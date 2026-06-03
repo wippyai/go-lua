@@ -37,7 +37,7 @@ func TestZZNilUnionProbe(t *testing.T) {
 			t.Logf("MISSING fixture %q", name)
 			continue
 		}
-		diags, entry := canonicalFixtureDiagnostics(s)
+		diags, entry := fixtureDiagnostics(s)
 		v := judgeAgainstCuratedExpectations(s, diags, entry)
 		t.Logf("=== %s passed=%v (%d missing, %d unexpected) ===", name, v.passed, len(v.missing), len(v.unexpected))
 		for _, m := range v.missing {

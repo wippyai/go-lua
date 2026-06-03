@@ -5,7 +5,6 @@ import (
 
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/cfg"
-	"github.com/wippyai/go-lua/compiler/check"
 	"github.com/wippyai/go-lua/compiler/check/domain/observation"
 	"github.com/wippyai/go-lua/compiler/check/tests/testutil"
 	"github.com/wippyai/go-lua/types/constraint"
@@ -22,7 +21,7 @@ function validate(obj: {["p-q"]: any})
     local p: {x: number, y: number} = obj[key]
 end
 `
-	res := testutil.Check(src, testutil.WithStdlib(), testutil.WithCheckOption(check.WithCanonicalFlow()))
+	res := testutil.Check(src, testutil.WithStdlib())
 	fn := findFunctionWithParamNames(t, res.Session.Results, "obj")
 	objSym := singleSymbolNamed(t, fn.Graph, "obj")
 	assignPoint, targetSym, source := assignmentSourceForTarget(t, fn.Graph, "p")

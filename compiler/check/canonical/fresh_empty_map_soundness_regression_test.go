@@ -6,7 +6,6 @@ import (
 
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/cfg"
-	"github.com/wippyai/go-lua/compiler/check"
 	"github.com/wippyai/go-lua/compiler/check/domain/observation"
 	"github.com/wippyai/go-lua/compiler/check/tests/testutil"
 	"github.com/wippyai/go-lua/types/constraint"
@@ -47,7 +46,6 @@ return 0
 	res := testutil.Check(src,
 		testutil.WithStdlib(),
 		testutil.WithManifest("time", canonicalTimeManifest()),
-		testutil.WithCheckOption(check.WithCanonicalFlow()),
 	)
 	root := res.Session.RootResult
 	if root == nil || root.Graph == nil {

@@ -29,7 +29,7 @@ func TestZZUnknownProbe(t *testing.T) {
 			t.Logf("MISSING fixture %q", name)
 			continue
 		}
-		diags, entry := canonicalFixtureDiagnostics(s)
+		diags, entry := fixtureDiagnostics(s)
 		v := judgeAgainstCuratedExpectations(s, diags, entry)
 		t.Logf("=== %s (entry %s) passed=%v ===", name, entry, v.passed)
 		for _, m := range v.missing {
@@ -67,7 +67,7 @@ func TestZZSoundnessProbe(t *testing.T) {
 		}
 	}
 	for _, s := range soundness {
-		diags, entry := canonicalFixtureDiagnostics(s)
+		diags, entry := fixtureDiagnostics(s)
 		v := judgeAgainstCuratedExpectations(s, diags, entry)
 		// A LOST expected error is the only soundness regression that matters here.
 		if len(v.missing) > 0 {

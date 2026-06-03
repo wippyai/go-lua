@@ -18,7 +18,7 @@ func TestZZNarrowAll(t *testing.T) {
 		if !strings.HasPrefix(s.Name, "narrowing/") {
 			continue
 		}
-		diags, entry := canonicalFixtureDiagnostics(s)
+		diags, entry := fixtureDiagnostics(s)
 		v := judgeAgainstCuratedExpectations(s, diags, entry)
 		if v.passed {
 			pass++

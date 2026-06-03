@@ -23,7 +23,7 @@ local function f(output: Output)
     end
 end
 `
-	res := testutil.Check(src, testutil.WithStdlib(), testutil.WithCheckOption(check.WithCanonicalFlow()))
+	res := testutil.Check(src, testutil.WithStdlib())
 	for _, m := range testutil.ErrorMessages(res.Diagnostics) {
 		t.Logf("PLAINVAR DIAG: %s", m)
 	}
@@ -42,7 +42,7 @@ local function f(receipt: Receipt)
     end
 end
 `
-	res := testutil.Check(src, testutil.WithStdlib(), testutil.WithCheckOption(check.WithCanonicalFlow()))
+	res := testutil.Check(src, testutil.WithStdlib())
 	for _, m := range testutil.ErrorMessages(res.Diagnostics) {
 		t.Logf("MEMBERPATH DIAG: %s", m)
 	}
@@ -61,7 +61,7 @@ local function f(receipt: Receipt)
     local r: RenderOutput = receipt.output
 end
 `
-	res := testutil.Check(src, testutil.WithStdlib(), testutil.WithCheckOption(check.WithCanonicalFlow()))
+	res := testutil.Check(src, testutil.WithStdlib())
 	msgs := testutil.ErrorMessages(res.Diagnostics)
 	if len(msgs) == 0 {
 		t.Fatalf("expected an assign error for unguarded Output -> RenderOutput, got none")
@@ -86,7 +86,7 @@ local function f(receipt: OutputReceipt)
     end
 end
 `
-	res := testutil.Check(src, testutil.WithStdlib(), testutil.WithCheckOption(check.WithCanonicalFlow()))
+	res := testutil.Check(src, testutil.WithStdlib())
 	for _, m := range testutil.ErrorMessages(res.Diagnostics) {
 		t.Logf("GENERIC DIAG: %s", m)
 	}

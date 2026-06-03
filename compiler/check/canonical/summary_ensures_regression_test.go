@@ -2,11 +2,9 @@ package canonical_test
 
 import (
 	"fmt"
+	"github.com/wippyai/go-lua/compiler/check/tests/testutil"
 	"strings"
 	"testing"
-
-	"github.com/wippyai/go-lua/compiler/check"
-	"github.com/wippyai/go-lua/compiler/check/tests/testutil"
 )
 
 func TestIsNilSummaryEnsuresRegression(t *testing.T) {
@@ -19,7 +17,7 @@ function M.is_nil(val: any, msg: string?)
 end
 return M
 `
-	canon := testutil.CheckAndExport(testSrc, "test", testutil.WithStdlib(), testutil.WithCheckOption(check.WithCanonicalFlow()))
+	canon := testutil.CheckAndExport(testSrc, "test", testutil.WithStdlib())
 	summary, ok := canon.Manifest.AllSummaries()["is_nil"]
 	if !ok {
 		t.Fatalf("expected canonical summary for is_nil, got %v", canon.Manifest.AllSummaries())

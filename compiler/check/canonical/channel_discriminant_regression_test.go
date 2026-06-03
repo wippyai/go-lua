@@ -5,7 +5,6 @@ import (
 
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/cfg"
-	"github.com/wippyai/go-lua/compiler/check"
 	"github.com/wippyai/go-lua/compiler/check/api"
 	"github.com/wippyai/go-lua/compiler/check/tests/testutil"
 	"github.com/wippyai/go-lua/types/constraint"
@@ -31,7 +30,7 @@ local function f(ch1: ChanInt, ch2: ChanStr)
     end
 end
 `
-	res := testutil.Check(src, testutil.WithStdlib(), testutil.WithCheckOption(check.WithCanonicalFlow()))
+	res := testutil.Check(src, testutil.WithStdlib())
 	fn := findFunctionWithParamNames(t, res.Session.Results, "ch1", "ch2")
 	resultSym := singleSymbolNamed(t, fn.Graph, "result")
 	ch1Sym := singleSymbolNamed(t, fn.Graph, "ch1")

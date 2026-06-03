@@ -1,10 +1,8 @@
 package canonical_test
 
 import (
-	"testing"
-
-	"github.com/wippyai/go-lua/compiler/check"
 	"github.com/wippyai/go-lua/compiler/check/tests/testutil"
+	"testing"
 )
 
 func TestCrossModuleSiblingNarrowingRegression(t *testing.T) {
@@ -36,12 +34,11 @@ test.is_nil(err, "no error expected")
 local id: string = response.metadata.response_id
 return id
 `
-	testMod := testutil.CheckAndExport(testSrc, "test", testutil.WithStdlib(), testutil.WithCheckOption(check.WithCanonicalFlow()))
-	clientMod := testutil.CheckAndExport(clientSrc, "client", testutil.WithStdlib(), testutil.WithCheckOption(check.WithCanonicalFlow()))
+	testMod := testutil.CheckAndExport(testSrc, "test", testutil.WithStdlib())
+	clientMod := testutil.CheckAndExport(clientSrc, "client", testutil.WithStdlib())
 	res := testutil.Check(mainSrc, testutil.WithStdlib(),
 		testutil.WithModule("test", testMod),
-		testutil.WithModule("client", clientMod),
-		testutil.WithCheckOption(check.WithCanonicalFlow()))
+		testutil.WithModule("client", clientMod))
 	if msgs := testutil.ErrorMessages(res.Diagnostics); len(msgs) != 0 {
 		t.Fatalf("expected cross-module sibling narrowing to be clean, got diagnostics: %v", msgs)
 	}

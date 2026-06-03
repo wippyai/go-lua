@@ -1,16 +1,14 @@
 package canonical_test
 
 import (
+	"github.com/wippyai/go-lua/compiler/check/tests/testutil"
 	"strings"
 	"testing"
-
-	"github.com/wippyai/go-lua/compiler/check"
-	"github.com/wippyai/go-lua/compiler/check/tests/testutil"
 )
 
 func canonicalMessages(t *testing.T, src string) []string {
 	t.Helper()
-	res := testutil.Check(src, testutil.WithStdlib(), testutil.WithCheckOption(check.WithCanonicalFlow()))
+	res := testutil.Check(src, testutil.WithStdlib())
 	return testutil.ErrorMessages(res.Diagnostics)
 }
 

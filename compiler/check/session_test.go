@@ -47,10 +47,6 @@ func newSessionTestChecker(imports map[string]*io.Manifest) *Checker {
 		Types:       core.NewEngineWithStdlib(stdlib.EngineConfig()),
 		Stdlib:      scope.NewWithBuiltins(),
 		GlobalTypes: globalTypes,
-		Resolver: &core.FuncResolver{
-			FieldFunc: core.Field,
-			IndexFunc: core.Index,
-		},
 	})
 }
 

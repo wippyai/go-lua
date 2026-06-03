@@ -3,11 +3,10 @@ package regression
 import (
 	"testing"
 
-	"github.com/wippyai/go-lua/compiler/check"
 	"github.com/wippyai/go-lua/compiler/check/tests/testutil"
 )
 
-func TestCanonicalImportedUntypedRepositoryFallbackEliminatesNil(t *testing.T) {
+func TestImportedUntypedRepositoryFallbackEliminatesNil(t *testing.T) {
 	sessionSource := `
 local session = {}
 
@@ -71,8 +70,7 @@ end
 
 return session
 `
-	canon := testutil.WithCheckOption(check.WithCanonicalFlow())
-	sessionModule := testutil.CheckAndExport(sessionSource, "session", testutil.WithStdlib(), canon)
+	sessionModule := testutil.CheckAndExport(sessionSource, "session", testutil.WithStdlib())
 	if sessionModule.HasError() {
 		for _, e := range sessionModule.Errors {
 			t.Logf("session error: %s at %d:%d", e.Message, e.Position.Line, e.Position.Column)
@@ -110,8 +108,8 @@ end
 
 return handle
 `
-	result := testutil.Check(source, testutil.WithStdlib(), testutil.WithModule("session", sessionModule), canon)
+	result := testutil.Check(source, testutil.WithStdlib(), testutil.WithModule("session", sessionModule))
 	if result.HasError() {
-		t.Fatalf("canonical producer+consumer errors: %v", testutil.ErrorMessages(result.Diagnostics))
+		t.Fatalf("producer+consumer errors: %v", testutil.ErrorMessages(result.Diagnostics))
 	}
 }

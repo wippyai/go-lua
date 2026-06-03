@@ -18,7 +18,7 @@ func zzGradualProbe(t *testing.T, fixtureName string) {
 		if !strings.HasSuffix(s.Name, fixtureName) {
 			continue
 		}
-		diags, entry := canonicalFixtureDiagnostics(s)
+		diags, entry := fixtureDiagnostics(s)
 		t.Logf("[%s] entry=%s diags=%d", s.Name, entry, len(diags))
 		for _, d := range diags {
 			t.Logf("[%s] %s @ %s:%d:%d (%s)", s.Name, d.Message, d.Position.File, d.Position.Line, d.Position.Column, d.Severity)
@@ -47,7 +47,7 @@ func TestZZGradual_GoogleClient(t *testing.T) {
 		if s.Name != "modules/google-client-metadata-regression" {
 			continue
 		}
-		diags, entry := canonicalFixtureDiagnostics(s)
+		diags, entry := fixtureDiagnostics(s)
 		v := judgeAgainstCuratedExpectations(s, diags, entry)
 		t.Logf("[%s] entry=%s diags=%d passed=%v", s.Name, entry, len(diags), v.passed)
 		for _, d := range diags {

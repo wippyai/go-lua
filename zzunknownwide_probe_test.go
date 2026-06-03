@@ -20,7 +20,7 @@ func TestZZUnknownWideProbe(t *testing.T) {
 		if !strings.HasPrefix(s.Name, "realworld/") {
 			continue
 		}
-		raw, entry := canonicalFixtureDiagnostics(s)
+		raw, entry := fixtureDiagnostics(s)
 		v := judgeAgainstCuratedExpectations(s, raw, entry)
 		totalMissing += len(v.missing)
 		for _, u := range v.unexpected {

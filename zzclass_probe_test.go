@@ -5,7 +5,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/wippyai/go-lua/compiler/check"
 	"github.com/wippyai/go-lua/compiler/check/tests/testutil"
 	"github.com/wippyai/go-lua/types/domain/value"
 	"github.com/wippyai/go-lua/types/typ"
@@ -66,9 +65,9 @@ func zzExtractNewReturn(export typ.Type) typ.Type {
 	return fn.Returns[0]
 }
 
-// zzProbeFixture runs one fixture's full check phase (deps then entry) through
-// the canonical flow and surfaces the panic stack trace when a panic occurs,
-// so the cross-module class identity bug is debuggable with a real trace.
+// zzProbeFixture runs one fixture's full check phase (deps then entry) and
+// surfaces the panic stack trace when a panic occurs, so the cross-module class
+// identity bug is debuggable with a real trace.
 func zzProbeFixture(t *testing.T, name string) {
 	suites, err := discoverFixtures("testdata/fixtures")
 	if err != nil {
@@ -91,17 +90,17 @@ func zzProbeFixture(t *testing.T, name string) {
 			t.Logf("PANIC in %s: %v\n%s", name, r, debug.Stack())
 		}
 	}()
-	diags, entry := zzCanonicalDiags(target)
+	diags, entry := zzProbeDiags(target)
 	t.Logf("entry=%s diagcount=%d", entry, len(diags))
 	for _, d := range diags {
 		t.Logf("DIAG %s:%d:%d [%s] %s", d.file, d.line, d.column, d.code, d.message)
 	}
 }
 
-func zzCanonicalDiags(s namedSuite) (diags []diagAlias, entryFile string) {
+func zzProbeDiags(s namedSuite) (diags []diagAlias, entryFile string) {
 	files := resolveFiles(s)
 	stdlib := resolveStdlib(s)
-	baseOpts := []testutil.Option{testutil.WithCheckOption(check.WithCanonicalFlow())}
+	var baseOpts []testutil.Option
 	if stdlib {
 		baseOpts = append(baseOpts, testutil.WithStdlib())
 	}
@@ -151,12 +150,12 @@ type diagAlias struct {
 	message string
 }
 
-// TestZZExportStoreManifest exports store.lua via canonical and reports whether
-// the exported M.new return type and Types["Store"] are the same recursive family.
+// TestZZExportStoreManifest exports store.lua and reports whether the exported
+// M.new return type and Types["Store"] are the same recursive family.
 func TestZZExportStoreManifest(t *testing.T) {
 	src := readFixtureFile("testdata/fixtures/modules/imported-self-method-store", "store.lua")
 	mod := testutil.CheckAndExport(src, "store",
-		testutil.WithCheckOption(check.WithCanonicalFlow()), testutil.WithStdlib())
+		testutil.WithStdlib())
 	m := mod.Manifest
 	if m == nil {
 		t.Fatalf("nil manifest")
@@ -192,10 +191,10 @@ func TestZZCompareStoreFamilies(t *testing.T) {
 		src := readFixtureFile(dir, file)
 		// Resolve protocol dep for the map-of-record store.
 		var opts []testutil.Option
-		opts = append(opts, testutil.WithCheckOption(check.WithCanonicalFlow()), testutil.WithStdlib())
+		opts = append(opts, testutil.WithStdlib())
 		if name == "store2" {
 			psrc := readFixtureFile("testdata/fixtures/modules/imported-map-of-record-store", "protocol.lua")
-			pmod := testutil.CheckAndExport(psrc, "protocol", testutil.WithCheckOption(check.WithCanonicalFlow()), testutil.WithStdlib())
+			pmod := testutil.CheckAndExport(psrc, "protocol", testutil.WithStdlib())
 			opts = append(opts, testutil.WithModule("protocol", pmod))
 		}
 		mod := testutil.CheckAndExport(src, name, opts...)
@@ -246,7 +245,7 @@ func TestZZImporterStore(t *testing.T) {
 			}
 			func() {
 				defer func() { _ = recover() }()
-				_, _ = zzCanonicalDiags(s)
+				_, _ = zzProbeDiags(s)
 			}()
 		}
 	}
@@ -256,7 +255,7 @@ func TestZZImporterStore(t *testing.T) {
 		if s.Name != "modules/imported-self-method-store" {
 			continue
 		}
-		diags, entry := zzCanonicalDiags(s)
+		diags, entry := zzProbeDiags(s)
 		t.Logf("[importer] entry=%s diagcount=%d", entry, len(diags))
 		for _, d := range diags {
 			t.Logf("DIAG %s:%d:%d [%s] %s", d.file, d.line, d.column, d.code, d.message)
@@ -287,10 +286,10 @@ func TestZZClassProbeStoreAfterOthers(t *testing.T) {
 		}
 		func() {
 			defer func() { _ = recover() }()
-			_, _ = zzCanonicalDiags(s)
+			_, _ = zzProbeDiags(s)
 		}()
 		if s.Name == "modules/imported-self-method-store" {
-			diags, entry := zzCanonicalDiags(s)
+			diags, entry := zzProbeDiags(s)
 			t.Logf("[after-others] entry=%s diagcount=%d", entry, len(diags))
 			for _, d := range diags {
 				t.Logf("DIAG %s:%d:%d [%s] %s", d.file, d.line, d.column, d.code, d.message)

@@ -48,7 +48,7 @@ for _, name in ipairs(suite_names) do
     local tests: {Entry} = suites[name]
 end
 `
-	res := testutil.Check(src, testutil.WithStdlib(), testutil.WithCheckOption(check.WithCanonicalFlow()))
+	res := testutil.Check(src, testutil.WithStdlib())
 	for _, m := range testutil.ErrorMessages(res.Diagnostics) {
 		t.Logf("MIN DIAG: %s", m)
 	}
@@ -63,7 +63,7 @@ for k in pairs(a) do
     local v: number = a[k]
 end
 `
-	res := testutil.Check(src, testutil.WithStdlib(), testutil.WithCheckOption(check.WithCanonicalFlow()))
+	res := testutil.Check(src, testutil.WithStdlib())
 	msgs := testutil.ErrorMessages(res.Diagnostics)
 	t.Logf("DIRECT KeyOf: %d diags", len(msgs))
 	for _, m := range msgs {
@@ -84,7 +84,7 @@ for k in pairs(a) do
     local w: number = v
 end
 `
-	res := testutil.Check(src, testutil.WithStdlib(), testutil.WithCheckOption(check.WithCanonicalFlow()))
+	res := testutil.Check(src, testutil.WithStdlib())
 	msgs := testutil.ErrorMessages(res.Diagnostics)
 	t.Logf("STORED-SLOT: %d diags (0 = transfer slot refined)", len(msgs))
 	for _, m := range msgs {
@@ -102,7 +102,7 @@ for k in pairs(a) do
     local v: number = b[k]
 end
 `
-	res := testutil.Check(src, testutil.WithStdlib(), testutil.WithCheckOption(check.WithCanonicalFlow()))
+	res := testutil.Check(src, testutil.WithStdlib())
 	msgs := testutil.ErrorMessages(res.Diagnostics)
 	t.Logf("WRONG-CONTAINER: %d diags (expect >=1)", len(msgs))
 	for _, m := range msgs {
@@ -118,7 +118,7 @@ local a: {[string]: number} = {}
 local k = "foo"
 local v: number = a[k]
 `
-	res := testutil.Check(src, testutil.WithStdlib(), testutil.WithCheckOption(check.WithCanonicalFlow()))
+	res := testutil.Check(src, testutil.WithStdlib())
 	msgs := testutil.ErrorMessages(res.Diagnostics)
 	t.Logf("ARBITRARY-KEY: %d diags (expect >=1)", len(msgs))
 	for _, m := range msgs {
@@ -144,7 +144,7 @@ func TestZZInsertIndexedFixture(t *testing.T) {
 	if !found {
 		t.Fatalf("fixture not found")
 	}
-	diags, entry := canonicalFixtureDiagnostics(target)
+	diags, entry := fixtureDiagnostics(target)
 	t.Logf("entry=%s, %d diagnostics", entry, len(diags))
 	for _, d := range diags {
 		t.Logf("  %s", diagSummary(d))

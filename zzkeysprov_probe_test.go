@@ -24,7 +24,7 @@ for _, name in ipairs(names) do
     local e: Entry = m[name]
 end
 `
-	res := testutil.Check(src, testutil.WithStdlib(), testutil.WithCheckOption(check.WithCanonicalFlow()))
+	res := testutil.Check(src, testutil.WithStdlib())
 	msgs := testutil.ErrorMessages(res.Diagnostics)
 	t.Logf("KEYS-PROV baseline: %d diags", len(msgs))
 	for _, m := range msgs {
@@ -51,7 +51,7 @@ for _, name in ipairs(names) do
     local e: Entry = b[name]
 end
 `
-	res := testutil.Check(src, testutil.WithStdlib(), testutil.WithCheckOption(check.WithCanonicalFlow()))
+	res := testutil.Check(src, testutil.WithStdlib())
 	msgs := testutil.ErrorMessages(res.Diagnostics)
 	t.Logf("KEYS-PROV wrong-container: %d diags (expect >=1)", len(msgs))
 	for _, m := range msgs {
@@ -79,7 +79,7 @@ for _, name in ipairs(names) do
     local e: Entry = a[name]
 end
 `
-	res := testutil.Check(src, testutil.WithStdlib(), testutil.WithCheckOption(check.WithCanonicalFlow()))
+	res := testutil.Check(src, testutil.WithStdlib())
 	msgs := testutil.ErrorMessages(res.Diagnostics)
 	t.Logf("KEYS-PROV arbitrary-fn: %d diags (expect >=1)", len(msgs))
 	for _, m := range msgs {
@@ -107,7 +107,7 @@ local a: {[string]: Entry} = {}
 local names = sorted_keys(a)
 local e: Entry = a["literal"]
 `
-	res := testutil.Check(src, testutil.WithStdlib(), testutil.WithCheckOption(check.WithCanonicalFlow()))
+	res := testutil.Check(src, testutil.WithStdlib())
 	msgs := testutil.ErrorMessages(res.Diagnostics)
 	t.Logf("KEYS-PROV literal-index: %d diags (expect >=1)", len(msgs))
 	for _, m := range msgs {
@@ -141,7 +141,7 @@ for _, name in ipairs(names) do
     local e: Entry = a[name]
 end
 `
-	res := testutil.Check(src, testutil.WithStdlib(), testutil.WithCheckOption(check.WithCanonicalFlow()))
+	res := testutil.Check(src, testutil.WithStdlib())
 	msgs := testutil.ErrorMessages(res.Diagnostics)
 	t.Logf("KEYS-PROV reassigned: %d diags (expect >=1)", len(msgs))
 	for _, m := range msgs {

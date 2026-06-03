@@ -5,7 +5,6 @@ import (
 
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/cfg"
-	"github.com/wippyai/go-lua/compiler/check"
 	"github.com/wippyai/go-lua/compiler/check/domain/observation"
 	"github.com/wippyai/go-lua/compiler/check/tests/testutil"
 	"github.com/wippyai/go-lua/types/constraint"
@@ -28,7 +27,7 @@ func TestEnvOverlay_CallExpectedArgsCarriesImportedCallbackType(t *testing.T) {
 			local changed: integer = result.rows_affected
 		end)
 	`
-	result := testutil.Check(source, testutil.WithStdlib(), testutil.WithManifest("sql", manifest), testutil.WithCheckOption(check.WithCanonicalFlow()))
+	result := testutil.Check(source, testutil.WithStdlib(), testutil.WithManifest("sql", manifest))
 	root := result.Session.RootResultValue()
 	if root == nil {
 		t.Fatal("missing root result")

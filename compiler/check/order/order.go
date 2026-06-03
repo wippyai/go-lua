@@ -1,11 +1,5 @@
-// This package handles post-analysis diagnostic operations:
-//   - Sorting functions by source position for deterministic pass execution
-//   - Sorting diagnostics for stable output ordering
-//
-// Deterministic ordering is essential for reproducible builds and test stability.
-// All sorting uses stable tie-breakers (graph ID, message content) to ensure
-// identical output across runs.
-package pipeline
+// Package order provides deterministic ordering helpers for checker outputs.
+package order
 
 import (
 	"sort"

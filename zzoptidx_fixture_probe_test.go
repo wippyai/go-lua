@@ -31,7 +31,7 @@ func TestZZOptIdxFixtureProbe(t *testing.T) {
 		if !ok {
 			t.Fatalf("fixture %q not found", name)
 		}
-		diags, entry := canonicalFixtureDiagnostics(s)
+		diags, entry := fixtureDiagnostics(s)
 		t.Logf("=== %s (entry %s): %d diagnostics ===", name, entry, len(diags))
 		for _, d := range diags {
 			t.Logf("  %s", diagSummary(d))
@@ -73,7 +73,7 @@ func TestZZSoundnessVerdictProbe(t *testing.T) {
 			t.Logf("fixture %q not found (name may differ)", name)
 			continue
 		}
-		diags, entry := canonicalFixtureDiagnostics(s)
+		diags, entry := fixtureDiagnostics(s)
 		v := judgeAgainstCuratedExpectations(s, diags, entry)
 		t.Logf("=== %s: passed=%v missing=%d unexpected=%d ===", name, v.passed, len(v.missing), len(v.unexpected))
 		for _, m := range v.missing {

@@ -27,7 +27,7 @@ func TestZZSoundGate(t *testing.T) {
 		if !isSound && !named[s.Name] {
 			continue
 		}
-		diags, entry := canonicalFixtureDiagnostics(s)
+		diags, entry := fixtureDiagnostics(s)
 		v := judgeAgainstCuratedExpectations(s, diags, entry)
 		if len(v.missing) == 0 {
 			continue

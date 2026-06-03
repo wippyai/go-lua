@@ -19,20 +19,17 @@ func zzScopeFixture(t *testing.T, name string) string {
 	return string(data)
 }
 
-// TestZZScopeProbe captures the legacy vs canonical diagnostics for the three
-// lexical-scope target fixtures. It is a diagnostic probe, not a parity gate.
+// TestZZScopeProbe captures diagnostics for the lexical-scope target fixtures. It
+// is a diagnostic probe, not a gate.
 func TestZZScopeProbe(t *testing.T) {
 	for _, name := range []string{"not-visible-outside-block", "used-before-definition", "shadowing"} {
 		name := name
 		t.Run(name, func(t *testing.T) {
 			src := zzScopeFixture(t, name)
-			diff := testutil.Differential(src, "main.lua", testutil.WithStdlib())
+			result := testutil.Check(src, testutil.WithStdlib())
 			t.Logf("=== %s ===", name)
-			for _, e := range diff.LegacyAll {
-				t.Logf("LEGACY    %d:%d %s | %s", e.Diagnostic.Position.Line, e.Diagnostic.Position.Column, e.Diagnostic.Code.Name(), e.Diagnostic.Message)
-			}
-			for _, e := range diff.CanonicalAll {
-				t.Logf("CANONICAL %d:%d %s | %s", e.Diagnostic.Position.Line, e.Diagnostic.Position.Column, e.Diagnostic.Code.Name(), e.Diagnostic.Message)
+			for _, d := range result.Diagnostics {
+				t.Logf("FLOW %d:%d %s | %s", d.Position.Line, d.Position.Column, d.Code.Name(), d.Message)
 			}
 		})
 	}

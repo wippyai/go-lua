@@ -1,10 +1,8 @@
 package canonical_test
 
 import (
-	"testing"
-
-	"github.com/wippyai/go-lua/compiler/check"
 	"github.com/wippyai/go-lua/compiler/check/tests/testutil"
+	"testing"
 )
 
 func TestCanonicalClosureEntryContextCapturesBranchNarrowedCell(t *testing.T) {
@@ -16,7 +14,7 @@ local function test(x)
         end
     end
 end
-`, testutil.WithStdlib(), testutil.WithCheckOption(check.WithCanonicalFlow()))
+`, testutil.WithStdlib())
 
 	var captured []int
 	for _, result := range res.Session.Results {
@@ -54,7 +52,7 @@ function T.render(): string
 end
 
 return M
-`, testutil.WithStdlib(), testutil.WithCheckOption(check.WithCanonicalFlow()))
+`, testutil.WithStdlib())
 
 	if res.HasError() {
 		t.Fatalf("exported function should see live boundary prototype context, diagnostics=%v", testutil.ErrorMessages(res.Diagnostics))

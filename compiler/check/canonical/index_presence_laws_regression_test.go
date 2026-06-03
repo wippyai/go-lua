@@ -5,7 +5,6 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/compiler/cfg"
-	"github.com/wippyai/go-lua/compiler/check"
 	"github.com/wippyai/go-lua/compiler/check/api"
 	"github.com/wippyai/go-lua/compiler/check/tests/testutil"
 	"github.com/wippyai/go-lua/types/constraint"
@@ -33,7 +32,7 @@ end
 
 local installed: string = messages["root"]:topic()
 `
-	res := testutil.Check(src, testutil.WithStdlib(), testutil.WithCheckOption(check.WithCanonicalFlow()))
+	res := testutil.Check(src, testutil.WithStdlib())
 	if msgs := testutil.ErrorMessages(res.Diagnostics); len(msgs) != 0 {
 		logIndexPresenceFacts(t, res)
 		t.Fatalf("expected clean canonical check, got diagnostics: %v", msgs)
@@ -63,7 +62,7 @@ end
 
 local topic: string = messages["root"]:topic()
 `
-	res := testutil.Check(src, testutil.WithStdlib(), testutil.WithCheckOption(check.WithCanonicalFlow()))
+	res := testutil.Check(src, testutil.WithStdlib())
 	if res == nil || res.Session == nil || res.Session.RootResult == nil || res.Session.RootResult.Graph == nil {
 		t.Fatal("missing canonical root result")
 	}

@@ -1,15 +1,13 @@
 package canonical_test
 
 import (
-	"testing"
-
-	"github.com/wippyai/go-lua/compiler/check"
 	"github.com/wippyai/go-lua/compiler/check/tests/testutil"
 	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/contract"
 	"github.com/wippyai/go-lua/types/effect"
 	"github.com/wippyai/go-lua/types/io"
 	"github.com/wippyai/go-lua/types/typ"
+	"testing"
 )
 
 func TestCanonicalCallbackEnvOverlaySeedsNestedCallbackEntryValue(t *testing.T) {
@@ -59,7 +57,7 @@ func TestCanonicalCallbackEnvOverlaySeedsNestedCallbackEntryValue(t *testing.T) 
 				end)
 			end)
 		end)
-	`, testutil.WithStdlib(), testutil.WithManifest("migration_lib", manifest), testutil.WithCheckOption(check.WithCanonicalFlow()))
+	`, testutil.WithStdlib(), testutil.WithManifest("migration_lib", manifest))
 	if res.HasError() {
 		t.Fatalf("expected clean check, got diagnostics: %v", testutil.ErrorMessages(res.Diagnostics))
 	}

@@ -1,13 +1,11 @@
 package canonical_test
 
 import (
-	"strings"
-	"testing"
-
-	"github.com/wippyai/go-lua/compiler/check"
 	"github.com/wippyai/go-lua/compiler/check/tests/testutil"
 	"github.com/wippyai/go-lua/types/typ"
 	"github.com/wippyai/go-lua/types/typ/unwrap"
+	"strings"
+	"testing"
 )
 
 func TestDynamicRegistryRendererGuardRegression(t *testing.T) {
@@ -45,11 +43,11 @@ end
 local page = page_registry.build_page({ id = "demo", data = { data_func = "load_data" } })
 return get_page_data(page)
 	`
-	mod := testutil.CheckAndExport(pageRegistry, "page_registry", testutil.WithStdlib(), testutil.WithCheckOption(check.WithCanonicalFlow()))
+	mod := testutil.CheckAndExport(pageRegistry, "page_registry", testutil.WithStdlib())
 	if msgs := testutil.ErrorMessages(mod.Errors); len(msgs) != 0 {
 		t.Fatalf("expected page_registry provider to export cleanly, got diagnostics: %v", msgs)
 	}
-	res := testutil.Check(main, testutil.WithStdlib(), testutil.WithModule("page_registry", mod), testutil.WithCheckOption(check.WithCanonicalFlow()))
+	res := testutil.Check(main, testutil.WithStdlib(), testutil.WithModule("page_registry", mod))
 	if msgs := testutil.ErrorMessages(res.Diagnostics); len(msgs) != 0 {
 		t.Fatalf("expected dynamic registry renderer guard to be clean, got diagnostics: %v", msgs)
 	}
@@ -66,7 +64,7 @@ function pages.build_page(entry: Entry)
 end
 return pages
 `
-	mod := testutil.CheckAndExport(pageRegistry, "page_registry", testutil.WithStdlib(), testutil.WithCheckOption(check.WithCanonicalFlow()))
+	mod := testutil.CheckAndExport(pageRegistry, "page_registry", testutil.WithStdlib())
 	rec := unwrap.Record(mod.Manifest.EnrichedExport())
 	if rec == nil {
 		t.Fatalf("expected record export, got %v", mod.Manifest.EnrichedExport())
@@ -107,7 +105,7 @@ function pages.build_page(entry: Entry)
 end
 return pages
 `
-	mod := testutil.CheckAndExport(pageRegistry, "page_registry", testutil.WithStdlib(), testutil.WithCheckOption(check.WithCanonicalFlow()))
+	mod := testutil.CheckAndExport(pageRegistry, "page_registry", testutil.WithStdlib())
 	msgs := testutil.ErrorMessages(mod.Errors)
 	if len(msgs) == 0 {
 		t.Fatal("expected unproved any/unknown concat in provider to be rejected")

@@ -17,11 +17,11 @@ import (
 	"github.com/wippyai/go-lua/types/typ"
 )
 
-// TestCanonicalDriver_MultiFunctionModuleSummarizesEachFunction is gate (b): the
-// canonical driver runs over a small multi-function module without panic and
-// produces a converged interprocedural summary for every module function (the
-// root chunk and each nested function). It exercises the module walk, the call
-// graph (caller -> callee), and a self-recursive function.
+// TestCanonicalDriver_MultiFunctionModuleSummarizesEachFunction verifies that the
+// module driver runs over a small multi-function module without panic and produces
+// a converged interprocedural summary for every module function (the root chunk
+// and each nested function). It exercises the module walk, the call graph
+// (caller -> callee), and a self-recursive function.
 func TestCanonicalDriver_MultiFunctionModuleSummarizesEachFunction(t *testing.T) {
 	const src = `
 local function add(a, b)
@@ -154,11 +154,11 @@ end
 	t.Fatalf("outerAssert ParamNarrows = %#v, want truthy narrow on parameter 0", sum.ParamNarrows)
 }
 
-// TestCanonicalDriver_BridgePopulatesSessionResults verifies the diagnostic bridge
-// (component 11b): after Run, every module function has an api.FuncResult in the
-// session keyed by its *ast.FunctionExpr, carrying the bridged sound inputs (the
-// CFG), so Checker.runPasses can range over the same result map the legacy flow
-// produces. It also confirms the canonical-computed return facts are exposed.
+// TestCanonicalDriver_BridgePopulatesSessionResults verifies the diagnostic bridge:
+// after Run, every module function has an api.FuncResult in the session keyed by
+// its *ast.FunctionExpr, carrying the bridged sound inputs (the CFG), so
+// Checker.runPasses can range over the same result map. It also confirms the
+// computed return facts are exposed.
 func TestCanonicalDriver_BridgePopulatesSessionResults(t *testing.T) {
 	const src = `
 local function pick(): number
@@ -203,9 +203,8 @@ return pick()
 		t.Fatal("bridge did not set the session root result")
 	}
 
-	// pick returns a single number; the canonical-computed return fact is exposed
-	// for the transfer-fidelity worklist even though the bridge does not yet route
-	// it into a legacy diagnostic field.
+	// pick returns a single number; the computed return fact is exposed for the
+	// transfer-fidelity worklist.
 	pickRef, found := findRefByFunc(sess, func(fn *ast.FunctionExpr) bool {
 		return fn != nil && fn.ParList != nil && len(fn.ParList.Names) == 0 && !fn.ParList.HasVargs
 	})

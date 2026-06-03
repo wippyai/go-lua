@@ -35,7 +35,7 @@ func TestZZBuilderProbe(t *testing.T) {
 			t.Logf("MISSING fixture %s", name)
 			continue
 		}
-		diags, entry := canonicalFixtureDiagnostics(s)
+		diags, entry := fixtureDiagnostics(s)
 		t.Logf("=== %s (entry=%s) %d diags ===", s.Name, entry, len(diags))
 		for _, d := range diags {
 			t.Logf("  %s:%d:%d [%s] %s", d.Position.File, d.Position.Line, d.Position.Column, d.Code.Name(), d.Message)

@@ -2,14 +2,12 @@ package canonical_test
 
 import (
 	"fmt"
-	"testing"
-
-	"github.com/wippyai/go-lua/compiler/check"
 	"github.com/wippyai/go-lua/compiler/check/api"
 	"github.com/wippyai/go-lua/compiler/check/tests/testutil"
 	"github.com/wippyai/go-lua/types/domain/value/product"
 	"github.com/wippyai/go-lua/types/subtype"
 	"github.com/wippyai/go-lua/types/typ"
+	"testing"
 )
 
 func TestCanonicalPublishesSolvedLocalFunctionFactsToParentProduct(t *testing.T) {
@@ -19,7 +17,7 @@ local function get_db()
 end
 
 local value, label = get_db()
-`, testutil.WithStdlib(), testutil.WithCheckOption(check.WithCanonicalFlow()))
+`, testutil.WithStdlib())
 	if msgs := testutil.ErrorMessages(res.Diagnostics); len(msgs) != 0 {
 		t.Fatalf("expected clean canonical check, got diagnostics: %v", msgs)
 	}
@@ -87,7 +85,7 @@ local function g(n)
 end
 
 local result = f(10)
-`, testutil.WithStdlib(), testutil.WithCheckOption(check.WithCanonicalFlow()))
+`, testutil.WithStdlib())
 	if msgs := testutil.ErrorMessages(res.Diagnostics); len(msgs) != 0 {
 		t.Fatalf("expected clean canonical check, got diagnostics: %v", msgs)
 	}

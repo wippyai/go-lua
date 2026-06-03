@@ -1,10 +1,8 @@
 package canonical_test
 
 import (
-	"testing"
-
-	"github.com/wippyai/go-lua/compiler/check"
 	"github.com/wippyai/go-lua/compiler/check/tests/testutil"
+	"testing"
 )
 
 func TestResultTypeCrossModuleSiblingNarrowingRegression(t *testing.T) {
@@ -89,15 +87,14 @@ if err == nil then
     local e: string = email
 end
 `
-	resultMod := testutil.CheckAndExport(resultSrc, "result", testutil.WithStdlib(), testutil.WithCheckOption(check.WithCanonicalFlow()))
-	repoMod := testutil.CheckAndExport(repoSrc, "repo", testutil.WithStdlib(), testutil.WithModule("result", resultMod), testutil.WithCheckOption(check.WithCanonicalFlow()))
-	serviceMod := testutil.CheckAndExport(serviceSrc, "service", testutil.WithStdlib(), testutil.WithModule("result", resultMod), testutil.WithModule("repo", repoMod), testutil.WithCheckOption(check.WithCanonicalFlow()))
+	resultMod := testutil.CheckAndExport(resultSrc, "result", testutil.WithStdlib())
+	repoMod := testutil.CheckAndExport(repoSrc, "repo", testutil.WithStdlib(), testutil.WithModule("result", resultMod))
+	serviceMod := testutil.CheckAndExport(serviceSrc, "service", testutil.WithStdlib(), testutil.WithModule("result", resultMod), testutil.WithModule("repo", repoMod))
 
 	res := testutil.Check(mainSrc, testutil.WithStdlib(),
 		testutil.WithModule("result", resultMod),
 		testutil.WithModule("repo", repoMod),
-		testutil.WithModule("service", serviceMod),
-		testutil.WithCheckOption(check.WithCanonicalFlow()))
+		testutil.WithModule("service", serviceMod))
 	if msgs := testutil.ErrorMessages(res.Diagnostics); len(msgs) != 0 {
 		t.Fatalf("expected cross-module result sibling narrowing to be clean, got diagnostics: %v", msgs)
 	}

@@ -24,7 +24,7 @@ func TestZZPluginSupervisorCanonical(t *testing.T) {
 	if !found {
 		t.Fatalf("fixture not found")
 	}
-	diags, entry := canonicalFixtureDiagnostics(target)
+	diags, entry := fixtureDiagnostics(target)
 	t.Logf("entry=%s, %d diagnostics", entry, len(diags))
 	for _, d := range diags {
 		t.Logf("  %s", diagSummary(d))

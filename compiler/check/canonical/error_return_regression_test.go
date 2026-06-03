@@ -1,14 +1,12 @@
 package canonical_test
 
 import (
-	"testing"
-
-	"github.com/wippyai/go-lua/compiler/check"
 	"github.com/wippyai/go-lua/compiler/check/erreffect"
 	"github.com/wippyai/go-lua/compiler/check/tests/testutil"
 	"github.com/wippyai/go-lua/types/io"
 	"github.com/wippyai/go-lua/types/typ"
 	"github.com/wippyai/go-lua/types/typ/unwrap"
+	"testing"
 )
 
 func TestErrorReturnCrossModuleSummaryRegression(t *testing.T) {
@@ -23,7 +21,7 @@ function M.request(ok: boolean): (Response?, string?)
 end
 return M
 `
-	res := testutil.CheckAndExport(client, "client", testutil.WithStdlib(), testutil.WithCheckOption(check.WithCanonicalFlow()))
+	res := testutil.CheckAndExport(client, "client", testutil.WithStdlib())
 	rec := unwrap.Record(res.Manifest.EnrichedExport())
 	if rec == nil {
 		t.Fatalf("expected record export, got %v", res.Manifest.EnrichedExport())
@@ -75,7 +73,7 @@ function M.new(): ActiveSession
 end
 return M
 `
-	res := testutil.CheckAndExport(src, "session_state", testutil.WithStdlib(), testutil.WithManifest("time", canonicalTimeManifest()), testutil.WithCheckOption(check.WithCanonicalFlow()))
+	res := testutil.CheckAndExport(src, "session_state", testutil.WithStdlib(), testutil.WithManifest("time", canonicalTimeManifest()))
 	if msgs := testutil.ErrorMessages(res.Errors); len(msgs) != 0 {
 		t.Fatalf("expected time manifest session state to be clean, got diagnostics: %v", msgs)
 	}
@@ -87,7 +85,7 @@ local time = require("time")
 local now = time.now()
 local x: number = now
 `
-	res := testutil.CheckAndExport(src, "m", testutil.WithStdlib(), testutil.WithManifest("time", canonicalTimeManifest()), testutil.WithCheckOption(check.WithCanonicalFlow()))
+	res := testutil.CheckAndExport(src, "m", testutil.WithStdlib(), testutil.WithManifest("time", canonicalTimeManifest()))
 	msgs := testutil.ErrorMessages(res.Errors)
 	for _, msg := range msgs {
 		if msg == "cannot assign time.Time to number" {

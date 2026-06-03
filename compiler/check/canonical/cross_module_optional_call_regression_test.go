@@ -1,11 +1,9 @@
 package canonical_test
 
 import (
+	"github.com/wippyai/go-lua/compiler/check/tests/testutil"
 	"strings"
 	"testing"
-
-	"github.com/wippyai/go-lua/compiler/check"
-	"github.com/wippyai/go-lua/compiler/check/tests/testutil"
 )
 
 func TestCrossModuleRegisteredMapReadStaysOptionalAtCall(t *testing.T) {
@@ -14,7 +12,7 @@ type Handler = (string) -> string
 local M = {}
 M.Handler = Handler
 return M
-`, "protocol", testutil.WithStdlib(), testutil.WithCheckOption(check.WithCanonicalFlow()))
+`, "protocol", testutil.WithStdlib())
 	if protocol.HasError() {
 		t.Fatalf("protocol export failed: %v", testutil.ErrorMessages(protocol.Errors))
 	}
@@ -25,7 +23,7 @@ function M.handle(value: string): string
     return value
 end
 return M
-`, "tools", testutil.WithStdlib(), testutil.WithCheckOption(check.WithCanonicalFlow()))
+`, "tools", testutil.WithStdlib())
 	if tools.HasError() {
 		t.Fatalf("tools export failed: %v", testutil.ErrorMessages(tools.Errors))
 	}
@@ -55,7 +53,7 @@ function App:register(name: string, handler: protocol.Handler): App
 end
 
 return M
-`, "engine", testutil.WithStdlib(), testutil.WithModule("protocol", protocol), testutil.WithCheckOption(check.WithCanonicalFlow()))
+`, "engine", testutil.WithStdlib(), testutil.WithModule("protocol", protocol))
 	if engine.HasError() {
 		t.Fatalf("engine export failed: %v", testutil.ErrorMessages(engine.Errors))
 	}
@@ -70,8 +68,7 @@ return handler("payload")
 `, testutil.WithStdlib(),
 		testutil.WithModule("protocol", protocol),
 		testutil.WithModule("tools", tools),
-		testutil.WithModule("engine", engine),
-		testutil.WithCheckOption(check.WithCanonicalFlow()))
+		testutil.WithModule("engine", engine))
 
 	msgs := testutil.ErrorMessages(result.Diagnostics)
 	for _, msg := range msgs {

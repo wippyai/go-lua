@@ -1,8 +1,6 @@
 // Package canonical wires the single-fixed-point type-flow engine into the
-// Checker. It is the cutover seam (DAG component 11): the Driver runs the
-// canonical engine over a whole module as the Checker's default flow; the legacy
-// pipeline remains available only through the explicit WithLegacyFlow
-// compatibility option.
+// Checker. The Driver runs the canonical engine over a whole module as the
+// Checker's only flow.
 //
 // The engine itself is built as a standalone leaf in the sub-packages:
 //
@@ -15,14 +13,12 @@
 //     equation system, not a driver-owned second pass.
 //
 // The Driver supplies the missing module context the engine's summary.Program
-// interface needs: it walks the module's CFG hierarchy the same way the legacy
-// driver does (the chunk graph plus every nested function), and derives the call
-// graph from each function's call sites. It then drives the interprocedural
-// fixed point by summarizing every module function.
+// interface needs: it walks the chunk graph plus every nested function and derives
+// the call graph from each function's call sites. It then drives the
+// interprocedural fixed point by summarizing every module function.
 //
 // SCOPE (component 11a): the Driver RUNS the canonical flow over a whole module
-// and proves it TERMINATES (the deadlock fixtures that hang the legacy runSCC
-// converge here via the value/numeric widening at loop headers). It computes and
+// and proves it TERMINATES via the value/numeric widening at loop headers. It computes and
 // memoizes the per-function summaries; it does NOT yet bridge the converged
 // state to the diagnostic passes — that is component 11b. A function whose body
 // uses a node kind the per-node transfer defers carries that node's state forward
@@ -78,8 +74,7 @@ import (
 	"github.com/wippyai/go-lua/types/typ/unwrap"
 )
 
-// Config supplies the canonical driver's dependencies. It mirrors the subset of
-// the legacy pipeline config the canonical engine consumes.
+// Config supplies the canonical driver's dependencies.
 type Config struct {
 	// Types resolves operator result types and other type operations. It is the
 	// seam for the per-node transfer's operator resolution and the call-return
@@ -98,8 +93,8 @@ type Config struct {
 	Stdlib *scope.State
 
 	// Manifests is the module manifest querier the annotation resolver reads for
-	// imported type names. It is the same db the legacy runner resolves against; a
-	// nil querier still resolves primitive and structural annotations.
+	// imported type names. A nil querier still resolves primitive and structural
+	// annotations.
 	Manifests io.ManifestQuerier
 
 	// MaxScopeDepth limits lexical scope nesting in the canonical scope walk.
@@ -114,9 +109,7 @@ type Config struct {
 	ComputePasses []api.ComputePass
 }
 
-// Driver runs the canonical type-flow engine over a module. It is the canonical
-// counterpart of pipeline.Driver and satisfies the same module-driver seam:
-// Run(api.AnalysisSession, []ast.Stmt).
+// Driver runs the canonical type-flow engine over a module.
 type Driver struct {
 	cfg Config
 

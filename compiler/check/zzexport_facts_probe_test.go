@@ -4,12 +4,12 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/compiler/cfg"
-	"github.com/wippyai/go-lua/compiler/check/domain/functionfact"
 	"github.com/wippyai/go-lua/compiler/check/api"
+	"github.com/wippyai/go-lua/compiler/check/domain/functionfact"
 )
 
-// TestZZExportFactsProbe inspects the canonical FunctionFacts return projection
-// for an inferred-return exported function. Diagnostic only.
+// TestZZExportFactsProbe inspects the FunctionFacts return projection for an
+// inferred-return exported function. Diagnostic only.
 func TestZZExportFactsProbe(t *testing.T) {
 	src := `
 type Entry = { id: string, data: {[string]: any} }
@@ -26,10 +26,9 @@ function pages.build_page(entry: Entry)
     page.data_func = data_func
     return page
 end
-return pages
+	return pages
 `
 	checker := newSessionTestChecker(nil)
-	checker.flowMode = FlowCanonical
 	sess := checker.Check(src, "page_registry.lua")
 
 	facts := sess.rootFunctionFactsForExport()

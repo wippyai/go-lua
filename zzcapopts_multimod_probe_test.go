@@ -3,7 +3,6 @@ package lua
 import (
 	"testing"
 
-	"github.com/wippyai/go-lua/compiler/check"
 	"github.com/wippyai/go-lua/compiler/check/tests/testutil"
 )
 
@@ -11,8 +10,6 @@ import (
 // real multi-module wiring (CheckAndExport + WithModule), to isolate whether the
 // imported `providers` module is what makes captured resolve to nil.
 func TestZZCapOptsMultiMod(t *testing.T) {
-	canon := testutil.WithCheckOption(check.WithCanonicalFlow())
-
 	contractSrc := `
 local contract = {}
 function contract.get(_id)
@@ -78,20 +75,20 @@ local delay: number = captured_options.retry.initial_delay
 return attempts, delay
 `
 
-	testMod := testutil.CheckAndExport(testSrc, "test", canon, testutil.WithStdlib())
+	testMod := testutil.CheckAndExport(testSrc, "test", testutil.WithStdlib())
 	for _, e := range testMod.Errors {
 		t.Logf("test ERR: %s", e.Message)
 	}
-	contractMod := testutil.CheckAndExport(contractSrc, "contract", canon, testutil.WithStdlib())
+	contractMod := testutil.CheckAndExport(contractSrc, "contract", testutil.WithStdlib())
 	for _, e := range contractMod.Errors {
 		t.Logf("contract ERR: %s", e.Message)
 	}
-	providersMod := testutil.CheckAndExport(providersSrc, "providers", canon, testutil.WithStdlib(),
+	providersMod := testutil.CheckAndExport(providersSrc, "providers", testutil.WithStdlib(),
 		testutil.WithModule("contract", contractMod))
 	for _, e := range providersMod.Errors {
 		t.Logf("providers ERR: %s", e.Message)
 	}
-	res := testutil.Check(mainSrc, canon, testutil.WithStdlib(),
+	res := testutil.Check(mainSrc, testutil.WithStdlib(),
 		testutil.WithModule("test", testMod),
 		testutil.WithModule("contract", contractMod),
 		testutil.WithModule("providers", providersMod))

@@ -3,13 +3,7 @@ package flow
 import (
 	"testing"
 
-	"github.com/wippyai/go-lua/compiler/ast"
-	"github.com/wippyai/go-lua/compiler/cfg"
-	"github.com/wippyai/go-lua/compiler/check/domain/observation"
 	"github.com/wippyai/go-lua/compiler/check/tests/testutil"
-	"github.com/wippyai/go-lua/types/constraint"
-	flowtypes "github.com/wippyai/go-lua/types/flow"
-	"github.com/wippyai/go-lua/types/typ"
 )
 
 func TestIpairs_ElementType(t *testing.T) {
@@ -51,71 +45,6 @@ func TestIpairs_ElementType(t *testing.T) {
 		},
 	}
 	testutil.RunCases(t, tests)
-}
-
-func TestIteratorFlowSolutionProjectsLoopVariablesAtBodyPoint(t *testing.T) {
-	result := testutil.Check(`
-		local arr: {string} = {"a", "b"}
-		for i, v in ipairs(arr) do
-			local use = v
-		end
-	`, testutil.WithStdlib())
-	if result.HasError() {
-		t.Fatalf("unexpected errors: %v", testutil.ErrorMessages(result.Diagnostics))
-	}
-	root := result.Session.RootResult
-	if root == nil || root.FlowInputs == nil || root.FlowSolution == nil {
-		t.Fatal("missing root flow result")
-	}
-
-	var indexAssign, valueAssign, useAssign *flowtypes.UnifiedAssignment
-	for i := range root.FlowInputs.Assignments {
-		assign := &root.FlowInputs.Assignments[i]
-		switch assign.TargetPath.Root {
-		case "i":
-			indexAssign = assign
-		case "v":
-			valueAssign = assign
-		case "use":
-			useAssign = assign
-		}
-	}
-	if indexAssign == nil || valueAssign == nil || useAssign == nil {
-		t.Fatalf("missing iterator/body assignments: index=%v value=%v use=%v", indexAssign, valueAssign, useAssign)
-	}
-
-	assertSolved := func(pointPath constraint.Path, p cfg.Point, want typ.Type) {
-		t.Helper()
-		got := root.FlowSolution.NarrowedTypeAt(p, pointPath)
-		if !typ.TypeEquals(got, want) {
-			t.Fatalf("NarrowedTypeAt(%s at %d) = %v, want %v", pointPath.Root, p, got, want)
-		}
-	}
-
-	assertSolved(indexAssign.TargetPath, indexAssign.Point, typ.Integer)
-	assertSolved(valueAssign.TargetPath, valueAssign.Point, typ.String)
-	assertSolved(useAssign.Source.Path, useAssign.Point, typ.String)
-
-	var useSourceFound bool
-	observer := observation.FromFuncResult(root, nil).WithProofValues()
-	for _, assign := range root.Evidence.Assignments {
-		if assign.Info == nil || assign.Point != useAssign.Point {
-			continue
-		}
-		assign.Info.EachTargetSource(func(_ int, target cfg.AssignTarget, source ast.Expr) {
-			if target.Symbol != useAssign.TargetPath.Symbol || source == nil {
-				return
-			}
-			useSourceFound = true
-			got := observer.AssignmentSourceType(source, assign.Point, typ.String, target.Symbol)
-			if !typ.TypeEquals(got, typ.String) {
-				t.Fatalf("observed assignment source = %v, want string", got)
-			}
-		})
-	}
-	if !useSourceFound {
-		t.Fatal("missing use assignment source evidence")
-	}
 }
 
 func TestPairs_MapType(t *testing.T) {

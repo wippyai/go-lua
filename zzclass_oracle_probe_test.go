@@ -5,7 +5,7 @@ import (
 	"testing"
 )
 
-// TestZZClassOracleIsolated runs canonicalFixtureDiagnostics for a single class
+// TestZZClassOracleIsolated runs fixtureDiagnostics for a single class
 // fixture in isolation, to determine whether its false positives reproduce
 // standalone or only after other fixtures contaminate process-global state.
 func TestZZClassOracleIsolated(t *testing.T) {
@@ -26,7 +26,7 @@ func TestZZClassOracleIsolated(t *testing.T) {
 		if !ok {
 			continue
 		}
-		diags, entry := canonicalFixtureDiagnostics(s)
+		diags, entry := fixtureDiagnostics(s)
 		t.Logf("=== %s (entry=%s) ===", s.Name, entry)
 		for _, d := range diags {
 			t.Logf("  %s:%d:%d [%s] %s", d.Position.File, d.Position.Line, d.Position.Column, d.Code.Name(), d.Message)
@@ -58,11 +58,11 @@ func TestZZClassOracleAfterContam(t *testing.T) {
 		if strings.HasPrefix(s.Name, "modules/") || strings.HasPrefix(s.Name, "realworld/") {
 			func() {
 				defer func() { _ = recover() }()
-				canonicalFixtureDiagnostics(s)
+				fixtureDiagnostics(s)
 			}()
 		}
 	}
-	diags, entry := canonicalFixtureDiagnostics(target)
+	diags, entry := fixtureDiagnostics(target)
 	t.Logf("=== %s after-contam (entry=%s) ===", target.Name, entry)
 	for _, d := range diags {
 		t.Logf("  %s:%d:%d [%s] %s", d.Position.File, d.Position.Line, d.Position.Column, d.Code.Name(), d.Message)

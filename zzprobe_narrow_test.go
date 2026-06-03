@@ -35,13 +35,13 @@ func dumpFixtureGraph(t *testing.T, s namedSuite) {
 // when explicitly run. Keep as a debug probe.
 func TestZZProbeNarrow(t *testing.T) {
 	targets := map[string]bool{
-		"narrowing/equality-discriminant": true,
-		"narrowing/boolean-discriminant":  true,
-		"narrowing/typeof-guard":          true,
-		"narrowing/typeof-excludes-other": true,
-		"narrowing/union-page-variant-guard":        true,
-		"narrowing/page-registry-renderer-guard":    true,
-		"narrowing/dynamic-registry-renderer-guard": true,
+		"narrowing/equality-discriminant":                      true,
+		"narrowing/boolean-discriminant":                       true,
+		"narrowing/typeof-guard":                               true,
+		"narrowing/typeof-excludes-other":                      true,
+		"narrowing/union-page-variant-guard":                   true,
+		"narrowing/page-registry-renderer-guard":               true,
+		"narrowing/dynamic-registry-renderer-guard":            true,
 		"narrowing/channel-select-case-exhaustiveness-warning": true,
 	}
 	suites, err := discoverFixtures("testdata/fixtures")
@@ -52,7 +52,7 @@ func TestZZProbeNarrow(t *testing.T) {
 		if !targets[s.Name] {
 			continue
 		}
-		diags, entry := canonicalFixtureDiagnostics(s)
+		diags, entry := fixtureDiagnostics(s)
 		t.Logf("=== %s entry=%s ===", s.Name, entry)
 		for _, d := range diags {
 			t.Logf("DIAG %s", diagSummary(d))

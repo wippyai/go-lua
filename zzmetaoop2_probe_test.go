@@ -3,7 +3,6 @@ package lua
 import (
 	"testing"
 
-	"github.com/wippyai/go-lua/compiler/check"
 	"github.com/wippyai/go-lua/compiler/check/tests/testutil"
 	"github.com/wippyai/go-lua/types/subtype"
 	"github.com/wippyai/go-lua/types/typ"
@@ -44,13 +43,12 @@ local function on_change(emitter: class.EventEmitter, handler: (self: class.Even
 end
 return on_change
 `
-	opt := testutil.WithCheckOption(check.WithCanonicalFlow())
-	classMod := testutil.CheckAndExport(classSrc, "class", opt)
+	classMod := testutil.CheckAndExport(classSrc, "class")
 	t.Logf("class module: %d errors", len(classMod.Errors))
 	for _, d := range classMod.Errors {
 		t.Logf("   class %s:%d:%d %s", d.Position.File, d.Position.Line, d.Position.Column, d.Message)
 	}
-	counterMod := testutil.CheckAndExport(counterSrc, "counter", opt, testutil.WithModule("class", classMod))
+	counterMod := testutil.CheckAndExport(counterSrc, "counter", testutil.WithModule("class", classMod))
 	t.Logf("counter module: %d errors", len(counterMod.Errors))
 	for _, d := range counterMod.Errors {
 		t.Logf("   counter %s:%d:%d %s", d.Position.File, d.Position.Line, d.Position.Column, d.Message)

@@ -1,7 +1,6 @@
 package testutil
 
 import (
-	"os"
 	"testing"
 
 	"github.com/wippyai/go-lua/compiler/check"
@@ -42,8 +41,8 @@ func WithManifest(path string, manifest *io.Manifest) Option {
 	}
 }
 
-// WithCheckOption forwards a check.Option (e.g. check.WithCanonicalFlow) to the
-// constructed Checker, on top of the default test passes.
+// WithCheckOption forwards a check.Option to the constructed Checker, on top of
+// the default test passes.
 func WithCheckOption(opts ...check.Option) Option {
 	return func(c *Config) {
 		c.CheckOptions = append(c.CheckOptions, opts...)
@@ -70,24 +69,7 @@ func NewChecker(opts ...Option) *check.Checker {
 	for _, opt := range opts {
 		opt(cfg)
 	}
-	cfg.CheckOptions = append(cfg.CheckOptions, envFlowOptions()...)
 	return buildChecker(cfg)
-}
-
-// envFlowOptions returns a flow override read from the WIPPY_FLOW environment
-// variable. Canonical is the checker default; WIPPY_FLOW=legacy explicitly opts
-// into the historical pipeline for compatibility gates. WIPPY_FLOW=canonical is
-// accepted as an explicit no-op for older scripts. Differential bypasses this
-// entirely: it drives each arm's flow directly through buildChecker.
-func envFlowOptions() []check.Option {
-	switch os.Getenv("WIPPY_FLOW") {
-	case "canonical":
-		return []check.Option{check.WithCanonicalFlow()}
-	case "legacy":
-		return []check.Option{check.WithLegacyFlow()}
-	default:
-		return nil
-	}
 }
 
 // Result holds the result of a check operation.
@@ -183,7 +165,6 @@ func CheckAndExport(source, name string, opts ...Option) *ModuleResult {
 	for _, opt := range opts {
 		opt(cfg)
 	}
-	cfg.CheckOptions = append(cfg.CheckOptions, envFlowOptions()...)
 
 	checker := buildChecker(cfg)
 	sess := checker.Check(source, name+".lua")

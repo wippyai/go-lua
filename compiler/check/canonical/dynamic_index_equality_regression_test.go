@@ -5,7 +5,6 @@ import (
 
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/cfg"
-	"github.com/wippyai/go-lua/compiler/check"
 	"github.com/wippyai/go-lua/compiler/check/domain/observation"
 	"github.com/wippyai/go-lua/compiler/check/tests/testutil"
 	"github.com/wippyai/go-lua/types/constraint"
@@ -25,7 +24,7 @@ function f(t: A | B, k: string)
     end
 end
 `
-	res := testutil.Check(src, testutil.WithStdlib(), testutil.WithCheckOption(check.WithCanonicalFlow()))
+	res := testutil.Check(src, testutil.WithStdlib())
 	fn := findFunctionWithParamNames(t, res.Session.Results, "t", "k")
 	tSym := singleSymbolNamed(t, fn.Graph, "t")
 	tPath := constraint.NewPath(tSym, "t")
@@ -64,7 +63,7 @@ function handle(event: Event): number
     return event.code
 end
 `
-	res := testutil.Check(src, testutil.WithStdlib(), testutil.WithCheckOption(check.WithCanonicalFlow()))
+	res := testutil.Check(src, testutil.WithStdlib())
 	fn := findFunctionWithParamNames(t, res.Session.Results, "event")
 	eventSym := singleSymbolNamed(t, fn.Graph, "event")
 	returnPoint := lastReturnPoint(t, fn.Graph)

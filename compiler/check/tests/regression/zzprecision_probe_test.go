@@ -6,12 +6,11 @@ import (
 	"sort"
 	"testing"
 
-	"github.com/wippyai/go-lua/compiler/check"
 	"github.com/wippyai/go-lua/compiler/check/tests/testutil"
 )
 
-// TestZZFixtureDump dumps positioned diagnostics for a fixture main.lua under the
-// canonical flow, to pinpoint which expect-error lines lost/gained an error.
+// TestZZFixtureDump dumps positioned diagnostics for a fixture main.lua to
+// pinpoint which expect-error lines lost/gained an error.
 // Diagnostic only. Set ZZFIX to the main.lua path.
 func TestZZFixtureDump(t *testing.T) {
 	path := os.Getenv("ZZFIX")
@@ -22,7 +21,7 @@ func TestZZFixtureDump(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	res := testutil.Check(string(src), testutil.WithStdlib(), testutil.WithCheckOption(check.WithCanonicalFlow()))
+	res := testutil.Check(string(src), testutil.WithStdlib())
 	lines := make([]string, 0, len(res.Diagnostics))
 	for _, d := range res.Diagnostics {
 		lines = append(lines, fmt.Sprintf("L%d:%d [%s] %s", d.Position.Line, d.Position.Column, d.Code.Name(), d.Message))
@@ -33,11 +32,8 @@ func TestZZFixtureDump(t *testing.T) {
 	}
 }
 
-// zzprecision_probe maps exactly which gradual-value narrowing forms the canonical
-// flow already supports and which it drops, so the cluster-#1 fix targets the real
-// gap rather than a guess. Diagnostic only; excluded from the oracle. Run with:
-//
-//	WIPPY_FLOW=canonical go test ./compiler/check/tests/regression/ -run ZZPrecisionProbe -v
+// zzprecision_probe maps exactly which gradual-value narrowing forms the checker
+// supports and which it drops. Diagnostic only; excluded from the oracle.
 func TestZZPrecisionProbe(t *testing.T) {
 	cases := []struct {
 		name string
@@ -113,7 +109,7 @@ return dec`},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			res := testutil.Check(tc.src, testutil.WithStdlib(), testutil.WithCheckOption(check.WithCanonicalFlow()))
+			res := testutil.Check(tc.src, testutil.WithStdlib())
 			if len(res.Errors) == 0 {
 				t.Logf("PROBE %s: NO ERROR (narrowing works)", tc.name)
 			} else {

@@ -26,7 +26,7 @@ func TestZZThreeFPProbe(t *testing.T) {
 		if !ok {
 			t.Fatalf("fixture %q not found", name)
 		}
-		diags, entry := canonicalFixtureDiagnostics(s)
+		diags, entry := fixtureDiagnostics(s)
 		t.Logf("=== %s (entry %s): %d diagnostics ===", name, entry, len(diags))
 		for _, d := range diags {
 			t.Logf("  %s", diagSummary(d))

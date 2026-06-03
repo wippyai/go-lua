@@ -6,50 +6,34 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/wippyai/go-lua/compiler/check"
 	"github.com/wippyai/go-lua/compiler/check/tests/testutil"
 	"github.com/wippyai/go-lua/types/diag"
 )
 
-// The canonical curated-expectation oracle (DAG component 11b).
-//
-// This is the real correctness scorecard for the canonical type-flow engine and
-// the eventual cutover gate. It runs every testdata fixture through the canonical
-// flow (check.WithCanonicalFlow, opt-in) and judges each fixture against its
-// hand-CURATED expected diagnostics — the same ground truth the legacy harness
-// (runCheckPhase) verifies against — NOT against the legacy flow's output.
-//
-// The acceptance criterion is correctness, not legacy parity (Forge journal
-// #383): a canonical diagnostic legacy misses may be canonical being MORE sound (a
-// win to keep), and a legacy diagnostic canonical avoids may be a legacy false
-// positive (also a win). The scorecard reports how many fixtures canonical passes
-// against curated truth, and buckets the failures by cause.
+// The fixture oracle is the scorecard for the normal type-checking flow. It runs
+// every testdata fixture and judges diagnostics against curated expectations
+// rather than against an older engine.
 
-// oracleVerdict is the outcome of judging one fixture's canonical diagnostics
-// against its curated expectations.
+// oracleVerdict is the outcome of judging one fixture's diagnostics against its
+// curated expectations.
 type oracleVerdict struct {
 	name   string
 	passed bool
-	// missing are curated expectations the canonical flow did not satisfy (a
-	// canonical MISS: an expected diagnostic that was not emitted, or an expected
-	// error count that was undershot).
+	// missing are curated expectations the checker did not satisfy.
 	missing []string
-	// unexpected are diagnostics the canonical flow emitted that the curated
-	// expectations do not account for (a canonical FALSE POSITIVE / over-report).
+	// unexpected are diagnostics the checker emitted that the curated expectations
+	// do not account for.
 	unexpected []string
 }
 
-// canonicalFixtureDiagnostics runs one fixture's full check phase (all dependency
-// modules then the entry) through the canonical flow and returns the collected
-// diagnostics together with the entry file name. It mirrors runCheckPhase's
-// module orchestration exactly, threading check.WithCanonicalFlow into every
-// checker (module exports and the entry) so the whole fixture is analyzed by the
-// canonical engine.
-func canonicalFixtureDiagnostics(s namedSuite) (diags []diag.Diagnostic, entryFile string) {
+// fixtureDiagnostics runs one fixture's full check phase (all dependency modules
+// then the entry) and returns the collected diagnostics with the entry file name.
+// It mirrors runCheckPhase's module orchestration exactly.
+func fixtureDiagnostics(s namedSuite) (diags []diag.Diagnostic, entryFile string) {
 	files := resolveFiles(s)
 	stdlib := resolveStdlib(s)
 
-	baseOpts := []testutil.Option{testutil.WithCheckOption(check.WithCanonicalFlow())}
+	var baseOpts []testutil.Option
 	if stdlib {
 		baseOpts = append(baseOpts, testutil.WithStdlib())
 	}
@@ -94,11 +78,9 @@ func canonicalFixtureDiagnostics(s namedSuite) (diags []diag.Diagnostic, entryFi
 	return allDiagnostics, entryFile
 }
 
-// judgeAgainstCuratedExpectations applies the SAME curated-truth verification the
-// legacy harness applies (inline expect-error/expect-warning annotations win;
-// otherwise manifest check.errors count; otherwise clean) and returns a verdict
-// listing the canonical misses and false positives. It is a pure function so the
-// scorecard and the gate both judge identically to runCheckPhase.
+// judgeAgainstCuratedExpectations applies the same curated-truth verification as
+// runCheckPhase: inline expect-error/expect-warning annotations win; otherwise
+// manifest check.errors count wins; otherwise the fixture is expected clean.
 func judgeAgainstCuratedExpectations(s namedSuite, diagnostics []diag.Diagnostic, entryFile string) oracleVerdict {
 	v := oracleVerdict{name: s.Name, passed: true}
 
@@ -168,14 +150,8 @@ func diagSummary(d diag.Diagnostic) string {
 	return fmt.Sprintf("%s:%d:%d [%s] %s", d.Position.File, d.Position.Line, d.Position.Column, d.Code.Name(), d.Message)
 }
 
-// shouldSkipOracleSuite mirrors the legacy harness's suite-level skips so the
-// oracle judges only the fixtures the legacy harness also judges, plus the
-// deadlock fixtures the legacy flow cannot run (which the canonical flow must now
-// pass — they are tracked as wins, not skipped).
+// shouldSkipOracleSuite mirrors the fixture harness's suite-level skips.
 func shouldSkipOracleSuite(s namedSuite) (skip bool, deadlock bool) {
-	// A deadlock fixture is one the legacy flow cannot terminate on (the harness
-	// catches it via runWithDeadline). The canonical flow terminates, so it is a
-	// "canonical must now pass" entry: never skipped, always tracked as deadlock.
 	if strings.Contains(s.Name, "deadlock") {
 		return false, true
 	}
@@ -188,13 +164,11 @@ func shouldSkipOracleSuite(s namedSuite) (skip bool, deadlock bool) {
 	return false, false
 }
 
-// TestCanonicalCuratedOracle is the canonical correctness scorecard: it judges
-// every fixture's canonical diagnostics against the fixture's curated
+// TestCuratedOracle judges every fixture's diagnostics against curated
 // expectations and reports the pass count plus the failing fixtures bucketed by
-// cause (canonical miss vs canonical false positive). It is a measurement, not a
-// hard gate (it does not fail the build on a non-pass); TestCanonicalCuratedGate
-// pins the subset that must stay green.
-func TestCanonicalCuratedOracle(t *testing.T) {
+// cause. It is a measurement, not a hard gate; TestCuratedGate pins the subset
+// that must stay green.
+func TestCuratedOracle(t *testing.T) {
 	suites, err := discoverFixtures("testdata/fixtures")
 	if err != nil {
 		t.Fatalf("discovering fixtures: %v", err)
@@ -216,7 +190,7 @@ func TestCanonicalCuratedOracle(t *testing.T) {
 					v = oracleVerdict{name: s.Name, passed: false, unexpected: []string{fmt.Sprintf("panic: %v", r)}}
 				}
 			}()
-			diags, entry := canonicalFixtureDiagnostics(s)
+			diags, entry := fixtureDiagnostics(s)
 			v = judgeAgainstCuratedExpectations(s, diags, entry)
 		}()
 		verdicts = append(verdicts, v)
@@ -234,7 +208,7 @@ func TestCanonicalCuratedOracle(t *testing.T) {
 	}
 
 	total := pass + fail
-	t.Logf("CANONICAL CURATED ORACLE SCORECARD: %d/%d fixtures PASS against curated truth (%d fail, %d skipped); deadlock-* %d pass / %d fail",
+	t.Logf("CURATED ORACLE SCORECARD: %d/%d fixtures PASS against curated truth (%d fail, %d skipped); deadlock-* %d pass / %d fail",
 		pass, total, fail, skipped, deadlockPass, deadlockFail)
 
 	// Bucket the failures by dominant cause for the worklist.
@@ -268,23 +242,19 @@ func TestCanonicalCuratedOracle(t *testing.T) {
 		codes = append(codes, c)
 	}
 	sort.Slice(codes, func(i, j int) bool { return codeBuckets[codes[i]] > codeBuckets[codes[j]] })
-	t.Logf("--- FALSE-POSITIVE CODE HISTOGRAM (canonical over-reports) ---")
+	t.Logf("--- FALSE-POSITIVE CODE HISTOGRAM ---")
 	for _, c := range codes {
 		t.Logf("  %s: %d", c, codeBuckets[c])
 	}
 }
 
-// TestCanonicalCuratedGate is the hard regression gate for the canonical curated
-// oracle: it pins the set of fixtures that exercise type-name / scope resolution
-// (DAG component 11b, fidelity iteration 4) so the named-type-resolution win
-// cannot silently regress. Each listed fixture must PASS against its curated
-// expectations under the canonical flow — the named annotation resolves
-// structurally, the field-on-named-type check succeeds, and discriminant narrowing
-// fires where the fixture relies on it.
-func TestCanonicalCuratedGate(t *testing.T) {
+// TestCuratedGate is the hard regression gate for the curated oracle: it pins the
+// set of fixtures that exercise type-name / scope resolution so those wins cannot
+// silently regress.
+func TestCuratedGate(t *testing.T) {
 	// Fixtures whose curated truth is reached only when a module-local named type
-	// resolves structurally in the canonical flow: union-alias discriminant
-	// narrowing and type-name-in-scope resolution.
+	// resolves structurally: union-alias discriminant narrowing and
+	// type-name-in-scope resolution.
 	mustPass := []string{
 		// Union-alias discriminant narrowing: x.kind == "a" refines the named union
 		// AB to variant A so the variant-A field access type-checks clean.
@@ -319,10 +289,10 @@ func TestCanonicalCuratedGate(t *testing.T) {
 			if !ok {
 				t.Fatalf("gate fixture %q not found", name)
 			}
-			diags, entry := canonicalFixtureDiagnostics(s)
+			diags, entry := fixtureDiagnostics(s)
 			v := judgeAgainstCuratedExpectations(s, diags, entry)
 			if !v.passed {
-				t.Errorf("%s: canonical fails curated truth (%d missing, %d unexpected)", name, len(v.missing), len(v.unexpected))
+				t.Errorf("%s: fixture fails curated truth (%d missing, %d unexpected)", name, len(v.missing), len(v.unexpected))
 				for _, m := range v.missing {
 					t.Errorf("    MISS: %s", m)
 				}

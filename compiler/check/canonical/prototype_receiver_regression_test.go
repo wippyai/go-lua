@@ -5,7 +5,6 @@ import (
 
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/cfg"
-	"github.com/wippyai/go-lua/compiler/check"
 	"github.com/wippyai/go-lua/compiler/check/api"
 	"github.com/wippyai/go-lua/compiler/check/domain/observation"
 	"github.com/wippyai/go-lua/compiler/check/tests/testutil"
@@ -46,7 +45,7 @@ function module.build()
 	return graph, nil
 end
 `
-	res := testutil.Check(src, testutil.WithStdlib(), testutil.WithCheckOption(check.WithCanonicalFlow()))
+	res := testutil.Check(src, testutil.WithStdlib())
 	fn, point, receiver := methodCallPoint(t, res.Session.Results, "is_empty")
 	sym, ok := fn.Graph.Bindings().SymbolOf(receiver)
 	if !ok || sym == 0 {
@@ -73,7 +72,7 @@ function session_writer:get_user_id(): string
 	return self.user_id
 end
 `
-	res := testutil.Check(src, testutil.WithStdlib(), testutil.WithCheckOption(check.WithCanonicalFlow()))
+	res := testutil.Check(src, testutil.WithStdlib())
 	fn := findFunctionWithParamNames(t, res.Session.Results, "self")
 	params := fn.Graph.ParamSymbols()
 	if len(params) == 0 || params[0] == 0 {
@@ -146,7 +145,7 @@ if err then return nil, err end
 state:load_state()
 state:get_failed_node_errors()
 `
-	res := testutil.Check(src, testutil.WithStdlib(), testutil.WithCheckOption(check.WithCanonicalFlow()))
+	res := testutil.Check(src, testutil.WithStdlib())
 	loadFn, _ := functionAssigningSelfStaticIndex(t, res.Session.Results, "nodes", "root")
 	selfSym := loadFn.Graph.ParamSymbols()[0]
 	selfPath := constraint.NewPath(selfSym, "self")

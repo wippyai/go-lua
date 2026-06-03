@@ -3,7 +3,6 @@ package lua
 import (
 	"testing"
 
-	"github.com/wippyai/go-lua/compiler/check"
 	"github.com/wippyai/go-lua/compiler/check/tests/testutil"
 	"github.com/wippyai/go-lua/types/typ"
 	"github.com/wippyai/go-lua/types/typ/unwrap"
@@ -31,9 +30,8 @@ error_types["b"] = "authentication"
 M.error_types = error_types
 return M
 `
-	opt := testutil.WithCheckOption(check.WithCanonicalFlow())
 	dump := func(label, src, field string) {
-		mod := testutil.CheckAndExport(src, "z_"+label, opt)
+		mod := testutil.CheckAndExport(src, "z_"+label)
 		exp := unwrap.Alias(mod.Manifest.Export)
 		rec, ok := exp.(*typ.Record)
 		if !ok {

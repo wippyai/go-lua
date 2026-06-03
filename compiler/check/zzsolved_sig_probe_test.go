@@ -44,46 +44,43 @@ return M
 `},
 	}
 
-	for _, mode := range []FlowMode{FlowCanonical, FlowLegacy} {
-		for _, tc := range cases {
-			checker := newSessionTestChecker(nil)
-			checker.flowMode = mode
-			sess := checker.Check(tc.src, "mod.lua")
+	for _, tc := range cases {
+		checker := newSessionTestChecker(nil)
+		sess := checker.Check(tc.src, "mod.lua")
 
-			root := sess.RootResultValue()
-			if root == nil {
-				t.Fatalf("[%v/%s] no root result", mode, tc.name)
+		root := sess.RootResultValue()
+		if root == nil {
+			t.Fatalf("[%s] no root result", tc.name)
+		}
+		for _, def := range root.Evidence.FunctionDefinitions {
+			if def.Nested.Func == nil {
+				continue
 			}
-			for _, def := range root.Evidence.FunctionDefinitions {
-				if def.Nested.Func == nil {
-					continue
-				}
-				t.Logf("[mode=%v %s] def=%q IsLocal=%v sym=%d", mode, tc.name, def.Name, def.IsLocal, def.Symbol)
-				res := sess.Results[def.Nested.Func]
-				if res == nil {
-					t.Logf("[mode=%v %s] def=%q no per-func result", mode, tc.name, def.Name)
-					continue
-				}
-				sig := functionfact.SolvedSignatureFromResult(res, def.Nested.Func)
-				fn := unwrap.Function(sig)
-				t.Logf("[mode=%v %s] def=%q solved=%s errRet=%v", mode, tc.name, def.Name, sig, fn != nil && erreffect.HasErrorReturnLabel(fn))
+			t.Logf("[%s] def=%q IsLocal=%v sym=%d", tc.name, def.Name, def.IsLocal, def.Symbol)
+			res := sess.Results[def.Nested.Func]
+			if res == nil {
+				t.Logf("[%s] def=%q no per-func result", tc.name, def.Name)
+				continue
+			}
+			sig := functionfact.SolvedSignatureFromResult(res, def.Nested.Func)
+			fn := unwrap.Function(sig)
+			t.Logf("[%s] def=%q solved=%s errRet=%v", tc.name, def.Name, sig, fn != nil && erreffect.HasErrorReturnLabel(fn))
 
-				// Probe: per-function NarrowSynth ObservedSummary.
-				if res.NarrowSynth != nil {
-					obs := abstractreturns.ObservedSummary(res.Graph, res.Evidence.Returns, nil, res.NarrowSynth)
-					t.Logf("[mode=%v %s] def=%q narrowSynth-observed=%v", mode, tc.name, def.Name, obs)
-					// Per-return-point classification probe for the ErrorReturn proof.
-					for _, ret := range res.Evidence.Returns {
-						if ret.Info == nil {
-							continue
-						}
-						vals := abstractreturns.ExpandValues(ret.Info.Exprs, 2, ret.Point, res.NarrowSynth)
-						t.Logf("[mode=%v %s/%s] ret@%v exprs=%d expand2=%v", mode, tc.name, def.Name, ret.Point, len(ret.Info.Exprs), vals)
+			// Probe: per-function NarrowSynth ObservedSummary.
+			if res.NarrowSynth != nil {
+				obs := abstractreturns.ObservedSummary(res.Graph, res.Evidence.Returns, nil, res.NarrowSynth)
+				t.Logf("[%s] def=%q narrowSynth-observed=%v", tc.name, def.Name, obs)
+				// Per-return-point classification probe for the ErrorReturn proof.
+				for _, ret := range res.Evidence.Returns {
+					if ret.Info == nil {
+						continue
 					}
-					conv := erreffect.CanonicalLuaValueErrorConvention()
-					proof := conv.ProveReturnPattern(res.Evidence.Returns, res.FlowSolution, res.NarrowSynth)
-					t.Logf("[mode=%v %s] def=%q proof=%+v", mode, tc.name, def.Name, proof)
+					vals := abstractreturns.ExpandValues(ret.Info.Exprs, 2, ret.Point, res.NarrowSynth)
+					t.Logf("[%s/%s] ret@%v exprs=%d expand2=%v", tc.name, def.Name, ret.Point, len(ret.Info.Exprs), vals)
 				}
+				conv := erreffect.CanonicalLuaValueErrorConvention()
+				proof := conv.ProveReturnPattern(res.Evidence.Returns, res.FlowSolution, res.NarrowSynth)
+				t.Logf("[%s] def=%q proof=%+v", tc.name, def.Name, proof)
 			}
 		}
 	}

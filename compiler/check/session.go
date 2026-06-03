@@ -512,11 +512,10 @@ func (s *Session) rootFunctionFactsForExport() api.FunctionFacts {
 // including IO effects (row), termination status, and conditional effects.
 // This enables importers to see side effect information for exported functions.
 //
-// The legacy interproc product records each function's refinement in the converged
-// FunctionFacts; the canonical flow records it on the per-function FuncResult
-// (FnRefinement) instead, so both sources are merged here. A symbol present in both
-// keeps the interproc-product refinement (the legacy authority); a canonical-only
-// symbol contributes its body-proven refinement.
+// FunctionFacts and per-function FuncResults can both carry a computed
+// refinement. Both sources are merged here; a symbol already present in the
+// converged interproc product keeps that product refinement, while otherwise the
+// per-function body-proven refinement contributes the export summary.
 func (s *Session) RefinementsForExport() map[cfg.SymbolID]*constraint.FunctionRefinement {
 	if s == nil {
 		return nil
@@ -546,11 +545,9 @@ func (s *Session) RefinementsForExport() map[cfg.SymbolID]*constraint.FunctionRe
 
 // canonicalRefinementsForExport collects each exported module function's
 // body-proven refinement (FnRefinement) from its per-function FuncResult, keyed by
-// the function definition's symbol. It is the canonical-flow source of the
-// assert-style summary the legacy interproc product otherwise supplies: the
-// canonical driver records the projected refinement on the result, and the export
-// path publishes it as the manifest function summary so a cross-module importer
-// resolves the imported callee's narrowing.
+// the function definition's symbol. The export path publishes it as the manifest
+// function summary so a cross-module importer resolves the imported callee's
+// narrowing.
 func (s *Session) canonicalRefinementsForExport() map[cfg.SymbolID]*constraint.FunctionRefinement {
 	if s == nil || s.RootResult == nil || len(s.Results) == 0 {
 		return nil

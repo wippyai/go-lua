@@ -3,13 +3,12 @@ package regression
 import (
 	"testing"
 
-	"github.com/wippyai/go-lua/compiler/check"
 	"github.com/wippyai/go-lua/compiler/check/tests/testutil"
 )
 
 func runPresence(t *testing.T, label, src string) {
 	t.Helper()
-	r := testutil.Check(src, testutil.WithStdlib(), testutil.WithCheckOption(check.WithCanonicalFlow()))
+	r := testutil.Check(src, testutil.WithStdlib())
 	if !r.HasError() {
 		t.Logf("[%s] NO ERROR", label)
 		return

@@ -6,7 +6,7 @@ import (
 )
 
 // TestZZDeadlockProbe runs the two deadlock regression fixtures through the exact
-// canonical oracle path (canonicalFixtureDiagnostics) under a wall-clock guard so a
+// canonical oracle path (fixtureDiagnostics) under a wall-clock guard so a
 // non-termination shows as a timeout rather than a leaked goroutine. Diagnostic
 // probe for the cutover-gate non-convergence investigation; not a correctness gate.
 func TestZZDeadlockProbe(t *testing.T) {
@@ -37,7 +37,7 @@ func TestZZDeadlockProbe(t *testing.T) {
 			done := make(chan result, 1)
 			start := time.Now()
 			go func() {
-				diags, entry := canonicalFixtureDiagnostics(s)
+				diags, entry := fixtureDiagnostics(s)
 				v := judgeAgainstCuratedExpectations(s, diags, entry)
 				done <- result{v, len(diags), entry}
 			}()

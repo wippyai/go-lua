@@ -4,7 +4,6 @@ import (
 	"os"
 	"testing"
 
-	"github.com/wippyai/go-lua/compiler/check"
 	"github.com/wippyai/go-lua/compiler/check/tests/testutil"
 	value "github.com/wippyai/go-lua/types/domain/value"
 	"github.com/wippyai/go-lua/types/domain/value/product"
@@ -79,12 +78,9 @@ end
 return M
 `
 
-func zzClassCheck(t *testing.T, label, readerProbe string, canonical bool) {
+func zzClassCheck(t *testing.T, label, readerProbe string) {
 	t.Helper()
 	opts := []testutil.Option{testutil.WithStdlib()}
-	if canonical {
-		opts = append(opts, testutil.WithCheckOption(check.WithCanonicalFlow()))
-	}
 	storeMod := testutil.CheckAndExport(zzClassStore, "store", opts...)
 	if storeMod.HasError() {
 		t.Logf("[%s] store export errors: %v", label, testutil.ErrorMessages(storeMod.Errors))
@@ -136,13 +132,13 @@ func TestZZClass_ContaminationPair(t *testing.T) {
 	}
 
 	clean := testutil.CheckAndExport(zzClassStore, "store",
-		testutil.WithStdlib(), testutil.WithCheckOption(check.WithCanonicalFlow()))
+		testutil.WithStdlib())
 	dump("clean", clean)
 
 	_ = testutil.CheckAndExport(zzRecordStore, "recstore",
-		testutil.WithStdlib(), testutil.WithCheckOption(check.WithCanonicalFlow()))
+		testutil.WithStdlib())
 	after := testutil.CheckAndExport(zzClassStore, "store",
-		testutil.WithStdlib(), testutil.WithCheckOption(check.WithCanonicalFlow()))
+		testutil.WithStdlib())
 	dump("after-contam", after)
 }
 
@@ -165,7 +161,6 @@ func fmtT(t typ.Type) string {
 func TestZZClass_SelfImportTwice(t *testing.T) {
 	run := func(label string) {
 		base := []testutil.Option{
-			testutil.WithCheckOption(check.WithCanonicalFlow()),
 			testutil.WithStdlib(),
 		}
 		storeMod := testutil.CheckAndExport(zzClassStore, "store", base...)
@@ -212,7 +207,7 @@ function Store:open(id: string): Snapshot?
 end
 return M
 `
-	r := testutil.Check(src, testutil.WithStdlib(), testutil.WithCheckOption(check.WithCanonicalFlow()))
+	r := testutil.Check(src, testutil.WithStdlib())
 	if !r.HasError() {
 		t.Logf("[map-index] NO ERROR")
 		return
@@ -271,7 +266,7 @@ function Store:get(id: string): protocol.Snapshot?
 end
 return M
 `
-	base := []testutil.Option{testutil.WithStdlib(), testutil.WithCheckOption(check.WithCanonicalFlow())}
+	base := []testutil.Option{testutil.WithStdlib()}
 	proto := testutil.CheckAndExport(protocolSrc, "protocol", base...)
 	t.Logf("[imported-map] protocol errors: %v", testutil.ErrorMessages(proto.Errors))
 	storeOpts := append(append([]testutil.Option{}, base...), testutil.WithModule("protocol", proto))
@@ -313,13 +308,13 @@ return M
 // errored first module or just a same-named family.
 func TestZZClass_ContaminationClean(t *testing.T) {
 	first := testutil.CheckAndExport(zzCleanOtherStore, "other",
-		testutil.WithStdlib(), testutil.WithCheckOption(check.WithCanonicalFlow()))
+		testutil.WithStdlib())
 	t.Logf("[clean-first] other errors: %v", testutil.ErrorMessages(first.Errors))
 	zzClassCheck(t, "clean-first self-method", `
 local store_mod = require("store")
 local store: store_mod.Store = store_mod.new()
 store:put("name", "lua")
-`, true)
+`)
 }
 
 // TestZZClass_RealFamilyCollapse takes the actual checked new()-return types of
@@ -327,7 +322,7 @@ store:put("name", "lua")
 // canonicalization + product interner to observe whether they collapse to one
 // representative (the cross-module contamination vector).
 func TestZZClass_RealFamilyCollapse(t *testing.T) {
-	base := []testutil.Option{testutil.WithStdlib(), testutil.WithCheckOption(check.WithCanonicalFlow())}
+	base := []testutil.Option{testutil.WithStdlib()}
 	// Check self FIRST so its family is interned before any other Store family.
 	self := testutil.CheckAndExport(zzClassStore, "store", base...)
 	other := testutil.CheckAndExport(zzCleanOtherStore, "other", base...)
@@ -363,7 +358,7 @@ func TestZZClass_RealFamilyCollapse(t *testing.T) {
 	}
 	repOther := value.CanonicalRecursiveFamily(tOther)
 	repSelf := value.CanonicalRecursiveFamily(tSelf)
-	t.Logf("canonical rep other: %p  self: %p  same=%v", repOther, repSelf, repOther == repSelf)
+	t.Logf("family rep other: %p  self: %p  same=%v", repOther, repSelf, repOther == repSelf)
 	t.Logf("phash other=%d self=%d", typ.ProductFamilyHash(tOther), typ.ProductFamilyHash(tSelf))
 
 	avOther := product.FromType(tOther)
@@ -374,42 +369,35 @@ func TestZZClass_RealFamilyCollapse(t *testing.T) {
 }
 
 func TestZZClass_DumpExport(t *testing.T) {
-	for _, canonical := range []bool{false, true} {
-		label := "legacy"
-		opts := []testutil.Option{testutil.WithStdlib()}
-		if canonical {
-			label = "canonical"
-			opts = append(opts, testutil.WithCheckOption(check.WithCanonicalFlow()))
-		}
-		storeMod := testutil.CheckAndExport(zzClassStore, "store", opts...)
-		m := storeMod.Manifest
-		t.Logf("[%s] Export type: %s (%T)", label, m.Export.String(), m.Export)
-		aliasStore := m.Types["Store"]
-		t.Logf("[%s] Type \"Store\": %s (%T)", label, aliasStore.String(), aliasStore)
-		zzClassDescribe(t, label+"/alias-Store", aliasStore)
-		// pull the return type of new() out of the export record
-		if rec, ok := m.Export.(*typ.Record); ok {
-			for _, f := range rec.Fields {
-				if f.Name == "new" {
-					if fn, ok := f.Type.(*typ.Function); ok && len(fn.Returns) == 1 {
-						zzClassDescribe(t, label+"/new-return", fn.Returns[0])
-						t.Logf("[%s] alias==newReturn ptr? %v consistent? %v",
-							label, aliasStore == fn.Returns[0], subtype.Consistent(fn.Returns[0], aliasStore))
-					}
+	label := "flow"
+	storeMod := testutil.CheckAndExport(zzClassStore, "store", testutil.WithStdlib())
+	m := storeMod.Manifest
+	t.Logf("[%s] Export type: %s (%T)", label, m.Export.String(), m.Export)
+	aliasStore := m.Types["Store"]
+	t.Logf("[%s] Type \"Store\": %s (%T)", label, aliasStore.String(), aliasStore)
+	zzClassDescribe(t, label+"/alias-Store", aliasStore)
+	// pull the return type of new() out of the export record
+	if rec, ok := m.Export.(*typ.Record); ok {
+		for _, f := range rec.Fields {
+			if f.Name == "new" {
+				if fn, ok := f.Type.(*typ.Function); ok && len(fn.Returns) == 1 {
+					zzClassDescribe(t, label+"/new-return", fn.Returns[0])
+					t.Logf("[%s] alias==newReturn ptr? %v consistent? %v",
+						label, aliasStore == fn.Returns[0], subtype.Consistent(fn.Returns[0], aliasStore))
 				}
 			}
 		}
-		// Enriched export: what an importer's require() actually receives.
-		enriched := m.EnrichedExport()
-		t.Logf("[%s] Enriched export: %s (%T)", label, enriched.String(), enriched)
-		if rec, ok := enriched.(*typ.Record); ok {
-			for _, f := range rec.Fields {
-				if f.Name == "new" {
-					if fn, ok := f.Type.(*typ.Function); ok && len(fn.Returns) == 1 {
-						zzClassDescribe(t, label+"/enriched-new-return", fn.Returns[0])
-						t.Logf("[%s] enriched: alias consistent newReturn? %v",
-							label, subtype.Consistent(fn.Returns[0], aliasStore))
-					}
+	}
+	// Enriched export: what an importer's require() actually receives.
+	enriched := m.EnrichedExport()
+	t.Logf("[%s] Enriched export: %s (%T)", label, enriched.String(), enriched)
+	if rec, ok := enriched.(*typ.Record); ok {
+		for _, f := range rec.Fields {
+			if f.Name == "new" {
+				if fn, ok := f.Type.(*typ.Function); ok && len(fn.Returns) == 1 {
+					zzClassDescribe(t, label+"/enriched-new-return", fn.Returns[0])
+					t.Logf("[%s] enriched: alias consistent newReturn? %v",
+						label, subtype.Consistent(fn.Returns[0], aliasStore))
 				}
 			}
 		}
@@ -450,24 +438,23 @@ return M
 func TestZZClass_Contamination(t *testing.T) {
 	// First check a record store with Snapshot.
 	rec := testutil.CheckAndExport(zzRecordStore, "store",
-		testutil.WithStdlib(), testutil.WithCheckOption(check.WithCanonicalFlow()))
+		testutil.WithStdlib())
 	t.Logf("record store errors: %v", testutil.ErrorMessages(rec.Errors))
 	// Then the self-method store with the same module name "store".
 	zzClassCheck(t, "contamination self-method", `
 local store_mod = require("store")
 local store: store_mod.Store = store_mod.new()
 store:put("name", "lua")
-`, true)
+`)
 }
 
 // Mirror the exact oracle path for self-method-store: export store.lua then
-// check main.lua, both canonical+stdlib, reading the real fixture files.
+// check main.lua with stdlib, reading the real fixture files.
 func TestZZClass_OraclePath_SelfMethod(t *testing.T) {
 	dir := "../../../../testdata/fixtures/modules/imported-self-method-store"
 	storeSrc := zzReadFile(t, dir+"/store.lua")
 	mainSrc := zzReadFile(t, dir+"/main.lua")
 	base := []testutil.Option{
-		testutil.WithCheckOption(check.WithCanonicalFlow()),
 		testutil.WithStdlib(),
 	}
 	storeMod := testutil.CheckAndExport(storeSrc, "store", base...)
@@ -486,9 +473,9 @@ func TestZZClass_OraclePath_SelfMethod(t *testing.T) {
 // export, to see whether the self-method Store body picks up Snapshot.
 func TestZZClass_Contamination_DumpManifest(t *testing.T) {
 	_ = testutil.CheckAndExport(zzRecordStore, "store",
-		testutil.WithStdlib(), testutil.WithCheckOption(check.WithCanonicalFlow()))
+		testutil.WithStdlib())
 	second := testutil.CheckAndExport(zzClassStore, "store",
-		testutil.WithStdlib(), testutil.WithCheckOption(check.WithCanonicalFlow()))
+		testutil.WithStdlib())
 	m := second.Manifest
 	t.Logf("second export type: %s", m.Export.String())
 	if st := m.Types["Store"]; st != nil {
@@ -503,67 +490,56 @@ func TestZZClass_Contamination_DumpManifest(t *testing.T) {
 // name-collision in a global manifest registry.
 func TestZZClass_Contamination_DiffName(t *testing.T) {
 	rec := testutil.CheckAndExport(zzRecordStore, "recstore",
-		testutil.WithStdlib(), testutil.WithCheckOption(check.WithCanonicalFlow()))
+		testutil.WithStdlib())
 	t.Logf("record store errors: %v", testutil.ErrorMessages(rec.Errors))
 	zzClassCheck(t, "diffname self-method", `
 local store_mod = require("store")
 local store: store_mod.Store = store_mod.new()
 store:put("name", "lua")
-`, true)
-}
-
-// First check is LEGACY (no canonical), then self-method is canonical.
-func TestZZClass_Contamination_FirstLegacy(t *testing.T) {
-	r := testutil.Check(zzRecordStore, testutil.WithStdlib())
-	t.Logf("record store legacy errors: %v", testutil.ErrorMessages(r.Errors))
-	zzClassCheck(t, "first-legacy self-method", `
-local store_mod = require("store")
-local store: store_mod.Store = store_mod.new()
-store:put("name", "lua")
-`, true)
+`)
 }
 
 // First check WITHOUT stdlib.
 func TestZZClass_Contamination_NoStdlib(t *testing.T) {
-	r := testutil.Check(zzRecordStore, testutil.WithCheckOption(check.WithCanonicalFlow()))
+	r := testutil.Check(zzRecordStore)
 	t.Logf("record store nostdlib errors: %v", testutil.ErrorMessages(r.Errors))
 	zzClassCheck(t, "nostdlib self-method", `
 local store_mod = require("store")
 local store: store_mod.Store = store_mod.new()
 store:put("name", "lua")
-`, true)
+`)
 }
 
 // First check the record store but DO NOT export; rule out export-side state.
 func TestZZClass_Contamination_NoExport(t *testing.T) {
-	r := testutil.Check(zzRecordStore, testutil.WithStdlib(), testutil.WithCheckOption(check.WithCanonicalFlow()))
+	r := testutil.Check(zzRecordStore, testutil.WithStdlib())
 	t.Logf("record store inline errors: %v", testutil.ErrorMessages(r.Errors))
 	zzClassCheck(t, "noexport self-method", `
 local store_mod = require("store")
 local store: store_mod.Store = store_mod.new()
 store:put("name", "lua")
-`, true)
+`)
 }
 
 // Isolate: assign new() to an UNannotated local, then call methods.
-func TestZZClass_NoAnnot_Canonical(t *testing.T) {
-	zzClassCheck(t, "no-annot canonical", `
+func TestZZClass_NoAnnot(t *testing.T) {
+	zzClassCheck(t, "no-annot", `
 local store_mod = require("store")
 local store = store_mod.new()
 store:put("name", "lua")
-`, true)
+`)
 }
 
 // Isolate: just the annotated local (no method call) to test the assign alone.
-func TestZZClass_AnnotOnly_Canonical(t *testing.T) {
-	zzClassCheck(t, "annot-only canonical", `
+func TestZZClass_AnnotOnly(t *testing.T) {
+	zzClassCheck(t, "annot-only", `
 local store_mod = require("store")
 local store: store_mod.Store = store_mod.new()
-`, true)
+`)
 }
 
-func TestZZClass_SelfMethodStore_Canonical(t *testing.T) {
-	zzClassCheck(t, "self-method canonical", `
+func TestZZClass_SelfMethodStore(t *testing.T) {
+	zzClassCheck(t, "self-method", `
 local store_mod = require("store")
 
 local store: store_mod.Store = store_mod.new()
@@ -573,19 +549,5 @@ local maybe_name = store:get("name")
 if maybe_name then
     local value: string = maybe_name
 end
-`, true)
-}
-
-func TestZZClass_SelfMethodStore_Legacy(t *testing.T) {
-	zzClassCheck(t, "self-method legacy", `
-local store_mod = require("store")
-
-local store: store_mod.Store = store_mod.new()
-store:put("name", "lua")
-
-local maybe_name = store:get("name")
-if maybe_name then
-    local value: string = maybe_name
-end
-`, false)
+`)
 }

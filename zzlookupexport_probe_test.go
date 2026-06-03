@@ -3,7 +3,6 @@ package lua
 import (
 	"testing"
 
-	"github.com/wippyai/go-lua/compiler/check"
 	"github.com/wippyai/go-lua/compiler/check/tests/testutil"
 	"github.com/wippyai/go-lua/types/typ"
 	"github.com/wippyai/go-lua/types/typ/unwrap"
@@ -18,10 +17,8 @@ func TestZZLookupExportProbe(t *testing.T) {
 	constSrc := readFixtureFile(dir, "constants.lua")
 	mapperSrc := readFixtureFile(dir, "mapper.lua")
 
-	opt := testutil.WithCheckOption(check.WithCanonicalFlow())
-
-	constMod := testutil.CheckAndExport(constSrc, "constants", opt)
-	mapperMod := testutil.CheckAndExport(mapperSrc, "mapper", opt, testutil.WithModule("constants", constMod))
+	constMod := testutil.CheckAndExport(constSrc, "constants")
+	mapperMod := testutil.CheckAndExport(mapperSrc, "mapper", testutil.WithModule("constants", constMod))
 
 	exp := mapperMod.Manifest.Export
 	t.Logf("mapper export raw kind=%v: %s", exp.Kind(), exp.String())

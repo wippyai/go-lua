@@ -3,7 +3,6 @@ package regression
 import (
 	"testing"
 
-	"github.com/wippyai/go-lua/compiler/check"
 	"github.com/wippyai/go-lua/compiler/check/tests/testutil"
 )
 
@@ -38,8 +37,7 @@ local asserted: string = messages["root"]:topic()
 
 func TestZZPresence_IndexPresenceLaws(t *testing.T) {
 	r := testutil.Check(zzPresenceSrc,
-		testutil.WithStdlib(),
-		testutil.WithCheckOption(check.WithCanonicalFlow()))
+		testutil.WithStdlib())
 	if !r.HasError() {
 		t.Logf("[presence] NO ERROR")
 		return
@@ -65,8 +63,7 @@ local other: string = messages["other"]:topic()
 
 func TestZZPresence_UnprovenKeyStillErrors(t *testing.T) {
 	r := testutil.Check(zzPresenceUnprovenSrc,
-		testutil.WithStdlib(),
-		testutil.WithCheckOption(check.WithCanonicalFlow()))
+		testutil.WithStdlib())
 	if !r.HasError() {
 		t.Logf("[unproven] NO ERROR (UNSOUND if this prints)")
 		return

@@ -3,7 +3,6 @@ package lua
 import (
 	"testing"
 
-	"github.com/wippyai/go-lua/compiler/check"
 	"github.com/wippyai/go-lua/compiler/check/tests/testutil"
 )
 
@@ -65,9 +64,8 @@ return M
 `,
 	}
 
-	opt := testutil.WithCheckOption(check.WithCanonicalFlow())
 	for name, src := range cases {
-		mod := testutil.CheckAndExport(src, "m_"+name, opt)
+		mod := testutil.CheckAndExport(src, "m_"+name)
 		t.Logf("=== %s: %d errors ===", name, len(mod.Errors))
 		for _, d := range mod.Errors {
 			t.Logf("   %s:%d:%d %s", d.Position.File, d.Position.Line, d.Position.Column, d.Message)

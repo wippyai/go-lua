@@ -1,28 +1,11 @@
-// Package check implements a multi-phase, fixpoint-iterative type checking system for Lua.
+// Package check implements the fixpoint type checker for Lua.
 //
 // # ARCHITECTURE OVERVIEW
 //
 // The checker performs interprocedural type analysis through a fixpoint iteration loop
 // that processes all functions until inter-function information stabilizes. Interproc
-// facts are produced during analysis and merged into one canonical product at
+// facts are produced during analysis and merged into one product at
 // iteration boundaries.
-//
-// # PHASE PIPELINE
-//
-// Each function is analyzed through a five-phase pipeline:
-//
-//	Phase A (Resolve): Resolves type annotations from AST nodes into concrete types.
-//	This processes @type, @param, @return annotations and user-defined type aliases.
-//
-//	Phase B (Scope): Builds lexical scope states for each CFG point, populating
-//	declared types from annotations and synthesizing function literal signatures.
-//	Also extracts flow constraints from control flow and assignments.
-//
-//	Phase C (Solve): Solves the extracted flow constraint system to compute
-//	reachability conditions and type narrowing facts at each CFG point.
-//
-//	Phase D (Narrow): Applies flow solution to narrow declared types, computing
-//	final effective types for all expressions and generating function refinements.
 //
 // # INTERPROCEDURAL ANALYSIS
 //
@@ -55,7 +38,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/check/api"
 	"github.com/wippyai/go-lua/compiler/check/canonical"
 	"github.com/wippyai/go-lua/compiler/check/canonical/summary"
-	"github.com/wippyai/go-lua/compiler/check/pipeline"
+	"github.com/wippyai/go-lua/compiler/check/order"
 	"github.com/wippyai/go-lua/compiler/check/scope"
 	"github.com/wippyai/go-lua/compiler/parse"
 	"github.com/wippyai/go-lua/types/db"
@@ -63,7 +46,6 @@ import (
 	"github.com/wippyai/go-lua/types/domain/value"
 	"github.com/wippyai/go-lua/types/domain/value/product"
 	"github.com/wippyai/go-lua/types/flow"
-	"github.com/wippyai/go-lua/types/narrow"
 	"github.com/wippyai/go-lua/types/query/core"
 	"github.com/wippyai/go-lua/types/typ"
 )
@@ -99,46 +81,12 @@ type Deps struct {
 	// like print, pairs, ipairs, type, assert, error, etc. These are runtime
 	// values with known types, not type definitions.
 	GlobalTypes map[string]typ.Type
-
-	// Resolver provides constraint resolution for the flow solver (Phase C).
-	// It implements type narrowing operations like type guards, nil checks,
-	// and assertion-based refinements.
-	Resolver narrow.Resolver
 }
 
-// moduleDriver is the module-analysis seam: it runs one fixpoint flow over a
-// parsed module chunk. The legacy *pipeline.Driver and the canonical
-// *canonical.Driver both satisfy it, so checkChunk drives either flow through the
-// same call regardless of which one newPipeline selected.
+// moduleDriver is the module-analysis seam: it runs the fixpoint flow over a
+// parsed module chunk.
 type moduleDriver interface {
 	Run(sess api.AnalysisSession, chunk []ast.Stmt)
-}
-
-// FlowMode selects which type-flow engine the Checker drives.
-type FlowMode int
-
-const (
-	// FlowCanonical is the single-fixed-point canonical engine: one
-	// intraprocedural FunctionState fixed point per function plus the
-	// interprocedural summary fixed point over the call graph.
-	FlowCanonical FlowMode = iota
-	// FlowLegacy is the established multi-fixpoint pipeline flow. It remains
-	// available only as an explicit compatibility/differential mode.
-	FlowLegacy
-)
-
-// WithCanonicalFlow selects the canonical type-flow engine for analysis. Canonical
-// is the default; this option is retained for call sites that choose a flow
-// explicitly and for older test helpers.
-func WithCanonicalFlow() Option {
-	return func(c *Checker) { c.flowMode = FlowCanonical }
-}
-
-// WithLegacyFlow selects the historical multi-pass pipeline. It is an explicit
-// compatibility escape hatch for differential tests and legacy-only gates; new
-// analysis should use the canonical default.
-func WithLegacyFlow() Option {
-	return func(c *Checker) { c.flowMode = FlowLegacy }
 }
 
 // Option configures optional behaviors of a Checker.
@@ -177,7 +125,6 @@ type Checker struct {
 	computePasses             []api.ComputePass
 	maxScopeDepth             int
 	emitScopeDepthDiagnostics bool
-	flowMode                  FlowMode
 }
 
 // NewChecker creates a new Checker instance with the given database, dependencies, and options.
@@ -196,7 +143,6 @@ type Checker struct {
 //	    Types:       typeOps,
 //	    Stdlib:      stdlibScope,
 //	    GlobalTypes: builtinTypes,
-//	    Resolver:    narrowResolver,
 //	}
 //	checker := check.NewChecker(db, deps, check.WithPass(fieldCheckPass))
 //	sess := checker.Check(source, "module.lua")
@@ -214,49 +160,16 @@ func NewChecker(database *db.DB, deps Deps, opts ...Option) *Checker {
 	return c
 }
 
-// newPipeline returns the module driver for the configured flow mode. The
-// canonical flow is the default and returns the single-fixed-point
-// *canonical.Driver; the legacy flow returns the established *pipeline.Driver only
-// when explicitly selected. Both satisfy moduleDriver, so checkChunk drives either
-// through the same Run call.
-func (c *Checker) newPipeline(interner *typ.RecursiveFamilyInterner) moduleDriver {
-	switch c.flowMode {
-	case FlowLegacy:
-		return c.newLegacyPipeline(interner)
-	default:
-		return canonical.NewDriver(canonical.Config{
-			Types:         c.deps.Types,
-			GlobalTypes:   c.deps.GlobalTypes,
-			Stdlib:        c.deps.Stdlib,
-			Manifests:     c.db,
-			MaxScopeDepth: c.maxScopeDepth,
-			EmitScopeDiag: c.emitScopeDepthDiagnostics,
-			ComputePasses: c.computePasses,
-		})
-	}
-}
-
-func (c *Checker) newLegacyPipeline(interner *typ.RecursiveFamilyInterner) *pipeline.Driver {
-	runner := pipeline.NewRunner(pipeline.RunnerConfig{
-		Types:             c.deps.Types,
-		GlobalTypes:       c.deps.GlobalTypes,
-		Stdlib:            c.deps.Stdlib,
-		Manifests:         c.db,
-		Resolver:          c.deps.Resolver,
-		MaxScopeDepth:     c.maxScopeDepth,
-		ComputePasses:     c.computePasses,
-		RecursiveFamilies: interner,
-	})
-	funcResultQ := db.NewQuery("FuncResult", runner.Run, funcResultEqual)
-	return pipeline.New(pipeline.Config{
-		Types:             c.deps.Types,
-		GlobalTypes:       c.deps.GlobalTypes,
-		Stdlib:            c.deps.Stdlib,
-		Manifests:         c.db,
-		MaxScopeDepth:     c.maxScopeDepth,
-		EmitScopeDiag:     c.emitScopeDepthDiagnostics,
-		FuncResultQ:       funcResultQ,
-		RecursiveFamilies: interner,
+// newDriver returns the module driver.
+func (c *Checker) newDriver() moduleDriver {
+	return canonical.NewDriver(canonical.Config{
+		Types:         c.deps.Types,
+		GlobalTypes:   c.deps.GlobalTypes,
+		Stdlib:        c.deps.Stdlib,
+		Manifests:     c.db,
+		MaxScopeDepth: c.maxScopeDepth,
+		EmitScopeDiag: c.emitScopeDepthDiagnostics,
+		ComputePasses: c.computePasses,
 	})
 }
 
@@ -365,33 +278,24 @@ func (c *Checker) checkChunk(sess *Session, chunk []ast.Stmt) {
 	flow.ResetCanonicalFunctionRefsKeys()
 	flow.ResetCanonicalClosureRefsKeys()
 	summary.ResetEntryValuesKeyInterner()
-	// Keyed recursive families are owner-keyed per compilation. A fresh interner
-	// instance owns this compilation's family handles; it can mutate only the
-	// body slots it minted, so symbol numbers reused across compilations never
-	// inherit a prior body and stdlib/manifest type graphs stay immutable inputs.
-	interner := typ.NewRecursiveFamilyInterner()
-	if p := c.newPipeline(interner); p != nil {
+	if p := c.newDriver(); p != nil {
 		p.Run(sess, chunk)
 	}
 
 	// Run passes after fixpoint converges
 	c.runPasses(sess)
-	pipeline.SortDiagnostics(sess.Diagnostics)
+	order.SortDiagnostics(sess.Diagnostics)
 }
 
 // runPasses executes registered passes after fixpoint converges.
 func (c *Checker) runPasses(sess *Session) {
-	for _, fn := range pipeline.SortedResultFunctions(sess.Results) {
+	for _, fn := range order.SortedResultFunctions(sess.Results) {
 		result := sess.Results[fn]
 		for _, p := range c.passes {
 			diags := p(sess, fn, result)
 			sess.Diagnostics = append(sess.Diagnostics, diags...)
 		}
 	}
-}
-
-func funcResultEqual(a, b *api.FuncResult) bool {
-	return funcResultDependencyEqual(a, b)
 }
 
 // ClearCache establishes a fresh incremental-query revision boundary.

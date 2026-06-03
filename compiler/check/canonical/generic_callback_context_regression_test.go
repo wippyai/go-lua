@@ -1,15 +1,13 @@
 package canonical_test
 
 import (
-	"testing"
-
-	"github.com/wippyai/go-lua/compiler/check"
 	"github.com/wippyai/go-lua/compiler/check/tests/testutil"
 	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/kind"
 	querycore "github.com/wippyai/go-lua/types/query/core"
 	"github.com/wippyai/go-lua/types/subtype"
 	"github.com/wippyai/go-lua/types/typ"
+	"testing"
 )
 
 func TestCanonicalGenericInlineCallbackParamIsCallClosed(t *testing.T) {
@@ -19,7 +17,7 @@ func TestCanonicalGenericInlineCallbackParamIsCallClosed(t *testing.T) {
 		end
 		local n = transform("hello", function(s) return #s end)
 		local len: integer = n
-	`, testutil.WithStdlib(), testutil.WithCheckOption(check.WithCanonicalFlow()))
+	`, testutil.WithStdlib())
 
 	fn := findFunctionWithParamNames(t, res.Session.Results, "s")
 	sym := singleSymbolNamed(t, fn.Graph, "s")
@@ -67,7 +65,7 @@ func TestCanonicalGenericInlineCallbackReturnInferredWithoutSink(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			res := testutil.Check(tt.code, testutil.WithStdlib(), testutil.WithCheckOption(check.WithCanonicalFlow()))
+			res := testutil.Check(tt.code, testutil.WithStdlib())
 			got := rootSymbolTypeAtExit(t, res, "n")
 			if !integerCompatibleType(got) {
 				t.Fatalf("inferred n type = %v, want integer-compatible without typed sink; diagnostics=%v", got, testutil.ErrorMessages(res.Diagnostics))
@@ -91,7 +89,7 @@ func TestCanonicalGenericKeysReturnIndexInferredWithoutSink(t *testing.T) {
 		local data: {[string]: number} = {["a"] = 1, ["b"] = 2}
 		local ks = keys(data)
 		local first = ks[1]
-	`, testutil.WithStdlib(), testutil.WithCheckOption(check.WithCanonicalFlow()))
+	`, testutil.WithStdlib())
 
 	got := rootSymbolTypeAtExit(t, res, "first")
 	if !presentStringCompatibleType(got) {
@@ -118,7 +116,7 @@ func TestCanonicalGenericInstantiatedRecordMethodReturnWithoutSink(t *testing.T)
 
 		local c = make_container("hello")
 		local s = c:get()
-	`, testutil.WithStdlib(), testutil.WithCheckOption(check.WithCanonicalFlow()))
+	`, testutil.WithStdlib())
 
 	got := rootSymbolTypeAtExit(t, res, "s")
 	if !presentStringCompatibleType(got) {
@@ -138,7 +136,7 @@ func TestCanonicalGenericInlineCallbackNumberParamIsCallClosed(t *testing.T) {
 		end
 		local n = apply(10, function(num) return num + 1 end)
 		local out: integer = n
-	`, testutil.WithStdlib(), testutil.WithCheckOption(check.WithCanonicalFlow()))
+	`, testutil.WithStdlib())
 
 	outer := findFunctionWithParamNames(t, res.Session.Results, "x", "fn")
 	outerSym := singleSymbolNamed(t, outer.Graph, "x")
@@ -199,7 +197,7 @@ func TestCanonicalGenericInlineCallbackRecordParamIsCallClosed(t *testing.T) {
 		end
 		local n = apply({count = 1}, function(r) return r.count end)
 		local out: integer = n
-	`, testutil.WithStdlib(), testutil.WithCheckOption(check.WithCanonicalFlow()))
+	`, testutil.WithStdlib())
 
 	fn := findFunctionWithParamNames(t, res.Session.Results, "r")
 	sym := singleSymbolNamed(t, fn.Graph, "r")

@@ -6,8 +6,8 @@ func TestCanonicalFamilyScopeDoesNotLeakAcrossFixtureChecks(t *testing.T) {
 	contaminator := suiteByNameForScopeRegression(t, "narrowing/union-method-after-narrowing")
 	target := suiteByNameForScopeRegression(t, "realworld/index-presence-laws")
 
-	canonicalFixtureDiagnostics(contaminator)
-	diags, entry := canonicalFixtureDiagnostics(target)
+	fixtureDiagnostics(contaminator)
+	diags, entry := fixtureDiagnostics(target)
 	verdict := judgeAgainstCuratedExpectations(target, diags, entry)
 	if !verdict.passed {
 		t.Fatalf("canonical family scope leaked across checks: missing=%v unexpected=%v", verdict.missing, verdict.unexpected)
