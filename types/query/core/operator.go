@@ -565,35 +565,30 @@ func unaryBnotWithMeta(operand typ.Type) typ.Type {
 	return nil
 }
 
-// binaryOpAny returns the result type when operating on "any" type.
-// Comparison operators return boolean; others return any.
+// binaryOpAny returns the abstract result for an operand whose only static
+// information is `any`. `any` is kept as a compatibility atom, but it is not
+// evidence that a concrete operator is valid: non-invariant operators propagate
+// unknown so typed downstream use must be justified by a proof/narrow/cast.
 func binaryOpAny(op string) typ.Type {
 	switch op {
-	case "==", "~=", "<", "<=", ">", ">=":
+	case "==", "~=":
 		return typ.Boolean
-	case "..":
-		// Concatenation result is invariant: a successful `..` always yields a
-		// string regardless of operand grad-ness. A gradual `any` operand is
-		// admitted as stringable, so the result is the concrete string type
-		// rather than a fresh any.
-		return typ.String
 	case "and", "or":
 		return typ.Any
 	default:
-		return typ.Any
+		return typ.Unknown
 	}
 }
 
-// unaryOpAny returns the result type when operating on "any" type.
-// "not" returns boolean; "#" returns integer; others return any.
+// unaryOpAny returns the abstract result for a unary operator over `any`.
+// `not` is type-invariant; concrete unary operators require proof and therefore
+// propagate unknown from top-like input.
 func unaryOpAny(op string) typ.Type {
 	switch op {
 	case "not":
 		return typ.Boolean
-	case "#":
-		return typ.Integer
 	default:
-		return typ.Any
+		return typ.Unknown
 	}
 }
 

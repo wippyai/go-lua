@@ -6,10 +6,10 @@ import (
 )
 
 func (p Projector) resolveLocalRefs(t typ.Type, point cfg.Point) typ.Type {
-	if t == nil || len(p.cfg.Scopes) == 0 {
+	if t == nil {
 		return t
 	}
-	sc := p.cfg.Scopes[point]
+	sc := p.scopeAt(point)
 	if sc == nil {
 		return t
 	}

@@ -678,6 +678,14 @@ func (t *Transfer) Transfer(
 	entryContracts paramevidence.Contracts,
 	demand func(param int, c paramevidence.ParamContract),
 ) flow.PointState {
+	// Kildall transfer functions must be strict: f(⊥)=⊥. The entry point is the
+	// sole exception because its incoming CFG join is initially Bottom and the
+	// entry transfer establishes reachability plus parameter seeds. Every other
+	// point reached at the actual lattice Bottom is unreachable; interpreting its
+	// syntax would fabricate value facts and parameter demands from dead code.
+	if g != nil && p != g.Entry() && flow.PointStateDomain.Equal(incoming, flow.PointStateDomain.Bottom()) {
+		return flow.PointStateDomain.Bottom()
+	}
 	out := flow.ClonePointState(incoming)
 	// Index-write admissions are point-local transfer proofs, not durable store
 	// state. Clear predecessor proofs before interpreting this node so only writes
@@ -832,6 +840,7 @@ func (t *Transfer) applyAssign(
 			t.applyTypeCastNarrow(out, p, srcCall, demand)
 		}
 	}
+	callPostconditions := t.buildAssignCallPostconditions(out, info, demand)
 	// A call source feeding more targets than sources expands to a multi-return
 	// tuple: bind each target to the matching return slot (target i -> return i),
 	// the Lua multi-assignment semantics (`local a, b = f()`). Resolved once here so
@@ -849,6 +858,10 @@ func (t *Transfer) applyAssign(
 		keyArrayTable, _ := t.keyArrayTableForAssignment(info, i, target)
 		functionRefs, closureRefs := t.referenceWritesForAssignedPlace(out, Place{Root: target.Symbol}, info, i, src, demand)
 		val, ok := t.targetValue(out, p, info, i, src, callReturns, demand)
+		constructorCardinalityLower := int64(0)
+		if tbl, isTable := src.(*ast.TableExpr); isTable {
+			constructorCardinalityLower = t.tableLiteralCardinalityLowerBound(out, tbl)
+		}
 		if !ok {
 			if src != nil && t.pendingUnannotatedParamSource(out, src) {
 				t.applySymbolWriteEffect(out, target, product.AbstractValue{}, false, false, src, keyArrayTable, functionRefs, closureRefs)
@@ -918,10 +931,10 @@ func (t *Transfer) applyAssign(
 		t.applySymbolWriteEffect(out, target, val, false, false, src, keyArrayTable, functionRefs, closureRefs)
 		if src != nil {
 			t.applyNumeric(out, key, src)
-			t.seedArrayLiteralLength(out, key, src)
+			t.seedArrayLiteralLength(out, key, src, constructorCardinalityLower)
 		}
 	})
-	t.seedSiblingNilRelations(out, info, demand)
+	t.applyAssignCallPostconditions(out, callPostconditions)
 }
 
 // declaredGradualTop reports whether sym is declared with the strict dynamic top `any`,
@@ -994,44 +1007,6 @@ func (t *Transfer) callExpansionReturns(
 		return nil
 	}
 	return returns
-}
-
-func (t *Transfer) seedSiblingNilRelations(
-	out *flow.PointState,
-	info *cfg.AssignInfo,
-	demand func(int, paramevidence.ParamContract),
-) {
-	if info == nil {
-		return
-	}
-	call, first := info.ExpandingSourceCall()
-	if call == nil || call.Call == nil {
-		return
-	}
-	if call.IsTypeCheck && call.Method == "is" && call.Receiver != nil {
-		return
-	}
-	rels := t.callReturnRelations(out, call.Call, demand)
-	for _, corr := range rels.ErrorReturns() {
-		valIdx := first + corr.ValueIndex
-		errIdx := first + corr.ErrorIndex
-		if valIdx < 0 || valIdx >= len(info.Targets) || errIdx < 0 || errIdx >= len(info.Targets) {
-			continue
-		}
-		valTarget := info.Targets[valIdx]
-		errTarget := info.Targets[errIdx]
-		if valTarget.Kind != cfg.TargetIdent || valTarget.Symbol == 0 {
-			continue
-		}
-		if errTarget.Kind != cfg.TargetIdent || errTarget.Symbol == 0 {
-			continue
-		}
-		t.applyRelationEffect(out, RelationEffect{
-			Kind:      RelationSeedSiblingNil,
-			ErrSym:    errTarget.Symbol,
-			ValueSyms: []cfg.SymbolID{valTarget.Symbol},
-		})
-	}
 }
 
 func (t *Transfer) attachVariantOriginToAssignedValue(p cfg.Point, target cfg.AssignTarget, val product.AbstractValue) (product.AbstractValue, bool) {
@@ -2316,10 +2291,7 @@ func (t *Transfer) evalExpr(
 	case *ast.ArithmeticOpExpr:
 		return t.evalBinary(out, e.Operator, e.Lhs, e.Rhs, demand)
 	case *ast.StringConcatOpExpr:
-		// A concatenation reads both operands (parameter demand) and yields a string.
-		t.demandConditionReads(out, e.Lhs, demand)
-		t.demandConditionReads(out, e.Rhs, demand)
-		return product.FromType(typ.String), true
+		return t.evalConcat(out, e.Lhs, e.Rhs, demand)
 	case *ast.LogicalOpExpr:
 		return t.evalLogical(out, e, demand)
 	case *ast.RelationalOpExpr:
@@ -2333,9 +2305,11 @@ func (t *Transfer) evalExpr(
 	case *ast.UnaryMinusOpExpr:
 		return t.evalUnary(out, "-", e.Expr, demand)
 	case *ast.UnaryLenOpExpr:
-		// #x is an integer; record the demand that x is read.
-		t.evalExpr(out, e.Expr, demand)
-		return product.FromType(typ.Integer), true
+		// `#x` yields an integer only when the operand's abstract value proves it
+		// supports Lua length. Gradual `any`/unknown atoms are representation, not
+		// evidence; routing through the shared unary operator query keeps the
+		// transfer layer aligned with the diagnostic proof boundary.
+		return t.evalUnary(out, "#", e.Expr, demand)
 	case *ast.CastExpr:
 		// `expr :: T` asserts the operand has type T; its value is T. The operand is
 		// still read (parameter demand). When the cast type does not resolve, fall
@@ -3368,6 +3342,30 @@ func (t *Transfer) evalBinary(
 	return product.AbstractValue{}, false
 }
 
+// evalConcat materializes the value of `lhs .. rhs` only when the shared operator
+// resolver proves both operands participate in Lua concatenation. Dynamic
+// placeholder atoms (`any`, `unknown`) intentionally project to unknown in the
+// query layer, so they do not become string evidence here; diagnostics and typed
+// sinks then force a cast, assertion, or narrowing proof at the boundary.
+func (t *Transfer) evalConcat(
+	out *flow.PointState,
+	lhs, rhs ast.Expr,
+	demand func(int, paramevidence.ParamContract),
+) (product.AbstractValue, bool) {
+	t.demandConditionReads(out, lhs, demand)
+	t.demandConditionReads(out, rhs, demand)
+	l, lok := t.evalExpr(out, lhs, demand)
+	r, rok := t.evalExpr(out, rhs, demand)
+	if t.ops == nil || !lok || !rok {
+		return product.AbstractValue{}, false
+	}
+	res := t.ops.BinaryOp(l.ProjectValue(), "..", r.ProjectValue())
+	if res == nil || typ.IsAbsentOrUnknown(res) {
+		return product.AbstractValue{}, false
+	}
+	return product.FromType(res), true
+}
+
 // evalUnary resolves a unary operator over its operand value.
 func (t *Transfer) evalUnary(
 	out *flow.PointState,
@@ -3385,7 +3383,7 @@ func (t *Transfer) evalUnary(
 			return product.FromType(res), true
 		}
 	}
-	if isNumeric(v, ok) {
+	if op == "-" && isNumeric(v, ok) {
 		return product.FromType(typ.Number), true
 	}
 	return product.AbstractValue{}, false
@@ -3422,10 +3420,11 @@ func (t *Transfer) evalLogical(
 	return product.FromType(res), true
 }
 
-// evalRelational types a comparison expression. A type-probe comparison
-// (`type(x) == "string"`, the discriminant guard form) folds to the proven boolean
-// outcome through the shared guard evaluation; any other comparison is a boolean. It
-// reads both operands so a parameter compared here still emits demand.
+// evalRelational types a comparison expression. Equality is total in Lua and can
+// always be materialized as boolean. Ordered comparisons are partial operations:
+// they yield boolean only when the shared operator query proves the operands are
+// comparable, so `any < 1` does not become boolean evidence until a cast,
+// assertion, or narrowing proves the ordered family.
 func (t *Transfer) evalRelational(
 	out *flow.PointState,
 	e *ast.RelationalOpExpr,
@@ -3433,6 +3432,22 @@ func (t *Transfer) evalRelational(
 ) (product.AbstractValue, bool) {
 	t.demandConditionReads(out, e.Lhs, demand)
 	t.demandConditionReads(out, e.Rhs, demand)
+	switch e.Operator {
+	case "==", "~=":
+		return product.FromType(typ.Boolean), true
+	case "<", "<=", ">", ">=":
+	default:
+		return product.AbstractValue{}, false
+	}
+	l, lok := t.evalExpr(out, e.Lhs, demand)
+	r, rok := t.evalExpr(out, e.Rhs, demand)
+	if t.ops == nil || !lok || !rok {
+		return product.AbstractValue{}, false
+	}
+	res := t.ops.BinaryOp(l.ProjectValue(), e.Operator, r.ProjectValue())
+	if res == nil || typ.IsAbsentOrUnknown(res) {
+		return product.AbstractValue{}, false
+	}
 	return product.FromType(typ.Boolean), true
 }
 
@@ -3699,6 +3714,18 @@ func (t *Transfer) applyReturn(
 	if len(info.Exprs) == 1 {
 		if call := info.SourceCallAt(0); call != nil && call.Call != nil {
 			effect.Relations = t.callReturnRelations(out, call.Call, demand)
+			t.applySetMetatablePrototypeSelf(out, p, call.Call, demand)
+			if returns, ok := t.evalCall(out, call.Call, demand); ok && len(returns) > 0 {
+				for i, val := range returns {
+					slot := ReturnSlotEffect{Index: i, Value: val}
+					if i == 0 {
+						slot.Source = call.Call
+					}
+					effect.Slots = append(effect.Slots, slot)
+				}
+				t.applyReturnEffect(out, effect)
+				return
+			}
 		}
 	}
 	for i, expr := range info.Exprs {
@@ -3846,7 +3873,9 @@ func (t *Transfer) applyCallArgs(
 	// argument here, so `check(y); use(y)` sees `y` narrowed.
 	if t.callTyper != nil {
 		if effects := t.callTyper.ParamNarrows(info.Call); len(effects) > 0 {
-			t.ApplyParamNarrows(out, info.Call, effects)
+			if t.ApplyParamNarrows(out, info.Call, effects) {
+				return true
+			}
 		}
 	}
 	return false

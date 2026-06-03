@@ -18,7 +18,9 @@ import (
 //   - It's a type parameter with a numeric constraint
 //
 // Optional types are NOT numeric - they must be narrowed first.
-// Placeholder types (any, unknown) are considered numeric for flexibility.
+// Placeholder types are accepted by this broad query helper for legacy callers
+// that ask "could this be numeric?". Diagnostic obligations must use
+// ProvesNumeric / AllowsNumericOperand so `any` is never treated as proof.
 func IsNumeric(t typ.Type) bool {
 	return isNumericGuard(t, typ.NewGuard(), true)
 }
@@ -30,11 +32,11 @@ func ProvesNumeric(t typ.Type) bool {
 }
 
 // AllowsNumericOperand reports whether a checker diagnostic should accept a
-// numeric operand. Concrete numeric types prove safety; explicit any is the
-// gradual escape hatch documented by typ.Any. Unknown remains rejected because
-// it represents missing analysis, not an intentional opt-out.
+// numeric operand. A placeholder top (`any` or `unknown`) is representation, not
+// evidence: concrete numeric use must be proved by narrowing, assertion, cast,
+// or a type-parameter constraint.
 func AllowsNumericOperand(t typ.Type) bool {
-	return ProvesNumeric(t) || typ.IsAny(unwrap.Alias(t))
+	return ProvesNumeric(t)
 }
 
 func isNumericGuard(t typ.Type, guard internal.RecursionGuard, allowPlaceholder bool) bool {
@@ -230,9 +232,9 @@ func mayBeOrderableGuard(t typ.Type, guard internal.RecursionGuard) bool {
 	}
 
 	k := t.Kind()
-	// any is the gradual escape hatch; unknown represents missing analysis and
-	// must be narrowed before ordering.
-	return k == kind.String || k == kind.Number || k == kind.Integer || k == kind.Any
+	// `any` and `unknown` are not orderability proofs; both must be narrowed
+	// before concrete ordered comparison.
+	return k == kind.String || k == kind.Number || k == kind.Integer
 }
 
 const (
@@ -306,10 +308,9 @@ func orderedFamilyMask(t typ.Type, guard internal.RecursionGuard) (int, bool) {
 		case k == kind.String:
 			return orderedFamilyString, false
 		case k == kind.Any:
-			// any is the gradual escape hatch: treat as compatible with either
-			// ordered family. unknown is missing analysis and yields no family,
-			// so a comparison against it is rejected by the empty-mask check.
-			return 0, true
+			// `any` is a top-like atom, not evidence of a Lua ordered family.
+			// Treat it like unknown at the family-proof boundary.
+			return 0, false
 		default:
 			return 0, false
 		}
@@ -472,10 +473,7 @@ func mayBeStringableGuard(t typ.Type, guard internal.RecursionGuard) bool {
 		}
 	default:
 		k := t.Kind()
-		// any is the gradual escape hatch; unknown must be narrowed first.
-		if k == kind.Any {
-			return true
-		}
+		// `any` and `unknown` must be narrowed before concrete concatenation.
 		if k == kind.String || k == kind.Number || k == kind.Integer {
 			return true
 		}
@@ -641,8 +639,8 @@ func mayHaveLengthGuard(t typ.Type, guard internal.RecursionGuard) bool {
 		return false
 	}
 
-	// any is the gradual escape hatch; unknown must be narrowed first.
-	return t.Kind() == kind.Any || t.Kind() == kind.String
+	// `any` and `unknown` must be narrowed before concrete length use.
+	return t.Kind() == kind.String
 }
 
 // IsStringOnly checks if type is string (not number).
@@ -676,7 +674,7 @@ func ProvesBitwiseNumeric(t typ.Type) bool {
 // AllowsBitwiseNumericOperand is the bitwise analogue of
 // AllowsNumericOperand.
 func AllowsBitwiseNumericOperand(t typ.Type) bool {
-	return ProvesBitwiseNumeric(t) || typ.IsAny(unwrap.Alias(t))
+	return ProvesBitwiseNumeric(t)
 }
 
 func isBitwiseNumericGuard(t typ.Type, guard internal.RecursionGuard, allowPlaceholder bool) bool {

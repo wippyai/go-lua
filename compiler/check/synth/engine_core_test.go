@@ -317,9 +317,11 @@ func TestSynthExpr_UnaryLenOp_Any(t *testing.T) {
 	result := e.TypeOf(&ast.UnaryLenOpExpr{
 		Expr: ident,
 	}, 0)
-	// # operator always returns integer in Lua, even on any
-	if result != typ.Integer {
-		t.Fatalf("got %v, want integer", result)
+	// `any` is an unknown atom, not evidence that the operand supports length.
+	// The checking surface reports the concrete-use error; synthesis must not
+	// fabricate an integer result that downstream code could treat as proof.
+	if result != typ.Unknown {
+		t.Fatalf("got %v, want unknown", result)
 	}
 }
 

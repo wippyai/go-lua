@@ -58,3 +58,16 @@ func TestParseSymbolValueKey(t *testing.T) {
 		t.Fatalf("ParseSymbolValueKey(s42.field) = %d/%v, want 0/false", sym, ok)
 	}
 }
+
+func TestParseReturnSlotValueKey(t *testing.T) {
+	idx, ok := ParseReturnSlotValueKey(ReturnSlotValueKey(12))
+	if !ok || idx != 12 {
+		t.Fatalf("ParseReturnSlotValueKey(ReturnSlotValueKey(12)) = %d/%v, want 12/true", idx, ok)
+	}
+	if idx, ok := ParseReturnSlotValueKey(SymbolValueKey(cfg.SymbolID(1))); ok || idx != 0 {
+		t.Fatalf("ParseReturnSlotValueKey(symbol) = %d/%v, want 0/false", idx, ok)
+	}
+	if idx, ok := ParseReturnSlotValueKey(ValueKey("r1.field")); ok || idx != 0 {
+		t.Fatalf("ParseReturnSlotValueKey(bad) = %d/%v, want 0/false", idx, ok)
+	}
+}

@@ -104,7 +104,9 @@ func TestPointStateJoinDropsOneBranchMustFacts(t *testing.T) {
 		ValuePath: KeyPresencePathKey(valuePath),
 		Value:     product.FromType(typ.Number),
 	})
-	factful.Rel = factful.Rel.WithSiblingNil(errSym, []cfg.SymbolID{valuePath.Symbol})
+	factful.Rel = factful.Rel.
+		WithSiblingNil(errSym, []cfg.SymbolID{valuePath.Symbol}).
+		WithContainerLowerBound(table.Symbol, KeyPresencePathKey(table), 2)
 
 	if !PointStateDomain.LessOrEq(factful, empty) {
 		t.Fatalf("factful reachable state should be below empty must-fact state:\nfactful=%s\nempty=%s", formatPointState(factful), formatPointState(empty))
@@ -156,6 +158,9 @@ func assertPointStateDroppedOneBranchMustFacts(t *testing.T, ps PointState, tabl
 	}
 	if rel, ok := ps.Rel.SiblingNil(errSym); ok {
 		t.Fatalf("PointState kept one-branch relation: %#v", rel)
+	}
+	if ps.Rel.HasContainerLowerBound(table.Symbol, KeyPresencePathKey(table), 1) {
+		t.Fatalf("PointState kept one-branch container cardinality relation: %#v", ps.Rel)
 	}
 	if _, ok := ps.IndexWrites.Admission(IndexWriteQuery{
 		Target:    table,

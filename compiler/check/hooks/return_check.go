@@ -64,7 +64,7 @@ func CheckReturns(
 		return nil
 	}
 
-	declaredReturns := resolveDeclaredReturns(fn.ReturnTypes, baseScope, declared)
+	declaredReturns := resolveDeclaredReturns(fn.ReturnTypes, declaredReturnScope(graph, scopes, baseScope), declared)
 	if len(declaredReturns) == 0 {
 		return nil
 	}
@@ -176,6 +176,15 @@ func CheckReturns(
 
 func returnTypeCompatible(actual, declared typ.Type) bool {
 	return value.DeclaredBoundaryCompatible(actual, declared)
+}
+
+func declaredReturnScope(graph *cfg.Graph, scopes map[cfg.Point]*scope.State, fallback *scope.State) *scope.State {
+	if graph != nil && scopes != nil {
+		if sc, ok := scopes[graph.Entry()]; ok && sc != nil {
+			return sc
+		}
+	}
+	return fallback
 }
 
 func resolveDeclaredReturns(returnTypes []ast.TypeExpr, baseScope *scope.State, s api.Synth) []typ.Type {

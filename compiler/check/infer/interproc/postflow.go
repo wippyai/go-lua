@@ -519,13 +519,14 @@ func CollectParameterEvidenceFromResult(store Store, result *api.FuncResult, par
 		currentKey, currentOK = store.ParentGraphKeyForSymbol(currentSym)
 	}
 	collector := parameterEvidenceCollector{
-		store:       store,
-		parent:      parent,
-		currentKey:  currentKey,
-		currentOK:   currentOK,
-		currentSym:  currentSym,
-		bodyContext: paramevidence.NewBodyPreconditionContext(graph, result, bindings).WithCurrentFunctionSymbol(currentSym),
-		scopes:      result.Scopes,
+		store:                        store,
+		parent:                       parent,
+		currentKey:                   currentKey,
+		currentOK:                    currentOK,
+		currentSym:                   currentSym,
+		skipCurrentBodyPreconditions: result.FlowProjection != nil,
+		bodyContext:                  paramevidence.NewBodyPreconditionContext(graph, result, bindings).WithCurrentFunctionSymbol(currentSym),
+		scopes:                       result.Scopes,
 		callEntry: paramevidence.NewCallEntryProjector(paramevidence.CallEntryConfig{
 			Result:           result,
 			Graph:            graph,
@@ -566,16 +567,23 @@ func CollectParameterEvidenceFromResult(store Store, result *api.FuncResult, par
 }
 
 type parameterEvidenceCollector struct {
-	store                    Store
-	parent                   *scope.State
-	currentKey               api.GraphKey
-	currentOK                bool
-	currentSym               cfg.SymbolID
-	bodyContext              paramevidence.BodyPreconditionContext
-	scopes                   map[cfg.Point]*scope.State
-	callEntry                paramevidence.CallEntryProjector
-	expectedReceiverType     func(string) typ.Type
-	methodResolvedOnReceiver func(cfg.Point, ast.Expr, string) bool
+	store      Store
+	parent     *scope.State
+	currentKey api.GraphKey
+	currentOK  bool
+	currentSym cfg.SymbolID
+	// Canonical flow solves parameter body contracts inside its single
+	// FunctionState = Points x Contracts fixed point. Re-running this legacy
+	// postflow body-precondition collector on the same result creates a second
+	// public contract source and can export stale hard obligations after guarded
+	// uses. Keep call-entry evidence below, but leave current-function body/public
+	// params to the canonical summary.
+	skipCurrentBodyPreconditions bool
+	bodyContext                  paramevidence.BodyPreconditionContext
+	scopes                       map[cfg.Point]*scope.State
+	callEntry                    paramevidence.CallEntryProjector
+	expectedReceiverType         func(string) typ.Type
+	methodResolvedOnReceiver     func(cfg.Point, ast.Expr, string) bool
 }
 
 func (c *parameterEvidenceCollector) collectCallEvidence(evidence api.CallEvidence) {
@@ -602,7 +610,7 @@ func (c *parameterEvidenceCollector) collectCallEvidence(evidence api.CallEviden
 }
 
 func (c *parameterEvidenceCollector) recordCurrentBodyPreconditions(p cfg.Point, evidence api.CallEvidence) {
-	if c == nil || c.store == nil || !c.currentOK || c.currentSym == 0 {
+	if c == nil || c.store == nil || c.skipCurrentBodyPreconditions || !c.currentOK || c.currentSym == 0 {
 		return
 	}
 	var expectedReceiver typ.Type

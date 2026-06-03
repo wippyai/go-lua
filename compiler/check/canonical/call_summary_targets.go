@@ -39,7 +39,7 @@ func (ct callTyper) callOutcomeForTypedCall(
 		},
 		canonicalcall.SummaryTargetInfo{
 			DeclaredReturns: func(target canonicalcall.SelectedTarget) bool {
-				return len(d.activeProgram.declaredReturns[target.Ref()]) > 0
+				return d.activeProgram.refHasClosedDeclaredReturns(target.Ref())
 			},
 			SignatureReturns: func(target canonicalcall.SelectedTarget) []typ.Type {
 				return ct.selectedTargetSignatureReturns(
@@ -82,7 +82,7 @@ func (ct callTyper) callOutcomeForProductCall(call *ast.FuncCallExpr, ctx transf
 		},
 		canonicalcall.SummaryTargetInfo{
 			DeclaredReturns: func(target canonicalcall.SelectedTarget) bool {
-				return len(d.activeProgram.declaredReturns[target.Ref()]) > 0
+				return d.activeProgram.refHasClosedDeclaredReturns(target.Ref())
 			},
 			SignatureReturns: func(target canonicalcall.SelectedTarget) []typ.Type {
 				return ct.selectedTargetSignatureReturns(
@@ -124,6 +124,7 @@ func (ct callTyper) selectedTargetSignatureReturns(
 	if sig == nil || typ.IsAbsentOrUnknown(sig) {
 		return nil
 	}
+	argTypes = callArgTypesWithExprFallback(call, argTypes, exprType)
 	forcedExprType := func(expr ast.Expr) typ.Type {
 		if expr == call.Func {
 			return sig
@@ -143,6 +144,27 @@ func (ct callTyper) selectedTargetSignatureReturns(
 		return append([]typ.Type(nil), fn.Returns...)
 	}
 	return nil
+}
+
+func callArgTypesWithExprFallback(call *ast.FuncCallExpr, argTypes []typ.Type, exprType func(ast.Expr) typ.Type) []typ.Type {
+	if call == nil {
+		return nil
+	}
+	out := make([]typ.Type, len(call.Args))
+	for i, arg := range call.Args {
+		if i < len(argTypes) && !typ.IsAbsentOrUnknown(argTypes[i]) {
+			out[i] = argTypes[i]
+			continue
+		}
+		if exprType != nil {
+			if t := exprType(arg); !typ.IsAbsentOrUnknown(t) {
+				out[i] = t
+				continue
+			}
+		}
+		out[i] = typ.Unknown
+	}
+	return out
 }
 
 func argTypesFromCall(call *ast.FuncCallExpr, exprType func(ast.Expr) typ.Type) []typ.Type {

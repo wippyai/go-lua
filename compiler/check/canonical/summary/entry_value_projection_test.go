@@ -126,6 +126,134 @@ func TestDirectCallEntryValues_ProjectsMethodReceiverRuntimeSlot(t *testing.T) {
 	}
 }
 
+func TestDirectCallEntryFunctionRefs_ProjectRuntimeArgsToParamPaths(t *testing.T) {
+	sourceSym := cfg.SymbolID(10)
+	param0 := cfg.SymbolID(20)
+	param1 := cfg.SymbolID(21)
+	sourcePath := constraint.NewPath(sourceSym, "cb")
+	param0Path := constraint.NewPath(param0, "fn")
+	param1Path := constraint.NewPath(param1, "direct")
+	callbackRef := flow.FunctionRef{GraphID: 101}
+	nestedRef := flow.FunctionRef{GraphID: 102}
+	directRef := flow.FunctionRef{GraphID: 103}
+	arg0 := &ast.IdentExpr{Value: "cb"}
+	arg1 := &ast.FunctionExpr{}
+	call := &ast.FuncCallExpr{Args: []ast.Expr{arg0, arg1}}
+
+	got := summary.DirectCallEntryFunctionRefs(summary.DirectCallEntryReferenceInput{
+		Call:         call,
+		Callee:       summary.FuncRef{GraphID: 7},
+		FunctionRefs: flow.WithFunctionRef(flow.WithFunctionRef(nil, sourcePath.Key(), flow.FunctionRefSetOf(callbackRef)), sourcePath.Field("nested").Key(), flow.FunctionRefSetOf(nestedRef)),
+		ParamSlot: func(_ summary.FuncRef, _ *ast.FuncCallExpr, runtimeIdx int) (int, int, bool) {
+			switch runtimeIdx {
+			case 0:
+				return 0, 0, true
+			case 1:
+				return 1, 1, true
+			default:
+				return 0, 0, false
+			}
+		},
+		ParamPath: func(_ summary.FuncRef, slot int) (constraint.Path, bool) {
+			if slot == 0 {
+				return param0Path, true
+			}
+			if slot == 1 {
+				return param1Path, true
+			}
+			return constraint.Path{}, false
+		},
+		ArgPath: func(runtimeIdx int, _ ast.Expr) (constraint.Path, bool) {
+			if runtimeIdx == 0 {
+				return sourcePath, true
+			}
+			return constraint.Path{}, false
+		},
+		ResolveFunctionArg: func(runtimeIdx int, _ ast.Expr, _ *flow.PointState) (flow.FunctionRefSet, bool) {
+			if runtimeIdx == 1 {
+				return flow.FunctionRefSetOf(directRef), true
+			}
+			return flow.FunctionRefSet{}, false
+		},
+	})
+
+	if refs, ok := flow.FunctionRefAt(got, param0Path.Key()); !ok {
+		t.Fatalf("rebased root refs missing: %#v", got)
+	} else if ref, singleton := refs.Singleton(); !singleton || ref != callbackRef {
+		t.Fatalf("rebased root refs = %s, want %v", refs.Format(), callbackRef)
+	}
+	if refs, ok := flow.FunctionRefAt(got, param0Path.Field("nested").Key()); !ok {
+		t.Fatalf("rebased nested refs missing: %#v", got)
+	} else if ref, singleton := refs.Singleton(); !singleton || ref != nestedRef {
+		t.Fatalf("rebased nested refs = %s, want %v", refs.Format(), nestedRef)
+	}
+	if refs, ok := flow.FunctionRefAt(got, param1Path.Key()); !ok {
+		t.Fatalf("direct literal refs missing: %#v", got)
+	} else if ref, singleton := refs.Singleton(); !singleton || ref != directRef {
+		t.Fatalf("direct literal refs = %s, want %v", refs.Format(), directRef)
+	}
+}
+
+func TestDirectCallEntryFunctionRefs_SeedsDirectLiteralWhenParamSlotMapped(t *testing.T) {
+	param := cfg.SymbolID(22)
+	paramPath := constraint.NewPath(param, "fn")
+	directRef := flow.FunctionRef{GraphID: 104}
+	arg := &ast.FunctionExpr{}
+	call := &ast.FuncCallExpr{Args: []ast.Expr{arg}}
+
+	got := summary.DirectCallEntryFunctionRefs(summary.DirectCallEntryReferenceInput{
+		Call:   call,
+		Callee: summary.FuncRef{GraphID: 8},
+		ParamSlot: func(summary.FuncRef, *ast.FuncCallExpr, int) (int, int, bool) {
+			return 0, 0, true
+		},
+		ParamPath: func(summary.FuncRef, int) (constraint.Path, bool) {
+			return paramPath, true
+		},
+		ResolveFunctionArg: func(_ int, gotArg ast.Expr, _ *flow.PointState) (flow.FunctionRefSet, bool) {
+			if gotArg != arg {
+				t.Fatalf("arg = %#v, want direct literal", gotArg)
+			}
+			return flow.FunctionRefSetOf(directRef), true
+		},
+	})
+
+	if refs, ok := flow.FunctionRefAt(got, paramPath.Key()); !ok {
+		t.Fatalf("direct literal refs missing: %#v", got)
+	} else if ref, singleton := refs.Singleton(); !singleton || ref != directRef {
+		t.Fatalf("direct literal refs = %s, want %v", refs.Format(), directRef)
+	}
+}
+
+func TestDirectCallEntryClosureRefs_ProjectRuntimeArgsToParamPaths(t *testing.T) {
+	source := constraint.NewPath(cfg.SymbolID(30), "cb")
+	target := constraint.NewPath(cfg.SymbolID(31), "fn")
+	closure := flow.ClosureRefOf(flow.FunctionRef{GraphID: 201}, flow.CaptureCellsDomain.Bottom(), nil)
+	arg := &ast.IdentExpr{Value: "cb"}
+	call := &ast.FuncCallExpr{Args: []ast.Expr{arg}}
+
+	got := summary.DirectCallEntryClosureRefs(summary.DirectCallEntryReferenceInput{
+		Call:        call,
+		Callee:      summary.FuncRef{GraphID: 9},
+		ClosureRefs: flow.WithClosureRef(nil, source.Key(), flow.ClosureRefSetOf(closure)),
+		ParamSlot: func(summary.FuncRef, *ast.FuncCallExpr, int) (int, int, bool) {
+			return 0, 0, true
+		},
+		ParamPath: func(summary.FuncRef, int) (constraint.Path, bool) {
+			return target, true
+		},
+		ArgPath: func(int, ast.Expr) (constraint.Path, bool) {
+			return source, true
+		},
+	})
+
+	if refs, ok := flow.ClosureRefAt(got, target.Key()); !ok {
+		t.Fatalf("rebased closure refs missing: %#v", got)
+	} else if ref, singleton := refs.Singleton(); !singleton || ref.Ref != closure.Ref {
+		t.Fatalf("rebased closure refs = %s, want %v", refs.Format(), closure.Ref)
+	}
+}
+
 func TestCallEntryContextProjectionUsesCallEventPostState(t *testing.T) {
 	arg := &ast.IdentExpr{Value: "arg"}
 	call := &ast.FuncCallExpr{

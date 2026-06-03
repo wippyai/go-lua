@@ -120,6 +120,45 @@ func TestPointRelationsLengthParamJoinAndKill(t *testing.T) {
 	}
 }
 
+func TestPointRelationsContainerLowerBoundJoinAndKill(t *testing.T) {
+	root := cfg.SymbolID(20)
+	otherRoot := cfg.SymbolID(21)
+	key := SymbolPathKey(root, nil)
+	otherKey := SymbolPathKey(otherRoot, nil)
+
+	a := PointRelations{}.
+		WithContainerLowerBound(root, key, 3).
+		WithContainerLowerBound(otherRoot, otherKey, 7)
+	b := PointRelations{}.WithContainerLowerBound(root, key, 1)
+
+	got := PointRelationsDomain.Join(a, b)
+	if !got.HasContainerLowerBound(root, key, 1) {
+		t.Fatalf("joined point relations lost common cardinality lower bound: %#v", got)
+	}
+	if got.HasContainerLowerBound(root, key, 2) {
+		t.Fatalf("joined point relations used max instead of must/min lower bound: %#v", got)
+	}
+	if got.HasContainerLowerBound(otherRoot, otherKey, 1) {
+		t.Fatalf("joined point relations kept non-must cardinality proof: %#v", got)
+	}
+
+	errSym := cfg.SymbolID(22)
+	valueSym := cfg.SymbolID(23)
+	withSibling := got.WithSiblingNil(errSym, []cfg.SymbolID{valueSym})
+	killedLength := withSibling.KillLengthTargets(root)
+	if killedLength.HasContainerLowerBound(root, key, 1) {
+		t.Fatalf("KillLengthTargets kept stale cardinality proof: %#v", killedLength)
+	}
+	if _, ok := killedLength.SiblingNil(errSym); !ok {
+		t.Fatalf("KillLengthTargets removed unrelated sibling-nil proof: %#v", killedLength)
+	}
+
+	killedSymbol := withSibling.KillSymbols(root)
+	if killedSymbol.HasContainerLowerBound(root, key, 1) {
+		t.Fatalf("KillSymbols kept stale cardinality proof: %#v", killedSymbol)
+	}
+}
+
 func TestReturnRelationsFromFunctionType(t *testing.T) {
 	rel01 := ReturnCorrelation{ValueIndex: 0, ErrorIndex: 1}
 	rel10 := ReturnCorrelation{ValueIndex: 1, ErrorIndex: 0}

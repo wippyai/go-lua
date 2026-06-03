@@ -194,8 +194,8 @@ func TestUnaryOp(t *testing.T) {
 
 	t.Run("length of any", func(t *testing.T) {
 		result := UnaryOp("#", typ.Any)
-		if result != typ.Integer {
-			t.Errorf("expected integer, got %v", result)
+		if result != typ.Unknown {
+			t.Errorf("expected unknown, got %v", result)
 		}
 	})
 
@@ -624,18 +624,18 @@ func TestUnaryOp_TypeAlias(t *testing.T) {
 func TestBinaryOp_Any(t *testing.T) {
 	t.Run("any + any", func(t *testing.T) {
 		result := BinaryOp(typ.Any, "+", typ.Any)
-		if result != typ.Any {
-			t.Errorf("expected any, got %v", result)
+		if result != typ.Unknown {
+			t.Errorf("expected unknown, got %v", result)
 		}
 	})
 
 	t.Run("any .. any", func(t *testing.T) {
-		// Concatenation result is invariant: a successful `..` always yields a
-		// string, so a gradual any operand still produces the concrete string
-		// type rather than propagating any.
+		// A successful concatenation always yields string, but `any` is not proof
+		// that concatenation succeeds. Keep the result opaque until a guard/cast
+		// proves the operands are stringable.
 		result := BinaryOp(typ.Any, "..", typ.Any)
-		if result != typ.String {
-			t.Errorf("expected string, got %v", result)
+		if result != typ.Unknown {
+			t.Errorf("expected unknown, got %v", result)
 		}
 	})
 

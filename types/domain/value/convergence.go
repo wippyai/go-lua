@@ -1025,115 +1025,166 @@ func sortConvergenceUnionMembers(members []typ.Type) {
 // ids produce the same key.
 func convergenceMemberOrderKey(t typ.Type) string {
 	var b strings.Builder
-	writeConvergenceOrderKey(&b, t, nil)
+	w := convergenceOrderKeyWriter{
+		b:      &b,
+		budget: convergenceOrderKeyNodeBudget,
+		active: make(map[typ.Type]int),
+	}
+	w.write(t, nil)
 	return b.String()
 }
 
-func writeConvergenceOrderKey(b *strings.Builder, t typ.Type, binders []*typ.Recursive) {
+const convergenceOrderKeyNodeBudget = 4096
+
+type convergenceOrderKeyWriter struct {
+	b         *strings.Builder
+	budget    int
+	nodes     int
+	exhausted bool
+	active    map[typ.Type]int
+}
+
+func (w *convergenceOrderKeyWriter) enter(t typ.Type) bool {
 	if t == nil {
-		b.WriteString("nil;")
+		return true
+	}
+	if w.budget <= 0 {
+		return true
+	}
+	w.nodes++
+	if w.nodes <= w.budget {
+		return true
+	}
+	if !w.exhausted {
+		w.b.WriteString("...;")
+	}
+	w.exhausted = true
+	return false
+}
+
+func (w *convergenceOrderKeyWriter) write(t typ.Type, binders []*typ.Recursive) {
+	if t == nil {
+		w.b.WriteString("nil;")
 		return
 	}
-	switch v := unwrap.Alias(t).(type) {
+	t = unwrap.Alias(t)
+	if !w.enter(t) {
+		return
+	}
+	if idx, ok := w.active[t]; ok {
+		w.b.WriteString("ref#")
+		w.b.WriteString(strconv.Itoa(len(w.active) - 1 - idx))
+		w.b.WriteByte(';')
+		return
+	}
+	w.active[t] = len(w.active)
+	defer delete(w.active, t)
+
+	switch v := t.(type) {
 	case *typ.Recursive:
-		if idx, ok := binderIndexOf(v, binders); ok {
-			b.WriteString("self#")
-			b.WriteString(strconv.Itoa(idx))
-			b.WriteByte(';')
+		if idx, ok := recursiveBinderIndex(v, binders); ok {
+			w.b.WriteString("self#")
+			w.b.WriteString(strconv.Itoa(idx))
+			w.b.WriteByte(';')
 			return
 		}
 		if v.Body == nil {
-			b.WriteString("mu?;")
+			w.b.WriteString("mu?;")
 			return
 		}
-		b.WriteString("mu(")
-		writeConvergenceOrderKey(b, v.Body, append(binders, v))
-		b.WriteString(");")
+		w.b.WriteString("mu:")
+		w.b.WriteString(v.Name)
+		w.b.WriteByte('(')
+		w.write(v.Body, append(binders, v))
+		w.b.WriteString(");")
 	case *typ.Union:
 		members := append([]typ.Type(nil), v.Members...)
 		keys := make([]string, len(members))
 		for i, m := range members {
 			var sub strings.Builder
-			writeConvergenceOrderKey(&sub, m, binders)
+			prev := w.b
+			w.b = &sub
+			w.write(m, binders)
+			w.b = prev
 			keys[i] = sub.String()
 		}
 		sort.Strings(keys)
-		b.WriteString("U[")
+		w.b.WriteString("U[")
 		for _, k := range keys {
-			b.WriteString(k)
+			w.b.WriteString(k)
 		}
-		b.WriteString("];")
+		w.b.WriteString("];")
 	case *typ.Optional:
-		b.WriteString("opt(")
-		writeConvergenceOrderKey(b, v.Inner, binders)
-		b.WriteString(");")
+		w.b.WriteString("opt(")
+		w.write(v.Inner, binders)
+		w.b.WriteString(");")
 	case *typ.Array:
-		b.WriteString("arr(")
-		writeConvergenceOrderKey(b, v.Element, binders)
-		b.WriteString(");")
+		w.b.WriteString("arr(")
+		w.write(v.Element, binders)
+		w.b.WriteString(");")
 	case *typ.Map:
-		b.WriteString("map(")
-		writeConvergenceOrderKey(b, v.Key, binders)
-		b.WriteByte(',')
-		writeConvergenceOrderKey(b, v.Value, binders)
-		b.WriteString(");")
+		w.b.WriteString("map(")
+		w.write(v.Key, binders)
+		w.b.WriteByte(',')
+		w.write(v.Value, binders)
+		w.b.WriteString(");")
 	case *typ.Record:
-		writeConvergenceRecordOrderKey(b, v, binders)
+		w.writeRecord(v, binders)
 	case *typ.Function:
-		b.WriteString("fn[")
+		w.b.WriteString("fn[")
 		for _, p := range v.Params {
-			b.WriteString(p.Name)
+			w.b.WriteString(p.Name)
 			if p.Optional {
-				b.WriteByte('?')
+				w.b.WriteByte('?')
 			}
-			b.WriteByte(':')
-			writeConvergenceOrderKey(b, p.Type, binders)
+			w.b.WriteByte(':')
+			w.write(p.Type, binders)
 		}
 		if v.Variadic != nil {
-			b.WriteString("...")
-			writeConvergenceOrderKey(b, v.Variadic, binders)
+			w.b.WriteString("...")
+			w.write(v.Variadic, binders)
 		}
-		b.WriteString("->")
+		w.b.WriteString("->")
 		for _, r := range v.Returns {
-			writeConvergenceOrderKey(b, r, binders)
+			w.write(r, binders)
 		}
-		b.WriteString("];")
+		w.b.WriteString("];")
 	default:
 		if ref, ok := recursiveBinderIndex(t, binders); ok {
-			b.WriteString("self#")
-			b.WriteString(strconv.Itoa(ref))
-			b.WriteByte(';')
+			w.b.WriteString("self#")
+			w.b.WriteString(strconv.Itoa(ref))
+			w.b.WriteByte(';')
 			return
 		}
-		b.WriteString(t.Kind().String())
-		b.WriteByte(':')
-		b.WriteString(t.String())
-		b.WriteByte(';')
+		w.b.WriteString(t.Kind().String())
+		w.b.WriteByte('#')
+		w.b.WriteString(strconv.FormatUint(t.Hash(), 16))
+		w.b.WriteByte(';')
 	}
 }
 
-func writeConvergenceRecordOrderKey(b *strings.Builder, r *typ.Record, binders []*typ.Recursive) {
-	b.WriteString("rec{")
+func (w *convergenceOrderKeyWriter) writeRecord(r *typ.Record, binders []*typ.Recursive) {
+	w.b.WriteString("rec{")
 	if r.Open {
-		b.WriteString("open;")
+		w.b.WriteString("open;")
 	}
 	fields := append([]typ.Field(nil), r.Fields...)
 	sort.Slice(fields, func(i, j int) bool { return fields[i].Name < fields[j].Name })
 	for _, f := range fields {
-		b.WriteString(f.Name)
+		w.b.WriteString(f.Name)
 		if f.Optional {
-			b.WriteByte('?')
+			w.b.WriteByte('?')
 		}
-		b.WriteByte(':')
-		writeConvergenceOrderKey(b, f.Type, binders)
+		w.b.WriteByte(':')
+		w.write(f.Type, binders)
 	}
 	if r.HasMapComponent() {
-		b.WriteString("[map]")
-		writeConvergenceOrderKey(b, r.MapKey, binders)
-		b.WriteByte(',')
-		writeConvergenceOrderKey(b, r.MapValue, binders)
+		w.b.WriteString("[map]")
+		w.write(r.MapKey, binders)
+		w.b.WriteByte(',')
+		w.write(r.MapValue, binders)
 	}
-	b.WriteString("};")
+	w.b.WriteString("};")
 }
 
 // recursiveBinderIndex returns the de Bruijn depth of t when it is a reference to

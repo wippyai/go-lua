@@ -357,6 +357,36 @@ func TestConstraintsFromEquality_FieldEqualsPath(t *testing.T) {
 	}
 }
 
+func TestConstraintsFromEquality_FieldLiteralPreservesPath(t *testing.T) {
+	lhs := &ast.AttrGetExpr{
+		Object:    &ast.IdentExpr{Value: "page"},
+		Key:       &ast.StringExpr{Value: "data_func"},
+		KeySyntax: ast.AttrKeyDot,
+	}
+	rhs := &ast.StringExpr{Value: ""}
+
+	c := (&cond.ConditionExtractor{}).ConditionFromEquality(lhs, rhs)
+	constraints := c.MustConstraints()
+	if !hasFieldEqualsConstraint(constraints, "page", "data_func", typ.LiteralString("")) {
+		t.Fatalf("constraintsFromEquality = %v, want FieldEquals(page.data_func, \"\")", constraints)
+	}
+}
+
+func TestConstraintsFromInequality_FieldLiteralPreservesPath(t *testing.T) {
+	lhs := &ast.AttrGetExpr{
+		Object:    &ast.IdentExpr{Value: "page"},
+		Key:       &ast.StringExpr{Value: "data_func"},
+		KeySyntax: ast.AttrKeyDot,
+	}
+	rhs := &ast.StringExpr{Value: ""}
+
+	c := (&cond.ConditionExtractor{}).ConditionFromInequality(lhs, rhs)
+	constraints := c.MustConstraints()
+	if !hasFieldNotEqualsConstraint(constraints, "page", "data_func", typ.LiteralString("")) {
+		t.Fatalf("constraintsFromInequality = %v, want FieldNotEquals(page.data_func, \"\")", constraints)
+	}
+}
+
 func TestConstraintsFromEquality_SelectVariantOriginEmitsCaseConstraint(t *testing.T) {
 	lhs := &ast.AttrGetExpr{
 		Object: &ast.IdentExpr{Value: "result"},

@@ -31,6 +31,13 @@ func ReconcilePathFactWithDeclaredRead(narrowed, declared typ.Type) (typ.Type, b
 	if narrowed == nil || declared == nil || declared.Kind().IsPlaceholder() {
 		return narrowed, true
 	}
+	if typ.ContainsTypeParam(declared) && !typ.ContainsTypeParam(narrowed) {
+		// Generic callees read parameters through their declared binder (`T`) while
+		// the caller-specific product context may already hold the closed value
+		// (`10`, `string`, `{count: integer}`). Treat the closed solved observation
+		// as the runtime fact; the open declaration remains the type-level contract.
+		return narrowed, true
+	}
 	declaredNonNil, nilable := SplitNilable(declared)
 	if nilable && typ.TypeEquals(narrowed, typ.Nil) {
 		return narrowed, true

@@ -525,6 +525,37 @@ func TestRecursiveUpperBoundCoversLaterSameShapeObservation(t *testing.T) {
 	}
 }
 
+func TestRecursiveEvidenceCoverBudgetDeclinesConservatively(t *testing.T) {
+	rec := typ.NewRecursivePlaceholder("Module")
+	body := typ.NewRecord().
+		Field("method", typ.Func().
+			Param("self", rec).
+			Returns(rec).
+			Build()).
+		Build()
+	rec.SetBody(body)
+	observation := typ.NewRecord().
+		Field("method", typ.Func().
+			Param("self", body).
+			Returns(body).
+			Build()).
+		Build()
+
+	if !recursiveUpperBoundCovers(rec, observation) {
+		t.Fatalf("default recursive cover should admit the same-shape observation")
+	}
+	cover := recursiveEvidenceCover{
+		seen:   make(recursiveCoverSeen),
+		budget: 1,
+	}
+	if cover.covers(rec, observation) {
+		t.Fatalf("tiny recursive cover budget must decline instead of admitting without proof")
+	}
+	if !cover.exhausted {
+		t.Fatalf("tiny recursive cover budget should report exhaustion")
+	}
+}
+
 func TestSelfEmbeddingUpperBound_SameNodeFastPath(t *testing.T) {
 	fn := typ.Func().Param("x", typ.Any).Returns(typ.Any).Build()
 	got, ok := SelfEmbeddingUpperBound(fn, fn)

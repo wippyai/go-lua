@@ -57,6 +57,7 @@ type Config struct {
 	Graph                    *cfg.Graph
 	Bindings                 *bind.BindingTable
 	Scopes                   map[cfg.Point]*scope.State
+	DefaultScope             *scope.State
 	Facts                    flow.TypeFacts
 	Inputs                   *flow.Inputs
 	Flow                     api.FlowOps
@@ -208,6 +209,7 @@ func FromFuncResult(result *api.FuncResult, functionType SymbolTypeLookup) Proje
 			cfg.Bindings = result.Graph.Bindings()
 		}
 		cfg.Scopes = result.Scopes
+		cfg.DefaultScope = result.BaseScope
 		cfg.Facts = result.Facts
 		cfg.Inputs = result.FlowInputs
 		cfg.Flow = result.SolvedFlow()
@@ -363,10 +365,17 @@ func (p Projector) castType(expr *ast.CastExpr, point cfg.Point) typ.Type {
 }
 
 func (p Projector) scopeAt(point cfg.Point) *scope.State {
-	if len(p.cfg.Scopes) == 0 {
-		return nil
+	if p.cfg.Scopes != nil {
+		if sc := p.cfg.Scopes[point]; sc != nil {
+			return sc
+		}
+		if p.cfg.Graph != nil {
+			if sc := p.cfg.Scopes[p.cfg.Graph.Entry()]; sc != nil {
+				return sc
+			}
+		}
 	}
-	return p.cfg.Scopes[point]
+	return p.cfg.DefaultScope
 }
 
 func (p Projector) binaryType(left typ.Type, op string, right typ.Type, fallback typ.Type) typ.Type {
@@ -550,27 +559,15 @@ func (p Projector) attrTypeWithExpected(expr *ast.AttrGetExpr, point cfg.Point, 
 	return p.coerceGradualToExpected(t, expected, expr, point)
 }
 
-// coerceGradualToExpected applies gradual-typing's consistency at a typed
-// boundary: a value observed as the gradual top `any` (an unannotated parameter,
-// or a field/index read off one) is consistent with every type, so against a
-// concrete expected type it observes as that expected type. This mirrors the
-// proven-path refinement refineWithExpectedProof already performs for `any`, for
-// the unproven gradual case the path-type short-circuit otherwise bypasses. It is
-// gradual-`any` admission, not error suppression: only the gradual top is
-// coerced, as proven by the product-valued observation boundary when available,
-// and only toward a concrete expected target (never `unknown`, the opaque
-// inference seed, which keeps its strict rejection).
+// coerceGradualToExpected used to apply gradual consistency by rewriting
+// gradual-top `any` to the expected concrete type at typed boundaries. That is
+// now deliberately disabled: expected types may guide synthesis, and
+// refineWithExpectedProof may use real path/predicate evidence, but unproved
+// `any` is representation rather than evidence. Keeping this hook as a no-op
+// documents the boundary and prevents call/assignment/return checks from
+// quietly accepting `any` as proof.
 func (p Projector) coerceGradualToExpected(t typ.Type, expected typ.Type, expr ast.Expr, point cfg.Point) typ.Type {
-	if expected == nil || !typ.IsAny(t) {
-		return t
-	}
-	if typ.IsAbsentOrUnknown(expected) || typ.IsAny(expected) {
-		return t
-	}
-	if !p.exprIsGradualTop(expr, point) {
-		return t
-	}
-	return expected
+	return t
 }
 
 func (p Projector) exprIsGradualTop(expr ast.Expr, point cfg.Point) bool {
@@ -603,24 +600,12 @@ func productValueIsGradualTop(pv flow.ProductValue) bool {
 	return pv.State == flow.StateResolved && !pv.Value.IsZero() && pv.Value.IsGradualTop()
 }
 
-// AdmitGradualArgument applies the gradual-top-any admission for the
-// call-argument diagnostic boundary, mirroring the assignment source and the
-// return boundary: an argument observed as the gradual top `any` is consistent
-// with a concrete expected parameter type. It is gated by sourceAnyIsGradualTop
-// so a declared-`any` symbol read (an `any` the cast-guard contract requires to
-// stay strict) and the opaque `unknown` seed are untouched and keep their
-// rejection.
+// AdmitGradualArgument is the call-argument analogue of
+// coerceGradualToExpected. It is intentionally a no-op under the strict-any
+// policy: concrete parameter obligations require proof, not gradual-top
+// compatibility.
 func (p Projector) AdmitGradualArgument(t typ.Type, arg ast.Expr, point cfg.Point, expected typ.Type) typ.Type {
-	if expected == nil || !typ.IsAny(t) {
-		return t
-	}
-	if typ.IsAbsentOrUnknown(expected) || typ.IsAny(expected) {
-		return t
-	}
-	if !p.exprIsGradualCallArg(arg, point) {
-		return t
-	}
-	return expected
+	return t
 }
 
 func (p Projector) exprIsGradualCallArg(expr ast.Expr, point cfg.Point) bool {
@@ -1147,7 +1132,7 @@ func (p Projector) interceptSelectCall(expr *ast.FuncCallExpr, point cfg.Point) 
 		return nil, false
 	}
 	var resolver intercept.VariadicTypeResolver
-	sc := p.cfg.Scopes[point]
+	sc := p.scopeAt(point)
 	if sc != nil {
 		resolver = sc
 	}
@@ -1178,7 +1163,7 @@ func (p Projector) interceptMethodCall(expr *ast.FuncCallExpr, point cfg.Point) 
 	if expr == nil || expr.Method == "" {
 		return nil, false
 	}
-	sc := p.cfg.Scopes[point]
+	sc := p.scopeAt(point)
 	if sc == nil {
 		return nil, false
 	}

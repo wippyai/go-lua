@@ -19,6 +19,7 @@ import (
 	"github.com/wippyai/go-lua/types/flow"
 	"github.com/wippyai/go-lua/types/query/core"
 	"github.com/wippyai/go-lua/types/typ"
+	"github.com/wippyai/go-lua/types/typ/subst"
 )
 
 func TestSelectedTargetSignatureReturnsClosesGenericFromProductContext(t *testing.T) {
@@ -65,6 +66,142 @@ local s: string = identity("test")
 	)
 	if len(returns) != 1 || !typ.TypeEquals(returns[0], typ.String) {
 		t.Fatalf("signature returns = %#v, want [string]; ctx=%v", returns, ctx)
+	}
+}
+
+func TestSelectedTargetSignatureReturnsClosesNestedGenericRecordFromProductContext(t *testing.T) {
+	chunk, err := parse.ParseString(`
+type Container<T> = {
+    value: T,
+    get: fun(self: self): T
+}
+
+local function make_container<T>(v: T): Container<T>
+    return {
+        value = v,
+        get = function(self): T return self.value end
+    }
+end
+
+local c = make_container("hello")
+`, "generic-record-signature-return.lua")
+	if err != nil {
+		t.Fatalf("parse failed: %v", err)
+	}
+
+	call := onlyCallExpr(t, chunk)
+	driver, prog, rootGraph, ctx := testDriverProgram(t, chunk)
+	defer func() {
+		driver.activeProgram = nil
+		driver.activeCtx = nil
+		driver.activeQueries = nil
+	}()
+
+	ct := callTyper{d: driver, g: rootGraph}
+	targets := canonicalcall.SelectedTargets(ct.resolveCallTargets(
+		call,
+		prog,
+		flow.FunctionRefsDomain.Bottom(),
+		flow.ClosureRefsDomain.Bottom(),
+	))
+	if len(targets) != 1 {
+		t.Fatalf("selected targets = %d, want one", len(targets))
+	}
+
+	arg := product.FromType(typ.LiteralString("hello"))
+	callCtx := transferlessProductCallContext([]product.AbstractValue{arg})
+	returns := ct.selectedTargetSignatureReturns(
+		prog,
+		targets[0],
+		call,
+		callCtx.ArgTypes(),
+		callCtx.ExprType,
+		flow.CaptureCellsDomain.Bottom(),
+		flow.FunctionRefsDomain.Bottom(),
+		nil,
+	)
+	if len(returns) != 1 {
+		t.Fatalf("signature returns = %#v, want one return; ctx=%v", returns, ctx)
+	}
+	expanded := subst.ExpandInstantiated(returns[0])
+	rec, ok := expanded.(*typ.Record)
+	if !ok {
+		t.Fatalf("signature return = %v expanded %v, want record; ctx=%v", returns[0], expanded, ctx)
+	}
+	value := rec.GetField("value")
+	if value == nil || !typ.TypeEquals(value.Type, typ.String) {
+		t.Fatalf("value field = %#v, want string; return=%v", value, expanded)
+	}
+	get := rec.GetField("get")
+	getFn, ok := get.Type.(*typ.Function)
+	if get == nil || !ok || len(getFn.Returns) != 1 || !typ.TypeEquals(getFn.Returns[0], typ.String) {
+		t.Fatalf("get field = %#v, want function returning string; return=%v", get, expanded)
+	}
+}
+
+func TestProductCallOutcomeRepairsNestedGenericRecordSummary(t *testing.T) {
+	chunk, err := parse.ParseString(`
+type Container<T> = {
+    value: T,
+    get: fun(self: self): T
+}
+
+local function make_container<T>(v: T): Container<T>
+    return {
+        value = v,
+        get = function(self): T return self.value end
+    }
+end
+
+local c = make_container("hello")
+`, "generic-record-product-outcome.lua")
+	if err != nil {
+		t.Fatalf("parse failed: %v", err)
+	}
+
+	call := onlyCallExpr(t, chunk)
+	driver, _, rootGraph, ctx := testDriverProgram(t, chunk)
+	defer func() {
+		driver.activeProgram = nil
+		driver.activeCtx = nil
+		driver.activeQueries = nil
+	}()
+
+	ct := callTyper{d: driver, g: rootGraph}
+	arg := product.FromType(typ.LiteralString("hello"))
+	callCtx := transferlessProductCallContext([]product.AbstractValue{arg})
+	outcome := ct.callOutcomeForProductCall(call, callCtx)
+	targets := outcome.Targets()
+	if len(targets) != 1 || len(targets[0].Summary.Returns) != 1 {
+		t.Fatalf("product outcome targets = %#v, want one target with one summary return", targets)
+	}
+	summaryRec, ok := targets[0].Summary.Returns[0].ProjectValue().(*typ.Record)
+	if !ok {
+		t.Fatalf("summary return = %v, want record", targets[0].Summary.Returns[0].ProjectValue())
+	}
+	summaryGet := summaryRec.GetField("get")
+	if summaryGet == nil {
+		t.Fatal("summary get field missing")
+	}
+	summaryGetFn, ok := summaryGet.Type.(*typ.Function)
+	if !ok || len(summaryGetFn.Returns) != 1 {
+		t.Fatalf("summary get field = %#v, want function return", summaryGet)
+	}
+	if _, isRef := summaryGetFn.Returns[0].(*typ.Ref); isRef {
+		t.Fatalf("summary get return leaked unresolved ref: %v", summaryGetFn.Returns[0])
+	}
+	values := outcome.InferredReturnValues()
+	if len(values) != 1 {
+		t.Fatalf("product outcome values = %#v, want one value; targets=%#v ctx=%v", values, targets, ctx)
+	}
+	rec, ok := values[0].ProjectValue().(*typ.Record)
+	if !ok {
+		t.Fatalf("product outcome = %v, want record; targets=%#v ctx=%v", values[0].ProjectValue(), targets, ctx)
+	}
+	get := rec.GetField("get")
+	getFn, ok := get.Type.(*typ.Function)
+	if get == nil || !ok || len(getFn.Returns) != 1 || !typ.TypeEquals(getFn.Returns[0], typ.String) {
+		t.Fatalf("get field = %#v, want function returning string; outcome=%v targets=%#v", get, rec, targets)
 	}
 }
 

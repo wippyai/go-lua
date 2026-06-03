@@ -1150,6 +1150,9 @@ func hasExplicitSelf(ctx *db.QueryContext, query core.TypeOps, fn *typ.Function,
 	if len(fn.Params) == 0 {
 		return false
 	}
+	if firstParamDeclaresSelf(fn) {
+		return true
+	}
 	receiverMatch := normalizeReceiverForSelfCheck(ctx, query, receiver)
 	return hasExplicitSelfCommon(fn, receiver, receiverMatch, func(sub, super typ.Type) bool {
 		return isSubtypeCheck(ctx, query, sub, super)
@@ -1207,8 +1210,22 @@ func hasExplicitSelfSimple(fn *typ.Function, receiver typ.Type) bool {
 	if len(fn.Params) == 0 {
 		return false
 	}
+	if firstParamDeclaresSelf(fn) {
+		return true
+	}
 	receiverMatch := normalizeReceiverForSelfCheck(nil, nil, receiver)
 	return hasExplicitSelfCommon(fn, receiver, receiverMatch, subtype.IsSubtype)
+}
+
+func firstParamDeclaresSelf(fn *typ.Function) bool {
+	if fn == nil || len(fn.Params) == 0 {
+		return false
+	}
+	if name := fn.Params[0].Name; name == "self" || name == "Self" {
+		return true
+	}
+	firstParam := fn.Params[0].Type
+	return firstParam != nil && firstParam.Kind() == kind.Self
 }
 
 func hasExplicitSelfCommon(
@@ -1257,6 +1274,9 @@ func hasExplicitSelfCommon(
 func normalizeReceiverForSelfCheck(ctx *db.QueryContext, query core.TypeOps, receiver typ.Type) typ.Type {
 	if receiver == nil {
 		return nil
+	}
+	if typ.ContainsRecursive(receiver) {
+		return receiver
 	}
 	if query != nil {
 		if widened := query.Widen(ctx, receiver); widened != nil {

@@ -1,6 +1,8 @@
 package topology
 
 import (
+	"slices"
+
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/canonical/ref"
@@ -13,9 +15,9 @@ type FunctionDiscoveryInput struct {
 }
 
 // FunctionTopology is the immutable topology of module-local functions. It owns
-// discovery order, graph/function identity, lexical parent edges, and method
-// definition ownership; solver layers consume this carrier instead of rebuilding
-// ad hoc graph walks.
+// discovery order, graph/function identity, lexical parent edges, and real
+// method definition ownership; solver layers consume this carrier instead of
+// rebuilding ad hoc graph walks.
 type FunctionTopology struct {
 	refs             []ref.FuncRef
 	graphs           map[ref.FuncRef]*cfg.Graph
@@ -65,12 +67,11 @@ func NewFunctionTopology(entries []FunctionEntry) FunctionTopology {
 			out.funcRefs[entry.Function] = fnRef
 		}
 		for _, sym := range entry.Symbols {
-			if sym != 0 {
-				out.funcRefsBySymbol[sym] = fnRef
-			}
+			out.addSymbol(fnRef, sym)
 		}
 		if entry.MethodDef != nil {
 			out.methodDefs[fnRef] = entry.MethodDef
+			out.addSymbol(fnRef, entry.MethodDef.Symbol)
 			if entry.MethodDef.FuncExpr != nil {
 				out.funcs[fnRef] = entry.MethodDef.FuncExpr
 				out.funcRefs[entry.MethodDef.FuncExpr] = fnRef
@@ -114,8 +115,10 @@ func DiscoverFunctions(in FunctionDiscoveryInput) FunctionTopology {
 				continue
 			}
 			childRef := ref.FuncRef{GraphID: ng.ID()}
+			out.addSymbol(childRef, nested.Symbol)
 			if info := methodDefExprs[nested.Func]; info != nil {
 				out.methodDefs[childRef] = info
+				out.addSymbol(childRef, info.Symbol)
 			}
 			if _, hasParent := out.parentRefs[childRef]; g.Func() != nil && !hasParent {
 				out.nestedRefs[curRef] = append(out.nestedRefs[curRef], childRef)
@@ -126,6 +129,7 @@ func DiscoverFunctions(in FunctionDiscoveryInput) FunctionTopology {
 	for fn, info := range methodDefExprs {
 		if fnRef, ok := out.RefForFunction(fn); ok {
 			out.methodDefs[fnRef] = info
+			out.addSymbol(fnRef, info.Symbol)
 		}
 	}
 	return out
@@ -148,7 +152,8 @@ func methodDefOwnsBody(info *cfg.FuncDefInfo) bool {
 	return info != nil &&
 		info.Name != "" &&
 		info.FuncExpr != nil &&
-		(info.TargetKind == cfg.FuncDefMethod || info.TargetKind == cfg.FuncDefField) &&
+		info.TargetKind == cfg.FuncDefMethod &&
+		info.IsMethod &&
 		info.Receiver != nil
 }
 
@@ -165,11 +170,21 @@ func (t *FunctionTopology) addGraph(g *cfg.Graph) ref.FuncRef {
 		t.funcRefs[fn] = fnRef
 		if bindings := g.Bindings(); bindings != nil {
 			if sym, ok := bindings.FuncLitSymbol(fn); ok && sym != 0 {
-				t.funcRefsBySymbol[sym] = fnRef
+				t.addSymbol(fnRef, sym)
 			}
 		}
 	}
 	return fnRef
+}
+
+func (t *FunctionTopology) addSymbol(fnRef ref.FuncRef, sym cfg.SymbolID) {
+	if t == nil || fnRef == (ref.FuncRef{}) || sym == 0 {
+		return
+	}
+	if t.funcRefsBySymbol == nil {
+		t.funcRefsBySymbol = make(map[cfg.SymbolID]ref.FuncRef)
+	}
+	t.funcRefsBySymbol[sym] = fnRef
 }
 
 // Refs returns module functions in deterministic discovery order.
@@ -212,6 +227,27 @@ func (t FunctionTopology) RefForSymbol(sym cfg.SymbolID) (ref.FuncRef, bool) {
 	}
 	fnRef, ok := t.funcRefsBySymbol[sym]
 	return fnRef, ok
+}
+
+// SymbolsForRef returns every CFG symbol that denotes fnRef. A function may have
+// more than one source symbol when a field/method definition and a function
+// literal identity are both present; callers that publish symbol-keyed products
+// must write all aliases at the boundary.
+func (t FunctionTopology) SymbolsForRef(fnRef ref.FuncRef) []cfg.SymbolID {
+	if fnRef == (ref.FuncRef{}) || len(t.funcRefsBySymbol) == 0 {
+		return nil
+	}
+	var out []cfg.SymbolID
+	for sym, candidate := range t.funcRefsBySymbol {
+		if candidate == fnRef && sym != 0 {
+			out = append(out, sym)
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	slices.Sort(out)
+	return out
 }
 
 // MethodDef returns the method/field definition that owns ref's body, if any.

@@ -116,6 +116,57 @@ func TestNestedAnalysisContext_UsesSolvedCallExpectedArgs(t *testing.T) {
 	}
 }
 
+func TestNestedAnalysisContext_PrefersSolvedCallExpectedArgsOverRawEvidence(t *testing.T) {
+	stmts, err := parse.ParseString(`register(function(value) end)`, "nested_callback.lua")
+	if err != nil {
+		t.Fatalf("parse failed: %v", err)
+	}
+	caller := &ast.FunctionExpr{ParList: &ast.ParList{}, Stmts: stmts}
+	bindings := bind.Bind(caller, []string{"register"})
+	graph := cfg.BuildWithBindings(caller, bindings)
+
+	var callPoint cfg.Point
+	var callInfo *cfg.CallInfo
+	graph.EachCallSite(func(p cfg.Point, info *cfg.CallInfo) {
+		if callInfo == nil {
+			callPoint = p
+			callInfo = info
+		}
+	})
+	if callInfo == nil || len(callInfo.Args) != 1 {
+		t.Fatalf("expected one callback call, got %+v", callInfo)
+	}
+	callback, ok := callInfo.Args[0].(*ast.FunctionExpr)
+	if !ok {
+		t.Fatalf("arg type = %T, want function literal", callInfo.Args[0])
+	}
+
+	tp := typ.NewTypeParam("T", nil)
+	rawOpen := typ.Func().Param("value", tp).Build()
+	solved := typ.Func().Param("value", typ.String).Build()
+	parent := &api.FuncAnalysisView{
+		Graph: graph,
+		Evidence: api.FlowEvidence{
+			Calls: []api.CallEvidence{{
+				Point:        callPoint,
+				Info:         callInfo,
+				ExpectedArgs: []typ.Type{rawOpen},
+			}},
+		},
+		CallExpectedArgs: []api.CallExpectedArgEvidence{
+			api.NewCallExpectedArgEvidence([]typ.Type{solved}),
+		},
+	}
+
+	ctx := New(Config{}).nestedAnalysisContext(callback, parent)
+	if ctx.ExpectedFunction == nil {
+		t.Fatal("expected solved call evidence to seed callback analysis context")
+	}
+	if len(ctx.ExpectedFunction.Params) != 1 || !typ.TypeEquals(ctx.ExpectedFunction.Params[0].Type, typ.String) {
+		t.Fatalf("expected function = %v, want solved string parameter", ctx.ExpectedFunction)
+	}
+}
+
 func TestNestedAnalysisContext_InheritsAmbientOverlay(t *testing.T) {
 	stmts, err := parse.ParseString(`register(function(value) end)`, "nested_callback.lua")
 	if err != nil {

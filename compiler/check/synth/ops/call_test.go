@@ -104,6 +104,33 @@ func TestCallWithGenericInference_AllowDiscardedExtraArgs(t *testing.T) {
 	}
 }
 
+func TestInferCallClosesGenericCallbackExpectedParam(t *testing.T) {
+	tp := typ.NewTypeParam("T", nil)
+	up := typ.NewTypeParam("U", nil)
+	fn := typ.Func().
+		TypeParamRef(tp).
+		TypeParamRef(up).
+		Param("x", tp).
+		Param("fn", typ.Func().Param("value", tp).Returns(up).Build()).
+		Returns(up).
+		Build()
+	callback := typ.Func().Param("value", typ.Any).Returns(typ.Any).Build()
+
+	ctx := db.NewQueryContext(db.New())
+	inferred := InferCall(ctx, CallDef{
+		Callee: fn,
+		Args:   []typ.Type{typ.String, callback},
+	})
+	expected := inferred.ExpectedArgType(1)
+	expectedFn, ok := expected.(*typ.Function)
+	if !ok || expectedFn == nil || len(expectedFn.Params) != 1 {
+		t.Fatalf("expected callback type = %v, want unary function", expected)
+	}
+	if !typ.TypeEquals(expectedFn.Params[0].Type, typ.String) {
+		t.Fatalf("expected callback param = %v, want string", expectedFn.Params[0].Type)
+	}
+}
+
 func TestCallWithGenericInference_Variadic(t *testing.T) {
 	fn := typ.Func().
 		Param("x", typ.Integer).
@@ -562,6 +589,23 @@ func TestHasExplicitSelfSimple_StillAcceptsExplicitPatterns(t *testing.T) {
 	}
 }
 
+func TestHasExplicitSelfSimple_NamedSelfSkipsRecursiveReceiverNormalization(t *testing.T) {
+	receiver := typ.NewRecursive("Node", func(self typ.Type) typ.Type {
+		return typ.NewRecord().
+			Field("next", self).
+			Field("callback", typ.Func().Param("node", self).Returns(self).Build()).
+			Build()
+	})
+	fn := typ.Func().
+		Param("self", typ.Any).
+		Param("name", typ.String).
+		Returns(typ.Boolean).
+		Build()
+	if !hasExplicitSelfSimple(fn, receiver) {
+		t.Fatal("parameter named self should not require recursive receiver normalization")
+	}
+}
+
 func TestHasExplicitSelfSimple_RejectsTopLikeReceiver(t *testing.T) {
 	receiver := typ.Any
 	optionsType := typ.NewRecord().
@@ -625,6 +669,19 @@ func TestCallFunction_MethodOnLiteralReceiverConsumesSelf(t *testing.T) {
 	}
 	if result.Type != typ.String {
 		t.Fatalf("expected string return type, got: %v", result.Type)
+	}
+}
+
+func TestRefinedArgSkipsRecursiveSubtypeProof(t *testing.T) {
+	node := typ.NewRecursive("Node", func(self typ.Type) typ.Type {
+		return typ.NewRecord().Field("next", self).Build()
+	})
+	existing := typ.Func().Param("node", node).Returns(node).Build()
+	candidate := typ.Func().Param("node", node).Returns(typ.NewOptional(node)).Build()
+
+	got, changed := refinedArg(existing, candidate)
+	if changed || got != existing {
+		t.Fatalf("refinedArg recursive proof = %v/%v, want existing/false", got, changed)
 	}
 }
 

@@ -3,7 +3,7 @@ package canonical_test
 import "testing"
 
 func TestDeadlockMinFalsePositiveRegression(t *testing.T) {
-	cases := map[string]string{
+	clean := map[string]string{
 		"ipairs-index-concat": `
 local function f(definitions)
     for i, def in ipairs(definitions) do
@@ -20,28 +20,6 @@ local function f(cfg: {[string]: string})
 end
 return f
 `,
-		"pairs-key-concat-untyped": `
-local function f(raw)
-    for key, v in pairs(raw) do
-        return "k " .. key
-    end
-end
-return f
-`,
-		"length-of-any-chain": `
-local function f(reader: any)
-    local data = reader:with(1):all()
-    return table.create(0, #data)
-end
-return f
-`,
-		"field-concat-untyped-self": `
-local methods = {}
-function methods:g(target)
-    return "t[" .. target.idx .. "]"
-end
-return methods
-`,
 		"ipairs-index-concat-any-annotated": `
 local function f(definitions: any)
     for i, def in ipairs(definitions) do
@@ -49,21 +27,6 @@ local function f(definitions: any)
     end
 end
 return f
-`,
-		"pairs-key-concat-any-annotated": `
-local function f(raw: any)
-    for key, v in pairs(raw) do
-        return "k " .. key
-    end
-end
-return f
-`,
-		"self-field-concat": `
-local methods = {}
-function methods:g()
-    return "node[" .. self.id .. "]"
-end
-return methods
 `,
 		"or-default-over-unresolved-call": `
 local ext = require("ext")
@@ -73,7 +36,73 @@ local function f()
 end
 return f
 `,
-		"ipairs-index-over-self-field": `
+	}
+	for name, src := range clean {
+		t.Run(name, func(t *testing.T) {
+			requireCanonicalClean(t, src)
+		})
+	}
+}
+
+func TestCanonicalStrictAnyRejectsUnprovedDeadlockMinCases(t *testing.T) {
+	cases := map[string]struct {
+		src  string
+		want string
+	}{
+		"pairs-key-concat-untyped": {
+			src: `
+local function f(raw)
+    for key, v in pairs(raw) do
+        return "k " .. key
+    end
+end
+return f
+`,
+			want: "cannot concatenate any",
+		},
+		"length-of-any-chain": {
+			src: `
+local function f(reader: any)
+    local data = reader:with(1):all()
+    return table.create(0, #data)
+end
+return f
+`,
+			want: "cannot apply length operator to any",
+		},
+		"field-concat-untyped-self": {
+			src: `
+local methods = {}
+function methods:g(target)
+    return "t[" .. target.idx .. "]"
+end
+return methods
+`,
+			want: "cannot concatenate any",
+		},
+		"pairs-key-concat-any-annotated": {
+			src: `
+local function f(raw: any)
+    for key, v in pairs(raw) do
+        return "k " .. key
+    end
+end
+return f
+`,
+			want: "cannot concatenate any",
+		},
+		"self-field-concat": {
+			src: `
+local methods = {}
+function methods:g()
+    return "node[" .. self.id .. "]"
+end
+return methods
+`,
+			want: "cannot concatenate any",
+		},
+		"ipairs-index-over-self-field": {
+			src: `
 local methods = {}
 function methods:g()
     for idx, t in ipairs(self.targets) do
@@ -82,10 +111,12 @@ function methods:g()
 end
 return methods
 `,
+			want: "cannot concatenate any",
+		},
 	}
-	for name, src := range cases {
+	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
-			requireCanonicalClean(t, src)
+			requireCanonicalDiagnosticContains(t, tc.src, tc.want)
 		})
 	}
 }

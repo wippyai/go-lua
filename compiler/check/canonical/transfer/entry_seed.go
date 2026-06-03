@@ -96,25 +96,19 @@ func entrySeedValue(declared typ.Type, entry, contract product.AbstractValue) pr
 		}
 		if av.IsZero() {
 			av = contract
-		} else if !entry.IsZero() {
-			av = entrySeedContractRefinement(av, contract)
-		} else {
+		} else if entry.IsZero() {
+			// Body contracts are backward demand facts, not forward proofs about a
+			// concrete caller entry. With no exact entry context, seed the body from
+			// the contract so the context-free summary can interpret required uses.
 			av = entrySeedContractValue(av, contract)
 		}
+		// With an exact caller entry value, keep `av` as the declared/entry
+		// composition. Refining it by the demand creates a self-fulfilling
+		// precondition: the parameter becomes what the body demands, guard
+		// complements vanish, and the exported contract is stricter than the source
+		// program actually requires.
 	}
 	return av
-}
-
-func entrySeedContractRefinement(entry, contract product.AbstractValue) product.AbstractValue {
-	entryType := entry.ProjectValue()
-	contractType := contract.ProjectValue()
-	if entryType == nil || contractType == nil {
-		return entry
-	}
-	if refined, changed := value.RefineStructuralAnnotation(entryType, contractType, typ.JoinPreferNonSoft); changed {
-		return product.FromType(refined)
-	}
-	return entry
 }
 
 func entrySeedContractValue(entry, contract product.AbstractValue) product.AbstractValue {
@@ -134,6 +128,13 @@ func entrySeedDeclaredValue(declared typ.Type, entry product.AbstractValue) prod
 	if declared == nil {
 		return product.AbstractValue{}
 	}
+	if typ.ContainsTypeParam(declared) && entryHasClosedInformativeValue(entry) {
+		// An open generic annotation (`T`, `{T}`, ...) is a binder constraint, not
+		// a closed runtime fact. Once the call-entry context supplies a closed value,
+		// entry state must carry that value so the body is interpreted under the
+		// instantiated call, not under the callee's binder syntax.
+		return entry
+	}
 	if !entry.IsZero() {
 		if evidence := entry.ProjectValue(); evidence != nil && !typ.IsAbsentOrUnknown(evidence) {
 			if refined, changed := value.RefineStructuralAnnotation(declared, evidence, typ.JoinPreferNonSoft); changed {
@@ -142,4 +143,12 @@ func entrySeedDeclaredValue(declared typ.Type, entry product.AbstractValue) prod
 		}
 	}
 	return product.FromType(declared)
+}
+
+func entryHasClosedInformativeValue(entry product.AbstractValue) bool {
+	if entry.IsZero() {
+		return false
+	}
+	t := entry.ProjectValue()
+	return t != nil && !typ.IsAbsentOrUnknown(t) && !typ.ContainsTypeParam(t)
 }

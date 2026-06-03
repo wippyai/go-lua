@@ -181,6 +181,159 @@ func TestMorePreciseConcreteTypeArgRefinesSymbolicTypeParam(t *testing.T) {
 	}
 }
 
+func TestContainsFreeTypeParamTreatsClosedInstantiationAsClosed(t *testing.T) {
+	tp := NewTypeParam("T", nil)
+	box := NewGeneric("Box", []*TypeParam{tp}, NewRecord().Field("value", tp).Build())
+
+	if ContainsFreeTypeParam(Instantiate(box, String)) {
+		t.Fatal("closed Box<string> should not report a free type parameter")
+	}
+	if !ContainsFreeTypeParam(Instantiate(box, tp)) {
+		t.Fatal("Box<T> with symbolic argument should report a free type parameter")
+	}
+}
+
+func TestRefineWithFallbackRepairsTypeParamLeafAndKeepsLiteral(t *testing.T) {
+	tp := NewTypeParam("T", nil)
+	summary := NewRecord().
+		Field("value", LiteralString("hello")).
+		Field("get", Func().OptParam("self", Any).Returns(tp).Build()).
+		Build()
+	fallback := NewRecord().
+		Field("value", String).
+		Field("get", Func().OptParam("self", Self).Returns(String).Build()).
+		Build()
+
+	refined, changed := RefineWithFallback(summary, fallback)
+	if !changed {
+		t.Fatal("RefineWithFallback did not repair open type-param leaf")
+	}
+	rec, ok := refined.(*Record)
+	if !ok {
+		t.Fatalf("refined = %T, want record", refined)
+	}
+	value := rec.GetField("value")
+	if value == nil || !TypeEquals(value.Type, LiteralString("hello")) {
+		t.Fatalf("value field = %#v, want literal hello", value)
+	}
+	get := rec.GetField("get")
+	if get == nil {
+		t.Fatal("missing get field")
+	}
+	fn, ok := get.Type.(*Function)
+	if get == nil || !ok || len(fn.Returns) != 1 || !TypeEquals(fn.Returns[0], String) {
+		t.Fatalf("get field = %#v, want function returning string", get)
+	}
+}
+
+func TestRefineWithFallbackRepairsFunctionReturnDespiteParamShapeMismatch(t *testing.T) {
+	tp := NewTypeParam("T", nil)
+	summary := Func().
+		OptParam("self", Any).
+		Returns(tp).
+		Build()
+	fallback := Func().
+		Param("self", NewRecord().Field("value", String).Build()).
+		Returns(String).
+		Build()
+
+	refined, changed := RefineWithFallback(summary, fallback)
+	if !changed {
+		t.Fatal("RefineWithFallback did not repair covariant return")
+	}
+	fn, ok := refined.(*Function)
+	if !ok {
+		t.Fatalf("refined = %T, want function", refined)
+	}
+	if len(fn.Params) != 1 || !fn.Params[0].Optional || !TypeEquals(fn.Params[0].Type, Any) {
+		t.Fatalf("param = %#v, want original optional any parameter", fn.Params)
+	}
+	if len(fn.Returns) != 1 || !TypeEquals(fn.Returns[0], String) {
+		t.Fatalf("returns = %#v, want string", fn.Returns)
+	}
+}
+
+func TestRefineWithFallbackRepairsFunctionReturnWithInstantiatedSelfParam(t *testing.T) {
+	tp := NewTypeParam("T", nil)
+	container := NewGeneric("Container", []*TypeParam{tp},
+		NewRecord().
+			Field("value", tp).
+			Field("get", Func().Param("self", Instantiate(NewGeneric("Container", []*TypeParam{tp}, NewRecord().Build()), tp)).Returns(tp).Build()).
+			Build(),
+	)
+	summary := NewRecord().
+		Field("value", LiteralString("hello")).
+		Field("get", Func().OptParam("self", Any).Returns(tp).Build()).
+		Build()
+	fallback := NewRecord().
+		Field("value", String).
+		Field("get", Func().Param("self", Instantiate(container, String)).Returns(String).Build()).
+		Build()
+
+	refined, changed := RefineWithFallback(summary, fallback)
+	if !changed {
+		t.Fatal("RefineWithFallback did not repair function return with instantiated self fallback")
+	}
+	rec, ok := refined.(*Record)
+	if !ok {
+		t.Fatalf("refined = %T, want record", refined)
+	}
+	get := rec.GetField("get")
+	fn, ok := get.Type.(*Function)
+	if get == nil || !ok || len(fn.Returns) != 1 || !TypeEquals(fn.Returns[0], String) {
+		t.Fatalf("get field = %#v, want function returning string", get)
+	}
+}
+
+func TestRefineWithFallbackRepairsDeferredRefLeaf(t *testing.T) {
+	summary := Func().
+		OptParam("self", Any).
+		Returns(NewRef("", "T")).
+		Build()
+	fallback := Func().
+		Param("self", NewRecord().Field("value", String).Build()).
+		Returns(String).
+		Build()
+
+	refined, changed := RefineWithFallback(summary, fallback)
+	if !changed {
+		t.Fatal("RefineWithFallback did not repair deferred ref leaf")
+	}
+	fn, ok := refined.(*Function)
+	if !ok || len(fn.Returns) != 1 || !TypeEquals(fn.Returns[0], String) {
+		t.Fatalf("refined = %v, want function returning string", refined)
+	}
+}
+
+func TestNeedsSameExpressionFallbackFindsNestedRepairableLeaves(t *testing.T) {
+	clean := NewRecord().
+		Field("value", LiteralString("hello")).
+		Field("get", Func().OptParam("self", Any).Returns(String).Build()).
+		Build()
+	if NeedsSameExpressionFallback(clean) {
+		t.Fatalf("clean record reported fallback need: %v", clean)
+	}
+
+	open := NewRecord().
+		Field("value", LiteralString("hello")).
+		Field("get", Func().OptParam("self", Any).Returns(NewRef("", "T")).Build()).
+		Build()
+	if !NeedsSameExpressionFallback(open) {
+		t.Fatalf("open record did not report fallback need: %v", open)
+	}
+}
+
+func TestRefineWithFallbackPreservesFunctionOwnedTypeParam(t *testing.T) {
+	tp := NewTypeParam("T", nil)
+	summary := Func().TypeParamRef(tp).Param("value", tp).Returns(tp).Build()
+	fallback := Func().Param("value", String).Returns(String).Build()
+
+	refined, changed := RefineWithFallback(summary, fallback)
+	if changed || refined != summary {
+		t.Fatalf("owned type param should not be repaired: %v changed=%v", refined, changed)
+	}
+}
+
 func TestComparePrecisionUnrelatedShapesNotComparable(t *testing.T) {
 	if strict, comparable := ComparePrecision(NewArray(String), NewMap(String, String)); strict || comparable {
 		t.Fatalf("array/map precision = (%v, %v), want unrelated", strict, comparable)

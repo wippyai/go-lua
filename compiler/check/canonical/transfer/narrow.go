@@ -3595,18 +3595,22 @@ func dominatesExit(g *cfg.Graph, q cfg.Point) bool {
 
 // ApplyParamNarrows refines the call arguments in out by the callee's parameter
 // narrowing effects: an effect on parameter i narrows the i-th argument's value
-// (along its field path) by the proven check. It applies only to an identifier or
+// (along its field path) by the proven check, and materializes the same proof in
+// PointState.Cond through ConditionEffect. It applies only to an identifier or
 // field-path argument whose root the flow tracks, so a wrapper call `check(y)`
 // narrows `y` exactly as the wrapper's body proved its parameter. An argument the
 // flow does not track, or an effect with no matching argument, is left unchanged.
-func (t *Transfer) ApplyParamNarrows(out *flow.PointState, call *ast.FuncCallExpr, effects []ParamNarrow) {
+// It reports dead when a callee-proven postcondition cannot hold for the current
+// argument value; the call continuation is then unreachable, like a failed assert.
+func (t *Transfer) ApplyParamNarrows(out *flow.PointState, call *ast.FuncCallExpr, effects []ParamNarrow) (dead bool) {
 	if call == nil || len(effects) == 0 {
-		return
+		return false
 	}
 	for _, e := range effects {
 		if e.Param < 0 || e.Param >= len(call.Args) {
 			continue
 		}
+		t.applyParamNarrowConditionEffect(out, call, e)
 		if e.IsParamEquality() {
 			t.applyParamEqNarrow(out, call, e)
 			continue
@@ -3629,10 +3633,14 @@ func (t *Transfer) ApplyParamNarrows(out *flow.PointState, call *ast.FuncCallExp
 		}
 		segs := append(append([]constraint.Segment{}, argSegs...), e.Segments...)
 		if !e.TypeKey.IsZero() {
-			t.narrowAssertTypePath(out, argSym, segs, e.Check, e.TypeKey)
+			if t.narrowAssertTypePath(out, argSym, segs, e.Check, e.TypeKey) {
+				return true
+			}
 			continue
 		}
-		t.narrowAssertPath(out, argSym, segs, e.Check)
+		if t.narrowAssertPath(out, argSym, segs, e.Check) {
+			return true
+		}
 		// When the narrowed argument is a recorded multi-return error symbol proven nil
 		// (a `test.is_nil(err)` wrapper that errors unless err is nil), its correlated
 		// value siblings are non-nil, so strip nil from them — the same correlation a
@@ -3641,6 +3649,30 @@ func (t *Transfer) ApplyParamNarrows(out *flow.PointState, call *ast.FuncCallExp
 			t.applySiblingNilForErr(out, argSym)
 		}
 	}
+	return false
+}
+
+// applyParamNarrowConditionEffect lowers a portable callee postcondition from
+// placeholder paths ($0, $1.field, ...) to the caller's normalized static argument
+// paths, then writes it through ConditionEffect. This is the condition-axis half
+// of parameter-effect application; value narrowing below remains the value-axis
+// half. Dynamic or untracked argument paths are intentionally not fabricated: their
+// placeholder substitution drops the fact, preserving soundness as precision loss.
+func (t *Transfer) applyParamNarrowConditionEffect(out *flow.PointState, call *ast.FuncCallExpr, e ParamNarrow) bool {
+	c, ok := paramevidence.ParamNarrowConstraint(e)
+	if !ok {
+		return false
+	}
+	args := make([]constraint.Path, len(call.Args))
+	for i, arg := range call.Args {
+		path, ok := t.staticPathOfExpr(arg)
+		if !ok || path.Symbol == 0 {
+			continue
+		}
+		args[i] = path
+	}
+	cond := constraint.FromConstraints(c).Substitute(args)
+	return t.applyConditionEffect(out, ConditionEffect{Fact: cond})
 }
 
 func (t *Transfer) narrowAssertTypePath(out *flow.PointState, sym cfg.SymbolID, segments []constraint.Segment, check cfg.CondCheckKind, key narrow.TypeKey) (dead bool) {

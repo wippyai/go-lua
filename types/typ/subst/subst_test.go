@@ -160,6 +160,33 @@ func TestSelf(t *testing.T) {
 			t.Error("self return should be substituted")
 		}
 	})
+
+	t.Run("replace self unioned with recursive payload", func(t *testing.T) {
+		rec := typ.NewRecursive("Node", func(self typ.Type) typ.Type {
+			return typ.NewRecord().Field("next", self).Build()
+		})
+		arg := typ.NewUnion(typ.Self, rec)
+		result := Self(arg, typ.String)
+		if !typ.TypeEquals(result, typ.NewUnion(typ.String, rec)) {
+			t.Fatalf("union self substitution = %v", result)
+		}
+	})
+
+	t.Run("skip concrete recursive payload without self", func(t *testing.T) {
+		rec := typ.NewRecursive("Node", func(self typ.Type) typ.Type {
+			return typ.NewRecord().
+				Field("next", self).
+				Field("handler", typ.Func().Param("node", self).Returns(self).Build()).
+				Build()
+		})
+		wrapper := typ.NewRecord().
+			Field("payload", rec).
+			Field("fn", typ.Func().Param("node", rec).Returns(rec).Build()).
+			Build()
+		if got := Self(wrapper, typ.String); got != wrapper {
+			t.Fatalf("recursive payload without Self should be returned unchanged, got %v", got)
+		}
+	})
 }
 
 func TestSelfValueStopsAtNestedCallableBinders(t *testing.T) {

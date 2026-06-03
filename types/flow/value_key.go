@@ -64,6 +64,27 @@ func ReturnSlotValueKey(i int) ValueKey {
 	return ValueKey("r" + valueKeyItoa(uint64(i)))
 }
 
+// ParseReturnSlotValueKey inverts ReturnSlotValueKey. Non-return-slot keys or
+// negative/empty slot encodings return false.
+func ParseReturnSlotValueKey(key ValueKey) (int, bool) {
+	s := string(key)
+	if len(s) < 2 || s[0] != 'r' {
+		return 0, false
+	}
+	var n uint64
+	for i := 1; i < len(s); i++ {
+		c := s[i]
+		if c < '0' || c > '9' {
+			return 0, false
+		}
+		n = n*10 + uint64(c-'0')
+	}
+	if n > uint64(^uint(0)>>1) {
+		return 0, false
+	}
+	return int(n), true
+}
+
 // ParseSymbolValueKey inverts SymbolValueKey. Non-symbol keys return false.
 func ParseSymbolValueKey(key ValueKey) (cfg.SymbolID, bool) {
 	s := string(key)

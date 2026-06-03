@@ -98,17 +98,13 @@ func (p Projector) ReturnSourceType(source ast.Expr, point cfg.Point, expected t
 	return p.TypeOfWithExpected(source, point, expected)
 }
 
-// admitGradualAssignmentSource applies gradual-typing's consistency to an
-// assignment source observed as the gradual top `any`, mirroring the return
-// boundary's coerceGradualToExpected: such a value is consistent with every
-// type, so against a concrete annotation it observes as that annotation. It is
-// gated by sourceAnyIsGradualTop so a declared-`any` symbol read keeps its
-// strict any->concrete rejection.
+// admitGradualAssignmentSource is intentionally strict. Earlier revisions used
+// this hook to coerce gradual-top `any` to the expected annotation at assignment
+// and return boundaries. That made `any` a proof escape hatch. The canonical
+// policy keeps `any` as an atom but requires a proof from narrowing, assertion,
+// cast, or predicate evidence before a concrete typed write/return is accepted.
 func (p Projector) admitGradualAssignmentSource(t typ.Type, source ast.Expr, point cfg.Point, expected typ.Type) typ.Type {
-	if !typ.IsAny(t) || !p.sourceAnyIsGradualTop(source, point) {
-		return t
-	}
-	return p.coerceGradualToExpected(t, expected, source, point)
+	return t
 }
 
 // sourceAnyIsGradualTop reports whether a source observed as `any` is the

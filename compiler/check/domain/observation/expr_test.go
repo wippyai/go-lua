@@ -7,6 +7,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/bind"
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/api"
+	"github.com/wippyai/go-lua/compiler/check/domain/globalenv"
 	"github.com/wippyai/go-lua/compiler/check/scope"
 	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/db"
@@ -655,7 +656,7 @@ func TestProjectorDeclaredPathProofRequiresAnnotation(t *testing.T) {
 	}
 }
 
-func TestProjector_ExpectedAnyCoercionRequiresProductGradualEvidence(t *testing.T) {
+func TestProjector_ExpectedAnyCoercionDoesNotUseGradualEvidenceAsProof(t *testing.T) {
 	ident := &ast.IdentExpr{Value: "value"}
 	bindings := bind.NewBindingTable()
 	const sym cfg.SymbolID = 12
@@ -679,12 +680,12 @@ func TestProjector_ExpectedAnyCoercionRequiresProductGradualEvidence(t *testing.
 			values:    map[cfg.SymbolID]product.AbstractValue{sym: product.GradualAny()},
 		},
 	}).TypeOfWithExpected(ident, 1, typ.String)
-	if !typ.TypeEquals(gradual, typ.String) {
-		t.Fatalf("gradual any with expected string = %v, want string", gradual)
+	if !typ.TypeEquals(gradual, typ.Any) {
+		t.Fatalf("gradual any with expected string = %v, want any", gradual)
 	}
 }
 
-func TestProjector_ProductGradualEvidenceOverridesUnannotatedParamFallback(t *testing.T) {
+func TestProjector_ProductGradualEvidenceDoesNotOverrideStrictAnyPolicy(t *testing.T) {
 	fn := &ast.FunctionExpr{ParList: &ast.ParList{Names: []string{"value"}}}
 	g := cfg.Build(fn)
 	syms := g.ParamSymbols()
@@ -700,8 +701,8 @@ func TestProjector_ProductGradualEvidenceOverridesUnannotatedParamFallback(t *te
 		Bindings: bindings,
 		Facts:    factsStub{syms[0]: typ.Any},
 	}).TypeOfWithExpected(ident, g.Entry(), typ.String)
-	if !typ.TypeEquals(compatFallback, typ.String) {
-		t.Fatalf("unannotated fallback any with expected string = %v, want string", compatFallback)
+	if !typ.TypeEquals(compatFallback, typ.Any) {
+		t.Fatalf("unannotated fallback any with expected string = %v, want any", compatFallback)
 	}
 
 	strictProduct := New(Config{
@@ -739,6 +740,44 @@ func TestProjector_GlobalIdentUsesSymbolFactsBeforeNameMap(t *testing.T) {
 
 	if !typ.TypeEquals(observed, typ.String) {
 		t.Fatalf("TypeOf(global ident) = %v, want string", observed)
+	}
+}
+
+func TestProjector_SelectFromVariadicUsesPointScopeAndGlobalEffect(t *testing.T) {
+	fn := &ast.FunctionExpr{Stmts: []ast.Stmt{
+		&ast.ReturnStmt{Exprs: []ast.Expr{
+			&ast.FuncCallExpr{
+				Func: &ast.IdentExpr{Value: "select"},
+				Args: []ast.Expr{
+					&ast.NumberExpr{Value: "1"},
+					&ast.Comma3Expr{},
+				},
+			},
+		}},
+	}}
+	g := cfg.Build(fn, "select")
+	tParam := typ.NewTypeParam("T", nil)
+	selectFn := typ.Func().
+		Param("index", typ.Integer).
+		Variadic(typ.Any).
+		Returns(typ.Any).
+		Effects(effect.WithVariadicTransform()).
+		Build()
+	call := fn.Stmts[0].(*ast.ReturnStmt).Exprs[0].(*ast.FuncCallExpr)
+
+	nonEntryPoint := cfg.Point(999)
+	if nonEntryPoint == g.Entry() {
+		t.Fatal("test setup expected a non-entry point")
+	}
+	observed := New(Config{
+		Graph:             g,
+		Scopes:            map[cfg.Point]*scope.State{g.Entry(): scope.New().WithVariadic(tParam)},
+		Facts:             factsStub{},
+		GlobalTypeOverlay: globalenv.TypeOverlayFromMap(map[string]typ.Type{"select": selectFn}),
+	}).TypeOf(call, nonEntryPoint)
+
+	if observed != tParam {
+		t.Fatalf("TypeOf(select(1, ...)) = %#v (%v), want variadic type param", observed, observed)
 	}
 }
 

@@ -20,10 +20,10 @@ func (p Projector) HasCallableTypeEffect(expr ast.Expr, point cfg.Point) bool {
 		return true
 	}
 	ident, ok := expr.(*ast.IdentExpr)
-	if !ok || len(p.cfg.Scopes) == 0 {
+	if !ok {
 		return false
 	}
-	sc := p.cfg.Scopes[point]
+	sc := p.scopeAt(point)
 	if sc == nil {
 		return false
 	}

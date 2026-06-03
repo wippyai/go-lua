@@ -60,16 +60,16 @@ func TestProvesNumeric_DynamicPlaceholdersRequireProof(t *testing.T) {
 	}
 }
 
-func TestAllowsNumericOperand_ExplicitAnyIsGradualEscape(t *testing.T) {
+func TestAllowsNumericOperand_DynamicTopRequiresProof(t *testing.T) {
 	tests := []struct {
 		name string
 		t    typ.Type
 		want bool
 	}{
 		{"integer", typ.Integer, true},
-		{"any", typ.Any, true},
+		{"any", typ.Any, false},
 		{"unknown", typ.Unknown, false},
-		{"optional any normalizes to any", typ.NewOptional(typ.Any), true},
+		{"optional any", typ.NewOptional(typ.Any), false},
 		{"optional unknown", typ.NewOptional(typ.Unknown), false},
 		{"string", typ.String, false},
 	}
@@ -416,7 +416,7 @@ func TestMayHaveLength(t *testing.T) {
 		{"string or nil", typ.NewUnion(typ.String, typ.Nil), true},
 		{"integer or nil", typ.NewUnion(typ.Integer, typ.Nil), false},
 		{"unknown", typ.Unknown, false},
-		{"any", typ.Any, true},
+		{"any", typ.Any, false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -441,7 +441,7 @@ func TestMayBeStringable(t *testing.T) {
 		{"optional string", typ.NewOptional(typ.String), true},
 		{"string or nil", typ.NewUnion(typ.String, typ.Nil), true},
 		{"boolean or nil", typ.NewUnion(typ.Boolean, typ.Nil), false},
-		{"any", typ.Any, true},
+		{"any", typ.Any, false},
 		{"unknown", typ.Unknown, false},
 	}
 	for _, tt := range tests {
@@ -466,6 +466,7 @@ func TestMayBeOrderable(t *testing.T) {
 		{"optional number", typ.NewOptional(typ.Number), true},
 		{"number or nil", typ.NewUnion(typ.Number, typ.Nil), true},
 		{"boolean or nil", typ.NewUnion(typ.Boolean, typ.Nil), false},
+		{"any", typ.Any, false},
 		{"unknown", typ.Unknown, false},
 	}
 	for _, tt := range tests {

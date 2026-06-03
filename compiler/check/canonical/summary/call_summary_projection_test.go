@@ -60,6 +60,71 @@ func TestCallSummaryProjection_ReturnValuesUseDeclaredSignatureReturns(t *testin
 	}
 }
 
+func TestCallSummaryProjection_OpenGenericDeclaredReturnKeepsSolvedSummary(t *testing.T) {
+	// Open generic returns such as `apply<T,U>(...): U` are binder relations.
+	// The target metadata must leave DeclaredReturns false for that shape so the
+	// exact-context solved summary, not the broad signature fallback, owns the
+	// product return value.
+	projection := summary.CallSummaryProjection{
+		Targets: []summary.CallSummaryTarget{
+			{
+				DeclaredReturns:  false,
+				SignatureReturns: []typ.Type{typ.Number},
+				Summary:          summary.Summary{Returns: []product.AbstractValue{product.FromType(typ.Integer)}},
+			},
+		},
+	}
+
+	got := projection.ReturnValues()
+	if len(got) != 1 {
+		t.Fatalf("ReturnValues len = %d, want 1", len(got))
+	}
+	if !product.Domain.Equal(got[0], product.FromType(typ.Integer)) {
+		t.Fatalf("slot 0 = %v, want solved integer summary", got[0].ProjectValue())
+	}
+}
+
+func TestCallSummaryProjection_OpenGenericReturnRepairsWithSignatureFallback(t *testing.T) {
+	open := typ.NewTypeParam("T", nil)
+	summaryRec := typ.NewRecord().
+		Field("value", typ.LiteralString("hello")).
+		Field("get", typ.Func().OptParam("self", typ.Any).Returns(open).Build()).
+		Build()
+	boxParam := typ.NewTypeParam("T", nil)
+	box := typ.NewGeneric("Box", []*typ.TypeParam{boxParam},
+		typ.NewRecord().
+			Field("value", boxParam).
+			Field("get", typ.Func().OptParam("self", typ.Self).Returns(boxParam).Build()).
+			Build(),
+	)
+	projection := summary.CallSummaryProjection{
+		Targets: []summary.CallSummaryTarget{
+			{
+				DeclaredReturns:  false,
+				SignatureReturns: []typ.Type{typ.Instantiate(box, typ.String)},
+				Summary:          summary.Summary{Returns: []product.AbstractValue{product.FromType(summaryRec)}},
+			},
+		},
+	}
+
+	got := projection.ReturnValues()
+	if len(got) != 1 {
+		t.Fatalf("ReturnValues len = %d, want 1", len(got))
+	}
+	rec, ok := got[0].ProjectValue().(*typ.Record)
+	if !ok {
+		t.Fatalf("slot 0 = %v, want repaired record", got[0].ProjectValue())
+	}
+	get := rec.GetField("get")
+	if get == nil {
+		t.Fatal("missing get field")
+	}
+	fn, ok := get.Type.(*typ.Function)
+	if !ok || len(fn.Returns) != 1 || !typ.TypeEquals(fn.Returns[0], typ.String) {
+		t.Fatalf("get field = %#v, want function returning string", get)
+	}
+}
+
 func TestCallSummaryProjection_DeclaredUnknownReturnsAreCarrierValues(t *testing.T) {
 	projection := summary.CallSummaryProjection{
 		Targets: []summary.CallSummaryTarget{

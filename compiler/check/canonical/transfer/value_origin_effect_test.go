@@ -213,6 +213,33 @@ func TestValueOriginDemandDirectParamFieldPathUnderTruthyGuardAdmitsFalsyLeaf(t 
 		Build())
 }
 
+func TestValueOriginDemandDirectParamFieldPathUnderNonEmptyGuardAdmitsGuardedAwayLeaf(t *testing.T) {
+	page := &ast.IdentExpr{Value: "page"}
+	in := valueOriginInput(t, map[*ast.IdentExpr]cfg.SymbolID{page: cfg.SymbolID(42)})
+	tr := New(in, Config{})
+	tr.paramBySym[cfg.SymbolID(42)] = 0
+	pagePath := constraint.NewPath(cfg.SymbolID(42), "page")
+	out := flow.PointState{Cond: constraint.FromConstraints(
+		constraint.Truthy{Path: pagePath.Field("data_func")},
+		constraint.FieldNotEquals{
+			Target: pagePath,
+			Field:  "data_func",
+			Value:  typ.LiteralString(""),
+		},
+	)}
+
+	got := collectDemand(t, func(demand func(int, paramevidence.ParamContract)) {
+		tr.demandExprCtx(&out, &ast.AttrGetExpr{
+			Object:    page,
+			Key:       &ast.StringExpr{Value: "data_func"},
+			KeySyntax: ast.AttrKeyDot,
+		}, typ.String, demand)
+	})
+	assertDemandType(t, got, 0, typ.NewRecord().
+		ReadonlyField("data_func", typ.NewUnion(typ.String, typ.Nil, typ.False, typ.LiteralString(""))).
+		Build())
+}
+
 func TestValueOriginInvalidatedByGenericWriteEffect(t *testing.T) {
 	tr := New(input.Inputs{}, Config{})
 	entryPath := constraint.NewPath(cfg.SymbolID(71), "entry")

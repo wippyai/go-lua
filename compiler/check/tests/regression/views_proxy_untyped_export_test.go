@@ -3,6 +3,9 @@ package regression
 import (
 	"testing"
 
+	"github.com/wippyai/go-lua/compiler/ast"
+	"github.com/wippyai/go-lua/compiler/cfg"
+	"github.com/wippyai/go-lua/compiler/check/api"
 	"github.com/wippyai/go-lua/compiler/check/tests/testutil"
 	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/io"
@@ -88,32 +91,68 @@ return enabled and fonts
 		testutil.WithManifest("test", decTest),
 		testutil.WithManifest("page_registry", decRegistry),
 	)
-	foundProxyNotNil := false
-	foundProxyNotNilWithSymbol := false
-	if result.Session != nil && result.Session.RootResult != nil && result.Session.RootResult.FlowInputs != nil {
-		for _, ec := range result.Session.RootResult.FlowInputs.EdgeConditions {
-			for _, c := range ec.Condition.MustConstraints() {
-				if nn, ok := c.(constraint.NotNil); ok {
-					p := nn.Path
-					if p.Root == "page" && len(p.Segments) == 1 && p.Segments[0].Kind == constraint.SegmentField && p.Segments[0].Name == "proxy" {
-						foundProxyNotNil = true
-						if p.Symbol != 0 {
-							foundProxyNotNilWithSymbol = true
-						}
-					}
-				}
-			}
-		}
-	}
-	if !foundProxyNotNil {
-		t.Fatalf("expected flow inputs to include NotNil(page.proxy) from imported test.not_nil call")
-	}
-	if !foundProxyNotNilWithSymbol {
-		t.Fatalf("expected NotNil(page.proxy) path to carry symbol identity")
+	if !canonicalSuccessorProvesNotNilField(result.Session.RootResult, "not_nil", "page", "proxy") {
+		t.Fatalf("expected canonical post-call condition to include symbol-bearing NotNil(page.proxy) from imported test.not_nil call")
 	}
 	if result.HasError() {
 		t.Fatalf("expected no errors after imported not_nil(field-path), got: %v", testutil.ErrorMessages(result.Diagnostics))
 	}
+}
+
+func canonicalSuccessorProvesNotNilField(root *api.FuncResult, calleeField, rootName, fieldName string) bool {
+	if root == nil || root.Graph == nil {
+		return false
+	}
+	facts := root.ConditionProofFacts()
+	if facts == nil {
+		return false
+	}
+	found := false
+	root.Graph.EachCall(func(p cfg.Point, info *cfg.CallInfo) {
+		if found || callFieldName(info) != calleeField {
+			return
+		}
+		for _, succ := range root.Graph.Successors(p) {
+			if conditionHasSymbolNotNilField(facts.ConditionAt(succ), rootName, fieldName) {
+				found = true
+				return
+			}
+		}
+	})
+	return found
+}
+
+func callFieldName(info *cfg.CallInfo) string {
+	if info == nil || info.Call == nil || info.Call.Func == nil {
+		return ""
+	}
+	switch callee := info.Call.Func.(type) {
+	case *ast.AttrGetExpr:
+		if key, ok := callee.Key.(*ast.StringExpr); ok && key != nil {
+			return key.Value
+		}
+	case *ast.IdentExpr:
+		return callee.Value
+	}
+	return ""
+}
+
+func conditionHasSymbolNotNilField(cond constraint.Condition, rootName, fieldName string) bool {
+	for _, c := range cond.MustConstraints() {
+		nn, ok := c.(constraint.NotNil)
+		if !ok {
+			continue
+		}
+		p := nn.Path
+		if p.Symbol == 0 || p.Root != rootName || len(p.Segments) != 1 {
+			continue
+		}
+		seg := p.Segments[0]
+		if seg.Kind == constraint.SegmentField && seg.Name == fieldName {
+			return true
+		}
+	}
+	return false
 }
 
 // Same as above but without the preceding is_nil(err) assertion, to isolate

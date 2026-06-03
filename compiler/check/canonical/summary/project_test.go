@@ -99,6 +99,53 @@ func TestProject_ReturnProjectionFallsBackToTop(t *testing.T) {
 	}
 }
 
+func TestProject_ReturnProjectionTreatsFiniteReturnedCallTargetAsPendingBottom(t *testing.T) {
+	g := returnFunctionGraph(t, "if flag then return 1 end\nreturn callee()")
+	numberRet, callRet, info := splitNumberAndCallReturns(t, g)
+	call := info.SourceCallAt(0)
+	if call == nil {
+		t.Fatal("return call info not found")
+	}
+	refs := flow.WithFunctionRef(nil, call.CalleePath.Key(), flow.FunctionRefSetOf(flow.FunctionRef{GraphID: 77}))
+	numberValue := product.FromType(typ.Number)
+
+	sum := summary.Project(state.FunctionState{
+		Points: map[cfg.Point]flow.PointState{
+			numberRet: {Env: map[flow.ValueKey]product.AbstractValue{flow.ReturnSlotValueKey(0): numberValue}},
+			callRet:   {FunctionRefs: refs},
+		},
+	}, g)
+
+	if len(sum.Returns) != 1 || !product.Domain.Equal(sum.Returns[0], numberValue) {
+		t.Fatalf("finite returned call target = %v, want number", summary.ReturnValues(sum))
+	}
+}
+
+func TestProject_ReturnProjectionUsesStaticTargetClassifierForPendingCall(t *testing.T) {
+	g := returnFunctionGraph(t, "if flag then return 1 end\nreturn callee()")
+	numberRet, callRet, info := splitNumberAndCallReturns(t, g)
+	call := info.SourceCallAt(0)
+	if call == nil {
+		t.Fatal("return call info not found")
+	}
+	numberValue := product.FromType(typ.Number)
+
+	sum := summary.ProjectWithOptions(state.FunctionState{
+		Points: map[cfg.Point]flow.PointState{
+			numberRet: {Env: map[flow.ValueKey]product.AbstractValue{flow.ReturnSlotValueKey(0): numberValue}},
+			callRet:   {},
+		},
+	}, g, summary.ProjectOptions{
+		ReturnCallHasFiniteTarget: func(got *cfg.CallInfo) bool {
+			return got == call
+		},
+	})
+
+	if len(sum.Returns) != 1 || !product.Domain.Equal(sum.Returns[0], numberValue) {
+		t.Fatalf("static returned call target = %v, want number", summary.ReturnValues(sum))
+	}
+}
+
 func TestProject_ReturnProjectionDoesNotMutateInputEnv(t *testing.T) {
 	g := returnFunctionGraph(t, "return 123")
 	ret, _ := returnPointAndInfo(t, g)
@@ -222,6 +269,28 @@ func returnPointAndInfo(t *testing.T, g *cfg.Graph) (cfg.Point, *cfg.ReturnInfo)
 		t.Fatal("return point not found")
 	}
 	return ret, info
+}
+
+func splitNumberAndCallReturns(t *testing.T, g *cfg.Graph) (cfg.Point, cfg.Point, *cfg.ReturnInfo) {
+	t.Helper()
+	var numberRet cfg.Point
+	var callRet cfg.Point
+	var callInfo *cfg.ReturnInfo
+	g.EachReturn(func(p cfg.Point, info *cfg.ReturnInfo) {
+		if info == nil || len(info.Exprs) == 0 {
+			return
+		}
+		if info.SourceCallAt(0) != nil {
+			callRet = p
+			callInfo = info
+			return
+		}
+		numberRet = p
+	})
+	if numberRet == 0 || callRet == 0 || callInfo == nil {
+		t.Fatalf("expected number and call return points, got number=%v call=%v info=%#v", numberRet, callRet, callInfo)
+	}
+	return numberRet, callRet, callInfo
 }
 
 func cloneValueEnv(in map[flow.ValueKey]product.AbstractValue) map[flow.ValueKey]product.AbstractValue {

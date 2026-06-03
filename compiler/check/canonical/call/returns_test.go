@@ -11,6 +11,7 @@ import (
 	"github.com/wippyai/go-lua/types/effect"
 	"github.com/wippyai/go-lua/types/query/core"
 	"github.com/wippyai/go-lua/types/typ"
+	"github.com/wippyai/go-lua/types/typ/subst"
 )
 
 func TestInferReturnTypesUsesSummaryBeforeTypePipeline(t *testing.T) {
@@ -114,6 +115,56 @@ func TestInferReturnTypesClosesGenericIdentityFromArg(t *testing.T) {
 	})
 	if !ok || len(got) != 1 || !typ.TypeEquals(got[0], typ.String) {
 		t.Fatalf("InferReturnTypes generic identity = %#v/%v, want string", got, ok)
+	}
+}
+
+func TestInferReturnTypesClosesNestedGenericRecordReturnFromArg(t *testing.T) {
+	call := &ast.FuncCallExpr{
+		Func: &ast.IdentExpr{Value: "make_box"},
+		Args: []ast.Expr{&ast.StringExpr{Value: "hello"}},
+	}
+	tp := typ.NewTypeParam("T", nil)
+	box := typ.NewGeneric("Box", []*typ.TypeParam{tp},
+		typ.NewRecord().
+			Field("value", tp).
+			Field("get", typ.Func().OptParam("self", typ.Self).Returns(tp).Build()).
+			Build(),
+	)
+	fn := typ.Func().
+		TypeParamRef(tp).
+		Param("value", tp).
+		Returns(typ.Instantiate(box, tp)).
+		Build()
+
+	got, ok := InferReturnTypes(ReturnInput{
+		Call:     call,
+		ArgTypes: []typ.Type{typ.LiteralString("hello")},
+		Ctx:      db.NewQueryContext(db.New()),
+		Query:    core.NewEngine(),
+		Resolver: TypeResolver{
+			ExprType: func(expr ast.Expr) typ.Type {
+				if expr == call.Func {
+					return fn
+				}
+				return typ.Unknown
+			},
+		},
+	})
+	if !ok || len(got) != 1 {
+		t.Fatalf("InferReturnTypes generic box = %#v/%v, want one return", got, ok)
+	}
+	expanded := subst.ExpandInstantiated(got[0])
+	rec, ok := expanded.(*typ.Record)
+	if !ok {
+		t.Fatalf("InferReturnTypes generic box = %v expanded %v, want record", got[0], expanded)
+	}
+	get := rec.GetField("get")
+	if get == nil {
+		t.Fatal("missing get field")
+	}
+	getFn, ok := get.Type.(*typ.Function)
+	if !ok || len(getFn.Returns) != 1 || !typ.TypeEquals(getFn.Returns[0], typ.String) {
+		t.Fatalf("get field = %#v, want function returning string", get)
 	}
 }
 
@@ -336,6 +387,99 @@ func TestInferReturnValuesRefinesStructuralSummaryWithTypeFallback(t *testing.T)
 	}
 }
 
+func TestInferReturnValuesRepairsOpenGenericLeafWithInstantiatedFallback(t *testing.T) {
+	call := &ast.FuncCallExpr{Func: &ast.IdentExpr{Value: "make_box"}}
+	open := typ.NewTypeParam("T", nil)
+	summary := typ.NewRecord().
+		Field("value", typ.LiteralString("hello")).
+		Field("get", typ.Func().OptParam("self", typ.Any).Returns(open).Build()).
+		Build()
+	boxParam := typ.NewTypeParam("T", nil)
+	box := typ.NewGeneric("Box", []*typ.TypeParam{boxParam},
+		typ.NewRecord().
+			Field("value", boxParam).
+			Field("get", typ.Func().OptParam("self", typ.Self).Returns(boxParam).Build()).
+			Build(),
+	)
+	instantiated := typ.Instantiate(box, typ.String)
+	if expanded := subst.ExpandInstantiated(instantiated); expanded == instantiated {
+		t.Fatalf("ExpandInstantiated(%v) did not expand", instantiated)
+	}
+
+	got, ok := InferReturnValues(ReturnValueInput{
+		Call:                call,
+		TypePolicyAvailable: true,
+		SummaryReturnValues: func(*ast.FuncCallExpr) []product.AbstractValue {
+			return []product.AbstractValue{product.FromType(summary)}
+		},
+		TypeFallback: func() ([]typ.Type, bool) {
+			return []typ.Type{instantiated}, true
+		},
+	})
+	if !ok || len(got) != 1 {
+		t.Fatalf("InferReturnValues generic fallback = %#v, %v; want one value", got, ok)
+	}
+	rec, ok := got[0].ProjectValue().(*typ.Record)
+	if !ok {
+		t.Fatalf("return value = %v, want record", got[0].ProjectValue())
+	}
+	value := rec.GetField("value")
+	if value == nil || !typ.TypeEquals(value.Type, typ.LiteralString("hello")) {
+		t.Fatalf("value field = %#v, want literal hello", value)
+	}
+	get := rec.GetField("get")
+	if get == nil {
+		t.Fatal("missing get field")
+	}
+	fn, ok := get.Type.(*typ.Function)
+	if !ok || len(fn.Returns) != 1 || !typ.TypeEquals(fn.Returns[0], typ.String) {
+		t.Fatalf("get field = %#v, want function returning string", get)
+	}
+}
+
+func TestInferReturnValuesRepairsOpenGenericLeafWithExpandedFallback(t *testing.T) {
+	call := &ast.FuncCallExpr{Func: &ast.IdentExpr{Value: "make_box"}}
+	open := typ.NewTypeParam("T", nil)
+	summary := typ.NewRecord().
+		Field("value", typ.LiteralString("hello")).
+		Field("get", typ.Func().OptParam("self", typ.Any).Returns(open).Build()).
+		Build()
+	fallback := typ.NewRecord().
+		Field("value", typ.String).
+		Field("get", typ.Func().OptParam("self", typ.Self).Returns(typ.String).Build()).
+		Build()
+
+	got, ok := InferReturnValues(ReturnValueInput{
+		Call:                call,
+		TypePolicyAvailable: true,
+		SummaryReturnValues: func(*ast.FuncCallExpr) []product.AbstractValue {
+			return []product.AbstractValue{product.FromType(summary)}
+		},
+		TypeFallback: func() ([]typ.Type, bool) {
+			return []typ.Type{fallback}, true
+		},
+	})
+	if !ok || len(got) != 1 {
+		t.Fatalf("InferReturnValues expanded fallback = %#v, %v; want one value", got, ok)
+	}
+	rec, ok := got[0].ProjectValue().(*typ.Record)
+	if !ok {
+		t.Fatalf("return value = %v, want record", got[0].ProjectValue())
+	}
+	value := rec.GetField("value")
+	if value == nil || !typ.TypeEquals(value.Type, typ.LiteralString("hello")) {
+		t.Fatalf("value field = %#v, want literal hello", value)
+	}
+	get := rec.GetField("get")
+	if get == nil {
+		t.Fatal("missing get field")
+	}
+	fn, ok := get.Type.(*typ.Function)
+	if !ok || len(fn.Returns) != 1 || !typ.TypeEquals(fn.Returns[0], typ.String) {
+		t.Fatalf("get field = %#v, want function returning string", get)
+	}
+}
+
 func TestInferReturnValuesTopLikeSummaryYieldsToTypeFallback(t *testing.T) {
 	call := &ast.FuncCallExpr{Func: &ast.IdentExpr{Value: "f"}}
 
@@ -443,6 +587,46 @@ func TestInferReturnValuesPendingInputRejectsTopLikeTypeFallback(t *testing.T) {
 				t.Fatalf("pending top-like fallback = %#v, %v; want nil, false", got, ok)
 			}
 		})
+	}
+}
+
+func TestInferReturnValuesSelectedTargetBlocksGradualAnySeed(t *testing.T) {
+	call := &ast.FuncCallExpr{Func: &ast.IdentExpr{Value: "f"}}
+	gradualUsed := false
+
+	got, ok := InferReturnValues(ReturnValueInput{
+		Call:                 call,
+		TypePolicyAvailable:  true,
+		BlockDynamicFallback: true,
+		ExprValue: func(ast.Expr) (product.AbstractValue, bool) {
+			gradualUsed = true
+			return product.GradualAny(), true
+		},
+		TypeFallback: func() ([]typ.Type, bool) {
+			return []typ.Type{typ.Any}, true
+		},
+	})
+	if !ok || len(got) != 1 || !product.Domain.Equal(got[0], product.Bottom()) {
+		t.Fatalf("selected target top-like fallback = %#v, %v; want bottom, true", got, ok)
+	}
+	if gradualUsed {
+		t.Fatal("selected local target used gradual dynamic fallback before summary convergence")
+	}
+}
+
+func TestInferReturnValuesSelectedTargetAllowsInformativeTypeFallback(t *testing.T) {
+	call := &ast.FuncCallExpr{Func: &ast.IdentExpr{Value: "f"}}
+
+	got, ok := InferReturnValues(ReturnValueInput{
+		Call:                 call,
+		TypePolicyAvailable:  true,
+		BlockDynamicFallback: true,
+		TypeFallback: func() ([]typ.Type, bool) {
+			return []typ.Type{typ.Number}, true
+		},
+	})
+	if !ok || len(got) != 1 || !typ.TypeEquals(got[0].ProjectValue(), typ.Number) {
+		t.Fatalf("selected target informative fallback = %#v, %v; want number, true", got, ok)
 	}
 }
 

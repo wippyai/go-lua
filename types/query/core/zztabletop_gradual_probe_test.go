@@ -7,10 +7,10 @@ import (
 )
 
 // TestZZTableTopGradualProbe asserts the bare builtin `table` top projects the
-// gradual top (`any`) across field/index/method/write access, while a TYPED
-// table ({[K]:V} map, {T} array, named record) and an INFERRED `unknown` stay
-// strictly checked. The bare-`table` annotation is an explicit gradual escape
-// hatch (like _G/_VERSION); inferred unknown must keep its strict errors.
+// compatibility atom (`any`) across field/index/method/write access, while a
+// TYPED table ({[K]:V} map, {T} array, named record) and an INFERRED `unknown`
+// stay strictly checked. The bare-`table` annotation is still opaque: concrete
+// operator use must be proved by a guard/assertion/cast.
 func TestZZTableTopGradualProbe(t *testing.T) {
 	tableTop := typ.NewInterface("table", nil)
 
@@ -25,11 +25,11 @@ func TestZZTableTopGradualProbe(t *testing.T) {
 		t.Fatalf("Method(table-top): want ok, got !ok")
 	}
 
-	// Gradual any field read is admitted as stringable: concat yields string,
-	// no error. This is the deadlock-dataflow-node `.. self.dataflow_id` case.
+	// A table-top field read remains opaque. Concatenation is concrete string
+	// use, so it cannot fabricate string from `any`.
 	fieldT, _ := Field(tableTop, "dataflow_id")
-	if got := BinaryOp(typ.String, "..", fieldT); got != typ.String {
-		t.Fatalf("concat(string, table-top.field): want string, got %v", got)
+	if got := BinaryOp(typ.String, "..", fieldT); got != typ.Unknown {
+		t.Fatalf("concat(string, table-top.field): want unknown, got %v", got)
 	}
 
 	// SOUNDNESS: a TYPED map stays strict. A field read off {[string]:number}

@@ -47,6 +47,7 @@ const (
 	RelationSeedSiblingNil RelationEffectKind = iota + 1
 	RelationKillSymbols
 	RelationSeedTargetLengthParam
+	RelationSeedContainerLowerBound
 	RelationKillLengthTargets
 )
 
@@ -61,6 +62,7 @@ type RelationEffect struct {
 	TargetRoot cfg.SymbolID
 	TargetKey  constraint.PathKey
 	ParamIndex int
+	Lower      int64
 }
 
 // ReturnSlotEffect is the transfer payload for one caller-visible return slot.
@@ -212,6 +214,8 @@ func (t *Transfer) applyRelationEffect(out *flow.PointState, effect RelationEffe
 		out.Rel = out.Rel.KillSymbols(effect.Symbols...)
 	case RelationSeedTargetLengthParam:
 		out.Rel = out.Rel.WithTargetLengthParam(effect.TargetRoot, effect.TargetKey, effect.ParamIndex)
+	case RelationSeedContainerLowerBound:
+		out.Rel = out.Rel.WithContainerLowerBound(effect.TargetRoot, effect.TargetKey, effect.Lower)
 	case RelationKillLengthTargets:
 		out.Rel = out.Rel.KillLengthTargets(effect.Symbols...)
 	default:

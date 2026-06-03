@@ -420,6 +420,32 @@ func TestConditionedPathEvidenceFromCondition_AddsDiscriminant(t *testing.T) {
 	}
 }
 
+func TestConditionedPathEvidenceFromCondition_FieldNotEqualsAdmitsExcludedLiteral(t *testing.T) {
+	page := constraint.NewPath(1, "page")
+	evidence := typ.NewRecord().
+		ReadonlyField("data_func", typ.String).
+		Build()
+	cond := constraint.FromConstraints(
+		constraint.Truthy{Path: page.Field("data_func")},
+		constraint.FieldNotEquals{
+			Target: page,
+			Field:  "data_func",
+			Value:  typ.LiteralString(""),
+		},
+	)
+
+	got, conditional := conditionedPathEvidenceFromCondition(page.Field("data_func"), evidence, cond, nil)
+	if !conditional {
+		t.Fatal("conditionedPathEvidenceFromCondition() did not mark field disequality evidence conditional")
+	}
+	want := typ.NewRecord().
+		ReadonlyField("data_func", typ.NewUnion(typ.String, typ.Nil, typ.False, typ.LiteralString(""))).
+		Build()
+	if !typ.TypeEquals(got, want) {
+		t.Fatalf("conditioned evidence = %v, want %v", got, want)
+	}
+}
+
 func TestMergeConditionedRecordEvidence_OrdersByStructuralFieldKey(t *testing.T) {
 	evidence := typ.NewRecord().
 		Field("b", typ.String).

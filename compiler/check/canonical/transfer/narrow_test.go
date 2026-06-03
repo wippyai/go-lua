@@ -211,6 +211,55 @@ func TestApplyParamInequalityNarrowsTypedDiscriminantPath(t *testing.T) {
 	}
 }
 
+func TestApplyParamNarrowWritesConditionAxisForStaticPath(t *testing.T) {
+	pageSym := cfg.SymbolID(41)
+	page := &ast.IdentExpr{Value: "page"}
+	proxy := &ast.AttrGetExpr{
+		Object:    page,
+		Key:       &ast.StringExpr{Value: "proxy"},
+		KeySyntax: ast.AttrKeyDot,
+	}
+	tr := New(keyPresenceInput(t, map[*ast.IdentExpr]cfg.SymbolID{
+		page: pageSym,
+	}), Config{})
+	out := flow.PointState{}
+	call := &ast.FuncCallExpr{Args: []ast.Expr{proxy}}
+
+	if dead := tr.ApplyParamNarrows(&out, call, []ParamNarrow{{Param: 0, Check: cfg.CheckNotNil, EqParam: -1}}); dead {
+		t.Fatal("not_nil(page.proxy) should not kill an unconstrained continuation")
+	}
+
+	wantPath := constraint.Path{
+		Root:   "page",
+		Symbol: pageSym,
+		Segments: []constraint.Segment{
+			{Kind: constraint.SegmentField, Name: "proxy"},
+		},
+	}
+	want := constraint.FromConstraints(constraint.NotNil{Path: wantPath})
+	if !constraint.Domain.Equal(out.Cond, want) {
+		t.Fatalf("condition after not_nil(page.proxy) = %v, want %v", out.Cond, want)
+	}
+}
+
+func TestApplyParamNarrowDeadWhenPostconditionImpossible(t *testing.T) {
+	sym := cfg.SymbolID(42)
+	x := &ast.IdentExpr{Value: "x"}
+	tr := New(keyPresenceInput(t, map[*ast.IdentExpr]cfg.SymbolID{
+		x: sym,
+	}), Config{})
+	out := flow.PointState{
+		Env: map[flow.ValueKey]product.AbstractValue{
+			flow.SymbolValueKey(sym): product.FromType(typ.Nil),
+		},
+	}
+	call := &ast.FuncCallExpr{Args: []ast.Expr{x}}
+
+	if dead := tr.ApplyParamNarrows(&out, call, []ParamNarrow{{Param: 0, Check: cfg.CheckNotNil, EqParam: -1}}); !dead {
+		t.Fatal("not_nil(x) over nil-only x should kill the continuation")
+	}
+}
+
 func TestNarrowLengthGuardRefinesContainerAndLiteralIndexRead(t *testing.T) {
 	sym := cfg.SymbolID(18)
 	rows := &ast.IdentExpr{Value: "rows"}

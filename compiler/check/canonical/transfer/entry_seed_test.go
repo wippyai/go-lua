@@ -37,6 +37,17 @@ func TestEntrySeedKeepsBareDeclaredAnyAsDynamicTop(t *testing.T) {
 	}
 }
 
+func TestEntrySeedOpenGenericDeclaredParamUsesClosedEntryValue(t *testing.T) {
+	got := entrySeedValue(
+		typ.NewTypeParam("T", nil),
+		product.FromType(typ.String),
+		product.AbstractValue{},
+	)
+	if !typ.TypeEquals(got.ProjectValue(), typ.String) {
+		t.Fatalf("generic entry seed = %v, want string", got.ProjectValue())
+	}
+}
+
 func TestEntrySeedBodyContractRefinesDeclaredAny(t *testing.T) {
 	contract := typ.NewRecord().ReadonlyField("id", typ.String).Build()
 	got := entrySeedValue(
@@ -49,7 +60,7 @@ func TestEntrySeedBodyContractRefinesDeclaredAny(t *testing.T) {
 	}
 }
 
-func TestEntrySeedBodyContractRefinesEntryArrayElement(t *testing.T) {
+func TestEntrySeedExactEntryIsNotRefinedByBodyContract(t *testing.T) {
 	entry := typ.NewArray(typ.Any)
 	contract := typ.NewArray(typ.NewRecord().ReadonlyField("id", typ.String).Build())
 	got := entrySeedValue(
@@ -57,8 +68,8 @@ func TestEntrySeedBodyContractRefinesEntryArrayElement(t *testing.T) {
 		product.FromType(entry),
 		product.FromType(contract),
 	)
-	if !typ.TypeEquals(got.ProjectValue(), contract) {
-		t.Fatalf("contract array seed = %v, want %v", got.ProjectValue(), contract)
+	if !typ.TypeEquals(got.ProjectValue(), entry) {
+		t.Fatalf("exact entry seed = %v, want %v", got.ProjectValue(), entry)
 	}
 }
 

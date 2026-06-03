@@ -180,6 +180,9 @@ func typeRefInternKey(t typ.Type) (uint64, bool) {
 }
 
 func queryTypeRefEqual(left, right typ.Type) bool {
+	if left == right {
+		return true
+	}
 	if left == nil || right == nil {
 		return left == right
 	}
@@ -200,18 +203,16 @@ func queryTypeRefEqual(left, right typ.Type) bool {
 		return queryTypeRefEqual(leftAlias.Target, rightAlias.Target)
 	}
 	if typ.ContainsRecursive(left) || typ.ContainsRecursive(right) {
-		// SameProductFamily merges equivalent unfoldings of one recursive family,
-		// which a field/method memo must keep sharing to converge. It is, however,
-		// alias- and identity-transparent and bottoms out at a constant terminal
-		// hash for recursive-containing leaves, so two distinct families that
-		// share structural precision (for example a per-module class allocation
-		// whose constructor return differs only by the family) compare as equal
-		// and would memoize the first family's field result for all of them. Gate
-		// the precision merge on an equal recursive-family fingerprint so distinct
-		// families keep distinct cache refs while equivalent unfoldings, which
-		// reference the same family identities, still share.
-		return typ.SameProductFamily(left, right) &&
-			typ.RecursiveFamilyFingerprint(left) == typ.RecursiveFamilyFingerprint(right)
+		if _, leftRec := left.(*typ.Recursive); leftRec {
+			if _, rightRec := right.(*typ.Recursive); rightRec {
+				return typ.TypeEquals(left, right)
+			}
+		}
+		// Recursive product-family equality can require a full precision walk over
+		// large receiver-expanded graphs. Type-ref interning is a cache-sharing
+		// optimization, so distinct recursive-containing product surfaces safely
+		// decline sharing rather than proving equality here.
+		return false
 	}
 	return typ.TypeEquals(left, right)
 }

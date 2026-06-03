@@ -129,6 +129,38 @@ func TypeParamScope(in ScopeInput) *scope.State {
 	return GenericScope(nil, in)
 }
 
+// FunctionContextScope returns the lexical base extended with the function-local
+// context needed by expression observation: generic type parameters, parameter
+// local names, and the typed variadic element for `...`.
+func FunctionContextScope(in ScopeInput) *scope.State {
+	sc := TypeParamScope(in)
+	fn := in.Function
+	if fn == nil || fn.ParList == nil {
+		return sc
+	}
+	var localNames []string
+	for _, name := range fn.ParList.Names {
+		if name != "" {
+			localNames = append(localNames, name)
+		}
+	}
+	if len(localNames) > 0 && sc != nil {
+		sc = sc.WithLocalNames(localNames)
+	}
+	if fn.ParList.HasVargs && sc != nil {
+		variadic := typ.Any
+		if in.ResolveType != nil && fn.ParList.VarargType != nil {
+			if t := in.ResolveType(fn.ParList.VarargType, sc); t != nil {
+				variadic = t
+			} else {
+				variadic = typ.Unknown
+			}
+		}
+		sc = sc.WithVariadic(variadic)
+	}
+	return sc
+}
+
 // ReturnInput is the return-vector lowering input.
 type ReturnInput struct {
 	Function *ast.FunctionExpr

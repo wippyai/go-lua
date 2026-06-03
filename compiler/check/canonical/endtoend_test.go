@@ -16,6 +16,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/check/scope"
 	"github.com/wippyai/go-lua/compiler/parse"
 	"github.com/wippyai/go-lua/types/constraint"
+	"github.com/wippyai/go-lua/types/domain/value/product"
 	"github.com/wippyai/go-lua/types/flow"
 	"github.com/wippyai/go-lua/types/flow/propagate"
 	"github.com/wippyai/go-lua/types/kind"
@@ -251,6 +252,70 @@ return {}, nil
 		Build()
 	if !typ.TypeEquals(got.ProjectValue(), want) {
 		t.Fatalf("guarded demand = %v, want %v", got.ProjectValue(), want)
+	}
+}
+
+func TestCanonical_GuardedFieldDemandSurvivesTypedLocalRead(t *testing.T) {
+	resolve := func(expr ast.TypeExpr, _ *scope.State) typ.Type {
+		if prim, ok := expr.(*ast.PrimitiveTypeExpr); ok && prim.Name == "string" {
+			return typ.String
+		}
+		return nil
+	}
+	fs, _ := solveFnWithTransferConfig(t, []string{"page"}, nil, resolve, `
+if not page or not page.data_func or page.data_func == "" then
+	return {}, nil
+end
+local name: string = page.data_func
+takes_string(page.data_func)
+return {}, nil
+`, transfer.Config{CallTyper: staticDemandTyper{demand: typ.String}})
+
+	got, ok := fs.Contracts[0]
+	if !ok {
+		t.Fatalf("guarded typed local read must preserve parameter contract; contracts=%v", fs.Contracts)
+	}
+	want := typ.NewRecord().
+		ReadonlyField("data_func", typ.NewUnion(typ.String, typ.Nil, typ.False, typ.LiteralString(""))).
+		Build()
+	if !typ.TypeEquals(got.ProjectValue(), want) {
+		t.Fatalf("guarded typed-local demand = %v, want %v", got.ProjectValue(), want)
+	}
+}
+
+func TestCanonical_GuardedFieldDemandWithContradictoryEntryValueEmitsNoDemand(t *testing.T) {
+	resolve := func(expr ast.TypeExpr, _ *scope.State) typ.Type {
+		if prim, ok := expr.(*ast.PrimitiveTypeExpr); ok && prim.Name == "string" {
+			return typ.String
+		}
+		return nil
+	}
+	stmts, err := parse.ParseString(`
+if not page or not page.data_func or page.data_func == "" then
+	return {}, nil
+end
+local name: string = page.data_func
+takes_string(page.data_func)
+return {}, nil
+`, "canonical.lua")
+	if err != nil {
+		t.Fatalf("parse failed: %v", err)
+	}
+	fn := &ast.FunctionExpr{
+		ParList: &ast.ParList{Names: []string{"page"}},
+		Stmts:   stmts,
+	}
+	in := input.BuildFromFunction(fn, resolve, nil, "takes_string")
+	tr := transfer.New(in, transfer.Config{CallTyper: staticDemandTyper{demand: typ.String}})
+	entryValue := product.FromType(typ.NewRecord().
+		Field("data_func", typ.NewUnion(typ.Nil, typ.False, typ.LiteralString(""))).
+		Build())
+	fs := equation.NewBuilder(in.Graph, in.Scope.NumParams(), tr).
+		WithEntryValues(map[int]product.AbstractValue{0: entryValue}).
+		Solve()
+
+	if got, ok := fs.Contracts[0]; ok {
+		t.Fatalf("contradictory exact entry made guarded call unreachable, but emitted demand %v", got.ProjectValue())
 	}
 }
 

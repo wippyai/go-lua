@@ -4,6 +4,7 @@ import (
 	"github.com/wippyai/go-lua/types/domain/value/product"
 	"github.com/wippyai/go-lua/types/flow"
 	"github.com/wippyai/go-lua/types/typ"
+	"github.com/wippyai/go-lua/types/typ/subst"
 )
 
 // CallSummaryTarget identifies one candidate callee summary at a call site.
@@ -27,9 +28,14 @@ type CallSummaryProjection struct {
 	Targets []CallSummaryTarget
 }
 
-// ReturnValues joins Summary.Returns across targets slotwise. Targets flagged as
-// DeclaredReturns are intentionally skipped so the normal call pipeline handles
-// declared return typing paths unchanged.
+// ReturnValues joins caller-visible returns across selected targets slotwise.
+// Closed declared-return targets use their signature-projected tuple: a source
+// contract such as `(): number` owns the public return surface even when the body
+// happens to return a literal. Open generic declarations (`(): T`, `(): {T}`)
+// must not be marked DeclaredReturns here; they are binder relations, not closed
+// runtime facts. Those targets keep the exact-context Summary.Returns so calls
+// like `apply<T,U>(x, fn): U` can return the solved callback result instead of a
+// broad signature fallback.
 func (p CallSummaryProjection) ReturnValues() []product.AbstractValue {
 	var out []product.AbstractValue
 	for _, target := range p.Targets {
@@ -51,6 +57,9 @@ func (p CallSummaryProjection) InferredReturnValues() []product.AbstractValue {
 
 func targetReturnValues(target CallSummaryTarget) ([]product.AbstractValue, bool) {
 	if !target.DeclaredReturns {
+		if refined, ok := RefineReturnValuesWithTypes(target.Summary.Returns, target.SignatureReturns); ok {
+			return refined, true
+		}
 		return target.Summary.Returns, true
 	}
 	if len(target.SignatureReturns) == 0 {
@@ -61,6 +70,43 @@ func targetReturnValues(target CallSummaryTarget) ([]product.AbstractValue, bool
 	// declared slots must be real product values so slotwise Join cannot see a
 	// zero handle.
 	return product.FromTypesTotal(target.SignatureReturns), true
+}
+
+// RefineReturnValuesWithTypes repairs product return slots with a closed
+// same-expression type fallback. The summary keeps precise evidence it already
+// owns; the fallback closes top-like or free-symbol leaves such as an open `T`
+// that should not cross the call boundary. This is a precision merge, not a
+// join and not whole-slot replacement.
+func RefineReturnValuesWithTypes(values []product.AbstractValue, types []typ.Type) ([]product.AbstractValue, bool) {
+	if len(values) == 0 || len(values) != len(types) {
+		return nil, false
+	}
+	out := make([]product.AbstractValue, len(values))
+	copy(out, values)
+	changed := false
+	for i, fallbackType := range types {
+		if fallbackType == nil || typ.IsUnknown(fallbackType) {
+			continue
+		}
+		fallbackType = subst.ExpandInstantiated(fallbackType)
+		summaryType := product.ProjectValueOrUnknown(values[i])
+		refinedType, refined := typ.RefineWithFallback(summaryType, fallbackType)
+		if !refined {
+			if !typ.MorePrecise(fallbackType, summaryType) {
+				continue
+			}
+			refinedType = fallbackType
+		}
+		if typ.TypeEquals(refinedType, summaryType) {
+			continue
+		}
+		out[i] = product.FromType(refinedType)
+		changed = true
+	}
+	if !changed {
+		return nil, false
+	}
+	return out, true
 }
 
 // InferredReturnTypes projects InferredReturnValues to caller-visible types.

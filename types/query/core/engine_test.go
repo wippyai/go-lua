@@ -163,6 +163,41 @@ func TestEngine_Field_MetatableDivergentOpenRecordsDoNotShareInternRef(t *testin
 	}
 }
 
+func TestQueryTypeRefEqualRecursiveIdentityFastPath(t *testing.T) {
+	rec := typ.NewRecursive("Node", func(self typ.Type) typ.Type {
+		return typ.NewRecord().
+			Field("next", self).
+			Field("handler", typ.Func().Param("self", self).Returns(self).Build()).
+			Build()
+	})
+	if !queryTypeRefEqual(rec, rec) {
+		t.Fatal("recursive type-ref equality should accept identical type nodes")
+	}
+}
+
+func TestQueryTypeRefEqualDistinctRecursiveFamiliesDoNotShareRef(t *testing.T) {
+	left := typ.NewRecursive("Left", func(self typ.Type) typ.Type {
+		return typ.NewRecord().Field("next", self).Build()
+	})
+	right := typ.NewRecursive("Right", func(self typ.Type) typ.Type {
+		return typ.NewRecord().Field("next", self).Build()
+	})
+	if queryTypeRefEqual(left, right) {
+		t.Fatal("distinct recursive families should not share type refs")
+	}
+}
+
+func TestQueryTypeRefEqualDeclinesRecursiveProductSurfaceSharing(t *testing.T) {
+	node := typ.NewRecursive("Node", func(self typ.Type) typ.Type {
+		return typ.NewRecord().Field("next", self).Build()
+	})
+	left := typ.NewRecord().Field("node", node).Build()
+	right := typ.NewRecord().Field("node", node).Build()
+	if queryTypeRefEqual(left, right) {
+		t.Fatal("recursive-containing product surfaces should not require structural sharing")
+	}
+}
+
 func TestEngine_Index_Array(t *testing.T) {
 	e := NewEngine()
 	arr := typ.NewArray(typ.String)

@@ -1,6 +1,7 @@
 package canonical_test
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/wippyai/go-lua/compiler/check"
@@ -13,13 +14,14 @@ func TestDynamicRegistryRendererGuardRegression(t *testing.T) {
 	pageRegistry := `
 type Entry = { id: string, data: {[string]: any} }
 local pages = {}
-local function qualify_id(entry_id, relative_id)
+local function qualify_id(entry_id: string, relative_id: string): string
     return entry_id .. ":" .. relative_id
 end
 function pages.build_page(entry: Entry)
-    local data_func = entry.data.data_func
-    if data_func and data_func ~= "" then
-        data_func = qualify_id(entry.id, data_func)
+    local raw_data_func = entry.data.data_func
+    local data_func: string? = nil
+    if type(raw_data_func) == "string" and raw_data_func ~= "" then
+        data_func = qualify_id(entry.id, raw_data_func)
     end
     local page = {}
     page.data_func = data_func
@@ -42,8 +44,11 @@ local function get_page_data(page)
 end
 local page = page_registry.build_page({ id = "demo", data = { data_func = "load_data" } })
 return get_page_data(page)
-`
+	`
 	mod := testutil.CheckAndExport(pageRegistry, "page_registry", testutil.WithStdlib(), testutil.WithCheckOption(check.WithCanonicalFlow()))
+	if msgs := testutil.ErrorMessages(mod.Errors); len(msgs) != 0 {
+		t.Fatalf("expected page_registry provider to export cleanly, got diagnostics: %v", msgs)
+	}
 	res := testutil.Check(main, testutil.WithStdlib(), testutil.WithModule("page_registry", mod), testutil.WithCheckOption(check.WithCanonicalFlow()))
 	if msgs := testutil.ErrorMessages(res.Diagnostics); len(msgs) != 0 {
 		t.Fatalf("expected dynamic registry renderer guard to be clean, got diagnostics: %v", msgs)
@@ -81,5 +86,43 @@ return pages
 	dataFunc := ret.GetField("data_func")
 	if dataFunc == nil || !typ.IsAny(dataFunc.Type) {
 		t.Fatalf("expected build_page return data_func:any, got %v", fn.Returns[0])
+	}
+}
+
+func TestDynamicRegistryUnprovedAnyConcatRejected(t *testing.T) {
+	pageRegistry := `
+type Entry = { id: string, data: {[string]: any} }
+local pages = {}
+local function qualify_id(entry_id, relative_id)
+    return entry_id .. ":" .. relative_id
+end
+function pages.build_page(entry: Entry)
+    local data_func = entry.data.data_func
+    if data_func and data_func ~= "" then
+        data_func = qualify_id(entry.id, data_func)
+    end
+    local page = {}
+    page.data_func = data_func
+    return page
+end
+return pages
+`
+	mod := testutil.CheckAndExport(pageRegistry, "page_registry", testutil.WithStdlib(), testutil.WithCheckOption(check.WithCanonicalFlow()))
+	msgs := testutil.ErrorMessages(mod.Errors)
+	if len(msgs) == 0 {
+		t.Fatal("expected unproved any/unknown concat in provider to be rejected")
+	}
+	wantUnknown := false
+	wantAny := false
+	for _, msg := range msgs {
+		if strings.Contains(msg, "cannot concatenate unknown") {
+			wantUnknown = true
+		}
+		if strings.Contains(msg, "cannot concatenate any") {
+			wantAny = true
+		}
+	}
+	if !wantUnknown || !wantAny {
+		t.Fatalf("expected concat proof-boundary diagnostics for unknown and any, got %v", msgs)
 	}
 }

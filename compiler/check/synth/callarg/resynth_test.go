@@ -157,3 +157,27 @@ func TestFull_IdentifierDoesNotUseExpectedAsProofForUnknown(t *testing.T) {
 		t.Fatalf("got %v, want unknown", result)
 	}
 }
+
+func TestFull_IdentifierDoesNotUseRecursiveExpectedAsProof(t *testing.T) {
+	inferred := typ.Func().Param("value", typ.String).Build()
+	node := typ.NewRecursive("Node", func(self typ.Type) typ.Type {
+		return typ.NewRecord().Field("next", self).Build()
+	})
+	expected := typ.NewRecord().
+		Field("node", node).
+		Field("handler", inferred).
+		Build()
+	synthWithExpected := func(arg ast.Expr, p cfg.Point, expected typ.Type) typ.Type {
+		if expected != nil {
+			t.Fatalf("identifier synthesis got expected %v, want nil", expected)
+		}
+		return inferred
+	}
+
+	reSynth := Full(synthWithExpected, nil, 0)
+	result := reSynth(0, &ast.IdentExpr{Value: "handler"}, expected)
+
+	if result != inferred {
+		t.Fatalf("got %v, want inferred recursive-heavy value left unchanged", result)
+	}
+}

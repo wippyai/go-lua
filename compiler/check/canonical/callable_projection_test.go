@@ -263,8 +263,26 @@ func (s *canonicalTestSession) RegisterGraphHierarchy(root *cfg.Graph) {
 				}
 			}
 		}
-		for _, nested := range g.NestedFunctions() {
-			child := s.GetOrBuildCFG(nested.Func)
+		evidence := s.store.EvidenceForGraph(g)
+		for _, def := range evidence.FunctionDefinitions {
+			if def.Nested.Func == nil {
+				continue
+			}
+			child := s.GetOrBuildCFG(def.Nested.Func)
+			if child == nil {
+				continue
+			}
+			s.store.RegisterGraph(child, def.Nested.Func)
+			s.store.RegisterNestedMeta(child.ID(), g.ID(), def.Nested.Point)
+			nestedSym := def.Symbol
+			if nestedSym == 0 && child.Bindings() != nil {
+				if sym, ok := child.Bindings().FuncLitSymbol(def.Nested.Func); ok {
+					nestedSym = sym
+				}
+			}
+			if nestedSym != 0 {
+				s.store.RegisterFunctionRef(nestedSym, def.Nested.Func, child, g.ID(), def.Nested.Point)
+			}
 			walk(child)
 		}
 	}

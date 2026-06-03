@@ -297,6 +297,10 @@ func TestCanonicalCuratedGate(t *testing.T) {
 		"regression/type-alias-function-return",
 		// A generic type alias instantiation resolves through the module scope.
 		"regression/generic-type-alias-instantiate",
+		// Strict-any proof boundary with exact-call entry values: the provider may
+		// export `data_func:any`, but the concrete call path with a literal string
+		// must remain clean without teaching the driver a page-registry special case.
+		"narrowing/dynamic-registry-renderer-guard",
 	}
 
 	suites, err := discoverFixtures("testdata/fixtures")
@@ -309,21 +313,24 @@ func TestCanonicalCuratedGate(t *testing.T) {
 	}
 
 	for _, name := range mustPass {
-		s, ok := byName[name]
-		if !ok {
-			t.Fatalf("gate fixture %q not found", name)
-		}
-		diags, entry := canonicalFixtureDiagnostics(s)
-		v := judgeAgainstCuratedExpectations(s, diags, entry)
-		if !v.passed {
-			t.Errorf("%s: canonical fails curated truth (%d missing, %d unexpected)", name, len(v.missing), len(v.unexpected))
-			for _, m := range v.missing {
-				t.Errorf("    MISS: %s", m)
+		name := name
+		t.Run(name, func(t *testing.T) {
+			s, ok := byName[name]
+			if !ok {
+				t.Fatalf("gate fixture %q not found", name)
 			}
-			for _, u := range v.unexpected {
-				t.Errorf("    FALSE+: %s", u)
+			diags, entry := canonicalFixtureDiagnostics(s)
+			v := judgeAgainstCuratedExpectations(s, diags, entry)
+			if !v.passed {
+				t.Errorf("%s: canonical fails curated truth (%d missing, %d unexpected)", name, len(v.missing), len(v.unexpected))
+				for _, m := range v.missing {
+					t.Errorf("    MISS: %s", m)
+				}
+				for _, u := range v.unexpected {
+					t.Errorf("    FALSE+: %s", u)
+				}
 			}
-		}
+		})
 	}
 }
 

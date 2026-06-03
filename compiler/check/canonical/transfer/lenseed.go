@@ -3,6 +3,7 @@ package transfer
 import (
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/cfg"
+	"github.com/wippyai/go-lua/compiler/check/domain/fieldkey"
 	"github.com/wippyai/go-lua/compiler/check/domain/paramevidence"
 	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/domain/value/product"
@@ -13,12 +14,14 @@ import (
 	"github.com/wippyai/go-lua/types/typ/unwrap"
 )
 
-// lenseed.go carries the array-length seeding and the in-bounds index-read
-// refinement: the wiring that recovers a non-optional element type for a
-// provably in-range sequence read. The length facts live only in the numeric
-// component (out.Num), which the loop-header widen bounds, so seeding cannot
-// affect fixpoint convergence; the refinement is a pure read of the converged
-// numeric state and emits no new facts.
+// lenseed.go carries two related but distinct size proofs plus the in-bounds
+// index-read refinement. Numeric length facts model Lua's sequence border (`#x`)
+// and live in out.Num. Container cardinality facts model statically-known
+// definitely-present constructor entries for iteration/postcondition reasoning
+// (`keys(data)` returning at least one key from a non-empty map) and live in
+// out.Rel. Keeping the axes separate prevents string-keyed maps from polluting
+// sequence length while giving call postconditions a normalized predicate to
+// consume without function-name branches.
 
 // arrayLiteralArity counts the positional (sequential, nil-key) elements of a
 // table constructor, the runtime length of an array literal `{1, 2, 3}`. A
@@ -45,15 +48,98 @@ func arrayLiteralArity(e *ast.TableExpr) int64 {
 	return n
 }
 
-// seedArrayLiteralLength seeds the length floor of a slot bound from an array
-// literal: `local arr = {1, 2, 3}` proves #arr >= 3, so a literal/length index
-// within that floor reads the non-optional element. A binding from any other
-// source drops a prior length floor (soundness: the new value's length is
-// unknown), so a slot reused across assignments never carries a stale floor.
-func (t *Transfer) seedArrayLiteralLength(out *flow.PointState, key flow.ValueKey, src ast.Expr) {
+// tableLiteralCardinalityLowerBound returns a conservative lower bound on the
+// number of definitely-present entries in a table constructor. It follows Lua's
+// final-write semantics for repeated static keys: the last write decides whether
+// the entry is present. Dynamic keys make the lower bound unknown because they
+// may collide with a static key or write nil into it, so the sound lower bound is
+// zero.
+func (t *Transfer) tableLiteralCardinalityLowerBound(out *flow.PointState, e *ast.TableExpr) int64 {
+	if e == nil || len(e.Fields) == 0 {
+		return 0
+	}
+	type slot struct {
+		present bool
+	}
+	final := make(map[tableCardinalityKey]slot, len(e.Fields))
+	var positional int
+	for _, field := range e.Fields {
+		if field == nil {
+			continue
+		}
+		key := tableCardinalityKey{}
+		if field.Key == nil {
+			positional++
+			key = tableCardinalityKey{kind: tableCardinalityKeyInt, index: positional}
+		} else {
+			var ok bool
+			key, ok = tableFieldCardinalityKey(field)
+			if !ok {
+				return 0
+			}
+		}
+		present := false
+		if av, ok := t.evalExpr(out, field.Value, nil); ok {
+			present = av.DefinitelyPresent()
+		}
+		final[key] = slot{present: present}
+	}
+	if len(final) == 0 {
+		return 0
+	}
+	var n int64
+	for _, slot := range final {
+		if slot.present {
+			n++
+		}
+	}
+	return n
+}
+
+type tableCardinalityKeyKind uint8
+
+const (
+	tableCardinalityKeyString tableCardinalityKeyKind = iota + 1
+	tableCardinalityKeyInt
+)
+
+type tableCardinalityKey struct {
+	kind  tableCardinalityKeyKind
+	name  string
+	index int
+}
+
+func tableFieldCardinalityKey(field *ast.Field) (tableCardinalityKey, bool) {
+	seg, ok := fieldkey.FromTableField(field)
+	if !ok {
+		return tableCardinalityKey{}, false
+	}
+	if name, ok := fieldkey.StringKeyFromSegment(seg); ok {
+		return tableCardinalityKey{kind: tableCardinalityKeyString, name: name}, true
+	}
+	if seg.Kind == constraint.SegmentIndexInt {
+		return tableCardinalityKey{kind: tableCardinalityKeyInt, index: seg.Index}, true
+	}
+	return tableCardinalityKey{}, false
+}
+
+// seedArrayLiteralLength seeds size facts for a slot bound from a constructor.
+// `local arr = {1, 2, 3}` proves #arr >= 3 on the numeric sequence axis. A
+// string-keyed literal such as `{["a"] = 1, ["b"] = 2}` proves cardinality >= 2
+// on the relation axis, not #table >= 2. A binding from any other source drops a
+// prior length/cardinality floor (soundness: the new value's size is unknown),
+// so a slot reused across assignments never carries stale proof.
+func (t *Transfer) seedArrayLiteralLength(out *flow.PointState, key flow.ValueKey, src ast.Expr, cardinalityLower int64) {
 	arrKey := constraint.PathKey(key)
 	if out == nil {
 		return
+	}
+	sym, hasSymbolRoot := flow.ParseSymbolValueKey(key)
+	if hasSymbolRoot {
+		t.applyRelationEffect(out, RelationEffect{
+			Kind:    RelationKillLengthTargets,
+			Symbols: []cfg.SymbolID{sym},
+		})
 	}
 	ops := []NumericOp{{Kind: NumericDropLenBound, Key: arrKey}}
 	tbl, ok := src.(*ast.TableExpr)
@@ -65,6 +151,14 @@ func (t *Transfer) seedArrayLiteralLength(out *flow.PointState, key flow.ValueKe
 		ops = append(ops, NumericOp{Kind: NumericLenGeConst, Key: arrKey, Const: n})
 	}
 	t.applyNumericEffect(out, NumericEffect{Ops: ops, RequireExisting: true})
+	if cardinalityLower > 0 && hasSymbolRoot {
+		t.applyRelationEffect(out, RelationEffect{
+			Kind:       RelationSeedContainerLowerBound,
+			TargetRoot: sym,
+			TargetKey:  flow.SymbolPathKey(sym, nil),
+			Lower:      cardinalityLower,
+		})
+	}
 }
 
 // applyIndexWriteLength updates the length floor of an indexed write `base[k]=v`.

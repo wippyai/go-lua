@@ -624,7 +624,24 @@ func (ce *ConditionExtractor) ConditionFromEquality(lhs, rhs ast.Expr) constrain
 		return constraint.FromConstraints(c...)
 	}
 
-	// x == literal (including const-resolved identifiers and literal-typed variables)
+	// path == literal, where the literal is syntactic/const-resolved. Prefer this
+	// structural path-literal guard before asking current value facts whether the
+	// path expression itself has already narrowed to a singleton literal. Otherwise
+	// an exact entry context can turn `page.data_func == ""` into `"" == ""`,
+	// erasing the FieldEquals/FieldNotEquals path constraint the downstream demand
+	// projection needs to export the correct guarded implication.
+	if lit, ok := ce.syntacticLiteralFromExpr(rhs); ok && lit != nil {
+		if c := ce.constraintsFromPathLiteral(lhs, lit); len(c) > 0 {
+			return constraint.FromConstraints(c...)
+		}
+	}
+	if lit, ok := ce.syntacticLiteralFromExpr(lhs); ok && lit != nil {
+		if c := ce.constraintsFromPathLiteral(rhs, lit); len(c) > 0 {
+			return constraint.FromConstraints(c...)
+		}
+	}
+
+	// x == literal (including literal-typed variables)
 	if lit, ok := ce.literalFromExpr(lhs); ok && lit != nil {
 		return constraint.FromConstraints(ce.constraintsFromPathLiteral(rhs, lit)...)
 	}
@@ -864,6 +881,17 @@ func (ce *ConditionExtractor) ConditionFromInequality(lhs, rhs ast.Expr) constra
 		return constraint.FromConstraints(c...)
 	}
 
+	if lit, ok := ce.syntacticLiteralFromExpr(rhs); ok && lit != nil {
+		if c := ce.constraintsFromPathLiteral(lhs, lit); len(c) > 0 {
+			return constraint.FromConstraints(numconst.NegateConstraints(c)...)
+		}
+	}
+	if lit, ok := ce.syntacticLiteralFromExpr(lhs); ok && lit != nil {
+		if c := ce.constraintsFromPathLiteral(rhs, lit); len(c) > 0 {
+			return constraint.FromConstraints(numconst.NegateConstraints(c)...)
+		}
+	}
+
 	left := ce.pathFromExpr(lhs)
 	right := ce.pathFromExpr(rhs)
 	if !left.IsEmpty() && !right.IsEmpty() {
@@ -1083,6 +1111,10 @@ func (ce *ConditionExtractor) constraintsFromCallableTypeCallExpr(expr *ast.Func
 // literalFromExpr resolves a literal from an expression using the extractor's context.
 func (ce *ConditionExtractor) literalFromExpr(expr ast.Expr) (*typ.Literal, bool) {
 	return literal.FromExprWithSymType(expr, ce.ConstResolver, ce.bindings(), ce.SymResolver, ce.P)
+}
+
+func (ce *ConditionExtractor) syntacticLiteralFromExpr(expr ast.Expr) (*typ.Literal, bool) {
+	return literal.FromExprWithConst(expr, ce.ConstResolver)
 }
 
 // typeKeyFromStringExpr extracts a type key from a string literal.

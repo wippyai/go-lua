@@ -17,6 +17,588 @@ func MorePrecise(candidate, baseline Type) bool {
 	return comparable && strict
 }
 
+// RefineWithFallback merges two same-expression observations without choosing
+// one whole value over the other. The summary observation wins where it already
+// carries concrete evidence (for example string literals); the fallback repairs
+// only top-like or open type-parameter leaves in the same structural position.
+//
+// This is intentionally a precision operation, not subtyping. It is used when a
+// fixed-point summary and a closed signature/type fallback describe the same
+// runtime expression and the summary may still contain internal placeholders
+// that should not cross the public/call boundary.
+func RefineWithFallback(summary, fallback Type) (Type, bool) {
+	state := &fallbackRefineState{}
+	out, changed := state.refine(summary, fallback)
+	if !changed {
+		return summary, false
+	}
+	return out, true
+}
+
+type fallbackRefineState struct {
+	seen      map[typePair]bool
+	ownedType map[*TypeParam]int
+}
+
+// ContainsFreeTypeParam reports whether t contains an unbound symbolic type
+// parameter/reference. Unlike ContainsTypeParam, a closed instantiated generic
+// such as Box<string> is treated as closed: only its concrete type arguments are
+// inspected, not the generic declaration template.
+func ContainsFreeTypeParam(t Type) bool {
+	return containsFreeTypeParam(t, nil, nil)
+}
+
+func containsFreeTypeParam(t Type, seen map[Type]bool, owned map[*TypeParam]int) bool {
+	if t == nil {
+		return false
+	}
+	if seen == nil {
+		seen = make(map[Type]bool)
+	}
+	if seen[t] {
+		return false
+	}
+	seen[t] = true
+
+	switch v := UnwrapAnnotated(t).(type) {
+	case nil:
+		return false
+	case *TypeParam:
+		return owned == nil || owned[v] == 0
+	case *Instantiated:
+		for _, arg := range v.TypeArgs {
+			if containsFreeTypeParam(arg, seen, owned) {
+				return true
+			}
+		}
+		return false
+	case *Function:
+		nextOwned := owned
+		if len(v.TypeParams) > 0 {
+			nextOwned = make(map[*TypeParam]int, len(owned)+len(v.TypeParams))
+			for tp, count := range owned {
+				nextOwned[tp] = count
+			}
+			for _, tp := range v.TypeParams {
+				if tp != nil {
+					nextOwned[tp]++
+				}
+			}
+		}
+		for _, param := range v.Params {
+			if containsFreeTypeParam(param.Type, seen, nextOwned) {
+				return true
+			}
+		}
+		if containsFreeTypeParam(v.Variadic, seen, nextOwned) {
+			return true
+		}
+		for _, ret := range v.Returns {
+			if containsFreeTypeParam(ret, seen, nextOwned) {
+				return true
+			}
+		}
+		return false
+	}
+
+	switch t.Kind() {
+	case kind.Ref, kind.TypeVar, kind.FieldAccess, kind.IndexAccess, kind.Generic:
+		return true
+	}
+	return Visit(t, Visitor[bool]{
+		Optional: func(o *Optional) bool {
+			return containsFreeTypeParam(o.Inner, seen, owned)
+		},
+		Union: func(u *Union) bool {
+			for _, member := range u.Members {
+				if containsFreeTypeParam(member, seen, owned) {
+					return true
+				}
+			}
+			return false
+		},
+		Intersection: func(in *Intersection) bool {
+			for _, member := range in.Members {
+				if containsFreeTypeParam(member, seen, owned) {
+					return true
+				}
+			}
+			return false
+		},
+		Array: func(a *Array) bool {
+			return containsFreeTypeParam(a.Element, seen, owned)
+		},
+		Map: func(m *Map) bool {
+			return containsFreeTypeParam(m.Key, seen, owned) || containsFreeTypeParam(m.Value, seen, owned)
+		},
+		ReadonlyMap: func(m *ReadonlyMap) bool {
+			return containsFreeTypeParam(m.Key, seen, owned) || containsFreeTypeParam(m.Value, seen, owned)
+		},
+		Tuple: func(tup *Tuple) bool {
+			for _, elem := range tup.Elements {
+				if containsFreeTypeParam(elem, seen, owned) {
+					return true
+				}
+			}
+			return false
+		},
+		Record: func(r *Record) bool {
+			if containsFreeTypeParam(r.MapKey, seen, owned) ||
+				containsFreeTypeParam(r.MapValue, seen, owned) ||
+				containsFreeTypeParam(r.Metatable, seen, owned) {
+				return true
+			}
+			for _, field := range r.Fields {
+				if containsFreeTypeParam(field.Type, seen, owned) {
+					return true
+				}
+			}
+			for _, member := range r.StaticMembers {
+				if containsFreeTypeParam(member.Type, seen, owned) {
+					return true
+				}
+			}
+			return false
+		},
+		Alias: func(a *Alias) bool {
+			return containsFreeTypeParam(a.Target, seen, owned)
+		},
+		Meta: func(m *Meta) bool {
+			return containsFreeTypeParam(m.Of, seen, owned)
+		},
+		Recursive: func(r *Recursive) bool {
+			return containsFreeTypeParam(r.Body, seen, owned)
+		},
+		Sum: func(s *Sum) bool {
+			for _, variant := range s.Variants {
+				for _, t := range variant.Types {
+					if containsFreeTypeParam(t, seen, owned) {
+						return true
+					}
+				}
+			}
+			return false
+		},
+	})
+}
+
+// NeedsSameExpressionFallback reports whether t contains a leaf that can be
+// repaired by a same-expression fallback. This is deliberately broader than
+// free type parameters: a summary return may contain unknown/any/deferred leaves
+// inside otherwise precise structure, and those holes should be repaired by a
+// closed signature observation without replacing the whole value.
+func NeedsSameExpressionFallback(t Type) bool {
+	return needsSameExpressionFallback(t, nil)
+}
+
+func needsSameExpressionFallback(t Type, seen map[Type]bool) bool {
+	if t == nil {
+		return true
+	}
+	if seen == nil {
+		seen = make(map[Type]bool)
+	}
+	if seen[t] {
+		return false
+	}
+	seen[t] = true
+
+	t = UnwrapAnnotated(t)
+	if summaryNeedsFallbackLeaf(t) {
+		return true
+	}
+	switch v := t.(type) {
+	case *Function:
+		// Function parameters are contravariant input positions. A loose summary
+		// parameter (`any`, unknown, optional self) should not trigger a fallback
+		// call by itself because RefineWithFallback preserves such parameters
+		// unless the function has an output/covariant hole to repair.
+		for _, ret := range v.Returns {
+			if needsSameExpressionFallback(ret, seen) {
+				return true
+			}
+		}
+		return false
+	case *Instantiated:
+		for _, arg := range v.TypeArgs {
+			if needsSameExpressionFallback(arg, seen) {
+				return true
+			}
+		}
+		return false
+	}
+
+	return Visit(t, Visitor[bool]{
+		Optional: func(o *Optional) bool {
+			return needsSameExpressionFallback(o.Inner, seen)
+		},
+		Union: func(u *Union) bool {
+			for _, member := range u.Members {
+				if needsSameExpressionFallback(member, seen) {
+					return true
+				}
+			}
+			return false
+		},
+		Intersection: func(in *Intersection) bool {
+			for _, member := range in.Members {
+				if needsSameExpressionFallback(member, seen) {
+					return true
+				}
+			}
+			return false
+		},
+		Array: func(a *Array) bool {
+			return needsSameExpressionFallback(a.Element, seen)
+		},
+		Map: func(m *Map) bool {
+			return needsSameExpressionFallback(m.Key, seen) || needsSameExpressionFallback(m.Value, seen)
+		},
+		ReadonlyMap: func(m *ReadonlyMap) bool {
+			return needsSameExpressionFallback(m.Key, seen) || needsSameExpressionFallback(m.Value, seen)
+		},
+		Tuple: func(tup *Tuple) bool {
+			for _, elem := range tup.Elements {
+				if needsSameExpressionFallback(elem, seen) {
+					return true
+				}
+			}
+			return false
+		},
+		Record: func(r *Record) bool {
+			if (r.MapKey != nil && needsSameExpressionFallback(r.MapKey, seen)) ||
+				(r.MapValue != nil && needsSameExpressionFallback(r.MapValue, seen)) ||
+				(r.Metatable != nil && needsSameExpressionFallback(r.Metatable, seen)) {
+				return true
+			}
+			for _, field := range r.Fields {
+				if needsSameExpressionFallback(field.Type, seen) {
+					return true
+				}
+			}
+			for _, member := range r.StaticMembers {
+				if needsSameExpressionFallback(member.Type, seen) {
+					return true
+				}
+			}
+			return false
+		},
+		Alias: func(a *Alias) bool {
+			return needsSameExpressionFallback(a.Target, seen)
+		},
+		Meta: func(m *Meta) bool {
+			return needsSameExpressionFallback(m.Of, seen)
+		},
+		Recursive: func(r *Recursive) bool {
+			return needsSameExpressionFallback(r.Body, seen)
+		},
+		Sum: func(s *Sum) bool {
+			for _, variant := range s.Variants {
+				for _, t := range variant.Types {
+					if needsSameExpressionFallback(t, seen) {
+						return true
+					}
+				}
+			}
+			return false
+		},
+	})
+}
+
+func (s *fallbackRefineState) refine(summary, fallback Type) (Type, bool) {
+	if summary == nil || fallback == nil || TypeEquals(summary, fallback) || fallbackIsOpaque(fallback) {
+		return summary, false
+	}
+	if s.ownsTypeParam(summary) {
+		return summary, false
+	}
+	if summaryNeedsFallbackLeaf(summary) {
+		return fallback, true
+	}
+
+	if MorePrecise(summary, fallback) {
+		return summary, false
+	}
+
+	pair, track := fallbackRefinePair(summary, fallback)
+	if track {
+		if s.seen == nil {
+			s.seen = make(map[typePair]bool)
+		}
+		if s.seen[pair] {
+			return summary, false
+		}
+		s.seen[pair] = true
+		defer delete(s.seen, pair)
+	}
+
+	if a, ok := summary.(*Alias); ok {
+		refined, changed := s.refine(a.UnaliasedTarget(), fallback)
+		if !changed {
+			return summary, false
+		}
+		return NewAlias(a.Name, refined), true
+	}
+	if b, ok := fallback.(*Alias); ok {
+		return s.refine(summary, b.UnaliasedTarget())
+	}
+
+	switch a := summary.(type) {
+	case *Optional:
+		b, ok := fallback.(*Optional)
+		if !ok {
+			break
+		}
+		inner, changed := s.refine(a.Inner, b.Inner)
+		if !changed {
+			return summary, false
+		}
+		return NewOptional(inner), true
+	case *Array:
+		b, ok := fallback.(*Array)
+		if !ok {
+			break
+		}
+		elem, changed := s.refine(a.Element, b.Element)
+		if !changed {
+			return summary, false
+		}
+		return NewArray(elem), true
+	case *Map:
+		b, ok := fallback.(*Map)
+		if !ok {
+			break
+		}
+		key, keyChanged := s.refine(a.Key, b.Key)
+		value, valueChanged := s.refine(a.Value, b.Value)
+		if !keyChanged && !valueChanged {
+			return summary, false
+		}
+		return NewMap(key, value), true
+	case *ReadonlyMap:
+		b, ok := fallback.(*ReadonlyMap)
+		if !ok {
+			break
+		}
+		key, keyChanged := s.refine(a.Key, b.Key)
+		value, valueChanged := s.refine(a.Value, b.Value)
+		if !keyChanged && !valueChanged {
+			return summary, false
+		}
+		return NewReadonlyMap(key, value), true
+	case *Tuple:
+		b, ok := fallback.(*Tuple)
+		if !ok || len(a.Elements) != len(b.Elements) {
+			break
+		}
+		elements, changed := s.refineTypeSlice(a.Elements, b.Elements)
+		if !changed {
+			return summary, false
+		}
+		return NewTuple(elements...), true
+	case *Function:
+		b, ok := fallback.(*Function)
+		if !ok {
+			break
+		}
+		return s.refineFunction(a, b)
+	case *Record:
+		b, ok := fallback.(*Record)
+		if !ok {
+			break
+		}
+		return s.refineRecord(a, b)
+	case *Instantiated:
+		b, ok := fallback.(*Instantiated)
+		if !ok || a.Generic == nil || b.Generic == nil || !TypeEquals(a.Generic, b.Generic) || len(a.TypeArgs) != len(b.TypeArgs) {
+			break
+		}
+		args, changed := s.refineTypeSlice(a.TypeArgs, b.TypeArgs)
+		if !changed {
+			return summary, false
+		}
+		return Instantiate(a.Generic, args...), true
+	}
+
+	if MorePrecise(fallback, summary) {
+		return fallback, true
+	}
+	return summary, false
+}
+
+func fallbackIsOpaque(t Type) bool {
+	return t == nil || IsAbsentOrUnknown(t) || t.Kind().IsPlaceholder() || ContainsFreeTypeParam(t)
+}
+
+func summaryNeedsFallbackLeaf(t Type) bool {
+	if t == nil || IsAbsentOrUnknown(t) || t.Kind().IsPlaceholder() || t.Kind().IsDeferred() {
+		return true
+	}
+	_, ok := t.(*TypeParam)
+	return ok
+}
+
+func (s *fallbackRefineState) ownsTypeParam(t Type) bool {
+	tp, ok := t.(*TypeParam)
+	return ok && s.ownedType != nil && s.ownedType[tp] > 0
+}
+
+func fallbackRefinePair(summary, fallback Type) (typePair, bool) {
+	sp := typePointer(summary)
+	fp := typePointer(fallback)
+	if sp == 0 && fp == 0 {
+		return typePair{}, false
+	}
+	return typePair{a: sp, b: fp}, true
+}
+
+func (s *fallbackRefineState) refineTypeSlice(summary, fallback []Type) ([]Type, bool) {
+	out := make([]Type, len(summary))
+	copy(out, summary)
+	changed := false
+	for i := range summary {
+		refined, slotChanged := s.refine(summary[i], fallback[i])
+		if slotChanged {
+			out[i] = refined
+			changed = true
+		}
+	}
+	return out, changed
+}
+
+func (s *fallbackRefineState) refineFunction(summary, fallback *Function) (Type, bool) {
+	if len(summary.Params) != len(fallback.Params) ||
+		len(summary.Returns) != len(fallback.Returns) ||
+		(summary.Variadic == nil) != (fallback.Variadic == nil) {
+		return summary, false
+	}
+	s.pushOwnedTypeParams(summary.TypeParams)
+	defer s.popOwnedTypeParams(summary.TypeParams)
+
+	params := make([]Param, len(summary.Params))
+	copy(params, summary.Params)
+	changed := false
+	for i := range summary.Params {
+		if summary.Params[i].Optional != fallback.Params[i].Optional {
+			// Parameter positions are contravariant. A fallback may know a narrower
+			// receiver/argument shape than the summary (`self: T` versus the runtime
+			// summary's `self: any?`), but tightening that input here would make the
+			// callable less permissive. Preserve the summary parameter and keep
+			// repairing covariant positions such as returns below.
+			continue
+		}
+		refined, slotChanged := s.refine(summary.Params[i].Type, fallback.Params[i].Type)
+		if slotChanged {
+			params[i].Type = refined
+			changed = true
+		}
+	}
+	returns, returnsChanged := s.refineTypeSlice(summary.Returns, fallback.Returns)
+	changed = changed || returnsChanged
+	variadic := summary.Variadic
+	if summary.Variadic != nil {
+		refined, slotChanged := s.refine(summary.Variadic, fallback.Variadic)
+		if slotChanged {
+			variadic = refined
+			changed = true
+		}
+	}
+	if !changed {
+		return summary, false
+	}
+	return buildFunctionType(summary.TypeParams, params, variadic, returns, summary.Effects, summary.Spec, summary.Refinement), true
+}
+
+func (s *fallbackRefineState) pushOwnedTypeParams(params []*TypeParam) {
+	if len(params) == 0 {
+		return
+	}
+	if s.ownedType == nil {
+		s.ownedType = make(map[*TypeParam]int, len(params))
+	}
+	for _, tp := range params {
+		if tp != nil {
+			s.ownedType[tp]++
+		}
+	}
+}
+
+func (s *fallbackRefineState) popOwnedTypeParams(params []*TypeParam) {
+	if len(params) == 0 || s.ownedType == nil {
+		return
+	}
+	for _, tp := range params {
+		if tp == nil {
+			continue
+		}
+		if s.ownedType[tp] <= 1 {
+			delete(s.ownedType, tp)
+		} else {
+			s.ownedType[tp]--
+		}
+	}
+}
+
+func (s *fallbackRefineState) refineRecord(summary, fallback *Record) (Type, bool) {
+	fields := make([]Field, len(summary.Fields))
+	copy(fields, summary.Fields)
+	changed := false
+	for i := range fields {
+		fb := fallback.GetField(fields[i].Name)
+		if fb == nil || fields[i].Optional != fb.Optional {
+			continue
+		}
+		refined, slotChanged := s.refine(fields[i].Type, fb.Type)
+		if slotChanged {
+			fields[i].Type = refined
+			changed = true
+		}
+	}
+
+	staticMembers := make([]StaticMember, len(summary.StaticMembers))
+	copy(staticMembers, summary.StaticMembers)
+	for i := range staticMembers {
+		fb := fallback.getStaticMember(staticMembers[i].Kind, staticMembers[i].Name, staticMembers[i].Index)
+		if fb == nil || staticMembers[i].Optional != fb.Optional {
+			continue
+		}
+		refined, slotChanged := s.refine(staticMembers[i].Type, fb.Type)
+		if slotChanged {
+			staticMembers[i].Type = refined
+			changed = true
+		}
+	}
+
+	metatable := summary.Metatable
+	if summary.Metatable != nil && fallback.Metatable != nil {
+		refined, slotChanged := s.refine(summary.Metatable, fallback.Metatable)
+		if slotChanged {
+			metatable = refined
+			changed = true
+		}
+	}
+	mapKey := summary.MapKey
+	if summary.MapKey != nil && fallback.MapKey != nil {
+		refined, slotChanged := s.refine(summary.MapKey, fallback.MapKey)
+		if slotChanged {
+			mapKey = refined
+			changed = true
+		}
+	}
+	mapValue := summary.MapValue
+	if summary.MapValue != nil && fallback.MapValue != nil {
+		refined, slotChanged := s.refine(summary.MapValue, fallback.MapValue)
+		if slotChanged {
+			mapValue = refined
+			changed = true
+		}
+	}
+	if !changed {
+		return summary, false
+	}
+	return buildRecordType(fields, staticMembers, metatable, mapKey, mapValue, summary.Open, true, summary.Fresh), true
+}
+
 // PruneLessPreciseRefinableUnionMembers removes refinable structural
 // placeholder members from a union when another member carries comparable,
 // strictly more precise evidence for the same runtime shape.

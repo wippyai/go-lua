@@ -2,6 +2,7 @@ package value
 
 import (
 	"math/rand"
+	"strings"
 	"testing"
 
 	"github.com/wippyai/go-lua/types/typ"
@@ -214,5 +215,35 @@ func TestConvergenceMemberOrderKey_CycleStable(t *testing.T) {
 	differing := recursiveSuiteFamily(typ.Number)
 	if convergenceMemberOrderKey(first) == convergenceMemberOrderKey(differing) {
 		t.Fatalf("order key collapsed structurally distinct families")
+	}
+}
+
+func TestConvergenceMemberOrderKey_BoundsDeepRecursiveSurface(t *testing.T) {
+	deep := typ.NewRecursive("Deep", func(self typ.Type) typ.Type {
+		t := self
+		for i := 0; i < convergenceOrderKeyNodeBudget+256; i++ {
+			t = typ.NewRecord().Field("next", t).Build()
+		}
+		return t
+	})
+
+	key := convergenceMemberOrderKey(deep)
+	if !strings.Contains(key, "...;") {
+		t.Fatalf("deep order key should record truncation")
+	}
+	if len(key) > convergenceOrderKeyNodeBudget*16 {
+		t.Fatalf("deep order key length = %d, want bounded", len(key))
+	}
+}
+
+func TestConvergenceMemberOrderKey_DoesNotRenderLongLiteral(t *testing.T) {
+	lit := typ.LiteralString(strings.Repeat("x", convergenceOrderKeyNodeBudget*16))
+
+	key := convergenceMemberOrderKey(lit)
+	if strings.Contains(key, "xxxx") {
+		t.Fatalf("order key rendered literal payload")
+	}
+	if len(key) > 64 {
+		t.Fatalf("literal order key length = %d, want compact hash key", len(key))
 	}
 }

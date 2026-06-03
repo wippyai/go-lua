@@ -271,6 +271,12 @@ func pathGuardComplement(path constraint.Path, cond constraint.Condition) typ.Ty
 		case constraint.NotNil:
 			guardPath = v.Path
 			next = typ.Nil
+		case constraint.FieldNotEquals:
+			if v.Value == nil {
+				continue
+			}
+			guardPath = v.Target.Field(v.Field)
+			next = v.Value
 		default:
 			continue
 		}

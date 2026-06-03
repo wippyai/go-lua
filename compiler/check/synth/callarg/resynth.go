@@ -73,6 +73,9 @@ func shouldRefineWithExpected(inferred, expected typ.Type) bool {
 	if typ.IsAny(inferred) || typ.IsAny(expected) || expected.Kind().IsPlaceholder() {
 		return false
 	}
+	if typ.ContainsRecursive(inferred) || typ.ContainsRecursive(expected) {
+		return false
+	}
 	if subtype.IsSubtype(inferred, expected) {
 		return true
 	}

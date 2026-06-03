@@ -152,6 +152,28 @@ func TestInferReturnRelationsUsesTypeThenStaticFallback(t *testing.T) {
 	}
 }
 
+func TestInferReturnRelationsUsesLengthOnlyTypeFallback(t *testing.T) {
+	t.Parallel()
+
+	ident := &ast.IdentExpr{Value: "keys"}
+	call := &ast.FuncCallExpr{Func: ident}
+	lengthRel := flow.ReturnRelationsOfLengthParams([]flow.ReturnLengthParamRelation{{ReturnIndex: 0, ParamIndex: 0}})
+
+	got := InferReturnRelations(ReturnRelationsInput{
+		Call: call,
+		Resolver: TypeResolver{
+			ExprType: func(ast.Expr) typ.Type {
+				return signatureWithRelation(lengthRel)
+			},
+		},
+		UseResolvedSignature: true,
+	})
+
+	if !got.HasLengthParam(flow.ReturnLengthParamRelation{ReturnIndex: 0, ParamIndex: 0}) {
+		t.Fatalf("relations = %#v, want length-only type fallback %#v", got.LengthParams(), lengthRel.LengthParams())
+	}
+}
+
 func TestInferCellEffectsBlocksCallbackFallbackWhenSelectionBlocks(t *testing.T) {
 	t.Parallel()
 
@@ -292,6 +314,73 @@ func TestParamNarrowsForCallImportedSignatureFallback(t *testing.T) {
 
 	if len(got) != 1 || got[0].Param != 1 || got[0].Check != compilecfg.CheckNotNil {
 		t.Fatalf("param narrows = %#v, want imported signature narrow", got)
+	}
+}
+
+func TestParamNarrowsForCallStaticGlobalFieldFallback(t *testing.T) {
+	t.Parallel()
+
+	base := &ast.IdentExpr{Value: "assert"}
+	callee := &ast.AttrGetExpr{Object: base, Key: &ast.StringExpr{Value: "not_nil"}}
+	call := &ast.FuncCallExpr{Func: callee}
+	bindings := bind.NewBindingTable()
+	bindings.Bind(base, 101)
+	bindings.SetName(101, "assert")
+
+	got := ParamNarrowsForCall(ParamNarrowsInput{
+		Call: call,
+		SummaryNarrows: func(*ast.FuncCallExpr) ([]paramevidence.ParamNarrow, bool) {
+			return nil, false
+		},
+		Resolver: TypeResolver{
+			Bindings: bindings,
+			Static: StaticTypeLookup{
+				GlobalBySymbol: func(sym compilecfg.SymbolID) (typ.Type, bool) {
+					if sym != 101 {
+						t.Fatalf("GlobalBySymbol sym = %d, want 101", sym)
+					}
+					return typ.NewRecord().
+						Field("not_nil", signatureWithParamNarrow(0, compilecfg.CheckNotNil)).
+						Build(), true
+				},
+			},
+		},
+	})
+
+	if len(got) != 1 || got[0].Param != 0 || got[0].Check != compilecfg.CheckNotNil {
+		t.Fatalf("param narrows = %#v, want static global-field signature narrow", got)
+	}
+}
+
+func TestParamNarrowsForCallStaticIdentFallback(t *testing.T) {
+	t.Parallel()
+
+	callee := &ast.IdentExpr{Value: "expect_present"}
+	call := &ast.FuncCallExpr{Func: callee}
+	bindings := bind.NewBindingTable()
+	bindings.Bind(callee, 102)
+	bindings.SetName(102, "expect_present")
+
+	got := ParamNarrowsForCall(ParamNarrowsInput{
+		Call: call,
+		SummaryNarrows: func(*ast.FuncCallExpr) ([]paramevidence.ParamNarrow, bool) {
+			return nil, false
+		},
+		Resolver: TypeResolver{
+			Bindings: bindings,
+			Static: StaticTypeLookup{
+				FuncBySymbol: func(sym compilecfg.SymbolID) (typ.Type, bool) {
+					if sym != 102 {
+						t.Fatalf("FuncBySymbol sym = %d, want 102", sym)
+					}
+					return signatureWithParamNarrow(0, compilecfg.CheckNotNil), true
+				},
+			},
+		},
+	})
+
+	if len(got) != 1 || got[0].Param != 0 || got[0].Check != compilecfg.CheckNotNil {
+		t.Fatalf("param narrows = %#v, want static identifier signature narrow", got)
 	}
 }
 
@@ -600,6 +689,12 @@ func signatureWithRelation(rels flow.ReturnRelations) typ.Type {
 		spec = spec.WithEffects(effect.ErrorReturn{
 			ValueIndex: rel.ValueIndex,
 			ErrorIndex: rel.ErrorIndex,
+		})
+	}
+	for _, rel := range rels.LengthParams() {
+		spec = spec.WithEffects(effect.ReturnLength{
+			ReturnIndex: rel.ReturnIndex,
+			Length:      constraint.ParamLen{Index: rel.ParamIndex},
 		})
 	}
 	return typ.Func().Returns(typ.String, typ.Nil).Spec(spec).Build()

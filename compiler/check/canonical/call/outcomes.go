@@ -41,6 +41,12 @@ func (o CallOutcome) InferredReturnValues() []product.AbstractValue {
 	return o.Projection.InferredReturnValues()
 }
 
+// HasInformativeReturnValues reports whether selected target summaries currently
+// provide concrete caller-visible return evidence.
+func (o CallOutcome) HasInformativeReturnValues() bool {
+	return informativeReturnValues(o.InferredReturnValues())
+}
+
 // InferredReturnTypes projects selected summary returns to the type surface.
 func (o CallOutcome) InferredReturnTypes() []typ.Type {
 	if !o.HasTargets() {
@@ -116,7 +122,7 @@ func InferReturnRelations(in ReturnRelationsInput) flow.ReturnRelations {
 	}
 	if in.UseResolvedSignature && in.Call != nil {
 		sig := in.Resolver.ResolveCallee(in.Call.Func)
-		if rels := flow.ReturnRelationsFromFunctionType(sig); len(rels.ErrorReturns()) > 0 {
+		if rels := flow.ReturnRelationsFromFunctionType(sig); rels.HasProof() {
 			return rels
 		}
 	}
@@ -145,8 +151,8 @@ func InferCellEffects(in CellEffectsInput) flow.CaptureEffects {
 }
 
 // ParamNarrowsInput is the canonical call-site policy for argument refinements
-// proven by a callee. Module summary facts win; imported signature refinements
-// are a fallback for external callees.
+// proven by a callee. Module summary facts win; static signature refinements
+// are the fallback for external callees and global/static helper functions.
 type ParamNarrowsInput struct {
 	Call *ast.FuncCallExpr
 
@@ -164,7 +170,7 @@ func ParamNarrowsForCall(in ParamNarrowsInput) []paramevidence.ParamNarrow {
 			return paramevidence.SortParamNarrows(narrows)
 		}
 	}
-	return paramevidence.ParamNarrowsFromFunctionType(in.Resolver.ResolveImportedFieldCallee(in.Call.Func))
+	return paramevidence.ParamNarrowsFromFunctionType(in.Resolver.ResolveStaticCallee(in.Call.Func))
 }
 
 // CallbackSpecInput is the canonical policy for finding a call's callback

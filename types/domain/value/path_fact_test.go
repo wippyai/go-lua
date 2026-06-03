@@ -78,6 +78,30 @@ func TestReconcilePathFactWithDeclaredRead_KeepsConcreteOverAny(t *testing.T) {
 	}
 }
 
+func TestReconcilePathFactWithDeclaredRead_KeepsClosedSolvedOverOpenTypeParam(t *testing.T) {
+	declared := typ.NewTypeParam("T", nil)
+
+	got, ok := ReconcilePathFactWithDeclaredRead(typ.LiteralInt(10), declared)
+	if !ok {
+		t.Fatal("closed path fact should reconcile with open type-param declaration")
+	}
+	if !typ.TypeEquals(got, typ.LiteralInt(10)) {
+		t.Fatalf("reconciled type = %v, want literal integer", got)
+	}
+}
+
+func TestSelectPathObservation_KeepsClosedSolvedOverOpenTypeParamDeclaredRead(t *testing.T) {
+	declared := typ.NewTypeParam("T", nil)
+
+	got, ok := SelectPathObservation(typ.LiteralInt(10), nil, declared)
+	if !ok {
+		t.Fatal("path observation should select closed solved value")
+	}
+	if !typ.TypeEquals(got, typ.LiteralInt(10)) {
+		t.Fatalf("selected observation = %v, want literal integer", got)
+	}
+}
+
 func TestSelectPathObservation_KeepsSolvedProductOverPlaceholderProof(t *testing.T) {
 	record := typ.NewRecord().
 		Field("pid", typ.String).

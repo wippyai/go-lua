@@ -1,6 +1,8 @@
 package value
 
 import (
+	"reflect"
+
 	"github.com/wippyai/go-lua/internal"
 	"github.com/wippyai/go-lua/types/kind"
 	"github.com/wippyai/go-lua/types/narrow"
@@ -1024,8 +1026,10 @@ func recursiveStructuralUpperBoundCovers(upper, observation typ.Type) bool {
 	if !selfEmbeddingObservationPreservesAnchor(observation, upper) || !ContainsRecursiveType(upper) {
 		return false
 	}
-	if recursiveEvidenceUpperBoundCovers(upper, observation) {
+	if covered, exhausted := recursiveEvidenceUpperBoundCoversResult(upper, observation); covered {
 		return true
+	} else if exhausted {
+		return false
 	}
 	refines, _ := RefinesSoftContainer(upper, observation)
 	return refines
@@ -1038,7 +1042,10 @@ func recursiveUpperBoundCovers(rec *typ.Recursive, observation typ.Type) bool {
 	if typ.IsRecursiveRef(observation, rec) {
 		return true
 	}
-	if !recursiveEvidenceUpperBoundCovers(rec, observation) {
+	if covered, exhausted := recursiveEvidenceUpperBoundCoversResult(rec, observation); !covered {
+		if exhausted {
+			return false
+		}
 		refines, _ := RefinesSoftContainer(rec, observation)
 		if !refines {
 			return false
@@ -1052,20 +1059,34 @@ func recursiveUpperBoundCovers(rec *typ.Recursive, observation typ.Type) bool {
 }
 
 func recursiveEvidenceUpperBoundCovers(upper, observation typ.Type) bool {
+	covered, _ := recursiveEvidenceUpperBoundCoversResult(upper, observation)
+	return covered
+}
+
+func recursiveEvidenceUpperBoundCoversResult(upper, observation typ.Type) (bool, bool) {
 	cover := recursiveEvidenceCover{
-		seen: make(recursiveCoverSeen),
+		seen:   make(recursiveCoverSeen),
+		budget: recursiveCoverageStepBudget,
 	}
-	return cover.covers(upper, observation)
+	covered := cover.covers(upper, observation)
+	return covered, cover.exhausted
 }
 
 type recursiveEvidenceCover struct {
-	seen recursiveCoverSeen
+	seen      recursiveCoverSeen
+	budget    int
+	steps     int
+	exhausted bool
 }
+
+const recursiveCoverageStepBudget = 4096
 
 type recursiveCoverSeenKey struct {
 	upper       uint64
 	observation uint64
 	family      bool
+	upperKind   kind.Kind
+	obsKind     kind.Kind
 }
 
 type recursiveCoverSeenEntry struct {
@@ -1106,16 +1127,53 @@ func (s recursiveCoverSeen) remember(upper, observation typ.Type) {
 
 func recursiveCoverKey(upper, observation typ.Type) recursiveCoverSeenKey {
 	if typ.ContainsRecursive(upper) || typ.ContainsRecursive(observation) {
+		upperHash, upperKind := recursiveCoverNodeKey(upper)
+		obsHash, obsKind := recursiveCoverNodeKey(observation)
 		return recursiveCoverSeenKey{
-			upper:       typ.ProductFamilyHash(upper),
-			observation: typ.ProductFamilyHash(observation),
+			upper:       upperHash,
+			observation: obsHash,
 			family:      true,
+			upperKind:   upperKind,
+			obsKind:     obsKind,
 		}
 	}
 	return recursiveCoverSeenKey{
 		upper:       typ.EqualityHash(upper),
 		observation: typ.EqualityHash(observation),
+		upperKind:   recursiveCoverKind(upper),
+		obsKind:     recursiveCoverKind(observation),
 	}
+}
+
+func recursiveCoverNodeKey(t typ.Type) (uint64, kind.Kind) {
+	k := recursiveCoverKind(t)
+	if t == nil {
+		return 0, k
+	}
+	v := reflect.ValueOf(t)
+	if v.IsValid() && v.Kind() == reflect.Pointer && !v.IsNil() {
+		return uint64(v.Pointer()), k
+	}
+	return typ.EqualityHash(t), k
+}
+
+func recursiveCoverKind(t typ.Type) kind.Kind {
+	if t == nil {
+		return kind.Unknown
+	}
+	return t.Kind()
+}
+
+func (c *recursiveEvidenceCover) enter() bool {
+	if c == nil || c.budget <= 0 {
+		return true
+	}
+	c.steps++
+	if c.steps <= c.budget {
+		return true
+	}
+	c.exhausted = true
+	return false
 }
 
 func (c *recursiveEvidenceCover) covers(upper, observation typ.Type) bool {
@@ -1144,6 +1202,9 @@ func (c *recursiveEvidenceCover) covers(upper, observation typ.Type) bool {
 		if _, ok := upper.(*typ.Recursive); ok {
 			return true
 		}
+		return false
+	}
+	if !c.enter() {
 		return false
 	}
 	if c.seen.contains(upper, observation) {

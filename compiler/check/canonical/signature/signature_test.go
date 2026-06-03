@@ -6,6 +6,8 @@ import (
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/scope"
+	"github.com/wippyai/go-lua/compiler/check/synth/ops"
+	"github.com/wippyai/go-lua/types/db"
 	"github.com/wippyai/go-lua/types/typ"
 )
 
@@ -58,6 +60,41 @@ func TestBuildFunctionDeclaredGenericReturnBeatsInferred(t *testing.T) {
 	}
 	if inferredUsed {
 		t.Fatal("inferred returns ran despite declared generic return")
+	}
+}
+
+func TestBuildGenericCallbackSignatureClosesExpectedParam(t *testing.T) {
+	t.Parallel()
+
+	fn := functionWithParams("x", "fn")
+	fn.TypeParams = []ast.TypeParamExpr{{Name: "T"}, {Name: "U"}}
+	fn.ParList.Types = []ast.TypeExpr{
+		&ast.TypeRefExpr{Path: []string{"T"}},
+		&ast.FunctionTypeExpr{
+			Params:  []ast.FunctionParamExpr{{Name: "value", Type: &ast.TypeRefExpr{Path: []string{"T"}}}},
+			Returns: []ast.TypeExpr{&ast.TypeRefExpr{Path: []string{"U"}}},
+		},
+	}
+	fn.ReturnTypes = []ast.TypeExpr{&ast.TypeRefExpr{Path: []string{"U"}}}
+
+	sig := Build(Input{
+		Function:    fn,
+		Base:        scope.NewWithBuiltins(),
+		ResolveType: testResolveType,
+		ReturnMode:  ReturnDeclaredOnly,
+	})
+	callback := typ.Func().Param("value", typ.Any).Returns(typ.Any).Build()
+	inferred := ops.InferCall(db.NewQueryContext(db.New()), ops.CallDef{
+		Callee: sig,
+		Args:   []typ.Type{typ.String, callback},
+	})
+	expected := inferred.ExpectedArgType(1)
+	expectedFn, ok := expected.(*typ.Function)
+	if !ok || expectedFn == nil || len(expectedFn.Params) != 1 {
+		t.Fatalf("expected callback type = %v, want unary function", expected)
+	}
+	if !typ.TypeEquals(expectedFn.Params[0].Type, typ.String) {
+		t.Fatalf("expected callback param = %v, want string; signature=%v", expectedFn.Params[0].Type, sig)
 	}
 }
 
@@ -191,6 +228,35 @@ func TestLiteralSignaturesResolveEnclosingGenericScope(t *testing.T) {
 	}
 }
 
+func TestFunctionContextScopeCarriesGenericVariadicType(t *testing.T) {
+	t.Parallel()
+
+	fn := functionWithParams("head")
+	fn.TypeParams = []ast.TypeParamExpr{{Name: "T"}}
+	fn.ParList.HasVargs = true
+	fn.ParList.VarargType = &ast.TypeRefExpr{Path: []string{"T"}}
+
+	sc := FunctionContextScope(ScopeInput{
+		Function:    fn,
+		Base:        scope.NewWithBuiltins(),
+		ResolveType: testResolveType,
+	})
+	if sc == nil {
+		t.Fatal("FunctionContextScope returned nil")
+	}
+	variadic := sc.VariadicType()
+	if variadic == nil {
+		t.Fatal("variadic type is nil")
+	}
+	tp, ok := variadic.(*typ.TypeParam)
+	if !ok || tp.Name != "T" {
+		t.Fatalf("variadic type = %#v, want type param T", variadic)
+	}
+	if !sc.IsLocal("head") {
+		t.Fatal("parameter name was not marked local")
+	}
+}
+
 func TestLiteralSignaturesUseMethodResolver(t *testing.T) {
 	t.Parallel()
 
@@ -268,6 +334,27 @@ func testResolveType(expr ast.TypeExpr, sc *scope.State) typ.Type {
 				return t
 			}
 		}
+	case *ast.FunctionTypeExpr:
+		builder := typ.Func()
+		resolveScope := sc
+		for _, tp := range e.TypeParams {
+			param := typ.NewTypeParam(tp.Name, nil)
+			builder.TypeParamRef(param)
+			if resolveScope != nil {
+				resolveScope = resolveScope.WithTypeParams(map[string]typ.Type{tp.Name: param})
+			}
+		}
+		for _, p := range e.Params {
+			builder.Param(p.Name, testResolveType(p.Type, resolveScope))
+		}
+		returns := make([]typ.Type, 0, len(e.Returns))
+		for _, ret := range e.Returns {
+			returns = append(returns, testResolveType(ret, resolveScope))
+		}
+		if len(returns) > 0 {
+			builder.Returns(returns...)
+		}
+		return builder.Build()
 	}
 	return nil
 }

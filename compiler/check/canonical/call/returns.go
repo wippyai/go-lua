@@ -4,6 +4,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/bind"
 	"github.com/wippyai/go-lua/compiler/check/api"
+	canonicalsummary "github.com/wippyai/go-lua/compiler/check/canonical/summary"
 	"github.com/wippyai/go-lua/compiler/check/domain/callobligation"
 	"github.com/wippyai/go-lua/compiler/check/domain/callreturn"
 	"github.com/wippyai/go-lua/compiler/check/scope"
@@ -57,9 +58,14 @@ type ReturnValueInput struct {
 	Env                 InterceptEnv
 	TypePolicyAvailable bool
 	PendingInput        bool
-	SummaryReturnValues func(call *ast.FuncCallExpr) []product.AbstractValue
-	ExprValue           func(ast.Expr) (product.AbstractValue, bool)
-	TypeFallback        func() ([]typ.Type, bool)
+	// BlockDynamicFallback is set when the caller has selected a concrete local
+	// target but its summary is not yet informative. That target selection is an
+	// authoritative fixed-point dependency, so a gradual dynamic return must not
+	// seed the recursive SCC with any/top while the real summary is still growing.
+	BlockDynamicFallback bool
+	SummaryReturnValues  func(call *ast.FuncCallExpr) []product.AbstractValue
+	ExprValue            func(ast.Expr) (product.AbstractValue, bool)
+	TypeFallback         func() ([]typ.Type, bool)
 }
 
 // InferReturnTypes applies the canonical type-level call-return policy.
@@ -136,6 +142,7 @@ func InferReturnValues(in ReturnValueInput) ([]product.AbstractValue, bool) {
 	if in.Call == nil {
 		return nil, false
 	}
+	deferredArity := 0
 	if in.TypePolicyAvailable {
 		if types, ok := InterceptReturnTypes(in.Call, in.Env); ok {
 			// Product call returns are consumed by transfer storage. Preserve zero
@@ -146,62 +153,61 @@ func InferReturnValues(in ReturnValueInput) ([]product.AbstractValue, bool) {
 	}
 	if in.SummaryReturnValues != nil {
 		if returns := in.SummaryReturnValues(in.Call); len(returns) > 0 {
+			deferredArity = len(returns)
+			if refined, ok := refineSummaryReturnValuesWithTypeFallback(in, returns); ok && informativeReturnValues(refined) {
+				return refined, true
+			}
 			if informativeReturnValues(returns) {
-				if refined, ok := refineSummaryReturnValuesWithTypeFallback(in, returns); ok {
-					return refined, true
-				}
 				return returns, true
 			}
 		}
 	}
-	if !in.PendingInput {
+	requireInformativeFallback := in.PendingInput || in.BlockDynamicFallback
+	if !requireInformativeFallback {
 		if v, ok := GradualDynamicReturnValue(in.Call, in.ExprValue); ok {
 			return []product.AbstractValue{v}, true
 		}
 	}
-	if values, ok := typeFallbackReturnValues(in, in.PendingInput); ok {
+	if values, ok := typeFallbackReturnValues(in, requireInformativeFallback); ok {
 		return values, true
+	}
+	if in.BlockDynamicFallback {
+		return bottomReturnValues(deferredArity), true
 	}
 	return nil, false
 }
 
+func bottomReturnValues(arity int) []product.AbstractValue {
+	if arity <= 0 {
+		arity = 1
+	}
+	out := make([]product.AbstractValue, arity)
+	for i := range out {
+		out[i] = product.Bottom()
+	}
+	return out
+}
+
 func refineSummaryReturnValuesWithTypeFallback(in ReturnValueInput, summary []product.AbstractValue) ([]product.AbstractValue, bool) {
-	if !summaryReturnValuesNeedPrecisionFallback(summary) {
+	if !in.TypePolicyAvailable || in.TypeFallback == nil {
 		return nil, false
 	}
-	if !in.TypePolicyAvailable || in.TypeFallback == nil {
+	if !summaryReturnValuesNeedTypeFallback(summary) {
 		return nil, false
 	}
 	types, ok := in.TypeFallback()
 	if !ok || len(types) != len(summary) {
 		return nil, false
 	}
-	out := make([]product.AbstractValue, len(summary))
-	copy(out, summary)
-	changed := false
-	for i, fallbackType := range types {
-		if fallbackType == nil || typ.IsUnknown(fallbackType) {
-			continue
-		}
-		summaryType := product.ProjectValueOrUnknown(summary[i])
-		if !typ.MorePrecise(fallbackType, summaryType) {
-			continue
-		}
-		out[i] = product.FromType(fallbackType)
-		changed = true
-	}
-	if !changed {
-		return nil, false
-	}
-	return out, true
+	return canonicalsummary.RefineReturnValuesWithTypes(summary, types)
 }
 
-func summaryReturnValuesNeedPrecisionFallback(values []product.AbstractValue) bool {
+func summaryReturnValuesNeedTypeFallback(values []product.AbstractValue) bool {
 	for _, av := range values {
 		if av.IsZero() {
 			continue
 		}
-		if typ.IsRefinableAnnotation(av.ProjectValue()) {
+		if typ.NeedsSameExpressionFallback(av.ProjectValue()) {
 			return true
 		}
 	}
@@ -231,12 +237,23 @@ func informativeReturnValues(values []product.AbstractValue) bool {
 			continue
 		}
 		t := av.ProjectValue()
-		if !callobligation.InformativeType(t) {
+		if !informativeReturnValueType(t) {
 			continue
 		}
 		return true
 	}
 	return false
+}
+
+func informativeReturnValueType(t typ.Type) bool {
+	t = unwrap.Alias(t)
+	if t == nil || typ.IsAbsentOrUnknown(t) || typ.IsAny(t) {
+		return false
+	}
+	if typ.ContainsFreeTypeParam(t) {
+		return false
+	}
+	return true
 }
 
 func informativeReturnTypes(types []typ.Type) bool {

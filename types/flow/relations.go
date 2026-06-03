@@ -147,6 +147,7 @@ type PointRelations struct {
 	bottom      bool
 	siblingNil  []SiblingNilRelation
 	lengthParam []PointLengthParamRelation
+	sizeLower   []PointContainerLowerBound
 }
 
 // SiblingNilRelation records that ErrSym being nil proves each ValueSym is
@@ -167,6 +168,18 @@ type PointLengthParamRelation struct {
 	ParamIndex int
 }
 
+// PointContainerLowerBound records a point-local proof that a container has at
+// least Lower entries under iteration/cardinality semantics. It is deliberately
+// separate from numeric len-bounds: a string-keyed map literal has cardinality
+// for `pairs`, but it does not prove anything about Lua's `#table` sequence
+// border. Join keeps only must lower bounds by taking the minimum lower bound
+// proven by all predecessors for the same target.
+type PointContainerLowerBound struct {
+	TargetRoot cfg.SymbolID
+	TargetKey  constraint.PathKey
+	Lower      int64
+}
+
 // PointRelationsDomain is the abstract domain of point-local relations.
 var PointRelationsDomain = lattice.Lattice[PointRelations]{
 	Bottom: func() PointRelations {
@@ -180,7 +193,8 @@ var PointRelationsDomain = lattice.Lattice[PointRelations]{
 			return a.bottom == b.bottom
 		}
 		return slices.EqualFunc(a.siblingNil, b.siblingNil, siblingNilEqual) &&
-			slices.Equal(a.lengthParam, b.lengthParam)
+			slices.Equal(a.lengthParam, b.lengthParam) &&
+			slices.Equal(a.sizeLower, b.sizeLower)
 	},
 	LessOrEq: func(a, b PointRelations) bool {
 		if a.bottom {
@@ -190,7 +204,8 @@ var PointRelationsDomain = lattice.Lattice[PointRelations]{
 			return false
 		}
 		return siblingNilContainsAll(a.siblingNil, b.siblingNil) &&
-			pointLengthParamsContainAll(a.lengthParam, b.lengthParam)
+			pointLengthParamsContainAll(a.lengthParam, b.lengthParam) &&
+			pointContainerLowerBoundsImplyAll(a.sizeLower, b.sizeLower)
 	},
 	Join: joinPointRelations,
 	Meet: nil,
@@ -222,6 +237,7 @@ func joinPointRelations(a, b PointRelations) PointRelations {
 	return PointRelations{
 		siblingNil:  intersectSiblingNil(a.siblingNil, b.siblingNil),
 		lengthParam: intersectPointLengthParams(a.lengthParam, b.lengthParam),
+		sizeLower:   joinPointContainerLowerBounds(a.sizeLower, b.sizeLower),
 	}
 }
 
@@ -241,12 +257,13 @@ func (r PointRelations) WithSiblingNil(err cfg.SymbolID, values []cfg.SymbolID) 
 	return PointRelations{
 		siblingNil:  compactSiblingNil(entries),
 		lengthParam: append([]PointLengthParamRelation(nil), r.lengthParam...),
+		sizeLower:   append([]PointContainerLowerBound(nil), r.sizeLower...),
 	}
 }
 
 // KillSymbols removes relations whose error or value side was overwritten.
 func (r PointRelations) KillSymbols(symbols ...cfg.SymbolID) PointRelations {
-	if r.bottom || len(symbols) == 0 || (len(r.siblingNil) == 0 && len(r.lengthParam) == 0) {
+	if r.bottom || len(symbols) == 0 || (len(r.siblingNil) == 0 && len(r.lengthParam) == 0 && len(r.sizeLower) == 0) {
 		return r
 	}
 	killed := make(map[cfg.SymbolID]bool, len(symbols))
@@ -283,6 +300,7 @@ func (r PointRelations) KillSymbols(symbols ...cfg.SymbolID) PointRelations {
 	return PointRelations{
 		siblingNil:  compactSiblingNil(siblings),
 		lengthParam: compactPointLengthParams(lengths),
+		sizeLower:   compactPointContainerLowerBounds(filterContainerLowerBoundsByKilledRoots(r.sizeLower, killed)),
 	}
 }
 
@@ -319,13 +337,36 @@ func (r PointRelations) WithTargetLengthParam(root cfg.SymbolID, target constrai
 	return PointRelations{
 		siblingNil:  append([]SiblingNilRelation(nil), r.siblingNil...),
 		lengthParam: compactPointLengthParams(entries),
+		sizeLower:   append([]PointContainerLowerBound(nil), r.sizeLower...),
+	}
+}
+
+// WithContainerLowerBound returns r plus a must lower-bound proof for a
+// container's iteration/cardinality size.
+func (r PointRelations) WithContainerLowerBound(root cfg.SymbolID, target constraint.PathKey, lower int64) PointRelations {
+	if root == 0 || target == "" || lower <= 0 {
+		return r
+	}
+	if r.bottom {
+		r = PointRelations{}
+	}
+	entries := append([]PointContainerLowerBound(nil), r.sizeLower...)
+	entries = append(entries, PointContainerLowerBound{
+		TargetRoot: root,
+		TargetKey:  target,
+		Lower:      lower,
+	})
+	return PointRelations{
+		siblingNil:  append([]SiblingNilRelation(nil), r.siblingNil...),
+		lengthParam: append([]PointLengthParamRelation(nil), r.lengthParam...),
+		sizeLower:   compactPointContainerLowerBounds(entries),
 	}
 }
 
 // KillLengthTargets removes target-length relations rooted at overwritten or
 // shape-mutated symbols without touching unrelated point relations.
 func (r PointRelations) KillLengthTargets(symbols ...cfg.SymbolID) PointRelations {
-	if r.bottom || len(r.lengthParam) == 0 || len(symbols) == 0 {
+	if r.bottom || (len(r.lengthParam) == 0 && len(r.sizeLower) == 0) || len(symbols) == 0 {
 		return r
 	}
 	killed := make(map[cfg.SymbolID]bool, len(symbols))
@@ -346,6 +387,7 @@ func (r PointRelations) KillLengthTargets(symbols ...cfg.SymbolID) PointRelation
 	return PointRelations{
 		siblingNil:  append([]SiblingNilRelation(nil), r.siblingNil...),
 		lengthParam: compactPointLengthParams(out),
+		sizeLower:   compactPointContainerLowerBounds(filterContainerLowerBoundsByKilledRoots(r.sizeLower, killed)),
 	}
 }
 
@@ -361,6 +403,38 @@ func (r PointRelations) LengthParamsForTarget(target constraint.PathKey) []Point
 		}
 	}
 	return out
+}
+
+// ContainerLowerBoundFor returns the proven container cardinality lower bound
+// for target, if every predecessor preserves one.
+func (r PointRelations) ContainerLowerBoundFor(target constraint.PathKey) (int64, bool) {
+	if r.bottom || target == "" || len(r.sizeLower) == 0 {
+		return 0, false
+	}
+	for _, rel := range r.sizeLower {
+		if rel.TargetKey == target {
+			return rel.Lower, true
+		}
+	}
+	return 0, false
+}
+
+// HasContainerLowerBound reports whether r proves target has at least lower
+// entries.
+func (r PointRelations) HasContainerLowerBound(root cfg.SymbolID, target constraint.PathKey, lower int64) bool {
+	if root == 0 || target == "" || lower <= 0 {
+		return false
+	}
+	got, ok := r.ContainerLowerBoundFor(target)
+	if !ok {
+		return false
+	}
+	for _, rel := range r.sizeLower {
+		if rel.TargetRoot == root && rel.TargetKey == target {
+			return got >= lower
+		}
+	}
+	return false
 }
 
 // HasTargetLengthParam reports whether r proves one exact target/parameter
@@ -507,6 +581,104 @@ func intersectPointLengthParams(a, b []PointLengthParamRelation) []PointLengthPa
 	for _, x := range a {
 		if _, ok := slices.BinarySearchFunc(b, x, comparePointLengthParam); ok {
 			out = append(out, x)
+		}
+	}
+	return out
+}
+
+func compactPointContainerLowerBounds(xs []PointContainerLowerBound) []PointContainerLowerBound {
+	if len(xs) == 0 {
+		return nil
+	}
+	best := make(map[containerLowerKey]int64, len(xs))
+	for _, rel := range xs {
+		if rel.TargetRoot == 0 || rel.TargetKey == "" || rel.Lower <= 0 {
+			continue
+		}
+		key := containerLowerKey{root: rel.TargetRoot, target: rel.TargetKey}
+		if cur, ok := best[key]; !ok || rel.Lower > cur {
+			best[key] = rel.Lower
+		}
+	}
+	if len(best) == 0 {
+		return nil
+	}
+	out := make([]PointContainerLowerBound, 0, len(best))
+	for key, lower := range best {
+		out = append(out, PointContainerLowerBound{
+			TargetRoot: key.root,
+			TargetKey:  key.target,
+			Lower:      lower,
+		})
+	}
+	slices.SortFunc(out, comparePointContainerLowerBound)
+	return out
+}
+
+type containerLowerKey struct {
+	root   cfg.SymbolID
+	target constraint.PathKey
+}
+
+func comparePointContainerLowerBound(a, b PointContainerLowerBound) int {
+	if c := cmp.Compare(a.TargetRoot, b.TargetRoot); c != 0 {
+		return c
+	}
+	if c := cmp.Compare(a.TargetKey, b.TargetKey); c != 0 {
+		return c
+	}
+	return cmp.Compare(a.Lower, b.Lower)
+}
+
+func pointContainerLowerBoundsImplyAll(have, want []PointContainerLowerBound) bool {
+	for _, w := range want {
+		found := false
+		for _, h := range have {
+			if h.TargetRoot == w.TargetRoot && h.TargetKey == w.TargetKey && h.Lower >= w.Lower {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return false
+		}
+	}
+	return true
+}
+
+func joinPointContainerLowerBounds(a, b []PointContainerLowerBound) []PointContainerLowerBound {
+	if len(a) == 0 || len(b) == 0 {
+		return nil
+	}
+	var out []PointContainerLowerBound
+	for _, x := range a {
+		for _, y := range b {
+			if x.TargetRoot != y.TargetRoot || x.TargetKey != y.TargetKey {
+				continue
+			}
+			lower := x.Lower
+			if y.Lower < lower {
+				lower = y.Lower
+			}
+			out = append(out, PointContainerLowerBound{
+				TargetRoot: x.TargetRoot,
+				TargetKey:  x.TargetKey,
+				Lower:      lower,
+			})
+			break
+		}
+	}
+	return compactPointContainerLowerBounds(out)
+}
+
+func filterContainerLowerBoundsByKilledRoots(xs []PointContainerLowerBound, killed map[cfg.SymbolID]bool) []PointContainerLowerBound {
+	if len(xs) == 0 || len(killed) == 0 {
+		return append([]PointContainerLowerBound(nil), xs...)
+	}
+	out := make([]PointContainerLowerBound, 0, len(xs))
+	for _, rel := range xs {
+		if !killed[rel.TargetRoot] {
+			out = append(out, rel)
 		}
 	}
 	return out

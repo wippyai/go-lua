@@ -344,6 +344,31 @@ func TestMethodInstantiated(t *testing.T) {
 	}
 }
 
+func TestMethodInstantiatedRecordFieldFunctionSubstitutesReturn(t *testing.T) {
+	tp := typ.NewTypeParam("T", nil)
+	body := typ.NewRecord().
+		Field("value", tp).
+		Field("get", typ.Func().Param("self", typ.Self).Returns(tp).Build()).
+		Build()
+	gen := typ.NewGeneric("Container", []*typ.TypeParam{tp}, body)
+	inst := typ.Instantiate(gen, typ.String)
+
+	mt, ok := Method(inst, "get")
+	if !ok {
+		t.Fatal("expected record-field method on instantiated type")
+	}
+	fn := unwrap.Function(mt)
+	if fn == nil {
+		t.Fatalf("expected function method, got %v", mt)
+	}
+	if len(fn.Params) == 0 || fn.Params[0].Type != typ.Self {
+		t.Fatalf("expected receiver normalized to self, got %v", fn.Params)
+	}
+	if len(fn.Returns) != 1 || fn.Returns[0] != typ.String {
+		t.Fatalf("expected string return, got %v", fn.Returns)
+	}
+}
+
 func TestHasMethod(t *testing.T) {
 	methodFn := typ.Func().Build()
 	meta := typ.NewRecord().Field("test", methodFn).Build()

@@ -123,6 +123,9 @@ func refinedArg(existing, candidate typ.Type) (typ.Type, bool) {
 	if typ.IsAny(candidate) && !typ.IsAny(existing) {
 		return existing, false
 	}
+	if typ.ContainsRecursive(existing) || typ.ContainsRecursive(candidate) {
+		return existing, false
+	}
 	if subtype.IsSubtype(candidate, existing) {
 		return candidate, true
 	}

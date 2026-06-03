@@ -7,10 +7,10 @@ import (
 
 // Source identifies why a concrete call argument has an obligation.
 //
-// Signature obligations come from a declared callable shape and stay gradual
-// consistent: a true gradual-top any may flow through the public signature
-// boundary. Body obligations come from solved callee Summary.Params and are
-// preconditions proved by the body; callers must satisfy them strictly.
+// Signature obligations come from a declared callable shape. Body obligations
+// come from solved callee Summary.Params and are preconditions proved by the
+// body. Both are checked as proof obligations: top-like `any` may remain in the
+// type language, but it is not evidence for a concrete parameter type.
 type Source uint8
 
 const (
@@ -25,7 +25,7 @@ type Obligation struct {
 	Source Source
 }
 
-// Signature constructs a gradual-consistent signature obligation.
+// Signature constructs a caller-visible signature obligation.
 func Signature(t typ.Type) Obligation {
 	if !InformativeType(t) {
 		return Obligation{}
@@ -47,9 +47,10 @@ func (o Obligation) Informative() bool {
 }
 
 // AllowsGradualAny reports whether a true gradual-top any can satisfy this
-// obligation at diagnostics.
+// obligation at diagnostics. Current policy is strict: `any` is representation,
+// not proof, so concrete call obligations require narrowing/assertion/cast.
 func (o Obligation) AllowsGradualAny() bool {
-	return o.Source != SourceBody
+	return false
 }
 
 // InformativeType reports whether t carries an enforceable caller obligation.
@@ -60,7 +61,16 @@ func InformativeType(t typ.Type) bool {
 	if obligationIsTopLike(t, make(map[typ.Type]bool)) {
 		return false
 	}
-	return !hasFreeObligationVariable(t, make(map[typ.Type]bool))
+	return !HasFreeVariable(t)
+}
+
+// HasFreeVariable reports whether t still contains an unbound symbolic type
+// variable that cannot be enforced as a concrete caller/return obligation.
+// Instantiated generics are inspected through their type arguments rather than
+// their template body, so a closed `Box<string>` is not rejected merely because
+// the generic declaration contains `T`.
+func HasFreeVariable(t typ.Type) bool {
+	return hasFreeObligationVariable(t, make(map[typ.Type]bool))
 }
 
 func obligationIsTopLike(t typ.Type, seen map[typ.Type]bool) bool {

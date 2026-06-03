@@ -52,7 +52,9 @@ import (
 	"github.com/wippyai/go-lua/compiler/check/domain/callbackenv"
 	"github.com/wippyai/go-lua/compiler/check/domain/callobligation"
 	"github.com/wippyai/go-lua/compiler/check/domain/fieldkey"
+	"github.com/wippyai/go-lua/compiler/check/domain/functionfact"
 	"github.com/wippyai/go-lua/compiler/check/domain/globalenv"
+	interprocdomain "github.com/wippyai/go-lua/compiler/check/domain/interproc"
 	"github.com/wippyai/go-lua/compiler/check/domain/iteration"
 	"github.com/wippyai/go-lua/compiler/check/domain/observation"
 	"github.com/wippyai/go-lua/compiler/check/domain/paramevidence"
@@ -306,6 +308,7 @@ func (d *Driver) Run(sess api.AnalysisSession, chunk []ast.Stmt) {
 	d.pointScopes = d.buildHierarchyScopes(sess, rootGraph)
 
 	prog := d.buildProgram(sess, rootGraph, topology.ResolveModuleAliases(moduleAliases, d.cfg.Manifests))
+	d.registerStoreGraphParents(sess, prog)
 	queries := summary.New(prog)
 
 	// Drive the canonical product equation system by demanding every module
@@ -325,6 +328,8 @@ func (d *Driver) Run(sess api.AnalysisSession, chunk []ast.Stmt) {
 	d.diagnosticContextSet = make(map[summary.FuncRef]map[summary.Key]struct{})
 	defer func() { d.activeProgram = nil; d.activeCtx = nil; d.activeQueries = nil }()
 	d.solvePass(sess, prog, queries)
+	d.publishFunctionFacts(sess, prog)
+	d.commitPublishedFunctionFacts(sess)
 
 	d.bridgeResults(sess, prog, queries)
 }
@@ -350,6 +355,113 @@ func (d *Driver) solvePass(sess api.AnalysisSession, prog *program, queries *sum
 		// instead of an artificial bottom/default call context.
 		d.states[ref] = d.diagnosticState(sess, prog, queries, ref)
 	}
+}
+
+func (d *Driver) registerStoreGraphParents(sess api.AnalysisSession, prog *program) {
+	if d == nil || sess == nil || prog == nil {
+		return
+	}
+	store := sess.StoreHandle()
+	if store == nil {
+		return
+	}
+	for _, ref := range prog.refs {
+		g := prog.Graph(ref)
+		if g == nil {
+			continue
+		}
+		parent := d.returnScope(g)
+		if parent == nil {
+			parent = scope.New()
+		}
+		hash := parent.Hash()
+		if hash == 0 {
+			continue
+		}
+		store.SetParentScope(hash, parent)
+		store.SetGraphParentHash(g.ID(), hash)
+	}
+}
+
+func (d *Driver) publishFunctionFacts(sess api.AnalysisSession, prog *program) {
+	if d == nil || sess == nil || prog == nil {
+		return
+	}
+	store := sess.StoreHandle()
+	if store == nil {
+		return
+	}
+	reader := d.summaryReader()
+	for _, ref := range prog.refs {
+		symbols := prog.symbolsForRef(ref)
+		if len(symbols) == 0 {
+			continue
+		}
+		sum, ok := d.summaries[ref]
+		if !ok {
+			sum = reader.Summarize(ref)
+		}
+		returns := summary.ReturnTypes(sum)
+		params := contractTypeVector(sum.Params, prog.NumParams(ref))
+		sig := d.signatureForRef(prog, ref)
+		refinement := paramevidence.FunctionRefinementFromParamNarrows(reader.ParamNarrows(ref), prog.facts.HasNoReturn(ref))
+		for _, sym := range symbols {
+			key, ok := store.ParentGraphKeyForSymbol(sym)
+			if !ok {
+				continue
+			}
+			builder := functionfact.NewBuilder()
+			builder.AddSignature(sym, sig)
+			builder.AddSummary(sym, returns)
+			builder.AddNarrow(sym, returns)
+			builder.AddBodyParams(sym, params)
+			builder.AddPublicParams(sym, params)
+			builder.AddRefinement(sym, refinement)
+			if facts := builder.Build(); len(facts) > 0 {
+				store.MergeInterprocFactsNext(key, interprocdomain.FunctionFactsDelta(facts))
+			}
+		}
+	}
+}
+
+func (d *Driver) commitPublishedFunctionFacts(sess api.AnalysisSession) {
+	if d == nil || sess == nil {
+		return
+	}
+	store := sess.StoreHandle()
+	if store == nil {
+		return
+	}
+	store.FixpointSwap()
+}
+
+func contractTypeVector(contracts paramevidence.Contracts, minLen int) []typ.Type {
+	typesBySlot := paramevidence.ContractTypes(contracts)
+	if len(typesBySlot) == 0 {
+		return nil
+	}
+	n := minLen
+	for slot := range typesBySlot {
+		if slot >= 0 && slot+1 > n {
+			n = slot + 1
+		}
+	}
+	if n <= 0 {
+		return nil
+	}
+	out := make([]typ.Type, n)
+	any := false
+	for slot, t := range typesBySlot {
+		if slot < 0 || slot >= n || t == nil || typ.IsAbsentOrUnknown(t) {
+			continue
+		}
+		out[slot] = t
+		any = true
+	}
+	if !any {
+		return nil
+	}
+	return out
 }
 
 func (d *Driver) diagnosticState(sess api.AnalysisSession, prog *program, queries *summary.Queries, ref summary.FuncRef) state.FunctionState {
@@ -820,7 +932,7 @@ func (d *Driver) buildFuncResult(sess api.AnalysisSession, prog *program, querie
 		DepthLimitExceeded: d.scopeDepthExceededFor(g),
 	}
 	obs := observation.FromFuncResult(result, nil).WithProofValues()
-	result.CallExpectedArgs = d.projectSolvedCallExpectedArgs(sess.Context(), g, evidence, obs.TypeOf)
+	result.CallExpectedArgs = d.projectSolvedCallExpectedArgs(prog, ref, evidence)
 	result.CallContracts = callContracts
 	result.NarrowSynth = &returnSynth{
 		driver: d,
@@ -831,13 +943,14 @@ func (d *Driver) buildFuncResult(sess api.AnalysisSession, prog *program, querie
 	return result
 }
 
-func (d *Driver) projectSolvedCallExpectedArgs(
-	ctx *db.QueryContext,
-	g *cfg.Graph,
-	evidence api.FlowEvidence,
-	typeOf func(ast.Expr, cfg.Point) typ.Type,
-) []api.CallExpectedArgEvidence {
-	if d == nil || g == nil || typeOf == nil || len(evidence.Calls) == 0 {
+func (d *Driver) projectSolvedCallExpectedArgs(prog *program, ref summary.FuncRef, evidence api.FlowEvidence) []api.CallExpectedArgEvidence {
+	if d == nil || prog == nil || len(evidence.Calls) == 0 {
+		return nil
+	}
+	g := prog.Graph(ref)
+	tr, _ := prog.transfers[ref].(*transfer.Transfer)
+	fs, ok := d.states[ref]
+	if g == nil || tr == nil || !ok {
 		return nil
 	}
 	var out []api.CallExpectedArgEvidence
@@ -846,23 +959,14 @@ func (d *Driver) projectSolvedCallExpectedArgs(
 		if info == nil || info.Call == nil || len(info.Call.Args) == 0 {
 			continue
 		}
-		def := ops.CallDef{
-			Args:                solvedShallowCallArgTypes(typeOf, info.Args, ev.Point),
-			Query:               d.cfg.Types,
-			ForceMethodReceiver: callsite.ForceMethodReceiverAtPoint(g.Bindings(), g, evidence, ev.Point, info.Call),
+		ps, ok := callEventPointState(fs, ev.Point)
+		if !ok {
+			continue
 		}
-		if callsite.IsMethodCallInfo(info) {
-			def.IsMethod = true
-			def.Receiver = typeOf(info.Receiver, ev.Point)
-			def.MethodName = info.Method
-		} else {
-			def.Callee = typeOf(info.Callee, ev.Point)
-		}
-		inferred := ops.InferCall(ctx, def)
 		args := make([]typ.Type, len(info.Call.Args))
 		any := false
 		for argIdx := range info.Call.Args {
-			expected := inferred.ExpectedArgType(argIdx)
+			expected := prog.expectedCallArgType(g, tr, ev.Point, info, &ps, argIdx)
 			if expected == nil || typ.IsAbsentOrUnknown(expected) || typ.IsAny(expected) {
 				continue
 			}
@@ -880,19 +984,13 @@ func (d *Driver) projectSolvedCallExpectedArgs(
 	return out
 }
 
-func solvedShallowCallArgTypes(typeOf func(ast.Expr, cfg.Point) typ.Type, args []ast.Expr, point cfg.Point) []typ.Type {
-	if len(args) == 0 {
-		return nil
+func callEventPointState(fs state.FunctionState, point cfg.Point) (flow.PointState, bool) {
+	ps, ok := fs.Points[point]
+	if ok {
+		return ps, true
 	}
-	out := make([]typ.Type, len(args))
-	for i, arg := range args {
-		if fn, ok := arg.(*ast.FunctionExpr); ok {
-			out[i] = phasecore.ShallowFunctionLiteralSignature(fn)
-			continue
-		}
-		out[i] = typeOf(arg, point)
-	}
-	return out
+	ps, ok = fs.InPoints[point]
+	return ps, ok
 }
 
 func (d *Driver) projectCallContracts(prog *program, ref summary.FuncRef, evidence api.FlowEvidence) []api.CallContractEvidence {
@@ -975,6 +1073,10 @@ func (p *program) DeclaredReturns(ref summary.FuncRef) []typ.Type {
 	return append([]typ.Type(nil), p.declaredReturns[ref]...)
 }
 
+func (p *program) refHasClosedDeclaredReturns(ref summary.FuncRef) bool {
+	return declaredTupleClosed(p.declaredReturns[ref])
+}
+
 // refByFunc resolves a function literal to its FuncRef at the temporary AST
 // boundary. Solver-facing identity remains FuncRef; AST pointers are not used as
 // summary/query keys.
@@ -990,6 +1092,13 @@ func (p *program) refBySymbol(sym cfg.SymbolID) (summary.FuncRef, bool) {
 		return summary.FuncRef{}, false
 	}
 	return p.funcTopology.RefForSymbol(sym)
+}
+
+func (p *program) symbolsForRef(ref summary.FuncRef) []cfg.SymbolID {
+	if p == nil {
+		return nil
+	}
+	return p.funcTopology.SymbolsForRef(ref)
 }
 
 func (p *program) refByGraph(g *cfg.Graph) (summary.FuncRef, bool) {
@@ -1272,6 +1381,18 @@ func (p *program) ProjectCallEntryContextKeys(ref summary.FuncRef, fs state.Func
 		ParamSlot: func(callee summary.FuncRef, call *ast.FuncCallExpr, argIdx int) (int, int, bool) {
 			return paramevidence.ParamSlotForRuntimeArg(p.Graph(callee), p.funcExpr(callee), argIdx)
 		},
+		ParamPath: func(callee summary.FuncRef, slot int) (constraint.Path, bool) {
+			return p.paramPath(callee, slot)
+		},
+		ArgPath: func(_ int, arg ast.Expr) (constraint.Path, bool) {
+			return (callTyper{d: p.driver, g: g}).exprPath(arg)
+		},
+		FunctionArgRefs: func(_ int, arg ast.Expr, in *flow.PointState) (flow.FunctionRefSet, bool) {
+			return p.callEntryFunctionArgRefs(g, arg, in)
+		},
+		ClosureArgRefs: func(_ int, arg ast.Expr, in *flow.PointState) (flow.ClosureRefSet, bool) {
+			return p.callEntryClosureArgRefs(g, arg, in)
+		},
 		EvalArg: tr.EvalExprValue,
 	}.ProjectKeys()
 }
@@ -1330,6 +1451,74 @@ func (p *program) callbackArgRefs(g *cfg.Graph, arg ast.Expr, rawSym cfg.SymbolI
 			return p.staticCallbackArgRef(g, expr, rawSym)
 		},
 	})
+}
+
+func (p *program) callEntryFunctionArgRefs(g *cfg.Graph, arg ast.Expr, in *flow.PointState) (flow.FunctionRefSet, bool) {
+	got, ok := p.callbackArgRefs(g, arg, 0, in)
+	return functionRefSetFromSummaryRefs(got, ok)
+}
+
+func (p *program) callEntryClosureArgRefs(g *cfg.Graph, arg ast.Expr, in *flow.PointState) (flow.ClosureRefSet, bool) {
+	if p == nil || arg == nil || in == nil {
+		return flow.ClosureRefSet{}, false
+	}
+	if fn, ok := arg.(*ast.FunctionExpr); ok && fn != nil {
+		ref, ok := p.refByFunc(fn)
+		if !ok {
+			return flow.ClosureRefSet{}, false
+		}
+		captured := p.capturedSymbols(ref)
+		return flow.ClosureRefSetOf(flow.ClosureRefOf(
+			canonref.ToFlow(ref),
+			captureCellsFromPoint(in, captured),
+			flow.ProjectFunctionRefsBySymbols(in.FunctionRefs, captured),
+			flow.ProjectClosureRefsBySymbols(in.ClosureRefs, captured),
+		)), true
+	}
+	path, ok := (callTyper{d: p.driver, g: g}).exprPath(arg)
+	if !ok {
+		return flow.ClosureRefSet{}, false
+	}
+	return flow.ClosureRefAt(in.ClosureRefs, path.Key())
+}
+
+func functionRefSetFromSummaryRefs(refs []summary.FuncRef, ok bool) (flow.FunctionRefSet, bool) {
+	if !ok {
+		return flow.FunctionRefSet{}, false
+	}
+	if len(refs) == 0 {
+		return flow.FunctionRefSetTop(), true
+	}
+	flowRefs := make([]flow.FunctionRef, 0, len(refs))
+	for _, ref := range refs {
+		if ref == (summary.FuncRef{}) {
+			continue
+		}
+		flowRefs = append(flowRefs, canonref.ToFlow(ref))
+	}
+	if len(flowRefs) == 0 {
+		return flow.FunctionRefSet{}, false
+	}
+	return flow.FunctionRefSetOf(flowRefs...), true
+}
+
+func captureCellsFromPoint(in *flow.PointState, captured []cfg.SymbolID) flow.CaptureCells {
+	if in == nil || len(captured) == 0 {
+		return flow.CaptureCellsDomain.Bottom()
+	}
+	cells := in.Cells.Project(captured)
+	for _, sym := range captured {
+		if sym == 0 {
+			continue
+		}
+		if _, ok := cells.Value(sym); ok {
+			continue
+		}
+		if av, ok := flow.SymbolValue(*in, sym); ok && !av.IsZero() {
+			cells = cells.With(sym, av)
+		}
+	}
+	return cells
 }
 
 func (p *program) staticCallbackArgRef(g *cfg.Graph, arg ast.Expr, rawSym cfg.SymbolID) (summary.FuncRef, bool) {
@@ -1404,6 +1593,13 @@ func productShallowCallArgTypes(ctx transfer.ProductCallContext, args []ast.Expr
 }
 
 func (ct callTyper) expectedCalleeTypeForCall(expr ast.Expr, call *ast.FuncCallExpr, ctx transfer.ProductCallContext) typ.Type {
+	if ct.d != nil && ct.d.activeProgram != nil {
+		if ref, ok := ct.targetResolver(ct.d.activeProgram).ResolveStaticCall(call); ok {
+			if sig := ct.d.signatureForRef(ct.d.activeProgram, ref); sig != nil {
+				return sig
+			}
+		}
+	}
 	if nested, ok := expr.(*ast.FuncCallExpr); ok && nested != nil {
 		returns, ok := ct.CallReturnValues(nested, ctx.ForCall(nested))
 		if ok && len(returns) > 0 {
@@ -1412,13 +1608,13 @@ func (ct callTyper) expectedCalleeTypeForCall(expr ast.Expr, call *ast.FuncCallE
 			}
 		}
 	}
+	if fn := ct.callFunctionForDemand(call, ctx.ExprType); fn != nil {
+		return fn
+	}
 	if expr != nil {
 		if t := ctx.ExprType(expr); t != nil && !typ.IsAbsentOrUnknown(t) {
 			return t
 		}
-	}
-	if fn := ct.callFunctionForDemand(call, ctx.ExprType); fn != nil {
-		return fn
 	}
 	return nil
 }
@@ -1510,9 +1706,31 @@ func (p *program) paramSlotDeclared(ref summary.FuncRef, slot int) bool {
 	return t != nil && !typ.IsAbsentOrUnknown(t)
 }
 
+// paramSlotFixed reports whether a parameter declaration is a closed runtime
+// contract that should block caller-entry inference. An open generic binder
+// (`x: T`, `x: {T}`) is declared but not fixed: exact call-entry values must
+// still seed it so the single product fixpoint can solve `T` before callback
+// entry and return projection read the parameter.
 func (p *program) paramSlotFixed(ref summary.FuncRef, slot int) bool {
 	t := p.paramSlotDeclaredType(ref, slot)
-	return t != nil && !typ.IsAbsentOrUnknown(t) && !typ.IsRefinableAnnotation(t)
+	return t != nil && !typ.IsAbsentOrUnknown(t) && !typ.ContainsTypeParam(t) && !typ.IsRefinableAnnotation(t)
+}
+
+// declaredTupleClosed reports whether source return annotations are closed
+// enough to own the caller-visible return tuple. Generic binder returns are not
+// closed facts; selected-target summary projection must prefer solved product
+// returns for `apply<T,U>(...): U`-style calls and use signature returns only as
+// fallback.
+func declaredTupleClosed(returns []typ.Type) bool {
+	if len(returns) == 0 {
+		return false
+	}
+	for _, ret := range returns {
+		if ret == nil || typ.ContainsTypeParam(ret) {
+			return false
+		}
+	}
+	return true
 }
 
 func (p *program) paramSlotDeclaredType(ref summary.FuncRef, slot int) typ.Type {
@@ -1548,6 +1766,18 @@ func (p *program) CallEntryFunctionRefs(ref summary.FuncRef, caller flow.Functio
 
 func (p *program) CallEntryClosureRefs(ref summary.FuncRef, caller flow.ClosureRefs) flow.ClosureRefs {
 	return flow.ProjectClosureRefsBySymbols(caller, p.capturedSymbols(ref))
+}
+
+func (p *program) paramPath(ref summary.FuncRef, slot int) (constraint.Path, bool) {
+	g := p.Graph(ref)
+	if g == nil || slot < 0 {
+		return constraint.Path{}, false
+	}
+	params := g.ParamSymbols()
+	if slot >= len(params) || params[slot] == 0 {
+		return constraint.Path{}, false
+	}
+	return constraint.NewPath(params[slot], ""), true
 }
 
 func (p *program) capturedSymbols(ref summary.FuncRef) []cfg.SymbolID {
@@ -1851,7 +2081,7 @@ func (d *Driver) buildTransfer(p *program, ref summary.FuncRef) *transfer.Transf
 	baseScope := d.baseScope()
 	return transfer.New(in, transfer.Config{
 		Ops:               opsResolver{d},
-		FuncTyper:         funcTyper{d},
+		FuncTyper:         funcTyper{d: d, prog: p},
 		CallTyper:         callTyper{d: d, g: g},
 		TypeChecks:        p.facts.TypeChecks(ref),
 		SelfType:          d.methodSelfSeed(p, g),
@@ -1915,16 +2145,14 @@ func (d *Driver) baseScope() *scope.State {
 }
 
 // returnScope is the scope the diagnostic return check resolves g's declared
-// return annotation against: the function's type-param scope (the module base scope
-// extended with its bounded type parameters) when g is generic, else the plain
-// module base scope. A generic function returning a type parameter then resolves it
-// to the same bounded parameter its body reads, so a sound `return x` matches the
-// declared return.
+// return annotation against: the function-context scope (the module base scope
+// extended with bounded type parameters and function-local context such as
+// varargs) when g is generic/variadic, else the plain module base scope.
 func (d *Driver) returnScope(g *cfg.Graph) *scope.State {
 	if g == nil {
 		return d.baseScope()
 	}
-	return d.typeParamScope(g.Func())
+	return d.functionContextScopeOver(g.Func(), d.baseScope())
 }
 
 // buildModuleScope enriches the configured base scope with every type definition
@@ -1952,13 +2180,10 @@ func (d *Driver) buildModuleScope(sess api.AnalysisSession, rootGraph *cfg.Graph
 	return base
 }
 
-// buildPointScopes is the per-CFG-point type-name scope the diagnostic passes
-// read (the ident pass's type-name-as-value guard, the field pass's named-type
-// resolution). It returns g's block-aware per-point scopes (precomputed by
+// buildPointScopes is the per-CFG-point scope the diagnostic and observation
+// passes read. It returns g's block-aware per-point scopes (precomputed by
 // buildHierarchyScopes): each point carries exactly the type definitions lexically
-// visible there, so a bare reference to a module-level type name resolves to that
-// type while a block-local or forward type name resolves to nothing outside its
-// block / before its definition.
+// visible there plus the function-local context (`self`, type params, varargs).
 func (d *Driver) buildPointScopes(g *cfg.Graph) map[cfg.Point]*scope.State {
 	if g == nil || d.resolver == nil {
 		return nil
@@ -1968,7 +2193,7 @@ func (d *Driver) buildPointScopes(g *cfg.Graph) map[cfg.Point]*scope.State {
 			return scopes
 		}
 	}
-	return d.computePointScopes(g, d.baseScope())
+	return d.computePointScopes(g, d.functionContextScopeOver(g.Func(), d.baseScope()))
 }
 
 // buildHierarchyScopes computes the block-aware per-point type-name scope for
@@ -1991,9 +2216,9 @@ func (d *Driver) buildHierarchyScopes(sess api.AnalysisSession, rootGraph *cfg.G
 	// and imported type names), NOT the flat module scope: the module's own top-level
 	// `type X` defs are re-introduced block-aware as ComputeScopes encounters them in
 	// RPO, so a block-local or forward type is not visible at points where Lua's
-	// lexical rules exclude it. The root chunk fn carries no type parameters, so
-	// genericScopeOver leaves the stdlib base unchanged here.
-	rootBase := d.genericScopeOver(nil, rootGraph.Func(), d.cfg.Stdlib)
+	// lexical rules exclude it. FunctionContextScope also carries function-local
+	// context such as typed varargs for observation.
+	rootBase := d.functionContextScopeOver(rootGraph.Func(), d.cfg.Stdlib)
 	topology.WalkHierarchyWithState(topology.HierarchyStateInput[*scope.State]{
 		Root:         rootGraph,
 		RootState:    rootBase,
@@ -2014,7 +2239,7 @@ func (d *Driver) buildHierarchyScopes(sess api.AnalysisSession, rootGraph *cfg.G
 			if defScope := d.scopeAtNestedDef(scopes, parent.Graph, nested.Func); defScope != nil {
 				childBase = defScope
 			}
-			return d.genericScopeOver(nil, nested.Func, childBase)
+			return d.functionContextScopeOver(nested.Func, childBase)
 		},
 	}, func(node topology.HierarchyStateNode[*scope.State]) {
 		scopes := d.computePointScopes(node.Graph, node.State)
@@ -2376,11 +2601,19 @@ func (ct callTyper) productCallEntryContext(ref summary.FuncRef, call *ast.FuncC
 		return canonicalcall.EntryContext{}, false
 	}
 	entryValues := ct.callEntryProductValuesForRef(ref, call, ctx.RuntimeArgValues)
+	entryRefs := flow.FunctionRefsDomain.Join(
+		d.activeProgram.CallEntryFunctionRefs(ref, ctx.FunctionRefs),
+		ct.callEntryFunctionRefsForRef(ref, call, ctx),
+	)
+	entryClosures := flow.ClosureRefsDomain.Join(
+		d.activeProgram.CallEntryClosureRefs(ref, ctx.ClosureRefs),
+		ct.callEntryClosureRefsForRef(ref, call, ctx),
+	)
 	return canonicalcall.NewEntryContext(
 		ref,
 		d.activeProgram.CallEntryCells(ref, ctx.Cells),
-		d.activeProgram.CallEntryFunctionRefs(ref, ctx.FunctionRefs),
-		d.activeProgram.CallEntryClosureRefs(ref, ctx.ClosureRefs),
+		entryRefs,
+		entryClosures,
 		entryValues,
 	), true
 }
@@ -2390,12 +2623,20 @@ func (ct callTyper) productClosureCallEntryContext(ref summary.FuncRef, closure 
 		return canonicalcall.EntryContext{}, false
 	}
 	entryValues := ct.callEntryProductValuesForRef(ref, call, ctx.RuntimeArgValues)
+	entryRefs := flow.FunctionRefsDomain.Join(
+		ct.d.activeProgram.CallEntryFunctionRefs(ref, ctx.FunctionRefs),
+		ct.callEntryFunctionRefsForRef(ref, call, ctx),
+	)
+	entryClosures := flow.ClosureRefsDomain.Join(
+		ct.d.activeProgram.CallEntryClosureRefs(ref, ctx.ClosureRefs),
+		ct.callEntryClosureRefsForRef(ref, call, ctx),
+	)
 	return canonicalcall.EntryContextFromClosureWithLiveAxes(
 		ref,
 		closure,
 		ct.d.activeProgram.CallEntryCells(ref, ctx.Cells),
-		ct.d.activeProgram.CallEntryFunctionRefs(ref, ctx.FunctionRefs),
-		ct.d.activeProgram.CallEntryClosureRefs(ref, ctx.ClosureRefs),
+		entryRefs,
+		entryClosures,
 		entryValues,
 	), true
 }
@@ -2442,14 +2683,17 @@ func (ct callTyper) CallReturnValues(call *ast.FuncCallExpr, ctx transfer.Produc
 	}
 	argTypes := ctx.ArgTypes()
 	exprType := ctx.ExprType
+	outcome := ct.callOutcomeForProductCall(call, ctx)
+	summaryReturns := outcome.InferredReturnValues()
 
 	return canonicalcall.InferReturnValues(canonicalcall.ReturnValueInput{
-		Call:                call,
-		Env:                 ct.callInterceptEnv(exprType),
-		TypePolicyAvailable: d.cfg.Types != nil,
-		PendingInput:        ctx.PendingInput,
+		Call:                 call,
+		Env:                  ct.callInterceptEnv(exprType),
+		TypePolicyAvailable:  d.cfg.Types != nil,
+		PendingInput:         ctx.PendingInput,
+		BlockDynamicFallback: outcome.HasTargets() && !outcome.HasInformativeReturnValues(),
 		SummaryReturnValues: func(call *ast.FuncCallExpr) []product.AbstractValue {
-			return ct.moduleCallSummaryReturnValues(call, ctx)
+			return summaryReturns
 		},
 		ExprValue: ctx.ExprValue,
 		TypeFallback: func() ([]typ.Type, bool) {
@@ -2487,6 +2731,100 @@ func (ct callTyper) callEntryProductValuesForRef(ref summary.FuncRef, call *ast.
 			return paramevidence.ParamSlotForRuntimeArg(d.activeProgram.Graph(callee), d.activeProgram.funcExpr(callee), argIdx)
 		},
 	)
+}
+
+func (ct callTyper) callEntryFunctionRefsForRef(ref summary.FuncRef, call *ast.FuncCallExpr, ctx transfer.ProductCallContext) flow.FunctionRefs {
+	d := ct.d
+	if d == nil || d.activeProgram == nil || call == nil {
+		return flow.FunctionRefsDomain.Bottom()
+	}
+	return summary.DirectCallEntryFunctionRefs(summary.DirectCallEntryReferenceInput{
+		Call:         call,
+		Callee:       ref,
+		FunctionRefs: ctx.FunctionRefs,
+		ParamSlot: func(callee summary.FuncRef, call *ast.FuncCallExpr, runtimeIdx int) (int, int, bool) {
+			return paramevidence.ParamSlotForRuntimeArg(d.activeProgram.Graph(callee), d.activeProgram.funcExpr(callee), runtimeIdx)
+		},
+		ParamPath: func(callee summary.FuncRef, slot int) (constraint.Path, bool) {
+			return d.activeProgram.paramPath(callee, slot)
+		},
+		ArgPath: func(_ int, arg ast.Expr) (constraint.Path, bool) {
+			return ct.exprPath(arg)
+		},
+		ResolveFunctionArg: func(_ int, arg ast.Expr, _ *flow.PointState) (flow.FunctionRefSet, bool) {
+			return ct.callEntryFunctionArgRefs(arg, ctx.FunctionRefs)
+		},
+	})
+}
+
+func (ct callTyper) callEntryClosureRefsForRef(ref summary.FuncRef, call *ast.FuncCallExpr, ctx transfer.ProductCallContext) flow.ClosureRefs {
+	d := ct.d
+	if d == nil || d.activeProgram == nil || call == nil {
+		return flow.ClosureRefsDomain.Bottom()
+	}
+	return summary.DirectCallEntryClosureRefs(summary.DirectCallEntryReferenceInput{
+		Call:        call,
+		Callee:      ref,
+		ClosureRefs: ctx.ClosureRefs,
+		ParamSlot: func(callee summary.FuncRef, call *ast.FuncCallExpr, runtimeIdx int) (int, int, bool) {
+			return paramevidence.ParamSlotForRuntimeArg(d.activeProgram.Graph(callee), d.activeProgram.funcExpr(callee), runtimeIdx)
+		},
+		ParamPath: func(callee summary.FuncRef, slot int) (constraint.Path, bool) {
+			return d.activeProgram.paramPath(callee, slot)
+		},
+		ArgPath: func(_ int, arg ast.Expr) (constraint.Path, bool) {
+			return ct.exprPath(arg)
+		},
+		ResolveClosureArg: func(_ int, arg ast.Expr, _ *flow.PointState) (flow.ClosureRefSet, bool) {
+			return ct.callEntryClosureArgRefs(arg, ctx)
+		},
+	})
+}
+
+func (ct callTyper) callEntryFunctionArgRefs(arg ast.Expr, refs flow.FunctionRefs) (flow.FunctionRefSet, bool) {
+	d := ct.d
+	if d == nil || d.activeProgram == nil {
+		return flow.FunctionRefSet{}, false
+	}
+	got, ok := canonicalcall.ResolveCallbackArgRefs(canonicalcall.CallbackArgInput{
+		Arg: arg,
+		FunctionLiteral: func(fn *ast.FunctionExpr) (summary.FuncRef, bool) {
+			return d.activeProgram.refByFunc(fn)
+		},
+		FunctionRefs: func(expr ast.Expr) ([]summary.FuncRef, bool) {
+			resolver := ct.targetResolver(d.activeProgram)
+			return resolver.ResolveFunctionRefsAtExpr(expr, refs)
+		},
+		StaticExpr: func(expr ast.Expr) (summary.FuncRef, bool) {
+			return ct.targetResolver(d.activeProgram).ResolveStaticExpr(expr)
+		},
+	})
+	return functionRefSetFromSummaryRefs(got, ok)
+}
+
+func (ct callTyper) callEntryClosureArgRefs(arg ast.Expr, ctx transfer.ProductCallContext) (flow.ClosureRefSet, bool) {
+	d := ct.d
+	if d == nil || d.activeProgram == nil || arg == nil {
+		return flow.ClosureRefSet{}, false
+	}
+	if fn, ok := arg.(*ast.FunctionExpr); ok && fn != nil {
+		ref, ok := d.activeProgram.refByFunc(fn)
+		if !ok {
+			return flow.ClosureRefSet{}, false
+		}
+		captured := d.activeProgram.capturedSymbols(ref)
+		return flow.ClosureRefSetOf(flow.ClosureRefOf(
+			canonref.ToFlow(ref),
+			ctx.Cells.Project(captured),
+			flow.ProjectFunctionRefsBySymbols(ctx.FunctionRefs, captured),
+			flow.ProjectClosureRefsBySymbols(ctx.ClosureRefs, captured),
+		)), true
+	}
+	path, ok := ct.exprPath(arg)
+	if !ok {
+		return flow.ClosureRefSet{}, false
+	}
+	return flow.ClosureRefAt(ctx.ClosureRefs, path.Key())
 }
 
 func (ct callTyper) moduleCallSummaryReturns(call *ast.FuncCallExpr, exprType func(ast.Expr) typ.Type, cells flow.CaptureCells, refs flow.FunctionRefs) []typ.Type {
@@ -2953,6 +3291,51 @@ func (p *program) funcRef(sym cfg.SymbolID) (summary.FuncRef, bool) {
 	return p.refBySymbol(sym)
 }
 
+func (p *program) ReturnCallHasFiniteTarget(caller summary.FuncRef, call *cfg.CallInfo) bool {
+	if p == nil || call == nil {
+		return false
+	}
+	if call.Method != "" {
+		method, ok := fieldkey.FromName(call.Method)
+		if !ok {
+			return false
+		}
+		if call.CalleePath.Symbol != 0 {
+			if _, ok := p.fieldFuncRef(call.CalleePath.Symbol, method); ok {
+				return true
+			}
+		}
+		if g := p.Graph(caller); g != nil && call.ReceiverSymbol != 0 {
+			if _, ok := p.selfMethodFuncRef(g, call.ReceiverSymbol, method); ok {
+				return true
+			}
+		}
+		return false
+	}
+	if call.CalleeSymbol != 0 {
+		if _, ok := p.funcRef(call.CalleeSymbol); ok {
+			return true
+		}
+	}
+	if sym, field, ok := directFieldFuncPath(call.CalleePath); ok {
+		if _, ok := p.fieldFuncRef(sym, field); ok {
+			return true
+		}
+	}
+	return false
+}
+
+func directFieldFuncPath(path constraint.Path) (cfg.SymbolID, fieldkey.Key, bool) {
+	if path.Symbol == 0 || len(path.Segments) != 1 {
+		return 0, fieldkey.Key{}, false
+	}
+	field, ok := fieldkey.FromSegment(path.Segments[0])
+	if !ok {
+		return 0, fieldkey.Key{}, false
+	}
+	return path.Symbol, field, true
+}
+
 func (p *program) selfMethodFuncRef(g *cfg.Graph, selfSym cfg.SymbolID, method fieldkey.Key) (summary.FuncRef, bool) {
 	if p == nil || g == nil || selfSym == 0 || method == (fieldkey.Key{}) {
 		return summary.FuncRef{}, false
@@ -2984,13 +3367,18 @@ func (ct callTyper) bindings() *bind.BindingTable {
 	return ct.g.Bindings()
 }
 
-// funcTyper adapts the driver to the transfer's FuncTyper seam: it resolves a
-// function literal's signature from its declared annotations, plus the inferred
-// summary return when the literal declares no return. The inferred lookup reads the
-// same summary query signatureForRef uses (the converged returns, or the in-flight
-// query's current returns during the solve), which the call-graph fixpoint widens, so
-// it is stable inside the solve rather than a not-yet-converged dependence.
-type funcTyper struct{ d *Driver }
+// funcTyper adapts the driver to the transfer's FuncTyper seam. It resolves a
+// function literal's signature in the lexical scope where the literal is defined,
+// not the flat module scope: a table-field callback inside `make<T>()` that
+// declares `(): T` must store the enclosing generic TypeParam in the product
+// value, not an unresolved `typ.Ref("T")`. The inferred lookup reads the same
+// summary query signatureForRef uses (the converged returns, or the in-flight
+// query's current returns during the solve), which the call-graph fixpoint
+// widens, so it is stable inside the solve rather than a second driver pass.
+type funcTyper struct {
+	d    *Driver
+	prog *program
+}
 
 func (ft funcTyper) FuncRef(fn *ast.FunctionExpr) (flow.FunctionRef, bool) {
 	if ft.d == nil || ft.d.activeProgram == nil || fn == nil {
@@ -3021,13 +3409,64 @@ func (ft funcTyper) CapturedSymbols(ref flow.FunctionRef) []cfg.SymbolID {
 // annotations, splicing the inferred summary return when fn declares none. The result
 // is the structural callable a function-valued table field carries.
 func (ft funcTyper) FuncType(fn *ast.FunctionExpr) *typ.Function {
+	return ft.build(fn, nil)
+}
+
+func (ft funcTyper) build(fn *ast.FunctionExpr, method *cfg.FuncDefInfo) *typ.Function {
+	if ft.d == nil || fn == nil {
+		return nil
+	}
+	base := ft.literalBaseScope(fn)
+	if method != nil {
+		return canonicalsig.Build(canonicalsig.Input{
+			Method:          method,
+			Base:            base,
+			ResolveType:     ft.d.resolveType,
+			InferredReturns: ft.d.inferredReturnsForFunction,
+			ReturnMode:      canonicalsig.ReturnDeclaredThenInferred,
+		})
+	}
 	return canonicalsig.Build(canonicalsig.Input{
 		Function:        fn,
-		Base:            ft.d.baseScope(),
+		Base:            base,
 		ResolveType:     ft.d.resolveType,
 		InferredReturns: ft.d.inferredReturnsForFunction,
 		ReturnMode:      canonicalsig.ReturnDeclaredThenInferred,
 	})
+}
+
+func (ft funcTyper) literalBaseScope(fn *ast.FunctionExpr) *scope.State {
+	if ft.d == nil {
+		return nil
+	}
+	base := ft.d.baseScope()
+	prog := ft.prog
+	if prog == nil {
+		prog = ft.d.activeProgram
+	}
+	if prog == nil || fn == nil {
+		return base
+	}
+	ref, ok := prog.refByFunc(fn)
+	if !ok {
+		return base
+	}
+	parent, ok := prog.funcTopology.ParentRef(ref)
+	if !ok {
+		return base
+	}
+	parentGraph := prog.Graph(parent)
+	if parentGraph == nil {
+		return base
+	}
+	if ft.d.pointScopes != nil {
+		if scopes := ft.d.pointScopes[parentGraph.ID()]; scopes != nil {
+			if defScope := ft.d.scopeAtNestedDef(scopes, parentGraph, fn); defScope != nil {
+				return defScope
+			}
+		}
+	}
+	return ft.d.functionContextScopeOver(parentGraph.Func(), base)
 }
 
 // inferredReturnTypes is ref's inferred return tuple from the converged summary, or
@@ -3044,13 +3483,10 @@ func (d *Driver) inferredReturnTypes(ref summary.FuncRef) []typ.Type {
 // the named type `T`, and the declared parameter/return annotations follow. This
 // is the callable the class field `T.m` holds.
 func (ft funcTyper) MethodFuncType(info *cfg.FuncDefInfo) *typ.Function {
-	return canonicalsig.Build(canonicalsig.Input{
-		Method:          info,
-		Base:            ft.d.baseScope(),
-		ResolveType:     ft.d.resolveType,
-		InferredReturns: ft.d.inferredReturnsForFunction,
-		ReturnMode:      canonicalsig.ReturnDeclaredThenInferred,
-	})
+	if info == nil {
+		return nil
+	}
+	return ft.build(info.FuncExpr, info)
 }
 
 // genericScope registers fn's generic type parameters (<T, U>) on builder and
@@ -3075,6 +3511,17 @@ func (d *Driver) genericScopeOver(builder *typ.FunctionBuilder, fn *ast.Function
 		base = d.baseScope()
 	}
 	return canonicalsig.GenericScope(builder, canonicalsig.ScopeInput{
+		Function:    fn,
+		Base:        base,
+		ResolveType: d.resolveType,
+	})
+}
+
+func (d *Driver) functionContextScopeOver(fn *ast.FunctionExpr, base *scope.State) *scope.State {
+	if base == nil {
+		base = d.baseScope()
+	}
+	return canonicalsig.FunctionContextScope(canonicalsig.ScopeInput{
 		Function:    fn,
 		Base:        base,
 		ResolveType: d.resolveType,

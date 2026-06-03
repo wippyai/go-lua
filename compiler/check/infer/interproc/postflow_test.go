@@ -81,6 +81,60 @@ func TestCollectParameterEvidenceFromResult_UsesSolvedObservationWithoutNarrowSy
 	}
 }
 
+func TestCollectParameterEvidenceFromResult_CanonicalProjectionSkipsLegacyBodyPreconditions(t *testing.T) {
+	stmts, err := parse.ParseString(`target(page.data_func)`, "postflow_canonical.lua")
+	if err != nil {
+		t.Fatalf("parse failed: %v", err)
+	}
+	caller := &ast.FunctionExpr{ParList: &ast.ParList{Names: []string{"page"}}, Stmts: stmts}
+	graph := cfg.Build(caller, "target")
+	if graph == nil {
+		t.Fatal("expected caller graph")
+	}
+
+	var callPoint cfg.Point
+	var callInfo *cfg.CallInfo
+	graph.EachCallSite(func(p cfg.Point, info *cfg.CallInfo) {
+		if callInfo == nil {
+			callPoint = p
+			callInfo = info
+		}
+	})
+	if callInfo == nil {
+		t.Fatal("expected target callsite")
+	}
+
+	parent := scopeForPostflowTest()
+	st := checkstore.NewSessionStore()
+	const currentSym = cfg.SymbolID(900)
+	st.RegisterGraph(graph, caller)
+	st.SetParentScope(parent.Hash(), parent)
+	st.SetGraphParentHash(graph.ID(), parent.Hash())
+	st.RegisterFunctionRef(currentSym, caller, graph, 0, 0)
+
+	result := &api.FuncResult{
+		Graph:          graph,
+		FlowProjection: noopFlowOps{},
+		Evidence: api.FlowEvidence{
+			Calls: []api.CallEvidence{{
+				Point:        callPoint,
+				Info:         callInfo,
+				ExpectedArgs: []typ.Type{typ.String},
+			}},
+		},
+	}
+	CollectParameterEvidenceFromResult(st, result, parent, currentSym)
+
+	key, ok := st.ParentGraphKeyForSymbol(currentSym)
+	if !ok {
+		t.Fatal("expected current function graph key")
+	}
+	ff := st.InterprocNext.Facts[key].FunctionFacts[currentSym]
+	if len(ff.Params) != 0 || len(ff.BodyParams) != 0 {
+		t.Fatalf("canonical result must not write legacy body/public params, got public=%v body=%v", ff.Params, ff.BodyParams)
+	}
+}
+
 func TestReturnLengthRelationEnsuresFromCanonicalRelations(t *testing.T) {
 	rels := flow.ReturnRelationsOfLengthParams([]flow.ReturnLengthParamRelation{
 		{ReturnIndex: 0, ParamIndex: 2},
@@ -95,4 +149,46 @@ func TestReturnLengthRelationEnsuresFromCanonicalRelations(t *testing.T) {
 
 func scopeForPostflowTest() *scope.State {
 	return scope.New()
+}
+
+type noopFlowOps struct{}
+
+func (noopFlowOps) NarrowedTypeAt(cfg.Point, constraint.Path) typ.Type {
+	return nil
+}
+
+func (noopFlowOps) NarrowedTypeAtWithCondition(cfg.Point, constraint.Path, constraint.Condition) typ.Type {
+	return nil
+}
+
+func (noopFlowOps) PreStateTypeAt(cfg.Point, constraint.Path) typ.Type {
+	return nil
+}
+
+func (noopFlowOps) ExcludesTypeAt(cfg.Point, constraint.Path, typ.Type) bool {
+	return false
+}
+
+func (noopFlowOps) BoundsAt(cfg.Point, string) (int64, int64, bool) {
+	return 0, 0, false
+}
+
+func (noopFlowOps) ArrayLenBoundAt(cfg.Point, string) (string, bool) {
+	return "", false
+}
+
+func (noopFlowOps) ArrayLenBoundWithOffsetAt(cfg.Point, string) (string, int64, bool) {
+	return "", 0, false
+}
+
+func (noopFlowOps) LengthBoundsAt(cfg.Point, constraint.Path) (int64, int64, bool) {
+	return 0, 0, false
+}
+
+func (noopFlowOps) IsPointDead(cfg.Point) bool {
+	return false
+}
+
+func (noopFlowOps) HasKeyOf(cfg.Point, constraint.Path, constraint.Path) bool {
+	return false
 }

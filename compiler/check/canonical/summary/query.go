@@ -87,6 +87,10 @@ type declaredReturnsProvider interface {
 	DeclaredReturns(ref FuncRef) []typ.Type
 }
 
+type returnCallTargetProvider interface {
+	ReturnCallHasFiniteTarget(ref FuncRef, call *cfg.CallInfo) bool
+}
+
 type captureEntryProvider interface {
 	CaptureEntries(ref FuncRef, captureExportsOf func(FuncRef) flow.CaptureCells) flow.CaptureCells
 }
@@ -339,7 +343,10 @@ func (q *Queries) ParamNarrows(ctx *db.QueryContext, ref FuncRef) []paramevidenc
 // call-graph edge.
 func (q *Queries) computeSolve(ctx *db.QueryContext, key Key) solveResult {
 	fs := q.solveIntra(ctx, key.Ref, q.entryCells(ctx, key), q.entryRefs(ctx, key), q.entryClosureRefs(ctx, key), q.entryValues(ctx, key), q.entrySymbolValues(key.Ref))
-	sum := ProjectWithDeclaredReturns(fs, q.prog.Graph(key.Ref), q.declaredReturns(key.Ref))
+	sum := ProjectWithOptions(fs, q.prog.Graph(key.Ref), ProjectOptions{
+		DeclaredReturns:           q.declaredReturns(key.Ref),
+		ReturnCallHasFiniteTarget: q.returnCallHasFiniteTarget(key.Ref),
+	})
 	sum.ParamNarrows = q.ParamNarrows(ctx, key.Ref)
 	if projector, ok := q.prog.(callEntryValueProjector); ok && projector != nil {
 		sum.CallEntryValues = projector.ProjectCallEntryValues(key.Ref, fs)
@@ -599,6 +606,16 @@ func (q *Queries) declaredReturns(ref FuncRef) []typ.Type {
 		return nil
 	}
 	return prog.DeclaredReturns(ref)
+}
+
+func (q *Queries) returnCallHasFiniteTarget(ref FuncRef) func(*cfg.CallInfo) bool {
+	prog, ok := q.prog.(returnCallTargetProvider)
+	if !ok || prog == nil {
+		return nil
+	}
+	return func(call *cfg.CallInfo) bool {
+		return prog.ReturnCallHasFiniteTarget(ref, call)
+	}
 }
 
 func solveResultEqual(a, b solveResult) bool {

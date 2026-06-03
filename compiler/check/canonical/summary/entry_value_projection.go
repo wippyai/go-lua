@@ -274,6 +274,10 @@ type CallEntryContextProjection struct {
 	ResolveCallback CallEntryCallbackResolver
 	ExpectedArgType CallEntryExpectedArgType
 	ParamSlot       EntryValueParamSlot
+	ParamPath       EntryReferenceParamPath
+	ArgPath         EntryReferenceArgPath
+	FunctionArgRefs EntryFunctionRefArgResolver
+	ClosureArgRefs  EntryClosureRefArgResolver
 	EvalArg         EntryValueEvaluator
 }
 
@@ -296,11 +300,13 @@ func (p CallEntryContextProjection) ProjectKeys() []Key {
 		targets := p.ResolveTargets(info.Call, &in)
 		for _, target := range targets {
 			values := p.directProductValues(target.Ref, info.Call, &in)
+			refs := flow.FunctionRefsDomain.Join(target.EntryFunctionRefs, p.directFunctionRefs(target.Ref, info.Call, &in))
+			closures := flow.ClosureRefsDomain.Join(target.EntryClosureRefs, p.directClosureRefs(target.Ref, info.Call, &in))
 			key := NewKeyWithEntryContext(
 				target.Ref,
 				target.EntryCells,
-				target.EntryFunctionRefs,
-				target.EntryClosureRefs,
+				refs,
+				closures,
 				values,
 			)
 			if _, ok := seen[key]; ok {
@@ -406,6 +412,38 @@ func (p CallEntryContextProjection) directProductValues(callee FuncRef, call *as
 	return DirectCallEntryProductValues(call, callee, argValues, p.ParamSlot)
 }
 
+func (p CallEntryContextProjection) directFunctionRefs(callee FuncRef, call *ast.FuncCallExpr, in *flow.PointState) flow.FunctionRefs {
+	if p.ParamSlot == nil || p.ParamPath == nil || in == nil {
+		return flow.FunctionRefsDomain.Bottom()
+	}
+	return DirectCallEntryFunctionRefs(DirectCallEntryReferenceInput{
+		Call:               call,
+		Callee:             callee,
+		ParamSlot:          p.ParamSlot,
+		ParamPath:          p.ParamPath,
+		ArgPath:            p.ArgPath,
+		FunctionRefs:       in.FunctionRefs,
+		State:              in,
+		ResolveFunctionArg: p.FunctionArgRefs,
+	})
+}
+
+func (p CallEntryContextProjection) directClosureRefs(callee FuncRef, call *ast.FuncCallExpr, in *flow.PointState) flow.ClosureRefs {
+	if p.ParamSlot == nil || p.ParamPath == nil || in == nil {
+		return flow.ClosureRefsDomain.Bottom()
+	}
+	return DirectCallEntryClosureRefs(DirectCallEntryReferenceInput{
+		Call:              call,
+		Callee:            callee,
+		ParamSlot:         p.ParamSlot,
+		ParamPath:         p.ParamPath,
+		ArgPath:           p.ArgPath,
+		ClosureRefs:       in.ClosureRefs,
+		State:             in,
+		ResolveClosureArg: p.ClosureArgRefs,
+	})
+}
+
 func (p CallEntryContextProjection) callbackEntryKeys(point cfg.Point, info *cfg.CallInfo, in *flow.PointState) []Key {
 	call := callInfoCall(info)
 	if p.ResolveCallback == nil || p.ExpectedArgType == nil || call == nil || in == nil {
@@ -424,9 +462,9 @@ func (p CallEntryContextProjection) callbackEntryKeys(point cfg.Point, info *cfg
 		if !ok || len(refs) == 0 {
 			continue
 		}
-		var values EntryValues
-		for slot, param := range fn.Params {
-			values = JoinEntryValue(values, slot, product.FromType(param.Type))
+		values, ok := callbackExpectedEntryValues(fn)
+		if !ok {
+			continue
 		}
 		for _, ref := range refs {
 			keys = append(keys, NewKeyWithEntryValues(ref, flow.CaptureCellsDomain.Bottom(), flow.FunctionRefsDomain.Bottom(), values))
@@ -504,13 +542,34 @@ func (p CallEntryValueProjection) projectCallbackEntryValues(out CallEntryValues
 		if !ok || len(refs) == 0 {
 			continue
 		}
+		values, ok := callbackExpectedEntryValues(fn)
+		if !ok || len(values) == 0 {
+			continue
+		}
 		for _, ref := range refs {
-			for slot, param := range fn.Params {
-				out = JoinCallEntryValue(out, ref, slot, product.FromType(param.Type))
+			for slot, av := range values {
+				out = JoinCallEntryValue(out, ref, slot, av)
 			}
 		}
 	}
 	return out
+}
+
+func callbackExpectedEntryValues(fn *typ.Function) (EntryValues, bool) {
+	if fn == nil {
+		return nil, false
+	}
+	if len(fn.Params) == 0 {
+		return nil, true
+	}
+	var values EntryValues
+	for slot, param := range fn.Params {
+		if param.Type == nil || typ.ContainsTypeParam(param.Type) {
+			continue
+		}
+		values = JoinEntryValue(values, slot, product.FromType(param.Type))
+	}
+	return values, len(values) != 0
 }
 
 func callInfoCall(info *cfg.CallInfo) *ast.FuncCallExpr {

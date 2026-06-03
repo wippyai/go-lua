@@ -449,7 +449,7 @@ func (f *canonicalFacts) CallReturnTypesAt(point cfg.Point, call *ast.FuncCallEx
 		},
 		canonicalcall.SummaryTargetInfo{
 			DeclaredReturns: func(target canonicalcall.SelectedTarget) bool {
-				return len(f.program.declaredReturns[target.Ref()]) > 0
+				return f.program.refHasClosedDeclaredReturns(target.Ref())
 			},
 			SignatureReturns: func(target canonicalcall.SelectedTarget) []typ.Type {
 				return ct.selectedTargetSignatureReturns(

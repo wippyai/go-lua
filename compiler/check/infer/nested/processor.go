@@ -228,13 +228,12 @@ func expectedFunctionForCallbackArg(
 	arg ast.Expr,
 	ev api.CallEvidence,
 ) *typ.Function {
-	if expected := expectedFunctionLiteralSignature(arg, ev.ExpectedArgType(argIdx)); expected != nil {
-		return expected
+	if parentResult != nil && callIdx >= 0 && callIdx < len(parentResult.CallExpectedArgs) {
+		if expected := expectedFunctionLiteralSignature(arg, parentResult.CallExpectedArgs[callIdx].ArgType(argIdx)); expected != nil {
+			return expected
+		}
 	}
-	if parentResult == nil || callIdx < 0 || callIdx >= len(parentResult.CallExpectedArgs) {
-		return nil
-	}
-	return expectedFunctionLiteralSignature(arg, parentResult.CallExpectedArgs[callIdx].ArgType(argIdx))
+	return expectedFunctionLiteralSignature(arg, ev.ExpectedArgType(argIdx))
 }
 
 func expectedFunctionLiteralSignature(arg ast.Expr, expected typ.Type) *typ.Function {

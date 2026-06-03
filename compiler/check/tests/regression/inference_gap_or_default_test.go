@@ -7,11 +7,11 @@ import (
 	"github.com/wippyai/go-lua/types/io"
 )
 
-// TestInferenceGap_GradualParamValueOperators verifies that an unannotated,
-// fully unconstrained parameter is read as gradual `any` in the body, matching
-// its public `any?` contract, so value operators on it are not rejected as
-// operations on an unresolved `unknown`.
-func TestInferenceGap_GradualParamValueOperators(t *testing.T) {
+// TestInferenceGap_GradualParamValueOperatorsRequireProof verifies that an
+// unannotated, fully unconstrained parameter is not treated as proof for value
+// operators. It may project to `any`, but concrete length/concat/order use must
+// come from narrowing, assertion, cast, or predicate evidence.
+func TestInferenceGap_GradualParamValueOperatorsRequireProof(t *testing.T) {
 	cases := []struct {
 		name string
 		code string
@@ -56,8 +56,8 @@ return { f = f }
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			result := testutil.Check(tc.code, testutil.WithStdlib())
-			if result.HasError() {
-				t.Fatalf("gradual unconstrained parameter must admit value operators, got: %v", testutil.ErrorMessages(result.Diagnostics))
+			if !result.HasError() {
+				t.Fatalf("expected gradual unconstrained parameter operator use to require proof")
 			}
 		})
 	}

@@ -6,6 +6,8 @@ import (
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/canonical/input"
+	"github.com/wippyai/go-lua/compiler/check/domain/callobligation"
+	"github.com/wippyai/go-lua/compiler/check/domain/paramevidence"
 	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/domain/value/product"
 	"github.com/wippyai/go-lua/types/flow"
@@ -46,6 +48,47 @@ func TestProductCallContextUsesTransferExpressionEvaluator(t *testing.T) {
 	}
 	if av, ok := ctx.ExprValue(call.Args[0]); !ok || av.IsZero() {
 		t.Fatalf("ExprValue(arg) = %v/%v, want evaluated product value", av, ok)
+	}
+}
+
+func TestTransferUnreachableCallDoesNotEmitArgumentDemand(t *testing.T) {
+	page := &ast.IdentExpr{Value: "page"}
+	arg := &ast.AttrGetExpr{
+		Object:    page,
+		Key:       &ast.StringExpr{Value: "data_func"},
+		KeySyntax: ast.AttrKeyDot,
+	}
+	call := &ast.FuncCallExpr{
+		Func: &ast.IdentExpr{Value: "takes_string"},
+		Args: []ast.Expr{arg},
+	}
+	fn := &ast.FunctionExpr{
+		ParList: &ast.ParList{Names: []string{"page"}},
+		Stmts:   []ast.Stmt{&ast.FuncCallStmt{Expr: call}},
+	}
+	in := input.BuildFromFunction(fn, nil, nil, "takes_string")
+	tr := New(in, Config{CallTyper: deadCallDemandTyper{demand: typ.String}})
+
+	var callPoint cfg.Point
+	in.Graph.EachCallSite(func(p cfg.Point, info *cfg.CallInfo) {
+		if info != nil && info.Call == call {
+			callPoint = p
+		}
+	})
+	if callPoint == 0 {
+		t.Fatal("test call point not found")
+	}
+
+	demands := paramevidence.Contracts{}
+	out := tr.Transfer(in.Graph, callPoint, flow.PointStateDomain.Bottom(), nil, func(idx int, c paramevidence.ParamContract) {
+		demands = paramevidence.JoinDemand(demands, idx, c)
+	})
+
+	if len(demands) != 0 {
+		t.Fatalf("unreachable call emitted demands: %v", demands)
+	}
+	if !flow.PointStateDomain.Equal(out, flow.PointStateDomain.Bottom()) {
+		t.Fatalf("unreachable call out = %#v, want point-state Bottom", out)
 	}
 }
 
@@ -260,6 +303,22 @@ func (p *productReturnTestTyper) CallReturnValues(
 		p.callee, _ = ctx.ExprValue(call.Func)
 	}
 	return append([]product.AbstractValue(nil), p.returns...), true
+}
+
+type deadCallDemandTyper struct {
+	captureEffectTyper
+	demand typ.Type
+}
+
+func (d deadCallDemandTyper) CallArgDemands(call *ast.FuncCallExpr, _ ProductCallContext) []callobligation.Obligation {
+	if call == nil || len(call.Args) == 0 || d.demand == nil {
+		return nil
+	}
+	out := make([]callobligation.Obligation, len(call.Args))
+	for i := range out {
+		out[i] = callobligation.Body(d.demand)
+	}
+	return out
 }
 
 type strictAnyReturnTyper struct {
