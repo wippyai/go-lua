@@ -79,14 +79,20 @@ func ReconcilePathFactWithDeclaredRead(narrowed, declared typ.Type) (typ.Type, b
 			}
 			return declaredNonNil, true
 		}
-		if unwrap.Function(declaredNonNil) != nil && unwrap.Function(narrowed) != nil {
+		if declaredFn, narrowedFn := unwrap.Function(declaredNonNil), unwrap.Function(narrowed); declaredFn != nil && narrowedFn != nil {
+			if functionSolvedReturnMorePrecise(narrowedFn, declaredFn) {
+				return narrowed, true
+			}
 			return declaredNonNil, true
 		}
 		if subtype.IsSubtype(narrowed, declaredNonNil) {
 			return narrowed, true
 		}
 	}
-	if unwrap.Function(declared) != nil && unwrap.Function(narrowed) != nil {
+	if declaredFn, narrowedFn := unwrap.Function(declared), unwrap.Function(narrowed); declaredFn != nil && narrowedFn != nil {
+		if functionSolvedReturnMorePrecise(narrowedFn, declaredFn) {
+			return narrowed, true
+		}
 		return declared, true
 	}
 	if declaredReadCoveredByUnion(narrowed, declared) {
@@ -96,6 +102,39 @@ func ReconcilePathFactWithDeclaredRead(narrowed, declared typ.Type) (typ.Type, b
 		return reconciled, true
 	}
 	return nil, false
+}
+
+func functionSolvedReturnMorePrecise(narrowed, declared *typ.Function) bool {
+	if narrowed == nil || declared == nil || len(narrowed.Returns) == 0 {
+		return false
+	}
+	if len(declared.Returns) == 0 {
+		return true
+	}
+	if len(narrowed.Returns) != len(declared.Returns) {
+		return false
+	}
+	strict := false
+	for i := range narrowed.Returns {
+		nret := unwrap.Alias(narrowed.Returns[i])
+		dret := unwrap.Alias(declared.Returns[i])
+		if typ.TypeEquals(nret, dret) {
+			continue
+		}
+		switch {
+		case typ.IsAbsentOrUnknown(dret) && !typ.IsAbsentOrUnknown(nret):
+			strict = true
+		case typ.IsAny(dret) && !typ.IsAny(nret):
+			strict = true
+		case typ.MorePrecise(nret, dret):
+			strict = true
+		case subtype.IsSubtype(nret, dret):
+			strict = true
+		default:
+			return false
+		}
+	}
+	return strict
 }
 
 // ReconcileDeclaredBoundary reconciles an observed expression value with a

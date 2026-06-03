@@ -20,6 +20,7 @@ import (
 	"github.com/wippyai/go-lua/types/flow"
 	"github.com/wippyai/go-lua/types/flow/propagate"
 	"github.com/wippyai/go-lua/types/kind"
+	querycore "github.com/wippyai/go-lua/types/query/core"
 	"github.com/wippyai/go-lua/types/typ"
 )
 
@@ -350,6 +351,33 @@ return v
 	}
 }
 
+func TestCanonical_OperatorDemandTypesUntypedConcatParameter(t *testing.T) {
+	fs, g := solveFnWithTransferConfig(t, []string{"name"}, nil, nil, `
+local out = "Hello, " .. name
+return out
+`, transfer.Config{Ops: queryOps{}})
+
+	assertExitSymbolType(t, fs, g, "out", typ.String)
+	if got, ok := fs.Contracts[0]; !ok {
+		t.Fatalf("concat use must demand parameter 0; contracts=%v", fs.Contracts)
+	} else if !typ.TypeEquals(got.ProjectValue(), typ.NewUnion(typ.String, typ.Number)) {
+		t.Fatalf("concat demand = %v, want string | number", got.ProjectValue())
+	}
+}
+
+func TestCanonical_OperatorDemandTypesUntypedLengthGuardThenConcat(t *testing.T) {
+	fs, g := solveFnWithTransferConfig(t, []string{"name"}, nil, nil, `
+local n = #name
+local out = "Hello, " .. name
+return out
+`, transfer.Config{Ops: queryOps{}})
+
+	assertExitSymbolType(t, fs, g, "out", typ.String)
+	if _, ok := fs.Contracts[0]; !ok {
+		t.Fatalf("length/concat use must demand parameter 0; contracts=%v", fs.Contracts)
+	}
+}
+
 func solveFnWithTransferConfig(t *testing.T, params []string, paramTypes []ast.TypeExpr, resolve input.TypeResolver, body string, config transfer.Config, globals ...string) (state.FunctionState, *cfg.Graph) {
 	t.Helper()
 	stmts, err := parse.ParseString(body, "canonical.lua")
@@ -367,6 +395,32 @@ func solveFnWithTransferConfig(t *testing.T, params []string, paramTypes []ast.T
 	tr := transfer.New(in, config)
 	fs := equation.NewBuilder(in.Graph, in.Scope.NumParams(), tr).Solve()
 	return fs, in.Graph
+}
+
+func assertExitSymbolType(t *testing.T, fs state.FunctionState, g *cfg.Graph, name string, want typ.Type) {
+	t.Helper()
+	ps, ok := fs.Points[g.Exit()]
+	if !ok {
+		t.Fatalf("no exit state; points=%v", fs.Points)
+	}
+	sym := mustSymbol(t, g, name)
+	av, ok := ps.Env[symbolKey(sym)]
+	if !ok {
+		t.Fatalf("local %s has no value at exit; env=%v", name, ps.Env)
+	}
+	if got := av.ProjectValue(); !typ.TypeEquals(got, want) {
+		t.Fatalf("local %s = %v, want %v", name, got, want)
+	}
+}
+
+type queryOps struct{}
+
+func (queryOps) BinaryOp(left typ.Type, op string, right typ.Type) typ.Type {
+	return querycore.BinaryOp(left, op, right)
+}
+
+func (queryOps) UnaryOp(op string, operand typ.Type) typ.Type {
+	return querycore.UnaryOp(op, operand)
 }
 
 type staticDemandTyper struct {

@@ -176,6 +176,22 @@ func TestReconcilePathFactWithDeclaredRead_UsesDeclaredNonNilWhenFlowIsBroader(t
 	}
 }
 
+func TestReconcilePathFactWithDeclaredRead_KeepsSolvedFunctionReturnWhenDeclaredReadIsBare(t *testing.T) {
+	result := typ.NewRecord().
+		Field("answer", typ.String).
+		Build()
+	declared := typ.Func().Build()
+	narrowed := typ.Func().Returns(result).Build()
+
+	got, ok := ReconcilePathFactWithDeclaredRead(narrowed, declared)
+	if !ok {
+		t.Fatal("function path fact should reconcile with bare declared function")
+	}
+	if !typ.TypeEquals(got, narrowed) {
+		t.Fatalf("reconciled type = %v, want solved function %v", got, narrowed)
+	}
+}
+
 func TestReconcilePathFactWithDeclaredRead_UsesDeclaredRecordWhenFlowCarriesInitWitness(t *testing.T) {
 	declared := typ.NewRecord().
 		Field("run_with", typ.Func().Param("self", typ.Any).Param("db", typ.String).Returns(typ.Any).Build()).

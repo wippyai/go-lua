@@ -48,6 +48,29 @@ end
 	assertPrototypeMethod(t, m.PrototypeMethods(), classSym, "has_cycles")
 }
 
+func TestBuildPreTransferStoresPrototypeReceiverFactsForInlineMetatableLiteral(t *testing.T) {
+	root := parseFactsTestChunk(t, `
+local Builder = {}
+
+function Builder.build()
+	return setmetatable({}, { __index = Builder })
+end
+
+function Builder:get()
+	return 0
+end
+`)
+	m, rootGraph := buildPrototypeFactsForSource(t, root)
+	builderSym := symbolNamed(t, rootGraph, "Builder")
+
+	buildRef := assertFieldFunc(t, m, builderSym, "build")
+	assertSetMetatableSite(t, m.SetMetatableSites(buildRef), 0, builderSym)
+
+	getRef := assertFieldFunc(t, m, builderSym, "get")
+	assertMethodReceiver(t, m.MethodReceivers(getRef), builderSym)
+	assertPrototypeMethod(t, m.PrototypeMethods(), builderSym, "get")
+}
+
 func TestBuildPreTransferStoresPrototypeReceiverFactsForSplitMethodTable(t *testing.T) {
 	root := parseFactsTestChunk(t, `
 local workflow_state = {}

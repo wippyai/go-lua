@@ -84,6 +84,86 @@ func TestDirectCallEntryValues_ProjectsAllExactInformativeArgs(t *testing.T) {
 	}
 }
 
+func TestDirectCallEntryValues_ProjectsOmittedFixedArgsAsNil(t *testing.T) {
+	arg := &ast.StringExpr{Value: "World"}
+	call := &ast.FuncCallExpr{Args: []ast.Expr{arg}}
+	callee := summary.FuncRef{GraphID: 7}
+
+	got := summary.DirectCallEntryValuesWithParamCount(
+		call,
+		callee,
+		func(expr ast.Expr) typ.Type {
+			if expr == arg {
+				return typ.String
+			}
+			return typ.Unknown
+		},
+		func(gotCallee summary.FuncRef, _ *ast.FuncCallExpr, runtimeIdx int) (int, int, bool) {
+			if gotCallee != callee {
+				t.Fatalf("callee = %v, want %v", gotCallee, callee)
+			}
+			switch runtimeIdx {
+			case 0:
+				return 0, 0, true
+			case 1:
+				return 1, 1, true
+			default:
+				return -1, -1, false
+			}
+		},
+		func(summary.FuncRef, *ast.FuncCallExpr) int {
+			return 2
+		},
+	)
+
+	if len(got) != 2 {
+		t.Fatalf("entry values = %#v, want supplied string and omitted nil", got)
+	}
+	if !product.Equal(got[0], product.FromType(typ.String)) {
+		t.Fatalf("slot 0 = %s, want string", got[0].ProjectValue())
+	}
+	if !product.Equal(got[1], product.FromType(typ.Nil)) {
+		t.Fatalf("slot 1 = %s, want nil", got[1].ProjectValue())
+	}
+}
+
+func TestDirectCallEntryProductValues_ProjectsOmittedFixedArgsAsNil(t *testing.T) {
+	call := &ast.FuncCallExpr{Args: []ast.Expr{&ast.StringExpr{Value: "World"}}}
+	callee := summary.FuncRef{GraphID: 7}
+
+	got := summary.DirectCallEntryProductValuesWithParamCount(
+		call,
+		callee,
+		[]product.AbstractValue{product.FromType(typ.String)},
+		func(gotCallee summary.FuncRef, _ *ast.FuncCallExpr, runtimeIdx int) (int, int, bool) {
+			if gotCallee != callee {
+				t.Fatalf("callee = %v, want %v", gotCallee, callee)
+			}
+			switch runtimeIdx {
+			case 0:
+				return 0, 0, true
+			case 1:
+				return 1, 1, true
+			default:
+				return -1, -1, false
+			}
+		},
+		func(summary.FuncRef, *ast.FuncCallExpr) int {
+			return 2
+		},
+	)
+
+	if len(got) != 2 {
+		t.Fatalf("entry values = %#v, want supplied string and omitted nil", got)
+	}
+	if !product.Equal(got[0], product.FromType(typ.String)) {
+		t.Fatalf("slot 0 = %s, want string", got[0].ProjectValue())
+	}
+	if !product.Equal(got[1], product.FromType(typ.Nil)) {
+		t.Fatalf("slot 1 = %s, want nil", got[1].ProjectValue())
+	}
+}
+
 func TestDirectCallEntryValues_ProjectsMethodReceiverRuntimeSlot(t *testing.T) {
 	recv := &ast.IdentExpr{Value: "state"}
 	arg := &ast.StringExpr{Value: "payload"}

@@ -62,10 +62,11 @@ func (t *Transfer) applyEntryReachabilityEffect(out *flow.PointState, _ EntryRea
 }
 
 // EntrySeedEffect is the entry-point reducer for one parameter slot. It composes
-// the three sources visible at function entry in a single product-state write:
-// declared annotation, exact caller-provided entry value, and body-demand
-// contract. Declared structural annotations are contracts, not precision erasers;
-// exact entry evidence may refine their dynamic/soft interior slots.
+// the sources visible at function entry in a single product-state write:
+// declared annotation, exact caller-provided entry value, and, only for
+// unannotated parameters, body-demand contract. Declared annotations are source
+// authority; body demand is an obligation, not proof about a declared dynamic
+// slot. Exact entry evidence may still refine dynamic/soft annotation interiors.
 type EntrySeedEffect struct {
 	Symbol   cfg.SymbolID
 	Declared typ.Type
@@ -96,32 +97,13 @@ func entrySeedValue(declared typ.Type, entry, contract product.AbstractValue) pr
 		}
 		if av.IsZero() {
 			av = contract
-		} else if entry.IsZero() {
-			// Body contracts are backward demand facts, not forward proofs about a
-			// concrete caller entry. With no exact entry context, seed the body from
-			// the contract so the context-free summary can interpret required uses.
-			av = entrySeedContractValue(av, contract)
 		}
-		// With an exact caller entry value, keep `av` as the declared/entry
-		// composition. Refining it by the demand creates a self-fulfilling
-		// precondition: the parameter becomes what the body demands, guard
-		// complements vanish, and the exported contract is stricter than the source
-		// program actually requires.
+		// With a declared annotation or exact caller entry value, keep `av` as the
+		// declared/entry composition. Refining it by the demand creates a
+		// self-fulfilling precondition: the parameter becomes what the body demands,
+		// guard complements vanish, and declared `any` is mistaken for concrete proof.
 	}
 	return av
-}
-
-func entrySeedContractValue(entry, contract product.AbstractValue) product.AbstractValue {
-	entryType := entry.ProjectValue()
-	contractType := contract.ProjectValue()
-	if entryType == nil || contractType == nil {
-		return product.Domain.Join(entry, contract)
-	}
-	merged := paramevidence.BodyEntryContractJoin(entryType, contractType)
-	if merged == nil {
-		return product.Domain.Join(entry, contract)
-	}
-	return product.FromType(merged)
 }
 
 func entrySeedDeclaredValue(declared typ.Type, entry product.AbstractValue) product.AbstractValue {

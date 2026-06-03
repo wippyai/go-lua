@@ -109,18 +109,21 @@ func factTypeMetadataEqualGuarded(a, b typ.Type, seen map[factTypePair]bool, see
 			seen[pair] = true
 		}
 	}
+	same := func(x, y typ.Type) bool {
+		return factTypeMetadataEqualGuarded(x, y, seen, seenFamily)
+	}
 
 	switch left := a.(type) {
 	case *typ.Optional:
 		right, ok := b.(*typ.Optional)
-		return ok && factTypeMetadataEqual(left.Inner, right.Inner, seen)
+		return ok && same(left.Inner, right.Inner)
 	case *typ.Union:
 		right, ok := b.(*typ.Union)
 		if !ok || len(left.Members) != len(right.Members) {
 			return false
 		}
 		for i, member := range left.Members {
-			if !factTypeMetadataEqual(member, right.Members[i], seen) {
+			if !same(member, right.Members[i]) {
 				return false
 			}
 		}
@@ -131,7 +134,7 @@ func factTypeMetadataEqualGuarded(a, b typ.Type, seen map[factTypePair]bool, see
 			return false
 		}
 		for i, member := range left.Members {
-			if !factTypeMetadataEqual(member, right.Members[i], seen) {
+			if !same(member, right.Members[i]) {
 				return false
 			}
 		}
@@ -142,19 +145,19 @@ func factTypeMetadataEqualGuarded(a, b typ.Type, seen map[factTypePair]bool, see
 			return false
 		}
 		for i, elem := range left.Elements {
-			if !factTypeMetadataEqual(elem, right.Elements[i], seen) {
+			if !same(elem, right.Elements[i]) {
 				return false
 			}
 		}
 		return true
 	case *typ.Array:
 		right, ok := b.(*typ.Array)
-		return ok && factTypeMetadataEqual(left.Element, right.Element, seen)
+		return ok && same(left.Element, right.Element)
 	case *typ.Map:
 		right, ok := b.(*typ.Map)
 		return ok &&
-			factTypeMetadataEqual(left.Key, right.Key, seen) &&
-			factTypeMetadataEqual(left.Value, right.Value, seen)
+			same(left.Key, right.Key) &&
+			same(left.Value, right.Value)
 	case *typ.Record:
 		right, ok := b.(*typ.Record)
 		if !ok || left.Open != right.Open || len(left.Fields) != len(right.Fields) {
@@ -165,7 +168,7 @@ func factTypeMetadataEqualGuarded(a, b typ.Type, seen map[factTypePair]bool, see
 			if field.Name != other.Name || field.Optional != other.Optional || field.Readonly != other.Readonly {
 				return false
 			}
-			if !factTypeMetadataEqual(field.Type, other.Type, seen) {
+			if !same(field.Type, other.Type) {
 				return false
 			}
 		}
@@ -173,39 +176,39 @@ func factTypeMetadataEqualGuarded(a, b typ.Type, seen map[factTypePair]bool, see
 			return false
 		}
 		if left.HasMapComponent() {
-			if !factTypeMetadataEqual(left.MapKey, right.MapKey, seen) ||
-				!factTypeMetadataEqual(left.MapValue, right.MapValue, seen) {
+			if !same(left.MapKey, right.MapKey) ||
+				!same(left.MapValue, right.MapValue) {
 				return false
 			}
 		}
-		return factTypeMetadataEqual(left.Metatable, right.Metatable, seen)
+		return same(left.Metatable, right.Metatable)
 	case *typ.Function:
 		right, ok := b.(*typ.Function)
-		return ok && factFunctionEqual(left, right, seen)
+		return ok && factFunctionEqual(left, right, seen, seenFamily)
 	case *typ.Generic:
 		right, ok := b.(*typ.Generic)
 		if !ok || left.Name != right.Name || len(left.TypeParams) != len(right.TypeParams) {
 			return false
 		}
 		for i, tp := range left.TypeParams {
-			if !factTypeParamEqual(tp, right.TypeParams[i], seen) {
+			if !factTypeParamEqual(tp, right.TypeParams[i], seen, seenFamily) {
 				return false
 			}
 		}
 		if left.Name != "" {
 			return true
 		}
-		return factTypeMetadataEqual(left.Body, right.Body, seen)
+		return same(left.Body, right.Body)
 	case *typ.Instantiated:
 		right, ok := b.(*typ.Instantiated)
 		if !ok || len(left.TypeArgs) != len(right.TypeArgs) {
 			return false
 		}
-		if !factTypeMetadataEqual(left.Generic, right.Generic, seen) {
+		if !same(left.Generic, right.Generic) {
 			return false
 		}
 		for i, arg := range left.TypeArgs {
-			if !factTypeMetadataEqual(arg, right.TypeArgs[i], seen) {
+			if !same(arg, right.TypeArgs[i]) {
 				return false
 			}
 		}
@@ -218,7 +221,7 @@ func factTypeMetadataEqualGuarded(a, b typ.Type, seen map[factTypePair]bool, see
 		if left.ID == right.ID {
 			return true
 		}
-		return factTypeMetadataEqual(left.Body, right.Body, seen)
+		return same(left.Body, right.Body)
 	case *typ.Sum:
 		right, ok := b.(*typ.Sum)
 		if !ok || left.Name != right.Name || len(left.Variants) != len(right.Variants) {
@@ -230,7 +233,7 @@ func factTypeMetadataEqualGuarded(a, b typ.Type, seen map[factTypePair]bool, see
 				return false
 			}
 			for j, t := range variant.Types {
-				if !factTypeMetadataEqual(t, other.Types[j], seen) {
+				if !same(t, other.Types[j]) {
 					return false
 				}
 			}
@@ -243,7 +246,7 @@ func factTypeMetadataEqualGuarded(a, b typ.Type, seen map[factTypePair]bool, see
 		}
 		for i, method := range left.Methods {
 			other := right.Methods[i]
-			if method.Name != other.Name || !factFunctionEqual(method.Type, other.Type, seen) {
+			if method.Name != other.Name || !factFunctionEqual(method.Type, other.Type, seen, seenFamily) {
 				return false
 			}
 		}
@@ -251,15 +254,15 @@ func factTypeMetadataEqualGuarded(a, b typ.Type, seen map[factTypePair]bool, see
 	case *typ.FieldAccess:
 		right, ok := b.(*typ.FieldAccess)
 		return ok && left.Field == right.Field &&
-			factTypeMetadataEqual(left.Base, right.Base, seen)
+			same(left.Base, right.Base)
 	case *typ.IndexAccess:
 		right, ok := b.(*typ.IndexAccess)
 		return ok &&
-			factTypeMetadataEqual(left.Base, right.Base, seen) &&
-			factTypeMetadataEqual(left.Index, right.Index, seen)
+			same(left.Base, right.Base) &&
+			same(left.Index, right.Index)
 	case *typ.Meta:
 		right, ok := b.(*typ.Meta)
-		return ok && factTypeMetadataEqual(left.Of, right.Of, seen)
+		return ok && same(left.Of, right.Of)
 	default:
 		return typ.TypeEquals(a, b)
 	}
@@ -302,7 +305,7 @@ func canonicalFactType(t typ.Type) typ.Type {
 	return t
 }
 
-func factFunctionEqual(left, right *typ.Function, seen map[factTypePair]bool) bool {
+func factFunctionEqual(left, right *typ.Function, seen map[factTypePair]bool, seenFamily map[factFamilyPair]bool) bool {
 	if left == nil || right == nil {
 		return left == right
 	}
@@ -324,8 +327,11 @@ func factFunctionEqual(left, right *typ.Function, seen map[factTypePair]bool) bo
 	// and let the value interner collapse them. The structural descent plus the
 	// coinductive family/pointer guards terminate on genuine same-family unfoldings
 	// while keeping distinct families apart.
+	same := func(x, y typ.Type) bool {
+		return factTypeMetadataEqualGuarded(x, y, seen, seenFamily)
+	}
 	for i, tp := range left.TypeParams {
-		if !factTypeParamEqual(tp, right.TypeParams[i], seen) {
+		if !factTypeParamEqual(tp, right.TypeParams[i], seen, seenFamily) {
 			return false
 		}
 	}
@@ -334,30 +340,30 @@ func factFunctionEqual(left, right *typ.Function, seen map[factTypePair]bool) bo
 		if param.Optional != other.Optional {
 			return false
 		}
-		if !factTypeMetadataEqual(param.Type, other.Type, seen) {
+		if !same(param.Type, other.Type) {
 			return false
 		}
 	}
 	if (left.Variadic == nil) != (right.Variadic == nil) {
 		return false
 	}
-	if left.Variadic != nil && !factTypeMetadataEqual(left.Variadic, right.Variadic, seen) {
+	if left.Variadic != nil && !same(left.Variadic, right.Variadic) {
 		return false
 	}
 	for i, ret := range left.Returns {
-		if !factTypeMetadataEqual(ret, right.Returns[i], seen) {
+		if !same(ret, right.Returns[i]) {
 			return false
 		}
 	}
 	return true
 }
 
-func factTypeParamEqual(left, right *typ.TypeParam, seen map[factTypePair]bool) bool {
+func factTypeParamEqual(left, right *typ.TypeParam, seen map[factTypePair]bool, seenFamily map[factFamilyPair]bool) bool {
 	if left == nil || right == nil {
 		return left == right
 	}
 	return left.Name == right.Name &&
-		factTypeMetadataEqual(left.Constraint, right.Constraint, seen)
+		factTypeMetadataEqualGuarded(left.Constraint, right.Constraint, seen, seenFamily)
 }
 
 func effectInfoEqual(left, right typ.EffectInfo) bool {

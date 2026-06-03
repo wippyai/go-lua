@@ -94,7 +94,10 @@ func checkSingleCall(
 		}
 	}
 
-	callObserver := observer.WithPostStateReads()
+	// Call arguments and callees are evaluated before an assignment/return node
+	// writes its result. Use the point-entry view so `x = f(x)` validates the
+	// argument against the old x, not the post-call assignment target.
+	callObserver := observer.WithPreStateReads()
 	args := make([]typ.Type, len(info.Args))
 	for i, arg := range info.Args {
 		args[i] = callObserver.TypeOf(arg, p)
@@ -136,12 +139,9 @@ func checkSingleCall(
 		},
 		p,
 	)
-	// An argument observed as the gradual top `any` is consistent with a concrete
-	// expected parameter type (gradual consistency), mirroring the assignment and
-	// return boundaries. The synthesis-side re-synth declines to refine a gradual
-	// `any` toward an expected type, so admit it here at the diagnostic boundary
-	// against the resolved expected parameter; a narrowed/dominated `any` is no
-	// longer the gradual top and is untouched.
+	// Expected parameter types guide contextual synthesis, but unproved `any`
+	// remains a strict proof-boundary failure. AdmitGradualArgument is intentionally
+	// a no-op under that policy.
 	resynth := func(idx int, arg ast.Expr, expected typ.Type) typ.Type {
 		return callObserver.AdmitGradualArgument(full(idx, arg, expected), arg, p, expected)
 	}

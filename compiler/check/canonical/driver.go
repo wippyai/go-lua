@@ -1229,7 +1229,7 @@ func (p *program) EntryValues(ref summary.FuncRef, deps summary.EntryValueDepend
 			Slot:      receiver.SelfSlot,
 		})
 	}
-	return summary.AggregateEntryValues(summary.EntryValueAggregation{
+	out := summary.AggregateEntryValues(summary.EntryValueAggregation{
 		Callee:           ref,
 		HasInferredSlots: p.hasInferredEntrySlot(ref),
 		EachCallerEntryValues: func(yield func(summary.EntryValues)) {
@@ -1255,6 +1255,13 @@ func (p *program) EntryValues(ref summary.FuncRef, deps summary.EntryValueDepend
 			return p.paramSlotFixed(ref, slot)
 		},
 	})
+	for _, seed := range p.facts.FunctionEntrySeeds(ref) {
+		out = summary.JoinEntryValue(out, seed.Slot, product.FromType(seed.Type))
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }
 
 // hasInferredEntrySlot is a query-dependency guard: functions whose parameters
@@ -1361,6 +1368,9 @@ func (p *program) ProjectCallEntryContextKeys(ref summary.FuncRef, fs state.Func
 		},
 		ParamSlot: func(callee summary.FuncRef, call *ast.FuncCallExpr, argIdx int) (int, int, bool) {
 			return paramevidence.ParamSlotForRuntimeArg(p.Graph(callee), p.funcExpr(callee), argIdx)
+		},
+		ParamSlotCount: func(callee summary.FuncRef, _ *ast.FuncCallExpr) int {
+			return p.paramSlotCount(callee)
 		},
 		ParamPath: func(callee summary.FuncRef, slot int) (constraint.Path, bool) {
 			return p.paramPath(callee, slot)
@@ -1724,6 +1734,14 @@ func (p *program) paramSlotDeclaredType(ref summary.FuncRef, slot int) typ.Type 
 		return nil
 	}
 	return p.declaredType(ref, sym)
+}
+
+func (p *program) paramSlotCount(ref summary.FuncRef) int {
+	g := p.Graph(ref)
+	if g == nil {
+		return 0
+	}
+	return len(g.ParamSlotsReadOnly())
 }
 
 func (p *program) declaredType(ref summary.FuncRef, sym cfg.SymbolID) typ.Type {
@@ -2680,12 +2698,15 @@ func (ct callTyper) callEntryValuesForRef(ref summary.FuncRef, call *ast.FuncCal
 	if d == nil || d.activeProgram == nil || call == nil || exprType == nil {
 		return nil
 	}
-	values := summary.DirectCallEntryValues(
+	values := summary.DirectCallEntryValuesWithParamCount(
 		call,
 		ref,
 		exprType,
 		func(callee summary.FuncRef, call *ast.FuncCallExpr, argIdx int) (int, int, bool) {
 			return paramevidence.ParamSlotForRuntimeArg(d.activeProgram.Graph(callee), d.activeProgram.funcExpr(callee), argIdx)
+		},
+		func(callee summary.FuncRef, _ *ast.FuncCallExpr) int {
+			return d.activeProgram.paramSlotCount(callee)
 		},
 	)
 	return values
@@ -2696,12 +2717,15 @@ func (ct callTyper) callEntryProductValuesForRef(ref summary.FuncRef, call *ast.
 	if d == nil || d.activeProgram == nil || call == nil {
 		return nil
 	}
-	return summary.DirectCallEntryProductValues(
+	return summary.DirectCallEntryProductValuesWithParamCount(
 		call,
 		ref,
 		runtimeValues,
 		func(callee summary.FuncRef, call *ast.FuncCallExpr, argIdx int) (int, int, bool) {
 			return paramevidence.ParamSlotForRuntimeArg(d.activeProgram.Graph(callee), d.activeProgram.funcExpr(callee), argIdx)
+		},
+		func(callee summary.FuncRef, _ *ast.FuncCallExpr) int {
+			return d.activeProgram.paramSlotCount(callee)
 		},
 	)
 }
@@ -3560,10 +3584,11 @@ func (d *Driver) signatureForRefWithMode(prog *program, ref summary.FuncRef, mod
 	if d == nil || prog == nil {
 		return nil
 	}
+	typer := funcTyper{d: d, prog: prog}
 	if info := prog.methodDef(ref); info != nil && info.FuncExpr != nil {
 		return canonicalsig.Build(canonicalsig.Input{
 			Method:          info,
-			Base:            d.baseScope(),
+			Base:            typer.literalBaseScope(info.FuncExpr),
 			ResolveType:     d.resolveType,
 			InferredReturns: inferred,
 			ReturnMode:      mode,
@@ -3575,7 +3600,7 @@ func (d *Driver) signatureForRefWithMode(prog *program, ref summary.FuncRef, mod
 	}
 	return canonicalsig.Build(canonicalsig.Input{
 		Function:        fn,
-		Base:            d.baseScope(),
+		Base:            typer.literalBaseScope(fn),
 		ResolveType:     d.resolveType,
 		InferredReturns: inferred,
 		ReturnMode:      mode,

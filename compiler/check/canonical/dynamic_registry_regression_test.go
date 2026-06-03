@@ -108,19 +108,15 @@ return pages
 	mod := testutil.CheckAndExport(pageRegistry, "page_registry", testutil.WithStdlib())
 	msgs := testutil.ErrorMessages(mod.Errors)
 	if len(msgs) == 0 {
-		t.Fatal("expected unproved any/unknown concat in provider to be rejected")
+		t.Fatal("expected unproved any concat in provider to be rejected")
 	}
-	wantUnknown := false
-	wantAny := false
+	wantCallBoundary := false
 	for _, msg := range msgs {
-		if strings.Contains(msg, "cannot concatenate unknown") {
-			wantUnknown = true
-		}
-		if strings.Contains(msg, "cannot concatenate any") {
-			wantAny = true
+		if strings.Contains(msg, "argument 2: expected number | string, got any") {
+			wantCallBoundary = true
 		}
 	}
-	if !wantUnknown || !wantAny {
-		t.Fatalf("expected concat proof-boundary diagnostics for unknown and any, got %v", msgs)
+	if !wantCallBoundary {
+		t.Fatalf("expected call-boundary proof diagnostic for unproved any concat, got %v", msgs)
 	}
 }

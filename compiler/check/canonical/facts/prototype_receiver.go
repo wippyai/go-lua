@@ -126,10 +126,10 @@ func collectPrototypeMethods(fields []topology.FieldFunction) []metatable.Protot
 }
 
 // collectSetMetatableSites extracts setmetatable call sites whose metatable
-// argument resolves to a static metatable index fact. Transfer later evaluates
-// the instance expression at the point and updates PointState.PrototypeSelf.
+// argument resolves to a static prototype edge. Transfer later evaluates the
+// instance expression at the point and updates PointState.PrototypeSelf.
 func collectSetMetatableSites(p Program, metas []metatable.Index) []setMetatableSiteEntry {
-	if p.Evidence == nil || len(metas) == 0 {
+	if p.Evidence == nil {
 		return nil
 	}
 	byMeta := make(map[cfg.SymbolID]cfg.SymbolID, len(metas))
@@ -148,9 +148,8 @@ func collectSetMetatableSites(p Program, metas []metatable.Index) []setMetatable
 			if info == nil || info.CalleeName != "setmetatable" || len(info.Args) < 2 {
 				continue
 			}
-			mt := identSymbol(info.Args[1], bindings)
-			proto, ok := byMeta[mt]
-			if !ok || proto == 0 {
+			mt, proto := setMetatablePrototypeArg(info.Args[1], bindings, byMeta)
+			if proto == 0 {
 				continue
 			}
 			out = append(out, setMetatableSiteEntry{
@@ -186,6 +185,18 @@ func indexFieldSourceSymbol(tbl *ast.TableExpr, bindings *bind.BindingTable) cfg
 		return identSymbol(field.Value, bindings)
 	}
 	return 0
+}
+
+func setMetatablePrototypeArg(e ast.Expr, bindings *bind.BindingTable, byMeta map[cfg.SymbolID]cfg.SymbolID) (cfg.SymbolID, cfg.SymbolID) {
+	if mt := identSymbol(e, bindings); mt != 0 {
+		if proto, ok := byMeta[mt]; ok {
+			return mt, proto
+		}
+	}
+	if tbl, ok := e.(*ast.TableExpr); ok {
+		return 0, indexFieldSourceSymbol(tbl, bindings)
+	}
+	return 0, 0
 }
 
 func identSymbol(e ast.Expr, bindings *bind.BindingTable) cfg.SymbolID {

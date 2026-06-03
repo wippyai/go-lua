@@ -7,11 +7,11 @@ import (
 	"github.com/wippyai/go-lua/types/io"
 )
 
-// TestInferenceGap_GradualParamValueOperatorsRequireProof verifies that an
-// unannotated, fully unconstrained parameter is not treated as proof for value
-// operators. It may project to `any`, but concrete length/concat/order use must
-// come from narrowing, assertion, cast, or predicate evidence.
-func TestInferenceGap_GradualParamValueOperatorsRequireProof(t *testing.T) {
+// TestInferenceGap_GradualParamValueOperatorsInferBodyPreconditions verifies
+// that value-operator use on an unannotated parameter emits a function-entry
+// obligation instead of failing inside the function body. The caller boundary
+// remains responsible for proving the obligation.
+func TestInferenceGap_GradualParamValueOperatorsInferBodyPreconditions(t *testing.T) {
 	cases := []struct {
 		name string
 		code string
@@ -56,8 +56,60 @@ return { f = f }
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			result := testutil.Check(tc.code, testutil.WithStdlib())
+			if result.HasError() {
+				t.Fatalf("operator body demand should infer a callable precondition, got: %v", testutil.ErrorMessages(result.Diagnostics))
+			}
+		})
+	}
+}
+
+func TestInferenceGap_GradualParamValueOperatorPreconditionsRejectIncompatibleCallers(t *testing.T) {
+	cases := []struct {
+		name string
+		code string
+	}{
+		{
+			name: "length operator rejects non-lengthable caller",
+			code: `
+local function f(entries)
+	return #entries
+end
+f(10)
+`,
+		},
+		{
+			name: "concat or-default rejects table caller",
+			code: `
+local function eq(msg)
+	return (msg or "fallback") .. "x"
+end
+eq({})
+`,
+		},
+		{
+			name: "direct concat rejects table caller",
+			code: `
+local function f(msg)
+	return msg .. "x"
+end
+f({})
+`,
+		},
+		{
+			name: "numeric comparison rejects string caller",
+			code: `
+local function f(n)
+	return n < 10
+end
+f("x")
+`,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			result := testutil.Check(tc.code, testutil.WithStdlib())
 			if !result.HasError() {
-				t.Fatalf("expected gradual unconstrained parameter operator use to require proof")
+				t.Fatalf("expected incompatible caller to fail the inferred operator precondition")
 			}
 		})
 	}

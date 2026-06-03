@@ -29,13 +29,27 @@ end
 return f
 `,
 		"or-default-over-unresolved-call": `
-local ext = require("ext")
-local function f()
-    local ok, err = ext.submit()
-    return "fail: " .. (err or "unknown")
-end
-return f
-`,
+	local ext = require("ext")
+	local function f()
+	    local ok, err = ext.submit()
+	    return "fail: " .. (err or "unknown")
+	end
+	return f
+	`,
+		"method-target-field-concat-infers-contract": `
+	local methods = {}
+	function methods:g(target)
+	    return "t[" .. target.idx .. "]"
+	end
+	return methods
+	`,
+		"method-self-field-concat-infers-contract": `
+	local methods = {}
+	function methods:g()
+	    return "node[" .. self.id .. "]"
+	end
+	return methods
+	`,
 	}
 	for name, src := range clean {
 		t.Run(name, func(t *testing.T) {
@@ -70,20 +84,10 @@ return f
 `,
 			want: "cannot apply length operator to any",
 		},
-		"field-concat-untyped-self": {
-			src: `
-local methods = {}
-function methods:g(target)
-    return "t[" .. target.idx .. "]"
-end
-return methods
-`,
-			want: "cannot concatenate any",
-		},
 		"pairs-key-concat-any-annotated": {
 			src: `
-local function f(raw: any)
-    for key, v in pairs(raw) do
+	local function f(raw: any)
+	    for key, v in pairs(raw) do
         return "k " .. key
     end
 end
@@ -91,19 +95,9 @@ return f
 `,
 			want: "cannot concatenate any",
 		},
-		"self-field-concat": {
-			src: `
-local methods = {}
-function methods:g()
-    return "node[" .. self.id .. "]"
-end
-return methods
-`,
-			want: "cannot concatenate any",
-		},
 		"ipairs-index-over-self-field": {
 			src: `
-local methods = {}
+	local methods = {}
 function methods:g()
     for idx, t in ipairs(self.targets) do
         return "t[" .. idx .. "]"

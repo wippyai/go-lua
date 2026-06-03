@@ -48,10 +48,22 @@ func TestEntrySeedOpenGenericDeclaredParamUsesClosedEntryValue(t *testing.T) {
 	}
 }
 
-func TestEntrySeedBodyContractRefinesDeclaredAny(t *testing.T) {
+func TestEntrySeedBodyContractDoesNotRefineDeclaredAny(t *testing.T) {
 	contract := typ.NewRecord().ReadonlyField("id", typ.String).Build()
 	got := entrySeedValue(
 		typ.Any,
+		product.AbstractValue{},
+		product.FromType(contract),
+	)
+	if !typ.TypeEquals(got.ProjectValue(), typ.Any) {
+		t.Fatalf("contract seed = %v, want declared any", got.ProjectValue())
+	}
+}
+
+func TestEntrySeedBodyContractSeedsUnannotatedParam(t *testing.T) {
+	contract := typ.NewRecord().ReadonlyField("id", typ.String).Build()
+	got := entrySeedValue(
+		nil,
 		product.AbstractValue{},
 		product.FromType(contract),
 	)
@@ -176,5 +188,74 @@ func TestLocalConcreteContainerAnnotationStillSeedsUnknownInitializer(t *testing
 	got, ok := tr.symbolValue(&out, sym)
 	if !ok || !typ.TypeEquals(got.ProjectValue(), declared) {
 		t.Fatalf("concrete container declaration = %v/%v, want %v", got.ProjectValue(), ok, declared)
+	}
+}
+
+func TestLocalObjectAnnotationSeedsConstructorInitializer(t *testing.T) {
+	const sym = cfg.SymbolID(33)
+	declared := typ.NewRecord().
+		Field("sessions", typ.NewMap(typ.String, typ.String)).
+		Build()
+	tr := New(input.Inputs{}, Config{})
+	tr.declaredTypes = map[cfg.SymbolID]typ.Type{sym: declared}
+
+	out := flow.PointState{Env: map[flow.ValueKey]product.AbstractValue{}}
+	tr.applyAssign(&out, 0, &cfg.AssignInfo{
+		IsLocal: true,
+		Targets: []cfg.AssignTarget{{
+			Kind:   cfg.TargetIdent,
+			Symbol: sym,
+			Name:   "self",
+		}},
+		Sources: []ast.Expr{&ast.TableExpr{}},
+		TypeAnnotations: []ast.TypeExpr{
+			&ast.TypeRefExpr{Path: []string{"Store"}},
+		},
+	}, nil)
+
+	got, ok := tr.symbolValue(&out, sym)
+	if !ok || !typ.TypeEquals(got.ProjectValue(), declared) {
+		t.Fatalf("object declaration = %v/%v, want %v", got.ProjectValue(), ok, declared)
+	}
+}
+
+func TestLocalUnionAnnotationKeepsInitializerDiscriminant(t *testing.T) {
+	const sym = cfg.SymbolID(34)
+	a := typ.NewRecord().Field("tag", typ.LiteralString("a")).Build()
+	b := typ.NewRecord().Field("tag", typ.LiteralString("b")).Build()
+	declared := typ.NewUnion(a, b)
+	tr := New(input.Inputs{}, Config{})
+	tr.declaredTypes = map[cfg.SymbolID]typ.Type{sym: declared}
+
+	out := flow.PointState{Env: map[flow.ValueKey]product.AbstractValue{}}
+	tr.applyAssign(&out, 0, &cfg.AssignInfo{
+		IsLocal: true,
+		Targets: []cfg.AssignTarget{{
+			Kind:   cfg.TargetIdent,
+			Symbol: sym,
+			Name:   "event",
+		}},
+		Sources: []ast.Expr{&ast.TableExpr{Fields: []*ast.Field{{
+			Key:       &ast.StringExpr{Value: "tag"},
+			KeySyntax: ast.AttrKeyDot,
+			Value:     &ast.StringExpr{Value: "a"},
+		}}}},
+		TypeAnnotations: []ast.TypeExpr{
+			&ast.UnionTypeExpr{Types: []ast.TypeExpr{
+				&ast.TypeRefExpr{Path: []string{"A"}},
+				&ast.TypeRefExpr{Path: []string{"B"}},
+			}},
+		},
+	}, nil)
+
+	got, ok := tr.symbolValue(&out, sym)
+	if !ok {
+		t.Fatal("union initializer did not write a value")
+	}
+	if typ.TypeEquals(got.ProjectValue(), declared) {
+		t.Fatalf("union annotation erased initializer discriminant: %v", got.ProjectValue())
+	}
+	if !typ.TypeEquals(got.ProjectValue(), a) {
+		t.Fatalf("union initializer = %v, want %v", got.ProjectValue(), a)
 	}
 }

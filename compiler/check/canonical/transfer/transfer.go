@@ -916,6 +916,14 @@ func (t *Transfer) applyAssign(
 			// element facts: preserving the empty initializer lets later mutator effects
 			// refine the element from observed inserts instead of joining forever with any.
 			val = product.FromType(dc)
+		} else if dt, has := t.declaredObjectInitializerType(info, i, target.Symbol); has {
+			// A local object/class annotation is the slot contract for constructor
+			// self values. Keep the declared object identity after the initializer has
+			// been checked so `local self: Store = {...}` returns Store rather than a
+			// union of Store and the transient literal shape. Reassignments and
+			// declared unions still flow from the current value so narrowing retains
+			// discriminant precision.
+			val = product.FromType(dt)
 		}
 		if withOrigin, ok := t.attachVariantOriginToAssignedValue(p, target, val); ok {
 			val = withOrigin
@@ -982,6 +990,25 @@ func (t *Transfer) declaredContainerType(sym cfg.SymbolID) (typ.Type, bool) {
 
 func declaredContainerOverridesKnownValue(declared typ.Type) bool {
 	return declared != nil && !typ.IsSoft(declared, typ.SoftPlaceholderPolicy)
+}
+
+func (t *Transfer) declaredObjectInitializerType(info *cfg.AssignInfo, targetIndex int, sym cfg.SymbolID) (typ.Type, bool) {
+	if info == nil || !info.IsLocal || info.TypeAnnotationAt(targetIndex) == nil || sym == 0 {
+		return nil, false
+	}
+	declared, ok := t.declaredTypes[sym]
+	if !ok || declared == nil || typ.IsAbsentOrUnknown(declared) || typ.IsAny(declared) {
+		return nil, false
+	}
+	if _, optional := typ.SplitNilableFieldType(declared); optional {
+		return nil, false
+	}
+	switch unwrap.Underlying(declared).(type) {
+	case *typ.Record, *typ.Recursive, *typ.Interface:
+		return declared, true
+	default:
+		return nil, false
+	}
 }
 
 // callExpansionReturns types the return vector of an assignment's single source
@@ -2915,6 +2942,9 @@ func (t *Transfer) setMetatablePrototype(p cfg.Point, call *ast.FuncCallExpr) (c
 	if proto, ok := t.setMetatableProtoByPoint[p]; ok && proto != 0 {
 		return proto, true
 	}
+	if proto := t.inlineSetMetatablePrototype(call); proto != 0 {
+		return proto, true
+	}
 	if call == nil || len(call.Args) < 2 || len(t.metatablePrototypeBySym) == 0 {
 		return 0, false
 	}
@@ -2924,6 +2954,27 @@ func (t *Transfer) setMetatablePrototype(p cfg.Point, call *ast.FuncCallExpr) (c
 	}
 	proto, ok := t.metatablePrototypeBySym[mt]
 	return proto, ok && proto != 0
+}
+
+func (t *Transfer) inlineSetMetatablePrototype(call *ast.FuncCallExpr) cfg.SymbolID {
+	if call == nil || len(call.Args) < 2 || t.in.Graph == nil || t.in.Graph.Bindings() == nil {
+		return 0
+	}
+	tbl, ok := call.Args[1].(*ast.TableExpr)
+	if !ok {
+		return 0
+	}
+	for _, field := range tbl.Fields {
+		if field == nil || field.Key == nil {
+			continue
+		}
+		name, ok := fieldkey.StringKeyFromTableField(field)
+		if !ok || name != "__index" {
+			continue
+		}
+		return t.symbolOfIdent(field.Value)
+	}
+	return 0
 }
 
 func (t *Transfer) prototypeMetatableValue(out *flow.PointState, proto cfg.SymbolID) (product.AbstractValue, bool) {
@@ -3311,6 +3362,53 @@ func (t *Transfer) demandParamCtx(expr ast.Expr, ctx typ.Type, demand func(int, 
 	}
 }
 
+func stringableContextType() typ.Type {
+	return typ.NewUnion(typ.String, typ.Number)
+}
+
+func lengthContextType() typ.Type {
+	return typ.String
+}
+
+func orderableContextType() typ.Type {
+	return typ.NewUnion(typ.String, typ.Number)
+}
+
+func orderedComparisonContexts(left, right typ.Type) (typ.Type, typ.Type) {
+	if family := concreteOrderFamily(right); family != nil {
+		return family, family
+	}
+	if family := concreteOrderFamily(left); family != nil {
+		return family, family
+	}
+	orderable := orderableContextType()
+	return orderable, orderable
+}
+
+func concreteOrderFamily(t typ.Type) typ.Type {
+	if t == nil {
+		return nil
+	}
+	t = typ.UnwrapAnnotated(t)
+	if lit, ok := t.(*typ.Literal); ok {
+		switch lit.Base {
+		case kind.Integer, kind.Number:
+			return typ.Number
+		case kind.String:
+			return typ.String
+		}
+		return nil
+	}
+	switch t.Kind() {
+	case kind.Integer, kind.Number:
+		return typ.Number
+	case kind.String:
+		return typ.String
+	default:
+		return nil
+	}
+}
+
 // evalBinary resolves an arithmetic operator over its operand values. With an
 // operator resolver it uses the resolved result; otherwise an arithmetic op over
 // determined numeric operands stays numeric (the sound structural default).
@@ -3348,6 +3446,9 @@ func (t *Transfer) evalConcat(
 	lhs, rhs ast.Expr,
 	demand func(int, paramevidence.ParamContract),
 ) (product.AbstractValue, bool) {
+	stringable := stringableContextType()
+	t.demandExprCtx(out, lhs, stringable, demand)
+	t.demandExprCtx(out, rhs, stringable, demand)
 	t.demandConditionReads(out, lhs, demand)
 	t.demandConditionReads(out, rhs, demand)
 	l, lok := t.evalExpr(out, lhs, demand)
@@ -3371,6 +3472,8 @@ func (t *Transfer) evalUnary(
 ) (product.AbstractValue, bool) {
 	if op == "-" {
 		t.demandParamCtx(operand, typ.Number, demand)
+	} else if op == "#" {
+		t.demandExprCtx(out, operand, lengthContextType(), demand)
 	}
 	v, ok := t.evalExpr(out, operand, demand)
 	if t.ops != nil && ok {
@@ -3431,6 +3534,12 @@ func (t *Transfer) evalRelational(
 	case "==", "~=":
 		return product.FromType(typ.Boolean), true
 	case "<", "<=", ">", ">=":
+		lhsCtx, rhsCtx := orderedComparisonContexts(
+			t.operandType(out, e.Lhs, demand),
+			t.operandType(out, e.Rhs, demand),
+		)
+		t.demandExprCtx(out, e.Lhs, lhsCtx, demand)
+		t.demandExprCtx(out, e.Rhs, rhsCtx, demand)
 	default:
 		return product.AbstractValue{}, false
 	}

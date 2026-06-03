@@ -1,13 +1,14 @@
 package canonical_test
 
 import (
+	"testing"
+
 	"github.com/wippyai/go-lua/compiler/check/tests/testutil"
 	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/kind"
 	querycore "github.com/wippyai/go-lua/types/query/core"
 	"github.com/wippyai/go-lua/types/subtype"
 	"github.com/wippyai/go-lua/types/typ"
-	"testing"
 )
 
 func TestCanonicalGenericInlineCallbackParamIsCallClosed(t *testing.T) {
@@ -129,6 +130,61 @@ func TestCanonicalGenericInstantiatedRecordMethodReturnWithoutSink(t *testing.T)
 	}
 }
 
+func TestCanonicalGenericConstructorLiteralMethodsUseEnclosingTypeParam(t *testing.T) {
+	res := testutil.Check(`
+		type Collection<T> = {
+			items: {T},
+			count: (self: Collection<T>) -> number,
+			get: (self: Collection<T>, index: integer) -> T?,
+			add: (self: Collection<T>, item: T) -> ()
+		}
+
+		local M = {}
+
+		function M.new<T>(): Collection<T>
+			local c: Collection<T> = {
+				items = {},
+				count = function(self: Collection<T>): number
+					return #self.items
+				end,
+				get = function(self: Collection<T>, index: integer): T?
+					return self.items[index]
+				end,
+				add = function(self: Collection<T>, item: T)
+					table.insert(self.items, item)
+				end
+			}
+			return c
+		end
+	`, testutil.WithStdlib())
+
+	if res.HasError() {
+		t.Fatalf("expected clean check, got diagnostics: %v", testutil.ErrorMessages(res.Diagnostics))
+	}
+}
+
+func TestTableLiteralFunctionSelfReceivesOwnerShape(t *testing.T) {
+	res := testutil.Check(`
+		local obj = {
+			value = 0,
+			get = function(self): number
+				return self.value
+			end
+		}
+	`, testutil.WithStdlib())
+
+	fn := findFunctionWithParamNames(t, res.Session.Results, "self")
+	selfSym := singleSymbolNamed(t, fn.Graph, "self")
+	selfType := fn.NarrowedTypeAt(fn.Graph.Entry(), constraint.NewPath(selfSym, "self"))
+	valueType, ok := querycore.Field(selfType, "value")
+	if !ok || !typ.TypeEquals(valueType, typ.Integer) {
+		t.Fatalf("self.value = %v/%v, want integer; self=%v diagnostics=%v", valueType, ok, selfType, testutil.ErrorMessages(res.Diagnostics))
+	}
+	if res.HasError() {
+		t.Fatalf("expected clean check, got diagnostics: %v", testutil.ErrorMessages(res.Diagnostics))
+	}
+}
+
 func TestCanonicalGenericInlineCallbackNumberParamIsCallClosed(t *testing.T) {
 	res := testutil.Check(`
 		local function apply<T, U>(x: T, fn: (T) -> U): U
@@ -153,6 +209,24 @@ func TestCanonicalGenericInlineCallbackNumberParamIsCallClosed(t *testing.T) {
 	}
 	if res.HasError() {
 		t.Fatalf("expected clean check, got diagnostics: %v", testutil.ErrorMessages(res.Diagnostics))
+	}
+}
+
+func TestLocalFunctionOperatorDemandTypesUntypedParameter(t *testing.T) {
+	res := testutil.Check(`
+local function greet(name)
+	if name and #name > 0 then
+		return "Hello, " .. name
+	end
+	return "Hello, stranger"
+end
+return greet
+`, testutil.WithStdlib())
+	if res.HasError() {
+		fn := findFunctionWithParamNames(t, res.Session.Results, "name")
+		sym := singleSymbolNamed(t, fn.Graph, "name")
+		got := fn.NarrowedTypeAt(fn.Graph.Entry(), constraint.NewPath(sym, "name"))
+		t.Fatalf("expected local function operator demand to type parameter, entry name=%v diagnostics=%v", got, testutil.ErrorMessages(res.Diagnostics))
 	}
 }
 

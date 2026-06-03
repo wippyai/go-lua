@@ -241,10 +241,17 @@ func refineByLengthLowerBoundDepth(t typ.Type, lower int64, depth int) typ.Type 
 			return t
 		},
 		Default: func(t typ.Type) typ.Type {
-			if t != nil && t.Kind() == kind.String {
-				return t
+			if t == nil {
+				return typ.Never
 			}
-			return t
+			switch {
+			case t.Kind() == kind.String:
+				return t
+			case t.Kind().IsPlaceholder():
+				return t
+			default:
+				return typ.Never
+			}
 		},
 	})
 }

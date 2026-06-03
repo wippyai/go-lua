@@ -78,6 +78,7 @@ type Module struct {
 	typeChecks         []typeCheckBindRow
 	functionBindings   []topology.FunctionBinding
 	fieldFunctions     []topology.FieldFunction
+	entrySelfSeeds     []entrySelfSeedRow
 	metatableIndexes   []metatable.Index
 	methodReceivers    []methodReceiverEntry
 	prototypeMethods   []metatable.PrototypeMethod
@@ -104,6 +105,19 @@ type keysCollectorRow struct {
 	Info    keyscoll.KeysCollector
 }
 
+// FunctionEntrySeed records a declaration-time entry value for one function
+// parameter slot.
+type FunctionEntrySeed struct {
+	Slot int
+	Type typ.Type
+}
+
+type entrySelfSeedRow struct {
+	FuncRef ref.FuncRef
+	Seed    FunctionEntrySeed
+	Order   int
+}
+
 type methodReceiverEntry struct {
 	FuncRef ref.FuncRef
 	Info    metatable.MethodReceiver
@@ -125,6 +139,7 @@ func BuildPreTransfer(p Program) Module {
 	m.metatableIndexes = collectMetatableIndexes(p)
 	m.functionBindings = collectFunctionBindings(p)
 	m.fieldFunctions = collectFieldFunctions(p)
+	m.entrySelfSeeds = collectEntrySelfSeeds(p)
 	m.methodReceivers = collectMethodReceivers(p)
 	m.prototypeMethods = collectPrototypeMethods(m.fieldFunctions)
 	m.setMetatableSites = collectSetMetatableSites(p, m.metatableIndexes)
@@ -281,6 +296,20 @@ func (m Module) FieldFuncRef(container cfg.SymbolID, field fieldkey.Key) (ref.Fu
 	return m.fieldFunctions[start].FuncRef, true
 }
 
+// FunctionEntrySeeds returns declaration-context entry seeds for r.
+func (m Module) FunctionEntrySeeds(r ref.FuncRef) []FunctionEntrySeed {
+	if len(m.entrySelfSeeds) == 0 {
+		return nil
+	}
+	start, _ := slices.BinarySearchFunc(m.entrySelfSeeds, entrySelfSeedRow{FuncRef: r}, compareEntrySelfSeedRowRefOnly)
+	var out []FunctionEntrySeed
+	for i := start; i < len(m.entrySelfSeeds) && compareFuncRef(m.entrySelfSeeds[i].FuncRef, r) == 0; i++ {
+		seed := m.entrySelfSeeds[i].Seed
+		out = append(out, FunctionEntrySeed{Slot: seed.Slot, Type: seed.Type})
+	}
+	return out
+}
+
 // CallbackEnv returns a copy of r's callback-scoped global bindings.
 func (m Module) CallbackEnv(r ref.FuncRef) []callbackenv.GlobalBinding {
 	if len(m.callbackEnv) == 0 {
@@ -360,6 +389,7 @@ func sortModuleFacts(m *Module) {
 	m.functionBindings = compactFunctionBindingEntries(m.functionBindings)
 	slices.SortFunc(m.fieldFunctions, compareFieldFuncEntry)
 	m.fieldFunctions = compactFieldFuncEntries(m.fieldFunctions)
+	slices.SortFunc(m.entrySelfSeeds, compareEntrySelfSeedRow)
 	slices.SortFunc(m.metatableIndexes, compareMetatableIndexEntry)
 	m.metatableIndexes = compactMetatableIndexEntries(m.metatableIndexes)
 	slices.SortFunc(m.methodReceivers, compareMethodReceiverEntry)
@@ -470,6 +500,20 @@ func compareFieldFuncEntryKeyOnly(a, b topology.FieldFunction) int {
 		return c
 	}
 	return cmp.Compare(a.Field.Index, b.Field.Index)
+}
+
+func compareEntrySelfSeedRow(a, b entrySelfSeedRow) int {
+	if c := compareFuncRef(a.FuncRef, b.FuncRef); c != 0 {
+		return c
+	}
+	if c := cmp.Compare(a.Seed.Slot, b.Seed.Slot); c != 0 {
+		return c
+	}
+	return cmp.Compare(a.Order, b.Order)
+}
+
+func compareEntrySelfSeedRowRefOnly(a, b entrySelfSeedRow) int {
+	return compareFuncRef(a.FuncRef, b.FuncRef)
 }
 
 func compareMetatableIndexEntry(a, b metatable.Index) int {

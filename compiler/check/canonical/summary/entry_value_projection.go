@@ -20,6 +20,11 @@ import (
 // calls and the first argument for plain calls.
 type EntryValueParamSlot func(callee FuncRef, call *ast.FuncCallExpr, runtimeIdx int) (sourceParam int, slot int, ok bool)
 
+// EntryValueParamSlotCount reports the finite fixed runtime parameter slots for
+// a callee. Omitted-argument projection is bounded by this layout; variadic tail
+// arguments are deliberately excluded because omission has no exact nil slot.
+type EntryValueParamSlotCount func(callee FuncRef, call *ast.FuncCallExpr) int
+
 // EntryValueParamAnnotated reports whether a callee source parameter is fixed
 // and therefore must not be inferred from aggregate entry evidence. Refinable
 // structural annotations should return false here.
@@ -210,6 +215,20 @@ func DirectCallEntryValues(
 	typeOf func(ast.Expr) typ.Type,
 	slotOf EntryValueParamSlot,
 ) EntryValues {
+	return DirectCallEntryValuesWithParamCount(call, callee, typeOf, slotOf, nil)
+}
+
+// DirectCallEntryValuesWithParamCount projects one concrete call site's runtime
+// arguments into the callee entry-value context key, including exact nil for
+// omitted fixed parameters when the caller supplies the callee's finite parameter
+// layout.
+func DirectCallEntryValuesWithParamCount(
+	call *ast.FuncCallExpr,
+	callee FuncRef,
+	typeOf func(ast.Expr) typ.Type,
+	slotOf EntryValueParamSlot,
+	slotCount EntryValueParamSlotCount,
+) EntryValues {
 	if call == nil || typeOf == nil || slotOf == nil {
 		return nil
 	}
@@ -229,6 +248,7 @@ func DirectCallEntryValues(
 		}
 		out = JoinEntryValue(out, slot, product.FromType(t))
 	}
+	out = joinOmittedFixedArgNil(out, callsite.RuntimeArgExprCount(call), callee, call, slotOf, slotCount)
 	if len(out) == 0 {
 		return nil
 	}
@@ -242,6 +262,19 @@ func DirectCallEntryProductValues(
 	callee FuncRef,
 	runtimeValues []product.AbstractValue,
 	slotOf EntryValueParamSlot,
+) EntryValues {
+	return DirectCallEntryProductValuesWithParamCount(call, callee, runtimeValues, slotOf, nil)
+}
+
+// DirectCallEntryProductValuesWithParamCount projects already-solved runtime
+// argument product values, including exact nil for omitted fixed parameters when
+// supplied with a finite callee parameter layout.
+func DirectCallEntryProductValuesWithParamCount(
+	call *ast.FuncCallExpr,
+	callee FuncRef,
+	runtimeValues []product.AbstractValue,
+	slotOf EntryValueParamSlot,
+	slotCount EntryValueParamSlotCount,
 ) EntryValues {
 	if call == nil || slotOf == nil {
 		return nil
@@ -257,8 +290,42 @@ func DirectCallEntryProductValues(
 		}
 		out = JoinObservedEntryValue(out, slot, av)
 	}
+	out = joinOmittedFixedArgNil(out, len(runtimeValues), callee, call, slotOf, slotCount)
 	if len(out) == 0 {
 		return nil
+	}
+	return out
+}
+
+func joinOmittedFixedArgNil(out EntryValues, supplied int, callee FuncRef, call *ast.FuncCallExpr, slotOf EntryValueParamSlot, slotCount EntryValueParamSlotCount) EntryValues {
+	if slotOf == nil || slotCount == nil || supplied < 0 {
+		return out
+	}
+	limit := slotCount(callee, call)
+	if limit <= supplied {
+		return out
+	}
+	seenSlots := make(map[int]struct{}, supplied)
+	for runtimeIdx := 0; runtimeIdx < supplied; runtimeIdx++ {
+		_, slot, ok := slotOf(callee, call, runtimeIdx)
+		if ok && slot >= 0 {
+			seenSlots[slot] = struct{}{}
+		}
+	}
+	nilValue := product.FromType(typ.Nil)
+	for runtimeIdx := supplied; runtimeIdx < limit; runtimeIdx++ {
+		_, slot, ok := slotOf(callee, call, runtimeIdx)
+		if !ok {
+			continue
+		}
+		if slot < 0 {
+			continue
+		}
+		if _, seen := seenSlots[slot]; seen {
+			continue
+		}
+		seenSlots[slot] = struct{}{}
+		out = JoinObservedEntryValue(out, slot, nilValue)
 	}
 	return out
 }
@@ -274,6 +341,7 @@ type CallEntryContextProjection struct {
 	ResolveCallback CallEntryCallbackResolver
 	ExpectedArgType CallEntryExpectedArgType
 	ParamSlot       EntryValueParamSlot
+	ParamSlotCount  EntryValueParamSlotCount
 	ParamPath       EntryReferenceParamPath
 	ArgPath         EntryReferenceArgPath
 	FunctionArgRefs EntryFunctionRefArgResolver
@@ -409,7 +477,7 @@ func (p CallEntryContextProjection) directProductValues(callee FuncRef, call *as
 		}
 		argValues[i] = av
 	}
-	return DirectCallEntryProductValues(call, callee, argValues, p.ParamSlot)
+	return DirectCallEntryProductValuesWithParamCount(call, callee, argValues, p.ParamSlot, p.ParamSlotCount)
 }
 
 func (p CallEntryContextProjection) directFunctionRefs(callee FuncRef, call *ast.FuncCallExpr, in *flow.PointState) flow.FunctionRefs {

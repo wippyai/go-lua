@@ -47,6 +47,15 @@ func TestRefineByLengthLowerBound_FiltersFreshEmptyBranch(t *testing.T) {
 	}
 }
 
+func TestRefineByLengthLowerBound_FiltersNonLengthableUnionMembers(t *testing.T) {
+	base := typ.NewUnion(typ.String, typ.Number, typ.Nil)
+
+	got := RefineByLengthLowerBound(base, 1)
+	if !typ.TypeEquals(got, typ.String) {
+		t.Fatalf("RefineByLengthLowerBound(string|number|nil, 1) = %v, want string", got)
+	}
+}
+
 func TestRefineByLengthLowerBound_RejectsClosedEmptyShape(t *testing.T) {
 	got := RefineByLengthLowerBound(typ.NewRecord().Build(), 1)
 	if !typ.IsNever(got) {
