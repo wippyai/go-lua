@@ -9,7 +9,7 @@ import (
 // ArgReSynth is called to re-synthesize an argument with contextual typing.
 type ArgReSynth func(idx int, expected typ.Type) typ.Type
 
-// CallPipeline executes the two-phase call synthesis flow.
+// CallPipeline executes staged call synthesis.
 type CallPipeline struct {
 	ctx      *db.QueryContext
 	def      CallDef
@@ -40,7 +40,7 @@ func (p *CallPipeline) WithExpected(expected typ.Type) *CallPipeline {
 	return p
 }
 
-// Infer runs Phase 1: callee resolution and type argument inference.
+// Infer runs the callee-resolution and type-argument inference stage.
 func (p *CallPipeline) Infer() InferResult {
 	p.infer = InferCall(p.ctx, p.def)
 	return p.infer
@@ -54,7 +54,7 @@ func (p *CallPipeline) ExpectedArgType(idx int) typ.Type {
 	return p.infer.ExpectedVariadic
 }
 
-// ReSynthAndReInfer runs Phase 2: re-synthesizes arguments and re-infers if needed.
+// ReSynthAndReInfer re-synthesizes arguments and re-infers if needed.
 func (p *CallPipeline) ReSynthAndReInfer() bool {
 	if p.reSynth == nil || p.argCount == 0 {
 		return false
@@ -72,7 +72,7 @@ func (p *CallPipeline) ReSynthAndReInfer() bool {
 	return true
 }
 
-// Finish runs Phase 3: completes the call and returns the result.
+// Finish completes the call and returns the result.
 func (p *CallPipeline) Finish() CallResult {
 	p.finished = true
 	return FinishCall(p.ctx, p.def, p.infer)

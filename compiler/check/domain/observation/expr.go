@@ -264,7 +264,7 @@ func ObservedArgumentType(result *api.FuncResult, point cfg.Point, arg ast.Expr,
 	obs := projector.pathObservationFacts().ObservePath(flow.PathObservationQuery{
 		Point:               point,
 		Path:                argPath,
-		Phase:               flow.PathReadPre,
+		View:                flow.PathReadPre,
 		AllowConditionProof: false,
 		PreserveProof:       true,
 	})
@@ -1364,7 +1364,7 @@ func (p Projector) pathType(expr ast.Expr, point cfg.Point) typ.Type {
 	obs := p.pathObservationFacts().ObservePath(flow.PathObservationQuery{
 		Point:               point,
 		Path:                path,
-		Phase:               p.pathReadPhase(),
+		View:                p.pathReadView(),
 		AllowConditionProof: true,
 		LocalCondition:      p.cfg.LocalCondition,
 		PreserveProof:       p.cfg.PreserveProof,
@@ -1382,7 +1382,7 @@ func (p Projector) pathType(expr ast.Expr, point cfg.Point) typ.Type {
 	return p.finalizeObservedPath(obs.Type)
 }
 
-func (p Projector) pathReadPhase() flow.PathReadPhase {
+func (p Projector) pathReadView() flow.PathReadView {
 	switch {
 	case p.cfg.PreferPreState:
 		return flow.PathReadPre
@@ -1436,7 +1436,7 @@ func (p Projector) ObservePath(q flow.PathObservationQuery) flow.PathObservation
 	declared := p.pathDeclaredType(q.Point, path)
 	var direct flow.PathObservationCandidate
 	if q.LocalCondition == nil && len(path.Segments) > 0 {
-		if t, ok := p.directFactsPathTypeForPhase(q.Point, path, q.Phase); ok {
+		if t, ok := p.directFactsPathTypeForView(q.Point, path, q.View); ok {
 			direct = flow.PathObservationCandidate{
 				Type:   t,
 				Source: flow.PathObservationDirectPath,
@@ -1455,16 +1455,16 @@ func (p Projector) ObservePath(q flow.PathObservationQuery) flow.PathObservation
 	if flowOps := p.pathReadFlow(); flowOps != nil {
 		var solved typ.Type
 		var proof typ.Type
-		if q.Phase == flow.PathReadPre {
+		if q.View == flow.PathReadPre {
 			if t := flowOps.PreStateTypeAt(q.Point, path); !typ.IsAbsentOrUnknown(t) {
 				solved = t
-			} else if !q.StrictPhase {
+			} else if !q.StrictView {
 				if t := flowOps.NarrowedTypeAt(q.Point, path); !typ.IsAbsentOrUnknown(t) {
 					solved = t
 				}
 			}
 			if q.AllowConditionProof && q.LocalCondition != nil {
-				proof = p.conditionedPathTypeWithCondition(q.Point, path, solved, declared, q.LocalCondition, q.Phase)
+				proof = p.conditionedPathTypeWithCondition(q.Point, path, solved, declared, q.LocalCondition, q.View)
 			}
 			if q.AllowConditionProof && typ.IsAbsentOrUnknown(solved) && typ.IsAbsentOrUnknown(proof) {
 				proof = p.conditionProofType(q.Point, path)
@@ -1480,7 +1480,7 @@ func (p Projector) ObservePath(q flow.PathObservationQuery) flow.PathObservation
 				solved = t
 			}
 			if q.AllowConditionProof && q.LocalCondition != nil {
-				proof = p.conditionedPathTypeWithCondition(q.Point, path, solved, declared, q.LocalCondition, q.Phase)
+				proof = p.conditionedPathTypeWithCondition(q.Point, path, solved, declared, q.LocalCondition, q.View)
 			}
 			if q.AllowConditionProof && typ.IsAbsentOrUnknown(solved) && (!q.PreserveProof || !hasConditionProof) && typ.IsAbsentOrUnknown(proof) {
 				proof = p.conditionProofType(q.Point, path)
@@ -1550,11 +1550,11 @@ func (p Projector) applyPathObservationIndexRead(t typ.Type, q flow.PathObservat
 	return t
 }
 
-func (p Projector) directFactsPathTypeForPhase(point cfg.Point, path constraint.Path, phase flow.PathReadPhase) (typ.Type, bool) {
+func (p Projector) directFactsPathTypeForView(point cfg.Point, path constraint.Path, view flow.PathReadView) (typ.Type, bool) {
 	if p.cfg.Facts == nil || path.Symbol == 0 || len(path.Segments) == 0 {
 		return nil, false
 	}
-	if phase == flow.PathReadPost {
+	if view == flow.PathReadPost {
 		if post, ok := p.cfg.Facts.(postStatePathFacts); ok {
 			refined := post.PostRefinedPathAt(point, path)
 			if refined.State == flow.StateResolved && !typ.IsAbsentOrUnknown(refined.Type) {
@@ -1573,7 +1573,7 @@ func (p Projector) directFactsPathTypeForPhase(point cfg.Point, path constraint.
 	return refined.Type, true
 }
 
-func (p Projector) conditionedPathTypeWithCondition(point cfg.Point, path constraint.Path, solved typ.Type, declared typ.Type, localCondition *constraint.Condition, phase flow.PathReadPhase) typ.Type {
+func (p Projector) conditionedPathTypeWithCondition(point cfg.Point, path constraint.Path, solved typ.Type, declared typ.Type, localCondition *constraint.Condition, view flow.PathReadView) typ.Type {
 	if localCondition == nil || path.IsEmpty() {
 		return nil
 	}
@@ -1587,7 +1587,7 @@ func (p Projector) conditionedPathTypeWithCondition(point cfg.Point, path constr
 	seedPath := constraint.Path{Root: path.Root, Symbol: path.Symbol, Version: path.Version}
 	seedType := solved
 	if len(path.Segments) > 0 || typ.IsAbsentOrUnknown(seedType) {
-		seedType = p.currentPathTypeForPhase(point, seedPath, phase)
+		seedType = p.currentPathTypeForView(point, seedPath, view)
 	}
 	if typ.IsAbsentOrUnknown(seedType) && len(path.Segments) == 0 {
 		seedType = declared
@@ -1601,12 +1601,12 @@ func (p Projector) conditionedPathTypeWithCondition(point cfg.Point, path constr
 	return proofs.ConditionedSeedTypeAt(point, seedPath, seedType, path, *localCondition)
 }
 
-func (p Projector) currentPathTypeForPhase(point cfg.Point, path constraint.Path, phase flow.PathReadPhase) typ.Type {
+func (p Projector) currentPathTypeForView(point cfg.Point, path constraint.Path, view flow.PathReadView) typ.Type {
 	flowOps := p.solvedFlow()
 	if flowOps == nil || path.IsEmpty() {
 		return nil
 	}
-	if phase == flow.PathReadPre {
+	if view == flow.PathReadPre {
 		if t := flowOps.PreStateTypeAt(point, path); !typ.IsAbsentOrUnknown(t) {
 			return t
 		}

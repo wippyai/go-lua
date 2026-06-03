@@ -1,18 +1,17 @@
 // Package synth provides type synthesis for Lua expressions during type checking.
 //
-// The synthesis engine operates in two distinct phases:
+// The synthesis engine operates in two distinct modes:
 //
-// 1. Declared Phase (pre-flow analysis): Synthesizes types using only declared
-// type annotations and structural inference. Used during scope computation
-// before dataflow analysis has been performed.
+// 1. Declared/static mode: Synthesizes types using only declared type annotations
+// and structural inference.
 //
-// 2. Narrowed Phase (post-flow analysis): Synthesizes types with full flow-sensitive
-// narrowing, incorporating control flow predicates, type guards, and refined
-// type information from assignments.
+// 2. Flow mode: Synthesizes types with flow-sensitive narrowing, incorporating
+// control flow predicates, type guards, and refined type information from
+// assignments.
 //
-// The Engine struct is the primary entry point, configured via Config depending
-// on the compilation phase. It delegates to the internal
-// extract.Synthesizer which handles the actual synthesis logic.
+// The Engine struct is the primary entry point, configured via Config. It
+// delegates to the internal extract.Synthesizer which handles the actual
+// synthesis logic.
 //
 // Key capabilities:
 //   - Expression type synthesis (TypeOf, MultiTypeOf)
@@ -31,8 +30,8 @@ import (
 	"github.com/wippyai/go-lua/compiler/bind"
 	"github.com/wippyai/go-lua/compiler/check/api"
 	"github.com/wippyai/go-lua/compiler/check/scope"
-	"github.com/wippyai/go-lua/compiler/check/synth/phase/extract"
-	"github.com/wippyai/go-lua/compiler/check/synth/phase/resolve"
+	"github.com/wippyai/go-lua/compiler/check/synth/extract"
+	"github.com/wippyai/go-lua/compiler/check/synth/resolve"
 	"github.com/wippyai/go-lua/types/cfg"
 	"github.com/wippyai/go-lua/types/db"
 	"github.com/wippyai/go-lua/types/flow"
@@ -41,11 +40,11 @@ import (
 	"github.com/wippyai/go-lua/types/typ"
 )
 
-// Config configures a synthesis engine for a given pipeline phase.
+// Config configures a synthesis engine for a requested mode.
 //
-// Phase controls whether flow-sensitive narrowing is enabled:
-//   - api.PhaseNarrowing: flow-refined (post-flow)
-//   - all earlier phases: declared-only (pre-flow)
+// SynthMode controls whether flow-sensitive narrowing is enabled:
+//   - api.SynthModeFlow: flow-refined (post-flow)
+//   - all earlier modes: declared-only (pre-flow)
 type Config struct {
 	Ctx            *db.QueryContext
 	Types          core.TypeOps
@@ -58,7 +57,7 @@ type Config struct {
 	Paths          api.PathFromExprFunc
 	Evidence       api.FlowEvidence
 	Graphs         api.GraphProvider
-	Phase          api.Phase
+	SynthMode      api.SynthMode
 	ModuleBindings *bind.BindingTable
 	ModuleAliases  map[cfg.SymbolID]string
 
@@ -67,12 +66,12 @@ type Config struct {
 	RecursiveFamilies *typ.RecursiveFamilyInterner
 }
 
-// Engine provides type synthesis configured by compilation phase.
+// Engine provides type synthesis configured by mode.
 //
 // Engine is the main entry point for type synthesis during type checking.
-// It wraps the internal extract.Synthesizer and provides a phase-aware API
+// It wraps the internal extract.Synthesizer and provides a mode-aware API
 // that automatically routes synthesis requests through the appropriate
-// code paths for declared vs narrowed phases.
+// code paths for declared/static vs flow-refined modes.
 //
 // The engine delegates pure memoization to db.Query/QueryContext.
 //
@@ -89,21 +88,21 @@ type exprTypeQueryKey struct {
 	Point cfg.Point
 }
 
-// New creates a synthesis engine configured for the requested phase.
+// New creates a synthesis engine configured for the requested mode.
 func New(cfg Config) *Engine {
-	phase := cfg.Phase
-	isNarrowing := phase == api.PhaseNarrowing
-	if isNarrowing && cfg.Flow == nil {
-		panic("synth: PhaseNarrowing requires Flow")
+	mode := cfg.SynthMode
+	usesFlow := mode == api.SynthModeFlow
+	if usesFlow && cfg.Flow == nil {
+		panic("synth: SynthModeFlow requires Flow")
 	}
 	if cfg.Env != nil {
-		if isNarrowing {
+		if usesFlow {
 			if _, ok := cfg.Env.(api.NarrowEnv); !ok {
-				panic("synth: PhaseNarrowing requires NarrowEnv")
+				panic("synth: SynthModeFlow requires NarrowEnv")
 			}
 		} else {
 			if _, ok := cfg.Env.(api.DeclaredEnv); !ok {
-				panic("synth: pre-flow phases require DeclaredEnv")
+				panic("synth: declared/static modes require DeclaredEnv")
 			}
 		}
 	}
@@ -114,24 +113,24 @@ func New(cfg Config) *Engine {
 	}
 
 	deps := &extract.Deps{
-		Ctx:            cfg.Ctx,
-		Types:          cfg.Types,
-		Scopes:         cfg.Scopes,
-		Manifests:      cfg.Manifests,
-		CheckCtx:       cfg.Env,
-		FunctionFacts:  cfg.FunctionFacts,
-		Graphs:         graphs,
-		Flow:           cfg.Flow,
-		Inputs:         cfg.Inputs,
-		Paths:          cfg.Paths,
-		Evidence:       cfg.Evidence,
+		Ctx:               cfg.Ctx,
+		Types:             cfg.Types,
+		Scopes:            cfg.Scopes,
+		Manifests:         cfg.Manifests,
+		CheckCtx:          cfg.Env,
+		FunctionFacts:     cfg.FunctionFacts,
+		Graphs:            graphs,
+		Flow:              cfg.Flow,
+		Inputs:            cfg.Inputs,
+		Paths:             cfg.Paths,
+		Evidence:          cfg.Evidence,
 		ModuleBindings:    cfg.ModuleBindings,
 		ModuleAliases:     cfg.ModuleAliases,
 		RecursiveFamilies: cfg.RecursiveFamilies,
 	}
 
 	engine := &Engine{
-		Synthesizer: extract.NewSynthesizer(deps, phase),
+		Synthesizer: extract.NewSynthesizer(deps, mode),
 		deps:        deps,
 	}
 	engine.narrowTypeQuery = db.NewQuery("check.synth.narrow-type-of", func(ctx *db.QueryContext, key exprTypeQueryKey) typ.Type {
@@ -153,8 +152,8 @@ func (e *Engine) withQueryContext(ctx *db.QueryContext) *Engine {
 
 // TypeOf returns the synthesized type of an expression at a CFG point.
 //
-// In narrowing phase, queries the narrow cache first, then synthesizes
-// using flow information and caches the result. In declared phase,
+// In flow mode, queries the narrow cache first, then synthesizes
+// using flow information and caches the result. In declared/static mode,
 // delegates to the extract synthesizer without flow context.
 //
 // Returns typ.Nil for nil expressions. Returns typ.Unknown if synthesis fails.
@@ -251,11 +250,11 @@ func (e *Engine) SynthWithExpected(expr ast.Expr, p cfg.Point, expected typ.Type
 	return e.SynthExprWithExpectedCore(expr, sc, p, recurse, expected)
 }
 
-// Narrow returns a narrowing-capable synth if flow information is available
-// and the engine is in PhaseNarrowing.
+// Narrow returns a flow-capable synth if flow information is available and the
+// engine is in SynthModeFlow.
 //
-// Returns nil if the engine was created without flow information or the phase
-// is pre-flow. Returns self if flow information is present and phase is narrowing.
+// Returns nil if the engine was created without flow information or the mode is
+// declared/static. Returns self if flow information is present and mode is flow.
 func (e *Engine) Narrow() api.BaseSynth {
 	if e.deps.Flow == nil || !e.IsNarrowing() {
 		return nil

@@ -174,7 +174,7 @@ func attachReturnLengthEnsures(signature *typ.Function, result *api.FuncResult) 
 // returnLengthRelationEnsures lowers canonical summary relations to public
 // contract postconditions. This is the normalized path for facts such as
 // len(ret_i) >= len(param_j): the relation is stored by return/parameter slot,
-// not by source names or legacy flow-input paths.
+// not by source names or flow-input paths.
 func returnLengthRelationEnsures(rels flow.ReturnRelations) []constraint.ExprCompare {
 	lengthParams := rels.LengthParams()
 	if len(lengthParams) == 0 {
@@ -537,7 +537,7 @@ func CollectParameterEvidenceFromResult(store Store, result *api.FuncResult, par
 			EvidenceAllowed: func(sym cfg.SymbolID, idx int) bool {
 				return callArgumentEvidenceAllowedForSymbol(store, sym, idx)
 			},
-			Observer: observation.FromFuncResult(result, functionfact.StoreProjectionLookup(store, functionfact.ProjectionSibling, api.PhaseScopeCompute, parent)),
+			Observer: observation.FromFuncResult(result, functionfact.StoreProjectionLookup(store, functionfact.ProjectionSibling, api.SynthModeDeclared, parent)),
 			ArgumentObservation: func(point cfg.Point, arg ast.Expr, current typ.Type) typ.Type {
 				return observation.ObservedArgumentType(result, point, arg, current, bindings)
 			},
@@ -572,12 +572,12 @@ type parameterEvidenceCollector struct {
 	currentKey api.GraphKey
 	currentOK  bool
 	currentSym cfg.SymbolID
-	// Canonical flow solves parameter body contracts inside its single
-	// FunctionState = Points x Contracts fixed point. Re-running this legacy
+	// The current flow solves parameter body contracts inside its single
+	// FunctionState = Points x Contracts fixed point. Re-running this older
 	// postflow body-precondition collector on the same result creates a second
 	// public contract source and can export stale hard obligations after guarded
 	// uses. Keep call-entry evidence below, but leave current-function body/public
-	// params to the canonical summary.
+	// params to the solved summary.
 	skipCurrentBodyPreconditions bool
 	bodyContext                  paramevidence.BodyPreconditionContext
 	scopes                       map[cfg.Point]*scope.State

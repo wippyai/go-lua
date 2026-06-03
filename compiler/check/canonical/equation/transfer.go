@@ -8,11 +8,10 @@ import (
 	"github.com/wippyai/go-lua/types/flow/propagate"
 )
 
-// NodeTransfer is the injected per-node transfer function of the canonical flow.
+// NodeTransfer is the injected per-node transfer function.
 // It is the single seam between this structural equation graph and the sound
-// value/condition/numeric transfer that will be extracted from
-// types/flow/transfer.go. This package never implements it; the builder takes
-// one and drives it.
+// value/condition/numeric transfer supplied by compiler/check/canonical/transfer.
+// This package never implements it; the builder takes one and drives it.
 //
 // Transfer computes the abstract state that holds AT point p, given the joined
 // state arriving from p's predecessors (incoming), and reports the obligations
@@ -70,7 +69,7 @@ type EntrySymbolValueSeeder interface {
 	SeedEntrySymbolValues(out *flow.PointState, values map[cfg.SymbolID]product.AbstractValue)
 }
 
-// EdgeNarrower is the optional per-edge refinement of the canonical flow: the
+// EdgeNarrower is the optional per-edge refinement of the flow: the
 // path-sensitive narrowing a branch guard proves about its tested value on one of
 // its successor edges. It is the second seam between this structural equation graph
 // and the sound value-domain narrowing; a NodeTransfer that also implements it

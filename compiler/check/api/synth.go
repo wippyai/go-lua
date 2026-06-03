@@ -1,6 +1,6 @@
 // Package api defines canonical interfaces for the type synthesis subsystem.
 // These interfaces decouple the synthesis engine implementation (synth.Engine)
-// from its consumers (hooks, abstract interpreter, phase runners, etc.).
+// from its consumers (hooks, input extraction, diagnostics, etc.).
 //
 // # INTERFACE HIERARCHY
 //
@@ -14,7 +14,7 @@
 //
 //	Synth: Full synthesis with narrowing support
 //	  - All BaseSynth methods
-//	  - Narrow(): Returns narrowed-phase synthesis
+//	  - Narrow(): Returns flow-refined synthesis
 //	  - Method/Field: Type member access
 //	  - ResolveFunctionSignature: Full signature resolution
 //
@@ -29,15 +29,15 @@
 //	  - BoundsAt: Numeric bounds from flow analysis
 //	  - IsPointDead: Reachability check
 //
-// # PHASE SEPARATION
+// # MODE SEPARATION
 //
-// Synthesis operates in two phases:
+// Synthesis operates in two modes:
 //
 //	Declared: Uses declared types from annotations only. No flow refinements.
-//	Narrowing: Uses flow-refined types when available, falls back to declared.
+//	Flow: Uses flow-refined types when available, falls back to declared.
 //
 // BaseSynth is the return type of Narrow() to prevent recursive interface
-// definitions while supporting phase-aware synthesis.
+// definitions while supporting mode-aware synthesis.
 package api
 
 import (
@@ -52,7 +52,7 @@ import (
 )
 
 // BaseSynth is the core type synthesis interface for expression type queries.
-// It provides essential operations needed for type checking without phase-specific
+// It provides essential operations needed for type checking without mode-specific
 // concerns. Used as the return type for Narrow() to avoid recursive interface definitions.
 //
 // EXPRESSION SYNTHESIS:
@@ -98,11 +98,11 @@ type BaseSynth interface {
 	ResolveReturnTypes(types []ast.TypeExpr, sc *scope.State) []typ.Type
 }
 
-// Synth is the full type synthesis interface with phase awareness and member access.
+// Synth is the full type synthesis interface with mode awareness and member access.
 // Implemented by synth.Engine and used throughout the type checking pipeline.
 //
-// PHASE AWARENESS: Synth supports both declared and narrowed phases through the
-// Narrow() method which returns a BaseSynth operating in narrowed mode.
+// MODE AWARENESS: Synth supports both declared/static and flow-refined modes
+// through the Narrow() method, which returns a BaseSynth operating in flow mode.
 //
 // MEMBER ACCESS: Method() and Field() provide type-aware member lookup supporting
 // records, interfaces, classes, and metatables.
@@ -120,7 +120,7 @@ type Synth interface {
 	// Used for @type aliases and class definitions.
 	ResolveTypeDef(name string, typeExpr ast.TypeExpr, typeParams []ast.TypeParamExpr, sc *scope.State) typ.Type
 
-	// Narrow returns a BaseSynth operating in narrowed phase.
+	// Narrow returns a BaseSynth operating in flow-refined mode.
 	// Narrowed synthesis uses flow-refined types when available.
 	Narrow() BaseSynth
 
@@ -172,7 +172,7 @@ type FlowQuery interface {
 }
 
 // FlowOps provides advanced flow operations for constraint solving and narrowing.
-// Used by the flow solver and narrowing phase for fine-grained type refinement.
+// Used by the flow engine and synthesis for fine-grained type refinement.
 type FlowOps interface {
 	// NarrowedTypeAt returns the narrowed type for a path at a point.
 	// Paths may include field accesses (e.g., x.y.z).

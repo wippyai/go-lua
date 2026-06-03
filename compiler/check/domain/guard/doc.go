@@ -27,6 +27,6 @@
 //
 // # Integration
 //
-// Guards feed into the flow solver which propagates narrowed types through
-// the CFG, enabling precise type tracking at each program point.
+// Guards feed into flow analysis, enabling precise type tracking at each program
+// point.
 package guard

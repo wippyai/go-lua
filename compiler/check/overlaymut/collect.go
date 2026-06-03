@@ -10,8 +10,8 @@ import (
 	"github.com/wippyai/go-lua/types/typ"
 )
 
-// MapMutatorInfo holds key and value types for map-write mutations.
-type MapMutatorInfo struct {
+// MapWriteInfo holds key and value types for dynamic map writes.
+type MapWriteInfo struct {
 	KeyType   typ.Type
 	ValueType typ.Type
 }
@@ -154,15 +154,15 @@ func CollectFunctionFieldAssignments(
 	return result
 }
 
-// CollectMapMutatorAssignments reduces transfer assignment evidence for map writes.
-// Returns a map: symbolID -> []MapMutatorInfo representing map mutations to each symbol.
-func CollectMapMutatorAssignments(
+// CollectMapWriteAssignments reduces transfer assignment evidence for map writes.
+// Returns a map: symbolID -> []MapWriteInfo representing dynamic writes to each symbol.
+func CollectMapWriteAssignments(
 	assignments []api.AssignmentEvidence,
 	synth func(ast.Expr, cfg.Point) typ.Type,
 	bindings *bind.BindingTable,
 	filterSyms map[cfg.SymbolID]bool,
-) map[cfg.SymbolID][]MapMutatorInfo {
-	result := make(map[cfg.SymbolID][]MapMutatorInfo)
+) map[cfg.SymbolID][]MapWriteInfo {
+	result := make(map[cfg.SymbolID][]MapWriteInfo)
 	if len(assignments) == 0 {
 		return result
 	}
@@ -218,7 +218,7 @@ func CollectMapMutatorAssignments(
 				valType = typ.Unknown
 			}
 
-			result[sym] = append(result[sym], MapMutatorInfo{
+			result[sym] = append(result[sym], MapWriteInfo{
 				KeyType:   keyType,
 				ValueType: valType,
 			})
@@ -235,12 +235,12 @@ func canonicalDynamicKeyType(keyType typ.Type) typ.Type {
 	return keyType
 }
 
-// MergeMapMutatorMutations merges table mutator-derived map effects into map mutations.
-func MergeMapMutatorMutations(
-	mapMutators map[cfg.SymbolID][]MapMutatorInfo,
-	mutations map[cfg.SymbolID][]MapMutatorInfo,
+// MergeMapWriteMutations merges table.insert-derived map effects into dynamic map writes.
+func MergeMapWriteMutations(
+	mapWrites map[cfg.SymbolID][]MapWriteInfo,
+	mutations map[cfg.SymbolID][]MapWriteInfo,
 ) {
 	for sym, infos := range mutations {
-		mapMutators[sym] = append(mapMutators[sym], infos...)
+		mapWrites[sym] = append(mapWrites[sym], infos...)
 	}
 }

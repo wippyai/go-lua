@@ -347,7 +347,7 @@ func ApplySpecReturnOverride(in SpecReturnInput) []typ.Type {
 	if fnType == nil {
 		return in.Returns
 	}
-	astOverride := (&intercept.SpecReturnOverride{Phase: api.PhaseScopeCompute}).Override(fnType, in.Call.Args)
+	astOverride := (&intercept.SpecReturnOverride{SynthMode: api.SynthModeDeclared}).Override(fnType, in.Call.Args)
 	if astOverride != nil {
 		return intercept.ApplyOverride(in.Returns, astOverride)
 	}

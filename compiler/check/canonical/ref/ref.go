@@ -1,4 +1,4 @@
-// Package ref contains stable identifiers shared by canonical solver layers.
+// Package ref contains stable identifiers shared by flow-engine layers.
 package ref
 
 import (

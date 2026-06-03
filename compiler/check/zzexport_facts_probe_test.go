@@ -39,8 +39,8 @@ end
 		if g != nil {
 			name = g.NameOf(sym)
 		}
-		rt := functionfact.ReturnProjection(facts, sym, api.PhaseNarrowing)
-		exp := functionfact.ExportTypeProjection(facts, sym, api.PhaseNarrowing)
+		rt := functionfact.ReturnProjection(facts, sym, api.SynthModeFlow)
+		exp := functionfact.ExportTypeProjection(facts, sym, api.SynthModeFlow)
 		t.Logf("  sym=%d name=%q returns=%v export=%s", sym, name, rt, exp)
 	}
 }

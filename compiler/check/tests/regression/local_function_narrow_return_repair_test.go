@@ -67,7 +67,7 @@ return { f = f }
 	if got := functionfact.NarrowSummary(functionFacts, sym); len(got) != 1 || containsNever(got[0]) {
 		t.Fatalf("narrow contains never artifact: %v", got)
 	}
-	if got := functionfact.SiblingTypeProjection(functionFacts, sym, api.PhaseScopeCompute); got == nil || containsNever(got) {
+	if got := functionfact.SiblingTypeProjection(functionFacts, sym, api.SynthModeDeclared); got == nil || containsNever(got) {
 		t.Fatalf("function fact contains never artifact: %v", got)
 	}
 

@@ -34,7 +34,7 @@
 // The synth package has several subpackages:
 //   - ops: Type operations (call, index, field access)
 //   - intercept: Special-case handling (type casts, type guards)
-//   - phase/extract: Expression extraction from CFG
-//   - phase/resolve: Final type resolution
+//   - extract: Expression extraction from CFG
+//   - resolve: Final type resolution
 //   - transform: Type transformations (spec returns, etc.)
 package synth

@@ -16,17 +16,17 @@ func mapSample(d lattice.Lattice[map[string]sign]) []map[string]sign {
 	return []map[string]sign{
 		d.Bottom(),
 		d.Top(),
-		{},                                  // explicit empty == Bottom
-		{"x": sNeg},                         // single key
-		{"x": sPos},                         // same key, different value
-		{"y": sZero},                        // disjoint key
-		{"x": sTop},                         // element top at a key
-		{"x": sNeg, "y": sPos},              // two keys
-		{"x": sPos, "y": sZero},             // overlapping keys, differ on x
-		{"y": sPos, "z": sNeg},              // partial overlap with above
-		{"x": sNeg, "y": sPos, "z": sZero},  // three keys
-		{"x": sBottom},                      // explicit bottom -> canonical absence
-		{"x": sNeg, "y": sBottom},           // mixed explicit bottom
+		{},                                 // explicit empty == Bottom
+		{"x": sNeg},                        // single key
+		{"x": sPos},                        // same key, different value
+		{"y": sZero},                       // disjoint key
+		{"x": sTop},                        // element top at a key
+		{"x": sNeg, "y": sPos},             // two keys
+		{"x": sPos, "y": sZero},            // overlapping keys, differ on x
+		{"y": sPos, "z": sNeg},             // partial overlap with above
+		{"x": sNeg, "y": sPos, "z": sZero}, // three keys
+		{"x": sBottom},                     // explicit bottom -> canonical absence
+		{"x": sNeg, "y": sBottom},          // mixed explicit bottom
 	}
 }
 

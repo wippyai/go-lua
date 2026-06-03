@@ -1,6 +1,8 @@
 package flow
 
 import (
+	"sort"
+
 	"github.com/wippyai/go-lua/types/cfg"
 	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/domain/value"
@@ -190,4 +192,20 @@ func productType(av product.AbstractValue, ok bool) (typ.Type, bool) {
 		return nil, false
 	}
 	return t, true
+}
+
+func sortedPathFacts(facts map[string]PathFact) []PathFact {
+	if len(facts) == 0 {
+		return nil
+	}
+	keys := make([]string, 0, len(facts))
+	for key := range facts {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	out := make([]PathFact, 0, len(keys))
+	for _, key := range keys {
+		out = append(out, facts[key])
+	}
+	return out
 }

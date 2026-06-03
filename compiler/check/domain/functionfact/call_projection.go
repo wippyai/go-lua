@@ -159,7 +159,7 @@ func projectCallFactType(ff api.FunctionFact, sym cfg.SymbolID) typ.Type {
 	// Call diagnostics consume caller-facing obligations. Body/entry evidence is
 	// for interpreting the callee and computing return products; it must not
 	// become an additional precondition at a call site.
-	return PublicTypeProjection(facts, sym, api.PhaseScopeCompute)
+	return PublicTypeProjection(facts, sym, api.SynthModeDeclared)
 }
 
 func (input callContractInput) closedWorldDynamicTopAdmitted(idx int) bool {

@@ -10,11 +10,10 @@ import (
 	"github.com/wippyai/go-lua/types/typ/unwrap"
 )
 
-// transfer.go provides the AbstractValue-native form of the flow transfer
-// functions (types/flow/transfer.go, query.go, structured_carry.go,
-// mutable_store.go). Each primitive takes and returns AbstractValue (or product
-// types) so the flow engine can later compute in the value domain with no
-// typ.Type round-trip in its carriers.
+// transfer.go provides the AbstractValue-native primitives used by flow
+// transfer. Each primitive takes and returns AbstractValue (or product types) so
+// the flow engine computes in the value domain with no typ.Type round-trip in
+// its carriers.
 //
 // A primitive recovers the structural type from the shape axis only internally,
 // through ProjectValue at the shape boundary, feeds it to the proven
@@ -26,10 +25,8 @@ import (
 
 // FieldOf is the AbstractValue-native form of a field read av.name.
 //
-// It corresponds to the field-read path of the flow transfer query
-// (Solution.TypeAt / derivedTypeAt deriving a child field through
-// query/core.Field). It returns the field value and whether the field resolves;
-// a non-resolving field read reports ok=false, matching query/core.Field.
+// It returns the field value and whether the field resolves; a non-resolving
+// field read reports ok=false, matching query/core.Field.
 func FieldOf(av AbstractValue, name string) (AbstractValue, bool) {
 	t := av.ProjectValue()
 	if t == nil {
@@ -527,11 +524,8 @@ func IndexOf(av AbstractValue, keyAV AbstractValue) (AbstractValue, bool) {
 
 // WriteIndex is the AbstractValue-native form of an indexed write av[keyAV] = valAV.
 //
-// It corresponds to the map-mutator write transfer
-// (processMapMutatorAssignmentReturnKey with MapMutationValueWrite, which calls
-// value.AdmitIndexedWrite then value.MergeForConvergence). The container is
-// widened to admit the key/value, then convergence-merged against its prior
-// shape so the result is a stable fixpoint iterate.
+// The container is widened to admit the key/value, then convergence-merged
+// against its prior shape so the result is a stable fixpoint iterate.
 func WriteIndex(av AbstractValue, keyAV AbstractValue, valAV AbstractValue) AbstractValue {
 	current := av.ProjectValue()
 	key := keyAV.ProjectValue()
@@ -569,9 +563,8 @@ func WriteIndexForeign(av AbstractValue, keyAV AbstractValue, valAV AbstractValu
 // IndexWriteAdmits is the AbstractValue-native form of the indexed-write
 // admission predicate.
 //
-// It corresponds to mapMutationAdmits with MapMutationValueWrite
-// (value.IndexedWriteAdmits): whether the value domain can soundly admit
-// av[keyAV] = valAV before WriteIndex computes the next container.
+// It reports whether the value domain can soundly admit av[keyAV] = valAV
+// before WriteIndex computes the next container.
 func IndexWriteAdmits(av AbstractValue, keyAV AbstractValue, valAV AbstractValue) bool {
 	return value.IndexedWriteAdmits(av.ProjectValue(), keyAV.ProjectValue(), valAV.ProjectValue())
 }
@@ -587,11 +580,8 @@ func SealedIndexWriteAdmits(av AbstractValue, keyAV AbstractValue, valAV Abstrac
 // MutateIndex is the AbstractValue-native form of a structural mutation inside an
 // indexed element, av[keyAV].field = ... .
 //
-// It corresponds to the map-mutator update transfer
-// (processMapMutatorAssignmentReturnKey with MapMutationValueUpdate, which calls
-// value.AdmitIndexedValueMutation then value.MergeForConvergence). Unlike
-// WriteIndex the incoming value is a patch joined into the element slot rather
-// than a replacement.
+// Unlike WriteIndex the incoming value is a patch joined into the element slot
+// rather than a replacement.
 func MutateIndex(av AbstractValue, keyAV AbstractValue, valAV AbstractValue) AbstractValue {
 	current := av.ProjectValue()
 	key := keyAV.ProjectValue()
@@ -603,8 +593,8 @@ func MutateIndex(av AbstractValue, keyAV AbstractValue, valAV AbstractValue) Abs
 // IndexMutateAdmits is the AbstractValue-native form of the indexed value
 // mutation admission predicate.
 //
-// It corresponds to mapMutationAdmits with MapMutationValueUpdate
-// (value.IndexedValueMutationAdmits).
+// It reports whether the value domain can soundly admit the indexed value
+// mutation.
 func IndexMutateAdmits(av AbstractValue, keyAV AbstractValue, valAV AbstractValue) bool {
 	return value.IndexedValueMutationAdmits(av.ProjectValue(), keyAV.ProjectValue(), valAV.ProjectValue())
 }
@@ -612,11 +602,8 @@ func IndexMutateAdmits(av AbstractValue, keyAV AbstractValue, valAV AbstractValu
 // AppendElement is the AbstractValue-native form of an array-element mutation
 // av[#av+1] = elemAV (table.insert-like).
 //
-// It corresponds to the table-mutator transfer with a direct array target
-// (processTableMutatorAssignmentReturnKey calling
-// value.AdmitArrayElementMutation with typ.JoinPreferNonSoft, then
-// value.MergeForConvergence). The array element domain is joined with elemAV's
-// content and the result convergence-merged against the prior shape.
+// The array element domain is joined with elemAV's content and the result
+// convergence-merged against the prior shape.
 func AppendElement(av AbstractValue, elemAV AbstractValue) AbstractValue {
 	current := av.ProjectValue()
 	elem := elemAV.ProjectValue()
@@ -627,10 +614,7 @@ func AppendElement(av AbstractValue, elemAV AbstractValue) AbstractValue {
 // AppendMapElement is the AbstractValue-native form of an array-element mutation
 // through a dynamic map key, av[keyAV][#...+1] = elemAV.
 //
-// It corresponds to the table-mutator transfer with a keyed target
-// (processTableMutatorAssignmentReturnKey calling
-// value.AdmitMapArrayElementMutation, then value.MergeForConvergence): the value
-// slot of the map at keyAV is array-widened by elemAV.
+// The value slot of the map at keyAV is array-widened by elemAV.
 func AppendMapElement(av AbstractValue, keyAV AbstractValue, elemAV AbstractValue) AbstractValue {
 	current := av.ProjectValue()
 	key := keyAV.ProjectValue()

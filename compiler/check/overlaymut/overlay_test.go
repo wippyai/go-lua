@@ -260,24 +260,24 @@ func TestMergeMapComponentIntoType(t *testing.T) {
 	})
 }
 
-func TestApplyMapMutatorMergeToOverlay(t *testing.T) {
+func TestApplyMapWriteMergeToOverlay(t *testing.T) {
 	t.Run("empty infos are skipped", func(t *testing.T) {
 		overlay := make(map[cfg.SymbolID]typ.Type)
-		mapMutatorAssignments := map[cfg.SymbolID][]MapMutatorInfo{
+		mapWrites := map[cfg.SymbolID][]MapWriteInfo{
 			1: {},
 		}
-		ApplyMapMutatorMergeToOverlay(overlay, mapMutatorAssignments)
+		ApplyMapWriteMergeToOverlay(overlay, mapWrites)
 		if _, ok := overlay[1]; ok {
 			t.Fatal("expected symbol 1 to not be in overlay")
 		}
 	})
 
-	t.Run("mapMutator info is merged", func(t *testing.T) {
+	t.Run("map write info is merged", func(t *testing.T) {
 		overlay := make(map[cfg.SymbolID]typ.Type)
-		mapMutatorAssignments := map[cfg.SymbolID][]MapMutatorInfo{
+		mapWrites := map[cfg.SymbolID][]MapWriteInfo{
 			1: {{KeyType: typ.String, ValueType: typ.Number}},
 		}
-		ApplyMapMutatorMergeToOverlay(overlay, mapMutatorAssignments)
+		ApplyMapWriteMergeToOverlay(overlay, mapWrites)
 		if overlay[1] == nil {
 			t.Fatal("expected overlay[1] to be set")
 		}

@@ -395,7 +395,7 @@ func (s *Session) exportFunctionResults() []modules.ExportFunctionResult {
 //
 // WHAT IS FREED:
 //   - CFG graphs and binding tables
-//   - Scope states and flow solutions
+//   - Scope states and solved-flow projections
 //   - Interprocedural fact products
 //   - Synthesis engines
 //
@@ -440,7 +440,7 @@ func (s *Session) Release() {
 			result.Scopes = nil
 			result.Facts = nil
 			result.FlowInputs = nil
-			result.FlowSolution = nil
+			result.FlowProjection = nil
 			result.NarrowSynth = nil
 		}
 	}

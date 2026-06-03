@@ -1,4 +1,4 @@
-// inference.go implements function refinement inference from flow analysis results.
+// inference.go implements function refinement inference from flow inputs.
 //
 // Function refinements describe how a function's return value relates to its parameters.
 // For predicate functions (returning boolean), refinements capture when parameters are
@@ -18,56 +18,16 @@ import (
 
 // ParamInfo describes a function parameter for effect inference.
 //
-// Symbol is the canonical identity. Name is retained only for legacy constraints
-// that were emitted before a symbol was attached to the path.
+// Symbol is the primary identity. Name is retained only for unresolved
+// constraints that were emitted before a symbol was attached to the path.
 type ParamInfo struct {
 	Name   string
 	Symbol cfg.SymbolID
 	Type   typ.Type
 }
 
-// InferFunctionRefinement computes a FunctionRefinement from solved flow analysis.
-//
-// This is the post-flow variant that uses the complete flow solution to determine
-// which constraints hold at each return point. It examines return points to compute:
-//
-//   - OnTrue: Constraints that hold when returning true (boolean predicates)
-//   - OnFalse: Constraints that hold when returning false (boolean predicates)
-//   - OnReturn: Constraints that hold on normal return (assert-style functions)
-//   - Terminates: Whether the function never returns normally
-//
-// For boolean-returning functions, OnTrue/OnFalse are populated based on return
-// statement analysis. Return statements with literal true/false are classified via
-// ReturnKinds. Return statements with predicate expressions use ReturnConstraints.
-//
-// For non-boolean functions, OnReturn is populated from path conditions at return points.
-//
-// All constraints are converted to use placeholders ($0, $1, ...) for parameters,
-// enabling the effect to be instantiated with actual arguments at call sites.
-//
-// Example: For function `function is_string(x) return type(x) == "string" end`:
-//   - OnTrue: HasType($0, string)
-//   - OnFalse: NotHasType($0, string)
-func InferFunctionRefinement(
-	solution *Solution,
-	g *cfg.CFG,
-	params []ParamInfo,
-	returnType typ.Type,
-) *constraint.FunctionRefinement {
-	if solution == nil || g == nil {
-		return nil
-	}
-
-	src := refinementSource{conditionAt: solution.ConditionAt}
-	if solution.inputs != nil {
-		src.returnConstraints = solution.inputs.ReturnConstraints
-		src.returnKinds = solution.inputs.ReturnKinds
-	}
-
-	return inferFunctionRefinementCore(src, g, params, returnType)
-}
-
-// InferFunctionRefinementFromInputs computes a FunctionRefinement without running full flow analysis.
+// InferFunctionRefinementFromInputs computes a FunctionRefinement from extracted
+// flow inputs.
 //
 // This is the pre-flow variant that uses only the extracted return constraints without
 // propagating conditions through the CFG. It produces conservative effects based on:
@@ -99,29 +59,14 @@ func InferFunctionRefinementFromInputs(
 
 // ParameterCondition keeps only parameter-dependent constraints from cond and
 // rewrites those paths to parameter placeholders ($0, $1, ...). This is the
-// canonical flow-level representation for exporting path-sensitive facts
-// through contracts or function products.
+// flow-level representation for exporting path-sensitive facts through
+// contracts or function products.
 func ParameterCondition(cond constraint.Condition, params []ParamInfo) constraint.Condition {
 	projection := newParameterProjection(params)
 	return substituteToPlaceholdersCondition(filterParamCondition(cond, projection), projection)
 }
 
 // refinementSource abstracts the data sources for refinement inference.
-//
-// This struct allows the same inference algorithm to work with both pre-flow
-// and post-flow data by providing optional access to different data sources:
-//
-//   - returnConstraints: Always available, contains constraints extracted from
-//     return expressions (e.g., return type(x) == "string" yields HasType(x, string))
-//
-//   - returnKinds: Post-flow only, classifies return statements as ReturnTrue,
-//     ReturnFalse, or ReturnUnknown based on constant analysis
-//
-//   - conditionAt: Post-flow only, returns the full DNF condition at a CFG point
-//     after propagation
-//
-// Nil fields indicate the data is unavailable, causing the inference to skip
-// the corresponding analysis step.
 type refinementSource struct {
 	returnConstraints map[cfg.Point]ReturnExprConstraints
 	returnKinds       map[cfg.Point]ReturnKind
@@ -258,21 +203,21 @@ func inferFunctionRefinementCore(
 }
 
 type parameterProjection struct {
-	bySymbol     map[cfg.SymbolID]int
-	legacyByRoot map[string]int
+	bySymbol   map[cfg.SymbolID]int
+	byRootName map[string]int
 }
 
 func newParameterProjection(params []ParamInfo) parameterProjection {
 	projection := parameterProjection{
-		bySymbol:     make(map[cfg.SymbolID]int),
-		legacyByRoot: make(map[string]int),
+		bySymbol:   make(map[cfg.SymbolID]int),
+		byRootName: make(map[string]int),
 	}
 	for i, p := range params {
 		if p.Symbol != 0 {
 			projection.bySymbol[p.Symbol] = i
 		}
 		if p.Name != "" {
-			projection.legacyByRoot[p.Name] = i
+			projection.byRootName[p.Name] = i
 		}
 	}
 	return projection
@@ -286,7 +231,7 @@ func (p parameterProjection) slotForPath(path constraint.Path) (int, bool) {
 	if path.Root == "" {
 		return 0, false
 	}
-	idx, ok := p.legacyByRoot[path.Root]
+	idx, ok := p.byRootName[path.Root]
 	return idx, ok
 }
 
@@ -338,8 +283,8 @@ func isBooleanReturnType(t typ.Type) bool {
 // reference only local variables or globals are filtered out since they cannot be
 // used at call sites for argument narrowing.
 //
-// Uses symbol identity when present. Root-name identity is a legacy fallback only
-// for unresolved paths with Symbol=0; a nonzero symbol mismatch is final.
+// Uses symbol identity when present. Root-name identity is a source-name fallback
+// only for unresolved paths with Symbol=0; a nonzero symbol mismatch is final.
 func filterParamConstraints(set []constraint.Constraint, projection parameterProjection) []constraint.Constraint {
 	if len(set) == 0 {
 		return nil
@@ -376,8 +321,8 @@ func filterParamConstraints(set []constraint.Constraint, projection parameterPro
 // This substitution enables effect instantiation: at a call site, $0 is replaced
 // with the actual first argument's path, $1 with the second, etc.
 //
-// Uses symbol identity when present. Root-name identity is a legacy fallback only
-// for unresolved paths with Symbol=0.
+// Uses symbol identity when present. Root-name identity is a source-name fallback
+// only for unresolved paths with Symbol=0.
 func substituteToPlaceholders(set []constraint.Constraint, projection parameterProjection) []constraint.Constraint {
 	if len(set) == 0 {
 		return nil

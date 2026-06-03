@@ -75,10 +75,10 @@ func TestReturnProjection_SelectsNarrowingProjection(t *testing.T) {
 		},
 	}
 
-	if got := functionfact.ReturnProjection(facts, 1, api.PhaseScopeCompute); len(got) != 1 || !typ.TypeEquals(got[0], typ.Nil) {
+	if got := functionfact.ReturnProjection(facts, 1, api.SynthModeDeclared); len(got) != 1 || !typ.TypeEquals(got[0], typ.Nil) {
 		t.Fatalf("scope returns = %v, want nil summary", got)
 	}
-	if got := functionfact.ReturnProjection(facts, 1, api.PhaseNarrowing); len(got) != 1 || !typ.TypeEquals(got[0], typ.String) {
+	if got := functionfact.ReturnProjection(facts, 1, api.SynthModeFlow); len(got) != 1 || !typ.TypeEquals(got[0], typ.String) {
 		t.Fatalf("narrow returns = %v, want string narrow summary", got)
 	}
 }
@@ -95,11 +95,11 @@ func TestReturnProjection_NarrowingRepairsWithoutDroppingSummaryTop(t *testing.T
 		},
 	}
 
-	if got := functionfact.ReturnProjection(facts, sym, api.PhaseNarrowing); len(got) != 1 || !typ.TypeEquals(got[0], typ.Any) {
+	if got := functionfact.ReturnProjection(facts, sym, api.SynthModeFlow); len(got) != 1 || !typ.TypeEquals(got[0], typ.Any) {
 		t.Fatalf("narrowing returns = %v, want whole-slot any summary", got)
 	}
 
-	projected := functionfact.ProjectType(facts[sym], functionfact.ProjectionExport, api.PhaseNarrowing)
+	projected := functionfact.ProjectType(facts[sym], functionfact.ProjectionExport, api.SynthModeFlow)
 	fn, ok := projected.(*typ.Function)
 	if !ok || len(fn.Returns) != 1 || !typ.TypeEquals(fn.Returns[0], typ.Any) {
 		t.Fatalf("export projection = %v, want any return", projected)
@@ -114,7 +114,7 @@ func TestProjectionLookup_ProjectsCanonicalFunctionTypes(t *testing.T) {
 		4:   {Params: product.LiftVector([]typ.Type{typ.String})},
 	}
 
-	lookup := functionfact.ProjectionLookup(facts, functionfact.ProjectionSibling, api.PhaseScopeCompute)
+	lookup := functionfact.ProjectionLookup(facts, functionfact.ProjectionSibling, api.SynthModeDeclared)
 	if lookup == nil {
 		t.Fatal("ProjectionLookup() returned nil")
 	}
@@ -143,7 +143,7 @@ func TestStoreProjectionLookup_UsesOwningFunctionFactProduct(t *testing.T) {
 	st.RegisterFunctionRef(sym, childFn, childGraph, parentGraph.ID(), 0)
 	writeFunctionFactType(st, parentGraph, parent, sym, fnType)
 
-	lookup := functionfact.StoreProjectionLookup(st, functionfact.ProjectionSibling, api.PhaseScopeCompute, nil)
+	lookup := functionfact.StoreProjectionLookup(st, functionfact.ProjectionSibling, api.SynthModeDeclared, nil)
 	if lookup == nil {
 		t.Fatal("StoreProjectionLookup() returned nil")
 	}
@@ -165,7 +165,7 @@ func TestRecursiveTypeProjection_ReadsCurrentReturnProduct(t *testing.T) {
 		},
 	}
 
-	got := functionfact.RecursiveTypeProjection(sig, nil, facts, sym, api.PhaseScopeCompute)
+	got := functionfact.RecursiveTypeProjection(sig, nil, facts, sym, api.SynthModeDeclared)
 	if got == nil || len(got.Returns) != 1 || !typ.TypeEquals(got.Returns[0], typ.Integer) {
 		t.Fatalf("RecursiveTypeProjection() = %v, want integer return from product", got)
 	}
@@ -175,7 +175,7 @@ func TestRecursiveTypeProjection_UsesExpectedReturnsWithoutProduct(t *testing.T)
 	sig := typ.Func().Param("x", typ.String).Build()
 	expected := typ.Func().Param("x", typ.String).Returns(typ.Boolean).Build()
 
-	got := functionfact.RecursiveTypeProjection(sig, expected, nil, 0, api.PhaseScopeCompute)
+	got := functionfact.RecursiveTypeProjection(sig, expected, nil, 0, api.SynthModeDeclared)
 	if got == nil || len(got.Returns) != 1 || !typ.TypeEquals(got.Returns[0], typ.Boolean) {
 		t.Fatalf("RecursiveTypeProjection() = %v, want expected boolean return", got)
 	}
@@ -204,13 +204,13 @@ func TestProjectionBodyDoesNotAssumeBodyContractAsEntryProof(t *testing.T) {
 		BodyParams: product.LiftVector([]typ.Type{typ.String}),
 	}
 
-	body := functionfact.ProjectType(ff, functionfact.ProjectionBody, api.PhaseScopeCompute)
+	body := functionfact.ProjectType(ff, functionfact.ProjectionBody, api.SynthModeDeclared)
 	bodyFn, ok := body.(*typ.Function)
 	if !ok || len(bodyFn.Params) != 1 || !typ.TypeEquals(bodyFn.Params[0].Type, typ.Any) {
 		t.Fatalf("body projection = %v, want source any parameter", body)
 	}
 
-	sibling := functionfact.ProjectType(ff, functionfact.ProjectionSibling, api.PhaseScopeCompute)
+	sibling := functionfact.ProjectType(ff, functionfact.ProjectionSibling, api.SynthModeDeclared)
 	siblingFn, ok := sibling.(*typ.Function)
 	if !ok || len(siblingFn.Params) != 1 || !typ.TypeEquals(siblingFn.Params[0].Type, typ.Any) {
 		t.Fatalf("sibling projection = %v, want caller-facing any parameter", sibling)
@@ -225,19 +225,19 @@ func TestProjectionSiblingUsesEntryEvidenceWithoutLeakingToPublic(t *testing.T) 
 		EntryParams: product.LiftVector([]typ.Type{entry}),
 	}
 
-	sibling := functionfact.ProjectType(ff, functionfact.ProjectionSibling, api.PhaseScopeCompute)
+	sibling := functionfact.ProjectType(ff, functionfact.ProjectionSibling, api.SynthModeDeclared)
 	siblingFn, ok := sibling.(*typ.Function)
 	if !ok || len(siblingFn.Params) != 1 || !typ.TypeEquals(siblingFn.Params[0].Type, entry) {
 		t.Fatalf("sibling projection = %v, want entry parameter %v", sibling, entry)
 	}
 
-	public := functionfact.ProjectType(ff, functionfact.ProjectionPublic, api.PhaseScopeCompute)
+	public := functionfact.ProjectType(ff, functionfact.ProjectionPublic, api.SynthModeDeclared)
 	publicFn, ok := public.(*typ.Function)
 	if !ok || len(publicFn.Params) != 1 || !typ.TypeEquals(publicFn.Params[0].Type, publicParam) {
 		t.Fatalf("public projection = %v, want public parameter %v", public, publicParam)
 	}
 
-	exported := functionfact.ProjectType(ff, functionfact.ProjectionExport, api.PhaseScopeCompute)
+	exported := functionfact.ProjectType(ff, functionfact.ProjectionExport, api.SynthModeDeclared)
 	exportFn, ok := exported.(*typ.Function)
 	if !ok || len(exportFn.Params) != 1 || !typ.TypeEquals(exportFn.Params[0].Type, publicParam) {
 		t.Fatalf("export projection = %v, want public parameter %v", exported, publicParam)
@@ -256,7 +256,7 @@ func TestProjectionFlowInputExcludesEntryAndBodyEvidence(t *testing.T) {
 		Summary:     product.LiftVector([]typ.Type{typ.Boolean}),
 	}
 
-	projected := functionfact.ProjectType(ff, functionfact.ProjectionFlowInput, api.PhaseScopeCompute)
+	projected := functionfact.ProjectType(ff, functionfact.ProjectionFlowInput, api.SynthModeDeclared)
 	fn, ok := projected.(*typ.Function)
 	if !ok || len(fn.Params) != 1 || len(fn.Returns) != 1 {
 		t.Fatalf("flow-input projection = %v, want one-param one-return function", projected)
@@ -280,13 +280,13 @@ func TestSynthesisTypeProjectionUsesFlowInputBeforeNarrowing(t *testing.T) {
 		},
 	}
 
-	scopeType := functionfact.SynthesisTypeProjection(facts, sym, api.PhaseScopeCompute)
+	scopeType := functionfact.SynthesisTypeProjection(facts, sym, api.SynthModeDeclared)
 	scopeFn, ok := scopeType.(*typ.Function)
 	if !ok || len(scopeFn.Params) != 1 || !typ.TypeEquals(scopeFn.Params[0].Type, publicParam) {
 		t.Fatalf("scope synthesis projection = %v, want public parameter", scopeType)
 	}
 
-	narrowType := functionfact.SynthesisTypeProjection(facts, sym, api.PhaseNarrowing)
+	narrowType := functionfact.SynthesisTypeProjection(facts, sym, api.SynthModeFlow)
 	narrowFn, ok := narrowType.(*typ.Function)
 	if !ok || len(narrowFn.Params) != 1 || !typ.TypeEquals(narrowFn.Params[0].Type, entry) {
 		t.Fatalf("narrow synthesis projection = %v, want entry parameter", narrowType)
@@ -299,13 +299,13 @@ func TestProjectionBodyPreservesNilEntryStateForUnannotatedParam(t *testing.T) {
 		EntryParams: product.LiftVector([]typ.Type{typ.Nil}),
 	}
 
-	body := functionfact.ProjectType(ff, functionfact.ProjectionBody, api.PhaseScopeCompute)
+	body := functionfact.ProjectType(ff, functionfact.ProjectionBody, api.SynthModeDeclared)
 	bodyFn, ok := body.(*typ.Function)
 	if !ok || len(bodyFn.Params) != 1 || !typ.TypeEquals(bodyFn.Params[0].Type, typ.Nil) {
 		t.Fatalf("body projection = %v, want nil entry state", body)
 	}
 
-	public := functionfact.ProjectType(ff, functionfact.ProjectionPublic, api.PhaseScopeCompute)
+	public := functionfact.ProjectType(ff, functionfact.ProjectionPublic, api.SynthModeDeclared)
 	publicFn, ok := public.(*typ.Function)
 	if !ok || len(publicFn.Params) != 1 || !typ.TypeEquals(publicFn.Params[0].Type, typ.Any) {
 		t.Fatalf("public projection = %v, want public any", public)
@@ -323,7 +323,7 @@ func TestProjectionPublicKeepsExplicitSoftAnnotationBroad(t *testing.T) {
 		Params:    product.LiftVector([]typ.Type{observed}),
 	}
 
-	public := functionfact.ProjectType(ff, functionfact.ProjectionPublic, api.PhaseScopeCompute)
+	public := functionfact.ProjectType(ff, functionfact.ProjectionPublic, api.SynthModeDeclared)
 	publicFn, ok := public.(*typ.Function)
 	if !ok || len(publicFn.Params) != 1 {
 		t.Fatalf("public projection = %v, want one-param function", public)
@@ -335,7 +335,7 @@ func TestProjectionPublicKeepsExplicitSoftAnnotationBroad(t *testing.T) {
 	body := functionfact.ProjectType(api.FunctionFact{
 		Signature:   ff.Signature,
 		EntryParams: product.LiftVector([]typ.Type{observed}),
-	}, functionfact.ProjectionBody, api.PhaseScopeCompute)
+	}, functionfact.ProjectionBody, api.SynthModeDeclared)
 	bodyFn, ok := body.(*typ.Function)
 	if !ok || len(bodyFn.Params) != 1 {
 		t.Fatalf("body projection = %v, want one-param function", body)
@@ -356,7 +356,7 @@ func TestProjectionBodyRefinesSoftArrayAnnotationWithEntryEvidence(t *testing.T)
 		EntryParams: product.LiftVector([]typ.Type{typ.NewOptional(typ.NewArray(entry))}),
 	}
 
-	body := functionfact.ProjectType(ff, functionfact.ProjectionBody, api.PhaseScopeCompute)
+	body := functionfact.ProjectType(ff, functionfact.ProjectionBody, api.SynthModeDeclared)
 	bodyFn, ok := body.(*typ.Function)
 	if !ok || len(bodyFn.Params) != 1 {
 		t.Fatalf("body projection = %v, want one-param function", body)
@@ -366,7 +366,7 @@ func TestProjectionBodyRefinesSoftArrayAnnotationWithEntryEvidence(t *testing.T)
 		t.Fatalf("body projection = %v, want %v", bodyFn.Params[0].Type, want)
 	}
 
-	public := functionfact.ProjectType(ff, functionfact.ProjectionPublic, api.PhaseScopeCompute)
+	public := functionfact.ProjectType(ff, functionfact.ProjectionPublic, api.SynthModeDeclared)
 	publicFn, ok := public.(*typ.Function)
 	if !ok || len(publicFn.Params) != 1 {
 		t.Fatalf("public projection = %v, want one-param function", public)

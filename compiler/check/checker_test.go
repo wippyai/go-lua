@@ -5,11 +5,7 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/compiler/ast"
-	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/api"
-	"github.com/wippyai/go-lua/compiler/check/domain/globalenv"
-	"github.com/wippyai/go-lua/compiler/check/phase"
-	"github.com/wippyai/go-lua/compiler/parse"
 	"github.com/wippyai/go-lua/compiler/stdlib"
 	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/db"
@@ -321,42 +317,5 @@ func TestChecker_FunctionLiteralsAnalyzed(t *testing.T) {
 	// At least the root + table method function should have results.
 	if len(sess.Results) < 2 {
 		t.Errorf("expected at least 2 function results (root + method), got %d", len(sess.Results))
-	}
-}
-
-func TestBuildInitialSymbolTypes_GlobalsGetTyped(t *testing.T) {
-	// Build a graph that uses a global variable
-	code := `print("hello")`
-	chunk, err := parse.Parse(strings.NewReader(code), "test.lua")
-	if err != nil {
-		t.Fatalf("parse error: %v", err)
-	}
-	fn := &ast.FunctionExpr{Stmts: chunk}
-	graph := cfg.Build(fn, "print") // "print" is a global
-
-	// Global types with "print" defined
-	globalTypes := map[string]typ.Type{
-		"print": &typ.Function{},
-	}
-
-	// Call BuildInitialSymbolTypes from resolve package
-	result := phase.BuildInitialSymbolTypes(graph, globalenv.TypeOverlayFromMap(globalTypes), nil)
-
-	// The global "print" should get its type
-	if result == nil {
-		t.Fatal("expected non-nil result")
-	}
-	found := false
-	for _, types := range result {
-		for sym, tv := range types {
-			name := graph.NameOf(sym)
-			if name == "print" && tv.Type != nil {
-				found = true
-				break
-			}
-		}
-	}
-	if !found {
-		t.Error("expected global 'print' to be typed")
 	}
 }

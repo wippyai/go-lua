@@ -57,7 +57,7 @@ func TestFactsDomain_ProductOperatorsAreIdempotentAcrossAllDomains(t *testing.T)
 	if got := functionfact.NarrowSummary(normalized.FunctionFacts, fnSym); !returnsummary.Equal(got, []typ.Type{typ.String}) {
 		t.Fatalf("narrow summary must come from canonical FunctionFacts, got %v", got)
 	}
-	if got := functionfact.SiblingTypeProjection(normalized.FunctionFacts, fnSym, api.PhaseScopeCompute); got == nil {
+	if got := functionfact.SiblingTypeProjection(normalized.FunctionFacts, fnSym, api.SynthModeDeclared); got == nil {
 		t.Fatalf("function type must come from canonical FunctionFacts")
 	}
 }
@@ -113,7 +113,7 @@ func TestFactsDomain_WidenFunctionParamsIsVarianceAware(t *testing.T) {
 		t.Fatalf("Widen must be idempotent for function param facts")
 	}
 
-	fn := unwrapFunctionForDomainTest(t, functionfact.SiblingTypeProjection(widened.FunctionFacts, sym, api.PhaseScopeCompute))
+	fn := unwrapFunctionForDomainTest(t, functionfact.SiblingTypeProjection(widened.FunctionFacts, sym, api.SynthModeDeclared))
 	if len(fn.Params) != 1 || !typ.TypeEquals(fn.Params[0].Type, typ.Any) {
 		t.Fatalf("expected widening to preserve broad parameter upper bound, got %v", fn)
 	}
@@ -132,7 +132,7 @@ func TestFactsDomain_PreservesArityAndNilabilityAsSeparateParamAxes(t *testing.T
 	}
 
 	widened := WidenFacts(api.Facts{}, raw)
-	fn := unwrapFunctionForDomainTest(t, functionfact.SiblingTypeProjection(widened.FunctionFacts, sym, api.PhaseScopeCompute))
+	fn := unwrapFunctionForDomainTest(t, functionfact.SiblingTypeProjection(widened.FunctionFacts, sym, api.SynthModeDeclared))
 	if len(fn.Params) != 1 || !fn.Params[0].Optional {
 		t.Fatalf("expected optional parameter slot, got %v", fn)
 	}

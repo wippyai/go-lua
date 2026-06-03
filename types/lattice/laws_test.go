@@ -10,7 +10,7 @@ import (
 // itself. It is independent of any production domain so a regression here
 // signals a harness bug, not a production-domain regression.
 //
-//   Bottom ⊏ {Nil, NonNil} ⊏ Top (= Unknown)
+//	Bottom ⊏ {Nil, NonNil} ⊏ Top (= Unknown)
 //
 // Nil and NonNil are incomparable.
 type presence int
@@ -205,8 +205,10 @@ type mockT struct {
 	fatal    bool
 }
 
-func (m *mockT) Helper()                           {}
-func (m *mockT) Errorf(format string, args ...any) { m.messages = append(m.messages, sprintf(format, args...)) }
+func (m *mockT) Helper() {}
+func (m *mockT) Errorf(format string, args ...any) {
+	m.messages = append(m.messages, sprintf(format, args...))
+}
 func (m *mockT) Fatalf(format string, args ...any) {
 	m.messages = append(m.messages, sprintf(format, args...))
 	m.fatal = true

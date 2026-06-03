@@ -190,7 +190,7 @@ func TestReorderedUnionStaysEqual(t *testing.T) {
 }
 
 // TestRecursiveFamilyStaysEqual pins that two observations of the same recursive
-// product family remain Equal under the finer Equal, since the flow solver
+// product family remain Equal under the finer Equal, since the flow engine
 // converges them under SameConvergedFact.
 func TestRecursiveFamilyStaysEqual(t *testing.T) {
 	a := FromType(muNextRoundTrip())

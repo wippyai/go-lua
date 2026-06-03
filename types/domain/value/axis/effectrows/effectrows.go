@@ -10,7 +10,7 @@ import (
 // It wraps a single effect.Row. The lattice order is row subset: the pure empty
 // row is Bottom, the unknown row {?} is Top, Join is row union, and Covers is the
 // superset relation. The richer effect reducers (iterator/return/mutation/control
-// correlation) land in Phase 5; they refine the carried row without changing this
+// correlation) land in design step 5; they refine the carried row without changing this
 // axis surface, which reuses the proven effect-package compose/equality helpers.
 type Value struct {
 	row effect.Row

@@ -18,8 +18,8 @@ import (
 //   - It's a type parameter with a numeric constraint
 //
 // Optional types are NOT numeric - they must be narrowed first.
-// Placeholder types are accepted by this broad query helper for legacy callers
-// that ask "could this be numeric?". Diagnostic obligations must use
+// Placeholder types are accepted by this broad query helper for callers that ask
+// "could this be numeric?". Diagnostic obligations must use
 // ProvesNumeric / AllowsNumericOperand so `any` is never treated as proof.
 func IsNumeric(t typ.Type) bool {
 	return isNumericGuard(t, typ.NewGuard(), true)

@@ -7,7 +7,7 @@ package product
 // construct), purely for diagnostics. It is deliberately excluded from Equal and
 // Hash: two values that describe the same abstraction are equivalent regardless of
 // how they were derived, so provenance never affects interning, lattice
-// equivalence, or the db red-green firewall. Phase 7 carriers attach richer
+// equivalence, or the db red-green firewall. design step 7 carriers attach richer
 // provenance; this carries the minimal label scaffolding.
 type Provenance struct {
 	// Origin is a short human-readable label for where the value came from.

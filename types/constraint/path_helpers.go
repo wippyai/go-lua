@@ -17,7 +17,7 @@ func ParamPath(index int) Path {
 //
 // Accepted forms:
 //   - "$N" (constraint path placeholder)
-//   - "param[N]" (legacy predicate placeholder)
+//   - "param[N]" (predicate placeholder)
 //
 // Returns -1 for invalid syntax, negative values, and overflow.
 func PlaceholderIndexFromString(s string) int {

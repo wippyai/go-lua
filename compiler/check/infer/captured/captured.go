@@ -61,82 +61,6 @@ func FromParentFactsAtPoint(
 	return out
 }
 
-// MergeSolvedMutationSurfaces merges parent-solved captured mutation surfaces
-// into a nested function's captured environment. Transfer observation points are
-// admitted only as mutable-surface evidence: later direct root rebindings are
-// excluded past observedPoint because their visibility is owned by
-// SSA/call-point capture.
-func MergeSolvedMutationSurfaces(
-	capturedTypes map[cfg.SymbolID]typ.Type,
-	parentFacts flow.TypeFacts,
-	inputs *flow.Inputs,
-	projection PathProjection,
-	observedPoint cfg.Point,
-	capturedSet map[cfg.SymbolID]bool,
-) map[cfg.SymbolID]typ.Type {
-	if parentFacts == nil || inputs == nil || len(capturedSet) == 0 {
-		return capturedTypes
-	}
-	seen := make(map[struct {
-		sym   cfg.SymbolID
-		point cfg.Point
-	}]struct{})
-	widening := value.NewConvergenceWidening()
-	mergeAt := func(point cfg.Point, sym cfg.SymbolID) {
-		if point == 0 || sym == 0 || !capturedSet[sym] {
-			return
-		}
-		key := struct {
-			sym   cfg.SymbolID
-			point cfg.Point
-		}{sym: sym, point: point}
-		if _, ok := seen[key]; ok {
-			return
-		}
-		seen[key] = struct{}{}
-		solved := capturedTypeAtPoint(parentFacts, point, sym, projection)
-		if typ.IsAbsentOrUnknown(solved) {
-			return
-		}
-		if capturedTypes == nil {
-			capturedTypes = make(map[cfg.SymbolID]typ.Type, 1)
-		}
-		if existing := capturedTypes[sym]; existing != nil {
-			capturedTypes[sym] = widening.Merge(existing, solved)
-		} else {
-			capturedTypes[sym] = solved
-		}
-	}
-	capturedSyms := cfg.SortedSymbolIDs(capturedSet)
-	for _, point := range inputs.TransferObservationPoints() {
-		if directRootRebindsCapturedSymbolAfterObservedPoint(inputs, point, observedPoint, capturedSet) {
-			continue
-		}
-		for _, sym := range capturedSyms {
-			mergeAt(point, sym)
-		}
-	}
-	return capturedTypes
-}
-
-func directRootRebindsCapturedSymbolAfterObservedPoint(inputs *flow.Inputs, point, observedPoint cfg.Point, capturedSet map[cfg.SymbolID]bool) bool {
-	if inputs == nil || point == 0 || len(capturedSet) == 0 {
-		return false
-	}
-	if observedPoint != 0 && point <= observedPoint {
-		return false
-	}
-	for _, assignment := range inputs.Assignments {
-		if assignment.Point != point || assignment.TargetPath.Symbol == 0 || len(assignment.TargetPath.Segments) != 0 {
-			continue
-		}
-		if capturedSet[assignment.TargetPath.Symbol] {
-			return true
-		}
-	}
-	return false
-}
-
 func capturedTypeAtPoint(
 	parentFacts flow.TypeFacts,
 	point cfg.Point,
@@ -300,7 +224,7 @@ func projectionChildFacts(point cfg.Point, path constraint.Path, projection Path
 	return projection.Children.ObserveChildPaths(flow.PathChildQuery{
 		Point: point,
 		Path:  path,
-		Phase: flow.PathReadCurrent,
+		View:  flow.PathReadCurrent,
 	})
 }
 
@@ -311,7 +235,7 @@ func projectionPathType(point cfg.Point, path constraint.Path, projection PathPr
 	obs := projection.Paths.ObservePath(flow.PathObservationQuery{
 		Point:               point,
 		Path:                path,
-		Phase:               flow.PathReadCurrent,
+		View:                flow.PathReadCurrent,
 		AllowConditionProof: true,
 		PreserveProof:       true,
 	})

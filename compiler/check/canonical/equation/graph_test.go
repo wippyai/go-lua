@@ -127,8 +127,8 @@ func TestStraightLine(t *testing.T) {
 
 // TestLoopTerminatesByWidening proves gate (b), the key property the whole
 // rebuild exists for: a mock transfer that GROWS a value every loop iteration
-// (the shape that deadlocks the legacy runSCC, which has no data-axis widening)
-// converges under the canonical solver because WidenAt fires at the loop-header
+// (the shape that deadlocks a widen-free SCC solve)
+// converges under the flow engine because WidenAt fires at the loop-header
 // FVS cell, jumping the unbounded numeric axis to Top.
 func TestLoopTerminatesByWidening(t *testing.T) {
 	g := whileLoopGraph()
@@ -140,8 +140,8 @@ func TestLoopTerminatesByWidening(t *testing.T) {
 
 	// Mock: at every point, emit a numeric upper bound one greater than the
 	// largest bound on any incoming edge. On the loop back-edge this makes the
-	// header's incoming strictly ascend (0,1,2,...): under pure Join (the legacy
-	// runSCC, which has no data-axis widening) the worklist NEVER converges.
+	// header's incoming strictly ascend (0,1,2,...): under pure Join (with no
+	// data-axis widening) the worklist NEVER converges.
 	// flow.PointStateDomain's real Cousot widen at the header FVS widens the
 	// growing-above interval to unconstrained, so the chain is stationary after
 	// one widening step and Solve returns. We record the maximum incoming bound

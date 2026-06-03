@@ -303,10 +303,10 @@ func TestCanonicalFactsObservePathHonorsStrictPrePhase(t *testing.T) {
 	path := constraint.NewPath(sym, "value")
 
 	pre := facts.ObservePath(flow.PathObservationQuery{
-		Point:       point,
-		Path:        path,
-		Phase:       flow.PathReadPre,
-		StrictPhase: true,
+		Point:      point,
+		Path:       path,
+		View:       flow.PathReadPre,
+		StrictView: true,
 	})
 	if !pre.Resolved() || !typ.TypeEquals(pre.Type, typ.String) {
 		t.Fatalf("ObservePath strict pre = %#v, want string", pre)
@@ -315,7 +315,7 @@ func TestCanonicalFactsObservePathHonorsStrictPrePhase(t *testing.T) {
 	post := facts.ObservePath(flow.PathObservationQuery{
 		Point: point,
 		Path:  path,
-		Phase: flow.PathReadPost,
+		View:  flow.PathReadPost,
 	})
 	if !post.Resolved() || !typ.TypeEquals(post.Type, typ.Number) {
 		t.Fatalf("ObservePath post = %#v, want number", post)

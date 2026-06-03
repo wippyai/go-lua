@@ -14,7 +14,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/check/modules"
 	"github.com/wippyai/go-lua/compiler/check/scope"
 	checkstore "github.com/wippyai/go-lua/compiler/check/store"
-	"github.com/wippyai/go-lua/compiler/check/synth/phase/resolve"
+	"github.com/wippyai/go-lua/compiler/check/synth/resolve"
 	"github.com/wippyai/go-lua/compiler/parse"
 	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/db"

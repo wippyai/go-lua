@@ -73,7 +73,7 @@ func SiblingTypeForSymbol(store api.StoreReader, sym cfg.SymbolID, defaultParent
 
 // StoreProjectionLookup returns a store-backed function projection lookup for
 // solved-state observers.
-func StoreProjectionLookup(store api.StoreReader, projection Projection, phase api.Phase, defaultParent *scope.State) func(cfg.SymbolID) typ.Type {
+func StoreProjectionLookup(store api.StoreReader, projection Projection, mode api.SynthMode, defaultParent *scope.State) func(cfg.SymbolID) typ.Type {
 	if store == nil {
 		return nil
 	}
@@ -89,14 +89,14 @@ func StoreProjectionLookup(store api.StoreReader, projection Projection, phase a
 		if !ok {
 			return nil
 		}
-		return ProjectType(ff, projection, phase)
+		return ProjectType(ff, projection, mode)
 	}
 }
 
 // ReturnSummaryForSymbol returns the canonical declared/pre-flow return summary
 // for sym from its owning function-fact product.
 func ReturnSummaryForSymbol(store api.StoreReader, sym cfg.SymbolID, defaultParent *scope.State) []typ.Type {
-	ff, ok := factForSymbolInPhase(store, sym, defaultParent, api.PhaseScopeCompute)
+	ff, ok := factForSymbolInMode(store, sym, defaultParent, api.SynthModeDeclared)
 	if !ok {
 		return nil
 	}
@@ -106,7 +106,7 @@ func ReturnSummaryForSymbol(store api.StoreReader, sym cfg.SymbolID, defaultPare
 // NarrowSummaryForSymbol returns the canonical post-flow return summary for sym
 // from its owning function-fact product.
 func NarrowSummaryForSymbol(store api.StoreReader, sym cfg.SymbolID, defaultParent *scope.State) []typ.Type {
-	ff, ok := factForSymbolInPhase(store, sym, defaultParent, api.PhaseNarrowing)
+	ff, ok := factForSymbolInMode(store, sym, defaultParent, api.SynthModeFlow)
 	if !ok {
 		return nil
 	}
@@ -141,7 +141,7 @@ func BodyTypeForGraph(store api.StoreReader, graph *cfg.Graph, sym cfg.SymbolID,
 	if !ok {
 		return nil
 	}
-	return ProjectType(ff, ProjectionBody, api.PhaseScopeCompute)
+	return ProjectType(ff, ProjectionBody, api.SynthModeDeclared)
 }
 
 // SiblingTypeForGraph returns the same-scope sibling function projection for
@@ -151,13 +151,13 @@ func SiblingTypeForGraph(store api.StoreReader, graph *cfg.Graph, sym cfg.Symbol
 	if !ok {
 		return nil
 	}
-	return ProjectType(ff, ProjectionSibling, api.PhaseScopeCompute)
+	return ProjectType(ff, ProjectionSibling, api.SynthModeDeclared)
 }
 
 // ReturnSummaryForGraph returns the canonical declared/pre-flow return summary
 // for sym from graph's function-fact product.
 func ReturnSummaryForGraph(store api.StoreReader, graph *cfg.Graph, sym cfg.SymbolID, defaultParent *scope.State) []typ.Type {
-	ff, ok := factForGraphInPhase(store, graph, sym, defaultParent, api.PhaseScopeCompute)
+	ff, ok := factForGraphInMode(store, graph, sym, defaultParent, api.SynthModeDeclared)
 	if !ok {
 		return nil
 	}
@@ -167,75 +167,75 @@ func ReturnSummaryForGraph(store api.StoreReader, graph *cfg.Graph, sym cfg.Symb
 // NarrowSummaryForGraph returns the canonical post-flow return summary for sym
 // from graph's function-fact product.
 func NarrowSummaryForGraph(store api.StoreReader, graph *cfg.Graph, sym cfg.SymbolID, defaultParent *scope.State) []typ.Type {
-	ff, ok := factForGraphInPhase(store, graph, sym, defaultParent, api.PhaseNarrowing)
+	ff, ok := factForGraphInMode(store, graph, sym, defaultParent, api.SynthModeFlow)
 	if !ok {
 		return nil
 	}
 	return narrowTypes(ff)
 }
 
-// ReturnProjection returns the return vector visible in phase.
-func ReturnProjection(facts api.FunctionFacts, sym cfg.SymbolID, phase api.Phase) []typ.Type {
+// ReturnProjection returns the return vector visible in mode.
+func ReturnProjection(facts api.FunctionFacts, sym cfg.SymbolID, mode api.SynthMode) []typ.Type {
 	ff, ok := Lookup(facts, sym)
 	if !ok {
 		return nil
 	}
-	return returnsForPhase(ff, phase)
+	return returnsForMode(ff, mode)
 }
 
 // BodyTypeProjection returns the body-view function type projection.
-func BodyTypeProjection(facts api.FunctionFacts, sym cfg.SymbolID, phase api.Phase) typ.Type {
+func BodyTypeProjection(facts api.FunctionFacts, sym cfg.SymbolID, mode api.SynthMode) typ.Type {
 	ff, ok := lookupStored(facts, sym)
 	if !ok {
 		return nil
 	}
-	return projectTypeNormalized(ff, ProjectionBody, phase)
+	return projectTypeNormalized(ff, ProjectionBody, mode)
 }
 
 // FlowInputTypeProjection returns the function view allowed while extracting
 // abstract-interpreter inputs.
-func FlowInputTypeProjection(facts api.FunctionFacts, sym cfg.SymbolID, phase api.Phase) typ.Type {
+func FlowInputTypeProjection(facts api.FunctionFacts, sym cfg.SymbolID, mode api.SynthMode) typ.Type {
 	ff, ok := lookupStored(facts, sym)
 	if !ok {
 		return nil
 	}
-	return projectTypeNormalized(ff, ProjectionFlowInput, phase)
+	return projectTypeNormalized(ff, ProjectionFlowInput, mode)
 }
 
 // PublicTypeProjection returns the caller-facing public function type projection.
-func PublicTypeProjection(facts api.FunctionFacts, sym cfg.SymbolID, phase api.Phase) typ.Type {
+func PublicTypeProjection(facts api.FunctionFacts, sym cfg.SymbolID, mode api.SynthMode) typ.Type {
 	ff, ok := lookupStored(facts, sym)
 	if !ok {
 		return nil
 	}
-	return projectTypeNormalized(ff, ProjectionPublic, phase)
+	return projectTypeNormalized(ff, ProjectionPublic, mode)
 }
 
 // ExportTypeProjection returns the module-boundary function type projection.
-func ExportTypeProjection(facts api.FunctionFacts, sym cfg.SymbolID, phase api.Phase) typ.Type {
+func ExportTypeProjection(facts api.FunctionFacts, sym cfg.SymbolID, mode api.SynthMode) typ.Type {
 	ff, ok := lookupStored(facts, sym)
 	if !ok {
 		return nil
 	}
-	return projectTypeNormalized(ff, ProjectionExport, phase)
+	return projectTypeNormalized(ff, ProjectionExport, mode)
 }
 
 // SiblingTypeProjection returns the same-scope sibling function type projection.
-func SiblingTypeProjection(facts api.FunctionFacts, sym cfg.SymbolID, phase api.Phase) typ.Type {
+func SiblingTypeProjection(facts api.FunctionFacts, sym cfg.SymbolID, mode api.SynthMode) typ.Type {
 	ff, ok := lookupStored(facts, sym)
 	if !ok {
 		return nil
 	}
-	return projectTypeNormalized(ff, ProjectionSibling, phase)
+	return projectTypeNormalized(ff, ProjectionSibling, mode)
 }
 
 // SynthesisTypeProjection is the default function-fact projection for expression
-// synthesis in a pipeline phase.
-func SynthesisTypeProjection(facts api.FunctionFacts, sym cfg.SymbolID, phase api.Phase) typ.Type {
-	if phase == api.PhaseNarrowing {
-		return SiblingTypeProjection(facts, sym, phase)
+// synthesis in a requested mode.
+func SynthesisTypeProjection(facts api.FunctionFacts, sym cfg.SymbolID, mode api.SynthMode) typ.Type {
+	if mode == api.SynthModeFlow {
+		return SiblingTypeProjection(facts, sym, mode)
 	}
-	return FlowInputTypeProjection(facts, sym, phase)
+	return FlowInputTypeProjection(facts, sym, mode)
 }
 
 // SignatureWithReturnSummary applies the canonical pre-flow return projection
@@ -252,7 +252,7 @@ func SignatureWithReturnSummary(facts api.FunctionFacts, sym cfg.SymbolID, fn *t
 }
 
 // ProjectionLookup returns a named function type projection function.
-func ProjectionLookup(facts api.FunctionFacts, projection Projection, phase api.Phase) func(cfg.SymbolID) typ.Type {
+func ProjectionLookup(facts api.FunctionFacts, projection Projection, mode api.SynthMode) func(cfg.SymbolID) typ.Type {
 	if len(facts) == 0 {
 		return nil
 	}
@@ -264,7 +264,7 @@ func ProjectionLookup(facts api.FunctionFacts, projection Projection, phase api.
 		if !ok {
 			return nil
 		}
-		return projectTypeNormalized(ff, projection, phase)
+		return projectTypeNormalized(ff, projection, mode)
 	}
 }
 
@@ -277,7 +277,7 @@ func RecursiveTypeProjection(
 	expected *typ.Function,
 	facts api.FunctionFacts,
 	sym cfg.SymbolID,
-	phase api.Phase,
+	mode api.SynthMode,
 ) *typ.Function {
 	if signature == nil {
 		return nil
@@ -289,7 +289,7 @@ func RecursiveTypeProjection(
 		}
 	}
 	if sym != 0 {
-		return typejoin.WithReturnsOrUnknown(fn, ReturnProjection(facts, sym, phase))
+		return typejoin.WithReturnsOrUnknown(fn, ReturnProjection(facts, sym, mode))
 	}
 	return typejoin.WithReturnsOrUnknown(fn, nil)
 }
@@ -323,13 +323,13 @@ func BodyInputProjection(signature *typ.Function, expected *typ.Function, entryE
 	return fn
 }
 
-// ProjectType derives a phase-specific function type from one canonical product.
-func ProjectType(ff api.FunctionFact, projection Projection, phase api.Phase) typ.Type {
+// ProjectType derives a mode-specific function type from one stored product.
+func ProjectType(ff api.FunctionFact, projection Projection, mode api.SynthMode) typ.Type {
 	ff = Normalize(ff)
-	return projectTypeNormalized(ff, projection, phase)
+	return projectTypeNormalized(ff, projection, mode)
 }
 
-func projectTypeNormalized(ff api.FunctionFact, projection Projection, phase api.Phase) typ.Type {
+func projectTypeNormalized(ff api.FunctionFact, projection Projection, mode api.SynthMode) typ.Type {
 	fn := ff.Signature
 	if fn == nil {
 		return nil
@@ -346,7 +346,7 @@ func projectTypeNormalized(ff api.FunctionFact, projection Projection, phase api
 	case ProjectionFlowInput, ProjectionPublic, ProjectionExport:
 		fn = ApplyPublicSignatureEvidence(fn, paramevidence.PublicSignatureVector(paramsTypes(ff)))
 	}
-	returns := returnsForPhase(ff, phase)
+	returns := returnsForMode(ff, mode)
 	if len(returns) == 0 {
 		returns = returnsummary.Canonical(fn.Returns)
 	}
@@ -517,10 +517,10 @@ func lookupStored(facts api.FunctionFacts, sym cfg.SymbolID) (api.FunctionFact, 
 // FactForGraph returns the canonical stored function fact for sym from graph's
 // function-fact product.
 func FactForGraph(store api.StoreReader, graph *cfg.Graph, sym cfg.SymbolID, defaultParent *scope.State) (api.FunctionFact, bool) {
-	return factForGraphInPhase(store, graph, sym, defaultParent, api.PhaseScopeCompute)
+	return factForGraphInMode(store, graph, sym, defaultParent, api.SynthModeDeclared)
 }
 
-func factForSymbolInPhase(store api.StoreReader, sym cfg.SymbolID, defaultParent *scope.State, phase api.Phase) (api.FunctionFact, bool) {
+func factForSymbolInMode(store api.StoreReader, sym cfg.SymbolID, defaultParent *scope.State, mode api.SynthMode) (api.FunctionFact, bool) {
 	if store == nil || sym == 0 {
 		return api.FunctionFact{}, false
 	}
@@ -528,10 +528,10 @@ func factForSymbolInPhase(store api.StoreReader, sym cfg.SymbolID, defaultParent
 	if ref == nil {
 		return api.FunctionFact{}, false
 	}
-	return factForGraphInPhase(store, graphForRef(store, ref), sym, defaultParent, phase)
+	return factForGraphInMode(store, graphForRef(store, ref), sym, defaultParent, mode)
 }
 
-func factForGraphInPhase(store api.StoreReader, graph *cfg.Graph, sym cfg.SymbolID, defaultParent *scope.State, phase api.Phase) (api.FunctionFact, bool) {
+func factForGraphInMode(store api.StoreReader, graph *cfg.Graph, sym cfg.SymbolID, defaultParent *scope.State, mode api.SynthMode) (api.FunctionFact, bool) {
 	if store == nil || graph == nil || sym == 0 {
 		return api.FunctionFact{}, false
 	}
@@ -544,8 +544,8 @@ func factForGraphInPhase(store api.StoreReader, graph *cfg.Graph, sym cfg.Symbol
 	load := func() {
 		ff, found = store.InterprocFacts(graph, parent).FunctionFact(sym)
 	}
-	if phaser, ok := store.(interface{ WithPhase(api.Phase, func()) }); ok {
-		phaser.WithPhase(phase, load)
+	if switcher, ok := store.(interface{ WithSynthMode(api.SynthMode, func()) }); ok {
+		switcher.WithSynthMode(mode, load)
 	} else {
 		load()
 	}
@@ -569,8 +569,8 @@ func RefinementsFromStore(store api.StoreReader, defaultParent *scope.State) api
 	})
 }
 
-func returnsForPhase(ff api.FunctionFact, phase api.Phase) []typ.Type {
-	if phase == api.PhaseNarrowing && len(ff.Narrow) > 0 {
+func returnsForMode(ff api.FunctionFact, mode api.SynthMode) []typ.Type {
+	if mode == api.SynthModeFlow && len(ff.Narrow) > 0 {
 		return repairSummaryWithNarrow(summaryTypes(ff), narrowTypes(ff))
 	}
 	return summaryTypes(ff)

@@ -39,7 +39,7 @@ Special elements:
 
 Canonicalization (already in `normalizeCondition`): within each disjunct, literals are sorted by hash and deduplicated; subsumed disjuncts are removed in the sound direction only (drop `(A ∧ B)` when `A` is also present — never drop `A` to keep `(A ∧ B)`); the resulting DNF is the canonical representative of its equivalence class under those structural rules.
 
-Rationale for keeping DNF (vs F2 BDD / F3 predicate abstraction): downstream consumers iterate the disjunct/conjunct structure directly. Replacing the carrier forces them through a query API or back to DNF at the boundary — moving the blowup, not eliminating it. Codex Phase F consult recommended F1 corrected; this design realizes that.
+Rationale for keeping DNF (vs F2 BDD / F3 predicate abstraction): downstream consumers iterate the disjunct/conjunct structure directly. Replacing the carrier forces them through a query API or back to DNF at the boundary — moving the blowup, not eliminating it. Codex design step F consult recommended F1 corrected; this design realizes that.
 
 ---
 
@@ -175,7 +175,7 @@ Cousot's classical algorithm widens only at a "feedback vertex set": a set of CF
 
 In the current CFG, `Node.LoopPreheaderSet` marks every structured-loop header (for / while / repeat). Lua's control flow is mostly structured; `goto` and `break` introduce edges but rarely produce irreducible CFGs.
 
-The widening set for Phase F is:
+The widening set for design step F is:
 ```
 FVS := { p ∈ CFG : p.LoopPreheaderSet ∨ p is the header of a non-loop SCC }
 ```
@@ -351,7 +351,7 @@ A synthetic CFG with one merge point of N predecessors. Assert: widening does NO
 
 ## 12. Out of scope
 
-- Phase D Kildall refactor (the worklist redesign).
+- design step D Kildall refactor (the worklist redesign).
 - Other abstract domains.
 - Stdlib precise typing.
 - Bilateral `MU ↔ nil` metatable hack.
@@ -386,7 +386,7 @@ ONE child agent, scoped strictly to:
 The agent receives:
 - this document (`DOMAIN_DESIGN.md`)
 - Codex's review (`.codex-out-condition-design.txt`)
-- the Phase F variant choice (`.codex-out-phase-f.txt`)
+- the design step F variant choice (`.codex-out-step-f.txt`)
 
 The agent implements §3–§9, the tests in §10, and the docs in §11. No code outside the three named directories. **No fixture-suite invocation in any test run.** No other-domain work.
 

@@ -10,7 +10,7 @@ The existing `numeric.State` does NOT implement a sound lattice today. Three rea
 2. `Widen` drops whole intervals when ANY bound moves, instead of selective Cousot widening (keep stable bounds; drop moved bounds to ±∞ / domain edges).
 3. `Widen(nil-Top, constrained)` returns the constrained state — doesn't over-approximate `Top`.
 
-Scope: fix all three bugs in `numeric.State`, then wire `Domain`, then test. Comparable to Condition Phase F in scope.
+Scope: fix all three bugs in `numeric.State`, then wire `Domain`, then test. Comparable to Condition design step F in scope.
 
 ---
 
@@ -212,9 +212,9 @@ Sample (Codex-expanded):
 
 Caveats (rev 3 per Codex Q3):
 
-- Fixing `Join` from intersection to hull may change downstream behavior in `solver.go::computeNumericStateAt` (predecessor merge — hull is the right semantics here, no problem expected) and in `types/flow/numeric.go:87` (calls `numeric.Widen(oldState, rawState)` — see below).
+- Fixing `Join` from intersection to hull may change downstream behavior in `solver.go::computeNumericStateAt` (predecessor merge — hull is the right semantics here, no problem expected) and in `types/flow/numeric/domain.go:87` (calls `numeric.Widen(oldState, rawState)` — see below).
 
-- Fixing `Widen(nil, x) = nil-Top` is lattice-correct but high-risk: `types/flow/numeric.go:87` may use `oldState == nil` to mean "uninitialized seed", not "Top". If the lattice-correct widening returns Top for nil-prev, the flow solver may fail to seed numeric facts on the first visit. **Triage policy: STOP and report if the non-regression gate exposes this**. Do NOT special-case the lattice Widen back to the buggy behavior — the flow solver must distinguish uninitialized state from lattice Top. The fix is outside this agent's scope.
+- Fixing `Widen(nil, x) = nil-Top` is lattice-correct but high-risk: `types/flow/numeric/domain.go:87` may use `oldState == nil` to mean "uninitialized seed", not "Top". If the lattice-correct widening returns Top for nil-prev, the flow engine may fail to seed numeric facts on the first visit. **Triage policy: STOP and report if the non-regression gate exposes this**. Do NOT special-case the lattice Widen back to the buggy behavior — the flow engine must distinguish uninitialized state from lattice Top. The fix is outside this agent's scope.
 
 - Any test regressing in `compiler/check/...` after the algebra fix must be triaged: tests depending on the buggy intersection/widening semantics get FIXED to assert the corrected behavior; downstream consumers using `Join` for a meet-like purpose get STOPPED+REPORTED.
 
@@ -233,8 +233,8 @@ Caveats (rev 3 per Codex Q3):
 ## 11. Out of scope
 
 - LengthBound separate domain (subsumed by Numeric per investigation; one fewer to migrate).
-- Theory-solver transfer-monotonicity (task #24, Phase C).
-- Phase D Kildall refactor.
+- Theory-solver transfer-monotonicity (task #24, design step C).
+- design step D Kildall refactor.
 - The stale `LengthBound` mention in `types/lattice/lattice.go:4` (small doc cleanup, fold into commit).
 
 ---

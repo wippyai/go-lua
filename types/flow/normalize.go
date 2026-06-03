@@ -19,8 +19,6 @@ func (in *Inputs) Normalize() {
 	in.normalizeEdgeConditions()
 	in.normalizeEdgeNumericConstraints()
 	in.normalizeVariantFieldOrigins()
-	in.normalizeMapMutatorAssignments()
-	in.normalizeTableMutatorAssignments()
 }
 
 func (in *Inputs) normalizeAssignments() {
@@ -51,22 +49,6 @@ func (in *Inputs) normalizeVariantFieldOrigins() {
 	if len(in.VariantFieldOrigins) > 1 {
 		sort.Slice(in.VariantFieldOrigins, func(i, j int) bool {
 			return variantFieldOriginLess(in.VariantFieldOrigins[i], in.VariantFieldOrigins[j])
-		})
-	}
-}
-
-func (in *Inputs) normalizeMapMutatorAssignments() {
-	if len(in.MapMutatorAssignments) > 1 {
-		sort.Slice(in.MapMutatorAssignments, func(i, j int) bool {
-			return mapMutatorAssignmentLess(in.MapMutatorAssignments[i], in.MapMutatorAssignments[j])
-		})
-	}
-}
-
-func (in *Inputs) normalizeTableMutatorAssignments() {
-	if len(in.TableMutatorAssignments) > 1 {
-		sort.Slice(in.TableMutatorAssignments, func(i, j int) bool {
-			return tableMutatorAssignmentLess(in.TableMutatorAssignments[i], in.TableMutatorAssignments[j])
 		})
 	}
 }
@@ -127,89 +109,6 @@ func variantFieldOriginLess(a, b VariantFieldOrigin) bool {
 		return a.CaseIndex < b.CaseIndex
 	}
 	return false
-}
-
-func mapMutatorAssignmentLess(a, b MapMutatorAssignment) bool {
-	if a.Point != b.Point {
-		return a.Point < b.Point
-	}
-	if pathLess(a.Target, b.Target) {
-		return true
-	}
-	if pathLess(b.Target, a.Target) {
-		return false
-	}
-	if a.ValueMode != b.ValueMode {
-		return a.ValueMode < b.ValueMode
-	}
-	if a.KeySymbol != b.KeySymbol {
-		return a.KeySymbol < b.KeySymbol
-	}
-	if a.KeyVar != b.KeyVar {
-		return a.KeyVar < b.KeyVar
-	}
-	if typeLess(a.KeyType, b.KeyType) {
-		return true
-	}
-	if typeLess(b.KeyType, a.KeyType) {
-		return false
-	}
-	if pathLess(a.ValuePath, b.ValuePath) {
-		return true
-	}
-	if pathLess(b.ValuePath, a.ValuePath) {
-		return false
-	}
-	if typeLess(a.ValueType, b.ValueType) {
-		return true
-	}
-	if typeLess(b.ValueType, a.ValueType) {
-		return false
-	}
-	return valueTemplateLess(a.Value, b.Value)
-}
-
-func tableMutatorAssignmentLess(a, b TableMutatorAssignment) bool {
-	if a.Point != b.Point {
-		return a.Point < b.Point
-	}
-	if pathLess(a.Target, b.Target) {
-		return true
-	}
-	if pathLess(b.Target, a.Target) {
-		return false
-	}
-	if a.KeySymbol != b.KeySymbol {
-		return a.KeySymbol < b.KeySymbol
-	}
-	if a.KeyVar != b.KeyVar {
-		return a.KeyVar < b.KeyVar
-	}
-	if typeLess(a.KeyType, b.KeyType) {
-		return true
-	}
-	if typeLess(b.KeyType, a.KeyType) {
-		return false
-	}
-	if pathLess(a.ValuePath, b.ValuePath) {
-		return true
-	}
-	if pathLess(b.ValuePath, a.ValuePath) {
-		return false
-	}
-	if typeLess(a.ValueType, b.ValueType) {
-		return true
-	}
-	if typeLess(b.ValueType, a.ValueType) {
-		return false
-	}
-	if valueTemplateLess(a.Value, b.Value) {
-		return true
-	}
-	if valueTemplateLess(b.Value, a.Value) {
-		return false
-	}
-	return a.LengthDelta < b.LengthDelta
 }
 
 func typeLess(a, b typ.Type) bool {

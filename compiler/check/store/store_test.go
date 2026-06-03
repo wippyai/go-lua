@@ -61,7 +61,7 @@ func TestFunctionFactsSiblingProjection(t *testing.T) {
 			},
 		},
 	}
-	got := functionfact.SiblingTypeProjection(facts.FunctionFacts, cfg.SymbolID(3), api.PhaseScopeCompute)
+	got := functionfact.SiblingTypeProjection(facts.FunctionFacts, cfg.SymbolID(3), api.SynthModeDeclared)
 	if !typ.TypeEquals(got, fn) {
 		t.Fatalf("unexpected function type: %#v", got)
 	}
@@ -176,7 +176,7 @@ func TestMergeInterprocFactsNext_ReconcilesDeltasWithinIteration(t *testing.T) {
 		},
 	})
 
-	got := functionfact.SiblingTypeProjection(s.InterprocNext.Facts[key].FunctionFacts, sym, api.PhaseScopeCompute)
+	got := functionfact.SiblingTypeProjection(s.InterprocNext.Facts[key].FunctionFacts, sym, api.SynthModeDeclared)
 	if !typ.TypeEquals(got, refined) {
 		t.Fatalf("expected update boundary to keep canonical refined function fact, got %v", got)
 	}

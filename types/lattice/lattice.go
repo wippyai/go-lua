@@ -3,7 +3,7 @@
 //
 // Every abstract domain — Condition, AbstractValue, NumericRange,
 // PathPresence, TypeNarrowing — exposes a Lattice value. The contract is the
-// algebraic foundation for the fixed-point algorithms in flow.Solve and
+// algebraic foundation for the fixed-point algorithms in the flow engine and
 // propagate.Propagate: a domain that satisfies the laws (idempotency,
 // commutativity, associativity, monotonicity, ACC under widening) makes those
 // algorithms terminate with a sound over-approximation of the collecting

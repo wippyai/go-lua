@@ -9,24 +9,24 @@ import (
 )
 
 func TestSpecReturnOverride_NilFnType_ReturnsNil(t *testing.T) {
-	s := &SpecReturnOverride{Phase: api.PhaseScopeCompute}
+	s := &SpecReturnOverride{SynthMode: api.SynthModeDeclared}
 	result := s.Override(nil, nil)
 	if result != nil {
 		t.Fatal("expected nil for nil fn type")
 	}
 }
 
-func TestSpecReturnOverride_WrongPhase_TypeResolution(t *testing.T) {
-	s := &SpecReturnOverride{Phase: api.PhaseTypeResolution}
+func TestSpecReturnOverride_WrongMode_Resolve(t *testing.T) {
+	s := &SpecReturnOverride{SynthMode: api.SynthModeResolve}
 	fn := typ.Func().Build()
 	result := s.Override(fn, nil)
 	if result != nil {
-		t.Fatal("expected nil for wrong phase")
+		t.Fatal("expected nil for wrong mode")
 	}
 }
 
-func TestSpecReturnOverride_PhaseScopeCompute(t *testing.T) {
-	s := &SpecReturnOverride{Phase: api.PhaseScopeCompute}
+func TestSpecReturnOverride_DeclaredMode(t *testing.T) {
+	s := &SpecReturnOverride{SynthMode: api.SynthModeDeclared}
 	fn := typ.Func().Build()
 	result := s.Override(fn, nil)
 	// Without spec, returns nil
@@ -35,8 +35,8 @@ func TestSpecReturnOverride_PhaseScopeCompute(t *testing.T) {
 	}
 }
 
-func TestSpecReturnOverride_PhaseNarrowing(t *testing.T) {
-	s := &SpecReturnOverride{Phase: api.PhaseNarrowing}
+func TestSpecReturnOverride_UsesFlow(t *testing.T) {
+	s := &SpecReturnOverride{SynthMode: api.SynthModeFlow}
 	fn := typ.Func().Build()
 	result := s.Override(fn, nil)
 	// Without spec, returns nil
@@ -163,7 +163,7 @@ func TestResolveSpecFunction_Union(t *testing.T) {
 }
 
 func TestSpecReturnOverride_FunctionWithoutSpec(t *testing.T) {
-	s := &SpecReturnOverride{Phase: api.PhaseScopeCompute}
+	s := &SpecReturnOverride{SynthMode: api.SynthModeDeclared}
 	fn := typ.Func().
 		Param("x", typ.Any).
 		Returns(typ.String).

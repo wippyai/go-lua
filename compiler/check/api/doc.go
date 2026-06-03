@@ -50,15 +50,15 @@
 // The [FunctionRefs] interface provides bidirectional lookup between symbols,
 // AST nodes, and CFG graphs.
 //
-// # Analysis Phases
+// # Synthesis Modes
 //
-// The [Phase] type identifies the current analysis phase, enabling phase-aware
-// queries and diagnostics. Phases progress from AST construction through
-// flow analysis and back-propagation.
+// The [SynthMode] type identifies the active synthesis view, enabling callers to
+// choose declared/static or flow-refined reads without creating a second analysis
+// path.
 //
 // # Synthesis Interface
 //
 // [BaseSynth] provides the type synthesis interface for expression analysis.
-// It is implemented by the synth.Engine and used by phase runners to
-// evaluate expressions in context.
+// It is implemented by the synth.Engine and used by diagnostics and flow input
+// construction to evaluate expressions in context.
 package api

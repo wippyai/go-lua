@@ -1,11 +1,11 @@
 // Package ops provides type synthesis for expressions and function calls.
 //
-// For function call synthesis, use the two-phase approach:
+// For function call synthesis, use staged inference:
 //
-//	infer := ops.InferCall(ctx, def)    // Phase 1: resolve callee, infer type args
+//	infer := ops.InferCall(ctx, def)    // resolve callee, infer type args
 //	// ... optionally re-synthesize args using infer.ExpectedArgs ...
 //	infer = ops.ReInfer(ctx, def, infer) // Re-infer with updated args
-//	result := ops.FinishCall(ctx, def, infer) // Phase 2: check args, compute return
+//	result := ops.FinishCall(ctx, def, infer) // check args, compute return
 //
 // For simple cases, CallWithGenericInference wraps the full flow.
 package ops

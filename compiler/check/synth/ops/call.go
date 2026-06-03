@@ -2,17 +2,17 @@
 // The call.go file handles function call type synthesis, including generic
 // type inference, method resolution, and argument type checking.
 //
-// # TWO-PHASE CALL SYNTHESIS
+// # STAGED CALL SYNTHESIS
 //
-// Function calls with callback arguments require two-phase synthesis to enable
-// contextual typing. The phases are:
+// Function calls with callback arguments require staged synthesis to enable
+// contextual typing:
 //
 //  1. InferCall: Resolve callee, infer type arguments, compute ExpectedArgs
-//  2. Re-synthesize function literal arguments using ExpectedArgs from phase 1
+//  2. Re-synthesize function literal arguments using ExpectedArgs from inference
 //  3. ReInfer: Re-infer type arguments with updated argument types
 //  4. FinishCall: Check arguments against parameters, compute return type
 //
-// For simple calls without callbacks, CallWithGenericInference combines phases.
+// For simple calls without callbacks, CallWithGenericInference combines stages.
 //
 // # GENERIC TYPE INFERENCE
 //
@@ -195,15 +195,15 @@ const (
 	InferKindNotCallable                   // Callee is not callable
 )
 
-// InferResult contains results from the first phase of two-phase call synthesis.
+// InferResult contains results from the first stage of call synthesis.
 //
-// The two-phase approach enables contextual typing for callback arguments:
+// The staged approach enables contextual typing for callback arguments:
 // 1. InferCall: Resolve callee, infer type arguments, compute expected arg types
 // 2. Re-synthesize function literal arguments using ExpectedArgs
 // 3. ReInfer: Re-infer type arguments with updated argument types
 // 4. FinishCall: Check arguments and compute return type
 //
-// For non-callback cases, use CallWithGenericInference for single-phase synthesis.
+// For non-callback cases, use CallWithGenericInference directly.
 //
 // Fields:
 //   - Kind: Classification of the resolved callee
@@ -349,7 +349,7 @@ func inferAndCall(ctx *db.QueryContext, fn *typ.Function, def CallDef, isMethod 
 	return callFunction(ctx, def.Query, instantiated, def.Args, receiver, isMethod, def.ForceMethodReceiver, def.AllowExtraArgs, errors)
 }
 
-// InferCall performs the first phase of call synthesis: callee resolution,
+// InferCall performs the first call-synthesis stage: callee resolution,
 // type argument inference, and expected argument type computation.
 // The returned InferResult contains ExpectedArgs that can be used to
 // re-synthesize function literal arguments with contextual typing.

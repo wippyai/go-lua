@@ -191,20 +191,20 @@ func addMergedRecordField(builder *typ.RecordBuilder, field typ.Field, fieldType
 	}
 }
 
-// ApplyMapMutatorMergeToOverlay adds map components to symbol types based on map-write evidence.
-func ApplyMapMutatorMergeToOverlay(
+// ApplyMapWriteMergeToOverlay adds map components to symbol types based on map-write evidence.
+func ApplyMapWriteMergeToOverlay(
 	overlay map[cfg.SymbolID]typ.Type,
-	mapMutatorAssignments map[cfg.SymbolID][]MapMutatorInfo,
+	mapWrites map[cfg.SymbolID][]MapWriteInfo,
 ) {
-	for _, sym := range cfg.SortedSymbolIDs(mapMutatorAssignments) {
-		infos := mapMutatorAssignments[sym]
+	for _, sym := range cfg.SortedSymbolIDs(mapWrites) {
+		infos := mapWrites[sym]
 		if len(infos) == 0 {
 			continue
 		}
 
 		var keyType, valType typ.Type
 		for _, info := range infos {
-			if mapMutatorAssignmentDeletesSlot(info.ValueType) {
+			if mapWriteDeletesSlot(info.ValueType) {
 				continue
 			}
 			keyType = typ.JoinPreferNonSoft(keyType, info.KeyType)
@@ -257,21 +257,21 @@ func JoinValueTypes(a, b typ.Type) typ.Type {
 	return value.JoinPrecise(a, b)
 }
 
-func mapMutatorAssignmentDeletesSlot(t typ.Type) bool {
+func mapWriteDeletesSlot(t typ.Type) bool {
 	if t == nil {
 		return false
 	}
 	switch v := typ.UnwrapAnnotated(t).(type) {
 	case *typ.Alias:
-		return mapMutatorAssignmentDeletesSlot(v.Target)
+		return mapWriteDeletesSlot(v.Target)
 	case *typ.Optional:
-		return mapMutatorAssignmentDeletesSlot(v.Inner)
+		return mapWriteDeletesSlot(v.Inner)
 	case *typ.Union:
 		if len(v.Members) == 0 {
 			return false
 		}
 		for _, member := range v.Members {
-			if !mapMutatorAssignmentDeletesSlot(member) {
+			if !mapWriteDeletesSlot(member) {
 				return false
 			}
 		}

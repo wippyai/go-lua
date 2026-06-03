@@ -1,6 +1,6 @@
 // Package interproc handles interprocedural analysis after flow solving.
 //
-// This package processes analysis results after the flow solver converges,
+// This package processes analysis results after flow analysis converges,
 // extracting interprocedural facts that propagate between functions.
 //
 // # Post-Flow Processing

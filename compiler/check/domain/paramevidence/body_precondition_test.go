@@ -248,7 +248,7 @@ func TestBodyPreconditionContext_MapElementEvidenceUsesAnyKeyWithoutSolvedKeyTyp
 	}
 }
 
-func TestBodyPreconditionContext_MapElementEvidenceUsesPathObservationFactsWithoutFlowSolution(t *testing.T) {
+func TestBodyPreconditionContext_MapElementEvidenceUsesPathObservationFactsWithoutConcreteSolver(t *testing.T) {
 	mapSym := cfg.SymbolID(1)
 	keySym := cfg.SymbolID(2)
 	keyPath := constraint.NewPath(keySym, "kind")
@@ -277,7 +277,7 @@ func TestBodyPreconditionContext_MapElementEvidenceUsesPathObservationFactsWitho
 	}
 }
 
-func TestBodyPreconditionContext_LocalProofUsesConditionProofFactsWithoutFlowSolution(t *testing.T) {
+func TestBodyPreconditionContext_LocalProofUsesConditionProofFactsWithoutConcreteSolver(t *testing.T) {
 	paramSym := cfg.SymbolID(1)
 	arg := &ast.IdentExpr{Value: "value"}
 	bindings := bind.NewBindingTable()
@@ -304,7 +304,7 @@ func TestBodyPreconditionContext_LocalProofUsesConditionProofFactsWithoutFlowSol
 	}
 }
 
-func TestBodyPreconditionContext_ConditionedEvidenceUsesProofAndPathObservationFactsWithoutFlowSolution(t *testing.T) {
+func TestBodyPreconditionContext_ConditionedEvidenceUsesProofAndPathObservationFactsWithoutConcreteSolver(t *testing.T) {
 	paramSym := cfg.SymbolID(1)
 	constSym := cfg.SymbolID(2)
 	msg := constraint.NewPath(paramSym, "msg")

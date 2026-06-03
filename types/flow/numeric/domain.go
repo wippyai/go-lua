@@ -1,4 +1,4 @@
-// domain.go implements the numeric subdomain for the flow solver's ProductDomain.
+// domain.go implements the numeric subdomain for ProductDomain.
 //
 // The numeric Domain tracks integer constraints (bounds, orderings, modular residues)
 // and integrates State (compact storage) with TheorySolver (transitive inference).

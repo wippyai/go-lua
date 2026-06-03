@@ -4,7 +4,6 @@ import (
 	"github.com/wippyai/go-lua/types/cfg"
 	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/domain/value"
-	"github.com/wippyai/go-lua/types/flow/numeric"
 	"github.com/wippyai/go-lua/types/typ"
 )
 
@@ -31,8 +30,6 @@ func InputsEqual(a, b *Inputs) bool {
 		predicateLinksEqual(a.PredicateLinks, b.PredicateLinks) &&
 		siblingAssignmentsEqual(a.SiblingAssignments, b.SiblingAssignments) &&
 		variantFieldOriginsEqual(a.VariantFieldOrigins, b.VariantFieldOrigins) &&
-		mapMutatorAssignmentsEqual(a.MapMutatorAssignments, b.MapMutatorAssignments) &&
-		tableMutatorAssignmentsEqual(a.TableMutatorAssignments, b.TableMutatorAssignments) &&
 		pointBoolMapEqual(a.DeadPoints, b.DeadPoints) &&
 		symbolStringMapEqual(a.ModuleAliases, b.ModuleAliases) &&
 		symbolSymbolMapEqual(a.FunctionAliases, b.FunctionAliases) &&
@@ -40,27 +37,6 @@ func InputsEqual(a, b *Inputs) bool {
 		symbolTypeMapEqual(a.LiteralTypes, b.LiteralTypes) &&
 		symbolTypeMapEqual(a.BindingTypes, b.BindingTypes) &&
 		symbolSymbolMapEqual(a.KeysProvenance, b.KeysProvenance)
-}
-
-// SolutionEqual reports whether two solved flow products expose the same
-// semantic state. Scratch buffers, query caches, epochs, and iteration counters
-// are not semantic state.
-func SolutionEqual(a, b *Solution) bool {
-	if a == b {
-		return true
-	}
-	if a == nil || b == nil {
-		return false
-	}
-	return pathValueMapEqual(a.values, b.values) &&
-		pointPathValueMapEqual(a.mutableOut, b.mutableOut) &&
-		edgeConditionMapEqual(a.edgeConditions, b.edgeConditions) &&
-		symbolSliceEqual(a.declaredSyms, b.declaredSyms) &&
-		edgeNumericConstraintMapEqual(a.edgeNumericConstraints, b.edgeNumericConstraints) &&
-		edgeBoolMapEqual(a.unsatEdges, b.unsatEdges) &&
-		pointConditionMapEqual(a.pointConditions, b.pointConditions) &&
-		numericStateMapEqual(a.numericAt, b.numericAt) &&
-		pathKeyMapEqual(a.pathAliases, b.pathAliases)
 }
 
 func typeEqual(a, b typ.Type) bool {
@@ -76,31 +52,6 @@ func symbolTypeMapEqual(a, b map[cfg.SymbolID]typ.Type) bool {
 	}
 	for k, av := range a {
 		if !typeEqual(av, b[k]) {
-			return false
-		}
-	}
-	return true
-}
-
-func pathValueMapEqual(a, b pathValueMap) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	for k, av := range a {
-		bv, ok := b[k]
-		if !ok || !av.Equal(bv) {
-			return false
-		}
-	}
-	return true
-}
-
-func pointPathValueMapEqual(a, b map[cfg.Point]pathValueMap) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	for k, av := range a {
-		if !pathValueMapEqual(av, b[k]) {
 			return false
 		}
 	}
@@ -131,18 +82,6 @@ func pointBoolMapEqual(a, b map[cfg.Point]bool) bool {
 	return true
 }
 
-func edgeBoolMapEqual(a, b map[edgeKey]bool) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	for k, av := range a {
-		if av != b[k] {
-			return false
-		}
-	}
-	return true
-}
-
 func symbolStringMapEqual(a, b map[cfg.SymbolID]string) bool {
 	if len(a) != len(b) {
 		return false
@@ -156,18 +95,6 @@ func symbolStringMapEqual(a, b map[cfg.SymbolID]string) bool {
 }
 
 func symbolSymbolMapEqual(a, b map[cfg.SymbolID]cfg.SymbolID) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	for k, av := range a {
-		if av != b[k] {
-			return false
-		}
-	}
-	return true
-}
-
-func pathKeyMapEqual(a, b map[constraint.PathKey]constraint.PathKey) bool {
 	if len(a) != len(b) {
 		return false
 	}
@@ -295,30 +222,6 @@ func edgeConditionsEqual(a, b []EdgeCondition) bool {
 	return true
 }
 
-func edgeConditionMapEqual(a, b map[edgeKey]constraint.Condition) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	for k, av := range a {
-		if !conditionEqual(av, b[k]) {
-			return false
-		}
-	}
-	return true
-}
-
-func pointConditionMapEqual(a, b map[cfg.Point]constraint.Condition) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	for k, av := range a {
-		if !conditionEqual(av, b[k]) {
-			return false
-		}
-	}
-	return true
-}
-
 func numericConstraintEqual(a, b constraint.NumericConstraint) bool {
 	if a == nil || b == nil {
 		return a == nil && b == nil
@@ -344,18 +247,6 @@ func edgeNumericConstraintsEqual(a, b []EdgeNumericConstraint) bool {
 	}
 	for i := range a {
 		if a[i].From != b[i].From || a[i].To != b[i].To || !numericConstraintsEqual(a[i].Constraints, b[i].Constraints) {
-			return false
-		}
-	}
-	return true
-}
-
-func edgeNumericConstraintMapEqual(a, b map[edgeKey][]constraint.NumericConstraint) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	for k, av := range a {
-		if !numericConstraintsEqual(av, b[k]) {
 			return false
 		}
 	}
@@ -498,45 +389,6 @@ func variantFieldOriginsEqual(a, b []VariantFieldOrigin) bool {
 	return true
 }
 
-func mapMutatorAssignmentsEqual(a, b []MapMutatorAssignment) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	for i := range a {
-		if a[i].Point != b[i].Point ||
-			!pathEqual(a[i].Target, b[i].Target) ||
-			a[i].ValueMode != b[i].ValueMode ||
-			a[i].KeyVar != b[i].KeyVar ||
-			a[i].KeySymbol != b[i].KeySymbol ||
-			!typeEqual(a[i].KeyType, b[i].KeyType) ||
-			!pathEqual(a[i].ValuePath, b[i].ValuePath) ||
-			!typeEqual(a[i].ValueType, b[i].ValueType) ||
-			!valueTemplateEqual(a[i].Value, b[i].Value) {
-			return false
-		}
-	}
-	return true
-}
-
-func tableMutatorAssignmentsEqual(a, b []TableMutatorAssignment) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	for i := range a {
-		if a[i].Point != b[i].Point ||
-			!pathEqual(a[i].Target, b[i].Target) ||
-			a[i].KeyVar != b[i].KeyVar ||
-			a[i].KeySymbol != b[i].KeySymbol ||
-			!typeEqual(a[i].KeyType, b[i].KeyType) ||
-			!pathEqual(a[i].ValuePath, b[i].ValuePath) ||
-			!typeEqual(a[i].ValueType, b[i].ValueType) ||
-			!valueTemplateEqual(a[i].Value, b[i].Value) {
-			return false
-		}
-	}
-	return true
-}
-
 func valueTemplateEqual(a, b ValueTemplate) bool {
 	if len(a.Slots) != len(b.Slots) {
 		return false
@@ -544,25 +396,6 @@ func valueTemplateEqual(a, b ValueTemplate) bool {
 	for i := range a.Slots {
 		if !pathsEqual(a.Slots[i].Segments, b.Slots[i].Segments) ||
 			!assignmentSourceEqual(a.Slots[i].Source, b.Slots[i].Source) {
-			return false
-		}
-	}
-	return true
-}
-
-func numericStateMapEqual(a, b map[cfg.Point]*numeric.State) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	for k, av := range a {
-		bv := b[k]
-		if av == nil || bv == nil {
-			if av != nil || bv != nil {
-				return false
-			}
-			continue
-		}
-		if !av.Equals(bv) {
 			return false
 		}
 	}

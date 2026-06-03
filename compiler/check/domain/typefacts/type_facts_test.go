@@ -4,10 +4,7 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/types/cfg"
-	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/flow"
-	"github.com/wippyai/go-lua/types/narrow"
-	"github.com/wippyai/go-lua/types/query/core"
 	"github.com/wippyai/go-lua/types/typ"
 )
 
@@ -93,34 +90,6 @@ func TestSelectEffectiveKeepsKnownDeclarationOverRefinedUnknown(t *testing.T) {
 	}
 }
 
-func TestTypeFactsEffectiveTypeAtProtectsAnnotatedDeclaration(t *testing.T) {
-	const sym cfg.SymbolID = 6
-
-	graph, assign := newTypeFactsLinearGraph(sym)
-	solution := flow.Solve(&flow.Inputs{
-		Graph:         graph,
-		DeclaredTypes: flow.DeclaredTypes{sym: typ.String},
-		AnnotatedVars: map[cfg.SymbolID]bool{sym: true},
-		Assignments: []flow.UnifiedAssignment{{
-			Point:      assign,
-			TargetPath: constraint.Path{Symbol: sym},
-			Type:       typ.Number,
-		}},
-		TypeKeys: map[uint64]typ.Type{},
-	}, typeFactsTestResolver())
-
-	facts := New(Config{
-		Declared:      flow.DeclaredTypes{sym: typ.String},
-		AnnotatedVars: map[cfg.SymbolID]bool{sym: true},
-		Solution:      solution,
-	})
-
-	got := facts.EffectiveTypeAt(graph.Exit(), sym)
-	if got.State != flow.StateResolved || !typ.TypeEquals(got.Type, typ.String) {
-		t.Fatalf("EffectiveTypeAt annotated mismatch = %v/%v, want declared string/resolved", got.Type, got.State)
-	}
-}
-
 func TestSelectEffectiveAnnotatedAnyAdoptsProvenRefinement(t *testing.T) {
 	refined := typ.NewRecord().Field("kind", typ.LiteralString("event")).Build()
 
@@ -197,90 +166,5 @@ func TestSelectEffectiveAnnotatedRecordUsesDeclaredContractOverInitWitnessUnion(
 	)
 	if got.State != flow.StateResolved || !typ.TypeEquals(got.Type, declared) {
 		t.Fatalf("SelectEffective annotated record witness union = %v/%v, want declared %v/resolved", got.Type, got.State, declared)
-	}
-}
-
-type typeFactsVersionedGraph struct {
-	*cfg.CFG
-	versions map[cfg.Point]map[cfg.SymbolID]cfg.Version
-	decls    map[cfg.SymbolID]cfg.Point
-}
-
-func newTypeFactsLinearGraph(sym cfg.SymbolID) (*typeFactsVersionedGraph, cfg.Point) {
-	g := cfg.New()
-	assign := g.AddNode(cfg.NodeAssign, sym, "")
-	g.AddEdge(g.Entry(), assign, true)
-	g.AddEdge(assign, g.Exit(), true)
-
-	out := &typeFactsVersionedGraph{
-		CFG:      g,
-		versions: map[cfg.Point]map[cfg.SymbolID]cfg.Version{},
-		decls:    map[cfg.SymbolID]cfg.Point{sym: g.Entry()},
-	}
-	out.setVersion(g.Entry(), sym, cfg.Version{Root: "v", Symbol: sym, ID: 1})
-	out.setVersion(assign, sym, cfg.Version{Root: "v", Symbol: sym, ID: 2})
-	out.setVersion(g.Exit(), sym, cfg.Version{Root: "v", Symbol: sym, ID: 2})
-	return out, assign
-}
-
-func (g *typeFactsVersionedGraph) setVersion(p cfg.Point, sym cfg.SymbolID, ver cfg.Version) {
-	if g.versions[p] == nil {
-		g.versions[p] = map[cfg.SymbolID]cfg.Version{}
-	}
-	g.versions[p][sym] = ver
-}
-
-func (g *typeFactsVersionedGraph) VisibleVersion(p cfg.Point, sym cfg.SymbolID) cfg.Version {
-	if bySym := g.versions[p]; bySym != nil {
-		return bySym[sym]
-	}
-	return cfg.Version{}
-}
-
-func (g *typeFactsVersionedGraph) AllVisibleVersions(p cfg.Point) map[cfg.SymbolID]cfg.Version {
-	return g.versions[p]
-}
-
-func (g *typeFactsVersionedGraph) PhiNodes() []cfg.PhiNode {
-	return nil
-}
-
-func (g *typeFactsVersionedGraph) SymbolAt(cfg.Point, string) (cfg.SymbolID, bool) {
-	return 0, false
-}
-
-func (g *typeFactsVersionedGraph) AllSymbolsAt(cfg.Point) map[string]cfg.SymbolID {
-	return nil
-}
-
-func (g *typeFactsVersionedGraph) DeclarationPoint(sym cfg.SymbolID) (cfg.Point, bool) {
-	p, ok := g.decls[sym]
-	return p, ok
-}
-
-func (g *typeFactsVersionedGraph) NameOf(cfg.SymbolID) string {
-	return ""
-}
-
-func (g *typeFactsVersionedGraph) SymbolKind(cfg.SymbolID) (cfg.SymbolKind, bool) {
-	return cfg.SymbolUnknown, false
-}
-
-func (g *typeFactsVersionedGraph) ParamNames() []string {
-	return nil
-}
-
-func (g *typeFactsVersionedGraph) ParamSymbols() []cfg.SymbolID {
-	return nil
-}
-
-func (g *typeFactsVersionedGraph) ParamDeclPoints() []cfg.Point {
-	return nil
-}
-
-func typeFactsTestResolver() narrow.Resolver {
-	return &core.FuncResolver{
-		FieldFunc: core.Field,
-		IndexFunc: core.Index,
 	}
 }

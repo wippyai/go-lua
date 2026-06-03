@@ -22,43 +22,8 @@ import (
 // resolved type directly for non-generic definitions.
 type TypeDefResolver func(name string, typeExpr ast.TypeExpr, typeParams []ast.TypeParamExpr, sc *State) typ.Type
 
-// BuildTypeDefScopes walks TypeDef nodes in RPO order and returns a scope
-// for each point that includes all type definitions visible at that point.
-//
-// This function implements forward propagation of type definitions through
-// the control flow graph. Each TypeDef node introduces a new type alias
-// that becomes visible at all subsequent points (in RPO order).
-//
-// Processing order uses Reverse Post Order (RPO) to ensure that definitions
-// are processed before their uses in straight-line code. For generic types,
-// the resolved type is stored directly; for non-generic types, an alias
-// wrapper preserves the user-defined name.
-//
-// The returned map provides O(1) lookup of the scope state at any CFG point,
-// enabling efficient type resolution during expression synthesis.
-func BuildTypeDefScopes(
-	graph *cfg.Graph,
-	base *State,
-	resolver TypeDefResolver,
-) map[cfg.Point]*State {
-	scopes := make(map[cfg.Point]*State)
-	current := base
-
-	for _, p := range graph.RPO() {
-		current = applyTypeDefAtPoint(graph, p, current, resolver)
-		scopes[p] = current
-	}
-
-	return scopes
-}
-
 // EnrichWithTypeDefs walks TypeDef nodes in RPO order and returns a scope
 // that includes all type definitions from the graph.
-//
-// This is a convenience wrapper around BuildTypeDefScopes that returns only
-// the final accumulated scope. Use this when you need the complete type
-// namespace after processing all definitions, but don't need per-point
-// scope snapshots.
 //
 // Common use case: Building the scope for a module's top-level, where all
 // type definitions should be visible to subsequent analysis.

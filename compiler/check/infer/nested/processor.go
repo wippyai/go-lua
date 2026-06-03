@@ -35,7 +35,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/check/overlaymut"
 	"github.com/wippyai/go-lua/compiler/check/scope"
 	"github.com/wippyai/go-lua/compiler/check/siblings"
-	phasecore "github.com/wippyai/go-lua/compiler/check/synth/phase/core"
+	phasecore "github.com/wippyai/go-lua/compiler/check/synth/core"
 	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/contract"
 	"github.com/wippyai/go-lua/types/db"
@@ -369,7 +369,7 @@ func observedNestedPathType(facts flow.PathObservationFacts, point cfg.Point, pa
 	obs := facts.ObservePath(flow.PathObservationQuery{
 		Point:               point,
 		Path:                path,
-		Phase:               flow.PathReadCurrent,
+		View:                flow.PathReadCurrent,
 		AllowConditionProof: true,
 		PreserveProof:       true,
 	})
@@ -521,7 +521,6 @@ func (p *Processor) processNestedFunction(
 					}
 				}
 				if len(capturedSet) > 0 {
-					capturedTypes = captured.MergeSolvedMutationSurfaces(capturedTypes, parentResult.Facts, parentResult.FlowInputs, projection, info.NF.Point, capturedSet)
 					fields := captured.FieldFactsFromAssignmentsAtPoint(parentResult.FlowInputs, capturedSet, info.NF.Point)
 					if len(fields) > 0 {
 						if capturedTypes == nil {
@@ -1028,7 +1027,7 @@ func (p *Processor) buildSiblingTypesForGroup(
 			}
 			if tbl, _ := nested.FindTableLiteralForSymbol(parentResult.Evidence.Assignments, sym); tbl != nil {
 				return nested.EnrichTableTypeWithFunctionLookup(rec, tbl, graph, func(fnSym cfg.SymbolID) typ.Type {
-					return functionfact.PublicTypeProjection(buildCfg.FunctionFacts, fnSym, api.PhaseScopeCompute)
+					return functionfact.PublicTypeProjection(buildCfg.FunctionFacts, fnSym, api.SynthModeDeclared)
 				})
 			}
 			return nil

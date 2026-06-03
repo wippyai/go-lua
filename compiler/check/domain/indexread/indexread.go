@@ -19,7 +19,7 @@ type Flow interface {
 	HasKeyOf(p cfg.Point, tablePath, keyPath constraint.Path) bool
 }
 
-// PathOf maps an expression to its canonical flow path at the read point.
+// PathOf maps an expression to its flow path at the read point.
 type PathOf func(ast.Expr) constraint.Path
 
 // Query describes one indexed read projection.

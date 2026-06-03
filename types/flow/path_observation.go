@@ -1,10 +1,120 @@
 package flow
 
 import (
+	"github.com/wippyai/go-lua/types/cfg"
+	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/domain/value"
 	"github.com/wippyai/go-lua/types/subtype"
 	"github.com/wippyai/go-lua/types/typ"
 )
+
+// PathReadView identifies the abstract state slice a path observation reads.
+type PathReadView uint8
+
+const (
+	// PathReadCurrent observes the normal point value, preferring the point's
+	// narrowed out/in value according to the producer's default policy.
+	PathReadCurrent PathReadView = iota
+	// PathReadPre observes the point-entry value before same-node effects.
+	PathReadPre
+	// PathReadPost observes the point-exit value after same-node effects.
+	PathReadPost
+)
+
+// PathObservationSource records which abstract fact family answered a path
+// observation. It is diagnostic metadata and keeps policy tests precise without
+// exposing producer internals.
+type PathObservationSource uint8
+
+const (
+	PathObservationUnknown PathObservationSource = iota
+	PathObservationDirectPath
+	PathObservationSolvedFlow
+	PathObservationFactProjection
+	PathObservationConditionProof
+	PathObservationDeclared
+)
+
+// PathObservationQuery is the normalized, AST-free request for a source path's
+// observed type at one CFG point. AST expressions are lowered to constraint.Path
+// before this boundary; the query is therefore cache-friendly and independent of
+// parser node identity.
+type PathObservationQuery struct {
+	Point cfg.Point
+	Path  constraint.Path
+	View  PathReadView
+	// StrictView forbids falling back to another view when the requested view has
+	// no fact. Assignment sources that reference their own target use this to read
+	// the pre-write value only.
+	StrictView bool
+	// AllowConditionProof permits condition-only proof projection to participate
+	// in the observation. Expression reads use it; assignment-source reads keep it
+	// disabled for parity with their existing solved-state policy.
+	AllowConditionProof bool
+	LocalCondition      *constraint.Condition
+	PreserveProof       bool
+	IndexRead           *PathObservationIndexRead
+}
+
+// PathObservationIndexRead is the normalized proof context for an indexed read
+// expression. It is produced at the AST boundary and consumed by path observation
+// without retaining parser node identity.
+type PathObservationIndexRead struct {
+	Container typ.Type
+	TablePath constraint.Path
+	KeyPath   constraint.Path
+
+	IndexVarPath   constraint.Path
+	IndexVarOffset int64
+	HasIndexVar    bool
+
+	LengthPath   constraint.Path
+	LengthOffset int64
+	HasLength    bool
+
+	LiteralIndex    int64
+	HasLiteralIndex bool
+}
+
+// PathObservation is the high-level result of observing one path through the
+// reduced product.
+type PathObservation struct {
+	Type     typ.Type
+	State    TypeState
+	Source   PathObservationSource
+	Declared typ.Type
+	Solved   typ.Type
+	Proof    typ.Type
+}
+
+// Resolved reports whether the observation carries a usable type.
+func (o PathObservation) Resolved() bool {
+	return o.State == StateResolved && !typ.IsAbsentOrUnknown(o.Type)
+}
+
+// PathObservationFacts owns the high-level path-read policy over a solved
+// abstract state: direct path facts, state projection, condition proofs, and
+// declared fallback reconciliation.
+type PathObservationFacts interface {
+	ObservePath(PathObservationQuery) PathObservation
+}
+
+// PathChildQuery is the normalized, AST-free request for the finite child facts
+// materialized below one path at a CFG point. It deliberately returns only
+// finite facts already present in the abstract state; it must not derive an
+// unbounded descendant tree from recursive product types.
+type PathChildQuery struct {
+	Point cfg.Point
+	Path  constraint.Path
+	View  PathReadView
+}
+
+// PathChildFacts exposes finite child path facts below a path. It is the child
+// counterpart of PathObservationFacts: producers own how finite facts are
+// represented, while consumers receive stable path/type pairs.
+type PathChildFacts interface {
+	ObserveChildPaths(PathChildQuery) []PathFact
+}
 
 // PathObservationCandidate is one producer-specific observation candidate for a
 // normalized path read. Producers own how candidates are computed; this package
@@ -24,9 +134,9 @@ type PathObservationSelection struct {
 	Solved   PathObservationCandidate
 	Proof    typ.Type
 	// AdmitSelected applies the value-domain observation admission law to
-	// selected non-declared observations when PreserveProof is false. Some legacy
-	// assignment-source reads still finalize outside this policy, so producers own
-	// the admission boundary while sharing the selection order.
+	// selected non-declared observations when PreserveProof is false. Assignment
+	// source reads can finalize outside this policy, so producers own the admission
+	// boundary while sharing the selection order.
 	AdmitSelected bool
 }
 
@@ -75,7 +185,7 @@ func SelectPathObservationResult(s PathObservationSelection) PathObservation {
 		}
 		return selectedPathObservation(q, s.Declared, selected, s.Direct.Type, nil, s.Direct.Source, s.AdmitSelected)
 	}
-	if q.StrictPhase && q.Phase == PathReadPre && !s.Solved.OK {
+	if q.StrictView && q.View == PathReadPre && !s.Solved.OK {
 		return declaredPathObservation(s.Declared)
 	}
 	if typ.IsNever(s.Solved.Type) {

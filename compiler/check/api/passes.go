@@ -7,10 +7,10 @@ import (
 
 // ComputePass computes additional analysis artifacts during function analysis.
 // Unlike Pass (which runs after convergence), ComputePass runs during each iteration
-// as part of the phase pipeline. Results are memoized in FuncResult.Extras.
+// when a component needs extra artifacts. Results are memoized in FuncResult.Extras.
 //
 // Use ComputePass for analysis that needs to participate in the fixpoint loop
-// or that computes data structures needed by later analysis phases. The Name()
+// or that computes data structures needed by later diagnostics. The Name()
 // method provides the key under which results are stored in Extras.
 type ComputePass interface {
 	Name() string

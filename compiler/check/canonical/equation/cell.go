@@ -23,10 +23,9 @@
 // transfer visit, then applies delayed widening only to continuing post-visit
 // growth, preserving one-shot demand precision without a fake discovery pass.
 //
-// This package is a clean isolated leaf. It does not touch the legacy flow; the
-// real per-node transfer is supplied as an injected NodeTransfer so the sound
-// transfer (extracted from types/flow/transfer.go later) plugs in without any
-// change here.
+// This package is a clean isolated leaf. It does not touch checker flow; the
+// real per-node transfer is supplied as an injected NodeTransfer so transfer
+// semantics plug in without any change here.
 package equation
 
 import (

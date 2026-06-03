@@ -13,7 +13,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/check/domain/indexread"
 	flowpath "github.com/wippyai/go-lua/compiler/check/domain/path"
 	"github.com/wippyai/go-lua/compiler/check/scope"
-	phasecore "github.com/wippyai/go-lua/compiler/check/synth/phase/core"
+	phasecore "github.com/wippyai/go-lua/compiler/check/synth/core"
 	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/db"
 	"github.com/wippyai/go-lua/types/domain/value/product"
@@ -26,13 +26,11 @@ import (
 	"github.com/wippyai/go-lua/types/typ"
 )
 
-// observation.go is the diagnostic bridge's observation surface: the canonical
-// equivalent of the legacy solved-phase facts the diagnostic passes query. The
+// observation.go is the diagnostic bridge's observation surface. The diagnostic
 // passes ask the observation.Projector for "the type of expression E at point P";
-// the Projector answers per-symbol/per-point reads through a flow.TypeFacts and
-// resolves declared annotations through a Synth. The legacy flow populates those
-// from its Solve/Narrow phases; the canonical flow has no such phases, so this
-// file projects the SAME questions onto the converged FunctionState.Points.
+// the Projector answers per-symbol/per-point reads through flow.TypeFacts and
+// resolves declared annotations through a Synth. This file projects those
+// questions onto the converged FunctionState.Points.
 //
 // The surface is built from:
 //
@@ -50,12 +48,6 @@ import (
 //     it is the same resolver and the same projector the rest of the surface uses,
 //     not a parallel type checker.
 //
-// The flow.Solution stays nil: the canonical flow produces no path-sensitive
-// narrowing solution, and the Projector treats a nil Solution as "no narrowing
-// proof available", falling back to the per-point facts and declared types this
-// surface provides. That fallback is the canonical-computed type, not a masked
-// miss.
-
 // functionFacts is the per-function declared-type context the bridge derives once
 // from the graph: the resolved declared type of each annotated symbol (parameters
 // and annotated local declarations) and the annotated-symbol set.
@@ -70,8 +62,7 @@ type functionFacts struct {
 	// paramSyms are the function's parameter symbols in declaration order. An
 	// unannotated parameter (not in annotated, with no declared type) is a gradual
 	// `any` when the body imposes no obligation on it: a Lua parameter with no
-	// annotation is dynamic, usable in every operation, exactly as the legacy
-	// localInferenceSolver.defaultUnconstrainedParams defaults it.
+	// annotation is dynamic and usable in every operation.
 	paramSyms []cfg.SymbolID
 }
 
@@ -362,8 +353,8 @@ type canonicalFacts struct {
 	// unannotatedParams is the set of parameter symbols with no declared annotation.
 	// A read of one whose converged value is the value-domain unknown resolves to
 	// gradual `any` (a Lua parameter without an annotation is dynamic, usable in
-	// every operation), mirroring the legacy defaultUnconstrainedParams fallback. A
-	// parameter the body constrains carries its inferred value and is not defaulted.
+	// every operation). A parameter the body constrains carries its inferred value
+	// and is not defaulted.
 	unannotatedParams map[cfg.SymbolID]bool
 
 	paths   pathProjector
@@ -838,19 +829,18 @@ func (f *canonicalFacts) LengthLowerBoundForPathAt(p cfg.Point, path constraint.
 	return f.paths.LengthLowerBoundForPathAt(p, path)
 }
 
-// ConditionAt exposes the canonical point condition to the Solution-less
-// observation surface for condition-proof projection.
+// ConditionAt exposes the point condition to the observation surface for
+// condition-proof projection.
 func (f *canonicalFacts) ConditionAt(p cfg.Point) constraint.Condition {
 	return f.inState(p).Cond
 }
 
-// ProvesTypeAt answers condition-only type proofs from the canonical point
-// condition without consulting legacy flow.Solution.
+// ProvesTypeAt answers condition-only type proofs from the point condition.
 func (f *canonicalFacts) ProvesTypeAt(p cfg.Point, path constraint.Path, t typ.Type) bool {
 	return f.conditionProofProjector().ProvesTypeAt(p, path, t)
 }
 
-// ConditionTypeAt returns the path type proven by the canonical point condition.
+// ConditionTypeAt returns the path type proven by the point condition.
 func (f *canonicalFacts) ConditionTypeAt(p cfg.Point, path constraint.Path) typ.Type {
 	return f.conditionProofProjector().ConditionTypeAt(p, path)
 }
@@ -868,10 +858,8 @@ func (f *canonicalFacts) ConditionedSeedTypeAt(p cfg.Point, seedPath constraint.
 }
 
 // ObservePath implements the high-level path observation policy directly over
-// canonical FunctionState. It is the canonical counterpart of the legacy
-// observation adapter: phase selection, declared reconciliation, condition
-// proofs, authoritative Never, and normalized index-read proofs are all handled
-// here without constructing a flow.Solution-shaped carrier.
+// FunctionState. View selection, declared reconciliation, condition proofs,
+// authoritative Never, and normalized index-read proofs are all handled here.
 func (f *canonicalFacts) ObservePath(q flow.PathObservationQuery) flow.PathObservation {
 	if f == nil || q.Path.IsEmpty() {
 		return flow.PathObservation{}
@@ -921,7 +909,7 @@ func (f *canonicalFacts) ObservePath(q flow.PathObservationQuery) flow.PathObser
 
 func (f *canonicalFacts) pathObservationSolvedType(q flow.PathObservationQuery) (typ.Type, bool) {
 	var refined flow.TypedValue
-	if q.Phase == flow.PathReadPost {
+	if q.View == flow.PathReadPost {
 		refined = f.PostRefinedPathAt(q.Point, q.Path)
 	} else {
 		refined = f.RefinedPathAt(q.Point, q.Path)
@@ -959,7 +947,7 @@ func (f *canonicalFacts) pathObservationHasProductValue(q flow.PathObservationQu
 		return true
 	}
 	paths := f.paths
-	if q.Phase == flow.PathReadPost {
+	if q.View == flow.PathReadPost {
 		paths = paths.WithPostState()
 	}
 	av, ok := paths.pathValueAt(q.Point, q.Path)
@@ -993,7 +981,7 @@ func (f *canonicalFacts) pathObservationConditionedType(q flow.PathObservationQu
 		seedType, _ = f.pathObservationSolvedType(flow.PathObservationQuery{
 			Point: q.Point,
 			Path:  seedPath,
-			Phase: q.Phase,
+			View:  q.View,
 		})
 	}
 	if typ.IsAbsentOrUnknown(seedType) && len(q.Path.Segments) == 0 {
@@ -1003,7 +991,7 @@ func (f *canonicalFacts) pathObservationConditionedType(q flow.PathObservationQu
 		seedType = f.pathObservationDeclaredType(flow.PathObservationQuery{
 			Point: q.Point,
 			Path:  seedPath,
-			Phase: q.Phase,
+			View:  q.View,
 		})
 	}
 	if typ.IsAbsentOrUnknown(seedType) {
@@ -1019,7 +1007,7 @@ func (f *canonicalFacts) pathObservationDeclaredType(q flow.PathObservationQuery
 	}
 	base := f.annotatedDeclaredType(q.Point, path.Symbol)
 	if base == nil {
-		base = f.effectivePathObservationRoot(q.Point, path.Symbol, q.Phase)
+		base = f.effectivePathObservationRoot(q.Point, path.Symbol, q.View)
 	}
 	if base == nil || len(path.Segments) == 0 {
 		return base
@@ -1038,9 +1026,9 @@ func (f *canonicalFacts) annotatedDeclaredType(point cfg.Point, sym cfg.SymbolID
 	return tv.Type
 }
 
-func (f *canonicalFacts) effectivePathObservationRoot(point cfg.Point, sym cfg.SymbolID, phase flow.PathReadPhase) typ.Type {
+func (f *canonicalFacts) effectivePathObservationRoot(point cfg.Point, sym cfg.SymbolID, view flow.PathReadView) typ.Type {
 	var tv flow.TypedValue
-	if phase == flow.PathReadPost {
+	if view == flow.PathReadPost {
 		tv = f.PostEffectiveTypeAt(point, sym)
 	} else {
 		tv = f.EffectiveTypeAt(point, sym)
@@ -1467,7 +1455,7 @@ func (s *returnSynth) ResolveTypeDef(name string, typeExpr ast.TypeExpr, typePar
 }
 
 // Narrow returns the same facade: the canonical observation Projector is already
-// the narrowed-phase view (it reads the converged flow-refined per-point types).
+// the flow-refined view (it reads the converged flow-refined per-point types).
 func (s *returnSynth) Narrow() api.BaseSynth { return s }
 
 func (s *returnSynth) WithFlow(api.FlowOps) api.BaseSynth { return s }

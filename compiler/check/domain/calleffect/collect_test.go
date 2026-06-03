@@ -13,8 +13,8 @@ import (
 	"github.com/wippyai/go-lua/types/typ"
 )
 
-func TestMapMutatorInfo(t *testing.T) {
-	info := overlaymut.MapMutatorInfo{
+func TestMapWriteInfo(t *testing.T) {
+	info := overlaymut.MapWriteInfo{
 		KeyType:   typ.String,
 		ValueType: typ.Integer,
 	}

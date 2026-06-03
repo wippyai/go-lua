@@ -52,7 +52,7 @@ func (f envReturnProofFacts) ConditionedSeedTypeAt(cfg.Point, constraint.Path, t
 	return nil
 }
 
-func TestEnvReturnConditionUsesConditionProofFactsWithoutFlowSolution(t *testing.T) {
+func TestEnvReturnConditionUsesConditionProofFactsWithoutConcreteSolver(t *testing.T) {
 	fn := &ast.FunctionExpr{ParList: &ast.ParList{Names: []string{"args"}}}
 	graph := cfg.Build(fn)
 	params := graph.ParamSlotsReadOnly()

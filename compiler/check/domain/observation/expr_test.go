@@ -491,13 +491,13 @@ func TestProjectorPathTypeUsesPathObservationFactsWithoutSolution(t *testing.T) 
 	if !typ.TypeEquals(got, typ.String) {
 		t.Fatalf("pathType via PathObservationFacts = %v, want string", got)
 	}
-	if facts.query.Point != 8 || facts.query.Phase != flow.PathReadCurrent || !facts.query.PreserveProof ||
+	if facts.query.Point != 8 || facts.query.View != flow.PathReadCurrent || !facts.query.PreserveProof ||
 		!facts.query.Path.Equal(constraint.NewPath(sym, "value")) {
 		t.Fatalf("PathObservationQuery = %#v", facts.query)
 	}
 }
 
-func TestObservedArgumentTypeUsesPathObservationFactsWithoutFlowSolution(t *testing.T) {
+func TestObservedArgumentTypeUsesPathObservationFactsWithoutConcreteSolver(t *testing.T) {
 	arg := &ast.IdentExpr{Value: "arg"}
 	fn := &ast.FunctionExpr{
 		ParList: &ast.ParList{Names: []string{"arg"}},
@@ -530,7 +530,7 @@ func TestObservedArgumentTypeUsesPathObservationFactsWithoutFlowSolution(t *test
 		t.Fatalf("ObservedArgumentType via PathObservationFacts = %v, want string", got)
 	}
 	if facts.query.Point != g.Entry() ||
-		facts.query.Phase != flow.PathReadPre ||
+		facts.query.View != flow.PathReadPre ||
 		!facts.query.PreserveProof ||
 		facts.query.AllowConditionProof ||
 		facts.query.Path.Symbol != sym {

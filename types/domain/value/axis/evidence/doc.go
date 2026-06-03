@@ -16,8 +16,8 @@
 //
 // # Status
 //
-// Phase 2 establishes the package and the local lattice surface so the Phase 5
+// design step 2 establishes the package and the local lattice surface so the design step 5
 // composition facade can import it. The evidence carriers and the
-// discriminant/predicate/correlation/gradual reducers are implemented in Phase 5;
+// discriminant/predicate/correlation/gradual reducers are implemented in design step 5;
 // the law tests are skipped until then.
 package evidence

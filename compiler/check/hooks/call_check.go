@@ -9,7 +9,7 @@
 //   - Generic calls: infers type arguments and validates against instantiated params
 //   - Type constructors: TypeName(x) - special handling for callable type effects
 //
-// For each call, the shared ops.CallPipeline handles the two-phase synthesis
+// For each call, the shared ops.CallPipeline handles staged synthesis
 // process, allowing contextual typing for callback arguments.
 //
 // Errors are mapped from ops.CallError to diag.Diagnostic with appropriate

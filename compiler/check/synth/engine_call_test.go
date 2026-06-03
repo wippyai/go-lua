@@ -7,7 +7,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/bind"
 	"github.com/wippyai/go-lua/compiler/check/api"
 	"github.com/wippyai/go-lua/compiler/check/scope"
-	"github.com/wippyai/go-lua/compiler/check/synth/phase/extract"
+	"github.com/wippyai/go-lua/compiler/check/synth/extract"
 	"github.com/wippyai/go-lua/types/cfg"
 	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/contract"
@@ -100,11 +100,11 @@ func TestSynthCallCore_DeclaredSpecReturnNarrowing(t *testing.T) {
 	})
 
 	e := New(Config{
-		Ctx:    db.NewQueryContext(db.New()),
-		Types:  mockTypeQuerier{},
-		Scopes: make(api.ScopeMap),
-		Env:    checkCtx,
-		Phase:  api.PhaseScopeCompute,
+		Ctx:       db.NewQueryContext(db.New()),
+		Types:     mockTypeQuerier{},
+		Scopes:    make(api.ScopeMap),
+		Env:       checkCtx,
+		SynthMode: api.SynthModeDeclared,
 	})
 
 	expr := &ast.FuncCallExpr{

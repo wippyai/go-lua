@@ -333,18 +333,16 @@ end
 			}
 		}
 
-		// Log flow solution
-		if funcResult.FlowSolution != nil {
-			solution := funcResult.FlowSolution
+		// Log solved flow projection
+		if solution := funcResult.SolvedFlow(); solution != nil {
 			t.Log("  Flow types for 'found':")
 			for p := cfg.Point(1); p <= 20; p++ {
 				path := constraint.Path{Root: "found"}
-				typeAt := solution.TypeAt(p, path)
 				narrowed := solution.NarrowedTypeAt(p, path)
-				cond := solution.ConditionAt(p)
-				if typeAt != nil || narrowed != nil || cond.HasConstraints() {
-					t.Logf("    Point %v: TypeAt=%v NarrowedTypeAt=%v Condition=%v",
-						p, typeAt, narrowed, cond.AllConstraints())
+				pre := solution.PreStateTypeAt(p, path)
+				if pre != nil || narrowed != nil {
+					t.Logf("    Point %v: PreStateTypeAt=%v NarrowedTypeAt=%v",
+						p, pre, narrowed)
 				}
 			}
 		}

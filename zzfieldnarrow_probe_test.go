@@ -3,7 +3,6 @@ package lua
 import (
 	"testing"
 
-	"github.com/wippyai/go-lua/compiler/check"
 	"github.com/wippyai/go-lua/compiler/check/tests/testutil"
 )
 

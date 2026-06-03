@@ -1,7 +1,7 @@
-// Package pathkey provides canonical path key generation for flow analysis.
+// Package pathkey provides normalized path key generation for flow analysis.
 //
 // In SSA form, each variable has multiple versions at different program points.
-// This package maps constraint paths (symbol + field segments) to canonical
+// This package maps constraint paths (symbol + field segments) to normalized
 // versioned keys that uniquely identify the variable incarnation.
 //
 // Key format: sym<SymbolID>@<VersionID><segments>
@@ -27,13 +27,13 @@ type VersionedGraph interface {
 	VisibleVersion(p cfg.Point, sym cfg.SymbolID) cfg.Version
 }
 
-// Resolver provides canonical path key generation from constraint paths.
+// Resolver provides normalized path key generation from constraint paths.
 //
-// All path-to-key conversions in the flow solver must go through the resolver
+// All path-to-key conversions for solved flow facts must go through the resolver
 // to ensure consistent SSA versioning. The resolver encapsulates the logic for:
 //
 //   - Querying the CFG for visible SSA versions
-//   - Building canonical key strings in the "sym<ID>@<Ver><segments>" format
+//   - Building normalized key strings in the "sym<ID>@<Ver><segments>" format
 //   - Handling placeholder paths (used in function refinements)
 //   - Validating that paths have resolvable versions
 //
@@ -67,10 +67,10 @@ func NewResolver(g VersionedGraph) *Resolver {
 	}
 }
 
-// KeyAt returns the canonical key for a path at a CFG point.
+// KeyAt returns the normalized key for a path at a CFG point.
 // This is the ONLY method that should be used for path→key conversion.
 //
-// Canonical key format: sym<SymbolID>@<VersionID><segments>
+// Normalized key format: sym<SymbolID>@<VersionID><segments>
 // Example: sym42@3.field[0]
 //
 // Rules:
@@ -266,9 +266,9 @@ func writeInt(b *strings.Builder, value int) {
 //
 // For keys without a version (missing @), versionID is 0.
 // For keys that don't start with a symbol root, returns (0, 0, "", false).
-// Both legacy solver roots ("sym42") and canonical point-state roots ("s42")
-// are accepted so product-domain projection can consume normalized PointState
-// keys without translating them through versioned solver keys.
+// Both verbose roots ("sym42") and compact point-state roots ("s42") are
+// accepted so product-domain projection can consume normalized PointState keys
+// without translating them through versioned keys.
 //
 // The suffix includes any field or index path after the version number.
 func ParseKey(key constraint.PathKey) (cfg.SymbolID, int, string, bool) {

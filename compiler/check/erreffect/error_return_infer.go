@@ -3,8 +3,8 @@ package erreffect
 import (
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/cfg"
-	abstractreturns "github.com/wippyai/go-lua/compiler/check/abstract/returns"
 	"github.com/wippyai/go-lua/compiler/check/api"
+	returnextract "github.com/wippyai/go-lua/compiler/check/domain/returns"
 	"github.com/wippyai/go-lua/types/contract"
 	"github.com/wippyai/go-lua/types/effect"
 	"github.com/wippyai/go-lua/types/kind"
@@ -65,7 +65,7 @@ type ReturnPatternProof struct {
 func (c ErrorReturnConvention) HasStrictInversePattern(
 	returns []api.ReturnEvidence,
 	flowOps api.FlowOps,
-	synth abstractreturns.ExprSynth,
+	synth returnextract.ExprSynth,
 ) bool {
 	proof := c.ProveReturnPattern(returns, flowOps, synth)
 	return proof.Consistent && proof.SawSuccess && proof.SawFailure
@@ -75,7 +75,7 @@ func (c ErrorReturnConvention) HasStrictInversePattern(
 func (c ErrorReturnConvention) ProveReturnPattern(
 	returns []api.ReturnEvidence,
 	flowOps api.FlowOps,
-	synth abstractreturns.ExprSynth,
+	synth returnextract.ExprSynth,
 ) ReturnPatternProof {
 	if !c.valid() {
 		return ReturnPatternProof{}
@@ -97,7 +97,7 @@ func AttachInferredErrorReturnSpec(
 	fn *typ.Function,
 	evidence api.FlowEvidence,
 	flowOps api.FlowOps,
-	synth abstractreturns.ExprSynth,
+	synth returnextract.ExprSynth,
 ) *typ.Function {
 	convention := CanonicalLuaValueErrorConvention()
 	if len(evidence.Returns) == 0 || synth == nil || !convention.canClassifyFunction(fn) {
@@ -173,7 +173,7 @@ func HasErrorReturnLabel(fn *typ.Function) bool {
 func HasStrictInverseReturnPattern(
 	returns []api.ReturnEvidence,
 	flowOps api.FlowOps,
-	synth abstractreturns.ExprSynth,
+	synth returnextract.ExprSynth,
 	valueIdx int,
 	errorIdx int,
 ) bool {
@@ -186,7 +186,7 @@ func HasStrictInverseReturnPattern(
 func ProveReturnPattern(
 	returns []api.ReturnEvidence,
 	flowOps api.FlowOps,
-	synth abstractreturns.ExprSynth,
+	synth returnextract.ExprSynth,
 	valueIdx int,
 	errorIdx int,
 ) ReturnPatternProof {
@@ -224,7 +224,7 @@ func ProveReturnPattern(
 			continue
 		}
 
-		values := abstractreturns.ExpandValues(info.Exprs, needed, p, synth)
+		values := returnextract.ExpandValues(info.Exprs, needed, p, synth)
 		if valueIdx >= len(values) || errorIdx >= len(values) {
 			incompatible = true
 			continue
@@ -264,7 +264,7 @@ func ProveReturnPattern(
 func delegatesErrorReturn(
 	info *cfg.ReturnInfo,
 	p cfg.Point,
-	synth abstractreturns.ExprSynth,
+	synth returnextract.ExprSynth,
 	valueIdx int,
 	errorIdx int,
 ) bool {

@@ -6,8 +6,8 @@ import (
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/bind"
 	ccfg "github.com/wippyai/go-lua/compiler/cfg"
-	"github.com/wippyai/go-lua/compiler/check/abstract/trace"
 	"github.com/wippyai/go-lua/compiler/check/api"
+	"github.com/wippyai/go-lua/compiler/check/domain/trace"
 	"github.com/wippyai/go-lua/compiler/check/scope"
 	"github.com/wippyai/go-lua/types/cfg"
 	"github.com/wippyai/go-lua/types/constraint"
@@ -175,12 +175,12 @@ func TestSynthExpr_IdentExpr_Narrowed(t *testing.T) {
 	})
 
 	e := New(Config{
-		Ctx:    db.NewQueryContext(db.New()),
-		Types:  mockTypeQuerier{},
-		Scopes: make(api.ScopeMap),
-		Flow:   flowQ,
-		Env:    checkCtx,
-		Phase:  api.PhaseNarrowing,
+		Ctx:       db.NewQueryContext(db.New()),
+		Types:     mockTypeQuerier{},
+		Scopes:    make(api.ScopeMap),
+		Flow:      flowQ,
+		Env:       checkCtx,
+		SynthMode: api.SynthModeFlow,
 	})
 
 	result := e.Narrow().TypeOf(ident, 0)
@@ -207,12 +207,12 @@ func TestSynthExpr_IdentExpr_LocalFlowOverrideUsesResolvedPath(t *testing.T) {
 	resolvedPath := constraint.Path{Root: "x", Symbol: symX, Version: 7}
 
 	e := New(Config{
-		Ctx:    db.NewQueryContext(db.New()),
-		Types:  mockTypeQuerier{},
-		Scopes: make(api.ScopeMap),
-		Flow:   baseFlow,
-		Env:    checkCtx,
-		Phase:  api.PhaseNarrowing,
+		Ctx:       db.NewQueryContext(db.New()),
+		Types:     mockTypeQuerier{},
+		Scopes:    make(api.ScopeMap),
+		Flow:      baseFlow,
+		Env:       checkCtx,
+		SynthMode: api.SynthModeFlow,
 		Paths: func(_ cfg.Point, expr ast.Expr, _ *scope.State) constraint.Path {
 			if expr == ident {
 				return resolvedPath
@@ -255,12 +255,12 @@ func TestSynthExpr_IdentExpr_NarrowedFunctionDoesNotWidenDeclaredFunction(t *tes
 	})
 
 	e := New(Config{
-		Ctx:    db.NewQueryContext(db.New()),
-		Types:  mockTypeQuerier{},
-		Scopes: make(api.ScopeMap),
-		Flow:   flowQ,
-		Env:    checkCtx,
-		Phase:  api.PhaseNarrowing,
+		Ctx:       db.NewQueryContext(db.New()),
+		Types:     mockTypeQuerier{},
+		Scopes:    make(api.ScopeMap),
+		Flow:      flowQ,
+		Env:       checkCtx,
+		SynthMode: api.SynthModeFlow,
 	})
 
 	result := e.Narrow().TypeOf(ident, 0)
@@ -382,12 +382,12 @@ func TestSynthIdentCore_FlowNarrowing(t *testing.T) {
 	})
 
 	e := New(Config{
-		Ctx:    db.NewQueryContext(db.New()),
-		Types:  mockTypeQuerier{},
-		Scopes: make(api.ScopeMap),
-		Flow:   flowQ,
-		Env:    checkCtx,
-		Phase:  api.PhaseNarrowing,
+		Ctx:       db.NewQueryContext(db.New()),
+		Types:     mockTypeQuerier{},
+		Scopes:    make(api.ScopeMap),
+		Flow:      flowQ,
+		Env:       checkCtx,
+		SynthMode: api.SynthModeFlow,
 	})
 
 	result := e.Narrow().TypeOf(ident, 5)
@@ -473,12 +473,12 @@ func TestNarrowView_TypeOf(t *testing.T) {
 	})
 
 	e := New(Config{
-		Ctx:    db.NewQueryContext(db.New()),
-		Types:  mockTypeQuerier{},
-		Scopes: make(api.ScopeMap),
-		Flow:   flowQ,
-		Env:    checkCtx,
-		Phase:  api.PhaseNarrowing,
+		Ctx:       db.NewQueryContext(db.New()),
+		Types:     mockTypeQuerier{},
+		Scopes:    make(api.ScopeMap),
+		Flow:      flowQ,
+		Env:       checkCtx,
+		SynthMode: api.SynthModeFlow,
 	})
 
 	narrow := e.Narrow()
@@ -781,7 +781,7 @@ func TestSynthIdentCore_UsesSymbolID(t *testing.T) {
 }
 
 func TestSynthIdentCore_PreflowIgnoresFlowNarrowing(t *testing.T) {
-	// Verify that preflow phase (DeclaredEngine) ignores flow narrowing
+	// Verify that declared mode ignores flow narrowing.
 	const symX = cfg.SymbolID(201)
 	ident := &ast.IdentExpr{Value: "x"}
 
@@ -798,11 +798,11 @@ func TestSynthIdentCore_PreflowIgnoresFlowNarrowing(t *testing.T) {
 	})
 
 	e := New(Config{
-		Ctx:    db.NewQueryContext(db.New()),
-		Types:  mockTypeQuerier{},
-		Scopes: make(api.ScopeMap),
-		Env:    checkCtx,
-		Phase:  api.PhaseScopeCompute,
+		Ctx:       db.NewQueryContext(db.New()),
+		Types:     mockTypeQuerier{},
+		Scopes:    make(api.ScopeMap),
+		Env:       checkCtx,
+		SynthMode: api.SynthModeDeclared,
 	})
 
 	// DeclaredEngine should return declared type, not narrowed type

@@ -154,7 +154,7 @@ func Widen(prev, next Value) Value {
 }
 
 // Equal is the value-domain convergence equivalence: the two shapes are the same
-// point in the convergence lattice the flow solver folds over.
+// point in the convergence lattice the flow engine folds over.
 //
 // For non-recursive shapes this is value.SameConvergedFact, the flow engine's
 // no-op/change-detection relation, not mutual coverage. Mutual coverage is too

@@ -67,7 +67,7 @@ import (
 //     constrain the source parameter inside the same fixed point.
 //   - IndexWrites: point-local must-facts proving a dynamic-index replacement
 //     write was admitted by the value-domain write law at this point. Observation
-//     consumes this proof instead of calling a legacy transfer driver.
+//     consumes this proof directly.
 //
 // PointState carries a lattice.Lattice (PointStateDomain) so the single generic
 // solver in types/lattice/solver computes the least fixed point over it. The

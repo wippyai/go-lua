@@ -120,7 +120,7 @@ return 0
 				pathObs := facts.ObservePath(flow.PathObservationQuery{
 					Point:         p,
 					Path:          path,
-					Phase:         flow.PathReadCurrent,
+					View:          flow.PathReadCurrent,
 					PreserveProof: true,
 				})
 				if !pathObs.Resolved() || !typ.TypeEquals(pathObs.Type, typ.Any) {

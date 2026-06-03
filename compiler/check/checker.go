@@ -102,7 +102,7 @@ func WithComputePass(p api.ComputePass) Option {
 	return func(c *Checker) { c.computePasses = append(c.computePasses, p) }
 }
 
-// Checker orchestrates the multi-phase type analysis pipeline for Lua modules.
+// Checker orchestrates type analysis for Lua modules.
 // It is the main entry point for type checking and coordinates the fixpoint
 // iteration loop that processes all functions until types stabilize.
 //
@@ -193,7 +193,7 @@ func WithScopeDepthDiagnostics(enabled bool) Option {
 
 // Check parses and analyzes Lua source code, returning a Session containing all results.
 //
-// The method performs the complete analysis pipeline:
+// The method performs the complete analysis:
 //  1. Parse source into AST
 //  2. Build module bindings and collect module aliases
 //  3. Run fixpoint loop until inter-function types stabilize

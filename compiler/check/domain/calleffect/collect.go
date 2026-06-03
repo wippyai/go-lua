@@ -19,8 +19,8 @@ func CollectTableInsertMutations(
 	graph *cfg.Graph,
 	synth func(ast.Expr, cfg.Point) typ.Type,
 	bindings *bind.BindingTable,
-) map[cfg.SymbolID][]overlaymut.MapMutatorInfo {
-	result := make(map[cfg.SymbolID][]overlaymut.MapMutatorInfo)
+) map[cfg.SymbolID][]overlaymut.MapWriteInfo {
+	result := make(map[cfg.SymbolID][]overlaymut.MapWriteInfo)
 	if len(calls) == 0 || graph == nil {
 		return result
 	}
@@ -85,7 +85,7 @@ func CollectTableInsertMutations(
 			elemType = typ.Unknown
 		}
 
-		result[baseSym] = append(result[baseSym], overlaymut.MapMutatorInfo{
+		result[baseSym] = append(result[baseSym], overlaymut.MapWriteInfo{
 			KeyType:   keyType,
 			ValueType: typ.NewArray(elemType),
 		})

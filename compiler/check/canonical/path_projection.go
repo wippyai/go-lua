@@ -137,7 +137,7 @@ func (p pathProjector) ObserveChildPaths(q flow.PathChildQuery) []flow.PathFact 
 	if q.Path.Symbol == 0 {
 		return nil
 	}
-	if q.Phase == flow.PathReadPost {
+	if q.View == flow.PathReadPost {
 		p = p.WithPostState()
 	}
 	return p.pointFacts(q.Point).ChildPathFacts(q.Path)

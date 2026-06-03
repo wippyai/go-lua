@@ -373,19 +373,19 @@ func TestResolveSpecFunction_NonFunction(t *testing.T) {
 }
 
 func TestSpecReturnOverride_NilFnType(t *testing.T) {
-	s := &SpecReturnOverride{Phase: api.PhaseScopeCompute}
+	s := &SpecReturnOverride{SynthMode: api.SynthModeDeclared}
 	result := s.Override(nil, nil)
 	if result != nil {
 		t.Fatal("expected nil for nil fn type")
 	}
 }
 
-func TestSpecReturnOverride_WrongPhase(t *testing.T) {
-	s := &SpecReturnOverride{Phase: api.PhaseTypeResolution}
+func TestSpecReturnOverride_WrongMode(t *testing.T) {
+	s := &SpecReturnOverride{SynthMode: api.SynthModeResolve}
 	fn := typ.Func().Build()
 	result := s.Override(fn, nil)
 	if result != nil {
-		t.Fatal("expected nil for wrong phase")
+		t.Fatal("expected nil for wrong mode")
 	}
 }
 

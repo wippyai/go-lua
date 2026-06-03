@@ -38,7 +38,7 @@ func TestTableLiteralFieldKeyKeepsFieldSyntaxCompatibility(t *testing.T) {
 		t.Fatal("string table key rejected")
 	}
 	if field.Kind != constraint.SegmentField || field.Name != "handler" {
-		t.Fatalf("legacy string key = %#v, want field handler", field)
+		t.Fatalf("string key = %#v, want field handler", field)
 	}
 }
 

@@ -3,10 +3,10 @@ package summary
 import (
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/cfg"
-	"github.com/wippyai/go-lua/compiler/check/abstract/predicate"
 	"github.com/wippyai/go-lua/compiler/check/canonical/state"
 	"github.com/wippyai/go-lua/compiler/check/domain/paramevidence"
 	domainpath "github.com/wippyai/go-lua/compiler/check/domain/path"
+	"github.com/wippyai/go-lua/compiler/check/domain/predicate"
 	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/domain/value/product"
 	"github.com/wippyai/go-lua/types/flow"
@@ -421,8 +421,7 @@ func returnCallTargetPath(call *cfg.CallInfo) (constraint.Path, bool) {
 }
 
 // projectReturnRelations proves caller-visible return-slot relations from the
-// solved return-point states. This is the summary-level counterpart of legacy
-// ErrorReturn inference, but it lives inside Summary projection so recursive
+// solved return-point states. It lives inside Summary projection so recursive
 // callees and callers see it through the same interprocedural fixed point.
 func projectReturnRelations(fs state.FunctionState, g *cfg.Graph, returns []product.AbstractValue, declaredReturns []typ.Type) flow.ReturnRelations {
 	return flow.MergeReturnRelationProofs(

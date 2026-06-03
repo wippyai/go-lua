@@ -131,7 +131,7 @@ func TestCollectParameterEvidenceFromResult_CanonicalProjectionSkipsLegacyBodyPr
 	}
 	ff := st.InterprocNext.Facts[key].FunctionFacts[currentSym]
 	if len(ff.Params) != 0 || len(ff.BodyParams) != 0 {
-		t.Fatalf("canonical result must not write legacy body/public params, got public=%v body=%v", ff.Params, ff.BodyParams)
+		t.Fatalf("flow result must not write retired body/public params, got public=%v body=%v", ff.Params, ff.BodyParams)
 	}
 }
 

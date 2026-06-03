@@ -151,6 +151,6 @@ func solvedObservation(result *api.FuncResult) observation.Projector {
 		return observation.New(observation.Config{})
 	}
 	store := api.StoreFrom(result.QueryContext)
-	lookup := functionfact.StoreProjectionLookup(store, functionfact.ProjectionSibling, api.PhaseScopeCompute, result.BaseScope)
+	lookup := functionfact.StoreProjectionLookup(store, functionfact.ProjectionSibling, api.SynthModeDeclared, result.BaseScope)
 	return observation.FromFuncResult(result, lookup).WithProofValues()
 }

@@ -24,7 +24,7 @@ type versionedGraph interface {
 }
 
 // StaticKeySegment converts a syntactically static table-constructor key
-// expression into a path segment using the legacy hand-built-AST heuristic.
+// expression into a path segment using the hand-built-AST heuristic.
 //
 // Table-constructor semantics:
 //   - identifier field: {foo = v}  -> SegmentField("foo")
@@ -63,7 +63,7 @@ func TableFieldMatchesSegmentWithConst(field *ast.Field, segment constraint.Segm
 }
 
 // StaticAttrKeySegment converts a syntactically static attribute/index key into
-// a path segment using the legacy hand-built-AST heuristic.
+// a path segment using the hand-built-AST heuristic.
 //
 // Attribute semantics:
 //   - dot field: obj.foo            -> SegmentField("foo")
@@ -111,8 +111,8 @@ func StaticAttrKeySegmentWithConst(key ast.Expr, constResolver func(string) *flo
 
 // StaticAttrSegmentWithConst resolves compile-time constant attribute/index keys
 // using the AttrGetExpr syntax bit. Parsed x["foo"] remains a string-index path,
-// while parsed x.foo remains a dot-field path. AttrKeyUnknown preserves legacy
-// behavior for manually constructed ASTs.
+// while parsed x.foo remains a dot-field path. AttrKeyUnknown preserves the
+// compatibility behavior for manually constructed ASTs.
 func StaticAttrSegmentWithConst(attr *ast.AttrGetExpr, constResolver func(string) *flow.ConstValue) (constraint.Segment, bool) {
 	if attr == nil {
 		return constraint.Segment{}, false

@@ -1,6 +1,7 @@
-// env.go defines phase-typed environments for synthesis.
-// DeclaredEnv is used pre-flow; NarrowEnv is used post-flow.
-// This split keeps declared and flow-refined function facts phase-explicit.
+// env.go defines mode-typed environments for synthesis.
+// DeclaredEnv is used for declared/static synthesis; NarrowEnv admits a
+// producer-neutral flow projection through synth.Config.Flow.
+// This split keeps declared and flow-refined function facts mode-explicit.
 package api
 
 import (
@@ -13,38 +14,37 @@ import (
 	"github.com/wippyai/go-lua/types/typ"
 )
 
-// Phase identifies which pipeline stage is active.
-// The phase also determines whether flow-refined types are available:
-//   - PhaseNarrowing enables flow-refined types
-//   - all earlier phases are declared-only
-type Phase uint8
+// SynthMode identifies which synthesis view is active.
+// The mode also determines whether flow-refined types are available:
+//   - SynthModeFlow enables flow-refined types
+//   - all earlier modes are declared-only
+type SynthMode uint8
 
 const (
-	PhaseScopeCompute Phase = iota
-	PhaseTypeResolution
-	PhaseNarrowing
+	SynthModeDeclared SynthMode = iota
+	SynthModeResolve
+	SynthModeFlow
 )
 
-func (p Phase) String() string {
-	switch p {
-	case PhaseScopeCompute:
-		return "ScopeCompute"
-	case PhaseTypeResolution:
-		return "TypeResolution"
-	case PhaseNarrowing:
-		return "Narrowing"
+func (m SynthMode) String() string {
+	switch m {
+	case SynthModeDeclared:
+		return "Declared"
+	case SynthModeResolve:
+		return "Resolve"
+	case SynthModeFlow:
+		return "Flow"
 	default:
 		return "Unknown"
 	}
 }
 
 // BaseEnv is the shared environment interface for synthesis.
-// It intentionally excludes FunctionFacts to prevent cross-phase misuse.
+// It intentionally excludes FunctionFacts to prevent cross-mode misuse.
 type BaseEnv interface {
-	Phase() Phase
+	SynthMode() SynthMode
 	Graph() cfg.VersionedGraph
 	Types() flow.TypeFacts
-	Consts() *flow.Solution
 	Refinements() RefinementFacts
 	TypeNames() *scope.State
 	Bindings() *bind.BindingTable
@@ -55,22 +55,21 @@ type BaseEnv interface {
 	WithGlobalTypeOverlay(overlay globalenv.TypeOverlay) BaseEnv
 }
 
-// DeclaredEnv is the declared-phase synthesis environment.
+// DeclaredEnv is the declared/static synthesis environment.
 type DeclaredEnv interface {
 	BaseEnv
 }
 
-// NarrowEnv is the narrowing-phase synthesis environment.
+// NarrowEnv is the flow-refined synthesis environment.
 type NarrowEnv interface {
 	BaseEnv
 }
 
 type envBase struct {
-	phase         Phase
+	mode          SynthMode
 	graph         cfg.VersionedGraph
 	bindings      *bind.BindingTable
 	types         flow.TypeFacts
-	solution      *flow.Solution
 	refinements   RefinementFacts
 	typeNames     *scope.State
 	moduleAliases map[cfg.SymbolID]string
@@ -103,12 +102,12 @@ func (c *envCommon) withGlobalTypeOverlay(overlay globalenv.TypeOverlay) envComm
 	return envCommon{base: c.base.withGlobalTypeOverlay(overlay)}
 }
 
-// Phase returns the current checking phase.
-func (c *envCommon) Phase() Phase {
+// SynthMode returns the current synthesis view.
+func (c *envCommon) SynthMode() SynthMode {
 	if c == nil {
-		return PhaseScopeCompute
+		return SynthModeDeclared
 	}
-	return c.base.phase
+	return c.base.mode
 }
 
 // Graph returns the versioned CFG graph.
@@ -125,14 +124,6 @@ func (c *envCommon) Types() flow.TypeFacts {
 		return nil
 	}
 	return c.base.types
-}
-
-// Consts returns the flow solution for constant value lookup.
-func (c *envCommon) Consts() *flow.Solution {
-	if c == nil {
-		return nil
-	}
-	return c.base.solution
 }
 
 // Refinements returns the refinement facts provider.
@@ -201,12 +192,12 @@ func (c *envCommon) GlobalTypeOverlay() globalenv.TypeOverlay {
 	return c.base.globalTypes.Clone()
 }
 
-// DeclaredEnvImpl is the concrete declared-phase environment.
+// DeclaredEnvImpl is the concrete declared/static environment.
 type DeclaredEnvImpl struct {
 	envCommon
 }
 
-// NarrowEnvImpl is the concrete narrowing-phase environment.
+// NarrowEnvImpl is the concrete flow-refined environment.
 type NarrowEnvImpl struct {
 	envCommon
 }
@@ -216,20 +207,20 @@ var _ BaseEnv = (*NarrowEnvImpl)(nil)
 var _ DeclaredEnv = (*DeclaredEnvImpl)(nil)
 var _ NarrowEnv = (*NarrowEnvImpl)(nil)
 
-// Phase returns the current checking phase.
-func (e *DeclaredEnvImpl) Phase() Phase {
+// SynthMode returns the current synthesis view.
+func (e *DeclaredEnvImpl) SynthMode() SynthMode {
 	if e == nil {
-		return PhaseScopeCompute
+		return SynthModeDeclared
 	}
-	return e.envCommon.Phase()
+	return e.envCommon.SynthMode()
 }
 
-// Phase returns the current checking phase.
-func (e *NarrowEnvImpl) Phase() Phase {
+// SynthMode returns the current synthesis view.
+func (e *NarrowEnvImpl) SynthMode() SynthMode {
 	if e == nil {
-		return PhaseScopeCompute
+		return SynthModeDeclared
 	}
-	return e.envCommon.Phase()
+	return e.envCommon.SynthMode()
 }
 
 // Graph returns the versioned CFG graph.
@@ -262,22 +253,6 @@ func (e *NarrowEnvImpl) Types() flow.TypeFacts {
 		return nil
 	}
 	return e.envCommon.Types()
-}
-
-// Consts returns the flow solution for constant value lookup.
-func (e *DeclaredEnvImpl) Consts() *flow.Solution {
-	if e == nil {
-		return nil
-	}
-	return e.envCommon.Consts()
-}
-
-// Consts returns the flow solution for constant value lookup.
-func (e *NarrowEnvImpl) Consts() *flow.Solution {
-	if e == nil {
-		return nil
-	}
-	return e.envCommon.Consts()
 }
 
 // Refinements returns the refinement facts provider.
@@ -418,7 +393,7 @@ func (e *NarrowEnvImpl) WithGlobalTypeOverlay(overlay globalenv.TypeOverlay) Bas
 	return &next
 }
 
-// DeclaredEnvConfig holds inputs for building a declared-phase Env.
+// DeclaredEnvConfig holds inputs for building a declared/static Env.
 type DeclaredEnvConfig struct {
 	Graph         cfg.VersionedGraph
 	Bindings      *bind.BindingTable
@@ -433,13 +408,12 @@ type DeclaredEnvConfig struct {
 	FunctionType  typefacts.FunctionTypeLookup
 }
 
-// NarrowEnvConfig holds inputs for building a narrowing-phase Env.
+// NarrowEnvConfig holds inputs for building a flow-refined Env.
 type NarrowEnvConfig struct {
 	Graph         cfg.VersionedGraph
 	Bindings      *bind.BindingTable
 	DeclaredTypes flow.DeclaredTypes
 	AnnotatedVars map[cfg.SymbolID]bool
-	Solution      *flow.Solution
 	BaseScope     *scope.State
 	Refinements   RefinementFacts
 	ModuleAliases map[cfg.SymbolID]string
@@ -450,11 +424,10 @@ type NarrowEnvConfig struct {
 }
 
 func newEnvBase(
-	phase Phase,
+	mode SynthMode,
 	graph cfg.VersionedGraph,
 	bindings *bind.BindingTable,
 	types flow.TypeFacts,
-	solution *flow.Solution,
 	refinements RefinementFacts,
 	typeNames *scope.State,
 	moduleAliases map[cfg.SymbolID]string,
@@ -466,11 +439,10 @@ func newEnvBase(
 		globalOverlay,
 	)
 	return envBase{
-		phase:         phase,
+		mode:          mode,
 		graph:         graph,
 		bindings:      bindings,
 		types:         types,
-		solution:      solution,
 		refinements:   refinements,
 		typeNames:     typeNames,
 		moduleAliases: moduleAliases,
@@ -478,13 +450,13 @@ func newEnvBase(
 	}
 }
 
-// NewDeclaredEnv creates a declared-phase Env.
+// NewDeclaredEnv creates a declared/static Env.
 func NewDeclaredEnv(cfg DeclaredEnvConfig) *DeclaredEnvImpl {
 	if cfg.Graph == nil {
 		return nil
 	}
 	base := newEnvBase(
-		PhaseScopeCompute,
+		SynthModeDeclared,
 		cfg.Graph,
 		cfg.Bindings,
 		typefacts.New(typefacts.Config{
@@ -493,7 +465,6 @@ func NewDeclaredEnv(cfg DeclaredEnvConfig) *DeclaredEnvImpl {
 			Literals:      cfg.LiteralTypes,
 			AnnotatedVars: cfg.AnnotatedVars,
 		}),
-		nil,
 		refinementFactsOrNil(cfg.Refinements),
 		cfg.BaseScope,
 		cfg.ModuleAliases,
@@ -503,13 +474,13 @@ func NewDeclaredEnv(cfg DeclaredEnvConfig) *DeclaredEnvImpl {
 	return &DeclaredEnvImpl{envCommon: envCommon{base: base}}
 }
 
-// NewNarrowEnv creates a narrowing-phase Env.
+// NewNarrowEnv creates a flow-refined Env.
 func NewNarrowEnv(cfg NarrowEnvConfig) *NarrowEnvImpl {
 	if cfg.Graph == nil {
 		return nil
 	}
 	base := newEnvBase(
-		PhaseNarrowing,
+		SynthModeFlow,
 		cfg.Graph,
 		cfg.Bindings,
 		typefacts.New(typefacts.Config{
@@ -517,9 +488,7 @@ func NewNarrowEnv(cfg NarrowEnvConfig) *NarrowEnvImpl {
 			FunctionType:  cfg.FunctionType,
 			Literals:      cfg.LiteralTypes,
 			AnnotatedVars: cfg.AnnotatedVars,
-			Solution:      cfg.Solution,
 		}),
-		cfg.Solution,
 		refinementFactsOrNil(cfg.Refinements),
 		cfg.BaseScope,
 		cfg.ModuleAliases,
@@ -541,20 +510,19 @@ type ReturnInferenceEnvConfig struct {
 	FunctionType  typefacts.FunctionTypeLookup
 }
 
-// NewReturnInferenceEnv creates a declared-phase Env for return inference.
+// NewReturnInferenceEnv creates a declared/static Env for return inference.
 func NewReturnInferenceEnv(cfg ReturnInferenceEnvConfig) *DeclaredEnvImpl {
 	if cfg.Graph == nil {
 		return nil
 	}
 	base := newEnvBase(
-		PhaseScopeCompute,
+		SynthModeDeclared,
 		cfg.Graph,
 		cfg.Bindings,
 		typefacts.New(typefacts.Config{
 			Declared:     cfg.DeclaredTypes,
 			FunctionType: cfg.FunctionType,
 		}),
-		nil,
 		nilRefinementFacts{},
 		cfg.BaseScope,
 		cfg.ModuleAliases,

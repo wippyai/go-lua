@@ -26,7 +26,7 @@ import (
 // These tests drive the WHOLE canonical intraprocedural solver end to end on
 // real Lua functions: input.BuildFromFunction assembles the inputs, transfer.New
 // builds the real per-node transfer, and equation.NewBuilder runs the single
-// generic worklist over the combined point/contract graph. No legacy flow is
+// generic worklist over the combined point/contract graph. No alternate flow is
 // involved.
 
 // solveFn is the end-to-end wiring under test: real inputs + real transfer +
@@ -51,8 +51,8 @@ func solveFn(t *testing.T, params []string, paramTypes []ast.TypeExpr, resolve i
 }
 
 // TestCanonical_DeadlockLoopTerminates is gate (a), the key result: a counting
-// loop whose counter grows each iteration deadlocks the legacy runSCC (which has
-// no data-axis widening). The canonical solver TERMINATES because the numeric
+// loop whose counter grows each iteration deadlocks a join-only SCC (which has
+// no data-axis widening). The flow engine TERMINATES because the numeric
 // domain's Cousot widen fires at the loop-header feedback-vertex set, cutting the
 // strictly ascending counter bound to unconstrained. The -timeout on the test
 // process is the only backstop; convergence is by design, not a cap.
@@ -90,8 +90,8 @@ return count
 	countKey := constraint.PathKey(symbolKey(countSym))
 
 	// Observe the largest counter upper bound arriving at any point. Under pure
-	// Join (the widen-free legacy runSCC) this ascends without bound and never
-	// converges; the canonical solver converges because WidenAt fires at the
+	// Join (a widen-free SCC) this ascends without bound and never
+	// converges; the flow engine converges because WidenAt fires at the
 	// loop-header feedback-vertex set. A max above the initial step proves the
 	// chain genuinely ascended (the deadlock precondition), not that it
 	// converged on its own.

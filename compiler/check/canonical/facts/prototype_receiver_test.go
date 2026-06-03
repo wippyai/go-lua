@@ -5,10 +5,10 @@ import (
 
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/cfg"
-	"github.com/wippyai/go-lua/compiler/check/abstract/trace"
 	"github.com/wippyai/go-lua/compiler/check/api"
 	"github.com/wippyai/go-lua/compiler/check/canonical/ref"
 	"github.com/wippyai/go-lua/compiler/check/domain/metatable"
+	"github.com/wippyai/go-lua/compiler/check/domain/trace"
 )
 
 func TestBuildPreTransferStoresPrototypeReceiverFactsForClassIndexPattern(t *testing.T) {

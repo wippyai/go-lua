@@ -1,6 +1,6 @@
 // Package canonical wires the single-fixed-point type-flow engine into the
-// Checker. The Driver runs the canonical engine over a whole module as the
-// Checker's only flow.
+// Checker. The Driver runs that engine over a whole module as the Checker's only
+// flow.
 //
 // The engine itself is built as a standalone leaf in the sub-packages:
 //
@@ -17,12 +17,12 @@
 // the call graph from each function's call sites. It then drives the
 // interprocedural fixed point by summarizing every module function.
 //
-// SCOPE (component 11a): the Driver RUNS the canonical flow over a whole module
-// and proves it TERMINATES via the value/numeric widening at loop headers. It computes and
-// memoizes the per-function summaries; it does NOT yet bridge the converged
-// state to the diagnostic passes — that is component 11b. A function whose body
-// uses a node kind the per-node transfer defers carries that node's state forward
-// unchanged: sound (precision loss, never unsoundness) and still terminating.
+// The Driver runs the flow over a whole module and relies on value/numeric
+// widening at loop headers for termination. It computes and memoizes
+// per-function summaries, then bridges converged state to the diagnostic passes.
+// A function whose body uses a deferred node kind carries that node's state
+// forward unchanged: sound precision loss, never unsoundness, and still
+// terminating.
 package canonical
 
 import (
@@ -56,11 +56,10 @@ import (
 	"github.com/wippyai/go-lua/compiler/check/domain/paramevidence"
 	flowpath "github.com/wippyai/go-lua/compiler/check/domain/path"
 	"github.com/wippyai/go-lua/compiler/check/modules"
-	checkphase "github.com/wippyai/go-lua/compiler/check/phase"
 	"github.com/wippyai/go-lua/compiler/check/scope"
+	phasecore "github.com/wippyai/go-lua/compiler/check/synth/core"
 	"github.com/wippyai/go-lua/compiler/check/synth/ops"
-	phasecore "github.com/wippyai/go-lua/compiler/check/synth/phase/core"
-	"github.com/wippyai/go-lua/compiler/check/synth/phase/resolve"
+	"github.com/wippyai/go-lua/compiler/check/synth/resolve"
 	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/contract"
 	"github.com/wippyai/go-lua/types/db"
@@ -139,7 +138,7 @@ type Driver struct {
 	// definitions. Without it a named annotation referring to a module-local type
 	// (a union alias, a record alias) resolves to an unresolved typ.Ref, which
 	// blocks field-on-named-type and discriminant narrowing. It is populated per Run
-	// from the module's TypeDef nodes, reusing the legacy scope.EnrichWithTypeDefs
+	// from the module's TypeDef nodes, reusing scope.EnrichWithTypeDefs
 	// machinery.
 	moduleScope *scope.State
 
@@ -167,9 +166,9 @@ type Driver struct {
 	// miss) and a shadowed type resolve to the wrong binding.
 	pointScopes map[uint64]map[cfg.Point]*scope.State
 
-	// scopeDepthExceeded records whether ComputeScopes hit MaxScopeDepth for each
+	// scopeDepthExceeded records whether BuildPointScopes hit MaxScopeDepth for each
 	// graph while building pointScopes. It feeds FuncResult.DepthLimitExceeded and
-	// optional checker diagnostics without creating a FlowSolution-shaped carrier.
+	// optional checker diagnostics without creating a concrete solver carrier.
 	scopeDepthExceeded map[uint64]bool
 
 	// activeProgram and activeCtx are the in-flight Run's program and db query
@@ -177,7 +176,7 @@ type Driver struct {
 	// intraprocedural fixpoint solves: the callee resolution needs the module-wide
 	// function signatures (activeProgram), and the call pipeline needs the query
 	// context. They are set before the summary loop and cleared after it, so a
-	// transfer built in phase 1 resolves calls against the fully built program.
+	// transfer resolves calls against the fully built program.
 	activeProgram *program
 	activeCtx     *db.QueryContext
 
@@ -228,14 +227,14 @@ func (d *Driver) summaryReader() summary.Reader {
 	return summary.NewReader(d.activeQueries, d.activeCtx, d.summaries)
 }
 
-// Run analyzes a module chunk with the canonical engine.
+// Run analyzes a module chunk with the flow engine.
 //
-// It first reproduces the legacy module setup so the session sees the same graph
+// It first builds the module setup so the session sees the same graph
 // hierarchy (root chunk function, bound globals, registered CFG hierarchy), then
 // walks the hierarchy to enumerate every module function, builds the
 // summary.Program over them, and drives the interprocedural summary fixed point
 // by summarizing each function. The fixpoint converges by the engine's lattice
-// widening; on a module the legacy flow deadlocks, this returns.
+// widening; on a module where a join-only iteration does not terminate, this returns.
 func (d *Driver) Run(sess api.AnalysisSession, chunk []ast.Stmt) {
 	if sess == nil {
 		return
@@ -289,7 +288,7 @@ func (d *Driver) Run(sess api.AnalysisSession, chunk []ast.Stmt) {
 	// annotation resolves: a named annotation referring to a module-local `type X`
 	// must resolve to the defined type, not an unresolved typ.Ref. This feeds every
 	// resolveType call below (parameter contracts, declared returns, function
-	// signatures) through the same scope the legacy flow puts type defs in.
+	// signatures) through the same scope used for type definitions.
 	d.moduleScope = d.buildModuleScope(sess, rootGraph)
 
 	// Compute the block-aware per-point type-name scope for every graph in the
@@ -789,25 +788,17 @@ func (d *Driver) addDiagnosticContext(key summary.Key) {
 	d.diagnosticContexts[ref] = append(d.diagnosticContexts[ref], key)
 }
 
-// bridgeResults populates the session's per-function results from the converged
-// canonical state, so the SAME legacy diagnostic passes (Checker.runPasses) run on
-// canonical-computed facts. This is the diagnostic bridge (component 11b): it
-// maximizes parity by reusing the diagnostic layer unchanged, so any diagnostic
-// difference between the flows reflects ONLY fact divergence (transfer fidelity),
-// not a diagnostic-format difference.
+// bridgeResults populates the session's per-function results from converged flow
+// state so the existing diagnostic passes (Checker.runPasses) run on solved
+// facts.
 //
-// What it bridges from the canonical state vs. defaults is documented on the
+// What it bridges from solved state vs. defaults is documented on the
 // field-population helper (buildFuncResult). The defaulted fields are recorded
 // transfer/bridge gaps, not fabricated facts. The bridge is scoped, so the diff a
-// caller measures has two shapes, both transfer-fidelity worklist items:
-//
-//   - legacy-only diagnostics: a check the canonical flow cannot yet make because
-//     the bridge defaults the fact it reads (the solved-phase pass no-ops);
-//   - canonical-only diagnostics: a value-operand pass that runs on the bridged
-//     Graph+Evidence reads the empty observation surface as the value-domain
-//     unknown and flags it, where the legacy solved facts resolved the concrete
-//     type. These resolve as the bridge routes the per-point value facts (return
-//     and declared-parameter typing) into the observation surface.
+// caller measures comes from transfer-fidelity worklist items: a diagnostic pass
+// can no-op when the bridge defaults a fact it reads, or it can flag an unknown
+// when the observation surface has not yet received the per-point value fact it
+// needs.
 func (d *Driver) bridgeResults(sess api.AnalysisSession, prog *program, queries *summary.Queries) {
 	results := sess.ResultsMap()
 	if results == nil {
@@ -827,11 +818,11 @@ func (d *Driver) bridgeResults(sess api.AnalysisSession, prog *program, queries 
 	}
 }
 
-// buildFuncResult assembles one function's api.FuncResult from the converged
-// canonical state, in the shape the legacy diagnostic passes consume.
+// buildFuncResult assembles one function's api.FuncResult from converged flow
+// state in the shape the diagnostic passes consume.
 //
-// BRIDGED from the canonical engine (sound inputs and computed facts):
-//   - Graph: the function's CFG, the same graph the canonical solve ranged over.
+// BRIDGED from the flow engine (sound inputs and computed facts):
+//   - Graph: the function's CFG, the same graph the solve ranged over.
 //   - Evidence: the raw graph-event trace (assignments, calls, returns, branches,
 //     identifier uses). It is a sound INPUT the canonical input builder already
 //     consumes, not a solved fact, so surfacing it to the passes fabricates
@@ -839,9 +830,8 @@ func (d *Driver) bridgeResults(sess api.AnalysisSession, prog *program, queries 
 //   - GlobalTypes: the immutable value namespace of predeclared globals.
 //
 // SOLVER-SHAPED CARRIERS STILL NOT FABRICATED:
-//   - FlowSolution remains nil: canonical exposes solved flow through
-//     FlowProjection (api.FlowOps), not by constructing a solver-shaped result
-//     it did not actually compute.
+//   - Solved flow is exposed through FlowProjection (api.FlowOps), not by
+//     constructing a concrete solver result it did not actually compute.
 //   - FnRefinement is a summary projection, not a Solve/Narrow output.
 //   - NarrowSynth is an observation facade over the same facts/resolver used by
 //     diagnostics; it is not a second type checker.
@@ -850,8 +840,8 @@ func (d *Driver) bridgeResults(sess api.AnalysisSession, prog *program, queries 
 // same semantics: per-point env facts seed the observation surface, return tuples
 // become ReturnRelations/ReturnTypes, contextual call signatures become
 // CallExpectedArgs, and solved body-demand parameter contracts become call-edge
-// CallContracts. They are not forced into FlowSolution, NarrowSynth, callable
-// signatures, or FlowEvidence; those would fabricate solver-shaped structures or
+// CallContracts. They are not forced into NarrowSynth, callable signatures, or
+// FlowEvidence; those would fabricate solver-shaped structures or
 // mutate immutable extraction evidence.
 func (d *Driver) buildFuncResult(sess api.AnalysisSession, prog *program, queries *summary.Queries, ref summary.FuncRef) *api.FuncResult {
 	g := prog.Graph(ref)
@@ -864,9 +854,7 @@ func (d *Driver) buildFuncResult(sess api.AnalysisSession, prog *program, querie
 
 	// Observation surface: project the converged FunctionState into the per-point /
 	// per-symbol facts and the declared-type inputs the diagnostic passes query
-	// through observation.Projector. The flow.Solution stays nil (the canonical flow
-	// has no path-sensitive narrowing solution); the Projector reads the per-point
-	// facts and declared types instead, which are the canonical-computed types.
+	// through observation.Projector. The Projector reads those surfaces directly.
 	//
 	// The immutable annotation/global facts are computed once while assembling the
 	// canonical input carrier. Clone them here before adding bridge-only function
@@ -1871,7 +1859,7 @@ func (d *Driver) buildProgram(sess api.AnalysisSession, rootGraph *cfg.Graph, mo
 			d.addFunction(sess, p, ref, g)
 		}
 	}
-	// Phase 3: derive finite module facts after name resolution. Pre-transfer
+	// Derive finite module facts after name resolution. Pre-transfer
 	// facts feed transfer construction; the full fact set follows once transfers
 	// can expose their body-local effects.
 	prevActive := d.activeProgram
@@ -2151,10 +2139,10 @@ func (d *Driver) returnScope(g *cfg.Graph) *scope.State {
 // buildModuleScope enriches the configured base scope with every type definition
 // the module declares, so a named annotation referring to a module-local type
 // resolves structurally. It walks the module's CFG hierarchy (root chunk plus
-// every nested function) and applies the legacy scope.EnrichWithTypeDefs over each
+// every nested function) and applies scope.EnrichWithTypeDefs over each
 // graph's TypeDef nodes, resolving each definition through the same annotation
 // resolver the rest of the driver uses. Accumulating across the hierarchy makes a
-// module-level alias visible to every function body, matching the legacy flow,
+// module-level alias visible to every function body,
 // which seeds each function's base scope from the enclosing type namespace.
 func (d *Driver) buildModuleScope(sess api.AnalysisSession, rootGraph *cfg.Graph) *scope.State {
 	base := d.cfg.Stdlib
@@ -2191,8 +2179,8 @@ func (d *Driver) buildPointScopes(g *cfg.Graph) map[cfg.Point]*scope.State {
 
 // buildHierarchyScopes computes the block-aware per-point type-name scope for
 // every graph in the module's CFG hierarchy, keyed by graph ID. It walks the
-// hierarchy from the root chunk; each graph's points are scoped by the legacy
-// block-aware RPO walk (ComputeScopes), which enters a child scope at every
+// hierarchy from the root chunk; each graph's points are scoped by the
+// block-aware RPO walk (BuildPointScopes), which enters a child scope at every
 // block/loop body, adds a `type X` to the scope active at its definition point,
 // and POPS the block's locals on scope exit. A nested function's base scope is its
 // parent's block-aware exit scope (the type namespace visible where the nested
@@ -2207,7 +2195,7 @@ func (d *Driver) buildHierarchyScopes(sess api.AnalysisSession, rootGraph *cfg.G
 
 	// The root chunk's base is the configured stdlib scope (its predeclared globals
 	// and imported type names), NOT the flat module scope: the module's own top-level
-	// `type X` defs are re-introduced block-aware as ComputeScopes encounters them in
+	// `type X` defs are re-introduced block-aware as BuildPointScopes encounters them in
 	// RPO, so a block-local or forward type is not visible at points where Lua's
 	// lexical rules exclude it. FunctionContextScope also carries function-local
 	// context such as typed varargs for observation.
@@ -2218,7 +2206,7 @@ func (d *Driver) buildHierarchyScopes(sess api.AnalysisSession, rootGraph *cfg.G
 		GraphForFunc: sess.GetOrBuildCFG,
 		ChildState: func(parent topology.HierarchyStateNode[*scope.State], nested cfg.NestedFunc, _ *cfg.Graph) *scope.State {
 			// A nested function defined in this graph sees the type namespace visible at
-			// its definition point. ComputeScopes pops a block's locals on exit, so the
+			// its definition point. BuildPointScopes pops a block's locals on exit, so the
 			// scope at the function-definition point carries the enclosing module-level
 			// types but not a sibling block's locals.
 			exitScope := parent.State
@@ -2262,7 +2250,7 @@ func (d *Driver) scopeAtNestedDef(scopes map[cfg.Point]*scope.State, g *cfg.Grap
 	return found
 }
 
-// computePointScopes runs the legacy block-aware scope walk over g from base,
+// computePointScopes runs the block-aware scope walk over g from base,
 // resolving each `type X` through the Run's single-sourced typedef resolver so a
 // per-point scope shares the same recursive family the module scope carries. The
 // walk enters a child scope at every block body and pops it on exit, giving each
@@ -2272,16 +2260,8 @@ func (d *Driver) computePointScopes(g *cfg.Graph, base *scope.State) map[cfg.Poi
 		return nil
 	}
 	defResolver := d.typeDefResolver()
-	services := checkphase.ScopeServicesFuncs{
-		TypeResolver: func(info *cfg.TypeDefInfo, _ cfg.Point, sc *scope.State) typ.Type {
-			if info == nil || info.TypeExpr == nil {
-				return nil
-			}
-			return defResolver(info.Name, info.TypeExpr, scope.ToTypeParamExprs(info.TypeParams), sc)
-		},
-	}
 	depthExceeded := false
-	scopes := checkphase.ComputeScopes(g, base, services, checkphase.ScopeOptions{
+	scopes := scope.BuildPointScopes(g, base, defResolver, scope.PointScopeOptions{
 		MaxDepth:      d.cfg.MaxScopeDepth,
 		DepthExceeded: &depthExceeded,
 	})
@@ -2481,7 +2461,7 @@ func (ct callTyper) globalNameType(name string) typ.Type {
 
 // opsResolver adapts the driver to the transfer's OperatorResolver seam: it routes
 // arithmetic/relational operator typing through the shared TypeOps engine, the same
-// resolver the legacy flow uses (core.QueryResolver). It holds the driver and reads
+// resolver used by expression typing (core.QueryResolver). It holds the driver and reads
 // the query context lazily at call time, because the transfers are built during
 // buildProgram before the run's activeCtx is set. A run with no resolved context or
 // query ops yields nil, so the transfer falls back to its structural numeric default.
@@ -3470,8 +3450,7 @@ func (d *Driver) inferredReturnTypes(ref summary.FuncRef) []typ.Type {
 }
 
 // MethodFuncType builds a method definition's signature with the implicit leading
-// `self` parameter typed as the receiver's class. It mirrors the legacy method
-// self-type resolution (resolveSelfTypeForMethod): the receiver name `T` in
+// `self` parameter typed as the receiver's class. The receiver name `T` in
 // `function T:m()` binds the instance contract in the type namespace, so self is
 // the named type `T`, and the declared parameter/return annotations follow. This
 // is the callable the class field `T.m` holds.
@@ -3484,7 +3463,7 @@ func (ft funcTyper) MethodFuncType(info *cfg.FuncDefInfo) *typ.Function {
 
 // genericScope registers fn's generic type parameters (<T, U>) on builder and
 // returns the resolution scope in which the parameter/return annotations resolve
-// those names to type-parameter references. Reusing the legacy type-param scope
+// those names to type-parameter references. Reusing the type-param scope
 // (typ.NewTypeParam + scope.WithTypeParams) makes a generic function's signature
 // carry TypeParams, so the call pipeline infers the type arguments from the call's
 // argument types (identity(42) instantiates T=number). A non-generic function

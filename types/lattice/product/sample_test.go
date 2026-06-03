@@ -5,11 +5,11 @@ import "github.com/wippyai/go-lua/types/lattice"
 // sign is a tiny finite element lattice used to drive the combinator law
 // suites. It is the standard sign lattice:
 //
-//	          sTop
-//	        /   |   \
-//	     sNeg  sZero sPos
-//	        \   |   /
-//	         sBottom
+//	     sTop
+//	   /   |   \
+//	sNeg  sZero sPos
+//	   \   |   /
+//	    sBottom
 //
 // The three middle elements are pairwise incomparable; Join of two distinct
 // middle elements is sTop, Meet is sBottom. Finite height, so Widen = Join is

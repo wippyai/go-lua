@@ -15,12 +15,12 @@ import (
 //   - Integer index: "x[0]" becomes Path{Root: "x", Segments: [[0]]}
 //   - String index: "x[\"key\"]" becomes Path{Root: "x", Segments: [["key"]]}
 //
-// The returned Path has Symbol=0 and MUST NOT be used for value identity in
-// the flow solver. For identity-aware path resolution that binds to SSA versions,
-// use PathFromExprFull with a SymbolResolver or pathkey.Resolver directly.
+// The returned Path has Symbol=0 and MUST NOT be used for value identity.
+// For identity-aware path resolution that binds to SSA versions, use
+// PathFromExprFull with a SymbolResolver or pathkey.Resolver directly.
 //
 // Returns (Path, true) on successful parse, or (empty Path, false) on error.
-// The returned Path has Symbol=0 and MUST NOT be used for value identity in the solver.
+// The returned Path has Symbol=0 and MUST NOT be used for value identity.
 func parsePath(path string) (constraint.Path, bool) {
 	if path == "" {
 		return constraint.Path{}, false
@@ -40,4 +40,18 @@ func parsePath(path string) (constraint.Path, bool) {
 	}
 
 	return constraint.Path{Root: root, Segments: segs}, true
+}
+
+// segmentsPrefix reports whether prefix's segments match the first segments of
+// full.
+func segmentsPrefix(prefix, full []constraint.Segment) bool {
+	if len(prefix) > len(full) {
+		return false
+	}
+	for i := range prefix {
+		if prefix[i] != full[i] {
+			return false
+		}
+	}
+	return true
 }

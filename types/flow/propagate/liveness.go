@@ -47,8 +47,7 @@ type liveSets struct {
 }
 
 // ConditionProjector applies the SSA-version relevance abstraction to a
-// condition at a CFG point. It is shared by the legacy condition propagator and
-// the canonical product equation solver so both fixed points use the same
+// condition at a CFG point. The product equation solver uses this as the single
 // condition-vocabulary bound instead of carrying parallel projection logic.
 type ConditionProjector struct {
 	live *liveSets

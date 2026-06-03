@@ -18,8 +18,8 @@ import (
 )
 
 // StaticPathKey is an opaque, comparable key for a statically-known suffix path.
-// It keeps guard-domain maps keyed by structural path identity instead of
-// legacy dotted strings.
+// It keeps guard-domain maps keyed by structural path identity instead of dotted
+// display strings.
 type StaticPathKey struct {
 	suffix constraint.PathKey
 	valid  bool
@@ -59,7 +59,7 @@ func (k StaticPathKey) Suffix() string {
 	return string(k.suffix)
 }
 
-// Display returns the legacy human spelling while keeping the stored key opaque.
+// Display returns the human spelling while keeping the stored key opaque.
 func (k StaticPathKey) Display() string {
 	if !k.valid {
 		return ""

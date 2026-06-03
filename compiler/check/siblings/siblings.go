@@ -121,17 +121,17 @@ func (b BuildServicesFuncs) EnrichRecord(rec *typ.Record, sym cfg.SymbolID) typ.
 
 // Build constructs the sibling types map for a scope group.
 //
-// The algorithm proceeds in four phases:
+// The algorithm proceeds in ordered steps:
 //
-// Phase 1 - Seed from Previous: Copy types from SiblingTypesPrev to preserve
+// Step 1 - Seed from Previous: Copy types from SiblingTypesPrev to preserve
 // types accumulated in prior fixpoint iterations. This ensures monotonicity:
 // types only grow more precise, never regress.
 //
-// Phase 2 - Captured Variables: For each function, find captured variables
+// Step 2 - Captured Variables: For each function, find captured variables
 // from the parent scope and add their types. This enables nested functions
 // to see types of variables defined in enclosing scopes.
 //
-// Phase 3 - Sibling Functions: Add canonical function types for locally-defined siblings.
+// Step 3 - Sibling Functions: Add function types for locally-defined siblings.
 //
 // The result maps each symbol to its best-known type. Functions in the group
 // use this map as an overlay during type checking to resolve sibling references.
@@ -254,7 +254,7 @@ func siblingFunctionType(c BuildConfig, entry FuncEntry) typ.Type {
 	if entry.Symbol == 0 {
 		return nil
 	}
-	if fnType := functionfact.SiblingTypeProjection(c.FunctionFacts, entry.Symbol, api.PhaseScopeCompute); fnType != nil {
+	if fnType := functionfact.SiblingTypeProjection(c.FunctionFacts, entry.Symbol, api.SynthModeDeclared); fnType != nil {
 		return fnType
 	}
 	if c.Services == nil {

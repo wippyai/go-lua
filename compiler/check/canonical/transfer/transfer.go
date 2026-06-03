@@ -1,23 +1,20 @@
-// Package transfer is the real per-node transfer of the canonical
-// intraprocedural solver: the NodeTransfer the equation graph injects.
+// Package transfer is the per-node transfer of the intraprocedural solver: the
+// NodeTransfer the equation graph injects.
 //
 // It implements equation.NodeTransfer by interpreting one CFG node's syntactic
 // evidence against the incoming flow.PointState and returning the post-node
-// state. It carries no fixed-point driver and no Solution-style mutable store:
+// state. It carries no fixed-point driver and no private mutable store:
 // the equation.Builder owns the worklist, the predecessor join, and the
 // widening; this transfer is a pure function of (point, incoming, contracts).
 //
-// The per-node semantics are the sound value/condition/numeric effects of the
-// legacy types/flow/transfer.go Solution methods, lifted off that driver and
-// expressed directly over the canonical PointState domains:
+// The per-node semantics are expressed directly over PointState domains:
 //
 //   - value: the Env maps a variable's symbol key to its product.AbstractValue.
 //     A local declaration or assignment writes the source expression's value;
 //     reads project the stored value. Joins and widens are the domain's
 //     (product.Domain via the Env MapLattice), so a loop that accumulates a
 //     growing type converges by the value-domain ACC widening at the loop-header
-//     feedback-vertex set — the exact termination the legacy widen-free runSCC
-//     lacks.
+//     feedback-vertex set.
 //   - numeric: a counter incremented by a constant in a loop body raises its
 //     relational bound; the numeric domain's widen at the loop header cuts the
 //     unbounded ascent to Top.
@@ -43,7 +40,6 @@ import (
 
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/cfg"
-	"github.com/wippyai/go-lua/compiler/check/abstract/literal"
 	"github.com/wippyai/go-lua/compiler/check/callsite"
 	"github.com/wippyai/go-lua/compiler/check/canonical/input"
 	canonicalplace "github.com/wippyai/go-lua/compiler/check/canonical/place"
@@ -51,6 +47,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/check/domain/fieldkey"
 	"github.com/wippyai/go-lua/compiler/check/domain/guard"
 	"github.com/wippyai/go-lua/compiler/check/domain/iteration"
+	"github.com/wippyai/go-lua/compiler/check/domain/literal"
 	"github.com/wippyai/go-lua/compiler/check/domain/metatable"
 	"github.com/wippyai/go-lua/compiler/check/domain/paramevidence"
 	domainpath "github.com/wippyai/go-lua/compiler/check/domain/path"
@@ -71,7 +68,7 @@ import (
 // DeferredNodeKinds names the CFG node kinds and source forms this transfer does
 // not yet interpret. Reaching one carries the incoming state forward unchanged
 // (sound: precision loss, not unsoundness). Listed for the follow-up that
-// extends coverage to the full legacy transfer.go surface.
+// extends current transfer coverage.
 //
 // Implemented (no longer deferred): field/index writes (t.f = v, t[k] = v) and the
 // read-back (product.WithField/WriteIndex/FieldOf/IndexOf over the Env);
@@ -81,7 +78,7 @@ import (
 // (x ~= nil, type(x) == k, x.kind == "tag") per branch edge via NarrowEdge
 // (narrow.go).
 var DeferredNodeKinds = []string{
-	"container/map mutators not represented by table.insert or spec-level ContainerElementUnion (table.remove)",
+	"container/map writes not represented by table.insert or spec-level ContainerElementUnion (table.remove)",
 	"generic-for iteration variable element typing",
 	"method-call receiver narrowing (unannotated self) and OnReturn argument refinement",
 	"logical-op (and/or) value flow and field-default (x.f or d) patterns",
@@ -123,14 +120,14 @@ type closureCaptureProvider interface {
 }
 
 // CallTyper types a call or method-call expression's Lua return vector. It is the
-// transfer's seam to the legacy call-typing machinery (ops.NewCallPipeline): the
-// driver implements it by resolving the callee/receiver type (from the module's
-// function signatures, predeclared globals, captured values, or the live Env via
-// the supplied resolver) and running the call pipeline, which infers generic type
-// arguments from the argument types, runs the cast/intercept chain, and produces
-// the multi-return tuple. The transfer owns reading the argument and receiver
-// values from the current Env; the CallTyper owns callee resolution and the
-// pipeline. It is optional: a nil typer leaves a call result untyped (the sound
+// transfer's seam to call typing (ops.NewCallPipeline): the driver implements it
+// by resolving the callee/receiver type (from the module's function signatures,
+// predeclared globals, captured values, or the live Env via the supplied
+// resolver) and running the call pipeline, which infers generic type arguments
+// from the argument types, runs the cast/intercept chain, and produces the
+// multi-return tuple. The transfer owns reading the argument and receiver values
+// from the current Env; the CallTyper owns callee resolution and the pipeline. It
+// is optional: a nil typer leaves a call result untyped (the sound
 // carry-forward), so a slot assigned from a call drops to the value-domain Top.
 //
 // exprType resolves an expression's value type against the live point Env (the
@@ -220,9 +217,9 @@ type ProductCallContext struct {
 	ClosureRefs      flow.ClosureRefs
 }
 
-// ExprType is the compatibility projection for legacy/provider code that still
-// needs a typ.Type resolver. It is an egress from the product context, not a
-// separate source of call evidence.
+// ExprType is the compatibility projection for provider code that still needs a
+// typ.Type resolver. It is an egress from the product context, not a separate
+// source of call evidence.
 func (c ProductCallContext) ExprType(e ast.Expr) typ.Type {
 	if c.ExprValue == nil {
 		return typ.Unknown
@@ -347,8 +344,8 @@ type Config struct {
 	// field untyped (the sound carry-forward).
 	FuncTyper FuncTyper
 	// CallTyper types a call/method-call expression's return vector through the
-	// legacy call pipeline. Nil leaves a call result untyped (the sound
-	// carry-forward), so a slot assigned from a call drops to the value-domain Top.
+	// call pipeline. Nil leaves a call result untyped (the sound carry-forward), so
+	// a slot assigned from a call drops to the value-domain Top.
 	CallTyper CallTyper
 	// TypeChecks are type-check value-narrowing binds precomputed from graph
 	// assignments such as `local val, err = T:is(x)`.
@@ -391,8 +388,8 @@ type Transfer struct {
 	// field untyped (the sound carry-forward).
 	funcTyper FuncTyper
 	// callTyper types a call/method-call expression's return vector through the
-	// legacy call pipeline. Nil leaves a call result untyped (the sound
-	// carry-forward), so a slot assigned from a call drops to the value-domain Top.
+	// call pipeline. Nil leaves a call result untyped (the sound carry-forward), so
+	// a slot assigned from a call drops to the value-domain Top.
 	callTyper CallTyper
 	// paramBySym maps a parameter's symbol ID to its parameter index, so a body
 	// use of a parameter routes demand to the right contract cell.
@@ -2005,8 +2002,7 @@ func staticIndexSegmentFromType(t typ.Type) (constraint.Segment, bool) {
 // applyNumericFor types the control variable of a numeric for-loop
 // (for i = init, limit[, step]). The loop body executes with the variable
 // ranging over the integer interval the control expressions describe, so the
-// variable's value is integer — the same type the legacy local-inference assigns
-// the numeric-for induction variable. The relational numeric component seeds the
+// variable's value is integer. The relational numeric component seeds the
 // variable's loop RANGE [init, limit] (not its init value): the body executes only
 // for an in-range index, so a body read `arr[i]` reads in range exactly when the
 // range lies within the container's length. Pinning the variable to its init would
@@ -2025,9 +2021,9 @@ func (t *Transfer) applyNumericFor(out *flow.PointState, info *cfg.AssignInfo) {
 // applyGenericFor types the iteration variables of a generic for-loop
 // (for i, v in ipairs(arr)) from the loop's iterator. It resolves the iterator
 // function's iteration effect and the iterated container's element/key/value types
-// through the CallTyper's IterVars seam (the same iteration-effect machinery the
-// legacy synthesizer uses), then writes each loop variable's element type into its Env
-// slot as a strong assignment update. The loop-header join/widening bounds the
+// through the CallTyper's IterVars seam, then writes each loop variable's element
+// type into its Env slot as a strong assignment update. The loop-header
+// join/widening bounds the
 // chain; the local target transfer must not join with its previous value or stale
 // optional/foreign arms can survive a fresh iterator yield. Every loop target
 // first emits an invalidation-only WriteEffect, so even an unrecognized iterator
@@ -2989,8 +2985,8 @@ func (t *Transfer) evalTable(
 ) (product.AbstractValue, bool) {
 	// A vararg-spread literal (`{...}`) is an array of the function's vararg element
 	// (`{...}` over `function f(...: number)` is number[]), the array shape the
-	// generic-for iteration reads. This is the array-like literal the legacy table
-	// synthesis builds from a vararg field; an ordinary positional literal (`{1, 2, 3}`)
+	// generic-for iteration reads. This is the array-like literal built from a
+	// vararg field; an ordinary positional literal (`{1, 2, 3}`)
 	// keeps the prior record over-approximation, so a tuple-arity index read is
 	// unaffected.
 	if elem := t.varargSpreadElement(e); elem != nil {
@@ -3390,14 +3386,13 @@ func (t *Transfer) evalUnary(
 }
 
 // evalLogical types a short-circuit logical expression (`a and b`, `a or b`)
-// through the shared logical-op semantics (ops.LogicalAndTyped / ops.LogicalOrTyped),
-// the same operator typing the legacy synthesizer uses. The result is the join of the
-// surviving operand values: for `or` the truthy part of the left joined with the right
-// (so `prefix or "["` yields the left's truthy type or the default), for `and` the
-// falsy part of the left joined with the right. Operand types resolve through
-// operandType, which falls back to gradual `any` for an unannotated parameter so a
-// default pattern over an undeclared parameter still types rather than dropping to
-// unknown.
+// through the shared logical-op semantics (ops.LogicalAndTyped /
+// ops.LogicalOrTyped). The result is the join of the surviving operand values:
+// for `or` the truthy part of the left joined with the right (so `prefix or "["`
+// yields the left's truthy type or the default), for `and` the falsy part of the
+// left joined with the right. Operand types resolve through operandType, which
+// falls back to gradual `any` for an unannotated parameter so a default pattern
+// over an undeclared parameter still types rather than dropping to unknown.
 func (t *Transfer) evalLogical(
 	out *flow.PointState,
 	e *ast.LogicalOpExpr,
@@ -3482,9 +3477,9 @@ func (t *Transfer) varargElem() typ.Type {
 	return sig.Variadic
 }
 
-// operandType resolves an expression's value type for an operator that reuses the
-// legacy typ.Type operator semantics (logical and/or). It is the value-domain
-// projection of evalExpr, with one refinement: an unannotated parameter the body has
+// operandType resolves an expression's value type for a typ.Type operator
+// semantics query (logical and/or). It is the value-domain projection of
+// evalExpr, with one refinement: an unannotated parameter the body has
 // not pinned resolves to gradual `any` rather than nil, so a default pattern over an
 // undeclared parameter (`prefix or "["`) joins against a usable left operand instead
 // of an undetermined one. A determined value projects normally; an undetermined,
@@ -3603,8 +3598,8 @@ func (t *Transfer) resolveExprValue(
 //     the loop-header join keeps the loop-entry arm, the merged upper bound
 //     strictly ascends each iteration (the deadlock shape); the value-domain
 //     numeric Widen at the loop-header feedback-vertex set then cuts the
-//     unbounded ascent to Top, which is what makes the canonical solver
-//     terminate where the widen-free legacy runSCC does not.
+//     unbounded ascent to Top, which is what makes the flow engine terminate
+//     where a widen-free SCC solve would not.
 //
 // Other numeric assignments leave the component untouched (the slot's prior
 // relation is dropped only when it is overwritten, which ApplyEqConst does).

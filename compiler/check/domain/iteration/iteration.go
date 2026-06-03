@@ -94,8 +94,7 @@ func VarTypes(kind effect.IteratorKind, count int, source typ.Type) ([]typ.Type,
 }
 
 // ProjectVarTypes projects generic-for loop variable types and preserves the
-// recognized-empty case. It is the canonical iterator-domain operation used by
-// the canonical transfer; VarTypes is the legacy two-state wrapper.
+// recognized-empty case. VarTypes is the simple success/failure wrapper.
 func ProjectVarTypes(kind effect.IteratorKind, count int, source typ.Type) (VarProjection, bool) {
 	if count <= 0 {
 		return VarProjection{}, false

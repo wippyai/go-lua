@@ -201,15 +201,15 @@ func (p Projector) assignmentPathSourceType(source ast.Expr, point cfg.Point, ta
 		return nil, false
 	}
 	selfReference := targetSym != 0 && p.exprReferencesSymbol(source, targetSym)
-	phase := flow.PathReadCurrent
+	view := flow.PathReadCurrent
 	if selfReference {
-		phase = flow.PathReadPre
+		view = flow.PathReadPre
 	}
 	obs := p.pathObservationFacts().ObservePath(flow.PathObservationQuery{
 		Point:               point,
 		Path:                path,
-		Phase:               phase,
-		StrictPhase:         selfReference,
+		View:                view,
+		StrictView:          selfReference,
 		AllowConditionProof: true,
 		PreserveProof:       p.cfg.PreserveProof,
 	})
@@ -217,7 +217,7 @@ func (p Projector) assignmentPathSourceType(source ast.Expr, point cfg.Point, ta
 }
 
 // factsNarrowedPathType resolves the flow-refined type of path from the per-point
-// Facts, the narrowing surface a Solution-less flow (the canonical flow) exposes.
+// Facts projection.
 // It reads the refined base symbol type and derives through the path segments the
 // same way pathDeclaredType walks the declared type, so a discriminant-narrowed
 // base.field read resolves to the narrowed variant's field. Returns false when no
@@ -226,8 +226,8 @@ func (p Projector) assignmentPathSourceType(source ast.Expr, point cfg.Point, ta
 // The root refinement is admitted only when it is a sound narrowing of the root's
 // declared type: an annotated symbol keeps a gradual (any) contract, and a refined
 // type that is not a subtype of the declared type is rejected. This matches the
-// concrete solver's annotated-symbol guard so a producer-neutral flow projection
-// does not replace a declared type with a refinement the assignment check must
+// annotated-symbol guard so a producer-neutral flow projection does not replace
+// a declared type with a refinement the assignment check must
 // still validate against the declaration (e.g. a value typed any must stay any at
 // an assignment source so an any -> concrete write is flagged, not silently
 // admitted).
@@ -452,7 +452,7 @@ func (p Projector) soundRootRefinement(point cfg.Point, sym cfg.SymbolID, refine
 		// any -> concrete write is flagged, not silently admitted by an inferred
 		// concrete value. But a path-sensitive type guard (a type(x) == k / T:is(x)
 		// success edge) narrows the gradual value to a concrete type; that refinement
-		// is sound to admit (the guard proved it). In the canonical flow the only way
+		// is sound to admit (the guard proved it). In the normal flow the only way
 		// a gradual symbol's refined value becomes a concrete strict-subtype is such a
 		// guard narrowing, so a non-placeholder refinement is the guarded narrowing
 		// and is admitted; a still-gradual refinement keeps the declared contract.

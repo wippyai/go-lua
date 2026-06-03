@@ -106,10 +106,6 @@ func indexCalls(t *testing.T, source string) *index.CallGraph {
 		Types:       engine,
 		Stdlib:      scope.New(),
 		GlobalTypes: nil,
-		Resolver: &core.FuncResolver{
-			FieldFunc: core.Field,
-			IndexFunc: core.Index,
-		},
 	}, WithLSPIndex(indexer))
 
 	checker.Check(source, "test.lua")

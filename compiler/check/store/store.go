@@ -6,9 +6,9 @@ import (
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/bind"
 	"github.com/wippyai/go-lua/compiler/cfg"
-	"github.com/wippyai/go-lua/compiler/check/abstract/trace"
 	"github.com/wippyai/go-lua/compiler/check/api"
 	"github.com/wippyai/go-lua/compiler/check/domain/interproc"
+	"github.com/wippyai/go-lua/compiler/check/domain/trace"
 	"github.com/wippyai/go-lua/compiler/check/scope"
 	"github.com/wippyai/go-lua/types/db"
 	"github.com/wippyai/go-lua/types/typ"
@@ -36,7 +36,7 @@ type SessionStore struct {
 
 	analysisContexts map[api.GraphKey]api.AnalysisContext
 
-	phase api.Phase
+	synthMode api.SynthMode
 }
 
 // InterprocState holds the graph-keyed interprocedural fact product for one iteration side.
@@ -107,28 +107,29 @@ func NewSessionStoreWithDB(database *db.DB) *SessionStore {
 		GraphParentHash:  make(map[uint64]uint64),
 		analysisContexts: make(map[api.GraphKey]api.AnalysisContext),
 		factInputs:       newFactInputs(database),
-		phase:            api.PhaseScopeCompute,
+		synthMode:        api.SynthModeDeclared,
 	}
 }
 
-// SetPhase sets the current check phase for fact-product access checks.
-func (s *SessionStore) SetPhase(phase api.Phase) {
+// SetSynthMode sets the current synthesis view for fact-product access checks.
+func (s *SessionStore) SetSynthMode(mode api.SynthMode) {
 	if s == nil {
 		return
 	}
-	s.phase = phase
+	s.synthMode = mode
 }
 
-// Phase returns the current check phase.
-func (s *SessionStore) Phase() api.Phase {
+// SynthMode returns the current synthesis view.
+func (s *SessionStore) SynthMode() api.SynthMode {
 	if s == nil {
-		return api.PhaseScopeCompute
+		return api.SynthModeDeclared
 	}
-	return s.phase
+	return s.synthMode
 }
 
-// WithPhase runs fn with a temporary phase, restoring the prior phase afterward.
-func (s *SessionStore) WithPhase(phase api.Phase, fn func()) {
+// WithSynthMode runs fn with a temporary synthesis view and restores the prior
+// view afterward.
+func (s *SessionStore) WithSynthMode(mode api.SynthMode, fn func()) {
 	if fn == nil {
 		return
 	}
@@ -136,10 +137,10 @@ func (s *SessionStore) WithPhase(phase api.Phase, fn func()) {
 		fn()
 		return
 	}
-	prev := s.phase
-	s.phase = phase
+	prev := s.synthMode
+	s.synthMode = mode
 	defer func() {
-		s.phase = prev
+		s.synthMode = prev
 	}()
 	fn()
 }

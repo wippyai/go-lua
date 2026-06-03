@@ -1,13 +1,13 @@
-// Package domain provides abstract domain interfaces for constraint solving.
+// Package domain provides abstract domain interfaces for condition projection.
 //
 // The domain package defines the interfaces for type and numeric constraint domains
-// used by the flow solver. Each domain processes constraints relevant to its
+// used by product-domain proof projection. Each domain processes constraints relevant to its
 // abstraction level:
 //
 //   - TypeDomain: Handles type-based constraints (HasType, NotHasType, Truthy, Falsy)
 //   - NumericDomain: Handles numeric constraints (Lt, Le, Gt, Ge, ModEq, Eq, Ne)
 //
-// The flow solver routes atoms to the appropriate domain based on ClassifyAtom,
+// ProductDomain routes atoms to the appropriate domain based on ClassifyAtom,
 // which returns AtomClassType, AtomClassNumeric, or AtomClassBoth.
 //
 // # Domain Protocol

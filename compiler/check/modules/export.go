@@ -6,10 +6,10 @@ import (
 
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/cfg"
-	abstractreturns "github.com/wippyai/go-lua/compiler/check/abstract/returns"
 	"github.com/wippyai/go-lua/compiler/check/api"
 	"github.com/wippyai/go-lua/compiler/check/domain/exportkey"
 	interprocfields "github.com/wippyai/go-lua/compiler/check/domain/interproc"
+	returns "github.com/wippyai/go-lua/compiler/check/domain/returns"
 	"github.com/wippyai/go-lua/compiler/check/effects"
 	"github.com/wippyai/go-lua/compiler/check/erreffect"
 	"github.com/wippyai/go-lua/types/constraint"
@@ -376,7 +376,7 @@ type ExportFunctionResult struct {
 //
 // The overlay is additive: a function field that already carries a concrete
 // return vector or an ErrorReturn label keeps it, so a flow whose export already
-// publishes the inferred summary (the legacy interproc projection) is unchanged.
+// publishes the inferred summary is unchanged.
 // A flow whose export exposes only the bare declared signature gains the inferred
 // return and the proven (value, err) inverse pattern the importer needs to type
 // the call result and correlate sibling slots.
@@ -513,7 +513,7 @@ func enrichExportFunctionType(base *typ.Function, result *api.FuncResult) *typ.F
 
 	enriched := base
 	if result.NarrowSynth != nil && len(result.Evidence.Returns) > 0 {
-		observed := abstractreturns.ObservedSummary(
+		observed := returns.ObservedSummary(
 			result.Graph,
 			result.Evidence.Returns,
 			deadPointFlow(result),

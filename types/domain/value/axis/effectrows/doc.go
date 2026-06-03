@@ -14,8 +14,8 @@
 //
 // # Status
 //
-// Phase 2 establishes the package and the local lattice surface so the Phase 5
+// design step 2 establishes the package and the local lattice surface so the design step 5
 // composition facade can import it. The lattice internals (and the reduction with
-// Ownership/Escape for legality) are implemented in Phase 5; the law tests are
+// Ownership/Escape for legality) are implemented in design step 5; the law tests are
 // skipped until then.
 package effectrows

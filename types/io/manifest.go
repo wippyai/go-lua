@@ -34,7 +34,7 @@ var (
 // Manifests are serialized to binary and stored alongside compiled Lua chunks.
 //
 // The manifest lifecycle:
-//  1. Analysis phase generates a manifest from source analysis
+//  1. Analysis generates a manifest from source analysis
 //  2. Manifest is serialized and stored (cache or file)
 //  3. Dependent modules load the manifest via db.Connect()
 //  4. Type checker resolves cross-module references through ManifestQuerier

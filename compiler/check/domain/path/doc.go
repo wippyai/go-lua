@@ -1,8 +1,8 @@
 // Package path constructs constraint paths from AST expressions.
 //
 // This package converts AST expressions into [constraint.Path] values that
-// identify variables and field access chains for flow analysis. Paths are
-// the primary way the flow solver tracks types through the program.
+// identify variables and field access chains for flow analysis. Paths are the
+// primary way analysis tracks types through the program.
 //
 // # Path Structure
 //

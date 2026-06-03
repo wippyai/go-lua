@@ -1,7 +1,7 @@
 // Package typefacts owns the checker product-state query surface.
 //
 // Synthesis and transfer code should ask this package for semantic facts rather
-// than rebuilding precedence rules from stores, product overlays, or phase-local
+// than rebuilding precedence rules from stores, product overlays, or mode-local
 // snapshots.
 package typefacts
 
@@ -23,7 +23,6 @@ type Config struct {
 	FunctionType  FunctionTypeLookup
 	Literals      flow.DeclaredTypes
 	AnnotatedVars map[cfg.SymbolID]bool
-	Solution      *flow.Solution
 }
 
 // TypeFacts implements flow.TypeFacts over the checker product state.
@@ -32,20 +31,18 @@ type TypeFacts struct {
 	functionType  FunctionTypeLookup
 	literals      flow.DeclaredTypes
 	annotatedVars map[cfg.SymbolID]bool
-	solution      *flow.Solution
 }
 
 var _ flow.TypeFacts = (*TypeFacts)(nil)
 var _ flow.BindingValueFacts = (*TypeFacts)(nil)
 
-// New returns the canonical type-fact query for a checker phase.
+// New returns the type-fact query for a synthesis mode.
 func New(cfg Config) *TypeFacts {
 	return &TypeFacts{
 		declared:      cfg.Declared,
 		functionType:  cfg.FunctionType,
 		literals:      cfg.Literals,
 		annotatedVars: cfg.AnnotatedVars,
-		solution:      cfg.Solution,
 	}
 }
 
@@ -91,10 +88,7 @@ func (f *TypeFacts) BindingValueAt(_ cfg.Point, sym cfg.SymbolID) flow.TypedValu
 
 // RefinedAt returns the flow-refined product-state type for a symbol.
 func (f *TypeFacts) RefinedAt(p cfg.Point, sym cfg.SymbolID) flow.TypedValue {
-	if f == nil || sym == 0 || f.solution == nil {
-		return flow.TypedValue{Type: nil, State: flow.StateUnknown}
-	}
-	return f.solution.RefinedAt(p, sym)
+	return flow.TypedValue{Type: nil, State: flow.StateUnknown}
 }
 
 // EffectiveTypeAt returns the best known product-state type. A flow refinement

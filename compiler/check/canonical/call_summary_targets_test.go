@@ -12,7 +12,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/check/canonical/transfer"
 	"github.com/wippyai/go-lua/compiler/check/modules"
 	"github.com/wippyai/go-lua/compiler/check/scope"
-	"github.com/wippyai/go-lua/compiler/check/synth/phase/resolve"
+	"github.com/wippyai/go-lua/compiler/check/synth/resolve"
 	"github.com/wippyai/go-lua/compiler/parse"
 	"github.com/wippyai/go-lua/types/db"
 	"github.com/wippyai/go-lua/types/domain/value/product"

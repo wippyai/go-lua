@@ -3,6 +3,8 @@ package flow
 import (
 	"github.com/wippyai/go-lua/types/cfg"
 	"github.com/wippyai/go-lua/types/constraint"
+	"github.com/wippyai/go-lua/types/flow/pathkey"
+	"github.com/wippyai/go-lua/types/kind"
 	"github.com/wippyai/go-lua/types/narrow"
 	"github.com/wippyai/go-lua/types/subtype"
 	"github.com/wippyai/go-lua/types/typ"
@@ -18,6 +20,19 @@ type ConditionProofProjector struct {
 	ConditionAt func(cfg.Point) constraint.Condition
 	RootTypeAt  func(cfg.Point, constraint.Path) typ.Type
 	ResolvePath func(cfg.Point, constraint.Path) constraint.PathKey
+}
+
+type conditionProjectionStatus uint8
+
+const (
+	conditionProjectionUnsat conditionProjectionStatus = iota
+	conditionProjectionNone
+	conditionProjectionType
+)
+
+type conditionProjectionResult struct {
+	typ    typ.Type
+	status conditionProjectionStatus
 }
 
 // ProvesTypeAt reports whether the point condition proves path is a subtype of t.
@@ -328,6 +343,21 @@ func (p ConditionProofProjector) conditionProvesType(cond constraint.Condition, 
 	return true
 }
 
+func typeMatches(a, b typ.Type) bool {
+	if a == nil || b == nil {
+		return false
+	}
+	if a.Hash() == b.Hash() {
+		return true
+	}
+	switch a.Kind() {
+	case kind.Nil, kind.Boolean, kind.Number, kind.Integer, kind.String:
+		return a.Kind() == b.Kind()
+	default:
+		return false
+	}
+}
+
 func conditionProofPathMatches(cpath constraint.Path, qpath constraint.Path) bool {
 	if cpath.Symbol != 0 && qpath.Symbol != 0 {
 		return cpath.Symbol == qpath.Symbol
@@ -339,6 +369,40 @@ func conditionProofPathMatches(cpath constraint.Path, qpath constraint.Path) boo
 		return cpath.Root == qpath.Root
 	}
 	return false
+}
+
+func projectConditionForPath(cond constraint.Condition, path constraint.Path) constraint.Condition {
+	if !cond.HasConstraints() || path.IsEmpty() {
+		return cond
+	}
+	disjuncts := make([][]constraint.Constraint, 0, cond.NumDisjuncts())
+	for i := 0; i < cond.NumDisjuncts(); i++ {
+		disjuncts = append(disjuncts, pathkey.FilterConstraintsForPath(cond.DisjunctConstraints(i), path))
+	}
+	return constraint.FromDisjuncts(disjuncts)
+}
+
+func normalizeConstraintPathForQuery(path constraint.Path) constraint.Path {
+	if path.Symbol == 0 {
+		return path
+	}
+	path.Version = 0
+	return path
+}
+
+func isDescendantOf(child, parent constraint.Path) bool {
+	if child.Symbol != parent.Symbol {
+		return false
+	}
+	if len(child.Segments) <= len(parent.Segments) {
+		return false
+	}
+	for i := 0; i < len(parent.Segments); i++ {
+		if child.Segments[i] != parent.Segments[i] {
+			return false
+		}
+	}
+	return true
 }
 
 // ConditionProofStructuralPathKey lowers a query path to the normalized

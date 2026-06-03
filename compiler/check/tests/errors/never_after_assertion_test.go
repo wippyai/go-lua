@@ -192,7 +192,7 @@ end
 		},
 		{
 			// After reassignment, the new definition gets fresh narrowing.
-			// The flow solver tracks definitions per-assignment point.
+			// The flow engine tracks definitions per-assignment point.
 			name: "reassignment_then_method_call",
 			code: `
 local function main()
@@ -266,8 +266,8 @@ end
 	}
 }
 
-// TestFlowSolutionDebug traces the flow solution for reassignment pattern.
-func TestFlowSolutionDebug(t *testing.T) {
+// TestSolvedProjectionDebug traces solved projection for reassignment pattern.
+func TestSolvedProjectionDebug(t *testing.T) {
 	// Vol type with methods
 	infoType := typ.NewRecord().Field("size", typ.Number).Build()
 	volType := typ.NewRecord().
@@ -367,16 +367,8 @@ end
 			}
 		}
 
-		// Log flow conditions
-		if funcResult.FlowSolution != nil {
-			solution := funcResult.FlowSolution
-			t.Log("  Conditions:")
-			for p := cfg.Point(2); p <= 10; p++ {
-				cond := solution.ConditionAt(p)
-				if cond.HasConstraints() {
-					t.Logf("    ConditionAt(%d): %v", p, cond.AllConstraints())
-				}
-			}
+		if flow := funcResult.SolvedFlow(); flow == nil {
+			t.Log("  Solved flow projection: <nil>")
 		}
 	}
 

@@ -1,7 +1,7 @@
-// Package state defines the carrier of the single canonical fixed point: the
+// Package state defines the carrier of the single fixed point: the
 // per-function abstract state ranged over by the generic lattice solver.
 //
-// The canonical flow computes ONE intraprocedural fixed point per function over
+// The flow computes ONE intraprocedural fixed point per function over
 // FunctionState = Points x Contracts, a reduced product of two component
 // domains:
 //

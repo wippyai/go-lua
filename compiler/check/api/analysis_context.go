@@ -39,8 +39,8 @@ func LiftGlobalOverlay(overlay map[string]typ.Type) GlobalOverlay {
 	return globalenv.ValueOverlayFromTypeMap(overlay)
 }
 
-// ProjectGlobalOverlay projects analysis-context global overlays back to the
-// source-name map consumed by legacy environment construction.
+// ProjectGlobalOverlay projects analysis-context global overlays back to a
+// source-name type map for environment construction.
 func ProjectGlobalOverlay(overlay GlobalOverlay) map[string]typ.Type {
 	return overlay.ToTypeMap()
 }

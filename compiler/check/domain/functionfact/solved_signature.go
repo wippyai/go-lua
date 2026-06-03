@@ -4,10 +4,10 @@ import (
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/bind"
 	"github.com/wippyai/go-lua/compiler/cfg"
-	abstractreturns "github.com/wippyai/go-lua/compiler/check/abstract/returns"
 	"github.com/wippyai/go-lua/compiler/check/api"
 	"github.com/wippyai/go-lua/compiler/check/domain/callbackenv"
 	"github.com/wippyai/go-lua/compiler/check/domain/observation"
+	returns "github.com/wippyai/go-lua/compiler/check/domain/returns"
 	"github.com/wippyai/go-lua/compiler/check/erreffect"
 	"github.com/wippyai/go-lua/types/contract"
 	"github.com/wippyai/go-lua/types/typ"
@@ -21,7 +21,7 @@ type solvedSignatureInput struct {
 	source         *typ.Function
 	moduleBindings *bind.BindingTable
 	observer       observation.Projector
-	returnSynth    abstractreturns.ExprSynth
+	returnSynth    returns.ExprSynth
 }
 
 // SolvedSignatureFromResult projects the solved function signature from a full
@@ -70,7 +70,7 @@ func solvedSignatureFromInput(input solvedSignatureInput, fn *ast.FunctionExpr) 
 		if returnSynth == nil {
 			returnSynth = input.observer
 		}
-		if observed := abstractreturns.ObservedSummary(input.graph, input.evidence.Returns, input.flowOps, returnSynth); len(observed) > 0 {
+		if observed := returns.ObservedSummary(input.graph, input.evidence.Returns, input.flowOps, returnSynth); len(observed) > 0 {
 			if aligned := typjoin.WithReturns(fnType, observed); aligned != nil {
 				fnType = aligned
 			}

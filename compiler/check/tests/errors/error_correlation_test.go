@@ -149,7 +149,11 @@ db:release()
 	}
 	if result.Session != nil {
 		for fn, res := range result.Session.Results {
-			if fn == nil || res == nil || res.Graph == nil || res.FlowSolution == nil {
+			if fn == nil || res == nil || res.Graph == nil {
+				continue
+			}
+			flow := res.SolvedFlow()
+			if flow == nil {
 				continue
 			}
 			if fn.Line() != 4 {
@@ -163,7 +167,7 @@ db:release()
 			res.Graph.EachReturn(func(p cfg.Point, _ *cfg.ReturnInfo) {
 				if sym, ok := res.Graph.SymbolAt(p, "db"); ok && sym != 0 {
 					path := constraint.Path{Root: "db", Symbol: sym}
-					if narrowed := res.FlowSolution.NarrowedTypeAt(p, path); narrowed != nil {
+					if narrowed := flow.NarrowedTypeAt(p, path); narrowed != nil {
 						t.Logf("NarrowedTypeAt(db) at return point %d = %v", p, narrowed)
 					}
 				}

@@ -8,7 +8,6 @@ import (
 	"github.com/wippyai/go-lua/compiler/check/scope"
 	"github.com/wippyai/go-lua/types/cfg"
 	"github.com/wippyai/go-lua/types/flow"
-	"github.com/wippyai/go-lua/types/query/core"
 	"github.com/wippyai/go-lua/types/typ"
 )
 
@@ -93,36 +92,33 @@ func (g *mockGraph) ParamNames() []string         { return nil }
 func (g *mockGraph) ParamSymbols() []cfg.SymbolID { return nil }
 func (g *mockGraph) ParamDeclPoints() []cfg.Point { return nil }
 
-func TestPhaseString(t *testing.T) {
+func TestSynthModeString(t *testing.T) {
 	tests := []struct {
-		phase Phase
-		want  string
+		mode SynthMode
+		want string
 	}{
-		{PhaseTypeResolution, "TypeResolution"},
-		{PhaseScopeCompute, "ScopeCompute"},
-		{PhaseNarrowing, "Narrowing"},
-		{Phase(99), "Unknown"},
+		{SynthModeResolve, "Resolve"},
+		{SynthModeDeclared, "Declared"},
+		{SynthModeFlow, "Flow"},
+		{SynthMode(99), "Unknown"},
 	}
 	for _, tt := range tests {
-		if got := tt.phase.String(); got != tt.want {
-			t.Errorf("Phase(%d).String() = %q, want %q", tt.phase, got, tt.want)
+		if got := tt.mode.String(); got != tt.want {
+			t.Errorf("SynthMode(%d).String() = %q, want %q", tt.mode, got, tt.want)
 		}
 	}
 }
 
 func TestDeclaredEnv_NilSafety(t *testing.T) {
 	var env *DeclaredEnvImpl
-	if env.Phase() != PhaseScopeCompute {
-		t.Errorf("nil.Phase() = %v, want PhaseScopeCompute", env.Phase())
+	if env.SynthMode() != SynthModeDeclared {
+		t.Errorf("nil.SynthMode() = %v, want SynthModeDeclared", env.SynthMode())
 	}
 	if env.Graph() != nil {
 		t.Error("nil.Graph() should be nil")
 	}
 	if env.Types() != nil {
 		t.Error("nil.Types() should be nil")
-	}
-	if env.Consts() != nil {
-		t.Error("nil.Consts() should be nil")
 	}
 	if env.Refinements() != nil {
 		t.Error("nil.Refinements() should be nil")
@@ -158,8 +154,8 @@ func TestDeclaredEnv_TypeFacts(t *testing.T) {
 	if env == nil {
 		t.Fatal("expected non-nil environment")
 	}
-	if env.Phase() != PhaseScopeCompute {
-		t.Errorf("Phase() = %v, want PhaseScopeCompute", env.Phase())
+	if env.SynthMode() != SynthModeDeclared {
+		t.Errorf("SynthMode() = %v, want SynthModeDeclared", env.SynthMode())
 	}
 
 	facts := env.Types()
@@ -233,30 +229,17 @@ func TestNarrowingEnv_TypeFacts(t *testing.T) {
 	symX := cfg.SymbolID(1)
 	graph.addSymbol(point, "x", symX, cfg.SymbolLocal)
 
-	inputs := &flow.Inputs{
-		Graph:         graph,
-		DeclaredTypes: flow.DeclaredTypes{symX: typ.Any},
-	}
-
-	resolver := &core.FuncResolver{
-		FieldFunc: func(t typ.Type, name string) (typ.Type, bool) { return nil, false },
-		IndexFunc: func(t typ.Type, key typ.Type) (typ.Type, bool) { return nil, false },
-	}
-
-	solution := flow.Solve(inputs, resolver)
-
 	env := NewNarrowEnv(NarrowEnvConfig{
 		Graph:         graph,
 		DeclaredTypes: flow.DeclaredTypes{symX: typ.Any},
-		Solution:      solution,
 		BaseScope:     scope.NewWithBuiltins(),
 	})
 
 	if env == nil {
 		t.Fatal("expected non-nil environment")
 	}
-	if env.Phase() != PhaseNarrowing {
-		t.Errorf("Phase() = %v, want PhaseNarrowing", env.Phase())
+	if env.SynthMode() != SynthModeFlow {
+		t.Errorf("SynthMode() = %v, want SynthModeFlow", env.SynthMode())
 	}
 }
 

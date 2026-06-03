@@ -7,25 +7,25 @@ import (
 	"github.com/wippyai/go-lua/compiler/check/domain/returnsummary"
 	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/contract"
+	"github.com/wippyai/go-lua/types/domain/value/product"
 	"github.com/wippyai/go-lua/types/kind"
 	"github.com/wippyai/go-lua/types/narrow"
 	querycore "github.com/wippyai/go-lua/types/query/core"
 	"github.com/wippyai/go-lua/types/subtype"
-	"github.com/wippyai/go-lua/types/domain/value/product"
 	"github.com/wippyai/go-lua/types/typ"
 	"github.com/wippyai/go-lua/types/typ/unwrap"
 )
 
 func projectFunctionForTest(t *testing.T, ff api.FunctionFact) *typ.Function {
 	t.Helper()
-	return projectFunctionForPhaseForTest(t, ff, api.PhaseScopeCompute)
+	return projectFunctionForModeForTest(t, ff, api.SynthModeDeclared)
 }
 
-func projectFunctionForPhaseForTest(t *testing.T, ff api.FunctionFact, phase api.Phase) *typ.Function {
+func projectFunctionForModeForTest(t *testing.T, ff api.FunctionFact, mode api.SynthMode) *typ.Function {
 	t.Helper()
-	fn := unwrap.Function(ProjectType(ff, ProjectionSibling, phase))
+	fn := unwrap.Function(ProjectType(ff, ProjectionSibling, mode))
 	if fn == nil {
-		t.Fatalf("expected function projection, got %v", ProjectType(ff, ProjectionSibling, phase))
+		t.Fatalf("expected function projection, got %v", ProjectType(ff, ProjectionSibling, mode))
 	}
 	return fn
 }
@@ -488,7 +488,7 @@ func TestWidenForConvergence_PreservesBodyStructuralParamPrecision(t *testing.T)
 		},
 	)
 
-	bodyFn := unwrap.Function(ProjectType(out, ProjectionBody, api.PhaseScopeCompute))
+	bodyFn := unwrap.Function(ProjectType(out, ProjectionBody, api.SynthModeDeclared))
 	if bodyFn == nil || !typ.TypeEquals(bodyFn.Params[0].Type, entryParam) {
 		t.Fatalf("expected body-effective function type to preserve entry %v, got %v", entryParam, bodyFn)
 	}
@@ -575,7 +575,7 @@ func TestWidenForConvergence_DeclaredDynamicMapReturnPreserved(t *testing.T) {
 	if !returnsummary.Equal(product.ProjectVector(out.Summary), []typ.Type{declared}) {
 		t.Fatalf("declared summary mismatch: got %v want %v", out.Summary, []typ.Type{declared})
 	}
-	fn := projectFunctionForPhaseForTest(t, out, api.PhaseNarrowing)
+	fn := projectFunctionForModeForTest(t, out, api.SynthModeFlow)
 	if len(fn.Returns) != 1 || !typ.TypeEquals(fn.Returns[0], declared) {
 		t.Fatalf("declared projection return = %v, want %v", fn.Returns, []typ.Type{declared})
 	}
@@ -605,7 +605,7 @@ func TestProjectionExport_UnannotatedDynamicAnyReturnFieldsBecomeUnknown(t *test
 		},
 	)
 
-	sibling := unwrap.Function(ProjectType(out, ProjectionSibling, api.PhaseNarrowing))
+	sibling := unwrap.Function(ProjectType(out, ProjectionSibling, api.SynthModeFlow))
 	if sibling == nil || len(sibling.Returns) != 1 {
 		t.Fatalf("sibling projection = %v, want one return", sibling)
 	}
@@ -617,7 +617,7 @@ func TestProjectionExport_UnannotatedDynamicAnyReturnFieldsBecomeUnknown(t *test
 		t.Fatalf("sibling max_tokens = %v, want any", field)
 	}
 
-	exported := unwrap.Function(ProjectType(out, ProjectionExport, api.PhaseNarrowing))
+	exported := unwrap.Function(ProjectType(out, ProjectionExport, api.SynthModeFlow))
 	if exported == nil || len(exported.Returns) != 1 {
 		t.Fatalf("export projection = %v, want one return", exported)
 	}

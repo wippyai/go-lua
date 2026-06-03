@@ -16,42 +16,42 @@ func buildEmptyGraph() *cfg.Graph {
 	return cfg.Build(fn)
 }
 
-func TestMapMutatorInfo_ZeroValue(t *testing.T) {
-	var info MapMutatorInfo
+func TestMapWriteInfo_ZeroValue(t *testing.T) {
+	var info MapWriteInfo
 	if info.KeyType != nil {
-		t.Error("expected nil KeyType for zero value MapMutatorInfo")
+		t.Error("expected nil KeyType for zero value MapWriteInfo")
 	}
 	if info.ValueType != nil {
-		t.Error("expected nil ValueType for zero value MapMutatorInfo")
+		t.Error("expected nil ValueType for zero value MapWriteInfo")
 	}
 }
 
-func TestMergeMapMutatorMutations_EmptyInputs(t *testing.T) {
-	mapMutators := make(map[cfg.SymbolID][]MapMutatorInfo)
-	mutations := make(map[cfg.SymbolID][]MapMutatorInfo)
+func TestMergeMapWriteMutations_EmptyInputs(t *testing.T) {
+	mapWrites := make(map[cfg.SymbolID][]MapWriteInfo)
+	mutations := make(map[cfg.SymbolID][]MapWriteInfo)
 
-	MergeMapMutatorMutations(mapMutators, mutations)
+	MergeMapWriteMutations(mapWrites, mutations)
 
-	if len(mapMutators) != 0 {
-		t.Errorf("expected empty mapMutators after merging empty mutations, got %d", len(mapMutators))
+	if len(mapWrites) != 0 {
+		t.Errorf("expected empty mapWrites after merging empty mutations, got %d", len(mapWrites))
 	}
 }
 
-func TestMergeMapMutatorMutations_MergesCorrectly(t *testing.T) {
-	mapMutators := make(map[cfg.SymbolID][]MapMutatorInfo)
-	mapMutators[1] = []MapMutatorInfo{{KeyType: typ.String, ValueType: typ.Integer}}
+func TestMergeMapWriteMutations_MergesCorrectly(t *testing.T) {
+	mapWrites := make(map[cfg.SymbolID][]MapWriteInfo)
+	mapWrites[1] = []MapWriteInfo{{KeyType: typ.String, ValueType: typ.Integer}}
 
-	mutations := make(map[cfg.SymbolID][]MapMutatorInfo)
-	mutations[1] = []MapMutatorInfo{{KeyType: typ.Integer, ValueType: typ.String}}
-	mutations[2] = []MapMutatorInfo{{KeyType: typ.Number, ValueType: typ.Boolean}}
+	mutations := make(map[cfg.SymbolID][]MapWriteInfo)
+	mutations[1] = []MapWriteInfo{{KeyType: typ.Integer, ValueType: typ.String}}
+	mutations[2] = []MapWriteInfo{{KeyType: typ.Number, ValueType: typ.Boolean}}
 
-	MergeMapMutatorMutations(mapMutators, mutations)
+	MergeMapWriteMutations(mapWrites, mutations)
 
-	if len(mapMutators[1]) != 2 {
-		t.Errorf("expected 2 infos for symbol 1, got %d", len(mapMutators[1]))
+	if len(mapWrites[1]) != 2 {
+		t.Errorf("expected 2 infos for symbol 1, got %d", len(mapWrites[1]))
 	}
-	if len(mapMutators[2]) != 1 {
-		t.Errorf("expected 1 info for symbol 2, got %d", len(mapMutators[2]))
+	if len(mapWrites[2]) != 1 {
+		t.Errorf("expected 1 info for symbol 2, got %d", len(mapWrites[2]))
 	}
 }
 
@@ -121,8 +121,8 @@ func TestCollectFunctionFieldAssignments_MethodDefinition(t *testing.T) {
 	}
 }
 
-func TestCollectMapMutatorAssignments_NilGraph(t *testing.T) {
-	result := CollectMapMutatorAssignments(nil, nil, nil, nil)
+func TestCollectMapWriteAssignments_NilGraph(t *testing.T) {
+	result := CollectMapWriteAssignments(nil, nil, nil, nil)
 	if result == nil {
 		t.Error("expected non-nil result for nil graph")
 	}
@@ -131,45 +131,45 @@ func TestCollectMapMutatorAssignments_NilGraph(t *testing.T) {
 	}
 }
 
-func TestCollectMapMutatorAssignments_EmptyGraph(t *testing.T) {
+func TestCollectMapWriteAssignments_EmptyGraph(t *testing.T) {
 	graph := buildEmptyGraph()
-	result := CollectMapMutatorAssignments(assignmentsFromGraph(graph), nil, nil, nil)
+	result := CollectMapWriteAssignments(assignmentsFromGraph(graph), nil, nil, nil)
 	if result == nil {
 		t.Error("expected non-nil result")
 	}
 }
 
-func TestCollectMapMutatorAssignments_WithSynth(t *testing.T) {
+func TestCollectMapWriteAssignments_WithSynth(t *testing.T) {
 	graph := buildEmptyGraph()
 	synth := func(expr ast.Expr, p cfg.Point) typ.Type {
 		return typ.Integer
 	}
-	result := CollectMapMutatorAssignments(assignmentsFromGraph(graph), synth, nil, nil)
+	result := CollectMapWriteAssignments(assignmentsFromGraph(graph), synth, nil, nil)
 	if result == nil {
 		t.Error("expected non-nil result")
 	}
 }
 
-func TestCollectMapMutatorAssignments_WithBindings(t *testing.T) {
+func TestCollectMapWriteAssignments_WithBindings(t *testing.T) {
 	graph := buildEmptyGraph()
 	bindings := &bind.BindingTable{}
-	result := CollectMapMutatorAssignments(assignmentsFromGraph(graph), nil, bindings, nil)
+	result := CollectMapWriteAssignments(assignmentsFromGraph(graph), nil, bindings, nil)
 	if result == nil {
 		t.Error("expected non-nil result")
 	}
 }
 
-func TestCollectMapMutatorAssignments_WithFilter(t *testing.T) {
+func TestCollectMapWriteAssignments_WithFilter(t *testing.T) {
 	graph := buildEmptyGraph()
 	filter := make(map[cfg.SymbolID]bool)
 	filter[1] = true
-	result := CollectMapMutatorAssignments(assignmentsFromGraph(graph), nil, nil, filter)
+	result := CollectMapWriteAssignments(assignmentsFromGraph(graph), nil, nil, filter)
 	if result == nil {
 		t.Error("expected non-nil result")
 	}
 }
 
-func TestCollectMapMutatorAssignments_AllParams(t *testing.T) {
+func TestCollectMapWriteAssignments_AllParams(t *testing.T) {
 	graph := buildEmptyGraph()
 	synth := func(expr ast.Expr, p cfg.Point) typ.Type {
 		return typ.String
@@ -177,7 +177,7 @@ func TestCollectMapMutatorAssignments_AllParams(t *testing.T) {
 	bindings := &bind.BindingTable{}
 	filter := make(map[cfg.SymbolID]bool)
 	filter[1] = true
-	result := CollectMapMutatorAssignments(assignmentsFromGraph(graph), synth, bindings, filter)
+	result := CollectMapWriteAssignments(assignmentsFromGraph(graph), synth, bindings, filter)
 	if result == nil {
 		t.Error("expected non-nil result")
 	}

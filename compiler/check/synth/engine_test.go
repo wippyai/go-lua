@@ -5,7 +5,7 @@ import (
 
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/check/api"
-	"github.com/wippyai/go-lua/compiler/check/synth/phase/extract"
+	"github.com/wippyai/go-lua/compiler/check/synth/extract"
 	"github.com/wippyai/go-lua/types/cfg"
 	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/db"
@@ -221,11 +221,11 @@ func TestEngine_Narrow_NilWithoutFlow(t *testing.T) {
 
 func TestEngine_Narrow_NonNilWithFlow(t *testing.T) {
 	engine := New(Config{
-		Ctx:    db.NewQueryContext(db.New()),
-		Types:  mockTypeQuerier{},
-		Scopes: make(api.ScopeMap),
-		Flow:   mockFlowOps{},
-		Phase:  api.PhaseNarrowing,
+		Ctx:       db.NewQueryContext(db.New()),
+		Types:     mockTypeQuerier{},
+		Scopes:    make(api.ScopeMap),
+		Flow:      mockFlowOps{},
+		SynthMode: api.SynthModeFlow,
 	})
 
 	narrow := engine.Narrow()
@@ -251,11 +251,11 @@ func TestEngine_QueryMemoizationInitialized(t *testing.T) {
 
 func TestEngine_NarrowQueryMemoizationInitialized(t *testing.T) {
 	engine := New(Config{
-		Ctx:    db.NewQueryContext(db.New()),
-		Types:  mockTypeQuerier{},
-		Scopes: make(api.ScopeMap),
-		Flow:   mockFlowOps{},
-		Phase:  api.PhaseNarrowing,
+		Ctx:       db.NewQueryContext(db.New()),
+		Types:     mockTypeQuerier{},
+		Scopes:    make(api.ScopeMap),
+		Flow:      mockFlowOps{},
+		SynthMode: api.SynthModeFlow,
 	})
 
 	expr := &ast.NumberExpr{Value: "42"}
@@ -268,10 +268,10 @@ func TestEngine_NarrowQueryMemoizationInitialized(t *testing.T) {
 
 func TestEngine_PhaseGating_DeclaredDisallowsReturnTransforms(t *testing.T) {
 	engine := New(Config{
-		Ctx:    db.NewQueryContext(db.New()),
-		Types:  mockTypeQuerier{},
-		Scopes: make(api.ScopeMap),
-		Phase:  api.PhaseScopeCompute,
+		Ctx:       db.NewQueryContext(db.New()),
+		Types:     mockTypeQuerier{},
+		Scopes:    make(api.ScopeMap),
+		SynthMode: api.SynthModeDeclared,
 	})
 
 	if engine.AllowReturnTransforms() {
@@ -281,24 +281,24 @@ func TestEngine_PhaseGating_DeclaredDisallowsReturnTransforms(t *testing.T) {
 
 func TestEngine_PhaseGating_NarrowingAllowsReturnTransforms(t *testing.T) {
 	engine := New(Config{
-		Ctx:    db.NewQueryContext(db.New()),
-		Types:  mockTypeQuerier{},
-		Scopes: make(api.ScopeMap),
-		Flow:   mockFlowOps{},
-		Phase:  api.PhaseNarrowing,
+		Ctx:       db.NewQueryContext(db.New()),
+		Types:     mockTypeQuerier{},
+		Scopes:    make(api.ScopeMap),
+		Flow:      mockFlowOps{},
+		SynthMode: api.SynthModeFlow,
 	})
 
 	if !engine.AllowReturnTransforms() {
-		t.Fatal("PhaseNarrowing should allow return transforms")
+		t.Fatal("SynthModeFlow should allow return transforms")
 	}
 }
 
 func TestEngine_PhaseGating_TypeResolutionDisallowsReturnTransforms(t *testing.T) {
 	engine := New(Config{
-		Ctx:    db.NewQueryContext(db.New()),
-		Types:  mockTypeQuerier{},
-		Scopes: make(api.ScopeMap),
-		Phase:  api.PhaseTypeResolution,
+		Ctx:       db.NewQueryContext(db.New()),
+		Types:     mockTypeQuerier{},
+		Scopes:    make(api.ScopeMap),
+		SynthMode: api.SynthModeResolve,
 	})
 
 	if engine.AllowReturnTransforms() {
@@ -308,10 +308,10 @@ func TestEngine_PhaseGating_TypeResolutionDisallowsReturnTransforms(t *testing.T
 
 func TestEngine_PhaseGating_ScopeComputeDisallowsReturnTransforms(t *testing.T) {
 	engine := New(Config{
-		Ctx:    db.NewQueryContext(db.New()),
-		Types:  mockTypeQuerier{},
-		Scopes: make(api.ScopeMap),
-		Phase:  api.PhaseScopeCompute,
+		Ctx:       db.NewQueryContext(db.New()),
+		Types:     mockTypeQuerier{},
+		Scopes:    make(api.ScopeMap),
+		SynthMode: api.SynthModeDeclared,
 	})
 
 	if engine.AllowReturnTransforms() {
@@ -331,14 +331,14 @@ func TestEngine_PhaseGating_DefaultPhaseDisallowsReturnTransforms(t *testing.T) 
 	}
 }
 
-// Phase Isolation Tests - Prove that phases cannot cross boundaries
+// Mode Isolation Tests - Prove that synthesis modes cannot cross boundaries
 
 func TestDeclaredEngine_DoesNotAllowReturnTransforms(t *testing.T) {
 	engine := New(Config{
-		Ctx:    db.NewQueryContext(db.New()),
-		Types:  mockTypeQuerier{},
-		Scopes: make(api.ScopeMap),
-		Phase:  api.PhaseScopeCompute,
+		Ctx:       db.NewQueryContext(db.New()),
+		Types:     mockTypeQuerier{},
+		Scopes:    make(api.ScopeMap),
+		SynthMode: api.SynthModeDeclared,
 	})
 
 	if engine.AllowReturnTransforms() {
@@ -346,29 +346,29 @@ func TestDeclaredEngine_DoesNotAllowReturnTransforms(t *testing.T) {
 	}
 }
 
-func TestDeclaredEngine_TypeResolutionPhase(t *testing.T) {
+func TestDeclaredEngine_ResolveMode(t *testing.T) {
 	engine := New(Config{
-		Ctx:    db.NewQueryContext(db.New()),
-		Types:  mockTypeQuerier{},
-		Scopes: make(api.ScopeMap),
-		Phase:  api.PhaseTypeResolution,
+		Ctx:       db.NewQueryContext(db.New()),
+		Types:     mockTypeQuerier{},
+		Scopes:    make(api.ScopeMap),
+		SynthMode: api.SynthModeResolve,
 	})
 
 	if engine.AllowReturnTransforms() {
-		t.Fatal("DeclaredEngine in TypeResolution should not allow return transforms")
+		t.Fatal("DeclaredEngine in resolve mode should not allow return transforms")
 	}
-	if engine.Phase() != api.PhaseTypeResolution {
-		t.Fatal("DeclaredEngine should preserve phase")
+	if engine.SynthMode() != api.SynthModeResolve {
+		t.Fatal("DeclaredEngine should preserve mode")
 	}
 }
 
 func TestNarrowedEngine_AllowsReturnTransforms(t *testing.T) {
 	engine := New(Config{
-		Ctx:    db.NewQueryContext(db.New()),
-		Types:  mockTypeQuerier{},
-		Scopes: make(api.ScopeMap),
-		Flow:   mockFlowOps{},
-		Phase:  api.PhaseNarrowing,
+		Ctx:       db.NewQueryContext(db.New()),
+		Types:     mockTypeQuerier{},
+		Scopes:    make(api.ScopeMap),
+		Flow:      mockFlowOps{},
+		SynthMode: api.SynthModeFlow,
 	})
 
 	if !engine.AllowReturnTransforms() {
@@ -379,11 +379,11 @@ func TestNarrowedEngine_AllowsReturnTransforms(t *testing.T) {
 func TestNarrowedEngine_HasFlow(t *testing.T) {
 	flow := mockFlowOps{narrowed: map[cfg.SymbolID]typ.Type{1: typ.String}}
 	engine := New(Config{
-		Ctx:    db.NewQueryContext(db.New()),
-		Types:  mockTypeQuerier{},
-		Scopes: make(api.ScopeMap),
-		Flow:   flow,
-		Phase:  api.PhaseNarrowing,
+		Ctx:       db.NewQueryContext(db.New()),
+		Types:     mockTypeQuerier{},
+		Scopes:    make(api.ScopeMap),
+		Flow:      flow,
+		SynthMode: api.SynthModeFlow,
 	})
 
 	// Verify narrowing is active by checking that Narrow() returns non-nil
@@ -392,17 +392,17 @@ func TestNarrowedEngine_HasFlow(t *testing.T) {
 	}
 }
 
-func TestNarrowedEngine_IsInNarrowingPhase(t *testing.T) {
+func TestNarrowedEngine_UsesFlow(t *testing.T) {
 	engine := New(Config{
-		Ctx:    db.NewQueryContext(db.New()),
-		Types:  mockTypeQuerier{},
-		Scopes: make(api.ScopeMap),
-		Flow:   mockFlowOps{},
-		Phase:  api.PhaseNarrowing,
+		Ctx:       db.NewQueryContext(db.New()),
+		Types:     mockTypeQuerier{},
+		Scopes:    make(api.ScopeMap),
+		Flow:      mockFlowOps{},
+		SynthMode: api.SynthModeFlow,
 	})
 
-	if engine.Phase() != api.PhaseNarrowing {
-		t.Fatalf("NarrowedEngine should be in PhaseNarrowing, got %v", engine.Phase())
+	if engine.SynthMode() != api.SynthModeFlow {
+		t.Fatalf("NarrowedEngine should be in SynthModeFlow, got %v", engine.SynthMode())
 	}
 	if !engine.IsNarrowing() {
 		t.Fatal("NarrowedEngine.IsNarrowing() should return true")
@@ -421,11 +421,11 @@ func TestDeclaredEngine_ImplementsSynth(t *testing.T) {
 
 func TestNarrowedEngine_ImplementsSynth(t *testing.T) {
 	engine := New(Config{
-		Ctx:    db.NewQueryContext(db.New()),
-		Types:  mockTypeQuerier{},
-		Scopes: make(api.ScopeMap),
-		Flow:   mockFlowOps{},
-		Phase:  api.PhaseNarrowing,
+		Ctx:       db.NewQueryContext(db.New()),
+		Types:     mockTypeQuerier{},
+		Scopes:    make(api.ScopeMap),
+		Flow:      mockFlowOps{},
+		SynthMode: api.SynthModeFlow,
 	})
 
 	var _ Synth = engine

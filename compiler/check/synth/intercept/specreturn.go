@@ -43,7 +43,7 @@ import (
 // while type-based matching requires the field to have a literal type in the
 // type system.
 type SpecReturnOverride struct {
-	Phase api.Phase
+	SynthMode api.SynthMode
 }
 
 // Override computes a spec return type override for a call.
@@ -52,7 +52,7 @@ func (s *SpecReturnOverride) Override(fnType typ.Type, args []ast.Expr) typ.Type
 	if fnType == nil {
 		return nil
 	}
-	if s.Phase != api.PhaseScopeCompute && s.Phase != api.PhaseNarrowing {
+	if s.SynthMode != api.SynthModeDeclared && s.SynthMode != api.SynthModeFlow {
 		return nil
 	}
 

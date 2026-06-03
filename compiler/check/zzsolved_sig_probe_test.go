@@ -3,8 +3,8 @@ package check
 import (
 	"testing"
 
-	abstractreturns "github.com/wippyai/go-lua/compiler/check/abstract/returns"
 	"github.com/wippyai/go-lua/compiler/check/domain/functionfact"
+	returns "github.com/wippyai/go-lua/compiler/check/domain/returns"
 	"github.com/wippyai/go-lua/compiler/check/erreffect"
 	"github.com/wippyai/go-lua/types/typ/unwrap"
 )
@@ -68,18 +68,18 @@ return M
 
 			// Probe: per-function NarrowSynth ObservedSummary.
 			if res.NarrowSynth != nil {
-				obs := abstractreturns.ObservedSummary(res.Graph, res.Evidence.Returns, nil, res.NarrowSynth)
+				obs := returns.ObservedSummary(res.Graph, res.Evidence.Returns, nil, res.NarrowSynth)
 				t.Logf("[%s] def=%q narrowSynth-observed=%v", tc.name, def.Name, obs)
 				// Per-return-point classification probe for the ErrorReturn proof.
 				for _, ret := range res.Evidence.Returns {
 					if ret.Info == nil {
 						continue
 					}
-					vals := abstractreturns.ExpandValues(ret.Info.Exprs, 2, ret.Point, res.NarrowSynth)
+					vals := returns.ExpandValues(ret.Info.Exprs, 2, ret.Point, res.NarrowSynth)
 					t.Logf("[%s/%s] ret@%v exprs=%d expand2=%v", tc.name, def.Name, ret.Point, len(ret.Info.Exprs), vals)
 				}
 				conv := erreffect.CanonicalLuaValueErrorConvention()
-				proof := conv.ProveReturnPattern(res.Evidence.Returns, res.FlowSolution, res.NarrowSynth)
+				proof := conv.ProveReturnPattern(res.Evidence.Returns, nil, res.NarrowSynth)
 				t.Logf("[%s] def=%q proof=%+v", tc.name, def.Name, proof)
 			}
 		}

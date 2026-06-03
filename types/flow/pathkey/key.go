@@ -1,8 +1,7 @@
 // key.go provides path key construction and manipulation utilities.
 //
-// Path keys are the canonical string identifiers for versioned paths in the
-// flow solver. This file provides functions for building, parsing, and
-// comparing path keys.
+// Path keys are normalized string identifiers for versioned paths in flow facts.
+// This file provides functions for building, parsing, and comparing path keys.
 package pathkey
 
 import (

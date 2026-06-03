@@ -18,11 +18,9 @@ import (
 // It is pure data with no back-references to Session or other FuncResults,
 // enabling safe memoization and independent storage.
 //
-// The result captures outputs from all analysis phases:
-//   - Phase A (Resolve): Type annotations resolved into Scopes
-//   - Phase B (Scope/Extract): BaseScope, Scopes, FlowInputs
-//   - Phase C (Solve): FlowSolution
-//   - Phase D (Narrow): Facts, FnRefinement, NarrowSynth
+// The result captures the checker flow's analysis outputs: graph and scope
+// facts, immutable extraction evidence, product-state facts, and the solved-flow
+// projection diagnostics consume.
 type FuncResult struct {
 	// Graph is the function's control flow graph containing CFG nodes,
 	// binding information, and iteration metadata.
@@ -48,18 +46,12 @@ type FuncResult struct {
 	// This is the primary interface for querying narrowed types during synthesis.
 	Facts flow.TypeFacts
 
-	// FlowInputs contains the extracted flow constraints from Phase B.
+	// FlowInputs contains the extracted flow constraints.
 	// Includes assignments, conditions, type guards, and dead point markers.
 	FlowInputs *flow.Inputs
 
-	// FlowSolution contains the concrete flow solver result for producers that
-	// materialize one. Producer-neutral consumers should use SolvedFlow.
-	FlowSolution *flow.Solution
-
-	// FlowProjection is the producer-neutral solved-flow read surface.
-	// FlowSolution-backed results may leave this nil because flow.Solution already
-	// implements FlowOps. Product-state producers set this to their projection
-	// instead of fabricating a flow.Solution.
+	// FlowProjection is the producer-neutral solved-flow read surface. Product-state
+	// producers set this to their projection.
 	FlowProjection FlowOps
 
 	// Evidence records events discovered during abstract interpretation.
@@ -86,14 +78,14 @@ type FuncResult struct {
 	ReturnRelations flow.ReturnRelations
 
 	// SourceSignature is the annotation-only function signature resolved during
-	// phase execution.
+	// analysis.
 	SourceSignature *typ.Function
 
 	// PublicSeedSignature is the source-declared public seed used when
 	// canonicalizing post-flow FunctionFact signatures.
 	PublicSeedSignature *typ.Function
 
-	// NarrowSynth is the narrowed-phase synthesis engine for this function.
+	// NarrowSynth is the flow-refined synthesis engine for this function.
 	// Use TypeOf to query expression types with flow-based narrowing applied.
 	NarrowSynth Synth
 
@@ -124,7 +116,7 @@ type FuncResult struct {
 	// Keyed by ComputePass.Name().
 	Extras map[string]any
 
-	// DepthLimitExceeded indicates scope depth limit was hit during scope phase.
+	// DepthLimitExceeded indicates scope depth limit was hit while building scopes.
 	DepthLimitExceeded bool
 
 	// RecursiveFamilies is the compilation-scoped recursive-family interner used
@@ -218,14 +210,11 @@ func (r *FuncResult) SolvedFlow() FlowOps {
 	if r.FlowProjection != nil {
 		return r.FlowProjection
 	}
-	if r.FlowSolution != nil {
-		return r.FlowSolution
-	}
 	return nil
 }
 
 // ConditionProofFacts returns the producer-neutral condition-proof surface for
-// this result. Consumers use this instead of checking the concrete flow solver.
+// this result. Consumers use this instead of depending on concrete flow state.
 func (r *FuncResult) ConditionProofFacts() flow.ConditionProofFacts {
 	if r == nil {
 		return nil
@@ -375,7 +364,6 @@ type FuncAnalysisView struct {
 	Scopes                   map[cfg.Point]*scope.State
 	Facts                    flow.TypeFacts
 	FlowInputs               *flow.Inputs
-	FlowSolution             *flow.Solution
 	FlowProjection           FlowOps
 	Evidence                 FlowEvidence
 	CallExpectedArgs         []CallExpectedArgEvidence
@@ -404,7 +392,6 @@ func ViewFromResult(r *FuncResult) *FuncAnalysisView {
 		Scopes:                   r.Scopes,
 		Facts:                    r.Facts,
 		FlowInputs:               r.FlowInputs,
-		FlowSolution:             r.FlowSolution,
 		FlowProjection:           r.FlowProjection,
 		Evidence:                 r.Evidence,
 		CallExpectedArgs:         r.CallExpectedArgs,
@@ -430,9 +417,6 @@ func (r *FuncAnalysisView) SolvedFlow() FlowOps {
 	}
 	if r.FlowProjection != nil {
 		return r.FlowProjection
-	}
-	if r.FlowSolution != nil {
-		return r.FlowSolution
 	}
 	return nil
 }

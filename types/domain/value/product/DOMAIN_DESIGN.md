@@ -1,7 +1,7 @@
 # AbstractValue Abstract Domain — Design Document
 
 Status: DRAFT for review.
-Scope: wire the existing `AbstractValue` operations into the `lattice.Lattice[AbstractValue]` contract established by Phase A+B and used by `Condition` (rev 2). Per the per-domain rule: ONE domain at a time, top-to-bottom, no fixture invocation.
+Scope: wire the existing `AbstractValue` operations into the `lattice.Lattice[AbstractValue]` contract established by design step A+B and used by `Condition` (rev 2). Per the per-domain rule: ONE domain at a time, top-to-bottom, no fixture invocation.
 
 Distinct from `Condition`: this domain's algebraic primitives are **already correct** — Forge seq 288 (the commutative/associative/idempotent semilattice law fix) and the per-axis reduced-product machinery have been the authoritative implementation for prior sessions. The work here is the contract wiring plus law-harness verification — not algorithmic.
 
@@ -200,7 +200,7 @@ The per-axis tests, convergence tests, and recursive-family tests pre-date this 
 
 - Anything Condition-domain related (already closed).
 - The other finite-height domains (NumericRange, PathPresence, LengthBound) — they follow only after this one is closed.
-- Phase D Kildall refactor.
+- design step D Kildall refactor.
 - Per-axis algebra (already correct per seq 288).
 
 ---

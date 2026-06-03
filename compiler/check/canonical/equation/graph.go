@@ -16,7 +16,7 @@ const wideningDelayChanges = 3
 // per-parameter contract cells) for one function and solves it over the single
 // generic worklist, producing the converged FunctionState.
 //
-// It is the structural core of the canonical flow: it owns the topology, the
+// It is the structural core of the flow: it owns the topology, the
 // predecessor join, the forward emission to successors, the backward routing of
 // demand into contract cells, and the entry point's reading of those contracts.
 // The local node semantics are supplied as an injected NodeTransfer.

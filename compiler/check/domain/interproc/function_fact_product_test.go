@@ -37,7 +37,7 @@ func TestJoinFacts_BatchMergeFunctionFacts(t *testing.T) {
 	if got := functionfact.NarrowSummary(facts.FunctionFacts, symNarrow); !returnsummary.Equal(got, []typ.Type{typ.Number}) {
 		t.Fatalf("narrow mismatch: got %v", got)
 	}
-	if got := functionfact.SiblingTypeProjection(facts.FunctionFacts, symFunc, api.PhaseScopeCompute); !typ.TypeEquals(got, funcType) {
+	if got := functionfact.SiblingTypeProjection(facts.FunctionFacts, symFunc, api.SynthModeDeclared); !typ.TypeEquals(got, funcType) {
 		t.Fatalf("func mismatch: got %v", got)
 	}
 }

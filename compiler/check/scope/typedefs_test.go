@@ -8,40 +8,6 @@ import (
 	"github.com/wippyai/go-lua/types/typ"
 )
 
-func TestBuildTypeDefScopes(t *testing.T) {
-	t.Run("empty graph returns base scope for all points", func(t *testing.T) {
-		graph := cfg.Build(&ast.FunctionExpr{})
-		if graph == nil {
-			t.Skip("empty function returns nil graph")
-		}
-		base := New()
-		resolver := func(name string, typeExpr ast.TypeExpr, typeParams []ast.TypeParamExpr, sc *State) typ.Type {
-			return nil
-		}
-		scopes := BuildTypeDefScopes(graph, base, resolver)
-		if scopes == nil {
-			t.Fatal("expected non-nil scopes map")
-		}
-	})
-
-	t.Run("nil resolver result does not add type", func(t *testing.T) {
-		graph := cfg.Build(&ast.FunctionExpr{})
-		if graph == nil {
-			t.Skip("empty function returns nil graph")
-		}
-		base := New()
-		resolver := func(name string, typeExpr ast.TypeExpr, typeParams []ast.TypeParamExpr, sc *State) typ.Type {
-			return nil
-		}
-		scopes := BuildTypeDefScopes(graph, base, resolver)
-		for _, sc := range scopes {
-			if sc == nil {
-				t.Fatal("expected non-nil scope")
-			}
-		}
-	})
-}
-
 func TestEnrichWithTypeDefs(t *testing.T) {
 	t.Run("empty graph returns base scope", func(t *testing.T) {
 		graph := cfg.Build(&ast.FunctionExpr{})

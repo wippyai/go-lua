@@ -70,8 +70,8 @@ import (
 //     parameters see the actual value product in the single fixed point.
 //   - ParamNarrows is the finite set of parameter refinements the function proves
 //     on every normal return, including wrapper effects inherited through the
-//     context-free ParamNarrowQ product cell. Summary carries the cell so legacy
-//     callers observe one caller-visible function abstraction without forcing
+//     context-free ParamNarrowQ product cell. Summary carries the cell so callers
+//     observe one caller-visible function abstraction without forcing
 //     bottom-context Summary dependencies.
 //
 // A Summary is the caller-facing half of the summary solve product; SummaryDomain

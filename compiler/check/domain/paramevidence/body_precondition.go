@@ -602,7 +602,7 @@ func (c BodyPreconditionContext) pathTypeAt(p cfg.Point, path constraint.Path) t
 		obs := facts.ObservePath(flow.PathObservationQuery{
 			Point:               p,
 			Path:                path,
-			Phase:               flow.PathReadCurrent,
+			View:                flow.PathReadCurrent,
 			AllowConditionProof: true,
 			PreserveProof:       true,
 		})

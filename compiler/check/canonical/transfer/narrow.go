@@ -4,10 +4,10 @@ import (
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/cfg/extraction"
-	abstractcond "github.com/wippyai/go-lua/compiler/check/abstract/cond"
-	"github.com/wippyai/go-lua/compiler/check/abstract/literal"
 	"github.com/wippyai/go-lua/compiler/check/canonical/place"
+	abstractcond "github.com/wippyai/go-lua/compiler/check/domain/cond"
 	"github.com/wippyai/go-lua/compiler/check/domain/guard"
+	"github.com/wippyai/go-lua/compiler/check/domain/literal"
 	"github.com/wippyai/go-lua/compiler/check/domain/paramevidence"
 	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/domain/value/product"
@@ -33,11 +33,9 @@ func refinedStr(refined, base typ.Type) string {
 	}
 }
 
-// narrow.go is the path-sensitive narrowing of the canonical flow: the per-edge
-// refinement a branch guard proves about its tested value. It is the canonical
-// counterpart of the legacy condition-narrowing, lifted off the legacy
-// Solve/Narrow phases and expressed directly over the canonical PointState by
-// reusing the SAME value-domain narrowing primitives the legacy flow applies:
+// narrow.go is the path-sensitive narrowing of the flow: the per-edge
+// refinement a branch guard proves about its tested value, expressed directly
+// over PointState by reusing the same value-domain narrowing primitives:
 //
 //   - product.NarrowPresent / FilterByKind for x ~= nil, type(x) == k;
 //   - product.NarrowTruthy / NarrowFalsy for if x / if not x;
@@ -1075,9 +1073,8 @@ func originatingBranch(g *cfg.Graph, exit cfg.Point, condSym cfg.SymbolID, check
 // proves. When the branch tests the error symbol of such an assignment and the
 // chosen edge is the success edge (err proven nil — `if err == nil` true edge, or
 // `if err`/`if err ~= nil` false edge), the checked value symbols narrow to the
-// checked type T. It reuses the recorded TypeCheckBind (the canonical counterpart of
-// the legacy Type:is PredicateLink); a non-type-check guard returns applied=false so
-// the discriminant / cond-check paths run.
+// checked type T. It reuses the recorded TypeCheckBind; a non-type-check guard
+// returns applied=false so the discriminant / cond-check paths run.
 func (t *Transfer) narrowByTypeCheck(out flow.PointState, info *cfg.BranchInfo, taken bool) (flow.PointState, bool) {
 	if t.typeCheckByErr == nil || info.CondSymbol == 0 {
 		return out, false
@@ -1285,16 +1282,15 @@ func staticMemberGuardImpliesPresence(check cfg.CondCheckKind, typeName string) 
 // narrowByPredicate applies the value-narrowing a local type-predicate guard
 // proves. A predicate is a local function whose body returns a builtin
 // `type(param) == kind` test on one of its parameters (recorded as a guard-owned
-// predicate function fact, the canonical counterpart of the legacy
-// LocalTypePredicateEvidence). On the edge
+// predicate function fact). On the edge
 // the predicate result holds true, the argument passed at the tested parameter
 // narrows to that kind, exactly as a direct `type(arg) == kind` guard would.
 //
 // The narrowing is ONE-SIDED: a predicate body is a conjunction of conditions
 // (`type(v) == "number" and v > 0`), so a false result does not prove the argument
 // is NOT the kind. Only the true edge narrows; the false edge leaves the argument
-// its declared (gradual) type, preserving the legacy PredicateLink direction and
-// the soundness boundary the false-branch adversarial cases pin.
+// its declared (gradual) type, preserving the one-sided soundness boundary the
+// false-branch adversarial cases pin.
 //
 // It recognizes both forms: the direct call `if P(arg)` (the branch condition is the
 // call, or its negation under `if not P(arg)`), and the assigned result
@@ -2770,8 +2766,9 @@ func pathHasMultiUnion(root typ.Type, prefix []constraint.Segment) bool {
 // errors at runtime before the comparison), so an optional/nil wrapper an array-index or
 // captured-optional source carries is stripped before refinement, leaving only the live
 // record variants the exclude edge must also drop. A plain `field == value` on a broad
-// scalar field (not a discriminant) is left un-stripped so it stays the legacy no-op and
-// never rewrites a sibling guard's field refinement. ok=false reports an unchanged base.
+// scalar field (not a discriminant) is left un-stripped so it remains a no-op and
+// never rewrites a sibling guard's field refinement. ok=false reports an
+// unchanged base.
 func narrowDiscriminantUnion(base typ.Type, field string, lit *typ.Literal, include bool) (typ.Type, bool) {
 	if fieldDiscriminatesUnion(base, field) {
 		base = narrow.RemoveNil(base)

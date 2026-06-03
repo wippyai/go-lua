@@ -11,10 +11,10 @@ func TestSelectPathObservationResult_StrictPreFallsBackToDeclared(t *testing.T) 
 	declared := typ.String
 	got := SelectPathObservationResult(PathObservationSelection{
 		Query: PathObservationQuery{
-			Point:       4,
-			Path:        constraint.NewPath(10, "x"),
-			Phase:       PathReadPre,
-			StrictPhase: true,
+			Point:      4,
+			Path:       constraint.NewPath(10, "x"),
+			View:       PathReadPre,
+			StrictView: true,
 		},
 		Declared: declared,
 	})
@@ -112,7 +112,7 @@ func TestSelectPathObservationResult_NeverSolvedIsAuthoritative(t *testing.T) {
 		Query: PathObservationQuery{
 			Point: 8,
 			Path:  constraint.NewPath(12, "x"),
-			Phase: PathReadCurrent,
+			View:  PathReadCurrent,
 		},
 		Declared: typ.String,
 		Solved: PathObservationCandidate{

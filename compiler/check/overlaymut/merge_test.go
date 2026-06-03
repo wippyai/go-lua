@@ -7,9 +7,9 @@ import (
 	"github.com/wippyai/go-lua/types/typ"
 )
 
-func TestApplyMapMutatorMergeToOverlay_TreatsNilWriteAsDeletion(t *testing.T) {
+func TestApplyMapWriteMergeToOverlay_TreatsNilWriteAsDeletion(t *testing.T) {
 	overlay := make(map[cfg.SymbolID]typ.Type)
-	ApplyMapMutatorMergeToOverlay(overlay, map[cfg.SymbolID][]MapMutatorInfo{
+	ApplyMapWriteMergeToOverlay(overlay, map[cfg.SymbolID][]MapWriteInfo{
 		1: {
 			{KeyType: typ.String, ValueType: typ.Nil},
 		},
@@ -19,10 +19,10 @@ func TestApplyMapMutatorMergeToOverlay_TreatsNilWriteAsDeletion(t *testing.T) {
 	}
 }
 
-func TestApplyMapMutatorMergeToOverlay_DeletionDoesNotPoisonWriteValue(t *testing.T) {
+func TestApplyMapWriteMergeToOverlay_DeletionDoesNotPoisonWriteValue(t *testing.T) {
 	entry := typ.NewRecord().OptField("proc", typ.Any).Build()
 	overlay := make(map[cfg.SymbolID]typ.Type)
-	ApplyMapMutatorMergeToOverlay(overlay, map[cfg.SymbolID][]MapMutatorInfo{
+	ApplyMapWriteMergeToOverlay(overlay, map[cfg.SymbolID][]MapWriteInfo{
 		1: {
 			{KeyType: typ.String, ValueType: typ.Nil},
 			{KeyType: typ.String, ValueType: entry},
@@ -134,7 +134,7 @@ func TestJoinValueTypes_ReplacesUnsolvedFunctionSeed(t *testing.T) {
 	}
 }
 
-func TestApplyMapMutatorMergeToOverlay_TableInsertRefinesAnnotatedMapValue(t *testing.T) {
+func TestApplyMapWriteMergeToOverlay_TableInsertRefinesAnnotatedMapValue(t *testing.T) {
 	entry := typ.NewRecord().
 		Field("id", typ.String).
 		Field("name", typ.String).
@@ -142,7 +142,7 @@ func TestApplyMapMutatorMergeToOverlay_TableInsertRefinesAnnotatedMapValue(t *te
 	overlay := map[cfg.SymbolID]typ.Type{
 		1: typ.NewMap(typ.String, typ.NewArray(typ.Any)),
 	}
-	ApplyMapMutatorMergeToOverlay(overlay, map[cfg.SymbolID][]MapMutatorInfo{
+	ApplyMapWriteMergeToOverlay(overlay, map[cfg.SymbolID][]MapWriteInfo{
 		1: {
 			{KeyType: typ.String, ValueType: typ.NewUnion(typ.NewArray(typ.Any), typ.NewRecord().Build())},
 			{KeyType: typ.String, ValueType: typ.NewArray(entry)},
@@ -151,7 +151,7 @@ func TestApplyMapMutatorMergeToOverlay_TableInsertRefinesAnnotatedMapValue(t *te
 
 	got, ok := overlay[1].(*typ.Map)
 	if !ok {
-		t.Fatalf("expected map after mapMutator merge, got %T", overlay[1])
+		t.Fatalf("expected map after map write merge, got %T", overlay[1])
 	}
 	want := typ.NewArray(entry)
 	if !typ.TypeEquals(got.Value, want) {

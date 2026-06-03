@@ -8,7 +8,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/check/tests/testutil"
 )
 
-// These tests lock the flow-solver fixpoint against non-convergence. A
+// These tests lock the flow engine against non-convergence. A
 // loop-carried table slot whose phi merges a stable nil edge with a back-edge
 // that oscillates between a concrete element type and the opaque unknown type
 // forms a limit cycle: each iteration the slot flips and the value interner
@@ -36,7 +36,7 @@ func checkConverges(t *testing.T, name, src string) {
 				t.Errorf("expected no errors, got: %v", testutil.ErrorMessages(r.Diagnostics))
 			}
 		case <-time.After(8 * time.Second):
-			t.Fatalf("non-convergence: checker did not terminate within 8s — flow-solver fixpoint failed to converge (limit cycle / missing widening)")
+			t.Fatalf("non-convergence: checker did not terminate within 8s — flow fixpoint failed to converge (limit cycle / missing widening)")
 		}
 	})
 }

@@ -1,12 +1,12 @@
-// Package input assembles the inputs the canonical intraprocedural solver needs
-// for one function: the CFG and graph topology, the raw graph-event evidence,
-// and the declared scope facts (parameter symbols, names, and declared types).
+// Package input assembles the inputs the intraprocedural flow engine needs for one
+// function: the CFG and graph topology, the raw graph-event evidence, and the
+// declared scope facts (parameter symbols, names, and declared types).
 //
-// It reuses ONLY the sound leaf extractors of the legacy pipeline:
+// It reuses only leaf extractors:
 //
 //   - the CFG and its binding table (compiler/cfg.Build / a session's
 //     GetOrBuildCFG produce the same *cfg.Graph with bindings attached);
-//   - the raw graph-event evidence (compiler/check/abstract/trace.GraphEvidence,
+//   - the raw graph-event evidence (compiler/check/domain/trace.GraphEvidence,
 //     the same stream a session's store.EvidenceForGraph caches) — assignments,
 //     calls, returns, branches, function definitions, identifier and parameter
 //     uses;
@@ -14,22 +14,20 @@
 //     a caller-supplied resolver for the type annotations (annotations, aliases,
 //     and base scopes are the caller's; this package does not own them).
 //
-// It does NOT call InferLocalTypes, CollectSpecNarrowedTypes,
-// buildPreflowBranchSolution, or SolveConditionView, and it does not build the
-// legacy flow.Inputs. Local inference is not an input here — it is produced by
-// the value/condition/numeric transfer equations the solver runs over these
-// inputs. Edge conditions and numeric conditions are transfer INPUTS the
-// per-node transfer reads from the raw evidence and CFG, not pre-solved facts.
+// Local inference is not an input here; it is produced by the
+// value/condition/numeric transfer equations the flow engine runs over these inputs.
+// Edge conditions and numeric conditions are transfer inputs the per-node
+// transfer reads from the raw evidence and CFG, not pre-solved facts.
 package input
 
 import (
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/cfg"
-	"github.com/wippyai/go-lua/compiler/check/abstract/constprop"
-	abstractcore "github.com/wippyai/go-lua/compiler/check/abstract/core"
-	"github.com/wippyai/go-lua/compiler/check/abstract/trace"
 	"github.com/wippyai/go-lua/compiler/check/api"
+	"github.com/wippyai/go-lua/compiler/check/domain/constprop"
+	flowctx "github.com/wippyai/go-lua/compiler/check/domain/flowctx"
 	domainpath "github.com/wippyai/go-lua/compiler/check/domain/path"
+	"github.com/wippyai/go-lua/compiler/check/domain/trace"
 	"github.com/wippyai/go-lua/compiler/check/scope"
 	basecfg "github.com/wippyai/go-lua/types/cfg"
 	"github.com/wippyai/go-lua/types/constraint"
@@ -38,7 +36,7 @@ import (
 	"github.com/wippyai/go-lua/types/typ"
 )
 
-// Inputs is everything the canonical solver needs for one function. It is a
+// Inputs is everything the flow engine needs for one function. It is a
 // passive carrier: the equation.Builder owns the topology walk, and the injected
 // NodeTransfer reads these fields to compute per-node effects.
 type Inputs struct {
@@ -149,7 +147,7 @@ func BuildConstValues(g *cfg.Graph, evidence api.FlowEvidence) map[cfg.SymbolID]
 		return nil
 	}
 	temp := &flow.Inputs{}
-	fc := &abstractcore.FlowContext{Graph: g, Evidence: evidence}
+	fc := &flowctx.FlowContext{Graph: g, Evidence: evidence}
 	constprop.CollectConstAssignments(fc, temp)
 	constprop.PropagateAllConstValues(fc, temp)
 	return temp.ConstValues
@@ -199,11 +197,10 @@ func BuildFromFunction(fn *ast.FunctionExpr, resolve TypeResolver, baseScope *sc
 	return Build(g, evidence, resolve, baseScope)
 }
 
-// BuildConditionDemand derives the read/def demand that bounds canonical
-// path-condition vocabulary. It is the canonical counterpart of the legacy
-// flow condition-demand builder: every real expression/guard/return read is a
-// use, whole-symbol definitions and phi targets are defs, and return points keep
-// exported roots live for summary projection.
+// BuildConditionDemand derives the read/def demand that bounds path-condition
+// vocabulary: every real expression/guard/return read is a use, whole-symbol
+// definitions and phi targets are defs, and return points keep exported roots
+// live for summary projection.
 func BuildConditionDemand(in Inputs) *propagate.Demand {
 	g := in.Graph
 	if g == nil {
