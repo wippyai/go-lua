@@ -5,7 +5,6 @@ import (
 	querycore "github.com/wippyai/go-lua/types/query/core"
 	"github.com/wippyai/go-lua/types/subtype"
 	"github.com/wippyai/go-lua/types/typ"
-	typejoin "github.com/wippyai/go-lua/types/typ/join"
 	"github.com/wippyai/go-lua/types/typ/unwrap"
 )
 
@@ -297,11 +296,20 @@ func mergeMapKeyDomain(existing, incoming typ.Type) typ.Type {
 }
 
 func joinContainerValueTypes(existing, incoming typ.Type) typ.Type {
-	joined := typ.JoinPreferNonSoft(existing, incoming)
-	if union, ok := joined.(*typ.Union); ok {
-		return typejoin.Types(union.Members...)
+	return JoinContainerValueTypes(existing, incoming)
+}
+
+// JoinContainerValueTypes is the canonical slot join for container element/value
+// mutation. It preserves soft-placeholder refinement, coalesces compatible
+// structural record families, and keeps true discriminated variants separate.
+func JoinContainerValueTypes(existing, incoming typ.Type) typ.Type {
+	if joined, ok := JoinStructuralShape(existing, incoming, JoinContainerValueTypes); ok {
+		return joined
 	}
-	return joined
+	if joined, ok := JoinStructuralUnionShape(existing, incoming, JoinContainerValueTypes); ok {
+		return joined
+	}
+	return typ.JoinUnionFieldSlot(existing, incoming, false)
 }
 
 // AdmitIndexedWrite returns the value-domain result of observing t[k] = v.

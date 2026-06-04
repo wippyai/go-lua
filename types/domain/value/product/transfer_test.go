@@ -521,9 +521,116 @@ func TestAppendElementMatchesValueDomain(t *testing.T) {
 		{"empty record to array", recordWith(), typ.Number},
 	}
 	for _, c := range cases {
-		want := value.MergeForConvergence(c.array, value.AdmitArrayElementMutation(c.array, c.elem, typ.JoinPreferNonSoft))
+		want := value.MergeForConvergence(c.array, value.AdmitArrayElementMutation(c.array, c.elem, value.JoinContainerValueTypes))
 		got := AppendElement(FromType(c.array), FromType(c.elem))
 		assertProjects(t, c.name, got, want)
+	}
+}
+
+func TestAppendElementCollapsesCompatibleCommandPayloads(t *testing.T) {
+	createData := typ.LiteralString("CREATE_DATA")
+	nodeInput := typ.LiteralString("NODE_INPUT")
+	initial := typ.NewRecord().
+		Field("type", createData).
+		Field("payload", typ.NewRecord().
+			Field("data_id", typ.String).
+			Field("data_type", nodeInput).
+			Field("content", typ.String).
+			Field("content_type", typ.LiteralString("text/plain")).
+			Build()).
+		Build()
+	next := typ.NewRecord().
+		Field("type", createData).
+		Field("payload", typ.NewRecord().
+			Field("data_id", typ.String).
+			Field("data_type", nodeInput).
+			Field("node_id", typ.String).
+			Field("key", typ.String).
+			Field("content", typ.LiteralString("")).
+			Field("content_type", typ.LiteralString("dataflow/reference")).
+			Build()).
+		Build()
+
+	appended := AppendElement(FromType(typ.NewArray(initial)), FromType(next))
+	got := appended.ProjectValue()
+	arr, ok := unwrap.Alias(got).(*typ.Array)
+	if !ok {
+		t.Fatalf("AppendElement command payloads = %T %[1]v, want array", got)
+	}
+	elem, ok := unwrap.Alias(arr.Element).(*typ.Record)
+	if !ok {
+		t.Fatalf("command element = %T %[1]v, want collapsed record", arr.Element)
+	}
+	if field := elem.GetField("type"); field == nil || !typ.TypeEquals(field.Type, createData) {
+		t.Fatalf("command type field = %v, want CREATE_DATA literal", field)
+	}
+	payloadField := elem.GetField("payload")
+	if payloadField == nil {
+		t.Fatalf("command payload field missing in %v", elem)
+	}
+	payload, ok := unwrap.Alias(payloadField.Type).(*typ.Record)
+	if !ok {
+		t.Fatalf("command payload = %T %[1]v, want collapsed record", payloadField.Type)
+	}
+	if field := payload.GetField("data_type"); field == nil || !typ.TypeEquals(field.Type, nodeInput) {
+		t.Fatalf("payload data_type = %v, want NODE_INPUT literal", field)
+	}
+	if field := payload.GetField("node_id"); field == nil || !field.Optional {
+		t.Fatalf("payload node_id = %v, want optional field", field)
+	}
+	if field := payload.GetField("content"); field == nil || !typ.TypeEquals(field.Type, typ.String) {
+		t.Fatalf("payload content = %v, want string widened from literal", field)
+	}
+
+	third := typ.NewRecord().
+		Field("type", createData).
+		Field("payload", typ.NewRecord().
+			Field("data_id", typ.String).
+			Field("data_type", nodeInput).
+			Field("content", typ.LiteralString("{}")).
+			Field("content_type", typ.LiteralString("application/json")).
+			Build()).
+		Build()
+	got = AppendElement(appended, FromType(third)).ProjectValue()
+	arr, ok = unwrap.Alias(got).(*typ.Array)
+	if !ok {
+		t.Fatalf("AppendElement third command payload = %T %[1]v, want array", got)
+	}
+	elem, ok = unwrap.Alias(arr.Element).(*typ.Record)
+	if !ok {
+		t.Fatalf("third command element = %T %[1]v, want collapsed record", arr.Element)
+	}
+	payloadField = elem.GetField("payload")
+	if payloadField == nil {
+		t.Fatalf("third command payload field missing in %v", elem)
+	}
+	payload, ok = unwrap.Alias(payloadField.Type).(*typ.Record)
+	if !ok {
+		t.Fatalf("third command payload = %T %[1]v, want collapsed record", payloadField.Type)
+	}
+	if field := payload.GetField("content_type"); field == nil || !typ.TypeEquals(field.Type, typ.String) {
+		t.Fatalf("third payload content_type = %v, want string widened from accumulated literals", field)
+	}
+}
+
+func TestAppendElementPreservesDiscriminatedCommandVariants(t *testing.T) {
+	createData := typ.NewRecord().
+		Field("type", typ.LiteralString("CREATE_DATA")).
+		Field("payload", typ.NewRecord().Field("data_id", typ.String).Build()).
+		Build()
+	deleteData := typ.NewRecord().
+		Field("type", typ.LiteralString("DELETE_DATA")).
+		Field("payload", typ.NewRecord().Field("data_id", typ.String).Build()).
+		Build()
+
+	got := AppendElement(FromType(typ.NewArray(createData)), FromType(deleteData)).ProjectValue()
+	arr, ok := unwrap.Alias(got).(*typ.Array)
+	if !ok {
+		t.Fatalf("AppendElement discriminants = %T %[1]v, want array", got)
+	}
+	union, ok := unwrap.Alias(arr.Element).(*typ.Union)
+	if !ok || len(union.Members) != 2 {
+		t.Fatalf("command variants = %T %[1]v, want two-member discriminated union", arr.Element)
 	}
 }
 
@@ -548,7 +655,7 @@ func TestContainerElementUnionMatchesValueDomain(t *testing.T) {
 	container := typ.Instantiate(channel, typ.Unknown)
 	elem := typ.String
 
-	want := value.AdmitContainerElementUnion(container, elem)
+	want := value.MergeForConvergence(container, value.AdmitContainerElementUnion(container, elem))
 	got := ContainerElementUnion(FromType(container), FromType(elem))
 	assertProjects(t, "ContainerElementUnion", got, want)
 }
@@ -612,6 +719,15 @@ func TestNarrowTruthyMatchesNarrow(t *testing.T) {
 	if !presence.Equal(got.Presence(), presence.Present()) {
 		t.Fatalf("NarrowTruthy presence = %s, want present", got.Presence())
 	}
+
+	dynamic := NarrowTruthy(FromType(typ.Any))
+	if !typ.TypeEquals(dynamic.ProjectValue(), typ.Any) || !dynamic.DefinitelyPresent() {
+		t.Fatalf("NarrowTruthy(any) = %s presence=%s, want present any", dynamic.ProjectValue(), dynamic.Presence())
+	}
+	gradual := NarrowTruthy(GradualAny())
+	if !gradual.IsGradualTop() || !typ.TypeEquals(gradual.ProjectValue(), typ.Any) || !gradual.DefinitelyPresent() {
+		t.Fatalf("NarrowTruthy(GradualAny) = %s gradual=%v presence=%s, want present gradual any", gradual.ProjectValue(), gradual.IsGradualTop(), gradual.Presence())
+	}
 }
 
 // TestNarrowFalsyMatchesNarrow pins NarrowFalsy as narrow.ToFalsy on the shape.
@@ -637,6 +753,11 @@ func TestNarrowPresentMatchesRemoveNil(t *testing.T) {
 	assertProjects(t, "NarrowPresent", got, want)
 	if !presence.Equal(got.Presence(), presence.Present()) {
 		t.Fatalf("NarrowPresent presence = %s, want present", got.Presence())
+	}
+
+	dynamic := NarrowPresent(FromType(typ.Any))
+	if !typ.TypeEquals(dynamic.ProjectValue(), typ.Any) || !dynamic.DefinitelyPresent() {
+		t.Fatalf("NarrowPresent(any) = %s presence=%s, want present any", dynamic.ProjectValue(), dynamic.Presence())
 	}
 }
 

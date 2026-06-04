@@ -175,6 +175,10 @@ func ProjectValuesOrUnknown(values []AbstractValue) []typ.Type {
 
 // Top is the most general AbstractValue: every axis at its Top.
 func Top() AbstractValue {
+	return cachedTop
+}
+
+func constructTop() AbstractValue {
 	return New(
 		shapevalue.Top(),
 		presence.Top(),
@@ -236,8 +240,43 @@ func PresentGradualAny() AbstractValue {
 	)
 }
 
+// presentRefinementFromType admits a type after a control-flow proof has removed
+// nil from the runtime value. Unlike FromType(any), which must conservatively
+// keep dynamic values maybe-present, this boundary preserves the proof on the
+// Presence axis while leaving the structural shape dynamic.
+func presentRefinementFromType(t typ.Type, gradual bool) AbstractValue {
+	if t == nil {
+		t = typ.Any
+	}
+	if t.Kind().IsNever() {
+		return Bottom()
+	}
+	nonNil, _ := value.SplitNilable(t)
+	if nonNil == nil || typ.IsNever(nonNil) {
+		return Bottom()
+	}
+	ev := evidence.Top()
+	if gradual {
+		ev = evidence.GradualTop()
+	}
+	return New(
+		shapeOf(nonNil),
+		presence.Present(),
+		numeric.Top(),
+		effectrows.Top(),
+		ownership.Top(),
+		escapeOf(nonNil),
+		identityOf(nonNil),
+		ev,
+	)
+}
+
 // Bottom is the least AbstractValue: every axis at its Bottom (the empty value).
 func Bottom() AbstractValue {
+	return cachedBottom
+}
+
+func constructBottom() AbstractValue {
 	return New(
 		shapevalue.Bottom(),
 		presence.Bottom(),
@@ -364,6 +403,15 @@ func (v AbstractValue) IsZero() bool {
 	return v.n == nil
 }
 
+// IsBottom reports whether this value is the interned least product value.
+//
+// Unlike IsZero, Bottom is a real lattice value stored in maps before
+// canonicalization. The predicate is pointer-cheap because product admission
+// interns all equal nodes, and it ignores diagnostic provenance just like Equal.
+func (v AbstractValue) IsBottom() bool {
+	return v.n == cachedBottom.n
+}
+
 // WithProvenance returns the same interned value carrying the given provenance.
 //
 // Provenance is a diagnostic sidecar: the node (hence Equal and Hash) is
@@ -427,6 +475,9 @@ func Equal(a, b AbstractValue) bool {
 	}
 	if a.n == nil || b.n == nil {
 		return a.n == b.n
+	}
+	if a.IsBottom() || b.IsBottom() {
+		return a.IsBottom() && b.IsBottom()
 	}
 	return nodeEqual(a.n, b.n)
 }

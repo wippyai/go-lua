@@ -722,6 +722,35 @@ func TestCondition_DisjunctConstraints(t *testing.T) {
 	}
 }
 
+func TestCondition_MapPathsRewritesAllEmbeddedPaths(t *testing.T) {
+	source := Path{Root: "x", Symbol: 1, Version: 2}.Field("config")
+	target := Path{Root: "node", Symbol: 7, Version: 11}.Field("config")
+	other := Path{Root: "k", Symbol: 2, Version: 1}
+
+	cond := FromConstraints(
+		Truthy{Path: source.Field("target")},
+		FieldEqualsPath{Target: source, Field: "kind", Value: source.Field("kind")},
+		KeyOf{Table: source, Key: other},
+	)
+	got := cond.MapPaths(func(p Path) Path {
+		if p.Symbol == source.Symbol && p.Version == source.Version {
+			p.Root = target.Root
+			p.Symbol = target.Symbol
+			p.Version = target.Version
+		}
+		return p
+	})
+
+	want := FromConstraints(
+		Truthy{Path: target.Field("target")},
+		FieldEqualsPath{Target: target, Field: "kind", Value: target.Field("kind")},
+		KeyOf{Table: target, Key: other},
+	)
+	if !got.Equals(want) {
+		t.Fatalf("MapPaths() = %v, want %v", got, want)
+	}
+}
+
 func TestCondition_NumDisjuncts(t *testing.T) {
 	path := Path{Root: "x", Symbol: 1}
 	a := FromConstraints(Truthy{Path: path})

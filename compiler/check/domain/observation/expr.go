@@ -582,18 +582,38 @@ func (p Projector) exprIsGradualTop(expr ast.Expr, point cfg.Point) bool {
 }
 
 func (p Projector) productGradualTopAt(point cfg.Point, path constraint.Path) (bool, bool) {
-	if p.cfg.Facts == nil {
+	pv := p.ProductValueAtPath(point, path)
+	if pv.State != flow.StateResolved {
 		return false, false
+	}
+	return productValueIsGradualTop(pv), true
+}
+
+// ProductValueAtPath returns the solved product carrier for a normalized source
+// path when the active facts expose product evidence. It is the observation
+// boundary for consumers that need semantic carrier facts such as presence.
+func (p Projector) ProductValueAtPath(point cfg.Point, path constraint.Path) flow.ProductValue {
+	if p.cfg.Facts == nil || path.IsEmpty() || path.Symbol == 0 {
+		return flow.ProductValue{State: flow.StateUnknown}
 	}
 	if len(path.Segments) == 0 {
 		if valueFacts, ok := p.cfg.Facts.(flow.ProductFacts); ok {
-			return productValueIsGradualTop(valueFacts.RefinedValueAt(point, path.Symbol)), true
+			return valueFacts.RefinedValueAt(point, path.Symbol)
 		}
 	}
 	if pathFacts, ok := p.cfg.Facts.(flow.ProductPathFacts); ok {
-		return productValueIsGradualTop(pathFacts.RefinedPathValueAt(point, path)), true
+		return pathFacts.RefinedPathValueAt(point, path)
 	}
-	return false, false
+	return flow.ProductValue{State: flow.StateUnknown}
+}
+
+// PathHasPresentProductValue reports whether solved product evidence proves a
+// normalized path is definitely non-nil. It does not infer field existence from
+// structural types; callers must supply a source path already derived at their
+// AST boundary.
+func (p Projector) PathHasPresentProductValue(point cfg.Point, path constraint.Path) bool {
+	pv := p.ProductValueAtPath(point, path)
+	return pv.State == flow.StateResolved && pv.Value.DefinitelyPresent()
 }
 
 func productValueIsGradualTop(pv flow.ProductValue) bool {
@@ -699,12 +719,12 @@ func (p Projector) attrType(expr *ast.AttrGetExpr, point cfg.Point) typ.Type {
 	}
 	key := p.TypeOf(expr.Key, point)
 	if t, ok := p.RuntimeIndex(obj, key); ok {
-		return p.applyIndexReadProof(t, obj, expr.Object, expr.Key, point)
+		return p.applyIndexReadProof(t, obj, expr.Object, expr.Key, key, point)
 	}
 	return typ.Unknown
 }
 
-func (p Projector) applyIndexReadProof(t typ.Type, objType typ.Type, obj ast.Expr, key ast.Expr, point cfg.Point) typ.Type {
+func (p Projector) applyIndexReadProof(t typ.Type, objType typ.Type, obj ast.Expr, key ast.Expr, keyType typ.Type, point cfg.Point) typ.Type {
 	if t == nil {
 		return t
 	}
@@ -718,6 +738,7 @@ func (p Projector) applyIndexReadProof(t typ.Type, objType typ.Type, obj ast.Exp
 		Result:    t,
 		Object:    obj,
 		Key:       key,
+		KeyType:   keyType,
 		Flow:      flowProof,
 		PathOf: func(expr ast.Expr) constraint.Path {
 			return p.pathOfExpr(expr, point)
@@ -742,15 +763,19 @@ func (p Projector) indexReadFlow() indexread.Flow {
 	kf, hasKeyOf := p.cfg.Facts.(keyOfFacts)
 	nf, hasNum := p.cfg.Facts.(flow.NumericFacts)
 	lf, hasLen := p.cfg.Facts.(flow.LengthFacts)
-	if !hasKeyOf && !hasNum && !hasLen {
+	iw, hasIndexWrites := p.cfg.Facts.(flow.IndexWriteFacts)
+	vo, _ := p.cfg.Facts.(valueOriginFacts)
+	if !hasKeyOf && !hasNum && !hasLen && !hasIndexWrites {
 		return nil
 	}
 	return factsIndexReadFlow{
-		keyOf:    kf,
-		numeric:  nf,
-		length:   lf,
-		graph:    p.cfg.Graph,
-		bindings: p.cfg.Bindings,
+		keyOf:       kf,
+		numeric:     nf,
+		length:      lf,
+		indexWrites: iw,
+		valueOrigin: vo,
+		graph:       p.cfg.Graph,
+		bindings:    p.cfg.Bindings,
 	}
 }
 
@@ -804,6 +829,10 @@ type keyOfFacts interface {
 	HasKeyOf(p cfg.Point, tablePath, keyPath constraint.Path) bool
 }
 
+type valueOriginFacts interface {
+	ValueOriginsAt(p cfg.Point) flow.ValueOriginFacts
+}
+
 // factsIndexReadFlow adapts per-point Facts proofs to the indexread.Flow surface.
 // HasKeyOf answers the key-presence proof; numeric bound and length queries are
 // answered from the numeric component (flow.NumericFacts / flow.LengthFacts),
@@ -813,11 +842,13 @@ type keyOfFacts interface {
 // name the graph cannot resolve, answers no proof so the read stays soundly
 // optional.
 type factsIndexReadFlow struct {
-	keyOf    keyOfFacts
-	numeric  flow.NumericFacts
-	length   flow.LengthFacts
-	graph    *cfg.Graph
-	bindings *bind.BindingTable
+	keyOf       keyOfFacts
+	numeric     flow.NumericFacts
+	length      flow.LengthFacts
+	indexWrites flow.IndexWriteFacts
+	valueOrigin valueOriginFacts
+	graph       *cfg.Graph
+	bindings    *bind.BindingTable
 }
 
 func (f factsIndexReadFlow) HasKeyOf(p cfg.Point, tablePath, keyPath constraint.Path) bool {
@@ -825,6 +856,77 @@ func (f factsIndexReadFlow) HasKeyOf(p cfg.Point, tablePath, keyPath constraint.
 		return false
 	}
 	return f.keyOf.HasKeyOf(p, tablePath, keyPath)
+}
+
+func (f factsIndexReadFlow) IndexWriteAdmission(q flow.IndexWriteQuery) (typ.Type, bool) {
+	if f.indexWrites == nil {
+		return nil, false
+	}
+	if got, ok := f.indexWrites.IndexWriteAdmission(q); ok {
+		return got, true
+	}
+	if q.KeyPath.IsEmpty() || f.valueOrigin == nil {
+		return nil, false
+	}
+	for _, keyPath := range f.indexWriteAdmissionAliasPaths(q.Point, q.KeyPath) {
+		if keyPath.Equal(q.KeyPath) {
+			continue
+		}
+		aliasQuery := q
+		aliasQuery.KeyPath = keyPath
+		aliasQuery.KeySymbol = keyPath.Symbol
+		if got, ok := f.indexWrites.IndexWriteAdmission(aliasQuery); ok {
+			return got, true
+		}
+	}
+	return nil, false
+}
+
+func (f factsIndexReadFlow) indexWriteAdmissionAliasPaths(p cfg.Point, keyPath constraint.Path) []constraint.Path {
+	origins := f.valueOrigin.ValueOriginsAt(p)
+	if origins.IsBottom() {
+		return nil
+	}
+	var out []constraint.Path
+	seen := map[constraint.PathKey]struct{}{}
+	queue := []constraint.Path{keyPath}
+	for len(queue) > 0 {
+		cur := queue[0]
+		queue = queue[1:]
+		curKey := flow.IndexWriteAdmissionPathKey(cur)
+		if curKey == "" {
+			continue
+		}
+		if _, ok := seen[curKey]; ok {
+			continue
+		}
+		seen[curKey] = struct{}{}
+		out = append(out, cur)
+		for _, use := range origins.OriginsCoveringPath(cur) {
+			if use.Origin.Kind != flow.ValueOriginAssignmentAlias {
+				continue
+			}
+			source, ok := observationPathFromKey(use.Origin.Source)
+			if !ok {
+				continue
+			}
+			for _, seg := range use.Remainder {
+				source = source.Append(seg)
+			}
+			if !source.IsEmpty() {
+				queue = append(queue, source)
+			}
+		}
+	}
+	return out
+}
+
+func observationPathFromKey(key constraint.PathKey) (constraint.Path, bool) {
+	sym, segments, ok := flow.ParseSymbolPathKey(key)
+	if !ok || sym == 0 {
+		return constraint.Path{}, false
+	}
+	return constraint.Path{Symbol: sym, Segments: append([]constraint.Segment(nil), segments...)}, true
 }
 
 func (f factsIndexReadFlow) BoundsAt(p cfg.Point, name string) (int64, int64, bool) {

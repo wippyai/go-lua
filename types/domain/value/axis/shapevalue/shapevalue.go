@@ -99,6 +99,15 @@ func Join(a, b Value) Value {
 // makes Join order-sensitive. The fix is to canonicalize through the
 // convergence merge whenever both Covers checks succeed without Equal.
 func joinUnaliased(at, bt typ.Type) Value {
+	if typ.ContainsRecursive(at) {
+		at = value.CanonicalRecursiveFamily(at)
+	}
+	if typ.ContainsRecursive(bt) {
+		bt = value.CanonicalRecursiveFamily(bt)
+	}
+	if at == bt {
+		return Value{t: at}
+	}
 	a := Value{t: at}
 	b := Value{t: bt}
 	aCovB := a.Covers(b)

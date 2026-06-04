@@ -443,10 +443,9 @@ func (t *Transfer) tableInsertMutatorEffect(
 		return MutatorEffect{}, false
 	}
 	effect := MutatorEffect{
-		Place:                 place,
-		Kind:                  MutatorAppendElement,
-		Element:               elemAV,
-		InvalidateKeyPresence: true,
+		Place:   place,
+		Kind:    MutatorAppendElement,
+		Element: elemAV,
 	}
 	if arrKey, ok := t.containerExprKey(target); ok {
 		effect.LengthKey = arrKey
@@ -547,6 +546,10 @@ func (t *Transfer) refineByKeyPresence(
 		return product.AbstractValue{}, false
 	}
 	if !out.KeyPresence.HasPaths(tablePath, keyPath) {
+		return product.AbstractValue{}, false
+	}
+	keyValue, ok := flow.PointFactsOf(*out).PathValue(keyPath)
+	if !ok || !keyValue.DefinitelyPresent() {
 		return product.AbstractValue{}, false
 	}
 	if !narrow.NilPresenceIsOnlyFlowUncertainty(result) {
@@ -721,6 +724,10 @@ func (t *Transfer) refineIndexRead(
 	result := ev.ProjectValue()
 	if container == nil || result == nil {
 		return ev
+	}
+
+	if refined, ok := t.refineByIndexWriteAdmission(out, e); ok {
+		return refined
 	}
 
 	// Key-presence (KeyOf): a key drawn from `pairs(container)` indexing that same

@@ -57,29 +57,32 @@ func (c Condition) WidenAgainst(next Condition) Condition {
 	return Or(c, projected)
 }
 
-// Project forgets dead, branch-local literals, then renormalizes. keep reports
-// whether a literal is still relevant (some referenced access path is live); a
-// dead literal (keep returns false) is forgotten only when it is also NOT common
-// to every disjunct.
+// Project forgets dead branch-local and mutable-path literals, then
+// renormalizes. keep reports whether a literal is still relevant (some
+// referenced access path is live); a dead literal (keep returns false) is
+// forgotten unless it is a root-stable fact common to every disjunct.
 //
-// Why commonality matters: a literal present in EVERY disjunct is a common
-// factor — L ∧ (D₁ ∨ D₂ ∨ …) — that does not contribute to disjunct
-// cross-multiplication. It typically represents a dominating fact established
-// before the merge (e.g. an early-return guard's surviving narrowing that holds
-// on all paths), whose refinement a downstream value-domain query still
-// observes through the narrowed container even when the guarded path itself is
-// not re-read syntactically. Dropping such a fact loses precision without
-// bounding the DNF. Conversely, a literal present in only SOME disjuncts is
-// branch-local; when its access path is dead it is exactly the kind of
-// discriminant that cross-multiplies a straight-line chain of independent
-// guards, so forgetting it is what keeps the DNF bounded.
+// Why root-stable commonality matters: a literal present in EVERY disjunct is a
+// common factor, L AND (D1 OR D2 OR ...), that does not contribute to disjunct
+// cross-multiplication. For facts over SSA-stable roots, it typically
+// represents a dominating fact established before the merge whose refinement a
+// downstream value-domain query can still soundly observe even when the guarded
+// path itself is not re-read syntactically.
+//
+// Mutable access-path facts are different. A field/index literal common at a
+// merge is still about a heap-shaped place that later writes can invalidate
+// without changing the root symbol. Until the analysis has write-versioned field
+// SSA, those literals must be retained only while live (or invalidated by the
+// transfer that performs the write). Preserving a dead mutable-path literal just
+// because it is common leaks historical branch facts through liveness and can
+// keep the single fixed point oscillating.
 //
 // Semantics:
 //   - ⊥ (False) and ⊤ (True) are preserved as-is.
-//   - A literal is dropped from every disjunct iff keep rejects it AND it does
-//     not appear in all disjuncts. Relational literals (EqPath, FieldEqualsPath,
-//     …) are dropped whole, never half-kept, so stale vocabulary cannot leak
-//     through a surviving endpoint.
+//   - A literal is dropped from every disjunct iff keep rejects it AND it is not
+//     a root-stable common literal. Relational literals (EqPath,
+//     FieldEqualsPath, ...) are dropped whole, never half-kept, so stale
+//     vocabulary cannot leak through a surviving endpoint.
 //   - If a disjunct becomes empty, it is ⊤; the whole condition collapses toward
 //     ⊤. The result is renormalized/deduped.
 //
@@ -110,7 +113,7 @@ func (c Condition) Project(keep func(Constraint) bool) Condition {
 		}
 		kept := make([]Constraint, 0, len(disj))
 		for _, lit := range disj {
-			if keep(lit) || common.contains(lit) {
+			if keep(lit) || (common.contains(lit) && rootStableConstraint(lit)) {
 				kept = append(kept, lit)
 			}
 		}
@@ -126,31 +129,81 @@ func (c Condition) Project(keep func(Constraint) bool) Condition {
 	return FromDisjuncts(retained)
 }
 
+// Forget drops literals selected by drop from every disjunct, including common
+// literals. It is the write-invalidation counterpart to Project: relevance
+// projection preserves common factors because they do not grow DNF, but a write
+// to a mutable place invalidates facts about that place regardless of commonality.
+//
+// Dropping a conjunct weakens a disjunct, so this is a sound upper-closure:
+// gamma(c) is a subset of gamma(c.Forget(drop)). If any disjunct becomes empty,
+// the whole DNF weakens to true.
+func (c Condition) Forget(drop func(Constraint) bool) Condition {
+	if drop == nil {
+		return c
+	}
+	if c.IsFalse() {
+		return FalseCondition()
+	}
+	if c.IsTrue() {
+		return TrueCondition()
+	}
+
+	retained := make([][]Constraint, 0, len(c.Disjuncts))
+	for _, disj := range c.Disjuncts {
+		if len(disj) == 0 {
+			return TrueCondition()
+		}
+		kept := make([]Constraint, 0, len(disj))
+		for _, lit := range disj {
+			if !drop(lit) {
+				kept = append(kept, lit)
+			}
+		}
+		if len(kept) == 0 {
+			return TrueCondition()
+		}
+		retained = append(retained, kept)
+	}
+	return FromDisjuncts(retained)
+}
+
 // commonLiterals returns the set of literals that appear in EVERY disjunct of c
 // (the common factors of the DNF). For a single-disjunct condition that is the
-// whole disjunct. Common factors never multiply the disjunct count, so they are
-// exempt from relevance projection.
+// whole disjunct. Project decides which common factors are stable enough to
+// survive liveness projection.
 func commonLiterals(c Condition) vocabularySet {
 	if len(c.Disjuncts) == 0 {
 		return newVocabularySet(0)
 	}
-	// Seed with the first disjunct's literals, then intersect with each other.
-	common := newVocabularySet(len(c.Disjuncts[0]))
-	for _, lit := range c.Disjuncts[0] {
-		common.add(lit)
-	}
-	for _, disj := range c.Disjuncts[1:] {
-		present := newVocabularySet(len(disj))
-		for _, lit := range disj {
-			present.add(lit)
+	minIdx := 0
+	minLen := len(c.Disjuncts[0])
+	for i := 1; i < len(c.Disjuncts); i++ {
+		if l := len(c.Disjuncts[i]); l < minLen {
+			minIdx = i
+			minLen = l
 		}
-		next := newVocabularySet(len(disj))
-		for _, lit := range c.Disjuncts[0] {
-			if common.contains(lit) && present.contains(lit) {
-				next.add(lit)
+	}
+	common := newVocabularySet(minLen)
+	if minLen == 0 {
+		return common
+	}
+	// Seed from the shortest disjunct. Conjunctions are canonicalized and
+	// sorted, so membership in every other disjunct is a direct structural
+	// lookup instead of allocating a transient vocabulary set per disjunct.
+	for _, lit := range c.Disjuncts[minIdx] {
+		presentInAll := true
+		for i, disj := range c.Disjuncts {
+			if i == minIdx {
+				continue
+			}
+			if !ConjunctionContains(disj, lit) {
+				presentInAll = false
+				break
 			}
 		}
-		common = next
+		if presentInAll {
+			common.add(lit)
+		}
 	}
 	return common
 }

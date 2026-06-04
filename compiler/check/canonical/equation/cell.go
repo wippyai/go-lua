@@ -17,11 +17,13 @@
 //
 // Because both halves live in one solver, the widening site is the
 // feedback-vertex set of the COMBINED graph: the CFG loop-header FVS (from
-// propagate.FeedbackVertexSet) for point cells, plus parameter contract cells
-// that can close the entry->body->contract->entry demand cycle. The generic
-// solver exact-joins a widening cell's initial fan-in before the cell's first
-// transfer visit, then applies delayed widening only to continuing post-visit
-// growth, preserving one-shot demand precision without a fake discovery pass.
+// propagate.FeedbackVertexSet) for point cells, parameter contract cells that
+// can close the entry->body->contract->entry demand cycle, and the entry point
+// cell that reads those contract cells back into ordinary point state. The
+// generic solver exact-joins a widening cell's initial fan-in before the cell's
+// first transfer visit, then applies delayed widening only to continuing
+// post-visit growth, preserving one-shot demand precision without a fake
+// discovery pass.
 //
 // This package is a clean isolated leaf. It does not touch checker flow; the
 // real per-node transfer is supplied as an injected NodeTransfer so transfer

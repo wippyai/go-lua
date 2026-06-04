@@ -72,8 +72,8 @@ func (f IndexWriteAdmissionFacts) Admission(q IndexWriteQuery) (product.Abstract
 	if target == "" {
 		return product.AbstractValue{}, false
 	}
-	keyPath := constraint.PathKey("")
-	if q.KeySymbol != 0 {
+	keyPath := IndexWriteAdmissionPathKey(q.KeyPath)
+	if keyPath == "" && q.KeySymbol != 0 {
 		keyPath = SymbolPathKey(q.KeySymbol, nil)
 	}
 	valuePath := IndexWriteAdmissionPathKey(q.ValuePath)
@@ -85,18 +85,41 @@ func (f IndexWriteAdmissionFacts) Admission(q IndexWriteQuery) (product.Abstract
 		if entry.Target != target {
 			continue
 		}
+		matchedKeyPath := false
 		if keyPath != "" && entry.KeyPath != "" && entry.KeyPath != keyPath {
 			continue
+		}
+		if keyPath != "" && entry.KeyPath != "" {
+			matchedKeyPath = true
 		}
 		if valuePath != "" && entry.ValuePath != "" && entry.ValuePath != valuePath {
 			continue
 		}
-		if !indexWriteKeyCompatible(entry.Key, keyValue) {
+		if !matchedKeyPath && !indexWriteKeyValueExactlyMatches(entry.Key, keyValue) {
 			continue
 		}
 		return entry.Value, true
 	}
 	return product.AbstractValue{}, false
+}
+
+// KillAffectedByWrite removes admission facts that are no longer valid after a
+// write to writePath. A write to the target table, the key expression path, or
+// the source value path can invalidate the read-back proof.
+func (f IndexWriteAdmissionFacts) KillAffectedByWrite(writePath constraint.PathKey) IndexWriteAdmissionFacts {
+	if f.bottom || writePath == "" || len(f.entries) == 0 {
+		return f
+	}
+	entries := make([]IndexWriteAdmissionFact, 0, len(f.entries))
+	for _, entry := range f.entries {
+		if indexWritePathsOverlap(entry.Target, writePath) ||
+			indexWritePathsOverlap(entry.KeyPath, writePath) ||
+			indexWritePathsOverlap(entry.ValuePath, writePath) {
+			continue
+		}
+		entries = append(entries, entry)
+	}
+	return canonicalIndexWriteAdmissionFacts(entries, product.Domain.Join)
 }
 
 // IndexWriteAdmissionPathKey lowers a source path to the version-insensitive
@@ -108,11 +131,24 @@ func IndexWriteAdmissionPathKey(path constraint.Path) constraint.PathKey {
 	return KeyPresencePathKey(path)
 }
 
-func indexWriteKeyCompatible(fact, query product.AbstractValue) bool {
+func indexWriteKeyValueExactlyMatches(fact, query product.AbstractValue) bool {
 	if fact.IsZero() || query.IsZero() {
-		return true
+		return false
 	}
-	return product.Domain.LessOrEq(fact, query) || product.Domain.LessOrEq(query, fact)
+	return product.Domain.LessOrEq(fact, query) && product.Domain.LessOrEq(query, fact)
+}
+
+func indexWritePathsOverlap(a, b constraint.PathKey) bool {
+	if a == "" || b == "" {
+		return false
+	}
+	return indexWritePathAffected(a, b) || indexWritePathAffected(b, a)
+}
+
+func indexWritePathAffected(path, root constraint.PathKey) bool {
+	p := string(path)
+	r := string(root)
+	return p == r || strings.HasPrefix(p, r+".") || strings.HasPrefix(p, r+"[")
 }
 
 func validIndexWriteAdmissionFact(fact IndexWriteAdmissionFact) bool {

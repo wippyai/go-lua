@@ -1,5 +1,8 @@
 type DbType = "postgres" | "sqlite" | "mysql"
-type QueryResult = {[string]: any}
+type QueryResult = {
+    exists: boolean?,
+    count: number?,
+}
 
 type Database = {
     db_type: DbType,

@@ -63,6 +63,7 @@ type PathObservationIndexRead struct {
 	Container typ.Type
 	TablePath constraint.Path
 	KeyPath   constraint.Path
+	KeyType   typ.Type
 
 	IndexVarPath   constraint.Path
 	IndexVarOffset int64

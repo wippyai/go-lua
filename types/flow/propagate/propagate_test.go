@@ -13,6 +13,7 @@ type mockGraph struct {
 	preds map[cfg.Point][]cfg.Point
 	succs map[cfg.Point][]cfg.Point
 	rpo   []cfg.Point
+	phis  []cfg.PhiNode
 }
 
 func (m *mockGraph) Entry() cfg.Point                     { return m.entry }
@@ -20,6 +21,7 @@ func (m *mockGraph) RPO() []cfg.Point                     { return m.rpo }
 func (m *mockGraph) Node(p cfg.Point) *cfg.Node           { return m.nodes[p] }
 func (m *mockGraph) Predecessors(p cfg.Point) []cfg.Point { return m.preds[p] }
 func (m *mockGraph) Successors(p cfg.Point) []cfg.Point   { return m.succs[p] }
+func (m *mockGraph) PhiNodes() []cfg.PhiNode              { return m.phis }
 
 func TestPropagate_SimpleLinear(t *testing.T) {
 	// entry -> block1 -> block2

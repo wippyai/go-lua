@@ -76,6 +76,73 @@ func TestJoinCompatibleRecordsPreservesStaticBracketMembers(t *testing.T) {
 	}
 }
 
+func TestJoinCompatibleRecordsPreservesSharedMetatable(t *testing.T) {
+	meta := NewRecord().
+		Field("__index", NewRecord().Field("run", Func().Build()).Build()).
+		Build()
+	left := NewRecord().
+		Field("id", String).
+		Metatable(meta).
+		Build()
+	right := NewRecord().
+		Field("id", String).
+		Field("name", String).
+		Metatable(meta).
+		Build()
+
+	got, ok := JoinCompatibleRecords(left, right)
+	if !ok {
+		t.Fatal("JoinCompatibleRecords ok=false")
+	}
+	rec, ok := got.(*Record)
+	if !ok {
+		t.Fatalf("JoinCompatibleRecords = %T %[1]v, want record", got)
+	}
+	if rec.Metatable == nil || !TypeEquals(rec.Metatable, meta) {
+		t.Fatalf("merged metatable = %v, want %v", rec.Metatable, meta)
+	}
+	name := rec.GetField("name")
+	if name == nil || !name.Optional || !TypeEquals(name.Type, String) {
+		t.Fatalf("merged name field = %#v, want optional string", name)
+	}
+}
+
+func TestJoinReturnSlotDoesNotDropMetatableWhenPeerHasNone(t *testing.T) {
+	meta := NewRecord().
+		Field("__index", NewRecord().Field("run", Func().Build()).Build()).
+		Build()
+	withMeta := NewRecord().
+		Field("id", String).
+		Metatable(meta).
+		Build()
+	withoutMeta := NewRecord().
+		Field("id", String).
+		Field("name", String).
+		Build()
+
+	got := JoinReturnSlot(withMeta, withoutMeta)
+	union, ok := got.(*Union)
+	if !ok {
+		t.Fatalf("JoinReturnSlot(with metatable, without metatable) = %T %[1]v, want union alternatives", got)
+	}
+	foundMeta := false
+	foundPlain := false
+	for _, member := range union.Members {
+		rec, ok := member.(*Record)
+		if !ok {
+			continue
+		}
+		if rec.Metatable != nil {
+			foundMeta = true
+		} else {
+			foundPlain = true
+		}
+	}
+	if !foundMeta || !foundPlain {
+		t.Fatalf("joined union members = %v, want metatable and plain alternatives", union.Members)
+	}
+}
+
 // TestJoinUnionFieldSlot_KeepsScalarFieldOverUnknownPeer proves the field-slot
 // join keeps the precise scalar field when one record observation has not yet
 // resolved it.
@@ -645,6 +712,49 @@ func TestJoinReturnSlot_MessageLiteralMismatchStillCoalesces(t *testing.T) {
 	statusField := rec.GetField("status_code")
 	if statusField == nil || !TypeEquals(statusField.Type, Integer) {
 		t.Fatalf("non-discriminant integer literal status should widen to integer, got %v", statusField)
+	}
+}
+
+func TestJoinReturnSlot_NestedEqualLiteralFamilyCoalescesPayloadLiterals(t *testing.T) {
+	a := NewRecord().
+		Field("type", LiteralString("CREATE_DATA")).
+		Field("payload", NewRecord().
+			Field("data_type", LiteralString("NODE_INPUT")).
+			Field("content_type", LiteralString("text/plain")).
+			Field("content", String).
+			Build()).
+		Build()
+	b := NewRecord().
+		Field("type", LiteralString("CREATE_DATA")).
+		Field("payload", NewRecord().
+			Field("data_type", LiteralString("NODE_INPUT")).
+			Field("content_type", LiteralString("dataflow/reference")).
+			Field("content", LiteralString("")).
+			Field("node_id", String).
+			Build()).
+		Build()
+
+	got := JoinReturnSlot(a, b)
+	rec, ok := got.(*Record)
+	if !ok {
+		t.Fatalf("JoinReturnSlot(nested equal literal family) = %T %[1]v, want *Record", got)
+	}
+	payloadField := rec.GetField("payload")
+	if payloadField == nil {
+		t.Fatalf("joined payload field missing in %v", got)
+	}
+	payload, ok := payloadField.Type.(*Record)
+	if !ok {
+		t.Fatalf("joined payload = %T %[1]v, want *Record", payloadField.Type)
+	}
+	if field := payload.GetField("data_type"); field == nil || !TypeEquals(field.Type, LiteralString("NODE_INPUT")) {
+		t.Fatalf("payload data_type = %v, want NODE_INPUT literal", field)
+	}
+	if field := payload.GetField("content_type"); field == nil || !TypeEquals(field.Type, String) {
+		t.Fatalf("payload content_type = %v, want string", field)
+	}
+	if field := payload.GetField("node_id"); field == nil || !field.Optional {
+		t.Fatalf("payload node_id = %v, want optional", field)
 	}
 }
 

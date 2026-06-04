@@ -244,6 +244,40 @@ func TestCanonicalFactsProvesTypeAtUsesConditionProofFacts(t *testing.T) {
 	}
 }
 
+func TestCanonicalFactsObservePathUsesRootHasTypeConditionProofWithoutDeclaredSeed(t *testing.T) {
+	const point cfg.Point = 18
+	const sym cfg.SymbolID = 22
+
+	path := constraint.NewPath(sym, "value")
+	facts := &canonicalFacts{
+		state: state.FunctionState{
+			InPoints: map[cfg.Point]flow.PointState{
+				point: {
+					Cond: constraint.FromConstraints(constraint.HasType{
+						Path: path,
+						Type: narrow.BuiltinTypeKey("string"),
+					}),
+				},
+			},
+		},
+	}
+
+	proof := facts.ConditionTypeAt(point, path)
+	if !typ.TypeEquals(proof, typ.String) {
+		t.Fatalf("ConditionTypeAt(value) = %v, want string", proof)
+	}
+
+	obs := facts.ObservePath(flow.PathObservationQuery{
+		Point:               point,
+		Path:                path,
+		AllowConditionProof: true,
+		PreserveProof:       true,
+	})
+	if !obs.Resolved() || obs.Source != flow.PathObservationConditionProof || !typ.TypeEquals(obs.Type, typ.String) {
+		t.Fatalf("ObservePath condition proof = %#v, want condition-proof string", obs)
+	}
+}
+
 func TestCanonicalFactsObservePathUsesDirectPathProjection(t *testing.T) {
 	const point cfg.Point = 14
 	const sym cfg.SymbolID = 18

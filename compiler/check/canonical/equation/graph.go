@@ -4,6 +4,8 @@ import (
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/canonical/state"
 	"github.com/wippyai/go-lua/compiler/check/domain/paramevidence"
+	basecfg "github.com/wippyai/go-lua/types/cfg"
+	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/domain/value/product"
 	"github.com/wippyai/go-lua/types/flow"
 	"github.com/wippyai/go-lua/types/flow/propagate"
@@ -214,7 +216,12 @@ func (b *Builder) makeTransfer() func(Cell, func(Cell) CellState, func(Cell, Cel
 			if b.narrower != nil {
 				ps = b.narrower.NarrowEdge(b.graph, pred, p, ps)
 			}
+			ps = b.rebasePhiConditions(pred, p, ps)
 			incoming = flow.PointStateDomain.Join(incoming, ps)
+			// Keep the predecessor fold inside the point's abstract condition
+			// domain; otherwise a high-fan-in merge can build an exact DNF that
+			// is immediately forgotten by the projector below.
+			incoming = b.projectInPointState(p, incoming)
 		}
 		if p == entry && !flow.CaptureCellsDomain.Equal(b.entry, flow.CaptureCellsDomain.Bottom()) {
 			incoming.Cells = flow.CaptureCellsDomain.Join(incoming.Cells, b.entry)
@@ -229,7 +236,7 @@ func (b *Builder) makeTransfer() func(Cell, func(Cell) CellState, func(Cell, Cel
 			b.seedEntrySymbolValues(&incoming)
 			b.seedEntryValues(&incoming)
 		}
-		incoming = b.projectPointState(p, incoming)
+		incoming = b.projectInPointState(p, incoming)
 
 		// Backward demand context: only entry reads contract cells. A grown
 		// contract therefore re-triggers entry, and any changed entry out-state
@@ -250,7 +257,7 @@ func (b *Builder) makeTransfer() func(Cell, func(Cell) CellState, func(Cell, Cel
 		}
 
 		next := b.transfer.Transfer(b.graph, p, incoming, entryContracts, demand)
-		next = b.projectPointState(p, next)
+		next = b.projectOutPointState(p, next)
 
 		// Emit the post-transfer state into p's own cell; successors read it.
 		emit(pointCellAt(p), pointState(next))
@@ -261,15 +268,78 @@ func (b *Builder) abstractCellState(cell Cell, st CellState) CellState {
 	if cell.Kind != PointCell || st.Kind != PointCell {
 		return st
 	}
-	return pointState(b.projectPointState(cell.Point, st.Point))
+	return pointState(b.projectOutPointState(cell.Point, st.Point))
 }
 
-func (b *Builder) projectPointState(p cfg.Point, ps flow.PointState) flow.PointState {
+func (b *Builder) projectInPointState(p cfg.Point, ps flow.PointState) flow.PointState {
 	if b == nil || b.projector == nil || !b.projector.Enabled() {
 		return ps
 	}
 	ps.Cond = b.projector.Project(p, ps.Cond)
 	return ps
+}
+
+func (b *Builder) projectOutPointState(p cfg.Point, ps flow.PointState) flow.PointState {
+	if b == nil || b.projector == nil || !b.projector.Enabled() {
+		return ps
+	}
+	ps.Cond = b.projector.ProjectOut(p, ps.Cond)
+	return ps
+}
+
+type phiVersionKey struct {
+	sym basecfg.SymbolID
+	id  int
+}
+
+func (b *Builder) rebasePhiConditions(pred, succ cfg.Point, ps flow.PointState) flow.PointState {
+	if b == nil || b.graph == nil || !ps.Cond.HasConstraints() {
+		return ps
+	}
+	renames := b.phiConditionRenames(pred, succ)
+	if len(renames) == 0 {
+		return ps
+	}
+	ps.Cond = ps.Cond.MapPaths(func(path constraint.Path) constraint.Path {
+		if path.Symbol == 0 || path.Version == 0 {
+			return path
+		}
+		to, ok := renames[phiVersionKey{sym: path.Symbol, id: path.Version}]
+		if !ok {
+			return path
+		}
+		path.Root = to.Root
+		path.Symbol = to.Symbol
+		path.Version = to.ID
+		return path
+	})
+	return ps
+}
+
+func (b *Builder) phiConditionRenames(pred, succ cfg.Point) map[phiVersionKey]cfg.Version {
+	phis := b.graph.PhiNodes()
+	if len(phis) == 0 {
+		return nil
+	}
+	var renames map[phiVersionKey]cfg.Version
+	for _, phi := range phis {
+		if phi.Point != succ || phi.Target.IsZero() {
+			continue
+		}
+		for _, op := range phi.Operands {
+			if op.From != pred || op.Version.IsZero() {
+				continue
+			}
+			if op.Version.Symbol == 0 || op.Version.Symbol != phi.Target.Symbol {
+				continue
+			}
+			if renames == nil {
+				renames = make(map[phiVersionKey]cfg.Version)
+			}
+			renames[phiVersionKey{sym: op.Version.Symbol, id: op.Version.ID}] = phi.Target
+		}
+	}
+	return renames
 }
 
 func cloneEntryValues(in map[int]product.AbstractValue) map[int]product.AbstractValue {
@@ -333,18 +403,25 @@ func (b *Builder) readContracts(read func(Cell) CellState) paramevidence.Contrac
 }
 
 // wideningSites is the combined feedback-vertex set: CFG loop-header / non-loop
-// SCC-header point cells (from propagate.FeedbackVertexSet) plus every contract
-// cell. A contract cell has no effect until a body use emits demand into it; once
-// that happens it participates in the entry->body->contract->entry cycle through
-// the entry point's contract read. The solver exact-joins pre-visit fan-in and
-// delays widening for the first post-visit changes, so initial one-shot demand
-// facts stay precise while continuing growth still terminates.
+// SCC-header point cells (from propagate.FeedbackVertexSet), every contract
+// cell, and the entry point cell when contract cells exist. A contract cell has
+// no effect until a body use emits demand into it; once that happens it
+// participates in the entry->body->contract->entry cycle through the entry
+// point's contract read. The entry cell is the point-state side of that same
+// feedback edge: contract widening bounds the demand carrier, while entry
+// widening bounds the ordinary point-state facts regenerated from the changing
+// assumed contract. The solver exact-joins pre-visit fan-in and delays widening
+// for the first post-visit changes, so initial one-shot demand facts stay
+// precise while continuing growth still terminates.
 func (b *Builder) wideningSites() map[Cell]bool {
 	sites := make(map[Cell]bool)
 	for p, isFVS := range propagate.FeedbackVertexSet(b.graph) {
 		if isFVS {
 			sites[pointCellAt(p)] = true
 		}
+	}
+	if b.numParams > 0 {
+		sites[pointCellAt(b.graph.Entry())] = true
 	}
 	for param := 0; param < b.numParams; param++ {
 		sites[contractCellAt(param)] = true
@@ -419,13 +496,14 @@ func (b *Builder) assembleInStates(points []cfg.Point, result map[Cell]CellState
 			if b.narrower != nil {
 				ps = b.narrower.NarrowEdge(b.graph, pred, p, ps)
 			}
+			ps = b.rebasePhiConditions(pred, p, ps)
 			joined = flow.PointStateDomain.Join(joined, ps)
 			any = true
 		}
 		if !any {
 			continue
 		}
-		joined = b.projectPointState(p, joined)
+		joined = b.projectInPointState(p, joined)
 		if flow.PointStateDomain.Equal(joined, flow.PointStateDomain.Bottom()) {
 			continue
 		}

@@ -315,9 +315,12 @@ func BodyInputProjection(signature *typ.Function, expected *typ.Function, entryE
 	}
 	fn := signature
 	if expected != nil {
-		fn = ApplyBodySignatureEvidence(fn, expectedParameterEvidence(expected))
+		evidence := expectedParameterEvidence(expected)
+		fn = CloseGenericBodySignature(fn, evidence)
+		fn = ApplyBodySignatureEvidence(fn, evidence)
 	}
 	if len(entryEvidence) > 0 {
+		fn = CloseGenericBodySignature(fn, entryEvidence)
 		fn = ApplyBodySignatureEvidence(fn, entryEvidence)
 	}
 	return fn
@@ -340,13 +343,16 @@ func projectTypeNormalized(ff api.FunctionFact, projection Projection, mode api.
 	fn = ClearOptionalForNonNilableObligation(fn, paramsTypes(ff))
 	switch projection {
 	case ProjectionBody:
-		fn = ApplyBodySignatureEvidence(fn, bodyEntryEvidenceNormalized(ff))
+		fn = BodyInputProjection(fn, nil, bodyEntryEvidenceNormalized(ff))
 	case ProjectionSibling:
 		fn = ApplyBodySignatureEvidence(fn, siblingParameterEvidenceNormalized(ff))
 	case ProjectionFlowInput, ProjectionPublic, ProjectionExport:
 		fn = ApplyPublicSignatureEvidence(fn, paramevidence.PublicSignatureVector(paramsTypes(ff)))
 	}
 	returns := returnsForMode(ff, mode)
+	if len(fn.Returns) > 0 {
+		returns = nil
+	}
 	if len(returns) == 0 {
 		returns = returnsummary.Canonical(fn.Returns)
 	}

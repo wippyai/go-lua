@@ -430,6 +430,75 @@ return captured
 	assertNestedNumberField(t, "root return captured", rootSum.Returns[0], "retry", "initial_delay")
 }
 
+func TestCanonicalDriver_FactoryReturnPublishesNestedMethodRefs(t *testing.T) {
+	const src = `
+type Row = {[string]: any}
+type DB = {
+	query: fun(self: DB, sql: string): ({Row}?, string?),
+}
+
+local M = {}
+
+function M.mock(): DB
+	local database: DB = {
+		query = function(self: DB, sql: string): ({Row}?, string?)
+			return {{ count = 1 }}, nil
+		end,
+	}
+	return database
+end
+
+local function table_exists(database: DB): boolean
+	local result, query_err = database:query("SELECT 1")
+	if query_err then
+		return false
+	end
+	if result and result[1] then
+		return result[1].count and result[1].count > 0
+	end
+	return false
+end
+
+return table_exists(M.mock())
+`
+	chunk, err := parse.ParseString(src, "factory_nested_method_refs.lua")
+	if err != nil {
+		t.Fatalf("parse failed: %v", err)
+	}
+
+	ctx := db.NewQueryContext(db.New())
+	sess := check.New(ctx, "factory_nested_method_refs.lua")
+	driver := canonical.NewDriver(canonical.Config{})
+	driver.Run(sess, chunk)
+
+	var mockRef summary.FuncRef
+	var foundMock bool
+	for _, ref := range driver.FuncRefs() {
+		fn, ok := sessionFuncByRef(sess, ref)
+		if !ok || fn == nil || fn.ParList == nil {
+			continue
+		}
+		if len(fn.ParList.Names) == 0 && len(fn.ReturnTypes) > 0 {
+			mockRef, foundMock = ref, true
+			break
+		}
+	}
+	if !foundMock {
+		t.Fatalf("mock ref not found: refs=%v", driver.FuncRefs())
+	}
+	mockSum, ok := driver.SummaryFor(mockRef)
+	if !ok {
+		t.Fatal("mock summary missing")
+	}
+	if len(mockSum.ReturnFunctionRefs) == 0 {
+		t.Fatalf("mock ReturnFunctionRefs missing: %#v", mockSum)
+	}
+	queryKey := constraint.NewPlaceholder(0).Field("query").Key()
+	if _, ok := flow.FunctionRefAt(mockSum.ReturnFunctionRefs[0], queryKey); !ok {
+		t.Fatalf("mock return slot missing query FunctionRef at %s: %#v", queryKey, mockSum.ReturnFunctionRefs)
+	}
+}
+
 func assertNestedNumberField(t *testing.T, label string, av product.AbstractValue, first, second string) {
 	t.Helper()
 	if !nestedNumberField(av, first, second) {

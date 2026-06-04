@@ -775,6 +775,10 @@ func (f *canonicalFacts) IndexWriteAdmission(q flow.IndexWriteQuery) (typ.Type, 
 	return flow.PointFactsOf(f.pointState(q.Point, true)).IndexWriteAdmission(q)
 }
 
+func (f *canonicalFacts) ValueOriginsAt(p cfg.Point) flow.ValueOriginFacts {
+	return f.pointState(p, true).ValueOrigins
+}
+
 // IsAnnotated reports whether sym carries an explicit type annotation.
 func (f *canonicalFacts) IsAnnotated(sym cfg.SymbolID) bool {
 	return f.annotate[sym]

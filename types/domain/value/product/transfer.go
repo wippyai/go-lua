@@ -607,7 +607,7 @@ func IndexMutateAdmits(av AbstractValue, keyAV AbstractValue, valAV AbstractValu
 func AppendElement(av AbstractValue, elemAV AbstractValue) AbstractValue {
 	current := av.ProjectValue()
 	elem := elemAV.ProjectValue()
-	widened := value.AdmitArrayElementMutation(current, elem, typ.JoinPreferNonSoft)
+	widened := value.AdmitArrayElementMutation(current, elem, value.JoinContainerValueTypes)
 	return FromType(value.MergeForConvergence(current, widened))
 }
 
@@ -630,7 +630,7 @@ func ContainerElementUnion(av AbstractValue, elemAV AbstractValue) AbstractValue
 	current := av.ProjectValue()
 	elem := elemAV.ProjectValue()
 	widened := value.AdmitContainerElementUnion(current, elem)
-	return FromType(widened)
+	return FromType(value.MergeForConvergence(current, widened))
 }
 
 // PhiJoin is the AbstractValue-native form of a phi-node join across
@@ -679,7 +679,7 @@ func NarrowTruthy(av AbstractValue) AbstractValue {
 	if narrowed == nil {
 		return Bottom()
 	}
-	return FromType(narrowed)
+	return presentRefinementFromType(narrowed, av.IsGradualTop() && typ.IsAny(narrowed))
 }
 
 // NarrowFalsy is the AbstractValue-native form of else-branch falsy refinement
@@ -705,7 +705,7 @@ func NarrowPresent(av AbstractValue) AbstractValue {
 	if narrowed == nil {
 		return Bottom()
 	}
-	return FromType(narrowed)
+	return presentRefinementFromType(narrowed, av.IsGradualTop() && typ.IsAny(narrowed))
 }
 
 // NarrowLengthLowerBound is the AbstractValue-native form of a proven sequence

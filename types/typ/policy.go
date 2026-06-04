@@ -1088,6 +1088,12 @@ func (s *returnJoinState) joinCompatibleRecords(a, b Type) (Type, bool) {
 		}
 		return nil, false
 	}
+	if !compatibleRecordMetatables(ar, br) {
+		if s != nil {
+			s.cacheRecordJoin(key, nil, false)
+		}
+		return nil, false
+	}
 
 	open := ar.Open || br.Open
 	metatable := Type(nil)
@@ -1623,11 +1629,24 @@ func (s *returnJoinState) hasRequiredDiscriminantTag(t Type) bool {
 // on a genuine literal discriminant.
 func (s *returnJoinState) recordMergesIntoGroup(rec *Record, group []*Record) bool {
 	for _, member := range group {
+		if !compatibleRecordMetatables(rec, member) {
+			return false
+		}
 		if s.hasConflictingRequiredLiteralField(rec, member) {
 			return false
 		}
 	}
 	return true
+}
+
+func compatibleRecordMetatables(a, b *Record) bool {
+	if a == nil || b == nil {
+		return false
+	}
+	if a.Metatable == nil || b.Metatable == nil {
+		return a.Metatable == nil && b.Metatable == nil
+	}
+	return SameNodeOrAcyclicEqual(a.Metatable, b.Metatable)
 }
 
 // literalErasedResidualsCleanlyMergeable reports whether two records merge into a
@@ -1738,51 +1757,13 @@ func mergeKeepsPreciseFieldType(a, b Type) bool {
 	return true
 }
 
-// nestedRequiredLiteralConflict reports whether two records share a required
-// literal field whose literal values differ, the nested form of a discriminant
-// partition.
+// nestedRequiredLiteralConflict reports whether two nested record-valued fields
+// are separated by a genuine literal discriminant. It uses the same structural
+// signal as top-level record coalescing: a lone differing required literal axis
+// partitions variants, while an equal literal axis alongside the difference marks
+// incidental payload data that can widen under the field-slot join.
 func nestedRequiredLiteralConflict(a, b *Record) bool {
-	for _, field := range a.Fields {
-		if field.Optional {
-			continue
-		}
-		lit, ok := literalType(field.Type)
-		if !ok {
-			continue
-		}
-		other := b.GetField(field.Name)
-		if other == nil || other.Optional {
-			continue
-		}
-		otherLit, ok := literalType(other.Type)
-		if !ok {
-			continue
-		}
-		if lit.Hash() != otherLit.Hash() {
-			return true
-		}
-	}
-	for _, member := range a.StaticMembers {
-		if member.Optional {
-			continue
-		}
-		lit, ok := literalType(member.Type)
-		if !ok {
-			continue
-		}
-		other := b.getStaticMember(member.Kind, member.Name, member.Index)
-		if other == nil || other.Optional {
-			continue
-		}
-		otherLit, ok := literalType(other.Type)
-		if !ok {
-			continue
-		}
-		if lit.Hash() != otherLit.Hash() {
-			return true
-		}
-	}
-	return false
+	return newReturnJoinState().hasConflictingRequiredLiteralField(a, b)
 }
 
 // fieldMergeKind reduces a field type to the outer kind that governs whether two

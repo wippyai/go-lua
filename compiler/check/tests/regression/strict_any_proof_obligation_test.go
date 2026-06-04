@@ -101,6 +101,21 @@ func TestStrictAny_LengthCastProvidesContainerProof(t *testing.T) {
 	}
 }
 
+func TestStrictAny_LengthTypeGuardProvidesContainerProof(t *testing.T) {
+	source := `
+		local raw: any = { "one" }
+		if type(raw) ~= "table" then
+			return 0
+		end
+		local len: integer = #raw
+		return len
+	`
+	result := testutil.Check(source, testutil.WithStdlib())
+	if result.HasError() {
+		t.Fatalf("expected table guard to prove lengthability, got %v", testutil.ErrorMessages(result.Diagnostics))
+	}
+}
+
 func TestStrictAny_ConcatRequiresStringableProof(t *testing.T) {
 	source := `
 		local raw: any = "name"

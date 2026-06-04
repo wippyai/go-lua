@@ -408,7 +408,7 @@ func checkTableEntriesAsRecord(entries []EntryDef, elems []typ.Type, expected *t
 	for _, ef := range expected.Fields {
 		_, ok := provided[constraint.Segment{Kind: constraint.SegmentField, Name: ef.Name}]
 		if !ok {
-			if !ef.Optional {
+			if !ef.Optional && !unwrap.IsOptionalLike(ef.Type) {
 				errors = append(errors, CheckError{
 					Message:  "missing required field",
 					Expected: ef.Type,

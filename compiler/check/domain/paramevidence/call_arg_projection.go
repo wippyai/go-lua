@@ -14,6 +14,7 @@ type CallArgDemandTarget struct {
 	Function             *ast.FunctionExpr
 	Contracts            Contracts
 	DeclaredSlotType     func(slot int) typ.Type
+	EntrySlotType        func(slot int) typ.Type
 	SourceParamAnnotated func(sourceParam int) bool
 }
 
@@ -41,6 +42,7 @@ func (p CallArgDemandProjection) Obligations() []callobligation.Obligation {
 			Call:                 p.Call,
 			Contracts:            target.Contracts,
 			DeclaredSlotType:     target.DeclaredSlotType,
+			EntrySlotType:        target.EntrySlotType,
 			SourceParamAnnotated: target.SourceParamAnnotated,
 		})
 		out = JoinCallArgObligations(out, demands)

@@ -147,7 +147,7 @@ func (p Projector) refineAssignmentSourceIndexRead(t typ.Type, source ast.Expr, 
 	if !ok || attr == nil {
 		return t
 	}
-	return p.applyIndexReadProof(t, p.TypeOf(attr.Object, point), attr.Object, attr.Key, point)
+	return p.applyIndexReadProof(t, p.TypeOf(attr.Object, point), attr.Object, attr.Key, p.TypeOf(attr.Key, point), point)
 }
 
 func (p Projector) assignmentSourceProjector(source ast.Expr, targetSym cfg.SymbolID) Projector {

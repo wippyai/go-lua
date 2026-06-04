@@ -60,6 +60,71 @@ func TestCallSummaryProjection_ReturnValuesUseDeclaredSignatureReturns(t *testin
 	}
 }
 
+func TestCallSummaryProjection_DeclaredStructuralReturnUsesCompatibleBodyEvidence(t *testing.T) {
+	rowAnnotation := typ.NewMap(typ.String, typ.Any)
+	rowEvidence := typ.NewRecord().
+		Field("count", typ.Integer).
+		Field("exists", typ.Boolean).
+		Build()
+	projection := summary.CallSummaryProjection{
+		Targets: []summary.CallSummaryTarget{
+			{
+				DeclaredReturns:  true,
+				SignatureReturns: []typ.Type{typ.NewOptional(typ.NewArray(rowAnnotation))},
+				Summary:          summary.Summary{Returns: []product.AbstractValue{product.FromType(typ.NewArray(rowEvidence))}},
+			},
+		},
+	}
+
+	got := projection.ReturnValues()
+	if len(got) != 1 {
+		t.Fatalf("ReturnValues len = %d, want 1", len(got))
+	}
+	opt, ok := got[0].ProjectValue().(*typ.Optional)
+	if !ok {
+		t.Fatalf("slot 0 = %T %[1]v, want optional array", got[0].ProjectValue())
+	}
+	arr, ok := opt.Inner.(*typ.Array)
+	if !ok {
+		t.Fatalf("slot 0 inner = %T %[1]v, want array", opt.Inner)
+	}
+	row, ok := arr.Element.(*typ.Record)
+	if !ok {
+		t.Fatalf("array element = %T %[1]v, want refined row record", arr.Element)
+	}
+	if !row.HasMapComponent() {
+		t.Fatalf("refined row = %v, want declared map component preserved", row)
+	}
+	count := row.GetField("count")
+	if count == nil || count.Optional || !typ.TypeEquals(count.Type, typ.Integer) {
+		t.Fatalf("count field = %v, want required integer", count)
+	}
+}
+
+func TestCallSummaryProjection_DeclaredAnyReturnRemainsCarrierValue(t *testing.T) {
+	body := typ.NewRecord().Field("count", typ.Integer).Build()
+	projection := summary.CallSummaryProjection{
+		Targets: []summary.CallSummaryTarget{
+			{
+				DeclaredReturns:  true,
+				SignatureReturns: []typ.Type{typ.Any},
+				Summary:          summary.Summary{Returns: []product.AbstractValue{product.FromType(body)}},
+			},
+		},
+	}
+
+	got := projection.ReturnValues()
+	if len(got) != 1 {
+		t.Fatalf("ReturnValues len = %d, want 1", len(got))
+	}
+	if got[0].IsZero() {
+		t.Fatal("declared any return remained a zero product slot")
+	}
+	if projected := got[0].ProjectValue(); !typ.IsAny(projected) {
+		t.Fatalf("slot 0 = %v, want declared any", projected)
+	}
+}
+
 func TestCallSummaryProjection_OpenGenericDeclaredReturnKeepsSolvedSummary(t *testing.T) {
 	// Open generic returns such as `apply<T,U>(...): U` are binder relations.
 	// The target metadata must leave DeclaredReturns false for that shape so the

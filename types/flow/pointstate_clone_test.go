@@ -54,6 +54,52 @@ func TestClonePointStateCopiesMutableCarriers(t *testing.T) {
 	}
 }
 
+func TestClonePointStateCanonicalizesMutableFiniteMaps(t *testing.T) {
+	const sym = cfg.SymbolID(1)
+	path := SymbolPathKey(sym, nil)
+	original := PointState{
+		Env: map[ValueKey]product.AbstractValue{
+			SymbolValueKey(sym): product.Bottom(),
+		},
+		FunctionRefs: FunctionRefs{
+			path: FunctionRefSet{},
+		},
+		ClosureRefs: ClosureRefs{
+			path: ClosureRefSet{},
+		},
+	}
+
+	cloned := ClonePointState(original)
+	if len(cloned.Env) != 0 {
+		t.Fatalf("cloned Env retained bottom entries: %#v", cloned.Env)
+	}
+	if len(cloned.FunctionRefs) != 0 {
+		t.Fatalf("cloned FunctionRefs retained bottom entries: %#v", cloned.FunctionRefs)
+	}
+	if len(cloned.ClosureRefs) != 0 {
+		t.Fatalf("cloned ClosureRefs retained bottom entries: %#v", cloned.ClosureRefs)
+	}
+}
+
+func TestClonePointStatePreservesMutableMapTopSentinels(t *testing.T) {
+	original := PointState{
+		Env:          envDomain.Top(),
+		FunctionRefs: FunctionRefsDomain.Top(),
+		ClosureRefs:  ClosureRefsDomain.Top(),
+	}
+
+	cloned := ClonePointState(original)
+	if !envDomain.Equal(cloned.Env, envDomain.Top()) {
+		t.Fatalf("cloned Env did not preserve top sentinel")
+	}
+	if !FunctionRefsDomain.Equal(cloned.FunctionRefs, FunctionRefsDomain.Top()) {
+		t.Fatalf("cloned FunctionRefs did not preserve top sentinel")
+	}
+	if !ClosureRefsDomain.Equal(cloned.ClosureRefs, ClosureRefsDomain.Top()) {
+		t.Fatalf("cloned ClosureRefs did not preserve top sentinel")
+	}
+}
+
 func TestClonePointStatePreservesPersistentAxes(t *testing.T) {
 	const proto = cfg.SymbolID(42)
 	const sym = cfg.SymbolID(43)

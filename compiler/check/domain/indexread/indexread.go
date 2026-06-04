@@ -6,6 +6,7 @@ import (
 	"github.com/wippyai/go-lua/types/cfg"
 	"github.com/wippyai/go-lua/types/constraint"
 	flowfacts "github.com/wippyai/go-lua/types/flow"
+	"github.com/wippyai/go-lua/types/kind"
 	"github.com/wippyai/go-lua/types/narrow"
 	"github.com/wippyai/go-lua/types/numparse"
 	"github.com/wippyai/go-lua/types/typ"
@@ -22,6 +23,10 @@ type Flow interface {
 // PathOf maps an expression to its flow path at the read point.
 type PathOf func(ast.Expr) constraint.Path
 
+type IndexWriteAdmissionFlow interface {
+	IndexWriteAdmission(q flowfacts.IndexWriteQuery) (typ.Type, bool)
+}
+
 // Query describes one indexed read projection.
 type Query struct {
 	Point     cfg.Point
@@ -29,6 +34,7 @@ type Query struct {
 	Result    typ.Type
 	Object    ast.Expr
 	Key       ast.Expr
+	KeyType   typ.Type
 	Flow      Flow
 	PathOf    PathOf
 }
@@ -39,6 +45,7 @@ type ContextQuery struct {
 	Container typ.Type
 	Object    ast.Expr
 	Key       ast.Expr
+	KeyType   typ.Type
 	PathOf    PathOf
 }
 
@@ -57,6 +64,7 @@ func Refine(q Query) (typ.Type, bool) {
 		Container: q.Container,
 		Object:    q.Object,
 		Key:       q.Key,
+		KeyType:   q.KeyType,
 		PathOf:    q.PathOf,
 	})
 	if !ok {
@@ -75,6 +83,7 @@ func Refine(q Query) (typ.Type, bool) {
 func Context(q ContextQuery) (flowfacts.PathObservationIndexRead, bool) {
 	var out flowfacts.PathObservationIndexRead
 	out.Container = q.Container
+	out.KeyType = q.KeyType
 	if q.PathOf != nil {
 		out.TablePath = q.PathOf(q.Object)
 		out.KeyPath = q.PathOf(q.Key)
@@ -102,6 +111,9 @@ func RefineObservation(q ObservationQuery) (typ.Type, bool) {
 	if q.Result == nil || q.Flow == nil {
 		return nil, false
 	}
+	if refined, ok := refineObservationByIndexWriteAdmission(q); ok {
+		return refined, true
+	}
 	if refined, ok := refineObservationByKeyPresence(q); ok {
 		return refined, true
 	}
@@ -118,6 +130,27 @@ func RefineObservation(q ObservationQuery) (typ.Type, bool) {
 		return refined, true
 	}
 	return nil, false
+}
+
+func refineObservationByIndexWriteAdmission(q ObservationQuery) (typ.Type, bool) {
+	flow, ok := q.Flow.(IndexWriteAdmissionFlow)
+	if !ok || q.Index.TablePath.IsEmpty() {
+		return nil, false
+	}
+	if q.Index.KeyPath.IsEmpty() && !indexWriteReadCanUseKeyValueOnly(q.Index.KeyType) {
+		return nil, false
+	}
+	admitted, ok := flow.IndexWriteAdmission(flowfacts.IndexWriteQuery{
+		Point:     q.Point,
+		Target:    q.Index.TablePath,
+		KeyPath:   q.Index.KeyPath,
+		KeySymbol: q.Index.KeyPath.Symbol,
+		KeyType:   q.Index.KeyType,
+	})
+	if !ok || typ.IsAbsentOrUnknown(admitted) || typ.IsAny(admitted) {
+		return nil, false
+	}
+	return admitted, true
 }
 
 func refineObservationByKeyPresence(q ObservationQuery) (typ.Type, bool) {
@@ -208,6 +241,13 @@ func removeNil(t typ.Type) (typ.Type, bool) {
 	}
 	refined := narrow.RemoveNil(t)
 	return refined, refined != nil && !typ.IsNever(refined) && !typ.TypeEquals(refined, t)
+}
+
+func indexWriteReadCanUseKeyValueOnly(keyType typ.Type) bool {
+	if keyType == nil || typ.IsAbsentOrUnknown(keyType) {
+		return false
+	}
+	return typ.UnwrapAnnotated(keyType).Kind() == kind.Literal
 }
 
 func integerLiteralIndex(expr ast.Expr) (int64, bool) {

@@ -107,6 +107,32 @@ func TestKeyPresenceFactsKillAffectedByWriteDropsOverlappingTableFacts(t *testin
 	}
 }
 
+func TestKeyPresenceFactsPresentElementWriteKeepsKeyPresenceButDropsValueFacts(t *testing.T) {
+	table := SymbolPathKey(cfg.SymbolID(1), nil)
+	tableMember := SymbolPathKey(cfg.SymbolID(1), []constraint.Segment{
+		{Kind: constraint.SegmentField, Name: "x"},
+	})
+	key := SymbolPathKey(cfg.SymbolID(2), nil)
+	value := SymbolPathKey(cfg.SymbolID(3), nil)
+	array := SymbolPathKey(cfg.SymbolID(4), nil)
+
+	facts := KeyPresenceFacts{}.
+		With(table, key).
+		WithValue(table, key, value).
+		WithKeyArray(array, table)
+
+	killed := facts.KillAffectedByPresentElementWrite(tableMember)
+	if !killed.Has(table, key) {
+		t.Fatalf("present element write dropped key-presence fact: %s", killed.Format())
+	}
+	if killed.HasValue(table, key, value) {
+		t.Fatalf("present element write kept stale value-specific fact: %s", killed.Format())
+	}
+	if len(killed.KeyArrayTables(array)) != 1 {
+		t.Fatalf("present element write dropped independent key-array fact: %s", killed.Format())
+	}
+}
+
 func TestKeyPresenceFactsKillAffectedByWriteDropsArrayMemberFacts(t *testing.T) {
 	array := SymbolPathKey(cfg.SymbolID(1), nil)
 	arrayMember := SymbolPathKey(cfg.SymbolID(1), []constraint.Segment{

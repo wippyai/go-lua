@@ -6,6 +6,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/canonical/input"
+	"github.com/wippyai/go-lua/compiler/check/domain/guard"
 	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/domain/value/product"
 	"github.com/wippyai/go-lua/types/effect"
@@ -52,6 +53,162 @@ func TestNarrowAtPath_DynamicTableProofDoesNotPinConcreteSlot(t *testing.T) {
 	segs := []constraint.Segment{{Kind: constraint.SegmentField, Name: "retry"}}
 	if got, ok := narrowAtPath(product.FromType(typ.Any), segs, cfg.CheckTypeEqual, "table"); ok {
 		t.Fatalf("table proof should leave dynamic field unassignable, got %s", typ.FormatShort(got.ProjectValue()))
+	}
+}
+
+func TestNarrowByCondCheckTruthyAnyMarksPresentDynamic(t *testing.T) {
+	ident := &ast.IdentExpr{Value: "last_template_node_id"}
+	sym := cfg.SymbolID(21)
+	tr := New(keyPresenceInput(t, map[*ast.IdentExpr]cfg.SymbolID{
+		ident: sym,
+	}), Config{})
+	out := flow.PointState{Env: map[flow.ValueKey]product.AbstractValue{
+		flow.SymbolValueKey(sym): product.FromType(typ.Any),
+	}}
+	info := &cfg.BranchInfo{
+		CondSymbol: sym,
+		CondCheck:  cfg.CondCheck{Kind: cfg.CheckTruthy},
+		Condition:  ident,
+	}
+
+	got := tr.narrowByCondCheck(out, info, true, false)
+	gotAV, ok := tr.symbolValue(&got, sym)
+	if !ok || !typ.TypeEquals(gotAV.ProjectValue(), typ.Any) || !gotAV.DefinitelyPresent() {
+		t.Fatalf("truthy any edge value = %v/%v present=%v; want present any", gotAV.ProjectValue(), ok, gotAV.DefinitelyPresent())
+	}
+}
+
+func TestNarrowByPredicateDirectCallTrueEdgeNarrowsArgument(t *testing.T) {
+	fnIdent := &ast.IdentExpr{Value: "is_positive_number"}
+	argIdent := &ast.IdentExpr{Value: "value"}
+	fnSym := cfg.SymbolID(21)
+	argSym := cfg.SymbolID(22)
+	tr := New(keyPresenceInput(t, map[*ast.IdentExpr]cfg.SymbolID{
+		fnIdent:  fnSym,
+		argIdent: argSym,
+	}), Config{
+		PredicateFacts: []guard.PredicateFunction{
+			{FuncSym: fnSym, ParamIndex: 0, Kind: "number"},
+		},
+	})
+	out := flow.PointState{Env: map[flow.ValueKey]product.AbstractValue{
+		flow.SymbolValueKey(argSym): product.FromType(typ.Any),
+	}}
+	info := &cfg.BranchInfo{
+		CondCheck: cfg.CondCheck{Kind: cfg.CheckTruthy},
+		Condition: &ast.FuncCallExpr{
+			Func: fnIdent,
+			Args: []ast.Expr{argIdent},
+		},
+	}
+
+	got := tr.narrowByPredicate(out, info, true)
+	gotAV, ok := tr.symbolValue(&got, argSym)
+	if !ok || !typ.TypeEquals(gotAV.ProjectValue(), typ.Number) {
+		t.Fatalf("true edge value = %v/%v, want number,true", gotAV.ProjectValue(), ok)
+	}
+
+	falseEdge := tr.narrowByPredicate(out, info, false)
+	falseAV, ok := tr.symbolValue(&falseEdge, argSym)
+	if !ok || !typ.TypeEquals(falseAV.ProjectValue(), typ.Any) {
+		t.Fatalf("false edge value = %v/%v, want any,true", falseAV.ProjectValue(), ok)
+	}
+}
+
+func TestNarrowByPredicateAssignedResultTrueEdgeNarrowsArgument(t *testing.T) {
+	okIdent := &ast.IdentExpr{Value: "ok"}
+	okSym := cfg.SymbolID(31)
+	argSym := cfg.SymbolID(32)
+	tr := New(keyPresenceInput(t, map[*ast.IdentExpr]cfg.SymbolID{
+		okIdent: okSym,
+	}), Config{
+		PredicateGuards: []guard.PredicateResult{
+			{CondSym: okSym, NarrowSym: argSym, Kind: "number"},
+		},
+	})
+	out := flow.PointState{Env: map[flow.ValueKey]product.AbstractValue{
+		flow.SymbolValueKey(argSym): product.FromType(typ.Any),
+	}}
+	info := &cfg.BranchInfo{
+		CondSymbol: okSym,
+		CondCheck:  cfg.CondCheck{Kind: cfg.CheckTruthy},
+		Condition:  okIdent,
+	}
+
+	got := tr.narrowByPredicate(out, info, true)
+	gotAV, ok := tr.symbolValue(&got, argSym)
+	if !ok || !typ.TypeEquals(gotAV.ProjectValue(), typ.Number) {
+		t.Fatalf("true edge value = %v/%v, want number,true", gotAV.ProjectValue(), ok)
+	}
+
+	falseEdge := tr.narrowByPredicate(out, info, false)
+	falseAV, ok := tr.symbolValue(&falseEdge, argSym)
+	if !ok || !typ.TypeEquals(falseAV.ProjectValue(), typ.Any) {
+		t.Fatalf("false edge value = %v/%v, want any,true", falseAV.ProjectValue(), ok)
+	}
+}
+
+func TestNarrowEdgePredicateDirectCallTrueSuccessorNarrowsArgument(t *testing.T) {
+	fnIdent := &ast.IdentExpr{Value: "is_positive_number"}
+	argIdent := &ast.IdentExpr{Value: "value"}
+	guardExpr := &ast.FuncCallExpr{
+		Func: fnIdent,
+		Args: []ast.Expr{argIdent},
+	}
+	fn := &ast.FunctionExpr{
+		ParList: &ast.ParList{Names: []string{"value"}},
+		Stmts: []ast.Stmt{
+			&ast.IfStmt{
+				Condition: guardExpr,
+				Then: []ast.Stmt{
+					&ast.LocalAssignStmt{Names: []string{"n"}, Exprs: []ast.Expr{argIdent}},
+				},
+			},
+		},
+	}
+	in := input.BuildFromFunction(fn, nil, nil, "is_positive_number")
+	if in.Graph == nil {
+		t.Fatal("test graph not built")
+	}
+	fnSym, ok := in.Graph.Bindings().SymbolOf(fnIdent)
+	if !ok || fnSym == 0 {
+		t.Fatalf("predicate callee was not bound: %d/%v", fnSym, ok)
+	}
+	argSym, ok := in.Graph.Bindings().SymbolOf(argIdent)
+	if !ok || argSym == 0 {
+		t.Fatalf("predicate argument was not bound: %d/%v", argSym, ok)
+	}
+	var branch cfg.Point
+	var trueSucc cfg.Point
+	in.Graph.EachBranch(func(p cfg.Point, _ *cfg.BranchInfo) {
+		if branch != 0 {
+			return
+		}
+		branch = p
+		for _, succ := range in.Graph.Successors(p) {
+			taken, known := in.Graph.EdgeCond(p, succ)
+			if known && taken {
+				trueSucc = succ
+				break
+			}
+		}
+	})
+	if trueSucc == 0 {
+		t.Fatal("test CFG has no true branch edge")
+	}
+	tr := New(in, Config{
+		PredicateFacts: []guard.PredicateFunction{
+			{FuncSym: fnSym, ParamIndex: 0, Kind: "number"},
+		},
+	})
+	out := flow.PointState{Env: map[flow.ValueKey]product.AbstractValue{
+		flow.SymbolValueKey(argSym): product.FromType(typ.Any),
+	}}
+
+	got := tr.NarrowEdge(in.Graph, branch, trueSucc, out)
+	gotAV, ok := tr.symbolValue(&got, argSym)
+	if !ok || !typ.TypeEquals(gotAV.ProjectValue(), typ.Number) {
+		t.Fatalf("true successor value = %v/%v, want number,true", gotAV.ProjectValue(), ok)
 	}
 }
 
@@ -452,6 +609,50 @@ func TestNarrowByCondCheckInstallsFactOnFalseEdgeOfNotIndexGuard(t *testing.T) {
 	}
 }
 
+func TestNarrowByCondCheckMissingStaticMemberPositiveGuardKeepsDynamicEdge(t *testing.T) {
+	tr := &Transfer{}
+	sym := cfg.SymbolID(14)
+	base := &ast.IdentExpr{Value: "prev"}
+	config := &ast.AttrGetExpr{
+		Object:    base,
+		Key:       &ast.StringExpr{Value: "config"},
+		KeySyntax: ast.AttrKeyDot,
+	}
+	guard := &ast.AttrGetExpr{
+		Object:    config,
+		Key:       &ast.StringExpr{Value: "data_targets"},
+		KeySyntax: ast.AttrKeyDot,
+	}
+	info := &cfg.BranchInfo{
+		CondSymbol: sym,
+		CondCheck:  cfg.CondCheck{Kind: cfg.CheckFalsy},
+		Condition:  &ast.UnaryNotOpExpr{Expr: guard},
+	}
+	out := flow.PointState{
+		Env: map[flow.ValueKey]product.AbstractValue{
+			flow.SymbolValueKey(sym): product.FromType(typ.NewRecord().
+				Field("config", typ.NewRecord().
+					Field("kind", typ.String).
+					Build()).
+				Build()),
+		},
+	}
+
+	got := tr.narrowByCondCheck(out, info, false, false)
+	root, ok := got.Env[flow.SymbolValueKey(sym)]
+	if !ok || valueIsBottom(root) {
+		t.Fatalf("positive guard on dynamic table member killed reachable root: %v, %v", root.ProjectValue(), ok)
+	}
+	path := []constraint.Segment{
+		{Kind: constraint.SegmentField, Name: "config"},
+		{Kind: constraint.SegmentField, Name: "data_targets"},
+	}
+	fact, ok := got.StaticMembers.Value(flow.SymbolPathKey(sym, path))
+	if !ok || !fact.DefinitelyPresent() {
+		t.Fatalf("dynamic missing-member guard fact = %v, %v; want present dynamic", fact.ProjectValue(), ok)
+	}
+}
+
 func TestApplyParamCondNarrowCarriesFullNarrowedProductState(t *testing.T) {
 	sym := cfg.SymbolID(13)
 	base := &ast.IdentExpr{Value: "messages"}
@@ -475,6 +676,58 @@ func TestApplyParamCondNarrowCarriesFullNarrowedProductState(t *testing.T) {
 	fact, ok := out.StaticMembers.Value(pathKey)
 	if !ok || !fact.DefinitelyPresent() || !typ.TypeEquals(fact.ProjectValue(), typ.String) {
 		t.Fatalf("forwarded condition fact = %v, %v; want present string", fact.ProjectValue(), ok)
+	}
+}
+
+func TestNarrowByCondCheckKeepsClosedEntryValueForOpenGenericDeclaredBase(t *testing.T) {
+	const sym = cfg.SymbolID(19)
+	resultIdent := &ast.IdentExpr{Value: "result"}
+	guard := &ast.AttrGetExpr{
+		Object:    resultIdent,
+		Key:       &ast.StringExpr{Value: "ok"},
+		KeySyntax: ast.AttrKeyDot,
+	}
+	tr := New(keyPresenceInput(t, map[*ast.IdentExpr]cfg.SymbolID{
+		resultIdent: sym,
+	}), Config{})
+
+	tp := typ.NewTypeParam("T", nil)
+	openSuccess := typ.NewRecord().
+		Field("ok", typ.True).
+		Field("value", tp).
+		Build()
+	openFailure := typ.NewRecord().
+		Field("ok", typ.False).
+		Field("error", typ.String).
+		Build()
+	tr.declaredTypes = map[cfg.SymbolID]typ.Type{
+		sym: typ.NewUnion(openSuccess, openFailure),
+	}
+
+	envelope := typ.NewRecord().Field("id", typ.String).Build()
+	closedSuccess := typ.NewRecord().
+		Field("ok", typ.True).
+		Field("value", envelope).
+		Build()
+	out := flow.PointState{
+		Env: map[flow.ValueKey]product.AbstractValue{
+			flow.SymbolValueKey(sym): product.FromType(closedSuccess),
+		},
+	}
+	info := &cfg.BranchInfo{
+		CondSymbol: sym,
+		CondCheck:  cfg.CondCheck{Kind: cfg.CheckTruthy},
+		Condition:  guard,
+	}
+
+	got := tr.narrowByCondCheck(out, info, true, false)
+	av, ok := tr.symbolValue(&got, sym)
+	if !ok {
+		t.Fatalf("narrowed state lost result symbol: env=%v cells=%s", got.Env, got.Cells.Format())
+	}
+	value, ok := querycore.Field(av.ProjectValue(), "value")
+	if !ok || !typ.TypeEquals(value, envelope) {
+		t.Fatalf("result.value after truthy ok guard = %v, %v; want Envelope", value, ok)
 	}
 }
 

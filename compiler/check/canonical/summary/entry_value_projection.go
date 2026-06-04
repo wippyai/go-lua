@@ -34,6 +34,11 @@ type EntryValueParamAnnotated func(callee FuncRef, sourceParam int) bool
 // state.
 type EntryValueEvaluator func(in *flow.PointState, expr ast.Expr) (product.AbstractValue, bool)
 
+// EntryValuesNormalizer rewrites direct call-site entry values before they are
+// interned into a context key. It receives the source call so callers can limit
+// topology enrichments to the call forms that actually carry that topology.
+type EntryValuesNormalizer func(callee FuncRef, call *ast.FuncCallExpr, values EntryValues) EntryValues
+
 // CallEntryTarget is a resolved callee target plus the captured-entry context that
 // must be used when summarizing that callee under this call.
 type CallEntryTarget struct {
@@ -335,18 +340,21 @@ func joinOmittedFixedArgNil(out EntryValues, supplied int, callee FuncRef, call 
 // callee: diagnostics use it to replay every reachable callee under the finite
 // context that an actual call site produced.
 type CallEntryContextProjection struct {
-	Graph           *cfg.Graph
-	State           state.FunctionState
-	ResolveTargets  CallEntryTargetResolver
-	ResolveCallback CallEntryCallbackResolver
-	ExpectedArgType CallEntryExpectedArgType
-	ParamSlot       EntryValueParamSlot
-	ParamSlotCount  EntryValueParamSlotCount
-	ParamPath       EntryReferenceParamPath
-	ArgPath         EntryReferenceArgPath
-	FunctionArgRefs EntryFunctionRefArgResolver
-	ClosureArgRefs  EntryClosureRefArgResolver
-	EvalArg         EntryValueEvaluator
+	Graph              *cfg.Graph
+	State              state.FunctionState
+	ResolveTargets     CallEntryTargetResolver
+	ResolveCallback    CallEntryCallbackResolver
+	ExpectedArgType    CallEntryExpectedArgType
+	ParamSlot          EntryValueParamSlot
+	ParamSlotCount     EntryValueParamSlotCount
+	ParamPath          EntryReferenceParamPath
+	ArgPath            EntryReferenceArgPath
+	FunctionArgRefs    EntryFunctionRefArgResolver
+	FunctionArgRefTree EntryFunctionRefsArgResolver
+	ClosureArgRefs     EntryClosureRefArgResolver
+	ClosureArgRefTree  EntryClosureRefsArgResolver
+	EvalArg            EntryValueEvaluator
+	NormalizeValues    EntryValuesNormalizer
 }
 
 // ProjectKeys returns deterministic, de-duplicated callee summary keys for every
@@ -368,6 +376,9 @@ func (p CallEntryContextProjection) ProjectKeys() []Key {
 		targets := p.ResolveTargets(info.Call, &in)
 		for _, target := range targets {
 			values := p.directProductValues(target.Ref, info.Call, &in)
+			if p.NormalizeValues != nil {
+				values = p.NormalizeValues(target.Ref, info.Call, values)
+			}
 			refs := flow.FunctionRefsDomain.Join(target.EntryFunctionRefs, p.directFunctionRefs(target.Ref, info.Call, &in))
 			closures := flow.ClosureRefsDomain.Join(target.EntryClosureRefs, p.directClosureRefs(target.Ref, info.Call, &in))
 			key := NewKeyWithEntryContext(
@@ -485,14 +496,15 @@ func (p CallEntryContextProjection) directFunctionRefs(callee FuncRef, call *ast
 		return flow.FunctionRefsDomain.Bottom()
 	}
 	return DirectCallEntryFunctionRefs(DirectCallEntryReferenceInput{
-		Call:               call,
-		Callee:             callee,
-		ParamSlot:          p.ParamSlot,
-		ParamPath:          p.ParamPath,
-		ArgPath:            p.ArgPath,
-		FunctionRefs:       in.FunctionRefs,
-		State:              in,
-		ResolveFunctionArg: p.FunctionArgRefs,
+		Call:                   call,
+		Callee:                 callee,
+		ParamSlot:              p.ParamSlot,
+		ParamPath:              p.ParamPath,
+		ArgPath:                p.ArgPath,
+		FunctionRefs:           in.FunctionRefs,
+		State:                  in,
+		ResolveFunctionArg:     p.FunctionArgRefs,
+		ResolveFunctionArgRefs: p.FunctionArgRefTree,
 	})
 }
 
@@ -501,20 +513,21 @@ func (p CallEntryContextProjection) directClosureRefs(callee FuncRef, call *ast.
 		return flow.ClosureRefsDomain.Bottom()
 	}
 	return DirectCallEntryClosureRefs(DirectCallEntryReferenceInput{
-		Call:              call,
-		Callee:            callee,
-		ParamSlot:         p.ParamSlot,
-		ParamPath:         p.ParamPath,
-		ArgPath:           p.ArgPath,
-		ClosureRefs:       in.ClosureRefs,
-		State:             in,
-		ResolveClosureArg: p.ClosureArgRefs,
+		Call:                  call,
+		Callee:                callee,
+		ParamSlot:             p.ParamSlot,
+		ParamPath:             p.ParamPath,
+		ArgPath:               p.ArgPath,
+		ClosureRefs:           in.ClosureRefs,
+		State:                 in,
+		ResolveClosureArg:     p.ClosureArgRefs,
+		ResolveClosureArgRefs: p.ClosureArgRefTree,
 	})
 }
 
 func (p CallEntryContextProjection) callbackEntryKeys(point cfg.Point, info *cfg.CallInfo, in *flow.PointState) []Key {
 	call := callInfoCall(info)
-	if p.ResolveCallback == nil || p.ExpectedArgType == nil || call == nil || in == nil {
+	if p.ResolveCallback == nil || call == nil || in == nil {
 		return nil
 	}
 	var keys []Key
@@ -522,20 +535,41 @@ func (p CallEntryContextProjection) callbackEntryKeys(point cfg.Point, info *cfg
 		if arg == nil {
 			continue
 		}
-		fn := unwrap.Function(p.ExpectedArgType(point, info, in, argIdx))
-		if fn == nil {
-			continue
-		}
 		refs, ok := p.ResolveCallback(arg, callInfoArgSymbol(info, argIdx), in)
 		if !ok || len(refs) == 0 {
 			continue
 		}
-		values, ok := callbackExpectedEntryValues(fn)
-		if !ok {
-			continue
+		var values EntryValues
+		if p.ExpectedArgType != nil {
+			if fn := unwrap.Function(p.ExpectedArgType(point, info, in, argIdx)); fn != nil {
+				values, _ = callbackExpectedEntryValues(fn)
+			}
+		}
+		var closures flow.ClosureRefSet
+		var closureOK bool
+		if p.ClosureArgRefs != nil {
+			closures, closureOK = p.ClosureArgRefs(argIdx, arg, in)
 		}
 		for _, ref := range refs {
-			keys = append(keys, NewKeyWithEntryValues(ref, flow.CaptureCellsDomain.Bottom(), flow.FunctionRefsDomain.Bottom(), values))
+			emitted := false
+			if closureOK {
+				for _, closure := range closures.Refs() {
+					if canonref.FromFlow(closure.Ref) != ref {
+						continue
+					}
+					keys = append(keys, NewKeyWithEntryContext(
+						ref,
+						closure.EntryCells(),
+						closure.EntryFunctionRefs(),
+						closure.EntryClosureRefs(),
+						values,
+					))
+					emitted = true
+				}
+			}
+			if !emitted {
+				keys = append(keys, NewKeyWithEntryValues(ref, flow.CaptureCellsDomain.Bottom(), flow.FunctionRefsDomain.Bottom(), values))
+			}
 		}
 	}
 	return keys

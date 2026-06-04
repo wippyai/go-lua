@@ -14,6 +14,7 @@ type ValueOriginKind uint8
 const (
 	ValueOriginIndexedIterator ValueOriginKind = iota + 1
 	ValueOriginKeyedIterator
+	ValueOriginAssignmentAlias
 )
 
 // ValueOriginFact is point-local provenance for a value derived from another

@@ -1530,7 +1530,7 @@ func precisionEvidenceCovers(candidate, baseline typ.Type) bool {
 }
 
 func precisionEvidenceComparable(a, b typ.Type) bool {
-	return dynamicArrayEvidenceComparable(a, b)
+	return dynamicArrayEvidenceComparable(a, b) || instantiatedEvidenceComparable(a, b)
 }
 
 func dynamicArrayEvidenceComparable(a, b typ.Type) bool {
@@ -1563,6 +1563,27 @@ func arrayEvidenceShape(t typ.Type) *typ.Array {
 			return nil
 		}
 	}
+}
+
+func instantiatedEvidenceComparable(a, b typ.Type) bool {
+	ai, okA := unwrap.Alias(a).(*typ.Instantiated)
+	bi, okB := unwrap.Alias(b).(*typ.Instantiated)
+	if !okA || !okB || ai == nil || bi == nil || ai.Generic == nil || bi.Generic == nil {
+		return false
+	}
+	if !typ.TypeEquals(ai.Generic, bi.Generic) || len(ai.TypeArgs) != len(bi.TypeArgs) {
+		return false
+	}
+	for i := range ai.TypeArgs {
+		if genericArgIsRefinableEvidence(ai.TypeArgs[i]) || genericArgIsRefinableEvidence(bi.TypeArgs[i]) {
+			return true
+		}
+	}
+	return false
+}
+
+func genericArgIsRefinableEvidence(t typ.Type) bool {
+	return t == nil || typ.IsAbsentOrUnknown(t) || typ.IsAny(t) || typ.IsRefinableAnnotation(t)
 }
 
 // DynamicMapUpperBound preserves the finite top map when one side already

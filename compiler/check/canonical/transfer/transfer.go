@@ -44,6 +44,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/check/canonical/input"
 	canonicalplace "github.com/wippyai/go-lua/compiler/check/canonical/place"
 	"github.com/wippyai/go-lua/compiler/check/domain/callobligation"
+	abstractcond "github.com/wippyai/go-lua/compiler/check/domain/cond"
 	"github.com/wippyai/go-lua/compiler/check/domain/fieldkey"
 	"github.com/wippyai/go-lua/compiler/check/domain/guard"
 	"github.com/wippyai/go-lua/compiler/check/domain/iteration"
@@ -61,6 +62,7 @@ import (
 	"github.com/wippyai/go-lua/types/flow/pathkey"
 	"github.com/wippyai/go-lua/types/flow/propagate"
 	"github.com/wippyai/go-lua/types/kind"
+	querycore "github.com/wippyai/go-lua/types/query/core"
 	"github.com/wippyai/go-lua/types/typ"
 	"github.com/wippyai/go-lua/types/typ/unwrap"
 )
@@ -375,9 +377,10 @@ type Config struct {
 	PredicateGuards []guard.PredicateResult
 }
 
-// Transfer is the canonical per-node transfer. It is stateless across points:
+// Transfer is the canonical per-node transfer. It carries no fixed-point state:
 // every Transfer call is a pure function of the incoming state and the node's
-// evidence.
+// evidence. Transfer-owned reductors may memoize immutable CFG/expression
+// reductions, but not abstract values from solver iterations.
 type Transfer struct {
 	in input.Inputs
 	// ops resolves arithmetic/relational operator result types. Nil falls back
@@ -460,6 +463,7 @@ type Transfer struct {
 	metatablePrototypeBySym  map[cfg.SymbolID]cfg.SymbolID
 	setMetatableProtoByPoint map[cfg.Point]cfg.SymbolID
 	conditionProjector       *propagate.ConditionProjector
+	branchConditions         branchConditionReductor
 	// loopAppendLengthsByPoint indexes passive loop-summary facts by the point
 	// where the fact first holds. Transfer applies them before interpreting the
 	// point's own node so ordinary writes can kill stale proofs.
@@ -481,6 +485,10 @@ func New(in input.Inputs, config Config) *Transfer {
 		declaredTypes: in.Scope.DeclaredTypes,
 		castType:      config.CastType,
 		typeNameValue: config.TypeNameValue,
+	}
+	t.branchConditions = branchConditionReductor{
+		transfer:  t,
+		pathCache: make(map[abstractcond.PathCacheKey]constraint.Path),
 	}
 	t.declaredParamBySlot = declaredParamBySlot(in)
 	// A method body's implicit `self` occupies slot 0 with no source annotation, so the
@@ -684,10 +692,6 @@ func (t *Transfer) Transfer(
 		return flow.PointStateDomain.Bottom()
 	}
 	out := flow.ClonePointState(incoming)
-	// Index-write admissions are point-local transfer proofs, not durable store
-	// state. Clear predecessor proofs before interpreting this node so only writes
-	// performed at p can appear in out[p].
-	out.IndexWrites = flow.IndexWriteAdmissionFactsDomain.Top()
 
 	// At the entry point the assumed contracts ARE the parameter values a caller
 	// supplies: seed each parameter's Env slot from its declared type joined with
@@ -735,13 +739,14 @@ func (t *Transfer) Transfer(
 // declared annotation, exact caller entry value, and body-demand contract all
 // meet at the same product-state location.
 func (t *Transfer) seedEntry(out *flow.PointState, contracts paramevidence.Contracts) {
+	declaredParamBySlot := t.closedDeclaredParamBySlot(out)
 	for i, sym := range t.in.Scope.ParamSymbols {
 		if sym == 0 {
 			continue
 		}
 		var effect EntrySeedEffect
 		effect.Symbol = sym
-		if declared, ok := t.declaredParamBySlot[i]; ok && declared != nil {
+		if declared, ok := declaredParamBySlot[i]; ok && declared != nil {
 			effect.Declared = declared
 		} else if existing, ok := t.symbolValue(out, sym); ok && !existing.IsZero() {
 			// Entry values supplied by the equation graph are already product-domain
@@ -934,6 +939,9 @@ func (t *Transfer) applyAssign(
 		// pollutes ordinary branch precision (for example an `any` local overwritten
 		// by a string inside the true edge stays `any` forever).
 		t.applySymbolWriteEffect(out, target, val, false, false, src, keyArrayTable, functionRefs, closureRefs)
+		if provenance, ok := t.assignmentProvenanceEffect(target, src, val); ok {
+			t.applyAssignmentProvenanceEffect(out, provenance)
+		}
 		if src != nil {
 			t.applyNumeric(out, key, src)
 			t.seedArrayLiteralLength(out, key, src, constructorCardinalityLower)
@@ -1370,7 +1378,8 @@ func (t *Transfer) applyContainerWriteWithRefResolver(
 	}
 	val := product.AbstractValue{}
 	if src != nil {
-		if resolved, ok := t.evalExpr(out, src, demand); ok && !resolved.IsZero() {
+		expected := t.expectedContainerWriteValueType(place)
+		if resolved, ok := t.evalExprWithExpected(out, src, expected, demand); ok && !resolved.IsZero() {
 			val = resolved
 		} else if !t.pendingUnannotatedParamSource(out, src) {
 			val = product.Domain.Top()
@@ -1398,6 +1407,26 @@ func (t *Transfer) applyContainerWriteWithRefResolver(
 		ClosureRefs:  closureRefs,
 		RecordStatic: true,
 	})
+}
+
+func (t *Transfer) expectedContainerWriteValueType(place Place) typ.Type {
+	targetPath, ok := indexWriteTargetPath(place)
+	if !ok || targetPath.IsEmpty() || len(place.Steps) == 0 {
+		return nil
+	}
+	container, ok := t.declaredTypeForExactStaticPath(targetPath)
+	if !ok || container == nil || typ.IsAbsentOrUnknown(container) || typ.IsRefinableAnnotation(container) {
+		return nil
+	}
+	step := place.Steps[len(place.Steps)-1]
+	if step.Kind != PlaceStepDynamicIndex || step.Key.IsZero() {
+		return nil
+	}
+	expected := value.SealedIndexedWriteObligation(container, product.ProjectValueOrUnknown(step.Key))
+	if expected == nil || typ.IsAbsentOrUnknown(expected) || typ.IsAny(expected) || typ.IsNever(expected) {
+		return nil
+	}
+	return expected
 }
 
 func (t *Transfer) installStaticMemberWriteFactForPlace(out *flow.PointState, place Place, val product.AbstractValue) {
@@ -1528,6 +1557,12 @@ func (t *Transfer) recordFunctionRefAt(out *flow.PointState, path constraint.Pat
 	if key == "" {
 		return
 	}
+	if srcPath, ok := t.staticPathOfExpr(src); ok {
+		refs := flow.RebaseFunctionRefs(flow.ProjectFunctionRefsByPath(out.FunctionRefs, srcPath), srcPath, path)
+		out.FunctionRefs = flow.WithoutFunctionRefSubtree(out.FunctionRefs, key)
+		out.FunctionRefs = flow.FunctionRefsDomain.Join(out.FunctionRefs, refs)
+		return
+	}
 	set, ok := t.functionRefSetOfExpr(out, src)
 	nested := t.nestedFunctionRefSetsOfExpr(out, src)
 	out.FunctionRefs = flow.WithoutFunctionRefSubtree(out.FunctionRefs, key)
@@ -1602,6 +1637,12 @@ func rebaseCallReturnClosureRefs(
 func (t *Transfer) recordClosureRefAt(out *flow.PointState, path constraint.Path, src ast.Expr) {
 	key := path.Key()
 	if out == nil || key == "" {
+		return
+	}
+	if srcPath, ok := t.staticPathOfExpr(src); ok {
+		refs := flow.RebaseClosureRefs(flow.ProjectClosureRefsByPath(out.ClosureRefs, srcPath), srcPath, path)
+		out.ClosureRefs = flow.WithoutClosureRefSubtree(out.ClosureRefs, key)
+		out.ClosureRefs = flow.ClosureRefsDomain.Join(out.ClosureRefs, refs)
 		return
 	}
 	set, ok := t.closureRefSetOfExpr(out, src)
@@ -2360,6 +2401,18 @@ func (t *Transfer) evalExpr(
 	}
 }
 
+func (t *Transfer) evalExprWithExpected(
+	out *flow.PointState,
+	expr ast.Expr,
+	expected typ.Type,
+	demand func(int, paramevidence.ParamContract),
+) (product.AbstractValue, bool) {
+	if table, ok := expr.(*ast.TableExpr); ok && table != nil && tableLiteralContextExpected(expected) {
+		return t.evalTableWithExpected(out, table, expected, demand)
+	}
+	return t.evalExpr(out, expr, demand)
+}
+
 func (t *Transfer) evalExprAt(
 	out *flow.PointState,
 	p cfg.Point,
@@ -2418,7 +2471,7 @@ func (t *Transfer) evalCall(
 	// the driver falls back to its module-wide signatures and globals; a read of an
 	// unannotated parameter resolves to gradual `any` (a genuinely-gradual source).
 	exprType := ctx.ExprType
-	t.applyCallCellEffects(out, call, ctx, exprType)
+	t.applyCallSideEffects(out, call, ctx, demand)
 	if productTyper, ok := t.callTyper.(ProductCallTyper); ok {
 		returns, ok := productTyper.CallReturnValues(call, ctx)
 		if ok && len(returns) > 0 {
@@ -2747,9 +2800,23 @@ func (t *Transfer) projectAttrGetValue(out *flow.PointState, e *ast.AttrGetExpr)
 	}
 	ev, ok := product.RuntimeIndexOf(base, key)
 	if !ok || ev.IsZero() {
+		if admitted, admittedOK := t.refineByIndexWriteAdmission(out, e); admittedOK {
+			return admitted, true
+		}
 		return product.AbstractValue{}, false
 	}
 	return t.refineIndexRead(out, e, base, ev), true
+}
+
+func (t *Transfer) applyCallSideEffects(
+	out *flow.PointState,
+	call *ast.FuncCallExpr,
+	ctx ProductCallContext,
+	demand func(int, paramevidence.ParamContract),
+) {
+	t.applyCallCellEffects(out, call, ctx, ctx.ExprType)
+	t.applyCallReceiverEffects(out, call, ctx, demand)
+	t.applyCallMutatorEffects(out, call, ctx, demand)
 }
 
 func (t *Transfer) applyCallCellEffects(
@@ -2775,18 +2842,18 @@ func (t *Transfer) applyCallCellEffects(
 
 func (t *Transfer) applyCallReceiverEffects(
 	out *flow.PointState,
-	info *cfg.CallInfo,
+	call *ast.FuncCallExpr,
 	ctx ProductCallContext,
 	demand func(int, paramevidence.ParamContract),
 ) bool {
-	if out == nil || info == nil || info.Call == nil || t.callTyper == nil {
+	if out == nil || call == nil || t.callTyper == nil {
 		return false
 	}
 	provider, ok := t.callTyper.(productReceiverEffectProvider)
 	if !ok || provider == nil {
 		return false
 	}
-	effects := provider.ReceiverEffectsFromValues(info.Call, ctx)
+	effects := provider.ReceiverEffectsFromValues(call, ctx)
 	if flow.ReceiverEffectsDomain.Equal(effects, flow.ReceiverEffectsDomain.Bottom()) ||
 		flow.ReceiverEffectsDomain.Equal(effects, flow.ReceiverEffectsIdentity()) {
 		return false
@@ -2794,7 +2861,7 @@ func (t *Transfer) applyCallReceiverEffects(
 	changed := false
 	if effects.IsTop() {
 		for slot := range ctx.RuntimeArgValues {
-			target := callsite.RuntimeArgAt(info, slot)
+			target := callsite.RuntimeArgExprAt(call, slot)
 			if target == nil {
 				continue
 			}
@@ -2813,7 +2880,7 @@ func (t *Transfer) applyCallReceiverEffects(
 		return changed
 	}
 	for _, entry := range effects.Entries() {
-		target := callsite.RuntimeArgAt(info, entry.Slot)
+		target := callsite.RuntimeArgExprAt(call, entry.Slot)
 		if target == nil {
 			continue
 		}
@@ -2843,31 +2910,31 @@ func (t *Transfer) applyCallReceiverEffects(
 
 func (t *Transfer) applyCallMutatorEffects(
 	out *flow.PointState,
-	info *cfg.CallInfo,
+	call *ast.FuncCallExpr,
 	ctx ProductCallContext,
 	demand func(int, paramevidence.ParamContract),
 ) {
-	if out == nil || info == nil || info.Call == nil || t.callTyper == nil {
+	if out == nil || call == nil || t.callTyper == nil {
 		return
 	}
 	provider, ok := t.callTyper.(containerElementUnionProvider)
 	if !ok || provider == nil {
 		return
 	}
-	for _, effect := range provider.ContainerElementUnionsFromValues(info.Call, ctx) {
-		t.applyContainerElementUnionEffect(out, info, ctx, effect, demand)
+	for _, effect := range provider.ContainerElementUnionsFromValues(call, ctx) {
+		t.applyContainerElementUnionEffect(out, call, ctx, effect, demand)
 	}
 }
 
 func (t *Transfer) applyContainerElementUnionEffect(
 	out *flow.PointState,
-	info *cfg.CallInfo,
+	call *ast.FuncCallExpr,
 	ctx ProductCallContext,
 	mutation effect.ContainerElementUnion,
 	demand func(int, paramevidence.ParamContract),
 ) bool {
-	targetExpr := callsite.RuntimeArgAt(info, mutation.Container.Index)
-	valueExpr := callsite.RuntimeArgAt(info, mutation.Value.Index)
+	targetExpr := callsite.RuntimeArgExprAt(call, mutation.Container.Index)
+	valueExpr := callsite.RuntimeArgExprAt(call, mutation.Value.Index)
 	if targetExpr == nil || valueExpr == nil {
 		return false
 	}
@@ -2880,10 +2947,9 @@ func (t *Transfer) applyContainerElementUnionEffect(
 		elem = product.Top()
 	}
 	return t.applyMutatorEffect(out, MutatorEffect{
-		Place:                 target,
-		Kind:                  MutatorContainerElementUnion,
-		Element:               elem,
-		InvalidateKeyPresence: true,
+		Place:   target,
+		Kind:    MutatorContainerElementUnion,
+		Element: elem,
 	})
 }
 
@@ -3083,6 +3149,146 @@ func (t *Transfer) evalTable(
 	return av, true
 }
 
+func (t *Transfer) evalTableWithExpected(
+	out *flow.PointState,
+	e *ast.TableExpr,
+	expected typ.Type,
+	demand func(int, paramevidence.ParamContract),
+) (product.AbstractValue, bool) {
+	expected = discriminatedTableExpected(e, expected)
+	if !tableLiteralContextExpected(expected) {
+		return t.evalTable(out, e, demand)
+	}
+	entries, elems, complete := t.evalTableEntriesWithExpected(out, e, expected, demand)
+	if !complete {
+		return t.evalTable(out, e, demand)
+	}
+	result := ops.CheckTableEntries(entries, elems, expected)
+	if len(result.Errors) != 0 {
+		return t.evalTable(out, e, demand)
+	}
+	if result.Type != nil && !typ.IsAbsentOrUnknown(result.Type) && !typ.IsAny(result.Type) {
+		return product.FromType(result.Type), true
+	}
+	return product.FromType(expected), true
+}
+
+func (t *Transfer) evalTableEntriesWithExpected(
+	out *flow.PointState,
+	e *ast.TableExpr,
+	expected typ.Type,
+	demand func(int, paramevidence.ParamContract),
+) ([]ops.EntryDef, []typ.Type, bool) {
+	if e == nil {
+		return nil, nil, false
+	}
+	entries := make([]ops.EntryDef, 0, len(e.Fields))
+	var elems []typ.Type
+	complete := true
+	for _, field := range e.Fields {
+		if field == nil {
+			continue
+		}
+		if field.Key == nil {
+			elemExpected := ops.ExpectedTableElementType(expected, len(elems))
+			elemType, ok := t.evalTableEntryValueType(out, field.Value, elemExpected, demand)
+			if !ok {
+				complete = false
+			}
+			elems = append(elems, elemType)
+			continue
+		}
+		key, ok := fieldkey.FromTableField(field)
+		if !ok {
+			complete = false
+			continue
+		}
+		fieldExpected := ops.ExpectedTableEntryType(expected, key)
+		fieldType, ok := t.evalTableEntryValueType(out, field.Value, fieldExpected, demand)
+		if !ok {
+			complete = false
+		}
+		entries = append(entries, ops.EntryDef{Key: key, Type: fieldType})
+	}
+	return entries, elems, complete
+}
+
+func (t *Transfer) evalTableEntryValueType(
+	out *flow.PointState,
+	expr ast.Expr,
+	expected typ.Type,
+	demand func(int, paramevidence.ParamContract),
+) (typ.Type, bool) {
+	if table, ok := expr.(*ast.TableExpr); ok && table != nil && tableLiteralContextExpected(expected) {
+		if av, ok := t.evalTableWithExpected(out, table, expected, demand); ok && !av.IsZero() {
+			pt := product.ProjectValueOrUnknown(av)
+			return pt, tableEntryValueIsProof(pt)
+		}
+		return typ.Unknown, false
+	}
+	av, ok := t.evalExpr(out, expr, demand)
+	if !ok || av.IsZero() {
+		return typ.Unknown, false
+	}
+	pt := product.ProjectValueOrUnknown(av)
+	return pt, tableEntryValueIsProof(pt)
+}
+
+func tableEntryValueIsProof(t typ.Type) bool {
+	return t != nil && !typ.IsAbsentOrUnknown(t) && !typ.IsAny(t)
+}
+
+func discriminatedTableExpected(e *ast.TableExpr, expected typ.Type) typ.Type {
+	if e == nil || expected == nil {
+		return expected
+	}
+	if match := querycore.TryDiscriminatedUnionMember(e, expected); match != nil && match.Member != nil {
+		return match.Member
+	}
+	return expected
+}
+
+func tableLiteralContextExpected(expected typ.Type) bool {
+	if expected == nil || typ.IsAbsentOrUnknown(expected) || typ.IsAny(expected) {
+		return false
+	}
+	expected = typ.UnwrapAnnotated(expected)
+	switch v := expected.(type) {
+	case *typ.Alias:
+		return tableLiteralContextExpected(v.Target)
+	case *typ.Optional:
+		return tableLiteralContextExpected(v.Inner)
+	case *typ.Instantiated:
+		if resolved, err := querycore.ResolveInstantiated(v); err == nil {
+			return tableLiteralContextExpected(resolved)
+		}
+		return false
+	case *typ.Recursive:
+		if v.Body == nil || v.Body == v {
+			return false
+		}
+		return tableLiteralContextExpected(v.Body)
+	case *typ.Union:
+		for _, member := range v.Members {
+			if !tableLiteralContextExpected(member) {
+				return false
+			}
+		}
+		return len(v.Members) > 0
+	case *typ.Intersection:
+		for _, member := range v.Members {
+			if tableLiteralContextExpected(member) {
+				return true
+			}
+		}
+		return false
+	case *typ.Array, *typ.Map, *typ.ReadonlyMap, *typ.Record, *typ.Tuple:
+		return true
+	default:
+		return false
+	}
+}
+
 // varargSpreadElement reports the element type of a pure vararg-spread literal
 // (`{...}`): the function's declared vararg element. It applies only when the literal's
 // sole field is the vararg expression with no key, the array-construction form a
@@ -3144,6 +3350,9 @@ func (t *Transfer) evalAttrGet(
 	}
 	ev, ok := product.RuntimeIndexOf(base, key)
 	if !ok || ev.IsZero() {
+		if admitted, admittedOK := t.refineByIndexWriteAdmission(out, e); admittedOK {
+			return admitted, true
+		}
 		return product.AbstractValue{}, false
 	}
 	return t.refineIndexRead(out, e, base, ev), true
@@ -3187,6 +3396,9 @@ func (t *Transfer) evalAttrGetAt(
 	}
 	ev, ok := product.RuntimeIndexOf(base, key)
 	if !ok || ev.IsZero() {
+		if admitted, admittedOK := t.refineByIndexWriteAdmission(out, e); admittedOK {
+			return admitted, true
+		}
 		return product.AbstractValue{}, false
 	}
 	return t.refineIndexRead(out, e, base, ev), true
@@ -3968,16 +4180,14 @@ func (t *Transfer) applyCallArgs(
 			return true
 		}
 		t.applyCallArgDemands(out, info.Call, ctx, demand)
-		t.applyCallCellEffects(out, info.Call, ctx, ctx.ExprType)
-		t.applyCallReceiverEffects(out, info, ctx, demand)
-		t.applyCallMutatorEffects(out, info, ctx, demand)
+		t.applyCallSideEffects(out, info.Call, ctx, demand)
 	}
 	// A call to a module function that narrows its parameters (a wrapper around
 	// assert / `if x == nil then error()`) carries that narrowing to the matching
 	// argument here, so `check(y); use(y)` sees `y` narrowed.
 	if t.callTyper != nil {
 		if effects := t.callTyper.ParamNarrows(info.Call); len(effects) > 0 {
-			if t.ApplyParamNarrows(out, info.Call, effects) {
+			if t.ApplyParamNarrowsAtPoint(out, p, info.Call, effects) {
 				return true
 			}
 		}

@@ -131,6 +131,57 @@ func TestInferCallClosesGenericCallbackExpectedParam(t *testing.T) {
 	}
 }
 
+func TestCallWithGenericInferenceSolvesCallbackReturnThroughGenericUnion(t *testing.T) {
+	tp := typ.NewTypeParam("T", nil)
+	up := typ.NewTypeParam("U", nil)
+	rp := typ.NewTypeParam("R", nil)
+	resultGeneric := typ.NewGeneric("Result", []*typ.TypeParam{rp}, typ.NewUnion(
+		typ.NewRecord().Field("ok", typ.True).Field("value", rp).Build(),
+		typ.NewRecord().Field("ok", typ.False).Field("error", typ.String).Build(),
+	))
+	andThen := typ.Func().
+		TypeParamRef(tp).
+		TypeParamRef(up).
+		Param("result", typ.Instantiate(resultGeneric, tp)).
+		Param("fn", typ.Func().Param("value", tp).Returns(typ.Instantiate(resultGeneric, up)).Build()).
+		Returns(typ.Instantiate(resultGeneric, up)).
+		Build()
+
+	envelope := typ.NewRecord().Field("id", typ.String).Build()
+	view := typ.NewRecord().Field("label", typ.String).Build()
+	callback := typ.Func().
+		Param("env", envelope).
+		Returns(typ.NewRecord().Field("ok", typ.True).Field("value", view).Build()).
+		Build()
+
+	typeArgs, err := InferTypeArgsWithExpectedAndMode(andThen, []typ.Type{
+		typ.Instantiate(resultGeneric, envelope),
+		callback,
+	}, false, nil, nil, false)
+	if err != nil {
+		t.Fatalf("type argument inference failed: %v", err)
+	}
+	if len(typeArgs) != 2 || !typ.TypeEquals(typeArgs[0], envelope) || !typ.TypeEquals(typeArgs[1], view) {
+		t.Fatalf("type args = %v, want [%v %v]", typeArgs, envelope, view)
+	}
+
+	ctx := db.NewQueryContext(db.New())
+	result := CallWithGenericInference(ctx, CallDef{
+		Callee: andThen,
+		Args: []typ.Type{
+			typ.Instantiate(resultGeneric, envelope),
+			callback,
+		},
+	})
+	if len(result.Errors) > 0 {
+		t.Fatalf("unexpected call errors: %v", result.Errors)
+	}
+	want := typ.Instantiate(resultGeneric, view)
+	if !typ.TypeEquals(result.Type, want) {
+		t.Fatalf("return type = %v, want %v", result.Type, want)
+	}
+}
+
 func TestCallWithGenericInference_Variadic(t *testing.T) {
 	fn := typ.Func().
 		Param("x", typ.Integer).

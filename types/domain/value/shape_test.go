@@ -398,6 +398,15 @@ func TestJoinRecordShape_DisjointPartialRecordsBecomeOptionalFields(t *testing.T
 	}
 }
 
+func TestRecordWidthDiffer_IgnoresIdenticalRecord(t *testing.T) {
+	rec := typ.NewRecord().
+		Field("payload", typ.NewRecord().Field("id", typ.String).Build()).
+		Build()
+	if RecordWidthDiffer(rec, rec) {
+		t.Fatalf("RecordWidthDiffer(same record) = true, want false")
+	}
+}
+
 func TestJoinRecordShape_RecursiveAlternativesStayUnionable(t *testing.T) {
 	inner := typ.NewRecord().Field("routes", typ.NewRecord().SetOpen(true).Build()).SetOpen(true).Build()
 	outer := typ.NewRecord().Field("api", inner).SetOpen(true).Build()

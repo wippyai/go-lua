@@ -82,6 +82,7 @@ type CallArgContractConfig struct {
 	Call                 *ast.FuncCallExpr
 	Contracts            Contracts
 	DeclaredSlotType     func(slot int) typ.Type
+	EntrySlotType        func(slot int) typ.Type
 	SourceParamAnnotated func(sourceParam int) bool
 }
 
@@ -108,11 +109,12 @@ func CallArgContractObligations(config CallArgContractConfig) []callobligation.O
 		}
 		declared := callArgDeclaredType(config.DeclaredSlotType, slot)
 		contract := callArgContractType(config.Contracts, slot)
+		entry := callArgEntryType(config.EntrySlotType, slot)
 		if callArgSourceAnnotated(config, source) {
 			out[argIdx] = callobligation.Signature(declared)
 			continue
 		}
-		out[argIdx] = mergeCallArgObligations(declared, contract)
+		out[argIdx] = mergeCallArgObligations(declared, contract, entry)
 	}
 	return callobligation.Normalize(out)
 }
@@ -270,6 +272,13 @@ func callArgDeclaredType(resolve func(slot int) typ.Type, slot int) typ.Type {
 	return informativeOrNil(resolve(slot))
 }
 
+func callArgEntryType(resolve func(slot int) typ.Type, slot int) typ.Type {
+	if resolve == nil || slot < 0 {
+		return nil
+	}
+	return informativeOrNil(resolve(slot))
+}
+
 func callArgContractType(contracts Contracts, slot int) typ.Type {
 	if slot < 0 || len(contracts) == 0 {
 		return nil
@@ -282,19 +291,23 @@ func callArgContractType(contracts Contracts, slot int) typ.Type {
 }
 
 func mergeCallArgContracts(declared, contract typ.Type) typ.Type {
-	return mergeCallArgObligations(declared, contract).Type
+	return mergeCallArgObligations(declared, contract, nil).Type
 }
 
-func mergeCallArgObligations(declared, contract typ.Type) callobligation.Obligation {
+func mergeCallArgObligations(declared, contract, entry typ.Type) callobligation.Obligation {
 	declared = informativeOrNil(declared)
 	contract = informativeOrNil(contract)
+	entry = informativeOrNil(entry)
 	if declared == nil {
+		if EntryContradictsBodyContract(entry, contract) {
+			return callobligation.Obligation{}
+		}
 		return callobligation.Body(contract)
 	}
 	if contract == nil {
 		return callobligation.Signature(declared)
 	}
-	if EntryContradictsBodyContract(declared, contract) {
+	if EntryContradictsBodyContract(entry, contract) {
 		return callobligation.Signature(declared)
 	}
 	if joined := HardContractJoin(declared, contract); joined != nil {

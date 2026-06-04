@@ -292,9 +292,14 @@ func WidenType(t typ.Type) typ.Type {
 			if ft != f.Type {
 				changed = true
 			}
-			if f.Optional {
+			switch {
+			case f.Optional && f.Readonly:
+				builder.OptReadonlyField(f.Name, ft)
+			case f.Optional:
 				builder.OptField(f.Name, ft)
-			} else {
+			case f.Readonly:
+				builder.ReadonlyField(f.Name, ft)
+			default:
 				builder.Field(f.Name, ft)
 			}
 		}

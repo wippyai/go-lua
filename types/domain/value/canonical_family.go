@@ -22,11 +22,18 @@ type recursiveFamilyInterner struct {
 	mu      sync.Mutex
 	buckets map[uint64][]typ.Type
 	aliases map[uint64][]*typ.Alias
+	memo    map[uintptr][]recursiveFamilyMemoEntry
+}
+
+type recursiveFamilyMemoEntry struct {
+	node typ.Type
+	rep  typ.Type
 }
 
 var recursiveFamilies = &recursiveFamilyInterner{
 	buckets: make(map[uint64][]typ.Type),
 	aliases: make(map[uint64][]*typ.Alias),
+	memo:    make(map[uintptr][]recursiveFamilyMemoEntry),
 }
 
 // ResetCanonicalRecursiveFamilies clears the process-local canonical family table.
@@ -61,12 +68,17 @@ func CanonicalRecursiveFamily(t typ.Type) typ.Type {
 	if t == nil {
 		return nil
 	}
+	if rep, ok := recursiveFamilies.memoLookup(t); ok {
+		return rep
+	}
 	if alias, ok := t.(*typ.Alias); ok && alias != nil {
 		canonicalTarget := CanonicalRecursiveFamily(alias.Target)
 		if !typ.ContainsRecursive(canonicalTarget) {
 			return t
 		}
-		return recursiveFamilies.canonicalAlias(alias.Name, canonicalTarget)
+		rep := recursiveFamilies.canonicalAlias(alias.Name, canonicalTarget)
+		recursiveFamilies.memoStore(t, rep)
+		return rep
 	}
 	if !canonicalizableRecursiveFamily(t) {
 		return t
@@ -91,17 +103,46 @@ func canonicalizableRecursiveFamily(t typ.Type) bool {
 // canonical returns the canonical representative equal to t, installing t as the
 // representative when its equivalence class is seen for the first time.
 func (i *recursiveFamilyInterner) canonical(t typ.Type) typ.Type {
+	ptr := factTypePointer(t)
+	if ptr != 0 {
+		i.mu.Lock()
+		if rep, ok := i.memo[ptr]; ok {
+			for _, entry := range rep {
+				if typ.SameNode(entry.node, t) {
+					i.mu.Unlock()
+					return entry.rep
+				}
+			}
+		}
+		i.mu.Unlock()
+	}
+
 	h := typ.ProductFamilyHash(t)
 
 	i.mu.Lock()
 	defer i.mu.Unlock()
 
+	if ptr != 0 {
+		if bucket, ok := i.memo[ptr]; ok {
+			for _, entry := range bucket {
+				if typ.SameNode(entry.node, t) {
+					return entry.rep
+				}
+			}
+		}
+	}
 	for _, rep := range i.buckets[h] {
 		if factTypeMetadataEqual(rep, t, nil) {
+			if ptr != 0 {
+				i.memo[ptr] = append(i.memo[ptr], recursiveFamilyMemoEntry{node: t, rep: rep})
+			}
 			return rep
 		}
 	}
 	i.buckets[h] = append(i.buckets[h], t)
+	if ptr != 0 {
+		i.memo[ptr] = append(i.memo[ptr], recursiveFamilyMemoEntry{node: t, rep: t})
+	}
 	return t
 }
 
@@ -110,6 +151,37 @@ func (i *recursiveFamilyInterner) reset() {
 	defer i.mu.Unlock()
 	i.buckets = make(map[uint64][]typ.Type)
 	i.aliases = make(map[uint64][]*typ.Alias)
+	i.memo = make(map[uintptr][]recursiveFamilyMemoEntry)
+}
+
+func (i *recursiveFamilyInterner) memoLookup(t typ.Type) (typ.Type, bool) {
+	ptr := factTypePointer(t)
+	if ptr == 0 {
+		return nil, false
+	}
+	i.mu.Lock()
+	defer i.mu.Unlock()
+	for _, entry := range i.memo[ptr] {
+		if typ.SameNode(entry.node, t) {
+			return entry.rep, true
+		}
+	}
+	return nil, false
+}
+
+func (i *recursiveFamilyInterner) memoStore(t typ.Type, rep typ.Type) {
+	ptr := factTypePointer(t)
+	if ptr == 0 || rep == nil {
+		return
+	}
+	i.mu.Lock()
+	defer i.mu.Unlock()
+	for _, entry := range i.memo[ptr] {
+		if typ.SameNode(entry.node, t) {
+			return
+		}
+	}
+	i.memo[ptr] = append(i.memo[ptr], recursiveFamilyMemoEntry{node: t, rep: rep})
 }
 
 // canonicalAlias returns the canonical alias wrapper for (name, canonicalTarget),

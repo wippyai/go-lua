@@ -12,12 +12,12 @@ import (
 // collectEntrySelfSeeds extracts declaration-context self values for table-owned
 // function fields. These are forward entry values, not annotations: exact call
 // contexts can still override them through the summary key.
-func collectEntrySelfSeeds(p Program) []entrySelfSeedRow {
+func collectEntrySelfSeeds(p Program) []entrySeedRow {
 	if p.RefForFuncSymbol == nil {
 		return nil
 	}
 	receiverTypes := make(map[cfg.SymbolID]typ.Type)
-	var out []entrySelfSeedRow
+	var out []entrySeedRow
 	order := 0
 	add := func(fn *ast.FunctionExpr, g *cfg.Graph, selfType typ.Type) {
 		if fn == nil || g == nil || selfType == nil || typ.IsAbsentOrUnknown(selfType) {
@@ -34,7 +34,7 @@ func collectEntrySelfSeeds(p Program) []entrySelfSeedRow {
 		if !ok {
 			return
 		}
-		out = append(out, entrySelfSeedRow{
+		out = append(out, entrySeedRow{
 			FuncRef: r,
 			Seed: FunctionEntrySeed{
 				Slot: 0,

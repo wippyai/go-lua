@@ -118,6 +118,45 @@ func TestInferSetRecord(t *testing.T) {
 	}
 }
 
+func TestMatchContraFunctionReturnSelectsGenericUnionMember(t *testing.T) {
+	cs := constraint.NewInferSet()
+	tVar := typ.NewTypeVar(1)
+	uVar := typ.NewTypeVar(2)
+
+	failure := typ.NewRecord().
+		Field("ok", typ.False).
+		Field("error", uVar).
+		Build()
+	patternSuccess := typ.NewRecord().
+		Field("ok", typ.True).
+		Field("value", uVar).
+		Build()
+	pattern := typ.Func().
+		Param("value", tVar).
+		Returns(typ.NewUnion(patternSuccess, failure)).
+		Build()
+
+	envelope := typ.NewRecord().Field("id", typ.String).Build()
+	view := typ.NewRecord().Field("label", typ.String).Build()
+	concreteSuccess := typ.NewRecord().
+		Field("ok", typ.True).
+		Field("value", view).
+		Build()
+	concrete := typ.Func().
+		Param("env", envelope).
+		Returns(concreteSuccess).
+		Build()
+
+	constraint.MatchContra(pattern, concrete, cs)
+	solution, err := cs.Solve()
+	if err != nil {
+		t.Fatalf("Solve failed: %v", err)
+	}
+	if got := solution[2]; !typ.TypeEquals(got, view) {
+		t.Fatalf("U solution = %v, want %v", got, view)
+	}
+}
+
 func TestInferSubstitutionApply(t *testing.T) {
 	tv := typ.NewTypeVar(1)
 	sub := constraint.InferSubstitution{

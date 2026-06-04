@@ -5,6 +5,7 @@ import (
 
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/cfg"
+	"github.com/wippyai/go-lua/compiler/check/domain/callobligation"
 	"github.com/wippyai/go-lua/compiler/check/domain/trace"
 	"github.com/wippyai/go-lua/compiler/parse"
 	"github.com/wippyai/go-lua/types/constraint"
@@ -41,6 +42,22 @@ func TestWidenType_NumberLiteral(t *testing.T) {
 	result := WidenType(lit)
 	if result != typ.Number {
 		t.Errorf("expected Number, got %v", result)
+	}
+}
+
+func TestWidenType_PreservesReadonlyRecordFields(t *testing.T) {
+	input := typ.NewRecord().
+		ReadonlyField("body", typ.LiteralString("ok")).
+		OptReadonlyField("metadata", typ.LiteralBool(false)).
+		Build()
+
+	got := WidenType(input)
+	want := typ.NewRecord().
+		ReadonlyField("body", typ.String).
+		OptReadonlyField("metadata", typ.Boolean).
+		Build()
+	if !typ.TypeEquals(got, want) {
+		t.Fatalf("WidenType(readonly record) = %v, want %v", got, want)
 	}
 }
 
@@ -218,6 +235,51 @@ func TestCallArgContractTypesProjectsBodyDemandThroughParamSlots(t *testing.T) {
 	})
 	if len(got) != 1 || !typ.TypeEquals(got[0], typ.String) {
 		t.Fatalf("method call arg demand = %v, want string", got)
+	}
+}
+
+func TestCallArgContractObligationsSuppressContradictingEntryBodyDemand(t *testing.T) {
+	fn := &ast.FunctionExpr{ParList: &ast.ParList{Names: []string{"value"}}}
+	g := cfg.Build(fn)
+	call := &ast.FuncCallExpr{Args: []ast.Expr{&ast.IdentExpr{Value: "value"}}}
+	record := typ.NewRecord().Field("name", typ.String).Build()
+
+	got := CallArgContractObligations(CallArgContractConfig{
+		Graph:     g,
+		Function:  fn,
+		Call:      call,
+		Contracts: Contracts{0: DemandFromType(typ.Number)},
+		EntrySlotType: func(slot int) typ.Type {
+			if slot == 0 {
+				return record
+			}
+			return nil
+		},
+	})
+	if got != nil {
+		t.Fatalf("contradicting entry body demand = %#v, want no caller obligation", got)
+	}
+}
+
+func TestCallArgContractObligationsKeepBodyDemandForTopEntry(t *testing.T) {
+	fn := &ast.FunctionExpr{ParList: &ast.ParList{Names: []string{"value"}}}
+	g := cfg.Build(fn)
+	call := &ast.FuncCallExpr{Args: []ast.Expr{&ast.IdentExpr{Value: "value"}}}
+
+	got := CallArgContractObligations(CallArgContractConfig{
+		Graph:     g,
+		Function:  fn,
+		Call:      call,
+		Contracts: Contracts{0: DemandFromType(typ.Number)},
+		EntrySlotType: func(slot int) typ.Type {
+			if slot == 0 {
+				return typ.Any
+			}
+			return nil
+		},
+	})
+	if len(got) != 1 || got[0].Source != callobligation.SourceBody || !typ.TypeEquals(got[0].Type, typ.Number) {
+		t.Fatalf("top entry body demand = %#v, want body number obligation", got)
 	}
 }
 

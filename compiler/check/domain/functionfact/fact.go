@@ -15,6 +15,7 @@ import (
 	"github.com/wippyai/go-lua/types/subtype"
 	"github.com/wippyai/go-lua/types/typ"
 	"github.com/wippyai/go-lua/types/typ/join"
+	"github.com/wippyai/go-lua/types/typ/subst"
 	"github.com/wippyai/go-lua/types/typ/unwrap"
 )
 
@@ -146,11 +147,6 @@ func CanonicalPostflowSignature(
 	candidate := observed
 	if publicSeed != nil {
 		candidate = withPublicSeedParams(candidate, publicSeed)
-	}
-	if hasDeclaredReturns && len(returns) > 0 && !returnsummary.AllNil(returns) {
-		if aligned := join.WithReturns(candidate, returns); aligned != nil {
-			candidate = aligned
-		}
 	}
 	if !hasSourceVariadic {
 		candidate = withoutSyntheticVariadic(candidate)
@@ -339,6 +335,101 @@ func ApplyBodySignatureEvidence(fn *typ.Function, evidence []typ.Type) *typ.Func
 		return fn
 	}
 	return builder.Build()
+}
+
+// CloseGenericBodySignature instantiates a generic body signature from the
+// whole parameter-evidence vector before per-slot evidence is merged. This keeps
+// correlated generic parameters closed together: evidence for fn: (Envelope) ->
+// View must also close result: Result<T> to Result<Envelope> in the same body
+// run, instead of refining each slot independently.
+func CloseGenericBodySignature(fn *typ.Function, evidence []typ.Type) *typ.Function {
+	if fn == nil || len(fn.TypeParams) == 0 || len(fn.Params) == 0 || len(evidence) == 0 {
+		return fn
+	}
+
+	typeVars := make(map[*typ.TypeParam]*typ.TypeVar, len(fn.TypeParams))
+	typeVarArgs := make([]typ.Type, len(fn.TypeParams))
+	for i, tp := range fn.TypeParams {
+		if tp == nil {
+			continue
+		}
+		tv := typ.NewTypeVar(i + 1)
+		typeVars[tp] = tv
+		typeVarArgs[i] = tv
+	}
+	if len(typeVars) == 0 {
+		return fn
+	}
+
+	cs := constraint.NewInferSet()
+	for i, got := range evidence {
+		if got == nil {
+			continue
+		}
+		if typ.ContainsFreeTypeParam(got) {
+			continue
+		}
+		pattern := bodyEvidencePattern(fn, typeVarArgs, i)
+		if pattern == nil {
+			continue
+		}
+		pattern = subst.ExpandInstantiated(pattern)
+		got = subst.ExpandInstantiated(got)
+		constraint.MatchContra(pattern, got, cs)
+	}
+
+	solution, err := cs.Solve()
+	if err != nil || len(solution) == 0 {
+		return fn
+	}
+
+	typeArgs := make([]typ.Type, len(fn.TypeParams))
+	solvedAny := false
+	for i, tp := range fn.TypeParams {
+		if tp == nil {
+			typeArgs[i] = typ.Unknown
+			continue
+		}
+		tv := typeVars[tp]
+		solved := typ.Type(nil)
+		if tv != nil {
+			solved = solution[tv.ID]
+		}
+		if solved == nil {
+			typeArgs[i] = typ.Unknown
+			continue
+		}
+		if tp.Constraint != nil && !typ.IsAbsentOrUnknown(solved) && !subtype.IsSubtype(solved, tp.Constraint) {
+			typeArgs[i] = typ.Unknown
+			continue
+		}
+		typeArgs[i] = solved
+		solvedAny = true
+	}
+	if !solvedAny {
+		return fn
+	}
+	closed := subst.Params(fn, fn.TypeParams, typeArgs)
+	if closedFn, ok := closed.(*typ.Function); ok {
+		return closedFn
+	}
+	return fn
+}
+
+func bodyEvidencePattern(fn *typ.Function, typeVarArgs []typ.Type, idx int) typ.Type {
+	if fn == nil || idx < 0 {
+		return nil
+	}
+	var pattern typ.Type
+	switch {
+	case idx < len(fn.Params):
+		pattern = fn.Params[idx].Type
+	case fn.Variadic != nil:
+		pattern = fn.Variadic
+	default:
+		return nil
+	}
+	return subst.Params(pattern, fn.TypeParams, typeVarArgs)
 }
 
 // nonNilableHardEvidence reports whether a public obligation requires a

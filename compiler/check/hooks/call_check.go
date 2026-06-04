@@ -28,6 +28,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/check/domain/functionfact"
 	"github.com/wippyai/go-lua/compiler/check/domain/observation"
 	"github.com/wippyai/go-lua/compiler/check/domain/paramevidence"
+	flowpath "github.com/wippyai/go-lua/compiler/check/domain/path"
 	"github.com/wippyai/go-lua/compiler/check/synth/callarg"
 	"github.com/wippyai/go-lua/compiler/check/synth/ops"
 	"github.com/wippyai/go-lua/types/db"
@@ -151,6 +152,7 @@ func checkSingleCall(
 	pipeline.ReSynthAndReInfer()
 	result := pipeline.Finish()
 	errors := appendCallContractErrors(result.Errors, contract, info, p, callObserver, ctx, query, pipeline)
+	errors = suppressForwardedUnannotatedParamCallErrors(errors, info, graph, bindings)
 	return callErrorsToDiags(errors, info, sourceName)
 }
 
@@ -204,6 +206,37 @@ func callErrorAlreadyCovers(errors []ops.CallError, argIdx int, expected typ.Typ
 		}
 		if expected == nil || err.Expected == nil || typ.TypeEquals(err.Expected, expected) {
 			return true
+		}
+	}
+	return false
+}
+
+func suppressForwardedUnannotatedParamCallErrors(errors []ops.CallError, info *cfg.CallInfo, graph *cfg.Graph, bindings *bind.BindingTable) []ops.CallError {
+	if len(errors) == 0 || info == nil || graph == nil || bindings == nil {
+		return errors
+	}
+	var out []ops.CallError
+	for _, err := range errors {
+		if err.Kind == ops.ErrTypeMismatch && callErrorArgIsUnannotatedParam(err, info, graph, bindings) {
+			continue
+		}
+		out = append(out, err)
+	}
+	return out
+}
+
+func callErrorArgIsUnannotatedParam(err ops.CallError, info *cfg.CallInfo, graph *cfg.Graph, bindings *bind.BindingTable) bool {
+	if err.ArgIdx <= 0 || err.ArgIdx > len(info.Args) {
+		return false
+	}
+	arg := info.Args[err.ArgIdx-1]
+	path := flowpath.FromExprWithBindings(arg, nil, bindings)
+	if path.IsEmpty() || path.Symbol == 0 {
+		return false
+	}
+	for _, slot := range graph.ParamSlotsReadOnly() {
+		if slot.Symbol == path.Symbol {
+			return slot.TypeAnnotation == nil
 		}
 	}
 	return false

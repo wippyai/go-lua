@@ -1,6 +1,9 @@
 package propagate
 
 import (
+	"strconv"
+	"strings"
+
 	"github.com/wippyai/go-lua/types/cfg"
 	"github.com/wippyai/go-lua/types/constraint"
 )
@@ -35,29 +38,64 @@ type pathDemandKey struct {
 	stripped constraint.PathKey
 }
 
+type livePathKey struct {
+	sym      cfg.SymbolID
+	ver      int
+	stripped constraint.PathKey
+}
+
 type symVer struct {
 	sym cfg.SymbolID
 	ver int
 }
 
+type edgeKey struct {
+	from cfg.Point
+	to   cfg.Point
+}
+
+type phiProvider interface {
+	PhiNodes() []cfg.PhiNode
+}
+
 // liveSets holds the per-point access-path demand computed by the backward
 // SSA-version liveness solve.
 type liveSets struct {
-	liveIn map[cfg.Point]map[pathDemandKey]struct{}
+	liveIn       map[cfg.Point]map[pathDemandKey]struct{}
+	liveOut      map[cfg.Point]map[pathDemandKey]struct{}
+	livePaths    map[cfg.Point]map[livePathKey]struct{}
+	liveOutPaths map[cfg.Point]map[livePathKey]struct{}
 }
 
 // ConditionProjector applies the SSA-version relevance abstraction to a
 // condition at a CFG point. The product equation solver uses this as the single
 // condition-vocabulary bound instead of carrying parallel projection logic.
 type ConditionProjector struct {
-	live *liveSets
+	live  *liveSets
+	cache map[projectionCacheKey][]projectionCacheEntry
+}
+
+type projectionCacheKey struct {
+	point cfg.Point
+	hash  uint64
+	out   bool
+}
+
+type projectionCacheEntry struct {
+	condition constraint.Condition
+	projected constraint.Condition
 }
 
 // NewConditionProjector computes the liveness demand needed to project
 // path-condition facts. A nil or disabled demand returns a projector whose
 // Project method is a no-op.
 func NewConditionProjector(inputs *Inputs) *ConditionProjector {
-	return &ConditionProjector{live: computeLiveSets(inputs)}
+	live := computeLiveSets(inputs)
+	p := &ConditionProjector{live: live}
+	if live.enabled() {
+		p.cache = make(map[projectionCacheKey][]projectionCacheEntry)
+	}
+	return p
 }
 
 // Enabled reports whether this projector has real liveness demand.
@@ -69,12 +107,34 @@ func (p *ConditionProjector) Enabled() bool {
 // point. Forgetting weakens the condition, so this is sound for forward
 // propagation and bounds acyclic DNF vocabulary growth.
 func (p *ConditionProjector) Project(point cfg.Point, cond constraint.Condition) constraint.Condition {
+	return p.project(point, cond, false)
+}
+
+// ProjectOut forgets condition literals using demand live after point. Point
+// cells in the equation solver hold post-transfer state, so assignment defs at
+// the point must not kill facts that are needed by successors.
+func (p *ConditionProjector) ProjectOut(point cfg.Point, cond constraint.Condition) constraint.Condition {
+	return p.project(point, cond, true)
+}
+
+func (p *ConditionProjector) project(point cfg.Point, cond constraint.Condition, out bool) constraint.Condition {
 	if !p.Enabled() {
 		return cond
 	}
-	return cond.Project(func(lit constraint.Constraint) bool {
-		return literalLive(p.live, point, lit)
+	key := projectionCacheKey{point: point, hash: cond.Hash(), out: out}
+	for _, entry := range p.cache[key] {
+		if entry.condition.Equals(cond) {
+			return entry.projected
+		}
+	}
+	projected := cond.Project(func(lit constraint.Constraint) bool {
+		return literalLive(p.live, point, lit, out)
 	})
+	p.cache[key] = append(p.cache[key], projectionCacheEntry{
+		condition: cond,
+		projected: projected,
+	})
+	return projected
 }
 
 // enabled reports whether projection should run: only when liveness demand was
@@ -84,13 +144,14 @@ func (l *liveSets) enabled() bool {
 }
 
 // fieldPathLive reports whether an access path is demanded at point p, matching
-// on (symbol, segments) and IGNORING the SSA version stamp. Field-presence
-// guards and their downstream field reads do not always carry the same version
-// stamp (guards version via the visible version at the branch; assignment
-// sources may be unversioned), so version-agnostic matching on the field path
-// is required. Distinct fields (x.a vs x.b) still differ by segments, so the
-// acyclic DNF bound is preserved. Placeholder/empty roots are always live.
-func (l *liveSets) fieldPathLive(p cfg.Point, path constraint.Path) bool {
+// on the same symbol, SSA version, and field/index path. Transfer and condition
+// extraction stamp mutable access-path facts at their source point; projection
+// must not let a guard over x@old.f survive just because x@new.f is live after a
+// redefinition. Prefix demand still preserves same-version sibling discriminants:
+// reading x@v.value demands x@v, so a FieldEquals{x@v,"kind"} literal remains
+// live while the same version's root is demanded. Placeholder/empty roots are
+// always live.
+func (l *liveSets) fieldPathLive(p cfg.Point, path constraint.Path, out bool) bool {
 	if l == nil || l.liveIn == nil {
 		return true
 	}
@@ -98,12 +159,21 @@ func (l *liveSets) fieldPathLive(p cfg.Point, path constraint.Path) bool {
 		return true
 	}
 	set := l.liveIn[p]
+	livePaths := l.livePaths[p]
+	if out {
+		set = l.liveOut[p]
+		livePaths = l.liveOutPaths[p]
+	}
 	if set == nil {
 		return false
 	}
 	want := strippedKey(path)
+	if livePaths != nil {
+		_, ok := livePaths[livePathKey{sym: path.Symbol, ver: path.Version, stripped: want}]
+		return ok
+	}
 	for k := range set {
-		if k.sym == path.Symbol && k.stripped == want {
+		if k.sym == path.Symbol && k.ver == path.Version && k.stripped == want {
 			return true
 		}
 	}
@@ -114,8 +184,8 @@ func demandKeyOf(path constraint.Path) pathDemandKey {
 	return pathDemandKey{sym: path.Symbol, ver: path.Version, key: path.Key(), stripped: strippedKey(path)}
 }
 
-// strippedKey is the version-agnostic access-path identity: symbol plus segment
-// suffix, with the SSA version stamp removed.
+// strippedKey is the access-path suffix identity: symbol plus segment suffix,
+// with the SSA version stored separately in pathDemandKey/livePathKey.
 func strippedKey(path constraint.Path) constraint.PathKey {
 	bare := constraint.Path{Root: path.Root, Symbol: path.Symbol, Segments: path.Segments}
 	return bare.Key()
@@ -181,9 +251,12 @@ func computeLiveSets(inputs *Inputs) *liveSets {
 	}
 
 	liveIn := make(map[cfg.Point]map[pathDemandKey]struct{}, len(rpo))
+	liveOut := make(map[cfg.Point]map[pathDemandKey]struct{}, len(rpo))
 	for _, p := range rpo {
 		liveIn[p] = make(map[pathDemandKey]struct{})
+		liveOut[p] = make(map[pathDemandKey]struct{})
 	}
+	phiEdgeDemand := buildPhiEdgeDemandRenames(g)
 
 	// Worklist over the backward dataflow: a point is re-evaluated only when one
 	// of its successors' live-in changed, driven by a once-built predecessor map.
@@ -214,16 +287,27 @@ func computeLiveSets(inputs *Inputs) *liveSets {
 		inQueue[p] = false
 
 		dset := defs[p]
-		next := make(map[pathDemandKey]struct{}, len(uses[p]))
+		out := make(map[pathDemandKey]struct{})
 		for _, succ := range graphSuccessors(g, p) {
+			renames := phiEdgeDemand[edgeKey{from: p, to: succ}]
 			for k := range liveIn[succ] {
-				if dset != nil {
-					if _, killed := dset[symVer{sym: k.sym, ver: k.ver}]; killed {
-						continue
-					}
+				k = renamePhiDemand(k, renames)
+				if k.sym == 0 || k.ver == 0 {
+					continue
 				}
-				next[k] = struct{}{}
+				out[k] = struct{}{}
 			}
+		}
+		liveOut[p] = out
+
+		next := make(map[pathDemandKey]struct{}, len(out)+len(uses[p]))
+		for k := range out {
+			if dset != nil {
+				if _, killed := dset[symVer{sym: k.sym, ver: k.ver}]; killed {
+					continue
+				}
+			}
+			next[k] = struct{}{}
 		}
 		for k := range uses[p] {
 			next[k] = struct{}{}
@@ -239,7 +323,70 @@ func computeLiveSets(inputs *Inputs) *liveSets {
 		}
 	}
 
-	return &liveSets{liveIn: liveIn}
+	return &liveSets{
+		liveIn:       liveIn,
+		liveOut:      liveOut,
+		livePaths:    indexLivePaths(liveIn),
+		liveOutPaths: indexLivePaths(liveOut),
+	}
+}
+
+func buildPhiEdgeDemandRenames(g Graph) map[edgeKey]map[symVer]int {
+	pg, ok := g.(phiProvider)
+	if !ok {
+		return nil
+	}
+	phis := pg.PhiNodes()
+	if len(phis) == 0 {
+		return nil
+	}
+	out := make(map[edgeKey]map[symVer]int)
+	for _, phi := range phis {
+		if phi.Target.Symbol == 0 || phi.Target.ID == 0 {
+			continue
+		}
+		for _, op := range phi.Operands {
+			if op.Version.Symbol == 0 || op.Version.ID == 0 {
+				continue
+			}
+			if op.Version.Symbol != phi.Target.Symbol {
+				continue
+			}
+			edge := edgeKey{from: op.From, to: phi.Point}
+			renames := out[edge]
+			if renames == nil {
+				renames = make(map[symVer]int)
+				out[edge] = renames
+			}
+			renames[symVer{sym: phi.Target.Symbol, ver: phi.Target.ID}] = op.Version.ID
+		}
+	}
+	return out
+}
+
+func renamePhiDemand(k pathDemandKey, renames map[symVer]int) pathDemandKey {
+	if len(renames) == 0 {
+		return k
+	}
+	operandVer, ok := renames[symVer{sym: k.sym, ver: k.ver}]
+	if !ok {
+		return k
+	}
+	k.ver = operandVer
+	k.key = versionedDemandKey(k.stripped, k.sym, operandVer)
+	return k
+}
+
+func versionedDemandKey(stripped constraint.PathKey, sym cfg.SymbolID, ver int) constraint.PathKey {
+	if sym == 0 || ver == 0 {
+		return stripped
+	}
+	prefix := "sym" + strconv.FormatUint(uint64(sym), 10)
+	s := string(stripped)
+	if !strings.HasPrefix(s, prefix) {
+		return stripped
+	}
+	return constraint.PathKey(prefix + "@" + strconv.Itoa(ver) + strings.TrimPrefix(s, prefix))
 }
 
 // literalLive reports whether a condition literal must be retained by
@@ -260,7 +407,7 @@ func computeLiveSets(inputs *Inputs) *liveSets {
 // Forgetting only ever weakens (γ(c) ⊆ γ(Project(c))); a still-live referenced
 // path keeps the literal, so projection can never unsoundly narrow a downstream
 // query. Reassignment kill is handled separately by KillRedefinedConditions.
-func literalLive(live *liveSets, p cfg.Point, lit constraint.Constraint) bool {
+func literalLive(live *liveSets, p cfg.Point, lit constraint.Constraint, out bool) bool {
 	paths := constraint.SemanticAffectedPaths(lit)
 	if len(paths) == 0 {
 		return true
@@ -270,7 +417,7 @@ func literalLive(live *liveSets, p cfg.Point, lit constraint.Constraint) bool {
 			// A placeholder/unresolved referenced path is conservatively live.
 			return true
 		}
-		if live.fieldPathLive(p, path) {
+		if live.fieldPathLive(p, path, out) {
 			return true
 		}
 	}
@@ -287,4 +434,19 @@ func sameDemandSet(a, b map[pathDemandKey]struct{}) bool {
 		}
 	}
 	return true
+}
+
+func indexLivePaths(liveIn map[cfg.Point]map[pathDemandKey]struct{}) map[cfg.Point]map[livePathKey]struct{} {
+	if len(liveIn) == 0 {
+		return nil
+	}
+	out := make(map[cfg.Point]map[livePathKey]struct{}, len(liveIn))
+	for p, set := range liveIn {
+		paths := make(map[livePathKey]struct{}, len(set))
+		for k := range set {
+			paths[livePathKey{sym: k.sym, ver: k.ver, stripped: k.stripped}] = struct{}{}
+		}
+		out[p] = paths
+	}
+	return out
 }

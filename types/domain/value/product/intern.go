@@ -20,6 +20,20 @@ type interner struct {
 
 var canonical = &interner{buckets: make(map[uint64][]*node)}
 
+var (
+	cachedBottom AbstractValue
+	cachedTop    AbstractValue
+)
+
+func init() {
+	refreshCachedExtrema()
+}
+
+func refreshCachedExtrema() {
+	cachedBottom = constructBottom()
+	cachedTop = constructTop()
+}
+
 // ResetCanonicalInterner clears the package-level product-value interner.
 //
 // Product nodes are immutable, but the canonical store owns analysis-local
@@ -27,8 +41,9 @@ var canonical = &interner{buckets: make(map[uint64][]*node)}
 // values with different query context collapse, which is not a valid Salsa key.
 func ResetCanonicalInterner() {
 	canonical.mu.Lock()
-	defer canonical.mu.Unlock()
 	canonical.buckets = make(map[uint64][]*node)
+	canonical.mu.Unlock()
+	refreshCachedExtrema()
 }
 
 // intern returns the canonical node equal to n, inserting n when none exists yet.

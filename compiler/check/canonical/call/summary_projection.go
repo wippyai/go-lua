@@ -43,8 +43,9 @@ func SummaryProjectionForTargets(
 	for _, target := range selected {
 		ctx := entryContext(target)
 		next := summary.CallSummaryTarget{
-			Ref:     target.Ref(),
-			Summary: lookup(ctx),
+			Ref:         target.Ref(),
+			Summary:     lookup(ctx),
+			EntryValues: ctx.EntryValues(),
 		}
 		if info.DeclaredReturns != nil {
 			next.DeclaredReturns = info.DeclaredReturns(target)

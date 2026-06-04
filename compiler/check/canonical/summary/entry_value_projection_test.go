@@ -305,6 +305,38 @@ func TestDirectCallEntryFunctionRefs_SeedsDirectLiteralWhenParamSlotMapped(t *te
 	}
 }
 
+func TestDirectCallEntryFunctionRefs_RebasesCallReturnSubtreeToParamPath(t *testing.T) {
+	param := cfg.SymbolID(23)
+	paramPath := constraint.NewPath(param, "database")
+	queryRef := flow.FunctionRef{GraphID: 105}
+	arg := &ast.FuncCallExpr{Func: &ast.IdentExpr{Value: "mock"}}
+	call := &ast.FuncCallExpr{Args: []ast.Expr{arg}}
+	returnRefs := flow.WithFunctionRef(nil, constraint.NewPlaceholder(0).Field("query").Key(), flow.FunctionRefSetOf(queryRef))
+
+	got := summary.DirectCallEntryFunctionRefs(summary.DirectCallEntryReferenceInput{
+		Call:   call,
+		Callee: summary.FuncRef{GraphID: 9},
+		ParamSlot: func(summary.FuncRef, *ast.FuncCallExpr, int) (int, int, bool) {
+			return 0, 0, true
+		},
+		ParamPath: func(summary.FuncRef, int) (constraint.Path, bool) {
+			return paramPath, true
+		},
+		ResolveFunctionArgRefs: func(_ int, gotArg ast.Expr, _ *flow.PointState) (flow.FunctionRefs, bool) {
+			if gotArg != arg {
+				t.Fatalf("arg = %#v, want call expression", gotArg)
+			}
+			return returnRefs, true
+		},
+	})
+
+	if refs, ok := flow.FunctionRefAt(got, paramPath.Field("query").Key()); !ok {
+		t.Fatalf("rebased call-return subtree refs missing: %#v", got)
+	} else if ref, singleton := refs.Singleton(); !singleton || ref != queryRef {
+		t.Fatalf("rebased call-return subtree refs = %s, want %v", refs.Format(), queryRef)
+	}
+}
+
 func TestDirectCallEntryClosureRefs_ProjectRuntimeArgsToParamPaths(t *testing.T) {
 	source := constraint.NewPath(cfg.SymbolID(30), "cb")
 	target := constraint.NewPath(cfg.SymbolID(31), "fn")
@@ -331,6 +363,37 @@ func TestDirectCallEntryClosureRefs_ProjectRuntimeArgsToParamPaths(t *testing.T)
 		t.Fatalf("rebased closure refs missing: %#v", got)
 	} else if ref, singleton := refs.Singleton(); !singleton || ref.Ref != closure.Ref {
 		t.Fatalf("rebased closure refs = %s, want %v", refs.Format(), closure.Ref)
+	}
+}
+
+func TestDirectCallEntryClosureRefs_RebasesCallReturnSubtreeToParamPath(t *testing.T) {
+	target := constraint.NewPath(cfg.SymbolID(32), "database")
+	closure := flow.ClosureRefOf(flow.FunctionRef{GraphID: 202}, flow.CaptureCellsDomain.Bottom(), nil)
+	arg := &ast.FuncCallExpr{Func: &ast.IdentExpr{Value: "mock"}}
+	call := &ast.FuncCallExpr{Args: []ast.Expr{arg}}
+	returnRefs := flow.WithClosureRef(nil, constraint.NewPlaceholder(0).Field("query").Key(), flow.ClosureRefSetOf(closure))
+
+	got := summary.DirectCallEntryClosureRefs(summary.DirectCallEntryReferenceInput{
+		Call:   call,
+		Callee: summary.FuncRef{GraphID: 10},
+		ParamSlot: func(summary.FuncRef, *ast.FuncCallExpr, int) (int, int, bool) {
+			return 0, 0, true
+		},
+		ParamPath: func(summary.FuncRef, int) (constraint.Path, bool) {
+			return target, true
+		},
+		ResolveClosureArgRefs: func(_ int, gotArg ast.Expr, _ *flow.PointState) (flow.ClosureRefs, bool) {
+			if gotArg != arg {
+				t.Fatalf("arg = %#v, want call expression", gotArg)
+			}
+			return returnRefs, true
+		},
+	})
+
+	if refs, ok := flow.ClosureRefAt(got, target.Field("query").Key()); !ok {
+		t.Fatalf("rebased call-return closure subtree missing: %#v", got)
+	} else if ref, singleton := refs.Singleton(); !singleton || ref.Ref != closure.Ref {
+		t.Fatalf("rebased call-return closure subtree = %s, want %v", refs.Format(), closure.Ref)
 	}
 }
 

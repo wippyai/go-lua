@@ -48,6 +48,56 @@ func TestEntrySeedOpenGenericDeclaredParamUsesClosedEntryValue(t *testing.T) {
 	}
 }
 
+func TestEntrySeedOpenGenericInstantiationUsesClosedInstantiatedEntryValue(t *testing.T) {
+	tParam := typ.NewTypeParam("T", nil)
+	boxParam := typ.NewTypeParam("X", nil)
+	box := typ.NewGeneric("Box", []*typ.TypeParam{boxParam},
+		typ.NewRecord().Field("value", boxParam).Build(),
+	)
+	envelope := typ.NewRecord().Field("id", typ.String).Build()
+
+	got := entrySeedValue(
+		typ.Instantiate(box, tParam),
+		product.FromType(typ.Instantiate(box, envelope)),
+		product.AbstractValue{},
+	)
+
+	if !typ.TypeEquals(got.ProjectValue(), typ.Instantiate(box, envelope)) {
+		t.Fatalf("generic instantiated entry seed = %v, want Box<Envelope>", got.ProjectValue())
+	}
+}
+
+func TestEntrySeedClosesGenericDeclaredParamsFromWholeEntryVector(t *testing.T) {
+	tParam := typ.NewTypeParam("T", nil)
+	uParam := typ.NewTypeParam("U", nil)
+	boxParam := typ.NewTypeParam("X", nil)
+	box := typ.NewGeneric("Box", []*typ.TypeParam{boxParam},
+		typ.NewRecord().Field("value", boxParam).Build())
+	envelope := typ.NewRecord().Field("id", typ.String).Build()
+	view := typ.NewRecord().Field("label", typ.String).Build()
+
+	outerT := typ.NewTypeParam("T", nil)
+	declared := map[int]typ.Type{
+		0: typ.Instantiate(box, tParam),
+		1: typ.Func().Param("value", tParam).Returns(uParam).Build(),
+	}
+	closed := closeDeclaredParamTypes(declared, []*typ.TypeParam{tParam, uParam}, []typ.Type{
+		typ.Instantiate(box, outerT),
+		typ.Func().Param("env", envelope).Returns(view).Build(),
+	})
+
+	if !typ.TypeEquals(closed[0], typ.Instantiate(box, envelope)) {
+		t.Fatalf("closed slot 0 = %v, want Box<Envelope>", closed[0])
+	}
+	fn, ok := closed[1].(*typ.Function)
+	if !ok || len(fn.Params) != 1 || len(fn.Returns) != 1 {
+		t.Fatalf("closed slot 1 = %v, want one-param function", closed[1])
+	}
+	if !typ.TypeEquals(fn.Params[0].Type, envelope) || !typ.TypeEquals(fn.Returns[0], view) {
+		t.Fatalf("closed callback = %v, want Envelope -> View", fn)
+	}
+}
+
 func TestEntrySeedBodyContractDoesNotRefineDeclaredAny(t *testing.T) {
 	contract := typ.NewRecord().ReadonlyField("id", typ.String).Build()
 	got := entrySeedValue(

@@ -1187,6 +1187,82 @@ func unionPairScore(pattern, concrete typ.Type) int {
 }
 
 func typesOverlapForInference(a, b typ.Type) bool {
+	aUnwrapped := unwrap.Alias(a)
+	bUnwrapped := unwrap.Alias(b)
+	if _, ok := aUnwrapped.(*typ.Record); ok {
+		if _, ok := bUnwrapped.(*typ.Record); ok {
+			return inferenceShapeOverlap(aUnwrapped, bUnwrapped, 0)
+		}
+	}
+	intersection := subtype.NormalizeIntersection(a, b)
+	if intersection != nil && !typ.IsNever(intersection) {
+		return true
+	}
+	if containsTypeVar(a) || containsTypeVar(b) {
+		return inferenceShapeOverlap(a, b, 0)
+	}
+	return false
+}
+
+func inferenceShapeOverlap(a, b typ.Type, depth int) bool {
+	if stopDepthPattern(a, b, depth) {
+		return false
+	}
+	a = unwrap.Alias(a)
+	b = unwrap.Alias(b)
+	if a == b {
+		return true
+	}
+	if typ.IsNever(a) || typ.IsNever(b) {
+		return false
+	}
+	if a.Kind().IsTopOrBottom() || b.Kind().IsTopOrBottom() {
+		return true
+	}
+	if a.Kind() == kind.TypeVar || b.Kind() == kind.TypeVar {
+		return true
+	}
+	if au, ok := a.(*typ.Union); ok {
+		for _, m := range au.Members {
+			if inferenceShapeOverlap(m, b, depth+1) {
+				return true
+			}
+		}
+		return false
+	}
+	if bu, ok := b.(*typ.Union); ok {
+		for _, m := range bu.Members {
+			if inferenceShapeOverlap(a, m, depth+1) {
+				return true
+			}
+		}
+		return false
+	}
+	if ar, ok := a.(*typ.Record); ok {
+		br, ok := b.(*typ.Record)
+		if !ok {
+			return false
+		}
+		for _, af := range ar.Fields {
+			bf := br.GetField(af.Name)
+			if bf == nil {
+				if !af.Optional && !unwrap.IsOptionalLike(af.Type) {
+					return false
+				}
+				continue
+			}
+			if !inferenceShapeOverlap(af.Type, bf.Type, depth+1) {
+				return false
+			}
+		}
+		return true
+	}
+	if subtype.IsSubtype(a, b) || subtype.IsSubtype(b, a) {
+		return true
+	}
+	if a.Kind() != b.Kind() {
+		return false
+	}
 	intersection := subtype.NormalizeIntersection(a, b)
 	return intersection != nil && !typ.IsNever(intersection)
 }

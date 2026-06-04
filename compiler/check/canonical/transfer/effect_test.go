@@ -31,8 +31,13 @@ func TestSymbolWriteEffectClearsStaleProductAxes(t *testing.T) {
 		},
 		StaticMembers: flow.StaticMemberFacts{}.With(fieldKey, product.FromType(typ.Boolean)),
 		KeyPresence:   flow.KeyPresenceFacts{}.WithPaths(root, constraint.NewPath(cfg.SymbolID(202), "k")),
-		FunctionRefs:  flow.WithFunctionRef(nil, fieldPath.Key(), flow.FunctionRefSetOf(ref)),
-		ClosureRefs:   flow.WithClosureRef(nil, fieldPath.Key(), flow.ClosureRefSetOf(closure)),
+		IndexWrites: flow.IndexWriteAdmissionFacts{}.With(flow.IndexWriteAdmissionFact{
+			Target: flow.SymbolPathKey(sym, []constraint.Segment{{Kind: constraint.SegmentField, Name: "items"}}),
+			Key:    product.FromType(typ.String),
+			Value:  product.FromType(typ.Number),
+		}),
+		FunctionRefs: flow.WithFunctionRef(nil, fieldPath.Key(), flow.FunctionRefSetOf(ref)),
+		ClosureRefs:  flow.WithClosureRef(nil, fieldPath.Key(), flow.ClosureRefSetOf(closure)),
 	}
 
 	tr.applyWriteEffect(&out, WriteEffect{
@@ -52,6 +57,9 @@ func TestSymbolWriteEffectClearsStaleProductAxes(t *testing.T) {
 	}
 	if out.KeyPresence.HasPaths(root, constraint.NewPath(cfg.SymbolID(202), "k")) {
 		t.Fatalf("stale key presence survived symbol write: %s", out.KeyPresence.Format())
+	}
+	if _, ok := out.IndexWrites.Admission(flow.IndexWriteQuery{Target: root.Field("items"), KeyType: typ.String}); ok {
+		t.Fatalf("stale index-write admission survived symbol write: %s", out.IndexWrites.Format())
 	}
 	if _, ok := flow.FunctionRefAt(out.FunctionRefs, fieldPath.Key()); ok {
 		t.Fatalf("stale function ref survived symbol write: %#v", out.FunctionRefs)
@@ -75,8 +83,13 @@ func TestUnresolvedContainerWriteInvalidatesStaleProductAxes(t *testing.T) {
 		},
 		StaticMembers: flow.StaticMemberFacts{}.With(fieldKey, product.FromType(typ.String)),
 		KeyPresence:   flow.KeyPresenceFacts{}.WithPaths(fieldPath, constraint.NewPath(cfg.SymbolID(304), "k")),
-		FunctionRefs:  flow.WithFunctionRef(nil, fieldPath.Key(), flow.FunctionRefSetOf(ref)),
-		ClosureRefs:   flow.WithClosureRef(nil, fieldPath.Key(), flow.ClosureRefSetOf(closure)),
+		IndexWrites: flow.IndexWriteAdmissionFacts{}.With(flow.IndexWriteAdmissionFact{
+			Target: flow.SymbolPathKey(baseSym, fieldPath.Segments),
+			Key:    product.FromType(typ.String),
+			Value:  product.FromType(typ.String),
+		}),
+		FunctionRefs: flow.WithFunctionRef(nil, fieldPath.Key(), flow.FunctionRefSetOf(ref)),
+		ClosureRefs:  flow.WithClosureRef(nil, fieldPath.Key(), flow.ClosureRefSetOf(closure)),
 	}
 
 	tr.applyContainerWrite(&out, cfg.AssignTarget{
@@ -91,6 +104,9 @@ func TestUnresolvedContainerWriteInvalidatesStaleProductAxes(t *testing.T) {
 	}
 	if out.KeyPresence.HasPaths(fieldPath, constraint.NewPath(cfg.SymbolID(304), "k")) {
 		t.Fatalf("stale key presence survived unresolved container write: %s", out.KeyPresence.Format())
+	}
+	if _, ok := out.IndexWrites.Admission(flow.IndexWriteQuery{Target: fieldPath, KeyType: typ.String}); ok {
+		t.Fatalf("stale index-write admission survived unresolved container write: %s", out.IndexWrites.Format())
 	}
 	if _, ok := flow.FunctionRefAt(out.FunctionRefs, fieldPath.Key()); ok {
 		t.Fatalf("stale function ref survived unresolved container write: %#v", out.FunctionRefs)
@@ -265,7 +281,84 @@ func TestDynamicIndexWriteAdmissionRejectsSealedAnnotatedTarget(t *testing.T) {
 	}
 }
 
-func TestTransferClearsIncomingIndexWriteAdmissionFacts(t *testing.T) {
+func TestSealedDynamicIndexWriteAdmissionUsesReadBackSlot(t *testing.T) {
+	const selfSym = cfg.SymbolID(436)
+	dataTargets := typ.NewMap(typ.String, typ.String)
+	node := typ.NewRecord().
+		Field("config", typ.NewRecord().Field("data_targets", dataTargets).Build()).
+		Build()
+	store := typ.NewRecord().
+		Field("nodes", typ.NewMap(typ.String, node)).
+		Build()
+	tr := New(input.Inputs{}, Config{})
+	tr.declaredTypes = map[cfg.SymbolID]typ.Type{selfSym: store}
+	key := product.FromType(typ.String)
+	out := flow.PointState{
+		Env: map[flow.ValueKey]product.AbstractValue{
+			flow.SymbolValueKey(selfSym): product.FromType(store),
+		},
+	}
+
+	tr.applyWriteEffect(&out, WriteEffect{
+		Place: Place{
+			Root:     selfSym,
+			RootName: "self",
+			Steps: []PlaceStep{
+				{Kind: PlaceStepStaticMember, Member: value.MemberField("nodes")},
+				{Kind: PlaceStepDynamicIndex, Key: key},
+			},
+		},
+		Value: product.FromType(node),
+		IndexTarget: cfg.AssignTarget{
+			Kind: cfg.TargetIndex,
+			Key:  &ast.IdentExpr{Value: "id"},
+		},
+		DynamicMode:  DynamicWriteForeign,
+		RecordStatic: true,
+	})
+
+	admitted, ok := out.IndexWrites.Admission(flow.IndexWriteQuery{
+		Target:  constraint.NewPath(selfSym, "self").Field("nodes"),
+		KeyType: typ.String,
+	})
+	if !ok {
+		t.Fatalf("sealed map write did not seed admission: %s", out.IndexWrites.Format())
+	}
+	config, ok := product.FieldOf(admitted, "config")
+	if !ok {
+		t.Fatalf("admitted value has no config field: %v", admitted.ProjectValue())
+	}
+	targets, ok := product.FieldOf(config, "data_targets")
+	if !ok || !typ.TypeEquals(targets.ProjectValue(), dataTargets) {
+		t.Fatalf("admitted data_targets = %v/%v, want %v/true; admitted=%v", targets.ProjectValue(), ok, dataTargets, admitted.ProjectValue())
+	}
+}
+
+func TestDynamicIndexWriteProofEffectKeepsOpaqueUnsealedReadbackLightweight(t *testing.T) {
+	tr := New(input.Inputs{}, Config{})
+	tablePath := constraint.NewPath(cfg.SymbolID(438), "nodes")
+	keyPath := constraint.NewPath(cfg.SymbolID(439), "node_id")
+	out := flow.PointState{}
+
+	changed := tr.applyDynamicIndexWriteProofEffect(&out, DynamicIndexWriteProofEffect{
+		TablePath: tablePath,
+		KeyPath:   keyPath,
+		Key:       product.FromType(typ.Unknown),
+		Value:     product.FromType(typ.String),
+	})
+
+	if !changed {
+		t.Fatal("dynamic index write proof did not report key-presence change")
+	}
+	if !out.KeyPresence.HasPaths(tablePath, keyPath) {
+		t.Fatalf("dynamic index write proof did not seed KeyPresence: %s", out.KeyPresence.Format())
+	}
+	if len(out.IndexWrites.Entries()) != 0 {
+		t.Fatalf("opaque unsealed key seeded heavy readback proof: %s", out.IndexWrites.Format())
+	}
+}
+
+func TestTransferPreservesIncomingIndexWriteAdmissionFacts(t *testing.T) {
 	const tableSym = cfg.SymbolID(441)
 	in := input.BuildFromFunction(&ast.FunctionExpr{ParList: &ast.ParList{}}, nil, nil)
 	tr := New(in, Config{})
@@ -278,11 +371,11 @@ func TestTransferClearsIncomingIndexWriteAdmissionFacts(t *testing.T) {
 	}
 
 	out := tr.Transfer(in.Graph, in.Graph.Entry(), incoming, nil, nil)
-	if _, ok := out.IndexWrites.Admission(flow.IndexWriteQuery{
+	if got, ok := out.IndexWrites.Admission(flow.IndexWriteQuery{
 		Target:  constraint.NewPath(tableSym, "items"),
 		KeyType: typ.String,
-	}); ok {
-		t.Fatalf("Transfer leaked predecessor index-write event: %s", out.IndexWrites.Format())
+	}); !ok || !typ.TypeEquals(got.ProjectValue(), typ.Number) {
+		t.Fatalf("Transfer dropped durable index-write admission: %v/%v in %s", got.ProjectValue(), ok, out.IndexWrites.Format())
 	}
 }
 
@@ -306,6 +399,131 @@ func TestConditionEffectOwnsConditionAxis(t *testing.T) {
 	}
 	if tr.applyConditionEffect(&out, ConditionEffect{Fact: constraint.TrueCondition()}) {
 		t.Fatal("true condition fact should not mutate Cond")
+	}
+}
+
+func TestWriteEffectInvalidatesStaleConditionFactsForStaticPlace(t *testing.T) {
+	graphSym := cfg.SymbolID(461)
+	graph := constraint.NewPath(graphSym, "graph")
+	lastNode := graph.Field("last_node_id")
+	inputData := graph.Field("input_data")
+	tr := New(input.Inputs{}, Config{})
+	out := flow.PointState{
+		Cond: constraint.FromDisjuncts([][]constraint.Constraint{
+			{constraint.Truthy{Path: lastNode}, constraint.Truthy{Path: inputData}},
+			{constraint.Truthy{Path: lastNode}, constraint.Falsy{Path: inputData}},
+		}),
+	}
+
+	changed := tr.applyWriteEffect(&out, WriteEffect{
+		Place: Place{
+			Root:     graphSym,
+			RootName: "graph",
+			Steps: []PlaceStep{{
+				Kind:   PlaceStepStaticMember,
+				Member: value.MemberField("last_node_id"),
+			}},
+		},
+		Value:        product.FromType(typ.String),
+		FunctionRefs: sourceFunctionRefsWrite(),
+		ClosureRefs:  sourceClosureRefsWrite(),
+		RecordStatic: true,
+	})
+
+	if !changed {
+		t.Fatal("write effect did not report condition invalidation")
+	}
+	if conditionMentionsPath(out.Cond, lastNode) {
+		t.Fatalf("stale last_node_id condition survived write: %v", out.Cond)
+	}
+	if !conditionMentionsPath(out.Cond, inputData) {
+		t.Fatalf("sibling input_data condition was incorrectly invalidated: %v", out.Cond)
+	}
+}
+
+func TestWriteEffectInvalidatesIndexConditionFactsForStaticPlace(t *testing.T) {
+	graphSym := cfg.SymbolID(462)
+	graph := constraint.NewPath(graphSym, "graph")
+	lastNode := graph.IndexStr("last_node_id")
+	inputData := graph.Field("input_data")
+	tr := New(input.Inputs{}, Config{})
+	out := flow.PointState{
+		Cond: constraint.FromDisjuncts([][]constraint.Constraint{
+			{
+				constraint.IndexEquals{
+					Target: graph,
+					Key:    typ.LiteralString("last_node_id"),
+					Value:  typ.LiteralString("node-1"),
+				},
+				constraint.Truthy{Path: inputData},
+			},
+			{
+				constraint.IndexEquals{
+					Target: graph,
+					Key:    typ.LiteralString("last_node_id"),
+					Value:  typ.LiteralString("node-1"),
+				},
+				constraint.Falsy{Path: inputData},
+			},
+		}),
+	}
+
+	changed := tr.applyWriteEffect(&out, WriteEffect{
+		Place: Place{
+			Root:     graphSym,
+			RootName: "graph",
+			Steps: []PlaceStep{{
+				Kind:   PlaceStepStaticMember,
+				Member: value.MemberStringIndex("last_node_id"),
+			}},
+		},
+		Value:        product.FromType(typ.String),
+		FunctionRefs: sourceFunctionRefsWrite(),
+		ClosureRefs:  sourceClosureRefsWrite(),
+		RecordStatic: true,
+	})
+
+	if !changed {
+		t.Fatal("write effect did not report index-condition invalidation")
+	}
+	if conditionMentionsPath(out.Cond, lastNode) {
+		t.Fatalf("stale last_node_id index condition survived write: %v", out.Cond)
+	}
+	if !conditionMentionsPath(out.Cond, inputData) {
+		t.Fatalf("sibling input_data condition was incorrectly invalidated: %v", out.Cond)
+	}
+}
+
+func TestMutatorEffectInvalidatesStaleConditionFactsForPlace(t *testing.T) {
+	itemsSym := cfg.SymbolID(463)
+	items := constraint.NewPath(itemsSym, "items")
+	first := items.IndexInt(1)
+	other := constraint.NewPath(cfg.SymbolID(464), "other")
+	tr := New(input.Inputs{}, Config{})
+	out := flow.PointState{
+		Env: map[flow.ValueKey]product.AbstractValue{
+			flow.SymbolValueKey(itemsSym): product.FromType(typ.NewArray(typ.String)),
+		},
+		Cond: constraint.FromDisjuncts([][]constraint.Constraint{
+			{constraint.Truthy{Path: first}, constraint.Truthy{Path: other}},
+			{constraint.Truthy{Path: first}, constraint.Falsy{Path: other}},
+		}),
+	}
+
+	changed := tr.applyMutatorEffect(&out, MutatorEffect{
+		Place:   Place{Root: itemsSym, RootName: "items"},
+		Kind:    MutatorAppendElement,
+		Element: product.FromType(typ.Number),
+	})
+
+	if !changed {
+		t.Fatal("mutator effect did not report a change")
+	}
+	if conditionMentionsPath(out.Cond, first) {
+		t.Fatalf("stale index condition survived mutator: %v", out.Cond)
+	}
+	if !conditionMentionsPath(out.Cond, other) {
+		t.Fatalf("unrelated condition was incorrectly invalidated: %v", out.Cond)
 	}
 }
 
@@ -467,6 +685,46 @@ func TestReturnEffectOwnsProjectionAxes(t *testing.T) {
 	gotClosure, singleton := closures.Singleton()
 	if !singleton || gotClosure.Ref != ref {
 		t.Fatalf("return slot closure refs = %s, want %v", closures.Format(), ref)
+	}
+}
+
+func TestReturnEffectRebasesPathBackedNestedRefsToPlaceholder(t *testing.T) {
+	fn := &ast.FunctionExpr{ParList: &ast.ParList{}}
+	in := input.BuildFromFunction(fn, nil, nil)
+	if in.Graph == nil || in.Graph.Bindings() == nil {
+		t.Fatal("test graph not built")
+	}
+	sourceSym := cfg.SymbolID(701)
+	source := &ast.IdentExpr{Value: "database"}
+	in.Graph.Bindings().Bind(source, sourceSym)
+	in.Graph.Bindings().SetName(sourceSym, "database")
+
+	tr := New(in, Config{})
+	fnRef := flow.FunctionRef{GraphID: 702}
+	closure := flow.ClosureRefOf(flow.FunctionRef{GraphID: 703}, flow.CaptureCellsDomain.Bottom(), nil)
+	sourcePath := constraint.NewPath(sourceSym, "database").Field("query")
+	out := flow.PointState{
+		FunctionRefs: flow.WithFunctionRef(nil, sourcePath.Key(), flow.FunctionRefSetOf(fnRef)),
+		ClosureRefs:  flow.WithClosureRef(nil, sourcePath.Key(), flow.ClosureRefSetOf(closure)),
+	}
+
+	tr.applyReturnEffect(&out, ReturnEffect{
+		Slots: []ReturnSlotEffect{{
+			Index:  0,
+			Source: source,
+		}},
+	})
+
+	target := constraint.NewPlaceholder(0).Field("query")
+	if refs, ok := flow.FunctionRefAt(out.FunctionRefs, target.Key()); !ok {
+		t.Fatalf("return slot nested function refs missing: %#v", out.FunctionRefs)
+	} else if got, singleton := refs.Singleton(); !singleton || got != fnRef {
+		t.Fatalf("return slot nested function refs = %s, want %v", refs.Format(), fnRef)
+	}
+	if refs, ok := flow.ClosureRefAt(out.ClosureRefs, target.Key()); !ok {
+		t.Fatalf("return slot nested closure refs missing: %#v", out.ClosureRefs)
+	} else if got, singleton := refs.Singleton(); !singleton || got.Ref != closure.Ref {
+		t.Fatalf("return slot nested closure refs = %s, want %v", refs.Format(), closure.Ref)
 	}
 }
 
@@ -658,6 +916,53 @@ func TestNestedWriteEffectRecordsPrototypeSelfThroughReducer(t *testing.T) {
 	}
 }
 
+func TestMutatorEffectRecordsPrototypeSelfThroughReducer(t *testing.T) {
+	proto := cfg.SymbolID(565)
+	selfSym := cfg.SymbolID(566)
+	tr := New(input.Inputs{}, Config{})
+	tr.prototypeReceiverSym = proto
+	tr.prototypeSelfSymbol = selfSym
+	out := flow.PointState{
+		Env: map[flow.ValueKey]product.AbstractValue{
+			flow.SymbolValueKey(selfSym): product.FromType(typ.NewRecord().
+				Field("items", typ.NewArray(typ.String)).
+				Build()),
+		},
+	}
+
+	tr.applyMutatorEffect(&out, MutatorEffect{
+		Place: Place{
+			Root: selfSym,
+			Steps: []PlaceStep{{
+				Kind:   PlaceStepStaticMember,
+				Member: value.MemberField("items"),
+			}},
+		},
+		Kind:    MutatorAppendElement,
+		Element: product.FromType(typ.Number),
+	})
+
+	got, ok := out.PrototypeSelf.Value(proto)
+	if !ok {
+		t.Fatalf("mutator effect did not record prototype-self: %s", out.PrototypeSelf.Format())
+	}
+	items, ok := product.MemberOf(got, value.MemberField("items"))
+	if !ok {
+		t.Fatalf("published self.items missing: %v", got.ProjectValue())
+	}
+	elem, ok := querycore.Index(product.NarrowPresent(items).ProjectValue(), typ.LiteralInt(1))
+	if !ok || typ.IsAny(elem) || !subtype.IsSubtype(typ.String, elem) || !subtype.IsSubtype(typ.Number, elem) {
+		t.Fatalf("published self.items element = %v/%v, want precise string|number supertype", elem, ok)
+	}
+	effects := out.ReceiverEffects.Entries()
+	if len(effects) != 1 ||
+		effects[0].Slot != 0 ||
+		!effects[0].MustWrite ||
+		!product.Domain.Equal(effects[0].Value, got) {
+		t.Fatalf("receiver effects = %s, want must-write slot 0 to published mutator self", out.ReceiverEffects.Format())
+	}
+}
+
 func TestCellEffectReducerUpdatesClosureEnvironment(t *testing.T) {
 	calleeSym := cfg.SymbolID(601)
 	cellSym := cfg.SymbolID(602)
@@ -709,12 +1014,11 @@ func TestMutatorEffectAppendsElementAndUpdatesSideAxes(t *testing.T) {
 	}
 
 	tr.applyMutatorEffect(&out, MutatorEffect{
-		Place:                 Place{Root: namesSym},
-		Kind:                  MutatorAppendElement,
-		Element:               product.FromType(typ.Number),
-		LengthKey:             arrKey,
-		LengthIncrement:       1,
-		InvalidateKeyPresence: true,
+		Place:           Place{Root: namesSym},
+		Kind:            MutatorAppendElement,
+		Element:         product.FromType(typ.Number),
+		LengthKey:       arrKey,
+		LengthIncrement: 1,
 	})
 
 	if tables := out.KeyPresence.KeyArrayTables(flow.KeyPresencePathKey(namesPath)); len(tables) != 0 {
@@ -1096,6 +1400,65 @@ func TestMethodCallAppliesReceiverEffectToReceiverPlace(t *testing.T) {
 	if !product.Domain.Equal(got, updated) {
 		t.Fatalf("receiver after method effect = %v, want %v", got.ProjectValue(), updated.ProjectValue())
 	}
+}
+
+func TestExpressionMethodCallAppliesReceiverEffectToReceiverPlace(t *testing.T) {
+	fn := &ast.FunctionExpr{ParList: &ast.ParList{Names: []string{"self"}}}
+	in := input.BuildFromFunction(fn, nil, nil)
+	selfSym := in.Scope.ParamSymbols[0]
+	self := &ast.IdentExpr{Value: "self"}
+	in.Graph.Bindings().Bind(self, selfSym)
+	in.Graph.Bindings().SetName(selfSym, "self")
+
+	updated := product.FromType(typ.NewRecord().Field("nodes", typ.NewMap(typ.String, typ.String)).Build())
+	tr := New(in, Config{CallTyper: receiverEffectTyper{effects: flow.ReceiverMustWrite(0, updated)}})
+	out := flow.PointState{Env: map[flow.ValueKey]product.AbstractValue{
+		flow.SymbolValueKey(selfSym): product.FromType(typ.NewRecord().Field("nodes", typ.NewRecord().Build()).Build()),
+	}}
+	call := &ast.FuncCallExpr{Receiver: self, Method: "load_state"}
+
+	if returns, ok := tr.evalCall(&out, call, nil); !ok || len(returns) == 0 {
+		t.Fatalf("expression call returns = (%v, %v), want typed call", returns, ok)
+	}
+	got := out.Env[flow.SymbolValueKey(selfSym)]
+	if !product.Domain.Equal(got, updated) {
+		t.Fatalf("receiver after expression method effect = %v, want %v", got.ProjectValue(), updated.ProjectValue())
+	}
+}
+
+func TestExpressionCallAppliesContainerElementUnionEffect(t *testing.T) {
+	for _, method := range []bool{false, true} {
+		name := "function"
+		if method {
+			name = "method"
+		}
+		t.Run(name, func(t *testing.T) {
+			tr, out, callInfo, channel, chSym := containerElementUnionCallFixture(method)
+
+			if returns, ok := tr.evalCall(&out, callInfo.Call, nil); !ok || len(returns) == 0 {
+				t.Fatalf("expression call returns = (%v, %v), want typed call", returns, ok)
+			}
+
+			want := typ.Instantiate(channel, typ.String)
+			got := out.Env[flow.SymbolValueKey(chSym)].ProjectValue()
+			if !typ.TypeEquals(got, want) {
+				t.Fatalf("container after expression %s call = %v, want %v", name, got, want)
+			}
+		})
+	}
+}
+
+func conditionMentionsPath(cond constraint.Condition, path constraint.Path) bool {
+	for i := 0; i < cond.NumDisjuncts(); i++ {
+		for _, c := range cond.DisjunctConstraints(i) {
+			for _, p := range constraint.SemanticAffectedPaths(c) {
+				if p.Equal(path) {
+					return true
+				}
+			}
+		}
+	}
+	return false
 }
 
 func containerElementUnionCallFixture(method bool) (*Transfer, flow.PointState, *cfg.CallInfo, *typ.Generic, cfg.SymbolID) {

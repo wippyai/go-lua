@@ -197,6 +197,24 @@ func TestSignatureWithReturnSummary_AppliesProductReturnProjection(t *testing.T)
 	}
 }
 
+func TestProjectTypePreservesDeclaredReturnsOverBodySummary(t *testing.T) {
+	declared := typ.NewRecord().Field("ok", typ.LiteralBool(true)).Field("value", typ.String).Build()
+	body := typ.NewRecord().Field("ok", typ.LiteralBool(true)).Field("value", typ.Integer).Build()
+	ff := api.FunctionFact{
+		Signature: typ.Func().Returns(declared).Build(),
+		Summary:   product.LiftVector([]typ.Type{body}),
+		Narrow:    product.LiftVector([]typ.Type{body}),
+	}
+
+	for _, mode := range []api.SynthMode{api.SynthModeDeclared, api.SynthModeFlow} {
+		projected := functionfact.ProjectType(ff, functionfact.ProjectionSibling, mode)
+		fn, ok := projected.(*typ.Function)
+		if !ok || len(fn.Returns) != 1 || !typ.TypeEquals(fn.Returns[0], declared) {
+			t.Fatalf("ProjectType(%v) = %v, want declared return %v", mode, projected, declared)
+		}
+	}
+}
+
 func TestProjectionBodyDoesNotAssumeBodyContractAsEntryProof(t *testing.T) {
 	sig := typ.Func().Param("value", typ.Any).Returns(typ.Boolean).Build()
 	ff := api.FunctionFact{
@@ -387,6 +405,46 @@ func TestBodyInputProjectionRefinesSoftAnnotationWithEntryEvidence(t *testing.T)
 	}
 	if want := typ.NewArray(entry); !typ.TypeEquals(body.Params[0].Type, want) {
 		t.Fatalf("body input projection param = %v, want %v", body.Params[0].Type, want)
+	}
+}
+
+func TestBodyInputProjectionClosesGenericSignatureFromWholeEvidenceVector(t *testing.T) {
+	tParam := typ.NewTypeParam("T", nil)
+	uParam := typ.NewTypeParam("U", nil)
+	boxParam := typ.NewTypeParam("X", nil)
+	box := typ.NewGeneric("Box", []*typ.TypeParam{boxParam},
+		typ.NewRecord().Field("value", boxParam).Build())
+	envelope := typ.NewRecord().Field("id", typ.String).Build()
+	view := typ.NewRecord().Field("label", typ.String).Build()
+
+	signature := typ.Func().
+		TypeParamRef(tParam).
+		TypeParamRef(uParam).
+		Param("box", typ.Instantiate(box, tParam)).
+		Param("fn", typ.Func().Param("value", tParam).Returns(uParam).Build()).
+		Returns(typ.Instantiate(box, uParam)).
+		Build()
+
+	outerT := typ.NewTypeParam("T", nil)
+	body := functionfact.BodyInputProjection(signature, nil, []typ.Type{
+		typ.Instantiate(box, outerT),
+		typ.Func().Param("env", envelope).Returns(view).Build(),
+	})
+	if body == nil {
+		t.Fatal("body input projection returned nil")
+	}
+	if len(body.TypeParams) != 0 {
+		t.Fatalf("body input projection left generic binders = %v", body.TypeParams)
+	}
+	if len(body.Params) != 2 || len(body.Returns) != 1 {
+		t.Fatalf("body input projection shape = %v", body)
+	}
+	fn := body.Params[1].Type.(*typ.Function)
+	if !typ.TypeEquals(fn.Params[0].Type, envelope) || !typ.TypeEquals(fn.Returns[0], view) {
+		t.Fatalf("callback param = %v, want Envelope -> View", fn)
+	}
+	if !typ.TypeEquals(body.Returns[0], typ.Instantiate(box, view)) {
+		t.Fatalf("body return = %v, want Box<View>", body.Returns[0])
 	}
 }
 

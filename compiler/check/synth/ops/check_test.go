@@ -95,6 +95,28 @@ func TestCheckTable_ExpectedRecord_OptionalField(t *testing.T) {
 	}
 }
 
+func TestCheckTable_ExpectedRecord_NilableFieldMayBeOmitted(t *testing.T) {
+	fields := []FieldDef{
+		{Name: "method", Type: typ.LiteralString("GET")},
+		{Name: "path", Type: typ.LiteralString("/users")},
+		{Name: "headers", Type: typ.NewMap(typ.String, typ.String)},
+	}
+	expected := typ.NewRecord().
+		Field("method", typ.NewUnion(typ.LiteralString("GET"), typ.LiteralString("POST"))).
+		Field("path", typ.String).
+		Field("body", typ.NewOptional(typ.Any)).
+		Field("headers", typ.NewMap(typ.String, typ.String)).
+		Build()
+
+	result := CheckTable(fields, nil, expected)
+	if len(result.Errors) > 0 {
+		t.Fatalf("nilable field should not be required in fresh table literal: %v", result.Errors)
+	}
+	if !typ.TypeEquals(result.Type, expected) {
+		t.Fatalf("CheckTable type = %v, want %v", result.Type, expected)
+	}
+}
+
 func TestCheckTable_ExpectedRecord_OptionalFieldAcceptsOptionalValue(t *testing.T) {
 	fields := []FieldDef{
 		{Name: "x", Type: typ.Integer},

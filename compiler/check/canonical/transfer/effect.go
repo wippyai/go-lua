@@ -394,13 +394,12 @@ type WriteEffect struct {
 // value-domain mutation plus the side axes that are invalidated by that semantic
 // mutation.
 type MutatorEffect struct {
-	Place                 Place
-	Kind                  MutatorKind
-	Element               product.AbstractValue
-	Key                   product.AbstractValue
-	LengthKey             constraint.PathKey
-	LengthIncrement       int64
-	InvalidateKeyPresence bool
+	Place           Place
+	Kind            MutatorKind
+	Element         product.AbstractValue
+	Key             product.AbstractValue
+	LengthKey       constraint.PathKey
+	LengthIncrement int64
 }
 
 func (t *Transfer) applyMutatorEffect(out *flow.PointState, effect MutatorEffect) bool {
@@ -408,10 +407,12 @@ func (t *Transfer) applyMutatorEffect(out *flow.PointState, effect MutatorEffect
 		return false
 	}
 	changed := false
-	if effect.InvalidateKeyPresence && effect.Place.Root != 0 {
-		t.invalidateKeyPresenceForPlace(out, effect.Place)
-		changed = true
-	}
+	changed = t.applyPlaceMutationEffect(out, PlaceMutationEffect{
+		Place:         effect.Place,
+		StaticMembers: true,
+		Conditions:    true,
+		KeyFacts:      true,
+	}) || changed
 	if effect.LengthKey != "" && effect.LengthIncrement > 0 {
 		changed = t.incrementLenBound(out, effect.LengthKey, effect.LengthIncrement) || changed
 	}
@@ -437,6 +438,7 @@ func (t *Transfer) applyMutatorEffect(out *flow.PointState, effect MutatorEffect
 		return changed
 	}
 	t.writeRootContainer(out, effect.Place.Root, updated)
+	changed = t.recordPrototypeSelfWrite(out, effect.Place.Root, updated) || changed
 	return true
 }
 
@@ -450,13 +452,16 @@ func (t *Transfer) applyWriteEffect(out *flow.PointState, effect WriteEffect) bo
 	} else if len(effect.Place.Steps) > 0 {
 		changed = t.applyRelationEffect(out, RelationEffect{Kind: RelationKillLengthTargets, Symbols: []cfg.SymbolID{effect.Place.Root}}) || changed
 	}
-	if effect.RecordStatic {
-		t.invalidateStaticMembersForPlace(out, effect.Place)
-		if !effect.ClearValue {
-			t.installStaticMemberWriteFactForPlace(out, effect.Place, effect.Value)
-		}
+	changed = t.applyPlaceMutationEffect(out, PlaceMutationEffect{
+		Place:                  effect.Place,
+		StaticMembers:          effect.RecordStatic,
+		Conditions:             true,
+		KeyFacts:               true,
+		PresentElementKeyFacts: presentDynamicElementWritePreservesKeyPresence(effect.Place, effect.Value),
+	}) || changed
+	if effect.RecordStatic && !effect.ClearValue {
+		t.installStaticMemberWriteFactForPlace(out, effect.Place, effect.Value)
 	}
-	t.invalidateKeyPresenceForPlace(out, effect.Place)
 	t.seedKeyArrayForWriteEffect(out, effect)
 	if effect.LengthBase != "" {
 		t.applyIndexWriteLength(out, effect.LengthTarget, effect.LengthBase)
@@ -479,34 +484,56 @@ func (t *Transfer) applyWriteEffect(out *flow.PointState, effect WriteEffect) bo
 			if !product.SealedIndexWriteAdmits(base, step.Key, val) {
 				return product.AbstractValue{}, false
 			}
+			written := product.WriteIndex(base, step.Key, val)
 			admittedIndexWrite = true
 			admittedIndexKey = step.Key
-			admittedIndexValue = val
-			return product.WriteIndex(base, step.Key, val), true
+			admittedIndexValue = indexWriteReadBackValue(written, step.Key, val)
+			return written, true
 		}
 		if effect.DynamicMode == DynamicWriteSelfDerived {
+			written := product.WriteSelfDerivedIndex(base, step.Key, val)
 			admittedIndexWrite = true
 			admittedIndexKey = step.Key
 			admittedIndexValue = val
-			return product.WriteSelfDerivedIndex(base, step.Key, val), true
+			return written, true
 		}
+		written := product.WriteIndexForeign(base, step.Key, val)
 		if product.IndexWriteAdmits(base, step.Key, val) {
 			admittedIndexWrite = true
 			admittedIndexKey = step.Key
 			admittedIndexValue = val
 		}
-		return product.WriteIndexForeign(base, step.Key, val), true
+		return written, true
 	})
 	if !ok {
 		return changed
 	}
 	if admittedIndexWrite {
-		t.recordIndexWriteAdmission(out, effect, admittedIndexKey, admittedIndexValue)
+		if proof, ok := t.dynamicIndexWriteProofEffect(effect, admittedIndexKey, admittedIndexValue); ok {
+			changed = t.applyDynamicIndexWriteProofEffect(out, proof) || changed
+		}
 	}
 	t.writeRootContainer(out, effect.Place.Root, updated)
 	t.applyPrototypeSelfWriteEffect(out, effect, updated)
 	t.applyReferenceEffect(out, referenceEffectForWrite(effect))
 	return true
+}
+
+func indexWriteReadBackValue(container, key, written product.AbstractValue) product.AbstractValue {
+	if container.IsZero() || key.IsZero() {
+		return written
+	}
+	read, ok := product.RuntimeIndexOf(container, key)
+	if !ok || read.IsZero() {
+		return written
+	}
+	if written.DefinitelyPresent() {
+		present := product.NarrowPresent(read)
+		if !present.IsZero() {
+			return present
+		}
+	}
+	return read
 }
 
 func (t *Transfer) applySymbolWriteEffect(
@@ -569,40 +596,4 @@ func (t *Transfer) seedKeyArrayForWriteEffect(out *flow.PointState, effect Write
 		return
 	}
 	out.KeyPresence = out.KeyPresence.WithKeyArrayPaths(path, effect.KeyArrayTable)
-}
-
-func (t *Transfer) invalidateStaticMembersForPlace(out *flow.PointState, place Place) {
-	if out == nil {
-		return
-	}
-	if path, ok := place.StaticPath(); ok && path.Symbol != 0 {
-		for i := 1; i < len(path.Segments); i++ {
-			prefix := constraint.Path{
-				Root:     path.Root,
-				Symbol:   path.Symbol,
-				Version:  path.Version,
-				Segments: append([]constraint.Segment(nil), path.Segments[:i]...),
-			}
-			out.StaticMembers = out.StaticMembers.With(flow.SymbolPathKey(prefix.Symbol, prefix.Segments), product.Domain.Bottom())
-		}
-		out.StaticMembers = out.StaticMembers.KillSubtree(flow.SymbolPathKey(path.Symbol, path.Segments))
-		return
-	}
-	path, ok := place.StaticPrefixPath()
-	if !ok || path.Symbol == 0 {
-		return
-	}
-	out.StaticMembers = out.StaticMembers.KillSubtree(flow.SymbolPathKey(path.Symbol, path.Segments))
-}
-
-func (t *Transfer) invalidateKeyPresenceForPlace(out *flow.PointState, place Place) {
-	if out == nil {
-		return
-	}
-	path, ok := place.StaticPrefixPath()
-	if !ok || path.Symbol == 0 {
-		return
-	}
-	out.KeyPresence = out.KeyPresence.KillAffectedByWrite(flow.KeyPresencePathKey(path))
-	out.ValueOrigins = out.ValueOrigins.KillAffectedByWrite(flow.KeyPresencePathKey(path))
 }

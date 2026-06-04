@@ -4,6 +4,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/scope"
+	phasecore "github.com/wippyai/go-lua/compiler/check/synth/core"
 	"github.com/wippyai/go-lua/types/typ"
 )
 
@@ -20,6 +21,14 @@ type LiteralInput struct {
 	ResolveType     ResolveType
 	InferredReturns func(*ast.FunctionExpr) []typ.Type
 	MethodFor       MethodResolver
+}
+
+// ExpectedFunctionLiteralSignature selects the contextual signature that should
+// initialize a function literal's body when source syntax supplies an expected
+// callable type. It is the canonical wrapper around alias/union normalization so
+// fact extraction and diagnostics do not open-code expected-function selection.
+func ExpectedFunctionLiteralSignature(fn *ast.FunctionExpr, expected typ.Type) *typ.Function {
+	return phasecore.ExpectedFunctionLiteralSignature(fn, expected)
 }
 
 // LiteralSignatures lowers every function literal directly nested in Graph to

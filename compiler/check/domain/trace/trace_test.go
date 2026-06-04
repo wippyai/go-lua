@@ -53,3 +53,31 @@ func TestGraphEvidenceIncludesParameterUses(t *testing.T) {
 		t.Fatalf("expected client.name field use only, got %+v", client)
 	}
 }
+
+func TestGraphEvidenceIncludesConjunctiveLocalTypePredicate(t *testing.T) {
+	stmts, err := parse.ParseString(`
+local function is_positive_number(value)
+	return type(value) == "number" and value > 0
+end
+`, "predicate.lua")
+	if err != nil {
+		t.Fatalf("parse failed: %v", err)
+	}
+	fn := &ast.FunctionExpr{
+		ParList: &ast.ParList{HasVargs: true},
+		Stmts:   stmts,
+	}
+	graph := cfg.Build(fn)
+	if graph == nil {
+		t.Fatal("expected graph")
+	}
+
+	evidence := GraphEvidence(graph, graph.Bindings())
+	if len(evidence.LocalTypePredicates) != 1 {
+		t.Fatalf("local type predicates = %#v, want one", evidence.LocalTypePredicates)
+	}
+	pred := evidence.LocalTypePredicates[0]
+	if pred.ParamName != "value" || pred.ParamIndex != 0 || pred.Kind != "number" {
+		t.Fatalf("predicate = %+v, want value[0] number", pred)
+	}
+}

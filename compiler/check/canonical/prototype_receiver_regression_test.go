@@ -57,6 +57,127 @@ end
 	}
 }
 
+func TestCanonicalPrototypeReceiverMethodSurfaceSurvivesReturnedArgument(t *testing.T) {
+	src := `
+local compiler = {}
+local FlowGraph = {}
+local flow_graph_mt = { __index = FlowGraph }
+
+function FlowGraph.new()
+	return setmetatable({
+		references = {},
+		input_data = nil,
+	}, flow_graph_mt)
+end
+
+function FlowGraph:resolve_reference(name)
+	if not name then
+		return nil, "missing"
+	end
+	return self.references[name], nil
+end
+
+function compiler.build_graph(operations, session_context)
+	local graph = FlowGraph.new()
+	graph.input_data = operations[1].config.data
+	if session_context and session_context.node_id then
+		graph.session_parent_id = session_context.node_id
+	end
+	graph.references.root = "root-id"
+	return graph, nil
+end
+
+function compiler.validate_graph(graph)
+	return graph:resolve_reference("root")
+end
+
+function compiler.compile_to_commands(graph, session_context)
+	local node_id, err = graph:resolve_reference("root")
+	if err then
+		return nil, err
+	end
+	return node_id, nil
+end
+
+function compiler.compile(operations, session_context)
+	local graph, err = compiler.build_graph(operations, session_context)
+	if err then
+		return nil, err
+	end
+	local ok, validation_err = compiler.validate_graph(graph)
+	if not ok then
+		return nil, validation_err
+	end
+	return compiler.compile_to_commands(graph, session_context)
+end
+
+compiler.compile({
+	{ config = { data = "payload" } },
+})
+`
+	res := testutil.Check(src, testutil.WithStdlib())
+	if msgs := testutil.ErrorMessages(res.Diagnostics); len(msgs) != 0 {
+		t.Fatalf("expected returned constructor value to keep prototype method surface through argument entry, got: %v", msgs)
+	}
+}
+
+func TestCanonicalPrototypeReceiverMutatorEffectSurvivesReturnedBuilder(t *testing.T) {
+	src := `
+local compiler = {}
+local FlowGraph = {}
+local flow_graph_mt = { __index = FlowGraph }
+
+function FlowGraph.new()
+	return setmetatable({
+		node_order = table.create(4, 0),
+	}, flow_graph_mt)
+end
+
+function FlowGraph:add_node(node_id)
+	table.insert(self.node_order, node_id)
+	return node_id, nil
+end
+
+function FlowGraph:first_node()
+	if #self.node_order == 0 then
+		return nil, "empty"
+	end
+	return self.node_order[1], nil
+end
+
+function compiler.build_graph()
+	local graph = FlowGraph.new()
+	local _, err = graph:add_node("root-node")
+	if err then
+		return nil, err
+	end
+	return graph, nil
+end
+
+function compiler.compile_to_commands(graph)
+	local node_id, err = graph:first_node()
+	if err then
+		return nil, err
+	end
+	return node_id:sub(1, 4), nil
+end
+
+function compiler.compile()
+	local graph, err = compiler.build_graph()
+	if err then
+		return nil, err
+	end
+	return compiler.compile_to_commands(graph)
+end
+
+compiler.compile()
+`
+	res := testutil.Check(src, testutil.WithStdlib())
+	if msgs := testutil.ErrorMessages(res.Diagnostics); len(msgs) != 0 {
+		t.Fatalf("expected method mutator receiver effect to survive returned builder, got: %v", msgs)
+	}
+}
+
 func TestCanonicalPrototypeReceiverSeedsMethodEntrySelfFromConstructorPublication(t *testing.T) {
 	src := `
 local session_writer = {}
@@ -169,6 +290,306 @@ state:get_failed_node_errors()
 	callerStatus := rootFn.NarrowedTypeAt(nextPoint, callerStatusPath)
 	if !typ.TypeEquals(callerStatus, typ.LiteralString("failed")) {
 		t.Fatalf("caller state.nodes[\"root\"].status after load_state = %v, want \"failed\"; state=%v diagnostics=%v", callerStatus, rootFn.NarrowedTypeAt(nextPoint, constraint.NewPath(stateSym, receiver.Value)), testutil.ErrorMessages(res.Diagnostics))
+	}
+}
+
+func TestCanonicalSplitMetatableReceiverPreservesConstructorAliasWithUnknownFields(t *testing.T) {
+	src := `
+local node = {}
+local methods = {}
+local mt = { __index = methods }
+
+type RouteTarget = {
+	data_type: string?,
+	metadata: unknown?,
+}
+
+type NodeConfig = {
+	data_targets: {RouteTarget}?,
+	input_transform: unknown?,
+}
+
+type NodeDefinition = {
+	config: NodeConfig?,
+	metadata: {[string]: unknown}?,
+}
+
+type NodeArgs = {
+	node_id: string,
+	node: NodeDefinition?,
+}
+
+function node.new(args: NodeArgs)
+	local instance = {
+		node_id = args.node_id,
+		data_targets = args.node and args.node.config and args.node.config.data_targets or {},
+		_queued_commands = {},
+		_deps = args.node,
+	}
+
+	return setmetatable(instance, mt), nil
+end
+
+function methods:submit()
+	if #self._queued_commands == 0 then
+		return "Node [" .. self.node_id .. "]", nil
+	end
+	return "queued", nil
+end
+`
+	res := testutil.Check(src, testutil.WithStdlib())
+	if res.HasError() {
+		t.Fatalf("expected aliased constructor contract with unknown fields to seed method self, got: %v", testutil.ErrorMessages(res.Diagnostics))
+	}
+	fn := findFunctionWithParamNames(t, res.Session.Results, "self")
+	selfSym := fn.Graph.ParamSymbols()[0]
+	selfPath := constraint.NewPath(selfSym, "self")
+	entrySelf := fn.NarrowedTypeAt(fn.Graph.Entry(), selfPath)
+	nodeID, ok := querycore.Field(entrySelf, "node_id")
+	if !ok || !typ.TypeEquals(nodeID, typ.String) {
+		t.Fatalf("method-entry self.node_id = %v/%v, want string; self=%v", nodeID, ok, entrySelf)
+	}
+}
+
+func TestCanonicalSplitMetatableReceiverSeedsMethodEntryWithoutLocalCall(t *testing.T) {
+	src := `
+local node = {}
+local methods = {}
+local mt = { __index = methods }
+
+type NodeInstance = {
+	node_id: string,
+	queued: {unknown},
+}
+
+function node.new(node_id: string)
+	local instance: NodeInstance = {
+		node_id = node_id,
+		queued = {},
+	}
+	return setmetatable(instance, mt), nil
+end
+
+function methods:submit()
+	if #self.queued == 0 then
+		return "Node [" .. self.node_id .. "]", nil
+	end
+	return "queued", nil
+end
+
+return node
+`
+	res := testutil.Check(src, testutil.WithStdlib())
+	if res.HasError() {
+		t.Fatalf("expected exported split-metatable constructor to seed method self without a local call, got: %v", testutil.ErrorMessages(res.Diagnostics))
+	}
+	fn := findFunctionWithParamNames(t, res.Session.Results, "self")
+	selfSym := fn.Graph.ParamSymbols()[0]
+	selfPath := constraint.NewPath(selfSym, "self")
+	entrySelf := fn.NarrowedTypeAt(fn.Graph.Entry(), selfPath)
+	nodeID, ok := querycore.Field(entrySelf, "node_id")
+	if !ok || !typ.TypeEquals(nodeID, typ.String) {
+		t.Fatalf("method-entry self.node_id = %v/%v, want string; self=%v", nodeID, ok, entrySelf)
+	}
+}
+
+func TestCanonicalSplitMetatableReceiverPreservesNestedDependencyCallFields(t *testing.T) {
+	src := `
+local node = {}
+local methods = {}
+local mt = { __index = methods }
+
+type Commit = {
+	submit: (dataflow_id: string, op_id: string, commands: {unknown}) -> (boolean, string?),
+}
+
+type Deps = {
+	commit: Commit,
+}
+
+type NodeInstance = {
+	dataflow_id: string,
+	queued: {unknown},
+	_deps: Deps,
+}
+
+local commit: Commit = {
+	submit = function(_dataflow_id: string, _op_id: string, _commands: {unknown}): (boolean, string?)
+		return true, nil
+	end,
+}
+
+local deps: Deps = {
+	commit = commit,
+}
+
+function node.new(dataflow_id: string, supplied: Deps?)
+	local effective_deps: Deps = supplied or deps
+	local instance: NodeInstance = {
+		dataflow_id = dataflow_id,
+		queued = {},
+		_deps = effective_deps,
+	}
+	return setmetatable(instance, mt), nil
+end
+
+function methods:submit()
+	return self._deps.commit.submit(self.dataflow_id, "op", self.queued)
+end
+
+return node
+`
+	res := testutil.Check(src, testutil.WithStdlib())
+	if res.HasError() {
+		t.Fatalf("expected nested dependency function fields to remain callable through prototype self, got: %v", testutil.ErrorMessages(res.Diagnostics))
+	}
+}
+
+func TestCanonicalSplitMetatableReceiverKeepsMethodsInsideCallback(t *testing.T) {
+	src := `
+local node = {}
+local methods = {}
+local mt = { __index = methods }
+
+type NodeInstance = {
+	node_id: string,
+}
+
+function node.new(node_id: string)
+	local instance: NodeInstance = {
+		node_id = node_id,
+	}
+	return setmetatable(instance, mt), nil
+end
+
+function methods:inputs()
+	return { status = self.node_id }
+end
+
+function methods:_route_outputs()
+	local ok, values = pcall(function()
+		local values = self:inputs()
+		return values
+	end)
+	return ok, values
+end
+
+return node
+`
+	res := testutil.Check(src, testutil.WithStdlib())
+	if res.HasError() {
+		t.Fatalf("expected callback-captured prototype receiver to keep method surface, got: %v", testutil.ErrorMessages(res.Diagnostics))
+	}
+}
+
+func TestCanonicalSplitMetatableReceiverComposesExactMethodSelfWithConstructorBaseline(t *testing.T) {
+	src := `
+local node = {}
+local methods = {}
+local mt = { __index = methods }
+
+type Commit = {
+	submit: (dataflow_id: string, op_id: string, commands: {unknown}) -> (boolean, string?),
+}
+
+type Deps = {
+	commit: Commit,
+}
+
+type NodeInstance = {
+	dataflow_id: string,
+	queued: {unknown},
+	_deps: Deps,
+}
+
+local commit: Commit = {
+	submit = function(_dataflow_id: string, _op_id: string, _commands: {unknown}): (boolean, string?)
+		return true, nil
+	end,
+}
+
+local deps: Deps = {
+	commit = commit,
+}
+
+function node.new(dataflow_id: string)
+	local instance: NodeInstance = {
+		dataflow_id = dataflow_id,
+		queued = {},
+		_deps = deps,
+	}
+	return setmetatable(instance, mt), nil
+end
+
+function methods:_submit_final()
+	return self._deps.commit.submit(self.dataflow_id, "op", self.queued)
+end
+
+function methods:complete()
+	return self:_submit_final()
+end
+
+local instance, err = node.new("df")
+if err then
+	return nil, err
+end
+return instance:complete()
+`
+	res := testutil.Check(src, testutil.WithStdlib())
+	if res.HasError() {
+		t.Fatalf("expected method-to-method receiver self to retain constructor-required fields, got: %v", testutil.ErrorMessages(res.Diagnostics))
+	}
+}
+
+func TestCanonicalSplitMetatableReceiverDoesNotRepairBadDirectSelfCall(t *testing.T) {
+	src := `
+local node = {}
+local methods = {}
+local mt = { __index = methods }
+
+type Commit = {
+	submit: (dataflow_id: string, op_id: string, commands: {unknown}) -> (boolean, string?),
+}
+
+type Deps = {
+	commit: Commit,
+}
+
+type NodeInstance = {
+	dataflow_id: string,
+	queued: {unknown},
+	_deps: Deps,
+}
+
+local commit: Commit = {
+	submit = function(_dataflow_id: string, _op_id: string, _commands: {unknown}): (boolean, string?)
+		return true, nil
+	end,
+}
+
+local deps: Deps = {
+	commit = commit,
+}
+
+function node.new(dataflow_id: string)
+	local instance: NodeInstance = {
+		dataflow_id = dataflow_id,
+		queued = {},
+		_deps = deps,
+	}
+	return setmetatable(instance, mt), nil
+end
+
+function methods:submit()
+	return self._deps.commit.submit(self.dataflow_id, "op", self.queued)
+end
+
+local bad: {} = {}
+return methods.submit(bad)
+`
+	res := testutil.Check(src, testutil.WithStdlib())
+	if !res.HasError() {
+		t.Fatalf("expected bad direct self call to remain invalid")
 	}
 }
 

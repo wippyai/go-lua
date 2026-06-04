@@ -36,6 +36,9 @@ func FromConjunction(items []Constraint) Condition {
 	if len(items) == 0 {
 		return TrueCondition()
 	}
+	if conjunctionContradicts(items) {
+		return FalseCondition()
+	}
 	return Condition{Disjuncts: [][]Constraint{items}}
 }
 
@@ -92,7 +95,11 @@ func FromConstraints(items ...Constraint) Condition {
 	if len(items) == 0 {
 		return TrueCondition()
 	}
-	return Condition{Disjuncts: [][]Constraint{canonicalizeConjunction(items)}}
+	conj := canonicalizeConjunction(items)
+	if conjunctionContradicts(conj) {
+		return FalseCondition()
+	}
+	return Condition{Disjuncts: [][]Constraint{conj}}
 }
 
 // FromDisjuncts builds a condition from multiple conjunctions.
@@ -103,7 +110,17 @@ func FromDisjuncts(conjunctions [][]Constraint) Condition {
 	}
 	canonicalized := make([][]Constraint, 0, len(conjunctions))
 	for _, conj := range conjunctions {
-		canonicalized = append(canonicalized, canonicalizeConjunction(conj))
+		canon := canonicalizeConjunction(conj)
+		if len(canon) == 0 {
+			return TrueCondition()
+		}
+		if conjunctionContradicts(canon) {
+			continue
+		}
+		canonicalized = append(canonicalized, canon)
+	}
+	if len(canonicalized) == 0 {
+		return FalseCondition()
 	}
 	return normalizeCondition(Condition{Disjuncts: canonicalized})
 }
@@ -213,6 +230,9 @@ func And(a, b Condition) Condition {
 	// Fast path: single disjunct on both sides (very common)
 	if len(a.Disjuncts) == 1 && len(b.Disjuncts) == 1 {
 		merged := mergeConjunctions(a.Disjuncts[0], b.Disjuncts[0])
+		if conjunctionContradicts(merged) {
+			return FalseCondition()
+		}
 		return Condition{Disjuncts: [][]Constraint{merged}}
 	}
 
@@ -228,8 +248,14 @@ func And(a, b Condition) Condition {
 				continue
 			}
 			merged := mergeConjunctions(da, db)
+			if conjunctionContradicts(merged) {
+				continue
+			}
 			out = append(out, merged)
 		}
+	}
+	if len(out) == 0 {
+		return FalseCondition()
 	}
 	return normalizeCondition(Condition{Disjuncts: out})
 }
@@ -244,6 +270,9 @@ func Or(a, b Condition) Condition {
 	}
 	if a.IsTrue() || b.IsTrue() {
 		return TrueCondition()
+	}
+	if a.Equals(b) {
+		return a
 	}
 
 	out := make([][]Constraint, 0, len(a.Disjuncts)+len(b.Disjuncts))
@@ -286,6 +315,25 @@ func (c Condition) Substitute(args []Path) Condition {
 			continue
 		}
 		out = append(out, SubstituteConjunction(conj, args))
+	}
+	return normalizeCondition(Condition{Disjuncts: out})
+}
+
+// MapPaths rewrites every semantic path embedded in c and re-normalizes the
+// resulting DNF. The mapper is pure: it must return the replacement path for
+// each input path and must not mutate the input path's segment slice.
+func (c Condition) MapPaths(fn func(Path) Path) Condition {
+	if len(c.Disjuncts) == 0 || fn == nil {
+		return c
+	}
+
+	out := make([][]Constraint, 0, len(c.Disjuncts))
+	for _, conj := range c.Disjuncts {
+		if len(conj) == 0 {
+			out = append(out, conj)
+			continue
+		}
+		out = append(out, MapPathsConjunction(conj, fn))
 	}
 	return normalizeCondition(Condition{Disjuncts: out})
 }
@@ -643,6 +691,87 @@ func SubstituteConjunction(conj []Constraint, args []Path) []Constraint {
 	return canonicalizeConjunction(out)
 }
 
+// MapPathsConjunction rewrites every semantic path embedded in a conjunction
+// and re-canonicalizes the result.
+func MapPathsConjunction(conj []Constraint, fn func(Path) Path) []Constraint {
+	if len(conj) == 0 || fn == nil {
+		return conj
+	}
+	out := make([]Constraint, 0, len(conj))
+	for _, c := range conj {
+		out = append(out, mapConstraintPaths(c, fn))
+	}
+	return canonicalizeConjunction(out)
+}
+
+func mapConstraintPaths(c Constraint, fn func(Path) Path) Constraint {
+	return VisitConstraint(c, ConstraintVisitor[Constraint]{
+		Truthy: func(v Truthy) Constraint {
+			return Truthy{Path: fn(v.Path)}
+		},
+		Falsy: func(v Falsy) Constraint {
+			return Falsy{Path: fn(v.Path)}
+		},
+		IsNil: func(v IsNil) Constraint {
+			return IsNil{Path: fn(v.Path)}
+		},
+		NotNil: func(v NotNil) Constraint {
+			return NotNil{Path: fn(v.Path)}
+		},
+		HasType: func(v HasType) Constraint {
+			return HasType{Path: fn(v.Path), Type: v.Type}
+		},
+		NotHasType: func(v NotHasType) Constraint {
+			return NotHasType{Path: fn(v.Path), Type: v.Type}
+		},
+		HasField: func(v HasField) Constraint {
+			return HasField{Path: fn(v.Path), Field: v.Field}
+		},
+		FieldEquals: func(v FieldEquals) Constraint {
+			return FieldEquals{Target: fn(v.Target), Field: v.Field, Value: v.Value}
+		},
+		FieldNotEquals: func(v FieldNotEquals) Constraint {
+			return FieldNotEquals{Target: fn(v.Target), Field: v.Field, Value: v.Value}
+		},
+		IndexEquals: func(v IndexEquals) Constraint {
+			return IndexEquals{Target: fn(v.Target), Key: v.Key, Value: v.Value}
+		},
+		IndexNotEquals: func(v IndexNotEquals) Constraint {
+			return IndexNotEquals{Target: fn(v.Target), Key: v.Key, Value: v.Value}
+		},
+		EqPath: func(v EqPath) Constraint {
+			return NewEqPath(fn(v.Left), fn(v.Right))
+		},
+		NotEqPath: func(v NotEqPath) Constraint {
+			return NewNotEqPath(fn(v.Left), fn(v.Right))
+		},
+		FieldEqualsPath: func(v FieldEqualsPath) Constraint {
+			return FieldEqualsPath{Target: fn(v.Target), Field: v.Field, Value: fn(v.Value)}
+		},
+		FieldNotEqualsPath: func(v FieldNotEqualsPath) Constraint {
+			return FieldNotEqualsPath{Target: fn(v.Target), Field: v.Field, Value: fn(v.Value)}
+		},
+		IndexEqualsPath: func(v IndexEqualsPath) Constraint {
+			return IndexEqualsPath{Target: fn(v.Target), Key: v.Key, Value: fn(v.Value)}
+		},
+		IndexNotEqualsPath: func(v IndexNotEqualsPath) Constraint {
+			return IndexNotEqualsPath{Target: fn(v.Target), Key: v.Key, Value: fn(v.Value)}
+		},
+		VariantCaseEquals: func(v VariantCaseEquals) Constraint {
+			return VariantCaseEquals{Target: fn(v.Target), OriginFamily: v.OriginFamily, CaseIndex: v.CaseIndex}
+		},
+		VariantCaseNotEquals: func(v VariantCaseNotEquals) Constraint {
+			return VariantCaseNotEquals{Target: fn(v.Target), OriginFamily: v.OriginFamily, CaseIndex: v.CaseIndex}
+		},
+		KeyOf: func(v KeyOf) Constraint {
+			return KeyOf{Table: fn(v.Table), Key: fn(v.Key)}
+		},
+		Default: func(v Constraint) Constraint {
+			return v
+		},
+	})
+}
+
 func substituteConstraint(c Constraint, args []Path) Constraint {
 	return VisitConstraint(c, ConstraintVisitor[Constraint]{
 		Truthy: func(v Truthy) Constraint {
@@ -974,6 +1103,19 @@ func normalizeCondition(c Condition) Condition {
 		}
 	}
 
+	filtered := c.Disjuncts[:0]
+	for _, d := range c.Disjuncts {
+		if conjunctionContradicts(d) {
+			continue
+		}
+		filtered = append(filtered, d)
+	}
+	if len(filtered) == 0 {
+		return FalseCondition()
+	}
+	c.Disjuncts = filtered
+	n = len(c.Disjuncts)
+
 	// Fast path: single disjunct
 	if n == 1 {
 		return c
@@ -1045,6 +1187,77 @@ func conjunctionSubsumes(a, b []Constraint) bool {
 		bHashes[i] = ct.Hash()
 	}
 	return conjunctionSubsumesWithHashes(a, aHashes, b, bHashes)
+}
+
+func conjunctionContradicts(conj []Constraint) bool {
+	for i := 0; i < len(conj); i++ {
+		for j := i + 1; j < len(conj); j++ {
+			if constraintsContradict(conj[i], conj[j]) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func constraintsContradict(a, b Constraint) bool {
+	if neg, ok := NegateConstraint(a); ok && neg.Equals(b) {
+		return rootStableConstraint(a) && rootStableConstraint(b) ||
+			versionScopedMutableConstraint(a) && versionScopedMutableConstraint(b)
+	}
+
+	if !rootStableConstraint(a) || !rootStableConstraint(b) {
+		return false
+	}
+	return truthyNilContradiction(a, b) || truthyNilContradiction(b, a)
+}
+
+func rootStableConstraint(c Constraint) bool {
+	switch c.Kind() {
+	case KindTruthy, KindFalsy, KindIsNil, KindNotNil, KindHasType, KindNotHasType,
+		KindEqPath, KindNotEqPath, KindVariantCaseEquals, KindVariantCaseNotEquals:
+	default:
+		return false
+	}
+	for _, p := range c.Paths() {
+		if !rootStablePath(p) {
+			return false
+		}
+	}
+	return true
+}
+
+func rootStablePath(p Path) bool {
+	return len(p.Segments) == 0
+}
+
+func versionScopedMutableConstraint(c Constraint) bool {
+	hasMutablePath := false
+	for _, p := range SemanticAffectedPaths(c) {
+		if p.Symbol == 0 {
+			return false
+		}
+		if len(p.Segments) == 0 {
+			continue
+		}
+		hasMutablePath = true
+		if p.Version == 0 {
+			return false
+		}
+	}
+	return hasMutablePath
+}
+
+func truthyNilContradiction(a, b Constraint) bool {
+	truthy, ok := a.(Truthy)
+	if !ok {
+		return false
+	}
+	if !rootStablePath(truthy.Path) {
+		return false
+	}
+	nilCheck, ok := b.(IsNil)
+	return ok && truthy.Path.Equal(nilCheck.Path)
 }
 
 // NegateConstraint negates a single constraint when possible.

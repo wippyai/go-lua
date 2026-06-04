@@ -60,3 +60,40 @@ local n: number = B:get()
 		t.Fatalf("expected method resolution to use receiver field identity, got: %v", testutil.ErrorMessages(result.Diagnostics))
 	}
 }
+
+func TestFunctionRefs_AnnotatedReceiverParameterUsesConcreteMethodTarget(t *testing.T) {
+	source := `
+type Row = {[string]: any}
+type DB = {
+	query: fun(self: DB, sql: string): ({Row}?, string?),
+}
+
+local M = {}
+
+function M.mock(): DB
+	local database: DB = {
+		query = function(self: DB, sql: string): ({Row}?, string?)
+			return {{ count = 1 }}, nil
+		end,
+	}
+	return database
+end
+
+local function table_exists(database: DB): boolean
+	local result, query_err = database:query("SELECT 1")
+	if query_err then
+		return false
+	end
+	if result and result[1] then
+		return result[1].count and result[1].count > 0
+	end
+	return false
+end
+
+return table_exists(M.mock())
+`
+	result := testutil.Check(source, testutil.WithStdlib())
+	if result.HasError() {
+		t.Fatalf("expected concrete receiver method target to refine map row fields, got: %v", testutil.ErrorMessages(result.Diagnostics))
+	}
+}

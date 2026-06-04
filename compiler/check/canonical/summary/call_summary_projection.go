@@ -1,6 +1,7 @@
 package summary
 
 import (
+	returndomain "github.com/wippyai/go-lua/compiler/check/domain/returns"
 	"github.com/wippyai/go-lua/types/domain/value/product"
 	"github.com/wippyai/go-lua/types/flow"
 	"github.com/wippyai/go-lua/types/typ"
@@ -11,6 +12,7 @@ import (
 type CallSummaryTarget struct {
 	Ref             FuncRef
 	Summary         Summary
+	EntryValues     EntryValues
 	DeclaredReturns bool
 	// SignatureReturns is the selected-target declared-return fallback for
 	// functions whose source signature owns the caller-visible return tuple.
@@ -65,11 +67,26 @@ func targetReturnValues(target CallSummaryTarget) ([]product.AbstractValue, bool
 	if len(target.SignatureReturns) == 0 {
 		return nil, false
 	}
+	return declaredReturnValuesWithSummary(target.Summary.Returns, target.SignatureReturns), true
+}
+
+func declaredReturnValuesWithSummary(summary []product.AbstractValue, signature []typ.Type) []product.AbstractValue {
 	// Declared signature returns are folded immediately through returnsDomain.
 	// That makes this a lattice boundary, not a transfer-storage seam: unknown
 	// declared slots must be real product values so slotwise Join cannot see a
 	// zero handle.
-	return product.FromTypesTotal(target.SignatureReturns), true
+	out := product.FromTypesTotal(signature)
+	if len(summary) == 0 || len(summary) != len(signature) {
+		return out
+	}
+	for i, fallbackType := range signature {
+		refined, ok := returndomain.RefineDeclaredReturnType(fallbackType, product.ProjectValueOrUnknown(summary[i]))
+		if !ok || typ.TypeEquals(refined, fallbackType) {
+			continue
+		}
+		out[i] = product.FromType(refined)
+	}
+	return out
 }
 
 // RefineReturnValuesWithTypes repairs product return slots with a closed

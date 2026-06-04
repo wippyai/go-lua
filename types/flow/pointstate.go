@@ -57,8 +57,11 @@ import (
 //   - StaticMembers: point-local must-facts for guarded exact static member
 //     reads. This keeps branch-local presence/value precision for `.field`,
 //     `["field"]`, `[""]`, and `[1]` paths out of typ.Record field overlays.
-//   - KeyPresence: point-local must-facts for KeyOf(table, key), paired
+//   - KeyPresence: point-local proofs for KeyOf(table, key), paired
 //     keyed-iteration value-origin provenance, and live keys-array provenance.
+//     A proof is guarded by the key path's presence: it may survive a join through
+//     a predecessor where the key is definitely nil, and exact dynamic-index
+//     consumers must still prove the key path definitely present before using it.
 //     Exact dynamic-index reads/writes consume this axis instead of scanning Cond
 //     or the CFG.
 //   - ValueOrigins: point-local must-facts for values derived from other values
@@ -66,8 +69,10 @@ import (
 //     parameter demand consumes this axis so typed uses of a derived local can
 //     constrain the source parameter inside the same fixed point.
 //   - IndexWrites: point-local must-facts proving a dynamic-index replacement
-//     write was admitted by the value-domain write law at this point. Observation
-//     consumes this proof directly.
+//     write was admitted by the value-domain write law at this point. Facts with
+//     a KeyPath are guarded by that key's presence, matching KeyPresence: they
+//     may survive a join through a predecessor where the key is definitely nil.
+//     Observation consumes this proof directly.
 //
 // PointState carries a lattice.Lattice (PointStateDomain) so the single generic
 // solver in types/lattice/solver computes the least fixed point over it. The
@@ -129,7 +134,7 @@ func SymbolValue(ps PointState, sym cfg.SymbolID) (product.AbstractValue, bool) 
 // methods return new values, so copying the axis value is sufficient.
 func ClonePointState(ps PointState) PointState {
 	out := PointState{
-		Env:                envDomain.Join(ps.Env, envDomain.Bottom()),
+		Env:                cloneEnv(ps.Env),
 		Cond:               ps.Cond,
 		Rel:                ps.Rel,
 		ReturnRel:          ps.ReturnRel,
@@ -138,8 +143,8 @@ func ClonePointState(ps PointState) PointState {
 		ReceiverEffects:    ps.ReceiverEffects,
 		PrototypeSelf:      ps.PrototypeSelf,
 		PrototypeInstances: ps.PrototypeInstances,
-		FunctionRefs:       FunctionRefsDomain.Join(ps.FunctionRefs, FunctionRefsDomain.Bottom()),
-		ClosureRefs:        ClosureRefsDomain.Join(ps.ClosureRefs, ClosureRefsDomain.Bottom()),
+		FunctionRefs:       cloneFunctionRefs(ps.FunctionRefs),
+		ClosureRefs:        cloneClosureRefs(ps.ClosureRefs),
 		StaticMembers:      ps.StaticMembers,
 		KeyPresence:        ps.KeyPresence,
 		ValueOrigins:       ps.ValueOrigins,
@@ -147,6 +152,46 @@ func ClonePointState(ps PointState) PointState {
 	}
 	if ps.Num != nil {
 		out.Num = ps.Num.Clone()
+	}
+	return out
+}
+
+func cloneEnv(env map[ValueKey]product.AbstractValue) map[ValueKey]product.AbstractValue {
+	if envDomain.Equal(env, envDomain.Top()) {
+		return envDomain.Top()
+	}
+	if len(env) == 0 {
+		return nil
+	}
+	var out map[ValueKey]product.AbstractValue
+	for k, v := range env {
+		if v.IsZero() || v.IsBottom() {
+			continue
+		}
+		if out == nil {
+			out = make(map[ValueKey]product.AbstractValue, len(env))
+		}
+		out[k] = v
+	}
+	return out
+}
+
+func cloneFunctionRefs(refs FunctionRefs) FunctionRefs {
+	if FunctionRefsDomain.Equal(refs, FunctionRefsDomain.Top()) {
+		return FunctionRefsDomain.Top()
+	}
+	if len(refs) == 0 {
+		return nil
+	}
+	var out FunctionRefs
+	for k, v := range refs {
+		if v.IsBottom() {
+			continue
+		}
+		if out == nil {
+			out = make(FunctionRefs, len(refs))
+		}
+		out[k] = v
 	}
 	return out
 }
@@ -238,9 +283,9 @@ var PointStateDomain = lattice.Lattice[PointState]{
 			FunctionRefsDomain.LessOrEq(a.FunctionRefs, b.FunctionRefs) &&
 			ClosureRefsDomain.LessOrEq(a.ClosureRefs, b.ClosureRefs) &&
 			StaticMemberFactsDomain.LessOrEq(a.StaticMembers, b.StaticMembers) &&
-			KeyPresenceFactsDomain.LessOrEq(a.KeyPresence, b.KeyPresence) &&
+			pointKeyPresenceLessOrEq(a, b) &&
 			ValueOriginFactsDomain.LessOrEq(a.ValueOrigins, b.ValueOrigins) &&
-			IndexWriteAdmissionFactsDomain.LessOrEq(a.IndexWrites, b.IndexWrites)
+			pointIndexWritesLessOrEq(a, b)
 	},
 	Join: func(a, b PointState) PointState {
 		return PointState{
@@ -257,9 +302,9 @@ var PointStateDomain = lattice.Lattice[PointState]{
 			FunctionRefs:       FunctionRefsDomain.Join(a.FunctionRefs, b.FunctionRefs),
 			ClosureRefs:        ClosureRefsDomain.Join(a.ClosureRefs, b.ClosureRefs),
 			StaticMembers:      StaticMemberFactsDomain.Join(a.StaticMembers, b.StaticMembers),
-			KeyPresence:        KeyPresenceFactsDomain.Join(a.KeyPresence, b.KeyPresence),
+			KeyPresence:        pointKeyPresenceJoin(a, b),
 			ValueOrigins:       ValueOriginFactsDomain.Join(a.ValueOrigins, b.ValueOrigins),
-			IndexWrites:        IndexWriteAdmissionFactsDomain.Join(a.IndexWrites, b.IndexWrites),
+			IndexWrites:        pointIndexWritesJoin(a, b, product.Domain.Join),
 		}
 	},
 	Meet: nil,
@@ -278,9 +323,142 @@ var PointStateDomain = lattice.Lattice[PointState]{
 			FunctionRefs:       FunctionRefsDomain.Widen(prev.FunctionRefs, next.FunctionRefs),
 			ClosureRefs:        ClosureRefsDomain.Widen(prev.ClosureRefs, next.ClosureRefs),
 			StaticMembers:      StaticMemberFactsDomain.Widen(prev.StaticMembers, next.StaticMembers),
-			KeyPresence:        KeyPresenceFactsDomain.Widen(prev.KeyPresence, next.KeyPresence),
+			KeyPresence:        pointKeyPresenceJoin(prev, next),
 			ValueOrigins:       ValueOriginFactsDomain.Widen(prev.ValueOrigins, next.ValueOrigins),
-			IndexWrites:        IndexWriteAdmissionFactsDomain.Widen(prev.IndexWrites, next.IndexWrites),
+			IndexWrites:        pointIndexWritesJoin(prev, next, product.Domain.Widen),
 		}
 	},
+}
+
+func pointKeyPresenceLessOrEq(a, b PointState) bool {
+	if a.KeyPresence.bottom {
+		return true
+	}
+	if b.KeyPresence.bottom {
+		return false
+	}
+	for _, want := range b.KeyPresence.Entries() {
+		if a.KeyPresence.Has(want.Table, want.Key) || pointPathKeyDefinitelyAbsent(a, want.Key) {
+			continue
+		}
+		return false
+	}
+	for _, want := range b.KeyPresence.ValueEntries() {
+		if a.KeyPresence.HasValue(want.Table, want.Key, want.Value) || pointPathKeyDefinitelyAbsent(a, want.Key) {
+			continue
+		}
+		return false
+	}
+	return keyArrayFactsContainAll(a.KeyPresence.KeyArrayEntries(), b.KeyPresence.KeyArrayEntries())
+}
+
+func pointKeyPresenceJoin(a, b PointState) KeyPresenceFacts {
+	joined := KeyPresenceFactsDomain.Join(a.KeyPresence, b.KeyPresence)
+	joined = pointKeyPresenceJoinOneSided(joined, a.KeyPresence, b)
+	joined = pointKeyPresenceJoinOneSided(joined, b.KeyPresence, a)
+	return joined
+}
+
+func pointKeyPresenceJoinOneSided(out KeyPresenceFacts, facts KeyPresenceFacts, other PointState) KeyPresenceFacts {
+	if facts.bottom {
+		return out
+	}
+	for _, entry := range facts.Entries() {
+		if out.Has(entry.Table, entry.Key) {
+			continue
+		}
+		if pointPathKeyDefinitelyAbsent(other, entry.Key) {
+			out = out.With(entry.Table, entry.Key)
+		}
+	}
+	for _, entry := range facts.ValueEntries() {
+		if out.HasValue(entry.Table, entry.Key, entry.Value) {
+			continue
+		}
+		if pointPathKeyDefinitelyAbsent(other, entry.Key) {
+			out = out.WithValue(entry.Table, entry.Key, entry.Value)
+		}
+	}
+	return out
+}
+
+func pointIndexWritesLessOrEq(a, b PointState) bool {
+	if a.IndexWrites.bottom {
+		return true
+	}
+	if b.IndexWrites.bottom {
+		return false
+	}
+	for _, want := range b.IndexWrites.Entries() {
+		if idx, ok := findIndexWriteAdmissionFact(a.IndexWrites.entries, want); ok {
+			have := a.IndexWrites.entries[idx]
+			if product.Domain.LessOrEq(have.Key, want.Key) && product.Domain.LessOrEq(have.Value, want.Value) {
+				continue
+			}
+		}
+		if want.KeyPath != "" && pointPathKeyDefinitelyAbsent(a, want.KeyPath) {
+			continue
+		}
+		return false
+	}
+	return true
+}
+
+func pointIndexWritesJoin(
+	a, b PointState,
+	op func(product.AbstractValue, product.AbstractValue) product.AbstractValue,
+) IndexWriteAdmissionFacts {
+	if a.IndexWrites.bottom {
+		return b.IndexWrites
+	}
+	if b.IndexWrites.bottom {
+		return a.IndexWrites
+	}
+	joined := intersectIndexWriteAdmissionFacts(a.IndexWrites, b.IndexWrites, op)
+	joined = pointIndexWritesJoinOneSided(joined, a.IndexWrites, b)
+	joined = pointIndexWritesJoinOneSided(joined, b.IndexWrites, a)
+	return joined
+}
+
+func pointIndexWritesJoinOneSided(
+	out IndexWriteAdmissionFacts,
+	facts IndexWriteAdmissionFacts,
+	other PointState,
+) IndexWriteAdmissionFacts {
+	if facts.bottom {
+		return out
+	}
+	for _, entry := range facts.Entries() {
+		if entry.KeyPath == "" || pointIndexWritesHasIdentity(out, entry) {
+			continue
+		}
+		if pointPathKeyDefinitelyAbsent(other, entry.KeyPath) {
+			out = out.With(entry)
+		}
+	}
+	return out
+}
+
+func pointIndexWritesHasIdentity(facts IndexWriteAdmissionFacts, fact IndexWriteAdmissionFact) bool {
+	if facts.bottom {
+		return false
+	}
+	_, ok := findIndexWriteAdmissionFact(facts.entries, fact)
+	return ok
+}
+
+func pointPathKeyDefinitelyAbsent(ps PointState, key constraint.PathKey) bool {
+	av, ok := pointPathKeyValue(ps, key)
+	return ok && av.DefinitelyAbsent()
+}
+
+func pointPathKeyValue(ps PointState, key constraint.PathKey) (product.AbstractValue, bool) {
+	sym, segments, ok := ParseSymbolPathKey(key)
+	if !ok || sym == 0 {
+		return product.AbstractValue{}, false
+	}
+	return PointFactsOf(ps).PathValue(constraint.Path{
+		Symbol:   sym,
+		Segments: append([]constraint.Segment(nil), segments...),
+	})
 }

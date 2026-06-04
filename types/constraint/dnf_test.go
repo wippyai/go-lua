@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/types/narrow"
+	"github.com/wippyai/go-lua/types/typ"
 )
 
 // conditionContains checks if any disjunct contains the given constraint.
@@ -271,6 +272,136 @@ func TestDNF_DuplicateElimination(t *testing.T) {
 
 	if len(result.Disjuncts) != 1 {
 		t.Errorf("duplicate disjuncts should be eliminated, got %d", len(result.Disjuncts))
+	}
+}
+
+func TestDNF_ContradictoryConjunctionIsFalse(t *testing.T) {
+	path := Path{Root: "x", Symbol: 1}
+
+	if got := FromConstraints(Truthy{Path: path}, Falsy{Path: path}); !got.IsFalse() {
+		t.Fatalf("truthy/falsy conjunction = %v, want false", got)
+	}
+	if got := And(FromConstraints(Truthy{Path: path}), FromConstraints(Falsy{Path: path})); !got.IsFalse() {
+		t.Fatalf("truthy AND falsy = %v, want false", got)
+	}
+	if got := FromConstraints(Truthy{Path: path}, IsNil{Path: path}); !got.IsFalse() {
+		t.Fatalf("truthy/nil conjunction = %v, want false", got)
+	}
+}
+
+func TestDNF_ContradictoryDisjunctsAreDropped(t *testing.T) {
+	pathX := Path{Root: "x", Symbol: 1}
+	pathY := Path{Root: "y", Symbol: 2}
+
+	got := FromDisjuncts([][]Constraint{
+		{Truthy{Path: pathX}, Falsy{Path: pathX}},
+		{Truthy{Path: pathY}},
+	})
+	want := FromConstraints(Truthy{Path: pathY})
+	if !got.Equals(want) {
+		t.Fatalf("contradictory disjuncts = %v, want %v", got, want)
+	}
+}
+
+func TestDNF_ForgetDropsCommonLiteral(t *testing.T) {
+	pathX := Path{Root: "x", Symbol: 1}
+	pathY := Path{Root: "y", Symbol: 2}
+	common := Truthy{Path: pathX}
+
+	cond := FromDisjuncts([][]Constraint{
+		{common, Truthy{Path: pathY}},
+		{common, Falsy{Path: pathY}},
+	})
+	got := cond.Forget(func(c Constraint) bool {
+		return c.Equals(common)
+	})
+
+	for _, disj := range got.Disjuncts {
+		if ConjunctionContains(disj, common) {
+			t.Fatalf("Forget kept common literal in %v", got)
+		}
+	}
+}
+
+func TestDNF_ProjectKeepsDeadCommonRootStableLiteral(t *testing.T) {
+	root := NewPath(1, "root")
+	left := NewPath(2, "left")
+	right := NewPath(3, "right")
+	common := Truthy{Path: root}
+
+	cond := FromDisjuncts([][]Constraint{
+		{common, Truthy{Path: left}},
+		{common, Truthy{Path: right}},
+	})
+	got := cond.Project(func(c Constraint) bool {
+		return !c.Equals(common)
+	})
+
+	for _, disj := range got.Disjuncts {
+		if !ConjunctionContains(disj, common) {
+			t.Fatalf("Project dropped root-stable common literal in %v", got)
+		}
+	}
+}
+
+func TestDNF_ProjectDropsDeadCommonMutablePathLiteral(t *testing.T) {
+	root := NewPath(1, "root")
+	left := NewPath(2, "left")
+	right := NewPath(3, "right")
+	common := Truthy{Path: root.Field("state")}
+
+	cond := FromDisjuncts([][]Constraint{
+		{common, Truthy{Path: left}},
+		{common, Truthy{Path: right}},
+	})
+	got := cond.Project(func(c Constraint) bool {
+		return !c.Equals(common)
+	})
+
+	for _, disj := range got.Disjuncts {
+		if ConjunctionContains(disj, common) {
+			t.Fatalf("Project kept dead mutable-path common literal in %v", got)
+		}
+	}
+}
+
+func TestDNF_UnversionedFieldEqualsNegationIsNotRootStableContradiction(t *testing.T) {
+	path := Path{Root: "x", Symbol: 1}
+	lit := typ.LiteralString("ready")
+
+	got := FromConstraints(
+		FieldEquals{Target: path, Field: "state", Value: lit},
+		FieldNotEquals{Target: path, Field: "state", Value: lit},
+	)
+	if got.IsFalse() {
+		t.Fatalf("unversioned field equals/not-equals conjunction collapsed to false: %v", got)
+	}
+}
+
+func TestDNF_VersionedFieldEqualsNegationIsContradiction(t *testing.T) {
+	target := Path{Root: "op", Symbol: 1, Version: 7}.Field("config")
+	lit := typ.LiteralString("ready")
+
+	got := FromConstraints(
+		FieldEquals{Target: target, Field: "target", Value: lit},
+		FieldNotEquals{Target: target, Field: "target", Value: lit},
+	)
+	if !got.IsFalse() {
+		t.Fatalf("versioned field equals/not-equals conjunction = %v, want false", got)
+	}
+}
+
+func TestDNF_VersionedIndexEqualsNegationIsContradiction(t *testing.T) {
+	target := Path{Root: "op", Symbol: 1, Version: 7}.Field("config")
+	key := typ.LiteralString("target")
+	lit := typ.LiteralString("ready")
+
+	got := FromConstraints(
+		IndexEquals{Target: target, Key: key, Value: lit},
+		IndexNotEquals{Target: target, Key: key, Value: lit},
+	)
+	if !got.IsFalse() {
+		t.Fatalf("versioned index equals/not-equals conjunction = %v, want false", got)
 	}
 }
 

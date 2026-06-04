@@ -382,6 +382,7 @@ type VariantFieldOrigin struct {
 type IndexWriteQuery struct {
 	Point     cfg.Point
 	Target    constraint.Path
+	KeyPath   constraint.Path
 	KeySymbol cfg.SymbolID
 	KeyType   typ.Type
 	ValuePath constraint.Path

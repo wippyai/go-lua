@@ -48,15 +48,6 @@ func MapLattice[K comparable, V any](elem lattice.Lattice[V]) lattice.Lattice[ma
 		return m != nil && reflect.ValueOf(m).Pointer() == topPtr
 	}
 
-	// get returns the denoted value at k: the stored value, or elem.Bottom()
-	// when k is absent. Not valid on the top sentinel (callers guard isTop).
-	get := func(m map[K]V, k K) V {
-		if v, ok := m[k]; ok {
-			return v
-		}
-		return elem.Bottom()
-	}
-
 	// canonicalize drops keys whose value Equals elem.Bottom() so that an
 	// explicit bottom entry and an absent key denote the same function and
 	// compare Equal. Returns nil for the empty (Bottom) function.
@@ -75,19 +66,6 @@ func MapLattice[K comparable, V any](elem lattice.Lattice[V]) lattice.Lattice[ma
 		return out
 	}
 
-	// unionKeys collects the keys present in either map (neither is the top
-	// sentinel; callers guard isTop before calling).
-	unionKeys := func(a, b map[K]V) map[K]struct{} {
-		keys := make(map[K]struct{}, len(a)+len(b))
-		for k := range a {
-			keys[k] = struct{}{}
-		}
-		for k := range b {
-			keys[k] = struct{}{}
-		}
-		return keys
-	}
-
 	l := lattice.Lattice[map[K]V]{
 		Bottom: func() map[K]V {
 			return nil
@@ -101,8 +79,21 @@ func MapLattice[K comparable, V any](elem lattice.Lattice[V]) lattice.Lattice[ma
 				// The top sentinel is Equal only to itself.
 				return at && bt
 			}
-			for k := range unionKeys(a, b) {
-				if !elem.Equal(get(a, k), get(b, k)) {
+			bot := elem.Bottom()
+			for k, av := range a {
+				bv, ok := b[k]
+				if !ok {
+					bv = bot
+				}
+				if !elem.Equal(av, bv) {
+					return false
+				}
+			}
+			for k, bv := range b {
+				if _, ok := a[k]; ok {
+					continue
+				}
+				if !elem.Equal(bot, bv) {
 					return false
 				}
 			}
@@ -116,8 +107,21 @@ func MapLattice[K comparable, V any](elem lattice.Lattice[V]) lattice.Lattice[ma
 				// Top ⊑ b only if b is also Top, handled above; here b is finite.
 				return false
 			}
-			for k := range unionKeys(a, b) {
-				if !elem.LessOrEq(get(a, k), get(b, k)) {
+			bot := elem.Bottom()
+			for k, av := range a {
+				bv, ok := b[k]
+				if !ok {
+					bv = bot
+				}
+				if !elem.LessOrEq(av, bv) {
+					return false
+				}
+			}
+			for k, bv := range b {
+				if _, ok := a[k]; ok {
+					continue
+				}
+				if !elem.LessOrEq(bot, bv) {
 					return false
 				}
 			}
@@ -127,21 +131,13 @@ func MapLattice[K comparable, V any](elem lattice.Lattice[V]) lattice.Lattice[ma
 			if isTop(a) || isTop(b) {
 				return topSentinel
 			}
-			out := make(map[K]V, len(a)+len(b))
-			for k := range unionKeys(a, b) {
-				out[k] = elem.Join(get(a, k), get(b, k))
-			}
-			return canonicalize(out)
+			return pointwiseMap(a, b, elem.Bottom(), elem.Join, elem.Equal)
 		},
 		Widen: func(prev, next map[K]V) map[K]V {
 			if isTop(prev) || isTop(next) {
 				return topSentinel
 			}
-			out := make(map[K]V, len(prev)+len(next))
-			for k := range unionKeys(prev, next) {
-				out[k] = elem.Widen(get(prev, k), get(next, k))
-			}
-			return canonicalize(out)
+			return pointwiseMap(prev, next, elem.Bottom(), elem.Widen, elem.Equal)
 		},
 	}
 
@@ -158,15 +154,48 @@ func MapLattice[K comparable, V any](elem lattice.Lattice[V]) lattice.Lattice[ma
 			if isTop(b) {
 				return canonicalizeTop(a, isTop, canonicalize, topSentinel)
 			}
-			out := make(map[K]V, len(a)+len(b))
-			for k := range unionKeys(a, b) {
-				out[k] = elem.Meet(get(a, k), get(b, k))
-			}
-			return canonicalize(out)
+			return pointwiseMap(a, b, elem.Bottom(), elem.Meet, elem.Equal)
 		}
 	}
 
 	return l
+}
+
+func pointwiseMap[K comparable, V any](
+	a, b map[K]V,
+	bot V,
+	combine func(V, V) V,
+	equal func(V, V) bool,
+) map[K]V {
+	var out map[K]V
+	for k, av := range a {
+		bv, ok := b[k]
+		if !ok {
+			bv = bot
+		}
+		v := combine(av, bv)
+		if equal(v, bot) {
+			continue
+		}
+		if out == nil {
+			out = make(map[K]V, len(a)+len(b))
+		}
+		out[k] = v
+	}
+	for k, bv := range b {
+		if _, ok := a[k]; ok {
+			continue
+		}
+		v := combine(bot, bv)
+		if equal(v, bot) {
+			continue
+		}
+		if out == nil {
+			out = make(map[K]V, len(a)+len(b))
+		}
+		out[k] = v
+	}
+	return out
 }
 
 // canonicalizeTop computes Meet(Top, x) = x: top is the identity for meet, so

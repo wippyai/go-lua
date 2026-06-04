@@ -46,6 +46,10 @@ type Program struct {
 	// to its stable canonical ref. Function identity is normalized by program
 	// discovery; facts never ask the driver to resolve AST pointers.
 	RefForFuncSymbol func(cfg.SymbolID) (ref.FuncRef, bool)
+	// DeclaredReturnTypes returns ref's resolved source-declared return vector.
+	// Expected function-literal entry facts use this declaration-only boundary; no
+	// inferred summary returns may enter pre-transfer facts.
+	DeclaredReturnTypes func(ref.FuncRef) []typ.Type
 	// NestedFuncRefs returns the refs of functions directly nested in ref.
 	NestedFuncRefs func(ref.FuncRef) []ref.FuncRef
 	// CallbackOverlaysForRef returns declared/source callback environment overlays
@@ -78,7 +82,7 @@ type Module struct {
 	typeChecks         []typeCheckBindRow
 	functionBindings   []topology.FunctionBinding
 	fieldFunctions     []topology.FieldFunction
-	entrySelfSeeds     []entrySelfSeedRow
+	entrySeeds         []entrySeedRow
 	metatableIndexes   []metatable.Index
 	methodReceivers    []methodReceiverEntry
 	prototypeMethods   []metatable.PrototypeMethod
@@ -112,7 +116,7 @@ type FunctionEntrySeed struct {
 	Type typ.Type
 }
 
-type entrySelfSeedRow struct {
+type entrySeedRow struct {
 	FuncRef ref.FuncRef
 	Seed    FunctionEntrySeed
 	Order   int
@@ -139,7 +143,8 @@ func BuildPreTransfer(p Program) Module {
 	m.metatableIndexes = collectMetatableIndexes(p)
 	m.functionBindings = collectFunctionBindings(p)
 	m.fieldFunctions = collectFieldFunctions(p)
-	m.entrySelfSeeds = collectEntrySelfSeeds(p)
+	m.entrySeeds = append(m.entrySeeds, collectEntrySelfSeeds(p)...)
+	m.entrySeeds = append(m.entrySeeds, collectExpectedFunctionEntrySeeds(p)...)
 	m.methodReceivers = collectMethodReceivers(p)
 	m.prototypeMethods = collectPrototypeMethods(m.fieldFunctions)
 	m.setMetatableSites = collectSetMetatableSites(p, m.metatableIndexes)
@@ -298,13 +303,13 @@ func (m Module) FieldFuncRef(container cfg.SymbolID, field fieldkey.Key) (ref.Fu
 
 // FunctionEntrySeeds returns declaration-context entry seeds for r.
 func (m Module) FunctionEntrySeeds(r ref.FuncRef) []FunctionEntrySeed {
-	if len(m.entrySelfSeeds) == 0 {
+	if len(m.entrySeeds) == 0 {
 		return nil
 	}
-	start, _ := slices.BinarySearchFunc(m.entrySelfSeeds, entrySelfSeedRow{FuncRef: r}, compareEntrySelfSeedRowRefOnly)
+	start, _ := slices.BinarySearchFunc(m.entrySeeds, entrySeedRow{FuncRef: r}, compareEntrySeedRowRefOnly)
 	var out []FunctionEntrySeed
-	for i := start; i < len(m.entrySelfSeeds) && compareFuncRef(m.entrySelfSeeds[i].FuncRef, r) == 0; i++ {
-		seed := m.entrySelfSeeds[i].Seed
+	for i := start; i < len(m.entrySeeds) && compareFuncRef(m.entrySeeds[i].FuncRef, r) == 0; i++ {
+		seed := m.entrySeeds[i].Seed
 		out = append(out, FunctionEntrySeed{Slot: seed.Slot, Type: seed.Type})
 	}
 	return out
@@ -389,7 +394,7 @@ func sortModuleFacts(m *Module) {
 	m.functionBindings = compactFunctionBindingEntries(m.functionBindings)
 	slices.SortFunc(m.fieldFunctions, compareFieldFuncEntry)
 	m.fieldFunctions = compactFieldFuncEntries(m.fieldFunctions)
-	slices.SortFunc(m.entrySelfSeeds, compareEntrySelfSeedRow)
+	slices.SortFunc(m.entrySeeds, compareEntrySeedRow)
 	slices.SortFunc(m.metatableIndexes, compareMetatableIndexEntry)
 	m.metatableIndexes = compactMetatableIndexEntries(m.metatableIndexes)
 	slices.SortFunc(m.methodReceivers, compareMethodReceiverEntry)
@@ -502,17 +507,20 @@ func compareFieldFuncEntryKeyOnly(a, b topology.FieldFunction) int {
 	return cmp.Compare(a.Field.Index, b.Field.Index)
 }
 
-func compareEntrySelfSeedRow(a, b entrySelfSeedRow) int {
+func compareEntrySeedRow(a, b entrySeedRow) int {
 	if c := compareFuncRef(a.FuncRef, b.FuncRef); c != 0 {
 		return c
 	}
 	if c := cmp.Compare(a.Seed.Slot, b.Seed.Slot); c != 0 {
 		return c
 	}
+	if c := cmp.Compare(typeHash(a.Seed.Type), typeHash(b.Seed.Type)); c != 0 {
+		return c
+	}
 	return cmp.Compare(a.Order, b.Order)
 }
 
-func compareEntrySelfSeedRowRefOnly(a, b entrySelfSeedRow) int {
+func compareEntrySeedRowRefOnly(a, b entrySeedRow) int {
 	return compareFuncRef(a.FuncRef, b.FuncRef)
 }
 
@@ -929,7 +937,10 @@ func predicateCondSymBinds(r ref.FuncRef, g *cfg.Graph, facts []guard.PredicateF
 			if call == nil || retIdx != 0 || call.Call == nil {
 				continue
 			}
-			argSym, kind, ok := predicateCallNarrow(call.Call, byFunc, bindings)
+			argSym, kind, ok := predicateCallInfoNarrow(call, byFunc)
+			if !ok {
+				argSym, kind, ok = predicateCallNarrow(call.Call, byFunc, bindings)
+			}
 			if !ok {
 				continue
 			}
@@ -944,6 +955,28 @@ func predicateCondSymBinds(r ref.FuncRef, g *cfg.Graph, facts []guard.PredicateF
 	}
 	slices.SortFunc(out, comparePredicateResultRow)
 	return compactPredicateResultRows(out)
+}
+
+func predicateCallInfoNarrow(call *cfg.CallInfo, byFunc map[cfg.SymbolID]guard.PredicateFunction) (cfg.SymbolID, string, bool) {
+	if call == nil || len(byFunc) == 0 || call.Method != "" {
+		return 0, "", false
+	}
+	fnSym := call.CalleeSymbol
+	if fnSym == 0 || callsite.IsMethodLikeExpr(call.Call) {
+		return 0, "", false
+	}
+	fact, ok := byFunc[fnSym]
+	if !ok || fact.Kind == "" {
+		return 0, "", false
+	}
+	if fact.ParamIndex < 0 || fact.ParamIndex >= len(call.ArgSymbols) {
+		return 0, "", false
+	}
+	argSym := call.ArgSymbols[fact.ParamIndex]
+	if argSym == 0 {
+		return 0, "", false
+	}
+	return argSym, fact.Kind, true
 }
 
 func predicateFuncMap(facts []guard.PredicateFunction) map[cfg.SymbolID]guard.PredicateFunction {

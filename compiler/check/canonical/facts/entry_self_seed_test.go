@@ -39,7 +39,7 @@ end
 `)
 	m, _ := buildPrototypeFactsForSource(t, root)
 	var getRef ref.FuncRef
-	for _, seed := range m.entrySelfSeeds {
+	for _, seed := range m.entrySeeds {
 		if seed.FuncRef != (ref.FuncRef{}) {
 			getRef = seed.FuncRef
 			break

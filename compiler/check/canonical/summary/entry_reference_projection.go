@@ -20,9 +20,20 @@ type EntryReferenceArgPath func(runtimeIdx int, arg ast.Expr) (constraint.Path, 
 // path, for example a direct function literal.
 type EntryFunctionRefArgResolver func(runtimeIdx int, arg ast.Expr, in *flow.PointState) (flow.FunctionRefSet, bool)
 
+// EntryFunctionRefsArgResolver resolves a whole function-identity subtree for a
+// runtime argument expression whose value is not represented by a caller storage
+// path, for example a call expression returning a record with function fields.
+// Returned paths are rooted at placeholder 0 and are rebased to the callee
+// parameter path.
+type EntryFunctionRefsArgResolver func(runtimeIdx int, arg ast.Expr, in *flow.PointState) (flow.FunctionRefs, bool)
+
 // EntryClosureRefArgResolver resolves closure identity carried by a runtime
 // argument expression when it is not represented by rebasing caller ClosureRefs.
 type EntryClosureRefArgResolver func(runtimeIdx int, arg ast.Expr, in *flow.PointState) (flow.ClosureRefSet, bool)
+
+// EntryClosureRefsArgResolver is the closure-value counterpart to
+// EntryFunctionRefsArgResolver.
+type EntryClosureRefsArgResolver func(runtimeIdx int, arg ast.Expr, in *flow.PointState) (flow.ClosureRefs, bool)
 
 // DirectCallEntryReferenceInput is the call-boundary projection for reference
 // axes. It is the reference-axis counterpart of DirectCallEntryProductValues:
@@ -36,11 +47,13 @@ type DirectCallEntryReferenceInput struct {
 	ParamPath EntryReferenceParamPath
 	ArgPath   EntryReferenceArgPath
 
-	FunctionRefs       flow.FunctionRefs
-	ClosureRefs        flow.ClosureRefs
-	State              *flow.PointState
-	ResolveFunctionArg EntryFunctionRefArgResolver
-	ResolveClosureArg  EntryClosureRefArgResolver
+	FunctionRefs           flow.FunctionRefs
+	ClosureRefs            flow.ClosureRefs
+	State                  *flow.PointState
+	ResolveFunctionArg     EntryFunctionRefArgResolver
+	ResolveFunctionArgRefs EntryFunctionRefsArgResolver
+	ResolveClosureArg      EntryClosureRefArgResolver
+	ResolveClosureArgRefs  EntryClosureRefsArgResolver
 }
 
 // DirectCallEntryFunctionRefs projects caller function identities into callee
@@ -60,6 +73,12 @@ func DirectCallEntryFunctionRefs(in DirectCallEntryReferenceInput) flow.Function
 		if in.ArgPath != nil {
 			if source, ok := in.ArgPath(runtimeIdx, arg); ok {
 				out = flow.FunctionRefsDomain.Join(out, rebaseEntryFunctionRefs(in.FunctionRefs, source, target))
+			}
+		}
+		if in.ResolveFunctionArgRefs != nil {
+			if refs, ok := in.ResolveFunctionArgRefs(runtimeIdx, arg, in.State); ok &&
+				!flow.FunctionRefsDomain.Equal(refs, flow.FunctionRefsDomain.Bottom()) {
+				out = flow.FunctionRefsDomain.Join(out, rebaseEntryFunctionRefs(refs, constraint.NewPlaceholder(0), target))
 			}
 		}
 		if in.ResolveFunctionArg == nil {
@@ -92,6 +111,12 @@ func DirectCallEntryClosureRefs(in DirectCallEntryReferenceInput) flow.ClosureRe
 		if in.ArgPath != nil {
 			if source, ok := in.ArgPath(runtimeIdx, arg); ok {
 				out = flow.ClosureRefsDomain.Join(out, rebaseEntryClosureRefs(in.ClosureRefs, source, target))
+			}
+		}
+		if in.ResolveClosureArgRefs != nil {
+			if refs, ok := in.ResolveClosureArgRefs(runtimeIdx, arg, in.State); ok &&
+				!flow.ClosureRefsDomain.Equal(refs, flow.ClosureRefsDomain.Bottom()) {
+				out = flow.ClosureRefsDomain.Join(out, rebaseEntryClosureRefs(refs, constraint.NewPlaceholder(0), target))
 			}
 		}
 		if in.ResolveClosureArg == nil {

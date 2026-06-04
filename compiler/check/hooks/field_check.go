@@ -178,6 +178,17 @@ func (r fieldResolverImpl) PathOf(expr ast.Expr, p cfg.Point) constraint.Path {
 	return path.FromExprWithBindingsAt(expr, nil, r.bindings, r.graph, p)
 }
 
+func (r fieldResolverImpl) FieldAccessHasPresentValue(expr *ast.AttrGetExpr, p cfg.Point) bool {
+	if expr == nil {
+		return false
+	}
+	path := r.PathOf(expr, p)
+	if path.IsEmpty() {
+		return false
+	}
+	return r.observer.PathHasPresentProductValue(p, path)
+}
+
 func (r fieldResolverImpl) WithExprCondition(expr ast.Expr, p cfg.Point, truthy bool) fieldResolverImpl {
 	r.observer = r.observer.WithExprCondition(expr, p, truthy)
 	return r

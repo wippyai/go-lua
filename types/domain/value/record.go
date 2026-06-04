@@ -80,6 +80,9 @@ func JoinRecordShape(a, b typ.Type, join func(typ.Type, typ.Type) typ.Type) (typ
 // the covering record the LUB here, so callers must route such a pair through the
 // optionalizing structural join rather than returning either operand whole.
 func RecordWidthDiffer(a, b typ.Type) bool {
+	if typ.SameNodeOrAcyclicEqual(a, b) {
+		return false
+	}
 	ar, okA := unwrap.Alias(a).(*typ.Record)
 	br, okB := unwrap.Alias(b).(*typ.Record)
 	if !okA || !okB || ar == nil || br == nil {
@@ -480,6 +483,9 @@ func isLiteralType(t typ.Type) bool {
 
 func recordsAreRecursiveAlternatives(a, b *typ.Record) bool {
 	if a == nil || b == nil {
+		return false
+	}
+	if a == b || typ.SameNodeOrAcyclicEqual(a, b) {
 		return false
 	}
 	return recordContainsEquivalentField(a, b) || recordContainsEquivalentField(b, a)

@@ -175,10 +175,10 @@ func TestCanonicalPostflowSignature_PreservesDeclaredReturnsAndSourceVariadic(t 
 	observed := typ.Func().
 		Param("value", typ.Any).
 		Variadic(typ.String).
-		Returns(typ.Unknown).
+		Returns(typ.Integer).
 		Build()
 
-	got := CanonicalPostflowSignature(observed, nil, []typ.Type{typ.Integer}, true, true)
+	got := CanonicalPostflowSignature(observed, nil, []typ.Type{typ.String}, true, true)
 	if got == nil {
 		t.Fatal("CanonicalPostflowSignature() = nil")
 	}
@@ -636,8 +636,8 @@ func TestProjectionExport_UnannotatedDynamicAnyReturnFieldsBecomeUnknown(t *test
 
 func TestJoin_NarrowSummaryReplacesOpenTopPlaceholder(t *testing.T) {
 	openTop := typ.NewRecord().SetOpen(true).Build()
-	existingFunc := typ.Func().Returns(openTop).Build()
-	candidateFunc := typ.Func().Returns(openTop).Build()
+	existingFunc := typ.Func().Build()
+	candidateFunc := typ.Func().Build()
 	narrow := []typ.Type{typ.NewArray(typ.Unknown)}
 
 	out := Join(
@@ -681,7 +681,7 @@ func TestJoin_NarrowSummaryRepairsNeverArtifact(t *testing.T) {
 	}
 
 	out := Join(
-		api.FunctionFact{Summary: product.LiftVector(bad), Signature: typ.Func().Returns(bad...).Build()},
+		api.FunctionFact{Summary: product.LiftVector(bad), Signature: typ.Func().Build()},
 		api.FunctionFact{Narrow: product.LiftVector(good)},
 	)
 
@@ -731,7 +731,7 @@ func TestJoin_DoesNotAlignFunctionToNarrowFieldRegression(t *testing.T) {
 	flowOnly := typ.NewRecord().
 		Field("x", typ.Integer).
 		Build()
-	existingFunc := typ.Func().Returns(flowOnly).Build()
+	existingFunc := typ.Func().Build()
 
 	out := Join(
 		api.FunctionFact{Summary: product.LiftVector([]typ.Type{withCapturedMethod}), Narrow: product.LiftVector([]typ.Type{flowOnly}), Signature: existingFunc},

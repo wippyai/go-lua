@@ -19,6 +19,10 @@ type FieldResolver interface {
 	Field(t typ.Type, name string) (typ.Type, bool)
 }
 
+type fieldAccessPresenceResolver interface {
+	FieldAccessHasPresentValue(fullExpr *ast.AttrGetExpr, p cfg.Point) bool
+}
+
 // ResolveFieldAccess resolves field or index access on an object type.
 //
 // This function handles the complexity of Lua's dynamic field access:
@@ -52,8 +56,7 @@ func ResolveFieldAccess(
 	if resolver != nil && fullExpr != nil {
 		fullType := resolver.TypeOf(fullExpr, p)
 		if fullType != nil &&
-			!fullType.Kind().IsPlaceholder() &&
-			fieldAccessCanTrustFullExprType(resolver, objType, fieldName) {
+			fieldAccessCanTrustFullExprType(resolver, objType, fieldName, fullExpr, p, fullType) {
 			return FieldAccessResult{Type: fullType, Found: true, SkipCheck: true}
 		}
 	}
@@ -119,10 +122,25 @@ func ResolveFieldAccess(
 	return FieldAccessResult{Found: false}
 }
 
-func fieldAccessCanTrustFullExprType(resolver FieldResolver, objType typ.Type, fieldName string) bool {
+func fieldAccessCanTrustFullExprType(resolver FieldResolver, objType typ.Type, fieldName string, fullExpr *ast.AttrGetExpr, p cfg.Point, fullType typ.Type) bool {
+	if fullType == nil {
+		return false
+	}
+	if fullType.Kind().IsPlaceholder() {
+		return fieldAccessHasPresentValue(resolver, fullExpr, p)
+	}
 	if resolver == nil || objType == nil || fieldName == "" || !querycore.MissingFieldReadsNil(objType) {
 		return true
 	}
-	_, ok := resolver.Field(objType, fieldName)
-	return ok
+	if _, ok := resolver.Field(objType, fieldName); ok {
+		return true
+	}
+	return fieldAccessHasPresentValue(resolver, fullExpr, p)
+}
+
+func fieldAccessHasPresentValue(resolver FieldResolver, fullExpr *ast.AttrGetExpr, p cfg.Point) bool {
+	if presence, ok := resolver.(fieldAccessPresenceResolver); ok {
+		return presence.FieldAccessHasPresentValue(fullExpr, p)
+	}
+	return false
 }

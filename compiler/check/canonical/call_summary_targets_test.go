@@ -205,6 +205,82 @@ local c = make_container("hello")
 	}
 }
 
+func TestDeclaredTupleClosedTreatsInstantiatedGenericAliasAsClosed(t *testing.T) {
+	tp := typ.NewTypeParam("T", nil)
+	result := typ.NewGeneric("Result", []*typ.TypeParam{tp},
+		typ.NewRecord().Field("value", tp).Build(),
+	)
+	user := typ.NewRecord().Field("id", typ.String).Build()
+
+	if !declaredTupleClosed([]typ.Type{typ.Instantiate(result, user)}) {
+		t.Fatal("closed instantiated declared return was treated as an open generic binder")
+	}
+	if declaredTupleClosed([]typ.Type{tp}) {
+		t.Fatal("open type-parameter declared return was treated as closed")
+	}
+	if declaredTupleClosed([]typ.Type{typ.Instantiate(result, tp)}) {
+		t.Fatal("instantiated declared return with open type argument was treated as closed")
+	}
+}
+
+func TestDeclaredTupleClosedKeepsResolvedFunctionGenericAliasReturnsOpen(t *testing.T) {
+	chunk, err := parse.ParseString(`
+type Failure = {code: string, message: string}
+type Result<T> = {ok: true, value: T} | {ok: false, error: Failure}
+type Envelope = {id: string}
+
+local function ok<T>(value: T): Result<T>
+	return { ok = true, value = value }
+end
+
+local function and_then<T, U>(result: Result<T>, fn: (T) -> Result<U>): Result<U>
+	if result.ok then
+		return fn(result.value)
+	end
+	return { ok = false, error = result.error }
+end
+
+local function decode(raw: any): Result<Envelope>
+	return ok({ id = "evt" })
+end
+`, "generic-result-declared-return-closed.lua")
+	if err != nil {
+		t.Fatalf("parse failed: %v", err)
+	}
+
+	driver, prog, _, _ := testDriverProgram(t, chunk)
+	defer func() {
+		driver.activeProgram = nil
+		driver.activeCtx = nil
+		driver.activeQueries = nil
+	}()
+
+	genericDeclared := 0
+	closedNonGeneric := 0
+	for _, ref := range prog.refs {
+		fn := prog.funcExpr(ref)
+		if fn == nil || len(fn.ReturnTypes) == 0 {
+			continue
+		}
+		if len(fn.TypeParams) > 0 {
+			genericDeclared++
+			if prog.refHasClosedDeclaredReturns(ref) {
+				t.Fatalf("generic declared return %v was treated as a closed caller-visible tuple", prog.declaredReturns[ref])
+			}
+			continue
+		}
+		if prog.refHasClosedDeclaredReturns(ref) {
+			closedNonGeneric++
+		}
+	}
+	if genericDeclared != 2 {
+		t.Fatalf("generic declared function count = %d, want 2", genericDeclared)
+	}
+	if closedNonGeneric == 0 {
+		t.Fatal("non-generic Result<Envelope> return was not treated as closed")
+	}
+}
+
 func testDriverProgram(t *testing.T, chunk []ast.Stmt) (*Driver, *program, *cfg.Graph, *db.QueryContext) {
 	t.Helper()
 

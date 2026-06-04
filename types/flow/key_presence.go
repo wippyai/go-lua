@@ -275,6 +275,41 @@ func (f KeyPresenceFacts) KillAffectedByWrite(writePath constraint.PathKey) KeyP
 	return canonicalKeyPresenceFactsFull(entries, values, arrays)
 }
 
+// KillAffectedByPresentElementWrite removes facts invalidated by a write of a
+// definitely-present value to a table element or field. Such a write can replace
+// value-specific readback facts, but it cannot make an already-present key of the
+// table absent: if the written key aliases an existing proven key, the new
+// non-nil value still leaves that key present.
+func (f KeyPresenceFacts) KillAffectedByPresentElementWrite(writePath constraint.PathKey) KeyPresenceFacts {
+	if f.bottom || writePath == "" || (len(f.entries) == 0 && len(f.values) == 0 && len(f.arrays) == 0) {
+		return f
+	}
+	entries := make([]KeyPresenceFact, 0, len(f.entries))
+	for _, e := range f.entries {
+		if keyPresencePathsOverlap(e.Key, writePath) {
+			continue
+		}
+		entries = append(entries, e)
+	}
+	values := make([]KeyValueFact, 0, len(f.values))
+	for _, e := range f.values {
+		if keyPresencePathsOverlap(e.Table, writePath) ||
+			keyPresencePathsOverlap(e.Key, writePath) ||
+			keyPresencePathsOverlap(e.Value, writePath) {
+			continue
+		}
+		values = append(values, e)
+	}
+	arrays := make([]KeyArrayFact, 0, len(f.arrays))
+	for _, e := range f.arrays {
+		if keyPresencePathsOverlap(e.Array, writePath) {
+			continue
+		}
+		arrays = append(arrays, e)
+	}
+	return canonicalKeyPresenceFactsFull(entries, values, arrays)
+}
+
 func (f KeyPresenceFacts) Format() string {
 	if f.bottom {
 		return "⊥"

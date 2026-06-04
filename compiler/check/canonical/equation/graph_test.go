@@ -55,6 +55,34 @@ func whileLoopGraph() *cfg.Graph {
 	return cfg.Build(fn)
 }
 
+func ifPhiGraph() *cfg.Graph {
+	fn := &ast.FunctionExpr{
+		ParList: &ast.ParList{},
+		Stmts: []ast.Stmt{
+			&ast.LocalAssignStmt{
+				Names: []string{"x"},
+				Exprs: []ast.Expr{&ast.NumberExpr{Value: "0"}},
+			},
+			&ast.IfStmt{
+				Condition: &ast.IdentExpr{Value: "cond"},
+				Then: []ast.Stmt{
+					&ast.AssignStmt{
+						Lhs: []ast.Expr{&ast.IdentExpr{Value: "x"}},
+						Rhs: []ast.Expr{&ast.NumberExpr{Value: "1"}},
+					},
+				},
+				Else: []ast.Stmt{
+					&ast.AssignStmt{
+						Lhs: []ast.Expr{&ast.IdentExpr{Value: "x"}},
+						Rhs: []ast.Expr{&ast.NumberExpr{Value: "2"}},
+					},
+				},
+			},
+		},
+	}
+	return cfg.Build(fn)
+}
+
 const growKey = constraint.PathKey("loopvar")
 
 // pointStateWithUpper is a PointState whose numeric component bounds growKey from
@@ -279,6 +307,52 @@ func TestContractsAreEntryOnlyContext(t *testing.T) {
 	}
 }
 
+// TestContractFeedbackWidensEntryPoint pins the combined-graph FVS: contract
+// cells bound the backward demand carrier, and the entry point bounds the
+// forward point-state facts regenerated when those contracts are read back into
+// the function. Non-entry points still rely on CFG FVS only; contract context
+// must flow through entry state, not through a side channel.
+func TestContractFeedbackWidensEntryPoint(t *testing.T) {
+	g := straightLineGraph()
+	entry := g.Entry()
+
+	withContracts := NewBuilder(g, 1, NodeTransferFunc(func(
+		_ *cfg.Graph,
+		_ cfg.Point,
+		incoming flow.PointState,
+		_ paramevidence.Contracts,
+		_ func(int, paramevidence.ParamContract),
+	) flow.PointState {
+		return incoming
+	})).wideningSites()
+
+	if !withContracts[pointCellAt(entry)] {
+		t.Fatalf("entry point must be a widening site for contract feedback")
+	}
+	if !withContracts[contractCellAt(0)] {
+		t.Fatalf("contract cell must be a widening site")
+	}
+	for _, p := range g.Successors(entry) {
+		if withContracts[pointCellAt(p)] {
+			t.Fatalf("non-entry point %v was widened by contract context; only entry reads contracts", p)
+		}
+	}
+
+	withoutContracts := NewBuilder(g, 0, NodeTransferFunc(func(
+		_ *cfg.Graph,
+		_ cfg.Point,
+		incoming flow.PointState,
+		_ paramevidence.Contracts,
+		_ func(int, paramevidence.ParamContract),
+	) flow.PointState {
+		return incoming
+	})).wideningSites()
+
+	if withoutContracts[pointCellAt(entry)] {
+		t.Fatalf("acyclic entry point without contract feedback must stay exact")
+	}
+}
+
 // TestBuilderDoesNotProbeTransferOutsideSolver locks the Kildall shape: the
 // builder must not execute NodeTransfer in a fake discovery/pre-pass with Bottom
 // inputs. Non-entry points may run only as solver cells, after their reachable
@@ -345,6 +419,48 @@ func TestConditionProjectionRunsAsCellAbstraction(t *testing.T) {
 	}
 }
 
+func TestPhiConditionRebasePreservesLiveOperandFactAtJoin(t *testing.T) {
+	g := ifPhiGraph()
+	phi := phiForRoot(t, g, "x")
+	if len(phi.Operands) == 0 {
+		t.Fatal("x phi has no operands")
+	}
+
+	operand := phi.Operands[0]
+	operandPath := pathFromVersion(operand.Version).Field("config")
+	targetPath := pathFromVersion(phi.Target).Field("config")
+	fact := constraint.FromConstraints(constraint.FieldEquals{
+		Target: operandPath,
+		Field:  "target",
+		Value:  typ.LiteralString("node"),
+	})
+	want := constraint.FromConstraints(constraint.FieldEquals{
+		Target: targetPath,
+		Field:  "target",
+		Value:  typ.LiteralString("node"),
+	})
+
+	mock := phiFactTransfer{
+		projector: propagate.NewConditionProjector(&propagate.Inputs{
+			Graph: g,
+			Demand: &propagate.Demand{Uses: map[cfg.Point][]constraint.Path{
+				phi.Point: []constraint.Path{targetPath.Field("target")},
+			}},
+		}),
+		pred: operand.From,
+		fact: fact,
+	}
+
+	fs := NewBuilder(g, 0, mock).Solve()
+	got, ok := fs.InPoints[phi.Point]
+	if !ok {
+		t.Fatalf("missing in-state for phi point %v", phi.Point)
+	}
+	if !got.Cond.Equals(want) {
+		t.Fatalf("phi in-state condition = %v, want %v", got.Cond, want)
+	}
+}
+
 type projectingTransfer struct {
 	projector *propagate.ConditionProjector
 	fact      constraint.Condition
@@ -364,6 +480,49 @@ func (m projectingTransfer) Transfer(
 
 func (m projectingTransfer) ConditionProjector() *propagate.ConditionProjector {
 	return m.projector
+}
+
+type phiFactTransfer struct {
+	projector *propagate.ConditionProjector
+	pred      cfg.Point
+	fact      constraint.Condition
+}
+
+func (m phiFactTransfer) Transfer(
+	_ *cfg.Graph,
+	p cfg.Point,
+	incoming flow.PointState,
+	_ paramevidence.Contracts,
+	_ func(int, paramevidence.ParamContract),
+) flow.PointState {
+	out := flow.PointStateDomain.Join(incoming, flow.PointStateDomain.Bottom())
+	if p == m.pred {
+		out.Cond = m.fact
+	}
+	return out
+}
+
+func (m phiFactTransfer) ConditionProjector() *propagate.ConditionProjector {
+	return m.projector
+}
+
+func phiForRoot(t *testing.T, g *cfg.Graph, root string) cfg.PhiInfo {
+	t.Helper()
+	for _, phi := range g.PhiNodes() {
+		if phi.Target.Root == root {
+			return phi
+		}
+	}
+	t.Fatalf("missing phi for %q; phis=%v", root, g.PhiNodes())
+	return cfg.PhiInfo{}
+}
+
+func pathFromVersion(v cfg.Version) constraint.Path {
+	return constraint.Path{
+		Root:    v.Root,
+		Symbol:  v.Symbol,
+		Version: v.ID,
+	}
 }
 
 // markKey names the Env slot a straight-line mock writes for point p.

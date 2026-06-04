@@ -82,10 +82,11 @@ func (p ConditionProofProjector) conditionedTypeAt(point cfg.Point, path constra
 	if cond.IsFalse() {
 		return typ.Never
 	}
+	directProof := p.directHasTypeProof(cond, path)
 	rootPath := constraint.Path{Root: path.Root, Symbol: path.Symbol}
 	rootType := p.rootTypeAt(point, rootPath)
 	if rootType == nil {
-		return nil
+		return directProof
 	}
 	if cond.IsTrue() || !cond.HasConstraints() {
 		if len(path.Segments) == 0 {
@@ -100,7 +101,11 @@ func (p ConditionProofProjector) conditionedTypeAt(point cfg.Point, path constra
 		}
 		return nil
 	}
-	return p.applyConditionProof(point, rootType, rootPath, path, projected)
+	proof := p.applyConditionProof(point, rootType, rootPath, path, projected)
+	if proof == nil && directProof != nil {
+		return directProof
+	}
+	return proof
 }
 
 func (p ConditionProofProjector) pointCondition(point cfg.Point, extra *constraint.Condition) constraint.Condition {
@@ -343,6 +348,82 @@ func (p ConditionProofProjector) conditionProvesType(cond constraint.Condition, 
 	return true
 }
 
+func (p ConditionProofProjector) directHasTypeProof(cond constraint.Condition, path constraint.Path) typ.Type {
+	if path.IsEmpty() || cond.IsFalse() || !cond.HasConstraints() {
+		return nil
+	}
+	types := make([]typ.Type, 0, cond.NumDisjuncts())
+	for i := 0; i < cond.NumDisjuncts(); i++ {
+		proof, ok := p.directHasTypeProofDisjunct(cond.DisjunctConstraints(i), path)
+		if !ok {
+			return nil
+		}
+		if proof == nil {
+			return nil
+		}
+		if proof.Kind().IsNever() {
+			continue
+		}
+		types = append(types, proof)
+	}
+	if len(types) == 0 {
+		return typ.Never
+	}
+	if len(types) == 1 {
+		return types[0]
+	}
+	return typ.PruneSoftUnionMembers(typ.NewUnion(types...))
+}
+
+func (p ConditionProofProjector) directHasTypeProofDisjunct(constraints []constraint.Constraint, path constraint.Path) (typ.Type, bool) {
+	var proof typ.Type
+	found := false
+	for _, c := range constraints {
+		ht, ok := c.(constraint.HasType)
+		if !ok || !conditionProofPathMatches(ht.Path, path) {
+			continue
+		}
+		resolved := p.typeFromHasTypeKey(ht.Type)
+		if resolved == nil {
+			continue
+		}
+		found = true
+		proof = intersectConjunctiveProof(proof, resolved)
+	}
+	return proof, found
+}
+
+func (p ConditionProofProjector) typeFromHasTypeKey(key narrow.TypeKey) typ.Type {
+	resolved := narrow.ByTypeKey(typ.Any, key, p.ResolveType)
+	if resolved != nil && !typ.IsAbsentOrUnknown(resolved) {
+		return resolved
+	}
+	if p.ResolveType == nil {
+		return nil
+	}
+	resolved = p.ResolveType(key)
+	if typ.IsAbsentOrUnknown(resolved) {
+		return nil
+	}
+	return resolved
+}
+
+func intersectConjunctiveProof(a, b typ.Type) typ.Type {
+	if a == nil {
+		return b
+	}
+	if b == nil {
+		return a
+	}
+	if typ.TypeEquals(a, b) || subtype.IsSubtype(a, b) {
+		return a
+	}
+	if subtype.IsSubtype(b, a) {
+		return b
+	}
+	return typ.Never
+}
+
 func typeMatches(a, b typ.Type) bool {
 	if a == nil || b == nil {
 		return false
@@ -359,16 +440,9 @@ func typeMatches(a, b typ.Type) bool {
 }
 
 func conditionProofPathMatches(cpath constraint.Path, qpath constraint.Path) bool {
-	if cpath.Symbol != 0 && qpath.Symbol != 0 {
-		return cpath.Symbol == qpath.Symbol
-	}
-	if cpath.Symbol != 0 || qpath.Symbol != 0 {
-		return false
-	}
-	if cpath.IsPlaceholder() {
-		return cpath.Root == qpath.Root
-	}
-	return false
+	cpath = normalizeConstraintPathForQuery(cpath)
+	qpath = normalizeConstraintPathForQuery(qpath)
+	return cpath.Equal(qpath)
 }
 
 func projectConditionForPath(cond constraint.Condition, path constraint.Path) constraint.Condition {

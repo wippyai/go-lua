@@ -3,7 +3,9 @@ package facts
 import (
 	"testing"
 
+	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/cfg"
+	"github.com/wippyai/go-lua/compiler/check/api"
 	"github.com/wippyai/go-lua/compiler/check/canonical/ref"
 	"github.com/wippyai/go-lua/compiler/check/canonical/topology"
 	"github.com/wippyai/go-lua/compiler/check/domain/callbackenv"
@@ -11,6 +13,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/check/domain/guard"
 	"github.com/wippyai/go-lua/compiler/check/domain/keyscoll"
 	"github.com/wippyai/go-lua/compiler/check/domain/metatable"
+	"github.com/wippyai/go-lua/compiler/check/domain/trace"
 	"github.com/wippyai/go-lua/types/flow"
 	"github.com/wippyai/go-lua/types/typ"
 )
@@ -255,6 +258,91 @@ func TestModuleFactsCanonicalSortedAndDefensive(t *testing.T) {
 	if again := m.SetMetatableSites(refA); again[0].PrototypeSym != cfg.SymbolID(2) {
 		t.Fatalf("SetMetatableSites exposed mutable backing store: %+v", again)
 	}
+}
+
+func TestBuildPreTransferStoresLocalTypePredicateFactsAcrossGraphs(t *testing.T) {
+	root := parseFactsTestChunk(t, `
+local function is_positive_number(value)
+	return type(value) == "number" and value > 0
+end
+
+local function run(value)
+	local ok = is_positive_number(value)
+	if ok then
+		return value + 1
+	end
+	return 0
+end
+`)
+	graphs := collectFactsTestGraphs(root)
+	rootGraph := graphs[root]
+	funcRefsBySymbol := factsTestFuncSymbolRefs(graphs)
+	runGraph := factsTestGraphWithLocal(t, graphs, "ok")
+	runRef := ref.FuncRef{GraphID: runGraph.ID()}
+
+	m := BuildPreTransfer(Program{
+		Refs: factsTestRefs(graphs),
+		Graph: func(r ref.FuncRef) *cfg.Graph {
+			return graphByRef(graphs, r)
+		},
+		Evidence: func(g *cfg.Graph) api.FlowEvidence {
+			return trace.GraphEvidence(g, g.Bindings())
+		},
+		RefForFuncSymbol: func(sym cfg.SymbolID) (ref.FuncRef, bool) {
+			r, ok := funcRefsBySymbol[sym]
+			return r, ok
+		},
+	})
+
+	predSym := symbolNamed(t, rootGraph, "is_positive_number")
+	preds := m.PredicateFacts()
+	if len(preds) != 1 || preds[0].FuncSym != predSym || preds[0].ParamIndex != 0 || preds[0].Kind != "number" {
+		t.Fatalf("PredicateFacts = %+v, want is_positive_number(value) => number", preds)
+	}
+
+	okSym := symbolNamed(t, runGraph, "ok")
+	valueSym := paramSymbolNamed(t, runGraph, "value")
+	guards := m.PredicateGuards(runRef)
+	if len(guards) != 1 || guards[0].CondSym != okSym || guards[0].NarrowSym != valueSym || guards[0].Kind != "number" {
+		t.Fatalf("PredicateGuards(run) = %+v, want ok narrows value to number", guards)
+	}
+}
+
+func factsTestGraphWithLocal(t *testing.T, graphs map[*ast.FunctionExpr]*cfg.Graph, name string) *cfg.Graph {
+	t.Helper()
+	for _, g := range graphs {
+		if g == nil {
+			continue
+		}
+		found := false
+		g.EachAssign(func(_ cfg.Point, info *cfg.AssignInfo) {
+			if info == nil {
+				return
+			}
+			for _, target := range info.Targets {
+				if target.Kind == cfg.TargetIdent && target.Name == name {
+					found = true
+					return
+				}
+			}
+		})
+		if found {
+			return g
+		}
+	}
+	t.Fatalf("no graph with local %q", name)
+	return nil
+}
+
+func paramSymbolNamed(t *testing.T, g *cfg.Graph, name string) cfg.SymbolID {
+	t.Helper()
+	for _, slot := range g.ParamSlotsReadOnly() {
+		if slot.Name == name && slot.Symbol != 0 {
+			return slot.Symbol
+		}
+	}
+	t.Fatalf("missing param %q", name)
+	return 0
 }
 
 func mustFieldKey(name string) fieldkey.Key {

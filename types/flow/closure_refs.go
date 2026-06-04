@@ -423,6 +423,9 @@ func joinClosureRefEnvironment(a, b ClosureRef) ClosureRef {
 }
 
 func closureRefLessOrEq(a, b ClosureRef) bool {
+	if a == b {
+		return true
+	}
 	return a.Ref == b.Ref &&
 		CaptureCellsDomain.LessOrEq(a.EntryCells(), b.EntryCells()) &&
 		FunctionRefsDomain.LessOrEq(a.EntryFunctionRefs(), b.EntryFunctionRefs()) &&
@@ -430,10 +433,11 @@ func closureRefLessOrEq(a, b ClosureRef) bool {
 }
 
 func closureRefEqual(a, b ClosureRef) bool {
-	return a.Ref == b.Ref &&
-		CaptureCellsDomain.Equal(a.EntryCells(), b.EntryCells()) &&
-		FunctionRefsDomain.Equal(a.EntryFunctionRefs(), b.EntryFunctionRefs()) &&
-		closureRefsEqual(a.EntryClosureRefs(), b.EntryClosureRefs())
+	// The environment components are interned exact comparable keys. Equal
+	// captured cells/function-ref maps/closure-ref maps canonicalize to the same
+	// key handles within an analysis scope, so reopening the maps here only
+	// redoes recursive equality work that the key layer already owns.
+	return a == b
 }
 
 func compareClosureRef(a, b ClosureRef) int {
@@ -604,8 +608,14 @@ func cloneClosureRefsFinite(refs ClosureRefs) ClosureRefs {
 	if len(refs) == 0 {
 		return nil
 	}
-	out := make(ClosureRefs, len(refs))
+	var out ClosureRefs
 	for k, v := range refs {
+		if v.IsBottom() {
+			continue
+		}
+		if out == nil {
+			out = make(ClosureRefs, len(refs))
+		}
 		out[k] = v
 	}
 	return out
@@ -615,7 +625,7 @@ func closureRefsEqual(a, b ClosureRefs) bool {
 	if len(a) != len(b) {
 		return false
 	}
-	for _, path := range constraint.SortedPathKeys(a) {
+	for path := range a {
 		bs, ok := b[path]
 		if !ok || !closureRefSetEqual(a[path], bs) {
 			return false
@@ -694,7 +704,7 @@ func closureRefSetEqual(a, b ClosureRefSet) bool {
 		return false
 	}
 	for i := range a.refs {
-		if !closureRefEqual(a.refs[i], b.refs[i]) {
+		if a.refs[i] != b.refs[i] {
 			return false
 		}
 	}

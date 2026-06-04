@@ -83,6 +83,9 @@ func TestRefineByKeyPresenceDoesNotScanCond(t *testing.T) {
 
 	out := flow.PointState{
 		Cond: constraint.FromConstraints(constraint.KeyOf{Table: tablePath, Key: keyPath}),
+		Env: map[flow.ValueKey]product.AbstractValue{
+			flow.SymbolValueKey(cfg.SymbolID(22)): product.FromType(typ.String),
+		},
 	}
 	if got, ok := tr.refineByKeyPresence(&out, read, result); ok {
 		t.Fatalf("refined from Cond without product proof: %v", got.ProjectValue())

@@ -56,6 +56,29 @@ func TestMergeForConvergence_UnknownIsUnresolvedEvidence(t *testing.T) {
 	}
 }
 
+func TestMergeForConvergence_RefinesInstantiatedGenericArgumentEvidence(t *testing.T) {
+	tp := typ.NewTypeParam("T", nil)
+	channel := typ.NewGeneric("Channel", []*typ.TypeParam{tp}, typ.NewRecord().Build())
+	seed := typ.Instantiate(channel, typ.Unknown)
+	refined := typ.Instantiate(channel, typ.String)
+
+	for _, tc := range []struct {
+		name string
+		a    typ.Type
+		b    typ.Type
+	}{
+		{name: "forward", a: seed, b: refined},
+		{name: "reverse", a: refined, b: seed},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := MergeForConvergence(tc.a, tc.b)
+			if !typ.TypeEquals(got, refined) {
+				t.Fatalf("MergeForConvergence(%v, %v) = %v, want %v", tc.a, tc.b, got, refined)
+			}
+		})
+	}
+}
+
 func TestJoinRecordShape_UsesSlotJoinForMetatableEvidence(t *testing.T) {
 	method := typ.Func().Param("self", typ.Any).Returns(typ.Boolean).Build()
 	prototype := typ.NewRecord().Field("ready", method).Build()
@@ -1147,7 +1170,6 @@ func TestFoldSelfEmbedding_RecognizesAsymmetricRefinedCycle(t *testing.T) {
 		t.Fatalf("folded = %v, want recursive mu", folded)
 	}
 }
-
 
 func TestCanonicalRecursiveFamily_DedupesSameFamilyFolds(t *testing.T) {
 	a, okA := FoldSelfEmbedding(asymRefinedTower(2), asymRefinedTower(3))

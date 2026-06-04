@@ -116,6 +116,10 @@ type entryValueProvider interface {
 	EntryValues(ref FuncRef, deps EntryValueDependencies) map[int]product.AbstractValue
 }
 
+type entryValueMerger interface {
+	MergeEntryValues(ref FuncRef, fixed, fallback EntryValues) EntryValues
+}
+
 type callEntryValueProjector interface {
 	ProjectCallEntryValues(ref FuncRef, fs state.FunctionState) CallEntryValues
 }
@@ -494,6 +498,9 @@ func (q *Queries) entryValues(ctx *db.QueryContext, key Key) map[int]product.Abs
 		return values
 	}
 	provided := provider.EntryValues(key.Ref, NewReader(q, ctx, nil))
+	if merger, ok := q.prog.(entryValueMerger); ok && merger != nil {
+		return merger.MergeEntryValues(key.Ref, values, provided)
+	}
 	return MergeEntryValuesWithFixed(values, provided)
 }
 

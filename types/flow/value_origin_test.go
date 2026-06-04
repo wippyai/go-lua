@@ -20,6 +20,7 @@ func TestValueOriginFactsDomainLaws(t *testing.T) {
 	indexedMeta := indexedEntry.WithPaths(entryMeta, items, ValueOriginIndexedIterator, 1)
 	keyedKey := ValueOriginFacts{}.WithPaths(name, items, ValueOriginKeyedIterator, 0)
 	keyedValue := keyedKey.WithPaths(value, items, ValueOriginKeyedIterator, 1)
+	assignmentAlias := ValueOriginFacts{}.WithPaths(name, entry, ValueOriginAssignmentAlias, 0)
 
 	lattice.LawSuite[ValueOriginFacts]{
 		Name:   "ValueOriginFacts",
@@ -31,6 +32,7 @@ func TestValueOriginFactsDomainLaws(t *testing.T) {
 			indexedMeta,
 			keyedKey,
 			keyedValue,
+			assignmentAlias,
 			ValueOriginFactsDomain.Join(indexedMeta, keyedValue),
 		},
 		Format: func(f ValueOriginFacts) string { return f.Format() },

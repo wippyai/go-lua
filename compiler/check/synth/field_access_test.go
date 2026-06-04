@@ -70,6 +70,63 @@ func TestResolveFieldAccess_RecordFieldNotFound(t *testing.T) {
 	}
 }
 
+func TestResolveFieldAccess_MissingTableFieldTrustsPresentFullPathValue(t *testing.T) {
+	rec := typ.NewRecord().Field("name", typ.String).Build()
+	expr := &ast.AttrGetExpr{
+		Object: &ast.IdentExpr{Value: "obj"},
+		Key:    &ast.StringExpr{Value: "installed"},
+	}
+	resolver := presentFieldAccessResolver{
+		fullType: typ.NewArray(typ.String),
+		present:  true,
+	}
+
+	result := ResolveFieldAccess(resolver, expr, rec, "installed", cfg.Point(0))
+	if !result.Found || !result.SkipCheck {
+		t.Fatalf("expected present full-path value to satisfy missing table field access, got %#v", result)
+	}
+	if !typ.TypeEquals(result.Type, typ.NewArray(typ.String)) {
+		t.Fatalf("resolved type = %v, want {string}", result.Type)
+	}
+}
+
+func TestResolveFieldAccess_MissingTableFieldTrustsPresentFullPathAny(t *testing.T) {
+	rec := typ.NewRecord().Field("name", typ.String).Build()
+	expr := &ast.AttrGetExpr{
+		Object: &ast.IdentExpr{Value: "obj"},
+		Key:    &ast.StringExpr{Value: "installed"},
+	}
+	resolver := presentFieldAccessResolver{
+		fullType: typ.Any,
+		present:  true,
+	}
+
+	result := ResolveFieldAccess(resolver, expr, rec, "installed", cfg.Point(0))
+	if !result.Found || !result.SkipCheck {
+		t.Fatalf("expected present full-path any to satisfy missing table field access, got %#v", result)
+	}
+	if !typ.TypeEquals(result.Type, typ.Any) {
+		t.Fatalf("resolved type = %v, want any", result.Type)
+	}
+}
+
+func TestResolveFieldAccess_MissingTableFieldRejectsUnprovedFullPathType(t *testing.T) {
+	rec := typ.NewRecord().Field("name", typ.String).Build()
+	expr := &ast.AttrGetExpr{
+		Object: &ast.IdentExpr{Value: "obj"},
+		Key:    &ast.StringExpr{Value: "missing"},
+	}
+	resolver := presentFieldAccessResolver{
+		fullType: typ.String,
+		present:  false,
+	}
+
+	result := ResolveFieldAccess(resolver, expr, rec, "missing", cfg.Point(0))
+	if result.Found || result.SkipCheck {
+		t.Fatalf("expected unproved missing table field to remain missing, got %#v", result)
+	}
+}
+
 func TestResolveFieldAccess_EmptyFieldNameMap(t *testing.T) {
 	e := newTestEngine()
 	m := typ.NewMap(typ.String, typ.Integer)
@@ -163,4 +220,26 @@ func TestResolveFieldAccess_UnexpandedRecursivePlaceholder(t *testing.T) {
 	if !result.SkipCheck {
 		t.Fatal("expected SkipCheck for unexpanded recursive placeholder")
 	}
+}
+
+type presentFieldAccessResolver struct {
+	fullType typ.Type
+	fields   map[string]typ.Type
+	present  bool
+}
+
+func (r presentFieldAccessResolver) TypeOf(ast.Expr, cfg.Point) typ.Type {
+	return r.fullType
+}
+
+func (r presentFieldAccessResolver) Field(_ typ.Type, name string) (typ.Type, bool) {
+	if r.fields == nil {
+		return nil, false
+	}
+	t, ok := r.fields[name]
+	return t, ok
+}
+
+func (r presentFieldAccessResolver) FieldAccessHasPresentValue(*ast.AttrGetExpr, cfg.Point) bool {
+	return r.present
 }

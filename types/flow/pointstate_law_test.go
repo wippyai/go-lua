@@ -75,6 +75,51 @@ func TestPointStateJoinKeepsBranchLocalStaticIndexInstallOptional(t *testing.T) 
 	}
 }
 
+func TestPointStateJoinKeepsNilGatedKeyPresence(t *testing.T) {
+	table := constraint.NewPath(cfg.SymbolID(930), "nodes")
+	key := constraint.NewPath(cfg.SymbolID(931), "last_id")
+	valuePath := constraint.NewPath(cfg.SymbolID(932), "node")
+	nilArm := reachableEmptyPointState()
+	nilArm.Env = map[ValueKey]product.AbstractValue{
+		SymbolValueKey(key.Symbol): product.FromType(typ.Nil),
+	}
+	factArm := reachableEmptyPointState()
+	factArm.Env = map[ValueKey]product.AbstractValue{
+		SymbolValueKey(key.Symbol): product.FromType(typ.String),
+	}
+	factArm.KeyPresence = factArm.KeyPresence.WithValuePaths(table, key, valuePath)
+
+	joined := PointStateDomain.Join(nilArm, factArm)
+	if !joined.KeyPresence.HasValuePaths(table, key, valuePath) {
+		t.Fatalf("nil-gated join dropped key-presence fact: %s", joined.KeyPresence.Format())
+	}
+	if !PointStateDomain.LessOrEq(nilArm, joined) {
+		t.Fatalf("nil predecessor must be below guarded key-presence join:\nnil=%s\njoined=%s", formatPointState(nilArm), formatPointState(joined))
+	}
+	if !PointStateDomain.LessOrEq(factArm, joined) {
+		t.Fatalf("fact predecessor must be below guarded key-presence join:\nfact=%s\njoined=%s", formatPointState(factArm), formatPointState(joined))
+	}
+}
+
+func TestPointStateJoinDropsOneBranchKeyPresenceWhenMissingBranchMayHaveKey(t *testing.T) {
+	table := constraint.NewPath(cfg.SymbolID(940), "nodes")
+	key := constraint.NewPath(cfg.SymbolID(941), "last_id")
+	missingArm := reachableEmptyPointState()
+	missingArm.Env = map[ValueKey]product.AbstractValue{
+		SymbolValueKey(key.Symbol): product.FromType(typ.String),
+	}
+	factArm := reachableEmptyPointState()
+	factArm.Env = map[ValueKey]product.AbstractValue{
+		SymbolValueKey(key.Symbol): product.FromType(typ.String),
+	}
+	factArm.KeyPresence = factArm.KeyPresence.WithPaths(table, key)
+
+	joined := PointStateDomain.Join(missingArm, factArm)
+	if joined.KeyPresence.HasPaths(table, key) {
+		t.Fatalf("join kept non-nil one-branch key-presence fact: %s", joined.KeyPresence.Format())
+	}
+}
+
 func TestPointStateJoinDropsOneBranchMustFacts(t *testing.T) {
 	table := constraint.NewPath(cfg.SymbolID(910), "messages")
 	key := constraint.NewPath(cfg.SymbolID(911), "key")

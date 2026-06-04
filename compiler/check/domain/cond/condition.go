@@ -76,6 +76,14 @@ type NumericBranchConstraints struct {
 	OnFalse []constraint.NumericConstraint
 }
 
+// PathCacheKey identifies one CFG-point-relative syntactic expression path.
+// Path extraction depends on bindings, constants, and visible SSA versions at
+// the point, but not on the changing abstract value state.
+type PathCacheKey struct {
+	Point cfg.Point
+	Expr  ast.Expr
+}
+
 // ConditionExtractor holds shared context for recursive condition extraction.
 // It processes AST condition expressions and emits type constraints for both
 // true and false control flow edges.
@@ -97,6 +105,7 @@ type ConditionExtractor struct {
 	RefinementBySym constraint.RefinementLookupBySym                  // Function refinement lookup
 	ModuleBindings  *bind.BindingTable                                // Module-level bindings used as secondary callee identity source
 	Evidence        api.FlowEvidence                                  // Canonical graph event trace
+	PathCache       map[PathCacheKey]constraint.Path                  // Optional point/expression path cache
 }
 
 // constraintsFromBranch extracts type constraints from branch info.
@@ -194,6 +203,15 @@ func (ce *ConditionExtractor) cfgGraph() *cfg.Graph {
 
 // pathFromExpr extracts a path using bindings from inputs.
 func (ce *ConditionExtractor) pathFromExpr(expr ast.Expr) constraint.Path {
+	if ce.PathCache != nil {
+		key := PathCacheKey{Point: ce.P, Expr: expr}
+		if path, ok := ce.PathCache[key]; ok {
+			return path
+		}
+		path := flowpath.FromExprWithBindingsAt(expr, ce.ConstResolver, ce.bindings(), ce.graph(), ce.P)
+		ce.PathCache[key] = path
+		return path
+	}
 	return flowpath.FromExprWithBindingsAt(expr, ce.ConstResolver, ce.bindings(), ce.graph(), ce.P)
 }
 

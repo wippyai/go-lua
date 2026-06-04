@@ -117,6 +117,30 @@ func TestClosureRefsKeyBoundsNestedClosureEnvironment(t *testing.T) {
 	}
 }
 
+func TestClosureRefEqualUsesCanonicalEnvironmentKeys(t *testing.T) {
+	cell := CaptureCellsOf([]CaptureCell{{Symbol: cfg.SymbolID(7), Value: product.FromType(typ.String)}})
+	fnPath := constraint.NewPath(cfg.SymbolID(9), "captured")
+	fnRefsA := WithFunctionRef(nil, fnPath.Key(), FunctionRefSetOf(FunctionRef{GraphID: 100}))
+	fnRefsB := WithFunctionRef(nil, fnPath.Key(), FunctionRefSetOf(FunctionRef{GraphID: 100}))
+	nestedA := WithClosureRef(nil, fnPath.Field("inner").Key(), ClosureRefSetOf(
+		ClosureRefOf(FunctionRef{GraphID: 101}, CaptureCellsDomain.Bottom(), nil),
+	))
+	nestedB := WithClosureRef(nil, fnPath.Field("inner").Key(), ClosureRefSetOf(
+		ClosureRefOf(FunctionRef{GraphID: 101}, CaptureCellsDomain.Bottom(), nil),
+	))
+
+	a := ClosureRefOf(FunctionRef{GraphID: 10}, cell, fnRefsA, nestedA)
+	b := ClosureRefOf(FunctionRef{GraphID: 10}, cell, fnRefsB, nestedB)
+
+	if a != b {
+		t.Fatalf("semantically equal closure environments did not share canonical keys:\n  a=%s\n  b=%s",
+			ClosureRefSetOf(a).Format(), ClosureRefSetOf(b).Format())
+	}
+	if !closureRefEqual(a, b) {
+		t.Fatalf("closureRefEqual rejected canonical-key-equal closure refs")
+	}
+}
+
 func TestRebaseClosureRefsMovesSubtree(t *testing.T) {
 	closure := ClosureRefOf(
 		FunctionRef{GraphID: 9},

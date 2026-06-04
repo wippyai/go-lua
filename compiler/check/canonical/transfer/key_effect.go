@@ -15,6 +15,7 @@ const (
 	KeyProvenanceKeyArrayAssignment
 	KeyProvenanceIndexedKeyArrayIteration
 	KeyProvenanceGuardedIndex
+	KeyProvenanceDynamicIndexWrite
 )
 
 // KeyProvenanceEffect is the reducer payload for facts of the form
@@ -34,7 +35,7 @@ func (t *Transfer) applyKeyProvenanceEffect(out *flow.PointState, effect KeyProv
 		return false
 	}
 	switch effect.Kind {
-	case KeyProvenanceKeyedIteration, KeyProvenanceGuardedIndex:
+	case KeyProvenanceKeyedIteration, KeyProvenanceGuardedIndex, KeyProvenanceDynamicIndexWrite:
 		if effect.TablePath.IsEmpty() || effect.KeyPath.IsEmpty() {
 			return false
 		}

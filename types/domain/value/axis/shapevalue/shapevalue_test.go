@@ -214,3 +214,24 @@ func TestJoin_CommutativeOnMutualCoverRecursive(t *testing.T) {
 		t.Errorf("Join not idempotent (other order): Join(Join(a,b), a) ≠ Join(a,b)")
 	}
 }
+
+func TestJoin_SameRecursiveFamilyCanonicalizesBeforeCoverage(t *testing.T) {
+	mk := func() typ.Type {
+		return typ.NewRecursive("Node", func(self typ.Type) typ.Type {
+			return typ.NewRecord().Field("next", typ.NewOptional(self)).Build()
+		})
+	}
+	left := Value{t: mk()}
+	right := Value{t: mk()}
+	if left.t == right.t {
+		t.Fatal("test must build distinct recursive nodes")
+	}
+
+	joined := Join(left, right)
+	if !Equal(joined, Of(left.t)) {
+		t.Fatalf("Join of same recursive family = %v, want canonical family %v", joined.t, Of(left.t).t)
+	}
+	if joined.t != Of(left.t).t {
+		t.Fatalf("Join did not return the canonical family representative")
+	}
+}

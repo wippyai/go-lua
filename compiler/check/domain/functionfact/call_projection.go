@@ -189,6 +189,9 @@ func (input callContractInput) publicParamProjection(idx int, bodyParam typ.Type
 		return bodyParam, false
 	}
 	publicParam := callBoundaryParamType(bodyParam, factParam)
+	if idx < len(input.Args) && paramevidence.EntryContradictsBodyContract(input.Args[idx], publicParam) {
+		return typ.Any, true
+	}
 	if !publicParamCanReplaceBodyParam(bodyParam, publicParam) {
 		return bodyParam, false
 	}
