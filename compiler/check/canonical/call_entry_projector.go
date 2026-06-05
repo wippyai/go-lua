@@ -9,6 +9,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/check/canonical/transfer"
 	"github.com/wippyai/go-lua/compiler/check/domain/paramevidence"
 	"github.com/wippyai/go-lua/types/constraint"
+	"github.com/wippyai/go-lua/types/domain/value/product"
 	"github.com/wippyai/go-lua/types/flow"
 	"github.com/wippyai/go-lua/types/typ"
 )
@@ -23,9 +24,6 @@ type callEntryProjector struct {
 // callEntryProjector is the program-owned capability bundle for summary
 // call-entry projection. Summary owns the pure projection algebra; this type owns
 // the driver/program lookups needed to instantiate that algebra for one caller.
-// TODO(canonical-call-entry): fold the ProductCallContext entry builders in
-// driver.go onto this same boundary so callTyper no longer hand-wires
-// ParamSlot/ArgPath/ReferenceProjection for product calls.
 func (p *program) callEntryProjector(ref summary.FuncRef) (callEntryProjector, bool) {
 	if p == nil || p.driver == nil {
 		return callEntryProjector{}, false
@@ -161,4 +159,224 @@ func (c callEntryProjector) expectedArgType(point cfg.Point, info *cfg.CallInfo,
 
 func (c callEntryProjector) paramSlot(callee summary.FuncRef, call *ast.FuncCallExpr, argIdx int) (int, int, bool) {
 	return paramevidence.ParamSlotForRuntimeArg(c.program.Graph(callee), c.program.funcExpr(callee), argIdx)
+}
+
+func (ct callTyper) callEntryProjector() (callEntryProjector, bool) {
+	if ct.d == nil || ct.d.activeProgram == nil {
+		return callEntryProjector{}, false
+	}
+	ref, ok := ct.currentRef()
+	if !ok {
+		return callEntryProjector{
+			program: ct.d.activeProgram,
+			graph:   ct.g,
+			typer:   ct,
+		}, true
+	}
+	if projector, ok := ct.d.activeProgram.callEntryProjector(ref); ok {
+		return projector, true
+	}
+	return callEntryProjector{
+		program: ct.d.activeProgram,
+		graph:   ct.g,
+		typer:   ct,
+	}, true
+}
+
+func (ct callTyper) callEntryValuesForRef(ref summary.FuncRef, call *ast.FuncCallExpr, exprType func(ast.Expr) typ.Type) summary.EntryValues {
+	projector, ok := ct.callEntryProjector()
+	if !ok {
+		return nil
+	}
+	return projector.valuesForRef(ref, call, exprType)
+}
+
+func (ct callTyper) callEntrySlotType(ref summary.FuncRef, call *ast.FuncCallExpr, runtimeValues []product.AbstractValue, entryValues summary.EntryValues, slot int) typ.Type {
+	projector, ok := ct.callEntryProjector()
+	if !ok {
+		return nil
+	}
+	return projector.slotType(ref, call, runtimeValues, entryValues, slot)
+}
+
+func (c callEntryProjector) slotType(ref summary.FuncRef, call *ast.FuncCallExpr, runtimeValues []product.AbstractValue, entryValues summary.EntryValues, slot int) typ.Type {
+	if slot < 0 {
+		return nil
+	}
+	for runtimeIdx, av := range runtimeValues {
+		if av.IsZero() || product.Domain.Equal(av, product.Domain.Top()) {
+			continue
+		}
+		_, mappedSlot, ok := c.paramSlot(ref, call, runtimeIdx)
+		if !ok || mappedSlot != slot {
+			continue
+		}
+		return product.ProjectValueOrUnknown(av)
+	}
+	if av, ok := entryValues[slot]; ok && !av.IsZero() {
+		return product.ProjectValueOrUnknown(av)
+	}
+	return nil
+}
+
+func (c callEntryProjector) valuesForRef(ref summary.FuncRef, call *ast.FuncCallExpr, exprType func(ast.Expr) typ.Type) summary.EntryValues {
+	if call == nil || exprType == nil {
+		return nil
+	}
+	return summary.DirectCallEntryValuesWithParamCount(
+		call,
+		ref,
+		exprType,
+		c.paramSlot,
+		func(callee summary.FuncRef, _ *ast.FuncCallExpr) int {
+			return c.program.paramSlotCount(callee)
+		},
+	)
+}
+
+func (ct callTyper) productCallEntryContext(ref summary.FuncRef, call *ast.FuncCallExpr, ctx transfer.ProductCallContext) (canonicalcall.EntryContext, bool) {
+	projector, ok := ct.callEntryProjector()
+	if !ok {
+		return canonicalcall.EntryContext{}, false
+	}
+	return projector.productContext(ref, call, ctx)
+}
+
+func (ct callTyper) productClosureCallEntryContext(ref summary.FuncRef, closure flow.ClosureRef, call *ast.FuncCallExpr, ctx transfer.ProductCallContext) (canonicalcall.EntryContext, bool) {
+	projector, ok := ct.callEntryProjector()
+	if !ok {
+		return canonicalcall.EntryContext{}, false
+	}
+	return projector.productClosureContext(ref, closure, call, ctx)
+}
+
+func (ct callTyper) callEntryFactsForRef(ref summary.FuncRef, call *ast.FuncCallExpr, ctx transfer.ProductCallContext) flow.BoundaryFacts {
+	projector, ok := ct.callEntryProjector()
+	if !ok {
+		return flow.BoundaryFactsDomain.Top()
+	}
+	return projector.factsForRef(ref, call, ctx)
+}
+
+func (c callEntryProjector) productContext(ref summary.FuncRef, call *ast.FuncCallExpr, ctx transfer.ProductCallContext) (canonicalcall.EntryContext, bool) {
+	entryValues := c.productValuesForRef(ref, call, ctx.RuntimeArgValues)
+	entryFacts := c.factsForRef(ref, call, ctx)
+	entryRefs := flow.FunctionRefsDomain.Join(
+		c.program.CallEntryFunctionRefs(ref, ctx.FunctionRefs),
+		c.functionRefsForRef(ref, call, ctx),
+	)
+	entryClosures := flow.ClosureRefsDomain.Join(
+		c.program.CallEntryClosureRefs(ref, ctx.ClosureRefs),
+		c.closureRefsForRef(ref, call, ctx),
+	)
+	return canonicalcall.NewEntryContextWithFacts(
+		ref,
+		c.program.CallEntryCells(ref, ctx.Cells),
+		entryRefs,
+		entryClosures,
+		entryValues,
+		entryFacts,
+	), true
+}
+
+func (c callEntryProjector) productClosureContext(ref summary.FuncRef, closure flow.ClosureRef, call *ast.FuncCallExpr, ctx transfer.ProductCallContext) (canonicalcall.EntryContext, bool) {
+	entryValues := c.productValuesForRef(ref, call, ctx.RuntimeArgValues)
+	entryFacts := c.factsForRef(ref, call, ctx)
+	entryRefs := flow.FunctionRefsDomain.Join(
+		c.program.CallEntryFunctionRefs(ref, ctx.FunctionRefs),
+		c.functionRefsForRef(ref, call, ctx),
+	)
+	entryClosures := flow.ClosureRefsDomain.Join(
+		c.program.CallEntryClosureRefs(ref, ctx.ClosureRefs),
+		c.closureRefsForRef(ref, call, ctx),
+	)
+	return canonicalcall.EntryContextFromClosureWithLiveAxesAndFacts(
+		ref,
+		closure,
+		c.program.CallEntryCells(ref, ctx.Cells),
+		entryRefs,
+		entryClosures,
+		entryValues,
+		entryFacts,
+	), true
+}
+
+func (c callEntryProjector) factsForRef(ref summary.FuncRef, call *ast.FuncCallExpr, ctx transfer.ProductCallContext) flow.BoundaryFacts {
+	return summary.DirectCallEntryFacts(summary.DirectCallEntryFactInput{
+		Call:        call,
+		Callee:      ref,
+		ParamSlot:   c.paramSlot,
+		ArgPath:     func(_ int, arg ast.Expr) (constraint.Path, bool) { return c.typer.exprPath(arg) },
+		KeyPresence: ctx.KeyPresence,
+		Num:         ctx.Num,
+		IndexWrites: ctx.IndexWrites,
+	})
+}
+
+func (c callEntryProjector) productValuesForRef(ref summary.FuncRef, call *ast.FuncCallExpr, runtimeValues []product.AbstractValue) summary.EntryValues {
+	if call == nil {
+		return nil
+	}
+	values := summary.DirectCallEntryProductValuesWithParamCount(
+		call,
+		ref,
+		runtimeValues,
+		c.paramSlot,
+		func(callee summary.FuncRef, _ *ast.FuncCallExpr) int {
+			return c.program.paramSlotCount(callee)
+		},
+	)
+	return c.program.withPrototypeMethodSurfacesForMethodCall(ref, call, values)
+}
+
+func (c callEntryProjector) functionRefsForRef(ref summary.FuncRef, call *ast.FuncCallExpr, ctx transfer.ProductCallContext) flow.FunctionRefs {
+	if call == nil {
+		return flow.FunctionRefsDomain.Bottom()
+	}
+	return summary.DirectCallEntryFunctionRefs(summary.DirectCallEntryReferenceInput{
+		Call:                call,
+		Callee:              ref,
+		FunctionRefs:        ctx.FunctionRefs,
+		ReferenceProjection: c.program.referenceProjection(ref),
+		LimitReferencePaths: true,
+		ParamSlot:           c.paramSlot,
+		ParamPath: func(callee summary.FuncRef, slot int) (constraint.Path, bool) {
+			return c.program.paramPath(callee, slot)
+		},
+		ArgPath: func(_ int, arg ast.Expr) (constraint.Path, bool) {
+			return c.typer.exprPath(arg)
+		},
+		ResolveFunctionArg: func(_ int, arg ast.Expr, _ *flow.PointState) (flow.FunctionRefSet, bool) {
+			return c.typer.callEntryFunctionArgRefs(arg, ctx.FunctionRefs)
+		},
+		ResolveFunctionArgRefs: func(_ int, arg ast.Expr, _ *flow.PointState) (flow.FunctionRefs, bool) {
+			return c.typer.callEntryFunctionArgTreeRefs(arg, ctx)
+		},
+	})
+}
+
+func (c callEntryProjector) closureRefsForRef(ref summary.FuncRef, call *ast.FuncCallExpr, ctx transfer.ProductCallContext) flow.ClosureRefs {
+	if call == nil {
+		return flow.ClosureRefsDomain.Bottom()
+	}
+	return summary.DirectCallEntryClosureRefs(summary.DirectCallEntryReferenceInput{
+		Call:                call,
+		Callee:              ref,
+		ClosureRefs:         ctx.ClosureRefs,
+		ReferenceProjection: c.program.referenceProjection(ref),
+		LimitReferencePaths: true,
+		ParamSlot:           c.paramSlot,
+		ParamPath: func(callee summary.FuncRef, slot int) (constraint.Path, bool) {
+			return c.program.paramPath(callee, slot)
+		},
+		ArgPath: func(_ int, arg ast.Expr) (constraint.Path, bool) {
+			return c.typer.exprPath(arg)
+		},
+		ResolveClosureArg: func(_ int, arg ast.Expr, _ *flow.PointState) (flow.ClosureRefSet, bool) {
+			return c.typer.callEntryClosureArgRefs(arg, ctx)
+		},
+		ResolveClosureArgRefs: func(_ int, arg ast.Expr, _ *flow.PointState) (flow.ClosureRefs, bool) {
+			return c.typer.callEntryClosureArgTreeRefs(arg, ctx)
+		},
+	})
 }
