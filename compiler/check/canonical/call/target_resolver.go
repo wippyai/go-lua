@@ -127,6 +127,21 @@ func (r TargetResolver) ResolveFunctionRefsAtExprOrSymbol(expr ast.Expr, refs fl
 	return ref.FromFlowAddress(refs, addr)
 }
 
+// ResolveClosureRefSetAtExpr resolves the live product ClosureRefs axis for a
+// function-valued expression. The bool has the same authority meaning as
+// ResolveFunctionRefsAtExpr: a present Top set returns (Top, true).
+func (r TargetResolver) ResolveClosureRefSetAtExpr(expr ast.Expr, refs flow.ClosureRefs) (flow.ClosureRefSet, bool) {
+	path, ok := r.exprPath(expr)
+	if !ok {
+		return flow.ClosureRefSet{}, false
+	}
+	addr, ok := flow.StableAddressOfPath(path)
+	if !ok {
+		return flow.ClosureRefSet{}, false
+	}
+	return flow.ClosureRefAtAddress(refs, addr)
+}
+
 // ResolveCallbackArgRefs resolves a callback argument using the same precedence
 // as call target resolution: direct function literal, live FunctionRefs axis,
 // then immutable static expression fallback.

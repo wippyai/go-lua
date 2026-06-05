@@ -1433,15 +1433,8 @@ func (p *program) callEntryClosureArgRefs(g *cfg.Graph, arg ast.Expr, in *flow.P
 			flow.ProjectClosureRefsByReferencePaths(in.ClosureRefs, projection),
 		)), true
 	}
-	path, ok := (callTyper{d: p.driver, g: g}).exprPath(arg)
-	if !ok {
-		return flow.ClosureRefSet{}, false
-	}
-	addr, ok := flow.StableAddressOfPath(path)
-	if !ok {
-		return flow.ClosureRefSet{}, false
-	}
-	return flow.ClosureRefAtAddress(in.ClosureRefs, addr)
+	resolver := (callTyper{d: p.driver, g: g}).targetResolver(p)
+	return resolver.ResolveClosureRefSetAtExpr(arg, in.ClosureRefs)
 }
 
 func (p *program) callEntryClosureArgTreeRefs(g *cfg.Graph, tr *transfer.Transfer, arg ast.Expr, in *flow.PointState) (flow.ClosureRefs, bool) {
@@ -2966,15 +2959,8 @@ func (ct callTyper) callEntryClosureArgRefs(arg ast.Expr, ctx transfer.ProductCa
 			flow.ProjectClosureRefsByReferencePaths(ctx.ClosureRefs, projection),
 		)), true
 	}
-	path, ok := ct.exprPath(arg)
-	if !ok {
-		return flow.ClosureRefSet{}, false
-	}
-	addr, ok := flow.StableAddressOfPath(path)
-	if !ok {
-		return flow.ClosureRefSet{}, false
-	}
-	return flow.ClosureRefAtAddress(ctx.ClosureRefs, addr)
+	resolver := ct.targetResolver(d.activeProgram)
+	return resolver.ResolveClosureRefSetAtExpr(arg, ctx.ClosureRefs)
 }
 
 func (ct callTyper) callEntryClosureArgTreeRefs(arg ast.Expr, ctx transfer.ProductCallContext) (flow.ClosureRefs, bool) {

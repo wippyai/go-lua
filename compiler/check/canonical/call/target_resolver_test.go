@@ -148,6 +148,31 @@ func TestTargetResolverFunctionRefsFallbackToRawSymbol(t *testing.T) {
 	}
 }
 
+func TestTargetResolverClosureRefSetAtExprIsAuthoritative(t *testing.T) {
+	t.Parallel()
+
+	call, bindings := testCallForPath()
+	path := callPathKey(bindings, call.Func)
+	resolver := TargetResolver{Bindings: bindings}
+	closure := flow.ClosureRefOf(flow.FunctionRef{GraphID: 20}, flow.CaptureCellsDomain.Bottom(), flow.FunctionRefsDomain.Bottom())
+	liveRefs := flow.WithClosureRef(nil, path, flow.ClosureRefSetOf(closure))
+
+	got, ok := resolver.ResolveClosureRefSetAtExpr(call.Func, liveRefs)
+	if !ok || got.IsBottom() || got.IsTop() {
+		t.Fatalf("ResolveClosureRefSetAtExpr finite = %v/%v, want finite set", got.Format(), ok)
+	}
+	refs := got.Refs()
+	if len(refs) != 1 || refs[0].Ref.GraphID != 20 {
+		t.Fatalf("ResolveClosureRefSetAtExpr refs = %+v, want graph 20", refs)
+	}
+
+	topRefs := flow.WithClosureRef(nil, path, flow.ClosureRefSetTop())
+	got, ok = resolver.ResolveClosureRefSetAtExpr(call.Func, topRefs)
+	if !ok || !got.IsTop() {
+		t.Fatalf("ResolveClosureRefSetAtExpr top = %v/%v, want authoritative top", got.Format(), ok)
+	}
+}
+
 func TestTargetResolverCallbackArgRefsUseLiveAxisBeforeStaticFallback(t *testing.T) {
 	t.Parallel()
 
