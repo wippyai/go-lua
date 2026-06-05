@@ -3,6 +3,7 @@ package call
 import (
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/check/canonical/summary"
+	phasecore "github.com/wippyai/go-lua/compiler/check/synth/core"
 	"github.com/wippyai/go-lua/compiler/check/synth/ops"
 	"github.com/wippyai/go-lua/types/callboundary"
 	"github.com/wippyai/go-lua/types/db"
@@ -75,6 +76,33 @@ func RefineCallbackArgTypes(in CallbackArgRefinementInput) []typ.Type {
 	}
 	if !changed {
 		return in.ArgTypes
+	}
+	return out
+}
+
+// ShallowArgTypes builds the staged inference argument vector for a call. Direct
+// callback literals are kept shallow so their body demand cannot solve callee
+// generics before the callee provides the expected callback signature.
+func ShallowArgTypes(args []ast.Expr, projected []typ.Type, exprType func(ast.Expr) typ.Type) []typ.Type {
+	if len(args) == 0 {
+		return nil
+	}
+	out := make([]typ.Type, len(args))
+	for i, arg := range args {
+		if fn, ok := arg.(*ast.FunctionExpr); ok {
+			out[i] = phasecore.ShallowFunctionLiteralSignature(fn)
+			continue
+		}
+		if i < len(projected) && projected[i] != nil && !typ.IsUnknown(projected[i]) {
+			out[i] = projected[i]
+			continue
+		}
+		if exprType != nil {
+			out[i] = exprType(arg)
+		}
+		if out[i] == nil {
+			out[i] = typ.Unknown
+		}
 	}
 	return out
 }

@@ -60,6 +60,29 @@ func TestExpectedArgTypesForCallMasksCallbackBodyDemandDuringExpectationProjecti
 	}
 }
 
+func TestShallowArgTypesKeepsDirectFunctionLiteralShallow(t *testing.T) {
+	t.Parallel()
+
+	callbackArg := &ast.FunctionExpr{}
+	otherArg := &ast.IdentExpr{Value: "value"}
+	got := ShallowArgTypes(
+		[]ast.Expr{callbackArg, otherArg},
+		[]typ.Type{typ.Func().Param("x", typ.String).Returns(typ.Number).Build(), typ.Integer},
+		func(ast.Expr) typ.Type { return typ.Boolean },
+	)
+
+	if len(got) != 2 {
+		t.Fatalf("shallow args = %v, want two args", got)
+	}
+	fn, ok := got[0].(*typ.Function)
+	if !ok || fn == nil || len(fn.Params) != 0 || len(fn.Returns) != 1 || !typ.TypeEquals(fn.Returns[0], typ.Any) {
+		t.Fatalf("callback arg = %v, want shallow function literal signature", got[0])
+	}
+	if !typ.TypeEquals(got[1], typ.Integer) {
+		t.Fatalf("non-callback arg = %v, want projected integer", got[1])
+	}
+}
+
 type noopTypeOps struct{}
 
 func (noopTypeOps) Field(*db.QueryContext, typ.Type, string) (typ.Type, bool) { return nil, false }

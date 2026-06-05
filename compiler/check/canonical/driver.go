@@ -1548,7 +1548,7 @@ func (p *program) expectedCallArgType(g *cfg.Graph, tr *transfer.Transfer, point
 	}
 	expectedArgs := canonicalcall.ExpectedArgTypesForCall(canonicalcall.ExpectedArgsInput{
 		Call:                call,
-		ArgTypes:            productShallowCallArgTypes(ctx, call.Args),
+		ArgTypes:            canonicalcall.ShallowArgTypes(call.Args, ctx.ArgTypes(), ctx.ExprType),
 		Resolver:            ct.callTypeResolver(ctx.ExprType),
 		Ctx:                 p.driver.activeCtx,
 		Query:               p.driver.cfg.Types,
@@ -1569,26 +1569,6 @@ func (p *program) expectedCallArgType(g *cfg.Graph, tr *transfer.Transfer, point
 		return nil
 	}
 	return expected
-}
-
-func productShallowCallArgTypes(ctx transfer.ProductCallContext, args []ast.Expr) []typ.Type {
-	if len(args) == 0 {
-		return nil
-	}
-	projected := ctx.ArgTypes()
-	out := make([]typ.Type, len(args))
-	for i, arg := range args {
-		if fn, ok := arg.(*ast.FunctionExpr); ok {
-			out[i] = phasecore.ShallowFunctionLiteralSignature(fn)
-			continue
-		}
-		if i < len(projected) && projected[i] != nil && !typ.IsUnknown(projected[i]) {
-			out[i] = projected[i]
-			continue
-		}
-		out[i] = ctx.ExprType(arg)
-	}
-	return out
 }
 
 func (ct callTyper) expectedCalleeTypeForCall(expr ast.Expr, call *ast.FuncCallExpr, ctx transfer.ProductCallContext) typ.Type {
