@@ -2749,41 +2749,21 @@ func (ct callTyper) ReturnRelationsFromValues(call *ast.FuncCallExpr, ctx transf
 // return relations. Imported or unresolved callees have no module-local cell
 // effect in this domain.
 func (ct callTyper) CellEffects(call *ast.FuncCallExpr, exprType func(ast.Expr) typ.Type, cells flow.CaptureCells, refs flow.FunctionRefs) flow.CaptureEffects {
-	d := ct.d
-	if d == nil || call == nil || d.activeProgram == nil {
+	projector, ok := ct.cellEffectProjector()
+	if !ok || call == nil {
 		return flow.CaptureEffectsDomain.Bottom()
 	}
 	outcome := ct.callOutcomeForTypedCall(call, exprType, cells, refs)
-	return outcome.CellEffects(summary.CellEffectAggregation{
-		CallbackSpec: ct.callbackSpecForCall(call, exprType),
-		CallbackArgs: call.Args,
-		MethodCall:   call.Method != "",
-		ResolveCallback: func(arg ast.Expr) ([]summary.FuncRef, bool) {
-			return ct.callbackArgRefs(arg, d.activeProgram, refs)
-		},
-		EffectOf: func(ref summary.FuncRef, entryValues summary.EntryValues) flow.CaptureEffects {
-			return ct.cellEffectsForRef(ref, cells, refs, flow.ClosureRefsDomain.Bottom(), entryValues, flow.BoundaryFactsDomain.Top())
-		},
-	})
+	return projector.typedCallEffects(outcome, call, exprType, cells, refs)
 }
 
 func (ct callTyper) CellEffectsFromValues(call *ast.FuncCallExpr, ctx transfer.ProductCallContext) flow.CaptureEffects {
-	d := ct.d
-	if d == nil || call == nil || d.activeProgram == nil {
+	projector, ok := ct.cellEffectProjector()
+	if !ok || call == nil {
 		return flow.CaptureEffectsDomain.Bottom()
 	}
 	outcome := ct.summaryOnlyProductCallOutcome(call, ctx)
-	return outcome.CellEffects(summary.CellEffectAggregation{
-		CallbackSpec: ct.callbackSpecForCall(call, ctx.ExprType),
-		CallbackArgs: call.Args,
-		MethodCall:   call.Method != "",
-		ResolveCallback: func(arg ast.Expr) ([]summary.FuncRef, bool) {
-			return ct.callbackArgRefs(arg, d.activeProgram, ctx.FunctionRefs)
-		},
-		EffectOf: func(ref summary.FuncRef, entryValues summary.EntryValues) flow.CaptureEffects {
-			return ct.cellEffectsForRef(ref, ctx.Cells, ctx.FunctionRefs, ctx.ClosureRefs, entryValues, ct.callEntryFactsForRef(ref, call, ctx))
-		},
-	})
+	return projector.productCallEffects(outcome, call, ctx)
 }
 
 func (ct callTyper) ReceiverEffectsFromValues(call *ast.FuncCallExpr, ctx transfer.ProductCallContext) flow.ReceiverEffects {
@@ -2818,42 +2798,6 @@ func (ct callTyper) ContainerElementUnionsFromValues(call *ast.FuncCallExpr, ctx
 			return nil
 		},
 		Resolver: ct.callTypeResolver(ctx.ExprType),
-	})
-}
-
-func (ct callTyper) cellEffectsForRef(ref summary.FuncRef, cells flow.CaptureCells, refs flow.FunctionRefs, closures flow.ClosureRefs, entryValues summary.EntryValues, entryFacts flow.BoundaryFacts) flow.CaptureEffects {
-	d := ct.d
-	if d == nil || d.activeProgram == nil {
-		return flow.CaptureEffectsDomain.Bottom()
-	}
-	reader := d.summaryReader()
-	entry := flow.CaptureCellsDomain.Bottom()
-	entryRefs := flow.FunctionRefsDomain.Bottom()
-	entryClosures := flow.ClosureRefsDomain.Bottom()
-	if reader.Live() {
-		entry = d.activeProgram.CallEntryCells(ref, cells)
-		entryRefs = d.activeProgram.CallEntryFunctionRefs(ref, refs)
-		entryClosures = d.activeProgram.CallEntryClosureRefs(ref, closures)
-	}
-	effects := reader.SummarizeWithEntryContextFacts(ref, entry, entryRefs, entryClosures, entryValues, entryFacts).CellEffects
-	return effects
-}
-
-func (ct callTyper) callbackSpecForCall(call *ast.FuncCallExpr, exprType func(ast.Expr) typ.Type) *contract.Spec {
-	d := ct.d
-	if d == nil || d.activeProgram == nil {
-		return nil
-	}
-	resolver := ct.callTypeResolver(exprType)
-	return canonicalcall.CallbackSpecForCall(canonicalcall.CallbackSpecInput{
-		Call: call,
-		SummarySignature: func(call *ast.FuncCallExpr) typ.Type {
-			if ref, ok := ct.resolveCalleeRef(call, d.activeProgram); ok {
-				return d.signatureForRef(d.activeProgram, ref)
-			}
-			return nil
-		},
-		Resolver: resolver,
 	})
 }
 
