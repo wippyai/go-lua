@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/wippyai/go-lua/types/constraint"
+	"github.com/wippyai/go-lua/types/typ"
 )
 
 // Label represents an atomic effect that a function can have.
@@ -415,9 +416,8 @@ func (s StringUnpackValue) String() string {
 //	    TypeProjection{Source: param[1], Steps: [generic_arg(0)]}
 //
 //	process.listen(topic, {decode = fun(any) -> Event}) -> Channel<Event>
-//	    uses the same projection [field("decode"), callable_return()] as the
-//	    evidence for T, with the wrapper supplied by the function's declared
-//	    generic return shape.
+//	    TypeProjection{Source: param[1],
+//	        Steps: [field("decode"), callable_return(), instantiate(Channel)]}
 type TypeProjection struct {
 	Source ParamRef
 	Steps  []TypeProjectionStep
@@ -442,6 +442,7 @@ const (
 	TypeProjectionField TypeProjectionStepKind = iota + 1
 	TypeProjectionCallableReturn
 	TypeProjectionGenericArg
+	TypeProjectionInstantiateGeneric
 )
 
 // TypeProjectionStep is one operation in a TypeProjection path.
@@ -449,6 +450,7 @@ type TypeProjectionStep struct {
 	Kind  TypeProjectionStepKind
 	Field string
 	Index int
+	Type  typ.Type
 }
 
 func ProjectField(name string) TypeProjectionStep {
@@ -463,6 +465,10 @@ func ProjectGenericArg(index int) TypeProjectionStep {
 	return TypeProjectionStep{Kind: TypeProjectionGenericArg, Index: index}
 }
 
+func ProjectInstantiateGeneric(generic typ.Type) TypeProjectionStep {
+	return TypeProjectionStep{Kind: TypeProjectionInstantiateGeneric, Type: generic}
+}
+
 func (s TypeProjectionStep) String() string {
 	switch s.Kind {
 	case TypeProjectionField:
@@ -471,6 +477,8 @@ func (s TypeProjectionStep) String() string {
 		return "return"
 	case TypeProjectionGenericArg:
 		return fmt.Sprintf("arg[%d]", s.Index)
+	case TypeProjectionInstantiateGeneric:
+		return fmt.Sprintf("instantiate[%s]", typ.FormatShort(s.Type))
 	default:
 		return "unknown"
 	}
@@ -885,7 +893,7 @@ func returnTypeEquals(a, b ReturnType) bool {
 				return false
 			}
 			for i := range av.Steps {
-				if av.Steps[i] != bv.Steps[i] {
+				if !typeProjectionStepEquals(av.Steps[i], bv.Steps[i]) {
 					return false
 				}
 			}
@@ -907,4 +915,11 @@ func returnTypeEquals(a, b ReturnType) bool {
 			return false
 		},
 	})
+}
+
+func typeProjectionStepEquals(a, b TypeProjectionStep) bool {
+	if a.Kind != b.Kind || a.Field != b.Field || a.Index != b.Index {
+		return false
+	}
+	return typ.TypeEquals(a.Type, b.Type)
 }

@@ -351,7 +351,7 @@ func TestMutateCodec_RoundTrip(t *testing.T) {
 				t.Fatalf("Encode() error = %v", err)
 			}
 
-			r := newMockReader(w.buf.Bytes())
+			r := newMockReader(w.buf.Bytes(), w.types...)
 
 			decoded, err := codec.Decode(r)
 			if err != nil {
@@ -442,7 +442,7 @@ func TestReturnCodec_RoundTrip(t *testing.T) {
 				t.Fatalf("Encode() error = %v", err)
 			}
 
-			r := newMockReader(w.buf.Bytes())
+			r := newMockReader(w.buf.Bytes(), w.types...)
 
 			decoded, err := codec.Decode(r)
 			if err != nil {
@@ -972,7 +972,17 @@ func TestWriteReadReturnType(t *testing.T) {
 				Steps: []TypeProjectionStep{
 					ProjectField("decode"),
 					ProjectCallableReturn(),
-					ProjectGenericArg(0),
+				},
+			},
+		},
+		{
+			name: "type projection with generic wrapper",
+			rt: TypeProjection{
+				Source: ParamRef{Index: 1},
+				Steps: []TypeProjectionStep{
+					ProjectField("decode"),
+					ProjectCallableReturn(),
+					ProjectInstantiateGeneric(typ.NewGeneric("Channel", []*typ.TypeParam{typ.NewTypeParam("T", nil)}, typ.NewRecord().Build())),
 				},
 			},
 		},
@@ -993,7 +1003,7 @@ func TestWriteReadReturnType(t *testing.T) {
 				t.Fatalf("writeReturnType() error = %v", err)
 			}
 
-			r := newMockReader(w.buf.Bytes())
+			r := newMockReader(w.buf.Bytes(), w.types...)
 
 			decoded, err := readReturnType(r)
 			if err != nil {
@@ -1010,6 +1020,9 @@ func TestWriteReadReturnType(t *testing.T) {
 
 			if fmt.Sprintf("%T", decoded) != fmt.Sprintf("%T", tt.rt) {
 				t.Errorf("Type mismatch: got %T, want %T", decoded, tt.rt)
+			}
+			if !returnTypeEquals(decoded, tt.rt) {
+				t.Errorf("decoded return type = %v, want %v", decoded, tt.rt)
 			}
 		})
 	}

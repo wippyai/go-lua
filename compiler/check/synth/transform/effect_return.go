@@ -517,6 +517,12 @@ func projectTypeStep(t typ.Type, step effect.TypeProjectionStep) typ.Type {
 			return nil
 		}
 		return inst.TypeArgs[step.Index]
+	case effect.TypeProjectionInstantiateGeneric:
+		generic, ok := unwrap.Alias(step.Type).(*typ.Generic)
+		if !ok || len(generic.TypeParams) != 1 {
+			return nil
+		}
+		return typ.Instantiate(generic, t)
 	default:
 		return nil
 	}

@@ -561,6 +561,10 @@ func writeTypeProjection(w Writer, v TypeProjection) error {
 			if err := w.WriteInt32(int32(step.Index)); err != nil {
 				return err
 			}
+		case TypeProjectionInstantiateGeneric:
+			if err := w.WriteType(step.Type); err != nil {
+				return err
+			}
 		case TypeProjectionCallableReturn:
 		default:
 			return fmt.Errorf("unknown type projection step kind %d", step.Kind)
@@ -604,6 +608,16 @@ func readTypeProjection(r Reader) (TypeProjection, error) {
 				return TypeProjection{}, err
 			}
 			step.Index = int(rawIndex)
+		case TypeProjectionInstantiateGeneric:
+			rawType, err := r.ReadType()
+			if err != nil {
+				return TypeProjection{}, err
+			}
+			t, ok := rawType.(typ.Type)
+			if !ok {
+				return TypeProjection{}, fmt.Errorf("type projection generic wrapper type: %T", rawType)
+			}
+			step.Type = t
 		case TypeProjectionCallableReturn:
 		default:
 			return TypeProjection{}, fmt.Errorf("unknown type projection step kind %d", step.Kind)
