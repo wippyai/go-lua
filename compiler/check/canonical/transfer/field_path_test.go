@@ -564,13 +564,13 @@ func TestStaticMemberWriteFactsInstallAndKillByStructuralPath(t *testing.T) {
 	tr.installStaticMemberWriteFact(&out, sym, indexSeg, product.FromType(typ.Number))
 	tr.installStaticMemberWriteFact(&out, sym, emptySeg, product.FromType(typ.Boolean))
 
-	if _, ok := out.StaticMembers.Value(flow.SymbolPathKey(sym, fieldSeg)); !ok {
+	if _, ok := testStaticMemberValue(t, out.StaticMembers, sym, fieldSeg); !ok {
 		t.Fatal("missing dot-field write fact")
 	}
-	if _, ok := out.StaticMembers.Value(flow.SymbolPathKey(sym, indexSeg)); !ok {
+	if _, ok := testStaticMemberValue(t, out.StaticMembers, sym, indexSeg); !ok {
 		t.Fatal("missing string-index write fact")
 	}
-	if _, ok := out.StaticMembers.Value(flow.SymbolPathKey(sym, emptySeg)); !ok {
+	if _, ok := testStaticMemberValue(t, out.StaticMembers, sym, emptySeg); !ok {
 		t.Fatal("missing empty-string-index write fact")
 	}
 
@@ -584,13 +584,13 @@ func TestStaticMemberWriteFactsInstallAndKillByStructuralPath(t *testing.T) {
 		},
 		RecordStatic: true,
 	})
-	if _, ok := out.StaticMembers.Value(flow.SymbolPathKey(sym, fieldSeg)); !ok {
+	if _, ok := testStaticMemberValue(t, out.StaticMembers, sym, fieldSeg); !ok {
 		t.Fatal("string-index kill removed dot-field fact")
 	}
-	if _, ok := out.StaticMembers.Value(flow.SymbolPathKey(sym, indexSeg)); ok {
+	if _, ok := testStaticMemberValue(t, out.StaticMembers, sym, indexSeg); ok {
 		t.Fatal("string-index kill kept matching string-index fact")
 	}
-	if _, ok := out.StaticMembers.Value(flow.SymbolPathKey(sym, emptySeg)); !ok {
+	if _, ok := testStaticMemberValue(t, out.StaticMembers, sym, emptySeg); !ok {
 		t.Fatal("string-index kill removed unrelated empty-string-index fact")
 	}
 
@@ -612,9 +612,9 @@ func TestStaticMemberWriteInvalidationKillsAncestorSnapshotsOnly(t *testing.T) {
 
 	out := flow.PointState{
 		StaticMembers: flow.StaticMemberFactsDomain.Top().
-			With(flow.SymbolPathKey(sym, parentSeg), product.FromType(typ.NewRecord().Build())).
-			With(flow.SymbolPathKey(sym, writtenSeg), product.FromType(typ.String)).
-			With(flow.SymbolPathKey(sym, siblingSeg), product.FromType(typ.Number)),
+			WithAddress(testStaticMemberAddress(t, sym, parentSeg), product.FromType(typ.NewRecord().Build())).
+			WithAddress(testStaticMemberAddress(t, sym, writtenSeg), product.FromType(typ.String)).
+			WithAddress(testStaticMemberAddress(t, sym, siblingSeg), product.FromType(typ.Number)),
 	}
 
 	tr.applyWriteEffect(&out, WriteEffect{
@@ -628,13 +628,13 @@ func TestStaticMemberWriteInvalidationKillsAncestorSnapshotsOnly(t *testing.T) {
 		RecordStatic: true,
 	})
 
-	if _, ok := out.StaticMembers.Value(flow.SymbolPathKey(sym, parentSeg)); ok {
+	if _, ok := testStaticMemberValue(t, out.StaticMembers, sym, parentSeg); ok {
 		t.Fatalf("descendant write kept stale parent static fact: %s", out.StaticMembers.Format())
 	}
-	if _, ok := out.StaticMembers.Value(flow.SymbolPathKey(sym, writtenSeg)); ok {
+	if _, ok := testStaticMemberValue(t, out.StaticMembers, sym, writtenSeg); ok {
 		t.Fatalf("descendant write kept written child static fact: %s", out.StaticMembers.Format())
 	}
-	if got, ok := out.StaticMembers.Value(flow.SymbolPathKey(sym, siblingSeg)); !ok || !typ.TypeEquals(got.ProjectValue(), typ.Number) {
+	if got, ok := testStaticMemberValue(t, out.StaticMembers, sym, siblingSeg); !ok || !typ.TypeEquals(got.ProjectValue(), typ.Number) {
 		t.Fatalf("descendant write lost sibling static fact: %s", out.StaticMembers.Format())
 	}
 }
@@ -646,12 +646,12 @@ func TestStaticMemberWriteFactRequiresDefinitelyPresentValue(t *testing.T) {
 	out := flow.PointState{}
 
 	tr.installStaticMemberWriteFact(&out, sym, segs, product.FromType(typ.NewOptional(typ.String)))
-	if _, ok := out.StaticMembers.Value(flow.SymbolPathKey(sym, segs)); ok {
+	if _, ok := testStaticMemberValue(t, out.StaticMembers, sym, segs); ok {
 		t.Fatal("optional write must not install a must-present member fact")
 	}
 
 	tr.installStaticMemberWriteFact(&out, sym, segs, product.FromType(typ.String))
-	if got, ok := out.StaticMembers.Value(flow.SymbolPathKey(sym, segs)); !ok || !typ.TypeEquals(got.ProjectValue(), typ.String) {
+	if got, ok := testStaticMemberValue(t, out.StaticMembers, sym, segs); !ok || !typ.TypeEquals(got.ProjectValue(), typ.String) {
 		t.Fatalf("present write fact = %v, %v; want string,true", got.ProjectValue(), ok)
 	}
 }
@@ -683,7 +683,7 @@ func TestDynamicExactKeyWriteInstallsStaticMemberFact(t *testing.T) {
 		Key:        keyExpr,
 	}, &ast.NumberExpr{Value: "42"}, nil)
 
-	got, ok := out.StaticMembers.Value(flow.SymbolPathKey(baseSym, []constraint.Segment{
+	got, ok := out.StaticMembers.ValueAtAddress(testStaticMemberAddress(t, baseSym, []constraint.Segment{
 		{Kind: constraint.SegmentIndexString, Name: "foo"},
 	}))
 	if !ok {
@@ -724,7 +724,7 @@ func TestStaticMemberWriteFactUsesPlaceForMixedStaticPath(t *testing.T) {
 
 	tr.applyContainerWrite(&out, target, &ast.TrueExpr{}, nil)
 
-	got, ok := out.StaticMembers.Value(flow.SymbolPathKey(rootSym, []constraint.Segment{
+	got, ok := out.StaticMembers.ValueAtAddress(testStaticMemberAddress(t, rootSym, []constraint.Segment{
 		{Kind: constraint.SegmentIndexString, Name: "handlers"},
 		{Kind: constraint.SegmentField, Name: "ready"},
 	}))
@@ -753,12 +753,12 @@ func TestEvalAttrGetUsesSyntaxAwareStaticMemberFacts(t *testing.T) {
 			flow.SymbolValueKey(sym): product.FromType(typ.NewRecord().Build()),
 		},
 	}
-	out.StaticMembers = out.StaticMembers.With(
-		flow.SymbolPathKey(sym, []constraint.Segment{{Kind: constraint.SegmentField, Name: "foo"}}),
+	out.StaticMembers = out.StaticMembers.WithAddress(
+		testStaticMemberAddress(t, sym, []constraint.Segment{{Kind: constraint.SegmentField, Name: "foo"}}),
 		product.FromType(typ.String),
 	)
-	out.StaticMembers = out.StaticMembers.With(
-		flow.SymbolPathKey(sym, []constraint.Segment{{Kind: constraint.SegmentIndexString, Name: "foo"}}),
+	out.StaticMembers = out.StaticMembers.WithAddress(
+		testStaticMemberAddress(t, sym, []constraint.Segment{{Kind: constraint.SegmentIndexString, Name: "foo"}}),
 		product.FromType(typ.Number),
 	)
 

@@ -792,7 +792,7 @@ func TestRefineStaticMemberFactForPositiveGuard(t *testing.T) {
 	out := flow.PointState{}
 
 	tr.refineStaticMemberFactForCheck(&out, sym, segs, base, true, cfg.CheckNotNil, "")
-	got, ok := out.StaticMembers.Value(flow.SymbolPathKey(sym, segs))
+	got, ok := testStaticMemberValue(t, out.StaticMembers, sym, segs)
 	if !ok || !got.DefinitelyPresent() || !typ.TypeEquals(got.ProjectValue(), typ.String) {
 		t.Fatalf("guard fact = %v, %v; want present string", got.ProjectValue(), ok)
 	}
@@ -807,11 +807,11 @@ func TestRefineStaticMemberFactRebasesExistingSentinelOnCurrentBase(t *testing.T
 		Field("data_func", typ.NewUnion(typ.String, typ.Nil, typ.False)).
 		Build())
 	out := flow.PointState{
-		StaticMembers: flow.StaticMemberFacts{}.With(pathKey, product.FromType(typ.True)),
+		StaticMembers: flow.StaticMemberFacts{}.WithAddress(testStaticMemberAddressKey(t, pathKey), product.FromType(typ.True)),
 	}
 
 	tr.refineStaticMemberFactForCheck(&out, sym, segs, base, true, cfg.CheckTruthy, "")
-	got, ok := out.StaticMembers.Value(pathKey)
+	got, ok := out.StaticMembers.ValueAtAddress(testStaticMemberAddressKey(t, pathKey))
 	if !ok || !got.DefinitelyPresent() || !typ.TypeEquals(got.ProjectValue(), typ.String) {
 		t.Fatalf("rebased guard fact = %v, %v; want present string", got.ProjectValue(), ok)
 	}
@@ -823,7 +823,7 @@ func TestStaticMemberLiteralExclusionCollapsesExactCachedPath(t *testing.T) {
 	segs := []constraint.Segment{{Kind: constraint.SegmentField, Name: "data_func"}}
 	pathKey := flow.SymbolPathKey(sym, segs)
 	out := flow.PointState{
-		StaticMembers: flow.StaticMemberFacts{}.With(pathKey, product.FromType(typ.LiteralString(""))),
+		StaticMembers: flow.StaticMemberFacts{}.WithAddress(testStaticMemberAddressKey(t, pathKey), product.FromType(typ.LiteralString(""))),
 	}
 
 	if !tr.refineStaticMemberFactForLiteralComparison(&out, sym, segs, typ.LiteralString(""), false) {
@@ -842,13 +842,13 @@ func TestRefineStaticMemberFactKeepsFalsyOnlyFromExistingPresentFact(t *testing.
 	out := flow.PointState{}
 
 	tr.refineStaticMemberFactForCheck(&out, sym, segs, product.AbstractValue{}, false, cfg.CheckFalsy, "")
-	if _, ok := out.StaticMembers.Value(pathKey); ok {
+	if _, ok := out.StaticMembers.ValueAtAddress(testStaticMemberAddressKey(t, pathKey)); ok {
 		t.Fatal("falsy guard without prior present fact must not invent a member fact")
 	}
 
-	out.StaticMembers = out.StaticMembers.With(pathKey, product.FromType(typ.Boolean))
+	out.StaticMembers = out.StaticMembers.WithAddress(testStaticMemberAddressKey(t, pathKey), product.FromType(typ.Boolean))
 	tr.refineStaticMemberFactForCheck(&out, sym, segs, product.AbstractValue{}, false, cfg.CheckFalsy, "")
-	got, ok := out.StaticMembers.Value(pathKey)
+	got, ok := out.StaticMembers.ValueAtAddress(testStaticMemberAddressKey(t, pathKey))
 	if !ok || !got.DefinitelyPresent() || !typ.TypeEquals(got.ProjectValue(), typ.False) {
 		t.Fatalf("falsy existing fact = %v, %v; want present false", got.ProjectValue(), ok)
 	}
@@ -876,7 +876,7 @@ func TestNarrowByCondCheckInstallsFactOnFalseEdgeOfNotIndexGuard(t *testing.T) {
 
 	got := tr.narrowByCondCheck(out, info, false, false)
 	pathKey := flow.SymbolPathKey(sym, []constraint.Segment{{Kind: constraint.SegmentIndexString, Name: "root"}})
-	fact, ok := got.StaticMembers.Value(pathKey)
+	fact, ok := got.StaticMembers.ValueAtAddress(testStaticMemberAddressKey(t, pathKey))
 	if !ok || !fact.DefinitelyPresent() || !typ.TypeEquals(fact.ProjectValue(), typ.String) {
 		t.Fatalf("false edge fact = %v, %v; want present string", fact.ProjectValue(), ok)
 	}
@@ -920,7 +920,7 @@ func TestNarrowByCondCheckMissingStaticMemberPositiveGuardKeepsDynamicEdge(t *te
 		{Kind: constraint.SegmentField, Name: "config"},
 		{Kind: constraint.SegmentField, Name: "data_targets"},
 	}
-	fact, ok := got.StaticMembers.Value(flow.SymbolPathKey(sym, path))
+	fact, ok := testStaticMemberValue(t, got.StaticMembers, sym, path)
 	if !ok || !fact.DefinitelyPresent() {
 		t.Fatalf("dynamic missing-member guard fact = %v, %v; want present dynamic", fact.ProjectValue(), ok)
 	}
@@ -1067,7 +1067,7 @@ func TestApplyParamCondNarrowCarriesFullNarrowedProductState(t *testing.T) {
 	tr.applyParamCondNarrow(&out, arg, cfg.CheckTruthy)
 
 	pathKey := flow.SymbolPathKey(sym, []constraint.Segment{{Kind: constraint.SegmentIndexString, Name: "root"}})
-	fact, ok := out.StaticMembers.Value(pathKey)
+	fact, ok := out.StaticMembers.ValueAtAddress(testStaticMemberAddressKey(t, pathKey))
 	if !ok || !fact.DefinitelyPresent() || !typ.TypeEquals(fact.ProjectValue(), typ.String) {
 		t.Fatalf("forwarded condition fact = %v, %v; want present string", fact.ProjectValue(), ok)
 	}

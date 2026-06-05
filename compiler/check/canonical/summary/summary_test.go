@@ -487,6 +487,10 @@ func TestProject_CaptureExportsFromReturnBoundaryCells(t *testing.T) {
 	}
 
 	exported := product.FromType(typ.String)
+	renderAddr, ok := flow.StableAddressOfSymbol(cfg.SymbolID(77), []constraint.Segment{{Kind: constraint.SegmentField, Name: "render"}})
+	if !ok {
+		t.Fatal("render static-member address did not build")
+	}
 	sum := summary.Project(state.FunctionState{
 		Points: map[cfg.Point]flow.PointState{
 			ret: {
@@ -494,8 +498,8 @@ func TestProject_CaptureExportsFromReturnBoundaryCells(t *testing.T) {
 					"s42": exported,
 				},
 				Cells: flow.CaptureCellsOf([]flow.CaptureCell{{Symbol: cfg.SymbolID(77), Value: product.FromType(typ.NewRecord().Build())}}),
-				StaticMembers: flow.StaticMemberFacts{}.With(
-					flow.SymbolPathKey(cfg.SymbolID(77), []constraint.Segment{{Kind: constraint.SegmentField, Name: "render"}}),
+				StaticMembers: flow.StaticMemberFacts{}.WithAddress(
+					renderAddr,
 					product.FromType(typ.Func().Returns(typ.String).Build()),
 				),
 			},

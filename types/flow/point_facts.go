@@ -77,7 +77,11 @@ func (f PointFacts) StaticMemberValue(path constraint.Path) (product.AbstractVal
 	if path.Symbol == 0 {
 		return product.AbstractValue{}, false
 	}
-	return f.state.StaticMembers.Value(SymbolPathKey(path.Symbol, path.Segments))
+	addr, ok := StableAddressOfPath(path)
+	if !ok {
+		return product.AbstractValue{}, false
+	}
+	return f.state.StaticMembers.ValueAtAddress(addr)
 }
 
 // PathValue returns a product value for path by applying point-local static

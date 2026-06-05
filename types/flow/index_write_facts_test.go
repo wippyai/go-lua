@@ -100,6 +100,15 @@ func testStableAddress(t *testing.T, path constraint.Path) StableAddress {
 	return addr
 }
 
+func testStableAddressKey(t *testing.T, key constraint.PathKey) StableAddress {
+	t.Helper()
+	addr, ok := StableAddressFromKey(key)
+	if !ok {
+		t.Fatalf("stable address for %s", key)
+	}
+	return addr
+}
+
 func testIndexWriteAddressQuery(t *testing.T, target, keyPath constraint.Path, keyType typ.Type, valuePath constraint.Path) IndexWriteAddressQuery {
 	t.Helper()
 	targetAddr := testStableAddress(t, target)

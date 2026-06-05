@@ -162,11 +162,15 @@ func TestObservePathCallableRefKeepsMustPresentProductValueDefinite(t *testing.T
 		Field("handlers", typ.NewMap(typ.String, declaredSig)).
 		Build()
 	path := constraint.NewPath(sym, "app").Field("handlers").IndexStr("present")
+	addr, ok := flow.StableAddressOfSymbol(sym, path.Segments)
+	if !ok {
+		t.Fatal("static-member address did not build")
+	}
 	fs := state.FunctionState{
 		InPoints: map[cfg.Point]flow.PointState{
 			point: {
 				StaticMembers: flow.StaticMemberFactsDomain.Top().
-					With(flow.SymbolPathKey(sym, path.Segments), product.FromType(declaredSig)),
+					WithAddress(addr, product.FromType(declaredSig)),
 				FunctionRefs: flow.WithFunctionRef(nil, path.Key(), flow.FunctionRefSetOf(canonref.ToFlow(ref))),
 			},
 		},

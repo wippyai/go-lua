@@ -400,7 +400,11 @@ func pointStaticMembersJoinOneSided(
 		if joined.IsZero() || joined.IsBottom() {
 			continue
 		}
-		out = out.With(entry.Path, joined)
+		addr, ok := StableAddressFromKey(entry.Path)
+		if !ok {
+			continue
+		}
+		out = out.WithAddress(addr, joined)
 	}
 	return out
 }

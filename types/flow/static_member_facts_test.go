@@ -34,13 +34,13 @@ func TestStaticMemberFactsJoinKeepsCommonProvenPaths(t *testing.T) {
 	})
 
 	joined := StaticMemberFactsDomain.Join(left, right)
-	if _, ok := joined.Value(pIndex); ok {
+	if _, ok := joined.ValueAtAddress(testStableAddressKey(t, pIndex)); ok {
 		t.Fatal("join kept string-index fact not proven by both predecessors")
 	}
-	if _, ok := joined.Value(pInt); ok {
+	if _, ok := joined.ValueAtAddress(testStableAddressKey(t, pInt)); ok {
 		t.Fatal("join kept int-index fact not proven by both predecessors")
 	}
-	got, ok := joined.Value(pField)
+	got, ok := joined.ValueAtAddress(testStableAddressKey(t, pField))
 	if !ok {
 		t.Fatal("join dropped common field fact")
 	}
@@ -62,14 +62,14 @@ func TestStaticMemberFactsKillSubtreeUsesStructuralPathPrefix(t *testing.T) {
 		{Path: other, Value: product.FromType(typ.Boolean)},
 	})
 
-	killed := facts.KillSubtree(root)
-	if _, ok := killed.Value(pField); ok {
+	killed := facts.KillSubtreeAddress(testStableAddressKey(t, root))
+	if _, ok := killed.ValueAtAddress(testStableAddressKey(t, pField)); ok {
 		t.Fatal("root kill kept dot-field fact")
 	}
-	if _, ok := killed.Value(pIndex); ok {
+	if _, ok := killed.ValueAtAddress(testStableAddressKey(t, pIndex)); ok {
 		t.Fatal("root kill kept string-index fact")
 	}
-	if _, ok := killed.Value(other); !ok {
+	if _, ok := killed.ValueAtAddress(testStableAddressKey(t, other)); !ok {
 		t.Fatal("root kill removed unrelated symbol fact")
 	}
 }
@@ -93,9 +93,6 @@ func TestStaticMemberFactsAddressAPIIsCanonicalSurface(t *testing.T) {
 	}
 	if !typ.TypeEquals(got.ProjectValue(), typ.String) {
 		t.Fatalf("address value = %s, want string", got.ProjectValue())
-	}
-	if got, ok := facts.Value(child.Key()); !ok || !typ.TypeEquals(got.ProjectValue(), typ.String) {
-		t.Fatalf("compat PathKey lookup lost address fact: %s/%v", got.ProjectValue(), ok)
 	}
 	killed := facts.KillSubtreeAddress(parent)
 	if _, ok := killed.ValueAtAddress(child); ok {

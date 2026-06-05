@@ -49,17 +49,6 @@ func (f StaticMemberFacts) Entries() []StaticMemberFact {
 	return append([]StaticMemberFact(nil), f.entries...)
 }
 
-// Value returns the fact for path if it is proven in a reachable state.
-// TODO(address-vocabulary): migrate callers to ValueAtAddress and remove this
-// PathKey compatibility wrapper.
-func (f StaticMemberFacts) Value(path constraint.PathKey) (product.AbstractValue, bool) {
-	addr, ok := StableAddressFromKey(path)
-	if !ok {
-		return product.Domain.Bottom(), false
-	}
-	return f.ValueAtAddress(addr)
-}
-
 // ValueAtAddress returns the fact for addr if it is proven in a reachable state.
 func (f StaticMemberFacts) ValueAtAddress(addr StableAddress) (product.AbstractValue, bool) {
 	if f.bottom || len(f.entries) == 0 {
@@ -74,18 +63,6 @@ func (f StaticMemberFacts) ValueAtAddress(addr StableAddress) (product.AbstractV
 		return product.Domain.Bottom(), false
 	}
 	return f.entries[idx].Value, true
-}
-
-// With returns f with path strongly updated to value. Updating to Bottom removes
-// the key, preserving absent-is-no-fact canonical form.
-// TODO(address-vocabulary): migrate callers to WithAddress and remove this
-// PathKey compatibility wrapper.
-func (f StaticMemberFacts) With(path constraint.PathKey, value product.AbstractValue) StaticMemberFacts {
-	addr, ok := StableAddressFromKey(path)
-	if !ok {
-		return f
-	}
-	return f.WithAddress(addr, value)
 }
 
 // WithAddress returns f with addr strongly updated to value. Updating to Bottom
@@ -108,17 +85,6 @@ func (f StaticMemberFacts) WithAddress(addr StableAddress, value product.Abstrac
 		next = append(next, StaticMemberFact{Path: path, Value: value})
 	}
 	return canonicalStaticMemberFacts(next, product.Domain.Join)
-}
-
-// KillSubtree removes facts at root and under root's structural path suffix.
-// TODO(address-vocabulary): migrate callers to KillSubtreeAddress and remove
-// this PathKey compatibility wrapper.
-func (f StaticMemberFacts) KillSubtree(root constraint.PathKey) StaticMemberFacts {
-	rootAddr, ok := StableAddressFromKey(root)
-	if !ok {
-		return f
-	}
-	return f.KillSubtreeAddress(rootAddr)
 }
 
 // KillSubtreeAddress removes facts at root and under root's structural suffix.

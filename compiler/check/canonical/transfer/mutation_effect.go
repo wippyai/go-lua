@@ -113,16 +113,22 @@ func (t *Transfer) invalidateStaticMembersForPlace(out *flow.PointState, place P
 				Version:  path.Version,
 				Segments: append([]constraint.Segment(nil), path.Segments[:i]...),
 			}
-			out.StaticMembers = out.StaticMembers.With(flow.SymbolPathKey(prefix.Symbol, prefix.Segments), product.Domain.Bottom())
+			if prefixAddr, ok := flow.StableAddressOfPath(prefix); ok {
+				out.StaticMembers = out.StaticMembers.WithAddress(prefixAddr, product.Domain.Bottom())
+			}
 		}
-		out.StaticMembers = out.StaticMembers.KillSubtree(flow.SymbolPathKey(path.Symbol, path.Segments))
+		if addr, ok := flow.StableAddressOfPath(path); ok {
+			out.StaticMembers = out.StaticMembers.KillSubtreeAddress(addr)
+		}
 		return !flow.StaticMemberFactsDomain.Equal(before, out.StaticMembers)
 	}
 	path, ok := place.StaticPrefixPath()
 	if !ok || path.Symbol == 0 {
 		return false
 	}
-	out.StaticMembers = out.StaticMembers.KillSubtree(flow.SymbolPathKey(path.Symbol, path.Segments))
+	if addr, ok := flow.StableAddressOfPath(path); ok {
+		out.StaticMembers = out.StaticMembers.KillSubtreeAddress(addr)
+	}
 	return !flow.StaticMemberFactsDomain.Equal(before, out.StaticMembers)
 }
 

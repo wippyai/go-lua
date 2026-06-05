@@ -304,7 +304,7 @@ func TestTransferTypeCastNarrowNormalizesConstKeyPath(t *testing.T) {
 	out := tr.Transfer(in.Graph, callPoint, incoming, nil, nil)
 
 	segs := []constraint.Segment{{Kind: constraint.SegmentIndexString, Name: "p-q"}}
-	fact, ok := out.StaticMembers.Value(flow.SymbolPathKey(objSym, segs))
+	fact, ok := testStaticMemberValue(t, out.StaticMembers, objSym, segs)
 	if !ok || !typ.TypeEquals(fact.ProjectValue(), pointType) {
 		t.Fatalf("const-key type-cast fact = %v/%v; want %v", fact.ProjectValue(), ok, pointType)
 	}

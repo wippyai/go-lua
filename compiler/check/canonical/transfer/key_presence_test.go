@@ -541,7 +541,7 @@ func TestGenericForRebindingKillsKeyPresenceBeforeIteratorTypingGate(t *testing.
 	tr := New(input.Inputs{}, Config{})
 	out := flow.PointState{
 		KeyPresence:   flow.KeyPresenceFacts{}.WithValuePaths(tablePath, keyPath, valuePath),
-		StaticMembers: flow.StaticMemberFacts{}.With(staleFieldKey, product.FromType(typ.String)),
+		StaticMembers: flow.StaticMemberFacts{}.WithAddress(testStaticMemberAddressKey(t, staleFieldKey), product.FromType(typ.String)),
 		FunctionRefs:  flow.WithFunctionRef(nil, staleField.Key(), flow.FunctionRefSetOf(flow.FunctionRef{GraphID: 74})),
 		Rel:           flow.PointRelations{}.WithSiblingNil(valueSym, []cfg.SymbolID{keySym}),
 	}
@@ -557,7 +557,7 @@ func TestGenericForRebindingKillsKeyPresenceBeforeIteratorTypingGate(t *testing.
 	if out.KeyPresence.HasPaths(tablePath, keyPath) || out.KeyPresence.HasValuePaths(tablePath, keyPath, valuePath) {
 		t.Fatalf("generic-for rebinding kept stale KeyPresence: %s", out.KeyPresence.Format())
 	}
-	if _, ok := out.StaticMembers.Value(staleFieldKey); ok {
+	if _, ok := out.StaticMembers.ValueAtAddress(testStaticMemberAddressKey(t, staleFieldKey)); ok {
 		t.Fatalf("generic-for rebinding kept stale StaticMembers: %s", out.StaticMembers.Format())
 	}
 	if _, ok := flow.FunctionRefAt(out.FunctionRefs, staleField.Key()); ok {

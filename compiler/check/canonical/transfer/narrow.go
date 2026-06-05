@@ -1938,8 +1938,11 @@ func (t *Transfer) refineStaticMemberFactForLiteralComparison(
 	if out == nil || sym == 0 || len(segments) == 0 || lit == nil {
 		return false
 	}
-	pathKey := flow.SymbolPathKey(sym, segments)
-	existing, ok := out.StaticMembers.Value(pathKey)
+	addr, ok := flow.StableAddressOfSymbol(sym, segments)
+	if !ok {
+		return false
+	}
+	existing, ok := out.StaticMembers.ValueAtAddress(addr)
 	if !ok || existing.IsZero() {
 		return false
 	}
@@ -1961,10 +1964,10 @@ func (t *Transfer) refineStaticMemberFactForLiteralComparison(
 		return true
 	}
 	if !next.DefinitelyPresent() {
-		out.StaticMembers = out.StaticMembers.KillSubtree(pathKey)
+		out.StaticMembers = out.StaticMembers.KillSubtreeAddress(addr)
 		return true
 	}
-	out.StaticMembers = out.StaticMembers.With(pathKey, next)
+	out.StaticMembers = out.StaticMembers.WithAddress(addr, next)
 	return true
 }
 

@@ -82,12 +82,12 @@ func TestPointStateJoinKeepsCommonStaticMemberFact(t *testing.T) {
 		{Kind: constraint.SegmentField, Name: "data_targets"},
 	})
 	installed := reachableEmptyPointState()
-	installed.StaticMembers = installed.StaticMembers.With(path, product.FromType(typ.NewRecord().Build()))
+	installed.StaticMembers = installed.StaticMembers.WithAddress(testStableAddressKey(t, path), product.FromType(typ.NewRecord().Build()))
 	present := reachableEmptyPointState()
-	present.StaticMembers = present.StaticMembers.With(path, product.PresentDynamic())
+	present.StaticMembers = present.StaticMembers.WithAddress(testStableAddressKey(t, path), product.PresentDynamic())
 
 	joined := PointStateDomain.Join(installed, present)
-	got, ok := joined.StaticMembers.Value(path)
+	got, ok := joined.StaticMembers.ValueAtAddress(testStableAddressKey(t, path))
 	if !ok || got.IsZero() {
 		t.Fatalf("join dropped common static member fact: %s", joined.StaticMembers.Format())
 	}
@@ -239,8 +239,8 @@ func TestPointStateJoinDropsOneBranchMustFacts(t *testing.T) {
 
 	empty := reachableEmptyPointState()
 	factful := reachableEmptyPointState()
-	factful.StaticMembers = factful.StaticMembers.With(
-		KeyPresencePathKey(table.IndexStr("root")),
+	factful.StaticMembers = factful.StaticMembers.WithAddress(
+		testStableAddressKey(t, KeyPresencePathKey(table.IndexStr("root"))),
 		product.FromType(typ.String),
 	)
 	factful.KeyPresence = factful.KeyPresence.
@@ -304,7 +304,7 @@ func reachableEmptyPointState() PointState {
 
 func assertPointStateDroppedOneBranchMustFacts(t *testing.T, ps PointState, table, key, valuePath constraint.Path, errSym cfg.SymbolID) {
 	t.Helper()
-	if _, ok := ps.StaticMembers.Value(KeyPresencePathKey(table.IndexStr("root"))); ok {
+	if _, ok := ps.StaticMembers.ValueAtAddress(testStableAddressKey(t, KeyPresencePathKey(table.IndexStr("root")))); ok {
 		t.Fatalf("PointState kept one-branch StaticMembers fact: %s", ps.StaticMembers.Format())
 	}
 	if ps.KeyPresence.HasPaths(table, key) || ps.KeyPresence.HasValuePaths(table, key, valuePath) {

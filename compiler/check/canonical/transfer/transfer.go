@@ -1645,7 +1645,9 @@ func (t *Transfer) installStaticMemberWriteFact(out *flow.PointState, sym cfg.Sy
 	if out == nil || sym == 0 || len(segs) == 0 || val.IsZero() || !val.DefinitelyPresent() {
 		return
 	}
-	out.StaticMembers = out.StaticMembers.With(flow.SymbolPathKey(sym, segs), val)
+	if addr, ok := flow.StableAddressOfSymbol(sym, segs); ok {
+		out.StaticMembers = out.StaticMembers.WithAddress(addr, val)
+	}
 }
 
 func (t *Transfer) referenceWritesForAssignedPlace(
@@ -2053,6 +2055,14 @@ func (t *Transfer) staticMemberExprPathKey(expr ast.Expr) (constraint.PathKey, b
 	return symbolPathKey(place)
 }
 
+func (t *Transfer) staticMemberExprAddress(expr ast.Expr) (flow.StableAddress, bool) {
+	place, ok := t.staticPlaceOfExpr(expr)
+	if !ok {
+		return flow.StableAddress{}, false
+	}
+	return symbolStableAddress(place)
+}
+
 func (t *Transfer) staticMemberExprPathKeyAt(out *flow.PointState, p cfg.Point, expr ast.Expr) (constraint.PathKey, bool) {
 	if out == nil {
 		return t.staticMemberExprPathKey(expr)
@@ -2062,6 +2072,17 @@ func (t *Transfer) staticMemberExprPathKeyAt(out *flow.PointState, p cfg.Point, 
 		return t.staticMemberExprPathKey(expr)
 	}
 	return symbolPathKey(place)
+}
+
+func (t *Transfer) staticMemberExprAddressAt(out *flow.PointState, p cfg.Point, expr ast.Expr) (flow.StableAddress, bool) {
+	if out == nil {
+		return t.staticMemberExprAddress(expr)
+	}
+	place, ok := t.placeOfExprAt(out, p, expr, nil)
+	if !ok {
+		return t.staticMemberExprAddress(expr)
+	}
+	return symbolStableAddress(place)
 }
 
 func fieldSegments(names []string) []constraint.Segment {
@@ -3053,8 +3074,8 @@ func (t *Transfer) projectIdentValue(out *flow.PointState, e *ast.IdentExpr) (pr
 
 func (t *Transfer) projectAttrGetValue(out *flow.PointState, e *ast.AttrGetExpr) (product.AbstractValue, bool) {
 	if out != nil {
-		if pathKey, hasPath := t.staticMemberExprPathKey(e); hasPath {
-			if fact, ok := out.StaticMembers.Value(pathKey); ok {
+		if addr, hasPath := t.staticMemberExprAddress(e); hasPath {
+			if fact, ok := out.StaticMembers.ValueAtAddress(addr); ok {
 				return fact, true
 			}
 		}
@@ -4068,8 +4089,8 @@ func (t *Transfer) evalAttrGet(
 	e *ast.AttrGetExpr,
 	demand func(int, paramevidence.ParamContract),
 ) (product.AbstractValue, bool) {
-	if pathKey, hasPath := t.staticMemberExprPathKey(e); hasPath {
-		if fact, ok := out.StaticMembers.Value(pathKey); ok {
+	if addr, hasPath := t.staticMemberExprAddress(e); hasPath {
+		if fact, ok := out.StaticMembers.ValueAtAddress(addr); ok {
 			return fact, true
 		}
 	}
@@ -4114,8 +4135,8 @@ func (t *Transfer) evalAttrGetAt(
 	e *ast.AttrGetExpr,
 	demand func(int, paramevidence.ParamContract),
 ) (product.AbstractValue, bool) {
-	if pathKey, hasPath := t.staticMemberExprPathKeyAt(out, p, e); hasPath {
-		if fact, ok := out.StaticMembers.Value(pathKey); ok {
+	if addr, hasPath := t.staticMemberExprAddressAt(out, p, e); hasPath {
+		if fact, ok := out.StaticMembers.ValueAtAddress(addr); ok {
 			return fact, true
 		}
 	}

@@ -30,7 +30,7 @@ func TestSymbolWriteEffectClearsStaleProductAxes(t *testing.T) {
 		Env: map[flow.ValueKey]product.AbstractValue{
 			flow.SymbolValueKey(sym): product.FromType(typ.Number),
 		},
-		StaticMembers: flow.StaticMemberFacts{}.With(fieldKey, product.FromType(typ.Boolean)),
+		StaticMembers: flow.StaticMemberFacts{}.WithAddress(testStaticMemberAddressKey(t, fieldKey), product.FromType(typ.Boolean)),
 		KeyPresence:   flow.KeyPresenceFacts{}.WithPaths(root, constraint.NewPath(cfg.SymbolID(202), "k")),
 		IndexWrites: flow.IndexWriteAdmissionFacts{}.With(flow.IndexWriteAdmissionFact{
 			Target: flow.SymbolPathKey(sym, []constraint.Segment{{Kind: constraint.SegmentField, Name: "items"}}),
@@ -53,7 +53,7 @@ func TestSymbolWriteEffectClearsStaleProductAxes(t *testing.T) {
 	if got := out.Env[flow.SymbolValueKey(sym)].ProjectValue(); !typ.TypeEquals(got, typ.String) {
 		t.Fatalf("symbol value = %v, want string", got)
 	}
-	if _, ok := out.StaticMembers.Value(fieldKey); ok {
+	if _, ok := out.StaticMembers.ValueAtAddress(testStaticMemberAddressKey(t, fieldKey)); ok {
 		t.Fatalf("stale static member survived symbol write: %s", out.StaticMembers.Format())
 	}
 	if out.KeyPresence.HasPaths(root, constraint.NewPath(cfg.SymbolID(202), "k")) {
@@ -124,7 +124,7 @@ func TestUnresolvedContainerWriteInvalidatesStaleProductAxes(t *testing.T) {
 		Env: map[flow.ValueKey]product.AbstractValue{
 			flow.SymbolValueKey(baseSym): product.FromType(typ.NewRecord().Field("field", typ.String).Build()),
 		},
-		StaticMembers: flow.StaticMemberFacts{}.With(fieldKey, product.FromType(typ.String)),
+		StaticMembers: flow.StaticMemberFacts{}.WithAddress(testStaticMemberAddressKey(t, fieldKey), product.FromType(typ.String)),
 		KeyPresence:   flow.KeyPresenceFacts{}.WithPaths(fieldPath, constraint.NewPath(cfg.SymbolID(304), "k")),
 		IndexWrites: flow.IndexWriteAdmissionFacts{}.With(flow.IndexWriteAdmissionFact{
 			Target: flow.SymbolPathKey(baseSym, fieldPath.Segments),
@@ -142,7 +142,7 @@ func TestUnresolvedContainerWriteInvalidatesStaleProductAxes(t *testing.T) {
 		FieldPath:  []string{"field"},
 	}, &ast.IdentExpr{Value: "unresolved"}, nil)
 
-	if _, ok := out.StaticMembers.Value(fieldKey); ok {
+	if _, ok := out.StaticMembers.ValueAtAddress(testStaticMemberAddressKey(t, fieldKey)); ok {
 		t.Fatalf("stale static member survived unresolved container write: %s", out.StaticMembers.Format())
 	}
 	if out.KeyPresence.HasPaths(fieldPath, constraint.NewPath(cfg.SymbolID(304), "k")) {

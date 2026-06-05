@@ -82,7 +82,7 @@ func TestPointFactsPathValueUsesStaticMemberFactsBeforeRootTraversal(t *testing.
 				Build()),
 		},
 		StaticMembers: StaticMemberFactsDomain.Top().
-			With(SymbolPathKey(sym, path.Segments), product.FromType(typ.Number)),
+			WithAddress(testStableAddressKey(t, SymbolPathKey(sym, path.Segments)), product.FromType(typ.Number)),
 	}
 
 	got, ok := PointFactsOf(state).PathType(path)
@@ -104,7 +104,7 @@ func TestPointFactsChildPathFactsEnumeratesDirectMaterializedChildren(t *testing
 				Build()),
 		},
 		StaticMembers: StaticMemberFactsDomain.Top().
-			With(SymbolPathKey(sym, id.Segments), product.FromType(typ.Number)),
+			WithAddress(testStableAddressKey(t, SymbolPathKey(sym, id.Segments)), product.FromType(typ.Number)),
 	}
 
 	rootChildren := PointFactsOf(state).ChildPathFacts(root)
