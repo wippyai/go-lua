@@ -83,14 +83,18 @@ func RefineCallbackArgTypes(in CallbackArgRefinementInput) []typ.Type {
 // ordinary call matcher. Callback argument normalization consumes this as entry
 // evidence for nested callback bodies.
 type ExpectedArgsInput struct {
-	Call               *ast.FuncCallExpr
-	ArgTypes           []typ.Type
-	CallbackArg        func(ast.Expr) bool
-	Resolver           TypeResolver
-	Ctx                *db.QueryContext
-	Query              core.TypeOps
-	MethodReceiverType typ.Type
-	ResolveTypeArg     func(ast.TypeExpr) typ.Type
+	Call                *ast.FuncCallExpr
+	ArgTypes            []typ.Type
+	CallbackArg         func(ast.Expr) bool
+	Resolver            TypeResolver
+	Ctx                 *db.QueryContext
+	Query               core.TypeOps
+	Callee              typ.Type
+	IsMethod            bool
+	MethodName          string
+	MethodReceiverType  typ.Type
+	ForceMethodReceiver bool
+	ResolveTypeArg      func(ast.TypeExpr) typ.Type
 }
 
 // ExpectedArgTypesForCall returns the callee-visible argument types inferred by
@@ -106,13 +110,21 @@ func ExpectedArgTypesForCall(in ExpectedArgsInput) []typ.Type {
 	if len(in.Call.TypeArgs) > 0 {
 		def.TypeArgs = resolvedTypeArgs(in.Call.TypeArgs, in.ResolveTypeArg)
 	}
-	if in.Call.Method != "" {
+	isMethod := in.IsMethod || in.Call.Method != ""
+	methodName := in.MethodName
+	if methodName == "" {
+		methodName = in.Call.Method
+	}
+	if isMethod {
 		def.IsMethod = true
 		def.Receiver = in.MethodReceiverType
 		if def.Receiver == nil || typ.IsAbsentOrUnknown(def.Receiver) {
 			def.Receiver = in.Resolver.ResolveReceiver(in.Call.Receiver)
 		}
-		def.MethodName = in.Call.Method
+		def.MethodName = methodName
+		def.ForceMethodReceiver = in.ForceMethodReceiver
+	} else if in.Callee != nil {
+		def.Callee = in.Callee
 	} else {
 		def.Callee = in.Resolver.ResolveCallee(in.Call.Func)
 	}

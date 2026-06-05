@@ -58,7 +58,6 @@ import (
 	"github.com/wippyai/go-lua/compiler/check/modules"
 	"github.com/wippyai/go-lua/compiler/check/scope"
 	phasecore "github.com/wippyai/go-lua/compiler/check/synth/core"
-	"github.com/wippyai/go-lua/compiler/check/synth/ops"
 	"github.com/wippyai/go-lua/compiler/check/synth/resolve"
 	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/contract"
@@ -1535,25 +1534,37 @@ func (p *program) expectedCallArgType(g *cfg.Graph, tr *transfer.Transfer, point
 	call := info.Call
 	ctx := tr.ProductCallContext(in, call)
 	ct := callTyper{d: p.driver, g: g}
-	def := ops.CallDef{
-		Args:  productShallowCallArgTypes(ctx, call.Args),
-		Query: p.driver.cfg.Types,
-	}
+	forceMethodReceiver := false
 	if ref, ok := p.refByGraph(g); ok {
-		def.ForceMethodReceiver = callsite.ForceMethodReceiverAtPoint(g.Bindings(), g, p.inputs[ref].Evidence, point, call)
+		forceMethodReceiver = callsite.ForceMethodReceiverAtPoint(g.Bindings(), g, p.inputs[ref].Evidence, point, call)
 	}
-	if callsite.IsMethodCallInfo(info) {
-		def.IsMethod = true
-		def.Receiver = ctx.SelfType
-		if def.Receiver == nil || typ.IsAbsentOrUnknown(def.Receiver) {
-			def.Receiver = ctx.ExprType(info.Receiver)
-		}
-		def.MethodName = info.Method
-	} else {
-		def.Callee = ct.expectedCalleeTypeForCall(info.Callee, call, ctx)
+	methodReceiver := ctx.SelfType
+	if methodReceiver == nil || typ.IsAbsentOrUnknown(methodReceiver) {
+		methodReceiver = ctx.ExprType(info.Receiver)
 	}
-	inferred := ops.InferCall(p.driver.activeCtx, def)
-	expected := inferred.ExpectedArgType(argIdx)
+	callee := typ.Type(nil)
+	if !callsite.IsMethodCallInfo(info) {
+		callee = ct.expectedCalleeTypeForCall(info.Callee, call, ctx)
+	}
+	expectedArgs := canonicalcall.ExpectedArgTypesForCall(canonicalcall.ExpectedArgsInput{
+		Call:                call,
+		ArgTypes:            productShallowCallArgTypes(ctx, call.Args),
+		Resolver:            ct.callTypeResolver(ctx.ExprType),
+		Ctx:                 p.driver.activeCtx,
+		Query:               p.driver.cfg.Types,
+		Callee:              callee,
+		IsMethod:            callsite.IsMethodCallInfo(info),
+		MethodName:          info.Method,
+		MethodReceiverType:  methodReceiver,
+		ForceMethodReceiver: forceMethodReceiver,
+		ResolveTypeArg: func(expr ast.TypeExpr) typ.Type {
+			return p.driver.resolveType(expr, p.driver.baseScope())
+		},
+	})
+	if argIdx >= len(expectedArgs) {
+		return nil
+	}
+	expected := expectedArgs[argIdx]
 	if expected == nil || typ.IsAbsentOrUnknown(expected) || typ.IsAny(expected) {
 		return nil
 	}
