@@ -892,17 +892,19 @@ type productReturnFunctionRefsTestTyper struct {
 	args []product.AbstractValue
 }
 
-func (t *productReturnFunctionRefsTestTyper) CallReturnFunctionRefsFromValues(
+func (t *productReturnFunctionRefsTestTyper) CallReturnRefsFromValues(
 	_ *ast.FuncCallExpr,
 	ctx ProductCallContext,
-) []flow.FunctionRefs {
+) CallReturnRefs {
 	t.args = append([]product.AbstractValue(nil), ctx.ArgValues...)
-	return []flow.FunctionRefs{
-		flow.WithFunctionRef(nil, constraint.NewPlaceholder(0).Field("with_options").Key(), flow.FunctionRefSetOf(t.ref)),
+	return CallReturnRefs{
+		FunctionRefs: []flow.FunctionRefs{
+			flow.WithFunctionRef(nil, constraint.NewPlaceholder(0).Field("with_options").Key(), flow.FunctionRefSetOf(t.ref)),
+		},
 	}
 }
 
-var _ productCallReturnFunctionRefsProvider = (*productReturnFunctionRefsTestTyper)(nil)
+var _ productCallReturnRefsProvider = (*productReturnFunctionRefsTestTyper)(nil)
 
 type returnClosureRefsTestTyper struct {
 	captureEffectTyper
@@ -913,10 +915,12 @@ func (t returnClosureRefsTestTyper) CallReturns(*ast.FuncCallExpr, []typ.Type, f
 	return []typ.Type{typ.NewRecord().Field("with_options", typ.Func().Build()).Build()}, true
 }
 
-func (t returnClosureRefsTestTyper) CallReturnClosureRefsFromValues(*ast.FuncCallExpr, ProductCallContext) []flow.ClosureRefs {
-	return []flow.ClosureRefs{
-		flow.WithClosureRef(nil, constraint.NewPlaceholder(0).Field("with_options").Key(), flow.ClosureRefSetOf(t.closure)),
+func (t returnClosureRefsTestTyper) CallReturnRefsFromValues(*ast.FuncCallExpr, ProductCallContext) CallReturnRefs {
+	return CallReturnRefs{
+		ClosureRefs: []flow.ClosureRefs{
+			flow.WithClosureRef(nil, constraint.NewPlaceholder(0).Field("with_options").Key(), flow.ClosureRefSetOf(t.closure)),
+		},
 	}
 }
 
-var _ productCallReturnClosureRefsProvider = returnClosureRefsTestTyper{}
+var _ productCallReturnRefsProvider = returnClosureRefsTestTyper{}

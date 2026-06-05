@@ -1279,7 +1279,7 @@ func (p *program) callEntryFunctionArgTreeRefs(g *cfg.Graph, tr *transfer.Transf
 	if !ok {
 		return flow.FunctionRefsDomain.Bottom(), false
 	}
-	returns := (callTyper{d: p.driver, g: g}).CallReturnFunctionRefsFromValues(call, tr.ProductCallContext(in, call))
+	returns := (callTyper{d: p.driver, g: g}).CallReturnRefsFromValues(call, tr.ProductCallContext(in, call)).FunctionRefs
 	if len(returns) == 0 || flow.FunctionRefsDomain.Equal(returns[0], flow.FunctionRefsDomain.Bottom()) {
 		return flow.FunctionRefsDomain.Bottom(), false
 	}
@@ -1319,7 +1319,7 @@ func (p *program) callEntryClosureArgTreeRefs(g *cfg.Graph, tr *transfer.Transfe
 	if !ok {
 		return flow.ClosureRefsDomain.Bottom(), false
 	}
-	returns := (callTyper{d: p.driver, g: g}).CallReturnClosureRefsFromValues(call, tr.ProductCallContext(in, call))
+	returns := (callTyper{d: p.driver, g: g}).CallReturnRefsFromValues(call, tr.ProductCallContext(in, call)).ClosureRefs
 	if len(returns) == 0 || flow.ClosureRefsDomain.Equal(returns[0], flow.ClosureRefsDomain.Bottom()) {
 		return flow.ClosureRefsDomain.Bottom(), false
 	}
@@ -2603,7 +2603,7 @@ func (ct callTyper) callEntryFunctionArgTreeRefs(arg ast.Expr, ctx transfer.Prod
 	if !ok {
 		return flow.FunctionRefsDomain.Bottom(), false
 	}
-	returns := ct.CallReturnFunctionRefsFromValues(call, ctx.ForCall(call))
+	returns := ct.CallReturnRefsFromValues(call, ctx.ForCall(call)).FunctionRefs
 	if len(returns) == 0 || flow.FunctionRefsDomain.Equal(returns[0], flow.FunctionRefsDomain.Bottom()) {
 		return flow.FunctionRefsDomain.Bottom(), false
 	}
@@ -2644,7 +2644,7 @@ func (ct callTyper) callEntryClosureArgTreeRefs(arg ast.Expr, ctx transfer.Produ
 	if !ok {
 		return flow.ClosureRefsDomain.Bottom(), false
 	}
-	returns := ct.CallReturnClosureRefsFromValues(call, ctx.ForCall(call))
+	returns := ct.CallReturnRefsFromValues(call, ctx.ForCall(call)).ClosureRefs
 	if len(returns) == 0 || flow.ClosureRefsDomain.Equal(returns[0], flow.ClosureRefsDomain.Bottom()) {
 		return flow.ClosureRefsDomain.Bottom(), false
 	}
@@ -2690,20 +2690,16 @@ func (ct callTyper) CallReturnFunctionRefs(call *ast.FuncCallExpr, exprType func
 	return ct.callOutcomeForTypedCall(call, exprType, cells, refs).ReturnFunctionRefs()
 }
 
-func (ct callTyper) CallReturnFunctionRefsFromValues(call *ast.FuncCallExpr, ctx transfer.ProductCallContext) []flow.FunctionRefs {
+func (ct callTyper) CallReturnRefsFromValues(call *ast.FuncCallExpr, ctx transfer.ProductCallContext) transfer.CallReturnRefs {
 	d := ct.d
 	if d == nil || call == nil || d.activeProgram == nil {
-		return nil
+		return transfer.CallReturnRefs{}
 	}
-	return ct.summaryOnlyProductCallOutcome(call, ctx).ReturnFunctionRefs()
-}
-
-func (ct callTyper) CallReturnClosureRefsFromValues(call *ast.FuncCallExpr, ctx transfer.ProductCallContext) []flow.ClosureRefs {
-	d := ct.d
-	if d == nil || call == nil || d.activeProgram == nil {
-		return nil
+	outcome := ct.summaryOnlyProductCallOutcome(call, ctx)
+	return transfer.CallReturnRefs{
+		FunctionRefs: outcome.ReturnFunctionRefs(),
+		ClosureRefs:  outcome.ReturnClosureRefs(),
 	}
-	return ct.summaryOnlyProductCallOutcome(call, ctx).ReturnClosureRefs()
 }
 
 // ReturnRelations resolves the callee's caller-visible return relations through

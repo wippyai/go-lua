@@ -311,12 +311,16 @@ type callReturnFunctionRefsProvider interface {
 	CallReturnFunctionRefs(call *ast.FuncCallExpr, exprType func(ast.Expr) typ.Type, cells flow.CaptureCells, refs flow.FunctionRefs) []flow.FunctionRefs
 }
 
-type productCallReturnFunctionRefsProvider interface {
-	CallReturnFunctionRefsFromValues(call *ast.FuncCallExpr, ctx ProductCallContext) []flow.FunctionRefs
+// CallReturnRefs is the product-call boundary for callable identities returned
+// by a callee. Function and closure refs are projected from the same selected
+// call outcome, so product callers consume them through one provider.
+type CallReturnRefs struct {
+	FunctionRefs []flow.FunctionRefs
+	ClosureRefs  []flow.ClosureRefs
 }
 
-type productCallReturnClosureRefsProvider interface {
-	CallReturnClosureRefsFromValues(call *ast.FuncCallExpr, ctx ProductCallContext) []flow.ClosureRefs
+type productCallReturnRefsProvider interface {
+	CallReturnRefsFromValues(call *ast.FuncCallExpr, ctx ProductCallContext) CallReturnRefs
 }
 
 type cellEffectProvider interface {
@@ -1726,9 +1730,9 @@ func (t *Transfer) callReturnFunctionRefsForPlace(
 	if !ok || path.IsEmpty() {
 		return nil, false
 	}
-	if provider, ok := t.callTyper.(productCallReturnFunctionRefsProvider); ok {
-		returns := provider.CallReturnFunctionRefsFromValues(call, t.productCallContext(out, call, demand))
-		return rebaseCallReturnFunctionRefs(path, retIndex, returns)
+	if provider, ok := t.callTyper.(productCallReturnRefsProvider); ok {
+		returns := provider.CallReturnRefsFromValues(call, t.productCallContext(out, call, demand))
+		return rebaseCallReturnFunctionRefs(path, retIndex, returns.FunctionRefs)
 	}
 	provider, ok := t.callTyper.(callReturnFunctionRefsProvider)
 	if !ok {
@@ -1826,12 +1830,12 @@ func (t *Transfer) callReturnClosureRefsForPlace(
 	if !ok || path.IsEmpty() {
 		return nil, false
 	}
-	provider, ok := t.callTyper.(productCallReturnClosureRefsProvider)
+	provider, ok := t.callTyper.(productCallReturnRefsProvider)
 	if !ok || provider == nil {
 		return nil, false
 	}
-	returns := provider.CallReturnClosureRefsFromValues(call, t.productCallContext(out, call, demand))
-	return rebaseCallReturnClosureRefs(path, retIndex, returns)
+	returns := provider.CallReturnRefsFromValues(call, t.productCallContext(out, call, demand))
+	return rebaseCallReturnClosureRefs(path, retIndex, returns.ClosureRefs)
 }
 
 func rebaseCallReturnClosureRefs(
