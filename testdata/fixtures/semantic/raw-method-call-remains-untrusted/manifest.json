@@ -1,6 +1,3 @@
 {
-  "description": "Method or function fields on an untrusted table do not prove callable signatures.",
-  "run": {
-    "skip": "checker-only soundness fixture"
-  }
+  "description": "Method or function fields on an untrusted table do not prove callable signatures."
 }

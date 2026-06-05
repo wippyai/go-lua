@@ -1,6 +1,3 @@
 {
-  "description": "A raw callback with no proof cannot satisfy a typed callback contract at assignment or call boundary.",
-  "run": {
-    "skip": "checker-only soundness fixture"
-  }
+  "description": "A raw callback with no proof cannot satisfy a typed callback contract at assignment or call boundary."
 }

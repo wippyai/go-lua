@@ -1,0 +1,8 @@
+{
+  "description": "Cross-module recursive union aliases should preserve discriminant narrowing across imported constructors.",
+  "files": [
+    "protocol.lua",
+    "builder.lua",
+    "main.lua"
+  ]
+}

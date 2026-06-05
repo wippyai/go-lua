@@ -1,0 +1,9 @@
+{
+  "description": "Cross-module generic Result pipelines preserve callback parameter and return inference while rejecting untrusted raw input and mismatched callbacks.",
+  "files": [
+    "protocol.lua",
+    "result.lua",
+    "validator.lua",
+    "main.lua"
+  ]
+}

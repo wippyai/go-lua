@@ -1,0 +1,3 @@
+{
+  "description": "Recursive map chains should keep dynamic map lookups optional while preserving guarded reads."
+}

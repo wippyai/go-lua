@@ -1,6 +1,3 @@
 {
-  "description": "A guard on one array element does not prove the whole untrusted array element type.",
-  "run": {
-    "skip": "checker-only soundness fixture"
-  }
+  "description": "A guard on one array element does not prove the whole untrusted array element type."
 }

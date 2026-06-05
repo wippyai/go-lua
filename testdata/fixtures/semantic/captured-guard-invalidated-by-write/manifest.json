@@ -1,6 +1,3 @@
 {
-  "description": "A closure reading a captured untrusted field must not keep a pre-write field guard alive after mutation.",
-  "run": {
-    "skip": "checker-only soundness fixture"
-  }
+  "description": "A closure reading a captured untrusted field must not keep a pre-write field guard alive after mutation."
 }

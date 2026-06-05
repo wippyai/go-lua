@@ -1,6 +1,3 @@
 {
-  "description": "An explicit cast to any is an untrusted marker: it may suppress unknown-shape lint but cannot prove record, field, or call-argument obligations.",
-  "run": {
-    "skip": "checker-only soundness fixture"
-  }
+  "description": "An explicit cast to any is an untrusted marker: it may suppress unknown-shape lint but cannot prove record, field, or call-argument obligations."
 }

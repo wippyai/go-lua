@@ -4,8 +4,5 @@
     "protocol.lua",
     "provider.lua",
     "main.lua"
-  ],
-  "run": {
-    "skip": "checker-only soundness fixture"
-  }
+  ]
 }
