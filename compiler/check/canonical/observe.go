@@ -456,6 +456,7 @@ func (f *canonicalFacts) CallReturnTypesAt(point cfg.Point, call *ast.FuncCallEx
 					callCtx.ExprType,
 					callCtx.Cells,
 					callCtx.FunctionRefs,
+					flow.ClosureRefsDomain.Bottom(),
 					callCtx.SelfType,
 				)
 			},

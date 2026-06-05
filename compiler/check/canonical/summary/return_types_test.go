@@ -96,3 +96,19 @@ func TestFunctionSignatureWithProjectedReturnsDoesNotRewriteParamsFromSummary(t 
 		t.Fatalf("returns = %#v, want [number]", got.Returns)
 	}
 }
+
+func TestFunctionSignatureWithEntryParamsAndProjectedReturnsRefinesGradualCallableParam(t *testing.T) {
+	sig := typ.Func().OptParam("node", typ.Any).Returns(typ.Any).Build()
+	got := FunctionSignatureWithEntryParamsAndProjectedReturns(sig, false, Summary{
+		Returns: []product.AbstractValue{product.FromType(typ.String)},
+	}, EntryValues{0: product.FromType(typ.NewRecord().Field("id", typ.String).Build())})
+	if got == nil || len(got.Params) != 1 {
+		t.Fatalf("signature = %v, want one parameter", got)
+	}
+	if typ.IsAny(got.Params[0].Type) {
+		t.Fatalf("callable entry param remained any: %+v", got.Params[0])
+	}
+	if len(got.Returns) != 1 || !typ.TypeEquals(got.Returns[0], typ.String) {
+		t.Fatalf("returns = %#v, want [string]", got.Returns)
+	}
+}

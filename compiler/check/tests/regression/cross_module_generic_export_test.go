@@ -141,7 +141,7 @@ type Node = {
 }
 
 local function run(ch: Channel<Node>)
-    local out = process.receive_map(ch, function(node): string
+    local out = process.receive_map(ch, function(node)
         return node.id
     end)
     if out then

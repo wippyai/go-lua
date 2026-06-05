@@ -1,6 +1,7 @@
 package summary
 
 import (
+	"github.com/wippyai/go-lua/compiler/check/domain/paramevidence"
 	"github.com/wippyai/go-lua/types/domain/value/product"
 	"github.com/wippyai/go-lua/types/typ"
 	typejoin "github.com/wippyai/go-lua/types/typ/join"
@@ -49,6 +50,82 @@ func FunctionSignatureWithProjectedReturns(sig *typ.Function, hasDeclaredReturns
 	return FunctionSignatureWithSummaryReturns(sig, s)
 }
 
+// FunctionSignatureWithEntryParamsAndProjectedReturns is the callable-value
+// boundary for exact entry contexts. EntryValues are caller-provided product
+// facts, so they can refine gradual source parameters before return projection
+// feeds higher-order generic inference.
+func FunctionSignatureWithEntryParamsAndProjectedReturns(sig *typ.Function, hasDeclaredReturns bool, s Summary, values EntryValues) *typ.Function {
+	if sig == nil {
+		return nil
+	}
+	out := functionSignatureWithEntryParams(sig, values)
+	out = functionSignatureWithProjectedParams(out, s)
+	if hasDeclaredReturns {
+		return out
+	}
+	return FunctionSignatureWithSummaryReturns(out, s)
+}
+
+// functionSignatureWithProjectedParams refines only gradual source parameter
+// slots from solved parameter contracts. Concrete annotations remain
+// authoritative.
+func functionSignatureWithProjectedParams(sig *typ.Function, s Summary) *typ.Function {
+	if sig == nil || len(sig.Params) == 0 || len(s.Params) == 0 {
+		return sig
+	}
+	paramTypes := paramevidence.ContractTypes(s.Params)
+	if len(paramTypes) == 0 {
+		return sig
+	}
+	params := append([]typ.Param(nil), sig.Params...)
+	changed := false
+	for slot, t := range paramTypes {
+		if slot < 0 || slot >= len(params) || t == nil || typ.IsAbsentOrUnknown(t) || typ.IsAny(t) || typ.ContainsTypeParam(t) {
+			continue
+		}
+		current := params[slot].Type
+		if current != nil && !typ.IsAbsentOrUnknown(current) && !typ.IsAny(current) {
+			continue
+		}
+		params[slot].Type = t
+		changed = true
+	}
+	if !changed {
+		return sig
+	}
+	return functionSignatureWithParams(sig, params)
+}
+
+// functionSignatureWithEntryParams refines gradual parameter slots from exact
+// entry values. The EntryValues producer already suppresses fixed source
+// annotations, so this helper only has to preserve non-gradual signature slots.
+func functionSignatureWithEntryParams(sig *typ.Function, values EntryValues) *typ.Function {
+	if sig == nil || len(sig.Params) == 0 || len(values) == 0 {
+		return sig
+	}
+	params := append([]typ.Param(nil), sig.Params...)
+	changed := false
+	for slot, av := range values {
+		if slot < 0 || slot >= len(params) || av.IsZero() {
+			continue
+		}
+		t := product.ProjectValueOrUnknown(av)
+		if t == nil || typ.IsAbsentOrUnknown(t) || typ.IsAny(t) || typ.ContainsTypeParam(t) {
+			continue
+		}
+		current := params[slot].Type
+		if current != nil && !typ.IsAbsentOrUnknown(current) && !typ.IsAny(current) {
+			continue
+		}
+		params[slot].Type = t
+		changed = true
+	}
+	if !changed {
+		return sig
+	}
+	return functionSignatureWithParams(sig, params)
+}
+
 // FunctionSignatureWithReturnTypes returns sig with returns installed, preserving
 // every other function component. Empty returns leave sig unchanged.
 func FunctionSignatureWithReturnTypes(sig *typ.Function, returns []typ.Type) *typ.Function {
@@ -59,4 +136,37 @@ func FunctionSignatureWithReturnTypes(sig *typ.Function, returns []typ.Type) *ty
 		return sig
 	}
 	return typejoin.WithReturns(sig, returns)
+}
+
+func functionSignatureWithParams(sig *typ.Function, params []typ.Param) *typ.Function {
+	if sig == nil {
+		return nil
+	}
+	builder := typ.Func().ReserveParams(len(params))
+	for _, tp := range sig.TypeParams {
+		builder = builder.TypeParamRef(tp)
+	}
+	for _, param := range params {
+		if param.Optional {
+			builder = builder.OptParam(param.Name, param.Type)
+		} else {
+			builder = builder.Param(param.Name, param.Type)
+		}
+	}
+	if sig.Variadic != nil {
+		builder = builder.Variadic(sig.Variadic)
+	}
+	if len(sig.Returns) > 0 {
+		builder = builder.Returns(sig.Returns...)
+	}
+	if sig.Effects != nil {
+		builder = builder.Effects(sig.Effects)
+	}
+	if sig.Spec != nil {
+		builder = builder.Spec(sig.Spec)
+	}
+	if sig.Refinement != nil {
+		builder = builder.WithRefinement(sig.Refinement)
+	}
+	return builder.Build()
 }

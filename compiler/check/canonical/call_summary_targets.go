@@ -50,6 +50,7 @@ func (ct callTyper) callOutcomeForTypedCall(
 					exprType,
 					cells,
 					refs,
+					flow.ClosureRefsDomain.Bottom(),
 					nil,
 				)
 			},
@@ -109,6 +110,7 @@ func (ct callTyper) callOutcomeForProductCallWithOptions(call *ast.FuncCallExpr,
 					ctx.ExprType,
 					ctx.Cells,
 					ctx.FunctionRefs,
+					ctx.ClosureRefs,
 					ctx.SelfType,
 				)
 			},
@@ -132,6 +134,7 @@ func (ct callTyper) selectedTargetSignatureReturns(
 	exprType func(ast.Expr) typ.Type,
 	cells flow.CaptureCells,
 	refs flow.FunctionRefs,
+	closures flow.ClosureRefs,
 	methodReceiverType typ.Type,
 ) []typ.Type {
 	d := ct.d
@@ -152,7 +155,7 @@ func (ct callTyper) selectedTargetSignatureReturns(
 		}
 		return exprType(expr)
 	}
-	in := ct.callReturnInput(call, argTypes, forcedExprType, cells, refs, methodReceiverType)
+	in := ct.callReturnInput(call, argTypes, forcedExprType, cells, refs, closures, methodReceiverType)
 	in.SummaryReturns = nil
 	in.Resolver = ct.callTypeResolver(forcedExprType)
 	if returns, ok := canonicalcall.InferReturnTypes(in); ok && len(returns) > 0 {

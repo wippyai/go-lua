@@ -62,6 +62,7 @@ local s: string = identity("test")
 		callCtx.ExprType,
 		flow.CaptureCellsDomain.Bottom(),
 		flow.FunctionRefsDomain.Bottom(),
+		flow.ClosureRefsDomain.Bottom(),
 		nil,
 	)
 	if len(returns) != 1 || !typ.TypeEquals(returns[0], typ.String) {
@@ -118,6 +119,7 @@ local c = make_container("hello")
 		callCtx.ExprType,
 		flow.CaptureCellsDomain.Bottom(),
 		flow.FunctionRefsDomain.Bottom(),
+		flow.ClosureRefsDomain.Bottom(),
 		nil,
 	)
 	if len(returns) != 1 {
