@@ -107,6 +107,20 @@ local function handle(source: protocol.Source): string
         id = id .. mapped
     end
 
+    local mapped_node_summary = process.receive_map(node_ch, function(decoded)
+        return {
+            id = decoded.id,
+            label = decoded.id .. ":node",
+        }
+    end)
+    if mapped_node_summary then
+        local summary_id: string = mapped_node_summary.id
+        local summary_label: string = mapped_node_summary.label
+        local bad_summary_id: number = mapped_node_summary.id -- expect-error
+        local bad_summary_label: number = mapped_node_summary.label -- expect-error
+        id = id .. summary_id .. summary_label
+    end
+
     local tree = json.decode("{}", protocol.tree_type())
     if tree.kind == "group" then
         local first = tree.children[1]
