@@ -2791,36 +2791,6 @@ func (ct callTyper) ContainerElementUnionsFromValues(call *ast.FuncCallExpr, ctx
 	})
 }
 
-func (ct callTyper) FunctionValueByRef(ref flow.FunctionRef, cells flow.CaptureCells, refs flow.FunctionRefs, closures flow.ClosureRefs) (typ.Type, bool) {
-	d := ct.d
-	if d == nil || d.activeProgram == nil {
-		return nil, false
-	}
-	projector := newCallableProjector(d, d.activeProgram, d.activeQueries, d.activeCtx)
-	sig := projector.FunctionTypeByRef(ref, cells, refs, closures)
-	if typ.IsAbsentOrUnknown(sig) {
-		return nil, false
-	}
-	return sig, true
-}
-
-func (ct callTyper) FunctionValueAtPath(path constraint.Path, cells flow.CaptureCells, refs flow.FunctionRefs, closures flow.ClosureRefs) (typ.Type, bool) {
-	d := ct.d
-	if d == nil || d.activeProgram == nil || path.IsEmpty() {
-		return nil, false
-	}
-	projector := newCallableProjector(d, d.activeProgram, d.activeQueries, d.activeCtx)
-	sig := projector.TypeAt(flow.PointState{
-		Cells:        cells,
-		FunctionRefs: refs,
-		ClosureRefs:  closures,
-	}, path)
-	if typ.IsAbsentOrUnknown(sig) {
-		return nil, false
-	}
-	return sig, true
-}
-
 // IterVars types a generic-for loop's iteration variables from its iterator
 // expression. The driver resolves the callee and source expression; the
 // iteration domain owns Iterator-effect classification and variable projection.

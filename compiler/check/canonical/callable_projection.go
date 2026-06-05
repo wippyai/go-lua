@@ -4,6 +4,7 @@ import (
 	canonicalcall "github.com/wippyai/go-lua/compiler/check/canonical/call"
 	canonref "github.com/wippyai/go-lua/compiler/check/canonical/ref"
 	"github.com/wippyai/go-lua/compiler/check/canonical/summary"
+	"github.com/wippyai/go-lua/compiler/check/canonical/transfer"
 	"github.com/wippyai/go-lua/compiler/check/domain/fieldkey"
 	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/db"
@@ -52,6 +53,29 @@ func newCallableProjector(d *Driver, prog *program, queries *summary.Queries, ct
 			return d.refHasDeclaredReturns(prog, ref)
 		},
 	}
+}
+
+func (ct callTyper) FunctionValue(query transfer.CallableValueQuery) (typ.Type, bool) {
+	d := ct.d
+	if d == nil || d.activeProgram == nil {
+		return nil, false
+	}
+	projector := newCallableProjector(d, d.activeProgram, d.activeQueries, d.activeCtx)
+	var sig typ.Type
+	if query.Ref != (flow.FunctionRef{}) {
+		sig = projector.FunctionTypeByRef(
+			query.Ref,
+			query.State.Cells,
+			query.State.FunctionRefs,
+			query.State.ClosureRefs,
+		)
+	} else if !query.Path.IsEmpty() {
+		sig = projector.TypeAt(query.State, query.Path)
+	}
+	if typ.IsAbsentOrUnknown(sig) {
+		return nil, false
+	}
+	return sig, true
 }
 
 func (p callableProjector) TypeAt(in flow.PointState, path constraint.Path) typ.Type {

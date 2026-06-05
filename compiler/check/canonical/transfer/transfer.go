@@ -339,12 +339,18 @@ type containerElementUnionProvider interface {
 	ContainerElementUnionsFromValues(call *ast.FuncCallExpr, ctx ProductCallContext) []effect.ContainerElementUnion
 }
 
-type functionValueProvider interface {
-	FunctionValueByRef(ref flow.FunctionRef, cells flow.CaptureCells, refs flow.FunctionRefs, closures flow.ClosureRefs) (typ.Type, bool)
+// CallableValueQuery is the transfer boundary for resolving a function-valued
+// product read to its callable signature. Exactly one of Ref or Path should be
+// populated by callers; State carries the live axes needed to project closure
+// environments and function summary returns.
+type CallableValueQuery struct {
+	Ref   flow.FunctionRef
+	Path  constraint.Path
+	State flow.PointState
 }
 
-type functionValueAtPathProvider interface {
-	FunctionValueAtPath(path constraint.Path, cells flow.CaptureCells, refs flow.FunctionRefs, closures flow.ClosureRefs) (typ.Type, bool)
+type functionValueProvider interface {
+	FunctionValue(query CallableValueQuery) (typ.Type, bool)
 }
 
 // Config is immutable construction-time configuration for a Transfer. These are
@@ -4262,11 +4268,18 @@ func (t *Transfer) functionValueForPath(out *flow.PointState, path constraint.Pa
 	if out == nil || t.callTyper == nil {
 		return nil, false
 	}
-	provider, ok := t.callTyper.(functionValueAtPathProvider)
+	provider, ok := t.callTyper.(functionValueProvider)
 	if !ok {
 		return nil, false
 	}
-	ft, ok := provider.FunctionValueAtPath(path, out.Cells, out.FunctionRefs, out.ClosureRefs)
+	ft, ok := provider.FunctionValue(CallableValueQuery{
+		Path: path,
+		State: flow.PointState{
+			Cells:        out.Cells,
+			FunctionRefs: out.FunctionRefs,
+			ClosureRefs:  out.ClosureRefs,
+		},
+	})
 	if !ok || typ.IsAbsentOrUnknown(ft) {
 		return nil, false
 	}
@@ -4296,7 +4309,14 @@ func (t *Transfer) functionValueForRef(out *flow.PointState, ref flow.FunctionRe
 	if !ok {
 		return nil, false
 	}
-	ft, ok := provider.FunctionValueByRef(ref, out.Cells, out.FunctionRefs, out.ClosureRefs)
+	ft, ok := provider.FunctionValue(CallableValueQuery{
+		Ref: ref,
+		State: flow.PointState{
+			Cells:        out.Cells,
+			FunctionRefs: out.FunctionRefs,
+			ClosureRefs:  out.ClosureRefs,
+		},
+	})
 	if !ok || typ.IsAbsentOrUnknown(ft) {
 		return nil, false
 	}

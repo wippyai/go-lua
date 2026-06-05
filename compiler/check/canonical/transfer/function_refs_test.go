@@ -836,8 +836,8 @@ type functionValueTestTyper struct {
 	sig typ.Type
 }
 
-func (t functionValueTestTyper) FunctionValueByRef(ref flow.FunctionRef, _ flow.CaptureCells, _ flow.FunctionRefs, _ flow.ClosureRefs) (typ.Type, bool) {
-	if ref != t.ref {
+func (t functionValueTestTyper) FunctionValue(query CallableValueQuery) (typ.Type, bool) {
+	if query.Ref != t.ref {
 		return nil, false
 	}
 	return t.sig, true
@@ -850,9 +850,9 @@ type capturingFunctionValueTyper struct {
 	closures flow.ClosureRefs
 }
 
-func (t *capturingFunctionValueTyper) FunctionValueByRef(ref flow.FunctionRef, _ flow.CaptureCells, _ flow.FunctionRefs, closures flow.ClosureRefs) (typ.Type, bool) {
-	t.closures = closures
-	if ref != t.ref {
+func (t *capturingFunctionValueTyper) FunctionValue(query CallableValueQuery) (typ.Type, bool) {
+	t.closures = query.State.ClosureRefs
+	if query.Ref != t.ref {
 		return nil, false
 	}
 	return t.sig, true
@@ -864,8 +864,8 @@ type pathFunctionValueTyper struct {
 	sig  typ.Type
 }
 
-func (t pathFunctionValueTyper) FunctionValueAtPath(path constraint.Path, _ flow.CaptureCells, _ flow.FunctionRefs, _ flow.ClosureRefs) (typ.Type, bool) {
-	if path.Key() != t.path.Key() {
+func (t pathFunctionValueTyper) FunctionValue(query CallableValueQuery) (typ.Type, bool) {
+	if query.Path.Key() != t.path.Key() {
 		return nil, false
 	}
 	return t.sig, true
