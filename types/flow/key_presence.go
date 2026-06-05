@@ -142,17 +142,6 @@ func KeyPresenceFactsOf(entries []KeyPresenceFact) KeyPresenceFacts {
 	return canonicalKeyPresenceFacts(entries)
 }
 
-// KeyPresenceFactFromPaths lowers source paths to the version-insensitive
-// structural keys used by canonical point-state components.
-func KeyPresenceFactFromPaths(table, key constraint.Path) (KeyPresenceFact, bool) {
-	tableKey := KeyPresencePathKey(table)
-	keyKey := KeyPresencePathKey(key)
-	if tableKey == "" || keyKey == "" {
-		return KeyPresenceFact{}, false
-	}
-	return KeyPresenceFact{Table: tableKey, Key: keyKey}, true
-}
-
 // KeyPresencePathKey returns the typed structural key used by key-presence facts.
 // Symbol paths use the stable symbol/segment key; root-only fallback is accepted
 // only for boundary paths that have not been symbolized.

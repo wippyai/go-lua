@@ -334,6 +334,19 @@ func (a StableAddress) Suffix() PathSuffix {
 	return PathSuffixOfSegments(a.suffix.segments)
 }
 
+// Append returns the descendant address reached by appending structured
+// member/index segments to this address.
+func (a StableAddress) Append(segments []constraint.Segment) (StableAddress, bool) {
+	if !a.root.isValid() {
+		return StableAddress{}, false
+	}
+	if len(segments) == 0 {
+		return StableAddressOfRootAndSuffix(a.root, a.suffix)
+	}
+	next := append(a.suffix.Segments(), segments...)
+	return StableAddressOfRootAndSuffix(a.root, PathSuffixOfSegments(next))
+}
+
 // Equal reports stable identity equality.
 func (a StableAddress) Equal(b StableAddress) bool {
 	return a.root.Equal(b.root) && a.suffix.Equal(b.suffix)

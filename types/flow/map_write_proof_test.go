@@ -172,7 +172,7 @@ func TestIndexedIteratorKeyArrayReadbackDerivesValueFromStableFacts(t *testing.T
 	origins := ValueOriginFacts{}.
 		WithAddresses(testStableAddressPath(t, keyPath), testStableAddressPath(t, arrayPath), ValueOriginIndexedIterator, 1)
 
-	got, ok := IndexedIteratorKeyArrayReadback(keyPresence, origins, tablePath, keyPath)
+	got, ok := IndexedIteratorKeyArrayReadback(keyPresence, origins, testStableAddressPath(t, tablePath), testStableAddressPath(t, keyPath))
 	if !ok || !product.Domain.Equal(got, product.FromType(typ.String)) {
 		t.Fatalf("readback = %v/%v, want string", got, ok)
 	}
@@ -190,7 +190,7 @@ func TestIndexedIteratorKeyArrayReadbackFollowsAssignmentAlias(t *testing.T) {
 		WithAddresses(testStableAddressPath(t, iterKeyPath), testStableAddressPath(t, arrayPath), ValueOriginIndexedIterator, 1).
 		WithAddresses(testStableAddressPath(t, aliasPath), testStableAddressPath(t, iterKeyPath), ValueOriginAssignmentAlias, 0)
 
-	got, ok := IndexedIteratorKeyArrayReadback(keyPresence, origins, tablePath, aliasPath)
+	got, ok := IndexedIteratorKeyArrayReadback(keyPresence, origins, testStableAddressPath(t, tablePath), testStableAddressPath(t, aliasPath))
 	if !ok || !product.Domain.Equal(got, product.FromType(typ.Number)) {
 		t.Fatalf("alias readback = %v/%v, want number", got, ok)
 	}

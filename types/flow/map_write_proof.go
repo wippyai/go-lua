@@ -183,20 +183,21 @@ func AdmissibleMapWriteProofValue(av product.AbstractValue) bool {
 func IndexedIteratorKeyArrayReadback(
 	keyPresence KeyPresenceFacts,
 	origins ValueOriginFacts,
-	tablePath constraint.Path,
-	keyPath constraint.Path,
+	table StableAddress,
+	key StableAddress,
 ) (product.AbstractValue, bool) {
-	tableKey := KeyPresencePathKey(tablePath)
-	keyKey := KeyPresencePathKey(keyPath)
+	tableKey := table.Key()
+	keyKey := key.Key()
 	if keyPresence.IsBottom() || origins.IsBottom() || tableKey == "" || keyKey == "" {
 		return product.AbstractValue{}, false
 	}
 	var out product.AbstractValue
 	seen := map[constraint.PathKey]struct{}{}
-	queue := []constraint.PathKey{keyKey}
+	queue := []StableAddress{key}
 	for len(queue) > 0 {
-		curKey := queue[0]
+		cur := queue[0]
 		queue = queue[1:]
+		curKey := cur.Key()
 		if curKey == "" {
 			continue
 		}
@@ -204,15 +205,7 @@ func IndexedIteratorKeyArrayReadback(
 			continue
 		}
 		seen[curKey] = struct{}{}
-		curPath, ok := pathFromSymbolPathKey(curKey)
-		if !ok {
-			continue
-		}
-		curAddr, ok := StableAddressOfPath(curPath)
-		if !ok {
-			continue
-		}
-		for _, use := range origins.OriginsCoveringAddress(curAddr) {
+		for _, use := range origins.OriginsCoveringAddress(cur) {
 			switch use.Origin.Kind {
 			case ValueOriginIndexedIterator:
 				if use.Origin.VarIndex != 1 || len(use.Remainder) != 0 {
@@ -229,30 +222,16 @@ func IndexedIteratorKeyArrayReadback(
 					}
 				}
 			case ValueOriginAssignmentAlias:
-				sourcePath, ok := pathFromSymbolPathKey(use.Origin.Source)
+				source, ok := StableAddressFromKey(use.Origin.Source)
 				if !ok {
 					continue
 				}
-				for _, seg := range use.Remainder {
-					sourcePath = sourcePath.Append(seg)
-				}
-				sourceKey := KeyPresencePathKey(sourcePath)
-				if sourceKey != "" {
-					queue = append(queue, sourceKey)
+				source, ok = source.Append(use.Remainder)
+				if ok {
+					queue = append(queue, source)
 				}
 			}
 		}
 	}
 	return out, !out.IsZero()
-}
-
-func pathFromSymbolPathKey(key constraint.PathKey) (constraint.Path, bool) {
-	sym, segments, ok := ParseSymbolPathKey(key)
-	if !ok || sym == 0 {
-		return constraint.Path{}, false
-	}
-	return constraint.Path{
-		Symbol:   sym,
-		Segments: append([]constraint.Segment(nil), segments...),
-	}, true
 }

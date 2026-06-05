@@ -816,12 +816,16 @@ func (f *canonicalFacts) MapReadback(q flow.IndexWriteReadQuery) (typ.Type, bool
 		return got, true
 	}
 	ps := f.indexReadState(q.Point, q.View)
-	keyPath := q.KeyPath
+	tableAddr, tableOK := flow.StableAddressOfPath(q.TargetPath)
+	keyAddr, keyOK := flow.StableAddressOfPath(q.KeyPath)
+	if !tableOK || !keyOK {
+		return nil, false
+	}
 	value, ok := flow.IndexedIteratorKeyArrayReadback(
 		ps.KeyPresence,
 		ps.ValueOrigins,
-		q.TargetPath,
-		keyPath,
+		tableAddr,
+		keyAddr,
 	)
 	if !ok || value.IsZero() {
 		return nil, false
