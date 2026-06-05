@@ -728,11 +728,23 @@ func (p Projector) bodyContractPathTypeAtPath(point cfg.Point, path constraint.P
 	if !p.cfg.CallArgumentProofs {
 		return nil
 	}
-	var types []typ.Type
 	pathAddr, ok := flow.StableAddressOfPath(path)
 	if !ok {
 		return nil
 	}
+	types := p.projectBodyContractOriginTypes(point, pathAddr, seen)
+	switch len(types) {
+	case 0:
+		return nil
+	case 1:
+		return p.conditionBodyContractSeedType(point, path, types[0])
+	default:
+		return p.conditionBodyContractSeedType(point, path, typ.NewUnion(types...))
+	}
+}
+
+func (p Projector) projectBodyContractOriginTypes(point cfg.Point, pathAddr flow.StableAddress, seen map[constraint.PathKey]bool) []typ.Type {
+	var types []typ.Type
 	for _, use := range p.pathAliasesAt(point).AliasesCoveringAddress(pathAddr) {
 		sourcePath, ok := observationPathFromKey(use.Alias.Source)
 		if !ok {
@@ -773,14 +785,7 @@ func (p Projector) bodyContractPathTypeAtPath(point cfg.Point, path constraint.P
 			}
 		}
 	}
-	switch len(types) {
-	case 0:
-		return nil
-	case 1:
-		return p.conditionBodyContractSeedType(point, path, types[0])
-	default:
-		return p.conditionBodyContractSeedType(point, path, typ.NewUnion(types...))
-	}
+	return types
 }
 
 func (p Projector) appendElementFieldOriginTypes(point cfg.Point, arrayPath constraint.Path, field []constraint.Segment, seen map[constraint.PathKey]bool) []typ.Type {
