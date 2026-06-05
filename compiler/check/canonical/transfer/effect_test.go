@@ -59,7 +59,7 @@ func TestSymbolWriteEffectClearsStaleProductAxes(t *testing.T) {
 	if out.KeyPresence.HasPaths(root, constraint.NewPath(cfg.SymbolID(202), "k")) {
 		t.Fatalf("stale key presence survived symbol write: %s", out.KeyPresence.Format())
 	}
-	if _, ok := out.IndexWrites.Admission(flow.IndexWriteQuery{Target: root.Field("items"), KeyType: typ.String}); ok {
+	if _, ok := testIndexWriteAdmission(t, out.IndexWrites, root.Field("items"), constraint.Path{}, typ.String); ok {
 		t.Fatalf("stale index-write admission survived symbol write: %s", out.IndexWrites.Format())
 	}
 	if _, ok := flow.FunctionRefAt(out.FunctionRefs, fieldPath.Key()); ok {
@@ -148,7 +148,7 @@ func TestUnresolvedContainerWriteInvalidatesStaleProductAxes(t *testing.T) {
 	if out.KeyPresence.HasPaths(fieldPath, constraint.NewPath(cfg.SymbolID(304), "k")) {
 		t.Fatalf("stale key presence survived unresolved container write: %s", out.KeyPresence.Format())
 	}
-	if _, ok := out.IndexWrites.Admission(flow.IndexWriteQuery{Target: fieldPath, KeyType: typ.String}); ok {
+	if _, ok := testIndexWriteAdmission(t, out.IndexWrites, fieldPath, constraint.Path{}, typ.String); ok {
 		t.Fatalf("stale index-write admission survived unresolved container write: %s", out.IndexWrites.Format())
 	}
 	if _, ok := flow.FunctionRefAt(out.FunctionRefs, fieldPath.Key()); ok {
@@ -285,10 +285,7 @@ func TestDynamicIndexWriteSeedsAdmissionFactOnlyWhenAdmitted(t *testing.T) {
 		RecordStatic: true,
 	})
 
-	got, ok := out.IndexWrites.Admission(flow.IndexWriteQuery{
-		Target:  tablePath,
-		KeyType: typ.String,
-	})
+	got, ok := testIndexWriteAdmission(t, out.IndexWrites, tablePath, constraint.Path{}, typ.String)
 	if !ok || !typ.TypeEquals(got.ProjectValue(), typ.String) {
 		t.Fatalf("IndexWrites admission = %v/%v, want string/true", got.ProjectValue(), ok)
 	}
@@ -311,7 +308,7 @@ func TestDynamicIndexWriteSeedsAdmissionFactOnlyWhenAdmitted(t *testing.T) {
 		DynamicMode:  DynamicWriteForeign,
 		RecordStatic: true,
 	})
-	if _, ok := out.IndexWrites.Admission(flow.IndexWriteQuery{Target: tablePath, KeyType: typ.String}); ok {
+	if _, ok := testIndexWriteAdmission(t, out.IndexWrites, tablePath, constraint.Path{}, typ.String); ok {
 		t.Fatalf("readonly map write seeded admission: %s", out.IndexWrites.Format())
 	}
 }
@@ -352,10 +349,7 @@ func TestForeignWriteToFreshEmptyTableKeepsIteratorTailAny(t *testing.T) {
 	if !typ.TypeEquals(iter, typ.Any) {
 		t.Fatalf("EntryValueType(updated fresh table) = %v, want any; updated=%v", iter, updated)
 	}
-	admitted, ok := out.IndexWrites.Admission(flow.IndexWriteQuery{
-		Target:  tablePath,
-		KeyType: typ.LiteralString("s1"),
-	})
+	admitted, ok := testIndexWriteAdmission(t, out.IndexWrites, tablePath, constraint.Path{}, typ.LiteralString("s1"))
 	if !ok || !typ.TypeEquals(admitted.ProjectValue(), payload) {
 		t.Fatalf("IndexWrites admission = %v/%v, want payload/true", admitted.ProjectValue(), ok)
 	}
@@ -395,7 +389,7 @@ func TestDynamicIndexWriteAdmissionRejectsSealedAnnotatedTarget(t *testing.T) {
 		RecordStatic: true,
 	})
 
-	if _, ok := out.IndexWrites.Admission(flow.IndexWriteQuery{Target: tablePath, KeyType: typ.String}); ok {
+	if _, ok := testIndexWriteAdmission(t, out.IndexWrites, tablePath, constraint.Path{}, typ.String); ok {
 		t.Fatalf("sealed target seeded admission: %s", out.IndexWrites.Format())
 	}
 	if got := out.Env[flow.SymbolValueKey(tableSym)].ProjectValue(); !typ.TypeEquals(got, declared) {
@@ -439,10 +433,7 @@ func TestSealedDynamicIndexWriteAdmissionUsesReadBackSlot(t *testing.T) {
 		RecordStatic: true,
 	})
 
-	admitted, ok := out.IndexWrites.Admission(flow.IndexWriteQuery{
-		Target:  constraint.NewPath(selfSym, "self").Field("nodes"),
-		KeyType: typ.String,
-	})
+	admitted, ok := testIndexWriteAdmission(t, out.IndexWrites, constraint.NewPath(selfSym, "self").Field("nodes"), constraint.Path{}, typ.String)
 	if !ok {
 		t.Fatalf("sealed map write did not seed admission: %s", out.IndexWrites.Format())
 	}
@@ -530,11 +521,7 @@ func TestWriteEffectPublishesStableDynamicIndexProofWhenProductUpdateCannotCarry
 	if !out.KeyPresence.HasPaths(tablePath, keyPath) {
 		t.Fatalf("stable dynamic write did not seed key presence: %s", out.KeyPresence.Format())
 	}
-	got, ok := out.IndexWrites.Admission(flow.IndexWriteQuery{
-		Target:  tablePath,
-		KeyPath: keyPath,
-		KeyType: typ.Any,
-	})
+	got, ok := testIndexWriteAdmission(t, out.IndexWrites, tablePath, keyPath, typ.Any)
 	if !ok || !product.Domain.Equal(got, nodeValue) {
 		t.Fatalf("stable dynamic write readback = %v/%v, want node/true; facts=%s", got.ProjectValue(), ok, out.IndexWrites.Format())
 	}
@@ -588,11 +575,7 @@ func TestUnresolvedDynamicIndexAssignPublishesStablePathProof(t *testing.T) {
 	if !out.KeyPresence.HasPaths(tablePath, keyPath) {
 		t.Fatalf("unresolved dynamic assign did not seed key presence: %s", out.KeyPresence.Format())
 	}
-	got, ok := out.IndexWrites.Admission(flow.IndexWriteQuery{
-		Target:  tablePath,
-		KeyPath: keyPath,
-		KeyType: typ.Unknown,
-	})
+	got, ok := testIndexWriteAdmission(t, out.IndexWrites, tablePath, keyPath, typ.Unknown)
 	if !ok {
 		t.Fatalf("unresolved dynamic assign did not seed readback proof: %s", out.IndexWrites.Format())
 	}
@@ -618,10 +601,7 @@ func TestTransferPreservesIncomingIndexWriteAdmissionFacts(t *testing.T) {
 	}
 
 	out := tr.Transfer(in.Graph, in.Graph.Entry(), incoming, nil, nil)
-	if got, ok := out.IndexWrites.Admission(flow.IndexWriteQuery{
-		Target:  constraint.NewPath(tableSym, "items"),
-		KeyType: typ.String,
-	}); !ok || !typ.TypeEquals(got.ProjectValue(), typ.Number) {
+	if got, ok := testIndexWriteAdmission(t, out.IndexWrites, constraint.NewPath(tableSym, "items"), constraint.Path{}, typ.String); !ok || !typ.TypeEquals(got.ProjectValue(), typ.Number) {
 		t.Fatalf("Transfer dropped durable index-write admission: %v/%v in %s", got.ProjectValue(), ok, out.IndexWrites.Format())
 	}
 }
@@ -663,11 +643,7 @@ func TestBoundaryIndexWriteReplayAdmitsOpaqueStableKeyPath(t *testing.T) {
 	if !out.KeyPresence.HasPaths(tablePath, keyPath) {
 		t.Fatalf("boundary index-write replay did not seed key presence: %s", out.KeyPresence.Format())
 	}
-	got, ok := out.IndexWrites.Admission(flow.IndexWriteQuery{
-		Target:  tablePath,
-		KeyPath: keyPath,
-		KeyType: typ.Unknown,
-	})
+	got, ok := testIndexWriteAdmission(t, out.IndexWrites, tablePath, keyPath, typ.Unknown)
 	if !ok || !typ.TypeEquals(got.ProjectValue(), nodeType) {
 		t.Fatalf("boundary index-write replay = %v/%v, want node/true; facts=%s", got.ProjectValue(), ok, out.IndexWrites.Format())
 	}

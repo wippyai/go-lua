@@ -134,10 +134,7 @@ func TestClonePointStatePreservesPersistentAxes(t *testing.T) {
 	if aliases := cloned.PathAliases.AliasesOfPath(constraint.NewPath(sym, "alias")); len(aliases) != 1 {
 		t.Fatalf("cloned PathAliases = %s, want one alias", cloned.PathAliases.Format())
 	}
-	if got, ok := cloned.IndexWrites.Admission(IndexWriteQuery{
-		Target:  constraint.NewPath(sym, ""),
-		KeyType: typ.String,
-	}); !ok || !typ.TypeEquals(got.ProjectValue(), typ.Number) {
+	if got, ok := cloned.IndexWrites.AdmissionAtAddress(testIndexWriteAddressQuery(t, constraint.NewPath(sym, ""), constraint.Path{}, typ.String, constraint.Path{})); !ok || !typ.TypeEquals(got.ProjectValue(), typ.Number) {
 		t.Fatalf("cloned IndexWrites admission = %v/%v, want number/true", got.ProjectValue(), ok)
 	}
 }

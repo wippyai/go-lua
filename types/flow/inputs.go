@@ -377,19 +377,6 @@ type VariantFieldOrigin struct {
 	CaseIndex    int
 }
 
-// IndexWriteQuery identifies the solved transfer proof for a dynamic index
-// write. The query is AST-free; diagnostics/projectors consume the point-state
-// proof instead of reconstructing write provenance.
-type IndexWriteQuery struct {
-	Point     cfg.Point
-	View      PathReadView
-	Target    constraint.Path
-	KeyPath   constraint.Path
-	KeySymbol cfg.SymbolID
-	KeyType   typ.Type
-	ValuePath constraint.Path
-}
-
 // IndexWriteReadQuery identifies a solved dynamic-index readback proof with
 // explicit solver context and normalized address-domain admission evidence.
 // TargetPath and KeyPath remain as provenance views for reducers that derive

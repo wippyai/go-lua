@@ -322,12 +322,7 @@ func assertPointStateDroppedOneBranchMustFacts(t *testing.T, ps PointState, tabl
 	if ps.Rel.HasContainerLowerBound(table.Symbol, KeyPresencePathKey(table), 1) {
 		t.Fatalf("PointState kept one-branch container cardinality relation: %#v", ps.Rel)
 	}
-	if _, ok := ps.IndexWrites.Admission(IndexWriteQuery{
-		Target:    table,
-		KeySymbol: key.Symbol,
-		KeyType:   typ.String,
-		ValuePath: valuePath,
-	}); ok {
+	if _, ok := ps.IndexWrites.AdmissionAtAddress(testIndexWriteAddressQuery(t, table, key, typ.String, valuePath)); ok {
 		t.Fatalf("PointState kept one-branch IndexWrites fact: %s", ps.IndexWrites.Format())
 	}
 }

@@ -52,13 +52,7 @@ func TestIndexWriteAdmissionFactsJoinKeepsOnlyCommonProofs(t *testing.T) {
 	})
 
 	joined := IndexWriteAdmissionFactsDomain.Join(left, right)
-	got, ok := joined.Admission(IndexWriteQuery{
-		Target:    target,
-		KeyPath:   key,
-		KeySymbol: key.Symbol,
-		KeyType:   typ.String,
-		ValuePath: valuePath,
-	})
+	got, ok := joined.AdmissionAtAddress(testIndexWriteAddressQuery(t, target, key, typ.String, valuePath))
 	if !ok {
 		t.Fatal("join dropped common admission proof")
 	}
@@ -66,12 +60,7 @@ func TestIndexWriteAdmissionFactsJoinKeepsOnlyCommonProofs(t *testing.T) {
 	if !typ.TypeEquals(got.ProjectValue(), want) {
 		t.Fatalf("joined admission value = %v, want %v", got.ProjectValue(), want)
 	}
-	if _, ok := joined.Admission(IndexWriteQuery{
-		Target:    target.Field("items"),
-		KeySymbol: key.Symbol,
-		KeyType:   typ.String,
-		ValuePath: otherValue,
-	}); ok {
+	if _, ok := joined.AdmissionAtAddress(testIndexWriteAddressQuery(t, target.Field("items"), constraint.Path{}, typ.String, otherValue)); ok {
 		t.Fatalf("join kept one-branch admission proof: %s", joined.Format())
 	}
 }
@@ -111,6 +100,24 @@ func testStableAddress(t *testing.T, path constraint.Path) StableAddress {
 	return addr
 }
 
+func testIndexWriteAddressQuery(t *testing.T, target, keyPath constraint.Path, keyType typ.Type, valuePath constraint.Path) IndexWriteAddressQuery {
+	t.Helper()
+	targetAddr := testStableAddress(t, target)
+	query := IndexWriteAddressQuery{Target: targetAddr}
+	if !keyPath.IsEmpty() {
+		query.KeyPath = testStableAddress(t, keyPath)
+		query.HasKeyPath = true
+	}
+	if !valuePath.IsEmpty() {
+		query.ValuePath = testStableAddress(t, valuePath)
+		query.HasValuePath = true
+	}
+	if !typ.IsAbsentOrUnknown(keyType) {
+		query.KeyValue = product.FromType(keyType)
+	}
+	return query
+}
+
 func TestIndexWriteAdmissionFactsPreservePresentElementWriteWeakensSameTableProof(t *testing.T) {
 	target := constraint.NewPath(cfg.SymbolID(16), "store").Field("items")
 	key := constraint.NewPath(cfg.SymbolID(17), "last_id")
@@ -137,11 +144,7 @@ func TestIndexWriteAdmissionFactsPreservePresentElementWriteWeakensSameTableProo
 		t.Fatal("target address")
 	}
 	got := facts.PreservePresentElementWriteAddress(targetAddr, written)
-	admitted, ok := got.Admission(IndexWriteQuery{
-		Target:  target,
-		KeyPath: key,
-		KeyType: typ.Any,
-	})
+	admitted, ok := got.AdmissionAtAddress(testIndexWriteAddressQuery(t, target, key, typ.Any, constraint.Path{}))
 	if !ok {
 		t.Fatalf("present element write dropped same-table admission: %s", got.Format())
 	}
@@ -149,11 +152,7 @@ func TestIndexWriteAdmissionFactsPreservePresentElementWriteWeakensSameTableProo
 	if !typ.TypeEquals(admitted.ProjectValue(), want) {
 		t.Fatalf("same-table admission value = %v, want %v", admitted.ProjectValue(), want)
 	}
-	if admitted, ok := got.Admission(IndexWriteQuery{
-		Target:  other,
-		KeyPath: key,
-		KeyType: typ.Any,
-	}); !ok || !typ.TypeEquals(admitted.ProjectValue(), edgeValue.ProjectValue()) {
+	if admitted, ok := got.AdmissionAtAddress(testIndexWriteAddressQuery(t, other, key, typ.Any, constraint.Path{})); !ok || !typ.TypeEquals(admitted.ProjectValue(), edgeValue.ProjectValue()) {
 		t.Fatalf("unrelated table admission = %v/%v, want edge value/true; facts=%s", admitted.ProjectValue(), ok, got.Format())
 	}
 }
@@ -166,10 +165,10 @@ func TestIndexWriteAdmissionFactsMatchesByKeyValueWhenKeyPathAbsent(t *testing.T
 		Value:  product.FromType(typ.String),
 	})
 
-	if _, ok := facts.Admission(IndexWriteQuery{Target: target, KeyType: typ.LiteralString("name")}); !ok {
+	if _, ok := facts.AdmissionAtAddress(testIndexWriteAddressQuery(t, target, constraint.Path{}, typ.LiteralString("name"), constraint.Path{})); !ok {
 		t.Fatal("literal-key query did not match literal-key admission proof")
 	}
-	if _, ok := facts.Admission(IndexWriteQuery{Target: target, KeyType: typ.LiteralString("other")}); ok {
+	if _, ok := facts.AdmissionAtAddress(testIndexWriteAddressQuery(t, target, constraint.Path{}, typ.LiteralString("other"), constraint.Path{})); ok {
 		t.Fatal("literal-key query matched incompatible key proof")
 	}
 }
@@ -185,24 +184,13 @@ func TestIndexWriteAdmissionFactsMatchesExactKeyPathWithUnknownKeyValue(t *testi
 		Value:   product.FromType(typ.String),
 	})
 
-	if got, ok := facts.Admission(IndexWriteQuery{
-		Target:  target,
-		KeyPath: key,
-		KeyType: typ.String,
-	}); !ok || !typ.TypeEquals(got.ProjectValue(), typ.String) {
+	if got, ok := facts.AdmissionAtAddress(testIndexWriteAddressQuery(t, target, key, typ.String, constraint.Path{})); !ok || !typ.TypeEquals(got.ProjectValue(), typ.String) {
 		t.Fatalf("exact key-path query = %v/%v, want string/true", got.ProjectValue(), ok)
 	}
-	if _, ok := facts.Admission(IndexWriteQuery{
-		Target:  target,
-		KeyPath: otherKey,
-		KeyType: typ.String,
-	}); ok {
+	if _, ok := facts.AdmissionAtAddress(testIndexWriteAddressQuery(t, target, otherKey, typ.String, constraint.Path{})); ok {
 		t.Fatal("different key-path query matched unknown-key admission proof")
 	}
-	if _, ok := facts.Admission(IndexWriteQuery{
-		Target:  target,
-		KeyType: typ.LiteralString("name"),
-	}); ok {
+	if _, ok := facts.AdmissionAtAddress(testIndexWriteAddressQuery(t, target, constraint.Path{}, typ.LiteralString("name"), constraint.Path{})); ok {
 		t.Fatal("pathless literal query matched unknown-key path-backed proof")
 	}
 }

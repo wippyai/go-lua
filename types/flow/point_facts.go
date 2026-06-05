@@ -169,20 +169,6 @@ func (f PointFacts) LengthLowerBound(path constraint.Path) (int64, bool) {
 	return lower, ok
 }
 
-// IndexWriteAdmission returns the value admitted by a dynamic index write proven
-// in this point state.
-func (f PointFacts) IndexWriteAdmission(q IndexWriteQuery) (typ.Type, bool) {
-	av, ok := f.state.IndexWrites.Admission(q)
-	if !ok || av.IsZero() {
-		return nil, false
-	}
-	t := product.ProjectValueOrUnknown(av)
-	if typ.IsAbsentOrUnknown(t) {
-		return nil, false
-	}
-	return t, true
-}
-
 // IndexWriteAdmissionAtAddress returns the value admitted by a dynamic index
 // write proven in this point state using normalized address-domain evidence.
 func (f PointFacts) IndexWriteAdmissionAtAddress(q IndexWriteAddressQuery) (typ.Type, bool) {

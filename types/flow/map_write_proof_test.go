@@ -67,11 +67,7 @@ func TestApplyMapWriteProofPublishesReadbackWhenAdmissible(t *testing.T) {
 	}
 	ApplyMapWriteProof(&state, proof)
 
-	value, ok := state.IndexWrites.Admission(IndexWriteQuery{
-		Target:  tablePath,
-		KeyPath: keyPath,
-		KeyType: typ.String,
-	})
+	value, ok := state.IndexWrites.AdmissionAtAddress(testIndexWriteAddressQuery(t, tablePath, keyPath, typ.String, constraint.Path{}))
 	if !ok || !product.Domain.Equal(value, product.FromType(typ.Number)) {
 		t.Fatalf("readback = %v/%v, want number", value, ok)
 	}

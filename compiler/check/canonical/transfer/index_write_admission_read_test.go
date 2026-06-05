@@ -78,11 +78,7 @@ func TestSymbolicDynamicIndexWriteSeedsKeyPresenceAndReadback(t *testing.T) {
 	if !out.KeyPresence.HasPaths(nodesPath, idPath) {
 		t.Fatalf("symbolic dynamic-index write did not seed key presence: %s", out.KeyPresence.Format())
 	}
-	got, ok := out.IndexWrites.Admission(flow.IndexWriteQuery{
-		Target:  nodesPath,
-		KeyPath: idPath,
-		KeyType: typ.String,
-	})
+	got, ok := testIndexWriteAdmission(t, out.IndexWrites, nodesPath, idPath, typ.String)
 	if !ok || !typ.TypeEquals(got.ProjectValue(), nodeType) {
 		t.Fatalf("symbolic dynamic-index readback = %v/%v, want node record/true", got.ProjectValue(), ok)
 	}
@@ -123,18 +119,11 @@ func TestDynamicIndexWriteProofBuilderAllowsOpaqueExactKeyPathReadback(t *testin
 	}
 	tr.applyDynamicIndexWriteProofEffect(&out, proof)
 
-	got, ok := out.IndexWrites.Admission(flow.IndexWriteQuery{
-		Target:  nodesPath,
-		KeyPath: idPath,
-		KeyType: typ.Any,
-	})
+	got, ok := testIndexWriteAdmission(t, out.IndexWrites, nodesPath, idPath, typ.Any)
 	if !ok || !product.Domain.Equal(got, payload) {
 		t.Fatalf("exact opaque key-path readback = %v/%v, want payload/true", got.ProjectValue(), ok)
 	}
-	if _, ok := out.IndexWrites.Admission(flow.IndexWriteQuery{
-		Target:  nodesPath,
-		KeyType: typ.LiteralString("other"),
-	}); ok {
+	if _, ok := testIndexWriteAdmission(t, out.IndexWrites, nodesPath, constraint.Path{}, typ.LiteralString("other")); ok {
 		t.Fatal("opaque key-path proof matched a pathless key-value query")
 	}
 }
@@ -192,11 +181,7 @@ func TestAssignmentProvenanceCopiesIndexWriteAdmissionKeyPath(t *testing.T) {
 	if !changed {
 		t.Fatal("assignment provenance did not report copied index-write admission")
 	}
-	got, ok := out.IndexWrites.Admission(flow.IndexWriteQuery{
-		Target:  tablePath,
-		KeyPath: targetPath,
-		KeyType: typ.Any,
-	})
+	got, ok := testIndexWriteAdmission(t, out.IndexWrites, tablePath, targetPath, typ.Any)
 	if !ok || !product.Domain.Equal(got, nodeValue) {
 		t.Fatalf("rebased index-write admission = %v/%v, want node/true; facts=%s", got.ProjectValue(), ok, out.IndexWrites.Format())
 	}
@@ -205,11 +190,7 @@ func TestAssignmentProvenanceCopiesIndexWriteAdmissionKeyPath(t *testing.T) {
 		t.Fatal("source address")
 	}
 	killed := out.IndexWrites.KillAffectedByWriteAddress(sourceAddr)
-	if got, ok := killed.Admission(flow.IndexWriteQuery{
-		Target:  tablePath,
-		KeyPath: targetPath,
-		KeyType: typ.Any,
-	}); !ok || !product.Domain.Equal(got, nodeValue) {
+	if got, ok := testIndexWriteAdmission(t, killed, tablePath, targetPath, typ.Any); !ok || !product.Domain.Equal(got, nodeValue) {
 		t.Fatalf("source overwrite killed rebased target admission: %v/%v in %s", got.ProjectValue(), ok, killed.Format())
 	}
 }
@@ -237,11 +218,7 @@ func TestAssignmentProvenanceReconstructsIndexWriteAdmissionFromKeyPresenceReadb
 	if !changed {
 		t.Fatal("assignment provenance did not report reconstructed index-write admission")
 	}
-	got, ok := out.IndexWrites.Admission(flow.IndexWriteQuery{
-		Target:  tablePath,
-		KeyPath: targetPath,
-		KeyType: typ.String,
-	})
+	got, ok := testIndexWriteAdmission(t, out.IndexWrites, tablePath, targetPath, typ.String)
 	if !ok || !typ.TypeEquals(got.ProjectValue(), nodeType) {
 		t.Fatalf("key-presence readback admission = %v/%v, want node/true; facts=%s", got.ProjectValue(), ok, out.IndexWrites.Format())
 	}

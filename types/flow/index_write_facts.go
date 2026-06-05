@@ -8,7 +8,6 @@ import (
 	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/domain/value/product"
 	"github.com/wippyai/go-lua/types/lattice"
-	"github.com/wippyai/go-lua/types/typ"
 )
 
 // IndexWriteAdmissionFact is a point-local must-fact proving that the transfer
@@ -49,8 +48,7 @@ type IndexWriteAdmissionFacts struct {
 }
 
 // IndexWriteAddressQuery is the normalized address-domain query for admitted
-// dynamic-index write readback. IndexWriteQuery remains a compatibility source
-// path wrapper; the finite proof domain reasons over stable addresses.
+// dynamic-index write readback.
 type IndexWriteAddressQuery struct {
 	Target       StableAddress
 	KeyPath      StableAddress
@@ -96,54 +94,6 @@ func (f IndexWriteAdmissionFacts) WithAddress(fact IndexWriteAdmissionAddressFac
 		return f
 	}
 	return f.With(keyed)
-}
-
-// Admission returns the admitted value proof matching q.
-// TODO(address-vocabulary): migrate callers to AdmissionAtAddress and remove
-// this source-path compatibility wrapper.
-func (f IndexWriteAdmissionFacts) Admission(q IndexWriteQuery) (product.AbstractValue, bool) {
-	query, ok := IndexWriteAddressQueryFromQuery(q)
-	if !ok {
-		return product.AbstractValue{}, false
-	}
-	return f.AdmissionAtAddress(query)
-}
-
-// IndexWriteAddressQueryFromQuery lowers the compatibility source-path query to
-// the address-domain query used by IndexWriteAdmissionFacts.
-// TODO(address-vocabulary): delete this adapter after callers construct
-// IndexWriteAddressQuery at their resolved-place boundary.
-func IndexWriteAddressQueryFromQuery(q IndexWriteQuery) (IndexWriteAddressQuery, bool) {
-	if q.Target.IsEmpty() {
-		return IndexWriteAddressQuery{}, false
-	}
-	target, ok := StableAddressOfPath(q.Target)
-	if !ok {
-		return IndexWriteAddressQuery{}, false
-	}
-	query := IndexWriteAddressQuery{Target: target}
-	if !q.KeyPath.IsEmpty() {
-		if key, ok := StableAddressOfPath(q.KeyPath); ok {
-			query.KeyPath = key
-			query.HasKeyPath = true
-		}
-	}
-	if !query.HasKeyPath && q.KeySymbol != 0 {
-		if key, ok := StableAddressOfSymbol(q.KeySymbol, nil); ok {
-			query.KeyPath = key
-			query.HasKeyPath = true
-		}
-	}
-	if !q.ValuePath.IsEmpty() {
-		if value, ok := StableAddressOfPath(q.ValuePath); ok {
-			query.ValuePath = value
-			query.HasValuePath = true
-		}
-	}
-	if !typ.IsAbsentOrUnknown(q.KeyType) {
-		query.KeyValue = product.FromType(q.KeyType)
-	}
-	return query, true
 }
 
 // AdmissionAtAddress returns the admitted value proof matching q.
