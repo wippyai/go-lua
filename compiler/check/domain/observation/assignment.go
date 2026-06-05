@@ -3,6 +3,7 @@ package observation
 import (
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/cfg"
+	"github.com/wippyai/go-lua/compiler/check/domain/indexread"
 	flowpath "github.com/wippyai/go-lua/compiler/check/domain/path"
 	"github.com/wippyai/go-lua/compiler/check/domain/provenance"
 	"github.com/wippyai/go-lua/types/constraint"
@@ -610,7 +611,7 @@ func (p Projector) assignmentTargetFlowWriteType(target cfg.AssignTarget, source
 		return nil
 	}
 	keyPath := p.pathOfExpr(target.Key, point)
-	query, ok := flow.IndexWriteReadQueryFromPaths(
+	query, ok := indexread.IndexWriteReadQueryFromPaths(
 		point,
 		flow.PathReadPost,
 		targetPath,

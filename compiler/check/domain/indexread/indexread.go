@@ -5,6 +5,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/types/cfg"
 	"github.com/wippyai/go-lua/types/constraint"
+	"github.com/wippyai/go-lua/types/domain/value/product"
 	flowfacts "github.com/wippyai/go-lua/types/flow"
 	"github.com/wippyai/go-lua/types/kind"
 	"github.com/wippyai/go-lua/types/narrow"
@@ -29,6 +30,45 @@ type IndexWriteAdmissionFlow interface {
 
 type MapReadbackFlow interface {
 	MapReadback(q flowfacts.IndexWriteReadQuery) (typ.Type, bool)
+}
+
+// IndexWriteReadQueryFromPaths normalizes source paths at the observation
+// boundary into the address-domain query consumed by flow facts.
+func IndexWriteReadQueryFromPaths(
+	point cfg.Point,
+	view flowfacts.PathReadView,
+	target constraint.Path,
+	keyPath constraint.Path,
+	keyType typ.Type,
+	valuePath constraint.Path,
+) (flowfacts.IndexWriteReadQuery, bool) {
+	targetAddr, ok := flowfacts.StableAddressOfPath(target)
+	if !ok {
+		return flowfacts.IndexWriteReadQuery{}, false
+	}
+	query := flowfacts.IndexWriteReadQuery{
+		Point:     point,
+		View:      view,
+		Admission: flowfacts.IndexWriteAddressQuery{Target: targetAddr},
+	}
+	if !keyPath.IsEmpty() {
+		keyAddr, ok := flowfacts.StableAddressOfPath(keyPath)
+		if ok {
+			query.Admission.KeyPath = keyAddr
+			query.Admission.HasKeyPath = true
+		}
+	}
+	if !valuePath.IsEmpty() {
+		valueAddr, ok := flowfacts.StableAddressOfPath(valuePath)
+		if ok {
+			query.Admission.ValuePath = valueAddr
+			query.Admission.HasValuePath = true
+		}
+	}
+	if !typ.IsAbsentOrUnknown(keyType) {
+		query.Admission.KeyValue = product.FromType(keyType)
+	}
+	return query, true
 }
 
 // Query describes one indexed read projection.
@@ -146,7 +186,7 @@ func refineObservationByIndexWriteAdmission(q ObservationQuery) (typ.Type, bool)
 	if q.Index.KeyPath.IsEmpty() && !indexWriteReadCanUseKeyValueOnly(q.Index.KeyType) {
 		return nil, false
 	}
-	query, ok := flowfacts.IndexWriteReadQueryFromPaths(
+	query, ok := IndexWriteReadQueryFromPaths(
 		q.Point,
 		q.View,
 		q.Index.TablePath,
