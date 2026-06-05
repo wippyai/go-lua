@@ -287,6 +287,7 @@ type ReturnTypeVisitor[R any] struct {
 	SameAs                func(SameAs) R
 	DeepElementOf         func(DeepElementOf) R
 	StringUnpackValue     func(StringUnpackValue) R
+	TypeProjection        func(TypeProjection) R
 	SelectCaseOfParam     func(SelectCaseOfParam) R
 	SelectResultOfCases   func(SelectResultOfCases) R
 	Default               func(ReturnType) R
@@ -350,6 +351,14 @@ func VisitReturnType[R any](t ReturnType, v ReturnTypeVisitor[R]) R {
 	case *StringUnpackValue:
 		if v.StringUnpackValue != nil {
 			return v.StringUnpackValue(*tt)
+		}
+	case TypeProjection:
+		if v.TypeProjection != nil {
+			return v.TypeProjection(tt)
+		}
+	case *TypeProjection:
+		if v.TypeProjection != nil {
+			return v.TypeProjection(*tt)
 		}
 	case SelectCaseOfParam:
 		if v.SelectCaseOfParam != nil {

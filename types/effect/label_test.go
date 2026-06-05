@@ -380,6 +380,7 @@ func TestReturnTypeInterface(t *testing.T) {
 		SameAs{},
 		DeepElementOf{},
 		StringUnpackValue{},
+		TypeProjection{},
 	}
 
 	for _, rt := range returnTypes {

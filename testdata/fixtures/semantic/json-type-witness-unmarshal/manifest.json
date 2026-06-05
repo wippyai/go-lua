@@ -1,0 +1,6 @@
+{
+  "description": "json.unmarshal-style APIs project return types from explicit typed witnesses instead of trusting casts or any.",
+  "run": {
+    "skip": "checker-only typed witness surface"
+  }
+}

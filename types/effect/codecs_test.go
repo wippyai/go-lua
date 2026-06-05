@@ -966,6 +966,17 @@ func TestWriteReadReturnType(t *testing.T) {
 			rt:   StringUnpackValue{Format: ParamRef{Index: 0}},
 		},
 		{
+			name: "type projection",
+			rt: TypeProjection{
+				Source: ParamRef{Index: 1},
+				Steps: []TypeProjectionStep{
+					ProjectField("decode"),
+					ProjectCallableReturn(),
+					ProjectGenericArg(0),
+				},
+			},
+		},
+		{
 			name: "select case of param",
 			rt:   SelectCaseOfParam{Source: ParamRef{Index: 1}},
 		},

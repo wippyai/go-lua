@@ -69,6 +69,11 @@ func ApplyEffectTransform(fn *typ.Function, args []typ.Type, returnIdx int, base
 				break
 			}
 		}
+	case effect.TypeProjection:
+		if projected := projectType(args, transform); projected != nil {
+			transformedReturn = projected
+			break
+		}
 	case effect.CallbackReturn:
 		if resolved := resolveParamType(args, transform.CallbackParam); resolved != nil {
 			if cbRet := callbackReturnType(resolved); cbRet != nil {
@@ -477,6 +482,42 @@ func callbackReturnType(t typ.Type) typ.Type {
 		if typ.IsUnknown(t) {
 			return typ.Unknown
 		}
+		return nil
+	}
+}
+
+func projectType(args []typ.Type, projection effect.TypeProjection) typ.Type {
+	current := resolveParamType(args, projection.Source)
+	if current == nil {
+		return nil
+	}
+	for _, step := range projection.Steps {
+		next := projectTypeStep(current, step)
+		if next == nil {
+			return nil
+		}
+		current = next
+	}
+	return current
+}
+
+func projectTypeStep(t typ.Type, step effect.TypeProjectionStep) typ.Type {
+	switch step.Kind {
+	case effect.TypeProjectionField:
+		ft, ok := querycore.Field(t, step.Field)
+		if !ok {
+			return nil
+		}
+		return ft
+	case effect.TypeProjectionCallableReturn:
+		return callbackReturnType(t)
+	case effect.TypeProjectionGenericArg:
+		inst, ok := unwrap.Alias(t).(*typ.Instantiated)
+		if !ok || step.Index < 0 || step.Index >= len(inst.TypeArgs) {
+			return nil
+		}
+		return inst.TypeArgs[step.Index]
+	default:
 		return nil
 	}
 }

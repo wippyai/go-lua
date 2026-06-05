@@ -376,6 +376,7 @@ const (
 	returnTypeStringUnpackValue = 7
 	returnTypeSelectCaseOfParam = 8
 	returnTypeSelectResultCases = 9
+	returnTypeTypeProjection    = 10
 )
 
 func writeReturnType(w Writer, rt ReturnType) error {
@@ -425,6 +426,12 @@ func writeReturnType(w Writer, rt ReturnType) error {
 				return err
 			}
 			return w.WriteInt32(int32(v.Format.Index))
+		},
+		TypeProjection: func(v TypeProjection) error {
+			if err := w.WriteByte(returnTypeTypeProjection); err != nil {
+				return err
+			}
+			return writeTypeProjection(w, v)
 		},
 		SelectCaseOfParam: func(v SelectCaseOfParam) error {
 			if err := w.WriteByte(returnTypeSelectCaseOfParam); err != nil {
@@ -505,6 +512,8 @@ func readReturnType(r Reader) (ReturnType, error) {
 		}
 
 		return StringUnpackValue{Format: ParamRef{Index: int(idx)}}, nil
+	case returnTypeTypeProjection:
+		return readTypeProjection(r)
 	case returnTypeSelectCaseOfParam:
 		idx, err := r.ReadInt32()
 		if err != nil {
@@ -530,6 +539,78 @@ func readReturnType(r Reader) (ReturnType, error) {
 	default:
 		return nil, fmt.Errorf("unknown return type tag: %d", tag)
 	}
+}
+
+func writeTypeProjection(w Writer, v TypeProjection) error {
+	if err := w.WriteInt32(int32(v.Source.Index)); err != nil {
+		return err
+	}
+	if err := w.WriteInt32(int32(len(v.Steps))); err != nil {
+		return err
+	}
+	for _, step := range v.Steps {
+		if err := w.WriteInt32(int32(step.Kind)); err != nil {
+			return err
+		}
+		switch step.Kind {
+		case TypeProjectionField:
+			if err := w.WriteString(step.Field); err != nil {
+				return err
+			}
+		case TypeProjectionGenericArg:
+			if err := w.WriteInt32(int32(step.Index)); err != nil {
+				return err
+			}
+		case TypeProjectionCallableReturn:
+		default:
+			return fmt.Errorf("unknown type projection step kind %d", step.Kind)
+		}
+	}
+	return nil
+}
+
+func readTypeProjection(r Reader) (TypeProjection, error) {
+	rawSource, err := r.ReadInt32()
+	if err != nil {
+		return TypeProjection{}, err
+	}
+	rawCount, err := r.ReadInt32()
+	if err != nil {
+		return TypeProjection{}, err
+	}
+	if rawCount < 0 {
+		return TypeProjection{}, fmt.Errorf("negative type projection step count %d", rawCount)
+	}
+	out := TypeProjection{Source: ParamRef{Index: int(rawSource)}}
+	if rawCount == 0 {
+		return out, nil
+	}
+	out.Steps = make([]TypeProjectionStep, 0, rawCount)
+	for i := int32(0); i < rawCount; i++ {
+		rawKind, err := r.ReadInt32()
+		if err != nil {
+			return TypeProjection{}, err
+		}
+		step := TypeProjectionStep{Kind: TypeProjectionStepKind(rawKind)}
+		switch step.Kind {
+		case TypeProjectionField:
+			step.Field, err = r.ReadString()
+			if err != nil {
+				return TypeProjection{}, err
+			}
+		case TypeProjectionGenericArg:
+			rawIndex, err := r.ReadInt32()
+			if err != nil {
+				return TypeProjection{}, err
+			}
+			step.Index = int(rawIndex)
+		case TypeProjectionCallableReturn:
+		default:
+			return TypeProjection{}, fmt.Errorf("unknown type projection step kind %d", step.Kind)
+		}
+		out.Steps = append(out.Steps, step)
+	}
+	return out, nil
 }
 
 // Expr encoding tags

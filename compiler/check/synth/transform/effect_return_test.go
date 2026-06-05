@@ -187,6 +187,63 @@ func TestApplyEffectTransform_ArrayOfCallbackReturn(t *testing.T) {
 	}
 }
 
+func TestApplyEffectTransform_TypeProjectionGenericWitness(t *testing.T) {
+	tParam := typ.NewTypeParam("T", nil)
+	witness := typ.NewGeneric("Type", []*typ.TypeParam{tParam}, typ.NewRecord().Build())
+	payload := typ.NewRecord().Field("id", typ.String).Build()
+	spec := contract.NewSpec().WithEffects(effect.Return{
+		ReturnIndex: 0,
+		Transform: effect.TypeProjection{
+			Source: effect.ParamRef{Index: 1},
+			Steps:  []effect.TypeProjectionStep{effect.ProjectGenericArg(0)},
+		},
+	})
+	fn := typ.Func().
+		Param("data", typ.String).
+		Param("witness", typ.Any).
+		Returns(typ.Any).
+		Spec(spec).
+		Build()
+	args := []typ.Type{
+		typ.String,
+		typ.Instantiate(witness, payload),
+	}
+
+	got := ApplyEffectTransform(fn, args, 0, typ.Any)
+	if !typ.TypeEquals(got, payload) {
+		t.Fatalf("expected witness projection to produce %v, got %v", payload, got)
+	}
+}
+
+func TestApplyEffectTransform_TypeProjectionOptionDecoderReturn(t *testing.T) {
+	event := typ.NewRecord().Field("id", typ.String).Build()
+	options := typ.NewRecord().
+		Field("decode", typ.Func().Param("raw", typ.Any).Returns(event).Build()).
+		Build()
+	spec := contract.NewSpec().WithEffects(effect.Return{
+		ReturnIndex: 0,
+		Transform: effect.TypeProjection{
+			Source: effect.ParamRef{Index: 1},
+			Steps: []effect.TypeProjectionStep{
+				effect.ProjectField("decode"),
+				effect.ProjectCallableReturn(),
+			},
+		},
+	})
+	fn := typ.Func().
+		Param("topic", typ.String).
+		Param("options", typ.Any).
+		Returns(typ.Any).
+		Spec(spec).
+		Build()
+	args := []typ.Type{typ.String, options}
+
+	got := ApplyEffectTransform(fn, args, 0, typ.Any)
+	if !typ.TypeEquals(got, event) {
+		t.Fatalf("expected option decoder projection to produce %v, got %v", event, got)
+	}
+}
+
 func TestApplyEffectTransform_FlowIntoParameterField(t *testing.T) {
 	fn := typ.Func().
 		Param("info", typ.Any).

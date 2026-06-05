@@ -2,6 +2,7 @@ package effect
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/wippyai/go-lua/types/constraint"
 )
@@ -402,6 +403,77 @@ type StringUnpackValue struct {
 func (StringUnpackValue) returnType() {}
 func (s StringUnpackValue) String() string {
 	return fmt.Sprintf("string_unpack(%s)", s.Format)
+}
+
+// TypeProjection derives a return type by walking type evidence from a parameter.
+//
+// It is the canonical return effect for APIs whose result type is determined by a
+// typed witness or typed option field rather than by trusting a source cast. For
+// example:
+//
+//	json.unmarshal<T>(data, witness: Type<T>) -> T
+//	    TypeProjection{Source: param[1], Steps: [generic_arg(0)]}
+//
+//	process.listen(topic, {decode = fun(any) -> Event}) -> Channel<Event>
+//	    uses the same projection [field("decode"), callable_return()] as the
+//	    evidence for T, with the wrapper supplied by the function's declared
+//	    generic return shape.
+type TypeProjection struct {
+	Source ParamRef
+	Steps  []TypeProjectionStep
+}
+
+func (TypeProjection) returnType() {}
+func (p TypeProjection) String() string {
+	if len(p.Steps) == 0 {
+		return fmt.Sprintf("project_type(%s)", p.Source)
+	}
+	parts := make([]string, 0, len(p.Steps))
+	for _, step := range p.Steps {
+		parts = append(parts, step.String())
+	}
+	return fmt.Sprintf("project_type(%s.%s)", p.Source, strings.Join(parts, "."))
+}
+
+// TypeProjectionStepKind names one type-level projection operation.
+type TypeProjectionStepKind uint8
+
+const (
+	TypeProjectionField TypeProjectionStepKind = iota + 1
+	TypeProjectionCallableReturn
+	TypeProjectionGenericArg
+)
+
+// TypeProjectionStep is one operation in a TypeProjection path.
+type TypeProjectionStep struct {
+	Kind  TypeProjectionStepKind
+	Field string
+	Index int
+}
+
+func ProjectField(name string) TypeProjectionStep {
+	return TypeProjectionStep{Kind: TypeProjectionField, Field: name}
+}
+
+func ProjectCallableReturn() TypeProjectionStep {
+	return TypeProjectionStep{Kind: TypeProjectionCallableReturn}
+}
+
+func ProjectGenericArg(index int) TypeProjectionStep {
+	return TypeProjectionStep{Kind: TypeProjectionGenericArg, Index: index}
+}
+
+func (s TypeProjectionStep) String() string {
+	switch s.Kind {
+	case TypeProjectionField:
+		return s.Field
+	case TypeProjectionCallableReturn:
+		return "return"
+	case TypeProjectionGenericArg:
+		return fmt.Sprintf("arg[%d]", s.Index)
+	default:
+		return "unknown"
+	}
 }
 
 // Throw indicates the function may throw an error.
@@ -806,6 +878,18 @@ func returnTypeEquals(a, b ReturnType) bool {
 				return av.Format.Index == bv.Format.Index
 			}
 			return false
+		},
+		TypeProjection: func(av TypeProjection) bool {
+			bv, ok := b.(TypeProjection)
+			if !ok || av.Source.Index != bv.Source.Index || len(av.Steps) != len(bv.Steps) {
+				return false
+			}
+			for i := range av.Steps {
+				if av.Steps[i] != bv.Steps[i] {
+					return false
+				}
+			}
+			return true
 		},
 		SelectCaseOfParam: func(av SelectCaseOfParam) bool {
 			if bv, ok := b.(SelectCaseOfParam); ok {
