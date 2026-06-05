@@ -230,6 +230,69 @@ func TestSynthFunctionTypeWithExpected_InfersReturnFromContextualParamField(t *t
 	}
 }
 
+func TestSynthFunctionTypeWithExpected_ContextualParamStaysPublicWhileBodyInfersReturn(t *testing.T) {
+	s := newTestSynthesizer()
+	sc := scope.New()
+
+	node := typ.NewRecord().
+		Field("id", typ.String).
+		Field("children", typ.NewArray(typ.String)).
+		Build()
+	expected := typ.Func().
+		Param("node", node).
+		Returns(typ.Any).
+		Build()
+	nodeIdent := &ast.IdentExpr{Value: "node"}
+	fn := &ast.FunctionExpr{
+		ParList: &ast.ParList{Names: []string{"node"}},
+		Stmts: []ast.Stmt{
+			&ast.ReturnStmt{Exprs: []ast.Expr{
+				&ast.TableExpr{Fields: []*ast.Field{
+					{
+						Key:       &ast.StringExpr{Value: "id"},
+						KeySyntax: ast.AttrKeyDot,
+						Value: &ast.AttrGetExpr{
+							Object:    nodeIdent,
+							Key:       &ast.StringExpr{Value: "id"},
+							KeySyntax: ast.AttrKeyDot,
+						},
+					},
+					{
+						Key:       &ast.StringExpr{Value: "child_count"},
+						KeySyntax: ast.AttrKeyDot,
+						Value: &ast.UnaryLenOpExpr{Expr: &ast.AttrGetExpr{
+							Object:    nodeIdent,
+							Key:       &ast.StringExpr{Value: "children"},
+							KeySyntax: ast.AttrKeyDot,
+						}},
+					},
+				}},
+			}},
+		},
+	}
+
+	result := s.SynthFunctionTypeWithExpected(fn, sc, expected)
+	if result == nil {
+		t.Fatal("expected non-nil function")
+	}
+	if len(result.Params) != 1 || !typ.TypeEquals(result.Params[0].Type, node) {
+		t.Fatalf("params = %v, want contextual node param", result.Params)
+	}
+	if len(result.Returns) != 1 {
+		t.Fatalf("returns = %v, want one record return", result.Returns)
+	}
+	rec, ok := result.Returns[0].(*typ.Record)
+	if !ok {
+		t.Fatalf("return = %v (%T), want record", result.Returns[0], result.Returns[0])
+	}
+	if got := rec.GetField("id"); got == nil || !typ.TypeEquals(got.Type, typ.String) {
+		t.Fatalf("return.id = %v, want string", got)
+	}
+	if got := rec.GetField("child_count"); got == nil || !typ.TypeEquals(got.Type, typ.Integer) {
+		t.Fatalf("return.child_count = %v, want integer", got)
+	}
+}
+
 func TestSynthFunctionTypeWithExpected_VariadicInference(t *testing.T) {
 	s := newTestSynthesizer()
 	sc := scope.New()

@@ -4,6 +4,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/check/canonical/summary"
 	"github.com/wippyai/go-lua/compiler/check/synth/ops"
+	"github.com/wippyai/go-lua/types/callboundary"
 	"github.com/wippyai/go-lua/types/db"
 	"github.com/wippyai/go-lua/types/domain/value/product"
 	"github.com/wippyai/go-lua/types/query/core"
@@ -57,6 +58,9 @@ func RefineCallbackArgTypes(in CallbackArgRefinementInput) []typ.Type {
 			if typ.IsAbsentOrUnknown(t) {
 				continue
 			}
+			if i < len(in.ExpectedArgs) {
+				t = callboundary.ProjectContextualFunctionArg(in.ExpectedArgs[i], t)
+			}
 			acc = product.Domain.Join(acc, product.FromType(t))
 		}
 		if product.Domain.Equal(acc, product.Domain.Bottom()) {
@@ -81,6 +85,7 @@ func RefineCallbackArgTypes(in CallbackArgRefinementInput) []typ.Type {
 type ExpectedArgsInput struct {
 	Call               *ast.FuncCallExpr
 	ArgTypes           []typ.Type
+	CallbackArg        func(ast.Expr) bool
 	Resolver           TypeResolver
 	Ctx                *db.QueryContext
 	Query              core.TypeOps
@@ -95,7 +100,7 @@ func ExpectedArgTypesForCall(in ExpectedArgsInput) []typ.Type {
 		return nil
 	}
 	def := ops.CallDef{
-		Args:  normalizedCallArgTypesForExpectation(in.ArgTypes, len(in.Call.Args)),
+		Args:  callArgTypesForExpectedArgProjection(in),
 		Query: in.Query,
 	}
 	if len(in.Call.TypeArgs) > 0 {
@@ -122,14 +127,20 @@ func ExpectedArgTypesForCall(in ExpectedArgsInput) []typ.Type {
 	return out
 }
 
-func normalizedCallArgTypesForExpectation(argTypes []typ.Type, n int) []typ.Type {
+func callArgTypesForExpectedArgProjection(in ExpectedArgsInput) []typ.Type {
+	if in.Call == nil {
+		return nil
+	}
+	n := len(in.Call.Args)
 	if n <= 0 {
 		return nil
 	}
 	out := make([]typ.Type, n)
 	for i := 0; i < n; i++ {
-		if i < len(argTypes) && argTypes[i] != nil {
-			out[i] = argTypes[i]
+		if in.CallbackArg != nil && in.CallbackArg(in.Call.Args[i]) {
+			out[i] = typ.Unknown
+		} else if i < len(in.ArgTypes) && in.ArgTypes[i] != nil {
+			out[i] = in.ArgTypes[i]
 		} else {
 			out[i] = typ.Unknown
 		}

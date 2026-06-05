@@ -21,6 +21,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/check/synth/intercept"
 	"github.com/wippyai/go-lua/compiler/check/synth/ops"
 	"github.com/wippyai/go-lua/compiler/check/synth/transform"
+	"github.com/wippyai/go-lua/types/callboundary"
 	"github.com/wippyai/go-lua/types/cfg"
 	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/contract"
@@ -890,7 +891,7 @@ func (s *Synthesizer) synthArgsWithCallContext(
 		if fn, ok := arg.(*ast.FunctionExpr); ok {
 			if expectedFn := phasecore.ExpectedFunctionLiteralSignature(fn, inferred.ExpectedArgType(i)); expectedFn != nil {
 				if t := s.SynthFunctionTypeWithExpected(fn, sc, expectedFn); t != nil {
-					args[i] = t
+					args[i] = callboundary.ProjectContextualFunctionArg(expectedFn, t)
 					continue
 				}
 			}

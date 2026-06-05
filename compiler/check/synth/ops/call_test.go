@@ -799,6 +799,60 @@ func TestCallPipelineReInferSolvesCallbackReturnAfterContextualSynth(t *testing.
 	}
 }
 
+func TestCallPipelineReInferIgnoresCallbackParamBodyDemandAfterInputSolved(t *testing.T) {
+	tp := typ.NewTypeParam("T", nil)
+	up := typ.NewTypeParam("U", nil)
+	channelParam := typ.NewTypeParam("T", nil)
+	channelBody := typ.NewInterface("channel.Channel", []typ.Method{
+		{
+			Name: "receive",
+			Type: typ.Func().
+				Param("self", typ.Self).
+				Returns(channelParam, typ.Boolean).
+				Build(),
+		},
+	})
+	channel := typ.NewGeneric("channel.Channel", []*typ.TypeParam{channelParam}, channelBody)
+	node := typ.NewRecord().
+		Field("id", typ.String).
+		Field("children", typ.NewArray(typ.String)).
+		Build()
+	bodyDemand := typ.NewRecord().Field("children", typ.String).Build()
+	mapped := typ.NewRecord().
+		Field("id", typ.String).
+		Field("child_count", typ.Integer).
+		Build()
+	fn := typ.Func().
+		TypeParamRef(tp).
+		TypeParamRef(up).
+		Param("channel", typ.Instantiate(channel, tp)).
+		Param("fn", typ.Func().Param("value", tp).Returns(up).Build()).
+		Returns(typ.NewOptional(up)).
+		Build()
+
+	ctx := db.NewQueryContext(db.New())
+	pipeline := NewCallPipeline(ctx, CallDef{
+		Callee: fn,
+		Args: []typ.Type{
+			typ.Instantiate(channel, node),
+			typ.Func().Param("value", typ.Any).Returns(typ.Any).Build(),
+		},
+	}, 2).WithReSynth(func(idx int, expected typ.Type) typ.Type {
+		if idx != 1 {
+			return nil
+		}
+		return typ.Func().Param("value", bodyDemand).Returns(mapped).Build()
+	})
+	result := pipeline.Run()
+	if len(result.Errors) > 0 {
+		t.Fatalf("unexpected call errors: %v", result.Errors)
+	}
+	want := typ.NewOptional(mapped)
+	if !typ.TypeEquals(result.Type, want) {
+		t.Fatalf("call result = %v, want %v", result.Type, want)
+	}
+}
+
 func TestInferCallSelectsCallbackParamFromInterfaceGenericArg(t *testing.T) {
 	tp := typ.NewTypeParam("T", nil)
 	up := typ.NewTypeParam("U", nil)

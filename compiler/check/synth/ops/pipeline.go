@@ -1,6 +1,7 @@
 package ops
 
 import (
+	"github.com/wippyai/go-lua/types/callboundary"
 	"github.com/wippyai/go-lua/types/db"
 	"github.com/wippyai/go-lua/types/subtype"
 	"github.com/wippyai/go-lua/types/typ"
@@ -119,6 +120,7 @@ func (p *CallPipeline) reSynthArgs() ([]typ.Type, bool) {
 				}
 				continue
 			}
+			reSynthed = callboundary.ProjectContextualFunctionArg(expected, reSynthed)
 			if selected, ok := refinedArg(result[i], reSynthed); ok {
 				result[i] = selected
 				changed = true
@@ -129,6 +131,7 @@ func (p *CallPipeline) reSynthArgs() ([]typ.Type, bool) {
 			continue
 		}
 		reSynthed := p.reSynth(i, expected)
+		reSynthed = callboundary.ProjectContextualFunctionArg(expected, reSynthed)
 		if selected, ok := refinedArg(result[i], reSynthed); ok {
 			result[i] = selected
 			changed = true

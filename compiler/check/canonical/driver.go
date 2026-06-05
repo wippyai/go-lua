@@ -2572,8 +2572,12 @@ func (ct callTyper) refineFunctionArgTypes(call *ast.FuncCallExpr, argTypes []ty
 	}
 	projector := newCallableProjector(d, d.activeProgram, d.activeQueries, d.activeCtx)
 	expectedArgs := canonicalcall.ExpectedArgTypesForCall(canonicalcall.ExpectedArgsInput{
-		Call:               call,
-		ArgTypes:           argTypes,
+		Call:     call,
+		ArgTypes: argTypes,
+		CallbackArg: func(arg ast.Expr) bool {
+			_, ok := callbackRefs[arg]
+			return ok
+		},
 		Resolver:           ct.callTypeResolver(exprType),
 		Ctx:                d.activeCtx,
 		Query:              d.cfg.Types,
