@@ -475,7 +475,9 @@ func (t *Transfer) applyMutatorEffect(out *flow.PointState, effect MutatorEffect
 	if effect.Kind == MutatorAppendElement {
 		if path, ok := effect.Place.StaticPath(); ok && !path.IsEmpty() {
 			appendHistoryArray = path
-			preserveAppendHistoryBase = out.KeyPresence.HasAppendHistoryBase(flow.KeyPresencePathKey(path))
+			if addr, ok := flow.StableAddressOfPath(path); ok {
+				preserveAppendHistoryBase = out.KeyPresence.HasAppendHistoryBase(addr.Key())
+			}
 		}
 	}
 	appendDestinations := appendOriginDestinations(out, appendHistoryArray, nil)
@@ -488,7 +490,9 @@ func (t *Transfer) applyMutatorEffect(out *flow.PointState, effect MutatorEffect
 	}) || changed
 	if preserveAppendHistoryBase {
 		before := out.KeyPresence
-		out.KeyPresence = out.KeyPresence.WithAppendHistoryBasePath(appendHistoryArray)
+		if addr, ok := flow.StableAddressOfPath(appendHistoryArray); ok {
+			out.KeyPresence = out.KeyPresence.WithAppendHistoryBaseAddress(addr)
+		}
 		changed = !flow.KeyPresenceFactsDomain.Equal(before, out.KeyPresence) || changed
 	}
 	changed = t.recordAppendKeyFact(out, effect.Place, effect.Kind, effect.ElementPath) || changed
@@ -590,10 +594,12 @@ func (t *Transfer) recordAppendKeyFact(out *flow.PointState, place Place, kind M
 		return false
 	}
 	before := out.KeyPresence
-	out.KeyPresence = out.KeyPresence.WithAppendedKeyPaths(arrayPath, elementPath)
-	arrayKey := flow.KeyPresencePathKey(arrayPath)
-	elementKey := flow.KeyPresencePathKey(elementPath)
-	out.KeyPresence = out.KeyPresence.WithAppendHistoryEvent(arrayKey, elementKey)
+	arrayAddr, arrayOK := flow.StableAddressOfPath(arrayPath)
+	elementAddr, elementOK := flow.StableAddressOfPath(elementPath)
+	if arrayOK && elementOK {
+		out.KeyPresence = out.KeyPresence.WithAppendedKeyAddresses(arrayAddr, elementAddr)
+		out.KeyPresence = out.KeyPresence.WithAppendHistoryEvent(arrayAddr.Key(), elementAddr.Key())
+	}
 	return !flow.KeyPresenceFactsDomain.Equal(before, out.KeyPresence)
 }
 
@@ -627,9 +633,14 @@ func (t *Transfer) recordAppendElementFieldOrigins(out *flow.PointState, place P
 				field := append([]constraint.Segment(nil), dst.fieldPrefix...)
 				field = append(field, seg)
 				for _, src := range sources {
+					arrayAddr, arrayOK := flow.StableAddressOfPath(dst.array)
+					sourceAddr, sourceOK := flow.StableAddressOfPath(src.source)
+					if !arrayOK || !sourceOK {
+						continue
+					}
 					out.KeyPresence = out.KeyPresence.
-						WithAppendHistoryBasePath(dst.array).
-						WithAppendElementFieldOriginFromPaths(dst.array, field, src.source, src.sourceField)
+						WithAppendHistoryBaseAddress(arrayAddr).
+						WithAppendElementFieldOriginFromAddresses(arrayAddr, field, sourceAddr, src.sourceField)
 				}
 			}
 		}
@@ -807,9 +818,14 @@ func recordAppendElementFieldOriginUse(
 		for _, dst := range destinations {
 			dstField := append([]constraint.Segment(nil), dst.fieldPrefix...)
 			dstField = append(dstField, field...)
+			arrayAddr, arrayOK := flow.StableAddressOfPath(dst.array)
+			sourceAddr, sourceOK := flow.StableAddressOfPath(source)
+			if !arrayOK || !sourceOK {
+				continue
+			}
 			facts = facts.
-				WithAppendHistoryBasePath(dst.array).
-				WithAppendElementFieldOriginFromPaths(dst.array, dstField, source, sourceField)
+				WithAppendHistoryBaseAddress(arrayAddr).
+				WithAppendElementFieldOriginFromAddresses(arrayAddr, dstField, sourceAddr, sourceField)
 		}
 	}
 	return facts
@@ -1192,7 +1208,11 @@ func (t *Transfer) seedKeyArrayForWriteEffect(out *flow.PointState, effect Write
 	if !ok {
 		return
 	}
-	out.KeyPresence = out.KeyPresence.WithKeyArrayPaths(path, effect.KeyArrayTable)
+	arrayAddr, arrayOK := flow.StableAddressOfPath(path)
+	tableAddr, tableOK := flow.StableAddressOfPath(effect.KeyArrayTable)
+	if arrayOK && tableOK {
+		out.KeyPresence = out.KeyPresence.WithKeyArrayAddresses(arrayAddr, tableAddr)
+	}
 }
 
 func (t *Transfer) seedEmptyContainerKeyArraysForWriteEffect(out *flow.PointState, effect WriteEffect) bool {
@@ -1216,7 +1236,9 @@ func (t *Transfer) seedEmptyContainerKeyArraysForWriteEffect(out *flow.PointStat
 	}
 	before := out.KeyPresence
 	for _, array := range arrays {
-		out.KeyPresence = out.KeyPresence.WithEmptyKeyArrayPath(rootPath.Field(array))
+		if addr, ok := flow.StableAddressOfPath(rootPath.Field(array)); ok {
+			out.KeyPresence = out.KeyPresence.WithEmptyKeyArrayAddress(addr)
+		}
 	}
 	return !flow.KeyPresenceFactsDomain.Equal(before, out.KeyPresence)
 }

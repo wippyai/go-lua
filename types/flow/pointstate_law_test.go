@@ -114,10 +114,10 @@ func TestPointStateJoinKeepsNilGatedKeyPresence(t *testing.T) {
 	factArm.Env = map[ValueKey]product.AbstractValue{
 		SymbolValueKey(key.Symbol): product.FromType(typ.String),
 	}
-	factArm.KeyPresence = factArm.KeyPresence.WithValuePaths(table, key, valuePath)
+	factArm.KeyPresence = factArm.KeyPresence.WithValueAddresses(testStableAddressPath(t, table), testStableAddressPath(t, key), testStableAddressPath(t, valuePath))
 
 	joined := PointStateDomain.Join(nilArm, factArm)
-	if !joined.KeyPresence.HasValuePaths(table, key, valuePath) {
+	if !joined.KeyPresence.HasValueAddresses(testStableAddressPath(t, table), testStableAddressPath(t, key), testStableAddressPath(t, valuePath)) {
 		t.Fatalf("nil-gated join dropped key-presence fact: %s", joined.KeyPresence.Format())
 	}
 	if !PointStateDomain.LessOrEq(nilArm, joined) {
@@ -139,10 +139,10 @@ func TestPointStateJoinDropsOneBranchKeyPresenceWhenMissingBranchMayHaveKey(t *t
 	factArm.Env = map[ValueKey]product.AbstractValue{
 		SymbolValueKey(key.Symbol): product.FromType(typ.String),
 	}
-	factArm.KeyPresence = factArm.KeyPresence.WithPaths(table, key)
+	factArm.KeyPresence = factArm.KeyPresence.WithAddresses(testStableAddressPath(t, table), testStableAddressPath(t, key))
 
 	joined := PointStateDomain.Join(missingArm, factArm)
-	if joined.KeyPresence.HasPaths(table, key) {
+	if joined.KeyPresence.HasAddresses(testStableAddressPath(t, table), testStableAddressPath(t, key)) {
 		t.Fatalf("join kept non-nil one-branch key-presence fact: %s", joined.KeyPresence.Format())
 	}
 }
@@ -151,9 +151,9 @@ func TestPointStateOrderSeesKeyArrayValuePayload(t *testing.T) {
 	array := constraint.NewPath(cfg.SymbolID(945), "node_order")
 	table := constraint.NewPath(cfg.SymbolID(946), "nodes")
 	tableOnly := reachableEmptyPointState()
-	tableOnly.KeyPresence = tableOnly.KeyPresence.WithKeyArrayPaths(array, table)
+	tableOnly.KeyPresence = tableOnly.KeyPresence.WithKeyArrayAddresses(testStableAddressPath(t, array), testStableAddressPath(t, table))
 	withValue := reachableEmptyPointState()
-	withValue.KeyPresence = withValue.KeyPresence.WithKeyArrayValuePaths(array, table, product.FromType(typ.String))
+	withValue.KeyPresence = withValue.KeyPresence.WithKeyArrayValueAddresses(testStableAddressPath(t, array), testStableAddressPath(t, table), product.FromType(typ.String))
 
 	if !PointStateDomain.LessOrEq(withValue, tableOnly) {
 		t.Fatalf("value-carrying key-array proof should imply table-only proof:\nvalue=%s\ntable=%s", formatPointState(withValue), formatPointState(tableOnly))
@@ -244,8 +244,8 @@ func TestPointStateJoinDropsOneBranchMustFacts(t *testing.T) {
 		product.FromType(typ.String),
 	)
 	factful.KeyPresence = factful.KeyPresence.
-		WithPaths(table, key).
-		WithValuePaths(table, key, valuePath)
+		WithAddresses(testStableAddressPath(t, table), testStableAddressPath(t, key)).
+		WithValueAddresses(testStableAddressPath(t, table), testStableAddressPath(t, key), testStableAddressPath(t, valuePath))
 	factful.ValueOrigins = factful.ValueOrigins.WithAddresses(
 		testStableAddressPath(t, valuePath),
 		testStableAddressPath(t, sourcePath),
@@ -307,7 +307,8 @@ func assertPointStateDroppedOneBranchMustFacts(t *testing.T, ps PointState, tabl
 	if _, ok := ps.StaticMembers.ValueAtAddress(testStableAddressKey(t, KeyPresencePathKey(table.IndexStr("root")))); ok {
 		t.Fatalf("PointState kept one-branch StaticMembers fact: %s", ps.StaticMembers.Format())
 	}
-	if ps.KeyPresence.HasPaths(table, key) || ps.KeyPresence.HasValuePaths(table, key, valuePath) {
+	if ps.KeyPresence.HasAddresses(testStableAddressPath(t, table), testStableAddressPath(t, key)) ||
+		ps.KeyPresence.HasValueAddresses(testStableAddressPath(t, table), testStableAddressPath(t, key), testStableAddressPath(t, valuePath)) {
 		t.Fatalf("PointState kept one-branch KeyPresence fact: %s", ps.KeyPresence.Format())
 	}
 	if got := ps.ValueOrigins.OriginsOfAddress(testStableAddressPath(t, valuePath)); len(got) != 0 {

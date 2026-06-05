@@ -177,12 +177,8 @@ func (f KeyPresenceFacts) Has(table, key constraint.PathKey) bool {
 	return ok
 }
 
-func (f KeyPresenceFacts) HasPaths(table, key constraint.Path) bool {
-	fact, ok := KeyPresenceFactFromPaths(table, key)
-	if !ok {
-		return false
-	}
-	return f.Has(fact.Table, fact.Key)
+func (f KeyPresenceFacts) HasAddresses(table, key StableAddress) bool {
+	return f.Has(table.Key(), key.Key())
 }
 
 func (f KeyPresenceFacts) With(table, key constraint.PathKey) KeyPresenceFacts {
@@ -200,12 +196,8 @@ func (f KeyPresenceFacts) With(table, key constraint.PathKey) KeyPresenceFacts {
 	return canonicalKeyPresenceFactsFull(next, f.values, f.arrays, f.arrayValues, f.appends, f.pending, f.emptyArrays, f.appendBases, f.appendEvents, f.appendCoverage, f.appendOrigins)
 }
 
-func (f KeyPresenceFacts) WithPaths(table, key constraint.Path) KeyPresenceFacts {
-	fact, ok := KeyPresenceFactFromPaths(table, key)
-	if !ok {
-		return f
-	}
-	return f.With(fact.Table, fact.Key)
+func (f KeyPresenceFacts) WithAddresses(table, key StableAddress) KeyPresenceFacts {
+	return f.With(table.Key(), key.Key())
 }
 
 func (f KeyPresenceFacts) HasValue(table, key, value constraint.PathKey) bool {
@@ -216,11 +208,8 @@ func (f KeyPresenceFacts) HasValue(table, key, value constraint.PathKey) bool {
 	return ok
 }
 
-func (f KeyPresenceFacts) HasValuePaths(table, key, value constraint.Path) bool {
-	tableKey := KeyPresencePathKey(table)
-	keyKey := KeyPresencePathKey(key)
-	valueKey := KeyPresencePathKey(value)
-	return f.HasValue(tableKey, keyKey, valueKey)
+func (f KeyPresenceFacts) HasValueAddresses(table, key, value StableAddress) bool {
+	return f.HasValue(table.Key(), key.Key(), value.Key())
 }
 
 func (f KeyPresenceFacts) WithValue(table, key, value constraint.PathKey) KeyPresenceFacts {
@@ -239,11 +228,8 @@ func (f KeyPresenceFacts) WithValue(table, key, value constraint.PathKey) KeyPre
 	return canonicalKeyPresenceFactsFull(f.entries, next, f.arrays, f.arrayValues, f.appends, f.pending, f.emptyArrays, f.appendBases, f.appendEvents, f.appendCoverage, f.appendOrigins)
 }
 
-func (f KeyPresenceFacts) WithValuePaths(table, key, value constraint.Path) KeyPresenceFacts {
-	tableKey := KeyPresencePathKey(table)
-	keyKey := KeyPresencePathKey(key)
-	valueKey := KeyPresencePathKey(value)
-	return f.WithValue(tableKey, keyKey, valueKey)
+func (f KeyPresenceFacts) WithValueAddresses(table, key, value StableAddress) KeyPresenceFacts {
+	return f.WithValue(table.Key(), key.Key(), value.Key())
 }
 
 func (f KeyPresenceFacts) ValueEntries() []KeyValueFact {
@@ -268,10 +254,8 @@ func (f KeyPresenceFacts) WithKeyArray(array, table constraint.PathKey) KeyPrese
 	return canonicalKeyPresenceFactsFull(f.entries, f.values, next, f.arrayValues, f.appends, f.pending, f.emptyArrays, f.appendBases, f.appendEvents, f.appendCoverage, f.appendOrigins)
 }
 
-func (f KeyPresenceFacts) WithKeyArrayPaths(array, table constraint.Path) KeyPresenceFacts {
-	arrayKey := KeyPresencePathKey(array)
-	tableKey := KeyPresencePathKey(table)
-	return f.WithKeyArray(arrayKey, tableKey)
+func (f KeyPresenceFacts) WithKeyArrayAddresses(array, table StableAddress) KeyPresenceFacts {
+	return f.WithKeyArray(array.Key(), table.Key())
 }
 
 func (f KeyPresenceFacts) KeyArrayTables(array constraint.PathKey) []constraint.PathKey {
@@ -328,8 +312,8 @@ func (f KeyPresenceFacts) WithEmptyKeyArray(array constraint.PathKey) KeyPresenc
 	return canonicalKeyPresenceFactsFull(f.entries, f.values, f.arrays, f.arrayValues, f.appends, f.pending, next, base, f.appendEvents, f.appendCoverage, f.appendOrigins)
 }
 
-func (f KeyPresenceFacts) WithEmptyKeyArrayPath(array constraint.Path) KeyPresenceFacts {
-	return f.WithEmptyKeyArray(KeyPresencePathKey(array))
+func (f KeyPresenceFacts) WithEmptyKeyArrayAddress(array StableAddress) KeyPresenceFacts {
+	return f.WithEmptyKeyArray(array.Key())
 }
 
 func (f KeyPresenceFacts) HasEmptyKeyArray(array constraint.PathKey) bool {
@@ -361,10 +345,8 @@ func (f KeyPresenceFacts) WithKeyArrayValue(array, table constraint.PathKey, val
 	return canonicalKeyPresenceFactsFull(f.entries, f.values, f.arrays, next, f.appends, f.pending, f.emptyArrays, f.appendBases, f.appendEvents, f.appendCoverage, f.appendOrigins)
 }
 
-func (f KeyPresenceFacts) WithKeyArrayValuePaths(array, table constraint.Path, value product.AbstractValue) KeyPresenceFacts {
-	arrayKey := KeyPresencePathKey(array)
-	tableKey := KeyPresencePathKey(table)
-	return f.WithKeyArrayValue(arrayKey, tableKey, value)
+func (f KeyPresenceFacts) WithKeyArrayValueAddresses(array, table StableAddress, value product.AbstractValue) KeyPresenceFacts {
+	return f.WithKeyArrayValue(array.Key(), table.Key(), value)
 }
 
 func (f KeyPresenceFacts) KeyArrayValueEntries() []KeyArrayValueFact {
@@ -405,10 +387,8 @@ func (f KeyPresenceFacts) WithAppendedKey(array, key constraint.PathKey) KeyPres
 	return canonicalKeyPresenceFactsFull(f.entries, f.values, f.arrays, f.arrayValues, next, f.pending, f.emptyArrays, f.appendBases, f.appendEvents, f.appendCoverage, f.appendOrigins)
 }
 
-func (f KeyPresenceFacts) WithAppendedKeyPaths(array, key constraint.Path) KeyPresenceFacts {
-	arrayKey := KeyPresencePathKey(array)
-	keyKey := KeyPresencePathKey(key)
-	return f.WithAppendedKey(arrayKey, keyKey)
+func (f KeyPresenceFacts) WithAppendedKeyAddresses(array, key StableAddress) KeyPresenceFacts {
+	return f.WithAppendedKey(array.Key(), key.Key())
 }
 
 func (f KeyPresenceFacts) AppendedKeyEntries() []AppendedKeyFact {
@@ -472,8 +452,8 @@ func (f KeyPresenceFacts) WithAppendHistoryBase(array constraint.PathKey) KeyPre
 	return canonicalKeyPresenceFactsFull(f.entries, f.values, f.arrays, f.arrayValues, f.appends, f.pending, f.emptyArrays, next, f.appendEvents, f.appendCoverage, f.appendOrigins)
 }
 
-func (f KeyPresenceFacts) WithAppendHistoryBasePath(array constraint.Path) KeyPresenceFacts {
-	return f.WithAppendHistoryBase(KeyPresencePathKey(array))
+func (f KeyPresenceFacts) WithAppendHistoryBaseAddress(array StableAddress) KeyPresenceFacts {
+	return f.WithAppendHistoryBase(array.Key())
 }
 
 func (f KeyPresenceFacts) HasAppendHistoryBase(array constraint.PathKey) bool {
@@ -571,16 +551,12 @@ func (f KeyPresenceFacts) WithAppendElementFieldOriginFromSource(array, field, s
 	return canonicalKeyPresenceFactsFull(f.entries, f.values, f.arrays, f.arrayValues, f.appends, f.pending, f.emptyArrays, f.appendBases, f.appendEvents, f.appendCoverage, next)
 }
 
-func (f KeyPresenceFacts) WithAppendElementFieldOriginPaths(array constraint.Path, field []constraint.Segment, source constraint.Path) KeyPresenceFacts {
-	return f.WithAppendElementFieldOriginFromPaths(array, field, source, nil)
+func (f KeyPresenceFacts) WithAppendElementFieldOriginAddresses(array StableAddress, field []constraint.Segment, source StableAddress) KeyPresenceFacts {
+	return f.WithAppendElementFieldOriginFromSource(array.Key(), AppendElementFieldPathKey(field), source.Key(), "")
 }
 
-func (f KeyPresenceFacts) WithAppendElementFieldOriginFromPaths(array constraint.Path, field []constraint.Segment, source constraint.Path, sourceField []constraint.Segment) KeyPresenceFacts {
-	arrayKey := KeyPresencePathKey(array)
-	fieldKey := AppendElementFieldPathKey(field)
-	sourceKey := KeyPresencePathKey(source)
-	sourceFieldKey := AppendElementFieldPathKey(sourceField)
-	return f.WithAppendElementFieldOriginFromSource(arrayKey, fieldKey, sourceKey, sourceFieldKey)
+func (f KeyPresenceFacts) WithAppendElementFieldOriginFromAddresses(array StableAddress, field []constraint.Segment, source StableAddress, sourceField []constraint.Segment) KeyPresenceFacts {
+	return f.WithAppendElementFieldOriginFromSource(array.Key(), AppendElementFieldPathKey(field), source.Key(), AppendElementFieldPathKey(sourceField))
 }
 
 func (f KeyPresenceFacts) AppendElementFieldOriginEntries() []AppendElementFieldOriginFact {

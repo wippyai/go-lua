@@ -881,7 +881,11 @@ func (t *Transfer) SeedEntryFacts(out *flow.PointState, facts flow.BoundaryFacts
 		if !ok {
 			continue
 		}
-		out.KeyPresence = out.KeyPresence.WithAppendedKeyPaths(array, key)
+		arrayAddr, arrayOK := flow.StableAddressOfPath(array)
+		keyAddr, keyOK := flow.StableAddressOfPath(key)
+		if arrayOK && keyOK {
+			out.KeyPresence = out.KeyPresence.WithAppendedKeyAddresses(arrayAddr, keyAddr)
+		}
 	}
 	for _, fact := range facts.AppendElementFieldOrigins() {
 		array, ok := t.rebaseEntryBoundaryPath(fact.Array)
@@ -892,9 +896,14 @@ func (t *Transfer) SeedEntryFacts(out *flow.PointState, facts flow.BoundaryFacts
 		if !ok {
 			continue
 		}
+		arrayAddr, arrayOK := flow.StableAddressOfPath(array)
+		sourceAddr, sourceOK := flow.StableAddressOfPath(source)
+		if !arrayOK || !sourceOK {
+			continue
+		}
 		out.KeyPresence = out.KeyPresence.
-			WithAppendHistoryBasePath(array).
-			WithAppendElementFieldOriginFromPaths(array, fact.Field, source, fact.SourceField)
+			WithAppendHistoryBaseAddress(arrayAddr).
+			WithAppendElementFieldOriginFromAddresses(arrayAddr, fact.Field, sourceAddr, fact.SourceField)
 	}
 	var ops []NumericOp
 	for _, fact := range facts.LengthLowerBounds() {
@@ -3531,9 +3540,13 @@ func (t *Transfer) applyBoundaryFactsWithAppendPlans(
 			continue
 		}
 		before := out.KeyPresence
-		out.KeyPresence = out.KeyPresence.
-			WithAppendHistoryBasePath(array).
-			WithAppendElementFieldOriginFromPaths(array, fact.Field, source, fact.SourceField)
+		arrayAddr, arrayOK := flow.StableAddressOfPath(array)
+		sourceAddr, sourceOK := flow.StableAddressOfPath(source)
+		if arrayOK && sourceOK {
+			out.KeyPresence = out.KeyPresence.
+				WithAppendHistoryBaseAddress(arrayAddr).
+				WithAppendElementFieldOriginFromAddresses(arrayAddr, fact.Field, sourceAddr, fact.SourceField)
+		}
 		changed = !flow.KeyPresenceFactsDomain.Equal(before, out.KeyPresence) || changed
 	}
 	var ops []NumericOp
@@ -3560,26 +3573,24 @@ func (t *Transfer) applyBoundaryAppendKeyPlans(out *flow.PointState, plans []bou
 	}
 	changed := false
 	for _, plan := range plans {
-		arrayKey := flow.KeyPresencePathKey(plan.array)
-		keyKey := flow.KeyPresencePathKey(plan.key)
-		if arrayKey == "" || keyKey == "" {
+		arrayAddr, arrayOK := flow.StableAddressOfPath(plan.array)
+		keyAddr, keyOK := flow.StableAddressOfPath(plan.key)
+		if !arrayOK || !keyOK {
 			continue
 		}
+		arrayKey := arrayAddr.Key()
+		keyKey := keyAddr.Key()
 		tables := t.boundaryAppendKeyPlanTables(out, plan, keyKey)
 		preserveAppendHistoryBase := plan.preserveHistoryBase || plan.freshEmpty || out.KeyPresence.HasAppendHistoryBase(arrayKey)
 		beforeKill := out.KeyPresence
-		arrayAddr, ok := flow.StableAddressOfPath(plan.array)
-		if !ok {
-			continue
-		}
 		out.KeyPresence = out.KeyPresence.KillAffectedByWriteAddress(arrayAddr)
 		changed = !flow.KeyPresenceFactsDomain.Equal(beforeKill, out.KeyPresence) || changed
 		beforeAppend := out.KeyPresence
-		out.KeyPresence = out.KeyPresence.WithAppendedKey(arrayKey, keyKey)
+		out.KeyPresence = out.KeyPresence.WithAppendedKeyAddresses(arrayAddr, keyAddr)
 		changed = !flow.KeyPresenceFactsDomain.Equal(beforeAppend, out.KeyPresence) || changed
 		if preserveAppendHistoryBase {
 			before := out.KeyPresence
-			out.KeyPresence = out.KeyPresence.WithAppendHistoryBase(arrayKey).WithAppendHistoryEvent(arrayKey, keyKey)
+			out.KeyPresence = out.KeyPresence.WithAppendHistoryBaseAddress(arrayAddr).WithAppendHistoryEvent(arrayKey, keyKey)
 			changed = !flow.KeyPresenceFactsDomain.Equal(before, out.KeyPresence) || changed
 		}
 		for _, table := range tables {

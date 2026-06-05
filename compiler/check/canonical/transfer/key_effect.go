@@ -45,7 +45,12 @@ func (t *Transfer) applyKeyProvenanceEffect(out *flow.PointState, effect KeyProv
 		}
 		if !effect.ValuePath.IsEmpty() {
 			before := out.KeyPresence
-			out.KeyPresence = out.KeyPresence.WithValuePaths(effect.TablePath, effect.KeyPath, effect.ValuePath)
+			tableAddr, tableOK := flow.StableAddressOfPath(effect.TablePath)
+			keyAddr, keyOK := flow.StableAddressOfPath(effect.KeyPath)
+			valueAddr, valueOK := flow.StableAddressOfPath(effect.ValuePath)
+			if tableOK && keyOK && valueOK {
+				out.KeyPresence = out.KeyPresence.WithValueAddresses(tableAddr, keyAddr, valueAddr)
+			}
 			changed = !flow.KeyPresenceFactsDomain.Equal(before, out.KeyPresence) || changed
 		}
 		return changed
@@ -54,7 +59,11 @@ func (t *Transfer) applyKeyProvenanceEffect(out *flow.PointState, effect KeyProv
 			return false
 		}
 		before := out.KeyPresence
-		out.KeyPresence = out.KeyPresence.WithKeyArrayPaths(effect.ArrayPath, effect.TablePath)
+		arrayAddr, arrayOK := flow.StableAddressOfPath(effect.ArrayPath)
+		tableAddr, tableOK := flow.StableAddressOfPath(effect.TablePath)
+		if arrayOK && tableOK {
+			out.KeyPresence = out.KeyPresence.WithKeyArrayAddresses(arrayAddr, tableAddr)
+		}
 		return !flow.KeyPresenceFactsDomain.Equal(before, out.KeyPresence)
 	case KeyProvenanceIndexedKeyArrayIteration:
 		if effect.ArrayPath.IsEmpty() || effect.KeyPath.IsEmpty() {

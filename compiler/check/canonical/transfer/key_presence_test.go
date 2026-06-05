@@ -33,11 +33,11 @@ func TestSeedKeyedIterKeyOfWritesKeyPresenceAxis(t *testing.T) {
 
 	tablePath := constraint.NewPath(cfg.SymbolID(11), "items")
 	keyPath := constraint.NewPath(keySym, "k")
-	if !out.KeyPresence.HasPaths(tablePath, keyPath) {
+	if !testKeyPresenceHas(t, out.KeyPresence, tablePath, keyPath) {
 		t.Fatalf("KeyPresence missing seeded keyed-iteration fact: %s", out.KeyPresence.Format())
 	}
 	valuePath := constraint.NewPath(cfg.SymbolID(13), "v")
-	if out.KeyPresence.HasValuePaths(tablePath, keyPath, valuePath) {
+	if testKeyPresenceHasValue(t, out.KeyPresence, tablePath, keyPath, valuePath) {
 		t.Fatal("unexpected value-origin fact without value target")
 	}
 	if out.Cond.HasConstraints() {
@@ -62,7 +62,7 @@ func TestSeedKeyedIterKeyOfWritesValueOriginFact(t *testing.T) {
 	tablePath := constraint.NewPath(cfg.SymbolID(41), "items")
 	keyPath := constraint.NewPath(cfg.SymbolID(42), "k")
 	valuePath := constraint.NewPath(cfg.SymbolID(43), "v")
-	if !out.KeyPresence.HasValuePaths(tablePath, keyPath, valuePath) {
+	if !testKeyPresenceHasValue(t, out.KeyPresence, tablePath, keyPath, valuePath) {
 		t.Fatalf("KeyPresence missing value-origin fact: %s", out.KeyPresence.Format())
 	}
 }
@@ -91,7 +91,7 @@ func TestRefineByKeyPresenceDoesNotScanCond(t *testing.T) {
 		t.Fatalf("refined from Cond without product proof: %v", got.ProjectValue())
 	}
 
-	out.KeyPresence = out.KeyPresence.WithPaths(tablePath, keyPath)
+	out.KeyPresence = testKeyPresenceWith(t, out.KeyPresence, tablePath, keyPath)
 	got, ok := tr.refineByKeyPresence(&out, read, result)
 	if !ok || !typ.TypeEquals(got.ProjectValue(), typ.String) {
 		t.Fatalf("refineByKeyPresence = %v, %v; want string,true", got.ProjectValue(), ok)
@@ -116,12 +116,12 @@ func TestGuardedDynamicIndexSeedsKeyPresenceAxis(t *testing.T) {
 
 	tablePath := constraint.NewPath(cfg.SymbolID(221), "items")
 	keyPath := constraint.NewPath(cfg.SymbolID(222), "k")
-	if !out.KeyPresence.HasPaths(tablePath, keyPath) {
+	if !testKeyPresenceHas(t, out.KeyPresence, tablePath, keyPath) {
 		t.Fatalf("truthy dynamic-index guard did not seed KeyPresence: %s", out.KeyPresence.Format())
 	}
 
 	falsy := tr.narrowByCondCheck(flow.PointState{}, info, false, false)
-	if falsy.KeyPresence.HasPaths(tablePath, keyPath) {
+	if testKeyPresenceHas(t, falsy.KeyPresence, tablePath, keyPath) {
 		t.Fatalf("false edge of truthy dynamic-index guard seeded KeyPresence: %s", falsy.KeyPresence.Format())
 	}
 }
@@ -144,12 +144,12 @@ func TestGuardedDynamicIndexNilComparisonSeedsOnlyNotNilEdge(t *testing.T) {
 
 	tablePath := constraint.NewPath(cfg.SymbolID(231), "items")
 	keyPath := constraint.NewPath(cfg.SymbolID(232), "k")
-	if !out.KeyPresence.HasPaths(tablePath, keyPath) {
+	if !testKeyPresenceHas(t, out.KeyPresence, tablePath, keyPath) {
 		t.Fatalf("not-nil dynamic-index guard did not seed KeyPresence: %s", out.KeyPresence.Format())
 	}
 
 	nilEdge := tr.narrowByCondCheck(flow.PointState{}, info, false, false)
-	if nilEdge.KeyPresence.HasPaths(tablePath, keyPath) {
+	if testKeyPresenceHas(t, nilEdge.KeyPresence, tablePath, keyPath) {
 		t.Fatalf("nil edge of dynamic-index guard seeded KeyPresence: %s", nilEdge.KeyPresence.Format())
 	}
 }
@@ -172,12 +172,12 @@ func TestGuardedNegatedDynamicIndexSeedsSurvivingTruthyEdge(t *testing.T) {
 	tablePath := constraint.NewPath(cfg.SymbolID(241), "items")
 	keyPath := constraint.NewPath(cfg.SymbolID(242), "k")
 	nilOrFalseEdge := tr.narrowByCondCheck(flow.PointState{}, info, true, false)
-	if nilOrFalseEdge.KeyPresence.HasPaths(tablePath, keyPath) {
+	if testKeyPresenceHas(t, nilOrFalseEdge.KeyPresence, tablePath, keyPath) {
 		t.Fatalf("taken edge of negated dynamic-index guard seeded KeyPresence: %s", nilOrFalseEdge.KeyPresence.Format())
 	}
 
 	truthyEdge := tr.narrowByCondCheck(flow.PointState{}, info, false, false)
-	if !truthyEdge.KeyPresence.HasPaths(tablePath, keyPath) {
+	if !testKeyPresenceHas(t, truthyEdge.KeyPresence, tablePath, keyPath) {
 		t.Fatalf("surviving truthy edge of negated dynamic-index guard did not seed KeyPresence: %s", truthyEdge.KeyPresence.Format())
 	}
 }
@@ -209,7 +209,7 @@ func TestDynamicWriteKeyConsumesKeyPresenceAxis(t *testing.T) {
 		t.Fatalf("dynamicWriteKey used Cond without product proof: %v", got.ProjectValue())
 	}
 
-	out.KeyPresence = out.KeyPresence.WithPaths(basePath, keyPath)
+	out.KeyPresence = testKeyPresenceWith(t, out.KeyPresence, basePath, keyPath)
 	if got := tr.dynamicWriteKey(&out, target, product.AbstractValue{}, nil); !got.IsZero() {
 		t.Fatalf("dynamicWriteKey synthesized key from zero base: %v", got.ProjectValue())
 	}
@@ -220,7 +220,7 @@ func TestDynamicWriteKeyConsumesKeyPresenceAxis(t *testing.T) {
 	}
 
 	target.FieldPath = []string{"inner"}
-	out.KeyPresence = flow.KeyPresenceFacts{}.WithPaths(basePath.Field("inner"), keyPath)
+	out.KeyPresence = testKeyPresenceWith(t, flow.KeyPresenceFacts{}, basePath.Field("inner"), keyPath)
 	got = tr.dynamicWriteKey(&out, target, base, nil)
 	if got.IsZero() || !typ.TypeEquals(got.ProjectValue(), want) {
 		t.Fatalf("nested dynamicWriteKey = %v; want %v", got.ProjectValue(), want)
@@ -251,7 +251,7 @@ func TestDynamicIndexWriteSeedsKeyPresenceForOpaqueKey(t *testing.T) {
 
 	tablePath := constraint.NewPath(cfg.SymbolID(141), "nodes")
 	keyPath := constraint.NewPath(cfg.SymbolID(142), "node_id")
-	if !out.KeyPresence.HasPaths(tablePath, keyPath) {
+	if !testKeyPresenceHas(t, out.KeyPresence, tablePath, keyPath) {
 		t.Fatalf("opaque dynamic write did not seed key presence: %s", out.KeyPresence.Format())
 	}
 }
@@ -276,7 +276,7 @@ func TestWriteIsSelfDerivedUsesLiveKeyPresenceValueOrigin(t *testing.T) {
 	keyPath := constraint.NewPath(cfg.SymbolID(52), "k")
 	valuePath := constraint.NewPath(cfg.SymbolID(53), "v")
 	out := flow.PointState{
-		KeyPresence: flow.KeyPresenceFacts{}.WithValuePaths(tablePath, keyPath, valuePath),
+		KeyPresence: testKeyPresenceWithValue(t, flow.KeyPresenceFacts{}, tablePath, keyPath, valuePath),
 	}
 
 	if !tr.writeIsSelfDerived(&out, target, value) {
@@ -340,7 +340,7 @@ func TestKeyPresenceKillMemberWriteDropsTableRootValueOrigin(t *testing.T) {
 	keyPath := constraint.NewPath(keySym, "k")
 	valuePath := constraint.NewPath(valueSym, "v")
 	out := flow.PointState{
-		KeyPresence: flow.KeyPresenceFacts{}.WithValuePaths(tablePath, keyPath, valuePath),
+		KeyPresence: testKeyPresenceWithValue(t, flow.KeyPresenceFacts{}, tablePath, keyPath, valuePath),
 	}
 
 	tr.applyContainerWrite(&out, cfg.AssignTarget{
@@ -349,7 +349,7 @@ func TestKeyPresenceKillMemberWriteDropsTableRootValueOrigin(t *testing.T) {
 		FieldPath:  []string{"x"},
 	}, &ast.StringExpr{Value: "next"}, nil)
 
-	if out.KeyPresence.HasPaths(tablePath, keyPath) || out.KeyPresence.HasValuePaths(tablePath, keyPath, valuePath) {
+	if testKeyPresenceHas(t, out.KeyPresence, tablePath, keyPath) || testKeyPresenceHasValue(t, out.KeyPresence, tablePath, keyPath, valuePath) {
 		t.Fatalf("member write kept stale table-root KeyPresence: %s", out.KeyPresence.Format())
 	}
 }
@@ -404,7 +404,7 @@ func TestIndexedKeyArrayIterationRefinesKeyValueFromTableDomain(t *testing.T) {
 				Field("suites", typ.NewRecord().MapComponent(typ.String, typ.Any).Build()).
 				Build()),
 		},
-		KeyPresence: flow.KeyPresenceFacts{}.WithKeyArrayPaths(namesPath, containerPath),
+		KeyPresence: testKeyPresenceWithKeyArray(t, flow.KeyPresenceFacts{}, namesPath, containerPath),
 	}
 
 	tr.seedIndexedIterKeyOf(&out, &cfg.AssignInfo{
@@ -428,7 +428,7 @@ func TestIndexedKeyPresenceKilledByKeysArrayMutation(t *testing.T) {
 	typer := keyPresenceTestTyper{indexedSource: namesPath}
 	tr := New(input.Inputs{}, Config{CallTyper: typer})
 	out := flow.PointState{
-		KeyPresence: flow.KeyPresenceFacts{}.WithKeyArrayPaths(namesPath, containerPath),
+		KeyPresence: testKeyPresenceWithKeyArray(t, flow.KeyPresenceFacts{}, namesPath, containerPath),
 	}
 
 	tr.applyContainerWrite(&out, cfg.AssignTarget{
@@ -456,7 +456,7 @@ func TestTableInsertKillsKeyArrayProvenance(t *testing.T) {
 	in := keyPresenceInput(t, map[*ast.IdentExpr]cfg.SymbolID{names: namesSym})
 	tr := New(in, Config{})
 	out := flow.PointState{
-		KeyPresence: flow.KeyPresenceFacts{}.WithKeyArrayPaths(namesPath, containerPath),
+		KeyPresence: testKeyPresenceWithKeyArray(t, flow.KeyPresenceFacts{}, namesPath, containerPath),
 	}
 
 	tr.applyTableInsert(&out, &cfg.CallInfo{
@@ -489,14 +489,14 @@ func TestPresentNestedIndexWritePreservesKeyPresence(t *testing.T) {
 	tablePath := constraint.NewPath(cfg.SymbolID(61), "items").Field("byName")
 	keyPath := constraint.NewPath(cfg.SymbolID(62), "k")
 	out := flow.PointState{
-		KeyPresence: flow.KeyPresenceFacts{}.WithPaths(tablePath, keyPath),
+		KeyPresence: testKeyPresenceWith(t, flow.KeyPresenceFacts{}, tablePath, keyPath),
 	}
 	tr.applyContainerWrite(&out, cfg.AssignTarget{
 		Kind: cfg.TargetIndex,
 		Base: base,
 		Key:  key,
 	}, &ast.StringExpr{Value: "changed"}, nil)
-	if !out.KeyPresence.HasPaths(tablePath, keyPath) {
+	if !testKeyPresenceHas(t, out.KeyPresence, tablePath, keyPath) {
 		t.Fatalf("present nested index write dropped KeyPresence: %s", out.KeyPresence.Format())
 	}
 }
@@ -518,14 +518,14 @@ func TestNilNestedIndexWriteKillsKeyPresence(t *testing.T) {
 	tablePath := constraint.NewPath(cfg.SymbolID(61), "items").Field("byName")
 	keyPath := constraint.NewPath(cfg.SymbolID(62), "k")
 	out := flow.PointState{
-		KeyPresence: flow.KeyPresenceFacts{}.WithPaths(tablePath, keyPath),
+		KeyPresence: testKeyPresenceWith(t, flow.KeyPresenceFacts{}, tablePath, keyPath),
 	}
 	tr.applyContainerWrite(&out, cfg.AssignTarget{
 		Kind: cfg.TargetIndex,
 		Base: base,
 		Key:  key,
 	}, &ast.NilExpr{}, nil)
-	if out.KeyPresence.HasPaths(tablePath, keyPath) {
+	if testKeyPresenceHas(t, out.KeyPresence, tablePath, keyPath) {
 		t.Fatalf("nil nested index write kept stale KeyPresence: %s", out.KeyPresence.Format())
 	}
 }
@@ -540,7 +540,7 @@ func TestGenericForRebindingKillsKeyPresenceBeforeIteratorTypingGate(t *testing.
 	staleFieldKey := flow.SymbolPathKey(keySym, staleField.Segments)
 	tr := New(input.Inputs{}, Config{})
 	out := flow.PointState{
-		KeyPresence:   flow.KeyPresenceFacts{}.WithValuePaths(tablePath, keyPath, valuePath),
+		KeyPresence:   testKeyPresenceWithValue(t, flow.KeyPresenceFacts{}, tablePath, keyPath, valuePath),
 		StaticMembers: flow.StaticMemberFacts{}.WithAddress(testStaticMemberAddressKey(t, staleFieldKey), product.FromType(typ.String)),
 		FunctionRefs:  flow.WithFunctionRef(nil, staleField.Key(), flow.FunctionRefSetOf(flow.FunctionRef{GraphID: 74})),
 		Rel:           flow.PointRelations{}.WithSiblingNil(valueSym, []cfg.SymbolID{keySym}),
@@ -554,7 +554,7 @@ func TestGenericForRebindingKillsKeyPresenceBeforeIteratorTypingGate(t *testing.
 		},
 	}, nil)
 
-	if out.KeyPresence.HasPaths(tablePath, keyPath) || out.KeyPresence.HasValuePaths(tablePath, keyPath, valuePath) {
+	if testKeyPresenceHas(t, out.KeyPresence, tablePath, keyPath) || testKeyPresenceHasValue(t, out.KeyPresence, tablePath, keyPath, valuePath) {
 		t.Fatalf("generic-for rebinding kept stale KeyPresence: %s", out.KeyPresence.Format())
 	}
 	if _, ok := out.StaticMembers.ValueAtAddress(testStaticMemberAddressKey(t, staleFieldKey)); ok {
@@ -605,7 +605,7 @@ end
 	itemPath := constraint.NewPath(itemSym, "item")
 	keyPath := constraint.NewPath(keySym, "key")
 	valuePath := constraint.NewPath(valueSym, "value")
-	stale := flow.KeyPresenceFacts{}.WithValuePaths(itemPath, keyPath, valuePath)
+	stale := testKeyPresenceWithValue(t, flow.KeyPresenceFacts{}, itemPath, keyPath, valuePath)
 	elem := typ.NewRecord().
 		Field("count", typ.Number).
 		Field("name", typ.String).
@@ -617,12 +617,12 @@ end
 			flow.SymbolValueKey(valueSym): product.FromType(typ.NewOptional(typ.String)),
 		},
 	}
-	if out.KeyPresence.HasValuePaths(itemPath, keyPath, valuePath) {
+	if testKeyPresenceHasValue(t, out.KeyPresence, itemPath, keyPath, valuePath) {
 		t.Fatal("test setup failed to kill iterator provenance")
 	}
 
 	got := tr.genericForBodyEdgeState(in.Graph, branch, out)
-	if !got.KeyPresence.HasValuePaths(itemPath, keyPath, valuePath) {
+	if !testKeyPresenceHasValue(t, got.KeyPresence, itemPath, keyPath, valuePath) {
 		t.Fatalf("generic-for body edge did not rebind iterator provenance: %s", got.KeyPresence.Format())
 	}
 	valueAV, _ := tr.symbolValue(&got, valueSym)
@@ -720,7 +720,7 @@ func TestFuncDefKillsKeyPresenceEvenWhenValueCannotBeTyped(t *testing.T) {
 	keyPath := constraint.NewPath(cfg.SymbolID(82), "k")
 	tr := New(input.Inputs{}, Config{})
 	out := flow.PointState{
-		KeyPresence: flow.KeyPresenceFacts{}.WithPaths(tablePath, keyPath),
+		KeyPresence: testKeyPresenceWith(t, flow.KeyPresenceFacts{}, tablePath, keyPath),
 	}
 
 	tr.applyFuncDef(&out, &cfg.FuncDefInfo{
@@ -728,7 +728,7 @@ func TestFuncDefKillsKeyPresenceEvenWhenValueCannotBeTyped(t *testing.T) {
 		FuncExpr:   &ast.FunctionExpr{},
 	})
 
-	if out.KeyPresence.HasPaths(tablePath, keyPath) {
+	if testKeyPresenceHas(t, out.KeyPresence, tablePath, keyPath) {
 		t.Fatalf("function definition kept stale KeyPresence: %s", out.KeyPresence.Format())
 	}
 }

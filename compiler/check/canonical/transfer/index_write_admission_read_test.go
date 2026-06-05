@@ -80,7 +80,7 @@ func TestSymbolicDynamicIndexWriteSeedsKeyPresenceAndReadback(t *testing.T) {
 	if !changed {
 		t.Fatal("symbolic dynamic-index write did not report a fact change")
 	}
-	if !out.KeyPresence.HasPaths(nodesPath, idPath) {
+	if !testKeyPresenceHas(t, out.KeyPresence, nodesPath, idPath) {
 		t.Fatalf("symbolic dynamic-index write did not seed key presence: %s", out.KeyPresence.Format())
 	}
 	got, ok := testIndexWriteAdmission(t, out.IndexWrites, nodesPath, idPath, typ.String)
@@ -140,7 +140,7 @@ func TestAssignmentProvenanceCopiesKeyPresence(t *testing.T) {
 	targetPath := constraint.NewPath(cfg.SymbolID(623), "last_id")
 	valuePath := constraint.NewPath(cfg.SymbolID(624), "node")
 	out := flow.PointState{
-		KeyPresence: flow.KeyPresenceFacts{}.WithValuePaths(tablePath, sourcePath, valuePath),
+		KeyPresence: testKeyPresenceWithValue(t, flow.KeyPresenceFacts{}, tablePath, sourcePath, valuePath),
 	}
 
 	changed := tr.applyAssignmentProvenanceEffect(&out, AssignmentProvenanceEffect{
@@ -152,7 +152,7 @@ func TestAssignmentProvenanceCopiesKeyPresence(t *testing.T) {
 	if !changed {
 		t.Fatal("assignment provenance did not report copied facts")
 	}
-	if !out.KeyPresence.HasValuePaths(tablePath, targetPath, valuePath) {
+	if !testKeyPresenceHasValue(t, out.KeyPresence, tablePath, targetPath, valuePath) {
 		t.Fatalf("assignment provenance did not copy key-presence value fact: %s", out.KeyPresence.Format())
 	}
 	origins := out.ValueOrigins.OriginsOfAddress(testFlowPathAddress(t, targetPath))
@@ -211,7 +211,7 @@ func TestAssignmentProvenanceReconstructsIndexWriteAdmissionFromKeyPresenceReadb
 			flow.SymbolValueKey(cfg.SymbolID(628)): product.FromType(typ.NewMap(typ.String, typ.NewOptional(nodeType))),
 			flow.SymbolValueKey(cfg.SymbolID(629)): product.FromType(typ.String),
 		},
-		KeyPresence: flow.KeyPresenceFacts{}.WithPaths(tablePath, sourcePath),
+		KeyPresence: testKeyPresenceWith(t, flow.KeyPresenceFacts{}, tablePath, sourcePath),
 	}
 
 	changed := tr.applyAssignmentProvenanceEffect(&out, AssignmentProvenanceEffect{
@@ -356,7 +356,7 @@ func TestKeyPresenceIndexReadRequiresPresentKey(t *testing.T) {
 			flow.SymbolValueKey(cfg.SymbolID(701)): product.FromType(typ.NewMap(typ.String, typ.NewOptional(nodeType))),
 			flow.SymbolValueKey(cfg.SymbolID(702)): product.FromType(typ.Nil),
 		},
-		KeyPresence: flow.KeyPresenceFacts{}.WithPaths(nodesPath, lastPath),
+		KeyPresence: testKeyPresenceWith(t, flow.KeyPresenceFacts{}, nodesPath, lastPath),
 	}
 
 	got, ok := tr.evalAttrGet(&out, read, nil)

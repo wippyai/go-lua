@@ -26,7 +26,7 @@ func TestRefinementEffectDoesNotInvalidateAssignmentOwnedAxes(t *testing.T) {
 			flow.SymbolValueKey(sym): product.FromType(typ.NewOptional(typ.String)),
 		},
 		StaticMembers: flow.StaticMemberFacts{}.WithAddress(testStaticMemberAddressKey(t, memberKey), product.FromType(typ.Boolean)),
-		KeyPresence:   flow.KeyPresenceFacts{}.WithPaths(path, constraint.NewPath(keySym, "k")),
+		KeyPresence:   testKeyPresenceWith(t, flow.KeyPresenceFacts{}, path, constraint.NewPath(keySym, "k")),
 		FunctionRefs:  flow.WithFunctionRef(nil, memberPath.Key(), flow.FunctionRefSetOf(ref)),
 		ClosureRefs:   flow.WithClosureRef(nil, memberPath.Key(), flow.ClosureRefSetOf(closure)),
 		Rel:           flow.PointRelations{}.WithSiblingNil(keySym, []cfg.SymbolID{sym}),
@@ -44,7 +44,7 @@ func TestRefinementEffectDoesNotInvalidateAssignmentOwnedAxes(t *testing.T) {
 	if _, ok := out.StaticMembers.ValueAtAddress(testStaticMemberAddressKey(t, memberKey)); !ok {
 		t.Fatalf("refinement killed static member fact: %s", out.StaticMembers.Format())
 	}
-	if !out.KeyPresence.HasPaths(path, constraint.NewPath(keySym, "k")) {
+	if !testKeyPresenceHas(t, out.KeyPresence, path, constraint.NewPath(keySym, "k")) {
 		t.Fatalf("refinement killed key presence: %s", out.KeyPresence.Format())
 	}
 	if _, ok := flow.FunctionRefAt(out.FunctionRefs, memberPath.Key()); !ok {

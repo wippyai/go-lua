@@ -1331,7 +1331,9 @@ func (f *canonicalFacts) ArrayLenRefAt(p cfg.Point, sym cfg.SymbolID) (cfg.Symbo
 // transfer's index-read refinement and deliberately does not scan Cond: key
 // presence is runtime must-state, not a disjunct-level logical query.
 func (f *canonicalFacts) HasKeyOf(p cfg.Point, tablePath, keyPath constraint.Path) bool {
-	return f.inState(p).KeyPresence.HasPaths(tablePath, keyPath)
+	tableAddr, tableOK := flow.StableAddressOfPath(tablePath)
+	keyAddr, keyOK := flow.StableAddressOfPath(keyPath)
+	return tableOK && keyOK && f.inState(p).KeyPresence.HasAddresses(tableAddr, keyAddr)
 }
 
 // NarrowedTypeAt implements api.FlowOps over the canonical in-state projection.

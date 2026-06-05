@@ -148,7 +148,7 @@ func TestIndexedIteratorKeyArrayReadbackDerivesValueFromStableFacts(t *testing.T
 	keyPath := constraint.NewPath(cfg.SymbolID(3), "current_node_id")
 
 	keyPresence := KeyPresenceFacts{}.
-		WithKeyArrayValuePaths(arrayPath, tablePath, product.FromType(typ.String))
+		WithKeyArrayValueAddresses(testStableAddressPath(t, arrayPath), testStableAddressPath(t, tablePath), product.FromType(typ.String))
 	origins := ValueOriginFacts{}.
 		WithAddresses(testStableAddressPath(t, keyPath), testStableAddressPath(t, arrayPath), ValueOriginIndexedIterator, 1)
 
@@ -165,7 +165,7 @@ func TestIndexedIteratorKeyArrayReadbackFollowsAssignmentAlias(t *testing.T) {
 	aliasPath := constraint.NewPath(cfg.SymbolID(4), "current_node_id")
 
 	keyPresence := KeyPresenceFacts{}.
-		WithKeyArrayValuePaths(arrayPath, tablePath, product.FromType(typ.Number))
+		WithKeyArrayValueAddresses(testStableAddressPath(t, arrayPath), testStableAddressPath(t, tablePath), product.FromType(typ.Number))
 	origins := ValueOriginFacts{}.
 		WithAddresses(testStableAddressPath(t, iterKeyPath), testStableAddressPath(t, arrayPath), ValueOriginIndexedIterator, 1).
 		WithAddresses(testStableAddressPath(t, aliasPath), testStableAddressPath(t, iterKeyPath), ValueOriginAssignmentAlias, 0)

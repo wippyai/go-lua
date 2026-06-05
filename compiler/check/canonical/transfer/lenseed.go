@@ -601,7 +601,9 @@ func (t *Transfer) refineByKeyPresence(
 	if !ok {
 		return product.AbstractValue{}, false
 	}
-	if !out.KeyPresence.HasPaths(tablePath, keyPath) {
+	tableAddr, tableAddrOK := flow.StableAddressOfPath(tablePath)
+	keyAddr, keyAddrOK := flow.StableAddressOfPath(keyPath)
+	if !tableAddrOK || !keyAddrOK || !out.KeyPresence.HasAddresses(tableAddr, keyAddr) {
 		return product.AbstractValue{}, false
 	}
 	keyValue, ok := flow.PointFactsOf(*out).PathValue(keyPath)
@@ -658,7 +660,9 @@ func (t *Transfer) dynamicWriteKey(
 		return product.AbstractValue{}
 	}
 	keyPath := constraint.NewPath(keySym, keyIdent.Value)
-	if !out.KeyPresence.HasPaths(basePath, keyPath) {
+	baseAddr, baseAddrOK := flow.StableAddressOfPath(basePath)
+	keyAddr, keyAddrOK := flow.StableAddressOfPath(keyPath)
+	if !baseAddrOK || !keyAddrOK || !out.KeyPresence.HasAddresses(baseAddr, keyAddr) {
 		return product.AbstractValue{}
 	}
 	names := recordFieldNameDomain(base)
@@ -760,7 +764,11 @@ func (t *Transfer) writeIsSelfDerived(out *flow.PointState, target cfg.AssignTar
 	}
 	keyPath := constraint.NewPath(keySym, keyIdent.Value)
 	valuePath := constraint.NewPath(valueSym, srcIdent.Value)
-	return out != nil && out.KeyPresence.HasValuePaths(basePath, keyPath, valuePath)
+	baseAddr, baseAddrOK := flow.StableAddressOfPath(basePath)
+	keyAddr, keyAddrOK := flow.StableAddressOfPath(keyPath)
+	valueAddr, valueAddrOK := flow.StableAddressOfPath(valuePath)
+	return out != nil && baseAddrOK && keyAddrOK && valueAddrOK &&
+		out.KeyPresence.HasValueAddresses(baseAddr, keyAddr, valueAddr)
 }
 
 // refineIndexRead recovers a non-optional element type for a provably in-bounds

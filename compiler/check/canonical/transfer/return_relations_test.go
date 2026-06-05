@@ -139,7 +139,7 @@ func TestAssignCallPostconditionsMaterializeReturnKeyParam(t *testing.T) {
 
 	tablePath := constraint.NewPath(selfSym, "self").Field("nodes")
 	keyPath := constraint.NewPath(idSym, "id")
-	if !out.KeyPresence.HasPaths(tablePath, keyPath) {
+	if !testKeyPresenceHas(t, out.KeyPresence, tablePath, keyPath) {
 		t.Fatalf("return-key postcondition did not seed KeyPresence: %s", out.KeyPresence.Format())
 	}
 }

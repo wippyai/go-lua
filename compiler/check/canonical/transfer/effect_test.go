@@ -31,7 +31,7 @@ func TestSymbolWriteEffectClearsStaleProductAxes(t *testing.T) {
 			flow.SymbolValueKey(sym): product.FromType(typ.Number),
 		},
 		StaticMembers: flow.StaticMemberFacts{}.WithAddress(testStaticMemberAddressKey(t, fieldKey), product.FromType(typ.Boolean)),
-		KeyPresence:   flow.KeyPresenceFacts{}.WithPaths(root, constraint.NewPath(cfg.SymbolID(202), "k")),
+		KeyPresence:   testKeyPresenceWith(t, flow.KeyPresenceFacts{}, root, constraint.NewPath(cfg.SymbolID(202), "k")),
 		IndexWrites: flow.IndexWriteAdmissionFacts{}.With(flow.IndexWriteAdmissionFact{
 			Target: flow.SymbolPathKey(sym, []constraint.Segment{{Kind: constraint.SegmentField, Name: "items"}}),
 			Key:    product.FromType(typ.String),
@@ -56,7 +56,7 @@ func TestSymbolWriteEffectClearsStaleProductAxes(t *testing.T) {
 	if _, ok := out.StaticMembers.ValueAtAddress(testStaticMemberAddressKey(t, fieldKey)); ok {
 		t.Fatalf("stale static member survived symbol write: %s", out.StaticMembers.Format())
 	}
-	if out.KeyPresence.HasPaths(root, constraint.NewPath(cfg.SymbolID(202), "k")) {
+	if testKeyPresenceHas(t, out.KeyPresence, root, constraint.NewPath(cfg.SymbolID(202), "k")) {
 		t.Fatalf("stale key presence survived symbol write: %s", out.KeyPresence.Format())
 	}
 	if _, ok := testIndexWriteAdmission(t, out.IndexWrites, root.Field("items"), constraint.Path{}, typ.String); ok {
@@ -130,7 +130,7 @@ func TestUnresolvedContainerWriteInvalidatesStaleProductAxes(t *testing.T) {
 			flow.SymbolValueKey(baseSym): product.FromType(typ.NewRecord().Field("field", typ.String).Build()),
 		},
 		StaticMembers: flow.StaticMemberFacts{}.WithAddress(testStaticMemberAddressKey(t, fieldKey), product.FromType(typ.String)),
-		KeyPresence:   flow.KeyPresenceFacts{}.WithPaths(fieldPath, constraint.NewPath(cfg.SymbolID(304), "k")),
+		KeyPresence:   testKeyPresenceWith(t, flow.KeyPresenceFacts{}, fieldPath, constraint.NewPath(cfg.SymbolID(304), "k")),
 		IndexWrites: flow.IndexWriteAdmissionFacts{}.With(flow.IndexWriteAdmissionFact{
 			Target: flow.SymbolPathKey(baseSym, fieldPath.Segments),
 			Key:    product.FromType(typ.String),
@@ -150,7 +150,7 @@ func TestUnresolvedContainerWriteInvalidatesStaleProductAxes(t *testing.T) {
 	if _, ok := out.StaticMembers.ValueAtAddress(testStaticMemberAddressKey(t, fieldKey)); ok {
 		t.Fatalf("stale static member survived unresolved container write: %s", out.StaticMembers.Format())
 	}
-	if out.KeyPresence.HasPaths(fieldPath, constraint.NewPath(cfg.SymbolID(304), "k")) {
+	if testKeyPresenceHas(t, out.KeyPresence, fieldPath, constraint.NewPath(cfg.SymbolID(304), "k")) {
 		t.Fatalf("stale key presence survived unresolved container write: %s", out.KeyPresence.Format())
 	}
 	if _, ok := testIndexWriteAdmission(t, out.IndexWrites, fieldPath, constraint.Path{}, typ.String); ok {
@@ -468,7 +468,7 @@ func TestDynamicIndexWriteProofEffectKeepsOpaqueUnsealedReadbackLightweight(t *t
 	if !changed {
 		t.Fatal("dynamic index write proof did not report key-presence change")
 	}
-	if !out.KeyPresence.HasPaths(tablePath, keyPath) {
+	if !testKeyPresenceHas(t, out.KeyPresence, tablePath, keyPath) {
 		t.Fatalf("dynamic index write proof did not seed KeyPresence: %s", out.KeyPresence.Format())
 	}
 	if len(out.IndexWrites.Entries()) != 0 {
@@ -523,7 +523,7 @@ func TestWriteEffectPublishesStableDynamicIndexProofWhenProductUpdateCannotCarry
 	if !changed {
 		t.Fatal("write effect did not report a proof change")
 	}
-	if !out.KeyPresence.HasPaths(tablePath, keyPath) {
+	if !testKeyPresenceHas(t, out.KeyPresence, tablePath, keyPath) {
 		t.Fatalf("stable dynamic write did not seed key presence: %s", out.KeyPresence.Format())
 	}
 	got, ok := testIndexWriteAdmission(t, out.IndexWrites, tablePath, keyPath, typ.Any)
@@ -577,7 +577,7 @@ func TestUnresolvedDynamicIndexAssignPublishesStablePathProof(t *testing.T) {
 
 	tablePath := constraint.NewPath(selfSym, "self").Field("nodes")
 	keyPath := constraint.NewPath(idSym, "node_id")
-	if !out.KeyPresence.HasPaths(tablePath, keyPath) {
+	if !testKeyPresenceHas(t, out.KeyPresence, tablePath, keyPath) {
 		t.Fatalf("unresolved dynamic assign did not seed key presence: %s", out.KeyPresence.Format())
 	}
 	got, ok := testIndexWriteAdmission(t, out.IndexWrites, tablePath, keyPath, typ.Unknown)
@@ -645,7 +645,7 @@ func TestBoundaryIndexWriteReplayAdmitsOpaqueStableKeyPath(t *testing.T) {
 	}
 	tablePath := constraint.NewPath(cfg.SymbolID(442), "self").Field("nodes")
 	keyPath := constraint.NewPath(cfg.SymbolID(443), "node_id")
-	if !out.KeyPresence.HasPaths(tablePath, keyPath) {
+	if !testKeyPresenceHas(t, out.KeyPresence, tablePath, keyPath) {
 		t.Fatalf("boundary index-write replay did not seed key presence: %s", out.KeyPresence.Format())
 	}
 	got, ok := testIndexWriteAdmission(t, out.IndexWrites, tablePath, keyPath, typ.Unknown)
@@ -747,7 +747,7 @@ func TestBoundaryAppendKeyBatchDerivesFreshEmptyTableFromSameBatchIndexWrite(t *
 		Value: product.FromType(nodeType),
 	}})
 	out := flow.PointState{
-		KeyPresence: flow.KeyPresenceFacts{}.WithEmptyKeyArrayPath(arrayPath),
+		KeyPresence: testKeyPresenceWithEmptyKeyArray(t, flow.KeyPresenceFacts{}, arrayPath),
 	}
 
 	if !tr.applyBoundaryFacts(&out, call, facts, nil) {
@@ -775,7 +775,7 @@ func TestNestedDynamicElementWritePreservesContainerKeyPresence(t *testing.T) {
 	itemsPath := constraint.NewPath(cfg.SymbolID(441), "items")
 	keyPath := constraint.NewPath(cfg.SymbolID(442), "k")
 	out := flow.PointState{
-		KeyPresence: flow.KeyPresenceFacts{}.WithPaths(itemsPath, keyPath),
+		KeyPresence: testKeyPresenceWith(t, flow.KeyPresenceFacts{}, itemsPath, keyPath),
 	}
 	tr := New(input.Inputs{}, Config{})
 
@@ -792,7 +792,7 @@ func TestNestedDynamicElementWritePreservesContainerKeyPresence(t *testing.T) {
 		RecordStatic: true,
 	})
 
-	if !out.KeyPresence.HasPaths(itemsPath, keyPath) {
+	if !testKeyPresenceHas(t, out.KeyPresence, itemsPath, keyPath) {
 		t.Fatalf("nested dynamic element write dropped container key-presence: %s", out.KeyPresence.Format())
 	}
 }
@@ -836,7 +836,7 @@ func TestBoundaryAppendKeyBatchRebasesReturnKeyForFreshEmptyTable(t *testing.T) 
 		Value: product.FromType(nodeType),
 	}})
 	out := flow.PointState{
-		KeyPresence: flow.KeyPresenceFacts{}.WithEmptyKeyArrayPath(arrayPath),
+		KeyPresence: testKeyPresenceWithEmptyKeyArray(t, flow.KeyPresenceFacts{}, arrayPath),
 	}
 
 	if !tr.applyBoundaryFacts(&out, call, facts, map[int]constraint.Path{0: constraint.NewPath(cfg.SymbolID(449), "node_id")}) {
@@ -896,7 +896,7 @@ func TestAssignCallPostconditionDerivesFreshEmptyKeyArrayFromReturnAppend(t *tes
 	arrayPath := constraint.NewPath(graphSym, "graph").Field("node_order")
 	tablePath := constraint.NewPath(graphSym, "graph").Field("nodes")
 	out := flow.PointState{
-		KeyPresence: flow.KeyPresenceFacts{}.WithEmptyKeyArrayPath(arrayPath),
+		KeyPresence: testKeyPresenceWithEmptyKeyArray(t, flow.KeyPresenceFacts{}, arrayPath),
 	}
 	info := &cfg.AssignInfo{
 		Targets: []cfg.AssignTarget{{
@@ -973,7 +973,7 @@ func TestAssignCallPostconditionPreservesAppendHistoryAcrossReceiverMutation(t *
 	arrayKey := flow.KeyPresencePathKey(arrayPath)
 	tableKey := flow.KeyPresencePathKey(tablePath)
 	out := flow.PointState{
-		KeyPresence: flow.KeyPresenceFacts{}.WithEmptyKeyArrayPath(arrayPath),
+		KeyPresence: testKeyPresenceWithEmptyKeyArray(t, flow.KeyPresenceFacts{}, arrayPath),
 	}
 	info := &cfg.AssignInfo{
 		Targets: []cfg.AssignTarget{{
@@ -1723,7 +1723,7 @@ func TestMutatorEffectAppendsElementAndUpdatesSideAxes(t *testing.T) {
 			flow.SymbolValueKey(namesSym): product.FromType(typ.NewArray(typ.String)),
 		},
 		Num:         numeric.NewState(),
-		KeyPresence: flow.KeyPresenceFacts{}.WithKeyArrayPaths(namesPath, container),
+		KeyPresence: testKeyPresenceWithKeyArray(t, flow.KeyPresenceFacts{}, namesPath, container),
 	}
 
 	tr.applyMutatorEffect(&out, MutatorEffect{
@@ -1759,7 +1759,7 @@ func TestMutatorEffectAppendKeySeedsKeyArrayForFreshEmptyArray(t *testing.T) {
 			flow.SymbolValueKey(arraySym): product.FromType(typ.NewFreshArray()),
 			flow.SymbolValueKey(keySym):   product.FromType(typ.String),
 		},
-		KeyPresence: flow.KeyPresenceFacts{}.WithPaths(tablePath, keyPath),
+		KeyPresence: testKeyPresenceWith(t, flow.KeyPresenceFacts{}, tablePath, keyPath),
 	}
 
 	tr.applyMutatorEffect(&out, MutatorEffect{
@@ -1789,7 +1789,7 @@ func TestMutatorEffectAppendKeySeedsKeyArrayValueForFreshEmptyArray(t *testing.T
 			flow.SymbolValueKey(arraySym): product.FromType(typ.NewFreshArray()),
 			flow.SymbolValueKey(keySym):   product.FromType(typ.String),
 		},
-		KeyPresence: flow.KeyPresenceFacts{}.WithPaths(tablePath, keyPath),
+		KeyPresence: testKeyPresenceWith(t, flow.KeyPresenceFacts{}, tablePath, keyPath),
 		IndexWrites: flow.IndexWriteAdmissionFacts{}.With(flow.IndexWriteAdmissionFact{
 			Target:  flow.StablePathKey(tablePath),
 			KeyPath: flow.StablePathKey(keyPath),
@@ -1867,7 +1867,7 @@ func TestMutatorEffectAppendKeyDoesNotSeedKeyArrayForUnknownExistingArray(t *tes
 			flow.SymbolValueKey(arraySym): product.FromType(typ.NewArray(typ.String)),
 			flow.SymbolValueKey(keySym):   product.FromType(typ.String),
 		},
-		KeyPresence: flow.KeyPresenceFacts{}.WithPaths(tablePath, keyPath),
+		KeyPresence: testKeyPresenceWith(t, flow.KeyPresenceFacts{}, tablePath, keyPath),
 	}
 
 	tr.applyMutatorEffect(&out, MutatorEffect{

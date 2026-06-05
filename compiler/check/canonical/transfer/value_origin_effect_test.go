@@ -57,13 +57,13 @@ func TestValueOriginDemandRoutesThroughAppendElementFieldOrigin(t *testing.T) {
 		ValueOrigins: flow.ValueOriginFacts{}.
 			WithAddresses(testFlowPathAddress(t, routePath), testFlowPathAddress(t, pendingRoutes), flow.ValueOriginIndexedIterator, 1).
 			WithAddresses(testFlowPathAddress(t, opPath), testFlowPathAddress(t, operationsPath), flow.ValueOriginIndexedIterator, 1),
-		KeyPresence: flow.KeyPresenceFacts{}.
-			WithAppendHistoryBasePath(pendingRoutes).
-			WithAppendElementFieldOriginPaths(
-				pendingRoutes,
-				[]constraint.Segment{{Kind: constraint.SegmentField, Name: "target_name"}},
-				opPath.Field("config").Field("target"),
-			),
+		KeyPresence: testKeyPresenceWithAppendElementFieldOrigin(
+			t,
+			testKeyPresenceWithAppendHistoryBase(t, flow.KeyPresenceFacts{}, pendingRoutes),
+			pendingRoutes,
+			[]constraint.Segment{{Kind: constraint.SegmentField, Name: "target_name"}},
+			opPath.Field("config").Field("target"),
+		),
 	}
 
 	arg := &ast.AttrGetExpr{

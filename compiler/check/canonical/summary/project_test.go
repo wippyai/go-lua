@@ -15,6 +15,15 @@ import (
 	"github.com/wippyai/go-lua/types/typ"
 )
 
+func testSummaryStableAddress(t *testing.T, path constraint.Path) flow.StableAddress {
+	t.Helper()
+	addr, ok := flow.StableAddressOfPath(path)
+	if !ok {
+		t.Fatalf("stable address for path %s", path.Key())
+	}
+	return addr
+}
+
 func TestProject_ReturnProjectionPrefersIdentifierValue(t *testing.T) {
 	g := returnFunctionGraph(t, "return x")
 	ret, info := returnPointAndInfo(t, g)
@@ -251,7 +260,10 @@ func TestProject_ExportsReturnKeyParamRelationForReturnedKey(t *testing.T) {
 	sum := summary.Project(state.FunctionState{
 		Points: map[cfg.Point]flow.PointState{
 			ret: {
-				KeyPresence: flow.KeyPresenceFacts{}.WithPaths(nodesPath, idPath),
+				KeyPresence: flow.KeyPresenceFacts{}.WithAddresses(
+					testSummaryStableAddress(t, nodesPath),
+					testSummaryStableAddress(t, idPath),
+				),
 			},
 		},
 	}, g)
@@ -314,7 +326,11 @@ func TestProject_ReturnBoundaryFactsIgnoreNilErrorReturns(t *testing.T) {
 			failureRet: {},
 			successRet: {
 				KeyPresence: flow.KeyPresenceFacts{}.
-					WithKeyArrayValuePaths(nodeOrderPath, nodesPath, product.FromType(typ.String)),
+					WithKeyArrayValueAddresses(
+						testSummaryStableAddress(t, nodeOrderPath),
+						testSummaryStableAddress(t, nodesPath),
+						product.FromType(typ.String),
+					),
 			},
 		},
 	}, g)
