@@ -34,6 +34,18 @@ type IndexWriteAdmissionFacts struct {
 	entries []IndexWriteAdmissionFact
 }
 
+// IndexWriteAddressQuery is the normalized address-domain query for admitted
+// dynamic-index write readback. IndexWriteQuery remains a compatibility source
+// path wrapper; the finite proof domain reasons over stable addresses.
+type IndexWriteAddressQuery struct {
+	Target       StableAddress
+	KeyPath      StableAddress
+	HasKeyPath   bool
+	KeyValue     product.AbstractValue
+	ValuePath    StableAddress
+	HasValuePath bool
+}
+
 // IndexWriteAdmissionFactsOf constructs a canonical finite proof set.
 func IndexWriteAdmissionFactsOf(entries []IndexWriteAdmissionFact) IndexWriteAdmissionFacts {
 	return canonicalIndexWriteAdmissionFacts(entries, product.Domain.Join)
@@ -64,38 +76,81 @@ func (f IndexWriteAdmissionFacts) With(fact IndexWriteAdmissionFact) IndexWriteA
 }
 
 // Admission returns the admitted value proof matching q.
+// TODO(address-vocabulary): migrate callers to AdmissionAtAddress and remove
+// this source-path compatibility wrapper.
 func (f IndexWriteAdmissionFacts) Admission(q IndexWriteQuery) (product.AbstractValue, bool) {
-	if f.bottom || len(f.entries) == 0 || q.Target.IsEmpty() {
+	query, ok := IndexWriteAddressQueryFromQuery(q)
+	if !ok {
 		return product.AbstractValue{}, false
 	}
-	target := IndexWriteAdmissionPathKey(q.Target)
+	return f.AdmissionAtAddress(query)
+}
+
+// IndexWriteAddressQueryFromQuery lowers the compatibility source-path query to
+// the address-domain query used by IndexWriteAdmissionFacts.
+// TODO(address-vocabulary): delete this adapter after callers construct
+// IndexWriteAddressQuery at their resolved-place boundary.
+func IndexWriteAddressQueryFromQuery(q IndexWriteQuery) (IndexWriteAddressQuery, bool) {
+	if q.Target.IsEmpty() {
+		return IndexWriteAddressQuery{}, false
+	}
+	target, ok := StableAddressOfPath(q.Target)
+	if !ok {
+		return IndexWriteAddressQuery{}, false
+	}
+	query := IndexWriteAddressQuery{Target: target}
+	if !q.KeyPath.IsEmpty() {
+		if key, ok := StableAddressOfPath(q.KeyPath); ok {
+			query.KeyPath = key
+			query.HasKeyPath = true
+		}
+	}
+	if !query.HasKeyPath && q.KeySymbol != 0 {
+		if key, ok := StableAddressOfSymbol(q.KeySymbol, nil); ok {
+			query.KeyPath = key
+			query.HasKeyPath = true
+		}
+	}
+	if !q.ValuePath.IsEmpty() {
+		if value, ok := StableAddressOfPath(q.ValuePath); ok {
+			query.ValuePath = value
+			query.HasValuePath = true
+		}
+	}
+	if !typ.IsAbsentOrUnknown(q.KeyType) {
+		query.KeyValue = product.FromType(q.KeyType)
+	}
+	return query, true
+}
+
+// AdmissionAtAddress returns the admitted value proof matching q.
+func (f IndexWriteAdmissionFacts) AdmissionAtAddress(q IndexWriteAddressQuery) (product.AbstractValue, bool) {
+	if f.bottom || len(f.entries) == 0 {
+		return product.AbstractValue{}, false
+	}
+	target := q.Target.Key()
 	if target == "" {
 		return product.AbstractValue{}, false
-	}
-	keyPath := IndexWriteAdmissionPathKey(q.KeyPath)
-	if keyPath == "" && q.KeySymbol != 0 {
-		keyPath = SymbolPathKey(q.KeySymbol, nil)
-	}
-	valuePath := IndexWriteAdmissionPathKey(q.ValuePath)
-	keyValue := product.AbstractValue{}
-	if !typ.IsAbsentOrUnknown(q.KeyType) {
-		keyValue = product.FromType(q.KeyType)
 	}
 	for _, entry := range f.entries {
 		if entry.Target != target {
 			continue
 		}
 		matchedKeyPath := false
-		if keyPath != "" && entry.KeyPath != "" && entry.KeyPath != keyPath {
-			continue
-		}
-		if keyPath != "" && entry.KeyPath != "" {
+		if q.HasKeyPath && entry.KeyPath != "" {
+			keyPath := q.KeyPath.Key()
+			if keyPath == "" || entry.KeyPath != keyPath {
+				continue
+			}
 			matchedKeyPath = true
 		}
-		if valuePath != "" && entry.ValuePath != "" && entry.ValuePath != valuePath {
-			continue
+		if q.HasValuePath && entry.ValuePath != "" {
+			valuePath := q.ValuePath.Key()
+			if valuePath == "" || entry.ValuePath != valuePath {
+				continue
+			}
 		}
-		if !matchedKeyPath && !indexWriteKeyValueExactlyMatches(entry.Key, keyValue) {
+		if !matchedKeyPath && !indexWriteKeyValueExactlyMatches(entry.Key, q.KeyValue) {
 			continue
 		}
 		return entry.Value, true
@@ -106,15 +161,27 @@ func (f IndexWriteAdmissionFacts) Admission(q IndexWriteQuery) (product.Abstract
 // KillAffectedByWrite removes admission facts that are no longer valid after a
 // write to writePath. A write to the target table, the key expression path, or
 // the source value path can invalidate the read-back proof.
+// TODO(address-vocabulary): migrate transfer invalidation to
+// KillAffectedByWriteAddress and remove this PathKey wrapper.
 func (f IndexWriteAdmissionFacts) KillAffectedByWrite(writePath constraint.PathKey) IndexWriteAdmissionFacts {
-	if f.bottom || writePath == "" || len(f.entries) == 0 {
+	addr, ok := StableAddressFromKey(writePath)
+	if !ok {
+		return f
+	}
+	return f.KillAffectedByWriteAddress(addr)
+}
+
+// KillAffectedByWriteAddress removes admission facts that are no longer valid
+// after a write to write.
+func (f IndexWriteAdmissionFacts) KillAffectedByWriteAddress(write StableAddress) IndexWriteAdmissionFacts {
+	if f.bottom || write.Key() == "" || len(f.entries) == 0 {
 		return f
 	}
 	entries := make([]IndexWriteAdmissionFact, 0, len(f.entries))
 	for _, entry := range f.entries {
-		if indexWritePathsOverlap(entry.Target, writePath) ||
-			indexWritePathsOverlap(entry.KeyPath, writePath) ||
-			indexWritePathsOverlap(entry.ValuePath, writePath) {
+		if indexWritePathOverlapsAddress(entry.Target, write) ||
+			indexWritePathOverlapsAddress(entry.KeyPath, write) ||
+			indexWritePathOverlapsAddress(entry.ValuePath, write) {
 			continue
 		}
 		entries = append(entries, entry)
@@ -126,23 +193,39 @@ func (f IndexWriteAdmissionFacts) KillAffectedByWrite(writePath constraint.PathK
 // present dynamic element write to writePath. Existing readback proofs for the
 // same dynamic table are weak-updated: the written value may be the same key, so
 // the prior readback payload is joined with the new payload instead of deleted.
+// TODO(address-vocabulary): migrate transfer invalidation to
+// PreservePresentElementWriteAddress and remove this PathKey wrapper.
 func (f IndexWriteAdmissionFacts) PreservePresentElementWrite(
 	writePath constraint.PathKey,
 	written product.AbstractValue,
 ) IndexWriteAdmissionFacts {
-	if !written.DefinitelyPresent() {
-		return f.KillAffectedByWrite(writePath)
+	addr, ok := StableAddressFromKey(writePath)
+	if !ok {
+		return f
 	}
+	return f.PreservePresentElementWriteAddress(addr, written)
+}
+
+// PreservePresentElementWriteAddress applies the invalidation law for a
+// definitely-present dynamic element write to write.
+func (f IndexWriteAdmissionFacts) PreservePresentElementWriteAddress(
+	write StableAddress,
+	written product.AbstractValue,
+) IndexWriteAdmissionFacts {
+	if !written.DefinitelyPresent() {
+		return f.KillAffectedByWriteAddress(write)
+	}
+	writePath := write.Key()
 	if f.bottom || writePath == "" || len(f.entries) == 0 {
 		return f
 	}
 	entries := make([]IndexWriteAdmissionFact, 0, len(f.entries))
 	for _, entry := range f.entries {
-		if indexWritePathsOverlap(entry.KeyPath, writePath) ||
-			indexWritePathsOverlap(entry.ValuePath, writePath) {
+		if indexWritePathOverlapsAddress(entry.KeyPath, write) ||
+			indexWritePathOverlapsAddress(entry.ValuePath, write) {
 			continue
 		}
-		if !indexWritePathsOverlap(entry.Target, writePath) {
+		if !indexWritePathOverlapsAddress(entry.Target, write) {
 			entries = append(entries, entry)
 			continue
 		}
@@ -159,6 +242,8 @@ func (f IndexWriteAdmissionFacts) PreservePresentElementWrite(
 
 // IndexWriteAdmissionPathKey lowers a source path to the version-insensitive
 // structural key used by point-local index-write admission facts.
+// TODO(address-vocabulary): remove after IndexWriteAdmissionFact construction
+// accepts StableAddress directly.
 func IndexWriteAdmissionPathKey(path constraint.Path) constraint.PathKey {
 	if path.IsEmpty() {
 		return ""
@@ -173,10 +258,9 @@ func indexWriteKeyValueExactlyMatches(fact, query product.AbstractValue) bool {
 	return product.Domain.LessOrEq(fact, query) && product.Domain.LessOrEq(query, fact)
 }
 
-func indexWritePathsOverlap(a, b constraint.PathKey) bool {
-	left, leftOK := StableAddressFromKey(a)
-	right, rightOK := StableAddressFromKey(b)
-	return leftOK && rightOK && left.Overlaps(right)
+func indexWritePathOverlapsAddress(path constraint.PathKey, addr StableAddress) bool {
+	pathAddr, ok := StableAddressFromKey(path)
+	return ok && pathAddr.Overlaps(addr)
 }
 
 func validIndexWriteAdmissionFact(fact IndexWriteAdmissionFact) bool {

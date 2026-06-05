@@ -194,6 +194,54 @@ func TestIndexWriteAdmissionFactsMatchesExactKeyPathWithUnknownKeyValue(t *testi
 	}
 }
 
+func TestIndexWriteAdmissionFactsAddressQuerySupportsNamedRoots(t *testing.T) {
+	target, _ := StableAddressOfRoot("$0", []constraint.Segment{{Kind: constraint.SegmentField, Name: "items"}})
+	key, _ := StableAddressOfRoot("$1", nil)
+	value := product.FromType(typ.String)
+	facts := IndexWriteAdmissionFacts{}.With(IndexWriteAdmissionFact{
+		Target:  target.Key(),
+		KeyPath: key.Key(),
+		Key:     product.FromType(typ.Unknown),
+		Value:   value,
+	})
+
+	got, ok := facts.AdmissionAtAddress(IndexWriteAddressQuery{
+		Target:     target,
+		KeyPath:    key,
+		HasKeyPath: true,
+		KeyValue:   product.FromType(typ.Number),
+	})
+	if !ok || !typ.TypeEquals(got.ProjectValue(), typ.String) {
+		t.Fatalf("address admission = %v/%v, want string/true", got.ProjectValue(), ok)
+	}
+}
+
+func TestIndexWriteAdmissionFactsAddressInvalidationUsesStructuredOverlap(t *testing.T) {
+	target, _ := StableAddressOfSymbol(cfg.SymbolID(41), []constraint.Segment{{Kind: constraint.SegmentField, Name: "items"}})
+	key, _ := StableAddressOfSymbol(cfg.SymbolID(42), nil)
+	valuePath, _ := StableAddressOfSymbol(cfg.SymbolID(43), []constraint.Segment{{Kind: constraint.SegmentField, Name: "payload"}})
+	facts := IndexWriteAdmissionFacts{}.With(IndexWriteAdmissionFact{
+		Target:    target.Key(),
+		KeyPath:   key.Key(),
+		Key:       product.FromType(typ.String),
+		ValuePath: valuePath.Key(),
+		Value:     product.FromType(typ.Number),
+	})
+
+	sibling, _ := StableAddressOfSymbol(cfg.SymbolID(41), []constraint.Segment{{Kind: constraint.SegmentField, Name: "edges"}})
+	if got := facts.KillAffectedByWriteAddress(sibling); !IndexWriteAdmissionFactsDomain.Equal(got, facts) {
+		t.Fatalf("sibling write killed admission: got %s want %s", got.Format(), facts.Format())
+	}
+
+	child, _ := StableAddressOfSymbol(cfg.SymbolID(43), []constraint.Segment{
+		{Kind: constraint.SegmentField, Name: "payload"},
+		{Kind: constraint.SegmentField, Name: "id"},
+	})
+	if got := facts.KillAffectedByWriteAddress(child); len(got.Entries()) != 0 {
+		t.Fatalf("value child write kept admission: %s", got.Format())
+	}
+}
+
 func indexWriteAdmissionFactsSample() []IndexWriteAdmissionFacts {
 	target := SymbolPathKey(cfg.SymbolID(1), nil)
 	key := SymbolPathKey(cfg.SymbolID(2), nil)
