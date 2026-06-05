@@ -49,9 +49,9 @@ func (t *Transfer) buildAssignCallPostconditions(
 			return
 		}
 		rels := t.callReturnRelations(out, callInfo.Call, demand)
-	t.appendSiblingNilPostconditions(info, callInfo, rels, &effects)
-	t.appendGuardedTypePostconditions(info, callInfo, rels, &effects)
-	t.appendLengthParamPostconditions(out, info, callInfo, rels, &effects)
+		t.appendSiblingNilPostconditions(info, callInfo, rels, &effects)
+		t.appendGuardedTypePostconditions(info, callInfo, rels, &effects)
+		t.appendLengthParamPostconditions(out, info, callInfo, rels, &effects)
 		t.appendReturnKeyParamPostconditions(info, callInfo, rels, &effects)
 		t.appendBoundaryFactPostconditions(out, info, callInfo, demand, &effects)
 	})
@@ -294,11 +294,11 @@ func (t *Transfer) callBoundaryFacts(
 	if out == nil || call == nil || t.callTyper == nil {
 		return flow.BoundaryFactsDomain.Top()
 	}
-	provider, ok := t.callTyper.(productBoundaryFactProvider)
+	provider, ok := t.callTyper.(productCallPostEffectProvider)
 	if !ok || provider == nil {
 		return flow.BoundaryFactsDomain.Top()
 	}
-	return provider.BoundaryFactsFromValues(call, t.productCallContext(out, call, demand))
+	return provider.CallPostEffectsFromValues(call, t.productCallContext(out, call, demand)).BoundaryFacts
 }
 
 func assignmentTargetForReturn(info *cfg.AssignInfo, callInfo *cfg.CallInfo, retIndex int) (cfg.AssignTarget, bool) {

@@ -2752,22 +2752,19 @@ func (ct callTyper) CellEffectsFromValues(call *ast.FuncCallExpr, ctx transfer.P
 	return projector.productCallEffects(outcome, call, ctx)
 }
 
-func (ct callTyper) ReceiverEffectsFromValues(call *ast.FuncCallExpr, ctx transfer.ProductCallContext) flow.ReceiverEffects {
+func (ct callTyper) CallPostEffectsFromValues(call *ast.FuncCallExpr, ctx transfer.ProductCallContext) transfer.CallPostEffects {
 	d := ct.d
 	if d == nil || call == nil || d.activeProgram == nil {
-		return flow.ReceiverEffectsDomain.Bottom()
+		return transfer.CallPostEffects{
+			ReceiverEffects: flow.ReceiverEffectsDomain.Bottom(),
+			BoundaryFacts:   flow.BoundaryFactsDomain.Top(),
+		}
 	}
-	effects := ct.summaryOnlyProductCallOutcome(call, ctx).ReceiverEffects()
-	return effects
-}
-
-func (ct callTyper) BoundaryFactsFromValues(call *ast.FuncCallExpr, ctx transfer.ProductCallContext) flow.BoundaryFacts {
-	d := ct.d
-	if d == nil || call == nil || d.activeProgram == nil {
-		return flow.BoundaryFactsDomain.Top()
+	outcome := ct.summaryOnlyProductCallOutcome(call, ctx)
+	return transfer.CallPostEffects{
+		ReceiverEffects: outcome.ReceiverEffects(),
+		BoundaryFacts:   outcome.BoundaryFacts(),
 	}
-	facts := ct.summaryOnlyProductCallOutcome(call, ctx).BoundaryFacts()
-	return facts
 }
 
 func (ct callTyper) ContainerElementUnionsFromValues(call *ast.FuncCallExpr, ctx transfer.ProductCallContext) []effect.ContainerElementUnion {

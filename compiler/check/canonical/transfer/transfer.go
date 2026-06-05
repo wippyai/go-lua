@@ -331,12 +331,15 @@ type productCellEffectProvider interface {
 	CellEffectsFromValues(call *ast.FuncCallExpr, ctx ProductCallContext) flow.CaptureEffects
 }
 
-type productReceiverEffectProvider interface {
-	ReceiverEffectsFromValues(call *ast.FuncCallExpr, ctx ProductCallContext) flow.ReceiverEffects
+// CallPostEffects groups product call-outcome effects that mutate caller-visible
+// state after a call returns.
+type CallPostEffects struct {
+	ReceiverEffects flow.ReceiverEffects
+	BoundaryFacts   flow.BoundaryFacts
 }
 
-type productBoundaryFactProvider interface {
-	BoundaryFactsFromValues(call *ast.FuncCallExpr, ctx ProductCallContext) flow.BoundaryFacts
+type productCallPostEffectProvider interface {
+	CallPostEffectsFromValues(call *ast.FuncCallExpr, ctx ProductCallContext) CallPostEffects
 }
 
 type containerElementUnionProvider interface {
@@ -3208,11 +3211,11 @@ func (t *Transfer) applyCallReceiverEffects(
 	if out == nil || call == nil || t.callTyper == nil {
 		return false
 	}
-	provider, ok := t.callTyper.(productReceiverEffectProvider)
+	provider, ok := t.callTyper.(productCallPostEffectProvider)
 	if !ok || provider == nil {
 		return false
 	}
-	effects := provider.ReceiverEffectsFromValues(call, ctx)
+	effects := provider.CallPostEffectsFromValues(call, ctx).ReceiverEffects
 	if flow.ReceiverEffectsDomain.Equal(effects, flow.ReceiverEffectsDomain.Bottom()) ||
 		flow.ReceiverEffectsDomain.Equal(effects, flow.ReceiverEffectsIdentity()) {
 		return false
@@ -3367,11 +3370,11 @@ func (t *Transfer) callBoundaryFactsAndAppendPlans(
 	if out == nil || call == nil || t.callTyper == nil {
 		return flow.BoundaryFactsDomain.Top(), nil
 	}
-	provider, ok := t.callTyper.(productBoundaryFactProvider)
+	provider, ok := t.callTyper.(productCallPostEffectProvider)
 	if !ok || provider == nil {
 		return flow.BoundaryFactsDomain.Top(), nil
 	}
-	facts := provider.BoundaryFactsFromValues(call, ctx)
+	facts := provider.CallPostEffectsFromValues(call, ctx).BoundaryFacts
 	if !facts.HasProof() {
 		return facts, nil
 	}

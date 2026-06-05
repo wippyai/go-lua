@@ -2478,8 +2478,8 @@ type boundaryAndContainerElementUnionTyper struct {
 	effects []effect.ContainerElementUnion
 }
 
-func (c boundaryAndContainerElementUnionTyper) BoundaryFactsFromValues(*ast.FuncCallExpr, ProductCallContext) flow.BoundaryFacts {
-	return c.facts
+func (c boundaryAndContainerElementUnionTyper) CallPostEffectsFromValues(*ast.FuncCallExpr, ProductCallContext) CallPostEffects {
+	return CallPostEffects{BoundaryFacts: c.facts}
 }
 
 func (c boundaryAndContainerElementUnionTyper) ContainerElementUnionsFromValues(*ast.FuncCallExpr, ProductCallContext) []effect.ContainerElementUnion {
@@ -2492,12 +2492,11 @@ type boundaryAndReceiverEffectTyper struct {
 	effects flow.ReceiverEffects
 }
 
-func (b boundaryAndReceiverEffectTyper) BoundaryFactsFromValues(*ast.FuncCallExpr, ProductCallContext) flow.BoundaryFacts {
-	return b.facts
-}
-
-func (b boundaryAndReceiverEffectTyper) ReceiverEffectsFromValues(*ast.FuncCallExpr, ProductCallContext) flow.ReceiverEffects {
-	return b.effects
+func (b boundaryAndReceiverEffectTyper) CallPostEffectsFromValues(*ast.FuncCallExpr, ProductCallContext) CallPostEffects {
+	return CallPostEffects{
+		ReceiverEffects: b.effects,
+		BoundaryFacts:   b.facts,
+	}
 }
 
 type receiverEffectTyper struct {
@@ -2505,6 +2504,9 @@ type receiverEffectTyper struct {
 	effects flow.ReceiverEffects
 }
 
-func (r receiverEffectTyper) ReceiverEffectsFromValues(*ast.FuncCallExpr, ProductCallContext) flow.ReceiverEffects {
-	return r.effects
+func (r receiverEffectTyper) CallPostEffectsFromValues(*ast.FuncCallExpr, ProductCallContext) CallPostEffects {
+	return CallPostEffects{
+		ReceiverEffects: r.effects,
+		BoundaryFacts:   flow.BoundaryFactsDomain.Top(),
+	}
 }
