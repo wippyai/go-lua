@@ -164,7 +164,7 @@ type TransferValueFacts interface {
 // IndexWriteFacts exposes the solved transfer proof that a dynamic indexed
 // replacement write was admitted by the abstract store law at a point.
 type IndexWriteFacts interface {
-	IndexWriteAdmission(q IndexWriteQuery) (typ.Type, bool)
+	IndexWriteAdmission(q IndexWriteReadQuery) (typ.Type, bool)
 }
 
 // ConditionProofFacts exposes condition-only proof queries over the converged

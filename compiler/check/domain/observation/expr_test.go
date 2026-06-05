@@ -126,10 +126,10 @@ func (f *assignmentSelectionFactsStub) ConstValueAtSym(_ cfg.Point, sym cfg.Symb
 type indexWriteFactsStub struct {
 	factsStub
 	value typ.Type
-	query flow.IndexWriteQuery
+	query flow.IndexWriteReadQuery
 }
 
-func (f *indexWriteFactsStub) IndexWriteAdmission(q flow.IndexWriteQuery) (typ.Type, bool) {
+func (f *indexWriteFactsStub) IndexWriteAdmission(q flow.IndexWriteReadQuery) (typ.Type, bool) {
 	f.query = q
 	return f.value, f.value != nil
 }
@@ -784,8 +784,13 @@ func TestProjector_AssignmentTargetWriteTypeUsesIndexWriteFactsWithoutSolution(t
 	if !typ.TypeEquals(got, typ.String) {
 		t.Fatalf("AssignmentTargetWriteType via IndexWriteFacts = %v, want string", got)
 	}
-	if facts.query.Point != 9 || !facts.query.Target.Equal(constraint.NewPath(baseSym, "m")) ||
-		facts.query.KeySymbol != keySym || !facts.query.ValuePath.Equal(constraint.NewPath(valSym, "v")) {
+	valueAddr, ok := flow.StableAddressOfPath(constraint.NewPath(valSym, "v"))
+	if !ok {
+		t.Fatal("value address")
+	}
+	if facts.query.Point != 9 || !facts.query.TargetPath.Equal(constraint.NewPath(baseSym, "m")) ||
+		!facts.query.KeyPath.Equal(constraint.NewPath(keySym, "k")) ||
+		!facts.query.Admission.HasValuePath || !facts.query.Admission.ValuePath.Equal(valueAddr) {
 		t.Fatalf("IndexWriteAdmission query = %#v", facts.query)
 	}
 }

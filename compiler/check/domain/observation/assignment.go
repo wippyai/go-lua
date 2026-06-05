@@ -610,13 +610,18 @@ func (p Projector) assignmentTargetFlowWriteType(target cfg.AssignTarget, source
 		return nil
 	}
 	keyPath := p.pathOfExpr(target.Key, point)
-	value, ok := facts.IndexWriteAdmission(flow.IndexWriteQuery{
-		Point:     point,
-		Target:    targetPath,
-		KeySymbol: keyPath.Symbol,
-		KeyType:   p.TypeOf(target.Key, point),
-		ValuePath: p.pathOfExpr(source, point),
-	})
+	query, ok := flow.IndexWriteReadQueryFromPaths(
+		point,
+		flow.PathReadPost,
+		targetPath,
+		keyPath,
+		p.TypeOf(target.Key, point),
+		p.pathOfExpr(source, point),
+	)
+	if !ok {
+		return nil
+	}
+	value, ok := facts.IndexWriteAdmission(query)
 	if !ok || typ.IsAbsentOrUnknown(value) || typ.IsAny(value) {
 		return nil
 	}

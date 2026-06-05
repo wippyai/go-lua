@@ -1309,7 +1309,7 @@ func (f factsIndexReadFlow) HasKeyOf(p cfg.Point, tablePath, keyPath constraint.
 	return f.keyOf.HasKeyOf(p, tablePath, keyPath)
 }
 
-func (f factsIndexReadFlow) MapReadback(q flow.IndexWriteQuery) (typ.Type, bool) {
+func (f factsIndexReadFlow) MapReadback(q flow.IndexWriteReadQuery) (typ.Type, bool) {
 	if f.mapReadback != nil {
 		if got, ok := f.mapReadback.MapReadback(q); ok {
 			return got, true
@@ -1318,7 +1318,7 @@ func (f factsIndexReadFlow) MapReadback(q flow.IndexWriteQuery) (typ.Type, bool)
 	return f.IndexWriteAdmission(q)
 }
 
-func (f factsIndexReadFlow) IndexWriteAdmission(q flow.IndexWriteQuery) (typ.Type, bool) {
+func (f factsIndexReadFlow) IndexWriteAdmission(q flow.IndexWriteReadQuery) (typ.Type, bool) {
 	if f.indexWrites == nil {
 		return nil, false
 	}
@@ -1334,7 +1334,13 @@ func (f factsIndexReadFlow) IndexWriteAdmission(q flow.IndexWriteQuery) (typ.Typ
 		}
 		aliasQuery := q
 		aliasQuery.KeyPath = keyPath
-		aliasQuery.KeySymbol = keyPath.Symbol
+		if keyAddr, ok := flow.StableAddressOfPath(keyPath); ok {
+			aliasQuery.Admission.KeyPath = keyAddr
+			aliasQuery.Admission.HasKeyPath = true
+		} else {
+			aliasQuery.Admission.KeyPath = flow.StableAddress{}
+			aliasQuery.Admission.HasKeyPath = false
+		}
 		if got, ok := f.indexWrites.IndexWriteAdmission(aliasQuery); ok {
 			return got, true
 		}

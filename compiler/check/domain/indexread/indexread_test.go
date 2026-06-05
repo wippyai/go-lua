@@ -52,7 +52,7 @@ func (f fakeFlow) HasKeyOf(_ cfg.Point, tablePath, keyPath constraint.Path) bool
 	return f.keyOf && !tablePath.IsEmpty() && !keyPath.IsEmpty()
 }
 
-func (f fakeFlow) MapReadback(_ flow.IndexWriteQuery) (typ.Type, bool) {
+func (f fakeFlow) MapReadback(_ flow.IndexWriteReadQuery) (typ.Type, bool) {
 	return f.mapReadback, f.mapReadbackOK
 }
 

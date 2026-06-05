@@ -24,11 +24,11 @@ type Flow interface {
 type PathOf func(ast.Expr) constraint.Path
 
 type IndexWriteAdmissionFlow interface {
-	IndexWriteAdmission(q flowfacts.IndexWriteQuery) (typ.Type, bool)
+	IndexWriteAdmission(q flowfacts.IndexWriteReadQuery) (typ.Type, bool)
 }
 
 type MapReadbackFlow interface {
-	MapReadback(q flowfacts.IndexWriteQuery) (typ.Type, bool)
+	MapReadback(q flowfacts.IndexWriteReadQuery) (typ.Type, bool)
 }
 
 // Query describes one indexed read projection.
@@ -146,13 +146,16 @@ func refineObservationByIndexWriteAdmission(q ObservationQuery) (typ.Type, bool)
 	if q.Index.KeyPath.IsEmpty() && !indexWriteReadCanUseKeyValueOnly(q.Index.KeyType) {
 		return nil, false
 	}
-	query := flowfacts.IndexWriteQuery{
-		Point:     q.Point,
-		View:      q.View,
-		Target:    q.Index.TablePath,
-		KeyPath:   q.Index.KeyPath,
-		KeySymbol: q.Index.KeyPath.Symbol,
-		KeyType:   q.Index.KeyType,
+	query, ok := flowfacts.IndexWriteReadQueryFromPaths(
+		q.Point,
+		q.View,
+		q.Index.TablePath,
+		q.Index.KeyPath,
+		q.Index.KeyType,
+		constraint.Path{},
+	)
+	if !ok {
+		return nil, false
 	}
 	if flow, ok := q.Flow.(MapReadbackFlow); ok {
 		if admitted, ok := flow.MapReadback(query); readbackIsInformative(admitted, ok) {

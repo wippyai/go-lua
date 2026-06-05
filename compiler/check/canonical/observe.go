@@ -801,9 +801,9 @@ func (f *canonicalFacts) MutatorKeyTypeAt(p cfg.Point, keyPath constraint.Path, 
 
 // IndexWriteAdmission reads the post-transfer point-state proof that a dynamic
 // indexed replacement write was admitted by the canonical product transfer.
-func (f *canonicalFacts) IndexWriteAdmission(q flow.IndexWriteQuery) (typ.Type, bool) {
+func (f *canonicalFacts) IndexWriteAdmission(q flow.IndexWriteReadQuery) (typ.Type, bool) {
 	ps := f.indexReadState(q.Point, q.View)
-	got, ok := flow.PointFactsOf(ps).IndexWriteAdmission(q)
+	got, ok := flow.PointFactsOf(ps).IndexWriteAdmissionAtAddress(q.Admission)
 	return got, ok
 }
 
@@ -811,19 +811,16 @@ func (f *canonicalFacts) IndexWriteAdmission(q flow.IndexWriteQuery) (typ.Type, 
 // consumes the heavy point-local dynamic-write admission lane, then derives the
 // same readback from stable key-array/value-origin facts when a loop key was
 // yielded from a proven key array.
-func (f *canonicalFacts) MapReadback(q flow.IndexWriteQuery) (typ.Type, bool) {
+func (f *canonicalFacts) MapReadback(q flow.IndexWriteReadQuery) (typ.Type, bool) {
 	if got, ok := f.IndexWriteAdmission(q); ok {
 		return got, true
 	}
 	ps := f.indexReadState(q.Point, q.View)
 	keyPath := q.KeyPath
-	if keyPath.IsEmpty() && q.KeySymbol != 0 {
-		keyPath = constraint.Path{Symbol: q.KeySymbol}
-	}
 	value, ok := flow.IndexedIteratorKeyArrayReadback(
 		ps.KeyPresence,
 		ps.ValueOrigins,
-		q.Target,
+		q.TargetPath,
 		keyPath,
 	)
 	if !ok || value.IsZero() {
