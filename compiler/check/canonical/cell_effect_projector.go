@@ -49,7 +49,7 @@ func (p cellEffectProjector) typedCallEffects(
 		CallbackArgs: call.Args,
 		MethodCall:   call.Method != "",
 		ResolveCallback: func(arg ast.Expr) ([]summary.FuncRef, bool) {
-			return p.typer.callbackArgRefs(arg, p.program, refs)
+			return p.typer.targetResolver(p.program).ResolveCallbackArgRefs(arg, refs, p.program.refByFunc)
 		},
 		EffectOf: func(ref summary.FuncRef, entryValues summary.EntryValues) flow.CaptureEffects {
 			return p.effectsForRef(ref, cells, refs, flow.ClosureRefsDomain.Bottom(), entryValues, flow.BoundaryFactsDomain.Top())
@@ -67,7 +67,7 @@ func (p cellEffectProjector) productCallEffects(
 		CallbackArgs: call.Args,
 		MethodCall:   call.Method != "",
 		ResolveCallback: func(arg ast.Expr) ([]summary.FuncRef, bool) {
-			return p.typer.callbackArgRefs(arg, p.program, ctx.FunctionRefs)
+			return p.typer.targetResolver(p.program).ResolveCallbackArgRefs(arg, ctx.FunctionRefs, p.program.refByFunc)
 		},
 		EffectOf: func(ref summary.FuncRef, entryValues summary.EntryValues) flow.CaptureEffects {
 			return p.effectsForRef(ref, ctx.Cells, ctx.FunctionRefs, ctx.ClosureRefs, entryValues, p.callEntry.factsForRef(ref, call, ctx))

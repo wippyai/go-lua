@@ -2396,9 +2396,10 @@ func (ct callTyper) refineFunctionArgTypes(call *ast.FuncCallExpr, argTypes []ty
 	if d == nil || d.activeProgram == nil || call == nil || len(call.Args) == 0 {
 		return argTypes
 	}
+	resolver := ct.targetResolver(d.activeProgram)
 	callbackRefs := make(map[ast.Expr][]summary.FuncRef)
 	for _, arg := range call.Args {
-		argRefs, ok := ct.callbackArgRefs(arg, d.activeProgram, refs)
+		argRefs, ok := resolver.ResolveCallbackArgRefs(arg, refs, d.activeProgram.refByFunc)
 		if !ok || len(argRefs) == 0 {
 			continue
 		}
@@ -2788,14 +2789,6 @@ func (ct callTyper) ContainerElementUnionsFromValues(call *ast.FuncCallExpr, ctx
 		},
 		Resolver: ct.callTypeResolver(ctx.ExprType),
 	})
-}
-
-func (ct callTyper) callbackArgRefs(arg ast.Expr, prog *program, refs flow.FunctionRefs) ([]summary.FuncRef, bool) {
-	if prog == nil {
-		return nil, false
-	}
-	resolver := ct.targetResolver(prog)
-	return resolver.ResolveCallbackArgRefs(arg, refs, prog.refByFunc)
 }
 
 func (ct callTyper) FunctionValueByRef(ref flow.FunctionRef, cells flow.CaptureCells, refs flow.FunctionRefs, closures flow.ClosureRefs) (typ.Type, bool) {
