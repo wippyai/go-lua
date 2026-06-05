@@ -20,6 +20,7 @@ func (ct callTyper) resolveCallTargets(
 
 func (ct callTyper) targetResolver(prog *program) canonicalcall.TargetResolver {
 	return canonicalcall.TargetResolver{
+		Graph:    ct.g,
 		Bindings: ct.bindings(),
 		Static: canonicalcall.StaticTargetLookup{
 			FuncBySymbol: func(sym cfg.SymbolID) (summary.FuncRef, bool) {

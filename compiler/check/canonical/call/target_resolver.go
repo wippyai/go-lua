@@ -4,6 +4,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/bind"
 	"github.com/wippyai/go-lua/compiler/cfg"
+	"github.com/wippyai/go-lua/compiler/check/callsite"
 	"github.com/wippyai/go-lua/compiler/check/canonical/ref"
 	"github.com/wippyai/go-lua/compiler/check/canonical/summary"
 	"github.com/wippyai/go-lua/compiler/check/domain/fieldkey"
@@ -24,6 +25,7 @@ type StaticTargetLookup struct {
 // topology facts. It performs no summary reads and owns the callable precedence
 // rule's data preparation; TargetSet/TargetSelection own the precedence itself.
 type TargetResolver struct {
+	Graph    *cfg.Graph
 	Bindings *bind.BindingTable
 	Static   StaticTargetLookup
 }
@@ -100,6 +102,29 @@ func (r TargetResolver) ResolveStaticExpr(expr ast.Expr) (summary.FuncRef, bool)
 		}
 	}
 	return summary.FuncRef{}, false
+}
+
+// ResolveStaticExprOrSymbol resolves immutable callback/callee topology for an
+// expression, expanding the CFG-provided raw symbol through the same direct-alias
+// candidate order used by call-site evidence. This is intentionally function-ref
+// only: field and method topology are ordinary callee resolution, not callback
+// argument alias evidence.
+func (r TargetResolver) ResolveStaticExprOrSymbol(expr ast.Expr, rawSym cfg.SymbolID) (summary.FuncRef, bool) {
+	if r.Static.FuncBySymbol == nil {
+		return summary.FuncRef{}, false
+	}
+	sym := callsite.CanonicalSymbolFromExprWithAliases(
+		expr,
+		rawSym,
+		r.Graph,
+		r.Bindings,
+		r.Bindings,
+		func(candidate cfg.SymbolID) bool {
+			_, ok := r.Static.FuncBySymbol(candidate)
+			return ok
+		},
+	)
+	return r.Static.FuncBySymbol(sym)
 }
 
 // ResolveFunctionRefsAtExpr resolves the live product FunctionRefs axis for a

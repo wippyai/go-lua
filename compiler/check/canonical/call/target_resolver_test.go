@@ -10,6 +10,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/check/canonical/summary"
 	"github.com/wippyai/go-lua/compiler/check/domain/fieldkey"
 	flowpath "github.com/wippyai/go-lua/compiler/check/domain/path"
+	"github.com/wippyai/go-lua/compiler/parse"
 	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/flow"
 )
@@ -199,6 +200,66 @@ func TestTargetResolverCallbackArgRefsUseLiveAxisBeforeStaticFallback(t *testing
 	}
 	if staticUsed {
 		t.Fatal("static fallback ran despite authoritative live callback refs")
+	}
+}
+
+func TestTargetResolverStaticExprOrSymbolExpandsAliases(t *testing.T) {
+	t.Parallel()
+
+	stmts, err := parse.ParseString(`
+		local function Target()
+			return 1
+		end
+		local a = Target
+		local b = a
+		local use = b
+		use()
+	`, "target_resolver_alias.lua")
+	if err != nil {
+		t.Fatalf("parse failed: %v", err)
+	}
+	graph := cfg.Build(&ast.FunctionExpr{Stmts: stmts})
+	if graph == nil {
+		t.Fatal("expected graph")
+	}
+	bindings := graph.Bindings()
+	if bindings == nil {
+		t.Fatal("expected bindings")
+	}
+	var (
+		useExpr *ast.IdentExpr
+		target  cfg.SymbolID
+	)
+	graph.EachCallSite(func(p cfg.Point, info *cfg.CallInfo) {
+		if info == nil || info.CalleeName != "use" {
+			return
+		}
+		if ident, ok := info.Callee.(*ast.IdentExpr); ok {
+			useExpr = ident
+		}
+		target, _ = graph.SymbolAt(p, "Target")
+	})
+	if useExpr == nil || target == 0 {
+		t.Fatalf("expected use ident and Target symbol, got use=%v target=%d", useExpr, target)
+	}
+	raw, ok := bindings.SymbolOf(useExpr)
+	if !ok || raw == 0 {
+		t.Fatalf("expected raw symbol for use, got %d/%v", raw, ok)
+	}
+	want := summary.FuncRef{GraphID: 77}
+	resolver := TargetResolver{
+		Graph:    graph,
+		Bindings: bindings,
+		Static: StaticTargetLookup{
+			FuncBySymbol: func(sym cfg.SymbolID) (summary.FuncRef, bool) {
+				return want, sym == target
+			},
+		},
+	}
+
+	got, ok := resolver.ResolveStaticExprOrSymbol(useExpr, raw)
+	if !ok || got != want {
+		t.Fatalf("ResolveStaticExprOrSymbol = %+v/%v, want %+v/true", got, ok, want)
 	}
 }
 

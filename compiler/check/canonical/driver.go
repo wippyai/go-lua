@@ -1272,7 +1272,7 @@ func (p *program) callbackArgRefs(g *cfg.Graph, arg ast.Expr, rawSym cfg.SymbolI
 			return resolver.ResolveFunctionRefsAtExprOrSymbol(expr, refs, rawSym)
 		},
 		StaticExpr: func(expr ast.Expr) (summary.FuncRef, bool) {
-			return p.staticCallbackArgRef(g, expr, rawSym)
+			return resolver.ResolveStaticExprOrSymbol(expr, rawSym)
 		},
 	})
 }
@@ -1374,25 +1374,6 @@ func captureCellsFromPoint(in *flow.PointState, captured []cfg.SymbolID) flow.Ca
 		}
 	}
 	return cells
-}
-
-func (p *program) staticCallbackArgRef(g *cfg.Graph, arg ast.Expr, rawSym cfg.SymbolID) (summary.FuncRef, bool) {
-	if p == nil || g == nil || arg == nil {
-		return summary.FuncRef{}, false
-	}
-	bindings := g.Bindings()
-	sym := callsite.CanonicalSymbolFromExprWithAliases(
-		arg,
-		rawSym,
-		g,
-		bindings,
-		bindings,
-		func(candidate cfg.SymbolID) bool {
-			_, ok := p.funcRef(candidate)
-			return ok
-		},
-	)
-	return p.funcRef(sym)
 }
 
 func (p *program) expectedCallArgType(g *cfg.Graph, tr *transfer.Transfer, point cfg.Point, info *cfg.CallInfo, in *flow.PointState, argIdx int) typ.Type {
