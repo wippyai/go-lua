@@ -181,19 +181,6 @@ func (f IndexWriteAdmissionFacts) AdmissionAtAddress(q IndexWriteAddressQuery) (
 	return product.AbstractValue{}, false
 }
 
-// KillAffectedByWrite removes admission facts that are no longer valid after a
-// write to writePath. A write to the target table, the key expression path, or
-// the source value path can invalidate the read-back proof.
-// TODO(address-vocabulary): migrate transfer invalidation to
-// KillAffectedByWriteAddress and remove this PathKey wrapper.
-func (f IndexWriteAdmissionFacts) KillAffectedByWrite(writePath constraint.PathKey) IndexWriteAdmissionFacts {
-	addr, ok := StableAddressFromKey(writePath)
-	if !ok {
-		return f
-	}
-	return f.KillAffectedByWriteAddress(addr)
-}
-
 // KillAffectedByWriteAddress removes admission facts that are no longer valid
 // after a write to write.
 func (f IndexWriteAdmissionFacts) KillAffectedByWriteAddress(write StableAddress) IndexWriteAdmissionFacts {
@@ -210,23 +197,6 @@ func (f IndexWriteAdmissionFacts) KillAffectedByWriteAddress(write StableAddress
 		entries = append(entries, entry)
 	}
 	return canonicalIndexWriteAdmissionFacts(entries, product.Domain.Join)
-}
-
-// PreservePresentElementWrite applies the invalidation law for a definitely
-// present dynamic element write to writePath. Existing readback proofs for the
-// same dynamic table are weak-updated: the written value may be the same key, so
-// the prior readback payload is joined with the new payload instead of deleted.
-// TODO(address-vocabulary): migrate transfer invalidation to
-// PreservePresentElementWriteAddress and remove this PathKey wrapper.
-func (f IndexWriteAdmissionFacts) PreservePresentElementWrite(
-	writePath constraint.PathKey,
-	written product.AbstractValue,
-) IndexWriteAdmissionFacts {
-	addr, ok := StableAddressFromKey(writePath)
-	if !ok {
-		return f
-	}
-	return f.PreservePresentElementWriteAddress(addr, written)
 }
 
 // PreservePresentElementWriteAddress applies the invalidation law for a

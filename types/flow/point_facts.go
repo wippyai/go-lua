@@ -183,6 +183,20 @@ func (f PointFacts) IndexWriteAdmission(q IndexWriteQuery) (typ.Type, bool) {
 	return t, true
 }
 
+// IndexWriteAdmissionAtAddress returns the value admitted by a dynamic index
+// write proven in this point state using normalized address-domain evidence.
+func (f PointFacts) IndexWriteAdmissionAtAddress(q IndexWriteAddressQuery) (typ.Type, bool) {
+	av, ok := f.state.IndexWrites.AdmissionAtAddress(q)
+	if !ok || av.IsZero() {
+		return nil, false
+	}
+	t := product.ProjectValueOrUnknown(av)
+	if typ.IsAbsentOrUnknown(t) {
+		return nil, false
+	}
+	return t, true
+}
+
 func productType(av product.AbstractValue, ok bool) (typ.Type, bool) {
 	if !ok || av.IsZero() {
 		return nil, false

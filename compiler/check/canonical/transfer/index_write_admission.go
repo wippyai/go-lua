@@ -128,13 +128,21 @@ func (t *Transfer) refineByIndexWriteAdmission(
 		return product.AbstractValue{}, false
 	}
 	keyType := flow.NormalizeDynamicKeyType(product.ProjectValueOrUnknown(key))
+	targetAddr, ok := flow.StableAddressOfPath(targetPath)
+	if !ok {
+		return product.AbstractValue{}, false
+	}
 	keyPaths := t.indexWriteReadKeyPaths(out, e.Key)
 	for _, keyPath := range keyPaths {
-		if admitted, ok := out.IndexWrites.Admission(flow.IndexWriteQuery{
-			Target:    targetPath,
-			KeyPath:   keyPath,
-			KeySymbol: keyPath.Symbol,
-			KeyType:   keyType,
+		keyAddr, ok := flow.StableAddressOfPath(keyPath)
+		if !ok {
+			continue
+		}
+		if admitted, ok := out.IndexWrites.AdmissionAtAddress(flow.IndexWriteAddressQuery{
+			Target:     targetAddr,
+			KeyPath:    keyAddr,
+			HasKeyPath: true,
+			KeyValue:   product.FromType(keyType),
 		}); ok && !admitted.IsZero() {
 			return admitted, true
 		}
@@ -142,9 +150,9 @@ func (t *Transfer) refineByIndexWriteAdmission(
 	if !indexWriteReadCanUseKeyValueOnly(keyType) {
 		return product.AbstractValue{}, false
 	}
-	admitted, ok := out.IndexWrites.Admission(flow.IndexWriteQuery{
-		Target:  targetPath,
-		KeyType: keyType,
+	admitted, ok := out.IndexWrites.AdmissionAtAddress(flow.IndexWriteAddressQuery{
+		Target:   targetAddr,
+		KeyValue: product.FromType(keyType),
 	})
 	if !ok || admitted.IsZero() {
 		return product.AbstractValue{}, false

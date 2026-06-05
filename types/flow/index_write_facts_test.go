@@ -88,18 +88,27 @@ func TestIndexWriteAdmissionFactsKillAffectedByWrite(t *testing.T) {
 		Value:     product.FromType(typ.Number),
 	})
 
-	if got := facts.KillAffectedByWrite(KeyPresencePathKey(constraint.NewPath(cfg.SymbolID(15), "other"))); !IndexWriteAdmissionFactsDomain.Equal(got, facts) {
+	if got := facts.KillAffectedByWriteAddress(testStableAddress(t, constraint.NewPath(cfg.SymbolID(15), "other"))); !IndexWriteAdmissionFactsDomain.Equal(got, facts) {
 		t.Fatalf("unrelated write killed admission: got %s want %s", got.Format(), facts.Format())
 	}
-	if got := facts.KillAffectedByWrite(KeyPresencePathKey(target.Field("name"))); len(got.Entries()) != 0 {
+	if got := facts.KillAffectedByWriteAddress(testStableAddress(t, target.Field("name"))); len(got.Entries()) != 0 {
 		t.Fatalf("target write kept admission: %s", got.Format())
 	}
-	if got := facts.KillAffectedByWrite(KeyPresencePathKey(key)); len(got.Entries()) != 0 {
+	if got := facts.KillAffectedByWriteAddress(testStableAddress(t, key)); len(got.Entries()) != 0 {
 		t.Fatalf("key write kept admission: %s", got.Format())
 	}
-	if got := facts.KillAffectedByWrite(KeyPresencePathKey(valuePath.Field("name"))); len(got.Entries()) != 0 {
+	if got := facts.KillAffectedByWriteAddress(testStableAddress(t, valuePath.Field("name"))); len(got.Entries()) != 0 {
 		t.Fatalf("value write kept admission: %s", got.Format())
 	}
+}
+
+func testStableAddress(t *testing.T, path constraint.Path) StableAddress {
+	t.Helper()
+	addr, ok := StableAddressOfPath(path)
+	if !ok {
+		t.Fatalf("stable address for %s", path.String())
+	}
+	return addr
 }
 
 func TestIndexWriteAdmissionFactsPreservePresentElementWriteWeakensSameTableProof(t *testing.T) {
@@ -123,7 +132,11 @@ func TestIndexWriteAdmissionFactsPreservePresentElementWriteWeakensSameTableProo
 			Value:   edgeValue,
 		})
 
-	got := facts.PreservePresentElementWrite(StablePathKey(target), written)
+	targetAddr, ok := StableAddressOfPath(target)
+	if !ok {
+		t.Fatal("target address")
+	}
+	got := facts.PreservePresentElementWriteAddress(targetAddr, written)
 	admitted, ok := got.Admission(IndexWriteQuery{
 		Target:  target,
 		KeyPath: key,

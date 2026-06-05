@@ -200,7 +200,11 @@ func TestAssignmentProvenanceCopiesIndexWriteAdmissionKeyPath(t *testing.T) {
 	if !ok || !product.Domain.Equal(got, nodeValue) {
 		t.Fatalf("rebased index-write admission = %v/%v, want node/true; facts=%s", got.ProjectValue(), ok, out.IndexWrites.Format())
 	}
-	killed := out.IndexWrites.KillAffectedByWrite(flow.StablePathKey(sourcePath))
+	sourceAddr, ok := flow.StableAddressOfPath(sourcePath)
+	if !ok {
+		t.Fatal("source address")
+	}
+	killed := out.IndexWrites.KillAffectedByWriteAddress(sourceAddr)
 	if got, ok := killed.Admission(flow.IndexWriteQuery{
 		Target:  tablePath,
 		KeyPath: targetPath,

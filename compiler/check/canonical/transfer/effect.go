@@ -879,10 +879,16 @@ func (t *Transfer) applyAppendKeyArrayFacts(
 		if keyType == nil {
 			keyType = typ.Unknown
 		}
-		value, ok := out.IndexWrites.Admission(flow.IndexWriteQuery{
-			Target:  tablePath,
-			KeyPath: elementPath,
-			KeyType: keyType,
+		tableAddr, tableOK := flow.StableAddressOfPath(tablePath)
+		keyAddr, keyOK := flow.StableAddressOfPath(elementPath)
+		if !tableOK || !keyOK {
+			continue
+		}
+		value, ok := out.IndexWrites.AdmissionAtAddress(flow.IndexWriteAddressQuery{
+			Target:     tableAddr,
+			KeyPath:    keyAddr,
+			HasKeyPath: true,
+			KeyValue:   product.FromType(keyType),
 		})
 		if !ok || value.IsZero() {
 			continue

@@ -3606,10 +3606,16 @@ func (t *Transfer) boundaryAppendKeyValue(out *flow.PointState, table constraint
 	if keyValue, ok := flow.PointFactsOf(*out).PathValue(keyPath); ok && !keyValue.IsZero() {
 		keyType = product.ProjectValueOrUnknown(keyValue)
 	}
-	value, ok := out.IndexWrites.Admission(flow.IndexWriteQuery{
-		Target:  tablePath,
-		KeyPath: keyPath,
-		KeyType: keyType,
+	tableAddr, tableOK := flow.StableAddressOfPath(tablePath)
+	keyAddr, keyOK := flow.StableAddressOfPath(keyPath)
+	if !tableOK || !keyOK {
+		return product.AbstractValue{}, false
+	}
+	value, ok := out.IndexWrites.AdmissionAtAddress(flow.IndexWriteAddressQuery{
+		Target:     tableAddr,
+		KeyPath:    keyAddr,
+		HasKeyPath: true,
+		KeyValue:   product.FromType(keyType),
 	})
 	if !ok || value.IsZero() {
 		return product.AbstractValue{}, false
