@@ -879,47 +879,33 @@ func (s *Synthesizer) synthArgsWithCallContext(
 	if len(exprs) == 0 {
 		return nil
 	}
-	if !hasDirectFunctionLiteralArg(exprs) {
-		return synthArgs(exprs, recurse)
+	callbackArg := func(arg ast.Expr) *ast.FunctionExpr {
+		return functionExprForCallbackArg(s, arg)
 	}
-	shallow := synthShallowFunctionArgs(exprs, recurse)
-	def.Args = shallow
+	initial, hasCallbackArg := callarg.InitialInferenceTypes(
+		exprs,
+		func(arg ast.Expr) typ.Type { return recurse(arg) },
+		callbackArg,
+	)
+	if !hasCallbackArg {
+		return initial
+	}
+	def.Args = initial
 	inferred := ops.InferCall(s.deps.Ctx, def)
 
 	args := make([]typ.Type, len(exprs))
 	for i, arg := range exprs {
-		if fn, ok := arg.(*ast.FunctionExpr); ok {
+		if fn := callarg.FunctionLiteralArg(arg, callbackArg); fn != nil {
 			if expectedFn := phasecore.ExpectedFunctionLiteralSignature(fn, inferred.ExpectedArgType(i)); expectedFn != nil {
 				if t := s.SynthFunctionTypeWithExpected(fn, sc, expectedFn); t != nil {
 					args[i] = callboundary.ProjectContextualFunctionArg(expectedFn, t)
 					continue
 				}
 			}
-			args[i] = recurse(arg)
+			args[i] = initial[i]
 			continue
 		}
-		args[i] = shallow[i]
-	}
-	return args
-}
-
-func hasDirectFunctionLiteralArg(exprs []ast.Expr) bool {
-	for _, arg := range exprs {
-		if _, ok := arg.(*ast.FunctionExpr); ok {
-			return true
-		}
-	}
-	return false
-}
-
-func synthShallowFunctionArgs(exprs []ast.Expr, recurse ExprSynth) []typ.Type {
-	args := make([]typ.Type, len(exprs))
-	for i, arg := range exprs {
-		if fn, ok := arg.(*ast.FunctionExpr); ok {
-			args[i] = phasecore.ShallowFunctionLiteralSignature(fn)
-			continue
-		}
-		args[i] = recurse(arg)
+		args[i] = initial[i]
 	}
 	return args
 }

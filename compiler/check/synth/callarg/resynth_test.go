@@ -33,6 +33,64 @@ func TestForArgsAdaptsIndexedExpression(t *testing.T) {
 	}
 }
 
+func TestInitialInferenceTypesUsesShallowDirectFunctionLiteral(t *testing.T) {
+	fn := &ast.FunctionExpr{ParList: &ast.ParList{Names: []string{"value"}}}
+	args := []ast.Expr{fn, &ast.StringExpr{Value: "seed"}}
+
+	got, hasCallback := InitialInferenceTypes(
+		args,
+		func(arg ast.Expr) typ.Type {
+			if arg == args[1] {
+				return typ.String
+			}
+			t.Fatalf("typeOf called for callback arg %T", arg)
+			return nil
+		},
+		nil,
+	)
+
+	if !hasCallback {
+		t.Fatal("expected callback argument to be detected")
+	}
+	callback, ok := got[0].(*typ.Function)
+	if !ok || callback == nil || len(callback.Params) != 1 || len(callback.Returns) != 1 {
+		t.Fatalf("callback arg = %v, want shallow unary function", got[0])
+	}
+	if !typ.TypeEquals(callback.Params[0].Type, typ.Any) || !typ.TypeEquals(callback.Returns[0], typ.Any) {
+		t.Fatalf("callback arg = %v, want any -> any", callback)
+	}
+	if got[1] != typ.String {
+		t.Fatalf("non-callback arg = %v, want string", got[1])
+	}
+}
+
+func TestInitialInferenceTypesUsesShallowNamedFunctionLiteral(t *testing.T) {
+	fn := &ast.FunctionExpr{ParList: &ast.ParList{Names: []string{"value"}}}
+	cb := &ast.IdentExpr{Value: "cb"}
+
+	got, hasCallback := InitialInferenceTypes(
+		[]ast.Expr{cb},
+		func(arg ast.Expr) typ.Type {
+			t.Fatalf("typeOf called for named callback arg %T", arg)
+			return nil
+		},
+		func(arg ast.Expr) *ast.FunctionExpr {
+			if arg == cb {
+				return fn
+			}
+			return nil
+		},
+	)
+
+	if !hasCallback {
+		t.Fatal("expected named callback argument to be detected")
+	}
+	callback, ok := got[0].(*typ.Function)
+	if !ok || callback == nil || len(callback.Params) != 1 || len(callback.Returns) != 1 {
+		t.Fatalf("callback arg = %v, want shallow unary function", got[0])
+	}
+}
+
 func TestFull_Function(t *testing.T) {
 	called := false
 	synthWithExpected := func(arg ast.Expr, p cfg.Point, expected typ.Type) typ.Type {

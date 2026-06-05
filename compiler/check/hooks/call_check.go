@@ -29,7 +29,6 @@ import (
 	"github.com/wippyai/go-lua/compiler/check/domain/observation"
 	"github.com/wippyai/go-lua/compiler/check/domain/paramevidence"
 	"github.com/wippyai/go-lua/compiler/check/synth/callarg"
-	phasecore "github.com/wippyai/go-lua/compiler/check/synth/core"
 	"github.com/wippyai/go-lua/compiler/check/synth/ops"
 	"github.com/wippyai/go-lua/types/db"
 	"github.com/wippyai/go-lua/types/diag"
@@ -99,14 +98,14 @@ func checkSingleCall(
 	// writes its result. Use the point-entry view so `x = f(x)` validates the
 	// argument against the old x, not the post-call assignment target.
 	callObserver := observer.WithPreStateReads().WithCallArgumentProofs()
-	args := make([]typ.Type, len(info.Args))
-	for i, arg := range info.Args {
-		if fn, ok := arg.(*ast.FunctionExpr); ok {
-			args[i] = phasecore.ShallowFunctionLiteralSignature(fn)
-			continue
-		}
-		args[i] = callObserver.TypeOf(arg, p)
-	}
+	args, _ := callarg.InitialInferenceTypes(
+		info.Args,
+		func(arg ast.Expr) typ.Type { return callObserver.TypeOf(arg, p) },
+		func(arg ast.Expr) *ast.FunctionExpr {
+			sym := callsite.SymbolFromExpr(arg, bindings)
+			return callsite.FunctionLiteralForGraphSymbol(evidence, sym)
+		},
+	)
 
 	def := ops.CallDef{
 		Args:  args,

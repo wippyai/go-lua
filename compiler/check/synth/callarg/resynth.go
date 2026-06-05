@@ -2,6 +2,7 @@ package callarg
 
 import (
 	"github.com/wippyai/go-lua/compiler/ast"
+	phasecore "github.com/wippyai/go-lua/compiler/check/synth/core"
 	"github.com/wippyai/go-lua/compiler/check/synth/ops"
 	"github.com/wippyai/go-lua/types/cfg"
 	"github.com/wippyai/go-lua/types/subtype"
@@ -11,6 +12,52 @@ import (
 
 // ReSynth is called to re-synthesize an AST argument with contextual typing.
 type ReSynth func(idx int, arg ast.Expr, expected typ.Type) typ.Type
+
+// TypeOf synthesizes the ordinary non-contextual type of an argument.
+type TypeOf func(ast.Expr) typ.Type
+
+// FunctionLiteral resolves an argument expression to the function literal it
+// denotes when the argument is a callback value.
+type FunctionLiteral func(ast.Expr) *ast.FunctionExpr
+
+// InitialInferenceTypes returns the argument vector used for the first generic
+// inference pass. Callback literals are represented by shallow signatures so
+// their body obligations cannot solve input generics before the callee has
+// supplied the expected callback parameter types.
+func InitialInferenceTypes(args []ast.Expr, typeOf TypeOf, literal FunctionLiteral) ([]typ.Type, bool) {
+	if len(args) == 0 {
+		return nil, false
+	}
+	out := make([]typ.Type, len(args))
+	hasCallback := false
+	for i, arg := range args {
+		if fn := FunctionLiteralArg(arg, literal); fn != nil {
+			out[i] = phasecore.ShallowFunctionLiteralSignature(fn)
+			hasCallback = true
+			continue
+		}
+		if typeOf != nil {
+			out[i] = typeOf(arg)
+		}
+		if out[i] == nil {
+			out[i] = typ.Unknown
+		}
+	}
+	return out, hasCallback
+}
+
+// FunctionLiteralArg resolves direct and named callback arguments through one
+// surface so all staged call paths agree on what must be kept shallow during
+// initial inference.
+func FunctionLiteralArg(arg ast.Expr, literal FunctionLiteral) *ast.FunctionExpr {
+	if fn, ok := arg.(*ast.FunctionExpr); ok {
+		return fn
+	}
+	if literal == nil {
+		return nil
+	}
+	return literal(arg)
+}
 
 // ForArgs binds AST arguments to the pure call pipeline re-synthesis hook.
 func ForArgs(args []ast.Expr, reSynth ReSynth) ops.ArgReSynth {
