@@ -431,8 +431,8 @@ func TestProjector_CallArgumentProofRoutesThroughAppendElementFieldOrigin(t *tes
 			WithAddresses(testFlowPathAddress(t, routePath), testFlowPathAddress(t, inputRoutesPath), flow.ValueOriginIndexedIterator, 1),
 		aliases: flow.PathAliasFacts{}.WithAddresses(testFlowPathAddress(t, routeEntryPath), testFlowPathAddress(t, routePath)),
 		appendOrigins: flow.KeyPresenceFacts{}.
-			WithAppendHistoryBasePath(inputRoutesPath).
-			WithAppendElementFieldOriginPaths(inputRoutesPath, targetField, opPath.Field("config").Field("target")),
+			WithAppendHistoryBaseAddress(testFlowPathAddress(t, inputRoutesPath)).
+			WithAppendElementFieldOriginAddresses(testFlowPathAddress(t, inputRoutesPath), targetField, testFlowPathAddress(t, opPath.Field("config").Field("target"))),
 		cond: constraint.TrueCondition(),
 	}
 
@@ -494,8 +494,8 @@ func TestProjector_CallArgumentProofRoutesThroughElementRelativeAppendOrigin(t *
 			WithAddresses(testFlowPathAddress(t, routePath), testFlowPathAddress(t, inputRoutesPath), flow.ValueOriginIndexedIterator, 1),
 		aliases: flow.PathAliasFacts{}.WithAddresses(testFlowPathAddress(t, routeEntryPath), testFlowPathAddress(t, routePath)),
 		appendOrigins: flow.KeyPresenceFacts{}.
-			WithAppendHistoryBasePath(inputRoutesPath).
-			WithAppendElementFieldOriginFromPaths(inputRoutesPath, targetField, operationsPath, sourceField),
+			WithAppendHistoryBaseAddress(testFlowPathAddress(t, inputRoutesPath)).
+			WithAppendElementFieldOriginFromAddresses(testFlowPathAddress(t, inputRoutesPath), targetField, testFlowPathAddress(t, operationsPath), sourceField),
 		cond: constraint.TrueCondition(),
 	}
 
@@ -797,8 +797,17 @@ func TestProjector_AssignmentTargetWriteTypeUsesIndexWriteFactsWithoutSolution(t
 	if !ok {
 		t.Fatal("value address")
 	}
-	if facts.query.Point != 9 || !facts.query.TargetPath.Equal(constraint.NewPath(baseSym, "m")) ||
-		!facts.query.KeyPath.Equal(constraint.NewPath(keySym, "k")) ||
+	targetAddr, ok := flow.StableAddressOfPath(constraint.NewPath(baseSym, "m"))
+	if !ok {
+		t.Fatal("target address")
+	}
+	keyAddr, ok := flow.StableAddressOfPath(constraint.NewPath(keySym, "k"))
+	if !ok {
+		t.Fatal("key address")
+	}
+	if facts.query.Point != 9 ||
+		!facts.query.Admission.Target.Equal(targetAddr) ||
+		!facts.query.Admission.HasKeyPath || !facts.query.Admission.KeyPath.Equal(keyAddr) ||
 		!facts.query.Admission.HasValuePath || !facts.query.Admission.ValuePath.Equal(valueAddr) {
 		t.Fatalf("IndexWriteAdmission query = %#v", facts.query)
 	}

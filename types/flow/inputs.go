@@ -379,14 +379,10 @@ type VariantFieldOrigin struct {
 
 // IndexWriteReadQuery identifies a solved dynamic-index readback proof with
 // explicit solver context and normalized address-domain admission evidence.
-// TargetPath and KeyPath remain as provenance views for reducers that derive
-// readback from key-array/value-origin facts instead of the heavy admission lane.
 type IndexWriteReadQuery struct {
-	Point      cfg.Point
-	View       PathReadView
-	Admission  IndexWriteAddressQuery
-	TargetPath constraint.Path
-	KeyPath    constraint.Path
+	Point     cfg.Point
+	View      PathReadView
+	Admission IndexWriteAddressQuery
 }
 
 // IndexWriteReadQueryFromPaths normalizes source paths at the caller boundary
@@ -404,11 +400,9 @@ func IndexWriteReadQueryFromPaths(
 		return IndexWriteReadQuery{}, false
 	}
 	query := IndexWriteReadQuery{
-		Point:      point,
-		View:       view,
-		Admission:  IndexWriteAddressQuery{Target: targetAddr},
-		TargetPath: target,
-		KeyPath:    keyPath,
+		Point:     point,
+		View:      view,
+		Admission: IndexWriteAddressQuery{Target: targetAddr},
 	}
 	if !keyPath.IsEmpty() {
 		keyAddr, ok := StableAddressOfPath(keyPath)

@@ -1329,22 +1329,16 @@ func (f factsIndexReadFlow) IndexWriteAdmission(q flow.IndexWriteReadQuery) (typ
 	if got, ok := f.indexWrites.IndexWriteAdmission(q); ok {
 		return got, true
 	}
-	if q.KeyPath.IsEmpty() || f.valueOrigin == nil {
+	if !q.Admission.HasKeyPath || f.valueOrigin == nil {
 		return nil, false
 	}
-	for _, keyPath := range f.indexWriteAdmissionAliasPaths(q.Point, q.KeyPath) {
-		if keyPath.Equal(q.KeyPath) {
+	for _, keyAddr := range f.indexWriteAdmissionAliasAddresses(q.Point, q.Admission.KeyPath) {
+		if keyAddr.Equal(q.Admission.KeyPath) {
 			continue
 		}
 		aliasQuery := q
-		aliasQuery.KeyPath = keyPath
-		if keyAddr, ok := flow.StableAddressOfPath(keyPath); ok {
-			aliasQuery.Admission.KeyPath = keyAddr
-			aliasQuery.Admission.HasKeyPath = true
-		} else {
-			aliasQuery.Admission.KeyPath = flow.StableAddress{}
-			aliasQuery.Admission.HasKeyPath = false
-		}
+		aliasQuery.Admission.KeyPath = keyAddr
+		aliasQuery.Admission.HasKeyPath = true
 		if got, ok := f.indexWrites.IndexWriteAdmission(aliasQuery); ok {
 			return got, true
 		}
@@ -1352,39 +1346,33 @@ func (f factsIndexReadFlow) IndexWriteAdmission(q flow.IndexWriteReadQuery) (typ
 	return nil, false
 }
 
-func (f factsIndexReadFlow) indexWriteAdmissionAliasPaths(p cfg.Point, keyPath constraint.Path) []constraint.Path {
+func (f factsIndexReadFlow) indexWriteAdmissionAliasAddresses(p cfg.Point, key flow.StableAddress) []flow.StableAddress {
 	origins := f.valueOrigin.ValueOriginsAt(p)
 	if origins.IsBottom() {
 		return nil
 	}
-	var out []constraint.Path
+	var out []flow.StableAddress
 	seen := map[constraint.PathKey]struct{}{}
-	queue := []constraint.Path{keyPath}
+	queue := []flow.StableAddress{key}
 	for len(queue) > 0 {
 		cur := queue[0]
 		queue = queue[1:]
-		curAddr, ok := flow.StableAddressOfPath(cur)
-		if !ok {
-			continue
-		}
-		curKey := curAddr.Key()
+		curKey := cur.Key()
 		if _, ok := seen[curKey]; ok {
 			continue
 		}
 		seen[curKey] = struct{}{}
 		out = append(out, cur)
-		for _, use := range origins.OriginsCoveringAddress(curAddr) {
+		for _, use := range origins.OriginsCoveringAddress(cur) {
 			if use.Origin.Kind != flow.ValueOriginAssignmentAlias {
 				continue
 			}
-			source, ok := observationPathFromKey(use.Origin.Source)
+			source, ok := flow.StableAddressFromKey(use.Origin.Source)
 			if !ok {
 				continue
 			}
-			for _, seg := range use.Remainder {
-				source = source.Append(seg)
-			}
-			if !source.IsEmpty() {
+			source, ok = source.Append(use.Remainder)
+			if ok {
 				queue = append(queue, source)
 			}
 		}
