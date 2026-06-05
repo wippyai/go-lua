@@ -821,13 +821,18 @@ func (t *Transfer) SeedEntryFacts(out *flow.PointState, facts flow.BoundaryFacts
 		if !ok {
 			continue
 		}
-		t.applyDynamicIndexWriteProofEffect(out, DynamicIndexWriteProofEffect{
-			TablePath:              table,
-			KeyPath:                key,
-			Key:                    product.FromType(typ.Unknown),
-			Value:                  fact.Value,
-			AllowOpaqueKeyReadback: true,
-		})
+		proof, ok := normalizeDynamicIndexWriteProof(
+			table,
+			key,
+			product.FromType(typ.Unknown),
+			constraint.Path{},
+			fact.Value,
+			true,
+		)
+		if !ok {
+			continue
+		}
+		t.applyDynamicIndexWriteProofEffect(out, DynamicIndexWriteProofEffect{Proof: proof})
 	}
 	for _, fact := range facts.KeyPresence() {
 		table, ok := t.rebaseEntryBoundaryPath(fact.Table)
@@ -3476,13 +3481,18 @@ func (t *Transfer) applyBoundaryFactsWithAppendPlans(
 		if !ok {
 			continue
 		}
-		changed = t.applyDynamicIndexWriteProofEffect(out, DynamicIndexWriteProofEffect{
-			TablePath:              table,
-			KeyPath:                key,
-			Key:                    product.FromType(typ.Unknown),
-			Value:                  fact.Value,
-			AllowOpaqueKeyReadback: true,
-		}) || changed
+		proof, ok := normalizeDynamicIndexWriteProof(
+			table,
+			key,
+			product.FromType(typ.Unknown),
+			constraint.Path{},
+			fact.Value,
+			true,
+		)
+		if !ok {
+			continue
+		}
+		changed = t.applyDynamicIndexWriteProofEffect(out, DynamicIndexWriteProofEffect{Proof: proof}) || changed
 	}
 	for _, fact := range facts.KeyPresence() {
 		table, ok := t.rebaseBoundaryPath(call, returns, fact.Table)

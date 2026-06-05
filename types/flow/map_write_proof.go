@@ -15,19 +15,6 @@ type KeyPresenceProof struct {
 	Value product.AbstractValue
 }
 
-// KeyPresenceProofFromPaths lowers source paths into a stable proof.
-func KeyPresenceProofFromPaths(tablePath, keyPath constraint.Path, value product.AbstractValue) (KeyPresenceProof, bool) {
-	table, ok := StableAddressOfPath(tablePath)
-	if !ok {
-		return KeyPresenceProof{}, false
-	}
-	key, ok := StableAddressOfPath(keyPath)
-	if !ok {
-		return KeyPresenceProof{}, false
-	}
-	return KeyPresenceProof{Table: table, Key: key, Value: value}, true
-}
-
 // ApplyKeyPresenceProof applies a key-presence proof to point state. When Value
 // is non-zero it also records value-carrying key-array consequences.
 func ApplyKeyPresenceProof(out *PointState, proof KeyPresenceProof) bool {
@@ -63,40 +50,6 @@ type MapWriteProof struct {
 	KeyValue               product.AbstractValue
 	Value                  product.AbstractValue
 	AllowOpaqueKeyReadback bool
-}
-
-// MapWriteProofFromPaths lowers transfer evidence into the flow-domain proof.
-func MapWriteProofFromPaths(
-	tablePath constraint.Path,
-	keyPath constraint.Path,
-	keyValue product.AbstractValue,
-	valuePath constraint.Path,
-	value product.AbstractValue,
-	allowOpaqueKeyReadback bool,
-) (MapWriteProof, bool) {
-	table, ok := StableAddressOfPath(tablePath)
-	if !ok {
-		return MapWriteProof{}, false
-	}
-	proof := MapWriteProof{
-		Table:                  table,
-		KeyValue:               keyValue,
-		Value:                  value,
-		AllowOpaqueKeyReadback: allowOpaqueKeyReadback,
-	}
-	if !keyPath.IsEmpty() {
-		if key, ok := StableAddressOfPath(keyPath); ok {
-			proof.Key = key
-			proof.HasKey = true
-		}
-	}
-	if !valuePath.IsEmpty() {
-		if addr, ok := StableAddressOfPath(valuePath); ok {
-			proof.ValuePath = addr
-			proof.HasValuePath = true
-		}
-	}
-	return proof, true
 }
 
 // ApplyMapWriteProof applies all reduced-product consequences of one dynamic

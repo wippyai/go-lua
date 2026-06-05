@@ -20,7 +20,8 @@ func TestApplyMapWriteProofDecouplesKeyArrayFromReadbackAdmission(t *testing.T) 
 	state := PointStateDomain.Top()
 	state.KeyPresence = state.KeyPresence.WithPendingKeyArray(arrayKey, tableKey, keyKey)
 
-	proof, ok := MapWriteProofFromPaths(
+	proof := testMapWriteProof(
+		t,
 		tablePath,
 		keyPath,
 		product.FromType(typ.Any),
@@ -28,9 +29,6 @@ func TestApplyMapWriteProofDecouplesKeyArrayFromReadbackAdmission(t *testing.T) 
 		product.FromType(typ.String),
 		false,
 	)
-	if !ok {
-		t.Fatal("MapWriteProofFromPaths did not resolve")
-	}
 	if changed := ApplyMapWriteProof(&state, proof); !changed {
 		t.Fatal("ApplyMapWriteProof reported no change")
 	}
@@ -54,7 +52,8 @@ func TestApplyMapWriteProofPublishesReadbackWhenAdmissible(t *testing.T) {
 	keyPath := constraint.NewPath(cfg.SymbolID(3), "node_id")
 
 	state := PointStateDomain.Top()
-	proof, ok := MapWriteProofFromPaths(
+	proof := testMapWriteProof(
+		t,
 		tablePath,
 		keyPath,
 		product.FromType(typ.String),
@@ -62,9 +61,6 @@ func TestApplyMapWriteProofPublishesReadbackWhenAdmissible(t *testing.T) {
 		product.FromType(typ.Number),
 		false,
 	)
-	if !ok {
-		t.Fatal("MapWriteProofFromPaths did not resolve")
-	}
 	ApplyMapWriteProof(&state, proof)
 
 	value, ok := state.IndexWrites.AdmissionAtAddress(testIndexWriteAddressQuery(t, tablePath, keyPath, typ.String, constraint.Path{}))
@@ -85,7 +81,8 @@ func TestApplyMapWriteProofWidensExistingKeyArrayValueForPresentWrite(t *testing
 	state := PointStateDomain.Top()
 	state.KeyPresence = state.KeyPresence.WithKeyArrayValue(arrayKey, tableKey, oldValue)
 
-	proof, ok := MapWriteProofFromPaths(
+	proof := testMapWriteProof(
+		t,
 		tablePath,
 		keyPath,
 		product.FromType(typ.String),
@@ -93,9 +90,6 @@ func TestApplyMapWriteProofWidensExistingKeyArrayValueForPresentWrite(t *testing
 		writtenValue,
 		false,
 	)
-	if !ok {
-		t.Fatal("MapWriteProofFromPaths did not resolve")
-	}
 	if changed := ApplyMapWriteProof(&state, proof); !changed {
 		t.Fatal("ApplyMapWriteProof reported no change")
 	}
@@ -121,7 +115,8 @@ func TestApplyMapWriteProofCoversTrackedAppendEvent(t *testing.T) {
 		WithAppendHistoryBase(arrayKey).
 		WithAppendHistoryEvent(arrayKey, keyKey)
 
-	proof, ok := MapWriteProofFromPaths(
+	proof := testMapWriteProof(
+		t,
 		tablePath,
 		keyPath,
 		product.FromType(typ.String),
@@ -129,9 +124,6 @@ func TestApplyMapWriteProofCoversTrackedAppendEvent(t *testing.T) {
 		nodeValue,
 		false,
 	)
-	if !ok {
-		t.Fatal("MapWriteProofFromPaths did not resolve")
-	}
 	if changed := ApplyMapWriteProof(&state, proof); !changed {
 		t.Fatal("ApplyMapWriteProof reported no change")
 	}
@@ -140,6 +132,34 @@ func TestApplyMapWriteProofCoversTrackedAppendEvent(t *testing.T) {
 	if len(values) != 1 || !product.Domain.Equal(values[0], nodeValue) {
 		t.Fatalf("tracked append coverage values = %v, want string; facts=%s", values, state.KeyPresence.Format())
 	}
+}
+
+func testMapWriteProof(
+	t *testing.T,
+	tablePath constraint.Path,
+	keyPath constraint.Path,
+	keyValue product.AbstractValue,
+	valuePath constraint.Path,
+	value product.AbstractValue,
+	allowOpaqueKeyReadback bool,
+) MapWriteProof {
+	t.Helper()
+	table := testStableAddressPath(t, tablePath)
+	proof := MapWriteProof{
+		Table:                  table,
+		KeyValue:               keyValue,
+		Value:                  value,
+		AllowOpaqueKeyReadback: allowOpaqueKeyReadback,
+	}
+	if !keyPath.IsEmpty() {
+		proof.Key = testStableAddressPath(t, keyPath)
+		proof.HasKey = true
+	}
+	if !valuePath.IsEmpty() {
+		proof.ValuePath = testStableAddressPath(t, valuePath)
+		proof.HasValuePath = true
+	}
+	return proof
 }
 
 func TestIndexedIteratorKeyArrayReadbackDerivesValueFromStableFacts(t *testing.T) {

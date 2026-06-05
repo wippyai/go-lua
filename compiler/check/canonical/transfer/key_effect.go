@@ -40,13 +40,16 @@ func (t *Transfer) applyKeyProvenanceEffect(out *flow.PointState, effect KeyProv
 			return false
 		}
 		changed := false
-		if proof, ok := flow.KeyPresenceProofFromPaths(effect.TablePath, effect.KeyPath, product.AbstractValue{}); ok {
-			changed = flow.ApplyKeyPresenceProof(out, proof) || changed
+		tableAddr, tableOK := flow.StableAddressOfPath(effect.TablePath)
+		keyAddr, keyOK := flow.StableAddressOfPath(effect.KeyPath)
+		if tableOK && keyOK {
+			changed = flow.ApplyKeyPresenceProof(out, flow.KeyPresenceProof{
+				Table: tableAddr,
+				Key:   keyAddr,
+			}) || changed
 		}
 		if !effect.ValuePath.IsEmpty() {
 			before := out.KeyPresence
-			tableAddr, tableOK := flow.StableAddressOfPath(effect.TablePath)
-			keyAddr, keyOK := flow.StableAddressOfPath(effect.KeyPath)
 			valueAddr, valueOK := flow.StableAddressOfPath(effect.ValuePath)
 			if tableOK && keyOK && valueOK {
 				out.KeyPresence = out.KeyPresence.WithValueAddresses(tableAddr, keyAddr, valueAddr)

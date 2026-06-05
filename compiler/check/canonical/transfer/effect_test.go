@@ -458,12 +458,18 @@ func TestDynamicIndexWriteProofEffectKeepsOpaqueUnsealedReadbackLightweight(t *t
 	keyPath := constraint.NewPath(cfg.SymbolID(439), "node_id")
 	out := flow.PointState{}
 
-	changed := tr.applyDynamicIndexWriteProofEffect(&out, DynamicIndexWriteProofEffect{
-		TablePath: tablePath,
-		KeyPath:   keyPath,
-		Key:       product.FromType(typ.Unknown),
-		Value:     product.FromType(typ.String),
-	})
+	proof, ok := normalizeDynamicIndexWriteProof(
+		tablePath,
+		keyPath,
+		product.FromType(typ.Unknown),
+		constraint.Path{},
+		product.FromType(typ.String),
+		false,
+	)
+	if !ok {
+		t.Fatal("dynamic index write proof did not resolve")
+	}
+	changed := tr.applyDynamicIndexWriteProofEffect(&out, DynamicIndexWriteProofEffect{Proof: proof})
 
 	if !changed {
 		t.Fatal("dynamic index write proof did not report key-presence change")
@@ -1840,13 +1846,18 @@ func TestDelayedIndexWriteMaterializesPendingAppendKeyArrayValue(t *testing.T) {
 		t.Fatalf("pending append materialized before table key proof: %s", out.KeyPresence.Format())
 	}
 
-	tr.applyDynamicIndexWriteProofEffect(&out, DynamicIndexWriteProofEffect{
-		TablePath:              tablePath,
-		KeyPath:                keyPath,
-		Key:                    product.FromType(typ.Unknown),
-		Value:                  product.FromType(edgeType),
-		AllowOpaqueKeyReadback: true,
-	})
+	proof, ok := normalizeDynamicIndexWriteProof(
+		tablePath,
+		keyPath,
+		product.FromType(typ.Unknown),
+		constraint.Path{},
+		product.FromType(edgeType),
+		true,
+	)
+	if !ok {
+		t.Fatal("dynamic index write proof did not resolve")
+	}
+	tr.applyDynamicIndexWriteProofEffect(&out, DynamicIndexWriteProofEffect{Proof: proof})
 
 	values := out.KeyPresence.KeyArrayValues(flow.KeyPresencePathKey(arrayPath), flow.KeyPresencePathKey(tablePath))
 	if len(values) != 1 || !typ.TypeEquals(values[0].ProjectValue(), edgeType) {
