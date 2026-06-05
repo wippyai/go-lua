@@ -282,7 +282,7 @@ func TestWriteIsSelfDerivedUsesLiveKeyPresenceValueOrigin(t *testing.T) {
 	if !tr.writeIsSelfDerived(&out, target, value) {
 		t.Fatal("value-origin fact did not prove self-derived write")
 	}
-	out.KeyPresence = out.KeyPresence.KillSubtree(flow.SymbolPathKey(cfg.SymbolID(53), nil))
+	out.KeyPresence = out.KeyPresence.KillSubtreeAddress(testFlowAddressKey(t, flow.SymbolPathKey(cfg.SymbolID(53), nil)))
 	if tr.writeIsSelfDerived(&out, target, value) {
 		t.Fatal("stale self-derived write survived value reassignment")
 	}
@@ -611,7 +611,7 @@ end
 		Field("name", typ.String).
 		Build()
 	out := flow.PointState{
-		KeyPresence: stale.KillAffectedByWrite(flow.KeyPresencePathKey(itemPath)),
+		KeyPresence: stale.KillAffectedByWriteAddress(testFlowPathAddress(t, itemPath)),
 		Env: map[flow.ValueKey]product.AbstractValue{
 			flow.SymbolValueKey(itemSym):  product.FromType(typ.NewMap(typ.String, elem)),
 			flow.SymbolValueKey(valueSym): product.FromType(typ.NewOptional(typ.String)),

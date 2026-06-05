@@ -729,18 +729,6 @@ func findPathKeyLinear(xs []constraint.PathKey, want constraint.PathKey) (int, b
 	return -1, false
 }
 
-// KillSubtree removes every presence, value-origin, or key-array fact whose
-// table, key, value, or array path is root or a descendant of root.
-// TODO(address-vocabulary): migrate callers to KillSubtreeAddress and remove
-// this PathKey compatibility wrapper.
-func (f KeyPresenceFacts) KillSubtree(root constraint.PathKey) KeyPresenceFacts {
-	rootAddr, ok := StableAddressFromKey(root)
-	if !ok {
-		return f
-	}
-	return f.KillSubtreeAddress(rootAddr)
-}
-
 // KillSubtreeAddress removes every presence, value-origin, or key-array fact
 // whose table, key, value, or array path is root or a descendant of root.
 func (f KeyPresenceFacts) KillSubtreeAddress(root StableAddress) KeyPresenceFacts {
@@ -840,21 +828,6 @@ func (f KeyPresenceFacts) KillSubtreeAddress(root StableAddress) KeyPresenceFact
 		appendOrigins = append(appendOrigins, e)
 	}
 	return canonicalKeyPresenceFactsFull(entries, values, arrays, arrayValues, appends, pending, emptyArrays, appendBases, appendEvents, appendCoverage, appendOrigins)
-}
-
-// KillAffectedByWrite removes facts that are no longer must-facts after a write
-// to writePath. Unlike KillSubtree, table writes invalidate facts rooted above
-// the written member too: a write to t.x can change the value of t[k] when k may
-// be "x", so any table/key/value fact whose table overlaps the written path is
-// dropped.
-// TODO(address-vocabulary): migrate callers to KillAffectedByWriteAddress and
-// remove this PathKey compatibility wrapper.
-func (f KeyPresenceFacts) KillAffectedByWrite(writePath constraint.PathKey) KeyPresenceFacts {
-	writeAddr, ok := StableAddressFromKey(writePath)
-	if !ok {
-		return f
-	}
-	return f.KillAffectedByWriteAddress(writeAddr)
 }
 
 // KillAffectedByWriteAddress removes facts that are no longer must-facts after
@@ -957,21 +930,6 @@ func (f KeyPresenceFacts) KillAffectedByWriteAddress(write StableAddress) KeyPre
 		appendOrigins = append(appendOrigins, e)
 	}
 	return canonicalKeyPresenceFactsFull(entries, values, arrays, arrayValues, appends, pending, emptyArrays, appendBases, appendEvents, appendCoverage, appendOrigins)
-}
-
-// KillAffectedByPresentElementWrite removes facts invalidated by a write of a
-// definitely-present value to a table element or field. Such a write can replace
-// value-specific readback facts, but it cannot make an already-present key of the
-// table absent: if the written key aliases an existing proven key, the new
-// non-nil value still leaves that key present.
-// TODO(address-vocabulary): migrate callers to
-// KillAffectedByPresentElementWriteAddress and remove this PathKey wrapper.
-func (f KeyPresenceFacts) KillAffectedByPresentElementWrite(writePath constraint.PathKey) KeyPresenceFacts {
-	writeAddr, ok := StableAddressFromKey(writePath)
-	if !ok {
-		return f
-	}
-	return f.KillAffectedByPresentElementWriteAddress(writeAddr)
 }
 
 // KillAffectedByPresentElementWriteAddress removes facts invalidated by a write

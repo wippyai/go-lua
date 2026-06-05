@@ -138,7 +138,7 @@ func TestKeyPresenceFactsKillSubtreeRemovesDependentFacts(t *testing.T) {
 		WithEmptyKeyArray(array).
 		WithPendingKeyArray(array, table, key)
 
-	killedValue := facts.KillSubtree(value)
+	killedValue := facts.KillSubtreeAddress(testStableAddressKey(t, value))
 	if killedValue.HasValue(table, key, value) {
 		t.Fatal("value assignment kept stale table/key/value self-origin fact")
 	}
@@ -146,7 +146,7 @@ func TestKeyPresenceFactsKillSubtreeRemovesDependentFacts(t *testing.T) {
 		t.Fatal("value assignment should not kill independent table/key presence")
 	}
 
-	killedKey := facts.KillSubtree(key)
+	killedKey := facts.KillSubtreeAddress(testStableAddressKey(t, key))
 	if killedKey.Has(table, key) || killedKey.HasValue(table, key, value) {
 		t.Fatal("key assignment kept stale key-presence facts")
 	}
@@ -154,7 +154,7 @@ func TestKeyPresenceFactsKillSubtreeRemovesDependentFacts(t *testing.T) {
 		t.Fatal("key assignment killed unrelated key-presence fact")
 	}
 
-	killedTable := facts.KillSubtree(table)
+	killedTable := facts.KillSubtreeAddress(testStableAddressKey(t, table))
 	if len(killedTable.Entries()) != 0 || len(killedTable.ValueEntries()) != 0 || len(killedTable.KeyArrayEntries()) != 0 || len(killedTable.PendingKeyArrayEntries()) != 0 {
 		t.Fatalf("table assignment left stale facts: %s", killedTable.Format())
 	}
@@ -162,7 +162,7 @@ func TestKeyPresenceFactsKillSubtreeRemovesDependentFacts(t *testing.T) {
 		t.Fatalf("table assignment killed independent empty-array fact: %s", killedTable.Format())
 	}
 
-	killedArray := facts.KillSubtree(array)
+	killedArray := facts.KillSubtreeAddress(testStableAddressKey(t, array))
 	if len(killedArray.KeyArrayEntries()) != 0 || len(killedArray.PendingKeyArrayEntries()) != 0 || killedArray.HasEmptyKeyArray(array) {
 		t.Fatalf("array assignment left stale key-array facts: %s", killedArray.Format())
 	}
@@ -189,7 +189,7 @@ func TestKeyPresenceFactsKillAffectedByWriteDropsOverlappingTableFacts(t *testin
 		WithEmptyKeyArray(array).
 		WithPendingKeyArray(array, table, key)
 
-	killed := facts.KillAffectedByWrite(tableMember)
+	killed := facts.KillAffectedByWriteAddress(testStableAddressKey(t, tableMember))
 	if killed.Has(table, key) || killed.HasValue(table, key, value) || len(killed.KeyArrayTables(array)) != 0 || len(killed.PendingKeyArrayEntries()) != 0 {
 		t.Fatalf("member write kept stale table-root facts: %s", killed.Format())
 	}
@@ -243,7 +243,7 @@ func TestKeyPresenceFactsPresentElementWriteKeepsKeyPresenceButDropsValueFacts(t
 		WithEmptyKeyArray(array).
 		WithPendingKeyArray(array, table, key)
 
-	killed := facts.KillAffectedByPresentElementWrite(tableMember)
+	killed := facts.KillAffectedByPresentElementWriteAddress(testStableAddressKey(t, tableMember))
 	if !killed.Has(table, key) {
 		t.Fatalf("present element write dropped key-presence fact: %s", killed.Format())
 	}
@@ -316,7 +316,7 @@ func TestKeyPresenceFactsKillAffectedByWriteDropsArrayMemberFacts(t *testing.T) 
 		WithEmptyKeyArray(array).
 		WithKeyArray(otherArray, table)
 
-	killed := facts.KillAffectedByWrite(arrayMember)
+	killed := facts.KillAffectedByWriteAddress(testStableAddressKey(t, arrayMember))
 	if len(killed.KeyArrayTables(array)) != 0 {
 		t.Fatalf("array member write kept stale key-array fact: %s", killed.Format())
 	}

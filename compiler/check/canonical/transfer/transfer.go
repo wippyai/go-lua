@@ -3568,7 +3568,11 @@ func (t *Transfer) applyBoundaryAppendKeyPlans(out *flow.PointState, plans []bou
 		tables := t.boundaryAppendKeyPlanTables(out, plan, keyKey)
 		preserveAppendHistoryBase := plan.preserveHistoryBase || plan.freshEmpty || out.KeyPresence.HasAppendHistoryBase(arrayKey)
 		beforeKill := out.KeyPresence
-		out.KeyPresence = out.KeyPresence.KillAffectedByWrite(arrayKey)
+		arrayAddr, ok := flow.StableAddressOfPath(plan.array)
+		if !ok {
+			continue
+		}
+		out.KeyPresence = out.KeyPresence.KillAffectedByWriteAddress(arrayAddr)
 		changed = !flow.KeyPresenceFactsDomain.Equal(beforeKill, out.KeyPresence) || changed
 		beforeAppend := out.KeyPresence
 		out.KeyPresence = out.KeyPresence.WithAppendedKey(arrayKey, keyKey)
