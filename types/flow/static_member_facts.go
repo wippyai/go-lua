@@ -50,6 +50,8 @@ func (f StaticMemberFacts) Entries() []StaticMemberFact {
 }
 
 // Value returns the fact for path if it is proven in a reachable state.
+// TODO(address-vocabulary): migrate callers to ValueAtAddress and remove this
+// PathKey compatibility wrapper.
 func (f StaticMemberFacts) Value(path constraint.PathKey) (product.AbstractValue, bool) {
 	addr, ok := StableAddressFromKey(path)
 	if !ok {
@@ -76,6 +78,8 @@ func (f StaticMemberFacts) ValueAtAddress(addr StableAddress) (product.AbstractV
 
 // With returns f with path strongly updated to value. Updating to Bottom removes
 // the key, preserving absent-is-no-fact canonical form.
+// TODO(address-vocabulary): migrate callers to WithAddress and remove this
+// PathKey compatibility wrapper.
 func (f StaticMemberFacts) With(path constraint.PathKey, value product.AbstractValue) StaticMemberFacts {
 	addr, ok := StableAddressFromKey(path)
 	if !ok {
@@ -107,6 +111,8 @@ func (f StaticMemberFacts) WithAddress(addr StableAddress, value product.Abstrac
 }
 
 // KillSubtree removes facts at root and under root's structural path suffix.
+// TODO(address-vocabulary): migrate callers to KillSubtreeAddress and remove
+// this PathKey compatibility wrapper.
 func (f StaticMemberFacts) KillSubtree(root constraint.PathKey) StaticMemberFacts {
 	rootAddr, ok := StableAddressFromKey(root)
 	if !ok {

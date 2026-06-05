@@ -143,28 +143,33 @@ func (t *Transfer) invalidateKeyFactsForPlaceWithValue(
 	if !ok || path.Symbol == 0 {
 		return false
 	}
+	addr, ok := flow.StableAddressOfPath(path)
+	if !ok {
+		return false
+	}
 	beforeKeyPresence := out.KeyPresence
 	beforeValueOrigins := out.ValueOrigins
 	beforePathAliases := out.PathAliases
 	beforeIndexWrites := out.IndexWrites
-	pathKey := flow.KeyPresencePathKey(path)
 	if presentElementWrite && len(place.Steps) > 0 {
 		if arrayPath, member, ok := presentElementMemberWriteFootprint(place); ok {
+			// TODO(address-vocabulary): make present-element member invalidation
+			// accept StableAddress for array once member footprints are address-based.
 			out.KeyPresence = out.KeyPresence.KillAffectedByPresentElementMemberWrite(flow.KeyPresencePathKey(arrayPath), member)
 		} else {
-			out.KeyPresence = out.KeyPresence.KillAffectedByPresentElementWrite(pathKey)
+			out.KeyPresence = out.KeyPresence.KillAffectedByPresentElementWriteAddress(addr)
 		}
 		written := presentElementValue
 		if written.IsZero() {
 			written = product.PresentDynamic()
 		}
-		out.IndexWrites = out.IndexWrites.PreservePresentElementWrite(pathKey, written)
+		out.IndexWrites = out.IndexWrites.PreservePresentElementWriteAddress(addr, written)
 	} else {
-		out.KeyPresence = out.KeyPresence.KillAffectedByWrite(pathKey)
-		out.IndexWrites = out.IndexWrites.KillAffectedByWrite(pathKey)
+		out.KeyPresence = out.KeyPresence.KillAffectedByWriteAddress(addr)
+		out.IndexWrites = out.IndexWrites.KillAffectedByWriteAddress(addr)
 	}
-	out.ValueOrigins = out.ValueOrigins.KillAffectedByWrite(pathKey)
-	out.PathAliases = out.PathAliases.KillAffectedByWrite(pathKey)
+	out.ValueOrigins = out.ValueOrigins.KillAffectedByWriteAddress(addr)
+	out.PathAliases = out.PathAliases.KillAffectedByWriteAddress(addr)
 	return !flow.KeyPresenceFactsDomain.Equal(beforeKeyPresence, out.KeyPresence) ||
 		!flow.ValueOriginFactsDomain.Equal(beforeValueOrigins, out.ValueOrigins) ||
 		!flow.PathAliasFactsDomain.Equal(beforePathAliases, out.PathAliases) ||

@@ -1075,6 +1075,8 @@ func (f KeyPresenceFacts) KillAffectedByPresentElementWriteAddress(write StableA
 // a write below an already-present array element, such as a[i].field = v. The
 // write can stale facts about the element member, but it does not change the
 // array's key set or append history.
+// TODO(address-vocabulary): migrate array to StableAddress and remove this
+// PathKey compatibility wrapper.
 func (f KeyPresenceFacts) KillAffectedByPresentElementMemberWrite(array constraint.PathKey, member []constraint.Segment) KeyPresenceFacts {
 	killed := f.KillAffectedByPresentElementWrite(array)
 	if f.bottom || array == "" {

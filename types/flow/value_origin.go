@@ -76,6 +76,8 @@ func (f ValueOriginFacts) WithAddresses(value, source StableAddress, kind ValueO
 	return f.With(ValueOriginFact{Value: valueKey, Source: sourceKey, Kind: kind, VarIndex: varIndex})
 }
 
+// TODO(address-vocabulary): migrate callers to WithAddresses and remove this
+// source-path compatibility wrapper.
 func (f ValueOriginFacts) WithPaths(value, source constraint.Path, kind ValueOriginKind, varIndex int) ValueOriginFacts {
 	valueAddr, ok := StableAddressOfPath(value)
 	if !ok {
@@ -88,6 +90,8 @@ func (f ValueOriginFacts) WithPaths(value, source constraint.Path, kind ValueOri
 	return f.WithAddresses(valueAddr, sourceAddr, kind, varIndex)
 }
 
+// TODO(address-vocabulary): migrate callers to OriginsOfAddress and remove this
+// PathKey compatibility wrapper.
 func (f ValueOriginFacts) OriginsOf(value constraint.PathKey) []ValueOriginFact {
 	addr, ok := StableAddressFromKey(value)
 	if !ok {
@@ -110,6 +114,8 @@ func (f ValueOriginFacts) OriginsOfAddress(value StableAddress) []ValueOriginFac
 	return out
 }
 
+// TODO(address-vocabulary): migrate callers to OriginsOfAddress and remove this
+// source-path compatibility wrapper.
 func (f ValueOriginFacts) OriginsOfPath(value constraint.Path) []ValueOriginFact {
 	return f.OriginsOf(KeyPresencePathKey(value))
 }
@@ -117,6 +123,8 @@ func (f ValueOriginFacts) OriginsOfPath(value constraint.Path) []ValueOriginFact
 // OriginsCoveringPath returns origins whose value path is equal to, or an
 // ancestor of, value. This is the path-sensitive lookup used by backward demand:
 // an origin for loop variable `entry` must also cover reads such as `entry.id`.
+// TODO(address-vocabulary): migrate callers to OriginsCoveringAddress and
+// remove this source-path compatibility wrapper.
 func (f ValueOriginFacts) OriginsCoveringPath(value constraint.Path) []ValueOriginUse {
 	addr, ok := StableAddressOfPath(value)
 	if !ok {
@@ -150,6 +158,8 @@ func (f ValueOriginFacts) OriginsCoveringAddress(value StableAddress) []ValueOri
 	return out
 }
 
+// TODO(address-vocabulary): migrate callers to KillAffectedByWriteAddress and
+// remove this PathKey compatibility wrapper.
 func (f ValueOriginFacts) KillAffectedByWrite(writePath constraint.PathKey) ValueOriginFacts {
 	addr, ok := StableAddressFromKey(writePath)
 	if !ok {
