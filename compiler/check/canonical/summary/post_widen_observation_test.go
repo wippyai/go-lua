@@ -7,7 +7,9 @@ import (
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/canonical/summary"
 	"github.com/wippyai/go-lua/types/constraint"
+	"github.com/wippyai/go-lua/types/domain/value/product"
 	"github.com/wippyai/go-lua/types/flow"
+	"github.com/wippyai/go-lua/types/typ"
 )
 
 func TestSelectPostWidenObservationRefs_MethodReceiverEffectsKeepDiscoveryOrder(t *testing.T) {
@@ -40,6 +42,30 @@ func TestSelectPostWidenObservationRefs_MethodReceiverEffectsKeepDiscoveryOrder(
 
 	want := []summary.FuncRef{methodA, methodB}
 	assertRefs(t, got, want)
+}
+
+func TestSelectPostWidenObservationRefs_RecursiveReturnFactoryObserved(t *testing.T) {
+	root := summary.FuncRef{GraphID: 1}
+	factory := summary.FuncRef{GraphID: 2}
+	plain := summary.FuncRef{GraphID: 3}
+	recursiveReturn := summary.Summary{
+		Returns: []product.AbstractValue{product.FromType(typ.NewRecursive("Inferred", func(typ.Type) typ.Type {
+			return typ.NewRecord().Field("node_order", typ.NewArray(typ.Never)).Build()
+		}))},
+	}
+
+	got := summary.SelectPostWidenObservationRefs(summary.PostWidenObservationInput{
+		Refs: []summary.FuncRef{root, factory, plain},
+		Root: root,
+		Summary: func(ref summary.FuncRef) summary.Summary {
+			if ref == factory {
+				return recursiveReturn
+			}
+			return summary.Summary{}
+		},
+	})
+
+	assertRefs(t, got, []summary.FuncRef{factory})
 }
 
 func TestSelectPostWidenObservationRefs_ReturnedCapturedCellObservesChildBeforeParent(t *testing.T) {

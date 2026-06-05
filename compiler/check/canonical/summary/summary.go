@@ -297,20 +297,36 @@ func mergeExactOverlayReturns(prev, next, widened []product.AbstractValue) []pro
 			continue
 		}
 		baseline := prev[i]
-		if baseline.IsZero() || product.Domain.Equal(baseline, candidate) {
+		if baseline.IsZero() {
+			continue
+		}
+		if product.Domain.Equal(baseline, candidate) &&
+			typ.TypeEquals(product.ProjectValueOrUnknown(baseline), product.ProjectValueOrUnknown(candidate)) {
 			continue
 		}
 		if exactReturnValueRefines(candidate, baseline) &&
-			baseline.Covers(candidate) && !candidate.Covers(baseline) {
+			!exactReturnValueFiniteOverWidened(baseline, candidate) &&
+			((baseline.Covers(candidate) && !candidate.Covers(baseline)) ||
+				exactReturnValueFiniteOverWidened(candidate, baseline)) {
 			out[i] = candidate
 			continue
 		}
 		if exactReturnValueRefines(baseline, candidate) &&
-			candidate.Covers(baseline) && !baseline.Covers(candidate) {
+			((candidate.Covers(baseline) && !baseline.Covers(candidate)) ||
+				exactReturnValueFiniteOverWidened(baseline, candidate)) {
 			out[i] = baseline
 		}
 	}
 	return out
+}
+
+func exactReturnValueFiniteOverWidened(candidate, baseline product.AbstractValue) bool {
+	candidateType := candidate.ProjectValue()
+	baselineType := baseline.ProjectValue()
+	return candidateType != nil &&
+		baselineType != nil &&
+		((!typ.ContainsRecursive(candidateType) && typ.ContainsRecursive(baselineType)) ||
+			(!typ.ContainsNever(candidateType) && typ.ContainsNever(baselineType)))
 }
 
 func exactReturnValueRefines(candidate, baseline product.AbstractValue) bool {
@@ -321,6 +337,9 @@ func exactReturnValueRefines(candidate, baseline product.AbstractValue) bool {
 	}
 	if _, baselineLiteral := baselineType.(*typ.Literal); baselineLiteral {
 		return false
+	}
+	if exactReturnValueFiniteOverWidened(candidate, baseline) {
+		return true
 	}
 	return candidateType != nil &&
 		baselineType != nil &&

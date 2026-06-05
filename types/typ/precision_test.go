@@ -252,6 +252,25 @@ func TestRefineWithFallbackDoesNotReplaceWholeConcreteLeaf(t *testing.T) {
 	}
 }
 
+func TestRefineWithFallbackKeepsConcreteArrayElementOverEmptyFallback(t *testing.T) {
+	summaryRecord := NewRecord().
+		Field("node_order", NewArray(String)).
+		Build()
+	fallbackRecord := NewRecord().
+		Field("node_order", NewArray(Never)).
+		Build()
+	summary := NewUnion(Nil, summaryRecord)
+	fallback := NewUnion(Nil, fallbackRecord)
+
+	refined, changed := RefineWithFallback(summary, fallback)
+	if changed {
+		t.Fatalf("RefineWithFallback replaced concrete array element with empty fallback: %v", refined)
+	}
+	if !TypeEquals(refined, summary) {
+		t.Fatalf("refined = %v, want %v", refined, summary)
+	}
+}
+
 func TestRefineWithFallbackRepairsFunctionReturnDespiteParamShapeMismatch(t *testing.T) {
 	tp := NewTypeParam("T", nil)
 	summary := Func().

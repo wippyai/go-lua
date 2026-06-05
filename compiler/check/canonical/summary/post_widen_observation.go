@@ -3,6 +3,7 @@ package summary
 import (
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/cfg"
+	"github.com/wippyai/go-lua/types/typ"
 )
 
 // PostWidenObservationInput supplies the graph/topology facts needed to select
@@ -55,7 +56,9 @@ func SelectPostWidenObservationRefs(in PostWidenObservationInput) []FuncRef {
 		if ref == in.Root || (in.IsMethod != nil && in.IsMethod(ref)) {
 			continue
 		}
-		if returnsNestedCapturedSymbol(in, ref) || isDirectChildOfReturnCapturedFunction(in, ref) {
+		if summaryNeedsObservedWidenedReturns(in.summary(ref)) ||
+			returnsNestedCapturedSymbol(in, ref) ||
+			isDirectChildOfReturnCapturedFunction(in, ref) {
 			add(ref)
 		}
 	}
@@ -72,6 +75,18 @@ func (in PostWidenObservationInput) summary(ref FuncRef) Summary {
 func summaryNeedsObservedReceiverEffects(sum Summary) bool {
 	for _, entry := range sum.ReceiverEffects.Entries() {
 		if len(entry.Mutations) > 0 {
+			return true
+		}
+	}
+	return false
+}
+
+func summaryNeedsObservedWidenedReturns(sum Summary) bool {
+	for _, ret := range sum.Returns {
+		if ret.IsZero() {
+			continue
+		}
+		if typ.ContainsRecursive(ret.ProjectValue()) {
 			return true
 		}
 	}

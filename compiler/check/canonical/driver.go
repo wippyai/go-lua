@@ -367,27 +367,30 @@ func (d *Driver) solvePass(sess api.AnalysisSession, prog *program, queries *sum
 		d.summaries[ref] = queries.Summarize(sess.Context(), ref)
 	}
 	rootRef, _ := prog.refByFunc(sess.RootFuncNode())
-	for _, ref := range summary.SelectPostWidenObservationRefs(summary.PostWidenObservationInput{
-		Refs: prog.refs,
-		Root: rootRef,
-		Summary: func(ref summary.FuncRef) summary.Summary {
-			return d.summaries[ref]
-		},
-		Graph: func(ref summary.FuncRef) *cfg.Graph {
-			return prog.Graph(ref)
-		},
-		IsMethod: func(ref summary.FuncRef) bool {
-			return prog.methodDef(ref) != nil
-		},
-		Nested: func(ref summary.FuncRef) []summary.FuncRef {
-			return prog.funcTopology.NestedRefs(ref)
-		},
-		Parent: func(ref summary.FuncRef) (summary.FuncRef, bool) {
-			return prog.funcTopology.ParentRef(ref)
-		},
-	}) {
-		d.summaries[ref] = queries.ObservedSummary(sess.Context(), ref)
-	}
+	d.withSnapshotSummaryReads(func() {
+		observed := summary.SelectPostWidenObservationRefs(summary.PostWidenObservationInput{
+			Refs: prog.refs,
+			Root: rootRef,
+			Summary: func(ref summary.FuncRef) summary.Summary {
+				return d.summaries[ref]
+			},
+			Graph: func(ref summary.FuncRef) *cfg.Graph {
+				return prog.Graph(ref)
+			},
+			IsMethod: func(ref summary.FuncRef) bool {
+				return prog.methodDef(ref) != nil
+			},
+			Nested: func(ref summary.FuncRef) []summary.FuncRef {
+				return prog.funcTopology.NestedRefs(ref)
+			},
+			Parent: func(ref summary.FuncRef) (summary.FuncRef, bool) {
+				return prog.funcTopology.ParentRef(ref)
+			},
+		})
+		for _, ref := range observed {
+			d.summaries[ref] = queries.ObservedSummary(sess.Context(), ref)
+		}
+	})
 	if rootRef, ok := prog.refByFunc(sess.RootFuncNode()); ok {
 		d.withSnapshotSummaryReads(func() {
 			d.buildDiagnosticContexts(sess, prog, queries, rootRef)

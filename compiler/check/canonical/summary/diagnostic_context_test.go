@@ -566,6 +566,85 @@ func TestDiagnosticContextFrontierDoesNotEraseExactReturnOverlayWithBroadRefresh
 	}
 }
 
+func TestDiagnosticContextFrontierDoesNotEraseExactReturnOverlayWithRecursiveRefresh(t *testing.T) {
+	root := summary.FuncRef{GraphID: 1}
+	rootKey := summary.NewKey(root, flow.CaptureCellsDomain.Bottom())
+	refinedType := typ.NewRecord().Field("node_order", typ.NewArray(typ.String)).Build()
+	refined := product.FromType(refinedType)
+	recursive := product.FromType(typ.NewRecursive("Inferred", func(typ.Type) typ.Type {
+		return typ.NewRecord().Field("node_order", typ.NewArray(typ.Never)).Build()
+	}))
+	direct := summary.MergeExactOverlaySummary(
+		summary.Summary{Returns: []product.AbstractValue{refined}},
+		summary.Summary{Returns: []product.AbstractValue{recursive}},
+	)
+	if len(direct.Returns) != 1 || !typ.TypeEquals(direct.Returns[0].ProjectValue(), refinedType) {
+		t.Fatalf("direct exact overlay merge = %#v, want %v", direct.Returns, refinedType)
+	}
+	overlay := map[summary.Key]summary.Summary{
+		rootKey: {
+			Returns: []product.AbstractValue{refined},
+		},
+	}
+
+	result := summary.DiagnosticContextFrontier{
+		Root:           root,
+		Refs:           []summary.FuncRef{root},
+		SummaryOverlay: overlay,
+		Solve: func(summary.Key) state.FunctionState {
+			return state.FunctionStateDomain.Bottom()
+		},
+		ProjectSummary: func(summary.Key, state.FunctionState) summary.Summary {
+			return summary.Summary{
+				Returns: []product.AbstractValue{recursive},
+			}
+		},
+	}.Build()
+
+	got := result.Summaries[rootKey].Returns
+	if len(got) != 1 {
+		t.Fatalf("overlay returns = %#v, want one slot", got)
+	}
+	if gotValue := got[0].ProjectValue(); !typ.TypeEquals(gotValue, refinedType) {
+		t.Fatalf("overlay return erased exact recursive member: %v, want %v", gotValue, refinedType)
+	}
+}
+
+func TestDiagnosticContextFrontierDoesNotEraseExactReturnOverlayWithEmptyContainerRefresh(t *testing.T) {
+	root := summary.FuncRef{GraphID: 1}
+	rootKey := summary.NewKey(root, flow.CaptureCellsDomain.Bottom())
+	refinedType := typ.NewRecord().Field("node_order", typ.NewArray(typ.String)).Build()
+	refined := product.FromType(refinedType)
+	empty := product.FromType(typ.NewRecord().Field("node_order", typ.NewArray(typ.Never)).Build())
+	overlay := map[summary.Key]summary.Summary{
+		rootKey: {
+			Returns: []product.AbstractValue{refined},
+		},
+	}
+
+	result := summary.DiagnosticContextFrontier{
+		Root:           root,
+		Refs:           []summary.FuncRef{root},
+		SummaryOverlay: overlay,
+		Solve: func(summary.Key) state.FunctionState {
+			return state.FunctionStateDomain.Bottom()
+		},
+		ProjectSummary: func(summary.Key, state.FunctionState) summary.Summary {
+			return summary.Summary{
+				Returns: []product.AbstractValue{empty},
+			}
+		},
+	}.Build()
+
+	got := result.Summaries[rootKey].Returns
+	if len(got) != 1 {
+		t.Fatalf("overlay returns = %#v, want one slot", got)
+	}
+	if gotValue := got[0].ProjectValue(); !typ.TypeEquals(gotValue, refinedType) {
+		t.Fatalf("overlay return erased exact empty-container member: %v, want %v", gotValue, refinedType)
+	}
+}
+
 func TestDiagnosticContextFrontierLetsExactProofOverlayRefineFromTop(t *testing.T) {
 	root := summary.FuncRef{GraphID: 1}
 	rootKey := summary.NewKey(root, flow.CaptureCellsDomain.Bottom())
