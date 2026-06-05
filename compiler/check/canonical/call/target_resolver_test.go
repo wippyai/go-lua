@@ -263,6 +263,68 @@ func TestTargetResolverStaticExprOrSymbolExpandsAliases(t *testing.T) {
 	}
 }
 
+func TestTargetResolverCallbackArgRefsExpandsStaticAliases(t *testing.T) {
+	t.Parallel()
+
+	stmts, err := parse.ParseString(`
+		local function Target()
+			return 1
+		end
+		local a = Target
+		local b = a
+		local use = b
+		consume(use)
+	`, "target_resolver_callback_alias.lua")
+	if err != nil {
+		t.Fatalf("parse failed: %v", err)
+	}
+	graph := cfg.Build(&ast.FunctionExpr{Stmts: stmts})
+	if graph == nil {
+		t.Fatal("expected graph")
+	}
+	bindings := graph.Bindings()
+	if bindings == nil {
+		t.Fatal("expected bindings")
+	}
+	var (
+		arg    ast.Expr
+		target cfg.SymbolID
+	)
+	graph.EachCallSite(func(p cfg.Point, info *cfg.CallInfo) {
+		if info == nil || info.CalleeName != "consume" || len(info.Args) == 0 {
+			return
+		}
+		arg = info.Args[0]
+		target, _ = graph.SymbolAt(p, "Target")
+	})
+	if arg == nil || target == 0 {
+		t.Fatalf("expected callback arg and Target symbol, got arg=%v target=%d", arg, target)
+	}
+	argIdent, ok := arg.(*ast.IdentExpr)
+	if !ok || argIdent == nil {
+		t.Fatalf("expected ident callback arg, got %T", arg)
+	}
+	raw, ok := bindings.SymbolOf(argIdent)
+	if !ok || raw == 0 {
+		t.Fatalf("expected raw symbol for callback arg, got %d/%v", raw, ok)
+	}
+	want := summary.FuncRef{GraphID: 77}
+	resolver := TargetResolver{
+		Graph:    graph,
+		Bindings: bindings,
+		Static: StaticTargetLookup{
+			FuncBySymbol: func(sym cfg.SymbolID) (summary.FuncRef, bool) {
+				return want, sym == target
+			},
+		},
+	}
+
+	got, ok := resolver.ResolveCallbackArgRefsOrSymbol(arg, flow.FunctionRefsDomain.Bottom(), raw, nil)
+	if !ok || len(got) != 1 || got[0] != want {
+		t.Fatalf("ResolveCallbackArgRefsOrSymbol = %+v/%v, want [%+v]/true", got, ok, want)
+	}
+}
+
 func TestTargetResolverStaticMethodFallbackOrder(t *testing.T) {
 	t.Parallel()
 

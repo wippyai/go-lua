@@ -1263,18 +1263,7 @@ func (p *program) callbackArgRefs(g *cfg.Graph, arg ast.Expr, rawSym cfg.SymbolI
 	if in != nil {
 		refs = in.FunctionRefs
 	}
-	return canonicalcall.ResolveCallbackArgRefs(canonicalcall.CallbackArgInput{
-		Arg: arg,
-		FunctionLiteral: func(fn *ast.FunctionExpr) (summary.FuncRef, bool) {
-			return p.refByFunc(fn)
-		},
-		FunctionRefs: func(expr ast.Expr) ([]summary.FuncRef, bool) {
-			return resolver.ResolveFunctionRefsAtExprOrSymbol(expr, refs, rawSym)
-		},
-		StaticExpr: func(expr ast.Expr) (summary.FuncRef, bool) {
-			return resolver.ResolveStaticExprOrSymbol(expr, rawSym)
-		},
-	})
+	return resolver.ResolveCallbackArgRefsOrSymbol(arg, refs, rawSym, p.refByFunc)
 }
 
 func (p *program) callEntryFunctionArgRefs(g *cfg.Graph, arg ast.Expr, in *flow.PointState) (flow.FunctionRefSet, bool) {

@@ -175,14 +175,28 @@ func (r TargetResolver) ResolveCallbackArgRefs(
 	refs flow.FunctionRefs,
 	functionLiteral func(*ast.FunctionExpr) (summary.FuncRef, bool),
 ) ([]summary.FuncRef, bool) {
+	return r.ResolveCallbackArgRefsOrSymbol(arg, refs, 0, functionLiteral)
+}
+
+// ResolveCallbackArgRefsOrSymbol resolves a callback argument through the same
+// callback policy as ResolveCallbackArgRefs, additionally honoring a CFG raw
+// symbol when the call-site already captured one. The raw symbol is only a
+// lookup candidate: live FunctionRefs remain authoritative and block static
+// fallback when present but unknown.
+func (r TargetResolver) ResolveCallbackArgRefsOrSymbol(
+	arg ast.Expr,
+	refs flow.FunctionRefs,
+	rawSym cfg.SymbolID,
+	functionLiteral func(*ast.FunctionExpr) (summary.FuncRef, bool),
+) ([]summary.FuncRef, bool) {
 	return ResolveCallbackArgRefs(CallbackArgInput{
 		Arg:             arg,
 		FunctionLiteral: functionLiteral,
 		FunctionRefs: func(expr ast.Expr) ([]summary.FuncRef, bool) {
-			return r.ResolveFunctionRefsAtExpr(expr, refs)
+			return r.ResolveFunctionRefsAtExprOrSymbol(expr, refs, rawSym)
 		},
 		StaticExpr: func(expr ast.Expr) (summary.FuncRef, bool) {
-			return r.ResolveStaticExpr(expr)
+			return r.ResolveStaticExprOrSymbol(expr, rawSym)
 		},
 	})
 }
