@@ -77,6 +77,24 @@ func TestValueOriginFactsOriginsCoveringPathKeepsAllPrefixOrigins(t *testing.T) 
 	}
 }
 
+func TestValueOriginFactsAddressCoverageSupportsNamedRoots(t *testing.T) {
+	value, _ := StableAddressOfRoot("$0", nil)
+	source, _ := StableAddressOfRoot("$1", nil)
+	child, _ := StableAddressOfRoot("$0", []constraint.Segment{{Kind: constraint.SegmentField, Name: "id"}})
+
+	facts := ValueOriginFacts{}.WithAddresses(value, source, ValueOriginAssignmentAlias, 0)
+	uses := facts.OriginsCoveringAddress(child)
+	if len(uses) != 1 {
+		t.Fatalf("OriginsCoveringAddress($0.id) got %d uses, want 1: %s", len(uses), facts.Format())
+	}
+	if uses[0].Origin.Source != source.Key() {
+		t.Fatalf("source = %s, want %s", uses[0].Origin.Source, source.Key())
+	}
+	if len(uses[0].Remainder) != 1 || uses[0].Remainder[0].Name != "id" {
+		t.Fatalf("remainder = %#v, want [.id]", uses[0].Remainder)
+	}
+}
+
 func TestValueOriginFactsJoinKeepsMustFacts(t *testing.T) {
 	entry := constraint.NewPath(cfg.SymbolID(21), "entry")
 	tests := constraint.NewPath(cfg.SymbolID(22), "tests")

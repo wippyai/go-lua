@@ -138,6 +138,30 @@ func TestPathSuffixIsDefensiveAndStructural(t *testing.T) {
 	}
 }
 
+func TestStableAddressRemainderAfterPrefixIsStructuredAndDefensive(t *testing.T) {
+	root, _ := SymbolPathRoot(cfg.SymbolID(17))
+	parent, _ := StableAddressOfRootAndSuffix(root, PathSuffixOfSegments([]constraint.Segment{
+		{Kind: constraint.SegmentField, Name: "node"},
+	}))
+	child, _ := StableAddressOfRootAndSuffix(root, PathSuffixOfSegments([]constraint.Segment{
+		{Kind: constraint.SegmentField, Name: "node"},
+		{Kind: constraint.SegmentIndexString, Name: "id"},
+	}))
+
+	remainder, ok := child.RemainderAfterPrefix(parent)
+	if !ok {
+		t.Fatal("child should be under parent")
+	}
+	if len(remainder) != 1 || remainder[0].Kind != constraint.SegmentIndexString || remainder[0].Name != "id" {
+		t.Fatalf("remainder = %#v, want [\"id\"]", remainder)
+	}
+	remainder[0].Name = "mutated"
+	again, _ := child.RemainderAfterPrefix(parent)
+	if again[0].Name != "id" {
+		t.Fatalf("remainder was not defensive: %#v", again)
+	}
+}
+
 func TestStableAddressOfRootAndSuffixKeepsVocabularyCanonical(t *testing.T) {
 	root, _ := SymbolPathRoot(cfg.SymbolID(27))
 	suffix := PathSuffixOfSegments([]constraint.Segment{

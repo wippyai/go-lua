@@ -58,22 +58,43 @@ func (f PathAliasFacts) With(fact PathAliasFact) PathAliasFacts {
 	return canonicalPathAliasFacts(next)
 }
 
-func (f PathAliasFacts) WithPaths(value, source constraint.Path) PathAliasFacts {
-	valueKey := KeyPresencePathKey(value)
-	sourceKey := KeyPresencePathKey(source)
+func (f PathAliasFacts) WithAddresses(value, source StableAddress) PathAliasFacts {
+	valueKey := value.Key()
+	sourceKey := source.Key()
 	if valueKey == "" || sourceKey == "" {
 		return f
 	}
 	return f.With(PathAliasFact{Value: valueKey, Source: sourceKey})
 }
 
+func (f PathAliasFacts) WithPaths(value, source constraint.Path) PathAliasFacts {
+	valueAddr, ok := StableAddressOfPath(value)
+	if !ok {
+		return f
+	}
+	sourceAddr, ok := StableAddressOfPath(source)
+	if !ok {
+		return f
+	}
+	return f.WithAddresses(valueAddr, sourceAddr)
+}
+
 func (f PathAliasFacts) AliasesOf(value constraint.PathKey) []PathAliasFact {
-	if f.bottom || value == "" || len(f.entries) == 0 {
+	addr, ok := StableAddressFromKey(value)
+	if !ok {
+		return nil
+	}
+	return f.AliasesOfAddress(addr)
+}
+
+func (f PathAliasFacts) AliasesOfAddress(value StableAddress) []PathAliasFact {
+	valueKey := value.Key()
+	if f.bottom || valueKey == "" || len(f.entries) == 0 {
 		return nil
 	}
 	var out []PathAliasFact
 	for _, entry := range f.entries {
-		if entry.Value == value {
+		if entry.Value == valueKey {
 			out = append(out, entry)
 		}
 	}
@@ -87,24 +108,27 @@ func (f PathAliasFacts) AliasesOfPath(value constraint.Path) []PathAliasFact {
 // AliasesCoveringPath returns aliases whose value path is equal to, or an
 // ancestor of, value.
 func (f PathAliasFacts) AliasesCoveringPath(value constraint.Path) []PathAliasUse {
-	valueKey := KeyPresencePathKey(value)
-	if f.bottom || valueKey == "" || len(f.entries) == 0 {
+	addr, ok := StableAddressOfPath(value)
+	if !ok {
 		return nil
 	}
-	valueSym, valueSegments, ok := ParseSymbolPathKey(valueKey)
-	if !ok || valueSym == 0 {
+	return f.AliasesCoveringAddress(addr)
+}
+
+func (f PathAliasFacts) AliasesCoveringAddress(value StableAddress) []PathAliasUse {
+	if f.bottom || value.Key() == "" || len(f.entries) == 0 {
 		return nil
 	}
 	var out []PathAliasUse
 	for _, entry := range f.entries {
-		entrySym, entrySegments, ok := ParseSymbolPathKey(entry.Value)
-		if !ok || entrySym != valueSym || len(entrySegments) > len(valueSegments) {
+		entryAddr, ok := StableAddressFromKey(entry.Value)
+		if !ok {
 			continue
 		}
-		if !segmentsPrefix(entrySegments, valueSegments) {
+		remainder, ok := value.RemainderAfterPrefix(entryAddr)
+		if !ok {
 			continue
 		}
-		remainder := append([]constraint.Segment(nil), valueSegments[len(entrySegments):]...)
 		out = append(out, PathAliasUse{Alias: entry, Remainder: remainder})
 	}
 	sort.Slice(out, func(i, j int) bool {
@@ -117,12 +141,22 @@ func (f PathAliasFacts) AliasesCoveringPath(value constraint.Path) []PathAliasUs
 }
 
 func (f PathAliasFacts) KillAffectedByWrite(writePath constraint.PathKey) PathAliasFacts {
-	if f.bottom || writePath == "" || len(f.entries) == 0 {
+	addr, ok := StableAddressFromKey(writePath)
+	if !ok {
+		return f
+	}
+	return f.KillAffectedByWriteAddress(addr)
+}
+
+func (f PathAliasFacts) KillAffectedByWriteAddress(write StableAddress) PathAliasFacts {
+	if f.bottom || write.Key() == "" || len(f.entries) == 0 {
 		return f
 	}
 	entries := make([]PathAliasFact, 0, len(f.entries))
 	for _, entry := range f.entries {
-		if keyPresencePathsOverlap(entry.Value, writePath) || keyPresencePathsOverlap(entry.Source, writePath) {
+		valueAddr, valueOK := StableAddressFromKey(entry.Value)
+		sourceAddr, sourceOK := StableAddressFromKey(entry.Source)
+		if (valueOK && valueAddr.Overlaps(write)) || (sourceOK && sourceAddr.Overlaps(write)) {
 			continue
 		}
 		entries = append(entries, entry)

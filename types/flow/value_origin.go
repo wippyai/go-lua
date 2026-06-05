@@ -67,22 +67,43 @@ func (f ValueOriginFacts) With(fact ValueOriginFact) ValueOriginFacts {
 	return canonicalValueOriginFacts(next)
 }
 
-func (f ValueOriginFacts) WithPaths(value, source constraint.Path, kind ValueOriginKind, varIndex int) ValueOriginFacts {
-	valueKey := KeyPresencePathKey(value)
-	sourceKey := KeyPresencePathKey(source)
+func (f ValueOriginFacts) WithAddresses(value, source StableAddress, kind ValueOriginKind, varIndex int) ValueOriginFacts {
+	valueKey := value.Key()
+	sourceKey := source.Key()
 	if valueKey == "" || sourceKey == "" {
 		return f
 	}
 	return f.With(ValueOriginFact{Value: valueKey, Source: sourceKey, Kind: kind, VarIndex: varIndex})
 }
 
+func (f ValueOriginFacts) WithPaths(value, source constraint.Path, kind ValueOriginKind, varIndex int) ValueOriginFacts {
+	valueAddr, ok := StableAddressOfPath(value)
+	if !ok {
+		return f
+	}
+	sourceAddr, ok := StableAddressOfPath(source)
+	if !ok {
+		return f
+	}
+	return f.WithAddresses(valueAddr, sourceAddr, kind, varIndex)
+}
+
 func (f ValueOriginFacts) OriginsOf(value constraint.PathKey) []ValueOriginFact {
-	if f.bottom || value == "" || len(f.entries) == 0 {
+	addr, ok := StableAddressFromKey(value)
+	if !ok {
+		return nil
+	}
+	return f.OriginsOfAddress(addr)
+}
+
+func (f ValueOriginFacts) OriginsOfAddress(value StableAddress) []ValueOriginFact {
+	valueKey := value.Key()
+	if f.bottom || valueKey == "" || len(f.entries) == 0 {
 		return nil
 	}
 	var out []ValueOriginFact
 	for _, entry := range f.entries {
-		if entry.Value == value {
+		if entry.Value == valueKey {
 			out = append(out, entry)
 		}
 	}
@@ -97,24 +118,27 @@ func (f ValueOriginFacts) OriginsOfPath(value constraint.Path) []ValueOriginFact
 // ancestor of, value. This is the path-sensitive lookup used by backward demand:
 // an origin for loop variable `entry` must also cover reads such as `entry.id`.
 func (f ValueOriginFacts) OriginsCoveringPath(value constraint.Path) []ValueOriginUse {
-	valueKey := KeyPresencePathKey(value)
-	if f.bottom || valueKey == "" || len(f.entries) == 0 {
+	addr, ok := StableAddressOfPath(value)
+	if !ok {
 		return nil
 	}
-	valueSym, valueSegments, ok := ParseSymbolPathKey(valueKey)
-	if !ok || valueSym == 0 {
+	return f.OriginsCoveringAddress(addr)
+}
+
+func (f ValueOriginFacts) OriginsCoveringAddress(value StableAddress) []ValueOriginUse {
+	if f.bottom || value.Key() == "" || len(f.entries) == 0 {
 		return nil
 	}
 	var out []ValueOriginUse
 	for _, entry := range f.entries {
-		entrySym, entrySegments, ok := ParseSymbolPathKey(entry.Value)
-		if !ok || entrySym != valueSym || len(entrySegments) > len(valueSegments) {
+		entryAddr, ok := StableAddressFromKey(entry.Value)
+		if !ok {
 			continue
 		}
-		if !segmentsPrefix(entrySegments, valueSegments) {
+		remainder, ok := value.RemainderAfterPrefix(entryAddr)
+		if !ok {
 			continue
 		}
-		remainder := append([]constraint.Segment(nil), valueSegments[len(entrySegments):]...)
 		out = append(out, ValueOriginUse{Origin: entry, Remainder: remainder})
 	}
 	sort.Slice(out, func(i, j int) bool {
@@ -127,12 +151,22 @@ func (f ValueOriginFacts) OriginsCoveringPath(value constraint.Path) []ValueOrig
 }
 
 func (f ValueOriginFacts) KillAffectedByWrite(writePath constraint.PathKey) ValueOriginFacts {
-	if f.bottom || writePath == "" || len(f.entries) == 0 {
+	addr, ok := StableAddressFromKey(writePath)
+	if !ok {
+		return f
+	}
+	return f.KillAffectedByWriteAddress(addr)
+}
+
+func (f ValueOriginFacts) KillAffectedByWriteAddress(write StableAddress) ValueOriginFacts {
+	if f.bottom || write.Key() == "" || len(f.entries) == 0 {
 		return f
 	}
 	entries := make([]ValueOriginFact, 0, len(f.entries))
 	for _, entry := range f.entries {
-		if keyPresencePathsOverlap(entry.Value, writePath) || keyPresencePathsOverlap(entry.Source, writePath) {
+		valueAddr, valueOK := StableAddressFromKey(entry.Value)
+		sourceAddr, sourceOK := StableAddressFromKey(entry.Source)
+		if (valueOK && valueAddr.Overlaps(write)) || (sourceOK && sourceAddr.Overlaps(write)) {
 			continue
 		}
 		entries = append(entries, entry)

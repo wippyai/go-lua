@@ -119,6 +119,15 @@ func (s PathSuffix) HasPrefix(prefix PathSuffix) bool {
 	return true
 }
 
+// RemainderAfterPrefix returns the suffix below prefix when prefix is this
+// suffix or one of its ancestors.
+func (s PathSuffix) RemainderAfterPrefix(prefix PathSuffix) ([]constraint.Segment, bool) {
+	if !s.HasPrefix(prefix) {
+		return nil, false
+	}
+	return cloneAddressSegments(s.segments[len(prefix.segments):]), true
+}
+
 // Overlaps reports whether one suffix is a prefix of the other.
 func (s PathSuffix) Overlaps(other PathSuffix) bool {
 	return s.HasPrefix(other) || other.HasPrefix(s)
@@ -295,6 +304,15 @@ func (a StableAddress) Equal(b StableAddress) bool {
 // HasPrefix reports whether prefix is this address or an ancestor of it.
 func (a StableAddress) HasPrefix(prefix StableAddress) bool {
 	return a.sameRoot(prefix) && a.suffix.HasPrefix(prefix.suffix)
+}
+
+// RemainderAfterPrefix returns the member/index suffix below prefix when prefix
+// is this address or one of its ancestors.
+func (a StableAddress) RemainderAfterPrefix(prefix StableAddress) ([]constraint.Segment, bool) {
+	if !a.sameRoot(prefix) {
+		return nil, false
+	}
+	return a.suffix.RemainderAfterPrefix(prefix.suffix)
 }
 
 // Overlaps reports whether two addresses share a root and one path is a prefix

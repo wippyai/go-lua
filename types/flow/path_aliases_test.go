@@ -46,6 +46,24 @@ func TestPathAliasFactsAliasesCoveringPath(t *testing.T) {
 	}
 }
 
+func TestPathAliasFactsAddressCoverageSupportsNamedRoots(t *testing.T) {
+	alias, _ := StableAddressOfRoot("$0", nil)
+	source, _ := StableAddressOfRoot("$1", nil)
+	child, _ := StableAddressOfRoot("$0", []constraint.Segment{{Kind: constraint.SegmentField, Name: "run"}})
+
+	facts := PathAliasFacts{}.WithAddresses(alias, source)
+	uses := facts.AliasesCoveringAddress(child)
+	if len(uses) != 1 {
+		t.Fatalf("AliasesCoveringAddress($0.run) got %d uses, want 1: %s", len(uses), facts.Format())
+	}
+	if uses[0].Alias.Source != source.Key() {
+		t.Fatalf("source = %s, want %s", uses[0].Alias.Source, source.Key())
+	}
+	if len(uses[0].Remainder) != 1 || uses[0].Remainder[0].Name != "run" {
+		t.Fatalf("remainder = %#v, want [.run]", uses[0].Remainder)
+	}
+}
+
 func TestPathAliasFactsKillAffectedByWrite(t *testing.T) {
 	alias := constraint.NewPath(cfg.SymbolID(21), "alias")
 	source := constraint.NewPath(cfg.SymbolID(22), "source")
