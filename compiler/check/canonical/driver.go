@@ -1239,134 +1239,19 @@ func (p *program) publishedPrototypes(ref summary.FuncRef) []cfg.SymbolID {
 }
 
 func (p *program) ProjectCallEntryValues(ref summary.FuncRef, fs state.FunctionState) summary.CallEntryValues {
-	if p == nil || p.driver == nil {
+	projector, ok := p.callEntryProjector(ref)
+	if !ok {
 		return nil
 	}
-	g := p.Graph(ref)
-	tr, ok := p.transfers[ref].(*transfer.Transfer)
-	if g == nil || !ok || tr == nil {
-		return nil
-	}
-	return summary.CallEntryValueProjection{
-		Graph: g,
-		State: fs,
-		ResolveTargets: func(call *ast.FuncCallExpr, in *flow.PointState) []summary.CallEntryTarget {
-			return p.resolveCallEntryTargets(g, call, in)
-		},
-		ResolveCallback: func(arg ast.Expr, rawSym cfg.SymbolID, in *flow.PointState) ([]summary.FuncRef, bool) {
-			return p.callbackArgRefs(g, arg, rawSym, in)
-		},
-		ExpectedArgType: func(point cfg.Point, info *cfg.CallInfo, in *flow.PointState, argIdx int) typ.Type {
-			return p.expectedCallArgType(g, tr, point, info, in, argIdx)
-		},
-		ParamSlot: func(callee summary.FuncRef, call *ast.FuncCallExpr, argIdx int) (int, int, bool) {
-			return paramevidence.ParamSlotForRuntimeArg(p.Graph(callee), p.funcExpr(callee), argIdx)
-		},
-		ParamAnnotated: func(callee summary.FuncRef, sourceParam int) bool {
-			_, slot, ok := paramevidence.ParamSlotForSourceParam(p.Graph(callee), p.funcExpr(callee), sourceParam)
-			if !ok {
-				return false
-			}
-			return p.paramSlotFixed(callee, slot)
-		},
-		EvalArg: tr.EvalExprValue,
-	}.Project()
+	return projector.valueProjection(fs).Project()
 }
 
 func (p *program) ProjectCallEntryContextKeys(ref summary.FuncRef, fs state.FunctionState) []summary.Key {
-	if p == nil || p.driver == nil {
+	projector, ok := p.callEntryProjector(ref)
+	if !ok {
 		return nil
 	}
-	g := p.Graph(ref)
-	tr, ok := p.transfers[ref].(*transfer.Transfer)
-	if g == nil || !ok || tr == nil {
-		return nil
-	}
-	return summary.CallEntryContextProjection{
-		Graph: g,
-		State: fs,
-		ResolveTargets: func(call *ast.FuncCallExpr, in *flow.PointState) []summary.CallEntryTarget {
-			return p.resolveCallEntryTargets(g, call, in)
-		},
-		ResolveCallback: func(arg ast.Expr, rawSym cfg.SymbolID, in *flow.PointState) ([]summary.FuncRef, bool) {
-			return p.callbackArgRefs(g, arg, rawSym, in)
-		},
-		ExpectedArgType: func(point cfg.Point, info *cfg.CallInfo, in *flow.PointState, argIdx int) typ.Type {
-			return p.expectedCallArgType(g, tr, point, info, in, argIdx)
-		},
-		ParamSlot: func(callee summary.FuncRef, call *ast.FuncCallExpr, argIdx int) (int, int, bool) {
-			return paramevidence.ParamSlotForRuntimeArg(p.Graph(callee), p.funcExpr(callee), argIdx)
-		},
-		ParamSlotCount: func(callee summary.FuncRef, _ *ast.FuncCallExpr) int {
-			return p.paramSlotCount(callee)
-		},
-		ParamPath: func(callee summary.FuncRef, slot int) (constraint.Path, bool) {
-			return p.paramPath(callee, slot)
-		},
-		ArgPath: func(_ int, arg ast.Expr) (constraint.Path, bool) {
-			return (callTyper{d: p.driver, g: g}).exprPath(arg)
-		},
-		FunctionArgRefs: func(_ int, arg ast.Expr, in *flow.PointState) (flow.FunctionRefSet, bool) {
-			return p.callEntryFunctionArgRefs(g, arg, in)
-		},
-		FunctionArgRefTree: func(_ int, arg ast.Expr, in *flow.PointState) (flow.FunctionRefs, bool) {
-			return p.callEntryFunctionArgTreeRefs(g, tr, arg, in)
-		},
-		ClosureArgRefs: func(_ int, arg ast.Expr, in *flow.PointState) (flow.ClosureRefSet, bool) {
-			return p.callEntryClosureArgRefs(g, arg, in)
-		},
-		ClosureArgRefTree: func(_ int, arg ast.Expr, in *flow.PointState) (flow.ClosureRefs, bool) {
-			return p.callEntryClosureArgTreeRefs(g, tr, arg, in)
-		},
-		EvalArg: tr.EvalExprValue,
-		NormalizeValues: func(callee summary.FuncRef, call *ast.FuncCallExpr, values summary.EntryValues) summary.EntryValues {
-			return p.withPrototypeMethodSurfacesForMethodCall(callee, call, values)
-		},
-		ReferencePaths: func(callee summary.FuncRef) flow.ReferencePathProjection {
-			return p.referenceProjection(callee)
-		},
-	}.ProjectKeys()
-}
-
-func (p *program) resolveCallEntryTargets(g *cfg.Graph, call *ast.FuncCallExpr, in *flow.PointState) []summary.CallEntryTarget {
-	if p == nil || p.driver == nil || g == nil || in == nil {
-		return nil
-	}
-	ct := callTyper{d: p.driver, g: g}
-	targets := ct.resolveCallTargets(call, p, in.FunctionRefs, in.ClosureRefs)
-	selected := canonicalcall.SelectTargets(targets).Targets()
-	out := make([]summary.CallEntryTarget, 0, len(selected))
-	for _, target := range selected {
-		ref := target.Ref()
-		cells := p.CallEntryCells(ref, in.Cells)
-		refs := p.CallEntryFunctionRefs(ref, in.FunctionRefs)
-		closures := p.CallEntryClosureRefs(ref, in.ClosureRefs)
-		entryFacts := summary.DirectCallEntryFacts(summary.DirectCallEntryFactInput{
-			Call:   call,
-			Callee: ref,
-			ParamSlot: func(callee summary.FuncRef, call *ast.FuncCallExpr, argIdx int) (int, int, bool) {
-				return paramevidence.ParamSlotForRuntimeArg(p.Graph(callee), p.funcExpr(callee), argIdx)
-			},
-			ArgPath: func(_ int, arg ast.Expr) (constraint.Path, bool) {
-				return (callTyper{d: p.driver, g: g}).exprPath(arg)
-			},
-			KeyPresence: in.KeyPresence,
-			Num:         in.Num,
-			IndexWrites: in.IndexWrites,
-		})
-		entry := canonicalcall.NewEntryContextWithFacts(ref, cells, refs, closures, nil, entryFacts)
-		if closure, ok := target.Closure(); ok {
-			entry = canonicalcall.EntryContextFromClosureWithLiveAxesAndFacts(ref, closure, cells, refs, closures, nil, entryFacts)
-		}
-		out = append(out, summary.CallEntryTarget{
-			Ref:               entry.Ref(),
-			EntryCells:        entry.CaptureCells(),
-			EntryFunctionRefs: entry.FunctionRefs(),
-			EntryClosureRefs:  entry.ClosureRefs(),
-			EntryFacts:        entry.EntryFacts(),
-		})
-	}
-	return out
+	return projector.contextProjection(fs).ProjectKeys()
 }
 
 func (p *program) callbackArgRefs(g *cfg.Graph, arg ast.Expr, rawSym cfg.SymbolID, in *flow.PointState) ([]summary.FuncRef, bool) {
