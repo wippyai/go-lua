@@ -63,7 +63,7 @@ local function handle(source: protocol.Source): string
         id = id .. child_id
     end
 
-    local root_label = json.decode_map("{}", protocol.node_type(), function(decoded): string
+    local root_label = json.decode_map("{}", protocol.node_type(), function(decoded)
         local decoded_id: string = decoded.id
         local bad_decoded_id: number = decoded.id -- expect-error
         return decoded_id
@@ -96,7 +96,7 @@ local function handle(source: protocol.Source): string
         end
     end
 
-    local mapped_node_id = process.receive_map(node_ch, function(decoded): string
+    local mapped_node_id = process.receive_map(node_ch, function(decoded)
         local decoded_id: string = decoded.id
         local bad_decoded_id: number = decoded.id -- expect-error
         return decoded_id
@@ -124,7 +124,7 @@ local function handle(source: protocol.Source): string
         channel = source.trees,
         decode = protocol.tree_type(),
     })
-    local tree_label = process.receive_map(tree_ch, function(decoded): string
+    local tree_label = process.receive_map(tree_ch, function(decoded)
         if decoded.kind == "group" then
             local child = decoded.children[1]
             if child and child.kind == "text" then

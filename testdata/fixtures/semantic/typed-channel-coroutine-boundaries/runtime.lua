@@ -11,7 +11,7 @@ local function map_receive<T>(ch: Channel<T>, fn: (T) -> string): string
 end
 
 function M.read_event(ch: Channel<protocol.Event>): string
-    return map_receive(ch, function(event: protocol.Event): string
+    return map_receive(ch, function(event: protocol.Event)
         local id: string = event.id
         return id
     end)

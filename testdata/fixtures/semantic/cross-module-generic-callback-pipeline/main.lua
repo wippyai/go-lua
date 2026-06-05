@@ -14,7 +14,7 @@ local raw: any = {
 local trusted: protocol.User = raw -- expect-error
 
 local decoded = validator.decode_user(raw)
-local label = result.map(decoded, function(user: protocol.User): string
+local label = result.map(decoded, function(user: protocol.User)
     return user.id .. ":" .. tostring(user.retries + 1)
 end)
 
@@ -34,7 +34,7 @@ if audit.ok then
     print(audit.value.user_id .. ":" .. event)
 end
 
-local wrong_result: NumberResult = result.map(decoded, function(user: protocol.User): string -- expect-error
+local wrong_result: NumberResult = result.map(decoded, function(user: protocol.User) -- expect-error
     return user.id
 end)
 

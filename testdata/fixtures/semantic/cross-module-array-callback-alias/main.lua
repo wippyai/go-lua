@@ -14,7 +14,7 @@ local metrics = {
     builder.metric("errors", 0, {source = "worker"}),
 }
 
-local events: {protocol.Event} = map(metrics, function(metric: protocol.Metric): protocol.Event
+local events: {protocol.Event} = map(metrics, function(metric: protocol.Metric)
     return builder.event(metric)
 end)
 
@@ -26,6 +26,6 @@ if first then
     print(kind .. ":" .. name)
 end
 
-local wrong_events: {protocol.Metric} = map(metrics, function(metric: protocol.Metric): protocol.Event -- expect-error
+local wrong_events: {protocol.Metric} = map(metrics, function(metric: protocol.Metric) -- expect-error
     return builder.event(metric)
 end)
