@@ -1810,8 +1810,8 @@ func TestMutatorEffectAppendKeySeedsKeyArrayValueForFreshEmptyArray(t *testing.T
 		},
 		KeyPresence: flow.KeyPresenceFacts{}.WithPaths(tablePath, keyPath),
 		IndexWrites: flow.IndexWriteAdmissionFacts{}.With(flow.IndexWriteAdmissionFact{
-			Target:  flow.IndexWriteAdmissionPathKey(tablePath),
-			KeyPath: flow.IndexWriteAdmissionPathKey(keyPath),
+			Target:  flow.StablePathKey(tablePath),
+			KeyPath: flow.StablePathKey(keyPath),
 			Key:     product.FromType(typ.String),
 			Value:   product.FromType(nodeType),
 		}),

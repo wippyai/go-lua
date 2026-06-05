@@ -118,9 +118,9 @@ func ApplyMapWriteProof(out *PointState, proof MapWriteProof) bool {
 		}) || changed
 		changed = ApplyAppendHistoryCoverageProof(out, proof.Table, proof.Key, proof.Value) || changed
 	}
-	if fact, ok := proof.IndexWriteAdmissionFact(); ok {
+	if fact, ok := proof.IndexWriteAdmissionAddressFact(); ok {
 		before := out.IndexWrites
-		out.IndexWrites = out.IndexWrites.With(fact)
+		out.IndexWrites = out.IndexWrites.WithAddress(fact)
 		changed = !IndexWriteAdmissionFactsDomain.Equal(before, out.IndexWrites) || changed
 	}
 	return changed
@@ -171,36 +171,38 @@ func ApplyAppendHistoryCoverageProof(out *PointState, table StableAddress, key S
 	return !KeyPresenceFactsDomain.Equal(before, out.KeyPresence)
 }
 
-// IndexWriteAdmissionFact returns the optional heavy readback consequence of the
-// map write proof.
-func (p MapWriteProof) IndexWriteAdmissionFact() (IndexWriteAdmissionFact, bool) {
+// IndexWriteAdmissionAddressFact returns the optional heavy readback consequence
+// of the map write proof.
+func (p MapWriteProof) IndexWriteAdmissionAddressFact() (IndexWriteAdmissionAddressFact, bool) {
 	if p.Table.Key() == "" || p.KeyValue.IsZero() || p.Value.IsZero() {
-		return IndexWriteAdmissionFact{}, false
+		return IndexWriteAdmissionAddressFact{}, false
 	}
 	if !p.HasKey && !AdmissibleMapWriteProofValue(p.KeyValue) {
-		return IndexWriteAdmissionFact{}, false
+		return IndexWriteAdmissionAddressFact{}, false
 	}
 	if p.HasKey {
 		if p.KeyValue.DefinitelyAbsent() {
-			return IndexWriteAdmissionFact{}, false
+			return IndexWriteAdmissionAddressFact{}, false
 		}
 		if !AdmissibleMapWriteProofValue(p.KeyValue) && !p.AllowOpaqueKeyReadback {
-			return IndexWriteAdmissionFact{}, false
+			return IndexWriteAdmissionAddressFact{}, false
 		}
 	}
 	if !AdmissibleMapWriteProofValue(p.Value) {
-		return IndexWriteAdmissionFact{}, false
+		return IndexWriteAdmissionAddressFact{}, false
 	}
-	fact := IndexWriteAdmissionFact{
-		Target: p.Table.Key(),
+	fact := IndexWriteAdmissionAddressFact{
+		Target: p.Table,
 		Key:    p.KeyValue,
 		Value:  p.Value,
 	}
 	if p.HasKey {
-		fact.KeyPath = p.Key.Key()
+		fact.KeyPath = p.Key
+		fact.HasKeyPath = true
 	}
 	if p.HasValuePath {
-		fact.ValuePath = p.ValuePath.Key()
+		fact.ValuePath = p.ValuePath
+		fact.HasValuePath = true
 	}
 	return fact, true
 }

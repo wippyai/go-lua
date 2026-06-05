@@ -32,8 +32,8 @@ func TestIndexWriteReadAdmissionFollowsAssignmentAlias(t *testing.T) {
 		},
 		ValueOrigins: flow.ValueOriginFacts{}.WithPaths(lastPath, idPath, flow.ValueOriginAssignmentAlias, 0),
 		IndexWrites: flow.IndexWriteAdmissionFacts{}.With(flow.IndexWriteAdmissionFact{
-			Target:  flow.IndexWriteAdmissionPathKey(nodesPath),
-			KeyPath: flow.IndexWriteAdmissionPathKey(idPath),
+			Target:  flow.StablePathKey(nodesPath),
+			KeyPath: flow.StablePathKey(idPath),
 			Key:     product.FromType(typ.String),
 			Value:   product.FromType(typ.Number),
 		}),
@@ -176,8 +176,8 @@ func TestAssignmentProvenanceCopiesIndexWriteAdmissionKeyPath(t *testing.T) {
 	nodeValue := product.FromType(typ.NewRecord().Field("config", typ.NewRecord().Build()).Build())
 	out := flow.PointState{
 		IndexWrites: flow.IndexWriteAdmissionFacts{}.With(flow.IndexWriteAdmissionFact{
-			Target:  flow.IndexWriteAdmissionPathKey(tablePath),
-			KeyPath: flow.IndexWriteAdmissionPathKey(sourcePath),
+			Target:  flow.StablePathKey(tablePath),
+			KeyPath: flow.StablePathKey(sourcePath),
 			Key:     product.FromType(typ.Any),
 			Value:   nodeValue,
 		}),
@@ -200,7 +200,7 @@ func TestAssignmentProvenanceCopiesIndexWriteAdmissionKeyPath(t *testing.T) {
 	if !ok || !product.Domain.Equal(got, nodeValue) {
 		t.Fatalf("rebased index-write admission = %v/%v, want node/true; facts=%s", got.ProjectValue(), ok, out.IndexWrites.Format())
 	}
-	killed := out.IndexWrites.KillAffectedByWrite(flow.IndexWriteAdmissionPathKey(sourcePath))
+	killed := out.IndexWrites.KillAffectedByWrite(flow.StablePathKey(sourcePath))
 	if got, ok := killed.Admission(flow.IndexWriteQuery{
 		Target:  tablePath,
 		KeyPath: targetPath,
@@ -327,8 +327,8 @@ func TestIndexWriteReadAdmissionFollowsStrictAnyPathAlias(t *testing.T) {
 		},
 		PathAliases: flow.PathAliasFacts{}.WithPaths(lastPath, idPath),
 		IndexWrites: flow.IndexWriteAdmissionFacts{}.With(flow.IndexWriteAdmissionFact{
-			Target:  flow.IndexWriteAdmissionPathKey(nodesPath),
-			KeyPath: flow.IndexWriteAdmissionPathKey(idPath),
+			Target:  flow.StablePathKey(nodesPath),
+			KeyPath: flow.StablePathKey(idPath),
 			Key:     product.FromType(typ.Any),
 			Value:   product.FromType(nodeType),
 		}),

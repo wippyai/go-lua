@@ -62,8 +62,8 @@ func TestDirectCallEntryFactsProjectsIndexWritesToParamPaths(t *testing.T) {
 			return source, true
 		},
 		IndexWrites: flow.IndexWriteAdmissionFacts{}.With(flow.IndexWriteAdmissionFact{
-			Target:  flow.IndexWriteAdmissionPathKey(table),
-			KeyPath: flow.IndexWriteAdmissionPathKey(key),
+			Target:  flow.StablePathKey(table),
+			KeyPath: flow.StablePathKey(key),
 			Key:     product.FromType(typ.String),
 			Value:   value,
 		}),

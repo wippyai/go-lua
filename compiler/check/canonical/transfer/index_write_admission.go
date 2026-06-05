@@ -163,10 +163,11 @@ func (t *Transfer) indexWriteReadKeyPaths(out *flow.PointState, key ast.Expr) []
 	for len(queue) > 0 {
 		cur := queue[0]
 		queue = queue[1:]
-		curKey := flow.IndexWriteAdmissionPathKey(cur)
-		if curKey == "" {
+		curAddr, ok := flow.StableAddressOfPath(cur)
+		if !ok {
 			continue
 		}
+		curKey := curAddr.Key()
 		if _, ok := seen[curKey]; ok {
 			continue
 		}

@@ -120,7 +120,7 @@ func TestCanonicalFactsIndexWriteAdmissionReadsPostState(t *testing.T) {
 		InPoints: map[cfg.Point]flow.PointState{
 			point: {
 				IndexWrites: flow.IndexWriteAdmissionFacts{}.With(flow.IndexWriteAdmissionFact{
-					Target: flow.IndexWriteAdmissionPathKey(target),
+					Target: flow.StablePathKey(target),
 					Key:    product.FromType(typ.String),
 					Value:  product.FromType(typ.Number),
 				}),
@@ -129,7 +129,7 @@ func TestCanonicalFactsIndexWriteAdmissionReadsPostState(t *testing.T) {
 		Points: map[cfg.Point]flow.PointState{
 			point: {
 				IndexWrites: flow.IndexWriteAdmissionFacts{}.With(flow.IndexWriteAdmissionFact{
-					Target: flow.IndexWriteAdmissionPathKey(target),
+					Target: flow.StablePathKey(target),
 					Key:    product.FromType(typ.String),
 					Value:  product.FromType(typ.Boolean),
 				}),

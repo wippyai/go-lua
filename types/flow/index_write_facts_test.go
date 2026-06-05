@@ -25,19 +25,19 @@ func TestIndexWriteAdmissionFactsJoinKeepsOnlyCommonProofs(t *testing.T) {
 	valuePath := constraint.NewPath(cfg.SymbolID(3), "v")
 	otherValue := constraint.NewPath(cfg.SymbolID(4), "w")
 	common := IndexWriteAdmissionFact{
-		Target:    IndexWriteAdmissionPathKey(target),
-		KeyPath:   IndexWriteAdmissionPathKey(key),
+		Target:    StablePathKey(target),
+		KeyPath:   StablePathKey(key),
 		Key:       product.FromType(typ.String),
-		ValuePath: IndexWriteAdmissionPathKey(valuePath),
+		ValuePath: StablePathKey(valuePath),
 		Value:     product.FromType(typ.String),
 	}
 	left := IndexWriteAdmissionFactsOf([]IndexWriteAdmissionFact{
 		common,
 		{
-			Target:    IndexWriteAdmissionPathKey(target.Field("items")),
-			KeyPath:   IndexWriteAdmissionPathKey(key),
+			Target:    StablePathKey(target.Field("items")),
+			KeyPath:   StablePathKey(key),
 			Key:       product.FromType(typ.String),
-			ValuePath: IndexWriteAdmissionPathKey(otherValue),
+			ValuePath: StablePathKey(otherValue),
 			Value:     product.FromType(typ.Boolean),
 		},
 	})
@@ -81,10 +81,10 @@ func TestIndexWriteAdmissionFactsKillAffectedByWrite(t *testing.T) {
 	key := constraint.NewPath(cfg.SymbolID(13), "id")
 	valuePath := constraint.NewPath(cfg.SymbolID(14), "entry")
 	facts := IndexWriteAdmissionFacts{}.With(IndexWriteAdmissionFact{
-		Target:    IndexWriteAdmissionPathKey(target),
-		KeyPath:   IndexWriteAdmissionPathKey(key),
+		Target:    StablePathKey(target),
+		KeyPath:   StablePathKey(key),
 		Key:       product.FromType(typ.String),
-		ValuePath: IndexWriteAdmissionPathKey(valuePath),
+		ValuePath: StablePathKey(valuePath),
 		Value:     product.FromType(typ.Number),
 	})
 
@@ -111,19 +111,19 @@ func TestIndexWriteAdmissionFactsPreservePresentElementWriteWeakensSameTableProo
 	edgeValue := product.FromType(typ.NewRecord().Field("targets", typ.NewArray(typ.String)).Build())
 	facts := IndexWriteAdmissionFacts{}.
 		With(IndexWriteAdmissionFact{
-			Target:  IndexWriteAdmissionPathKey(target),
-			KeyPath: IndexWriteAdmissionPathKey(key),
+			Target:  StablePathKey(target),
+			KeyPath: StablePathKey(key),
 			Key:     product.FromType(typ.Any),
 			Value:   oldValue,
 		}).
 		With(IndexWriteAdmissionFact{
-			Target:  IndexWriteAdmissionPathKey(other),
-			KeyPath: IndexWriteAdmissionPathKey(key),
+			Target:  StablePathKey(other),
+			KeyPath: StablePathKey(key),
 			Key:     product.FromType(typ.Any),
 			Value:   edgeValue,
 		})
 
-	got := facts.PreservePresentElementWrite(IndexWriteAdmissionPathKey(target), written)
+	got := facts.PreservePresentElementWrite(StablePathKey(target), written)
 	admitted, ok := got.Admission(IndexWriteQuery{
 		Target:  target,
 		KeyPath: key,
@@ -148,7 +148,7 @@ func TestIndexWriteAdmissionFactsPreservePresentElementWriteWeakensSameTableProo
 func TestIndexWriteAdmissionFactsMatchesByKeyValueWhenKeyPathAbsent(t *testing.T) {
 	target := constraint.NewPath(cfg.SymbolID(10), "m")
 	facts := IndexWriteAdmissionFacts{}.With(IndexWriteAdmissionFact{
-		Target: IndexWriteAdmissionPathKey(target),
+		Target: StablePathKey(target),
 		Key:    product.FromType(typ.LiteralString("name")),
 		Value:  product.FromType(typ.String),
 	})
@@ -166,8 +166,8 @@ func TestIndexWriteAdmissionFactsMatchesExactKeyPathWithUnknownKeyValue(t *testi
 	key := constraint.NewPath(cfg.SymbolID(21), "k")
 	otherKey := constraint.NewPath(cfg.SymbolID(22), "other")
 	facts := IndexWriteAdmissionFacts{}.With(IndexWriteAdmissionFact{
-		Target:  IndexWriteAdmissionPathKey(target),
-		KeyPath: IndexWriteAdmissionPathKey(key),
+		Target:  StablePathKey(target),
+		KeyPath: StablePathKey(key),
 		Key:     product.FromType(typ.Unknown),
 		Value:   product.FromType(typ.String),
 	})

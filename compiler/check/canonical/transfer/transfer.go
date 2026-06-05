@@ -2546,11 +2546,17 @@ func (t *Transfer) seedIndexedIterKeyArrayValues(out *flow.PointState, arrayPath
 			if !ok || tablePath.IsEmpty() || value.IsZero() {
 				continue
 			}
-			out.IndexWrites = out.IndexWrites.With(flow.IndexWriteAdmissionFact{
-				Target:  flow.IndexWriteAdmissionPathKey(tablePath),
-				KeyPath: flow.IndexWriteAdmissionPathKey(keyPath),
-				Key:     product.FromType(keyType),
-				Value:   value,
+			tableAddr, tableOK := flow.StableAddressOfPath(tablePath)
+			keyAddr, keyOK := flow.StableAddressOfPath(keyPath)
+			if !tableOK || !keyOK {
+				continue
+			}
+			out.IndexWrites = out.IndexWrites.WithAddress(flow.IndexWriteAdmissionAddressFact{
+				Target:     tableAddr,
+				KeyPath:    keyAddr,
+				HasKeyPath: true,
+				Key:        product.FromType(keyType),
+				Value:      value,
 			})
 		}
 	}
