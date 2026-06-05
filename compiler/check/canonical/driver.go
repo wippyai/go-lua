@@ -2934,19 +2934,8 @@ func (ct callTyper) callEntryFunctionArgRefs(arg ast.Expr, refs flow.FunctionRef
 	if d == nil || d.activeProgram == nil {
 		return flow.FunctionRefSet{}, false
 	}
-	got, ok := canonicalcall.ResolveCallbackArgRefs(canonicalcall.CallbackArgInput{
-		Arg: arg,
-		FunctionLiteral: func(fn *ast.FunctionExpr) (summary.FuncRef, bool) {
-			return d.activeProgram.refByFunc(fn)
-		},
-		FunctionRefs: func(expr ast.Expr) ([]summary.FuncRef, bool) {
-			resolver := ct.targetResolver(d.activeProgram)
-			return resolver.ResolveFunctionRefsAtExpr(expr, refs)
-		},
-		StaticExpr: func(expr ast.Expr) (summary.FuncRef, bool) {
-			return ct.targetResolver(d.activeProgram).ResolveStaticExpr(expr)
-		},
-	})
+	resolver := ct.targetResolver(d.activeProgram)
+	got, ok := resolver.ResolveCallbackArgRefs(arg, refs, d.activeProgram.refByFunc)
 	return functionRefSetFromSummaryRefs(got, ok)
 }
 
@@ -3214,18 +3203,7 @@ func (ct callTyper) callbackArgRefs(arg ast.Expr, prog *program, refs flow.Funct
 		return nil, false
 	}
 	resolver := ct.targetResolver(prog)
-	return canonicalcall.ResolveCallbackArgRefs(canonicalcall.CallbackArgInput{
-		Arg: arg,
-		FunctionLiteral: func(fn *ast.FunctionExpr) (summary.FuncRef, bool) {
-			return prog.refByFunc(fn)
-		},
-		FunctionRefs: func(expr ast.Expr) ([]summary.FuncRef, bool) {
-			return resolver.ResolveFunctionRefsAtExpr(expr, refs)
-		},
-		StaticExpr: func(expr ast.Expr) (summary.FuncRef, bool) {
-			return resolver.ResolveStaticExpr(expr)
-		},
-	})
+	return resolver.ResolveCallbackArgRefs(arg, refs, prog.refByFunc)
 }
 
 func (ct callTyper) FunctionValueByRef(ref flow.FunctionRef, cells flow.CaptureCells, refs flow.FunctionRefs, closures flow.ClosureRefs) (typ.Type, bool) {

@@ -131,6 +131,35 @@ func TestTargetResolverFunctionRefsAtExprAreAuthoritative(t *testing.T) {
 	}
 }
 
+func TestTargetResolverCallbackArgRefsUseLiveAxisBeforeStaticFallback(t *testing.T) {
+	t.Parallel()
+
+	call, bindings := testCallForPath()
+	path := callPathKey(bindings, call.Func)
+	staticUsed := false
+	resolver := TargetResolver{
+		Bindings: bindings,
+		Static: StaticTargetLookup{
+			FuncBySymbol: func(cfg.SymbolID) (summary.FuncRef, bool) {
+				staticUsed = true
+				return summary.FuncRef{GraphID: 99}, true
+			},
+		},
+	}
+	liveRefs := flow.WithFunctionRef(nil, path, flow.FunctionRefSetOf(
+		flow.FunctionRef{GraphID: 20},
+		flow.FunctionRef{GraphID: 10},
+	))
+
+	got, ok := resolver.ResolveCallbackArgRefs(call.Func, liveRefs, nil)
+	if !ok || len(got) != 2 || got[0].GraphID != 10 || got[1].GraphID != 20 {
+		t.Fatalf("ResolveCallbackArgRefs = %+v/%v, want sorted live refs 10,20", got, ok)
+	}
+	if staticUsed {
+		t.Fatal("static fallback ran despite authoritative live callback refs")
+	}
+}
+
 func TestTargetResolverStaticMethodFallbackOrder(t *testing.T) {
 	t.Parallel()
 

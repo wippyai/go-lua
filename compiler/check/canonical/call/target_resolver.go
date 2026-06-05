@@ -110,6 +110,26 @@ func (r TargetResolver) ResolveFunctionRefsAtExpr(expr ast.Expr, refs flow.Funct
 	return r.directExprRefsFromState(expr, refs)
 }
 
+// ResolveCallbackArgRefs resolves a callback argument using the same precedence
+// as call target resolution: direct function literal, live FunctionRefs axis,
+// then immutable static expression fallback.
+func (r TargetResolver) ResolveCallbackArgRefs(
+	arg ast.Expr,
+	refs flow.FunctionRefs,
+	functionLiteral func(*ast.FunctionExpr) (summary.FuncRef, bool),
+) ([]summary.FuncRef, bool) {
+	return ResolveCallbackArgRefs(CallbackArgInput{
+		Arg:             arg,
+		FunctionLiteral: functionLiteral,
+		FunctionRefs: func(expr ast.Expr) ([]summary.FuncRef, bool) {
+			return r.ResolveFunctionRefsAtExpr(expr, refs)
+		},
+		StaticExpr: func(expr ast.Expr) (summary.FuncRef, bool) {
+			return r.ResolveStaticExpr(expr)
+		},
+	})
+}
+
 // ResolveStaticMethod resolves a method call through immutable topology facts
 // only: receiver field function first, then current-self prototype method.
 func (r TargetResolver) ResolveStaticMethod(call *ast.FuncCallExpr) (summary.FuncRef, bool) {
