@@ -42,6 +42,12 @@ func ReconcilePathFactWithDeclaredRead(narrowed, declared typ.Type) (typ.Type, b
 	if nilable && typ.TypeEquals(narrowed, typ.Nil) {
 		return narrowed, true
 	}
+	if narrowedNonNil, narrowedNilable := SplitNilable(narrowed); narrowedNilable && !nilable && narrowedNonNil != nil {
+		narrowedNonNil = unwrap.Alias(narrowedNonNil)
+		if typ.TypeEquals(narrowedNonNil, declared) || samePathFactFamily(narrowedNonNil, declared) {
+			return declared, true
+		}
+	}
 	// A record literal flowing into a declared map field is over-precise for the
 	// ascribed map type. Widen it to the declared map so a downstream read sees the
 	// keyed-container shape (an index on it is a map lookup), and keep the declared

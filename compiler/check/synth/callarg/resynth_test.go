@@ -158,6 +158,23 @@ func TestFull_IdentifierDoesNotUseExpectedAsProofForUnknown(t *testing.T) {
 	}
 }
 
+func TestFullWithExpectedProofs_IdentifierAsksExpectedAwareObserver(t *testing.T) {
+	expectedType := typ.String
+	synthWithExpected := func(arg ast.Expr, p cfg.Point, expected typ.Type) typ.Type {
+		if expected != expectedType {
+			t.Fatalf("identifier synthesis expected = %v, want %v", expected, expectedType)
+		}
+		return expectedType
+	}
+
+	reSynth := FullWithExpectedProofs(synthWithExpected, nil, 0)
+	result := reSynth(0, &ast.IdentExpr{Value: "self"}, expectedType)
+
+	if result != expectedType {
+		t.Fatalf("got %v, want %v", result, expectedType)
+	}
+}
+
 func TestFull_IdentifierDoesNotUseRecursiveExpectedAsProof(t *testing.T) {
 	inferred := typ.Func().Param("value", typ.String).Build()
 	node := typ.NewRecursive("Node", func(self typ.Type) typ.Type {

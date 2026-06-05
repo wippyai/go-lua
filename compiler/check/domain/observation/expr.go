@@ -17,6 +17,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/check/domain/paramevidence"
 	flowpath "github.com/wippyai/go-lua/compiler/check/domain/path"
 	"github.com/wippyai/go-lua/compiler/check/scope"
+	phasecore "github.com/wippyai/go-lua/compiler/check/synth/core"
 	"github.com/wippyai/go-lua/compiler/check/synth/intercept"
 	"github.com/wippyai/go-lua/compiler/check/synth/ops"
 	"github.com/wippyai/go-lua/types/constraint"
@@ -549,6 +550,9 @@ func (p Projector) isUnannotatedParamSymbol(sym cfg.SymbolID) bool {
 	if p.cfg.Inputs != nil && p.cfg.Inputs.AnnotatedVars[sym] {
 		return false
 	}
+	if p.cfg.Facts != nil && p.cfg.Facts.IsAnnotated(sym) {
+		return false
+	}
 	fn := p.cfg.Graph.Func()
 	if fn == nil || fn.ParList == nil {
 		return false
@@ -556,6 +560,9 @@ func (p Projector) isUnannotatedParamSymbol(sym cfg.SymbolID) bool {
 	for _, slot := range p.cfg.Graph.ParamSlotsReadOnly() {
 		if slot.Symbol != sym {
 			continue
+		}
+		if slot.IsImplicitSelf {
+			return true
 		}
 		sourceIdx, hasSource := slot.SourceParamIndex()
 		if !hasSource {
@@ -1531,26 +1538,73 @@ func expectedTable(expected typ.Type) bool {
 }
 
 func (p Projector) functionType(fn *ast.FunctionExpr, expected typ.Type) typ.Type {
-	expectedFn := unwrap.Function(expected)
+	expectedFn := phasecore.ExpectedFunctionLiteralSignature(fn, expected)
+	var sourceSig *typ.Function
+	if p.cfg.LiteralSignatureProvider != nil {
+		sourceSig = p.cfg.LiteralSignatureProvider.Lookup(fn)
+	}
 	if p.cfg.Bindings != nil && p.cfg.FunctionType != nil {
 		if sym, ok := p.cfg.Bindings.FuncLitSymbol(fn); ok && sym != 0 {
 			if t := p.cfg.FunctionType(sym); t != nil {
 				if observed := unwrap.Function(t); observed != nil {
+					if sourceSig != nil && expectedFn != nil {
+						return contextualFunctionLiteralTypeWithSource(fn, observed, sourceSig, expectedFn)
+					}
 					return contextualFunctionLiteralType(fn, observed, expectedFn)
 				}
 				return t
 			}
 		}
 	}
-	if p.cfg.LiteralSignatureProvider != nil {
-		if sig := p.cfg.LiteralSignatureProvider.Lookup(fn); sig != nil {
-			return contextualFunctionLiteralType(fn, sig, expectedFn)
-		}
+	if sourceSig != nil {
+		return contextualFunctionLiteralType(fn, sourceSig, expectedFn)
 	}
 	if expectedFn != nil {
 		return expectedFn
 	}
 	return typ.Func().Build()
+}
+
+func contextualFunctionLiteralTypeWithSource(fn *ast.FunctionExpr, observed, source, expected *typ.Function) *typ.Function {
+	if source == nil {
+		return contextualFunctionLiteralType(fn, observed, expected)
+	}
+	sourceView := contextualFunctionLiteralType(fn, source, expected)
+	observedView := contextualFunctionLiteralType(fn, observed, expected)
+	if observedView == nil {
+		return sourceView
+	}
+	builder := typ.Func().ReserveParams(len(sourceView.Params))
+	for _, tp := range observedView.TypeParams {
+		if tp != nil {
+			builder.TypeParamRef(tp)
+		}
+	}
+	for _, param := range sourceView.Params {
+		if param.Type == nil {
+			param.Type = typ.Unknown
+		}
+		if param.Optional {
+			builder.OptParam(param.Name, param.Type)
+		} else {
+			builder.Param(param.Name, param.Type)
+		}
+	}
+	if sourceView.Variadic != nil {
+		builder.Variadic(sourceView.Variadic)
+	}
+	returns := observedView.Returns
+	if !typ.HasKnownType(returns) && len(sourceView.Returns) > 0 {
+		returns = sourceView.Returns
+	}
+	if len(returns) > 0 {
+		builder.Returns(returns...)
+	}
+	return builder.
+		Effects(observedView.Effects).
+		Spec(observedView.Spec).
+		WithRefinement(observedView.Refinement).
+		Build()
 }
 
 func contextualFunctionLiteralType(fn *ast.FunctionExpr, observed, expected *typ.Function) *typ.Function {

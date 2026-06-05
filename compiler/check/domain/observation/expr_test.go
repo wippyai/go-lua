@@ -10,6 +10,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/check/domain/globalenv"
 	"github.com/wippyai/go-lua/compiler/check/domain/paramevidence"
 	"github.com/wippyai/go-lua/compiler/check/scope"
+	"github.com/wippyai/go-lua/compiler/parse"
 	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/db"
 	"github.com/wippyai/go-lua/types/domain/value"
@@ -19,6 +20,7 @@ import (
 	"github.com/wippyai/go-lua/types/kind"
 	querycore "github.com/wippyai/go-lua/types/query/core"
 	"github.com/wippyai/go-lua/types/typ"
+	"github.com/wippyai/go-lua/types/typ/unwrap"
 )
 
 type factsStub map[cfg.SymbolID]typ.Type
@@ -568,6 +570,55 @@ func TestProjector_CallArgumentProofUsesRootLocalBodyContractValueOrigin(t *test
 
 	if !typ.TypeEquals(got, typ.String) {
 		t.Fatalf("TypeOfWithExpected(node_id) = %v, want string", got)
+	}
+}
+
+func TestProjector_CallArgumentProofRecognizesImplicitSelfSlot(t *testing.T) {
+	source := `
+local Runner = {}
+function Runner:run(content)
+	return content
+end
+`
+	stmts, err := parse.ParseString(source, "test.lua")
+	if err != nil {
+		t.Fatalf("parse failed: %v", err)
+	}
+	root := cfg.BuildBlock(stmts)
+	if root == nil {
+		t.Fatal("BuildBlock() = nil")
+	}
+	var methodGraph *cfg.Graph
+	root.EachFuncDef(func(_ cfg.Point, info *cfg.FuncDefInfo) {
+		if methodGraph != nil || info == nil || !info.IsMethod || info.FuncExpr == nil {
+			return
+		}
+		methodGraph = cfg.BuildWithBindings(info.FuncExpr, root.Bindings())
+	})
+	if methodGraph == nil {
+		t.Fatal("expected method graph")
+	}
+	slots := methodGraph.ParamSlotsReadOnly()
+	if len(slots) == 0 || !slots[0].IsImplicitSelf || slots[0].Symbol == 0 {
+		t.Fatalf("ParamSlotsReadOnly() = %#v, want implicit self slot", slots)
+	}
+
+	self := &ast.IdentExpr{Value: "self"}
+	bindings := methodGraph.Bindings()
+	bindings.Bind(self, slots[0].Symbol)
+
+	structuralSelf := typ.NewRecord().Field("node_id", typ.String).Build()
+	nodeInstance := typ.NewAlias("NodeInstance",
+		typ.NewRecord().Field("node_id", typ.String).Field("dataflow_id", typ.String).Build(),
+	)
+	projector := New(Config{
+		Graph:    methodGraph,
+		Bindings: bindings,
+		Facts:    factsStub{slots[0].Symbol: structuralSelf},
+	})
+	got := projector.WithCallArgumentProofs().TypeOfWithExpected(self, methodGraph.Entry(), nodeInstance)
+	if !typ.TypeEquals(got, nodeInstance) {
+		t.Fatalf("TypeOfWithExpected(self, NodeInstance) = %v, want %v", got, nodeInstance)
 	}
 }
 
@@ -1485,6 +1536,48 @@ func TestProjector_FunctionLiteralUsesCanonicalProjection(t *testing.T) {
 
 	if !typ.TypeEquals(observed, want) {
 		t.Fatalf("TypeOf(function literal) = %v, want canonical projection %v", observed, want)
+	}
+}
+
+func TestProjector_FunctionLiteralExpectedBoundaryKeepsSourceParams(t *testing.T) {
+	fn := &ast.FunctionExpr{
+		ParList: &ast.ParList{
+			Names: []string{"args"},
+			Types: []ast.TypeExpr{&ast.MapTypeExpr{
+				Key:   &ast.PrimitiveTypeExpr{Name: "string"},
+				Value: &ast.PrimitiveTypeExpr{Name: "any"},
+			}},
+		},
+	}
+	bindings := bind.NewBindingTable()
+	const sym cfg.SymbolID = 17
+	bindings.SetFuncLitSymbol(fn, sym)
+
+	sourceParam := typ.NewMap(typ.String, typ.Any)
+	observedParam := typ.NewMap(typ.String, typ.String)
+	source := typ.Func().Param("args", sourceParam).Returns(typ.String).Build()
+	observed := typ.Func().Param("args", observedParam).Returns(typ.String).Build()
+	handler := typ.NewAlias("Handler", typ.Func().Param("args", sourceParam).Returns(typ.Any, typ.NewOptional(typ.String)).Build())
+
+	got := New(Config{
+		Bindings: bindings,
+		LiteralSignatureProvider: api.LiteralSigsLookup{
+			fn: source,
+		},
+		FunctionType: func(candidate cfg.SymbolID) typ.Type {
+			if candidate == sym {
+				return observed
+			}
+			return nil
+		},
+	}).TypeOfWithExpected(fn, 1, handler)
+
+	gotFn := unwrap.Function(got)
+	if gotFn == nil || len(gotFn.Params) != 1 {
+		t.Fatalf("TypeOfWithExpected(function literal) = %v, want one-param function", got)
+	}
+	if !typ.TypeEquals(gotFn.Params[0].Type, sourceParam) {
+		t.Fatalf("function literal param = %v, want source/expected %v", gotFn.Params[0].Type, sourceParam)
 	}
 }
 

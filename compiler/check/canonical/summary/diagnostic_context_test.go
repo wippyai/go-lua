@@ -532,6 +532,40 @@ func TestDiagnosticContextFrontierLetsExactReturnOverlayRefineWidenedValue(t *te
 	}
 }
 
+func TestDiagnosticContextFrontierDoesNotEraseExactReturnOverlayWithBroadRefresh(t *testing.T) {
+	root := summary.FuncRef{GraphID: 1}
+	rootKey := summary.NewKey(root, flow.CaptureCellsDomain.Bottom())
+	broad := product.FromType(typ.NewRecord().Build())
+	refined := product.FromType(typ.NewRecord().Field("render", typ.Func().Returns(typ.String).Build()).Build())
+	overlay := map[summary.Key]summary.Summary{
+		rootKey: {
+			Returns: []product.AbstractValue{refined},
+		},
+	}
+
+	result := summary.DiagnosticContextFrontier{
+		Root:           root,
+		Refs:           []summary.FuncRef{root},
+		SummaryOverlay: overlay,
+		Solve: func(summary.Key) state.FunctionState {
+			return state.FunctionStateDomain.Bottom()
+		},
+		ProjectSummary: func(summary.Key, state.FunctionState) summary.Summary {
+			return summary.Summary{
+				Returns: []product.AbstractValue{broad},
+			}
+		},
+	}.Build()
+
+	got := result.Summaries[rootKey].Returns
+	if len(got) != 1 {
+		t.Fatalf("overlay returns = %#v, want one slot", got)
+	}
+	if gotValue := got[0].ProjectValue(); !typ.TypeEquals(gotValue, refined.ProjectValue()) {
+		t.Fatalf("overlay return erased exact member: %v, want %v", gotValue, refined.ProjectValue())
+	}
+}
+
 func TestDiagnosticContextFrontierLetsExactProofOverlayRefineFromTop(t *testing.T) {
 	root := summary.FuncRef{GraphID: 1}
 	rootKey := summary.NewKey(root, flow.CaptureCellsDomain.Bottom())
@@ -607,5 +641,37 @@ func TestDiagnosticContextFrontierLetsExactEffectOverlayRefineFromIdentity(t *te
 	entries := got.Entries()
 	if len(entries) != 1 || !entries[0].MustWrite {
 		t.Fatalf("overlay cell effect kept historical identity path: %s", got.Format())
+	}
+}
+
+func TestDiagnosticContextFrontierDoesNotEraseExactEffectWithIdentityRefresh(t *testing.T) {
+	root := summary.FuncRef{GraphID: 1}
+	rootKey := summary.NewKey(root, flow.CaptureCellsDomain.Bottom())
+	sym := cfg.SymbolID(42)
+	must := flow.CaptureMustWrite(sym, product.FromType(typ.String))
+	overlay := map[summary.Key]summary.Summary{
+		rootKey: {
+			CellEffects: must,
+		},
+	}
+
+	result := summary.DiagnosticContextFrontier{
+		Root:           root,
+		Refs:           []summary.FuncRef{root},
+		SummaryOverlay: overlay,
+		Solve: func(summary.Key) state.FunctionState {
+			return state.FunctionStateDomain.Bottom()
+		},
+		ProjectSummary: func(summary.Key, state.FunctionState) summary.Summary {
+			return summary.Summary{
+				CellEffects: flow.CaptureEffectsIdentity(),
+			}
+		},
+	}.Build()
+
+	got := result.Summaries[rootKey].CellEffects
+	entries := got.Entries()
+	if len(entries) != 1 || entries[0].Symbol != sym || entries[0].Value.IsZero() {
+		t.Fatalf("overlay cell effect erased by identity refresh: %s", got.Format())
 	}
 }

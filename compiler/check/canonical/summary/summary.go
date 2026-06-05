@@ -273,11 +273,18 @@ func SummaryWiden(prev, next Summary) Summary { return SummaryDomain.Widen(prev,
 func MergeExactOverlaySummary(prev, next Summary) Summary {
 	out := SummaryDomain.Widen(prev, next)
 	out.Returns = mergeExactOverlayReturns(prev.Returns, next.Returns, out.Returns)
-	out.CellEffects = next.CellEffects
+	out.CellEffects = mergeExactOverlayCellEffects(prev.CellEffects, next.CellEffects)
 	out.ReceiverEffects = next.ReceiverEffects
 	out.Relations = next.Relations
 	out.BoundaryFacts = next.BoundaryFacts
 	return out
+}
+
+func mergeExactOverlayCellEffects(prev, next flow.CaptureEffects) flow.CaptureEffects {
+	if !next.IsTop() && !next.IsBottom() && len(next.Entries()) == 0 && len(prev.Entries()) > 0 {
+		return prev
+	}
+	return next
 }
 
 func mergeExactOverlayReturns(prev, next, widened []product.AbstractValue) []product.AbstractValue {
@@ -296,6 +303,11 @@ func mergeExactOverlayReturns(prev, next, widened []product.AbstractValue) []pro
 		if exactReturnValueRefines(candidate, baseline) &&
 			baseline.Covers(candidate) && !candidate.Covers(baseline) {
 			out[i] = candidate
+			continue
+		}
+		if exactReturnValueRefines(baseline, candidate) &&
+			candidate.Covers(baseline) && !baseline.Covers(candidate) {
+			out[i] = baseline
 		}
 	}
 	return out

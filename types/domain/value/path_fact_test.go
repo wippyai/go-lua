@@ -141,6 +141,16 @@ func TestSelectPathObservation_KeepsNilRefinementOfOptionalDeclaredRead(t *testi
 	}
 }
 
+func TestSelectPathObservation_RequiredDeclaredReadDropsSolvedOptionalShell(t *testing.T) {
+	got, ok := SelectPathObservation(typ.NewOptional(typ.String), nil, typ.String)
+	if !ok {
+		t.Fatal("path observation should reconcile optional solved fact with required declared read")
+	}
+	if !typ.TypeEquals(got, typ.String) {
+		t.Fatalf("selected observation = %v, want string", got)
+	}
+}
+
 func TestSelectSourceProjection_UsesCallpointProjectionOverStaleNilRead(t *testing.T) {
 	projected := typ.NewRecord().Field("answer", typ.String).Build()
 

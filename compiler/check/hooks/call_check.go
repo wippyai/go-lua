@@ -130,7 +130,7 @@ func checkSingleCall(
 		}
 	}
 
-	full := callarg.Full(
+	full := callarg.FullWithExpectedProofs(
 		func(arg ast.Expr, pt cfg.Point, expected typ.Type) typ.Type {
 			return callObserver.TypeOfWithExpected(arg, pt, expected)
 		},
@@ -146,7 +146,7 @@ func checkSingleCall(
 		return callObserver.AdmitGradualArgument(full(idx, arg, expected), arg, p, expected)
 	}
 	pipeline := ops.NewCallPipeline(ctx, def, len(info.Args)).
-		WithReSynth(callarg.ForArgs(info.Args, resynth))
+		WithArgProofObservation(callarg.ObserveArgsWithExpectedProofs(info.Args, resynth))
 	pipeline.Infer()
 	pipeline.ReSynthAndReInfer()
 	result := pipeline.Finish()

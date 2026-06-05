@@ -9,14 +9,20 @@ import (
 // ArgReSynth is called to re-synthesize an argument with contextual typing.
 type ArgReSynth func(idx int, expected typ.Type) typ.Type
 
+// ArgProofObservation observes an argument at a hard proof boundary. The boolean
+// result marks candidate as authoritative for that boundary, so the pipeline
+// must not discard it as a mere structural refinement.
+type ArgProofObservation func(idx int, expected typ.Type) (candidate typ.Type, authoritative bool)
+
 // CallPipeline executes staged call synthesis.
 type CallPipeline struct {
-	ctx      *db.QueryContext
-	def      CallDef
-	argCount int
-	reSynth  ArgReSynth
-	infer    InferResult
-	finished bool
+	ctx          *db.QueryContext
+	def          CallDef
+	argCount     int
+	reSynth      ArgReSynth
+	proofObserve ArgProofObservation
+	infer        InferResult
+	finished     bool
 }
 
 // NewCallPipeline creates a new call pipeline with the given definition.
@@ -31,6 +37,13 @@ func NewCallPipeline(ctx *db.QueryContext, def CallDef, argCount int) *CallPipel
 // WithReSynth sets the re-synthesis callback for contextual typing.
 func (p *CallPipeline) WithReSynth(reSynth ArgReSynth) *CallPipeline {
 	p.reSynth = reSynth
+	return p
+}
+
+// WithArgProofObservation sets the proof-aware observation callback for
+// call-boundary argument validation.
+func (p *CallPipeline) WithArgProofObservation(observe ArgProofObservation) *CallPipeline {
+	p.proofObserve = observe
 	return p
 }
 
@@ -56,7 +69,7 @@ func (p *CallPipeline) ExpectedArgType(idx int) typ.Type {
 
 // ReSynthAndReInfer re-synthesizes arguments and re-infers if needed.
 func (p *CallPipeline) ReSynthAndReInfer() bool {
-	if p.reSynth == nil || p.argCount == 0 {
+	if (p.reSynth == nil && p.proofObserve == nil) || p.argCount == 0 {
 		return false
 	}
 
@@ -97,6 +110,24 @@ func (p *CallPipeline) reSynthArgs() ([]typ.Type, bool) {
 			continue
 		}
 
+		if p.proofObserve != nil {
+			reSynthed, authoritative := p.proofObserve(i, expected)
+			if authoritative {
+				if reSynthed != nil && !typ.TypeEquals(result[i], reSynthed) {
+					result[i] = reSynthed
+					changed = true
+				}
+				continue
+			}
+			if selected, ok := refinedArg(result[i], reSynthed); ok {
+				result[i] = selected
+				changed = true
+			}
+			continue
+		}
+		if p.reSynth == nil {
+			continue
+		}
 		reSynthed := p.reSynth(i, expected)
 		if selected, ok := refinedArg(result[i], reSynthed); ok {
 			result[i] = selected

@@ -25,6 +25,22 @@ func ForArgs(args []ast.Expr, reSynth ReSynth) ops.ArgReSynth {
 	}
 }
 
+// ObserveArgsWithExpectedProofs binds AST arguments to the proof-aware call
+// pipeline hook. Only an exact expected-type selection is authoritative; other
+// returned types remain ordinary contextual refinements.
+func ObserveArgsWithExpectedProofs(args []ast.Expr, reSynth ReSynth) ops.ArgProofObservation {
+	if reSynth == nil || len(args) == 0 {
+		return nil
+	}
+	return func(idx int, expected typ.Type) (typ.Type, bool) {
+		if idx < 0 || idx >= len(args) {
+			return nil, false
+		}
+		candidate := reSynth(idx, args[idx], expected)
+		return candidate, candidate != nil && typ.TypeEquals(candidate, expected)
+	}
+}
+
 // TableCompatChecker checks if a table literal is compatible with an expected type.
 type TableCompatChecker func(table *ast.TableExpr, expected typ.Type, p cfg.Point) bool
 
@@ -38,6 +54,27 @@ func Full(
 	tableChecker TableCompatChecker,
 	p cfg.Point,
 ) ReSynth {
+	return full(synthWithExpected, tableChecker, p, false)
+}
+
+// FullWithExpectedProofs creates a ReSynth for hard call-argument proof
+// boundaries. Identifier and attribute arguments are sent through the
+// expected-aware observation surface so declared/path/body-contract proofs can
+// be selected there; unproved gradual values remain rejected by that surface.
+func FullWithExpectedProofs(
+	synthWithExpected func(arg ast.Expr, p cfg.Point, expected typ.Type) typ.Type,
+	tableChecker TableCompatChecker,
+	p cfg.Point,
+) ReSynth {
+	return full(synthWithExpected, tableChecker, p, true)
+}
+
+func full(
+	synthWithExpected func(arg ast.Expr, p cfg.Point, expected typ.Type) typ.Type,
+	tableChecker TableCompatChecker,
+	p cfg.Point,
+	expectedProofs bool,
+) ReSynth {
 	return func(idx int, arg ast.Expr, expected typ.Type) typ.Type {
 		switch a := arg.(type) {
 		case *ast.FunctionExpr:
@@ -48,13 +85,21 @@ func Full(
 			}
 			return synthWithExpected(a, p, expected)
 		case *ast.IdentExpr:
-			inferred := synthWithExpected(a, p, nil)
+			context := expected
+			if !expectedProofs {
+				context = nil
+			}
+			inferred := synthWithExpected(a, p, context)
 			if shouldRefineWithExpected(inferred, expected) {
 				return expected
 			}
 			return inferred
 		case *ast.AttrGetExpr:
-			inferred := synthWithExpected(a, p, nil)
+			context := expected
+			if !expectedProofs {
+				context = nil
+			}
+			inferred := synthWithExpected(a, p, context)
 			if shouldRefineWithExpected(inferred, expected) {
 				return expected
 			}
