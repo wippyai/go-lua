@@ -1,0 +1,6 @@
+{
+  "description": "Untrusted any cannot be assigned to a precise record or expose fields merely because the source table has similarly named fields.",
+  "run": {
+    "skip": "checker-only soundness fixture"
+  }
+}

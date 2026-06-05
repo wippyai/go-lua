@@ -1,0 +1,6 @@
+{
+  "description": "A field guard must be invalidated by writes through an alias of the guarded container.",
+  "run": {
+    "skip": "checker-only soundness fixture"
+  }
+}

@@ -1,0 +1,6 @@
+{
+  "description": "A field guard is historical after the guarded field is overwritten in the same branch.",
+  "run": {
+    "skip": "checker-only soundness fixture"
+  }
+}

@@ -1,0 +1,6 @@
+{
+  "description": "A guard on one map entry does not prove all entries of an untrusted string map.",
+  "run": {
+    "skip": "checker-only soundness fixture"
+  }
+}

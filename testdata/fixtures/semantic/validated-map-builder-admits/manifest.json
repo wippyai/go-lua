@@ -1,0 +1,3 @@
+{
+  "description": "A validated map builder may produce a typed map by copying only proven key/value entries."
+}

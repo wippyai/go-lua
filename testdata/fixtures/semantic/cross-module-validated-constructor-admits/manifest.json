@@ -1,0 +1,8 @@
+{
+  "description": "A cross-module validated constructor may return an imported precise record after guarding untrusted input.",
+  "files": [
+    "protocol.lua",
+    "provider.lua",
+    "main.lua"
+  ]
+}
