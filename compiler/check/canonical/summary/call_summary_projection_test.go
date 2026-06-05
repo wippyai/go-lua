@@ -101,6 +101,40 @@ func TestCallSummaryProjection_DeclaredStructuralReturnUsesCompatibleBodyEvidenc
 	}
 }
 
+func TestCallSummaryProjection_DeclaredClosedUnionReturnPreservesVariantCorrelation(t *testing.T) {
+	accepted := typ.NewAlias("Accepted", typ.NewRecord().
+		Field("id", typ.String).
+		Field("attempt", typ.Number).
+		Build())
+	rejected := typ.NewAlias("Rejected", typ.NewRecord().
+		Field("id", typ.String).
+		Field("reason", typ.String).
+		Build())
+	decision := typ.NewAlias("Decision", typ.NewUnion(accepted, rejected))
+	coalesced := typ.NewRecord().
+		Field("id", typ.String).
+		OptField("attempt", typ.Number).
+		Field("reason", typ.Nil).
+		Build()
+	projection := summary.CallSummaryProjection{
+		Targets: []summary.CallSummaryTarget{
+			{
+				DeclaredReturns:  true,
+				SignatureReturns: []typ.Type{decision},
+				Summary:          summary.Summary{Returns: []product.AbstractValue{product.FromType(coalesced)}},
+			},
+		},
+	}
+
+	got := projection.ReturnValues()
+	if len(got) != 1 {
+		t.Fatalf("ReturnValues len = %d, want 1", len(got))
+	}
+	if projected := got[0].ProjectValue(); !typ.TypeEquals(projected, decision) {
+		t.Fatalf("slot 0 = %v, want declared closed union %v", projected, decision)
+	}
+}
+
 func TestCallSummaryProjection_DeclaredAnyReturnRemainsCarrierValue(t *testing.T) {
 	body := typ.NewRecord().Field("count", typ.Integer).Build()
 	projection := summary.CallSummaryProjection{

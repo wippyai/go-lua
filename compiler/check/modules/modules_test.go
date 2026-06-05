@@ -271,6 +271,50 @@ func TestEnrichExportFunctionsAttachesCanonicalReturnRelations(t *testing.T) {
 	}
 }
 
+func TestEnrichExportFunctionsPreservesClosedDeclaredUnionReturns(t *testing.T) {
+	accepted := typ.NewAlias("Accepted", typ.NewRecord().
+		Field("id", typ.String).
+		Field("attempt", typ.Number).
+		Build())
+	rejected := typ.NewAlias("Rejected", typ.NewRecord().
+		Field("id", typ.String).
+		Field("reason", typ.String).
+		Build())
+	decision := typ.NewAlias("Decision", typ.NewUnion(accepted, rejected))
+	coalesced := typ.NewRecord().
+		Field("id", typ.String).
+		OptField("attempt", typ.Number).
+		Field("reason", typ.Nil).
+		Build()
+	base := typ.Func().Returns(coalesced).Build()
+	export := typ.NewRecord().Field("decide", base).Build()
+	got := EnrichExportFunctions(export, []ExportFunctionResult{{
+		TargetPath: constraint.Path{
+			Root:   "M",
+			Symbol: 1,
+			Segments: []constraint.Segment{
+				{Kind: constraint.SegmentField, Name: "decide"},
+			},
+		},
+		Result: &api.FuncResult{
+			SourceSignature: typ.Func().Returns(decision).Build(),
+		},
+	}})
+
+	rec, ok := unwrap.Alias(got).(*typ.Record)
+	if !ok {
+		t.Fatalf("enriched export = %T, want record", got)
+	}
+	field := rec.GetField("decide")
+	if field == nil {
+		t.Fatal("missing decide field")
+	}
+	fn := unwrap.Function(field.Type)
+	if fn == nil || len(fn.Returns) != 1 || !typ.TypeEquals(fn.Returns[0], decision) {
+		t.Fatalf("decide function = %v, want return %v", field.Type, decision)
+	}
+}
+
 func mustExportMemberPath(t *testing.T, names ...string) exportkey.MemberPath {
 	t.Helper()
 	segments := make([]fieldkey.Key, 0, len(names))

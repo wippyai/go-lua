@@ -4,6 +4,7 @@ import (
 	returndomain "github.com/wippyai/go-lua/compiler/check/domain/returns"
 	"github.com/wippyai/go-lua/types/domain/value/product"
 	"github.com/wippyai/go-lua/types/flow"
+	"github.com/wippyai/go-lua/types/subtype"
 	"github.com/wippyai/go-lua/types/typ"
 	"github.com/wippyai/go-lua/types/typ/subst"
 )
@@ -107,6 +108,11 @@ func RefineReturnValuesWithTypes(values []product.AbstractValue, types []typ.Typ
 		}
 		fallbackType = subst.ExpandInstantiated(fallbackType)
 		summaryType := product.ProjectValueOrUnknown(values[i])
+		if typ.IsClosedUnionAnnotation(fallbackType) && !subtype.IsSubtype(summaryType, fallbackType) {
+			out[i] = product.FromType(fallbackType)
+			changed = true
+			continue
+		}
 		refinedType, refined := typ.RefineWithFallback(summaryType, fallbackType)
 		if !refined {
 			continue

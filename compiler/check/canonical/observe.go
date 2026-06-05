@@ -1001,16 +1001,60 @@ func (f *canonicalFacts) pathObservationSolvedType(q flow.PathObservationQuery) 
 	} else {
 		refined = f.RefinedPathAt(q.Point, q.Path)
 	}
-	if refined.State != flow.StateResolved || typ.IsAbsentOrUnknown(refined.Type) {
-		return nil, false
-	}
 	if len(q.Path.Segments) == 0 {
+		if refined.State != flow.StateResolved || typ.IsAbsentOrUnknown(refined.Type) {
+			return nil, false
+		}
 		if root := f.soundPathObservationRoot(q.Point, q.Path.Symbol, refined.Type); root != nil {
 			return root, true
 		}
 		return nil, false
 	}
-	return f.preserveDeclaredPathNilability(q, refined.Type), true
+	var direct typ.Type
+	if refined.State == flow.StateResolved && !typ.IsAbsentOrUnknown(refined.Type) {
+		direct = f.preserveDeclaredPathNilability(q, refined.Type)
+	}
+	if derived, ok := f.pathObservationRootDerivedType(q); ok {
+		if typ.IsAbsentOrUnknown(direct) || pathObservationDerivedPreferred(derived, direct) {
+			return derived, true
+		}
+	}
+	if typ.IsAbsentOrUnknown(direct) {
+		return nil, false
+	}
+	return direct, true
+}
+
+func (f *canonicalFacts) pathObservationRootDerivedType(q flow.PathObservationQuery) (typ.Type, bool) {
+	if q.Path.Symbol == 0 || len(q.Path.Segments) == 0 {
+		return nil, false
+	}
+	rootPath := constraint.Path{Root: q.Path.Root, Symbol: q.Path.Symbol, Version: q.Path.Version}
+	root, ok := f.pathObservationSolvedType(flow.PathObservationQuery{
+		Point: q.Point,
+		Path:  rootPath,
+		View:  q.View,
+	})
+	if !ok || typ.IsAbsentOrUnknown(root) {
+		return nil, false
+	}
+	derived := deriveCanonicalPathSegments(root, q.Path.Segments)
+	if typ.IsAbsentOrUnknown(derived) {
+		return nil, false
+	}
+	return derived, true
+}
+
+func pathObservationDerivedPreferred(derived, direct typ.Type) bool {
+	if typ.TypeEquals(derived, direct) {
+		return false
+	}
+	if typ.MorePrecise(derived, direct) {
+		return true
+	}
+	derivedSubDirect := subtype.IsSubtype(derived, direct)
+	directSubDerived := subtype.IsSubtype(direct, derived)
+	return derivedSubDirect && !directSubDerived
 }
 
 func (f *canonicalFacts) preserveDeclaredPathNilability(q flow.PathObservationQuery, solved typ.Type) typ.Type {

@@ -49,6 +49,9 @@ func refineDeclaredReturnType(annotation, evidence typ.Type, topLevel bool) (typ
 	if topLevel && (typ.IsAny(annotation) || typ.IsAbsentOrUnknown(annotation)) {
 		return annotation, false
 	}
+	if topLevel && typ.IsClosedUnionAnnotation(annotation) && !subtype.IsSubtype(evidence, annotation) {
+		return annotation, false
+	}
 	if !topLevel && (typ.IsAny(annotation) || typ.IsAbsentOrUnknown(annotation)) {
 		return evidence, !typ.TypeEquals(annotation, evidence)
 	}

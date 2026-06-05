@@ -31,7 +31,7 @@ if decoded.ok then
         print(reason)
     else
         local accepted_id: string = outcome.id
-        local inferred_attempt: number = outcome.attempt -- expect-error
+        local inferred_attempt: number = outcome.attempt
         local reason_from_accepted: string = outcome.reason -- expect-error
         print(accepted_id .. ":" .. tostring(accepted_attempt))
     end

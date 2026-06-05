@@ -512,6 +512,9 @@ func enrichExportFunctionType(base *typ.Function, result *api.FuncResult) *typ.F
 	}
 
 	enriched := base
+	if withDeclared := preserveClosedDeclaredExportReturns(enriched, result.SourceSignature); withDeclared != nil {
+		enriched = withDeclared
+	}
 	if result.NarrowSynth != nil && len(result.Evidence.Returns) > 0 {
 		observed := returns.ObservedSummary(
 			result.Graph,
@@ -536,6 +539,26 @@ func enrichExportFunctionType(base *typ.Function, result *api.FuncResult) *typ.F
 		)
 	}
 	return enriched
+}
+
+func preserveClosedDeclaredExportReturns(base *typ.Function, source *typ.Function) *typ.Function {
+	if base == nil || source == nil || len(source.Returns) == 0 {
+		return base
+	}
+	replace := false
+	for i, declared := range source.Returns {
+		if !typ.IsClosedUnionAnnotation(declared) {
+			continue
+		}
+		if i >= len(base.Returns) || !subtype.IsSubtype(base.Returns[i], declared) {
+			replace = true
+			break
+		}
+	}
+	if !replace {
+		return base
+	}
+	return join.WithReturns(base, source.Returns)
 }
 
 func attachExportReturnRelations(fn *typ.Function, rels flow.ReturnRelations) *typ.Function {

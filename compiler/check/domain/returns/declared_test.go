@@ -52,3 +52,25 @@ func TestRefineDeclaredReturnVectorRejectsIncompatibleScalar(t *testing.T) {
 		t.Fatalf("RefineDeclaredReturnVector refined incompatible scalar to %v", got)
 	}
 }
+
+func TestRefineDeclaredReturnVectorPreservesClosedUnionAgainstCoalescedEvidence(t *testing.T) {
+	accepted := typ.NewAlias("Accepted", typ.NewRecord().
+		Field("id", typ.String).
+		Field("attempt", typ.Number).
+		Build())
+	rejected := typ.NewAlias("Rejected", typ.NewRecord().
+		Field("id", typ.String).
+		Field("reason", typ.String).
+		Build())
+	decision := typ.NewAlias("Decision", typ.NewUnion(accepted, rejected))
+	coalesced := typ.NewRecord().
+		Field("id", typ.String).
+		OptField("attempt", typ.Number).
+		Field("reason", typ.Nil).
+		Build()
+
+	got, ok := RefineDeclaredReturnVector([]typ.Type{decision}, []typ.Type{coalesced})
+	if ok {
+		t.Fatalf("RefineDeclaredReturnVector refined closed union to %v", got)
+	}
+}

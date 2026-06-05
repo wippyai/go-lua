@@ -1003,6 +1003,50 @@ func TestNarrowByCondCheckDoesNotWidenCurrentEdgeWithDeclaredBase(t *testing.T) 
 	}
 }
 
+func TestNarrowByCondCheckFieldPresenceFalseEdgeDropsPresentOnlyVariant(t *testing.T) {
+	outcomeIdent := &ast.IdentExpr{Value: "outcome"}
+	sym := cfg.SymbolID(26)
+	tr := New(keyPresenceInput(t, map[*ast.IdentExpr]cfg.SymbolID{
+		outcomeIdent: sym,
+	}), Config{})
+	accepted := typ.NewAlias("Accepted", typ.NewRecord().
+		Field("id", typ.String).
+		Field("attempt", typ.Number).
+		Build())
+	rejected := typ.NewAlias("Rejected", typ.NewRecord().
+		Field("id", typ.String).
+		Field("reason", typ.String).
+		Build())
+	decision := typ.NewAlias("Decision", typ.NewUnion(accepted, rejected))
+	tr.declaredTypes = map[cfg.SymbolID]typ.Type{sym: decision}
+	guard := &ast.AttrGetExpr{
+		Object:    outcomeIdent,
+		Key:       &ast.StringExpr{Value: "reason"},
+		KeySyntax: ast.AttrKeyDot,
+	}
+	info := &cfg.BranchInfo{
+		CondSymbol: sym,
+		CondCheck:  cfg.CondCheck{Kind: cfg.CheckTruthy},
+		CondVar:    "outcome.reason",
+		Condition:  guard,
+	}
+	out := flow.PointState{
+		Env: map[flow.ValueKey]product.AbstractValue{
+			flow.SymbolValueKey(sym): product.FromType(decision),
+		},
+	}
+
+	got := tr.narrowByCondCheck(out, info, false, false)
+	root, ok := tr.symbolValue(&got, sym)
+	if !ok {
+		t.Fatal("narrowed root missing")
+	}
+	gotType := root.ProjectValue()
+	if !typ.TypeEquals(gotType, accepted) {
+		t.Fatalf("falsy outcome.reason root = %v, want %v", gotType, accepted)
+	}
+}
+
 func TestApplyParamCondNarrowCarriesFullNarrowedProductState(t *testing.T) {
 	sym := cfg.SymbolID(13)
 	base := &ast.IdentExpr{Value: "messages"}
