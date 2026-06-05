@@ -250,14 +250,6 @@ func (ct callTyper) productClosureCallEntryContext(ref summary.FuncRef, closure 
 	return projector.productClosureContext(ref, closure, call, ctx)
 }
 
-func (ct callTyper) callEntryFactsForRef(ref summary.FuncRef, call *ast.FuncCallExpr, ctx transfer.ProductCallContext) flow.BoundaryFacts {
-	projector, ok := ct.callEntryProjector()
-	if !ok {
-		return flow.BoundaryFactsDomain.Top()
-	}
-	return projector.factsForRef(ref, call, ctx)
-}
-
 func (c callEntryProjector) productContext(ref summary.FuncRef, call *ast.FuncCallExpr, ctx transfer.ProductCallContext) (canonicalcall.EntryContext, bool) {
 	entryValues := c.productValuesForRef(ref, call, ctx.RuntimeArgValues)
 	entryFacts := c.factsForRef(ref, call, ctx)

@@ -11,9 +11,10 @@ import (
 )
 
 type cellEffectProjector struct {
-	typer   callTyper
-	program *program
-	driver  *Driver
+	typer     callTyper
+	program   *program
+	driver    *Driver
+	callEntry callEntryProjector
 }
 
 // cellEffectProjector is the canonical/program-owned adapter for caller-visible
@@ -24,10 +25,15 @@ func (ct callTyper) cellEffectProjector() (cellEffectProjector, bool) {
 	if ct.d == nil || ct.d.activeProgram == nil {
 		return cellEffectProjector{}, false
 	}
+	callEntry, ok := ct.callEntryProjector()
+	if !ok {
+		return cellEffectProjector{}, false
+	}
 	return cellEffectProjector{
-		typer:   ct,
-		program: ct.d.activeProgram,
-		driver:  ct.d,
+		typer:     ct,
+		program:   ct.d.activeProgram,
+		driver:    ct.d,
+		callEntry: callEntry,
 	}, true
 }
 
@@ -64,7 +70,7 @@ func (p cellEffectProjector) productCallEffects(
 			return p.typer.callbackArgRefs(arg, p.program, ctx.FunctionRefs)
 		},
 		EffectOf: func(ref summary.FuncRef, entryValues summary.EntryValues) flow.CaptureEffects {
-			return p.effectsForRef(ref, ctx.Cells, ctx.FunctionRefs, ctx.ClosureRefs, entryValues, p.typer.callEntryFactsForRef(ref, call, ctx))
+			return p.effectsForRef(ref, ctx.Cells, ctx.FunctionRefs, ctx.ClosureRefs, entryValues, p.callEntry.factsForRef(ref, call, ctx))
 		},
 	})
 }
