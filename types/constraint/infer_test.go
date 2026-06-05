@@ -50,6 +50,25 @@ func TestInferSetArray(t *testing.T) {
 	}
 }
 
+func TestInferSetArrayElementPreservesAliasBound(t *testing.T) {
+	cs := constraint.NewInferSet()
+	tv := typ.NewTypeVar(1)
+	event := typ.NewAlias("protocol.Event", typ.NewRecord().
+		Field("kind", typ.String).
+		Build())
+
+	constraint.MatchContra(typ.NewArray(tv), typ.NewArray(event), cs)
+
+	solution, err := cs.Solve()
+	if err != nil {
+		t.Fatalf("Solve failed: %v", err)
+	}
+	alias, ok := solution[1].(*typ.Alias)
+	if !ok || alias.Name != "protocol.Event" {
+		t.Fatalf("expected protocol.Event alias, got %v", solution[1])
+	}
+}
+
 func TestInferSetMap(t *testing.T) {
 	cs := constraint.NewInferSet()
 	tvK := typ.NewTypeVar(1)

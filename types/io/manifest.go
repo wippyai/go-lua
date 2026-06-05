@@ -239,7 +239,7 @@ func (m *Manifest) LookupType(name string) (typ.Type, bool) {
 	if !ok {
 		return nil, false
 	}
-	return resolveManifestLocalRefs(t, m.Types), true
+	return m.importProjectedType(resolveManifestLocalRefs(t, m.Types)), true
 }
 
 // AllTypes returns a copy of all type definitions.
@@ -362,7 +362,7 @@ func (m *Manifest) EnrichedExport() typ.Type {
 	}
 	m.cacheMu.RUnlock()
 
-	resolvedExport := resolveManifestLocalRefs(m.Export, m.Types)
+	resolvedExport := m.importProjectedType(resolveManifestLocalRefs(m.Export, m.Types))
 	enriched := resolvedExport
 	if resolvedExport != nil && len(m.Summaries) > 0 {
 		enriched = enrichTypeWithSummaries(resolvedExport, m.Summaries)
@@ -413,6 +413,49 @@ func resolveManifestLocalRefs(t typ.Type, defs map[string]typ.Type) typ.Type {
 	}
 
 	return resolve(t, 0)
+}
+
+func (m *Manifest) importProjectedType(t typ.Type) typ.Type {
+	if m == nil || t == nil || m.Path == "" || len(m.Types) == 0 {
+		return t
+	}
+	return qualifyManifestLocalAliases(t, m.Path, m.Types, 0)
+}
+
+func qualifyManifestLocalAliases(t typ.Type, modulePath string, defs map[string]typ.Type, depth int) typ.Type {
+	if t == nil || modulePath == "" || len(defs) == 0 || typ.DepthExceeded(depth) {
+		return t
+	}
+	return typ.Rewrite(t, func(n typ.Type) (typ.Type, bool) {
+		switch v := n.(type) {
+		case *typ.Ref:
+			if v.Module == "" && manifestHasLocalType(defs, v.Name) {
+				return typ.NewRef(modulePath, v.Name), true
+			}
+		case *typ.Alias:
+			name := qualifiedManifestAliasName(v.Name, modulePath, defs)
+			target := qualifyManifestLocalAliases(v.Target, modulePath, defs, depth+1)
+			if name != v.Name || target != v.Target {
+				return typ.NewAlias(name, target), true
+			}
+		}
+		return nil, false
+	})
+}
+
+func qualifiedManifestAliasName(name, modulePath string, defs map[string]typ.Type) string {
+	if name == "" || modulePath == "" || strings.Contains(name, ".") || !manifestHasLocalType(defs, name) {
+		return name
+	}
+	return modulePath + "." + name
+}
+
+func manifestHasLocalType(defs map[string]typ.Type, name string) bool {
+	if name == "" || len(defs) == 0 {
+		return false
+	}
+	_, ok := defs[name]
+	return ok
 }
 
 // enrichTypeWithSummaries applies summaries to function fields in a type.

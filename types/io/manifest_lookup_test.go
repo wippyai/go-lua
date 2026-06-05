@@ -67,6 +67,57 @@ func TestLookupEnrichedExport(t *testing.T) {
 	}
 }
 
+func TestLookupTypeQualifiesManifestLocalAlias(t *testing.T) {
+	event := typ.NewAlias("Event", typ.NewRecord().
+		Field("kind", typ.String).
+		Build())
+	m := NewManifest("protocol")
+	m.DefineType("Event", event)
+
+	got, ok := m.LookupType("Event")
+	if !ok {
+		t.Fatal("LookupType(Event) should resolve")
+	}
+	alias, ok := got.(*typ.Alias)
+	if !ok || alias.Name != "protocol.Event" {
+		t.Fatalf("LookupType(Event) = %v, want protocol.Event alias", got)
+	}
+}
+
+func TestLookupEnrichedExportQualifiesNestedManifestLocalAlias(t *testing.T) {
+	event := typ.NewAlias("Event", typ.NewRecord().
+		Field("kind", typ.String).
+		Build())
+	m := NewManifest("protocol")
+	m.DefineType("Event", event)
+	m.SetExport(typ.NewRecord().
+		Field("make", typ.Func().
+			Returns(event).
+			Build()).
+		Build())
+	q := &manifestQuerierStub{
+		manifests: map[string]*Manifest{"protocol": m},
+	}
+
+	got := LookupEnrichedExport(q, "protocol")
+	rec, ok := got.(*typ.Record)
+	if !ok {
+		t.Fatalf("LookupEnrichedExport = %v, want record", got)
+	}
+	field := rec.GetField("make")
+	if field == nil {
+		t.Fatalf("LookupEnrichedExport missing make field: %v", got)
+	}
+	fn, ok := field.Type.(*typ.Function)
+	if !ok || len(fn.Returns) != 1 {
+		t.Fatalf("make field = %v, want one-return function", field.Type)
+	}
+	alias, ok := fn.Returns[0].(*typ.Alias)
+	if !ok || alias.Name != "protocol.Event" {
+		t.Fatalf("make return = %v, want protocol.Event alias", fn.Returns[0])
+	}
+}
+
 func TestManifestLookupValue_RecordField(t *testing.T) {
 	m := NewManifest("a")
 	m.SetExport(typ.NewRecord().Field("name", typ.String).Build())

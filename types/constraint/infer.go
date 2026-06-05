@@ -912,24 +912,25 @@ func matchDepth(pattern, concrete typ.Type, cs *InferSet, variance subtype.Varia
 	}
 
 	pattern = unwrap.Alias(pattern)
-	concrete = unwrap.Alias(concrete)
-	concrete = subtype.WidenForInference(concrete)
-
 	if pattern.Kind() == kind.TypeVar {
 		v := pattern.(*typ.TypeVar)
+		bound := subtype.WidenForInference(concrete)
 
 		switch variance {
 		case subtype.Covariant:
-			cs.AddSubtype(v, concrete)
+			cs.AddSubtype(v, bound)
 		case subtype.Contravariant:
-			cs.AddSubtype(concrete, v)
+			cs.AddSubtype(bound, v)
 		case subtype.Invariant, subtype.Bivariant:
-			cs.AddSubtype(v, concrete)
-			cs.AddSubtype(concrete, v)
+			cs.AddSubtype(v, bound)
+			cs.AddSubtype(bound, v)
 		}
 
 		return
 	}
+
+	concrete = unwrap.Alias(concrete)
+	concrete = subtype.WidenForInference(concrete)
 
 	if concrete.Kind() == kind.TypeVar {
 		return
