@@ -131,6 +131,23 @@ func TestTargetResolverFunctionRefsAtExprAreAuthoritative(t *testing.T) {
 	}
 }
 
+func TestTargetResolverFunctionRefsFallbackToRawSymbol(t *testing.T) {
+	t.Parallel()
+
+	const rawSym cfg.SymbolID = 88
+	arg := &ast.IdentExpr{Value: "cb"}
+	resolver := TargetResolver{}
+	liveRefs := flow.WithFunctionRef(nil, flow.SymbolPathKey(rawSym, nil), flow.FunctionRefSetOf(
+		flow.FunctionRef{GraphID: 30},
+		flow.FunctionRef{GraphID: 10},
+	))
+
+	got, ok := resolver.ResolveFunctionRefsAtExprOrSymbol(arg, liveRefs, rawSym)
+	if !ok || len(got) != 2 || got[0].GraphID != 10 || got[1].GraphID != 30 {
+		t.Fatalf("ResolveFunctionRefsAtExprOrSymbol = %+v/%v, want sorted raw-symbol refs 10,30", got, ok)
+	}
+}
+
 func TestTargetResolverCallbackArgRefsUseLiveAxisBeforeStaticFallback(t *testing.T) {
 	t.Parallel()
 

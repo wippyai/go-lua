@@ -110,6 +110,23 @@ func (r TargetResolver) ResolveFunctionRefsAtExpr(expr ast.Expr, refs flow.Funct
 	return r.directExprRefsFromState(expr, refs)
 }
 
+// ResolveFunctionRefsAtExprOrSymbol resolves live FunctionRefs for expr, falling
+// back to rawSym when the CFG call-site already computed a canonical argument
+// symbol but the expression itself does not carry a static path.
+func (r TargetResolver) ResolveFunctionRefsAtExprOrSymbol(expr ast.Expr, refs flow.FunctionRefs, rawSym cfg.SymbolID) ([]summary.FuncRef, bool) {
+	if got, ok := r.ResolveFunctionRefsAtExpr(expr, refs); ok {
+		return got, true
+	}
+	if rawSym == 0 {
+		return nil, false
+	}
+	addr, ok := flow.StableAddressOfSymbol(rawSym, nil)
+	if !ok {
+		return nil, false
+	}
+	return ref.FromFlowAddress(refs, addr)
+}
+
 // ResolveCallbackArgRefs resolves a callback argument using the same precedence
 // as call target resolution: direct function literal, live FunctionRefs axis,
 // then immutable static expression fallback.

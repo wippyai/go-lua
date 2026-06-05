@@ -1384,17 +1384,7 @@ func (p *program) callbackArgRefs(g *cfg.Graph, arg ast.Expr, rawSym cfg.SymbolI
 			return p.refByFunc(fn)
 		},
 		FunctionRefs: func(expr ast.Expr) ([]summary.FuncRef, bool) {
-			if got, ok := resolver.ResolveFunctionRefsAtExpr(expr, refs); ok {
-				return got, true
-			}
-			if rawSym == 0 {
-				return nil, false
-			}
-			addr, ok := flow.StableAddressOfSymbol(rawSym, nil)
-			if !ok {
-				return nil, false
-			}
-			return canonref.FromFlowAddress(refs, addr)
+			return resolver.ResolveFunctionRefsAtExprOrSymbol(expr, refs, rawSym)
 		},
 		StaticExpr: func(expr ast.Expr) (summary.FuncRef, bool) {
 			return p.staticCallbackArgRef(g, expr, rawSym)
