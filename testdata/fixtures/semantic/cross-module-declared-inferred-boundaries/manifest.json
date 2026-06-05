@@ -1,0 +1,9 @@
+{
+  "description": "Cross-module decoding, declared requests, inferred constructor returns, and union decisions preserve positive types and reject declared or inferred lies.",
+  "files": [
+    "protocol.lua",
+    "decision.lua",
+    "decoder.lua",
+    "main.lua"
+  ]
+}
