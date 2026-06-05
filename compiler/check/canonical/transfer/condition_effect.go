@@ -129,7 +129,7 @@ func (t *Transfer) conditionProductReductionValue(
 	env := constraint.Env{
 		Resolver: fieldResolver,
 		ResolvePath: func(path constraint.Path) constraint.PathKey {
-			return flow.ConditionProofStructuralPathKey(path)
+			return flow.StablePathKey(path)
 		},
 		PathTypeAt: func(key constraint.PathKey) typ.Type {
 			if cached, ok := pathTypeCache[key]; ok {

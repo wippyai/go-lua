@@ -478,9 +478,3 @@ func isDescendantOf(child, parent constraint.Path) bool {
 	}
 	return true
 }
-
-// ConditionProofStructuralPathKey lowers a query path to the normalized
-// structural key used by canonical point-state components.
-func ConditionProofStructuralPathKey(path constraint.Path) constraint.PathKey {
-	return KeyPresencePathKey(path)
-}

@@ -1218,7 +1218,7 @@ func (f *canonicalFacts) conditionProofProjector() flow.ConditionProofProjector 
 		ConditionAt: f.ConditionAt,
 		RootTypeAt:  f.conditionProofRootTypeAt,
 		ResolvePath: func(_ cfg.Point, path constraint.Path) constraint.PathKey {
-			return flow.ConditionProofStructuralPathKey(path)
+			return flow.StablePathKey(path)
 		},
 	}
 }

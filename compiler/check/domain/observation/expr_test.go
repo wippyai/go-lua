@@ -297,7 +297,7 @@ func (f bodyContractOriginFactsStub) conditionProjector() flow.ConditionProofPro
 			return tv.Type
 		},
 		ResolvePath: func(_ cfg.Point, path constraint.Path) constraint.PathKey {
-			return flow.ConditionProofStructuralPathKey(path)
+			return flow.StablePathKey(path)
 		},
 	}
 }
