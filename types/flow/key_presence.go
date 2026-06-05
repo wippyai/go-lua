@@ -731,8 +731,20 @@ func findPathKeyLinear(xs []constraint.PathKey, want constraint.PathKey) (int, b
 
 // KillSubtree removes every presence, value-origin, or key-array fact whose
 // table, key, value, or array path is root or a descendant of root.
+// TODO(address-vocabulary): migrate callers to KillSubtreeAddress and remove
+// this PathKey compatibility wrapper.
 func (f KeyPresenceFacts) KillSubtree(root constraint.PathKey) KeyPresenceFacts {
-	if f.bottom || root == "" ||
+	rootAddr, ok := StableAddressFromKey(root)
+	if !ok {
+		return f
+	}
+	return f.KillSubtreeAddress(rootAddr)
+}
+
+// KillSubtreeAddress removes every presence, value-origin, or key-array fact
+// whose table, key, value, or array path is root or a descendant of root.
+func (f KeyPresenceFacts) KillSubtreeAddress(root StableAddress) KeyPresenceFacts {
+	if f.bottom || root.Key() == "" ||
 		(len(f.entries) == 0 && len(f.values) == 0 && len(f.arrays) == 0 &&
 			len(f.emptyArrays) == 0 && len(f.arrayValues) == 0 && len(f.appends) == 0 &&
 			len(f.pending) == 0 && len(f.appendBases) == 0 && len(f.appendEvents) == 0 &&
@@ -741,88 +753,88 @@ func (f KeyPresenceFacts) KillSubtree(root constraint.PathKey) KeyPresenceFacts 
 	}
 	entries := make([]KeyPresenceFact, 0, len(f.entries))
 	for _, e := range f.entries {
-		if keyPresencePathAffected(e.Table, root) || keyPresencePathAffected(e.Key, root) {
+		if keyPresencePathAffectedByAddress(e.Table, root) || keyPresencePathAffectedByAddress(e.Key, root) {
 			continue
 		}
 		entries = append(entries, e)
 	}
 	values := make([]KeyValueFact, 0, len(f.values))
 	for _, e := range f.values {
-		if keyPresencePathAffected(e.Table, root) ||
-			keyPresencePathAffected(e.Key, root) ||
-			keyPresencePathAffected(e.Value, root) {
+		if keyPresencePathAffectedByAddress(e.Table, root) ||
+			keyPresencePathAffectedByAddress(e.Key, root) ||
+			keyPresencePathAffectedByAddress(e.Value, root) {
 			continue
 		}
 		values = append(values, e)
 	}
 	arrays := make([]KeyArrayFact, 0, len(f.arrays))
 	for _, e := range f.arrays {
-		if keyPresencePathAffected(e.Array, root) ||
-			keyPresencePathAffected(e.Table, root) {
+		if keyPresencePathAffectedByAddress(e.Array, root) ||
+			keyPresencePathAffectedByAddress(e.Table, root) {
 			continue
 		}
 		arrays = append(arrays, e)
 	}
 	emptyArrays := make([]EmptyKeyArrayFact, 0, len(f.emptyArrays))
 	for _, e := range f.emptyArrays {
-		if keyPresencePathAffected(e.Array, root) {
+		if keyPresencePathAffectedByAddress(e.Array, root) {
 			continue
 		}
 		emptyArrays = append(emptyArrays, e)
 	}
 	arrayValues := make([]KeyArrayValueFact, 0, len(f.arrayValues))
 	for _, e := range f.arrayValues {
-		if keyPresencePathAffected(e.Array, root) ||
-			keyPresencePathAffected(e.Table, root) {
+		if keyPresencePathAffectedByAddress(e.Array, root) ||
+			keyPresencePathAffectedByAddress(e.Table, root) {
 			continue
 		}
 		arrayValues = append(arrayValues, e)
 	}
 	appends := make([]AppendedKeyFact, 0, len(f.appends))
 	for _, e := range f.appends {
-		if keyPresencePathAffected(e.Array, root) ||
-			keyPresencePathAffected(e.Key, root) {
+		if keyPresencePathAffectedByAddress(e.Array, root) ||
+			keyPresencePathAffectedByAddress(e.Key, root) {
 			continue
 		}
 		appends = append(appends, e)
 	}
 	pending := make([]PendingKeyArrayFact, 0, len(f.pending))
 	for _, e := range f.pending {
-		if keyPresencePathAffected(e.Array, root) ||
-			keyPresencePathAffected(e.Key, root) ||
-			(e.Table != "" && keyPresencePathAffected(e.Table, root)) {
+		if keyPresencePathAffectedByAddress(e.Array, root) ||
+			keyPresencePathAffectedByAddress(e.Key, root) ||
+			(e.Table != "" && keyPresencePathAffectedByAddress(e.Table, root)) {
 			continue
 		}
 		pending = append(pending, e)
 	}
 	appendBases := make([]AppendHistoryBaseFact, 0, len(f.appendBases))
 	for _, e := range f.appendBases {
-		if keyPresencePathAffected(e.Array, root) {
+		if keyPresencePathAffectedByAddress(e.Array, root) {
 			continue
 		}
 		appendBases = append(appendBases, e)
 	}
 	appendEvents := make([]AppendHistoryEventFact, 0, len(f.appendEvents))
 	for _, e := range f.appendEvents {
-		if keyPresencePathAffected(e.Array, root) ||
-			keyPresencePathAffected(e.Key, root) {
+		if keyPresencePathAffectedByAddress(e.Array, root) ||
+			keyPresencePathAffectedByAddress(e.Key, root) {
 			continue
 		}
 		appendEvents = append(appendEvents, e)
 	}
 	appendCoverage := make([]AppendHistoryCoverageFact, 0, len(f.appendCoverage))
 	for _, e := range f.appendCoverage {
-		if keyPresencePathAffected(e.Array, root) ||
-			keyPresencePathAffected(e.Key, root) ||
-			keyPresencePathAffected(e.Table, root) {
+		if keyPresencePathAffectedByAddress(e.Array, root) ||
+			keyPresencePathAffectedByAddress(e.Key, root) ||
+			keyPresencePathAffectedByAddress(e.Table, root) {
 			continue
 		}
 		appendCoverage = append(appendCoverage, e)
 	}
 	appendOrigins := make([]AppendElementFieldOriginFact, 0, len(f.appendOrigins))
 	for _, e := range f.appendOrigins {
-		if keyPresencePathAffected(e.Array, root) ||
-			keyPresencePathAffected(e.Source, root) {
+		if keyPresencePathAffectedByAddress(e.Array, root) ||
+			keyPresencePathAffectedByAddress(e.Source, root) {
 			continue
 		}
 		appendOrigins = append(appendOrigins, e)
@@ -835,8 +847,20 @@ func (f KeyPresenceFacts) KillSubtree(root constraint.PathKey) KeyPresenceFacts 
 // the written member too: a write to t.x can change the value of t[k] when k may
 // be "x", so any table/key/value fact whose table overlaps the written path is
 // dropped.
+// TODO(address-vocabulary): migrate callers to KillAffectedByWriteAddress and
+// remove this PathKey compatibility wrapper.
 func (f KeyPresenceFacts) KillAffectedByWrite(writePath constraint.PathKey) KeyPresenceFacts {
-	if f.bottom || writePath == "" ||
+	writeAddr, ok := StableAddressFromKey(writePath)
+	if !ok {
+		return f
+	}
+	return f.KillAffectedByWriteAddress(writeAddr)
+}
+
+// KillAffectedByWriteAddress removes facts that are no longer must-facts after
+// a write to write.
+func (f KeyPresenceFacts) KillAffectedByWriteAddress(write StableAddress) KeyPresenceFacts {
+	if f.bottom || write.Key() == "" ||
 		(len(f.entries) == 0 && len(f.values) == 0 && len(f.arrays) == 0 &&
 			len(f.emptyArrays) == 0 && len(f.arrayValues) == 0 && len(f.appends) == 0 &&
 			len(f.pending) == 0 && len(f.appendBases) == 0 && len(f.appendEvents) == 0 &&
@@ -845,89 +869,89 @@ func (f KeyPresenceFacts) KillAffectedByWrite(writePath constraint.PathKey) KeyP
 	}
 	entries := make([]KeyPresenceFact, 0, len(f.entries))
 	for _, e := range f.entries {
-		if keyPresencePathsOverlap(e.Table, writePath) ||
-			keyPresencePathsOverlap(e.Key, writePath) {
+		if keyPresencePathOverlapsAddress(e.Table, write) ||
+			keyPresencePathOverlapsAddress(e.Key, write) {
 			continue
 		}
 		entries = append(entries, e)
 	}
 	values := make([]KeyValueFact, 0, len(f.values))
 	for _, e := range f.values {
-		if keyPresencePathsOverlap(e.Table, writePath) ||
-			keyPresencePathsOverlap(e.Key, writePath) ||
-			keyPresencePathsOverlap(e.Value, writePath) {
+		if keyPresencePathOverlapsAddress(e.Table, write) ||
+			keyPresencePathOverlapsAddress(e.Key, write) ||
+			keyPresencePathOverlapsAddress(e.Value, write) {
 			continue
 		}
 		values = append(values, e)
 	}
 	arrays := make([]KeyArrayFact, 0, len(f.arrays))
 	for _, e := range f.arrays {
-		if keyPresencePathsOverlap(e.Array, writePath) ||
-			keyPresencePathsOverlap(e.Table, writePath) {
+		if keyPresencePathOverlapsAddress(e.Array, write) ||
+			keyPresencePathOverlapsAddress(e.Table, write) {
 			continue
 		}
 		arrays = append(arrays, e)
 	}
 	emptyArrays := make([]EmptyKeyArrayFact, 0, len(f.emptyArrays))
 	for _, e := range f.emptyArrays {
-		if keyPresencePathsOverlap(e.Array, writePath) {
+		if keyPresencePathOverlapsAddress(e.Array, write) {
 			continue
 		}
 		emptyArrays = append(emptyArrays, e)
 	}
 	arrayValues := make([]KeyArrayValueFact, 0, len(f.arrayValues))
 	for _, e := range f.arrayValues {
-		if keyPresencePathsOverlap(e.Array, writePath) ||
-			keyPresencePathsOverlap(e.Table, writePath) {
+		if keyPresencePathOverlapsAddress(e.Array, write) ||
+			keyPresencePathOverlapsAddress(e.Table, write) {
 			continue
 		}
 		arrayValues = append(arrayValues, e)
 	}
 	appends := make([]AppendedKeyFact, 0, len(f.appends))
 	for _, e := range f.appends {
-		if keyPresencePathsOverlap(e.Array, writePath) ||
-			keyPresencePathsOverlap(e.Key, writePath) {
+		if keyPresencePathOverlapsAddress(e.Array, write) ||
+			keyPresencePathOverlapsAddress(e.Key, write) {
 			continue
 		}
 		appends = append(appends, e)
 	}
 	pending := make([]PendingKeyArrayFact, 0, len(f.pending))
 	for _, e := range f.pending {
-		if keyPresencePathsOverlap(e.Array, writePath) ||
-			keyPresencePathsOverlap(e.Key, writePath) ||
-			(e.Table != "" && keyPresencePathsOverlap(e.Table, writePath)) {
+		if keyPresencePathOverlapsAddress(e.Array, write) ||
+			keyPresencePathOverlapsAddress(e.Key, write) ||
+			(e.Table != "" && keyPresencePathOverlapsAddress(e.Table, write)) {
 			continue
 		}
 		pending = append(pending, e)
 	}
 	appendBases := make([]AppendHistoryBaseFact, 0, len(f.appendBases))
 	for _, e := range f.appendBases {
-		if keyPresencePathsOverlap(e.Array, writePath) {
+		if keyPresencePathOverlapsAddress(e.Array, write) {
 			continue
 		}
 		appendBases = append(appendBases, e)
 	}
 	appendEvents := make([]AppendHistoryEventFact, 0, len(f.appendEvents))
 	for _, e := range f.appendEvents {
-		if keyPresencePathsOverlap(e.Array, writePath) ||
-			keyPresencePathsOverlap(e.Key, writePath) {
+		if keyPresencePathOverlapsAddress(e.Array, write) ||
+			keyPresencePathOverlapsAddress(e.Key, write) {
 			continue
 		}
 		appendEvents = append(appendEvents, e)
 	}
 	appendCoverage := make([]AppendHistoryCoverageFact, 0, len(f.appendCoverage))
 	for _, e := range f.appendCoverage {
-		if keyPresencePathsOverlap(e.Array, writePath) ||
-			keyPresencePathsOverlap(e.Key, writePath) ||
-			keyPresencePathsOverlap(e.Table, writePath) {
+		if keyPresencePathOverlapsAddress(e.Array, write) ||
+			keyPresencePathOverlapsAddress(e.Key, write) ||
+			keyPresencePathOverlapsAddress(e.Table, write) {
 			continue
 		}
 		appendCoverage = append(appendCoverage, e)
 	}
 	appendOrigins := make([]AppendElementFieldOriginFact, 0, len(f.appendOrigins))
 	for _, e := range f.appendOrigins {
-		if keyPresencePathsOverlap(e.Array, writePath) ||
-			keyPresencePathsOverlap(e.Source, writePath) {
+		if keyPresencePathOverlapsAddress(e.Array, write) ||
+			keyPresencePathOverlapsAddress(e.Source, write) {
 			continue
 		}
 		appendOrigins = append(appendOrigins, e)
@@ -940,8 +964,20 @@ func (f KeyPresenceFacts) KillAffectedByWrite(writePath constraint.PathKey) KeyP
 // value-specific readback facts, but it cannot make an already-present key of the
 // table absent: if the written key aliases an existing proven key, the new
 // non-nil value still leaves that key present.
+// TODO(address-vocabulary): migrate callers to
+// KillAffectedByPresentElementWriteAddress and remove this PathKey wrapper.
 func (f KeyPresenceFacts) KillAffectedByPresentElementWrite(writePath constraint.PathKey) KeyPresenceFacts {
-	if f.bottom || writePath == "" ||
+	writeAddr, ok := StableAddressFromKey(writePath)
+	if !ok {
+		return f
+	}
+	return f.KillAffectedByPresentElementWriteAddress(writeAddr)
+}
+
+// KillAffectedByPresentElementWriteAddress removes facts invalidated by a write
+// of a definitely-present value to a table element or field.
+func (f KeyPresenceFacts) KillAffectedByPresentElementWriteAddress(write StableAddress) KeyPresenceFacts {
+	if f.bottom || write.Key() == "" ||
 		(len(f.entries) == 0 && len(f.values) == 0 && len(f.arrays) == 0 &&
 			len(f.emptyArrays) == 0 && len(f.arrayValues) == 0 && len(f.appends) == 0 &&
 			len(f.pending) == 0 && len(f.appendBases) == 0 && len(f.appendEvents) == 0 &&
@@ -950,84 +986,84 @@ func (f KeyPresenceFacts) KillAffectedByPresentElementWrite(writePath constraint
 	}
 	entries := make([]KeyPresenceFact, 0, len(f.entries))
 	for _, e := range f.entries {
-		if keyPresencePathsOverlap(e.Key, writePath) {
+		if keyPresencePathOverlapsAddress(e.Key, write) {
 			continue
 		}
 		entries = append(entries, e)
 	}
 	values := make([]KeyValueFact, 0, len(f.values))
 	for _, e := range f.values {
-		if keyPresencePathsOverlap(e.Table, writePath) ||
-			keyPresencePathsOverlap(e.Key, writePath) ||
-			keyPresencePathsOverlap(e.Value, writePath) {
+		if keyPresencePathOverlapsAddress(e.Table, write) ||
+			keyPresencePathOverlapsAddress(e.Key, write) ||
+			keyPresencePathOverlapsAddress(e.Value, write) {
 			continue
 		}
 		values = append(values, e)
 	}
 	arrays := make([]KeyArrayFact, 0, len(f.arrays))
 	for _, e := range f.arrays {
-		if keyPresencePathsOverlap(e.Array, writePath) {
+		if keyPresencePathOverlapsAddress(e.Array, write) {
 			continue
 		}
 		arrays = append(arrays, e)
 	}
 	emptyArrays := make([]EmptyKeyArrayFact, 0, len(f.emptyArrays))
 	for _, e := range f.emptyArrays {
-		if keyPresencePathsOverlap(e.Array, writePath) {
+		if keyPresencePathOverlapsAddress(e.Array, write) {
 			continue
 		}
 		emptyArrays = append(emptyArrays, e)
 	}
 	arrayValues := make([]KeyArrayValueFact, 0, len(f.arrayValues))
 	for _, e := range f.arrayValues {
-		if keyPresencePathsOverlap(e.Array, writePath) {
+		if keyPresencePathOverlapsAddress(e.Array, write) {
 			continue
 		}
 		arrayValues = append(arrayValues, e)
 	}
 	appends := make([]AppendedKeyFact, 0, len(f.appends))
 	for _, e := range f.appends {
-		if keyPresencePathsOverlap(e.Array, writePath) ||
-			keyPresencePathsOverlap(e.Key, writePath) {
+		if keyPresencePathOverlapsAddress(e.Array, write) ||
+			keyPresencePathOverlapsAddress(e.Key, write) {
 			continue
 		}
 		appends = append(appends, e)
 	}
 	pending := make([]PendingKeyArrayFact, 0, len(f.pending))
 	for _, e := range f.pending {
-		if keyPresencePathsOverlap(e.Array, writePath) ||
-			keyPresencePathsOverlap(e.Key, writePath) {
+		if keyPresencePathOverlapsAddress(e.Array, write) ||
+			keyPresencePathOverlapsAddress(e.Key, write) {
 			continue
 		}
 		pending = append(pending, e)
 	}
 	appendBases := make([]AppendHistoryBaseFact, 0, len(f.appendBases))
 	for _, e := range f.appendBases {
-		if keyPresencePathsOverlap(e.Array, writePath) {
+		if keyPresencePathOverlapsAddress(e.Array, write) {
 			continue
 		}
 		appendBases = append(appendBases, e)
 	}
 	appendEvents := make([]AppendHistoryEventFact, 0, len(f.appendEvents))
 	for _, e := range f.appendEvents {
-		if keyPresencePathsOverlap(e.Array, writePath) ||
-			keyPresencePathsOverlap(e.Key, writePath) {
+		if keyPresencePathOverlapsAddress(e.Array, write) ||
+			keyPresencePathOverlapsAddress(e.Key, write) {
 			continue
 		}
 		appendEvents = append(appendEvents, e)
 	}
 	appendCoverage := make([]AppendHistoryCoverageFact, 0, len(f.appendCoverage))
 	for _, e := range f.appendCoverage {
-		if keyPresencePathsOverlap(e.Array, writePath) ||
-			keyPresencePathsOverlap(e.Key, writePath) {
+		if keyPresencePathOverlapsAddress(e.Array, write) ||
+			keyPresencePathOverlapsAddress(e.Key, write) {
 			continue
 		}
 		appendCoverage = append(appendCoverage, e)
 	}
 	appendOrigins := make([]AppendElementFieldOriginFact, 0, len(f.appendOrigins))
 	for _, e := range f.appendOrigins {
-		if keyPresencePathsOverlap(e.Array, writePath) ||
-			keyPresencePathsOverlap(e.Source, writePath) {
+		if keyPresencePathOverlapsAddress(e.Array, write) ||
+			keyPresencePathOverlapsAddress(e.Source, write) {
 			continue
 		}
 		appendOrigins = append(appendOrigins, e)
@@ -2212,16 +2248,14 @@ func appendElementFieldOriginsForBases(
 	return append([]AppendElementFieldOriginFact(nil), out...)
 }
 
-func keyPresencePathAffected(path, root constraint.PathKey) bool {
-	pathAddr, pathOK := StableAddressFromKey(path)
-	rootAddr, rootOK := StableAddressFromKey(root)
-	return pathOK && rootOK && pathAddr.HasPrefix(rootAddr)
+func keyPresencePathAffectedByAddress(path constraint.PathKey, root StableAddress) bool {
+	pathAddr, ok := StableAddressFromKey(path)
+	return ok && pathAddr.HasPrefix(root)
 }
 
-func keyPresencePathsOverlap(a, b constraint.PathKey) bool {
-	left, leftOK := StableAddressFromKey(a)
-	right, rightOK := StableAddressFromKey(b)
-	return leftOK && rightOK && left.Overlaps(right)
+func keyPresencePathOverlapsAddress(path constraint.PathKey, addr StableAddress) bool {
+	pathAddr, ok := StableAddressFromKey(path)
+	return ok && pathAddr.Overlaps(addr)
 }
 
 func keyArrayFactsForArray(facts []KeyArrayFact, array constraint.PathKey) []KeyArrayFact {

@@ -201,6 +201,31 @@ func TestKeyPresenceFactsKillAffectedByWriteDropsOverlappingTableFacts(t *testin
 	}
 }
 
+func TestKeyPresenceFactsAddressInvalidationSupportsNamedRoots(t *testing.T) {
+	table, _ := StableAddressOfRoot("$0", nil)
+	tableMember, _ := StableAddressOfRoot("$0", []constraint.Segment{{Kind: constraint.SegmentField, Name: "x"}})
+	key, _ := StableAddressOfRoot("$1", nil)
+	otherTable, _ := StableAddressOfRoot("$2", nil)
+	array, _ := StableAddressOfRoot("$3", nil)
+
+	facts := KeyPresenceFacts{}.
+		With(table.Key(), key.Key()).
+		With(otherTable.Key(), key.Key()).
+		WithKeyArray(array.Key(), table.Key()).
+		WithEmptyKeyArray(array.Key())
+
+	killed := facts.KillAffectedByWriteAddress(tableMember)
+	if killed.Has(table.Key(), key.Key()) || len(killed.KeyArrayTables(array.Key())) != 0 {
+		t.Fatalf("address member write kept stale table facts: %s", killed.Format())
+	}
+	if !killed.Has(otherTable.Key(), key.Key()) {
+		t.Fatalf("address member write killed unrelated table fact: %s", killed.Format())
+	}
+	if !killed.HasEmptyKeyArray(array.Key()) {
+		t.Fatalf("address member write killed independent empty-array fact: %s", killed.Format())
+	}
+}
+
 func TestKeyPresenceFactsPresentElementWriteKeepsKeyPresenceButDropsValueFacts(t *testing.T) {
 	table := SymbolPathKey(cfg.SymbolID(1), nil)
 	tableMember := SymbolPathKey(cfg.SymbolID(1), []constraint.Segment{
@@ -237,6 +262,44 @@ func TestKeyPresenceFactsPresentElementWriteKeepsKeyPresenceButDropsValueFacts(t
 	}
 	if !killed.HasEmptyKeyArray(array) {
 		t.Fatalf("present table element write killed independent empty-array fact: %s", killed.Format())
+	}
+}
+
+func TestKeyPresenceFactsPresentElementAddressWriteKeepsPresence(t *testing.T) {
+	table, _ := StableAddressOfRoot("$0", nil)
+	tableMember, _ := StableAddressOfRoot("$0", []constraint.Segment{{Kind: constraint.SegmentField, Name: "x"}})
+	key, _ := StableAddressOfRoot("$1", nil)
+	value, _ := StableAddressOfRoot("$2", nil)
+
+	facts := KeyPresenceFacts{}.
+		With(table.Key(), key.Key()).
+		WithValue(table.Key(), key.Key(), value.Key())
+
+	killed := facts.KillAffectedByPresentElementWriteAddress(tableMember)
+	if !killed.Has(table.Key(), key.Key()) {
+		t.Fatalf("present element address write dropped key-presence fact: %s", killed.Format())
+	}
+	if killed.HasValue(table.Key(), key.Key(), value.Key()) {
+		t.Fatalf("present element address write kept stale value fact: %s", killed.Format())
+	}
+}
+
+func TestKeyPresenceFactsAddressSubtreeKillUsesPrefixOnly(t *testing.T) {
+	root, _ := StableAddressOfSymbol(cfg.SymbolID(40), nil)
+	child, _ := StableAddressOfSymbol(cfg.SymbolID(40), []constraint.Segment{{Kind: constraint.SegmentField, Name: "child"}})
+	sibling, _ := StableAddressOfSymbol(cfg.SymbolID(41), nil)
+	key, _ := StableAddressOfSymbol(cfg.SymbolID(42), nil)
+
+	facts := KeyPresenceFacts{}.
+		With(child.Key(), key.Key()).
+		With(sibling.Key(), key.Key())
+
+	killed := facts.KillSubtreeAddress(root)
+	if killed.Has(child.Key(), key.Key()) {
+		t.Fatalf("subtree kill kept child fact: %s", killed.Format())
+	}
+	if !killed.Has(sibling.Key(), key.Key()) {
+		t.Fatalf("subtree kill removed sibling root fact: %s", killed.Format())
 	}
 }
 
