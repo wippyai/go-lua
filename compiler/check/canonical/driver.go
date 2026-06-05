@@ -367,24 +367,26 @@ func (d *Driver) solvePass(sess api.AnalysisSession, prog *program, queries *sum
 		d.summaries[ref] = queries.Summarize(sess.Context(), ref)
 	}
 	rootRef, _ := prog.refByFunc(sess.RootFuncNode())
-	observed := make(map[summary.FuncRef]struct{})
-	observe := func(ref summary.FuncRef) {
-		if _, ok := observed[ref]; ok {
-			return
-		}
-		observed[ref] = struct{}{}
+	for _, ref := range summary.SelectPostWidenObservationRefs(summary.PostWidenObservationInput{
+		Refs: prog.refs,
+		Root: rootRef,
+		Summary: func(ref summary.FuncRef) summary.Summary {
+			return d.summaries[ref]
+		},
+		Graph: func(ref summary.FuncRef) *cfg.Graph {
+			return prog.Graph(ref)
+		},
+		IsMethod: func(ref summary.FuncRef) bool {
+			return prog.methodDef(ref) != nil
+		},
+		Nested: func(ref summary.FuncRef) []summary.FuncRef {
+			return prog.funcTopology.NestedRefs(ref)
+		},
+		Parent: func(ref summary.FuncRef) (summary.FuncRef, bool) {
+			return prog.funcTopology.ParentRef(ref)
+		},
+	}) {
 		d.summaries[ref] = queries.ObservedSummary(sess.Context(), ref)
-	}
-	for _, ref := range prog.refs {
-		if prog.methodDef(ref) != nil && summaryNeedsObservedSnapshot(d.summaries[ref]) {
-			observe(ref)
-		}
-	}
-	for i := len(prog.refs) - 1; i >= 0; i-- {
-		ref := prog.refs[i]
-		if ref != rootRef && prog.methodDef(ref) == nil && (functionReturnsNestedCapturedSymbol(prog, ref) || functionIsDirectChildOfReturnCapturedFunction(prog, ref, rootRef)) {
-			observe(ref)
-		}
 	}
 	if rootRef, ok := prog.refByFunc(sess.RootFuncNode()); ok {
 		d.withSnapshotSummaryReads(func() {
@@ -399,82 +401,6 @@ func (d *Driver) solvePass(sess api.AnalysisSession, prog *program, queries *sum
 		// instead of an artificial bottom/default call context.
 		d.states[ref] = d.diagnosticState(sess, prog, queries, ref)
 	}
-}
-
-func summaryNeedsObservedReceiverEffects(sum summary.Summary) bool {
-	for _, entry := range sum.ReceiverEffects.Entries() {
-		if len(entry.Mutations) > 0 {
-			return true
-		}
-	}
-	return false
-}
-
-func summaryNeedsObservedSnapshot(sum summary.Summary) bool {
-	if summaryNeedsObservedReceiverEffects(sum) {
-		return true
-	}
-	return false
-}
-
-func functionReturnsNestedCapturedSymbol(prog *program, ref summary.FuncRef) bool {
-	if prog == nil {
-		return false
-	}
-	g := prog.Graph(ref)
-	if g == nil || g.Bindings() == nil {
-		return false
-	}
-	returned := make(map[cfg.SymbolID]struct{})
-	g.EachReturn(func(_ cfg.Point, info *cfg.ReturnInfo) {
-		if info == nil {
-			return
-		}
-		n := len(info.Exprs)
-		if len(info.Symbols) > n {
-			n = len(info.Symbols)
-		}
-		for i := 0; i < n; i++ {
-			var sym cfg.SymbolID
-			if i < len(info.Symbols) {
-				sym = info.Symbols[i]
-			}
-			if sym == 0 && i < len(info.Exprs) {
-				if ident, ok := info.Exprs[i].(*ast.IdentExpr); ok {
-					sym, _ = g.Bindings().SymbolOf(ident)
-				}
-			}
-			if sym != 0 {
-				returned[sym] = struct{}{}
-			}
-		}
-	})
-	if len(returned) == 0 {
-		return false
-	}
-	for _, child := range prog.funcTopology.NestedRefs(ref) {
-		childGraph := prog.Graph(child)
-		if childGraph == nil || childGraph.Bindings() == nil || childGraph.Func() == nil {
-			continue
-		}
-		for _, sym := range childGraph.Bindings().CapturedSymbols(childGraph.Func()) {
-			if _, ok := returned[sym]; ok {
-				return true
-			}
-		}
-	}
-	return false
-}
-
-func functionIsDirectChildOfReturnCapturedFunction(prog *program, ref, root summary.FuncRef) bool {
-	if prog == nil {
-		return false
-	}
-	parent, ok := prog.funcTopology.ParentRef(ref)
-	if !ok || parent == root {
-		return false
-	}
-	return functionReturnsNestedCapturedSymbol(prog, parent)
 }
 
 func (d *Driver) registerStoreGraphParents(sess api.AnalysisSession, prog *program) {
