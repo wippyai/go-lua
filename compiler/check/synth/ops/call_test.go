@@ -6,6 +6,7 @@ import (
 	"github.com/wippyai/go-lua/types/db"
 	"github.com/wippyai/go-lua/types/kind"
 	"github.com/wippyai/go-lua/types/typ"
+	"github.com/wippyai/go-lua/types/typ/unwrap"
 )
 
 func TestCallWithGenericInference_Simple(t *testing.T) {
@@ -733,6 +734,105 @@ func TestRefinedArgSkipsRecursiveSubtypeProof(t *testing.T) {
 	got, changed := refinedArg(existing, candidate)
 	if changed || got != existing {
 		t.Fatalf("refinedArg recursive proof = %v/%v, want existing/false", got, changed)
+	}
+}
+
+func TestRefinedArgAcceptsRecursiveContextualFunctionLiteral(t *testing.T) {
+	node := typ.NewRecursive("Node", func(self typ.Type) typ.Type {
+		return typ.NewRecord().
+			Field("id", typ.String).
+			Field("children", typ.NewArray(self)).
+			Build()
+	})
+	existing := typ.Func().Param("node", typ.Any).Returns(typ.Any).Build()
+	candidate := typ.Func().Param("node", node).Returns(typ.String).Build()
+
+	got, changed := refinedArg(existing, candidate)
+	if !changed || got != candidate {
+		t.Fatalf("refinedArg recursive contextual literal = %v/%v, want candidate/true", got, changed)
+	}
+}
+
+func TestCallPipelineReInferSolvesCallbackReturnAfterContextualSynth(t *testing.T) {
+	tp := typ.NewTypeParam("T", nil)
+	up := typ.NewTypeParam("U", nil)
+	channelParam := typ.NewTypeParam("T", nil)
+	channelBody := typ.NewInterface("channel.Channel", []typ.Method{
+		{
+			Name: "receive",
+			Type: typ.Func().
+				Param("self", typ.Self).
+				Returns(channelParam, typ.Boolean).
+				Build(),
+		},
+	})
+	channel := typ.NewGeneric("channel.Channel", []*typ.TypeParam{channelParam}, channelBody)
+	node := typ.NewRecord().Field("id", typ.String).Build()
+	fn := typ.Func().
+		TypeParamRef(tp).
+		TypeParamRef(up).
+		Param("channel", typ.Instantiate(channel, tp)).
+		Param("fn", typ.Func().Param("value", tp).Returns(up).Build()).
+		Returns(typ.NewOptional(up)).
+		Build()
+
+	ctx := db.NewQueryContext(db.New())
+	pipeline := NewCallPipeline(ctx, CallDef{
+		Callee: fn,
+		Args: []typ.Type{
+			typ.Instantiate(channel, node),
+			typ.Func().Param("value", typ.Any).Returns(typ.Any).Build(),
+		},
+	}, 2).WithReSynth(func(idx int, expected typ.Type) typ.Type {
+		if idx != 1 {
+			return nil
+		}
+		return typ.Func().Param("value", node).Returns(typ.String).Build()
+	})
+	result := pipeline.Run()
+	if len(result.Errors) > 0 {
+		t.Fatalf("unexpected call errors: %v", result.Errors)
+	}
+	want := typ.NewOptional(typ.String)
+	if !typ.TypeEquals(result.Type, want) {
+		t.Fatalf("call result = %v, want %v", result.Type, want)
+	}
+}
+
+func TestInferCallSelectsCallbackParamFromInterfaceGenericArg(t *testing.T) {
+	tp := typ.NewTypeParam("T", nil)
+	up := typ.NewTypeParam("U", nil)
+	channelParam := typ.NewTypeParam("T", nil)
+	channelBody := typ.NewInterface("channel.Channel", []typ.Method{
+		{
+			Name: "receive",
+			Type: typ.Func().
+				Param("self", typ.Self).
+				Returns(channelParam, typ.Boolean).
+				Build(),
+		},
+	})
+	channel := typ.NewGeneric("channel.Channel", []*typ.TypeParam{channelParam}, channelBody)
+	node := typ.NewRecord().Field("id", typ.String).Build()
+	fn := typ.Func().
+		TypeParamRef(tp).
+		TypeParamRef(up).
+		Param("channel", typ.Instantiate(channel, tp)).
+		Param("fn", typ.Func().Param("value", tp).Returns(up).Build()).
+		Returns(typ.NewOptional(up)).
+		Build()
+
+	inferred := InferCall(db.NewQueryContext(db.New()), CallDef{
+		Callee: fn,
+		Args: []typ.Type{
+			typ.Instantiate(channel, node),
+			typ.Func().Param("value", typ.Any).Returns(typ.Unknown).Build(),
+		},
+	})
+	expected := inferred.ExpectedArgType(1)
+	expectedFn := unwrap.Function(expected)
+	if expectedFn == nil || len(expectedFn.Params) != 1 || !typ.TypeEquals(expectedFn.Params[0].Type, node) {
+		t.Fatalf("expected callback arg = %v, want (%v) -> ?", expected, node)
 	}
 }
 

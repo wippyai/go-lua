@@ -16,10 +16,23 @@ type Node = {
     children: {Node},
 }
 
+type TextNode = {
+    kind: "text",
+    value: string,
+}
+
+type GroupNode = {
+    kind: "group",
+    children: {TreeNode},
+}
+
+type TreeNode = TextNode | GroupNode
+
 type Source = {
     records: Channel<RawRecord>,
     timers: Channel<Timer>,
     nodes: Channel<Node>,
+    trees: Channel<TreeNode>,
 }
 
 type ListenOptions<T> = {
@@ -69,6 +82,22 @@ function M.node_type(): Type<Node>
             return {
                 id = tostring(raw),
                 children = {},
+            }
+        end,
+    }
+end
+
+function M.tree_type(): Type<TreeNode>
+    return {
+        decode = function(raw: any): TreeNode
+            return {
+                kind = "group",
+                children = {
+                    {
+                        kind = "text",
+                        value = tostring(raw),
+                    },
+                },
             }
         end,
     }

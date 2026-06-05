@@ -199,6 +199,37 @@ func TestSynthFunctionTypeWithExpected_ReturnInference(t *testing.T) {
 	}
 }
 
+func TestSynthFunctionTypeWithExpected_InfersReturnFromContextualParamField(t *testing.T) {
+	s := newTestSynthesizer()
+	sc := scope.New()
+
+	node := typ.NewRecord().Field("id", typ.String).Build()
+	expected := typ.Func().
+		Param("node", node).
+		Returns(typ.Any).
+		Build()
+	fn := &ast.FunctionExpr{
+		ParList: &ast.ParList{Names: []string{"node"}},
+		Stmts: []ast.Stmt{
+			&ast.ReturnStmt{Exprs: []ast.Expr{
+				&ast.AttrGetExpr{
+					Object:    &ast.IdentExpr{Value: "node"},
+					Key:       &ast.StringExpr{Value: "id"},
+					KeySyntax: ast.AttrKeyDot,
+				},
+			}},
+		},
+	}
+
+	result := s.SynthFunctionTypeWithExpected(fn, sc, expected)
+	if result == nil {
+		t.Fatal("expected non-nil function")
+	}
+	if len(result.Returns) != 1 || !typ.TypeEquals(result.Returns[0], typ.String) {
+		t.Fatalf("returns = %v, want string from contextual param field", result.Returns)
+	}
+}
+
 func TestSynthFunctionTypeWithExpected_VariadicInference(t *testing.T) {
 	s := newTestSynthesizer()
 	sc := scope.New()

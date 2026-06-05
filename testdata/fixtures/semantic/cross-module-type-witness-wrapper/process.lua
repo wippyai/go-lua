@@ -24,4 +24,12 @@ function M.listen_nested<T>(topic: string, options: NestedListenOptions<T>): Cha
     return options.channel
 end
 
+function M.receive_map<T, U>(channel: Channel<T>, fn: (T) -> U): U?
+    local value, ok = channel:receive()
+    if ok then
+        return fn(value)
+    end
+    return nil
+end
+
 return M

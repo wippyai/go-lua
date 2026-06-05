@@ -63,6 +63,22 @@ local function handle(source: protocol.Source): string
         id = id .. child_id
     end
 
+    local root_label = json.decode_map("{}", protocol.node_type(), function(decoded): string
+        local decoded_id: string = decoded.id
+        local bad_decoded_id: number = decoded.id -- expect-error
+        return decoded_id
+    end)
+    local accepted_label: string = root_label
+    local bad_label: number = root_label -- expect-error
+
+    local row_labels = json.decode_many_map("[]", protocol.raw_record_array_type(), function(row)
+        local row_amount: number = row.amount
+        local bad_row_amount: string = row.amount -- expect-error
+        return row.id .. tostring(row_amount)
+    end)
+    local accepted_labels: {string} = row_labels
+    local bad_labels: {number} = row_labels -- expect-error
+
     local node_ch = process.listen_nested("nodes", {
         channel = source.nodes,
         schema = {
@@ -78,6 +94,50 @@ local function handle(source: protocol.Source): string
             local bad_child_id: number = child.id -- expect-error
             id = id .. child_id
         end
+    end
+
+    local mapped_node_id = process.receive_map(node_ch, function(decoded): string
+        local decoded_id: string = decoded.id
+        local bad_decoded_id: number = decoded.id -- expect-error
+        return decoded_id
+    end)
+    if mapped_node_id then
+        local mapped: string = mapped_node_id
+        local bad_mapped: number = mapped_node_id -- expect-error
+        id = id .. mapped
+    end
+
+    local tree = json.decode("{}", protocol.tree_type())
+    if tree.kind == "group" then
+        local first = tree.children[1]
+        if first and first.kind == "text" then
+            local value: string = first.value
+            local bad_value: number = first.value -- expect-error
+            id = id .. value
+        end
+    end
+    if tree.kind == "text" then
+        local children = tree.children -- expect-error
+    end
+
+    local tree_ch = process.listen("trees", {
+        channel = source.trees,
+        decode = protocol.tree_type(),
+    })
+    local tree_label = process.receive_map(tree_ch, function(decoded): string
+        if decoded.kind == "group" then
+            local child = decoded.children[1]
+            if child and child.kind == "text" then
+                return child.value
+            end
+            return "empty"
+        end
+        return decoded.value
+    end)
+    if tree_label then
+        local accepted_tree_label: string = tree_label
+        local bad_tree_label: number = tree_label -- expect-error
+        id = id .. accepted_tree_label
     end
 
     local wrong_ch: Channel<protocol.RawRecord> = process.listen("timers", { -- expect-error

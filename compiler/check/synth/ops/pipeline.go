@@ -155,6 +155,9 @@ func refinedArg(existing, candidate typ.Type) (typ.Type, bool) {
 		return existing, false
 	}
 	if typ.ContainsRecursive(existing) || typ.ContainsRecursive(candidate) {
+		if contextualFunctionLiteralRefinement(existing, candidate) {
+			return candidate, true
+		}
 		return existing, false
 	}
 	if subtype.IsSubtype(candidate, existing) {
@@ -164,4 +167,37 @@ func refinedArg(existing, candidate typ.Type) (typ.Type, bool) {
 		return existing, false
 	}
 	return candidate, true
+}
+
+func contextualFunctionLiteralRefinement(existing, candidate typ.Type) bool {
+	existingFn, ok := existing.(*typ.Function)
+	if !ok || existingFn == nil {
+		return false
+	}
+	candidateFn, ok := candidate.(*typ.Function)
+	if !ok || candidateFn == nil {
+		return false
+	}
+	if len(existingFn.Params) != len(candidateFn.Params) ||
+		len(existingFn.Returns) != len(candidateFn.Returns) {
+		return false
+	}
+	if existingFn.Variadic != nil && !gradualPlaceholder(existingFn.Variadic) {
+		return false
+	}
+	for _, p := range existingFn.Params {
+		if !gradualPlaceholder(p.Type) {
+			return false
+		}
+	}
+	for _, r := range existingFn.Returns {
+		if !gradualPlaceholder(r) {
+			return false
+		}
+	}
+	return true
+}
+
+func gradualPlaceholder(t typ.Type) bool {
+	return typ.IsAny(t) || typ.IsAbsentOrUnknown(t)
 }

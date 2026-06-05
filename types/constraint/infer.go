@@ -1060,6 +1060,20 @@ func matchDepth(pattern, concrete typ.Type, cs *InferSet, variance subtype.Varia
 			}
 			return struct{}{}
 		},
+		Interface: func(p *typ.Interface) struct{} {
+			if c, ok := concrete.(*typ.Interface); ok {
+				for _, pm := range p.Methods {
+					for _, cm := range c.Methods {
+						if pm.Name != cm.Name {
+							continue
+						}
+						matchDepth(pm.Type, cm.Type, cs, variance, depth+1)
+						break
+					}
+				}
+			}
+			return struct{}{}
+		},
 		Record: func(p *typ.Record) struct{} {
 			if c, ok := concrete.(*typ.Record); ok {
 				for _, f := range p.Fields {

@@ -5,6 +5,7 @@ import (
 
 	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/typ"
+	"github.com/wippyai/go-lua/types/typ/subst"
 )
 
 func TestInferSetBasic(t *testing.T) {
@@ -66,6 +67,89 @@ func TestInferSetArrayElementPreservesAliasBound(t *testing.T) {
 	alias, ok := solution[1].(*typ.Alias)
 	if !ok || alias.Name != "protocol.Event" {
 		t.Fatalf("expected protocol.Event alias, got %v", solution[1])
+	}
+}
+
+func TestMatchContraInstantiatedGenericInfersArgument(t *testing.T) {
+	cs := constraint.NewInferSet()
+	tv := typ.NewTypeVar(1)
+	channelParam := typ.NewTypeParam("T", nil)
+	channel := typ.NewGeneric("channel.Channel", []*typ.TypeParam{channelParam}, typ.NewInterface("channel.Channel", nil))
+	node := typ.NewAlias("protocol.Node", typ.NewRecord().
+		Field("id", typ.String).
+		Build())
+
+	constraint.MatchContra(typ.Instantiate(channel, tv), typ.Instantiate(channel, node), cs)
+
+	solution, err := cs.Solve()
+	if err != nil {
+		t.Fatalf("Solve failed: %v", err)
+	}
+	if got := solution[1]; !typ.TypeEquals(got, node) {
+		t.Fatalf("T solution = %v, want %v", got, node)
+	}
+}
+
+func TestMatchContraInstantiatedInterfaceGenericInfersFromMethods(t *testing.T) {
+	cs := constraint.NewInferSet()
+	tv := typ.NewTypeVar(1)
+	channelParam := typ.NewTypeParam("T", nil)
+	channelBody := typ.NewInterface("channel.Channel", []typ.Method{
+		{
+			Name: "receive",
+			Type: typ.Func().
+				Param("self", typ.Self).
+				Returns(channelParam, typ.Boolean).
+				Build(),
+		},
+	})
+	channel := typ.NewGeneric("channel.Channel", []*typ.TypeParam{channelParam}, channelBody)
+	node := typ.NewAlias("protocol.Node", typ.NewRecord().
+		Field("id", typ.String).
+		Build())
+
+	constraint.MatchContra(
+		subst.ExpandInstantiated(typ.Instantiate(channel, tv)),
+		subst.ExpandInstantiated(typ.Instantiate(channel, node)),
+		cs,
+	)
+
+	solution, err := cs.Solve()
+	if err != nil {
+		t.Fatalf("Solve failed: %v", err)
+	}
+	if got := solution[1]; !typ.TypeEquals(got, node) {
+		t.Fatalf("T solution = %v, want %v", got, node)
+	}
+}
+
+func TestMatchContraFunctionReturnInfersCallbackOutput(t *testing.T) {
+	cs := constraint.NewInferSet()
+	tVar := typ.NewTypeVar(1)
+	uVar := typ.NewTypeVar(2)
+	node := typ.NewAlias("protocol.Node", typ.NewRecord().
+		Field("id", typ.String).
+		Build())
+	pattern := typ.Func().
+		Param("value", tVar).
+		Returns(uVar).
+		Build()
+	concrete := typ.Func().
+		Param("value", node).
+		Returns(typ.String).
+		Build()
+
+	constraint.MatchContra(pattern, concrete, cs)
+
+	solution, err := cs.Solve()
+	if err != nil {
+		t.Fatalf("Solve failed: %v", err)
+	}
+	if got := solution[1]; !typ.TypeEquals(got, node) {
+		t.Fatalf("T solution = %v, want %v", got, node)
+	}
+	if got := solution[2]; !typ.TypeEquals(got, typ.String) {
+		t.Fatalf("U solution = %v, want string", got)
 	}
 }
 
