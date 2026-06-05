@@ -67,30 +67,6 @@ func (f PathAliasFacts) WithAddresses(value, source StableAddress) PathAliasFact
 	return f.With(PathAliasFact{Value: valueKey, Source: sourceKey})
 }
 
-// TODO(address-vocabulary): migrate callers to WithAddresses and remove this
-// source-path compatibility wrapper.
-func (f PathAliasFacts) WithPaths(value, source constraint.Path) PathAliasFacts {
-	valueAddr, ok := StableAddressOfPath(value)
-	if !ok {
-		return f
-	}
-	sourceAddr, ok := StableAddressOfPath(source)
-	if !ok {
-		return f
-	}
-	return f.WithAddresses(valueAddr, sourceAddr)
-}
-
-// TODO(address-vocabulary): migrate callers to AliasesOfAddress and remove this
-// PathKey compatibility wrapper.
-func (f PathAliasFacts) AliasesOf(value constraint.PathKey) []PathAliasFact {
-	addr, ok := StableAddressFromKey(value)
-	if !ok {
-		return nil
-	}
-	return f.AliasesOfAddress(addr)
-}
-
 func (f PathAliasFacts) AliasesOfAddress(value StableAddress) []PathAliasFact {
 	valueKey := value.Key()
 	if f.bottom || valueKey == "" || len(f.entries) == 0 {
@@ -103,24 +79,6 @@ func (f PathAliasFacts) AliasesOfAddress(value StableAddress) []PathAliasFact {
 		}
 	}
 	return out
-}
-
-// TODO(address-vocabulary): migrate callers to AliasesOfAddress and remove this
-// source-path compatibility wrapper.
-func (f PathAliasFacts) AliasesOfPath(value constraint.Path) []PathAliasFact {
-	return f.AliasesOf(KeyPresencePathKey(value))
-}
-
-// AliasesCoveringPath returns aliases whose value path is equal to, or an
-// ancestor of, value.
-// TODO(address-vocabulary): migrate callers to AliasesCoveringAddress and
-// remove this source-path compatibility wrapper.
-func (f PathAliasFacts) AliasesCoveringPath(value constraint.Path) []PathAliasUse {
-	addr, ok := StableAddressOfPath(value)
-	if !ok {
-		return nil
-	}
-	return f.AliasesCoveringAddress(addr)
 }
 
 func (f PathAliasFacts) AliasesCoveringAddress(value StableAddress) []PathAliasUse {
@@ -146,16 +104,6 @@ func (f PathAliasFacts) AliasesCoveringAddress(value StableAddress) []PathAliasU
 		return pathAliasLess(out[i].Alias, out[j].Alias)
 	})
 	return out
-}
-
-// TODO(address-vocabulary): migrate callers to KillAffectedByWriteAddress and
-// remove this PathKey compatibility wrapper.
-func (f PathAliasFacts) KillAffectedByWrite(writePath constraint.PathKey) PathAliasFacts {
-	addr, ok := StableAddressFromKey(writePath)
-	if !ok {
-		return f
-	}
-	return f.KillAffectedByWriteAddress(addr)
 }
 
 func (f PathAliasFacts) KillAffectedByWriteAddress(write StableAddress) PathAliasFacts {

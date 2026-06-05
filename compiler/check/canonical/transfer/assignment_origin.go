@@ -204,8 +204,16 @@ func (t *Transfer) applyPathAliasEffect(out *flow.PointState, effect AssignmentP
 	if pathkey.PathRelated(effect.TargetPath, effect.SourcePath) {
 		return false
 	}
+	targetAddr, ok := flow.StableAddressOfPath(effect.TargetPath)
+	if !ok {
+		return false
+	}
+	sourceAddr, ok := flow.StableAddressOfPath(effect.SourcePath)
+	if !ok {
+		return false
+	}
 	before := out.PathAliases
-	out.PathAliases = out.PathAliases.WithPaths(effect.TargetPath, effect.SourcePath)
+	out.PathAliases = out.PathAliases.WithAddresses(targetAddr, sourceAddr)
 	return !flow.PathAliasFactsDomain.Equal(before, out.PathAliases)
 }
 

@@ -88,7 +88,12 @@ func TestWriteEffectReplaysStaticAliasDescendantWrite(t *testing.T) {
 				Field("cur", typ.NewRecord().OptField("hook", typ.Nil).Build()).
 				Build()),
 		},
-		ValueOrigins: flow.ValueOriginFacts{}.WithPaths(boxCurPath, sPath, flow.ValueOriginAssignmentAlias, 0),
+		ValueOrigins: flow.ValueOriginFacts{}.WithAddresses(
+			testFlowPathAddress(t, boxCurPath),
+			testFlowPathAddress(t, sPath),
+			flow.ValueOriginAssignmentAlias,
+			0,
+		),
 	}
 
 	tr.applyWriteEffect(&out, WriteEffect{

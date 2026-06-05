@@ -110,7 +110,10 @@ func TestClonePointStatePreservesPersistentAxes(t *testing.T) {
 		CellEffects:        CaptureEffectsIdentity().WithMustWrite(sym, cell),
 		PrototypeSelf:      PrototypeSelfOf([]PrototypeSelfEntry{{Prototype: proto, Value: self}}),
 		PrototypeInstances: PrototypeInstancesOf([]PrototypeInstanceEntry{{Symbol: sym, Prototypes: []cfg.SymbolID{proto}}}),
-		PathAliases:        PathAliasFacts{}.WithPaths(constraint.NewPath(sym, "alias"), constraint.NewPath(cfg.SymbolID(44), "source")),
+		PathAliases: PathAliasFacts{}.WithAddresses(
+			testStableAddressPath(t, constraint.NewPath(sym, "alias")),
+			testStableAddressPath(t, constraint.NewPath(cfg.SymbolID(44), "source")),
+		),
 		IndexWrites: IndexWriteAdmissionFacts{}.With(IndexWriteAdmissionFact{
 			Target: SymbolPathKey(sym, nil),
 			Key:    product.FromType(typ.String),
@@ -131,7 +134,7 @@ func TestClonePointStatePreservesPersistentAxes(t *testing.T) {
 	if protos, ok := cloned.PrototypeInstances.Prototypes(sym); !ok || len(protos) != 1 || protos[0] != proto {
 		t.Fatalf("cloned PrototypeInstances[%d] = %v/%v, want [%d]/true", sym, protos, ok, proto)
 	}
-	if aliases := cloned.PathAliases.AliasesOfPath(constraint.NewPath(sym, "alias")); len(aliases) != 1 {
+	if aliases := cloned.PathAliases.AliasesOfAddress(testStableAddressPath(t, constraint.NewPath(sym, "alias"))); len(aliases) != 1 {
 		t.Fatalf("cloned PathAliases = %s, want one alias", cloned.PathAliases.Format())
 	}
 	if got, ok := cloned.IndexWrites.AdmissionAtAddress(testIndexWriteAddressQuery(t, constraint.NewPath(sym, ""), constraint.Path{}, typ.String, constraint.Path{})); !ok || !typ.TypeEquals(got.ProjectValue(), typ.Number) {

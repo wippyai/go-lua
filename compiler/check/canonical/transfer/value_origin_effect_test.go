@@ -21,9 +21,9 @@ func TestValueOriginDemandIndexedIteratorNestedField(t *testing.T) {
 	tr.paramBySym[cfg.SymbolID(11)] = 0
 
 	out := flow.PointState{
-		ValueOrigins: flow.ValueOriginFacts{}.WithPaths(
-			constraint.NewPath(cfg.SymbolID(12), "entry"),
-			constraint.NewPath(cfg.SymbolID(11), "tests"),
+		ValueOrigins: flow.ValueOriginFacts{}.WithAddresses(
+			testFlowPathAddress(t, constraint.NewPath(cfg.SymbolID(12), "entry")),
+			testFlowPathAddress(t, constraint.NewPath(cfg.SymbolID(11), "tests")),
 			flow.ValueOriginIndexedIterator,
 			1,
 		),
@@ -53,10 +53,10 @@ func TestValueOriginDemandRoutesThroughAppendElementFieldOrigin(t *testing.T) {
 	opPath := constraint.NewPath(cfg.SymbolID(154), "op")
 	operationsPath := constraint.NewPath(cfg.SymbolID(120), "operations")
 	out := flow.PointState{
-		PathAliases: flow.PathAliasFacts{}.WithPaths(routeEntryPath, routePath),
+		PathAliases: flow.PathAliasFacts{}.WithAddresses(testFlowPathAddress(t, routeEntryPath), testFlowPathAddress(t, routePath)),
 		ValueOrigins: flow.ValueOriginFacts{}.
-			WithPaths(routePath, pendingRoutes, flow.ValueOriginIndexedIterator, 1).
-			WithPaths(opPath, operationsPath, flow.ValueOriginIndexedIterator, 1),
+			WithAddresses(testFlowPathAddress(t, routePath), testFlowPathAddress(t, pendingRoutes), flow.ValueOriginIndexedIterator, 1).
+			WithAddresses(testFlowPathAddress(t, opPath), testFlowPathAddress(t, operationsPath), flow.ValueOriginIndexedIterator, 1),
 		KeyPresence: flow.KeyPresenceFacts{}.
 			WithAppendHistoryBasePath(pendingRoutes).
 			WithAppendElementFieldOriginPaths(
@@ -97,7 +97,7 @@ func TestAssignmentProvenanceUsesCFGSourceSymbolFallback(t *testing.T) {
 
 	out := flow.PointState{}
 	tr.applyAssignmentProvenanceEffect(&out, provenance)
-	if aliases := out.PathAliases.AliasesOfPath(constraint.NewPath(cfg.SymbolID(156), "route_entry")); len(aliases) != 1 ||
+	if aliases := out.PathAliases.AliasesOfAddress(testFlowPathAddress(t, constraint.NewPath(cfg.SymbolID(156), "route_entry"))); len(aliases) != 1 ||
 		aliases[0].Source != flow.KeyPresencePathKey(constraint.NewPath(srcSym, "route")) {
 		t.Fatalf("path aliases = %s, want route_entry<-route", out.PathAliases.Format())
 	}
@@ -148,9 +148,9 @@ func TestValueOriginDemandLiftsThroughNestedSourcePath(t *testing.T) {
 	tr.paramBySym[cfg.SymbolID(51)] = 0
 
 	out := flow.PointState{
-		ValueOrigins: flow.ValueOriginFacts{}.WithPaths(
-			constraint.NewPath(cfg.SymbolID(52), "entry"),
-			constraint.NewPath(cfg.SymbolID(51), "page").Field("tests"),
+		ValueOrigins: flow.ValueOriginFacts{}.WithAddresses(
+			testFlowPathAddress(t, constraint.NewPath(cfg.SymbolID(52), "entry")),
+			testFlowPathAddress(t, constraint.NewPath(cfg.SymbolID(51), "page").Field("tests")),
 			flow.ValueOriginIndexedIterator,
 			1,
 		),
@@ -181,17 +181,20 @@ func TestValueOriginDemandUsesAllCoveringOrigins(t *testing.T) {
 	tr.paramBySym[cfg.SymbolID(61)] = 0
 	tr.paramBySym[cfg.SymbolID(63)] = 1
 
+	entryPath := constraint.NewPath(cfg.SymbolID(62), "entry")
+	testsPath := constraint.NewPath(cfg.SymbolID(61), "tests")
+	metasPath := constraint.NewPath(cfg.SymbolID(63), "metas")
 	out := flow.PointState{
 		ValueOrigins: flow.ValueOriginFacts{}.
-			WithPaths(
-				constraint.NewPath(cfg.SymbolID(62), "entry"),
-				constraint.NewPath(cfg.SymbolID(61), "tests"),
+			WithAddresses(
+				testFlowPathAddress(t, entryPath),
+				testFlowPathAddress(t, testsPath),
 				flow.ValueOriginIndexedIterator,
 				1,
 			).
-			WithPaths(
-				constraint.NewPath(cfg.SymbolID(62), "entry").Field("meta"),
-				constraint.NewPath(cfg.SymbolID(63), "metas"),
+			WithAddresses(
+				testFlowPathAddress(t, entryPath.Field("meta")),
+				testFlowPathAddress(t, metasPath),
 				flow.ValueOriginIndexedIterator,
 				1,
 			),
@@ -220,17 +223,20 @@ func TestValueOriginDemandKeyedIteratorKeyAndValue(t *testing.T) {
 	tr := New(in, Config{})
 	tr.paramBySym[cfg.SymbolID(21)] = 0
 
+	namePath := constraint.NewPath(cfg.SymbolID(22), "name")
+	itemsPath := constraint.NewPath(cfg.SymbolID(21), "items")
+	entryPath := constraint.NewPath(cfg.SymbolID(23), "entry")
 	out := flow.PointState{
 		ValueOrigins: flow.ValueOriginFacts{}.
-			WithPaths(
-				constraint.NewPath(cfg.SymbolID(22), "name"),
-				constraint.NewPath(cfg.SymbolID(21), "items"),
+			WithAddresses(
+				testFlowPathAddress(t, namePath),
+				testFlowPathAddress(t, itemsPath),
 				flow.ValueOriginKeyedIterator,
 				0,
 			).
-			WithPaths(
-				constraint.NewPath(cfg.SymbolID(23), "entry"),
-				constraint.NewPath(cfg.SymbolID(21), "items"),
+			WithAddresses(
+				testFlowPathAddress(t, entryPath),
+				testFlowPathAddress(t, itemsPath),
 				flow.ValueOriginKeyedIterator,
 				1,
 			),
@@ -269,9 +275,9 @@ func TestValueOriginContractDemandGuardedDerivedLeafAdmitsFalsyLeaf(t *testing.T
 	valuePath := constraint.NewPath(cfg.SymbolID(52), "op").Field("config").Field("template")
 	out := flow.PointState{
 		Cond: constraint.FromConstraints(constraint.Truthy{Path: valuePath}),
-		ValueOrigins: flow.ValueOriginFacts{}.WithPaths(
-			constraint.NewPath(cfg.SymbolID(52), "op"),
-			sourcePath,
+		ValueOrigins: flow.ValueOriginFacts{}.WithAddresses(
+			testFlowPathAddress(t, constraint.NewPath(cfg.SymbolID(52), "op")),
+			testFlowPathAddress(t, sourcePath),
 			flow.ValueOriginIndexedIterator,
 			1,
 		),
@@ -390,7 +396,12 @@ func TestValueOriginInvalidatedByGenericWriteEffect(t *testing.T) {
 	entryPath := constraint.NewPath(cfg.SymbolID(71), "entry")
 	sourcePath := constraint.NewPath(cfg.SymbolID(72), "tests")
 	out := flow.PointState{
-		ValueOrigins: flow.ValueOriginFacts{}.WithPaths(entryPath, sourcePath, flow.ValueOriginIndexedIterator, 1),
+		ValueOrigins: flow.ValueOriginFacts{}.WithAddresses(
+			testFlowPathAddress(t, entryPath),
+			testFlowPathAddress(t, sourcePath),
+			flow.ValueOriginIndexedIterator,
+			1,
+		),
 	}
 
 	tr.applyWriteEffect(&out, WriteEffect{

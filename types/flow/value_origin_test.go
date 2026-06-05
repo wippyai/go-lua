@@ -16,11 +16,11 @@ func TestValueOriginFactsDomainLaws(t *testing.T) {
 	name := constraint.NewPath(cfg.SymbolID(4), "name")
 	value := constraint.NewPath(cfg.SymbolID(5), "value")
 
-	indexedEntry := ValueOriginFacts{}.WithPaths(entry, tests, ValueOriginIndexedIterator, 1)
-	indexedMeta := indexedEntry.WithPaths(entryMeta, items, ValueOriginIndexedIterator, 1)
-	keyedKey := ValueOriginFacts{}.WithPaths(name, items, ValueOriginKeyedIterator, 0)
-	keyedValue := keyedKey.WithPaths(value, items, ValueOriginKeyedIterator, 1)
-	assignmentAlias := ValueOriginFacts{}.WithPaths(name, entry, ValueOriginAssignmentAlias, 0)
+	indexedEntry := ValueOriginFacts{}.WithAddresses(testStableAddressPath(t, entry), testStableAddressPath(t, tests), ValueOriginIndexedIterator, 1)
+	indexedMeta := indexedEntry.WithAddresses(testStableAddressPath(t, entryMeta), testStableAddressPath(t, items), ValueOriginIndexedIterator, 1)
+	keyedKey := ValueOriginFacts{}.WithAddresses(testStableAddressPath(t, name), testStableAddressPath(t, items), ValueOriginKeyedIterator, 0)
+	keyedValue := keyedKey.WithAddresses(testStableAddressPath(t, value), testStableAddressPath(t, items), ValueOriginKeyedIterator, 1)
+	assignmentAlias := ValueOriginFacts{}.WithAddresses(testStableAddressPath(t, name), testStableAddressPath(t, entry), ValueOriginAssignmentAlias, 0)
 
 	lattice.LawSuite[ValueOriginFacts]{
 		Name:   "ValueOriginFacts",
@@ -42,9 +42,9 @@ func TestValueOriginFactsDomainLaws(t *testing.T) {
 func TestValueOriginFactsOriginsCoveringPath(t *testing.T) {
 	entry := constraint.NewPath(cfg.SymbolID(11), "entry")
 	tests := constraint.NewPath(cfg.SymbolID(12), "tests")
-	facts := ValueOriginFacts{}.WithPaths(entry, tests, ValueOriginIndexedIterator, 1)
+	facts := ValueOriginFacts{}.WithAddresses(testStableAddressPath(t, entry), testStableAddressPath(t, tests), ValueOriginIndexedIterator, 1)
 
-	uses := facts.OriginsCoveringPath(entry.Field("id"))
+	uses := facts.OriginsCoveringAddress(testStableAddressPath(t, entry.Field("id")))
 	if len(uses) != 1 {
 		t.Fatalf("OriginsCoveringPath(entry.id) got %d uses, want 1: %s", len(uses), facts.Format())
 	}
@@ -62,10 +62,10 @@ func TestValueOriginFactsOriginsCoveringPathKeepsAllPrefixOrigins(t *testing.T) 
 	tests := constraint.NewPath(cfg.SymbolID(15), "tests")
 	metadata := constraint.NewPath(cfg.SymbolID(16), "metadata")
 	facts := ValueOriginFacts{}.
-		WithPaths(entry, tests, ValueOriginIndexedIterator, 1).
-		WithPaths(entryMeta, metadata, ValueOriginIndexedIterator, 1)
+		WithAddresses(testStableAddressPath(t, entry), testStableAddressPath(t, tests), ValueOriginIndexedIterator, 1).
+		WithAddresses(testStableAddressPath(t, entryMeta), testStableAddressPath(t, metadata), ValueOriginIndexedIterator, 1)
 
-	uses := facts.OriginsCoveringPath(entryMeta.Field("id"))
+	uses := facts.OriginsCoveringAddress(testStableAddressPath(t, entryMeta.Field("id")))
 	if len(uses) != 2 {
 		t.Fatalf("OriginsCoveringPath(entry.meta.id) got %d uses, want both covering origins: %s", len(uses), facts.Format())
 	}
@@ -151,15 +151,15 @@ func TestValueOriginFactsCanonicalizationIsDeterministic(t *testing.T) {
 func TestValueOriginFactsKillAffectedByWrite(t *testing.T) {
 	entry := constraint.NewPath(cfg.SymbolID(31), "entry")
 	tests := constraint.NewPath(cfg.SymbolID(32), "tests")
-	facts := ValueOriginFacts{}.WithPaths(entry, tests, ValueOriginIndexedIterator, 1)
+	facts := ValueOriginFacts{}.WithAddresses(testStableAddressPath(t, entry), testStableAddressPath(t, tests), ValueOriginIndexedIterator, 1)
 
-	got := facts.KillAffectedByWrite(KeyPresencePathKey(tests.Field("items")))
+	got := facts.KillAffectedByWriteAddress(testStableAddressPath(t, tests.Field("items")))
 	if len(got.Entries()) != 0 {
 		t.Fatalf("source subtree write kept origin: %s", got.Format())
 	}
 
-	facts = ValueOriginFacts{}.WithPaths(entry, tests, ValueOriginIndexedIterator, 1)
-	got = facts.KillAffectedByWrite(KeyPresencePathKey(entry.Field("id")))
+	facts = ValueOriginFacts{}.WithAddresses(testStableAddressPath(t, entry), testStableAddressPath(t, tests), ValueOriginIndexedIterator, 1)
+	got = facts.KillAffectedByWriteAddress(testStableAddressPath(t, entry.Field("id")))
 	if len(got.Entries()) != 0 {
 		t.Fatalf("derived-value subtree write kept origin: %s", got.Format())
 	}
@@ -169,9 +169,9 @@ func TestValueOriginFactsKillAffectedByWritePreservesSiblings(t *testing.T) {
 	entryID := constraint.NewPath(cfg.SymbolID(33), "entry").Field("id")
 	entryName := constraint.NewPath(cfg.SymbolID(33), "entry").Field("name")
 	tests := constraint.NewPath(cfg.SymbolID(34), "tests")
-	facts := ValueOriginFacts{}.WithPaths(entryID, tests, ValueOriginIndexedIterator, 1)
+	facts := ValueOriginFacts{}.WithAddresses(testStableAddressPath(t, entryID), testStableAddressPath(t, tests), ValueOriginIndexedIterator, 1)
 
-	got := facts.KillAffectedByWrite(KeyPresencePathKey(entryName))
+	got := facts.KillAffectedByWriteAddress(testStableAddressPath(t, entryName))
 	if !ValueOriginFactsDomain.Equal(got, facts) {
 		t.Fatalf("sibling write killed unrelated origin: got=%s want=%s", got.Format(), facts.Format())
 	}

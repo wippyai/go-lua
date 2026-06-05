@@ -184,7 +184,7 @@ func (t *Transfer) indexWriteReadKeyPaths(out *flow.PointState, key ast.Expr) []
 		if out == nil {
 			continue
 		}
-		for _, use := range out.PathAliases.AliasesCoveringPath(cur) {
+		for _, use := range out.PathAliases.AliasesCoveringAddress(curAddr) {
 			source, ok := indexWritePathFromKey(use.Alias.Source)
 			if !ok {
 				continue
@@ -196,7 +196,7 @@ func (t *Transfer) indexWriteReadKeyPaths(out *flow.PointState, key ast.Expr) []
 				queue = append(queue, source)
 			}
 		}
-		for _, use := range out.ValueOrigins.OriginsCoveringPath(cur) {
+		for _, use := range out.ValueOrigins.OriginsCoveringAddress(curAddr) {
 			if use.Origin.Kind != flow.ValueOriginAssignmentAlias {
 				continue
 			}

@@ -150,7 +150,7 @@ func TestIndexedIteratorKeyArrayReadbackDerivesValueFromStableFacts(t *testing.T
 	keyPresence := KeyPresenceFacts{}.
 		WithKeyArrayValuePaths(arrayPath, tablePath, product.FromType(typ.String))
 	origins := ValueOriginFacts{}.
-		WithPaths(keyPath, arrayPath, ValueOriginIndexedIterator, 1)
+		WithAddresses(testStableAddressPath(t, keyPath), testStableAddressPath(t, arrayPath), ValueOriginIndexedIterator, 1)
 
 	got, ok := IndexedIteratorKeyArrayReadback(keyPresence, origins, tablePath, keyPath)
 	if !ok || !product.Domain.Equal(got, product.FromType(typ.String)) {
@@ -167,8 +167,8 @@ func TestIndexedIteratorKeyArrayReadbackFollowsAssignmentAlias(t *testing.T) {
 	keyPresence := KeyPresenceFacts{}.
 		WithKeyArrayValuePaths(arrayPath, tablePath, product.FromType(typ.Number))
 	origins := ValueOriginFacts{}.
-		WithPaths(iterKeyPath, arrayPath, ValueOriginIndexedIterator, 1).
-		WithPaths(aliasPath, iterKeyPath, ValueOriginAssignmentAlias, 0)
+		WithAddresses(testStableAddressPath(t, iterKeyPath), testStableAddressPath(t, arrayPath), ValueOriginIndexedIterator, 1).
+		WithAddresses(testStableAddressPath(t, aliasPath), testStableAddressPath(t, iterKeyPath), ValueOriginAssignmentAlias, 0)
 
 	got, ok := IndexedIteratorKeyArrayReadback(keyPresence, origins, tablePath, aliasPath)
 	if !ok || !product.Domain.Equal(got, product.FromType(typ.Number)) {

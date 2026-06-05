@@ -13,8 +13,8 @@ func TestPathAliasFactsDomainLaws(t *testing.T) {
 	source := constraint.NewPath(cfg.SymbolID(2), "source")
 	other := constraint.NewPath(cfg.SymbolID(3), "other")
 
-	one := PathAliasFacts{}.WithPaths(alias, source)
-	two := one.WithPaths(other, source)
+	one := PathAliasFacts{}.WithAddresses(testStableAddressPath(t, alias), testStableAddressPath(t, source))
+	two := one.WithAddresses(testStableAddressPath(t, other), testStableAddressPath(t, source))
 
 	lattice.LawSuite[PathAliasFacts]{
 		Name:   "PathAliasFacts",
@@ -32,9 +32,9 @@ func TestPathAliasFactsDomainLaws(t *testing.T) {
 func TestPathAliasFactsAliasesCoveringPath(t *testing.T) {
 	alias := constraint.NewPath(cfg.SymbolID(11), "alias")
 	source := constraint.NewPath(cfg.SymbolID(12), "source")
-	facts := PathAliasFacts{}.WithPaths(alias, source)
+	facts := PathAliasFacts{}.WithAddresses(testStableAddressPath(t, alias), testStableAddressPath(t, source))
 
-	uses := facts.AliasesCoveringPath(alias.Field("id"))
+	uses := facts.AliasesCoveringAddress(testStableAddressPath(t, alias.Field("id")))
 	if len(uses) != 1 {
 		t.Fatalf("AliasesCoveringPath(alias.id) got %d uses, want 1: %s", len(uses), facts.Format())
 	}
@@ -69,14 +69,14 @@ func TestPathAliasFactsKillAffectedByWrite(t *testing.T) {
 	source := constraint.NewPath(cfg.SymbolID(22), "source")
 	other := constraint.NewPath(cfg.SymbolID(23), "other")
 	facts := PathAliasFacts{}.
-		WithPaths(alias, source).
-		WithPaths(other, source)
+		WithAddresses(testStableAddressPath(t, alias), testStableAddressPath(t, source)).
+		WithAddresses(testStableAddressPath(t, other), testStableAddressPath(t, source))
 
-	got := facts.KillAffectedByWrite(KeyPresencePathKey(alias))
-	if len(got.AliasesOfPath(alias)) != 0 {
+	got := facts.KillAffectedByWriteAddress(testStableAddressPath(t, alias))
+	if len(got.AliasesOfAddress(testStableAddressPath(t, alias))) != 0 {
 		t.Fatalf("alias write kept stale alias fact: %s", got.Format())
 	}
-	if len(got.AliasesOfPath(other)) != 1 {
+	if len(got.AliasesOfAddress(testStableAddressPath(t, other))) != 1 {
 		t.Fatalf("unrelated alias fact was dropped: %s", got.Format())
 	}
 }

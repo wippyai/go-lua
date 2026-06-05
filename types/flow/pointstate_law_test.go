@@ -197,10 +197,10 @@ func TestPointStateJoinKeepsNilGatedPathAlias(t *testing.T) {
 	factArm.Env = map[ValueKey]product.AbstractValue{
 		SymbolValueKey(key.Symbol): product.FromType(typ.String),
 	}
-	factArm.PathAliases = factArm.PathAliases.WithPaths(key, source)
+	factArm.PathAliases = factArm.PathAliases.WithAddresses(testStableAddressPath(t, key), testStableAddressPath(t, source))
 
 	joined := PointStateDomain.Join(nilArm, factArm)
-	if len(joined.PathAliases.AliasesOfPath(key)) != 1 {
+	if len(joined.PathAliases.AliasesOfAddress(testStableAddressPath(t, key))) != 1 {
 		t.Fatalf("nil-gated join dropped path alias: %s", joined.PathAliases.Format())
 	}
 	if !PointStateDomain.LessOrEq(nilArm, joined) {
@@ -222,10 +222,10 @@ func TestPointStateJoinDropsOneBranchPathAliasWhenMissingBranchMayHaveValue(t *t
 	factArm.Env = map[ValueKey]product.AbstractValue{
 		SymbolValueKey(key.Symbol): product.FromType(typ.String),
 	}
-	factArm.PathAliases = factArm.PathAliases.WithPaths(key, source)
+	factArm.PathAliases = factArm.PathAliases.WithAddresses(testStableAddressPath(t, key), testStableAddressPath(t, source))
 
 	joined := PointStateDomain.Join(missingArm, factArm)
-	if len(joined.PathAliases.AliasesOfPath(key)) != 0 {
+	if len(joined.PathAliases.AliasesOfAddress(testStableAddressPath(t, key))) != 0 {
 		t.Fatalf("join kept non-nil one-branch path alias: %s", joined.PathAliases.Format())
 	}
 }
@@ -246,13 +246,13 @@ func TestPointStateJoinDropsOneBranchMustFacts(t *testing.T) {
 	factful.KeyPresence = factful.KeyPresence.
 		WithPaths(table, key).
 		WithValuePaths(table, key, valuePath)
-	factful.ValueOrigins = factful.ValueOrigins.WithPaths(
-		valuePath,
-		sourcePath,
+	factful.ValueOrigins = factful.ValueOrigins.WithAddresses(
+		testStableAddressPath(t, valuePath),
+		testStableAddressPath(t, sourcePath),
 		ValueOriginIndexedIterator,
 		1,
 	)
-	factful.PathAliases = factful.PathAliases.WithPaths(key, sourcePath)
+	factful.PathAliases = factful.PathAliases.WithAddresses(testStableAddressPath(t, key), testStableAddressPath(t, sourcePath))
 	factful.IndexWrites = factful.IndexWrites.With(IndexWriteAdmissionFact{
 		Target:    KeyPresencePathKey(table),
 		KeyPath:   KeyPresencePathKey(key),
@@ -310,10 +310,10 @@ func assertPointStateDroppedOneBranchMustFacts(t *testing.T, ps PointState, tabl
 	if ps.KeyPresence.HasPaths(table, key) || ps.KeyPresence.HasValuePaths(table, key, valuePath) {
 		t.Fatalf("PointState kept one-branch KeyPresence fact: %s", ps.KeyPresence.Format())
 	}
-	if got := ps.ValueOrigins.OriginsOfPath(valuePath); len(got) != 0 {
+	if got := ps.ValueOrigins.OriginsOfAddress(testStableAddressPath(t, valuePath)); len(got) != 0 {
 		t.Fatalf("PointState kept one-branch ValueOrigins fact: %s", ps.ValueOrigins.Format())
 	}
-	if got := ps.PathAliases.AliasesOfPath(key); len(got) != 0 {
+	if got := ps.PathAliases.AliasesOfAddress(testStableAddressPath(t, key)); len(got) != 0 {
 		t.Fatalf("PointState kept one-branch PathAliases fact: %s", ps.PathAliases.Format())
 	}
 	if rel, ok := ps.Rel.SiblingNil(errSym); ok {
@@ -421,15 +421,18 @@ func pointStateSample() []PointState {
 			Key:   SymbolPathKey(cfg.SymbolID(4), nil),
 		},
 	})
-	valueOriginOne := ValueOriginFacts{}.WithPaths(
-		constraint.NewPath(cfg.SymbolID(5), "entry"),
-		constraint.NewPath(cfg.SymbolID(6), "items"),
+	entryAddr, _ := StableAddressOfPath(constraint.NewPath(cfg.SymbolID(5), "entry"))
+	itemsAddr, _ := StableAddressOfPath(constraint.NewPath(cfg.SymbolID(6), "items"))
+	keyAddr, _ := StableAddressOfPath(constraint.NewPath(cfg.SymbolID(7), "key"))
+	valueOriginOne := ValueOriginFacts{}.WithAddresses(
+		entryAddr,
+		itemsAddr,
 		ValueOriginIndexedIterator,
 		1,
 	)
-	valueOriginTwo := valueOriginOne.WithPaths(
-		constraint.NewPath(cfg.SymbolID(7), "key"),
-		constraint.NewPath(cfg.SymbolID(6), "items"),
+	valueOriginTwo := valueOriginOne.WithAddresses(
+		keyAddr,
+		itemsAddr,
 		ValueOriginKeyedIterator,
 		0,
 	)

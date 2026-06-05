@@ -636,10 +636,14 @@ func (t *Transfer) recordAppendElementFieldOrigins(out *flow.PointState, place P
 		for _, seg := range field {
 			elementField = elementField.Append(seg)
 		}
-		for _, originUse := range out.ValueOrigins.OriginsCoveringPath(elementField) {
+		elementFieldAddr, ok := flow.StableAddressOfPath(elementField)
+		if !ok {
+			continue
+		}
+		for _, originUse := range out.ValueOrigins.OriginsCoveringAddress(elementFieldAddr) {
 			out.KeyPresence = recordAppendElementFieldOriginUse(out.KeyPresence, destinations, field, originUse)
 		}
-		for _, aliasUse := range out.PathAliases.AliasesCoveringPath(elementField) {
+		for _, aliasUse := range out.PathAliases.AliasesCoveringAddress(elementFieldAddr) {
 			source, ok := pathFromKey(aliasUse.Alias.Source)
 			if !ok {
 				continue
@@ -647,7 +651,11 @@ func (t *Transfer) recordAppendElementFieldOrigins(out *flow.PointState, place P
 			for _, seg := range aliasUse.Remainder {
 				source = source.Append(seg)
 			}
-			for _, originUse := range out.ValueOrigins.OriginsCoveringPath(source) {
+			sourceAddr, ok := flow.StableAddressOfPath(source)
+			if !ok {
+				continue
+			}
+			for _, originUse := range out.ValueOrigins.OriginsCoveringAddress(sourceAddr) {
 				out.KeyPresence = recordAppendElementFieldOriginUse(out.KeyPresence, destinations, field, originUse)
 			}
 		}
@@ -683,7 +691,11 @@ func appendOriginDestinations(out *flow.PointState, arrayPath constraint.Path, f
 			array:       array,
 			fieldPrefix: append([]constraint.Segment(nil), prefix...),
 		})
-		for _, use := range out.ValueOrigins.OriginsCoveringPath(array) {
+		arrayAddr, ok := flow.StableAddressOfPath(array)
+		if !ok {
+			return
+		}
+		for _, use := range out.ValueOrigins.OriginsCoveringAddress(arrayAddr) {
 			if use.Origin.Kind != flow.ValueOriginIndexedIterator || use.Origin.VarIndex != 1 || len(use.Remainder) == 0 {
 				continue
 			}
@@ -695,7 +707,7 @@ func appendOriginDestinations(out *flow.PointState, arrayPath constraint.Path, f
 			nextPrefix = append(nextPrefix, prefix...)
 			add(source, nextPrefix)
 		}
-		for _, aliasUse := range out.PathAliases.AliasesCoveringPath(array) {
+		for _, aliasUse := range out.PathAliases.AliasesCoveringAddress(arrayAddr) {
 			source, ok := pathFromKey(aliasUse.Alias.Source)
 			if !ok {
 				continue
@@ -725,7 +737,11 @@ func appendOriginSources(out *flow.PointState, sourcePath constraint.Path) []app
 		})
 	}
 	add(sourcePath, nil)
-	for _, use := range out.ValueOrigins.OriginsCoveringPath(sourcePath) {
+	sourceAddr, ok := flow.StableAddressOfPath(sourcePath)
+	if !ok {
+		return sources
+	}
+	for _, use := range out.ValueOrigins.OriginsCoveringAddress(sourceAddr) {
 		source, ok := pathFromKey(use.Origin.Source)
 		if !ok {
 			continue
@@ -742,7 +758,7 @@ func appendOriginSources(out *flow.PointState, sourcePath constraint.Path) []app
 			add(source, nil)
 		}
 	}
-	for _, aliasUse := range out.PathAliases.AliasesCoveringPath(sourcePath) {
+	for _, aliasUse := range out.PathAliases.AliasesCoveringAddress(sourceAddr) {
 		source, ok := pathFromKey(aliasUse.Alias.Source)
 		if !ok {
 			continue
@@ -1035,7 +1051,11 @@ func (t *Transfer) aliasReplayWriteEffects(out *flow.PointState, effect WriteEff
 	}
 	var outEffects []WriteEffect
 	seen := map[constraint.PathKey]struct{}{}
-	for _, use := range out.ValueOrigins.OriginsCoveringPath(path) {
+	addr, ok := flow.StableAddressOfPath(path)
+	if !ok {
+		return nil
+	}
+	for _, use := range out.ValueOrigins.OriginsCoveringAddress(addr) {
 		if use.Origin.Kind != flow.ValueOriginAssignmentAlias || len(use.Remainder) == 0 {
 			continue
 		}

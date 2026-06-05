@@ -25,6 +25,15 @@ import (
 
 type factsStub map[cfg.SymbolID]typ.Type
 
+func testFlowPathAddress(t *testing.T, path constraint.Path) flow.StableAddress {
+	t.Helper()
+	addr, ok := flow.StableAddressOfPath(path)
+	if !ok {
+		t.Fatalf("flow address for path %s", path.Key())
+	}
+	return addr
+}
+
 func (f factsStub) DeclaredAt(_ cfg.Point, sym cfg.SymbolID) flow.TypedValue {
 	return typedValueForTest(f[sym])
 }
@@ -350,9 +359,9 @@ func TestProjector_CallArgumentProofUsesBodyContractValueOrigin(t *testing.T) {
 		contracts: paramevidence.Contracts{
 			0: sourceContract,
 		},
-		origins: flow.ValueOriginFacts{}.WithPaths(
-			valuePath,
-			sourcePath,
+		origins: flow.ValueOriginFacts{}.WithAddresses(
+			testFlowPathAddress(t, valuePath),
+			testFlowPathAddress(t, sourcePath),
 			flow.ValueOriginIndexedIterator,
 			1,
 		),
@@ -418,9 +427,9 @@ func TestProjector_CallArgumentProofRoutesThroughAppendElementFieldOrigin(t *tes
 			0: paramevidence.IndexedIteratorContract(1, targetContract),
 		},
 		origins: flow.ValueOriginFacts{}.
-			WithPaths(opPath, operationsPath, flow.ValueOriginIndexedIterator, 1).
-			WithPaths(routePath, inputRoutesPath, flow.ValueOriginIndexedIterator, 1),
-		aliases: flow.PathAliasFacts{}.WithPaths(routeEntryPath, routePath),
+			WithAddresses(testFlowPathAddress(t, opPath), testFlowPathAddress(t, operationsPath), flow.ValueOriginIndexedIterator, 1).
+			WithAddresses(testFlowPathAddress(t, routePath), testFlowPathAddress(t, inputRoutesPath), flow.ValueOriginIndexedIterator, 1),
+		aliases: flow.PathAliasFacts{}.WithAddresses(testFlowPathAddress(t, routeEntryPath), testFlowPathAddress(t, routePath)),
 		appendOrigins: flow.KeyPresenceFacts{}.
 			WithAppendHistoryBasePath(inputRoutesPath).
 			WithAppendElementFieldOriginPaths(inputRoutesPath, targetField, opPath.Field("config").Field("target")),
@@ -482,8 +491,8 @@ func TestProjector_CallArgumentProofRoutesThroughElementRelativeAppendOrigin(t *
 			0: paramevidence.IndexedIteratorContract(1, targetContract),
 		},
 		origins: flow.ValueOriginFacts{}.
-			WithPaths(routePath, inputRoutesPath, flow.ValueOriginIndexedIterator, 1),
-		aliases: flow.PathAliasFacts{}.WithPaths(routeEntryPath, routePath),
+			WithAddresses(testFlowPathAddress(t, routePath), testFlowPathAddress(t, inputRoutesPath), flow.ValueOriginIndexedIterator, 1),
+		aliases: flow.PathAliasFacts{}.WithAddresses(testFlowPathAddress(t, routeEntryPath), testFlowPathAddress(t, routePath)),
 		appendOrigins: flow.KeyPresenceFacts{}.
 			WithAppendHistoryBasePath(inputRoutesPath).
 			WithAppendElementFieldOriginFromPaths(inputRoutesPath, targetField, operationsPath, sourceField),
@@ -537,9 +546,9 @@ func TestProjector_CallArgumentProofUsesRootLocalBodyContractValueOrigin(t *test
 			0: selfContract,
 		},
 		annotated: map[cfg.SymbolID]bool{selfSym: true},
-		origins: flow.ValueOriginFacts{}.WithPaths(
-			nodePath,
-			nodesPath,
+		origins: flow.ValueOriginFacts{}.WithAddresses(
+			testFlowPathAddress(t, nodePath),
+			testFlowPathAddress(t, nodesPath),
 			flow.ValueOriginKeyedIterator,
 			0,
 		),

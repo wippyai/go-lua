@@ -30,7 +30,12 @@ func TestIndexWriteReadAdmissionFollowsAssignmentAlias(t *testing.T) {
 			flow.SymbolValueKey(cfg.SymbolID(501)): product.FromType(typ.NewMap(typ.String, typ.NewOptional(typ.Number))),
 			flow.SymbolValueKey(cfg.SymbolID(503)): product.FromType(typ.String),
 		},
-		ValueOrigins: flow.ValueOriginFacts{}.WithPaths(lastPath, idPath, flow.ValueOriginAssignmentAlias, 0),
+		ValueOrigins: flow.ValueOriginFacts{}.WithAddresses(
+			testFlowPathAddress(t, lastPath),
+			testFlowPathAddress(t, idPath),
+			flow.ValueOriginAssignmentAlias,
+			0,
+		),
 		IndexWrites: flow.IndexWriteAdmissionFacts{}.With(flow.IndexWriteAdmissionFact{
 			Target:  flow.StablePathKey(nodesPath),
 			KeyPath: flow.StablePathKey(idPath),
@@ -150,7 +155,7 @@ func TestAssignmentProvenanceCopiesKeyPresence(t *testing.T) {
 	if !out.KeyPresence.HasValuePaths(tablePath, targetPath, valuePath) {
 		t.Fatalf("assignment provenance did not copy key-presence value fact: %s", out.KeyPresence.Format())
 	}
-	origins := out.ValueOrigins.OriginsOfPath(targetPath)
+	origins := out.ValueOrigins.OriginsOfAddress(testFlowPathAddress(t, targetPath))
 	if len(origins) != 1 || origins[0].Kind != flow.ValueOriginAssignmentAlias ||
 		origins[0].Source != flow.KeyPresencePathKey(sourcePath) {
 		t.Fatalf("assignment provenance origins = %v, want alias from %s", origins, flow.KeyPresencePathKey(sourcePath))
@@ -250,7 +255,7 @@ func TestAssignmentProvenanceRecordsStaticMemberAlias(t *testing.T) {
 
 	targetPath := constraint.NewPath(cfg.SymbolID(632), "box").Field("cur")
 	sourcePath := constraint.NewPath(cfg.SymbolID(631), "s")
-	origins := out.ValueOrigins.OriginsOfPath(targetPath)
+	origins := out.ValueOrigins.OriginsOfAddress(testFlowPathAddress(t, targetPath))
 	if len(origins) != 1 || origins[0].Kind != flow.ValueOriginAssignmentAlias ||
 		origins[0].Source != flow.KeyPresencePathKey(sourcePath) {
 		t.Fatalf("static member assignment origins = %v, want alias from %s", origins, flow.KeyPresencePathKey(sourcePath))
@@ -279,7 +284,7 @@ func TestAssignmentValueOriginRejectsGradualAnyAlias(t *testing.T) {
 		t.Fatalf("gradual any assignment seeded alias origin: %s", out.ValueOrigins.Format())
 	}
 	targetPath := constraint.NewPath(cfg.SymbolID(611), "alias")
-	if aliases := out.PathAliases.AliasesOfPath(targetPath); len(aliases) != 1 ||
+	if aliases := out.PathAliases.AliasesOfAddress(testFlowPathAddress(t, targetPath)); len(aliases) != 1 ||
 		aliases[0].Source != flow.KeyPresencePathKey(constraint.NewPath(cfg.SymbolID(612), "id")) {
 		t.Fatalf("strict any assignment path aliases = %v in %s, want alias<-id", aliases, out.PathAliases.Format())
 	}
@@ -306,7 +311,10 @@ func TestIndexWriteReadAdmissionFollowsStrictAnyPathAlias(t *testing.T) {
 			flow.SymbolValueKey(cfg.SymbolID(721)): product.FromType(typ.NewMap(typ.String, typ.NewOptional(nodeType))),
 			flow.SymbolValueKey(cfg.SymbolID(723)): product.FromType(typ.Any),
 		},
-		PathAliases: flow.PathAliasFacts{}.WithPaths(lastPath, idPath),
+		PathAliases: flow.PathAliasFacts{}.WithAddresses(
+			testFlowPathAddress(t, lastPath),
+			testFlowPathAddress(t, idPath),
+		),
 		IndexWrites: flow.IndexWriteAdmissionFacts{}.With(flow.IndexWriteAdmissionFact{
 			Target:  flow.StablePathKey(nodesPath),
 			KeyPath: flow.StablePathKey(idPath),

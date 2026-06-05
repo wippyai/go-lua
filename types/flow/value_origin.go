@@ -76,30 +76,6 @@ func (f ValueOriginFacts) WithAddresses(value, source StableAddress, kind ValueO
 	return f.With(ValueOriginFact{Value: valueKey, Source: sourceKey, Kind: kind, VarIndex: varIndex})
 }
 
-// TODO(address-vocabulary): migrate callers to WithAddresses and remove this
-// source-path compatibility wrapper.
-func (f ValueOriginFacts) WithPaths(value, source constraint.Path, kind ValueOriginKind, varIndex int) ValueOriginFacts {
-	valueAddr, ok := StableAddressOfPath(value)
-	if !ok {
-		return f
-	}
-	sourceAddr, ok := StableAddressOfPath(source)
-	if !ok {
-		return f
-	}
-	return f.WithAddresses(valueAddr, sourceAddr, kind, varIndex)
-}
-
-// TODO(address-vocabulary): migrate callers to OriginsOfAddress and remove this
-// PathKey compatibility wrapper.
-func (f ValueOriginFacts) OriginsOf(value constraint.PathKey) []ValueOriginFact {
-	addr, ok := StableAddressFromKey(value)
-	if !ok {
-		return nil
-	}
-	return f.OriginsOfAddress(addr)
-}
-
 func (f ValueOriginFacts) OriginsOfAddress(value StableAddress) []ValueOriginFact {
 	valueKey := value.Key()
 	if f.bottom || valueKey == "" || len(f.entries) == 0 {
@@ -112,25 +88,6 @@ func (f ValueOriginFacts) OriginsOfAddress(value StableAddress) []ValueOriginFac
 		}
 	}
 	return out
-}
-
-// TODO(address-vocabulary): migrate callers to OriginsOfAddress and remove this
-// source-path compatibility wrapper.
-func (f ValueOriginFacts) OriginsOfPath(value constraint.Path) []ValueOriginFact {
-	return f.OriginsOf(KeyPresencePathKey(value))
-}
-
-// OriginsCoveringPath returns origins whose value path is equal to, or an
-// ancestor of, value. This is the path-sensitive lookup used by backward demand:
-// an origin for loop variable `entry` must also cover reads such as `entry.id`.
-// TODO(address-vocabulary): migrate callers to OriginsCoveringAddress and
-// remove this source-path compatibility wrapper.
-func (f ValueOriginFacts) OriginsCoveringPath(value constraint.Path) []ValueOriginUse {
-	addr, ok := StableAddressOfPath(value)
-	if !ok {
-		return nil
-	}
-	return f.OriginsCoveringAddress(addr)
 }
 
 func (f ValueOriginFacts) OriginsCoveringAddress(value StableAddress) []ValueOriginUse {
@@ -156,16 +113,6 @@ func (f ValueOriginFacts) OriginsCoveringAddress(value StableAddress) []ValueOri
 		return valueOriginLess(out[i].Origin, out[j].Origin)
 	})
 	return out
-}
-
-// TODO(address-vocabulary): migrate callers to KillAffectedByWriteAddress and
-// remove this PathKey compatibility wrapper.
-func (f ValueOriginFacts) KillAffectedByWrite(writePath constraint.PathKey) ValueOriginFacts {
-	addr, ok := StableAddressFromKey(writePath)
-	if !ok {
-		return f
-	}
-	return f.KillAffectedByWriteAddress(addr)
 }
 
 func (f ValueOriginFacts) KillAffectedByWriteAddress(write StableAddress) ValueOriginFacts {

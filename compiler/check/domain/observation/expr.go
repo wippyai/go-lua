@@ -729,7 +729,11 @@ func (p Projector) bodyContractPathTypeAtPath(point cfg.Point, path constraint.P
 		return nil
 	}
 	var types []typ.Type
-	for _, use := range p.pathAliasesAt(point).AliasesCoveringPath(path) {
+	pathAddr, ok := flow.StableAddressOfPath(path)
+	if !ok {
+		return nil
+	}
+	for _, use := range p.pathAliasesAt(point).AliasesCoveringAddress(pathAddr) {
 		sourcePath, ok := observationPathFromKey(use.Alias.Source)
 		if !ok {
 			continue
@@ -745,7 +749,7 @@ func (p Projector) bodyContractPathTypeAtPath(point cfg.Point, path constraint.P
 	}
 	origins := p.valueOriginsAt(point)
 	if !origins.IsBottom() {
-		for _, use := range origins.OriginsCoveringPath(path) {
+		for _, use := range origins.OriginsCoveringAddress(pathAddr) {
 			sourcePath, ok := observationPathFromKey(use.Origin.Source)
 			if !ok {
 				continue
@@ -1369,7 +1373,7 @@ func (f factsIndexReadFlow) indexWriteAdmissionAliasPaths(p cfg.Point, keyPath c
 		}
 		seen[curKey] = struct{}{}
 		out = append(out, cur)
-		for _, use := range origins.OriginsCoveringPath(cur) {
+		for _, use := range origins.OriginsCoveringAddress(curAddr) {
 			if use.Origin.Kind != flow.ValueOriginAssignmentAlias {
 				continue
 			}

@@ -27,6 +27,15 @@ func testStaticMemberAddressKey(t *testing.T, key constraint.PathKey) flow.Stabl
 	return addr
 }
 
+func testFlowPathAddress(t *testing.T, path constraint.Path) flow.StableAddress {
+	t.Helper()
+	addr, ok := flow.StableAddressOfPath(path)
+	if !ok {
+		t.Fatalf("flow address for path %s", path.Key())
+	}
+	return addr
+}
+
 func testStaticMemberValue(t *testing.T, facts flow.StaticMemberFacts, sym cfg.SymbolID, segs []constraint.Segment) (product.AbstractValue, bool) {
 	t.Helper()
 	return facts.ValueAtAddress(testStaticMemberAddress(t, sym, segs))

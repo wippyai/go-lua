@@ -255,7 +255,11 @@ func IndexedIteratorKeyArrayReadback(
 		if !ok {
 			continue
 		}
-		for _, use := range origins.OriginsCoveringPath(curPath) {
+		curAddr, ok := StableAddressOfPath(curPath)
+		if !ok {
+			continue
+		}
+		for _, use := range origins.OriginsCoveringAddress(curAddr) {
 			switch use.Origin.Kind {
 			case ValueOriginIndexedIterator:
 				if use.Origin.VarIndex != 1 || len(use.Remainder) != 0 {

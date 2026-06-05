@@ -23,8 +23,16 @@ func (t *Transfer) applyValueOriginEffect(out *flow.PointState, effect ValueOrig
 	if out == nil || effect.ValuePath.IsEmpty() || effect.SourcePath.IsEmpty() || effect.Kind == 0 {
 		return false
 	}
+	valueAddr, ok := flow.StableAddressOfPath(effect.ValuePath)
+	if !ok {
+		return false
+	}
+	sourceAddr, ok := flow.StableAddressOfPath(effect.SourcePath)
+	if !ok {
+		return false
+	}
 	before := out.ValueOrigins
-	out.ValueOrigins = out.ValueOrigins.WithPaths(effect.ValuePath, effect.SourcePath, effect.Kind, effect.VarIndex)
+	out.ValueOrigins = out.ValueOrigins.WithAddresses(valueAddr, sourceAddr, effect.Kind, effect.VarIndex)
 	return !flow.ValueOriginFactsDomain.Equal(before, out.ValueOrigins)
 }
 
@@ -168,12 +176,16 @@ func (t *Transfer) demandLocalPathContract(
 		if out == nil {
 			continue
 		}
-		for _, use := range out.PathAliases.AliasesCoveringPath(cur.path) {
+		curAddr, ok := flow.StableAddressOfPath(cur.path)
+		if !ok {
+			continue
+		}
+		for _, use := range out.PathAliases.AliasesCoveringAddress(curAddr) {
 			if source, ok := demandSourceWithRemainder(use.Alias.Source, use.Remainder); ok {
 				queue = append(queue, demandRouteItem{path: source, contract: cur.contract})
 			}
 		}
-		for _, use := range out.ValueOrigins.OriginsCoveringPath(cur.path) {
+		for _, use := range out.ValueOrigins.OriginsCoveringAddress(curAddr) {
 			switch use.Origin.Kind {
 			case flow.ValueOriginAssignmentAlias:
 				if source, ok := demandSourceWithRemainder(use.Origin.Source, use.Remainder); ok {
