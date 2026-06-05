@@ -58,14 +58,17 @@ func (p callableProjector) TypeAt(in flow.PointState, path constraint.Path) typ.
 	if p.prog == nil || path.Symbol == 0 {
 		return nil
 	}
-	key := functionRefPathKey(path)
-	if t := p.closureTypeAt(in, key); !typ.IsAbsentOrUnknown(t) {
-		return t
-	}
-	if _, ok := flow.ClosureRefAt(in.ClosureRefs, key); ok {
+	addr, ok := flow.StableAddressOfPath(path)
+	if !ok {
 		return nil
 	}
-	refs, ok := flow.FunctionRefAt(in.FunctionRefs, key)
+	if t := p.closureTypeAt(in, addr); !typ.IsAbsentOrUnknown(t) {
+		return t
+	}
+	if _, ok := flow.ClosureRefAtAddress(in.ClosureRefs, addr); ok {
+		return nil
+	}
+	refs, ok := flow.FunctionRefAtAddress(in.FunctionRefs, addr)
 	if ok {
 		return p.functionRefsType(refs, in.Cells, in.FunctionRefs, in.ClosureRefs)
 	}
@@ -82,8 +85,8 @@ func (p callableProjector) FunctionTypeByRef(ref flow.FunctionRef, cells flow.Ca
 	return p.signature(ref, cells, refs, closures)
 }
 
-func (p callableProjector) closureTypeAt(in flow.PointState, key constraint.PathKey) typ.Type {
-	set, ok := flow.ClosureRefAt(in.ClosureRefs, key)
+func (p callableProjector) closureTypeAt(in flow.PointState, addr flow.StableAddress) typ.Type {
+	set, ok := flow.ClosureRefAtAddress(in.ClosureRefs, addr)
 	if !ok {
 		return nil
 	}
@@ -175,9 +178,4 @@ func (p callableProjector) signature(ref flow.FunctionRef, cells flow.CaptureCel
 	}
 	sum := p.reader.SummarizeWithEntryContext(sref, entryCells, entryRefs, entryClosures, nil)
 	return summary.FunctionSignatureWithProjectedReturns(sig, hasDeclaredReturns, sum)
-}
-
-func functionRefPathKey(path constraint.Path) constraint.PathKey {
-	path.Version = 0
-	return path.Key()
 }

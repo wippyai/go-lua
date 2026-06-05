@@ -457,11 +457,14 @@ func returnSlotHasFiniteCallTarget(ps flow.PointState, info *cfg.ReturnInfo, i i
 	if !ok {
 		return false
 	}
-	key := path.Key()
-	if set, ok := flow.FunctionRefAt(ps.FunctionRefs, key); ok && len(set.Refs()) > 0 {
+	addr, ok := flow.StableAddressOfPath(path)
+	if !ok {
+		return false
+	}
+	if set, ok := flow.FunctionRefAtAddress(ps.FunctionRefs, addr); ok && len(set.Refs()) > 0 {
 		return true
 	}
-	if set, ok := flow.ClosureRefAt(ps.ClosureRefs, key); ok && len(set.Refs()) > 0 {
+	if set, ok := flow.ClosureRefAtAddress(ps.ClosureRefs, addr); ok && len(set.Refs()) > 0 {
 		return true
 	}
 	return false

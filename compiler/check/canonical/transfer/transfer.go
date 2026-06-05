@@ -1429,11 +1429,15 @@ func (t *Transfer) applyFuncDef(out *flow.PointState, info *cfg.FuncDefInfo) {
 
 func (t *Transfer) functionRefsWriteForFuncDef(info *cfg.FuncDefInfo) functionRefsWrite {
 	if provider, ok := t.funcTyper.(functionRefProvider); ok {
+		addr, addrOK := flow.StableAddressOfPath(info.TargetPath)
+		if !addrOK {
+			return sourceFunctionRefsWrite()
+		}
 		if ref, ok := provider.MethodFuncRef(info); ok {
-			return explicitFunctionRefsWrite(flow.WithFunctionRef(nil, info.TargetPath.Key(), flow.FunctionRefSetOf(ref)))
+			return explicitFunctionRefsWrite(flow.WithFunctionRefAddress(nil, addr, flow.FunctionRefSetOf(ref)))
 		}
 		if ref, ok := provider.FuncRef(info.FuncExpr); ok {
-			return explicitFunctionRefsWrite(flow.WithFunctionRef(nil, info.TargetPath.Key(), flow.FunctionRefSetOf(ref)))
+			return explicitFunctionRefsWrite(flow.WithFunctionRefAddress(nil, addr, flow.FunctionRefSetOf(ref)))
 		}
 	}
 	return sourceFunctionRefsWrite()
@@ -1731,28 +1735,32 @@ func rebaseCallReturnFunctionRefs(
 }
 
 func (t *Transfer) recordFunctionRefAt(out *flow.PointState, path constraint.Path, src ast.Expr) {
-	key := path.Key()
-	if key == "" {
+	addr, ok := flow.StableAddressOfPath(path)
+	if !ok {
 		return
 	}
 	if srcPath, ok := t.staticPathOfExpr(src); ok {
 		refs := flow.RebaseFunctionRefs(flow.ProjectFunctionRefsByPath(out.FunctionRefs, srcPath), srcPath, path)
-		out.FunctionRefs = flow.WithoutFunctionRefSubtree(out.FunctionRefs, key)
+		out.FunctionRefs = flow.WithoutFunctionRefSubtreeAddress(out.FunctionRefs, addr)
 		out.FunctionRefs = flow.FunctionRefsDomain.Join(out.FunctionRefs, refs)
 		return
 	}
 	set, ok := t.functionRefSetOfExpr(out, src)
 	nested := t.nestedFunctionRefSetsOfExpr(out, src)
-	out.FunctionRefs = flow.WithoutFunctionRefSubtree(out.FunctionRefs, key)
+	out.FunctionRefs = flow.WithoutFunctionRefSubtreeAddress(out.FunctionRefs, addr)
 	if !ok {
 		for _, entry := range nested {
-			out.FunctionRefs = flow.WithFunctionRef(out.FunctionRefs, appendFunctionRefPath(path, entry.segments).Key(), entry.set)
+			if child, ok := flow.StableAddressOfPath(appendFunctionRefPath(path, entry.segments)); ok {
+				out.FunctionRefs = flow.WithFunctionRefAddress(out.FunctionRefs, child, entry.set)
+			}
 		}
 		return
 	}
-	out.FunctionRefs = flow.WithFunctionRef(out.FunctionRefs, key, set)
+	out.FunctionRefs = flow.WithFunctionRefAddress(out.FunctionRefs, addr, set)
 	for _, entry := range nested {
-		out.FunctionRefs = flow.WithFunctionRef(out.FunctionRefs, appendFunctionRefPath(path, entry.segments).Key(), entry.set)
+		if child, ok := flow.StableAddressOfPath(appendFunctionRefPath(path, entry.segments)); ok {
+			out.FunctionRefs = flow.WithFunctionRefAddress(out.FunctionRefs, child, entry.set)
+		}
 	}
 }
 
@@ -1813,28 +1821,32 @@ func rebaseCallReturnClosureRefs(
 }
 
 func (t *Transfer) recordClosureRefAt(out *flow.PointState, path constraint.Path, src ast.Expr) {
-	key := path.Key()
-	if out == nil || key == "" {
+	addr, ok := flow.StableAddressOfPath(path)
+	if out == nil || !ok {
 		return
 	}
 	if srcPath, ok := t.staticPathOfExpr(src); ok {
 		refs := flow.RebaseClosureRefs(flow.ProjectClosureRefsByPath(out.ClosureRefs, srcPath), srcPath, path)
-		out.ClosureRefs = flow.WithoutClosureRefSubtree(out.ClosureRefs, key)
+		out.ClosureRefs = flow.WithoutClosureRefSubtreeAddress(out.ClosureRefs, addr)
 		out.ClosureRefs = flow.ClosureRefsDomain.Join(out.ClosureRefs, refs)
 		return
 	}
 	set, ok := t.closureRefSetOfExpr(out, src)
 	nested := t.nestedClosureRefSetsOfExpr(out, src)
-	out.ClosureRefs = flow.WithoutClosureRefSubtree(out.ClosureRefs, key)
+	out.ClosureRefs = flow.WithoutClosureRefSubtreeAddress(out.ClosureRefs, addr)
 	if !ok {
 		for _, entry := range nested {
-			out.ClosureRefs = flow.WithClosureRef(out.ClosureRefs, appendFunctionRefPath(path, entry.segments).Key(), entry.set)
+			if child, ok := flow.StableAddressOfPath(appendFunctionRefPath(path, entry.segments)); ok {
+				out.ClosureRefs = flow.WithClosureRefAddress(out.ClosureRefs, child, entry.set)
+			}
 		}
 		return
 	}
-	out.ClosureRefs = flow.WithClosureRef(out.ClosureRefs, key, set)
+	out.ClosureRefs = flow.WithClosureRefAddress(out.ClosureRefs, addr, set)
 	for _, entry := range nested {
-		out.ClosureRefs = flow.WithClosureRef(out.ClosureRefs, appendFunctionRefPath(path, entry.segments).Key(), entry.set)
+		if child, ok := flow.StableAddressOfPath(appendFunctionRefPath(path, entry.segments)); ok {
+			out.ClosureRefs = flow.WithClosureRefAddress(out.ClosureRefs, child, entry.set)
+		}
 	}
 }
 
@@ -1867,11 +1879,11 @@ func (t *Transfer) closureRefSetOfExpr(out *flow.PointState, expr ast.Expr) (flo
 			entryClosures,
 		)), true
 	}
-	key, ok := t.functionExprPathKey(expr)
+	addr, ok := t.functionExprAddress(expr)
 	if !ok {
 		return flow.ClosureRefSet{}, false
 	}
-	return flow.ClosureRefAt(out.ClosureRefs, key)
+	return flow.ClosureRefAtAddress(out.ClosureRefs, addr)
 }
 
 func (t *Transfer) closureCapturedSymbols(ref flow.FunctionRef) []cfg.SymbolID {
@@ -1969,11 +1981,11 @@ func (t *Transfer) functionRefSetOfExpr(out *flow.PointState, expr ast.Expr) (fl
 		}
 		return flow.FunctionRefSet{}, false
 	}
-	key, ok := t.functionExprPathKey(expr)
+	addr, ok := t.functionExprAddress(expr)
 	if !ok {
 		return flow.FunctionRefSet{}, false
 	}
-	return flow.FunctionRefAt(out.FunctionRefs, key)
+	return flow.FunctionRefAtAddress(out.FunctionRefs, addr)
 }
 
 type nestedFunctionRefSet struct {
@@ -2039,20 +2051,16 @@ func (t *Transfer) targetFunctionPathKey(target cfg.AssignTarget) (constraint.Pa
 	return path.Key(), true
 }
 
-func (t *Transfer) functionExprPathKey(expr ast.Expr) (constraint.PathKey, bool) {
+func (t *Transfer) functionExprAddress(expr ast.Expr) (flow.StableAddress, bool) {
 	place, ok := t.staticPlaceOfExpr(expr)
 	if !ok {
-		return "", false
+		return flow.StableAddress{}, false
 	}
-	return place.StaticPathKey()
-}
-
-func (t *Transfer) staticMemberExprPathKey(expr ast.Expr) (constraint.PathKey, bool) {
-	place, ok := t.staticPlaceOfExpr(expr)
+	path, ok := place.StaticPath()
 	if !ok {
-		return "", false
+		return flow.StableAddress{}, false
 	}
-	return symbolPathKey(place)
+	return flow.StableAddressOfPath(path)
 }
 
 func (t *Transfer) staticMemberExprAddress(expr ast.Expr) (flow.StableAddress, bool) {
@@ -2061,17 +2069,6 @@ func (t *Transfer) staticMemberExprAddress(expr ast.Expr) (flow.StableAddress, b
 		return flow.StableAddress{}, false
 	}
 	return symbolStableAddress(place)
-}
-
-func (t *Transfer) staticMemberExprPathKeyAt(out *flow.PointState, p cfg.Point, expr ast.Expr) (constraint.PathKey, bool) {
-	if out == nil {
-		return t.staticMemberExprPathKey(expr)
-	}
-	place, ok := t.placeOfExprAt(out, p, expr, nil)
-	if !ok {
-		return t.staticMemberExprPathKey(expr)
-	}
-	return symbolPathKey(place)
 }
 
 func (t *Transfer) staticMemberExprAddressAt(out *flow.PointState, p cfg.Point, expr ast.Expr) (flow.StableAddress, bool) {
@@ -2168,12 +2165,15 @@ func (t *Transfer) prototypeMethodRefs(proto cfg.SymbolID, base constraint.Path)
 		}
 		path := base
 		path.Segments = append(append([]constraint.Segment(nil), base.Segments...), method.Field)
-		key := path.Key()
+		addr, ok := flow.StableAddressOfPath(path)
+		if !ok {
+			continue
+		}
 		set := flow.FunctionRefSetOf(method.FuncRef)
-		if existing, ok := flow.FunctionRefAt(refs, key); ok {
+		if existing, ok := flow.FunctionRefAtAddress(refs, addr); ok {
 			set = flow.FunctionRefSetDomain.Join(existing, set)
 		}
-		refs = flow.WithFunctionRef(refs, key, set)
+		refs = flow.WithFunctionRefAddress(refs, addr, set)
 	}
 	return refs
 }
@@ -3090,8 +3090,8 @@ func (t *Transfer) projectAttrGetValue(out *flow.PointState, e *ast.AttrGetExpr)
 	if member, isStatic := staticMemberKey(e); isStatic {
 		fv, ok := product.RuntimeMemberOf(base, member)
 		if !ok || fv.IsZero() {
-			if pathKey, hasPath := t.functionExprPathKey(e); hasPath {
-				if ft, ok := t.functionValueForPathKey(out, pathKey); ok {
+			if addr, hasPath := t.functionExprAddress(e); hasPath {
+				if ft, ok := t.functionValueForAddress(out, addr); ok {
 					return product.RefineCallableRead(fv, ft), true
 				}
 			}
@@ -3100,8 +3100,8 @@ func (t *Transfer) projectAttrGetValue(out *flow.PointState, e *ast.AttrGetExpr)
 			}
 			return product.AbstractValue{}, false
 		}
-		if pathKey, hasPath := t.functionExprPathKey(e); hasPath {
-			if ft, ok := t.functionValueForPathKey(out, pathKey); ok {
+		if addr, hasPath := t.functionExprAddress(e); hasPath {
+			if ft, ok := t.functionValueForAddress(out, addr); ok {
 				return product.RefineCallableRead(fv, ft), true
 			}
 		}
@@ -4105,15 +4105,15 @@ func (t *Transfer) evalAttrGet(
 	if member, isStatic := staticMemberKey(e); isStatic {
 		fv, ok := product.RuntimeMemberOf(base, member)
 		if !ok || fv.IsZero() {
-			if pathKey, hasPath := t.functionExprPathKey(e); hasPath {
-				if ft, ok := t.functionValueForPathKey(out, pathKey); ok {
+			if addr, hasPath := t.functionExprAddress(e); hasPath {
+				if ft, ok := t.functionValueForAddress(out, addr); ok {
 					return product.RefineCallableRead(fv, ft), true
 				}
 			}
 			return product.AbstractValue{}, false
 		}
-		if pathKey, hasPath := t.functionExprPathKey(e); hasPath {
-			if ft, ok := t.functionValueForPathKey(out, pathKey); ok {
+		if addr, hasPath := t.functionExprAddress(e); hasPath {
+			if ft, ok := t.functionValueForAddress(out, addr); ok {
 				return product.RefineCallableRead(fv, ft), true
 			}
 		}
@@ -4151,15 +4151,15 @@ func (t *Transfer) evalAttrGetAt(
 	if member, isStatic := staticMemberKeyWithConst(e, t.constResolverAt(p)); isStatic {
 		fv, ok := product.RuntimeMemberOf(base, member)
 		if !ok || fv.IsZero() {
-			if pathKey, hasPath := t.functionExprPathKey(e); hasPath {
-				if ft, ok := t.functionValueForPathKey(out, pathKey); ok {
+			if addr, hasPath := t.functionExprAddress(e); hasPath {
+				if ft, ok := t.functionValueForAddress(out, addr); ok {
 					return product.RefineCallableRead(fv, ft), true
 				}
 			}
 			return product.AbstractValue{}, false
 		}
-		if pathKey, hasPath := t.functionExprPathKey(e); hasPath {
-			if ft, ok := t.functionValueForPathKey(out, pathKey); ok {
+		if addr, hasPath := t.functionExprAddress(e); hasPath {
+			if ft, ok := t.functionValueForAddress(out, addr); ok {
 				return product.RefineCallableRead(fv, ft), true
 			}
 		}
@@ -4215,8 +4215,10 @@ func (t *Transfer) evalIdent(
 }
 
 func (t *Transfer) functionValueForPath(out *flow.PointState, path constraint.Path) (typ.Type, bool) {
-	if ft, ok := t.functionValueForPathKey(out, path.Key()); ok {
-		return ft, true
+	if addr, ok := flow.StableAddressOfPath(path); ok {
+		if ft, ok := t.functionValueForAddress(out, addr); ok {
+			return ft, true
+		}
 	}
 	if out == nil || t.callTyper == nil {
 		return nil, false
@@ -4232,11 +4234,11 @@ func (t *Transfer) functionValueForPath(out *flow.PointState, path constraint.Pa
 	return ft, true
 }
 
-func (t *Transfer) functionValueForPathKey(out *flow.PointState, key constraint.PathKey) (typ.Type, bool) {
+func (t *Transfer) functionValueForAddress(out *flow.PointState, addr flow.StableAddress) (typ.Type, bool) {
 	if out == nil || t.callTyper == nil {
 		return nil, false
 	}
-	refs, ok := flow.FunctionRefAt(out.FunctionRefs, key)
+	refs, ok := flow.FunctionRefAtAddress(out.FunctionRefs, addr)
 	if !ok {
 		return nil, false
 	}

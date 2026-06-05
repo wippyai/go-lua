@@ -194,9 +194,9 @@ func (k ClosureRefsKey) Format() string {
 	return formatClosureRefs(k.Refs())
 }
 
-// ClosureRefAt returns the closure set for path.
-func ClosureRefAt(refs ClosureRefs, path constraint.PathKey) (ClosureRefSet, bool) {
-	if path == "" {
+// ClosureRefAtAddress returns the closure set for addr.
+func ClosureRefAtAddress(refs ClosureRefs, addr StableAddress) (ClosureRefSet, bool) {
+	if addr.Key() == "" {
 		return ClosureRefSet{}, false
 	}
 	if isClosureRefsTop(refs) {
@@ -205,13 +205,19 @@ func ClosureRefAt(refs ClosureRefs, path constraint.PathKey) (ClosureRefSet, boo
 	if len(refs) == 0 {
 		return ClosureRefSet{}, false
 	}
-	set, ok := refs[path]
-	return set, ok && !set.IsBottom()
+	for _, path := range functionRefAddressKeys(addr) {
+		set, ok := refs[path]
+		if ok && !set.IsBottom() {
+			return set, true
+		}
+	}
+	return ClosureRefSet{}, false
 }
 
-// WithClosureRef returns refs with path strongly updated to set. Updating to
-// Bottom removes the key.
-func WithClosureRef(refs ClosureRefs, path constraint.PathKey, set ClosureRefSet) ClosureRefs {
+// WithClosureRefAddress returns refs with addr strongly updated to set. Updating
+// to Bottom removes the key.
+func WithClosureRefAddress(refs ClosureRefs, addr StableAddress, set ClosureRefSet) ClosureRefs {
+	path := addr.Key()
 	if path == "" {
 		return refs
 	}
@@ -228,6 +234,25 @@ func WithClosureRef(refs ClosureRefs, path constraint.PathKey, set ClosureRefSet
 	}
 	out[path] = set
 	return ClosureRefsDomain.Join(out, nil)
+}
+
+// ClosureRefAt returns the closure set for path.
+func ClosureRefAt(refs ClosureRefs, path constraint.PathKey) (ClosureRefSet, bool) {
+	addr, ok := StableAddressFromKey(path)
+	if !ok {
+		return ClosureRefSet{}, false
+	}
+	return ClosureRefAtAddress(refs, addr)
+}
+
+// WithClosureRef returns refs with path strongly updated to set. Updating to
+// Bottom removes the key.
+func WithClosureRef(refs ClosureRefs, path constraint.PathKey, set ClosureRefSet) ClosureRefs {
+	addr, ok := StableAddressFromKey(path)
+	if !ok {
+		return refs
+	}
+	return WithClosureRefAddress(refs, addr, set)
 }
 
 // ProjectClosureRefsBySymbols keeps only paths rooted at one of symbols.
@@ -256,11 +281,11 @@ func ProjectClosureRefsBySymbols(refs ClosureRefs, symbols []cfg.SymbolID) Closu
 
 // ProjectClosureRefsByPath keeps only path and its descendants.
 func ProjectClosureRefsByPath(refs ClosureRefs, root constraint.Path) ClosureRefs {
-	rootKey := root.Key()
+	rootAddr, ok := StableAddressOfPath(root)
 	if isClosureRefsTop(refs) {
 		return ClosureRefsDomain.Top()
 	}
-	if len(refs) == 0 || rootKey == "" {
+	if len(refs) == 0 || !ok {
 		return ClosureRefsDomain.Bottom()
 	}
 	out := make(ClosureRefs)
@@ -269,7 +294,7 @@ func ProjectClosureRefsByPath(refs ClosureRefs, root constraint.Path) ClosureRef
 		if set.IsBottom() {
 			continue
 		}
-		if functionRefPathInSubtree(path, rootKey) {
+		if functionRefPathInAddressSubtree(path, rootAddr) {
 			out[path] = set
 		}
 	}
@@ -302,31 +327,39 @@ func ProjectClosureRefsByReferencePaths(refs ClosureRefs, projection ReferencePa
 // RebaseClosureRefs moves all closure facts under from to the corresponding
 // subtree under to.
 func RebaseClosureRefs(refs ClosureRefs, from, to constraint.Path) ClosureRefs {
-	fromKey := from.Key()
-	toKey := to.Key()
+	fromAddr, fromOK := StableAddressOfPath(from)
+	toAddr, toOK := StableAddressOfPath(to)
 	if isClosureRefsTop(refs) {
 		return ClosureRefsDomain.Top()
 	}
-	if len(refs) == 0 || fromKey == "" || toKey == "" {
+	if len(refs) == 0 || !fromOK || !toOK {
 		return ClosureRefsDomain.Bottom()
 	}
 	out := make(ClosureRefs)
-	fromPrefix := string(fromKey)
-	toPrefix := string(toKey)
 	for _, path := range constraint.SortedPathKeys(refs) {
 		set := refs[path]
-		if set.IsBottom() || !functionRefPathInSubtree(path, fromKey) {
+		pathAddr, ok := StableAddressFromKey(path)
+		if set.IsBottom() || !ok {
 			continue
 		}
-		suffix := strings.TrimPrefix(string(path), fromPrefix)
-		out[constraint.PathKey(toPrefix+suffix)] = set
+		remainder, ok := pathAddr.RemainderAfterPrefix(fromAddr)
+		if !ok {
+			continue
+		}
+		targetSegments := append(toAddr.Segments(), remainder...)
+		target, ok := StableAddressOfRootAndSuffix(toAddr.RootIdentity(), PathSuffixOfSegments(targetSegments))
+		if !ok {
+			continue
+		}
+		out[target.Key()] = set
 	}
 	return ClosureRefsDomain.Join(out, nil)
 }
 
-// WithoutClosureRefSubtree returns refs with path and every descendant path
-// removed.
-func WithoutClosureRefSubtree(refs ClosureRefs, path constraint.PathKey) ClosureRefs {
+// WithoutClosureRefSubtreeAddress returns refs with addr and every descendant
+// path removed.
+func WithoutClosureRefSubtreeAddress(refs ClosureRefs, addr StableAddress) ClosureRefs {
+	path := addr.Key()
 	if isClosureRefsTop(refs) {
 		return refs
 	}
@@ -352,30 +385,52 @@ func WithoutClosureRefSubtree(refs ClosureRefs, path constraint.PathKey) Closure
 	return ClosureRefsDomain.Join(out, nil)
 }
 
-// ApplyClosureRefCellEffects applies cell effects to the closure environment
-// stored at path. This is the closure-call counterpart of CaptureEffects.Apply:
-// the callee mutates its captured lexical store, so the closure value's carried
-// environment changes instead of blindly writing the caller's current cell store.
-func ApplyClosureRefCellEffects(refs ClosureRefs, path constraint.PathKey, effects CaptureEffects) ClosureRefs {
+// WithoutClosureRefSubtree returns refs with path and every descendant path
+// removed.
+func WithoutClosureRefSubtree(refs ClosureRefs, path constraint.PathKey) ClosureRefs {
+	addr, ok := StableAddressFromKey(path)
+	if !ok {
+		return refs
+	}
+	return WithoutClosureRefSubtreeAddress(refs, addr)
+}
+
+// ApplyClosureRefCellEffectsAddress applies cell effects to the closure
+// environment stored at addr. This is the closure-call counterpart of
+// CaptureEffects.Apply: the callee mutates its captured lexical store, so the
+// closure value's carried environment changes instead of blindly writing the
+// caller's current cell store.
+func ApplyClosureRefCellEffectsAddress(refs ClosureRefs, addr StableAddress, effects CaptureEffects) ClosureRefs {
+	path := addr.Key()
 	if isClosureRefsTop(refs) {
 		return refs
 	}
 	if path == "" || CaptureEffectsDomain.Equal(effects, CaptureEffectsDomain.Bottom()) {
 		return refs
 	}
-	set, ok := ClosureRefAt(refs, path)
+	set, ok := ClosureRefAtAddress(refs, addr)
 	if !ok {
 		return refs
 	}
 	if set.IsTop() {
-		return WithClosureRef(refs, path, set)
+		return WithClosureRefAddress(refs, addr, set)
 	}
 	updated := make([]ClosureRef, 0, len(set.refs))
 	for _, ref := range set.refs {
 		ref.Cells = effects.Apply(ref.EntryCells()).Key()
 		updated = append(updated, ref)
 	}
-	return WithClosureRef(refs, path, ClosureRefSetOf(updated...))
+	return WithClosureRefAddress(refs, addr, ClosureRefSetOf(updated...))
+}
+
+// ApplyClosureRefCellEffects applies cell effects to the closure environment
+// stored at path.
+func ApplyClosureRefCellEffects(refs ClosureRefs, path constraint.PathKey, effects CaptureEffects) ClosureRefs {
+	addr, ok := StableAddressFromKey(path)
+	if !ok {
+		return refs
+	}
+	return ApplyClosureRefCellEffectsAddress(refs, addr, effects)
 }
 
 func canonicalClosureRefSet(refs []ClosureRef) ClosureRefSet {

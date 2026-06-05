@@ -157,11 +157,14 @@ func (t *Transfer) applyClosureCellEffect(out *flow.PointState, effect CellEffec
 	if effect.ClosurePath.IsEmpty() {
 		return false
 	}
-	key := effect.ClosurePath.Key()
-	if _, ok := flow.ClosureRefAt(out.ClosureRefs, key); !ok {
+	addr, ok := flow.StableAddressOfPath(effect.ClosurePath)
+	if !ok {
 		return false
 	}
-	out.ClosureRefs = flow.ApplyClosureRefCellEffects(out.ClosureRefs, key, effect.Effects)
+	if _, ok := flow.ClosureRefAtAddress(out.ClosureRefs, addr); !ok {
+		return false
+	}
+	out.ClosureRefs = flow.ApplyClosureRefCellEffectsAddress(out.ClosureRefs, addr, effect.Effects)
 	return true
 }
 
@@ -347,12 +350,16 @@ func (t *Transfer) applyFunctionReferenceEffect(
 		return false
 	case referenceWriteFromSource:
 		if !exact {
-			out.FunctionRefs = flow.WithoutFunctionRefSubtree(out.FunctionRefs, path.Key())
+			if addr, ok := flow.StableAddressOfPath(path); ok {
+				out.FunctionRefs = flow.WithoutFunctionRefSubtreeAddress(out.FunctionRefs, addr)
+			}
 			return !flow.FunctionRefsDomain.Equal(before, out.FunctionRefs)
 		}
 		t.recordFunctionRefAt(out, path, src)
 	case referenceWriteExplicit:
-		out.FunctionRefs = flow.WithoutFunctionRefSubtree(out.FunctionRefs, path.Key())
+		if addr, ok := flow.StableAddressOfPath(path); ok {
+			out.FunctionRefs = flow.WithoutFunctionRefSubtreeAddress(out.FunctionRefs, addr)
+		}
 		out.FunctionRefs = flow.FunctionRefsDomain.Join(out.FunctionRefs, write.Refs)
 	default:
 		return false
@@ -373,12 +380,16 @@ func (t *Transfer) applyClosureReferenceEffect(
 		return false
 	case referenceWriteFromSource:
 		if !exact {
-			out.ClosureRefs = flow.WithoutClosureRefSubtree(out.ClosureRefs, path.Key())
+			if addr, ok := flow.StableAddressOfPath(path); ok {
+				out.ClosureRefs = flow.WithoutClosureRefSubtreeAddress(out.ClosureRefs, addr)
+			}
 			return !flow.ClosureRefsDomain.Equal(before, out.ClosureRefs)
 		}
 		t.recordClosureRefAt(out, path, src)
 	case referenceWriteExplicit:
-		out.ClosureRefs = flow.WithoutClosureRefSubtree(out.ClosureRefs, path.Key())
+		if addr, ok := flow.StableAddressOfPath(path); ok {
+			out.ClosureRefs = flow.WithoutClosureRefSubtreeAddress(out.ClosureRefs, addr)
+		}
 		out.ClosureRefs = flow.ClosureRefsDomain.Join(out.ClosureRefs, write.Refs)
 	default:
 		return false

@@ -226,6 +226,9 @@ func StableAddressFromKey(key constraint.PathKey) (StableAddress, bool) {
 	if sym, segments, ok := ParseSymbolPathKey(key); ok {
 		return StableAddressOfSymbol(sym, segments)
 	}
+	if sym, segments, ok := parseLegacyConstraintSymbolPathKey(key); ok {
+		return StableAddressOfSymbol(sym, segments)
+	}
 	root, suffix, ok := splitStableRootKey(string(key))
 	if !ok {
 		return StableAddress{}, false
@@ -235,6 +238,41 @@ func StableAddressFromKey(key constraint.PathKey) (StableAddress, bool) {
 		return StableAddress{}, false
 	}
 	return StableAddressOfRoot(root, segments)
+}
+
+func parseLegacyConstraintSymbolPathKey(key constraint.PathKey) (cfg.SymbolID, []constraint.Segment, bool) {
+	s := string(key)
+	if len(s) < 4 || s[0] != 's' || s[1] != 'y' || s[2] != 'm' {
+		return 0, nil, false
+	}
+	i := 3
+	var n uint64
+	for i < len(s) {
+		c := s[i]
+		if c < '0' || c > '9' {
+			break
+		}
+		n = n*10 + uint64(c-'0')
+		i++
+	}
+	if n == 0 {
+		return 0, nil, false
+	}
+	if i < len(s) && s[i] == '@' {
+		i++
+		for i < len(s) {
+			c := s[i]
+			if c < '0' || c > '9' {
+				break
+			}
+			i++
+		}
+	}
+	segments, ok := parseSymbolPathSegments(s[i:])
+	if !ok {
+		return 0, nil, false
+	}
+	return cfg.SymbolID(n), segments, true
 }
 
 // StablePathKey returns the deterministic key for path's stable address.

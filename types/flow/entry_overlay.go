@@ -32,7 +32,11 @@ func OverlayFunctionRefs(base, live FunctionRefs) FunctionRefs {
 		if set.IsBottom() {
 			continue
 		}
-		out = WithFunctionRef(out, path, set)
+		addr, ok := StableAddressFromKey(path)
+		if !ok {
+			continue
+		}
+		out = WithFunctionRefAddress(out, addr, set)
 	}
 	return out
 }
@@ -52,7 +56,11 @@ func OverlayClosureRefs(base, live ClosureRefs) ClosureRefs {
 		if set.IsBottom() {
 			continue
 		}
-		out = WithClosureRef(out, path, set)
+		addr, ok := StableAddressFromKey(path)
+		if !ok {
+			continue
+		}
+		out = WithClosureRefAddress(out, addr, set)
 	}
 	return out
 }

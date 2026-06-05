@@ -1391,7 +1391,11 @@ func (p *program) callbackArgRefs(g *cfg.Graph, arg ast.Expr, rawSym cfg.SymbolI
 			if rawSym == 0 {
 				return nil, false
 			}
-			return canonref.FromFlowPath(refs, constraint.NewPath(rawSym, "").Key())
+			addr, ok := flow.StableAddressOfSymbol(rawSym, nil)
+			if !ok {
+				return nil, false
+			}
+			return canonref.FromFlowAddress(refs, addr)
 		},
 		StaticExpr: func(expr ast.Expr) (summary.FuncRef, bool) {
 			return p.staticCallbackArgRef(g, expr, rawSym)
@@ -1444,7 +1448,11 @@ func (p *program) callEntryClosureArgRefs(g *cfg.Graph, arg ast.Expr, in *flow.P
 	if !ok {
 		return flow.ClosureRefSet{}, false
 	}
-	return flow.ClosureRefAt(in.ClosureRefs, path.Key())
+	addr, ok := flow.StableAddressOfPath(path)
+	if !ok {
+		return flow.ClosureRefSet{}, false
+	}
+	return flow.ClosureRefAtAddress(in.ClosureRefs, addr)
 }
 
 func (p *program) callEntryClosureArgTreeRefs(g *cfg.Graph, tr *transfer.Transfer, arg ast.Expr, in *flow.PointState) (flow.ClosureRefs, bool) {
@@ -2992,7 +3000,11 @@ func (ct callTyper) callEntryClosureArgRefs(arg ast.Expr, ctx transfer.ProductCa
 	if !ok {
 		return flow.ClosureRefSet{}, false
 	}
-	return flow.ClosureRefAt(ctx.ClosureRefs, path.Key())
+	addr, ok := flow.StableAddressOfPath(path)
+	if !ok {
+		return flow.ClosureRefSet{}, false
+	}
+	return flow.ClosureRefAtAddress(ctx.ClosureRefs, addr)
 }
 
 func (ct callTyper) callEntryClosureArgTreeRefs(arg ast.Expr, ctx transfer.ProductCallContext) (flow.ClosureRefs, bool) {

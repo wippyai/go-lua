@@ -146,7 +146,11 @@ func (r TargetResolver) directMethodRefsFromState(call *ast.FuncCallExpr, refs f
 	if !ok {
 		return nil, false
 	}
-	return ref.FromFlowPath(refs, path.Key())
+	addr, ok := flow.StableAddressOfPath(path)
+	if !ok {
+		return nil, false
+	}
+	return ref.FromFlowAddress(refs, addr)
 }
 
 func (r TargetResolver) directExprRefsFromState(expr ast.Expr, refs flow.FunctionRefs) ([]summary.FuncRef, bool) {
@@ -154,7 +158,11 @@ func (r TargetResolver) directExprRefsFromState(expr ast.Expr, refs flow.Functio
 	if !ok {
 		return nil, false
 	}
-	return ref.FromFlowPath(refs, path.Key())
+	addr, ok := flow.StableAddressOfPath(path)
+	if !ok {
+		return nil, false
+	}
+	return ref.FromFlowAddress(refs, addr)
 }
 
 func (r TargetResolver) closureMethodRefs(call *ast.FuncCallExpr, refs flow.ClosureRefs) ([]flow.ClosureRef, bool) {
@@ -162,7 +170,7 @@ func (r TargetResolver) closureMethodRefs(call *ast.FuncCallExpr, refs flow.Clos
 	if !ok {
 		return nil, false
 	}
-	return closureRefsAtPath(refs, path.Key())
+	return closureRefsAtPath(refs, path)
 }
 
 func (r TargetResolver) closureExprRefs(expr ast.Expr, refs flow.ClosureRefs) ([]flow.ClosureRef, bool) {
@@ -170,7 +178,7 @@ func (r TargetResolver) closureExprRefs(expr ast.Expr, refs flow.ClosureRefs) ([
 	if !ok {
 		return nil, false
 	}
-	return closureRefsAtPath(refs, path.Key())
+	return closureRefsAtPath(refs, path)
 }
 
 func (r TargetResolver) methodPath(call *ast.FuncCallExpr) (constraint.Path, bool) {
@@ -215,8 +223,12 @@ func (r TargetResolver) symbolOf(ident *ast.IdentExpr) (cfg.SymbolID, bool) {
 	return r.Bindings.SymbolOf(ident)
 }
 
-func closureRefsAtPath(refs flow.ClosureRefs, path constraint.PathKey) ([]flow.ClosureRef, bool) {
-	set, ok := flow.ClosureRefAt(refs, path)
+func closureRefsAtPath(refs flow.ClosureRefs, path constraint.Path) ([]flow.ClosureRef, bool) {
+	addr, ok := flow.StableAddressOfPath(path)
+	if !ok {
+		return nil, false
+	}
+	set, ok := flow.ClosureRefAtAddress(refs, addr)
 	if !ok {
 		return nil, false
 	}

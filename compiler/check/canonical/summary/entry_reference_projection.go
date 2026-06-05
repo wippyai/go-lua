@@ -158,7 +158,10 @@ func rebaseEntryFunctionRefs(refs flow.FunctionRefs, source, target constraint.P
 		return flow.FunctionRefsDomain.Bottom()
 	}
 	if flow.FunctionRefsDomain.Equal(refs, flow.FunctionRefsDomain.Top()) {
-		return flow.WithFunctionRef(nil, target.Key(), flow.FunctionRefSetTop())
+		if addr, ok := flow.StableAddressOfPath(target); ok {
+			return flow.WithFunctionRefAddress(nil, addr, flow.FunctionRefSetTop())
+		}
+		return flow.FunctionRefsDomain.Bottom()
 	}
 	return flow.RebaseFunctionRefs(refs, source, target)
 }
@@ -168,27 +171,32 @@ func rebaseEntryClosureRefs(refs flow.ClosureRefs, source, target constraint.Pat
 		return flow.ClosureRefsDomain.Bottom()
 	}
 	if flow.ClosureRefsDomain.Equal(refs, flow.ClosureRefsDomain.Top()) {
-		return flow.WithClosureRef(nil, target.Key(), flow.ClosureRefSetTop())
+		if addr, ok := flow.StableAddressOfPath(target); ok {
+			return flow.WithClosureRefAddress(nil, addr, flow.ClosureRefSetTop())
+		}
+		return flow.ClosureRefsDomain.Bottom()
 	}
 	return flow.RebaseClosureRefs(refs, source, target)
 }
 
 func joinFunctionRefAt(refs flow.FunctionRefs, path constraint.PathKey, set flow.FunctionRefSet) flow.FunctionRefs {
-	if path == "" || set.IsBottom() {
+	addr, ok := flow.StableAddressFromKey(path)
+	if !ok || set.IsBottom() {
 		return refs
 	}
-	if prev, ok := flow.FunctionRefAt(refs, path); ok {
+	if prev, ok := flow.FunctionRefAtAddress(refs, addr); ok {
 		set = flow.FunctionRefSetDomain.Join(prev, set)
 	}
-	return flow.WithFunctionRef(refs, path, set)
+	return flow.WithFunctionRefAddress(refs, addr, set)
 }
 
 func joinClosureRefAt(refs flow.ClosureRefs, path constraint.PathKey, set flow.ClosureRefSet) flow.ClosureRefs {
-	if path == "" || set.IsBottom() {
+	addr, ok := flow.StableAddressFromKey(path)
+	if !ok || set.IsBottom() {
 		return refs
 	}
-	if prev, ok := flow.ClosureRefAt(refs, path); ok {
+	if prev, ok := flow.ClosureRefAtAddress(refs, addr); ok {
 		set = flow.ClosureRefSetDomain.Join(prev, set)
 	}
-	return flow.WithClosureRef(refs, path, set)
+	return flow.WithClosureRefAddress(refs, addr, set)
 }

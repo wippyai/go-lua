@@ -75,7 +75,17 @@ func UniqueSortedFuncRefs(in []FuncRef) []FuncRef {
 // (nil, true), preserving the caller's "authoritative but unknown" distinction
 // from an absent path, which yields (nil, false).
 func FromFlowPath(refs flow.FunctionRefs, path constraint.PathKey) ([]FuncRef, bool) {
-	set, ok := flow.FunctionRefAt(refs, path)
+	addr, ok := flow.StableAddressFromKey(path)
+	if !ok {
+		return nil, false
+	}
+	return FromFlowAddress(refs, addr)
+}
+
+// FromFlowAddress reads the flow-domain function identities at addr and converts
+// the finite may-set to canonical function identities.
+func FromFlowAddress(refs flow.FunctionRefs, addr flow.StableAddress) ([]FuncRef, bool) {
+	set, ok := flow.FunctionRefAtAddress(refs, addr)
 	if !ok {
 		return nil, false
 	}

@@ -173,18 +173,24 @@ func ResetCanonicalFunctionRefsKeys() {
 // FunctionRefsDomain is the pointwise finite-map lattice for closure identities.
 var FunctionRefsDomain = latticeproduct.MapLattice[constraint.PathKey](FunctionRefSetDomain)
 
-// FunctionRefAt returns the identity set for path.
-func FunctionRefAt(refs FunctionRefs, path constraint.PathKey) (FunctionRefSet, bool) {
-	if len(refs) == 0 || path == "" {
+// FunctionRefAtAddress returns the identity set for addr.
+func FunctionRefAtAddress(refs FunctionRefs, addr StableAddress) (FunctionRefSet, bool) {
+	if len(refs) == 0 || addr.Key() == "" {
 		return FunctionRefSet{}, false
 	}
-	set, ok := refs[path]
-	return set, ok && !set.IsBottom()
+	for _, path := range functionRefAddressKeys(addr) {
+		set, ok := refs[path]
+		if ok && !set.IsBottom() {
+			return set, true
+		}
+	}
+	return FunctionRefSet{}, false
 }
 
-// WithFunctionRef returns refs with path strongly updated to set. Updating to
-// Bottom removes the key.
-func WithFunctionRef(refs FunctionRefs, path constraint.PathKey, set FunctionRefSet) FunctionRefs {
+// WithFunctionRefAddress returns refs with addr strongly updated to set.
+// Updating to Bottom removes the key.
+func WithFunctionRefAddress(refs FunctionRefs, addr StableAddress, set FunctionRefSet) FunctionRefs {
+	path := addr.Key()
 	if path == "" {
 		return refs
 	}
@@ -198,6 +204,25 @@ func WithFunctionRef(refs FunctionRefs, path constraint.PathKey, set FunctionRef
 	}
 	out[path] = set
 	return FunctionRefsDomain.Join(out, nil)
+}
+
+// FunctionRefAt returns the identity set for path.
+func FunctionRefAt(refs FunctionRefs, path constraint.PathKey) (FunctionRefSet, bool) {
+	addr, ok := StableAddressFromKey(path)
+	if !ok {
+		return FunctionRefSet{}, false
+	}
+	return FunctionRefAtAddress(refs, addr)
+}
+
+// WithFunctionRef returns refs with path strongly updated to set. Updating to
+// Bottom removes the key.
+func WithFunctionRef(refs FunctionRefs, path constraint.PathKey, set FunctionRefSet) FunctionRefs {
+	addr, ok := StableAddressFromKey(path)
+	if !ok {
+		return refs
+	}
+	return WithFunctionRefAddress(refs, addr, set)
 }
 
 // FunctionRefsKeyOf returns an exact comparable key for refs.
@@ -237,8 +262,8 @@ func ProjectFunctionRefsBySymbols(refs FunctionRefs, symbols []cfg.SymbolID) Fun
 
 // ProjectFunctionRefsByPath keeps only path and its descendants.
 func ProjectFunctionRefsByPath(refs FunctionRefs, root constraint.Path) FunctionRefs {
-	rootKey := root.Key()
-	if len(refs) == 0 || rootKey == "" {
+	rootAddr, ok := StableAddressOfPath(root)
+	if len(refs) == 0 || !ok {
 		return FunctionRefsDomain.Bottom()
 	}
 	out := make(FunctionRefs)
@@ -247,7 +272,7 @@ func ProjectFunctionRefsByPath(refs FunctionRefs, root constraint.Path) Function
 		if set.IsBottom() {
 			continue
 		}
-		if functionRefPathInSubtree(path, rootKey) {
+		if functionRefPathInAddressSubtree(path, rootAddr) {
 			out[path] = set
 		}
 	}
@@ -284,21 +309,28 @@ func ProjectFunctionRefsByReferencePaths(refs FunctionRefs, projection Reference
 // identities under placeholder paths ($0.f); the caller rebases that subtree onto
 // the concrete assignment target (x.f).
 func RebaseFunctionRefs(refs FunctionRefs, from, to constraint.Path) FunctionRefs {
-	fromKey := from.Key()
-	toKey := to.Key()
-	if len(refs) == 0 || fromKey == "" || toKey == "" {
+	fromAddr, fromOK := StableAddressOfPath(from)
+	toAddr, toOK := StableAddressOfPath(to)
+	if len(refs) == 0 || !fromOK || !toOK {
 		return FunctionRefsDomain.Bottom()
 	}
 	out := make(FunctionRefs)
-	fromPrefix := string(fromKey)
-	toPrefix := string(toKey)
 	for _, path := range constraint.SortedPathKeys(refs) {
 		set := refs[path]
-		if set.IsBottom() || !functionRefPathInSubtree(path, fromKey) {
+		pathAddr, ok := StableAddressFromKey(path)
+		if set.IsBottom() || !ok {
 			continue
 		}
-		suffix := strings.TrimPrefix(string(path), fromPrefix)
-		out[constraint.PathKey(toPrefix+suffix)] = set
+		remainder, ok := pathAddr.RemainderAfterPrefix(fromAddr)
+		if !ok {
+			continue
+		}
+		targetSegments := append(toAddr.Segments(), remainder...)
+		target, ok := StableAddressOfRootAndSuffix(toAddr.RootIdentity(), PathSuffixOfSegments(targetSegments))
+		if !ok {
+			continue
+		}
+		out[target.Key()] = set
 	}
 	return FunctionRefsDomain.Join(out, nil)
 }
@@ -307,20 +339,20 @@ func functionRefPathBelongsToSymbol(path constraint.PathKey, sym cfg.SymbolID) b
 	if sym == 0 {
 		return false
 	}
-	root := constraint.NewPath(sym, "").Key()
-	return functionRefPathInSubtree(path, root)
+	root, ok := StableAddressOfSymbol(sym, nil)
+	return ok && functionRefPathInAddressSubtree(path, root)
 }
 
-// WithoutFunctionRefSubtree returns refs with path and every descendant path
-// removed. A strong write to a container path invalidates all function identities
-// beneath that runtime value.
-func WithoutFunctionRefSubtree(refs FunctionRefs, path constraint.PathKey) FunctionRefs {
-	if len(refs) == 0 || path == "" {
+// WithoutFunctionRefSubtreeAddress returns refs with addr and every descendant
+// path removed. A strong write to a container path invalidates all function
+// identities beneath that runtime value.
+func WithoutFunctionRefSubtreeAddress(refs FunctionRefs, addr StableAddress) FunctionRefs {
+	if len(refs) == 0 || addr.Key() == "" {
 		return refs
 	}
 	found := false
 	for k := range refs {
-		if functionRefPathInSubtree(k, path) {
+		if functionRefPathInAddressSubtree(k, addr) {
 			found = true
 			break
 		}
@@ -330,14 +362,29 @@ func WithoutFunctionRefSubtree(refs FunctionRefs, path constraint.PathKey) Funct
 	}
 	out := make(FunctionRefs, len(refs))
 	for k, v := range refs {
-		if !functionRefPathInSubtree(k, path) {
+		if !functionRefPathInAddressSubtree(k, addr) {
 			out[k] = v
 		}
 	}
 	return FunctionRefsDomain.Join(out, nil)
 }
 
+// WithoutFunctionRefSubtree returns refs with path and every descendant path
+// removed. A strong write to a container path invalidates all function identities
+// beneath that runtime value.
+func WithoutFunctionRefSubtree(refs FunctionRefs, path constraint.PathKey) FunctionRefs {
+	addr, ok := StableAddressFromKey(path)
+	if !ok {
+		return refs
+	}
+	return WithoutFunctionRefSubtreeAddress(refs, addr)
+}
+
 func functionRefPathInSubtree(path, root constraint.PathKey) bool {
+	rootAddr, ok := StableAddressFromKey(root)
+	if ok {
+		return functionRefPathInAddressSubtree(path, rootAddr)
+	}
 	if path == root {
 		return true
 	}
@@ -345,21 +392,47 @@ func functionRefPathInSubtree(path, root constraint.PathKey) bool {
 	return strings.HasPrefix(p, r+".") || strings.HasPrefix(p, r+"[")
 }
 
+func functionRefPathInAddressSubtree(path constraint.PathKey, root StableAddress) bool {
+	pathAddr, ok := StableAddressFromKey(path)
+	if !ok {
+		return false
+	}
+	return pathAddr.HasPrefix(root)
+}
+
 func referenceProjectionContainsPath(projection ReferencePathProjection, path constraint.PathKey) bool {
 	if path == "" {
 		return false
 	}
+	pathAddr, ok := StableAddressFromKey(path)
+	if !ok {
+		return false
+	}
 	for _, exact := range projection.Exact {
-		if key := exact.Key(); key != "" && path == key {
+		if addr, ok := StableAddressOfPath(exact); ok && pathAddr.Equal(addr) {
 			return true
 		}
 	}
 	for _, root := range projection.Subtrees {
-		if key := root.Key(); key != "" && functionRefPathInSubtree(path, key) {
+		if addr, ok := StableAddressOfPath(root); ok && pathAddr.HasPrefix(addr) {
 			return true
 		}
 	}
 	return false
+}
+
+func functionRefAddressKeys(addr StableAddress) []constraint.PathKey {
+	key := addr.Key()
+	if key == "" {
+		return nil
+	}
+	keys := []constraint.PathKey{key}
+	if path, ok := addr.Path(); ok {
+		if pathKey := path.Key(); pathKey != "" && pathKey != key {
+			keys = append(keys, pathKey)
+		}
+	}
+	return keys
 }
 
 func internFunctionRefsKey(refs FunctionRefs) FunctionRefsKey {
