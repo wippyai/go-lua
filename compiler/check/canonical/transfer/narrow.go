@@ -964,15 +964,47 @@ func (t *Transfer) typedDiscriminantFromSides(out flow.PointState, access, value
 	if sym == 0 {
 		return discriminant{}, nil, false
 	}
-	otherIdent, ok := value.(*ast.IdentExpr)
-	if !ok {
-		return discriminant{}, nil, false
-	}
-	otherType := t.trackedIdentType(out, otherIdent)
+	otherType := t.trackedExprType(out, value)
 	if !isDiscriminatingType(otherType) {
 		return discriminant{}, nil, false
 	}
 	return discriminant{sym: sym, field: field, negated: negated}, otherType, true
+}
+
+func (t *Transfer) trackedExprType(out flow.PointState, expr ast.Expr) typ.Type {
+	if ident, ok := expr.(*ast.IdentExpr); ok {
+		return t.trackedIdentType(out, ident)
+	}
+	path, ok := t.staticPathOfExpr(expr)
+	if !ok || path.IsEmpty() {
+		return nil
+	}
+	var declared typ.Type
+	if path.Symbol != 0 && t.declaredTypes != nil {
+		if root := t.declaredTypes[path.Symbol]; !typ.IsAbsentOrUnknown(root) {
+			if len(path.Segments) == 0 {
+				declared = root
+			} else if av, ok := productMemberPathValue(product.FromType(root), path.Segments); ok && !av.IsZero() {
+				declared = av.ProjectValue()
+			}
+		}
+	}
+	if av, ok := flow.PointFactsOf(out).PathValue(path); ok && !av.IsZero() {
+		projected := av.ProjectValue()
+		if !typ.IsAbsentOrUnknown(projected) {
+			if isDiscriminatingType(projected) {
+				return projected
+			}
+			if isDiscriminatingType(declared) && narrow.TypesOverlap(projected, declared) {
+				return declared
+			}
+			return projected
+		}
+	}
+	if !typ.IsAbsentOrUnknown(declared) {
+		return declared
+	}
+	return nil
 }
 
 // trackedIdentType resolves an identifier's value type for typed path-equality
