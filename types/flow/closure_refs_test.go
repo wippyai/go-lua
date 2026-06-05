@@ -149,10 +149,26 @@ func TestRebaseClosureRefsMovesSubtree(t *testing.T) {
 	)
 	from := constraint.NewPlaceholder(0)
 	to := constraint.NewPath(cfg.SymbolID(42), "out")
-	refs := WithClosureRef(nil, from.Field("method").Key(), ClosureRefSetOf(closure))
+	fromAddr, ok := StableAddressOfPath(from)
+	if !ok {
+		t.Fatal("from address")
+	}
+	toAddr, ok := StableAddressOfPath(to)
+	if !ok {
+		t.Fatal("to address")
+	}
+	methodAddr, ok := StableAddressOfPath(from.Field("method"))
+	if !ok {
+		t.Fatal("method address")
+	}
+	toMethodAddr, ok := StableAddressOfPath(to.Field("method"))
+	if !ok {
+		t.Fatal("target method address")
+	}
+	refs := WithClosureRefAddress(nil, methodAddr, ClosureRefSetOf(closure))
 
-	rebased := RebaseClosureRefs(refs, from, to)
-	set, ok := ClosureRefAt(rebased, to.Field("method").Key())
+	rebased := RebaseClosureRefsAddress(refs, fromAddr, toAddr)
+	set, ok := ClosureRefAtAddress(rebased, toMethodAddr)
 	if !ok {
 		t.Fatalf("rebased closure refs missing: %#v", rebased)
 	}

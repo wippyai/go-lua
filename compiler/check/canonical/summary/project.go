@@ -355,7 +355,9 @@ func projectReturnClosureRefs(fs state.FunctionState, g *cfg.Graph) []flow.Closu
 func returnClosureRefsTupleAt(ps flow.PointState, info *cfg.ReturnInfo) []flow.ClosureRefs {
 	out := make([]flow.ClosureRefs, len(info.Exprs))
 	for i := range info.Exprs {
-		out[i] = flow.ProjectClosureRefsByPath(ps.ClosureRefs, constraint.NewPlaceholder(i))
+		if addr, ok := flow.StableAddressOfPath(constraint.NewPlaceholder(i)); ok {
+			out[i] = flow.ProjectClosureRefsByAddress(ps.ClosureRefs, addr)
+		}
 	}
 	return out
 }
@@ -363,7 +365,9 @@ func returnClosureRefsTupleAt(ps flow.PointState, info *cfg.ReturnInfo) []flow.C
 func returnFunctionRefsTupleAt(ps flow.PointState, info *cfg.ReturnInfo) []flow.FunctionRefs {
 	out := make([]flow.FunctionRefs, len(info.Exprs))
 	for i := range info.Exprs {
-		out[i] = flow.ProjectFunctionRefsByPath(ps.FunctionRefs, constraint.NewPlaceholder(i))
+		if addr, ok := flow.StableAddressOfPath(constraint.NewPlaceholder(i)); ok {
+			out[i] = flow.ProjectFunctionRefsByAddress(ps.FunctionRefs, addr)
+		}
 	}
 	return out
 }

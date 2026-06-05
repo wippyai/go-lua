@@ -157,26 +157,30 @@ func rebaseEntryFunctionRefs(refs flow.FunctionRefs, source, target constraint.P
 	if source.IsEmpty() || target.IsEmpty() {
 		return flow.FunctionRefsDomain.Bottom()
 	}
-	if flow.FunctionRefsDomain.Equal(refs, flow.FunctionRefsDomain.Top()) {
-		if addr, ok := flow.StableAddressOfPath(target); ok {
-			return flow.WithFunctionRefAddress(nil, addr, flow.FunctionRefSetTop())
-		}
+	sourceAddr, sourceOK := flow.StableAddressOfPath(source)
+	targetAddr, targetOK := flow.StableAddressOfPath(target)
+	if !sourceOK || !targetOK {
 		return flow.FunctionRefsDomain.Bottom()
 	}
-	return flow.RebaseFunctionRefs(refs, source, target)
+	if flow.FunctionRefsDomain.Equal(refs, flow.FunctionRefsDomain.Top()) {
+		return flow.WithFunctionRefAddress(nil, targetAddr, flow.FunctionRefSetTop())
+	}
+	return flow.RebaseFunctionRefsAddress(refs, sourceAddr, targetAddr)
 }
 
 func rebaseEntryClosureRefs(refs flow.ClosureRefs, source, target constraint.Path) flow.ClosureRefs {
 	if source.IsEmpty() || target.IsEmpty() {
 		return flow.ClosureRefsDomain.Bottom()
 	}
-	if flow.ClosureRefsDomain.Equal(refs, flow.ClosureRefsDomain.Top()) {
-		if addr, ok := flow.StableAddressOfPath(target); ok {
-			return flow.WithClosureRefAddress(nil, addr, flow.ClosureRefSetTop())
-		}
+	sourceAddr, sourceOK := flow.StableAddressOfPath(source)
+	targetAddr, targetOK := flow.StableAddressOfPath(target)
+	if !sourceOK || !targetOK {
 		return flow.ClosureRefsDomain.Bottom()
 	}
-	return flow.RebaseClosureRefs(refs, source, target)
+	if flow.ClosureRefsDomain.Equal(refs, flow.ClosureRefsDomain.Top()) {
+		return flow.WithClosureRefAddress(nil, targetAddr, flow.ClosureRefSetTop())
+	}
+	return flow.RebaseClosureRefsAddress(refs, sourceAddr, targetAddr)
 }
 
 func joinFunctionRefAt(refs flow.FunctionRefs, path constraint.PathKey, set flow.FunctionRefSet) flow.FunctionRefs {

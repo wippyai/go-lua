@@ -260,10 +260,9 @@ func ProjectFunctionRefsBySymbols(refs FunctionRefs, symbols []cfg.SymbolID) Fun
 	return FunctionRefsDomain.Join(out, nil)
 }
 
-// ProjectFunctionRefsByPath keeps only path and its descendants.
-func ProjectFunctionRefsByPath(refs FunctionRefs, root constraint.Path) FunctionRefs {
-	rootAddr, ok := StableAddressOfPath(root)
-	if len(refs) == 0 || !ok {
+// ProjectFunctionRefsByAddress keeps only addr and its descendants.
+func ProjectFunctionRefsByAddress(refs FunctionRefs, addr StableAddress) FunctionRefs {
+	if len(refs) == 0 || addr.Key() == "" {
 		return FunctionRefsDomain.Bottom()
 	}
 	out := make(FunctionRefs)
@@ -272,7 +271,7 @@ func ProjectFunctionRefsByPath(refs FunctionRefs, root constraint.Path) Function
 		if set.IsBottom() {
 			continue
 		}
-		if functionRefPathInAddressSubtree(path, rootAddr) {
+		if functionRefPathInAddressSubtree(path, addr) {
 			out[path] = set
 		}
 	}
@@ -308,10 +307,8 @@ func ProjectFunctionRefsByReferencePaths(refs FunctionRefs, projection Reference
 // subtree under to. It is used for summary return slots: a callee summary records
 // identities under placeholder paths ($0.f); the caller rebases that subtree onto
 // the concrete assignment target (x.f).
-func RebaseFunctionRefs(refs FunctionRefs, from, to constraint.Path) FunctionRefs {
-	fromAddr, fromOK := StableAddressOfPath(from)
-	toAddr, toOK := StableAddressOfPath(to)
-	if len(refs) == 0 || !fromOK || !toOK {
+func RebaseFunctionRefsAddress(refs FunctionRefs, from, to StableAddress) FunctionRefs {
+	if len(refs) == 0 || from.Key() == "" || to.Key() == "" {
 		return FunctionRefsDomain.Bottom()
 	}
 	out := make(FunctionRefs)
@@ -321,12 +318,11 @@ func RebaseFunctionRefs(refs FunctionRefs, from, to constraint.Path) FunctionRef
 		if set.IsBottom() || !ok {
 			continue
 		}
-		remainder, ok := pathAddr.RemainderAfterPrefix(fromAddr)
+		remainder, ok := pathAddr.RemainderAfterPrefix(from)
 		if !ok {
 			continue
 		}
-		targetSegments := append(toAddr.Segments(), remainder...)
-		target, ok := StableAddressOfRootAndSuffix(toAddr.RootIdentity(), PathSuffixOfSegments(targetSegments))
+		target, ok := to.Append(remainder)
 		if !ok {
 			continue
 		}

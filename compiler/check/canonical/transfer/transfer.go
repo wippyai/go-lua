@@ -1741,7 +1741,12 @@ func rebaseCallReturnFunctionRefs(
 	if retIndex >= len(returns) {
 		return nil, false
 	}
-	rebased := flow.RebaseFunctionRefs(returns[retIndex], constraint.NewPlaceholder(retIndex), path)
+	fromAddr, fromOK := flow.StableAddressOfPath(constraint.NewPlaceholder(retIndex))
+	toAddr, toOK := flow.StableAddressOfPath(path)
+	if !fromOK || !toOK {
+		return nil, false
+	}
+	rebased := flow.RebaseFunctionRefsAddress(returns[retIndex], fromAddr, toAddr)
 	if flow.FunctionRefsDomain.Equal(rebased, flow.FunctionRefsDomain.Bottom()) {
 		return nil, false
 	}
@@ -1754,7 +1759,11 @@ func (t *Transfer) recordFunctionRefAt(out *flow.PointState, path constraint.Pat
 		return
 	}
 	if srcPath, ok := t.staticPathOfExpr(src); ok {
-		refs := flow.RebaseFunctionRefs(flow.ProjectFunctionRefsByPath(out.FunctionRefs, srcPath), srcPath, path)
+		srcAddr, srcOK := flow.StableAddressOfPath(srcPath)
+		if !srcOK {
+			return
+		}
+		refs := flow.RebaseFunctionRefsAddress(flow.ProjectFunctionRefsByAddress(out.FunctionRefs, srcAddr), srcAddr, addr)
 		out.FunctionRefs = flow.WithoutFunctionRefSubtreeAddress(out.FunctionRefs, addr)
 		out.FunctionRefs = flow.FunctionRefsDomain.Join(out.FunctionRefs, refs)
 		return
@@ -1827,7 +1836,12 @@ func rebaseCallReturnClosureRefs(
 	if retIndex >= len(returns) {
 		return nil, false
 	}
-	rebased := flow.RebaseClosureRefs(returns[retIndex], constraint.NewPlaceholder(retIndex), path)
+	fromAddr, fromOK := flow.StableAddressOfPath(constraint.NewPlaceholder(retIndex))
+	toAddr, toOK := flow.StableAddressOfPath(path)
+	if !fromOK || !toOK {
+		return nil, false
+	}
+	rebased := flow.RebaseClosureRefsAddress(returns[retIndex], fromAddr, toAddr)
 	if flow.ClosureRefsDomain.Equal(rebased, flow.ClosureRefsDomain.Bottom()) {
 		return nil, false
 	}
@@ -1840,7 +1854,11 @@ func (t *Transfer) recordClosureRefAt(out *flow.PointState, path constraint.Path
 		return
 	}
 	if srcPath, ok := t.staticPathOfExpr(src); ok {
-		refs := flow.RebaseClosureRefs(flow.ProjectClosureRefsByPath(out.ClosureRefs, srcPath), srcPath, path)
+		srcAddr, srcOK := flow.StableAddressOfPath(srcPath)
+		if !srcOK {
+			return
+		}
+		refs := flow.RebaseClosureRefsAddress(flow.ProjectClosureRefsByAddress(out.ClosureRefs, srcAddr), srcAddr, addr)
 		out.ClosureRefs = flow.WithoutClosureRefSubtreeAddress(out.ClosureRefs, addr)
 		out.ClosureRefs = flow.ClosureRefsDomain.Join(out.ClosureRefs, refs)
 		return
