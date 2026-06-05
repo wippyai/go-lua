@@ -153,9 +153,11 @@ func (t *Transfer) invalidateKeyFactsForPlaceWithValue(
 	beforeIndexWrites := out.IndexWrites
 	if presentElementWrite && len(place.Steps) > 0 {
 		if arrayPath, member, ok := presentElementMemberWriteFootprint(place); ok {
-			// TODO(address-vocabulary): make present-element member invalidation
-			// accept StableAddress for array once member footprints are address-based.
-			out.KeyPresence = out.KeyPresence.KillAffectedByPresentElementMemberWrite(flow.KeyPresencePathKey(arrayPath), member)
+			if arrayAddr, ok := flow.StableAddressOfPath(arrayPath); ok {
+				out.KeyPresence = out.KeyPresence.KillAffectedByPresentElementMemberWriteAddress(arrayAddr, member)
+			} else {
+				out.KeyPresence = out.KeyPresence.KillAffectedByPresentElementWriteAddress(addr)
+			}
 		} else {
 			out.KeyPresence = out.KeyPresence.KillAffectedByPresentElementWriteAddress(addr)
 		}

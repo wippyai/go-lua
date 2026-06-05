@@ -1071,26 +1071,25 @@ func (f KeyPresenceFacts) KillAffectedByPresentElementWriteAddress(write StableA
 	return canonicalKeyPresenceFactsFull(entries, values, arrays, arrayValues, appends, pending, emptyArrays, appendBases, appendEvents, appendCoverage, appendOrigins)
 }
 
-// KillAffectedByPresentElementMemberWrite invalidates value-specific proofs for
-// a write below an already-present array element, such as a[i].field = v. The
-// write can stale facts about the element member, but it does not change the
-// array's key set or append history.
-// TODO(address-vocabulary): migrate array to StableAddress and remove this
-// PathKey compatibility wrapper.
-func (f KeyPresenceFacts) KillAffectedByPresentElementMemberWrite(array constraint.PathKey, member []constraint.Segment) KeyPresenceFacts {
-	killed := f.KillAffectedByPresentElementWrite(array)
-	if f.bottom || array == "" {
+// KillAffectedByPresentElementMemberWriteAddress invalidates value-specific
+// proofs for a write below an already-present array element, such as
+// a[i].field = v. The write can stale facts about the element member, but it
+// does not change the array's key set or append history.
+func (f KeyPresenceFacts) KillAffectedByPresentElementMemberWriteAddress(array StableAddress, member []constraint.Segment) KeyPresenceFacts {
+	killed := f.KillAffectedByPresentElementWriteAddress(array)
+	arrayKey := array.Key()
+	if f.bottom || arrayKey == "" {
 		return killed
 	}
-	arrays := append(killed.KeyArrayEntries(), keyArrayFactsForArray(f.arrays, array)...)
-	arrayValues := append(killed.KeyArrayValueEntries(), keyArrayValueFactsForArray(f.arrayValues, array)...)
-	pending := append(killed.PendingKeyArrayEntries(), pendingKeyArrayFactsForArray(f.pending, array)...)
-	emptyArrays := append(killed.EmptyKeyArrayEntries(), emptyKeyArrayFactsForArray(f.emptyArrays, array)...)
-	appends := append(killed.AppendedKeyEntries(), appendedKeyFactsForArray(f.appends, array)...)
-	appendBases := append(killed.AppendHistoryBaseEntries(), appendHistoryBaseFactsForArray(f.appendBases, array)...)
-	appendEvents := append(killed.AppendHistoryEventEntries(), appendHistoryEventFactsForArray(f.appendEvents, array)...)
-	appendCoverage := append(killed.AppendHistoryCoverageEntries(), appendHistoryCoverageFactsForArray(f.appendCoverage, array)...)
-	appendOrigins := append(killed.AppendElementFieldOriginEntries(), appendElementFieldOriginFactsPreservedByMemberWrite(f.appendOrigins, array, member)...)
+	arrays := append(killed.KeyArrayEntries(), keyArrayFactsForArray(f.arrays, arrayKey)...)
+	arrayValues := append(killed.KeyArrayValueEntries(), keyArrayValueFactsForArray(f.arrayValues, arrayKey)...)
+	pending := append(killed.PendingKeyArrayEntries(), pendingKeyArrayFactsForArray(f.pending, arrayKey)...)
+	emptyArrays := append(killed.EmptyKeyArrayEntries(), emptyKeyArrayFactsForArray(f.emptyArrays, arrayKey)...)
+	appends := append(killed.AppendedKeyEntries(), appendedKeyFactsForArray(f.appends, arrayKey)...)
+	appendBases := append(killed.AppendHistoryBaseEntries(), appendHistoryBaseFactsForArray(f.appendBases, arrayKey)...)
+	appendEvents := append(killed.AppendHistoryEventEntries(), appendHistoryEventFactsForArray(f.appendEvents, arrayKey)...)
+	appendCoverage := append(killed.AppendHistoryCoverageEntries(), appendHistoryCoverageFactsForArray(f.appendCoverage, arrayKey)...)
+	appendOrigins := append(killed.AppendElementFieldOriginEntries(), appendElementFieldOriginFactsPreservedByMemberWrite(f.appendOrigins, arrayKey, member)...)
 	return canonicalKeyPresenceFactsFull(
 		killed.Entries(),
 		killed.ValueEntries(),
