@@ -51,10 +51,23 @@ func (f StaticMemberFacts) Entries() []StaticMemberFact {
 
 // Value returns the fact for path if it is proven in a reachable state.
 func (f StaticMemberFacts) Value(path constraint.PathKey) (product.AbstractValue, bool) {
-	if f.bottom || path == "" || len(f.entries) == 0 {
+	addr, ok := StableAddressFromKey(path)
+	if !ok {
 		return product.Domain.Bottom(), false
 	}
-	idx, ok := findStaticMemberFact(f.entries, path)
+	return f.ValueAtAddress(addr)
+}
+
+// ValueAtAddress returns the fact for addr if it is proven in a reachable state.
+func (f StaticMemberFacts) ValueAtAddress(addr StableAddress) (product.AbstractValue, bool) {
+	if f.bottom || len(f.entries) == 0 {
+		return product.Domain.Bottom(), false
+	}
+	key := addr.Key()
+	if key == "" {
+		return product.Domain.Bottom(), false
+	}
+	idx, ok := findStaticMemberFact(f.entries, key)
 	if !ok {
 		return product.Domain.Bottom(), false
 	}
@@ -64,9 +77,20 @@ func (f StaticMemberFacts) Value(path constraint.PathKey) (product.AbstractValue
 // With returns f with path strongly updated to value. Updating to Bottom removes
 // the key, preserving absent-is-no-fact canonical form.
 func (f StaticMemberFacts) With(path constraint.PathKey, value product.AbstractValue) StaticMemberFacts {
+	addr, ok := StableAddressFromKey(path)
+	if !ok {
+		return f
+	}
+	return f.WithAddress(addr, value)
+}
+
+// WithAddress returns f with addr strongly updated to value. Updating to Bottom
+// removes the key, preserving absent-is-no-fact canonical form.
+func (f StaticMemberFacts) WithAddress(addr StableAddress, value product.AbstractValue) StaticMemberFacts {
 	if f.bottom {
 		f = StaticMemberFacts{}
 	}
+	path := addr.Key()
 	next := f.Entries()
 	idx, ok := findStaticMemberFact(next, path)
 	switch {
@@ -84,17 +108,22 @@ func (f StaticMemberFacts) With(path constraint.PathKey, value product.AbstractV
 
 // KillSubtree removes facts at root and under root's structural path suffix.
 func (f StaticMemberFacts) KillSubtree(root constraint.PathKey) StaticMemberFacts {
-	if f.bottom || root == "" || len(f.entries) == 0 {
-		return f
-	}
 	rootAddr, ok := StableAddressFromKey(root)
 	if !ok {
+		return f
+	}
+	return f.KillSubtreeAddress(rootAddr)
+}
+
+// KillSubtreeAddress removes facts at root and under root's structural suffix.
+func (f StaticMemberFacts) KillSubtreeAddress(root StableAddress) StaticMemberFacts {
+	if f.bottom || len(f.entries) == 0 {
 		return f
 	}
 	out := make([]StaticMemberFact, 0, len(f.entries))
 	for _, e := range f.entries {
 		pathAddr, ok := StableAddressFromKey(e.Path)
-		if ok && pathAddr.HasPrefix(rootAddr) {
+		if ok && pathAddr.HasPrefix(root) {
 			continue
 		}
 		out = append(out, e)

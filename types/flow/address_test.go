@@ -89,3 +89,71 @@ func TestStableAddressFromKeyRoundTripsSymbolAndRoot(t *testing.T) {
 		t.Fatalf("parsed root = %s, want %s", parsedRoot.Key(), root.Key())
 	}
 }
+
+func TestPathRootSeparatesSemanticRootKinds(t *testing.T) {
+	symbol, ok := SymbolPathRoot(cfg.SymbolID(9))
+	if !ok {
+		t.Fatal("symbol root did not build")
+	}
+	named, ok := NamedPathRoot("9")
+	if !ok {
+		t.Fatal("named root did not build")
+	}
+	if symbol.Equal(named) {
+		t.Fatalf("symbol root and named root should not be equal: %#v %#v", symbol, named)
+	}
+	if _, ok := symbol.Name(); ok {
+		t.Fatal("symbol root exposed a name")
+	}
+	if _, ok := named.Symbol(); ok {
+		t.Fatal("named root exposed a symbol")
+	}
+}
+
+func TestPathSuffixIsDefensiveAndStructural(t *testing.T) {
+	segments := []constraint.Segment{
+		{Kind: constraint.SegmentField, Name: "nodes"},
+		{Kind: constraint.SegmentIndexString, Name: "last"},
+	}
+	suffix := PathSuffixOfSegments(segments)
+	segments[0].Name = "mutated"
+
+	if got := suffix.KeySuffix(); got != `.nodes["last"]` {
+		t.Fatalf("suffix key = %q, want structured original", got)
+	}
+
+	returned := suffix.Segments()
+	returned[1].Name = "mutated"
+	if got := suffix.KeySuffix(); got != `.nodes["last"]` {
+		t.Fatalf("suffix changed through returned slice: %q", got)
+	}
+
+	parent := PathSuffixOfSegments([]constraint.Segment{{Kind: constraint.SegmentField, Name: "nodes"}})
+	sibling := PathSuffixOfSegments([]constraint.Segment{{Kind: constraint.SegmentField, Name: "edges"}})
+	if !suffix.HasPrefix(parent) || !suffix.Overlaps(parent) {
+		t.Fatalf("%s should overlap ancestor %s", suffix.KeySuffix(), parent.KeySuffix())
+	}
+	if suffix.Overlaps(sibling) {
+		t.Fatalf("%s should not overlap sibling %s", suffix.KeySuffix(), sibling.KeySuffix())
+	}
+}
+
+func TestStableAddressOfRootAndSuffixKeepsVocabularyCanonical(t *testing.T) {
+	root, _ := SymbolPathRoot(cfg.SymbolID(27))
+	suffix := PathSuffixOfSegments([]constraint.Segment{
+		{Kind: constraint.SegmentField, Name: "payload"},
+	})
+	addr, ok := StableAddressOfRootAndSuffix(root, suffix)
+	if !ok {
+		t.Fatal("address did not build from normalized root/suffix")
+	}
+	if !addr.RootIdentity().Equal(root) {
+		t.Fatalf("root identity changed: %#v vs %#v", addr.RootIdentity(), root)
+	}
+	if !addr.Suffix().Equal(suffix) {
+		t.Fatalf("suffix changed: %s vs %s", addr.Suffix().KeySuffix(), suffix.KeySuffix())
+	}
+	if got, want := addr.Key(), SymbolPathKey(cfg.SymbolID(27), suffix.Segments()); got != want {
+		t.Fatalf("key = %s, want %s", got, want)
+	}
+}

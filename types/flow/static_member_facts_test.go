@@ -74,6 +74,35 @@ func TestStaticMemberFactsKillSubtreeUsesStructuralPathPrefix(t *testing.T) {
 	}
 }
 
+func TestStaticMemberFactsAddressAPIIsCanonicalSurface(t *testing.T) {
+	root, _ := SymbolPathRoot(cfg.SymbolID(8))
+	field := PathSuffixOfSegments([]constraint.Segment{{Kind: constraint.SegmentField, Name: "field"}})
+	child, ok := StableAddressOfRootAndSuffix(root, field)
+	if !ok {
+		t.Fatal("child address did not build")
+	}
+	parent, ok := StableAddressOfRootAndSuffix(root, PathSuffix{})
+	if !ok {
+		t.Fatal("parent address did not build")
+	}
+
+	facts := StaticMemberFactsDomain.Top().WithAddress(child, product.FromType(typ.String))
+	got, ok := facts.ValueAtAddress(child)
+	if !ok {
+		t.Fatal("address value lookup missed fact")
+	}
+	if !typ.TypeEquals(got.ProjectValue(), typ.String) {
+		t.Fatalf("address value = %s, want string", got.ProjectValue())
+	}
+	if got, ok := facts.Value(child.Key()); !ok || !typ.TypeEquals(got.ProjectValue(), typ.String) {
+		t.Fatalf("compat PathKey lookup lost address fact: %s/%v", got.ProjectValue(), ok)
+	}
+	killed := facts.KillSubtreeAddress(parent)
+	if _, ok := killed.ValueAtAddress(child); ok {
+		t.Fatal("address subtree kill kept child fact")
+	}
+}
+
 func staticMemberFactsSample() []StaticMemberFacts {
 	pField := SymbolPathKey(cfg.SymbolID(1), []constraint.Segment{{Kind: constraint.SegmentField, Name: "foo"}})
 	pIndex := SymbolPathKey(cfg.SymbolID(1), []constraint.Segment{{Kind: constraint.SegmentIndexString, Name: "foo"}})
