@@ -75,6 +75,33 @@ func TestPointStateJoinKeepsBranchLocalStaticIndexInstallOptional(t *testing.T) 
 	}
 }
 
+func TestPointStateJoinKeepsCommonStaticMemberFact(t *testing.T) {
+	const sym = cfg.SymbolID(905)
+	path := SymbolPathKey(sym, []constraint.Segment{
+		{Kind: constraint.SegmentField, Name: "config"},
+		{Kind: constraint.SegmentField, Name: "data_targets"},
+	})
+	installed := reachableEmptyPointState()
+	installed.StaticMembers = installed.StaticMembers.With(path, product.FromType(typ.NewRecord().Build()))
+	present := reachableEmptyPointState()
+	present.StaticMembers = present.StaticMembers.With(path, product.PresentDynamic())
+
+	joined := PointStateDomain.Join(installed, present)
+	got, ok := joined.StaticMembers.Value(path)
+	if !ok || got.IsZero() {
+		t.Fatalf("join dropped common static member fact: %s", joined.StaticMembers.Format())
+	}
+	if !got.DefinitelyPresent() {
+		t.Fatalf("join static member fact = %s, want definitely-present value", got.ProjectValue())
+	}
+	if !PointStateDomain.LessOrEq(installed, joined) {
+		t.Fatalf("installed arm must be below static-member join:\ninstalled=%s\njoined=%s", formatPointState(installed), formatPointState(joined))
+	}
+	if !PointStateDomain.LessOrEq(present, joined) {
+		t.Fatalf("present arm must be below static-member join:\npresent=%s\njoined=%s", formatPointState(present), formatPointState(joined))
+	}
+}
+
 func TestPointStateJoinKeepsNilGatedKeyPresence(t *testing.T) {
 	table := constraint.NewPath(cfg.SymbolID(930), "nodes")
 	key := constraint.NewPath(cfg.SymbolID(931), "last_id")
@@ -120,6 +147,89 @@ func TestPointStateJoinDropsOneBranchKeyPresenceWhenMissingBranchMayHaveKey(t *t
 	}
 }
 
+func TestPointStateOrderSeesKeyArrayValuePayload(t *testing.T) {
+	array := constraint.NewPath(cfg.SymbolID(945), "node_order")
+	table := constraint.NewPath(cfg.SymbolID(946), "nodes")
+	tableOnly := reachableEmptyPointState()
+	tableOnly.KeyPresence = tableOnly.KeyPresence.WithKeyArrayPaths(array, table)
+	withValue := reachableEmptyPointState()
+	withValue.KeyPresence = withValue.KeyPresence.WithKeyArrayValuePaths(array, table, product.FromType(typ.String))
+
+	if !PointStateDomain.LessOrEq(withValue, tableOnly) {
+		t.Fatalf("value-carrying key-array proof should imply table-only proof:\nvalue=%s\ntable=%s", formatPointState(withValue), formatPointState(tableOnly))
+	}
+	if PointStateDomain.LessOrEq(tableOnly, withValue) {
+		t.Fatalf("table-only key-array proof must not imply value payload:\ntable=%s\nvalue=%s", formatPointState(tableOnly), formatPointState(withValue))
+	}
+}
+
+func TestPointStateOrderSeesAppendHistoryAxes(t *testing.T) {
+	array := KeyPresencePathKey(constraint.NewPath(cfg.SymbolID(947), "node_order"))
+	key := KeyPresencePathKey(constraint.NewPath(cfg.SymbolID(948), "node_id"))
+	plain := reachableEmptyPointState()
+	base := reachableEmptyPointState()
+	base.KeyPresence = base.KeyPresence.WithAppendHistoryBase(array)
+	event := reachableEmptyPointState()
+	event.KeyPresence = base.KeyPresence.WithAppendHistoryEvent(array, key)
+
+	if PointStateDomain.LessOrEq(plain, base) {
+		t.Fatalf("plain state must not imply append-history base:\nplain=%s\nbase=%s", formatPointState(plain), formatPointState(base))
+	}
+	if !PointStateDomain.LessOrEq(base, plain) {
+		t.Fatalf("append-history base should imply plain key-presence state:\nbase=%s\nplain=%s", formatPointState(base), formatPointState(plain))
+	}
+	if PointStateDomain.LessOrEq(event, base) {
+		t.Fatalf("possible append event must not imply event-free base:\nevent=%s\nbase=%s", formatPointState(event), formatPointState(base))
+	}
+	if !PointStateDomain.LessOrEq(base, event) {
+		t.Fatalf("event-free base should be below tracked-base plus possible event:\nbase=%s\nevent=%s", formatPointState(base), formatPointState(event))
+	}
+}
+
+func TestPointStateJoinKeepsNilGatedPathAlias(t *testing.T) {
+	key := constraint.NewPath(cfg.SymbolID(950), "last_id")
+	source := constraint.NewPath(cfg.SymbolID(951), "node_id")
+	nilArm := reachableEmptyPointState()
+	nilArm.Env = map[ValueKey]product.AbstractValue{
+		SymbolValueKey(key.Symbol): product.FromType(typ.Nil),
+	}
+	factArm := reachableEmptyPointState()
+	factArm.Env = map[ValueKey]product.AbstractValue{
+		SymbolValueKey(key.Symbol): product.FromType(typ.String),
+	}
+	factArm.PathAliases = factArm.PathAliases.WithPaths(key, source)
+
+	joined := PointStateDomain.Join(nilArm, factArm)
+	if len(joined.PathAliases.AliasesOfPath(key)) != 1 {
+		t.Fatalf("nil-gated join dropped path alias: %s", joined.PathAliases.Format())
+	}
+	if !PointStateDomain.LessOrEq(nilArm, joined) {
+		t.Fatalf("nil predecessor must be below guarded path-alias join:\nnil=%s\njoined=%s", formatPointState(nilArm), formatPointState(joined))
+	}
+	if !PointStateDomain.LessOrEq(factArm, joined) {
+		t.Fatalf("fact predecessor must be below guarded path-alias join:\nfact=%s\njoined=%s", formatPointState(factArm), formatPointState(joined))
+	}
+}
+
+func TestPointStateJoinDropsOneBranchPathAliasWhenMissingBranchMayHaveValue(t *testing.T) {
+	key := constraint.NewPath(cfg.SymbolID(960), "last_id")
+	source := constraint.NewPath(cfg.SymbolID(961), "node_id")
+	missingArm := reachableEmptyPointState()
+	missingArm.Env = map[ValueKey]product.AbstractValue{
+		SymbolValueKey(key.Symbol): product.FromType(typ.String),
+	}
+	factArm := reachableEmptyPointState()
+	factArm.Env = map[ValueKey]product.AbstractValue{
+		SymbolValueKey(key.Symbol): product.FromType(typ.String),
+	}
+	factArm.PathAliases = factArm.PathAliases.WithPaths(key, source)
+
+	joined := PointStateDomain.Join(missingArm, factArm)
+	if len(joined.PathAliases.AliasesOfPath(key)) != 0 {
+		t.Fatalf("join kept non-nil one-branch path alias: %s", joined.PathAliases.Format())
+	}
+}
+
 func TestPointStateJoinDropsOneBranchMustFacts(t *testing.T) {
 	table := constraint.NewPath(cfg.SymbolID(910), "messages")
 	key := constraint.NewPath(cfg.SymbolID(911), "key")
@@ -142,6 +252,7 @@ func TestPointStateJoinDropsOneBranchMustFacts(t *testing.T) {
 		ValueOriginIndexedIterator,
 		1,
 	)
+	factful.PathAliases = factful.PathAliases.WithPaths(key, sourcePath)
 	factful.IndexWrites = factful.IndexWrites.With(IndexWriteAdmissionFact{
 		Target:    KeyPresencePathKey(table),
 		KeyPath:   KeyPresencePathKey(key),
@@ -187,6 +298,7 @@ func reachableEmptyPointState() PointState {
 		StaticMembers:      StaticMemberFactsDomain.Top(),
 		KeyPresence:        KeyPresenceFactsDomain.Top(),
 		ValueOrigins:       ValueOriginFactsDomain.Top(),
+		PathAliases:        PathAliasFactsDomain.Top(),
 	}
 }
 
@@ -200,6 +312,9 @@ func assertPointStateDroppedOneBranchMustFacts(t *testing.T, ps PointState, tabl
 	}
 	if got := ps.ValueOrigins.OriginsOfPath(valuePath); len(got) != 0 {
 		t.Fatalf("PointState kept one-branch ValueOrigins fact: %s", ps.ValueOrigins.Format())
+	}
+	if got := ps.PathAliases.AliasesOfPath(key); len(got) != 0 {
+		t.Fatalf("PointState kept one-branch PathAliases fact: %s", ps.PathAliases.Format())
 	}
 	if rel, ok := ps.Rel.SiblingNil(errSym); ok {
 		t.Fatalf("PointState kept one-branch relation: %#v", rel)
@@ -382,6 +497,6 @@ func pointStateSample() []PointState {
 }
 
 func formatPointState(p PointState) string {
-	return fmt.Sprintf("{Env:%v Cond:%v Num:%v Cells:%s Effects:%s PrototypeSelf:%s PrototypeInstances:%s ClosureRefs:%v StaticMembers:%s KeyPresence:%s ValueOrigins:%s IndexWrites:%s}",
-		p.Env, constraint.Domain.Equal(p.Cond, constraint.Domain.Top()), numeric.StateDomain.Equal(p.Num, numeric.StateDomain.Top()), p.Cells.Format(), p.CellEffects.Format(), p.PrototypeSelf.Format(), p.PrototypeInstances.Format(), p.ClosureRefs, p.StaticMembers.Format(), p.KeyPresence.Format(), p.ValueOrigins.Format(), p.IndexWrites.Format())
+	return fmt.Sprintf("{Env:%v Cond:%v Num:%v Cells:%s Effects:%s PrototypeSelf:%s PrototypeInstances:%s ClosureRefs:%v StaticMembers:%s KeyPresence:%s ValueOrigins:%s PathAliases:%s IndexWrites:%s}",
+		p.Env, constraint.Domain.Equal(p.Cond, constraint.Domain.Top()), numeric.StateDomain.Equal(p.Num, numeric.StateDomain.Top()), p.Cells.Format(), p.CellEffects.Format(), p.PrototypeSelf.Format(), p.PrototypeInstances.Format(), p.ClosureRefs, p.StaticMembers.Format(), p.KeyPresence.Format(), p.ValueOrigins.Format(), p.PathAliases.Format(), p.IndexWrites.Format())
 }

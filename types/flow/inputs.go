@@ -381,6 +381,7 @@ type VariantFieldOrigin struct {
 // proof instead of reconstructing write provenance.
 type IndexWriteQuery struct {
 	Point     cfg.Point
+	View      PathReadView
 	Target    constraint.Path
 	KeyPath   constraint.Path
 	KeySymbol cfg.SymbolID

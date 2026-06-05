@@ -87,11 +87,14 @@ func (f StaticMemberFacts) KillSubtree(root constraint.PathKey) StaticMemberFact
 	if f.bottom || root == "" || len(f.entries) == 0 {
 		return f
 	}
-	prefix := string(root)
+	rootAddr, ok := StableAddressFromKey(root)
+	if !ok {
+		return f
+	}
 	out := make([]StaticMemberFact, 0, len(f.entries))
 	for _, e := range f.entries {
-		key := string(e.Path)
-		if key == prefix || strings.HasPrefix(key, prefix+".") || strings.HasPrefix(key, prefix+"[") {
+		pathAddr, ok := StableAddressFromKey(e.Path)
+		if ok && pathAddr.HasPrefix(rootAddr) {
 			continue
 		}
 		out = append(out, e)

@@ -351,7 +351,9 @@ func TestReturnSetMetatablePublishesPrototypeMethodFunctionRefs(t *testing.T) {
 	in.Graph.Bindings().SetName(metaSym, "mt")
 
 	methodRef := flow.FunctionRef{GraphID: 743, ParentHash: 744}
+	methodSig := typ.Func().Returns(typ.String).Build()
 	tr := New(in, Config{
+		CallTyper: functionValueTestTyper{ref: methodRef, sig: methodSig},
 		MetatableIndexes: []metatable.Index{{
 			MetatableSym: metaSym,
 			PrototypeSym: protoSym,

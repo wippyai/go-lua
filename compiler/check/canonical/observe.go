@@ -11,6 +11,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/check/domain/assignsource"
 	"github.com/wippyai/go-lua/compiler/check/domain/callbackenv"
 	"github.com/wippyai/go-lua/compiler/check/domain/indexread"
+	"github.com/wippyai/go-lua/compiler/check/domain/paramevidence"
 	flowpath "github.com/wippyai/go-lua/compiler/check/domain/path"
 	"github.com/wippyai/go-lua/compiler/check/scope"
 	phasecore "github.com/wippyai/go-lua/compiler/check/synth/core"
@@ -412,6 +413,9 @@ func (f *canonicalFacts) CallReturnTypesAt(point cfg.Point, call *ast.FuncCallEx
 	if f == nil || f.driver == nil || f.program == nil || call == nil {
 		return nil, false
 	}
+	if values, ok := f.intrinsicCallReturnTypesAt(point, call); ok {
+		return values, true
+	}
 	callCtx, ok := f.productCallContextAt(point, call)
 	if !ok {
 		return nil, false
@@ -430,12 +434,13 @@ func (f *canonicalFacts) CallReturnTypesAt(point cfg.Point, call *ast.FuncCallEx
 			return entry
 		},
 		func(ctx canonicalcall.EntryContext) summary.Summary {
-			return f.reader.SummarizeWithEntryContext(
+			return f.reader.SummarizeWithEntryContextFacts(
 				ctx.Ref(),
 				ctx.CaptureCells(),
 				ctx.FunctionRefs(),
 				ctx.ClosureRefs(),
 				ctx.EntryValues(),
+				ctx.EntryFacts(),
 			)
 		},
 		canonicalcall.SummaryTargetInfo{
@@ -466,20 +471,44 @@ func (f *canonicalFacts) CallReturnTypesAt(point cfg.Point, call *ast.FuncCallEx
 	return product.ProjectValuesOrUnknown(values), true
 }
 
+func (f *canonicalFacts) intrinsicCallReturnTypesAt(point cfg.Point, call *ast.FuncCallExpr) ([]typ.Type, bool) {
+	tr, ok := f.transfer()
+	if !ok {
+		return nil, false
+	}
+	in := f.inState(point)
+	values, ok := tr.IntrinsicCallReturnValues(&in, call, nil)
+	if !ok || len(values) == 0 {
+		return nil, false
+	}
+	return product.ProjectValuesOrUnknown(values), true
+}
+
 func (f *canonicalFacts) productCallContextAt(point cfg.Point, call *ast.FuncCallExpr) (transfer.ProductCallContext, bool) {
 	if f == nil || f.program == nil || f.graph == nil || call == nil {
 		return transfer.ProductCallContext{}, false
 	}
-	ref, ok := f.program.refByGraph(f.graph)
+	tr, ok := f.transfer()
 	if !ok {
-		return transfer.ProductCallContext{}, false
-	}
-	tr, ok := f.program.transfers[ref].(*transfer.Transfer)
-	if !ok || tr == nil {
 		return transfer.ProductCallContext{}, false
 	}
 	in := f.inState(point)
 	return tr.ProductCallContext(&in, call), true
+}
+
+func (f *canonicalFacts) transfer() (*transfer.Transfer, bool) {
+	if f == nil || f.program == nil || f.graph == nil {
+		return nil, false
+	}
+	ref, ok := f.program.refByGraph(f.graph)
+	if !ok {
+		return nil, false
+	}
+	tr, ok := f.program.transfers[ref].(*transfer.Transfer)
+	if !ok || tr == nil {
+		return nil, false
+	}
+	return tr, true
 }
 
 func (f *canonicalFacts) observedExprTypeAt(point cfg.Point, expr ast.Expr, expected typ.Type) typ.Type {
@@ -772,11 +801,65 @@ func (f *canonicalFacts) MutatorKeyTypeAt(p cfg.Point, keyPath constraint.Path, 
 // IndexWriteAdmission reads the post-transfer point-state proof that a dynamic
 // indexed replacement write was admitted by the canonical product transfer.
 func (f *canonicalFacts) IndexWriteAdmission(q flow.IndexWriteQuery) (typ.Type, bool) {
-	return flow.PointFactsOf(f.pointState(q.Point, true)).IndexWriteAdmission(q)
+	ps := f.indexReadState(q.Point, q.View)
+	got, ok := flow.PointFactsOf(ps).IndexWriteAdmission(q)
+	return got, ok
+}
+
+// MapReadback returns the normalized proof value for table[key] reads. It first
+// consumes the heavy point-local dynamic-write admission lane, then derives the
+// same readback from stable key-array/value-origin facts when a loop key was
+// yielded from a proven key array.
+func (f *canonicalFacts) MapReadback(q flow.IndexWriteQuery) (typ.Type, bool) {
+	if got, ok := f.IndexWriteAdmission(q); ok {
+		return got, true
+	}
+	ps := f.indexReadState(q.Point, q.View)
+	keyPath := q.KeyPath
+	if keyPath.IsEmpty() && q.KeySymbol != 0 {
+		keyPath = constraint.Path{Symbol: q.KeySymbol}
+	}
+	value, ok := flow.IndexedIteratorKeyArrayReadback(
+		ps.KeyPresence,
+		ps.ValueOrigins,
+		q.Target,
+		keyPath,
+	)
+	if !ok || value.IsZero() {
+		return nil, false
+	}
+	t := product.ProjectValueOrUnknown(value)
+	if typ.IsAbsentOrUnknown(t) || typ.IsAny(t) {
+		return nil, false
+	}
+	return t, true
+}
+
+func (f *canonicalFacts) indexReadState(p cfg.Point, view flow.PathReadView) flow.PointState {
+	switch view {
+	case flow.PathReadPre:
+		return f.inState(p)
+	case flow.PathReadPost:
+		return f.pointState(p, true)
+	default:
+		return f.pointState(p, true)
+	}
 }
 
 func (f *canonicalFacts) ValueOriginsAt(p cfg.Point) flow.ValueOriginFacts {
 	return f.pointState(p, true).ValueOrigins
+}
+
+func (f *canonicalFacts) PathAliasesAt(p cfg.Point) flow.PathAliasFacts {
+	return f.pointState(p, true).PathAliases
+}
+
+func (f *canonicalFacts) AppendElementFieldSourcesAt(p cfg.Point, array constraint.PathKey, field []constraint.Segment) []flow.AppendElementFieldOriginUse {
+	return f.pointState(p, true).KeyPresence.AppendElementFieldSources(array, field)
+}
+
+func (f *canonicalFacts) BodyContracts() paramevidence.Contracts {
+	return f.state.Contracts
 }
 
 // IsAnnotated reports whether sym carries an explicit type annotation.
@@ -1465,10 +1548,16 @@ func (s *returnSynth) Narrow() api.BaseSynth { return s }
 func (s *returnSynth) WithFlow(api.FlowOps) api.BaseSynth { return s }
 
 func (s *returnSynth) Method(t typ.Type, name string) (typ.Type, bool) {
+	if s != nil && s.driver != nil && s.driver.cfg.Types != nil && s.ctx != nil {
+		return s.driver.cfg.Types.Method(s.ctx, t, name)
+	}
 	return querycore.Method(t, name)
 }
 
 func (s *returnSynth) Field(t typ.Type, name string) (typ.Type, bool) {
+	if s != nil && s.driver != nil && s.driver.cfg.Types != nil && s.ctx != nil {
+		return s.driver.cfg.Types.Field(s.ctx, t, name)
+	}
 	return querycore.Field(t, name)
 }
 

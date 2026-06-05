@@ -63,6 +63,35 @@ func TestRequireIntercept_WrongArgCount_Multiple(t *testing.T) {
 	}
 }
 
+func TestRequireIntercept_WrongArgCountDoesNotSynthesizeCallee(t *testing.T) {
+	querier := &requireTestManifestQuerier{manifests: map[string]*io.Manifest{}}
+	r := &RequireIntercept{Manifests: querier}
+	ex := &ast.FuncCallExpr{
+		Func: &ast.AttrGetExpr{
+			Object:    &ast.IdentExpr{Value: "compiler"},
+			Key:       &ast.StringExpr{Value: "build_graph"},
+			KeySyntax: ast.AttrKeyDot,
+		},
+		Args: []ast.Expr{
+			&ast.IdentExpr{Value: "operations"},
+			&ast.IdentExpr{Value: "session_context"},
+		},
+	}
+	recurseCalled := false
+	result := r.InterceptCall(ex, CallEnv{
+		Recurse: func(ast.Expr) typ.Type {
+			recurseCalled = true
+			return typ.Func().Returns(typ.Any).Effects(effect.WithModuleLoad()).Build()
+		},
+	})
+	if result.Skip {
+		t.Fatal("expected skip=false for multiple args")
+	}
+	if recurseCalled {
+		t.Fatal("wrong-arity require intercept synthesized callee")
+	}
+}
+
 func TestRequireIntercept_NonStringArg_SkipsFalse(t *testing.T) {
 	querier := &requireTestManifestQuerier{manifests: map[string]*io.Manifest{}}
 	r := &RequireIntercept{Manifests: querier}

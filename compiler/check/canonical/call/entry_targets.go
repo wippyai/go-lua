@@ -32,6 +32,7 @@ func SummaryEntryTargets(targets TargetSet, direct DirectEntryContext) []summary
 			EntryCells:        ctx.CaptureCells(),
 			EntryFunctionRefs: ctx.FunctionRefs(),
 			EntryClosureRefs:  ctx.ClosureRefs(),
+			EntryFacts:        ctx.EntryFacts(),
 		})
 	}
 	return out

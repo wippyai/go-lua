@@ -29,9 +29,13 @@ func newCallableProjector(d *Driver, prog *program, queries *summary.Queries, ct
 	if d == nil {
 		return callableProjector{prog: prog}
 	}
+	reader := summary.NewReader(queries, ctx, d.summaries)
+	if d.snapshotSummaryReads {
+		reader = d.summaryReader()
+	}
 	return callableProjector{
 		prog:   prog,
-		reader: summary.NewReader(queries, ctx, d.summaries),
+		reader: reader,
 		baseSignature: func(ref summary.FuncRef) *typ.Function {
 			if prog == nil {
 				return nil

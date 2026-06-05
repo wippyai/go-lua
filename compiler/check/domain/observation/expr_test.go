@@ -8,6 +8,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/api"
 	"github.com/wippyai/go-lua/compiler/check/domain/globalenv"
+	"github.com/wippyai/go-lua/compiler/check/domain/paramevidence"
 	"github.com/wippyai/go-lua/compiler/check/scope"
 	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/db"
@@ -220,6 +221,76 @@ func (f *pathObservationFactsStub) ObservePath(q flow.PathObservationQuery) flow
 	return f.observation
 }
 
+type bodyContractOriginFactsStub struct {
+	factsStub
+	contracts     paramevidence.Contracts
+	origins       flow.ValueOriginFacts
+	aliases       flow.PathAliasFacts
+	appendOrigins flow.KeyPresenceFacts
+	cond          constraint.Condition
+	annotated     map[cfg.SymbolID]bool
+}
+
+func (f bodyContractOriginFactsStub) BodyContracts() paramevidence.Contracts {
+	return f.contracts
+}
+
+func (f bodyContractOriginFactsStub) ValueOriginsAt(cfg.Point) flow.ValueOriginFacts {
+	return f.origins
+}
+
+func (f bodyContractOriginFactsStub) PathAliasesAt(cfg.Point) flow.PathAliasFacts {
+	return f.aliases
+}
+
+func (f bodyContractOriginFactsStub) AppendElementFieldSourcesAt(_ cfg.Point, array constraint.PathKey, field []constraint.Segment) []flow.AppendElementFieldOriginUse {
+	return f.appendOrigins.AppendElementFieldSources(array, field)
+}
+
+func (f bodyContractOriginFactsStub) IsAnnotated(sym cfg.SymbolID) bool {
+	return f.annotated[sym]
+}
+
+func (f bodyContractOriginFactsStub) ConditionAt(cfg.Point) constraint.Condition {
+	if f.cond.HasConstraints() || f.cond.IsFalse() {
+		return f.cond
+	}
+	return constraint.TrueCondition()
+}
+
+func (f bodyContractOriginFactsStub) ProvesTypeAt(point cfg.Point, path constraint.Path, t typ.Type) bool {
+	return f.conditionProjector().ProvesTypeAt(point, path, t)
+}
+
+func (f bodyContractOriginFactsStub) ConditionTypeAt(point cfg.Point, path constraint.Path) typ.Type {
+	return f.conditionProjector().ConditionTypeAt(point, path)
+}
+
+func (f bodyContractOriginFactsStub) ConditionedTypeAt(point cfg.Point, path constraint.Path, extra constraint.Condition) typ.Type {
+	return f.conditionProjector().ConditionedTypeAt(point, path, extra)
+}
+
+func (f bodyContractOriginFactsStub) ConditionedSeedTypeAt(point cfg.Point, seedPath constraint.Path, seedType typ.Type, queryPath constraint.Path, extra constraint.Condition) typ.Type {
+	return f.conditionProjector().ConditionedSeedTypeAt(point, seedPath, seedType, queryPath, extra)
+}
+
+func (f bodyContractOriginFactsStub) conditionProjector() flow.ConditionProofProjector {
+	return flow.ConditionProofProjector{
+		Resolver:    observationResolver{},
+		ConditionAt: f.ConditionAt,
+		RootTypeAt: func(point cfg.Point, path constraint.Path) typ.Type {
+			tv := f.EffectiveTypeAt(point, path.Symbol)
+			if tv.State != flow.StateResolved {
+				return nil
+			}
+			return tv.Type
+		},
+		ResolvePath: func(_ cfg.Point, path constraint.Path) constraint.PathKey {
+			return flow.ConditionProofStructuralPathKey(path)
+		},
+	}
+}
+
 func TestProjector_IdentUsesSolvedFacts(t *testing.T) {
 	ident := &ast.IdentExpr{Value: "value"}
 	bindings := bind.NewBindingTable()
@@ -233,6 +304,270 @@ func TestProjector_IdentUsesSolvedFacts(t *testing.T) {
 
 	if !typ.TypeEquals(observed, typ.String) {
 		t.Fatalf("TypeOf(ident) = %v, want string", observed)
+	}
+}
+
+func TestProjector_CallArgumentProofUsesBodyContractValueOrigin(t *testing.T) {
+	op := &ast.IdentExpr{Value: "op"}
+	opTemplate := &ast.AttrGetExpr{
+		Object: &ast.AttrGetExpr{
+			Object:    op,
+			Key:       &ast.StringExpr{Value: "config"},
+			KeySyntax: ast.AttrKeyDot,
+		},
+		Key:       &ast.StringExpr{Value: "template"},
+		KeySyntax: ast.AttrKeyDot,
+	}
+	fn := &ast.FunctionExpr{
+		ParList: &ast.ParList{Names: []string{"operations"}, Types: []ast.TypeExpr{nil}},
+	}
+	g := cfg.Build(fn)
+	slots := g.ParamSlotsReadOnly()
+	if len(slots) != 1 || slots[0].Symbol == 0 {
+		t.Fatalf("ParamSlotsReadOnly() = %#v, want one operations slot", slots)
+	}
+	const point cfg.Point = 7
+	const opSym cfg.SymbolID = 52
+	operationsSym := slots[0].Symbol
+	bindings := bind.NewBindingTable()
+	bindings.Bind(op, opSym)
+
+	valuePath := constraint.NewPath(opSym, "op")
+	templatePath := valuePath.Field("config").Field("template")
+	sourcePath := constraint.NewPath(operationsSym, "operations")
+	localContract := paramevidence.DemandFromPathType(
+		[]constraint.Segment{
+			{Kind: constraint.SegmentField, Name: "config"},
+			{Kind: constraint.SegmentField, Name: "template"},
+		},
+		typ.NewUnion(typ.String, typ.Nil, typ.False),
+	)
+	sourceContract := paramevidence.IndexedIteratorContract(1, localContract)
+	facts := bodyContractOriginFactsStub{
+		factsStub: factsStub{opSym: typ.Any},
+		contracts: paramevidence.Contracts{
+			0: sourceContract,
+		},
+		origins: flow.ValueOriginFacts{}.WithPaths(
+			valuePath,
+			sourcePath,
+			flow.ValueOriginIndexedIterator,
+			1,
+		),
+		cond: constraint.FromConstraints(constraint.Truthy{Path: templatePath}),
+	}
+
+	projector := New(Config{
+		Graph:    g,
+		Bindings: bindings,
+		Facts:    facts,
+	})
+	if ordinary := projector.TypeOf(opTemplate, point); !typ.IsAny(ordinary) {
+		t.Fatalf("ordinary TypeOf(op.config.template) = %v, want any without call-argument proof", ordinary)
+	}
+
+	got := projector.WithCallArgumentProofs().TypeOfWithExpected(opTemplate, point, typ.String)
+
+	if !typ.TypeEquals(got, typ.String) {
+		t.Fatalf("TypeOfWithExpected(op.config.template) = %v, want string", got)
+	}
+}
+
+func TestProjector_CallArgumentProofRoutesThroughAppendElementFieldOrigin(t *testing.T) {
+	routeEntry := &ast.IdentExpr{Value: "route_entry"}
+	routeTarget := &ast.AttrGetExpr{
+		Object:    routeEntry,
+		Key:       &ast.StringExpr{Value: "target_name"},
+		KeySyntax: ast.AttrKeyDot,
+	}
+	fn := &ast.FunctionExpr{
+		ParList: &ast.ParList{Names: []string{"operations"}, Types: []ast.TypeExpr{nil}},
+	}
+	g := cfg.Build(fn)
+	slots := g.ParamSlotsReadOnly()
+	if len(slots) != 1 || slots[0].Symbol == 0 {
+		t.Fatalf("ParamSlotsReadOnly() = %#v, want one operations slot", slots)
+	}
+	const point cfg.Point = 9
+	const opSym cfg.SymbolID = 61
+	const routeSym cfg.SymbolID = 62
+	const routeEntrySym cfg.SymbolID = 63
+	const graphSym cfg.SymbolID = 64
+	operationsSym := slots[0].Symbol
+	bindings := bind.NewBindingTable()
+	bindings.Bind(routeEntry, routeEntrySym)
+
+	opPath := constraint.NewPath(opSym, "op")
+	operationsPath := constraint.NewPath(operationsSym, "operations")
+	routePath := constraint.NewPath(routeSym, "route")
+	routeEntryPath := constraint.NewPath(routeEntrySym, "route_entry")
+	inputRoutesPath := constraint.NewPath(graphSym, "graph").Field("input_routes")
+	targetField := []constraint.Segment{{Kind: constraint.SegmentField, Name: "target_name"}}
+	targetContract := paramevidence.DemandFromPathType(
+		[]constraint.Segment{
+			{Kind: constraint.SegmentField, Name: "config"},
+			{Kind: constraint.SegmentField, Name: "target"},
+		},
+		typ.String,
+	)
+	facts := bodyContractOriginFactsStub{
+		factsStub: factsStub{routeEntrySym: typ.Any},
+		contracts: paramevidence.Contracts{
+			0: paramevidence.IndexedIteratorContract(1, targetContract),
+		},
+		origins: flow.ValueOriginFacts{}.
+			WithPaths(opPath, operationsPath, flow.ValueOriginIndexedIterator, 1).
+			WithPaths(routePath, inputRoutesPath, flow.ValueOriginIndexedIterator, 1),
+		aliases: flow.PathAliasFacts{}.WithPaths(routeEntryPath, routePath),
+		appendOrigins: flow.KeyPresenceFacts{}.
+			WithAppendHistoryBasePath(inputRoutesPath).
+			WithAppendElementFieldOriginPaths(inputRoutesPath, targetField, opPath.Field("config").Field("target")),
+		cond: constraint.TrueCondition(),
+	}
+
+	projector := New(Config{
+		Graph:    g,
+		Bindings: bindings,
+		Facts:    facts,
+	})
+	if ordinary := projector.TypeOf(routeTarget, point); !typ.IsAny(ordinary) {
+		t.Fatalf("ordinary TypeOf(route_entry.target_name) = %v, want any without call-argument proof", ordinary)
+	}
+
+	got := projector.WithCallArgumentProofs().TypeOfWithExpected(routeTarget, point, typ.String)
+
+	if !typ.TypeEquals(got, typ.String) {
+		t.Fatalf("TypeOfWithExpected(route_entry.target_name) = %v, want string", got)
+	}
+}
+
+func TestProjector_CallArgumentProofRoutesThroughElementRelativeAppendOrigin(t *testing.T) {
+	routeEntry := &ast.IdentExpr{Value: "route_entry"}
+	routeTarget := &ast.AttrGetExpr{
+		Object:    routeEntry,
+		Key:       &ast.StringExpr{Value: "target_name"},
+		KeySyntax: ast.AttrKeyDot,
+	}
+	fn := &ast.FunctionExpr{
+		ParList: &ast.ParList{Names: []string{"operations"}, Types: []ast.TypeExpr{nil}},
+	}
+	g := cfg.Build(fn)
+	slots := g.ParamSlotsReadOnly()
+	if len(slots) != 1 || slots[0].Symbol == 0 {
+		t.Fatalf("ParamSlotsReadOnly() = %#v, want one operations slot", slots)
+	}
+	const point cfg.Point = 9
+	const routeSym cfg.SymbolID = 62
+	const routeEntrySym cfg.SymbolID = 63
+	const graphSym cfg.SymbolID = 64
+	operationsSym := slots[0].Symbol
+	bindings := bind.NewBindingTable()
+	bindings.Bind(routeEntry, routeEntrySym)
+
+	operationsPath := constraint.NewPath(operationsSym, "operations")
+	routePath := constraint.NewPath(routeSym, "route")
+	routeEntryPath := constraint.NewPath(routeEntrySym, "route_entry")
+	inputRoutesPath := constraint.NewPath(graphSym, "graph").Field("input_routes")
+	targetField := []constraint.Segment{{Kind: constraint.SegmentField, Name: "target_name"}}
+	sourceField := []constraint.Segment{
+		{Kind: constraint.SegmentField, Name: "config"},
+		{Kind: constraint.SegmentField, Name: "target"},
+	}
+	targetContract := paramevidence.DemandFromPathType(sourceField, typ.String)
+	facts := bodyContractOriginFactsStub{
+		factsStub: factsStub{routeEntrySym: typ.Any},
+		contracts: paramevidence.Contracts{
+			0: paramevidence.IndexedIteratorContract(1, targetContract),
+		},
+		origins: flow.ValueOriginFacts{}.
+			WithPaths(routePath, inputRoutesPath, flow.ValueOriginIndexedIterator, 1),
+		aliases: flow.PathAliasFacts{}.WithPaths(routeEntryPath, routePath),
+		appendOrigins: flow.KeyPresenceFacts{}.
+			WithAppendHistoryBasePath(inputRoutesPath).
+			WithAppendElementFieldOriginFromPaths(inputRoutesPath, targetField, operationsPath, sourceField),
+		cond: constraint.TrueCondition(),
+	}
+
+	projector := New(Config{
+		Graph:    g,
+		Bindings: bindings,
+		Facts:    facts,
+	})
+	got := projector.WithCallArgumentProofs().TypeOfWithExpected(routeTarget, point, typ.String)
+
+	if !typ.TypeEquals(got, typ.String) {
+		t.Fatalf("TypeOfWithExpected(route_entry.target_name) = %v, want string", got)
+	}
+}
+
+func TestProjector_CallArgumentProofUsesRootLocalBodyContractValueOrigin(t *testing.T) {
+	nodeID := &ast.IdentExpr{Value: "node_id"}
+	fn := &ast.FunctionExpr{
+		ParList: &ast.ParList{Names: []string{"self"}, Types: []ast.TypeExpr{nil}},
+	}
+	g := cfg.Build(fn)
+	slots := g.ParamSlotsReadOnly()
+	if len(slots) != 1 || slots[0].Symbol == 0 {
+		t.Fatalf("ParamSlotsReadOnly() = %#v, want one self slot", slots)
+	}
+	const point cfg.Point = 11
+	const nodeSym cfg.SymbolID = 77
+	selfSym := slots[0].Symbol
+	bindings := bind.NewBindingTable()
+	bindings.Bind(nodeID, nodeSym)
+
+	nodePath := constraint.NewPath(nodeSym, "node_id")
+	nodesPath := constraint.NewPath(selfSym, "self").Field("nodes")
+	nodesContract := paramevidence.KeyedIteratorContract(0, paramevidence.DemandFromType(typ.String))
+	if projected := nodesContract.ProjectValue(); projected == nil || typ.IsNever(projected) {
+		t.Fatalf("nodesContract.ProjectValue() = %v, want readonly map", projected)
+	}
+	selfContract := paramevidence.DemandFromPathContract(
+		[]constraint.Segment{{Kind: constraint.SegmentField, Name: "nodes"}},
+		nodesContract,
+	)
+	if projected := selfContract.ProjectValue(); projected == nil || typ.IsNever(projected) {
+		t.Fatalf("selfContract.ProjectValue() = %v, want record with nodes map", projected)
+	}
+	facts := bodyContractOriginFactsStub{
+		factsStub: factsStub{nodeSym: typ.Any},
+		contracts: paramevidence.Contracts{
+			0: selfContract,
+		},
+		annotated: map[cfg.SymbolID]bool{selfSym: true},
+		origins: flow.ValueOriginFacts{}.WithPaths(
+			nodePath,
+			nodesPath,
+			flow.ValueOriginKeyedIterator,
+			0,
+		),
+		cond: constraint.TrueCondition(),
+	}
+
+	projector := New(Config{
+		Graph:    g,
+		Bindings: bindings,
+		Facts:    facts,
+	})
+	if ordinary := projector.TypeOf(nodeID, point); !typ.IsAny(ordinary) {
+		t.Fatalf("ordinary TypeOf(node_id) = %v, want any without call-argument proof", ordinary)
+	}
+	proofProjector := projector.WithCallArgumentProofs()
+	if direct := proofProjector.directBodyContractPathType(nodesPath); direct == nil || typ.IsNever(direct) {
+		t.Fatalf("directBodyContractPathType(self.nodes) = %v, want readonly map", direct)
+	}
+	sourceType := proofProjector.bodyContractPathTypeAtPath(point, nodesPath, nil)
+	if keyType := querycore.EntryKeyType(sourceType); !typ.TypeEquals(keyType, typ.String) {
+		t.Fatalf("bodyContractPathTypeAtPath(self.nodes) = %v, key %v, want string key", sourceType, keyType)
+	}
+	if localType := proofProjector.bodyContractPathTypeAtPath(point, nodePath, nil); !typ.TypeEquals(localType, typ.String) {
+		t.Fatalf("bodyContractPathTypeAtPath(node_id) = %v, want string", localType)
+	}
+
+	got := proofProjector.TypeOfWithExpected(nodeID, point, typ.String)
+
+	if !typ.TypeEquals(got, typ.String) {
+		t.Fatalf("TypeOfWithExpected(node_id) = %v, want string", got)
 	}
 }
 
@@ -910,6 +1245,40 @@ func TestProjector_ArrayElementUsesDiscriminatedUnionContext(t *testing.T) {
 
 	if !typ.TypeEquals(observed, expected) {
 		t.Fatalf("TypeOfWithExpected(union array literal) = %v, want %v", observed, expected)
+	}
+}
+
+func TestProjector_TableUnionContextChecksMembersBeforeUnionFieldContext(t *testing.T) {
+	chanInt := typ.NewRecord().Field("__tag", typ.LiteralString("int")).Build()
+	chanStr := typ.NewRecord().Field("__tag", typ.LiteralString("str")).Build()
+	intResult := typ.NewRecord().
+		Field("channel", chanInt).
+		Field("value", typ.Number).
+		Field("ok", typ.Boolean).
+		Build()
+	strResult := typ.NewRecord().
+		Field("channel", chanStr).
+		Field("value", typ.String).
+		Field("ok", typ.Boolean).
+		Build()
+	expected := typ.NewUnion(intResult, strResult)
+
+	channel := &ast.IdentExpr{Value: "a"}
+	bindings := bind.NewBindingTable()
+	const channelSym cfg.SymbolID = 91
+	bindings.Bind(channel, channelSym)
+
+	observed := New(Config{
+		Bindings: bindings,
+		Facts:    factsStub{channelSym: chanInt},
+	}).ReturnSourceType(&ast.TableExpr{Fields: []*ast.Field{
+		{Key: &ast.IdentExpr{Value: "channel"}, Value: channel},
+		{Key: &ast.IdentExpr{Value: "value"}, Value: &ast.NumberExpr{Value: "42"}},
+		{Key: &ast.IdentExpr{Value: "ok"}, Value: &ast.TrueExpr{}},
+	}}, 1, expected)
+
+	if !typ.TypeEquals(observed, intResult) {
+		t.Fatalf("ReturnSourceType(table union) = %v, want %v", observed, intResult)
 	}
 }
 

@@ -6,14 +6,17 @@ import (
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/types/cfg"
 	"github.com/wippyai/go-lua/types/constraint"
+	"github.com/wippyai/go-lua/types/flow"
 	"github.com/wippyai/go-lua/types/typ"
 )
 
 type fakeFlow struct {
-	bounds    map[string][2]int64
-	lenBounds map[string][2]int64
-	lenRefs   map[string]lenRef
-	keyOf     bool
+	bounds        map[string][2]int64
+	lenBounds     map[string][2]int64
+	lenRefs       map[string]lenRef
+	keyOf         bool
+	mapReadback   typ.Type
+	mapReadbackOK bool
 }
 
 type lenRef struct {
@@ -47,6 +50,10 @@ func (f fakeFlow) LengthBoundsAt(_ cfg.Point, path constraint.Path) (int64, int6
 
 func (f fakeFlow) HasKeyOf(_ cfg.Point, tablePath, keyPath constraint.Path) bool {
 	return f.keyOf && !tablePath.IsEmpty() && !keyPath.IsEmpty()
+}
+
+func (f fakeFlow) MapReadback(_ flow.IndexWriteQuery) (typ.Type, bool) {
+	return f.mapReadback, f.mapReadbackOK
 }
 
 func TestRefine_TupleIndexBoundedByNumericForRemovesNil(t *testing.T) {
@@ -137,5 +144,39 @@ func TestRefine_KeyPresenceRemovesNil(t *testing.T) {
 
 	if !ok || !typ.TypeEquals(refined, typ.Number) {
 		t.Fatalf("Refine(map[name]) = %v, %v; want number, true", refined, ok)
+	}
+}
+
+func TestRefine_MapReadbackComposesKeyPresence(t *testing.T) {
+	obj := &ast.IdentExpr{Value: "map"}
+	key := &ast.IdentExpr{Value: "name"}
+	objPath := constraint.Path{Root: "map", Symbol: 61}
+	keyPath := constraint.Path{Root: "name", Symbol: 62}
+
+	refined, ok := Refine(Query{
+		Point:     6,
+		Container: typ.NewMap(typ.String, typ.Number),
+		Result:    typ.NewOptional(typ.Number),
+		Object:    obj,
+		Key:       key,
+		Flow: fakeFlow{
+			keyOf:         true,
+			mapReadback:   typ.NewOptional(typ.Number),
+			mapReadbackOK: true,
+		},
+		PathOf: func(expr ast.Expr) constraint.Path {
+			switch expr {
+			case obj:
+				return objPath
+			case key:
+				return keyPath
+			default:
+				return constraint.Path{}
+			}
+		},
+	})
+
+	if !ok || !typ.TypeEquals(refined, typ.Number) {
+		t.Fatalf("Refine(map[name]) = %v, %v; want present number readback", refined, ok)
 	}
 }

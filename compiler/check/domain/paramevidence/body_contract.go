@@ -4,7 +4,6 @@ import (
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/domain/callobligation"
-	"github.com/wippyai/go-lua/types/domain/value/product"
 	"github.com/wippyai/go-lua/types/typ"
 	"github.com/wippyai/go-lua/types/typ/subst"
 )
@@ -108,7 +107,7 @@ func CallArgContractObligations(config CallArgContractConfig) []callobligation.O
 			continue
 		}
 		declared := callArgDeclaredType(config.DeclaredSlotType, slot)
-		contract := callArgContractType(config.Contracts, slot)
+		contract := callArgContract(config.Contracts, slot)
 		entry := callArgEntryType(config.EntrySlotType, slot)
 		if callArgSourceAnnotated(config, source) {
 			out[argIdx] = callobligation.Signature(declared)
@@ -217,7 +216,7 @@ func JoinCallArgObligation(prev, next callobligation.Obligation) callobligation.
 	}
 	source := callobligation.JoinSource(prev.Source, next.Source)
 	if joined := HardContractJoin(prev.Type, next.Type); joined != nil {
-		return callArgObligationWithSource(joined, source)
+		return callArgObligationWithSource(joined, source, joinObligationContracts(prev, next))
 	}
 	return prev
 }
@@ -280,47 +279,96 @@ func callArgEntryType(resolve func(slot int) typ.Type, slot int) typ.Type {
 }
 
 func callArgContractType(contracts Contracts, slot int) typ.Type {
+	contract := callArgContract(contracts, slot)
+	if ParamContractDomain.Equal(contract, ParamContractDomain.Bottom()) {
+		return nil
+	}
+	return informativeOrNil(contract.ProjectValue())
+}
+
+func callArgContract(contracts Contracts, slot int) ParamContract {
 	if slot < 0 || len(contracts) == 0 {
-		return nil
+		return ParamContractDomain.Bottom()
 	}
-	av, ok := contracts[slot]
-	if !ok || av.IsZero() {
-		return nil
+	contract, ok := contracts[slot]
+	if !ok || ParamContractDomain.Equal(contract, ParamContractDomain.Bottom()) {
+		return ParamContractDomain.Bottom()
 	}
-	return informativeOrNil(product.ProjectValueOrUnknown(av))
+	return contract
 }
 
 func mergeCallArgContracts(declared, contract typ.Type) typ.Type {
-	return mergeCallArgObligations(declared, contract, nil).Type
+	return mergeCallArgObligations(declared, DemandFromType(contract), nil).Type
 }
 
-func mergeCallArgObligations(declared, contract, entry typ.Type) callobligation.Obligation {
+func mergeCallArgObligations(declared typ.Type, contract ParamContract, entry typ.Type) callobligation.Obligation {
 	declared = informativeOrNil(declared)
-	contract = informativeOrNil(contract)
+	contractType := informativeOrNil(contract.ProjectValue())
 	entry = informativeOrNil(entry)
 	if declared == nil {
-		if EntryContradictsBodyContract(entry, contract) {
+		if EntryContradictsBodyContract(entry, contractType) {
 			return callobligation.Obligation{}
 		}
-		return callobligation.Body(contract)
+		return bodyContractObligation(contractType, contract)
 	}
-	if contract == nil {
+	if contractType == nil {
 		return callobligation.Signature(declared)
 	}
-	if EntryContradictsBodyContract(entry, contract) {
+	if EntryContradictsBodyContract(entry, contractType) {
 		return callobligation.Signature(declared)
 	}
-	if joined := HardContractJoin(declared, contract); joined != nil {
-		return callobligation.Body(joined)
+	if joined := HardContractJoin(declared, contractType); joined != nil {
+		shape := ParamContractDomain.Join(DemandFromType(declared), contract)
+		return bodyContractObligation(joined, shape)
 	}
 	return callobligation.Signature(declared)
 }
 
-func callArgObligationWithSource(t typ.Type, source callobligation.Source) callobligation.Obligation {
+func callArgObligationWithSource(t typ.Type, source callobligation.Source, contract ParamContract) callobligation.Obligation {
 	if source == callobligation.SourceBody {
-		return callobligation.Body(t)
+		return bodyContractObligation(t, contract)
 	}
 	return callobligation.Signature(t)
+}
+
+func bodyContractObligation(t typ.Type, contract ParamContract) callobligation.Obligation {
+	if !ParamContractDomain.Equal(contract, ParamContractDomain.Bottom()) {
+		return callobligation.BodyShape(t, contract)
+	}
+	return callobligation.Body(t)
+}
+
+func joinObligationContracts(prev, next callobligation.Obligation) ParamContract {
+	contract := ParamContractDomain.Bottom()
+	for _, obligation := range []callobligation.Obligation{prev, next} {
+		if obligation.Source == callobligation.SourceSignature {
+			contract = ParamContractDomain.Join(contract, DemandFromType(obligation.Type))
+			continue
+		}
+		if obligation.Source != callobligation.SourceBody {
+			continue
+		}
+		if shaped, ok := obligationParamContract(obligation); ok {
+			contract = ParamContractDomain.Join(contract, shaped)
+			continue
+		}
+		contract = ParamContractDomain.Join(contract, DemandFromType(obligation.Type))
+	}
+	return contract
+}
+
+func obligationParamContract(obligation callobligation.Obligation) (ParamContract, bool) {
+	switch shape := obligation.Shape.(type) {
+	case ParamContract:
+		return shape, !ParamContractDomain.Equal(shape, ParamContractDomain.Bottom())
+	case *ParamContract:
+		if shape == nil {
+			return ParamContractDomain.Bottom(), false
+		}
+		return *shape, !ParamContractDomain.Equal(*shape, ParamContractDomain.Bottom())
+	default:
+		return ParamContractDomain.Bottom(), false
+	}
 }
 
 func informativeOrNil(t typ.Type) typ.Type {

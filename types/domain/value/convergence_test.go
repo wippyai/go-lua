@@ -154,6 +154,27 @@ func TestMergeForConvergence_ReplacesEmptyRecordSeedWithRecordExtension(t *testi
 	}
 }
 
+func TestMergeForConvergence_ReplacesEmptyRecordSeedWithArrayMutation(t *testing.T) {
+	seed := typ.NewRecord().Build()
+	observed := typ.NewArray(typ.String)
+
+	for _, tc := range []struct {
+		name string
+		a    typ.Type
+		b    typ.Type
+	}{
+		{name: "forward", a: seed, b: observed},
+		{name: "reverse", a: observed, b: seed},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := MergeForConvergence(tc.a, tc.b)
+			if !typ.TypeEquals(got, observed) {
+				t.Fatalf("MergeForConvergence(empty record, array mutation) = %v, want %v", got, observed)
+			}
+		})
+	}
+}
+
 func TestJoinRecordShape_DoesNotInventMetatableWhenAbsentOnOneBranch(t *testing.T) {
 	method := typ.Func().Param("self", typ.Any).Returns(typ.Boolean).Build()
 	prototype := typ.NewRecord().Field("ready", method).Build()

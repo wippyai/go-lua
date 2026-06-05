@@ -109,10 +109,7 @@ func RefineReturnValuesWithTypes(values []product.AbstractValue, types []typ.Typ
 		summaryType := product.ProjectValueOrUnknown(values[i])
 		refinedType, refined := typ.RefineWithFallback(summaryType, fallbackType)
 		if !refined {
-			if !typ.MorePrecise(fallbackType, summaryType) {
-				continue
-			}
-			refinedType = fallbackType
+			continue
 		}
 		if typ.TypeEquals(refinedType, summaryType) {
 			continue
@@ -177,6 +174,19 @@ func (p CallSummaryProjection) ReceiverEffects() flow.ReceiverEffects {
 	out := flow.ReceiverEffectsDomain.Bottom()
 	for _, target := range p.Targets {
 		out = flow.CooccurringReceiverEffects(out, target.Summary.ReceiverEffects)
+	}
+	return out
+}
+
+// BoundaryFacts folds caller-visible boundary facts across candidate callees.
+// Facts are must-postconditions, so possible targets are joined by intersection.
+func (p CallSummaryProjection) BoundaryFacts() flow.BoundaryFacts {
+	out := flow.BoundaryFactsDomain.Bottom()
+	for _, target := range p.Targets {
+		out = flow.BoundaryFactsDomain.Join(out, target.Summary.BoundaryFacts)
+	}
+	if flow.BoundaryFactsDomain.Equal(out, flow.BoundaryFactsDomain.Bottom()) {
+		return flow.BoundaryFactsDomain.Top()
 	}
 	return out
 }

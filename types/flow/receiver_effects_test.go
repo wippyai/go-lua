@@ -3,6 +3,7 @@ package flow
 import (
 	"testing"
 
+	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/domain/value/product"
 	"github.com/wippyai/go-lua/types/lattice"
 	"github.com/wippyai/go-lua/types/typ"
@@ -42,6 +43,41 @@ func TestReceiverEffectsJoinTurnsMissingPathIntoMayWrite(t *testing.T) {
 	}
 	if entries[0].MustWrite {
 		t.Fatalf("join(identity, must-write) = must-write, want may-write: %s", joined.Format())
+	}
+}
+
+func TestReceiverEffectsJoinKeepsMutationOnlyEffect(t *testing.T) {
+	mutation := ReceiverMutations(0, []ReceiverMutation{{
+		Segments: []constraint.Segment{{Kind: constraint.SegmentField, Name: "items"}},
+	}})
+
+	joined := ReceiverEffectsDomain.Join(ReceiverEffectsIdentity(), mutation)
+	entries := joined.Entries()
+	if len(entries) != 1 {
+		t.Fatalf("entries len = %d, want 1: %s", len(entries), joined.Format())
+	}
+	if entries[0].MustWrite || !entries[0].Value.IsZero() || len(entries[0].Mutations) != 1 {
+		t.Fatalf("join(identity, mutation) = %#v, want mutation-only may effect", entries[0])
+	}
+}
+
+func TestReceiverEffectsKeepsPresentElementMutationDistinctFromBroadMutation(t *testing.T) {
+	segments := []constraint.Segment{{Kind: constraint.SegmentField, Name: "items"}}
+	effects := ReceiverMutations(0, []ReceiverMutation{
+		{Segments: segments},
+		{Segments: segments, PresentElementWrite: true},
+	})
+
+	entries := effects.Entries()
+	if len(entries) != 1 {
+		t.Fatalf("entries len = %d, want 1: %s", len(entries), effects.Format())
+	}
+	mutations := entries[0].Mutations
+	if len(mutations) != 2 {
+		t.Fatalf("mutations len = %d, want broad and present element: %#v", len(mutations), mutations)
+	}
+	if mutations[0].PresentElementWrite || !mutations[1].PresentElementWrite {
+		t.Fatalf("mutations = %#v, want broad then present element", mutations)
 	}
 }
 

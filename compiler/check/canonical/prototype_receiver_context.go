@@ -533,7 +533,34 @@ func receiverInvariantSlotType(exact, baseline typ.Type) typ.Type {
 	if baseline == nil {
 		return exact
 	}
-	return typ.JoinReturnSlot(exact, baseline)
+	if receiverCurrentSequenceCoversBaselineSeed(exact, baseline) {
+		return exact
+	}
+	return value.MergeForConvergence(exact, baseline)
+}
+
+func receiverCurrentSequenceCoversBaselineSeed(exact, baseline typ.Type) bool {
+	exactInner, _ := value.SplitNilable(exact)
+	baselineInner, _ := value.SplitNilable(baseline)
+	if exactInner == nil || baselineInner == nil {
+		return false
+	}
+	exactArray, exactOK := unwrap.Alias(exactInner).(*typ.Array)
+	baselineArray, baselineOK := unwrap.Alias(baselineInner).(*typ.Array)
+	if !exactOK || !baselineOK || exactArray == nil || baselineArray == nil {
+		return false
+	}
+	if !receiverSequenceSeed(baselineArray) || receiverSequenceSeed(exactArray) {
+		return false
+	}
+	if typ.IsNever(exactArray.Element) {
+		return false
+	}
+	return true
+}
+
+func receiverSequenceSeed(arr *typ.Array) bool {
+	return arr != nil && (arr.Fresh || typ.IsNever(arr.Element))
 }
 
 func (p *program) normalizeCapturedMethodReceiverCells(

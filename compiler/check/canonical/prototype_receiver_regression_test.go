@@ -178,6 +178,230 @@ compiler.compile()
 	}
 }
 
+func TestCanonicalReturnedGraphKeepsNodeOrderKeysForNodeAndEdgeMaps(t *testing.T) {
+	src := `
+local uuid = require("uuid")
+local compiler = {}
+local FlowGraph = {}
+local flow_graph_mt = { __index = FlowGraph }
+
+function FlowGraph.new()
+	return setmetatable({
+		nodes = table.create(0, 4),
+		node_order = table.create(4, 0),
+		edges = table.create(0, 4),
+	}, flow_graph_mt)
+end
+
+function FlowGraph:create_node(node_type)
+	local node_id = uuid.v7()
+	self.nodes[node_id] = {
+		node_id = node_id,
+		node_type = node_type,
+		parent_node_id = nil,
+		config = {},
+		metadata = {},
+		status = "pending",
+	}
+	table.insert(self.node_order, node_id)
+	self.edges[node_id] = {
+		targets = table.create(2, 0),
+		error_targets = table.create(1, 0),
+	}
+	return node_id, nil
+end
+
+function FlowGraph:compute_auto_chain()
+	for i = 1, #self.node_order - 1 do
+		local current_node_id = self.node_order[i]
+		local next_node_id = self.node_order[i + 1]
+		local current_node = self.nodes[current_node_id]
+		local next_node = self.nodes[next_node_id]
+		if not current_node.parent_node_id and not next_node.parent_node_id then
+			local current_edges = self.edges[current_node_id]
+			table.insert(current_edges.targets, {
+				target_node_id = next_node_id,
+			})
+		end
+	end
+end
+
+function compiler.build_graph()
+	local graph = FlowGraph.new()
+	local _, err = graph:create_node("a")
+	if err then
+		return nil, err
+	end
+	local _, err2 = graph:create_node("b")
+	if err2 then
+		return nil, err2
+	end
+	return graph, nil
+end
+
+function compiler.compile()
+	local graph, err = compiler.build_graph()
+	if err then
+		return nil, err
+	end
+	graph:compute_auto_chain()
+	return graph, nil
+end
+
+	compiler.compile()
+	`
+	res := testutil.Check(src, testutil.WithStdlib())
+	if msgs := testutil.ErrorMessages(res.Diagnostics); len(msgs) != 0 {
+		t.Fatalf("expected node_order key provenance to survive node/edge map writes, got: %v", msgs)
+	}
+}
+
+func TestCanonicalPrototypeReceiverBaselineDoesNotOverwriteMutatedBuilderReceiver(t *testing.T) {
+	src := `
+local uuid = require("uuid")
+local compiler = {}
+local FlowGraph = {}
+local flow_graph_mt = { __index = FlowGraph }
+
+function FlowGraph.new()
+	return setmetatable({
+		nodes = table.create(0, 4),
+		node_order = table.create(4, 0),
+		edges = table.create(0, 4),
+	}, flow_graph_mt)
+end
+
+function FlowGraph:create_node(node_type)
+	local node_id = uuid.v7()
+	self.nodes[node_id] = {
+		node_id = node_id,
+		node_type = node_type,
+		parent_node_id = nil,
+		config = {},
+		metadata = {},
+		status = "pending",
+	}
+	table.insert(self.node_order, node_id)
+	self.edges[node_id] = {
+		targets = table.create(2, 0),
+		error_targets = table.create(1, 0),
+	}
+	return node_id, nil
+end
+
+function FlowGraph:compute_auto_chain()
+	for i = 1, #self.node_order - 1 do
+		local current_node_id = self.node_order[i]
+		local next_node_id = self.node_order[i + 1]
+		local current_node = self.nodes[current_node_id]
+		local next_node = self.nodes[next_node_id]
+		if not current_node.parent_node_id and not next_node.parent_node_id then
+			local current_edges = self.edges[current_node_id]
+			table.insert(current_edges.targets, {
+				target_node_id = next_node_id,
+			})
+		end
+	end
+end
+
+function compiler.build_graph(operations)
+	local graph = FlowGraph.new()
+	for _, op in ipairs(operations) do
+		local _, err = graph:create_node(op.kind)
+		if err then
+			return nil, err
+		end
+	end
+	graph:compute_auto_chain()
+	return graph, nil
+end
+
+function compiler.compile()
+	local graph, err = compiler.build_graph({ { kind = "a" }, { kind = "b" } })
+	if err then
+		return nil, err
+	end
+	return graph, nil
+end
+
+	compiler.compile()
+	`
+	res := testutil.Check(src, testutil.WithStdlib())
+	if msgs := testutil.ErrorMessages(res.Diagnostics); len(msgs) != 0 {
+		t.Fatalf("expected prototype baseline to preserve mutated builder receiver facts, got: %v", msgs)
+	}
+}
+
+func TestCanonicalReturnedGraphKeepsConstructorSequenceFieldsAcrossValidation(t *testing.T) {
+	src := `
+local compiler = {}
+local FlowGraph = {}
+local flow_graph_mt = { __index = FlowGraph }
+
+function FlowGraph.new()
+	return setmetatable({
+		node_order = table.create(4, 0),
+		input_routes = table.create(4, 0),
+		static_data_sources = table.create(4, 0),
+	}, flow_graph_mt)
+end
+
+function compiler.build_graph(operations)
+	local graph = FlowGraph.new()
+	for _, op in ipairs(operations) do
+		table.insert(graph.node_order, op.id)
+		if op.input then
+			table.insert(graph.input_routes, { target_name = op.input })
+		end
+		if op.static then
+			table.insert(graph.static_data_sources, { routes = table.create(0, 0) })
+		end
+	end
+	return graph, nil
+end
+
+function compiler.validate_graph(graph)
+	if #graph.input_routes > 0 then
+		for _, route in ipairs(graph.input_routes) do
+			if not route.target_name then
+				return false, "missing"
+			end
+		end
+	end
+	for _, src in ipairs(graph.static_data_sources) do
+		if #src.routes > 0 then
+			return false, "unexpected"
+		end
+	end
+	return true, nil
+end
+
+function compiler.compile_to_commands(graph)
+	local commands = table.create(#graph.node_order * 2, 0)
+	local static_data_ids = table.create(0, #graph.static_data_sources)
+	return commands, static_data_ids
+end
+
+function compiler.compile(operations)
+	local graph, graph_err = compiler.build_graph(operations)
+	if graph_err then
+		return nil, graph_err
+	end
+	local valid, validation_err = compiler.validate_graph(graph)
+	if not valid then
+		return nil, validation_err
+	end
+	return compiler.compile_to_commands(graph)
+end
+
+	compiler.compile({ { id = "root", input = "next", static = true } })
+	`
+	res := testutil.Check(src, testutil.WithStdlib())
+	if msgs := testutil.ErrorMessages(res.Diagnostics); len(msgs) != 0 {
+		t.Fatalf("expected returned graph sequence fields to survive validation/compile boundary, got: %v", msgs)
+	}
+}
+
 func TestCanonicalPrototypeReceiverSeedsMethodEntrySelfFromConstructorPublication(t *testing.T) {
 	src := `
 local session_writer = {}

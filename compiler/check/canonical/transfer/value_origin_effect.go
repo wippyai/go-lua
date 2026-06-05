@@ -36,34 +36,44 @@ func (t *Transfer) demandExprCtx(out *flow.PointState, expr ast.Expr, ctx typ.Ty
 	if !ok || valuePath.Symbol == 0 {
 		return
 	}
-	if idx, isParam := t.paramBySym[valuePath.Symbol]; isParam {
-		evidence := ctx
-		if len(valuePath.Segments) > 0 {
-			evidence = paramevidence.PathEvidence(valuePath.Segments, ctx)
-			if evidence == nil {
-				return
-			}
-		}
-		if out != nil {
-			evidence, _ = paramevidence.ConditionedPathEvidence(valuePath, evidence, out.Cond)
-		}
-		demand(idx, paramevidence.DemandFromType(evidence))
+	contract := paramevidence.DemandFromType(ctx)
+	localContract := t.conditionedLeafContract(out, valuePath, contract)
+	t.demandLocalPathContract(out, valuePath, localContract, demand)
+}
+
+func (t *Transfer) demandExprCapabilityCtx(
+	out *flow.PointState,
+	expr ast.Expr,
+	cap paramevidence.Capability,
+	demand func(int, paramevidence.ParamContract),
+) {
+	if demand == nil {
 		return
 	}
-	if out == nil {
+	valuePath, ok := t.demandPathForExpr(expr)
+	if !ok || valuePath.Symbol == 0 {
 		return
 	}
-	for _, use := range out.ValueOrigins.OriginsCoveringPath(valuePath) {
-		localEvidence := paramevidence.PathEvidence(use.Remainder, ctx)
-		if localEvidence == nil {
-			continue
-		}
-		evidence := iteratorOriginEvidence(use.Origin, localEvidence)
-		if evidence == nil {
-			continue
-		}
-		t.demandSourcePathCtx(use.Origin.Source, evidence, demand)
+	contract := paramevidence.DemandFromCapability(cap)
+	localContract := t.conditionedLeafContract(out, valuePath, contract)
+	t.demandLocalPathContract(out, valuePath, localContract, demand)
+}
+
+func (t *Transfer) demandExprContractCtx(
+	out *flow.PointState,
+	expr ast.Expr,
+	contract paramevidence.ParamContract,
+	demand func(int, paramevidence.ParamContract),
+) {
+	if demand == nil || paramevidence.ParamContractDomain.Equal(contract, paramevidence.ParamContractDomain.Bottom()) {
+		return
 	}
+	valuePath, ok := t.demandPathForExpr(expr)
+	if !ok || valuePath.Symbol == 0 {
+		return
+	}
+	localContract := t.conditionedLeafContract(out, valuePath, contract)
+	t.demandLocalPathContract(out, valuePath, localContract, demand)
 }
 
 func (t *Transfer) demandPathForExpr(expr ast.Expr) (constraint.Path, bool) {
@@ -77,25 +87,169 @@ func (t *Transfer) demandPathForExpr(expr ast.Expr) (constraint.Path, bool) {
 	}, true
 }
 
+func (t *Transfer) demandParamPathContract(
+	out *flow.PointState,
+	idx int,
+	path constraint.Path,
+	contract paramevidence.ParamContract,
+	demand func(int, paramevidence.ParamContract),
+) {
+	if demand == nil || idx < 0 ||
+		paramevidence.ParamContractDomain.Equal(contract, paramevidence.ParamContractDomain.Bottom()) {
+		return
+	}
+	if out != nil {
+		conditioned, _ := paramevidence.ConditionedPathContract(path, contract, out.Cond)
+		demand(idx, conditioned)
+		return
+	}
+	demand(idx, paramevidence.DemandFromPathContract(path.Segments, contract))
+}
+
+func (t *Transfer) conditionedLeafContract(
+	out *flow.PointState,
+	path constraint.Path,
+	contract paramevidence.ParamContract,
+) paramevidence.ParamContract {
+	if out == nil {
+		return contract
+	}
+	conditioned, _ := paramevidence.ConditionedLeafContract(path, contract, out.Cond)
+	return conditioned
+}
+
 func (t *Transfer) demandSourcePathCtx(source constraint.PathKey, evidence typ.Type, demand func(int, paramevidence.ParamContract)) {
-	if source == "" || evidence == nil || demand == nil {
+	t.demandSourcePathContract(nil, source, paramevidence.DemandFromType(evidence), demand)
+}
+
+func (t *Transfer) demandSourcePathContract(out *flow.PointState, source constraint.PathKey, evidence paramevidence.ParamContract, demand func(int, paramevidence.ParamContract)) {
+	if source == "" || demand == nil ||
+		paramevidence.ParamContractDomain.Equal(evidence, paramevidence.ParamContractDomain.Bottom()) {
 		return
 	}
-	sym, segments, ok := flow.ParseSymbolPathKey(source)
-	if !ok || sym == 0 {
+	path, ok := demandPathFromKey(source)
+	if !ok || path.Symbol == 0 {
 		return
 	}
-	idx, isParam := t.paramBySym[sym]
-	if !isParam {
+	t.demandLocalPathContract(out, path, evidence, demand)
+}
+
+type demandRouteItem struct {
+	path     constraint.Path
+	contract paramevidence.ParamContract
+}
+
+func (t *Transfer) demandLocalPathContract(
+	out *flow.PointState,
+	path constraint.Path,
+	contract paramevidence.ParamContract,
+	demand func(int, paramevidence.ParamContract),
+) {
+	if demand == nil || path.Symbol == 0 ||
+		paramevidence.ParamContractDomain.Equal(contract, paramevidence.ParamContractDomain.Bottom()) {
 		return
 	}
-	if len(segments) > 0 {
-		evidence = paramevidence.PathEvidence(segments, evidence)
-		if evidence == nil {
-			return
+	queue := []demandRouteItem{{path: path, contract: contract}}
+	seen := map[constraint.PathKey]struct{}{}
+	for len(queue) > 0 {
+		cur := queue[0]
+		queue = queue[1:]
+		key := flow.KeyPresencePathKey(cur.path)
+		if key == "" {
+			continue
+		}
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		if idx, isParam := t.paramBySym[cur.path.Symbol]; isParam {
+			t.demandParamPathContract(out, idx, cur.path, cur.contract, demand)
+		}
+		if out == nil {
+			continue
+		}
+		for _, use := range out.PathAliases.AliasesCoveringPath(cur.path) {
+			if source, ok := demandSourceWithRemainder(use.Alias.Source, use.Remainder); ok {
+				queue = append(queue, demandRouteItem{path: source, contract: cur.contract})
+			}
+		}
+		for _, use := range out.ValueOrigins.OriginsCoveringPath(cur.path) {
+			switch use.Origin.Kind {
+			case flow.ValueOriginAssignmentAlias:
+				if source, ok := demandSourceWithRemainder(use.Origin.Source, use.Remainder); ok {
+					queue = append(queue, demandRouteItem{path: source, contract: cur.contract})
+				}
+			case flow.ValueOriginIndexedIterator:
+				t.enqueueAppendFieldOriginDemands(out, use.Origin.Source, use.Remainder, cur.contract, &queue)
+				localEvidence := paramevidence.DemandFromPathContract(use.Remainder, cur.contract)
+				evidence := iteratorOriginContract(use.Origin, localEvidence)
+				if paramevidence.ParamContractDomain.Equal(evidence, paramevidence.ParamContractDomain.Bottom()) {
+					continue
+				}
+				if source, ok := demandPathFromKey(use.Origin.Source); ok && source.Symbol != 0 {
+					queue = append(queue, demandRouteItem{path: source, contract: evidence})
+				}
+			case flow.ValueOriginKeyedIterator:
+				localEvidence := paramevidence.DemandFromPathContract(use.Remainder, cur.contract)
+				evidence := iteratorOriginContract(use.Origin, localEvidence)
+				if paramevidence.ParamContractDomain.Equal(evidence, paramevidence.ParamContractDomain.Bottom()) {
+					continue
+				}
+				if source, ok := demandPathFromKey(use.Origin.Source); ok && source.Symbol != 0 {
+					queue = append(queue, demandRouteItem{path: source, contract: evidence})
+				}
+			}
 		}
 	}
-	demand(idx, paramevidence.DemandFromType(evidence))
+}
+
+func (t *Transfer) enqueueAppendFieldOriginDemands(
+	out *flow.PointState,
+	array constraint.PathKey,
+	field []constraint.Segment,
+	contract paramevidence.ParamContract,
+	queue *[]demandRouteItem,
+) {
+	if out == nil || array == "" || len(field) == 0 || queue == nil ||
+		paramevidence.ParamContractDomain.Equal(contract, paramevidence.ParamContractDomain.Bottom()) {
+		return
+	}
+	for _, use := range out.KeyPresence.AppendElementFieldSources(array, field) {
+		source, ok := demandPathFromKey(use.Origin.Source)
+		if !ok || source.Symbol == 0 {
+			continue
+		}
+		if len(use.SourceField) > 0 {
+			sourceField := append([]constraint.Segment(nil), use.SourceField...)
+			sourceField = append(sourceField, use.FieldRemainder...)
+			evidence := paramevidence.DemandFromSequenceElement(paramevidence.DemandFromPathContract(sourceField, contract))
+			*queue = append(*queue, demandRouteItem{path: source, contract: evidence})
+			continue
+		}
+		for _, seg := range use.FieldRemainder {
+			source = source.Append(seg)
+		}
+		*queue = append(*queue, demandRouteItem{path: source, contract: contract})
+	}
+}
+
+func demandSourceWithRemainder(source constraint.PathKey, remainder []constraint.Segment) (constraint.Path, bool) {
+	path, ok := demandPathFromKey(source)
+	if !ok || path.Symbol == 0 {
+		return constraint.Path{}, false
+	}
+	for _, seg := range remainder {
+		path = path.Append(seg)
+	}
+	return path, true
+}
+
+func demandPathFromKey(key constraint.PathKey) (constraint.Path, bool) {
+	addr, ok := flow.StableAddressFromKey(key)
+	if !ok {
+		return constraint.Path{}, false
+	}
+	return addr.Path()
 }
 
 func iteratorOriginEvidence(origin flow.ValueOriginFact, local typ.Type) typ.Type {
@@ -106,5 +260,16 @@ func iteratorOriginEvidence(origin flow.ValueOriginFact, local typ.Type) typ.Typ
 		return paramevidence.KeyedIteratorEvidence(origin.VarIndex, local)
 	default:
 		return nil
+	}
+}
+
+func iteratorOriginContract(origin flow.ValueOriginFact, local paramevidence.ParamContract) paramevidence.ParamContract {
+	switch origin.Kind {
+	case flow.ValueOriginIndexedIterator:
+		return paramevidence.IndexedIteratorContract(origin.VarIndex, local)
+	case flow.ValueOriginKeyedIterator:
+		return paramevidence.KeyedIteratorContract(origin.VarIndex, local)
+	default:
+		return paramevidence.ParamContractDomain.Bottom()
 	}
 }

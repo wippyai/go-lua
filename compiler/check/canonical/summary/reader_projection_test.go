@@ -46,6 +46,37 @@ func TestReaderProjectsSnapshotSummaryCells(t *testing.T) {
 	}
 }
 
+func TestReaderSnapshotOverlayOverridesExactContext(t *testing.T) {
+	ref := FuncRef{GraphID: 17}
+	values := EntryValues{0: product.FromType(typ.Boolean)}
+	key := NewKeyWithEntryContext(
+		ref,
+		flow.CaptureCellsDomain.Bottom(),
+		flow.FunctionRefsDomain.Bottom(),
+		flow.ClosureRefsDomain.Bottom(),
+		values,
+	)
+	reader := NewReaderWithOverlay(nil, nil, map[FuncRef]Summary{
+		ref: {Returns: []product.AbstractValue{product.FromType(typ.String)}},
+	}, map[Key]Summary{
+		key: {Returns: []product.AbstractValue{product.FromType(typ.Number)}},
+	})
+
+	got := reader.ReturnTypesWithEntryContext(
+		ref,
+		flow.CaptureCellsDomain.Bottom(),
+		flow.FunctionRefsDomain.Bottom(),
+		flow.ClosureRefsDomain.Bottom(),
+		values,
+	)
+	if len(got) != 1 || !typ.TypeEquals(got[0], typ.Number) {
+		t.Fatalf("exact ReturnTypes = %#v, want number from overlay", got)
+	}
+	if fallback := reader.ReturnTypes(ref); len(fallback) != 1 || !typ.TypeEquals(fallback[0], typ.String) {
+		t.Fatalf("fallback ReturnTypes = %#v, want string snapshot", fallback)
+	}
+}
+
 func TestReaderParamNarrowsDefensiveCopy(t *testing.T) {
 	ref := FuncRef{GraphID: 8}
 	reader := NewReader(nil, nil, map[FuncRef]Summary{

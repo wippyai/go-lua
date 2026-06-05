@@ -244,7 +244,7 @@ func PresentGradualAny() AbstractValue {
 // nil from the runtime value. Unlike FromType(any), which must conservatively
 // keep dynamic values maybe-present, this boundary preserves the proof on the
 // Presence axis while leaving the structural shape dynamic.
-func presentRefinementFromType(t typ.Type, gradual bool) AbstractValue {
+func presentRefinementFromType(base AbstractValue, t typ.Type, gradual bool) AbstractValue {
 	if t == nil {
 		t = typ.Any
 	}
@@ -266,7 +266,7 @@ func presentRefinementFromType(t typ.Type, gradual bool) AbstractValue {
 		effectrows.Top(),
 		ownership.Top(),
 		escapeOf(nonNil),
-		identityOf(nonNil),
+		identityOfRefinement(base, nonNil),
 		ev,
 	)
 }
@@ -433,6 +433,21 @@ func (v AbstractValue) Provenance() (Provenance, bool) {
 // interned. The component join runs first, then the registered cross-axis reducers
 // refine the result to a local fixed point.
 func Join(a, b AbstractValue) AbstractValue {
+	if a.n == b.n {
+		return a
+	}
+	if a.IsBottom() {
+		return b
+	}
+	if b.IsBottom() {
+		return a
+	}
+	if a.n == cachedTop.n || b.n == cachedTop.n {
+		return Top()
+	}
+	if out, ok := lookupJoinNode(a.n, b.n); ok {
+		return AbstractValue{n: out}
+	}
 	n := &node{
 		shape:    shapevalue.Join(a.n.shape, b.n.shape),
 		presence: presence.Join(a.n.presence, b.n.presence),
@@ -444,11 +459,25 @@ func Join(a, b AbstractValue) AbstractValue {
 		evidence: evidence.Join(a.n.evidence, b.n.evidence),
 		origin:   variantorigin.Join(a.n.origin, b.n.origin),
 	}
-	return AbstractValue{n: intern(reduce(n))}
+	out := intern(reduce(n))
+	rememberJoinNode(a.n, b.n, out)
+	return AbstractValue{n: out}
 }
 
 // Widen is the component-wise widening from prev to next, reduced and interned.
 func Widen(prev, next AbstractValue) AbstractValue {
+	if prev.n == next.n {
+		return prev
+	}
+	if prev.IsBottom() {
+		return next
+	}
+	if next.IsBottom() {
+		return prev
+	}
+	if prev.n == cachedTop.n || next.n == cachedTop.n {
+		return Top()
+	}
 	n := &node{
 		shape:    shapevalue.Widen(prev.n.shape, next.n.shape),
 		presence: presence.Widen(prev.n.presence, next.n.presence),
@@ -593,6 +622,19 @@ func identityOf(t typ.Type) identityrecursion.Value {
 		return identityrecursion.Top()
 	}
 	return identityrecursion.Of(nonNil)
+}
+
+func identityOfRefinement(base AbstractValue, refined typ.Type) identityrecursion.Value {
+	id := identityOf(refined)
+	if base.IsZero() {
+		return id
+	}
+	refinedShape := shapeOf(refined)
+	baseShape := base.Shape()
+	if baseShape.Covers(refinedShape) && refinedShape.Covers(baseShape) {
+		return base.Identity()
+	}
+	return id
 }
 
 // shapeOf derives the Shape/Value axis from a structural type at admission. It

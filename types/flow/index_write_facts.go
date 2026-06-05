@@ -122,13 +122,48 @@ func (f IndexWriteAdmissionFacts) KillAffectedByWrite(writePath constraint.PathK
 	return canonicalIndexWriteAdmissionFacts(entries, product.Domain.Join)
 }
 
+// PreservePresentElementWrite applies the invalidation law for a definitely
+// present dynamic element write to writePath. Existing readback proofs for the
+// same dynamic table are weak-updated: the written value may be the same key, so
+// the prior readback payload is joined with the new payload instead of deleted.
+func (f IndexWriteAdmissionFacts) PreservePresentElementWrite(
+	writePath constraint.PathKey,
+	written product.AbstractValue,
+) IndexWriteAdmissionFacts {
+	if !written.DefinitelyPresent() {
+		return f.KillAffectedByWrite(writePath)
+	}
+	if f.bottom || writePath == "" || len(f.entries) == 0 {
+		return f
+	}
+	entries := make([]IndexWriteAdmissionFact, 0, len(f.entries))
+	for _, entry := range f.entries {
+		if indexWritePathsOverlap(entry.KeyPath, writePath) ||
+			indexWritePathsOverlap(entry.ValuePath, writePath) {
+			continue
+		}
+		if !indexWritePathsOverlap(entry.Target, writePath) {
+			entries = append(entries, entry)
+			continue
+		}
+		if entry.Target != writePath {
+			continue
+		}
+		entry.Value = product.Domain.Join(entry.Value, written)
+		if validIndexWriteAdmissionFact(entry) {
+			entries = append(entries, entry)
+		}
+	}
+	return canonicalIndexWriteAdmissionFacts(entries, product.Domain.Join)
+}
+
 // IndexWriteAdmissionPathKey lowers a source path to the version-insensitive
 // structural key used by point-local index-write admission facts.
 func IndexWriteAdmissionPathKey(path constraint.Path) constraint.PathKey {
 	if path.IsEmpty() {
 		return ""
 	}
-	return KeyPresencePathKey(path)
+	return StablePathKey(path)
 }
 
 func indexWriteKeyValueExactlyMatches(fact, query product.AbstractValue) bool {
@@ -139,16 +174,9 @@ func indexWriteKeyValueExactlyMatches(fact, query product.AbstractValue) bool {
 }
 
 func indexWritePathsOverlap(a, b constraint.PathKey) bool {
-	if a == "" || b == "" {
-		return false
-	}
-	return indexWritePathAffected(a, b) || indexWritePathAffected(b, a)
-}
-
-func indexWritePathAffected(path, root constraint.PathKey) bool {
-	p := string(path)
-	r := string(root)
-	return p == r || strings.HasPrefix(p, r+".") || strings.HasPrefix(p, r+"[")
+	left, leftOK := StableAddressFromKey(a)
+	right, rightOK := StableAddressFromKey(b)
+	return leftOK && rightOK && left.Overlaps(right)
 }
 
 func validIndexWriteAdmissionFact(fact IndexWriteAdmissionFact) bool {

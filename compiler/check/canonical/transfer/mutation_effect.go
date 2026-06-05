@@ -1,6 +1,7 @@
 package transfer
 
 import (
+	canonicalplace "github.com/wippyai/go-lua/compiler/check/canonical/place"
 	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/domain/value/product"
 	"github.com/wippyai/go-lua/types/flow"
@@ -17,13 +18,23 @@ type PlaceMutationEffect struct {
 	Conditions             bool
 	KeyFacts               bool
 	PresentElementKeyFacts bool
+	PresentElementValue    product.AbstractValue
 }
 
 func presentDynamicElementWritePreservesKeyPresence(place Place, value product.AbstractValue) bool {
-	if !value.DefinitelyPresent() || len(place.Steps) == 0 {
+	if len(place.Steps) == 0 {
 		return false
 	}
-	return place.Steps[len(place.Steps)-1].Kind == PlaceStepDynamicIndex
+	for i, step := range place.Steps {
+		if step.Kind != PlaceStepDynamicIndex {
+			continue
+		}
+		if i == len(place.Steps)-1 {
+			return value.DefinitelyPresent()
+		}
+		return true
+	}
+	return false
 }
 
 func (t *Transfer) applyPlaceMutationEffect(out *flow.PointState, effect PlaceMutationEffect) bool {
@@ -38,7 +49,7 @@ func (t *Transfer) applyPlaceMutationEffect(out *flow.PointState, effect PlaceMu
 		changed = t.invalidateConditionsForPlace(out, effect.Place) || changed
 	}
 	if effect.KeyFacts {
-		changed = t.invalidateKeyFactsForPlace(out, effect.Place, effect.PresentElementKeyFacts) || changed
+		changed = t.invalidateKeyFactsForPlaceWithValue(out, effect.Place, effect.PresentElementKeyFacts, effect.PresentElementValue) || changed
 	}
 	return changed
 }
@@ -116,6 +127,15 @@ func (t *Transfer) invalidateStaticMembersForPlace(out *flow.PointState, place P
 }
 
 func (t *Transfer) invalidateKeyFactsForPlace(out *flow.PointState, place Place, presentElementWrite bool) bool {
+	return t.invalidateKeyFactsForPlaceWithValue(out, place, presentElementWrite, product.AbstractValue{})
+}
+
+func (t *Transfer) invalidateKeyFactsForPlaceWithValue(
+	out *flow.PointState,
+	place Place,
+	presentElementWrite bool,
+	presentElementValue product.AbstractValue,
+) bool {
 	if out == nil {
 		return false
 	}
@@ -125,16 +145,65 @@ func (t *Transfer) invalidateKeyFactsForPlace(out *flow.PointState, place Place,
 	}
 	beforeKeyPresence := out.KeyPresence
 	beforeValueOrigins := out.ValueOrigins
+	beforePathAliases := out.PathAliases
 	beforeIndexWrites := out.IndexWrites
 	pathKey := flow.KeyPresencePathKey(path)
 	if presentElementWrite && len(place.Steps) > 0 {
-		out.KeyPresence = out.KeyPresence.KillAffectedByPresentElementWrite(pathKey)
+		if arrayPath, member, ok := presentElementMemberWriteFootprint(place); ok {
+			out.KeyPresence = out.KeyPresence.KillAffectedByPresentElementMemberWrite(flow.KeyPresencePathKey(arrayPath), member)
+		} else {
+			out.KeyPresence = out.KeyPresence.KillAffectedByPresentElementWrite(pathKey)
+		}
+		written := presentElementValue
+		if written.IsZero() {
+			written = product.PresentDynamic()
+		}
+		out.IndexWrites = out.IndexWrites.PreservePresentElementWrite(pathKey, written)
 	} else {
 		out.KeyPresence = out.KeyPresence.KillAffectedByWrite(pathKey)
+		out.IndexWrites = out.IndexWrites.KillAffectedByWrite(pathKey)
 	}
 	out.ValueOrigins = out.ValueOrigins.KillAffectedByWrite(pathKey)
-	out.IndexWrites = out.IndexWrites.KillAffectedByWrite(pathKey)
+	out.PathAliases = out.PathAliases.KillAffectedByWrite(pathKey)
 	return !flow.KeyPresenceFactsDomain.Equal(beforeKeyPresence, out.KeyPresence) ||
 		!flow.ValueOriginFactsDomain.Equal(beforeValueOrigins, out.ValueOrigins) ||
+		!flow.PathAliasFactsDomain.Equal(beforePathAliases, out.PathAliases) ||
 		!flow.IndexWriteAdmissionFactsDomain.Equal(beforeIndexWrites, out.IndexWrites)
+}
+
+func presentElementMemberWriteFootprint(place Place) (constraint.Path, []constraint.Segment, bool) {
+	if place.Root == 0 {
+		return constraint.Path{}, nil, false
+	}
+	array := constraint.NewPath(place.Root, place.RootName)
+	for i, step := range place.Steps {
+		if step.Kind == PlaceStepDynamicIndex {
+			if i == len(place.Steps)-1 {
+				return constraint.Path{}, nil, false
+			}
+			member, ok := staticMemberSuffix(place.Steps[i+1:])
+			return array, member, ok
+		}
+		seg, ok := canonicalplace.SegmentFromStep(step)
+		if !ok {
+			return constraint.Path{}, nil, false
+		}
+		array.Segments = append(array.Segments, seg)
+	}
+	return constraint.Path{}, nil, false
+}
+
+func staticMemberSuffix(steps []PlaceStep) ([]constraint.Segment, bool) {
+	if len(steps) == 0 {
+		return nil, false
+	}
+	out := make([]constraint.Segment, 0, len(steps))
+	for _, step := range steps {
+		seg, ok := canonicalplace.SegmentFromStep(step)
+		if !ok {
+			return nil, false
+		}
+		out = append(out, seg)
+	}
+	return out, true
 }

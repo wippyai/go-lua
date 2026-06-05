@@ -30,6 +30,22 @@ func TestMergeEntryAxesWithFixedPreservesExplicitContext(t *testing.T) {
 	if av, ok := gotCells.Value(other); !ok || !typ.TypeEquals(av.ProjectValue(), typ.Number) {
 		t.Fatalf("fallback missing cell: got %v/%v, want number", av.ProjectValue(), ok)
 	}
+	emptyRecord := typ.NewRecord().Build()
+	recordWithMethod := typ.NewRecord().Field("render", typ.Func().Returns(typ.String).Build()).Build()
+	gotCells = mergeCaptureCellsWithFixed(
+		flow.CaptureCellsOf([]flow.CaptureCell{{Symbol: sym, Value: product.FromType(emptyRecord)}}),
+		flow.CaptureCellsOf([]flow.CaptureCell{{Symbol: sym, Value: product.FromType(recordWithMethod)}}),
+	)
+	if av, ok := gotCells.Value(sym); !ok || !typ.TypeEquals(av.ProjectValue(), recordWithMethod) {
+		t.Fatalf("narrower fallback cell = %v/%v, want record with render", av.ProjectValue(), ok)
+	}
+	gotCells = mergeCaptureCellsWithFixed(
+		flow.CaptureCellsOf([]flow.CaptureCell{{Symbol: sym, Value: product.FromType(typ.Number)}}),
+		flow.CaptureCellsOf([]flow.CaptureCell{{Symbol: sym, Value: product.FromType(typ.Any)}}),
+	)
+	if av, ok := gotCells.Value(sym); !ok || !typ.TypeEquals(av.ProjectValue(), typ.Number) {
+		t.Fatalf("broad fallback cell = %v/%v, want fixed number", av.ProjectValue(), ok)
+	}
 
 	fixedRefs := flow.WithFunctionRef(nil, path.Key(), flow.FunctionRefSetOf(flow.FunctionRef{GraphID: 11}))
 	fallbackRefs := flow.WithFunctionRef(nil, path.Key(), flow.FunctionRefSetOf(flow.FunctionRef{GraphID: 12}))

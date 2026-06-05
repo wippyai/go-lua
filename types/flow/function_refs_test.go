@@ -27,6 +27,29 @@ func TestFunctionRefSetLatticeLaws(t *testing.T) {
 	}.Run(t)
 }
 
+func TestFunctionRefSetJoinMergesCanonicalSortedSets(t *testing.T) {
+	a := FunctionRefSetOf(
+		FunctionRef{GraphID: 1},
+		FunctionRef{GraphID: 3},
+	)
+	b := FunctionRefSetOf(
+		FunctionRef{GraphID: 2},
+		FunctionRef{GraphID: 3},
+		FunctionRef{GraphID: 4, ParentHash: 9},
+	)
+
+	got := FunctionRefSetDomain.Join(a, b)
+	want := FunctionRefSetOf(
+		FunctionRef{GraphID: 1},
+		FunctionRef{GraphID: 2},
+		FunctionRef{GraphID: 3},
+		FunctionRef{GraphID: 4, ParentHash: 9},
+	)
+	if !FunctionRefSetDomain.Equal(got, want) {
+		t.Fatalf("join = %s, want %s", got.Format(), want.Format())
+	}
+}
+
 func TestFunctionRefsSubtreeStrongUpdate(t *testing.T) {
 	root := constraint.PathKey("sym1.dep")
 	child := constraint.PathKey("sym1.dep.get")

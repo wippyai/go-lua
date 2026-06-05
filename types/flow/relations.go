@@ -7,12 +7,14 @@ import (
 	"github.com/wippyai/go-lua/types/cfg"
 	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/lattice"
+	"github.com/wippyai/go-lua/types/typ"
 )
 
 // ReturnRelations is the finite caller-visible relation component of a function
 // summary. It records return-slot relations the function proves for every normal
-// return path, such as Lua's `(value, err)` inverse convention and length
-// postconditions like `len(ret_i) >= len(param_j)`.
+// return path, such as Lua's `(value, err)` inverse convention, length
+// postconditions like `len(ret_i) >= len(param_j)`, and key-presence
+// postconditions like `ret_i is a key of param_j.path`.
 //
 // The carrier is a must-fact lattice: a relation may be consumed by callers only
 // when every incoming summary path proves it. Join is therefore intersection. The
@@ -22,7 +24,9 @@ import (
 type ReturnRelations struct {
 	bottom      bool
 	errorReturn []ReturnCorrelation
+	guarded     []ReturnGuardRelation
 	lengthParam []ReturnLengthParamRelation
+	keyParam    []ReturnKeyParamRelation
 }
 
 // ReturnRelationsDomain is the abstract domain of finite return relations.
@@ -38,7 +42,9 @@ var ReturnRelationsDomain = lattice.Lattice[ReturnRelations]{
 			return a.bottom == b.bottom
 		}
 		return slices.Equal(a.errorReturn, b.errorReturn) &&
-			slices.Equal(a.lengthParam, b.lengthParam)
+			returnGuardRelationsEqual(a.guarded, b.guarded) &&
+			slices.Equal(a.lengthParam, b.lengthParam) &&
+			returnKeyParamsEqual(a.keyParam, b.keyParam)
 	},
 	LessOrEq: func(a, b ReturnRelations) bool {
 		if a.bottom {
@@ -48,7 +54,9 @@ var ReturnRelationsDomain = lattice.Lattice[ReturnRelations]{
 			return false
 		}
 		return returnCorrelationsContainAll(a.errorReturn, b.errorReturn) &&
-			returnLengthParamsContainAll(a.lengthParam, b.lengthParam)
+			returnGuardRelationsContainAll(a.guarded, b.guarded) &&
+			returnLengthParamsContainAll(a.lengthParam, b.lengthParam) &&
+			returnKeyParamsContainAll(a.keyParam, b.keyParam)
 	},
 	Join: joinReturnRelations,
 	Meet: nil,
@@ -62,10 +70,24 @@ func ReturnRelationsOfErrorReturns(xs []ReturnCorrelation) ReturnRelations {
 	return ReturnRelations{errorReturn: compactReturnCorrelations(xs)}
 }
 
+// ReturnRelationsOfGuardedTypes builds a canonical finite relation value whose
+// atoms say: when return[GuardIndex] takes the requested truth edge,
+// return[TargetIndex] is proven to have TargetType.
+func ReturnRelationsOfGuardedTypes(xs []ReturnGuardRelation) ReturnRelations {
+	return ReturnRelations{guarded: compactReturnGuardRelations(xs)}
+}
+
 // ReturnRelationsOfLengthParams builds a canonical finite return-length relation
 // value. Each relation means len(return[ReturnIndex]) >= len(param[ParamIndex]).
 func ReturnRelationsOfLengthParams(xs []ReturnLengthParamRelation) ReturnRelations {
 	return ReturnRelations{lengthParam: compactReturnLengthParams(xs)}
+}
+
+// ReturnRelationsOfKeyParams builds a canonical finite return-key relation
+// value. Each relation means return[ReturnIndex] is a key of
+// param[ParamIndex].ParamSegments.
+func ReturnRelationsOfKeyParams(xs []ReturnKeyParamRelation) ReturnRelations {
+	return ReturnRelations{keyParam: compactReturnKeyParams(xs)}
 }
 
 // MergeReturnRelationProofs combines independently-proven finite relation facts.
@@ -81,7 +103,9 @@ func MergeReturnRelationProofs(a, b ReturnRelations) ReturnRelations {
 	}
 	return ReturnRelations{
 		errorReturn: compactReturnCorrelations(append(a.ErrorReturns(), b.ErrorReturns()...)),
+		guarded:     compactReturnGuardRelations(append(a.GuardedTypes(), b.GuardedTypes()...)),
 		lengthParam: compactReturnLengthParams(append(a.LengthParams(), b.LengthParams()...)),
+		keyParam:    compactReturnKeyParams(append(a.KeyParams(), b.KeyParams()...)),
 	}
 }
 
@@ -92,7 +116,7 @@ func (r ReturnRelations) IsBottom() bool { return r.bottom }
 // caller-visible fact. Top has no finite proof; Bottom is a recursive/unreachable
 // seed and is deliberately not consumable.
 func (r ReturnRelations) HasProof() bool {
-	return !r.bottom && (len(r.errorReturn) > 0 || len(r.lengthParam) > 0)
+	return !r.bottom && (len(r.errorReturn) > 0 || len(r.guarded) > 0 || len(r.lengthParam) > 0 || len(r.keyParam) > 0)
 }
 
 // ErrorReturns returns a defensive copy of the proven ErrorReturn relations.
@@ -112,6 +136,22 @@ func (r ReturnRelations) HasErrorReturn(c ReturnCorrelation) bool {
 	}
 	_, ok := slices.BinarySearchFunc(r.errorReturn, c, compareReturnCorrelation)
 	return ok
+}
+
+// ReturnGuardRelation records a caller-visible conditional return fact.
+type ReturnGuardRelation struct {
+	GuardIndex    int
+	TargetIndex   int
+	GuardOnTruthy bool
+	TargetType    typ.Type
+}
+
+// GuardedTypes returns a defensive copy of the guarded return facts.
+func (r ReturnRelations) GuardedTypes() []ReturnGuardRelation {
+	if r.bottom || len(r.guarded) == 0 {
+		return nil
+	}
+	return append([]ReturnGuardRelation(nil), r.guarded...)
 }
 
 // ReturnLengthParamRelation records a caller-visible length postcondition:
@@ -139,6 +179,35 @@ func (r ReturnRelations) HasLengthParam(c ReturnLengthParamRelation) bool {
 	return ok
 }
 
+// ReturnKeyParamRelation records a caller-visible key-presence postcondition:
+// return[ReturnIndex] is a key of param[ParamIndex].ParamSegments.
+type ReturnKeyParamRelation struct {
+	ReturnIndex   int
+	ParamIndex    int
+	ParamSegments []constraint.Segment
+}
+
+// KeyParams returns a defensive copy of the proven return-key relations.
+func (r ReturnRelations) KeyParams() []ReturnKeyParamRelation {
+	if r.bottom || len(r.keyParam) == 0 {
+		return nil
+	}
+	out := make([]ReturnKeyParamRelation, 0, len(r.keyParam))
+	for _, rel := range r.keyParam {
+		out = append(out, cloneReturnKeyParam(rel))
+	}
+	return out
+}
+
+// HasKeyParam reports whether the reachable finite carrier proves relation c.
+func (r ReturnRelations) HasKeyParam(c ReturnKeyParamRelation) bool {
+	if r.bottom {
+		return false
+	}
+	_, ok := slices.BinarySearchFunc(r.keyParam, c, compareReturnKeyParam)
+	return ok
+}
+
 // PointRelations is the finite point-local relation component of a PointState.
 // SiblingNil facts are must-correlations between variables assigned from one
 // multi-return call. Join intersects them so a branch may consume a relation only
@@ -146,6 +215,7 @@ func (r ReturnRelations) HasLengthParam(c ReturnLengthParamRelation) bool {
 type PointRelations struct {
 	bottom      bool
 	siblingNil  []SiblingNilRelation
+	guarded     []PointGuardRelation
 	lengthParam []PointLengthParamRelation
 	sizeLower   []PointContainerLowerBound
 }
@@ -156,6 +226,15 @@ type PointRelations struct {
 type SiblingNilRelation struct {
 	ErrSym    cfg.SymbolID
 	ValueSyms []cfg.SymbolID
+}
+
+// PointGuardRelation is the point-local form of ReturnGuardRelation after a
+// multi-return call has been assigned to local symbols.
+type PointGuardRelation struct {
+	GuardSym      cfg.SymbolID
+	TargetSym     cfg.SymbolID
+	GuardOnTruthy bool
+	TargetType    typ.Type
 }
 
 // PointLengthParamRelation records a point-local proof that the sequence at
@@ -193,6 +272,7 @@ var PointRelationsDomain = lattice.Lattice[PointRelations]{
 			return a.bottom == b.bottom
 		}
 		return slices.EqualFunc(a.siblingNil, b.siblingNil, siblingNilEqual) &&
+			pointGuardRelationsEqual(a.guarded, b.guarded) &&
 			slices.Equal(a.lengthParam, b.lengthParam) &&
 			slices.Equal(a.sizeLower, b.sizeLower)
 	},
@@ -204,6 +284,7 @@ var PointRelationsDomain = lattice.Lattice[PointRelations]{
 			return false
 		}
 		return siblingNilContainsAll(a.siblingNil, b.siblingNil) &&
+			pointGuardRelationsContainAll(a.guarded, b.guarded) &&
 			pointLengthParamsContainAll(a.lengthParam, b.lengthParam) &&
 			pointContainerLowerBoundsImplyAll(a.sizeLower, b.sizeLower)
 	},
@@ -223,7 +304,9 @@ func joinReturnRelations(a, b ReturnRelations) ReturnRelations {
 	}
 	return ReturnRelations{
 		errorReturn: intersectReturnCorrelations(a.errorReturn, b.errorReturn),
+		guarded:     intersectReturnGuardRelations(a.guarded, b.guarded),
 		lengthParam: intersectReturnLengthParams(a.lengthParam, b.lengthParam),
+		keyParam:    intersectReturnKeyParams(a.keyParam, b.keyParam),
 	}
 }
 
@@ -236,6 +319,7 @@ func joinPointRelations(a, b PointRelations) PointRelations {
 	}
 	return PointRelations{
 		siblingNil:  intersectSiblingNil(a.siblingNil, b.siblingNil),
+		guarded:     intersectPointGuardRelations(a.guarded, b.guarded),
 		lengthParam: intersectPointLengthParams(a.lengthParam, b.lengthParam),
 		sizeLower:   joinPointContainerLowerBounds(a.sizeLower, b.sizeLower),
 	}
@@ -256,6 +340,30 @@ func (r PointRelations) WithSiblingNil(err cfg.SymbolID, values []cfg.SymbolID) 
 	entries = append(entries, SiblingNilRelation{ErrSym: err, ValueSyms: compactSymbolIDs(values)})
 	return PointRelations{
 		siblingNil:  compactSiblingNil(entries),
+		guarded:     append([]PointGuardRelation(nil), r.guarded...),
+		lengthParam: append([]PointLengthParamRelation(nil), r.lengthParam...),
+		sizeLower:   append([]PointContainerLowerBound(nil), r.sizeLower...),
+	}
+}
+
+// WithGuardedType returns r plus a branch-sensitive type proof.
+func (r PointRelations) WithGuardedType(guard, target cfg.SymbolID, guardOnTruthy bool, targetType typ.Type) PointRelations {
+	if guard == 0 || target == 0 || targetType == nil {
+		return r
+	}
+	if r.bottom {
+		r = PointRelations{}
+	}
+	entries := append([]PointGuardRelation(nil), r.guarded...)
+	entries = append(entries, PointGuardRelation{
+		GuardSym:      guard,
+		TargetSym:     target,
+		GuardOnTruthy: guardOnTruthy,
+		TargetType:    targetType,
+	})
+	return PointRelations{
+		siblingNil:  append([]SiblingNilRelation(nil), r.siblingNil...),
+		guarded:     compactPointGuardRelations(entries),
 		lengthParam: append([]PointLengthParamRelation(nil), r.lengthParam...),
 		sizeLower:   append([]PointContainerLowerBound(nil), r.sizeLower...),
 	}
@@ -263,7 +371,7 @@ func (r PointRelations) WithSiblingNil(err cfg.SymbolID, values []cfg.SymbolID) 
 
 // KillSymbols removes relations whose error or value side was overwritten.
 func (r PointRelations) KillSymbols(symbols ...cfg.SymbolID) PointRelations {
-	if r.bottom || len(symbols) == 0 || (len(r.siblingNil) == 0 && len(r.lengthParam) == 0 && len(r.sizeLower) == 0) {
+	if r.bottom || len(symbols) == 0 || (len(r.siblingNil) == 0 && len(r.guarded) == 0 && len(r.lengthParam) == 0 && len(r.sizeLower) == 0) {
 		return r
 	}
 	killed := make(map[cfg.SymbolID]bool, len(symbols))
@@ -297,8 +405,15 @@ func (r PointRelations) KillSymbols(symbols ...cfg.SymbolID) PointRelations {
 			lengths = append(lengths, rel)
 		}
 	}
+	guarded := make([]PointGuardRelation, 0, len(r.guarded))
+	for _, rel := range r.guarded {
+		if !killed[rel.GuardSym] && !killed[rel.TargetSym] {
+			guarded = append(guarded, rel)
+		}
+	}
 	return PointRelations{
 		siblingNil:  compactSiblingNil(siblings),
+		guarded:     compactPointGuardRelations(guarded),
 		lengthParam: compactPointLengthParams(lengths),
 		sizeLower:   compactPointContainerLowerBounds(filterContainerLowerBoundsByKilledRoots(r.sizeLower, killed)),
 	}
@@ -316,6 +431,20 @@ func (r PointRelations) SiblingNil(err cfg.SymbolID) (SiblingNilRelation, bool) 
 	rel := r.siblingNil[idx]
 	rel.ValueSyms = append([]cfg.SymbolID(nil), rel.ValueSyms...)
 	return rel, true
+}
+
+// GuardedTypesForGuard returns every target type proof activated by guard.
+func (r PointRelations) GuardedTypesForGuard(guard cfg.SymbolID, guardTruthy bool) []PointGuardRelation {
+	if r.bottom || guard == 0 || len(r.guarded) == 0 {
+		return nil
+	}
+	var out []PointGuardRelation
+	for _, rel := range r.guarded {
+		if rel.GuardSym == guard && rel.GuardOnTruthy == guardTruthy {
+			out = append(out, rel)
+		}
+	}
+	return out
 }
 
 // WithTargetLengthParam returns r plus the target-length >= parameter-length
@@ -336,6 +465,7 @@ func (r PointRelations) WithTargetLengthParam(root cfg.SymbolID, target constrai
 	})
 	return PointRelations{
 		siblingNil:  append([]SiblingNilRelation(nil), r.siblingNil...),
+		guarded:     append([]PointGuardRelation(nil), r.guarded...),
 		lengthParam: compactPointLengthParams(entries),
 		sizeLower:   append([]PointContainerLowerBound(nil), r.sizeLower...),
 	}
@@ -358,6 +488,7 @@ func (r PointRelations) WithContainerLowerBound(root cfg.SymbolID, target constr
 	})
 	return PointRelations{
 		siblingNil:  append([]SiblingNilRelation(nil), r.siblingNil...),
+		guarded:     append([]PointGuardRelation(nil), r.guarded...),
 		lengthParam: append([]PointLengthParamRelation(nil), r.lengthParam...),
 		sizeLower:   compactPointContainerLowerBounds(entries),
 	}
@@ -386,6 +517,7 @@ func (r PointRelations) KillLengthTargets(symbols ...cfg.SymbolID) PointRelation
 	}
 	return PointRelations{
 		siblingNil:  append([]SiblingNilRelation(nil), r.siblingNil...),
+		guarded:     append([]PointGuardRelation(nil), r.guarded...),
 		lengthParam: compactPointLengthParams(out),
 		sizeLower:   compactPointContainerLowerBounds(filterContainerLowerBoundsByKilledRoots(r.sizeLower, killed)),
 	}
@@ -470,6 +602,77 @@ func compareReturnCorrelation(a, b ReturnCorrelation) int {
 	return cmp.Compare(a.ErrorIndex, b.ErrorIndex)
 }
 
+func compactReturnGuardRelations(xs []ReturnGuardRelation) []ReturnGuardRelation {
+	if len(xs) == 0 {
+		return nil
+	}
+	out := make([]ReturnGuardRelation, 0, len(xs))
+	for _, rel := range xs {
+		if rel.GuardIndex < 0 || rel.TargetIndex < 0 || rel.TargetType == nil {
+			continue
+		}
+		out = append(out, rel)
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	slices.SortFunc(out, compareReturnGuardRelation)
+	out = slices.CompactFunc(out, func(a, b ReturnGuardRelation) bool {
+		return compareReturnGuardRelation(a, b) == 0
+	})
+	return out
+}
+
+func compareReturnGuardRelation(a, b ReturnGuardRelation) int {
+	if c := cmp.Compare(a.GuardIndex, b.GuardIndex); c != 0 {
+		return c
+	}
+	if c := cmp.Compare(a.TargetIndex, b.TargetIndex); c != 0 {
+		return c
+	}
+	if c := compareBool(a.GuardOnTruthy, b.GuardOnTruthy); c != 0 {
+		return c
+	}
+	if typ.TypeEquals(a.TargetType, b.TargetType) {
+		return 0
+	}
+	return cmp.Compare(typeOrderKey(a.TargetType), typeOrderKey(b.TargetType))
+}
+
+func returnGuardRelationsEqual(a, b []ReturnGuardRelation) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if compareReturnGuardRelation(a[i], b[i]) != 0 {
+			return false
+		}
+	}
+	return true
+}
+
+func returnGuardRelationsContainAll(have, want []ReturnGuardRelation) bool {
+	for _, w := range want {
+		if _, ok := slices.BinarySearchFunc(have, w, compareReturnGuardRelation); !ok {
+			return false
+		}
+	}
+	return true
+}
+
+func intersectReturnGuardRelations(a, b []ReturnGuardRelation) []ReturnGuardRelation {
+	if len(a) == 0 || len(b) == 0 {
+		return nil
+	}
+	var out []ReturnGuardRelation
+	for _, x := range a {
+		if _, ok := slices.BinarySearchFunc(b, x, compareReturnGuardRelation); ok {
+			out = append(out, x)
+		}
+	}
+	return out
+}
+
 func compactReturnLengthParams(xs []ReturnLengthParamRelation) []ReturnLengthParamRelation {
 	if len(xs) == 0 {
 		return nil
@@ -528,6 +731,103 @@ func intersectReturnLengthParams(a, b []ReturnLengthParamRelation) []ReturnLengt
 	for _, x := range a {
 		if _, ok := slices.BinarySearchFunc(b, x, compareReturnLengthParam); ok {
 			out = append(out, x)
+		}
+	}
+	return out
+}
+
+func compactReturnKeyParams(xs []ReturnKeyParamRelation) []ReturnKeyParamRelation {
+	if len(xs) == 0 {
+		return nil
+	}
+	out := make([]ReturnKeyParamRelation, 0, len(xs))
+	for _, rel := range xs {
+		if rel.ReturnIndex < 0 || rel.ParamIndex < 0 {
+			continue
+		}
+		out = append(out, cloneReturnKeyParam(rel))
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	slices.SortFunc(out, compareReturnKeyParam)
+	out = slices.CompactFunc(out, func(a, b ReturnKeyParamRelation) bool {
+		return compareReturnKeyParam(a, b) == 0
+	})
+	return out
+}
+
+func cloneReturnKeyParam(rel ReturnKeyParamRelation) ReturnKeyParamRelation {
+	if len(rel.ParamSegments) == 0 {
+		rel.ParamSegments = nil
+		return rel
+	}
+	rel.ParamSegments = append([]constraint.Segment(nil), rel.ParamSegments...)
+	return rel
+}
+
+func compareReturnKeyParam(a, b ReturnKeyParamRelation) int {
+	if c := cmp.Compare(a.ReturnIndex, b.ReturnIndex); c != 0 {
+		return c
+	}
+	if c := cmp.Compare(a.ParamIndex, b.ParamIndex); c != 0 {
+		return c
+	}
+	return compareConstraintSegments(a.ParamSegments, b.ParamSegments)
+}
+
+func compareConstraintSegments(a, b []constraint.Segment) int {
+	min := len(a)
+	if len(b) < min {
+		min = len(b)
+	}
+	for i := 0; i < min; i++ {
+		if c := compareConstraintSegment(a[i], b[i]); c != 0 {
+			return c
+		}
+	}
+	return cmp.Compare(len(a), len(b))
+}
+
+func compareConstraintSegment(a, b constraint.Segment) int {
+	if c := cmp.Compare(a.Kind, b.Kind); c != 0 {
+		return c
+	}
+	if c := cmp.Compare(a.Name, b.Name); c != 0 {
+		return c
+	}
+	return cmp.Compare(a.Index, b.Index)
+}
+
+func returnKeyParamsEqual(a, b []ReturnKeyParamRelation) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if compareReturnKeyParam(a[i], b[i]) != 0 {
+			return false
+		}
+	}
+	return true
+}
+
+func returnKeyParamsContainAll(have, want []ReturnKeyParamRelation) bool {
+	for _, w := range want {
+		if _, ok := slices.BinarySearchFunc(have, w, compareReturnKeyParam); !ok {
+			return false
+		}
+	}
+	return true
+}
+
+func intersectReturnKeyParams(a, b []ReturnKeyParamRelation) []ReturnKeyParamRelation {
+	if len(a) == 0 || len(b) == 0 {
+		return nil
+	}
+	var out []ReturnKeyParamRelation
+	for _, x := range a {
+		if _, ok := slices.BinarySearchFunc(b, x, compareReturnKeyParam); ok {
+			out = append(out, cloneReturnKeyParam(x))
 		}
 	}
 	return out
@@ -682,6 +982,95 @@ func filterContainerLowerBoundsByKilledRoots(xs []PointContainerLowerBound, kill
 		}
 	}
 	return out
+}
+
+func compactPointGuardRelations(xs []PointGuardRelation) []PointGuardRelation {
+	if len(xs) == 0 {
+		return nil
+	}
+	out := make([]PointGuardRelation, 0, len(xs))
+	for _, rel := range xs {
+		if rel.GuardSym == 0 || rel.TargetSym == 0 || rel.TargetType == nil {
+			continue
+		}
+		out = append(out, rel)
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	slices.SortFunc(out, comparePointGuardRelation)
+	out = slices.CompactFunc(out, func(a, b PointGuardRelation) bool {
+		return comparePointGuardRelation(a, b) == 0
+	})
+	return out
+}
+
+func comparePointGuardRelation(a, b PointGuardRelation) int {
+	if c := cmp.Compare(a.GuardSym, b.GuardSym); c != 0 {
+		return c
+	}
+	if c := cmp.Compare(a.TargetSym, b.TargetSym); c != 0 {
+		return c
+	}
+	if c := compareBool(a.GuardOnTruthy, b.GuardOnTruthy); c != 0 {
+		return c
+	}
+	if typ.TypeEquals(a.TargetType, b.TargetType) {
+		return 0
+	}
+	return cmp.Compare(typeOrderKey(a.TargetType), typeOrderKey(b.TargetType))
+}
+
+func pointGuardRelationsEqual(a, b []PointGuardRelation) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if comparePointGuardRelation(a[i], b[i]) != 0 {
+			return false
+		}
+	}
+	return true
+}
+
+func pointGuardRelationsContainAll(have, want []PointGuardRelation) bool {
+	for _, w := range want {
+		if _, ok := slices.BinarySearchFunc(have, w, comparePointGuardRelation); !ok {
+			return false
+		}
+	}
+	return true
+}
+
+func intersectPointGuardRelations(a, b []PointGuardRelation) []PointGuardRelation {
+	if len(a) == 0 || len(b) == 0 {
+		return nil
+	}
+	var out []PointGuardRelation
+	for _, x := range a {
+		if _, ok := slices.BinarySearchFunc(b, x, comparePointGuardRelation); ok {
+			out = append(out, x)
+		}
+	}
+	return out
+}
+
+func typeOrderKey(t typ.Type) uint64 {
+	if t == nil {
+		return 0
+	}
+	return t.Hash()
+}
+
+func compareBool(a, b bool) int {
+	switch {
+	case a == b:
+		return 0
+	case !a && b:
+		return -1
+	default:
+		return 1
+	}
 }
 
 func compactSiblingNil(xs []SiblingNilRelation) []SiblingNilRelation {

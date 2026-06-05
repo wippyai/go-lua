@@ -33,6 +33,7 @@ func ResetEntryValuesKeyInterner() {
 	canonicalEntryValuesKeys.mu.Lock()
 	defer canonicalEntryValuesKeys.mu.Unlock()
 	canonicalEntryValuesKeys.buckets = make(map[uint64][]*entryValuesKeyNode)
+	ResetEntryFactsKeyInterner()
 }
 
 // EntryValuesKeyOf returns an exact comparable key for values.

@@ -60,6 +60,18 @@ type EntryValueSeeder interface {
 	SeedEntryValues(out *flow.PointState, values map[int]product.AbstractValue)
 }
 
+// EntryFactSeeder is the optional seam for parameter-relative path facts that
+// are already finite flow proofs at the call boundary. The equation graph owns
+// when these facts enter the point-state fixed point; the concrete transfer owns
+// how parameter-relative boundary paths become this function's symbol paths.
+//
+// These are forward proof facts, not parameter contracts and not diagnostic
+// suppressors. They must enter before the local transfer reads parameter paths so
+// ordinary assignment/mutation kill logic can invalidate them inside the body.
+type EntryFactSeeder interface {
+	SeedEntryFacts(out *flow.PointState, facts flow.BoundaryFacts)
+}
+
 // EntrySymbolValueSeeder is the optional seam for entry-point values keyed by
 // stable symbols rather than parameter slots. It is used for immutable
 // scope/fact-derived bindings such as callback-scoped globals that must enter the

@@ -102,6 +102,49 @@ func TestIndexWriteAdmissionFactsKillAffectedByWrite(t *testing.T) {
 	}
 }
 
+func TestIndexWriteAdmissionFactsPreservePresentElementWriteWeakensSameTableProof(t *testing.T) {
+	target := constraint.NewPath(cfg.SymbolID(16), "store").Field("items")
+	key := constraint.NewPath(cfg.SymbolID(17), "last_id")
+	other := constraint.NewPath(cfg.SymbolID(18), "store").Field("edges")
+	oldValue := product.FromType(typ.NewRecord().Field("config", typ.NewRecord().Field("func_id", typ.String).Build()).Build())
+	written := product.FromType(typ.NewRecord().Field("config", typ.NewRecord().Field("agent", typ.String).Build()).Build())
+	edgeValue := product.FromType(typ.NewRecord().Field("targets", typ.NewArray(typ.String)).Build())
+	facts := IndexWriteAdmissionFacts{}.
+		With(IndexWriteAdmissionFact{
+			Target:  IndexWriteAdmissionPathKey(target),
+			KeyPath: IndexWriteAdmissionPathKey(key),
+			Key:     product.FromType(typ.Any),
+			Value:   oldValue,
+		}).
+		With(IndexWriteAdmissionFact{
+			Target:  IndexWriteAdmissionPathKey(other),
+			KeyPath: IndexWriteAdmissionPathKey(key),
+			Key:     product.FromType(typ.Any),
+			Value:   edgeValue,
+		})
+
+	got := facts.PreservePresentElementWrite(IndexWriteAdmissionPathKey(target), written)
+	admitted, ok := got.Admission(IndexWriteQuery{
+		Target:  target,
+		KeyPath: key,
+		KeyType: typ.Any,
+	})
+	if !ok {
+		t.Fatalf("present element write dropped same-table admission: %s", got.Format())
+	}
+	want := product.ProjectValueOrUnknown(product.Domain.Join(oldValue, written))
+	if !typ.TypeEquals(admitted.ProjectValue(), want) {
+		t.Fatalf("same-table admission value = %v, want %v", admitted.ProjectValue(), want)
+	}
+	if admitted, ok := got.Admission(IndexWriteQuery{
+		Target:  other,
+		KeyPath: key,
+		KeyType: typ.Any,
+	}); !ok || !typ.TypeEquals(admitted.ProjectValue(), edgeValue.ProjectValue()) {
+		t.Fatalf("unrelated table admission = %v/%v, want edge value/true; facts=%s", admitted.ProjectValue(), ok, got.Format())
+	}
+}
+
 func TestIndexWriteAdmissionFactsMatchesByKeyValueWhenKeyPathAbsent(t *testing.T) {
 	target := constraint.NewPath(cfg.SymbolID(10), "m")
 	facts := IndexWriteAdmissionFacts{}.With(IndexWriteAdmissionFact{

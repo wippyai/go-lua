@@ -28,6 +28,7 @@ type Key struct {
 	Refs     flow.FunctionRefsKey
 	Closures flow.ClosureRefsKey
 	Values   EntryValuesKey
+	Facts    EntryFactsKey
 }
 
 // NewKey constructs the canonical summary key for ref and entry cells.
@@ -50,12 +51,19 @@ func NewKeyWithEntryValues(ref FuncRef, entry flow.CaptureCells, refs flow.Funct
 // NewKeyWithEntryContext constructs the canonical summary key for every
 // caller-provided entry component.
 func NewKeyWithEntryContext(ref FuncRef, entry flow.CaptureCells, refs flow.FunctionRefs, closures flow.ClosureRefs, values EntryValues) Key {
+	return NewKeyWithEntryContextFacts(ref, entry, refs, closures, values, flow.BoundaryFactsDomain.Top())
+}
+
+// NewKeyWithEntryContextFacts constructs the canonical summary key for every
+// caller-provided entry component, including parameter-relative path facts.
+func NewKeyWithEntryContextFacts(ref FuncRef, entry flow.CaptureCells, refs flow.FunctionRefs, closures flow.ClosureRefs, values EntryValues, facts flow.BoundaryFacts) Key {
 	return Key{
 		Ref:      ref,
 		Entry:    entry.Key(),
 		Refs:     flow.FunctionRefsKeyOf(refs),
 		Closures: flow.ClosureRefsKeyOf(closures),
 		Values:   EntryValuesKeyOf(values),
+		Facts:    EntryFactsKeyOf(facts),
 	}
 }
 
@@ -144,15 +152,31 @@ type paramNarrowProvider interface {
 // dependency in the db cycle. After convergence it reads the immutable summary
 // snapshot. Callers should not duplicate this live-vs-snapshot choice.
 type Reader struct {
-	queries   *Queries
-	ctx       *db.QueryContext
-	converged map[FuncRef]Summary
+	queries     *Queries
+	ctx         *db.QueryContext
+	converged   map[FuncRef]Summary
+	overlay     map[Key]Summary
+	overlayRead func(Key)
 }
 
 // NewReader constructs a summary observer for live query reads plus a converged
 // fallback snapshot. A nil query/context makes the reader snapshot-only.
 func NewReader(queries *Queries, ctx *db.QueryContext, converged map[FuncRef]Summary) Reader {
 	return Reader{queries: queries, ctx: ctx, converged: converged}
+}
+
+// NewReaderWithOverlay constructs a summary observer with exact-key snapshot
+// overrides. The overlay is used only when the reader is snapshot-backed; live
+// readers still record semantic dependencies through the recursive summary query.
+func NewReaderWithOverlay(queries *Queries, ctx *db.QueryContext, converged map[FuncRef]Summary, overlay map[Key]Summary) Reader {
+	return Reader{queries: queries, ctx: ctx, converged: converged, overlay: overlay}
+}
+
+// NewReaderWithOverlayReads constructs a snapshot observer that reports every
+// exact-overlay key it attempts to read. Diagnostic context discovery uses those
+// read edges to refresh only observers whose exact callee overlay changed.
+func NewReaderWithOverlayReads(queries *Queries, ctx *db.QueryContext, converged map[FuncRef]Summary, overlay map[Key]Summary, overlayRead func(Key)) Reader {
+	return Reader{queries: queries, ctx: ctx, converged: converged, overlay: overlay, overlayRead: overlayRead}
 }
 
 // Live reports whether this reader is observing the active summary query cycle.
@@ -256,11 +280,42 @@ func (q *Queries) IntraWithEntryContext(ctx *db.QueryContext, ref FuncRef, entry
 	return q.intra(ctx, NewKeyWithEntryContext(ref, entry, refs, closures, values))
 }
 
+// IntraWithEntryContextFacts returns ref's converged intraprocedural state under
+// all caller-provided entry components, including parameter-relative path facts.
+func (q *Queries) IntraWithEntryContextFacts(ctx *db.QueryContext, ref FuncRef, entry flow.CaptureCells, refs flow.FunctionRefs, closures flow.ClosureRefs, values EntryValues, facts flow.BoundaryFacts) state.FunctionState {
+	return q.intra(ctx, NewKeyWithEntryContextFacts(ref, entry, refs, closures, values, facts))
+}
+
+// ObserveIntraWithEntryContext runs the local point/demand solver under an exact
+// entry context without demanding a corresponding recursive Summary cell first.
+// Diagnostic observation uses it after the summary fixed point has converged and
+// arranges for nested summary reads to come from that converged snapshot.
+func (q *Queries) ObserveIntraWithEntryContext(ctx *db.QueryContext, ref FuncRef, entry flow.CaptureCells, refs flow.FunctionRefs, closures flow.ClosureRefs, values EntryValues) state.FunctionState {
+	return q.ObserveIntraWithEntryContextFacts(ctx, ref, entry, refs, closures, values, flow.BoundaryFactsDomain.Top())
+}
+
+// ObserveIntraWithEntryContextFacts observes the local point/demand solver under
+// an exact entry context with parameter-relative path facts.
+func (q *Queries) ObserveIntraWithEntryContextFacts(ctx *db.QueryContext, ref FuncRef, entry flow.CaptureCells, refs flow.FunctionRefs, closures flow.ClosureRefs, values EntryValues, facts flow.BoundaryFacts) state.FunctionState {
+	key := NewKeyWithEntryContextFacts(ref, entry, refs, closures, values, facts)
+	return q.solveIntra(ctx, key.Ref, q.entryCells(ctx, key), q.entryRefs(ctx, key), q.entryClosureRefs(ctx, key), q.entryValues(ctx, key), q.entryFacts(key), q.entrySymbolValues(key.Ref))
+}
+
 // Summarize returns ref's interprocedural Summary, driving the call-graph
 // fixpoint as needed. This is the call-site lookup seam: a caller resolving a
 // call to ref reads the converged callee summary here.
 func (q *Queries) Summarize(ctx *db.QueryContext, ref FuncRef) Summary {
 	return q.SummarizeWithEntry(ctx, ref, flow.CaptureCellsDomain.Bottom())
+}
+
+// ObservedSummary returns the caller-visible summary after the recursive summary
+// cell has converged and the local state has been re-observed over those
+// dependencies. The recursive cell's Summary remains the lawful widened carrier
+// used to terminate cycles; this projection is the post-widen narrowing surface
+// consumed by snapshot readers and diagnostics.
+func (q *Queries) ObservedSummary(ctx *db.QueryContext, ref FuncRef) Summary {
+	fs := q.Intra(ctx, ref)
+	return q.ProjectStateSummary(ctx, ref, fs)
 }
 
 // SummarizeWithEntry returns ref's summary under a caller-provided entry cell
@@ -287,6 +342,12 @@ func (q *Queries) SummarizeWithEntryContext(ctx *db.QueryContext, ref FuncRef, e
 	return q.solveQ.Get(ctx, NewKeyWithEntryContext(ref, entry, refs, closures, values)).Summary
 }
 
+// SummarizeWithEntryContextFacts returns ref's summary under all caller-provided
+// entry components, including parameter-relative path facts.
+func (q *Queries) SummarizeWithEntryContextFacts(ctx *db.QueryContext, ref FuncRef, entry flow.CaptureCells, refs flow.FunctionRefs, closures flow.ClosureRefs, values EntryValues, facts flow.BoundaryFacts) Summary {
+	return q.solveQ.Get(ctx, NewKeyWithEntryContextFacts(ref, entry, refs, closures, values, facts)).Summary
+}
+
 // Summarize returns ref's caller-visible summary through this reader.
 func (r Reader) Summarize(ref FuncRef) Summary {
 	return r.SummarizeWithEntryContext(ref, flow.CaptureCellsDomain.Bottom(), flow.FunctionRefsDomain.Bottom(), flow.ClosureRefsDomain.Bottom(), nil)
@@ -302,8 +363,23 @@ func (r Reader) SummarizeWithEntryValues(ref FuncRef, entry flow.CaptureCells, r
 // components, using the live summary query when one is active and the converged
 // snapshot otherwise.
 func (r Reader) SummarizeWithEntryContext(ref FuncRef, entry flow.CaptureCells, refs flow.FunctionRefs, closures flow.ClosureRefs, values EntryValues) Summary {
+	return r.SummarizeWithEntryContextFacts(ref, entry, refs, closures, values, flow.BoundaryFactsDomain.Top())
+}
+
+// SummarizeWithEntryContextFacts reads ref's summary under all caller-provided
+// entry components, including parameter-relative path facts.
+func (r Reader) SummarizeWithEntryContextFacts(ref FuncRef, entry flow.CaptureCells, refs flow.FunctionRefs, closures flow.ClosureRefs, values EntryValues, facts flow.BoundaryFacts) Summary {
 	if r.queries != nil && r.ctx != nil {
-		return r.queries.SummarizeWithEntryContext(r.ctx, ref, entry, refs, closures, values)
+		return r.queries.SummarizeWithEntryContextFacts(r.ctx, ref, entry, refs, closures, values, facts)
+	}
+	if r.overlay != nil {
+		key := NewKeyWithEntryContextFacts(ref, entry, refs, closures, values, facts)
+		if r.overlayRead != nil {
+			r.overlayRead(key)
+		}
+		if sum, ok := r.overlay[key]; ok {
+			return sum
+		}
 	}
 	if sum, ok := r.converged[ref]; ok {
 		return sum
@@ -329,7 +405,7 @@ func (q *Queries) intra(ctx *db.QueryContext, key Key) state.FunctionState {
 	// observer over those dependencies; it is intentionally not memoized as a
 	// separate db fixed point.
 	_ = q.solveQ.Get(ctx, key).Summary
-	return q.solveIntra(ctx, key.Ref, q.entryCells(ctx, key), q.entryRefs(ctx, key), q.entryClosureRefs(ctx, key), q.entryValues(ctx, key), q.entrySymbolValues(key.Ref))
+	return q.solveIntra(ctx, key.Ref, q.entryCells(ctx, key), q.entryRefs(ctx, key), q.entryClosureRefs(ctx, key), q.entryValues(ctx, key), q.entryFacts(key), q.entrySymbolValues(key.Ref))
 }
 
 // ParamNarrows returns ref's context-free parameter-refinement cell: portable
@@ -346,16 +422,25 @@ func (q *Queries) ParamNarrows(ctx *db.QueryContext, ref FuncRef) []paramevidenc
 // cycle records the real semantic dependency rather than an eager bottom-context
 // call-graph edge.
 func (q *Queries) computeSolve(ctx *db.QueryContext, key Key) solveResult {
-	fs := q.solveIntra(ctx, key.Ref, q.entryCells(ctx, key), q.entryRefs(ctx, key), q.entryClosureRefs(ctx, key), q.entryValues(ctx, key), q.entrySymbolValues(key.Ref))
-	sum := ProjectWithOptions(fs, q.prog.Graph(key.Ref), ProjectOptions{
-		DeclaredReturns:           q.declaredReturns(key.Ref),
-		ReturnCallHasFiniteTarget: q.returnCallHasFiniteTarget(key.Ref),
-	})
-	sum.ParamNarrows = q.ParamNarrows(ctx, key.Ref)
-	if projector, ok := q.prog.(callEntryValueProjector); ok && projector != nil {
-		sum.CallEntryValues = projector.ProjectCallEntryValues(key.Ref, fs)
-	}
+	fs := q.solveIntra(ctx, key.Ref, q.entryCells(ctx, key), q.entryRefs(ctx, key), q.entryClosureRefs(ctx, key), q.entryValues(ctx, key), q.entryFacts(key), q.entrySymbolValues(key.Ref))
+	sum := q.ProjectStateSummary(ctx, key.Ref, fs)
 	return solveResult{State: fs, Summary: sum}
+}
+
+// ProjectStateSummary projects an already-solved local observer state into the
+// same caller-visible Summary carrier used by the recursive summary cell. It is
+// deliberately a summary-layer operation so diagnostic exact-context overlays do
+// not reimplement projection policy in the driver.
+func (q *Queries) ProjectStateSummary(ctx *db.QueryContext, ref FuncRef, fs state.FunctionState) Summary {
+	sum := ProjectWithOptions(fs, q.prog.Graph(ref), ProjectOptions{
+		DeclaredReturns:           q.declaredReturns(ref),
+		ReturnCallHasFiniteTarget: q.returnCallHasFiniteTarget(ref),
+	})
+	sum.ParamNarrows = q.ParamNarrows(ctx, ref)
+	if projector, ok := q.prog.(callEntryValueProjector); ok && projector != nil {
+		sum.CallEntryValues = projector.ProjectCallEntryValues(ref, fs)
+	}
+	return sum
 }
 
 func (q *Queries) computeParamNarrows(ctx *db.QueryContext, ref FuncRef) []paramevidence.ParamNarrow {
@@ -504,6 +589,10 @@ func (q *Queries) entryValues(ctx *db.QueryContext, key Key) map[int]product.Abs
 	return MergeEntryValuesWithFixed(values, provided)
 }
 
+func (q *Queries) entryFacts(key Key) flow.BoundaryFacts {
+	return key.Facts.Facts()
+}
+
 func mergeCaptureCellsWithFixed(fixed, fallback flow.CaptureCells) flow.CaptureCells {
 	if fixed.IsTop() || fallback.IsTop() {
 		if fixed.IsTop() {
@@ -516,12 +605,37 @@ func mergeCaptureCellsWithFixed(fixed, fallback flow.CaptureCells) flow.CaptureC
 	}
 	out := fixed
 	for _, entry := range fallback.Entries() {
-		if _, ok := out.Value(entry.Symbol); ok {
+		if current, ok := out.Value(entry.Symbol); ok {
+			out = out.With(entry.Symbol, mergeCaptureCellValue(current, entry.Value))
 			continue
 		}
 		out = out.With(entry.Symbol, entry.Value)
 	}
 	return flow.CaptureCellsDomain.Join(out, flow.CaptureCellsDomain.Bottom())
+}
+
+func mergeCaptureCellValue(fixed, fallback product.AbstractValue) product.AbstractValue {
+	if fixed.IsZero() {
+		return fallback
+	}
+	if fallback.IsZero() || product.Domain.Equal(fixed, fallback) {
+		return fixed
+	}
+	fixedType := product.ProjectValueOrUnknown(fixed)
+	fallbackType := product.ProjectValueOrUnknown(fallback)
+	if typ.MorePrecise(fallbackType, fixedType) {
+		return fallback
+	}
+	if typ.MorePrecise(fixedType, fallbackType) {
+		return fixed
+	}
+	if fallback.Covers(fixed) {
+		return fixed
+	}
+	if fixed.Covers(fallback) {
+		return fallback
+	}
+	return fixed
 }
 
 func mergeFunctionRefsWithFixed(fixed, fallback flow.FunctionRefs) flow.FunctionRefs {
@@ -583,7 +697,7 @@ func (q *Queries) entrySymbolValues(ref FuncRef) map[cfg.SymbolID]product.Abstra
 // solveIntra drives the equation.Builder for ref/context. It evaluates the
 // point/demand cell subgraph used by the summary cell; it does not touch the db
 // cache itself (its caller memoizes).
-func (q *Queries) solveIntra(ctx *db.QueryContext, ref FuncRef, entry flow.CaptureCells, refs flow.FunctionRefs, closures flow.ClosureRefs, entryValues map[int]product.AbstractValue, entrySymbolValues map[cfg.SymbolID]product.AbstractValue) state.FunctionState {
+func (q *Queries) solveIntra(ctx *db.QueryContext, ref FuncRef, entry flow.CaptureCells, refs flow.FunctionRefs, closures flow.ClosureRefs, entryValues map[int]product.AbstractValue, entryFacts flow.BoundaryFacts, entrySymbolValues map[cfg.SymbolID]product.AbstractValue) state.FunctionState {
 	g := q.prog.Graph(ref)
 	if g == nil {
 		return state.FunctionStateDomain.Bottom()
@@ -598,6 +712,7 @@ func (q *Queries) solveIntra(ctx *db.QueryContext, ref FuncRef, entry flow.Captu
 			WithEntryFunctionRefs(refs).
 			WithEntryClosureRefs(closures).
 			WithEntryValues(entryValues).
+			WithEntryFacts(entryFacts).
 			WithEntrySymbolValues(entrySymbolValues).
 			Solve()
 	}

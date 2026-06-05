@@ -93,6 +93,11 @@ func (o CallOutcome) ReceiverEffects() flow.ReceiverEffects {
 	return o.Projection.ReceiverEffects()
 }
 
+// BoundaryFacts projects caller-visible parameter/return-relative facts.
+func (o CallOutcome) BoundaryFacts() flow.BoundaryFacts {
+	return o.Projection.BoundaryFacts()
+}
+
 // NeverReturns reports whether every selected target is proven no-return.
 func (o CallOutcome) NeverReturns(hasNoReturn func(summary.FuncRef) bool) bool {
 	return SelectionNeverReturns(o.Selection, hasNoReturn)

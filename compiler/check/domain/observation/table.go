@@ -28,14 +28,16 @@ func (p Projector) CheckTable(table *ast.TableExpr, point cfg.Point, expected ty
 		return TableCheckResult{}
 	}
 	expected = p.resolveLocalRefs(expected, point)
-	entries, arrayElems, _, earlyFail := p.tableEntries(table, expected, point, true)
-	if earlyFail {
-		return TableCheckResult{Handled: true, Compatible: false, Reason: "table shape is incompatible with expected record fields"}
-	}
-
 	if u := unwrap.Union(expected); u != nil {
 		bestReason := ""
 		for _, member := range u.Members {
+			entries, arrayElems, _, earlyFail := p.tableEntries(table, member, point, true)
+			if earlyFail {
+				if bestReason == "" {
+					bestReason = "table shape is incompatible with expected record fields"
+				}
+				continue
+			}
 			ok, reason := checkTableEntriesWithOptionalRelax(entries, arrayElems, member)
 			if ok {
 				return TableCheckResult{Handled: true, Compatible: true}
@@ -45,6 +47,10 @@ func (p Projector) CheckTable(table *ast.TableExpr, point cfg.Point, expected ty
 			}
 		}
 		return TableCheckResult{Handled: true, Compatible: false, Reason: bestReason}
+	}
+	entries, arrayElems, _, earlyFail := p.tableEntries(table, expected, point, true)
+	if earlyFail {
+		return TableCheckResult{Handled: true, Compatible: false, Reason: "table shape is incompatible with expected record fields"}
 	}
 
 	ok, reason := checkTableEntriesWithOptionalRelax(entries, arrayElems, expected)

@@ -1,6 +1,7 @@
 package core
 
 import (
+	"github.com/wippyai/go-lua/types/db"
 	"github.com/wippyai/go-lua/types/effect"
 	"github.com/wippyai/go-lua/types/kind"
 	"github.com/wippyai/go-lua/types/typ"
@@ -26,6 +27,35 @@ func Method(t typ.Type, name string) (typ.Type, bool) {
 	return methodDepth(t, name, 0)
 }
 
+func (e *Engine) methodDepth(ctx *db.QueryContext, t typ.Type, name string, depth int) (typ.Type, bool) {
+	return methodLookupEnv{
+		engine: e,
+		ctx:    ctx,
+		fields: fieldLookupEnv{engine: e, ctx: ctx},
+	}.depth(t, name, depth)
+}
+
+type methodLookupEnv struct {
+	engine *Engine
+	ctx    *db.QueryContext
+	fields fieldLookupEnv
+}
+
+func (env methodLookupEnv) child(t typ.Type, name string, depth int, owner typ.Type) (typ.Type, bool) {
+	if t == nil {
+		return nil, false
+	}
+	if owner == nil && env.engine != nil && env.engine.methodQ != nil && env.ctx != nil && env.ctx.DB() != nil {
+		res := env.engine.methodQ.Get(env.ctx, methodKey{t: internTypeRef(env.ctx, t), name: name})
+		return res.t, res.ok
+	}
+	return env.depthWithOwner(t, name, depth, owner)
+}
+
+func (env methodLookupEnv) depth(t typ.Type, name string, depth int) (typ.Type, bool) {
+	return env.depthWithOwner(t, name, depth, nil)
+}
+
 // methodViaIndex walks the __index chain to find inherited methods.
 //
 // Lua's prototype inheritance uses __index to delegate lookups to parent tables.
@@ -34,6 +64,10 @@ func Method(t typ.Type, name string) (typ.Type, bool) {
 //  2. If __index is a table, look up the method there and recurse
 //  3. If __index is a function, use its return type as the method type
 func methodViaIndex(meta typ.Type, name string, depth int, owners ...typ.Type) (typ.Type, bool) {
+	return methodLookupEnv{}.viaIndex(meta, name, depth, owners...)
+}
+
+func (env methodLookupEnv) viaIndex(meta typ.Type, name string, depth int, owners ...typ.Type) (typ.Type, bool) {
 	if stopDepth(meta, depth) {
 		return nil, false
 	}
@@ -44,7 +78,7 @@ func methodViaIndex(meta typ.Type, name string, depth int, owners ...typ.Type) (
 		if mu.Body == nil || mu.Body == mu {
 			return nil, false
 		}
-		return methodViaIndex(mu.Body, name, depth+1, append(owners, mu)...)
+		return env.viaIndex(mu.Body, name, depth+1, append(owners, mu)...)
 	}
 
 	rec, ok := meta.(*typ.Record)
@@ -63,28 +97,28 @@ func methodViaIndex(meta typ.Type, name string, depth int, owners ...typ.Type) (
 			if rec == nil || rec.Body == nil || rec.Body == rec {
 				return fieldResult{}
 			}
-			if ft, ok := fieldDepth(rec.Body, name, depth+1); ok {
+			if ft, ok := env.fields.depth(rec.Body, name, depth+1); ok {
 				return fieldResult{t: normalizeMethodReceiverSelf(ft, append(owners, rec, rec.Body)...), ok: true}
 			}
-			ft, ok := methodViaIndex(rec.Body, name, depth+1, append(owners, rec)...)
+			ft, ok := env.viaIndex(rec.Body, name, depth+1, append(owners, rec)...)
 			return fieldResult{t: ft, ok: ok}
 		},
 		Alias: func(a *typ.Alias) fieldResult {
-			ft, ok := methodViaIndex(a.Target, name, depth+1, owners...)
+			ft, ok := env.viaIndex(a.Target, name, depth+1, owners...)
 			return fieldResult{t: ft, ok: ok}
 		},
 		Optional: func(o *typ.Optional) fieldResult {
-			ft, ok := methodViaIndex(o.Inner, name, depth+1, owners...)
+			ft, ok := env.viaIndex(o.Inner, name, depth+1, owners...)
 			return fieldResult{t: ft, ok: ok}
 		},
 		Record: func(r *typ.Record) fieldResult {
 			// __index is a table - look for method there
-			if ft, ok := fieldDepth(r, name, depth+1); ok {
+			if ft, ok := env.fields.depth(r, name, depth+1); ok {
 				return fieldResult{t: normalizeMethodReceiverSelf(ft, append(owners, r)...), ok: true}
 			}
 			// Continue walking the chain
 			if r.Metatable != nil {
-				ft, ok := methodViaIndex(r.Metatable, name, depth+1, append(owners, r)...)
+				ft, ok := env.viaIndex(r.Metatable, name, depth+1, append(owners, r)...)
 				return fieldResult{t: ft, ok: ok}
 			}
 
@@ -108,10 +142,14 @@ func methodViaIndex(meta typ.Type, name string, depth int, owners ...typ.Type) (
 // methodDepth recursively resolves method lookup with depth limiting.
 // Handles various type constructors and propagates through wrappers.
 func methodDepth(t typ.Type, name string, depth int) (typ.Type, bool) {
-	return methodDepthWithOwner(t, name, depth, nil)
+	return methodLookupEnv{}.depth(t, name, depth)
 }
 
 func methodDepthWithOwner(t typ.Type, name string, depth int, owner typ.Type) (typ.Type, bool) {
+	return methodLookupEnv{}.depthWithOwner(t, name, depth, owner)
+}
+
+func (env methodLookupEnv) depthWithOwner(t typ.Type, name string, depth int, owner typ.Type) (typ.Type, bool) {
 	if stopDepth(t, depth) {
 		return nil, false
 	}
@@ -122,7 +160,7 @@ func methodDepthWithOwner(t typ.Type, name string, depth int, owner typ.Type) (t
 	res := typ.Visit(t, typ.Visitor[fieldResult]{
 		TypeParam: func(tp *typ.TypeParam) fieldResult {
 			if tp.Constraint != nil {
-				mt, ok := methodDepthWithOwner(tp.Constraint, name, depth+1, owner)
+				mt, ok := env.child(tp.Constraint, name, depth+1, owner)
 				return fieldResult{t: mt, ok: ok}
 			}
 			return fieldResult{}
@@ -157,13 +195,13 @@ func methodDepthWithOwner(t typ.Type, name string, depth int, owner typ.Type) (t
 				return fieldResult{}
 			}
 			// Look for method in metatable's fields
-			if ft, ok := fieldDepth(r.Metatable, name, depth+1); ok {
+			if ft, ok := env.fields.depth(r.Metatable, name, depth+1); ok {
 				if mt, ok := methodFieldView(ft, methodOwner, r.Metatable); ok {
 					return fieldResult{t: mt, ok: true}
 				}
 			}
 			// Check __index chain for inherited methods
-			if mt, ok := methodViaIndex(r.Metatable, name, depth+1, methodOwner, r.Metatable); ok {
+			if mt, ok := env.viaIndex(r.Metatable, name, depth+1, methodOwner, r.Metatable); ok {
 				return fieldResult{t: mt, ok: true}
 			}
 			if r.Open {
@@ -193,7 +231,7 @@ func methodDepthWithOwner(t typ.Type, name string, depth int, owner typ.Type) (t
 					continue
 				}
 
-				mt, ok := methodDepthWithOwner(m, name, depth+1, nil)
+				mt, ok := env.child(m, name, depth+1, nil)
 				if !ok {
 					return fieldResult{}
 				}
@@ -210,7 +248,7 @@ func methodDepthWithOwner(t typ.Type, name string, depth int, owner typ.Type) (t
 		},
 		Intersection: func(in *typ.Intersection) fieldResult {
 			for _, m := range in.Members {
-				if mt, ok := methodDepthWithOwner(m, name, depth+1, owner); ok {
+				if mt, ok := env.child(m, name, depth+1, owner); ok {
 					return fieldResult{t: mt, ok: true}
 				}
 			}
@@ -218,7 +256,7 @@ func methodDepthWithOwner(t typ.Type, name string, depth int, owner typ.Type) (t
 			return fieldResult{}
 		},
 		Optional: func(o *typ.Optional) fieldResult {
-			mt, ok := methodDepthWithOwner(o.Inner, name, depth+1, owner)
+			mt, ok := env.child(o.Inner, name, depth+1, owner)
 			return fieldResult{t: mt, ok: ok}
 		},
 		Recursive: func(rec *typ.Recursive) fieldResult {
@@ -229,11 +267,11 @@ func methodDepthWithOwner(t typ.Type, name string, depth int, owner typ.Type) (t
 			if methodOwner == nil {
 				methodOwner = rec
 			}
-			mt, ok := methodDepthWithOwner(rec.Body, name, depth+1, methodOwner)
+			mt, ok := env.child(rec.Body, name, depth+1, methodOwner)
 			return fieldResult{t: mt, ok: ok}
 		},
 		Alias: func(a *typ.Alias) fieldResult {
-			mt, ok := methodDepthWithOwner(a.Target, name, depth+1, owner)
+			mt, ok := env.child(a.Target, name, depth+1, owner)
 			return fieldResult{t: mt, ok: ok}
 		},
 		Instantiated: func(inst *typ.Instantiated) fieldResult {
@@ -242,7 +280,7 @@ func methodDepthWithOwner(t typ.Type, name string, depth int, owner typ.Type) (t
 				return fieldResult{}
 			}
 
-			mt, ok := methodDepthWithOwner(resolved, name, depth+1, owner)
+			mt, ok := env.child(resolved, name, depth+1, owner)
 			return fieldResult{t: mt, ok: ok}
 		},
 		Ref: func(r *typ.Ref) fieldResult {

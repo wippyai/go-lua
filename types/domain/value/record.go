@@ -488,27 +488,36 @@ func recordsAreRecursiveAlternatives(a, b *typ.Record) bool {
 	if a == b || typ.SameNodeOrAcyclicEqual(a, b) {
 		return false
 	}
-	return recordContainsEquivalentField(a, b) || recordContainsEquivalentField(b, a)
+	return recordContainsEquivalentChild(a, b) || recordContainsEquivalentChild(b, a)
 }
 
-func recordContainsEquivalentField(container, target *typ.Record) bool {
+func recordContainsEquivalentChild(container, target *typ.Record) bool {
+	if container == nil || target == nil {
+		return false
+	}
+	scanner := structuralScanner{
+		seen:   make(structuralTypeSeen),
+		hashes: make(map[typ.Type]uint64),
+	}
+	targetHash := scanner.hash(target)
+	scanner.visit = func(node typ.Type) (bool, bool) {
+		if scanner.hash(node) == targetHash && sameEmbeddingNode(node, target) {
+			return true, false
+		}
+		return false, true
+	}
 	for _, field := range container.Fields {
-		if typ.SameNodeOrAcyclicEqual(field.Type, target) || ContainsEquivalent(field.Type, target) {
+		if scanner.scan(field.Type, typ.NewGuard()) {
 			return true
 		}
 	}
 	for _, member := range container.StaticMembers {
-		if typ.SameNodeOrAcyclicEqual(member.Type, target) || ContainsEquivalent(member.Type, target) {
+		if scanner.scan(member.Type, typ.NewGuard()) {
 			return true
 		}
 	}
-	if container.HasMapComponent() &&
-		(typ.SameNodeOrAcyclicEqual(container.MapValue, target) || ContainsEquivalent(container.MapValue, target)) {
+	if container.HasMapComponent() && scanner.scan(container.MapValue, typ.NewGuard()) {
 		return true
 	}
-	if container.Metatable != nil &&
-		(typ.SameNodeOrAcyclicEqual(container.Metatable, target) || ContainsEquivalent(container.Metatable, target)) {
-		return true
-	}
-	return false
+	return container.Metatable != nil && scanner.scan(container.Metatable, typ.NewGuard())
 }

@@ -8,8 +8,11 @@ import (
 
 	"github.com/wippyai/go-lua/internal"
 	"github.com/wippyai/go-lua/types/cfg"
+	"github.com/wippyai/go-lua/types/constraint"
+	"github.com/wippyai/go-lua/types/domain/value"
 	"github.com/wippyai/go-lua/types/domain/value/product"
 	"github.com/wippyai/go-lua/types/lattice"
+	"github.com/wippyai/go-lua/types/typ"
 )
 
 // CaptureCell is one abstract lexical cell captured by closures.
@@ -113,6 +116,50 @@ func (c CaptureCells) Project(symbols []cfg.SymbolID) CaptureCells {
 	return CaptureCellsOf(out)
 }
 
+// ProjectPaths keeps the captured cells and product members named by projection.
+// A root path keeps the full cell. A nested path rebuilds the root value with
+// only the requested static member path, avoiding whole-object context keys when
+// a callee observes only a few fields.
+func (c CaptureCells) ProjectPaths(projection ReferencePathProjection) CaptureCells {
+	requests := captureCellPathRequests(projection)
+	if len(requests) == 0 {
+		return CaptureCells{}
+	}
+	if c.top {
+		entries := make([]CaptureCell, 0, len(requests))
+		for _, sym := range sortedRequestSymbols(requests) {
+			entries = append(entries, CaptureCell{Symbol: sym, Value: product.Domain.Top()})
+		}
+		return CaptureCellsOf(entries)
+	}
+	if len(c.entries) == 0 {
+		return CaptureCells{}
+	}
+	var out []CaptureCell
+	for _, entry := range c.entries {
+		req, ok := requests[entry.Symbol]
+		if !ok {
+			continue
+		}
+		if req.full {
+			out = append(out, entry)
+			continue
+		}
+		projected := product.Domain.Bottom()
+		for _, segs := range req.segments {
+			valueAtPath, ok := captureCellValueAt(entry.Value, segs)
+			if !ok || valueAtPath.IsZero() {
+				continue
+			}
+			projected = product.Domain.Join(projected, captureCellValueWithSegments(segs, valueAtPath))
+		}
+		if !projected.IsZero() && !product.Domain.Equal(projected, product.Domain.Bottom()) {
+			out = append(out, CaptureCell{Symbol: entry.Symbol, Value: projected})
+		}
+	}
+	return CaptureCellsOf(out)
+}
+
 // IsTop reports whether c is the greatest capture-cell state.
 func (c CaptureCells) IsTop() bool { return c.top }
 
@@ -186,6 +233,107 @@ func (k CaptureCellsKey) Cells() CaptureCells {
 // Format renders the keyed store deterministically.
 func (k CaptureCellsKey) Format() string {
 	return k.Cells().Format()
+}
+
+type captureCellPathRequest struct {
+	full     bool
+	segments [][]constraint.Segment
+}
+
+func captureCellPathRequests(projection ReferencePathProjection) map[cfg.SymbolID]captureCellPathRequest {
+	requests := make(map[cfg.SymbolID]captureCellPathRequest)
+	addPath := func(path constraint.Path) {
+		if path.Symbol == 0 {
+			return
+		}
+		req := requests[path.Symbol]
+		if len(path.Segments) == 0 {
+			req.full = true
+			req.segments = nil
+			requests[path.Symbol] = req
+			return
+		}
+		if !req.full && !captureCellRequestHasSegments(req, path.Segments) {
+			req.segments = append(req.segments, append([]constraint.Segment(nil), path.Segments...))
+		}
+		requests[path.Symbol] = req
+	}
+	for _, path := range projection.Exact {
+		addPath(path)
+	}
+	for _, path := range projection.Subtrees {
+		addPath(path)
+	}
+	if len(requests) == 0 {
+		return nil
+	}
+	return requests
+}
+
+func captureCellRequestHasSegments(req captureCellPathRequest, segments []constraint.Segment) bool {
+	for _, existing := range req.segments {
+		if captureCellSegmentsEqual(existing, segments) {
+			return true
+		}
+	}
+	return false
+}
+
+func captureCellSegmentsEqual(left, right []constraint.Segment) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	for i := range left {
+		if left[i] != right[i] {
+			return false
+		}
+	}
+	return true
+}
+
+func sortedRequestSymbols(requests map[cfg.SymbolID]captureCellPathRequest) []cfg.SymbolID {
+	if len(requests) == 0 {
+		return nil
+	}
+	symbols := make([]cfg.SymbolID, 0, len(requests))
+	for sym := range requests {
+		symbols = append(symbols, sym)
+	}
+	return sortedUniqueSymbols(symbols)
+}
+
+func captureCellValueAt(root product.AbstractValue, segments []constraint.Segment) (product.AbstractValue, bool) {
+	cur := root
+	for _, seg := range segments {
+		member, ok := value.MemberFromSegment(seg)
+		if !ok {
+			return product.AbstractValue{}, false
+		}
+		next, ok := product.MemberOf(cur, member)
+		if !ok || next.IsZero() {
+			return product.AbstractValue{}, false
+		}
+		cur = next
+	}
+	return cur, true
+}
+
+func captureCellValueWithSegments(segments []constraint.Segment, leaf product.AbstractValue) product.AbstractValue {
+	if len(segments) == 0 {
+		return leaf
+	}
+	if valueIsBottom(leaf) {
+		return product.Domain.Bottom()
+	}
+	member, ok := value.MemberFromSegment(segments[0])
+	if !ok {
+		return product.Domain.Bottom()
+	}
+	child := captureCellValueWithSegments(segments[1:], leaf)
+	if valueIsBottom(child) {
+		return product.Domain.Bottom()
+	}
+	return product.WithMember(product.FromType(typ.NewRecord().Build()), member, child)
 }
 
 // CaptureCellsDomain is the finite-map lattice over captured lexical cells.

@@ -15,16 +15,24 @@ type EntryContext struct {
 	refs     flow.FunctionRefs
 	closures flow.ClosureRefs
 	values   summary.EntryValues
+	facts    flow.BoundaryFacts
 }
 
 // NewEntryContext constructs an entry context from already-resolved entry axes.
 func NewEntryContext(ref summary.FuncRef, cells flow.CaptureCells, refs flow.FunctionRefs, closures flow.ClosureRefs, values summary.EntryValues) EntryContext {
+	return NewEntryContextWithFacts(ref, cells, refs, closures, values, flow.BoundaryFactsDomain.Top())
+}
+
+// NewEntryContextWithFacts constructs an entry context from already-resolved
+// entry axes, including parameter-relative path facts.
+func NewEntryContextWithFacts(ref summary.FuncRef, cells flow.CaptureCells, refs flow.FunctionRefs, closures flow.ClosureRefs, values summary.EntryValues, facts flow.BoundaryFacts) EntryContext {
 	return EntryContext{
 		ref:      ref,
 		cells:    cells,
 		refs:     cloneFunctionRefs(refs),
 		closures: cloneClosureRefs(closures),
 		values:   cloneEntryValues(values),
+		facts:    cloneBoundaryFacts(facts),
 	}
 }
 
@@ -47,12 +55,27 @@ func EntryContextFromClosureWithLiveAxes(
 	liveClosures flow.ClosureRefs,
 	values summary.EntryValues,
 ) EntryContext {
-	return NewEntryContext(
+	return EntryContextFromClosureWithLiveAxesAndFacts(ref, closure, liveCells, liveRefs, liveClosures, values, flow.BoundaryFactsDomain.Top())
+}
+
+// EntryContextFromClosureWithLiveAxesAndFacts is EntryContextFromClosureWithLiveAxes
+// plus caller-projected parameter-relative path facts.
+func EntryContextFromClosureWithLiveAxesAndFacts(
+	ref summary.FuncRef,
+	closure flow.ClosureRef,
+	liveCells flow.CaptureCells,
+	liveRefs flow.FunctionRefs,
+	liveClosures flow.ClosureRefs,
+	values summary.EntryValues,
+	facts flow.BoundaryFacts,
+) EntryContext {
+	return NewEntryContextWithFacts(
 		ref,
-		overlayCaptureCells(closure.EntryCells(), liveCells),
-		overlayFunctionRefs(closure.EntryFunctionRefs(), liveRefs),
-		overlayClosureRefs(closure.EntryClosureRefs(), liveClosures),
+		flow.OverlayCaptureCells(closure.EntryCells(), liveCells),
+		flow.OverlayFunctionRefs(closure.EntryFunctionRefs(), liveRefs),
+		flow.OverlayClosureRefs(closure.EntryClosureRefs(), liveClosures),
 		values,
+		facts,
 	)
 }
 
@@ -71,9 +94,12 @@ func (c EntryContext) ClosureRefs() flow.ClosureRefs { return cloneClosureRefs(c
 // EntryValues returns caller-projected parameter values.
 func (c EntryContext) EntryValues() summary.EntryValues { return cloneEntryValues(c.values) }
 
+// EntryFacts returns caller-projected parameter-relative path facts.
+func (c EntryContext) EntryFacts() flow.BoundaryFacts { return cloneBoundaryFacts(c.facts) }
+
 // Key returns the canonical summary key for this exact entry context.
 func (c EntryContext) Key() summary.Key {
-	return summary.NewKeyWithEntryContext(c.ref, c.cells, c.refs, c.closures, c.values)
+	return summary.NewKeyWithEntryContextFacts(c.ref, c.cells, c.refs, c.closures, c.values, c.facts)
 }
 
 func cloneFunctionRefs(refs flow.FunctionRefs) flow.FunctionRefs {
@@ -95,52 +121,16 @@ func cloneEntryValues(in summary.EntryValues) summary.EntryValues {
 	return out
 }
 
-func overlayCaptureCells(base, live flow.CaptureCells) flow.CaptureCells {
-	if base.IsTop() || live.IsTop() {
-		if live.IsTop() {
-			return live
-		}
-		return base
+func cloneBoundaryFacts(in flow.BoundaryFacts) flow.BoundaryFacts {
+	if in.IsBottom() || !in.HasProof() {
+		return flow.BoundaryFactsDomain.Top()
 	}
-	out := base
-	for _, entry := range live.Entries() {
-		out = out.With(entry.Symbol, entry.Value)
-	}
-	return out
-}
-
-func overlayFunctionRefs(base, live flow.FunctionRefs) flow.FunctionRefs {
-	if flow.FunctionRefsDomain.Equal(base, flow.FunctionRefsDomain.Top()) ||
-		flow.FunctionRefsDomain.Equal(live, flow.FunctionRefsDomain.Top()) {
-		if flow.FunctionRefsDomain.Equal(live, flow.FunctionRefsDomain.Top()) {
-			return live
-		}
-		return base
-	}
-	out := flow.FunctionRefsDomain.Join(base, nil)
-	for path, set := range live {
-		if set.IsBottom() {
-			continue
-		}
-		out = flow.WithFunctionRef(out, path, set)
-	}
-	return out
-}
-
-func overlayClosureRefs(base, live flow.ClosureRefs) flow.ClosureRefs {
-	if flow.ClosureRefsDomain.Equal(base, flow.ClosureRefsDomain.Top()) ||
-		flow.ClosureRefsDomain.Equal(live, flow.ClosureRefsDomain.Top()) {
-		if flow.ClosureRefsDomain.Equal(live, flow.ClosureRefsDomain.Top()) {
-			return live
-		}
-		return base
-	}
-	out := flow.ClosureRefsDomain.Join(base, nil)
-	for path, set := range live {
-		if set.IsBottom() {
-			continue
-		}
-		out = flow.WithClosureRef(out, path, set)
-	}
-	return out
+	return flow.BoundaryFactsOf(
+		in.KeyPresence(),
+		in.KeyArrays(),
+		in.KeyArrayValues(),
+		in.AppendKeys(),
+		in.LengthLowerBounds(),
+		in.IndexWrites(),
+	).WithAppendElementFieldOrigins(in.AppendElementFieldOrigins())
 }

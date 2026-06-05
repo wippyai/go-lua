@@ -10,8 +10,17 @@ import (
 )
 
 type assignCallPostconditionEffects struct {
-	relations  []RelationEffect
-	numericOps []NumericOp
+	relations     []RelationEffect
+	keyProvenance []KeyProvenanceEffect
+	boundaryFacts []boundaryFactPostcondition
+	numericOps    []NumericOp
+}
+
+type boundaryFactPostcondition struct {
+	call        *ast.FuncCallExpr
+	facts       flow.BoundaryFacts
+	returns     map[int]constraint.Path
+	appendPlans []boundaryAppendKeyPlan
 }
 
 // buildAssignCallPostconditions rebases callee return-relation predicates into
@@ -40,8 +49,11 @@ func (t *Transfer) buildAssignCallPostconditions(
 			return
 		}
 		rels := t.callReturnRelations(out, callInfo.Call, demand)
-		t.appendSiblingNilPostconditions(info, callInfo, rels, &effects)
-		t.appendLengthParamPostconditions(out, info, callInfo, rels, &effects)
+	t.appendSiblingNilPostconditions(info, callInfo, rels, &effects)
+	t.appendGuardedTypePostconditions(info, callInfo, rels, &effects)
+	t.appendLengthParamPostconditions(out, info, callInfo, rels, &effects)
+		t.appendReturnKeyParamPostconditions(info, callInfo, rels, &effects)
+		t.appendBoundaryFactPostconditions(out, info, callInfo, demand, &effects)
 	})
 	return effects
 }
@@ -52,6 +64,12 @@ func (t *Transfer) applyAssignCallPostconditions(out *flow.PointState, effects a
 	}
 	for _, rel := range effects.relations {
 		t.applyRelationEffect(out, rel)
+	}
+	for _, effect := range effects.keyProvenance {
+		t.applyKeyProvenanceEffect(out, effect)
+	}
+	for _, effect := range effects.boundaryFacts {
+		t.applyBoundaryFactsWithAppendPlans(out, effect.call, effect.facts, effect.returns, effect.appendPlans)
 	}
 	if len(effects.numericOps) > 0 {
 		t.applyNumericEffect(out, NumericEffect{Ops: effects.numericOps})
@@ -79,6 +97,141 @@ func (t *Transfer) appendSiblingNilPostconditions(
 			ValueSyms: []cfg.SymbolID{valTarget.Symbol},
 		})
 	}
+}
+
+func (t *Transfer) appendGuardedTypePostconditions(
+	info *cfg.AssignInfo,
+	callInfo *cfg.CallInfo,
+	rels flow.ReturnRelations,
+	effects *assignCallPostconditionEffects,
+) {
+	for _, rel := range rels.GuardedTypes() {
+		guardTarget, ok := assignmentTargetForReturn(info, callInfo, rel.GuardIndex)
+		if !ok || guardTarget.Kind != cfg.TargetIdent || guardTarget.Symbol == 0 {
+			continue
+		}
+		valueTarget, ok := assignmentTargetForReturn(info, callInfo, rel.TargetIndex)
+		if !ok || valueTarget.Kind != cfg.TargetIdent || valueTarget.Symbol == 0 || rel.TargetType == nil {
+			continue
+		}
+		effects.relations = append(effects.relations, RelationEffect{
+			Kind:          RelationSeedGuardedType,
+			GuardSym:      guardTarget.Symbol,
+			TargetSym:     valueTarget.Symbol,
+			GuardOnTruthy: rel.GuardOnTruthy,
+			TargetType:    rel.TargetType,
+		})
+	}
+}
+
+func (t *Transfer) appendReturnKeyParamPostconditions(
+	info *cfg.AssignInfo,
+	callInfo *cfg.CallInfo,
+	rels flow.ReturnRelations,
+	effects *assignCallPostconditionEffects,
+) {
+	for _, rel := range rels.KeyParams() {
+		target, ok := assignmentTargetForReturn(info, callInfo, rel.ReturnIndex)
+		if !ok {
+			continue
+		}
+		keyPath, ok := t.staticPathOfAssignTarget(target)
+		if !ok || keyPath.IsEmpty() {
+			continue
+		}
+		arg := callsite.RuntimeArgAt(callInfo, rel.ParamIndex)
+		if arg == nil {
+			continue
+		}
+		tablePath, ok := t.staticPathOfExpr(arg)
+		if !ok || tablePath.IsEmpty() {
+			continue
+		}
+		for _, seg := range rel.ParamSegments {
+			tablePath = tablePath.Append(seg)
+		}
+		effects.keyProvenance = append(effects.keyProvenance, KeyProvenanceEffect{
+			Kind:      KeyProvenanceDynamicIndexWrite,
+			TablePath: tablePath,
+			KeyPath:   keyPath,
+		})
+	}
+}
+
+func (t *Transfer) appendBoundaryFactPostconditions(
+	out *flow.PointState,
+	info *cfg.AssignInfo,
+	callInfo *cfg.CallInfo,
+	demand func(int, paramevidence.ParamContract),
+	effects *assignCallPostconditionEffects,
+) {
+	if callInfo == nil || callInfo.Call == nil {
+		return
+	}
+	facts := t.callBoundaryFacts(out, callInfo.Call, demand)
+	if !facts.HasProof() {
+		return
+	}
+	returns := make(map[int]constraint.Path)
+	for _, fact := range facts.KeyPresence() {
+		t.collectBoundaryReturnPath(info, callInfo, fact.Table, returns)
+		t.collectBoundaryReturnPath(info, callInfo, fact.Key, returns)
+	}
+	for _, fact := range facts.KeyArrays() {
+		t.collectBoundaryReturnPath(info, callInfo, fact.Array, returns)
+		t.collectBoundaryReturnPath(info, callInfo, fact.Table, returns)
+	}
+	for _, fact := range facts.KeyArrayValues() {
+		t.collectBoundaryReturnPath(info, callInfo, fact.Array, returns)
+		t.collectBoundaryReturnPath(info, callInfo, fact.Table, returns)
+	}
+	for _, fact := range facts.AppendKeys() {
+		t.collectBoundaryReturnPath(info, callInfo, fact.Array, returns)
+		t.collectBoundaryReturnPath(info, callInfo, fact.Key, returns)
+		if fact.HasTable {
+			t.collectBoundaryReturnPath(info, callInfo, fact.Table, returns)
+		}
+	}
+	for _, fact := range facts.AppendElementFieldOrigins() {
+		t.collectBoundaryReturnPath(info, callInfo, fact.Array, returns)
+		t.collectBoundaryReturnPath(info, callInfo, fact.Source, returns)
+	}
+	for _, fact := range facts.LengthLowerBounds() {
+		t.collectBoundaryReturnPath(info, callInfo, fact.Target, returns)
+	}
+	for _, fact := range facts.IndexWrites() {
+		t.collectBoundaryReturnPath(info, callInfo, fact.Table, returns)
+		t.collectBoundaryReturnPath(info, callInfo, fact.Key, returns)
+	}
+	effects.boundaryFacts = append(effects.boundaryFacts, boundaryFactPostcondition{
+		call:        callInfo.Call,
+		facts:       facts,
+		returns:     returns,
+		appendPlans: t.boundaryAppendKeyPlans(out, callInfo.Call, facts, returns),
+	})
+}
+
+func (t *Transfer) collectBoundaryReturnPath(
+	info *cfg.AssignInfo,
+	callInfo *cfg.CallInfo,
+	path flow.BoundaryPath,
+	out map[int]constraint.Path,
+) {
+	if path.Kind != flow.BoundaryPathReturn {
+		return
+	}
+	if _, ok := out[path.Index]; ok {
+		return
+	}
+	target, ok := assignmentTargetForReturn(info, callInfo, path.Index)
+	if !ok {
+		return
+	}
+	targetPath, ok := t.staticPathOfAssignTarget(target)
+	if !ok || targetPath.IsEmpty() {
+		return
+	}
+	out[path.Index] = targetPath
 }
 
 func (t *Transfer) appendLengthParamPostconditions(
@@ -131,6 +284,21 @@ func (t *Transfer) appendLengthParamPostconditions(
 			Const: lower,
 		})
 	}
+}
+
+func (t *Transfer) callBoundaryFacts(
+	out *flow.PointState,
+	call *ast.FuncCallExpr,
+	demand func(int, paramevidence.ParamContract),
+) flow.BoundaryFacts {
+	if out == nil || call == nil || t.callTyper == nil {
+		return flow.BoundaryFactsDomain.Top()
+	}
+	provider, ok := t.callTyper.(productBoundaryFactProvider)
+	if !ok || provider == nil {
+		return flow.BoundaryFactsDomain.Top()
+	}
+	return provider.BoundaryFactsFromValues(call, t.productCallContext(out, call, demand))
 }
 
 func assignmentTargetForReturn(info *cfg.AssignInfo, callInfo *cfg.CallInfo, retIndex int) (cfg.AssignTarget, bool) {

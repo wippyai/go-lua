@@ -188,6 +188,13 @@ type Driver struct {
 	// after it.
 	activeQueries *summary.Queries
 
+	// snapshotSummaryReads is set only while diagnostic exact observation is
+	// running. The local observer still uses exact entry axes, but nested call
+	// summaries are read from d.summaries instead of creating new exact Summary
+	// cells after the fixed point has converged.
+	snapshotSummaryReads  bool
+	diagnosticOverlayRead func(summary.Key)
+
 	// diagnosticContexts records summary contexts observed by the summary-owned
 	// DiagnosticContextFrontier. The bridge uses these contexts, not an artificial
 	// bottom/default context, when building per-function diagnostic state.
@@ -197,6 +204,13 @@ type Driver struct {
 	// diagnosticContexts so bridge materialization does not replay identical local
 	// equation solves for the same summary.Key.
 	diagnosticStates map[summary.Key]state.FunctionState
+
+	// diagnosticSummaries is the exact-key summary overlay projected from
+	// diagnostic observer states. Snapshot summary reads consult it before the
+	// coarser per-function converged summary map, so exact diagnostic solves can
+	// consume exact callee postconditions without creating new recursive summary
+	// query cells after the main fixed point.
+	diagnosticSummaries map[summary.Key]summary.Summary
 }
 
 // NewDriver constructs a canonical driver with the given configuration.
@@ -225,7 +239,20 @@ func (d *Driver) summaryReader() summary.Reader {
 	if d == nil {
 		return summary.NewReader(nil, nil, nil)
 	}
+	if d.snapshotSummaryReads {
+		return summary.NewReaderWithOverlayReads(nil, nil, d.summaries, d.diagnosticSummaries, d.diagnosticOverlayRead)
+	}
 	return summary.NewReader(d.activeQueries, d.activeCtx, d.summaries)
+}
+
+func (d *Driver) withSnapshotSummaryReads(run func()) {
+	if d == nil || run == nil {
+		return
+	}
+	prev := d.snapshotSummaryReads
+	d.snapshotSummaryReads = true
+	defer func() { d.snapshotSummaryReads = prev }()
+	run()
 }
 
 // Run analyzes a module chunk with the flow engine.
@@ -319,12 +346,14 @@ func (d *Driver) Run(sess api.AnalysisSession, chunk []ast.Stmt) {
 	d.activeQueries = queries
 	d.diagnosticContexts = make(map[summary.FuncRef][]summary.Key)
 	d.diagnosticStates = make(map[summary.Key]state.FunctionState)
+	d.diagnosticSummaries = make(map[summary.Key]summary.Summary)
 	defer func() { d.activeProgram = nil; d.activeCtx = nil; d.activeQueries = nil }()
 	d.solvePass(sess, prog, queries)
-	d.publishFunctionFacts(sess, prog)
-	d.commitPublishedFunctionFacts(sess)
-
-	d.bridgeResults(sess, prog, queries)
+	d.withSnapshotSummaryReads(func() {
+		d.publishFunctionFacts(sess, prog)
+		d.commitPublishedFunctionFacts(sess)
+		d.bridgeResults(sess, prog, queries)
+	})
 }
 
 // solvePass demands every module summary from the canonical product equation
@@ -337,8 +366,15 @@ func (d *Driver) solvePass(sess api.AnalysisSession, prog *program, queries *sum
 	for _, ref := range prog.refs {
 		d.summaries[ref] = queries.Summarize(sess.Context(), ref)
 	}
+	for _, ref := range prog.refs {
+		if summaryNeedsObservedReceiverEffects(d.summaries[ref]) {
+			d.summaries[ref] = queries.ObservedSummary(sess.Context(), ref)
+		}
+	}
 	if rootRef, ok := prog.refByFunc(sess.RootFuncNode()); ok {
-		d.buildDiagnosticContexts(sess, prog, queries, rootRef)
+		d.withSnapshotSummaryReads(func() {
+			d.buildDiagnosticContexts(sess, prog, queries, rootRef)
+		})
 	}
 	for _, ref := range prog.refs {
 		// The converged per-point state is an exact observer over the already-solved
@@ -348,6 +384,15 @@ func (d *Driver) solvePass(sess api.AnalysisSession, prog *program, queries *sum
 		// instead of an artificial bottom/default call context.
 		d.states[ref] = d.diagnosticState(sess, prog, queries, ref)
 	}
+}
+
+func summaryNeedsObservedReceiverEffects(sum summary.Summary) bool {
+	for _, entry := range sum.ReceiverEffects.Entries() {
+		if len(entry.Mutations) > 0 {
+			return true
+		}
+	}
+	return false
 }
 
 func (d *Driver) registerStoreGraphParents(sess api.AnalysisSession, prog *program) {
@@ -529,7 +574,7 @@ func (d *Driver) diagnosticState(sess api.AnalysisSession, prog *program, querie
 	for _, key := range contexts {
 		fs, ok := d.diagnosticStates[key]
 		if !ok {
-			fs = queries.IntraWithEntryContext(sess.Context(), ref, key.Entry.Cells(), key.Refs.Refs(), key.Closures.Refs(), key.Values.Values())
+			fs = queries.IntraWithEntryContextFacts(sess.Context(), ref, key.Entry.Cells(), key.Refs.Refs(), key.Closures.Refs(), key.Values.Values(), key.Facts.Facts())
 			if d.diagnosticStates == nil {
 				d.diagnosticStates = make(map[summary.Key]state.FunctionState)
 			}
@@ -545,16 +590,20 @@ func (d *Driver) buildDiagnosticContexts(sess api.AnalysisSession, prog *program
 		return
 	}
 	result := summary.DiagnosticContextFrontier{
-		Root: root,
-		Refs: prog.refs,
+		Root:           root,
+		Refs:           prog.refs,
+		SummaryOverlay: d.diagnosticSummaries,
 		ValidKey: func(key summary.Key) bool {
 			return d.validDiagnosticContext(prog, key)
 		},
 		DefaultKey: func(ref summary.FuncRef) summary.Key {
 			return d.defaultDiagnosticKey(prog, ref)
 		},
-		Solve: func(key summary.Key) state.FunctionState {
-			return queries.IntraWithEntryContext(sess.Context(), key.Ref, key.Entry.Cells(), key.Refs.Refs(), key.Closures.Refs(), key.Values.Values())
+		SolveWithDependencies: func(key summary.Key) (state.FunctionState, []summary.Key) {
+			return d.observeDiagnosticIntraWithOverlayDeps(sess, queries, key)
+		},
+		ProjectSummary: func(key summary.Key, fs state.FunctionState) summary.Summary {
+			return queries.ProjectStateSummary(sess.Context(), key.Ref, fs)
 		},
 		ProjectCalls: func(ref summary.FuncRef, fs state.FunctionState) []summary.Key {
 			return d.projectDiagnosticCallContexts(prog, ref, fs)
@@ -565,6 +614,37 @@ func (d *Driver) buildDiagnosticContexts(sess api.AnalysisSession, prog *program
 	}.Build()
 	d.diagnosticContexts = result.Contexts
 	d.diagnosticStates = result.States
+	d.diagnosticSummaries = result.Summaries
+}
+
+func (d *Driver) observeDiagnosticIntraWithOverlayDeps(sess api.AnalysisSession, queries *summary.Queries, key summary.Key) (state.FunctionState, []summary.Key) {
+	if d == nil {
+		return state.FunctionStateDomain.Bottom(), nil
+	}
+	reads := make(map[summary.Key]struct{})
+	prev := d.diagnosticOverlayRead
+	d.diagnosticOverlayRead = func(read summary.Key) {
+		reads[read] = struct{}{}
+	}
+	defer func() {
+		d.diagnosticOverlayRead = prev
+	}()
+	fs := d.observeDiagnosticIntra(sess, queries, key)
+	if len(reads) == 0 {
+		return fs, nil
+	}
+	deps := make([]summary.Key, 0, len(reads))
+	for dep := range reads {
+		deps = append(deps, dep)
+	}
+	return fs, deps
+}
+
+func (d *Driver) observeDiagnosticIntra(sess api.AnalysisSession, queries *summary.Queries, key summary.Key) state.FunctionState {
+	if d == nil || sess == nil || queries == nil {
+		return state.FunctionStateDomain.Bottom()
+	}
+	return queries.ObserveIntraWithEntryContextFacts(sess.Context(), key.Ref, key.Entry.Cells(), key.Refs.Refs(), key.Closures.Refs(), key.Values.Values(), key.Facts.Facts())
 }
 
 func (d *Driver) validDiagnosticContext(prog *program, key summary.Key) bool {
@@ -591,137 +671,12 @@ func (d *Driver) projectDiagnosticClosureContexts(prog *program, ref summary.Fun
 	if d == nil || prog == nil {
 		return nil
 	}
-	observable := d.projectObservableDiagnosticClosureContexts(prog, ref, fs)
-	if len(observable) == 0 {
-		return d.projectLiveDiagnosticClosureContexts(prog, fs, nil)
-	}
-	seen := make(map[summary.FuncRef]struct{}, len(observable))
-	for _, key := range observable {
-		seen[key.Ref] = struct{}{}
-	}
-	return append(observable, d.projectLiveDiagnosticClosureContexts(prog, fs, seen)...)
-}
-
-func (d *Driver) projectObservableDiagnosticClosureContexts(prog *program, ref summary.FuncRef, fs state.FunctionState) []summary.Key {
-	if d == nil || prog == nil {
-		return nil
-	}
-	g := prog.Graph(ref)
-	if g == nil {
-		return nil
-	}
-	rows := make(map[summary.FuncRef]diagnosticClosureContextRow)
-	var points []cfg.Point
-	g.EachReturn(func(point cfg.Point, _ *cfg.ReturnInfo) {
-		points = append(points, point)
-	})
-	points = append(points, g.Exit())
-	slices.Sort(points)
-	points = slices.Compact(points)
-	for _, point := range points {
-		d.collectLiveDiagnosticClosurePoint(prog, rows, fs.InPoints[point], nil)
-		d.collectLiveDiagnosticClosurePoint(prog, rows, fs.Points[point], nil)
-	}
-	return materializeDiagnosticClosureContextRows(rows)
-}
-
-func (d *Driver) projectLiveDiagnosticClosureContexts(prog *program, fs state.FunctionState, skip map[summary.FuncRef]struct{}) []summary.Key {
-	if d == nil || prog == nil {
-		return nil
-	}
-	rows := make(map[summary.FuncRef]diagnosticClosureContextRow)
-	d.collectLiveDiagnosticClosurePointMap(prog, rows, fs.Points, skip)
-	d.collectLiveDiagnosticClosurePointMap(prog, rows, fs.InPoints, skip)
-	return materializeDiagnosticClosureContextRows(rows)
-}
-
-type diagnosticClosureContextRow struct {
-	cells    flow.CaptureCells
-	refs     flow.FunctionRefs
-	closures flow.ClosureRefs
-	set      bool
-}
-
-func (d *Driver) collectLiveDiagnosticClosurePointMap(prog *program, rows map[summary.FuncRef]diagnosticClosureContextRow, points map[cfg.Point]flow.PointState, skip map[summary.FuncRef]struct{}) {
-	if len(points) == 0 {
-		return
-	}
-	ordered := make([]cfg.Point, 0, len(points))
-	for point := range points {
-		ordered = append(ordered, point)
-	}
-	slices.Sort(ordered)
-	for _, point := range ordered {
-		d.collectLiveDiagnosticClosurePoint(prog, rows, points[point], skip)
-	}
-}
-
-func (d *Driver) collectLiveDiagnosticClosurePoint(prog *program, rows map[summary.FuncRef]diagnosticClosureContextRow, ps flow.PointState, skip map[summary.FuncRef]struct{}) {
-	if len(ps.ClosureRefs) == 0 {
-		return
-	}
-	paths := make([]constraint.PathKey, 0, len(ps.ClosureRefs))
-	for path := range ps.ClosureRefs {
-		paths = append(paths, path)
-	}
-	slices.Sort(paths)
-	for _, path := range paths {
-		for _, closure := range ps.ClosureRefs[path].Refs() {
-			ref := canonref.FromFlow(closure.Ref)
-			if ref == (summary.FuncRef{}) || prog.Graph(ref) == nil {
-				continue
-			}
-			if _, ok := skip[ref]; ok {
-				continue
-			}
-			entry := canonicalcall.EntryContextFromClosureWithLiveAxes(
-				ref,
-				closure,
-				prog.CallEntryCells(ref, ps.Cells),
-				prog.CallEntryFunctionRefs(ref, ps.FunctionRefs),
-				prog.CallEntryClosureRefs(ref, ps.ClosureRefs),
-				nil,
-			)
-			addDiagnosticClosureContextRow(rows, ref, entry)
-		}
-	}
-}
-
-func addDiagnosticClosureContextRow(rows map[summary.FuncRef]diagnosticClosureContextRow, ref summary.FuncRef, entry canonicalcall.EntryContext) {
-	row := rows[ref]
-	if !row.set {
-		rows[ref] = diagnosticClosureContextRow{
-			cells:    entry.CaptureCells(),
-			refs:     entry.FunctionRefs(),
-			closures: entry.ClosureRefs(),
-			set:      true,
-		}
-		return
-	}
-	row.cells = flow.CaptureCellsDomain.Join(row.cells, entry.CaptureCells())
-	row.refs = flow.FunctionRefsDomain.Join(row.refs, entry.FunctionRefs())
-	row.closures = flow.ClosureRefsDomain.Join(row.closures, entry.ClosureRefs())
-	rows[ref] = row
-}
-
-func materializeDiagnosticClosureContextRows(rows map[summary.FuncRef]diagnosticClosureContextRow) []summary.Key {
-	if len(rows) == 0 {
-		return nil
-	}
-	refs := make([]summary.FuncRef, 0, len(rows))
-	for ref := range rows {
-		refs = append(refs, ref)
-	}
-	canonref.SortFuncRefs(refs)
-	out := make([]summary.Key, 0, len(refs))
-	for _, ref := range refs {
-		row := rows[ref]
-		if !row.set {
-			continue
-		}
-		out = append(out, summary.NewKeyWithEntryContext(ref, row.cells, row.refs, row.closures, nil))
-	}
-	return out
+	return summary.ClosureEntryContextProjection{
+		State: fs,
+		ReferencePaths: func(callee summary.FuncRef) flow.ReferencePathProjection {
+			return prog.referenceProjection(callee)
+		},
+	}.ProjectKeys()
 }
 
 func joinDiagnosticFunctionState(a, b state.FunctionState) state.FunctionState {
@@ -954,7 +909,7 @@ func (d *Driver) projectCallContracts(prog *program, ref summary.FuncRef, eviden
 	if g == nil || tr == nil || !ok {
 		return nil
 	}
-	ct := callTyper{d: d, g: g}
+	ct := callTyper{d: d, g: g, ref: ref}
 	var contracts []api.CallContractEvidence
 	for i, ev := range evidence.Calls {
 		if ev.Info == nil || ev.Info.Call == nil || len(ev.Info.Call.Args) == 0 {
@@ -1016,6 +971,10 @@ type program struct {
 	// reads only publishers for its prototype, not every summary with any prototype
 	// publication.
 	prototypePublishersBySym map[cfg.SymbolID][]summary.FuncRef
+
+	// referencePaths is the graph-derived vocabulary of function/closure identity
+	// paths each callee can observe at entry.
+	referencePaths map[summary.FuncRef]flow.ReferencePathProjection
 }
 
 func (p *program) Graph(ref summary.FuncRef) *cfg.Graph { return p.funcTopology.Graph(ref) }
@@ -1138,7 +1097,7 @@ func (p *program) CaptureEntries(ref summary.FuncRef, captureExportsOf func(summ
 			entries = append(entries, flow.CaptureCell{Symbol: sym, Value: av})
 		}
 	}
-	return flow.CaptureCellsOf(entries)
+	return flow.CaptureCellsOf(entries).ProjectPaths(p.referenceProjection(ref))
 }
 
 func (p *program) CaptureEntryRefs(ref summary.FuncRef, captureFunctionRefsOf func(summary.FuncRef) flow.FunctionRefs) flow.FunctionRefs {
@@ -1155,18 +1114,13 @@ func (p *program) CaptureEntryRefs(ref summary.FuncRef, captureFunctionRefsOf fu
 	if len(captured) == 0 {
 		return flow.FunctionRefsDomain.Bottom()
 	}
-	var syms []cfg.SymbolID
-	for _, sym := range captured {
-		if g.IsFreeSymbol(sym) {
-			syms = append(syms, sym)
-		}
-	}
-	if len(syms) == 0 {
+	projection := p.referenceProjection(ref)
+	if len(projection.Exact) == 0 && len(projection.Subtrees) == 0 {
 		return flow.FunctionRefsDomain.Bottom()
 	}
 	out := flow.FunctionRefsDomain.Bottom()
 	for _, dep := range p.captureDependencyChain(ref) {
-		out = flow.FunctionRefsDomain.Join(out, flow.ProjectFunctionRefsBySymbols(captureFunctionRefsOf(dep), syms))
+		out = flow.FunctionRefsDomain.Join(out, flow.ProjectFunctionRefsByReferencePaths(captureFunctionRefsOf(dep), projection))
 	}
 	return out
 }
@@ -1176,13 +1130,13 @@ func (p *program) CaptureEntryClosureRefs(ref summary.FuncRef, captureClosureRef
 	if g == nil || captureClosureRefsOf == nil {
 		return flow.ClosureRefsDomain.Bottom()
 	}
-	syms := p.capturedSymbols(ref)
-	if len(syms) == 0 {
+	projection := p.referenceProjection(ref)
+	if len(projection.Exact) == 0 && len(projection.Subtrees) == 0 {
 		return flow.ClosureRefsDomain.Bottom()
 	}
 	out := flow.ClosureRefsDomain.Bottom()
 	for _, dep := range p.captureDependencyChain(ref) {
-		out = flow.ClosureRefsDomain.Join(out, flow.ProjectClosureRefsBySymbols(captureClosureRefsOf(dep), syms))
+		out = flow.ClosureRefsDomain.Join(out, flow.ProjectClosureRefsByReferencePaths(captureClosureRefsOf(dep), projection))
 	}
 	return out
 }
@@ -1193,9 +1147,21 @@ func (p *program) EntryValues(ref summary.FuncRef, deps summary.EntryValueDepend
 	}
 	receivers := p.facts.MethodReceivers(ref)
 	prototypeReceivers := entryValuePrototypeReceivers(receivers)
+	hasInferredSlots := p.hasInferredEntrySlot(ref)
 	out := summary.AggregateEntryValues(summary.EntryValueAggregation{
-		Callee:             ref,
-		HasInferredSlots:   false,
+		Callee:           ref,
+		HasInferredSlots: hasInferredSlots,
+		EachCallerEntryValues: func(yield func(summary.EntryValues)) {
+			if !hasInferredSlots {
+				return
+			}
+			for _, dep := range p.callerRefs(ref) {
+				values := deps.CallEntryValues(dep, ref)
+				if len(values) != 0 {
+					yield(values)
+				}
+			}
+		},
 		PrototypeReceivers: prototypeReceivers,
 		EachPrototypeSource: func(yield func(summary.EntryValuePrototypeSource)) {
 			for _, dep := range p.prototypePublisherRefs(prototypeReceivers) {
@@ -1346,6 +1312,9 @@ func (p *program) ProjectCallEntryContextKeys(ref summary.FuncRef, fs state.Func
 		NormalizeValues: func(callee summary.FuncRef, call *ast.FuncCallExpr, values summary.EntryValues) summary.EntryValues {
 			return p.withPrototypeMethodSurfacesForMethodCall(callee, call, values)
 		},
+		ReferencePaths: func(callee summary.FuncRef) flow.ReferencePathProjection {
+			return p.referenceProjection(callee)
+		},
 	}.ProjectKeys()
 }
 
@@ -1362,15 +1331,29 @@ func (p *program) resolveCallEntryTargets(g *cfg.Graph, call *ast.FuncCallExpr, 
 		cells := p.CallEntryCells(ref, in.Cells)
 		refs := p.CallEntryFunctionRefs(ref, in.FunctionRefs)
 		closures := p.CallEntryClosureRefs(ref, in.ClosureRefs)
-		entry := canonicalcall.NewEntryContext(ref, cells, refs, closures, nil)
+		entryFacts := summary.DirectCallEntryFacts(summary.DirectCallEntryFactInput{
+			Call:   call,
+			Callee: ref,
+			ParamSlot: func(callee summary.FuncRef, call *ast.FuncCallExpr, argIdx int) (int, int, bool) {
+				return paramevidence.ParamSlotForRuntimeArg(p.Graph(callee), p.funcExpr(callee), argIdx)
+			},
+			ArgPath: func(_ int, arg ast.Expr) (constraint.Path, bool) {
+				return (callTyper{d: p.driver, g: g}).exprPath(arg)
+			},
+			KeyPresence: in.KeyPresence,
+			Num:         in.Num,
+			IndexWrites: in.IndexWrites,
+		})
+		entry := canonicalcall.NewEntryContextWithFacts(ref, cells, refs, closures, nil, entryFacts)
 		if closure, ok := target.Closure(); ok {
-			entry = canonicalcall.EntryContextFromClosureWithLiveAxes(ref, closure, cells, refs, closures, nil)
+			entry = canonicalcall.EntryContextFromClosureWithLiveAxesAndFacts(ref, closure, cells, refs, closures, nil, entryFacts)
 		}
 		out = append(out, summary.CallEntryTarget{
 			Ref:               entry.Ref(),
 			EntryCells:        entry.CaptureCells(),
 			EntryFunctionRefs: entry.FunctionRefs(),
 			EntryClosureRefs:  entry.ClosureRefs(),
+			EntryFacts:        entry.EntryFacts(),
 		})
 	}
 	return out
@@ -1435,13 +1418,15 @@ func (p *program) callEntryClosureArgRefs(g *cfg.Graph, arg ast.Expr, in *flow.P
 			return flow.ClosureRefSet{}, false
 		}
 		captured := p.capturedSymbols(ref)
+		projection := p.referenceProjection(ref)
 		cells := captureCellsFromPoint(in, captured)
 		cells = p.normalizeCapturedMethodReceiverCells(g, in, cells, captured)
+		cells = cells.ProjectPaths(projection)
 		return flow.ClosureRefSetOf(flow.ClosureRefOf(
 			canonref.ToFlow(ref),
 			cells,
-			flow.ProjectFunctionRefsBySymbols(in.FunctionRefs, captured),
-			flow.ProjectClosureRefsBySymbols(in.ClosureRefs, captured),
+			flow.ProjectFunctionRefsByReferencePaths(in.FunctionRefs, projection),
+			flow.ProjectClosureRefsByReferencePaths(in.ClosureRefs, projection),
 		)), true
 	}
 	path, ok := (callTyper{d: p.driver, g: g}).exprPath(arg)
@@ -1749,15 +1734,33 @@ func (p *program) declaredType(ref summary.FuncRef, sym cfg.SymbolID) typ.Type {
 }
 
 func (p *program) CallEntryCells(ref summary.FuncRef, caller flow.CaptureCells) flow.CaptureCells {
-	return caller.Project(p.capturedSymbols(ref))
+	return caller.ProjectPaths(p.referenceProjection(ref))
 }
 
 func (p *program) CallEntryFunctionRefs(ref summary.FuncRef, caller flow.FunctionRefs) flow.FunctionRefs {
-	return flow.ProjectFunctionRefsBySymbols(caller, p.capturedSymbols(ref))
+	return flow.ProjectFunctionRefsByReferencePaths(caller, p.referenceProjection(ref))
 }
 
 func (p *program) CallEntryClosureRefs(ref summary.FuncRef, caller flow.ClosureRefs) flow.ClosureRefs {
-	return flow.ProjectClosureRefsBySymbols(caller, p.capturedSymbols(ref))
+	return flow.ProjectClosureRefsByReferencePaths(caller, p.referenceProjection(ref))
+}
+
+func (p *program) referenceProjection(ref summary.FuncRef) flow.ReferencePathProjection {
+	if p == nil {
+		return flow.ReferencePathProjection{}
+	}
+	if projection, ok := p.referencePaths[ref]; ok {
+		return projection
+	}
+	g := p.Graph(ref)
+	if g == nil {
+		return flow.ReferencePathProjection{}
+	}
+	projection := summary.ReferencePathProjectionForGraph(g)
+	if p.referencePaths != nil {
+		p.referencePaths[ref] = projection
+	}
+	return projection
 }
 
 func (p *program) paramPath(ref summary.FuncRef, slot int) (constraint.Path, bool) {
@@ -1863,10 +1866,12 @@ func (d *Driver) buildProgram(sess api.AnalysisSession, rootGraph *cfg.Graph, mo
 		params:          make(map[summary.FuncRef]int),
 		functionFacts:   make(map[summary.FuncRef]functionFacts),
 		declaredReturns: make(map[summary.FuncRef][]typ.Type),
+		referencePaths:  make(map[summary.FuncRef]flow.ReferencePathProjection),
 		refs:            funcTopology.Refs(),
 	}
 	for _, ref := range p.refs {
 		if g := p.Graph(ref); g != nil {
+			p.referencePaths[ref] = summary.ReferencePathProjectionForGraph(g)
 			d.addFunction(sess, p, ref, g)
 		}
 	}
@@ -2077,7 +2082,7 @@ func (d *Driver) buildTransfer(p *program, ref summary.FuncRef) *transfer.Transf
 	return transfer.New(in, transfer.Config{
 		Ops:               opsResolver{d},
 		FuncTyper:         funcTyper{d: d, prog: p},
-		CallTyper:         callTyper{d: d, g: g},
+		CallTyper:         callTyper{d: d, g: g, ref: ref},
 		TypeChecks:        p.facts.TypeChecks(ref),
 		SelfType:          d.methodSelfSeed(p, g),
 		MethodReceivers:   p.facts.MethodReceivers(ref),
@@ -2433,8 +2438,9 @@ func (d *Driver) callbackEnvSetupExprType(_ *program, g *cfg.Graph, expr ast.Exp
 // path read through TypeOps. A callee that resolves to no function yields no
 // returns, so the transfer leaves the slot at the value-domain Top.
 type callTyper struct {
-	d *Driver
-	g *cfg.Graph
+	d   *Driver
+	g   *cfg.Graph
+	ref summary.FuncRef
 }
 
 func (ct callTyper) globalSymbolType(sym cfg.SymbolID) typ.Type {
@@ -2557,14 +2563,18 @@ func (ct callTyper) moduleCallArgDemands(call *ast.FuncCallExpr, ctx transfer.Pr
 		return nil, false
 	}
 	prog := d.activeProgram
-	outcome := ct.callOutcomeForProductCall(call, ctx)
+	outcome := ct.summaryOnlyProductCallOutcome(call, ctx)
 	if !outcome.HasTargets() {
 		return nil, false
 	}
 	targets := outcome.Targets()
+	currentRef, hasCurrentRef := ct.currentRef()
 	projectionTargets := make([]paramevidence.CallArgDemandTarget, 0, len(targets))
 	for _, target := range targets {
 		ref := target.Ref
+		if hasCurrentRef && ref == currentRef {
+			continue
+		}
 		localRef := ref
 		localFn := prog.funcExpr(localRef)
 		projectionTargets = append(projectionTargets, paramevidence.CallArgDemandTarget{
@@ -2582,7 +2592,20 @@ func (ct callTyper) moduleCallArgDemands(call *ast.FuncCallExpr, ctx transfer.Pr
 			},
 		})
 	}
+	if len(projectionTargets) == 0 {
+		return nil, false
+	}
 	return canonicalcall.DemandsForCallTargets(call, projectionTargets), true
+}
+
+func (ct callTyper) currentRef() (summary.FuncRef, bool) {
+	if ct.ref != (summary.FuncRef{}) {
+		return ct.ref, true
+	}
+	if ct.d == nil || ct.d.activeProgram == nil || ct.g == nil {
+		return summary.FuncRef{}, false
+	}
+	return ct.d.activeProgram.refByGraph(ct.g)
 }
 
 func (ct callTyper) callEntrySlotType(ref summary.FuncRef, call *ast.FuncCallExpr, runtimeValues []product.AbstractValue, entryValues summary.EntryValues, slot int) typ.Type {
@@ -2611,6 +2634,7 @@ func (ct callTyper) productCallEntryContext(ref summary.FuncRef, call *ast.FuncC
 		return canonicalcall.EntryContext{}, false
 	}
 	entryValues := ct.callEntryProductValuesForRef(ref, call, ctx.RuntimeArgValues)
+	entryFacts := ct.callEntryFactsForRef(ref, call, ctx)
 	entryRefs := flow.FunctionRefsDomain.Join(
 		d.activeProgram.CallEntryFunctionRefs(ref, ctx.FunctionRefs),
 		ct.callEntryFunctionRefsForRef(ref, call, ctx),
@@ -2619,12 +2643,13 @@ func (ct callTyper) productCallEntryContext(ref summary.FuncRef, call *ast.FuncC
 		d.activeProgram.CallEntryClosureRefs(ref, ctx.ClosureRefs),
 		ct.callEntryClosureRefsForRef(ref, call, ctx),
 	)
-	return canonicalcall.NewEntryContext(
+	return canonicalcall.NewEntryContextWithFacts(
 		ref,
 		d.activeProgram.CallEntryCells(ref, ctx.Cells),
 		entryRefs,
 		entryClosures,
 		entryValues,
+		entryFacts,
 	), true
 }
 
@@ -2633,6 +2658,7 @@ func (ct callTyper) productClosureCallEntryContext(ref summary.FuncRef, closure 
 		return canonicalcall.EntryContext{}, false
 	}
 	entryValues := ct.callEntryProductValuesForRef(ref, call, ctx.RuntimeArgValues)
+	entryFacts := ct.callEntryFactsForRef(ref, call, ctx)
 	entryRefs := flow.FunctionRefsDomain.Join(
 		ct.d.activeProgram.CallEntryFunctionRefs(ref, ctx.FunctionRefs),
 		ct.callEntryFunctionRefsForRef(ref, call, ctx),
@@ -2641,14 +2667,32 @@ func (ct callTyper) productClosureCallEntryContext(ref summary.FuncRef, closure 
 		ct.d.activeProgram.CallEntryClosureRefs(ref, ctx.ClosureRefs),
 		ct.callEntryClosureRefsForRef(ref, call, ctx),
 	)
-	return canonicalcall.EntryContextFromClosureWithLiveAxes(
+	return canonicalcall.EntryContextFromClosureWithLiveAxesAndFacts(
 		ref,
 		closure,
 		ct.d.activeProgram.CallEntryCells(ref, ctx.Cells),
 		entryRefs,
 		entryClosures,
 		entryValues,
+		entryFacts,
 	), true
+}
+
+func (ct callTyper) callEntryFactsForRef(ref summary.FuncRef, call *ast.FuncCallExpr, ctx transfer.ProductCallContext) flow.BoundaryFacts {
+	if ct.d == nil || ct.d.activeProgram == nil {
+		return flow.BoundaryFactsDomain.Top()
+	}
+	return summary.DirectCallEntryFacts(summary.DirectCallEntryFactInput{
+		Call:   call,
+		Callee: ref,
+		ParamSlot: func(callee summary.FuncRef, call *ast.FuncCallExpr, argIdx int) (int, int, bool) {
+			return paramevidence.ParamSlotForRuntimeArg(ct.d.activeProgram.Graph(callee), ct.d.activeProgram.funcExpr(callee), argIdx)
+		},
+		ArgPath:     func(_ int, arg ast.Expr) (constraint.Path, bool) { return ct.exprPath(arg) },
+		KeyPresence: ctx.KeyPresence,
+		Num:         ctx.Num,
+		IndexWrites: ctx.IndexWrites,
+	})
 }
 
 func (ct callTyper) summaryForCallEntryContext(entry canonicalcall.EntryContext) summary.Summary {
@@ -2656,12 +2700,13 @@ func (ct callTyper) summaryForCallEntryContext(entry canonicalcall.EntryContext)
 	if d == nil {
 		return summary.SummaryDomain.Bottom()
 	}
-	return d.summaryReader().SummarizeWithEntryContext(
+	return d.summaryReader().SummarizeWithEntryContextFacts(
 		entry.Ref(),
 		entry.CaptureCells(),
 		entry.FunctionRefs(),
 		entry.ClosureRefs(),
 		entry.EntryValues(),
+		entry.EntryFacts(),
 	)
 }
 
@@ -2756,9 +2801,11 @@ func (ct callTyper) callEntryFunctionRefsForRef(ref summary.FuncRef, call *ast.F
 		return flow.FunctionRefsDomain.Bottom()
 	}
 	return summary.DirectCallEntryFunctionRefs(summary.DirectCallEntryReferenceInput{
-		Call:         call,
-		Callee:       ref,
-		FunctionRefs: ctx.FunctionRefs,
+		Call:                call,
+		Callee:              ref,
+		FunctionRefs:        ctx.FunctionRefs,
+		ReferenceProjection: d.activeProgram.referenceProjection(ref),
+		LimitReferencePaths: true,
 		ParamSlot: func(callee summary.FuncRef, call *ast.FuncCallExpr, runtimeIdx int) (int, int, bool) {
 			return paramevidence.ParamSlotForRuntimeArg(d.activeProgram.Graph(callee), d.activeProgram.funcExpr(callee), runtimeIdx)
 		},
@@ -2783,9 +2830,11 @@ func (ct callTyper) callEntryClosureRefsForRef(ref summary.FuncRef, call *ast.Fu
 		return flow.ClosureRefsDomain.Bottom()
 	}
 	return summary.DirectCallEntryClosureRefs(summary.DirectCallEntryReferenceInput{
-		Call:        call,
-		Callee:      ref,
-		ClosureRefs: ctx.ClosureRefs,
+		Call:                call,
+		Callee:              ref,
+		ClosureRefs:         ctx.ClosureRefs,
+		ReferenceProjection: d.activeProgram.referenceProjection(ref),
+		LimitReferencePaths: true,
 		ParamSlot: func(callee summary.FuncRef, call *ast.FuncCallExpr, runtimeIdx int) (int, int, bool) {
 			return paramevidence.ParamSlotForRuntimeArg(d.activeProgram.Graph(callee), d.activeProgram.funcExpr(callee), runtimeIdx)
 		},
@@ -2851,13 +2900,15 @@ func (ct callTyper) callEntryClosureArgRefs(arg ast.Expr, ctx transfer.ProductCa
 			return flow.ClosureRefSet{}, false
 		}
 		captured := d.activeProgram.capturedSymbols(ref)
+		projection := d.activeProgram.referenceProjection(ref)
 		cells := ctx.Cells.Project(captured)
 		cells = d.activeProgram.normalizeCapturedMethodReceiverCellsFromCells(ct.g, cells, captured)
+		cells = cells.ProjectPaths(projection)
 		return flow.ClosureRefSetOf(flow.ClosureRefOf(
 			canonref.ToFlow(ref),
 			cells,
-			flow.ProjectFunctionRefsBySymbols(ctx.FunctionRefs, captured),
-			flow.ProjectClosureRefsBySymbols(ctx.ClosureRefs, captured),
+			flow.ProjectFunctionRefsByReferencePaths(ctx.FunctionRefs, projection),
+			flow.ProjectClosureRefsByReferencePaths(ctx.ClosureRefs, projection),
 		)), true
 	}
 	path, ok := ct.exprPath(arg)
@@ -2926,7 +2977,7 @@ func (ct callTyper) CallReturnFunctionRefsFromValues(call *ast.FuncCallExpr, ctx
 	if d == nil || call == nil || d.activeProgram == nil {
 		return nil
 	}
-	return ct.callOutcomeForProductCall(call, ctx).ReturnFunctionRefs()
+	return ct.summaryOnlyProductCallOutcome(call, ctx).ReturnFunctionRefs()
 }
 
 func (ct callTyper) CallReturnClosureRefsFromValues(call *ast.FuncCallExpr, ctx transfer.ProductCallContext) []flow.ClosureRefs {
@@ -2934,7 +2985,7 @@ func (ct callTyper) CallReturnClosureRefsFromValues(call *ast.FuncCallExpr, ctx 
 	if d == nil || call == nil || d.activeProgram == nil {
 		return nil
 	}
-	return ct.callOutcomeForProductCall(call, ctx).ReturnClosureRefs()
+	return ct.summaryOnlyProductCallOutcome(call, ctx).ReturnClosureRefs()
 }
 
 // ReturnRelations resolves the callee's caller-visible return relations through
@@ -2983,7 +3034,7 @@ func (ct callTyper) CellEffects(call *ast.FuncCallExpr, exprType func(ast.Expr) 
 			return ct.callbackArgRefs(arg, d.activeProgram, refs)
 		},
 		EffectOf: func(ref summary.FuncRef, entryValues summary.EntryValues) flow.CaptureEffects {
-			return ct.cellEffectsForRef(ref, cells, refs, flow.ClosureRefsDomain.Bottom(), entryValues)
+			return ct.cellEffectsForRef(ref, cells, refs, flow.ClosureRefsDomain.Bottom(), entryValues, flow.BoundaryFactsDomain.Top())
 		},
 	})
 }
@@ -2993,7 +3044,7 @@ func (ct callTyper) CellEffectsFromValues(call *ast.FuncCallExpr, ctx transfer.P
 	if d == nil || call == nil || d.activeProgram == nil {
 		return flow.CaptureEffectsDomain.Bottom()
 	}
-	outcome := ct.callOutcomeForProductCall(call, ctx)
+	outcome := ct.summaryOnlyProductCallOutcome(call, ctx)
 	return outcome.CellEffects(summary.CellEffectAggregation{
 		CallbackSpec: ct.callbackSpecForCall(call, ctx.ExprType),
 		CallbackArgs: call.Args,
@@ -3002,7 +3053,7 @@ func (ct callTyper) CellEffectsFromValues(call *ast.FuncCallExpr, ctx transfer.P
 			return ct.callbackArgRefs(arg, d.activeProgram, ctx.FunctionRefs)
 		},
 		EffectOf: func(ref summary.FuncRef, entryValues summary.EntryValues) flow.CaptureEffects {
-			return ct.cellEffectsForRef(ref, ctx.Cells, ctx.FunctionRefs, ctx.ClosureRefs, entryValues)
+			return ct.cellEffectsForRef(ref, ctx.Cells, ctx.FunctionRefs, ctx.ClosureRefs, entryValues, ct.callEntryFactsForRef(ref, call, ctx))
 		},
 	})
 }
@@ -3012,7 +3063,17 @@ func (ct callTyper) ReceiverEffectsFromValues(call *ast.FuncCallExpr, ctx transf
 	if d == nil || call == nil || d.activeProgram == nil {
 		return flow.ReceiverEffectsDomain.Bottom()
 	}
-	return ct.callOutcomeForProductCall(call, ctx).ReceiverEffects()
+	effects := ct.summaryOnlyProductCallOutcome(call, ctx).ReceiverEffects()
+	return effects
+}
+
+func (ct callTyper) BoundaryFactsFromValues(call *ast.FuncCallExpr, ctx transfer.ProductCallContext) flow.BoundaryFacts {
+	d := ct.d
+	if d == nil || call == nil || d.activeProgram == nil {
+		return flow.BoundaryFactsDomain.Top()
+	}
+	facts := ct.summaryOnlyProductCallOutcome(call, ctx).BoundaryFacts()
+	return facts
 }
 
 func (ct callTyper) ContainerElementUnionsFromValues(call *ast.FuncCallExpr, ctx transfer.ProductCallContext) []effect.ContainerElementUnion {
@@ -3032,7 +3093,7 @@ func (ct callTyper) ContainerElementUnionsFromValues(call *ast.FuncCallExpr, ctx
 	})
 }
 
-func (ct callTyper) cellEffectsForRef(ref summary.FuncRef, cells flow.CaptureCells, refs flow.FunctionRefs, closures flow.ClosureRefs, entryValues summary.EntryValues) flow.CaptureEffects {
+func (ct callTyper) cellEffectsForRef(ref summary.FuncRef, cells flow.CaptureCells, refs flow.FunctionRefs, closures flow.ClosureRefs, entryValues summary.EntryValues, entryFacts flow.BoundaryFacts) flow.CaptureEffects {
 	d := ct.d
 	if d == nil || d.activeProgram == nil {
 		return flow.CaptureEffectsDomain.Bottom()
@@ -3046,7 +3107,8 @@ func (ct callTyper) cellEffectsForRef(ref summary.FuncRef, cells flow.CaptureCel
 		entryRefs = d.activeProgram.CallEntryFunctionRefs(ref, refs)
 		entryClosures = d.activeProgram.CallEntryClosureRefs(ref, closures)
 	}
-	return reader.SummarizeWithEntryContext(ref, entry, entryRefs, entryClosures, entryValues).CellEffects
+	effects := reader.SummarizeWithEntryContextFacts(ref, entry, entryRefs, entryClosures, entryValues, entryFacts).CellEffects
+	return effects
 }
 
 func (ct callTyper) callbackSpecForCall(call *ast.FuncCallExpr, exprType func(ast.Expr) typ.Type) *contract.Spec {
@@ -3169,11 +3231,7 @@ func (ct callTyper) IndexedIterSource(iter *ast.FuncCallExpr) (constraint.Path, 
 	if ct.g == nil || bindings == nil {
 		return constraint.Path{}, false
 	}
-	source, ok := iteration.IndexedSourceSymbol(iter, bindings, ct.iteratorKind)
-	if !ok {
-		return constraint.Path{}, false
-	}
-	return constraint.NewPath(source, bindings.Name(source)), true
+	return iteration.IndexedSourcePath(iter, bindings, ct.iteratorKind)
 }
 
 func (ct callTyper) KeysCollectorContainer(call *cfg.CallInfo, retIndex int) (constraint.Path, bool) {
@@ -3196,9 +3254,17 @@ func (ct callTyper) KeysCollectorContainer(call *cfg.CallInfo, retIndex int) (co
 }
 
 func (ct callTyper) callTypeResolver(exprType func(ast.Expr) typ.Type) canonicalcall.TypeResolver {
+	var query core.TypeOps
+	var queryCtx *db.QueryContext
+	if ct.d != nil {
+		query = ct.d.cfg.Types
+		queryCtx = ct.d.activeCtx
+	}
 	return canonicalcall.TypeResolver{
 		Bindings: ct.bindings(),
 		ExprType: exprType,
+		Ctx:      queryCtx,
+		Query:    query,
 		Static: canonicalcall.StaticTypeLookup{
 			FuncBySymbol: func(sym cfg.SymbolID) (typ.Type, bool) {
 				if sym == 0 || ct.d == nil || ct.d.activeProgram == nil {
@@ -3307,7 +3373,7 @@ func (ct callTyper) IsNoReturn(call *ast.FuncCallExpr, ctx transfer.ProductCallC
 	if prog == nil {
 		return false
 	}
-	return ct.callOutcomeForProductCall(call, ctx).NeverReturns(func(ref summary.FuncRef) bool {
+	return ct.summaryOnlyProductCallOutcome(call, ctx).NeverReturns(func(ref summary.FuncRef) bool {
 		return prog.facts.HasNoReturn(ref)
 	})
 }
@@ -3469,6 +3535,13 @@ func (ft funcTyper) CapturedSymbols(ref flow.FunctionRef) []cfg.SymbolID {
 		return nil
 	}
 	return ft.d.activeProgram.capturedSymbols(canonref.FromFlow(ref))
+}
+
+func (ft funcTyper) ReferenceProjection(ref flow.FunctionRef) flow.ReferencePathProjection {
+	if ft.d == nil || ft.d.activeProgram == nil {
+		return flow.ReferencePathProjection{}
+	}
+	return ft.d.activeProgram.referenceProjection(canonref.FromFlow(ref))
 }
 
 // FuncType builds fn's signature from its declared parameter and return

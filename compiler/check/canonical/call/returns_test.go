@@ -350,6 +350,69 @@ func TestInferReturnValuesSummaryBeatsGradualAndTypeFallback(t *testing.T) {
 	}
 }
 
+func TestInferReturnValuesSkipsRecursiveFamilyFallbackScan(t *testing.T) {
+	call := &ast.FuncCallExpr{Func: &ast.IdentExpr{Value: "build_graph"}}
+	node := typ.NewRecursivePlaceholder("Node")
+	var tower typ.Type = typ.NewAlias("NodeAlias", typ.NewRecord().
+		Field("next", node).
+		Build())
+	for i := 0; i < 512; i++ {
+		tower = typ.NewAlias("TowerAlias", typ.NewMap(typ.String, typ.NewOptional(typ.NewUnion(tower, typ.Nil))))
+	}
+	node.SetBody(typ.NewRecord().
+		Field("next", tower).
+		Field("hole", typ.Unknown).
+		Build())
+	typeFallbackUsed := false
+
+	got, ok := InferReturnValues(ReturnValueInput{
+		Call:                call,
+		TypePolicyAvailable: true,
+		SummaryReturnValues: func(*ast.FuncCallExpr) []product.AbstractValue {
+			return []product.AbstractValue{product.FromType(tower)}
+		},
+		TypeFallback: func() ([]typ.Type, bool) {
+			typeFallbackUsed = true
+			return []typ.Type{typ.String}, true
+		},
+	})
+
+	if !ok || len(got) != 1 || got[0].IsZero() {
+		t.Fatalf("InferReturnValues recursive summary = %#v, %v; want summary value", got, ok)
+	}
+	if typeFallbackUsed {
+		t.Fatal("recursive family return forced type fallback")
+	}
+}
+
+func TestInferReturnValuesSkipsOversizedStructuralFallbackScan(t *testing.T) {
+	call := &ast.FuncCallExpr{Func: &ast.IdentExpr{Value: "build"}}
+	var tower typ.Type = typ.String
+	for i := 0; i < summaryReturnFallbackScanLimit+16; i++ {
+		tower = typ.NewMap(typ.String, typ.NewOptional(tower))
+	}
+	typeFallbackUsed := false
+
+	got, ok := InferReturnValues(ReturnValueInput{
+		Call:                call,
+		TypePolicyAvailable: true,
+		SummaryReturnValues: func(*ast.FuncCallExpr) []product.AbstractValue {
+			return []product.AbstractValue{product.FromType(tower)}
+		},
+		TypeFallback: func() ([]typ.Type, bool) {
+			typeFallbackUsed = true
+			return []typ.Type{typ.String}, true
+		},
+	})
+
+	if !ok || len(got) != 1 || got[0].IsZero() {
+		t.Fatalf("InferReturnValues oversized summary = %#v, %v; want summary value", got, ok)
+	}
+	if typeFallbackUsed {
+		t.Fatal("oversized structural summary forced type fallback")
+	}
+}
+
 func TestInferReturnValuesRefinesStructuralSummaryWithTypeFallback(t *testing.T) {
 	call := &ast.FuncCallExpr{Func: &ast.IdentExpr{Value: "select"}}
 	summary := typ.NewRecord().
@@ -587,6 +650,27 @@ func TestInferReturnValuesPendingInputRejectsTopLikeTypeFallback(t *testing.T) {
 				t.Fatalf("pending top-like fallback = %#v, %v; want nil, false", got, ok)
 			}
 		})
+	}
+}
+
+func TestInformativeReturnValueTypeUsesTypeParamFlags(t *testing.T) {
+	closed := typ.NewRecord().
+		Field("graph", typ.NewRecord().
+			Field("nodes", typ.NewMap(typ.String, typ.Number)).
+			Field("edges", typ.NewMap(typ.String, typ.Boolean)).
+			Build()).
+		Build()
+	if !informativeReturnValueType(closed) {
+		t.Fatalf("closed structural return reported uninformative: %v", closed)
+	}
+
+	tp := typ.NewTypeParam("T", nil)
+	open := typ.NewRecord().Field("value", tp).Build()
+	if informativeReturnValueType(open) {
+		t.Fatalf("open type-param return reported informative: %v", open)
+	}
+	if informativeReturnValueType(typ.NewRef("", "Later")) {
+		t.Fatal("deferred ref return reported informative")
 	}
 }
 

@@ -36,17 +36,17 @@ func (t *Transfer) dynamicIndexWriteProofEffect(
 	if !ok || targetPath.IsEmpty() {
 		return DynamicIndexWriteProofEffect{}, false
 	}
-	proof := DynamicIndexWriteProofEffect{
-		TablePath:              targetPath,
-		Key:                    key,
-		Value:                  value,
-		AllowOpaqueKeyReadback: t.indexWriteTargetSealed(targetPath),
-	}
 	keyPath := constraint.Path{}
 	if path, ok := t.staticPathOfExpr(effect.IndexTarget.Key); ok {
 		keyPath = path
 	}
-	proof.KeyPath = keyPath
+	proof := DynamicIndexWriteProofEffect{
+		TablePath:              targetPath,
+		KeyPath:                keyPath,
+		Key:                    key,
+		Value:                  value,
+		AllowOpaqueKeyReadback: t.indexWriteTargetSealed(targetPath) || !keyPath.IsEmpty(),
+	}
 	if valuePath, ok := t.staticPathOfExpr(effect.Source); ok {
 		proof.ValuePath = valuePath
 	}
@@ -60,48 +60,56 @@ func (t *Transfer) applyDynamicIndexWriteProofEffect(
 	if out == nil || effect.TablePath.IsEmpty() {
 		return false
 	}
-	changed := false
-	if !effect.KeyPath.IsEmpty() {
-		changed = t.applyKeyProvenanceEffect(out, KeyProvenanceEffect{
-			Kind:      KeyProvenanceDynamicIndexWrite,
-			TablePath: effect.TablePath,
-			KeyPath:   effect.KeyPath,
-		}) || changed
-	}
-	fact, ok := dynamicIndexWriteReadbackFact(effect)
+	proof, ok := flow.MapWriteProofFromPaths(
+		effect.TablePath,
+		effect.KeyPath,
+		effect.Key,
+		effect.ValuePath,
+		effect.Value,
+		effect.AllowOpaqueKeyReadback,
+	)
 	if !ok {
-		return changed
+		return false
 	}
-	before := out.IndexWrites
-	out.IndexWrites = out.IndexWrites.With(fact)
-	return !flow.IndexWriteAdmissionFactsDomain.Equal(before, out.IndexWrites) || changed
+	return flow.ApplyMapWriteProof(out, proof)
 }
 
-func dynamicIndexWriteReadbackFact(effect DynamicIndexWriteProofEffect) (flow.IndexWriteAdmissionFact, bool) {
-	if effect.TablePath.IsEmpty() || effect.Key.IsZero() || effect.Value.IsZero() {
-		return flow.IndexWriteAdmissionFact{}, false
+func (t *Transfer) applySymbolicDynamicIndexWriteProof(
+	out *flow.PointState,
+	target cfg.AssignTarget,
+	src ast.Expr,
+	value product.AbstractValue,
+) bool {
+	if out == nil || target.Kind != cfg.TargetIndex || value.IsZero() {
+		return false
 	}
-	if effect.KeyPath.IsEmpty() && !admissibleIndexWriteProofValue(effect.Key) {
-		return flow.IndexWriteAdmissionFact{}, false
+	tablePath, ok := t.staticContainerPathOfAssignTarget(target)
+	if !ok || tablePath.IsEmpty() {
+		return false
 	}
-	if !effect.KeyPath.IsEmpty() && !admissibleIndexWriteProofValue(effect.Key) && !effect.AllowOpaqueKeyReadback {
-		return flow.IndexWriteAdmissionFact{}, false
+	keyPath := constraint.Path{}
+	if target.Key != nil {
+		keyPath, _ = t.staticPathOfExpr(target.Key)
 	}
-	if !admissibleIndexWriteProofValue(effect.Value) {
-		return flow.IndexWriteAdmissionFact{}, false
+	if keyPath.IsEmpty() {
+		return false
 	}
-	fact := flow.IndexWriteAdmissionFact{
-		Target: flow.IndexWriteAdmissionPathKey(effect.TablePath),
-		Key:    effect.Key,
-		Value:  effect.Value,
+	valuePath := constraint.Path{}
+	if src != nil {
+		valuePath, _ = t.staticPathOfExpr(src)
 	}
-	if !effect.KeyPath.IsEmpty() {
-		fact.KeyPath = flow.IndexWriteAdmissionPathKey(effect.KeyPath)
+	proof, ok := flow.MapWriteProofFromPaths(
+		tablePath,
+		keyPath,
+		product.FromType(typ.Unknown),
+		valuePath,
+		value,
+		true,
+	)
+	if !ok {
+		return false
 	}
-	if !effect.ValuePath.IsEmpty() {
-		fact.ValuePath = flow.IndexWriteAdmissionPathKey(effect.ValuePath)
-	}
-	return fact, true
+	return flow.ApplyMapWriteProof(out, proof)
 }
 
 func (t *Transfer) refineByIndexWriteAdmission(
@@ -120,7 +128,8 @@ func (t *Transfer) refineByIndexWriteAdmission(
 		return product.AbstractValue{}, false
 	}
 	keyType := flow.NormalizeDynamicKeyType(product.ProjectValueOrUnknown(key))
-	for _, keyPath := range t.indexWriteReadKeyPaths(out, e.Key) {
+	keyPaths := t.indexWriteReadKeyPaths(out, e.Key)
+	for _, keyPath := range keyPaths {
 		if admitted, ok := out.IndexWrites.Admission(flow.IndexWriteQuery{
 			Target:    targetPath,
 			KeyPath:   keyPath,
@@ -166,6 +175,18 @@ func (t *Transfer) indexWriteReadKeyPaths(out *flow.PointState, key ast.Expr) []
 		if out == nil {
 			continue
 		}
+		for _, use := range out.PathAliases.AliasesCoveringPath(cur) {
+			source, ok := indexWritePathFromKey(use.Alias.Source)
+			if !ok {
+				continue
+			}
+			for _, seg := range use.Remainder {
+				source = source.Append(seg)
+			}
+			if !source.IsEmpty() {
+				queue = append(queue, source)
+			}
+		}
 		for _, use := range out.ValueOrigins.OriginsCoveringPath(cur) {
 			if use.Origin.Kind != flow.ValueOriginAssignmentAlias {
 				continue
@@ -186,11 +207,11 @@ func (t *Transfer) indexWriteReadKeyPaths(out *flow.PointState, key ast.Expr) []
 }
 
 func indexWritePathFromKey(key constraint.PathKey) (constraint.Path, bool) {
-	sym, segments, ok := flow.ParseSymbolPathKey(key)
-	if !ok || sym == 0 {
+	addr, ok := flow.StableAddressFromKey(key)
+	if !ok {
 		return constraint.Path{}, false
 	}
-	return constraint.Path{Symbol: sym, Segments: append([]constraint.Segment(nil), segments...)}, true
+	return addr.Path()
 }
 
 func indexWriteReadCanUseKeyValueOnly(keyType typ.Type) bool {
@@ -198,14 +219,6 @@ func indexWriteReadCanUseKeyValueOnly(keyType typ.Type) bool {
 		return false
 	}
 	return typ.UnwrapAnnotated(keyType).Kind() == kind.Literal
-}
-
-func admissibleIndexWriteProofValue(av product.AbstractValue) bool {
-	if av.IsZero() {
-		return false
-	}
-	t := product.ProjectValueOrUnknown(av)
-	return !typ.IsAbsentOrUnknown(t) && !typ.IsAny(t)
 }
 
 func indexWriteTargetPath(place Place) (constraint.Path, bool) {

@@ -174,6 +174,13 @@ func (r fieldResolverImpl) RuntimeIndex(t typ.Type, key typ.Type) (typ.Type, boo
 	return r.observer.RuntimeIndex(t, key)
 }
 
+func (r fieldResolverImpl) IndexedReadProofType(expr *ast.AttrGetExpr, p cfg.Point, keyType typ.Type) (typ.Type, bool) {
+	if expr == nil {
+		return nil, false
+	}
+	return r.observer.IndexedReadProofType(expr.Object, expr.Key, keyType, p)
+}
+
 func (r fieldResolverImpl) PathOf(expr ast.Expr, p cfg.Point) constraint.Path {
 	return path.FromExprWithBindingsAt(expr, nil, r.bindings, r.graph, p)
 }
@@ -506,6 +513,10 @@ func checkAttrGet(e *ast.AttrGetExpr, p cfg.Point, resolver fieldResolverImpl, s
 
 	objType := resolver.TypeOf(e.Object, p)
 
+	if indexedReadProofType(e, p, resolver) {
+		return diags
+	}
+
 	if d, ok := optionalIndexError(objType, e, sourceName); ok {
 		diags = append(diags, d)
 		return diags
@@ -570,6 +581,18 @@ func checkAttrGet(e *ast.AttrGetExpr, p cfg.Point, resolver fieldResolverImpl, s
 	return diags
 }
 
+func indexedReadProofType(e *ast.AttrGetExpr, p cfg.Point, resolver fieldResolverImpl) bool {
+	if e == nil {
+		return false
+	}
+	keyType := resolver.TypeOf(e.Key, p)
+	if keyType == nil {
+		keyType = typ.Unknown
+	}
+	proven, ok := resolver.IndexedReadProofType(e, p, keyType)
+	return ok && !typ.IsAbsentOrUnknown(proven)
+}
+
 func relationalIsEquality(e *ast.RelationalOpExpr) bool {
 	if e == nil {
 		return false
@@ -610,6 +633,10 @@ func checkIndexAccess(e *ast.AttrGetExpr, p cfg.Point, resolver fieldResolverImp
 		// This preserves dynamic Lua semantics for computed keys while still
 		// allowing container-specific checks to reject impossible accesses.
 		keyType = typ.Unknown
+	}
+
+	if proven, ok := resolver.IndexedReadProofType(e, p, keyType); ok && !typ.IsAbsentOrUnknown(proven) {
+		return nil
 	}
 
 	_, ok := resolver.RuntimeIndex(objType, keyType)

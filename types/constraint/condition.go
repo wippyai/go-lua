@@ -226,6 +226,12 @@ func And(a, b Condition) Condition {
 	if b.IsTrue() {
 		return a
 	}
+	if conditionImpliesByConjunctionSubset(a, b) {
+		return a
+	}
+	if conditionImpliesByConjunctionSubset(b, a) {
+		return b
+	}
 
 	// Fast path: single disjunct on both sides (very common)
 	if len(a.Disjuncts) == 1 && len(b.Disjuncts) == 1 {
@@ -328,12 +334,21 @@ func (c Condition) MapPaths(fn func(Path) Path) Condition {
 	}
 
 	out := make([][]Constraint, 0, len(c.Disjuncts))
+	changed := false
 	for _, conj := range c.Disjuncts {
 		if len(conj) == 0 {
 			out = append(out, conj)
 			continue
 		}
-		out = append(out, MapPathsConjunction(conj, fn))
+		mapped, conjChanged := mapPathsConjunction(conj, fn)
+		if conjChanged {
+			changed = true
+			mapped = canonicalizeConjunction(mapped)
+		}
+		out = append(out, mapped)
+	}
+	if !changed {
+		return c
 	}
 	return normalizeCondition(Condition{Disjuncts: out})
 }
@@ -600,6 +615,43 @@ func conjunctionHash(conj []Constraint) uint64 {
 	return h
 }
 
+func conditionImpliesByConjunctionSubset(a, b Condition) bool {
+	if b.IsTrue() || a.IsFalse() {
+		return true
+	}
+	if a.IsTrue() || b.IsFalse() {
+		return false
+	}
+	for _, da := range a.Disjuncts {
+		matched := false
+		for _, db := range b.Disjuncts {
+			if conjunctionContainsAll(da, db) {
+				matched = true
+				break
+			}
+		}
+		if !matched {
+			return false
+		}
+	}
+	return len(a.Disjuncts) > 0
+}
+
+func conjunctionContainsAll(haystack, needles []Constraint) bool {
+	if len(needles) == 0 {
+		return true
+	}
+	if len(haystack) < len(needles) {
+		return false
+	}
+	for _, c := range needles {
+		if !ConjunctionContains(haystack, c) {
+			return false
+		}
+	}
+	return true
+}
+
 func mergeConjunctions(a, b []Constraint) []Constraint {
 	if len(a) == 0 {
 		return b
@@ -697,11 +749,24 @@ func MapPathsConjunction(conj []Constraint, fn func(Path) Path) []Constraint {
 	if len(conj) == 0 || fn == nil {
 		return conj
 	}
-	out := make([]Constraint, 0, len(conj))
-	for _, c := range conj {
-		out = append(out, mapConstraintPaths(c, fn))
+	out, changed := mapPathsConjunction(conj, fn)
+	if !changed {
+		return conj
 	}
 	return canonicalizeConjunction(out)
+}
+
+func mapPathsConjunction(conj []Constraint, fn func(Path) Path) ([]Constraint, bool) {
+	out := make([]Constraint, 0, len(conj))
+	changed := false
+	for _, c := range conj {
+		mapped := mapConstraintPaths(c, fn)
+		if !mapped.Equals(c) {
+			changed = true
+		}
+		out = append(out, mapped)
+	}
+	return out, changed
 }
 
 func mapConstraintPaths(c Constraint, fn func(Path) Path) Constraint {
@@ -1190,14 +1255,7 @@ func conjunctionSubsumes(a, b []Constraint) bool {
 }
 
 func conjunctionContradicts(conj []Constraint) bool {
-	for i := 0; i < len(conj); i++ {
-		for j := i + 1; j < len(conj); j++ {
-			if constraintsContradict(conj[i], conj[j]) {
-				return true
-			}
-		}
-	}
-	return false
+	return conjunctionContradictionIndexOf(conj).HasContradiction()
 }
 
 func constraintsContradict(a, b Constraint) bool {
@@ -1206,10 +1264,38 @@ func constraintsContradict(a, b Constraint) bool {
 			versionScopedMutableConstraint(a) && versionScopedMutableConstraint(b)
 	}
 
+	if hasTypeBuiltinContradiction(a, b) {
+		return rootStableConstraint(a) && rootStableConstraint(b) ||
+			versionScopedMutableConstraint(a) && versionScopedMutableConstraint(b)
+	}
+
 	if !rootStableConstraint(a) || !rootStableConstraint(b) {
 		return false
 	}
 	return truthyNilContradiction(a, b) || truthyNilContradiction(b, a)
+}
+
+func hasTypeBuiltinContradiction(a, b Constraint) bool {
+	ha, ok := a.(HasType)
+	if !ok {
+		return false
+	}
+	hb, ok := b.(HasType)
+	if !ok {
+		return false
+	}
+	if !ha.Path.Equal(hb.Path) {
+		return false
+	}
+	ka, ok := ha.Type.BuiltinKind()
+	if !ok {
+		return false
+	}
+	kb, ok := hb.Type.BuiltinKind()
+	if !ok {
+		return false
+	}
+	return ka != kb
 }
 
 func rootStableConstraint(c Constraint) bool {

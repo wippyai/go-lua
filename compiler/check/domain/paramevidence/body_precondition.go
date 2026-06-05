@@ -179,6 +179,47 @@ func ConditionedPathEvidence(path constraint.Path, evidence typ.Type, cond const
 	return conditionedPathEvidenceFromCondition(path, evidence, cond, nil)
 }
 
+// ConditionedPathContract wraps a leaf contract under path, then weakens the
+// caller-visible contract when the current abstract condition proves the path is
+// locally guarded. It is the native ParamContract counterpart to
+// ConditionedPathEvidence, used by transfer so type, capability, and contract
+// demands share one guard policy.
+func ConditionedPathContract(path constraint.Path, leaf ParamContract, cond constraint.Condition) (ParamContract, bool) {
+	contract := DemandFromPathContract(path.Segments, leaf)
+	if path.Symbol == 0 || ParamContractDomain.Equal(contract, ParamContractDomain.Bottom()) {
+		return contract, false
+	}
+	evidence := contract.ProjectValue()
+	if evidence == nil {
+		return contract, false
+	}
+	conditioned, ok := ConditionedPathEvidence(path, evidence, cond)
+	if !ok || conditioned == nil {
+		return contract, ok
+	}
+	return DemandFromType(conditioned), true
+}
+
+// ConditionedLeafContract weakens a demand on a derived local path before that
+// demand is lifted back through ValueOrigin provenance. The returned contract is
+// still leaf-relative: callers wrap it under the origin remainder after local
+// guard complements have been admitted at the consumed leaf.
+func ConditionedLeafContract(path constraint.Path, leaf ParamContract, cond constraint.Condition) (ParamContract, bool) {
+	if path.Symbol == 0 || ParamContractDomain.Equal(leaf, ParamContractDomain.Bottom()) ||
+		cond.IsFalse() || !cond.HasConstraints() {
+		return leaf, false
+	}
+	evidence := leaf.ProjectValue()
+	if evidence == nil {
+		return leaf, false
+	}
+	complement := pathGuardComplement(path, cond)
+	if complement == nil {
+		return leaf, false
+	}
+	return DemandFromType(typ.NewUnion(evidence, complement)), true
+}
+
 func (c BodyPreconditionContext) literalValueAtPath(p cfg.Point, path constraint.Path) *typ.Literal {
 	if path.IsEmpty() {
 		return nil
@@ -292,17 +333,12 @@ func pathGuardComplement(path constraint.Path, cond constraint.Condition) typ.Ty
 }
 
 func samePathIgnoringVersion(a, b constraint.Path) bool {
-	if a.Symbol != b.Symbol || len(a.Segments) != len(b.Segments) {
+	left, leftOK := flow.StableAddressOfPath(a)
+	right, rightOK := flow.StableAddressOfPath(b)
+	if !leftOK || !rightOK {
 		return false
 	}
-	for i := range a.Segments {
-		if a.Segments[i].Kind != b.Segments[i].Kind ||
-			a.Segments[i].Name != b.Segments[i].Name ||
-			a.Segments[i].Index != b.Segments[i].Index {
-			return false
-		}
-	}
-	return true
+	return left.Equal(right)
 }
 
 // guardedLeafEvidence rebuilds structural evidence for segments with the

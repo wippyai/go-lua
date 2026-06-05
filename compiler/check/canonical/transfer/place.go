@@ -147,6 +147,18 @@ func (t *Transfer) staticPathOfExpr(expr ast.Expr) (constraint.Path, bool) {
 	return place.StaticPath()
 }
 
+func staticPathOfExprWithRootSymbol(expr ast.Expr, sym cfg.SymbolID) (constraint.Path, bool) {
+	access, ok := staticAccessOfExpr(expr)
+	if !ok {
+		return constraint.Path{}, false
+	}
+	place, ok := access.place(sym)
+	if !ok {
+		return constraint.Path{}, false
+	}
+	return place.StaticPath()
+}
+
 func symbolPathKey(p Place) (constraint.PathKey, bool) {
 	path, ok := p.StaticPath()
 	if !ok || path.Symbol == 0 {

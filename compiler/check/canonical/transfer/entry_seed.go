@@ -62,6 +62,10 @@ func (t *Transfer) applyEntryReachabilityEffect(out *flow.PointState, _ EntryRea
 		out.ValueOrigins = flow.ValueOriginFactsDomain.Top()
 		changed = true
 	}
+	if out.PathAliases.IsBottom() {
+		out.PathAliases = flow.PathAliasFactsDomain.Top()
+		changed = true
+	}
 	if out.IndexWrites.IsBottom() {
 		out.IndexWrites = flow.IndexWriteAdmissionFactsDomain.Top()
 		changed = true
@@ -79,7 +83,7 @@ type EntrySeedEffect struct {
 	Symbol   cfg.SymbolID
 	Declared typ.Type
 	Entry    product.AbstractValue
-	Contract product.AbstractValue
+	Contract paramevidence.ParamContract
 }
 
 func (t *Transfer) applyEntrySeedEffect(out *flow.PointState, effect EntrySeedEffect) bool {
@@ -286,17 +290,25 @@ func collectTypeParams(t typ.Type, seen map[*typ.TypeParam]bool, seenTypes map[t
 	})
 }
 
-func entrySeedValue(declared typ.Type, entry, contract product.AbstractValue) product.AbstractValue {
+func entrySeedValue(declared typ.Type, entry product.AbstractValue, contract paramevidence.ParamContract) product.AbstractValue {
 	av := entrySeedDeclaredValue(declared, entry)
 	if av.IsZero() && !entry.IsZero() {
 		av = entry
 	}
-	if !contract.IsZero() {
-		if !paramevidence.IsInformative(contract.ProjectValue()) {
+	if !paramevidence.ParamContractDomain.Equal(contract, paramevidence.ParamContractDomain.Bottom()) {
+		contractValue := contract.ProductValue()
+		if contractValue.IsZero() || !paramevidence.IsInformative(contract.ProjectValue()) {
 			return av
 		}
 		if av.IsZero() {
-			av = contract
+			av = contractValue
+		} else if declared == nil && av.IsGradualTop() {
+			// A gradual entry value is not concrete caller evidence; it is the
+			// dynamic top introduced by an unannotated source. Let the callee's
+			// solved body contract seed the entry so wrappers do not block real
+			// parameter obligations behind `any`. Declared `any` has no
+			// GradualTop evidence and remains authoritative above.
+			av = contractValue
 		}
 		// With a declared annotation or exact caller entry value, keep `av` as the
 		// declared/entry composition. Refining it by the demand creates a

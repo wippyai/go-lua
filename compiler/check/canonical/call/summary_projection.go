@@ -19,9 +19,11 @@ type SummaryLookup func(EntryContext) summary.Summary
 // SummaryTargetInfo provides per-target metadata needed by summary projection
 // without letting this package read driver/program state.
 type SummaryTargetInfo struct {
-	DeclaredReturns    func(SelectedTarget) bool
-	SignatureReturns   func(SelectedTarget) []typ.Type
-	SignatureRelations func(SelectedTarget) flow.ReturnRelations
+	DeclaredReturns        func(SelectedTarget) bool
+	SignatureReturns       func(SelectedTarget) []typ.Type
+	SignatureRelations     func(SelectedTarget) flow.ReturnRelations
+	SkipSignatureReturns   bool
+	SkipSignatureRelations bool
 }
 
 // SummaryProjectionForTargets applies the canonical callable precedence rule,
@@ -50,10 +52,10 @@ func SummaryProjectionForTargets(
 		if info.DeclaredReturns != nil {
 			next.DeclaredReturns = info.DeclaredReturns(target)
 		}
-		if info.SignatureReturns != nil {
+		if !info.SkipSignatureReturns && info.SignatureReturns != nil {
 			next.SignatureReturns = info.SignatureReturns(target)
 		}
-		if info.SignatureRelations != nil {
+		if !info.SkipSignatureRelations && info.SignatureRelations != nil {
 			next.SignatureRelations = info.SignatureRelations(target)
 		}
 		out = append(out, next)

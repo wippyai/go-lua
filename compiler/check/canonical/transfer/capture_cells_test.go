@@ -171,7 +171,7 @@ func TestCapturedAssignmentFromPendingParamDoesNotTopEffect(t *testing.T) {
 func TestOwnerCellBackedParamSeedsCellWithoutEffect(t *testing.T) {
 	tr, ident, sym := ownerCellParamTestTransfer(t)
 	out := tr.Transfer(tr.in.Graph, tr.in.Graph.Entry(), flow.PointState{}, paramevidence.Contracts{
-		0: product.FromType(typ.String),
+		0: paramevidence.DemandFromType(typ.String),
 	}, nil)
 
 	if _, ok := out.Env[flow.SymbolValueKey(sym)]; ok {

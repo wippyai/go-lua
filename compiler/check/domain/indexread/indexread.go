@@ -27,9 +27,14 @@ type IndexWriteAdmissionFlow interface {
 	IndexWriteAdmission(q flowfacts.IndexWriteQuery) (typ.Type, bool)
 }
 
+type MapReadbackFlow interface {
+	MapReadback(q flowfacts.IndexWriteQuery) (typ.Type, bool)
+}
+
 // Query describes one indexed read projection.
 type Query struct {
 	Point     cfg.Point
+	View      flowfacts.PathReadView
 	Container typ.Type
 	Result    typ.Type
 	Object    ast.Expr
@@ -53,6 +58,7 @@ type ContextQuery struct {
 // normalized indexed-read proof context.
 type ObservationQuery struct {
 	Point  cfg.Point
+	View   flowfacts.PathReadView
 	Result typ.Type
 	Index  flowfacts.PathObservationIndexRead
 	Flow   Flow
@@ -72,6 +78,7 @@ func Refine(q Query) (typ.Type, bool) {
 	}
 	return RefineObservation(ObservationQuery{
 		Point:  q.Point,
+		View:   q.View,
 		Result: q.Result,
 		Index:  index,
 		Flow:   q.Flow,
@@ -133,24 +140,46 @@ func RefineObservation(q ObservationQuery) (typ.Type, bool) {
 }
 
 func refineObservationByIndexWriteAdmission(q ObservationQuery) (typ.Type, bool) {
-	flow, ok := q.Flow.(IndexWriteAdmissionFlow)
-	if !ok || q.Index.TablePath.IsEmpty() {
+	if q.Index.TablePath.IsEmpty() {
 		return nil, false
 	}
 	if q.Index.KeyPath.IsEmpty() && !indexWriteReadCanUseKeyValueOnly(q.Index.KeyType) {
 		return nil, false
 	}
-	admitted, ok := flow.IndexWriteAdmission(flowfacts.IndexWriteQuery{
+	query := flowfacts.IndexWriteQuery{
 		Point:     q.Point,
+		View:      q.View,
 		Target:    q.Index.TablePath,
 		KeyPath:   q.Index.KeyPath,
 		KeySymbol: q.Index.KeyPath.Symbol,
 		KeyType:   q.Index.KeyType,
-	})
-	if !ok || typ.IsAbsentOrUnknown(admitted) || typ.IsAny(admitted) {
-		return nil, false
 	}
-	return admitted, true
+	if flow, ok := q.Flow.(MapReadbackFlow); ok {
+		if admitted, ok := flow.MapReadback(query); readbackIsInformative(admitted, ok) {
+			return refineReadbackPresence(q, admitted), true
+		}
+	}
+	if flow, ok := q.Flow.(IndexWriteAdmissionFlow); ok {
+		if admitted, ok := flow.IndexWriteAdmission(query); readbackIsInformative(admitted, ok) {
+			return refineReadbackPresence(q, admitted), true
+		}
+	}
+	return nil, false
+}
+
+func refineReadbackPresence(q ObservationQuery, readback typ.Type) typ.Type {
+	if q.Flow == nil || q.Index.TablePath.IsEmpty() || q.Index.KeyPath.IsEmpty() ||
+		!q.Flow.HasKeyOf(q.Point, q.Index.TablePath, q.Index.KeyPath) {
+		return readback
+	}
+	if refined, ok := removeNil(readback); ok {
+		return refined
+	}
+	return readback
+}
+
+func readbackIsInformative(t typ.Type, ok bool) bool {
+	return ok && !typ.IsAbsentOrUnknown(t) && !typ.IsAny(t)
 }
 
 func refineObservationByKeyPresence(q ObservationQuery) (typ.Type, bool) {

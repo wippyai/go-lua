@@ -274,6 +274,39 @@ func TestDirectCallEntryFunctionRefs_ProjectRuntimeArgsToParamPaths(t *testing.T
 	}
 }
 
+func TestDirectCallEntryFunctionRefs_LimitsRebasedArgsToCalleeVocabulary(t *testing.T) {
+	source := constraint.NewPath(cfg.SymbolID(24), "receiver")
+	param := constraint.NewPath(cfg.SymbolID(25), "self")
+	usedRef := flow.FunctionRef{GraphID: 106}
+	unusedRef := flow.FunctionRef{GraphID: 107}
+	arg := &ast.IdentExpr{Value: "receiver"}
+	call := &ast.FuncCallExpr{Args: []ast.Expr{arg}}
+	refs := flow.WithFunctionRef(nil, source.Field("used").Key(), flow.FunctionRefSetOf(usedRef))
+	refs = flow.WithFunctionRef(refs, source.Field("unused").Key(), flow.FunctionRefSetOf(unusedRef))
+
+	got := summary.DirectCallEntryFunctionRefs(summary.DirectCallEntryReferenceInput{
+		Call:                   call,
+		Callee:                 summary.FuncRef{GraphID: 7},
+		FunctionRefs:           refs,
+		ReferenceProjection:    flow.ReferencePathProjection{Exact: []constraint.Path{param.Field("used")}},
+		LimitReferencePaths:    true,
+		ParamSlot:              func(summary.FuncRef, *ast.FuncCallExpr, int) (int, int, bool) { return 0, 0, true },
+		ParamPath:              func(summary.FuncRef, int) (constraint.Path, bool) { return param, true },
+		ArgPath:                func(int, ast.Expr) (constraint.Path, bool) { return source, true },
+		ResolveFunctionArg:     nil,
+		ResolveFunctionArgRefs: nil,
+	})
+
+	if refs, ok := flow.FunctionRefAt(got, param.Field("used").Key()); !ok {
+		t.Fatalf("projected used ref missing: %#v", got)
+	} else if ref, singleton := refs.Singleton(); !singleton || ref != usedRef {
+		t.Fatalf("projected used ref = %s, want %v", refs.Format(), usedRef)
+	}
+	if _, ok := flow.FunctionRefAt(got, param.Field("unused").Key()); ok {
+		t.Fatalf("projected refs retained unused path: %#v", got)
+	}
+}
+
 func TestDirectCallEntryFunctionRefs_SeedsDirectLiteralWhenParamSlotMapped(t *testing.T) {
 	param := cfg.SymbolID(22)
 	paramPath := constraint.NewPath(param, "fn")
@@ -472,6 +505,85 @@ func TestCallEntryContextProjectionUsesCallEventPostState(t *testing.T) {
 	got, ok := values[0]
 	if !ok || !product.Equal(got, product.FromType(typ.String)) {
 		t.Fatalf("entry slot 0 = %v/%v, want post-state string", got.ProjectValue(), ok)
+	}
+}
+
+func TestCallEntryContextProjectionResolvesTargetsFromPreCallState(t *testing.T) {
+	arg := &ast.IdentExpr{Value: "arg"}
+	call := &ast.FuncCallExpr{
+		Receiver: &ast.IdentExpr{Value: "c"},
+		Method:   "with_options",
+		Args:     []ast.Expr{arg},
+	}
+	fn := &ast.FunctionExpr{Stmts: []ast.Stmt{&ast.FuncCallStmt{Expr: call}}}
+	graph := cfg.Build(fn)
+	var (
+		point cfg.Point
+		info  *cfg.CallInfo
+	)
+	graph.EachCallSite(func(p cfg.Point, callInfo *cfg.CallInfo) {
+		point = p
+		info = callInfo
+	})
+	if point == 0 || info == nil || info.CalleePath.IsEmpty() {
+		t.Fatal("test graph did not expose method call info")
+	}
+
+	callee := summary.FuncRef{GraphID: 10}
+	methodRef := flow.FunctionRef{GraphID: 10}
+	methodPath := info.CalleePath.Field(info.Method)
+	postRoot := flow.WithFunctionRef(nil, info.CalleePath.Key(), flow.FunctionRefSetOf(flow.FunctionRef{GraphID: 99}))
+	preValue := product.FromType(typ.Number)
+	postValue := product.FromType(typ.String)
+	keys := summary.CallEntryContextProjection{
+		Graph: graph,
+		State: state.FunctionState{
+			InPoints: map[cfg.Point]flow.PointState{
+				point: {
+					Env: map[flow.ValueKey]product.AbstractValue{
+						flow.SymbolValueKey(1): preValue,
+					},
+					FunctionRefs: flow.WithFunctionRef(nil, methodPath.Key(), flow.FunctionRefSetOf(methodRef)),
+				},
+			},
+			Points: map[cfg.Point]flow.PointState{
+				point: {
+					Env: map[flow.ValueKey]product.AbstractValue{
+						flow.SymbolValueKey(1): postValue,
+					},
+					FunctionRefs: postRoot,
+				},
+			},
+		},
+		ResolveTargets: func(gotCall *ast.FuncCallExpr, in *flow.PointState) []summary.CallEntryTarget {
+			if gotCall != call {
+				t.Fatalf("call = %#v, want test call", gotCall)
+			}
+			if set, ok := flow.FunctionRefAt(in.FunctionRefs, methodPath.Key()); ok && !set.IsBottom() {
+				return []summary.CallEntryTarget{{Ref: callee}}
+			}
+			return nil
+		},
+		ParamSlot: func(_ summary.FuncRef, _ *ast.FuncCallExpr, runtimeIdx int) (int, int, bool) {
+			if runtimeIdx == 1 {
+				return 0, 0, true
+			}
+			return 0, 0, false
+		},
+		EvalArg: func(in *flow.PointState, _ ast.Expr) (product.AbstractValue, bool) {
+			return flow.SymbolValue(*in, 1)
+		},
+	}.ProjectKeys()
+
+	if len(keys) != 1 {
+		t.Fatalf("context keys = %d, want 1", len(keys))
+	}
+	if keys[0].Ref != callee {
+		t.Fatalf("callee key = %v, want %v", keys[0].Ref, callee)
+	}
+	got, ok := keys[0].Values.Values()[0]
+	if !ok || !product.Equal(got, preValue) {
+		t.Fatalf("entry slot 0 = %v/%v, want pre-state number", got.ProjectValue(), ok)
 	}
 }
 

@@ -164,6 +164,101 @@ func TestProductCallContextRuntimeArgsIncludeMethodReceiver(t *testing.T) {
 	}
 }
 
+func TestProductCallContextMethodReceiverSelfTypeRejectsOpenSurface(t *testing.T) {
+	fn := &ast.FunctionExpr{ParList: &ast.ParList{Names: []string{"recv"}}}
+	in := input.BuildFromFunction(fn, nil, nil)
+	recvSym := in.Scope.ParamSymbols[0]
+	recv := &ast.IdentExpr{Value: "recv"}
+	in.Graph.Bindings().Bind(recv, recvSym)
+
+	tp := typ.NewTypeParam("T", nil)
+	openReceiver := typ.NewRecord().
+		Field("go", typ.Func().Build()).
+		Field("value", tp).
+		Build()
+	tr := New(in, Config{})
+	out := flow.PointState{Env: map[flow.ValueKey]product.AbstractValue{
+		flow.SymbolValueKey(recvSym): product.FromType(openReceiver),
+	}}
+	ctx := tr.ProductCallContext(&out, &ast.FuncCallExpr{Receiver: recv, Method: "go"})
+
+	if ctx.SelfType != nil {
+		t.Fatalf("ProductCallContext SelfType = %v, want nil for open receiver", ctx.SelfType)
+	}
+	if av, ok := ctx.RuntimeArgValueAt(0); !ok || !typ.TypeEquals(av.ProjectValue(), openReceiver) {
+		t.Fatalf("RuntimeArgValueAt(0) = %v/%v, want receiver value preserved", av.ProjectValue(), ok)
+	}
+}
+
+func TestProductCallContextMethodReceiverUsesBranchNarrowedCopiedLocal(t *testing.T) {
+	fn := &ast.FunctionExpr{ParList: &ast.ParList{Names: []string{"store"}}}
+	in := input.BuildFromFunction(fn, nil, nil)
+	storeSym := in.Scope.ParamSymbols[0]
+	store := &ast.IdentExpr{Value: "store"}
+	in.Graph.Bindings().Bind(store, storeSym)
+
+	svc := typ.NewRecord().
+		Field("go", typ.Func().Build()).
+		Build()
+	tr := New(in, Config{})
+	out := flow.PointState{Env: map[flow.ValueKey]product.AbstractValue{
+		flow.SymbolValueKey(storeSym): product.FromType(typ.NewOptional(svc)),
+	}}
+	narrowed := tr.narrowByCondCheck(out, &cfg.BranchInfo{
+		CondSymbol: storeSym,
+		CondCheck:  cfg.CondCheck{Kind: cfg.CheckTruthy},
+		Condition:  store,
+	}, true, false)
+	if av, ok := tr.symbolValue(&narrowed, storeSym); !ok || !typ.TypeEquals(av.ProjectValue(), svc) {
+		t.Fatalf("narrowed store = %v/%v, want non-optional receiver", av.ProjectValue(), ok)
+	}
+
+	call := &ast.FuncCallExpr{Receiver: store, Method: "go"}
+	ctx := tr.ProductCallContext(&narrowed, call)
+	if ctx.SelfType == nil || !typ.TypeEquals(ctx.SelfType, svc) {
+		t.Fatalf("ProductCallContext SelfType = %v, want non-optional receiver %v", ctx.SelfType, svc)
+	}
+	if av, ok := ctx.RuntimeArgValueAt(0); !ok || !typ.TypeEquals(av.ProjectValue(), svc) {
+		t.Fatalf("RuntimeArgValueAt(0) = %v/%v, want non-optional receiver", av.ProjectValue(), ok)
+	}
+}
+
+func TestProductCallContextMethodReceiverUsesBranchNarrowedAliasLocal(t *testing.T) {
+	fn := &ast.FunctionExpr{ParList: &ast.ParList{Names: []string{"store"}}}
+	in := input.BuildFromFunction(fn, nil, nil)
+	storeSym := in.Scope.ParamSymbols[0]
+	store := &ast.IdentExpr{Value: "store"}
+	in.Graph.Bindings().Bind(store, storeSym)
+
+	svc := typ.NewAlias("Svc", typ.NewRecord().
+		Field("go", typ.Func().Build()).
+		Build())
+	tr := New(in, Config{})
+	out := flow.PointState{Env: map[flow.ValueKey]product.AbstractValue{
+		flow.SymbolValueKey(storeSym): product.FromType(typ.NewOptional(svc)),
+	}}
+	narrowed := tr.narrowByCondCheck(out, &cfg.BranchInfo{
+		CondSymbol: storeSym,
+		CondCheck:  cfg.CondCheck{Kind: cfg.CheckTruthy},
+		Condition:  store,
+	}, true, false)
+	if av, ok := tr.symbolValue(&narrowed, storeSym); !ok || !av.DefinitelyPresent() {
+		t.Fatalf("narrowed store = %v/%v present=%v, want present alias receiver", av.ProjectValue(), ok, av.DefinitelyPresent())
+	}
+
+	call := &ast.FuncCallExpr{Receiver: store, Method: "go"}
+	ctx := tr.ProductCallContext(&narrowed, call)
+	if ctx.SelfType == nil {
+		t.Fatalf("ProductCallContext SelfType is nil for narrowed alias receiver")
+	}
+	if _, optional := typ.SplitNilableFieldType(ctx.SelfType); optional {
+		t.Fatalf("ProductCallContext SelfType = %v, want non-optional alias receiver", ctx.SelfType)
+	}
+	if av, ok := ctx.RuntimeArgValueAt(0); !ok || !av.DefinitelyPresent() {
+		t.Fatalf("RuntimeArgValueAt(0) = %v/%v present=%v, want present alias receiver", av.ProjectValue(), ok, av.DefinitelyPresent())
+	}
+}
+
 func TestTransferTypeCastNarrowNormalizesConstKeyPath(t *testing.T) {
 	obj := &ast.IdentExpr{Value: "obj"}
 	key := &ast.IdentExpr{Value: "key"}

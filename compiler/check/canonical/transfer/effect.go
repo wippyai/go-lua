@@ -3,9 +3,12 @@ package transfer
 import (
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/cfg"
+	"github.com/wippyai/go-lua/compiler/check/domain/fieldkey"
 	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/domain/value/product"
 	"github.com/wippyai/go-lua/types/flow"
+	"github.com/wippyai/go-lua/types/typ"
+	"github.com/wippyai/go-lua/types/typ/unwrap"
 )
 
 type DynamicWriteMode uint8
@@ -49,20 +52,25 @@ const (
 	RelationSeedTargetLengthParam
 	RelationSeedContainerLowerBound
 	RelationKillLengthTargets
+	RelationSeedGuardedType
 )
 
 // RelationEffect is the canonical reducer payload for point-local relation facts.
 // Relations are must-facts in PointState.Rel, so transfer code seeds and kills
 // them through this reducer rather than editing the relation axis directly.
 type RelationEffect struct {
-	Kind       RelationEffectKind
-	ErrSym     cfg.SymbolID
-	ValueSyms  []cfg.SymbolID
-	Symbols    []cfg.SymbolID
-	TargetRoot cfg.SymbolID
-	TargetKey  constraint.PathKey
-	ParamIndex int
-	Lower      int64
+	Kind          RelationEffectKind
+	ErrSym        cfg.SymbolID
+	ValueSyms     []cfg.SymbolID
+	Symbols       []cfg.SymbolID
+	TargetRoot    cfg.SymbolID
+	TargetKey     constraint.PathKey
+	ParamIndex    int
+	Lower         int64
+	GuardSym      cfg.SymbolID
+	TargetSym     cfg.SymbolID
+	GuardOnTruthy bool
+	TargetType    typ.Type
 }
 
 // ReturnSlotEffect is the transfer payload for one caller-visible return slot.
@@ -193,13 +201,49 @@ func (t *Transfer) recordCellEffects(out *flow.PointState, effects flow.CaptureE
 	out.CellEffects = out.CellEffects.Then(effects)
 }
 
-func (t *Transfer) recordReceiverEffect(out *flow.PointState, slot int, value product.AbstractValue) bool {
+func (t *Transfer) recordReceiverEffect(
+	out *flow.PointState,
+	slot int,
+	value product.AbstractValue,
+	mutations ...flow.ReceiverMutation,
+) bool {
 	if out == nil || slot < 0 || value.IsZero() {
 		return false
 	}
 	before := out.ReceiverEffects
-	out.ReceiverEffects = out.ReceiverEffects.Then(flow.ReceiverMustWrite(slot, value))
+	out.ReceiverEffects = out.ReceiverEffects.Then(flow.ReceiverMustWriteWithMutations(slot, value, mutations))
 	return !flow.ReceiverEffectsDomain.Equal(before, out.ReceiverEffects)
+}
+
+func (t *Transfer) recordReceiverMutationEffect(
+	out *flow.PointState,
+	sym cfg.SymbolID,
+	mutations ...flow.ReceiverMutation,
+) bool {
+	if out == nil || sym == 0 || len(mutations) == 0 {
+		return false
+	}
+	slot, ok := t.paramBySym[sym]
+	if !ok {
+		if t.prototypeSelfSymbol == 0 || sym != t.prototypeSelfSymbol || t.prototypeSelfSlot < 0 {
+			return false
+		}
+		slot = t.prototypeSelfSlot
+	}
+	before := out.ReceiverEffects
+	out.ReceiverEffects = out.ReceiverEffects.Then(flow.ReceiverMutations(slot, mutations))
+	return !flow.ReceiverEffectsDomain.Equal(before, out.ReceiverEffects)
+}
+
+func receiverMutationForPlace(place Place, presentElementWrite bool) (flow.ReceiverMutation, bool) {
+	path, ok := place.StaticPrefixPath()
+	if !ok || path.Symbol == 0 {
+		return flow.ReceiverMutation{}, false
+	}
+	return flow.ReceiverMutation{
+		Segments:            append([]constraint.Segment(nil), path.Segments...),
+		PresentElementWrite: presentElementWrite,
+	}, true
 }
 
 func (t *Transfer) applyRelationEffect(out *flow.PointState, effect RelationEffect) bool {
@@ -218,6 +262,8 @@ func (t *Transfer) applyRelationEffect(out *flow.PointState, effect RelationEffe
 		out.Rel = out.Rel.WithContainerLowerBound(effect.TargetRoot, effect.TargetKey, effect.Lower)
 	case RelationKillLengthTargets:
 		out.Rel = out.Rel.KillLengthTargets(effect.Symbols...)
+	case RelationSeedGuardedType:
+		out.Rel = out.Rel.WithGuardedType(effect.GuardSym, effect.TargetSym, effect.GuardOnTruthy, effect.TargetType)
 	default:
 		return false
 	}
@@ -353,7 +399,11 @@ func (t *Transfer) applyPrototypeSelfWriteEffect(out *flow.PointState, effect Wr
 	if !effect.RecordProto {
 		return false
 	}
-	return t.recordPrototypeSelfWrite(out, effect.Place.Root, updated)
+	mutation, _ := receiverMutationForPlace(
+		effect.Place,
+		presentDynamicElementWritePreservesKeyPresence(effect.Place, effect.Value),
+	)
+	return t.recordPrototypeSelfWrite(out, effect.Place.Root, updated, len(effect.Place.Steps) > 0, mutation)
 }
 
 func referenceEffectForWrite(effect WriteEffect) ReferenceEffect {
@@ -397,6 +447,8 @@ type MutatorEffect struct {
 	Place           Place
 	Kind            MutatorKind
 	Element         product.AbstractValue
+	ElementExpr     ast.Expr
+	ElementPath     constraint.Path
 	Key             product.AbstractValue
 	LengthKey       constraint.PathKey
 	LengthIncrement int64
@@ -406,6 +458,16 @@ func (t *Transfer) applyMutatorEffect(out *flow.PointState, effect MutatorEffect
 	if out == nil {
 		return false
 	}
+	keyArrayTables, pendingKeyArrayTables := t.keyArrayTablesPreservedByAppend(out, effect)
+	appendHistoryArray := constraint.Path{}
+	preserveAppendHistoryBase := false
+	if effect.Kind == MutatorAppendElement {
+		if path, ok := effect.Place.StaticPath(); ok && !path.IsEmpty() {
+			appendHistoryArray = path
+			preserveAppendHistoryBase = out.KeyPresence.HasAppendHistoryBase(flow.KeyPresencePathKey(path))
+		}
+	}
+	appendDestinations := appendOriginDestinations(out, appendHistoryArray, nil)
 	changed := false
 	changed = t.applyPlaceMutationEffect(out, PlaceMutationEffect{
 		Place:         effect.Place,
@@ -413,8 +475,22 @@ func (t *Transfer) applyMutatorEffect(out *flow.PointState, effect MutatorEffect
 		Conditions:    true,
 		KeyFacts:      true,
 	}) || changed
+	if preserveAppendHistoryBase {
+		before := out.KeyPresence
+		out.KeyPresence = out.KeyPresence.WithAppendHistoryBasePath(appendHistoryArray)
+		changed = !flow.KeyPresenceFactsDomain.Equal(before, out.KeyPresence) || changed
+	}
+	changed = t.recordAppendKeyFact(out, effect.Place, effect.Kind, effect.ElementPath) || changed
+	changed = t.recordAppendElementFieldOrigins(out, effect.Place, effect.Kind, effect.ElementExpr, appendDestinations) || changed
 	if effect.LengthKey != "" && effect.LengthIncrement > 0 {
 		changed = t.incrementLenBound(out, effect.LengthKey, effect.LengthIncrement) || changed
+	}
+	if len(keyArrayTables) > 0 || len(pendingKeyArrayTables) > 0 {
+		changed = t.applyAppendKeyArrayFacts(out, effect.Place, keyArrayTables, pendingKeyArrayTables, effect.ElementPath, effect.Element) || changed
+	}
+	mutation, mutationOK := receiverMutationForPlace(effect.Place, false)
+	if mutationOK {
+		changed = t.recordReceiverMutationEffect(out, effect.Place.Root, mutation) || changed
 	}
 	if effect.Place.Root == 0 || effect.Element.IsZero() {
 		return changed
@@ -438,13 +514,422 @@ func (t *Transfer) applyMutatorEffect(out *flow.PointState, effect MutatorEffect
 		return changed
 	}
 	t.writeRootContainer(out, effect.Place.Root, updated)
-	changed = t.recordPrototypeSelfWrite(out, effect.Place.Root, updated) || changed
+	if mutationOK {
+		changed = t.recordPrototypeSelfWrite(out, effect.Place.Root, updated, true, mutation) || changed
+	} else {
+		changed = t.recordPrototypeSelfWrite(out, effect.Place.Root, updated, true) || changed
+	}
 	return true
 }
 
+func (t *Transfer) keyArrayTablesPreservedByAppend(out *flow.PointState, effect MutatorEffect) ([]constraint.PathKey, []constraint.PathKey) {
+	if out == nil || effect.Kind != MutatorAppendElement || effect.ElementPath.IsEmpty() {
+		return nil, nil
+	}
+	arrayPath, ok := effect.Place.StaticPath()
+	if !ok || arrayPath.IsEmpty() {
+		return nil, nil
+	}
+	arrayKey := flow.KeyPresencePathKey(arrayPath)
+	elementKey := flow.KeyPresencePathKey(effect.ElementPath)
+	if arrayKey == "" || elementKey == "" {
+		return nil, nil
+	}
+	existingTables := out.KeyPresence.KeyArrayTables(arrayKey)
+	historyEmpty := out.KeyPresence.HasAppendHistoryBase(arrayKey)
+	if historyEmpty {
+		for _, event := range out.KeyPresence.AppendHistoryEventEntries() {
+			if event.Array == arrayKey {
+				historyEmpty = false
+				break
+			}
+		}
+	}
+	canSeedFromEmpty := len(existingTables) == 0 &&
+		(out.KeyPresence.HasEmptyKeyArray(arrayKey) || historyEmpty || t.arrayPathCurrentlyEmpty(out, arrayPath))
+	var tables []constraint.PathKey
+	var pending []constraint.PathKey
+	if canSeedFromEmpty {
+		pending = append(pending, "")
+	}
+	for _, table := range existingTables {
+		if out.KeyPresence.Has(table, elementKey) {
+			tables = append(tables, table)
+			continue
+		}
+		pending = append(pending, table)
+	}
+	for _, fact := range out.KeyPresence.Entries() {
+		if fact.Key != elementKey {
+			continue
+		}
+		if _, ok := slicesFindPathKey(existingTables, fact.Table); ok || canSeedFromEmpty {
+			tables = append(tables, fact.Table)
+		}
+	}
+	return compactPathKeys(tables), compactPathKeys(pending)
+}
+
+func (t *Transfer) recordAppendKeyFact(out *flow.PointState, place Place, kind MutatorKind, elementPath constraint.Path) bool {
+	if out == nil || kind != MutatorAppendElement || elementPath.IsEmpty() {
+		return false
+	}
+	arrayPath, ok := place.StaticPath()
+	if !ok || arrayPath.IsEmpty() {
+		return false
+	}
+	before := out.KeyPresence
+	out.KeyPresence = out.KeyPresence.WithAppendedKeyPaths(arrayPath, elementPath)
+	arrayKey := flow.KeyPresencePathKey(arrayPath)
+	elementKey := flow.KeyPresencePathKey(elementPath)
+	out.KeyPresence = out.KeyPresence.WithAppendHistoryEvent(arrayKey, elementKey)
+	return !flow.KeyPresenceFactsDomain.Equal(before, out.KeyPresence)
+}
+
+func (t *Transfer) recordAppendElementFieldOrigins(out *flow.PointState, place Place, kind MutatorKind, elem ast.Expr, destinations []appendOriginDestination) bool {
+	if out == nil || kind != MutatorAppendElement || elem == nil {
+		return false
+	}
+	arrayPath, ok := place.StaticPath()
+	if !ok || arrayPath.IsEmpty() {
+		return false
+	}
+	before := out.KeyPresence
+	if len(destinations) == 0 {
+		destinations = appendOriginDestinations(out, arrayPath, nil)
+	}
+	if table, ok := elem.(*ast.TableExpr); ok && table != nil {
+		for _, field := range table.Fields {
+			if field == nil || field.Value == nil {
+				continue
+			}
+			seg, ok := fieldkey.FromTableField(field)
+			if !ok {
+				continue
+			}
+			source, ok := t.staticPathOfExpr(field.Value)
+			if !ok || source.IsEmpty() {
+				continue
+			}
+			sources := appendOriginSources(out, source)
+			for _, dst := range destinations {
+				field := append([]constraint.Segment(nil), dst.fieldPrefix...)
+				field = append(field, seg)
+				for _, src := range sources {
+					out.KeyPresence = out.KeyPresence.
+						WithAppendHistoryBasePath(dst.array).
+						WithAppendElementFieldOriginFromPaths(dst.array, field, src.source, src.sourceField)
+				}
+			}
+		}
+	}
+	elementPath, ok := t.staticPathOfExpr(elem)
+	if !ok || elementPath.IsEmpty() {
+		return !flow.KeyPresenceFactsDomain.Equal(before, out.KeyPresence)
+	}
+	for _, fact := range out.KeyPresence.AppendElementFieldOriginEntries() {
+		field, ok := flow.AppendElementFieldSegments(fact.Field)
+		if !ok || len(field) == 0 {
+			continue
+		}
+		elementField := elementPath
+		for _, seg := range field {
+			elementField = elementField.Append(seg)
+		}
+		for _, originUse := range out.ValueOrigins.OriginsCoveringPath(elementField) {
+			out.KeyPresence = recordAppendElementFieldOriginUse(out.KeyPresence, destinations, field, originUse)
+		}
+		for _, aliasUse := range out.PathAliases.AliasesCoveringPath(elementField) {
+			source, ok := pathFromKey(aliasUse.Alias.Source)
+			if !ok {
+				continue
+			}
+			for _, seg := range aliasUse.Remainder {
+				source = source.Append(seg)
+			}
+			for _, originUse := range out.ValueOrigins.OriginsCoveringPath(source) {
+				out.KeyPresence = recordAppendElementFieldOriginUse(out.KeyPresence, destinations, field, originUse)
+			}
+		}
+	}
+	return !flow.KeyPresenceFactsDomain.Equal(before, out.KeyPresence)
+}
+
+type appendOriginDestination struct {
+	array       constraint.Path
+	fieldPrefix []constraint.Segment
+}
+
+type appendOriginSource struct {
+	source      constraint.Path
+	sourceField []constraint.Segment
+}
+
+func appendOriginDestinations(out *flow.PointState, arrayPath constraint.Path, fieldPrefix []constraint.Segment) []appendOriginDestination {
+	if out == nil || arrayPath.IsEmpty() {
+		return nil
+	}
+	seen := map[string]bool{}
+	var destinations []appendOriginDestination
+	var add func(constraint.Path, []constraint.Segment)
+	add = func(array constraint.Path, prefix []constraint.Segment) {
+		key := flow.KeyPresencePathKey(array)
+		seenKey := string(key) + "/" + string(flow.AppendElementFieldPathKey(prefix))
+		if key == "" || seen[seenKey] {
+			return
+		}
+		seen[seenKey] = true
+		destinations = append(destinations, appendOriginDestination{
+			array:       array,
+			fieldPrefix: append([]constraint.Segment(nil), prefix...),
+		})
+		for _, use := range out.ValueOrigins.OriginsCoveringPath(array) {
+			if use.Origin.Kind != flow.ValueOriginIndexedIterator || use.Origin.VarIndex != 1 || len(use.Remainder) == 0 {
+				continue
+			}
+			source, ok := pathFromKey(use.Origin.Source)
+			if !ok {
+				continue
+			}
+			nextPrefix := append([]constraint.Segment(nil), use.Remainder...)
+			nextPrefix = append(nextPrefix, prefix...)
+			add(source, nextPrefix)
+		}
+		for _, aliasUse := range out.PathAliases.AliasesCoveringPath(array) {
+			source, ok := pathFromKey(aliasUse.Alias.Source)
+			if !ok {
+				continue
+			}
+			for _, seg := range aliasUse.Remainder {
+				source = source.Append(seg)
+			}
+			add(source, prefix)
+		}
+	}
+	add(arrayPath, fieldPrefix)
+	return destinations
+}
+
+func appendOriginSources(out *flow.PointState, sourcePath constraint.Path) []appendOriginSource {
+	if out == nil || sourcePath.IsEmpty() {
+		return nil
+	}
+	var sources []appendOriginSource
+	add := func(source constraint.Path, sourceField []constraint.Segment) {
+		if source.IsEmpty() {
+			return
+		}
+		sources = append(sources, appendOriginSource{
+			source:      source,
+			sourceField: append([]constraint.Segment(nil), sourceField...),
+		})
+	}
+	add(sourcePath, nil)
+	for _, use := range out.ValueOrigins.OriginsCoveringPath(sourcePath) {
+		source, ok := pathFromKey(use.Origin.Source)
+		if !ok {
+			continue
+		}
+		switch use.Origin.Kind {
+		case flow.ValueOriginIndexedIterator:
+			if use.Origin.VarIndex == 1 && len(use.Remainder) > 0 {
+				add(source, use.Remainder)
+			}
+		case flow.ValueOriginAssignmentAlias:
+			for _, seg := range use.Remainder {
+				source = source.Append(seg)
+			}
+			add(source, nil)
+		}
+	}
+	for _, aliasUse := range out.PathAliases.AliasesCoveringPath(sourcePath) {
+		source, ok := pathFromKey(aliasUse.Alias.Source)
+		if !ok {
+			continue
+		}
+		for _, seg := range aliasUse.Remainder {
+			source = source.Append(seg)
+		}
+		add(source, nil)
+	}
+	return sources
+}
+
+func recordAppendElementFieldOriginUse(
+	facts flow.KeyPresenceFacts,
+	destinations []appendOriginDestination,
+	field []constraint.Segment,
+	originUse flow.ValueOriginUse,
+) flow.KeyPresenceFacts {
+	if originUse.Origin.Kind != flow.ValueOriginIndexedIterator || originUse.Origin.VarIndex != 1 || len(originUse.Remainder) == 0 {
+		return facts
+	}
+	for _, sourceUse := range facts.AppendElementFieldSources(originUse.Origin.Source, originUse.Remainder) {
+		source, ok := pathFromKey(sourceUse.Origin.Source)
+		if !ok {
+			continue
+		}
+		sourceField := append([]constraint.Segment(nil), sourceUse.SourceField...)
+		if len(sourceField) > 0 {
+			sourceField = append(sourceField, sourceUse.FieldRemainder...)
+		} else {
+			for _, seg := range sourceUse.FieldRemainder {
+				source = source.Append(seg)
+			}
+		}
+		for _, dst := range destinations {
+			dstField := append([]constraint.Segment(nil), dst.fieldPrefix...)
+			dstField = append(dstField, field...)
+			facts = facts.
+				WithAppendHistoryBasePath(dst.array).
+				WithAppendElementFieldOriginFromPaths(dst.array, dstField, source, sourceField)
+		}
+	}
+	return facts
+}
+
+func pathFromKey(key constraint.PathKey) (constraint.Path, bool) {
+	sym, segments, ok := flow.ParseSymbolPathKey(key)
+	if !ok || sym == 0 {
+		return constraint.Path{}, false
+	}
+	return constraint.Path{Symbol: sym, Segments: segments}, true
+}
+
+func (t *Transfer) arrayPathCurrentlyEmpty(out *flow.PointState, path constraint.Path) bool {
+	if out == nil || path.IsEmpty() {
+		return false
+	}
+	av, ok := flow.PointFactsOf(*out).PathValue(path)
+	if !ok || av.IsZero() || !av.DefinitelyPresent() {
+		return false
+	}
+	return productValueIsFreshEmptySequence(av)
+}
+
+func productValueIsFreshEmptySequence(av product.AbstractValue) bool {
+	t := unwrap.Alias(av.ProjectValue())
+	switch v := t.(type) {
+	case *typ.Array:
+		return v.Fresh || typ.IsNever(v.Element)
+	case *typ.Record:
+		return len(v.Fields) == 0 &&
+			len(v.StaticMembers) == 0 &&
+			!v.HasMapComponent() &&
+			!v.Open &&
+			v.Metatable == nil
+	case *typ.Union:
+		if len(v.Members) == 0 {
+			return false
+		}
+		for _, member := range v.Members {
+			if !productTypeIsFreshEmptySequence(member) {
+				return false
+			}
+		}
+		return true
+	default:
+		return false
+	}
+}
+
+func productTypeIsFreshEmptySequence(t typ.Type) bool {
+	switch v := unwrap.Alias(t).(type) {
+	case *typ.Array:
+		return v.Fresh || typ.IsNever(v.Element)
+	case *typ.Record:
+		return len(v.Fields) == 0 &&
+			len(v.StaticMembers) == 0 &&
+			!v.HasMapComponent() &&
+			!v.Open &&
+			v.Metatable == nil
+	default:
+		return false
+	}
+}
+
+func (t *Transfer) applyAppendKeyArrayFacts(
+	out *flow.PointState,
+	place Place,
+	tables []constraint.PathKey,
+	pendingTables []constraint.PathKey,
+	elementPath constraint.Path,
+	element product.AbstractValue,
+) bool {
+	if out == nil || (len(tables) == 0 && len(pendingTables) == 0) {
+		return false
+	}
+	arrayPath, ok := place.StaticPath()
+	if !ok || arrayPath.IsEmpty() {
+		return false
+	}
+	arrayKey := flow.KeyPresencePathKey(arrayPath)
+	elementKey := flow.KeyPresencePathKey(elementPath)
+	before := out.KeyPresence
+	for _, table := range tables {
+		out.KeyPresence = out.KeyPresence.WithKeyArray(arrayKey, table)
+		if elementPath.IsEmpty() {
+			continue
+		}
+		tablePath, ok := indexWritePathFromKey(table)
+		if !ok || tablePath.IsEmpty() {
+			continue
+		}
+		keyType := product.ProjectValueOrUnknown(element)
+		if keyType == nil {
+			keyType = typ.Unknown
+		}
+		value, ok := out.IndexWrites.Admission(flow.IndexWriteQuery{
+			Target:  tablePath,
+			KeyPath: elementPath,
+			KeyType: keyType,
+		})
+		if !ok || value.IsZero() {
+			continue
+		}
+		out.KeyPresence = out.KeyPresence.WithKeyArrayValue(arrayKey, table, value)
+		out.KeyPresence = out.KeyPresence.WithAppendHistoryCoverage(arrayKey, elementKey, table, value)
+	}
+	for _, table := range pendingTables {
+		out.KeyPresence = out.KeyPresence.WithPendingKeyArray(arrayKey, table, elementKey)
+	}
+	return !flow.KeyPresenceFactsDomain.Equal(before, out.KeyPresence)
+}
+
+func slicesFindPathKey(xs []constraint.PathKey, want constraint.PathKey) (int, bool) {
+	for i, x := range xs {
+		if x == want {
+			return i, true
+		}
+	}
+	return -1, false
+}
+
+func compactPathKeys(xs []constraint.PathKey) []constraint.PathKey {
+	if len(xs) == 0 {
+		return nil
+	}
+	out := xs[:0]
+	for _, x := range xs {
+		if _, ok := slicesFindPathKey(out, x); ok {
+			continue
+		}
+		out = append(out, x)
+	}
+	return append([]constraint.PathKey(nil), out...)
+}
+
 func (t *Transfer) applyWriteEffect(out *flow.PointState, effect WriteEffect) bool {
+	return t.applyWriteEffectWithAliasReplay(out, effect, true)
+}
+
+func (t *Transfer) applyWriteEffectWithAliasReplay(out *flow.PointState, effect WriteEffect, replayAliases bool) bool {
 	if out == nil || effect.Place.Root == 0 {
 		return false
+	}
+	aliasWrites := []WriteEffect(nil)
+	if replayAliases {
+		aliasWrites = t.aliasReplayWriteEffects(out, effect)
 	}
 	changed := false
 	if effect.KillRelations && len(effect.Place.Steps) == 0 {
@@ -458,26 +943,41 @@ func (t *Transfer) applyWriteEffect(out *flow.PointState, effect WriteEffect) bo
 		Conditions:             true,
 		KeyFacts:               true,
 		PresentElementKeyFacts: presentDynamicElementWritePreservesKeyPresence(effect.Place, effect.Value),
+		PresentElementValue:    effect.Value,
 	}) || changed
+	if len(effect.Place.Steps) > 0 {
+		if mutation, ok := receiverMutationForPlace(
+			effect.Place,
+			presentDynamicElementWritePreservesKeyPresence(effect.Place, effect.Value),
+		); ok {
+			changed = t.recordReceiverMutationEffect(out, effect.Place.Root, mutation) || changed
+		}
+	}
 	if effect.RecordStatic && !effect.ClearValue {
 		t.installStaticMemberWriteFactForPlace(out, effect.Place, effect.Value)
 	}
 	t.seedKeyArrayForWriteEffect(out, effect)
+	changed = t.seedEmptyContainerKeyArraysForWriteEffect(out, effect) || changed
 	if effect.LengthBase != "" {
 		t.applyIndexWriteLength(out, effect.LengthTarget, effect.LengthBase)
 	}
 	if len(effect.Place.Steps) == 0 {
-		return t.applyRootWriteEffect(out, effect) || changed
+		changed = t.applyRootWriteEffect(out, effect) || changed
+		return t.applyAliasReplayWriteEffects(out, aliasWrites) || changed
 	}
 	if effect.ClearValue || effect.Value.IsZero() {
-		return t.applyReferenceEffect(out, referenceEffectForWrite(effect)) || changed
+		changed = t.applyReferenceEffect(out, referenceEffectForWrite(effect)) || changed
+		return t.applyAliasReplayWriteEffects(out, aliasWrites) || changed
 	}
-	admittedIndexWrite := false
 	admittedIndexKey := product.AbstractValue{}
 	admittedIndexValue := product.AbstractValue{}
 	sealedIndexTarget := false
 	if targetPath, ok := indexWriteTargetPath(effect.Place); ok {
 		sealedIndexTarget = t.indexWriteTargetSealed(targetPath)
+	}
+	if !sealedIndexTarget && effect.IndexTarget.Kind == cfg.TargetIndex {
+		symbolicChanged := t.applySymbolicDynamicIndexWriteProof(out, effect.IndexTarget, effect.Source, effect.Value)
+		changed = symbolicChanged || changed
 	}
 	updated, _, ok := t.assignPlaceValue(out, effect.Place, effect.Value, func(base product.AbstractValue, step PlaceStep, val product.AbstractValue) (product.AbstractValue, bool) {
 		if sealedIndexTarget {
@@ -485,38 +985,98 @@ func (t *Transfer) applyWriteEffect(out *flow.PointState, effect WriteEffect) bo
 				return product.AbstractValue{}, false
 			}
 			written := product.WriteIndex(base, step.Key, val)
-			admittedIndexWrite = true
 			admittedIndexKey = step.Key
 			admittedIndexValue = indexWriteReadBackValue(written, step.Key, val)
 			return written, true
 		}
 		if effect.DynamicMode == DynamicWriteSelfDerived {
 			written := product.WriteSelfDerivedIndex(base, step.Key, val)
-			admittedIndexWrite = true
 			admittedIndexKey = step.Key
 			admittedIndexValue = val
 			return written, true
 		}
 		written := product.WriteIndexForeign(base, step.Key, val)
 		if product.IndexWriteAdmits(base, step.Key, val) {
-			admittedIndexWrite = true
 			admittedIndexKey = step.Key
 			admittedIndexValue = val
 		}
 		return written, true
 	})
 	if !ok {
-		return changed
+		return t.applyAliasReplayWriteEffects(out, aliasWrites) || changed
 	}
-	if admittedIndexWrite {
-		if proof, ok := t.dynamicIndexWriteProofEffect(effect, admittedIndexKey, admittedIndexValue); ok {
-			changed = t.applyDynamicIndexWriteProofEffect(out, proof) || changed
-		}
+	if sealedIndexTarget && effect.IndexTarget.Kind == cfg.TargetIndex {
+		symbolicChanged := t.applySymbolicDynamicIndexWriteProof(out, effect.IndexTarget, effect.Source, effect.Value)
+		changed = symbolicChanged || changed
+	}
+	if proof, ok := t.dynamicIndexWriteProofEffect(effect, admittedIndexKey, admittedIndexValue); ok {
+		changed = t.applyDynamicIndexWriteProofEffect(out, proof) || changed
 	}
 	t.writeRootContainer(out, effect.Place.Root, updated)
 	t.applyPrototypeSelfWriteEffect(out, effect, updated)
 	t.applyReferenceEffect(out, referenceEffectForWrite(effect))
-	return true
+	changed = true
+	return t.applyAliasReplayWriteEffects(out, aliasWrites) || changed
+}
+
+func (t *Transfer) aliasReplayWriteEffects(out *flow.PointState, effect WriteEffect) []WriteEffect {
+	if out == nil || out.ValueOrigins.IsBottom() {
+		return nil
+	}
+	path, ok := effect.Place.StaticPath()
+	if !ok || path.Symbol == 0 || len(path.Segments) == 0 {
+		return nil
+	}
+	var outEffects []WriteEffect
+	seen := map[constraint.PathKey]struct{}{}
+	for _, use := range out.ValueOrigins.OriginsCoveringPath(path) {
+		if use.Origin.Kind != flow.ValueOriginAssignmentAlias || len(use.Remainder) == 0 {
+			continue
+		}
+		source, ok := indexWritePathFromKey(use.Origin.Source)
+		if !ok || source.IsEmpty() {
+			continue
+		}
+		for _, seg := range use.Remainder {
+			source = source.Append(seg)
+		}
+		if source.Equal(path) {
+			continue
+		}
+		sourceKey := flow.SymbolPathKey(source.Symbol, source.Segments)
+		if sourceKey == "" {
+			continue
+		}
+		if _, ok := seen[sourceKey]; ok {
+			continue
+		}
+		seen[sourceKey] = struct{}{}
+		place, ok := staticPlace(source.Symbol, source.Segments)
+		if !ok || place.Root == 0 || len(place.Steps) == 0 {
+			continue
+		}
+		outEffects = append(outEffects, WriteEffect{
+			Place:         place,
+			Value:         effect.Value,
+			ClearValue:    effect.ClearValue,
+			JoinExisting:  effect.JoinExisting,
+			Source:        effect.Source,
+			FunctionRefs:  effect.FunctionRefs,
+			ClosureRefs:   effect.ClosureRefs,
+			KillRelations: effect.KillRelations,
+			RecordProto:   effect.RecordProto,
+			RecordStatic:  effect.RecordStatic,
+		})
+	}
+	return outEffects
+}
+
+func (t *Transfer) applyAliasReplayWriteEffects(out *flow.PointState, effects []WriteEffect) bool {
+	changed := false
+	for _, effect := range effects {
+		changed = t.applyWriteEffectWithAliasReplay(out, effect, false) || changed
+	}
+	return changed
 }
 
 func indexWriteReadBackValue(container, key, written product.AbstractValue) product.AbstractValue {
@@ -596,4 +1156,87 @@ func (t *Transfer) seedKeyArrayForWriteEffect(out *flow.PointState, effect Write
 		return
 	}
 	out.KeyPresence = out.KeyPresence.WithKeyArrayPaths(path, effect.KeyArrayTable)
+}
+
+func (t *Transfer) seedEmptyContainerKeyArraysForWriteEffect(out *flow.PointState, effect WriteEffect) bool {
+	if out == nil || effect.ClearValue || effect.Value.IsZero() || len(effect.Place.Steps) != 0 {
+		return false
+	}
+	if !emptyContainerKeyArraySeedSource(effect.Source) {
+		return false
+	}
+	rootPath, ok := effect.Place.StaticPath()
+	if !ok || rootPath.Symbol == 0 {
+		return false
+	}
+	rec := unwrap.Record(effect.Value.ProjectValue())
+	if rec == nil {
+		return false
+	}
+	arrays := emptyContainerKeyArraySeedFields(effect.Value, rec)
+	if len(arrays) == 0 {
+		return false
+	}
+	before := out.KeyPresence
+	for _, array := range arrays {
+		out.KeyPresence = out.KeyPresence.WithEmptyKeyArrayPath(rootPath.Field(array))
+	}
+	return !flow.KeyPresenceFactsDomain.Equal(before, out.KeyPresence)
+}
+
+func emptyContainerKeyArraySeedSource(src ast.Expr) bool {
+	switch src.(type) {
+	case *ast.TableExpr, *ast.FuncCallExpr:
+		return true
+	default:
+		return false
+	}
+}
+
+func emptyContainerKeyArraySeedFields(root product.AbstractValue, rec *typ.Record) []string {
+	if root.IsZero() || rec == nil {
+		return nil
+	}
+	var arrays []string
+	for _, field := range rec.Fields {
+		fieldValue, ok := product.FieldOf(root, field.Name)
+		if !ok || fieldValue.IsZero() || !fieldValue.DefinitelyPresent() {
+			continue
+		}
+		if productValueIsFreshEmptyArray(fieldValue) {
+			arrays = append(arrays, field.Name)
+		}
+	}
+	return arrays
+}
+
+func productValueIsFreshEmptyArray(av product.AbstractValue) bool {
+	if av.IsZero() || !av.DefinitelyPresent() {
+		return false
+	}
+	return productTypeIsFreshEmptyArray(av.ProjectValue())
+}
+
+func productTypeIsFreshEmptyArray(t typ.Type) bool {
+	switch v := unwrap.Alias(t).(type) {
+	case *typ.Array:
+		return v.Fresh || typ.IsNever(v.Element)
+	case *typ.Recursive:
+		if v.Body == nil || v.Body == t {
+			return false
+		}
+		return productTypeIsFreshEmptyArray(v.Body)
+	case *typ.Union:
+		if len(v.Members) == 0 {
+			return false
+		}
+		for _, member := range v.Members {
+			if !productTypeIsFreshEmptyArray(member) {
+				return false
+			}
+		}
+		return true
+	default:
+		return false
+	}
 }

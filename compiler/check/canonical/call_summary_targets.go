@@ -60,7 +60,23 @@ func (ct callTyper) callOutcomeForTypedCall(
 	)
 }
 
+type productCallOutcomeOptions struct {
+	skipSignatureReturns   bool
+	skipSignatureRelations bool
+}
+
 func (ct callTyper) callOutcomeForProductCall(call *ast.FuncCallExpr, ctx transfer.ProductCallContext) canonicalcall.CallOutcome {
+	return ct.callOutcomeForProductCallWithOptions(call, ctx, productCallOutcomeOptions{})
+}
+
+func (ct callTyper) summaryOnlyProductCallOutcome(call *ast.FuncCallExpr, ctx transfer.ProductCallContext) canonicalcall.CallOutcome {
+	return ct.callOutcomeForProductCallWithOptions(call, ctx, productCallOutcomeOptions{
+		skipSignatureReturns:   true,
+		skipSignatureRelations: true,
+	})
+}
+
+func (ct callTyper) callOutcomeForProductCallWithOptions(call *ast.FuncCallExpr, ctx transfer.ProductCallContext, opts productCallOutcomeOptions) canonicalcall.CallOutcome {
 	d := ct.d
 	if d == nil || call == nil || d.activeProgram == nil {
 		return canonicalcall.CallOutcome{}
@@ -102,6 +118,8 @@ func (ct callTyper) callOutcomeForProductCall(call *ast.FuncCallExpr, ctx transf
 				}
 				return flow.ReturnRelationsFromFunctionType(d.signatureForRef(d.activeProgram, target.Ref()))
 			},
+			SkipSignatureReturns:   opts.skipSignatureReturns,
+			SkipSignatureRelations: opts.skipSignatureRelations,
 		},
 	)
 }

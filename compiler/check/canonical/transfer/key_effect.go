@@ -39,17 +39,23 @@ func (t *Transfer) applyKeyProvenanceEffect(out *flow.PointState, effect KeyProv
 		if effect.TablePath.IsEmpty() || effect.KeyPath.IsEmpty() {
 			return false
 		}
-		out.KeyPresence = out.KeyPresence.WithPaths(effect.TablePath, effect.KeyPath)
-		if !effect.ValuePath.IsEmpty() {
-			out.KeyPresence = out.KeyPresence.WithValuePaths(effect.TablePath, effect.KeyPath, effect.ValuePath)
+		changed := false
+		if proof, ok := flow.KeyPresenceProofFromPaths(effect.TablePath, effect.KeyPath, product.AbstractValue{}); ok {
+			changed = flow.ApplyKeyPresenceProof(out, proof) || changed
 		}
-		return true
+		if !effect.ValuePath.IsEmpty() {
+			before := out.KeyPresence
+			out.KeyPresence = out.KeyPresence.WithValuePaths(effect.TablePath, effect.KeyPath, effect.ValuePath)
+			changed = !flow.KeyPresenceFactsDomain.Equal(before, out.KeyPresence) || changed
+		}
+		return changed
 	case KeyProvenanceKeyArrayAssignment:
 		if effect.ArrayPath.IsEmpty() || effect.TablePath.IsEmpty() {
 			return false
 		}
+		before := out.KeyPresence
 		out.KeyPresence = out.KeyPresence.WithKeyArrayPaths(effect.ArrayPath, effect.TablePath)
-		return true
+		return !flow.KeyPresenceFactsDomain.Equal(before, out.KeyPresence)
 	case KeyProvenanceIndexedKeyArrayIteration:
 		if effect.ArrayPath.IsEmpty() || effect.KeyPath.IsEmpty() {
 			return false

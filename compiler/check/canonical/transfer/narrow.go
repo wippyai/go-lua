@@ -55,6 +55,27 @@ func refinedStr(refined, base typ.Type) string {
 // (types/query/core), not a parallel implementation.
 var fieldResolver = querycore.Resolver()
 
+type narrowSeedAuthority uint8
+
+const (
+	narrowSeedNone narrowSeedAuthority = iota
+	narrowSeedEnv
+	narrowSeedDeclared
+)
+
+type narrowSeed struct {
+	value     product.AbstractValue
+	authority narrowSeedAuthority
+}
+
+func (s narrowSeed) hasValue() bool {
+	return s.authority != narrowSeedNone && !s.value.IsZero()
+}
+
+func (s narrowSeed) fromDeclared() bool {
+	return s.authority == narrowSeedDeclared
+}
+
 // narrowBase resolves the value the per-edge narrowing refines for symbol sym. A
 // symbol declared with an annotation (`local r: A|B = ...`) narrows over its
 // DECLARED type, not the precise constructor value the Env seeds: the constructor
@@ -77,8 +98,13 @@ var fieldResolver = querycore.Resolver()
 // at the fresh branch, whose full condition AST is intact. The declared base is
 // still used when the Env carries no tracked value (the symbol is unrefined here).
 func (t *Transfer) narrowBase(sym cfg.SymbolID, av product.AbstractValue, preferEnv bool) (product.AbstractValue, bool) {
+	seed := t.narrowSeed(sym, av, preferEnv)
+	return seed.value, seed.hasValue()
+}
+
+func (t *Transfer) narrowSeed(sym cfg.SymbolID, av product.AbstractValue, preferEnv bool) narrowSeed {
 	if preferEnv && !av.IsZero() {
-		return av, true
+		return narrowSeed{value: av, authority: narrowSeedEnv}
 	}
 	if declared, ok := t.declaredTypes[sym]; ok && declared != nil && !typ.IsAbsentOrUnknown(declared) {
 		if typ.ContainsFreeTypeParam(declared) && entryHasClosedInformativeValue(av) {
@@ -86,14 +112,14 @@ func (t *Transfer) narrowBase(sym cfg.SymbolID, av product.AbstractValue, prefer
 			// constraint, not a closed runtime fact. If call-entry/context seeding has
 			// already supplied a closed value, narrow that instantiated value instead of
 			// resetting branch state back to the callee's binder syntax.
-			return av, true
+			return narrowSeed{value: av, authority: narrowSeedEnv}
 		}
-		return product.FromType(declared), true
+		return narrowSeed{value: product.FromType(declared), authority: narrowSeedDeclared}
 	}
 	if av.IsZero() {
-		return product.AbstractValue{}, false
+		return narrowSeed{}
 	}
-	return av, true
+	return narrowSeed{value: av, authority: narrowSeedEnv}
 }
 
 func (t *Transfer) narrowBaseFor(out flow.PointState, sym cfg.SymbolID, preferEnv bool) (product.AbstractValue, bool) {
@@ -140,10 +166,12 @@ func (t *Transfer) NarrowEdge(g *cfg.Graph, pred, succ cfg.Point, out flow.Point
 		return out
 	}
 	atExit := false
+	var exitOrigin cfg.Point
+	exitHasOrigin := false
 	info, ok := g.Info(pred).(*cfg.BranchInfo)
 	branchPred := ok && info != nil
 	if !ok || info == nil {
-		info = exitGuard(g, pred)
+		info, exitOrigin, exitHasOrigin = exitGuard(g, pred)
 		if info == nil {
 			return out
 		}
@@ -169,6 +197,9 @@ func (t *Transfer) NarrowEdge(g *cfg.Graph, pred, succ cfg.Point, out flow.Point
 	if atExit {
 		if narrowed, applied := t.narrowExitDiscriminantChain(g, pred, info, out); applied {
 			return narrowed
+		}
+		if exitHasOrigin && t.scopeExitGuardPathMutated(g, exitOrigin, pred, info) {
+			return out
 		}
 	}
 	return t.narrowEdgeInner(pred, out, info, taken, atExit)
@@ -374,6 +405,7 @@ func (t *Transfer) narrowEdgeInner(point cfg.Point, out flow.PointState, info *c
 	// of the tested error symbol's own refinement, so it composes with whichever base
 	// narrower classifies the guard rather than short-circuiting the chain.
 	out = t.narrowBySiblingNil(out, info, taken)
+	out = t.narrowByGuardedType(out, info, taken)
 	// A relational comparison guard (`i <= n`, `i < #arr`) bounds a numeric value on
 	// the edge it holds; the bound seeds the numeric component independently of the
 	// guard's value narrowing, so it composes too.
@@ -488,6 +520,51 @@ func (t *Transfer) narrowBySiblingNil(out flow.PointState, info *cfg.BranchInfo,
 			continue
 		}
 		t.setNarrowedSymbol(&res, vs, product.NarrowPresent(av))
+		applied = true
+	}
+	if !applied {
+		return out
+	}
+	return res
+}
+
+func (t *Transfer) narrowByGuardedType(out flow.PointState, info *cfg.BranchInfo, taken bool) flow.PointState {
+	sym := info.CondSymbol
+	if sym == 0 {
+		sym = t.condTestSymbol(info)
+	}
+	if sym == 0 || len(t.condTestSegments(info)) > 0 {
+		return out
+	}
+	check := effectiveCheck(info.CondCheck.Kind, taken)
+	var guardTruthy bool
+	switch check {
+	case cfg.CheckTruthy, cfg.CheckNotNil:
+		guardTruthy = true
+	case cfg.CheckFalsy, cfg.CheckNil:
+		guardTruthy = false
+	default:
+		return out
+	}
+	rels := out.Rel.GuardedTypesForGuard(sym, guardTruthy)
+	if len(rels) == 0 {
+		return out
+	}
+	res := flow.ClonePointState(out)
+	applied := false
+	for _, rel := range rels {
+		if rel.TargetSym == 0 || rel.TargetType == nil {
+			continue
+		}
+		av, has := t.symbolValue(&res, rel.TargetSym)
+		if !has || av.IsZero() {
+			continue
+		}
+		refined := product.FromRefinedType(av, rel.TargetType)
+		if refined.IsZero() {
+			refined = product.FromType(rel.TargetType)
+		}
+		t.setNarrowedSymbol(&res, rel.TargetSym, refined)
 		applied = true
 	}
 	if !applied {
@@ -1026,22 +1103,22 @@ func fieldDiscriminatesUnion(base typ.Type, field string) bool {
 // declines rather than narrow the wrong (root) value. Edge polarity is selected by
 // EdgeCond on the exit node's outgoing edge: the then-exit's edge to the merge is
 // the TRUE edge, the else-exit's the FALSE edge.
-func exitGuard(g *cfg.Graph, pred cfg.Point) *cfg.BranchInfo {
+func exitGuard(g *cfg.Graph, pred cfg.Point) (*cfg.BranchInfo, cfg.Point, bool) {
 	node := g.Node(pred)
 	if node == nil || node.Kind != cfg.NodeScopeExit {
-		return nil
+		return nil, 0, false
 	}
 	if node.CondVar == 0 && node.CondCheck.Kind == cfg.CheckNone {
-		return nil
+		return nil, 0, false
 	}
-	if info := originatingBranch(g, pred, node.CondVar, node.CondCheck); info != nil {
-		return info
+	if info, branch, ok := originatingBranch(g, pred, node.CondVar, node.CondCheck); ok {
+		return info, branch, true
 	}
 	return &cfg.BranchInfo{
 		CondVar:    g.NameOf(node.CondVar),
 		CondSymbol: node.CondVar,
 		CondCheck:  node.CondCheck,
-	}
+	}, 0, false
 }
 
 // originatingBranch finds the branch a ScopeExit copied its guard markers from: the
@@ -1051,7 +1128,7 @@ func exitGuard(g *cfg.Graph, pred cfg.Point) *cfg.BranchInfo {
 // the exit re-narrowing operates on the SAME path the branch tested, recovering the
 // field segments the node-level markers drop. A no-match (no matching branch is a
 // backward ancestor) returns nil so the caller falls back to the bare reconstruction.
-func originatingBranch(g *cfg.Graph, exit cfg.Point, condSym cfg.SymbolID, check cfg.CondCheck) *cfg.BranchInfo {
+func originatingBranch(g *cfg.Graph, exit cfg.Point, condSym cfg.SymbolID, check cfg.CondCheck) (*cfg.BranchInfo, cfg.Point, bool) {
 	seen := map[cfg.Point]bool{exit: true}
 	frontier := append([]cfg.Point(nil), g.Predecessors(exit)...)
 	for len(frontier) > 0 {
@@ -1062,13 +1139,72 @@ func originatingBranch(g *cfg.Graph, exit cfg.Point, condSym cfg.SymbolID, check
 			}
 			seen[p] = true
 			if info := g.Branch(p); info != nil && info.CondSymbol == condSym && info.CondCheck == check {
-				return info
+				return info, p, true
 			}
 			next = append(next, g.Predecessors(p)...)
 		}
 		frontier = next
 	}
-	return nil
+	return nil, 0, false
+}
+
+// scopeExitGuardPathMutated reports whether the arm between branch and its
+// ScopeExit wrote the path whose value the branch guard tested. A ScopeExit guard
+// is historical: it speaks about the value at the branch. If the arm overwrote the
+// tested path (or one of its ancestors), reapplying that guard to the current
+// store would refine the replacement value with an obsolete fact.
+func (t *Transfer) scopeExitGuardPathMutated(g *cfg.Graph, branch, exit cfg.Point, info *cfg.BranchInfo) bool {
+	if g == nil || info == nil {
+		return false
+	}
+	sym := t.condTestSymbol(info)
+	if sym == 0 {
+		return false
+	}
+	segments := t.condTestSegments(info)
+	seen := map[cfg.Point]bool{exit: true}
+	frontier := append([]cfg.Point(nil), g.Predecessors(exit)...)
+	for len(frontier) > 0 {
+		p := frontier[len(frontier)-1]
+		frontier = frontier[:len(frontier)-1]
+		if p == branch || seen[p] {
+			continue
+		}
+		seen[p] = true
+		if t.assignmentWritesGuardPath(g.Assign(p), sym, segments) {
+			return true
+		}
+		frontier = append(frontier, g.Predecessors(p)...)
+	}
+	return false
+}
+
+func (t *Transfer) assignmentWritesGuardPath(info *cfg.AssignInfo, sym cfg.SymbolID, segments []constraint.Segment) bool {
+	if info == nil || sym == 0 {
+		return false
+	}
+	for _, target := range info.Targets {
+		path, ok := t.staticPathOfAssignTarget(target)
+		if !ok || path.Symbol != sym {
+			continue
+		}
+		if pathWriteInvalidatesGuard(path.Segments, segments) {
+			return true
+		}
+	}
+	return false
+}
+
+func pathWriteInvalidatesGuard(write, guard []constraint.Segment) bool {
+	if len(write) > len(guard) {
+		return false
+	}
+	for i := range write {
+		if write[i] != guard[i] {
+			return false
+		}
+	}
+	return true
 }
 
 // narrowByTypeCheck applies the value-narrowing a `local val, err = T:is(x)` guard
@@ -1143,12 +1279,23 @@ func (t *Transfer) narrowByCondCheckAtPoint(point cfg.Point, out flow.PointState
 		return out
 	}
 	segments := t.condTestSegments(info)
-	baseAV, has := t.narrowBaseFor(out, sym, atExit)
+	currentAV, hasCurrent := t.symbolValue(&out, sym)
+	seed := t.narrowSeed(sym, currentAV, atExit)
+	baseAV, has := seed.value, seed.hasValue()
 
 	cond := t.condForCheck(point, sym, segments, info.CondVar, check, info.CondCheck.TypeName)
 	res := flow.ClonePointState(out)
 	if cond.HasConstraints() {
+		beforeAV, beforeOK := t.symbolValue(&res, sym)
 		t.applyConditionEffect(&res, ConditionEffect{Fact: cond})
+		if afterAV, afterOK := t.symbolValue(&res, sym); afterOK && !afterAV.IsZero() &&
+			(!beforeOK || beforeAV.IsZero() || !product.Domain.Equal(beforeAV, afterAV)) {
+			baseAV = afterAV
+			has = true
+		}
+		if flow.PointStateDomain.Equal(res, flow.PointStateDomain.Bottom()) {
+			return res
+		}
 	}
 	// A positive guard on a literal index path `arr[i]` (`if arr[i]`, `arr[i] ~= nil`)
 	// proves the element at index i is present, so the container holds at least i
@@ -1180,11 +1327,71 @@ func (t *Transfer) narrowByCondCheckAtPoint(point cfg.Point, out flow.PointState
 	if !ok {
 		return res
 	}
-	if valueIsBottom(narrowed) && missingStaticMemberGuardStaysDynamic(baseAV, segments, check, info.CondCheck.TypeName) {
+	narrowedBase := baseAV
+	if seed.fromDeclared() && hasCurrent && !currentAV.IsZero() && !currentAV.Covers(narrowed) {
+		currentNarrowed, currentOK := narrowAtPath(currentAV, segments, check, info.CondCheck.TypeName)
+		if currentOK && !valueIsBottom(currentNarrowed) &&
+			t.conditionAuthorizesCurrentSeed(point, &res, sym, seed.value, currentAV) {
+			narrowed = currentNarrowed
+			narrowedBase = currentAV
+		}
+	} else if !seed.fromDeclared() && hasCurrent && !currentAV.IsZero() && !currentAV.Covers(narrowed) {
+		currentNarrowed, currentOK := narrowAtPath(currentAV, segments, check, info.CondCheck.TypeName)
+		if !currentOK || !semanticProductReduction(currentAV, currentNarrowed) {
+			return res
+		}
+		narrowed = currentNarrowed
+		narrowedBase = currentAV
+	}
+	if valueIsBottom(narrowed) && missingStaticMemberGuardStaysDynamic(narrowedBase, segments, check, info.CondCheck.TypeName) {
 		return res
 	}
 	t.setNarrowedSymbol(&res, sym, narrowed)
 	return res
+}
+
+// conditionAuthorizesCurrentSeed is the authority boundary for declared-base
+// narrowing. A declaration supplies the branch universe; the current Env value may
+// specialize that universe only when the condition-proof projector can re-project
+// the declared seed to an envelope covering the current value. A precise
+// initializer singleton has no condition proof, so it cannot make another
+// declared-union edge unreachable.
+func (t *Transfer) conditionAuthorizesCurrentSeed(point cfg.Point, out *flow.PointState, sym cfg.SymbolID, declaredBase, live product.AbstractValue) bool {
+	if out == nil || sym == 0 || declaredBase.IsZero() || live.IsZero() || !out.Cond.HasConstraints() {
+		return false
+	}
+	seedType := product.ProjectValueOrUnknown(declaredBase)
+	if typ.IsAbsentOrUnknown(seedType) {
+		return false
+	}
+	seedPath := constraint.Path{Symbol: sym}
+	projectedType := flow.ConditionProofProjector{
+		Resolver:    fieldResolver,
+		ResolveType: conditionProofTypeKey,
+		ConditionAt: func(cfg.Point) constraint.Condition { return out.Cond },
+		ResolvePath: func(_ cfg.Point, path constraint.Path) constraint.PathKey {
+			return flow.ConditionProofStructuralPathKey(path)
+		},
+	}.ConditionedSeedTypeAt(point, seedPath, seedType, seedPath, constraint.TrueCondition())
+	if typ.IsAbsentOrUnknown(projectedType) || typ.IsNever(projectedType) {
+		return false
+	}
+	projected := product.FromRefinedType(declaredBase, projectedType)
+	if projected.IsZero() || valueIsBottom(projected) {
+		return false
+	}
+	return projected.Covers(live)
+}
+
+func conditionProofTypeKey(key narrow.TypeKey) typ.Type {
+	if key.Kind != narrow.TypeKeyBuiltin {
+		return nil
+	}
+	builtin, ok := key.BuiltinKind()
+	if !ok {
+		return nil
+	}
+	return narrow.TypeForKind(builtin)
 }
 
 func (t *Transfer) narrowGuardedIndexPresence(out flow.PointState, info *cfg.BranchInfo, check cfg.CondCheckKind) flow.PointState {
@@ -1595,15 +1802,22 @@ func (t *Transfer) narrowByScalarLiteralComparison(out flow.PointState, info *cf
 			return narrowByLiteralEquality(ft, lit, includeLiteral)
 		}
 		refined := refineAtPath(base, segments, refine)
-		if refined == nil || typ.TypeEquals(refined, base) {
+		res := flow.ClonePointState(out)
+		applied := false
+		if refined != nil && !typ.TypeEquals(refined, base) {
+			applied = true
+			if refined.Kind().IsNever() {
+				t.setNarrowedSymbol(&res, sym, product.Bottom())
+				return res, true
+			}
+			t.setNarrowedSymbol(&res, sym, product.FromType(refined))
+		}
+		if t.refineStaticMemberFactForLiteralComparison(&res, sym, segments, lit, includeLiteral) {
+			applied = true
+		}
+		if !applied {
 			return out, false
 		}
-		res := flow.ClonePointState(out)
-		if refined.Kind().IsNever() {
-			t.setNarrowedSymbol(&res, sym, product.Bottom())
-			return res, true
-		}
-		t.setNarrowedSymbol(&res, sym, product.FromType(refined))
 		return res, true
 	}
 
@@ -1680,6 +1894,46 @@ func (t *Transfer) scalarComparisonAccess(out *flow.PointState, expr ast.Expr) (
 		return 0, nil, false
 	}
 	return sym, segments, true
+}
+
+func (t *Transfer) refineStaticMemberFactForLiteralComparison(
+	out *flow.PointState,
+	sym cfg.SymbolID,
+	segments []constraint.Segment,
+	lit *typ.Literal,
+	include bool,
+) bool {
+	if out == nil || sym == 0 || len(segments) == 0 || lit == nil {
+		return false
+	}
+	pathKey := flow.SymbolPathKey(sym, segments)
+	existing, ok := out.StaticMembers.Value(pathKey)
+	if !ok || existing.IsZero() {
+		return false
+	}
+	current := existing.ProjectValue()
+	if current == nil {
+		return false
+	}
+	refined := narrowByLiteralEquality(current, lit, include)
+	if refined == nil || typ.TypeEquals(refined, current) {
+		return false
+	}
+	if refined.Kind().IsNever() {
+		*out = flow.PointStateDomain.Bottom()
+		return true
+	}
+	next := product.FromRefinedType(existing, refined)
+	if valueIsBottom(next) {
+		*out = flow.PointStateDomain.Bottom()
+		return true
+	}
+	if !next.DefinitelyPresent() {
+		out.StaticMembers = out.StaticMembers.KillSubtree(pathKey)
+		return true
+	}
+	out.StaticMembers = out.StaticMembers.With(pathKey, next)
+	return true
 }
 
 func narrowLiteralAtPlace(t typ.Type, steps []PlaceStep, lit *typ.Literal, include bool) typ.Type {
@@ -2496,127 +2750,11 @@ func (t *Transfer) conditionRefinedCaptureValue(out *flow.PointState, sym cfg.Sy
 	if out == nil || sym == 0 || !out.Cond.HasConstraints() {
 		return product.AbstractValue{}, false
 	}
-	if !hasBase || base.IsZero() {
-		base = product.Top()
-	}
-	var joined product.AbstractValue
-	hadDisjunct := false
-	for i := 0; i < out.Cond.NumDisjuncts(); i++ {
-		cur := base
-		touched := false
-		for _, c := range out.Cond.DisjunctConstraints(i) {
-			next, ok := conditionConstraintNarrowValue(cur, sym, c)
-			if !ok {
-				continue
-			}
-			cur = next
-			touched = true
-		}
-		if !touched && !hasBase {
-			cur = product.Top()
-		}
-		if !hadDisjunct {
-			joined = cur
-			hadDisjunct = true
-			continue
-		}
-		joined = product.Join(joined, cur)
-	}
-	if !hadDisjunct {
+	next, ok := t.conditionProductReductionValue(out, sym, base, hasBase, out.Cond)
+	if !ok || next.IsZero() {
 		return product.AbstractValue{}, false
 	}
-	return joined, true
-}
-
-func conditionConstraintNarrowValue(av product.AbstractValue, sym cfg.SymbolID, c constraint.Constraint) (product.AbstractValue, bool) {
-	switch cc := c.(type) {
-	case constraint.Truthy:
-		return conditionPathNarrowValue(av, sym, cc.Path, cfg.CheckTruthy, "")
-	case constraint.Falsy:
-		return conditionPathNarrowValue(av, sym, cc.Path, cfg.CheckFalsy, "")
-	case constraint.IsNil:
-		return conditionPathNarrowValue(av, sym, cc.Path, cfg.CheckNil, "")
-	case constraint.NotNil:
-		return conditionPathNarrowValue(av, sym, cc.Path, cfg.CheckNotNil, "")
-	case constraint.HasType:
-		return conditionPathNarrowTypeKey(av, sym, cc.Path, cc.Type, false)
-	case constraint.NotHasType:
-		return conditionPathNarrowTypeKey(av, sym, cc.Path, cc.Type, true)
-	case constraint.FieldEquals:
-		return conditionFieldLiteralValue(av, sym, cc.Target, cc.Field, cc.Value, false)
-	case constraint.FieldNotEquals:
-		return conditionFieldLiteralValue(av, sym, cc.Target, cc.Field, cc.Value, true)
-	case constraint.VariantCaseEquals:
-		return conditionVariantOriginCaseValue(av, sym, cc.Target, cc.OriginFamily, cc.CaseIndex, true)
-	case constraint.VariantCaseNotEquals:
-		return conditionVariantOriginCaseValue(av, sym, cc.Target, cc.OriginFamily, cc.CaseIndex, false)
-	default:
-		return product.AbstractValue{}, false
-	}
-}
-
-func conditionVariantOriginCaseValue(av product.AbstractValue, sym cfg.SymbolID, path constraint.Path, family uint64, caseIndex int, equal bool) (product.AbstractValue, bool) {
-	if path.Symbol != sym || len(path.Segments) != 0 {
-		return product.AbstractValue{}, false
-	}
-	return product.NarrowVariantOriginCase(av, family, caseIndex, equal)
-}
-
-func conditionPathNarrowValue(av product.AbstractValue, sym cfg.SymbolID, path constraint.Path, check cfg.CondCheckKind, typeName string) (product.AbstractValue, bool) {
-	if path.Symbol != sym {
-		return product.AbstractValue{}, false
-	}
-	return narrowAtPath(av, path.Segments, check, typeName)
-}
-
-func conditionPathNarrowTypeKey(av product.AbstractValue, sym cfg.SymbolID, path constraint.Path, key narrow.TypeKey, exclude bool) (product.AbstractValue, bool) {
-	if path.Symbol != sym || key.IsZero() {
-		return product.AbstractValue{}, false
-	}
-	if k, ok := key.BuiltinKind(); ok {
-		check := cfg.CheckTypeEqual
-		if exclude {
-			check = cfg.CheckTypeNot
-		}
-		return narrowAtPath(av, path.Segments, check, k.String())
-	}
-	if len(path.Segments) != 0 {
-		return product.AbstractValue{}, false
-	}
-	base := product.ProjectValueOrUnknown(av)
-	if base == nil {
-		return product.AbstractValue{}, false
-	}
-	var refined typ.Type
-	if exclude {
-		refined = narrow.ExcludeByTypeKey(base, key, nil)
-	} else {
-		refined = narrow.ByTypeKey(base, key, nil)
-	}
-	if refined == nil {
-		return product.AbstractValue{}, false
-	}
-	return product.FromType(refined), true
-}
-
-func conditionFieldLiteralValue(av product.AbstractValue, sym cfg.SymbolID, target constraint.Path, field string, lit *typ.Literal, exclude bool) (product.AbstractValue, bool) {
-	if target.Symbol != sym || len(target.Segments) != 0 || field == "" || lit == nil {
-		return product.AbstractValue{}, false
-	}
-	base := product.ProjectValueOrUnknown(av)
-	if base == nil {
-		return product.AbstractValue{}, false
-	}
-	var refined typ.Type
-	if exclude {
-		refined = narrow.ExcludeByFieldLiteral(base, field, lit, fieldResolver)
-	} else {
-		refined = narrow.ByFieldLiteral(base, field, lit, fieldResolver)
-	}
-	if refined == nil {
-		return product.AbstractValue{}, false
-	}
-	return product.FromType(refined), true
+	return next, true
 }
 
 // condForCheck builds the per-edge path condition for the resolved check on the

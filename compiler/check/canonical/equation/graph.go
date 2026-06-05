@@ -31,6 +31,7 @@ type Builder struct {
 	entryRefs     flow.FunctionRefs
 	entryClosures flow.ClosureRefs
 	entryValues   map[int]product.AbstractValue
+	entryFacts    flow.BoundaryFacts
 	entrySymbols  map[cfg.SymbolID]product.AbstractValue
 	projector     *propagate.ConditionProjector
 
@@ -87,6 +88,21 @@ func (b *Builder) WithEntryClosureRefs(refs flow.ClosureRefs) *Builder {
 // ordinary entry transfer can compose the sources in one Env/Cells location.
 func (b *Builder) WithEntryValues(values map[int]product.AbstractValue) *Builder {
 	b.entryValues = cloneEntryValues(values)
+	return b
+}
+
+// WithEntryFacts returns b after installing parameter-relative path facts
+// visible at function entry. These facts are seeded into PointState before local
+// node transfer so the same kill/reduction logic owns their lifetime.
+func (b *Builder) WithEntryFacts(facts flow.BoundaryFacts) *Builder {
+	b.entryFacts = flow.BoundaryFactsOf(
+		facts.KeyPresence(),
+		facts.KeyArrays(),
+		facts.KeyArrayValues(),
+		facts.AppendKeys(),
+		facts.LengthLowerBounds(),
+		facts.IndexWrites(),
+	).WithAppendElementFieldOrigins(facts.AppendElementFieldOrigins())
 	return b
 }
 
@@ -235,6 +251,7 @@ func (b *Builder) makeTransfer() func(Cell, func(Cell) CellState, func(Cell, Cel
 		if p == entry {
 			b.seedEntrySymbolValues(&incoming)
 			b.seedEntryValues(&incoming)
+			b.seedEntryFacts(&incoming)
 		}
 		incoming = b.projectInPointState(p, incoming)
 
@@ -384,6 +401,17 @@ func (b *Builder) seedEntryValues(out *flow.PointState) {
 		return
 	}
 	seeder.SeedEntryValues(out, b.entryValues)
+}
+
+func (b *Builder) seedEntryFacts(out *flow.PointState) {
+	if !b.entryFacts.HasProof() {
+		return
+	}
+	seeder, ok := b.transfer.(EntryFactSeeder)
+	if !ok || seeder == nil {
+		return
+	}
+	seeder.SeedEntryFacts(out, b.entryFacts)
 }
 
 // readContracts reads every contract cell into a paramevidence.Contracts map.

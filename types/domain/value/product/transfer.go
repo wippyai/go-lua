@@ -2,7 +2,10 @@ package product
 
 import (
 	"github.com/wippyai/go-lua/types/domain/value"
+	"github.com/wippyai/go-lua/types/domain/value/axis/effectrows"
+	"github.com/wippyai/go-lua/types/domain/value/axis/evidence"
 	"github.com/wippyai/go-lua/types/domain/value/axis/numeric"
+	"github.com/wippyai/go-lua/types/domain/value/axis/ownership"
 	"github.com/wippyai/go-lua/types/kind"
 	"github.com/wippyai/go-lua/types/narrow"
 	querycore "github.com/wippyai/go-lua/types/query/core"
@@ -22,6 +25,34 @@ import (
 // recombines the Presence axis nilability the value-domain field/index/narrow
 // laws expect to see on the structural type. The contract of every primitive is
 // AbstractValue-in / AbstractValue-out; typ.Type never appears in a signature.
+
+// FromRefinedType admits a structural type produced by a proof over base. It is
+// the product boundary for reductions whose structural component is computed by
+// a type-domain helper or condition solver: shape/presence/identity come from the
+// refined type, while semantic evidence that remains valid under structural
+// narrowing is preserved from base.
+func FromRefinedType(base AbstractValue, t typ.Type) AbstractValue {
+	if t == nil {
+		t = typ.Any
+	}
+	if t.Kind().IsNever() {
+		return Bottom()
+	}
+	ev := evidence.Top()
+	if !base.IsZero() && base.IsGradualTop() {
+		ev = evidence.GradualTop()
+	}
+	return New(
+		shapeOf(t),
+		presenceOf(t),
+		numeric.Top(),
+		effectrows.Top(),
+		ownership.Top(),
+		escapeOf(t),
+		identityOfRefinement(base, t),
+		ev,
+	)
+}
 
 // FieldOf is the AbstractValue-native form of a field read av.name.
 //
@@ -679,7 +710,7 @@ func NarrowTruthy(av AbstractValue) AbstractValue {
 	if narrowed == nil {
 		return Bottom()
 	}
-	return presentRefinementFromType(narrowed, av.IsGradualTop() && typ.IsAny(narrowed))
+	return presentRefinementFromType(av, narrowed, av.IsGradualTop())
 }
 
 // NarrowFalsy is the AbstractValue-native form of else-branch falsy refinement
@@ -690,7 +721,7 @@ func NarrowFalsy(av AbstractValue) AbstractValue {
 	if narrowed == nil {
 		return Bottom()
 	}
-	return FromType(narrowed)
+	return FromRefinedType(av, narrowed)
 }
 
 // NarrowPresent is the AbstractValue-native form of not-nil refinement (the value
@@ -705,7 +736,7 @@ func NarrowPresent(av AbstractValue) AbstractValue {
 	if narrowed == nil {
 		return Bottom()
 	}
-	return presentRefinementFromType(narrowed, av.IsGradualTop() && typ.IsAny(narrowed))
+	return presentRefinementFromType(av, narrowed, av.IsGradualTop())
 }
 
 // NarrowLengthLowerBound is the AbstractValue-native form of a proven sequence
@@ -721,7 +752,7 @@ func NarrowLengthLowerBound(av AbstractValue, lower int64) AbstractValue {
 	if narrowed == nil {
 		return Bottom()
 	}
-	return FromType(narrowed)
+	return FromRefinedType(av, narrowed)
 }
 
 // FilterByKind is the AbstractValue-native form of positive typeof narrowing
@@ -733,18 +764,21 @@ func FilterByKind(av AbstractValue, k kind.Kind) AbstractValue {
 	if narrowed == nil {
 		return Bottom()
 	}
-	return FromType(narrowed)
+	return FromRefinedType(av, narrowed)
 }
 
 // ExcludeByKind is the AbstractValue-native form of negative typeof narrowing
 // type(x) ~= k (the value side of applyCondition for a NotHasType/kind
 // constraint, narrow.ExcludeKind).
 func ExcludeByKind(av AbstractValue, k kind.Kind) AbstractValue {
+	if k == kind.Nil {
+		return NarrowPresent(av)
+	}
 	narrowed := narrow.ExcludeKind(av.ProjectValue(), k)
 	if narrowed == nil {
 		return Bottom()
 	}
-	return FromType(narrowed)
+	return FromRefinedType(av, narrowed)
 }
 
 // RefineNumeric is the AbstractValue-native form of numeric refinement (the

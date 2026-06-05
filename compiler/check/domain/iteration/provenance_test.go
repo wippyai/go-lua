@@ -45,6 +45,23 @@ func TestIndexedSourceSymbol(t *testing.T) {
 	}
 }
 
+func TestIndexedSourcePathStaticField(t *testing.T) {
+	bindings := bind.NewBindingTable()
+	graph := bindIdent(bindings, ident("graph"), 20)
+	routes := &ast.AttrGetExpr{
+		Object:    graph,
+		Key:       &ast.StringExpr{Value: "pending_routes"},
+		KeySyntax: ast.AttrKeyDot,
+	}
+	iter := call("ipairs", routes)
+
+	got, ok := IndexedSourcePath(iter, bindings, indexedSource0)
+	want := constraint.NewPath(20, "graph").Field("pending_routes")
+	if !ok || !got.Equal(want) {
+		t.Fatalf("IndexedSourcePath() = (%v, %v), want %v/true", got, ok, want)
+	}
+}
+
 func TestContainerPath_StaticField(t *testing.T) {
 	bindings := bind.NewBindingTable()
 	base := bindIdent(bindings, ident("container"), 20)

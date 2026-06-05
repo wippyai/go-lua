@@ -2,7 +2,6 @@ package call
 
 import (
 	"github.com/wippyai/go-lua/compiler/ast"
-	"github.com/wippyai/go-lua/types/query/core"
 	"github.com/wippyai/go-lua/types/typ"
 	"github.com/wippyai/go-lua/types/typ/subst"
 	"github.com/wippyai/go-lua/types/typ/unwrap"
@@ -35,7 +34,7 @@ func FunctionForDemand(in DemandFunctionInput) *typ.Function {
 		if receiver == nil || typ.IsAbsentOrUnknown(receiver) {
 			return nil
 		}
-		member, ok := core.Method(receiver, call.Method)
+		member, ok := in.Resolver.method(receiver, call.Method)
 		if !ok {
 			return nil
 		}

@@ -133,6 +133,16 @@ var FunctionRefSetDomain = lattice.Lattice[FunctionRefSet]{
 // FunctionRefs maps runtime value paths to possible function identities.
 type FunctionRefs = map[constraint.PathKey]FunctionRefSet
 
+// ReferencePathProjection is a finite vocabulary for reference-axis facts.
+// Exact paths keep only the path itself. Subtrees keep the path and every
+// descendant. Call-entry and closure-capture reducers use it to retain only the
+// function/closure identities a callee can observe, without falling back to
+// whole-symbol projection.
+type ReferencePathProjection struct {
+	Exact    []constraint.Path
+	Subtrees []constraint.Path
+}
+
 // FunctionRefsKey is an exact comparable key for a function-identity path map.
 // It is interned by FunctionRefsDomain equality, not by formatting identity, so
 // summary/cache keys stay stable while retaining exact lattice semantics.
@@ -244,6 +254,31 @@ func ProjectFunctionRefsByPath(refs FunctionRefs, root constraint.Path) Function
 	return FunctionRefsDomain.Join(out, nil)
 }
 
+// ProjectFunctionRefsByReferencePaths keeps exactly the finite path vocabulary
+// in projection. It is more precise than ProjectFunctionRefsBySymbols: captured
+// table roots no longer pull every function-valued field into a callee context
+// unless that table escapes as a whole subtree.
+func ProjectFunctionRefsByReferencePaths(refs FunctionRefs, projection ReferencePathProjection) FunctionRefs {
+	if len(projection.Exact) == 0 && len(projection.Subtrees) == 0 {
+		return FunctionRefsDomain.Bottom()
+	}
+	if FunctionRefsDomain.Equal(refs, FunctionRefsDomain.Top()) {
+		return FunctionRefsDomain.Top()
+	}
+	if len(refs) == 0 {
+		return FunctionRefsDomain.Bottom()
+	}
+	out := make(FunctionRefs)
+	for _, path := range constraint.SortedPathKeys(refs) {
+		set := refs[path]
+		if set.IsBottom() || !referenceProjectionContainsPath(projection, path) {
+			continue
+		}
+		out[path] = set
+	}
+	return FunctionRefsDomain.Join(out, nil)
+}
+
 // RebaseFunctionRefs moves all identity facts under from to the corresponding
 // subtree under to. It is used for summary return slots: a callee summary records
 // identities under placeholder paths ($0.f); the caller rebases that subtree onto
@@ -283,12 +318,21 @@ func WithoutFunctionRefSubtree(refs FunctionRefs, path constraint.PathKey) Funct
 	if len(refs) == 0 || path == "" {
 		return refs
 	}
+	found := false
+	for k := range refs {
+		if functionRefPathInSubtree(k, path) {
+			found = true
+			break
+		}
+	}
+	if !found {
+		return refs
+	}
 	out := make(FunctionRefs, len(refs))
 	for k, v := range refs {
-		if functionRefPathInSubtree(k, path) {
-			continue
+		if !functionRefPathInSubtree(k, path) {
+			out[k] = v
 		}
-		out[k] = v
 	}
 	return FunctionRefsDomain.Join(out, nil)
 }
@@ -299,6 +343,23 @@ func functionRefPathInSubtree(path, root constraint.PathKey) bool {
 	}
 	p, r := string(path), string(root)
 	return strings.HasPrefix(p, r+".") || strings.HasPrefix(p, r+"[")
+}
+
+func referenceProjectionContainsPath(projection ReferencePathProjection, path constraint.PathKey) bool {
+	if path == "" {
+		return false
+	}
+	for _, exact := range projection.Exact {
+		if key := exact.Key(); key != "" && path == key {
+			return true
+		}
+	}
+	for _, root := range projection.Subtrees {
+		if key := root.Key(); key != "" && functionRefPathInSubtree(path, key) {
+			return true
+		}
+	}
+	return false
 }
 
 func internFunctionRefsKey(refs FunctionRefs) FunctionRefsKey {
@@ -383,8 +444,38 @@ func joinFunctionRefSet(a, b FunctionRefSet) FunctionRefSet {
 	if a.top || b.top {
 		return FunctionRefSetTop()
 	}
-	out := append(a.Refs(), b.refs...)
-	return canonicalFunctionRefSet(out)
+	if len(a.refs) == 0 {
+		return b
+	}
+	if len(b.refs) == 0 {
+		return a
+	}
+
+	out := make([]FunctionRef, 0, len(a.refs)+len(b.refs))
+	i, j := 0, 0
+	for i < len(a.refs) && j < len(b.refs) {
+		switch compareFunctionRef(a.refs[i], b.refs[j]) {
+		case -1:
+			out = append(out, a.refs[i])
+			i++
+		case 0:
+			out = append(out, a.refs[i])
+			i++
+			j++
+		default:
+			out = append(out, b.refs[j])
+			j++
+		}
+	}
+	out = append(out, a.refs[i:]...)
+	out = append(out, b.refs[j:]...)
+	if sameFunctionRefSlice(out, a.refs) {
+		return a
+	}
+	if sameFunctionRefSlice(out, b.refs) {
+		return b
+	}
+	return FunctionRefSet{refs: out}
 }
 
 func compareFunctionRef(a, b FunctionRef) int {
@@ -392,4 +483,16 @@ func compareFunctionRef(a, b FunctionRef) int {
 		return c
 	}
 	return cmp.Compare(a.ParentHash, b.ParentHash)
+}
+
+func sameFunctionRefSlice(a, b []FunctionRef) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
 }

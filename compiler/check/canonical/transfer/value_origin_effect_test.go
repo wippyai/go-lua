@@ -41,6 +41,106 @@ func TestValueOriginDemandIndexedIteratorNestedField(t *testing.T) {
 	assertDemandType(t, got, 0, want)
 }
 
+func TestValueOriginDemandRoutesThroughAppendElementFieldOrigin(t *testing.T) {
+	routeEntry := &ast.IdentExpr{Value: "route_entry"}
+	in := valueOriginInput(t, map[*ast.IdentExpr]cfg.SymbolID{routeEntry: cfg.SymbolID(156)})
+	tr := New(in, Config{})
+	tr.paramBySym[cfg.SymbolID(120)] = 0
+
+	routePath := constraint.NewPath(cfg.SymbolID(155), "route")
+	routeEntryPath := constraint.NewPath(cfg.SymbolID(156), "route_entry")
+	pendingRoutes := constraint.NewPath(cfg.SymbolID(122), "graph").Field("pending_routes")
+	opPath := constraint.NewPath(cfg.SymbolID(154), "op")
+	operationsPath := constraint.NewPath(cfg.SymbolID(120), "operations")
+	out := flow.PointState{
+		PathAliases: flow.PathAliasFacts{}.WithPaths(routeEntryPath, routePath),
+		ValueOrigins: flow.ValueOriginFacts{}.
+			WithPaths(routePath, pendingRoutes, flow.ValueOriginIndexedIterator, 1).
+			WithPaths(opPath, operationsPath, flow.ValueOriginIndexedIterator, 1),
+		KeyPresence: flow.KeyPresenceFacts{}.
+			WithAppendHistoryBasePath(pendingRoutes).
+			WithAppendElementFieldOriginPaths(
+				pendingRoutes,
+				[]constraint.Segment{{Kind: constraint.SegmentField, Name: "target_name"}},
+				opPath.Field("config").Field("target"),
+			),
+	}
+
+	arg := &ast.AttrGetExpr{
+		Object:    routeEntry,
+		Key:       &ast.StringExpr{Value: "target_name"},
+		KeySyntax: ast.AttrKeyDot,
+	}
+	got := collectDemand(t, func(demand func(int, paramevidence.ParamContract)) {
+		tr.demandExprCtx(&out, arg, typ.String, demand)
+	})
+	want := typ.NewArray(typ.NewRecord().ReadonlyField("config", typ.NewRecord().
+		ReadonlyField("target", typ.String).
+		Build()).Build())
+	assertDemandType(t, got, 0, want)
+}
+
+func TestAssignmentProvenanceUsesCFGSourceSymbolFallback(t *testing.T) {
+	route := &ast.IdentExpr{Value: "route"}
+	in := valueOriginInput(t, map[*ast.IdentExpr]cfg.SymbolID{})
+	tr := New(in, Config{})
+	target := cfg.AssignTarget{Kind: cfg.TargetIdent, Name: "route_entry", Symbol: cfg.SymbolID(156)}
+	srcSym := cfg.SymbolID(155)
+
+	provenance, ok := tr.assignmentProvenanceEffectWithSourceSymbol(target, route, srcSym, product.AbstractValue{})
+	if !ok {
+		t.Fatal("assignment provenance did not use CFG source symbol fallback")
+	}
+	if provenance.SourcePath.Symbol != srcSym {
+		t.Fatalf("source symbol = %d, want %d", provenance.SourcePath.Symbol, srcSym)
+	}
+
+	out := flow.PointState{}
+	tr.applyAssignmentProvenanceEffect(&out, provenance)
+	if aliases := out.PathAliases.AliasesOfPath(constraint.NewPath(cfg.SymbolID(156), "route_entry")); len(aliases) != 1 ||
+		aliases[0].Source != flow.KeyPresencePathKey(constraint.NewPath(srcSym, "route")) {
+		t.Fatalf("path aliases = %s, want route_entry<-route", out.PathAliases.Format())
+	}
+}
+
+func TestConditionReadDemandUnaryLengthOperand(t *testing.T) {
+	operations := &ast.IdentExpr{Value: "operations"}
+	in := valueOriginInput(t, map[*ast.IdentExpr]cfg.SymbolID{operations: cfg.SymbolID(12)})
+	tr := New(in, Config{})
+	tr.paramBySym[cfg.SymbolID(12)] = 0
+
+	cond := &ast.RelationalOpExpr{
+		Operator: "==",
+		Lhs:      &ast.UnaryLenOpExpr{Expr: operations},
+		Rhs:      &ast.NumberExpr{Value: "0"},
+	}
+	got := collectDemand(t, func(demand func(int, paramevidence.ParamContract)) {
+		tr.demandConditionReads(&flow.PointState{}, cond, demand)
+	})
+	assertDemandType(t, got, 0, lengthContextType())
+}
+
+func TestCapabilityDemandDirectParamFieldPathUnderTruthyGuardAdmitsFalsyLeaf(t *testing.T) {
+	template := &ast.IdentExpr{Value: "template"}
+	operations := &ast.AttrGetExpr{
+		Object:    template,
+		Key:       &ast.StringExpr{Value: "operations"},
+		KeySyntax: ast.AttrKeyDot,
+	}
+	in := valueOriginInput(t, map[*ast.IdentExpr]cfg.SymbolID{template: cfg.SymbolID(12)})
+	tr := New(in, Config{})
+	tr.paramBySym[cfg.SymbolID(12)] = 0
+	path := constraint.NewPath(cfg.SymbolID(12), "template").Field("operations")
+	out := flow.PointState{Cond: constraint.FromConstraints(constraint.Truthy{Path: path})}
+
+	got := collectDemand(t, func(demand func(int, paramevidence.ParamContract)) {
+		tr.demandExprCapabilityCtx(&out, operations, paramevidence.CapabilityLength, demand)
+	})
+	assertDemandType(t, got, 0, typ.NewRecord().
+		ReadonlyField("operations", typ.NewUnion(lengthContextType(), typ.Nil, typ.False)).
+		Build())
+}
+
 func TestValueOriginDemandLiftsThroughNestedSourcePath(t *testing.T) {
 	entry := &ast.IdentExpr{Value: "entry"}
 	in := valueOriginInput(t, map[*ast.IdentExpr]cfg.SymbolID{entry: cfg.SymbolID(52)})
@@ -149,6 +249,51 @@ func TestValueOriginDemandKeyedIteratorKeyAndValue(t *testing.T) {
 		}, typ.String, demand)
 	})
 	assertDemandType(t, valueDemand, 0, typ.NewReadonlyMap(typ.Any, typ.NewRecord().ReadonlyField("id", typ.String).Build()))
+}
+
+func TestValueOriginContractDemandGuardedDerivedLeafAdmitsFalsyLeaf(t *testing.T) {
+	op := &ast.IdentExpr{Value: "op"}
+	opTemplate := &ast.AttrGetExpr{
+		Object: &ast.AttrGetExpr{
+			Object:    op,
+			Key:       &ast.StringExpr{Value: "config"},
+			KeySyntax: ast.AttrKeyDot,
+		},
+		Key:       &ast.StringExpr{Value: "template"},
+		KeySyntax: ast.AttrKeyDot,
+	}
+	in := valueOriginInput(t, map[*ast.IdentExpr]cfg.SymbolID{op: cfg.SymbolID(52)})
+	tr := New(in, Config{})
+	tr.paramBySym[cfg.SymbolID(51)] = 0
+	sourcePath := constraint.NewPath(cfg.SymbolID(51), "template").Field("operations")
+	valuePath := constraint.NewPath(cfg.SymbolID(52), "op").Field("config").Field("template")
+	out := flow.PointState{
+		Cond: constraint.FromConstraints(constraint.Truthy{Path: valuePath}),
+		ValueOrigins: flow.ValueOriginFacts{}.WithPaths(
+			constraint.NewPath(cfg.SymbolID(52), "op"),
+			sourcePath,
+			flow.ValueOriginIndexedIterator,
+			1,
+		),
+	}
+	calleeTemplateContract := paramevidence.DemandFromPathCapability(
+		[]constraint.Segment{{Kind: constraint.SegmentField, Name: "operations"}},
+		paramevidence.CapabilityLength,
+	)
+
+	got := collectDemand(t, func(demand func(int, paramevidence.ParamContract)) {
+		tr.demandExprContractCtx(&out, opTemplate, calleeTemplateContract, demand)
+	})
+	wantElement := typ.NewRecord().ReadonlyField("config", typ.NewRecord().
+		ReadonlyField("template", typ.NewUnion(
+			typ.NewRecord().ReadonlyField("operations", lengthContextType()).Build(),
+			typ.Nil,
+			typ.False,
+		)).
+		Build()).Build()
+	assertDemandType(t, got, 0, typ.NewRecord().
+		ReadonlyField("operations", typ.NewArray(wantElement)).
+		Build())
 }
 
 func TestValueOriginDemandDirectParamRoot(t *testing.T) {

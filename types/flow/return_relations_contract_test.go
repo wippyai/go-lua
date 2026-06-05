@@ -83,6 +83,40 @@ func TestReturnRelationsLengthParamJoinIsMust(t *testing.T) {
 	}
 }
 
+func TestReturnRelationsKeyParamJoinIsMust(t *testing.T) {
+	common := ReturnKeyParamRelation{
+		ReturnIndex: 0,
+		ParamIndex:  1,
+		ParamSegments: []constraint.Segment{{
+			Kind: constraint.SegmentField,
+			Name: "nodes",
+		}},
+	}
+	other := ReturnKeyParamRelation{
+		ReturnIndex: 1,
+		ParamIndex:  1,
+		ParamSegments: []constraint.Segment{{
+			Kind: constraint.SegmentField,
+			Name: "edges",
+		}},
+	}
+	a := ReturnRelationsOfKeyParams([]ReturnKeyParamRelation{common, other})
+	b := ReturnRelationsOfKeyParams([]ReturnKeyParamRelation{common})
+
+	got := ReturnRelationsDomain.Join(a, b)
+	if !got.HasKeyParam(common) || got.HasKeyParam(other) {
+		t.Fatalf("Join(%#v, %#v) = %#v, want only common key-param proof", a, b, got)
+	}
+	if !got.HasProof() {
+		t.Fatalf("joined key-param relation should be finite proof")
+	}
+	exposed := got.KeyParams()
+	exposed[0].ParamSegments[0].Name = "mutated"
+	if !got.HasKeyParam(common) {
+		t.Fatalf("KeyParams exposed mutable backing: %#v", got.KeyParams())
+	}
+}
+
 func TestPointRelationsLengthParamJoinAndKill(t *testing.T) {
 	root := cfg.SymbolID(10)
 	otherRoot := cfg.SymbolID(11)

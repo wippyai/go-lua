@@ -44,3 +44,31 @@ func TestInformativeTypeConcreteBoundary(t *testing.T) {
 		})
 	}
 }
+
+func TestHasFreeVariableUsesRecursiveFamilySeen(t *testing.T) {
+	closed := typ.NewRecursive("Node", func(self typ.Type) typ.Type {
+		return typ.NewRecord().
+			ReadonlyField("next", typ.NewOptional(self)).
+			ReadonlyField("get", typ.Func().OptParam("self", typ.Any).Returns(self).Build()).
+			Build()
+	})
+	if HasFreeVariable(closed) {
+		t.Fatalf("closed recursive obligation reported free variable: %v", closed)
+	}
+	if !InformativeType(closed) {
+		t.Fatalf("closed recursive obligation should be informative: %v", closed)
+	}
+
+	open := typ.NewRecursive("OpenNode", func(self typ.Type) typ.Type {
+		return typ.NewRecord().
+			ReadonlyField("next", typ.NewOptional(self)).
+			ReadonlyField("get", typ.Func().OptParam("self", typ.Any).Returns(typ.NewRef("", "T")).Build()).
+			Build()
+	})
+	if !HasFreeVariable(open) {
+		t.Fatalf("recursive obligation with open return did not report free variable: %v", open)
+	}
+	if InformativeType(open) {
+		t.Fatalf("recursive obligation with open return should not be informative: %v", open)
+	}
+}

@@ -1126,6 +1126,23 @@ func TestFilterByKind_Alias(t *testing.T) {
 	}
 }
 
+func TestFilterByKind_AliasUnionNormalizesRefinedBody(t *testing.T) {
+	alias := typ.NewAlias("Entry", typ.NewUnion(typ.String, typ.NewRecord().Field("id", typ.String).Build()))
+	got := narrow.FilterByKind(alias, kind.String)
+	if !typ.TypeEquals(got, typ.String) {
+		t.Errorf("FilterByKind(Alias<string|record>, string) = %v, want string", got)
+	}
+}
+
+func TestExcludeKind_AliasUnionNormalizesRefinedBody(t *testing.T) {
+	record := typ.NewRecord().Field("id", typ.String).Build()
+	alias := typ.NewAlias("Entry", typ.NewUnion(typ.String, record))
+	got := narrow.ExcludeKind(alias, kind.String)
+	if !typ.TypeEquals(got, record) {
+		t.Errorf("ExcludeKind(Alias<string|record>, string) = %v, want %v", got, record)
+	}
+}
+
 func TestFilterByKind_Intersection(t *testing.T) {
 	inter := typ.NewIntersection(typ.String, typ.String)
 	got := narrow.FilterByKind(inter, kind.String)

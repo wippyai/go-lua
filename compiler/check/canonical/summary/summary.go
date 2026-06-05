@@ -26,6 +26,8 @@ import (
 	"github.com/wippyai/go-lua/types/flow"
 	"github.com/wippyai/go-lua/types/lattice"
 	latticeproduct "github.com/wippyai/go-lua/types/lattice/product"
+	"github.com/wippyai/go-lua/types/subtype"
+	"github.com/wippyai/go-lua/types/typ"
 )
 
 // Summary is the interprocedural abstraction of one function: everything a
@@ -53,6 +55,11 @@ import (
 //     It models method/self table mutation as a summary effect applied to the
 //     concrete caller argument place, instead of using prototype entry fallback as
 //     a post-call store update.
+//   - BoundaryFacts is the finite caller-visible postcondition carrier for
+//     point-local facts that are meaningful at the function boundary, such as
+//     parameter/return-relative key presence, key-array provenance, and length
+//     lower bounds. Product receiver effects own value shape; BoundaryFacts owns
+//     path facts that must be rebased by callers.
 //   - CaptureExports is the finite store snapshot a directly nested closure may
 //     capture at entry. It is store state, not a call effect; the summary solve
 //     query uses it to seed child PointState.Cells through lexical dependencies.
@@ -89,6 +96,7 @@ type Summary struct {
 	Relations           flow.ReturnRelations
 	CellEffects         flow.CaptureEffects
 	ReceiverEffects     flow.ReceiverEffects
+	BoundaryFacts       flow.BoundaryFacts
 	CaptureExports      flow.CaptureCells
 	CaptureFunctionRefs flow.FunctionRefs
 	CaptureClosureRefs  flow.ClosureRefs
@@ -130,6 +138,7 @@ var SummaryDomain = lattice.Lattice[Summary]{
 			Relations:           flow.ReturnRelationsDomain.Bottom(),
 			CellEffects:         flow.CaptureEffectsDomain.Bottom(),
 			ReceiverEffects:     flow.ReceiverEffectsDomain.Bottom(),
+			BoundaryFacts:       flow.BoundaryFactsDomain.Bottom(),
 			CaptureExports:      flow.CaptureCellsDomain.Bottom(),
 			CaptureFunctionRefs: flow.FunctionRefsDomain.Bottom(),
 			CaptureClosureRefs:  flow.ClosureRefsDomain.Bottom(),
@@ -150,6 +159,7 @@ var SummaryDomain = lattice.Lattice[Summary]{
 			flow.ReturnRelationsDomain.Equal(a.Relations, b.Relations) &&
 			flow.CaptureEffectsDomain.Equal(a.CellEffects, b.CellEffects) &&
 			flow.ReceiverEffectsDomain.Equal(a.ReceiverEffects, b.ReceiverEffects) &&
+			flow.BoundaryFactsDomain.Equal(a.BoundaryFacts, b.BoundaryFacts) &&
 			flow.CaptureCellsDomain.Equal(a.CaptureExports, b.CaptureExports) &&
 			flow.FunctionRefsDomain.Equal(a.CaptureFunctionRefs, b.CaptureFunctionRefs) &&
 			flow.ClosureRefsDomain.Equal(a.CaptureClosureRefs, b.CaptureClosureRefs) &&
@@ -171,6 +181,7 @@ var SummaryDomain = lattice.Lattice[Summary]{
 			flow.ReturnRelationsDomain.LessOrEq(a.Relations, b.Relations) &&
 			flow.CaptureEffectsDomain.LessOrEq(a.CellEffects, b.CellEffects) &&
 			flow.ReceiverEffectsDomain.LessOrEq(a.ReceiverEffects, b.ReceiverEffects) &&
+			flow.BoundaryFactsDomain.LessOrEq(a.BoundaryFacts, b.BoundaryFacts) &&
 			flow.CaptureCellsDomain.LessOrEq(a.CaptureExports, b.CaptureExports) &&
 			flow.FunctionRefsDomain.LessOrEq(a.CaptureFunctionRefs, b.CaptureFunctionRefs) &&
 			flow.ClosureRefsDomain.LessOrEq(a.CaptureClosureRefs, b.CaptureClosureRefs) &&
@@ -190,6 +201,7 @@ var SummaryDomain = lattice.Lattice[Summary]{
 			Relations:           flow.ReturnRelationsDomain.Join(a.Relations, b.Relations),
 			CellEffects:         flow.CaptureEffectsDomain.Join(a.CellEffects, b.CellEffects),
 			ReceiverEffects:     flow.ReceiverEffectsDomain.Join(a.ReceiverEffects, b.ReceiverEffects),
+			BoundaryFacts:       flow.BoundaryFactsDomain.Join(a.BoundaryFacts, b.BoundaryFacts),
 			CaptureExports:      flow.CaptureCellsDomain.Join(a.CaptureExports, b.CaptureExports),
 			CaptureFunctionRefs: flow.FunctionRefsDomain.Join(a.CaptureFunctionRefs, b.CaptureFunctionRefs),
 			CaptureClosureRefs:  flow.ClosureRefsDomain.Join(a.CaptureClosureRefs, b.CaptureClosureRefs),
@@ -211,6 +223,7 @@ var SummaryDomain = lattice.Lattice[Summary]{
 			Relations:           flow.ReturnRelationsDomain.Widen(prev.Relations, next.Relations),
 			CellEffects:         flow.CaptureEffectsDomain.Widen(prev.CellEffects, next.CellEffects),
 			ReceiverEffects:     flow.ReceiverEffectsDomain.Widen(prev.ReceiverEffects, next.ReceiverEffects),
+			BoundaryFacts:       flow.BoundaryFactsDomain.Widen(prev.BoundaryFacts, next.BoundaryFacts),
 			CaptureExports:      flow.CaptureCellsDomain.Widen(prev.CaptureExports, next.CaptureExports),
 			CaptureFunctionRefs: flow.FunctionRefsDomain.Widen(prev.CaptureFunctionRefs, next.CaptureFunctionRefs),
 			CaptureClosureRefs:  flow.ClosureRefsDomain.Widen(prev.CaptureClosureRefs, next.CaptureClosureRefs),
@@ -231,6 +244,7 @@ func summaryTop() Summary {
 		Relations:           flow.ReturnRelationsDomain.Top(),
 		CellEffects:         flow.CaptureEffectsDomain.Top(),
 		ReceiverEffects:     flow.ReceiverEffectsDomain.Top(),
+		BoundaryFacts:       flow.BoundaryFactsDomain.Top(),
 		CaptureExports:      flow.CaptureCellsDomain.Top(),
 		CaptureFunctionRefs: flow.FunctionRefsDomain.Top(),
 		CaptureClosureRefs:  flow.ClosureRefsDomain.Top(),
@@ -247,6 +261,60 @@ func SummaryEqual(a, b Summary) bool { return SummaryDomain.Equal(a, b) }
 // projection whose value keeps growing, so the fixpoint terminates by lattice
 // height rather than a cap.
 func SummaryWiden(prev, next Summary) Summary { return SummaryDomain.Widen(prev, next) }
+
+// MergeExactOverlaySummary is the reducer for diagnostic exact-context summary
+// overlays. It is deliberately not just SummaryWiden: the recursive Summary cell
+// is a monotone fixed-point carrier, while the diagnostic overlay is a snapshot of
+// an exact observer that may initially run before exact callees have published
+// their own overlay postconditions. Value axes still use widening to terminate
+// recursive exact observations. Effect and must-proof axes are latest snapshots:
+// an earlier identity/no-proof observation is not a runtime path and must not
+// survive after the exact callee overlay proves a write or boundary fact.
+func MergeExactOverlaySummary(prev, next Summary) Summary {
+	out := SummaryDomain.Widen(prev, next)
+	out.Returns = mergeExactOverlayReturns(prev.Returns, next.Returns, out.Returns)
+	out.CellEffects = next.CellEffects
+	out.ReceiverEffects = next.ReceiverEffects
+	out.Relations = next.Relations
+	out.BoundaryFacts = next.BoundaryFacts
+	return out
+}
+
+func mergeExactOverlayReturns(prev, next, widened []product.AbstractValue) []product.AbstractValue {
+	if len(next) == 0 || len(prev) == 0 {
+		return widened
+	}
+	out := append([]product.AbstractValue(nil), widened...)
+	for i, candidate := range next {
+		if i >= len(prev) || i >= len(out) || candidate.IsZero() {
+			continue
+		}
+		baseline := prev[i]
+		if baseline.IsZero() || product.Domain.Equal(baseline, candidate) {
+			continue
+		}
+		if exactReturnValueRefines(candidate, baseline) &&
+			baseline.Covers(candidate) && !candidate.Covers(baseline) {
+			out[i] = candidate
+		}
+	}
+	return out
+}
+
+func exactReturnValueRefines(candidate, baseline product.AbstractValue) bool {
+	candidateType := candidate.ProjectValue()
+	baselineType := baseline.ProjectValue()
+	if _, candidateLiteral := candidateType.(*typ.Literal); candidateLiteral {
+		return false
+	}
+	if _, baselineLiteral := baselineType.(*typ.Literal); baselineLiteral {
+		return false
+	}
+	return candidateType != nil &&
+		baselineType != nil &&
+		subtype.IsSubtype(candidateType, baselineType) &&
+		!subtype.IsSubtype(baselineType, candidateType)
+}
 
 // JoinReturnFunctionRefs joins caller-visible returned-function identities slotwise.
 // This is the public summary-owned operation for consumers that combine several

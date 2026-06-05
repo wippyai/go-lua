@@ -59,6 +59,7 @@ import (
 	"github.com/wippyai/go-lua/types/domain/value/product"
 	"github.com/wippyai/go-lua/types/effect"
 	"github.com/wippyai/go-lua/types/flow"
+	"github.com/wippyai/go-lua/types/flow/numeric"
 	"github.com/wippyai/go-lua/types/flow/pathkey"
 	"github.com/wippyai/go-lua/types/flow/propagate"
 	"github.com/wippyai/go-lua/types/kind"
@@ -119,6 +120,10 @@ type functionRefProvider interface {
 
 type closureCaptureProvider interface {
 	CapturedSymbols(ref flow.FunctionRef) []cfg.SymbolID
+}
+
+type closureReferenceProjectionProvider interface {
+	ReferenceProjection(ref flow.FunctionRef) flow.ReferencePathProjection
 }
 
 // CallTyper types a call or method-call expression's Lua return vector. It is the
@@ -217,6 +222,9 @@ type ProductCallContext struct {
 	Cells            flow.CaptureCells
 	FunctionRefs     flow.FunctionRefs
 	ClosureRefs      flow.ClosureRefs
+	KeyPresence      flow.KeyPresenceFacts
+	Num              *numeric.State
+	IndexWrites      flow.IndexWriteAdmissionFacts
 }
 
 // ExprType is the compatibility projection for provider code that still needs a
@@ -284,7 +292,7 @@ func (c ProductCallContext) ForCall(call *ast.FuncCallExpr) ProductCallContext {
 	}
 	next.RuntimeArgValues = append(next.RuntimeArgValues, next.ArgValues...)
 	if call.Method != "" && len(next.RuntimeArgValues) > 0 && !next.RuntimeArgValues[0].IsZero() {
-		if selfType := product.ProjectValueOrUnknown(next.RuntimeArgValues[0]); callobligation.InformativeType(selfType) {
+		if selfType := productCallSelfType(next.RuntimeArgValues[0]); selfType != nil {
 			next.SelfType = selfType
 		}
 	}
@@ -321,6 +329,10 @@ type productCellEffectProvider interface {
 
 type productReceiverEffectProvider interface {
 	ReceiverEffectsFromValues(call *ast.FuncCallExpr, ctx ProductCallContext) flow.ReceiverEffects
+}
+
+type productBoundaryFactProvider interface {
+	BoundaryFactsFromValues(call *ast.FuncCallExpr, ctx ProductCallContext) flow.BoundaryFacts
 }
 
 type containerElementUnionProvider interface {
@@ -792,6 +804,129 @@ func (t *Transfer) SeedEntryValues(out *flow.PointState, values map[int]product.
 	}
 }
 
+// SeedEntryFacts writes parameter-relative path facts into the same PointState
+// fact lanes the ordinary transfer uses. It is called by the equation graph at
+// the entry point before local node semantics run, so subsequent writes and
+// branch flow own fact lifetime through the usual reducers.
+func (t *Transfer) SeedEntryFacts(out *flow.PointState, facts flow.BoundaryFacts) {
+	if t == nil || out == nil || !facts.HasProof() {
+		return
+	}
+	for _, fact := range facts.IndexWrites() {
+		table, ok := t.rebaseEntryBoundaryPath(fact.Table)
+		if !ok {
+			continue
+		}
+		key, ok := t.rebaseEntryBoundaryPath(fact.Key)
+		if !ok {
+			continue
+		}
+		t.applyDynamicIndexWriteProofEffect(out, DynamicIndexWriteProofEffect{
+			TablePath:              table,
+			KeyPath:                key,
+			Key:                    product.FromType(typ.Unknown),
+			Value:                  fact.Value,
+			AllowOpaqueKeyReadback: true,
+		})
+	}
+	for _, fact := range facts.KeyPresence() {
+		table, ok := t.rebaseEntryBoundaryPath(fact.Table)
+		if !ok {
+			continue
+		}
+		key, ok := t.rebaseEntryBoundaryPath(fact.Key)
+		if !ok {
+			continue
+		}
+		t.applyKeyProvenanceEffect(out, KeyProvenanceEffect{
+			Kind:      KeyProvenanceDynamicIndexWrite,
+			TablePath: table,
+			KeyPath:   key,
+		})
+	}
+	for _, fact := range facts.KeyArrays() {
+		array, ok := t.rebaseEntryBoundaryPath(fact.Array)
+		if !ok {
+			continue
+		}
+		table, ok := t.rebaseEntryBoundaryPath(fact.Table)
+		if !ok {
+			continue
+		}
+		t.applyKeyProvenanceEffect(out, KeyProvenanceEffect{
+			Kind:      KeyProvenanceKeyArrayAssignment,
+			ArrayPath: array,
+			TablePath: table,
+		})
+	}
+	for _, fact := range facts.KeyArrayValues() {
+		array, ok := t.rebaseEntryBoundaryPath(fact.Array)
+		if !ok {
+			continue
+		}
+		table, ok := t.rebaseEntryBoundaryPath(fact.Table)
+		if !ok {
+			continue
+		}
+		arrayKey := flow.KeyPresencePathKey(array)
+		tableKey := flow.KeyPresencePathKey(table)
+		out.KeyPresence = out.KeyPresence.WithKeyArrayValue(arrayKey, tableKey, fact.Value)
+	}
+	for _, fact := range facts.AppendKeys() {
+		array, ok := t.rebaseEntryBoundaryPath(fact.Array)
+		if !ok {
+			continue
+		}
+		key, ok := t.rebaseEntryBoundaryPath(fact.Key)
+		if !ok {
+			continue
+		}
+		out.KeyPresence = out.KeyPresence.WithAppendedKeyPaths(array, key)
+	}
+	for _, fact := range facts.AppendElementFieldOrigins() {
+		array, ok := t.rebaseEntryBoundaryPath(fact.Array)
+		if !ok {
+			continue
+		}
+		source, ok := t.rebaseEntryBoundaryPath(fact.Source)
+		if !ok {
+			continue
+		}
+		out.KeyPresence = out.KeyPresence.
+			WithAppendHistoryBasePath(array).
+			WithAppendElementFieldOriginFromPaths(array, fact.Field, source, fact.SourceField)
+	}
+	var ops []NumericOp
+	for _, fact := range facts.LengthLowerBounds() {
+		target, ok := t.rebaseEntryBoundaryPath(fact.Target)
+		if !ok || target.Symbol == 0 {
+			continue
+		}
+		key := flow.SymbolPathKey(target.Symbol, target.Segments)
+		if key == "" {
+			continue
+		}
+		ops = append(ops, NumericOp{Kind: NumericLenGeConst, Key: key, Const: fact.Lower})
+	}
+	if len(ops) > 0 {
+		t.applyNumericEffect(out, NumericEffect{Ops: ops})
+	}
+}
+
+func (t *Transfer) rebaseEntryBoundaryPath(path flow.BoundaryPath) (constraint.Path, bool) {
+	if t == nil || path.Kind != flow.BoundaryPathParam || path.Index < 0 || path.Index >= len(t.in.Scope.ParamSymbols) {
+		return constraint.Path{}, false
+	}
+	sym := t.in.Scope.ParamSymbols[path.Index]
+	if sym == 0 {
+		return constraint.Path{}, false
+	}
+	return constraint.Path{
+		Symbol:   sym,
+		Segments: append([]constraint.Segment(nil), path.Segments...),
+	}, true
+}
+
 // SeedEntrySymbolValues writes immutable entry values keyed directly by graph
 // symbol into the same product-state store ordinary transfer reads. The equation
 // graph calls this only at the entry point; local node semantics and widening
@@ -859,6 +994,11 @@ func (t *Transfer) applyAssign(
 		}
 		keyArrayTable, _ := t.keyArrayTableForAssignment(info, i, target)
 		functionRefs, closureRefs := t.referenceWritesForAssignedPlace(out, Place{Root: target.Symbol}, info, i, src, demand)
+		applyAssignmentProvenance := func(value product.AbstractValue) {
+			if provenance, ok := t.assignmentProvenanceEffectWithSourceSymbol(target, src, assignSourceSymbol(info, i), value); ok {
+				t.applyAssignmentProvenanceEffect(out, provenance)
+			}
+		}
 		val, ok := t.targetValue(out, p, info, i, src, callReturns, demand)
 		constructorCardinalityLower := int64(0)
 		if tbl, isTable := src.(*ast.TableExpr); isTable {
@@ -867,10 +1007,12 @@ func (t *Transfer) applyAssign(
 		if !ok {
 			if src != nil && t.pendingUnannotatedParamSource(out, src) {
 				t.applySymbolWriteEffect(out, target, product.AbstractValue{}, false, false, src, keyArrayTable, functionRefs, closureRefs)
+				applyAssignmentProvenance(product.AbstractValue{})
 				return
 			}
 			if t.symbolStorage.isCellBacked(target.Symbol) && src != nil {
 				t.applySymbolWriteEffect(out, target, product.Domain.Top(), false, false, nil, keyArrayTable, functionRefs, closureRefs)
+				applyAssignmentProvenance(product.Domain.Top())
 				return
 			}
 			if src == nil {
@@ -886,7 +1028,9 @@ func (t *Transfer) applyAssign(
 			// unresolved. A field read off it is then a read off a placeholder, which
 			// the gradual-admission gate does not silently admit.
 			if t.declaredGradualTop(target.Symbol) {
-				t.applySymbolWriteEffect(out, target, product.FromType(typ.Any), false, false, nil, keyArrayTable, functionRefs, closureRefs)
+				anyValue := product.FromType(typ.Any)
+				t.applySymbolWriteEffect(out, target, anyValue, false, false, nil, keyArrayTable, functionRefs, closureRefs)
+				applyAssignmentProvenance(anyValue)
 				return
 			}
 			// A declared keyed/indexed local (`local m: {[string]: string} = f()`) is
@@ -895,12 +1039,15 @@ func (t *Transfer) applyAssign(
 			// overrides structural inference). Seed it so a later read/iteration of the
 			// slot sees the declared element/key/value rather than collapsing to unknown.
 			if dc, has := t.declaredContainerType(target.Symbol); has {
-				t.applySymbolWriteEffect(out, target, product.FromType(dc), false, false, nil, keyArrayTable, functionRefs, closureRefs)
+				declaredValue := product.FromType(dc)
+				t.applySymbolWriteEffect(out, target, declaredValue, false, false, nil, keyArrayTable, functionRefs, closureRefs)
+				applyAssignmentProvenance(declaredValue)
 				return
 			}
 			// Unknown source: clear any stale narrowing so the slot is the value
 			// domain's Top (the most general value), never a stale precise type.
 			t.applySymbolWriteEffect(out, target, product.AbstractValue{}, true, false, nil, keyArrayTable, functionRefs, closureRefs)
+			applyAssignmentProvenance(product.AbstractValue{})
 			return
 		}
 		// A local declared `any` keeps strict dynamic top rather than the initializer's
@@ -939,8 +1086,9 @@ func (t *Transfer) applyAssign(
 		// pollutes ordinary branch precision (for example an `any` local overwritten
 		// by a string inside the true edge stays `any` forever).
 		t.applySymbolWriteEffect(out, target, val, false, false, src, keyArrayTable, functionRefs, closureRefs)
-		if provenance, ok := t.assignmentProvenanceEffect(target, src, val); ok {
-			t.applyAssignmentProvenanceEffect(out, provenance)
+		applyAssignmentProvenance(val)
+		if provenance, ok := t.arrayElementKeyProvenanceEffect(target, src, val); ok {
+			t.applyArrayElementKeyProvenanceEffect(out, provenance)
 		}
 		if src != nil {
 			t.applyNumeric(out, key, src)
@@ -1129,6 +1277,13 @@ func (t *Transfer) targetValue(
 		return t.evalExprAt(out, p, src, demand)
 	}
 	return product.AbstractValue{}, false
+}
+
+func assignSourceSymbol(info *cfg.AssignInfo, i int) cfg.SymbolID {
+	if info == nil || i < 0 || i >= len(info.SourceSymbols) {
+		return 0
+	}
+	return info.SourceSymbols[i]
 }
 
 // pendingUnannotatedParamSource reports whether src failed to resolve because it
@@ -1351,6 +1506,7 @@ func (t *Transfer) applyContainerWriteWithRefResolver(
 	}
 	place, ok := t.placeOfAssignTarget(out, target, base, demand)
 	if !ok || place.Root == 0 || len(place.Steps) == 0 {
+		symbolicValue := t.symbolicDynamicIndexWriteValue(out, target, src, demand)
 		// A write through an unresolved dynamic key may still have a tracked static
 		// container prefix (`items.byName[k] = v`). Emit an invalidation-only effect
 		// for that footprint; do not pretend we know the exact key or root value.
@@ -1368,6 +1524,7 @@ func (t *Transfer) applyContainerWriteWithRefResolver(
 				RecordStatic: true,
 			})
 		}
+		t.applySymbolicDynamicIndexWriteProof(out, target, src, symbolicValue)
 		// A write through a non-identifier base (e.g. f().x = v) has no root slot
 		// to update; its container value lives nowhere this transfer tracks.
 		return
@@ -1407,6 +1564,25 @@ func (t *Transfer) applyContainerWriteWithRefResolver(
 		ClosureRefs:  closureRefs,
 		RecordStatic: true,
 	})
+	if provenance, ok := t.assignmentProvenanceEffect(target, src, val); ok {
+		t.applyAssignmentProvenanceEffect(out, provenance)
+	}
+}
+
+func (t *Transfer) symbolicDynamicIndexWriteValue(
+	out *flow.PointState,
+	target cfg.AssignTarget,
+	src ast.Expr,
+	demand func(int, paramevidence.ParamContract),
+) product.AbstractValue {
+	if target.Kind != cfg.TargetIndex || src == nil {
+		return product.AbstractValue{}
+	}
+	value, ok := t.evalExpr(out, src, demand)
+	if !ok || value.IsZero() {
+		return product.AbstractValue{}
+	}
+	return value
 }
 
 func (t *Transfer) expectedContainerWriteValueType(place Place) typ.Type {
@@ -1674,11 +1850,19 @@ func (t *Transfer) closureRefSetOfExpr(out *flow.PointState, expr ast.Expr) (flo
 			return flow.ClosureRefSet{}, false
 		}
 		captured := t.closureCapturedSymbols(ref)
+		entryRefs := flow.ProjectFunctionRefsBySymbols(out.FunctionRefs, captured)
+		entryClosures := flow.ProjectClosureRefsBySymbols(out.ClosureRefs, captured)
+		entryCells := t.closureCaptureCells(out, captured)
+		if projection, ok := t.closureReferenceProjection(ref); ok {
+			entryRefs = flow.ProjectFunctionRefsByReferencePaths(out.FunctionRefs, projection)
+			entryClosures = flow.ProjectClosureRefsByReferencePaths(out.ClosureRefs, projection)
+			entryCells = entryCells.ProjectPaths(projection)
+		}
 		return flow.ClosureRefSetOf(flow.ClosureRefOf(
 			ref,
-			t.closureCaptureCells(out, captured),
-			flow.ProjectFunctionRefsBySymbols(out.FunctionRefs, captured),
-			flow.ProjectClosureRefsBySymbols(out.ClosureRefs, captured),
+			entryCells,
+			entryRefs,
+			entryClosures,
 		)), true
 	}
 	key, ok := t.functionExprPathKey(expr)
@@ -1696,6 +1880,14 @@ func (t *Transfer) closureCapturedSymbols(ref flow.FunctionRef) []cfg.SymbolID {
 	return provider.CapturedSymbols(ref)
 }
 
+func (t *Transfer) closureReferenceProjection(ref flow.FunctionRef) (flow.ReferencePathProjection, bool) {
+	provider, ok := t.funcTyper.(closureReferenceProjectionProvider)
+	if !ok || provider == nil {
+		return flow.ReferencePathProjection{}, false
+	}
+	return provider.ReferenceProjection(ref), true
+}
+
 func (t *Transfer) closureCaptureCells(out *flow.PointState, captured []cfg.SymbolID) flow.CaptureCells {
 	if out == nil || len(captured) == 0 {
 		return flow.CaptureCellsDomain.Bottom()
@@ -1705,16 +1897,17 @@ func (t *Transfer) closureCaptureCells(out *flow.PointState, captured []cfg.Symb
 		if sym == 0 {
 			continue
 		}
-		if _, ok := cells.Value(sym); ok {
-			continue
+		base, has := t.symbolValue(out, sym)
+		if existing, ok := cells.Value(sym); ok && !valueIsBottom(existing) {
+			base = existing
+			has = true
 		}
-		av, has := t.symbolValue(out, sym)
-		if refined, ok := t.conditionRefinedCaptureValue(out, sym, av, has); ok && !valueIsBottom(refined) {
+		if refined, ok := t.conditionRefinedCaptureValue(out, sym, base, has); ok && !valueIsBottom(refined) {
 			cells = cells.With(sym, refined)
 			continue
 		}
-		if has && !valueIsBottom(av) {
-			cells = cells.With(sym, av)
+		if has && !valueIsBottom(base) {
+			cells = cells.With(sym, base)
 		}
 	}
 	return cells
@@ -1885,7 +2078,13 @@ func fieldSegments(names []string) []constraint.Segment {
 	return segs
 }
 
-func (t *Transfer) recordPrototypeSelfWrite(out *flow.PointState, sym cfg.SymbolID, updated product.AbstractValue) bool {
+func (t *Transfer) recordPrototypeSelfWrite(
+	out *flow.PointState,
+	sym cfg.SymbolID,
+	updated product.AbstractValue,
+	publishParamEffect bool,
+	mutations ...flow.ReceiverMutation,
+) bool {
 	if out == nil || sym == 0 || updated.IsZero() {
 		return false
 	}
@@ -1894,9 +2093,15 @@ func (t *Transfer) recordPrototypeSelfWrite(out *flow.PointState, sym cfg.Symbol
 		t.applyPrototypeSelfEffect(out, PrototypeSelfEffect{Prototype: t.prototypeReceiverSym, Value: updated}) {
 		changed = true
 	}
-	if t.prototypeSelfSymbol != 0 && sym == t.prototypeSelfSymbol && t.prototypeSelfSlot >= 0 &&
-		t.recordReceiverEffect(out, t.prototypeSelfSlot, updated) {
-		changed = true
+	if publishParamEffect {
+		if slot, ok := t.paramBySym[sym]; ok {
+			if t.recordReceiverEffect(out, slot, updated, mutations...) {
+				changed = true
+			}
+		} else if t.prototypeSelfSymbol != 0 && sym == t.prototypeSelfSymbol && t.prototypeSelfSlot >= 0 &&
+			t.recordReceiverEffect(out, t.prototypeSelfSlot, updated, mutations...) {
+			changed = true
+		}
 	}
 	return changed
 }
@@ -2323,6 +2528,32 @@ func (t *Transfer) seedIndexedIterKeyOf(out *flow.PointState, info *cfg.AssignIn
 		ArrayPath: source,
 		KeyPath:   constraint.NewPath(valueTarget.Symbol, valueTarget.Name),
 	})
+	t.seedIndexedIterKeyArrayValues(out, source, constraint.NewPath(valueTarget.Symbol, valueTarget.Name))
+}
+
+func (t *Transfer) seedIndexedIterKeyArrayValues(out *flow.PointState, arrayPath, keyPath constraint.Path) {
+	if out == nil || arrayPath.IsEmpty() || keyPath.IsEmpty() {
+		return
+	}
+	arrayKey := flow.KeyPresencePathKey(arrayPath)
+	keyType := typ.Unknown
+	if keyValue, ok := flow.PointFactsOf(*out).PathValue(keyPath); ok && !keyValue.IsZero() {
+		keyType = product.ProjectValueOrUnknown(keyValue)
+	}
+	for _, table := range out.KeyPresence.KeyArrayTables(arrayKey) {
+		for _, value := range out.KeyPresence.KeyArrayValues(arrayKey, table) {
+			tablePath, ok := indexWritePathFromKey(table)
+			if !ok || tablePath.IsEmpty() || value.IsZero() {
+				continue
+			}
+			out.IndexWrites = out.IndexWrites.With(flow.IndexWriteAdmissionFact{
+				Target:  flow.IndexWriteAdmissionPathKey(tablePath),
+				KeyPath: flow.IndexWriteAdmissionPathKey(keyPath),
+				Key:     product.FromType(keyType),
+				Value:   value,
+			})
+		}
+	}
 }
 
 // evalExpr computes the value of a source expression against the current Env.
@@ -2457,6 +2688,9 @@ func (t *Transfer) evalCall(
 	if set, ok := t.evalSetMetatableCall(out, call, demand); ok {
 		return []product.AbstractValue{set}, true
 	}
+	if created, ok := t.evalTableCreateCall(out, call); ok {
+		return []product.AbstractValue{created}, true
+	}
 	if t.callTyper == nil {
 		return nil, false
 	}
@@ -2491,6 +2725,25 @@ func (t *Transfer) evalCall(
 	// Keep nil/unknown slots as zero so targetValue can distinguish "slot exists
 	// but no product fact" from "the call returned an explicit unknown value".
 	return product.FromTypes(returns), true
+}
+
+// IntrinsicCallReturnValues projects transfer-owned intrinsic call semantics for
+// diagnostic observation. These calls depend on source syntax or product
+// allocation state rather than a reusable function summary, so the observation
+// layer should consume the same transfer reducer instead of falling back to a
+// weaker type-only stdlib signature.
+func (t *Transfer) IntrinsicCallReturnValues(
+	out *flow.PointState,
+	call *ast.FuncCallExpr,
+	demand func(int, paramevidence.ParamContract),
+) ([]product.AbstractValue, bool) {
+	if call == nil {
+		return nil, false
+	}
+	if created, ok := t.evalTableCreateCall(out, call); ok {
+		return []product.AbstractValue{created}, true
+	}
+	return nil, false
 }
 
 func (t *Transfer) evalSetMetatableCall(
@@ -2538,7 +2791,7 @@ func (t *Transfer) productCallContext(
 		ExprValue:        t.projectExprValueResolver(out),
 	}
 	if call != nil && call.Method != "" && len(ctx.RuntimeArgValues) > 0 && !ctx.RuntimeArgValues[0].IsZero() {
-		if selfType := product.ProjectValueOrUnknown(ctx.RuntimeArgValues[0]); callobligation.InformativeType(selfType) {
+		if selfType := productCallSelfType(ctx.RuntimeArgValues[0]); selfType != nil {
 			ctx.SelfType = selfType
 		}
 	}
@@ -2546,8 +2799,37 @@ func (t *Transfer) productCallContext(
 		ctx.Cells = out.Cells
 		ctx.FunctionRefs = out.FunctionRefs
 		ctx.ClosureRefs = out.ClosureRefs
+		ctx.KeyPresence = out.KeyPresence
+		ctx.Num = out.Num
+		ctx.IndexWrites = out.IndexWrites
 	}
 	return ctx
+}
+
+func productCallSelfType(av product.AbstractValue) typ.Type {
+	if av.IsZero() {
+		return nil
+	}
+	selfType := product.ProjectValueOrUnknown(av)
+	if !productCallSelfTypeInformative(selfType) {
+		return nil
+	}
+	return selfType
+}
+
+func productCallSelfTypeInformative(t typ.Type) bool {
+	t = typ.UnwrapAnnotated(t)
+	if t == nil || typ.IsAbsentOrUnknown(t) || typ.IsAny(t) {
+		return false
+	}
+	switch t.Kind() {
+	case kind.Self, kind.Generic:
+		return false
+	}
+	if t.Kind().IsDeferred() {
+		return false
+	}
+	return !typ.ContainsTypeParam(t) || !typ.ContainsFreeTypeParam(t)
 }
 
 func (t *Transfer) runtimeArgumentValues(
@@ -2621,6 +2903,10 @@ func (t *Transfer) applyCallArgDemands(
 			break
 		}
 		if !expected[i].Informative() {
+			continue
+		}
+		if contract, ok := paramevidence.ObligationContract(expected[i]); ok {
+			t.demandExprContractCtx(out, arg, contract, demand)
 			continue
 		}
 		t.demandExprCtx(out, arg, expected[i].Type, demand)
@@ -2814,9 +3100,13 @@ func (t *Transfer) applyCallSideEffects(
 	ctx ProductCallContext,
 	demand func(int, paramevidence.ParamContract),
 ) {
+	boundaryFacts, boundaryAppendPlans := t.callBoundaryFactsAndAppendPlans(out, call, ctx)
 	t.applyCallCellEffects(out, call, ctx, ctx.ExprType)
 	t.applyCallReceiverEffects(out, call, ctx, demand)
 	t.applyCallMutatorEffects(out, call, ctx, demand)
+	if boundaryFacts.HasProof() {
+		t.applyBoundaryFactsWithAppendPlans(out, call, boundaryFacts, nil, boundaryAppendPlans)
+	}
 }
 
 func (t *Transfer) applyCallCellEffects(
@@ -2888,8 +3178,10 @@ func (t *Transfer) applyCallReceiverEffects(
 		if !ok || place.Root == 0 {
 			continue
 		}
+		mutations := receiverMutationsForTargetPlace(place, entry.Mutations)
+		changed = t.applyReceiverMutations(out, place.Root, place.RootName, mutations) || changed
 		value := entry.Value
-		if !entry.MustWrite {
+		if !entry.MustWrite && !value.IsZero() {
 			if old, ok := t.resolveExprValue(out, target, demand); ok && !old.IsZero() {
 				value = product.Domain.Join(old, value)
 			}
@@ -2897,15 +3189,461 @@ func (t *Transfer) applyCallReceiverEffects(
 		if value.IsZero() {
 			continue
 		}
-		changed = t.applyWriteEffect(out, WriteEffect{
-			Place:         place,
-			Value:         value,
-			KillRelations: true,
-			RecordProto:   true,
-			RecordStatic:  true,
+		changed = t.applyReceiverValueEffect(out, place, value, mutations) || changed
+	}
+	return changed
+}
+
+func receiverMutationsForTargetPlace(target Place, mutations []flow.ReceiverMutation) []flow.ReceiverMutation {
+	prefix, ok := target.StaticPrefixPath()
+	if !ok || prefix.Symbol == 0 {
+		return nil
+	}
+	if len(mutations) == 0 {
+		return []flow.ReceiverMutation{{
+			Segments: append([]constraint.Segment(nil), prefix.Segments...),
+		}}
+	}
+	out := make([]flow.ReceiverMutation, 0, len(mutations))
+	for _, mutation := range mutations {
+		segs := append([]constraint.Segment(nil), prefix.Segments...)
+		segs = append(segs, mutation.Segments...)
+		out = append(out, flow.ReceiverMutation{
+			Segments:            segs,
+			PresentElementWrite: mutation.PresentElementWrite,
+		})
+	}
+	return out
+}
+
+func (t *Transfer) applyReceiverMutations(
+	out *flow.PointState,
+	root cfg.SymbolID,
+	rootName string,
+	mutations []flow.ReceiverMutation,
+) bool {
+	if out == nil || root == 0 {
+		return false
+	}
+	changed := false
+	for _, mutation := range mutations {
+		place, ok := receiverMutationPlace(root, rootName, mutation)
+		if !ok {
+			continue
+		}
+		changed = t.applyPlaceMutationEffect(out, PlaceMutationEffect{
+			Place:                  place,
+			StaticMembers:          true,
+			Conditions:             true,
+			KeyFacts:               true,
+			PresentElementKeyFacts: mutation.PresentElementWrite,
 		}) || changed
 	}
 	return changed
+}
+
+func receiverMutationPlace(root cfg.SymbolID, rootName string, mutation flow.ReceiverMutation) (Place, bool) {
+	path := constraint.NewPath(root, rootName)
+	path.Segments = append([]constraint.Segment(nil), mutation.Segments...)
+	place, ok := canonicalplace.FromStaticPath(path)
+	if !ok {
+		return Place{}, false
+	}
+	if mutation.PresentElementWrite {
+		place.Steps = append(place.Steps, PlaceStep{Kind: PlaceStepDynamicIndex})
+	}
+	return place, true
+}
+
+func (t *Transfer) applyReceiverValueEffect(
+	out *flow.PointState,
+	place Place,
+	value product.AbstractValue,
+	mutations []flow.ReceiverMutation,
+) bool {
+	if out == nil || place.Root == 0 || value.IsZero() {
+		return false
+	}
+	updated := value
+	if len(place.Steps) > 0 {
+		var ok bool
+		updated, _, ok = t.assignPlaceValue(out, place, value, nil)
+		if !ok {
+			return false
+		}
+	}
+	t.writeRootContainer(out, place.Root, updated)
+	changed := true
+	changed = t.recordPrototypeSelfWrite(out, place.Root, updated, true, mutations...) || changed
+	return changed
+}
+
+func (t *Transfer) applyCallBoundaryFacts(
+	out *flow.PointState,
+	call *ast.FuncCallExpr,
+	ctx ProductCallContext,
+) bool {
+	facts, plans := t.callBoundaryFactsAndAppendPlans(out, call, ctx)
+	if !facts.HasProof() {
+		return false
+	}
+	return t.applyBoundaryFactsWithAppendPlans(out, call, facts, nil, plans)
+}
+
+func (t *Transfer) callBoundaryFactsAndAppendPlans(
+	out *flow.PointState,
+	call *ast.FuncCallExpr,
+	ctx ProductCallContext,
+) (flow.BoundaryFacts, []boundaryAppendKeyPlan) {
+	if out == nil || call == nil || t.callTyper == nil {
+		return flow.BoundaryFactsDomain.Top(), nil
+	}
+	provider, ok := t.callTyper.(productBoundaryFactProvider)
+	if !ok || provider == nil {
+		return flow.BoundaryFactsDomain.Top(), nil
+	}
+	facts := provider.BoundaryFactsFromValues(call, ctx)
+	if !facts.HasProof() {
+		return facts, nil
+	}
+	return facts, t.boundaryAppendKeyPlans(out, call, facts, nil)
+}
+
+func (t *Transfer) applyBoundaryFacts(
+	out *flow.PointState,
+	call *ast.FuncCallExpr,
+	facts flow.BoundaryFacts,
+	returns map[int]constraint.Path,
+) bool {
+	plans := t.boundaryAppendKeyPlans(out, call, facts, returns)
+	return t.applyBoundaryFactsWithAppendPlans(out, call, facts, returns, plans)
+}
+
+type boundaryAppendKeyPlan struct {
+	array               constraint.Path
+	key                 constraint.Path
+	table               constraint.Path
+	hasTable            bool
+	existingTables      []constraint.PathKey
+	writtenTables       []constraint.PathKey
+	freshEmpty          bool
+	preserveHistoryBase bool
+}
+
+func (t *Transfer) boundaryAppendKeyPlans(
+	out *flow.PointState,
+	call *ast.FuncCallExpr,
+	facts flow.BoundaryFacts,
+	returns map[int]constraint.Path,
+) []boundaryAppendKeyPlan {
+	if out == nil || call == nil {
+		return nil
+	}
+	appendKeys := facts.AppendKeys()
+	if len(appendKeys) == 0 {
+		return nil
+	}
+	var plans []boundaryAppendKeyPlan
+	for _, fact := range appendKeys {
+		array, ok := t.rebaseBoundaryPath(call, returns, fact.Array)
+		if !ok || array.IsEmpty() {
+			continue
+		}
+		key, ok := t.rebaseBoundaryPath(call, returns, fact.Key)
+		if !ok || key.IsEmpty() {
+			continue
+		}
+		arrayKey := flow.KeyPresencePathKey(array)
+		if arrayKey == "" {
+			continue
+		}
+		historyEmpty := out.KeyPresence.HasAppendHistoryBase(arrayKey)
+		if historyEmpty {
+			for _, event := range out.KeyPresence.AppendHistoryEventEntries() {
+				if event.Array == arrayKey {
+					historyEmpty = false
+					break
+				}
+			}
+		}
+		plan := boundaryAppendKeyPlan{
+			array:               array,
+			key:                 key,
+			existingTables:      out.KeyPresence.KeyArrayTables(arrayKey),
+			freshEmpty:          out.KeyPresence.HasEmptyKeyArray(arrayKey) || historyEmpty || t.arrayPathCurrentlyEmpty(out, array),
+			preserveHistoryBase: out.KeyPresence.HasAppendHistoryBase(arrayKey),
+		}
+		if fact.HasTable {
+			table, ok := t.rebaseBoundaryPath(call, returns, fact.Table)
+			if !ok || table.IsEmpty() {
+				continue
+			}
+			plan.table = table
+			plan.hasTable = true
+		}
+		plan.writtenTables = t.boundaryIndexWriteTablesForAppendedKey(call, returns, facts.IndexWrites(), key, plan.table, plan.hasTable)
+		plans = append(plans, plan)
+	}
+	return plans
+}
+
+func (t *Transfer) boundaryIndexWriteTablesForAppendedKey(
+	call *ast.FuncCallExpr,
+	returns map[int]constraint.Path,
+	indexWrites []flow.BoundaryIndexWriteFact,
+	key constraint.Path,
+	explicitTable constraint.Path,
+	hasExplicitTable bool,
+) []constraint.PathKey {
+	if call == nil || key.IsEmpty() || len(indexWrites) == 0 {
+		return nil
+	}
+	var tables []constraint.PathKey
+	for _, fact := range indexWrites {
+		writeKey, ok := t.rebaseBoundaryPath(call, returns, fact.Key)
+		if !ok || !writeKey.Equal(key) {
+			continue
+		}
+		table, ok := t.rebaseBoundaryPath(call, returns, fact.Table)
+		if !ok || table.IsEmpty() {
+			continue
+		}
+		if hasExplicitTable && !table.Equal(explicitTable) {
+			continue
+		}
+		tableKey := flow.KeyPresencePathKey(table)
+		if tableKey == "" {
+			continue
+		}
+		tables = append(tables, tableKey)
+	}
+	return compactPathKeys(tables)
+}
+
+func (t *Transfer) applyBoundaryFactsWithAppendPlans(
+	out *flow.PointState,
+	call *ast.FuncCallExpr,
+	facts flow.BoundaryFacts,
+	returns map[int]constraint.Path,
+	appendPlans []boundaryAppendKeyPlan,
+) bool {
+	if out == nil || call == nil {
+		return false
+	}
+	changed := false
+	for _, fact := range facts.IndexWrites() {
+		table, ok := t.rebaseBoundaryPath(call, returns, fact.Table)
+		if !ok {
+			continue
+		}
+		key, ok := t.rebaseBoundaryPath(call, returns, fact.Key)
+		if !ok {
+			continue
+		}
+		changed = t.applyDynamicIndexWriteProofEffect(out, DynamicIndexWriteProofEffect{
+			TablePath:              table,
+			KeyPath:                key,
+			Key:                    product.FromType(typ.Unknown),
+			Value:                  fact.Value,
+			AllowOpaqueKeyReadback: true,
+		}) || changed
+	}
+	for _, fact := range facts.KeyPresence() {
+		table, ok := t.rebaseBoundaryPath(call, returns, fact.Table)
+		if !ok {
+			continue
+		}
+		key, ok := t.rebaseBoundaryPath(call, returns, fact.Key)
+		if !ok {
+			continue
+		}
+		changed = t.applyKeyProvenanceEffect(out, KeyProvenanceEffect{
+			Kind:      KeyProvenanceDynamicIndexWrite,
+			TablePath: table,
+			KeyPath:   key,
+		}) || changed
+	}
+	for _, fact := range facts.KeyArrays() {
+		array, ok := t.rebaseBoundaryPath(call, returns, fact.Array)
+		if !ok {
+			continue
+		}
+		table, ok := t.rebaseBoundaryPath(call, returns, fact.Table)
+		if !ok {
+			continue
+		}
+		changed = t.applyKeyProvenanceEffect(out, KeyProvenanceEffect{
+			Kind:      KeyProvenanceKeyArrayAssignment,
+			ArrayPath: array,
+			TablePath: table,
+		}) || changed
+	}
+	for _, fact := range facts.KeyArrayValues() {
+		array, ok := t.rebaseBoundaryPath(call, returns, fact.Array)
+		if !ok {
+			continue
+		}
+		table, ok := t.rebaseBoundaryPath(call, returns, fact.Table)
+		if !ok {
+			continue
+		}
+		arrayKey := flow.KeyPresencePathKey(array)
+		tableKey := flow.KeyPresencePathKey(table)
+		before := out.KeyPresence
+		out.KeyPresence = out.KeyPresence.WithKeyArrayValue(arrayKey, tableKey, fact.Value)
+		changed = !flow.KeyPresenceFactsDomain.Equal(before, out.KeyPresence) || changed
+	}
+	changed = t.applyBoundaryAppendKeyPlans(out, appendPlans) || changed
+	for _, fact := range facts.AppendElementFieldOrigins() {
+		array, ok := t.rebaseBoundaryPath(call, returns, fact.Array)
+		if !ok {
+			continue
+		}
+		source, ok := t.rebaseBoundaryPath(call, returns, fact.Source)
+		if !ok {
+			continue
+		}
+		before := out.KeyPresence
+		out.KeyPresence = out.KeyPresence.
+			WithAppendHistoryBasePath(array).
+			WithAppendElementFieldOriginFromPaths(array, fact.Field, source, fact.SourceField)
+		changed = !flow.KeyPresenceFactsDomain.Equal(before, out.KeyPresence) || changed
+	}
+	var ops []NumericOp
+	for _, fact := range facts.LengthLowerBounds() {
+		target, ok := t.rebaseBoundaryPath(call, returns, fact.Target)
+		if !ok {
+			continue
+		}
+		key := flow.SymbolPathKey(target.Symbol, target.Segments)
+		if key == "" {
+			continue
+		}
+		ops = append(ops, NumericOp{Kind: NumericLenGeConst, Key: key, Const: fact.Lower})
+	}
+	if len(ops) > 0 {
+		changed = t.applyNumericEffect(out, NumericEffect{Ops: ops}) || changed
+	}
+	return changed
+}
+
+func (t *Transfer) applyBoundaryAppendKeyPlans(out *flow.PointState, plans []boundaryAppendKeyPlan) bool {
+	if out == nil || len(plans) == 0 {
+		return false
+	}
+	changed := false
+	for _, plan := range plans {
+		arrayKey := flow.KeyPresencePathKey(plan.array)
+		keyKey := flow.KeyPresencePathKey(plan.key)
+		if arrayKey == "" || keyKey == "" {
+			continue
+		}
+		tables := t.boundaryAppendKeyPlanTables(out, plan, keyKey)
+		preserveAppendHistoryBase := plan.preserveHistoryBase || plan.freshEmpty || out.KeyPresence.HasAppendHistoryBase(arrayKey)
+		beforeKill := out.KeyPresence
+		out.KeyPresence = out.KeyPresence.KillAffectedByWrite(arrayKey)
+		changed = !flow.KeyPresenceFactsDomain.Equal(beforeKill, out.KeyPresence) || changed
+		beforeAppend := out.KeyPresence
+		out.KeyPresence = out.KeyPresence.WithAppendedKey(arrayKey, keyKey)
+		changed = !flow.KeyPresenceFactsDomain.Equal(beforeAppend, out.KeyPresence) || changed
+		if preserveAppendHistoryBase {
+			before := out.KeyPresence
+			out.KeyPresence = out.KeyPresence.WithAppendHistoryBase(arrayKey).WithAppendHistoryEvent(arrayKey, keyKey)
+			changed = !flow.KeyPresenceFactsDomain.Equal(before, out.KeyPresence) || changed
+		}
+		for _, table := range tables {
+			if table == "" || !out.KeyPresence.Has(table, keyKey) {
+				continue
+			}
+			before := out.KeyPresence
+			out.KeyPresence = out.KeyPresence.WithKeyArray(arrayKey, table)
+			if value, ok := t.boundaryAppendKeyValue(out, table, plan.key); ok {
+				out.KeyPresence = out.KeyPresence.WithKeyArrayValue(arrayKey, table, value)
+				out.KeyPresence = out.KeyPresence.WithAppendHistoryCoverage(arrayKey, keyKey, table, value)
+			}
+			changed = !flow.KeyPresenceFactsDomain.Equal(before, out.KeyPresence) || changed
+		}
+	}
+	return changed
+}
+
+func (t *Transfer) boundaryAppendKeyPlanTables(out *flow.PointState, plan boundaryAppendKeyPlan, key constraint.PathKey) []constraint.PathKey {
+	var tables []constraint.PathKey
+	if plan.hasTable {
+		tableKey := flow.KeyPresencePathKey(plan.table)
+		if tableKey == "" {
+			return nil
+		}
+		if _, ok := slicesFindPathKey(plan.existingTables, tableKey); ok || plan.freshEmpty {
+			tables = append(tables, tableKey)
+		}
+		return compactPathKeys(tables)
+	}
+	tables = append(tables, plan.existingTables...)
+	if plan.freshEmpty {
+		tables = append(tables, plan.writtenTables...)
+		for _, fact := range out.KeyPresence.Entries() {
+			if fact.Key == key {
+				tables = append(tables, fact.Table)
+			}
+		}
+	}
+	return compactPathKeys(tables)
+}
+
+func (t *Transfer) boundaryAppendKeyValue(out *flow.PointState, table constraint.PathKey, keyPath constraint.Path) (product.AbstractValue, bool) {
+	tablePath, ok := indexWritePathFromKey(table)
+	if !ok || tablePath.IsEmpty() || keyPath.IsEmpty() {
+		return product.AbstractValue{}, false
+	}
+	keyType := typ.Unknown
+	if keyValue, ok := flow.PointFactsOf(*out).PathValue(keyPath); ok && !keyValue.IsZero() {
+		keyType = product.ProjectValueOrUnknown(keyValue)
+	}
+	value, ok := out.IndexWrites.Admission(flow.IndexWriteQuery{
+		Target:  tablePath,
+		KeyPath: keyPath,
+		KeyType: keyType,
+	})
+	if !ok || value.IsZero() {
+		return product.AbstractValue{}, false
+	}
+	return value, true
+}
+
+func (t *Transfer) rebaseBoundaryPath(
+	call *ast.FuncCallExpr,
+	returns map[int]constraint.Path,
+	path flow.BoundaryPath,
+) (constraint.Path, bool) {
+	var out constraint.Path
+	switch path.Kind {
+	case flow.BoundaryPathParam:
+		arg := callsite.RuntimeArgExprAt(call, path.Index)
+		if arg == nil {
+			return constraint.Path{}, false
+		}
+		argPath, ok := t.staticPathOfExpr(arg)
+		if !ok || argPath.IsEmpty() {
+			return constraint.Path{}, false
+		}
+		out = argPath
+	case flow.BoundaryPathReturn:
+		if returns == nil {
+			return constraint.Path{}, false
+		}
+		retPath, ok := returns[path.Index]
+		if !ok || retPath.IsEmpty() {
+			return constraint.Path{}, false
+		}
+		out = retPath
+	default:
+		return constraint.Path{}, false
+	}
+	for _, seg := range path.Segments {
+		out = out.Append(seg)
+	}
+	return out, true
 }
 
 func (t *Transfer) applyCallMutatorEffects(
@@ -3579,7 +4317,13 @@ func stringableContextType() typ.Type {
 }
 
 func lengthContextType() typ.Type {
-	return typ.String
+	return typ.NewUnion(
+		typ.String,
+		typ.NewArray(typ.Any),
+		typ.NewMap(typ.Any, typ.Any),
+		typ.NewReadonlyMap(typ.Any, typ.Any),
+		typ.NewRecord().SetOpen(true).Build(),
+	)
 }
 
 func orderableContextType() typ.Type {
@@ -3595,6 +4339,25 @@ func orderedComparisonContexts(left, right typ.Type) (typ.Type, typ.Type) {
 	}
 	orderable := orderableContextType()
 	return orderable, orderable
+}
+
+func (t *Transfer) demandOrderedComparisonCtx(
+	out *flow.PointState,
+	lhs, rhs ast.Expr,
+	demand func(int, paramevidence.ParamContract),
+) {
+	if family := concreteOrderFamily(t.operandType(out, rhs, demand)); family != nil {
+		t.demandExprCtx(out, lhs, family, demand)
+		t.demandExprCtx(out, rhs, family, demand)
+		return
+	}
+	if family := concreteOrderFamily(t.operandType(out, lhs, demand)); family != nil {
+		t.demandExprCtx(out, lhs, family, demand)
+		t.demandExprCtx(out, rhs, family, demand)
+		return
+	}
+	t.demandExprCapabilityCtx(out, lhs, paramevidence.CapabilityOrderable, demand)
+	t.demandExprCapabilityCtx(out, rhs, paramevidence.CapabilityOrderable, demand)
 }
 
 func concreteOrderFamily(t typ.Type) typ.Type {
@@ -3622,8 +4385,9 @@ func concreteOrderFamily(t typ.Type) typ.Type {
 }
 
 // evalBinary resolves an arithmetic operator over its operand values. With an
-// operator resolver it uses the resolved result; otherwise an arithmetic op over
-// determined numeric operands stays numeric (the sound structural default).
+// operator resolver it uses the resolved result; otherwise it uses the shared
+// pure query-core operator reducer. The final numeric fallback is only for
+// cases the shared reducer cannot classify.
 func (t *Transfer) evalBinary(
 	out *flow.PointState,
 	op string,
@@ -3641,7 +4405,12 @@ func (t *Transfer) evalBinary(
 			return product.FromType(res), true
 		}
 	}
-	// Structural default: arithmetic on numbers is numeric.
+	if lok && rok {
+		res := querycore.BinaryOp(l.ProjectValue(), op, r.ProjectValue())
+		if res != nil && !typ.IsAbsentOrUnknown(res) {
+			return product.FromType(res), true
+		}
+	}
 	if isNumeric(l, lok) && isNumeric(r, rok) {
 		return product.FromType(typ.Number), true
 	}
@@ -3658,9 +4427,8 @@ func (t *Transfer) evalConcat(
 	lhs, rhs ast.Expr,
 	demand func(int, paramevidence.ParamContract),
 ) (product.AbstractValue, bool) {
-	stringable := stringableContextType()
-	t.demandExprCtx(out, lhs, stringable, demand)
-	t.demandExprCtx(out, rhs, stringable, demand)
+	t.demandExprCapabilityCtx(out, lhs, paramevidence.CapabilityStringable, demand)
+	t.demandExprCapabilityCtx(out, rhs, paramevidence.CapabilityStringable, demand)
 	t.demandConditionReads(out, lhs, demand)
 	t.demandConditionReads(out, rhs, demand)
 	l, lok := t.evalExpr(out, lhs, demand)
@@ -3685,11 +4453,17 @@ func (t *Transfer) evalUnary(
 	if op == "-" {
 		t.demandParamCtx(operand, typ.Number, demand)
 	} else if op == "#" {
-		t.demandExprCtx(out, operand, lengthContextType(), demand)
+		t.demandExprCapabilityCtx(out, operand, paramevidence.CapabilityLength, demand)
 	}
 	v, ok := t.evalExpr(out, operand, demand)
 	if t.ops != nil && ok {
 		res := t.ops.UnaryOp(op, v.ProjectValue())
+		if res != nil && !typ.IsAbsentOrUnknown(res) {
+			return product.FromType(res), true
+		}
+	}
+	if ok {
+		res := querycore.UnaryOp(op, v.ProjectValue())
 		if res != nil && !typ.IsAbsentOrUnknown(res) {
 			return product.FromType(res), true
 		}
@@ -3746,12 +4520,7 @@ func (t *Transfer) evalRelational(
 	case "==", "~=":
 		return product.FromType(typ.Boolean), true
 	case "<", "<=", ">", ">=":
-		lhsCtx, rhsCtx := orderedComparisonContexts(
-			t.operandType(out, e.Lhs, demand),
-			t.operandType(out, e.Rhs, demand),
-		)
-		t.demandExprCtx(out, e.Lhs, lhsCtx, demand)
-		t.demandExprCtx(out, e.Rhs, rhsCtx, demand)
+		t.demandOrderedComparisonCtx(out, e.Lhs, e.Rhs, demand)
 	default:
 		return product.AbstractValue{}, false
 	}
@@ -4037,6 +4806,7 @@ func (t *Transfer) applyReturn(
 					if i == 0 {
 						slot.Source = call.Call
 					}
+					slot.FunctionRefs = t.returnSetMetatableFunctionRefs(p, call.Call, i)
 					effect.Slots = append(effect.Slots, slot)
 				}
 				t.applyReturnEffect(out, effect)
@@ -4049,9 +4819,7 @@ func (t *Transfer) applyReturn(
 		slot := ReturnSlotEffect{Index: i, Source: expr}
 		if call := nestedCallExpr(expr); call != nil {
 			t.applySetMetatablePrototypeSelf(out, p, call, demand)
-			if proto, ok := t.setMetatablePrototype(p, call); ok && proto != 0 {
-				slot.FunctionRefs = t.prototypeMethodRefs(proto, constraint.NewPlaceholder(i))
-			}
+			slot.FunctionRefs = t.returnSetMetatableFunctionRefs(p, call, i)
 		}
 		t.publishReturnedPrototypeSelf(out, expr)
 		// A returned identifier already carries its value in the variable's Env
@@ -4065,6 +4833,17 @@ func (t *Transfer) applyReturn(
 		effect.Slots = append(effect.Slots, slot)
 	}
 	t.applyReturnEffect(out, effect)
+}
+
+func (t *Transfer) returnSetMetatableFunctionRefs(p cfg.Point, call *ast.FuncCallExpr, slot int) flow.FunctionRefs {
+	if call == nil || slot < 0 || t.in.Graph == nil || !metatable.IsSetMetatableCall(call, t.in.Graph.Bindings()) {
+		return flow.FunctionRefsDomain.Bottom()
+	}
+	proto, ok := t.setMetatablePrototype(p, call)
+	if !ok || proto == 0 {
+		return flow.FunctionRefsDomain.Bottom()
+	}
+	return t.prototypeMethodRefs(proto, constraint.NewPlaceholder(slot))
 }
 
 func (t *Transfer) publishReturnedPrototypeSelf(out *flow.PointState, expr ast.Expr) {
@@ -4233,7 +5012,10 @@ func (t *Transfer) applyTypeCastNarrow(
 }
 
 // demandConditionReads walks an expression for identifier reads, emitting
-// parameter demand for each parameter read. It does not mutate value state.
+// parameter demand for each parameter read. Operator nodes also emit the same
+// operand contracts evalExpr would emit in a value-producing context, so a use
+// that appears only in a branch condition (for example `#xs == 0`) still feeds
+// the entry contract cell. It does not mutate value state.
 func (t *Transfer) demandConditionReads(
 	out *flow.PointState,
 	expr ast.Expr,
@@ -4255,22 +5037,32 @@ func (t *Transfer) demandConditionReads(
 			t.demandConditionReads(out, arg, demand)
 		}
 	case *ast.ArithmeticOpExpr:
+		t.demandExprCtx(out, e.Lhs, typ.Number, demand)
+		t.demandExprCtx(out, e.Rhs, typ.Number, demand)
 		t.demandConditionReads(out, e.Lhs, demand)
 		t.demandConditionReads(out, e.Rhs, demand)
 	case *ast.RelationalOpExpr:
+		switch e.Operator {
+		case "<", "<=", ">", ">=":
+			t.demandOrderedComparisonCtx(out, e.Lhs, e.Rhs, demand)
+		}
 		t.demandConditionReads(out, e.Lhs, demand)
 		t.demandConditionReads(out, e.Rhs, demand)
 	case *ast.LogicalOpExpr:
 		t.demandConditionReads(out, e.Lhs, demand)
 		t.demandConditionReads(out, e.Rhs, demand)
 	case *ast.StringConcatOpExpr:
+		t.demandExprCapabilityCtx(out, e.Lhs, paramevidence.CapabilityStringable, demand)
+		t.demandExprCapabilityCtx(out, e.Rhs, paramevidence.CapabilityStringable, demand)
 		t.demandConditionReads(out, e.Lhs, demand)
 		t.demandConditionReads(out, e.Rhs, demand)
 	case *ast.UnaryMinusOpExpr:
+		t.demandExprCtx(out, e.Expr, typ.Number, demand)
 		t.demandConditionReads(out, e.Expr, demand)
 	case *ast.UnaryNotOpExpr:
 		t.demandConditionReads(out, e.Expr, demand)
 	case *ast.UnaryLenOpExpr:
+		t.demandExprCapabilityCtx(out, e.Expr, paramevidence.CapabilityLength, demand)
 		t.demandConditionReads(out, e.Expr, demand)
 	}
 }

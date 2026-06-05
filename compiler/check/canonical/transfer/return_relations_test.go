@@ -6,6 +6,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/canonical/input"
+	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/domain/value/product"
 	"github.com/wippyai/go-lua/types/flow"
 	"github.com/wippyai/go-lua/types/flow/numeric"
@@ -90,6 +91,56 @@ func TestAssignCallPostconditionsMaterializeLengthParamLowerBound(t *testing.T) 
 	}
 	if !out.Rel.HasTargetLengthParam(targetSym, targetKey, 0) {
 		t.Fatalf("point relations = %#v, want wrapper-preserving target length >= param 0", out.Rel)
+	}
+}
+
+func TestAssignCallPostconditionsMaterializeReturnKeyParam(t *testing.T) {
+	fn := &ast.FunctionExpr{ParList: &ast.ParList{Names: []string{"self"}}}
+	in := input.BuildFromFunction(fn, nil, nil)
+	if in.Graph == nil || len(in.Scope.ParamSymbols) != 1 {
+		t.Fatal("test graph did not build one parameter")
+	}
+	selfSym := in.Scope.ParamSymbols[0]
+	idSym := cfg.SymbolID(7002)
+	self := &ast.IdentExpr{Value: "self"}
+	in.Graph.Bindings().Bind(self, selfSym)
+	in.Graph.Bindings().SetName(selfSym, "self")
+
+	call := &ast.FuncCallExpr{
+		Receiver: self,
+		Method:   "create_node",
+	}
+	callInfo := &cfg.CallInfo{Call: call, Method: call.Method, Receiver: self}
+	rel := flow.ReturnKeyParamRelation{
+		ReturnIndex: 0,
+		ParamIndex:  0,
+		ParamSegments: []constraint.Segment{{
+			Kind: constraint.SegmentField,
+			Name: "nodes",
+		}},
+	}
+	typer := &productReturnRelationsTestTyper{
+		rels: flow.ReturnRelationsOfKeyParams([]flow.ReturnKeyParamRelation{rel}),
+	}
+	tr := New(in, Config{CallTyper: typer})
+	out := flow.PointState{KeyPresence: flow.KeyPresenceFactsDomain.Top()}
+	info := &cfg.AssignInfo{
+		Targets: []cfg.AssignTarget{{
+			Kind:   cfg.TargetIdent,
+			Name:   "id",
+			Symbol: idSym,
+		}},
+		Sources:     []ast.Expr{call},
+		SourceCalls: []*cfg.CallInfo{callInfo},
+	}
+
+	effects := tr.buildAssignCallPostconditions(&out, info, nil)
+	tr.applyAssignCallPostconditions(&out, effects)
+
+	tablePath := constraint.NewPath(selfSym, "self").Field("nodes")
+	keyPath := constraint.NewPath(idSym, "id")
+	if !out.KeyPresence.HasPaths(tablePath, keyPath) {
+		t.Fatalf("return-key postcondition did not seed KeyPresence: %s", out.KeyPresence.Format())
 	}
 }
 

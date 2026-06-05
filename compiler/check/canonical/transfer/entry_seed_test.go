@@ -6,6 +6,8 @@ import (
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/canonical/input"
+	"github.com/wippyai/go-lua/compiler/check/domain/paramevidence"
+	"github.com/wippyai/go-lua/compiler/check/synth/ops"
 	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/domain/value/product"
 	"github.com/wippyai/go-lua/types/flow"
@@ -18,7 +20,7 @@ func TestEntrySeedRefinesDeclaredAnyArrayWithExactEntry(t *testing.T) {
 	got := entrySeedValue(
 		typ.NewArray(typ.Any),
 		product.FromType(typ.NewArray(entry)),
-		product.AbstractValue{},
+		paramevidence.ParamContractDomain.Bottom(),
 	)
 	want := typ.NewArray(entry)
 	if !typ.TypeEquals(got.ProjectValue(), want) {
@@ -30,7 +32,7 @@ func TestEntrySeedKeepsBareDeclaredAnyAsDynamicTop(t *testing.T) {
 	got := entrySeedValue(
 		typ.Any,
 		product.FromType(typ.NewRecord().Field("id", typ.String).Build()),
-		product.AbstractValue{},
+		paramevidence.ParamContractDomain.Bottom(),
 	)
 	if !typ.TypeEquals(got.ProjectValue(), typ.Any) {
 		t.Fatalf("bare any seed = %v, want any", got.ProjectValue())
@@ -41,7 +43,7 @@ func TestEntrySeedOpenGenericDeclaredParamUsesClosedEntryValue(t *testing.T) {
 	got := entrySeedValue(
 		typ.NewTypeParam("T", nil),
 		product.FromType(typ.String),
-		product.AbstractValue{},
+		paramevidence.ParamContractDomain.Bottom(),
 	)
 	if !typ.TypeEquals(got.ProjectValue(), typ.String) {
 		t.Fatalf("generic entry seed = %v, want string", got.ProjectValue())
@@ -59,7 +61,7 @@ func TestEntrySeedOpenGenericInstantiationUsesClosedInstantiatedEntryValue(t *te
 	got := entrySeedValue(
 		typ.Instantiate(box, tParam),
 		product.FromType(typ.Instantiate(box, envelope)),
-		product.AbstractValue{},
+		paramevidence.ParamContractDomain.Bottom(),
 	)
 
 	if !typ.TypeEquals(got.ProjectValue(), typ.Instantiate(box, envelope)) {
@@ -103,7 +105,7 @@ func TestEntrySeedBodyContractDoesNotRefineDeclaredAny(t *testing.T) {
 	got := entrySeedValue(
 		typ.Any,
 		product.AbstractValue{},
-		product.FromType(contract),
+		paramevidence.DemandFromType(contract),
 	)
 	if !typ.TypeEquals(got.ProjectValue(), typ.Any) {
 		t.Fatalf("contract seed = %v, want declared any", got.ProjectValue())
@@ -112,13 +114,27 @@ func TestEntrySeedBodyContractDoesNotRefineDeclaredAny(t *testing.T) {
 
 func TestEntrySeedBodyContractSeedsUnannotatedParam(t *testing.T) {
 	contract := typ.NewRecord().ReadonlyField("id", typ.String).Build()
+	want := typ.NewRecord().SetOpen(true).ReadonlyField("id", typ.String).Build()
 	got := entrySeedValue(
 		nil,
 		product.AbstractValue{},
-		product.FromType(contract),
+		paramevidence.DemandFromType(contract),
 	)
-	if !typ.TypeEquals(got.ProjectValue(), contract) {
-		t.Fatalf("contract seed = %v, want %v", got.ProjectValue(), contract)
+	if !typ.TypeEquals(got.ProjectValue(), want) {
+		t.Fatalf("contract seed = %v, want %v", got.ProjectValue(), want)
+	}
+}
+
+func TestEntrySeedBodyContractReplacesGradualEntry(t *testing.T) {
+	contract := typ.NewArray(typ.NewRecord().ReadonlyField("id", typ.String).Build())
+	want := typ.NewArray(typ.NewRecord().SetOpen(true).ReadonlyField("id", typ.String).Build())
+	got := entrySeedValue(
+		nil,
+		product.GradualAny(),
+		paramevidence.DemandFromType(contract),
+	)
+	if !typ.TypeEquals(got.ProjectValue(), want) {
+		t.Fatalf("gradual entry seed = %v, want body contract %v", got.ProjectValue(), want)
 	}
 }
 
@@ -128,10 +144,20 @@ func TestEntrySeedExactEntryIsNotRefinedByBodyContract(t *testing.T) {
 	got := entrySeedValue(
 		typ.NewArray(typ.Any),
 		product.FromType(entry),
-		product.FromType(contract),
+		paramevidence.DemandFromType(contract),
 	)
 	if !typ.TypeEquals(got.ProjectValue(), entry) {
 		t.Fatalf("exact entry seed = %v, want %v", got.ProjectValue(), entry)
+	}
+}
+
+func TestLengthContextIsLengthableNotStringOnly(t *testing.T) {
+	ctx := lengthContextType()
+	if !ops.MayHaveLength(ctx) {
+		t.Fatalf("length context = %v, want lengthable", ctx)
+	}
+	if typ.TypeEquals(ctx, typ.String) {
+		t.Fatalf("length context regressed to string-only")
 	}
 }
 

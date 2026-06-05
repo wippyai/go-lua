@@ -14,11 +14,14 @@ import (
 	"github.com/wippyai/go-lua/types/db"
 	"github.com/wippyai/go-lua/types/domain/value/product"
 	"github.com/wippyai/go-lua/types/io"
+	"github.com/wippyai/go-lua/types/kind"
 	"github.com/wippyai/go-lua/types/query/core"
 	"github.com/wippyai/go-lua/types/typ"
 	"github.com/wippyai/go-lua/types/typ/subst"
 	"github.com/wippyai/go-lua/types/typ/unwrap"
 )
+
+const summaryReturnFallbackScanLimit = 512
 
 // InterceptEnv is the AST/type context needed by canonical call intercepts.
 // It is explicit so call inference can be replayed from normalized query inputs
@@ -130,6 +133,8 @@ func InferReturnTypes(in ReturnInput) ([]typ.Type, bool) {
 		IsMethod: in.Call.Method != "",
 		Returns:  returns,
 		Args:     args,
+		Ctx:      in.Ctx,
+		Query:    in.Query,
 	})
 	return returns, true
 }
@@ -207,11 +212,36 @@ func summaryReturnValuesNeedTypeFallback(values []product.AbstractValue) bool {
 		if av.IsZero() {
 			continue
 		}
-		if typ.NeedsSameExpressionFallback(av.ProjectValue()) {
+		if summaryReturnValueNeedsTypeFallback(av.ProjectValue()) {
 			return true
 		}
 	}
 	return false
+}
+
+func summaryReturnValueNeedsTypeFallback(t typ.Type) bool {
+	if t == nil {
+		return true
+	}
+	base := typ.UnwrapAnnotated(t)
+	if base == nil {
+		return true
+	}
+	if typ.IsAbsentOrUnknown(base) || typ.IsAny(base) || base.Kind().IsPlaceholder() || base.Kind().IsDeferred() {
+		return true
+	}
+	if _, ok := base.(*typ.TypeParam); ok {
+		return true
+	}
+	// Recursive product families are owned by the summary fixed point. Walking an
+	// entire family here turns a call-site fallback check into an unbounded body
+	// traversal; closed fallback signatures may still repair top-level holes, but
+	// recursive interiors must converge through the product/summary domains.
+	if typ.ContainsRecursive(base) {
+		return false
+	}
+	needs, complete := typ.NeedsSameExpressionFallbackWithin(base, summaryReturnFallbackScanLimit)
+	return complete && needs
 }
 
 func typeFallbackReturnValues(in ReturnValueInput, requireInformative bool) ([]product.AbstractValue, bool) {
@@ -250,7 +280,18 @@ func informativeReturnValueType(t typ.Type) bool {
 	if t == nil || typ.IsAbsentOrUnknown(t) || typ.IsAny(t) {
 		return false
 	}
-	if typ.ContainsFreeTypeParam(t) {
+	base := typ.UnwrapAnnotated(t)
+	if base == nil {
+		return false
+	}
+	switch base.Kind() {
+	case kind.Self, kind.Generic:
+		return false
+	}
+	if base.Kind().IsDeferred() {
+		return false
+	}
+	if typ.ContainsTypeParam(base) && typ.ContainsFreeTypeParam(base) {
 		return false
 	}
 	return true
@@ -330,6 +371,8 @@ type SpecReturnInput struct {
 	IsMethod bool
 	Returns  []typ.Type
 	Args     []typ.Type
+	Ctx      *db.QueryContext
+	Query    core.TypeOps
 }
 
 // ApplySpecReturnOverride applies AST-level and type-level contract return
@@ -340,7 +383,11 @@ func ApplySpecReturnOverride(in SpecReturnInput) []typ.Type {
 	}
 	fnType := in.Callee
 	if in.IsMethod {
-		if mt, ok := core.Method(in.Receiver, in.Call.Method); ok {
+		if in.Query != nil {
+			if mt, ok := in.Query.Method(in.Ctx, in.Receiver, in.Call.Method); ok {
+				fnType = mt
+			}
+		} else if mt, ok := core.Method(in.Receiver, in.Call.Method); ok {
 			fnType = mt
 		}
 	}

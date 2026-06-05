@@ -226,6 +226,41 @@ func TestProject_ExportsPointLengthParamRelationForReturnedTarget(t *testing.T) 
 	}
 }
 
+func TestProject_ExportsReturnKeyParamRelationForReturnedKey(t *testing.T) {
+	g := returnFunctionGraphWithParams(t, []string{"self"}, "local id = \"node\"\nreturn id")
+	ret, info := returnPointAndInfo(t, g)
+	params := g.ParamSymbols()
+	if len(params) != 1 || params[0] == 0 {
+		t.Fatalf("parameter symbol not found: %#v", params)
+	}
+	if len(info.Symbols) != 1 || info.Symbols[0] == 0 {
+		t.Fatalf("identifier return info not found: %#v", info.Symbols)
+	}
+	selfPath := constraint.NewPath(params[0], "self")
+	nodesPath := selfPath.Field("nodes")
+	idPath := constraint.NewPath(info.Symbols[0], "id")
+	rel := flow.ReturnKeyParamRelation{
+		ReturnIndex: 0,
+		ParamIndex:  0,
+		ParamSegments: []constraint.Segment{{
+			Kind: constraint.SegmentField,
+			Name: "nodes",
+		}},
+	}
+
+	sum := summary.Project(state.FunctionState{
+		Points: map[cfg.Point]flow.PointState{
+			ret: {
+				KeyPresence: flow.KeyPresenceFacts{}.WithPaths(nodesPath, idPath),
+			},
+		},
+	}, g)
+
+	if !sum.Relations.HasKeyParam(rel) {
+		t.Fatalf("summary relations = %#v, want return-key relation %#v", sum.Relations, rel)
+	}
+}
+
 func TestProject_RejectsStalePointLengthParamRelationKey(t *testing.T) {
 	g := returnFunctionGraph(t, "return out")
 	ret, info := returnPointAndInfo(t, g)
@@ -248,13 +283,71 @@ func TestProject_RejectsStalePointLengthParamRelationKey(t *testing.T) {
 	}
 }
 
+func TestProject_ReturnBoundaryFactsIgnoreNilErrorReturns(t *testing.T) {
+	g := returnFunctionGraphWithParams(t, []string{"err"}, "local graph = {}\nif err then return nil, err end\nreturn graph, nil")
+
+	var failureRet cfg.Point
+	var successRet cfg.Point
+	var graphSym cfg.SymbolID
+	g.EachReturn(func(p cfg.Point, info *cfg.ReturnInfo) {
+		if info == nil || len(info.Symbols) == 0 {
+			return
+		}
+		if info.Symbols[0] != 0 {
+			successRet = p
+			if ident, ok := info.Exprs[0].(*ast.IdentExpr); ok {
+				graphSym, _ = g.Bindings().SymbolOf(ident)
+			}
+		} else {
+			failureRet = p
+		}
+	})
+	if failureRet == 0 || successRet == 0 || graphSym == 0 {
+		t.Fatalf("expected nil and graph return points, got failure=%v success=%v graph=%v", failureRet, successRet, graphSym)
+	}
+	graphPath := constraint.NewPath(graphSym, "graph")
+	nodeOrderPath := graphPath.Field("node_order")
+	nodesPath := graphPath.Field("nodes")
+
+	sum := summary.Project(state.FunctionState{
+		Points: map[cfg.Point]flow.PointState{
+			failureRet: {},
+			successRet: {
+				KeyPresence: flow.KeyPresenceFacts{}.
+					WithKeyArrayValuePaths(nodeOrderPath, nodesPath, product.FromType(typ.String)),
+			},
+		},
+	}, g)
+
+	facts := sum.BoundaryFacts.KeyArrayValues()
+	if len(facts) != 1 {
+		t.Fatalf("boundary key-array values = %#v, want one return-relative fact", facts)
+	}
+	if facts[0].Array.Kind != flow.BoundaryPathReturn ||
+		facts[0].Array.Index != 0 ||
+		len(facts[0].Array.Segments) != 1 ||
+		facts[0].Table.Kind != flow.BoundaryPathReturn ||
+		facts[0].Table.Index != 0 ||
+		len(facts[0].Table.Segments) != 1 {
+		t.Fatalf("boundary fact = %#v, want return[0].node_order -> return[0].nodes", facts[0])
+	}
+}
+
 func returnFunctionGraph(t *testing.T, code string) *cfg.Graph {
+	return returnFunctionGraphWithParams(t, nil, code)
+}
+
+func returnFunctionGraphWithParams(t *testing.T, params []string, code string) *cfg.Graph {
 	t.Helper()
 	stmts, err := parse.ParseString(code, "return_slot.lua")
 	if err != nil {
 		t.Fatalf("parse failed: %v", err)
 	}
-	return cfg.Build(&ast.FunctionExpr{Stmts: stmts})
+	fn := &ast.FunctionExpr{Stmts: stmts}
+	if len(params) > 0 {
+		fn.ParList = &ast.ParList{Names: params}
+	}
+	return cfg.Build(fn)
 }
 
 func returnPointAndInfo(t *testing.T, g *cfg.Graph) (cfg.Point, *cfg.ReturnInfo) {

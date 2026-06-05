@@ -41,8 +41,8 @@ func functionStateSample() []FunctionState {
 	}
 	psTop := flow.PointStateDomain.Top()
 
-	avString := product.FromType(typ.String)
-	avNumber := product.FromType(typ.Number)
+	contractString := paramevidence.DemandFromType(typ.String)
+	contractNumber := paramevidence.DemandFromType(typ.Number)
 
 	mk := func(points map[cfg.Point]flow.PointState, contracts paramevidence.Contracts) FunctionState {
 		return FunctionState{Points: points, Contracts: contracts}
@@ -54,13 +54,13 @@ func functionStateSample() []FunctionState {
 
 		// One half non-trivial at a time.
 		mk(map[cfg.Point]flow.PointState{cfg.Point(0): psMixed}, nil),
-		mk(nil, paramevidence.Contracts{0: avString}),
+		mk(nil, paramevidence.Contracts{0: contractString}),
 
 		// Both halves non-trivial, single and multi key.
 		mk(map[cfg.Point]flow.PointState{cfg.Point(0): psMixed, cfg.Point(1): psTop},
-			paramevidence.Contracts{0: avString, 1: avNumber}),
+			paramevidence.Contracts{0: contractString, 1: contractNumber}),
 		mk(map[cfg.Point]flow.PointState{cfg.Point(3): psMixed},
-			paramevidence.Contracts{2: avNumber}),
+			paramevidence.Contracts{2: contractNumber}),
 	}
 }
 

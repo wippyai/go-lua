@@ -276,6 +276,29 @@ func ProjectClosureRefsByPath(refs ClosureRefs, root constraint.Path) ClosureRef
 	return ClosureRefsDomain.Join(out, nil)
 }
 
+// ProjectClosureRefsByReferencePaths is the closure-value counterpart to
+// ProjectFunctionRefsByReferencePaths.
+func ProjectClosureRefsByReferencePaths(refs ClosureRefs, projection ReferencePathProjection) ClosureRefs {
+	if len(projection.Exact) == 0 && len(projection.Subtrees) == 0 {
+		return ClosureRefsDomain.Bottom()
+	}
+	if isClosureRefsTop(refs) {
+		return ClosureRefsDomain.Top()
+	}
+	if len(refs) == 0 {
+		return ClosureRefsDomain.Bottom()
+	}
+	out := make(ClosureRefs)
+	for _, path := range constraint.SortedPathKeys(refs) {
+		set := refs[path]
+		if set.IsBottom() || !referenceProjectionContainsPath(projection, path) {
+			continue
+		}
+		out[path] = set
+	}
+	return ClosureRefsDomain.Join(out, nil)
+}
+
 // RebaseClosureRefs moves all closure facts under from to the corresponding
 // subtree under to.
 func RebaseClosureRefs(refs ClosureRefs, from, to constraint.Path) ClosureRefs {
@@ -310,12 +333,21 @@ func WithoutClosureRefSubtree(refs ClosureRefs, path constraint.PathKey) Closure
 	if len(refs) == 0 || path == "" {
 		return refs
 	}
+	found := false
+	for k := range refs {
+		if functionRefPathInSubtree(k, path) {
+			found = true
+			break
+		}
+	}
+	if !found {
+		return refs
+	}
 	out := make(ClosureRefs, len(refs))
 	for k, v := range refs {
-		if functionRefPathInSubtree(k, path) {
-			continue
+		if !functionRefPathInSubtree(k, path) {
+			out[k] = v
 		}
-		out[k] = v
 	}
 	return ClosureRefsDomain.Join(out, nil)
 }

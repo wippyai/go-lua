@@ -20,6 +20,20 @@ type interner struct {
 
 var canonical = &interner{buckets: make(map[uint64][]*node)}
 
+type nodePair struct {
+	a *node
+	b *node
+}
+
+type nodePairCache struct {
+	mu   sync.RWMutex
+	join map[nodePair]*node
+}
+
+var binaryCache = &nodePairCache{
+	join: make(map[nodePair]*node),
+}
+
 var (
 	cachedBottom AbstractValue
 	cachedTop    AbstractValue
@@ -43,6 +57,7 @@ func ResetCanonicalInterner() {
 	canonical.mu.Lock()
 	canonical.buckets = make(map[uint64][]*node)
 	canonical.mu.Unlock()
+	resetBinaryCache()
 	refreshCachedExtrema()
 }
 
@@ -78,4 +93,30 @@ func lookup(bucket []*node, n *node) (*node, bool) {
 		}
 	}
 	return nil, false
+}
+
+func resetBinaryCache() {
+	binaryCache.mu.Lock()
+	binaryCache.join = make(map[nodePair]*node)
+	binaryCache.mu.Unlock()
+}
+
+func lookupJoinNode(a, b *node) (*node, bool) {
+	if a == nil || b == nil {
+		return nil, false
+	}
+	binaryCache.mu.RLock()
+	out, ok := binaryCache.join[nodePair{a: a, b: b}]
+	binaryCache.mu.RUnlock()
+	return out, ok
+}
+
+func rememberJoinNode(a, b, out *node) {
+	if a == nil || b == nil || out == nil {
+		return
+	}
+	binaryCache.mu.Lock()
+	binaryCache.join[nodePair{a: a, b: b}] = out
+	binaryCache.join[nodePair{a: b, b: a}] = out
+	binaryCache.mu.Unlock()
 }

@@ -463,6 +463,16 @@ func ExcludeKind(t typ.Type, target kind.Kind) typ.Type {
 	if t == nil {
 		return nil
 	}
+	if a, ok := t.(*typ.Alias); ok {
+		inner := ExcludeKind(a.Target, target)
+		if inner == nil || inner.Kind().IsNever() {
+			return inner
+		}
+		if typ.TypeEquals(inner, a.Target) {
+			return t
+		}
+		return inner
+	}
 	return narrowType(t, narrowConfig{
 		handleOptional: func(opt *typ.Optional, recurse func(typ.Type) typ.Type) typ.Type {
 			if target == kind.Nil {
@@ -477,8 +487,16 @@ func ExcludeKind(t typ.Type, target kind.Kind) typ.Type {
 		handleUnion: func(u *typ.Union, _ func(typ.Type) typ.Type) typ.Type {
 			var kept []typ.Type
 			for _, m := range u.Members {
-				if !KindMatches(m, target) {
-					kept = append(kept, m)
+				switch m.(type) {
+				case *typ.Alias, *typ.Optional:
+					narrowed := ExcludeKind(m, target)
+					if narrowed != nil && !narrowed.Kind().IsNever() {
+						kept = append(kept, narrowed)
+					}
+				default:
+					if !KindMatches(m, target) {
+						kept = append(kept, m)
+					}
 				}
 			}
 			if len(kept) == 0 {
@@ -683,6 +701,9 @@ func filterUnionByOverlap(u *typ.Union, other typ.Type) typ.Type {
 func FilterByKind(t typ.Type, target kind.Kind) typ.Type {
 	if t == nil {
 		return nil
+	}
+	if a, ok := t.(*typ.Alias); ok {
+		return FilterByKind(a.Target, target)
 	}
 	if t.Kind().IsPlaceholder() {
 		return placeholderTypeForKind(t, target)

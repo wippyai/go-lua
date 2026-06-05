@@ -5,7 +5,9 @@ import (
 
 	"github.com/wippyai/go-lua/types/cfg"
 	"github.com/wippyai/go-lua/types/constraint"
+	"github.com/wippyai/go-lua/types/domain/value/product"
 	"github.com/wippyai/go-lua/types/lattice"
+	"github.com/wippyai/go-lua/types/typ"
 )
 
 func TestKeyPresenceFactsDomain_Laws(t *testing.T) {
@@ -39,6 +41,88 @@ func TestKeyPresenceFactsJoinKeepsCommonProvenPairs(t *testing.T) {
 	}
 }
 
+func TestKeyPresenceFactsJoinSpecializesEmptyKeyArray(t *testing.T) {
+	array := SymbolPathKey(cfg.SymbolID(1), nil)
+	table := SymbolPathKey(cfg.SymbolID(2), nil)
+	otherTable := SymbolPathKey(cfg.SymbolID(3), nil)
+
+	empty := KeyPresenceFacts{}.WithEmptyKeyArray(array)
+	backedge := KeyPresenceFacts{}.
+		WithKeyArray(array, table).
+		WithKeyArray(otherTable, table)
+
+	joined := KeyPresenceFactsDomain.Join(empty, backedge)
+	if joined.HasEmptyKeyArray(array) {
+		t.Fatalf("join with concrete backedge kept stale empty-array fact: %s", joined.Format())
+	}
+	if tables := joined.KeyArrayTables(array); len(tables) != 1 || tables[0] != table {
+		t.Fatalf("join did not specialize empty array to observed table: %s", joined.Format())
+	}
+	if tables := joined.KeyArrayTables(otherTable); len(tables) != 0 {
+		t.Fatalf("join specialized unrelated array: %s", joined.Format())
+	}
+}
+
+func TestKeyPresenceAppendHistoryJoinUnionsCoveredEvents(t *testing.T) {
+	array := SymbolPathKey(cfg.SymbolID(10), nil)
+	nodes := SymbolPathKey(cfg.SymbolID(11), nil)
+	edges := SymbolPathKey(cfg.SymbolID(12), nil)
+	keyA := SymbolPathKey(cfg.SymbolID(13), nil)
+	keyB := SymbolPathKey(cfg.SymbolID(14), nil)
+	nodeValue := product.FromType(typ.String)
+	edgeValue := product.FromType(typ.Number)
+
+	left := KeyPresenceFacts{}.
+		WithEmptyKeyArray(array).
+		WithAppendHistoryEvent(array, keyA).
+		WithAppendHistoryCoverage(array, keyA, nodes, nodeValue).
+		WithAppendHistoryCoverage(array, keyA, edges, edgeValue)
+	right := KeyPresenceFacts{}.
+		WithAppendHistoryBase(array).
+		WithAppendHistoryEvent(array, keyB).
+		WithAppendHistoryCoverage(array, keyB, nodes, nodeValue).
+		WithAppendHistoryCoverage(array, keyB, edges, edgeValue)
+
+	joined := KeyPresenceFactsDomain.Join(left, right)
+	tables := joined.KeyArrayTables(array)
+	if len(tables) != 2 {
+		t.Fatalf("covered tables = %v, want nodes and edges; facts=%s", tables, joined.Format())
+	}
+	if _, ok := findPathKeyLinear(tables, nodes); !ok {
+		t.Fatalf("covered tables missing nodes: %v facts=%s", tables, joined.Format())
+	}
+	if _, ok := findPathKeyLinear(tables, edges); !ok {
+		t.Fatalf("covered tables missing edges: %v facts=%s", tables, joined.Format())
+	}
+	nodeValues := joined.KeyArrayValues(array, nodes)
+	if len(nodeValues) != 1 || !product.Domain.Equal(nodeValues[0], nodeValue) {
+		t.Fatalf("node coverage values = %v, want string; facts=%s", nodeValues, joined.Format())
+	}
+}
+
+func TestKeyPresenceAppendHistoryRejectsPartiallyCoveredTable(t *testing.T) {
+	array := SymbolPathKey(cfg.SymbolID(20), nil)
+	nodes := SymbolPathKey(cfg.SymbolID(21), nil)
+	edges := SymbolPathKey(cfg.SymbolID(22), nil)
+	keyA := SymbolPathKey(cfg.SymbolID(23), nil)
+	keyB := SymbolPathKey(cfg.SymbolID(24), nil)
+
+	facts := KeyPresenceFacts{}.
+		WithAppendHistoryBase(array).
+		WithAppendHistoryEvent(array, keyA).
+		WithAppendHistoryEvent(array, keyB).
+		WithAppendHistoryCoverage(array, keyA, nodes, product.FromType(typ.String)).
+		WithAppendHistoryCoverage(array, keyA, edges, product.FromType(typ.Number)).
+		WithAppendHistoryCoverage(array, keyB, edges, product.FromType(typ.Number))
+
+	if values := facts.KeyArrayValues(array, nodes); len(values) != 0 {
+		t.Fatalf("partially covered nodes table produced values: %v facts=%s", values, facts.Format())
+	}
+	if values := facts.KeyArrayValues(array, edges); len(values) != 1 || !product.Domain.Equal(values[0], product.FromType(typ.Number)) {
+		t.Fatalf("fully covered edges table values = %v facts=%s", values, facts.Format())
+	}
+}
+
 func TestKeyPresenceFactsKillSubtreeRemovesDependentFacts(t *testing.T) {
 	table := SymbolPathKey(cfg.SymbolID(1), nil)
 	key := SymbolPathKey(cfg.SymbolID(2), nil)
@@ -50,7 +134,9 @@ func TestKeyPresenceFactsKillSubtreeRemovesDependentFacts(t *testing.T) {
 		With(table, key).
 		WithValue(table, key, value).
 		With(table, other).
-		WithKeyArray(array, table)
+		WithKeyArray(array, table).
+		WithEmptyKeyArray(array).
+		WithPendingKeyArray(array, table, key)
 
 	killedValue := facts.KillSubtree(value)
 	if killedValue.HasValue(table, key, value) {
@@ -69,12 +155,15 @@ func TestKeyPresenceFactsKillSubtreeRemovesDependentFacts(t *testing.T) {
 	}
 
 	killedTable := facts.KillSubtree(table)
-	if len(killedTable.Entries()) != 0 || len(killedTable.ValueEntries()) != 0 || len(killedTable.KeyArrayEntries()) != 0 {
+	if len(killedTable.Entries()) != 0 || len(killedTable.ValueEntries()) != 0 || len(killedTable.KeyArrayEntries()) != 0 || len(killedTable.PendingKeyArrayEntries()) != 0 {
 		t.Fatalf("table assignment left stale facts: %s", killedTable.Format())
+	}
+	if !killedTable.HasEmptyKeyArray(array) {
+		t.Fatalf("table assignment killed independent empty-array fact: %s", killedTable.Format())
 	}
 
 	killedArray := facts.KillSubtree(array)
-	if len(killedArray.KeyArrayEntries()) != 0 {
+	if len(killedArray.KeyArrayEntries()) != 0 || len(killedArray.PendingKeyArrayEntries()) != 0 || killedArray.HasEmptyKeyArray(array) {
 		t.Fatalf("array assignment left stale key-array facts: %s", killedArray.Format())
 	}
 	if !killedArray.Has(table, key) {
@@ -96,11 +185,16 @@ func TestKeyPresenceFactsKillAffectedByWriteDropsOverlappingTableFacts(t *testin
 		With(table, key).
 		WithValue(table, key, value).
 		With(otherTable, key).
-		WithKeyArray(array, table)
+		WithKeyArray(array, table).
+		WithEmptyKeyArray(array).
+		WithPendingKeyArray(array, table, key)
 
 	killed := facts.KillAffectedByWrite(tableMember)
-	if killed.Has(table, key) || killed.HasValue(table, key, value) || len(killed.KeyArrayTables(array)) != 0 {
+	if killed.Has(table, key) || killed.HasValue(table, key, value) || len(killed.KeyArrayTables(array)) != 0 || len(killed.PendingKeyArrayEntries()) != 0 {
 		t.Fatalf("member write kept stale table-root facts: %s", killed.Format())
+	}
+	if !killed.HasEmptyKeyArray(array) {
+		t.Fatalf("table member write killed independent empty-array fact: %s", killed.Format())
 	}
 	if !killed.Has(otherTable, key) {
 		t.Fatalf("member write killed unrelated table fact: %s", killed.Format())
@@ -119,7 +213,10 @@ func TestKeyPresenceFactsPresentElementWriteKeepsKeyPresenceButDropsValueFacts(t
 	facts := KeyPresenceFacts{}.
 		With(table, key).
 		WithValue(table, key, value).
-		WithKeyArray(array, table)
+		WithKeyArray(array, table).
+		WithKeyArrayValue(array, table, product.FromType(typ.String)).
+		WithEmptyKeyArray(array).
+		WithPendingKeyArray(array, table, key)
 
 	killed := facts.KillAffectedByPresentElementWrite(tableMember)
 	if !killed.Has(table, key) {
@@ -130,6 +227,16 @@ func TestKeyPresenceFactsPresentElementWriteKeepsKeyPresenceButDropsValueFacts(t
 	}
 	if len(killed.KeyArrayTables(array)) != 1 {
 		t.Fatalf("present element write dropped independent key-array fact: %s", killed.Format())
+	}
+	values := killed.KeyArrayValues(array, table)
+	if len(values) != 1 || !product.Domain.Equal(values[0], product.FromType(typ.String)) {
+		t.Fatalf("present element write dropped key-array value before write proof: %s", killed.Format())
+	}
+	if len(killed.PendingKeyArrayEntries()) != 1 {
+		t.Fatalf("present element write dropped pending key-array fact: %s", killed.Format())
+	}
+	if !killed.HasEmptyKeyArray(array) {
+		t.Fatalf("present table element write killed independent empty-array fact: %s", killed.Format())
 	}
 }
 
@@ -143,11 +250,15 @@ func TestKeyPresenceFactsKillAffectedByWriteDropsArrayMemberFacts(t *testing.T) 
 
 	facts := KeyPresenceFacts{}.
 		WithKeyArray(array, table).
+		WithEmptyKeyArray(array).
 		WithKeyArray(otherArray, table)
 
 	killed := facts.KillAffectedByWrite(arrayMember)
 	if len(killed.KeyArrayTables(array)) != 0 {
 		t.Fatalf("array member write kept stale key-array fact: %s", killed.Format())
+	}
+	if killed.HasEmptyKeyArray(array) {
+		t.Fatalf("array member write kept stale empty-array fact: %s", killed.Format())
 	}
 	if len(killed.KeyArrayTables(otherArray)) != 1 {
 		t.Fatalf("array member write killed unrelated key-array fact: %s", killed.Format())
@@ -180,5 +291,8 @@ func keyPresenceFactsSample() []KeyPresenceFacts {
 			{Table: tableA, Key: keyA},
 			{Table: tableB, Key: keyB},
 		}).WithValue(tableA, keyA, keyB).WithKeyArray(keyA, tableA),
+		KeyPresenceFacts{}.WithEmptyKeyArray(keyA),
+		KeyPresenceFacts{}.WithPendingKeyArray(keyA, tableA, keyB),
+		KeyPresenceFacts{}.WithPendingKeyArray(keyA, "", keyB),
 	}
 }

@@ -45,26 +45,36 @@ type fallbackRefineState struct {
 // such as Box<string> is treated as closed: only its concrete type arguments are
 // inspected, not the generic declaration template.
 func ContainsFreeTypeParam(t Type) bool {
-	return containsFreeTypeParam(t, nil, nil)
+	return containsFreeTypeParam(t, make(containsSeen), nil)
 }
 
-func containsFreeTypeParam(t Type, seen map[Type]bool, owned map[*TypeParam]int) bool {
+func containsFreeTypeParam(t Type, seen containsSeen, owned map[*TypeParam]int) bool {
 	if t == nil {
 		return false
 	}
-	if seen == nil {
-		seen = make(map[Type]bool)
-	}
-	if seen[t] {
+	t = UnwrapAnnotated(t)
+	if t == nil {
 		return false
 	}
-	seen[t] = true
 
-	switch v := UnwrapAnnotated(t).(type) {
-	case nil:
-		return false
+	switch v := t.(type) {
 	case *TypeParam:
 		return owned == nil || owned[v] == 0
+	}
+
+	switch t.Kind() {
+	case kind.Ref, kind.TypeVar, kind.FieldAccess, kind.IndexAccess, kind.Generic:
+		return true
+	}
+
+	if freeTypeParamUseSeen(owned) {
+		if seen.contains(t) {
+			return false
+		}
+		seen.remember(t)
+	}
+
+	switch v := t.(type) {
 	case *Instantiated:
 		for _, arg := range v.TypeArgs {
 			if containsFreeTypeParam(arg, seen, owned) {
@@ -101,10 +111,6 @@ func containsFreeTypeParam(t Type, seen map[Type]bool, owned map[*TypeParam]int)
 		return false
 	}
 
-	switch t.Kind() {
-	case kind.Ref, kind.TypeVar, kind.FieldAccess, kind.IndexAccess, kind.Generic:
-		return true
-	}
 	return Visit(t, Visitor[bool]{
 		Optional: func(o *Optional) bool {
 			return containsFreeTypeParam(o.Inner, seen, owned)
@@ -182,31 +188,68 @@ func containsFreeTypeParam(t Type, seen map[Type]bool, owned map[*TypeParam]int)
 	})
 }
 
+func freeTypeParamUseSeen(owned map[*TypeParam]int) bool {
+	return len(owned) == 0
+}
+
 // NeedsSameExpressionFallback reports whether t contains a leaf that can be
 // repaired by a same-expression fallback. This is deliberately broader than
 // free type parameters: a summary return may contain unknown/any/deferred leaves
 // inside otherwise precise structure, and those holes should be repaired by a
 // closed signature observation without replacing the whole value.
 func NeedsSameExpressionFallback(t Type) bool {
-	return needsSameExpressionFallback(t, nil)
+	scan := &sameExpressionFallbackScan{seen: make(containsSeen)}
+	return scan.needs(t)
 }
 
-func needsSameExpressionFallback(t Type, seen map[Type]bool) bool {
+// NeedsSameExpressionFallbackWithin is the bounded form of
+// NeedsSameExpressionFallback. When maxNodes is positive and the scan exceeds
+// it, the returned complete flag is false and the caller should treat this as
+// "no precision repair from this optional fallback" rather than as proof that no
+// repairable leaf exists.
+func NeedsSameExpressionFallbackWithin(t Type, maxNodes int) (needs bool, complete bool) {
+	scan := &sameExpressionFallbackScan{seen: make(containsSeen), maxNodes: maxNodes}
+	needs = scan.needs(t)
+	return needs, !scan.exceeded
+}
+
+type sameExpressionFallbackScan struct {
+	seen     containsSeen
+	maxNodes int
+	nodes    int
+	exceeded bool
+}
+
+func (s *sameExpressionFallbackScan) enter() bool {
+	if s == nil || s.maxNodes <= 0 {
+		return true
+	}
+	s.nodes++
+	if s.nodes <= s.maxNodes {
+		return true
+	}
+	s.exceeded = true
+	return false
+}
+
+func (s *sameExpressionFallbackScan) needs(t Type) bool {
+	if !s.enter() {
+		return false
+	}
 	if t == nil {
 		return true
 	}
-	if seen == nil {
-		seen = make(map[Type]bool)
-	}
-	if seen[t] {
-		return false
-	}
-	seen[t] = true
-
 	t = UnwrapAnnotated(t)
+	if t == nil {
+		return true
+	}
 	if summaryNeedsFallbackLeaf(t) {
 		return true
 	}
+	if s.seen.contains(t) {
+		return false
+	}
+	s.seen.remember(t)
 	switch v := t.(type) {
 	case *Function:
 		// Function parameters are contravariant input positions. A loose summary
@@ -214,14 +257,14 @@ func needsSameExpressionFallback(t Type, seen map[Type]bool) bool {
 		// call by itself because RefineWithFallback preserves such parameters
 		// unless the function has an output/covariant hole to repair.
 		for _, ret := range v.Returns {
-			if needsSameExpressionFallback(ret, seen) {
+			if s.needs(ret) {
 				return true
 			}
 		}
 		return false
 	case *Instantiated:
 		for _, arg := range v.TypeArgs {
-			if needsSameExpressionFallback(arg, seen) {
+			if s.needs(arg) {
 				return true
 			}
 		}
@@ -230,11 +273,11 @@ func needsSameExpressionFallback(t Type, seen map[Type]bool) bool {
 
 	return Visit(t, Visitor[bool]{
 		Optional: func(o *Optional) bool {
-			return needsSameExpressionFallback(o.Inner, seen)
+			return s.needs(o.Inner)
 		},
 		Union: func(u *Union) bool {
 			for _, member := range u.Members {
-				if needsSameExpressionFallback(member, seen) {
+				if s.needs(member) {
 					return true
 				}
 			}
@@ -242,60 +285,60 @@ func needsSameExpressionFallback(t Type, seen map[Type]bool) bool {
 		},
 		Intersection: func(in *Intersection) bool {
 			for _, member := range in.Members {
-				if needsSameExpressionFallback(member, seen) {
+				if s.needs(member) {
 					return true
 				}
 			}
 			return false
 		},
 		Array: func(a *Array) bool {
-			return needsSameExpressionFallback(a.Element, seen)
+			return s.needs(a.Element)
 		},
 		Map: func(m *Map) bool {
-			return needsSameExpressionFallback(m.Key, seen) || needsSameExpressionFallback(m.Value, seen)
+			return s.needs(m.Key) || s.needs(m.Value)
 		},
 		ReadonlyMap: func(m *ReadonlyMap) bool {
-			return needsSameExpressionFallback(m.Key, seen) || needsSameExpressionFallback(m.Value, seen)
+			return s.needs(m.Key) || s.needs(m.Value)
 		},
 		Tuple: func(tup *Tuple) bool {
 			for _, elem := range tup.Elements {
-				if needsSameExpressionFallback(elem, seen) {
+				if s.needs(elem) {
 					return true
 				}
 			}
 			return false
 		},
 		Record: func(r *Record) bool {
-			if (r.MapKey != nil && needsSameExpressionFallback(r.MapKey, seen)) ||
-				(r.MapValue != nil && needsSameExpressionFallback(r.MapValue, seen)) ||
-				(r.Metatable != nil && needsSameExpressionFallback(r.Metatable, seen)) {
+			if (r.MapKey != nil && s.needs(r.MapKey)) ||
+				(r.MapValue != nil && s.needs(r.MapValue)) ||
+				(r.Metatable != nil && s.needs(r.Metatable)) {
 				return true
 			}
 			for _, field := range r.Fields {
-				if needsSameExpressionFallback(field.Type, seen) {
+				if s.needs(field.Type) {
 					return true
 				}
 			}
 			for _, member := range r.StaticMembers {
-				if needsSameExpressionFallback(member.Type, seen) {
+				if s.needs(member.Type) {
 					return true
 				}
 			}
 			return false
 		},
 		Alias: func(a *Alias) bool {
-			return needsSameExpressionFallback(a.Target, seen)
+			return s.needs(a.Target)
 		},
 		Meta: func(m *Meta) bool {
-			return needsSameExpressionFallback(m.Of, seen)
+			return s.needs(m.Of)
 		},
 		Recursive: func(r *Recursive) bool {
-			return needsSameExpressionFallback(r.Body, seen)
+			return s.needs(r.Body)
 		},
-		Sum: func(s *Sum) bool {
-			for _, variant := range s.Variants {
+		Sum: func(sum *Sum) bool {
+			for _, variant := range sum.Variants {
 				for _, t := range variant.Types {
-					if needsSameExpressionFallback(t, seen) {
+					if s.needs(t) {
 						return true
 					}
 				}
@@ -420,9 +463,6 @@ func (s *fallbackRefineState) refine(summary, fallback Type) (Type, bool) {
 		return Instantiate(a.Generic, args...), true
 	}
 
-	if MorePrecise(fallback, summary) {
-		return fallback, true
-	}
 	return summary, false
 }
 

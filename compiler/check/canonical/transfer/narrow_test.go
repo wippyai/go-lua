@@ -78,6 +78,131 @@ func TestNarrowByCondCheckTruthyAnyMarksPresentDynamic(t *testing.T) {
 	}
 }
 
+func TestNarrowByCondCheckTypeEqualAnyNarrowsToKind(t *testing.T) {
+	ident := &ast.IdentExpr{Value: "x"}
+	sym := cfg.SymbolID(22)
+	tr := New(keyPresenceInput(t, map[*ast.IdentExpr]cfg.SymbolID{
+		ident: sym,
+	}), Config{})
+	info := &cfg.BranchInfo{
+		CondSymbol: sym,
+		CondCheck:  cfg.CondCheck{Kind: cfg.CheckTypeEqual, TypeName: "number"},
+		Condition:  ident,
+	}
+
+	for name, base := range map[string]product.AbstractValue{
+		"strict-any":  product.FromType(typ.Any),
+		"gradual-any": product.GradualAny(),
+	} {
+		t.Run(name, func(t *testing.T) {
+			out := flow.PointState{Env: map[flow.ValueKey]product.AbstractValue{
+				flow.SymbolValueKey(sym): base,
+			}}
+			got := tr.narrowByCondCheck(out, info, true, false)
+			gotAV, ok := tr.symbolValue(&got, sym)
+			if !ok || !typ.TypeEquals(gotAV.ProjectValue(), typ.Number) {
+				t.Fatalf("type(x)==number edge value = %v/%v, want number,true", gotAV.ProjectValue(), ok)
+			}
+			if base.IsGradualTop() && !gotAV.IsGradualTop() {
+				t.Fatal("type guard over gradual source lost gradual evidence")
+			}
+		})
+	}
+}
+
+func TestNarrowByCondCheckDeclaredUnionIgnoresInitializerSingletonVeto(t *testing.T) {
+	ident := &ast.IdentExpr{Value: "x"}
+	sym := cfg.SymbolID(23)
+	tr := New(keyPresenceInput(t, map[*ast.IdentExpr]cfg.SymbolID{
+		ident: sym,
+	}), Config{})
+	tr.declaredTypes = map[cfg.SymbolID]typ.Type{
+		sym: typ.NewUnion(typ.String, typ.Number),
+	}
+	out := flow.PointState{
+		Env: map[flow.ValueKey]product.AbstractValue{
+			flow.SymbolValueKey(sym): product.FromType(typ.LiteralInt(42)),
+		},
+	}
+	info := &cfg.BranchInfo{
+		CondSymbol: sym,
+		CondVar:    "x",
+		CondCheck:  cfg.CondCheck{Kind: cfg.CheckTypeEqual, TypeName: "string"},
+		Condition:  ident,
+	}
+
+	got := tr.narrowByCondCheck(out, info, true, false)
+	gotAV, ok := tr.symbolValue(&got, sym)
+	if !ok || !typ.TypeEquals(gotAV.ProjectValue(), typ.String) {
+		t.Fatalf("declared union type(x)==string edge = %v/%v, want string", gotAV.ProjectValue(), ok)
+	}
+}
+
+func TestNarrowByCondCheckDeclaredUnionLetsPathConditionedCurrentSpecialize(t *testing.T) {
+	ident := &ast.IdentExpr{Value: "x"}
+	sym := cfg.SymbolID(24)
+	tr := New(keyPresenceInput(t, map[*ast.IdentExpr]cfg.SymbolID{
+		ident: sym,
+	}), Config{})
+	tr.declaredTypes = map[cfg.SymbolID]typ.Type{
+		sym: typ.NewUnion(typ.String, typ.Number),
+	}
+	path := constraint.NewPath(sym, "x")
+	out := flow.PointState{
+		Cond: constraint.FromConstraints(constraint.HasType{
+			Path: path,
+			Type: typeKeyFor("number"),
+		}),
+		Env: map[flow.ValueKey]product.AbstractValue{
+			flow.SymbolValueKey(sym): product.FromType(typ.LiteralInt(42)),
+		},
+	}
+	info := &cfg.BranchInfo{
+		CondSymbol: sym,
+		CondVar:    "x",
+		CondCheck:  cfg.CondCheck{Kind: cfg.CheckTypeEqual, TypeName: "number"},
+		Condition:  ident,
+	}
+
+	got := tr.narrowByCondCheck(out, info, true, false)
+	gotAV, ok := tr.symbolValue(&got, sym)
+	if !ok || !typ.TypeEquals(gotAV.ProjectValue(), typ.LiteralInt(42)) {
+		t.Fatalf("condition-backed current value = %v/%v, want literal 42", gotAV.ProjectValue(), ok)
+	}
+}
+
+func TestNarrowByCondCheckContradictoryTypeConditionBottomsEdge(t *testing.T) {
+	ident := &ast.IdentExpr{Value: "x"}
+	sym := cfg.SymbolID(25)
+	tr := New(keyPresenceInput(t, map[*ast.IdentExpr]cfg.SymbolID{
+		ident: sym,
+	}), Config{})
+	tr.declaredTypes = map[cfg.SymbolID]typ.Type{
+		sym: typ.NewUnion(typ.String, typ.Number),
+	}
+	path := constraint.NewPath(sym, "x")
+	out := flow.PointState{
+		Cond: constraint.FromConstraints(constraint.HasType{
+			Path: path,
+			Type: typeKeyFor("number"),
+		}),
+		Env: map[flow.ValueKey]product.AbstractValue{
+			flow.SymbolValueKey(sym): product.FromType(typ.Number),
+		},
+	}
+	info := &cfg.BranchInfo{
+		CondSymbol: sym,
+		CondVar:    "x",
+		CondCheck:  cfg.CondCheck{Kind: cfg.CheckTypeEqual, TypeName: "string"},
+		Condition:  ident,
+	}
+
+	got := tr.narrowByCondCheck(out, info, true, false)
+	if !flow.PointStateDomain.Equal(got, flow.PointStateDomain.Bottom()) {
+		t.Fatalf("contradictory typeof edge = %#v, want point-state bottom", got)
+	}
+}
+
 func TestNarrowByPredicateDirectCallTrueEdgeNarrowsArgument(t *testing.T) {
 	fnIdent := &ast.IdentExpr{Value: "is_positive_number"}
 	argIdent := &ast.IdentExpr{Value: "value"}
@@ -209,6 +334,137 @@ func TestNarrowEdgePredicateDirectCallTrueSuccessorNarrowsArgument(t *testing.T)
 	gotAV, ok := tr.symbolValue(&got, argSym)
 	if !ok || !typ.TypeEquals(gotAV.ProjectValue(), typ.Number) {
 		t.Fatalf("true successor value = %v/%v, want number,true", gotAV.ProjectValue(), ok)
+	}
+}
+
+func TestNarrowEdgeTruthyAliasLocalTrueSuccessorNarrowsReceiver(t *testing.T) {
+	store := &ast.IdentExpr{Value: "store"}
+	callRecv := &ast.IdentExpr{Value: "store"}
+	fn := &ast.FunctionExpr{
+		ParList: &ast.ParList{Names: []string{"store"}},
+		Stmts: []ast.Stmt{
+			&ast.IfStmt{
+				Condition: store,
+				Then: []ast.Stmt{
+					&ast.FuncCallStmt{Expr: &ast.FuncCallExpr{Receiver: callRecv, Method: "go"}},
+				},
+			},
+		},
+	}
+	in := input.BuildFromFunction(fn, nil, nil)
+	if in.Graph == nil {
+		t.Fatal("test graph not built")
+	}
+	storeSym := in.Scope.ParamSymbols[0]
+	var branch cfg.Point
+	var trueSucc cfg.Point
+	in.Graph.EachBranch(func(p cfg.Point, info *cfg.BranchInfo) {
+		if branch != 0 || info == nil || info.CondSymbol != storeSym {
+			return
+		}
+		branch = p
+		for _, succ := range in.Graph.Successors(p) {
+			taken, known := in.Graph.EdgeCond(p, succ)
+			if known && taken {
+				trueSucc = succ
+				break
+			}
+		}
+	})
+	if trueSucc == 0 {
+		t.Fatal("test CFG has no true branch edge")
+	}
+	svc := typ.NewAlias("Svc", typ.NewRecord().
+		Field("go", typ.Func().Build()).
+		Build())
+	tr := New(in, Config{})
+	out := flow.PointState{Env: map[flow.ValueKey]product.AbstractValue{
+		flow.SymbolValueKey(storeSym): product.FromType(typ.NewOptional(svc)),
+	}}
+
+	got := tr.NarrowEdge(in.Graph, branch, trueSucc, out)
+	gotAV, ok := tr.symbolValue(&got, storeSym)
+	if !ok || !gotAV.DefinitelyPresent() {
+		t.Fatalf("true successor value = %v/%v present=%v, want present alias receiver", gotAV.ProjectValue(), ok, gotAV.DefinitelyPresent())
+	}
+}
+
+func TestNarrowEdgeTruthyCopiedAliasLocalTrueSuccessorNarrowsReceiver(t *testing.T) {
+	h := &ast.IdentExpr{Value: "h"}
+	source := &ast.AttrGetExpr{Object: h, Key: &ast.StringExpr{Value: "store"}, KeySyntax: ast.AttrKeyDot}
+	condStore := &ast.IdentExpr{Value: "store"}
+	callStore := &ast.IdentExpr{Value: "store"}
+	fn := &ast.FunctionExpr{
+		ParList: &ast.ParList{Names: []string{"h"}},
+		Stmts: []ast.Stmt{
+			&ast.LocalAssignStmt{Names: []string{"store"}, Exprs: []ast.Expr{source}},
+			&ast.IfStmt{
+				Condition: condStore,
+				Then: []ast.Stmt{
+					&ast.FuncCallStmt{Expr: &ast.FuncCallExpr{Receiver: callStore, Method: "go"}},
+				},
+			},
+		},
+	}
+	in := input.BuildFromFunction(fn, nil, nil)
+	if in.Graph == nil {
+		t.Fatal("test graph not built")
+	}
+	storeSym, ok := in.Graph.Bindings().SymbolOf(condStore)
+	if !ok || storeSym == 0 {
+		t.Fatalf("store condition was not bound: %d/%v", storeSym, ok)
+	}
+	var branch cfg.Point
+	var trueSucc cfg.Point
+	in.Graph.EachBranch(func(p cfg.Point, info *cfg.BranchInfo) {
+		if branch != 0 || info == nil || info.CondSymbol != storeSym {
+			return
+		}
+		branch = p
+		for _, succ := range in.Graph.Successors(p) {
+			taken, known := in.Graph.EdgeCond(p, succ)
+			if known && taken {
+				trueSucc = succ
+				break
+			}
+		}
+	})
+	if trueSucc == 0 {
+		t.Fatal("test CFG has no true branch edge")
+	}
+	svc := typ.NewAlias("Svc", typ.NewRecord().
+		Field("go", typ.Func().Build()).
+		Build())
+	tr := New(in, Config{})
+	out := flow.PointState{Env: map[flow.ValueKey]product.AbstractValue{
+		flow.SymbolValueKey(storeSym): product.FromType(typ.NewOptional(svc)),
+	}}
+
+	got := tr.NarrowEdge(in.Graph, branch, trueSucc, out)
+	gotAV, ok := tr.symbolValue(&got, storeSym)
+	if !ok || !gotAV.DefinitelyPresent() {
+		t.Fatalf("true successor value = %v/%v present=%v, want present copied alias receiver", gotAV.ProjectValue(), ok, gotAV.DefinitelyPresent())
+	}
+}
+
+func TestConditionRefinedCaptureValueNarrowsExistingCell(t *testing.T) {
+	sym := cfg.SymbolID(10)
+	tr := New(input.Inputs{}, Config{})
+	out := flow.PointState{
+		Cells: flow.CaptureCellsDomain.Bottom().With(sym, product.GradualAny()),
+		Cond: constraint.FromConstraints(constraint.HasType{
+			Path: constraint.NewPath(sym, "x"),
+			Type: typeKeyFor("number"),
+		}),
+	}
+	base, ok := out.Cells.Value(sym)
+	if !ok {
+		t.Fatal("test cell missing")
+	}
+
+	got, refined := tr.conditionRefinedCaptureValue(&out, sym, base, true)
+	if !refined || !typ.TypeEquals(got.ProjectValue(), typ.Number) {
+		t.Fatalf("conditionRefinedCaptureValue = %v/%v, want number refinement", got.ProjectValue(), refined)
 	}
 }
 
@@ -561,6 +817,23 @@ func TestRefineStaticMemberFactRebasesExistingSentinelOnCurrentBase(t *testing.T
 	}
 }
 
+func TestStaticMemberLiteralExclusionCollapsesExactCachedPath(t *testing.T) {
+	tr := &Transfer{}
+	sym := cfg.SymbolID(9)
+	segs := []constraint.Segment{{Kind: constraint.SegmentField, Name: "data_func"}}
+	pathKey := flow.SymbolPathKey(sym, segs)
+	out := flow.PointState{
+		StaticMembers: flow.StaticMemberFacts{}.With(pathKey, product.FromType(typ.LiteralString(""))),
+	}
+
+	if !tr.refineStaticMemberFactForLiteralComparison(&out, sym, segs, typ.LiteralString(""), false) {
+		t.Fatal("literal exclusion reported no change")
+	}
+	if !flow.PointStateDomain.Equal(out, flow.PointStateDomain.Bottom()) {
+		t.Fatalf("literal exclusion left exact cached path reachable: %s", out.StaticMembers.Format())
+	}
+}
+
 func TestRefineStaticMemberFactKeepsFalsyOnlyFromExistingPresentFact(t *testing.T) {
 	tr := &Transfer{}
 	sym := cfg.SymbolID(9)
@@ -650,6 +923,83 @@ func TestNarrowByCondCheckMissingStaticMemberPositiveGuardKeepsDynamicEdge(t *te
 	fact, ok := got.StaticMembers.Value(flow.SymbolPathKey(sym, path))
 	if !ok || !fact.DefinitelyPresent() {
 		t.Fatalf("dynamic missing-member guard fact = %v, %v; want present dynamic", fact.ProjectValue(), ok)
+	}
+}
+
+func TestNarrowByCondCheckTruthyFieldDropsArrayAlternative(t *testing.T) {
+	entryIdent := &ast.IdentExpr{Value: "entry"}
+	sym := cfg.SymbolID(24)
+	tr := New(keyPresenceInput(t, map[*ast.IdentExpr]cfg.SymbolID{
+		entryIdent: sym,
+	}), Config{})
+	entryRecord := typ.NewRecord().Field("id", typ.String).Build()
+	entry := typ.NewAlias("Entry", typ.NewUnion(typ.String, entryRecord))
+	entryArray := typ.NewArray(entry)
+	declared := typ.NewUnion(entry, entryArray)
+	tr.declaredTypes = map[cfg.SymbolID]typ.Type{sym: declared}
+	guard := &ast.AttrGetExpr{
+		Object:    entryIdent,
+		Key:       &ast.StringExpr{Value: "id"},
+		KeySyntax: ast.AttrKeyDot,
+	}
+	info := &cfg.BranchInfo{
+		CondSymbol: sym,
+		CondCheck:  cfg.CondCheck{Kind: cfg.CheckTruthy},
+		Condition:  guard,
+	}
+	out := flow.PointState{
+		Env: map[flow.ValueKey]product.AbstractValue{
+			flow.SymbolValueKey(sym): product.FromType(declared),
+		},
+	}
+
+	got := tr.narrowByCondCheck(out, info, true, false)
+	root, ok := tr.symbolValue(&got, sym)
+	if !ok {
+		t.Fatal("narrowed root missing")
+	}
+	gotType := root.ProjectValue()
+	if typ.IsNever(gotType) || !typ.TypeEquals(gotType, entryRecord) {
+		t.Fatalf("truthy entry.id root = %v, want %v", gotType, entryRecord)
+	}
+}
+
+func TestNarrowByCondCheckDoesNotWidenCurrentEdgeWithDeclaredBase(t *testing.T) {
+	entryIdent := &ast.IdentExpr{Value: "entry"}
+	sym := cfg.SymbolID(25)
+	tr := New(keyPresenceInput(t, map[*ast.IdentExpr]cfg.SymbolID{
+		entryIdent: sym,
+	}), Config{})
+	entryRecord := typ.NewRecord().Field("id", typ.String).Build()
+	entry := typ.NewAlias("Entry", typ.NewUnion(typ.String, entryRecord))
+	entryArray := typ.NewArray(entry)
+	declared := typ.NewUnion(entry, entryArray)
+	tr.declaredTypes = map[cfg.SymbolID]typ.Type{sym: declared}
+	guard := &ast.AttrGetExpr{
+		Object:    entryIdent,
+		Key:       &ast.StringExpr{Value: "id"},
+		KeySyntax: ast.AttrKeyDot,
+	}
+	info := &cfg.BranchInfo{
+		CondSymbol: sym,
+		CondCheck:  cfg.CondCheck{Kind: cfg.CheckTruthy},
+		CondVar:    "entry.id",
+		Condition:  guard,
+	}
+	out := flow.PointState{
+		Env: map[flow.ValueKey]product.AbstractValue{
+			flow.SymbolValueKey(sym): product.FromType(entryRecord),
+		},
+	}
+
+	got := tr.narrowByCondCheck(out, info, true, false)
+	root, ok := tr.symbolValue(&got, sym)
+	if !ok {
+		t.Fatal("narrowed root missing")
+	}
+	gotType := root.ProjectValue()
+	if !typ.TypeEquals(gotType, entryRecord) {
+		t.Fatalf("truthy entry.id widened current edge value to %v, want %v", gotType, entryRecord)
 	}
 }
 

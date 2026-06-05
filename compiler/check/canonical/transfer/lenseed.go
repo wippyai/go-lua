@@ -376,6 +376,36 @@ func isTableInsertCallee(info *cfg.CallInfo) bool {
 	return seg.Kind == constraint.SegmentField && seg.Name == "insert"
 }
 
+// evalTableCreateCall lowers Luau's table.create allocation primitive into a
+// product-domain allocation seed. Positive array capacity is a sequence seed;
+// zero/unknown array capacity stays a fresh record seed, which dynamic writes
+// and table.insert can still refine through the ordinary product transfer laws.
+func (t *Transfer) evalTableCreateCall(out *flow.PointState, call *ast.FuncCallExpr) (product.AbstractValue, bool) {
+	if !t.isTableCreateCall(call) {
+		return product.AbstractValue{}, false
+	}
+	if call == nil || len(call.Args) == 0 {
+		return product.AbstractValue{}, false
+	}
+	narray, hasConstArray := t.constInt(call.Args[0])
+	if hasConstArray && narray > 0 {
+		return product.FromType(typ.NewFreshArray()), true
+	}
+	return product.FromType(typ.NewFreshEmptyRecord()), true
+}
+
+func (t *Transfer) isTableCreateCall(call *ast.FuncCallExpr) bool {
+	if t == nil || call == nil || call.Method != "" || call.Func == nil {
+		return false
+	}
+	path, ok := t.staticPathOfExpr(call.Func)
+	if !ok || path.Root != "table" || len(path.Segments) != 1 {
+		return false
+	}
+	seg := path.Segments[0]
+	return seg.Kind == constraint.SegmentField && seg.Name == "create"
+}
+
 // applyTableInsert lowers `table.insert` into a MutatorEffect. Direct sequence
 // targets (`arr`, `saga.compensations`, `groups["default"]`) append to the exact
 // Place and raise that sequence's length floor when it has a static numeric key.
@@ -395,8 +425,9 @@ func (t *Transfer) applyTableInsert(
 		return
 	}
 	target := args[0]
+	elemExpr := args[len(args)-1]
 	if out.Num == nil {
-		effect, ok := t.tableInsertMutatorEffect(out, target, product.AbstractValue{}, demand)
+		effect, ok := t.tableInsertMutatorEffect(out, target, elemExpr, product.AbstractValue{}, demand)
 		if ok {
 			effect.LengthKey = ""
 			effect.LengthIncrement = 0
@@ -404,24 +435,45 @@ func (t *Transfer) applyTableInsert(
 		}
 		return
 	}
-	elemAV, hasElem := t.evalExpr(out, args[len(args)-1], demand)
+	elemAV, hasElem := t.evalExpr(out, elemExpr, demand)
 	if !hasElem || elemAV.IsZero() {
 		elemAV = product.AbstractValue{}
 	}
+	t.demandTableInsertTarget(out, target, elemAV, demand)
 
-	effect, ok := t.tableInsertMutatorEffect(out, target, elemAV, demand)
+	effect, ok := t.tableInsertMutatorEffect(out, target, elemExpr, elemAV, demand)
 	if !ok {
 		return
 	}
 	t.applyMutatorEffect(out, effect)
 }
 
+func (t *Transfer) demandTableInsertTarget(
+	out *flow.PointState,
+	target ast.Expr,
+	elem product.AbstractValue,
+	demand func(int, paramevidence.ParamContract),
+) {
+	if demand == nil {
+		return
+	}
+	elemContract := paramevidence.DemandFromType(typ.Any)
+	if !elem.IsZero() {
+		if elemType := elem.ProjectValue(); elemType != nil && !typ.IsAbsentOrUnknown(elemType) {
+			elemContract = paramevidence.DemandFromType(elemType)
+		}
+	}
+	t.demandExprContractCtx(out, target, paramevidence.DemandFromSequenceElement(elemContract), demand)
+}
+
 func (t *Transfer) tableInsertMutatorEffect(
 	out *flow.PointState,
 	target ast.Expr,
+	elemExpr ast.Expr,
 	elemAV product.AbstractValue,
 	demand func(int, paramevidence.ParamContract),
 ) (MutatorEffect, bool) {
+	elemPath, _ := t.staticPathOfExpr(elemExpr)
 	if attr, isAttr := target.(*ast.AttrGetExpr); isAttr {
 		if _, isStatic := staticMemberKey(attr); !isStatic {
 			base, ok := t.placeOfExpr(out, attr.Object, demand)
@@ -430,10 +482,12 @@ func (t *Transfer) tableInsertMutatorEffect(
 			}
 			key, _ := t.evalExpr(out, attr.Key, demand)
 			return MutatorEffect{
-				Place:   base,
-				Kind:    MutatorAppendMapElement,
-				Element: elemAV,
-				Key:     key,
+				Place:       base,
+				Kind:        MutatorAppendMapElement,
+				Element:     elemAV,
+				ElementExpr: elemExpr,
+				ElementPath: elemPath,
+				Key:         key,
 			}, true
 		}
 	}
@@ -443,9 +497,11 @@ func (t *Transfer) tableInsertMutatorEffect(
 		return MutatorEffect{}, false
 	}
 	effect := MutatorEffect{
-		Place:   place,
-		Kind:    MutatorAppendElement,
-		Element: elemAV,
+		Place:       place,
+		Kind:        MutatorAppendElement,
+		Element:     elemAV,
+		ElementExpr: elemExpr,
+		ElementPath: elemPath,
 	}
 	if arrKey, ok := t.containerExprKey(target); ok {
 		effect.LengthKey = arrKey
@@ -549,7 +605,7 @@ func (t *Transfer) refineByKeyPresence(
 		return product.AbstractValue{}, false
 	}
 	keyValue, ok := flow.PointFactsOf(*out).PathValue(keyPath)
-	if !ok || !keyValue.DefinitelyPresent() {
+	if ok && keyValue.DefinitelyAbsent() {
 		return product.AbstractValue{}, false
 	}
 	if !narrow.NilPresenceIsOnlyFlowUncertainty(result) {
@@ -617,6 +673,9 @@ func (t *Transfer) dynamicWriteKey(
 // over. A non-record value, or a record with no named string fields, yields nil so
 // the caller declines to synthesize a key.
 func recordFieldNameDomain(av product.AbstractValue) typ.Type {
+	if av.IsZero() {
+		return nil
+	}
 	t := av.ProjectValue()
 	if t == nil {
 		return nil

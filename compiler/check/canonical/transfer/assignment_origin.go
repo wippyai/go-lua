@@ -20,23 +20,118 @@ type AssignmentProvenanceEffect struct {
 	Value      product.AbstractValue
 }
 
+// ArrayElementKeyProvenanceEffect is the transfer reducer payload for a local
+// assignment from an indexed array element. If the source array is proven to hold
+// keys for one or more tables, the assigned target is a key for those tables.
+type ArrayElementKeyProvenanceEffect struct {
+	TargetPath constraint.Path
+	ArrayPath  constraint.Path
+	Value      product.AbstractValue
+}
+
 func (t *Transfer) assignmentProvenanceEffect(
 	target cfg.AssignTarget,
 	src ast.Expr,
 	val product.AbstractValue,
 ) (AssignmentProvenanceEffect, bool) {
-	if target.Kind != cfg.TargetIdent || target.Symbol == 0 || src == nil {
+	return t.assignmentProvenanceEffectWithSourceSymbol(target, src, 0, val)
+}
+
+func (t *Transfer) assignmentProvenanceEffectWithSourceSymbol(
+	target cfg.AssignTarget,
+	src ast.Expr,
+	sourceSym cfg.SymbolID,
+	val product.AbstractValue,
+) (AssignmentProvenanceEffect, bool) {
+	if src == nil {
+		return AssignmentProvenanceEffect{}, false
+	}
+	targetPath, ok := t.exactStaticAliasTargetPath(target)
+	if !ok || targetPath.Symbol == 0 || targetPath.IsEmpty() {
 		return AssignmentProvenanceEffect{}, false
 	}
 	sourcePath, ok := t.staticPathOfExpr(src)
 	if !ok || sourcePath.Symbol == 0 || sourcePath.IsEmpty() {
-		return AssignmentProvenanceEffect{}, false
+		sourcePath, ok = staticPathOfExprWithRootSymbol(src, sourceSym)
+		if !ok || sourcePath.Symbol == 0 || sourcePath.IsEmpty() {
+			return AssignmentProvenanceEffect{}, false
+		}
 	}
 	return AssignmentProvenanceEffect{
-		TargetPath: constraint.NewPath(target.Symbol, target.Name),
+		TargetPath: targetPath,
 		SourcePath: sourcePath,
 		Value:      val,
 	}, true
+}
+
+func (t *Transfer) arrayElementKeyProvenanceEffect(
+	target cfg.AssignTarget,
+	src ast.Expr,
+	val product.AbstractValue,
+) (ArrayElementKeyProvenanceEffect, bool) {
+	targetPath, ok := t.exactStaticAliasTargetPath(target)
+	if !ok || targetPath.Symbol == 0 || targetPath.IsEmpty() {
+		return ArrayElementKeyProvenanceEffect{}, false
+	}
+	attr, ok := src.(*ast.AttrGetExpr)
+	if !ok || attr == nil || attr.Key == nil {
+		return ArrayElementKeyProvenanceEffect{}, false
+	}
+	arrayPath, ok := t.containerExprPath(attr.Object)
+	if !ok || arrayPath.IsEmpty() {
+		return ArrayElementKeyProvenanceEffect{}, false
+	}
+	return ArrayElementKeyProvenanceEffect{
+		TargetPath: targetPath,
+		ArrayPath:  arrayPath,
+		Value:      val,
+	}, true
+}
+
+func (t *Transfer) exactStaticAliasTargetPath(target cfg.AssignTarget) (constraint.Path, bool) {
+	if target.Expr != nil {
+		return t.staticPathOfExpr(target.Expr)
+	}
+	switch target.Kind {
+	case cfg.TargetIdent:
+		if target.Symbol == 0 {
+			return constraint.Path{}, false
+		}
+		return constraint.NewPath(target.Symbol, target.Name), true
+	case cfg.TargetField:
+		if target.BaseSymbol == 0 || len(target.FieldPath) == 0 {
+			return constraint.Path{}, false
+		}
+		path := constraint.NewPath(target.BaseSymbol, target.BaseName)
+		path.Segments = append(path.Segments, fieldSegments(target.FieldPath)...)
+		return path, true
+	case cfg.TargetIndex:
+		if target.Base == nil {
+			if target.BaseSymbol == 0 {
+				return constraint.Path{}, false
+			}
+			path := constraint.NewPath(target.BaseSymbol, target.BaseName)
+			path.Segments = append(path.Segments, fieldSegments(target.FieldPath)...)
+			seg, ok := staticIndexSegment(target.Key)
+			if !ok {
+				return constraint.Path{}, false
+			}
+			path.Segments = append(path.Segments, seg)
+			return path, true
+		}
+		path, ok := t.staticPathOfExpr(target.Base)
+		if !ok || path.Symbol == 0 {
+			return constraint.Path{}, false
+		}
+		seg, ok := staticIndexSegment(target.Key)
+		if !ok {
+			return constraint.Path{}, false
+		}
+		path.Segments = append(path.Segments, seg)
+		return path, true
+	default:
+		return constraint.Path{}, false
+	}
 }
 
 func (t *Transfer) applyAssignmentProvenanceEffect(
@@ -46,9 +141,66 @@ func (t *Transfer) applyAssignmentProvenanceEffect(
 	if out == nil || effect.TargetPath.IsEmpty() || effect.SourcePath.IsEmpty() {
 		return false
 	}
-	changed := t.applyAssignmentAliasOrigin(out, effect)
+	changed := t.applyPathAliasEffect(out, effect)
+	changed = t.applyAssignmentAliasOrigin(out, effect) || changed
 	changed = t.copyAssignmentKeyPresence(out, effect.SourcePath, effect.TargetPath) || changed
+	changed = t.copyAssignmentIndexWriteAdmissions(out, effect.SourcePath, effect.TargetPath) || changed
 	return changed
+}
+
+func (t *Transfer) applyArrayElementKeyProvenanceEffect(
+	out *flow.PointState,
+	effect ArrayElementKeyProvenanceEffect,
+) bool {
+	if out == nil || effect.TargetPath.IsEmpty() || effect.ArrayPath.IsEmpty() {
+		return false
+	}
+	arrayKey := flow.KeyPresencePathKey(effect.ArrayPath)
+	targetKey := flow.KeyPresencePathKey(effect.TargetPath)
+	if arrayKey == "" || targetKey == "" {
+		return false
+	}
+	tables := out.KeyPresence.KeyArrayTables(arrayKey)
+	changed := false
+	beforePresence := out.KeyPresence
+	for _, table := range tables {
+		out.KeyPresence = out.KeyPresence.With(table, targetKey)
+		for _, value := range out.KeyPresence.KeyArrayValues(arrayKey, table) {
+			tablePath, ok := indexWritePathFromKey(table)
+			if !ok || tablePath.IsEmpty() || value.IsZero() {
+				continue
+			}
+			keyValue := effect.Value
+			if keyValue.IsZero() {
+				keyValue = product.FromType(typ.Unknown)
+			}
+			beforeWrites := out.IndexWrites
+			out.IndexWrites = out.IndexWrites.With(flow.IndexWriteAdmissionFact{
+				Target:  flow.IndexWriteAdmissionPathKey(tablePath),
+				KeyPath: flow.IndexWriteAdmissionPathKey(effect.TargetPath),
+				Key:     keyValue,
+				Value:   value,
+			})
+			changed = !flow.IndexWriteAdmissionFactsDomain.Equal(beforeWrites, out.IndexWrites) || changed
+		}
+	}
+	changed = !flow.KeyPresenceFactsDomain.Equal(beforePresence, out.KeyPresence) || changed
+	changed = t.applyValueOriginEffect(out, ValueOriginEffect{
+		ValuePath:  effect.TargetPath,
+		SourcePath: effect.ArrayPath,
+		Kind:       flow.ValueOriginIndexedIterator,
+		VarIndex:   1,
+	}) || changed
+	return changed
+}
+
+func (t *Transfer) applyPathAliasEffect(out *flow.PointState, effect AssignmentProvenanceEffect) bool {
+	if pathkey.PathRelated(effect.TargetPath, effect.SourcePath) {
+		return false
+	}
+	before := out.PathAliases
+	out.PathAliases = out.PathAliases.WithPaths(effect.TargetPath, effect.SourcePath)
+	return !flow.PathAliasFactsDomain.Equal(before, out.PathAliases)
 }
 
 func (t *Transfer) applyAssignmentAliasOrigin(out *flow.PointState, effect AssignmentProvenanceEffect) bool {
@@ -86,4 +238,56 @@ func (t *Transfer) copyAssignmentKeyPresence(out *flow.PointState, sourcePath, t
 		out.KeyPresence = out.KeyPresence.WithValue(entry.Table, targetKey, entry.Value)
 	}
 	return !flow.KeyPresenceFactsDomain.Equal(before, out.KeyPresence)
+}
+
+func (t *Transfer) copyAssignmentIndexWriteAdmissions(out *flow.PointState, sourcePath, targetPath constraint.Path) bool {
+	sourceKey := flow.IndexWriteAdmissionPathKey(sourcePath)
+	targetKey := flow.IndexWriteAdmissionPathKey(targetPath)
+	if sourceKey == "" || targetKey == "" {
+		return false
+	}
+	before := out.IndexWrites
+	for _, entry := range out.IndexWrites.Entries() {
+		if entry.KeyPath != sourceKey {
+			continue
+		}
+		next := entry
+		next.KeyPath = targetKey
+		out.IndexWrites = out.IndexWrites.With(next)
+	}
+	sourceValue, hasSourceValue := flow.PointFactsOf(*out).PathValue(sourcePath)
+	if hasSourceValue && sourceValue.DefinitelyAbsent() {
+		return !flow.IndexWriteAdmissionFactsDomain.Equal(before, out.IndexWrites)
+	}
+	if !hasSourceValue || sourceValue.IsZero() {
+		sourceValue = product.FromType(typ.Unknown)
+	}
+	for _, entry := range out.KeyPresence.Entries() {
+		if entry.Key != sourceKey {
+			continue
+		}
+		tablePath, ok := indexWritePathFromKey(entry.Table)
+		if !ok || tablePath.IsEmpty() {
+			continue
+		}
+		tableValue, ok := flow.PointFactsOf(*out).PathValue(tablePath)
+		if !ok || tableValue.IsZero() {
+			continue
+		}
+		read, ok := product.RuntimeIndexOf(tableValue, sourceValue)
+		if !ok || read.IsZero() {
+			continue
+		}
+		present := product.NarrowPresent(read)
+		if present.IsZero() || !flow.AdmissibleMapWriteProofValue(present) {
+			continue
+		}
+		out.IndexWrites = out.IndexWrites.With(flow.IndexWriteAdmissionFact{
+			Target:  entry.Table,
+			KeyPath: targetKey,
+			Key:     sourceValue,
+			Value:   present,
+		})
+	}
+	return !flow.IndexWriteAdmissionFactsDomain.Equal(before, out.IndexWrites)
 }

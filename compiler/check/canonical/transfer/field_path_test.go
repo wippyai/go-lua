@@ -114,6 +114,64 @@ func TestEvalTableEmptyLiteralIsFreshAllocation(t *testing.T) {
 	}
 }
 
+func TestEvalTableCreateNestedFieldPreservesArrayAllocationSeed(t *testing.T) {
+	tr, tableIdent := transferWithBoundTableGlobal()
+	table := &ast.TableExpr{Fields: []*ast.Field{{
+		Key:       &ast.StringExpr{Value: "items"},
+		KeySyntax: ast.AttrKeyDot,
+		Value:     tableCreateCall(tableIdent, "4", "0"),
+	}}}
+
+	av, ok := tr.evalTable(&flow.PointState{}, table, nil)
+	if !ok {
+		t.Fatal("evalTable did not resolve table.create field")
+	}
+	items, ok := product.MemberOf(av, value.MemberField("items"))
+	if !ok || items.IsZero() {
+		t.Fatalf("items field missing from %v", av.ProjectValue())
+	}
+	arr, ok := items.ProjectValue().(*typ.Array)
+	if !ok || !arr.Fresh {
+		t.Fatalf("items = %T %[1]v, want fresh array allocation", items.ProjectValue())
+	}
+}
+
+func TestEvalTableCreateHashCapacityUsesFreshTableSeed(t *testing.T) {
+	tr, tableIdent := transferWithBoundTableGlobal()
+	av, ok := tr.evalExpr(&flow.PointState{}, tableCreateCall(tableIdent, "0", "16"), nil)
+	if !ok {
+		t.Fatal("table.create hash allocation did not resolve")
+	}
+	if !av.IsFreshAllocation() {
+		t.Fatalf("table.create(0, 16) = %v, want fresh table allocation", av.ProjectValue())
+	}
+}
+
+func transferWithBoundTableGlobal() (*Transfer, *ast.IdentExpr) {
+	fn := &ast.FunctionExpr{ParList: &ast.ParList{}}
+	in := input.BuildFromFunction(fn, nil, nil, "table")
+	tableIdent := &ast.IdentExpr{Value: "table"}
+	const tableSym = cfg.SymbolID(901)
+	in.Graph.Bindings().Bind(tableIdent, tableSym)
+	in.Graph.Bindings().SetKind(tableSym, cfg.SymbolGlobal)
+	in.Graph.Bindings().SetName(tableSym, "table")
+	return New(in, Config{}), tableIdent
+}
+
+func tableCreateCall(tableIdent *ast.IdentExpr, narray, nhash string) *ast.FuncCallExpr {
+	return &ast.FuncCallExpr{
+		Func: &ast.AttrGetExpr{
+			Object:    tableIdent,
+			Key:       &ast.StringExpr{Value: "create"},
+			KeySyntax: ast.AttrKeyDot,
+		},
+		Args: []ast.Expr{
+			&ast.NumberExpr{Value: narray},
+			&ast.NumberExpr{Value: nhash},
+		},
+	}
+}
+
 func TestEvalLogicalDefaultUsesRuntimeNilForMissingTableField(t *testing.T) {
 	entry := &ast.IdentExpr{Value: "entry"}
 	in := input.BuildFromFunction(&ast.FunctionExpr{ParList: &ast.ParList{}}, nil, nil)

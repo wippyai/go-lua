@@ -1,6 +1,16 @@
 package canonical_test
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/wippyai/go-lua/compiler/ast"
+	"github.com/wippyai/go-lua/compiler/cfg"
+	"github.com/wippyai/go-lua/compiler/check/scope"
+	"github.com/wippyai/go-lua/compiler/check/tests/testutil"
+	"github.com/wippyai/go-lua/types/constraint"
+	"github.com/wippyai/go-lua/types/flow"
+	"github.com/wippyai/go-lua/types/typ"
+)
 
 func TestOptionalGuardNarrowingRegression(t *testing.T) {
 	cases := map[string]struct {
@@ -148,5 +158,90 @@ return build
 			}
 			requireCanonicalDiagnosticContains(t, tc.src, tc.wantContains)
 		})
+	}
+}
+
+func TestOptionalGuardCopiedLocalMethodReceiverStateAtCall(t *testing.T) {
+	svc := typ.NewRecord().
+		Field("go", typ.Func().Param("self", typ.Self).Build()).
+		Build()
+	holder := typ.NewRecord().
+		Field("store", typ.NewOptional(svc)).
+		Build()
+
+	fs, g := solveFn(t,
+		[]string{"h"},
+		[]ast.TypeExpr{&ast.PrimitiveTypeExpr{Name: "Holder"}},
+		func(expr ast.TypeExpr, _ *scope.State) typ.Type {
+			if prim, ok := expr.(*ast.PrimitiveTypeExpr); ok && prim.Name == "Holder" {
+				return holder
+			}
+			return nil
+		},
+		`
+local store = h.store
+if store then
+    store:go()
+end
+`)
+	var checked bool
+	g.EachCallSite(func(p cfg.Point, info *cfg.CallInfo) {
+		if checked || info == nil || info.Call == nil || info.Call.Method != "go" {
+			return
+		}
+		receiver, ok := info.Call.Receiver.(*ast.IdentExpr)
+		if !ok {
+			t.Fatalf("method receiver = %T, want identifier", info.Call.Receiver)
+		}
+		sym, ok := g.Bindings().SymbolOf(receiver)
+		if !ok {
+			t.Fatalf("method receiver %q has no symbol", receiver.Value)
+		}
+		av, ok := flow.PointFactsOf(fs.InPoints[p]).SymbolValue(sym)
+		if !ok || !typ.TypeEquals(av.ProjectValue(), svc) {
+			t.Fatalf("call-point receiver value = %v/%v, want non-optional Svc", av.ProjectValue(), ok)
+		}
+		checked = true
+	})
+	if !checked {
+		t.Fatal("test did not find store:go call site")
+	}
+}
+
+func TestOptionalGuardCopiedLocalMethodReceiverObservationAtCall(t *testing.T) {
+	res := testutil.Check(`
+type Svc = { go: fun(self: Svc) }
+type Holder = { store: Svc? }
+local function run(h: Holder)
+    local store = h.store
+    if store then
+        store:go()
+    end
+end
+return run
+`)
+	fn := findFunctionWithParamNames(t, res.Session.Results, "h")
+	storeSym := singleSymbolNamed(t, fn.Graph, "store")
+	var checked bool
+	fn.Graph.EachCallSite(func(p cfg.Point, info *cfg.CallInfo) {
+		if checked || info == nil || info.Call == nil || info.Call.Method != "go" {
+			return
+		}
+		receiver, ok := info.Call.Receiver.(*ast.IdentExpr)
+		if !ok {
+			t.Fatalf("method receiver = %T, want identifier", info.Call.Receiver)
+		}
+		flowType := fn.NarrowedTypeAt(p, constraint.NewPath(storeSym, "store"))
+		synthType := fn.NarrowSynth.Narrow().TypeOf(receiver, p)
+		if _, optional := typ.SplitNilableFieldType(flowType); optional {
+			t.Fatalf("flow receiver type at call = %v, want non-optional", flowType)
+		}
+		if _, optional := typ.SplitNilableFieldType(synthType); optional {
+			t.Fatalf("synth receiver type at call = %v, flow=%v diagnostics=%v", synthType, flowType, testutil.ErrorMessages(res.Diagnostics))
+		}
+		checked = true
+	})
+	if !checked {
+		t.Fatal("test did not find store:go call site")
 	}
 }

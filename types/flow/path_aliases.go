@@ -1,0 +1,251 @@
+package flow
+
+import (
+	"fmt"
+	"sort"
+	"strings"
+
+	"github.com/wippyai/go-lua/types/constraint"
+	"github.com/wippyai/go-lua/types/lattice"
+)
+
+// PathAliasFact is point-local identity provenance for assignment aliases.
+//
+// It records that Value currently denotes the same runtime key/value identity as
+// Source. Unlike ValueOriginFacts, this carrier is not semantic demand evidence
+// and not reference-mutation provenance. It exists so path-sensitive consumers
+// such as index-write readback can follow `last = id` even when the payload type
+// is strict dynamic.
+type PathAliasFact struct {
+	Value  constraint.PathKey
+	Source constraint.PathKey
+}
+
+// PathAliasUse is a path-alias fact covering a consumed path. Remainder is the
+// suffix under Alias.Value, so an alias `b <- a` also covers `b.x` as `a.x`.
+type PathAliasUse struct {
+	Alias     PathAliasFact
+	Remainder []constraint.Segment
+}
+
+// PathAliasFacts is a finite must-set lattice over assignment identity facts.
+// Bottom is unreachable; Top is the empty fact set.
+type PathAliasFacts struct {
+	bottom  bool
+	entries []PathAliasFact
+}
+
+func (f PathAliasFacts) IsBottom() bool { return f.bottom }
+
+func (f PathAliasFacts) Entries() []PathAliasFact {
+	if f.bottom || len(f.entries) == 0 {
+		return nil
+	}
+	return append([]PathAliasFact(nil), f.entries...)
+}
+
+func (f PathAliasFacts) With(fact PathAliasFact) PathAliasFacts {
+	if fact.Value == "" || fact.Source == "" || fact.Value == fact.Source {
+		return f
+	}
+	if f.bottom {
+		f = PathAliasFacts{}
+	}
+	next := f.Entries()
+	if _, ok := findPathAliasFact(next, fact); !ok {
+		next = append(next, fact)
+	}
+	return canonicalPathAliasFacts(next)
+}
+
+func (f PathAliasFacts) WithPaths(value, source constraint.Path) PathAliasFacts {
+	valueKey := KeyPresencePathKey(value)
+	sourceKey := KeyPresencePathKey(source)
+	if valueKey == "" || sourceKey == "" {
+		return f
+	}
+	return f.With(PathAliasFact{Value: valueKey, Source: sourceKey})
+}
+
+func (f PathAliasFacts) AliasesOf(value constraint.PathKey) []PathAliasFact {
+	if f.bottom || value == "" || len(f.entries) == 0 {
+		return nil
+	}
+	var out []PathAliasFact
+	for _, entry := range f.entries {
+		if entry.Value == value {
+			out = append(out, entry)
+		}
+	}
+	return out
+}
+
+func (f PathAliasFacts) AliasesOfPath(value constraint.Path) []PathAliasFact {
+	return f.AliasesOf(KeyPresencePathKey(value))
+}
+
+// AliasesCoveringPath returns aliases whose value path is equal to, or an
+// ancestor of, value.
+func (f PathAliasFacts) AliasesCoveringPath(value constraint.Path) []PathAliasUse {
+	valueKey := KeyPresencePathKey(value)
+	if f.bottom || valueKey == "" || len(f.entries) == 0 {
+		return nil
+	}
+	valueSym, valueSegments, ok := ParseSymbolPathKey(valueKey)
+	if !ok || valueSym == 0 {
+		return nil
+	}
+	var out []PathAliasUse
+	for _, entry := range f.entries {
+		entrySym, entrySegments, ok := ParseSymbolPathKey(entry.Value)
+		if !ok || entrySym != valueSym || len(entrySegments) > len(valueSegments) {
+			continue
+		}
+		if !segmentsPrefix(entrySegments, valueSegments) {
+			continue
+		}
+		remainder := append([]constraint.Segment(nil), valueSegments[len(entrySegments):]...)
+		out = append(out, PathAliasUse{Alias: entry, Remainder: remainder})
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if len(out[i].Remainder) != len(out[j].Remainder) {
+			return len(out[i].Remainder) < len(out[j].Remainder)
+		}
+		return pathAliasLess(out[i].Alias, out[j].Alias)
+	})
+	return out
+}
+
+func (f PathAliasFacts) KillAffectedByWrite(writePath constraint.PathKey) PathAliasFacts {
+	if f.bottom || writePath == "" || len(f.entries) == 0 {
+		return f
+	}
+	entries := make([]PathAliasFact, 0, len(f.entries))
+	for _, entry := range f.entries {
+		if keyPresencePathsOverlap(entry.Value, writePath) || keyPresencePathsOverlap(entry.Source, writePath) {
+			continue
+		}
+		entries = append(entries, entry)
+	}
+	return canonicalPathAliasFacts(entries)
+}
+
+func (f PathAliasFacts) Format() string {
+	if f.bottom {
+		return "⊥"
+	}
+	if len(f.entries) == 0 {
+		return "{}"
+	}
+	parts := make([]string, 0, len(f.entries))
+	for _, entry := range f.entries {
+		parts = append(parts, fmt.Sprintf("%s<-%s", entry.Value, entry.Source))
+	}
+	return "{" + strings.Join(parts, ", ") + "}"
+}
+
+var PathAliasFactsDomain = lattice.Lattice[PathAliasFacts]{
+	Bottom: func() PathAliasFacts {
+		return PathAliasFacts{bottom: true}
+	},
+	Top: func() PathAliasFacts {
+		return PathAliasFacts{}
+	},
+	Equal: func(a, b PathAliasFacts) bool {
+		if a.bottom || b.bottom {
+			return a.bottom == b.bottom
+		}
+		if len(a.entries) != len(b.entries) {
+			return false
+		}
+		for i := range a.entries {
+			if a.entries[i] != b.entries[i] {
+				return false
+			}
+		}
+		return true
+	},
+	LessOrEq: func(a, b PathAliasFacts) bool {
+		if a.bottom {
+			return true
+		}
+		if b.bottom {
+			return false
+		}
+		return pathAliasFactsContainAll(a.entries, b.entries)
+	},
+	Join: func(a, b PathAliasFacts) PathAliasFacts {
+		if a.bottom {
+			return b
+		}
+		if b.bottom {
+			return a
+		}
+		return intersectPathAliasFacts(a, b)
+	},
+	Meet: nil,
+	Widen: func(prev, next PathAliasFacts) PathAliasFacts {
+		if prev.bottom {
+			return next
+		}
+		if next.bottom {
+			return prev
+		}
+		return intersectPathAliasFacts(prev, next)
+	},
+}
+
+func canonicalPathAliasFacts(entries []PathAliasFact) PathAliasFacts {
+	if len(entries) == 0 {
+		return PathAliasFacts{}
+	}
+	out := append([]PathAliasFact(nil), entries...)
+	sort.Slice(out, func(i, j int) bool { return pathAliasLess(out[i], out[j]) })
+	dst := out[:0]
+	for _, entry := range out {
+		if entry.Value == "" || entry.Source == "" || entry.Value == entry.Source {
+			continue
+		}
+		if len(dst) > 0 && dst[len(dst)-1] == entry {
+			continue
+		}
+		dst = append(dst, entry)
+	}
+	return PathAliasFacts{entries: append([]PathAliasFact(nil), dst...)}
+}
+
+func pathAliasLess(a, b PathAliasFact) bool {
+	if a.Value != b.Value {
+		return a.Value < b.Value
+	}
+	return a.Source < b.Source
+}
+
+func findPathAliasFact(entries []PathAliasFact, fact PathAliasFact) (int, bool) {
+	i := sort.Search(len(entries), func(i int) bool {
+		return !pathAliasLess(entries[i], fact)
+	})
+	if i < len(entries) && entries[i] == fact {
+		return i, true
+	}
+	return -1, false
+}
+
+func pathAliasFactsContainAll(have, want []PathAliasFact) bool {
+	for _, w := range want {
+		if _, ok := findPathAliasFact(have, w); !ok {
+			return false
+		}
+	}
+	return true
+}
+
+func intersectPathAliasFacts(a, b PathAliasFacts) PathAliasFacts {
+	var out []PathAliasFact
+	for _, entry := range a.entries {
+		if _, ok := findPathAliasFact(b.entries, entry); ok {
+			out = append(out, entry)
+		}
+	}
+	return canonicalPathAliasFacts(out)
+}

@@ -6,6 +6,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/canonical/input"
+	"github.com/wippyai/go-lua/compiler/check/domain/paramevidence"
 	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/domain/value"
 	"github.com/wippyai/go-lua/types/domain/value/product"
@@ -66,6 +67,48 @@ func TestSymbolWriteEffectClearsStaleProductAxes(t *testing.T) {
 	}
 	if _, ok := flow.ClosureRefAt(out.ClosureRefs, fieldPath.Key()); ok {
 		t.Fatalf("stale closure ref survived symbol write: %#v", out.ClosureRefs)
+	}
+}
+
+func TestWriteEffectReplaysStaticAliasDescendantWrite(t *testing.T) {
+	const (
+		sSym   = cfg.SymbolID(1301)
+		boxSym = cfg.SymbolID(1302)
+	)
+	sPath := constraint.NewPath(sSym, "s")
+	boxCurPath := constraint.NewPath(boxSym, "box").Field("cur")
+	fnType := typ.Func().Build()
+	tr := New(input.Inputs{}, Config{})
+	out := flow.PointState{
+		Env: map[flow.ValueKey]product.AbstractValue{
+			flow.SymbolValueKey(sSym): product.FromType(typ.NewRecord().
+				OptField("hook", typ.Nil).
+				Build()),
+			flow.SymbolValueKey(boxSym): product.FromType(typ.NewRecord().
+				Field("cur", typ.NewRecord().OptField("hook", typ.Nil).Build()).
+				Build()),
+		},
+		ValueOrigins: flow.ValueOriginFacts{}.WithPaths(boxCurPath, sPath, flow.ValueOriginAssignmentAlias, 0),
+	}
+
+	tr.applyWriteEffect(&out, WriteEffect{
+		Place: Place{
+			Root:     boxSym,
+			RootName: "box",
+			Steps: []PlaceStep{
+				{Kind: PlaceStepStaticMember, Member: value.MemberField("cur")},
+				{Kind: PlaceStepStaticMember, Member: value.MemberField("hook")},
+			},
+		},
+		Value:        product.FromType(fnType),
+		FunctionRefs: sourceFunctionRefsWrite(),
+		ClosureRefs:  sourceClosureRefsWrite(),
+		RecordStatic: true,
+	})
+
+	got, ok := flow.PointFactsOf(out).PathValue(sPath.Field("hook"))
+	if !ok || !typ.TypeEquals(got.ProjectValue(), fnType) {
+		t.Fatalf("alias replay s.hook = %v/%v, want function", got.ProjectValue(), ok)
 	}
 }
 
@@ -131,6 +174,85 @@ func TestSymbolWriteEffectSeedsKeyArrayProvenance(t *testing.T) {
 
 	if tables := out.KeyPresence.KeyArrayTables(flow.SymbolPathKey(namesSym, nil)); len(tables) != 1 || tables[0] != flow.KeyPresencePathKey(container) {
 		t.Fatalf("key-array provenance = %v, want %s", tables, flow.KeyPresencePathKey(container))
+	}
+}
+
+func TestRootWriteEffectSeedsEmptyArrayInvariants(t *testing.T) {
+	graphSym := cfg.SymbolID(411)
+	graphPath := constraint.NewPath(graphSym, "graph")
+	graphType := typ.NewRecord().
+		Field("node_order", typ.NewArray(typ.Never)).
+		Field("operations", typ.NewFreshArray()).
+		Field("nodes", typ.NewFreshEmptyRecord()).
+		Field("edges", typ.NewMap(typ.String, typ.Unknown)).
+		Field("name", typ.String).
+		Build()
+	tr := New(input.Inputs{}, Config{})
+	out := flow.PointState{}
+
+	tr.applyWriteEffect(&out, WriteEffect{
+		Place:        Place{Root: graphSym, RootName: "graph"},
+		Value:        product.FromType(graphType),
+		Source:       &ast.TableExpr{},
+		RecordStatic: true,
+	})
+
+	if !out.KeyPresence.HasEmptyKeyArray(flow.KeyPresencePathKey(graphPath.Field("node_order"))) {
+		t.Fatalf("node_order missing empty key-array invariant: %s", out.KeyPresence.Format())
+	}
+	if !out.KeyPresence.HasEmptyKeyArray(flow.KeyPresencePathKey(graphPath.Field("operations"))) {
+		t.Fatalf("operations missing empty key-array invariant: %s", out.KeyPresence.Format())
+	}
+	if out.KeyPresence.HasEmptyKeyArray(flow.KeyPresencePathKey(graphPath.Field("name"))) {
+		t.Fatalf("scalar sibling became an empty key-array carrier: %s", out.KeyPresence.Format())
+	}
+	if tables := out.KeyPresence.KeyArrayTables(flow.KeyPresencePathKey(graphPath.Field("node_order"))); len(tables) != 0 {
+		t.Fatalf("root write enumerated concrete table pairs: %s", out.KeyPresence.Format())
+	}
+}
+
+func TestRootWriteEffectSeedsEmptyArrayInvariantsForInferredRecord(t *testing.T) {
+	graphSym := cfg.SymbolID(412)
+	graphPath := constraint.NewPath(graphSym, "graph")
+	graphBody := typ.NewRecord().
+		Field("node_order", typ.NewArray(typ.Never)).
+		Field("nodes", typ.NewFreshEmptyRecord()).
+		Build()
+	graphType := typ.NewRecursiveWithBody("Inferred", graphBody)
+	tr := New(input.Inputs{}, Config{})
+	out := flow.PointState{}
+
+	tr.applyWriteEffect(&out, WriteEffect{
+		Place:        Place{Root: graphSym, RootName: "graph"},
+		Value:        product.FromType(graphType),
+		Source:       &ast.FuncCallExpr{},
+		RecordStatic: true,
+	})
+
+	if !out.KeyPresence.HasEmptyKeyArray(flow.KeyPresencePathKey(graphPath.Field("node_order"))) {
+		t.Fatalf("inferred record missing empty-array/table invariant: %s", out.KeyPresence.Format())
+	}
+}
+
+func TestRootWriteEffectDoesNotSeedEmptyArrayInvariantFromReadAlias(t *testing.T) {
+	graphSym := cfg.SymbolID(413)
+	graphPath := constraint.NewPath(graphSym, "graph")
+	graphType := typ.NewRecord().
+		Field("node_order", typ.NewArray(typ.Never)).
+		Field("nodes", typ.NewFreshEmptyRecord()).
+		Build()
+	tr := New(input.Inputs{}, Config{})
+	out := flow.PointState{}
+
+	tr.applyWriteEffect(&out, WriteEffect{
+		Place:        Place{Root: graphSym, RootName: "graph"},
+		Value:        product.FromType(graphType),
+		Source:       &ast.AttrGetExpr{},
+		RecordStatic: true,
+	})
+
+	if out.KeyPresence.HasEmptyKeyArray(flow.KeyPresencePathKey(graphPath.Field("node_order"))) {
+		t.Fatalf("read alias seeded empty-array invariant: %s", out.KeyPresence.Format())
 	}
 }
 
@@ -358,6 +480,131 @@ func TestDynamicIndexWriteProofEffectKeepsOpaqueUnsealedReadbackLightweight(t *t
 	}
 }
 
+func TestWriteEffectPublishesStableDynamicIndexProofWhenProductUpdateCannotCarryShape(t *testing.T) {
+	self := &ast.IdentExpr{Value: "self"}
+	id := &ast.IdentExpr{Value: "node_id"}
+	in := valueOriginInput(t, map[*ast.IdentExpr]cfg.SymbolID{
+		self: cfg.SymbolID(440),
+		id:   cfg.SymbolID(441),
+	})
+	tr := New(in, Config{})
+	nodesBase := &ast.AttrGetExpr{
+		Object:    self,
+		Key:       &ast.StringExpr{Value: "nodes"},
+		KeySyntax: ast.AttrKeyDot,
+	}
+	targetExpr := &ast.AttrGetExpr{
+		Object:    nodesBase,
+		Key:       id,
+		KeySyntax: ast.AttrKeyIndex,
+	}
+	nodeType := typ.NewRecord().Field("node_id", typ.String).Build()
+	nodeValue := product.FromType(nodeType)
+	tablePath := constraint.NewPath(cfg.SymbolID(440), "self").Field("nodes")
+	keyPath := constraint.NewPath(cfg.SymbolID(441), "node_id")
+	out := flow.PointState{}
+
+	changed := tr.applyWriteEffect(&out, WriteEffect{
+		Place: Place{
+			Root:     cfg.SymbolID(440),
+			RootName: "self",
+			Steps: []PlaceStep{
+				{Kind: PlaceStepStaticMember, Member: value.MemberField("nodes")},
+				{Kind: PlaceStepDynamicIndex, Key: product.FromType(typ.Any)},
+			},
+		},
+		Value: nodeValue,
+		IndexTarget: cfg.AssignTarget{
+			Kind: cfg.TargetIndex,
+			Base: nodesBase,
+			Key:  id,
+			Expr: targetExpr,
+		},
+		DynamicMode:  DynamicWriteForeign,
+		RecordStatic: true,
+	})
+
+	if !changed {
+		t.Fatal("write effect did not report a proof change")
+	}
+	if !out.KeyPresence.HasPaths(tablePath, keyPath) {
+		t.Fatalf("stable dynamic write did not seed key presence: %s", out.KeyPresence.Format())
+	}
+	got, ok := out.IndexWrites.Admission(flow.IndexWriteQuery{
+		Target:  tablePath,
+		KeyPath: keyPath,
+		KeyType: typ.Any,
+	})
+	if !ok || !product.Domain.Equal(got, nodeValue) {
+		t.Fatalf("stable dynamic write readback = %v/%v, want node/true; facts=%s", got.ProjectValue(), ok, out.IndexWrites.Format())
+	}
+}
+
+func TestUnresolvedDynamicIndexAssignPublishesStablePathProof(t *testing.T) {
+	self := &ast.IdentExpr{Value: "self"}
+	id := &ast.IdentExpr{Value: "node_id"}
+	const (
+		selfSym = cfg.SymbolID(446)
+		idSym   = cfg.SymbolID(447)
+	)
+	in := valueOriginInput(t, map[*ast.IdentExpr]cfg.SymbolID{
+		self: selfSym,
+		id:   idSym,
+	})
+	tr := New(in, Config{})
+	nodesBase := &ast.AttrGetExpr{
+		Object:    self,
+		Key:       &ast.StringExpr{Value: "nodes"},
+		KeySyntax: ast.AttrKeyDot,
+	}
+	targetExpr := &ast.AttrGetExpr{
+		Object:    nodesBase,
+		Key:       id,
+		KeySyntax: ast.AttrKeyIndex,
+	}
+	src := &ast.TableExpr{Fields: []*ast.Field{
+		{
+			Key:       &ast.StringExpr{Value: "node_id"},
+			KeySyntax: ast.AttrKeyDot,
+			Value:     id,
+		},
+		{
+			Key:       &ast.StringExpr{Value: "status"},
+			KeySyntax: ast.AttrKeyDot,
+			Value:     &ast.StringExpr{Value: "pending"},
+		},
+	}}
+	out := flow.PointState{}
+
+	tr.applyContainerWrite(&out, cfg.AssignTarget{
+		Kind: cfg.TargetIndex,
+		Base: nodesBase,
+		Key:  id,
+		Expr: targetExpr,
+	}, src, nil)
+
+	tablePath := constraint.NewPath(selfSym, "self").Field("nodes")
+	keyPath := constraint.NewPath(idSym, "node_id")
+	if !out.KeyPresence.HasPaths(tablePath, keyPath) {
+		t.Fatalf("unresolved dynamic assign did not seed key presence: %s", out.KeyPresence.Format())
+	}
+	got, ok := out.IndexWrites.Admission(flow.IndexWriteQuery{
+		Target:  tablePath,
+		KeyPath: keyPath,
+		KeyType: typ.Unknown,
+	})
+	if !ok {
+		t.Fatalf("unresolved dynamic assign did not seed readback proof: %s", out.IndexWrites.Format())
+	}
+	status, ok := product.FieldOf(got, "status")
+	if !ok || !typ.TypeEquals(status.ProjectValue(), typ.LiteralString("pending")) {
+		t.Fatalf("readback status = %v/%v, want pending/true; value=%v", status.ProjectValue(), ok, got.ProjectValue())
+	}
+	if _, ok := out.Env[flow.SymbolValueKey(selfSym)]; ok {
+		t.Fatalf("unresolved dynamic assign fabricated root product state: %v", out.Env[flow.SymbolValueKey(selfSym)].ProjectValue())
+	}
+}
+
 func TestTransferPreservesIncomingIndexWriteAdmissionFacts(t *testing.T) {
 	const tableSym = cfg.SymbolID(441)
 	in := input.BuildFromFunction(&ast.FunctionExpr{ParList: &ast.ParList{}}, nil, nil)
@@ -376,6 +623,399 @@ func TestTransferPreservesIncomingIndexWriteAdmissionFacts(t *testing.T) {
 		KeyType: typ.String,
 	}); !ok || !typ.TypeEquals(got.ProjectValue(), typ.Number) {
 		t.Fatalf("Transfer dropped durable index-write admission: %v/%v in %s", got.ProjectValue(), ok, out.IndexWrites.Format())
+	}
+}
+
+func TestBoundaryIndexWriteReplayAdmitsOpaqueStableKeyPath(t *testing.T) {
+	self := &ast.IdentExpr{Value: "self"}
+	nodeID := &ast.IdentExpr{Value: "node_id"}
+	in := valueOriginInput(t, map[*ast.IdentExpr]cfg.SymbolID{
+		self:   cfg.SymbolID(442),
+		nodeID: cfg.SymbolID(443),
+	})
+	tr := New(in, Config{})
+	out := flow.PointState{}
+	nodeType := typ.NewRecord().
+		Field("config", typ.NewRecord().Field("data_targets", typ.NewArray(typ.String)).Build()).
+		Build()
+	call := &ast.FuncCallExpr{Args: []ast.Expr{self, nodeID}}
+
+	changed := tr.applyBoundaryFacts(&out, call, flow.BoundaryFactsOf(nil, nil, nil, nil, nil, []flow.BoundaryIndexWriteFact{{
+		Table: flow.BoundaryPath{
+			Kind:  flow.BoundaryPathParam,
+			Index: 0,
+			Segments: []constraint.Segment{
+				{Kind: constraint.SegmentField, Name: "nodes"},
+			},
+		},
+		Key: flow.BoundaryPath{
+			Kind:  flow.BoundaryPathParam,
+			Index: 1,
+		},
+		Value: product.FromType(nodeType),
+	}}), nil)
+
+	if !changed {
+		t.Fatal("boundary index-write replay did not report a fact change")
+	}
+	tablePath := constraint.NewPath(cfg.SymbolID(442), "self").Field("nodes")
+	keyPath := constraint.NewPath(cfg.SymbolID(443), "node_id")
+	if !out.KeyPresence.HasPaths(tablePath, keyPath) {
+		t.Fatalf("boundary index-write replay did not seed key presence: %s", out.KeyPresence.Format())
+	}
+	got, ok := out.IndexWrites.Admission(flow.IndexWriteQuery{
+		Target:  tablePath,
+		KeyPath: keyPath,
+		KeyType: typ.Unknown,
+	})
+	if !ok || !typ.TypeEquals(got.ProjectValue(), nodeType) {
+		t.Fatalf("boundary index-write replay = %v/%v, want node/true; facts=%s", got.ProjectValue(), ok, out.IndexWrites.Format())
+	}
+}
+
+func TestBoundaryFactBatchPreservesFinalKeyArrayValueProofs(t *testing.T) {
+	self := &ast.IdentExpr{Value: "self"}
+	nodeID := &ast.IdentExpr{Value: "node_id"}
+	in := valueOriginInput(t, map[*ast.IdentExpr]cfg.SymbolID{
+		self:   cfg.SymbolID(444),
+		nodeID: cfg.SymbolID(445),
+	})
+	tr := New(in, Config{})
+	out := flow.PointState{}
+	nodeType := typ.NewRecord().Field("node_id", typ.String).Build()
+	call := &ast.FuncCallExpr{Args: []ast.Expr{self, nodeID}}
+	arrayPath := constraint.NewPath(cfg.SymbolID(444), "self").Field("node_order")
+	tablePath := constraint.NewPath(cfg.SymbolID(444), "self").Field("nodes")
+
+	changed := tr.applyBoundaryFacts(&out, call, flow.BoundaryFactsOf(nil, nil, []flow.BoundaryKeyArrayValueFact{{
+		Array: flow.BoundaryPath{
+			Kind:  flow.BoundaryPathParam,
+			Index: 0,
+			Segments: []constraint.Segment{
+				{Kind: constraint.SegmentField, Name: "node_order"},
+			},
+		},
+		Table: flow.BoundaryPath{
+			Kind:  flow.BoundaryPathParam,
+			Index: 0,
+			Segments: []constraint.Segment{
+				{Kind: constraint.SegmentField, Name: "nodes"},
+			},
+		},
+		Value: product.FromType(nodeType),
+	}}, nil, nil, []flow.BoundaryIndexWriteFact{{
+		Table: flow.BoundaryPath{
+			Kind:  flow.BoundaryPathParam,
+			Index: 0,
+			Segments: []constraint.Segment{
+				{Kind: constraint.SegmentField, Name: "nodes"},
+			},
+		},
+		Key: flow.BoundaryPath{
+			Kind:  flow.BoundaryPathParam,
+			Index: 1,
+		},
+		Value: product.FromType(nodeType),
+	}}), nil)
+
+	if !changed {
+		t.Fatal("boundary fact batch did not report a change")
+	}
+	values := out.KeyPresence.KeyArrayValues(flow.KeyPresencePathKey(arrayPath), flow.KeyPresencePathKey(tablePath))
+	if len(values) != 1 || !typ.TypeEquals(values[0].ProjectValue(), nodeType) {
+		t.Fatalf("boundary key-array value = %s, want final node_order -> nodes proof", out.KeyPresence.Format())
+	}
+}
+
+func TestBoundaryAppendKeyBatchDerivesFreshEmptyTableFromSameBatchIndexWrite(t *testing.T) {
+	self := &ast.IdentExpr{Value: "self"}
+	nodeID := &ast.IdentExpr{Value: "node_id"}
+	in := valueOriginInput(t, map[*ast.IdentExpr]cfg.SymbolID{
+		self:   cfg.SymbolID(446),
+		nodeID: cfg.SymbolID(447),
+	})
+	tr := New(in, Config{})
+	nodeType := typ.NewRecord().Field("node_id", typ.String).Build()
+	call := &ast.FuncCallExpr{Args: []ast.Expr{self, nodeID}}
+	arrayPath := constraint.NewPath(cfg.SymbolID(446), "self").Field("node_order")
+	tablePath := constraint.NewPath(cfg.SymbolID(446), "self").Field("nodes")
+	facts := flow.BoundaryFactsOf(nil, nil, nil, []flow.BoundaryAppendKeyFact{{
+		Array: flow.BoundaryPath{
+			Kind:  flow.BoundaryPathParam,
+			Index: 0,
+			Segments: []constraint.Segment{
+				{Kind: constraint.SegmentField, Name: "node_order"},
+			},
+		},
+		Key: flow.BoundaryPath{
+			Kind:  flow.BoundaryPathParam,
+			Index: 1,
+		},
+	}}, nil, []flow.BoundaryIndexWriteFact{{
+		Table: flow.BoundaryPath{
+			Kind:  flow.BoundaryPathParam,
+			Index: 0,
+			Segments: []constraint.Segment{
+				{Kind: constraint.SegmentField, Name: "nodes"},
+			},
+		},
+		Key: flow.BoundaryPath{
+			Kind:  flow.BoundaryPathParam,
+			Index: 1,
+		},
+		Value: product.FromType(nodeType),
+	}})
+	out := flow.PointState{
+		KeyPresence: flow.KeyPresenceFacts{}.WithEmptyKeyArrayPath(arrayPath),
+	}
+
+	if !tr.applyBoundaryFacts(&out, call, facts, nil) {
+		t.Fatal("boundary append/index-write batch did not report a change")
+	}
+	values := out.KeyPresence.KeyArrayValues(flow.KeyPresencePathKey(arrayPath), flow.KeyPresencePathKey(tablePath))
+	if len(values) != 1 || !typ.TypeEquals(values[0].ProjectValue(), nodeType) {
+		t.Fatalf("fresh-empty append batch value = %s, want node_order -> nodes proof", out.KeyPresence.Format())
+	}
+
+	out = flow.PointState{}
+	tr.applyBoundaryFacts(&out, call, facts, nil)
+	if values := out.KeyPresence.KeyArrayValues(flow.KeyPresencePathKey(arrayPath), flow.KeyPresencePathKey(tablePath)); len(values) != 0 {
+		t.Fatalf("non-empty/unknown append batch derived table proof: %s", out.KeyPresence.Format())
+	}
+	appends := out.KeyPresence.AppendedKeyEntries()
+	if len(appends) != 1 ||
+		appends[0].Array != flow.KeyPresencePathKey(arrayPath) ||
+		appends[0].Key != flow.KeyPresencePathKey(constraint.NewPath(cfg.SymbolID(447), "node_id")) {
+		t.Fatalf("non-empty/unknown append batch dropped direct append event: %s", out.KeyPresence.Format())
+	}
+}
+
+func TestNestedDynamicElementWritePreservesContainerKeyPresence(t *testing.T) {
+	itemsPath := constraint.NewPath(cfg.SymbolID(441), "items")
+	keyPath := constraint.NewPath(cfg.SymbolID(442), "k")
+	out := flow.PointState{
+		KeyPresence: flow.KeyPresenceFacts{}.WithPaths(itemsPath, keyPath),
+	}
+	tr := New(input.Inputs{}, Config{})
+
+	tr.applyWriteEffect(&out, WriteEffect{
+		Place: Place{
+			Root:     cfg.SymbolID(441),
+			RootName: "items",
+			Steps: []PlaceStep{
+				{Kind: PlaceStepDynamicIndex, Key: product.FromType(typ.Any)},
+				{Kind: PlaceStepStaticMember, Member: value.MemberField("name")},
+			},
+		},
+		Value:        product.FromType(typ.String),
+		RecordStatic: true,
+	})
+
+	if !out.KeyPresence.HasPaths(itemsPath, keyPath) {
+		t.Fatalf("nested dynamic element write dropped container key-presence: %s", out.KeyPresence.Format())
+	}
+}
+
+func TestBoundaryAppendKeyBatchRebasesReturnKeyForFreshEmptyTable(t *testing.T) {
+	self := &ast.IdentExpr{Value: "self"}
+	nodeID := &ast.IdentExpr{Value: "node_id"}
+	in := valueOriginInput(t, map[*ast.IdentExpr]cfg.SymbolID{
+		self:   cfg.SymbolID(448),
+		nodeID: cfg.SymbolID(449),
+	})
+	tr := New(in, Config{})
+	nodeType := typ.NewRecord().Field("node_id", typ.String).Build()
+	call := &ast.FuncCallExpr{Args: []ast.Expr{self}}
+	arrayPath := constraint.NewPath(cfg.SymbolID(448), "self").Field("node_order")
+	tablePath := constraint.NewPath(cfg.SymbolID(448), "self").Field("nodes")
+	facts := flow.BoundaryFactsOf(nil, nil, nil, []flow.BoundaryAppendKeyFact{{
+		Array: flow.BoundaryPath{
+			Kind:  flow.BoundaryPathParam,
+			Index: 0,
+			Segments: []constraint.Segment{
+				{Kind: constraint.SegmentField, Name: "node_order"},
+			},
+		},
+		Key: flow.BoundaryPath{
+			Kind:  flow.BoundaryPathReturn,
+			Index: 0,
+		},
+	}}, nil, []flow.BoundaryIndexWriteFact{{
+		Table: flow.BoundaryPath{
+			Kind:  flow.BoundaryPathParam,
+			Index: 0,
+			Segments: []constraint.Segment{
+				{Kind: constraint.SegmentField, Name: "nodes"},
+			},
+		},
+		Key: flow.BoundaryPath{
+			Kind:  flow.BoundaryPathReturn,
+			Index: 0,
+		},
+		Value: product.FromType(nodeType),
+	}})
+	out := flow.PointState{
+		KeyPresence: flow.KeyPresenceFacts{}.WithEmptyKeyArrayPath(arrayPath),
+	}
+
+	if !tr.applyBoundaryFacts(&out, call, facts, map[int]constraint.Path{0: constraint.NewPath(cfg.SymbolID(449), "node_id")}) {
+		t.Fatal("return-relative boundary append/index-write batch did not report a change")
+	}
+	values := out.KeyPresence.KeyArrayValues(flow.KeyPresencePathKey(arrayPath), flow.KeyPresencePathKey(tablePath))
+	if len(values) != 1 || !typ.TypeEquals(values[0].ProjectValue(), nodeType) {
+		t.Fatalf("return-key append batch value = %s, want node_order -> nodes proof", out.KeyPresence.Format())
+	}
+}
+
+func TestAssignCallPostconditionDerivesFreshEmptyKeyArrayFromReturnAppend(t *testing.T) {
+	fn := &ast.FunctionExpr{ParList: &ast.ParList{Names: []string{"graph"}}}
+	in := input.BuildFromFunction(fn, nil, nil)
+	graphSym := in.Scope.ParamSymbols[0]
+	nodeIDSym := cfg.SymbolID(450)
+	graph := &ast.IdentExpr{Value: "graph"}
+	in.Graph.Bindings().Bind(graph, graphSym)
+	in.Graph.Bindings().SetName(graphSym, "graph")
+	call := &ast.FuncCallExpr{
+		Receiver: graph,
+		Method:   "create_node",
+	}
+	callInfo := &cfg.CallInfo{
+		Call:     call,
+		Method:   call.Method,
+		Receiver: graph,
+	}
+	nodeType := typ.NewRecord().Field("node_id", typ.String).Build()
+	facts := flow.BoundaryFactsOf(nil, nil, nil, []flow.BoundaryAppendKeyFact{{
+		Array: flow.BoundaryPath{
+			Kind:  flow.BoundaryPathParam,
+			Index: 0,
+			Segments: []constraint.Segment{
+				{Kind: constraint.SegmentField, Name: "node_order"},
+			},
+		},
+		Key: flow.BoundaryPath{
+			Kind:  flow.BoundaryPathReturn,
+			Index: 0,
+		},
+	}}, nil, []flow.BoundaryIndexWriteFact{{
+		Table: flow.BoundaryPath{
+			Kind:  flow.BoundaryPathParam,
+			Index: 0,
+			Segments: []constraint.Segment{
+				{Kind: constraint.SegmentField, Name: "nodes"},
+			},
+		},
+		Key: flow.BoundaryPath{
+			Kind:  flow.BoundaryPathReturn,
+			Index: 0,
+		},
+		Value: product.FromType(nodeType),
+	}})
+	tr := New(in, Config{CallTyper: boundaryAndContainerElementUnionTyper{facts: facts}})
+	arrayPath := constraint.NewPath(graphSym, "graph").Field("node_order")
+	tablePath := constraint.NewPath(graphSym, "graph").Field("nodes")
+	out := flow.PointState{
+		KeyPresence: flow.KeyPresenceFacts{}.WithEmptyKeyArrayPath(arrayPath),
+	}
+	info := &cfg.AssignInfo{
+		Targets: []cfg.AssignTarget{{
+			Kind:   cfg.TargetIdent,
+			Name:   "node_id",
+			Symbol: nodeIDSym,
+		}},
+		Sources:     []ast.Expr{call},
+		SourceCalls: []*cfg.CallInfo{callInfo},
+	}
+
+	tr.applyAssign(&out, 0, info, nil)
+
+	values := out.KeyPresence.KeyArrayValues(flow.KeyPresencePathKey(arrayPath), flow.KeyPresencePathKey(tablePath))
+	if len(values) != 1 || !typ.TypeEquals(values[0].ProjectValue(), nodeType) {
+		t.Fatalf("assign-call return append value = %s, want graph.node_order -> graph.nodes proof", out.KeyPresence.Format())
+	}
+}
+
+func TestAssignCallPostconditionPreservesAppendHistoryAcrossReceiverMutation(t *testing.T) {
+	fn := &ast.FunctionExpr{ParList: &ast.ParList{Names: []string{"graph"}}}
+	in := input.BuildFromFunction(fn, nil, nil)
+	graphSym := in.Scope.ParamSymbols[0]
+	nodeIDSym := cfg.SymbolID(451)
+	graph := &ast.IdentExpr{Value: "graph"}
+	in.Graph.Bindings().Bind(graph, graphSym)
+	in.Graph.Bindings().SetName(graphSym, "graph")
+	call := &ast.FuncCallExpr{
+		Receiver: graph,
+		Method:   "create_node",
+	}
+	callInfo := &cfg.CallInfo{
+		Call:     call,
+		Method:   call.Method,
+		Receiver: graph,
+	}
+	nodeType := typ.NewRecord().Field("node_id", typ.String).Build()
+	facts := flow.BoundaryFactsOf(nil, nil, nil, []flow.BoundaryAppendKeyFact{{
+		Array: flow.BoundaryPath{
+			Kind:  flow.BoundaryPathParam,
+			Index: 0,
+			Segments: []constraint.Segment{
+				{Kind: constraint.SegmentField, Name: "node_order"},
+			},
+		},
+		Key: flow.BoundaryPath{
+			Kind:  flow.BoundaryPathReturn,
+			Index: 0,
+		},
+	}}, nil, []flow.BoundaryIndexWriteFact{{
+		Table: flow.BoundaryPath{
+			Kind:  flow.BoundaryPathParam,
+			Index: 0,
+			Segments: []constraint.Segment{
+				{Kind: constraint.SegmentField, Name: "nodes"},
+			},
+		},
+		Key: flow.BoundaryPath{
+			Kind:  flow.BoundaryPathReturn,
+			Index: 0,
+		},
+		Value: product.FromType(nodeType),
+	}})
+	updatedReceiver := product.FromType(typ.NewRecord().
+		Field("node_order", typ.NewArray(typ.Unknown)).
+		Field("nodes", typ.NewMap(typ.String, nodeType)).
+		Build())
+	tr := New(in, Config{CallTyper: boundaryAndReceiverEffectTyper{
+		facts:   facts,
+		effects: flow.ReceiverMustWrite(0, updatedReceiver),
+	}})
+	arrayPath := constraint.NewPath(graphSym, "graph").Field("node_order")
+	tablePath := constraint.NewPath(graphSym, "graph").Field("nodes")
+	arrayKey := flow.KeyPresencePathKey(arrayPath)
+	tableKey := flow.KeyPresencePathKey(tablePath)
+	out := flow.PointState{
+		KeyPresence: flow.KeyPresenceFacts{}.WithEmptyKeyArrayPath(arrayPath),
+	}
+	info := &cfg.AssignInfo{
+		Targets: []cfg.AssignTarget{{
+			Kind:   cfg.TargetIdent,
+			Name:   "node_id",
+			Symbol: nodeIDSym,
+		}},
+		Sources:     []ast.Expr{call},
+		SourceCalls: []*cfg.CallInfo{callInfo},
+	}
+
+	tr.applyAssign(&out, 0, info, nil)
+
+	if !out.KeyPresence.HasAppendHistoryBase(arrayKey) {
+		t.Fatalf("receiver mutation erased append-history base: %s", out.KeyPresence.Format())
+	}
+	values := out.KeyPresence.KeyArrayValues(arrayKey, tableKey)
+	if len(values) != 1 || !typ.TypeEquals(values[0].ProjectValue(), nodeType) {
+		t.Fatalf("receiver mutation append value = %s, want graph.node_order -> graph.nodes proof", out.KeyPresence.Format())
+	}
+	coverage := out.KeyPresence.AppendHistoryCoverageEntries()
+	if len(coverage) != 1 || coverage[0].Array != arrayKey || coverage[0].Table != tableKey {
+		t.Fatalf("receiver mutation did not restore append-history coverage: %s", out.KeyPresence.Format())
 	}
 }
 
@@ -399,6 +1039,30 @@ func TestConditionEffectOwnsConditionAxis(t *testing.T) {
 	}
 	if tr.applyConditionEffect(&out, ConditionEffect{Fact: constraint.TrueCondition()}) {
 		t.Fatal("true condition fact should not mutate Cond")
+	}
+}
+
+func TestConditionEffectContradictionCollapsesPointState(t *testing.T) {
+	tr := New(input.Inputs{}, Config{})
+	x := constraint.NewPath(cfg.SymbolID(453), "x")
+	out := flow.PointState{
+		Cond: constraint.FromConstraints(constraint.HasType{
+			Path: x,
+			Type: typeKeyFor("number"),
+		}),
+		Env: map[flow.ValueKey]product.AbstractValue{
+			flow.SymbolValueKey(x.Symbol): product.FromType(typ.Number),
+		},
+	}
+
+	if !tr.applyConditionEffect(&out, ConditionEffect{Fact: constraint.FromConstraints(constraint.HasType{
+		Path: x,
+		Type: typeKeyFor("string"),
+	})}) {
+		t.Fatal("contradictory condition effect did not report a change")
+	}
+	if !flow.PointStateDomain.Equal(out, flow.PointStateDomain.Bottom()) {
+		t.Fatalf("contradictory condition effect = %#v, want point-state bottom", out)
 	}
 }
 
@@ -916,6 +1580,74 @@ func TestNestedWriteEffectRecordsPrototypeSelfThroughReducer(t *testing.T) {
 	}
 }
 
+func TestNestedWriteEffectRecordsParameterReceiverEffectWithoutPrototype(t *testing.T) {
+	selfSym := cfg.SymbolID(567)
+	tr := New(input.Inputs{
+		Scope: input.ScopeFacts{
+			ParamSymbols: []cfg.SymbolID{selfSym},
+		},
+	}, Config{})
+	out := flow.PointState{
+		Env: map[flow.ValueKey]product.AbstractValue{
+			flow.SymbolValueKey(selfSym): product.FromType(typ.NewRecord().Build()),
+		},
+	}
+
+	tr.applyWriteEffect(&out, WriteEffect{
+		Place: Place{
+			Root: selfSym,
+			Steps: []PlaceStep{{
+				Kind:   PlaceStepStaticMember,
+				Member: value.MemberField("name"),
+			}},
+		},
+		Value:       product.FromType(typ.String),
+		RecordProto: true,
+	})
+
+	effects := out.ReceiverEffects.Entries()
+	if len(effects) != 1 ||
+		effects[0].Slot != 0 ||
+		!effects[0].MustWrite {
+		t.Fatalf("receiver effects = %s, want must-write slot 0", out.ReceiverEffects.Format())
+	}
+	member, ok := product.MemberOf(effects[0].Value, value.MemberField("name"))
+	if !ok || !typ.TypeEquals(member.ProjectValue(), typ.String) {
+		t.Fatalf("receiver effect self.name = %v/%v, want string", member.ProjectValue(), ok)
+	}
+}
+
+func TestMutatorEffectRecordsParameterReceiverMutationWithoutRootValue(t *testing.T) {
+	selfSym := cfg.SymbolID(568)
+	tr := New(input.Inputs{
+		Scope: input.ScopeFacts{
+			ParamSymbols: []cfg.SymbolID{selfSym},
+		},
+	}, Config{})
+	out := flow.PointState{}
+
+	tr.applyMutatorEffect(&out, MutatorEffect{
+		Place: Place{
+			Root: selfSym,
+			Steps: []PlaceStep{{
+				Kind:   PlaceStepStaticMember,
+				Member: value.MemberField("items"),
+			}},
+		},
+		Kind:    MutatorAppendElement,
+		Element: product.FromType(typ.String),
+	})
+
+	effects := out.ReceiverEffects.Entries()
+	if len(effects) != 1 ||
+		effects[0].Slot != 0 ||
+		effects[0].MustWrite ||
+		!effects[0].Value.IsZero() ||
+		len(effects[0].Mutations) != 1 {
+		t.Fatalf("receiver effects = %#v (%s), want mutation-only slot 0", effects, out.ReceiverEffects.Format())
+	}
+}
+
 func TestMutatorEffectRecordsPrototypeSelfThroughReducer(t *testing.T) {
 	proto := cfg.SymbolID(565)
 	selfSym := cfg.SymbolID(566)
@@ -1033,6 +1765,142 @@ func TestMutatorEffectAppendsElementAndUpdatesSideAxes(t *testing.T) {
 	}
 }
 
+func TestMutatorEffectAppendKeySeedsKeyArrayForFreshEmptyArray(t *testing.T) {
+	arraySym := cfg.SymbolID(711)
+	keySym := cfg.SymbolID(712)
+	tableSym := cfg.SymbolID(713)
+	arrayPath := constraint.NewPath(arraySym, "node_order")
+	keyPath := constraint.NewPath(keySym, "node_id")
+	tablePath := constraint.NewPath(tableSym, "nodes")
+	tr := New(input.Inputs{}, Config{})
+	out := flow.PointState{
+		Env: map[flow.ValueKey]product.AbstractValue{
+			flow.SymbolValueKey(arraySym): product.FromType(typ.NewFreshArray()),
+			flow.SymbolValueKey(keySym):   product.FromType(typ.String),
+		},
+		KeyPresence: flow.KeyPresenceFacts{}.WithPaths(tablePath, keyPath),
+	}
+
+	tr.applyMutatorEffect(&out, MutatorEffect{
+		Place:       Place{Root: arraySym},
+		Kind:        MutatorAppendElement,
+		Element:     product.FromType(typ.String),
+		ElementPath: keyPath,
+	})
+
+	if tables := out.KeyPresence.KeyArrayTables(flow.KeyPresencePathKey(arrayPath)); len(tables) != 1 ||
+		tables[0] != flow.KeyPresencePathKey(tablePath) {
+		t.Fatalf("append of proven key did not seed key-array provenance: %s", out.KeyPresence.Format())
+	}
+}
+
+func TestMutatorEffectAppendKeySeedsKeyArrayValueForFreshEmptyArray(t *testing.T) {
+	arraySym := cfg.SymbolID(716)
+	keySym := cfg.SymbolID(717)
+	tableSym := cfg.SymbolID(718)
+	arrayPath := constraint.NewPath(arraySym, "node_order")
+	keyPath := constraint.NewPath(keySym, "node_id")
+	tablePath := constraint.NewPath(tableSym, "nodes")
+	nodeType := typ.NewRecord().Field("node_id", typ.String).Field("status", typ.String).Build()
+	tr := New(input.Inputs{}, Config{})
+	out := flow.PointState{
+		Env: map[flow.ValueKey]product.AbstractValue{
+			flow.SymbolValueKey(arraySym): product.FromType(typ.NewFreshArray()),
+			flow.SymbolValueKey(keySym):   product.FromType(typ.String),
+		},
+		KeyPresence: flow.KeyPresenceFacts{}.WithPaths(tablePath, keyPath),
+		IndexWrites: flow.IndexWriteAdmissionFacts{}.With(flow.IndexWriteAdmissionFact{
+			Target:  flow.IndexWriteAdmissionPathKey(tablePath),
+			KeyPath: flow.IndexWriteAdmissionPathKey(keyPath),
+			Key:     product.FromType(typ.String),
+			Value:   product.FromType(nodeType),
+		}),
+	}
+
+	tr.applyMutatorEffect(&out, MutatorEffect{
+		Place:       Place{Root: arraySym},
+		Kind:        MutatorAppendElement,
+		Element:     product.FromType(typ.String),
+		ElementPath: keyPath,
+	})
+
+	values := out.KeyPresence.KeyArrayValues(flow.KeyPresencePathKey(arrayPath), flow.KeyPresencePathKey(tablePath))
+	if len(values) != 1 || !typ.TypeEquals(values[0].ProjectValue(), nodeType) {
+		t.Fatalf("append of proven key did not seed key-array value: %s", out.KeyPresence.Format())
+	}
+}
+
+func TestDelayedIndexWriteMaterializesPendingAppendKeyArrayValue(t *testing.T) {
+	arraySym := cfg.SymbolID(719)
+	keySym := cfg.SymbolID(720)
+	tableSym := cfg.SymbolID(721)
+	arrayPath := constraint.NewPath(arraySym, "node_order")
+	keyPath := constraint.NewPath(keySym, "node_id")
+	tablePath := constraint.NewPath(tableSym, "edges")
+	edgeType := typ.NewRecord().
+		Field("targets", typ.NewArray(typ.Unknown)).
+		Field("error_targets", typ.NewArray(typ.Unknown)).
+		Build()
+	tr := New(input.Inputs{}, Config{})
+	out := flow.PointState{
+		Env: map[flow.ValueKey]product.AbstractValue{
+			flow.SymbolValueKey(arraySym): product.FromType(typ.NewFreshArray()),
+			flow.SymbolValueKey(keySym):   product.FromType(typ.String),
+		},
+	}
+
+	tr.applyMutatorEffect(&out, MutatorEffect{
+		Place:       Place{Root: arraySym},
+		Kind:        MutatorAppendElement,
+		Element:     product.FromType(typ.String),
+		ElementPath: keyPath,
+	})
+	if tables := out.KeyPresence.KeyArrayTables(flow.KeyPresencePathKey(arrayPath)); len(tables) != 0 {
+		t.Fatalf("pending append materialized before table key proof: %s", out.KeyPresence.Format())
+	}
+
+	tr.applyDynamicIndexWriteProofEffect(&out, DynamicIndexWriteProofEffect{
+		TablePath:              tablePath,
+		KeyPath:                keyPath,
+		Key:                    product.FromType(typ.Unknown),
+		Value:                  product.FromType(edgeType),
+		AllowOpaqueKeyReadback: true,
+	})
+
+	values := out.KeyPresence.KeyArrayValues(flow.KeyPresencePathKey(arrayPath), flow.KeyPresencePathKey(tablePath))
+	if len(values) != 1 || !typ.TypeEquals(values[0].ProjectValue(), edgeType) {
+		t.Fatalf("delayed index write did not materialize key-array value: %s", out.KeyPresence.Format())
+	}
+}
+
+func TestMutatorEffectAppendKeyDoesNotSeedKeyArrayForUnknownExistingArray(t *testing.T) {
+	arraySym := cfg.SymbolID(722)
+	keySym := cfg.SymbolID(723)
+	tableSym := cfg.SymbolID(724)
+	arrayPath := constraint.NewPath(arraySym, "node_order")
+	keyPath := constraint.NewPath(keySym, "node_id")
+	tablePath := constraint.NewPath(tableSym, "nodes")
+	tr := New(input.Inputs{}, Config{})
+	out := flow.PointState{
+		Env: map[flow.ValueKey]product.AbstractValue{
+			flow.SymbolValueKey(arraySym): product.FromType(typ.NewArray(typ.String)),
+			flow.SymbolValueKey(keySym):   product.FromType(typ.String),
+		},
+		KeyPresence: flow.KeyPresenceFacts{}.WithPaths(tablePath, keyPath),
+	}
+
+	tr.applyMutatorEffect(&out, MutatorEffect{
+		Place:       Place{Root: arraySym},
+		Kind:        MutatorAppendElement,
+		Element:     product.FromType(typ.String),
+		ElementPath: keyPath,
+	})
+
+	if tables := out.KeyPresence.KeyArrayTables(flow.KeyPresencePathKey(arrayPath)); len(tables) != 0 {
+		t.Fatalf("append into existing array seeded unsound key-array provenance: %s", out.KeyPresence.Format())
+	}
+}
+
 func TestMutatorEffectAppendsMapElementAtNestedPlace(t *testing.T) {
 	rootSym := cfg.SymbolID(801)
 	keyAV := product.FromType(typ.String)
@@ -1088,6 +1956,21 @@ func TestTableInsertCallLowersToAppendElementAndLength(t *testing.T) {
 	if lower, _, ok := out.Num.LenBoundsFor(arrKey); !ok || lower != 1 {
 		t.Fatalf("table.insert length lower = %v/%v, want 1", lower, ok)
 	}
+}
+
+func TestTableInsertCallDemandsSequenceElementContract(t *testing.T) {
+	tr, arr, msg, _, msgSym := tableInsertTransferFixture(t, "arr", "msg")
+	out := flow.PointState{
+		Env: map[flow.ValueKey]product.AbstractValue{
+			flow.SymbolValueKey(msgSym): product.FromType(typ.Number),
+		},
+		Num: numeric.NewState(),
+	}
+
+	got := collectDemand(t, func(demand func(idx int, c paramevidence.ParamContract)) {
+		tr.applyTableInsert(&out, tableInsertCallInfo(&ast.FuncCallExpr{Args: []ast.Expr{arr, msg}}), demand)
+	})
+	assertDemandType(t, got, 0, typ.NewArray(typ.Number))
 }
 
 func TestTableInsertCallLowersDynamicTargetToAppendMapElement(t *testing.T) {
@@ -1361,6 +2244,66 @@ func TestStatementCallAppliesContainerElementUnionEffect(t *testing.T) {
 	}
 }
 
+func TestCallBoundaryFactsReplayAfterGenericMutatorEffects(t *testing.T) {
+	fn := &ast.FunctionExpr{ParList: &ast.ParList{Names: []string{"graph", "msg"}}}
+	in := input.BuildFromFunction(fn, nil, nil)
+	graphSym := in.Scope.ParamSymbols[0]
+	msgSym := in.Scope.ParamSymbols[1]
+	graph := &ast.IdentExpr{Value: "graph"}
+	msg := &ast.IdentExpr{Value: "msg"}
+	in.Graph.Bindings().Bind(graph, graphSym)
+	in.Graph.Bindings().Bind(msg, msgSym)
+	in.Graph.Bindings().SetName(graphSym, "graph")
+	in.Graph.Bindings().SetName(msgSym, "msg")
+
+	facts := flow.BoundaryFactsOf(nil, nil, []flow.BoundaryKeyArrayValueFact{{
+		Array: flow.BoundaryPath{
+			Kind:  flow.BoundaryPathParam,
+			Index: 0,
+			Segments: []constraint.Segment{
+				{Kind: constraint.SegmentField, Name: "node_order"},
+			},
+		},
+		Table: flow.BoundaryPath{
+			Kind:  flow.BoundaryPathParam,
+			Index: 0,
+			Segments: []constraint.Segment{
+				{Kind: constraint.SegmentField, Name: "nodes"},
+			},
+		},
+		Value: product.FromType(typ.String),
+	}}, nil, nil, nil)
+	typer := boundaryAndContainerElementUnionTyper{
+		facts: facts,
+		effects: []effect.ContainerElementUnion{{
+			Container: effect.ParamRef{Index: 0},
+			Value:     effect.ParamRef{Index: 1},
+		}},
+	}
+	tr := New(in, Config{CallTyper: typer})
+	out := flow.PointState{Env: map[flow.ValueKey]product.AbstractValue{
+		flow.SymbolValueKey(graphSym): product.FromType(typ.NewRecord().Build()),
+		flow.SymbolValueKey(msgSym):   product.FromType(typ.String),
+	}}
+	call := &ast.FuncCallExpr{Func: &ast.IdentExpr{Value: "mutate"}, Args: []ast.Expr{graph, msg}}
+
+	dead := tr.applyCallArgs(&out, 0, &cfg.CallInfo{
+		Call:   call,
+		Callee: call.Func,
+		Args:   call.Args,
+	}, nil)
+	if dead {
+		t.Fatal("test call unexpectedly marked dead")
+	}
+
+	arrayPath := constraint.NewPath(graphSym, "graph").Field("node_order")
+	tablePath := constraint.NewPath(graphSym, "graph").Field("nodes")
+	values := out.KeyPresence.KeyArrayValues(flow.KeyPresencePathKey(arrayPath), flow.KeyPresencePathKey(tablePath))
+	if len(values) != 1 || !typ.TypeEquals(values[0].ProjectValue(), typ.String) {
+		t.Fatalf("boundary key-array value after mutator = %s, want graph.node_order -> graph.nodes string", out.KeyPresence.Format())
+	}
+}
+
 func TestMethodCallAppliesContainerElementUnionEffectToReceiver(t *testing.T) {
 	tr, out, callInfo, channel, chSym := containerElementUnionCallFixture(true)
 
@@ -1535,6 +2478,34 @@ type containerElementUnionTyper struct {
 
 func (c containerElementUnionTyper) ContainerElementUnionsFromValues(*ast.FuncCallExpr, ProductCallContext) []effect.ContainerElementUnion {
 	return append([]effect.ContainerElementUnion(nil), c.effects...)
+}
+
+type boundaryAndContainerElementUnionTyper struct {
+	captureEffectTyper
+	facts   flow.BoundaryFacts
+	effects []effect.ContainerElementUnion
+}
+
+func (c boundaryAndContainerElementUnionTyper) BoundaryFactsFromValues(*ast.FuncCallExpr, ProductCallContext) flow.BoundaryFacts {
+	return c.facts
+}
+
+func (c boundaryAndContainerElementUnionTyper) ContainerElementUnionsFromValues(*ast.FuncCallExpr, ProductCallContext) []effect.ContainerElementUnion {
+	return append([]effect.ContainerElementUnion(nil), c.effects...)
+}
+
+type boundaryAndReceiverEffectTyper struct {
+	captureEffectTyper
+	facts   flow.BoundaryFacts
+	effects flow.ReceiverEffects
+}
+
+func (b boundaryAndReceiverEffectTyper) BoundaryFactsFromValues(*ast.FuncCallExpr, ProductCallContext) flow.BoundaryFacts {
+	return b.facts
+}
+
+func (b boundaryAndReceiverEffectTyper) ReceiverEffectsFromValues(*ast.FuncCallExpr, ProductCallContext) flow.ReceiverEffects {
+	return b.effects
 }
 
 type receiverEffectTyper struct {

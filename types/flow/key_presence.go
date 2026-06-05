@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/wippyai/go-lua/types/constraint"
+	"github.com/wippyai/go-lua/types/domain/value/product"
 	"github.com/wippyai/go-lua/types/lattice"
 )
 
@@ -33,15 +34,107 @@ type KeyArrayFact struct {
 	Table constraint.PathKey
 }
 
+// EmptyKeyArrayFact is a point-local must-fact proving that Array is currently
+// empty, therefore its elements are keys of every table by vacuity. It is kept
+// separate from concrete KeyArrayFact entries so constructors do not enumerate a
+// cross-product of empty arrays and sibling tables. Joins specialize it only when
+// another predecessor has observed a concrete table-specific key-array fact.
+type EmptyKeyArrayFact struct {
+	Array constraint.PathKey
+}
+
+// KeyArrayValueFact is a point-local must-fact proving that every current
+// element of Array is a key of Table and that Table[element] has Value. It is
+// the value-carrying companion of KeyArrayFact, consumed by indexed iteration to
+// materialize symbolic readback for the loop value key.
+type KeyArrayValueFact struct {
+	Array constraint.PathKey
+	Table constraint.PathKey
+	Value product.AbstractValue
+}
+
+// AppendedKeyFact is a point-local event fact proving that Key was appended to
+// Array on the current path. It does not by itself prove Array is a key-array
+// for any table; boundary projection and append reducers compose it with
+// table/key proofs and caller pre-state.
+type AppendedKeyFact struct {
+	Array constraint.PathKey
+	Key   constraint.PathKey
+}
+
+// PendingKeyArrayFact is a delayed reduced-product proof for append-before-write
+// flows. It records that the current Array would be a key-array for Table once
+// Key is proven present in that Table. An empty Table means the array was freshly
+// formed by this append, so any later table proven to contain Key may materialize
+// the key-array relation. Consumers never read this fact directly.
+type PendingKeyArrayFact struct {
+	Array constraint.PathKey
+	Table constraint.PathKey
+	Key   constraint.PathKey
+}
+
+// AppendHistoryBaseFact proves Array's current contents are tracked from an
+// empty base through finite append events. It is a must fact: if any predecessor
+// loses the tracked base, append-history coverage for that array is unusable.
+type AppendHistoryBaseFact struct {
+	Array constraint.PathKey
+}
+
+// AppendHistoryEventFact records one possible key appended to a tracked array
+// since its empty base. It is a may-history fact: joins union possible append
+// keys so coverage can prove every possible current element.
+type AppendHistoryEventFact struct {
+	Array constraint.PathKey
+	Key   constraint.PathKey
+}
+
+// AppendHistoryCoverageFact proves that a tracked append event's key is present
+// in Table with Value. An append-history coverage query succeeds only when every
+// tracked append event for Array has a matching coverage fact for Table.
+type AppendHistoryCoverageFact struct {
+	Array constraint.PathKey
+	Key   constraint.PathKey
+	Table constraint.PathKey
+	Value product.AbstractValue
+}
+
+// AppendElementFieldOriginFact records that a tracked append to Array may have
+// sourced the element-relative Field from Source. It is consumed only by
+// backward demand routing: a later demand for Array element field Field can be
+// routed to every recorded Source while AppendHistoryBase still proves the array
+// contents are tracked from an empty base.
+type AppendElementFieldOriginFact struct {
+	Array       constraint.PathKey
+	Field       constraint.PathKey
+	Source      constraint.PathKey
+	SourceField constraint.PathKey
+}
+
+// AppendElementFieldOriginUse is a field-origin fact covering a demanded
+// element field path. Remainder is the suffix under Origin.Field.
+type AppendElementFieldOriginUse struct {
+	Origin         AppendElementFieldOriginFact
+	SourceField    []constraint.Segment
+	FieldRemainder []constraint.Segment
+}
+
 // KeyPresenceFacts is a finite must-set lattice over KeyOf provenance. Bottom is
 // unreachable, Top is the empty fact set, and finite states are sorted
-// table/key, table/key/value, and key-array facts. Join keeps only facts proven
-// by every predecessor.
+// table/key, table/key/value, key-array, key-array/value, and delayed key-array
+// facts. Join keeps only facts proven by every predecessor.
 type KeyPresenceFacts struct {
-	bottom  bool
-	entries []KeyPresenceFact
-	values  []KeyValueFact
-	arrays  []KeyArrayFact
+	bottom         bool
+	entries        []KeyPresenceFact
+	values         []KeyValueFact
+	arrays         []KeyArrayFact
+	emptyArrays    []EmptyKeyArrayFact
+	arrayValues    []KeyArrayValueFact
+	appends        []AppendedKeyFact
+	pending        []PendingKeyArrayFact
+	appendBases    []AppendHistoryBaseFact
+	appendEvents   []AppendHistoryEventFact
+	appendCoverage []AppendHistoryCoverageFact
+	appendOrigins  []AppendElementFieldOriginFact
 }
 
 // KeyPresenceFactsOf constructs a canonical finite fact set.
@@ -64,11 +157,7 @@ func KeyPresenceFactFromPaths(table, key constraint.Path) (KeyPresenceFact, bool
 // Symbol paths use the stable symbol/segment key; root-only fallback is accepted
 // only for boundary paths that have not been symbolized.
 func KeyPresencePathKey(path constraint.Path) constraint.PathKey {
-	if path.Symbol != 0 {
-		return SymbolPathKey(path.Symbol, path.Segments)
-	}
-	path.Version = 0
-	return path.Key()
+	return StablePathKey(path)
 }
 
 func (f KeyPresenceFacts) IsBottom() bool { return f.bottom }
@@ -108,7 +197,7 @@ func (f KeyPresenceFacts) With(table, key constraint.PathKey) KeyPresenceFacts {
 	if _, ok := findKeyPresenceFact(next, fact); !ok {
 		next = append(next, fact)
 	}
-	return canonicalKeyPresenceFactsFull(next, f.values, f.arrays)
+	return canonicalKeyPresenceFactsFull(next, f.values, f.arrays, f.arrayValues, f.appends, f.pending, f.emptyArrays, f.appendBases, f.appendEvents, f.appendCoverage, f.appendOrigins)
 }
 
 func (f KeyPresenceFacts) WithPaths(table, key constraint.Path) KeyPresenceFacts {
@@ -147,7 +236,7 @@ func (f KeyPresenceFacts) WithValue(table, key, value constraint.PathKey) KeyPre
 	if _, ok := findKeyValueFact(next, fact); !ok {
 		next = append(next, fact)
 	}
-	return canonicalKeyPresenceFactsFull(f.entries, next, f.arrays)
+	return canonicalKeyPresenceFactsFull(f.entries, next, f.arrays, f.arrayValues, f.appends, f.pending, f.emptyArrays, f.appendBases, f.appendEvents, f.appendCoverage, f.appendOrigins)
 }
 
 func (f KeyPresenceFacts) WithValuePaths(table, key, value constraint.Path) KeyPresenceFacts {
@@ -176,7 +265,7 @@ func (f KeyPresenceFacts) WithKeyArray(array, table constraint.PathKey) KeyPrese
 	if _, ok := findKeyArrayFact(next, fact); !ok {
 		next = append(next, fact)
 	}
-	return canonicalKeyPresenceFactsFull(f.entries, f.values, next)
+	return canonicalKeyPresenceFactsFull(f.entries, f.values, next, f.arrayValues, f.appends, f.pending, f.emptyArrays, f.appendBases, f.appendEvents, f.appendCoverage, f.appendOrigins)
 }
 
 func (f KeyPresenceFacts) WithKeyArrayPaths(array, table constraint.Path) KeyPresenceFacts {
@@ -186,7 +275,7 @@ func (f KeyPresenceFacts) WithKeyArrayPaths(array, table constraint.Path) KeyPre
 }
 
 func (f KeyPresenceFacts) KeyArrayTables(array constraint.PathKey) []constraint.PathKey {
-	if f.bottom || array == "" || len(f.arrays) == 0 {
+	if f.bottom || array == "" {
 		return nil
 	}
 	var out []constraint.PathKey
@@ -195,20 +284,459 @@ func (f KeyPresenceFacts) KeyArrayTables(array constraint.PathKey) []constraint.
 			out = append(out, fact.Table)
 		}
 	}
+	for _, table := range f.appendHistoryCoveredTables(array) {
+		if _, ok := findPathKeyLinear(out, table); !ok {
+			out = append(out, table)
+		}
+	}
 	return out
 }
 
 func (f KeyPresenceFacts) KeyArrayEntries() []KeyArrayFact {
-	if f.bottom || len(f.arrays) == 0 {
+	if f.bottom {
 		return nil
 	}
-	return append([]KeyArrayFact(nil), f.arrays...)
+	out := append([]KeyArrayFact(nil), f.arrays...)
+	for _, base := range f.appendBases {
+		for _, table := range f.appendHistoryCoveredTables(base.Array) {
+			fact := KeyArrayFact{Array: base.Array, Table: table}
+			if _, ok := findKeyArrayFact(out, fact); !ok {
+				out = append(out, fact)
+			}
+		}
+	}
+	sortKeyArrayFacts(out)
+	return out
+}
+
+func (f KeyPresenceFacts) WithEmptyKeyArray(array constraint.PathKey) KeyPresenceFacts {
+	if array == "" {
+		return f
+	}
+	if f.bottom {
+		f = KeyPresenceFacts{}
+	}
+	next := f.EmptyKeyArrayEntries()
+	fact := EmptyKeyArrayFact{Array: array}
+	if _, ok := findEmptyKeyArrayFact(next, fact); !ok {
+		next = append(next, fact)
+	}
+	base := f.AppendHistoryBaseEntries()
+	if _, ok := findAppendHistoryBaseFact(base, AppendHistoryBaseFact{Array: array}); !ok {
+		base = append(base, AppendHistoryBaseFact{Array: array})
+	}
+	return canonicalKeyPresenceFactsFull(f.entries, f.values, f.arrays, f.arrayValues, f.appends, f.pending, next, base, f.appendEvents, f.appendCoverage, f.appendOrigins)
+}
+
+func (f KeyPresenceFacts) WithEmptyKeyArrayPath(array constraint.Path) KeyPresenceFacts {
+	return f.WithEmptyKeyArray(KeyPresencePathKey(array))
+}
+
+func (f KeyPresenceFacts) HasEmptyKeyArray(array constraint.PathKey) bool {
+	if f.bottom || array == "" || len(f.emptyArrays) == 0 {
+		return false
+	}
+	_, ok := findEmptyKeyArrayFact(f.emptyArrays, EmptyKeyArrayFact{Array: array})
+	return ok
+}
+
+func (f KeyPresenceFacts) EmptyKeyArrayEntries() []EmptyKeyArrayFact {
+	if f.bottom || len(f.emptyArrays) == 0 {
+		return nil
+	}
+	return append([]EmptyKeyArrayFact(nil), f.emptyArrays...)
+}
+
+func (f KeyPresenceFacts) WithKeyArrayValue(array, table constraint.PathKey, value product.AbstractValue) KeyPresenceFacts {
+	if array == "" || table == "" || value.IsZero() {
+		return f
+	}
+	if f.bottom {
+		f = KeyPresenceFacts{}
+	}
+	f = f.WithKeyArray(array, table)
+	next := f.KeyArrayValueEntries()
+	fact := KeyArrayValueFact{Array: array, Table: table, Value: value}
+	next = append(next, fact)
+	return canonicalKeyPresenceFactsFull(f.entries, f.values, f.arrays, next, f.appends, f.pending, f.emptyArrays, f.appendBases, f.appendEvents, f.appendCoverage, f.appendOrigins)
+}
+
+func (f KeyPresenceFacts) WithKeyArrayValuePaths(array, table constraint.Path, value product.AbstractValue) KeyPresenceFacts {
+	arrayKey := KeyPresencePathKey(array)
+	tableKey := KeyPresencePathKey(table)
+	return f.WithKeyArrayValue(arrayKey, tableKey, value)
+}
+
+func (f KeyPresenceFacts) KeyArrayValueEntries() []KeyArrayValueFact {
+	if f.bottom {
+		return nil
+	}
+	out := append([]KeyArrayValueFact(nil), f.arrayValues...)
+	for _, base := range f.appendBases {
+		for _, table := range f.appendHistoryCoveredTables(base.Array) {
+			value, ok := f.AppendHistoryCoverageValue(base.Array, table)
+			if !ok || value.IsZero() {
+				continue
+			}
+			fact := KeyArrayValueFact{Array: base.Array, Table: table, Value: value}
+			if idx, ok := findKeyArrayValueFact(out, fact); ok {
+				out[idx].Value = product.Domain.Join(out[idx].Value, value)
+				continue
+			}
+			out = append(out, fact)
+		}
+	}
+	sortKeyArrayValueFacts(out)
+	return out
+}
+
+func (f KeyPresenceFacts) WithAppendedKey(array, key constraint.PathKey) KeyPresenceFacts {
+	if array == "" || key == "" {
+		return f
+	}
+	if f.bottom {
+		f = KeyPresenceFacts{}
+	}
+	next := f.AppendedKeyEntries()
+	fact := AppendedKeyFact{Array: array, Key: key}
+	if _, ok := findAppendedKeyFact(next, fact); !ok {
+		next = append(next, fact)
+	}
+	return canonicalKeyPresenceFactsFull(f.entries, f.values, f.arrays, f.arrayValues, next, f.pending, f.emptyArrays, f.appendBases, f.appendEvents, f.appendCoverage, f.appendOrigins)
+}
+
+func (f KeyPresenceFacts) WithAppendedKeyPaths(array, key constraint.Path) KeyPresenceFacts {
+	arrayKey := KeyPresencePathKey(array)
+	keyKey := KeyPresencePathKey(key)
+	return f.WithAppendedKey(arrayKey, keyKey)
+}
+
+func (f KeyPresenceFacts) AppendedKeyEntries() []AppendedKeyFact {
+	if f.bottom || len(f.appends) == 0 {
+		return nil
+	}
+	return append([]AppendedKeyFact(nil), f.appends...)
+}
+
+func (f KeyPresenceFacts) WithPendingKeyArray(array, table, key constraint.PathKey) KeyPresenceFacts {
+	if array == "" || key == "" {
+		return f
+	}
+	if f.bottom {
+		f = KeyPresenceFacts{}
+	}
+	next := f.PendingKeyArrayEntries()
+	fact := PendingKeyArrayFact{Array: array, Table: table, Key: key}
+	if _, ok := findPendingKeyArrayFact(next, fact); !ok {
+		next = append(next, fact)
+	}
+	return canonicalKeyPresenceFactsFull(f.entries, f.values, f.arrays, f.arrayValues, f.appends, next, f.emptyArrays, f.appendBases, f.appendEvents, f.appendCoverage, f.appendOrigins)
+}
+
+func (f KeyPresenceFacts) PendingKeyArrayEntries() []PendingKeyArrayFact {
+	if f.bottom || len(f.pending) == 0 {
+		return nil
+	}
+	return append([]PendingKeyArrayFact(nil), f.pending...)
+}
+
+func (f KeyPresenceFacts) PendingKeyArraysFor(table, key constraint.PathKey) []constraint.PathKey {
+	if f.bottom || key == "" || len(f.pending) == 0 {
+		return nil
+	}
+	var out []constraint.PathKey
+	for _, fact := range f.pending {
+		if fact.Key != key {
+			continue
+		}
+		if fact.Table != "" && fact.Table != table {
+			continue
+		}
+		out = append(out, fact.Array)
+	}
+	return out
+}
+
+func (f KeyPresenceFacts) WithAppendHistoryBase(array constraint.PathKey) KeyPresenceFacts {
+	if array == "" {
+		return f
+	}
+	if f.bottom {
+		f = KeyPresenceFacts{}
+	}
+	next := f.AppendHistoryBaseEntries()
+	fact := AppendHistoryBaseFact{Array: array}
+	if _, ok := findAppendHistoryBaseFact(next, fact); !ok {
+		next = append(next, fact)
+	}
+	return canonicalKeyPresenceFactsFull(f.entries, f.values, f.arrays, f.arrayValues, f.appends, f.pending, f.emptyArrays, next, f.appendEvents, f.appendCoverage, f.appendOrigins)
+}
+
+func (f KeyPresenceFacts) WithAppendHistoryBasePath(array constraint.Path) KeyPresenceFacts {
+	return f.WithAppendHistoryBase(KeyPresencePathKey(array))
+}
+
+func (f KeyPresenceFacts) HasAppendHistoryBase(array constraint.PathKey) bool {
+	if f.bottom || array == "" || len(f.appendBases) == 0 {
+		return false
+	}
+	_, ok := findAppendHistoryBaseFact(f.appendBases, AppendHistoryBaseFact{Array: array})
+	return ok
+}
+
+func (f KeyPresenceFacts) AppendHistoryBaseEntries() []AppendHistoryBaseFact {
+	if f.bottom || len(f.appendBases) == 0 {
+		return nil
+	}
+	return append([]AppendHistoryBaseFact(nil), f.appendBases...)
+}
+
+func (f KeyPresenceFacts) WithAppendHistoryEvent(array, key constraint.PathKey) KeyPresenceFacts {
+	if array == "" || key == "" || !f.HasAppendHistoryBase(array) {
+		return f
+	}
+	next := f.AppendHistoryEventEntries()
+	fact := AppendHistoryEventFact{Array: array, Key: key}
+	if _, ok := findAppendHistoryEventFact(next, fact); !ok {
+		next = append(next, fact)
+	}
+	return canonicalKeyPresenceFactsFull(f.entries, f.values, f.arrays, f.arrayValues, f.appends, f.pending, f.emptyArrays, f.appendBases, next, f.appendCoverage, f.appendOrigins)
+}
+
+func (f KeyPresenceFacts) AppendHistoryEventEntries() []AppendHistoryEventFact {
+	if f.bottom || len(f.appendEvents) == 0 {
+		return nil
+	}
+	return append([]AppendHistoryEventFact(nil), f.appendEvents...)
+}
+
+func (f KeyPresenceFacts) WithAppendHistoryCoverage(array, key, table constraint.PathKey, value product.AbstractValue) KeyPresenceFacts {
+	if array == "" || key == "" || table == "" || value.IsZero() || !f.HasAppendHistoryBase(array) {
+		return f
+	}
+	f = f.WithAppendHistoryEvent(array, key)
+	next := f.AppendHistoryCoverageEntries()
+	next = append(next, AppendHistoryCoverageFact{Array: array, Key: key, Table: table, Value: value})
+	return canonicalKeyPresenceFactsFull(f.entries, f.values, f.arrays, f.arrayValues, f.appends, f.pending, f.emptyArrays, f.appendBases, f.appendEvents, next, f.appendOrigins)
+}
+
+func (f KeyPresenceFacts) AppendHistoryCoverageEntries() []AppendHistoryCoverageFact {
+	if f.bottom || len(f.appendCoverage) == 0 {
+		return nil
+	}
+	return append([]AppendHistoryCoverageFact(nil), f.appendCoverage...)
+}
+
+const appendElementFieldRoot = "__element"
+
+func AppendElementFieldPathKey(segments []constraint.Segment) constraint.PathKey {
+	if len(segments) == 0 {
+		return ""
+	}
+	return constraint.Path{
+		Root:     appendElementFieldRoot,
+		Segments: append([]constraint.Segment(nil), segments...),
+	}.Key()
+}
+
+func AppendElementFieldSegments(key constraint.PathKey) ([]constraint.Segment, bool) {
+	addr, ok := StableAddressFromKey(key)
+	if !ok {
+		return nil, false
+	}
+	root, ok := addr.Root()
+	if !ok || root != appendElementFieldRoot {
+		return nil, false
+	}
+	segs := addr.Segments()
+	return segs, len(segs) > 0
+}
+
+func (f KeyPresenceFacts) WithAppendElementFieldOrigin(array, field, source constraint.PathKey) KeyPresenceFacts {
+	return f.WithAppendElementFieldOriginFromSource(array, field, source, "")
+}
+
+func (f KeyPresenceFacts) WithAppendElementFieldOriginFromSource(array, field, source, sourceField constraint.PathKey) KeyPresenceFacts {
+	if array == "" || field == "" || source == "" || !f.HasAppendHistoryBase(array) {
+		return f
+	}
+	if f.bottom {
+		f = KeyPresenceFacts{}
+	}
+	next := f.AppendElementFieldOriginEntries()
+	fact := AppendElementFieldOriginFact{Array: array, Field: field, Source: source, SourceField: sourceField}
+	if _, ok := findAppendElementFieldOriginFact(next, fact); !ok {
+		next = append(next, fact)
+	}
+	return canonicalKeyPresenceFactsFull(f.entries, f.values, f.arrays, f.arrayValues, f.appends, f.pending, f.emptyArrays, f.appendBases, f.appendEvents, f.appendCoverage, next)
+}
+
+func (f KeyPresenceFacts) WithAppendElementFieldOriginPaths(array constraint.Path, field []constraint.Segment, source constraint.Path) KeyPresenceFacts {
+	return f.WithAppendElementFieldOriginFromPaths(array, field, source, nil)
+}
+
+func (f KeyPresenceFacts) WithAppendElementFieldOriginFromPaths(array constraint.Path, field []constraint.Segment, source constraint.Path, sourceField []constraint.Segment) KeyPresenceFacts {
+	arrayKey := KeyPresencePathKey(array)
+	fieldKey := AppendElementFieldPathKey(field)
+	sourceKey := KeyPresencePathKey(source)
+	sourceFieldKey := AppendElementFieldPathKey(sourceField)
+	return f.WithAppendElementFieldOriginFromSource(arrayKey, fieldKey, sourceKey, sourceFieldKey)
+}
+
+func (f KeyPresenceFacts) AppendElementFieldOriginEntries() []AppendElementFieldOriginFact {
+	if f.bottom || len(f.appendOrigins) == 0 {
+		return nil
+	}
+	return append([]AppendElementFieldOriginFact(nil), f.appendOrigins...)
+}
+
+func (f KeyPresenceFacts) AppendElementFieldSources(array constraint.PathKey, field []constraint.Segment) []AppendElementFieldOriginUse {
+	fieldKey := AppendElementFieldPathKey(field)
+	if f.bottom || array == "" || fieldKey == "" || !f.HasAppendHistoryBase(array) || len(f.appendOrigins) == 0 {
+		return nil
+	}
+	fieldSegs, ok := AppendElementFieldSegments(fieldKey)
+	if !ok {
+		return nil
+	}
+	var out []AppendElementFieldOriginUse
+	for _, fact := range f.appendOrigins {
+		if fact.Array != array {
+			continue
+		}
+		originSegs, ok := AppendElementFieldSegments(fact.Field)
+		if !ok || len(originSegs) > len(fieldSegs) || !segmentsPrefix(originSegs, fieldSegs) {
+			continue
+		}
+		remainder := append([]constraint.Segment(nil), fieldSegs[len(originSegs):]...)
+		sourceField, _ := AppendElementFieldSegments(fact.SourceField)
+		out = append(out, AppendElementFieldOriginUse{
+			Origin:         fact,
+			SourceField:    append([]constraint.Segment(nil), sourceField...),
+			FieldRemainder: append([]constraint.Segment(nil), remainder...),
+		})
+	}
+	return out
+}
+
+func (f KeyPresenceFacts) KeyArrayValues(array, table constraint.PathKey) []product.AbstractValue {
+	if f.bottom || array == "" || table == "" {
+		return nil
+	}
+	var out product.AbstractValue
+	for _, fact := range f.arrayValues {
+		if fact.Array == array && fact.Table == table {
+			if out.IsZero() {
+				out = fact.Value
+			} else {
+				out = product.Domain.Join(out, fact.Value)
+			}
+		}
+	}
+	if value, ok := f.AppendHistoryCoverageValue(array, table); ok {
+		if out.IsZero() {
+			out = value
+		} else {
+			out = product.Domain.Join(out, value)
+		}
+	}
+	if out.IsZero() {
+		return nil
+	}
+	return []product.AbstractValue{out}
+}
+
+func (f KeyPresenceFacts) AppendHistoryCoverageValue(array, table constraint.PathKey) (product.AbstractValue, bool) {
+	if f.bottom || array == "" || table == "" || !f.HasAppendHistoryBase(array) {
+		return product.AbstractValue{}, false
+	}
+	events := f.appendHistoryEventsFor(array)
+	if len(events) == 0 {
+		return product.AbstractValue{}, false
+	}
+	var out product.AbstractValue
+	for _, event := range events {
+		value, ok := f.appendHistoryCoverageFor(array, event.Key, table)
+		if !ok || value.IsZero() {
+			return product.AbstractValue{}, false
+		}
+		if out.IsZero() {
+			out = value
+		} else {
+			out = product.Domain.Join(out, value)
+		}
+	}
+	return out, !out.IsZero()
+}
+
+func (f KeyPresenceFacts) appendHistoryEventsFor(array constraint.PathKey) []AppendHistoryEventFact {
+	var out []AppendHistoryEventFact
+	for _, event := range f.appendEvents {
+		if event.Array == array {
+			out = append(out, event)
+		}
+	}
+	return out
+}
+
+func (f KeyPresenceFacts) appendHistoryCoverageFor(array, key, table constraint.PathKey) (product.AbstractValue, bool) {
+	var out product.AbstractValue
+	for _, coverage := range f.appendCoverage {
+		if coverage.Array != array || coverage.Key != key || coverage.Table != table || coverage.Value.IsZero() {
+			continue
+		}
+		if out.IsZero() {
+			out = coverage.Value
+		} else {
+			out = product.Domain.Join(out, coverage.Value)
+		}
+	}
+	return out, !out.IsZero()
+}
+
+func (f KeyPresenceFacts) appendHistoryCoveredTables(array constraint.PathKey) []constraint.PathKey {
+	if f.bottom || array == "" || !f.HasAppendHistoryBase(array) {
+		return nil
+	}
+	events := f.appendHistoryEventsFor(array)
+	if len(events) == 0 {
+		return nil
+	}
+	var candidates []constraint.PathKey
+	for _, coverage := range f.appendCoverage {
+		if coverage.Array != array || coverage.Table == "" {
+			continue
+		}
+		if _, ok := findPathKeyLinear(candidates, coverage.Table); !ok {
+			candidates = append(candidates, coverage.Table)
+		}
+	}
+	var out []constraint.PathKey
+	for _, table := range candidates {
+		if _, ok := f.AppendHistoryCoverageValue(array, table); ok {
+			out = append(out, table)
+		}
+	}
+	return out
+}
+
+func findPathKeyLinear(xs []constraint.PathKey, want constraint.PathKey) (int, bool) {
+	for i, x := range xs {
+		if x == want {
+			return i, true
+		}
+	}
+	return -1, false
 }
 
 // KillSubtree removes every presence, value-origin, or key-array fact whose
 // table, key, value, or array path is root or a descendant of root.
 func (f KeyPresenceFacts) KillSubtree(root constraint.PathKey) KeyPresenceFacts {
-	if f.bottom || root == "" || (len(f.entries) == 0 && len(f.values) == 0 && len(f.arrays) == 0) {
+	if f.bottom || root == "" ||
+		(len(f.entries) == 0 && len(f.values) == 0 && len(f.arrays) == 0 &&
+			len(f.emptyArrays) == 0 && len(f.arrayValues) == 0 && len(f.appends) == 0 &&
+			len(f.pending) == 0 && len(f.appendBases) == 0 && len(f.appendEvents) == 0 &&
+			len(f.appendCoverage) == 0 && len(f.appendOrigins) == 0) {
 		return f
 	}
 	entries := make([]KeyPresenceFact, 0, len(f.entries))
@@ -235,7 +763,71 @@ func (f KeyPresenceFacts) KillSubtree(root constraint.PathKey) KeyPresenceFacts 
 		}
 		arrays = append(arrays, e)
 	}
-	return canonicalKeyPresenceFactsFull(entries, values, arrays)
+	emptyArrays := make([]EmptyKeyArrayFact, 0, len(f.emptyArrays))
+	for _, e := range f.emptyArrays {
+		if keyPresencePathAffected(e.Array, root) {
+			continue
+		}
+		emptyArrays = append(emptyArrays, e)
+	}
+	arrayValues := make([]KeyArrayValueFact, 0, len(f.arrayValues))
+	for _, e := range f.arrayValues {
+		if keyPresencePathAffected(e.Array, root) ||
+			keyPresencePathAffected(e.Table, root) {
+			continue
+		}
+		arrayValues = append(arrayValues, e)
+	}
+	appends := make([]AppendedKeyFact, 0, len(f.appends))
+	for _, e := range f.appends {
+		if keyPresencePathAffected(e.Array, root) ||
+			keyPresencePathAffected(e.Key, root) {
+			continue
+		}
+		appends = append(appends, e)
+	}
+	pending := make([]PendingKeyArrayFact, 0, len(f.pending))
+	for _, e := range f.pending {
+		if keyPresencePathAffected(e.Array, root) ||
+			keyPresencePathAffected(e.Key, root) ||
+			(e.Table != "" && keyPresencePathAffected(e.Table, root)) {
+			continue
+		}
+		pending = append(pending, e)
+	}
+	appendBases := make([]AppendHistoryBaseFact, 0, len(f.appendBases))
+	for _, e := range f.appendBases {
+		if keyPresencePathAffected(e.Array, root) {
+			continue
+		}
+		appendBases = append(appendBases, e)
+	}
+	appendEvents := make([]AppendHistoryEventFact, 0, len(f.appendEvents))
+	for _, e := range f.appendEvents {
+		if keyPresencePathAffected(e.Array, root) ||
+			keyPresencePathAffected(e.Key, root) {
+			continue
+		}
+		appendEvents = append(appendEvents, e)
+	}
+	appendCoverage := make([]AppendHistoryCoverageFact, 0, len(f.appendCoverage))
+	for _, e := range f.appendCoverage {
+		if keyPresencePathAffected(e.Array, root) ||
+			keyPresencePathAffected(e.Key, root) ||
+			keyPresencePathAffected(e.Table, root) {
+			continue
+		}
+		appendCoverage = append(appendCoverage, e)
+	}
+	appendOrigins := make([]AppendElementFieldOriginFact, 0, len(f.appendOrigins))
+	for _, e := range f.appendOrigins {
+		if keyPresencePathAffected(e.Array, root) ||
+			keyPresencePathAffected(e.Source, root) {
+			continue
+		}
+		appendOrigins = append(appendOrigins, e)
+	}
+	return canonicalKeyPresenceFactsFull(entries, values, arrays, arrayValues, appends, pending, emptyArrays, appendBases, appendEvents, appendCoverage, appendOrigins)
 }
 
 // KillAffectedByWrite removes facts that are no longer must-facts after a write
@@ -244,7 +836,11 @@ func (f KeyPresenceFacts) KillSubtree(root constraint.PathKey) KeyPresenceFacts 
 // be "x", so any table/key/value fact whose table overlaps the written path is
 // dropped.
 func (f KeyPresenceFacts) KillAffectedByWrite(writePath constraint.PathKey) KeyPresenceFacts {
-	if f.bottom || writePath == "" || (len(f.entries) == 0 && len(f.values) == 0 && len(f.arrays) == 0) {
+	if f.bottom || writePath == "" ||
+		(len(f.entries) == 0 && len(f.values) == 0 && len(f.arrays) == 0 &&
+			len(f.emptyArrays) == 0 && len(f.arrayValues) == 0 && len(f.appends) == 0 &&
+			len(f.pending) == 0 && len(f.appendBases) == 0 && len(f.appendEvents) == 0 &&
+			len(f.appendCoverage) == 0 && len(f.appendOrigins) == 0) {
 		return f
 	}
 	entries := make([]KeyPresenceFact, 0, len(f.entries))
@@ -272,7 +868,71 @@ func (f KeyPresenceFacts) KillAffectedByWrite(writePath constraint.PathKey) KeyP
 		}
 		arrays = append(arrays, e)
 	}
-	return canonicalKeyPresenceFactsFull(entries, values, arrays)
+	emptyArrays := make([]EmptyKeyArrayFact, 0, len(f.emptyArrays))
+	for _, e := range f.emptyArrays {
+		if keyPresencePathsOverlap(e.Array, writePath) {
+			continue
+		}
+		emptyArrays = append(emptyArrays, e)
+	}
+	arrayValues := make([]KeyArrayValueFact, 0, len(f.arrayValues))
+	for _, e := range f.arrayValues {
+		if keyPresencePathsOverlap(e.Array, writePath) ||
+			keyPresencePathsOverlap(e.Table, writePath) {
+			continue
+		}
+		arrayValues = append(arrayValues, e)
+	}
+	appends := make([]AppendedKeyFact, 0, len(f.appends))
+	for _, e := range f.appends {
+		if keyPresencePathsOverlap(e.Array, writePath) ||
+			keyPresencePathsOverlap(e.Key, writePath) {
+			continue
+		}
+		appends = append(appends, e)
+	}
+	pending := make([]PendingKeyArrayFact, 0, len(f.pending))
+	for _, e := range f.pending {
+		if keyPresencePathsOverlap(e.Array, writePath) ||
+			keyPresencePathsOverlap(e.Key, writePath) ||
+			(e.Table != "" && keyPresencePathsOverlap(e.Table, writePath)) {
+			continue
+		}
+		pending = append(pending, e)
+	}
+	appendBases := make([]AppendHistoryBaseFact, 0, len(f.appendBases))
+	for _, e := range f.appendBases {
+		if keyPresencePathsOverlap(e.Array, writePath) {
+			continue
+		}
+		appendBases = append(appendBases, e)
+	}
+	appendEvents := make([]AppendHistoryEventFact, 0, len(f.appendEvents))
+	for _, e := range f.appendEvents {
+		if keyPresencePathsOverlap(e.Array, writePath) ||
+			keyPresencePathsOverlap(e.Key, writePath) {
+			continue
+		}
+		appendEvents = append(appendEvents, e)
+	}
+	appendCoverage := make([]AppendHistoryCoverageFact, 0, len(f.appendCoverage))
+	for _, e := range f.appendCoverage {
+		if keyPresencePathsOverlap(e.Array, writePath) ||
+			keyPresencePathsOverlap(e.Key, writePath) ||
+			keyPresencePathsOverlap(e.Table, writePath) {
+			continue
+		}
+		appendCoverage = append(appendCoverage, e)
+	}
+	appendOrigins := make([]AppendElementFieldOriginFact, 0, len(f.appendOrigins))
+	for _, e := range f.appendOrigins {
+		if keyPresencePathsOverlap(e.Array, writePath) ||
+			keyPresencePathsOverlap(e.Source, writePath) {
+			continue
+		}
+		appendOrigins = append(appendOrigins, e)
+	}
+	return canonicalKeyPresenceFactsFull(entries, values, arrays, arrayValues, appends, pending, emptyArrays, appendBases, appendEvents, appendCoverage, appendOrigins)
 }
 
 // KillAffectedByPresentElementWrite removes facts invalidated by a write of a
@@ -281,7 +941,11 @@ func (f KeyPresenceFacts) KillAffectedByWrite(writePath constraint.PathKey) KeyP
 // table absent: if the written key aliases an existing proven key, the new
 // non-nil value still leaves that key present.
 func (f KeyPresenceFacts) KillAffectedByPresentElementWrite(writePath constraint.PathKey) KeyPresenceFacts {
-	if f.bottom || writePath == "" || (len(f.entries) == 0 && len(f.values) == 0 && len(f.arrays) == 0) {
+	if f.bottom || writePath == "" ||
+		(len(f.entries) == 0 && len(f.values) == 0 && len(f.arrays) == 0 &&
+			len(f.emptyArrays) == 0 && len(f.arrayValues) == 0 && len(f.appends) == 0 &&
+			len(f.pending) == 0 && len(f.appendBases) == 0 && len(f.appendEvents) == 0 &&
+			len(f.appendCoverage) == 0 && len(f.appendOrigins) == 0) {
 		return f
 	}
 	entries := make([]KeyPresenceFact, 0, len(f.entries))
@@ -307,17 +971,117 @@ func (f KeyPresenceFacts) KillAffectedByPresentElementWrite(writePath constraint
 		}
 		arrays = append(arrays, e)
 	}
-	return canonicalKeyPresenceFactsFull(entries, values, arrays)
+	emptyArrays := make([]EmptyKeyArrayFact, 0, len(f.emptyArrays))
+	for _, e := range f.emptyArrays {
+		if keyPresencePathsOverlap(e.Array, writePath) {
+			continue
+		}
+		emptyArrays = append(emptyArrays, e)
+	}
+	arrayValues := make([]KeyArrayValueFact, 0, len(f.arrayValues))
+	for _, e := range f.arrayValues {
+		if keyPresencePathsOverlap(e.Array, writePath) {
+			continue
+		}
+		arrayValues = append(arrayValues, e)
+	}
+	appends := make([]AppendedKeyFact, 0, len(f.appends))
+	for _, e := range f.appends {
+		if keyPresencePathsOverlap(e.Array, writePath) ||
+			keyPresencePathsOverlap(e.Key, writePath) {
+			continue
+		}
+		appends = append(appends, e)
+	}
+	pending := make([]PendingKeyArrayFact, 0, len(f.pending))
+	for _, e := range f.pending {
+		if keyPresencePathsOverlap(e.Array, writePath) ||
+			keyPresencePathsOverlap(e.Key, writePath) {
+			continue
+		}
+		pending = append(pending, e)
+	}
+	appendBases := make([]AppendHistoryBaseFact, 0, len(f.appendBases))
+	for _, e := range f.appendBases {
+		if keyPresencePathsOverlap(e.Array, writePath) {
+			continue
+		}
+		appendBases = append(appendBases, e)
+	}
+	appendEvents := make([]AppendHistoryEventFact, 0, len(f.appendEvents))
+	for _, e := range f.appendEvents {
+		if keyPresencePathsOverlap(e.Array, writePath) ||
+			keyPresencePathsOverlap(e.Key, writePath) {
+			continue
+		}
+		appendEvents = append(appendEvents, e)
+	}
+	appendCoverage := make([]AppendHistoryCoverageFact, 0, len(f.appendCoverage))
+	for _, e := range f.appendCoverage {
+		if keyPresencePathsOverlap(e.Array, writePath) ||
+			keyPresencePathsOverlap(e.Key, writePath) {
+			continue
+		}
+		appendCoverage = append(appendCoverage, e)
+	}
+	appendOrigins := make([]AppendElementFieldOriginFact, 0, len(f.appendOrigins))
+	for _, e := range f.appendOrigins {
+		if keyPresencePathsOverlap(e.Array, writePath) ||
+			keyPresencePathsOverlap(e.Source, writePath) {
+			continue
+		}
+		appendOrigins = append(appendOrigins, e)
+	}
+	return canonicalKeyPresenceFactsFull(entries, values, arrays, arrayValues, appends, pending, emptyArrays, appendBases, appendEvents, appendCoverage, appendOrigins)
+}
+
+// KillAffectedByPresentElementMemberWrite invalidates value-specific proofs for
+// a write below an already-present array element, such as a[i].field = v. The
+// write can stale facts about the element member, but it does not change the
+// array's key set or append history.
+func (f KeyPresenceFacts) KillAffectedByPresentElementMemberWrite(array constraint.PathKey, member []constraint.Segment) KeyPresenceFacts {
+	killed := f.KillAffectedByPresentElementWrite(array)
+	if f.bottom || array == "" {
+		return killed
+	}
+	arrays := append(killed.KeyArrayEntries(), keyArrayFactsForArray(f.arrays, array)...)
+	arrayValues := append(killed.KeyArrayValueEntries(), keyArrayValueFactsForArray(f.arrayValues, array)...)
+	pending := append(killed.PendingKeyArrayEntries(), pendingKeyArrayFactsForArray(f.pending, array)...)
+	emptyArrays := append(killed.EmptyKeyArrayEntries(), emptyKeyArrayFactsForArray(f.emptyArrays, array)...)
+	appends := append(killed.AppendedKeyEntries(), appendedKeyFactsForArray(f.appends, array)...)
+	appendBases := append(killed.AppendHistoryBaseEntries(), appendHistoryBaseFactsForArray(f.appendBases, array)...)
+	appendEvents := append(killed.AppendHistoryEventEntries(), appendHistoryEventFactsForArray(f.appendEvents, array)...)
+	appendCoverage := append(killed.AppendHistoryCoverageEntries(), appendHistoryCoverageFactsForArray(f.appendCoverage, array)...)
+	appendOrigins := append(killed.AppendElementFieldOriginEntries(), appendElementFieldOriginFactsPreservedByMemberWrite(f.appendOrigins, array, member)...)
+	return canonicalKeyPresenceFactsFull(
+		killed.Entries(),
+		killed.ValueEntries(),
+		arrays,
+		arrayValues,
+		appends,
+		pending,
+		emptyArrays,
+		appendBases,
+		appendEvents,
+		appendCoverage,
+		appendOrigins,
+	)
 }
 
 func (f KeyPresenceFacts) Format() string {
 	if f.bottom {
 		return "⊥"
 	}
-	if len(f.entries) == 0 && len(f.values) == 0 && len(f.arrays) == 0 {
+	if len(f.entries) == 0 && len(f.values) == 0 && len(f.arrays) == 0 &&
+		len(f.emptyArrays) == 0 && len(f.arrayValues) == 0 && len(f.appends) == 0 &&
+		len(f.pending) == 0 && len(f.appendBases) == 0 && len(f.appendEvents) == 0 &&
+		len(f.appendCoverage) == 0 && len(f.appendOrigins) == 0 {
 		return "⊤"
 	}
-	parts := make([]string, 0, len(f.entries)+len(f.values)+len(f.arrays))
+	parts := make([]string, 0,
+		len(f.entries)+len(f.values)+len(f.arrays)+len(f.emptyArrays)+len(f.arrayValues)+
+			len(f.appends)+len(f.pending)+len(f.appendBases)+len(f.appendEvents)+
+			len(f.appendCoverage)+len(f.appendOrigins))
 	for _, e := range f.entries {
 		parts = append(parts, fmt.Sprintf("%s[%s]", e.Table, e.Key))
 	}
@@ -326,6 +1090,34 @@ func (f KeyPresenceFacts) Format() string {
 	}
 	for _, e := range f.arrays {
 		parts = append(parts, fmt.Sprintf("keys(%s)->%s", e.Array, e.Table))
+	}
+	for _, e := range f.emptyArrays {
+		parts = append(parts, fmt.Sprintf("keys(%s)->*", e.Array))
+	}
+	for _, e := range f.arrayValues {
+		parts = append(parts, fmt.Sprintf("keys(%s)->%s=%s", e.Array, e.Table, e.Value.ProjectValue()))
+	}
+	for _, e := range f.appends {
+		parts = append(parts, fmt.Sprintf("append_key(%s,%s)", e.Array, e.Key))
+	}
+	for _, e := range f.pending {
+		table := e.Table
+		if table == "" {
+			table = "*"
+		}
+		parts = append(parts, fmt.Sprintf("pending_keys(%s,%s)->%s", e.Array, e.Key, table))
+	}
+	for _, e := range f.appendBases {
+		parts = append(parts, fmt.Sprintf("append_base(%s)", e.Array))
+	}
+	for _, e := range f.appendEvents {
+		parts = append(parts, fmt.Sprintf("append_event(%s,%s)", e.Array, e.Key))
+	}
+	for _, e := range f.appendCoverage {
+		parts = append(parts, fmt.Sprintf("append_cover(%s,%s)->%s=%s", e.Array, e.Key, e.Table, e.Value.ProjectValue()))
+	}
+	for _, e := range f.appendOrigins {
+		parts = append(parts, fmt.Sprintf("append_origin(%s,%s)->%s", e.Array, e.Field, e.Source))
 	}
 	return "{" + strings.Join(parts, ",") + "}"
 }
@@ -368,6 +1160,75 @@ var KeyPresenceFactsDomain = lattice.Lattice[KeyPresenceFacts]{
 				return false
 			}
 		}
+		if len(a.emptyArrays) != len(b.emptyArrays) {
+			return false
+		}
+		for i := range a.emptyArrays {
+			if a.emptyArrays[i] != b.emptyArrays[i] {
+				return false
+			}
+		}
+		if len(a.arrayValues) != len(b.arrayValues) {
+			return false
+		}
+		for i := range a.arrayValues {
+			if a.arrayValues[i].Array != b.arrayValues[i].Array ||
+				a.arrayValues[i].Table != b.arrayValues[i].Table ||
+				!product.Domain.Equal(a.arrayValues[i].Value, b.arrayValues[i].Value) {
+				return false
+			}
+		}
+		if len(a.appends) != len(b.appends) {
+			return false
+		}
+		for i := range a.appends {
+			if a.appends[i] != b.appends[i] {
+				return false
+			}
+		}
+		if len(a.pending) != len(b.pending) {
+			return false
+		}
+		for i := range a.pending {
+			if a.pending[i] != b.pending[i] {
+				return false
+			}
+		}
+		if len(a.appendBases) != len(b.appendBases) {
+			return false
+		}
+		for i := range a.appendBases {
+			if a.appendBases[i] != b.appendBases[i] {
+				return false
+			}
+		}
+		if len(a.appendEvents) != len(b.appendEvents) {
+			return false
+		}
+		for i := range a.appendEvents {
+			if a.appendEvents[i] != b.appendEvents[i] {
+				return false
+			}
+		}
+		if len(a.appendCoverage) != len(b.appendCoverage) {
+			return false
+		}
+		for i := range a.appendCoverage {
+			if a.appendCoverage[i].Array != b.appendCoverage[i].Array ||
+				a.appendCoverage[i].Key != b.appendCoverage[i].Key ||
+				a.appendCoverage[i].Table != b.appendCoverage[i].Table ||
+				!product.Domain.Equal(a.appendCoverage[i].Value, b.appendCoverage[i].Value) {
+				return false
+			}
+		}
+		if len(a.appendOrigins) != len(b.appendOrigins) {
+			return false
+		}
+		for i := range a.appendOrigins {
+			if a.appendOrigins[i] != b.appendOrigins[i] {
+				return false
+			}
+		}
 		return true
 	},
 	LessOrEq: func(a, b KeyPresenceFacts) bool {
@@ -379,7 +1240,15 @@ var KeyPresenceFactsDomain = lattice.Lattice[KeyPresenceFacts]{
 		}
 		return keyPresenceFactsContainAll(a.entries, b.entries) &&
 			keyValueFactsContainAll(a.values, b.values) &&
-			keyArrayFactsContainAll(a.arrays, b.arrays)
+			keyArrayFactsContainAllWithEmpty(a.arrays, a.emptyArrays, b.arrays) &&
+			emptyKeyArrayFactsContainAll(a.emptyArrays, b.emptyArrays) &&
+			keyArrayValueFactsContainAllWithEmpty(a.arrayValues, a.emptyArrays, b.arrayValues) &&
+			appendedKeyFactsContainAll(a.appends, b.appends) &&
+			pendingKeyArrayFactsContainAll(a.pending, b.pending) &&
+			appendHistoryBaseFactsContainAllWithEmpty(a.appendBases, a.emptyArrays, b.appendBases) &&
+			appendHistoryEventFactsContainAll(b.appendEvents, a.appendEvents) &&
+			appendHistoryCoverageFactsContainAll(b.appendCoverage, a.appendCoverage) &&
+			appendElementFieldOriginFactsContainAll(b.appendOrigins, a.appendOrigins)
 	},
 	Join: func(a, b KeyPresenceFacts) KeyPresenceFacts {
 		if a.bottom {
@@ -398,7 +1267,7 @@ var KeyPresenceFactsDomain = lattice.Lattice[KeyPresenceFacts]{
 		if next.bottom {
 			return prev
 		}
-		return intersectKeyPresenceFacts(prev, next)
+		return intersectKeyPresenceFactsWiden(prev, next)
 	},
 }
 
@@ -407,11 +1276,23 @@ func canonicalKeyPresenceFacts(entries []KeyPresenceFact, values ...[]KeyValueFa
 	if len(values) > 0 {
 		rawValues = values[0]
 	}
-	return canonicalKeyPresenceFactsFull(entries, rawValues, nil)
+	return canonicalKeyPresenceFactsFull(entries, rawValues, nil, nil, nil, nil, nil, nil, nil, nil, nil)
 }
 
-func canonicalKeyPresenceFactsFull(entries []KeyPresenceFact, values []KeyValueFact, arrays []KeyArrayFact) KeyPresenceFacts {
-	if len(entries) == 0 && len(values) == 0 && len(arrays) == 0 {
+func canonicalKeyPresenceFactsFull(
+	entries []KeyPresenceFact,
+	values []KeyValueFact,
+	arrays []KeyArrayFact,
+	arrayValues []KeyArrayValueFact,
+	appends []AppendedKeyFact,
+	pending []PendingKeyArrayFact,
+	emptyArrays []EmptyKeyArrayFact,
+	appendBases []AppendHistoryBaseFact,
+	appendEvents []AppendHistoryEventFact,
+	appendCoverage []AppendHistoryCoverageFact,
+	appendOrigins []AppendElementFieldOriginFact,
+) KeyPresenceFacts {
+	if len(entries) == 0 && len(values) == 0 && len(arrays) == 0 && len(emptyArrays) == 0 && len(arrayValues) == 0 && len(appends) == 0 && len(pending) == 0 && len(appendBases) == 0 && len(appendEvents) == 0 && len(appendCoverage) == 0 && len(appendOrigins) == 0 {
 		return KeyPresenceFacts{}
 	}
 	out := append([]KeyPresenceFact(nil), entries...)
@@ -450,10 +1331,141 @@ func canonicalKeyPresenceFactsFull(entries []KeyPresenceFact, values []KeyValueF
 		}
 		arrayDst = append(arrayDst, e)
 	}
+	emptyOut := append([]EmptyKeyArrayFact(nil), emptyArrays...)
+	sortEmptyKeyArrayFacts(emptyOut)
+	emptyDst := emptyOut[:0]
+	for _, e := range emptyOut {
+		if e.Array == "" {
+			continue
+		}
+		if len(emptyDst) > 0 && emptyDst[len(emptyDst)-1] == e {
+			continue
+		}
+		emptyDst = append(emptyDst, e)
+	}
+	arrayValueOut := append([]KeyArrayValueFact(nil), arrayValues...)
+	sortKeyArrayValueFacts(arrayValueOut)
+	arrayValueDst := arrayValueOut[:0]
+	for _, e := range arrayValueOut {
+		if e.Array == "" || e.Table == "" || e.Value.IsZero() {
+			continue
+		}
+		if len(arrayValueDst) > 0 &&
+			arrayValueDst[len(arrayValueDst)-1].Array == e.Array &&
+			arrayValueDst[len(arrayValueDst)-1].Table == e.Table {
+			arrayValueDst[len(arrayValueDst)-1].Value = product.Domain.Join(arrayValueDst[len(arrayValueDst)-1].Value, e.Value)
+			continue
+		}
+		arrayValueDst = append(arrayValueDst, e)
+	}
+	appendOut := append([]AppendedKeyFact(nil), appends...)
+	sortAppendedKeyFacts(appendOut)
+	appendDst := appendOut[:0]
+	for _, e := range appendOut {
+		if e.Array == "" || e.Key == "" {
+			continue
+		}
+		if len(appendDst) > 0 && appendDst[len(appendDst)-1] == e {
+			continue
+		}
+		appendDst = append(appendDst, e)
+	}
+	pendingOut := append([]PendingKeyArrayFact(nil), pending...)
+	sortPendingKeyArrayFacts(pendingOut)
+	pendingDst := pendingOut[:0]
+	for _, e := range pendingOut {
+		if e.Array == "" || e.Key == "" {
+			continue
+		}
+		if len(pendingDst) > 0 && pendingDst[len(pendingDst)-1] == e {
+			continue
+		}
+		pendingDst = append(pendingDst, e)
+	}
+	appendBaseOut := append([]AppendHistoryBaseFact(nil), appendBases...)
+	sortAppendHistoryBaseFacts(appendBaseOut)
+	appendBaseDst := appendBaseOut[:0]
+	for _, e := range appendBaseOut {
+		if e.Array == "" {
+			continue
+		}
+		if len(appendBaseDst) > 0 && appendBaseDst[len(appendBaseDst)-1] == e {
+			continue
+		}
+		appendBaseDst = append(appendBaseDst, e)
+	}
+	appendEventOut := append([]AppendHistoryEventFact(nil), appendEvents...)
+	sortAppendHistoryEventFacts(appendEventOut)
+	appendEventDst := appendEventOut[:0]
+	for _, e := range appendEventOut {
+		if e.Array == "" || e.Key == "" {
+			continue
+		}
+		if _, ok := findAppendHistoryBaseFact(appendBaseDst, AppendHistoryBaseFact{Array: e.Array}); !ok {
+			continue
+		}
+		if len(appendEventDst) > 0 && appendEventDst[len(appendEventDst)-1] == e {
+			continue
+		}
+		appendEventDst = append(appendEventDst, e)
+	}
+	appendCoverageOut := append([]AppendHistoryCoverageFact(nil), appendCoverage...)
+	sortAppendHistoryCoverageFacts(appendCoverageOut)
+	appendCoverageDst := appendCoverageOut[:0]
+	for _, e := range appendCoverageOut {
+		if e.Array == "" || e.Key == "" || e.Table == "" || e.Value.IsZero() {
+			continue
+		}
+		if _, ok := findAppendHistoryBaseFact(appendBaseDst, AppendHistoryBaseFact{Array: e.Array}); !ok {
+			continue
+		}
+		if _, ok := findAppendHistoryEventFact(appendEventDst, AppendHistoryEventFact{Array: e.Array, Key: e.Key}); !ok {
+			continue
+		}
+		if len(appendCoverageDst) > 0 &&
+			appendCoverageDst[len(appendCoverageDst)-1].Array == e.Array &&
+			appendCoverageDst[len(appendCoverageDst)-1].Key == e.Key &&
+			appendCoverageDst[len(appendCoverageDst)-1].Table == e.Table {
+			appendCoverageDst[len(appendCoverageDst)-1].Value = product.Domain.Join(appendCoverageDst[len(appendCoverageDst)-1].Value, e.Value)
+			continue
+		}
+		appendCoverageDst = append(appendCoverageDst, e)
+	}
+	appendOriginOut := append([]AppendElementFieldOriginFact(nil), appendOrigins...)
+	sortAppendElementFieldOriginFacts(appendOriginOut)
+	appendOriginDst := appendOriginOut[:0]
+	for _, e := range appendOriginOut {
+		if e.Array == "" || e.Field == "" || e.Source == "" {
+			continue
+		}
+		if e.SourceField != "" {
+			if _, ok := AppendElementFieldSegments(e.SourceField); !ok {
+				continue
+			}
+		}
+		if _, ok := findAppendHistoryBaseFact(appendBaseDst, AppendHistoryBaseFact{Array: e.Array}); !ok {
+			continue
+		}
+		if _, ok := AppendElementFieldSegments(e.Field); !ok {
+			continue
+		}
+		if len(appendOriginDst) > 0 && appendOriginDst[len(appendOriginDst)-1] == e {
+			continue
+		}
+		appendOriginDst = append(appendOriginDst, e)
+	}
 	return KeyPresenceFacts{
-		entries: append([]KeyPresenceFact(nil), dst...),
-		values:  append([]KeyValueFact(nil), valueDst...),
-		arrays:  append([]KeyArrayFact(nil), arrayDst...),
+		entries:        append([]KeyPresenceFact(nil), dst...),
+		values:         append([]KeyValueFact(nil), valueDst...),
+		arrays:         append([]KeyArrayFact(nil), arrayDst...),
+		emptyArrays:    append([]EmptyKeyArrayFact(nil), emptyDst...),
+		arrayValues:    append([]KeyArrayValueFact(nil), arrayValueDst...),
+		appends:        append([]AppendedKeyFact(nil), appendDst...),
+		pending:        append([]PendingKeyArrayFact(nil), pendingDst...),
+		appendBases:    append([]AppendHistoryBaseFact(nil), appendBaseDst...),
+		appendEvents:   append([]AppendHistoryEventFact(nil), appendEventDst...),
+		appendCoverage: append([]AppendHistoryCoverageFact(nil), appendCoverageDst...),
+		appendOrigins:  append([]AppendElementFieldOriginFact(nil), appendOriginDst...),
 	}
 }
 
@@ -505,6 +1517,132 @@ func keyArrayLess(a, b KeyArrayFact) bool {
 	return a.Table < b.Table
 }
 
+func sortEmptyKeyArrayFacts(entries []EmptyKeyArrayFact) {
+	for i := 1; i < len(entries); i++ {
+		for j := i; j > 0 && emptyKeyArrayLess(entries[j], entries[j-1]); j-- {
+			entries[j], entries[j-1] = entries[j-1], entries[j]
+		}
+	}
+}
+
+func emptyKeyArrayLess(a, b EmptyKeyArrayFact) bool {
+	return a.Array < b.Array
+}
+
+func sortKeyArrayValueFacts(entries []KeyArrayValueFact) {
+	for i := 1; i < len(entries); i++ {
+		for j := i; j > 0 && keyArrayValueLess(entries[j], entries[j-1]); j-- {
+			entries[j], entries[j-1] = entries[j-1], entries[j]
+		}
+	}
+}
+
+func keyArrayValueLess(a, b KeyArrayValueFact) bool {
+	if a.Array != b.Array {
+		return a.Array < b.Array
+	}
+	return a.Table < b.Table
+}
+
+func sortAppendedKeyFacts(entries []AppendedKeyFact) {
+	for i := 1; i < len(entries); i++ {
+		for j := i; j > 0 && appendedKeyLess(entries[j], entries[j-1]); j-- {
+			entries[j], entries[j-1] = entries[j-1], entries[j]
+		}
+	}
+}
+
+func appendedKeyLess(a, b AppendedKeyFact) bool {
+	if a.Array != b.Array {
+		return a.Array < b.Array
+	}
+	return a.Key < b.Key
+}
+
+func sortPendingKeyArrayFacts(entries []PendingKeyArrayFact) {
+	for i := 1; i < len(entries); i++ {
+		for j := i; j > 0 && pendingKeyArrayLess(entries[j], entries[j-1]); j-- {
+			entries[j], entries[j-1] = entries[j-1], entries[j]
+		}
+	}
+}
+
+func pendingKeyArrayLess(a, b PendingKeyArrayFact) bool {
+	if a.Array != b.Array {
+		return a.Array < b.Array
+	}
+	if a.Key != b.Key {
+		return a.Key < b.Key
+	}
+	return a.Table < b.Table
+}
+
+func sortAppendHistoryBaseFacts(entries []AppendHistoryBaseFact) {
+	for i := 1; i < len(entries); i++ {
+		for j := i; j > 0 && appendHistoryBaseLess(entries[j], entries[j-1]); j-- {
+			entries[j], entries[j-1] = entries[j-1], entries[j]
+		}
+	}
+}
+
+func appendHistoryBaseLess(a, b AppendHistoryBaseFact) bool {
+	return a.Array < b.Array
+}
+
+func sortAppendHistoryEventFacts(entries []AppendHistoryEventFact) {
+	for i := 1; i < len(entries); i++ {
+		for j := i; j > 0 && appendHistoryEventLess(entries[j], entries[j-1]); j-- {
+			entries[j], entries[j-1] = entries[j-1], entries[j]
+		}
+	}
+}
+
+func appendHistoryEventLess(a, b AppendHistoryEventFact) bool {
+	if a.Array != b.Array {
+		return a.Array < b.Array
+	}
+	return a.Key < b.Key
+}
+
+func sortAppendHistoryCoverageFacts(entries []AppendHistoryCoverageFact) {
+	for i := 1; i < len(entries); i++ {
+		for j := i; j > 0 && appendHistoryCoverageLess(entries[j], entries[j-1]); j-- {
+			entries[j], entries[j-1] = entries[j-1], entries[j]
+		}
+	}
+}
+
+func appendHistoryCoverageLess(a, b AppendHistoryCoverageFact) bool {
+	if a.Array != b.Array {
+		return a.Array < b.Array
+	}
+	if a.Key != b.Key {
+		return a.Key < b.Key
+	}
+	return a.Table < b.Table
+}
+
+func sortAppendElementFieldOriginFacts(entries []AppendElementFieldOriginFact) {
+	for i := 1; i < len(entries); i++ {
+		for j := i; j > 0 && appendElementFieldOriginLess(entries[j], entries[j-1]); j-- {
+			entries[j], entries[j-1] = entries[j-1], entries[j]
+		}
+	}
+}
+
+func appendElementFieldOriginLess(a, b AppendElementFieldOriginFact) bool {
+	if a.Array != b.Array {
+		return a.Array < b.Array
+	}
+	if a.Field != b.Field {
+		return a.Field < b.Field
+	}
+	if a.Source != b.Source {
+		return a.Source < b.Source
+	}
+	return a.SourceField < b.SourceField
+}
+
 func findKeyPresenceFact(entries []KeyPresenceFact, fact KeyPresenceFact) (int, bool) {
 	lo, hi := 0, len(entries)
 	for lo < hi {
@@ -544,6 +1682,115 @@ func findKeyArrayFact(entries []KeyArrayFact, fact KeyArrayFact) (int, bool) {
 	return lo, lo < len(entries) && entries[lo] == fact
 }
 
+func findEmptyKeyArrayFact(entries []EmptyKeyArrayFact, fact EmptyKeyArrayFact) (int, bool) {
+	lo, hi := 0, len(entries)
+	for lo < hi {
+		mid := int(uint(lo+hi) >> 1)
+		if emptyKeyArrayLess(entries[mid], fact) {
+			lo = mid + 1
+		} else {
+			hi = mid
+		}
+	}
+	return lo, lo < len(entries) && entries[lo] == fact
+}
+
+func findKeyArrayValueFact(entries []KeyArrayValueFact, fact KeyArrayValueFact) (int, bool) {
+	lo, hi := 0, len(entries)
+	for lo < hi {
+		mid := int(uint(lo+hi) >> 1)
+		if keyArrayValueLess(entries[mid], fact) {
+			lo = mid + 1
+		} else {
+			hi = mid
+		}
+	}
+	return lo, lo < len(entries) &&
+		entries[lo].Array == fact.Array &&
+		entries[lo].Table == fact.Table
+}
+
+func findAppendedKeyFact(entries []AppendedKeyFact, fact AppendedKeyFact) (int, bool) {
+	lo, hi := 0, len(entries)
+	for lo < hi {
+		mid := int(uint(lo+hi) >> 1)
+		if appendedKeyLess(entries[mid], fact) {
+			lo = mid + 1
+		} else {
+			hi = mid
+		}
+	}
+	return lo, lo < len(entries) && entries[lo] == fact
+}
+
+func findPendingKeyArrayFact(entries []PendingKeyArrayFact, fact PendingKeyArrayFact) (int, bool) {
+	lo, hi := 0, len(entries)
+	for lo < hi {
+		mid := int(uint(lo+hi) >> 1)
+		if pendingKeyArrayLess(entries[mid], fact) {
+			lo = mid + 1
+		} else {
+			hi = mid
+		}
+	}
+	return lo, lo < len(entries) && entries[lo] == fact
+}
+
+func findAppendHistoryBaseFact(entries []AppendHistoryBaseFact, fact AppendHistoryBaseFact) (int, bool) {
+	lo, hi := 0, len(entries)
+	for lo < hi {
+		mid := int(uint(lo+hi) >> 1)
+		if appendHistoryBaseLess(entries[mid], fact) {
+			lo = mid + 1
+		} else {
+			hi = mid
+		}
+	}
+	return lo, lo < len(entries) && entries[lo] == fact
+}
+
+func findAppendHistoryEventFact(entries []AppendHistoryEventFact, fact AppendHistoryEventFact) (int, bool) {
+	lo, hi := 0, len(entries)
+	for lo < hi {
+		mid := int(uint(lo+hi) >> 1)
+		if appendHistoryEventLess(entries[mid], fact) {
+			lo = mid + 1
+		} else {
+			hi = mid
+		}
+	}
+	return lo, lo < len(entries) && entries[lo] == fact
+}
+
+func findAppendHistoryCoverageFact(entries []AppendHistoryCoverageFact, fact AppendHistoryCoverageFact) (int, bool) {
+	lo, hi := 0, len(entries)
+	for lo < hi {
+		mid := int(uint(lo+hi) >> 1)
+		if appendHistoryCoverageLess(entries[mid], fact) {
+			lo = mid + 1
+		} else {
+			hi = mid
+		}
+	}
+	return lo, lo < len(entries) &&
+		entries[lo].Array == fact.Array &&
+		entries[lo].Key == fact.Key &&
+		entries[lo].Table == fact.Table
+}
+
+func findAppendElementFieldOriginFact(entries []AppendElementFieldOriginFact, fact AppendElementFieldOriginFact) (int, bool) {
+	lo, hi := 0, len(entries)
+	for lo < hi {
+		mid := int(uint(lo+hi) >> 1)
+		if appendElementFieldOriginLess(entries[mid], fact) {
+			lo = mid + 1
+		} else {
+			hi = mid
+		}
+	}
+	return lo, lo < len(entries) && entries[lo] == fact
+}
+
 func keyPresenceFactsContainAll(have, want []KeyPresenceFact) bool {
 	for _, w := range want {
 		if _, ok := findKeyPresenceFact(have, w); !ok {
@@ -571,7 +1818,120 @@ func keyArrayFactsContainAll(have, want []KeyArrayFact) bool {
 	return true
 }
 
+func keyArrayFactsContainAllWithEmpty(have []KeyArrayFact, empty []EmptyKeyArrayFact, want []KeyArrayFact) bool {
+	for _, w := range want {
+		if _, ok := findKeyArrayFact(have, w); ok {
+			continue
+		}
+		if _, ok := findEmptyKeyArrayFact(empty, EmptyKeyArrayFact{Array: w.Array}); ok {
+			continue
+		}
+		return false
+	}
+	return true
+}
+
+func emptyKeyArrayFactsContainAll(have, want []EmptyKeyArrayFact) bool {
+	for _, w := range want {
+		if _, ok := findEmptyKeyArrayFact(have, w); !ok {
+			return false
+		}
+	}
+	return true
+}
+
+func keyArrayValueFactsContainAll(have, want []KeyArrayValueFact) bool {
+	for _, w := range want {
+		i, ok := findKeyArrayValueFact(have, w)
+		if !ok || !product.Domain.LessOrEq(have[i].Value, w.Value) {
+			return false
+		}
+	}
+	return true
+}
+
+func keyArrayValueFactsContainAllWithEmpty(have []KeyArrayValueFact, empty []EmptyKeyArrayFact, want []KeyArrayValueFact) bool {
+	for _, w := range want {
+		i, ok := findKeyArrayValueFact(have, w)
+		if ok && product.Domain.LessOrEq(have[i].Value, w.Value) {
+			continue
+		}
+		if _, ok := findEmptyKeyArrayFact(empty, EmptyKeyArrayFact{Array: w.Array}); ok {
+			continue
+		}
+		return false
+	}
+	return true
+}
+
+func appendedKeyFactsContainAll(have, want []AppendedKeyFact) bool {
+	for _, w := range want {
+		if _, ok := findAppendedKeyFact(have, w); !ok {
+			return false
+		}
+	}
+	return true
+}
+
+func pendingKeyArrayFactsContainAll(have, want []PendingKeyArrayFact) bool {
+	for _, w := range want {
+		if _, ok := findPendingKeyArrayFact(have, w); !ok {
+			return false
+		}
+	}
+	return true
+}
+
+func appendHistoryBaseFactsContainAllWithEmpty(have []AppendHistoryBaseFact, empty []EmptyKeyArrayFact, want []AppendHistoryBaseFact) bool {
+	for _, w := range want {
+		if _, ok := findAppendHistoryBaseFact(have, w); ok {
+			continue
+		}
+		if _, ok := findEmptyKeyArrayFact(empty, EmptyKeyArrayFact{Array: w.Array}); ok {
+			continue
+		}
+		return false
+	}
+	return true
+}
+
+func appendHistoryEventFactsContainAll(have, want []AppendHistoryEventFact) bool {
+	for _, w := range want {
+		if _, ok := findAppendHistoryEventFact(have, w); !ok {
+			return false
+		}
+	}
+	return true
+}
+
+func appendHistoryCoverageFactsContainAll(have, want []AppendHistoryCoverageFact) bool {
+	for _, w := range want {
+		i, ok := findAppendHistoryCoverageFact(have, w)
+		if !ok || !product.Domain.LessOrEq(have[i].Value, w.Value) {
+			return false
+		}
+	}
+	return true
+}
+
+func appendElementFieldOriginFactsContainAll(have, want []AppendElementFieldOriginFact) bool {
+	for _, w := range want {
+		if _, ok := findAppendElementFieldOriginFact(have, w); !ok {
+			return false
+		}
+	}
+	return true
+}
+
 func intersectKeyPresenceFacts(a, b KeyPresenceFacts) KeyPresenceFacts {
+	return intersectKeyPresenceFactsWithPayload(a, b, false)
+}
+
+func intersectKeyPresenceFactsWiden(prev, next KeyPresenceFacts) KeyPresenceFacts {
+	return intersectKeyPresenceFactsWithPayload(prev, next, true)
+}
+
+func intersectKeyPresenceFactsWithPayload(a, b KeyPresenceFacts, widenPayload bool) KeyPresenceFacts {
 	var out []KeyPresenceFact
 	i, j := 0, 0
 	for i < len(a.entries) && j < len(b.entries) {
@@ -614,15 +1974,370 @@ func intersectKeyPresenceFacts(a, b KeyPresenceFacts) KeyPresenceFacts {
 			j++
 		}
 	}
-	return canonicalKeyPresenceFactsFull(out, values, arrays)
+	arrays = append(arrays, keyArrayFactsSpecializedByEmpty(a.emptyArrays, b.arrays)...)
+	arrays = append(arrays, keyArrayFactsSpecializedByEmpty(b.emptyArrays, a.arrays)...)
+	var emptyArrays []EmptyKeyArrayFact
+	i, j = 0, 0
+	for i < len(a.emptyArrays) && j < len(b.emptyArrays) {
+		switch {
+		case emptyKeyArrayLess(a.emptyArrays[i], b.emptyArrays[j]):
+			i++
+		case emptyKeyArrayLess(b.emptyArrays[j], a.emptyArrays[i]):
+			j++
+		default:
+			emptyArrays = append(emptyArrays, a.emptyArrays[i])
+			i++
+			j++
+		}
+	}
+	var arrayValues []KeyArrayValueFact
+	i, j = 0, 0
+	for i < len(a.arrayValues) && j < len(b.arrayValues) {
+		switch {
+		case keyArrayValueLess(a.arrayValues[i], b.arrayValues[j]):
+			i++
+		case keyArrayValueLess(b.arrayValues[j], a.arrayValues[i]):
+			j++
+		default:
+			value := product.Domain.Join(a.arrayValues[i].Value, b.arrayValues[j].Value)
+			if widenPayload {
+				value = product.Domain.Widen(a.arrayValues[i].Value, b.arrayValues[j].Value)
+			}
+			arrayValues = append(arrayValues, KeyArrayValueFact{
+				Array: a.arrayValues[i].Array,
+				Table: a.arrayValues[i].Table,
+				Value: value,
+			})
+			i++
+			j++
+		}
+	}
+	arrayValues = append(arrayValues, keyArrayValueFactsSpecializedByEmpty(a.emptyArrays, b.arrayValues)...)
+	arrayValues = append(arrayValues, keyArrayValueFactsSpecializedByEmpty(b.emptyArrays, a.arrayValues)...)
+	var pending []PendingKeyArrayFact
+	var appends []AppendedKeyFact
+	i, j = 0, 0
+	for i < len(a.appends) && j < len(b.appends) {
+		switch {
+		case appendedKeyLess(a.appends[i], b.appends[j]):
+			i++
+		case appendedKeyLess(b.appends[j], a.appends[i]):
+			j++
+		default:
+			appends = append(appends, a.appends[i])
+			i++
+			j++
+		}
+	}
+	i, j = 0, 0
+	for i < len(a.pending) && j < len(b.pending) {
+		switch {
+		case pendingKeyArrayLess(a.pending[i], b.pending[j]):
+			i++
+		case pendingKeyArrayLess(b.pending[j], a.pending[i]):
+			j++
+		default:
+			pending = append(pending, a.pending[i])
+			i++
+			j++
+		}
+	}
+	var appendBases []AppendHistoryBaseFact
+	i, j = 0, 0
+	for i < len(a.appendBases) && j < len(b.appendBases) {
+		switch {
+		case appendHistoryBaseLess(a.appendBases[i], b.appendBases[j]):
+			i++
+		case appendHistoryBaseLess(b.appendBases[j], a.appendBases[i]):
+			j++
+		default:
+			appendBases = append(appendBases, a.appendBases[i])
+			i++
+			j++
+		}
+	}
+	appendBases = append(appendBases, appendHistoryBasesSpecializedByEmpty(a.emptyArrays, b.appendBases)...)
+	appendBases = append(appendBases, appendHistoryBasesSpecializedByEmpty(b.emptyArrays, a.appendBases)...)
+	appendBases = compactAppendHistoryBases(appendBases)
+	appendEvents := appendHistoryEventsForBases(append(a.AppendHistoryEventEntries(), b.AppendHistoryEventEntries()...), appendBases)
+	appendCoverage := appendHistoryCoverageForBases(append(a.AppendHistoryCoverageEntries(), b.AppendHistoryCoverageEntries()...), appendBases, appendEvents, widenPayload)
+	appendOrigins := appendElementFieldOriginsForBases(append(a.AppendElementFieldOriginEntries(), b.AppendElementFieldOriginEntries()...), appendBases)
+	return canonicalKeyPresenceFactsFull(out, values, arrays, arrayValues, appends, pending, emptyArrays, appendBases, appendEvents, appendCoverage, appendOrigins)
+}
+
+func keyArrayFactsSpecializedByEmpty(empty []EmptyKeyArrayFact, concrete []KeyArrayFact) []KeyArrayFact {
+	if len(empty) == 0 || len(concrete) == 0 {
+		return nil
+	}
+	var out []KeyArrayFact
+	for _, fact := range concrete {
+		if _, ok := findEmptyKeyArrayFact(empty, EmptyKeyArrayFact{Array: fact.Array}); ok {
+			out = append(out, fact)
+		}
+	}
+	return out
+}
+
+func keyArrayValueFactsSpecializedByEmpty(empty []EmptyKeyArrayFact, concrete []KeyArrayValueFact) []KeyArrayValueFact {
+	if len(empty) == 0 || len(concrete) == 0 {
+		return nil
+	}
+	var out []KeyArrayValueFact
+	for _, fact := range concrete {
+		if _, ok := findEmptyKeyArrayFact(empty, EmptyKeyArrayFact{Array: fact.Array}); ok {
+			out = append(out, fact)
+		}
+	}
+	return out
+}
+
+func appendHistoryBasesSpecializedByEmpty(empty []EmptyKeyArrayFact, concrete []AppendHistoryBaseFact) []AppendHistoryBaseFact {
+	if len(empty) == 0 || len(concrete) == 0 {
+		return nil
+	}
+	var out []AppendHistoryBaseFact
+	for _, fact := range concrete {
+		if _, ok := findEmptyKeyArrayFact(empty, EmptyKeyArrayFact{Array: fact.Array}); ok {
+			out = append(out, fact)
+		}
+	}
+	return out
+}
+
+func compactAppendHistoryBases(entries []AppendHistoryBaseFact) []AppendHistoryBaseFact {
+	if len(entries) == 0 {
+		return nil
+	}
+	sortAppendHistoryBaseFacts(entries)
+	out := entries[:0]
+	for _, entry := range entries {
+		if entry.Array == "" {
+			continue
+		}
+		if len(out) > 0 && out[len(out)-1] == entry {
+			continue
+		}
+		out = append(out, entry)
+	}
+	return append([]AppendHistoryBaseFact(nil), out...)
+}
+
+func appendHistoryEventsForBases(events []AppendHistoryEventFact, bases []AppendHistoryBaseFact) []AppendHistoryEventFact {
+	if len(events) == 0 || len(bases) == 0 {
+		return nil
+	}
+	sortAppendHistoryEventFacts(events)
+	var out []AppendHistoryEventFact
+	for _, event := range events {
+		if event.Array == "" || event.Key == "" {
+			continue
+		}
+		if _, ok := findAppendHistoryBaseFact(bases, AppendHistoryBaseFact{Array: event.Array}); !ok {
+			continue
+		}
+		if len(out) > 0 && out[len(out)-1] == event {
+			continue
+		}
+		out = append(out, event)
+	}
+	return append([]AppendHistoryEventFact(nil), out...)
+}
+
+func appendHistoryCoverageForBases(
+	coverage []AppendHistoryCoverageFact,
+	bases []AppendHistoryBaseFact,
+	events []AppendHistoryEventFact,
+	widenPayload bool,
+) []AppendHistoryCoverageFact {
+	if len(coverage) == 0 || len(bases) == 0 || len(events) == 0 {
+		return nil
+	}
+	sortAppendHistoryCoverageFacts(coverage)
+	var out []AppendHistoryCoverageFact
+	for _, fact := range coverage {
+		if fact.Array == "" || fact.Key == "" || fact.Table == "" || fact.Value.IsZero() {
+			continue
+		}
+		if _, ok := findAppendHistoryBaseFact(bases, AppendHistoryBaseFact{Array: fact.Array}); !ok {
+			continue
+		}
+		if _, ok := findAppendHistoryEventFact(events, AppendHistoryEventFact{Array: fact.Array, Key: fact.Key}); !ok {
+			continue
+		}
+		if len(out) > 0 &&
+			out[len(out)-1].Array == fact.Array &&
+			out[len(out)-1].Key == fact.Key &&
+			out[len(out)-1].Table == fact.Table {
+			if widenPayload {
+				out[len(out)-1].Value = product.Domain.Widen(out[len(out)-1].Value, fact.Value)
+			} else {
+				out[len(out)-1].Value = product.Domain.Join(out[len(out)-1].Value, fact.Value)
+			}
+			continue
+		}
+		out = append(out, fact)
+	}
+	return append([]AppendHistoryCoverageFact(nil), out...)
+}
+
+func appendElementFieldOriginsForBases(
+	origins []AppendElementFieldOriginFact,
+	bases []AppendHistoryBaseFact,
+) []AppendElementFieldOriginFact {
+	if len(origins) == 0 || len(bases) == 0 {
+		return nil
+	}
+	sortAppendElementFieldOriginFacts(origins)
+	var out []AppendElementFieldOriginFact
+	for _, origin := range origins {
+		if origin.Array == "" || origin.Field == "" || origin.Source == "" {
+			continue
+		}
+		if origin.SourceField != "" {
+			if _, ok := AppendElementFieldSegments(origin.SourceField); !ok {
+				continue
+			}
+		}
+		if _, ok := findAppendHistoryBaseFact(bases, AppendHistoryBaseFact{Array: origin.Array}); !ok {
+			continue
+		}
+		if _, ok := AppendElementFieldSegments(origin.Field); !ok {
+			continue
+		}
+		if len(out) > 0 && out[len(out)-1] == origin {
+			continue
+		}
+		out = append(out, origin)
+	}
+	return append([]AppendElementFieldOriginFact(nil), out...)
 }
 
 func keyPresencePathAffected(path, root constraint.PathKey) bool {
-	p := string(path)
-	r := string(root)
-	return p == r || strings.HasPrefix(p, r+".") || strings.HasPrefix(p, r+"[")
+	pathAddr, pathOK := StableAddressFromKey(path)
+	rootAddr, rootOK := StableAddressFromKey(root)
+	return pathOK && rootOK && pathAddr.HasPrefix(rootAddr)
 }
 
 func keyPresencePathsOverlap(a, b constraint.PathKey) bool {
-	return keyPresencePathAffected(a, b) || keyPresencePathAffected(b, a)
+	left, leftOK := StableAddressFromKey(a)
+	right, rightOK := StableAddressFromKey(b)
+	return leftOK && rightOK && left.Overlaps(right)
+}
+
+func keyArrayFactsForArray(facts []KeyArrayFact, array constraint.PathKey) []KeyArrayFact {
+	var out []KeyArrayFact
+	for _, fact := range facts {
+		if fact.Array == array {
+			out = append(out, fact)
+		}
+	}
+	return out
+}
+
+func keyArrayValueFactsForArray(facts []KeyArrayValueFact, array constraint.PathKey) []KeyArrayValueFact {
+	var out []KeyArrayValueFact
+	for _, fact := range facts {
+		if fact.Array == array {
+			out = append(out, fact)
+		}
+	}
+	return out
+}
+
+func pendingKeyArrayFactsForArray(facts []PendingKeyArrayFact, array constraint.PathKey) []PendingKeyArrayFact {
+	var out []PendingKeyArrayFact
+	for _, fact := range facts {
+		if fact.Array == array {
+			out = append(out, fact)
+		}
+	}
+	return out
+}
+
+func emptyKeyArrayFactsForArray(facts []EmptyKeyArrayFact, array constraint.PathKey) []EmptyKeyArrayFact {
+	var out []EmptyKeyArrayFact
+	for _, fact := range facts {
+		if fact.Array == array {
+			out = append(out, fact)
+		}
+	}
+	return out
+}
+
+func appendedKeyFactsForArray(facts []AppendedKeyFact, array constraint.PathKey) []AppendedKeyFact {
+	var out []AppendedKeyFact
+	for _, fact := range facts {
+		if fact.Array == array {
+			out = append(out, fact)
+		}
+	}
+	return out
+}
+
+func appendHistoryBaseFactsForArray(facts []AppendHistoryBaseFact, array constraint.PathKey) []AppendHistoryBaseFact {
+	var out []AppendHistoryBaseFact
+	for _, fact := range facts {
+		if fact.Array == array {
+			out = append(out, fact)
+		}
+	}
+	return out
+}
+
+func appendHistoryEventFactsForArray(facts []AppendHistoryEventFact, array constraint.PathKey) []AppendHistoryEventFact {
+	var out []AppendHistoryEventFact
+	for _, fact := range facts {
+		if fact.Array == array {
+			out = append(out, fact)
+		}
+	}
+	return out
+}
+
+func appendHistoryCoverageFactsForArray(facts []AppendHistoryCoverageFact, array constraint.PathKey) []AppendHistoryCoverageFact {
+	var out []AppendHistoryCoverageFact
+	for _, fact := range facts {
+		if fact.Array == array {
+			out = append(out, fact)
+		}
+	}
+	return out
+}
+
+func appendElementFieldOriginFactsPreservedByMemberWrite(
+	facts []AppendElementFieldOriginFact,
+	array constraint.PathKey,
+	member []constraint.Segment,
+) []AppendElementFieldOriginFact {
+	var out []AppendElementFieldOriginFact
+	for _, fact := range facts {
+		if fact.Array != array {
+			continue
+		}
+		if appendElementFieldOriginOverlapsMember(fact, member) {
+			continue
+		}
+		out = append(out, fact)
+	}
+	return out
+}
+
+func appendElementFieldOriginOverlapsMember(fact AppendElementFieldOriginFact, member []constraint.Segment) bool {
+	field, ok := AppendElementFieldSegments(fact.Field)
+	if !ok || len(member) == 0 {
+		return true
+	}
+	return segmentsOverlap(field, member)
+}
+
+func segmentsOverlap(a, b []constraint.Segment) bool {
+	if len(a) > len(b) {
+		a, b = b, a
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
 }

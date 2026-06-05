@@ -190,6 +190,26 @@ func TestCallSummaryProjection_OpenGenericReturnRepairsWithSignatureFallback(t *
 	}
 }
 
+func TestCallSummaryProjection_NonDeclaredReturnDoesNotReplaceWholeSlotWithFallback(t *testing.T) {
+	projection := summary.CallSummaryProjection{
+		Targets: []summary.CallSummaryTarget{
+			{
+				DeclaredReturns:  false,
+				SignatureReturns: []typ.Type{typ.LiteralString("signature-only")},
+				Summary:          summary.Summary{Returns: []product.AbstractValue{product.FromType(typ.String)}},
+			},
+		},
+	}
+
+	got := projection.ReturnValues()
+	if len(got) != 1 {
+		t.Fatalf("ReturnValues len = %d, want 1", len(got))
+	}
+	if !typ.TypeEquals(got[0].ProjectValue(), typ.String) {
+		t.Fatalf("slot 0 = %v, want solved summary string", got[0].ProjectValue())
+	}
+}
+
 func TestCallSummaryProjection_DeclaredUnknownReturnsAreCarrierValues(t *testing.T) {
 	projection := summary.CallSummaryProjection{
 		Targets: []summary.CallSummaryTarget{

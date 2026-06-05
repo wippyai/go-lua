@@ -7,6 +7,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/check/domain/fieldkey"
 	flowpath "github.com/wippyai/go-lua/compiler/check/domain/path"
 	"github.com/wippyai/go-lua/types/constraint"
+	"github.com/wippyai/go-lua/types/db"
 	"github.com/wippyai/go-lua/types/query/core"
 	"github.com/wippyai/go-lua/types/typ"
 )
@@ -27,6 +28,8 @@ type StaticTypeLookup struct {
 type TypeResolver struct {
 	Bindings *bind.BindingTable
 	ExprType func(ast.Expr) typ.Type
+	Ctx      *db.QueryContext
+	Query    core.TypeOps
 	Static   StaticTypeLookup
 }
 
@@ -133,7 +136,7 @@ func (r TypeResolver) ResolveImportedFieldCallee(expr ast.Expr) typ.Type {
 	if !ok || base == nil {
 		return nil
 	}
-	ft, ok := StaticMemberType(base, field)
+	ft, ok := r.staticMemberType(base, field)
 	if !ok || typ.IsAbsentOrUnknown(ft) {
 		return nil
 	}
@@ -148,7 +151,7 @@ func (r TypeResolver) staticMemberFromBase(sym cfg.SymbolID, field fieldkey.Key,
 	if !ok || base == nil {
 		return nil
 	}
-	ft, ok := StaticMemberType(base, field)
+	ft, ok := r.staticMemberType(base, field)
 	if !ok || typ.IsAbsentOrUnknown(ft) {
 		return nil
 	}
@@ -170,6 +173,40 @@ func StaticMemberType(base typ.Type, key fieldkey.Key) (typ.Type, bool) {
 	default:
 		return nil, false
 	}
+}
+
+func (r TypeResolver) staticMemberType(base typ.Type, key fieldkey.Key) (typ.Type, bool) {
+	switch key.Kind {
+	case constraint.SegmentField:
+		if key.Name == "" {
+			return nil, false
+		}
+		if r.Query != nil && r.Ctx != nil {
+			return r.Query.Field(r.Ctx, base, key.Name)
+		}
+		return core.Field(base, key.Name)
+	case constraint.SegmentIndexString:
+		keyType := typ.LiteralString(key.Name)
+		if r.Query != nil && r.Ctx != nil {
+			return r.Query.Index(r.Ctx, base, keyType)
+		}
+		return core.Index(base, keyType)
+	case constraint.SegmentIndexInt:
+		keyType := typ.LiteralInt(int64(key.Index))
+		if r.Query != nil && r.Ctx != nil {
+			return r.Query.Index(r.Ctx, base, keyType)
+		}
+		return core.Index(base, keyType)
+	default:
+		return nil, false
+	}
+}
+
+func (r TypeResolver) method(receiver typ.Type, name string) (typ.Type, bool) {
+	if r.Query != nil && r.Ctx != nil {
+		return r.Query.Method(r.Ctx, receiver, name)
+	}
+	return core.Method(receiver, name)
 }
 
 func (r TypeResolver) exprType(expr ast.Expr) typ.Type {

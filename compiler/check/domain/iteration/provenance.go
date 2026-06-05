@@ -19,23 +19,30 @@ func KeyedSource(iter *ast.FuncCallExpr, resolveKind KindResolver) (ast.Expr, bo
 	return source, ok
 }
 
-// IndexedSourceSymbol returns the symbol of the array source in an indexed
-// iterator call. The provenance proof for that symbol is owned by canonical facts;
-// transfer uses this helper only to identify which fact to read.
-func IndexedSourceSymbol(iter *ast.FuncCallExpr, bindings *bind.BindingTable, resolveKind KindResolver) (cfg.SymbolID, bool) {
+// IndexedSourcePath returns the static array source path in an indexed iterator
+// call. The provenance proof for that path is owned by canonical facts; transfer
+// uses this helper only to identify which fact to read.
+func IndexedSourcePath(iter *ast.FuncCallExpr, bindings *bind.BindingTable, resolveKind KindResolver) (constraint.Path, bool) {
 	source, _, ok := sourceArg(iter, effect.IterateIndexed, resolveKind)
 	if !ok || bindings == nil {
+		return constraint.Path{}, false
+	}
+	path := flowpath.FromExprWithBindings(source, nil, bindings)
+	if path.IsEmpty() || path.Symbol == 0 {
+		return constraint.Path{}, false
+	}
+	return path, true
+}
+
+// IndexedSourceSymbol returns the root symbol of the array source in an indexed
+// iterator call. Prefer IndexedSourcePath for new flow facts so static field paths
+// are preserved.
+func IndexedSourceSymbol(iter *ast.FuncCallExpr, bindings *bind.BindingTable, resolveKind KindResolver) (cfg.SymbolID, bool) {
+	path, ok := IndexedSourcePath(iter, bindings, resolveKind)
+	if !ok || path.Symbol == 0 {
 		return 0, false
 	}
-	srcIdent, ok := source.(*ast.IdentExpr)
-	if !ok {
-		return 0, false
-	}
-	srcSym, ok := bindings.SymbolOf(srcIdent)
-	if !ok || srcSym == 0 {
-		return 0, false
-	}
-	return srcSym, true
+	return path.Symbol, true
 }
 
 // ContainerPath builds a static container path from a keys-collector actual

@@ -14,6 +14,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/parse"
 	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/db"
+	"github.com/wippyai/go-lua/types/domain/value"
 	"github.com/wippyai/go-lua/types/domain/value/product"
 	"github.com/wippyai/go-lua/types/flow"
 	"github.com/wippyai/go-lua/types/kind"
@@ -492,7 +493,11 @@ func TestProject_CaptureExportsFromReturnBoundaryCells(t *testing.T) {
 				Env: map[flow.ValueKey]product.AbstractValue{
 					"s42": exported,
 				},
-				Cells: flow.CaptureCellsOf([]flow.CaptureCell{{Symbol: cfg.SymbolID(77), Value: product.FromType(typ.Number)}}),
+				Cells: flow.CaptureCellsOf([]flow.CaptureCell{{Symbol: cfg.SymbolID(77), Value: product.FromType(typ.NewRecord().Build())}}),
+				StaticMembers: flow.StaticMemberFacts{}.With(
+					flow.SymbolPathKey(cfg.SymbolID(77), []constraint.Segment{{Kind: constraint.SegmentField, Name: "render"}}),
+					product.FromType(typ.Func().Returns(typ.String).Build()),
+				),
 			},
 			g.Entry(): {
 				Env: map[flow.ValueKey]product.AbstractValue{
@@ -505,8 +510,10 @@ func TestProject_CaptureExportsFromReturnBoundaryCells(t *testing.T) {
 	if v, ok := sum.CaptureExports.Value(cfg.SymbolID(42)); ok {
 		t.Fatalf("ordinary env symbol leaked into capture exports: %v; exports=%s", v.ProjectValue(), sum.CaptureExports.Format())
 	}
-	if v, ok := sum.CaptureExports.Value(cfg.SymbolID(77)); !ok || !product.Domain.Equal(v, product.FromType(typ.Number)) {
-		t.Fatalf("exported captured cell 77 = %v/%v, want number; exports=%s", v.ProjectValue(), ok, sum.CaptureExports.Format())
+	if v, ok := sum.CaptureExports.Value(cfg.SymbolID(77)); !ok {
+		t.Fatalf("exported captured cell 77 missing; exports=%s", sum.CaptureExports.Format())
+	} else if member, ok := product.MemberOf(v, value.MemberField("render")); !ok || typ.IsAbsentOrUnknown(member.ProjectValue()) {
+		t.Fatalf("exported captured cell 77.render = %v/%v; exports=%s", member.ProjectValue(), ok, sum.CaptureExports.Format())
 	}
 	if _, ok := sum.CaptureExports.Value(cfg.SymbolID(99)); ok {
 		t.Fatalf("entry-only symbol leaked into capture exports: %s", sum.CaptureExports.Format())

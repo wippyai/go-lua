@@ -4,6 +4,8 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/types/cfg"
+	"github.com/wippyai/go-lua/types/constraint"
+	"github.com/wippyai/go-lua/types/domain/value"
 	"github.com/wippyai/go-lua/types/domain/value/product"
 	"github.com/wippyai/go-lua/types/lattice"
 	"github.com/wippyai/go-lua/types/typ"
@@ -84,6 +86,84 @@ func TestCaptureCellsProjectCanonicalizesSymbols(t *testing.T) {
 	}
 }
 
+func TestCaptureCellsProjectPathsKeepsRequestedNestedMember(t *testing.T) {
+	root := captureCellProjectionRoot()
+	cells := CaptureCellsOf([]CaptureCell{
+		{Symbol: 1, Value: root},
+		{Symbol: 2, Value: product.FromType(typ.String)},
+	})
+
+	got := cells.ProjectPaths(ReferencePathProjection{
+		Exact: []constraint.Path{constraint.NewPath(1, "captured").Field("config").Field("used")},
+	})
+	projected, ok := got.Value(1)
+	if !ok {
+		t.Fatalf("projected cell 1 missing: %s", got.Format())
+	}
+	if _, ok := got.Value(2); ok {
+		t.Fatalf("project retained unrequested symbol 2: %s", got.Format())
+	}
+	config := requireProjectedMember(t, projected, "config")
+	used := requireProjectedMember(t, config, "used")
+	if !product.Domain.Equal(used, product.FromType(typ.Number)) {
+		t.Fatalf("config.used = %s, want number", used.ProjectValue())
+	}
+	if _, ok := product.MemberOf(config, value.MemberField("dropped")); ok {
+		t.Fatalf("project retained config.dropped: %s", config.ProjectValue())
+	}
+	if _, ok := product.MemberOf(projected, value.MemberField("stable")); ok {
+		t.Fatalf("project retained stable sibling: %s", projected.ProjectValue())
+	}
+}
+
+func TestCaptureCellsProjectPathsRootKeepsFullCell(t *testing.T) {
+	root := captureCellProjectionRoot()
+	cells := CaptureCellsOf([]CaptureCell{{Symbol: 1, Value: root}})
+
+	got := cells.ProjectPaths(ReferencePathProjection{
+		Exact: []constraint.Path{constraint.NewPath(1, "captured")},
+	})
+	projected, ok := got.Value(1)
+	if !ok {
+		t.Fatalf("projected cell 1 missing: %s", got.Format())
+	}
+	requireProjectedMember(t, projected, "stable")
+	config := requireProjectedMember(t, projected, "config")
+	requireProjectedMember(t, config, "dropped")
+}
+
+func TestCaptureCellsProjectPathsNestedSubtreeKeepsSubtree(t *testing.T) {
+	root := captureCellProjectionRoot()
+	cells := CaptureCellsOf([]CaptureCell{{Symbol: 1, Value: root}})
+
+	got := cells.ProjectPaths(ReferencePathProjection{
+		Subtrees: []constraint.Path{constraint.NewPath(1, "captured").Field("config")},
+	})
+	projected, ok := got.Value(1)
+	if !ok {
+		t.Fatalf("projected cell 1 missing: %s", got.Format())
+	}
+	config := requireProjectedMember(t, projected, "config")
+	requireProjectedMember(t, config, "used")
+	requireProjectedMember(t, config, "dropped")
+	if _, ok := product.MemberOf(projected, value.MemberField("stable")); ok {
+		t.Fatalf("project retained stable sibling: %s", projected.ProjectValue())
+	}
+}
+
+func TestCaptureCellsProjectPathsTopProjectsRequestedSymbolsToTop(t *testing.T) {
+	got := CaptureCellsTop().ProjectPaths(ReferencePathProjection{
+		Exact: []constraint.Path{constraint.NewPath(2, "captured").Field("config")},
+	})
+	v, ok := got.Value(2)
+	if !ok || !product.Domain.Equal(v, product.Domain.Top()) {
+		t.Fatalf("projected top cell 2 = %v/%v, want top", v.ProjectValue(), ok)
+	}
+	if _, ok := got.Value(1); ok {
+		t.Fatalf("projected top retained unrequested symbol 1: %s", got.Format())
+	}
+}
+
 func TestCaptureCellsKeyInternsByExactEquality(t *testing.T) {
 	a := CaptureCellsOf([]CaptureCell{
 		{Symbol: 2, Value: product.FromType(typ.String)},
@@ -126,4 +206,20 @@ func TestCaptureCellsJoinAndWidenArePointwise(t *testing.T) {
 	if widened := CaptureCellsDomain.Widen(left, right); !CaptureCellsDomain.LessOrEq(joined, widened) {
 		t.Fatalf("widen must over-approximate join: join=%s widen=%s", joined.Format(), widened.Format())
 	}
+}
+
+func captureCellProjectionRoot() product.AbstractValue {
+	config := product.WithMember(product.FromType(typ.NewRecord().Build()), value.MemberField("used"), product.FromType(typ.Number))
+	config = product.WithMember(config, value.MemberField("dropped"), product.FromType(typ.String))
+	root := product.WithMember(product.FromType(typ.NewRecord().Build()), value.MemberField("config"), config)
+	return product.WithMember(root, value.MemberField("stable"), product.FromType(typ.Boolean))
+}
+
+func requireProjectedMember(t *testing.T, root product.AbstractValue, name string) product.AbstractValue {
+	t.Helper()
+	member, ok := product.MemberOf(root, value.MemberField(name))
+	if !ok || member.IsZero() {
+		t.Fatalf("member %s missing from %s", name, root.ProjectValue())
+	}
+	return member
 }

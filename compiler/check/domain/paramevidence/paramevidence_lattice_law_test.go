@@ -5,8 +5,9 @@ import (
 	"sort"
 	"testing"
 
-	"github.com/wippyai/go-lua/types/domain/value/product"
+	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/lattice"
+	"github.com/wippyai/go-lua/types/subtype"
 	"github.com/wippyai/go-lua/types/typ"
 )
 
@@ -131,33 +132,19 @@ func TestContractDomain_AbsentIndexIsBottom(t *testing.T) {
 	}
 }
 
-// TestContractDomain_AccumulationIsUpperBound pins the locked update semantics:
-// JoinDemand only ever moves a cell UP the order. The non-monotone "prefer a
-// narrower refined type" replacement is rejected — joining a broad obligation
-// with a narrower one yields their least upper bound (the broad one covers the
-// narrow), never a downward replacement.
-func TestContractDomain_AccumulationIsUpperBound(t *testing.T) {
+// TestContractDomain_AccumulationComposesObligations pins the contract-domain
+// update semantics: same-path body obligations are composed and reduced before
+// projection. A broader obligation plus a narrower obligation yields the
+// stronger shared precondition, not the forward value-domain LUB.
+func TestContractDomain_AccumulationComposesObligations(t *testing.T) {
 	broad := DemandFromType(typ.NewUnion(typ.String, typ.False))
 	narrow := DemandFromType(typ.String)
 
 	c := Contracts{0: broad}
 	got := JoinDemand(c, 0, narrow)
 
-	// The accumulated cell must be an upper bound of both: broad ⊑ cell and
-	// narrow ⊑ cell. A "prefer narrow" replacement would make broad ⋢ cell.
-	cellMap := Contracts{0: got[0]}
-	if !ContractDomain.LessOrEq(Contracts{0: broad}, cellMap) {
-		t.Errorf("accumulation dropped below prior obligation: prev=%s cell=%s",
-			formatContracts(Contracts{0: broad}), formatContracts(cellMap))
-	}
-	if !ContractDomain.LessOrEq(Contracts{0: narrow}, cellMap) {
-		t.Errorf("accumulation does not cover new demand: demand=%s cell=%s",
-			formatContracts(Contracts{0: narrow}), formatContracts(cellMap))
-	}
-	// broad already covers narrow, so the least upper bound equals broad.
-	if !ParamContractDomain.Equal(got[0], product.Join(broad, narrow)) {
-		t.Errorf("cell is not the element least upper bound: cell=%s",
-			formatContracts(cellMap))
+	if !typ.TypeEquals(got[0].ProjectValue(), typ.String) {
+		t.Errorf("composed cell = %v, want string", got[0].ProjectValue())
 	}
 
 	// Accumulation is idempotent and commutative: re-applying either order is
@@ -166,6 +153,68 @@ func TestContractDomain_AccumulationIsUpperBound(t *testing.T) {
 	if !ContractDomain.Equal(got, again) {
 		t.Errorf("re-applying a covered demand changed the cell: %s -> %s",
 			formatContracts(got), formatContracts(again))
+	}
+}
+
+func TestContractDomain_LengthCapabilityReducesAgainstPathTableEvidence(t *testing.T) {
+	tableField := []constraint.Segment{{Kind: constraint.SegmentField, Name: "operations"}}
+	length := DemandFromPathCapability(tableField, CapabilityLength)
+	array := DemandFromPathType(tableField, typ.NewArray(typ.String))
+
+	got := ParamContractDomain.Join(length, array)
+	want := typ.NewRecord().ReadonlyField("operations", typ.NewArray(typ.String)).Build()
+	if !typ.TypeEquals(got.ProjectValue(), want) {
+		t.Fatalf("length + array obligation = %v, want %v", got.ProjectValue(), want)
+	}
+}
+
+func TestContractDomain_LengthCapabilityProjectionAdmitsConcreteArrays(t *testing.T) {
+	contract := DemandFromPathCapability(
+		[]constraint.Segment{{Kind: constraint.SegmentField, Name: "input_routes"}},
+		CapabilityLength,
+	)
+	caller := typ.NewRecord().
+		Field("input_routes", typ.NewArray(typ.NewRecord().Field("target_name", typ.String).Build())).
+		Build()
+
+	if !subtype.IsSubtype(caller, contract.ProjectValue()) {
+		t.Fatalf("caller %v should satisfy length contract %v", caller, contract.ProjectValue())
+	}
+}
+
+func TestContractDomain_ArrayElementRecordObligationsCompose(t *testing.T) {
+	typeField := typ.NewArray(typ.NewRecord().
+		ReadonlyField("type", typ.String).
+		Build())
+	configField := typ.NewArray(typ.NewRecord().
+		ReadonlyField("config", typ.NewRecord().ReadonlyField("data", typ.Any).Build()).
+		Build())
+
+	got := ParamContractDomain.Join(DemandFromType(typeField), DemandFromType(configField))
+	want := typ.NewArray(typ.NewRecord().
+		ReadonlyField("type", typ.String).
+		ReadonlyField("config", typ.NewRecord().ReadonlyField("data", typ.Any).Build()).
+		Build())
+	if !typ.TypeEquals(got.ProjectValue(), want) {
+		t.Fatalf("array element obligations = %v, want %v", got.ProjectValue(), want)
+	}
+}
+
+func TestParamContractProductValueOpensInferredRecordLowerBounds(t *testing.T) {
+	contract := DemandFromPathCapability(
+		[]constraint.Segment{{Kind: constraint.SegmentField, Name: "config"}, {Kind: constraint.SegmentField, Name: "name"}},
+		CapabilityStringable,
+	)
+	projected := contract.ProjectValue()
+	rec, ok := projected.(*typ.Record)
+	if !ok || rec.Open {
+		t.Fatalf("public projection = %v, want closed required-field record", projected)
+	}
+
+	entry := contract.ProductValue().ProjectValue()
+	entryRec, ok := entry.(*typ.Record)
+	if !ok || !entryRec.Open {
+		t.Fatalf("entry projection = %v, want open lower-bound record", entry)
 	}
 }
 

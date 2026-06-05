@@ -67,11 +67,12 @@ type Config struct {
 	FunctionType             SymbolTypeLookup
 	ResolveType              TypeResolver
 	// GlobalTypeOverlay is the normalized source-global type carrier.
-	GlobalTypeOverlay globalenv.TypeOverlay
-	PreferPreState    bool
-	PreferPostState   bool
-	PreserveProof     bool
-	GradualParamReads bool
+	GlobalTypeOverlay  globalenv.TypeOverlay
+	PreferPreState     bool
+	PreferPostState    bool
+	PreserveProof      bool
+	CallArgumentProofs bool
+	GradualParamReads  bool
 	// StrictContainerWrite restricts the gradual-top admission to the true gradual
 	// top (an unannotated-parameter path root). A write into a typed container's
 	// element slot uses it so a field/index read off a typed container whose member
@@ -135,6 +136,15 @@ func (p Projector) WithPostStateReads() Projector {
 // convergent value-product representation.
 func (p Projector) WithProofValues() Projector {
 	p.cfg.PreserveProof = true
+	return p
+}
+
+// WithCallArgumentProofs observes call arguments at hard proof boundaries. Body
+// contract seeds remain available for ordinary body interpretation, but an
+// unrelated branch guard must not turn a self-inferred entry assumption into
+// proof for a concrete callee parameter.
+func (p Projector) WithCallArgumentProofs() Projector {
+	p.cfg.CallArgumentProofs = true
 	return p
 }
 
@@ -284,6 +294,75 @@ func (p Projector) TypeOfWithExpected(expr ast.Expr, point cfg.Point, expected t
 	return p.typeOf(expr, point, expected)
 }
 
+// ExprSatisfiesContract proves that expr satisfies a native parameter contract
+// using both structural type evidence and canonical path facts. It is the
+// diagnostics-facing proof predicate for body-summary obligations; callers do
+// not need to collapse ParamContract to a broad projected type first.
+func (p Projector) ExprSatisfiesContract(
+	expr ast.Expr,
+	point cfg.Point,
+	contract paramevidence.ParamContract,
+	satisfies paramevidence.TypeSatisfaction,
+) bool {
+	path := p.pathOfExpr(expr, point)
+	if path.IsEmpty() || path.Symbol == 0 {
+		return false
+	}
+	actual := p.TypeOf(expr, point)
+	return paramevidence.ContractSatisfiedByTypeOrProof(
+		contract,
+		actual,
+		satisfies,
+		contractPathProof{projector: p, point: point, root: path},
+	)
+}
+
+type contractPathProof struct {
+	projector Projector
+	point     cfg.Point
+	root      constraint.Path
+}
+
+func (p contractPathProof) PathSatisfies(segments []constraint.Segment, _ paramevidence.ParamContract, expected typ.Type) bool {
+	if expected == nil {
+		return false
+	}
+	path := p.root
+	for _, seg := range segments {
+		path = path.Append(seg)
+	}
+	observed := p.projector.pathTypeAtPath(path, p.point)
+	return !typ.IsAbsentOrUnknown(observed) && subtype.IsSubtype(observed, expected)
+}
+
+func (p contractPathProof) ElementFieldSatisfies(array []constraint.Segment, field []constraint.Segment, contract paramevidence.ParamContract, expected typ.Type) bool {
+	if len(field) == 0 || expected == nil {
+		return false
+	}
+	arrayPath := p.root
+	for _, seg := range array {
+		arrayPath = arrayPath.Append(seg)
+	}
+	arrayKey := flow.KeyPresencePathKey(arrayPath)
+	if arrayKey == "" {
+		return false
+	}
+	provider := p.projector.appendElementFieldOriginProvider()
+	if provider == nil {
+		return false
+	}
+	for _, use := range provider.AppendElementFieldSourcesAt(p.point, arrayKey, field) {
+		sourceType := p.projector.appendElementFieldOriginSourceType(p.point, use, nil, nil)
+		if !typ.IsAbsentOrUnknown(sourceType) && subtype.IsSubtype(sourceType, expected) {
+			return true
+		}
+		if paramevidence.ContractSatisfiedByTypeOrProof(contract, sourceType, subtype.Consistent, p) {
+			return true
+		}
+	}
+	return false
+}
+
 // MultiTypeOf observes the Lua return vector of expr at point p.
 func (p Projector) MultiTypeOf(expr ast.Expr, point cfg.Point) []typ.Type {
 	if call, ok := expr.(*ast.FuncCallExpr); ok {
@@ -303,8 +382,16 @@ func (p Projector) typeOf(expr ast.Expr, point cfg.Point, expected typ.Type) typ
 	if attr, ok := expr.(*ast.AttrGetExpr); ok {
 		return p.attrTypeWithExpected(attr, point, expected)
 	}
-	if t := p.pathType(expr, point); !typ.IsAbsentOrUnknown(t) {
-		return p.coerceGradualToExpected(t, expected, expr, point)
+	pathType := p.pathType(expr, point)
+	contractType := p.bodyContractPathType(expr, point)
+	if !typ.IsAbsentOrUnknown(pathType) && (!typ.IsAny(pathType) || typ.IsAbsentOrUnknown(contractType)) {
+		return p.finishExpectedObservation(pathType, expected, expr, point)
+	}
+	if !typ.IsAbsentOrUnknown(contractType) {
+		return p.finishExpectedObservation(contractType, expected, expr, point)
+	}
+	if !typ.IsAbsentOrUnknown(pathType) {
+		return p.finishExpectedObservation(pathType, expected, expr, point)
 	}
 	switch e := expr.(type) {
 	case *ast.NilExpr:
@@ -487,10 +574,15 @@ func (p Projector) isUnannotatedParamSymbol(sym cfg.SymbolID) bool {
 
 func (p Projector) identTypeWithExpected(expr *ast.IdentExpr, point cfg.Point, expected typ.Type) typ.Type {
 	t := p.identType(expr, point)
-	if refined, ok := p.refineWithExpectedProof(point, expr, t, expected); ok {
+	return p.finishExpectedObservation(t, expected, expr, point)
+}
+
+func (p Projector) finishExpectedObservation(observed typ.Type, expected typ.Type, expr ast.Expr, point cfg.Point) typ.Type {
+	if refined, ok := p.refineWithExpectedProof(point, expr, observed, expected); ok {
 		return refined
 	}
-	return p.coerceGradualToExpected(t, expected, expr, point)
+	observed = p.callArgumentProofObservation(observed, expected, expr, point)
+	return p.coerceGradualToExpected(observed, expected, expr, point)
 }
 
 func (p Projector) provesExprType(point cfg.Point, expr ast.Expr, expected typ.Type) bool {
@@ -546,17 +638,19 @@ func (p Projector) declaredPathProofType(point cfg.Point, expr ast.Expr) typ.Typ
 }
 
 func (p Projector) attrTypeWithExpected(expr *ast.AttrGetExpr, point cfg.Point, expected typ.Type) typ.Type {
-	if t := p.pathType(expr, point); !typ.IsAbsentOrUnknown(t) {
-		if refined, ok := p.refineWithExpectedProof(point, expr, t, expected); ok {
-			return refined
-		}
-		return p.coerceGradualToExpected(t, expected, expr, point)
+	pathType := p.pathType(expr, point)
+	contractType := p.bodyContractPathType(expr, point)
+	if !typ.IsAbsentOrUnknown(pathType) && (!typ.IsAny(pathType) || typ.IsAbsentOrUnknown(contractType)) {
+		return p.finishExpectedObservation(pathType, expected, expr, point)
+	}
+	if !typ.IsAbsentOrUnknown(contractType) {
+		return p.finishExpectedObservation(contractType, expected, expr, point)
+	}
+	if !typ.IsAbsentOrUnknown(pathType) {
+		return p.finishExpectedObservation(pathType, expected, expr, point)
 	}
 	t := p.attrType(expr, point)
-	if refined, ok := p.refineWithExpectedProof(point, expr, t, expected); ok {
-		return refined
-	}
-	return p.coerceGradualToExpected(t, expected, expr, point)
+	return p.finishExpectedObservation(t, expected, expr, point)
 }
 
 // coerceGradualToExpected used to apply gradual consistency by rewriting
@@ -568,6 +662,309 @@ func (p Projector) attrTypeWithExpected(expr *ast.AttrGetExpr, point cfg.Point, 
 // quietly accepting `any` as proof.
 func (p Projector) coerceGradualToExpected(t typ.Type, expected typ.Type, expr ast.Expr, point cfg.Point) typ.Type {
 	return t
+}
+
+func (p Projector) callArgumentProofObservation(observed typ.Type, expected typ.Type, expr ast.Expr, point cfg.Point) typ.Type {
+	if !p.cfg.CallArgumentProofs || typ.IsAbsentOrUnknown(observed) ||
+		typ.IsAbsentOrUnknown(expected) || typ.IsAny(expected) {
+		return observed
+	}
+	path := p.pathOfExpr(expr, point)
+	if path.IsEmpty() || path.Symbol == 0 {
+		return observed
+	}
+	if len(path.Segments) == 0 {
+		if p.isUnannotatedParamSymbol(path.Symbol) {
+			return expected
+		}
+	}
+	contractPathType := p.bodyContractPathTypeAtPath(point, path, nil)
+	if typ.IsAbsentOrUnknown(contractPathType) || !subtype.IsSubtype(contractPathType, expected) {
+		return observed
+	}
+	return expected
+}
+
+type bodyContractFacts interface {
+	BodyContracts() paramevidence.Contracts
+}
+
+func (p Projector) bodyContractPathType(expr ast.Expr, point cfg.Point) typ.Type {
+	path := p.pathOfExpr(expr, point)
+	if path.IsEmpty() || path.Symbol == 0 {
+		return nil
+	}
+	return p.bodyContractPathTypeAtPath(point, path, nil)
+}
+
+func (p Projector) bodyContractPathTypeAtPath(point cfg.Point, path constraint.Path, seen map[constraint.PathKey]bool) typ.Type {
+	if path.IsEmpty() || path.Symbol == 0 {
+		return nil
+	}
+	key := flow.KeyPresencePathKey(path)
+	if key == "" {
+		return nil
+	}
+	if seen == nil {
+		seen = make(map[constraint.PathKey]bool)
+	}
+	if seen[key] {
+		return nil
+	}
+	seen[key] = true
+	defer delete(seen, key)
+
+	if direct := p.directBodyContractPathType(path); direct != nil {
+		return p.conditionBodyContractSeedType(point, path, direct)
+	}
+
+	if !p.cfg.CallArgumentProofs {
+		return nil
+	}
+	var types []typ.Type
+	for _, use := range p.pathAliasesAt(point).AliasesCoveringPath(path) {
+		sourcePath, ok := observationPathFromKey(use.Alias.Source)
+		if !ok {
+			continue
+		}
+		for _, seg := range use.Remainder {
+			sourcePath = sourcePath.Append(seg)
+		}
+		sourceType := p.bodyContractPathTypeAtPath(point, sourcePath, seen)
+		if sourceType == nil {
+			continue
+		}
+		types = append(types, sourceType)
+	}
+	origins := p.valueOriginsAt(point)
+	if !origins.IsBottom() {
+		for _, use := range origins.OriginsCoveringPath(path) {
+			sourcePath, ok := observationPathFromKey(use.Origin.Source)
+			if !ok {
+				continue
+			}
+			if use.Origin.Kind == flow.ValueOriginIndexedIterator && use.Origin.VarIndex == 1 && len(use.Remainder) > 0 {
+				types = append(types, p.appendElementFieldOriginTypes(point, sourcePath, use.Remainder, seen)...)
+			}
+			sourceType := p.bodyContractPathTypeAtPath(point, sourcePath, seen)
+			if sourceType == nil {
+				continue
+			}
+			localType := p.valueOriginLocalType(use.Origin, sourceType)
+			if localType == nil {
+				continue
+			}
+			if len(use.Remainder) > 0 {
+				localType = p.typeAtSegments(localType, use.Remainder)
+			}
+			if localType != nil {
+				types = append(types, localType)
+			}
+		}
+	}
+	switch len(types) {
+	case 0:
+		return nil
+	case 1:
+		return p.conditionBodyContractSeedType(point, path, types[0])
+	default:
+		return p.conditionBodyContractSeedType(point, path, typ.NewUnion(types...))
+	}
+}
+
+func (p Projector) appendElementFieldOriginTypes(point cfg.Point, arrayPath constraint.Path, field []constraint.Segment, seen map[constraint.PathKey]bool) []typ.Type {
+	if arrayPath.IsEmpty() || len(field) == 0 {
+		return nil
+	}
+	arrayKey := flow.KeyPresencePathKey(arrayPath)
+	if arrayKey == "" {
+		return nil
+	}
+	var provider appendElementFieldOriginFacts
+	if p.cfg.Facts != nil {
+		if facts, ok := p.cfg.Facts.(appendElementFieldOriginFacts); ok {
+			provider = facts
+		}
+	}
+	if provider == nil && p.cfg.Flow != nil {
+		if facts, ok := p.cfg.Flow.(appendElementFieldOriginFacts); ok {
+			provider = facts
+		}
+	}
+	if provider == nil {
+		return nil
+	}
+	var types []typ.Type
+	for _, use := range provider.AppendElementFieldSourcesAt(point, arrayKey, field) {
+		sourceType := p.appendElementFieldOriginSourceType(point, use, nil, seen)
+		if sourceType != nil {
+			types = append(types, sourceType)
+		}
+	}
+	return types
+}
+
+func (p Projector) appendElementFieldOriginSourceType(point cfg.Point, use flow.AppendElementFieldOriginUse, extra []constraint.Segment, seen map[constraint.PathKey]bool) typ.Type {
+	sourcePath, ok := observationPathFromKey(use.Origin.Source)
+	if !ok {
+		return nil
+	}
+	if len(use.SourceField) > 0 {
+		segments := append([]constraint.Segment(nil), use.SourceField...)
+		segments = append(segments, use.FieldRemainder...)
+		segments = append(segments, extra...)
+		var fallback typ.Type
+		for _, sourceType := range []typ.Type{
+			p.pathTypeAtPath(sourcePath, point),
+			p.bodyContractPathTypeAtPath(point, sourcePath, seen),
+		} {
+			if typ.IsAbsentOrUnknown(sourceType) {
+				continue
+			}
+			elemType := querycore.ElementType(sourceType)
+			if typ.IsAbsentOrUnknown(elemType) {
+				continue
+			}
+			projected := p.typeAtSegments(elemType, segments)
+			if typ.IsAbsentOrUnknown(projected) {
+				continue
+			}
+			if !typ.IsAny(projected) {
+				return projected
+			}
+			fallback = projected
+		}
+		return fallback
+	}
+	for _, seg := range use.FieldRemainder {
+		sourcePath = sourcePath.Append(seg)
+	}
+	for _, seg := range extra {
+		sourcePath = sourcePath.Append(seg)
+	}
+	sourceType := p.bodyContractPathTypeAtPath(point, sourcePath, seen)
+	if sourceType != nil {
+		return sourceType
+	}
+	return p.pathTypeAtPath(sourcePath, point)
+}
+
+func (p Projector) directBodyContractPathType(path constraint.Path) typ.Type {
+	if path.IsEmpty() || path.Symbol == 0 || p.cfg.Facts == nil {
+		return nil
+	}
+	if !p.cfg.CallArgumentProofs && !p.isUnannotatedParamSymbol(path.Symbol) {
+		return nil
+	}
+	bodyFacts, ok := p.cfg.Facts.(bodyContractFacts)
+	if !ok {
+		return nil
+	}
+	slot, ok := p.paramSlotForSymbol(path.Symbol)
+	if !ok {
+		return nil
+	}
+	contract, ok := bodyFacts.BodyContracts()[slot]
+	if !ok || paramevidence.ParamContractDomain.Equal(contract, paramevidence.ParamContractDomain.Bottom()) {
+		return nil
+	}
+	base := contract.ProjectValue()
+	if typ.IsAbsentOrUnknown(base) {
+		return nil
+	}
+	if len(path.Segments) == 0 {
+		return base
+	}
+	return p.typeAtSegments(base, path.Segments)
+}
+
+func (p Projector) pathIsBodyContractSeed(point cfg.Point, path constraint.Path, expected typ.Type) bool {
+	if path.IsEmpty() || path.Symbol == 0 || expected == nil {
+		return false
+	}
+	contractPathType := p.bodyContractPathTypeAtPath(point, path, nil)
+	return !typ.IsAbsentOrUnknown(contractPathType) && subtype.IsSubtype(contractPathType, expected)
+}
+
+func (p Projector) conditionBodyContractSeedType(point cfg.Point, path constraint.Path, seed typ.Type) typ.Type {
+	if typ.IsAbsentOrUnknown(seed) || path.IsEmpty() {
+		return seed
+	}
+	proofs := p.conditionProofFacts()
+	if proofs == nil {
+		return seed
+	}
+	conditioned := proofs.ConditionedSeedTypeAt(point, path, seed, path, constraint.TrueCondition())
+	if typ.IsAbsentOrUnknown(conditioned) {
+		return seed
+	}
+	return conditioned
+}
+
+func (p Projector) valueOriginsAt(point cfg.Point) flow.ValueOriginFacts {
+	if p.cfg.Facts != nil {
+		if facts, ok := p.cfg.Facts.(valueOriginFacts); ok {
+			return facts.ValueOriginsAt(point)
+		}
+	}
+	if p.cfg.Flow != nil {
+		if facts, ok := p.cfg.Flow.(valueOriginFacts); ok {
+			return facts.ValueOriginsAt(point)
+		}
+	}
+	return flow.ValueOriginFacts{}
+}
+
+func (p Projector) pathAliasesAt(point cfg.Point) flow.PathAliasFacts {
+	if p.cfg.Facts != nil {
+		if facts, ok := p.cfg.Facts.(pathAliasFacts); ok {
+			return facts.PathAliasesAt(point)
+		}
+	}
+	if p.cfg.Flow != nil {
+		if facts, ok := p.cfg.Flow.(pathAliasFacts); ok {
+			return facts.PathAliasesAt(point)
+		}
+	}
+	return flow.PathAliasFacts{}
+}
+
+func (p Projector) valueOriginLocalType(origin flow.ValueOriginFact, source typ.Type) typ.Type {
+	if source == nil {
+		return nil
+	}
+	switch origin.Kind {
+	case flow.ValueOriginAssignmentAlias:
+		return source
+	case flow.ValueOriginIndexedIterator:
+		if origin.VarIndex != 1 {
+			return nil
+		}
+		return querycore.ElementType(source)
+	case flow.ValueOriginKeyedIterator:
+		switch origin.VarIndex {
+		case 0:
+			return querycore.EntryKeyType(source)
+		case 1:
+			return querycore.EntryValueType(source)
+		default:
+			return nil
+		}
+	default:
+		return nil
+	}
+}
+
+func (p Projector) paramSlotForSymbol(sym cfg.SymbolID) (int, bool) {
+	if sym == 0 || p.cfg.Graph == nil {
+		return 0, false
+	}
+	for i, slot := range p.cfg.Graph.ParamSlotsReadOnly() {
+		if slot.Symbol == sym {
+			return i, true
+		}
+	}
+	return 0, false
 }
 
 func (p Projector) exprIsGradualTop(expr ast.Expr, point cfg.Point) bool {
@@ -702,7 +1099,11 @@ func (p Projector) attrType(expr *ast.AttrGetExpr, point cfg.Point) typ.Type {
 		return typ.Unknown
 	}
 	obj := p.TypeOf(expr.Object, point)
+	key := p.TypeOf(expr.Key, point)
 	if typ.IsAbsentOrUnknown(obj) {
+		if proven, ok := p.IndexedReadProofType(expr.Object, expr.Key, key, point); ok {
+			return proven
+		}
 		return typ.Unknown
 	}
 	if seg, ok := flowpath.StaticAttrSegmentWithConst(expr, p.constResolver(point)); ok && seg.Kind == constraint.SegmentField {
@@ -717,11 +1118,42 @@ func (p Projector) attrType(expr *ast.AttrGetExpr, point cfg.Point) typ.Type {
 			return typ.Nil
 		}
 	}
-	key := p.TypeOf(expr.Key, point)
 	if t, ok := p.RuntimeIndex(obj, key); ok {
 		return p.applyIndexReadProof(t, obj, expr.Object, expr.Key, key, point)
 	}
+	if proven, ok := p.IndexedReadProofType(expr.Object, expr.Key, key, point); ok {
+		return proven
+	}
 	return typ.Unknown
+}
+
+// IndexedReadProofType returns the value type proven by the solved indexed-read
+// proof surface for object[key], independent of the object's direct product type.
+// It is the diagnostic counterpart to transfer's index-write readback reducer:
+// the observation layer asks the normalized proof domain before treating a weak
+// object type as a failed runtime-index read.
+func (p Projector) IndexedReadProofType(obj ast.Expr, key ast.Expr, keyType typ.Type, point cfg.Point) (typ.Type, bool) {
+	flowProof := p.indexReadFlow()
+	if flowProof == nil {
+		return nil, false
+	}
+	if typ.IsAbsentOrUnknown(keyType) {
+		keyType = typ.Unknown
+	}
+	refined, ok := indexread.Refine(indexread.Query{
+		Point:     point,
+		View:      p.pathReadView(),
+		Container: typ.Unknown,
+		Result:    typ.Unknown,
+		Object:    obj,
+		Key:       key,
+		KeyType:   keyType,
+		Flow:      flowProof,
+		PathOf: func(expr ast.Expr) constraint.Path {
+			return p.pathOfExpr(expr, point)
+		},
+	})
+	return refined, ok
 }
 
 func (p Projector) applyIndexReadProof(t typ.Type, objType typ.Type, obj ast.Expr, key ast.Expr, keyType typ.Type, point cfg.Point) typ.Type {
@@ -734,6 +1166,7 @@ func (p Projector) applyIndexReadProof(t typ.Type, objType typ.Type, obj ast.Exp
 	}
 	if refined, ok := indexread.Refine(indexread.Query{
 		Point:     point,
+		View:      p.pathReadView(),
 		Container: objType,
 		Result:    t,
 		Object:    obj,
@@ -764,8 +1197,9 @@ func (p Projector) indexReadFlow() indexread.Flow {
 	nf, hasNum := p.cfg.Facts.(flow.NumericFacts)
 	lf, hasLen := p.cfg.Facts.(flow.LengthFacts)
 	iw, hasIndexWrites := p.cfg.Facts.(flow.IndexWriteFacts)
+	mr, _ := p.cfg.Facts.(indexread.MapReadbackFlow)
 	vo, _ := p.cfg.Facts.(valueOriginFacts)
-	if !hasKeyOf && !hasNum && !hasLen && !hasIndexWrites {
+	if !hasKeyOf && !hasNum && !hasLen && !hasIndexWrites && mr == nil {
 		return nil
 	}
 	return factsIndexReadFlow{
@@ -773,6 +1207,7 @@ func (p Projector) indexReadFlow() indexread.Flow {
 		numeric:     nf,
 		length:      lf,
 		indexWrites: iw,
+		mapReadback: mr,
 		valueOrigin: vo,
 		graph:       p.cfg.Graph,
 		bindings:    p.cfg.Bindings,
@@ -833,6 +1268,14 @@ type valueOriginFacts interface {
 	ValueOriginsAt(p cfg.Point) flow.ValueOriginFacts
 }
 
+type pathAliasFacts interface {
+	PathAliasesAt(p cfg.Point) flow.PathAliasFacts
+}
+
+type appendElementFieldOriginFacts interface {
+	AppendElementFieldSourcesAt(p cfg.Point, array constraint.PathKey, field []constraint.Segment) []flow.AppendElementFieldOriginUse
+}
+
 // factsIndexReadFlow adapts per-point Facts proofs to the indexread.Flow surface.
 // HasKeyOf answers the key-presence proof; numeric bound and length queries are
 // answered from the numeric component (flow.NumericFacts / flow.LengthFacts),
@@ -846,6 +1289,7 @@ type factsIndexReadFlow struct {
 	numeric     flow.NumericFacts
 	length      flow.LengthFacts
 	indexWrites flow.IndexWriteFacts
+	mapReadback indexread.MapReadbackFlow
 	valueOrigin valueOriginFacts
 	graph       *cfg.Graph
 	bindings    *bind.BindingTable
@@ -856,6 +1300,15 @@ func (f factsIndexReadFlow) HasKeyOf(p cfg.Point, tablePath, keyPath constraint.
 		return false
 	}
 	return f.keyOf.HasKeyOf(p, tablePath, keyPath)
+}
+
+func (f factsIndexReadFlow) MapReadback(q flow.IndexWriteQuery) (typ.Type, bool) {
+	if f.mapReadback != nil {
+		if got, ok := f.mapReadback.MapReadback(q); ok {
+			return got, true
+		}
+	}
+	return f.IndexWriteAdmission(q)
 }
 
 func (f factsIndexReadFlow) IndexWriteAdmission(q flow.IndexWriteQuery) (typ.Type, bool) {
@@ -1006,6 +1459,9 @@ func (p Projector) tableType(expr *ast.TableExpr, point cfg.Point, expected typ.
 		}
 		return typ.NewFreshEmptyRecord()
 	}
+	if result, ok := p.tableTypeWithUnionExpected(expr, point, expected); ok {
+		return result
+	}
 	entries, elems, fieldCount, _ := p.tableEntries(expr, expected, point, false)
 	if expected != nil {
 		if result := ops.CheckTableEntries(entries, elems, expected); len(result.Errors) == 0 {
@@ -1023,6 +1479,34 @@ func (p Projector) tableType(expr *ast.TableExpr, point cfg.Point, expected typ.
 		return typ.Unknown
 	}
 	return value.AdmitObservation(result)
+}
+
+func (p Projector) tableTypeWithUnionExpected(expr *ast.TableExpr, point cfg.Point, expected typ.Type) (typ.Type, bool) {
+	u := unwrap.Union(expected)
+	if u == nil {
+		return nil, false
+	}
+	var results []typ.Type
+	for _, member := range u.Members {
+		entries, elems, _, _ := p.tableEntries(expr, member, point, false)
+		result := ops.CheckTableEntries(entries, elems, member)
+		if len(result.Errors) != 0 {
+			continue
+		}
+		if result.Type != nil {
+			results = append(results, result.Type)
+			continue
+		}
+		results = append(results, member)
+	}
+	switch len(results) {
+	case 0:
+		return nil, false
+	case 1:
+		return results[0], true
+	default:
+		return typ.NewUnion(results...), true
+	}
 }
 
 func (p Projector) discriminatedExpected(expr *ast.TableExpr, expected typ.Type) typ.Type {
@@ -1484,6 +1968,27 @@ func (p Projector) pathType(expr ast.Expr, point cfg.Point) typ.Type {
 	return p.finalizeObservedPath(obs.Type)
 }
 
+func (p Projector) pathTypeAtPath(path constraint.Path, point cfg.Point) typ.Type {
+	if path.IsEmpty() || path.Symbol == 0 {
+		return nil
+	}
+	obs := p.pathObservationFacts().ObservePath(flow.PathObservationQuery{
+		Point:               point,
+		Path:                path,
+		View:                p.pathReadView(),
+		AllowConditionProof: true,
+		LocalCondition:      p.cfg.LocalCondition,
+		PreserveProof:       p.cfg.PreserveProof,
+	})
+	if !obs.Resolved() {
+		return nil
+	}
+	if typ.IsNever(obs.Type) || obs.Source == flow.PathObservationDeclared {
+		return obs.Type
+	}
+	return p.finalizeObservedPath(obs.Type)
+}
+
 func (p Projector) pathReadView() flow.PathReadView {
 	switch {
 	case p.cfg.PreferPreState:
@@ -1507,6 +2012,20 @@ func (p Projector) pathObservationFacts() flow.PathObservationFacts {
 		}
 	}
 	return p
+}
+
+func (p Projector) appendElementFieldOriginProvider() appendElementFieldOriginFacts {
+	if p.cfg.Facts != nil {
+		if facts, ok := p.cfg.Facts.(appendElementFieldOriginFacts); ok {
+			return facts
+		}
+	}
+	if p.cfg.Flow != nil {
+		if facts, ok := p.cfg.Flow.(appendElementFieldOriginFacts); ok {
+			return facts
+		}
+	}
+	return nil
 }
 
 func (p Projector) pathObservationIndexRead(expr ast.Expr, point cfg.Point) *flow.PathObservationIndexRead {
@@ -1643,6 +2162,7 @@ func (p Projector) applyPathObservationIndexRead(t typ.Type, q flow.PathObservat
 	}
 	if refined, ok := indexread.RefineObservation(indexread.ObservationQuery{
 		Point:  q.Point,
+		View:   q.View,
 		Result: t,
 		Index:  *q.IndexRead,
 		Flow:   flowProof,
@@ -1768,8 +2288,18 @@ func (p Projector) pathDeclaredType(point cfg.Point, path constraint.Path) typ.T
 	if base == nil || len(path.Segments) == 0 {
 		return base
 	}
+	return p.typeAtSegments(base, path.Segments)
+}
+
+func (p Projector) typeAtSegments(base typ.Type, segments []constraint.Segment) typ.Type {
+	if base == nil {
+		return nil
+	}
+	if len(segments) == 0 {
+		return base
+	}
 	current := base
-	for _, segment := range path.Segments {
+	for _, segment := range segments {
 		var next typ.Type
 		switch segment.Kind {
 		case constraint.SegmentField, constraint.SegmentIndexString:

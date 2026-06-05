@@ -146,6 +146,16 @@ func TestCanonicalFactsIndexWriteAdmissionReadsPostState(t *testing.T) {
 	if !ok || !typ.TypeEquals(got, typ.Boolean) {
 		t.Fatalf("IndexWriteAdmission = %v/%v, want post-state boolean/true", got, ok)
 	}
+
+	got, ok = facts.IndexWriteAdmission(flow.IndexWriteQuery{
+		Point:   point,
+		View:    flow.PathReadPre,
+		Target:  target,
+		KeyType: typ.String,
+	})
+	if !ok || !typ.TypeEquals(got, typ.Number) {
+		t.Fatalf("pre-state IndexWriteAdmission = %v/%v, want number/true", got, ok)
+	}
 }
 
 func TestCanonicalFactsConditionTypeAtProjectsDiscriminatedChildWithoutSolution(t *testing.T) {

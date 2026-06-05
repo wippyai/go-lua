@@ -97,6 +97,37 @@ func TestCondition_AndOr(t *testing.T) {
 	}
 }
 
+func TestCondition_AndKeepsConditionWhenFactAlreadyImplied(t *testing.T) {
+	pathX := Path{Root: "x", Symbol: 1}
+	pathY := Path{Root: "y", Symbol: 2}
+	xString := HasType{Path: pathX, Type: narrow.BuiltinTypeKey("string")}
+	yNotNil := NotNil{Path: pathY}
+
+	cond := FromConstraints(xString, yNotNil)
+	fact := FromConstraints(xString)
+
+	if got := And(cond, fact); !got.Equals(cond) {
+		t.Fatalf("condition AND implied fact = %v, want %v", got, cond)
+	}
+	if got := And(fact, cond); !got.Equals(cond) {
+		t.Fatalf("implied fact AND condition = %v, want %v", got, cond)
+	}
+}
+
+func TestCondition_AndKeepsDisjunctionWhenFactCommonToAllArms(t *testing.T) {
+	pathX := Path{Root: "x", Symbol: 1}
+	pathY := Path{Root: "y", Symbol: 2}
+	xNotNil := NotNil{Path: pathX}
+	left := FromConstraints(xNotNil, FieldEquals{Target: pathY, Field: "kind", Value: typ.LiteralString("a")})
+	right := FromConstraints(xNotNil, FieldEquals{Target: pathY, Field: "kind", Value: typ.LiteralString("b")})
+	cond := Or(left, right)
+	fact := FromConstraints(xNotNil)
+
+	if got := And(cond, fact); !got.Equals(cond) {
+		t.Fatalf("disjunction AND common fact = %v, want %v", got, cond)
+	}
+}
+
 func TestCondition_MustConstraintsCommon(t *testing.T) {
 	path := Path{Root: "x", Symbol: 1}
 
@@ -193,6 +224,22 @@ func TestNegateConstraint(t *testing.T) {
 		if !result.Equals(tt.expected) {
 			t.Errorf("NegateConstraint(%T) = %T, want %T", tt.input, result, tt.expected)
 		}
+	}
+}
+
+func TestCondition_HasTypeBuiltinKindsContradictOnSamePath(t *testing.T) {
+	path := Path{Root: "x", Symbol: 1}
+	str := HasType{Path: path, Type: narrow.BuiltinTypeKey("string")}
+	num := HasType{Path: path, Type: narrow.BuiltinTypeKey("number")}
+
+	if got := FromConstraints(str, num); !got.IsFalse() {
+		t.Fatalf("hastype string and number on same path = %v, want false", got)
+	}
+	if got := And(FromConstraints(str), FromConstraints(num)); !got.IsFalse() {
+		t.Fatalf("hastype string AND number on same path = %v, want false", got)
+	}
+	if got := FromConstraints(str, str); got.IsFalse() {
+		t.Fatalf("duplicate hastype string = false, want satisfiable")
 	}
 }
 
@@ -679,6 +726,40 @@ func TestCondition_NegateConstraint_FieldIndex(t *testing.T) {
 	}
 }
 
+func TestCondition_ContradictionIndexSemanticRules(t *testing.T) {
+	root := Path{Root: "x"}
+	if got := FromConstraints(
+		Truthy{Path: root},
+		IsNil{Path: root},
+	); !got.IsFalse() {
+		t.Fatalf("root truthy/nil contradiction should be false condition, got %v", got)
+	}
+
+	if got := FromConstraints(
+		HasType{Path: root, Type: narrow.BuiltinTypeKey("string")},
+		HasType{Path: root, Type: narrow.BuiltinTypeKey("number")},
+	); !got.IsFalse() {
+		t.Fatalf("mutually exclusive root builtin HasType constraints should be false, got %v", got)
+	}
+
+	versioned := Path{Root: "x", Symbol: 1, Version: 7}
+	lit := typ.LiteralString("ready")
+	if got := FromConstraints(
+		FieldEquals{Target: versioned, Field: "status", Value: lit},
+		FieldNotEquals{Target: versioned, Field: "status", Value: lit},
+	); !got.IsFalse() {
+		t.Fatalf("version-scoped field complement should be false condition, got %v", got)
+	}
+
+	historical := Path{Root: "x", Symbol: 1}
+	if got := FromConstraints(
+		FieldEquals{Target: historical, Field: "status", Value: lit},
+		FieldNotEquals{Target: historical, Field: "status", Value: lit},
+	); got.IsFalse() {
+		t.Fatalf("unversioned mutable field complement should not collapse as current fact")
+	}
+}
+
 func TestConjunctionContains(t *testing.T) {
 	path := Path{Root: "x", Symbol: 1}
 	truthy := Truthy{Path: path}
@@ -748,6 +829,25 @@ func TestCondition_MapPathsRewritesAllEmbeddedPaths(t *testing.T) {
 	)
 	if !got.Equals(want) {
 		t.Fatalf("MapPaths() = %v, want %v", got, want)
+	}
+}
+
+func TestCondition_MapPathsNoOpKeepsCanonicalStorage(t *testing.T) {
+	path := Path{Root: "x", Symbol: 1, Version: 2}.Field("config")
+	cond := FromConstraints(
+		Truthy{Path: path},
+		NotNil{Path: path.Field("target")},
+	)
+
+	got := cond.MapPaths(func(p Path) Path { return p })
+	if !got.Equals(cond) {
+		t.Fatalf("MapPaths(no-op) = %v, want %v", got, cond)
+	}
+	if len(got.Disjuncts) != 1 || len(cond.Disjuncts) != 1 || len(got.Disjuncts[0]) == 0 {
+		t.Fatalf("unexpected test condition shape: got=%v cond=%v", got, cond)
+	}
+	if &got.Disjuncts[0][0] != &cond.Disjuncts[0][0] {
+		t.Fatalf("MapPaths(no-op) should keep the existing canonical constraint storage")
 	}
 }
 

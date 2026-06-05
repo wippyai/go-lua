@@ -49,6 +49,8 @@ type DirectCallEntryReferenceInput struct {
 
 	FunctionRefs           flow.FunctionRefs
 	ClosureRefs            flow.ClosureRefs
+	ReferenceProjection    flow.ReferencePathProjection
+	LimitReferencePaths    bool
 	State                  *flow.PointState
 	ResolveFunctionArg     EntryFunctionRefArgResolver
 	ResolveFunctionArgRefs EntryFunctionRefsArgResolver
@@ -90,7 +92,11 @@ func DirectCallEntryFunctionRefs(in DirectCallEntryReferenceInput) flow.Function
 		}
 		out = joinFunctionRefAt(out, target.Key(), set)
 	}
-	return flow.FunctionRefsDomain.Join(out, nil)
+	out = flow.FunctionRefsDomain.Join(out, nil)
+	if !in.LimitReferencePaths {
+		return out
+	}
+	return flow.ProjectFunctionRefsByReferencePaths(out, in.ReferenceProjection)
 }
 
 // DirectCallEntryClosureRefs is the closure-value counterpart to
@@ -128,7 +134,11 @@ func DirectCallEntryClosureRefs(in DirectCallEntryReferenceInput) flow.ClosureRe
 		}
 		out = joinClosureRefAt(out, target.Key(), set)
 	}
-	return flow.ClosureRefsDomain.Join(out, nil)
+	out = flow.ClosureRefsDomain.Join(out, nil)
+	if !in.LimitReferencePaths {
+		return out
+	}
+	return flow.ProjectClosureRefsByReferencePaths(out, in.ReferenceProjection)
 }
 
 func entryReferenceTargetPath(in DirectCallEntryReferenceInput, runtimeIdx int) (constraint.Path, bool) {

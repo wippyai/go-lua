@@ -1,7 +1,5 @@
 package typ
 
-import "github.com/wippyai/go-lua/internal"
-
 // Contains reports whether t or any nested type satisfies pred.
 //
 // This is the canonical structural scanner for type predicates. Callers should
@@ -64,8 +62,13 @@ func (s containsSeen) remember(t Type) {
 }
 
 func containsSeenKey(t Type) uint64 {
-	if rec, ok := t.(*Recursive); ok {
-		return internal.HashCombine(uint64(rec.Kind()), internal.FnvString(rec.Name))
+	if knownContainsOpenRecursive(t) {
+		if ptr := typePointer(t); ptr != 0 {
+			return uint64(ptr)
+		}
+	}
+	if knownContainsRecursive(t) {
+		return ProductFamilyHash(t)
 	}
 	return typeEqualityHash(t)
 }

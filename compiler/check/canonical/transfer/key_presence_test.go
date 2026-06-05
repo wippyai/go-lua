@@ -210,6 +210,9 @@ func TestDynamicWriteKeyConsumesKeyPresenceAxis(t *testing.T) {
 	}
 
 	out.KeyPresence = out.KeyPresence.WithPaths(basePath, keyPath)
+	if got := tr.dynamicWriteKey(&out, target, product.AbstractValue{}, nil); !got.IsZero() {
+		t.Fatalf("dynamicWriteKey synthesized key from zero base: %v", got.ProjectValue())
+	}
 	got := tr.dynamicWriteKey(&out, target, base, nil)
 	want := typ.NewUnion(typ.LiteralString("a"), typ.LiteralString("b"))
 	if got.IsZero() || !typ.TypeEquals(got.ProjectValue(), want) {
@@ -221,6 +224,35 @@ func TestDynamicWriteKeyConsumesKeyPresenceAxis(t *testing.T) {
 	got = tr.dynamicWriteKey(&out, target, base, nil)
 	if got.IsZero() || !typ.TypeEquals(got.ProjectValue(), want) {
 		t.Fatalf("nested dynamicWriteKey = %v; want %v", got.ProjectValue(), want)
+	}
+}
+
+func TestDynamicIndexWriteSeedsKeyPresenceForOpaqueKey(t *testing.T) {
+	table := &ast.IdentExpr{Value: "nodes"}
+	key := &ast.IdentExpr{Value: "node_id"}
+	src := &ast.StringExpr{Value: "node"}
+	in := keyPresenceInput(t, map[*ast.IdentExpr]cfg.SymbolID{
+		table: cfg.SymbolID(141),
+		key:   cfg.SymbolID(142),
+	})
+	tr := New(in, Config{})
+	out := flow.PointState{
+		Env: map[flow.ValueKey]product.AbstractValue{
+			flow.SymbolValueKey(cfg.SymbolID(141)): product.FromType(typ.NewMap(typ.String, typ.Any)),
+			flow.SymbolValueKey(cfg.SymbolID(142)): product.FromType(typ.Any),
+		},
+	}
+	tr.applyContainerWrite(&out, cfg.AssignTarget{
+		Kind:       cfg.TargetIndex,
+		BaseName:   "nodes",
+		BaseSymbol: cfg.SymbolID(141),
+		Key:        key,
+	}, src, nil)
+
+	tablePath := constraint.NewPath(cfg.SymbolID(141), "nodes")
+	keyPath := constraint.NewPath(cfg.SymbolID(142), "node_id")
+	if !out.KeyPresence.HasPaths(tablePath, keyPath) {
+		t.Fatalf("opaque dynamic write did not seed key presence: %s", out.KeyPresence.Format())
 	}
 }
 
@@ -440,7 +472,7 @@ func TestTableInsertKillsKeyArrayProvenance(t *testing.T) {
 	}
 }
 
-func TestKeyPresenceKillHandlesNestedIndexBaseExpression(t *testing.T) {
+func TestPresentNestedIndexWritePreservesKeyPresence(t *testing.T) {
 	root := &ast.IdentExpr{Value: "items"}
 	key := &ast.IdentExpr{Value: "k"}
 	base := &ast.AttrGetExpr{
@@ -464,8 +496,37 @@ func TestKeyPresenceKillHandlesNestedIndexBaseExpression(t *testing.T) {
 		Base: base,
 		Key:  key,
 	}, &ast.StringExpr{Value: "changed"}, nil)
+	if !out.KeyPresence.HasPaths(tablePath, keyPath) {
+		t.Fatalf("present nested index write dropped KeyPresence: %s", out.KeyPresence.Format())
+	}
+}
+
+func TestNilNestedIndexWriteKillsKeyPresence(t *testing.T) {
+	root := &ast.IdentExpr{Value: "items"}
+	key := &ast.IdentExpr{Value: "k"}
+	base := &ast.AttrGetExpr{
+		Object:    root,
+		Key:       &ast.StringExpr{Value: "byName"},
+		KeySyntax: ast.AttrKeyDot,
+	}
+	in := keyPresenceInput(t, map[*ast.IdentExpr]cfg.SymbolID{
+		root: cfg.SymbolID(61),
+		key:  cfg.SymbolID(62),
+	})
+	tr := New(in, Config{})
+
+	tablePath := constraint.NewPath(cfg.SymbolID(61), "items").Field("byName")
+	keyPath := constraint.NewPath(cfg.SymbolID(62), "k")
+	out := flow.PointState{
+		KeyPresence: flow.KeyPresenceFacts{}.WithPaths(tablePath, keyPath),
+	}
+	tr.applyContainerWrite(&out, cfg.AssignTarget{
+		Kind: cfg.TargetIndex,
+		Base: base,
+		Key:  key,
+	}, &ast.NilExpr{}, nil)
 	if out.KeyPresence.HasPaths(tablePath, keyPath) {
-		t.Fatalf("nested index write kept stale KeyPresence: %s", out.KeyPresence.Format())
+		t.Fatalf("nil nested index write kept stale KeyPresence: %s", out.KeyPresence.Format())
 	}
 }
 

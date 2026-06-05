@@ -28,7 +28,6 @@ import (
 	"github.com/wippyai/go-lua/compiler/check/domain/functionfact"
 	"github.com/wippyai/go-lua/compiler/check/domain/observation"
 	"github.com/wippyai/go-lua/compiler/check/domain/paramevidence"
-	flowpath "github.com/wippyai/go-lua/compiler/check/domain/path"
 	"github.com/wippyai/go-lua/compiler/check/synth/callarg"
 	"github.com/wippyai/go-lua/compiler/check/synth/ops"
 	"github.com/wippyai/go-lua/types/db"
@@ -98,7 +97,7 @@ func checkSingleCall(
 	// Call arguments and callees are evaluated before an assignment/return node
 	// writes its result. Use the point-entry view so `x = f(x)` validates the
 	// argument against the old x, not the post-call assignment target.
-	callObserver := observer.WithPreStateReads()
+	callObserver := observer.WithPreStateReads().WithCallArgumentProofs()
 	args := make([]typ.Type, len(info.Args))
 	for i, arg := range info.Args {
 		args[i] = callObserver.TypeOf(arg, p)
@@ -152,7 +151,6 @@ func checkSingleCall(
 	pipeline.ReSynthAndReInfer()
 	result := pipeline.Finish()
 	errors := appendCallContractErrors(result.Errors, contract, info, p, callObserver, ctx, query, pipeline)
-	errors = suppressForwardedUnannotatedParamCallErrors(errors, info, graph, bindings)
 	return callErrorsToDiags(errors, info, sourceName)
 }
 
@@ -185,7 +183,20 @@ func appendCallContractErrors(
 		if obligation.AllowsGradualAny() {
 			actual = observer.AdmitGradualArgument(actual, arg, p, expected)
 		}
-		if actual == nil || ops.Consistent(ctx, query, actual, expected) {
+		if actual == nil {
+			continue
+		}
+		satisfied := paramevidence.CallArgObligationSatisfied(actual, obligation, func(actual, expected typ.Type) bool {
+			return ops.Consistent(ctx, query, actual, expected)
+		})
+		if !satisfied {
+			if contract, ok := paramevidence.ObligationContract(obligation); ok {
+				satisfied = observer.ExprSatisfiesContract(arg, p, contract, func(actual, expected typ.Type) bool {
+					return ops.Consistent(ctx, query, actual, expected)
+				})
+			}
+		}
+		if satisfied {
 			continue
 		}
 		errors = append(errors, ops.CallError{
@@ -206,37 +217,6 @@ func callErrorAlreadyCovers(errors []ops.CallError, argIdx int, expected typ.Typ
 		}
 		if expected == nil || err.Expected == nil || typ.TypeEquals(err.Expected, expected) {
 			return true
-		}
-	}
-	return false
-}
-
-func suppressForwardedUnannotatedParamCallErrors(errors []ops.CallError, info *cfg.CallInfo, graph *cfg.Graph, bindings *bind.BindingTable) []ops.CallError {
-	if len(errors) == 0 || info == nil || graph == nil || bindings == nil {
-		return errors
-	}
-	var out []ops.CallError
-	for _, err := range errors {
-		if err.Kind == ops.ErrTypeMismatch && callErrorArgIsUnannotatedParam(err, info, graph, bindings) {
-			continue
-		}
-		out = append(out, err)
-	}
-	return out
-}
-
-func callErrorArgIsUnannotatedParam(err ops.CallError, info *cfg.CallInfo, graph *cfg.Graph, bindings *bind.BindingTable) bool {
-	if err.ArgIdx <= 0 || err.ArgIdx > len(info.Args) {
-		return false
-	}
-	arg := info.Args[err.ArgIdx-1]
-	path := flowpath.FromExprWithBindings(arg, nil, bindings)
-	if path.IsEmpty() || path.Symbol == 0 {
-		return false
-	}
-	for _, slot := range graph.ParamSlotsReadOnly() {
-		if slot.Symbol == path.Symbol {
-			return slot.TypeAnnotation == nil
 		}
 	}
 	return false

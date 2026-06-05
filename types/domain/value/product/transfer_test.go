@@ -81,6 +81,29 @@ func TestGradualAnyEvidenceSurvivesDynamicReads(t *testing.T) {
 	}
 }
 
+func TestGradualAnyEvidenceSurvivesKindRefinements(t *testing.T) {
+	number := FilterByKind(GradualAny(), kind.Number)
+	if !number.IsGradualTop() || !typ.TypeEquals(number.ProjectValue(), typ.Number) || !number.DefinitelyPresent() {
+		t.Fatalf("FilterByKind(GradualAny, number) = %v gradual=%v present=%v, want gradual number",
+			number.ProjectValue(), number.IsGradualTop(), number.DefinitelyPresent())
+	}
+	if !GradualAny().Covers(number) {
+		t.Fatal("gradual source must semantically cover its type-refined product value")
+	}
+
+	nonNil := ExcludeByKind(GradualAny(), kind.Nil)
+	if !nonNil.IsGradualTop() || !typ.TypeEquals(nonNil.ProjectValue(), typ.Any) || !nonNil.DefinitelyPresent() {
+		t.Fatalf("ExcludeByKind(GradualAny, nil) = %v gradual=%v present=%v, want present gradual any",
+			nonNil.ProjectValue(), nonNil.IsGradualTop(), nonNil.DefinitelyPresent())
+	}
+
+	nilOnly := FilterByKind(GradualAny(), kind.Nil)
+	if !nilOnly.IsGradualTop() || !typ.TypeEquals(nilOnly.ProjectValue(), typ.Nil) {
+		t.Fatalf("FilterByKind(GradualAny, nil) = %v gradual=%v, want gradual nil",
+			nilOnly.ProjectValue(), nilOnly.IsGradualTop())
+	}
+}
+
 func TestWithMemberStaticStringIndexDoesNotOverwriteDotField(t *testing.T) {
 	base := FromType(typ.NewRecord().
 		Field("name", typ.String).
@@ -634,6 +657,14 @@ func TestAppendElementPreservesDiscriminatedCommandVariants(t *testing.T) {
 	}
 }
 
+func TestAppendElementReplacesEmptyRecordSeedWithArray(t *testing.T) {
+	got := AppendElement(FromType(typ.NewRecord().Build()), FromType(typ.String)).ProjectValue()
+	want := typ.NewArray(typ.String)
+	if !typ.TypeEquals(got, want) {
+		t.Fatalf("AppendElement(empty record seed, string) = %v, want %v", got, want)
+	}
+}
+
 // TestAppendMapElementMatchesValueDomain pins that AppendMapElement agrees with
 // the value-domain map-array-element law for a keyed table-mutator target.
 func TestAppendMapElementMatchesValueDomain(t *testing.T) {
@@ -727,6 +758,28 @@ func TestNarrowTruthyMatchesNarrow(t *testing.T) {
 	gradual := NarrowTruthy(GradualAny())
 	if !gradual.IsGradualTop() || !typ.TypeEquals(gradual.ProjectValue(), typ.Any) || !gradual.DefinitelyPresent() {
 		t.Fatalf("NarrowTruthy(GradualAny) = %s gradual=%v presence=%s, want present gradual any", gradual.ProjectValue(), gradual.IsGradualTop(), gradual.Presence())
+	}
+
+	svc := typ.NewAlias("Svc", typ.NewRecord().
+		Field("go", typ.Func().Build()).
+		Build())
+	alias := NarrowTruthy(FromType(typ.NewOptional(svc)))
+	if _, optional := typ.SplitNilableFieldType(alias.ProjectValue()); optional || !alias.DefinitelyPresent() {
+		t.Fatalf("NarrowTruthy(Svc?) = %s presence=%s, want present non-optional alias", alias.ProjectValue(), alias.Presence())
+	}
+
+	recursiveSvc := typ.NewRecursive("Svc", func(self typ.Type) typ.Type {
+		return typ.NewRecord().
+			Field("go", typ.Func().Param("self", self).Build()).
+			Build()
+	})
+	recursiveBase := FromType(typ.NewOptional(recursiveSvc))
+	recursive := NarrowTruthy(recursiveBase)
+	if !recursiveBase.Covers(recursive) {
+		t.Fatalf("NarrowTruthy(recursive Svc?) = %s is not covered by base %s", recursive.ProjectValue(), recursiveBase.ProjectValue())
+	}
+	if !recursive.DefinitelyPresent() {
+		t.Fatalf("NarrowTruthy(recursive Svc?) presence=%s, want present", recursive.Presence())
 	}
 }
 

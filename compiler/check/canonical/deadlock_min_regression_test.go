@@ -43,14 +43,148 @@ return f
 	end
 	return methods
 	`,
-		"method-self-field-concat-infers-contract": `
-	local methods = {}
+			"method-self-field-concat-infers-contract": `
+		local methods = {}
 	function methods:g()
 	    return "node[" .. self.id .. "]"
 	end
 	return methods
 	`,
+			"unannotated-operation-config-branches": `
+	local compiler = {}
+	compiler.OP_TYPES = {
+	    FUNC = "func",
+	    AGENT = "agent",
+	    AS = "as",
 	}
+
+	local function build_graph(operations)
+	    for _, op in ipairs(operations) do
+	        if op.type == compiler.OP_TYPES.FUNC then
+	            local config = {
+	                func_id = op.config.func_id,
+	                args = op.config.args,
+	            }
+	        elseif op.type == compiler.OP_TYPES.AGENT then
+	            local config = {
+	                agent = op.config.agent_id,
+	                model = op.config.model,
+	            }
+	        elseif op.type == compiler.OP_TYPES.AS then
+	            local name = op.config.name
+	        end
+	    end
+	end
+
+	return build_graph
+	`,
+			"operation-config-branches-after-method-storage": `
+	local compiler = {}
+	compiler.OP_TYPES = {
+	    FUNC = "func",
+	    AGENT = "agent",
+	    AS = "as",
+	}
+	local FlowGraph = {}
+	local flow_graph_mt = { __index = FlowGraph }
+
+	function FlowGraph.new()
+	    return setmetatable({
+	        operations = table.create(16, 0),
+	    }, flow_graph_mt)
+	end
+
+	function FlowGraph:add_operation(op_type, config)
+	    table.insert(self.operations, {
+	        type = op_type,
+	        config = config or {},
+	    })
+	end
+
+	local function build_graph(operations)
+	    local graph = FlowGraph.new()
+	    for _, op in ipairs(operations) do
+	        if op.type == compiler.OP_TYPES.FUNC then
+	            local config = {
+	                func_id = op.config.func_id,
+	                args = op.config.args,
+	            }
+	        elseif op.type == compiler.OP_TYPES.AGENT then
+	            local config = {
+	                agent = op.config.agent_id,
+	                model = op.config.model,
+	            }
+	        elseif op.type == compiler.OP_TYPES.AS then
+	            local name = op.config.name
+	        end
+	        graph:add_operation(op.type, op.config)
+	    end
+	    return graph
+	end
+
+	return build_graph
+	`,
+			"operation-config-branches-through-compile-wrapper": `
+	local compiler = {}
+	compiler.OP_TYPES = {
+	    FUNC = "func",
+	    AGENT = "agent",
+	    AS = "as",
+	}
+	local FlowGraph = {}
+	local flow_graph_mt = { __index = FlowGraph }
+
+	function FlowGraph.new()
+	    return setmetatable({
+	        operations = table.create(16, 0),
+	    }, flow_graph_mt)
+	end
+
+	function FlowGraph:add_operation(op_type, config)
+	    table.insert(self.operations, {
+	        type = op_type,
+	        config = config or {},
+	    })
+	end
+
+	function compiler.build_graph(operations, session_context)
+	    if not operations or #operations == 0 then
+	        return nil, "No operations provided"
+	    end
+	    local graph = FlowGraph.new()
+	    for _, op in ipairs(operations) do
+	        if op.type == compiler.OP_TYPES.FUNC then
+	            local config = {
+	                func_id = op.config.func_id,
+	                args = op.config.args,
+	            }
+	        elseif op.type == compiler.OP_TYPES.AGENT then
+	            local config = {
+	                agent = op.config.agent_id,
+	                model = op.config.model,
+	            }
+	        elseif op.type == compiler.OP_TYPES.AS then
+	            local name = op.config.name
+	        end
+	        graph:add_operation(op.type, op.config)
+	    end
+	    return graph, nil
+	end
+
+	function compiler.compile(operations, session_context)
+	    if not operations or #operations == 0 then
+	        return nil, "No operations to compile"
+	    end
+	    local graph, graph_err = compiler.build_graph(operations, session_context)
+	    if graph_err then
+	        return nil, graph_err
+	    end
+	    return graph, nil
+	end
+
+	return compiler
+	`,
+		}
 	for name, src := range clean {
 		t.Run(name, func(t *testing.T) {
 			requireCanonicalClean(t, src)

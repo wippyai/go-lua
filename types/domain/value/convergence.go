@@ -1442,6 +1442,11 @@ func (s *convergenceWidenState) convergenceUpperBound(existing, candidate typ.Ty
 	if upper, ok := SelfEmbeddingUpperBound(existing, candidate); ok {
 		return upper, true
 	}
+	if !s.joinMode {
+		if upper, ok := EmptyRecordArrayMutationUpperBound(existing, candidate); ok {
+			return upper, true
+		}
+	}
 	// RecordExtensionUpperBound admits a construction-history extension whole, with
 	// the freshly added field kept required. That over-approximates the join (the
 	// LUB optionalizes the non-shared field), so it is a widening step only; Join
@@ -1455,6 +1460,35 @@ func (s *convergenceWidenState) convergenceUpperBound(existing, candidate typ.Ty
 		return upper, true
 	}
 	return nil, false
+}
+
+// EmptyRecordArrayMutationUpperBound admits the construction history `{}`
+// followed by an observed array append as the observed array shape. This is a
+// convergence/mutation fact, not a branch join rule: JoinForConvergence keeps
+// ordinary co-occurring empty-record/array alternatives out of this path.
+func EmptyRecordArrayMutationUpperBound(a, b typ.Type) (typ.Type, bool) {
+	if exactEmptyRecordSeed(a) {
+		if arr, ok := unwrap.Alias(b).(*typ.Array); ok && arr != nil {
+			return b, true
+		}
+	}
+	if exactEmptyRecordSeed(b) {
+		if arr, ok := unwrap.Alias(a).(*typ.Array); ok && arr != nil {
+			return a, true
+		}
+	}
+	return nil, false
+}
+
+func exactEmptyRecordSeed(t typ.Type) bool {
+	rec, ok := unwrap.Alias(t).(*typ.Record)
+	return ok &&
+		rec != nil &&
+		len(rec.Fields) == 0 &&
+		len(rec.StaticMembers) == 0 &&
+		!rec.HasMapComponent() &&
+		!rec.Open &&
+		rec.Metatable == nil
 }
 
 // FunctionEvidenceUpperBound admits a solved function projection over the

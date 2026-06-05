@@ -272,6 +272,34 @@ func TestJoinInterned(t *testing.T) {
 	}
 }
 
+func TestJoinBottomIdentityUsesExistingCarrier(t *testing.T) {
+	v := FromType(typ.NewRecord().
+		Field("name", typ.String).
+		Field("nested", typ.NewRecord().Field("id", typ.Integer).Build()).
+		Build())
+
+	if got := Join(Bottom(), v); got.n != v.n {
+		t.Fatalf("Join(bottom, v) should return v carrier, got %v", got.ProjectValue())
+	}
+	if got := Join(v, Bottom()); got.n != v.n {
+		t.Fatalf("Join(v, bottom) should return v carrier, got %v", got.ProjectValue())
+	}
+}
+
+func TestWidenBottomIdentityUsesExistingCarrier(t *testing.T) {
+	v := FromType(typ.NewRecord().
+		Field("name", typ.String).
+		Field("nested", typ.NewRecord().Field("id", typ.Integer).Build()).
+		Build())
+
+	if got := Widen(Bottom(), v); got.n != v.n {
+		t.Fatalf("Widen(bottom, v) should return v carrier, got %v", got.ProjectValue())
+	}
+	if got := Widen(v, Bottom()); got.n != v.n {
+		t.Fatalf("Widen(v, bottom) should return v carrier, got %v", got.ProjectValue())
+	}
+}
+
 // TestWidenAboveJoin pins that Widen sits at or above Join (a sound accelerant).
 func TestWidenAboveJoin(t *testing.T) {
 	vs := sampleValues()

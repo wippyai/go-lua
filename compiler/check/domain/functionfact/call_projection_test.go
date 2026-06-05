@@ -10,29 +10,9 @@ import (
 	"github.com/wippyai/go-lua/types/typ"
 )
 
-func TestProjectObservedDynamicCallParams_UsesDynamicEvidenceForDynamicCall(t *testing.T) {
+func TestProjectCallContract_DoesNotPromotePublicParamEvidenceIntoCallableShape(t *testing.T) {
 	payload := typ.NewRecord().Field("parent_id", typ.String).Build()
-	callee := typ.Func().Param("payload", payload).Returns(typ.Boolean).Build()
-	source := &ast.FunctionExpr{ParList: &ast.ParList{Names: []string{"payload"}}}
-
-	got := projectCallContract(callContractInput{
-		Fact:   api.FunctionFact{Signature: callee, Params: product.LiftVector([]typ.Type{typ.Any})},
-		Sym:    cfg.SymbolID(1),
-		Source: source,
-		Args:   []typ.Type{typ.Any},
-	})
-	fn, ok := got.(*typ.Function)
-	if !ok || len(fn.Params) != 1 {
-		t.Fatalf("expected function projection, got %T", got)
-	}
-	if !typ.TypeEquals(fn.Params[0].Type, typ.Any) {
-		t.Fatalf("expected dynamic call projection to keep any contract, got %v", fn.Params[0].Type)
-	}
-}
-
-func TestProjectObservedDynamicCallParams_KeepsStructuralContextForPreciseCall(t *testing.T) {
-	payload := typ.NewRecord().Field("parent_id", typ.String).Build()
-	callee := typ.Func().Param("payload", payload).Returns(typ.Boolean).Build()
+	callee := typ.Func().OptParam("payload", typ.Any).Returns(typ.Boolean).Build()
 	source := &ast.FunctionExpr{ParList: &ast.ParList{Names: []string{"payload"}}}
 
 	got := projectCallContract(callContractInput{
@@ -45,8 +25,31 @@ func TestProjectObservedDynamicCallParams_KeepsStructuralContextForPreciseCall(t
 	if !ok || len(fn.Params) != 1 {
 		t.Fatalf("expected function projection, got %T", got)
 	}
-	if !typ.TypeEquals(fn.Params[0].Type, payload) {
-		t.Fatalf("expected precise call projection to keep structural context, got %v", fn.Params[0].Type)
+	if !typ.TypeEquals(fn.Params[0].Type, typ.Any) {
+		t.Fatalf("parameter evidence rewrote callable shape to %v, want source any", fn.Params[0].Type)
+	}
+	if !fn.Params[0].Optional {
+		t.Fatalf("parameter evidence made optional source parameter required: %#v", fn.Params[0])
+	}
+}
+
+func TestProjectCallContract_DoesNotUseBodyEvidenceAsPreciseCallContext(t *testing.T) {
+	payload := typ.NewRecord().Field("parent_id", typ.String).Build()
+	callee := typ.Func().OptParam("payload", typ.Any).Returns(typ.Boolean).Build()
+	source := &ast.FunctionExpr{ParList: &ast.ParList{Names: []string{"payload"}}}
+
+	got := projectCallContract(callContractInput{
+		Fact:   api.FunctionFact{Signature: callee, Params: product.LiftVector([]typ.Type{payload})},
+		Sym:    cfg.SymbolID(1),
+		Source: source,
+		Args:   []typ.Type{payload},
+	})
+	fn, ok := got.(*typ.Function)
+	if !ok || len(fn.Params) != 1 {
+		t.Fatalf("expected function projection, got %T", got)
+	}
+	if !typ.TypeEquals(fn.Params[0].Type, typ.Any) {
+		t.Fatalf("body/public evidence leaked into callable shape: got %v, want any", fn.Params[0].Type)
 	}
 }
 
@@ -73,7 +76,7 @@ func TestProjectObservedDynamicCallParams_DoesNotRewriteAnnotatedParam(t *testin
 	}
 }
 
-func TestProjectObservedDynamicCallParams_DoesNotRewriteScalarPrecondition(t *testing.T) {
+func TestProjectCallContract_KeepsSourceScalarSignature(t *testing.T) {
 	callee := typ.Func().Param("name", typ.String).Returns(typ.String).Build()
 	source := &ast.FunctionExpr{ParList: &ast.ParList{Names: []string{"name"}}}
 
@@ -88,11 +91,11 @@ func TestProjectObservedDynamicCallParams_DoesNotRewriteScalarPrecondition(t *te
 		t.Fatalf("expected function projection, got %T", got)
 	}
 	if !typ.TypeEquals(fn.Params[0].Type, typ.String) {
-		t.Fatalf("expected scalar precondition to remain string, got %v", fn.Params[0].Type)
+		t.Fatalf("expected source scalar signature to remain string, got %v", fn.Params[0].Type)
 	}
 }
 
-func TestProjectPublicCallParams_DoesNotWeakenScalarBodyContractToAny(t *testing.T) {
+func TestProjectCallContract_PublicAnyEvidenceDoesNotWeakenSourceScalarSignature(t *testing.T) {
 	callee := typ.Func().Param("name", typ.String).Returns(typ.String).Build()
 	source := &ast.FunctionExpr{ParList: &ast.ParList{Names: []string{"name"}}}
 
@@ -107,11 +110,11 @@ func TestProjectPublicCallParams_DoesNotWeakenScalarBodyContractToAny(t *testing
 		t.Fatalf("expected function projection, got %T", got)
 	}
 	if !typ.TypeEquals(fn.Params[0].Type, typ.String) {
-		t.Fatalf("expected public any evidence not to weaken string precondition, got %v", fn.Params[0].Type)
+		t.Fatalf("expected public any evidence not to weaken source signature, got %v", fn.Params[0].Type)
 	}
 }
 
-func TestProjectPublicCallParams_CanWidenStructuralCallBoundary(t *testing.T) {
+func TestProjectCallContract_DoesNotWidenStructuralCallableShapeFromParamEvidence(t *testing.T) {
 	node := typ.NewRecord().Field("node_id", typ.String).Build()
 	tupleParam := typ.NewTuple(node)
 	arrayParam := typ.NewArray(node)
@@ -128,8 +131,8 @@ func TestProjectPublicCallParams_CanWidenStructuralCallBoundary(t *testing.T) {
 	if !ok || len(fn.Params) != 1 {
 		t.Fatalf("expected function projection, got %T", got)
 	}
-	if !typ.TypeEquals(fn.Params[0].Type, arrayParam) {
-		t.Fatalf("expected public structural evidence to replace tuple projection, got %v", fn.Params[0].Type)
+	if !typ.TypeEquals(fn.Params[0].Type, tupleParam) {
+		t.Fatalf("parameter evidence widened callable shape to %v, want source tuple %v", fn.Params[0].Type, tupleParam)
 	}
 }
 

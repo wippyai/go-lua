@@ -29,16 +29,16 @@ func (r *RequireIntercept) InterceptCall(ex *ast.FuncCallExpr, ctx CallEnv) Resu
 		return Result{}
 	}
 
-	if !isRequireCall(ex, ctx) {
-		return Result{}
-	}
-
-	if len(ex.Args) != 1 {
+	if ex == nil || len(ex.Args) != 1 {
 		return Result{}
 	}
 
 	strArg, ok := ex.Args[0].(*ast.StringExpr)
 	if !ok {
+		return Result{}
+	}
+
+	if !isRequireCall(ex, ctx) {
 		return Result{}
 	}
 

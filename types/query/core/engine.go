@@ -247,8 +247,8 @@ func NewEngine() *Engine {
 		t, ok := e.fieldDepth(ctx, refType(key.t), key.name, 0)
 		return fieldResult{t: t, ok: ok}
 	}, fieldResultEqual, widenFieldResult)
-	e.methodQ = db.NewQueryWithWiden("Method", func(_ *db.QueryContext, key methodKey) fieldResult {
-		t, ok := methodDepth(refType(key.t), key.name, 0)
+	e.methodQ = db.NewQueryWithWiden("Method", func(ctx *db.QueryContext, key methodKey) fieldResult {
+		t, ok := e.methodDepth(ctx, refType(key.t), key.name, 0)
 		return fieldResult{t: t, ok: ok}
 	}, fieldResultEqual, widenFieldResult)
 	e.indexQ = db.NewQueryWithWiden("Index", func(_ *db.QueryContext, key indexKey) fieldResult {

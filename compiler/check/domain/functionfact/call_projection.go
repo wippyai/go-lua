@@ -120,15 +120,6 @@ type callContractInput struct {
 	UnobservedParams []bool
 }
 
-// factParam projects the public parameter-evidence carrier slot at idx to its
-// structural type, returning nil for an out-of-range or unoccupied slot.
-func (input callContractInput) factParam(idx int) typ.Type {
-	if idx < 0 || idx >= len(input.Fact.Params) || input.Fact.Params[idx].IsZero() {
-		return nil
-	}
-	return input.Fact.Params[idx].ProjectValue()
-}
-
 func projectCallContract(input callContractInput) typ.Type {
 	base := projectCallFactType(input.Fact, input.Sym)
 	if base == nil {
@@ -142,24 +133,28 @@ func projectCallContract(input callContractInput) typ.Type {
 		if input.refinementAdmitsDynamicTop(i, p.Type, refinement) {
 			return typ.Any
 		}
-		if input.sourceParamUnannotated(i) {
-			if publicParam, ok := input.publicParamProjection(i, p.Type); ok {
-				return publicParam
-			}
-			if input.observedDynamicParamAdmitted(i, p.Type) {
-				return typ.Any
-			}
-		}
 		return p.Type
 	})
 }
 
 func projectCallFactType(ff api.FunctionFact, sym cfg.SymbolID) typ.Type {
-	facts := api.FunctionFacts{sym: ff}
-	// Call diagnostics consume caller-facing obligations. Body/entry evidence is
-	// for interpreting the callee and computing return products; it must not
-	// become an additional precondition at a call site.
+	facts := api.FunctionFacts{sym: callShapeFact(ff)}
+	// The ordinary call pipeline consumes a caller-facing callable shape for arity,
+	// contextual argument synthesis, and optional-call checks. Parameter obligations
+	// from solved body/public evidence are enforced through CallContracts, where the
+	// paramevidence reducer can prove paths and capabilities without collapsing them
+	// into a structural parameter type.
 	return PublicTypeProjection(facts, sym, api.SynthModeDeclared)
+}
+
+func callShapeFact(ff api.FunctionFact) api.FunctionFact {
+	return api.FunctionFact{
+		Signature:  ff.Signature,
+		Summary:    ff.Summary,
+		Narrow:     ff.Narrow,
+		Refinement: ff.Refinement,
+		EnvReturns: ff.EnvReturns,
+	}
 }
 
 func (input callContractInput) closedWorldDynamicTopAdmitted(idx int) bool {
@@ -177,65 +172,6 @@ func (input callContractInput) refinementAdmitsDynamicTop(idx int, param typ.Typ
 		typ.IsAny(input.Args[idx]) &&
 		sourceParamExplicitAny(input.Source, idx) &&
 		RefinementGuaranteesParamType(refinement, idx, param)
-}
-
-func (input callContractInput) sourceParamUnannotated(idx int) bool {
-	return sourceParamUnannotated(input.Source, idx)
-}
-
-func (input callContractInput) publicParamProjection(idx int, bodyParam typ.Type) (typ.Type, bool) {
-	factParam := input.factParam(idx)
-	if factParam == nil {
-		return bodyParam, false
-	}
-	publicParam := callBoundaryParamType(bodyParam, factParam)
-	if idx < len(input.Args) && paramevidence.EntryContradictsBodyContract(input.Args[idx], publicParam) {
-		return typ.Any, true
-	}
-	if !publicParamCanReplaceBodyParam(bodyParam, publicParam) {
-		return bodyParam, false
-	}
-	if paramProjectionIsWider(bodyParam, publicParam) {
-		return publicParam, true
-	}
-	if idx < len(input.Args) && input.Args[idx] != nil &&
-		subtype.IsSubtype(input.Args[idx], publicParam) &&
-		!subtype.IsSubtype(input.Args[idx], bodyParam) {
-		return publicParam, true
-	}
-	return bodyParam, false
-}
-
-func (input callContractInput) observedDynamicParamAdmitted(idx int, param typ.Type) bool {
-	return idx < len(input.Args) &&
-		idx < len(input.Fact.Params) &&
-		value.IsStructuredTableShape(unwrap.Optional(param)) &&
-		isDynamicTop(input.Args[idx]) &&
-		isDynamicTop(input.factParam(idx))
-}
-
-func callBoundaryParamType(bodyParam, publicParam typ.Type) typ.Type {
-	if publicParam == nil {
-		return bodyParam
-	}
-	if unwrap.IsOptionalLike(bodyParam) && !unwrap.IsOptionalLike(publicParam) {
-		return typ.NewOptional(publicParam)
-	}
-	return publicParam
-}
-
-func publicParamCanReplaceBodyParam(bodyParam, publicParam typ.Type) bool {
-	if publicParam == nil || typ.TypeEquals(bodyParam, publicParam) {
-		return true
-	}
-	if isDynamicTop(publicParam) && !isDynamicTop(bodyParam) {
-		return false
-	}
-	if typ.IsUnknown(bodyParam) || typ.IsAny(bodyParam) || bodyParam == nil {
-		return true
-	}
-	return value.IsStructuredTableShape(unwrap.Optional(bodyParam)) &&
-		value.IsStructuredTableShape(unwrap.Optional(publicParam))
 }
 
 func refinementFromFact(ff api.FunctionFact) *constraint.FunctionRefinement {
@@ -298,13 +234,6 @@ func sourceParamExplicitAny(fn *ast.FunctionExpr, idx int) bool {
 	}
 	primitive, ok := fn.ParList.Types[idx].(*ast.PrimitiveTypeExpr)
 	return ok && primitive.Name == "any"
-}
-
-func sourceParamUnannotated(fn *ast.FunctionExpr, idx int) bool {
-	if fn == nil || fn.ParList == nil || idx < 0 || idx >= len(fn.ParList.Names) {
-		return false
-	}
-	return fn.ParList.Types == nil || idx >= len(fn.ParList.Types) || fn.ParList.Types[idx] == nil
 }
 
 func isDynamicTop(t typ.Type) bool {

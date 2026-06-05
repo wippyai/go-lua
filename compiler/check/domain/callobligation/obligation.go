@@ -19,10 +19,18 @@ const (
 	SourceBody
 )
 
+// Shape is the optional domain witness behind an obligation's public type
+// projection. It lets producers carry their native obligation algebra to proof
+// sites without making callobligation depend on that domain package.
+type Shape interface {
+	ProjectValue() typ.Type
+}
+
 // Obligation is one call argument's caller-visible contract.
 type Obligation struct {
 	Type   typ.Type
 	Source Source
+	Shape  Shape
 }
 
 // Signature constructs a caller-visible signature obligation.
@@ -39,6 +47,18 @@ func Body(t typ.Type) Obligation {
 		return Obligation{}
 	}
 	return Obligation{Type: t, Source: SourceBody}
+}
+
+// BodyShape constructs a strict body-summary obligation with its native domain
+// witness preserved for contract-aware proof.
+func BodyShape(t typ.Type, shape Shape) Obligation {
+	if !InformativeType(t) {
+		return Obligation{}
+	}
+	if shape == nil {
+		return Body(t)
+	}
+	return Obligation{Type: t, Source: SourceBody, Shape: shape}
 }
 
 // Informative reports whether this obligation carries a concrete caller check.
@@ -58,7 +78,7 @@ func InformativeType(t typ.Type) bool {
 	if t == nil {
 		return false
 	}
-	if obligationIsTopLike(t, make(map[typ.Type]bool)) {
+	if obligationIsTopLike(t, make(obligationTypeSeen)) {
 		return false
 	}
 	return !HasFreeVariable(t)
@@ -70,20 +90,56 @@ func InformativeType(t typ.Type) bool {
 // their template body, so a closed `Box<string>` is not rejected merely because
 // the generic declaration contains `T`.
 func HasFreeVariable(t typ.Type) bool {
-	return hasFreeObligationVariable(t, make(map[typ.Type]bool))
+	return hasFreeObligationVariable(t, make(obligationTypeSeen))
 }
 
-func obligationIsTopLike(t typ.Type, seen map[typ.Type]bool) bool {
+type obligationTypeSeen map[uint64][]typ.Type
+
+func (s obligationTypeSeen) contains(t typ.Type) bool {
+	if t == nil || s == nil {
+		return false
+	}
+	for _, existing := range s[obligationTypeSeenKey(t)] {
+		if typ.SameNodeOrAcyclicEqual(existing, t) || typ.SameProductFamily(existing, t) {
+			return true
+		}
+	}
+	return false
+}
+
+func (s obligationTypeSeen) remember(t typ.Type) {
+	if t == nil || s == nil {
+		return
+	}
+	key := obligationTypeSeenKey(t)
+	s[key] = append(s[key], t)
+}
+
+func obligationTypeSeenKey(t typ.Type) uint64 {
+	if t == nil {
+		return 0
+	}
+	if typ.ContainsRecursive(t) {
+		return typ.ProductFamilyHash(t)
+	}
+	return t.Hash()
+}
+
+func obligationIsTopLike(t typ.Type, seen obligationTypeSeen) bool {
+	if t == nil {
+		return false
+	}
+	t = typ.UnwrapAnnotated(t)
 	if t == nil {
 		return false
 	}
 	if typ.IsAbsentOrUnknown(t) || typ.IsAny(t) {
 		return true
 	}
-	if seen[t] {
+	if seen.contains(t) {
 		return false
 	}
-	seen[t] = true
+	seen.remember(t)
 	return typ.Visit(t, typ.Visitor[bool]{
 		Optional: func(o *typ.Optional) bool {
 			return obligationIsTopLike(o.Inner, seen)
@@ -108,16 +164,20 @@ func obligationIsTopLike(t typ.Type, seen map[typ.Type]bool) bool {
 	})
 }
 
-func hasFreeObligationVariable(t typ.Type, seen map[typ.Type]bool) bool {
+func hasFreeObligationVariable(t typ.Type, seen obligationTypeSeen) bool {
 	if t == nil {
 		return false
 	}
-	if seen[t] {
+	t = typ.UnwrapAnnotated(t)
+	if t == nil {
 		return false
 	}
-	seen[t] = true
+	if seen.contains(t) {
+		return false
+	}
+	seen.remember(t)
 	switch t.Kind() {
-	case kind.Self, kind.TypeParam, kind.TypeVar, kind.FieldAccess, kind.IndexAccess, kind.Generic:
+	case kind.Self, kind.Ref, kind.TypeParam, kind.TypeVar, kind.FieldAccess, kind.IndexAccess, kind.Generic:
 		return true
 	}
 	return typ.Visit(t, typ.Visitor[bool]{
