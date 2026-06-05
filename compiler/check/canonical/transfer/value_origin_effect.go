@@ -162,7 +162,7 @@ func (t *Transfer) demandLocalPathContract(
 	for len(queue) > 0 {
 		cur := queue[0]
 		queue = queue[1:]
-		key := flow.KeyPresencePathKey(cur.path)
+		key := flow.StablePathKey(cur.path)
 		if key == "" {
 			continue
 		}

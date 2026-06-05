@@ -708,7 +708,7 @@ func (p Projector) bodyContractPathTypeAtPath(point cfg.Point, path constraint.P
 	if path.IsEmpty() || path.Symbol == 0 {
 		return nil
 	}
-	key := flow.KeyPresencePathKey(path)
+	key := flow.StablePathKey(path)
 	if key == "" {
 		return nil
 	}
