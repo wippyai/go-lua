@@ -53,6 +53,21 @@ type AppendKeyArrayTableQuery struct {
 	FreshEmpty       bool
 }
 
+// AppendKeyArraySelection is the direct plus delayed consequence set for an
+// append into a possible key array.
+type AppendKeyArraySelection struct {
+	Tables  []StableAddress
+	Pending []PendingKeyArrayDestination
+}
+
+// AppendKeyArrayPreservationQuery selects consequences for appending Key into
+// an array whose existing elements may already be keys of some table.
+type AppendKeyArrayPreservationQuery struct {
+	Array          StableAddress
+	Key            StableAddress
+	FreshEmptySeed bool
+}
+
 // AppendOriginDestinations follows value-origin and path-alias facts to every
 // array whose appended element field may be observed through array.
 func AppendOriginDestinations(state PointState, array StableAddress, fieldPrefix []constraint.Segment) []AppendOriginDestination {
@@ -231,6 +246,78 @@ func AppendKeyArrayTables(state PointState, q AppendKeyArrayTableQuery) []Stable
 			if ok {
 				out = add(out, table)
 			}
+		}
+	}
+	return out
+}
+
+// AppendKeyArrayPreservation selects direct and delayed key-array consequences
+// for a local append into Array.
+func AppendKeyArrayPreservation(state PointState, q AppendKeyArrayPreservationQuery) AppendKeyArraySelection {
+	arrayKey := q.Array.Key()
+	keyKey := q.Key.Key()
+	if arrayKey == "" || keyKey == "" {
+		return AppendKeyArraySelection{}
+	}
+	addTable := func(out []StableAddress, table StableAddress) []StableAddress {
+		if table.Key() == "" {
+			return out
+		}
+		for _, existing := range out {
+			if existing.Equal(table) {
+				return out
+			}
+		}
+		return append(out, table)
+	}
+	addPending := func(out []PendingKeyArrayDestination, pending PendingKeyArrayDestination) []PendingKeyArrayDestination {
+		if pending.HasTable && pending.Table.Key() == "" {
+			return out
+		}
+		for _, existing := range out {
+			if existing.HasTable == pending.HasTable && (!existing.HasTable || existing.Table.Equal(pending.Table)) {
+				return out
+			}
+		}
+		return append(out, pending)
+	}
+	existingTables := state.KeyPresence.KeyArrayTables(arrayKey)
+	canSeedFromEmpty := len(existingTables) == 0 && q.FreshEmptySeed
+	var out AppendKeyArraySelection
+	if canSeedFromEmpty {
+		out.Pending = addPending(out.Pending, PendingKeyArrayDestination{})
+	}
+	for _, tableKey := range existingTables {
+		table, ok := StableAddressFromKey(tableKey)
+		if !ok {
+			continue
+		}
+		if state.KeyPresence.Has(tableKey, keyKey) {
+			out.Tables = addTable(out.Tables, table)
+			continue
+		}
+		out.Pending = addPending(out.Pending, PendingKeyArrayDestination{
+			Table:    table,
+			HasTable: true,
+		})
+	}
+	for _, fact := range state.KeyPresence.Entries() {
+		if fact.Key != keyKey {
+			continue
+		}
+		hasExisting := false
+		for _, existing := range existingTables {
+			if existing == fact.Table {
+				hasExisting = true
+				break
+			}
+		}
+		if !hasExisting && !canSeedFromEmpty {
+			continue
+		}
+		table, ok := StableAddressFromKey(fact.Table)
+		if ok {
+			out.Tables = addTable(out.Tables, table)
 		}
 	}
 	return out

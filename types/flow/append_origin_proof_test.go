@@ -175,6 +175,59 @@ func TestAppendKeyArrayTablesUsesFreshEmptyEvidence(t *testing.T) {
 	}
 }
 
+func TestAppendKeyArrayPreservationSplitsDirectAndPendingTables(t *testing.T) {
+	arrayPath := constraint.NewPath(cfg.SymbolID(38), "keys")
+	nodesPath := constraint.NewPath(cfg.SymbolID(39), "nodes")
+	edgesPath := constraint.NewPath(cfg.SymbolID(40), "edges")
+	keyPath := constraint.NewPath(cfg.SymbolID(41), "id")
+	array := testStableAddressPath(t, arrayPath)
+	nodes := testStableAddressPath(t, nodesPath)
+	edges := testStableAddressPath(t, edgesPath)
+	key := testStableAddressPath(t, keyPath)
+	state := PointState{
+		KeyPresence: KeyPresenceFacts{}.
+			WithKeyArrayAddresses(array, nodes).
+			WithKeyArrayAddresses(array, edges).
+			WithAddresses(nodes, key),
+	}
+
+	selection := AppendKeyArrayPreservation(state, AppendKeyArrayPreservationQuery{
+		Array: array,
+		Key:   key,
+	})
+	if len(selection.Tables) != 1 || !selection.Tables[0].Equal(nodes) {
+		t.Fatalf("direct tables = %v, want nodes", selection.Tables)
+	}
+	if len(selection.Pending) != 1 || !selection.Pending[0].HasTable || !selection.Pending[0].Table.Equal(edges) {
+		t.Fatalf("pending = %v, want edges", selection.Pending)
+	}
+}
+
+func TestAppendKeyArrayPreservationUsesFreshEmptySeed(t *testing.T) {
+	arrayPath := constraint.NewPath(cfg.SymbolID(42), "keys")
+	tablePath := constraint.NewPath(cfg.SymbolID(43), "nodes")
+	keyPath := constraint.NewPath(cfg.SymbolID(44), "id")
+	array := testStableAddressPath(t, arrayPath)
+	table := testStableAddressPath(t, tablePath)
+	key := testStableAddressPath(t, keyPath)
+	state := PointState{
+		KeyPresence: KeyPresenceFacts{}.
+			WithAddresses(table, key),
+	}
+
+	selection := AppendKeyArrayPreservation(state, AppendKeyArrayPreservationQuery{
+		Array:          array,
+		Key:            key,
+		FreshEmptySeed: true,
+	})
+	if len(selection.Pending) != 1 || selection.Pending[0].HasTable {
+		t.Fatalf("pending = %v, want wildcard pending", selection.Pending)
+	}
+	if len(selection.Tables) != 1 || !selection.Tables[0].Equal(table) {
+		t.Fatalf("direct tables = %v, want table with key", selection.Tables)
+	}
+}
+
 func assertAppendDestination(t *testing.T, got AppendOriginDestination, wantPath constraint.Path, wantPrefix []constraint.Segment) {
 	t.Helper()
 	want := testStableAddressPath(t, wantPath)

@@ -424,7 +424,7 @@ func (t *Transfer) applyMutatorEffect(out *flow.PointState, effect MutatorEffect
 	if out == nil {
 		return false
 	}
-	keyArrayTables, pendingKeyArrayTables := t.keyArrayTablesPreservedByAppend(out, effect)
+	keyArraySelection := t.keyArraySelectionPreservedByAppend(out, effect)
 	appendHistoryArray := constraint.Path{}
 	preserveAppendHistoryBase := false
 	if effect.Kind == MutatorAppendElement {
@@ -453,8 +453,8 @@ func (t *Transfer) applyMutatorEffect(out *flow.PointState, effect MutatorEffect
 	if effect.LengthKey != "" && effect.LengthIncrement > 0 {
 		changed = t.incrementLenBound(out, effect.LengthKey, effect.LengthIncrement) || changed
 	}
-	if len(keyArrayTables) > 0 || len(pendingKeyArrayTables) > 0 {
-		changed = t.applyAppendKeyArrayFacts(out, effect.Place, keyArrayTables, pendingKeyArrayTables, effect.ElementPath, effect.Element) || changed
+	if len(keyArraySelection.Tables) > 0 || len(keyArraySelection.Pending) > 0 {
+		changed = t.applyAppendKeyArrayFacts(out, effect.Place, keyArraySelection, effect.ElementPath, effect.Element) || changed
 	}
 	mutation, mutationOK := receiverMutationForPlace(effect.Place, false)
 	if mutationOK {
@@ -490,52 +490,28 @@ func (t *Transfer) applyMutatorEffect(out *flow.PointState, effect MutatorEffect
 	return true
 }
 
-func (t *Transfer) keyArrayTablesPreservedByAppend(out *flow.PointState, effect MutatorEffect) ([]constraint.PathKey, []constraint.PathKey) {
+func (t *Transfer) keyArraySelectionPreservedByAppend(out *flow.PointState, effect MutatorEffect) flow.AppendKeyArraySelection {
 	if out == nil || effect.Kind != MutatorAppendElement || effect.ElementPath.IsEmpty() {
-		return nil, nil
+		return flow.AppendKeyArraySelection{}
 	}
 	arrayPath, ok := effect.Place.StaticPath()
 	if !ok || arrayPath.IsEmpty() {
-		return nil, nil
+		return flow.AppendKeyArraySelection{}
 	}
-	arrayKey := flow.KeyPresencePathKey(arrayPath)
-	elementKey := flow.KeyPresencePathKey(effect.ElementPath)
-	if arrayKey == "" || elementKey == "" {
-		return nil, nil
+	arrayAddr, arrayOK := flow.StableAddressOfPath(arrayPath)
+	elementAddr, elementOK := flow.StableAddressOfPath(effect.ElementPath)
+	if !arrayOK || !elementOK {
+		return flow.AppendKeyArraySelection{}
 	}
-	existingTables := out.KeyPresence.KeyArrayTables(arrayKey)
-	historyEmpty := out.KeyPresence.HasAppendHistoryBase(arrayKey)
-	if historyEmpty {
-		for _, event := range out.KeyPresence.AppendHistoryEventEntries() {
-			if event.Array == arrayKey {
-				historyEmpty = false
-				break
-			}
-		}
-	}
-	canSeedFromEmpty := len(existingTables) == 0 &&
-		(out.KeyPresence.HasEmptyKeyArray(arrayKey) || historyEmpty || t.arrayPathCurrentlyEmpty(out, arrayPath))
-	var tables []constraint.PathKey
-	var pending []constraint.PathKey
-	if canSeedFromEmpty {
-		pending = append(pending, "")
-	}
-	for _, table := range existingTables {
-		if out.KeyPresence.Has(table, elementKey) {
-			tables = append(tables, table)
-			continue
-		}
-		pending = append(pending, table)
-	}
-	for _, fact := range out.KeyPresence.Entries() {
-		if fact.Key != elementKey {
-			continue
-		}
-		if _, ok := slicesFindPathKey(existingTables, fact.Table); ok || canSeedFromEmpty {
-			tables = append(tables, fact.Table)
-		}
-	}
-	return compactPathKeys(tables), compactPathKeys(pending)
+	arrayKey := arrayAddr.Key()
+	freshEmptySeed := out.KeyPresence.HasEmptyKeyArray(arrayKey) ||
+		flow.AppendHistoryBaseWithoutEvents(*out, arrayAddr) ||
+		t.arrayPathCurrentlyEmpty(out, arrayPath)
+	return flow.AppendKeyArrayPreservation(*out, flow.AppendKeyArrayPreservationQuery{
+		Array:          arrayAddr,
+		Key:            elementAddr,
+		FreshEmptySeed: freshEmptySeed,
+	})
 }
 
 func (t *Transfer) recordAppendKeyFact(out *flow.PointState, place Place, kind MutatorKind, elementPath constraint.Path) bool {
@@ -712,12 +688,11 @@ func productTypeIsFreshEmptySequence(t typ.Type) bool {
 func (t *Transfer) applyAppendKeyArrayFacts(
 	out *flow.PointState,
 	place Place,
-	tables []constraint.PathKey,
-	pendingTables []constraint.PathKey,
+	selection flow.AppendKeyArraySelection,
 	elementPath constraint.Path,
 	element product.AbstractValue,
 ) bool {
-	if out == nil || (len(tables) == 0 && len(pendingTables) == 0) {
+	if out == nil || (len(selection.Tables) == 0 && len(selection.Pending) == 0) {
 		return false
 	}
 	arrayPath, ok := place.StaticPath()
@@ -729,58 +704,14 @@ func (t *Transfer) applyAppendKeyArrayFacts(
 		return false
 	}
 	elementAddr, elementOK := flow.StableAddressOfPath(elementPath)
-	tableAddrs := make([]flow.StableAddress, 0, len(tables))
-	for _, table := range tables {
-		tableAddr, ok := flow.StableAddressFromKey(table)
-		if !ok {
-			continue
-		}
-		tableAddrs = append(tableAddrs, tableAddr)
-	}
-	pending := make([]flow.PendingKeyArrayDestination, 0, len(pendingTables))
-	for _, table := range pendingTables {
-		dst := flow.PendingKeyArrayDestination{}
-		if table != "" {
-			tableAddr, ok := flow.StableAddressFromKey(table)
-			if !ok {
-				continue
-			}
-			dst.Table = tableAddr
-			dst.HasTable = true
-		}
-		pending = append(pending, dst)
-	}
 	return flow.ApplyAppendKeyArrayConsequences(out, flow.AppendKeyArrayConsequences{
 		Array:    arrayAddr,
 		Key:      elementAddr,
 		HasKey:   elementOK,
 		KeyValue: element,
-		Tables:   tableAddrs,
-		Pending:  pending,
+		Tables:   selection.Tables,
+		Pending:  selection.Pending,
 	})
-}
-
-func slicesFindPathKey(xs []constraint.PathKey, want constraint.PathKey) (int, bool) {
-	for i, x := range xs {
-		if x == want {
-			return i, true
-		}
-	}
-	return -1, false
-}
-
-func compactPathKeys(xs []constraint.PathKey) []constraint.PathKey {
-	if len(xs) == 0 {
-		return nil
-	}
-	out := xs[:0]
-	for _, x := range xs {
-		if _, ok := slicesFindPathKey(out, x); ok {
-			continue
-		}
-		out = append(out, x)
-	}
-	return append([]constraint.PathKey(nil), out...)
 }
 
 func (t *Transfer) applyWriteEffect(out *flow.PointState, effect WriteEffect) bool {
