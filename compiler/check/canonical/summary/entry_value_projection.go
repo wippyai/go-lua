@@ -430,7 +430,7 @@ func (p CallEntryContextProjection) ProjectKeys() []Key {
 			seen[key] = struct{}{}
 			out = append(out, key)
 		}
-		for _, key := range p.callbackEntryKeys(site.Point, site.Info, &site.EventState) {
+		for _, key := range p.callbackEntryKeys(site) {
 			if _, ok := seen[key]; ok {
 				continue
 			}
@@ -640,35 +640,13 @@ func (p CallEntryContextProjection) referenceProjection(callee FuncRef) flow.Ref
 	return p.ReferencePaths(callee)
 }
 
-func (p CallEntryContextProjection) callbackEntryKeys(point cfg.Point, info *cfg.CallInfo, in *flow.PointState) []Key {
-	call := callInfoCall(info)
-	if p.ResolveCallback == nil || call == nil || in == nil {
-		return nil
-	}
+func (p CallEntryContextProjection) callbackEntryKeys(site callEntrySite) []Key {
 	var keys []Key
-	for argIdx, arg := range call.Args {
-		if arg == nil {
-			continue
-		}
-		refs, ok := p.ResolveCallback(arg, callInfoArgSymbol(info, argIdx), in)
-		if !ok || len(refs) == 0 {
-			continue
-		}
-		var values EntryValues
-		if p.ExpectedArgType != nil {
-			if fn := unwrap.Function(p.ExpectedArgType(point, info, in, argIdx)); fn != nil {
-				values, _ = callbackExpectedEntryValues(fn)
-			}
-		}
-		var closures flow.ClosureRefSet
-		var closureOK bool
-		if p.ClosureArgRefs != nil {
-			closures, closureOK = p.ClosureArgRefs(argIdx, arg, in)
-		}
-		for _, ref := range refs {
+	for _, callback := range callEntryCallbacks(site, p.ResolveCallback, p.ExpectedArgType, p.ClosureArgRefs) {
+		for _, ref := range callback.Refs {
 			emitted := false
-			if closureOK {
-				for _, closure := range closures.Refs() {
+			if callback.HasClosures {
+				for _, closure := range callback.Closures.Refs() {
 					if canonref.FromFlow(closure.Ref) != ref {
 						continue
 					}
@@ -677,13 +655,13 @@ func (p CallEntryContextProjection) callbackEntryKeys(point cfg.Point, info *cfg
 						closure.EntryCells(),
 						closure.EntryFunctionRefs(),
 						closure.EntryClosureRefs(),
-						values,
+						callback.Values,
 					))
 					emitted = true
 				}
 			}
 			if !emitted {
-				keys = append(keys, NewKeyWithEntryValues(ref, flow.CaptureCellsDomain.Bottom(), flow.FunctionRefsDomain.Bottom(), values))
+				keys = append(keys, NewKeyWithEntryValues(ref, flow.CaptureCellsDomain.Bottom(), flow.FunctionRefsDomain.Bottom(), callback.Values))
 			}
 		}
 	}
@@ -726,7 +704,7 @@ func (p CallEntryValueProjection) Project() CallEntryValues {
 				out = JoinCallEntryValue(out, target.Ref, arg.Slot, av)
 			}
 		}
-		out = p.projectCallbackEntryValues(out, site.Point, site.Info, &site.EventState)
+		out = p.projectCallbackEntryValues(out, site)
 	})
 	if len(out) == 0 {
 		return nil
@@ -734,32 +712,59 @@ func (p CallEntryValueProjection) Project() CallEntryValues {
 	return out
 }
 
-func (p CallEntryValueProjection) projectCallbackEntryValues(out CallEntryValues, point cfg.Point, info *cfg.CallInfo, in *flow.PointState) CallEntryValues {
-	call := callInfoCall(info)
-	if p.ResolveCallback == nil || p.ExpectedArgType == nil || call == nil || in == nil {
+func (p CallEntryValueProjection) projectCallbackEntryValues(out CallEntryValues, site callEntrySite) CallEntryValues {
+	if p.ExpectedArgType == nil {
 		return out
 	}
-	for argIdx, arg := range call.Args {
-		if arg == nil {
+	for _, callback := range callEntryCallbacks(site, p.ResolveCallback, p.ExpectedArgType, nil) {
+		if !callback.HasValues || len(callback.Values) == 0 {
 			continue
 		}
-		fn := unwrap.Function(p.ExpectedArgType(point, info, in, argIdx))
-		if fn == nil {
-			continue
-		}
-		refs, ok := p.ResolveCallback(arg, callInfoArgSymbol(info, argIdx), in)
-		if !ok || len(refs) == 0 {
-			continue
-		}
-		values, ok := callbackExpectedEntryValues(fn)
-		if !ok || len(values) == 0 {
-			continue
-		}
-		for _, ref := range refs {
-			for slot, av := range values {
+		for _, ref := range callback.Refs {
+			for slot, av := range callback.Values {
 				out = JoinCallEntryValue(out, ref, slot, av)
 			}
 		}
+	}
+	return out
+}
+
+type callEntryCallback struct {
+	Refs        []FuncRef
+	Values      EntryValues
+	HasValues   bool
+	Closures    flow.ClosureRefSet
+	HasClosures bool
+}
+
+func callEntryCallbacks(
+	site callEntrySite,
+	resolve CallEntryCallbackResolver,
+	expected CallEntryExpectedArgType,
+	resolveClosures EntryClosureRefArgResolver,
+) []callEntryCallback {
+	if resolve == nil || site.Call == nil {
+		return nil
+	}
+	var out []callEntryCallback
+	for argIdx, arg := range site.Call.Args {
+		if arg == nil {
+			continue
+		}
+		refs, ok := resolve(arg, callInfoArgSymbol(site.Info, argIdx), &site.EventState)
+		if !ok || len(refs) == 0 {
+			continue
+		}
+		callback := callEntryCallback{Refs: refs}
+		if expected != nil {
+			if fn := unwrap.Function(expected(site.Point, site.Info, &site.EventState, argIdx)); fn != nil {
+				callback.Values, callback.HasValues = callbackExpectedEntryValues(fn)
+			}
+		}
+		if resolveClosures != nil {
+			callback.Closures, callback.HasClosures = resolveClosures(argIdx, arg, &site.EventState)
+		}
+		out = append(out, callback)
 	}
 	return out
 }
