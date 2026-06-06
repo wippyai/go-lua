@@ -146,6 +146,39 @@ type KeyPresenceFacts struct {
 	appendOrigins  []AppendElementFieldOriginFact
 }
 
+type keyPresenceFactSet struct {
+	entries        []KeyPresenceFact
+	values         []KeyValueFact
+	arrays         []KeyArrayFact
+	emptyArrays    []EmptyKeyArrayFact
+	arrayValues    []KeyArrayValueFact
+	appends        []AppendedKeyFact
+	pending        []PendingKeyArrayFact
+	appendBases    []AppendHistoryBaseFact
+	appendEvents   []AppendHistoryEventFact
+	appendCoverage []AppendHistoryCoverageFact
+	appendOrigins  []AppendElementFieldOriginFact
+}
+
+func (f KeyPresenceFacts) factSet() keyPresenceFactSet {
+	if f.bottom {
+		return keyPresenceFactSet{}
+	}
+	return keyPresenceFactSet{
+		entries:        f.entries,
+		values:         f.values,
+		arrays:         f.arrays,
+		emptyArrays:    f.emptyArrays,
+		arrayValues:    f.arrayValues,
+		appends:        f.appends,
+		pending:        f.pending,
+		appendBases:    f.appendBases,
+		appendEvents:   f.appendEvents,
+		appendCoverage: f.appendCoverage,
+		appendOrigins:  f.appendOrigins,
+	}
+}
+
 // KeyPresenceFactsOf constructs a canonical finite fact set.
 func KeyPresenceFactsOf(entries []KeyPresenceFact) KeyPresenceFacts {
 	return canonicalKeyPresenceFacts(entries)
@@ -191,7 +224,9 @@ func (f KeyPresenceFacts) With(table, key constraint.PathKey) KeyPresenceFacts {
 	if _, ok := findKeyPresenceFact(next, fact); !ok {
 		next = append(next, fact)
 	}
-	return canonicalKeyPresenceFactsFull(next, f.values, f.arrays, f.arrayValues, f.appends, f.pending, f.emptyArrays, f.appendBases, f.appendEvents, f.appendCoverage, f.appendOrigins)
+	set := f.factSet()
+	set.entries = next
+	return canonicalKeyPresenceFactSet(set)
 }
 
 func (f KeyPresenceFacts) WithAddresses(table, key StableAddress) KeyPresenceFacts {
@@ -223,7 +258,9 @@ func (f KeyPresenceFacts) WithValue(table, key, value constraint.PathKey) KeyPre
 	if _, ok := findKeyValueFact(next, fact); !ok {
 		next = append(next, fact)
 	}
-	return canonicalKeyPresenceFactsFull(f.entries, next, f.arrays, f.arrayValues, f.appends, f.pending, f.emptyArrays, f.appendBases, f.appendEvents, f.appendCoverage, f.appendOrigins)
+	set := f.factSet()
+	set.values = next
+	return canonicalKeyPresenceFactSet(set)
 }
 
 func (f KeyPresenceFacts) WithValueAddresses(table, key, value StableAddress) KeyPresenceFacts {
@@ -249,7 +286,9 @@ func (f KeyPresenceFacts) WithKeyArray(array, table constraint.PathKey) KeyPrese
 	if _, ok := findKeyArrayFact(next, fact); !ok {
 		next = append(next, fact)
 	}
-	return canonicalKeyPresenceFactsFull(f.entries, f.values, next, f.arrayValues, f.appends, f.pending, f.emptyArrays, f.appendBases, f.appendEvents, f.appendCoverage, f.appendOrigins)
+	set := f.factSet()
+	set.arrays = next
+	return canonicalKeyPresenceFactSet(set)
 }
 
 func (f KeyPresenceFacts) WithKeyArrayAddresses(array, table StableAddress) KeyPresenceFacts {
@@ -307,7 +346,10 @@ func (f KeyPresenceFacts) WithEmptyKeyArray(array constraint.PathKey) KeyPresenc
 	if _, ok := findAppendHistoryBaseFact(base, AppendHistoryBaseFact{Array: array}); !ok {
 		base = append(base, AppendHistoryBaseFact{Array: array})
 	}
-	return canonicalKeyPresenceFactsFull(f.entries, f.values, f.arrays, f.arrayValues, f.appends, f.pending, next, base, f.appendEvents, f.appendCoverage, f.appendOrigins)
+	set := f.factSet()
+	set.emptyArrays = next
+	set.appendBases = base
+	return canonicalKeyPresenceFactSet(set)
 }
 
 func (f KeyPresenceFacts) WithEmptyKeyArrayAddress(array StableAddress) KeyPresenceFacts {
@@ -340,7 +382,9 @@ func (f KeyPresenceFacts) WithKeyArrayValue(array, table constraint.PathKey, val
 	next := f.KeyArrayValueEntries()
 	fact := KeyArrayValueFact{Array: array, Table: table, Value: value}
 	next = append(next, fact)
-	return canonicalKeyPresenceFactsFull(f.entries, f.values, f.arrays, next, f.appends, f.pending, f.emptyArrays, f.appendBases, f.appendEvents, f.appendCoverage, f.appendOrigins)
+	set := f.factSet()
+	set.arrayValues = next
+	return canonicalKeyPresenceFactSet(set)
 }
 
 func (f KeyPresenceFacts) WithKeyArrayValueAddresses(array, table StableAddress, value product.AbstractValue) KeyPresenceFacts {
@@ -382,7 +426,9 @@ func (f KeyPresenceFacts) WithAppendedKey(array, key constraint.PathKey) KeyPres
 	if _, ok := findAppendedKeyFact(next, fact); !ok {
 		next = append(next, fact)
 	}
-	return canonicalKeyPresenceFactsFull(f.entries, f.values, f.arrays, f.arrayValues, next, f.pending, f.emptyArrays, f.appendBases, f.appendEvents, f.appendCoverage, f.appendOrigins)
+	set := f.factSet()
+	set.appends = next
+	return canonicalKeyPresenceFactSet(set)
 }
 
 func (f KeyPresenceFacts) WithAppendedKeyAddresses(array, key StableAddress) KeyPresenceFacts {
@@ -408,7 +454,9 @@ func (f KeyPresenceFacts) WithPendingKeyArray(array, table, key constraint.PathK
 	if _, ok := findPendingKeyArrayFact(next, fact); !ok {
 		next = append(next, fact)
 	}
-	return canonicalKeyPresenceFactsFull(f.entries, f.values, f.arrays, f.arrayValues, f.appends, next, f.emptyArrays, f.appendBases, f.appendEvents, f.appendCoverage, f.appendOrigins)
+	set := f.factSet()
+	set.pending = next
+	return canonicalKeyPresenceFactSet(set)
 }
 
 func (f KeyPresenceFacts) PendingKeyArrayEntries() []PendingKeyArrayFact {
@@ -447,7 +495,9 @@ func (f KeyPresenceFacts) WithAppendHistoryBase(array constraint.PathKey) KeyPre
 	if _, ok := findAppendHistoryBaseFact(next, fact); !ok {
 		next = append(next, fact)
 	}
-	return canonicalKeyPresenceFactsFull(f.entries, f.values, f.arrays, f.arrayValues, f.appends, f.pending, f.emptyArrays, next, f.appendEvents, f.appendCoverage, f.appendOrigins)
+	set := f.factSet()
+	set.appendBases = next
+	return canonicalKeyPresenceFactSet(set)
 }
 
 func (f KeyPresenceFacts) WithAppendHistoryBaseAddress(array StableAddress) KeyPresenceFacts {
@@ -478,7 +528,9 @@ func (f KeyPresenceFacts) WithAppendHistoryEvent(array, key constraint.PathKey) 
 	if _, ok := findAppendHistoryEventFact(next, fact); !ok {
 		next = append(next, fact)
 	}
-	return canonicalKeyPresenceFactsFull(f.entries, f.values, f.arrays, f.arrayValues, f.appends, f.pending, f.emptyArrays, f.appendBases, next, f.appendCoverage, f.appendOrigins)
+	set := f.factSet()
+	set.appendEvents = next
+	return canonicalKeyPresenceFactSet(set)
 }
 
 func (f KeyPresenceFacts) AppendHistoryEventEntries() []AppendHistoryEventFact {
@@ -495,7 +547,9 @@ func (f KeyPresenceFacts) WithAppendHistoryCoverage(array, key, table constraint
 	f = f.WithAppendHistoryEvent(array, key)
 	next := f.AppendHistoryCoverageEntries()
 	next = append(next, AppendHistoryCoverageFact{Array: array, Key: key, Table: table, Value: value})
-	return canonicalKeyPresenceFactsFull(f.entries, f.values, f.arrays, f.arrayValues, f.appends, f.pending, f.emptyArrays, f.appendBases, f.appendEvents, next, f.appendOrigins)
+	set := f.factSet()
+	set.appendCoverage = next
+	return canonicalKeyPresenceFactSet(set)
 }
 
 func (f KeyPresenceFacts) AppendHistoryCoverageEntries() []AppendHistoryCoverageFact {
@@ -546,7 +600,9 @@ func (f KeyPresenceFacts) WithAppendElementFieldOriginFromSource(array, field, s
 	if _, ok := findAppendElementFieldOriginFact(next, fact); !ok {
 		next = append(next, fact)
 	}
-	return canonicalKeyPresenceFactsFull(f.entries, f.values, f.arrays, f.arrayValues, f.appends, f.pending, f.emptyArrays, f.appendBases, f.appendEvents, f.appendCoverage, next)
+	set := f.factSet()
+	set.appendOrigins = next
+	return canonicalKeyPresenceFactSet(set)
 }
 
 func (f KeyPresenceFacts) WithAppendElementFieldOriginAddresses(array StableAddress, field []constraint.Segment, source StableAddress) KeyPresenceFacts {
@@ -801,7 +857,19 @@ func (f KeyPresenceFacts) KillSubtreeAddress(root StableAddress) KeyPresenceFact
 		}
 		appendOrigins = append(appendOrigins, e)
 	}
-	return canonicalKeyPresenceFactsFull(entries, values, arrays, arrayValues, appends, pending, emptyArrays, appendBases, appendEvents, appendCoverage, appendOrigins)
+	return canonicalKeyPresenceFactSet(keyPresenceFactSet{
+		entries:        entries,
+		values:         values,
+		arrays:         arrays,
+		emptyArrays:    emptyArrays,
+		arrayValues:    arrayValues,
+		appends:        appends,
+		pending:        pending,
+		appendBases:    appendBases,
+		appendEvents:   appendEvents,
+		appendCoverage: appendCoverage,
+		appendOrigins:  appendOrigins,
+	})
 }
 
 // KillAffectedByWriteAddress removes facts that are no longer must-facts after
@@ -903,7 +971,19 @@ func (f KeyPresenceFacts) KillAffectedByWriteAddress(write StableAddress) KeyPre
 		}
 		appendOrigins = append(appendOrigins, e)
 	}
-	return canonicalKeyPresenceFactsFull(entries, values, arrays, arrayValues, appends, pending, emptyArrays, appendBases, appendEvents, appendCoverage, appendOrigins)
+	return canonicalKeyPresenceFactSet(keyPresenceFactSet{
+		entries:        entries,
+		values:         values,
+		arrays:         arrays,
+		emptyArrays:    emptyArrays,
+		arrayValues:    arrayValues,
+		appends:        appends,
+		pending:        pending,
+		appendBases:    appendBases,
+		appendEvents:   appendEvents,
+		appendCoverage: appendCoverage,
+		appendOrigins:  appendOrigins,
+	})
 }
 
 // KillAffectedByPresentElementWriteAddress removes facts invalidated by a write
@@ -1000,7 +1080,19 @@ func (f KeyPresenceFacts) KillAffectedByPresentElementWriteAddress(write StableA
 		}
 		appendOrigins = append(appendOrigins, e)
 	}
-	return canonicalKeyPresenceFactsFull(entries, values, arrays, arrayValues, appends, pending, emptyArrays, appendBases, appendEvents, appendCoverage, appendOrigins)
+	return canonicalKeyPresenceFactSet(keyPresenceFactSet{
+		entries:        entries,
+		values:         values,
+		arrays:         arrays,
+		emptyArrays:    emptyArrays,
+		arrayValues:    arrayValues,
+		appends:        appends,
+		pending:        pending,
+		appendBases:    appendBases,
+		appendEvents:   appendEvents,
+		appendCoverage: appendCoverage,
+		appendOrigins:  appendOrigins,
+	})
 }
 
 // KillAffectedByPresentElementMemberWriteAddress invalidates value-specific
@@ -1022,19 +1114,19 @@ func (f KeyPresenceFacts) KillAffectedByPresentElementMemberWriteAddress(array S
 	appendEvents := append(killed.AppendHistoryEventEntries(), appendHistoryEventFactsForArray(f.appendEvents, arrayKey)...)
 	appendCoverage := append(killed.AppendHistoryCoverageEntries(), appendHistoryCoverageFactsForArray(f.appendCoverage, arrayKey)...)
 	appendOrigins := append(killed.AppendElementFieldOriginEntries(), appendElementFieldOriginFactsPreservedByMemberWrite(f.appendOrigins, arrayKey, member)...)
-	return canonicalKeyPresenceFactsFull(
-		killed.Entries(),
-		killed.ValueEntries(),
-		arrays,
-		arrayValues,
-		appends,
-		pending,
-		emptyArrays,
-		appendBases,
-		appendEvents,
-		appendCoverage,
-		appendOrigins,
-	)
+	return canonicalKeyPresenceFactSet(keyPresenceFactSet{
+		entries:        killed.Entries(),
+		values:         killed.ValueEntries(),
+		arrays:         arrays,
+		emptyArrays:    emptyArrays,
+		arrayValues:    arrayValues,
+		appends:        appends,
+		pending:        pending,
+		appendBases:    appendBases,
+		appendEvents:   appendEvents,
+		appendCoverage: appendCoverage,
+		appendOrigins:  appendOrigins,
+	})
 }
 
 func (f KeyPresenceFacts) Format() string {
@@ -1245,26 +1337,17 @@ func canonicalKeyPresenceFacts(entries []KeyPresenceFact, values ...[]KeyValueFa
 	if len(values) > 0 {
 		rawValues = values[0]
 	}
-	return canonicalKeyPresenceFactsFull(entries, rawValues, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+	return canonicalKeyPresenceFactSet(keyPresenceFactSet{
+		entries: entries,
+		values:  rawValues,
+	})
 }
 
-func canonicalKeyPresenceFactsFull(
-	entries []KeyPresenceFact,
-	values []KeyValueFact,
-	arrays []KeyArrayFact,
-	arrayValues []KeyArrayValueFact,
-	appends []AppendedKeyFact,
-	pending []PendingKeyArrayFact,
-	emptyArrays []EmptyKeyArrayFact,
-	appendBases []AppendHistoryBaseFact,
-	appendEvents []AppendHistoryEventFact,
-	appendCoverage []AppendHistoryCoverageFact,
-	appendOrigins []AppendElementFieldOriginFact,
-) KeyPresenceFacts {
-	if len(entries) == 0 && len(values) == 0 && len(arrays) == 0 && len(emptyArrays) == 0 && len(arrayValues) == 0 && len(appends) == 0 && len(pending) == 0 && len(appendBases) == 0 && len(appendEvents) == 0 && len(appendCoverage) == 0 && len(appendOrigins) == 0 {
+func canonicalKeyPresenceFactSet(set keyPresenceFactSet) KeyPresenceFacts {
+	if len(set.entries) == 0 && len(set.values) == 0 && len(set.arrays) == 0 && len(set.emptyArrays) == 0 && len(set.arrayValues) == 0 && len(set.appends) == 0 && len(set.pending) == 0 && len(set.appendBases) == 0 && len(set.appendEvents) == 0 && len(set.appendCoverage) == 0 && len(set.appendOrigins) == 0 {
 		return KeyPresenceFacts{}
 	}
-	out := append([]KeyPresenceFact(nil), entries...)
+	out := append([]KeyPresenceFact(nil), set.entries...)
 	sortKeyPresenceFacts(out)
 	dst := out[:0]
 	for _, e := range out {
@@ -1276,7 +1359,7 @@ func canonicalKeyPresenceFactsFull(
 		}
 		dst = append(dst, e)
 	}
-	valueOut := append([]KeyValueFact(nil), values...)
+	valueOut := append([]KeyValueFact(nil), set.values...)
 	sortKeyValueFacts(valueOut)
 	valueDst := valueOut[:0]
 	for _, e := range valueOut {
@@ -1288,7 +1371,7 @@ func canonicalKeyPresenceFactsFull(
 		}
 		valueDst = append(valueDst, e)
 	}
-	arrayOut := append([]KeyArrayFact(nil), arrays...)
+	arrayOut := append([]KeyArrayFact(nil), set.arrays...)
 	sortKeyArrayFacts(arrayOut)
 	arrayDst := arrayOut[:0]
 	for _, e := range arrayOut {
@@ -1300,7 +1383,7 @@ func canonicalKeyPresenceFactsFull(
 		}
 		arrayDst = append(arrayDst, e)
 	}
-	emptyOut := append([]EmptyKeyArrayFact(nil), emptyArrays...)
+	emptyOut := append([]EmptyKeyArrayFact(nil), set.emptyArrays...)
 	sortEmptyKeyArrayFacts(emptyOut)
 	emptyDst := emptyOut[:0]
 	for _, e := range emptyOut {
@@ -1312,7 +1395,7 @@ func canonicalKeyPresenceFactsFull(
 		}
 		emptyDst = append(emptyDst, e)
 	}
-	arrayValueOut := append([]KeyArrayValueFact(nil), arrayValues...)
+	arrayValueOut := append([]KeyArrayValueFact(nil), set.arrayValues...)
 	sortKeyArrayValueFacts(arrayValueOut)
 	arrayValueDst := arrayValueOut[:0]
 	for _, e := range arrayValueOut {
@@ -1327,7 +1410,7 @@ func canonicalKeyPresenceFactsFull(
 		}
 		arrayValueDst = append(arrayValueDst, e)
 	}
-	appendOut := append([]AppendedKeyFact(nil), appends...)
+	appendOut := append([]AppendedKeyFact(nil), set.appends...)
 	sortAppendedKeyFacts(appendOut)
 	appendDst := appendOut[:0]
 	for _, e := range appendOut {
@@ -1339,7 +1422,7 @@ func canonicalKeyPresenceFactsFull(
 		}
 		appendDst = append(appendDst, e)
 	}
-	pendingOut := append([]PendingKeyArrayFact(nil), pending...)
+	pendingOut := append([]PendingKeyArrayFact(nil), set.pending...)
 	sortPendingKeyArrayFacts(pendingOut)
 	pendingDst := pendingOut[:0]
 	for _, e := range pendingOut {
@@ -1351,7 +1434,7 @@ func canonicalKeyPresenceFactsFull(
 		}
 		pendingDst = append(pendingDst, e)
 	}
-	appendBaseOut := append([]AppendHistoryBaseFact(nil), appendBases...)
+	appendBaseOut := append([]AppendHistoryBaseFact(nil), set.appendBases...)
 	sortAppendHistoryBaseFacts(appendBaseOut)
 	appendBaseDst := appendBaseOut[:0]
 	for _, e := range appendBaseOut {
@@ -1363,7 +1446,7 @@ func canonicalKeyPresenceFactsFull(
 		}
 		appendBaseDst = append(appendBaseDst, e)
 	}
-	appendEventOut := append([]AppendHistoryEventFact(nil), appendEvents...)
+	appendEventOut := append([]AppendHistoryEventFact(nil), set.appendEvents...)
 	sortAppendHistoryEventFacts(appendEventOut)
 	appendEventDst := appendEventOut[:0]
 	for _, e := range appendEventOut {
@@ -1378,7 +1461,7 @@ func canonicalKeyPresenceFactsFull(
 		}
 		appendEventDst = append(appendEventDst, e)
 	}
-	appendCoverageOut := append([]AppendHistoryCoverageFact(nil), appendCoverage...)
+	appendCoverageOut := append([]AppendHistoryCoverageFact(nil), set.appendCoverage...)
 	sortAppendHistoryCoverageFacts(appendCoverageOut)
 	appendCoverageDst := appendCoverageOut[:0]
 	for _, e := range appendCoverageOut {
@@ -1400,7 +1483,7 @@ func canonicalKeyPresenceFactsFull(
 		}
 		appendCoverageDst = append(appendCoverageDst, e)
 	}
-	appendOriginOut := append([]AppendElementFieldOriginFact(nil), appendOrigins...)
+	appendOriginOut := append([]AppendElementFieldOriginFact(nil), set.appendOrigins...)
 	sortAppendElementFieldOriginFacts(appendOriginOut)
 	appendOriginDst := appendOriginOut[:0]
 	for _, e := range appendOriginOut {
@@ -2031,7 +2114,19 @@ func intersectKeyPresenceFactsWithPayload(a, b KeyPresenceFacts, widenPayload bo
 	appendEvents := appendHistoryEventsForBases(append(a.AppendHistoryEventEntries(), b.AppendHistoryEventEntries()...), appendBases)
 	appendCoverage := appendHistoryCoverageForBases(append(a.AppendHistoryCoverageEntries(), b.AppendHistoryCoverageEntries()...), appendBases, appendEvents, widenPayload)
 	appendOrigins := appendElementFieldOriginsForBases(append(a.AppendElementFieldOriginEntries(), b.AppendElementFieldOriginEntries()...), appendBases)
-	return canonicalKeyPresenceFactsFull(out, values, arrays, arrayValues, appends, pending, emptyArrays, appendBases, appendEvents, appendCoverage, appendOrigins)
+	return canonicalKeyPresenceFactSet(keyPresenceFactSet{
+		entries:        out,
+		values:         values,
+		arrays:         arrays,
+		emptyArrays:    emptyArrays,
+		arrayValues:    arrayValues,
+		appends:        appends,
+		pending:        pending,
+		appendBases:    appendBases,
+		appendEvents:   appendEvents,
+		appendCoverage: appendCoverage,
+		appendOrigins:  appendOrigins,
+	})
 }
 
 func keyArrayFactsSpecializedByEmpty(empty []EmptyKeyArrayFact, concrete []KeyArrayFact) []KeyArrayFact {
