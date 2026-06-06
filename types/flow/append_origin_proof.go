@@ -42,6 +42,17 @@ type AppendKeyArrayConsequences struct {
 	Pending []PendingKeyArrayDestination
 }
 
+// AppendKeyArrayTableQuery selects the tables for which appending Key into
+// Array proves or delays key-array provenance.
+type AppendKeyArrayTableQuery struct {
+	Array            StableAddress
+	Key              StableAddress
+	ExplicitTable    StableAddress
+	HasExplicitTable bool
+	WrittenTables    []StableAddress
+	FreshEmpty       bool
+}
+
 // AppendOriginDestinations follows value-origin and path-alias facts to every
 // array whose appended element field may be observed through array.
 func AppendOriginDestinations(state PointState, array StableAddress, fieldPrefix []constraint.Segment) []AppendOriginDestination {
@@ -147,6 +158,82 @@ func ApplyAppendKeyArrayConsequences(out *PointState, proof AppendKeyArrayConseq
 		changed = ApplyPendingKeyArrayProof(out, pendingProof) || changed
 	}
 	return changed
+}
+
+// AppendHistoryBaseWithoutEvents reports whether Array still has a tracked
+// append-history base with no recorded append events.
+func AppendHistoryBaseWithoutEvents(state PointState, array StableAddress) bool {
+	arrayKey := array.Key()
+	if arrayKey == "" || !state.KeyPresence.HasAppendHistoryBase(arrayKey) {
+		return false
+	}
+	for _, event := range state.KeyPresence.AppendHistoryEventEntries() {
+		if event.Array == arrayKey {
+			return false
+		}
+	}
+	return true
+}
+
+// AppendKeyArrayTables selects concrete key-array consequence tables from the
+// current key-presence state and boundary write evidence.
+func AppendKeyArrayTables(state PointState, q AppendKeyArrayTableQuery) []StableAddress {
+	arrayKey := q.Array.Key()
+	keyKey := q.Key.Key()
+	if arrayKey == "" || keyKey == "" {
+		return nil
+	}
+	add := func(out []StableAddress, table StableAddress) []StableAddress {
+		if table.Key() == "" {
+			return out
+		}
+		for _, existing := range out {
+			if existing.Equal(table) {
+				return out
+			}
+		}
+		return append(out, table)
+	}
+	existingTables := state.KeyPresence.KeyArrayTables(arrayKey)
+	var out []StableAddress
+	if q.HasExplicitTable {
+		tableKey := q.ExplicitTable.Key()
+		if tableKey == "" {
+			return nil
+		}
+		hasExisting := false
+		for _, existing := range existingTables {
+			if existing == tableKey {
+				hasExisting = true
+				break
+			}
+		}
+		if q.FreshEmpty || hasExisting {
+			out = add(out, q.ExplicitTable)
+		}
+		return out
+	}
+	for _, tableKey := range existingTables {
+		table, ok := StableAddressFromKey(tableKey)
+		if ok {
+			out = add(out, table)
+		}
+	}
+	if q.FreshEmpty {
+		for _, table := range q.WrittenTables {
+			out = add(out, table)
+		}
+		for _, fact := range state.KeyPresence.Entries() {
+			if fact.Key != keyKey {
+				continue
+			}
+			table, ok := StableAddressFromKey(fact.Table)
+			if ok {
+				out = add(out, table)
+			}
+		}
+	}
+	return out
 }
 
 // AppendOriginSources follows value-origin and path-alias facts backward from

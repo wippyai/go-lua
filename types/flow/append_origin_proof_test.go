@@ -121,6 +121,60 @@ func TestApplyAppendKeyArrayConsequencesPublishesReadbackValue(t *testing.T) {
 	}
 }
 
+func TestAppendKeyArrayTablesSelectsExplicitExistingTable(t *testing.T) {
+	arrayPath := constraint.NewPath(cfg.SymbolID(31), "keys")
+	tablePath := constraint.NewPath(cfg.SymbolID(32), "nodes")
+	keyPath := constraint.NewPath(cfg.SymbolID(33), "node_id")
+	array := testStableAddressPath(t, arrayPath)
+	table := testStableAddressPath(t, tablePath)
+	key := testStableAddressPath(t, keyPath)
+	state := PointState{
+		KeyPresence: KeyPresenceFacts{}.
+			WithKeyArrayAddresses(array, table),
+	}
+
+	tables := AppendKeyArrayTables(state, AppendKeyArrayTableQuery{
+		Array:            array,
+		Key:              key,
+		ExplicitTable:    table,
+		HasExplicitTable: true,
+	})
+	if len(tables) != 1 || !tables[0].Equal(table) {
+		t.Fatalf("tables = %v, want explicit table", tables)
+	}
+}
+
+func TestAppendKeyArrayTablesUsesFreshEmptyEvidence(t *testing.T) {
+	arrayPath := constraint.NewPath(cfg.SymbolID(34), "keys")
+	tablePath := constraint.NewPath(cfg.SymbolID(35), "nodes")
+	otherPath := constraint.NewPath(cfg.SymbolID(36), "edges")
+	keyPath := constraint.NewPath(cfg.SymbolID(37), "node_id")
+	array := testStableAddressPath(t, arrayPath)
+	table := testStableAddressPath(t, tablePath)
+	other := testStableAddressPath(t, otherPath)
+	key := testStableAddressPath(t, keyPath)
+	state := PointState{
+		KeyPresence: KeyPresenceFacts{}.
+			WithAddresses(table, key),
+	}
+
+	tables := AppendKeyArrayTables(state, AppendKeyArrayTableQuery{
+		Array:         array,
+		Key:           key,
+		WrittenTables: []StableAddress{other},
+		FreshEmpty:    true,
+	})
+	if len(tables) != 2 {
+		t.Fatalf("tables = %v, want written and key-presence tables", tables)
+	}
+	if !tables[0].Equal(other) && !tables[1].Equal(other) {
+		t.Fatalf("tables missing written table: %v", tables)
+	}
+	if !tables[0].Equal(table) && !tables[1].Equal(table) {
+		t.Fatalf("tables missing key-presence table: %v", tables)
+	}
+}
+
 func assertAppendDestination(t *testing.T, got AppendOriginDestination, wantPath constraint.Path, wantPrefix []constraint.Segment) {
 	t.Helper()
 	want := testStableAddressPath(t, wantPath)
