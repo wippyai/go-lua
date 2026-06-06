@@ -164,8 +164,7 @@ func (t *Transfer) applyClosureCellEffect(out *flow.PointState, effect CellEffec
 	if _, ok := flow.ClosureRefAtAddress(out.ClosureRefs, addr); !ok {
 		return false
 	}
-	out.ClosureRefs = flow.ApplyClosureRefCellEffectsAddress(out.ClosureRefs, addr, effect.Effects)
-	return true
+	return references.applyClosureCellEffects(out, addr, effect.Effects)
 }
 
 func (t *Transfer) currentCellEffects(out *flow.PointState, effects flow.CaptureEffects) flow.CaptureEffects {
@@ -351,16 +350,16 @@ func (t *Transfer) applyFunctionReferenceEffect(
 	case referenceWriteFromSource:
 		if !exact {
 			if addr, ok := flow.StableAddressOfPath(path); ok {
-				out.FunctionRefs = flow.WithoutFunctionRefSubtreeAddress(out.FunctionRefs, addr)
+				references.clearFunctionSubtree(out, addr)
 			}
 			return !flow.FunctionRefsDomain.Equal(before, out.FunctionRefs)
 		}
 		t.recordFunctionRefAt(out, path, src)
 	case referenceWriteExplicit:
 		if addr, ok := flow.StableAddressOfPath(path); ok {
-			out.FunctionRefs = flow.WithoutFunctionRefSubtreeAddress(out.FunctionRefs, addr)
+			references.clearFunctionSubtree(out, addr)
 		}
-		out.FunctionRefs = flow.FunctionRefsDomain.Join(out.FunctionRefs, write.Refs)
+		references.joinFunctions(out, write.Refs)
 	default:
 		return false
 	}
@@ -381,16 +380,16 @@ func (t *Transfer) applyClosureReferenceEffect(
 	case referenceWriteFromSource:
 		if !exact {
 			if addr, ok := flow.StableAddressOfPath(path); ok {
-				out.ClosureRefs = flow.WithoutClosureRefSubtreeAddress(out.ClosureRefs, addr)
+				references.clearClosureSubtree(out, addr)
 			}
 			return !flow.ClosureRefsDomain.Equal(before, out.ClosureRefs)
 		}
 		t.recordClosureRefAt(out, path, src)
 	case referenceWriteExplicit:
 		if addr, ok := flow.StableAddressOfPath(path); ok {
-			out.ClosureRefs = flow.WithoutClosureRefSubtreeAddress(out.ClosureRefs, addr)
+			references.clearClosureSubtree(out, addr)
 		}
-		out.ClosureRefs = flow.ClosureRefsDomain.Join(out.ClosureRefs, write.Refs)
+		references.joinClosures(out, write.Refs)
 	default:
 		return false
 	}
