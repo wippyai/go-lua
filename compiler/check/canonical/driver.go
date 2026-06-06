@@ -1809,6 +1809,24 @@ func (ct callTyper) productCallArgDemands(call *ast.FuncCallExpr, ctx transfer.P
 	return proj.demands(ctx)
 }
 
+func (ct callTyper) productCallParamNarrows(call *ast.FuncCallExpr) []transfer.ParamNarrow {
+	if ct.d == nil || ct.d.activeProgram == nil || call == nil {
+		return nil
+	}
+	prog := ct.d.activeProgram
+	return (canonicalcall.ParamNarrowProjection{
+		Call: call,
+		SummaryNarrows: func(call *ast.FuncCallExpr) ([]paramevidence.ParamNarrow, bool) {
+			ref, ok := ct.resolveCalleeRef(call, prog)
+			if !ok {
+				return nil, false
+			}
+			return ct.d.summaryReader().ParamNarrows(ref), true
+		},
+		Resolver: ct.callTypeResolver(nil),
+	}).Narrows()
+}
+
 func (ct callTyper) currentRef() (summary.FuncRef, bool) {
 	if ct.ref != (summary.FuncRef{}) {
 		return ct.ref, true
@@ -1849,6 +1867,7 @@ func (ct callTyper) ProductCallFromValues(call *ast.FuncCallExpr, ctx transfer.P
 			NeverReturns: proj.neverReturns(func(ref summary.FuncRef) bool {
 				return ct.d.activeProgram.facts.HasNoReturn(ref)
 			}),
+			ParamNarrows: ct.productCallParamNarrows(call),
 		}
 	}
 	return proj.result(projector, ct.containerElementUnions(call, ctx))
@@ -2004,21 +2023,6 @@ func (ct callTyper) callInterceptEnv(exprType func(ast.Expr) typ.Type) canonical
 // TypeCastTarget reports whether call is a type-cast/assertion call `T(arg)`.
 func (ct callTyper) TypeCastTarget(call *ast.FuncCallExpr, exprType func(ast.Expr) typ.Type) (typ.Type, bool) {
 	return ct.callInterceptEnv(exprType).TypeCastTarget(call)
-}
-
-// ParamNarrows resolves the callee of call to a module function and returns its
-// parameter-narrowing effects. It resolves module-local callees through the same
-// symbol/prototype/field identity path as call typing, so wrappers narrow arguments
-// without a source-name fallback. A callee that does not resolve to a module
-// function is an imported callee: its body-proven refinement rides its imported
-// signature (the manifest function summary the module export published), so the
-// effects are recovered from that signature's FunctionRefinement instead.
-func (ct callTyper) ParamNarrows(call *ast.FuncCallExpr) []transfer.ParamNarrow {
-	proj, ok := ct.callControlProjection()
-	if !ok {
-		return nil
-	}
-	return proj.paramNarrows(call)
 }
 
 // resolveCalleeRef resolves call's callee to its module FuncRef. Method calls

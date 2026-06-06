@@ -125,12 +125,12 @@ type closureReferenceProjectionProvider interface {
 	ReferenceProjection(ref flow.FunctionRef) flow.ReferencePathProjection
 }
 
-// CallTyper is the transfer's seam to call-derived facts: iteration effects,
-// argument demands, post-call narrows, no-return control, and cast recognition.
-// The driver implements it by resolving the callee/receiver type (from the
-// module's function signatures, predeclared globals, captured values, or the live
-// Env via the supplied resolver) and running the call pipeline. Product results
-// are exposed through ProductCallProvider so return values and effects share one
+// CallTyper is the transfer's seam for call-shaped recognizers that are not the
+// selected product-call outcome: iteration effects and callable-type casts. The
+// driver implements it by resolving the callee/receiver type (from module
+// signatures, predeclared globals, captured values, or the live Env via the
+// supplied resolver). Selected call-outcome facts are exposed through
+// ProductCallProvider so values, effects, obligations, and control travel in one
 // carrier.
 //
 // exprType resolves an expression's value type against the live point Env (the
@@ -165,13 +165,6 @@ type CallTyper interface {
 	// product-state provenance on the assigned array; indexed iteration consumes
 	// only the live fact after intervening writes have had a chance to kill it.
 	KeysCollectorContainer(call *cfg.CallInfo, retIndex int) (constraint.Path, bool)
-	// ParamNarrows resolves the callee's parameter-narrowing effects: the
-	// presence/truthy refinements the callee's body proves about its parameters on
-	// every normal return (a wrapper around assert / `if x == nil then error()`).
-	// The transfer applies them to the matching call arguments so `check(y)` narrows
-	// `y`. A callee with no such effect, or one that does not resolve to a module
-	// function, yields none.
-	ParamNarrows(call *ast.FuncCallExpr) []ParamNarrow
 	// TypeCastTarget reports whether call is a type-cast/assertion call `T(arg)` (a
 	// type name used as a callable constructor, recognized by the same CallableType
 	// effect the call-return typing uses), and if so returns the asserted type T. A
@@ -223,6 +216,7 @@ type ProductCallResult struct {
 	Effects         CallEffects
 	ArgDemands      []callobligation.Obligation
 	NeverReturns    bool
+	ParamNarrows    []ParamNarrow
 }
 
 func EmptyProductCallResult() ProductCallResult {
@@ -4204,15 +4198,11 @@ func (t *Transfer) applyCallArgs(
 		}
 		t.applyCallArgDemands(out, info.Call, result.ArgDemands, demand)
 		t.applyCallResultEffects(out, info.Call, ctx, result.Effects, demand)
-	}
-	// A call to a module function that narrows its parameters (a wrapper around
-	// assert / `if x == nil then error()`) carries that narrowing to the matching
-	// argument here, so `check(y); use(y)` sees `y` narrowed.
-	if t.callTyper != nil {
-		if effects := t.callTyper.ParamNarrows(info.Call); len(effects) > 0 {
-			if t.ApplyParamNarrowsAtPoint(out, p, info.Call, effects) {
-				return true
-			}
+		// A call to a function that narrows its parameters (a wrapper around assert /
+		// `if x == nil then error()`) carries that narrowing to the matching argument
+		// here, so `check(y); use(y)` sees `y` narrowed.
+		if len(result.ParamNarrows) > 0 && t.ApplyParamNarrowsAtPoint(out, p, info.Call, result.ParamNarrows) {
+			return true
 		}
 	}
 	return false

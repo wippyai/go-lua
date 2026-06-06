@@ -417,10 +417,6 @@ func (c captureEffectTyper) KeysCollectorContainer(*cfg.CallInfo, int) (constrai
 	return constraint.Path{}, false
 }
 
-func (c captureEffectTyper) ParamNarrows(*ast.FuncCallExpr) []ParamNarrow {
-	return nil
-}
-
 func (c captureEffectTyper) TypeCastTarget(*ast.FuncCallExpr, func(ast.Expr) typ.Type) (typ.Type, bool) {
 	return nil, false
 }

@@ -89,6 +89,7 @@ func (p productCallProjection) result(projector cellEffectProjector, elementUnio
 		NeverReturns: p.neverReturns(func(ref summary.FuncRef) bool {
 			return p.typer.d.activeProgram.facts.HasNoReturn(ref)
 		}),
+		ParamNarrows: p.typer.productCallParamNarrows(p.call),
 	}
 }
 

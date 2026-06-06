@@ -443,10 +443,6 @@ func (s staticDemandTyper) KeysCollectorContainer(*cfg.CallInfo, int) (constrain
 	return constraint.Path{}, false
 }
 
-func (s staticDemandTyper) ParamNarrows(*ast.FuncCallExpr) []transfer.ParamNarrow {
-	return nil
-}
-
 func (s staticDemandTyper) TypeCastTarget(*ast.FuncCallExpr, func(ast.Expr) typ.Type) (typ.Type, bool) {
 	return nil, false
 }
