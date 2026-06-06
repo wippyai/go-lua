@@ -17,9 +17,7 @@ type callReturnProjection struct {
 	call               *ast.FuncCallExpr
 	argTypes           []typ.Type
 	exprType           func(ast.Expr) typ.Type
-	cells              flow.CaptureCells
-	refs               flow.FunctionRefs
-	closures           flow.ClosureRefs
+	references         flow.ReferenceContext
 	methodReceiverType typ.Type
 }
 
@@ -27,9 +25,7 @@ func (ct callTyper) callReturnProjection(
 	call *ast.FuncCallExpr,
 	argTypes []typ.Type,
 	exprType func(ast.Expr) typ.Type,
-	cells flow.CaptureCells,
-	refs flow.FunctionRefs,
-	closures flow.ClosureRefs,
+	references flow.ReferenceContext,
 	methodReceiverType typ.Type,
 ) (callReturnProjection, bool) {
 	d := ct.d
@@ -41,9 +37,7 @@ func (ct callTyper) callReturnProjection(
 		call:               call,
 		argTypes:           argTypes,
 		exprType:           exprType,
-		cells:              cells,
-		refs:               refs,
-		closures:           closures,
+		references:         references,
 		methodReceiverType: methodReceiverType,
 	}, true
 }
@@ -58,7 +52,7 @@ func (p callReturnProjection) projection() canonicalcall.ReturnInput {
 		Query:              d.cfg.Types,
 		MethodReceiverType: p.methodReceiverType,
 		SummaryReturns: func(call *ast.FuncCallExpr, exprType func(ast.Expr) typ.Type) []typ.Type {
-			return p.typer.callOutcomeForTypedCall(call, exprType, p.cells, p.refs).InferredReturnTypes()
+			return p.typer.callOutcomeForTypedCall(call, exprType, p.references.CaptureCells(), p.references.FunctionRefs()).InferredReturnTypes()
 		},
 		Resolver: p.typer.callTypeResolver(p.exprType),
 		ResolveTypeArg: func(expr ast.TypeExpr) typ.Type {
@@ -95,7 +89,12 @@ func (p callReturnProjection) refinedArgTypes() []typ.Type {
 			return argRefs, ok
 		},
 		FunctionType: func(ref summary.FuncRef) typ.Type {
-			return projector.FunctionTypeByRef(canonref.ToFlow(ref), p.cells, p.refs, p.closures)
+			return projector.FunctionTypeByRef(
+				canonref.ToFlow(ref),
+				p.references.CaptureCells(),
+				p.references.FunctionRefs(),
+				p.references.ClosureRefs(),
+			)
 		},
 		ContextualFunction: func(ref summary.FuncRef, values summary.EntryValues) typ.Type {
 			return p.contextualFunction(projector, ref, values)
@@ -111,7 +110,7 @@ func (p callReturnProjection) callbackRefs() map[ast.Expr][]summary.FuncRef {
 	resolver := p.typer.targetResolver(d.activeProgram)
 	out := make(map[ast.Expr][]summary.FuncRef)
 	for _, arg := range p.call.Args {
-		argRefs, ok := resolver.ResolveCallbackArgRefs(arg, p.refs, d.activeProgram.refByFunc)
+		argRefs, ok := resolver.ResolveCallbackArgRefs(arg, p.references, d.activeProgram.refByFunc)
 		if !ok || len(argRefs) == 0 {
 			continue
 		}
@@ -129,7 +128,7 @@ func (p callReturnProjection) contextualFunction(projector callableProjector, re
 	if sig == nil {
 		return nil
 	}
-	entry := d.activeProgram.CallEntryContext(ref, flow.ReferenceContextOf(p.cells, p.refs, p.closures), values)
+	entry := d.activeProgram.CallEntryContext(ref, p.references, values)
 	sum := projector.reader.SummarizeWithKey(entry.Key())
 	return summary.FunctionSignatureWithEntryParamsAndProjectedReturns(sig, d.refHasDeclaredReturns(d.activeProgram, ref), sum, values)
 }

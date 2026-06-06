@@ -15,6 +15,10 @@ import (
 	"github.com/wippyai/go-lua/types/flow"
 )
 
+func functionRefContext(refs flow.FunctionRefs) flow.ReferenceContext {
+	return flow.ReferenceContextOf(flow.CaptureCellsDomain.Bottom(), refs, flow.ClosureRefsDomain.Bottom())
+}
+
 func TestTargetResolverHonorsFunctionAndClosureAuthority(t *testing.T) {
 	t.Parallel()
 
@@ -197,7 +201,7 @@ func TestTargetResolverCallbackArgRefsUseLiveAxisBeforeStaticFallback(t *testing
 		flow.FunctionRef{GraphID: 10},
 	))
 
-	got, ok := resolver.ResolveCallbackArgRefs(call.Func, liveRefs, nil)
+	got, ok := resolver.ResolveCallbackArgRefs(call.Func, functionRefContext(liveRefs), nil)
 	if !ok || len(got) != 2 || got[0].GraphID != 10 || got[1].GraphID != 20 {
 		t.Fatalf("ResolveCallbackArgRefs = %+v/%v, want sorted live refs 10,20", got, ok)
 	}
@@ -221,7 +225,7 @@ func TestTargetResolverCallbackArgRefsFunctionLiteralBeatsStaticFallback(t *test
 		},
 	}
 
-	got, ok := resolver.ResolveCallbackArgRefs(arg, flow.FunctionRefsDomain.Bottom(), func(fn *ast.FunctionExpr) (summary.FuncRef, bool) {
+	got, ok := resolver.ResolveCallbackArgRefs(arg, functionRefContext(flow.FunctionRefsDomain.Bottom()), func(fn *ast.FunctionExpr) (summary.FuncRef, bool) {
 		if fn != arg {
 			t.Fatalf("function literal resolver got %#v, want arg", fn)
 		}
@@ -256,7 +260,7 @@ func TestTargetResolverCallbackArgRefsStaticFallback(t *testing.T) {
 		},
 	}
 
-	got, ok := resolver.ResolveCallbackArgRefs(arg, flow.FunctionRefsDomain.Bottom(), func(*ast.FunctionExpr) (summary.FuncRef, bool) {
+	got, ok := resolver.ResolveCallbackArgRefs(arg, functionRefContext(flow.FunctionRefsDomain.Bottom()), func(*ast.FunctionExpr) (summary.FuncRef, bool) {
 		t.Fatal("function literal resolver ran for ident")
 		return summary.FuncRef{}, false
 	})
@@ -283,7 +287,7 @@ func TestTargetResolverCallbackArgRefsLiveTopBlocksStaticFallback(t *testing.T) 
 	}
 	liveRefs := flow.WithFunctionRef(nil, path, flow.FunctionRefSetTop())
 
-	got, ok := resolver.ResolveCallbackArgRefs(call.Func, liveRefs, nil)
+	got, ok := resolver.ResolveCallbackArgRefs(call.Func, functionRefContext(liveRefs), nil)
 	if !ok || len(got) != 0 {
 		t.Fatalf("ResolveCallbackArgRefs = %+v/%v, want authoritative unknown", got, ok)
 	}
@@ -408,7 +412,7 @@ func TestTargetResolverCallbackArgRefsExpandsStaticAliases(t *testing.T) {
 		},
 	}
 
-	got, ok := resolver.ResolveCallbackArgRefsOrSymbol(arg, flow.FunctionRefsDomain.Bottom(), raw, nil)
+	got, ok := resolver.ResolveCallbackArgRefsOrSymbol(arg, functionRefContext(flow.FunctionRefsDomain.Bottom()), raw, nil)
 	if !ok || len(got) != 1 || got[0] != want {
 		t.Fatalf("ResolveCallbackArgRefsOrSymbol = %+v/%v, want [%+v]/true", got, ok, want)
 	}

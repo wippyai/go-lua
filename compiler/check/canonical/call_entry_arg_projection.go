@@ -78,7 +78,7 @@ func (p callEntryArgProjection) callbackRefs(arg ast.Expr, rawSym cfg.SymbolID) 
 		return nil, false
 	}
 	resolver := p.typer.targetResolver(p.program)
-	return resolver.ResolveCallbackArgRefsOrSymbol(arg, p.functionRefs(), rawSym, p.program.refByFunc)
+	return resolver.ResolveCallbackArgRefsOrSymbol(arg, p.evidence.references, rawSym, p.program.refByFunc)
 }
 
 func (p callEntryArgProjection) functionArgRefs(arg ast.Expr) (flow.FunctionRefSet, bool) {

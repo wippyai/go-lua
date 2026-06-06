@@ -47,7 +47,7 @@ func (p cellEffectProjector) productCallEffects(
 		CallbackArgs: call.Args,
 		MethodCall:   call.Method != "",
 		ResolveCallback: func(arg ast.Expr) ([]summary.FuncRef, bool) {
-			return p.typer.targetResolver(p.program).ResolveCallbackArgRefs(arg, ctx.FunctionRefs(), p.program.refByFunc)
+			return p.typer.targetResolver(p.program).ResolveCallbackArgRefs(arg, ctx.References, p.program.refByFunc)
 		},
 		EffectOf: func(ref summary.FuncRef, entryValues summary.EntryValues) flow.CaptureEffects {
 			entryFacts := p.callEntry.access().productFacts(ref, call, ctx)

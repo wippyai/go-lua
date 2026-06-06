@@ -174,9 +174,7 @@ func (p callOutcomeProjection) signatureReturns(target canonicalcall.SelectedTar
 		p.call,
 		argTypes,
 		forcedExprType,
-		p.references.CaptureCells(),
-		p.references.FunctionRefs(),
-		p.references.ClosureRefs(),
+		p.references,
 		p.methodReceiverType,
 	)
 	if !ok {

@@ -1787,21 +1787,6 @@ func (r opsResolver) UnaryOp(op string, operand typ.Type) typ.Type {
 	return res.UnaryOp(op, operand)
 }
 
-// CallReturns types call's Lua return vector. argTypes are the value-domain types
-// the transfer resolved for the arguments (typ.Unknown for an undetermined slot);
-// exprType resolves an expression against the live point Env for callee/receiver
-// resolution.
-func (ct callTyper) CallReturns(call *ast.FuncCallExpr, argTypes []typ.Type, exprType func(ast.Expr) typ.Type, cells flow.CaptureCells, refs flow.FunctionRefs) ([]typ.Type, bool) {
-	if ct.d == nil || ct.d.cfg.Types == nil {
-		return nil, false
-	}
-	proj, ok := ct.callReturnProjection(call, argTypes, exprType, cells, refs, flow.ClosureRefsDomain.Bottom(), nil)
-	if !ok {
-		return nil, false
-	}
-	return proj.types()
-}
-
 func (ct callTyper) productCallArgDemands(call *ast.FuncCallExpr, ctx transfer.ProductCallContext) []callobligation.Obligation {
 	proj, ok := ct.callDemandProjection(call, ctx.ExprType)
 	if !ok {

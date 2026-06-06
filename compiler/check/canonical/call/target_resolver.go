@@ -169,10 +169,10 @@ func (r TargetResolver) ResolveClosureRefSetAtExpr(expr ast.Expr, refs flow.Clos
 // then immutable static expression fallback.
 func (r TargetResolver) ResolveCallbackArgRefs(
 	arg ast.Expr,
-	refs flow.FunctionRefs,
+	references flow.ReferenceContext,
 	functionLiteral func(*ast.FunctionExpr) (summary.FuncRef, bool),
 ) ([]summary.FuncRef, bool) {
-	return r.ResolveCallbackArgRefsOrSymbol(arg, refs, 0, functionLiteral)
+	return r.ResolveCallbackArgRefsOrSymbol(arg, references, 0, functionLiteral)
 }
 
 // ResolveCallbackArgRefsOrSymbol resolves a callback argument through the same
@@ -182,7 +182,7 @@ func (r TargetResolver) ResolveCallbackArgRefs(
 // fallback when present but unknown.
 func (r TargetResolver) ResolveCallbackArgRefsOrSymbol(
 	arg ast.Expr,
-	refs flow.FunctionRefs,
+	references flow.ReferenceContext,
 	rawSym cfg.SymbolID,
 	functionLiteral func(*ast.FunctionExpr) (summary.FuncRef, bool),
 ) ([]summary.FuncRef, bool) {
@@ -194,7 +194,7 @@ func (r TargetResolver) ResolveCallbackArgRefsOrSymbol(
 			return []summary.FuncRef{ref}, true
 		}
 	}
-	if got, ok := r.ResolveFunctionRefsAtExprOrSymbol(arg, refs, rawSym); ok {
+	if got, ok := r.ResolveFunctionRefsAtExprOrSymbol(arg, references.FunctionRefs(), rawSym); ok {
 		return ref.UniqueSortedFuncRefs(got), true
 	}
 	if got, ok := r.ResolveStaticExprOrSymbol(arg, rawSym); ok {
