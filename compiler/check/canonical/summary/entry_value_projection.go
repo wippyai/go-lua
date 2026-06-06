@@ -404,24 +404,18 @@ func (p CallEntryContextProjection) ProjectKeys() []Key {
 	seen := make(map[Key]struct{})
 	var out []Key
 	p.Graph.EachCallSite(func(point cfg.Point, info *cfg.CallInfo) {
-		if info == nil || info.Call == nil {
-			return
-		}
-		in, ok := p.callEventState(point)
+		site, ok := newCallEntrySite(p.State, point, info)
 		if !ok {
 			return
 		}
-		targetState := p.callTargetState(point, in)
-		argState := callArgumentState(info.Call, targetState, in)
-		targets := p.resolveTargets(info.Call, targetState, in)
-		for _, target := range targets {
-			values := p.directProductValues(target.Ref, info.Call, &argState)
+		for _, target := range site.targets(p.ResolveTargets) {
+			values := p.directProductValues(target.Ref, site.Call, &site.ArgState)
 			if p.NormalizeValues != nil {
-				values = p.NormalizeValues(target.Ref, info.Call, values)
+				values = p.NormalizeValues(target.Ref, site.Call, values)
 			}
-			refs := flow.FunctionRefsDomain.Join(target.EntryFunctionRefs, p.directFunctionRefs(target.Ref, info.Call, &argState))
-			closures := flow.ClosureRefsDomain.Join(target.EntryClosureRefs, p.directClosureRefs(target.Ref, info.Call, &argState))
-			facts := flow.MergeBoundaryFactProofs(target.EntryFacts, p.directFacts(target.Ref, info.Call, &argState))
+			refs := flow.FunctionRefsDomain.Join(target.EntryFunctionRefs, p.directFunctionRefs(target.Ref, site.Call, &site.ArgState))
+			closures := flow.ClosureRefsDomain.Join(target.EntryClosureRefs, p.directClosureRefs(target.Ref, site.Call, &site.ArgState))
+			facts := flow.MergeBoundaryFactProofs(target.EntryFacts, p.directFacts(target.Ref, site.Call, &site.ArgState))
 			key := NewKeyWithEntryContextFacts(
 				target.Ref,
 				target.EntryCells,
@@ -436,7 +430,7 @@ func (p CallEntryContextProjection) ProjectKeys() []Key {
 			seen[key] = struct{}{}
 			out = append(out, key)
 		}
-		for _, key := range p.callbackEntryKeys(point, info, &in) {
+		for _, key := range p.callbackEntryKeys(site.Point, site.Info, &site.EventState) {
 			if _, ok := seen[key]; ok {
 				continue
 			}
@@ -716,28 +710,23 @@ func (p CallEntryValueProjection) Project() CallEntryValues {
 	}
 	var out CallEntryValues
 	p.Graph.EachCallSite(func(point cfg.Point, info *cfg.CallInfo) {
-		if info == nil || info.Call == nil {
-			return
-		}
-		in, ok := p.callEventState(point)
+		site, ok := newCallEntrySite(p.State, point, info)
 		if !ok {
 			return
 		}
-		targetState := p.callTargetState(point, in)
-		argState := callArgumentState(info.Call, targetState, in)
-		for _, target := range p.resolveTargets(info.Call, targetState, in) {
-			for _, arg := range entryRuntimeArgs(target.Ref, info.Call, p.ParamSlot) {
+		for _, target := range site.targets(p.ResolveTargets) {
+			for _, arg := range entryRuntimeArgs(target.Ref, site.Call, p.ParamSlot) {
 				if arg.Expr == nil || (p.ParamAnnotated != nil && p.ParamAnnotated(target.Ref, arg.SourceParam)) {
 					continue
 				}
-				av, ok := p.EvalArg(&argState, arg.Expr)
+				av, ok := p.EvalArg(&site.ArgState, arg.Expr)
 				if !ok {
 					continue
 				}
 				out = JoinCallEntryValue(out, target.Ref, arg.Slot, av)
 			}
 		}
-		out = p.projectCallbackEntryValues(out, point, info, &in)
+		out = p.projectCallbackEntryValues(out, site.Point, site.Info, &site.EventState)
 	})
 	if len(out) == 0 {
 		return nil
@@ -806,28 +795,37 @@ func callInfoArgSymbol(info *cfg.CallInfo, argIdx int) cfg.SymbolID {
 	return info.ArgSymbols[argIdx]
 }
 
-func (p CallEntryValueProjection) callEventState(point cfg.Point) (flow.PointState, bool) {
-	return callEventState(p.State, point)
+type callEntrySite struct {
+	Point       cfg.Point
+	Info        *cfg.CallInfo
+	Call        *ast.FuncCallExpr
+	EventState  flow.PointState
+	TargetState flow.PointState
+	ArgState    flow.PointState
 }
 
-func (p CallEntryValueProjection) callTargetState(point cfg.Point, event flow.PointState) flow.PointState {
-	return callTargetState(p.State, point, event)
+func newCallEntrySite(fs state.FunctionState, point cfg.Point, info *cfg.CallInfo) (callEntrySite, bool) {
+	call := callInfoCall(info)
+	if call == nil {
+		return callEntrySite{}, false
+	}
+	event, ok := callEventState(fs, point)
+	if !ok {
+		return callEntrySite{}, false
+	}
+	target := callTargetState(fs, point, event)
+	return callEntrySite{
+		Point:       point,
+		Info:        info,
+		Call:        call,
+		EventState:  event,
+		TargetState: target,
+		ArgState:    callArgumentState(call, target, event),
+	}, true
 }
 
-func (p CallEntryValueProjection) resolveTargets(call *ast.FuncCallExpr, target, event flow.PointState) []CallEntryTarget {
-	return resolveCallEntryTargets(p.ResolveTargets, call, target, event)
-}
-
-func (p CallEntryContextProjection) callEventState(point cfg.Point) (flow.PointState, bool) {
-	return callEventState(p.State, point)
-}
-
-func (p CallEntryContextProjection) callTargetState(point cfg.Point, event flow.PointState) flow.PointState {
-	return callTargetState(p.State, point, event)
-}
-
-func (p CallEntryContextProjection) resolveTargets(call *ast.FuncCallExpr, target, event flow.PointState) []CallEntryTarget {
-	return resolveCallEntryTargets(p.ResolveTargets, call, target, event)
+func (s callEntrySite) targets(resolve CallEntryTargetResolver) []CallEntryTarget {
+	return resolveCallEntryTargets(resolve, s.Call, s.TargetState, s.EventState)
 }
 
 func callEventState(fs state.FunctionState, point cfg.Point) (flow.PointState, bool) {
