@@ -3,9 +3,9 @@
 package callreturn
 
 import (
-	"github.com/wippyai/go-lua/compiler/check/synth/transform"
 	"github.com/wippyai/go-lua/types/callshape"
 	"github.com/wippyai/go-lua/types/db"
+	"github.com/wippyai/go-lua/types/effect/returntransform"
 	querycore "github.com/wippyai/go-lua/types/query/core"
 	"github.com/wippyai/go-lua/types/typ"
 	"github.com/wippyai/go-lua/types/typ/unwrap"
@@ -46,7 +46,7 @@ func ApplyEffectTransforms(in EffectTransformInput) []typ.Type {
 	)
 	var out []typ.Type
 	for i := range in.Returns {
-		transformed := transform.ApplyEffectTransform(fn, effectArgs, i, in.Returns[i])
+		transformed := returntransform.ApplyEffectTransform(fn, effectArgs, i, in.Returns[i])
 		if transformed == nil || transformed == in.Returns[i] {
 			continue
 		}
