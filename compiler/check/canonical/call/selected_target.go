@@ -83,11 +83,7 @@ func (s TargetSelection) AllowsCallbackFallback() bool {
 	return !s.HasClosureTargets() && !s.BlocksTypeFallback()
 }
 
-// SelectionNeverReturns reports whether every selected concrete target is proven
-// no-return. Empty selections, mixed returning/no-return selections, and
-// closure-authoritative misses are not no-return proof and must not prune the
-// continuation.
-func SelectionNeverReturns(selection TargetSelection, hasNoReturn func(summary.FuncRef) bool) bool {
+func selectionNeverReturns(selection TargetSelection, hasNoReturn func(summary.FuncRef) bool) bool {
 	if !selection.HasTargets() || hasNoReturn == nil {
 		return false
 	}

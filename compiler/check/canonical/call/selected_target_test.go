@@ -184,11 +184,11 @@ func TestSelectionNeverReturnsRequiresAllSelectedTargets(t *testing.T) {
 		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			got := SelectionNeverReturns(SelectTargets(tc.targets), func(ref summary.FuncRef) bool {
+			got := selectionNeverReturns(SelectTargets(tc.targets), func(ref summary.FuncRef) bool {
 				return noReturn[ref]
 			})
 			if got != tc.want {
-				t.Fatalf("SelectionNeverReturns = %v, want %v", got, tc.want)
+				t.Fatalf("selectionNeverReturns = %v, want %v", got, tc.want)
 			}
 		})
 	}

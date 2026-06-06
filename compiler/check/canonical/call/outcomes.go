@@ -100,7 +100,7 @@ func (o CallOutcome) BoundaryFacts() flow.BoundaryFacts {
 
 // NeverReturns reports whether every selected target is proven no-return.
 func (o CallOutcome) NeverReturns(hasNoReturn func(summary.FuncRef) bool) bool {
-	return SelectionNeverReturns(o.Selection, hasNoReturn)
+	return selectionNeverReturns(o.Selection, hasNoReturn)
 }
 
 // ReturnRelationsInput is the canonical call-site policy for caller-visible
