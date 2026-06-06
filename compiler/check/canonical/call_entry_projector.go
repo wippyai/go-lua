@@ -182,7 +182,7 @@ func (c callEntryProjector) resolveTargets(call *ast.FuncCallExpr, in *flow.Poin
 	}
 	access := c.access()
 	targets := c.typer.resolveCallTargets(call, c.program, in.FunctionRefs, in.ClosureRefs)
-	selected := canonicalcall.SelectTargets(targets).Targets()
+	selected := targets.Select().Targets()
 	out := make([]summary.CallEntryTarget, 0, len(selected))
 	for _, target := range selected {
 		ref := target.Ref()

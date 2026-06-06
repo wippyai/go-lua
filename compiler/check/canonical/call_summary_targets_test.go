@@ -6,7 +6,6 @@ import (
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/bind"
 	"github.com/wippyai/go-lua/compiler/cfg"
-	canonicalcall "github.com/wippyai/go-lua/compiler/check/canonical/call"
 	"github.com/wippyai/go-lua/compiler/check/canonical/summary"
 	"github.com/wippyai/go-lua/compiler/check/canonical/topology"
 	"github.com/wippyai/go-lua/compiler/check/canonical/transfer"
@@ -42,12 +41,13 @@ local s: string = identity("test")
 	}()
 
 	ct := callTyper{d: driver, g: rootGraph}
-	targets := canonicalcall.SelectTargets(ct.resolveCallTargets(
+	targetSet := ct.resolveCallTargets(
 		call,
 		prog,
 		flow.FunctionRefsDomain.Bottom(),
 		flow.ClosureRefsDomain.Bottom(),
-	)).Targets()
+	)
+	targets := targetSet.Select().Targets()
 	if len(targets) != 1 {
 		t.Fatalf("selected targets = %d, want one", len(targets))
 	}
@@ -90,12 +90,13 @@ local c = make_container("hello")
 	}()
 
 	ct := callTyper{d: driver, g: rootGraph}
-	targets := canonicalcall.SelectTargets(ct.resolveCallTargets(
+	targetSet := ct.resolveCallTargets(
 		call,
 		prog,
 		flow.FunctionRefsDomain.Bottom(),
 		flow.ClosureRefsDomain.Bottom(),
-	)).Targets()
+	)
+	targets := targetSet.Select().Targets()
 	if len(targets) != 1 {
 		t.Fatalf("selected targets = %d, want one", len(targets))
 	}

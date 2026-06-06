@@ -38,10 +38,10 @@ type TargetSelection struct {
 	closureAuthoritative bool
 }
 
-// SelectTargets applies the canonical callable precedence rule: finite closure
-// targets win because they carry captured entry context; otherwise finite direct
-// targets are used.
-func SelectTargets(targets TargetSet) TargetSelection {
+// Select applies the canonical callable precedence rule: finite closure targets
+// win because they carry captured entry context; otherwise finite direct targets
+// are used.
+func (targets TargetSet) Select() TargetSelection {
 	return TargetSelection{
 		targets:              selectTargets(targets),
 		closureAuthoritative: targets.ClosureAuthoritative(),

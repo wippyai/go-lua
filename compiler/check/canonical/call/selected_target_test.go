@@ -18,7 +18,7 @@ func TestSelectedTargetsFiniteClosureDominatesDirect(t *testing.T) {
 		true,
 	)
 
-	selected := SelectTargets(targets).Targets()
+	selected := targets.Select().Targets()
 	if len(selected) != 1 {
 		t.Fatalf("selected targets len = %d, want 1", len(selected))
 	}
@@ -43,7 +43,7 @@ func TestSelectedTargetsFallsBackToDirectWhenClosureTopHasNoFiniteTargets(t *tes
 		true,
 	)
 
-	selected := SelectTargets(targets).Targets()
+	selected := targets.Select().Targets()
 	if len(selected) != 2 {
 		t.Fatalf("selected targets len = %d, want 2", len(selected))
 	}
@@ -118,7 +118,7 @@ func TestTargetSelectionFallbackClassification(t *testing.T) {
 		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			selection := SelectTargets(tc.targets)
+			selection := tc.targets.Select()
 			if got := selection.HasTargets(); got != tc.hasTargets {
 				t.Fatalf("HasTargets = %v, want %v", got, tc.hasTargets)
 			}
@@ -184,7 +184,7 @@ func TestSelectionNeverReturnsRequiresAllSelectedTargets(t *testing.T) {
 		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			got := selectionNeverReturns(SelectTargets(tc.targets), func(ref summary.FuncRef) bool {
+			got := selectionNeverReturns(tc.targets.Select(), func(ref summary.FuncRef) bool {
 				return noReturn[ref]
 			})
 			if got != tc.want {

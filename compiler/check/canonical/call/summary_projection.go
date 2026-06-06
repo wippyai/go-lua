@@ -35,7 +35,7 @@ func summaryProjectionForTargets(
 	lookup SummaryLookup,
 	info SummaryTargetInfo,
 ) (summary.CallSummaryProjection, TargetSelection) {
-	selection := SelectTargets(targets)
+	selection := targets.Select()
 	selected := selection.Targets()
 	if len(selected) == 0 || entryContext == nil || lookup == nil {
 		return summary.CallSummaryProjection{}, selection

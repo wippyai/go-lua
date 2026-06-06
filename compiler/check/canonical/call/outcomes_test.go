@@ -52,7 +52,7 @@ func TestCallOutcomeReturnRelationsClosureAuthoritativeMissBlocksTypeFallback(t 
 
 	call := &ast.FuncCallExpr{Func: &ast.IdentExpr{Value: "f"}}
 	typeRel := flow.ReturnRelationsOfErrorReturns([]flow.ReturnCorrelation{{ValueIndex: 0, ErrorIndex: 1}})
-	selection := SelectTargets(NewTargetSet(nil, false, nil, true))
+	selection := NewTargetSet(nil, false, nil, true).Select()
 	fallbackUsed := false
 
 	got := (CallOutcome{
@@ -158,7 +158,7 @@ func TestCallOutcomeCellEffectsBlocksCallbackFallbackWhenSelectionBlocks(t *test
 	direct := flow.CaptureMustWrite(valuecfg.SymbolID(10), product.FromType(typ.String))
 	callback := flow.CaptureMustWrite(valuecfg.SymbolID(11), product.FromType(typ.Number))
 	arg := &ast.IdentExpr{Value: "cb"}
-	selection := SelectTargets(NewTargetSet(nil, false, nil, true))
+	selection := NewTargetSet(nil, false, nil, true).Select()
 	callbackUsed := false
 
 	got := (CallOutcome{
