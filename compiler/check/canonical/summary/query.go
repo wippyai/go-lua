@@ -33,19 +33,13 @@ type Key struct {
 
 // NewKey constructs the canonical summary key for ref and entry cells.
 func NewKey(ref FuncRef, entry flow.CaptureCells) Key {
-	return NewKeyWithRefs(ref, entry, flow.FunctionRefsDomain.Bottom())
+	return NewKeyWithEntryContextFacts(ref, entry, flow.FunctionRefsDomain.Bottom(), flow.ClosureRefsDomain.Bottom(), nil, flow.BoundaryFactsDomain.Top())
 }
 
-// NewKeyWithRefs constructs the canonical summary key for ref, entry cells, and
-// entry function identities.
-func NewKeyWithRefs(ref FuncRef, entry flow.CaptureCells, refs flow.FunctionRefs) Key {
-	return NewKeyWithEntryValues(ref, entry, refs, nil)
-}
-
-// NewKeyWithEntryValues constructs the canonical summary key for ref, entry
-// cells, entry function identities, and caller-projected parameter values.
-func NewKeyWithEntryValues(ref FuncRef, entry flow.CaptureCells, refs flow.FunctionRefs, values EntryValues) Key {
-	return NewKeyWithEntryContext(ref, entry, refs, flow.ClosureRefsDomain.Bottom(), values)
+// NewDefaultKey constructs the key for a function entered without captured
+// caller axes, preserving only caller-projected parameter values.
+func NewDefaultKey(ref FuncRef, values EntryValues) Key {
+	return NewKeyWithEntryContextFacts(ref, flow.CaptureCellsDomain.Bottom(), flow.FunctionRefsDomain.Bottom(), flow.ClosureRefsDomain.Bottom(), values, flow.BoundaryFactsDomain.Top())
 }
 
 // NewKeyWithEntryContext constructs the canonical summary key for every

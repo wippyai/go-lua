@@ -380,7 +380,7 @@ func (b *diagnosticContextBuilder) defaultKey(ref FuncRef) Key {
 	if b.frontier.DefaultKey != nil {
 		return b.frontier.DefaultKey(ref)
 	}
-	return NewKeyWithEntryContext(ref, flow.CaptureCellsDomain.Bottom(), flow.FunctionRefsDomain.Bottom(), flow.ClosureRefsDomain.Bottom(), nil)
+	return NewDefaultKey(ref, nil)
 }
 
 func (b *diagnosticContextBuilder) valid(key Key) bool {

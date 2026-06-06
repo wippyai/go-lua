@@ -573,7 +573,7 @@ func (d *Driver) diagnosticState(sess api.AnalysisSession, prog *program, querie
 		reader := summary.NewReader(nil, nil, d.summaries)
 		values := prog.EntryValues(ref, reader)
 		if len(values) != 0 {
-			key := summary.NewKeyWithEntryValues(ref, flow.CaptureCellsDomain.Bottom(), flow.FunctionRefsDomain.Bottom(), values)
+			key := summary.NewDefaultKey(ref, values)
 			return queries.IntraWithKey(sess.Context(), key)
 		}
 		return queries.Intra(sess.Context(), ref)
@@ -661,11 +661,11 @@ func (d *Driver) validDiagnosticContext(prog *program, key summary.Key) bool {
 
 func (d *Driver) defaultDiagnosticKey(prog *program, ref summary.FuncRef) summary.Key {
 	if d == nil || prog == nil {
-		return summary.NewKeyWithEntryContext(ref, flow.CaptureCellsDomain.Bottom(), flow.FunctionRefsDomain.Bottom(), flow.ClosureRefsDomain.Bottom(), nil)
+		return summary.NewDefaultKey(ref, nil)
 	}
 	reader := summary.NewReader(nil, nil, d.summaries)
 	values := prog.EntryValues(ref, reader)
-	return summary.NewKeyWithEntryContext(ref, flow.CaptureCellsDomain.Bottom(), flow.FunctionRefsDomain.Bottom(), flow.ClosureRefsDomain.Bottom(), values)
+	return summary.NewDefaultKey(ref, values)
 }
 
 func (d *Driver) projectDiagnosticCallContexts(prog *program, ref summary.FuncRef, fs state.FunctionState) []summary.Key {

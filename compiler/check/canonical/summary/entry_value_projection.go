@@ -648,7 +648,7 @@ func (p CallEntryContextProjection) callbackEntryKeys(site callEntrySite) []Key 
 				}
 			}
 			if !emitted {
-				keys = append(keys, NewKeyWithEntryValues(ref, flow.CaptureCellsDomain.Bottom(), flow.FunctionRefsDomain.Bottom(), callback.Values))
+				keys = append(keys, NewDefaultKey(ref, callback.Values))
 			}
 		}
 	}

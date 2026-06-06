@@ -128,12 +128,7 @@ func TestDiagnosticContextFrontierPromotesFallbackDiscoveredCallContext(t *testi
 		flow.ClosureRefsDomain.Bottom(),
 		nil,
 	)
-	calleeCall := summary.NewKeyWithEntryValues(
-		callee,
-		flow.CaptureCellsDomain.Bottom(),
-		flow.FunctionRefsDomain.Bottom(),
-		summary.EntryValues{0: product.FromType(typ.Number)},
-	)
+	calleeCall := summary.NewDefaultKey(callee, summary.EntryValues{0: product.FromType(typ.Number)})
 
 	result := summary.DiagnosticContextFrontier{
 		Root: root,
@@ -166,12 +161,7 @@ func TestDiagnosticContextFrontierPromotesFallbackDiscoveredCallContext(t *testi
 func TestDiagnosticContextFrontierReducesDominatedEntryFactContexts(t *testing.T) {
 	root := summary.FuncRef{GraphID: 1}
 	callee := summary.FuncRef{GraphID: 2}
-	base := summary.NewKeyWithEntryValues(
-		callee,
-		flow.CaptureCellsDomain.Bottom(),
-		flow.FunctionRefsDomain.Bottom(),
-		summary.EntryValues{0: product.FromType(typ.String)},
-	)
+	base := summary.NewDefaultKey(callee, summary.EntryValues{0: product.FromType(typ.String)})
 	facts := flow.BoundaryFactsOf(nil, []flow.BoundaryKeyArrayFact{{
 		Array: flow.BoundaryPath{Kind: flow.BoundaryPathParam, Index: 0},
 		Table: flow.BoundaryPath{Kind: flow.BoundaryPathParam, Index: 0, Segments: []constraint.Segment{{
@@ -211,18 +201,8 @@ func TestDiagnosticContextFrontierDropsStaleContextsAfterRefresh(t *testing.T) {
 	root := summary.FuncRef{GraphID: 1}
 	callee := summary.FuncRef{GraphID: 2}
 	rootKey := summary.NewKey(root, flow.CaptureCellsDomain.Bottom())
-	stale := summary.NewKeyWithEntryValues(
-		callee,
-		flow.CaptureCellsDomain.Bottom(),
-		flow.FunctionRefsDomain.Bottom(),
-		summary.EntryValues{0: product.FromType(typ.NewRecord().Build())},
-	)
-	current := summary.NewKeyWithEntryValues(
-		callee,
-		flow.CaptureCellsDomain.Bottom(),
-		flow.FunctionRefsDomain.Bottom(),
-		summary.EntryValues{0: product.FromType(typ.NewRecord().Field("nodes", typ.NewMap(typ.String, typ.Number)).Build())},
-	)
+	stale := summary.NewDefaultKey(callee, summary.EntryValues{0: product.FromType(typ.NewRecord().Build())})
+	current := summary.NewDefaultKey(callee, summary.EntryValues{0: product.FromType(typ.NewRecord().Field("nodes", typ.NewMap(typ.String, typ.Number)).Build())})
 	solves := make(map[summary.Key]int)
 
 	result := summary.DiagnosticContextFrontier{
@@ -296,12 +276,7 @@ func TestDiagnosticContextFrontierRefreshesDerivedInPointContexts(t *testing.T) 
 	root := summary.FuncRef{GraphID: 1}
 	callee := summary.FuncRef{GraphID: 2}
 	rootKey := summary.NewKey(root, flow.CaptureCellsDomain.Bottom())
-	calleeKey := summary.NewKeyWithEntryValues(
-		callee,
-		flow.CaptureCellsDomain.Bottom(),
-		flow.FunctionRefsDomain.Bottom(),
-		summary.EntryValues{0: product.FromType(typ.String)},
-	)
+	calleeKey := summary.NewDefaultKey(callee, summary.EntryValues{0: product.FromType(typ.String)})
 	solves := make(map[summary.Key]int)
 
 	result := summary.DiagnosticContextFrontier{
@@ -342,12 +317,7 @@ func TestDiagnosticContextFrontierRefreshesCallersAfterExactSummaryOverlay(t *te
 	root := summary.FuncRef{GraphID: 1}
 	callee := summary.FuncRef{GraphID: 2}
 	rootKey := summary.NewKey(root, flow.CaptureCellsDomain.Bottom())
-	calleeKey := summary.NewKeyWithEntryValues(
-		callee,
-		flow.CaptureCellsDomain.Bottom(),
-		flow.FunctionRefsDomain.Bottom(),
-		summary.EntryValues{0: product.FromType(typ.String)},
-	)
+	calleeKey := summary.NewDefaultKey(callee, summary.EntryValues{0: product.FromType(typ.String)})
 	overlay := make(map[summary.Key]summary.Summary)
 	solves := make(map[summary.Key]int)
 
