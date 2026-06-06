@@ -160,11 +160,7 @@ func (r TargetResolver) ResolveClosureRefSetAtExpr(expr ast.Expr, refs flow.Clos
 	if !ok {
 		return flow.ClosureRefSet{}, false
 	}
-	addr, ok := flow.StableAddressOfPath(path)
-	if !ok {
-		return flow.ClosureRefSet{}, false
-	}
-	return flow.ClosureRefAtAddress(refs, addr)
+	return flow.ClosureRefAtPath(refs, path)
 }
 
 // ResolveCallbackArgRefs resolves a callback argument using the same precedence
@@ -237,11 +233,7 @@ func (r TargetResolver) directMethodRefsFromState(call *ast.FuncCallExpr, refs f
 	if !ok {
 		return nil, false
 	}
-	addr, ok := flow.StableAddressOfPath(path)
-	if !ok {
-		return nil, false
-	}
-	return ref.FromFlowAddress(refs, addr)
+	return ref.FromFlowStructuredPath(refs, path)
 }
 
 func (r TargetResolver) directExprRefsFromState(expr ast.Expr, refs flow.FunctionRefs) ([]summary.FuncRef, bool) {
@@ -249,11 +241,7 @@ func (r TargetResolver) directExprRefsFromState(expr ast.Expr, refs flow.Functio
 	if !ok {
 		return nil, false
 	}
-	addr, ok := flow.StableAddressOfPath(path)
-	if !ok {
-		return nil, false
-	}
-	return ref.FromFlowAddress(refs, addr)
+	return ref.FromFlowStructuredPath(refs, path)
 }
 
 func (r TargetResolver) closureMethodRefs(call *ast.FuncCallExpr, refs flow.ClosureRefs) ([]flow.ClosureRef, bool) {
@@ -315,11 +303,7 @@ func (r TargetResolver) symbolOf(ident *ast.IdentExpr) (cfg.SymbolID, bool) {
 }
 
 func closureRefsAtPath(refs flow.ClosureRefs, path constraint.Path) ([]flow.ClosureRef, bool) {
-	addr, ok := flow.StableAddressOfPath(path)
-	if !ok {
-		return nil, false
-	}
-	set, ok := flow.ClosureRefAtAddress(refs, addr)
+	set, ok := flow.ClosureRefAtPath(refs, path)
 	if !ok {
 		return nil, false
 	}

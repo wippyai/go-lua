@@ -82,6 +82,16 @@ func FromFlowPath(refs flow.FunctionRefs, path constraint.PathKey) ([]FuncRef, b
 	return fromFlowSet(set)
 }
 
+// FromFlowStructuredPath reads flow-domain function identities at a structured
+// path without exposing stable-address normalization to callers.
+func FromFlowStructuredPath(refs flow.FunctionRefs, path constraint.Path) ([]FuncRef, bool) {
+	set, ok := flow.FunctionRefAtPath(refs, path)
+	if !ok {
+		return nil, false
+	}
+	return fromFlowSet(set)
+}
+
 // FromFlowAddress reads the flow-domain function identities at addr and converts
 // the finite may-set to canonical function identities.
 func FromFlowAddress(refs flow.FunctionRefs, addr flow.StableAddress) ([]FuncRef, bool) {
