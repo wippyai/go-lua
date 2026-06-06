@@ -36,58 +36,16 @@ func NewEntryContextWithFacts(ref summary.FuncRef, cells flow.CaptureCells, refs
 	}
 }
 
-// EntryContextFromClosure constructs an entry context from a closure value's
-// carried lexical environment.
-func EntryContextFromClosure(ref summary.FuncRef, closure flow.ClosureRef, values summary.EntryValues) EntryContext {
-	return NewEntryContext(ref, closure.EntryCells(), closure.EntryFunctionRefs(), closure.EntryClosureRefs(), values)
-}
-
-// EntryContextFromClosureWithLiveAxes constructs a closure entry context for an
-// invocation point. ClosureRefs carry the lexical environment from allocation
-// time; live caller axes override matching captured cells/paths because Lua
-// closures capture mutable locations, not immutable value snapshots. Callers must
-// pass axes already projected to the callee's captured symbols.
-func EntryContextFromClosureWithLiveAxes(
-	ref summary.FuncRef,
-	closure flow.ClosureRef,
-	liveCells flow.CaptureCells,
-	liveRefs flow.FunctionRefs,
-	liveClosures flow.ClosureRefs,
-	values summary.EntryValues,
-) EntryContext {
-	return EntryContextFromClosureWithLiveAxesAndFacts(ref, closure, liveCells, liveRefs, liveClosures, values, flow.BoundaryFactsDomain.Top())
-}
-
-// EntryContextFromClosureWithLiveAxesAndFacts is EntryContextFromClosureWithLiveAxes
-// plus caller-projected parameter-relative path facts.
-func EntryContextFromClosureWithLiveAxesAndFacts(
-	ref summary.FuncRef,
-	closure flow.ClosureRef,
-	liveCells flow.CaptureCells,
-	liveRefs flow.FunctionRefs,
-	liveClosures flow.ClosureRefs,
-	values summary.EntryValues,
-	facts flow.BoundaryFacts,
-) EntryContext {
-	return NewEntryContextWithFacts(
-		ref,
-		flow.OverlayCaptureCells(closure.EntryCells(), liveCells),
-		flow.OverlayFunctionRefs(closure.EntryFunctionRefs(), liveRefs),
-		flow.OverlayClosureRefs(closure.EntryClosureRefs(), liveClosures),
-		values,
-		facts,
-	)
-}
-
 // EntryContextFromClosureWithLiveContext overlays a closure's captured
 // environment with an already-projected live entry context for the same callee.
+// Lua closures capture mutable locations, so live axes win over the allocation
+// snapshot for matching cells and reference paths.
 func EntryContextFromClosureWithLiveContext(closure flow.ClosureRef, live EntryContext) EntryContext {
-	return EntryContextFromClosureWithLiveAxesAndFacts(
+	return NewEntryContextWithFacts(
 		live.ref,
-		closure,
-		live.cells,
-		live.refs,
-		live.closures,
+		flow.OverlayCaptureCells(closure.EntryCells(), live.cells),
+		flow.OverlayFunctionRefs(closure.EntryFunctionRefs(), live.refs),
+		flow.OverlayClosureRefs(closure.EntryClosureRefs(), live.closures),
 		live.values,
 		live.facts,
 	)

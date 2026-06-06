@@ -32,7 +32,7 @@ func TestEntryContextKeyMatchesSummaryEntryContextKey(t *testing.T) {
 	}
 }
 
-func TestEntryContextFromClosurePreservesClosureAxes(t *testing.T) {
+func TestEntryContextFromClosureWithLiveContextPreservesClosureAxes(t *testing.T) {
 	ref := summary.FuncRef{GraphID: 100, ParentHash: 200}
 	cells := flow.CaptureCellsOf([]flow.CaptureCell{
 		{Symbol: cfg.SymbolID(11), Value: product.FromType(typ.String)},
@@ -47,7 +47,8 @@ func TestEntryContextFromClosurePreservesClosureAxes(t *testing.T) {
 	closures := flow.WithClosureRef(nil, constraint.NewPath(cfg.SymbolID(14), "factory").Field("inner").Key(), flow.ClosureRefSetOf(nested))
 	closure := flow.ClosureRefOf(flow.FunctionRef{GraphID: ref.GraphID, ParentHash: ref.ParentHash}, cells, refs, closures)
 
-	ctx := EntryContextFromClosure(ref, closure, summary.EntryValues{1: product.FromType(typ.Boolean)})
+	live := NewEntryContext(ref, flow.CaptureCellsDomain.Bottom(), nil, nil, summary.EntryValues{1: product.FromType(typ.Boolean)})
+	ctx := EntryContextFromClosureWithLiveContext(closure, live)
 
 	if ctx.Ref() != ref {
 		t.Fatalf("Ref() = %#v, want %#v", ctx.Ref(), ref)
@@ -67,7 +68,7 @@ func TestEntryContextFromClosurePreservesClosureAxes(t *testing.T) {
 	}
 }
 
-func TestEntryContextFromClosureWithLiveAxesOverridesSnapshot(t *testing.T) {
+func TestEntryContextFromClosureWithLiveContextOverridesSnapshot(t *testing.T) {
 	ref := summary.FuncRef{GraphID: 11, ParentHash: 22}
 	sym := cfg.SymbolID(7)
 	path := constraint.NewPath(sym, "M").Field("dep").Field("get")
@@ -89,7 +90,8 @@ func TestEntryContextFromClosureWithLiveAxesOverridesSnapshot(t *testing.T) {
 		flow.ClosureRefOf(flow.FunctionRef{GraphID: 41}, liveCells, liveRefs),
 	))
 
-	ctx := EntryContextFromClosureWithLiveAxes(ref, closure, liveCells, liveRefs, liveClosures, nil)
+	live := NewEntryContext(ref, liveCells, liveRefs, liveClosures, nil)
+	ctx := EntryContextFromClosureWithLiveContext(closure, live)
 	if av, ok := ctx.CaptureCells().Value(sym); !ok || !typ.TypeEquals(av.ProjectValue(), typ.String) {
 		t.Fatalf("CaptureCells()[%d] = %v/%v, want string", sym, av.ProjectValue(), ok)
 	}

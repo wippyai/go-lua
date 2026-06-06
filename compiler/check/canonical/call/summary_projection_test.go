@@ -29,7 +29,7 @@ func TestSummaryProjectionForTargetsUsesClosureEntryContext(t *testing.T) {
 		func(target SelectedTarget) EntryContext {
 			if target.IsClosure() {
 				closure, _ := target.Closure()
-				return EntryContextFromClosure(target.Ref(), closure, summary.EntryValues{
+				return NewEntryContext(target.Ref(), closure.EntryCells(), closure.EntryFunctionRefs(), closure.EntryClosureRefs(), summary.EntryValues{
 					0: product.FromType(typ.Boolean),
 				})
 			}

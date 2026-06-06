@@ -104,10 +104,10 @@ func TestSummaryEntryTargetsWithLiveContextOverlaysClosureTargets(t *testing.T) 
 	capturedRefs := flow.WithFunctionRef(nil, constraint.NewPath(cfg.SymbolID(20), "captured").Key(), flow.FunctionRefSetOf(flow.FunctionRef{GraphID: 30}))
 	liveRefs := flow.WithFunctionRef(nil, constraint.NewPath(cfg.SymbolID(20), "captured").Key(), flow.FunctionRefSetOf(flow.FunctionRef{GraphID: 31}))
 	capturedClosures := flow.WithClosureRef(nil, constraint.NewPath(cfg.SymbolID(21), "captured").Key(), flow.ClosureRefSetOf(
-		flow.ClosureRefOf(flow.FunctionRef{GraphID: 40}, nil, nil),
+		flow.ClosureRefOf(flow.FunctionRef{GraphID: 40}, flow.CaptureCellsDomain.Bottom(), nil),
 	))
 	liveClosures := flow.WithClosureRef(nil, constraint.NewPath(cfg.SymbolID(22), "live").Key(), flow.ClosureRefSetOf(
-		flow.ClosureRefOf(flow.FunctionRef{GraphID: 41}, nil, nil),
+		flow.ClosureRefOf(flow.FunctionRef{GraphID: 41}, flow.CaptureCellsDomain.Bottom(), nil),
 	))
 	facts := flow.BoundaryFactsOf(nil, nil, nil, nil, []flow.BoundaryLengthLowerBound{{
 		Target: flow.BoundaryPath{Kind: flow.BoundaryPathParam, Index: 0},
