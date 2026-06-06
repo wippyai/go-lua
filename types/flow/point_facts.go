@@ -376,12 +376,15 @@ func (f PointFacts) ValueOriginUsesCoveringPath(path constraint.Path) []ValueOri
 // IndexWritePathQuery is the structured-path query form for admitted dynamic
 // index writes.
 type IndexWritePathQuery struct {
-	Target       constraint.Path
-	KeyPath      constraint.Path
-	HasKeyPath   bool
-	KeyValue     product.AbstractValue
-	ValuePath    constraint.Path
-	HasValuePath bool
+	Target     constraint.Path
+	KeyPath    constraint.Path
+	HasKeyPath bool
+	// FollowKeyAliases asks the PointFacts read boundary to apply identity
+	// alias closure before querying the address-native index-write facts.
+	FollowKeyAliases bool
+	KeyValue         product.AbstractValue
+	ValuePath        constraint.Path
+	HasValuePath     bool
 }
 
 // IndexWriteAdmissionAtAddress returns the value admitted by a dynamic index
@@ -405,27 +408,40 @@ func (f PointFacts) IndexWriteAdmission(q IndexWritePathQuery) (product.Abstract
 	if !ok {
 		return product.AbstractValue{}, false
 	}
-	addressQuery := IndexWriteAddressQuery{
-		Target:   target,
-		KeyValue: q.KeyValue,
-	}
-	if q.HasKeyPath {
-		key, ok := StableAddressOfPath(q.KeyPath)
-		if !ok {
-			return product.AbstractValue{}, false
-		}
-		addressQuery.KeyPath = key
-		addressQuery.HasKeyPath = true
-	}
+	valueAddr := StableAddress{}
 	if q.HasValuePath {
 		value, ok := StableAddressOfPath(q.ValuePath)
 		if !ok {
 			return product.AbstractValue{}, false
 		}
-		addressQuery.ValuePath = value
-		addressQuery.HasValuePath = true
+		valueAddr = value
 	}
-	return f.state.IndexWrites.AdmissionAtAddress(addressQuery)
+	keyPaths := []constraint.Path{q.KeyPath}
+	if !q.HasKeyPath {
+		keyPaths = []constraint.Path{{}}
+	} else if q.FollowKeyAliases {
+		keyPaths = f.IdentityAliasClosurePaths(q.KeyPath)
+	}
+	for _, keyPath := range keyPaths {
+		addressQuery := IndexWriteAddressQuery{
+			Target:       target,
+			KeyValue:     q.KeyValue,
+			ValuePath:    valueAddr,
+			HasValuePath: q.HasValuePath,
+			HasKeyPath:   q.HasKeyPath,
+		}
+		if q.HasKeyPath {
+			key, ok := StableAddressOfPath(keyPath)
+			if !ok {
+				continue
+			}
+			addressQuery.KeyPath = key
+		}
+		if admitted, ok := f.state.IndexWrites.AdmissionAtAddress(addressQuery); ok && !admitted.IsZero() {
+			return admitted, true
+		}
+	}
+	return product.AbstractValue{}, false
 }
 
 func productType(av product.AbstractValue, ok bool) (typ.Type, bool) {

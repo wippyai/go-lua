@@ -69,7 +69,7 @@ func (t *Transfer) applySymbolicDynamicIndexWriteProof(
 	if src != nil {
 		valuePath, _ = t.staticPathOfExpr(src)
 	}
-	proof, ok := flow.MapWriteProofOfPathProof(flow.MapWritePathProof{
+	return flow.ApplyMapWritePathProof(out, flow.MapWritePathProof{
 		TablePath:              tablePath,
 		KeyPath:                keyPath,
 		KeyValue:               product.FromType(typ.Unknown),
@@ -77,10 +77,6 @@ func (t *Transfer) applySymbolicDynamicIndexWriteProof(
 		Value:                  value,
 		AllowOpaqueKeyReadback: true,
 	})
-	if !ok {
-		return false
-	}
-	return flow.ApplyMapWriteProof(out, proof)
 }
 
 func (t *Transfer) refineByIndexWriteAdmission(
@@ -99,14 +95,14 @@ func (t *Transfer) refineByIndexWriteAdmission(
 		return product.AbstractValue{}, false
 	}
 	keyType := flow.NormalizeDynamicKeyType(product.ProjectValueOrUnknown(key))
-	keyPaths := t.indexWriteReadKeyPaths(out, e.Key)
 	facts := flow.PointFactsOf(*out)
-	for _, keyPath := range keyPaths {
+	if keyPath, ok := t.staticPathOfExpr(e.Key); ok && keyPath.Symbol != 0 {
 		if admitted, ok := facts.IndexWriteAdmission(flow.IndexWritePathQuery{
-			Target:     targetPath,
-			KeyPath:    keyPath,
-			HasKeyPath: true,
-			KeyValue:   product.FromType(keyType),
+			Target:           targetPath,
+			KeyPath:          keyPath,
+			HasKeyPath:       true,
+			FollowKeyAliases: true,
+			KeyValue:         product.FromType(keyType),
 		}); ok && !admitted.IsZero() {
 			return admitted, true
 		}
@@ -122,17 +118,6 @@ func (t *Transfer) refineByIndexWriteAdmission(
 		return product.AbstractValue{}, false
 	}
 	return admitted, true
-}
-
-func (t *Transfer) indexWriteReadKeyPaths(out *flow.PointState, key ast.Expr) []constraint.Path {
-	keyPath, ok := t.staticPathOfExpr(key)
-	if !ok || keyPath.Symbol == 0 {
-		return nil
-	}
-	if out == nil {
-		return []constraint.Path{keyPath}
-	}
-	return flow.PointFactsOf(*out).IdentityAliasClosurePaths(keyPath)
 }
 
 func indexWriteReadCanUseKeyValueOnly(keyType typ.Type) bool {
