@@ -115,7 +115,7 @@ func (t *Transfer) applyRefinementEffect(out *flow.PointState, effect Refinement
 		}
 		t.writeRefinedRoot(out, effect.Place.Root, refinedValue)
 		if addr, ok := symbolStableAddress(effect.Place); ok {
-			out.StaticMembers = out.StaticMembers.WithAddress(addr, product.FromType(effect.Target))
+			staticMembers.set(out, addr, product.FromType(effect.Target))
 		}
 		return true
 	case RefinementLengthLowerBound:
@@ -182,14 +182,12 @@ func (t *Transfer) refineStaticMemberFactForLengthLower(out *flow.PointState, pa
 	}
 	refined := product.NarrowLengthLowerBound(source, lower)
 	if valueIsBottom(refined) {
-		out.StaticMembers = out.StaticMembers.KillSubtreeAddress(addr)
-		return true
+		return staticMembers.killSubtree(out, addr)
 	}
 	if !refined.DefinitelyPresent() {
 		return false
 	}
-	out.StaticMembers = out.StaticMembers.WithAddress(addr, refined)
-	return true
+	return staticMembers.set(out, addr, refined)
 }
 
 func (t *Transfer) applyStaticMemberRefinementEffect(out *flow.PointState, effect StaticMemberRefinementEffect) bool {
@@ -207,11 +205,9 @@ func (t *Transfer) applyStaticMemberRefinementEffect(out *flow.PointState, effec
 	if existing, ok := out.StaticMembers.ValueAtAddress(addr); ok {
 		refined, ok := refinedStaticMemberValue(existing, true, effect.Base, effect.HasBase, path.Segments, effect.Check, effect.TypeName)
 		if !ok || refined.IsZero() || !refined.DefinitelyPresent() {
-			out.StaticMembers = out.StaticMembers.KillSubtreeAddress(addr)
-			return true
+			return staticMembers.killSubtree(out, addr)
 		}
-		out.StaticMembers = out.StaticMembers.WithAddress(addr, refined)
-		return true
+		return staticMembers.set(out, addr, refined)
 	}
 	if !staticMemberGuardImpliesPresence(effect.Check, effect.TypeName) {
 		return false
@@ -226,8 +222,7 @@ func (t *Transfer) applyStaticMemberRefinementEffect(out *flow.PointState, effec
 	if !ok || refined.IsZero() || !refined.DefinitelyPresent() {
 		return false
 	}
-	out.StaticMembers = out.StaticMembers.WithAddress(addr, refined)
-	return true
+	return staticMembers.set(out, addr, refined)
 }
 
 func refinedStaticMemberValue(

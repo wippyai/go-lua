@@ -1688,9 +1688,7 @@ func (t *Transfer) installStaticMemberWriteFact(out *flow.PointState, sym cfg.Sy
 	if out == nil || sym == 0 || len(segs) == 0 || val.IsZero() || !val.DefinitelyPresent() {
 		return
 	}
-	if addr, ok := flow.StableAddressOfSymbol(sym, segs); ok {
-		out.StaticMembers = out.StaticMembers.WithAddress(addr, val)
-	}
+	staticMembers.setSymbolPath(out, sym, segs, val)
 }
 
 func (t *Transfer) referenceWritesForAssignedPlace(
