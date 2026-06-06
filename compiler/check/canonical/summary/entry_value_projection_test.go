@@ -48,7 +48,7 @@ func TestDirectCallEntryValues_ProjectsAllExactInformativeArgs(t *testing.T) {
 	call := &ast.FuncCallExpr{Args: args}
 	callee := summary.FuncRef{GraphID: 7}
 
-	got := summary.DirectCallEntryValues(
+	got := summary.DirectCallEntryValuesWithParamCount(
 		call,
 		callee,
 		func(expr ast.Expr) typ.Type { return types[expr] },
@@ -69,6 +69,7 @@ func TestDirectCallEntryValues_ProjectsAllExactInformativeArgs(t *testing.T) {
 				return -1, -1, false
 			}
 		},
+		nil,
 	)
 
 	wantSlot0 := product.Join(product.FromType(typ.String), product.FromType(typ.Number))
@@ -179,7 +180,7 @@ func TestDirectCallEntryValues_ProjectsMethodReceiverRuntimeSlot(t *testing.T) {
 		arg:  typ.String,
 	}
 
-	got := summary.DirectCallEntryValues(
+	got := summary.DirectCallEntryValuesWithParamCount(
 		call,
 		callee,
 		func(expr ast.Expr) typ.Type { return types[expr] },
@@ -196,6 +197,7 @@ func TestDirectCallEntryValues_ProjectsMethodReceiverRuntimeSlot(t *testing.T) {
 				return 0, 0, false
 			}
 		},
+		nil,
 	)
 
 	if gotSlot0, ok := got[0]; !ok || !typ.TypeEquals(gotSlot0.ProjectValue(), receiverType) {

@@ -249,20 +249,6 @@ func MergeEntryValuesWithFixed(fixed, fallback EntryValues) EntryValues {
 	return entryValuesDomain.Join(out, nil)
 }
 
-// DirectCallEntryValues projects one concrete call site's runtime arguments into
-// the callee entry-value context key. Exact context keys carry declared and
-// inferred slots alike; the callee entry reducer composes these values with
-// declared annotations. Aggregate CallEntryValues fallback remains responsible
-// for skipping declared slots.
-func DirectCallEntryValues(
-	call *ast.FuncCallExpr,
-	callee FuncRef,
-	typeOf func(ast.Expr) typ.Type,
-	slotOf EntryValueParamSlot,
-) EntryValues {
-	return DirectCallEntryValuesWithParamCount(call, callee, typeOf, slotOf, nil)
-}
-
 // DirectCallEntryValuesWithParamCount projects one concrete call site's runtime
 // arguments into the callee entry-value context key, including exact nil for
 // omitted fixed parameters when the caller supplies the callee's finite parameter
@@ -293,17 +279,6 @@ func DirectCallEntryValuesWithParamCount(
 		return nil
 	}
 	return out
-}
-
-// DirectCallEntryProductValues projects one concrete call site's already-solved
-// runtime argument product values into the callee entry-value context key.
-func DirectCallEntryProductValues(
-	call *ast.FuncCallExpr,
-	callee FuncRef,
-	runtimeValues []product.AbstractValue,
-	slotOf EntryValueParamSlot,
-) EntryValues {
-	return DirectCallEntryProductValuesWithParamCount(call, callee, runtimeValues, slotOf, nil)
 }
 
 // DirectCallEntryProductValuesWithParamCount projects already-solved runtime

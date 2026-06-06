@@ -44,7 +44,7 @@ type EntryReferenceArgSources struct {
 }
 
 // DirectCallEntryReferenceInput is the call-boundary projection for reference
-// axes. It is the reference-axis counterpart of DirectCallEntryProductValues:
+// axes. It is the reference-axis counterpart of direct entry-value projection:
 // both consume normalized runtime arguments, the callee's ParamSlots mapping,
 // and the callee's parameter paths.
 type DirectCallEntryReferenceInput struct {
