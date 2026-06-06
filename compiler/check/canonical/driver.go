@@ -69,7 +69,6 @@ import (
 	"github.com/wippyai/go-lua/types/io"
 	"github.com/wippyai/go-lua/types/query/core"
 	"github.com/wippyai/go-lua/types/typ"
-	"github.com/wippyai/go-lua/types/typ/unwrap"
 )
 
 // Config supplies the canonical driver's dependencies.
@@ -1486,52 +1485,7 @@ func (d *Driver) buildProgram(sess api.AnalysisSession, rootGraph *cfg.Graph, mo
 	// can expose their body-local effects.
 	prevActive := d.activeProgram
 	d.activeProgram = p
-	factProgram := facts.Program{
-		Refs:          p.refs,
-		ModuleAliases: moduleAliases,
-		Graph: func(ref summary.FuncRef) *cfg.Graph {
-			return p.Graph(ref)
-		},
-		Evidence: func(g *cfg.Graph) api.FlowEvidence {
-			return sess.EvidenceForGraph(g)
-		},
-		ResolveCallee: func(g *cfg.Graph, call *ast.FuncCallExpr) (summary.FuncRef, bool) {
-			ct := callTyper{d: d, g: g}
-			return ct.resolveCalleeRef(call, p)
-		},
-		RefForFuncSymbol: func(sym cfg.SymbolID) (summary.FuncRef, bool) {
-			return p.refBySymbol(sym)
-		},
-		DeclaredReturnTypes: func(ref summary.FuncRef) []typ.Type {
-			return append([]typ.Type(nil), p.declaredReturns[ref]...)
-		},
-		NestedFuncRefs: func(ref summary.FuncRef) []summary.FuncRef {
-			return p.funcTopology.NestedRefs(ref)
-		},
-		CallbackOverlaysForRef: func(ref summary.FuncRef) callbackenv.Overlays {
-			return d.declaredCallbackOverlaysForRef(p, ref)
-		},
-		CalleeCallbackOverlays: func(g *cfg.Graph, call *ast.FuncCallExpr) callbackenv.Overlays {
-			return d.staticCalleeCallbackOverlays(callTyper{d: d, g: g}, call)
-		},
-		TypeByName: func(name string) typ.Type {
-			if name == "" {
-				return nil
-			}
-			sc := d.baseScope()
-			if sc == nil {
-				return nil
-			}
-			t, ok := sc.LookupType(name)
-			if !ok || t == nil || typ.IsAbsentOrUnknown(t) {
-				return nil
-			}
-			return t
-		},
-		SetupExprType: func(g *cfg.Graph, expr ast.Expr, point cfg.Point) typ.Type {
-			return d.callbackEnvSetupExprType(p, g, expr, point)
-		},
-	}
+	factProgram := d.factProgramProjection(sess, p, moduleAliases).programView()
 	p.facts = facts.BuildPreTransfer(factProgram)
 	d.seedVariantFieldOrigins(p)
 	for _, ref := range p.refs {
@@ -1986,51 +1940,6 @@ func (d *Driver) resolveType(expr ast.TypeExpr, sc *scope.State) typ.Type {
 		return nil
 	}
 	return t
-}
-
-// staticCalleeCallbackOverlays resolves only external/static callback overlay
-// contracts for fact extraction. Module-local callees are handled by ResolveCallee
-// and CallbackOverlaysForRef; this path intentionally avoids signatureForRef so
-// immutable facts cannot pull inferred summary returns into pre-solve evidence.
-func (d *Driver) staticCalleeCallbackOverlays(ct callTyper, call *ast.FuncCallExpr) callbackenv.Overlays {
-	resolver := ct.callTypeResolver(nil)
-	return canonicalcall.StaticCallbackOverlaysForCall(canonicalcall.StaticCallbackOverlayInput{
-		Call:     call,
-		Resolver: resolver,
-	})
-}
-
-func (d *Driver) callbackEnvSetupExprType(_ *program, g *cfg.Graph, expr ast.Expr, point cfg.Point) typ.Type {
-	if d == nil || expr == nil {
-		return nil
-	}
-	switch e := expr.(type) {
-	case *ast.FunctionExpr:
-		base := d.baseScope()
-		if scopes := d.buildPointScopes(g); scopes != nil {
-			if sc := scopes[point]; sc != nil {
-				base = sc
-			}
-		}
-		return canonicalsig.Build(canonicalsig.Input{
-			Function:    e,
-			Base:        base,
-			ResolveType: d.resolveType,
-			ReturnMode:  canonicalsig.ReturnDeclaredOnly,
-		})
-	case *ast.FuncCallExpr:
-		if g == nil {
-			return nil
-		}
-		callee := callTyper{d: d, g: g}.callTypeResolver(nil).ResolveCallee(e.Func)
-		fn := unwrap.Function(callee)
-		if fn == nil || len(fn.Returns) == 0 {
-			return nil
-		}
-		return fn.Returns[0]
-	default:
-		return nil
-	}
 }
 
 // callTyper adapts the driver to the transfer's CallTyper seam: the driver
