@@ -9,7 +9,6 @@ import (
 	"github.com/wippyai/go-lua/types/domain/value"
 	"github.com/wippyai/go-lua/types/domain/value/product"
 	"github.com/wippyai/go-lua/types/flow"
-	"github.com/wippyai/go-lua/types/flow/numeric"
 	"github.com/wippyai/go-lua/types/subtype"
 	"github.com/wippyai/go-lua/types/typ"
 	"github.com/wippyai/go-lua/types/typ/subst"
@@ -22,55 +21,7 @@ import (
 type EntryReachabilityEffect struct{}
 
 func (t *Transfer) applyEntryReachabilityEffect(out *flow.PointState, _ EntryReachabilityEffect) bool {
-	if out == nil {
-		return false
-	}
-	changed := false
-	if out.Num == nil || out.Num.IsUnsat() {
-		out.Num = numeric.NewState()
-		changed = true
-	}
-	if constraint.Domain.Equal(out.Cond, constraint.Domain.Bottom()) {
-		out.Cond = constraint.Domain.Top()
-		changed = true
-	}
-	if out.Rel.IsBottom() {
-		out.Rel = flow.PointRelationsDomain.Top()
-		changed = true
-	}
-	if out.ReturnRel.IsBottom() {
-		out.ReturnRel = flow.ReturnRelationsDomain.Top()
-		changed = true
-	}
-	if out.CellEffects.IsBottom() {
-		out.CellEffects = flow.CaptureEffectsIdentity()
-		changed = true
-	}
-	if out.ReceiverEffects.IsBottom() {
-		out.ReceiverEffects = flow.ReceiverEffectsIdentity()
-		changed = true
-	}
-	if out.StaticMembers.IsBottom() {
-		out.StaticMembers = flow.StaticMemberFactsDomain.Top()
-		changed = true
-	}
-	if out.KeyPresence.IsBottom() {
-		out.KeyPresence = flow.KeyPresenceFactsDomain.Top()
-		changed = true
-	}
-	if out.ValueOrigins.IsBottom() {
-		out.ValueOrigins = flow.ValueOriginFactsDomain.Top()
-		changed = true
-	}
-	if out.PathAliases.IsBottom() {
-		out.PathAliases = flow.PathAliasFactsDomain.Top()
-		changed = true
-	}
-	if out.IndexWrites.IsBottom() {
-		out.IndexWrites = flow.IndexWriteAdmissionFactsDomain.Top()
-		changed = true
-	}
-	return changed
+	return flow.LiftEntryReachability(out)
 }
 
 // EntrySeedEffect is the entry-point reducer for one parameter slot. It composes
