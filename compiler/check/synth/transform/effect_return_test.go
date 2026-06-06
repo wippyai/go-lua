@@ -277,6 +277,38 @@ func TestApplyEffectTransform_TypeProjectionWrapsProjectedType(t *testing.T) {
 	}
 }
 
+func TestApplyEffectTransform_TypeProjectionWrapsMetaPayload(t *testing.T) {
+	tParam := typ.NewTypeParam("T", nil)
+	channel := typ.NewGeneric("Channel", []*typ.TypeParam{tParam}, typ.NewRecord().Build())
+	event := typ.NewRecord().Field("id", typ.String).Build()
+	options := typ.NewRecord().
+		Field("type", typ.NewMeta(event)).
+		Build()
+	spec := contract.NewSpec().WithEffects(effect.Return{
+		ReturnIndex: 0,
+		Transform: effect.TypeProjection{
+			Source: effect.ParamRef{Index: 1},
+			Steps: []effect.TypeProjectionStep{
+				effect.ProjectField("type"),
+				effect.ProjectInstantiateGeneric(channel),
+			},
+		},
+	})
+	fn := typ.Func().
+		Param("topic", typ.String).
+		Param("options", typ.Any).
+		Returns(typ.Any).
+		Spec(spec).
+		Build()
+	args := []typ.Type{typ.String, options}
+
+	got := ApplyEffectTransform(fn, args, 0, typ.Any)
+	want := typ.Instantiate(channel, event)
+	if !typ.TypeEquals(got, want) {
+		t.Fatalf("expected meta payload projection to produce %v, got %v", want, got)
+	}
+}
+
 func TestApplyEffectTransform_TypeProjectionTransitiveOptionWrapper(t *testing.T) {
 	tParam := typ.NewTypeParam("T", nil)
 	channel := typ.NewGeneric("Channel", []*typ.TypeParam{tParam}, typ.NewRecord().Build())

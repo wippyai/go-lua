@@ -22,6 +22,11 @@ func TestInputsEqualIncludesVariantOriginFamilyAndCase(t *testing.T) {
 	if InputsEqual(&Inputs{VariantFieldOrigins: base}, &Inputs{VariantFieldOrigins: otherCase}) {
 		t.Fatalf("different case index must affect InputsEqual")
 	}
+	otherProjection := []VariantFieldOrigin{variantOriginForTest(7, 1)}
+	otherProjection[0].ProjectionField = "payload"
+	if InputsEqual(&Inputs{VariantFieldOrigins: base}, &Inputs{VariantFieldOrigins: otherProjection}) {
+		t.Fatalf("different projection field must affect InputsEqual")
+	}
 }
 
 func TestNormalizeOrdersVariantOriginsByFamilyAndCase(t *testing.T) {
@@ -56,5 +61,6 @@ func variantOriginForTest(family uint64, caseIndex int) VariantFieldOrigin {
 		},
 		OriginFamily: family,
 		CaseIndex:    caseIndex,
+		ProjectionField: "value",
 	}
 }

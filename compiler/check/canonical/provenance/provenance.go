@@ -95,11 +95,12 @@ func selectResultOrigins(in Input, p cfg.Point, call *cfg.CallInfo, target const
 			continue
 		}
 		out = append(out, flow.VariantFieldOrigin{
-			Target:       target,
-			Field:        effect.SelectResultChannelField,
-			Source:       sourcePath,
-			OriginFamily: family,
-			CaseIndex:    caseIdx,
+			Target:          target,
+			Field:           effect.SelectResultChannelField,
+			Source:          sourcePath,
+			OriginFamily:    family,
+			CaseIndex:       caseIdx,
+			ProjectionField: effect.SelectResultValueField,
 		})
 	}
 	return out

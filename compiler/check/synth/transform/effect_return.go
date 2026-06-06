@@ -522,10 +522,17 @@ func projectTypeStep(t typ.Type, step effect.TypeProjectionStep) typ.Type {
 		if !ok || len(generic.TypeParams) != 1 {
 			return nil
 		}
-		return typ.Instantiate(generic, t)
+		return typ.Instantiate(generic, typeEvidencePayload(t))
 	default:
 		return nil
 	}
+}
+
+func typeEvidencePayload(t typ.Type) typ.Type {
+	if meta, ok := unwrap.Alias(t).(*typ.Meta); ok && meta != nil && meta.Of != nil {
+		return meta.Of
+	}
+	return t
 }
 
 func deepElementType(t typ.Type) typ.Type {

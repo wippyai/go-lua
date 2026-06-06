@@ -9,6 +9,7 @@ import (
 	"github.com/wippyai/go-lua/types/flow"
 	"github.com/wippyai/go-lua/types/kind"
 	"github.com/wippyai/go-lua/types/typ"
+	"github.com/wippyai/go-lua/types/typ/unwrap"
 )
 
 // ConditionEffect is the transfer atom for learning a path-condition fact on the
@@ -233,7 +234,7 @@ func (t *Transfer) applyVariantOriginConditionReductions(out *flow.PointState, f
 		if !ok || av.IsZero() {
 			continue
 		}
-		next, narrowed := variantOriginValueForCondition(av, sym, fact)
+		next, narrowed := t.variantOriginValueForCondition(av, sym, fact)
 		if !narrowed || product.Domain.Equal(av, next) {
 			continue
 		}
@@ -243,7 +244,7 @@ func (t *Transfer) applyVariantOriginConditionReductions(out *flow.PointState, f
 	return changed
 }
 
-func variantOriginValueForCondition(av product.AbstractValue, sym cfg.SymbolID, fact constraint.Condition) (product.AbstractValue, bool) {
+func (t *Transfer) variantOriginValueForCondition(av product.AbstractValue, sym cfg.SymbolID, fact constraint.Condition) (product.AbstractValue, bool) {
 	if fact.NumDisjuncts() == 0 {
 		return product.AbstractValue{}, false
 	}
@@ -252,7 +253,7 @@ func variantOriginValueForCondition(av product.AbstractValue, sym cfg.SymbolID, 
 	for i := 0; i < fact.NumDisjuncts(); i++ {
 		candidate := av
 		for _, c := range fact.DisjunctConstraints(i) {
-			next, ok := variantOriginValueForConstraint(candidate, sym, c)
+			next, ok := t.variantOriginValueForConstraint(candidate, sym, c)
 			if ok {
 				candidate = next
 			}
@@ -270,22 +271,89 @@ func variantOriginValueForCondition(av product.AbstractValue, sym cfg.SymbolID, 
 	return joined, true
 }
 
-func variantOriginValueForConstraint(av product.AbstractValue, sym cfg.SymbolID, c constraint.Constraint) (product.AbstractValue, bool) {
+func (t *Transfer) variantOriginValueForConstraint(av product.AbstractValue, sym cfg.SymbolID, c constraint.Constraint) (product.AbstractValue, bool) {
 	switch cc := c.(type) {
 	case constraint.VariantCaseEquals:
-		return variantOriginValueForCase(av, sym, cc.Target, cc.OriginFamily, cc.CaseIndex, true)
+		return t.variantOriginValueForCase(av, sym, cc.Target, cc.OriginFamily, cc.CaseIndex, true)
 	case constraint.VariantCaseNotEquals:
-		return variantOriginValueForCase(av, sym, cc.Target, cc.OriginFamily, cc.CaseIndex, false)
+		return t.variantOriginValueForCase(av, sym, cc.Target, cc.OriginFamily, cc.CaseIndex, false)
 	default:
 		return product.AbstractValue{}, false
 	}
 }
 
-func variantOriginValueForCase(av product.AbstractValue, sym cfg.SymbolID, path constraint.Path, family uint64, caseIndex int, equal bool) (product.AbstractValue, bool) {
+func (t *Transfer) variantOriginValueForCase(av product.AbstractValue, sym cfg.SymbolID, path constraint.Path, family uint64, caseIndex int, equal bool) (product.AbstractValue, bool) {
 	if path.Symbol != sym || len(path.Segments) != 0 {
 		return product.AbstractValue{}, false
 	}
-	return product.NarrowVariantOriginCase(av, family, caseIndex, equal)
+	next, changed := product.NarrowVariantOriginCase(av, family, caseIndex, equal)
+	if !equal || next.IsZero() {
+		return next, changed
+	}
+	if projected := variantOriginCaseType(next.ProjectValue(), caseIndex); projected != nil {
+		// Projection authority comes from normalized provenance. Transfer does
+		// not know which producer created the family; it only checks whether the
+		// selected case's projected field is opaque enough that structural
+		// narrowing cannot recover the branch by itself.
+		if field := t.variantOriginProjectionField(path, family, caseIndex); field != "" && variantOriginCaseProjectionSafe(projected, field) {
+			refined := product.WithVariantOrigin(product.FromType(projected), family, []int{caseIndex})
+			if !product.Domain.Equal(next, refined) {
+				return refined, true
+			}
+		}
+	}
+	return next, changed
+}
+
+func (t *Transfer) variantOriginProjectionField(path constraint.Path, family uint64, caseIndex int) string {
+	if t == nil || family == 0 || len(t.in.VariantFieldOrigins) == 0 {
+		return ""
+	}
+	for _, origin := range t.in.VariantFieldOrigins {
+		if origin.OriginFamily == family &&
+			origin.CaseIndex == caseIndex &&
+			origin.Target.Equal(path) &&
+			origin.ProjectionField != "" {
+			return origin.ProjectionField
+		}
+	}
+	return ""
+}
+
+func variantOriginCaseProjectionSafe(t typ.Type, projectionField string) bool {
+	if t == nil || projectionField == "" || typ.ContainsAny(t) {
+		return false
+	}
+	rec := unwrap.Record(t)
+	if rec == nil {
+		return true
+	}
+	field := rec.GetField(projectionField)
+	if field == nil || field.Type == nil {
+		return true
+	}
+	_, payloadIsRecord := unwrap.Alias(field.Type).(*typ.Record)
+	return !payloadIsRecord
+}
+
+func variantOriginCaseType(t typ.Type, caseIndex int) typ.Type {
+	if caseIndex < 0 || t == nil {
+		return nil
+	}
+	switch v := unwrap.Alias(t).(type) {
+	case *typ.Union:
+		if caseIndex >= len(v.Members) {
+			return nil
+		}
+		return v.Members[caseIndex]
+	case *typ.Optional:
+		return variantOriginCaseType(v.Inner, caseIndex)
+	default:
+		if caseIndex == 0 {
+			return t
+		}
+		return nil
+	}
 }
 
 func variantOriginConditionSymbols(fact constraint.Condition) []cfg.SymbolID {

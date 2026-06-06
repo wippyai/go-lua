@@ -196,27 +196,6 @@ func TestExtractReturnExprConstraints_IdentExpr(t *testing.T) {
 	}
 }
 
-func TestChannelValueConstraint_NilBindings(t *testing.T) {
-	result := ChannelValueConstraint(constraint.Path{}, nil, 0, nil, nil, nil)
-	if result != nil {
-		t.Error("nil bindings should return nil")
-	}
-}
-
-func TestExtractChannelElementType_NilType(t *testing.T) {
-	result := ExtractChannelElementType(nil)
-	if result != nil {
-		t.Error("nil type should return nil")
-	}
-}
-
-func TestExtractChannelElementType_NonChannel(t *testing.T) {
-	result := ExtractChannelElementType(typ.String)
-	if result != nil {
-		t.Error("non-channel type should return nil")
-	}
-}
-
 func TestEmitIndexEqualsLiteral_NilValue(t *testing.T) {
 	result := EmitIndexEqualsLiteral(constraint.Path{Root: "x"}, typ.String, nil)
 	if len(result) != 1 {

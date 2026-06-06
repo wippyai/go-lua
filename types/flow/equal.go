@@ -382,7 +382,8 @@ func variantFieldOriginsEqual(a, b []VariantFieldOrigin) bool {
 			a[i].Field != b[i].Field ||
 			!pathEqual(a[i].Source, b[i].Source) ||
 			a[i].OriginFamily != b[i].OriginFamily ||
-			a[i].CaseIndex != b[i].CaseIndex {
+			a[i].CaseIndex != b[i].CaseIndex ||
+			a[i].ProjectionField != b[i].ProjectionField {
 			return false
 		}
 	}

@@ -108,6 +108,9 @@ func variantFieldOriginLess(a, b VariantFieldOrigin) bool {
 	if a.CaseIndex != b.CaseIndex {
 		return a.CaseIndex < b.CaseIndex
 	}
+	if a.ProjectionField != b.ProjectionField {
+		return a.ProjectionField < b.ProjectionField
+	}
 	return false
 }
 

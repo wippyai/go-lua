@@ -374,6 +374,10 @@ type VariantFieldOrigin struct {
 	Source       constraint.Path
 	OriginFamily uint64
 	CaseIndex    int
+	// ProjectionField names the correlated payload field whose type may justify
+	// projecting the whole target to the selected case when structural field
+	// narrowing cannot distinguish the variants.
+	ProjectionField string
 }
 
 // IndexWriteReadQuery identifies a solved dynamic-index readback proof with

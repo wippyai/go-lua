@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/compiler/cfg"
+	"github.com/wippyai/go-lua/compiler/check/canonical/input"
 	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/domain/value/product"
 	"github.com/wippyai/go-lua/types/flow"
@@ -47,6 +48,62 @@ func TestConditionEffectVariantOriginDNFJoinsAllowedCases(t *testing.T) {
 	want := product.WithVariantOrigin(base, family, []int{0, 1})
 	if !product.Equal(got, want) {
 		t.Fatalf("DNF origin reduction = %#v, want %#v", got, want)
+	}
+}
+
+func TestConditionEffectVariantOriginProjectsCaseType(t *testing.T) {
+	sym := cfg.SymbolID(43)
+	family := uint64(778)
+	path := constraint.Path{Root: "result", Symbol: sym}
+	first := typ.NewRecord().Field("channel", typ.String).Field("value", typ.String).Build()
+	second := typ.NewRecord().Field("channel", typ.Number).Field("value", typ.Number).Build()
+	in := input.Inputs{VariantFieldOrigins: []flow.VariantFieldOrigin{{
+		Target:          path,
+		OriginFamily:    family,
+		CaseIndex:       1,
+		ProjectionField: "value",
+	}}}
+	state := flow.PointState{
+		Cond: constraint.TrueCondition(),
+		Env: map[flow.ValueKey]product.AbstractValue{
+			flow.SymbolValueKey(sym): product.WithVariantOrigin(product.FromType(typ.NewUnion(first, second)), family, []int{0, 1}),
+		},
+	}
+	tr := &Transfer{in: in}
+
+	if !tr.applyConditionEffect(&state, ConditionEffect{Fact: constraint.FromConstraints(
+		constraint.VariantCaseEquals{Target: path, OriginFamily: family, CaseIndex: 1},
+	)}) {
+		t.Fatal("condition effect reported no change")
+	}
+	got, ok := tr.symbolValue(&state, sym)
+	if !ok || !typ.TypeEquals(got.ProjectValue(), second) {
+		t.Fatalf("case-projected value = %v/%v, want %v", got.ProjectValue(), ok, second)
+	}
+}
+
+func TestConditionEffectVariantOriginKeepsProjectionOutWithoutOriginAuthority(t *testing.T) {
+	sym := cfg.SymbolID(44)
+	family := uint64(779)
+	path := constraint.Path{Root: "result", Symbol: sym}
+	first := typ.NewRecord().Field("channel", typ.String).Field("value", typ.String).Build()
+	second := typ.NewRecord().Field("channel", typ.Number).Field("value", typ.Number).Build()
+	base := product.WithVariantOrigin(product.FromType(typ.NewUnion(first, second)), family, []int{0, 1})
+	state := flow.PointState{
+		Cond: constraint.TrueCondition(),
+		Env:  map[flow.ValueKey]product.AbstractValue{flow.SymbolValueKey(sym): base},
+	}
+	tr := &Transfer{}
+
+	if !tr.applyConditionEffect(&state, ConditionEffect{Fact: constraint.FromConstraints(
+		constraint.VariantCaseEquals{Target: path, OriginFamily: family, CaseIndex: 1},
+	)}) {
+		t.Fatal("condition effect reported no change")
+	}
+	got, ok := tr.symbolValue(&state, sym)
+	want := product.WithVariantOrigin(product.FromType(typ.NewUnion(first, second)), family, []int{1})
+	if !ok || !product.Equal(got, want) {
+		t.Fatalf("origin-only value = %#v/%v, want %#v", got, ok, want)
 	}
 }
 
