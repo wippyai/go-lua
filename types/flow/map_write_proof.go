@@ -39,6 +39,14 @@ type KeyArrayElementKeyProof struct {
 	KeyValue  product.AbstractValue
 }
 
+// KeyArrayElementKeyPathProof is the structured-path form of
+// KeyArrayElementKeyProof for producer-facing transfer code.
+type KeyArrayElementKeyPathProof struct {
+	ArrayPath     constraint.Path
+	TargetKeyPath constraint.Path
+	KeyValue      product.AbstractValue
+}
+
 // KeyArrayElementKeyResult reports the tables reached by a key-array element
 // proof so callers can apply non-flow refinements.
 type KeyArrayElementKeyResult struct {
@@ -236,6 +244,19 @@ func ApplyKeyArrayElementKeyProof(out *PointState, proof KeyArrayElementKeyProof
 	changed := !KeyPresenceFactsDomain.Equal(beforePresence, out.KeyPresence)
 	changed = !IndexWriteAdmissionFactsDomain.Equal(beforeIndexWrites, out.IndexWrites) || changed
 	return result, changed
+}
+
+func ApplyKeyArrayElementKeyPathProof(out *PointState, proof KeyArrayElementKeyPathProof) (KeyArrayElementKeyResult, bool) {
+	array, arrayOK := StableAddressOfPath(proof.ArrayPath)
+	target, targetOK := StableAddressOfPath(proof.TargetKeyPath)
+	if !arrayOK || !targetOK {
+		return KeyArrayElementKeyResult{}, false
+	}
+	return ApplyKeyArrayElementKeyProof(out, KeyArrayElementKeyProof{
+		Array:     array,
+		TargetKey: target,
+		KeyValue:  proof.KeyValue,
+	})
 }
 
 // ApplyKeyArrayProof applies a key-array provenance proof to point state.

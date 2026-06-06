@@ -168,15 +168,10 @@ func (t *Transfer) applyArrayElementKeyProvenanceEffect(
 	if out == nil || effect.TargetPath.IsEmpty() || effect.ArrayPath.IsEmpty() {
 		return false
 	}
-	arrayAddr, arrayOK := flow.StableAddressOfPath(effect.ArrayPath)
-	targetAddr, targetOK := flow.StableAddressOfPath(effect.TargetPath)
-	if !arrayOK || !targetOK {
-		return false
-	}
-	_, presenceChanged := flow.ApplyKeyArrayElementKeyProof(out, flow.KeyArrayElementKeyProof{
-		Array:     arrayAddr,
-		TargetKey: targetAddr,
-		KeyValue:  effect.Value,
+	_, presenceChanged := flow.ApplyKeyArrayElementKeyPathProof(out, flow.KeyArrayElementKeyPathProof{
+		ArrayPath:     effect.ArrayPath,
+		TargetKeyPath: effect.TargetPath,
+		KeyValue:      effect.Value,
 	})
 	changed := false
 	changed = presenceChanged || changed

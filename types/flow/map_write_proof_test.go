@@ -292,6 +292,34 @@ func TestApplyKeyArrayElementKeyProofPublishesTargetKey(t *testing.T) {
 	}
 }
 
+func TestApplyKeyArrayElementKeyPathProofLowersStructuredPaths(t *testing.T) {
+	arrayPath := constraint.NewPath(cfg.SymbolID(129), "node_order")
+	tablePath := constraint.NewPath(cfg.SymbolID(130), "nodes")
+	targetPath := constraint.NewPath(cfg.SymbolID(131), "node_id")
+	tableKey := StablePathKey(tablePath)
+	targetKey := StablePathKey(targetPath)
+
+	state := PointStateDomain.Top()
+	state.KeyPresence = state.KeyPresence.WithKeyArrayAddresses(
+		testStableAddressPath(t, arrayPath),
+		testStableAddressPath(t, tablePath),
+	)
+
+	result, changed := ApplyKeyArrayElementKeyPathProof(&state, KeyArrayElementKeyPathProof{
+		ArrayPath:     arrayPath,
+		TargetKeyPath: targetPath,
+	})
+	if !changed {
+		t.Fatal("ApplyKeyArrayElementKeyPathProof reported no change")
+	}
+	if len(result.Tables) != 1 || result.Tables[0].Key() != tableKey {
+		t.Fatalf("path proof tables = %v, want %s", result.Tables, tableKey)
+	}
+	if !state.KeyPresence.Has(tableKey, targetKey) {
+		t.Fatalf("path proof did not publish table/target key presence: %s", state.KeyPresence.Format())
+	}
+}
+
 func TestApplyKeyArrayElementKeyProofPublishesReadbackAdmission(t *testing.T) {
 	arrayPath := constraint.NewPath(cfg.SymbolID(32), "node_order")
 	tablePath := constraint.NewPath(cfg.SymbolID(33), "nodes")
