@@ -86,7 +86,7 @@ func (p callReturnProjection) refinedArgTypes() []typ.Type {
 		return ok
 	}
 	expectedArgs := expectedInput.ExpectedTypes()
-	return canonicalcall.RefineCallbackArgTypes(canonicalcall.CallbackArgRefinementInput{
+	return (canonicalcall.CallbackArgRefinementProjection{
 		Call:         p.call,
 		ArgTypes:     p.argTypes,
 		ExpectedArgs: expectedArgs,
@@ -100,7 +100,7 @@ func (p callReturnProjection) refinedArgTypes() []typ.Type {
 		ContextualFunction: func(ref summary.FuncRef, values summary.EntryValues) typ.Type {
 			return p.contextualFunction(projector, ref, values)
 		},
-	})
+	}).RefinedTypes()
 }
 
 func (p callReturnProjection) callbackRefs() map[ast.Expr][]summary.FuncRef {

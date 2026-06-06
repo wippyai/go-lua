@@ -13,11 +13,11 @@ import (
 	"github.com/wippyai/go-lua/types/typ/unwrap"
 )
 
-// CallbackArgRefinementInput is the canonical call-boundary normalizer for
+// CallbackArgRefinementProjection is the canonical call-boundary normalizer for
 // higher-order arguments. It lets imported/generic call inference see the
 // signature actually proven for a callback under the callee's expected entry
 // context, without making call inference read program or driver state.
-type CallbackArgRefinementInput struct {
+type CallbackArgRefinementProjection struct {
 	Call         *ast.FuncCallExpr
 	ArgTypes     []typ.Type
 	ExpectedArgs []typ.Type
@@ -27,40 +27,40 @@ type CallbackArgRefinementInput struct {
 	ContextualFunction func(summary.FuncRef, summary.EntryValues) typ.Type
 }
 
-// RefineCallbackArgTypes replaces only shallow/gradual function argument types
+// RefinedTypes replaces only shallow/gradual function argument types
 // with solved callback-value signatures. Concrete source annotations remain the
 // authority for the public function type.
-func RefineCallbackArgTypes(in CallbackArgRefinementInput) []typ.Type {
-	if in.Call == nil || len(in.Call.Args) == 0 || in.CallbackRefs == nil {
-		return in.ArgTypes
+func (p CallbackArgRefinementProjection) RefinedTypes() []typ.Type {
+	if p.Call == nil || len(p.Call.Args) == 0 || p.CallbackRefs == nil {
+		return p.ArgTypes
 	}
-	out := append([]typ.Type(nil), in.ArgTypes...)
-	if len(out) < len(in.Call.Args) {
-		out = append(out, make([]typ.Type, len(in.Call.Args)-len(out))...)
+	out := append([]typ.Type(nil), p.ArgTypes...)
+	if len(out) < len(p.Call.Args) {
+		out = append(out, make([]typ.Type, len(p.Call.Args)-len(out))...)
 	}
 	changed := false
-	for i, arg := range in.Call.Args {
-		argRefs, ok := in.CallbackRefs(arg)
+	for i, arg := range p.Call.Args {
+		argRefs, ok := p.CallbackRefs(arg)
 		if !ok || len(argRefs) == 0 {
 			continue
 		}
-		entryValues := expectedCallbackEntryValues(in.ExpectedArgs, i)
+		entryValues := expectedCallbackEntryValues(p.ExpectedArgs, i)
 		acc := product.Domain.Bottom()
 		for _, ref := range argRefs {
 			t := typ.Type(nil)
-			if in.FunctionType != nil {
-				t = in.FunctionType(ref)
+			if p.FunctionType != nil {
+				t = p.FunctionType(ref)
 			}
-			if len(entryValues) != 0 && in.ContextualFunction != nil {
-				if contextual := in.ContextualFunction(ref, entryValues); !typ.IsAbsentOrUnknown(contextual) {
+			if len(entryValues) != 0 && p.ContextualFunction != nil {
+				if contextual := p.ContextualFunction(ref, entryValues); !typ.IsAbsentOrUnknown(contextual) {
 					t = contextual
 				}
 			}
 			if typ.IsAbsentOrUnknown(t) {
 				continue
 			}
-			if i < len(in.ExpectedArgs) {
-				t = callboundary.ProjectContextualFunctionArg(in.ExpectedArgs[i], t)
+			if i < len(p.ExpectedArgs) {
+				t = callboundary.ProjectContextualFunctionArg(p.ExpectedArgs[i], t)
 			}
 			acc = product.Domain.Join(acc, product.FromType(t))
 		}
@@ -75,7 +75,7 @@ func RefineCallbackArgTypes(in CallbackArgRefinementInput) []typ.Type {
 		changed = true
 	}
 	if !changed {
-		return in.ArgTypes
+		return p.ArgTypes
 	}
 	return out
 }
