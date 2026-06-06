@@ -245,7 +245,7 @@ func TestInferCellEffectsComposesCallbackFallbackWhenAllowed(t *testing.T) {
 	}
 }
 
-func TestParamNarrowsForCallSummaryBeatsImportedSignature(t *testing.T) {
+func TestParamNarrowProjectionSummaryBeatsImportedSignature(t *testing.T) {
 	t.Parallel()
 
 	base := &ast.IdentExpr{Value: "svc"}
@@ -257,7 +257,7 @@ func TestParamNarrowsForCallSummaryBeatsImportedSignature(t *testing.T) {
 	summaryNarrow := paramevidence.ParamNarrow{Param: 0, Check: compilecfg.CheckTruthy}
 	importedUsed := false
 
-	got := ParamNarrowsForCall(ParamNarrowsInput{
+	got := (ParamNarrowProjection{
 		Call: call,
 		SummaryNarrows: func(*ast.FuncCallExpr) ([]paramevidence.ParamNarrow, bool) {
 			return []paramevidence.ParamNarrow{summaryNarrow}, true
@@ -273,7 +273,7 @@ func TestParamNarrowsForCallSummaryBeatsImportedSignature(t *testing.T) {
 				},
 			},
 		},
-	})
+	}).Narrows()
 
 	if len(got) != 1 || got[0].Param != 0 || got[0].Check != compilecfg.CheckTruthy {
 		t.Fatalf("param narrows = %#v, want summary narrow", got)
@@ -283,7 +283,7 @@ func TestParamNarrowsForCallSummaryBeatsImportedSignature(t *testing.T) {
 	}
 }
 
-func TestParamNarrowsForCallImportedSignatureFallback(t *testing.T) {
+func TestParamNarrowProjectionImportedSignatureFallback(t *testing.T) {
 	t.Parallel()
 
 	base := &ast.IdentExpr{Value: "svc"}
@@ -292,7 +292,7 @@ func TestParamNarrowsForCallImportedSignatureFallback(t *testing.T) {
 	bindings := bind.NewBindingTable()
 	bindings.Bind(base, 100)
 	bindings.SetName(100, "svc")
-	got := ParamNarrowsForCall(ParamNarrowsInput{
+	got := (ParamNarrowProjection{
 		Call: call,
 		SummaryNarrows: func(*ast.FuncCallExpr) ([]paramevidence.ParamNarrow, bool) {
 			return nil, false
@@ -310,14 +310,14 @@ func TestParamNarrowsForCallImportedSignatureFallback(t *testing.T) {
 				},
 			},
 		},
-	})
+	}).Narrows()
 
 	if len(got) != 1 || got[0].Param != 1 || got[0].Check != compilecfg.CheckNotNil {
 		t.Fatalf("param narrows = %#v, want imported signature narrow", got)
 	}
 }
 
-func TestParamNarrowsForCallStaticGlobalFieldFallback(t *testing.T) {
+func TestParamNarrowProjectionStaticGlobalFieldFallback(t *testing.T) {
 	t.Parallel()
 
 	base := &ast.IdentExpr{Value: "assert"}
@@ -327,7 +327,7 @@ func TestParamNarrowsForCallStaticGlobalFieldFallback(t *testing.T) {
 	bindings.Bind(base, 101)
 	bindings.SetName(101, "assert")
 
-	got := ParamNarrowsForCall(ParamNarrowsInput{
+	got := (ParamNarrowProjection{
 		Call: call,
 		SummaryNarrows: func(*ast.FuncCallExpr) ([]paramevidence.ParamNarrow, bool) {
 			return nil, false
@@ -345,14 +345,14 @@ func TestParamNarrowsForCallStaticGlobalFieldFallback(t *testing.T) {
 				},
 			},
 		},
-	})
+	}).Narrows()
 
 	if len(got) != 1 || got[0].Param != 0 || got[0].Check != compilecfg.CheckNotNil {
 		t.Fatalf("param narrows = %#v, want static global-field signature narrow", got)
 	}
 }
 
-func TestParamNarrowsForCallStaticIdentFallback(t *testing.T) {
+func TestParamNarrowProjectionStaticIdentFallback(t *testing.T) {
 	t.Parallel()
 
 	callee := &ast.IdentExpr{Value: "expect_present"}
@@ -361,7 +361,7 @@ func TestParamNarrowsForCallStaticIdentFallback(t *testing.T) {
 	bindings.Bind(callee, 102)
 	bindings.SetName(102, "expect_present")
 
-	got := ParamNarrowsForCall(ParamNarrowsInput{
+	got := (ParamNarrowProjection{
 		Call: call,
 		SummaryNarrows: func(*ast.FuncCallExpr) ([]paramevidence.ParamNarrow, bool) {
 			return nil, false
@@ -377,7 +377,7 @@ func TestParamNarrowsForCallStaticIdentFallback(t *testing.T) {
 				},
 			},
 		},
-	})
+	}).Narrows()
 
 	if len(got) != 1 || got[0].Param != 0 || got[0].Check != compilecfg.CheckNotNil {
 		t.Fatalf("param narrows = %#v, want static identifier signature narrow", got)

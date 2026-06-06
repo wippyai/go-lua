@@ -27,7 +27,7 @@ func (p callControlProjection) paramNarrows(call *ast.FuncCallExpr) []transfer.P
 		return nil
 	}
 	prog := p.typer.d.activeProgram
-	return canonicalcall.ParamNarrowsForCall(canonicalcall.ParamNarrowsInput{
+	return (canonicalcall.ParamNarrowProjection{
 		Call: call,
 		SummaryNarrows: func(call *ast.FuncCallExpr) ([]paramevidence.ParamNarrow, bool) {
 			ref, ok := p.typer.resolveCalleeRef(call, prog)
@@ -37,7 +37,7 @@ func (p callControlProjection) paramNarrows(call *ast.FuncCallExpr) []transfer.P
 			return p.typer.d.summaryReader().ParamNarrows(ref), true
 		},
 		Resolver: p.typer.callTypeResolver(nil),
-	})
+	}).Narrows()
 }
 
 func (p callControlProjection) noReturn(call *ast.FuncCallExpr, ctx transfer.ProductCallContext) bool {

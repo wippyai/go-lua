@@ -155,27 +155,27 @@ func InferCellEffects(in CellEffectsInput) flow.CaptureEffects {
 	return summary.AggregateCellEffects(in.Aggregation)
 }
 
-// ParamNarrowsInput is the canonical call-site policy for argument refinements
+// ParamNarrowProjection is the canonical call-site policy for argument refinements
 // proven by a callee. Module summary facts win; static signature refinements
 // are the fallback for external callees and global/static helper functions.
-type ParamNarrowsInput struct {
+type ParamNarrowProjection struct {
 	Call *ast.FuncCallExpr
 
 	SummaryNarrows func(*ast.FuncCallExpr) ([]paramevidence.ParamNarrow, bool)
 	Resolver       TypeResolver
 }
 
-// ParamNarrowsForCall resolves caller-visible parameter refinements.
-func ParamNarrowsForCall(in ParamNarrowsInput) []paramevidence.ParamNarrow {
-	if in.Call == nil {
+// Narrows resolves caller-visible parameter refinements.
+func (p ParamNarrowProjection) Narrows() []paramevidence.ParamNarrow {
+	if p.Call == nil {
 		return nil
 	}
-	if in.SummaryNarrows != nil {
-		if narrows, ok := in.SummaryNarrows(in.Call); ok {
+	if p.SummaryNarrows != nil {
+		if narrows, ok := p.SummaryNarrows(p.Call); ok {
 			return paramevidence.SortParamNarrows(narrows)
 		}
 	}
-	return paramevidence.ParamNarrowsFromFunctionType(in.Resolver.ResolveStaticCallee(in.Call.Func))
+	return paramevidence.ParamNarrowsFromFunctionType(p.Resolver.ResolveStaticCallee(p.Call.Func))
 }
 
 // CallbackSpecInput is the canonical policy for finding a call's callback
