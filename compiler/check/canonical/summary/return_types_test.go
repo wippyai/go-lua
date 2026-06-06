@@ -51,13 +51,13 @@ func TestReturnValuesClonesAbstractTuple(t *testing.T) {
 	}
 }
 
-func TestFunctionSignatureWithSummaryReturns(t *testing.T) {
+func TestFunctionSignatureWithSummaryReturnsProjection(t *testing.T) {
 	sig := typ.Func().Param("x", typ.String).Returns(typ.Nil).Build()
-	got := FunctionSignatureWithSummaryReturns(sig, Summary{
+	got := functionSignatureWithSummaryReturns(sig, Summary{
 		Returns: []product.AbstractValue{product.FromType(typ.Number)},
 	})
 	if got == sig {
-		t.Fatal("FunctionSignatureWithSummaryReturns returned original signature despite summary returns")
+		t.Fatal("functionSignatureWithSummaryReturns returned original signature despite summary returns")
 	}
 	if len(got.Params) != 1 || !typ.TypeEquals(got.Params[0].Type, typ.String) {
 		t.Fatalf("params not preserved: %#v", got.Params)
@@ -65,7 +65,7 @@ func TestFunctionSignatureWithSummaryReturns(t *testing.T) {
 	if len(got.Returns) != 1 || !typ.TypeEquals(got.Returns[0], typ.Number) {
 		t.Fatalf("returns = %#v, want [number]", got.Returns)
 	}
-	if unchanged := FunctionSignatureWithSummaryReturns(sig, Summary{}); unchanged != sig {
+	if unchanged := functionSignatureWithSummaryReturns(sig, Summary{}); unchanged != sig {
 		t.Fatal("empty summary returns should preserve original signature pointer")
 	}
 }

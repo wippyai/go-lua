@@ -33,10 +33,8 @@ func ReturnValues(s Summary) []product.AbstractValue {
 	return out
 }
 
-// FunctionSignatureWithSummaryReturns returns sig with the concrete return tuple
-// projected from s. If s proves no return tuple, sig is returned unchanged.
-func FunctionSignatureWithSummaryReturns(sig *typ.Function, s Summary) *typ.Function {
-	return FunctionSignatureWithReturnTypes(sig, ReturnTypes(s))
+func functionSignatureWithSummaryReturns(sig *typ.Function, s Summary) *typ.Function {
+	return functionSignatureWithReturnTypes(sig, ReturnTypes(s))
 }
 
 // FunctionSignatureWithProjectedReturns returns sig unchanged when source
@@ -47,7 +45,7 @@ func FunctionSignatureWithProjectedReturns(sig *typ.Function, hasDeclaredReturns
 	if sig == nil || hasDeclaredReturns {
 		return sig
 	}
-	return FunctionSignatureWithSummaryReturns(sig, s)
+	return functionSignatureWithSummaryReturns(sig, s)
 }
 
 // FunctionSignatureWithEntryParamsAndProjectedReturns is the callable-value
@@ -63,7 +61,7 @@ func FunctionSignatureWithEntryParamsAndProjectedReturns(sig *typ.Function, hasD
 	if hasDeclaredReturns {
 		return out
 	}
-	return FunctionSignatureWithSummaryReturns(out, s)
+	return functionSignatureWithSummaryReturns(out, s)
 }
 
 // functionSignatureWithProjectedParams refines only gradual source parameter
@@ -126,9 +124,7 @@ func functionSignatureWithEntryParams(sig *typ.Function, values EntryValues) *ty
 	return functionSignatureWithParams(sig, params)
 }
 
-// FunctionSignatureWithReturnTypes returns sig with returns installed, preserving
-// every other function component. Empty returns leave sig unchanged.
-func FunctionSignatureWithReturnTypes(sig *typ.Function, returns []typ.Type) *typ.Function {
+func functionSignatureWithReturnTypes(sig *typ.Function, returns []typ.Type) *typ.Function {
 	if sig == nil {
 		return nil
 	}
