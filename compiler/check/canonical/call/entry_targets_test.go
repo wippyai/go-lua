@@ -11,10 +11,13 @@ import (
 	"github.com/wippyai/go-lua/types/typ"
 )
 
-func TestEntryContextsUseClosureTargetsWhenFinite(t *testing.T) {
+func TestSummaryEntryTargetsWithLiveContextUsesClosureTargetsWhenFinite(t *testing.T) {
 	t.Parallel()
 
 	directRef := summary.FuncRef{GraphID: 1}
+	liveCells := flow.CaptureCellsOf([]flow.CaptureCell{
+		{Symbol: cfg.SymbolID(13), Value: product.FromType(typ.Boolean)},
+	})
 	cells := flow.CaptureCellsOf([]flow.CaptureCell{
 		{Symbol: cfg.SymbolID(10), Value: product.FromType(typ.String)},
 	})
@@ -26,27 +29,29 @@ func TestEntryContextsUseClosureTargetsWhenFinite(t *testing.T) {
 	targets := NewTargetSet([]summary.FuncRef{directRef}, true, []flow.ClosureRef{closure}, true)
 
 	calledDirect := false
-	contexts := EntryContexts(targets, func(ref summary.FuncRef) EntryContext {
-		calledDirect = true
-		return NewEntryContext(ref, flow.CaptureCellsDomain.Bottom(), nil, nil, nil)
+	out := SummaryEntryTargetsWithLiveContext(targets, func(ref summary.FuncRef) EntryContext {
+		if ref == directRef {
+			calledDirect = true
+		}
+		return NewEntryContext(ref, liveCells, nil, nil, nil)
 	})
 
 	if calledDirect {
 		t.Fatal("direct context builder called despite finite closure targets")
 	}
-	if len(contexts) != 1 {
-		t.Fatalf("EntryContexts len = %d, want 1", len(contexts))
+	if len(out) != 1 {
+		t.Fatalf("SummaryEntryTargetsWithLiveContext len = %d, want 1", len(out))
 	}
-	if got := contexts[0].Ref(); got.GraphID != 2 {
+	if got := out[0].Ref; got.GraphID != 2 {
 		t.Fatalf("closure context ref = %#v, want graph 2", got)
 	}
-	if got := contexts[0].CaptureCells(); !flow.CaptureCellsDomain.Equal(got, cells) {
-		t.Fatalf("closure context cells = %s, want %s", got.Format(), cells.Format())
+	if got := out[0].EntryCells; !flow.CaptureCellsDomain.Equal(got, flow.OverlayCaptureCells(cells, liveCells)) {
+		t.Fatalf("closure context cells = %s, want captured/live overlay", got.Format())
 	}
-	if got := contexts[0].FunctionRefs(); !flow.FunctionRefsDomain.Equal(got, refs) {
+	if got := out[0].EntryFunctionRefs; !flow.FunctionRefsDomain.Equal(got, refs) {
 		t.Fatalf("closure context function refs = %#v, want %#v", got, refs)
 	}
-	if got := contexts[0].ClosureRefs(); !flow.ClosureRefsDomain.Equal(got, closures) {
+	if got := out[0].EntryClosureRefs; !flow.ClosureRefsDomain.Equal(got, closures) {
 		t.Fatalf("closure context closure refs = %#v, want %#v", got, closures)
 	}
 }
@@ -64,12 +69,12 @@ func TestSummaryEntryTargetsUseDirectWhenClosureTopHasNoFiniteTargets(t *testing
 	))
 	targets := NewTargetSet([]summary.FuncRef{directRef}, true, nil, true)
 
-	out := SummaryEntryTargets(targets, func(ref summary.FuncRef) EntryContext {
+	out := SummaryEntryTargetsWithLiveContext(targets, func(ref summary.FuncRef) EntryContext {
 		return NewEntryContext(ref, cells, refs, closures, nil)
 	})
 
 	if len(out) != 1 {
-		t.Fatalf("SummaryEntryTargets len = %d, want 1", len(out))
+		t.Fatalf("SummaryEntryTargetsWithLiveContext len = %d, want 1", len(out))
 	}
 	if out[0].Ref != directRef {
 		t.Fatalf("target ref = %#v, want %#v", out[0].Ref, directRef)
