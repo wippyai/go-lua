@@ -25,6 +25,12 @@ type KeyPresenceAliasProof struct {
 	TargetKey StableAddress
 }
 
+// KeyPresenceAliasPathProof is the structured-path form of KeyPresenceAliasProof.
+type KeyPresenceAliasPathProof struct {
+	SourcePath constraint.Path
+	TargetPath constraint.Path
+}
+
 // KeyArrayElementKeyProof consumes key-array provenance for Array by proving
 // TargetKey is present in every table whose keys are carried by Array.
 type KeyArrayElementKeyProof struct {
@@ -146,6 +152,23 @@ func ApplyKeyPresenceAliasProof(out *PointState, proof KeyPresenceAliasProof) bo
 		out.KeyPresence = out.KeyPresence.WithValue(entry.Table, targetKey, entry.Value)
 	}
 	return !KeyPresenceFactsDomain.Equal(before, out.KeyPresence)
+}
+
+// ApplyKeyPresenceAliasPathProof applies key-presence alias facts from
+// structured paths.
+func ApplyKeyPresenceAliasPathProof(out *PointState, proof KeyPresenceAliasPathProof) bool {
+	if out == nil || proof.SourcePath.IsEmpty() || proof.TargetPath.IsEmpty() {
+		return false
+	}
+	sourceAddr, sourceOK := StableAddressOfPath(proof.SourcePath)
+	targetAddr, targetOK := StableAddressOfPath(proof.TargetPath)
+	if !sourceOK || !targetOK {
+		return false
+	}
+	return ApplyKeyPresenceAliasProof(out, KeyPresenceAliasProof{
+		SourceKey: sourceAddr,
+		TargetKey: targetAddr,
+	})
 }
 
 // ApplyKeyArrayElementKeyProof applies key-array membership to a target key. If

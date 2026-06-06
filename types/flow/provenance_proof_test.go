@@ -21,6 +21,22 @@ func TestApplyPathAliasProofPublishesAlias(t *testing.T) {
 	}
 }
 
+func TestApplyPathAliasPathProofPublishesAlias(t *testing.T) {
+	valuePath := constraint.NewPath(cfg.SymbolID(11), "value")
+	sourcePath := constraint.NewPath(cfg.SymbolID(12), "source")
+	value := testStableAddressPath(t, valuePath)
+	source := testStableAddressPath(t, sourcePath)
+	state := PointState{}
+
+	if !ApplyPathAliasPathProof(&state, PathAliasPathProof{ValuePath: valuePath, SourcePath: sourcePath}) {
+		t.Fatal("ApplyPathAliasPathProof reported unchanged")
+	}
+	aliases := state.PathAliases.AliasesOfAddress(value)
+	if len(aliases) != 1 || aliases[0].Source != source.Key() {
+		t.Fatalf("aliases = %v, want source %s", aliases, source.Key())
+	}
+}
+
 func TestApplyValueOriginPathProofPublishesOrigin(t *testing.T) {
 	valuePath := constraint.NewPath(cfg.SymbolID(13), "value")
 	sourcePath := constraint.NewPath(cfg.SymbolID(14), "source")

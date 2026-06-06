@@ -192,6 +192,30 @@ func TestApplyKeyPresenceAliasProofCopiesMembershipAndValuePath(t *testing.T) {
 	}
 }
 
+func TestApplyKeyPresenceAliasPathProofCopiesMembership(t *testing.T) {
+	tablePath := constraint.NewPath(cfg.SymbolID(29), "nodes")
+	sourcePath := constraint.NewPath(cfg.SymbolID(30), "source_id")
+	targetPath := constraint.NewPath(cfg.SymbolID(31), "target_id")
+	tableKey := StablePathKey(tablePath)
+	targetKey := StablePathKey(targetPath)
+
+	state := PointStateDomain.Top()
+	state.KeyPresence = state.KeyPresence.WithAddresses(
+		testStableAddressPath(t, tablePath),
+		testStableAddressPath(t, sourcePath),
+	)
+
+	if !ApplyKeyPresenceAliasPathProof(&state, KeyPresenceAliasPathProof{
+		SourcePath: sourcePath,
+		TargetPath: targetPath,
+	}) {
+		t.Fatal("ApplyKeyPresenceAliasPathProof reported unchanged")
+	}
+	if !state.KeyPresence.Has(tableKey, targetKey) {
+		t.Fatalf("path alias did not copy key presence: %s", state.KeyPresence.Format())
+	}
+}
+
 func TestApplyKeyProvenancePathProofPublishesKeyPresence(t *testing.T) {
 	tablePath := constraint.NewPath(cfg.SymbolID(101), "nodes")
 	keyPath := constraint.NewPath(cfg.SymbolID(102), "node_id")

@@ -142,10 +142,22 @@ func (t *Transfer) applyAssignmentProvenanceEffect(
 	if out == nil || effect.TargetPath.IsEmpty() || effect.SourcePath.IsEmpty() {
 		return false
 	}
-	changed := t.applyPathAliasEffect(out, effect)
+	changed := false
+	if !pathkey.PathRelated(effect.TargetPath, effect.SourcePath) {
+		changed = flow.ApplyPathAliasPathProof(out, flow.PathAliasPathProof{
+			ValuePath:  effect.TargetPath,
+			SourcePath: effect.SourcePath,
+		}) || changed
+	}
 	changed = t.applyAssignmentAliasOrigin(out, effect) || changed
-	changed = t.copyAssignmentKeyPresence(out, effect.SourcePath, effect.TargetPath) || changed
-	changed = t.copyAssignmentIndexWriteAdmissions(out, effect.SourcePath, effect.TargetPath) || changed
+	changed = flow.ApplyKeyPresenceAliasPathProof(out, flow.KeyPresenceAliasPathProof{
+		SourcePath: effect.SourcePath,
+		TargetPath: effect.TargetPath,
+	}) || changed
+	changed = flow.ApplyIndexWriteKeyAliasReadbackPathProof(out, flow.IndexWriteKeyAliasReadbackPathProof{
+		SourcePath: effect.SourcePath,
+		TargetPath: effect.TargetPath,
+	}) || changed
 	return changed
 }
 
@@ -177,24 +189,6 @@ func (t *Transfer) applyArrayElementKeyProvenanceEffect(
 	return changed
 }
 
-func (t *Transfer) applyPathAliasEffect(out *flow.PointState, effect AssignmentProvenanceEffect) bool {
-	if pathkey.PathRelated(effect.TargetPath, effect.SourcePath) {
-		return false
-	}
-	targetAddr, ok := flow.StableAddressOfPath(effect.TargetPath)
-	if !ok {
-		return false
-	}
-	sourceAddr, ok := flow.StableAddressOfPath(effect.SourcePath)
-	if !ok {
-		return false
-	}
-	return flow.ApplyPathAliasProof(out, flow.PathAliasProof{
-		Value:  targetAddr,
-		Source: sourceAddr,
-	})
-}
-
 func (t *Transfer) applyAssignmentAliasOrigin(out *flow.PointState, effect AssignmentProvenanceEffect) bool {
 	if effect.Value.IsZero() || pathkey.PathRelated(effect.TargetPath, effect.SourcePath) {
 		return false
@@ -207,34 +201,5 @@ func (t *Transfer) applyAssignmentAliasOrigin(out *flow.PointState, effect Assig
 		ValuePath:  effect.TargetPath,
 		SourcePath: effect.SourcePath,
 		Kind:       flow.ValueOriginAssignmentAlias,
-	})
-}
-
-func (t *Transfer) copyAssignmentKeyPresence(out *flow.PointState, sourcePath, targetPath constraint.Path) bool {
-	sourceAddr, sourceOK := flow.StableAddressOfPath(sourcePath)
-	targetAddr, targetOK := flow.StableAddressOfPath(targetPath)
-	if !sourceOK || !targetOK {
-		return false
-	}
-	return flow.ApplyKeyPresenceAliasProof(out, flow.KeyPresenceAliasProof{
-		SourceKey: sourceAddr,
-		TargetKey: targetAddr,
-	})
-}
-
-func (t *Transfer) copyAssignmentIndexWriteAdmissions(out *flow.PointState, sourcePath, targetPath constraint.Path) bool {
-	sourceAddr, sourceOK := flow.StableAddressOfPath(sourcePath)
-	targetAddr, targetOK := flow.StableAddressOfPath(targetPath)
-	if !sourceOK || !targetOK {
-		return false
-	}
-	sourceValue, hasSourceValue := flow.PointFactsOf(*out).PathValue(sourcePath)
-	if !hasSourceValue || sourceValue.IsZero() {
-		sourceValue = product.FromType(typ.Unknown)
-	}
-	return flow.ApplyIndexWriteKeyAliasReadbackProof(out, flow.IndexWriteKeyAliasReadbackProof{
-		SourceKey:   sourceAddr,
-		TargetKey:   targetAddr,
-		SourceValue: sourceValue,
 	})
 }
