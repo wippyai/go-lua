@@ -181,15 +181,15 @@ func (t *Transfer) applyArrayElementKeyProvenanceEffect(
 			if !tableOK || !keyOK {
 				continue
 			}
-			beforeWrites := out.IndexWrites
-			out.IndexWrites = out.IndexWrites.WithAddress(flow.IndexWriteAdmissionAddressFact{
-				Target:     tableAddr,
-				KeyPath:    keyAddr,
-				HasKeyPath: true,
-				Key:        keyValue,
-				Value:      value,
-			})
-			changed = !flow.IndexWriteAdmissionFactsDomain.Equal(beforeWrites, out.IndexWrites) || changed
+			changed = flow.ApplyIndexWriteAdmissionProof(out, flow.IndexWriteAdmissionProof{
+				Fact: flow.IndexWriteAdmissionAddressFact{
+					Target:     tableAddr,
+					KeyPath:    keyAddr,
+					HasKeyPath: true,
+					Key:        keyValue,
+					Value:      value,
+				},
+			}) || changed
 		}
 	}
 	changed = presenceChanged || changed
@@ -256,14 +256,10 @@ func (t *Transfer) copyAssignmentIndexWriteAdmissions(out *flow.PointState, sour
 	sourceKey := sourceAddr.Key()
 	targetKey := targetAddr.Key()
 	before := out.IndexWrites
-	for _, entry := range out.IndexWrites.Entries() {
-		if entry.KeyPath != sourceKey {
-			continue
-		}
-		next := entry
-		next.KeyPath = targetKey
-		out.IndexWrites = out.IndexWrites.With(next)
-	}
+	flow.ApplyIndexWriteKeyAliasProof(out, flow.IndexWriteKeyAliasProof{
+		SourceKey: sourceAddr,
+		TargetKey: targetAddr,
+	})
 	sourceValue, hasSourceValue := flow.PointFactsOf(*out).PathValue(sourcePath)
 	if hasSourceValue && sourceValue.DefinitelyAbsent() {
 		return !flow.IndexWriteAdmissionFactsDomain.Equal(before, out.IndexWrites)
@@ -296,12 +292,14 @@ func (t *Transfer) copyAssignmentIndexWriteAdmissions(out *flow.PointState, sour
 		if !tableOK || !keyOK {
 			continue
 		}
-		out.IndexWrites = out.IndexWrites.WithAddress(flow.IndexWriteAdmissionAddressFact{
-			Target:     tableAddr,
-			KeyPath:    keyAddr,
-			HasKeyPath: true,
-			Key:        sourceValue,
-			Value:      present,
+		flow.ApplyIndexWriteAdmissionProof(out, flow.IndexWriteAdmissionProof{
+			Fact: flow.IndexWriteAdmissionAddressFact{
+				Target:     tableAddr,
+				KeyPath:    keyAddr,
+				HasKeyPath: true,
+				Key:        sourceValue,
+				Value:      present,
+			},
 		})
 	}
 	return !flow.IndexWriteAdmissionFactsDomain.Equal(before, out.IndexWrites)

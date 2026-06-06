@@ -2629,12 +2629,14 @@ func (t *Transfer) seedIndexedIterKeyArrayValues(out *flow.PointState, arrayPath
 			if !tableOK || !keyOK {
 				continue
 			}
-			out.IndexWrites = out.IndexWrites.WithAddress(flow.IndexWriteAdmissionAddressFact{
-				Target:     tableAddr,
-				KeyPath:    keyAddr,
-				HasKeyPath: true,
-				Key:        product.FromType(keyType),
-				Value:      value,
+			flow.ApplyIndexWriteAdmissionProof(out, flow.IndexWriteAdmissionProof{
+				Fact: flow.IndexWriteAdmissionAddressFact{
+					Target:     tableAddr,
+					KeyPath:    keyAddr,
+					HasKeyPath: true,
+					Key:        product.FromType(keyType),
+					Value:      value,
+				},
 			})
 		}
 	}
