@@ -78,7 +78,7 @@ func InferReturnTypes(in ReturnInput) ([]typ.Type, bool) {
 	}
 	args := normalizedArgTypes(in.ArgTypes)
 
-	if types, ok := InterceptReturnTypes(in.Call, in.Env); ok {
+	if types, ok := interceptReturnTypes(in.Call, in.Env); ok {
 		return types, true
 	}
 	if in.SummaryReturns != nil {
@@ -126,7 +126,7 @@ func InferReturnTypes(in ReturnInput) ([]typ.Type, bool) {
 		Receiver: receiver,
 		IsMethod: in.Call.Method != "",
 	})
-	returns = ApplySpecReturnOverride(SpecReturnInput{
+	returns = applySpecReturnOverride(SpecReturnInput{
 		Call:     in.Call,
 		Callee:   callee,
 		Receiver: receiver,
@@ -149,7 +149,7 @@ func InferReturnValues(in ReturnValueInput) ([]product.AbstractValue, bool) {
 	}
 	deferredArity := 0
 	if in.TypePolicyAvailable {
-		if types, ok := InterceptReturnTypes(in.Call, in.Env); ok {
+		if types, ok := interceptReturnTypes(in.Call, in.Env); ok {
 			// Product call returns are consumed by transfer storage. Preserve zero
 			// slots for nil/unknown type-only intercepts so unresolved evidence can
 			// still be refined by the same canonical fixed point.
@@ -169,7 +169,7 @@ func InferReturnValues(in ReturnValueInput) ([]product.AbstractValue, bool) {
 	}
 	requireInformativeFallback := in.PendingInput || in.BlockDynamicFallback
 	if !requireInformativeFallback {
-		if v, ok := GradualDynamicReturnValue(in.Call, in.ExprValue); ok {
+		if v, ok := gradualDynamicReturnValue(in.Call, in.ExprValue); ok {
 			return []product.AbstractValue{v}, true
 		}
 	}
@@ -307,8 +307,7 @@ func informativeReturnTypes(types []typ.Type) bool {
 	return false
 }
 
-// InterceptReturnTypes applies the standard intercept chain in canonical order.
-func InterceptReturnTypes(call *ast.FuncCallExpr, env InterceptEnv) ([]typ.Type, bool) {
+func interceptReturnTypes(call *ast.FuncCallExpr, env InterceptEnv) ([]typ.Type, bool) {
 	if call == nil {
 		return nil, false
 	}
@@ -343,10 +342,7 @@ func InferTypeCastTarget(call *ast.FuncCallExpr, env InterceptEnv) (typ.Type, bo
 	return res.Types[0], true
 }
 
-// GradualDynamicReturnValue reports the product return of a call through a
-// gradual-top callee/receiver. This is the product-carrier counterpart of the
-// type-level any-callee rule.
-func GradualDynamicReturnValue(call *ast.FuncCallExpr, exprValue func(ast.Expr) (product.AbstractValue, bool)) (product.AbstractValue, bool) {
+func gradualDynamicReturnValue(call *ast.FuncCallExpr, exprValue func(ast.Expr) (product.AbstractValue, bool)) (product.AbstractValue, bool) {
 	if call == nil || exprValue == nil {
 		return product.AbstractValue{}, false
 	}
@@ -375,9 +371,7 @@ type SpecReturnInput struct {
 	Query    core.TypeOps
 }
 
-// ApplySpecReturnOverride applies AST-level and type-level contract return
-// specialization after ordinary pipeline/effect return synthesis.
-func ApplySpecReturnOverride(in SpecReturnInput) []typ.Type {
+func applySpecReturnOverride(in SpecReturnInput) []typ.Type {
 	if in.Call == nil || len(in.Returns) == 0 {
 		return in.Returns
 	}

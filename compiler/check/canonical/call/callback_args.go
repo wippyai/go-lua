@@ -44,7 +44,7 @@ func RefineCallbackArgTypes(in CallbackArgRefinementInput) []typ.Type {
 		if !ok || len(argRefs) == 0 {
 			continue
 		}
-		entryValues := ExpectedCallbackEntryValues(in.ExpectedArgs, i)
+		entryValues := expectedCallbackEntryValues(in.ExpectedArgs, i)
 		acc := product.Domain.Bottom()
 		for _, ref := range argRefs {
 			t := typ.Type(nil)
@@ -68,7 +68,7 @@ func RefineCallbackArgTypes(in CallbackArgRefinementInput) []typ.Type {
 			continue
 		}
 		candidate := product.ProjectValueOrUnknown(acc)
-		if !ShouldUseRefinedFunctionArg(out[i], candidate) {
+		if !shouldUseRefinedFunctionArg(out[i], candidate) {
 			continue
 		}
 		out[i] = candidate
@@ -188,9 +188,7 @@ func callArgTypesForExpectedArgProjection(in ExpectedArgsInput) []typ.Type {
 	return out
 }
 
-// ExpectedCallbackEntryValues projects a callback parameter contract into the
-// summary entry-value carrier used to resummarize that callback at this call.
-func ExpectedCallbackEntryValues(expected []typ.Type, idx int) summary.EntryValues {
+func expectedCallbackEntryValues(expected []typ.Type, idx int) summary.EntryValues {
 	if idx < 0 || idx >= len(expected) {
 		return nil
 	}
@@ -208,9 +206,7 @@ func ExpectedCallbackEntryValues(expected []typ.Type, idx int) summary.EntryValu
 	return values
 }
 
-// ShouldUseRefinedFunctionArg admits solved callback signatures only when they
-// fill gradual holes in the argument type observed by the surrounding call.
-func ShouldUseRefinedFunctionArg(current, candidate typ.Type) bool {
+func shouldUseRefinedFunctionArg(current, candidate typ.Type) bool {
 	if candidate == nil || typ.IsAbsentOrUnknown(candidate) || typ.IsAny(candidate) {
 		return false
 	}

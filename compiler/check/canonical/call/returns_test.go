@@ -266,22 +266,22 @@ func TestTypeCastTargetAndInterceptShareEnvironment(t *testing.T) {
 	if !ok || target != typ.String {
 		t.Fatalf("InferTypeCastTarget = %v, %v; want string, true", target, ok)
 	}
-	returns, ok := InterceptReturnTypes(call, env)
+	returns, ok := interceptReturnTypes(call, env)
 	if !ok || len(returns) != 1 || returns[0] != typ.String {
-		t.Fatalf("InterceptReturnTypes = %#v, %v; want string, true", returns, ok)
+		t.Fatalf("interceptReturnTypes = %#v, %v; want string, true", returns, ok)
 	}
 }
 
 func TestGradualDynamicReturnValue(t *testing.T) {
 	call := &ast.FuncCallExpr{Func: &ast.IdentExpr{Value: "dynamic"}}
-	got, ok := GradualDynamicReturnValue(call, func(expr ast.Expr) (product.AbstractValue, bool) {
+	got, ok := gradualDynamicReturnValue(call, func(expr ast.Expr) (product.AbstractValue, bool) {
 		if ident, ok := expr.(*ast.IdentExpr); !ok || ident.Value != "dynamic" {
 			t.Fatalf("unexpected gradual call expr: %#v", expr)
 		}
 		return product.GradualAny(), true
 	})
 	if !ok || !got.IsGradualTop() {
-		t.Fatalf("GradualDynamicReturnValue = %v, %v; want gradual top, true", got, ok)
+		t.Fatalf("gradualDynamicReturnValue = %v, %v; want gradual top, true", got, ok)
 	}
 }
 
@@ -746,12 +746,12 @@ func TestApplySpecReturnOverrideUsesTypeCases(t *testing.T) {
 			},
 		},
 	}
-	got := ApplySpecReturnOverride(SpecReturnInput{
+	got := applySpecReturnOverride(SpecReturnInput{
 		Call:    &ast.FuncCallExpr{Func: &ast.IdentExpr{Value: "f"}},
 		Callee:  fn,
 		Returns: []typ.Type{typ.Boolean},
 	})
 	if len(got) != 1 || got[0] != typ.String {
-		t.Fatalf("ApplySpecReturnOverride = %#v; want string", got)
+		t.Fatalf("applySpecReturnOverride = %#v; want string", got)
 	}
 }
