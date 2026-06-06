@@ -1254,26 +1254,6 @@ func (p *program) ProjectCallEntryContextKeys(ref summary.FuncRef, fs state.Func
 	return projector.contextProjection(fs).ProjectKeys()
 }
 
-func functionRefSetFromSummaryRefs(refs []summary.FuncRef, ok bool) (flow.FunctionRefSet, bool) {
-	if !ok {
-		return flow.FunctionRefSet{}, false
-	}
-	if len(refs) == 0 {
-		return flow.FunctionRefSetTop(), true
-	}
-	flowRefs := make([]flow.FunctionRef, 0, len(refs))
-	for _, ref := range refs {
-		if ref == (summary.FuncRef{}) {
-			continue
-		}
-		flowRefs = append(flowRefs, canonref.ToFlow(ref))
-	}
-	if len(flowRefs) == 0 {
-		return flow.FunctionRefSet{}, false
-	}
-	return flow.FunctionRefSetOf(flowRefs...), true
-}
-
 func captureCellsFromPoint(in *flow.PointState, captured []cfg.SymbolID) flow.CaptureCells {
 	if in == nil || len(captured) == 0 {
 		return flow.CaptureCellsDomain.Bottom()
@@ -2315,37 +2295,6 @@ func (ct callTyper) CallReturnValues(call *ast.FuncCallExpr, ctx transfer.Produc
 		return nil, false
 	}
 	return proj.callReturnValues()
-}
-
-func valueCallExpr(expr ast.Expr) (*ast.FuncCallExpr, bool) {
-	switch e := expr.(type) {
-	case *ast.FuncCallExpr:
-		return e, e != nil
-	case *ast.CastExpr:
-		return valueCallExpr(e.Expr)
-	default:
-		return nil, false
-	}
-}
-
-func (ct callTyper) moduleCallSummaryReturns(call *ast.FuncCallExpr, exprType func(ast.Expr) typ.Type, cells flow.CaptureCells, refs flow.FunctionRefs) []typ.Type {
-	proj, ok := ct.typedCallProjection(call, exprType, cells, refs)
-	if !ok {
-		return nil
-	}
-	return proj.inferredReturnTypes()
-}
-
-func (ct callTyper) moduleCallSummaryReturnValues(call *ast.FuncCallExpr, ctx transfer.ProductCallContext) []product.AbstractValue {
-	proj, ok := ct.productCallProjection(call, ctx, productCallOutcomeOptions{})
-	if !ok {
-		return nil
-	}
-	// Keep the normalized product context intact through summary projection.
-	// Selected-target signature returns close generics from ctx.ArgValues and
-	// expression projections; rebuilding a partial context from runtime args
-	// alone loses that evidence and degrades precise calls to unknown.
-	return proj.inferredReturnValues()
 }
 
 func (ct callTyper) CallReturnFunctionRefs(call *ast.FuncCallExpr, exprType func(ast.Expr) typ.Type, cells flow.CaptureCells, refs flow.FunctionRefs) []flow.FunctionRefs {

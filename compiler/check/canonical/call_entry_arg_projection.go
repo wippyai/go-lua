@@ -153,3 +153,34 @@ func (p callEntryArgProjection) closureRefs() flow.ClosureRefs {
 	}
 	return flow.ClosureRefsDomain.Bottom()
 }
+
+func valueCallExpr(expr ast.Expr) (*ast.FuncCallExpr, bool) {
+	switch e := expr.(type) {
+	case *ast.FuncCallExpr:
+		return e, e != nil
+	case *ast.CastExpr:
+		return valueCallExpr(e.Expr)
+	default:
+		return nil, false
+	}
+}
+
+func functionRefSetFromSummaryRefs(refs []summary.FuncRef, ok bool) (flow.FunctionRefSet, bool) {
+	if !ok {
+		return flow.FunctionRefSet{}, false
+	}
+	if len(refs) == 0 {
+		return flow.FunctionRefSetTop(), true
+	}
+	flowRefs := make([]flow.FunctionRef, 0, len(refs))
+	for _, ref := range refs {
+		if ref == (summary.FuncRef{}) {
+			continue
+		}
+		flowRefs = append(flowRefs, canonref.ToFlow(ref))
+	}
+	if len(flowRefs) == 0 {
+		return flow.FunctionRefSet{}, false
+	}
+	return flow.FunctionRefSetOf(flowRefs...), true
+}
