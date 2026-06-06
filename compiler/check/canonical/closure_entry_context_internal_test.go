@@ -181,17 +181,19 @@ return M
 	if av, ok := cells.Value(tSym); !ok || !typeHasField(av.ProjectValue(), "render") {
 		t.Fatalf("CaptureEntries T = %v/%v, want render; cells=%s chain=%v", av.ProjectValue(), ok, cells.Format(), prog.captureDependencyChain(makeRef))
 	}
-	fs := q.IntraWithEntryContext(
+	fs := q.IntraWithKey(
 		ctx,
-		makeRef,
-		flow.CaptureCellsOf([]flow.CaptureCell{{Symbol: tSym, Value: product.FromType(typ.NewRecord().Build())}}),
-		flow.FunctionRefsDomain.Bottom(),
-		flow.ClosureRefsDomain.Bottom(),
-		nil,
+		summary.NewKeyWithEntryContext(
+			makeRef,
+			flow.CaptureCellsOf([]flow.CaptureCell{{Symbol: tSym, Value: product.FromType(typ.NewRecord().Build())}}),
+			flow.FunctionRefsDomain.Bottom(),
+			flow.ClosureRefsDomain.Bottom(),
+			nil,
+		),
 	)
 	got, ok := flow.PointFactsOf(fs.InPoints[prog.Graph(makeRef).Entry()]).SymbolType(tSym)
 	if !ok || !typeHasField(got, "render") {
-		t.Fatalf("IntraWithEntryContext T = %v/%v, want render", got, ok)
+		t.Fatalf("entry-context intra T = %v/%v, want render", got, ok)
 	}
 }
 

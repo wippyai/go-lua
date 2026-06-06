@@ -573,7 +573,8 @@ func (d *Driver) diagnosticState(sess api.AnalysisSession, prog *program, querie
 		reader := summary.NewReader(nil, nil, d.summaries)
 		values := prog.EntryValues(ref, reader)
 		if len(values) != 0 {
-			return queries.IntraWithEntryValues(sess.Context(), ref, flow.CaptureCellsDomain.Bottom(), flow.FunctionRefsDomain.Bottom(), values)
+			key := summary.NewKeyWithEntryValues(ref, flow.CaptureCellsDomain.Bottom(), flow.FunctionRefsDomain.Bottom(), values)
+			return queries.IntraWithKey(sess.Context(), key)
 		}
 		return queries.Intra(sess.Context(), ref)
 	}

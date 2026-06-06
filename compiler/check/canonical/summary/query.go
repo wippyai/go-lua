@@ -254,56 +254,13 @@ func New(prog Program) *Queries {
 
 // Intra returns ref's converged intraprocedural FunctionState, memoized.
 func (q *Queries) Intra(ctx *db.QueryContext, ref FuncRef) state.FunctionState {
-	return q.IntraWithEntry(ctx, ref, flow.CaptureCellsDomain.Bottom())
-}
-
-// IntraWithEntry returns ref's converged intraprocedural state under entry cells.
-func (q *Queries) IntraWithEntry(ctx *db.QueryContext, ref FuncRef, entry flow.CaptureCells) state.FunctionState {
-	return q.IntraWithEntryRefs(ctx, ref, entry, flow.FunctionRefsDomain.Bottom())
-}
-
-// IntraWithEntryRefs returns ref's converged intraprocedural state under entry
-// cells and function identities.
-func (q *Queries) IntraWithEntryRefs(ctx *db.QueryContext, ref FuncRef, entry flow.CaptureCells, refs flow.FunctionRefs) state.FunctionState {
-	return q.IntraWithEntryValues(ctx, ref, entry, refs, nil)
-}
-
-// IntraWithEntryValues returns ref's converged intraprocedural state under entry
-// cells, function identities, and caller-projected parameter values.
-func (q *Queries) IntraWithEntryValues(ctx *db.QueryContext, ref FuncRef, entry flow.CaptureCells, refs flow.FunctionRefs, values EntryValues) state.FunctionState {
-	return q.intra(ctx, NewKeyWithEntryValues(ref, entry, refs, values))
-}
-
-// IntraWithEntryContext returns ref's converged intraprocedural state under all
-// caller-provided entry components.
-func (q *Queries) IntraWithEntryContext(ctx *db.QueryContext, ref FuncRef, entry flow.CaptureCells, refs flow.FunctionRefs, closures flow.ClosureRefs, values EntryValues) state.FunctionState {
-	return q.intra(ctx, NewKeyWithEntryContext(ref, entry, refs, closures, values))
-}
-
-// IntraWithEntryContextFacts returns ref's converged intraprocedural state under
-// all caller-provided entry components, including parameter-relative path facts.
-func (q *Queries) IntraWithEntryContextFacts(ctx *db.QueryContext, ref FuncRef, entry flow.CaptureCells, refs flow.FunctionRefs, closures flow.ClosureRefs, values EntryValues, facts flow.BoundaryFacts) state.FunctionState {
-	return q.IntraWithKey(ctx, NewKeyWithEntryContextFacts(ref, entry, refs, closures, values, facts))
+	return q.IntraWithKey(ctx, NewKey(ref, flow.CaptureCellsDomain.Bottom()))
 }
 
 // IntraWithKey returns the converged intraprocedural state for an already
 // normalized summary key.
 func (q *Queries) IntraWithKey(ctx *db.QueryContext, key Key) state.FunctionState {
 	return q.intra(ctx, key)
-}
-
-// ObserveIntraWithEntryContext runs the local point/demand solver under an exact
-// entry context without demanding a corresponding recursive Summary cell first.
-// Diagnostic observation uses it after the summary fixed point has converged and
-// arranges for nested summary reads to come from that converged snapshot.
-func (q *Queries) ObserveIntraWithEntryContext(ctx *db.QueryContext, ref FuncRef, entry flow.CaptureCells, refs flow.FunctionRefs, closures flow.ClosureRefs, values EntryValues) state.FunctionState {
-	return q.ObserveIntraWithEntryContextFacts(ctx, ref, entry, refs, closures, values, flow.BoundaryFactsDomain.Top())
-}
-
-// ObserveIntraWithEntryContextFacts observes the local point/demand solver under
-// an exact entry context with parameter-relative path facts.
-func (q *Queries) ObserveIntraWithEntryContextFacts(ctx *db.QueryContext, ref FuncRef, entry flow.CaptureCells, refs flow.FunctionRefs, closures flow.ClosureRefs, values EntryValues, facts flow.BoundaryFacts) state.FunctionState {
-	return q.ObserveIntraWithKey(ctx, NewKeyWithEntryContextFacts(ref, entry, refs, closures, values, facts))
 }
 
 // ObserveIntraWithKey observes the local point/demand solver for an already
@@ -317,7 +274,7 @@ func (q *Queries) ObserveIntraWithKey(ctx *db.QueryContext, key Key) state.Funct
 // fixpoint as needed. This is the call-site lookup seam: a caller resolving a
 // call to ref reads the converged callee summary here.
 func (q *Queries) Summarize(ctx *db.QueryContext, ref FuncRef) Summary {
-	return q.SummarizeWithEntry(ctx, ref, flow.CaptureCellsDomain.Bottom())
+	return q.SummarizeWithKey(ctx, NewKey(ref, flow.CaptureCellsDomain.Bottom()))
 }
 
 // ObservedSummary returns the caller-visible summary after the recursive summary
@@ -330,36 +287,6 @@ func (q *Queries) ObservedSummary(ctx *db.QueryContext, ref FuncRef) Summary {
 	return q.ProjectStateSummary(ctx, ref, fs)
 }
 
-// SummarizeWithEntry returns ref's summary under a caller-provided entry cell
-// store.
-func (q *Queries) SummarizeWithEntry(ctx *db.QueryContext, ref FuncRef, entry flow.CaptureCells) Summary {
-	return q.SummarizeWithEntryRefs(ctx, ref, entry, flow.FunctionRefsDomain.Bottom())
-}
-
-// SummarizeWithEntryRefs returns ref's summary under caller-provided entry cell
-// and function-identity contexts.
-func (q *Queries) SummarizeWithEntryRefs(ctx *db.QueryContext, ref FuncRef, entry flow.CaptureCells, refs flow.FunctionRefs) Summary {
-	return q.SummarizeWithEntryValues(ctx, ref, entry, refs, nil)
-}
-
-// SummarizeWithEntryValues returns ref's summary under caller-provided entry
-// cells, function identities, and caller-projected parameter values.
-func (q *Queries) SummarizeWithEntryValues(ctx *db.QueryContext, ref FuncRef, entry flow.CaptureCells, refs flow.FunctionRefs, values EntryValues) Summary {
-	return q.solveQ.Get(ctx, NewKeyWithEntryValues(ref, entry, refs, values)).Summary
-}
-
-// SummarizeWithEntryContext returns ref's summary under all caller-provided
-// entry components.
-func (q *Queries) SummarizeWithEntryContext(ctx *db.QueryContext, ref FuncRef, entry flow.CaptureCells, refs flow.FunctionRefs, closures flow.ClosureRefs, values EntryValues) Summary {
-	return q.solveQ.Get(ctx, NewKeyWithEntryContext(ref, entry, refs, closures, values)).Summary
-}
-
-// SummarizeWithEntryContextFacts returns ref's summary under all caller-provided
-// entry components, including parameter-relative path facts.
-func (q *Queries) SummarizeWithEntryContextFacts(ctx *db.QueryContext, ref FuncRef, entry flow.CaptureCells, refs flow.FunctionRefs, closures flow.ClosureRefs, values EntryValues, facts flow.BoundaryFacts) Summary {
-	return q.SummarizeWithKey(ctx, NewKeyWithEntryContextFacts(ref, entry, refs, closures, values, facts))
-}
-
 // SummarizeWithKey returns the summary for an already normalized entry key.
 func (q *Queries) SummarizeWithKey(ctx *db.QueryContext, key Key) Summary {
 	return q.solveQ.Get(ctx, key).Summary
@@ -367,26 +294,7 @@ func (q *Queries) SummarizeWithKey(ctx *db.QueryContext, key Key) Summary {
 
 // Summarize returns ref's caller-visible summary through this reader.
 func (r Reader) Summarize(ref FuncRef) Summary {
-	return r.SummarizeWithEntryContext(ref, flow.CaptureCellsDomain.Bottom(), flow.FunctionRefsDomain.Bottom(), flow.ClosureRefsDomain.Bottom(), nil)
-}
-
-// SummarizeWithEntryValues reads ref's summary under entry cells, function
-// identities, and caller-projected parameter values.
-func (r Reader) SummarizeWithEntryValues(ref FuncRef, entry flow.CaptureCells, refs flow.FunctionRefs, values EntryValues) Summary {
-	return r.SummarizeWithEntryContext(ref, entry, refs, flow.ClosureRefsDomain.Bottom(), values)
-}
-
-// SummarizeWithEntryContext reads ref's summary under all caller-provided entry
-// components, using the live summary query when one is active and the converged
-// snapshot otherwise.
-func (r Reader) SummarizeWithEntryContext(ref FuncRef, entry flow.CaptureCells, refs flow.FunctionRefs, closures flow.ClosureRefs, values EntryValues) Summary {
-	return r.SummarizeWithEntryContextFacts(ref, entry, refs, closures, values, flow.BoundaryFactsDomain.Top())
-}
-
-// SummarizeWithEntryContextFacts reads ref's summary under all caller-provided
-// entry components, including parameter-relative path facts.
-func (r Reader) SummarizeWithEntryContextFacts(ref FuncRef, entry flow.CaptureCells, refs flow.FunctionRefs, closures flow.ClosureRefs, values EntryValues, facts flow.BoundaryFacts) Summary {
-	return r.SummarizeWithKey(NewKeyWithEntryContextFacts(ref, entry, refs, closures, values, facts))
+	return r.SummarizeWithKey(NewKey(ref, flow.CaptureCellsDomain.Bottom()))
 }
 
 // SummarizeWithKey reads a summary through an already normalized entry key.
