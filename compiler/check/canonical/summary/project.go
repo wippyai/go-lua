@@ -30,29 +30,29 @@ import (
 // Top in that slot, the sound over-approximation. Return arity is the widest
 // return statement's expression count.
 func Project(fs state.FunctionState, g *cfg.Graph) Summary {
-	return ProjectWithDeclaredReturns(fs, g, nil)
+	return projectWithDeclaredReturns(fs, g, nil)
 }
 
-// ProjectOptions carries analysis metadata that projection needs but does not
+// projectOptions carries analysis metadata that projection needs but does not
 // own. It stays intentionally narrow: summary projection can classify whether a
 // returned call is a finite local dependency without importing driver/program
 // target-resolution code.
-type ProjectOptions struct {
+type projectOptions struct {
 	DeclaredReturns           []typ.Type
 	ReturnCallHasFiniteTarget func(*cfg.CallInfo) bool
 }
 
-// ProjectWithDeclaredReturns is Project plus annotation context from the
+// projectWithDeclaredReturns is Project plus annotation context from the
 // function signature. The declared return tuple is not a second analysis: it is a
 // caller-visible contract used only where the summary projection needs to know
 // that a success-only `(value, nil)` body is allowed to prove an error-return
 // relation for an optional value slot.
-func ProjectWithDeclaredReturns(fs state.FunctionState, g *cfg.Graph, declaredReturns []typ.Type) Summary {
-	return ProjectWithOptions(fs, g, ProjectOptions{DeclaredReturns: declaredReturns})
+func projectWithDeclaredReturns(fs state.FunctionState, g *cfg.Graph, declaredReturns []typ.Type) Summary {
+	return projectWithOptions(fs, g, projectOptions{DeclaredReturns: declaredReturns})
 }
 
-// ProjectWithOptions is Project with the complete projection metadata bundle.
-func ProjectWithOptions(fs state.FunctionState, g *cfg.Graph, opts ProjectOptions) Summary {
+// projectWithOptions is Project with the complete projection metadata bundle.
+func projectWithOptions(fs state.FunctionState, g *cfg.Graph, opts projectOptions) Summary {
 	returns := projectReturns(fs, g, opts)
 	return Summary{
 		Returns:             returns,
@@ -258,7 +258,7 @@ func captureExportSymbols(g *cfg.Graph) map[cfg.SymbolID]bool {
 // tuple is the slotwise Join over all return points (a function with two return
 // statements returns the least upper bound of both). Slots beyond a given
 // statement's arity contribute Bottom for that statement.
-func projectReturns(fs state.FunctionState, g *cfg.Graph, opts ProjectOptions) []product.AbstractValue {
+func projectReturns(fs state.FunctionState, g *cfg.Graph, opts projectOptions) []product.AbstractValue {
 	if g == nil {
 		return nil
 	}
@@ -355,7 +355,7 @@ func returnFunctionRefsTupleAt(ps flow.PointState, info *cfg.ReturnInfo) []flow.
 // the function falls back to the transfer-owned return-slot Env key. When both
 // lookups miss, it projects value-domain Top, and later transfer-fidelity passes
 // (call-return typing) can still refine.
-func returnTupleAt(ps flow.PointState, info *cfg.ReturnInfo, opts ProjectOptions) []product.AbstractValue {
+func returnTupleAt(ps flow.PointState, info *cfg.ReturnInfo, opts projectOptions) []product.AbstractValue {
 	arity := len(info.Exprs)
 	if len(info.Exprs) == 1 && info.SourceCallAt(0) != nil {
 		if stored := flow.PointFactsOf(ps).ReturnSlotStoredArity(); stored > arity {
@@ -386,11 +386,11 @@ func materializeImplicitNilReturnSlots(info *cfg.ReturnInfo, tuple []product.Abs
 	return out
 }
 
-func returnSlotValue(ps flow.PointState, info *cfg.ReturnInfo, i int, opts ProjectOptions) product.AbstractValue {
+func returnSlotValue(ps flow.PointState, info *cfg.ReturnInfo, i int, opts projectOptions) product.AbstractValue {
 	return returnSlotValueFromPointState(ps, info, i, opts)
 }
 
-func returnSlotValueFromPointState(ps flow.PointState, info *cfg.ReturnInfo, i int, opts ProjectOptions) product.AbstractValue {
+func returnSlotValueFromPointState(ps flow.PointState, info *cfg.ReturnInfo, i int, opts projectOptions) product.AbstractValue {
 	if i < len(info.Symbols) && info.Symbols[i] != 0 {
 		if av, ok := flow.PointFactsOf(ps).SymbolValue(info.Symbols[i]); ok && !av.IsZero() {
 			return av
@@ -409,7 +409,7 @@ func returnSlotValueFromPointState(ps flow.PointState, info *cfg.ReturnInfo, i i
 	return product.Domain.Top()
 }
 
-func returnSlotHasFiniteCallTarget(ps flow.PointState, info *cfg.ReturnInfo, i int, opts ProjectOptions) bool {
+func returnSlotHasFiniteCallTarget(ps flow.PointState, info *cfg.ReturnInfo, i int, opts projectOptions) bool {
 	call := info.SourceCallAt(i)
 	if call == nil {
 		return false
@@ -538,7 +538,7 @@ func projectGuardedReturnRelations(fs state.FunctionState, g *cfg.Graph) flow.Re
 			return
 		}
 		sawGuard = true
-		targetValue := returnSlotValue(ps, info, targetIdx, ProjectOptions{})
+		targetValue := returnSlotValue(ps, info, targetIdx, projectOptions{})
 		if targetValue.IsZero() {
 			return
 		}
@@ -564,7 +564,7 @@ func projectGuardedReturnRelations(fs state.FunctionState, g *cfg.Graph) flow.Re
 }
 
 func classifyReturnTruthiness(ps flow.PointState, info *cfg.ReturnInfo, idx int) (bool, bool) {
-	av := returnSlotValue(ps, info, idx, ProjectOptions{})
+	av := returnSlotValue(ps, info, idx, projectOptions{})
 	if av.IsZero() {
 		return false, false
 	}
@@ -1162,7 +1162,7 @@ func classifyReturnSlot(ps flow.PointState, info *cfg.ReturnInfo, idx int) (retu
 		}
 		return 0, false
 	}
-	return classifyReturnValue(returnSlotValue(ps, info, idx, ProjectOptions{}))
+	return classifyReturnValue(returnSlotValue(ps, info, idx, projectOptions{}))
 }
 
 func classifyReturnValue(av product.AbstractValue) (returnNilState, bool) {

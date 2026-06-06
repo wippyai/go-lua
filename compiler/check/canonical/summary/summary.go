@@ -254,7 +254,7 @@ func summaryTop() Summary {
 	}
 }
 
-// MergeExactOverlaySummary is the reducer for diagnostic exact-context summary
+// mergeExactOverlaySummary is the reducer for diagnostic exact-context summary
 // overlays. It is deliberately not just SummaryDomain.Widen: the recursive
 // Summary cell is a monotone fixed-point carrier, while the diagnostic overlay
 // is a snapshot of an exact observer that may initially run before exact callees
@@ -263,7 +263,7 @@ func summaryTop() Summary {
 // latest snapshots: an earlier identity/no-proof observation is not a runtime
 // path and must not survive after the exact callee overlay proves a write or
 // boundary fact.
-func MergeExactOverlaySummary(prev, next Summary) Summary {
+func mergeExactOverlaySummary(prev, next Summary) Summary {
 	out := SummaryDomain.Widen(prev, next)
 	out.Returns = mergeExactOverlayReturns(prev.Returns, next.Returns, out.Returns)
 	out.CellEffects = mergeExactOverlayCellEffects(prev.CellEffects, next.CellEffects)

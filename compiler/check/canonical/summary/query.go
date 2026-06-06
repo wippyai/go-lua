@@ -344,7 +344,7 @@ func (q *Queries) computeSolve(ctx *db.QueryContext, key Key) solveResult {
 // deliberately a summary-layer operation so diagnostic exact-context overlays do
 // not reimplement projection policy in the driver.
 func (q *Queries) ProjectStateSummary(ctx *db.QueryContext, ref FuncRef, fs state.FunctionState) Summary {
-	sum := ProjectWithOptions(fs, q.prog.Graph(ref), ProjectOptions{
+	sum := projectWithOptions(fs, q.prog.Graph(ref), projectOptions{
 		DeclaredReturns:           q.declaredReturns(ref),
 		ReturnCallHasFiniteTarget: q.returnCallHasFiniteTarget(ref),
 	})

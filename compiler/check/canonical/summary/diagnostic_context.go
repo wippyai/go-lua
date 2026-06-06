@@ -253,7 +253,7 @@ func (b *diagnosticContextBuilder) updateSummary(key Key, fs state.FunctionState
 	projected := b.frontier.ProjectSummary(key, fs)
 	next := projected
 	if prev, ok := b.result.Summaries[key]; ok {
-		next = MergeExactOverlaySummary(prev, projected)
+		next = mergeExactOverlaySummary(prev, projected)
 		if SummaryDomain.Equal(prev, next) {
 			return false
 		}

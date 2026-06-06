@@ -1,10 +1,9 @@
-package summary_test
+package summary
 
 import (
 	"testing"
 
 	"github.com/wippyai/go-lua/compiler/check/canonical/state"
-	"github.com/wippyai/go-lua/compiler/check/canonical/summary"
 	"github.com/wippyai/go-lua/types/cfg"
 	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/domain/value/product"
@@ -13,24 +12,24 @@ import (
 )
 
 func TestDiagnosticContextFrontierCachesSolvedObserverStates(t *testing.T) {
-	root := summary.FuncRef{GraphID: 1}
-	callee := summary.FuncRef{GraphID: 2}
-	rootKey := summary.NewDefaultKey(root, nil)
-	calleeKey := summary.NewDefaultKey(callee, nil)
-	solves := make(map[summary.Key]int)
+	root := FuncRef{GraphID: 1}
+	callee := FuncRef{GraphID: 2}
+	rootKey := NewDefaultKey(root, nil)
+	calleeKey := NewDefaultKey(callee, nil)
+	solves := make(map[Key]int)
 
-	result := summary.DiagnosticContextFrontier{
+	result := DiagnosticContextFrontier{
 		Root: root,
-		Refs: []summary.FuncRef{root, callee},
-		Solve: func(key summary.Key) state.FunctionState {
+		Refs: []FuncRef{root, callee},
+		Solve: func(key Key) state.FunctionState {
 			solves[key]++
 			return state.FunctionStateDomain.Bottom()
 		},
-		ProjectCalls: func(ref summary.FuncRef, _ state.FunctionState) []summary.Key {
+		ProjectCalls: func(ref FuncRef, _ state.FunctionState) []Key {
 			if ref != root {
 				return nil
 			}
-			return []summary.Key{calleeKey, calleeKey}
+			return []Key{calleeKey, calleeKey}
 		},
 	}.Build()
 
@@ -52,12 +51,12 @@ func TestDiagnosticContextFrontierCachesSolvedObserverStates(t *testing.T) {
 }
 
 func TestDiagnosticContextFrontierUsesFallbackOnlyForUncalledFunctions(t *testing.T) {
-	root := summary.FuncRef{GraphID: 1}
-	called := summary.FuncRef{GraphID: 2}
-	uncalledClosure := summary.FuncRef{GraphID: 3}
-	uncalledDefault := summary.FuncRef{GraphID: 4}
-	calledKey := summary.NewDefaultKey(called, nil)
-	calledClosureKey := summary.NewKeyWithEntryContextFacts(
+	root := FuncRef{GraphID: 1}
+	called := FuncRef{GraphID: 2}
+	uncalledClosure := FuncRef{GraphID: 3}
+	uncalledDefault := FuncRef{GraphID: 4}
+	calledKey := NewDefaultKey(called, nil)
+	calledClosureKey := NewKeyWithEntryContextFacts(
 		called,
 		flow.CaptureCellsOf([]flow.CaptureCell{{Symbol: 10, Value: product.FromType(typ.String)}}),
 		flow.FunctionRefsDomain.Bottom(),
@@ -65,7 +64,7 @@ func TestDiagnosticContextFrontierUsesFallbackOnlyForUncalledFunctions(t *testin
 		nil,
 		flow.BoundaryFactsDomain.Top(),
 	)
-	closureKey := summary.NewKeyWithEntryContextFacts(
+	closureKey := NewKeyWithEntryContextFacts(
 		uncalledClosure,
 		flow.CaptureCellsOf([]flow.CaptureCell{{Symbol: 11, Value: product.FromType(typ.Number)}}),
 		flow.FunctionRefsDomain.Bottom(),
@@ -73,29 +72,29 @@ func TestDiagnosticContextFrontierUsesFallbackOnlyForUncalledFunctions(t *testin
 		nil,
 		flow.BoundaryFactsDomain.Top(),
 	)
-	defaultKey := summary.NewDefaultKey(uncalledDefault, nil)
+	defaultKey := NewDefaultKey(uncalledDefault, nil)
 
-	result := summary.DiagnosticContextFrontier{
+	result := DiagnosticContextFrontier{
 		Root: root,
-		Refs: []summary.FuncRef{root, called, uncalledClosure, uncalledDefault},
-		DefaultKey: func(ref summary.FuncRef) summary.Key {
+		Refs: []FuncRef{root, called, uncalledClosure, uncalledDefault},
+		DefaultKey: func(ref FuncRef) Key {
 			if ref == uncalledDefault {
 				return defaultKey
 			}
-			return summary.NewDefaultKey(ref, nil)
+			return NewDefaultKey(ref, nil)
 		},
-		Solve: func(summary.Key) state.FunctionState {
+		Solve: func(Key) state.FunctionState {
 			return state.FunctionStateDomain.Bottom()
 		},
-		ProjectCalls: func(ref summary.FuncRef, _ state.FunctionState) []summary.Key {
+		ProjectCalls: func(ref FuncRef, _ state.FunctionState) []Key {
 			if ref == root {
-				return []summary.Key{calledKey}
+				return []Key{calledKey}
 			}
 			return nil
 		},
-		ProjectClosures: func(ref summary.FuncRef, _ state.FunctionState) []summary.Key {
+		ProjectClosures: func(ref FuncRef, _ state.FunctionState) []Key {
 			if ref == root {
-				return []summary.Key{calledClosureKey, closureKey}
+				return []Key{calledClosureKey, closureKey}
 			}
 			return nil
 		},
@@ -113,10 +112,10 @@ func TestDiagnosticContextFrontierUsesFallbackOnlyForUncalledFunctions(t *testin
 }
 
 func TestDiagnosticContextFrontierPromotesFallbackDiscoveredCallContext(t *testing.T) {
-	root := summary.FuncRef{GraphID: 1}
-	caller := summary.FuncRef{GraphID: 2}
-	callee := summary.FuncRef{GraphID: 3}
-	callerFallback := summary.NewKeyWithEntryContextFacts(
+	root := FuncRef{GraphID: 1}
+	caller := FuncRef{GraphID: 2}
+	callee := FuncRef{GraphID: 3}
+	callerFallback := NewKeyWithEntryContextFacts(
 		caller,
 		flow.CaptureCellsOf([]flow.CaptureCell{{Symbol: 10, Value: product.FromType(typ.String)}}),
 		flow.FunctionRefsDomain.Bottom(),
@@ -124,7 +123,7 @@ func TestDiagnosticContextFrontierPromotesFallbackDiscoveredCallContext(t *testi
 		nil,
 		flow.BoundaryFactsDomain.Top(),
 	)
-	calleeFallback := summary.NewKeyWithEntryContextFacts(
+	calleeFallback := NewKeyWithEntryContextFacts(
 		callee,
 		flow.CaptureCellsOf([]flow.CaptureCell{{Symbol: 11, Value: product.FromType(typ.String)}}),
 		flow.FunctionRefsDomain.Bottom(),
@@ -132,23 +131,23 @@ func TestDiagnosticContextFrontierPromotesFallbackDiscoveredCallContext(t *testi
 		nil,
 		flow.BoundaryFactsDomain.Top(),
 	)
-	calleeCall := summary.NewDefaultKey(callee, summary.EntryValues{0: product.FromType(typ.Number)})
+	calleeCall := NewDefaultKey(callee, EntryValues{0: product.FromType(typ.Number)})
 
-	result := summary.DiagnosticContextFrontier{
+	result := DiagnosticContextFrontier{
 		Root: root,
-		Refs: []summary.FuncRef{root, caller, callee},
-		Solve: func(summary.Key) state.FunctionState {
+		Refs: []FuncRef{root, caller, callee},
+		Solve: func(Key) state.FunctionState {
 			return state.FunctionStateDomain.Bottom()
 		},
-		ProjectCalls: func(ref summary.FuncRef, _ state.FunctionState) []summary.Key {
+		ProjectCalls: func(ref FuncRef, _ state.FunctionState) []Key {
 			if ref == caller {
-				return []summary.Key{calleeCall}
+				return []Key{calleeCall}
 			}
 			return nil
 		},
-		ProjectClosures: func(ref summary.FuncRef, _ state.FunctionState) []summary.Key {
+		ProjectClosures: func(ref FuncRef, _ state.FunctionState) []Key {
 			if ref == root {
-				return []summary.Key{callerFallback, calleeFallback}
+				return []Key{callerFallback, calleeFallback}
 			}
 			return nil
 		},
@@ -163,9 +162,9 @@ func TestDiagnosticContextFrontierPromotesFallbackDiscoveredCallContext(t *testi
 }
 
 func TestDiagnosticContextFrontierReducesDominatedEntryFactContexts(t *testing.T) {
-	root := summary.FuncRef{GraphID: 1}
-	callee := summary.FuncRef{GraphID: 2}
-	base := summary.NewDefaultKey(callee, summary.EntryValues{0: product.FromType(typ.String)})
+	root := FuncRef{GraphID: 1}
+	callee := FuncRef{GraphID: 2}
+	base := NewDefaultKey(callee, EntryValues{0: product.FromType(typ.String)})
 	facts := flow.BoundaryFactsOf(nil, []flow.BoundaryKeyArrayFact{{
 		Array: flow.BoundaryPath{Kind: flow.BoundaryPathParam, Index: 0},
 		Table: flow.BoundaryPath{Kind: flow.BoundaryPathParam, Index: 0, Segments: []constraint.Segment{{
@@ -173,24 +172,24 @@ func TestDiagnosticContextFrontierReducesDominatedEntryFactContexts(t *testing.T
 			Name: "nodes",
 		}}},
 	}}, nil, nil, nil, nil)
-	factful := summary.NewKeyWithEntryContextFacts(
+	factful := NewKeyWithEntryContextFacts(
 		callee,
 		flow.CaptureCellsDomain.Bottom(),
 		flow.FunctionRefsDomain.Bottom(),
 		flow.ClosureRefsDomain.Bottom(),
-		summary.EntryValues{0: product.FromType(typ.String)},
+		EntryValues{0: product.FromType(typ.String)},
 		facts,
 	)
 
-	result := summary.DiagnosticContextFrontier{
+	result := DiagnosticContextFrontier{
 		Root: root,
-		Refs: []summary.FuncRef{root, callee},
-		Solve: func(summary.Key) state.FunctionState {
+		Refs: []FuncRef{root, callee},
+		Solve: func(Key) state.FunctionState {
 			return state.FunctionStateDomain.Bottom()
 		},
-		ProjectCalls: func(ref summary.FuncRef, _ state.FunctionState) []summary.Key {
+		ProjectCalls: func(ref FuncRef, _ state.FunctionState) []Key {
 			if ref == root {
-				return []summary.Key{base, factful}
+				return []Key{base, factful}
 			}
 			return nil
 		},
@@ -202,17 +201,17 @@ func TestDiagnosticContextFrontierReducesDominatedEntryFactContexts(t *testing.T
 }
 
 func TestDiagnosticContextFrontierDropsStaleContextsAfterRefresh(t *testing.T) {
-	root := summary.FuncRef{GraphID: 1}
-	callee := summary.FuncRef{GraphID: 2}
-	rootKey := summary.NewDefaultKey(root, nil)
-	stale := summary.NewDefaultKey(callee, summary.EntryValues{0: product.FromType(typ.NewRecord().Build())})
-	current := summary.NewDefaultKey(callee, summary.EntryValues{0: product.FromType(typ.NewRecord().Field("nodes", typ.NewMap(typ.String, typ.Number)).Build())})
-	solves := make(map[summary.Key]int)
+	root := FuncRef{GraphID: 1}
+	callee := FuncRef{GraphID: 2}
+	rootKey := NewDefaultKey(root, nil)
+	stale := NewDefaultKey(callee, EntryValues{0: product.FromType(typ.NewRecord().Build())})
+	current := NewDefaultKey(callee, EntryValues{0: product.FromType(typ.NewRecord().Field("nodes", typ.NewMap(typ.String, typ.Number)).Build())})
+	solves := make(map[Key]int)
 
-	result := summary.DiagnosticContextFrontier{
+	result := DiagnosticContextFrontier{
 		Root: root,
-		Refs: []summary.FuncRef{root, callee},
-		Solve: func(key summary.Key) state.FunctionState {
+		Refs: []FuncRef{root, callee},
+		Solve: func(key Key) state.FunctionState {
 			solves[key]++
 			if key != rootKey || solves[key] == 1 {
 				return state.FunctionStateDomain.Bottom()
@@ -227,14 +226,14 @@ func TestDiagnosticContextFrontierDropsStaleContextsAfterRefresh(t *testing.T) {
 			}
 			return fs
 		},
-		ProjectCalls: func(ref summary.FuncRef, fs state.FunctionState) []summary.Key {
+		ProjectCalls: func(ref FuncRef, fs state.FunctionState) []Key {
 			if ref != root {
 				return nil
 			}
 			if len(fs.InPoints) == 0 {
-				return []summary.Key{stale}
+				return []Key{stale}
 			}
-			return []summary.Key{current}
+			return []Key{current}
 		},
 	}.Build()
 
@@ -247,14 +246,14 @@ func TestDiagnosticContextFrontierDropsStaleContextsAfterRefresh(t *testing.T) {
 }
 
 func TestDiagnosticContextFrontierIgnoresUnobservableRefreshChurn(t *testing.T) {
-	root := summary.FuncRef{GraphID: 1}
-	rootKey := summary.NewDefaultKey(root, nil)
-	solves := make(map[summary.Key]int)
+	root := FuncRef{GraphID: 1}
+	rootKey := NewDefaultKey(root, nil)
+	solves := make(map[Key]int)
 
-	result := summary.DiagnosticContextFrontier{
+	result := DiagnosticContextFrontier{
 		Root: root,
-		Refs: []summary.FuncRef{root},
-		Solve: func(key summary.Key) state.FunctionState {
+		Refs: []FuncRef{root},
+		Solve: func(key Key) state.FunctionState {
 			solves[key]++
 			fs := state.FunctionStateDomain.Bottom()
 			fs.InPoints = map[cfg.Point]flow.PointState{
@@ -277,16 +276,16 @@ func TestDiagnosticContextFrontierIgnoresUnobservableRefreshChurn(t *testing.T) 
 }
 
 func TestDiagnosticContextFrontierRefreshesDerivedInPointContexts(t *testing.T) {
-	root := summary.FuncRef{GraphID: 1}
-	callee := summary.FuncRef{GraphID: 2}
-	rootKey := summary.NewDefaultKey(root, nil)
-	calleeKey := summary.NewDefaultKey(callee, summary.EntryValues{0: product.FromType(typ.String)})
-	solves := make(map[summary.Key]int)
+	root := FuncRef{GraphID: 1}
+	callee := FuncRef{GraphID: 2}
+	rootKey := NewDefaultKey(root, nil)
+	calleeKey := NewDefaultKey(callee, EntryValues{0: product.FromType(typ.String)})
+	solves := make(map[Key]int)
 
-	result := summary.DiagnosticContextFrontier{
+	result := DiagnosticContextFrontier{
 		Root: root,
-		Refs: []summary.FuncRef{root},
-		Solve: func(key summary.Key) state.FunctionState {
+		Refs: []FuncRef{root},
+		Solve: func(key Key) state.FunctionState {
 			solves[key]++
 			if key != rootKey || solves[key] == 1 {
 				return state.FunctionStateDomain.Bottom()
@@ -301,11 +300,11 @@ func TestDiagnosticContextFrontierRefreshesDerivedInPointContexts(t *testing.T) 
 			}
 			return fs
 		},
-		ProjectCalls: func(ref summary.FuncRef, fs state.FunctionState) []summary.Key {
+		ProjectCalls: func(ref FuncRef, fs state.FunctionState) []Key {
 			if ref != root || len(fs.InPoints) == 0 {
 				return nil
 			}
-			return []summary.Key{calleeKey}
+			return []Key{calleeKey}
 		},
 	}.Build()
 
@@ -318,18 +317,18 @@ func TestDiagnosticContextFrontierRefreshesDerivedInPointContexts(t *testing.T) 
 }
 
 func TestDiagnosticContextFrontierRefreshesCallersAfterExactSummaryOverlay(t *testing.T) {
-	root := summary.FuncRef{GraphID: 1}
-	callee := summary.FuncRef{GraphID: 2}
-	rootKey := summary.NewDefaultKey(root, nil)
-	calleeKey := summary.NewDefaultKey(callee, summary.EntryValues{0: product.FromType(typ.String)})
-	overlay := make(map[summary.Key]summary.Summary)
-	solves := make(map[summary.Key]int)
+	root := FuncRef{GraphID: 1}
+	callee := FuncRef{GraphID: 2}
+	rootKey := NewDefaultKey(root, nil)
+	calleeKey := NewDefaultKey(callee, EntryValues{0: product.FromType(typ.String)})
+	overlay := make(map[Key]Summary)
+	solves := make(map[Key]int)
 
-	result := summary.DiagnosticContextFrontier{
+	result := DiagnosticContextFrontier{
 		Root:           root,
-		Refs:           []summary.FuncRef{root, callee},
+		Refs:           []FuncRef{root, callee},
 		SummaryOverlay: overlay,
-		Solve: func(key summary.Key) state.FunctionState {
+		Solve: func(key Key) state.FunctionState {
 			solves[key]++
 			fs := state.FunctionStateDomain.Bottom()
 			if key == rootKey {
@@ -347,17 +346,17 @@ func TestDiagnosticContextFrontierRefreshesCallersAfterExactSummaryOverlay(t *te
 			}
 			return fs
 		},
-		ProjectSummary: func(key summary.Key, _ state.FunctionState) summary.Summary {
+		ProjectSummary: func(key Key, _ state.FunctionState) Summary {
 			if key == calleeKey {
-				return summary.Summary{
+				return Summary{
 					Returns: []product.AbstractValue{product.FromType(typ.String)},
 				}
 			}
-			return summary.SummaryDomain.Bottom()
+			return SummaryDomain.Bottom()
 		},
-		ProjectCalls: func(ref summary.FuncRef, _ state.FunctionState) []summary.Key {
+		ProjectCalls: func(ref FuncRef, _ state.FunctionState) []Key {
 			if ref == root {
-				return []summary.Key{calleeKey}
+				return []Key{calleeKey}
 			}
 			return nil
 		},
@@ -379,20 +378,20 @@ func TestDiagnosticContextFrontierRefreshesCallersAfterExactSummaryOverlay(t *te
 }
 
 func TestDiagnosticContextFrontierRefreshesOnlyExactOverlayDependents(t *testing.T) {
-	root := summary.FuncRef{GraphID: 1}
-	callee := summary.FuncRef{GraphID: 2}
-	unrelated := summary.FuncRef{GraphID: 3}
-	rootKey := summary.NewDefaultKey(root, nil)
-	calleeKey := summary.NewDefaultKey(callee, nil)
-	unrelatedKey := summary.NewDefaultKey(unrelated, nil)
-	overlay := make(map[summary.Key]summary.Summary)
-	solves := make(map[summary.Key]int)
+	root := FuncRef{GraphID: 1}
+	callee := FuncRef{GraphID: 2}
+	unrelated := FuncRef{GraphID: 3}
+	rootKey := NewDefaultKey(root, nil)
+	calleeKey := NewDefaultKey(callee, nil)
+	unrelatedKey := NewDefaultKey(unrelated, nil)
+	overlay := make(map[Key]Summary)
+	solves := make(map[Key]int)
 
-	result := summary.DiagnosticContextFrontier{
+	result := DiagnosticContextFrontier{
 		Root:           root,
-		Refs:           []summary.FuncRef{root, callee, unrelated},
+		Refs:           []FuncRef{root, callee, unrelated},
 		SummaryOverlay: overlay,
-		SolveWithDependencies: func(key summary.Key) (state.FunctionState, []summary.Key) {
+		SolveWithDependencies: func(key Key) (state.FunctionState, []Key) {
 			solves[key]++
 			fs := state.FunctionStateDomain.Bottom()
 			if key == rootKey {
@@ -406,21 +405,21 @@ func TestDiagnosticContextFrontierRefreshesOnlyExactOverlayDependents(t *testing
 						},
 					}
 				}
-				return fs, []summary.Key{calleeKey}
+				return fs, []Key{calleeKey}
 			}
 			return fs, nil
 		},
-		ProjectSummary: func(key summary.Key, _ state.FunctionState) summary.Summary {
+		ProjectSummary: func(key Key, _ state.FunctionState) Summary {
 			if key == calleeKey && solves[key] >= 2 {
-				return summary.Summary{
+				return Summary{
 					Returns: []product.AbstractValue{product.FromType(typ.String)},
 				}
 			}
-			return summary.SummaryDomain.Bottom()
+			return SummaryDomain.Bottom()
 		},
-		ProjectCalls: func(ref summary.FuncRef, _ state.FunctionState) []summary.Key {
+		ProjectCalls: func(ref FuncRef, _ state.FunctionState) []Key {
 			if ref == root {
-				return []summary.Key{calleeKey, unrelatedKey}
+				return []Key{calleeKey, unrelatedKey}
 			}
 			return nil
 		},
@@ -442,23 +441,23 @@ func TestDiagnosticContextFrontierRefreshesOnlyExactOverlayDependents(t *testing
 }
 
 func TestDiagnosticContextFrontierWidensExactSummaryOverlay(t *testing.T) {
-	root := summary.FuncRef{GraphID: 1}
-	rootKey := summary.NewDefaultKey(root, nil)
-	overlay := map[summary.Key]summary.Summary{
+	root := FuncRef{GraphID: 1}
+	rootKey := NewDefaultKey(root, nil)
+	overlay := map[Key]Summary{
 		rootKey: {
 			Returns: []product.AbstractValue{product.FromType(typ.LiteralString("a"))},
 		},
 	}
 
-	result := summary.DiagnosticContextFrontier{
+	result := DiagnosticContextFrontier{
 		Root:           root,
-		Refs:           []summary.FuncRef{root},
+		Refs:           []FuncRef{root},
 		SummaryOverlay: overlay,
-		Solve: func(summary.Key) state.FunctionState {
+		Solve: func(Key) state.FunctionState {
 			return state.FunctionStateDomain.Bottom()
 		},
-		ProjectSummary: func(summary.Key, state.FunctionState) summary.Summary {
-			return summary.Summary{
+		ProjectSummary: func(Key, state.FunctionState) Summary {
+			return Summary{
 				Returns: []product.AbstractValue{product.FromType(typ.LiteralString("b"))},
 			}
 		},
@@ -478,23 +477,23 @@ func TestDiagnosticContextFrontierWidensExactSummaryOverlay(t *testing.T) {
 }
 
 func TestDiagnosticContextFrontierLetsExactReturnOverlayRefineWidenedValue(t *testing.T) {
-	root := summary.FuncRef{GraphID: 1}
-	rootKey := summary.NewDefaultKey(root, nil)
-	overlay := map[summary.Key]summary.Summary{
+	root := FuncRef{GraphID: 1}
+	rootKey := NewDefaultKey(root, nil)
+	overlay := map[Key]Summary{
 		rootKey: {
 			Returns: []product.AbstractValue{product.FromType(typ.Number)},
 		},
 	}
 
-	result := summary.DiagnosticContextFrontier{
+	result := DiagnosticContextFrontier{
 		Root:           root,
-		Refs:           []summary.FuncRef{root},
+		Refs:           []FuncRef{root},
 		SummaryOverlay: overlay,
-		Solve: func(summary.Key) state.FunctionState {
+		Solve: func(Key) state.FunctionState {
 			return state.FunctionStateDomain.Bottom()
 		},
-		ProjectSummary: func(summary.Key, state.FunctionState) summary.Summary {
-			return summary.Summary{
+		ProjectSummary: func(Key, state.FunctionState) Summary {
+			return Summary{
 				Returns: []product.AbstractValue{product.FromType(typ.Integer)},
 			}
 		},
@@ -507,25 +506,25 @@ func TestDiagnosticContextFrontierLetsExactReturnOverlayRefineWidenedValue(t *te
 }
 
 func TestDiagnosticContextFrontierDoesNotEraseExactReturnOverlayWithBroadRefresh(t *testing.T) {
-	root := summary.FuncRef{GraphID: 1}
-	rootKey := summary.NewDefaultKey(root, nil)
+	root := FuncRef{GraphID: 1}
+	rootKey := NewDefaultKey(root, nil)
 	broad := product.FromType(typ.NewRecord().Build())
 	refined := product.FromType(typ.NewRecord().Field("render", typ.Func().Returns(typ.String).Build()).Build())
-	overlay := map[summary.Key]summary.Summary{
+	overlay := map[Key]Summary{
 		rootKey: {
 			Returns: []product.AbstractValue{refined},
 		},
 	}
 
-	result := summary.DiagnosticContextFrontier{
+	result := DiagnosticContextFrontier{
 		Root:           root,
-		Refs:           []summary.FuncRef{root},
+		Refs:           []FuncRef{root},
 		SummaryOverlay: overlay,
-		Solve: func(summary.Key) state.FunctionState {
+		Solve: func(Key) state.FunctionState {
 			return state.FunctionStateDomain.Bottom()
 		},
-		ProjectSummary: func(summary.Key, state.FunctionState) summary.Summary {
-			return summary.Summary{
+		ProjectSummary: func(Key, state.FunctionState) Summary {
+			return Summary{
 				Returns: []product.AbstractValue{broad},
 			}
 		},
@@ -541,35 +540,35 @@ func TestDiagnosticContextFrontierDoesNotEraseExactReturnOverlayWithBroadRefresh
 }
 
 func TestDiagnosticContextFrontierDoesNotEraseExactReturnOverlayWithRecursiveRefresh(t *testing.T) {
-	root := summary.FuncRef{GraphID: 1}
-	rootKey := summary.NewDefaultKey(root, nil)
+	root := FuncRef{GraphID: 1}
+	rootKey := NewDefaultKey(root, nil)
 	refinedType := typ.NewRecord().Field("node_order", typ.NewArray(typ.String)).Build()
 	refined := product.FromType(refinedType)
 	recursive := product.FromType(typ.NewRecursive("Inferred", func(typ.Type) typ.Type {
 		return typ.NewRecord().Field("node_order", typ.NewArray(typ.Never)).Build()
 	}))
-	direct := summary.MergeExactOverlaySummary(
-		summary.Summary{Returns: []product.AbstractValue{refined}},
-		summary.Summary{Returns: []product.AbstractValue{recursive}},
+	direct := mergeExactOverlaySummary(
+		Summary{Returns: []product.AbstractValue{refined}},
+		Summary{Returns: []product.AbstractValue{recursive}},
 	)
 	if len(direct.Returns) != 1 || !typ.TypeEquals(direct.Returns[0].ProjectValue(), refinedType) {
 		t.Fatalf("direct exact overlay merge = %#v, want %v", direct.Returns, refinedType)
 	}
-	overlay := map[summary.Key]summary.Summary{
+	overlay := map[Key]Summary{
 		rootKey: {
 			Returns: []product.AbstractValue{refined},
 		},
 	}
 
-	result := summary.DiagnosticContextFrontier{
+	result := DiagnosticContextFrontier{
 		Root:           root,
-		Refs:           []summary.FuncRef{root},
+		Refs:           []FuncRef{root},
 		SummaryOverlay: overlay,
-		Solve: func(summary.Key) state.FunctionState {
+		Solve: func(Key) state.FunctionState {
 			return state.FunctionStateDomain.Bottom()
 		},
-		ProjectSummary: func(summary.Key, state.FunctionState) summary.Summary {
-			return summary.Summary{
+		ProjectSummary: func(Key, state.FunctionState) Summary {
+			return Summary{
 				Returns: []product.AbstractValue{recursive},
 			}
 		},
@@ -585,26 +584,26 @@ func TestDiagnosticContextFrontierDoesNotEraseExactReturnOverlayWithRecursiveRef
 }
 
 func TestDiagnosticContextFrontierDoesNotEraseExactReturnOverlayWithEmptyContainerRefresh(t *testing.T) {
-	root := summary.FuncRef{GraphID: 1}
-	rootKey := summary.NewDefaultKey(root, nil)
+	root := FuncRef{GraphID: 1}
+	rootKey := NewDefaultKey(root, nil)
 	refinedType := typ.NewRecord().Field("node_order", typ.NewArray(typ.String)).Build()
 	refined := product.FromType(refinedType)
 	empty := product.FromType(typ.NewRecord().Field("node_order", typ.NewArray(typ.Never)).Build())
-	overlay := map[summary.Key]summary.Summary{
+	overlay := map[Key]Summary{
 		rootKey: {
 			Returns: []product.AbstractValue{refined},
 		},
 	}
 
-	result := summary.DiagnosticContextFrontier{
+	result := DiagnosticContextFrontier{
 		Root:           root,
-		Refs:           []summary.FuncRef{root},
+		Refs:           []FuncRef{root},
 		SummaryOverlay: overlay,
-		Solve: func(summary.Key) state.FunctionState {
+		Solve: func(Key) state.FunctionState {
 			return state.FunctionStateDomain.Bottom()
 		},
-		ProjectSummary: func(summary.Key, state.FunctionState) summary.Summary {
-			return summary.Summary{
+		ProjectSummary: func(Key, state.FunctionState) Summary {
+			return Summary{
 				Returns: []product.AbstractValue{empty},
 			}
 		},
@@ -620,9 +619,9 @@ func TestDiagnosticContextFrontierDoesNotEraseExactReturnOverlayWithEmptyContain
 }
 
 func TestDiagnosticContextFrontierLetsExactProofOverlayRefineFromTop(t *testing.T) {
-	root := summary.FuncRef{GraphID: 1}
-	rootKey := summary.NewDefaultKey(root, nil)
-	overlay := map[summary.Key]summary.Summary{
+	root := FuncRef{GraphID: 1}
+	rootKey := NewDefaultKey(root, nil)
+	overlay := map[Key]Summary{
 		rootKey: {
 			Relations:     flow.ReturnRelationsDomain.Top(),
 			BoundaryFacts: flow.BoundaryFactsDomain.Top(),
@@ -637,15 +636,15 @@ func TestDiagnosticContextFrontierLetsExactProofOverlayRefineFromTop(t *testing.
 		ParamIndex:  0,
 	}})
 
-	result := summary.DiagnosticContextFrontier{
+	result := DiagnosticContextFrontier{
 		Root:           root,
-		Refs:           []summary.FuncRef{root},
+		Refs:           []FuncRef{root},
 		SummaryOverlay: overlay,
-		Solve: func(summary.Key) state.FunctionState {
+		Solve: func(Key) state.FunctionState {
 			return state.FunctionStateDomain.Bottom()
 		},
-		ProjectSummary: func(summary.Key, state.FunctionState) summary.Summary {
-			return summary.Summary{
+		ProjectSummary: func(Key, state.FunctionState) Summary {
+			return Summary{
 				BoundaryFacts: facts,
 				Relations:     relations,
 			}
@@ -662,26 +661,26 @@ func TestDiagnosticContextFrontierLetsExactProofOverlayRefineFromTop(t *testing.
 }
 
 func TestDiagnosticContextFrontierLetsExactEffectOverlayRefineFromIdentity(t *testing.T) {
-	root := summary.FuncRef{GraphID: 1}
-	rootKey := summary.NewDefaultKey(root, nil)
+	root := FuncRef{GraphID: 1}
+	rootKey := NewDefaultKey(root, nil)
 	sym := cfg.SymbolID(42)
 	must := flow.CaptureMustWrite(sym, product.FromType(typ.String))
-	overlay := map[summary.Key]summary.Summary{
+	overlay := map[Key]Summary{
 		rootKey: {
 			CellEffects:     flow.CaptureEffectsIdentity(),
 			ReceiverEffects: flow.ReceiverEffectsIdentity(),
 		},
 	}
 
-	result := summary.DiagnosticContextFrontier{
+	result := DiagnosticContextFrontier{
 		Root:           root,
-		Refs:           []summary.FuncRef{root},
+		Refs:           []FuncRef{root},
 		SummaryOverlay: overlay,
-		Solve: func(summary.Key) state.FunctionState {
+		Solve: func(Key) state.FunctionState {
 			return state.FunctionStateDomain.Bottom()
 		},
-		ProjectSummary: func(summary.Key, state.FunctionState) summary.Summary {
-			return summary.Summary{
+		ProjectSummary: func(Key, state.FunctionState) Summary {
+			return Summary{
 				CellEffects: must,
 			}
 		},
@@ -698,25 +697,25 @@ func TestDiagnosticContextFrontierLetsExactEffectOverlayRefineFromIdentity(t *te
 }
 
 func TestDiagnosticContextFrontierDoesNotEraseExactEffectWithIdentityRefresh(t *testing.T) {
-	root := summary.FuncRef{GraphID: 1}
-	rootKey := summary.NewDefaultKey(root, nil)
+	root := FuncRef{GraphID: 1}
+	rootKey := NewDefaultKey(root, nil)
 	sym := cfg.SymbolID(42)
 	must := flow.CaptureMustWrite(sym, product.FromType(typ.String))
-	overlay := map[summary.Key]summary.Summary{
+	overlay := map[Key]Summary{
 		rootKey: {
 			CellEffects: must,
 		},
 	}
 
-	result := summary.DiagnosticContextFrontier{
+	result := DiagnosticContextFrontier{
 		Root:           root,
-		Refs:           []summary.FuncRef{root},
+		Refs:           []FuncRef{root},
 		SummaryOverlay: overlay,
-		Solve: func(summary.Key) state.FunctionState {
+		Solve: func(Key) state.FunctionState {
 			return state.FunctionStateDomain.Bottom()
 		},
-		ProjectSummary: func(summary.Key, state.FunctionState) summary.Summary {
-			return summary.Summary{
+		ProjectSummary: func(Key, state.FunctionState) Summary {
+			return Summary{
 				CellEffects: flow.CaptureEffectsIdentity(),
 			}
 		},

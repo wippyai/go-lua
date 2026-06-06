@@ -1,4 +1,4 @@
-package summary_test
+package summary
 
 import (
 	"testing"
@@ -6,7 +6,6 @@ import (
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/canonical/state"
-	"github.com/wippyai/go-lua/compiler/check/canonical/summary"
 	"github.com/wippyai/go-lua/compiler/parse"
 	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/domain/value/product"
@@ -33,7 +32,7 @@ func TestProject_ReturnProjectionPrefersIdentifierValue(t *testing.T) {
 	slotValue := product.FromType(typ.Number)
 	idValue := product.FromType(typ.String)
 
-	sum := summary.Project(state.FunctionState{
+	sum := Project(state.FunctionState{
 		Points: map[cfg.Point]flow.PointState{
 			ret: {
 				Env: map[flow.ValueKey]product.AbstractValue{
@@ -46,7 +45,7 @@ func TestProject_ReturnProjectionPrefersIdentifierValue(t *testing.T) {
 	}, g)
 
 	if len(sum.Returns) != 1 || !product.Domain.Equal(sum.Returns[0], idValue) {
-		t.Fatalf("summary return value = %v, want identifier-backed %v", summary.ReturnValues(sum), idValue)
+		t.Fatalf("summary return value = %v, want identifier-backed %v", ReturnValues(sum), idValue)
 	}
 }
 
@@ -55,7 +54,7 @@ func TestProject_ReturnProjectionFallsBackToReturnSlot(t *testing.T) {
 	ret, info := returnPointAndInfo(t, g)
 	slotValue := product.FromType(typ.Number)
 
-	sum := summary.Project(state.FunctionState{
+	sum := Project(state.FunctionState{
 		Points: map[cfg.Point]flow.PointState{
 			ret: {
 				Env: map[flow.ValueKey]product.AbstractValue{
@@ -66,7 +65,7 @@ func TestProject_ReturnProjectionFallsBackToReturnSlot(t *testing.T) {
 	}, g)
 
 	if len(sum.Returns) != 1 || !product.Domain.Equal(sum.Returns[0], slotValue) {
-		t.Fatalf("summary return fallback = %v, want %v", summary.ReturnValues(sum), slotValue)
+		t.Fatalf("summary return fallback = %v, want %v", ReturnValues(sum), slotValue)
 	}
 	if info.Symbols[0] == 0 {
 		t.Fatalf("sanity: expected identifier return slot")
@@ -78,7 +77,7 @@ func TestProject_ReturnProjectionUsesReturnSlotForNonIdentifier(t *testing.T) {
 	ret, _ := returnPointAndInfo(t, g)
 	slotValue := product.FromType(typ.Number)
 
-	sum := summary.Project(state.FunctionState{
+	sum := Project(state.FunctionState{
 		Points: map[cfg.Point]flow.PointState{
 			ret: {
 				Env: map[flow.ValueKey]product.AbstractValue{
@@ -89,7 +88,7 @@ func TestProject_ReturnProjectionUsesReturnSlotForNonIdentifier(t *testing.T) {
 	}, g)
 
 	if len(sum.Returns) != 1 || !product.Domain.Equal(sum.Returns[0], slotValue) {
-		t.Fatalf("summary return value = %v, want %v", summary.ReturnValues(sum), slotValue)
+		t.Fatalf("summary return value = %v, want %v", ReturnValues(sum), slotValue)
 	}
 }
 
@@ -97,14 +96,14 @@ func TestProject_ReturnProjectionFallsBackToTop(t *testing.T) {
 	g := returnFunctionGraph(t, "return 123")
 	ret, _ := returnPointAndInfo(t, g)
 
-	sum := summary.Project(state.FunctionState{
+	sum := Project(state.FunctionState{
 		Points: map[cfg.Point]flow.PointState{
 			ret: {Env: map[flow.ValueKey]product.AbstractValue{}},
 		},
 	}, g)
 
 	if len(sum.Returns) != 1 || !product.Domain.Equal(sum.Returns[0], product.Domain.Top()) {
-		t.Fatalf("summary return value = %v, want Top", summary.ReturnValues(sum))
+		t.Fatalf("summary return value = %v, want Top", ReturnValues(sum))
 	}
 }
 
@@ -118,7 +117,7 @@ func TestProject_ReturnProjectionTreatsFiniteReturnedCallTargetAsPendingBottom(t
 	refs := flow.WithFunctionRef(nil, call.CalleePath.Key(), flow.FunctionRefSetOf(flow.FunctionRef{GraphID: 77}))
 	numberValue := product.FromType(typ.Number)
 
-	sum := summary.Project(state.FunctionState{
+	sum := Project(state.FunctionState{
 		Points: map[cfg.Point]flow.PointState{
 			numberRet: {Env: map[flow.ValueKey]product.AbstractValue{flow.ReturnSlotValueKey(0): numberValue}},
 			callRet:   {FunctionRefs: refs},
@@ -126,7 +125,7 @@ func TestProject_ReturnProjectionTreatsFiniteReturnedCallTargetAsPendingBottom(t
 	}, g)
 
 	if len(sum.Returns) != 1 || !product.Domain.Equal(sum.Returns[0], numberValue) {
-		t.Fatalf("finite returned call target = %v, want number", summary.ReturnValues(sum))
+		t.Fatalf("finite returned call target = %v, want number", ReturnValues(sum))
 	}
 }
 
@@ -139,19 +138,19 @@ func TestProject_ReturnProjectionUsesStaticTargetClassifierForPendingCall(t *tes
 	}
 	numberValue := product.FromType(typ.Number)
 
-	sum := summary.ProjectWithOptions(state.FunctionState{
+	sum := projectWithOptions(state.FunctionState{
 		Points: map[cfg.Point]flow.PointState{
 			numberRet: {Env: map[flow.ValueKey]product.AbstractValue{flow.ReturnSlotValueKey(0): numberValue}},
 			callRet:   {},
 		},
-	}, g, summary.ProjectOptions{
+	}, g, projectOptions{
 		ReturnCallHasFiniteTarget: func(got *cfg.CallInfo) bool {
 			return got == call
 		},
 	})
 
 	if len(sum.Returns) != 1 || !product.Domain.Equal(sum.Returns[0], numberValue) {
-		t.Fatalf("static returned call target = %v, want number", summary.ReturnValues(sum))
+		t.Fatalf("static returned call target = %v, want number", ReturnValues(sum))
 	}
 }
 
@@ -164,13 +163,13 @@ func TestProject_ReturnProjectionDoesNotMutateInputEnv(t *testing.T) {
 	}
 	before := cloneValueEnv(start)
 
-	sum := summary.Project(state.FunctionState{
+	sum := Project(state.FunctionState{
 		Points: map[cfg.Point]flow.PointState{
 			ret: {Env: start},
 		},
 	}, g)
 	if len(sum.Returns) != 1 || !product.Domain.Equal(sum.Returns[0], slotValue) {
-		t.Fatalf("summary return value = %v, want %v", summary.ReturnValues(sum), slotValue)
+		t.Fatalf("summary return value = %v, want %v", ReturnValues(sum), slotValue)
 	}
 	if !valueEnvEqual(before, start) {
 		t.Fatalf("Project mutated return-point Env: before=%v after=%v", before, start)
@@ -182,7 +181,7 @@ func TestProject_ForwardsTailCallReturnLengthRelations(t *testing.T) {
 	ret, _ := returnPointAndInfo(t, g)
 	rel := flow.ReturnLengthParamRelation{ReturnIndex: 0, ParamIndex: 1}
 
-	sum := summary.Project(state.FunctionState{
+	sum := Project(state.FunctionState{
 		Points: map[cfg.Point]flow.PointState{
 			ret: {
 				ReturnRel: flow.ReturnRelationsOfLengthParams([]flow.ReturnLengthParamRelation{rel}),
@@ -200,7 +199,7 @@ func TestProject_DoesNotForwardStaleReturnRelationsFromNonCallReturn(t *testing.
 	ret, _ := returnPointAndInfo(t, g)
 	rel := flow.ReturnLengthParamRelation{ReturnIndex: 0, ParamIndex: 1}
 
-	sum := summary.Project(state.FunctionState{
+	sum := Project(state.FunctionState{
 		Points: map[cfg.Point]flow.PointState{
 			ret: {
 				ReturnRel: flow.ReturnRelationsOfLengthParams([]flow.ReturnLengthParamRelation{rel}),
@@ -222,7 +221,7 @@ func TestProject_ExportsPointLengthParamRelationForReturnedTarget(t *testing.T) 
 	targetKey := pathkey.NewResolver(g).KeyAt(ret, constraint.Path{Symbol: info.Symbols[0]})
 	rel := flow.ReturnLengthParamRelation{ReturnIndex: 0, ParamIndex: 1}
 
-	sum := summary.Project(state.FunctionState{
+	sum := Project(state.FunctionState{
 		Points: map[cfg.Point]flow.PointState{
 			ret: {
 				Rel: flow.PointRelations{}.WithTargetLengthParam(info.Symbols[0], targetKey, rel.ParamIndex),
@@ -257,7 +256,7 @@ func TestProject_ExportsReturnKeyParamRelationForReturnedKey(t *testing.T) {
 		}},
 	}
 
-	sum := summary.Project(state.FunctionState{
+	sum := Project(state.FunctionState{
 		Points: map[cfg.Point]flow.PointState{
 			ret: {
 				KeyPresence: flow.KeyPresenceFacts{}.WithAddresses(
@@ -282,7 +281,7 @@ func TestProject_RejectsStalePointLengthParamRelationKey(t *testing.T) {
 	staleKey := pathkey.NewResolver(g).KeyAtVersion(info.Symbols[0], 999, nil)
 	rel := flow.ReturnLengthParamRelation{ReturnIndex: 0, ParamIndex: 1}
 
-	sum := summary.Project(state.FunctionState{
+	sum := Project(state.FunctionState{
 		Points: map[cfg.Point]flow.PointState{
 			ret: {
 				Rel: flow.PointRelations{}.WithTargetLengthParam(info.Symbols[0], staleKey, rel.ParamIndex),
@@ -321,7 +320,7 @@ func TestProject_ReturnBoundaryFactsIgnoreNilErrorReturns(t *testing.T) {
 	nodeOrderPath := graphPath.Field("node_order")
 	nodesPath := graphPath.Field("nodes")
 
-	sum := summary.Project(state.FunctionState{
+	sum := Project(state.FunctionState{
 		Points: map[cfg.Point]flow.PointState{
 			failureRet: {},
 			successRet: {
