@@ -129,9 +129,9 @@ type closureReferenceProjectionProvider interface {
 // argument demands, post-call narrows, no-return control, and cast recognition.
 // The driver implements it by resolving the callee/receiver type (from the
 // module's function signatures, predeclared globals, captured values, or the live
-// Env via the supplied resolver) and running the call pipeline. Return values are
-// exposed separately through ProductCallTyper so transfer has one product-carrier
-// route for call returns.
+// Env via the supplied resolver) and running the call pipeline. Product results
+// are exposed through ProductCallProvider so return values and effects share one
+// carrier.
 //
 // exprType resolves an expression's value type against the live point Env (the
 // transfer's evalExpr): the driver reads it for the callee, the receiver, and any
@@ -191,13 +191,6 @@ type IterVarProjector interface {
 	IterVarProjection(iter *ast.FuncCallExpr, count int, exprType func(ast.Expr) typ.Type) (iteration.VarProjection, bool)
 }
 
-// ProductCallTyper is the product-carrier call-return seam. A CallTyper may
-// implement it when it can preserve axes that are lost by projecting through
-// typ.Type, such as the gradual-top evidence axis.
-type ProductCallTyper interface {
-	CallReturnValues(call *ast.FuncCallExpr, ctx ProductCallContext) ([]product.AbstractValue, bool)
-}
-
 type CallArgDemandProvider interface {
 	CallArgDemands(call *ast.FuncCallExpr, ctx ProductCallContext) []callobligation.Obligation
 }
@@ -236,8 +229,21 @@ func EmptyCallEffects() CallEffects {
 	}
 }
 
-type productCallEffectProvider interface {
-	CallEffectsFromValues(call *ast.FuncCallExpr, ctx ProductCallContext) CallEffects
+// ProductCallResult is the product-carrier result of evaluating one concrete
+// call site. Return values and caller-visible effects travel together so transfer
+// does not rebuild selected call outcomes through parallel provider routes.
+type ProductCallResult struct {
+	ReturnValues    []product.AbstractValue
+	HasReturnValues bool
+	Effects         CallEffects
+}
+
+func EmptyProductCallResult() ProductCallResult {
+	return ProductCallResult{Effects: EmptyCallEffects()}
+}
+
+type ProductCallProvider interface {
+	ProductCallFromValues(call *ast.FuncCallExpr, ctx ProductCallContext) ProductCallResult
 }
 
 // CallableValueQuery is the transfer boundary for resolving a function-valued
@@ -265,7 +271,7 @@ type Config struct {
 	// field untyped (the sound carry-forward).
 	FuncTyper FuncTyper
 	// CallTyper exposes call-derived facts. When it also implements
-	// ProductCallTyper, expression calls receive product return values; otherwise a
+	// ProductCallProvider, expression calls receive product results; otherwise a
 	// call result remains untyped (the sound carry-forward).
 	CallTyper CallTyper
 	// TypeChecks are type-check value-narrowing binds precomputed from graph
@@ -309,8 +315,8 @@ type Transfer struct {
 	// function-valued table-literal field types as a callable. Nil leaves such a
 	// field untyped (the sound carry-forward).
 	funcTyper FuncTyper
-	// callTyper exposes call-derived facts. Product return values are consumed only
-	// when this value also implements ProductCallTyper.
+	// callTyper exposes call-derived facts. Product results are consumed only when
+	// this value also implements ProductCallProvider.
 	callTyper CallTyper
 	// paramBySym maps a parameter's symbol ID to its parameter index, so a body
 	// use of a parameter routes demand to the right contract cell.
@@ -2496,17 +2502,15 @@ func (t *Transfer) evalCall(
 	// argument's product value for the call pipeline's generic inference and arity.
 	ctx := t.productCallContext(out, call, demand)
 	t.applyCallArgDemands(out, call, ctx, demand)
-	t.applyCallSideEffects(out, call, ctx, demand)
-	if productTyper, ok := t.callTyper.(ProductCallTyper); ok {
-		returns, ok := productTyper.CallReturnValues(call, ctx)
-		if ok && len(returns) > 0 {
-			out2 := make([]product.AbstractValue, len(returns))
-			copy(out2, returns)
-			return out2, true
-		}
-		if ctx.PendingInput {
-			return nil, false
-		}
+	result := t.productCallResult(call, ctx)
+	t.applyCallResultEffects(out, call, ctx, result.Effects, demand)
+	if result.HasReturnValues && len(result.ReturnValues) > 0 {
+		out2 := make([]product.AbstractValue, len(result.ReturnValues))
+		copy(out2, result.ReturnValues)
+		return out2, true
+	}
+	if ctx.PendingInput {
+		return nil, false
 	}
 	return nil, false
 }
@@ -2650,21 +2654,6 @@ func (t *Transfer) exprValueResolver(
 	return func(e ast.Expr) (product.AbstractValue, bool) {
 		return t.resolveExprValue(out, e, demand)
 	}
-}
-
-func (t *Transfer) applyCallBoundaryFacts(
-	out *flow.PointState,
-	call *ast.FuncCallExpr,
-	ctx ProductCallContext,
-) bool {
-	if out == nil || call == nil {
-		return false
-	}
-	facts, plans := t.boundaryFactsAppendPlans(out, call, t.callEffects(call, ctx).BoundaryFacts)
-	if !facts.HasProof() {
-		return false
-	}
-	return t.applyBoundaryFactsWithAppendPlans(out, call, facts, nil, plans)
 }
 
 func (t *Transfer) boundaryFactsAppendPlans(

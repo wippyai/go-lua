@@ -389,15 +389,23 @@ type productReturnTestTyper struct {
 	callee  product.AbstractValue
 }
 
-func (p *productReturnTestTyper) CallReturnValues(
+func productReturnResultForTest(returns ...product.AbstractValue) ProductCallResult {
+	return ProductCallResult{
+		ReturnValues:    append([]product.AbstractValue(nil), returns...),
+		HasReturnValues: true,
+		Effects:         EmptyCallEffects(),
+	}
+}
+
+func (p *productReturnTestTyper) ProductCallFromValues(
 	call *ast.FuncCallExpr,
 	ctx ProductCallContext,
-) ([]product.AbstractValue, bool) {
+) ProductCallResult {
 	p.args = append([]product.AbstractValue(nil), ctx.ArgValues...)
 	if call != nil && ctx.ExprValue != nil {
 		p.callee, _ = ctx.ExprValue(call.Func)
 	}
-	return append([]product.AbstractValue(nil), p.returns...), true
+	return productReturnResultForTest(p.returns...)
 }
 
 type deadCallDemandTyper struct {
@@ -420,8 +428,8 @@ type strictAnyReturnTyper struct {
 	captureEffectTyper
 }
 
-func (strictAnyReturnTyper) CallReturnValues(*ast.FuncCallExpr, ProductCallContext) ([]product.AbstractValue, bool) {
-	return []product.AbstractValue{product.FromType(typ.Any)}, true
+func (strictAnyReturnTyper) ProductCallFromValues(*ast.FuncCallExpr, ProductCallContext) ProductCallResult {
+	return productReturnResultForTest(product.FromType(typ.Any))
 }
 
 type pendingBlocksTypeFallbackTyper struct {
@@ -429,17 +437,17 @@ type pendingBlocksTypeFallbackTyper struct {
 	productCalls int
 }
 
-func (p *pendingBlocksTypeFallbackTyper) CallReturnValues(*ast.FuncCallExpr, ProductCallContext) ([]product.AbstractValue, bool) {
+func (p *pendingBlocksTypeFallbackTyper) ProductCallFromValues(*ast.FuncCallExpr, ProductCallContext) ProductCallResult {
 	p.productCalls++
-	return nil, false
+	return EmptyProductCallResult()
 }
 
 var _ CallTyper = (*productReturnTestTyper)(nil)
-var _ ProductCallTyper = (*productReturnTestTyper)(nil)
+var _ ProductCallProvider = (*productReturnTestTyper)(nil)
 var _ CallTyper = strictAnyReturnTyper{}
-var _ ProductCallTyper = strictAnyReturnTyper{}
+var _ ProductCallProvider = strictAnyReturnTyper{}
 var _ CallTyper = (*pendingBlocksTypeFallbackTyper)(nil)
-var _ ProductCallTyper = (*pendingBlocksTypeFallbackTyper)(nil)
+var _ ProductCallProvider = (*pendingBlocksTypeFallbackTyper)(nil)
 
 type constTypeCastTyper struct {
 	captureEffectTyper
@@ -457,7 +465,7 @@ type nonReentrantProductTyper struct {
 	sawCallProjectionMiss bool
 }
 
-func (p *nonReentrantProductTyper) CallReturnValues(call *ast.FuncCallExpr, ctx ProductCallContext) ([]product.AbstractValue, bool) {
+func (p *nonReentrantProductTyper) ProductCallFromValues(call *ast.FuncCallExpr, ctx ProductCallContext) ProductCallResult {
 	p.calls++
 	if p.calls > 1 {
 		p.t.Fatalf("provider ExprValue re-entered evalCall for the same call")
@@ -469,7 +477,7 @@ func (p *nonReentrantProductTyper) CallReturnValues(call *ast.FuncCallExpr, ctx 
 		p.t.Fatalf("ExprValue(call) = %v/%v, want projection miss", av, ok)
 	}
 	p.sawCallProjectionMiss = true
-	return []product.AbstractValue{product.FromType(typ.String)}, true
+	return productReturnResultForTest(product.FromType(typ.String))
 }
 
-var _ ProductCallTyper = (*nonReentrantProductTyper)(nil)
+var _ ProductCallProvider = (*nonReentrantProductTyper)(nil)

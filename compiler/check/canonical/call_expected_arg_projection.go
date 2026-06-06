@@ -96,9 +96,9 @@ func (p expectedCallArgProjection) expectedCalleeType(expr ast.Expr) typ.Type {
 		}
 	}
 	if nested, ok := expr.(*ast.FuncCallExpr); ok && nested != nil {
-		returns, ok := p.typer.CallReturnValues(nested, p.ctx.NestedCall(nested))
-		if ok && len(returns) > 0 {
-			if t := product.ProjectValueOrUnknown(returns[0]); t != nil && !typ.IsAbsentOrUnknown(t) {
+		result := p.typer.ProductCallFromValues(nested, p.ctx.NestedCall(nested))
+		if result.HasReturnValues && len(result.ReturnValues) > 0 {
+			if t := product.ProjectValueOrUnknown(result.ReturnValues[0]); t != nil && !typ.IsAbsentOrUnknown(t) {
 				return t
 			}
 		}

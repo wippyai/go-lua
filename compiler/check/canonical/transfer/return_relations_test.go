@@ -226,12 +226,16 @@ func (t *postconditionAssignTestTyper) ReturnRelationsFromValues(
 	return t.rels
 }
 
-func (t *postconditionAssignTestTyper) CallReturnValues(
+func (t *postconditionAssignTestTyper) ProductCallFromValues(
 	_ *ast.FuncCallExpr,
 	_ ProductCallContext,
-) ([]product.AbstractValue, bool) {
-	return t.returns, true
+) ProductCallResult {
+	return ProductCallResult{
+		ReturnValues:    t.returns,
+		HasReturnValues: true,
+		Effects:         EmptyCallEffects(),
+	}
 }
 
 var _ productReturnRelationProvider = (*postconditionAssignTestTyper)(nil)
-var _ ProductCallTyper = (*postconditionAssignTestTyper)(nil)
+var _ ProductCallProvider = (*postconditionAssignTestTyper)(nil)

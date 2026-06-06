@@ -18,7 +18,17 @@ func (t *Transfer) applyCallSideEffects(
 	ctx ProductCallContext,
 	demand func(int, paramevidence.ParamContract),
 ) {
-	effects := t.callEffects(call, ctx)
+	result := t.productCallResult(call, ctx)
+	t.applyCallResultEffects(out, call, ctx, result.Effects, demand)
+}
+
+func (t *Transfer) applyCallResultEffects(
+	out *flow.PointState,
+	call *ast.FuncCallExpr,
+	ctx ProductCallContext,
+	effects CallEffects,
+	demand func(int, paramevidence.ParamContract),
+) {
 	boundaryFacts, boundaryAppendPlans := t.boundaryFactsAppendPlans(out, call, effects.BoundaryFacts)
 	t.applyCallCellEffects(out, call, effects.CellEffects)
 	t.applyCallReceiverEffects(out, call, effects.ReceiverEffects, len(ctx.RuntimeArgValues), demand)
@@ -28,15 +38,15 @@ func (t *Transfer) applyCallSideEffects(
 	}
 }
 
-func (t *Transfer) callEffects(call *ast.FuncCallExpr, ctx ProductCallContext) CallEffects {
+func (t *Transfer) productCallResult(call *ast.FuncCallExpr, ctx ProductCallContext) ProductCallResult {
 	if call == nil || t.callTyper == nil {
-		return EmptyCallEffects()
+		return EmptyProductCallResult()
 	}
-	provider, ok := t.callTyper.(productCallEffectProvider)
+	provider, ok := t.callTyper.(ProductCallProvider)
 	if !ok || provider == nil {
-		return EmptyCallEffects()
+		return EmptyProductCallResult()
 	}
-	return provider.CallEffectsFromValues(call, ctx)
+	return provider.ProductCallFromValues(call, ctx)
 }
 
 func (t *Transfer) applyCallCellEffects(

@@ -395,11 +395,11 @@ type captureEffectTyper struct {
 
 type numberReturnTyper struct{}
 
-func (numberReturnTyper) CallReturnValues(*ast.FuncCallExpr, ProductCallContext) ([]product.AbstractValue, bool) {
-	return []product.AbstractValue{product.FromType(typ.Number)}, true
+func (numberReturnTyper) ProductCallFromValues(*ast.FuncCallExpr, ProductCallContext) ProductCallResult {
+	return productReturnResultForTest(product.FromType(typ.Number))
 }
 
-var _ ProductCallTyper = numberReturnTyper{}
+var _ ProductCallProvider = numberReturnTyper{}
 
 func (c captureEffectTyper) IterVars(*ast.FuncCallExpr, int, func(ast.Expr) typ.Type) ([]typ.Type, bool) {
 	return nil, false
@@ -433,15 +433,15 @@ func (c captureEffectTyper) ReturnRelationsFromValues(*ast.FuncCallExpr, Product
 	return flow.ReturnRelationsDomain.Top()
 }
 
-func (c captureEffectTyper) CallEffectsFromValues(*ast.FuncCallExpr, ProductCallContext) CallEffects {
-	return CallEffects{
+func (c captureEffectTyper) ProductCallFromValues(*ast.FuncCallExpr, ProductCallContext) ProductCallResult {
+	return ProductCallResult{Effects: CallEffects{
 		CellEffects:     c.effects,
 		ReceiverEffects: flow.ReceiverEffectsDomain.Bottom(),
 		BoundaryFacts:   flow.BoundaryFactsDomain.Top(),
-	}
+	}}
 }
 
-var _ productCallEffectProvider = captureEffectTyper{}
+var _ ProductCallProvider = captureEffectTyper{}
 
 type productCaptureEffectTyper struct {
 	captureEffectTyper
@@ -449,17 +449,18 @@ type productCaptureEffectTyper struct {
 	args []product.AbstractValue
 }
 
-func (p *productCaptureEffectTyper) CallEffectsFromValues(
+func (p *productCaptureEffectTyper) ProductCallFromValues(
 	_ *ast.FuncCallExpr,
 	ctx ProductCallContext,
-) CallEffects {
+) ProductCallResult {
 	p.args = append([]product.AbstractValue(nil), ctx.ArgValues...)
-	return CallEffects{
+	result := productReturnResultForTest(product.FromType(typ.Number))
+	result.Effects = CallEffects{
 		CellEffects:     p.effects,
 		ReceiverEffects: flow.ReceiverEffectsDomain.Bottom(),
 		BoundaryFacts:   flow.BoundaryFactsDomain.Top(),
 	}
+	return result
 }
 
-var _ productCallEffectProvider = (*productCaptureEffectTyper)(nil)
-var _ ProductCallTyper = (*productCaptureEffectTyper)(nil)
+var _ ProductCallProvider = (*productCaptureEffectTyper)(nil)

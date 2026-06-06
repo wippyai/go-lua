@@ -876,8 +876,8 @@ type returnFunctionRefsTestTyper struct {
 	ref flow.FunctionRef
 }
 
-func (t returnFunctionRefsTestTyper) CallReturnValues(*ast.FuncCallExpr, ProductCallContext) ([]product.AbstractValue, bool) {
-	return []product.AbstractValue{product.FromType(typ.NewRecord().Field("with_options", typ.Func().Build()).Build())}, true
+func (t returnFunctionRefsTestTyper) ProductCallFromValues(*ast.FuncCallExpr, ProductCallContext) ProductCallResult {
+	return productReturnResultForTest(product.FromType(typ.NewRecord().Field("with_options", typ.Func().Build()).Build()))
 }
 
 func (t returnFunctionRefsTestTyper) CallReturnRefsFromValues(*ast.FuncCallExpr, ProductCallContext) CallReturnRefs {
@@ -888,7 +888,7 @@ func (t returnFunctionRefsTestTyper) CallReturnRefsFromValues(*ast.FuncCallExpr,
 	}
 }
 
-var _ ProductCallTyper = returnFunctionRefsTestTyper{}
+var _ ProductCallProvider = returnFunctionRefsTestTyper{}
 var _ productCallReturnRefsProvider = returnFunctionRefsTestTyper{}
 
 type productReturnFunctionRefsTestTyper struct {
@@ -916,8 +916,8 @@ type returnClosureRefsTestTyper struct {
 	closure flow.ClosureRef
 }
 
-func (t returnClosureRefsTestTyper) CallReturnValues(*ast.FuncCallExpr, ProductCallContext) ([]product.AbstractValue, bool) {
-	return []product.AbstractValue{product.FromType(typ.NewRecord().Field("with_options", typ.Func().Build()).Build())}, true
+func (t returnClosureRefsTestTyper) ProductCallFromValues(*ast.FuncCallExpr, ProductCallContext) ProductCallResult {
+	return productReturnResultForTest(product.FromType(typ.NewRecord().Field("with_options", typ.Func().Build()).Build()))
 }
 
 func (t returnClosureRefsTestTyper) CallReturnRefsFromValues(*ast.FuncCallExpr, ProductCallContext) CallReturnRefs {
@@ -928,5 +928,5 @@ func (t returnClosureRefsTestTyper) CallReturnRefsFromValues(*ast.FuncCallExpr, 
 	}
 }
 
-var _ ProductCallTyper = returnClosureRefsTestTyper{}
+var _ ProductCallProvider = returnClosureRefsTestTyper{}
 var _ productCallReturnRefsProvider = returnClosureRefsTestTyper{}

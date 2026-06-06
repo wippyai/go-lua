@@ -92,6 +92,15 @@ func (p productCallProjection) callReturnValues() ([]product.AbstractValue, bool
 	}.Values()
 }
 
+func (p productCallProjection) result(projector cellEffectProjector, elementUnions []effect.ContainerElementUnion) transfer.ProductCallResult {
+	values, ok := p.callReturnValues()
+	return transfer.ProductCallResult{
+		ReturnValues:    values,
+		HasReturnValues: ok,
+		Effects:         p.effects(projector, elementUnions),
+	}
+}
+
 func (p productCallProjection) returnRefs() transfer.CallReturnRefs {
 	return transfer.CallReturnRefs{
 		FunctionRefs: p.outcome.ReturnFunctionRefs(),

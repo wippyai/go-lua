@@ -289,7 +289,7 @@ func (t *Transfer) callBoundaryFacts(
 	if out == nil || call == nil {
 		return flow.BoundaryFactsDomain.Top()
 	}
-	return t.callEffects(call, t.productCallContext(out, call, demand)).BoundaryFacts
+	return t.productCallResult(call, t.productCallContext(out, call, demand)).Effects.BoundaryFacts
 }
 
 func assignmentTargetForReturn(info *cfg.AssignInfo, callInfo *cfg.CallInfo, retIndex int) (cfg.AssignTarget, bool) {

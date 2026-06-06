@@ -1827,16 +1827,25 @@ func (ct callTyper) summaryForCallEntryContext(entry canonicalcall.EntryContext)
 	return d.summaryReader().SummarizeWithKey(entry.Key())
 }
 
-// CallReturnValues is the product-carrier call-return path. It preserves product
+// ProductCallFromValues is the product-carrier call path. It preserves product
 // axes owned by the canonical fixed point (for example gradual-top evidence and
-// callee summary return values) and falls back to the type-only CallReturns seam
-// only at external boundaries that still expose typ.Type.
-func (ct callTyper) CallReturnValues(call *ast.FuncCallExpr, ctx transfer.ProductCallContext) ([]product.AbstractValue, bool) {
+// callee summary return values), projects caller-visible effects from the same
+// selected outcome, and keeps type-only signature fallback inside this boundary.
+func (ct callTyper) ProductCallFromValues(call *ast.FuncCallExpr, ctx transfer.ProductCallContext) transfer.ProductCallResult {
 	proj, ok := ct.productCallProjection(call, ctx, productCallOutcomeOptions{})
 	if !ok {
-		return nil, false
+		return transfer.EmptyProductCallResult()
 	}
-	return proj.callReturnValues()
+	projector, ok := ct.cellEffectProjector()
+	if !ok {
+		values, hasValues := proj.callReturnValues()
+		return transfer.ProductCallResult{
+			ReturnValues:    values,
+			HasReturnValues: hasValues,
+			Effects:         transfer.EmptyCallEffects(),
+		}
+	}
+	return proj.result(projector, ct.containerElementUnions(call, ctx))
 }
 
 func (ct callTyper) CallReturnRefsFromValues(call *ast.FuncCallExpr, ctx transfer.ProductCallContext) transfer.CallReturnRefs {
@@ -1853,18 +1862,6 @@ func (ct callTyper) ReturnRelationsFromValues(call *ast.FuncCallExpr, ctx transf
 		return flow.ReturnRelationsDomain.Top()
 	}
 	return proj.returnRelations()
-}
-
-func (ct callTyper) CallEffectsFromValues(call *ast.FuncCallExpr, ctx transfer.ProductCallContext) transfer.CallEffects {
-	projector, ok := ct.cellEffectProjector()
-	if !ok || call == nil {
-		return transfer.EmptyCallEffects()
-	}
-	proj, ok := ct.summaryOnlyProductCallProjection(call, ctx)
-	if !ok {
-		return transfer.EmptyCallEffects()
-	}
-	return proj.effects(projector, ct.containerElementUnions(call, ctx))
 }
 
 // IterVars types a generic-for loop's iteration variables from its iterator
