@@ -214,6 +214,15 @@ func ClosureRefAtAddress(refs ClosureRefs, addr StableAddress) (ClosureRefSet, b
 	return ClosureRefSet{}, false
 }
 
+// ClosureRefAtPath returns the closure set for a structured path.
+func ClosureRefAtPath(refs ClosureRefs, path constraint.Path) (ClosureRefSet, bool) {
+	addr, ok := StableAddressOfPath(path)
+	if !ok {
+		return ClosureRefSet{}, false
+	}
+	return ClosureRefAtAddress(refs, addr)
+}
+
 // WithClosureRefAddress returns refs with addr strongly updated to set. Updating
 // to Bottom removes the key.
 func WithClosureRefAddress(refs ClosureRefs, addr StableAddress, set ClosureRefSet) ClosureRefs {

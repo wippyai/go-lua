@@ -199,6 +199,9 @@ func TestRebaseClosureRefsPathMovesSubtree(t *testing.T) {
 	if !singleton || !closureRefEqual(got, closure) {
 		t.Fatalf("rebased closure = %s, want %s", set.Format(), ClosureRefSetOf(closure).Format())
 	}
+	if pathSet, ok := ClosureRefAtPath(rebased, toMethod); !ok || !ClosureRefSetDomain.Equal(pathSet, set) {
+		t.Fatalf("ClosureRefAtPath = %s/%v, want %s/true", pathSet.Format(), ok, set.Format())
+	}
 }
 
 func TestApplyClosureRefCellEffectsUpdatesStoredEnvironment(t *testing.T) {

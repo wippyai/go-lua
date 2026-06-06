@@ -1878,11 +1878,11 @@ func (t *Transfer) closureRefSetOfExpr(out *flow.PointState, expr ast.Expr) (flo
 			entryClosures,
 		)), true
 	}
-	addr, ok := t.functionExprAddress(expr)
+	path, ok := t.staticPathOfExpr(expr)
 	if !ok {
 		return flow.ClosureRefSet{}, false
 	}
-	return flow.ClosureRefAtAddress(out.ClosureRefs, addr)
+	return flow.ClosureRefAtPath(out.ClosureRefs, path)
 }
 
 func (t *Transfer) closureCapturedSymbols(ref flow.FunctionRef) []cfg.SymbolID {
@@ -1980,11 +1980,11 @@ func (t *Transfer) functionRefSetOfExpr(out *flow.PointState, expr ast.Expr) (fl
 		}
 		return flow.FunctionRefSet{}, false
 	}
-	addr, ok := t.functionExprAddress(expr)
+	path, ok := t.staticPathOfExpr(expr)
 	if !ok {
 		return flow.FunctionRefSet{}, false
 	}
-	return flow.FunctionRefAtAddress(out.FunctionRefs, addr)
+	return flow.FunctionRefAtPath(out.FunctionRefs, path)
 }
 
 type nestedFunctionRefSet struct {
@@ -2038,35 +2038,15 @@ func appendFunctionRefPath(base constraint.Path, segments []constraint.Segment) 
 	return next
 }
 
-func (t *Transfer) functionExprAddress(expr ast.Expr) (flow.StableAddress, bool) {
-	place, ok := t.staticPlaceOfExpr(expr)
-	if !ok {
-		return flow.StableAddress{}, false
-	}
-	path, ok := place.StaticPath()
-	if !ok {
-		return flow.StableAddress{}, false
-	}
-	return flow.StableAddressOfPath(path)
-}
-
-func (t *Transfer) staticMemberExprAddress(expr ast.Expr) (flow.StableAddress, bool) {
-	place, ok := t.staticPlaceOfExpr(expr)
-	if !ok {
-		return flow.StableAddress{}, false
-	}
-	return symbolStableAddress(place)
-}
-
-func (t *Transfer) staticMemberExprAddressAt(out *flow.PointState, p cfg.Point, expr ast.Expr) (flow.StableAddress, bool) {
+func (t *Transfer) staticMemberExprPathAt(out *flow.PointState, p cfg.Point, expr ast.Expr) (constraint.Path, bool) {
 	if out == nil {
-		return t.staticMemberExprAddress(expr)
+		return t.staticPathOfExpr(expr)
 	}
 	place, ok := t.placeOfExprAt(out, p, expr, nil)
 	if !ok {
-		return t.staticMemberExprAddress(expr)
+		return t.staticPathOfExpr(expr)
 	}
-	return symbolStableAddress(place)
+	return place.StaticPath()
 }
 
 func fieldSegments(names []string) []constraint.Segment {
@@ -3016,8 +2996,8 @@ func (t *Transfer) projectIdentValue(out *flow.PointState, e *ast.IdentExpr) (pr
 
 func (t *Transfer) projectAttrGetValue(out *flow.PointState, e *ast.AttrGetExpr) (product.AbstractValue, bool) {
 	if out != nil {
-		if addr, hasPath := t.staticMemberExprAddress(e); hasPath {
-			if fact, ok := out.StaticMembers.ValueAtAddress(addr); ok {
+		if path, hasPath := t.staticPathOfExpr(e); hasPath {
+			if fact, ok := flow.PointFactsOf(*out).StaticMemberValue(path); ok {
 				return fact, true
 			}
 		}
@@ -3032,8 +3012,8 @@ func (t *Transfer) projectAttrGetValue(out *flow.PointState, e *ast.AttrGetExpr)
 	if member, isStatic := staticMemberKey(e); isStatic {
 		fv, ok := product.RuntimeMemberOf(base, member)
 		if !ok || fv.IsZero() {
-			if addr, hasPath := t.functionExprAddress(e); hasPath {
-				if ft, ok := t.functionValueForAddress(out, addr); ok {
+			if path, hasPath := t.staticPathOfExpr(e); hasPath {
+				if ft, ok := t.functionValueForPath(out, path); ok {
 					return product.RefineCallableRead(fv, ft), true
 				}
 			}
@@ -3042,8 +3022,8 @@ func (t *Transfer) projectAttrGetValue(out *flow.PointState, e *ast.AttrGetExpr)
 			}
 			return product.AbstractValue{}, false
 		}
-		if addr, hasPath := t.functionExprAddress(e); hasPath {
-			if ft, ok := t.functionValueForAddress(out, addr); ok {
+		if path, hasPath := t.staticPathOfExpr(e); hasPath {
+			if ft, ok := t.functionValueForPath(out, path); ok {
 				return product.RefineCallableRead(fv, ft), true
 			}
 		}
@@ -3943,9 +3923,11 @@ func (t *Transfer) evalAttrGet(
 	e *ast.AttrGetExpr,
 	demand func(int, paramevidence.ParamContract),
 ) (product.AbstractValue, bool) {
-	if addr, hasPath := t.staticMemberExprAddress(e); hasPath {
-		if fact, ok := out.StaticMembers.ValueAtAddress(addr); ok {
-			return fact, true
+	if out != nil {
+		if path, hasPath := t.staticPathOfExpr(e); hasPath {
+			if fact, ok := flow.PointFactsOf(*out).StaticMemberValue(path); ok {
+				return fact, true
+			}
 		}
 	}
 	base, ok := t.evalExpr(out, e.Object, demand)
@@ -3955,15 +3937,15 @@ func (t *Transfer) evalAttrGet(
 	if member, isStatic := staticMemberKey(e); isStatic {
 		fv, ok := product.RuntimeMemberOf(base, member)
 		if !ok || fv.IsZero() {
-			if addr, hasPath := t.functionExprAddress(e); hasPath {
-				if ft, ok := t.functionValueForAddress(out, addr); ok {
+			if path, hasPath := t.staticPathOfExpr(e); hasPath {
+				if ft, ok := t.functionValueForPath(out, path); ok {
 					return product.RefineCallableRead(fv, ft), true
 				}
 			}
 			return product.AbstractValue{}, false
 		}
-		if addr, hasPath := t.functionExprAddress(e); hasPath {
-			if ft, ok := t.functionValueForAddress(out, addr); ok {
+		if path, hasPath := t.staticPathOfExpr(e); hasPath {
+			if ft, ok := t.functionValueForPath(out, path); ok {
 				return product.RefineCallableRead(fv, ft), true
 			}
 		}
@@ -3989,9 +3971,11 @@ func (t *Transfer) evalAttrGetAt(
 	e *ast.AttrGetExpr,
 	demand func(int, paramevidence.ParamContract),
 ) (product.AbstractValue, bool) {
-	if addr, hasPath := t.staticMemberExprAddressAt(out, p, e); hasPath {
-		if fact, ok := out.StaticMembers.ValueAtAddress(addr); ok {
-			return fact, true
+	if out != nil {
+		if path, hasPath := t.staticMemberExprPathAt(out, p, e); hasPath {
+			if fact, ok := flow.PointFactsOf(*out).StaticMemberValue(path); ok {
+				return fact, true
+			}
 		}
 	}
 	base, ok := t.evalExprAt(out, p, e.Object, demand)
@@ -4001,15 +3985,15 @@ func (t *Transfer) evalAttrGetAt(
 	if member, isStatic := staticMemberKeyWithConst(e, t.constResolverAt(p)); isStatic {
 		fv, ok := product.RuntimeMemberOf(base, member)
 		if !ok || fv.IsZero() {
-			if addr, hasPath := t.functionExprAddress(e); hasPath {
-				if ft, ok := t.functionValueForAddress(out, addr); ok {
+			if path, hasPath := t.staticPathOfExpr(e); hasPath {
+				if ft, ok := t.functionValueForPath(out, path); ok {
 					return product.RefineCallableRead(fv, ft), true
 				}
 			}
 			return product.AbstractValue{}, false
 		}
-		if addr, hasPath := t.functionExprAddress(e); hasPath {
-			if ft, ok := t.functionValueForAddress(out, addr); ok {
+		if path, hasPath := t.staticPathOfExpr(e); hasPath {
+			if ft, ok := t.functionValueForPath(out, path); ok {
 				return product.RefineCallableRead(fv, ft), true
 			}
 		}

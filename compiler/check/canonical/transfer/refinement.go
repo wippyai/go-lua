@@ -114,8 +114,8 @@ func (t *Transfer) applyRefinementEffect(out *flow.PointState, effect Refinement
 			return true
 		}
 		t.writeRefinedRoot(out, effect.Place.Root, refinedValue)
-		if addr, ok := symbolStableAddress(effect.Place); ok {
-			flow.SetStaticMemberFact(out, addr, product.FromType(effect.Target))
+		if path.Symbol != 0 {
+			flow.SetStaticMemberPath(out, path, product.FromType(effect.Target))
 		}
 		return true
 	case RefinementLengthLowerBound:
