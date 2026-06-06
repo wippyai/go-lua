@@ -1,6 +1,9 @@
 package flow
 
-import "github.com/wippyai/go-lua/types/cfg"
+import (
+	"github.com/wippyai/go-lua/types/cfg"
+	"github.com/wippyai/go-lua/types/constraint"
+)
 
 // ReferenceContext is the callee-entry view of caller-owned reference state:
 // captured cell values plus function and closure identity paths. These axes are
@@ -29,6 +32,11 @@ func ReferenceContextOf(cells CaptureCells, functionRefs FunctionRefs, closureRe
 		functionRefs: FunctionRefsDomain.Join(functionRefs, FunctionRefsDomain.Bottom()),
 		closureRefs:  ClosureRefsDomain.Join(closureRefs, ClosureRefsDomain.Bottom()),
 	}
+}
+
+// ReferenceContextBottom returns the empty finite reference context.
+func ReferenceContextBottom() ReferenceContext {
+	return ReferenceContextOf(CaptureCellsDomain.Bottom(), FunctionRefsDomain.Bottom(), ClosureRefsDomain.Bottom())
 }
 
 // ReferenceContextKeyOf constructs the comparable key for a reference context.
@@ -93,6 +101,44 @@ func (c ReferenceContext) Join(other ReferenceContext) ReferenceContext {
 		FunctionRefsDomain.Join(c.functionRefs, other.functionRefs),
 		ClosureRefsDomain.Join(c.closureRefs, other.closureRefs),
 	)
+}
+
+// RebaseCallablePaths moves callable identity facts under source to target.
+// Captured cells are lexical storage, not callable identity paths, so this
+// operation intentionally returns an empty cell axis.
+func (c ReferenceContext) RebaseCallablePaths(source, target constraint.Path) ReferenceContext {
+	if source.IsEmpty() || target.IsEmpty() {
+		return ReferenceContextBottom()
+	}
+	return ReferenceContextOf(
+		CaptureCellsDomain.Bottom(),
+		RebaseFunctionRefsPath(c.functionRefs, source, target),
+		RebaseClosureRefsPath(c.closureRefs, source, target),
+	)
+}
+
+// JoinFunctionRefAt additively publishes function identity at path.
+func (c ReferenceContext) JoinFunctionRefAt(path constraint.PathKey, set FunctionRefSet) ReferenceContext {
+	if set.IsBottom() {
+		return c
+	}
+	refs := c.functionRefs
+	if prev, ok := FunctionRefAt(refs, path); ok {
+		set = FunctionRefSetDomain.Join(prev, set)
+	}
+	return ReferenceContextOf(c.cells, WithFunctionRef(refs, path, set), c.closureRefs)
+}
+
+// JoinClosureRefAt additively publishes closure identity at path.
+func (c ReferenceContext) JoinClosureRefAt(path constraint.PathKey, set ClosureRefSet) ReferenceContext {
+	if set.IsBottom() {
+		return c
+	}
+	refs := c.closureRefs
+	if prev, ok := ClosureRefAt(refs, path); ok {
+		set = ClosureRefSetDomain.Join(prev, set)
+	}
+	return ReferenceContextOf(c.cells, c.functionRefs, WithClosureRef(refs, path, set))
 }
 
 // ProjectPaths keeps only paths visible through projection on every reference

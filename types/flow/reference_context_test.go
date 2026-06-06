@@ -119,6 +119,54 @@ func TestReferenceContextJoinAddsEveryAxis(t *testing.T) {
 	}
 }
 
+func TestReferenceContextRebaseCallablePathsMovesIdentityAxes(t *testing.T) {
+	source := constraint.NewPath(cfg.SymbolID(50), "source")
+	target := constraint.NewPath(cfg.SymbolID(51), "target")
+	fn := FunctionRef{GraphID: 50}
+	closure := ClosureRefOf(FunctionRef{GraphID: 51}, CaptureCellsDomain.Bottom(), nil)
+	references := ReferenceContextOf(
+		CaptureCellsOf([]CaptureCell{{Symbol: source.Symbol, Value: product.FromType(typ.String)}}),
+		WithFunctionRefPath(nil, source.Field("nested"), FunctionRefSetOf(fn)),
+		WithClosureRefAddress(nil, testStableAddressPath(t, source.Field("nested")), ClosureRefSetOf(closure)),
+	)
+
+	rebased := references.RebaseCallablePaths(source, target)
+	if len(rebased.CaptureCells().Entries()) != 0 {
+		t.Fatalf("rebased callable refs carried lexical cells: %s", rebased.CaptureCells().Format())
+	}
+	if set, ok := FunctionRefAtPath(rebased.FunctionRefs(), target.Field("nested")); !ok {
+		t.Fatalf("rebased function refs missing: %#v", rebased.FunctionRefs())
+	} else if got, singleton := set.Singleton(); !singleton || got != fn {
+		t.Fatalf("rebased function refs = %s, want %v", set.Format(), fn)
+	}
+	if set, ok := ClosureRefAtPath(rebased.ClosureRefs(), target.Field("nested")); !ok {
+		t.Fatalf("rebased closure refs missing: %#v", rebased.ClosureRefs())
+	} else if got, singleton := set.Singleton(); !singleton || got.Ref != closure.Ref {
+		t.Fatalf("rebased closure refs = %s, want %v", set.Format(), closure.Ref)
+	}
+}
+
+func TestReferenceContextJoinRefAtAddsIdentitySets(t *testing.T) {
+	path := constraint.NewPath(cfg.SymbolID(52), "fn").Key()
+	firstFn := FunctionRef{GraphID: 52}
+	secondFn := FunctionRef{GraphID: 53}
+	firstClosure := ClosureRefOf(FunctionRef{GraphID: 54}, CaptureCellsDomain.Bottom(), nil)
+	secondClosure := ClosureRefOf(FunctionRef{GraphID: 55}, CaptureCellsDomain.Bottom(), nil)
+
+	references := ReferenceContextBottom().
+		JoinFunctionRefAt(path, FunctionRefSetOf(firstFn)).
+		JoinFunctionRefAt(path, FunctionRefSetOf(secondFn)).
+		JoinClosureRefAt(path, ClosureRefSetOf(firstClosure)).
+		JoinClosureRefAt(path, ClosureRefSetOf(secondClosure))
+
+	if set, ok := FunctionRefAt(references.FunctionRefs(), path); !ok || len(set.Refs()) != 2 {
+		t.Fatalf("joined function refs = %s/%v, want two refs", set.Format(), ok)
+	}
+	if set, ok := ClosureRefAt(references.ClosureRefs(), path); !ok || len(set.Refs()) != 2 {
+		t.Fatalf("joined closure refs = %s/%v, want two refs", set.Format(), ok)
+	}
+}
+
 func TestReferenceContextKeyRoundTrip(t *testing.T) {
 	sym := cfg.SymbolID(40)
 	path := constraint.NewPath(sym, "dep").Field("make")

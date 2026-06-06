@@ -62,44 +62,34 @@ type directCallEntryReferenceInput struct {
 // argument layout, source paths, and callee parameter paths, so they are projected
 // together to preserve a single boundary traversal.
 func directCallEntryReferences(in directCallEntryReferenceInput) flow.ReferenceContext {
-	functionRefs := flow.FunctionRefsDomain.Bottom()
-	closureRefs := flow.ClosureRefsDomain.Bottom()
+	out := flow.ReferenceContextBottom()
 	references := in.References
 	ok := forEachEntryReferenceArg(in, func(runtimeIdx int, arg ast.Expr, target constraint.Path) {
 		if in.ArgPath != nil {
 			if source, ok := in.ArgPath(runtimeIdx, arg); ok {
-				functionRefs = flow.FunctionRefsDomain.Join(functionRefs, rebaseEntryFunctionRefs(references.FunctionRefs(), source, target))
-				closureRefs = flow.ClosureRefsDomain.Join(closureRefs, rebaseEntryClosureRefs(references.ClosureRefs(), source, target))
+				out = out.Join(references.RebaseCallablePaths(source, target))
 			}
 		}
 		if in.ArgSources.RefTrees != nil {
 			tree, ok := in.ArgSources.RefTrees(runtimeIdx, arg, in.State)
 			if ok {
-				if treeRefs := tree.FunctionRefs(); !flow.FunctionRefsDomain.Equal(treeRefs, flow.FunctionRefsDomain.Bottom()) {
-					functionRefs = flow.FunctionRefsDomain.Join(functionRefs, rebaseEntryFunctionRefs(treeRefs, constraint.NewPlaceholder(0), target))
-				}
-				if treeClosures := tree.ClosureRefs(); !flow.ClosureRefsDomain.Equal(treeClosures, flow.ClosureRefsDomain.Bottom()) {
-					closureRefs = flow.ClosureRefsDomain.Join(closureRefs, rebaseEntryClosureRefs(treeClosures, constraint.NewPlaceholder(0), target))
-				}
+				out = out.Join(tree.RebaseCallablePaths(constraint.NewPlaceholder(0), target))
 			}
 		}
 		if in.ArgSources.FunctionRefs != nil {
 			if set, ok := in.ArgSources.FunctionRefs(runtimeIdx, arg, in.State); ok && !set.IsBottom() {
-				functionRefs = joinFunctionRefAt(functionRefs, target.Key(), set)
+				out = out.JoinFunctionRefAt(target.Key(), set)
 			}
 		}
 		if in.ArgSources.ClosureRefs != nil {
 			if set, ok := in.ArgSources.ClosureRefs(runtimeIdx, arg, in.State); ok && !set.IsBottom() {
-				closureRefs = joinClosureRefAt(closureRefs, target.Key(), set)
+				out = out.JoinClosureRefAt(target.Key(), set)
 			}
 		}
 	})
 	if !ok {
-		return flow.ReferenceContextOf(flow.CaptureCellsDomain.Bottom(), flow.FunctionRefsDomain.Bottom(), flow.ClosureRefsDomain.Bottom())
+		return flow.ReferenceContextBottom()
 	}
-	functionRefs = flow.FunctionRefsDomain.Join(functionRefs, nil)
-	closureRefs = flow.ClosureRefsDomain.Join(closureRefs, nil)
-	out := flow.ReferenceContextOf(flow.CaptureCellsDomain.Bottom(), functionRefs, closureRefs)
 	if in.LimitReferencePaths {
 		out = out.ProjectPaths(in.ReferenceProjection)
 	}
@@ -126,38 +116,4 @@ func entryReferenceTargetPath(in directCallEntryReferenceInput, slot int) (const
 		return constraint.Path{}, false
 	}
 	return target, true
-}
-
-func rebaseEntryFunctionRefs(refs flow.FunctionRefs, source, target constraint.Path) flow.FunctionRefs {
-	if source.IsEmpty() || target.IsEmpty() {
-		return flow.FunctionRefsDomain.Bottom()
-	}
-	return flow.RebaseFunctionRefsPath(refs, source, target)
-}
-
-func rebaseEntryClosureRefs(refs flow.ClosureRefs, source, target constraint.Path) flow.ClosureRefs {
-	if source.IsEmpty() || target.IsEmpty() {
-		return flow.ClosureRefsDomain.Bottom()
-	}
-	return flow.RebaseClosureRefsPath(refs, source, target)
-}
-
-func joinFunctionRefAt(refs flow.FunctionRefs, path constraint.PathKey, set flow.FunctionRefSet) flow.FunctionRefs {
-	if set.IsBottom() {
-		return refs
-	}
-	if prev, ok := flow.FunctionRefAt(refs, path); ok {
-		set = flow.FunctionRefSetDomain.Join(prev, set)
-	}
-	return flow.WithFunctionRef(refs, path, set)
-}
-
-func joinClosureRefAt(refs flow.ClosureRefs, path constraint.PathKey, set flow.ClosureRefSet) flow.ClosureRefs {
-	if set.IsBottom() {
-		return refs
-	}
-	if prev, ok := flow.ClosureRefAt(refs, path); ok {
-		set = flow.ClosureRefSetDomain.Join(prev, set)
-	}
-	return flow.WithClosureRef(refs, path, set)
 }
