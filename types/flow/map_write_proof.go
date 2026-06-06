@@ -10,9 +10,11 @@ import (
 // table". It owns the cross-reduction from direct key presence into delayed
 // key-array facts.
 type KeyPresenceProof struct {
-	Table StableAddress
-	Key   StableAddress
-	Value product.AbstractValue
+	Table        StableAddress
+	Key          StableAddress
+	ValuePath    StableAddress
+	HasValuePath bool
+	Value        product.AbstractValue
 }
 
 // ApplyKeyPresenceProof applies a key-presence proof to point state. When Value
@@ -28,6 +30,12 @@ func ApplyKeyPresenceProof(out *PointState, proof KeyPresenceProof) bool {
 	}
 	before := out.KeyPresence
 	out.KeyPresence = out.KeyPresence.With(tableKey, keyKey)
+	if proof.HasValuePath {
+		valuePath := proof.ValuePath.Key()
+		if valuePath != "" {
+			out.KeyPresence = out.KeyPresence.WithValue(tableKey, keyKey, valuePath)
+		}
+	}
 	for _, array := range out.KeyPresence.PendingKeyArraysFor(tableKey, keyKey) {
 		out.KeyPresence = out.KeyPresence.WithKeyArray(array, tableKey)
 		if !proof.Value.IsZero() {

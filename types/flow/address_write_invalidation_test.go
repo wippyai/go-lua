@@ -58,3 +58,25 @@ func TestApplyAddressWriteInvalidationKillsAddressSideFacts(t *testing.T) {
 		t.Fatalf("path aliases survived table write: %s", ps.PathAliases.Format())
 	}
 }
+
+func TestApplyKeyPresenceProofPublishesValuePath(t *testing.T) {
+	tableAddr := testStableAddressPath(t, constraint.NewPath(cfg.SymbolID(11), "table"))
+	keyAddr := testStableAddressPath(t, constraint.NewPath(cfg.SymbolID(12), "key"))
+	valueAddr := testStableAddressPath(t, constraint.NewPath(cfg.SymbolID(13), "value"))
+	ps := PointState{}
+
+	if !ApplyKeyPresenceProof(&ps, KeyPresenceProof{
+		Table:        tableAddr,
+		Key:          keyAddr,
+		ValuePath:    valueAddr,
+		HasValuePath: true,
+	}) {
+		t.Fatal("ApplyKeyPresenceProof reported no change")
+	}
+	if !ps.KeyPresence.HasAddresses(tableAddr, keyAddr) {
+		t.Fatalf("key presence missing: %s", ps.KeyPresence.Format())
+	}
+	if !ps.KeyPresence.HasValueAddresses(tableAddr, keyAddr, valueAddr) {
+		t.Fatalf("value-path presence missing: %s", ps.KeyPresence.Format())
+	}
+}
