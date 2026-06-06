@@ -318,15 +318,7 @@ var IndexWriteAdmissionFactsDomain = lattice.Lattice[IndexWriteAdmissionFacts]{
 		if a.bottom || b.bottom {
 			return a.bottom == b.bottom
 		}
-		if len(a.entries) != len(b.entries) {
-			return false
-		}
-		for i := range a.entries {
-			if !indexWriteAdmissionFactEqual(a.entries[i], b.entries[i]) {
-				return false
-			}
-		}
-		return true
+		return indexWriteAdmissionRowIdentity.EqualBy(a.entries, b.entries, indexWriteAdmissionFactEqual)
 	},
 	LessOrEq: func(a, b IndexWriteAdmissionFacts) bool {
 		if a.bottom {
@@ -411,51 +403,36 @@ func indexWriteAdmissionFactsContainAll(
 	have, want []IndexWriteAdmissionFact,
 	pred func(product.AbstractValue, product.AbstractValue) bool,
 ) bool {
-	for _, w := range want {
-		idx, ok := findIndexWriteAdmissionFact(have, w)
-		if !ok {
-			return false
-		}
-		h := have[idx]
-		if !pred(h.Key, w.Key) || !pred(h.Value, w.Value) {
-			return false
-		}
-	}
-	return true
+	return indexWriteAdmissionRowIdentity.ContainsAllBy(have, want, func(have, want IndexWriteAdmissionFact) bool {
+		return indexWriteAdmissionSameIdentity(have, want) &&
+			pred(have.Key, want.Key) &&
+			pred(have.Value, want.Value)
+	})
 }
 
 func intersectIndexWriteAdmissionFacts(
 	a, b IndexWriteAdmissionFacts,
 	op func(product.AbstractValue, product.AbstractValue) product.AbstractValue,
 ) IndexWriteAdmissionFacts {
-	var out []IndexWriteAdmissionFact
-	i, j := 0, 0
-	for i < len(a.entries) && j < len(b.entries) {
-		switch {
-		case indexWriteAdmissionFactLess(a.entries[i], b.entries[j]):
-			i++
-		case indexWriteAdmissionFactLess(b.entries[j], a.entries[i]):
-			j++
-		default:
-			out = append(out, IndexWriteAdmissionFact{
-				Target:    a.entries[i].Target,
-				KeyPath:   a.entries[i].KeyPath,
-				Key:       op(a.entries[i].Key, b.entries[j].Key),
-				ValuePath: a.entries[i].ValuePath,
-				Value:     op(a.entries[i].Value, b.entries[j].Value),
-			})
-			i++
-			j++
-		}
-	}
+	out := indexWriteAdmissionRowIdentity.MergeIntersect(a.entries, b.entries, func(left, right IndexWriteAdmissionFact) (IndexWriteAdmissionFact, bool) {
+		return IndexWriteAdmissionFact{
+			Target:    left.Target,
+			KeyPath:   left.KeyPath,
+			Key:       op(left.Key, right.Key),
+			ValuePath: left.ValuePath,
+			Value:     op(left.Value, right.Value),
+		}, true
+	})
 	return canonicalIndexWriteAdmissionFacts(out, op)
 }
 
 func findIndexWriteAdmissionFact(entries []IndexWriteAdmissionFact, fact IndexWriteAdmissionFact) (int, bool) {
-	i := sort.Search(len(entries), func(i int) bool {
-		return !indexWriteAdmissionFactLess(entries[i], fact)
-	})
-	return i, i < len(entries) && indexWriteAdmissionSameIdentity(entries[i], fact)
+	return indexWriteAdmissionRowIdentity.Find(entries, fact)
+}
+
+var indexWriteAdmissionRowIdentity = orderedRowIdentity[IndexWriteAdmissionFact]{
+	less: indexWriteAdmissionFactLess,
+	same: indexWriteAdmissionSameIdentity,
 }
 
 func productFormat(av product.AbstractValue) string {

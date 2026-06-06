@@ -2,11 +2,15 @@ package flow
 
 import "sort"
 
-// orderedRows* helpers are the small algebra for canonical finite-row carriers:
-// sorted rows, identity lookup, subset, and must-set intersection. Domain files
-// still own row validity and payload merging; this only removes repeated ordered
-// set mechanics from each lattice literal.
-func orderedRowsEqual[T any](a, b []T, equal func(T, T) bool) bool {
+// orderedRowIdentity is the private algebra for finite fact rows whose
+// canonical order is their identity order. Domains still own payload validity
+// and merging; this type owns only ordered lookup/subset/intersection mechanics.
+type orderedRowIdentity[T any] struct {
+	less func(T, T) bool
+	same func(T, T) bool
+}
+
+func (id orderedRowIdentity[T]) EqualBy(a, b []T, equal func(T, T) bool) bool {
 	if len(a) != len(b) {
 		return false
 	}
@@ -18,34 +22,49 @@ func orderedRowsEqual[T any](a, b []T, equal func(T, T) bool) bool {
 	return true
 }
 
-func orderedRowsFind[T any](entries []T, fact T, less func(T, T) bool, same func(T, T) bool) (int, bool) {
-	i := sort.Search(len(entries), func(i int) bool {
-		return !less(entries[i], fact)
-	})
-	return i, i < len(entries) && same(entries[i], fact)
+func (id orderedRowIdentity[T]) Equal(a, b []T) bool {
+	return id.EqualBy(a, b, id.same)
 }
 
-func orderedRowsContainAll[T any](have, want []T, less func(T, T) bool, same func(T, T) bool) bool {
+func (id orderedRowIdentity[T]) Find(entries []T, row T) (int, bool) {
+	i := sort.Search(len(entries), func(i int) bool {
+		return !id.less(entries[i], row)
+	})
+	return i, i < len(entries) && id.same(entries[i], row)
+}
+
+func (id orderedRowIdentity[T]) ContainsAllBy(have, want []T, contains func(T, T) bool) bool {
 	for _, w := range want {
-		if _, ok := orderedRowsFind(have, w, less, same); !ok {
+		idx, ok := id.Find(have, w)
+		if !ok || !contains(have[idx], w) {
 			return false
 		}
 	}
 	return true
 }
 
-func orderedRowsIntersect[T any](a, b []T, less func(T, T) bool, same func(T, T) bool) []T {
+func (id orderedRowIdentity[T]) ContainsAll(have, want []T) bool {
+	return id.ContainsAllBy(have, want, id.same)
+}
+
+func (id orderedRowIdentity[T]) Intersect(a, b []T) []T {
+	return id.MergeIntersect(a, b, func(left, _ T) (T, bool) {
+		return left, true
+	})
+}
+
+func (id orderedRowIdentity[T]) MergeIntersect(a, b []T, merge func(T, T) (T, bool)) []T {
 	var out []T
 	i, j := 0, 0
 	for i < len(a) && j < len(b) {
 		switch {
-		case less(a[i], b[j]):
+		case id.less(a[i], b[j]):
 			i++
-		case less(b[j], a[i]):
+		case id.less(b[j], a[i]):
 			j++
 		default:
-			if same(a[i], b[j]) {
-				out = append(out, a[i])
+			if row, ok := merge(a[i], b[j]); ok {
+				out = append(out, row)
 			}
 			i++
 			j++

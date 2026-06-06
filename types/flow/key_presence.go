@@ -256,17 +256,17 @@ func (set keyPresenceFactSet) append(other keyPresenceFactSet) keyPresenceFactSe
 }
 
 func (set keyPresenceFactSet) equal(other keyPresenceFactSet) bool {
-	return orderedRowsEqual(set.entries, other.entries, func(a, b KeyPresenceFact) bool { return a == b }) &&
-		orderedRowsEqual(set.values, other.values, func(a, b KeyValueFact) bool { return a == b }) &&
-		orderedRowsEqual(set.arrays, other.arrays, func(a, b KeyArrayFact) bool { return a == b }) &&
-		orderedRowsEqual(set.emptyArrays, other.emptyArrays, func(a, b EmptyKeyArrayFact) bool { return a == b }) &&
-		orderedRowsEqual(set.arrayValues, other.arrayValues, keyArrayValueFactEqual) &&
-		orderedRowsEqual(set.appends, other.appends, func(a, b AppendedKeyFact) bool { return a == b }) &&
-		orderedRowsEqual(set.pending, other.pending, func(a, b PendingKeyArrayFact) bool { return a == b }) &&
-		orderedRowsEqual(set.appendBases, other.appendBases, func(a, b AppendHistoryBaseFact) bool { return a == b }) &&
-		orderedRowsEqual(set.appendEvents, other.appendEvents, func(a, b AppendHistoryEventFact) bool { return a == b }) &&
-		orderedRowsEqual(set.appendCoverage, other.appendCoverage, appendHistoryCoverageFactEqual) &&
-		orderedRowsEqual(set.appendOrigins, other.appendOrigins, func(a, b AppendElementFieldOriginFact) bool { return a == b })
+	return keyPresenceRowIdentity.Equal(set.entries, other.entries) &&
+		keyValueRowIdentity.Equal(set.values, other.values) &&
+		keyArrayRowIdentity.Equal(set.arrays, other.arrays) &&
+		emptyKeyArrayRowIdentity.Equal(set.emptyArrays, other.emptyArrays) &&
+		keyArrayValueRowIdentity.EqualBy(set.arrayValues, other.arrayValues, keyArrayValueFactEqual) &&
+		appendedKeyRowIdentity.Equal(set.appends, other.appends) &&
+		pendingKeyArrayRowIdentity.Equal(set.pending, other.pending) &&
+		appendHistoryBaseRowIdentity.Equal(set.appendBases, other.appendBases) &&
+		appendHistoryEventRowIdentity.Equal(set.appendEvents, other.appendEvents) &&
+		appendHistoryCoverageRowIdentity.EqualBy(set.appendCoverage, other.appendCoverage, appendHistoryCoverageFactEqual) &&
+		appendElementFieldOriginRowIdentity.Equal(set.appendOrigins, other.appendOrigins)
 }
 
 func (set keyPresenceFactSet) lessOrEqualTo(other keyPresenceFactSet) bool {
@@ -284,7 +284,7 @@ func (set keyPresenceFactSet) lessOrEqualTo(other keyPresenceFactSet) bool {
 }
 
 func (set keyPresenceFactSet) intersect(other keyPresenceFactSet, widenPayload bool) keyPresenceFactSet {
-	appendBases := orderedRowsIntersect(set.appendBases, other.appendBases, appendHistoryBaseLess, func(a, b AppendHistoryBaseFact) bool { return a == b })
+	appendBases := appendHistoryBaseRowIdentity.Intersect(set.appendBases, other.appendBases)
 	appendBases = append(appendBases, appendHistoryBasesSpecializedByEmpty(set.emptyArrays, other.appendBases)...)
 	appendBases = append(appendBases, appendHistoryBasesSpecializedByEmpty(other.emptyArrays, set.appendBases)...)
 	appendBases = compactAppendHistoryBases(appendBases)
@@ -296,7 +296,7 @@ func (set keyPresenceFactSet) intersect(other keyPresenceFactSet, widenPayload b
 	appendCoverage := appendHistoryCoverageForBases(coverage, appendBases, appendEvents, widenPayload)
 	appendOrigins := appendElementFieldOriginsForBases(origins, appendBases)
 
-	arrays := orderedRowsIntersect(set.arrays, other.arrays, keyArrayLess, func(a, b KeyArrayFact) bool { return a == b })
+	arrays := keyArrayRowIdentity.Intersect(set.arrays, other.arrays)
 	arrays = append(arrays, keyArrayFactsSpecializedByEmpty(set.emptyArrays, other.arrays)...)
 	arrays = append(arrays, keyArrayFactsSpecializedByEmpty(other.emptyArrays, set.arrays)...)
 
@@ -305,13 +305,13 @@ func (set keyPresenceFactSet) intersect(other keyPresenceFactSet, widenPayload b
 	arrayValues = append(arrayValues, keyArrayValueFactsSpecializedByEmpty(other.emptyArrays, set.arrayValues)...)
 
 	return keyPresenceFactSet{
-		entries:        orderedRowsIntersect(set.entries, other.entries, keyPresenceLess, func(a, b KeyPresenceFact) bool { return a == b }),
-		values:         orderedRowsIntersect(set.values, other.values, keyValueLess, func(a, b KeyValueFact) bool { return a == b }),
+		entries:        keyPresenceRowIdentity.Intersect(set.entries, other.entries),
+		values:         keyValueRowIdentity.Intersect(set.values, other.values),
 		arrays:         arrays,
-		emptyArrays:    orderedRowsIntersect(set.emptyArrays, other.emptyArrays, emptyKeyArrayLess, func(a, b EmptyKeyArrayFact) bool { return a == b }),
+		emptyArrays:    emptyKeyArrayRowIdentity.Intersect(set.emptyArrays, other.emptyArrays),
 		arrayValues:    arrayValues,
-		appends:        orderedRowsIntersect(set.appends, other.appends, appendedKeyLess, func(a, b AppendedKeyFact) bool { return a == b }),
-		pending:        orderedRowsIntersect(set.pending, other.pending, pendingKeyArrayLess, func(a, b PendingKeyArrayFact) bool { return a == b }),
+		appends:        appendedKeyRowIdentity.Intersect(set.appends, other.appends),
+		pending:        pendingKeyArrayRowIdentity.Intersect(set.pending, other.pending),
 		appendBases:    appendBases,
 		appendEvents:   appendEvents,
 		appendCoverage: appendCoverage,
@@ -320,29 +320,17 @@ func (set keyPresenceFactSet) intersect(other keyPresenceFactSet, widenPayload b
 }
 
 func intersectKeyArrayValueFacts(a, b []KeyArrayValueFact, widenPayload bool) []KeyArrayValueFact {
-	var out []KeyArrayValueFact
-	i, j := 0, 0
-	for i < len(a) && j < len(b) {
-		switch {
-		case keyArrayValueLess(a[i], b[j]):
-			i++
-		case keyArrayValueLess(b[j], a[i]):
-			j++
-		default:
-			value := product.Domain.Join(a[i].Value, b[j].Value)
-			if widenPayload {
-				value = product.Domain.Widen(a[i].Value, b[j].Value)
-			}
-			out = append(out, KeyArrayValueFact{
-				Array: a[i].Array,
-				Table: a[i].Table,
-				Value: value,
-			})
-			i++
-			j++
+	return keyArrayValueRowIdentity.MergeIntersect(a, b, func(left, right KeyArrayValueFact) (KeyArrayValueFact, bool) {
+		value := product.Domain.Join(left.Value, right.Value)
+		if widenPayload {
+			value = product.Domain.Widen(left.Value, right.Value)
 		}
-	}
-	return out
+		return KeyArrayValueFact{
+			Array: left.Array,
+			Table: left.Table,
+			Value: value,
+		}, true
+	})
 }
 
 func keyArrayValueFactEqual(a, b KeyArrayValueFact) bool {
@@ -1616,179 +1604,115 @@ func appendElementFieldOriginLess(a, b AppendElementFieldOriginFact) bool {
 	return a.SourceField < b.SourceField
 }
 
-func findKeyPresenceFact(entries []KeyPresenceFact, fact KeyPresenceFact) (int, bool) {
-	lo, hi := 0, len(entries)
-	for lo < hi {
-		mid := int(uint(lo+hi) >> 1)
-		if keyPresenceLess(entries[mid], fact) {
-			lo = mid + 1
-		} else {
-			hi = mid
-		}
+var (
+	keyPresenceRowIdentity = orderedRowIdentity[KeyPresenceFact]{
+		less: keyPresenceLess,
+		same: func(a, b KeyPresenceFact) bool { return a == b },
 	}
-	return lo, lo < len(entries) && entries[lo] == fact
+	keyValueRowIdentity = orderedRowIdentity[KeyValueFact]{
+		less: keyValueLess,
+		same: func(a, b KeyValueFact) bool { return a == b },
+	}
+	keyArrayRowIdentity = orderedRowIdentity[KeyArrayFact]{
+		less: keyArrayLess,
+		same: func(a, b KeyArrayFact) bool { return a == b },
+	}
+	emptyKeyArrayRowIdentity = orderedRowIdentity[EmptyKeyArrayFact]{
+		less: emptyKeyArrayLess,
+		same: func(a, b EmptyKeyArrayFact) bool { return a == b },
+	}
+	keyArrayValueRowIdentity = orderedRowIdentity[KeyArrayValueFact]{
+		less: keyArrayValueLess,
+		same: keyArrayValueSameIdentity,
+	}
+	appendedKeyRowIdentity = orderedRowIdentity[AppendedKeyFact]{
+		less: appendedKeyLess,
+		same: func(a, b AppendedKeyFact) bool { return a == b },
+	}
+	pendingKeyArrayRowIdentity = orderedRowIdentity[PendingKeyArrayFact]{
+		less: pendingKeyArrayLess,
+		same: func(a, b PendingKeyArrayFact) bool { return a == b },
+	}
+	appendHistoryBaseRowIdentity = orderedRowIdentity[AppendHistoryBaseFact]{
+		less: appendHistoryBaseLess,
+		same: func(a, b AppendHistoryBaseFact) bool { return a == b },
+	}
+	appendHistoryEventRowIdentity = orderedRowIdentity[AppendHistoryEventFact]{
+		less: appendHistoryEventLess,
+		same: func(a, b AppendHistoryEventFact) bool { return a == b },
+	}
+	appendHistoryCoverageRowIdentity = orderedRowIdentity[AppendHistoryCoverageFact]{
+		less: appendHistoryCoverageLess,
+		same: appendHistoryCoverageSameIdentity,
+	}
+	appendElementFieldOriginRowIdentity = orderedRowIdentity[AppendElementFieldOriginFact]{
+		less: appendElementFieldOriginLess,
+		same: func(a, b AppendElementFieldOriginFact) bool { return a == b },
+	}
+)
+
+func keyArrayValueSameIdentity(a, b KeyArrayValueFact) bool {
+	return a.Array == b.Array && a.Table == b.Table
+}
+
+func appendHistoryCoverageSameIdentity(a, b AppendHistoryCoverageFact) bool {
+	return a.Array == b.Array && a.Key == b.Key && a.Table == b.Table
+}
+
+func findKeyPresenceFact(entries []KeyPresenceFact, fact KeyPresenceFact) (int, bool) {
+	return keyPresenceRowIdentity.Find(entries, fact)
 }
 
 func findKeyValueFact(entries []KeyValueFact, fact KeyValueFact) (int, bool) {
-	lo, hi := 0, len(entries)
-	for lo < hi {
-		mid := int(uint(lo+hi) >> 1)
-		if keyValueLess(entries[mid], fact) {
-			lo = mid + 1
-		} else {
-			hi = mid
-		}
-	}
-	return lo, lo < len(entries) && entries[lo] == fact
+	return keyValueRowIdentity.Find(entries, fact)
 }
 
 func findKeyArrayFact(entries []KeyArrayFact, fact KeyArrayFact) (int, bool) {
-	lo, hi := 0, len(entries)
-	for lo < hi {
-		mid := int(uint(lo+hi) >> 1)
-		if keyArrayLess(entries[mid], fact) {
-			lo = mid + 1
-		} else {
-			hi = mid
-		}
-	}
-	return lo, lo < len(entries) && entries[lo] == fact
+	return keyArrayRowIdentity.Find(entries, fact)
 }
 
 func findEmptyKeyArrayFact(entries []EmptyKeyArrayFact, fact EmptyKeyArrayFact) (int, bool) {
-	lo, hi := 0, len(entries)
-	for lo < hi {
-		mid := int(uint(lo+hi) >> 1)
-		if emptyKeyArrayLess(entries[mid], fact) {
-			lo = mid + 1
-		} else {
-			hi = mid
-		}
-	}
-	return lo, lo < len(entries) && entries[lo] == fact
+	return emptyKeyArrayRowIdentity.Find(entries, fact)
 }
 
 func findKeyArrayValueFact(entries []KeyArrayValueFact, fact KeyArrayValueFact) (int, bool) {
-	lo, hi := 0, len(entries)
-	for lo < hi {
-		mid := int(uint(lo+hi) >> 1)
-		if keyArrayValueLess(entries[mid], fact) {
-			lo = mid + 1
-		} else {
-			hi = mid
-		}
-	}
-	return lo, lo < len(entries) &&
-		entries[lo].Array == fact.Array &&
-		entries[lo].Table == fact.Table
+	return keyArrayValueRowIdentity.Find(entries, fact)
 }
 
 func findAppendedKeyFact(entries []AppendedKeyFact, fact AppendedKeyFact) (int, bool) {
-	lo, hi := 0, len(entries)
-	for lo < hi {
-		mid := int(uint(lo+hi) >> 1)
-		if appendedKeyLess(entries[mid], fact) {
-			lo = mid + 1
-		} else {
-			hi = mid
-		}
-	}
-	return lo, lo < len(entries) && entries[lo] == fact
+	return appendedKeyRowIdentity.Find(entries, fact)
 }
 
 func findPendingKeyArrayFact(entries []PendingKeyArrayFact, fact PendingKeyArrayFact) (int, bool) {
-	lo, hi := 0, len(entries)
-	for lo < hi {
-		mid := int(uint(lo+hi) >> 1)
-		if pendingKeyArrayLess(entries[mid], fact) {
-			lo = mid + 1
-		} else {
-			hi = mid
-		}
-	}
-	return lo, lo < len(entries) && entries[lo] == fact
+	return pendingKeyArrayRowIdentity.Find(entries, fact)
 }
 
 func findAppendHistoryBaseFact(entries []AppendHistoryBaseFact, fact AppendHistoryBaseFact) (int, bool) {
-	lo, hi := 0, len(entries)
-	for lo < hi {
-		mid := int(uint(lo+hi) >> 1)
-		if appendHistoryBaseLess(entries[mid], fact) {
-			lo = mid + 1
-		} else {
-			hi = mid
-		}
-	}
-	return lo, lo < len(entries) && entries[lo] == fact
+	return appendHistoryBaseRowIdentity.Find(entries, fact)
 }
 
 func findAppendHistoryEventFact(entries []AppendHistoryEventFact, fact AppendHistoryEventFact) (int, bool) {
-	lo, hi := 0, len(entries)
-	for lo < hi {
-		mid := int(uint(lo+hi) >> 1)
-		if appendHistoryEventLess(entries[mid], fact) {
-			lo = mid + 1
-		} else {
-			hi = mid
-		}
-	}
-	return lo, lo < len(entries) && entries[lo] == fact
+	return appendHistoryEventRowIdentity.Find(entries, fact)
 }
 
 func findAppendHistoryCoverageFact(entries []AppendHistoryCoverageFact, fact AppendHistoryCoverageFact) (int, bool) {
-	lo, hi := 0, len(entries)
-	for lo < hi {
-		mid := int(uint(lo+hi) >> 1)
-		if appendHistoryCoverageLess(entries[mid], fact) {
-			lo = mid + 1
-		} else {
-			hi = mid
-		}
-	}
-	return lo, lo < len(entries) &&
-		entries[lo].Array == fact.Array &&
-		entries[lo].Key == fact.Key &&
-		entries[lo].Table == fact.Table
+	return appendHistoryCoverageRowIdentity.Find(entries, fact)
 }
 
 func findAppendElementFieldOriginFact(entries []AppendElementFieldOriginFact, fact AppendElementFieldOriginFact) (int, bool) {
-	lo, hi := 0, len(entries)
-	for lo < hi {
-		mid := int(uint(lo+hi) >> 1)
-		if appendElementFieldOriginLess(entries[mid], fact) {
-			lo = mid + 1
-		} else {
-			hi = mid
-		}
-	}
-	return lo, lo < len(entries) && entries[lo] == fact
+	return appendElementFieldOriginRowIdentity.Find(entries, fact)
 }
 
 func keyPresenceFactsContainAll(have, want []KeyPresenceFact) bool {
-	for _, w := range want {
-		if _, ok := findKeyPresenceFact(have, w); !ok {
-			return false
-		}
-	}
-	return true
+	return keyPresenceRowIdentity.ContainsAll(have, want)
 }
 
 func keyValueFactsContainAll(have, want []KeyValueFact) bool {
-	for _, w := range want {
-		if _, ok := findKeyValueFact(have, w); !ok {
-			return false
-		}
-	}
-	return true
+	return keyValueRowIdentity.ContainsAll(have, want)
 }
 
 func keyArrayFactsContainAll(have, want []KeyArrayFact) bool {
-	for _, w := range want {
-		if _, ok := findKeyArrayFact(have, w); !ok {
-			return false
-		}
-	}
-	return true
+	return keyArrayRowIdentity.ContainsAll(have, want)
 }
 
 func keyArrayFactsContainAllWithEmpty(have []KeyArrayFact, empty []EmptyKeyArrayFact, want []KeyArrayFact) bool {
@@ -1805,22 +1729,13 @@ func keyArrayFactsContainAllWithEmpty(have []KeyArrayFact, empty []EmptyKeyArray
 }
 
 func emptyKeyArrayFactsContainAll(have, want []EmptyKeyArrayFact) bool {
-	for _, w := range want {
-		if _, ok := findEmptyKeyArrayFact(have, w); !ok {
-			return false
-		}
-	}
-	return true
+	return emptyKeyArrayRowIdentity.ContainsAll(have, want)
 }
 
 func keyArrayValueFactsContainAll(have, want []KeyArrayValueFact) bool {
-	for _, w := range want {
-		i, ok := findKeyArrayValueFact(have, w)
-		if !ok || !product.Domain.LessOrEq(have[i].Value, w.Value) {
-			return false
-		}
-	}
-	return true
+	return keyArrayValueRowIdentity.ContainsAllBy(have, want, func(have, want KeyArrayValueFact) bool {
+		return keyArrayValueSameIdentity(have, want) && product.Domain.LessOrEq(have.Value, want.Value)
+	})
 }
 
 func keyArrayValueFactsContainAllWithEmpty(have []KeyArrayValueFact, empty []EmptyKeyArrayFact, want []KeyArrayValueFact) bool {
@@ -1838,21 +1753,11 @@ func keyArrayValueFactsContainAllWithEmpty(have []KeyArrayValueFact, empty []Emp
 }
 
 func appendedKeyFactsContainAll(have, want []AppendedKeyFact) bool {
-	for _, w := range want {
-		if _, ok := findAppendedKeyFact(have, w); !ok {
-			return false
-		}
-	}
-	return true
+	return appendedKeyRowIdentity.ContainsAll(have, want)
 }
 
 func pendingKeyArrayFactsContainAll(have, want []PendingKeyArrayFact) bool {
-	for _, w := range want {
-		if _, ok := findPendingKeyArrayFact(have, w); !ok {
-			return false
-		}
-	}
-	return true
+	return pendingKeyArrayRowIdentity.ContainsAll(have, want)
 }
 
 func appendHistoryBaseFactsContainAllWithEmpty(have []AppendHistoryBaseFact, empty []EmptyKeyArrayFact, want []AppendHistoryBaseFact) bool {
@@ -1869,31 +1774,17 @@ func appendHistoryBaseFactsContainAllWithEmpty(have []AppendHistoryBaseFact, emp
 }
 
 func appendHistoryEventFactsContainAll(have, want []AppendHistoryEventFact) bool {
-	for _, w := range want {
-		if _, ok := findAppendHistoryEventFact(have, w); !ok {
-			return false
-		}
-	}
-	return true
+	return appendHistoryEventRowIdentity.ContainsAll(have, want)
 }
 
 func appendHistoryCoverageFactsContainAll(have, want []AppendHistoryCoverageFact) bool {
-	for _, w := range want {
-		i, ok := findAppendHistoryCoverageFact(have, w)
-		if !ok || !product.Domain.LessOrEq(have[i].Value, w.Value) {
-			return false
-		}
-	}
-	return true
+	return appendHistoryCoverageRowIdentity.ContainsAllBy(have, want, func(have, want AppendHistoryCoverageFact) bool {
+		return appendHistoryCoverageSameIdentity(have, want) && product.Domain.LessOrEq(have.Value, want.Value)
+	})
 }
 
 func appendElementFieldOriginFactsContainAll(have, want []AppendElementFieldOriginFact) bool {
-	for _, w := range want {
-		if _, ok := findAppendElementFieldOriginFact(have, w); !ok {
-			return false
-		}
-	}
-	return true
+	return appendElementFieldOriginRowIdentity.ContainsAll(have, want)
 }
 
 func intersectKeyPresenceFacts(a, b KeyPresenceFacts) KeyPresenceFacts {

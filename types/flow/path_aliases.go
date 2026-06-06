@@ -195,7 +195,7 @@ var PathAliasFactsDomain = lattice.Lattice[PathAliasFacts]{
 		if a.bottom || b.bottom {
 			return a.bottom == b.bottom
 		}
-		return orderedRowsEqual(a.entries, b.entries, func(a, b PathAliasFact) bool { return a == b })
+		return pathAliasRowIdentity.Equal(a.entries, b.entries)
 	},
 	LessOrEq: func(a, b PathAliasFacts) bool {
 		if a.bottom {
@@ -253,15 +253,20 @@ func pathAliasLess(a, b PathAliasFact) bool {
 	return a.Source < b.Source
 }
 
+var pathAliasRowIdentity = orderedRowIdentity[PathAliasFact]{
+	less: pathAliasLess,
+	same: func(a, b PathAliasFact) bool { return a == b },
+}
+
 func findPathAliasFact(entries []PathAliasFact, fact PathAliasFact) (int, bool) {
-	return orderedRowsFind(entries, fact, pathAliasLess, func(a, b PathAliasFact) bool { return a == b })
+	return pathAliasRowIdentity.Find(entries, fact)
 }
 
 func pathAliasFactsContainAll(have, want []PathAliasFact) bool {
-	return orderedRowsContainAll(have, want, pathAliasLess, func(a, b PathAliasFact) bool { return a == b })
+	return pathAliasRowIdentity.ContainsAll(have, want)
 }
 
 func intersectPathAliasFacts(a, b PathAliasFacts) PathAliasFacts {
-	out := orderedRowsIntersect(a.entries, b.entries, pathAliasLess, func(a, b PathAliasFact) bool { return a == b })
+	out := pathAliasRowIdentity.Intersect(a.entries, b.entries)
 	return canonicalPathAliasFacts(out)
 }

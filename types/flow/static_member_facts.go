@@ -258,16 +258,7 @@ var StaticMemberFactsDomain = lattice.Lattice[StaticMemberFacts]{
 		if a.bottom || b.bottom {
 			return a.bottom == b.bottom
 		}
-		if len(a.entries) != len(b.entries) {
-			return false
-		}
-		for i := range a.entries {
-			if a.entries[i].Path != b.entries[i].Path ||
-				!product.Domain.Equal(a.entries[i].Value, b.entries[i].Value) {
-				return false
-			}
-		}
-		return true
+		return staticMemberRowIdentity.EqualBy(a.entries, b.entries, staticMemberFactEqual)
 	},
 	LessOrEq: func(a, b StaticMemberFacts) bool {
 		if a.bottom {
@@ -331,45 +322,38 @@ func sortStaticMemberFacts(entries []StaticMemberFact) {
 }
 
 func findStaticMemberFact(entries []StaticMemberFact, path constraint.PathKey) (int, bool) {
-	lo, hi := 0, len(entries)
-	for lo < hi {
-		mid := int(uint(lo+hi) >> 1)
-		if entries[mid].Path < path {
-			lo = mid + 1
-		} else {
-			hi = mid
-		}
-	}
-	return lo, lo < len(entries) && entries[lo].Path == path
+	return staticMemberRowIdentity.Find(entries, StaticMemberFact{Path: path})
 }
 
 func staticMemberFactsContainAll(have, want []StaticMemberFact, pred func(product.AbstractValue, product.AbstractValue) bool) bool {
-	for _, w := range want {
-		idx, ok := findStaticMemberFact(have, w.Path)
-		if !ok || !pred(have[idx].Value, w.Value) {
-			return false
-		}
-	}
-	return true
+	return staticMemberRowIdentity.ContainsAllBy(have, want, func(have, want StaticMemberFact) bool {
+		return have.Path == want.Path && pred(have.Value, want.Value)
+	})
 }
 
 func intersectStaticMemberFacts(a, b StaticMemberFacts, op func(product.AbstractValue, product.AbstractValue) product.AbstractValue) StaticMemberFacts {
-	var out []StaticMemberFact
-	i, j := 0, 0
-	for i < len(a.entries) && j < len(b.entries) {
-		switch {
-		case a.entries[i].Path < b.entries[j].Path:
-			i++
-		case b.entries[j].Path < a.entries[i].Path:
-			j++
-		default:
-			out = append(out, StaticMemberFact{
-				Path:  a.entries[i].Path,
-				Value: op(a.entries[i].Value, b.entries[j].Value),
-			})
-			i++
-			j++
-		}
-	}
+	out := staticMemberRowIdentity.MergeIntersect(a.entries, b.entries, func(left, right StaticMemberFact) (StaticMemberFact, bool) {
+		return StaticMemberFact{
+			Path:  left.Path,
+			Value: op(left.Value, right.Value),
+		}, true
+	})
 	return canonicalStaticMemberFacts(out, product.Domain.Join)
+}
+
+func staticMemberFactEqual(a, b StaticMemberFact) bool {
+	return a.Path == b.Path && product.Domain.Equal(a.Value, b.Value)
+}
+
+func staticMemberFactSamePath(a, b StaticMemberFact) bool {
+	return a.Path == b.Path
+}
+
+func staticMemberFactLess(a, b StaticMemberFact) bool {
+	return a.Path < b.Path
+}
+
+var staticMemberRowIdentity = orderedRowIdentity[StaticMemberFact]{
+	less: staticMemberFactLess,
+	same: staticMemberFactSamePath,
 }

@@ -165,7 +165,7 @@ var ValueOriginFactsDomain = lattice.Lattice[ValueOriginFacts]{
 		if a.bottom || b.bottom {
 			return a.bottom == b.bottom
 		}
-		return orderedRowsEqual(a.entries, b.entries, func(a, b ValueOriginFact) bool { return a == b })
+		return valueOriginRowIdentity.Equal(a.entries, b.entries)
 	},
 	LessOrEq: func(a, b ValueOriginFacts) bool {
 		if a.bottom {
@@ -229,15 +229,20 @@ func valueOriginLess(a, b ValueOriginFact) bool {
 	return a.VarIndex < b.VarIndex
 }
 
+var valueOriginRowIdentity = orderedRowIdentity[ValueOriginFact]{
+	less: valueOriginLess,
+	same: func(a, b ValueOriginFact) bool { return a == b },
+}
+
 func findValueOriginFact(entries []ValueOriginFact, fact ValueOriginFact) (int, bool) {
-	return orderedRowsFind(entries, fact, valueOriginLess, func(a, b ValueOriginFact) bool { return a == b })
+	return valueOriginRowIdentity.Find(entries, fact)
 }
 
 func valueOriginFactsContainAll(have, want []ValueOriginFact) bool {
-	return orderedRowsContainAll(have, want, valueOriginLess, func(a, b ValueOriginFact) bool { return a == b })
+	return valueOriginRowIdentity.ContainsAll(have, want)
 }
 
 func intersectValueOriginFacts(a, b ValueOriginFacts) ValueOriginFacts {
-	out := orderedRowsIntersect(a.entries, b.entries, valueOriginLess, func(a, b ValueOriginFact) bool { return a == b })
+	out := valueOriginRowIdentity.Intersect(a.entries, b.entries)
 	return canonicalValueOriginFacts(out)
 }
