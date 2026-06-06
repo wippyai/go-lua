@@ -4063,21 +4063,6 @@ func (t *Transfer) functionValueForPath(out *flow.PointState, path constraint.Pa
 	return ft, true
 }
 
-func (t *Transfer) functionValueForAddress(out *flow.PointState, addr flow.StableAddress) (typ.Type, bool) {
-	if out == nil || t.callTyper == nil {
-		return nil, false
-	}
-	refs, ok := flow.FunctionRefAtAddress(out.FunctionRefs, addr)
-	if !ok {
-		return nil, false
-	}
-	ref, singleton := refs.Singleton()
-	if !singleton {
-		return nil, false
-	}
-	return t.functionValueForRef(out, ref)
-}
-
 func (t *Transfer) functionValueForFunctionRefsPath(out *flow.PointState, path constraint.Path) (typ.Type, bool) {
 	if out == nil || t.callTyper == nil {
 		return nil, false
