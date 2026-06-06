@@ -534,21 +534,12 @@ func (p ClosureEntryContextProjection) projectClosureRefs(out []Key, seen map[Ke
 }
 
 func (p ClosureEntryContextProjection) closureEntryContextKey(ref FuncRef, closure flow.ClosureRef, point flow.PointState) Key {
-	captured := closureCapturedSymbols(closure)
 	entry := closure.EntryReferenceContext()
-	live := flow.ReferenceContextOf(
-		flow.CaptureCellsDomain.Bottom(),
-		flow.ProjectFunctionRefsBySymbols(point.FunctionRefs, captured),
-		flow.ProjectClosureRefsBySymbols(point.ClosureRefs, captured),
-	)
+	live := flow.ReferenceContextFromPoint(&point).CallableIdentity().ProjectSymbols(entry.RootSymbols())
 	if p.ReferencePaths != nil {
 		projection := p.ReferencePaths(ref)
 		entry = entry.ProjectPaths(projection)
-		live = flow.ReferenceContextOf(
-			flow.CaptureCellsDomain.Bottom(),
-			flow.ProjectFunctionRefsByReferencePaths(point.FunctionRefs, projection),
-			flow.ProjectClosureRefsByReferencePaths(point.ClosureRefs, projection),
-		)
+		live = flow.ReferenceContextFromPoint(&point).CallableIdentity().ProjectPaths(projection)
 	}
 	return NewKeyWithReferenceContext(
 		ref,
@@ -556,22 +547,6 @@ func (p ClosureEntryContextProjection) closureEntryContextKey(ref FuncRef, closu
 		nil,
 		flow.BoundaryFactsDomain.Top(),
 	)
-}
-
-func closureCapturedSymbols(closure flow.ClosureRef) []cfg.SymbolID {
-	var symbols []cfg.SymbolID
-	for _, entry := range closure.EntryCells().Entries() {
-		if entry.Symbol != 0 {
-			symbols = append(symbols, entry.Symbol)
-		}
-	}
-	symbols = append(symbols, flow.FunctionRefRootSymbols(closure.EntryFunctionRefs())...)
-	symbols = append(symbols, flow.ClosureRefRootSymbols(closure.EntryClosureRefs())...)
-	if len(symbols) == 0 {
-		return nil
-	}
-	slices.Sort(symbols)
-	return slices.Compact(symbols)
 }
 
 func (p CallEntryContextProjection) directProductValues(callee FuncRef, call *ast.FuncCallExpr, in *flow.PointState) EntryValues {

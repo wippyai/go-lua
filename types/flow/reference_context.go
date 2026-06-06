@@ -110,6 +110,19 @@ func (c ReferenceContext) CallableIdentity() ReferenceContext {
 	return ReferenceContextOf(CaptureCellsDomain.Bottom(), c.functionRefs, c.closureRefs)
 }
 
+// RootSymbols returns the finite symbol roots referenced by any axis.
+func (c ReferenceContext) RootSymbols() []cfg.SymbolID {
+	var symbols []cfg.SymbolID
+	for _, entry := range c.CaptureCells().Entries() {
+		if entry.Symbol != 0 {
+			symbols = append(symbols, entry.Symbol)
+		}
+	}
+	symbols = append(symbols, FunctionRefRootSymbols(c.FunctionRefs())...)
+	symbols = append(symbols, ClosureRefRootSymbols(c.ClosureRefs())...)
+	return compactSortedSymbols(symbols)
+}
+
 // RebaseCallablePaths moves callable identity facts under source to target.
 // Captured cells are lexical storage, not callable identity paths, so this
 // operation intentionally returns an empty cell axis.

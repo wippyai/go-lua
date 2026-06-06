@@ -190,6 +190,30 @@ func TestReferenceContextCallableIdentityDropsCaptureCells(t *testing.T) {
 	}
 }
 
+func TestReferenceContextRootSymbolsUnifiesAxes(t *testing.T) {
+	cellSym := cfg.SymbolID(58)
+	fnSym := cfg.SymbolID(59)
+	closureSym := cfg.SymbolID(60)
+	references := ReferenceContextOf(
+		CaptureCellsOf([]CaptureCell{{Symbol: cellSym, Value: product.FromType(typ.String)}}),
+		WithFunctionRefPath(nil, constraint.NewPath(fnSym, "make"), FunctionRefSetOf(FunctionRef{GraphID: 58})),
+		WithClosureRefAddress(nil, testStableAddressPath(t, constraint.NewPath(closureSym, "make")), ClosureRefSetOf(
+			ClosureRefOf(FunctionRef{GraphID: 59}, CaptureCellsDomain.Bottom(), nil),
+		)),
+	)
+
+	got := references.RootSymbols()
+	want := []cfg.SymbolID{cellSym, fnSym, closureSym}
+	if len(got) != len(want) {
+		t.Fatalf("root symbols = %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("root symbols = %v, want %v", got, want)
+		}
+	}
+}
+
 func TestReferenceContextKeyRoundTrip(t *testing.T) {
 	sym := cfg.SymbolID(40)
 	path := constraint.NewPath(sym, "dep").Field("make")
