@@ -145,3 +145,13 @@ func ApplyClosureCellEffectsToRefs(out *PointState, addr StableAddress, effects 
 	out.ClosureRefs = ApplyClosureRefCellEffectsAddress(out.ClosureRefs, addr, effects)
 	return !ClosureRefsDomain.Equal(before, out.ClosureRefs)
 }
+
+// ApplyClosureCellEffectsToRefsPath updates a stored closure environment at a
+// structured path.
+func ApplyClosureCellEffectsToRefsPath(out *PointState, path constraint.Path, effects CaptureEffects) bool {
+	addr, ok := StableAddressOfPath(path)
+	if !ok {
+		return false
+	}
+	return ApplyClosureCellEffectsToRefs(out, addr, effects)
+}

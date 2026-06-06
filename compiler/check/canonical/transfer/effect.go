@@ -128,14 +128,7 @@ func (t *Transfer) applyClosureCellEffect(out *flow.PointState, effect CellEffec
 	if effect.ClosurePath.IsEmpty() {
 		return false
 	}
-	addr, ok := flow.StableAddressOfPath(effect.ClosurePath)
-	if !ok {
-		return false
-	}
-	if _, ok := flow.ClosureRefAtAddress(out.ClosureRefs, addr); !ok {
-		return false
-	}
-	return flow.ApplyClosureCellEffectsToRefs(out, addr, effect.Effects)
+	return flow.ApplyClosureCellEffectsToRefsPath(out, effect.ClosurePath, effect.Effects)
 }
 
 func (t *Transfer) currentCellEffects(out *flow.PointState, effects flow.CaptureEffects) flow.CaptureEffects {
@@ -277,16 +270,12 @@ func (t *Transfer) applyFunctionReferenceEffect(
 		return false
 	case referenceWriteFromSource:
 		if !exact {
-			if addr, ok := flow.StableAddressOfPath(path); ok {
-				flow.ClearFunctionRefSubtree(out, addr)
-			}
+			flow.ClearFunctionRefSubtreePath(out, path)
 			return !flow.FunctionRefsDomain.Equal(before, out.FunctionRefs)
 		}
 		t.recordFunctionRefAt(out, path, src)
 	case referenceWriteExplicit:
-		if addr, ok := flow.StableAddressOfPath(path); ok {
-			flow.ClearFunctionRefSubtree(out, addr)
-		}
+		flow.ClearFunctionRefSubtreePath(out, path)
 		flow.JoinFunctionRefs(out, write.Refs)
 	default:
 		return false
@@ -307,16 +296,12 @@ func (t *Transfer) applyClosureReferenceEffect(
 		return false
 	case referenceWriteFromSource:
 		if !exact {
-			if addr, ok := flow.StableAddressOfPath(path); ok {
-				flow.ClearClosureRefSubtree(out, addr)
-			}
+			flow.ClearClosureRefSubtreePath(out, path)
 			return !flow.ClosureRefsDomain.Equal(before, out.ClosureRefs)
 		}
 		t.recordClosureRefAt(out, path, src)
 	case referenceWriteExplicit:
-		if addr, ok := flow.StableAddressOfPath(path); ok {
-			flow.ClearClosureRefSubtree(out, addr)
-		}
+		flow.ClearClosureRefSubtreePath(out, path)
 		flow.JoinClosureRefs(out, write.Refs)
 	default:
 		return false
