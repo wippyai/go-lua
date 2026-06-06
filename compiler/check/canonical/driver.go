@@ -933,74 +933,6 @@ func (p *program) ResolveDelegatedCallee(ref summary.FuncRef, call *ast.FuncCall
 	return callTyper{d: p.driver, g: g}.resolveCalleeRef(call, p)
 }
 
-func (p *program) CaptureEntries(ref summary.FuncRef, captureExportsOf func(summary.FuncRef) flow.CaptureCells) flow.CaptureCells {
-	g := p.Graph(ref)
-	if g == nil || captureExportsOf == nil {
-		return flow.CaptureCellsDomain.Bottom()
-	}
-	bindings := g.Bindings()
-	fn := g.Func()
-	if bindings == nil || fn == nil {
-		return flow.CaptureCellsDomain.Bottom()
-	}
-	captured := bindings.CapturedSymbols(fn)
-	if len(captured) == 0 {
-		return flow.CaptureCellsDomain.Bottom()
-	}
-	deps := p.captureDependencyChain(ref)
-	entries := make([]flow.CaptureCell, 0, len(captured))
-	for _, sym := range captured {
-		if !g.IsFreeSymbol(sym) {
-			continue
-		}
-		if av, ok := p.captureEntryValue(ref, sym, deps, captureExportsOf); ok {
-			entries = append(entries, flow.CaptureCell{Symbol: sym, Value: av})
-		}
-	}
-	return flow.CaptureCellsOf(entries).ProjectPaths(p.referenceProjection(ref))
-}
-
-func (p *program) CaptureEntryRefs(ref summary.FuncRef, captureFunctionRefsOf func(summary.FuncRef) flow.FunctionRefs) flow.FunctionRefs {
-	g := p.Graph(ref)
-	if g == nil || captureFunctionRefsOf == nil {
-		return flow.FunctionRefsDomain.Bottom()
-	}
-	bindings := g.Bindings()
-	fn := g.Func()
-	if bindings == nil || fn == nil {
-		return flow.FunctionRefsDomain.Bottom()
-	}
-	captured := bindings.CapturedSymbols(fn)
-	if len(captured) == 0 {
-		return flow.FunctionRefsDomain.Bottom()
-	}
-	projection := p.referenceProjection(ref)
-	if len(projection.Exact) == 0 && len(projection.Subtrees) == 0 {
-		return flow.FunctionRefsDomain.Bottom()
-	}
-	out := flow.FunctionRefsDomain.Bottom()
-	for _, dep := range p.captureDependencyChain(ref) {
-		out = flow.FunctionRefsDomain.Join(out, flow.ProjectFunctionRefsByReferencePaths(captureFunctionRefsOf(dep), projection))
-	}
-	return out
-}
-
-func (p *program) CaptureEntryClosureRefs(ref summary.FuncRef, captureClosureRefsOf func(summary.FuncRef) flow.ClosureRefs) flow.ClosureRefs {
-	g := p.Graph(ref)
-	if g == nil || captureClosureRefsOf == nil {
-		return flow.ClosureRefsDomain.Bottom()
-	}
-	projection := p.referenceProjection(ref)
-	if len(projection.Exact) == 0 && len(projection.Subtrees) == 0 {
-		return flow.ClosureRefsDomain.Bottom()
-	}
-	out := flow.ClosureRefsDomain.Bottom()
-	for _, dep := range p.captureDependencyChain(ref) {
-		out = flow.ClosureRefsDomain.Join(out, flow.ProjectClosureRefsByReferencePaths(captureClosureRefsOf(dep), projection))
-	}
-	return out
-}
-
 func (p *program) EntryValues(ref summary.FuncRef, deps summary.EntryValueDependencies) map[int]product.AbstractValue {
 	proj, ok := p.entryValueProjection(ref, deps)
 	if !ok {
@@ -1254,36 +1186,6 @@ func (p *program) declaredType(ref summary.FuncRef, sym cfg.SymbolID) typ.Type {
 		return nil
 	}
 	return facts.declared[sym]
-}
-
-func (p *program) CallEntryCells(ref summary.FuncRef, caller flow.CaptureCells) flow.CaptureCells {
-	return caller.ProjectPaths(p.referenceProjection(ref))
-}
-
-func (p *program) CallEntryFunctionRefs(ref summary.FuncRef, caller flow.FunctionRefs) flow.FunctionRefs {
-	return flow.ProjectFunctionRefsByReferencePaths(caller, p.referenceProjection(ref))
-}
-
-func (p *program) CallEntryClosureRefs(ref summary.FuncRef, caller flow.ClosureRefs) flow.ClosureRefs {
-	return flow.ProjectClosureRefsByReferencePaths(caller, p.referenceProjection(ref))
-}
-
-func (p *program) referenceProjection(ref summary.FuncRef) flow.ReferencePathProjection {
-	if p == nil {
-		return flow.ReferencePathProjection{}
-	}
-	if projection, ok := p.referencePaths[ref]; ok {
-		return projection
-	}
-	g := p.Graph(ref)
-	if g == nil {
-		return flow.ReferencePathProjection{}
-	}
-	projection := summary.ReferencePathProjectionForGraph(g)
-	if p.referencePaths != nil {
-		p.referencePaths[ref] = projection
-	}
-	return projection
 }
 
 func (p *program) paramPath(ref summary.FuncRef, slot int) (constraint.Path, bool) {
