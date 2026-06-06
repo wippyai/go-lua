@@ -3299,9 +3299,9 @@ func (t *Transfer) applyBoundaryFacts(
 type boundaryAppendKeyPlan struct {
 	array               constraint.Path
 	key                 constraint.Path
-	table               flow.StableAddress
+	table               constraint.Path
 	hasTable            bool
-	writtenTables       []flow.StableAddress
+	writtenTables       []constraint.Path
 	freshEmpty          bool
 	preserveHistoryBase bool
 }
@@ -3329,27 +3329,19 @@ func (t *Transfer) boundaryAppendKeyPlans(
 		if !ok || key.IsEmpty() {
 			continue
 		}
-		arrayAddr, arrayOK := flow.StableAddressOfPath(array)
-		if !arrayOK {
-			continue
-		}
-		arrayKey := arrayAddr.Key()
+		factsView := flow.PointFactsOf(*out)
 		plan := boundaryAppendKeyPlan{
 			array:               array,
 			key:                 key,
-			freshEmpty:          out.KeyPresence.HasEmptyKeyArray(arrayKey) || flow.AppendHistoryBaseWithoutEvents(*out, arrayAddr) || t.arrayPathCurrentlyEmpty(out, array),
-			preserveHistoryBase: out.KeyPresence.HasAppendHistoryBase(arrayKey),
+			freshEmpty:          factsView.HasEmptyKeyArray(array) || flow.AppendHistoryBaseWithoutEventsPath(*out, array) || t.arrayPathCurrentlyEmpty(out, array),
+			preserveHistoryBase: factsView.HasAppendHistoryBase(array),
 		}
 		if fact.HasTable {
 			table, ok := t.rebaseBoundaryPath(call, returns, fact.Table)
 			if !ok || table.IsEmpty() {
 				continue
 			}
-			tableAddr, tableOK := flow.StableAddressOfPath(table)
-			if !tableOK {
-				continue
-			}
-			plan.table = tableAddr
+			plan.table = table
 			plan.hasTable = true
 		}
 		plan.writtenTables = t.boundaryIndexWriteTablesForAppendedKey(call, returns, facts.IndexWrites(), key, plan.table, plan.hasTable)
@@ -3363,13 +3355,13 @@ func (t *Transfer) boundaryIndexWriteTablesForAppendedKey(
 	returns map[int]constraint.Path,
 	indexWrites []flow.BoundaryIndexWriteFact,
 	key constraint.Path,
-	explicitTable flow.StableAddress,
+	explicitTable constraint.Path,
 	hasExplicitTable bool,
-) []flow.StableAddress {
+) []constraint.Path {
 	if call == nil || key.IsEmpty() || len(indexWrites) == 0 {
 		return nil
 	}
-	var tables []flow.StableAddress
+	var tables []constraint.Path
 	for _, fact := range indexWrites {
 		writeKey, ok := t.rebaseBoundaryPath(call, returns, fact.Key)
 		if !ok || !writeKey.Equal(key) {
@@ -3379,14 +3371,10 @@ func (t *Transfer) boundaryIndexWriteTablesForAppendedKey(
 		if !ok || table.IsEmpty() {
 			continue
 		}
-		tableAddr, tableOK := flow.StableAddressOfPath(table)
-		if !tableOK {
+		if hasExplicitTable && !table.Equal(explicitTable) {
 			continue
 		}
-		if hasExplicitTable && !tableAddr.Equal(explicitTable) {
-			continue
-		}
-		tables = append(tables, tableAddr)
+		tables = append(tables, table)
 	}
 	return tables
 }
@@ -3505,39 +3493,15 @@ func (t *Transfer) applyBoundaryAppendKeyPlans(out *flow.PointState, plans []bou
 	}
 	changed := false
 	for _, plan := range plans {
-		arrayAddr, arrayOK := flow.StableAddressOfPath(plan.array)
-		keyAddr, keyOK := flow.StableAddressOfPath(plan.key)
-		if !arrayOK || !keyOK {
-			continue
-		}
-		arrayKey := arrayAddr.Key()
-		preserveAppendHistoryBase := plan.preserveHistoryBase || plan.freshEmpty || out.KeyPresence.HasAppendHistoryBase(arrayKey)
-		changed = flow.ApplyAddressWriteInvalidation(out, flow.AddressWriteInvalidation{Write: arrayAddr}) || changed
-		if preserveAppendHistoryBase {
-			changed = flow.ApplyAppendHistoryBaseProof(out, flow.AppendHistoryBaseProof{Array: arrayAddr}) || changed
-		}
-		changed = flow.ApplyAppendKeyProof(out, flow.AppendKeyProof{
-			Array: arrayAddr,
-			Key:   keyAddr,
+		changed = flow.ApplyAppendKeyReplayPathProof(out, flow.AppendKeyReplayPathProof{
+			ArrayPath:           plan.array,
+			KeyPath:             plan.key,
+			ExplicitTablePath:   plan.table,
+			HasExplicitTable:    plan.hasTable,
+			WrittenTablePaths:   plan.writtenTables,
+			FreshEmpty:          plan.freshEmpty,
+			PreserveHistoryBase: plan.preserveHistoryBase,
 		}) || changed
-		keyValue, _ := flow.PointFactsOf(*out).AddressValue(keyAddr)
-		tables := flow.AppendKeyArrayTables(*out, flow.AppendKeyArrayTableQuery{
-			Array:            arrayAddr,
-			Key:              keyAddr,
-			ExplicitTable:    plan.table,
-			HasExplicitTable: plan.hasTable,
-			WrittenTables:    plan.writtenTables,
-			FreshEmpty:       plan.freshEmpty,
-		})
-		if len(tables) > 0 {
-			changed = flow.ApplyAppendKeyArrayConsequences(out, flow.AppendKeyArrayConsequences{
-				Array:    arrayAddr,
-				Key:      keyAddr,
-				HasKey:   true,
-				KeyValue: keyValue,
-				Tables:   tables,
-			}) || changed
-		}
 	}
 	return changed
 }

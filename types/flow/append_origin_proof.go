@@ -66,6 +66,30 @@ type AppendKeyArrayTableQuery struct {
 	FreshEmpty       bool
 }
 
+// AppendKeyArrayPathTableQuery is the structured-path form of
+// AppendKeyArrayTableQuery.
+type AppendKeyArrayPathTableQuery struct {
+	ArrayPath         constraint.Path
+	KeyPath           constraint.Path
+	ExplicitTablePath constraint.Path
+	HasExplicitTable  bool
+	WrittenTablePaths []constraint.Path
+	FreshEmpty        bool
+}
+
+// AppendKeyReplayPathProof is the path-shaped reduced-product transaction for
+// an append write. It applies the write invalidation, preserves append-history
+// when required, records the appended key, and publishes key-array consequences.
+type AppendKeyReplayPathProof struct {
+	ArrayPath           constraint.Path
+	KeyPath             constraint.Path
+	ExplicitTablePath   constraint.Path
+	HasExplicitTable    bool
+	WrittenTablePaths   []constraint.Path
+	FreshEmpty          bool
+	PreserveHistoryBase bool
+}
+
 // AppendKeyArraySelection is the direct plus delayed consequence set for an
 // append into a possible key array.
 type AppendKeyArraySelection struct {
@@ -303,6 +327,77 @@ func AppendKeyArrayTables(state PointState, q AppendKeyArrayTableQuery) []Stable
 		}
 	}
 	return out
+}
+
+func AppendKeyArrayTablesPath(state PointState, q AppendKeyArrayPathTableQuery) []StableAddress {
+	array, arrayOK := StableAddressOfPath(q.ArrayPath)
+	key, keyOK := StableAddressOfPath(q.KeyPath)
+	if !arrayOK || !keyOK {
+		return nil
+	}
+	addressQuery := AppendKeyArrayTableQuery{
+		Array:            array,
+		Key:              key,
+		HasExplicitTable: q.HasExplicitTable,
+		FreshEmpty:       q.FreshEmpty,
+	}
+	if q.HasExplicitTable {
+		table, ok := StableAddressOfPath(q.ExplicitTablePath)
+		if !ok {
+			return nil
+		}
+		addressQuery.ExplicitTable = table
+	}
+	if len(q.WrittenTablePaths) > 0 {
+		addressQuery.WrittenTables = make([]StableAddress, 0, len(q.WrittenTablePaths))
+		for _, tablePath := range q.WrittenTablePaths {
+			table, ok := StableAddressOfPath(tablePath)
+			if ok {
+				addressQuery.WrittenTables = append(addressQuery.WrittenTables, table)
+			}
+		}
+	}
+	return AppendKeyArrayTables(state, addressQuery)
+}
+
+func ApplyAppendKeyReplayPathProof(out *PointState, proof AppendKeyReplayPathProof) bool {
+	if out == nil {
+		return false
+	}
+	array, arrayOK := StableAddressOfPath(proof.ArrayPath)
+	key, keyOK := StableAddressOfPath(proof.KeyPath)
+	if !arrayOK || !keyOK {
+		return false
+	}
+	arrayKey := array.Key()
+	preserveHistoryBase := proof.PreserveHistoryBase || proof.FreshEmpty || out.KeyPresence.HasAppendHistoryBase(arrayKey)
+	changed := ApplyAddressWritePathInvalidation(out, AddressWritePathInvalidation{WritePath: proof.ArrayPath})
+	if preserveHistoryBase {
+		changed = ApplyAppendHistoryBaseProof(out, AppendHistoryBaseProof{Array: array}) || changed
+	}
+	changed = ApplyAppendKeyProof(out, AppendKeyProof{
+		Array: array,
+		Key:   key,
+	}) || changed
+	keyValue, _ := PointFactsOf(*out).PathValue(proof.KeyPath)
+	tables := AppendKeyArrayTablesPath(*out, AppendKeyArrayPathTableQuery{
+		ArrayPath:         proof.ArrayPath,
+		KeyPath:           proof.KeyPath,
+		ExplicitTablePath: proof.ExplicitTablePath,
+		HasExplicitTable:  proof.HasExplicitTable,
+		WrittenTablePaths: proof.WrittenTablePaths,
+		FreshEmpty:        proof.FreshEmpty,
+	})
+	if len(tables) > 0 {
+		changed = ApplyAppendKeyArrayConsequences(out, AppendKeyArrayConsequences{
+			Array:    array,
+			Key:      key,
+			HasKey:   true,
+			KeyValue: keyValue,
+			Tables:   tables,
+		}) || changed
+	}
+	return changed
 }
 
 // AppendKeyArrayPreservation selects direct and delayed key-array consequences

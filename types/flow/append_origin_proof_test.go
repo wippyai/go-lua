@@ -279,6 +279,62 @@ func TestAppendKeyArrayTablesUsesFreshEmptyEvidence(t *testing.T) {
 	}
 }
 
+func TestAppendKeyArrayTablesPathLowersStructuredInputs(t *testing.T) {
+	arrayPath := constraint.NewPath(cfg.SymbolID(134), "keys")
+	tablePath := constraint.NewPath(cfg.SymbolID(135), "nodes")
+	keyPath := constraint.NewPath(cfg.SymbolID(136), "node_id")
+	table := testStableAddressPath(t, tablePath)
+	state := PointState{
+		KeyPresence: KeyPresenceFacts{}.
+			WithKeyArrayAddresses(testStableAddressPath(t, arrayPath), table),
+	}
+
+	tables := AppendKeyArrayTablesPath(state, AppendKeyArrayPathTableQuery{
+		ArrayPath:         arrayPath,
+		KeyPath:           keyPath,
+		ExplicitTablePath: tablePath,
+		HasExplicitTable:  true,
+	})
+	if len(tables) != 1 || !tables[0].Equal(table) {
+		t.Fatalf("path tables = %v, want explicit table", tables)
+	}
+}
+
+func TestApplyAppendKeyReplayPathProofAppliesAppendTransaction(t *testing.T) {
+	arrayPath := constraint.NewPath(cfg.SymbolID(137), "keys")
+	tablePath := constraint.NewPath(cfg.SymbolID(138), "nodes")
+	keyPath := constraint.NewPath(cfg.SymbolID(139), "node_id")
+	value := product.FromType(typ.String)
+	state := PointState{
+		KeyPresence: KeyPresenceFacts{}.
+			WithKeyArrayAddresses(testStableAddressPath(t, arrayPath), testStableAddressPath(t, tablePath)),
+		IndexWrites: IndexWriteAdmissionFacts{}.WithAddress(IndexWriteAdmissionAddressFact{
+			Target:     testStableAddressPath(t, tablePath),
+			KeyPath:    testStableAddressPath(t, keyPath),
+			HasKeyPath: true,
+			Key:        product.FromType(typ.Unknown),
+			Value:      value,
+		}),
+	}
+
+	if !ApplyAppendKeyReplayPathProof(&state, AppendKeyReplayPathProof{
+		ArrayPath:         arrayPath,
+		KeyPath:           keyPath,
+		WrittenTablePaths: []constraint.Path{tablePath},
+		FreshEmpty:        true,
+	}) {
+		t.Fatal("ApplyAppendKeyReplayPathProof reported no change")
+	}
+	appends := state.KeyPresence.AppendedKeyEntries()
+	if len(appends) != 1 || appends[0].Array != StablePathKey(arrayPath) || appends[0].Key != StablePathKey(keyPath) {
+		t.Fatalf("append key was not recorded: %s", state.KeyPresence.Format())
+	}
+	values := state.KeyPresence.KeyArrayValues(StablePathKey(arrayPath), StablePathKey(tablePath))
+	if len(values) != 1 || !product.Domain.Equal(values[0], value) {
+		t.Fatalf("key-array values = %v, want string", values)
+	}
+}
+
 func TestAppendKeyArrayPreservationSplitsDirectAndPendingTables(t *testing.T) {
 	arrayPath := constraint.NewPath(cfg.SymbolID(38), "keys")
 	nodesPath := constraint.NewPath(cfg.SymbolID(39), "nodes")
