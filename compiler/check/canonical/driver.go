@@ -57,7 +57,6 @@ import (
 	flowpath "github.com/wippyai/go-lua/compiler/check/domain/path"
 	"github.com/wippyai/go-lua/compiler/check/modules"
 	"github.com/wippyai/go-lua/compiler/check/scope"
-	phasecore "github.com/wippyai/go-lua/compiler/check/synth/core"
 	"github.com/wippyai/go-lua/compiler/check/synth/resolve"
 	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/contract"
@@ -1629,69 +1628,8 @@ func (d *Driver) returnTransformForCall(g *cfg.Graph, call *cfg.CallInfo, retInd
 
 func (d *Driver) buildTransfer(p *program, ref summary.FuncRef) *transfer.Transfer {
 	in := p.inputs[ref]
-	g := p.Graph(ref)
-	// A method body's implicit `self` is seeded here only for a named receiver type
-	// (`function T:m()` where T is a type binding). A value receiver
-	// (`function methods:m()`) is not a declared contract; split-pattern runtime self
-	// flows through the PrototypeSelf product axis and EntryValues fallback.
-	// A `expr :: T` cast asserts the operand has the annotated type. Resolve it
-	// through the same annotation resolver the parameter and declared-local types
-	// use, against the module base scope, so the transfer types a cast operand
-	// (e.g. `pairs(cfg :: {[string]: string})`) by its asserted type.
-	baseScope := d.baseScope()
-	return transfer.New(in, transfer.Config{
-		Ops:               opsResolver{d},
-		FuncTyper:         funcTyper{d: d, prog: p},
-		CallTyper:         callTyper{d: d, g: g, ref: ref},
-		TypeChecks:        p.facts.TypeChecks(ref),
-		SelfType:          d.methodSelfSeed(p, g),
-		MethodReceivers:   p.facts.MethodReceivers(ref),
-		SetMetatableSites: p.facts.SetMetatableSites(ref),
-		MetatableIndexes:  p.facts.MetatableIndexes(),
-		PrototypeMethods:  p.facts.PrototypeMethods(),
-		PredicateFacts:    p.facts.PredicateFacts(),
-		PredicateGuards:   p.facts.PredicateGuards(ref),
-		CastType: func(expr ast.TypeExpr) typ.Type {
-			return d.resolveType(expr, baseScope)
-		},
-		// A bare identifier naming a `type` used as a value (`M.AppError = AppError`)
-		// resolves to that type's reified Meta, the same MetaForName rule the synth flow
-		// applies, so the field carries the type value (with the built-in `:is` guard).
-		TypeNameValue: func(name string) typ.Type {
-			if meta := baseScope.MetaForName(name); meta != nil {
-				return meta
-			}
-			return nil
-		},
-	})
-}
-
-// methodSelfSeed resolves a source-declared implicit `self` type for a method
-// body's entry state. It applies only to a method/field definition whose receiver
-// resolves in the type namespace (for example `function T:m()` with `type T = ...`).
-// Value receivers are unannotated runtime facts and are seeded by the PrototypeSelf
-// product axis, not by moduleCaptures.
-func (d *Driver) methodSelfSeed(p *program, g *cfg.Graph) typ.Type {
-	if g == nil {
-		return nil
-	}
-	fn := g.Func()
-	if fn == nil {
-		return nil
-	}
-	ref, ok := p.refByFunc(fn)
-	if !ok {
-		return nil
-	}
-	info := p.methodDef(ref)
-	if info == nil || info.Receiver == nil {
-		return nil
-	}
-	bindings := g.Bindings()
-	if bindings == nil || !phasecore.HasUnannotatedSelfParam(fn, bindings) {
-		return nil
-	}
-	return d.namedReceiverType(info, d.baseScope())
+	proj := d.transferConfigProjection(p, ref)
+	return transfer.New(in, proj.config())
 }
 
 // baseScope is the type-name scope annotation resolution reads against: the
