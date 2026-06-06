@@ -1,11 +1,9 @@
 package propagate
 
 import (
-	"strconv"
-	"strings"
-
 	"github.com/wippyai/go-lua/types/cfg"
 	"github.com/wippyai/go-lua/types/constraint"
+	"github.com/wippyai/go-lua/types/flow/pathkey"
 )
 
 // Demand seeds the backward SSA-version liveness solve. The caller (which can
@@ -381,12 +379,18 @@ func versionedDemandKey(stripped constraint.PathKey, sym cfg.SymbolID, ver int) 
 	if sym == 0 || ver == 0 {
 		return stripped
 	}
-	prefix := "sym" + strconv.FormatUint(uint64(sym), 10)
-	s := string(stripped)
-	if !strings.HasPrefix(s, prefix) {
+	parsedSym, _, suffix, ok := pathkey.ParseKey(stripped)
+	if !ok || parsedSym != sym {
 		return stripped
 	}
-	return constraint.PathKey(prefix + "@" + strconv.Itoa(ver) + strings.TrimPrefix(s, prefix))
+	segments := pathkey.ParseSuffix(suffix)
+	if suffix != "" && segments == nil {
+		return stripped
+	}
+	if key := pathkey.SymbolVersionKey(sym, ver, segments); key != "" {
+		return key
+	}
+	return stripped
 }
 
 // literalLive reports whether a condition literal must be retained by
