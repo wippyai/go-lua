@@ -190,17 +190,11 @@ func (t *Transfer) currentCellEffects(out *flow.PointState, effects flow.Capture
 }
 
 func (t *Transfer) applyCellStoreEffects(out *flow.PointState, effects flow.CaptureEffects) {
-	if flow.CaptureEffectsDomain.Equal(effects, flow.CaptureEffectsDomain.Bottom()) {
-		return
-	}
-	out.Cells = effects.Apply(out.Cells)
+	callerEffects.applyCellStore(out, effects)
 }
 
 func (t *Transfer) recordCellEffects(out *flow.PointState, effects flow.CaptureEffects) {
-	if flow.CaptureEffectsDomain.Equal(effects, flow.CaptureEffectsDomain.Bottom()) {
-		return
-	}
-	out.CellEffects = out.CellEffects.Then(effects)
+	callerEffects.recordCells(out, effects)
 }
 
 func (t *Transfer) recordReceiverEffect(
@@ -209,12 +203,7 @@ func (t *Transfer) recordReceiverEffect(
 	value product.AbstractValue,
 	mutations ...flow.ReceiverMutation,
 ) bool {
-	if out == nil || slot < 0 || value.IsZero() {
-		return false
-	}
-	before := out.ReceiverEffects
-	out.ReceiverEffects = out.ReceiverEffects.Then(flow.ReceiverMustWriteWithMutations(slot, value, mutations))
-	return !flow.ReceiverEffectsDomain.Equal(before, out.ReceiverEffects)
+	return callerEffects.recordReceiverWrite(out, slot, value, mutations...)
 }
 
 func (t *Transfer) recordReceiverMutationEffect(
@@ -232,9 +221,7 @@ func (t *Transfer) recordReceiverMutationEffect(
 		}
 		slot = t.prototypeSelfSlot
 	}
-	before := out.ReceiverEffects
-	out.ReceiverEffects = out.ReceiverEffects.Then(flow.ReceiverMutations(slot, mutations))
-	return !flow.ReceiverEffectsDomain.Equal(before, out.ReceiverEffects)
+	return callerEffects.recordReceiverMutation(out, slot, mutations...)
 }
 
 func receiverMutationForPlace(place Place, presentElementWrite bool) (flow.ReceiverMutation, bool) {
