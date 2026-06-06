@@ -4,7 +4,6 @@ import (
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/canonical/state"
 	"github.com/wippyai/go-lua/types/constraint"
-	"github.com/wippyai/go-lua/types/domain/value"
 	"github.com/wippyai/go-lua/types/domain/value/product"
 	"github.com/wippyai/go-lua/types/flow"
 	"github.com/wippyai/go-lua/types/narrow"
@@ -95,33 +94,15 @@ func (p pathProjector) RefinedPathValueAt(point cfg.Point, path constraint.Path)
 			if !root.Value.IsGradualTop() {
 				return flow.ProductValue{State: flow.StateUnknown}
 			}
-			cur := root.Value
-			for _, seg := range path.Segments {
-				member, ok := value.MemberFromSegment(seg)
-				if !ok {
-					return flow.ProductValue{State: flow.StateUnknown}
-				}
-				next, ok := product.MemberOf(cur, member)
-				if !ok || next.IsZero() {
-					return flow.ProductValue{State: flow.StateUnknown}
-				}
-				cur = next
+			if av, ok := flow.ProductMemberPathValue(root.Value, path.Segments); ok && !av.IsZero() {
+				return flow.ProductValue{Value: av, State: flow.StateResolved}
 			}
-			return flow.ProductValue{Value: cur, State: flow.StateResolved}
+			return flow.ProductValue{State: flow.StateUnknown}
 		}
-		cur := product.GradualAny()
-		for _, seg := range path.Segments {
-			member, ok := value.MemberFromSegment(seg)
-			if !ok {
-				return flow.ProductValue{State: flow.StateUnknown}
-			}
-			next, ok := product.MemberOf(cur, member)
-			if !ok || next.IsZero() {
-				return flow.ProductValue{State: flow.StateUnknown}
-			}
-			cur = next
+		if av, ok := flow.ProductMemberPathValue(product.GradualAny(), path.Segments); ok && !av.IsZero() {
+			return flow.ProductValue{Value: av, State: flow.StateResolved}
 		}
-		return flow.ProductValue{Value: cur, State: flow.StateResolved}
+		return flow.ProductValue{State: flow.StateUnknown}
 	}
 	return flow.ProductValue{State: flow.StateUnknown}
 }
