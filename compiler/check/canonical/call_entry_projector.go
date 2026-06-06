@@ -44,7 +44,7 @@ func (a callEntryAccess) pointReferenceArgSources() summary.EntryReferenceArgSou
 		FunctionRefs: func(_ int, arg ast.Expr, in *flow.PointState) (flow.FunctionRefSet, bool) {
 			return a.projector.pointArgProjection(in).functionArgRefs(arg)
 		},
-		RefTrees: func(_ int, arg ast.Expr, in *flow.PointState) (flow.FunctionRefs, flow.ClosureRefs, bool) {
+		RefTrees: func(_ int, arg ast.Expr, in *flow.PointState) (flow.ReferenceContext, bool) {
 			return a.projector.pointArgProjection(in).argRefTrees(arg)
 		},
 		ClosureRefs: func(_ int, arg ast.Expr, in *flow.PointState) (flow.ClosureRefSet, bool) {
@@ -59,7 +59,7 @@ func (a callEntryAccess) productReferenceArgSources(ctx transfer.ProductCallCont
 		FunctionRefs: func(_ int, arg ast.Expr, _ *flow.PointState) (flow.FunctionRefSet, bool) {
 			return projection.functionArgRefs(arg)
 		},
-		RefTrees: func(_ int, arg ast.Expr, _ *flow.PointState) (flow.FunctionRefs, flow.ClosureRefs, bool) {
+		RefTrees: func(_ int, arg ast.Expr, _ *flow.PointState) (flow.ReferenceContext, bool) {
 			return projection.argRefTrees(arg)
 		},
 		ClosureRefs: func(_ int, arg ast.Expr, _ *flow.PointState) (flow.ClosureRefSet, bool) {
@@ -304,8 +304,10 @@ func (c callEntryProjector) productClosureContext(ref summary.FuncRef, closure f
 
 func (c callEntryProjector) productEntryContext(ref summary.FuncRef, call *ast.FuncCallExpr, ctx transfer.ProductCallContext) canonicalcall.EntryContext {
 	access := c.access()
-	refs, closures := c.productReferencesForRef(ref, call, ctx)
-	references := ctx.References.WithFunctionRefs(refs).WithClosureRefs(closures)
+	directReferences := c.productReferencesForRef(ref, call, ctx)
+	references := ctx.References.
+		WithFunctionRefs(directReferences.FunctionRefs()).
+		WithClosureRefs(directReferences.ClosureRefs())
 	return c.program.CallEntryContextWithFacts(
 		ref,
 		references,
@@ -331,12 +333,12 @@ func (c callEntryProjector) entryValueLayout() summary.CallEntryContextProjectio
 	}
 }
 
-func (c callEntryProjector) productReferencesForRef(ref summary.FuncRef, call *ast.FuncCallExpr, ctx transfer.ProductCallContext) (flow.FunctionRefs, flow.ClosureRefs) {
+func (c callEntryProjector) productReferencesForRef(ref summary.FuncRef, call *ast.FuncCallExpr, ctx transfer.ProductCallContext) flow.ReferenceContext {
 	if call == nil {
-		return flow.FunctionRefsDomain.Bottom(), flow.ClosureRefsDomain.Bottom()
+		return flow.ReferenceContextOf(flow.CaptureCellsDomain.Bottom(), flow.FunctionRefsDomain.Bottom(), flow.ClosureRefsDomain.Bottom())
 	}
 	access := c.access()
-	return c.referenceLayout().DirectReferences(ref, call, nil, ctx.FunctionRefs(), ctx.ClosureRefs(), access.productReferenceArgSources(ctx))
+	return c.referenceLayout().DirectReferences(ref, call, nil, ctx.References, access.productReferenceArgSources(ctx))
 }
 
 func (c callEntryProjector) referenceLayout() summary.CallEntryContextProjection {

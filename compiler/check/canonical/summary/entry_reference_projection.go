@@ -23,12 +23,12 @@ type EntryFunctionRefArgResolver func(runtimeIdx int, arg ast.Expr, in *flow.Poi
 // argument expression when it is not represented by rebasing caller ClosureRefs.
 type EntryClosureRefArgResolver func(runtimeIdx int, arg ast.Expr, in *flow.PointState) (flow.ClosureRefSet, bool)
 
-// EntryReferenceTreesArgResolver resolves whole function/closure identity
-// subtrees carried by one runtime argument whose value is not represented by a
-// caller storage path, for example a call expression returning a record with
-// callable fields. Returned paths are rooted at placeholder 0 and are rebased to
-// the callee parameter path.
-type EntryReferenceTreesArgResolver func(runtimeIdx int, arg ast.Expr, in *flow.PointState) (flow.FunctionRefs, flow.ClosureRefs, bool)
+// EntryReferenceTreesArgResolver resolves whole reference subtrees carried by
+// one runtime argument whose value is not represented by a caller storage path,
+// for example a call expression returning a record with callable fields.
+// Returned paths are rooted at placeholder 0 and are rebased to the callee
+// parameter path.
+type EntryReferenceTreesArgResolver func(runtimeIdx int, arg ast.Expr, in *flow.PointState) (flow.ReferenceContext, bool)
 
 // EntryReferenceArgSources resolves callable-reference evidence carried by a
 // runtime argument when simple caller-path rebasing is not enough.
@@ -50,8 +50,7 @@ type directCallEntryReferenceInput struct {
 	ParamPath EntryReferenceParamPath
 	ArgPath   EntryReferenceArgPath
 
-	FunctionRefs        flow.FunctionRefs
-	ClosureRefs         flow.ClosureRefs
+	References          flow.ReferenceContext
 	ReferenceProjection flow.ReferencePathProjection
 	LimitReferencePaths bool
 	State               *flow.PointState
@@ -62,24 +61,25 @@ type directCallEntryReferenceInput struct {
 // call-boundary context. Function and closure identities share the same runtime
 // argument layout, source paths, and callee parameter paths, so they are projected
 // together to preserve a single boundary traversal.
-func directCallEntryReferences(in directCallEntryReferenceInput) (flow.FunctionRefs, flow.ClosureRefs) {
+func directCallEntryReferences(in directCallEntryReferenceInput) flow.ReferenceContext {
 	functionRefs := flow.FunctionRefsDomain.Bottom()
 	closureRefs := flow.ClosureRefsDomain.Bottom()
+	references := in.References
 	ok := forEachEntryReferenceArg(in, func(runtimeIdx int, arg ast.Expr, target constraint.Path) {
 		if in.ArgPath != nil {
 			if source, ok := in.ArgPath(runtimeIdx, arg); ok {
-				functionRefs = flow.FunctionRefsDomain.Join(functionRefs, rebaseEntryFunctionRefs(in.FunctionRefs, source, target))
-				closureRefs = flow.ClosureRefsDomain.Join(closureRefs, rebaseEntryClosureRefs(in.ClosureRefs, source, target))
+				functionRefs = flow.FunctionRefsDomain.Join(functionRefs, rebaseEntryFunctionRefs(references.FunctionRefs(), source, target))
+				closureRefs = flow.ClosureRefsDomain.Join(closureRefs, rebaseEntryClosureRefs(references.ClosureRefs(), source, target))
 			}
 		}
 		if in.ArgSources.RefTrees != nil {
-			functionTree, closureTree, ok := in.ArgSources.RefTrees(runtimeIdx, arg, in.State)
+			tree, ok := in.ArgSources.RefTrees(runtimeIdx, arg, in.State)
 			if ok {
-				if !flow.FunctionRefsDomain.Equal(functionTree, flow.FunctionRefsDomain.Bottom()) {
-					functionRefs = flow.FunctionRefsDomain.Join(functionRefs, rebaseEntryFunctionRefs(functionTree, constraint.NewPlaceholder(0), target))
+				if treeRefs := tree.FunctionRefs(); !flow.FunctionRefsDomain.Equal(treeRefs, flow.FunctionRefsDomain.Bottom()) {
+					functionRefs = flow.FunctionRefsDomain.Join(functionRefs, rebaseEntryFunctionRefs(treeRefs, constraint.NewPlaceholder(0), target))
 				}
-				if !flow.ClosureRefsDomain.Equal(closureTree, flow.ClosureRefsDomain.Bottom()) {
-					closureRefs = flow.ClosureRefsDomain.Join(closureRefs, rebaseEntryClosureRefs(closureTree, constraint.NewPlaceholder(0), target))
+				if treeClosures := tree.ClosureRefs(); !flow.ClosureRefsDomain.Equal(treeClosures, flow.ClosureRefsDomain.Bottom()) {
+					closureRefs = flow.ClosureRefsDomain.Join(closureRefs, rebaseEntryClosureRefs(treeClosures, constraint.NewPlaceholder(0), target))
 				}
 			}
 		}
@@ -95,15 +95,15 @@ func directCallEntryReferences(in directCallEntryReferenceInput) (flow.FunctionR
 		}
 	})
 	if !ok {
-		return flow.FunctionRefsDomain.Bottom(), flow.ClosureRefsDomain.Bottom()
+		return flow.ReferenceContextOf(flow.CaptureCellsDomain.Bottom(), flow.FunctionRefsDomain.Bottom(), flow.ClosureRefsDomain.Bottom())
 	}
 	functionRefs = flow.FunctionRefsDomain.Join(functionRefs, nil)
 	closureRefs = flow.ClosureRefsDomain.Join(closureRefs, nil)
-	if !in.LimitReferencePaths {
-		return functionRefs, closureRefs
+	out := flow.ReferenceContextOf(flow.CaptureCellsDomain.Bottom(), functionRefs, closureRefs)
+	if in.LimitReferencePaths {
+		out = out.ProjectPaths(in.ReferenceProjection)
 	}
-	return flow.ProjectFunctionRefsByReferencePaths(functionRefs, in.ReferenceProjection),
-		flow.ProjectClosureRefsByReferencePaths(closureRefs, in.ReferenceProjection)
+	return out
 }
 
 func forEachEntryReferenceArg(in directCallEntryReferenceInput, visit func(runtimeIdx int, arg ast.Expr, target constraint.Path)) bool {

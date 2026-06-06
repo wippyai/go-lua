@@ -86,13 +86,14 @@ func (p callEntryArgProjection) functionArgRefs(arg ast.Expr) (flow.FunctionRefS
 	return functionRefSetFromSummaryRefs(got, ok)
 }
 
-func (p callEntryArgProjection) argRefTrees(arg ast.Expr) (flow.FunctionRefs, flow.ClosureRefs, bool) {
+func (p callEntryArgProjection) argRefTrees(arg ast.Expr) (flow.ReferenceContext, bool) {
+	bottom := flow.ReferenceContextOf(flow.CaptureCellsDomain.Bottom(), flow.FunctionRefsDomain.Bottom(), flow.ClosureRefsDomain.Bottom())
 	if p.evidence.nestedCall == nil {
-		return flow.FunctionRefsDomain.Bottom(), flow.ClosureRefsDomain.Bottom(), false
+		return bottom, false
 	}
 	call, ok := valueCallExpr(arg)
 	if !ok {
-		return flow.FunctionRefsDomain.Bottom(), flow.ClosureRefsDomain.Bottom(), false
+		return bottom, false
 	}
 	returns := p.typer.ProductCallFromValues(call, p.evidence.nestedCall(call)).ReturnRefs
 	functionRefs := flow.FunctionRefsDomain.Bottom()
@@ -105,9 +106,9 @@ func (p callEntryArgProjection) argRefTrees(arg ast.Expr) (flow.FunctionRefs, fl
 	}
 	if flow.FunctionRefsDomain.Equal(functionRefs, flow.FunctionRefsDomain.Bottom()) &&
 		flow.ClosureRefsDomain.Equal(closureRefs, flow.ClosureRefsDomain.Bottom()) {
-		return flow.FunctionRefsDomain.Bottom(), flow.ClosureRefsDomain.Bottom(), false
+		return bottom, false
 	}
-	return functionRefs, closureRefs, true
+	return flow.ReferenceContextOf(flow.CaptureCellsDomain.Bottom(), functionRefs, closureRefs), true
 }
 
 func (p callEntryArgProjection) closureArgRefs(arg ast.Expr) (flow.ClosureRefSet, bool) {

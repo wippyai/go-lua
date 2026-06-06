@@ -411,18 +411,16 @@ func (p CallEntryContextProjection) DirectReferences(
 	callee FuncRef,
 	call *ast.FuncCallExpr,
 	state *flow.PointState,
-	functionRefs flow.FunctionRefs,
-	closureRefs flow.ClosureRefs,
+	references flow.ReferenceContext,
 	argSources EntryReferenceArgSources,
-) (flow.FunctionRefs, flow.ClosureRefs) {
+) flow.ReferenceContext {
 	return directCallEntryReferences(directCallEntryReferenceInput{
 		Call:                call,
 		Callee:              callee,
 		ParamSlot:           p.ParamSlot,
 		ParamPath:           p.ParamPath,
 		ArgPath:             p.ArgPath,
-		FunctionRefs:        functionRefs,
-		ClosureRefs:         closureRefs,
+		References:          references,
 		ReferenceProjection: p.referenceProjection(callee),
 		LimitReferencePaths: p.ReferencePaths != nil,
 		State:               state,
@@ -448,15 +446,15 @@ func (p CallEntryContextProjection) ProjectKeys() []Key {
 			if p.NormalizeValues != nil {
 				values = p.NormalizeValues(target.Ref, site.Call, values)
 			}
-			refs, closures := p.directReferenceAxes(target.Ref, site.Call, &site.ArgState)
-			refs = flow.FunctionRefsDomain.Join(target.EntryFunctionRefs, refs)
-			closures = flow.ClosureRefsDomain.Join(target.EntryClosureRefs, closures)
+			references := flow.ReferenceContextOf(target.EntryCells, target.EntryFunctionRefs, target.EntryClosureRefs)
+			directReferences := p.directReferenceAxes(target.Ref, site.Call, &site.ArgState)
+			references = references.
+				WithFunctionRefs(directReferences.FunctionRefs()).
+				WithClosureRefs(directReferences.ClosureRefs())
 			facts := flow.MergeBoundaryFactProofs(target.EntryFacts, p.directFacts(target.Ref, site.Call, &site.ArgState))
-			key := NewKeyWithEntryContextFacts(
+			key := NewKeyWithReferenceContext(
 				target.Ref,
-				target.EntryCells,
-				refs,
-				closures,
+				references,
 				values,
 				facts,
 			)
@@ -600,11 +598,11 @@ func (p CallEntryContextProjection) directProductValues(callee FuncRef, call *as
 	return directCallEntryProductValuesWithParamCount(call, callee, argValues, p.ParamSlot, p.ParamSlotCount)
 }
 
-func (p CallEntryContextProjection) directReferenceAxes(callee FuncRef, call *ast.FuncCallExpr, in *flow.PointState) (flow.FunctionRefs, flow.ClosureRefs) {
+func (p CallEntryContextProjection) directReferenceAxes(callee FuncRef, call *ast.FuncCallExpr, in *flow.PointState) flow.ReferenceContext {
 	if p.ParamSlot == nil || p.ParamPath == nil || in == nil {
-		return flow.FunctionRefsDomain.Bottom(), flow.ClosureRefsDomain.Bottom()
+		return flow.ReferenceContextOf(flow.CaptureCellsDomain.Bottom(), flow.FunctionRefsDomain.Bottom(), flow.ClosureRefsDomain.Bottom())
 	}
-	return p.DirectReferences(callee, call, in, in.FunctionRefs, in.ClosureRefs, p.ReferenceArgSources)
+	return p.DirectReferences(callee, call, in, flow.ReferenceContextFromPoint(in), p.ReferenceArgSources)
 }
 
 func (p CallEntryContextProjection) directFacts(callee FuncRef, call *ast.FuncCallExpr, in *flow.PointState) flow.BoundaryFacts {
