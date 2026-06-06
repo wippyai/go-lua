@@ -16,6 +16,27 @@ func TestValueKey_ConstructorsAreStableAndTyped(t *testing.T) {
 	}
 }
 
+func TestValueSlotNormalizesSymbolKeys(t *testing.T) {
+	symbolSlot, ok := ValueKeySlot(SymbolValueKey(cfg.SymbolID(42)))
+	if !ok {
+		t.Fatalf("ValueKeySlot(symbol) reported absent")
+	}
+	if got, ok := symbolSlot.Symbol(); !ok || got != cfg.SymbolID(42) {
+		t.Fatalf("ValueKeySlot(symbol).Symbol = %d/%v, want 42/true", got, ok)
+	}
+	if _, ok := symbolSlot.Key(); ok {
+		t.Fatalf("ValueKeySlot(symbol).Key reported present")
+	}
+
+	keySlot, ok := ValueKeySlot(ReturnSlotValueKey(1))
+	if !ok {
+		t.Fatalf("ValueKeySlot(return) reported absent")
+	}
+	if got, ok := keySlot.Key(); !ok || got != ReturnSlotValueKey(1) {
+		t.Fatalf("ValueKeySlot(return).Key = %s/%v, want r1/true", got, ok)
+	}
+}
+
 func TestParseSymbolPathKey(t *testing.T) {
 	segments := []constraint.Segment{
 		{Kind: constraint.SegmentField, Name: "users"},

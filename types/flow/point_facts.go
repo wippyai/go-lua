@@ -25,42 +25,61 @@ func PointFactsOf(state PointState) PointFacts {
 	return PointFacts{state: state}
 }
 
-// SingleChangedValueKey reports the one logical value slot changed from before
-// to after. Env entries use their typed ValueKey; Cells are reported as the
-// corresponding symbol value key so callers can read/write through the ordinary
-// symbol-value boundary.
-func SingleChangedValueKey(before, after PointState) (ValueKey, bool) {
-	var changed ValueKey
+// SingleChangedValueSlot reports the one logical value slot changed from before
+// to after. Env symbol keys and Cells are both reported as symbol slots so
+// callers can apply their own lexical storage policy without decoding key
+// strings.
+func SingleChangedValueSlot(before, after PointState) (ValueSlot, bool) {
+	var changed ValueSlot
+	setChanged := func(slot ValueSlot) bool {
+		if _, ok := changed.ValueKey(); ok {
+			return false
+		}
+		changed = slot
+		return true
+	}
 	for key, next := range after.Env {
 		prev, had := before.Env[key]
 		if had && product.Domain.Equal(prev, next) {
 			continue
 		}
-		if changed != "" {
-			return "", false
+		slot, ok := ValueKeySlot(key)
+		if !ok || !setChanged(slot) {
+			return ValueSlot{}, false
 		}
-		changed = key
 	}
 	for _, cell := range after.Cells.Entries() {
 		prev, _ := before.Cells.Value(cell.Symbol)
 		if product.Domain.Equal(prev, cell.Value) {
 			continue
 		}
-		if changed != "" {
-			return "", false
+		slot, ok := SymbolValueSlot(cell.Symbol)
+		if !ok || !setChanged(slot) {
+			return ValueSlot{}, false
 		}
-		changed = SymbolValueKey(cell.Symbol)
 	}
 	for _, cell := range before.Cells.Entries() {
 		if _, ok := after.Cells.Value(cell.Symbol); ok {
 			continue
 		}
-		if changed != "" {
-			return "", false
+		slot, ok := SymbolValueSlot(cell.Symbol)
+		if !ok || !setChanged(slot) {
+			return ValueSlot{}, false
 		}
-		changed = SymbolValueKey(cell.Symbol)
 	}
-	return changed, changed != ""
+	_, ok := changed.ValueKey()
+	return changed, ok
+}
+
+// SingleChangedValueKey reports the one logical value slot changed from before
+// to after as a ValueKey. Prefer SingleChangedValueSlot when the caller needs to
+// distinguish symbol slots from non-symbol Env keys.
+func SingleChangedValueKey(before, after PointState) (ValueKey, bool) {
+	slot, ok := SingleChangedValueSlot(before, after)
+	if !ok {
+		return "", false
+	}
+	return slot.ValueKey()
 }
 
 // SymbolValue returns sym's low-level slot value, using Cells before Env when a

@@ -4119,19 +4119,21 @@ func (t *Transfer) symbolValue(out *flow.PointState, sym cfg.SymbolID) (product.
 	return t.symbolStorage.read(out, sym)
 }
 
-// symbolValueByKey is the transfer-owned value-key read boundary. Symbol keys
+// valueBySlot is the transfer-owned logical-slot read boundary. Symbol slots
 // route through symbolStoragePolicy so Env-backed locals cannot be shadowed by a
-// same-ID capture-cell entry; non-symbol keys remain ordinary Env facts.
-func (t *Transfer) symbolValueByKey(out flow.PointState, key flow.ValueKey) (product.AbstractValue, bool) {
-	sym, ok := flow.ParseSymbolValueKey(key)
-	if !ok {
+// same-ID capture-cell entry; non-symbol key slots remain ordinary Env facts.
+func (t *Transfer) valueBySlot(out flow.PointState, slot flow.ValueSlot) (product.AbstractValue, bool) {
+	if sym, ok := slot.Symbol(); ok {
+		return t.symbolValue(&out, sym)
+	}
+	if key, ok := slot.Key(); ok {
 		av, ok := flow.PointFactsOf(out).ValueKeyValue(key)
 		if !ok || valueIsBottom(av) {
 			return product.AbstractValue{}, false
 		}
 		return av, true
 	}
-	return t.symbolValue(&out, sym)
+	return product.AbstractValue{}, false
 }
 
 func (t *Transfer) setSymbolValue(out *flow.PointState, sym cfg.SymbolID, val product.AbstractValue, joinExisting bool) {
@@ -4142,12 +4144,14 @@ func (t *Transfer) writeSymbolValue(out *flow.PointState, sym cfg.SymbolID, val 
 	t.symbolStorage.write(out, sym, val, joinExisting, emitEffect)
 }
 
-func (t *Transfer) setSymbolValueByKey(out *flow.PointState, key flow.ValueKey, val product.AbstractValue, joinExisting bool) {
-	if sym, ok := flow.ParseSymbolValueKey(key); ok {
+func (t *Transfer) setValueBySlot(out *flow.PointState, slot flow.ValueSlot, val product.AbstractValue, joinExisting bool) {
+	if sym, ok := slot.Symbol(); ok {
 		t.setSymbolValue(out, sym, val, joinExisting)
 		return
 	}
-	flow.NewPointWriter(out).WriteValueKey(key, val, joinExisting)
+	if key, ok := slot.Key(); ok {
+		flow.NewPointWriter(out).WriteValueKey(key, val, joinExisting)
+	}
 }
 
 // typeValueOf resolves an identifier naming a `type` used as a value to that type's

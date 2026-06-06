@@ -130,6 +130,13 @@ func TestSingleChangedValueKeyReportsEnvKey(t *testing.T) {
 	if !ok || got != key {
 		t.Fatalf("SingleChangedValueKey(env) = %s/%v, want %s/true", got, ok, key)
 	}
+	slot, ok := SingleChangedValueSlot(before, after)
+	if !ok {
+		t.Fatalf("SingleChangedValueSlot(env) reported absent")
+	}
+	if got, ok := slot.Key(); !ok || got != key {
+		t.Fatalf("SingleChangedValueSlot(env).Key = %s/%v, want %s/true", got, ok, key)
+	}
 }
 
 func TestSingleChangedValueKeyReportsCellAsSymbolKey(t *testing.T) {
@@ -140,6 +147,13 @@ func TestSingleChangedValueKeyReportsCellAsSymbolKey(t *testing.T) {
 	got, ok := SingleChangedValueKey(before, after)
 	if !ok || got != SymbolValueKey(sym) {
 		t.Fatalf("SingleChangedValueKey(cell) = %s/%v, want %s/true", got, ok, SymbolValueKey(sym))
+	}
+	slot, ok := SingleChangedValueSlot(before, after)
+	if !ok {
+		t.Fatalf("SingleChangedValueSlot(cell) reported absent")
+	}
+	if got, ok := slot.Symbol(); !ok || got != sym {
+		t.Fatalf("SingleChangedValueSlot(cell).Symbol = %d/%v, want %d/true", got, ok, sym)
 	}
 }
 

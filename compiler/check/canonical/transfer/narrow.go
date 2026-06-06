@@ -675,38 +675,38 @@ func (t *Transfer) narrowAndUnionFalseEdgeAtPoint(point cfg.Point, out flow.Poin
 }
 
 func (t *Transfer) narrowSameValueUnion(point cfg.Point, out flow.PointState, lhsGuard, rhsGuard operandGuard) (flow.PointState, bool) {
-	lhs, lkey, lok := t.operandNarrowsOneKey(point, out, lhsGuard)
+	lhs, lslot, lok := t.operandNarrowsOneSlot(point, out, lhsGuard)
 	if !lok {
 		return out, false
 	}
-	rhs, rkey, rok := t.operandNarrowsOneKey(point, out, rhsGuard)
-	if !rok || lkey != rkey {
+	rhs, rslot, rok := t.operandNarrowsOneSlot(point, out, rhsGuard)
+	if !rok || !lslot.Equal(rslot) {
 		return out, false
 	}
-	lv, lok := t.symbolValueByKey(lhs, lkey)
-	rv, rok := t.symbolValueByKey(rhs, rkey)
+	lv, lok := t.valueBySlot(lhs, lslot)
+	rv, rok := t.valueBySlot(rhs, rslot)
 	if !lok || !rok {
 		return out, false
 	}
 	joined := product.Join(lv, rv)
 	res := flow.ClonePointState(out)
-	t.setSymbolValueByKey(&res, lkey, joined, false)
+	t.setValueBySlot(&res, lslot, joined, false)
 	return res, true
 }
 
-// operandNarrowsOneKey narrows state by one logical operand and reports the
-// single value key it refined. It returns ok=true only when the operand refines
-// EXACTLY one key, so the caller can join two disjuncts that agree on which
-// value they constrain; an operand that refines no key or more than one key is
+// operandNarrowsOneSlot narrows state by one logical operand and reports the
+// single value slot it refined. It returns ok=true only when the operand refines
+// EXACTLY one slot, so the caller can join two disjuncts that agree on which
+// value they constrain; an operand that refines no slot or more than one slot is
 // not a same-value disjunct and returns ok=false.
-func (t *Transfer) operandNarrowsOneKey(point cfg.Point, state flow.PointState, guard operandGuard) (flow.PointState, flow.ValueKey, bool) {
+func (t *Transfer) operandNarrowsOneSlot(point cfg.Point, state flow.PointState, guard operandGuard) (flow.PointState, flow.ValueSlot, bool) {
 	narrowed, ok := t.narrowOperand(point, state, guard)
 	if !ok {
-		return flow.PointState{}, "", false
+		return flow.PointState{}, flow.ValueSlot{}, false
 	}
-	changed, ok := flow.SingleChangedValueKey(state, narrowed)
+	changed, ok := flow.SingleChangedValueSlot(state, narrowed)
 	if !ok {
-		return flow.PointState{}, "", false
+		return flow.PointState{}, flow.ValueSlot{}, false
 	}
 	return narrowed, changed, true
 }
