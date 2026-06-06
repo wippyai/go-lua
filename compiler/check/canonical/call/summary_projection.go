@@ -63,12 +63,11 @@ func summaryProjectionForTargets(
 	return summary.CallSummaryProjection{Targets: out}, selection
 }
 
-// CallOutcomeForTargets builds the canonical selected-target call outcome once.
-// Call-site policies should project return values, returned identities,
-// relations, effects, and no-return facts from this value instead of rebuilding
-// summary target sets independently.
-func CallOutcomeForTargets(
-	targets TargetSet,
+// Outcome builds the canonical selected-target call outcome once. Call-site
+// policies should project return values, returned identities, relations,
+// effects, and no-return facts from this value instead of rebuilding summary
+// target sets independently.
+func (targets TargetSet) Outcome(
 	entryContext SelectedEntryContext,
 	lookup SummaryLookup,
 	info SummaryTargetInfo,

@@ -116,8 +116,7 @@ type callOutcomeProjection struct {
 }
 
 func (p callOutcomeProjection) outcome() canonicalcall.CallOutcome {
-	return canonicalcall.CallOutcomeForTargets(
-		p.targets,
+	return p.targets.Outcome(
 		p.entryContext,
 		func(ctx canonicalcall.EntryContext) summary.Summary {
 			if p.summaryLookup != nil {
