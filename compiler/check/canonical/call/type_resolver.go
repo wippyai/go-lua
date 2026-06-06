@@ -158,23 +158,6 @@ func (r TypeResolver) staticMemberFromBase(sym cfg.SymbolID, field fieldkey.Key,
 	return ft
 }
 
-// StaticMemberType reads a static field/index member from base.
-func StaticMemberType(base typ.Type, key fieldkey.Key) (typ.Type, bool) {
-	switch key.Kind {
-	case constraint.SegmentField:
-		if key.Name == "" {
-			return nil, false
-		}
-		return core.Field(base, key.Name)
-	case constraint.SegmentIndexString:
-		return core.Index(base, typ.LiteralString(key.Name))
-	case constraint.SegmentIndexInt:
-		return core.Index(base, typ.LiteralInt(int64(key.Index)))
-	default:
-		return nil, false
-	}
-}
-
 func (r TypeResolver) staticMemberType(base typ.Type, key fieldkey.Key) (typ.Type, bool) {
 	switch key.Kind {
 	case constraint.SegmentField:
