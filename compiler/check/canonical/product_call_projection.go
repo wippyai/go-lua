@@ -85,6 +85,10 @@ func (p productCallProjection) result(projector cellEffectProjector, elementUnio
 		ReturnRefs:      p.returnRefs(),
 		ReturnRelations: p.returnRelations(),
 		Effects:         p.effects(projector, elementUnions),
+		ArgDemands:      p.typer.productCallArgDemands(p.call, p.ctx),
+		NeverReturns: p.neverReturns(func(ref summary.FuncRef) bool {
+			return p.typer.d.activeProgram.facts.HasNoReturn(ref)
+		}),
 	}
 }
 

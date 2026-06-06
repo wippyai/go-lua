@@ -414,15 +414,17 @@ type deadCallDemandTyper struct {
 	demand typ.Type
 }
 
-func (d deadCallDemandTyper) CallArgDemands(call *ast.FuncCallExpr, _ ProductCallContext) []callobligation.Obligation {
+func (d deadCallDemandTyper) ProductCallFromValues(call *ast.FuncCallExpr, _ ProductCallContext) ProductCallResult {
+	result := EmptyProductCallResult()
 	if call == nil || len(call.Args) == 0 || d.demand == nil {
-		return nil
+		return result
 	}
 	out := make([]callobligation.Obligation, len(call.Args))
 	for i := range out {
 		out[i] = callobligation.Body(d.demand)
 	}
-	return out
+	result.ArgDemands = out
+	return result
 }
 
 type strictAnyReturnTyper struct {

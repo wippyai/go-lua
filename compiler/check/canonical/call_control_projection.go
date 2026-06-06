@@ -3,7 +3,6 @@ package canonical
 import (
 	"github.com/wippyai/go-lua/compiler/ast"
 	canonicalcall "github.com/wippyai/go-lua/compiler/check/canonical/call"
-	"github.com/wippyai/go-lua/compiler/check/canonical/summary"
 	"github.com/wippyai/go-lua/compiler/check/canonical/transfer"
 	"github.com/wippyai/go-lua/compiler/check/domain/paramevidence"
 )
@@ -38,14 +37,4 @@ func (p callControlProjection) paramNarrows(call *ast.FuncCallExpr) []transfer.P
 		},
 		Resolver: p.typer.callTypeResolver(nil),
 	}).Narrows()
-}
-
-func (p callControlProjection) noReturn(call *ast.FuncCallExpr, ctx transfer.ProductCallContext) bool {
-	proj, ok := p.typer.summaryOnlyProductCallProjection(call, ctx)
-	if !ok {
-		return false
-	}
-	return proj.neverReturns(func(ref summary.FuncRef) bool {
-		return p.typer.d.activeProgram.facts.HasNoReturn(ref)
-	})
 }

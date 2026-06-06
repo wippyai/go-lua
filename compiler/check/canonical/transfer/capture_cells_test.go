@@ -421,10 +421,6 @@ func (c captureEffectTyper) ParamNarrows(*ast.FuncCallExpr) []ParamNarrow {
 	return nil
 }
 
-func (c captureEffectTyper) IsNoReturn(*ast.FuncCallExpr, ProductCallContext) bool {
-	return false
-}
-
 func (c captureEffectTyper) TypeCastTarget(*ast.FuncCallExpr, func(ast.Expr) typ.Type) (typ.Type, bool) {
 	return nil, false
 }

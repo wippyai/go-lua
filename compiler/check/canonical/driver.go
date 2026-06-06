@@ -1801,7 +1801,7 @@ func (ct callTyper) CallReturns(call *ast.FuncCallExpr, argTypes []typ.Type, exp
 	return proj.types()
 }
 
-func (ct callTyper) CallArgDemands(call *ast.FuncCallExpr, ctx transfer.ProductCallContext) []callobligation.Obligation {
+func (ct callTyper) productCallArgDemands(call *ast.FuncCallExpr, ctx transfer.ProductCallContext) []callobligation.Obligation {
 	proj, ok := ct.callDemandProjection(call, ctx.ExprType)
 	if !ok {
 		return nil
@@ -1845,6 +1845,10 @@ func (ct callTyper) ProductCallFromValues(call *ast.FuncCallExpr, ctx transfer.P
 			ReturnRefs:      proj.returnRefs(),
 			ReturnRelations: proj.returnRelations(),
 			Effects:         transfer.EmptyCallEffects(),
+			ArgDemands:      ct.productCallArgDemands(call, ctx),
+			NeverReturns: proj.neverReturns(func(ref summary.FuncRef) bool {
+				return ct.d.activeProgram.facts.HasNoReturn(ref)
+			}),
 		}
 	}
 	return proj.result(projector, ct.containerElementUnions(call, ctx))
@@ -2015,17 +2019,6 @@ func (ct callTyper) ParamNarrows(call *ast.FuncCallExpr) []transfer.ParamNarrow 
 		return nil
 	}
 	return proj.paramNarrows(call)
-}
-
-// IsNoReturn reports whether call's selected callees are all module functions the
-// program proved never return normally. A statement call terminates the caller's
-// flow only when every selected target is no-return.
-func (ct callTyper) IsNoReturn(call *ast.FuncCallExpr, ctx transfer.ProductCallContext) bool {
-	proj, ok := ct.callControlProjection()
-	if !ok {
-		return false
-	}
-	return proj.noReturn(call, ctx)
 }
 
 // resolveCalleeRef resolves call's callee to its module FuncRef. Method calls

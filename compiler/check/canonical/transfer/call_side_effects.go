@@ -12,16 +12,6 @@ import (
 	"github.com/wippyai/go-lua/types/flow"
 )
 
-func (t *Transfer) applyCallSideEffects(
-	out *flow.PointState,
-	call *ast.FuncCallExpr,
-	ctx ProductCallContext,
-	demand func(int, paramevidence.ParamContract),
-) {
-	result := t.productCallResult(call, ctx)
-	t.applyCallResultEffects(out, call, ctx, result.Effects, demand)
-}
-
 func (t *Transfer) applyCallResultEffects(
 	out *flow.PointState,
 	call *ast.FuncCallExpr,

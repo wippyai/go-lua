@@ -89,7 +89,7 @@ func (p solvedCallEvidenceProjection) contracts() []api.CallContractEvidence {
 			continue
 		}
 		ctx := p.transfer.ProductCallContext(&ps, ev.Info.Call)
-		demands := ct.CallArgDemands(ev.Info.Call, ctx)
+		demands := ct.productCallArgDemands(ev.Info.Call, ctx)
 		if len(demands) == 0 {
 			continue
 		}

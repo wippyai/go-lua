@@ -172,12 +172,6 @@ type CallTyper interface {
 	// `y`. A callee with no such effect, or one that does not resolve to a module
 	// function, yields none.
 	ParamNarrows(call *ast.FuncCallExpr) []ParamNarrow
-	// IsNoReturn reports whether call's selected callees are proven never to return
-	// normally (their bodies always raise — every exit path ends in error() or a
-	// call to another no-return function). A statement call terminates the live
-	// flow only when all selected product/static targets are no-return; mixed or
-	// unresolved targets keep the continuation reachable.
-	IsNoReturn(call *ast.FuncCallExpr, ctx ProductCallContext) bool
 	// TypeCastTarget reports whether call is a type-cast/assertion call `T(arg)` (a
 	// type name used as a callable constructor, recognized by the same CallableType
 	// effect the call-return typing uses), and if so returns the asserted type T. A
@@ -189,10 +183,6 @@ type CallTyper interface {
 
 type IterVarProjector interface {
 	IterVarProjection(iter *ast.FuncCallExpr, count int, exprType func(ast.Expr) typ.Type) (iteration.VarProjection, bool)
-}
-
-type CallArgDemandProvider interface {
-	CallArgDemands(call *ast.FuncCallExpr, ctx ProductCallContext) []callobligation.Obligation
 }
 
 // CallReturnRefs is the product-call boundary for callable identities returned
@@ -223,14 +213,16 @@ func EmptyCallEffects() CallEffects {
 
 // ProductCallResult is the product-carrier result of evaluating one concrete
 // call site. Values, callable identities, return relations, and caller-visible
-// effects travel together so transfer does not rebuild selected call outcomes
-// through parallel provider routes.
+// effects, pre-call obligations, and control facts travel together so transfer
+// does not rebuild selected call outcomes through parallel provider routes.
 type ProductCallResult struct {
 	ReturnValues    []product.AbstractValue
 	HasReturnValues bool
 	ReturnRefs      CallReturnRefs
 	ReturnRelations flow.ReturnRelations
 	Effects         CallEffects
+	ArgDemands      []callobligation.Obligation
+	NeverReturns    bool
 }
 
 func EmptyProductCallResult() ProductCallResult {
@@ -2495,8 +2487,8 @@ func (t *Transfer) evalCall(
 	// Emit parameter demand for argument and receiver reads, and resolve each
 	// argument's product value for the call pipeline's generic inference and arity.
 	ctx := t.productCallContext(out, call, demand)
-	t.applyCallArgDemands(out, call, ctx, demand)
 	result := t.productCallResult(call, ctx)
+	t.applyCallArgDemands(out, call, result.ArgDemands, demand)
 	t.applyCallResultEffects(out, call, ctx, result.Effects, demand)
 	if result.HasReturnValues && len(result.ReturnValues) > 0 {
 		out2 := make([]product.AbstractValue, len(result.ReturnValues))
@@ -2615,17 +2607,12 @@ func (t *Transfer) callArgumentValues(
 func (t *Transfer) applyCallArgDemands(
 	out *flow.PointState,
 	call *ast.FuncCallExpr,
-	ctx ProductCallContext,
+	expected []callobligation.Obligation,
 	demand func(int, paramevidence.ParamContract),
 ) {
-	if t.callTyper == nil || call == nil || demand == nil {
+	if out == nil || call == nil || demand == nil || len(expected) == 0 {
 		return
 	}
-	provider, ok := t.callTyper.(CallArgDemandProvider)
-	if !ok || provider == nil {
-		return
-	}
-	expected := provider.CallArgDemands(call, ctx)
 	for i, arg := range call.Args {
 		if i >= len(expected) {
 			break
@@ -4211,11 +4198,12 @@ func (t *Transfer) applyCallArgs(
 	// this call drops out of the post-guard merge.
 	if t.callTyper != nil {
 		ctx := t.productCallContext(out, info.Call, demand)
-		if t.callTyper.IsNoReturn(info.Call, ctx) {
+		result := t.productCallResult(info.Call, ctx)
+		if result.NeverReturns {
 			return true
 		}
-		t.applyCallArgDemands(out, info.Call, ctx, demand)
-		t.applyCallSideEffects(out, info.Call, ctx, demand)
+		t.applyCallArgDemands(out, info.Call, result.ArgDemands, demand)
+		t.applyCallResultEffects(out, info.Call, ctx, result.Effects, demand)
 	}
 	// A call to a module function that narrows its parameters (a wrapper around
 	// assert / `if x == nil then error()`) carries that narrowing to the matching

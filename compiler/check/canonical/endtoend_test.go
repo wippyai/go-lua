@@ -447,23 +447,21 @@ func (s staticDemandTyper) ParamNarrows(*ast.FuncCallExpr) []transfer.ParamNarro
 	return nil
 }
 
-func (s staticDemandTyper) IsNoReturn(*ast.FuncCallExpr, transfer.ProductCallContext) bool {
-	return false
-}
-
 func (s staticDemandTyper) TypeCastTarget(*ast.FuncCallExpr, func(ast.Expr) typ.Type) (typ.Type, bool) {
 	return nil, false
 }
 
-func (s staticDemandTyper) CallArgDemands(call *ast.FuncCallExpr, _ transfer.ProductCallContext) []callobligation.Obligation {
+func (s staticDemandTyper) ProductCallFromValues(call *ast.FuncCallExpr, _ transfer.ProductCallContext) transfer.ProductCallResult {
+	result := transfer.EmptyProductCallResult()
 	if call == nil || len(call.Args) == 0 || s.demand == nil {
-		return nil
+		return result
 	}
 	out := make([]callobligation.Obligation, len(call.Args))
 	for i := range out {
 		out[i] = callobligation.Body(s.demand)
 	}
-	return out
+	result.ArgDemands = out
+	return result
 }
 
 // TestCanonical_DeclaredParamSeedsEntry confirms a declared parameter type seeds
