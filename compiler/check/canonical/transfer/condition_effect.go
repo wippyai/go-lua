@@ -23,26 +23,14 @@ func (t *Transfer) applyConditionEffect(out *flow.PointState, effect ConditionEf
 		return false
 	}
 	if effect.Fact.IsFalse() {
-		*out = flow.PointStateDomain.Bottom()
-		return true
+		return conditions.assume(out, effect.Fact)
 	}
 	if !effect.Fact.HasConstraints() {
 		return false
 	}
-	changed := false
-	if out.Cond.IsFalse() || out.Cond.IsTrue() {
-		out.Cond = effect.Fact
-		changed = true
-	} else {
-		next := constraint.And(out.Cond, effect.Fact)
-		if next.IsFalse() {
-			*out = flow.PointStateDomain.Bottom()
-			return true
-		}
-		if !constraint.Domain.Equal(out.Cond, next) {
-			out.Cond = next
-			changed = true
-		}
+	changed := conditions.assume(out, effect.Fact)
+	if flow.PointStateDomain.Equal(*out, flow.PointStateDomain.Bottom()) {
+		return true
 	}
 	if t.applyVariantOriginConditionReductions(out, effect.Fact) {
 		changed = true
