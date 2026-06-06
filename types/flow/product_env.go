@@ -104,6 +104,26 @@ func ProductWithMemberPath(base product.AbstractValue, segments []constraint.Seg
 	return product.WithMember(base, member, updated)
 }
 
+// ProductWithOnlyMemberPath builds a minimal product value whose only known
+// member suffix is segments and whose leaf value is val.
+func ProductWithOnlyMemberPath(segments []constraint.Segment, val product.AbstractValue) product.AbstractValue {
+	if len(segments) == 0 {
+		return val
+	}
+	if valueIsBottom(val) {
+		return product.Domain.Bottom()
+	}
+	member, ok := value.MemberFromSegment(segments[0])
+	if !ok {
+		return product.Domain.Bottom()
+	}
+	child := ProductWithOnlyMemberPath(segments[1:], val)
+	if valueIsBottom(child) {
+		return product.Domain.Bottom()
+	}
+	return product.WithMember(product.FromType(typ.NewRecord().Build()), member, child)
+}
+
 // ProductDomainHasNarrowingForSymbol reports whether domain has any narrowed
 // fact rooted at sym.
 func ProductDomainHasNarrowingForSymbol(domain *ProductDomain, sym cfg.SymbolID) bool {

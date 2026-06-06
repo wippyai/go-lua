@@ -9,10 +9,8 @@ import (
 	"github.com/wippyai/go-lua/internal"
 	"github.com/wippyai/go-lua/types/cfg"
 	"github.com/wippyai/go-lua/types/constraint"
-	"github.com/wippyai/go-lua/types/domain/value"
 	"github.com/wippyai/go-lua/types/domain/value/product"
 	"github.com/wippyai/go-lua/types/lattice"
-	"github.com/wippyai/go-lua/types/typ"
 )
 
 // CaptureCell is one abstract lexical cell captured by closures.
@@ -147,11 +145,11 @@ func (c CaptureCells) ProjectPaths(projection ReferencePathProjection) CaptureCe
 		}
 		projected := product.Domain.Bottom()
 		for _, segs := range req.segments {
-			valueAtPath, ok := captureCellValueAt(entry.Value, segs)
+			valueAtPath, ok := ProductMemberPathValue(entry.Value, segs)
 			if !ok || valueAtPath.IsZero() {
 				continue
 			}
-			projected = product.Domain.Join(projected, captureCellValueWithSegments(segs, valueAtPath))
+			projected = product.Domain.Join(projected, ProductWithOnlyMemberPath(segs, valueAtPath))
 		}
 		if !projected.IsZero() && !product.Domain.Equal(projected, product.Domain.Bottom()) {
 			out = append(out, CaptureCell{Symbol: entry.Symbol, Value: projected})
@@ -300,40 +298,6 @@ func sortedRequestSymbols(requests map[cfg.SymbolID]captureCellPathRequest) []cf
 		symbols = append(symbols, sym)
 	}
 	return sortedUniqueSymbols(symbols)
-}
-
-func captureCellValueAt(root product.AbstractValue, segments []constraint.Segment) (product.AbstractValue, bool) {
-	cur := root
-	for _, seg := range segments {
-		member, ok := value.MemberFromSegment(seg)
-		if !ok {
-			return product.AbstractValue{}, false
-		}
-		next, ok := product.MemberOf(cur, member)
-		if !ok || next.IsZero() {
-			return product.AbstractValue{}, false
-		}
-		cur = next
-	}
-	return cur, true
-}
-
-func captureCellValueWithSegments(segments []constraint.Segment, leaf product.AbstractValue) product.AbstractValue {
-	if len(segments) == 0 {
-		return leaf
-	}
-	if valueIsBottom(leaf) {
-		return product.Domain.Bottom()
-	}
-	member, ok := value.MemberFromSegment(segments[0])
-	if !ok {
-		return product.Domain.Bottom()
-	}
-	child := captureCellValueWithSegments(segments[1:], leaf)
-	if valueIsBottom(child) {
-		return product.Domain.Bottom()
-	}
-	return product.WithMember(product.FromType(typ.NewRecord().Build()), member, child)
 }
 
 // CaptureCellsDomain is the finite-map lattice over captured lexical cells.

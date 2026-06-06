@@ -84,6 +84,28 @@ func TestProductWithMemberPathUsesNumericIndexAsIndexedWrite(t *testing.T) {
 	}
 }
 
+func TestProductWithOnlyMemberPathBuildsMinimalNestedProduct(t *testing.T) {
+	got := ProductWithOnlyMemberPath([]constraint.Segment{
+		{Kind: constraint.SegmentField, Name: "config"},
+		{Kind: constraint.SegmentField, Name: "used"},
+	}, product.FromType(typ.Number))
+
+	config, ok := ProductMemberPathValue(got, []constraint.Segment{{Kind: constraint.SegmentField, Name: "config"}})
+	if !ok || config.IsZero() {
+		t.Fatalf("config missing from minimal product: %v", got.ProjectValue())
+	}
+	used, ok := ProductMemberPathValue(got, []constraint.Segment{
+		{Kind: constraint.SegmentField, Name: "config"},
+		{Kind: constraint.SegmentField, Name: "used"},
+	})
+	if !ok || !typ.TypeEquals(used.ProjectValue(), typ.Number) {
+		t.Fatalf("config.used = %v/%v, want number", used.ProjectValue(), ok)
+	}
+	if _, ok := ProductMemberPathValue(got, []constraint.Segment{{Kind: constraint.SegmentField, Name: "stable"}}); ok {
+		t.Fatalf("minimal product retained sibling: %v", got.ProjectValue())
+	}
+}
+
 func TestProductDomainHasNarrowingForSymbolUsesStableAddress(t *testing.T) {
 	const sym = cfg.SymbolID(51)
 	path := constraint.NewPath(sym, "node")
