@@ -1442,15 +1442,11 @@ func (t *Transfer) applyFuncDef(out *flow.PointState, info *cfg.FuncDefInfo) {
 
 func (t *Transfer) functionRefsWriteForFuncDef(info *cfg.FuncDefInfo) functionRefsWrite {
 	if provider, ok := t.funcTyper.(functionRefProvider); ok {
-		addr, addrOK := flow.StableAddressOfPath(info.TargetPath)
-		if !addrOK {
-			return sourceFunctionRefsWrite()
-		}
 		if ref, ok := provider.MethodFuncRef(info); ok {
-			return explicitFunctionRefsWrite(flow.WithFunctionRefAddress(nil, addr, flow.FunctionRefSetOf(ref)))
+			return explicitFunctionRefsWrite(flow.WithFunctionRefPath(nil, info.TargetPath, flow.FunctionRefSetOf(ref)))
 		}
 		if ref, ok := provider.FuncRef(info.FuncExpr); ok {
-			return explicitFunctionRefsWrite(flow.WithFunctionRefAddress(nil, addr, flow.FunctionRefSetOf(ref)))
+			return explicitFunctionRefsWrite(flow.WithFunctionRefPath(nil, info.TargetPath, flow.FunctionRefSetOf(ref)))
 		}
 	}
 	return sourceFunctionRefsWrite()
@@ -2152,15 +2148,11 @@ func (t *Transfer) prototypeMethodRefs(proto cfg.SymbolID, base constraint.Path)
 		}
 		path := base
 		path.Segments = append(append([]constraint.Segment(nil), base.Segments...), method.Field)
-		addr, ok := flow.StableAddressOfPath(path)
-		if !ok {
-			continue
-		}
 		set := flow.FunctionRefSetOf(method.FuncRef)
-		if existing, ok := flow.FunctionRefAtAddress(refs, addr); ok {
+		if existing, ok := flow.FunctionRefAtPath(refs, path); ok {
 			set = flow.FunctionRefSetDomain.Join(existing, set)
 		}
-		refs = flow.WithFunctionRefAddress(refs, addr, set)
+		refs = flow.WithFunctionRefPath(refs, path, set)
 	}
 	return refs
 }
@@ -4073,10 +4065,8 @@ func (t *Transfer) evalIdent(
 }
 
 func (t *Transfer) functionValueForPath(out *flow.PointState, path constraint.Path) (typ.Type, bool) {
-	if addr, ok := flow.StableAddressOfPath(path); ok {
-		if ft, ok := t.functionValueForAddress(out, addr); ok {
-			return ft, true
-		}
+	if ft, ok := t.functionValueForFunctionRefsPath(out, path); ok {
+		return ft, true
 	}
 	if out == nil || t.callTyper == nil {
 		return nil, false
@@ -4104,6 +4094,21 @@ func (t *Transfer) functionValueForAddress(out *flow.PointState, addr flow.Stabl
 		return nil, false
 	}
 	refs, ok := flow.FunctionRefAtAddress(out.FunctionRefs, addr)
+	if !ok {
+		return nil, false
+	}
+	ref, singleton := refs.Singleton()
+	if !singleton {
+		return nil, false
+	}
+	return t.functionValueForRef(out, ref)
+}
+
+func (t *Transfer) functionValueForFunctionRefsPath(out *flow.PointState, path constraint.Path) (typ.Type, bool) {
+	if out == nil || t.callTyper == nil {
+		return nil, false
+	}
+	refs, ok := flow.FunctionRefAtPath(out.FunctionRefs, path)
 	if !ok {
 		return nil, false
 	}

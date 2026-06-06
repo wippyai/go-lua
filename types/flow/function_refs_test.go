@@ -3,6 +3,7 @@ package flow
 import (
 	"testing"
 
+	"github.com/wippyai/go-lua/types/cfg"
 	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/lattice"
 )
@@ -70,6 +71,21 @@ func TestFunctionRefsSubtreeStrongUpdate(t *testing.T) {
 		t.Fatalf("sibling identity was removed")
 	} else if ref, singleton := got.Singleton(); !singleton || ref.GraphID != 3 {
 		t.Fatalf("sibling identity = %s, want graph 3 singleton", got.Format())
+	}
+}
+
+func TestFunctionRefsPathAPINormalizesStructuredPath(t *testing.T) {
+	path := constraint.NewPath(cfg.SymbolID(41), "fn").Field("call")
+	ref := FunctionRef{GraphID: 41}
+
+	refs := WithFunctionRefPath(nil, path, FunctionRefSetOf(ref))
+	set, ok := FunctionRefAtPath(refs, path)
+	if !ok {
+		t.Fatalf("FunctionRefAtPath missed path ref: %#v", refs)
+	}
+	got, singleton := set.Singleton()
+	if !singleton || got != ref {
+		t.Fatalf("path ref = %s, want graph 41 singleton", set.Format())
 	}
 }
 

@@ -187,6 +187,15 @@ func FunctionRefAtAddress(refs FunctionRefs, addr StableAddress) (FunctionRefSet
 	return FunctionRefSet{}, false
 }
 
+// FunctionRefAtPath returns the identity set for a structured path.
+func FunctionRefAtPath(refs FunctionRefs, path constraint.Path) (FunctionRefSet, bool) {
+	addr, ok := StableAddressOfPath(path)
+	if !ok {
+		return FunctionRefSet{}, false
+	}
+	return FunctionRefAtAddress(refs, addr)
+}
+
 // WithFunctionRefAddress returns refs with addr strongly updated to set.
 // Updating to Bottom removes the key.
 func WithFunctionRefAddress(refs FunctionRefs, addr StableAddress, set FunctionRefSet) FunctionRefs {
@@ -204,6 +213,16 @@ func WithFunctionRefAddress(refs FunctionRefs, addr StableAddress, set FunctionR
 	}
 	out[path] = set
 	return FunctionRefsDomain.Join(out, nil)
+}
+
+// WithFunctionRefPath returns refs with a structured path strongly updated to
+// set. Updating to Bottom removes the key.
+func WithFunctionRefPath(refs FunctionRefs, path constraint.Path, set FunctionRefSet) FunctionRefs {
+	addr, ok := StableAddressOfPath(path)
+	if !ok {
+		return refs
+	}
+	return WithFunctionRefAddress(refs, addr, set)
 }
 
 // FunctionRefAt returns the identity set for path.
