@@ -183,17 +183,13 @@ func (t *Transfer) demandLocalPathContract(
 		if !ok {
 			continue
 		}
-		for _, use := range out.PathAliases.AliasesCoveringAddress(curAddr) {
-			if source, ok := demandSourceWithRemainder(use.Alias.Source, use.Remainder); ok {
+		for _, sourceAddr := range flow.IdentityAliasSources(*out, curAddr) {
+			if source, ok := sourceAddr.Path(); ok && source.Symbol != 0 {
 				queue = append(queue, demandRouteItem{path: source, contract: cur.contract})
 			}
 		}
 		for _, use := range out.ValueOrigins.OriginsCoveringAddress(curAddr) {
 			switch use.Origin.Kind {
-			case flow.ValueOriginAssignmentAlias:
-				if source, ok := demandSourceWithRemainder(use.Origin.Source, use.Remainder); ok {
-					queue = append(queue, demandRouteItem{path: source, contract: cur.contract})
-				}
 			case flow.ValueOriginIndexedIterator:
 				t.enqueueAppendFieldOriginDemands(out, use.Origin.Source, use.Remainder, cur.contract, &queue)
 				localEvidence := paramevidence.DemandFromPathContract(use.Remainder, cur.contract)
@@ -246,17 +242,6 @@ func (t *Transfer) enqueueAppendFieldOriginDemands(
 		}
 		*queue = append(*queue, demandRouteItem{path: source, contract: contract})
 	}
-}
-
-func demandSourceWithRemainder(source constraint.PathKey, remainder []constraint.Segment) (constraint.Path, bool) {
-	path, ok := demandPathFromKey(source)
-	if !ok || path.Symbol == 0 {
-		return constraint.Path{}, false
-	}
-	for _, seg := range remainder {
-		path = path.Append(seg)
-	}
-	return path, true
 }
 
 func demandPathFromKey(key constraint.PathKey) (constraint.Path, bool) {
