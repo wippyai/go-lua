@@ -131,8 +131,42 @@ type EntryValueAggregation struct {
 	SlotDeclared          func(slot int) bool
 }
 
-// JoinEntryValue adds av to one callee entry slot under product-domain join.
-func JoinEntryValue(out EntryValues, slot int, av product.AbstractValue) EntryValues {
+// EntryValueSeed is declaration-context evidence for one callee entry slot.
+// Summary owns lowering seeds into product entry values so callers do not
+// mutate the EntryValues carrier directly.
+type EntryValueSeed struct {
+	Slot int
+	Type typ.Type
+}
+
+// EntryValuesWithSeeds joins declaration-context seed types into an existing
+// entry-value vector. Seeds are additional evidence, not fixed-slot fallback.
+func EntryValuesWithSeeds(values EntryValues, seeds []EntryValueSeed) EntryValues {
+	out := values
+	for _, seed := range seeds {
+		out = joinEntryValue(out, seed.Slot, product.FromType(seed.Type))
+	}
+	return out
+}
+
+// EntryValuesFromFunctionParams lowers a callback signature's concrete
+// parameter types into entry evidence for contextual callback synthesis.
+func EntryValuesFromFunctionParams(fn *typ.Function) EntryValues {
+	if fn == nil || len(fn.Params) == 0 {
+		return nil
+	}
+	var out EntryValues
+	for slot, param := range fn.Params {
+		if param.Type == nil || typ.IsAbsentOrUnknown(param.Type) || typ.IsAny(param.Type) || typ.ContainsTypeParam(param.Type) {
+			continue
+		}
+		out = joinEntryValue(out, slot, product.FromType(param.Type))
+	}
+	return out
+}
+
+// joinEntryValue adds av to one callee entry slot under product-domain join.
+func joinEntryValue(out EntryValues, slot int, av product.AbstractValue) EntryValues {
 	if slot < 0 || av.IsZero() {
 		return out
 	}
@@ -154,7 +188,7 @@ func joinObservedEntryValue(out EntryValues, slot int, av product.AbstractValue)
 	if t := av.ProjectValue(); t == nil || typ.IsAbsentOrUnknown(t) {
 		return out
 	}
-	return JoinEntryValue(out, slot, av)
+	return joinEntryValue(out, slot, av)
 }
 
 func joinCallEntryValue(out CallEntryValues, callee FuncRef, slot int, av product.AbstractValue) CallEntryValues {
@@ -185,7 +219,7 @@ func AggregateEntryValues(in EntryValueAggregation) EntryValues {
 				if declared(slot) {
 					continue
 				}
-				out = JoinEntryValue(out, slot, av)
+				out = joinEntryValue(out, slot, av)
 			}
 		})
 	}
@@ -206,7 +240,7 @@ func AggregateEntryValues(in EntryValueAggregation) EntryValues {
 				if !ok || av.IsZero() {
 					continue
 				}
-				out = JoinEntryValue(out, receiver.Slot, av)
+				out = joinEntryValue(out, receiver.Slot, av)
 			}
 		})
 	}
@@ -737,7 +771,7 @@ func callbackExpectedEntryValues(fn *typ.Function) (EntryValues, bool) {
 		if param.Type == nil || typ.ContainsTypeParam(param.Type) {
 			continue
 		}
-		values = JoinEntryValue(values, slot, product.FromType(param.Type))
+		values = joinEntryValue(values, slot, product.FromType(param.Type))
 	}
 	return values, len(values) != 0
 }

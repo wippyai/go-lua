@@ -192,18 +192,7 @@ func expectedCallbackEntryValues(expected []typ.Type, idx int) summary.EntryValu
 	if idx < 0 || idx >= len(expected) {
 		return nil
 	}
-	fn := unwrap.Function(expected[idx])
-	if fn == nil || len(fn.Params) == 0 {
-		return nil
-	}
-	var values summary.EntryValues
-	for slot, param := range fn.Params {
-		if param.Type == nil || typ.IsAbsentOrUnknown(param.Type) || typ.IsAny(param.Type) || typ.ContainsTypeParam(param.Type) {
-			continue
-		}
-		values = summary.JoinEntryValue(values, slot, product.FromType(param.Type))
-	}
-	return values
+	return summary.EntryValuesFromFunctionParams(unwrap.Function(expected[idx]))
 }
 
 func shouldUseRefinedFunctionArg(current, candidate typ.Type) bool {

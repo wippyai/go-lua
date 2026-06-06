@@ -1,8 +1,8 @@
 package canonical
 
 import (
+	"github.com/wippyai/go-lua/compiler/check/canonical/facts"
 	"github.com/wippyai/go-lua/compiler/check/canonical/summary"
-	"github.com/wippyai/go-lua/types/domain/value/product"
 )
 
 // programEntryValueProjection owns the summary-level entry values for one
@@ -80,8 +80,22 @@ func (p programEntryValueProjection) eachPrototypeSource(yield func(summary.Entr
 
 func (p programEntryValueProjection) withSourceEntrySeeds(values summary.EntryValues) summary.EntryValues {
 	out := values
-	for _, seed := range p.program.facts.FunctionEntrySeeds(p.ref) {
-		out = summary.JoinEntryValue(out, seed.Slot, product.FromType(seed.Type))
+	if seeds := entryValueSeeds(p.program.facts.FunctionEntrySeeds(p.ref)); len(seeds) != 0 {
+		out = summary.EntryValuesWithSeeds(out, seeds)
+	}
+	return out
+}
+
+func entryValueSeeds(seeds []facts.FunctionEntrySeed) []summary.EntryValueSeed {
+	if len(seeds) == 0 {
+		return nil
+	}
+	out := make([]summary.EntryValueSeed, 0, len(seeds))
+	for _, seed := range seeds {
+		out = append(out, summary.EntryValueSeed{
+			Slot: seed.Slot,
+			Type: seed.Type,
+		})
 	}
 	return out
 }
