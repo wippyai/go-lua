@@ -395,11 +395,11 @@ type captureEffectTyper struct {
 
 type numberReturnTyper struct{}
 
-func (numberReturnTyper) CallReturns(*ast.FuncCallExpr, []typ.Type, func(ast.Expr) typ.Type, flow.CaptureCells, flow.FunctionRefs) ([]typ.Type, bool) {
-	return []typ.Type{typ.Number}, true
+func (numberReturnTyper) CallReturnValues(*ast.FuncCallExpr, ProductCallContext) ([]product.AbstractValue, bool) {
+	return []product.AbstractValue{product.FromType(typ.Number)}, true
 }
 
-var _ typeCallReturnProvider = numberReturnTyper{}
+var _ ProductCallTyper = numberReturnTyper{}
 
 func (c captureEffectTyper) IterVars(*ast.FuncCallExpr, int, func(ast.Expr) typ.Type) ([]typ.Type, bool) {
 	return nil, false
@@ -454,4 +454,4 @@ func (p *productCaptureEffectTyper) CellEffectsFromValues(
 }
 
 var _ productCellEffectProvider = (*productCaptureEffectTyper)(nil)
-var _ typeCallReturnProvider = (*productCaptureEffectTyper)(nil)
+var _ ProductCallTyper = (*productCaptureEffectTyper)(nil)

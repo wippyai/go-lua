@@ -125,16 +125,13 @@ type closureReferenceProjectionProvider interface {
 	ReferenceProjection(ref flow.FunctionRef) flow.ReferencePathProjection
 }
 
-// CallTyper types a call or method-call expression's Lua return vector. It is the
-// transfer's seam to call typing (ops.NewCallPipeline): the driver implements it
-// by resolving the callee/receiver type (from the module's function signatures,
-// predeclared globals, captured values, or the live Env via the supplied
-// resolver) and running the call pipeline, which infers generic type arguments
-// from the argument types, runs the cast/intercept chain, and produces the
-// multi-return tuple. The transfer owns reading the argument and receiver values
-// from the current Env; the CallTyper owns callee resolution and the pipeline. It
-// is optional: a nil typer leaves a call result untyped (the sound
-// carry-forward), so a slot assigned from a call drops to the value-domain Top.
+// CallTyper is the transfer's seam to call-derived facts: iteration effects,
+// argument demands, post-call narrows, no-return control, and cast recognition.
+// The driver implements it by resolving the callee/receiver type (from the
+// module's function signatures, predeclared globals, captured values, or the live
+// Env via the supplied resolver) and running the call pipeline. Return values are
+// exposed separately through ProductCallTyper so transfer has one product-carrier
+// route for call returns.
 //
 // exprType resolves an expression's value type against the live point Env (the
 // transfer's evalExpr): the driver reads it for the callee, the receiver, and any
@@ -194,18 +191,9 @@ type IterVarProjector interface {
 	IterVarProjection(iter *ast.FuncCallExpr, count int, exprType func(ast.Expr) typ.Type) (iteration.VarProjection, bool)
 }
 
-// typeCallReturnProvider is the compatibility fallback for call return facts
-// that are still exposed only as typ.Type. ProductCallTyper is the canonical
-// value carrier; this provider is optional so transfer-only call effects do not
-// have to implement a no-op return method.
-type typeCallReturnProvider interface {
-	CallReturns(call *ast.FuncCallExpr, argTypes []typ.Type, exprType func(ast.Expr) typ.Type, cells flow.CaptureCells, refs flow.FunctionRefs) ([]typ.Type, bool)
-}
-
 // ProductCallTyper is the product-carrier call-return seam. A CallTyper may
 // implement it when it can preserve axes that are lost by projecting through
-// typ.Type, such as the gradual-top evidence axis. The older CallReturns seam
-// remains an optional compatibility fallback for type-only call facts.
+// typ.Type, such as the gradual-top evidence axis.
 type ProductCallTyper interface {
 	CallReturnValues(call *ast.FuncCallExpr, ctx ProductCallContext) ([]product.AbstractValue, bool)
 }
@@ -273,9 +261,9 @@ type Config struct {
 	// function-valued table-literal field types as a callable. Nil leaves such a
 	// field untyped (the sound carry-forward).
 	FuncTyper FuncTyper
-	// CallTyper types a call/method-call expression's return vector through the
-	// call pipeline. Nil leaves a call result untyped (the sound carry-forward), so
-	// a slot assigned from a call drops to the value-domain Top.
+	// CallTyper exposes call-derived facts. When it also implements
+	// ProductCallTyper, expression calls receive product return values; otherwise a
+	// call result remains untyped (the sound carry-forward).
 	CallTyper CallTyper
 	// TypeChecks are type-check value-narrowing binds precomputed from graph
 	// assignments such as `local val, err = T:is(x)`.
@@ -318,9 +306,8 @@ type Transfer struct {
 	// function-valued table-literal field types as a callable. Nil leaves such a
 	// field untyped (the sound carry-forward).
 	funcTyper FuncTyper
-	// callTyper types a call/method-call expression's return vector through the
-	// call pipeline. Nil leaves a call result untyped (the sound carry-forward), so
-	// a slot assigned from a call drops to the value-domain Top.
+	// callTyper exposes call-derived facts. Product return values are consumed only
+	// when this value also implements ProductCallTyper.
 	callTyper CallTyper
 	// paramBySym maps a parameter's symbol ID to its parameter index, so a body
 	// use of a parameter routes demand to the right contract cell.
@@ -2476,11 +2463,10 @@ func (t *Transfer) evalExprAt(
 }
 
 // evalCall types a call or method-call expression's Lua return vector through the
-// CallTyper seam. It resolves argument product values from the current Env and
-// emits parameter demand for arguments that are parameter reads. A product-aware
-// typer receives the product values directly, preserving axes that typ.Type cannot
-// express (notably gradual-top evidence); type-only typers remain supported at
-// external type-only boundaries.
+// product call seam. It resolves argument product values from the current Env and
+// emits parameter demand for arguments that are parameter reads. The driver may
+// still use type-only signatures internally, but transfer no longer exposes a
+// second type-only return route beside the product carrier.
 //
 // The receiver of a method call and any field-path callee are resolved through the
 // live point state, so a method on a tracked local resolves its receiver value.
@@ -2507,13 +2493,6 @@ func (t *Transfer) evalCall(
 	// argument's product value for the call pipeline's generic inference and arity.
 	ctx := t.productCallContext(out, call, demand)
 	t.applyCallArgDemands(out, call, ctx, demand)
-	argTypes := ctx.ArgTypes()
-	// exprType resolves an expression against the live Env for the driver's callee/
-	// receiver resolution (a function-valued local, a tracked receiver record). It
-	// returns the value-domain unknown when the transfer does not track the value, so
-	// the driver falls back to its module-wide signatures and globals; a read of an
-	// unannotated parameter resolves to gradual `any` (a genuinely-gradual source).
-	exprType := ctx.ExprType
 	t.applyCallSideEffects(out, call, ctx, demand)
 	if productTyper, ok := t.callTyper.(ProductCallTyper); ok {
 		returns, ok := productTyper.CallReturnValues(call, ctx)
@@ -2526,18 +2505,7 @@ func (t *Transfer) evalCall(
 			return nil, false
 		}
 	}
-	typeTyper, ok := t.callTyper.(typeCallReturnProvider)
-	if !ok || typeTyper == nil {
-		return nil, false
-	}
-	returns, ok := typeTyper.CallReturns(call, argTypes, exprType, out.Cells, out.FunctionRefs)
-	if !ok || len(returns) == 0 {
-		return nil, false
-	}
-	// Legacy/type-only providers return a storage vector, not a summary tuple.
-	// Keep nil/unknown slots as zero so targetValue can distinguish "slot exists
-	// but no product fact" from "the call returned an explicit unknown value".
-	return product.FromTypes(returns), true
+	return nil, false
 }
 
 // IntrinsicCallReturnValues projects transfer-owned intrinsic call semantics for

@@ -333,23 +333,23 @@ func TestEvalCallPassesUnannotatedParamCalleeAsProductGradualTop(t *testing.T) {
 	}
 }
 
-func TestEvalCallTypeOnlyAnyReturnStaysStrictAny(t *testing.T) {
+func TestEvalCallProductStrictAnyReturnStaysStrictAny(t *testing.T) {
 	tr := New(input.Inputs{}, Config{CallTyper: strictAnyReturnTyper{}})
 	out := flow.PointState{Env: map[flow.ValueKey]product.AbstractValue{}}
 
 	returns, ok := tr.evalCall(&out, &ast.FuncCallExpr{Func: &ast.IdentExpr{Value: "callee"}}, nil)
 	if !ok || len(returns) != 1 {
-		t.Fatalf("evalCall returned %d/%v, want one type-only return", len(returns), ok)
+		t.Fatalf("evalCall returned %d/%v, want one product return", len(returns), ok)
 	}
 	if returns[0].IsGradualTop() {
-		t.Fatal("type-only any return was incorrectly promoted to gradual-top evidence")
+		t.Fatal("strict any return was incorrectly promoted to gradual-top evidence")
 	}
 	if !typ.IsAny(returns[0].ProjectValue()) {
-		t.Fatalf("type-only return = %v, want strict any", returns[0].ProjectValue())
+		t.Fatalf("product return = %v, want strict any", returns[0].ProjectValue())
 	}
 }
 
-func TestEvalCallPendingProductInputBlocksTypeOnlyFallback(t *testing.T) {
+func TestEvalCallPendingProductInputWithoutReturnEvidenceStaysUnknown(t *testing.T) {
 	fn := &ast.FunctionExpr{ParList: &ast.ParList{Names: []string{"db"}}}
 	in := input.BuildFromFunction(fn, nil, nil)
 	if in.Graph == nil || len(in.Scope.ParamSymbols) != 1 {
@@ -368,17 +368,17 @@ func TestEvalCallPendingProductInputBlocksTypeOnlyFallback(t *testing.T) {
 	if returns, ok := tr.evalCall(&out, call, nil); ok || len(returns) != 0 {
 		t.Fatalf("pending product input evalCall = %v/%v, want no contribution", returns, ok)
 	}
-	if typer.typeCalls != 0 {
-		t.Fatalf("type-only fallback called %d times for pending product input", typer.typeCalls)
+	if typer.productCalls != 1 {
+		t.Fatalf("product return calls after pending input = %d, want 1", typer.productCalls)
 	}
 
 	out.Env[flow.SymbolValueKey(sym)] = product.FromType(typ.String)
 	returns, ok := tr.evalCall(&out, call, nil)
-	if !ok || len(returns) != 1 || !typ.IsAny(returns[0].ProjectValue()) || returns[0].IsGradualTop() {
-		t.Fatalf("concrete receiver fallback = %v/%v, want strict any", returns, ok)
+	if ok || len(returns) != 0 {
+		t.Fatalf("concrete receiver without product evidence = %v/%v, want no contribution", returns, ok)
 	}
-	if typer.typeCalls != 1 {
-		t.Fatalf("type-only fallback calls after concrete receiver = %d, want 1", typer.typeCalls)
+	if typer.productCalls != 2 {
+		t.Fatalf("product return calls after concrete receiver = %d, want 2", typer.productCalls)
 	}
 }
 
@@ -420,31 +420,26 @@ type strictAnyReturnTyper struct {
 	captureEffectTyper
 }
 
-func (strictAnyReturnTyper) CallReturns(*ast.FuncCallExpr, []typ.Type, func(ast.Expr) typ.Type, flow.CaptureCells, flow.FunctionRefs) ([]typ.Type, bool) {
-	return []typ.Type{typ.Any}, true
+func (strictAnyReturnTyper) CallReturnValues(*ast.FuncCallExpr, ProductCallContext) ([]product.AbstractValue, bool) {
+	return []product.AbstractValue{product.FromType(typ.Any)}, true
 }
 
 type pendingBlocksTypeFallbackTyper struct {
 	captureEffectTyper
-	typeCalls int
+	productCalls int
 }
 
 func (p *pendingBlocksTypeFallbackTyper) CallReturnValues(*ast.FuncCallExpr, ProductCallContext) ([]product.AbstractValue, bool) {
+	p.productCalls++
 	return nil, false
-}
-
-func (p *pendingBlocksTypeFallbackTyper) CallReturns(*ast.FuncCallExpr, []typ.Type, func(ast.Expr) typ.Type, flow.CaptureCells, flow.FunctionRefs) ([]typ.Type, bool) {
-	p.typeCalls++
-	return []typ.Type{typ.Any}, true
 }
 
 var _ CallTyper = (*productReturnTestTyper)(nil)
 var _ ProductCallTyper = (*productReturnTestTyper)(nil)
 var _ CallTyper = strictAnyReturnTyper{}
-var _ typeCallReturnProvider = strictAnyReturnTyper{}
+var _ ProductCallTyper = strictAnyReturnTyper{}
 var _ CallTyper = (*pendingBlocksTypeFallbackTyper)(nil)
 var _ ProductCallTyper = (*pendingBlocksTypeFallbackTyper)(nil)
-var _ typeCallReturnProvider = (*pendingBlocksTypeFallbackTyper)(nil)
 
 type constTypeCastTyper struct {
 	captureEffectTyper
