@@ -304,18 +304,6 @@ func ResolveCallbackArgRefs(in CallbackArgInput) ([]summary.FuncRef, bool) {
 	return nil, false
 }
 
-// ResolveCallbackArg is the singleton compatibility form for callers that
-// cannot represent multiple callback targets. It never falls back to static
-// facts after an authoritative product-axis miss; that decision is made by
-// ResolveCallbackArgRefs.
-func ResolveCallbackArg(in CallbackArgInput) (summary.FuncRef, bool) {
-	refs, ok := ResolveCallbackArgRefs(in)
-	if !ok || len(refs) != 1 {
-		return summary.FuncRef{}, false
-	}
-	return refs[0], true
-}
-
 // StaticCallbackOverlayInput is the canonical pre-solve policy for callback
 // environment overlays on callees that are not handled as module-local refs.
 type StaticCallbackOverlayInput struct {

@@ -463,14 +463,14 @@ func TestContainerElementUnionsForCallExtractsMutateLabels(t *testing.T) {
 	}
 }
 
-func TestResolveCallbackArgFunctionLiteralBeatsStaticExpr(t *testing.T) {
+func TestResolveCallbackArgRefsFunctionLiteralBeatsStaticExpr(t *testing.T) {
 	t.Parallel()
 
 	arg := &ast.FunctionExpr{}
 	literalRef := summary.FuncRef{GraphID: 7}
 	staticUsed := false
 
-	got, ok := ResolveCallbackArg(CallbackArgInput{
+	got, ok := ResolveCallbackArgRefs(CallbackArgInput{
 		Arg: arg,
 		FunctionLiteral: func(fn *ast.FunctionExpr) (summary.FuncRef, bool) {
 			if fn != arg {
@@ -484,21 +484,21 @@ func TestResolveCallbackArgFunctionLiteralBeatsStaticExpr(t *testing.T) {
 		},
 	})
 
-	if !ok || got != literalRef {
-		t.Fatalf("callback arg ref = %v, %v; want literal ref", got, ok)
+	if !ok || len(got) != 1 || got[0] != literalRef {
+		t.Fatalf("callback arg refs = %+v/%v; want literal ref", got, ok)
 	}
 	if staticUsed {
 		t.Fatal("static expr fallback ran despite function literal ref")
 	}
 }
 
-func TestResolveCallbackArgStaticExprFallback(t *testing.T) {
+func TestResolveCallbackArgRefsStaticExprFallback(t *testing.T) {
 	t.Parallel()
 
 	arg := &ast.IdentExpr{Value: "cb"}
 	staticRef := summary.FuncRef{GraphID: 9}
 
-	got, ok := ResolveCallbackArg(CallbackArgInput{
+	got, ok := ResolveCallbackArgRefs(CallbackArgInput{
 		Arg: arg,
 		FunctionLiteral: func(*ast.FunctionExpr) (summary.FuncRef, bool) {
 			t.Fatal("function literal resolver ran for ident")
@@ -512,8 +512,8 @@ func TestResolveCallbackArgStaticExprFallback(t *testing.T) {
 		},
 	})
 
-	if !ok || got != staticRef {
-		t.Fatalf("callback arg ref = %v, %v; want static ref", got, ok)
+	if !ok || len(got) != 1 || got[0] != staticRef {
+		t.Fatalf("callback arg refs = %+v/%v; want static ref", got, ok)
 	}
 }
 
