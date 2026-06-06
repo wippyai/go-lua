@@ -13,7 +13,7 @@ type assignCallPostconditionEffects struct {
 	relations     []RelationEffect
 	keyProvenance []KeyProvenanceEffect
 	boundaryFacts []boundaryFactPostcondition
-	numericOps    []NumericOp
+	numericOps    []flow.NumericOp
 }
 
 type boundaryFactPostcondition struct {
@@ -72,7 +72,7 @@ func (t *Transfer) applyAssignCallPostconditions(out *flow.PointState, effects a
 		t.applyBoundaryFactsWithAppendPlans(out, effect.call, effect.facts, effect.returns, effect.appendPlans)
 	}
 	if len(effects.numericOps) > 0 {
-		t.applyNumericEffect(out, NumericEffect{Ops: effects.numericOps})
+		flow.ApplyNumericEffect(out, flow.NumericEffect{Ops: effects.numericOps})
 	}
 }
 
@@ -278,8 +278,8 @@ func (t *Transfer) appendLengthParamPostconditions(
 		if lower <= 0 {
 			continue
 		}
-		effects.numericOps = append(effects.numericOps, NumericOp{
-			Kind:  NumericLenGeConst,
+		effects.numericOps = append(effects.numericOps, flow.NumericOp{
+			Kind:  flow.NumericLenGeConst,
 			Key:   targetKey,
 			Const: lower,
 		})

@@ -36,9 +36,9 @@ func (t *Transfer) applyLoopAppendLengthFacts(out *flow.PointState, facts []inpu
 	changed := false
 	for _, fact := range facts {
 		if fact.Count > 0 {
-			changed = t.applyNumericEffect(out, NumericEffect{
-				Ops: []NumericOp{{
-					Kind:  NumericLenGeConst,
+			changed = flow.ApplyNumericEffect(out, flow.NumericEffect{
+				Ops: []flow.NumericOp{{
+					Kind:  flow.NumericLenGeConst,
 					Key:   fact.TargetKey,
 					Const: fact.Count,
 				}},

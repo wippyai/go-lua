@@ -1704,9 +1704,9 @@ func (t *Transfer) narrowIndexPresenceLength(res flow.PointState, sym cfg.Symbol
 	if seg.Kind != constraint.SegmentIndexInt || seg.Index < 1 {
 		return res
 	}
-	t.applyNumericEffect(&res, NumericEffect{
-		Ops: []NumericOp{{
-			Kind:  NumericLenGeConst,
+	flow.ApplyNumericEffect(&res, flow.NumericEffect{
+		Ops: []flow.NumericOp{{
+			Kind:  flow.NumericLenGeConst,
 			Key:   constraint.PathKey(flow.SymbolValueKey(sym)),
 			Const: int64(seg.Index),
 		}},
@@ -1771,12 +1771,12 @@ func (t *Transfer) narrowNumericComparison(out flow.PointState, info *cfg.Branch
 	}
 	idxKey := constraint.PathKey(flow.SymbolValueKey(idxSym))
 	if c, ok := t.constInt(boundExpr); ok {
-		ops := numericConstComparisonOps(idxKey, op, c)
+		ops := flow.NumericConstComparisonOps(idxKey, op, c)
 		if len(ops) == 0 {
 			return out
 		}
 		res := flow.ClonePointState(out)
-		t.applyNumericEffect(&res, NumericEffect{Ops: ops})
+		flow.ApplyNumericEffect(&res, flow.NumericEffect{Ops: ops})
 		return res
 	}
 	// `var <= #container` / `var < #container`: a symbolic length reference. Only the
@@ -1784,9 +1784,9 @@ func (t *Transfer) narrowNumericComparison(out flow.PointState, info *cfg.Branch
 	// does not establish in-range presence and is left unseeded.
 	if arrKey, off, ok := t.lengthBoundComparison(boundExpr, op); ok {
 		res := flow.ClonePointState(out)
-		t.applyNumericEffect(&res, NumericEffect{
-			Ops: []NumericOp{{
-				Kind:   NumericVarLeLenOffset,
+		flow.ApplyNumericEffect(&res, flow.NumericEffect{
+			Ops: []flow.NumericOp{{
+				Kind:   flow.NumericVarLeLenOffset,
 				Key:    idxKey,
 				Other:  arrKey,
 				Offset: off,
@@ -2167,19 +2167,19 @@ func (t *Transfer) narrowLengthGuard(out flow.PointState, rel *ast.RelationalOpE
 	if !effectiveTruthy(info.CondCheck.Kind, taken) {
 		op = negateLengthOp(op)
 	}
-	floor, ceil, hasFloor, hasCeil := lengthBoundFromOp(op, c)
+	floor, ceil, hasFloor, hasCeil := flow.LengthBoundFromOp(op, c)
 	if !hasFloor && !hasCeil {
 		return out, false
 	}
-	ops := make([]NumericOp, 0, 2)
+	ops := make([]flow.NumericOp, 0, 2)
 	if hasFloor {
-		ops = append(ops, NumericOp{Kind: NumericLenGeConst, Key: arrKey, Const: floor})
+		ops = append(ops, flow.NumericOp{Kind: flow.NumericLenGeConst, Key: arrKey, Const: floor})
 	}
 	if hasCeil {
-		ops = append(ops, NumericOp{Kind: NumericLenLeConst, Key: arrKey, Const: ceil})
+		ops = append(ops, flow.NumericOp{Kind: flow.NumericLenLeConst, Key: arrKey, Const: ceil})
 	}
 	res := flow.ClonePointState(out)
-	t.applyNumericEffect(&res, NumericEffect{Ops: ops})
+	flow.ApplyNumericEffect(&res, flow.NumericEffect{Ops: ops})
 	if hasFloor && floor > 0 {
 		t.applyRefinementEffect(&res, RefinementEffect{
 			Place:     place,
@@ -2222,34 +2222,6 @@ func negateLengthOp(op string) string {
 		return "=="
 	default:
 		return negateComparisonOp(op)
-	}
-}
-
-// lengthBoundFromOp translates a proven `#x OP c` comparison into the inclusive
-// integer length floor and/or ceiling it establishes. A strict bound is tightened to
-// its integer neighbor (`#x > c` is `#x >= c+1`). An equality bounds both ends; an
-// inequality bounds the length only when c is 0 (a non-negative length that is not 0
-// is at least 1). An operator/constant that proves no usable bound reports both
-// has-flags false.
-func lengthBoundFromOp(op string, c int64) (floor, ceil int64, hasFloor, hasCeil bool) {
-	switch op {
-	case ">":
-		return c + 1, 0, true, false
-	case ">=":
-		return c, 0, true, false
-	case "<":
-		return 0, c - 1, false, true
-	case "<=":
-		return 0, c, false, true
-	case "==":
-		return c, c, true, true
-	case "~=":
-		if c == 0 {
-			return 1, 0, true, false
-		}
-		return 0, 0, false, false
-	default:
-		return 0, 0, false, false
 	}
 }
 
@@ -4032,12 +4004,12 @@ func (t *Transfer) applyLengthEqualityProof(out *flow.PointState, left, right as
 	if !ok {
 		return
 	}
-	ops := numericLengthBoundOps(arrKey, op, c)
+	ops := flow.NumericLengthBoundOps(arrKey, op, c)
 	if len(ops) == 0 {
 		return
 	}
-	t.applyNumericEffect(out, NumericEffect{Ops: ops})
-	if floor, _, hasFloor, _ := lengthBoundFromOp(op, c); hasFloor && floor > 0 {
+	flow.ApplyNumericEffect(out, flow.NumericEffect{Ops: ops})
+	if floor, _, hasFloor, _ := flow.LengthBoundFromOp(op, c); hasFloor && floor > 0 {
 		t.applyRefinementEffect(out, RefinementEffect{
 			Place:     place,
 			Kind:      RefinementLengthLowerBound,
@@ -4066,7 +4038,7 @@ func (t *Transfer) seedPathIndexPresence(out *flow.PointState, expr ast.Expr) {
 	if !ok || path.Symbol == 0 || len(path.Segments) == 0 {
 		return
 	}
-	ops := make([]NumericOp, 0, len(path.Segments))
+	ops := make([]flow.NumericOp, 0, len(path.Segments))
 	for i, seg := range path.Segments {
 		if seg.Kind != constraint.SegmentIndexInt || seg.Index < 1 {
 			continue
@@ -4075,13 +4047,13 @@ func (t *Transfer) seedPathIndexPresence(out *flow.PointState, expr ast.Expr) {
 		if i > 0 {
 			containerKey = flow.SymbolPathKey(path.Symbol, path.Segments[:i])
 		}
-		ops = append(ops, NumericOp{
-			Kind:  NumericLenGeConst,
+		ops = append(ops, flow.NumericOp{
+			Kind:  flow.NumericLenGeConst,
 			Key:   containerKey,
 			Const: int64(seg.Index),
 		})
 	}
-	t.applyNumericEffect(out, NumericEffect{Ops: ops})
+	flow.ApplyNumericEffect(out, flow.NumericEffect{Ops: ops})
 }
 
 func (t *Transfer) narrowLiteralEqualityPath(out *flow.PointState, access ast.Expr, lit *typ.Literal) bool {

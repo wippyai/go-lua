@@ -1,10 +1,9 @@
-package transfer
+package flow
 
 import (
 	"math"
 
 	"github.com/wippyai/go-lua/types/constraint"
-	"github.com/wippyai/go-lua/types/flow"
 	"github.com/wippyai/go-lua/types/flow/numeric"
 )
 
@@ -21,9 +20,9 @@ const (
 	NumericIncrementLenLower
 )
 
-// NumericEffect is the canonical product-state effect for facts in the numeric
-// component. Callers lower guards, assignments, and table-length mutations into
-// primitive numeric atoms; this reducer owns cloning, top initialization, and
+// NumericEffect is the canonical PointState effect for facts in the numeric
+// component. Transfer lowers guards, assignments, and table-length mutations
+// into primitive numeric atoms; flow owns cloning, top initialization, and
 // canonical storage of PointState.Num.
 type NumericEffect struct {
 	Ops             []NumericOp
@@ -39,7 +38,7 @@ type NumericOp struct {
 	Delta  int64
 }
 
-func (t *Transfer) applyNumericEffect(out *flow.PointState, effect NumericEffect) bool {
+func ApplyNumericEffect(out *PointState, effect NumericEffect) bool {
 	if out == nil || len(effect.Ops) == 0 {
 		return false
 	}
@@ -135,7 +134,7 @@ func normalizeNumericEffectState(num *numeric.State) *numeric.State {
 	return num
 }
 
-func numericConstComparisonOps(key constraint.PathKey, op string, c int64) []NumericOp {
+func NumericConstComparisonOps(key constraint.PathKey, op string, c int64) []NumericOp {
 	switch op {
 	case "<":
 		if c == math.MinInt64 {
@@ -156,7 +155,7 @@ func numericConstComparisonOps(key constraint.PathKey, op string, c int64) []Num
 	}
 }
 
-func numericLengthBoundOps(key constraint.PathKey, op string, c int64) []NumericOp {
+func NumericLengthBoundOps(key constraint.PathKey, op string, c int64) []NumericOp {
 	switch op {
 	case "<":
 		if c == math.MinInt64 {
@@ -167,7 +166,7 @@ func numericLengthBoundOps(key constraint.PathKey, op string, c int64) []Numeric
 			return nil
 		}
 	}
-	floor, ceil, hasFloor, hasCeil := lengthBoundFromOp(op, c)
+	floor, ceil, hasFloor, hasCeil := LengthBoundFromOp(op, c)
 	if !hasFloor && !hasCeil {
 		return nil
 	}
@@ -179,4 +178,30 @@ func numericLengthBoundOps(key constraint.PathKey, op string, c int64) []Numeric
 		ops = append(ops, NumericOp{Kind: NumericLenLeConst, Key: key, Const: ceil})
 	}
 	return ops
+}
+
+// LengthBoundFromOp translates a proven `#x OP c` comparison into the inclusive
+// integer length floor and/or ceiling it establishes. A strict bound is tightened
+// to its integer neighbor. Equality bounds both ends; inequality bounds the
+// length only when c is 0 because lengths are non-negative.
+func LengthBoundFromOp(op string, c int64) (floor, ceil int64, hasFloor, hasCeil bool) {
+	switch op {
+	case ">":
+		return c + 1, 0, true, false
+	case ">=":
+		return c, 0, true, false
+	case "<":
+		return 0, c - 1, false, true
+	case "<=":
+		return 0, c, false, true
+	case "==":
+		return c, c, true, true
+	case "~=":
+		if c == 0 {
+			return 1, 0, true, false
+		}
+		return 0, 0, false, false
+	default:
+		return 0, 0, false, false
+	}
 }

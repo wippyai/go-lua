@@ -935,7 +935,7 @@ func (t *Transfer) SeedEntryFacts(out *flow.PointState, facts flow.BoundaryFacts
 			SourceField: fact.SourceField,
 		})
 	}
-	var ops []NumericOp
+	var ops []flow.NumericOp
 	for _, fact := range facts.LengthLowerBounds() {
 		target, ok := t.rebaseEntryBoundaryPath(fact.Target)
 		if !ok || target.Symbol == 0 {
@@ -945,10 +945,10 @@ func (t *Transfer) SeedEntryFacts(out *flow.PointState, facts flow.BoundaryFacts
 		if key == "" {
 			continue
 		}
-		ops = append(ops, NumericOp{Kind: NumericLenGeConst, Key: key, Const: fact.Lower})
+		ops = append(ops, flow.NumericOp{Kind: flow.NumericLenGeConst, Key: key, Const: fact.Lower})
 	}
 	if len(ops) > 0 {
-		t.applyNumericEffect(out, NumericEffect{Ops: ops})
+		flow.ApplyNumericEffect(out, flow.NumericEffect{Ops: ops})
 	}
 }
 
@@ -3545,7 +3545,7 @@ func (t *Transfer) applyBoundaryFactsWithAppendPlans(
 			}) || changed
 		}
 	}
-	var ops []NumericOp
+	var ops []flow.NumericOp
 	for _, fact := range facts.LengthLowerBounds() {
 		target, ok := t.rebaseBoundaryPath(call, returns, fact.Target)
 		if !ok {
@@ -3555,10 +3555,10 @@ func (t *Transfer) applyBoundaryFactsWithAppendPlans(
 		if key == "" {
 			continue
 		}
-		ops = append(ops, NumericOp{Kind: NumericLenGeConst, Key: key, Const: fact.Lower})
+		ops = append(ops, flow.NumericOp{Kind: flow.NumericLenGeConst, Key: key, Const: fact.Lower})
 	}
 	if len(ops) > 0 {
-		changed = t.applyNumericEffect(out, NumericEffect{Ops: ops}) || changed
+		changed = flow.ApplyNumericEffect(out, flow.NumericEffect{Ops: ops}) || changed
 	}
 	return changed
 }
@@ -4710,8 +4710,8 @@ func (t *Transfer) applyNumeric(out *flow.PointState, key flow.ValueKey, src ast
 	}
 	pk := constraint.PathKey(key)
 	if c, ok := t.constInt(src); ok {
-		t.applyNumericEffect(out, NumericEffect{
-			Ops:             []NumericOp{{Kind: NumericVarEqConst, Key: pk, Const: c}},
+		flow.ApplyNumericEffect(out, flow.NumericEffect{
+			Ops:             []flow.NumericOp{{Kind: flow.NumericVarEqConst, Key: pk, Const: c}},
 			RequireExisting: true,
 		})
 		return
@@ -4739,8 +4739,8 @@ func (t *Transfer) applyNumeric(out *flow.PointState, key flow.ValueKey, src ast
 	if (delta > 0 && prevUpper > math.MaxInt64-delta) || (delta < 0 && prevUpper < math.MinInt64-delta) {
 		return
 	}
-	t.applyNumericEffect(out, NumericEffect{
-		Ops:             []NumericOp{{Kind: NumericVarEqConst, Key: pk, Const: prevUpper + delta}},
+	flow.ApplyNumericEffect(out, flow.NumericEffect{
+		Ops:             []flow.NumericOp{{Kind: flow.NumericVarEqConst, Key: pk, Const: prevUpper + delta}},
 		RequireExisting: true,
 	})
 }

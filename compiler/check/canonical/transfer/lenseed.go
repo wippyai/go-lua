@@ -141,16 +141,16 @@ func (t *Transfer) seedArrayLiteralLength(out *flow.PointState, key flow.ValueKe
 			Symbols: []cfg.SymbolID{sym},
 		})
 	}
-	ops := []NumericOp{{Kind: NumericDropLenBound, Key: arrKey}}
+	ops := []flow.NumericOp{{Kind: flow.NumericDropLenBound, Key: arrKey}}
 	tbl, ok := src.(*ast.TableExpr)
 	if !ok {
-		t.applyNumericEffect(out, NumericEffect{Ops: ops, RequireExisting: true})
+		flow.ApplyNumericEffect(out, flow.NumericEffect{Ops: ops, RequireExisting: true})
 		return
 	}
 	if n := arrayLiteralArity(tbl); n > 0 {
-		ops = append(ops, NumericOp{Kind: NumericLenGeConst, Key: arrKey, Const: n})
+		ops = append(ops, flow.NumericOp{Kind: flow.NumericLenGeConst, Key: arrKey, Const: n})
 	}
-	t.applyNumericEffect(out, NumericEffect{Ops: ops, RequireExisting: true})
+	flow.ApplyNumericEffect(out, flow.NumericEffect{Ops: ops, RequireExisting: true})
 	if cardinalityLower > 0 && hasSymbolRoot {
 		t.applyRelationEffect(out, RelationEffect{
 			Kind:       RelationSeedContainerLowerBound,
@@ -174,28 +174,28 @@ func (t *Transfer) applyIndexWriteLength(out *flow.PointState, target cfg.Assign
 	arrKey := constraint.PathKey(baseKey)
 	lenIdent, offset, ok := t.lengthIndexOffset(target.Key)
 	if !ok || offset < 1 {
-		t.applyNumericEffect(out, NumericEffect{
-			Ops:             []NumericOp{{Kind: NumericDropLenBound, Key: arrKey}},
+		flow.ApplyNumericEffect(out, flow.NumericEffect{
+			Ops:             []flow.NumericOp{{Kind: flow.NumericDropLenBound, Key: arrKey}},
 			RequireExisting: true,
 		})
 		return
 	}
 	if lenSym := t.symbolOf(lenIdent); lenSym == 0 || constraint.PathKey(flow.SymbolValueKey(lenSym)) != arrKey {
-		t.applyNumericEffect(out, NumericEffect{
-			Ops:             []NumericOp{{Kind: NumericDropLenBound, Key: arrKey}},
+		flow.ApplyNumericEffect(out, flow.NumericEffect{
+			Ops:             []flow.NumericOp{{Kind: flow.NumericDropLenBound, Key: arrKey}},
 			RequireExisting: true,
 		})
 		return
 	}
-	t.applyNumericEffect(out, NumericEffect{
-		Ops:             []NumericOp{{Kind: NumericIncrementLenLower, Key: arrKey, Delta: offset}},
+	flow.ApplyNumericEffect(out, flow.NumericEffect{
+		Ops:             []flow.NumericOp{{Kind: flow.NumericIncrementLenLower, Key: arrKey, Delta: offset}},
 		RequireExisting: true,
 	})
 }
 
 func (t *Transfer) incrementLenBound(out *flow.PointState, arrKey constraint.PathKey, delta int64) bool {
-	return t.applyNumericEffect(out, NumericEffect{
-		Ops:             []NumericOp{{Kind: NumericIncrementLenLower, Key: arrKey, Delta: delta}},
+	return flow.ApplyNumericEffect(out, flow.NumericEffect{
+		Ops:             []flow.NumericOp{{Kind: flow.NumericIncrementLenLower, Key: arrKey, Delta: delta}},
 		RequireExisting: true,
 	})
 }
@@ -548,19 +548,19 @@ func (t *Transfer) seedNumericForBounds(out *flow.PointState, idxSym cfg.SymbolI
 		ceilEnd, floorEnd = info.Init, info.Limit
 	}
 	idxKey := constraint.PathKey(flow.SymbolValueKey(idxSym))
-	ops := make([]NumericOp, 0, 2)
+	ops := make([]flow.NumericOp, 0, 2)
 	if c, ok := t.constInt(floorEnd); ok {
-		ops = append(ops, NumericOp{Kind: NumericVarGeConst, Key: idxKey, Const: c})
+		ops = append(ops, flow.NumericOp{Kind: flow.NumericVarGeConst, Key: idxKey, Const: c})
 	}
 	if c, ok := t.constInt(ceilEnd); ok {
-		ops = append(ops, NumericOp{Kind: NumericVarLeConst, Key: idxKey, Const: c})
-		t.applyNumericEffect(out, NumericEffect{Ops: ops, RequireExisting: true})
+		ops = append(ops, flow.NumericOp{Kind: flow.NumericVarLeConst, Key: idxKey, Const: c})
+		flow.ApplyNumericEffect(out, flow.NumericEffect{Ops: ops, RequireExisting: true})
 		return
 	}
 	if arrKey, ok := t.lenExprContainerKey(ceilEnd); ok {
-		ops = append(ops, NumericOp{Kind: NumericVarLeLenOffset, Key: idxKey, Other: arrKey})
+		ops = append(ops, flow.NumericOp{Kind: flow.NumericVarLeLenOffset, Key: idxKey, Other: arrKey})
 	}
-	t.applyNumericEffect(out, NumericEffect{Ops: ops, RequireExisting: true})
+	flow.ApplyNumericEffect(out, flow.NumericEffect{Ops: ops, RequireExisting: true})
 }
 
 // forStepIsNegative reports whether a numeric-for step expression is a negative

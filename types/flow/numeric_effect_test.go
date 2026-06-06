@@ -1,22 +1,19 @@
-package transfer
+package flow
 
 import (
 	"math"
 	"testing"
 
-	"github.com/wippyai/go-lua/compiler/check/canonical/input"
 	"github.com/wippyai/go-lua/types/constraint"
-	"github.com/wippyai/go-lua/types/flow"
 	"github.com/wippyai/go-lua/types/flow/numeric"
 )
 
 func TestNumericEffectAppliesPrimitiveAtomsFromTop(t *testing.T) {
-	tr := New(input.Inputs{}, Config{})
-	out := flow.PointState{}
+	out := PointState{}
 	arrKey := constraint.PathKey("arr")
 	idxKey := constraint.PathKey("i")
 
-	if !tr.applyNumericEffect(&out, NumericEffect{Ops: []NumericOp{
+	if !ApplyNumericEffect(&out, NumericEffect{Ops: []NumericOp{
 		{Kind: NumericLenGeConst, Key: arrKey, Const: 1},
 		{Kind: NumericLenLeConst, Key: arrKey, Const: 4},
 		{Kind: NumericVarLeLenOffset, Key: idxKey, Other: arrKey, Offset: -1},
@@ -37,10 +34,9 @@ func TestNumericEffectAppliesPrimitiveAtomsFromTop(t *testing.T) {
 }
 
 func TestNumericEffectRequireExistingPreservesTop(t *testing.T) {
-	tr := New(input.Inputs{}, Config{})
-	out := flow.PointState{}
+	out := PointState{}
 
-	if tr.applyNumericEffect(&out, NumericEffect{
+	if ApplyNumericEffect(&out, NumericEffect{
 		Ops:             []NumericOp{{Kind: NumericLenGeConst, Key: "arr", Const: 1}},
 		RequireExisting: true,
 	}) {
@@ -52,12 +48,11 @@ func TestNumericEffectRequireExistingPreservesTop(t *testing.T) {
 }
 
 func TestNumericEffectClonesBeforeApplying(t *testing.T) {
-	tr := New(input.Inputs{}, Config{})
 	base := numeric.NewState()
 	base.ApplyLenGeConst("arr", 1)
-	out := flow.PointState{Num: base}
+	out := PointState{Num: base}
 
-	if !tr.applyNumericEffect(&out, NumericEffect{
+	if !ApplyNumericEffect(&out, NumericEffect{
 		Ops: []NumericOp{{Kind: NumericLenGeConst, Key: "arr", Const: 3}},
 	}) {
 		t.Fatalf("numeric effect did not report stronger length floor")
@@ -73,12 +68,11 @@ func TestNumericEffectClonesBeforeApplying(t *testing.T) {
 }
 
 func TestNumericEffectCanonicalizesEmptyStateToTop(t *testing.T) {
-	tr := New(input.Inputs{}, Config{})
 	num := numeric.NewState()
 	num.ApplyLenGeConst("arr", 1)
-	out := flow.PointState{Num: num}
+	out := PointState{Num: num}
 
-	if !tr.applyNumericEffect(&out, NumericEffect{
+	if !ApplyNumericEffect(&out, NumericEffect{
 		Ops: []NumericOp{{Kind: NumericDropLenBound, Key: "arr"}},
 	}) {
 		t.Fatalf("numeric effect did not report dropped length fact")
@@ -89,16 +83,16 @@ func TestNumericEffectCanonicalizesEmptyStateToTop(t *testing.T) {
 }
 
 func TestNumericComparisonOpsAvoidStrictBoundOverflow(t *testing.T) {
-	if ops := numericConstComparisonOps("i", "<", math.MinInt64); len(ops) != 0 {
+	if ops := NumericConstComparisonOps("i", "<", math.MinInt64); len(ops) != 0 {
 		t.Fatalf("x < MinInt64 ops = %#v, want no over-approximating overflow op", ops)
 	}
-	if ops := numericConstComparisonOps("i", ">", math.MaxInt64); len(ops) != 0 {
+	if ops := NumericConstComparisonOps("i", ">", math.MaxInt64); len(ops) != 0 {
 		t.Fatalf("x > MaxInt64 ops = %#v, want no over-approximating overflow op", ops)
 	}
-	if ops := numericLengthBoundOps("arr", "<", math.MinInt64); len(ops) != 0 {
+	if ops := NumericLengthBoundOps("arr", "<", math.MinInt64); len(ops) != 0 {
 		t.Fatalf("#arr < MinInt64 ops = %#v, want no overflow op", ops)
 	}
-	if ops := numericLengthBoundOps("arr", ">", math.MaxInt64); len(ops) != 0 {
+	if ops := NumericLengthBoundOps("arr", ">", math.MaxInt64); len(ops) != 0 {
 		t.Fatalf("#arr > MaxInt64 ops = %#v, want no overflow op", ops)
 	}
 }
