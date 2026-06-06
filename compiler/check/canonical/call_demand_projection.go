@@ -3,6 +3,8 @@ package canonical
 import (
 	"github.com/wippyai/go-lua/compiler/ast"
 	canonicalcall "github.com/wippyai/go-lua/compiler/check/canonical/call"
+	"github.com/wippyai/go-lua/compiler/check/canonical/transfer"
+	"github.com/wippyai/go-lua/compiler/check/domain/callobligation"
 	"github.com/wippyai/go-lua/types/typ"
 )
 
@@ -32,6 +34,25 @@ func (p callDemandProjection) functionShape() *typ.Function {
 		SummaryFunction: p.summaryFunction,
 		Resolver:        p.typer.callTypeResolver(p.exprType),
 	}).Function()
+}
+
+func (p callDemandProjection) demands(ctx transfer.ProductCallContext) []callobligation.Obligation {
+	return (canonicalcall.CallArgDemandProjection{
+		Call: p.call,
+		SummaryDemands: func(call *ast.FuncCallExpr) ([]callobligation.Obligation, bool) {
+			proj, ok := p.typer.summaryOnlyProductCallProjection(call, ctx)
+			if !ok {
+				return nil, false
+			}
+			return proj.argDemands()
+		},
+		FunctionShape: func(*ast.FuncCallExpr) *typ.Function {
+			return p.functionShape()
+		},
+		SelfType: func(*ast.FuncCallExpr) typ.Type {
+			return ctx.SelfType
+		},
+	}).Demands()
 }
 
 func (p callDemandProjection) summaryFunction(call *ast.FuncCallExpr) *typ.Function {

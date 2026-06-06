@@ -8,13 +8,13 @@ import (
 	"github.com/wippyai/go-lua/types/typ"
 )
 
-func TestCallArgDemandsForCallSummaryWins(t *testing.T) {
+func TestCallArgDemandProjectionSummaryWins(t *testing.T) {
 	t.Parallel()
 
 	call := &ast.FuncCallExpr{Args: []ast.Expr{&ast.IdentExpr{Value: "arg"}}}
 	fallbackUsed := false
 
-	got := CallArgDemandsForCall(CallArgDemandsInput{
+	got := (CallArgDemandProjection{
 		Call: call,
 		SummaryDemands: func(gotCall *ast.FuncCallExpr) ([]callobligation.Obligation, bool) {
 			if gotCall != call {
@@ -26,23 +26,23 @@ func TestCallArgDemandsForCallSummaryWins(t *testing.T) {
 			fallbackUsed = true
 			return typ.Func().Param("x", typ.Number).Build()
 		},
-	})
+	}).Demands()
 
 	if len(got) != 1 || got[0].Source != callobligation.SourceBody || got[0].Type != typ.String {
-		t.Fatalf("CallArgDemandsForCall summary = %#v, want string", got)
+		t.Fatalf("CallArgDemandProjection summary = %#v, want string", got)
 	}
 	if fallbackUsed {
 		t.Fatal("function fallback ran despite summary demands")
 	}
 }
 
-func TestCallArgDemandsForCallEmptySummaryHitBlocksFallback(t *testing.T) {
+func TestCallArgDemandProjectionEmptySummaryHitBlocksFallback(t *testing.T) {
 	t.Parallel()
 
 	call := &ast.FuncCallExpr{Args: []ast.Expr{&ast.IdentExpr{Value: "arg"}}}
 	fallbackUsed := false
 
-	got := CallArgDemandsForCall(CallArgDemandsInput{
+	got := (CallArgDemandProjection{
 		Call: call,
 		SummaryDemands: func(*ast.FuncCallExpr) ([]callobligation.Obligation, bool) {
 			return nil, true
@@ -51,22 +51,22 @@ func TestCallArgDemandsForCallEmptySummaryHitBlocksFallback(t *testing.T) {
 			fallbackUsed = true
 			return typ.Func().Param("x", typ.Number).Build()
 		},
-	})
+	}).Demands()
 
 	if got != nil {
-		t.Fatalf("CallArgDemandsForCall empty summary hit = %#v, want nil", got)
+		t.Fatalf("CallArgDemandProjection empty summary hit = %#v, want nil", got)
 	}
 	if fallbackUsed {
 		t.Fatal("function fallback ran despite authoritative empty summary hit")
 	}
 }
 
-func TestCallArgDemandsForCallFunctionFallback(t *testing.T) {
+func TestCallArgDemandProjectionFunctionFallback(t *testing.T) {
 	t.Parallel()
 
 	call := &ast.FuncCallExpr{Args: []ast.Expr{&ast.IdentExpr{Value: "arg"}}}
 
-	got := CallArgDemandsForCall(CallArgDemandsInput{
+	got := (CallArgDemandProjection{
 		Call: call,
 		SummaryDemands: func(*ast.FuncCallExpr) ([]callobligation.Obligation, bool) {
 			return nil, false
@@ -77,14 +77,14 @@ func TestCallArgDemandsForCallFunctionFallback(t *testing.T) {
 			}
 			return typ.Func().Param("x", typ.Number).Build()
 		},
-	})
+	}).Demands()
 
 	if len(got) != 1 || got[0].Source != callobligation.SourceSignature || got[0].Type != typ.Number {
-		t.Fatalf("CallArgDemandsForCall fallback = %#v, want number", got)
+		t.Fatalf("CallArgDemandProjection fallback = %#v, want number", got)
 	}
 }
 
-func TestCallArgDemandsForCallSubstitutesSelfFromReceiver(t *testing.T) {
+func TestCallArgDemandProjectionSubstitutesSelfFromReceiver(t *testing.T) {
 	t.Parallel()
 
 	timeType := typ.NewInterface("time.Time", nil)
@@ -94,7 +94,7 @@ func TestCallArgDemandsForCallSubstitutesSelfFromReceiver(t *testing.T) {
 		Args:     []ast.Expr{&ast.IdentExpr{Value: "other"}},
 	}
 
-	got := CallArgDemandsForCall(CallArgDemandsInput{
+	got := (CallArgDemandProjection{
 		Call: call,
 		FunctionShape: func(*ast.FuncCallExpr) *typ.Function {
 			return typ.Func().
@@ -105,18 +105,18 @@ func TestCallArgDemandsForCallSubstitutesSelfFromReceiver(t *testing.T) {
 		SelfType: func(*ast.FuncCallExpr) typ.Type {
 			return timeType
 		},
-	})
+	}).Demands()
 
 	if len(got) != 1 || got[0].Source != callobligation.SourceSignature || !typ.TypeEquals(got[0].Type, timeType) {
-		t.Fatalf("CallArgDemandsForCall self substitution = %#v, want time.Time signature", got)
+		t.Fatalf("CallArgDemandProjection self substitution = %#v, want time.Time signature", got)
 	}
 }
 
-func TestCallArgDemandsForCallEmptyInputSkipsProviders(t *testing.T) {
+func TestCallArgDemandProjectionEmptyInputSkipsProviders(t *testing.T) {
 	t.Parallel()
 
 	providerUsed := false
-	got := CallArgDemandsForCall(CallArgDemandsInput{
+	got := (CallArgDemandProjection{
 		Call: &ast.FuncCallExpr{},
 		SummaryDemands: func(*ast.FuncCallExpr) ([]callobligation.Obligation, bool) {
 			providerUsed = true
@@ -126,10 +126,10 @@ func TestCallArgDemandsForCallEmptyInputSkipsProviders(t *testing.T) {
 			providerUsed = true
 			return typ.Func().Param("x", typ.Number).Build()
 		},
-	})
+	}).Demands()
 
 	if got != nil {
-		t.Fatalf("CallArgDemandsForCall no args = %#v, want nil", got)
+		t.Fatalf("CallArgDemandProjection no args = %#v, want nil", got)
 	}
 	if providerUsed {
 		t.Fatal("providers ran for call without arguments")

@@ -1801,26 +1801,11 @@ func (ct callTyper) CallReturns(call *ast.FuncCallExpr, argTypes []typ.Type, exp
 }
 
 func (ct callTyper) CallArgDemands(call *ast.FuncCallExpr, ctx transfer.ProductCallContext) []callobligation.Obligation {
-	return canonicalcall.CallArgDemandsForCall(canonicalcall.CallArgDemandsInput{
-		Call: call,
-		SummaryDemands: func(call *ast.FuncCallExpr) ([]callobligation.Obligation, bool) {
-			proj, ok := ct.summaryOnlyProductCallProjection(call, ctx)
-			if !ok {
-				return nil, false
-			}
-			return proj.argDemands()
-		},
-		FunctionShape: func(call *ast.FuncCallExpr) *typ.Function {
-			proj, ok := ct.callDemandProjection(call, ctx.ExprType)
-			if !ok {
-				return nil
-			}
-			return proj.functionShape()
-		},
-		SelfType: func(*ast.FuncCallExpr) typ.Type {
-			return ctx.SelfType
-		},
-	})
+	proj, ok := ct.callDemandProjection(call, ctx.ExprType)
+	if !ok {
+		return nil
+	}
+	return proj.demands(ctx)
 }
 
 func (ct callTyper) currentRef() (summary.FuncRef, bool) {
