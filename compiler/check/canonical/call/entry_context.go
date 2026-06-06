@@ -93,6 +93,18 @@ func EntryContextFromClosureWithLiveContext(closure flow.ClosureRef, live EntryC
 	)
 }
 
+// WithReferenceAxes returns c with additional callee-projected reference axes.
+func (c EntryContext) WithReferenceAxes(refs flow.FunctionRefs, closures flow.ClosureRefs) EntryContext {
+	return NewEntryContextWithFacts(
+		c.ref,
+		c.cells,
+		flow.FunctionRefsDomain.Join(c.refs, refs),
+		flow.ClosureRefsDomain.Join(c.closures, closures),
+		c.values,
+		c.facts,
+	)
+}
+
 // Ref returns the callee function identity for this entry context.
 func (c EntryContext) Ref() summary.FuncRef { return c.ref }
 

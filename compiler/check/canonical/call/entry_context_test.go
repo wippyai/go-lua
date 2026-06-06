@@ -105,6 +105,42 @@ func TestEntryContextFromClosureWithLiveAxesOverridesSnapshot(t *testing.T) {
 	}
 }
 
+func TestEntryContextWithReferenceAxesJoinsRefsAndPreservesOtherAxes(t *testing.T) {
+	ref := summary.FuncRef{GraphID: 12}
+	cells := flow.CaptureCellsOf([]flow.CaptureCell{
+		{Symbol: cfg.SymbolID(1), Value: product.FromType(typ.String)},
+	})
+	basePath := constraint.NewPath(cfg.SymbolID(2), "base")
+	extraPath := constraint.NewPath(cfg.SymbolID(3), "extra")
+	baseRefs := flow.WithFunctionRef(nil, basePath.Key(), flow.FunctionRefSetOf(flow.FunctionRef{GraphID: 20}))
+	extraRefs := flow.WithFunctionRef(nil, extraPath.Key(), flow.FunctionRefSetOf(flow.FunctionRef{GraphID: 21}))
+	baseClosures := flow.WithClosureRef(nil, basePath.Key(), flow.ClosureRefSetOf(
+		flow.ClosureRefOf(flow.FunctionRef{GraphID: 30}, nil, nil),
+	))
+	extraClosures := flow.WithClosureRef(nil, extraPath.Key(), flow.ClosureRefSetOf(
+		flow.ClosureRefOf(flow.FunctionRef{GraphID: 31}, nil, nil),
+	))
+	values := summary.EntryValues{0: product.FromType(typ.Number)}
+	ctx := NewEntryContext(ref, cells, baseRefs, baseClosures, values)
+
+	got := ctx.WithReferenceAxes(extraRefs, extraClosures)
+
+	if !flow.CaptureCellsDomain.Equal(got.CaptureCells(), cells) {
+		t.Fatal("WithReferenceAxes changed capture cells")
+	}
+	if !entryValueEqual(got.EntryValues()[0], values[0]) {
+		t.Fatal("WithReferenceAxes changed entry values")
+	}
+	wantRefs := flow.FunctionRefsDomain.Join(baseRefs, extraRefs)
+	if !flow.FunctionRefsDomain.Equal(got.FunctionRefs(), wantRefs) {
+		t.Fatalf("FunctionRefs = %#v, want joined refs", got.FunctionRefs())
+	}
+	wantClosures := flow.ClosureRefsDomain.Join(baseClosures, extraClosures)
+	if !flow.ClosureRefsDomain.Equal(got.ClosureRefs(), wantClosures) {
+		t.Fatalf("ClosureRefs = %#v, want joined closures", got.ClosureRefs())
+	}
+}
+
 func TestEntryContextEntryValuesNoAliasAndDeterministic(t *testing.T) {
 	ref := summary.FuncRef{GraphID: 200}
 	stringValue := product.FromType(typ.String)

@@ -284,20 +284,15 @@ func (c callEntryProjector) productClosureContext(ref summary.FuncRef, closure f
 func (c callEntryProjector) productEntryContext(ref summary.FuncRef, call *ast.FuncCallExpr, ctx transfer.ProductCallContext) canonicalcall.EntryContext {
 	access := c.access()
 	references := c.productReferencesForRef(ref, call, ctx)
-	return canonicalcall.NewEntryContextWithFacts(
+	entry := c.program.CallEntryContextWithFacts(
 		ref,
-		c.program.CallEntryCells(ref, ctx.Cells),
-		flow.FunctionRefsDomain.Join(
-			c.program.CallEntryFunctionRefs(ref, ctx.FunctionRefs),
-			references.refs,
-		),
-		flow.ClosureRefsDomain.Join(
-			c.program.CallEntryClosureRefs(ref, ctx.ClosureRefs),
-			references.closures,
-		),
+		ctx.Cells,
+		ctx.FunctionRefs,
+		ctx.ClosureRefs,
 		c.productValuesForRef(ref, call, ctx.RuntimeArgValues),
 		access.productFacts(ref, call, ctx),
 	)
+	return entry.WithReferenceAxes(references.refs, references.closures)
 }
 
 func (c callEntryProjector) productValuesForRef(ref summary.FuncRef, call *ast.FuncCallExpr, runtimeValues []product.AbstractValue) summary.EntryValues {
