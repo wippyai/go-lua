@@ -8,7 +8,7 @@ import (
 	"github.com/wippyai/go-lua/types/typ"
 )
 
-func TestExpectedArgTypesForCallMasksCallbackBodyDemandDuringExpectationProjection(t *testing.T) {
+func TestExpectedArgProjectionMasksCallbackBodyDemandDuringExpectationProjection(t *testing.T) {
 	t.Parallel()
 
 	tp := typ.NewTypeParam("T", nil)
@@ -27,7 +27,7 @@ func TestExpectedArgTypesForCallMasksCallbackBodyDemandDuringExpectationProjecti
 	}
 	bodyDemandCallback := typ.Func().Param("value", typ.Number).Returns(typ.Integer).Build()
 
-	got := ExpectedArgTypesForCall(ExpectedArgsInput{
+	got := (ExpectedArgProjection{
 		Call: call,
 		ArgTypes: []typ.Type{
 			typ.String,
@@ -46,7 +46,7 @@ func TestExpectedArgTypesForCallMasksCallbackBodyDemandDuringExpectationProjecti
 		},
 		Ctx:   db.NewQueryContext(db.New()),
 		Query: noopTypeOps{},
-	})
+	}).ExpectedTypes()
 
 	if len(got) != 2 {
 		t.Fatalf("expected args = %v, want two args", got)

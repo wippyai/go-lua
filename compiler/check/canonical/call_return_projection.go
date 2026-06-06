@@ -80,12 +80,12 @@ func (p callReturnProjection) refinedArgTypes() []typ.Type {
 		return p.argTypes
 	}
 	projector := newCallableProjector(p.typer.d, p.typer.d.activeProgram, p.typer.d.activeQueries, p.typer.d.activeCtx)
-	expectedInput := p.typer.expectedArgsInput(p.call, p.argTypes, p.exprType, p.methodReceiverType)
+	expectedInput := p.typer.expectedArgProjection(p.call, p.argTypes, p.exprType, p.methodReceiverType)
 	expectedInput.CallbackArg = func(arg ast.Expr) bool {
 		_, ok := callbackRefs[arg]
 		return ok
 	}
-	expectedArgs := canonicalcall.ExpectedArgTypesForCall(expectedInput)
+	expectedArgs := expectedInput.ExpectedTypes()
 	return canonicalcall.RefineCallbackArgTypes(canonicalcall.CallbackArgRefinementInput{
 		Call:         p.call,
 		ArgTypes:     p.argTypes,

@@ -107,10 +107,10 @@ func ShallowArgTypes(args []ast.Expr, projected []typ.Type, exprType func(ast.Ex
 	return out
 }
 
-// ExpectedArgsInput computes the expected argument contract produced by the
+// ExpectedArgProjection computes the expected argument contract produced by the
 // ordinary call matcher. Callback argument normalization consumes this as entry
 // evidence for nested callback bodies.
-type ExpectedArgsInput struct {
+type ExpectedArgProjection struct {
 	Call                *ast.FuncCallExpr
 	ArgTypes            []typ.Type
 	CallbackArg         func(ast.Expr) bool
@@ -125,62 +125,62 @@ type ExpectedArgsInput struct {
 	ResolveTypeArg      func(ast.TypeExpr) typ.Type
 }
 
-// ExpectedArgTypesForCall returns the callee-visible argument types inferred by
+// ExpectedTypes returns the callee-visible argument types inferred by
 // the same generic matcher that will later synthesize call returns.
-func ExpectedArgTypesForCall(in ExpectedArgsInput) []typ.Type {
-	if in.Call == nil || in.Query == nil {
+func (p ExpectedArgProjection) ExpectedTypes() []typ.Type {
+	if p.Call == nil || p.Query == nil {
 		return nil
 	}
 	def := ops.CallDef{
-		Args:  callArgTypesForExpectedArgProjection(in),
-		Query: in.Query,
+		Args:  callArgTypesForExpectedArgProjection(p),
+		Query: p.Query,
 	}
-	if len(in.Call.TypeArgs) > 0 {
-		def.TypeArgs = resolvedTypeArgs(in.Call.TypeArgs, in.ResolveTypeArg)
+	if len(p.Call.TypeArgs) > 0 {
+		def.TypeArgs = resolvedTypeArgs(p.Call.TypeArgs, p.ResolveTypeArg)
 	}
-	isMethod := in.IsMethod || in.Call.Method != ""
-	methodName := in.MethodName
+	isMethod := p.IsMethod || p.Call.Method != ""
+	methodName := p.MethodName
 	if methodName == "" {
-		methodName = in.Call.Method
+		methodName = p.Call.Method
 	}
 	if isMethod {
 		def.IsMethod = true
-		def.Receiver = in.MethodReceiverType
+		def.Receiver = p.MethodReceiverType
 		if def.Receiver == nil || typ.IsAbsentOrUnknown(def.Receiver) {
-			def.Receiver = in.Resolver.ResolveReceiver(in.Call.Receiver)
+			def.Receiver = p.Resolver.ResolveReceiver(p.Call.Receiver)
 		}
 		def.MethodName = methodName
-		def.ForceMethodReceiver = in.ForceMethodReceiver
-	} else if in.Callee != nil {
-		def.Callee = in.Callee
+		def.ForceMethodReceiver = p.ForceMethodReceiver
+	} else if p.Callee != nil {
+		def.Callee = p.Callee
 	} else {
-		def.Callee = in.Resolver.ResolveCallee(in.Call.Func)
+		def.Callee = p.Resolver.ResolveCallee(p.Call.Func)
 	}
-	inferred := ops.InferCall(in.Ctx, def)
+	inferred := ops.InferCall(p.Ctx, def)
 	if len(inferred.ExpectedArgs) == 0 && inferred.ExpectedVariadic == nil {
 		return nil
 	}
-	out := make([]typ.Type, len(in.Call.Args))
-	for i := range in.Call.Args {
+	out := make([]typ.Type, len(p.Call.Args))
+	for i := range p.Call.Args {
 		out[i] = inferred.ExpectedArgType(i)
 	}
 	return out
 }
 
-func callArgTypesForExpectedArgProjection(in ExpectedArgsInput) []typ.Type {
-	if in.Call == nil {
+func callArgTypesForExpectedArgProjection(p ExpectedArgProjection) []typ.Type {
+	if p.Call == nil {
 		return nil
 	}
-	n := len(in.Call.Args)
+	n := len(p.Call.Args)
 	if n <= 0 {
 		return nil
 	}
 	out := make([]typ.Type, n)
 	for i := 0; i < n; i++ {
-		if in.CallbackArg != nil && in.CallbackArg(in.Call.Args[i]) {
+		if p.CallbackArg != nil && p.CallbackArg(p.Call.Args[i]) {
 			out[i] = typ.Unknown
-		} else if i < len(in.ArgTypes) && in.ArgTypes[i] != nil {
-			out[i] = in.ArgTypes[i]
+		} else if i < len(p.ArgTypes) && p.ArgTypes[i] != nil {
+			out[i] = p.ArgTypes[i]
 		} else {
 			out[i] = typ.Unknown
 		}

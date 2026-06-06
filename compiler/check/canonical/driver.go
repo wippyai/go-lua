@@ -1025,9 +1025,9 @@ func (p *program) expectedCallArgType(g *cfg.Graph, tr *transfer.Transfer, point
 	return projection.argType(argIdx)
 }
 
-func (ct callTyper) expectedArgsInput(call *ast.FuncCallExpr, argTypes []typ.Type, exprType func(ast.Expr) typ.Type, methodReceiverType typ.Type) canonicalcall.ExpectedArgsInput {
+func (ct callTyper) expectedArgProjection(call *ast.FuncCallExpr, argTypes []typ.Type, exprType func(ast.Expr) typ.Type, methodReceiverType typ.Type) canonicalcall.ExpectedArgProjection {
 	d := ct.d
-	in := canonicalcall.ExpectedArgsInput{
+	in := canonicalcall.ExpectedArgProjection{
 		Call:               call,
 		ArgTypes:           argTypes,
 		Resolver:           ct.callTypeResolver(exprType),

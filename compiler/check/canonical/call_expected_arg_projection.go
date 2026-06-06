@@ -42,21 +42,21 @@ func (p expectedCallArgProjection) argType(argIdx int) typ.Type {
 		return nil
 	}
 	call := p.info.Call
-	expectedArgsInput := p.typer.expectedArgsInput(
+	expectedArgs := p.typer.expectedArgProjection(
 		call,
 		canonicalcall.ShallowArgTypes(call.Args, p.ctx.ArgTypes(), p.ctx.ExprType),
 		p.ctx.ExprType,
 		p.methodReceiverType(),
 	)
-	expectedArgsInput.Callee = p.calleeType()
-	expectedArgsInput.IsMethod = callsite.IsMethodCallInfo(p.info)
-	expectedArgsInput.MethodName = p.info.Method
-	expectedArgsInput.ForceMethodReceiver = p.forceMethodReceiver()
-	expectedArgs := canonicalcall.ExpectedArgTypesForCall(expectedArgsInput)
-	if argIdx >= len(expectedArgs) {
+	expectedArgs.Callee = p.calleeType()
+	expectedArgs.IsMethod = callsite.IsMethodCallInfo(p.info)
+	expectedArgs.MethodName = p.info.Method
+	expectedArgs.ForceMethodReceiver = p.forceMethodReceiver()
+	expectedTypes := expectedArgs.ExpectedTypes()
+	if argIdx >= len(expectedTypes) {
 		return nil
 	}
-	expected := expectedArgs[argIdx]
+	expected := expectedTypes[argIdx]
 	if expected == nil || typ.IsAbsentOrUnknown(expected) || typ.IsAny(expected) {
 		return nil
 	}
