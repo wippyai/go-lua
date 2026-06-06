@@ -3,6 +3,7 @@ package flow
 import (
 	"testing"
 
+	"github.com/wippyai/go-lua/types/access"
 	"github.com/wippyai/go-lua/types/cfg"
 	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/domain/value/product"
@@ -109,6 +110,48 @@ func TestApplyAddressWritePathInvalidationNormalizesWriteFootprint(t *testing.T)
 	}
 }
 
+func TestApplyAccessMutationAppliesSelectedWriteConsequences(t *testing.T) {
+	table := constraint.NewPath(cfg.SymbolID(31), "table")
+	child := table.Field("field")
+	other := constraint.NewPath(cfg.SymbolID(32), "other")
+	key := constraint.NewPath(cfg.SymbolID(33), "key")
+	tableAddr := testStableAddressPath(t, table)
+	keyAddr := testStableAddressPath(t, key)
+	ps := PointState{
+		Cond: constraint.FromConstraints(
+			constraint.Truthy{Path: child},
+			constraint.Truthy{Path: other},
+		),
+		KeyPresence: KeyPresenceFacts{}.WithAddresses(tableAddr, keyAddr),
+	}
+	SetStaticMemberPath(&ps, child, product.FromType(typ.String))
+
+	if !ApplyAccessMutation(&ps, AccessMutation{
+		Footprint: access.WriteFootprint{
+			WritePath:         table,
+			ExactWritePath:    table,
+			HasExactWritePath: true,
+		},
+		StaticMembers: true,
+		Conditions:    true,
+		AddressFacts:  true,
+	}) {
+		t.Fatal("ApplyAccessMutation reported no change")
+	}
+	if _, ok := PointFactsOf(ps).StaticMemberValue(child); ok {
+		t.Fatalf("static member survived access mutation: %s", ps.StaticMembers.Format())
+	}
+	if accessMutationConditionMentions(ps.Cond, child) {
+		t.Fatalf("condition still mentions written subtree: %v", ps.Cond)
+	}
+	if !accessMutationConditionMentions(ps.Cond, other) {
+		t.Fatalf("condition lost unrelated path: %v", ps.Cond)
+	}
+	if ps.KeyPresence.HasAddresses(tableAddr, keyAddr) {
+		t.Fatalf("key presence survived access mutation: %s", ps.KeyPresence.Format())
+	}
+}
+
 func TestApplyKeyPresenceProofPublishesValuePath(t *testing.T) {
 	tableAddr := testStableAddressPath(t, constraint.NewPath(cfg.SymbolID(11), "table"))
 	keyAddr := testStableAddressPath(t, constraint.NewPath(cfg.SymbolID(12), "key"))
@@ -129,4 +172,23 @@ func TestApplyKeyPresenceProofPublishesValuePath(t *testing.T) {
 	if !ps.KeyPresence.HasValueAddresses(tableAddr, keyAddr, valueAddr) {
 		t.Fatalf("value-path presence missing: %s", ps.KeyPresence.Format())
 	}
+}
+
+func accessMutationConditionMentions(cond constraint.Condition, path constraint.Path) bool {
+	found := false
+	for i := 0; i < cond.NumDisjuncts(); i++ {
+		for _, c := range cond.DisjunctConstraints(i) {
+			constraint.VisitPaths(c, func(candidate constraint.Path) bool {
+				if candidate.Equal(path) {
+					found = true
+					return true
+				}
+				return false
+			})
+			if found {
+				return true
+			}
+		}
+	}
+	return false
 }

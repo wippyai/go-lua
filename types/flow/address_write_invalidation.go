@@ -29,6 +29,39 @@ type AddressWritePathInvalidation struct {
 	Written                    product.AbstractValue
 }
 
+// AccessMutation is the point-state transaction for facts whose truth is tied
+// to one normalized source access write. It keeps transfer from routing the same
+// write through separate path projections for each fact family.
+type AccessMutation struct {
+	Footprint     access.WriteFootprint
+	StaticMembers bool
+	Conditions    bool
+	AddressFacts  bool
+}
+
+// ApplyAccessMutation applies all selected point-state consequences of one
+// normalized access write. Flow owns the path-to-address lowering and the laws
+// for each affected fact family.
+func ApplyAccessMutation(out *PointState, mutation AccessMutation) bool {
+	if out == nil || mutation.Footprint.WritePath.IsEmpty() {
+		return false
+	}
+	changed := false
+	if mutation.StaticMembers {
+		if mutation.Footprint.HasExactWritePath {
+			changed = InvalidateStaticMemberWritePath(out, mutation.Footprint.ExactWritePath) || changed
+		}
+		changed = KillStaticMemberSubtreePath(out, mutation.Footprint.WritePath) || changed
+	}
+	if mutation.Conditions {
+		changed = ForgetConditionAffectedByWrite(out, mutation.Footprint.WritePath) || changed
+	}
+	if mutation.AddressFacts {
+		changed = ApplyAccessWriteFootprint(out, mutation.Footprint) || changed
+	}
+	return changed
+}
+
 func ApplyAddressWritePathInvalidation(out *PointState, proof AddressWritePathInvalidation) bool {
 	write, ok := StableAddressOfPath(proof.WritePath)
 	if !ok {

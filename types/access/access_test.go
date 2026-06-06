@@ -85,6 +85,9 @@ func TestWriteFootprintCarriesPresentElementMember(t *testing.T) {
 	if !footprint.WritePath.Equal(wantWrite) {
 		t.Fatalf("WritePath = %v, want %v", footprint.WritePath, wantWrite)
 	}
+	if footprint.HasExactWritePath {
+		t.Fatalf("HasExactWritePath = true for opaque dynamic access: %v", footprint.ExactWritePath)
+	}
 	if !footprint.PresentElementWrite {
 		t.Fatal("PresentElementWrite = false, want true")
 	}
@@ -105,6 +108,38 @@ func TestWriteFootprintCarriesPresentElementMember(t *testing.T) {
 	}
 	if !product.Domain.Equal(footprint.Written, written) {
 		t.Fatal("Written was not preserved")
+	}
+}
+
+func TestWriteFootprintCarriesExactPathWhenStatic(t *testing.T) {
+	t.Parallel()
+
+	loc := Location{
+		Root:     cfg.SymbolID(12),
+		RootName: "rows",
+		Steps: []Step{
+			{Kind: StepStaticMember, Member: value.MemberField("items")},
+			{Kind: StepDynamicIndex, Key: product.FromType(typ.LiteralString("node"))},
+			{Kind: StepStaticMember, Member: value.MemberField("name")},
+		},
+	}
+
+	footprint, ok := loc.WriteFootprint(false, product.FromType(typ.String))
+	if !ok {
+		t.Fatal("WriteFootprint() failed")
+	}
+	want := constraint.NewPath(cfg.SymbolID(12), "rows").
+		Field("items").
+		IndexStr("node").
+		Field("name")
+	if !footprint.HasExactWritePath {
+		t.Fatal("HasExactWritePath = false, want true")
+	}
+	if !footprint.ExactWritePath.Equal(want) {
+		t.Fatalf("ExactWritePath = %v, want %v", footprint.ExactWritePath, want)
+	}
+	if !footprint.WritePath.Equal(want) {
+		t.Fatalf("WritePath = %v, want %v", footprint.WritePath, want)
 	}
 }
 

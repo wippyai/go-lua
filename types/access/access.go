@@ -40,6 +40,8 @@ type Step struct {
 // Flow owns the subsequent path-to-address normalization.
 type WriteFootprint struct {
 	WritePath                  constraint.Path
+	ExactWritePath             constraint.Path
+	HasExactWritePath          bool
 	PresentElementWrite        bool
 	PresentElementArrayPath    constraint.Path
 	HasPresentElementArrayPath bool
@@ -102,6 +104,10 @@ func (l Location) WriteFootprint(presentElementWrite bool, written product.Abstr
 		WritePath:           path,
 		PresentElementWrite: presentElementWrite && len(l.Steps) > 0,
 		Written:             written,
+	}
+	if exact, ok := l.StaticPath(); ok && !exact.IsEmpty() {
+		footprint.ExactWritePath = exact
+		footprint.HasExactWritePath = true
 	}
 	if footprint.PresentElementWrite {
 		if arrayPath, member, ok := l.PresentElementMemberFootprint(); ok {

@@ -39,60 +39,14 @@ func (t *Transfer) applyPlaceMutationEffect(out *flow.PointState, effect PlaceMu
 	if out == nil || effect.Place.Root == 0 {
 		return false
 	}
-	changed := false
-	if effect.StaticMembers {
-		changed = t.invalidateStaticMembersForPlace(out, effect.Place) || changed
-	}
-	if effect.Conditions {
-		changed = t.invalidateConditionsForPlace(out, effect.Place) || changed
-	}
-	if effect.KeyFacts {
-		changed = t.invalidateKeyFactsForPlaceWithValue(out, effect.Place, effect.PresentElementKeyFacts, effect.PresentElementValue) || changed
-	}
-	return changed
-}
-
-func (t *Transfer) invalidateConditionsForPlace(out *flow.PointState, place Place) bool {
-	if out == nil || out.Cond.IsFalse() || out.Cond.IsTrue() || place.Root == 0 {
-		return false
-	}
-	path, ok := place.StaticPrefixPath()
-	if !ok || path.Symbol == 0 {
-		return false
-	}
-	return flow.ForgetConditionAffectedByWrite(out, path)
-}
-
-func (t *Transfer) invalidateStaticMembersForPlace(out *flow.PointState, place Place) bool {
-	if out == nil {
-		return false
-	}
-	if path, ok := place.StaticPath(); ok && path.Symbol != 0 {
-		return flow.InvalidateStaticMemberWritePath(out, path)
-	}
-	path, ok := place.StaticPrefixPath()
-	if !ok || path.Symbol == 0 {
-		return false
-	}
-	return flow.KillStaticMemberSubtreePath(out, path)
-}
-
-func (t *Transfer) invalidateKeyFactsForPlace(out *flow.PointState, place Place, presentElementWrite bool) bool {
-	return t.invalidateKeyFactsForPlaceWithValue(out, place, presentElementWrite, product.AbstractValue{})
-}
-
-func (t *Transfer) invalidateKeyFactsForPlaceWithValue(
-	out *flow.PointState,
-	place Place,
-	presentElementWrite bool,
-	presentElementValue product.AbstractValue,
-) bool {
-	if out == nil {
-		return false
-	}
-	footprint, ok := place.WriteFootprint(presentElementWrite, presentElementValue)
+	footprint, ok := effect.Place.WriteFootprint(effect.PresentElementKeyFacts, effect.PresentElementValue)
 	if !ok {
 		return false
 	}
-	return flow.ApplyAccessWriteFootprint(out, footprint)
+	return flow.ApplyAccessMutation(out, flow.AccessMutation{
+		Footprint:     footprint,
+		StaticMembers: effect.StaticMembers,
+		Conditions:    effect.Conditions,
+		AddressFacts:  effect.KeyFacts,
+	})
 }
