@@ -33,7 +33,7 @@ func TestSummaryEntryTargetsWithLiveContextUsesClosureTargetsWhenFinite(t *testi
 		if ref == directRef {
 			calledDirect = true
 		}
-		return NewEntryContext(ref, liveCells, nil, nil, nil)
+		return NewEntryContext(ref, liveCells, nil, nil, nil, flow.BoundaryFactsDomain.Top())
 	})
 
 	if calledDirect {
@@ -70,7 +70,7 @@ func TestSummaryEntryTargetsUseDirectWhenClosureTopHasNoFiniteTargets(t *testing
 	targets := NewTargetSet([]summary.FuncRef{directRef}, true, nil, true)
 
 	out := SummaryEntryTargetsWithLiveContext(targets, func(ref summary.FuncRef) EntryContext {
-		return NewEntryContext(ref, cells, refs, closures, nil)
+		return NewEntryContext(ref, cells, refs, closures, nil, flow.BoundaryFactsDomain.Top())
 	})
 
 	if len(out) != 1 {
@@ -117,7 +117,7 @@ func TestSummaryEntryTargetsWithLiveContextOverlaysClosureTargets(t *testing.T) 
 	targets := NewTargetSet(nil, false, []flow.ClosureRef{closure}, true)
 
 	out := SummaryEntryTargetsWithLiveContext(targets, func(ref summary.FuncRef) EntryContext {
-		return NewEntryContextWithFacts(ref, liveCells, liveRefs, liveClosures, nil, facts)
+		return NewEntryContext(ref, liveCells, liveRefs, liveClosures, nil, facts)
 	})
 
 	if len(out) != 1 {

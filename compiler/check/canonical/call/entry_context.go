@@ -19,13 +19,7 @@ type EntryContext struct {
 }
 
 // NewEntryContext constructs an entry context from already-resolved entry axes.
-func NewEntryContext(ref summary.FuncRef, cells flow.CaptureCells, refs flow.FunctionRefs, closures flow.ClosureRefs, values summary.EntryValues) EntryContext {
-	return NewEntryContextWithFacts(ref, cells, refs, closures, values, flow.BoundaryFactsDomain.Top())
-}
-
-// NewEntryContextWithFacts constructs an entry context from already-resolved
-// entry axes, including parameter-relative path facts.
-func NewEntryContextWithFacts(ref summary.FuncRef, cells flow.CaptureCells, refs flow.FunctionRefs, closures flow.ClosureRefs, values summary.EntryValues, facts flow.BoundaryFacts) EntryContext {
+func NewEntryContext(ref summary.FuncRef, cells flow.CaptureCells, refs flow.FunctionRefs, closures flow.ClosureRefs, values summary.EntryValues, facts flow.BoundaryFacts) EntryContext {
 	return EntryContext{
 		ref:      ref,
 		cells:    cells,
@@ -41,7 +35,7 @@ func NewEntryContextWithFacts(ref summary.FuncRef, cells flow.CaptureCells, refs
 // Lua closures capture mutable locations, so live axes win over the allocation
 // snapshot for matching cells and reference paths.
 func EntryContextFromClosureWithLiveContext(closure flow.ClosureRef, live EntryContext) EntryContext {
-	return NewEntryContextWithFacts(
+	return NewEntryContext(
 		live.ref,
 		flow.OverlayCaptureCells(closure.EntryCells(), live.cells),
 		flow.OverlayFunctionRefs(closure.EntryFunctionRefs(), live.refs),

@@ -85,7 +85,7 @@ func (p cellEffectProjector) effectsForRef(
 	entryFacts flow.BoundaryFacts,
 ) flow.CaptureEffects {
 	reader := p.driver.summaryReader()
-	entry := canonicalcall.NewEntryContextWithFacts(
+	entry := canonicalcall.NewEntryContext(
 		ref,
 		flow.CaptureCellsDomain.Bottom(),
 		flow.FunctionRefsDomain.Bottom(),

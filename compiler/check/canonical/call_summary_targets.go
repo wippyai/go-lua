@@ -35,7 +35,7 @@ func (ct callTyper) callOutcomeForTypedCall(
 			if d.summaryReader().Live() {
 				return d.activeProgram.CallEntryContext(ref, cells, refs, flow.ClosureRefsDomain.Bottom(), entryValues)
 			}
-			return canonicalcall.NewEntryContext(ref, flow.CaptureCellsDomain.Bottom(), flow.FunctionRefsDomain.Bottom(), flow.ClosureRefsDomain.Bottom(), entryValues)
+			return canonicalcall.NewEntryContext(ref, flow.CaptureCellsDomain.Bottom(), flow.FunctionRefsDomain.Bottom(), flow.ClosureRefsDomain.Bottom(), entryValues, flow.BoundaryFactsDomain.Top())
 		},
 	}.outcome()
 }

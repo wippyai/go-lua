@@ -111,7 +111,7 @@ func (p *program) CallEntryContextWithFacts(
 	values summary.EntryValues,
 	facts flow.BoundaryFacts,
 ) canonicalcall.EntryContext {
-	return canonicalcall.NewEntryContextWithFacts(
+	return canonicalcall.NewEntryContext(
 		ref,
 		p.callEntryCells(ref, cells),
 		p.callEntryFunctionRefs(ref, refs),
