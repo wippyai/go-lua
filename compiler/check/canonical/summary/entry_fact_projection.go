@@ -144,49 +144,14 @@ func directCallEntryFacts(in directCallEntryFactInput) flow.BoundaryFacts {
 }
 
 func entryBoundaryPathForCallerKey(in directCallEntryFactInput, key constraint.PathKey) (flow.BoundaryPath, bool) {
-	path, ok := flow.StablePathFromKey(key)
-	if !ok {
-		return flow.BoundaryPath{}, false
-	}
 	for _, arg := range entryRuntimeArgs(in.Callee, in.Call, in.ParamSlot) {
 		source, ok := in.ArgPath(arg.RuntimeIdx, arg.Expr)
 		if !ok || source.IsEmpty() {
 			continue
 		}
-		if arg.Slot < 0 {
-			continue
+		if path, ok := flow.BoundaryParamPathFromKey(key, source, arg.Slot); ok {
+			return path, true
 		}
-		suffix, ok := entryFactPathSuffix(path, source)
-		if !ok {
-			continue
-		}
-		return flow.BoundaryPath{
-			Kind:     flow.BoundaryPathParam,
-			Index:    arg.Slot,
-			Segments: suffix,
-		}, true
 	}
 	return flow.BoundaryPath{}, false
-}
-
-func entryFactPathSuffix(path, source constraint.Path) ([]constraint.Segment, bool) {
-	if !entryFactSameRoot(path, source) || len(source.Segments) > len(path.Segments) {
-		return nil, false
-	}
-	for i := range source.Segments {
-		if source.Segments[i] != path.Segments[i] {
-			return nil, false
-		}
-	}
-	if len(source.Segments) == len(path.Segments) {
-		return nil, true
-	}
-	return append([]constraint.Segment(nil), path.Segments[len(source.Segments):]...), true
-}
-
-func entryFactSameRoot(path, source constraint.Path) bool {
-	if path.Symbol != 0 || source.Symbol != 0 {
-		return path.Symbol != 0 && path.Symbol == source.Symbol
-	}
-	return path.Root != "" && path.Root == source.Root
 }

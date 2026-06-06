@@ -665,6 +665,7 @@ func projectPointReturnKeyParamRelations(fs state.FunctionState, g *cfg.Graph) f
 	if len(paramBySymbol) == 0 {
 		return flow.ReturnRelationsDomain.Top()
 	}
+	paramProjection := flow.NewBoundaryPathProjection(paramBySymbol, nil)
 	out := flow.ReturnRelationsDomain.Bottom()
 	sawReturn := false
 	g.EachReturn(func(p cfg.Point, info *cfg.ReturnInfo) {
@@ -686,7 +687,7 @@ func projectPointReturnKeyParamRelations(fs state.FunctionState, g *cfg.Graph) f
 				if entry.Key != key {
 					continue
 				}
-				param, segments, ok := keyPresenceTableParamPath(entry.Table, paramBySymbol)
+				param, segments, ok := keyPresenceTableParamPath(entry.Table, paramProjection)
 				if !ok {
 					continue
 				}
@@ -725,13 +726,10 @@ func projectBoundaryFacts(fs state.FunctionState, g *cfg.Graph) flow.BoundaryFac
 		if !ok {
 			return
 		}
-		mapper := boundaryPathMapper{
-			paramBySymbol:  paramBySymbol,
-			returnBySymbol: returnBoundarySymbolMap(g, p, info),
-		}
+		mapper := flow.NewBoundaryPathProjection(paramBySymbol, returnBoundarySymbolMap(g, p, info))
 		paramFacts, buckets := projectPointBoundaryFacts(ps, mapper).PartitionByReturnIndices()
 		point := boundaryPointFacts{
-			mappedReturns: mapper.mappedReturnIndices(),
+			mappedReturns: mapper.MappedReturnIndices(),
 			paramFacts:    paramFacts,
 		}
 		if len(buckets) > 0 {
@@ -816,19 +814,14 @@ func appendBoundaryIndexKey(out []byte, idx int) []byte {
 	return append(out, buf[i:]...)
 }
 
-type boundaryPathMapper struct {
-	paramBySymbol  map[cfg.SymbolID]int
-	returnBySymbol map[cfg.SymbolID][]flow.BoundaryPath
-}
-
-func projectPointBoundaryFacts(ps flow.PointState, mapper boundaryPathMapper) flow.BoundaryFacts {
+func projectPointBoundaryFacts(ps flow.PointState, mapper flow.BoundaryPathProjection) flow.BoundaryFacts {
 	var keyPresence []flow.BoundaryKeyPresenceFact
 	for _, fact := range ps.KeyPresence.Entries() {
-		tables := mapper.pathsFromKey(fact.Table)
+		tables := mapper.PathsFromKey(fact.Table)
 		if len(tables) == 0 {
 			continue
 		}
-		keys := mapper.pathsFromKey(fact.Key)
+		keys := mapper.PathsFromKey(fact.Key)
 		if len(keys) == 0 {
 			continue
 		}
@@ -840,11 +833,11 @@ func projectPointBoundaryFacts(ps flow.PointState, mapper boundaryPathMapper) fl
 	}
 	var keyArrays []flow.BoundaryKeyArrayFact
 	for _, fact := range ps.KeyPresence.KeyArrayEntries() {
-		arrays := mapper.pathsFromKey(fact.Array)
+		arrays := mapper.PathsFromKey(fact.Array)
 		if len(arrays) == 0 {
 			continue
 		}
-		tables := mapper.pathsFromKey(fact.Table)
+		tables := mapper.PathsFromKey(fact.Table)
 		if len(tables) == 0 {
 			continue
 		}
@@ -856,11 +849,11 @@ func projectPointBoundaryFacts(ps flow.PointState, mapper boundaryPathMapper) fl
 	}
 	var keyArrayValues []flow.BoundaryKeyArrayValueFact
 	for _, fact := range ps.KeyPresence.KeyArrayValueEntries() {
-		arrays := mapper.pathsFromKey(fact.Array)
+		arrays := mapper.PathsFromKey(fact.Array)
 		if len(arrays) == 0 {
 			continue
 		}
-		tables := mapper.pathsFromKey(fact.Table)
+		tables := mapper.PathsFromKey(fact.Table)
 		if len(tables) == 0 {
 			continue
 		}
@@ -876,11 +869,11 @@ func projectPointBoundaryFacts(ps flow.PointState, mapper boundaryPathMapper) fl
 	}
 	var appendKeys []flow.BoundaryAppendKeyFact
 	for _, fact := range ps.KeyPresence.AppendedKeyEntries() {
-		arrays := mapper.pathsFromKey(fact.Array)
+		arrays := mapper.PathsFromKey(fact.Array)
 		if len(arrays) == 0 {
 			continue
 		}
-		keys := mapper.pathsFromKey(fact.Key)
+		keys := mapper.PathsFromKey(fact.Key)
 		if len(keys) == 0 {
 			continue
 		}
@@ -895,7 +888,7 @@ func projectPointBoundaryFacts(ps flow.PointState, mapper boundaryPathMapper) fl
 	}
 	var appendOrigins []flow.BoundaryAppendElementFieldOriginFact
 	for _, fact := range ps.KeyPresence.AppendElementFieldOriginEntries() {
-		arrays := mapper.pathsFromKey(fact.Array)
+		arrays := mapper.PathsFromKey(fact.Array)
 		if len(arrays) == 0 {
 			continue
 		}
@@ -903,7 +896,7 @@ func projectPointBoundaryFacts(ps flow.PointState, mapper boundaryPathMapper) fl
 		if !ok {
 			continue
 		}
-		sources := mapper.pathsFromKey(fact.Source)
+		sources := mapper.PathsFromKey(fact.Source)
 		if len(sources) == 0 {
 			continue
 		}
@@ -920,17 +913,17 @@ func projectPointBoundaryFacts(ps flow.PointState, mapper boundaryPathMapper) fl
 		}
 	}
 	for _, fact := range ps.KeyPresence.PendingKeyArrayEntries() {
-		arrays := mapper.pathsFromKey(fact.Array)
+		arrays := mapper.PathsFromKey(fact.Array)
 		if len(arrays) == 0 {
 			continue
 		}
-		keys := mapper.pathsFromKey(fact.Key)
+		keys := mapper.PathsFromKey(fact.Key)
 		if len(keys) == 0 {
 			continue
 		}
 		var tables []flow.BoundaryPath
 		if fact.Table != "" {
-			tables = mapper.pathsFromKey(fact.Table)
+			tables = mapper.PathsFromKey(fact.Table)
 			if len(tables) == 0 {
 				continue
 			}
@@ -958,7 +951,7 @@ func projectPointBoundaryFacts(ps flow.PointState, mapper boundaryPathMapper) fl
 	var lengths []flow.BoundaryLengthLowerBound
 	if ps.Num != nil {
 		ps.Num.ForEachLenBound(func(key constraint.PathKey, lower, _ int64) bool {
-			targets := mapper.pathsFromKey(key)
+			targets := mapper.PathsFromKey(key)
 			if lower > 0 {
 				for _, target := range targets {
 					lengths = append(lengths, flow.BoundaryLengthLowerBound{Target: target, Lower: lower})
@@ -972,11 +965,11 @@ func projectPointBoundaryFacts(ps flow.PointState, mapper boundaryPathMapper) fl
 		if fact.Target == "" || fact.KeyPath == "" || fact.Value.IsZero() {
 			continue
 		}
-		tables := mapper.pathsFromKey(fact.Target)
+		tables := mapper.PathsFromKey(fact.Target)
 		if len(tables) == 0 {
 			continue
 		}
-		keys := mapper.pathsFromKey(fact.KeyPath)
+		keys := mapper.PathsFromKey(fact.KeyPath)
 		if len(keys) == 0 {
 			continue
 		}
@@ -992,61 +985,6 @@ func projectPointBoundaryFacts(ps flow.PointState, mapper boundaryPathMapper) fl
 	}
 	return flow.BoundaryFactsOf(keyPresence, keyArrays, keyArrayValues, appendKeys, lengths, indexWrites).
 		WithAppendElementFieldOrigins(appendOrigins)
-}
-
-func (m boundaryPathMapper) pathsFromKey(key constraint.PathKey) []flow.BoundaryPath {
-	path, ok := flow.StablePathFromKey(key)
-	if !ok || path.Symbol == 0 {
-		return nil
-	}
-	var out []flow.BoundaryPath
-	if idx, ok := m.paramBySymbol[path.Symbol]; ok {
-		out = append(out, flow.BoundaryPath{
-			Kind:     flow.BoundaryPathParam,
-			Index:    idx,
-			Segments: append([]constraint.Segment(nil), path.Segments...),
-		})
-	}
-	for _, root := range m.returnBySymbol[path.Symbol] {
-		nextSegments := path.Segments
-		if len(root.Segments) > 0 {
-			trimmed, ok := trimBoundarySegmentPrefix(nextSegments, root.Segments)
-			if !ok {
-				continue
-			}
-			nextSegments = trimmed
-		}
-		root.Segments = append([]constraint.Segment(nil), nextSegments...)
-		out = append(out, root)
-	}
-	return out
-}
-
-func (m boundaryPathMapper) mappedReturnIndices() map[int]bool {
-	if len(m.returnBySymbol) == 0 {
-		return nil
-	}
-	out := make(map[int]bool)
-	for _, roots := range m.returnBySymbol {
-		for _, root := range roots {
-			if root.Kind == flow.BoundaryPathReturn && root.Index >= 0 {
-				out[root.Index] = true
-			}
-		}
-	}
-	return out
-}
-
-func trimBoundarySegmentPrefix(segments, prefix []constraint.Segment) ([]constraint.Segment, bool) {
-	if len(prefix) > len(segments) {
-		return nil, false
-	}
-	for i := range prefix {
-		if segments[i] != prefix[i] {
-			return nil, false
-		}
-	}
-	return segments[len(prefix):], true
 }
 
 func returnBoundarySymbolMap(g *cfg.Graph, p cfg.Point, info *cfg.ReturnInfo) map[cfg.SymbolID][]flow.BoundaryPath {
@@ -1131,16 +1069,13 @@ func returnRelationParamSymbolMap(g *cfg.Graph) map[cfg.SymbolID]int {
 	return out
 }
 
-func keyPresenceTableParamPath(key constraint.PathKey, paramBySymbol map[cfg.SymbolID]int) (int, []constraint.Segment, bool) {
-	path, ok := flow.StablePathFromKey(key)
-	if !ok || path.Symbol == 0 {
-		return 0, nil, false
+func keyPresenceTableParamPath(key constraint.PathKey, projection flow.BoundaryPathProjection) (int, []constraint.Segment, bool) {
+	for _, path := range projection.PathsFromKey(key) {
+		if path.Kind == flow.BoundaryPathParam && path.Index >= 0 {
+			return path.Index, append([]constraint.Segment(nil), path.Segments...), true
+		}
 	}
-	idx, ok := paramBySymbol[path.Symbol]
-	if !ok {
-		return 0, nil, false
-	}
-	return idx, append([]constraint.Segment(nil), path.Segments...), true
+	return 0, nil, false
 }
 
 type returnRelationProof struct {
