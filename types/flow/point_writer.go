@@ -31,6 +31,14 @@ func (w PointWriter) DeleteValueKey(key ValueKey) bool {
 	return true
 }
 
+// DeleteSymbolEnvValue removes sym's primitive Env entry without touching Cells.
+func (w PointWriter) DeleteSymbolEnvValue(sym cfg.SymbolID) bool {
+	if sym == 0 {
+		return false
+	}
+	return w.DeleteValueKey(SymbolValueKey(sym))
+}
+
 // WriteValueKey writes an abstract value under a typed Env key.
 //
 // This is the primitive for non-symbol values such as return slots. Symbol

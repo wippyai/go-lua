@@ -78,13 +78,13 @@ func (p symbolStoragePolicy) read(out *flow.PointState, sym cfg.SymbolID) (produ
 		if av, ok := facts.CellValue(sym); ok && !valueIsBottom(av) {
 			return av, true
 		}
-		av, ok := facts.EnvValue(flow.SymbolValueKey(sym))
+		av, ok := facts.EnvSymbolValue(sym)
 		if !ok || valueIsBottom(av) {
 			return product.AbstractValue{}, false
 		}
 		return av, true
 	default:
-		av, ok := facts.EnvValue(flow.SymbolValueKey(sym))
+		av, ok := facts.EnvSymbolValue(sym)
 		if !ok || valueIsBottom(av) {
 			return product.AbstractValue{}, false
 		}
@@ -131,7 +131,7 @@ func (p symbolStoragePolicy) clear(out *flow.PointState, sym cfg.SymbolID, joinE
 		p.write(out, sym, product.Domain.Top(), joinExisting, emitEffect)
 		return true
 	}
-	return flow.NewPointWriter(out).DeleteValueKey(flow.SymbolValueKey(sym))
+	return flow.NewPointWriter(out).DeleteSymbolEnvValue(sym)
 }
 
 func (p symbolStoragePolicy) isCapturedFreeVar(sym cfg.SymbolID) bool {

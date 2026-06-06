@@ -53,6 +53,10 @@ func TestPointFactsPrimitiveEnvAndCellReadsStaySeparate(t *testing.T) {
 	if !ok || !typ.TypeEquals(env.ProjectValue(), typ.String) {
 		t.Fatalf("EnvValue(symbol) = %v/%v, want string/true", env.ProjectValue(), ok)
 	}
+	envSym, ok := PointFactsOf(state).EnvSymbolValue(sym)
+	if !ok || !typ.TypeEquals(envSym.ProjectValue(), typ.String) {
+		t.Fatalf("EnvSymbolValue = %v/%v, want string/true", envSym.ProjectValue(), ok)
+	}
 	cell, ok := PointFactsOf(state).CellValue(sym)
 	if !ok || !typ.TypeEquals(cell.ProjectValue(), typ.Number) {
 		t.Fatalf("CellValue(symbol) = %v/%v, want number/true", cell.ProjectValue(), ok)

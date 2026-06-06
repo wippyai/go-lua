@@ -42,6 +42,14 @@ func (f PointFacts) EnvValue(key ValueKey) (product.AbstractValue, bool) {
 	return av, true
 }
 
+// EnvSymbolValue returns the Env entry for sym without consulting Cells.
+func (f PointFacts) EnvSymbolValue(sym cfg.SymbolID) (product.AbstractValue, bool) {
+	if sym == 0 {
+		return product.AbstractValue{}, false
+	}
+	return f.EnvValue(SymbolValueKey(sym))
+}
+
 // CellValue returns the abstract value stored directly in the capture-cell axis.
 func (f PointFacts) CellValue(sym cfg.SymbolID) (product.AbstractValue, bool) {
 	if sym == 0 {

@@ -62,6 +62,30 @@ func TestPointWriterDeletesValueKeys(t *testing.T) {
 	}
 }
 
+func TestPointWriterDeletesSymbolEnvValueOnly(t *testing.T) {
+	const sym = cfg.SymbolID(9)
+	ps := PointState{
+		Env: map[ValueKey]product.AbstractValue{
+			SymbolValueKey(sym): product.FromType(typ.String),
+		},
+		Cells: CaptureCellsDomain.Bottom().With(sym, product.FromType(typ.Number)),
+	}
+	writer := NewPointWriter(&ps)
+
+	if !writer.DeleteSymbolEnvValue(sym) {
+		t.Fatal("DeleteSymbolEnvValue reported unchanged for existing Env symbol")
+	}
+	if _, ok := ps.Env[SymbolValueKey(sym)]; ok {
+		t.Fatalf("DeleteSymbolEnvValue left Env[%s]", SymbolValueKey(sym))
+	}
+	if got, ok := ps.Cells.Value(sym); !ok || !typ.TypeEquals(got.ProjectValue(), typ.Number) {
+		t.Fatalf("DeleteSymbolEnvValue touched Cells: %v/%v", got.ProjectValue(), ok)
+	}
+	if writer.DeleteSymbolEnvValue(sym) {
+		t.Fatal("DeleteSymbolEnvValue reported changed for absent Env symbol")
+	}
+}
+
 func TestPointWriterWritesCellOverEnv(t *testing.T) {
 	const sym = cfg.SymbolID(11)
 	ps := PointState{
