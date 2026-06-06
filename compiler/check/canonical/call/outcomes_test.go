@@ -384,14 +384,14 @@ func TestParamNarrowProjectionStaticIdentFallback(t *testing.T) {
 	}
 }
 
-func TestCallbackSpecForCallSummarySignatureWins(t *testing.T) {
+func TestCallbackSpecProjectionSummarySignatureWins(t *testing.T) {
 	t.Parallel()
 
 	call := &ast.FuncCallExpr{Func: &ast.IdentExpr{Value: "f"}}
 	summarySpec := contract.NewSpec().WithCallback(0, &contract.CallbackSpec{Cardinality: contract.CardExactlyOnce})
 	fallbackUsed := false
 
-	got := CallbackSpecForCall(CallbackSpecInput{
+	got := (CallbackSpecProjection{
 		Call: call,
 		SummarySignature: func(*ast.FuncCallExpr) typ.Type {
 			return typ.Func().Spec(summarySpec).Build()
@@ -402,7 +402,7 @@ func TestCallbackSpecForCallSummarySignatureWins(t *testing.T) {
 				return typ.Func().Spec(contract.NewSpec().WithCallback(1, &contract.CallbackSpec{})).Build()
 			},
 		},
-	})
+	}).Spec()
 
 	if got == nil || got.Callbacks[0] == nil {
 		t.Fatalf("callback spec = %#v, want summary callback on param 0", got)
@@ -412,7 +412,7 @@ func TestCallbackSpecForCallSummarySignatureWins(t *testing.T) {
 	}
 }
 
-func TestCallbackSpecForCallMethodReceiverFallback(t *testing.T) {
+func TestCallbackSpecProjectionMethodReceiverFallback(t *testing.T) {
 	t.Parallel()
 
 	receiver := &ast.IdentExpr{Value: "obj"}
@@ -422,7 +422,7 @@ func TestCallbackSpecForCallMethodReceiverFallback(t *testing.T) {
 		Field("run", typ.Func().Spec(methodSpec).Build()).
 		Build()
 
-	got := CallbackSpecForCall(CallbackSpecInput{
+	got := (CallbackSpecProjection{
 		Call: call,
 		Resolver: TypeResolver{
 			ExprType: func(expr ast.Expr) typ.Type {
@@ -432,7 +432,7 @@ func TestCallbackSpecForCallMethodReceiverFallback(t *testing.T) {
 				return receiverType
 			},
 		},
-	})
+	}).Spec()
 
 	if got == nil || got.Callbacks[1] == nil {
 		t.Fatalf("callback spec = %#v, want method callback on param 1", got)
@@ -571,12 +571,12 @@ func TestResolveCallbackArgRefsLiveTopBlocksStaticExpr(t *testing.T) {
 	}
 }
 
-func TestStaticCallbackOverlaysForCallGlobalIdentWins(t *testing.T) {
+func TestStaticCallbackOverlayProjectionGlobalIdentWins(t *testing.T) {
 	t.Parallel()
 
 	call := &ast.FuncCallExpr{Func: &ast.IdentExpr{Value: "schedule"}}
 
-	got := StaticCallbackOverlaysForCall(StaticCallbackOverlayInput{
+	got := (StaticCallbackOverlayProjection{
 		Call: call,
 		Resolver: TypeResolver{
 			Static: StaticTypeLookup{
@@ -588,7 +588,7 @@ func TestStaticCallbackOverlaysForCallGlobalIdentWins(t *testing.T) {
 				},
 			},
 		},
-	})
+	}).Overlays()
 
 	if len(got) != 1 || got[0].ParamIndex != 0 {
 		t.Fatalf("overlays = %#v, want one global overlay on param 0", got)
@@ -598,7 +598,7 @@ func TestStaticCallbackOverlaysForCallGlobalIdentWins(t *testing.T) {
 	}
 }
 
-func TestStaticCallbackOverlaysForCallImportedFallback(t *testing.T) {
+func TestStaticCallbackOverlayProjectionImportedFallback(t *testing.T) {
 	t.Parallel()
 
 	base := &ast.IdentExpr{Value: "jobs"}
@@ -611,7 +611,7 @@ func TestStaticCallbackOverlaysForCallImportedFallback(t *testing.T) {
 	bindings.Bind(base, 101)
 	bindings.SetName(101, "jobs")
 
-	got := StaticCallbackOverlaysForCall(StaticCallbackOverlayInput{
+	got := (StaticCallbackOverlayProjection{
 		Call: call,
 		Resolver: TypeResolver{
 			Bindings: bindings,
@@ -630,7 +630,7 @@ func TestStaticCallbackOverlaysForCallImportedFallback(t *testing.T) {
 				},
 			},
 		},
-	})
+	}).Overlays()
 
 	if len(got) != 1 || got[0].ParamIndex != 1 {
 		t.Fatalf("overlays = %#v, want one imported overlay on param 1", got)
@@ -640,7 +640,7 @@ func TestStaticCallbackOverlaysForCallImportedFallback(t *testing.T) {
 	}
 }
 
-func TestStaticCallbackOverlaysForCallGlobalFieldFallback(t *testing.T) {
+func TestStaticCallbackOverlayProjectionGlobalFieldFallback(t *testing.T) {
 	t.Parallel()
 
 	base := &ast.IdentExpr{Value: "migration"}
@@ -654,7 +654,7 @@ func TestStaticCallbackOverlaysForCallGlobalFieldFallback(t *testing.T) {
 	bindings.SetName(102, "migration")
 	bindings.SetKind(102, compilecfg.SymbolGlobal)
 
-	got := StaticCallbackOverlaysForCall(StaticCallbackOverlayInput{
+	got := (StaticCallbackOverlayProjection{
 		Call: call,
 		Resolver: TypeResolver{
 			Bindings: bindings,
@@ -673,7 +673,7 @@ func TestStaticCallbackOverlaysForCallGlobalFieldFallback(t *testing.T) {
 				},
 			},
 		},
-	})
+	}).Overlays()
 
 	if len(got) != 1 || got[0].ParamIndex != 1 {
 		t.Fatalf("overlays = %#v, want one global-field overlay on param 1", got)

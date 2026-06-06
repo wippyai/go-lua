@@ -101,7 +101,7 @@ func (p cellEffectProjector) effectsForRef(
 
 func (p cellEffectProjector) callbackSpecForCall(call *ast.FuncCallExpr, exprType func(ast.Expr) typ.Type) *contract.Spec {
 	resolver := p.typer.callTypeResolver(exprType)
-	return canonicalcall.CallbackSpecForCall(canonicalcall.CallbackSpecInput{
+	return (canonicalcall.CallbackSpecProjection{
 		Call: call,
 		SummarySignature: func(call *ast.FuncCallExpr) typ.Type {
 			if ref, ok := p.typer.resolveCalleeRef(call, p.program); ok {
@@ -110,5 +110,5 @@ func (p cellEffectProjector) callbackSpecForCall(call *ast.FuncCallExpr, exprTyp
 			return nil
 		},
 		Resolver: resolver,
-	})
+	}).Spec()
 }

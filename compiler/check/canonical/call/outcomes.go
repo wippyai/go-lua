@@ -178,23 +178,22 @@ func (p ParamNarrowProjection) Narrows() []paramevidence.ParamNarrow {
 	return paramevidence.ParamNarrowsFromFunctionType(p.Resolver.ResolveStaticCallee(p.Call.Func))
 }
 
-// CallbackSpecInput is the canonical policy for finding a call's callback
+// CallbackSpecProjection is the canonical policy for finding a call's callback
 // contract. Summary-known module signatures win; unresolved calls fall back to
 // caller-visible callee/receiver type resolution.
-type CallbackSpecInput struct {
+type CallbackSpecProjection struct {
 	Call *ast.FuncCallExpr
 
 	SummarySignature func(*ast.FuncCallExpr) typ.Type
 	Resolver         TypeResolver
 }
 
-// CallbackSpecForCall extracts the callback contract used by call-site cell
-// effect projection.
-func CallbackSpecForCall(in CallbackSpecInput) *contract.Spec {
+// Spec extracts the callback contract used by call-site cell effect projection.
+func (p CallbackSpecProjection) Spec() *contract.Spec {
 	return specForCall(specInput{
-		Call:             in.Call,
-		SummarySignature: in.SummarySignature,
-		Resolver:         in.Resolver,
+		Call:             p.Call,
+		SummarySignature: p.SummarySignature,
+		Resolver:         p.Resolver,
 	})
 }
 
@@ -300,26 +299,26 @@ func ResolveCallbackArgRefs(in CallbackArgInput) ([]summary.FuncRef, bool) {
 	return nil, false
 }
 
-// StaticCallbackOverlayInput is the canonical pre-solve policy for callback
+// StaticCallbackOverlayProjection is the canonical pre-solve policy for callback
 // environment overlays on callees that are not handled as module-local refs.
-type StaticCallbackOverlayInput struct {
+type StaticCallbackOverlayProjection struct {
 	Call *ast.FuncCallExpr
 
 	Resolver TypeResolver
 }
 
-// StaticCallbackOverlaysForCall resolves only external/static callback overlay
+// Overlays resolves only external/static callback overlay
 // contracts for fact extraction. Module-local callee overlays are supplied by
-// summary/facts through a separate ref-based path, so this function deliberately
-// does not read inferred module signatures.
-func StaticCallbackOverlaysForCall(in StaticCallbackOverlayInput) callbackenv.Overlays {
-	if in.Call == nil {
+// summary/facts through a separate ref-based path, so this projection
+// deliberately does not read inferred module signatures.
+func (p StaticCallbackOverlayProjection) Overlays() callbackenv.Overlays {
+	if p.Call == nil {
 		return nil
 	}
-	if ident, ok := in.Call.Func.(*ast.IdentExpr); ok && ident != nil {
-		if ov := callbackenv.OverlaysFromFunction(in.Resolver.ResolveGlobalIdentType(ident)); len(ov) > 0 {
+	if ident, ok := p.Call.Func.(*ast.IdentExpr); ok && ident != nil {
+		if ov := callbackenv.OverlaysFromFunction(p.Resolver.ResolveGlobalIdentType(ident)); len(ov) > 0 {
 			return ov
 		}
 	}
-	return callbackenv.OverlaysFromFunction(in.Resolver.ResolveStaticFieldCallee(in.Call.Func))
+	return callbackenv.OverlaysFromFunction(p.Resolver.ResolveStaticFieldCallee(p.Call.Func))
 }

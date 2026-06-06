@@ -68,10 +68,10 @@ func (p factProgramProjection) programView() facts.Program {
 
 func (p factProgramProjection) calleeCallbackOverlays(g *cfg.Graph, call *ast.FuncCallExpr) callbackenv.Overlays {
 	resolver := callTyper{d: p.driver, g: g}.callTypeResolver(nil)
-	return canonicalcall.StaticCallbackOverlaysForCall(canonicalcall.StaticCallbackOverlayInput{
+	return (canonicalcall.StaticCallbackOverlayProjection{
 		Call:     call,
 		Resolver: resolver,
-	})
+	}).Overlays()
 }
 
 func (p factProgramProjection) typeByName(name string) typ.Type {
