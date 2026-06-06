@@ -338,6 +338,7 @@ func (c callEntryProjector) productClosureContext(ref summary.FuncRef, closure f
 }
 
 func (c callEntryProjector) productAxes(ref summary.FuncRef, call *ast.FuncCallExpr, ctx transfer.ProductCallContext) productEntryAxes {
+	access := c.access()
 	return productEntryAxes{
 		ref:   ref,
 		cells: c.program.CallEntryCells(ref, ctx.Cells),
@@ -350,12 +351,8 @@ func (c callEntryProjector) productAxes(ref summary.FuncRef, call *ast.FuncCallE
 			c.closureRefsForRef(ref, call, ctx),
 		),
 		values: c.productValuesForRef(ref, call, ctx.RuntimeArgValues),
-		facts:  c.factsForRef(ref, call, ctx),
+		facts:  access.productFacts(ref, call, ctx),
 	}
-}
-
-func (c callEntryProjector) factsForRef(ref summary.FuncRef, call *ast.FuncCallExpr, ctx transfer.ProductCallContext) flow.BoundaryFacts {
-	return c.access().productFacts(ref, call, ctx)
 }
 
 func (c callEntryProjector) productValuesForRef(ref summary.FuncRef, call *ast.FuncCallExpr, runtimeValues []product.AbstractValue) summary.EntryValues {
