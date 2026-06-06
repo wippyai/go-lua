@@ -36,6 +36,27 @@ func TestAppendOriginDestinationsRoutesThroughIteratorAndAliasFacts(t *testing.T
 	assertAppendDestination(t, got[2], aliasArrayPath.Field("id"), nil)
 }
 
+func TestAppendOriginDestinationsPathNormalizesArray(t *testing.T) {
+	outPath := constraint.NewPath(cfg.SymbolID(4), "out")
+	arrayPath := outPath.Field("id")
+	iterArrayPath := constraint.NewPath(cfg.SymbolID(5), "source")
+	state := PointState{
+		ValueOrigins: ValueOriginFacts{}.WithAddresses(
+			testStableAddressPath(t, outPath),
+			testStableAddressPath(t, iterArrayPath),
+			ValueOriginIndexedIterator,
+			1,
+		),
+	}
+
+	got := AppendOriginDestinationsPath(state, arrayPath, nil)
+	if len(got) != 2 {
+		t.Fatalf("destinations got %d, want direct + iterator", len(got))
+	}
+	assertAppendDestination(t, got[0], arrayPath, nil)
+	assertAppendDestination(t, got[1], iterArrayPath, []constraint.Segment{{Kind: constraint.SegmentField, Name: "id"}})
+}
+
 func TestApplyAppendElementFieldOriginUseReplaysSourcesToDestinations(t *testing.T) {
 	arrayPath := constraint.NewPath(cfg.SymbolID(11), "out")
 	sourcePath := constraint.NewPath(cfg.SymbolID(12), "source")
@@ -104,6 +125,32 @@ func TestAppendElementFieldOriginUsesRoutesThroughPathAlias(t *testing.T) {
 	}
 }
 
+func TestAppendElementFieldOriginUsesPathNormalizesField(t *testing.T) {
+	elementPath := constraint.NewPath(cfg.SymbolID(17), "element").Field("name")
+	sourcePath := constraint.NewPath(cfg.SymbolID(18), "source")
+	arrayPath := constraint.NewPath(cfg.SymbolID(19), "items")
+	state := PointState{
+		PathAliases: PathAliasFacts{}.WithAddresses(
+			testStableAddressPath(t, elementPath),
+			testStableAddressPath(t, sourcePath),
+		),
+		ValueOrigins: ValueOriginFacts{}.WithAddresses(
+			testStableAddressPath(t, sourcePath),
+			testStableAddressPath(t, arrayPath),
+			ValueOriginIndexedIterator,
+			1,
+		),
+	}
+
+	uses := AppendElementFieldOriginUsesPath(state, elementPath)
+	if len(uses) != 1 {
+		t.Fatalf("uses got %d, want alias-routed origin", len(uses))
+	}
+	if uses[0].Origin.Source != testStableAddressPath(t, arrayPath).Key() || uses[0].Origin.Kind != ValueOriginIndexedIterator {
+		t.Fatalf("use = %#v, want indexed iterator source", uses[0])
+	}
+}
+
 func TestApplyAppendKeyArrayConsequencesPublishesReadbackValue(t *testing.T) {
 	arrayPath := constraint.NewPath(cfg.SymbolID(21), "keys")
 	tablePath := constraint.NewPath(cfg.SymbolID(22), "nodes")
@@ -144,6 +191,37 @@ func TestApplyAppendKeyArrayConsequencesPublishesReadbackValue(t *testing.T) {
 	}
 	if len(state.KeyPresence.PendingKeyArrayEntries()) != 1 {
 		t.Fatalf("pending key-array proof was not published: %s", state.KeyPresence.Format())
+	}
+}
+
+func TestApplyAppendKeyArrayPathConsequencesPublishesReadbackValue(t *testing.T) {
+	arrayPath := constraint.NewPath(cfg.SymbolID(24), "keys")
+	tablePath := constraint.NewPath(cfg.SymbolID(25), "nodes")
+	keyPath := constraint.NewPath(cfg.SymbolID(26), "node_id")
+	value := product.FromType(typ.String)
+	state := PointState{
+		IndexWrites: IndexWriteAdmissionFacts{}.WithAddress(IndexWriteAdmissionAddressFact{
+			Target:     testStableAddressPath(t, tablePath),
+			KeyPath:    testStableAddressPath(t, keyPath),
+			HasKeyPath: true,
+			Key:        product.FromType(typ.String),
+			Value:      value,
+		}),
+	}
+
+	if !ApplyAppendKeyArrayPathConsequences(&state, AppendKeyArrayPathConsequences{
+		ArrayPath: arrayPath,
+		KeyPath:   keyPath,
+		HasKey:    true,
+		KeyValue:  product.FromType(typ.String),
+		Tables:    []StableAddress{testStableAddressPath(t, tablePath)},
+	}) {
+		t.Fatalf("expected append key-array path consequences to change state")
+	}
+
+	values := state.KeyPresence.KeyArrayValues(StablePathKey(arrayPath), StablePathKey(tablePath))
+	if len(values) != 1 || !product.Domain.Equal(values[0], value) {
+		t.Fatalf("key-array values = %v, want string", values)
 	}
 }
 
@@ -244,6 +322,29 @@ func TestAppendKeyArrayPreservationUsesFreshEmptySeed(t *testing.T) {
 	selection := AppendKeyArrayPreservation(state, AppendKeyArrayPreservationQuery{
 		Array:          array,
 		Key:            key,
+		FreshEmptySeed: true,
+	})
+	if len(selection.Pending) != 1 || selection.Pending[0].HasTable {
+		t.Fatalf("pending = %v, want wildcard pending", selection.Pending)
+	}
+	if len(selection.Tables) != 1 || !selection.Tables[0].Equal(table) {
+		t.Fatalf("direct tables = %v, want table with key", selection.Tables)
+	}
+}
+
+func TestAppendKeyArrayPathPreservationNormalizesPaths(t *testing.T) {
+	arrayPath := constraint.NewPath(cfg.SymbolID(45), "keys")
+	tablePath := constraint.NewPath(cfg.SymbolID(46), "nodes")
+	keyPath := constraint.NewPath(cfg.SymbolID(47), "id")
+	table := testStableAddressPath(t, tablePath)
+	state := PointState{
+		KeyPresence: KeyPresenceFacts{}.
+			WithAddresses(table, testStableAddressPath(t, keyPath)),
+	}
+
+	selection := AppendKeyArrayPathPreservation(state, AppendKeyArrayPathPreservationQuery{
+		ArrayPath:      arrayPath,
+		KeyPath:        keyPath,
 		FreshEmptySeed: true,
 	})
 	if len(selection.Pending) != 1 || selection.Pending[0].HasTable {

@@ -520,6 +520,19 @@ func TestApplyAppendKeyProofPublishesHistoryEvent(t *testing.T) {
 	}
 }
 
+func TestApplyAppendHistoryBasePathProofNormalizesPath(t *testing.T) {
+	arrayPath := constraint.NewPath(cfg.SymbolID(75), "node_order")
+	arrayKey := StablePathKey(arrayPath)
+
+	state := PointStateDomain.Top()
+	if changed := ApplyAppendHistoryBasePathProof(&state, arrayPath); !changed {
+		t.Fatal("ApplyAppendHistoryBasePathProof reported no change")
+	}
+	if !state.KeyPresence.HasAppendHistoryBase(arrayKey) {
+		t.Fatalf("append-history base missing: %s", state.KeyPresence.Format())
+	}
+}
+
 func TestApplyAppendKeyPathProofNormalizesHistoryEvent(t *testing.T) {
 	arrayPath := constraint.NewPath(cfg.SymbolID(73), "node_order")
 	keyPath := constraint.NewPath(cfg.SymbolID(74), "node_id")

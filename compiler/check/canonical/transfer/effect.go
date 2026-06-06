@@ -382,12 +382,10 @@ func (t *Transfer) applyMutatorEffect(out *flow.PointState, effect MutatorEffect
 	if effect.Kind == MutatorAppendElement {
 		if path, ok := effect.Place.StaticPath(); ok && !path.IsEmpty() {
 			appendHistoryArray = path
-			if addr, ok := flow.StableAddressOfPath(path); ok {
-				preserveAppendHistoryBase = out.KeyPresence.HasAppendHistoryBase(addr.Key())
-			}
+			preserveAppendHistoryBase = flow.PointFactsOf(*out).HasAppendHistoryBase(path)
 		}
 	}
-	appendDestinations := appendOriginDestinations(out, appendHistoryArray)
+	appendDestinations := flow.AppendOriginDestinationsPath(*out, appendHistoryArray, nil)
 	changed := false
 	changed = t.applyPlaceMutationEffect(out, PlaceMutationEffect{
 		Place:         effect.Place,
@@ -396,9 +394,7 @@ func (t *Transfer) applyMutatorEffect(out *flow.PointState, effect MutatorEffect
 		KeyFacts:      true,
 	}) || changed
 	if preserveAppendHistoryBase {
-		if addr, ok := flow.StableAddressOfPath(appendHistoryArray); ok {
-			changed = flow.ApplyAppendHistoryBaseProof(out, flow.AppendHistoryBaseProof{Array: addr}) || changed
-		}
+		changed = flow.ApplyAppendHistoryBasePathProof(out, appendHistoryArray) || changed
 	}
 	changed = t.recordAppendKeyFact(out, effect.Place, effect.Kind, effect.ElementPath) || changed
 	changed = t.recordAppendElementFieldOrigins(out, effect.Place, effect.Kind, effect.ElementExpr, appendDestinations) || changed
@@ -450,18 +446,12 @@ func (t *Transfer) keyArraySelectionPreservedByAppend(out *flow.PointState, effe
 	if !ok || arrayPath.IsEmpty() {
 		return flow.AppendKeyArraySelection{}
 	}
-	arrayAddr, arrayOK := flow.StableAddressOfPath(arrayPath)
-	elementAddr, elementOK := flow.StableAddressOfPath(effect.ElementPath)
-	if !arrayOK || !elementOK {
-		return flow.AppendKeyArraySelection{}
-	}
-	arrayKey := arrayAddr.Key()
-	freshEmptySeed := out.KeyPresence.HasEmptyKeyArray(arrayKey) ||
-		flow.AppendHistoryBaseWithoutEvents(*out, arrayAddr) ||
+	freshEmptySeed := flow.PointFactsOf(*out).HasEmptyKeyArray(arrayPath) ||
+		flow.AppendHistoryBaseWithoutEventsPath(*out, arrayPath) ||
 		t.arrayPathCurrentlyEmpty(out, arrayPath)
-	return flow.AppendKeyArrayPreservation(*out, flow.AppendKeyArrayPreservationQuery{
-		Array:          arrayAddr,
-		Key:            elementAddr,
+	return flow.AppendKeyArrayPathPreservation(*out, flow.AppendKeyArrayPathPreservationQuery{
+		ArrayPath:      arrayPath,
+		KeyPath:        effect.ElementPath,
 		FreshEmptySeed: freshEmptySeed,
 	})
 }
@@ -492,7 +482,7 @@ func (t *Transfer) recordAppendElementFieldOrigins(out *flow.PointState, place P
 	}
 	before := out.KeyPresence
 	if len(destinations) == 0 {
-		destinations = appendOriginDestinations(out, arrayPath)
+		destinations = flow.AppendOriginDestinationsPath(*out, arrayPath, nil)
 	}
 	if table, ok := elem.(*ast.TableExpr); ok && table != nil {
 		for _, field := range table.Fields {
@@ -507,7 +497,7 @@ func (t *Transfer) recordAppendElementFieldOrigins(out *flow.PointState, place P
 			if !ok || source.IsEmpty() {
 				continue
 			}
-			sources := appendOriginSources(out, source)
+			sources := flow.AppendOriginSourcesPath(*out, source)
 			for _, dst := range destinations {
 				field := append([]constraint.Segment(nil), dst.FieldPrefix...)
 				field = append(field, seg)
@@ -535,37 +525,11 @@ func (t *Transfer) recordAppendElementFieldOrigins(out *flow.PointState, place P
 		for _, seg := range field {
 			elementField = elementField.Append(seg)
 		}
-		elementFieldAddr, ok := flow.StableAddressOfPath(elementField)
-		if !ok {
-			continue
-		}
-		for _, originUse := range flow.AppendElementFieldOriginUses(*out, elementFieldAddr) {
+		for _, originUse := range flow.AppendElementFieldOriginUsesPath(*out, elementField) {
 			flow.ApplyAppendElementFieldOriginUse(out, destinations, field, originUse)
 		}
 	}
 	return !flow.KeyPresenceFactsDomain.Equal(before, out.KeyPresence)
-}
-
-func appendOriginDestinations(out *flow.PointState, arrayPath constraint.Path) []flow.AppendOriginDestination {
-	if out == nil || arrayPath.IsEmpty() {
-		return nil
-	}
-	arrayAddr, ok := flow.StableAddressOfPath(arrayPath)
-	if !ok {
-		return nil
-	}
-	return flow.AppendOriginDestinations(*out, arrayAddr, nil)
-}
-
-func appendOriginSources(out *flow.PointState, sourcePath constraint.Path) []flow.AppendOriginSource {
-	if out == nil || sourcePath.IsEmpty() {
-		return nil
-	}
-	sourceAddr, ok := flow.StableAddressOfPath(sourcePath)
-	if !ok {
-		return nil
-	}
-	return flow.AppendOriginSources(*out, sourceAddr)
 }
 
 func (t *Transfer) arrayPathCurrentlyEmpty(out *flow.PointState, path constraint.Path) bool {
@@ -634,18 +598,13 @@ func (t *Transfer) applyAppendKeyArrayFacts(
 	if !ok || arrayPath.IsEmpty() {
 		return false
 	}
-	arrayAddr, arrayOK := flow.StableAddressOfPath(arrayPath)
-	if !arrayOK {
-		return false
-	}
-	elementAddr, elementOK := flow.StableAddressOfPath(elementPath)
-	return flow.ApplyAppendKeyArrayConsequences(out, flow.AppendKeyArrayConsequences{
-		Array:    arrayAddr,
-		Key:      elementAddr,
-		HasKey:   elementOK,
-		KeyValue: element,
-		Tables:   selection.Tables,
-		Pending:  selection.Pending,
+	return flow.ApplyAppendKeyArrayPathConsequences(out, flow.AppendKeyArrayPathConsequences{
+		ArrayPath: arrayPath,
+		KeyPath:   elementPath,
+		HasKey:    !elementPath.IsEmpty(),
+		KeyValue:  element,
+		Tables:    selection.Tables,
+		Pending:   selection.Pending,
 	})
 }
 

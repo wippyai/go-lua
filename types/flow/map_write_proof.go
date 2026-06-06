@@ -343,6 +343,14 @@ func ApplyAppendHistoryBaseProof(out *PointState, proof AppendHistoryBaseProof) 
 	return !KeyPresenceFactsDomain.Equal(before, out.KeyPresence)
 }
 
+func ApplyAppendHistoryBasePathProof(out *PointState, arrayPath constraint.Path) bool {
+	array, ok := StableAddressOfPath(arrayPath)
+	if !ok {
+		return false
+	}
+	return ApplyAppendHistoryBaseProof(out, AppendHistoryBaseProof{Array: array})
+}
+
 // ApplyAppendElementFieldOriginProof applies an append element-field origin
 // proof to point state.
 func ApplyAppendElementFieldOriginProof(out *PointState, proof AppendElementFieldOriginProof) bool {

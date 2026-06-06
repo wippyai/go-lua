@@ -201,6 +201,16 @@ func (f PointFacts) HasKeyValuePresence(table, key, value constraint.Path) bool 
 	return tableOK && keyOK && valueOK && f.state.KeyPresence.HasValueAddresses(tableAddr, keyAddr, valueAddr)
 }
 
+func (f PointFacts) HasEmptyKeyArray(array constraint.Path) bool {
+	arrayAddr, ok := StableAddressOfPath(array)
+	return ok && f.state.KeyPresence.HasEmptyKeyArray(arrayAddr.Key())
+}
+
+func (f PointFacts) HasAppendHistoryBase(array constraint.Path) bool {
+	arrayAddr, ok := StableAddressOfPath(array)
+	return ok && f.state.KeyPresence.HasAppendHistoryBase(arrayAddr.Key())
+}
+
 // IdentityAliasClosurePaths returns root plus every assignment/path alias
 // reachable through the identity-alias relation, normalized back to paths.
 func (f PointFacts) IdentityAliasClosurePaths(root constraint.Path) []constraint.Path {

@@ -42,6 +42,19 @@ type AppendKeyArrayConsequences struct {
 	Pending []PendingKeyArrayDestination
 }
 
+// AppendKeyArrayPathConsequences is the producer-facing path form for append
+// key-array consequences. Tables and pending destinations may remain
+// address-native when they came from prior flow queries.
+type AppendKeyArrayPathConsequences struct {
+	ArrayPath constraint.Path
+	KeyPath   constraint.Path
+	HasKey    bool
+	KeyValue  product.AbstractValue
+
+	Tables  []StableAddress
+	Pending []PendingKeyArrayDestination
+}
+
 // AppendKeyArrayTableQuery selects the tables for which appending Key into
 // Array proves or delays key-array provenance.
 type AppendKeyArrayTableQuery struct {
@@ -65,6 +78,14 @@ type AppendKeyArraySelection struct {
 type AppendKeyArrayPreservationQuery struct {
 	Array          StableAddress
 	Key            StableAddress
+	FreshEmptySeed bool
+}
+
+// AppendKeyArrayPathPreservationQuery selects append preservation consequences
+// from structured paths.
+type AppendKeyArrayPathPreservationQuery struct {
+	ArrayPath      constraint.Path
+	KeyPath        constraint.Path
 	FreshEmptySeed bool
 }
 
@@ -113,6 +134,14 @@ func AppendOriginDestinations(state PointState, array StableAddress, fieldPrefix
 	}
 	add(array, fieldPrefix)
 	return destinations
+}
+
+func AppendOriginDestinationsPath(state PointState, arrayPath constraint.Path, fieldPrefix []constraint.Segment) []AppendOriginDestination {
+	array, ok := StableAddressOfPath(arrayPath)
+	if !ok {
+		return nil
+	}
+	return AppendOriginDestinations(state, array, fieldPrefix)
 }
 
 // ApplyAppendKeyArrayConsequences applies direct and delayed key-array facts
@@ -175,6 +204,26 @@ func ApplyAppendKeyArrayConsequences(out *PointState, proof AppendKeyArrayConseq
 	return changed
 }
 
+func ApplyAppendKeyArrayPathConsequences(out *PointState, proof AppendKeyArrayPathConsequences) bool {
+	array, arrayOK := StableAddressOfPath(proof.ArrayPath)
+	if !arrayOK {
+		return false
+	}
+	key := StableAddress{}
+	keyOK := false
+	if proof.HasKey {
+		key, keyOK = StableAddressOfPath(proof.KeyPath)
+	}
+	return ApplyAppendKeyArrayConsequences(out, AppendKeyArrayConsequences{
+		Array:    array,
+		Key:      key,
+		HasKey:   proof.HasKey && keyOK,
+		KeyValue: proof.KeyValue,
+		Tables:   proof.Tables,
+		Pending:  proof.Pending,
+	})
+}
+
 // AppendHistoryBaseWithoutEvents reports whether Array still has a tracked
 // append-history base with no recorded append events.
 func AppendHistoryBaseWithoutEvents(state PointState, array StableAddress) bool {
@@ -188,6 +237,11 @@ func AppendHistoryBaseWithoutEvents(state PointState, array StableAddress) bool 
 		}
 	}
 	return true
+}
+
+func AppendHistoryBaseWithoutEventsPath(state PointState, arrayPath constraint.Path) bool {
+	array, ok := StableAddressOfPath(arrayPath)
+	return ok && AppendHistoryBaseWithoutEvents(state, array)
 }
 
 // AppendKeyArrayTables selects concrete key-array consequence tables from the
@@ -323,6 +377,19 @@ func AppendKeyArrayPreservation(state PointState, q AppendKeyArrayPreservationQu
 	return out
 }
 
+func AppendKeyArrayPathPreservation(state PointState, q AppendKeyArrayPathPreservationQuery) AppendKeyArraySelection {
+	array, arrayOK := StableAddressOfPath(q.ArrayPath)
+	key, keyOK := StableAddressOfPath(q.KeyPath)
+	if !arrayOK || !keyOK {
+		return AppendKeyArraySelection{}
+	}
+	return AppendKeyArrayPreservation(state, AppendKeyArrayPreservationQuery{
+		Array:          array,
+		Key:            key,
+		FreshEmptySeed: q.FreshEmptySeed,
+	})
+}
+
 // AppendOriginSources follows value-origin and path-alias facts backward from
 // source to every path that may have supplied an appended element field.
 func AppendOriginSources(state PointState, source StableAddress) []AppendOriginSource {
@@ -370,6 +437,14 @@ func AppendOriginSources(state PointState, source StableAddress) []AppendOriginS
 	return sources
 }
 
+func AppendOriginSourcesPath(state PointState, sourcePath constraint.Path) []AppendOriginSource {
+	source, ok := StableAddressOfPath(sourcePath)
+	if !ok {
+		return nil
+	}
+	return AppendOriginSources(state, source)
+}
+
 // AppendElementFieldOriginUses returns value-origin uses for an appended
 // element field, including origins reached through path aliases.
 func AppendElementFieldOriginUses(state PointState, field StableAddress) []ValueOriginUse {
@@ -389,6 +464,14 @@ func AppendElementFieldOriginUses(state PointState, field StableAddress) []Value
 		uses = append(uses, state.ValueOrigins.OriginsCoveringAddress(source)...)
 	}
 	return uses
+}
+
+func AppendElementFieldOriginUsesPath(state PointState, fieldPath constraint.Path) []ValueOriginUse {
+	field, ok := StableAddressOfPath(fieldPath)
+	if !ok {
+		return nil
+	}
+	return AppendElementFieldOriginUses(state, field)
 }
 
 // ApplyAppendElementFieldOriginUse replays a prior field-origin use into the
