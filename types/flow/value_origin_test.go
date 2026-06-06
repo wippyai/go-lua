@@ -54,6 +54,10 @@ func TestValueOriginFactsOriginsCoveringPath(t *testing.T) {
 	if len(uses[0].Remainder) != 1 || uses[0].Remainder[0].Name != "id" {
 		t.Fatalf("remainder = %#v, want [.id]", uses[0].Remainder)
 	}
+	sourcePath, ok := uses[0].Origin.SourcePath()
+	if !ok || !sourcePath.Equal(tests) {
+		t.Fatalf("source path = %v/%v, want tests", sourcePath, ok)
+	}
 }
 
 func TestValueOriginFactsOriginsCoveringPathKeepsAllPrefixOrigins(t *testing.T) {

@@ -28,6 +28,21 @@ type ValueOriginFact struct {
 	VarIndex int
 }
 
+// SourceAddress returns the normalized source address carried by this origin.
+func (f ValueOriginFact) SourceAddress() (StableAddress, bool) {
+	return StableAddressFromKey(f.Source)
+}
+
+// SourcePath returns the source path carried by this origin when it is
+// symbol-rooted.
+func (f ValueOriginFact) SourcePath() (constraint.Path, bool) {
+	addr, ok := f.SourceAddress()
+	if !ok {
+		return constraint.Path{}, false
+	}
+	return addr.Path()
+}
+
 // ValueOriginUse is a provenance fact that covers a consumed path. Remainder is
 // the suffix under Origin.Value that was read by the consumer, so a demand for
 // local.f on an origin local <- source becomes iterator evidence for {f: T}.

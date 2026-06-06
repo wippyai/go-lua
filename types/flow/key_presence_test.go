@@ -123,6 +123,29 @@ func TestKeyPresenceAppendHistoryRejectsPartiallyCoveredTable(t *testing.T) {
 	}
 }
 
+func TestAppendElementFieldOriginUseSourcePath(t *testing.T) {
+	arrayPath := constraint.NewPath(cfg.SymbolID(30), "routes")
+	sourcePath := constraint.NewPath(cfg.SymbolID(31), "op")
+	field := []constraint.Segment{{Kind: constraint.SegmentField, Name: "target_name"}}
+	facts := KeyPresenceFacts{}.
+		WithAppendHistoryBaseAddress(testStableAddressPath(t, arrayPath)).
+		WithAppendElementFieldOriginFromAddresses(
+			testStableAddressPath(t, arrayPath),
+			field,
+			testStableAddressPath(t, sourcePath),
+			nil,
+		)
+
+	uses := facts.AppendElementFieldSources(testStableAddressPath(t, arrayPath).Key(), field)
+	if len(uses) != 1 {
+		t.Fatalf("uses got %d, want one source", len(uses))
+	}
+	got, ok := uses[0].SourcePath()
+	if !ok || !got.Equal(sourcePath) {
+		t.Fatalf("source path = %v/%v, want op", got, ok)
+	}
+}
+
 func TestKeyPresenceFactsKillSubtreeRemovesDependentFacts(t *testing.T) {
 	table := SymbolPathKey(cfg.SymbolID(1), nil)
 	key := SymbolPathKey(cfg.SymbolID(2), nil)

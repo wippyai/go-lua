@@ -118,6 +118,15 @@ type AppendElementFieldOriginUse struct {
 	FieldRemainder []constraint.Segment
 }
 
+// SourcePath returns the symbol-rooted source path carried by this origin use.
+func (u AppendElementFieldOriginUse) SourcePath() (constraint.Path, bool) {
+	addr, ok := StableAddressFromKey(u.Origin.Source)
+	if !ok {
+		return constraint.Path{}, false
+	}
+	return addr.Path()
+}
+
 // KeyPresenceFacts is a finite must-set lattice over KeyOf provenance. Bottom is
 // unreachable, Top is the empty fact set, and finite states are sorted
 // table/key, table/key/value, key-array, key-array/value, and delayed key-array

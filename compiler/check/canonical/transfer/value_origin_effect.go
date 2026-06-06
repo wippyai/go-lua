@@ -129,22 +129,6 @@ func (t *Transfer) conditionedLeafContract(
 	return conditioned
 }
 
-func (t *Transfer) demandSourcePathCtx(source constraint.PathKey, evidence typ.Type, demand func(int, paramevidence.ParamContract)) {
-	t.demandSourcePathContract(nil, source, paramevidence.DemandFromType(evidence), demand)
-}
-
-func (t *Transfer) demandSourcePathContract(out *flow.PointState, source constraint.PathKey, evidence paramevidence.ParamContract, demand func(int, paramevidence.ParamContract)) {
-	if source == "" || demand == nil ||
-		paramevidence.ParamContractDomain.Equal(evidence, paramevidence.ParamContractDomain.Bottom()) {
-		return
-	}
-	path, ok := demandPathFromKey(source)
-	if !ok || path.Symbol == 0 {
-		return
-	}
-	t.demandLocalPathContract(out, path, evidence, demand)
-}
-
 type demandRouteItem struct {
 	path     constraint.Path
 	contract paramevidence.ParamContract
@@ -197,7 +181,7 @@ func (t *Transfer) demandLocalPathContract(
 				if paramevidence.ParamContractDomain.Equal(evidence, paramevidence.ParamContractDomain.Bottom()) {
 					continue
 				}
-				if source, ok := demandPathFromKey(use.Origin.Source); ok && source.Symbol != 0 {
+				if source, ok := use.Origin.SourcePath(); ok && source.Symbol != 0 {
 					queue = append(queue, demandRouteItem{path: source, contract: evidence})
 				}
 			case flow.ValueOriginKeyedIterator:
@@ -206,7 +190,7 @@ func (t *Transfer) demandLocalPathContract(
 				if paramevidence.ParamContractDomain.Equal(evidence, paramevidence.ParamContractDomain.Bottom()) {
 					continue
 				}
-				if source, ok := demandPathFromKey(use.Origin.Source); ok && source.Symbol != 0 {
+				if source, ok := use.Origin.SourcePath(); ok && source.Symbol != 0 {
 					queue = append(queue, demandRouteItem{path: source, contract: evidence})
 				}
 			}
@@ -226,7 +210,7 @@ func (t *Transfer) enqueueAppendFieldOriginDemands(
 		return
 	}
 	for _, use := range out.KeyPresence.AppendElementFieldSources(array, field) {
-		source, ok := demandPathFromKey(use.Origin.Source)
+		source, ok := use.SourcePath()
 		if !ok || source.Symbol == 0 {
 			continue
 		}
@@ -242,14 +226,6 @@ func (t *Transfer) enqueueAppendFieldOriginDemands(
 		}
 		*queue = append(*queue, demandRouteItem{path: source, contract: contract})
 	}
-}
-
-func demandPathFromKey(key constraint.PathKey) (constraint.Path, bool) {
-	addr, ok := flow.StableAddressFromKey(key)
-	if !ok {
-		return constraint.Path{}, false
-	}
-	return addr.Path()
 }
 
 func iteratorOriginEvidence(origin flow.ValueOriginFact, local typ.Type) typ.Type {
