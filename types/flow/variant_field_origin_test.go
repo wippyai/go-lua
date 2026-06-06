@@ -77,6 +77,68 @@ func TestNormalizeOrdersVariantOriginsAndCaseFieldProjections(t *testing.T) {
 	}
 }
 
+func TestVariantFieldOriginEqualityConstraintsSelectMatchingCase(t *testing.T) {
+	target := constraint.Path{Root: "selected", Symbol: cfg.SymbolID(11), Version: 2}
+	source := constraint.Path{Root: "events", Symbol: cfg.SymbolID(12)}
+	origin := VariantFieldOrigin{
+		Target:       target,
+		Field:        "channel",
+		Source:       source,
+		OriginFamily: 91,
+		CaseIndex:    3,
+	}
+
+	got := VariantFieldOriginEqualityConstraints([]VariantFieldOrigin{origin}, target, "channel", source)
+	if len(got) != 1 {
+		t.Fatalf("equality constraints = %#v, want one selected case", got)
+	}
+	eq, ok := got[0].(constraint.VariantCaseEquals)
+	if !ok {
+		t.Fatalf("constraint = %#v, want VariantCaseEquals", got[0])
+	}
+	if !eq.Target.Equal(target) || eq.OriginFamily != 91 || eq.CaseIndex != 3 {
+		t.Fatalf("constraint = %#v, want selected family/case", eq)
+	}
+}
+
+func TestVariantFieldOriginNotEqualityConstraintsExcludeMatchingCase(t *testing.T) {
+	target := constraint.Path{Root: "selected", Symbol: cfg.SymbolID(11)}
+	source := constraint.Path{Root: "events", Symbol: cfg.SymbolID(12)}
+	origin := VariantFieldOrigin{
+		Target:       target,
+		Field:        "channel",
+		Source:       source,
+		OriginFamily: 91,
+		CaseIndex:    3,
+	}
+
+	got := VariantFieldOriginNotEqualityConstraints([]VariantFieldOrigin{origin}, target, "channel", source)
+	if len(got) != 1 {
+		t.Fatalf("not-equality constraints = %#v, want one excluded case", got)
+	}
+	neq, ok := got[0].(constraint.VariantCaseNotEquals)
+	if !ok {
+		t.Fatalf("constraint = %#v, want VariantCaseNotEquals", got[0])
+	}
+	if !neq.Target.Equal(target) || neq.OriginFamily != 91 || neq.CaseIndex != 3 {
+		t.Fatalf("constraint = %#v, want excluded family/case", neq)
+	}
+}
+
+func TestVariantOriginPathMatchesVersionAgnosticCounterpart(t *testing.T) {
+	origin := constraint.Path{Root: "selected", Symbol: cfg.SymbolID(11)}
+	actual := constraint.Path{Root: "selected", Symbol: cfg.SymbolID(11), Version: 7}
+	if !VariantOriginPathMatches(origin, actual) {
+		t.Fatalf("version-agnostic origin should match versioned actual path")
+	}
+
+	other := actual
+	other.Version = 8
+	if VariantOriginPathMatches(actual, other) {
+		t.Fatalf("different concrete versions must not match")
+	}
+}
+
 func TestVariantCaseFieldProjectionValuesJoinSelectedPayloads(t *testing.T) {
 	resultSym := cfg.SymbolID(11)
 	eventsSym := cfg.SymbolID(12)

@@ -717,12 +717,16 @@ func (ce *ConditionExtractor) ConditionFromEquality(lhs, rhs ast.Expr) constrain
 	}
 	if target, field, ok := constraint.SplitFieldPath(left); ok {
 		constraints := []constraint.Constraint{constraint.FieldEqualsPath{Target: target, Field: field, Value: right}}
-		constraints = append(constraints, ce.variantFieldOriginConstraints(target, field, right, true)...)
+		if ce != nil && ce.Inputs != nil {
+			constraints = append(constraints, flow.VariantFieldOriginEqualityConstraints(ce.Inputs.VariantFieldOrigins, target, field, right)...)
+		}
 		return constraint.FromConstraints(constraints...)
 	}
 	if target, field, ok := constraint.SplitFieldPath(right); ok {
 		constraints := []constraint.Constraint{constraint.FieldEqualsPath{Target: target, Field: field, Value: left}}
-		constraints = append(constraints, ce.variantFieldOriginConstraints(target, field, left, true)...)
+		if ce != nil && ce.Inputs != nil {
+			constraints = append(constraints, flow.VariantFieldOriginEqualityConstraints(ce.Inputs.VariantFieldOrigins, target, field, left)...)
+		}
 		return constraint.FromConstraints(constraints...)
 	}
 	if target, key, ok := flowpath.SplitIndexPath(left); ok {
@@ -915,12 +919,16 @@ func (ce *ConditionExtractor) ConditionFromInequality(lhs, rhs ast.Expr) constra
 	if !left.IsEmpty() && !right.IsEmpty() {
 		if target, field, ok := constraint.SplitFieldPath(left); ok {
 			constraints := []constraint.Constraint{constraint.FieldNotEqualsPath{Target: target, Field: field, Value: right}}
-			constraints = append(constraints, ce.variantFieldOriginConstraints(target, field, right, false)...)
+			if ce != nil && ce.Inputs != nil {
+				constraints = append(constraints, flow.VariantFieldOriginNotEqualityConstraints(ce.Inputs.VariantFieldOrigins, target, field, right)...)
+			}
 			return constraint.FromConstraints(constraints...)
 		}
 		if target, field, ok := constraint.SplitFieldPath(right); ok {
 			constraints := []constraint.Constraint{constraint.FieldNotEqualsPath{Target: target, Field: field, Value: left}}
-			constraints = append(constraints, ce.variantFieldOriginConstraints(target, field, left, false)...)
+			if ce != nil && ce.Inputs != nil {
+				constraints = append(constraints, flow.VariantFieldOriginNotEqualityConstraints(ce.Inputs.VariantFieldOrigins, target, field, left)...)
+			}
 			return constraint.FromConstraints(constraints...)
 		}
 	}
@@ -931,62 +939,6 @@ func (ce *ConditionExtractor) ConditionFromInequality(lhs, rhs ast.Expr) constra
 		return constraint.TrueCondition()
 	}
 	return constraint.Not(eq)
-}
-
-func (ce *ConditionExtractor) variantFieldOriginConstraints(target constraint.Path, field string, source constraint.Path, equals bool) []constraint.Constraint {
-	if ce == nil || ce.Inputs == nil || target.IsEmpty() || source.IsEmpty() || field == "" {
-		return nil
-	}
-	var out []constraint.Constraint
-	for _, origin := range ce.Inputs.VariantFieldOrigins {
-		if origin.Field != field ||
-			!pathsCompatibleForOrigin(origin.Target, target) ||
-			!pathsCompatibleForOrigin(origin.Source, source) {
-			continue
-		}
-		if origin.OriginFamily != 0 {
-			if equals {
-				out = append(out, constraint.VariantCaseEquals{
-					Target:       origin.Target,
-					OriginFamily: origin.OriginFamily,
-					CaseIndex:    origin.CaseIndex,
-				})
-				continue
-			}
-			out = append(out, constraint.VariantCaseNotEquals{
-				Target:       origin.Target,
-				OriginFamily: origin.OriginFamily,
-				CaseIndex:    origin.CaseIndex,
-			})
-			continue
-		}
-	}
-	return out
-}
-
-func pathsCompatibleForOrigin(origin, actual constraint.Path) bool {
-	if origin.IsEmpty() || actual.IsEmpty() {
-		return false
-	}
-	if origin.Symbol != 0 || actual.Symbol != 0 {
-		if origin.Symbol != actual.Symbol {
-			return false
-		}
-		if origin.Version != 0 && actual.Version != 0 && origin.Version != actual.Version {
-			return false
-		}
-	} else if origin.Root != actual.Root {
-		return false
-	}
-	if len(origin.Segments) != len(actual.Segments) {
-		return false
-	}
-	for i := range origin.Segments {
-		if origin.Segments[i] != actual.Segments[i] {
-			return false
-		}
-	}
-	return true
 }
 
 // constraintsFromPathLiteral handles path == literal for static paths.
