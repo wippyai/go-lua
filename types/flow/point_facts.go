@@ -112,6 +112,35 @@ func (f PointFacts) ValueKeyValue(key ValueKey) (product.AbstractValue, bool) {
 	return f.EnvValue(key)
 }
 
+// ReturnSlotValue returns the scratch value recorded for a non-symbol return
+// expression at slot index.
+func (f PointFacts) ReturnSlotValue(index int) (product.AbstractValue, bool) {
+	if index < 0 {
+		return product.AbstractValue{}, false
+	}
+	return f.EnvValue(ReturnSlotValueKey(index))
+}
+
+// ReturnSlotStoredArity reports one past the greatest non-empty scratch return
+// slot present in Env. Summary projection uses it to expand a single returned
+// call into the callee arity the transfer materialized.
+func (f PointFacts) ReturnSlotStoredArity() int {
+	maxSlot := -1
+	for key, av := range f.state.Env {
+		if av.IsZero() {
+			continue
+		}
+		idx, ok := ParseReturnSlotValueKey(key)
+		if !ok || idx < 0 {
+			continue
+		}
+		if idx > maxSlot {
+			maxSlot = idx
+		}
+	}
+	return maxSlot + 1
+}
+
 // SymbolType returns sym's projected structural type when a product value is
 // present and informative.
 func (f PointFacts) SymbolType(sym cfg.SymbolID) (typ.Type, bool) {

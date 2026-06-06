@@ -381,7 +381,7 @@ func returnFunctionRefsTupleAt(ps flow.PointState, info *cfg.ReturnInfo) []flow.
 func returnTupleAt(ps flow.PointState, info *cfg.ReturnInfo, opts ProjectOptions) []product.AbstractValue {
 	arity := len(info.Exprs)
 	if len(info.Exprs) == 1 && info.SourceCallAt(0) != nil {
-		if stored := returnSlotStoredArity(ps); stored > arity {
+		if stored := flow.PointFactsOf(ps).ReturnSlotStoredArity(); stored > arity {
 			arity = stored
 		}
 	}
@@ -393,23 +393,6 @@ func returnTupleAt(ps flow.PointState, info *cfg.ReturnInfo, opts ProjectOptions
 		out[i] = returnSlotValue(ps, info, i, opts)
 	}
 	return out
-}
-
-func returnSlotStoredArity(ps flow.PointState) int {
-	maxSlot := -1
-	for key, av := range ps.Env {
-		if av.IsZero() {
-			continue
-		}
-		idx, ok := flow.ParseReturnSlotValueKey(key)
-		if !ok || idx < 0 {
-			continue
-		}
-		if idx > maxSlot {
-			maxSlot = idx
-		}
-	}
-	return maxSlot + 1
 }
 
 func materializeImplicitNilReturnSlots(info *cfg.ReturnInfo, tuple []product.AbstractValue, arity int) []product.AbstractValue {
@@ -440,7 +423,7 @@ func returnSlotValueFromPointState(ps flow.PointState, info *cfg.ReturnInfo, i i
 	// its value in the return-slot Env key written by applyReturn. This is a
 	// summary-owned read of transfer assembly facts through the PointFacts
 	// typed-key boundary.
-	if av, ok := flow.PointFactsOf(ps).ValueKeyValue(flow.ReturnSlotValueKey(i)); ok && !av.IsZero() {
+	if av, ok := flow.PointFactsOf(ps).ReturnSlotValue(i); ok && !av.IsZero() {
 		return av
 	}
 	if returnSlotHasFiniteCallTarget(ps, info, i, opts) {

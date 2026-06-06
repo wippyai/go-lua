@@ -76,6 +76,28 @@ func TestPointFactsValueKeyValueReadsReturnSlots(t *testing.T) {
 	}
 }
 
+func TestPointFactsReturnSlotValueAndStoredArity(t *testing.T) {
+	state := PointState{
+		Env: map[ValueKey]product.AbstractValue{
+			ReturnSlotValueKey(0): product.FromType(typ.String),
+			ReturnSlotValueKey(2): product.FromType(typ.Number),
+			SymbolValueKey(9):     product.FromType(typ.Boolean),
+		},
+	}
+
+	facts := PointFactsOf(state)
+	got, ok := facts.ReturnSlotValue(2)
+	if !ok || !typ.TypeEquals(got.ProjectValue(), typ.Number) {
+		t.Fatalf("ReturnSlotValue(2) = %v/%v, want number/true", got.ProjectValue(), ok)
+	}
+	if _, ok := facts.ReturnSlotValue(-1); ok {
+		t.Fatalf("ReturnSlotValue(-1) reported present")
+	}
+	if got := facts.ReturnSlotStoredArity(); got != 3 {
+		t.Fatalf("ReturnSlotStoredArity = %d, want 3", got)
+	}
+}
+
 func TestSingleChangedValueKeyReportsEnvKey(t *testing.T) {
 	key := ReturnSlotValueKey(1)
 	before := PointState{Env: map[ValueKey]product.AbstractValue{key: product.FromType(typ.String)}}
