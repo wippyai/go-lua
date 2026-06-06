@@ -15,8 +15,8 @@ import (
 func TestDiagnosticContextFrontierCachesSolvedObserverStates(t *testing.T) {
 	root := summary.FuncRef{GraphID: 1}
 	callee := summary.FuncRef{GraphID: 2}
-	rootKey := summary.NewKey(root, flow.CaptureCellsDomain.Bottom())
-	calleeKey := summary.NewKey(callee, flow.CaptureCellsDomain.Bottom())
+	rootKey := summary.NewDefaultKey(root, nil)
+	calleeKey := summary.NewDefaultKey(callee, nil)
 	solves := make(map[summary.Key]int)
 
 	result := summary.DiagnosticContextFrontier{
@@ -56,7 +56,7 @@ func TestDiagnosticContextFrontierUsesFallbackOnlyForUncalledFunctions(t *testin
 	called := summary.FuncRef{GraphID: 2}
 	uncalledClosure := summary.FuncRef{GraphID: 3}
 	uncalledDefault := summary.FuncRef{GraphID: 4}
-	calledKey := summary.NewKey(called, flow.CaptureCellsDomain.Bottom())
+	calledKey := summary.NewDefaultKey(called, nil)
 	calledClosureKey := summary.NewKeyWithEntryContext(
 		called,
 		flow.CaptureCellsOf([]flow.CaptureCell{{Symbol: 10, Value: product.FromType(typ.String)}}),
@@ -71,7 +71,7 @@ func TestDiagnosticContextFrontierUsesFallbackOnlyForUncalledFunctions(t *testin
 		flow.ClosureRefsDomain.Bottom(),
 		nil,
 	)
-	defaultKey := summary.NewKey(uncalledDefault, flow.CaptureCellsDomain.Bottom())
+	defaultKey := summary.NewDefaultKey(uncalledDefault, nil)
 
 	result := summary.DiagnosticContextFrontier{
 		Root: root,
@@ -80,7 +80,7 @@ func TestDiagnosticContextFrontierUsesFallbackOnlyForUncalledFunctions(t *testin
 			if ref == uncalledDefault {
 				return defaultKey
 			}
-			return summary.NewKey(ref, flow.CaptureCellsDomain.Bottom())
+			return summary.NewDefaultKey(ref, nil)
 		},
 		Solve: func(summary.Key) state.FunctionState {
 			return state.FunctionStateDomain.Bottom()
@@ -200,7 +200,7 @@ func TestDiagnosticContextFrontierReducesDominatedEntryFactContexts(t *testing.T
 func TestDiagnosticContextFrontierDropsStaleContextsAfterRefresh(t *testing.T) {
 	root := summary.FuncRef{GraphID: 1}
 	callee := summary.FuncRef{GraphID: 2}
-	rootKey := summary.NewKey(root, flow.CaptureCellsDomain.Bottom())
+	rootKey := summary.NewDefaultKey(root, nil)
 	stale := summary.NewDefaultKey(callee, summary.EntryValues{0: product.FromType(typ.NewRecord().Build())})
 	current := summary.NewDefaultKey(callee, summary.EntryValues{0: product.FromType(typ.NewRecord().Field("nodes", typ.NewMap(typ.String, typ.Number)).Build())})
 	solves := make(map[summary.Key]int)
@@ -244,7 +244,7 @@ func TestDiagnosticContextFrontierDropsStaleContextsAfterRefresh(t *testing.T) {
 
 func TestDiagnosticContextFrontierIgnoresUnobservableRefreshChurn(t *testing.T) {
 	root := summary.FuncRef{GraphID: 1}
-	rootKey := summary.NewKey(root, flow.CaptureCellsDomain.Bottom())
+	rootKey := summary.NewDefaultKey(root, nil)
 	solves := make(map[summary.Key]int)
 
 	result := summary.DiagnosticContextFrontier{
@@ -275,7 +275,7 @@ func TestDiagnosticContextFrontierIgnoresUnobservableRefreshChurn(t *testing.T) 
 func TestDiagnosticContextFrontierRefreshesDerivedInPointContexts(t *testing.T) {
 	root := summary.FuncRef{GraphID: 1}
 	callee := summary.FuncRef{GraphID: 2}
-	rootKey := summary.NewKey(root, flow.CaptureCellsDomain.Bottom())
+	rootKey := summary.NewDefaultKey(root, nil)
 	calleeKey := summary.NewDefaultKey(callee, summary.EntryValues{0: product.FromType(typ.String)})
 	solves := make(map[summary.Key]int)
 
@@ -316,7 +316,7 @@ func TestDiagnosticContextFrontierRefreshesDerivedInPointContexts(t *testing.T) 
 func TestDiagnosticContextFrontierRefreshesCallersAfterExactSummaryOverlay(t *testing.T) {
 	root := summary.FuncRef{GraphID: 1}
 	callee := summary.FuncRef{GraphID: 2}
-	rootKey := summary.NewKey(root, flow.CaptureCellsDomain.Bottom())
+	rootKey := summary.NewDefaultKey(root, nil)
 	calleeKey := summary.NewDefaultKey(callee, summary.EntryValues{0: product.FromType(typ.String)})
 	overlay := make(map[summary.Key]summary.Summary)
 	solves := make(map[summary.Key]int)
@@ -378,9 +378,9 @@ func TestDiagnosticContextFrontierRefreshesOnlyExactOverlayDependents(t *testing
 	root := summary.FuncRef{GraphID: 1}
 	callee := summary.FuncRef{GraphID: 2}
 	unrelated := summary.FuncRef{GraphID: 3}
-	rootKey := summary.NewKey(root, flow.CaptureCellsDomain.Bottom())
-	calleeKey := summary.NewKey(callee, flow.CaptureCellsDomain.Bottom())
-	unrelatedKey := summary.NewKey(unrelated, flow.CaptureCellsDomain.Bottom())
+	rootKey := summary.NewDefaultKey(root, nil)
+	calleeKey := summary.NewDefaultKey(callee, nil)
+	unrelatedKey := summary.NewDefaultKey(unrelated, nil)
 	overlay := make(map[summary.Key]summary.Summary)
 	solves := make(map[summary.Key]int)
 
@@ -439,7 +439,7 @@ func TestDiagnosticContextFrontierRefreshesOnlyExactOverlayDependents(t *testing
 
 func TestDiagnosticContextFrontierWidensExactSummaryOverlay(t *testing.T) {
 	root := summary.FuncRef{GraphID: 1}
-	rootKey := summary.NewKey(root, flow.CaptureCellsDomain.Bottom())
+	rootKey := summary.NewDefaultKey(root, nil)
 	overlay := map[summary.Key]summary.Summary{
 		rootKey: {
 			Returns: []product.AbstractValue{product.FromType(typ.LiteralString("a"))},
@@ -475,7 +475,7 @@ func TestDiagnosticContextFrontierWidensExactSummaryOverlay(t *testing.T) {
 
 func TestDiagnosticContextFrontierLetsExactReturnOverlayRefineWidenedValue(t *testing.T) {
 	root := summary.FuncRef{GraphID: 1}
-	rootKey := summary.NewKey(root, flow.CaptureCellsDomain.Bottom())
+	rootKey := summary.NewDefaultKey(root, nil)
 	overlay := map[summary.Key]summary.Summary{
 		rootKey: {
 			Returns: []product.AbstractValue{product.FromType(typ.Number)},
@@ -504,7 +504,7 @@ func TestDiagnosticContextFrontierLetsExactReturnOverlayRefineWidenedValue(t *te
 
 func TestDiagnosticContextFrontierDoesNotEraseExactReturnOverlayWithBroadRefresh(t *testing.T) {
 	root := summary.FuncRef{GraphID: 1}
-	rootKey := summary.NewKey(root, flow.CaptureCellsDomain.Bottom())
+	rootKey := summary.NewDefaultKey(root, nil)
 	broad := product.FromType(typ.NewRecord().Build())
 	refined := product.FromType(typ.NewRecord().Field("render", typ.Func().Returns(typ.String).Build()).Build())
 	overlay := map[summary.Key]summary.Summary{
@@ -538,7 +538,7 @@ func TestDiagnosticContextFrontierDoesNotEraseExactReturnOverlayWithBroadRefresh
 
 func TestDiagnosticContextFrontierDoesNotEraseExactReturnOverlayWithRecursiveRefresh(t *testing.T) {
 	root := summary.FuncRef{GraphID: 1}
-	rootKey := summary.NewKey(root, flow.CaptureCellsDomain.Bottom())
+	rootKey := summary.NewDefaultKey(root, nil)
 	refinedType := typ.NewRecord().Field("node_order", typ.NewArray(typ.String)).Build()
 	refined := product.FromType(refinedType)
 	recursive := product.FromType(typ.NewRecursive("Inferred", func(typ.Type) typ.Type {
@@ -582,7 +582,7 @@ func TestDiagnosticContextFrontierDoesNotEraseExactReturnOverlayWithRecursiveRef
 
 func TestDiagnosticContextFrontierDoesNotEraseExactReturnOverlayWithEmptyContainerRefresh(t *testing.T) {
 	root := summary.FuncRef{GraphID: 1}
-	rootKey := summary.NewKey(root, flow.CaptureCellsDomain.Bottom())
+	rootKey := summary.NewDefaultKey(root, nil)
 	refinedType := typ.NewRecord().Field("node_order", typ.NewArray(typ.String)).Build()
 	refined := product.FromType(refinedType)
 	empty := product.FromType(typ.NewRecord().Field("node_order", typ.NewArray(typ.Never)).Build())
@@ -617,7 +617,7 @@ func TestDiagnosticContextFrontierDoesNotEraseExactReturnOverlayWithEmptyContain
 
 func TestDiagnosticContextFrontierLetsExactProofOverlayRefineFromTop(t *testing.T) {
 	root := summary.FuncRef{GraphID: 1}
-	rootKey := summary.NewKey(root, flow.CaptureCellsDomain.Bottom())
+	rootKey := summary.NewDefaultKey(root, nil)
 	overlay := map[summary.Key]summary.Summary{
 		rootKey: {
 			Relations:     flow.ReturnRelationsDomain.Top(),
@@ -659,7 +659,7 @@ func TestDiagnosticContextFrontierLetsExactProofOverlayRefineFromTop(t *testing.
 
 func TestDiagnosticContextFrontierLetsExactEffectOverlayRefineFromIdentity(t *testing.T) {
 	root := summary.FuncRef{GraphID: 1}
-	rootKey := summary.NewKey(root, flow.CaptureCellsDomain.Bottom())
+	rootKey := summary.NewDefaultKey(root, nil)
 	sym := cfg.SymbolID(42)
 	must := flow.CaptureMustWrite(sym, product.FromType(typ.String))
 	overlay := map[summary.Key]summary.Summary{
@@ -695,7 +695,7 @@ func TestDiagnosticContextFrontierLetsExactEffectOverlayRefineFromIdentity(t *te
 
 func TestDiagnosticContextFrontierDoesNotEraseExactEffectWithIdentityRefresh(t *testing.T) {
 	root := summary.FuncRef{GraphID: 1}
-	rootKey := summary.NewKey(root, flow.CaptureCellsDomain.Bottom())
+	rootKey := summary.NewDefaultKey(root, nil)
 	sym := cfg.SymbolID(42)
 	must := flow.CaptureMustWrite(sym, product.FromType(typ.String))
 	overlay := map[summary.Key]summary.Summary{

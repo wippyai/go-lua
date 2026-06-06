@@ -31,11 +31,6 @@ type Key struct {
 	Facts    EntryFactsKey
 }
 
-// NewKey constructs the canonical summary key for ref and entry cells.
-func NewKey(ref FuncRef, entry flow.CaptureCells) Key {
-	return NewKeyWithEntryContextFacts(ref, entry, flow.FunctionRefsDomain.Bottom(), flow.ClosureRefsDomain.Bottom(), nil, flow.BoundaryFactsDomain.Top())
-}
-
 // NewDefaultKey constructs the key for a function entered without captured
 // caller axes, preserving only caller-projected parameter values.
 func NewDefaultKey(ref FuncRef, values EntryValues) Key {
@@ -248,7 +243,7 @@ func New(prog Program) *Queries {
 
 // Intra returns ref's converged intraprocedural FunctionState, memoized.
 func (q *Queries) Intra(ctx *db.QueryContext, ref FuncRef) state.FunctionState {
-	return q.IntraWithKey(ctx, NewKey(ref, flow.CaptureCellsDomain.Bottom()))
+	return q.IntraWithKey(ctx, NewDefaultKey(ref, nil))
 }
 
 // IntraWithKey returns the converged intraprocedural state for an already
@@ -268,7 +263,7 @@ func (q *Queries) ObserveIntraWithKey(ctx *db.QueryContext, key Key) state.Funct
 // fixpoint as needed. This is the call-site lookup seam: a caller resolving a
 // call to ref reads the converged callee summary here.
 func (q *Queries) Summarize(ctx *db.QueryContext, ref FuncRef) Summary {
-	return q.SummarizeWithKey(ctx, NewKey(ref, flow.CaptureCellsDomain.Bottom()))
+	return q.SummarizeWithKey(ctx, NewDefaultKey(ref, nil))
 }
 
 // ObservedSummary returns the caller-visible summary after the recursive summary
@@ -288,7 +283,7 @@ func (q *Queries) SummarizeWithKey(ctx *db.QueryContext, key Key) Summary {
 
 // Summarize returns ref's caller-visible summary through this reader.
 func (r Reader) Summarize(ref FuncRef) Summary {
-	return r.SummarizeWithKey(NewKey(ref, flow.CaptureCellsDomain.Bottom()))
+	return r.SummarizeWithKey(NewDefaultKey(ref, nil))
 }
 
 // SummarizeWithKey reads a summary through an already normalized entry key.
@@ -470,7 +465,7 @@ func (q *Queries) entryCells(ctx *db.QueryContext, key Key) flow.CaptureCells {
 	entries := key.Entry.Cells()
 	if provider, ok := q.prog.(captureEntryProvider); ok {
 		lexical := provider.CaptureEntries(key.Ref, func(dep FuncRef) flow.CaptureCells {
-			return q.solveQ.Get(ctx, NewKey(dep, flow.CaptureCellsDomain.Bottom())).Summary.CaptureExports
+			return q.solveQ.Get(ctx, NewDefaultKey(dep, nil)).Summary.CaptureExports
 		})
 		entries = mergeCaptureCellsWithFixed(entries, lexical)
 	}
@@ -481,7 +476,7 @@ func (q *Queries) entryRefs(ctx *db.QueryContext, key Key) flow.FunctionRefs {
 	refs := key.Refs.Refs()
 	if provider, ok := q.prog.(captureEntryRefsProvider); ok {
 		lexical := provider.CaptureEntryRefs(key.Ref, func(dep FuncRef) flow.FunctionRefs {
-			return q.solveQ.Get(ctx, NewKey(dep, flow.CaptureCellsDomain.Bottom())).Summary.CaptureFunctionRefs
+			return q.solveQ.Get(ctx, NewDefaultKey(dep, nil)).Summary.CaptureFunctionRefs
 		})
 		refs = mergeFunctionRefsWithFixed(refs, lexical)
 	}
@@ -492,7 +487,7 @@ func (q *Queries) entryClosureRefs(ctx *db.QueryContext, key Key) flow.ClosureRe
 	refs := key.Closures.Refs()
 	if provider, ok := q.prog.(captureEntryClosureRefsProvider); ok {
 		lexical := provider.CaptureEntryClosureRefs(key.Ref, func(dep FuncRef) flow.ClosureRefs {
-			return q.solveQ.Get(ctx, NewKey(dep, flow.CaptureCellsDomain.Bottom())).Summary.CaptureClosureRefs
+			return q.solveQ.Get(ctx, NewDefaultKey(dep, nil)).Summary.CaptureClosureRefs
 		})
 		refs = mergeClosureRefsWithFixed(refs, lexical)
 	}
