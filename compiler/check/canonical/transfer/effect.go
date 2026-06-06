@@ -490,14 +490,10 @@ func (t *Transfer) recordAppendKeyFact(out *flow.PointState, place Place, kind M
 		return false
 	}
 	before := out.KeyPresence
-	arrayAddr, arrayOK := flow.StableAddressOfPath(arrayPath)
-	elementAddr, elementOK := flow.StableAddressOfPath(elementPath)
-	if arrayOK && elementOK {
-		flow.ApplyAppendKeyProof(out, flow.AppendKeyProof{
-			Array: arrayAddr,
-			Key:   elementAddr,
-		})
-	}
+	flow.ApplyAppendKeyPathProof(out, flow.AppendKeyPathProof{
+		ArrayPath: arrayPath,
+		KeyPath:   elementPath,
+	})
 	return !flow.KeyPresenceFactsDomain.Equal(before, out.KeyPresence)
 }
 

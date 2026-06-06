@@ -70,6 +70,16 @@ type KeyArrayValueProof struct {
 	HasAppendKey bool
 }
 
+// KeyArrayValuePathProof is the producer-facing form of key-array value
+// coverage. Flow normalizes paths before publishing the address-indexed fact.
+type KeyArrayValuePathProof struct {
+	ArrayPath        constraint.Path
+	TablePath        constraint.Path
+	Value            product.AbstractValue
+	AppendKeyPath    constraint.Path
+	HasAppendKeyPath bool
+}
+
 // PendingKeyArrayProof records that Array may become a key-array for Table
 // after Key is proven present. Table is optional because some empty-array seeds
 // intentionally wait for any matching table/key presence.
@@ -86,6 +96,12 @@ type AppendKeyProof struct {
 	Key   StableAddress
 }
 
+// AppendKeyPathProof records append-key provenance from structured paths.
+type AppendKeyPathProof struct {
+	ArrayPath constraint.Path
+	KeyPath   constraint.Path
+}
+
 // AppendHistoryBaseProof preserves append-history tracking for Array across a
 // mutation that otherwise invalidates array element facts.
 type AppendHistoryBaseProof struct {
@@ -99,6 +115,15 @@ type AppendElementFieldOriginProof struct {
 	Array       StableAddress
 	Field       []constraint.Segment
 	Source      StableAddress
+	SourceField []constraint.Segment
+}
+
+// AppendElementFieldOriginPathProof records appended element-field provenance
+// from structured paths.
+type AppendElementFieldOriginPathProof struct {
+	ArrayPath   constraint.Path
+	Field       []constraint.Segment
+	SourcePath  constraint.Path
 	SourceField []constraint.Segment
 }
 
@@ -246,6 +271,28 @@ func ApplyKeyArrayValueProof(out *PointState, proof KeyArrayValueProof) bool {
 	return !KeyPresenceFactsDomain.Equal(before, out.KeyPresence)
 }
 
+func ApplyKeyArrayValuePathProof(out *PointState, proof KeyArrayValuePathProof) bool {
+	array, arrayOK := StableAddressOfPath(proof.ArrayPath)
+	table, tableOK := StableAddressOfPath(proof.TablePath)
+	if !arrayOK || !tableOK {
+		return false
+	}
+	addressProof := KeyArrayValueProof{
+		Array: array,
+		Table: table,
+		Value: proof.Value,
+	}
+	if proof.HasAppendKeyPath {
+		appendKey, keyOK := StableAddressOfPath(proof.AppendKeyPath)
+		if !keyOK {
+			return false
+		}
+		addressProof.AppendKey = appendKey
+		addressProof.HasAppendKey = true
+	}
+	return ApplyKeyArrayValueProof(out, addressProof)
+}
+
 // ApplyPendingKeyArrayProof applies delayed key-array provenance to point state.
 func ApplyPendingKeyArrayProof(out *PointState, proof PendingKeyArrayProof) bool {
 	if out == nil || proof.Array.Key() == "" || proof.Key.Key() == "" {
@@ -274,6 +321,18 @@ func ApplyAppendKeyProof(out *PointState, proof AppendKeyProof) bool {
 	return !KeyPresenceFactsDomain.Equal(before, out.KeyPresence)
 }
 
+func ApplyAppendKeyPathProof(out *PointState, proof AppendKeyPathProof) bool {
+	array, arrayOK := StableAddressOfPath(proof.ArrayPath)
+	key, keyOK := StableAddressOfPath(proof.KeyPath)
+	if !arrayOK || !keyOK {
+		return false
+	}
+	return ApplyAppendKeyProof(out, AppendKeyProof{
+		Array: array,
+		Key:   key,
+	})
+}
+
 // ApplyAppendHistoryBaseProof applies append-history base tracking to point state.
 func ApplyAppendHistoryBaseProof(out *PointState, proof AppendHistoryBaseProof) bool {
 	if out == nil || proof.Array.Key() == "" {
@@ -295,6 +354,20 @@ func ApplyAppendElementFieldOriginProof(out *PointState, proof AppendElementFiel
 		WithAppendHistoryBaseAddress(proof.Array).
 		WithAppendElementFieldOriginFromAddresses(proof.Array, proof.Field, proof.Source, proof.SourceField)
 	return !KeyPresenceFactsDomain.Equal(before, out.KeyPresence)
+}
+
+func ApplyAppendElementFieldOriginPathProof(out *PointState, proof AppendElementFieldOriginPathProof) bool {
+	array, arrayOK := StableAddressOfPath(proof.ArrayPath)
+	source, sourceOK := StableAddressOfPath(proof.SourcePath)
+	if !arrayOK || !sourceOK {
+		return false
+	}
+	return ApplyAppendElementFieldOriginProof(out, AppendElementFieldOriginProof{
+		Array:       array,
+		Field:       proof.Field,
+		Source:      source,
+		SourceField: proof.SourceField,
+	})
 }
 
 // IndexedKeyArrayIterationProof consumes key-array provenance at an indexed

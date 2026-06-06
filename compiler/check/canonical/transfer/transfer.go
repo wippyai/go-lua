@@ -873,15 +873,11 @@ func (t *Transfer) SeedEntryFacts(out *flow.PointState, facts flow.BoundaryFacts
 		if !ok {
 			continue
 		}
-		arrayAddr, arrayOK := flow.StableAddressOfPath(array)
-		tableAddr, tableOK := flow.StableAddressOfPath(table)
-		if arrayOK && tableOK {
-			flow.ApplyKeyArrayValueProof(out, flow.KeyArrayValueProof{
-				Array: arrayAddr,
-				Table: tableAddr,
-				Value: fact.Value,
-			})
-		}
+		flow.ApplyKeyArrayValuePathProof(out, flow.KeyArrayValuePathProof{
+			ArrayPath: array,
+			TablePath: table,
+			Value:     fact.Value,
+		})
 	}
 	for _, fact := range facts.AppendKeys() {
 		array, ok := t.rebaseEntryBoundaryPath(fact.Array)
@@ -892,14 +888,10 @@ func (t *Transfer) SeedEntryFacts(out *flow.PointState, facts flow.BoundaryFacts
 		if !ok {
 			continue
 		}
-		arrayAddr, arrayOK := flow.StableAddressOfPath(array)
-		keyAddr, keyOK := flow.StableAddressOfPath(key)
-		if arrayOK && keyOK {
-			flow.ApplyAppendKeyProof(out, flow.AppendKeyProof{
-				Array: arrayAddr,
-				Key:   keyAddr,
-			})
-		}
+		flow.ApplyAppendKeyPathProof(out, flow.AppendKeyPathProof{
+			ArrayPath: array,
+			KeyPath:   key,
+		})
 	}
 	for _, fact := range facts.AppendElementFieldOrigins() {
 		array, ok := t.rebaseEntryBoundaryPath(fact.Array)
@@ -910,15 +902,10 @@ func (t *Transfer) SeedEntryFacts(out *flow.PointState, facts flow.BoundaryFacts
 		if !ok {
 			continue
 		}
-		arrayAddr, arrayOK := flow.StableAddressOfPath(array)
-		sourceAddr, sourceOK := flow.StableAddressOfPath(source)
-		if !arrayOK || !sourceOK {
-			continue
-		}
-		flow.ApplyAppendElementFieldOriginProof(out, flow.AppendElementFieldOriginProof{
-			Array:       arrayAddr,
+		flow.ApplyAppendElementFieldOriginPathProof(out, flow.AppendElementFieldOriginPathProof{
+			ArrayPath:   array,
 			Field:       fact.Field,
-			Source:      sourceAddr,
+			SourcePath:  source,
 			SourceField: fact.SourceField,
 		})
 	}
@@ -3495,15 +3482,10 @@ func (t *Transfer) applyBoundaryFactsWithAppendPlans(
 		if !ok {
 			continue
 		}
-		arrayAddr, arrayOK := flow.StableAddressOfPath(array)
-		tableAddr, tableOK := flow.StableAddressOfPath(table)
-		if !arrayOK || !tableOK {
-			continue
-		}
-		changed = flow.ApplyKeyArrayValueProof(out, flow.KeyArrayValueProof{
-			Array: arrayAddr,
-			Table: tableAddr,
-			Value: fact.Value,
+		changed = flow.ApplyKeyArrayValuePathProof(out, flow.KeyArrayValuePathProof{
+			ArrayPath: array,
+			TablePath: table,
+			Value:     fact.Value,
 		}) || changed
 	}
 	changed = t.applyBoundaryAppendKeyPlans(out, appendPlans) || changed
@@ -3516,16 +3498,12 @@ func (t *Transfer) applyBoundaryFactsWithAppendPlans(
 		if !ok {
 			continue
 		}
-		arrayAddr, arrayOK := flow.StableAddressOfPath(array)
-		sourceAddr, sourceOK := flow.StableAddressOfPath(source)
-		if arrayOK && sourceOK {
-			changed = flow.ApplyAppendElementFieldOriginProof(out, flow.AppendElementFieldOriginProof{
-				Array:       arrayAddr,
-				Field:       fact.Field,
-				Source:      sourceAddr,
-				SourceField: fact.SourceField,
-			}) || changed
-		}
+		changed = flow.ApplyAppendElementFieldOriginPathProof(out, flow.AppendElementFieldOriginPathProof{
+			ArrayPath:   array,
+			Field:       fact.Field,
+			SourcePath:  source,
+			SourceField: fact.SourceField,
+		}) || changed
 	}
 	var ops []flow.NumericOp
 	for _, fact := range facts.LengthLowerBounds() {

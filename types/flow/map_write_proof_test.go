@@ -447,6 +447,36 @@ func TestApplyKeyArrayValueProofPublishesCoverage(t *testing.T) {
 	}
 }
 
+func TestApplyKeyArrayValuePathProofNormalizesCoverage(t *testing.T) {
+	arrayPath := constraint.NewPath(cfg.SymbolID(54), "node_order")
+	tablePath := constraint.NewPath(cfg.SymbolID(55), "nodes")
+	keyPath := constraint.NewPath(cfg.SymbolID(56), "node_id")
+	arrayKey := StablePathKey(arrayPath)
+	tableKey := StablePathKey(tablePath)
+	value := product.FromType(typ.String)
+
+	state := PointStateDomain.Top()
+	state.KeyPresence = state.KeyPresence.WithAppendHistoryBase(arrayKey)
+
+	if changed := ApplyKeyArrayValuePathProof(&state, KeyArrayValuePathProof{
+		ArrayPath:        arrayPath,
+		TablePath:        tablePath,
+		Value:            value,
+		AppendKeyPath:    keyPath,
+		HasAppendKeyPath: true,
+	}); !changed {
+		t.Fatal("ApplyKeyArrayValuePathProof reported no change")
+	}
+
+	values := state.KeyPresence.KeyArrayValues(arrayKey, tableKey)
+	if len(values) != 1 || !product.Domain.Equal(values[0], value) {
+		t.Fatalf("key-array values = %v, want string", values)
+	}
+	if got, ok := state.KeyPresence.AppendHistoryCoverageValue(arrayKey, tableKey); !ok || !product.Domain.Equal(got, value) {
+		t.Fatalf("append coverage = %v/%v, want string", got, ok)
+	}
+}
+
 func TestApplyPendingKeyArrayProofAllowsWildcardTable(t *testing.T) {
 	arrayPath := constraint.NewPath(cfg.SymbolID(61), "node_order")
 	keyPath := constraint.NewPath(cfg.SymbolID(62), "node_id")
@@ -490,6 +520,29 @@ func TestApplyAppendKeyProofPublishesHistoryEvent(t *testing.T) {
 	}
 }
 
+func TestApplyAppendKeyPathProofNormalizesHistoryEvent(t *testing.T) {
+	arrayPath := constraint.NewPath(cfg.SymbolID(73), "node_order")
+	keyPath := constraint.NewPath(cfg.SymbolID(74), "node_id")
+	arrayKey := StablePathKey(arrayPath)
+	keyKey := StablePathKey(keyPath)
+
+	state := PointStateDomain.Top()
+	state.KeyPresence = state.KeyPresence.WithAppendHistoryBase(arrayKey)
+	if changed := ApplyAppendKeyPathProof(&state, AppendKeyPathProof{
+		ArrayPath: arrayPath,
+		KeyPath:   keyPath,
+	}); !changed {
+		t.Fatal("ApplyAppendKeyPathProof reported no change")
+	}
+
+	if entries := state.KeyPresence.AppendedKeyEntries(); len(entries) != 1 || entries[0].Array != arrayKey || entries[0].Key != keyKey {
+		t.Fatalf("appended key entries = %v, want array/key", entries)
+	}
+	if events := state.KeyPresence.AppendHistoryEventEntries(); len(events) != 1 || events[0].Array != arrayKey || events[0].Key != keyKey {
+		t.Fatalf("append history events = %v, want array/key", events)
+	}
+}
+
 func TestApplyAppendElementFieldOriginProofPublishesBaseAndOrigin(t *testing.T) {
 	arrayPath := constraint.NewPath(cfg.SymbolID(81), "items")
 	sourcePath := constraint.NewPath(cfg.SymbolID(82), "source")
@@ -503,6 +556,30 @@ func TestApplyAppendElementFieldOriginProofPublishesBaseAndOrigin(t *testing.T) 
 		Source: testStableAddressPath(t, sourcePath),
 	}); !changed {
 		t.Fatal("ApplyAppendElementFieldOriginProof reported no change")
+	}
+
+	if !state.KeyPresence.HasAppendHistoryBase(arrayKey) {
+		t.Fatalf("append-history base missing: %s", state.KeyPresence.Format())
+	}
+	origins := state.KeyPresence.AppendElementFieldOriginEntries()
+	if len(origins) != 1 || origins[0].Array != arrayKey || origins[0].Field == "" || origins[0].Source != StablePathKey(sourcePath) {
+		t.Fatalf("append element origins = %v, want array field source", origins)
+	}
+}
+
+func TestApplyAppendElementFieldOriginPathProofNormalizesOrigin(t *testing.T) {
+	arrayPath := constraint.NewPath(cfg.SymbolID(83), "items")
+	sourcePath := constraint.NewPath(cfg.SymbolID(84), "source")
+	arrayKey := StablePathKey(arrayPath)
+	field := []constraint.Segment{{Kind: constraint.SegmentField, Name: "id"}}
+
+	state := PointStateDomain.Top()
+	if changed := ApplyAppendElementFieldOriginPathProof(&state, AppendElementFieldOriginPathProof{
+		ArrayPath:  arrayPath,
+		Field:      field,
+		SourcePath: sourcePath,
+	}); !changed {
+		t.Fatal("ApplyAppendElementFieldOriginPathProof reported no change")
 	}
 
 	if !state.KeyPresence.HasAppendHistoryBase(arrayKey) {
