@@ -169,11 +169,7 @@ func (t *Transfer) refineStaticMemberFactForLengthLower(out *flow.PointState, pa
 	if out == nil || path.Symbol == 0 || len(path.Segments) == 0 || lower <= 0 {
 		return false
 	}
-	addr, ok := flow.StableAddressOfPath(path)
-	if !ok {
-		return false
-	}
-	source, has := out.StaticMembers.ValueAtAddress(addr)
+	source, has := flow.PointFactsOf(*out).StaticMemberValue(path)
 	if !has && !base.IsZero() {
 		source, has = productMemberPathValue(base, path.Segments)
 	}
@@ -182,12 +178,12 @@ func (t *Transfer) refineStaticMemberFactForLengthLower(out *flow.PointState, pa
 	}
 	refined := product.NarrowLengthLowerBound(source, lower)
 	if valueIsBottom(refined) {
-		return flow.KillStaticMemberSubtree(out, addr)
+		return flow.KillStaticMemberSubtreePath(out, path)
 	}
 	if !refined.DefinitelyPresent() {
 		return false
 	}
-	return flow.SetStaticMemberFact(out, addr, refined)
+	return flow.SetStaticMemberPath(out, path, refined)
 }
 
 func (t *Transfer) applyStaticMemberRefinementEffect(out *flow.PointState, effect StaticMemberRefinementEffect) bool {
@@ -198,16 +194,12 @@ func (t *Transfer) applyStaticMemberRefinementEffect(out *flow.PointState, effec
 	if !ok || path.Symbol == 0 || len(path.Segments) == 0 {
 		return false
 	}
-	addr, ok := flow.StableAddressOfPath(path)
-	if !ok {
-		return false
-	}
-	if existing, ok := out.StaticMembers.ValueAtAddress(addr); ok {
+	if existing, ok := flow.PointFactsOf(*out).StaticMemberValue(path); ok {
 		refined, ok := refinedStaticMemberValue(existing, true, effect.Base, effect.HasBase, path.Segments, effect.Check, effect.TypeName)
 		if !ok || refined.IsZero() || !refined.DefinitelyPresent() {
-			return flow.KillStaticMemberSubtree(out, addr)
+			return flow.KillStaticMemberSubtreePath(out, path)
 		}
-		return flow.SetStaticMemberFact(out, addr, refined)
+		return flow.SetStaticMemberPath(out, path, refined)
 	}
 	if !staticMemberGuardImpliesPresence(effect.Check, effect.TypeName) {
 		return false
@@ -222,7 +214,7 @@ func (t *Transfer) applyStaticMemberRefinementEffect(out *flow.PointState, effec
 	if !ok || refined.IsZero() || !refined.DefinitelyPresent() {
 		return false
 	}
-	return flow.SetStaticMemberFact(out, addr, refined)
+	return flow.SetStaticMemberPath(out, path, refined)
 }
 
 func refinedStaticMemberValue(
