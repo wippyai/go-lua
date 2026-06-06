@@ -197,25 +197,15 @@ var BoundaryFactsDomain = lattice.Lattice[BoundaryFacts]{
 		if a.bottom || b.bottom {
 			return a.bottom == b.bottom
 		}
-		return slices.EqualFunc(a.keyPresence, b.keyPresence, func(x, y BoundaryKeyPresenceFact) bool {
-			return compareBoundaryKeyPresence(x, y) == 0
-		}) &&
-			slices.EqualFunc(a.keyArrays, b.keyArrays, func(x, y BoundaryKeyArrayFact) bool {
-				return compareBoundaryKeyArray(x, y) == 0
-			}) &&
-			slices.EqualFunc(a.keyArrayValues, b.keyArrayValues, func(x, y BoundaryKeyArrayValueFact) bool {
+		return boundaryKeyPresenceRowIdentity.Equal(a.keyPresence, b.keyPresence) &&
+			boundaryKeyArrayRowIdentity.Equal(a.keyArrays, b.keyArrays) &&
+			boundaryKeyArrayValueRowIdentity.EqualBy(a.keyArrayValues, b.keyArrayValues, func(x, y BoundaryKeyArrayValueFact) bool {
 				return compareBoundaryKeyArrayValue(x, y) == 0 && product.Domain.Equal(x.Value, y.Value)
 			}) &&
-			slices.EqualFunc(a.appendKeys, b.appendKeys, func(x, y BoundaryAppendKeyFact) bool {
-				return compareBoundaryAppendKey(x, y) == 0
-			}) &&
-			slices.EqualFunc(a.appendOrigins, b.appendOrigins, func(x, y BoundaryAppendElementFieldOriginFact) bool {
-				return compareBoundaryAppendElementFieldOrigin(x, y) == 0
-			}) &&
-			slices.EqualFunc(a.lenLower, b.lenLower, func(x, y BoundaryLengthLowerBound) bool {
-				return compareBoundaryLengthLower(x, y) == 0
-			}) &&
-			slices.EqualFunc(a.indexWrites, b.indexWrites, func(x, y BoundaryIndexWriteFact) bool {
+			boundaryAppendKeyRowIdentity.Equal(a.appendKeys, b.appendKeys) &&
+			boundaryAppendElementFieldOriginRowIdentity.Equal(a.appendOrigins, b.appendOrigins) &&
+			boundaryLengthLowerRowIdentity.Equal(a.lenLower, b.lenLower) &&
+			boundaryIndexWriteRowIdentity.EqualBy(a.indexWrites, b.indexWrites, func(x, y BoundaryIndexWriteFact) bool {
 				return compareBoundaryIndexWrite(x, y) == 0 && product.Domain.Equal(x.Value, y.Value)
 			})
 	},
@@ -436,7 +426,7 @@ func (f BoundaryFacts) HasKeyPresence(fact BoundaryKeyPresenceFact) bool {
 	if f.bottom {
 		return false
 	}
-	_, ok := slices.BinarySearchFunc(f.keyPresence, fact, compareBoundaryKeyPresence)
+	_, ok := boundaryKeyPresenceRowIdentity.Find(f.keyPresence, fact)
 	return ok
 }
 
@@ -444,7 +434,7 @@ func (f BoundaryFacts) HasKeyArray(fact BoundaryKeyArrayFact) bool {
 	if f.bottom {
 		return false
 	}
-	_, ok := slices.BinarySearchFunc(f.keyArrays, fact, compareBoundaryKeyArray)
+	_, ok := boundaryKeyArrayRowIdentity.Find(f.keyArrays, fact)
 	return ok
 }
 
@@ -452,7 +442,7 @@ func (f BoundaryFacts) HasLengthLowerBound(fact BoundaryLengthLowerBound) bool {
 	if f.bottom {
 		return false
 	}
-	_, ok := slices.BinarySearchFunc(f.lenLower, fact, compareBoundaryLengthLower)
+	_, ok := boundaryLengthLowerRowIdentity.Find(f.lenLower, fact)
 	return ok
 }
 
@@ -460,7 +450,7 @@ func (f BoundaryFacts) HasIndexWrite(fact BoundaryIndexWriteFact) bool {
 	if f.bottom {
 		return false
 	}
-	idx, ok := slices.BinarySearchFunc(f.indexWrites, fact, compareBoundaryIndexWrite)
+	idx, ok := boundaryIndexWriteRowIdentity.Find(f.indexWrites, fact)
 	return ok && product.Domain.Equal(f.indexWrites[idx].Value, fact.Value)
 }
 
@@ -843,174 +833,129 @@ func compareBoundaryPath(a, b BoundaryPath) int {
 	return compareConstraintSegments(a.Segments, b.Segments)
 }
 
-func boundaryKeyPresenceContainAll(have, want []BoundaryKeyPresenceFact) bool {
-	for _, w := range want {
-		if _, ok := slices.BinarySearchFunc(have, w, compareBoundaryKeyPresence); !ok {
-			return false
-		}
+var (
+	boundaryKeyPresenceRowIdentity = orderedRowIdentity[BoundaryKeyPresenceFact]{
+		less: func(a, b BoundaryKeyPresenceFact) bool { return compareBoundaryKeyPresence(a, b) < 0 },
+		same: func(a, b BoundaryKeyPresenceFact) bool {
+			return compareBoundaryKeyPresence(a, b) == 0
+		},
 	}
-	return true
+	boundaryKeyArrayRowIdentity = orderedRowIdentity[BoundaryKeyArrayFact]{
+		less: func(a, b BoundaryKeyArrayFact) bool { return compareBoundaryKeyArray(a, b) < 0 },
+		same: func(a, b BoundaryKeyArrayFact) bool { return compareBoundaryKeyArray(a, b) == 0 },
+	}
+	boundaryKeyArrayValueRowIdentity = orderedRowIdentity[BoundaryKeyArrayValueFact]{
+		less: func(a, b BoundaryKeyArrayValueFact) bool { return compareBoundaryKeyArrayValue(a, b) < 0 },
+		same: func(a, b BoundaryKeyArrayValueFact) bool { return compareBoundaryKeyArrayValue(a, b) == 0 },
+	}
+	boundaryAppendKeyRowIdentity = orderedRowIdentity[BoundaryAppendKeyFact]{
+		less: func(a, b BoundaryAppendKeyFact) bool { return compareBoundaryAppendKey(a, b) < 0 },
+		same: func(a, b BoundaryAppendKeyFact) bool { return compareBoundaryAppendKey(a, b) == 0 },
+	}
+	boundaryAppendElementFieldOriginRowIdentity = orderedRowIdentity[BoundaryAppendElementFieldOriginFact]{
+		less: func(a, b BoundaryAppendElementFieldOriginFact) bool {
+			return compareBoundaryAppendElementFieldOrigin(a, b) < 0
+		},
+		same: func(a, b BoundaryAppendElementFieldOriginFact) bool {
+			return compareBoundaryAppendElementFieldOrigin(a, b) == 0
+		},
+	}
+	boundaryLengthLowerRowIdentity = orderedRowIdentity[BoundaryLengthLowerBound]{
+		less: func(a, b BoundaryLengthLowerBound) bool { return compareBoundaryLengthLower(a, b) < 0 },
+		same: func(a, b BoundaryLengthLowerBound) bool { return compareBoundaryLengthLower(a, b) == 0 },
+	}
+	boundaryIndexWriteRowIdentity = orderedRowIdentity[BoundaryIndexWriteFact]{
+		less: func(a, b BoundaryIndexWriteFact) bool { return compareBoundaryIndexWrite(a, b) < 0 },
+		same: func(a, b BoundaryIndexWriteFact) bool { return compareBoundaryIndexWrite(a, b) == 0 },
+	}
+)
+
+func boundaryKeyPresenceContainAll(have, want []BoundaryKeyPresenceFact) bool {
+	return boundaryKeyPresenceRowIdentity.ContainsAll(have, want)
 }
 
 func boundaryKeyArraysContainAll(have, want []BoundaryKeyArrayFact) bool {
-	for _, w := range want {
-		if _, ok := slices.BinarySearchFunc(have, w, compareBoundaryKeyArray); !ok {
-			return false
-		}
-	}
-	return true
+	return boundaryKeyArrayRowIdentity.ContainsAll(have, want)
 }
 
 func boundaryKeyArrayValuesContainAll(have, want []BoundaryKeyArrayValueFact) bool {
-	for _, w := range want {
-		idx, ok := slices.BinarySearchFunc(have, w, compareBoundaryKeyArrayValue)
-		if !ok || !product.Domain.LessOrEq(have[idx].Value, w.Value) {
-			return false
-		}
-	}
-	return true
+	return boundaryKeyArrayValueRowIdentity.ContainsAllBy(have, want, func(have, want BoundaryKeyArrayValueFact) bool {
+		return compareBoundaryKeyArrayValue(have, want) == 0 &&
+			product.Domain.LessOrEq(have.Value, want.Value)
+	})
 }
 
 func boundaryAppendKeysContainAll(have, want []BoundaryAppendKeyFact) bool {
-	for _, w := range want {
-		if _, ok := slices.BinarySearchFunc(have, w, compareBoundaryAppendKey); !ok {
-			return false
-		}
-	}
-	return true
+	return boundaryAppendKeyRowIdentity.ContainsAll(have, want)
 }
 
 func boundaryAppendElementFieldOriginsContainAll(have, want []BoundaryAppendElementFieldOriginFact) bool {
-	for _, w := range want {
-		if _, ok := slices.BinarySearchFunc(have, w, compareBoundaryAppendElementFieldOrigin); !ok {
-			return false
-		}
-	}
-	return true
+	return boundaryAppendElementFieldOriginRowIdentity.ContainsAll(have, want)
 }
 
 func boundaryLengthLowerContainAll(have, want []BoundaryLengthLowerBound) bool {
-	for _, w := range want {
-		if _, ok := slices.BinarySearchFunc(have, w, compareBoundaryLengthLower); !ok {
-			return false
-		}
-	}
-	return true
+	return boundaryLengthLowerRowIdentity.ContainsAll(have, want)
 }
 
 func boundaryIndexWritesContainAll(have, want []BoundaryIndexWriteFact) bool {
-	for _, w := range want {
-		idx, ok := slices.BinarySearchFunc(have, w, compareBoundaryIndexWrite)
-		if !ok || !product.Domain.LessOrEq(have[idx].Value, w.Value) {
-			return false
-		}
-	}
-	return true
+	return boundaryIndexWriteRowIdentity.ContainsAllBy(have, want, func(have, want BoundaryIndexWriteFact) bool {
+		return compareBoundaryIndexWrite(have, want) == 0 &&
+			product.Domain.LessOrEq(have.Value, want.Value)
+	})
 }
 
 func intersectBoundaryKeyPresence(a, b []BoundaryKeyPresenceFact) []BoundaryKeyPresenceFact {
-	if len(a) == 0 || len(b) == 0 {
-		return nil
-	}
-	var out []BoundaryKeyPresenceFact
-	for _, fact := range a {
-		if _, ok := slices.BinarySearchFunc(b, fact, compareBoundaryKeyPresence); ok {
-			out = append(out, cloneBoundaryKeyPresence(fact))
-		}
-	}
-	return out
+	return boundaryKeyPresenceRowIdentity.MergeIntersect(a, b, func(left, _ BoundaryKeyPresenceFact) (BoundaryKeyPresenceFact, bool) {
+		return cloneBoundaryKeyPresence(left), true
+	})
 }
 
 func intersectBoundaryKeyArrays(a, b []BoundaryKeyArrayFact) []BoundaryKeyArrayFact {
-	if len(a) == 0 || len(b) == 0 {
-		return nil
-	}
-	var out []BoundaryKeyArrayFact
-	for _, fact := range a {
-		if _, ok := slices.BinarySearchFunc(b, fact, compareBoundaryKeyArray); ok {
-			out = append(out, cloneBoundaryKeyArray(fact))
-		}
-	}
-	return out
+	return boundaryKeyArrayRowIdentity.MergeIntersect(a, b, func(left, _ BoundaryKeyArrayFact) (BoundaryKeyArrayFact, bool) {
+		return cloneBoundaryKeyArray(left), true
+	})
 }
 
 func intersectBoundaryKeyArrayValues(a, b []BoundaryKeyArrayValueFact, widenPayload bool) []BoundaryKeyArrayValueFact {
-	if len(a) == 0 || len(b) == 0 {
-		return nil
-	}
-	var out []BoundaryKeyArrayValueFact
-	for _, fact := range a {
-		idx, ok := slices.BinarySearchFunc(b, fact, compareBoundaryKeyArrayValue)
-		if !ok {
-			continue
-		}
-		fact = cloneBoundaryKeyArrayValue(fact)
+	out := boundaryKeyArrayValueRowIdentity.MergeIntersect(a, b, func(left, right BoundaryKeyArrayValueFact) (BoundaryKeyArrayValueFact, bool) {
+		fact := cloneBoundaryKeyArrayValue(left)
 		if widenPayload {
-			fact.Value = product.Domain.Widen(fact.Value, b[idx].Value)
+			fact.Value = product.Domain.Widen(fact.Value, right.Value)
 		} else {
-			fact.Value = product.Domain.Join(fact.Value, b[idx].Value)
+			fact.Value = product.Domain.Join(fact.Value, right.Value)
 		}
-		out = append(out, fact)
-	}
+		return fact, true
+	})
 	return compactBoundaryKeyArrayValues(out)
 }
 
 func intersectBoundaryAppendKeys(a, b []BoundaryAppendKeyFact) []BoundaryAppendKeyFact {
-	if len(a) == 0 || len(b) == 0 {
-		return nil
-	}
-	var out []BoundaryAppendKeyFact
-	for _, fact := range a {
-		if _, ok := slices.BinarySearchFunc(b, fact, compareBoundaryAppendKey); ok {
-			out = append(out, cloneBoundaryAppendKey(fact))
-		}
-	}
-	return out
+	return boundaryAppendKeyRowIdentity.MergeIntersect(a, b, func(left, _ BoundaryAppendKeyFact) (BoundaryAppendKeyFact, bool) {
+		return cloneBoundaryAppendKey(left), true
+	})
 }
 
 func intersectBoundaryAppendElementFieldOrigins(a, b []BoundaryAppendElementFieldOriginFact) []BoundaryAppendElementFieldOriginFact {
-	if len(a) == 0 || len(b) == 0 {
-		return nil
-	}
-	var out []BoundaryAppendElementFieldOriginFact
-	for _, fact := range a {
-		if _, ok := slices.BinarySearchFunc(b, fact, compareBoundaryAppendElementFieldOrigin); ok {
-			out = append(out, cloneBoundaryAppendElementFieldOrigin(fact))
-		}
-	}
-	return out
+	return boundaryAppendElementFieldOriginRowIdentity.MergeIntersect(a, b, func(left, _ BoundaryAppendElementFieldOriginFact) (BoundaryAppendElementFieldOriginFact, bool) {
+		return cloneBoundaryAppendElementFieldOrigin(left), true
+	})
 }
 
 func intersectBoundaryLengthLower(a, b []BoundaryLengthLowerBound) []BoundaryLengthLowerBound {
-	if len(a) == 0 || len(b) == 0 {
-		return nil
-	}
-	var out []BoundaryLengthLowerBound
-	for _, fact := range a {
-		if _, ok := slices.BinarySearchFunc(b, fact, compareBoundaryLengthLower); ok {
-			out = append(out, cloneBoundaryLengthLower(fact))
-		}
-	}
-	return out
+	return boundaryLengthLowerRowIdentity.MergeIntersect(a, b, func(left, _ BoundaryLengthLowerBound) (BoundaryLengthLowerBound, bool) {
+		return cloneBoundaryLengthLower(left), true
+	})
 }
 
 func intersectBoundaryIndexWrites(a, b []BoundaryIndexWriteFact, widenPayload bool) []BoundaryIndexWriteFact {
-	if len(a) == 0 || len(b) == 0 {
-		return nil
-	}
-	var out []BoundaryIndexWriteFact
-	for _, fact := range a {
-		idx, ok := slices.BinarySearchFunc(b, fact, compareBoundaryIndexWrite)
-		if !ok {
-			continue
-		}
-		fact = cloneBoundaryIndexWrite(fact)
+	out := boundaryIndexWriteRowIdentity.MergeIntersect(a, b, func(left, right BoundaryIndexWriteFact) (BoundaryIndexWriteFact, bool) {
+		fact := cloneBoundaryIndexWrite(left)
 		if widenPayload {
-			fact.Value = product.Domain.Widen(fact.Value, b[idx].Value)
+			fact.Value = product.Domain.Widen(fact.Value, right.Value)
 		} else {
-			fact.Value = product.Domain.Join(fact.Value, b[idx].Value)
+			fact.Value = product.Domain.Join(fact.Value, right.Value)
 		}
-		out = append(out, fact)
-	}
+		return fact, true
+	})
 	return compactBoundaryIndexWrites(out)
 }
