@@ -20,10 +20,16 @@ func (ct callTyper) callOutcomeForTypedCall(
 	if d == nil || call == nil || d.activeProgram == nil {
 		return canonicalcall.CallOutcome{}
 	}
-	targets := ct.resolveCallTargets(call, d.activeProgram, refs, nil)
-	return canonicalcall.CallOutcomeForTargets(
-		targets,
-		func(target canonicalcall.SelectedTarget) canonicalcall.EntryContext {
+	return callOutcomeProjection{
+		typer:    ct,
+		program:  d.activeProgram,
+		call:     call,
+		targets:  ct.resolveCallTargets(call, d.activeProgram, refs, nil),
+		argTypes: argTypesFromCall(call, exprType),
+		exprType: exprType,
+		cells:    cells,
+		refs:     refs,
+		entryContext: func(target canonicalcall.SelectedTarget) canonicalcall.EntryContext {
 			ref := target.Ref()
 			entryValues := ct.callEntryValuesForRef(ref, call, exprType)
 			entryCells := flow.CaptureCellsDomain.Bottom()
@@ -34,31 +40,7 @@ func (ct callTyper) callOutcomeForTypedCall(
 			}
 			return canonicalcall.NewEntryContext(ref, entryCells, entryRefs, flow.ClosureRefsDomain.Bottom(), entryValues)
 		},
-		func(ctx canonicalcall.EntryContext) summary.Summary {
-			return ct.summaryForCallEntryContext(ctx)
-		},
-		canonicalcall.SummaryTargetInfo{
-			DeclaredReturns: func(target canonicalcall.SelectedTarget) bool {
-				return d.activeProgram.refHasClosedDeclaredReturns(target.Ref())
-			},
-			SignatureReturns: func(target canonicalcall.SelectedTarget) []typ.Type {
-				return ct.selectedTargetSignatureReturns(
-					d.activeProgram,
-					target,
-					call,
-					argTypesFromCall(call, exprType),
-					exprType,
-					cells,
-					refs,
-					flow.ClosureRefsDomain.Bottom(),
-					nil,
-				)
-			},
-			SignatureRelations: func(target canonicalcall.SelectedTarget) flow.ReturnRelations {
-				return flow.ReturnRelationsFromFunctionType(d.signatureForRef(d.activeProgram, target.Ref()))
-			},
-		},
-	)
+	}.outcome()
 }
 
 type productCallOutcomeOptions struct {
@@ -75,10 +57,21 @@ func (ct callTyper) callOutcomeForProductCallWithOptions(call *ast.FuncCallExpr,
 	if d == nil || call == nil || d.activeProgram == nil {
 		return canonicalcall.CallOutcome{}
 	}
-	targets := ct.resolveCallTargets(call, d.activeProgram, ctx.FunctionRefs, ctx.ClosureRefs)
-	return canonicalcall.CallOutcomeForTargets(
-		targets,
-		func(target canonicalcall.SelectedTarget) canonicalcall.EntryContext {
+	return callOutcomeProjection{
+		typer:                    ct,
+		program:                  d.activeProgram,
+		call:                     call,
+		targets:                  ct.resolveCallTargets(call, d.activeProgram, ctx.FunctionRefs, ctx.ClosureRefs),
+		argTypes:                 ctx.ArgTypes(),
+		exprType:                 ctx.ExprType,
+		cells:                    ctx.Cells,
+		refs:                     ctx.FunctionRefs,
+		closures:                 ctx.ClosureRefs,
+		methodReceiverType:       ctx.SelfType,
+		skipSignatureReturns:     opts.skipSignatureReturns,
+		skipSignatureRelations:   opts.skipSignatureRelations,
+		omitClosureRelationProof: true,
+		entryContext: func(target canonicalcall.SelectedTarget) canonicalcall.EntryContext {
 			ref := target.Ref()
 			if closure, ok := target.Closure(); ok {
 				entry, _ := ct.productClosureCallEntryContext(ref, closure, call, ctx)
@@ -87,34 +80,61 @@ func (ct callTyper) callOutcomeForProductCallWithOptions(call *ast.FuncCallExpr,
 			entry, _ := ct.productCallEntryContext(ref, call, ctx)
 			return entry
 		},
+	}.outcome()
+}
+
+// callOutcomeProjection centralizes the selected-target summary policy for both
+// typed and product call contexts. The caller supplies only the target axes and
+// the entry-context constructor that is specific to its evidence carrier.
+type callOutcomeProjection struct {
+	typer                    callTyper
+	program                  *program
+	call                     *ast.FuncCallExpr
+	targets                  canonicalcall.TargetSet
+	argTypes                 []typ.Type
+	exprType                 func(ast.Expr) typ.Type
+	cells                    flow.CaptureCells
+	refs                     flow.FunctionRefs
+	closures                 flow.ClosureRefs
+	methodReceiverType       typ.Type
+	entryContext             canonicalcall.SelectedEntryContext
+	skipSignatureReturns     bool
+	skipSignatureRelations   bool
+	omitClosureRelationProof bool
+}
+
+func (p callOutcomeProjection) outcome() canonicalcall.CallOutcome {
+	return canonicalcall.CallOutcomeForTargets(
+		p.targets,
+		p.entryContext,
 		func(ctx canonicalcall.EntryContext) summary.Summary {
-			return ct.summaryForCallEntryContext(ctx)
+			return p.typer.summaryForCallEntryContext(ctx)
 		},
 		canonicalcall.SummaryTargetInfo{
 			DeclaredReturns: func(target canonicalcall.SelectedTarget) bool {
-				return d.activeProgram.refHasClosedDeclaredReturns(target.Ref())
+				return p.program.refHasClosedDeclaredReturns(target.Ref())
 			},
 			SignatureReturns: func(target canonicalcall.SelectedTarget) []typ.Type {
-				return ct.selectedTargetSignatureReturns(
-					d.activeProgram,
+				return p.typer.selectedTargetSignatureReturns(
+					p.program,
 					target,
-					call,
-					ctx.ArgTypes(),
-					ctx.ExprType,
-					ctx.Cells,
-					ctx.FunctionRefs,
-					ctx.ClosureRefs,
-					ctx.SelfType,
+					p.call,
+					p.argTypes,
+					p.exprType,
+					p.cells,
+					p.refs,
+					p.closures,
+					p.methodReceiverType,
 				)
 			},
 			SignatureRelations: func(target canonicalcall.SelectedTarget) flow.ReturnRelations {
-				if target.IsClosure() {
+				if p.omitClosureRelationProof && target.IsClosure() {
 					return flow.ReturnRelations{}
 				}
-				return flow.ReturnRelationsFromFunctionType(d.signatureForRef(d.activeProgram, target.Ref()))
+				return flow.ReturnRelationsFromFunctionType(p.typer.d.signatureForRef(p.program, target.Ref()))
 			},
-			SkipSignatureReturns:   opts.skipSignatureReturns,
-			SkipSignatureRelations: opts.skipSignatureRelations,
+			SkipSignatureReturns:   p.skipSignatureReturns,
+			SkipSignatureRelations: p.skipSignatureRelations,
 		},
 	)
 }
