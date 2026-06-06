@@ -18,7 +18,7 @@ import (
 	"github.com/wippyai/go-lua/types/typ"
 )
 
-func TestInferReturnRelationsSummaryBeatsTypeFallback(t *testing.T) {
+func TestCallOutcomeReturnRelationsSummaryBeatsTypeFallback(t *testing.T) {
 	t.Parallel()
 
 	call := &ast.FuncCallExpr{Func: &ast.IdentExpr{Value: "f"}}
@@ -26,21 +26,18 @@ func TestInferReturnRelationsSummaryBeatsTypeFallback(t *testing.T) {
 	typeRel := flow.ReturnRelationsOfErrorReturns([]flow.ReturnCorrelation{{ValueIndex: 0, ErrorIndex: 1}})
 	fallbackUsed := false
 
-	got := InferReturnRelations(ReturnRelationsInput{
+	got := (CallOutcome{
 		Projection: summary.CallSummaryProjection{
 			Targets: []summary.CallSummaryTarget{
 				{Summary: summary.Summary{Relations: summaryRel}},
 			},
 		},
-		Call: call,
-		Resolver: TypeResolver{
-			ExprType: func(ast.Expr) typ.Type {
-				fallbackUsed = true
-				return signatureWithRelation(typeRel)
-			},
+	}).ReturnRelations(call, TypeResolver{
+		ExprType: func(ast.Expr) typ.Type {
+			fallbackUsed = true
+			return signatureWithRelation(typeRel)
 		},
-		UseResolvedSignature: true,
-	})
+	}, true)
 
 	if !flow.ReturnRelationsDomain.Equal(got, summaryRel) {
 		t.Fatalf("relations = %#v, want summary relation %#v", got.ErrorReturns(), summaryRel.ErrorReturns())
@@ -50,7 +47,7 @@ func TestInferReturnRelationsSummaryBeatsTypeFallback(t *testing.T) {
 	}
 }
 
-func TestInferReturnRelationsClosureAuthoritativeMissBlocksTypeFallback(t *testing.T) {
+func TestCallOutcomeReturnRelationsClosureAuthoritativeMissBlocksTypeFallback(t *testing.T) {
 	t.Parallel()
 
 	call := &ast.FuncCallExpr{Func: &ast.IdentExpr{Value: "f"}}
@@ -58,17 +55,14 @@ func TestInferReturnRelationsClosureAuthoritativeMissBlocksTypeFallback(t *testi
 	selection := SelectTargets(NewTargetSet(nil, false, nil, true))
 	fallbackUsed := false
 
-	got := InferReturnRelations(ReturnRelationsInput{
+	got := (CallOutcome{
 		Selection: selection,
-		Call:      call,
-		Resolver: TypeResolver{
-			ExprType: func(ast.Expr) typ.Type {
-				fallbackUsed = true
-				return signatureWithRelation(typeRel)
-			},
+	}).ReturnRelations(call, TypeResolver{
+		ExprType: func(ast.Expr) typ.Type {
+			fallbackUsed = true
+			return signatureWithRelation(typeRel)
 		},
-		UseResolvedSignature: true,
-	})
+	}, true)
 
 	if !flow.ReturnRelationsDomain.Equal(got, flow.ReturnRelationsDomain.Top()) {
 		t.Fatalf("relations = %#v, want Top", got.ErrorReturns())
@@ -78,7 +72,7 @@ func TestInferReturnRelationsClosureAuthoritativeMissBlocksTypeFallback(t *testi
 	}
 }
 
-func TestInferReturnRelationsUsesTypeThenStaticFallback(t *testing.T) {
+func TestCallOutcomeReturnRelationsUsesTypeThenStaticFallback(t *testing.T) {
 	t.Parallel()
 
 	ident := &ast.IdentExpr{Value: "f"}
@@ -101,49 +95,37 @@ func TestInferReturnRelationsUsesTypeThenStaticFallback(t *testing.T) {
 		},
 	}
 
-	got := InferReturnRelations(ReturnRelationsInput{
-		Call: call,
-		Resolver: TypeResolver{
-			Bindings: bindings,
-			ExprType: func(ast.Expr) typ.Type {
-				return signatureWithRelation(typeRel)
-			},
-			Static: staticLookup,
+	got := (CallOutcome{}).ReturnRelations(call, TypeResolver{
+		Bindings: bindings,
+		ExprType: func(ast.Expr) typ.Type {
+			return signatureWithRelation(typeRel)
 		},
-		UseResolvedSignature: true,
-	})
+		Static: staticLookup,
+	}, true)
 	if !flow.ReturnRelationsDomain.Equal(got, typeRel) {
 		t.Fatalf("relations = %#v, want type fallback %#v", got.ErrorReturns(), typeRel.ErrorReturns())
 	}
 
-	got = InferReturnRelations(ReturnRelationsInput{
-		Call: call,
-		Resolver: TypeResolver{
-			Bindings: bindings,
-			ExprType: func(ast.Expr) typ.Type {
-				return typ.Func().Returns(typ.String, typ.Nil).Build()
-			},
-			Static: staticLookup,
+	got = (CallOutcome{}).ReturnRelations(call, TypeResolver{
+		Bindings: bindings,
+		ExprType: func(ast.Expr) typ.Type {
+			return typ.Func().Returns(typ.String, typ.Nil).Build()
 		},
-		UseResolvedSignature: true,
-	})
+		Static: staticLookup,
+	}, true)
 	if !flow.ReturnRelationsDomain.Equal(got, staticRel) {
 		t.Fatalf("relations = %#v, want static fallback %#v", got.ErrorReturns(), staticRel.ErrorReturns())
 	}
 
 	resolvedUsed := false
-	got = InferReturnRelations(ReturnRelationsInput{
-		Call: call,
-		Resolver: TypeResolver{
-			Bindings: bindings,
-			ExprType: func(ast.Expr) typ.Type {
-				resolvedUsed = true
-				return signatureWithRelation(typeRel)
-			},
-			Static: staticLookup,
+	got = (CallOutcome{}).ReturnRelations(call, TypeResolver{
+		Bindings: bindings,
+		ExprType: func(ast.Expr) typ.Type {
+			resolvedUsed = true
+			return signatureWithRelation(typeRel)
 		},
-		UseResolvedSignature: false,
-	})
+		Static: staticLookup,
+	}, false)
 	if !flow.ReturnRelationsDomain.Equal(got, staticRel) {
 		t.Fatalf("relations = %#v, want static fallback %#v", got.ErrorReturns(), staticRel.ErrorReturns())
 	}
@@ -152,29 +134,25 @@ func TestInferReturnRelationsUsesTypeThenStaticFallback(t *testing.T) {
 	}
 }
 
-func TestInferReturnRelationsUsesLengthOnlyTypeFallback(t *testing.T) {
+func TestCallOutcomeReturnRelationsUsesLengthOnlyTypeFallback(t *testing.T) {
 	t.Parallel()
 
 	ident := &ast.IdentExpr{Value: "keys"}
 	call := &ast.FuncCallExpr{Func: ident}
 	lengthRel := flow.ReturnRelationsOfLengthParams([]flow.ReturnLengthParamRelation{{ReturnIndex: 0, ParamIndex: 0}})
 
-	got := InferReturnRelations(ReturnRelationsInput{
-		Call: call,
-		Resolver: TypeResolver{
-			ExprType: func(ast.Expr) typ.Type {
-				return signatureWithRelation(lengthRel)
-			},
+	got := (CallOutcome{}).ReturnRelations(call, TypeResolver{
+		ExprType: func(ast.Expr) typ.Type {
+			return signatureWithRelation(lengthRel)
 		},
-		UseResolvedSignature: true,
-	})
+	}, true)
 
 	if !got.HasLengthParam(flow.ReturnLengthParamRelation{ReturnIndex: 0, ParamIndex: 0}) {
 		t.Fatalf("relations = %#v, want length-only type fallback %#v", got.LengthParams(), lengthRel.LengthParams())
 	}
 }
 
-func TestInferCellEffectsBlocksCallbackFallbackWhenSelectionBlocks(t *testing.T) {
+func TestCallOutcomeCellEffectsBlocksCallbackFallbackWhenSelectionBlocks(t *testing.T) {
 	t.Parallel()
 
 	direct := flow.CaptureMustWrite(valuecfg.SymbolID(10), product.FromType(typ.String))
@@ -183,23 +161,22 @@ func TestInferCellEffectsBlocksCallbackFallbackWhenSelectionBlocks(t *testing.T)
 	selection := SelectTargets(NewTargetSet(nil, false, nil, true))
 	callbackUsed := false
 
-	got := InferCellEffects(CellEffectsInput{
+	got := (CallOutcome{
 		Projection: summary.CallSummaryProjection{
 			Targets: []summary.CallSummaryTarget{
 				{Summary: summary.Summary{CellEffects: direct}},
 			},
 		},
 		Selection: selection,
-		Aggregation: summary.CellEffectAggregation{
-			CallbackSpec: contract.NewSpec().WithCallback(0, &contract.CallbackSpec{Cardinality: contract.CardExactlyOnce}),
-			CallbackArgs: []ast.Expr{arg},
-			ResolveCallback: func(ast.Expr) ([]summary.FuncRef, bool) {
-				callbackUsed = true
-				return []summary.FuncRef{{GraphID: 20}}, true
-			},
-			EffectOf: func(summary.FuncRef, summary.EntryValues) flow.CaptureEffects {
-				return callback
-			},
+	}).CellEffects(summary.CellEffectAggregation{
+		CallbackSpec: contract.NewSpec().WithCallback(0, &contract.CallbackSpec{Cardinality: contract.CardExactlyOnce}),
+		CallbackArgs: []ast.Expr{arg},
+		ResolveCallback: func(ast.Expr) ([]summary.FuncRef, bool) {
+			callbackUsed = true
+			return []summary.FuncRef{{GraphID: 20}}, true
+		},
+		EffectOf: func(summary.FuncRef, summary.EntryValues) flow.CaptureEffects {
+			return callback
 		},
 	})
 
@@ -211,31 +188,30 @@ func TestInferCellEffectsBlocksCallbackFallbackWhenSelectionBlocks(t *testing.T)
 	}
 }
 
-func TestInferCellEffectsComposesCallbackFallbackWhenAllowed(t *testing.T) {
+func TestCallOutcomeCellEffectsComposesCallbackFallbackWhenAllowed(t *testing.T) {
 	t.Parallel()
 
 	direct := flow.CaptureMustWrite(valuecfg.SymbolID(10), product.FromType(typ.String))
 	callback := flow.CaptureMustWrite(valuecfg.SymbolID(11), product.FromType(typ.Number))
 	arg := &ast.IdentExpr{Value: "cb"}
 
-	got := InferCellEffects(CellEffectsInput{
+	got := (CallOutcome{
 		Projection: summary.CallSummaryProjection{
 			Targets: []summary.CallSummaryTarget{
 				{Summary: summary.Summary{CellEffects: direct}},
 			},
 		},
-		Aggregation: summary.CellEffectAggregation{
-			CallbackSpec: contract.NewSpec().WithCallback(0, &contract.CallbackSpec{Cardinality: contract.CardExactlyOnce}),
-			CallbackArgs: []ast.Expr{arg},
-			ResolveCallback: func(expr ast.Expr) ([]summary.FuncRef, bool) {
-				if expr != arg {
-					t.Fatalf("callback resolver got %#v, want arg", expr)
-				}
-				return []summary.FuncRef{{GraphID: 20}}, true
-			},
-			EffectOf: func(summary.FuncRef, summary.EntryValues) flow.CaptureEffects {
-				return callback
-			},
+	}).CellEffects(summary.CellEffectAggregation{
+		CallbackSpec: contract.NewSpec().WithCallback(0, &contract.CallbackSpec{Cardinality: contract.CardExactlyOnce}),
+		CallbackArgs: []ast.Expr{arg},
+		ResolveCallback: func(expr ast.Expr) ([]summary.FuncRef, bool) {
+			if expr != arg {
+				t.Fatalf("callback resolver got %#v, want arg", expr)
+			}
+			return []summary.FuncRef{{GraphID: 20}}, true
+		},
+		EffectOf: func(summary.FuncRef, summary.EntryValues) flow.CaptureEffects {
+			return callback
 		},
 	})
 

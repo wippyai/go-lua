@@ -68,23 +68,32 @@ func (o CallOutcome) ReturnClosureRefs() []flow.ClosureRefs {
 // ReturnRelations projects return-slot relations through the canonical fallback
 // policy owned by this package.
 func (o CallOutcome) ReturnRelations(call *ast.FuncCallExpr, resolver TypeResolver, useResolvedSignature bool) flow.ReturnRelations {
-	return InferReturnRelations(ReturnRelationsInput{
-		Projection:           o.Projection,
-		Selection:            o.Selection,
-		Call:                 call,
-		Resolver:             resolver,
-		UseResolvedSignature: useResolvedSignature,
-	})
+	if len(o.Projection.Targets) > 0 {
+		return o.Projection.ReturnRelations()
+	}
+	if o.Selection.BlocksTypeFallback() {
+		return flow.ReturnRelationsDomain.Top()
+	}
+	if useResolvedSignature && call != nil {
+		sig := resolver.ResolveCallee(call.Func)
+		if rels := flow.ReturnRelationsFromFunctionType(sig); rels.HasProof() {
+			return rels
+		}
+	}
+	if call == nil {
+		return flow.ReturnRelationsFromFunctionType(nil)
+	}
+	return flow.ReturnRelationsFromFunctionType(resolver.ResolveStaticCallee(call.Func))
 }
 
 // CellEffects projects caller-visible capture effects through the canonical
 // direct-summary plus callback-fallback policy.
 func (o CallOutcome) CellEffects(aggregation summary.CellEffectAggregation) flow.CaptureEffects {
-	return InferCellEffects(CellEffectsInput{
-		Projection:  o.Projection,
-		Selection:   o.Selection,
-		Aggregation: aggregation,
-	})
+	if !o.Selection.AllowsCallbackFallback() {
+		return o.Projection.CellEffects()
+	}
+	aggregation.DirectEffects = o.Projection.CellEffects()
+	return summary.AggregateCellEffects(aggregation)
 }
 
 // ReceiverEffects projects caller-visible receiver/container effects.
@@ -100,58 +109,6 @@ func (o CallOutcome) BoundaryFacts() flow.BoundaryFacts {
 // NeverReturns reports whether every selected target is proven no-return.
 func (o CallOutcome) NeverReturns(hasNoReturn func(summary.FuncRef) bool) bool {
 	return selectionNeverReturns(o.Selection, hasNoReturn)
-}
-
-// ReturnRelationsInput is the canonical call-site policy for caller-visible
-// return-slot relations. Summary projection wins; closure-authoritative misses
-// block type fallback; type facts are used only as fallbacks.
-type ReturnRelationsInput struct {
-	Projection summary.CallSummaryProjection
-	Selection  TargetSelection
-
-	Call                 *ast.FuncCallExpr
-	Resolver             TypeResolver
-	UseResolvedSignature bool
-}
-
-// InferReturnRelations resolves return-slot relations for a call without reading
-// driver or program state. The driver supplies normalized summary projection and
-// signature providers; this package owns the fallback order.
-func InferReturnRelations(in ReturnRelationsInput) flow.ReturnRelations {
-	if len(in.Projection.Targets) > 0 {
-		return in.Projection.ReturnRelations()
-	}
-	if in.Selection.BlocksTypeFallback() {
-		return flow.ReturnRelationsDomain.Top()
-	}
-	if in.UseResolvedSignature && in.Call != nil {
-		sig := in.Resolver.ResolveCallee(in.Call.Func)
-		if rels := flow.ReturnRelationsFromFunctionType(sig); rels.HasProof() {
-			return rels
-		}
-	}
-	if in.Call == nil {
-		return flow.ReturnRelationsFromFunctionType(nil)
-	}
-	return flow.ReturnRelationsFromFunctionType(in.Resolver.ResolveStaticCallee(in.Call.Func))
-}
-
-// CellEffectsInput is the canonical call-site policy for caller-visible capture
-// effects. Summary projection supplies direct callee effects. Callback fallback
-// is composed only when target selection says it is legal.
-type CellEffectsInput struct {
-	Projection  summary.CallSummaryProjection
-	Selection   TargetSelection
-	Aggregation summary.CellEffectAggregation
-}
-
-// InferCellEffects combines direct summary effects with legal callback fallback.
-func InferCellEffects(in CellEffectsInput) flow.CaptureEffects {
-	if !in.Selection.AllowsCallbackFallback() {
-		return in.Projection.CellEffects()
-	}
-	in.Aggregation.DirectEffects = in.Projection.CellEffects()
-	return summary.AggregateCellEffects(in.Aggregation)
 }
 
 // ParamNarrowProjection is the canonical call-site policy for argument refinements
