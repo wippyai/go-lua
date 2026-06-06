@@ -10,6 +10,7 @@ import (
 	"github.com/wippyai/go-lua/types/domain/value/product"
 	"github.com/wippyai/go-lua/types/flow/numeric"
 	"github.com/wippyai/go-lua/types/lattice"
+	"github.com/wippyai/go-lua/types/narrow"
 	"github.com/wippyai/go-lua/types/typ"
 )
 
@@ -34,6 +35,35 @@ func TestPointStateDomain_Laws(t *testing.T) {
 		Sample: pointStateSample(),
 		Format: formatPointState,
 	}.Run(t)
+}
+
+func TestPointPathKeyPresentValueUsesStableAddressCondition(t *testing.T) {
+	path := constraint.NewPath(cfg.SymbolID(991), "node").Field("id")
+	versioned := path
+	versioned.Version = 7
+	key := StablePathKey(path)
+	state := PointState{
+		Cond: constraint.FromConstraints(constraint.Truthy{Path: versioned}),
+	}
+
+	if got, ok := pointPathKeyPresentValue(state, key); !ok || !got.DefinitelyPresent() {
+		t.Fatalf("versioned condition did not prove stable key present: %v/%v", got, ok)
+	}
+}
+
+func TestPointPathKeyPresentValueRejectsSameRootDifferentSymbol(t *testing.T) {
+	path := constraint.NewPath(cfg.SymbolID(992), "node").Field("id")
+	other := constraint.NewPath(cfg.SymbolID(993), "node").Field("id")
+	state := PointState{
+		Cond: constraint.FromConstraints(constraint.HasType{
+			Path: other,
+			Type: narrow.BuiltinTypeKey("string"),
+		}),
+	}
+
+	if got, ok := pointPathKeyPresentValue(state, StablePathKey(path)); ok {
+		t.Fatalf("different symbol condition proved stable key present: %v", got)
+	}
 }
 
 func TestPointStateJoinKeepsBranchLocalStaticIndexInstallOptional(t *testing.T) {

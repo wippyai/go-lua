@@ -497,20 +497,26 @@ func pointConjunctionProvesPathKeyPresent(conj []constraint.Constraint, key cons
 	for _, c := range conj {
 		switch cc := c.(type) {
 		case constraint.Truthy:
-			if cc.Path.Key() == key {
+			if pointConditionPathMatchesKey(cc.Path, key) {
 				return true
 			}
 		case constraint.NotNil:
-			if cc.Path.Key() == key {
+			if pointConditionPathMatchesKey(cc.Path, key) {
 				return true
 			}
 		case constraint.HasType:
-			if cc.Path.Key() == key && pointHasTypeImpliesPresent(cc) {
+			if pointConditionPathMatchesKey(cc.Path, key) && pointHasTypeImpliesPresent(cc) {
 				return true
 			}
 		}
 	}
 	return false
+}
+
+func pointConditionPathMatchesKey(path constraint.Path, key constraint.PathKey) bool {
+	pathAddr, pathOK := StableAddressOfPath(path)
+	keyAddr, keyOK := StableAddressFromKey(key)
+	return pathOK && keyOK && pathAddr.Equal(keyAddr)
 }
 
 func pointHasTypeImpliesPresent(c constraint.HasType) bool {
