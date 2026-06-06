@@ -31,20 +31,20 @@ func ExpectedFunctionLiteralSignature(fn *ast.FunctionExpr, expected typ.Type) *
 	return phasecore.ExpectedFunctionLiteralSignature(fn, expected)
 }
 
-// LiteralSignatures lowers every function literal directly nested in Graph to
-// its canonical callable signature. The returned map is the external lookup
-// shape expected by diagnostics; construction policy lives here so the driver
-// does not own a literal-specific graph walk.
-func LiteralSignatures(in LiteralInput) map[*ast.FunctionExpr]*typ.Function {
+// Signatures lowers every function literal directly nested in Graph to its
+// canonical callable signature. The returned map is the external lookup shape
+// expected by diagnostics; construction policy lives here so the driver does not
+// own a literal-specific graph walk.
+func (in LiteralInput) Signatures() map[*ast.FunctionExpr]*typ.Function {
 	g := in.Graph
 	if g == nil {
 		return nil
 	}
-	enclosing := TypeParamScope(ScopeInput{
+	enclosing := ScopeInput{
 		Function:    g.Func(),
 		Base:        in.Base,
 		ResolveType: in.ResolveType,
-	})
+	}.TypeParams()
 	out := make(map[*ast.FunctionExpr]*typ.Function)
 	for _, nested := range g.NestedFunctions() {
 		fn := nested.Func
@@ -53,25 +53,25 @@ func LiteralSignatures(in LiteralInput) map[*ast.FunctionExpr]*typ.Function {
 		}
 		if in.MethodFor != nil {
 			if method := in.MethodFor(fn); method != nil {
-				if sig := Build(Input{
+				if sig := (Input{
 					Method:          method,
 					Base:            enclosing,
 					ResolveType:     in.ResolveType,
 					InferredReturns: in.InferredReturns,
 					ReturnMode:      ReturnDeclaredThenInferred,
-				}); sig != nil {
+				}).Build(); sig != nil {
 					out[fn] = sig
 					continue
 				}
 			}
 		}
-		if sig := Build(Input{
+		if sig := (Input{
 			Function:        fn,
 			Base:            enclosing,
 			ResolveType:     in.ResolveType,
 			InferredReturns: in.InferredReturns,
 			ReturnMode:      ReturnDeclaredThenInferred,
-		}); sig != nil {
+		}).Build(); sig != nil {
 			out[fn] = sig
 		}
 	}
@@ -79,4 +79,10 @@ func LiteralSignatures(in LiteralInput) map[*ast.FunctionExpr]*typ.Function {
 		return nil
 	}
 	return out
+}
+
+// LiteralSignatures lowers every function literal directly nested in Graph to
+// its canonical callable signature.
+func LiteralSignatures(in LiteralInput) map[*ast.FunctionExpr]*typ.Function {
+	return in.Signatures()
 }

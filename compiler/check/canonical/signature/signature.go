@@ -50,7 +50,7 @@ type Input struct {
 }
 
 // Build returns the canonical function signature for in.
-func Build(in Input) *typ.Function {
+func (in Input) Build() *typ.Function {
 	fn := in.Function
 	if in.Method != nil {
 		fn = in.Method.FuncExpr
@@ -59,11 +59,11 @@ func Build(in Input) *typ.Function {
 		return nil
 	}
 	builder := typ.Func()
-	sc := GenericScope(builder, ScopeInput{
+	sc := ScopeInput{
 		Function:    fn,
 		Base:        in.Base,
 		ResolveType: in.ResolveType,
-	})
+	}.Generic(builder)
 	if in.Method != nil {
 		phasecore.ApplyParamList(builder, fn, phasecore.ParamListConfig{
 			ResolveType:      in.ResolveType,
@@ -79,16 +79,21 @@ func Build(in Input) *typ.Function {
 			UntypedParamType: typ.Any,
 		})
 	}
-	if returns := ReturnTypes(ReturnInput{
+	if returns := (ReturnInput{
 		Function:        fn,
 		Scope:           sc,
 		ResolveType:     in.ResolveType,
 		InferredReturns: in.InferredReturns,
 		Mode:            in.ReturnMode,
-	}); len(returns) > 0 {
+	}).Types(); len(returns) > 0 {
 		builder.Returns(returns...)
 	}
 	return builder.Build()
+}
+
+// Build returns the canonical function signature for in.
+func Build(in Input) *typ.Function {
+	return in.Build()
 }
 
 // ScopeInput is the input for generic type-parameter scope construction.
@@ -98,9 +103,9 @@ type ScopeInput struct {
 	ResolveType ResolveType
 }
 
-// GenericScope extends Base with Function's type parameters and records the same
+// Generic extends Base with Function's type parameters and records the same
 // parameters on builder when builder is non-nil.
-func GenericScope(builder *typ.FunctionBuilder, in ScopeInput) *scope.State {
+func (in ScopeInput) Generic(builder *typ.FunctionBuilder) *scope.State {
 	sc := in.Base
 	fn := in.Function
 	if fn == nil || len(fn.TypeParams) == 0 {
@@ -124,16 +129,27 @@ func GenericScope(builder *typ.FunctionBuilder, in ScopeInput) *scope.State {
 	return sc.WithTypeParams(typeParams)
 }
 
+// GenericScope extends Base with Function's type parameters and records the same
+// parameters on builder when builder is non-nil.
+func GenericScope(builder *typ.FunctionBuilder, in ScopeInput) *scope.State {
+	return in.Generic(builder)
+}
+
+// TypeParamScope returns the annotation scope for a function body/signature.
+func (in ScopeInput) TypeParams() *scope.State {
+	return in.Generic(nil)
+}
+
 // TypeParamScope returns the annotation scope for a function body/signature.
 func TypeParamScope(in ScopeInput) *scope.State {
-	return GenericScope(nil, in)
+	return in.TypeParams()
 }
 
 // FunctionContextScope returns the lexical base extended with the function-local
 // context needed by expression observation: generic type parameters, parameter
 // local names, and the typed variadic element for `...`.
-func FunctionContextScope(in ScopeInput) *scope.State {
-	sc := TypeParamScope(in)
+func (in ScopeInput) FunctionContext() *scope.State {
+	sc := in.TypeParams()
 	fn := in.Function
 	if fn == nil || fn.ParList == nil {
 		return sc
@@ -161,6 +177,12 @@ func FunctionContextScope(in ScopeInput) *scope.State {
 	return sc
 }
 
+// FunctionContextScope returns the lexical base extended with the function-local
+// context needed by expression observation.
+func FunctionContextScope(in ScopeInput) *scope.State {
+	return in.FunctionContext()
+}
+
 // ReturnInput is the return-vector lowering input.
 type ReturnInput struct {
 	Function *ast.FunctionExpr
@@ -171,9 +193,9 @@ type ReturnInput struct {
 	Mode            ReturnMode
 }
 
-// ReturnTypes lowers a function's source return annotations or inferred summary
-// returns according to Mode.
-func ReturnTypes(in ReturnInput) []typ.Type {
+// Types lowers a function's source return annotations or inferred summary returns
+// according to Mode.
+func (in ReturnInput) Types() []typ.Type {
 	fn := in.Function
 	if fn == nil {
 		return nil
@@ -198,6 +220,12 @@ func ReturnTypes(in ReturnInput) []typ.Type {
 		return nil
 	}
 	return in.InferredReturns(fn)
+}
+
+// ReturnTypes lowers a function's source return annotations or inferred summary
+// returns according to Mode.
+func ReturnTypes(in ReturnInput) []typ.Type {
+	return in.Types()
 }
 
 // DeclaredReturnTypes lowers only source-declared returns.

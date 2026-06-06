@@ -104,7 +104,7 @@ func (p funcResultProjection) functionFacts() functionFacts {
 }
 
 func (p funcResultProjection) literalSignatures() map[*ast.FunctionExpr]*typ.Function {
-	return canonicalsig.LiteralSignatures(canonicalsig.LiteralInput{
+	return canonicalsig.LiteralInput{
 		Graph:           p.graph,
 		Base:            p.driver.baseScope(),
 		ResolveType:     p.driver.resolveType,
@@ -115,5 +115,5 @@ func (p funcResultProjection) literalSignatures() map[*ast.FunctionExpr]*typ.Fun
 			}
 			return nil
 		},
-	})
+	}.Signatures()
 }

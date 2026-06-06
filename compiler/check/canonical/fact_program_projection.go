@@ -101,12 +101,12 @@ func (p factProgramProjection) setupExprType(g *cfg.Graph, expr ast.Expr, point 
 				base = sc
 			}
 		}
-		return canonicalsig.Build(canonicalsig.Input{
+		return canonicalsig.Input{
 			Function:    e,
 			Base:        base,
 			ResolveType: p.driver.resolveType,
 			ReturnMode:  canonicalsig.ReturnDeclaredOnly,
-		})
+		}.Build()
 	case *ast.FuncCallExpr:
 		if g == nil {
 			return nil

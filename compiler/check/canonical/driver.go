@@ -2270,21 +2270,21 @@ func (ft funcTyper) build(fn *ast.FunctionExpr, method *cfg.FuncDefInfo) *typ.Fu
 	}
 	base := ft.literalBaseScope(fn)
 	if method != nil {
-		return canonicalsig.Build(canonicalsig.Input{
+		return canonicalsig.Input{
 			Method:          method,
 			Base:            base,
 			ResolveType:     ft.d.resolveType,
 			InferredReturns: ft.d.inferredReturnsForFunction,
 			ReturnMode:      canonicalsig.ReturnDeclaredThenInferred,
-		})
+		}.Build()
 	}
-	return canonicalsig.Build(canonicalsig.Input{
+	return canonicalsig.Input{
 		Function:        fn,
 		Base:            base,
 		ResolveType:     ft.d.resolveType,
 		InferredReturns: ft.d.inferredReturnsForFunction,
 		ReturnMode:      canonicalsig.ReturnDeclaredThenInferred,
-	})
+	}.Build()
 }
 
 func (ft funcTyper) literalBaseScope(fn *ast.FunctionExpr) *scope.State {
@@ -2361,22 +2361,22 @@ func (d *Driver) genericScopeOver(builder *typ.FunctionBuilder, fn *ast.Function
 	if base == nil {
 		base = d.baseScope()
 	}
-	return canonicalsig.GenericScope(builder, canonicalsig.ScopeInput{
+	return canonicalsig.ScopeInput{
 		Function:    fn,
 		Base:        base,
 		ResolveType: d.resolveType,
-	})
+	}.Generic(builder)
 }
 
 func (d *Driver) functionContextScopeOver(fn *ast.FunctionExpr, base *scope.State) *scope.State {
 	if base == nil {
 		base = d.baseScope()
 	}
-	return canonicalsig.FunctionContextScope(canonicalsig.ScopeInput{
+	return canonicalsig.ScopeInput{
 		Function:    fn,
 		Base:        base,
 		ResolveType: d.resolveType,
-	})
+	}.FunctionContext()
 }
 
 // typeParamScope is the resolution scope a generic function's own body annotations
@@ -2387,20 +2387,20 @@ func (d *Driver) functionContextScopeOver(fn *ast.FunctionExpr, base *scope.Stat
 // parameter rather than an unresolved typ.Ref. A non-generic function resolves
 // against the base scope unchanged.
 func (d *Driver) typeParamScope(fn *ast.FunctionExpr) *scope.State {
-	return canonicalsig.TypeParamScope(canonicalsig.ScopeInput{
+	return canonicalsig.ScopeInput{
 		Function:    fn,
 		Base:        d.baseScope(),
 		ResolveType: d.resolveType,
-	})
+	}.TypeParams()
 }
 
 func (d *Driver) declaredReturnTypes(fn *ast.FunctionExpr) []typ.Type {
-	return canonicalsig.ReturnTypes(canonicalsig.ReturnInput{
+	return canonicalsig.ReturnInput{
 		Function:    fn,
 		Scope:       d.typeParamScope(fn),
 		ResolveType: d.resolveType,
 		Mode:        canonicalsig.ReturnDeclaredOnly,
-	})
+	}.Types()
 }
 
 func (d *Driver) declaredCallbackOverlaysForRef(prog *program, ref summary.FuncRef) callbackenv.Overlays {
@@ -2441,25 +2441,25 @@ func (d *Driver) signatureForRefWithMode(prog *program, ref summary.FuncRef, mod
 	}
 	typer := funcTyper{d: d, prog: prog}
 	if info := prog.methodDef(ref); info != nil && info.FuncExpr != nil {
-		return canonicalsig.Build(canonicalsig.Input{
+		return canonicalsig.Input{
 			Method:          info,
 			Base:            typer.literalBaseScope(info.FuncExpr),
 			ResolveType:     d.resolveType,
 			InferredReturns: inferred,
 			ReturnMode:      mode,
-		})
+		}.Build()
 	}
 	fn := prog.funcExpr(ref)
 	if fn == nil {
 		return nil
 	}
-	return canonicalsig.Build(canonicalsig.Input{
+	return canonicalsig.Input{
 		Function:        fn,
 		Base:            typer.literalBaseScope(fn),
 		ResolveType:     d.resolveType,
 		InferredReturns: inferred,
 		ReturnMode:      mode,
-	})
+	}.Build()
 }
 
 func (d *Driver) inferredReturnsForFunction(fn *ast.FunctionExpr) []typ.Type {
