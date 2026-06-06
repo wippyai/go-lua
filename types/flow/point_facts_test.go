@@ -76,6 +76,42 @@ func TestPointFactsValueKeyValueReadsReturnSlots(t *testing.T) {
 	}
 }
 
+func TestSingleChangedValueKeyReportsEnvKey(t *testing.T) {
+	key := ReturnSlotValueKey(1)
+	before := PointState{Env: map[ValueKey]product.AbstractValue{key: product.FromType(typ.String)}}
+	after := PointState{Env: map[ValueKey]product.AbstractValue{key: product.FromType(typ.Number)}}
+
+	got, ok := SingleChangedValueKey(before, after)
+	if !ok || got != key {
+		t.Fatalf("SingleChangedValueKey(env) = %s/%v, want %s/true", got, ok, key)
+	}
+}
+
+func TestSingleChangedValueKeyReportsCellAsSymbolKey(t *testing.T) {
+	const sym = cfg.SymbolID(13)
+	before := PointState{Cells: CaptureCellsDomain.Bottom().With(sym, product.FromType(typ.String))}
+	after := PointState{Cells: CaptureCellsDomain.Bottom().With(sym, product.FromType(typ.Number))}
+
+	got, ok := SingleChangedValueKey(before, after)
+	if !ok || got != SymbolValueKey(sym) {
+		t.Fatalf("SingleChangedValueKey(cell) = %s/%v, want %s/true", got, ok, SymbolValueKey(sym))
+	}
+}
+
+func TestSingleChangedValueKeyRejectsMultipleChanges(t *testing.T) {
+	before := PointState{}
+	after := PointState{
+		Env: map[ValueKey]product.AbstractValue{
+			ReturnSlotValueKey(1): product.FromType(typ.String),
+			ReturnSlotValueKey(2): product.FromType(typ.Number),
+		},
+	}
+
+	if got, ok := SingleChangedValueKey(before, after); ok || got != "" {
+		t.Fatalf("SingleChangedValueKey(multiple) = %s/%v, want empty/false", got, ok)
+	}
+}
+
 func TestPointFactsPathValueUsesStaticMemberFactsBeforeRootTraversal(t *testing.T) {
 	const sym = cfg.SymbolID(11)
 	path := constraint.NewPath(sym, "entry").Field("meta").Field("id")

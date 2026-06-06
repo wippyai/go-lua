@@ -704,38 +704,8 @@ func (t *Transfer) operandNarrowsOneKey(point cfg.Point, state flow.PointState, 
 	if !ok {
 		return flow.PointState{}, "", false
 	}
-	var changed flow.ValueKey
-	stateFacts := flow.PointFactsOf(state)
-	for k, av := range narrowed.Env {
-		base, had := stateFacts.EnvValue(k)
-		if had && product.Domain.Equal(base, av) {
-			continue
-		}
-		if changed != "" {
-			return flow.PointState{}, "", false
-		}
-		changed = k
-	}
-	for _, cell := range narrowed.Cells.Entries() {
-		base, _ := state.Cells.Value(cell.Symbol)
-		if product.Domain.Equal(base, cell.Value) {
-			continue
-		}
-		if changed != "" {
-			return flow.PointState{}, "", false
-		}
-		changed = flow.SymbolValueKey(cell.Symbol)
-	}
-	for _, cell := range state.Cells.Entries() {
-		if _, ok := narrowed.Cells.Value(cell.Symbol); ok {
-			continue
-		}
-		if changed != "" {
-			return flow.PointState{}, "", false
-		}
-		changed = flow.SymbolValueKey(cell.Symbol)
-	}
-	if changed == "" {
+	changed, ok := flow.SingleChangedValueKey(state, narrowed)
+	if !ok {
 		return flow.PointState{}, "", false
 	}
 	return narrowed, changed, true

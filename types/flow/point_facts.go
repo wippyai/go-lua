@@ -25,6 +25,44 @@ func PointFactsOf(state PointState) PointFacts {
 	return PointFacts{state: state}
 }
 
+// SingleChangedValueKey reports the one logical value slot changed from before
+// to after. Env entries use their typed ValueKey; Cells are reported as the
+// corresponding symbol value key so callers can read/write through the ordinary
+// symbol-value boundary.
+func SingleChangedValueKey(before, after PointState) (ValueKey, bool) {
+	var changed ValueKey
+	for key, next := range after.Env {
+		prev, had := before.Env[key]
+		if had && product.Domain.Equal(prev, next) {
+			continue
+		}
+		if changed != "" {
+			return "", false
+		}
+		changed = key
+	}
+	for _, cell := range after.Cells.Entries() {
+		prev, _ := before.Cells.Value(cell.Symbol)
+		if product.Domain.Equal(prev, cell.Value) {
+			continue
+		}
+		if changed != "" {
+			return "", false
+		}
+		changed = SymbolValueKey(cell.Symbol)
+	}
+	for _, cell := range before.Cells.Entries() {
+		if _, ok := after.Cells.Value(cell.Symbol); ok {
+			continue
+		}
+		if changed != "" {
+			return "", false
+		}
+		changed = SymbolValueKey(cell.Symbol)
+	}
+	return changed, changed != ""
+}
+
 // SymbolValue returns sym's low-level slot value, using Cells before Env when a
 // cell entry exists. It is intentionally lexical-policy-free; transfer code
 // that knows whether a symbol is Env-backed or cell-backed should use its
