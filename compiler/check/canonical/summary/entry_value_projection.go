@@ -11,6 +11,7 @@ import (
 	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/domain/value/product"
 	"github.com/wippyai/go-lua/types/flow"
+	"github.com/wippyai/go-lua/types/flow/numeric"
 	"github.com/wippyai/go-lua/types/typ"
 	"github.com/wippyai/go-lua/types/typ/unwrap"
 )
@@ -337,6 +338,27 @@ func (p CallEntryContextProjection) DirectProductValues(callee FuncRef, call *as
 	return directCallEntryProductValuesWithParamCount(call, callee, runtimeValues, p.ParamSlot, p.ParamSlotCount)
 }
 
+// DirectFacts projects caller point-local path facts into parameter-relative
+// facts for one callee using this projection's runtime-slot and argument-path
+// layout.
+func (p CallEntryContextProjection) DirectFacts(
+	callee FuncRef,
+	call *ast.FuncCallExpr,
+	keyPresence flow.KeyPresenceFacts,
+	num *numeric.State,
+	indexWrites flow.IndexWriteAdmissionFacts,
+) flow.BoundaryFacts {
+	return directCallEntryFacts(directCallEntryFactInput{
+		Call:        call,
+		Callee:      callee,
+		ParamSlot:   p.ParamSlot,
+		ArgPath:     p.ArgPath,
+		KeyPresence: keyPresence,
+		Num:         num,
+		IndexWrites: indexWrites,
+	})
+}
+
 // ProjectKeys returns deterministic, de-duplicated callee summary keys for every
 // module-local call site in Graph.
 func (p CallEntryContextProjection) ProjectKeys() []Key {
@@ -552,18 +574,10 @@ func (p CallEntryContextProjection) referenceInput(callee FuncRef, call *ast.Fun
 }
 
 func (p CallEntryContextProjection) directFacts(callee FuncRef, call *ast.FuncCallExpr, in *flow.PointState) flow.BoundaryFacts {
-	if p.ParamSlot == nil || p.ArgPath == nil || in == nil {
+	if in == nil {
 		return flow.BoundaryFactsDomain.Top()
 	}
-	return DirectCallEntryFacts(DirectCallEntryFactInput{
-		Call:        call,
-		Callee:      callee,
-		ParamSlot:   p.ParamSlot,
-		ArgPath:     p.ArgPath,
-		KeyPresence: in.KeyPresence,
-		Num:         in.Num,
-		IndexWrites: in.IndexWrites,
-	})
+	return p.DirectFacts(callee, call, in.KeyPresence, in.Num, in.IndexWrites)
 }
 
 func (p CallEntryContextProjection) referenceProjection(callee FuncRef) flow.ReferencePathProjection {

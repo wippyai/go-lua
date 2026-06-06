@@ -92,15 +92,10 @@ func (a callEntryAccess) facts(
 	num *numeric.State,
 	indexWrites flow.IndexWriteAdmissionFacts,
 ) flow.BoundaryFacts {
-	return summary.DirectCallEntryFacts(summary.DirectCallEntryFactInput{
-		Call:        call,
-		Callee:      ref,
-		ParamSlot:   a.projector.paramSlot,
-		ArgPath:     a.argPath,
-		KeyPresence: keyPresence,
-		Num:         num,
-		IndexWrites: indexWrites,
-	})
+	return summary.CallEntryContextProjection{
+		ParamSlot: a.projector.paramSlot,
+		ArgPath:   a.argPath,
+	}.DirectFacts(ref, call, keyPresence, num, indexWrites)
 }
 
 // callEntryProjector is the program-owned capability bundle for summary

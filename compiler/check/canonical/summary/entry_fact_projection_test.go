@@ -20,17 +20,17 @@ func TestDirectCallEntryFactsProjectsLengthBoundsToParamPaths(t *testing.T) {
 	num := numeric.NewState()
 	num.ApplyLenGeConst(flow.SymbolPathKey(nodeOrder.Symbol, nodeOrder.Segments), 1)
 
-	got := summary.DirectCallEntryFacts(summary.DirectCallEntryFactInput{
-		Call:   &ast.FuncCallExpr{Args: []ast.Expr{&ast.IdentExpr{Value: "graph"}}},
-		Callee: summary.FuncRef{GraphID: 7},
+	callee := summary.FuncRef{GraphID: 7}
+	call := &ast.FuncCallExpr{Args: []ast.Expr{&ast.IdentExpr{Value: "graph"}}}
+	projection := summary.CallEntryContextProjection{
 		ParamSlot: func(summary.FuncRef, *ast.FuncCallExpr, int) (int, int, bool) {
 			return 0, 0, true
 		},
 		ArgPath: func(int, ast.Expr) (constraint.Path, bool) {
 			return source, true
 		},
-		Num: num,
-	})
+	}
+	got := projection.DirectFacts(callee, call, flow.KeyPresenceFacts{}, num, flow.IndexWriteAdmissionFacts{})
 
 	bounds := got.LengthLowerBounds()
 	if len(bounds) != 1 {
@@ -52,22 +52,23 @@ func TestDirectCallEntryFactsProjectsIndexWritesToParamPaths(t *testing.T) {
 	key := source.Field("last_node_id")
 	value := product.FromType(typ.String)
 
-	got := summary.DirectCallEntryFacts(summary.DirectCallEntryFactInput{
-		Call:   &ast.FuncCallExpr{Args: []ast.Expr{&ast.IdentExpr{Value: "graph"}}},
-		Callee: summary.FuncRef{GraphID: 8},
+	callee := summary.FuncRef{GraphID: 8}
+	call := &ast.FuncCallExpr{Args: []ast.Expr{&ast.IdentExpr{Value: "graph"}}}
+	projection := summary.CallEntryContextProjection{
 		ParamSlot: func(summary.FuncRef, *ast.FuncCallExpr, int) (int, int, bool) {
 			return 0, 0, true
 		},
 		ArgPath: func(int, ast.Expr) (constraint.Path, bool) {
 			return source, true
 		},
-		IndexWrites: flow.IndexWriteAdmissionFacts{}.With(flow.IndexWriteAdmissionFact{
-			Target:  flow.StablePathKey(table),
-			KeyPath: flow.StablePathKey(key),
-			Key:     product.FromType(typ.String),
-			Value:   value,
-		}),
+	}
+	indexWrites := flow.IndexWriteAdmissionFacts{}.With(flow.IndexWriteAdmissionFact{
+		Target:  flow.StablePathKey(table),
+		KeyPath: flow.StablePathKey(key),
+		Key:     product.FromType(typ.String),
+		Value:   value,
 	})
+	got := projection.DirectFacts(callee, call, flow.KeyPresenceFacts{}, nil, indexWrites)
 
 	writes := got.IndexWrites()
 	if len(writes) != 1 {

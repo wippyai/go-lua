@@ -7,10 +7,10 @@ import (
 	"github.com/wippyai/go-lua/types/flow/numeric"
 )
 
-// DirectCallEntryFactInput is the call-boundary projection for point-local path
+// directCallEntryFactInput is the call-boundary projection for point-local path
 // facts. It consumes normalized runtime arguments plus caller-side argument
 // paths and emits parameter-relative boundary facts for the callee entry key.
-type DirectCallEntryFactInput struct {
+type directCallEntryFactInput struct {
 	Call   *ast.FuncCallExpr
 	Callee FuncRef
 
@@ -22,10 +22,10 @@ type DirectCallEntryFactInput struct {
 	IndexWrites flow.IndexWriteAdmissionFacts
 }
 
-// DirectCallEntryFacts projects caller point-local path facts into callee
+// directCallEntryFacts projects caller point-local path facts into callee
 // parameter-relative entry facts. Facts are emitted only when every referenced
 // path is structurally owned by one of the runtime argument paths.
-func DirectCallEntryFacts(in DirectCallEntryFactInput) flow.BoundaryFacts {
+func directCallEntryFacts(in directCallEntryFactInput) flow.BoundaryFacts {
 	if in.Call == nil || in.ParamSlot == nil || in.ArgPath == nil {
 		return flow.BoundaryFactsDomain.Top()
 	}
@@ -143,7 +143,7 @@ func DirectCallEntryFacts(in DirectCallEntryFactInput) flow.BoundaryFacts {
 		WithAppendElementFieldOrigins(appendOrigins)
 }
 
-func entryBoundaryPathForCallerKey(in DirectCallEntryFactInput, key constraint.PathKey) (flow.BoundaryPath, bool) {
+func entryBoundaryPathForCallerKey(in directCallEntryFactInput, key constraint.PathKey) (flow.BoundaryPath, bool) {
 	path, ok := flow.StablePathFromKey(key)
 	if !ok {
 		return flow.BoundaryPath{}, false
