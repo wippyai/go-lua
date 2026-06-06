@@ -174,6 +174,39 @@ type keyPresenceFactFilter struct {
 	appendOrigins  func(AppendElementFieldOriginFact) bool
 }
 
+type keyPresenceCanonicalSpec[T any] struct {
+	less  func(T, T) bool
+	valid func(T) bool
+	same  func(T, T) bool
+	merge func(T, T) T
+}
+
+func canonicalKeyPresenceSlice[T any](facts []T, spec keyPresenceCanonicalSpec[T]) []T {
+	if len(facts) == 0 || spec.less == nil || spec.same == nil {
+		return nil
+	}
+	out := append([]T(nil), facts...)
+	for i := 1; i < len(out); i++ {
+		for j := i; j > 0 && spec.less(out[j], out[j-1]); j-- {
+			out[j], out[j-1] = out[j-1], out[j]
+		}
+	}
+	dst := out[:0]
+	for _, fact := range out {
+		if spec.valid != nil && !spec.valid(fact) {
+			continue
+		}
+		if len(dst) > 0 && spec.same(dst[len(dst)-1], fact) {
+			if spec.merge != nil {
+				dst[len(dst)-1] = spec.merge(dst[len(dst)-1], fact)
+			}
+			continue
+		}
+		dst = append(dst, fact)
+	}
+	return append([]T(nil), dst...)
+}
+
 func filterKeyPresenceFacts[T any](facts []T, keep func(T) bool) []T {
 	if len(facts) == 0 {
 		return nil
@@ -1300,177 +1333,112 @@ func canonicalKeyPresenceFactSet(set keyPresenceFactSet) KeyPresenceFacts {
 	if set.isEmpty() {
 		return KeyPresenceFacts{}
 	}
-	out := append([]KeyPresenceFact(nil), set.entries...)
-	sortKeyPresenceFacts(out)
-	dst := out[:0]
-	for _, e := range out {
-		if e.Table == "" || e.Key == "" {
-			continue
-		}
-		if len(dst) > 0 && dst[len(dst)-1] == e {
-			continue
-		}
-		dst = append(dst, e)
-	}
-	valueOut := append([]KeyValueFact(nil), set.values...)
-	sortKeyValueFacts(valueOut)
-	valueDst := valueOut[:0]
-	for _, e := range valueOut {
-		if e.Table == "" || e.Key == "" || e.Value == "" {
-			continue
-		}
-		if len(valueDst) > 0 && valueDst[len(valueDst)-1] == e {
-			continue
-		}
-		valueDst = append(valueDst, e)
-	}
-	arrayOut := append([]KeyArrayFact(nil), set.arrays...)
-	sortKeyArrayFacts(arrayOut)
-	arrayDst := arrayOut[:0]
-	for _, e := range arrayOut {
-		if e.Array == "" || e.Table == "" {
-			continue
-		}
-		if len(arrayDst) > 0 && arrayDst[len(arrayDst)-1] == e {
-			continue
-		}
-		arrayDst = append(arrayDst, e)
-	}
-	emptyOut := append([]EmptyKeyArrayFact(nil), set.emptyArrays...)
-	sortEmptyKeyArrayFacts(emptyOut)
-	emptyDst := emptyOut[:0]
-	for _, e := range emptyOut {
-		if e.Array == "" {
-			continue
-		}
-		if len(emptyDst) > 0 && emptyDst[len(emptyDst)-1] == e {
-			continue
-		}
-		emptyDst = append(emptyDst, e)
-	}
-	arrayValueOut := append([]KeyArrayValueFact(nil), set.arrayValues...)
-	sortKeyArrayValueFacts(arrayValueOut)
-	arrayValueDst := arrayValueOut[:0]
-	for _, e := range arrayValueOut {
-		if e.Array == "" || e.Table == "" || e.Value.IsZero() {
-			continue
-		}
-		if len(arrayValueDst) > 0 &&
-			arrayValueDst[len(arrayValueDst)-1].Array == e.Array &&
-			arrayValueDst[len(arrayValueDst)-1].Table == e.Table {
-			arrayValueDst[len(arrayValueDst)-1].Value = product.Domain.Join(arrayValueDst[len(arrayValueDst)-1].Value, e.Value)
-			continue
-		}
-		arrayValueDst = append(arrayValueDst, e)
-	}
-	appendOut := append([]AppendedKeyFact(nil), set.appends...)
-	sortAppendedKeyFacts(appendOut)
-	appendDst := appendOut[:0]
-	for _, e := range appendOut {
-		if e.Array == "" || e.Key == "" {
-			continue
-		}
-		if len(appendDst) > 0 && appendDst[len(appendDst)-1] == e {
-			continue
-		}
-		appendDst = append(appendDst, e)
-	}
-	pendingOut := append([]PendingKeyArrayFact(nil), set.pending...)
-	sortPendingKeyArrayFacts(pendingOut)
-	pendingDst := pendingOut[:0]
-	for _, e := range pendingOut {
-		if e.Array == "" || e.Key == "" {
-			continue
-		}
-		if len(pendingDst) > 0 && pendingDst[len(pendingDst)-1] == e {
-			continue
-		}
-		pendingDst = append(pendingDst, e)
-	}
-	appendBaseOut := append([]AppendHistoryBaseFact(nil), set.appendBases...)
-	sortAppendHistoryBaseFacts(appendBaseOut)
-	appendBaseDst := appendBaseOut[:0]
-	for _, e := range appendBaseOut {
-		if e.Array == "" {
-			continue
-		}
-		if len(appendBaseDst) > 0 && appendBaseDst[len(appendBaseDst)-1] == e {
-			continue
-		}
-		appendBaseDst = append(appendBaseDst, e)
-	}
-	appendEventOut := append([]AppendHistoryEventFact(nil), set.appendEvents...)
-	sortAppendHistoryEventFacts(appendEventOut)
-	appendEventDst := appendEventOut[:0]
-	for _, e := range appendEventOut {
-		if e.Array == "" || e.Key == "" {
-			continue
-		}
-		if _, ok := findAppendHistoryBaseFact(appendBaseDst, AppendHistoryBaseFact{Array: e.Array}); !ok {
-			continue
-		}
-		if len(appendEventDst) > 0 && appendEventDst[len(appendEventDst)-1] == e {
-			continue
-		}
-		appendEventDst = append(appendEventDst, e)
-	}
-	appendCoverageOut := append([]AppendHistoryCoverageFact(nil), set.appendCoverage...)
-	sortAppendHistoryCoverageFacts(appendCoverageOut)
-	appendCoverageDst := appendCoverageOut[:0]
-	for _, e := range appendCoverageOut {
-		if e.Array == "" || e.Key == "" || e.Table == "" || e.Value.IsZero() {
-			continue
-		}
-		if _, ok := findAppendHistoryBaseFact(appendBaseDst, AppendHistoryBaseFact{Array: e.Array}); !ok {
-			continue
-		}
-		if _, ok := findAppendHistoryEventFact(appendEventDst, AppendHistoryEventFact{Array: e.Array, Key: e.Key}); !ok {
-			continue
-		}
-		if len(appendCoverageDst) > 0 &&
-			appendCoverageDst[len(appendCoverageDst)-1].Array == e.Array &&
-			appendCoverageDst[len(appendCoverageDst)-1].Key == e.Key &&
-			appendCoverageDst[len(appendCoverageDst)-1].Table == e.Table {
-			appendCoverageDst[len(appendCoverageDst)-1].Value = product.Domain.Join(appendCoverageDst[len(appendCoverageDst)-1].Value, e.Value)
-			continue
-		}
-		appendCoverageDst = append(appendCoverageDst, e)
-	}
-	appendOriginOut := append([]AppendElementFieldOriginFact(nil), set.appendOrigins...)
-	sortAppendElementFieldOriginFacts(appendOriginOut)
-	appendOriginDst := appendOriginOut[:0]
-	for _, e := range appendOriginOut {
-		if e.Array == "" || e.Field == "" || e.Source == "" {
-			continue
-		}
-		if e.SourceField != "" {
-			if _, ok := AppendElementFieldSegments(e.SourceField); !ok {
-				continue
+	dst := canonicalKeyPresenceSlice(set.entries, keyPresenceCanonicalSpec[KeyPresenceFact]{
+		less:  keyPresenceLess,
+		valid: func(e KeyPresenceFact) bool { return e.Table != "" && e.Key != "" },
+		same:  func(a, b KeyPresenceFact) bool { return a == b },
+	})
+	valueDst := canonicalKeyPresenceSlice(set.values, keyPresenceCanonicalSpec[KeyValueFact]{
+		less:  keyValueLess,
+		valid: func(e KeyValueFact) bool { return e.Table != "" && e.Key != "" && e.Value != "" },
+		same:  func(a, b KeyValueFact) bool { return a == b },
+	})
+	arrayDst := canonicalKeyPresenceSlice(set.arrays, keyPresenceCanonicalSpec[KeyArrayFact]{
+		less:  keyArrayLess,
+		valid: func(e KeyArrayFact) bool { return e.Array != "" && e.Table != "" },
+		same:  func(a, b KeyArrayFact) bool { return a == b },
+	})
+	emptyDst := canonicalKeyPresenceSlice(set.emptyArrays, keyPresenceCanonicalSpec[EmptyKeyArrayFact]{
+		less:  emptyKeyArrayLess,
+		valid: func(e EmptyKeyArrayFact) bool { return e.Array != "" },
+		same:  func(a, b EmptyKeyArrayFact) bool { return a == b },
+	})
+	arrayValueDst := canonicalKeyPresenceSlice(set.arrayValues, keyPresenceCanonicalSpec[KeyArrayValueFact]{
+		less:  keyArrayValueLess,
+		valid: func(e KeyArrayValueFact) bool { return e.Array != "" && e.Table != "" && !e.Value.IsZero() },
+		same:  func(a, b KeyArrayValueFact) bool { return a.Array == b.Array && a.Table == b.Table },
+		merge: func(a, b KeyArrayValueFact) KeyArrayValueFact {
+			a.Value = product.Domain.Join(a.Value, b.Value)
+			return a
+		},
+	})
+	appendDst := canonicalKeyPresenceSlice(set.appends, keyPresenceCanonicalSpec[AppendedKeyFact]{
+		less:  appendedKeyLess,
+		valid: func(e AppendedKeyFact) bool { return e.Array != "" && e.Key != "" },
+		same:  func(a, b AppendedKeyFact) bool { return a == b },
+	})
+	pendingDst := canonicalKeyPresenceSlice(set.pending, keyPresenceCanonicalSpec[PendingKeyArrayFact]{
+		less:  pendingKeyArrayLess,
+		valid: func(e PendingKeyArrayFact) bool { return e.Array != "" && e.Key != "" },
+		same:  func(a, b PendingKeyArrayFact) bool { return a == b },
+	})
+	appendBaseDst := canonicalKeyPresenceSlice(set.appendBases, keyPresenceCanonicalSpec[AppendHistoryBaseFact]{
+		less:  appendHistoryBaseLess,
+		valid: func(e AppendHistoryBaseFact) bool { return e.Array != "" },
+		same:  func(a, b AppendHistoryBaseFact) bool { return a == b },
+	})
+	appendEventDst := canonicalKeyPresenceSlice(set.appendEvents, keyPresenceCanonicalSpec[AppendHistoryEventFact]{
+		less: appendHistoryEventLess,
+		valid: func(e AppendHistoryEventFact) bool {
+			if e.Array == "" || e.Key == "" {
+				return false
 			}
-		}
-		if _, ok := findAppendHistoryBaseFact(appendBaseDst, AppendHistoryBaseFact{Array: e.Array}); !ok {
-			continue
-		}
-		if _, ok := AppendElementFieldSegments(e.Field); !ok {
-			continue
-		}
-		if len(appendOriginDst) > 0 && appendOriginDst[len(appendOriginDst)-1] == e {
-			continue
-		}
-		appendOriginDst = append(appendOriginDst, e)
-	}
+			_, ok := findAppendHistoryBaseFact(appendBaseDst, AppendHistoryBaseFact{Array: e.Array})
+			return ok
+		},
+		same: func(a, b AppendHistoryEventFact) bool { return a == b },
+	})
+	appendCoverageDst := canonicalKeyPresenceSlice(set.appendCoverage, keyPresenceCanonicalSpec[AppendHistoryCoverageFact]{
+		less: appendHistoryCoverageLess,
+		valid: func(e AppendHistoryCoverageFact) bool {
+			if e.Array == "" || e.Key == "" || e.Table == "" || e.Value.IsZero() {
+				return false
+			}
+			if _, ok := findAppendHistoryBaseFact(appendBaseDst, AppendHistoryBaseFact{Array: e.Array}); !ok {
+				return false
+			}
+			_, ok := findAppendHistoryEventFact(appendEventDst, AppendHistoryEventFact{Array: e.Array, Key: e.Key})
+			return ok
+		},
+		same: func(a, b AppendHistoryCoverageFact) bool {
+			return a.Array == b.Array && a.Key == b.Key && a.Table == b.Table
+		},
+		merge: func(a, b AppendHistoryCoverageFact) AppendHistoryCoverageFact {
+			a.Value = product.Domain.Join(a.Value, b.Value)
+			return a
+		},
+	})
+	appendOriginDst := canonicalKeyPresenceSlice(set.appendOrigins, keyPresenceCanonicalSpec[AppendElementFieldOriginFact]{
+		less: appendElementFieldOriginLess,
+		valid: func(e AppendElementFieldOriginFact) bool {
+			if e.Array == "" || e.Field == "" || e.Source == "" {
+				return false
+			}
+			if e.SourceField != "" {
+				if _, ok := AppendElementFieldSegments(e.SourceField); !ok {
+					return false
+				}
+			}
+			if _, ok := findAppendHistoryBaseFact(appendBaseDst, AppendHistoryBaseFact{Array: e.Array}); !ok {
+				return false
+			}
+			_, ok := AppendElementFieldSegments(e.Field)
+			return ok
+		},
+		same: func(a, b AppendElementFieldOriginFact) bool { return a == b },
+	})
 	return KeyPresenceFacts{
-		entries:        append([]KeyPresenceFact(nil), dst...),
-		values:         append([]KeyValueFact(nil), valueDst...),
-		arrays:         append([]KeyArrayFact(nil), arrayDst...),
-		emptyArrays:    append([]EmptyKeyArrayFact(nil), emptyDst...),
-		arrayValues:    append([]KeyArrayValueFact(nil), arrayValueDst...),
-		appends:        append([]AppendedKeyFact(nil), appendDst...),
-		pending:        append([]PendingKeyArrayFact(nil), pendingDst...),
-		appendBases:    append([]AppendHistoryBaseFact(nil), appendBaseDst...),
-		appendEvents:   append([]AppendHistoryEventFact(nil), appendEventDst...),
-		appendCoverage: append([]AppendHistoryCoverageFact(nil), appendCoverageDst...),
-		appendOrigins:  append([]AppendElementFieldOriginFact(nil), appendOriginDst...),
+		entries:        dst,
+		values:         valueDst,
+		arrays:         arrayDst,
+		emptyArrays:    emptyDst,
+		arrayValues:    arrayValueDst,
+		appends:        appendDst,
+		pending:        pendingDst,
+		appendBases:    appendBaseDst,
+		appendEvents:   appendEventDst,
+		appendCoverage: appendCoverageDst,
+		appendOrigins:  appendOriginDst,
 	}
 }
 
