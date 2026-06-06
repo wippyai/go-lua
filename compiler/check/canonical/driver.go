@@ -1855,23 +1855,12 @@ func (ct callTyper) ProductCallFromValues(call *ast.FuncCallExpr, ctx transfer.P
 	if !ok {
 		return transfer.EmptyProductCallResult()
 	}
+	effects := transfer.EmptyCallEffects()
 	projector, ok := ct.cellEffectProjector()
-	if !ok {
-		values, hasValues := proj.callReturnValues()
-		return transfer.ProductCallResult{
-			ReturnValues:    values,
-			HasReturnValues: hasValues,
-			ReturnRefs:      proj.returnRefs(),
-			ReturnRelations: proj.returnRelations(),
-			Effects:         transfer.EmptyCallEffects(),
-			ArgDemands:      ct.productCallArgDemands(call, ctx),
-			NeverReturns: proj.neverReturns(func(ref summary.FuncRef) bool {
-				return ct.d.activeProgram.facts.HasNoReturn(ref)
-			}),
-			ParamNarrows: ct.productCallParamNarrows(call),
-		}
+	if ok {
+		effects = proj.effects(projector, ct.containerElementUnions(call, ctx))
 	}
-	return proj.result(projector, ct.containerElementUnions(call, ctx))
+	return proj.result(effects)
 }
 
 // IterVars types a generic-for loop's iteration variables from its iterator

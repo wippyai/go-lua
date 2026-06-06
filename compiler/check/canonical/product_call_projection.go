@@ -77,14 +77,14 @@ func (p productCallProjection) callReturnValues() ([]product.AbstractValue, bool
 	}.Values()
 }
 
-func (p productCallProjection) result(projector cellEffectProjector, elementUnions []effect.ContainerElementUnion) transfer.ProductCallResult {
+func (p productCallProjection) result(effects transfer.CallEffects) transfer.ProductCallResult {
 	values, ok := p.callReturnValues()
 	return transfer.ProductCallResult{
 		ReturnValues:    values,
 		HasReturnValues: ok,
 		ReturnRefs:      p.returnRefs(),
 		ReturnRelations: p.returnRelations(),
-		Effects:         p.effects(projector, elementUnions),
+		Effects:         effects,
 		ArgDemands:      p.typer.productCallArgDemands(p.call, p.ctx),
 		NeverReturns: p.neverReturns(func(ref summary.FuncRef) bool {
 			return p.typer.d.activeProgram.facts.HasNoReturn(ref)
