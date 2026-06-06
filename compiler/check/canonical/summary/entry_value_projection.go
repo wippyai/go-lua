@@ -146,10 +146,7 @@ func JoinEntryValue(out EntryValues, slot int, av product.AbstractValue) EntryVa
 	return out
 }
 
-// JoinObservedEntryValue adds av when it carries informative runtime value
-// evidence. It rejects top-like projections so summaries do not learn precision
-// from unknown/absent arguments.
-func JoinObservedEntryValue(out EntryValues, slot int, av product.AbstractValue) EntryValues {
+func joinObservedEntryValue(out EntryValues, slot int, av product.AbstractValue) EntryValues {
 	if slot < 0 || av.IsZero() {
 		return out
 	}
@@ -159,9 +156,8 @@ func JoinObservedEntryValue(out EntryValues, slot int, av product.AbstractValue)
 	return JoinEntryValue(out, slot, av)
 }
 
-// JoinCallEntryValue adds av to the caller-summary map for one callee.
-func JoinCallEntryValue(out CallEntryValues, callee FuncRef, slot int, av product.AbstractValue) CallEntryValues {
-	values := JoinObservedEntryValue(out[callee], slot, av)
+func joinCallEntryValue(out CallEntryValues, callee FuncRef, slot int, av product.AbstractValue) CallEntryValues {
+	values := joinObservedEntryValue(out[callee], slot, av)
 	if len(values) == 0 {
 		return out
 	}
@@ -303,7 +299,7 @@ func DirectCallEntryProductValuesWithParamCount(
 		if !ok {
 			continue
 		}
-		out = JoinObservedEntryValue(out, slot, av)
+		out = joinObservedEntryValue(out, slot, av)
 	}
 	out = joinOmittedFixedArgNil(out, len(runtimeValues), callee, call, slotOf, slotCount)
 	if len(out) == 0 {
@@ -342,7 +338,7 @@ func joinOmittedFixedArgNil(out EntryValues, supplied int, callee FuncRef, call 
 			continue
 		}
 		seenSlots[slot] = struct{}{}
-		out = JoinObservedEntryValue(out, slot, nilValue)
+		out = joinObservedEntryValue(out, slot, nilValue)
 	}
 	return out
 }
@@ -665,7 +661,7 @@ func (p CallEntryValueProjection) Project() CallEntryValues {
 				if !ok {
 					continue
 				}
-				out = JoinCallEntryValue(out, target.Ref, arg.Slot, av)
+				out = joinCallEntryValue(out, target.Ref, arg.Slot, av)
 			}
 		}
 		out = p.projectCallbackEntryValues(out, site)
@@ -686,7 +682,7 @@ func (p CallEntryValueProjection) projectCallbackEntryValues(out CallEntryValues
 		}
 		for _, ref := range callback.Refs {
 			for slot, av := range callback.Values {
-				out = JoinCallEntryValue(out, ref, slot, av)
+				out = joinCallEntryValue(out, ref, slot, av)
 			}
 		}
 	}
