@@ -377,22 +377,19 @@ func joinOmittedFixedArgNil(out EntryValues, supplied int, callee FuncRef, call 
 // callee: diagnostics use it to replay every reachable callee under the finite
 // context that an actual call site produced.
 type CallEntryContextProjection struct {
-	Graph              *cfg.Graph
-	State              state.FunctionState
-	ResolveTargets     CallEntryTargetResolver
-	ResolveCallback    CallEntryCallbackResolver
-	ExpectedArgType    CallEntryExpectedArgType
-	ParamSlot          EntryValueParamSlot
-	ParamSlotCount     EntryValueParamSlotCount
-	ParamPath          EntryReferenceParamPath
-	ArgPath            EntryReferenceArgPath
-	FunctionArgRefs    EntryFunctionRefArgResolver
-	FunctionArgRefTree EntryFunctionRefsArgResolver
-	ClosureArgRefs     EntryClosureRefArgResolver
-	ClosureArgRefTree  EntryClosureRefsArgResolver
-	EvalArg            EntryValueEvaluator
-	NormalizeValues    EntryValuesNormalizer
-	ReferencePaths     EntryReferenceProjection
+	Graph               *cfg.Graph
+	State               state.FunctionState
+	ResolveTargets      CallEntryTargetResolver
+	ResolveCallback     CallEntryCallbackResolver
+	ExpectedArgType     CallEntryExpectedArgType
+	ParamSlot           EntryValueParamSlot
+	ParamSlotCount      EntryValueParamSlotCount
+	ParamPath           EntryReferenceParamPath
+	ArgPath             EntryReferenceArgPath
+	ReferenceArgSources EntryReferenceArgSources
+	EvalArg             EntryValueEvaluator
+	NormalizeValues     EntryValuesNormalizer
+	ReferencePaths      EntryReferenceProjection
 }
 
 // ProjectKeys returns deterministic, de-duplicated callee summary keys for every
@@ -590,11 +587,8 @@ func (p CallEntryContextProjection) directReferenceAxes(callee FuncRef, call *as
 	}
 	refInput := p.referenceInput(callee, call, in)
 	refInput.FunctionRefs = in.FunctionRefs
-	refInput.ResolveFunctionArg = p.FunctionArgRefs
-	refInput.ResolveFunctionArgRefs = p.FunctionArgRefTree
 	refInput.ClosureRefs = in.ClosureRefs
-	refInput.ResolveClosureArg = p.ClosureArgRefs
-	refInput.ResolveClosureArgRefs = p.ClosureArgRefTree
+	refInput.ArgSources = p.ReferenceArgSources
 	return DirectCallEntryReferences(refInput)
 }
 
@@ -635,7 +629,7 @@ func (p CallEntryContextProjection) referenceProjection(callee FuncRef) flow.Ref
 
 func (p CallEntryContextProjection) callbackEntryKeys(site callEntrySite) []Key {
 	var keys []Key
-	for _, callback := range callEntryCallbacks(site, p.ResolveCallback, p.ExpectedArgType, p.ClosureArgRefs) {
+	for _, callback := range callEntryCallbacks(site, p.ResolveCallback, p.ExpectedArgType, p.ReferenceArgSources.ClosureRefs) {
 		for _, ref := range callback.Refs {
 			emitted := false
 			if callback.HasClosures {

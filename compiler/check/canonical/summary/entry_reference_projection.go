@@ -34,6 +34,15 @@ type EntryClosureRefArgResolver func(runtimeIdx int, arg ast.Expr, in *flow.Poin
 // EntryFunctionRefsArgResolver.
 type EntryClosureRefsArgResolver func(runtimeIdx int, arg ast.Expr, in *flow.PointState) (flow.ClosureRefs, bool)
 
+// EntryReferenceArgSources resolves callable-reference evidence carried by a
+// runtime argument when simple caller-path rebasing is not enough.
+type EntryReferenceArgSources struct {
+	FunctionRefs    EntryFunctionRefArgResolver
+	FunctionRefTree EntryFunctionRefsArgResolver
+	ClosureRefs     EntryClosureRefArgResolver
+	ClosureRefTree  EntryClosureRefsArgResolver
+}
+
 // DirectCallEntryReferenceInput is the call-boundary projection for reference
 // axes. It is the reference-axis counterpart of DirectCallEntryProductValues:
 // both consume normalized runtime arguments, the callee's ParamSlots mapping,
@@ -46,15 +55,12 @@ type DirectCallEntryReferenceInput struct {
 	ParamPath EntryReferenceParamPath
 	ArgPath   EntryReferenceArgPath
 
-	FunctionRefs           flow.FunctionRefs
-	ClosureRefs            flow.ClosureRefs
-	ReferenceProjection    flow.ReferencePathProjection
-	LimitReferencePaths    bool
-	State                  *flow.PointState
-	ResolveFunctionArg     EntryFunctionRefArgResolver
-	ResolveFunctionArgRefs EntryFunctionRefsArgResolver
-	ResolveClosureArg      EntryClosureRefArgResolver
-	ResolveClosureArgRefs  EntryClosureRefsArgResolver
+	FunctionRefs        flow.FunctionRefs
+	ClosureRefs         flow.ClosureRefs
+	ReferenceProjection flow.ReferencePathProjection
+	LimitReferencePaths bool
+	State               *flow.PointState
+	ArgSources          EntryReferenceArgSources
 }
 
 // DirectCallEntryReferences projects both callable-reference axes for one direct
@@ -71,25 +77,25 @@ func DirectCallEntryReferences(in DirectCallEntryReferenceInput) (flow.FunctionR
 				closureRefs = flow.ClosureRefsDomain.Join(closureRefs, rebaseEntryClosureRefs(in.ClosureRefs, source, target))
 			}
 		}
-		if in.ResolveFunctionArgRefs != nil {
-			if refs, ok := in.ResolveFunctionArgRefs(runtimeIdx, arg, in.State); ok &&
+		if in.ArgSources.FunctionRefTree != nil {
+			if refs, ok := in.ArgSources.FunctionRefTree(runtimeIdx, arg, in.State); ok &&
 				!flow.FunctionRefsDomain.Equal(refs, flow.FunctionRefsDomain.Bottom()) {
 				functionRefs = flow.FunctionRefsDomain.Join(functionRefs, rebaseEntryFunctionRefs(refs, constraint.NewPlaceholder(0), target))
 			}
 		}
-		if in.ResolveFunctionArg != nil {
-			if set, ok := in.ResolveFunctionArg(runtimeIdx, arg, in.State); ok && !set.IsBottom() {
+		if in.ArgSources.FunctionRefs != nil {
+			if set, ok := in.ArgSources.FunctionRefs(runtimeIdx, arg, in.State); ok && !set.IsBottom() {
 				functionRefs = joinFunctionRefAt(functionRefs, target.Key(), set)
 			}
 		}
-		if in.ResolveClosureArgRefs != nil {
-			if refs, ok := in.ResolveClosureArgRefs(runtimeIdx, arg, in.State); ok &&
+		if in.ArgSources.ClosureRefTree != nil {
+			if refs, ok := in.ArgSources.ClosureRefTree(runtimeIdx, arg, in.State); ok &&
 				!flow.ClosureRefsDomain.Equal(refs, flow.ClosureRefsDomain.Bottom()) {
 				closureRefs = flow.ClosureRefsDomain.Join(closureRefs, rebaseEntryClosureRefs(refs, constraint.NewPlaceholder(0), target))
 			}
 		}
-		if in.ResolveClosureArg != nil {
-			if set, ok := in.ResolveClosureArg(runtimeIdx, arg, in.State); ok && !set.IsBottom() {
+		if in.ArgSources.ClosureRefs != nil {
+			if set, ok := in.ArgSources.ClosureRefs(runtimeIdx, arg, in.State); ok && !set.IsBottom() {
 				closureRefs = joinClosureRefAt(closureRefs, target.Key(), set)
 			}
 		}

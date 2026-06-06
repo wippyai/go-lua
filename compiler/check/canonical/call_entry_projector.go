@@ -38,20 +38,39 @@ func (a callEntryAccess) argPath(_ int, arg ast.Expr) (constraint.Path, bool) {
 	return a.projector.typer.exprPath(arg)
 }
 
-func (a callEntryAccess) pointFunctionArgRefs(_ int, arg ast.Expr, in *flow.PointState) (flow.FunctionRefSet, bool) {
-	return a.projector.pointArgProjection(in).functionArgRefs(arg)
+func (a callEntryAccess) pointReferenceArgSources() summary.EntryReferenceArgSources {
+	return summary.EntryReferenceArgSources{
+		FunctionRefs: func(_ int, arg ast.Expr, in *flow.PointState) (flow.FunctionRefSet, bool) {
+			return a.projector.pointArgProjection(in).functionArgRefs(arg)
+		},
+		FunctionRefTree: func(_ int, arg ast.Expr, in *flow.PointState) (flow.FunctionRefs, bool) {
+			return a.projector.pointArgProjection(in).functionArgTreeRefs(arg)
+		},
+		ClosureRefs: func(_ int, arg ast.Expr, in *flow.PointState) (flow.ClosureRefSet, bool) {
+			return a.projector.pointArgProjection(in).closureArgRefs(arg)
+		},
+		ClosureRefTree: func(_ int, arg ast.Expr, in *flow.PointState) (flow.ClosureRefs, bool) {
+			return a.projector.pointArgProjection(in).closureArgTreeRefs(arg)
+		},
+	}
 }
 
-func (a callEntryAccess) pointFunctionArgTreeRefs(_ int, arg ast.Expr, in *flow.PointState) (flow.FunctionRefs, bool) {
-	return a.projector.pointArgProjection(in).functionArgTreeRefs(arg)
-}
-
-func (a callEntryAccess) pointClosureArgRefs(_ int, arg ast.Expr, in *flow.PointState) (flow.ClosureRefSet, bool) {
-	return a.projector.pointArgProjection(in).closureArgRefs(arg)
-}
-
-func (a callEntryAccess) pointClosureArgTreeRefs(_ int, arg ast.Expr, in *flow.PointState) (flow.ClosureRefs, bool) {
-	return a.projector.pointArgProjection(in).closureArgTreeRefs(arg)
+func (a callEntryAccess) productReferenceArgSources(ctx transfer.ProductCallContext) summary.EntryReferenceArgSources {
+	projection := a.projector.productArgProjection(ctx)
+	return summary.EntryReferenceArgSources{
+		FunctionRefs: func(_ int, arg ast.Expr, _ *flow.PointState) (flow.FunctionRefSet, bool) {
+			return projection.functionArgRefs(arg)
+		},
+		FunctionRefTree: func(_ int, arg ast.Expr, _ *flow.PointState) (flow.FunctionRefs, bool) {
+			return projection.functionArgTreeRefs(arg)
+		},
+		ClosureRefs: func(_ int, arg ast.Expr, _ *flow.PointState) (flow.ClosureRefSet, bool) {
+			return projection.closureArgRefs(arg)
+		},
+		ClosureRefTree: func(_ int, arg ast.Expr, _ *flow.PointState) (flow.ClosureRefs, bool) {
+			return projection.closureArgTreeRefs(arg)
+		},
+	}
 }
 
 func (a callEntryAccess) pointFacts(ref summary.FuncRef, call *ast.FuncCallExpr, in *flow.PointState) flow.BoundaryFacts {
@@ -149,12 +168,9 @@ func (c callEntryProjector) contextProjection(fs state.FunctionState) summary.Ca
 		ParamPath: func(callee summary.FuncRef, slot int) (constraint.Path, bool) {
 			return c.program.paramPath(callee, slot)
 		},
-		ArgPath:            access.argPath,
-		FunctionArgRefs:    access.pointFunctionArgRefs,
-		FunctionArgRefTree: access.pointFunctionArgTreeRefs,
-		ClosureArgRefs:     access.pointClosureArgRefs,
-		ClosureArgRefTree:  access.pointClosureArgTreeRefs,
-		EvalArg:            c.transfer.EvalExprValue,
+		ArgPath:             access.argPath,
+		ReferenceArgSources: access.pointReferenceArgSources(),
+		EvalArg:             c.transfer.EvalExprValue,
 		NormalizeValues: func(callee summary.FuncRef, call *ast.FuncCallExpr, values summary.EntryValues) summary.EntryValues {
 			return c.program.withPrototypeMethodSurfacesForMethodCall(callee, call, values)
 		},
@@ -320,21 +336,10 @@ func (c callEntryProjector) productReferencesForRef(ref summary.FuncRef, call *a
 		}
 	}
 	in := c.referenceInput(ref, call)
-	argProjection := c.productArgProjection(ctx)
+	access := c.access()
 	in.FunctionRefs = ctx.FunctionRefs
-	in.ResolveFunctionArg = func(_ int, arg ast.Expr, _ *flow.PointState) (flow.FunctionRefSet, bool) {
-		return argProjection.functionArgRefs(arg)
-	}
-	in.ResolveFunctionArgRefs = func(_ int, arg ast.Expr, _ *flow.PointState) (flow.FunctionRefs, bool) {
-		return argProjection.functionArgTreeRefs(arg)
-	}
 	in.ClosureRefs = ctx.ClosureRefs
-	in.ResolveClosureArg = func(_ int, arg ast.Expr, _ *flow.PointState) (flow.ClosureRefSet, bool) {
-		return argProjection.closureArgRefs(arg)
-	}
-	in.ResolveClosureArgRefs = func(_ int, arg ast.Expr, _ *flow.PointState) (flow.ClosureRefs, bool) {
-		return argProjection.closureArgTreeRefs(arg)
-	}
+	in.ArgSources = access.productReferenceArgSources(ctx)
 	refs, closures := summary.DirectCallEntryReferences(in)
 	return productReferenceAxes{
 		refs:     refs,
