@@ -23,12 +23,12 @@ func (t *Transfer) applyConditionEffect(out *flow.PointState, effect ConditionEf
 		return false
 	}
 	if effect.Fact.IsFalse() {
-		return conditions.assume(out, effect.Fact)
+		return flow.ApplyConditionFact(out, effect.Fact)
 	}
 	if !effect.Fact.HasConstraints() {
 		return false
 	}
-	changed := conditions.assume(out, effect.Fact)
+	changed := flow.ApplyConditionFact(out, effect.Fact)
 	if flow.PointStateDomain.Equal(*out, flow.PointStateDomain.Bottom()) {
 		return true
 	}

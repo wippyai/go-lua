@@ -1,22 +1,13 @@
-package transfer
+package flow
 
-import (
-	"github.com/wippyai/go-lua/types/constraint"
-	"github.com/wippyai/go-lua/types/flow"
-)
+import "github.com/wippyai/go-lua/types/constraint"
 
-type conditionReducer struct{}
-
-var conditions = conditionReducer{}
-
-// Conditions are edge-local must-facts. Transfer decides which guards and writes
-// are in scope; this reducer owns the canonical Cond carrier update.
-func (conditionReducer) assume(out *flow.PointState, fact constraint.Condition) bool {
+func ApplyConditionFact(out *PointState, fact constraint.Condition) bool {
 	if out == nil {
 		return false
 	}
 	if fact.IsFalse() {
-		*out = flow.PointStateDomain.Bottom()
+		*out = PointStateDomain.Bottom()
 		return true
 	}
 	if !fact.HasConstraints() {
@@ -28,7 +19,7 @@ func (conditionReducer) assume(out *flow.PointState, fact constraint.Condition) 
 	}
 	next := constraint.And(out.Cond, fact)
 	if next.IsFalse() {
-		*out = flow.PointStateDomain.Bottom()
+		*out = PointStateDomain.Bottom()
 		return true
 	}
 	if constraint.Domain.Equal(out.Cond, next) {
@@ -38,7 +29,7 @@ func (conditionReducer) assume(out *flow.PointState, fact constraint.Condition) 
 	return true
 }
 
-func (conditionReducer) forgetAffectedByWrite(out *flow.PointState, path constraint.Path) bool {
+func ForgetConditionAffectedByWrite(out *PointState, path constraint.Path) bool {
 	if out == nil || out.Cond.IsFalse() || out.Cond.IsTrue() || path.Symbol == 0 {
 		return false
 	}

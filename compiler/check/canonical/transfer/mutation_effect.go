@@ -62,7 +62,7 @@ func (t *Transfer) invalidateConditionsForPlace(out *flow.PointState, place Plac
 	if !ok || path.Symbol == 0 {
 		return false
 	}
-	return conditions.forgetAffectedByWrite(out, path)
+	return flow.ForgetConditionAffectedByWrite(out, path)
 }
 
 func (t *Transfer) invalidateStaticMembersForPlace(out *flow.PointState, place Place) bool {
