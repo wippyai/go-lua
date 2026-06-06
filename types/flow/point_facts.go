@@ -88,6 +88,25 @@ func (f PointFacts) EnvSymbolValue(sym cfg.SymbolID) (product.AbstractValue, boo
 	return f.EnvValue(SymbolValueKey(sym))
 }
 
+// EnvCaptureCells projects Env-backed symbol values into the capture-cell
+// domain for the requested symbols. It deliberately reads only Env entries:
+// existing Cells are already represented on the Cells axis and should be joined
+// by the caller when publishing capture exports.
+func (f PointFacts) EnvCaptureCells(allowed map[cfg.SymbolID]bool) CaptureCells {
+	if len(f.state.Env) == 0 || len(allowed) == 0 {
+		return CaptureCellsDomain.Bottom()
+	}
+	entries := make([]CaptureCell, 0, len(allowed))
+	for key, av := range f.state.Env {
+		sym, ok := ParseSymbolValueKey(key)
+		if !ok || !allowed[sym] || av.IsZero() {
+			continue
+		}
+		entries = append(entries, CaptureCell{Symbol: sym, Value: av})
+	}
+	return CaptureCellsOf(entries)
+}
+
 // CellValue returns the abstract value stored directly in the capture-cell axis.
 func (f PointFacts) CellValue(sym cfg.SymbolID) (product.AbstractValue, bool) {
 	if sym == 0 {

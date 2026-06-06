@@ -122,7 +122,7 @@ func projectCaptureExports(fs state.FunctionState, g *cfg.Graph) flow.CaptureCel
 		if !ok {
 			return
 		}
-		point := flow.CaptureCellsDomain.Join(ps.Cells, captureCellsFromEnv(ps.Env, envExports))
+		point := flow.CaptureCellsDomain.Join(ps.Cells, flow.PointFactsOf(ps).EnvCaptureCells(envExports))
 		point = captureCellsWithStaticMembers(point, ps.StaticMembers)
 		out = flow.CaptureCellsDomain.Join(out, point)
 	})
@@ -175,21 +175,6 @@ func projectPrototypeSelf(fs state.FunctionState, g *cfg.Graph) flow.PrototypeSe
 		out = flow.PrototypeSelfDomain.Join(out, ps.PrototypeSelf)
 	})
 	return out
-}
-
-func captureCellsFromEnv(env map[flow.ValueKey]product.AbstractValue, allowed map[cfg.SymbolID]bool) flow.CaptureCells {
-	if len(env) == 0 || len(allowed) == 0 {
-		return flow.CaptureCellsDomain.Bottom()
-	}
-	entries := make([]flow.CaptureCell, 0, len(env))
-	for key, av := range env {
-		sym, ok := symbolFromEnvKey(key)
-		if !ok || !allowed[sym] || av.IsZero() {
-			continue
-		}
-		entries = append(entries, flow.CaptureCell{Symbol: sym, Value: av})
-	}
-	return flow.CaptureCellsOf(entries)
 }
 
 func captureCellsWithStaticMembers(cells flow.CaptureCells, facts flow.StaticMemberFacts) flow.CaptureCells {
@@ -266,10 +251,6 @@ func captureExportSymbols(g *cfg.Graph) map[cfg.SymbolID]bool {
 		return nil
 	}
 	return out
-}
-
-func symbolFromEnvKey(key flow.ValueKey) (cfg.SymbolID, bool) {
-	return flow.ParseSymbolValueKey(key)
 }
 
 // projectReturns folds the per-return-point Env into a single return tuple. For

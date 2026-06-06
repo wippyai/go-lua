@@ -63,6 +63,29 @@ func TestPointFactsPrimitiveEnvAndCellReadsStaySeparate(t *testing.T) {
 	}
 }
 
+func TestPointFactsEnvCaptureCellsProjectsAllowedEnvSymbolsOnly(t *testing.T) {
+	const allowedSym = cfg.SymbolID(10)
+	const blockedSym = cfg.SymbolID(11)
+	const cellSym = cfg.SymbolID(12)
+	state := PointState{
+		Env: map[ValueKey]product.AbstractValue{
+			SymbolValueKey(allowedSym): product.FromType(typ.String),
+			SymbolValueKey(blockedSym): product.FromType(typ.Number),
+			ReturnSlotValueKey(0):      product.FromType(typ.Boolean),
+		},
+		Cells: CaptureCellsDomain.Bottom().With(cellSym, product.FromType(typ.Boolean)),
+	}
+
+	cells := PointFactsOf(state).EnvCaptureCells(map[cfg.SymbolID]bool{allowedSym: true, cellSym: true})
+	entries := cells.Entries()
+	if len(entries) != 1 {
+		t.Fatalf("EnvCaptureCells entries = %#v, want one allowed Env symbol", entries)
+	}
+	if entries[0].Symbol != allowedSym || !typ.TypeEquals(entries[0].Value.ProjectValue(), typ.String) {
+		t.Fatalf("EnvCaptureCells entry = %#v, want allowed string symbol", entries[0])
+	}
+}
+
 func TestPointFactsValueKeyValueReadsReturnSlots(t *testing.T) {
 	state := PointState{
 		Env: map[ValueKey]product.AbstractValue{
