@@ -2432,8 +2432,13 @@ type containerElementUnionTyper struct {
 	effects []effect.ContainerElementUnion
 }
 
-func (c containerElementUnionTyper) ContainerElementUnionsFromValues(*ast.FuncCallExpr, ProductCallContext) []effect.ContainerElementUnion {
-	return append([]effect.ContainerElementUnion(nil), c.effects...)
+func (c containerElementUnionTyper) CallEffectsFromValues(*ast.FuncCallExpr, ProductCallContext) CallEffects {
+	return CallEffects{
+		CellEffects:     c.captureEffectTyper.effects,
+		ReceiverEffects: flow.ReceiverEffectsDomain.Bottom(),
+		BoundaryFacts:   flow.BoundaryFactsDomain.Top(),
+		ElementUnions:   append([]effect.ContainerElementUnion(nil), c.effects...),
+	}
 }
 
 type boundaryAndContainerElementUnionTyper struct {
@@ -2442,12 +2447,13 @@ type boundaryAndContainerElementUnionTyper struct {
 	effects []effect.ContainerElementUnion
 }
 
-func (c boundaryAndContainerElementUnionTyper) CallPostEffectsFromValues(*ast.FuncCallExpr, ProductCallContext) CallPostEffects {
-	return CallPostEffects{BoundaryFacts: c.facts}
-}
-
-func (c boundaryAndContainerElementUnionTyper) ContainerElementUnionsFromValues(*ast.FuncCallExpr, ProductCallContext) []effect.ContainerElementUnion {
-	return append([]effect.ContainerElementUnion(nil), c.effects...)
+func (c boundaryAndContainerElementUnionTyper) CallEffectsFromValues(*ast.FuncCallExpr, ProductCallContext) CallEffects {
+	return CallEffects{
+		CellEffects:     c.captureEffectTyper.effects,
+		ReceiverEffects: flow.ReceiverEffectsDomain.Bottom(),
+		BoundaryFacts:   c.facts,
+		ElementUnions:   append([]effect.ContainerElementUnion(nil), c.effects...),
+	}
 }
 
 type boundaryAndReceiverEffectTyper struct {
@@ -2456,8 +2462,9 @@ type boundaryAndReceiverEffectTyper struct {
 	effects flow.ReceiverEffects
 }
 
-func (b boundaryAndReceiverEffectTyper) CallPostEffectsFromValues(*ast.FuncCallExpr, ProductCallContext) CallPostEffects {
-	return CallPostEffects{
+func (b boundaryAndReceiverEffectTyper) CallEffectsFromValues(*ast.FuncCallExpr, ProductCallContext) CallEffects {
+	return CallEffects{
+		CellEffects:     b.captureEffectTyper.effects,
 		ReceiverEffects: b.effects,
 		BoundaryFacts:   b.facts,
 	}
@@ -2469,8 +2476,9 @@ type receiverEffectTyper struct {
 	effects flow.ReceiverEffects
 }
 
-func (r receiverEffectTyper) CallPostEffectsFromValues(*ast.FuncCallExpr, ProductCallContext) CallPostEffects {
-	return CallPostEffects{
+func (r receiverEffectTyper) CallEffectsFromValues(*ast.FuncCallExpr, ProductCallContext) CallEffects {
+	return CallEffects{
+		CellEffects:     r.captureEffectTyper.effects,
 		ReceiverEffects: r.effects,
 		BoundaryFacts:   flow.BoundaryFactsDomain.Top(),
 	}

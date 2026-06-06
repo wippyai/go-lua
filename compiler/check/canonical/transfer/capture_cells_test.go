@@ -433,11 +433,15 @@ func (c captureEffectTyper) ReturnRelationsFromValues(*ast.FuncCallExpr, Product
 	return flow.ReturnRelationsDomain.Top()
 }
 
-func (c captureEffectTyper) CellEffectsFromValues(*ast.FuncCallExpr, ProductCallContext) flow.CaptureEffects {
-	return c.effects
+func (c captureEffectTyper) CallEffectsFromValues(*ast.FuncCallExpr, ProductCallContext) CallEffects {
+	return CallEffects{
+		CellEffects:     c.effects,
+		ReceiverEffects: flow.ReceiverEffectsDomain.Bottom(),
+		BoundaryFacts:   flow.BoundaryFactsDomain.Top(),
+	}
 }
 
-var _ productCellEffectProvider = captureEffectTyper{}
+var _ productCallEffectProvider = captureEffectTyper{}
 
 type productCaptureEffectTyper struct {
 	captureEffectTyper
@@ -445,13 +449,17 @@ type productCaptureEffectTyper struct {
 	args []product.AbstractValue
 }
 
-func (p *productCaptureEffectTyper) CellEffectsFromValues(
+func (p *productCaptureEffectTyper) CallEffectsFromValues(
 	_ *ast.FuncCallExpr,
 	ctx ProductCallContext,
-) flow.CaptureEffects {
+) CallEffects {
 	p.args = append([]product.AbstractValue(nil), ctx.ArgValues...)
-	return p.effects
+	return CallEffects{
+		CellEffects:     p.effects,
+		ReceiverEffects: flow.ReceiverEffectsDomain.Bottom(),
+		BoundaryFacts:   flow.BoundaryFactsDomain.Top(),
+	}
 }
 
-var _ productCellEffectProvider = (*productCaptureEffectTyper)(nil)
+var _ productCallEffectProvider = (*productCaptureEffectTyper)(nil)
 var _ ProductCallTyper = (*productCaptureEffectTyper)(nil)

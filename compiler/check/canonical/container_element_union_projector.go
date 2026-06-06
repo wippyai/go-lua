@@ -8,11 +8,11 @@ import (
 	"github.com/wippyai/go-lua/types/typ"
 )
 
-// ContainerElementUnionsFromValues projects contract-declared container element
-// union effects for a product call. The call package owns spec extraction; this
+// containerElementUnions projects contract-declared container element union
+// effects for a product call. The call package owns spec extraction; this
 // adapter supplies module-local summary signatures and the product-context type
 // resolver without making driver.go wire that policy inline.
-func (ct callTyper) ContainerElementUnionsFromValues(call *ast.FuncCallExpr, ctx transfer.ProductCallContext) []effect.ContainerElementUnion {
+func (ct callTyper) containerElementUnions(call *ast.FuncCallExpr, ctx transfer.ProductCallContext) []effect.ContainerElementUnion {
 	d := ct.d
 	if d == nil || call == nil || d.activeProgram == nil {
 		return nil

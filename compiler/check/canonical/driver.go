@@ -1855,27 +1855,16 @@ func (ct callTyper) ReturnRelationsFromValues(call *ast.FuncCallExpr, ctx transf
 	return proj.returnRelations()
 }
 
-func (ct callTyper) CellEffectsFromValues(call *ast.FuncCallExpr, ctx transfer.ProductCallContext) flow.CaptureEffects {
+func (ct callTyper) CallEffectsFromValues(call *ast.FuncCallExpr, ctx transfer.ProductCallContext) transfer.CallEffects {
 	projector, ok := ct.cellEffectProjector()
 	if !ok || call == nil {
-		return flow.CaptureEffectsDomain.Bottom()
+		return transfer.EmptyCallEffects()
 	}
 	proj, ok := ct.summaryOnlyProductCallProjection(call, ctx)
 	if !ok {
-		return flow.CaptureEffectsDomain.Bottom()
+		return transfer.EmptyCallEffects()
 	}
-	return proj.cellEffects(projector)
-}
-
-func (ct callTyper) CallPostEffectsFromValues(call *ast.FuncCallExpr, ctx transfer.ProductCallContext) transfer.CallPostEffects {
-	proj, ok := ct.summaryOnlyProductCallProjection(call, ctx)
-	if !ok {
-		return transfer.CallPostEffects{
-			ReceiverEffects: flow.ReceiverEffectsDomain.Bottom(),
-			BoundaryFacts:   flow.BoundaryFactsDomain.Top(),
-		}
-	}
-	return proj.postEffects()
+	return proj.effects(projector, ct.containerElementUnions(call, ctx))
 }
 
 // IterVars types a generic-for loop's iteration variables from its iterator

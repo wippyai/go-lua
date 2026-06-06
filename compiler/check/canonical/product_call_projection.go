@@ -8,6 +8,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/check/domain/callobligation"
 	"github.com/wippyai/go-lua/compiler/check/domain/paramevidence"
 	"github.com/wippyai/go-lua/types/domain/value/product"
+	"github.com/wippyai/go-lua/types/effect"
 	"github.com/wippyai/go-lua/types/flow"
 	"github.com/wippyai/go-lua/types/typ"
 )
@@ -150,14 +151,12 @@ func (p productCallProjection) demandTargets() []paramevidence.CallArgDemandTarg
 	return out
 }
 
-func (p productCallProjection) cellEffects(projector cellEffectProjector) flow.CaptureEffects {
-	return projector.productCallEffects(p.outcome, p.call, p.ctx)
-}
-
-func (p productCallProjection) postEffects() transfer.CallPostEffects {
-	return transfer.CallPostEffects{
+func (p productCallProjection) effects(projector cellEffectProjector, elementUnions []effect.ContainerElementUnion) transfer.CallEffects {
+	return transfer.CallEffects{
+		CellEffects:     projector.productCallEffects(p.outcome, p.call, p.ctx),
 		ReceiverEffects: p.outcome.ReceiverEffects(),
 		BoundaryFacts:   p.outcome.BoundaryFacts(),
+		ElementUnions:   elementUnions,
 	}
 }
 

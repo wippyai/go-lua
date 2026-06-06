@@ -218,23 +218,26 @@ type productCallReturnRefsProvider interface {
 	CallReturnRefsFromValues(call *ast.FuncCallExpr, ctx ProductCallContext) CallReturnRefs
 }
 
-type productCellEffectProvider interface {
-	CellEffectsFromValues(call *ast.FuncCallExpr, ctx ProductCallContext) flow.CaptureEffects
-}
-
-// CallPostEffects groups product call-outcome effects that mutate caller-visible
-// state after a call returns.
-type CallPostEffects struct {
+// CallEffects groups product call-outcome effects that mutate caller-visible
+// state after a call returns. Transfer consumes this as one carrier so call-side
+// effects are projected once and then applied by axis-specific reducers.
+type CallEffects struct {
+	CellEffects     flow.CaptureEffects
 	ReceiverEffects flow.ReceiverEffects
 	BoundaryFacts   flow.BoundaryFacts
+	ElementUnions   []effect.ContainerElementUnion
 }
 
-type productCallPostEffectProvider interface {
-	CallPostEffectsFromValues(call *ast.FuncCallExpr, ctx ProductCallContext) CallPostEffects
+func EmptyCallEffects() CallEffects {
+	return CallEffects{
+		CellEffects:     flow.CaptureEffectsDomain.Bottom(),
+		ReceiverEffects: flow.ReceiverEffectsDomain.Bottom(),
+		BoundaryFacts:   flow.BoundaryFactsDomain.Top(),
+	}
 }
 
-type containerElementUnionProvider interface {
-	ContainerElementUnionsFromValues(call *ast.FuncCallExpr, ctx ProductCallContext) []effect.ContainerElementUnion
+type productCallEffectProvider interface {
+	CallEffectsFromValues(call *ast.FuncCallExpr, ctx ProductCallContext) CallEffects
 }
 
 // CallableValueQuery is the transfer boundary for resolving a function-valued
@@ -2657,7 +2660,7 @@ func (t *Transfer) applyCallBoundaryFacts(
 	if out == nil || call == nil {
 		return false
 	}
-	facts, plans := t.boundaryFactsAppendPlans(out, call, t.callPostEffects(call, ctx).BoundaryFacts)
+	facts, plans := t.boundaryFactsAppendPlans(out, call, t.callEffects(call, ctx).BoundaryFacts)
 	if !facts.HasProof() {
 		return false
 	}

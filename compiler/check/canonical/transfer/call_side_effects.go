@@ -18,46 +18,35 @@ func (t *Transfer) applyCallSideEffects(
 	ctx ProductCallContext,
 	demand func(int, paramevidence.ParamContract),
 ) {
-	postEffects := t.callPostEffects(call, ctx)
-	boundaryFacts, boundaryAppendPlans := t.boundaryFactsAppendPlans(out, call, postEffects.BoundaryFacts)
-	t.applyCallCellEffects(out, call, ctx)
-	t.applyCallReceiverEffects(out, call, postEffects.ReceiverEffects, len(ctx.RuntimeArgValues), demand)
-	t.applyCallMutatorEffects(out, call, ctx, demand)
+	effects := t.callEffects(call, ctx)
+	boundaryFacts, boundaryAppendPlans := t.boundaryFactsAppendPlans(out, call, effects.BoundaryFacts)
+	t.applyCallCellEffects(out, call, effects.CellEffects)
+	t.applyCallReceiverEffects(out, call, effects.ReceiverEffects, len(ctx.RuntimeArgValues), demand)
+	t.applyCallMutatorEffects(out, call, ctx, effects.ElementUnions, demand)
 	if boundaryFacts.HasProof() {
 		t.applyBoundaryFactsWithAppendPlans(out, call, boundaryFacts, nil, boundaryAppendPlans)
 	}
 }
 
-func (t *Transfer) callPostEffects(call *ast.FuncCallExpr, ctx ProductCallContext) CallPostEffects {
+func (t *Transfer) callEffects(call *ast.FuncCallExpr, ctx ProductCallContext) CallEffects {
 	if call == nil || t.callTyper == nil {
-		return CallPostEffects{
-			ReceiverEffects: flow.ReceiverEffectsDomain.Bottom(),
-			BoundaryFacts:   flow.BoundaryFactsDomain.Top(),
-		}
+		return EmptyCallEffects()
 	}
-	provider, ok := t.callTyper.(productCallPostEffectProvider)
+	provider, ok := t.callTyper.(productCallEffectProvider)
 	if !ok || provider == nil {
-		return CallPostEffects{
-			ReceiverEffects: flow.ReceiverEffectsDomain.Bottom(),
-			BoundaryFacts:   flow.BoundaryFactsDomain.Top(),
-		}
+		return EmptyCallEffects()
 	}
-	return provider.CallPostEffectsFromValues(call, ctx)
+	return provider.CallEffectsFromValues(call, ctx)
 }
 
 func (t *Transfer) applyCallCellEffects(
 	out *flow.PointState,
 	call *ast.FuncCallExpr,
-	ctx ProductCallContext,
+	effects flow.CaptureEffects,
 ) {
 	if out == nil || call == nil {
 		return
 	}
-	provider, ok := t.callTyper.(productCellEffectProvider)
-	if !ok || provider == nil {
-		return
-	}
-	effects := provider.CellEffectsFromValues(call, ctx)
 	closurePath, _ := t.callClosurePath(call)
 	t.applyCellEffect(out, CellEffect{Effects: effects, ClosurePath: closurePath})
 }
@@ -210,16 +199,13 @@ func (t *Transfer) applyCallMutatorEffects(
 	out *flow.PointState,
 	call *ast.FuncCallExpr,
 	ctx ProductCallContext,
+	effects []effect.ContainerElementUnion,
 	demand func(int, paramevidence.ParamContract),
 ) {
-	if out == nil || call == nil || t.callTyper == nil {
+	if out == nil || call == nil {
 		return
 	}
-	provider, ok := t.callTyper.(containerElementUnionProvider)
-	if !ok || provider == nil {
-		return
-	}
-	for _, effect := range provider.ContainerElementUnionsFromValues(call, ctx) {
+	for _, effect := range effects {
 		t.applyContainerElementUnionEffect(out, call, ctx, effect, demand)
 	}
 }
