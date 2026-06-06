@@ -112,25 +112,15 @@ func (t *Transfer) applyCallReceiverEffects(
 }
 
 func receiverMutationsForTargetPlace(target Place, mutations []flow.ReceiverMutation) []flow.ReceiverMutation {
-	prefix, ok := target.StaticPrefixPath()
-	if !ok || prefix.Symbol == 0 {
+	footprint, ok := target.WriteFootprint(false, product.AbstractValue{})
+	if !ok {
 		return nil
 	}
-	if len(mutations) == 0 {
-		return []flow.ReceiverMutation{{
-			Segments: append([]constraint.Segment(nil), prefix.Segments...),
-		}}
+	base, ok := flow.ReceiverMutationFromAccessFootprint(footprint)
+	if !ok {
+		return nil
 	}
-	out := make([]flow.ReceiverMutation, 0, len(mutations))
-	for _, mutation := range mutations {
-		segs := append([]constraint.Segment(nil), prefix.Segments...)
-		segs = append(segs, mutation.Segments...)
-		out = append(out, flow.ReceiverMutation{
-			Segments:            segs,
-			PresentElementWrite: mutation.PresentElementWrite,
-		})
-	}
-	return out
+	return flow.RebaseReceiverMutations(base, mutations)
 }
 
 func (t *Transfer) applyReceiverMutations(

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/wippyai/go-lua/types/access"
 	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/domain/value/product"
 	"github.com/wippyai/go-lua/types/lattice"
@@ -29,6 +30,40 @@ type ReceiverEffect struct {
 type ReceiverMutation struct {
 	Segments            []constraint.Segment
 	PresentElementWrite bool
+}
+
+// ReceiverMutationFromAccessFootprint lowers a normalized source-access write
+// footprint into the receiver-relative mutation vocabulary used in summaries.
+func ReceiverMutationFromAccessFootprint(footprint access.WriteFootprint) (ReceiverMutation, bool) {
+	if footprint.WritePath.IsEmpty() {
+		return ReceiverMutation{}, false
+	}
+	return ReceiverMutation{
+		Segments:            append([]constraint.Segment(nil), footprint.WritePath.Segments...),
+		PresentElementWrite: footprint.PresentElementWrite,
+	}, true
+}
+
+// RebaseReceiverMutations composes callee-relative mutations under the caller
+// argument access path. An empty mutation list still means the argument itself
+// was mutated.
+func RebaseReceiverMutations(base ReceiverMutation, mutations []ReceiverMutation) []ReceiverMutation {
+	if len(mutations) == 0 {
+		return []ReceiverMutation{{
+			Segments:            append([]constraint.Segment(nil), base.Segments...),
+			PresentElementWrite: base.PresentElementWrite,
+		}}
+	}
+	out := make([]ReceiverMutation, 0, len(mutations))
+	for _, mutation := range mutations {
+		segments := append([]constraint.Segment(nil), base.Segments...)
+		segments = append(segments, mutation.Segments...)
+		out = append(out, ReceiverMutation{
+			Segments:            segments,
+			PresentElementWrite: mutation.PresentElementWrite,
+		})
+	}
+	return out
 }
 
 // ReceiverEffects is a deterministic finite-map lattice of runtime-argument

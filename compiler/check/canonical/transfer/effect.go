@@ -189,14 +189,11 @@ func (t *Transfer) recordReceiverMutationEffect(
 }
 
 func receiverMutationForPlace(place Place, presentElementWrite bool) (flow.ReceiverMutation, bool) {
-	path, ok := place.StaticPrefixPath()
-	if !ok || path.Symbol == 0 {
+	footprint, ok := place.WriteFootprint(presentElementWrite, product.AbstractValue{})
+	if !ok {
 		return flow.ReceiverMutation{}, false
 	}
-	return flow.ReceiverMutation{
-		Segments:            append([]constraint.Segment(nil), path.Segments...),
-		PresentElementWrite: presentElementWrite,
-	}, true
+	return flow.ReceiverMutationFromAccessFootprint(footprint)
 }
 
 func (t *Transfer) applyReturnEffect(out *flow.PointState, effect ReturnEffect) bool {

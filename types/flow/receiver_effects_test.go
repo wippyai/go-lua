@@ -3,6 +3,8 @@ package flow
 import (
 	"testing"
 
+	"github.com/wippyai/go-lua/types/access"
+	"github.com/wippyai/go-lua/types/cfg"
 	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/domain/value/product"
 	"github.com/wippyai/go-lua/types/lattice"
@@ -78,6 +80,84 @@ func TestReceiverEffectsKeepsPresentElementMutationDistinctFromBroadMutation(t *
 	}
 	if mutations[0].PresentElementWrite || !mutations[1].PresentElementWrite {
 		t.Fatalf("mutations = %#v, want broad then present element", mutations)
+	}
+}
+
+func TestReceiverMutationFromAccessFootprintUsesWritePath(t *testing.T) {
+	path := constraint.NewPath(cfg.SymbolID(7), "arg").
+		Field("items").
+		Field("by_id")
+
+	mutation, ok := ReceiverMutationFromAccessFootprint(access.WriteFootprint{
+		WritePath:           path,
+		PresentElementWrite: true,
+	})
+	if !ok {
+		t.Fatal("ReceiverMutationFromAccessFootprint returned false")
+	}
+	if len(mutation.Segments) != len(path.Segments) {
+		t.Fatalf("segments len = %d, want %d", len(mutation.Segments), len(path.Segments))
+	}
+	for i := range path.Segments {
+		if mutation.Segments[i] != path.Segments[i] {
+			t.Fatalf("segment[%d] = %v, want %v", i, mutation.Segments[i], path.Segments[i])
+		}
+	}
+	if !mutation.PresentElementWrite {
+		t.Fatal("PresentElementWrite = false, want true")
+	}
+}
+
+func TestRebaseReceiverMutationsComposesCallerPrefix(t *testing.T) {
+	base := ReceiverMutation{
+		Segments: []constraint.Segment{{Kind: constraint.SegmentField, Name: "target"}},
+	}
+	mutations := []ReceiverMutation{{
+		Segments: []constraint.Segment{{Kind: constraint.SegmentField, Name: "field"}},
+	}, {
+		Segments:            []constraint.Segment{{Kind: constraint.SegmentField, Name: "items"}},
+		PresentElementWrite: true,
+	}}
+
+	got := RebaseReceiverMutations(base, mutations)
+	if len(got) != 2 {
+		t.Fatalf("mutations len = %d, want 2: %#v", len(got), got)
+	}
+	wantFirst := []constraint.Segment{
+		{Kind: constraint.SegmentField, Name: "target"},
+		{Kind: constraint.SegmentField, Name: "field"},
+	}
+	for i := range wantFirst {
+		if got[0].Segments[i] != wantFirst[i] {
+			t.Fatalf("first segment[%d] = %v, want %v", i, got[0].Segments[i], wantFirst[i])
+		}
+	}
+	if got[0].PresentElementWrite {
+		t.Fatal("first PresentElementWrite = true, want false")
+	}
+	if !got[1].PresentElementWrite {
+		t.Fatal("second PresentElementWrite = false, want true")
+	}
+	if got[1].Segments[0] != base.Segments[0] || got[1].Segments[1].Name != "items" {
+		t.Fatalf("second mutation was not rebased: %#v", got[1])
+	}
+}
+
+func TestRebaseReceiverMutationsTreatsEmptyMutationListAsBaseWrite(t *testing.T) {
+	base := ReceiverMutation{
+		Segments:            []constraint.Segment{{Kind: constraint.SegmentField, Name: "target"}},
+		PresentElementWrite: true,
+	}
+
+	got := RebaseReceiverMutations(base, nil)
+	if len(got) != 1 {
+		t.Fatalf("mutations len = %d, want 1: %#v", len(got), got)
+	}
+	if len(got[0].Segments) != 1 || got[0].Segments[0] != base.Segments[0] {
+		t.Fatalf("base mutation not preserved: %#v", got[0])
+	}
+	if !got[0].PresentElementWrite {
+		t.Fatal("PresentElementWrite = false, want true")
 	}
 }
 
