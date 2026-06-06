@@ -102,11 +102,7 @@ func (f PathAliasFacts) AliasesCoveringAddress(value StableAddress) []PathAliasU
 	}
 	var out []PathAliasUse
 	for _, entry := range f.entries {
-		entryAddr, ok := StableAddressFromKey(entry.Value)
-		if !ok {
-			continue
-		}
-		remainder, ok := value.RemainderAfterPrefix(entryAddr)
+		remainder, ok := value.RemainderAfterAddressKey(entry.Value)
 		if !ok {
 			continue
 		}
@@ -127,9 +123,7 @@ func (f PathAliasFacts) KillAffectedByWriteAddress(write StableAddress) PathAlia
 	}
 	entries := make([]PathAliasFact, 0, len(f.entries))
 	for _, entry := range f.entries {
-		valueAddr, valueOK := StableAddressFromKey(entry.Value)
-		sourceAddr, sourceOK := StableAddressFromKey(entry.Source)
-		if (valueOK && valueAddr.Overlaps(write)) || (sourceOK && sourceAddr.Overlaps(write)) {
+		if AddressKeyOverlaps(entry.Value, write) || AddressKeyOverlaps(entry.Source, write) {
 			continue
 		}
 		entries = append(entries, entry)

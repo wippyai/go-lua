@@ -195,6 +195,32 @@ func TestStableAddressRemainderAfterPrefixIsStructuredAndDefensive(t *testing.T)
 	}
 }
 
+func TestStableAddressKeyRelationsOwnKeyParsing(t *testing.T) {
+	root := constraint.NewPath(cfg.SymbolID(28), "root")
+	child := root.Field("child").IndexStr("id")
+	other := constraint.NewPath(cfg.SymbolID(29), "root").Field("child")
+
+	rootAddr, _ := StableAddressOfPath(root)
+	childAddr, _ := StableAddressOfPath(child)
+
+	remainder, ok := childAddr.RemainderAfterAddressKey(StablePathKey(root))
+	if !ok {
+		t.Fatal("child should be under root key")
+	}
+	if len(remainder) != 2 || remainder[0].Name != "child" || remainder[1].Name != "id" {
+		t.Fatalf("remainder = %#v, want child/id suffix", remainder)
+	}
+	if _, ok := childAddr.RemainderAfterAddressKey(StablePathKey(other)); ok {
+		t.Fatalf("different symbol key covered child address")
+	}
+	if !AddressKeyOverlaps(StablePathKey(child), rootAddr) {
+		t.Fatalf("child key should overlap root address")
+	}
+	if AddressKeyOverlaps(StablePathKey(other), rootAddr) {
+		t.Fatalf("different symbol key should not overlap root address")
+	}
+}
+
 func TestStableAddressOfRootAndSuffixKeepsVocabularyCanonical(t *testing.T) {
 	root, _ := SymbolPathRoot(cfg.SymbolID(27))
 	suffix := PathSuffixOfSegments([]constraint.Segment{

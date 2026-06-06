@@ -111,11 +111,7 @@ func (f ValueOriginFacts) OriginsCoveringAddress(value StableAddress) []ValueOri
 	}
 	var out []ValueOriginUse
 	for _, entry := range f.entries {
-		entryAddr, ok := StableAddressFromKey(entry.Value)
-		if !ok {
-			continue
-		}
-		remainder, ok := value.RemainderAfterPrefix(entryAddr)
+		remainder, ok := value.RemainderAfterAddressKey(entry.Value)
 		if !ok {
 			continue
 		}
@@ -136,9 +132,7 @@ func (f ValueOriginFacts) KillAffectedByWriteAddress(write StableAddress) ValueO
 	}
 	entries := make([]ValueOriginFact, 0, len(f.entries))
 	for _, entry := range f.entries {
-		valueAddr, valueOK := StableAddressFromKey(entry.Value)
-		sourceAddr, sourceOK := StableAddressFromKey(entry.Source)
-		if (valueOK && valueAddr.Overlaps(write)) || (sourceOK && sourceAddr.Overlaps(write)) {
+		if AddressKeyOverlaps(entry.Value, write) || AddressKeyOverlaps(entry.Source, write) {
 			continue
 		}
 		entries = append(entries, entry)
