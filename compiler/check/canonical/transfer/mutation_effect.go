@@ -153,35 +153,23 @@ func (t *Transfer) invalidateKeyFactsForPlaceWithValue(
 	if !ok {
 		return false
 	}
-	beforeKeyPresence := out.KeyPresence
-	beforeValueOrigins := out.ValueOrigins
-	beforePathAliases := out.PathAliases
-	beforeIndexWrites := out.IndexWrites
+	effect := flow.AddressWriteInvalidation{
+		Write:               addr,
+		PresentElementWrite: presentElementWrite && len(place.Steps) > 0,
+		Written:             presentElementValue,
+	}
 	if presentElementWrite && len(place.Steps) > 0 {
 		if arrayPath, member, ok := presentElementMemberWriteFootprint(place); ok {
 			if arrayAddr, ok := flow.StableAddressOfPath(arrayPath); ok {
-				out.KeyPresence = out.KeyPresence.KillAffectedByPresentElementMemberWriteAddress(arrayAddr, member)
+				effect.PresentElementArray = arrayAddr
+				effect.HasPresentElementArray = true
+				effect.PresentElementMember = member
 			} else {
-				out.KeyPresence = out.KeyPresence.KillAffectedByPresentElementWriteAddress(addr)
+				effect.PresentElementMember = nil
 			}
-		} else {
-			out.KeyPresence = out.KeyPresence.KillAffectedByPresentElementWriteAddress(addr)
 		}
-		written := presentElementValue
-		if written.IsZero() {
-			written = product.PresentDynamic()
-		}
-		out.IndexWrites = out.IndexWrites.PreservePresentElementWriteAddress(addr, written)
-	} else {
-		out.KeyPresence = out.KeyPresence.KillAffectedByWriteAddress(addr)
-		out.IndexWrites = out.IndexWrites.KillAffectedByWriteAddress(addr)
 	}
-	out.ValueOrigins = out.ValueOrigins.KillAffectedByWriteAddress(addr)
-	out.PathAliases = out.PathAliases.KillAffectedByWriteAddress(addr)
-	return !flow.KeyPresenceFactsDomain.Equal(beforeKeyPresence, out.KeyPresence) ||
-		!flow.ValueOriginFactsDomain.Equal(beforeValueOrigins, out.ValueOrigins) ||
-		!flow.PathAliasFactsDomain.Equal(beforePathAliases, out.PathAliases) ||
-		!flow.IndexWriteAdmissionFactsDomain.Equal(beforeIndexWrites, out.IndexWrites)
+	return flow.ApplyAddressWriteInvalidation(out, effect)
 }
 
 func presentElementMemberWriteFootprint(place Place) (constraint.Path, []constraint.Segment, bool) {
