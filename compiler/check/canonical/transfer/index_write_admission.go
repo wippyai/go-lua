@@ -99,19 +99,12 @@ func (t *Transfer) refineByIndexWriteAdmission(
 		return product.AbstractValue{}, false
 	}
 	keyType := flow.NormalizeDynamicKeyType(product.ProjectValueOrUnknown(key))
-	targetAddr, ok := flow.StableAddressOfPath(targetPath)
-	if !ok {
-		return product.AbstractValue{}, false
-	}
 	keyPaths := t.indexWriteReadKeyPaths(out, e.Key)
+	facts := flow.PointFactsOf(*out)
 	for _, keyPath := range keyPaths {
-		keyAddr, ok := flow.StableAddressOfPath(keyPath)
-		if !ok {
-			continue
-		}
-		if admitted, ok := out.IndexWrites.AdmissionAtAddress(flow.IndexWriteAddressQuery{
-			Target:     targetAddr,
-			KeyPath:    keyAddr,
+		if admitted, ok := facts.IndexWriteAdmission(flow.IndexWritePathQuery{
+			Target:     targetPath,
+			KeyPath:    keyPath,
 			HasKeyPath: true,
 			KeyValue:   product.FromType(keyType),
 		}); ok && !admitted.IsZero() {
@@ -121,8 +114,8 @@ func (t *Transfer) refineByIndexWriteAdmission(
 	if !indexWriteReadCanUseKeyValueOnly(keyType) {
 		return product.AbstractValue{}, false
 	}
-	admitted, ok := out.IndexWrites.AdmissionAtAddress(flow.IndexWriteAddressQuery{
-		Target:   targetAddr,
+	admitted, ok := facts.IndexWriteAdmission(flow.IndexWritePathQuery{
+		Target:   targetPath,
 		KeyValue: product.FromType(keyType),
 	})
 	if !ok || admitted.IsZero() {
@@ -136,22 +129,10 @@ func (t *Transfer) indexWriteReadKeyPaths(out *flow.PointState, key ast.Expr) []
 	if !ok || keyPath.Symbol == 0 {
 		return nil
 	}
-	keyAddr, ok := flow.StableAddressOfPath(keyPath)
-	if !ok {
-		return nil
-	}
 	if out == nil {
 		return []constraint.Path{keyPath}
 	}
-	addrs := flow.IdentityAliasClosure(*out, keyAddr)
-	outPaths := make([]constraint.Path, 0, len(addrs))
-	for _, addr := range addrs {
-		path, ok := addr.Path()
-		if ok && !path.IsEmpty() {
-			outPaths = append(outPaths, path)
-		}
-	}
-	return outPaths
+	return flow.PointFactsOf(*out).IdentityAliasClosurePaths(keyPath)
 }
 
 func indexWriteReadCanUseKeyValueOnly(keyType typ.Type) bool {

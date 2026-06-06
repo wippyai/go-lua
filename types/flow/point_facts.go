@@ -184,6 +184,52 @@ func (f PointFacts) LengthLowerBound(path constraint.Path) (int64, bool) {
 	return lower, ok
 }
 
+// HasKeyPresence reports whether the key-presence axis proves table[key] is
+// present for structured paths.
+func (f PointFacts) HasKeyPresence(table, key constraint.Path) bool {
+	tableAddr, tableOK := StableAddressOfPath(table)
+	keyAddr, keyOK := StableAddressOfPath(key)
+	return tableOK && keyOK && f.state.KeyPresence.HasAddresses(tableAddr, keyAddr)
+}
+
+// HasKeyValuePresence reports whether key-presence also tracks the value path
+// produced by table[key].
+func (f PointFacts) HasKeyValuePresence(table, key, value constraint.Path) bool {
+	tableAddr, tableOK := StableAddressOfPath(table)
+	keyAddr, keyOK := StableAddressOfPath(key)
+	valueAddr, valueOK := StableAddressOfPath(value)
+	return tableOK && keyOK && valueOK && f.state.KeyPresence.HasValueAddresses(tableAddr, keyAddr, valueAddr)
+}
+
+// IdentityAliasClosurePaths returns root plus every assignment/path alias
+// reachable through the identity-alias relation, normalized back to paths.
+func (f PointFacts) IdentityAliasClosurePaths(root constraint.Path) []constraint.Path {
+	rootAddr, ok := StableAddressOfPath(root)
+	if !ok {
+		return nil
+	}
+	addrs := IdentityAliasClosure(f.state, rootAddr)
+	out := make([]constraint.Path, 0, len(addrs))
+	for _, addr := range addrs {
+		path, ok := addr.Path()
+		if ok && !path.IsEmpty() {
+			out = append(out, path)
+		}
+	}
+	return out
+}
+
+// IndexWritePathQuery is the structured-path query form for admitted dynamic
+// index writes.
+type IndexWritePathQuery struct {
+	Target       constraint.Path
+	KeyPath      constraint.Path
+	HasKeyPath   bool
+	KeyValue     product.AbstractValue
+	ValuePath    constraint.Path
+	HasValuePath bool
+}
+
 // IndexWriteAdmissionAtAddress returns the value admitted by a dynamic index
 // write proven in this point state using normalized address-domain evidence.
 func (f PointFacts) IndexWriteAdmissionAtAddress(q IndexWriteAddressQuery) (typ.Type, bool) {
@@ -196,6 +242,36 @@ func (f PointFacts) IndexWriteAdmissionAtAddress(q IndexWriteAddressQuery) (typ.
 		return nil, false
 	}
 	return t, true
+}
+
+// IndexWriteAdmission returns the value admitted by a dynamic index write using
+// structured paths. PointFacts owns the path-to-address normalization for reads.
+func (f PointFacts) IndexWriteAdmission(q IndexWritePathQuery) (product.AbstractValue, bool) {
+	target, ok := StableAddressOfPath(q.Target)
+	if !ok {
+		return product.AbstractValue{}, false
+	}
+	addressQuery := IndexWriteAddressQuery{
+		Target:   target,
+		KeyValue: q.KeyValue,
+	}
+	if q.HasKeyPath {
+		key, ok := StableAddressOfPath(q.KeyPath)
+		if !ok {
+			return product.AbstractValue{}, false
+		}
+		addressQuery.KeyPath = key
+		addressQuery.HasKeyPath = true
+	}
+	if q.HasValuePath {
+		value, ok := StableAddressOfPath(q.ValuePath)
+		if !ok {
+			return product.AbstractValue{}, false
+		}
+		addressQuery.ValuePath = value
+		addressQuery.HasValuePath = true
+	}
+	return f.state.IndexWrites.AdmissionAtAddress(addressQuery)
 }
 
 func productType(av product.AbstractValue, ok bool) (typ.Type, bool) {
