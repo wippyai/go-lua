@@ -70,14 +70,14 @@ func (t *Transfer) invalidateStaticMembersForPlace(out *flow.PointState, place P
 		return false
 	}
 	if path, ok := place.StaticPath(); ok && path.Symbol != 0 {
-		return staticMembers.invalidateWritePath(out, path)
+		return flow.InvalidateStaticMemberWritePath(out, path)
 	}
 	path, ok := place.StaticPrefixPath()
 	if !ok || path.Symbol == 0 {
 		return false
 	}
 	if addr, ok := flow.StableAddressOfPath(path); ok {
-		return staticMembers.killSubtree(out, addr)
+		return flow.KillStaticMemberSubtree(out, addr)
 	}
 	return false
 }

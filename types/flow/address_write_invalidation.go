@@ -17,8 +17,9 @@ type AddressWriteInvalidation struct {
 }
 
 // ApplyAddressWriteInvalidation applies the shared write-kill law for address
-// indexed point facts. StaticMembers is intentionally excluded: transfer owns
-// its branch-specific prefix-bottoming rule before applying subtree kills.
+// indexed point facts. StaticMembers is intentionally excluded from this generic
+// reducer because it has a dedicated prefix-bottoming rule; see
+// InvalidateStaticMemberWritePath.
 func ApplyAddressWriteInvalidation(out *PointState, effect AddressWriteInvalidation) bool {
 	if out == nil || effect.Write.Key() == "" {
 		return false

@@ -100,6 +100,42 @@ func TestStaticMemberFactsAddressAPIIsCanonicalSurface(t *testing.T) {
 	}
 }
 
+func TestInvalidateStaticMemberWritePathBottomsAncestorsAndKillsSubtree(t *testing.T) {
+	root := cfg.SymbolID(9)
+	parentPath := constraint.NewPath(root, "root").Field("cfg")
+	childPath := constraint.NewPath(root, "root").Field("cfg").Field("value")
+	otherPath := constraint.NewPath(root, "root").Field("other")
+	parent, ok := StableAddressOfPath(parentPath)
+	if !ok {
+		t.Fatal("parent address did not build")
+	}
+	child, ok := StableAddressOfPath(childPath)
+	if !ok {
+		t.Fatal("child address did not build")
+	}
+	other, ok := StableAddressOfPath(otherPath)
+	if !ok {
+		t.Fatal("other address did not build")
+	}
+	out := PointState{StaticMembers: StaticMemberFactsDomain.Top()}
+	SetStaticMemberFact(&out, parent, product.FromType(typ.NewRecord().Build()))
+	SetStaticMemberFact(&out, child, product.FromType(typ.String))
+	SetStaticMemberFact(&out, other, product.FromType(typ.Number))
+
+	if !InvalidateStaticMemberWritePath(&out, childPath) {
+		t.Fatal("InvalidateStaticMemberWritePath reported no change")
+	}
+	if _, ok := out.StaticMembers.ValueAtAddress(child); ok {
+		t.Fatalf("write invalidation kept written subtree: %s", out.StaticMembers.Format())
+	}
+	if _, ok := out.StaticMembers.ValueAtAddress(parent); ok {
+		t.Fatalf("write invalidation kept stale ancestor fact: %s", out.StaticMembers.Format())
+	}
+	if got, ok := out.StaticMembers.ValueAtAddress(other); !ok || !typ.TypeEquals(got.ProjectValue(), typ.Number) {
+		t.Fatalf("write invalidation touched unrelated fact: %s", out.StaticMembers.Format())
+	}
+}
+
 func staticMemberFactsSample() []StaticMemberFacts {
 	pField := SymbolPathKey(cfg.SymbolID(1), []constraint.Segment{{Kind: constraint.SegmentField, Name: "foo"}})
 	pIndex := SymbolPathKey(cfg.SymbolID(1), []constraint.Segment{{Kind: constraint.SegmentIndexString, Name: "foo"}})

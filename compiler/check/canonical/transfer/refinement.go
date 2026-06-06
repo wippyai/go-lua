@@ -115,7 +115,7 @@ func (t *Transfer) applyRefinementEffect(out *flow.PointState, effect Refinement
 		}
 		t.writeRefinedRoot(out, effect.Place.Root, refinedValue)
 		if addr, ok := symbolStableAddress(effect.Place); ok {
-			staticMembers.set(out, addr, product.FromType(effect.Target))
+			flow.SetStaticMemberFact(out, addr, product.FromType(effect.Target))
 		}
 		return true
 	case RefinementLengthLowerBound:
@@ -182,12 +182,12 @@ func (t *Transfer) refineStaticMemberFactForLengthLower(out *flow.PointState, pa
 	}
 	refined := product.NarrowLengthLowerBound(source, lower)
 	if valueIsBottom(refined) {
-		return staticMembers.killSubtree(out, addr)
+		return flow.KillStaticMemberSubtree(out, addr)
 	}
 	if !refined.DefinitelyPresent() {
 		return false
 	}
-	return staticMembers.set(out, addr, refined)
+	return flow.SetStaticMemberFact(out, addr, refined)
 }
 
 func (t *Transfer) applyStaticMemberRefinementEffect(out *flow.PointState, effect StaticMemberRefinementEffect) bool {
@@ -205,9 +205,9 @@ func (t *Transfer) applyStaticMemberRefinementEffect(out *flow.PointState, effec
 	if existing, ok := out.StaticMembers.ValueAtAddress(addr); ok {
 		refined, ok := refinedStaticMemberValue(existing, true, effect.Base, effect.HasBase, path.Segments, effect.Check, effect.TypeName)
 		if !ok || refined.IsZero() || !refined.DefinitelyPresent() {
-			return staticMembers.killSubtree(out, addr)
+			return flow.KillStaticMemberSubtree(out, addr)
 		}
-		return staticMembers.set(out, addr, refined)
+		return flow.SetStaticMemberFact(out, addr, refined)
 	}
 	if !staticMemberGuardImpliesPresence(effect.Check, effect.TypeName) {
 		return false
@@ -222,7 +222,7 @@ func (t *Transfer) applyStaticMemberRefinementEffect(out *flow.PointState, effec
 	if !ok || refined.IsZero() || !refined.DefinitelyPresent() {
 		return false
 	}
-	return staticMembers.set(out, addr, refined)
+	return flow.SetStaticMemberFact(out, addr, refined)
 }
 
 func refinedStaticMemberValue(

@@ -1964,9 +1964,9 @@ func (t *Transfer) refineStaticMemberFactForLiteralComparison(
 		return true
 	}
 	if !next.DefinitelyPresent() {
-		return staticMembers.killSubtree(out, addr)
+		return flow.KillStaticMemberSubtree(out, addr)
 	}
-	return staticMembers.set(out, addr, next)
+	return flow.SetStaticMemberFact(out, addr, next)
 }
 
 func narrowLiteralAtPlace(t typ.Type, steps []PlaceStep, lit *typ.Literal, include bool) typ.Type {
