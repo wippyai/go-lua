@@ -105,3 +105,104 @@ func TestPlaceDynamicLiteralIndexConvertsToSegment(t *testing.T) {
 		t.Fatalf("segment kind = %#v, want %#v", got, want)
 	}
 }
+
+func TestPlaceAssignRootValueWritesNestedStaticMember(t *testing.T) {
+	t.Parallel()
+
+	p := Place{
+		Root:     7,
+		RootName: "record",
+		Steps: []Step{
+			{Kind: StepStaticMember, Member: value.MemberField("payload")},
+			{Kind: StepStaticMember, Member: value.MemberField("id")},
+		},
+	}
+	root := product.FromType(typ.NewRecord().Build())
+	want := product.FromType(typ.String)
+
+	updated, ok := p.AssignRootValue(root, want, nil)
+	if !ok {
+		t.Fatal("AssignRootValue() unexpectedly false")
+	}
+	payload, ok := product.MemberOf(updated, value.MemberField("payload"))
+	if !ok {
+		t.Fatal("payload member missing")
+	}
+	got, ok := product.MemberOf(payload, value.MemberField("id"))
+	if !ok {
+		t.Fatal("payload.id member missing")
+	}
+	if !product.Domain.Equal(got, want) {
+		t.Fatalf("payload.id = %v, want %v", got.ProjectValue(), want.ProjectValue())
+	}
+}
+
+func TestPlaceAssignRootValueUsesFinalDynamicWriter(t *testing.T) {
+	t.Parallel()
+
+	key := product.FromType(typ.LiteralString("active"))
+	val := product.FromType(typ.Number)
+	p := Place{
+		Root:     8,
+		RootName: "items",
+		Steps:    []Step{{Kind: StepDynamicIndex, Key: key}},
+	}
+
+	called := false
+	updated, ok := p.AssignRootValue(product.FromType(typ.NewRecord().Build()), val,
+		func(base product.AbstractValue, step Step, gotVal product.AbstractValue) (product.AbstractValue, bool) {
+			called = true
+			if step.Kind != StepDynamicIndex || !product.Domain.Equal(step.Key, key) {
+				t.Fatalf("dynamic step = %#v, want key %v", step, key.ProjectValue())
+			}
+			if !product.Domain.Equal(gotVal, val) {
+				t.Fatalf("value = %v, want %v", gotVal.ProjectValue(), val.ProjectValue())
+			}
+			return product.WriteIndexForeign(base, step.Key, gotVal), true
+		})
+	if !ok {
+		t.Fatal("AssignRootValue() unexpectedly false")
+	}
+	if !called {
+		t.Fatal("final dynamic writer was not called")
+	}
+	got, ok := product.IndexOf(updated, key)
+	if !ok {
+		t.Fatal("dynamic index missing after assignment")
+	}
+	if !product.Domain.Equal(got, val) {
+		t.Fatalf("dynamic index = %v, want %v", got.ProjectValue(), val.ProjectValue())
+	}
+}
+
+func TestPlaceUpdateRootValueCreatesMissingIntermediateRecord(t *testing.T) {
+	t.Parallel()
+
+	p := Place{
+		Root:     9,
+		RootName: "root",
+		Steps: []Step{
+			{Kind: StepStaticMember, Member: value.MemberField("child")},
+			{Kind: StepStaticMember, Member: value.MemberField("count")},
+		},
+	}
+	want := product.FromType(typ.Number)
+
+	updated, ok := p.UpdateRootValue(product.FromType(typ.NewRecord().Build()), func(product.AbstractValue) (product.AbstractValue, bool) {
+		return want, true
+	})
+	if !ok {
+		t.Fatal("UpdateRootValue() unexpectedly false")
+	}
+	child, ok := product.MemberOf(updated, value.MemberField("child"))
+	if !ok {
+		t.Fatal("child member missing")
+	}
+	got, ok := product.MemberOf(child, value.MemberField("count"))
+	if !ok {
+		t.Fatal("child.count member missing")
+	}
+	if !product.Domain.Equal(got, want) {
+		t.Fatalf("child.count = %v, want %v", got.ProjectValue(), want.ProjectValue())
+	}
+}

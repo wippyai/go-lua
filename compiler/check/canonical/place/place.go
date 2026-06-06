@@ -44,6 +44,13 @@ type Step struct {
 	Key    product.AbstractValue
 }
 
+// ValueUpdater rewrites the value currently stored at a Place.
+type ValueUpdater func(product.AbstractValue) (product.AbstractValue, bool)
+
+// FinalDynamicWriter writes a final dynamic index step. It lets callers choose
+// exact lvalue semantics while Place owns traversal through the root value.
+type FinalDynamicWriter func(product.AbstractValue, Step, product.AbstractValue) (product.AbstractValue, bool)
+
 // FromStaticPath converts a fully-static constraint.Path into a Place.
 // It is lossless for paths with dynamic-free segments, returning false for
 // placeholder/static-member-incompatible segments.
@@ -118,6 +125,26 @@ func (p Place) StaticPathKey() (constraint.PathKey, bool) {
 	return path.Key(), true
 }
 
+// UpdateRootValue applies update at p inside root and returns the rebuilt root.
+func (p Place) UpdateRootValue(root product.AbstractValue, update ValueUpdater) (product.AbstractValue, bool) {
+	if update == nil {
+		return product.AbstractValue{}, false
+	}
+	return updateValueAtSteps(root, p.Steps, update)
+}
+
+// AssignRootValue writes val at p inside root and returns the rebuilt root.
+func (p Place) AssignRootValue(
+	root product.AbstractValue,
+	val product.AbstractValue,
+	finalDynamic FinalDynamicWriter,
+) (product.AbstractValue, bool) {
+	if val.IsZero() {
+		return product.AbstractValue{}, false
+	}
+	return assignValueAtSteps(root, p.Steps, val, finalDynamic)
+}
+
 // String returns a deterministic location string representation.
 func (p Place) String() string {
 	root := p.RootName
@@ -162,6 +189,113 @@ func SegmentFromStep(step Step) (constraint.Segment, bool) {
 		return staticIndexSegmentFromValue(step.Key)
 	default:
 		return constraint.Segment{}, false
+	}
+}
+
+func updateValueAtSteps(
+	base product.AbstractValue,
+	steps []Step,
+	update ValueUpdater,
+) (product.AbstractValue, bool) {
+	if len(steps) == 0 {
+		return update(base)
+	}
+	step := steps[0]
+	child, ok := readStep(base, step)
+	if !ok || child.IsZero() {
+		child = product.FromType(typ.NewRecord().Build())
+	} else {
+		child = product.NarrowPresent(child)
+	}
+	updatedChild, ok := updateValueAtSteps(child, steps[1:], update)
+	if !ok || updatedChild.IsZero() {
+		return product.AbstractValue{}, false
+	}
+	return writeStep(base, step, updatedChild)
+}
+
+func assignValueAtSteps(
+	base product.AbstractValue,
+	steps []Step,
+	val product.AbstractValue,
+	finalDynamic FinalDynamicWriter,
+) (product.AbstractValue, bool) {
+	if len(steps) == 0 {
+		return val, true
+	}
+	step := steps[0]
+	if len(steps) == 1 {
+		return writeFinalStep(base, step, val, finalDynamic)
+	}
+	child, ok := readStep(base, step)
+	if !ok || child.IsZero() {
+		child = product.FromType(typ.NewRecord().Build())
+	} else {
+		child = product.NarrowPresent(child)
+	}
+	updatedChild, ok := assignValueAtSteps(child, steps[1:], val, finalDynamic)
+	if !ok || updatedChild.IsZero() {
+		return product.AbstractValue{}, false
+	}
+	return writeStep(base, step, updatedChild)
+}
+
+func readStep(base product.AbstractValue, step Step) (product.AbstractValue, bool) {
+	if base.IsZero() {
+		return product.AbstractValue{}, false
+	}
+	switch step.Kind {
+	case StepStaticMember:
+		return product.MemberOf(base, step.Member)
+	case StepDynamicIndex:
+		if step.Key.IsZero() {
+			return product.AbstractValue{}, false
+		}
+		return product.IndexOf(base, step.Key)
+	default:
+		return product.AbstractValue{}, false
+	}
+}
+
+func writeStep(base product.AbstractValue, step Step, child product.AbstractValue) (product.AbstractValue, bool) {
+	if base.IsZero() || child.IsZero() {
+		return product.AbstractValue{}, false
+	}
+	switch step.Kind {
+	case StepStaticMember:
+		return product.WithMember(base, step.Member, child), true
+	case StepDynamicIndex:
+		if step.Key.IsZero() {
+			return product.AbstractValue{}, false
+		}
+		return product.MutateIndex(base, step.Key, child), true
+	default:
+		return product.AbstractValue{}, false
+	}
+}
+
+func writeFinalStep(
+	base product.AbstractValue,
+	step Step,
+	val product.AbstractValue,
+	finalDynamic FinalDynamicWriter,
+) (product.AbstractValue, bool) {
+	if base.IsZero() || val.IsZero() {
+		return product.AbstractValue{}, false
+	}
+	switch step.Kind {
+	case StepStaticMember:
+		return product.WithMember(base, step.Member, val), true
+	case StepDynamicIndex:
+		if step.Key.IsZero() {
+			return product.AbstractValue{}, false
+		}
+		if finalDynamic != nil {
+			return finalDynamic(base, step, val)
+		}
+		return product.WriteIndexForeign(base, step.Key, val), true
+	default:
+		return product.AbstractValue{}, false
 	}
 }
 

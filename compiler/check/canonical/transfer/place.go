@@ -21,9 +21,9 @@ const (
 	PlaceStepDynamicIndex = place.StepDynamicIndex
 )
 
-type placeValueUpdater func(product.AbstractValue) (product.AbstractValue, bool)
+type placeValueUpdater = place.ValueUpdater
 
-type finalPlaceWriter func(product.AbstractValue, PlaceStep, product.AbstractValue) (product.AbstractValue, bool)
+type finalPlaceWriter = place.FinalDynamicWriter
 
 type staticAccess struct {
 	Root  *ast.IdentExpr
@@ -249,7 +249,7 @@ func (t *Transfer) updatePlace(
 	update placeValueUpdater,
 ) (product.AbstractValue, bool, bool) {
 	return t.rewritePlace(out, p, func(root product.AbstractValue) (product.AbstractValue, bool) {
-		return t.updateValueAtPlace(root, p.Steps, update)
+		return p.UpdateRootValue(root, update)
 	})
 }
 
@@ -267,7 +267,7 @@ func (t *Transfer) assignPlaceValue(
 		return product.AbstractValue{}, false, false
 	}
 	return t.rewritePlace(out, p, func(root product.AbstractValue) (product.AbstractValue, bool) {
-		return t.assignValueAtPlace(root, p.Steps, val, finalDynamic)
+		return p.AssignRootValue(root, val, finalDynamic)
 	})
 }
 
@@ -291,117 +291,6 @@ func (t *Transfer) rewritePlace(
 		return product.AbstractValue{}, false, false
 	}
 	return updated, targetsCell, true
-}
-
-func (t *Transfer) updateValueAtPlace(
-	base product.AbstractValue,
-	steps []PlaceStep,
-	update placeValueUpdater,
-) (product.AbstractValue, bool) {
-	if len(steps) == 0 {
-		return update(base)
-	}
-	step := steps[0]
-	child, ok := t.readPlaceStep(base, step)
-	if !ok || child.IsZero() {
-		child = product.FromType(typ.NewRecord().Build())
-	} else {
-		child = product.NarrowPresent(child)
-	}
-	updatedChild, ok := t.updateValueAtPlace(child, steps[1:], update)
-	if !ok || updatedChild.IsZero() {
-		return product.AbstractValue{}, false
-	}
-	return t.writePlaceStep(base, step, updatedChild)
-}
-
-func (t *Transfer) assignValueAtPlace(
-	base product.AbstractValue,
-	steps []PlaceStep,
-	val product.AbstractValue,
-	finalDynamic finalPlaceWriter,
-) (product.AbstractValue, bool) {
-	if len(steps) == 0 {
-		return val, true
-	}
-	step := steps[0]
-	if len(steps) == 1 {
-		return t.writeFinalPlaceStep(base, step, val, finalDynamic)
-	}
-	child, ok := t.readPlaceStep(base, step)
-	if !ok || child.IsZero() {
-		child = product.FromType(typ.NewRecord().Build())
-	} else {
-		child = product.NarrowPresent(child)
-	}
-	updatedChild, ok := t.assignValueAtPlace(child, steps[1:], val, finalDynamic)
-	if !ok || updatedChild.IsZero() {
-		return product.AbstractValue{}, false
-	}
-	return t.writePlaceStep(base, step, updatedChild)
-}
-
-func (t *Transfer) readPlaceStep(base product.AbstractValue, step PlaceStep) (product.AbstractValue, bool) {
-	if base.IsZero() {
-		return product.AbstractValue{}, false
-	}
-	switch step.Kind {
-	case PlaceStepStaticMember:
-		return product.MemberOf(base, step.Member)
-	case PlaceStepDynamicIndex:
-		if step.Key.IsZero() {
-			return product.AbstractValue{}, false
-		}
-		return product.IndexOf(base, step.Key)
-	default:
-		return product.AbstractValue{}, false
-	}
-}
-
-func (t *Transfer) writePlaceStep(
-	base product.AbstractValue,
-	step PlaceStep,
-	child product.AbstractValue,
-) (product.AbstractValue, bool) {
-	if base.IsZero() || child.IsZero() {
-		return product.AbstractValue{}, false
-	}
-	switch step.Kind {
-	case PlaceStepStaticMember:
-		return product.WithMember(base, step.Member, child), true
-	case PlaceStepDynamicIndex:
-		if step.Key.IsZero() {
-			return product.AbstractValue{}, false
-		}
-		return product.MutateIndex(base, step.Key, child), true
-	default:
-		return product.AbstractValue{}, false
-	}
-}
-
-func (t *Transfer) writeFinalPlaceStep(
-	base product.AbstractValue,
-	step PlaceStep,
-	val product.AbstractValue,
-	finalDynamic finalPlaceWriter,
-) (product.AbstractValue, bool) {
-	if base.IsZero() || val.IsZero() {
-		return product.AbstractValue{}, false
-	}
-	switch step.Kind {
-	case PlaceStepStaticMember:
-		return product.WithMember(base, step.Member, val), true
-	case PlaceStepDynamicIndex:
-		if step.Key.IsZero() {
-			return product.AbstractValue{}, false
-		}
-		if finalDynamic != nil {
-			return finalDynamic(base, step, val)
-		}
-		return product.WriteIndexForeign(base, step.Key, val), true
-	default:
-		return product.AbstractValue{}, false
-	}
 }
 
 func (t *Transfer) placeOfAssignTarget(
