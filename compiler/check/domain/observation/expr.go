@@ -1337,7 +1337,8 @@ func (f factsIndexReadFlow) IndexWriteAdmission(q flow.IndexWriteReadQuery) (typ
 	if !q.Admission.HasKeyPath || f.valueOrigin == nil {
 		return nil, false
 	}
-	for _, keyAddr := range f.indexWriteAdmissionAliasAddresses(q.Point, q.Admission.KeyPath) {
+	origins := f.valueOrigin.ValueOriginsAt(q.Point)
+	for _, keyAddr := range flow.IdentityAliasClosure(flow.PointState{ValueOrigins: origins}, q.Admission.KeyPath) {
 		if keyAddr.Equal(q.Admission.KeyPath) {
 			continue
 		}
@@ -1349,40 +1350,6 @@ func (f factsIndexReadFlow) IndexWriteAdmission(q flow.IndexWriteReadQuery) (typ
 		}
 	}
 	return nil, false
-}
-
-func (f factsIndexReadFlow) indexWriteAdmissionAliasAddresses(p cfg.Point, key flow.StableAddress) []flow.StableAddress {
-	origins := f.valueOrigin.ValueOriginsAt(p)
-	if origins.IsBottom() {
-		return nil
-	}
-	var out []flow.StableAddress
-	seen := map[constraint.PathKey]struct{}{}
-	queue := []flow.StableAddress{key}
-	for len(queue) > 0 {
-		cur := queue[0]
-		queue = queue[1:]
-		curKey := cur.Key()
-		if _, ok := seen[curKey]; ok {
-			continue
-		}
-		seen[curKey] = struct{}{}
-		out = append(out, cur)
-		for _, use := range origins.OriginsCoveringAddress(cur) {
-			if use.Origin.Kind != flow.ValueOriginAssignmentAlias {
-				continue
-			}
-			source, ok := flow.StableAddressFromKey(use.Origin.Source)
-			if !ok {
-				continue
-			}
-			source, ok = source.Append(use.Remainder)
-			if ok {
-				queue = append(queue, source)
-			}
-		}
-	}
-	return out
 }
 
 func observationPathFromKey(key constraint.PathKey) (constraint.Path, bool) {
