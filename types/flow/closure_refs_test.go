@@ -238,6 +238,26 @@ func TestProjectClosureRefsByPathKeepsSubtree(t *testing.T) {
 	}
 }
 
+func TestClosureRefRootSymbolsUsesAddressRoots(t *testing.T) {
+	root := constraint.NewPath(cfg.SymbolID(55), "root")
+	child := root.Field("child")
+	other := constraint.NewPath(cfg.SymbolID(56), "other")
+	named, ok := StableAddressOfRoot("placeholder", nil)
+	if !ok {
+		t.Fatal("named root address did not build")
+	}
+	closure := ClosureRefOf(FunctionRef{GraphID: 9}, CaptureCellsDomain.Bottom(), nil)
+	refs := WithClosureRefAddress(nil, testStableAddressPath(t, root), ClosureRefSetOf(closure))
+	refs = WithClosureRefAddress(refs, testStableAddressPath(t, child), ClosureRefSetTop())
+	refs = WithClosureRefAddress(refs, testStableAddressPath(t, other), ClosureRefSetOf(closure))
+	refs = WithClosureRefAddress(refs, named, ClosureRefSetOf(closure))
+
+	got := ClosureRefRootSymbols(refs)
+	if len(got) != 2 || got[0] != root.Symbol || got[1] != other.Symbol {
+		t.Fatalf("root symbols = %v, want [%d %d]", got, root.Symbol, other.Symbol)
+	}
+}
+
 func TestAssignClosureRefSubtreePathCopiesAndReplacesTarget(t *testing.T) {
 	source := constraint.NewPath(cfg.SymbolID(47), "source")
 	sourceChild := source.Field("child")

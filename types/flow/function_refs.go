@@ -3,6 +3,7 @@ package flow
 import (
 	"cmp"
 	"fmt"
+	"slices"
 	"strings"
 	"sync"
 
@@ -279,6 +280,23 @@ func ProjectFunctionRefsBySymbols(refs FunctionRefs, symbols []cfg.SymbolID) Fun
 	return FunctionRefsDomain.Join(out, nil)
 }
 
+// FunctionRefRootSymbols returns the finite symbol roots that carry function
+// identity facts.
+func FunctionRefRootSymbols(refs FunctionRefs) []cfg.SymbolID {
+	if len(refs) == 0 || FunctionRefsDomain.Equal(refs, FunctionRefsDomain.Top()) {
+		return nil
+	}
+	var out []cfg.SymbolID
+	for _, path := range constraint.SortedPathKeys(refs) {
+		set := refs[path]
+		if set.IsBottom() {
+			continue
+		}
+		out = appendReferencePathRootSymbol(out, path)
+	}
+	return compactSortedSymbols(out)
+}
+
 // ProjectFunctionRefsByAddress keeps only addr and its descendants.
 func ProjectFunctionRefsByAddress(refs FunctionRefs, addr StableAddress) FunctionRefs {
 	if len(refs) == 0 || addr.Key() == "" {
@@ -379,6 +397,26 @@ func functionRefPathBelongsToSymbol(path constraint.PathKey, sym cfg.SymbolID) b
 	}
 	root, ok := StableAddressOfSymbol(sym, nil)
 	return ok && functionRefPathInAddressSubtree(path, root)
+}
+
+func appendReferencePathRootSymbol(symbols []cfg.SymbolID, path constraint.PathKey) []cfg.SymbolID {
+	addr, ok := StableAddressFromKey(path)
+	if !ok {
+		return symbols
+	}
+	sym, ok := addr.Symbol()
+	if ok && sym != 0 {
+		symbols = append(symbols, sym)
+	}
+	return symbols
+}
+
+func compactSortedSymbols(symbols []cfg.SymbolID) []cfg.SymbolID {
+	if len(symbols) == 0 {
+		return nil
+	}
+	slices.Sort(symbols)
+	return slices.Compact(symbols)
 }
 
 // WithoutFunctionRefSubtreeAddress returns refs with addr and every descendant

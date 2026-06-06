@@ -572,33 +572,13 @@ func closureCapturedSymbols(closure flow.ClosureRef) []cfg.SymbolID {
 			symbols = append(symbols, entry.Symbol)
 		}
 	}
-	symbols = appendReferenceRootSymbols(symbols, closure.EntryFunctionRefs())
-	symbols = appendClosureReferenceRootSymbols(symbols, closure.EntryClosureRefs())
+	symbols = append(symbols, flow.FunctionRefRootSymbols(closure.EntryFunctionRefs())...)
+	symbols = append(symbols, flow.ClosureRefRootSymbols(closure.EntryClosureRefs())...)
 	if len(symbols) == 0 {
 		return nil
 	}
 	slices.Sort(symbols)
 	return slices.Compact(symbols)
-}
-
-func appendReferenceRootSymbols(symbols []cfg.SymbolID, refs flow.FunctionRefs) []cfg.SymbolID {
-	for _, path := range constraint.SortedPathKeys(refs) {
-		sym, _, ok := flow.ParseSymbolPathKey(path)
-		if ok && sym != 0 {
-			symbols = append(symbols, sym)
-		}
-	}
-	return symbols
-}
-
-func appendClosureReferenceRootSymbols(symbols []cfg.SymbolID, refs flow.ClosureRefs) []cfg.SymbolID {
-	for _, path := range constraint.SortedPathKeys(refs) {
-		sym, _, ok := flow.ParseSymbolPathKey(path)
-		if ok && sym != 0 {
-			symbols = append(symbols, sym)
-		}
-	}
-	return symbols
 }
 
 func (p CallEntryContextProjection) directProductValues(callee FuncRef, call *ast.FuncCallExpr, in *flow.PointState) EntryValues {

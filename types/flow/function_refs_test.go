@@ -140,6 +140,25 @@ func TestProjectFunctionRefsByPathKeepsSubtree(t *testing.T) {
 	}
 }
 
+func TestFunctionRefRootSymbolsUsesAddressRoots(t *testing.T) {
+	root := constraint.NewPath(cfg.SymbolID(51), "root")
+	child := root.Field("child")
+	other := constraint.NewPath(cfg.SymbolID(52), "other")
+	named, ok := StableAddressOfRoot("placeholder", nil)
+	if !ok {
+		t.Fatal("named root address did not build")
+	}
+	refs := WithFunctionRefPath(nil, root, FunctionRefSetOf(FunctionRef{GraphID: 1}))
+	refs = WithFunctionRefPath(refs, child, FunctionRefSetOf(FunctionRef{GraphID: 2}))
+	refs = WithFunctionRefPath(refs, other, FunctionRefSetOf(FunctionRef{GraphID: 3}))
+	refs = WithFunctionRefAddress(refs, named, FunctionRefSetOf(FunctionRef{GraphID: 4}))
+
+	got := FunctionRefRootSymbols(refs)
+	if len(got) != 2 || got[0] != root.Symbol || got[1] != other.Symbol {
+		t.Fatalf("root symbols = %v, want [%d %d]", got, root.Symbol, other.Symbol)
+	}
+}
+
 func TestReplaceFunctionRefSubtreePathClearsAndJoins(t *testing.T) {
 	target := constraint.NewPath(43, "target")
 	child := target.Field("child")

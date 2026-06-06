@@ -288,6 +288,23 @@ func ProjectClosureRefsBySymbols(refs ClosureRefs, symbols []cfg.SymbolID) Closu
 	return ClosureRefsDomain.Join(out, nil)
 }
 
+// ClosureRefRootSymbols returns the finite symbol roots that carry closure
+// identity facts.
+func ClosureRefRootSymbols(refs ClosureRefs) []cfg.SymbolID {
+	if isClosureRefsTop(refs) || len(refs) == 0 {
+		return nil
+	}
+	var out []cfg.SymbolID
+	for _, path := range constraint.SortedPathKeys(refs) {
+		set := refs[path]
+		if set.IsBottom() {
+			continue
+		}
+		out = appendReferencePathRootSymbol(out, path)
+	}
+	return compactSortedSymbols(out)
+}
+
 // ProjectClosureRefsByAddress keeps only addr and its descendants.
 func ProjectClosureRefsByAddress(refs ClosureRefs, addr StableAddress) ClosureRefs {
 	if isClosureRefsTop(refs) {
