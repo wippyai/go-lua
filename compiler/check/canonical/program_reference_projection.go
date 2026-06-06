@@ -1,6 +1,7 @@
 package canonical
 
 import (
+	canonicalcall "github.com/wippyai/go-lua/compiler/check/canonical/call"
 	"github.com/wippyai/go-lua/compiler/check/canonical/summary"
 	"github.com/wippyai/go-lua/types/flow"
 )
@@ -86,6 +87,38 @@ func (p *program) CallEntryFunctionRefs(ref summary.FuncRef, caller flow.Functio
 
 func (p *program) CallEntryClosureRefs(ref summary.FuncRef, caller flow.ClosureRefs) flow.ClosureRefs {
 	return flow.ProjectClosureRefsByReferencePaths(caller, p.referenceProjection(ref))
+}
+
+// CallEntryContext projects caller-owned entry axes into the callee-visible
+// reference vocabulary.
+func (p *program) CallEntryContext(
+	ref summary.FuncRef,
+	cells flow.CaptureCells,
+	refs flow.FunctionRefs,
+	closures flow.ClosureRefs,
+	values summary.EntryValues,
+) canonicalcall.EntryContext {
+	return p.CallEntryContextWithFacts(ref, cells, refs, closures, values, flow.BoundaryFactsDomain.Top())
+}
+
+// CallEntryContextWithFacts preserves parameter-relative path facts alongside
+// the projected entry axes.
+func (p *program) CallEntryContextWithFacts(
+	ref summary.FuncRef,
+	cells flow.CaptureCells,
+	refs flow.FunctionRefs,
+	closures flow.ClosureRefs,
+	values summary.EntryValues,
+	facts flow.BoundaryFacts,
+) canonicalcall.EntryContext {
+	return canonicalcall.NewEntryContextWithFacts(
+		ref,
+		p.CallEntryCells(ref, cells),
+		p.CallEntryFunctionRefs(ref, refs),
+		p.CallEntryClosureRefs(ref, closures),
+		values,
+		facts,
+	)
 }
 
 func (p *program) referenceProjection(ref summary.FuncRef) flow.ReferencePathProjection {

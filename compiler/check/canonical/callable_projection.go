@@ -137,13 +137,9 @@ func (p callableProjector) closureSignature(closure flow.ClosureRef, in flow.Poi
 		return nil
 	}
 	sref := canonref.FromFlow(closure.Ref)
-	entry := canonicalcall.EntryContextFromClosureWithLiveAxes(
-		sref,
+	entry := canonicalcall.EntryContextFromClosureWithLiveContext(
 		closure,
-		p.prog.CallEntryCells(sref, in.Cells),
-		p.prog.CallEntryFunctionRefs(sref, in.FunctionRefs),
-		p.prog.CallEntryClosureRefs(sref, in.ClosureRefs),
-		nil,
+		p.prog.CallEntryContext(sref, in.Cells, in.FunctionRefs, in.ClosureRefs, nil),
 	)
 	return p.signature(closure.Ref, entry.CaptureCells(), entry.FunctionRefs(), entry.ClosureRefs())
 }
@@ -193,13 +189,11 @@ func (p callableProjector) signature(ref flow.FunctionRef, cells flow.CaptureCel
 	if sig == nil {
 		return nil
 	}
-	entryCells := p.prog.CallEntryCells(sref, cells)
-	entryRefs := p.prog.CallEntryFunctionRefs(sref, refs)
-	entryClosures := p.prog.CallEntryClosureRefs(sref, closures)
+	entry := p.prog.CallEntryContext(sref, cells, refs, closures, nil)
 	hasDeclaredReturns := false
 	if p.hasDeclaredReturns != nil {
 		hasDeclaredReturns = p.hasDeclaredReturns(sref)
 	}
-	sum := p.reader.SummarizeWithEntryContext(sref, entryCells, entryRefs, entryClosures, nil)
+	sum := p.reader.SummarizeWithEntryContext(sref, entry.CaptureCells(), entry.FunctionRefs(), entry.ClosureRefs(), nil)
 	return summary.FunctionSignatureWithProjectedReturns(sig, hasDeclaredReturns, sum)
 }

@@ -85,15 +85,25 @@ func (p cellEffectProjector) effectsForRef(
 	entryFacts flow.BoundaryFacts,
 ) flow.CaptureEffects {
 	reader := p.driver.summaryReader()
-	entry := flow.CaptureCellsDomain.Bottom()
-	entryRefs := flow.FunctionRefsDomain.Bottom()
-	entryClosures := flow.ClosureRefsDomain.Bottom()
+	entry := canonicalcall.NewEntryContextWithFacts(
+		ref,
+		flow.CaptureCellsDomain.Bottom(),
+		flow.FunctionRefsDomain.Bottom(),
+		flow.ClosureRefsDomain.Bottom(),
+		entryValues,
+		entryFacts,
+	)
 	if reader.Live() {
-		entry = p.program.CallEntryCells(ref, cells)
-		entryRefs = p.program.CallEntryFunctionRefs(ref, refs)
-		entryClosures = p.program.CallEntryClosureRefs(ref, closures)
+		entry = p.program.CallEntryContextWithFacts(ref, cells, refs, closures, entryValues, entryFacts)
 	}
-	return reader.SummarizeWithEntryContextFacts(ref, entry, entryRefs, entryClosures, entryValues, entryFacts).CellEffects
+	return reader.SummarizeWithEntryContextFacts(
+		entry.Ref(),
+		entry.CaptureCells(),
+		entry.FunctionRefs(),
+		entry.ClosureRefs(),
+		entry.EntryValues(),
+		entry.EntryFacts(),
+	).CellEffects
 }
 
 func (p cellEffectProjector) callbackSpecForCall(call *ast.FuncCallExpr, exprType func(ast.Expr) typ.Type) *contract.Spec {

@@ -32,13 +32,10 @@ func (ct callTyper) callOutcomeForTypedCall(
 		entryContext: func(target canonicalcall.SelectedTarget) canonicalcall.EntryContext {
 			ref := target.Ref()
 			entryValues := ct.callEntryValuesForRef(ref, call, exprType)
-			entryCells := flow.CaptureCellsDomain.Bottom()
-			entryRefs := flow.FunctionRefsDomain.Bottom()
 			if d.summaryReader().Live() {
-				entryCells = d.activeProgram.CallEntryCells(ref, cells)
-				entryRefs = d.activeProgram.CallEntryFunctionRefs(ref, refs)
+				return d.activeProgram.CallEntryContext(ref, cells, refs, flow.ClosureRefsDomain.Bottom(), entryValues)
 			}
-			return canonicalcall.NewEntryContext(ref, entryCells, entryRefs, flow.ClosureRefsDomain.Bottom(), entryValues)
+			return canonicalcall.NewEntryContext(ref, flow.CaptureCellsDomain.Bottom(), flow.FunctionRefsDomain.Bottom(), flow.ClosureRefsDomain.Bottom(), entryValues)
 		},
 	}.outcome()
 }

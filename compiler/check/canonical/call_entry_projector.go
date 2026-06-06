@@ -170,11 +170,8 @@ func (c callEntryProjector) resolveTargets(call *ast.FuncCallExpr, in *flow.Poin
 	access := c.access()
 	targets := c.typer.resolveCallTargets(call, c.program, in.FunctionRefs, in.ClosureRefs)
 	return canonicalcall.SummaryEntryTargetsWithLiveContext(targets, func(ref summary.FuncRef) canonicalcall.EntryContext {
-		cells := c.program.CallEntryCells(ref, in.Cells)
-		refs := c.program.CallEntryFunctionRefs(ref, in.FunctionRefs)
-		closures := c.program.CallEntryClosureRefs(ref, in.ClosureRefs)
 		entryFacts := access.pointFacts(ref, call, in)
-		return canonicalcall.NewEntryContextWithFacts(ref, cells, refs, closures, nil, entryFacts)
+		return c.program.CallEntryContextWithFacts(ref, in.Cells, in.FunctionRefs, in.ClosureRefs, nil, entryFacts)
 	})
 }
 
