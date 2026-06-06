@@ -165,6 +165,18 @@ func EntryValuesFromFunctionParams(fn *typ.Function) EntryValues {
 	return out
 }
 
+// EntryValueContextMerge applies the summary-key rule for combining an exact
+// entry context with aggregate fallback evidence.
+type EntryValueContextMerge struct {
+	Fixed    EntryValues
+	Fallback EntryValues
+}
+
+// Values returns fixed entry evidence plus fallback slots not explicitly fixed.
+func (m EntryValueContextMerge) Values() EntryValues {
+	return mergeEntryValuesWithFixed(m.Fixed, m.Fallback)
+}
+
 // joinEntryValue adds av to one callee entry slot under product-domain join.
 func joinEntryValue(out EntryValues, slot int, av product.AbstractValue) EntryValues {
 	if slot < 0 || av.IsZero() {
@@ -262,11 +274,11 @@ func entryValueSourcePublishes(source EntryValuePrototypeSource, proto cfg.Symbo
 	return false
 }
 
-// MergeEntryValuesWithFixed merges fallback evidence into fixed entry evidence,
+// mergeEntryValuesWithFixed merges fallback evidence into fixed entry evidence,
 // preserving every slot already present in fixed. This is the summary-key rule:
 // explicit EntryValuesKey context wins; aggregate CallEntryValues fills only
 // unspecified slots.
-func MergeEntryValuesWithFixed(fixed, fallback EntryValues) EntryValues {
+func mergeEntryValuesWithFixed(fixed, fallback EntryValues) EntryValues {
 	if len(fixed) == 0 {
 		return entryValuesDomain.Join(fallback, nil)
 	}

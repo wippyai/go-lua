@@ -498,7 +498,10 @@ func (q *Queries) entryValues(ctx *db.QueryContext, key Key) map[int]product.Abs
 	if merger, ok := q.prog.(entryValueMerger); ok && merger != nil {
 		return merger.MergeEntryValues(key.Ref, values, provided)
 	}
-	return MergeEntryValuesWithFixed(values, provided)
+	return (EntryValueContextMerge{
+		Fixed:    values,
+		Fallback: provided,
+	}).Values()
 }
 
 func (q *Queries) entryFacts(key Key) flow.BoundaryFacts {

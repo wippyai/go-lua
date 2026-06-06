@@ -186,7 +186,10 @@ func (p *program) prototypeSurfaceType(proto cfg.SymbolID, base typ.Type) (typ.T
 }
 
 func (p *program) MergeEntryValues(ref summary.FuncRef, fixed, fallback summary.EntryValues) summary.EntryValues {
-	merged := summary.MergeEntryValuesWithFixed(fixed, fallback)
+	merged := (summary.EntryValueContextMerge{
+		Fixed:    fixed,
+		Fallback: fallback,
+	}).Values()
 	if p == nil || len(fixed) == 0 || len(fallback) == 0 || len(merged) == 0 {
 		return merged
 	}
