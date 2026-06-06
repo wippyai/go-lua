@@ -133,17 +133,7 @@ func (p callOutcomeProjection) outcome() canonicalcall.CallOutcome {
 				return p.program.refHasClosedDeclaredReturns(target.Ref())
 			},
 			SignatureReturns: func(target canonicalcall.SelectedTarget) []typ.Type {
-				return p.typer.selectedTargetSignatureReturns(
-					p.program,
-					target,
-					p.call,
-					p.argTypes,
-					p.exprType,
-					p.cells,
-					p.refs,
-					p.closures,
-					p.methodReceiverType,
-				)
+				return p.signatureReturns(target)
 			},
 			SignatureRelations: func(target canonicalcall.SelectedTarget) flow.ReturnRelations {
 				if p.omitClosureRelationProof && target.IsClosure() {
@@ -157,36 +147,26 @@ func (p callOutcomeProjection) outcome() canonicalcall.CallOutcome {
 	)
 }
 
-func (ct callTyper) selectedTargetSignatureReturns(
-	prog *program,
-	target canonicalcall.SelectedTarget,
-	call *ast.FuncCallExpr,
-	argTypes []typ.Type,
-	exprType func(ast.Expr) typ.Type,
-	cells flow.CaptureCells,
-	refs flow.FunctionRefs,
-	closures flow.ClosureRefs,
-	methodReceiverType typ.Type,
-) []typ.Type {
-	d := ct.d
-	if d == nil || prog == nil || call == nil {
+func (p callOutcomeProjection) signatureReturns(target canonicalcall.SelectedTarget) []typ.Type {
+	d := p.typer.d
+	if d == nil || p.program == nil || p.call == nil {
 		return nil
 	}
-	sig := d.signatureForRef(prog, target.Ref())
+	sig := d.signatureForRef(p.program, target.Ref())
 	if sig == nil || typ.IsAbsentOrUnknown(sig) {
 		return nil
 	}
-	argTypes = callArgTypesWithExprFallback(call, argTypes, exprType)
+	argTypes := callArgTypesWithExprFallback(p.call, p.argTypes, p.exprType)
 	forcedExprType := func(expr ast.Expr) typ.Type {
-		if expr == call.Func {
+		if expr == p.call.Func {
 			return sig
 		}
-		if exprType == nil {
+		if p.exprType == nil {
 			return nil
 		}
-		return exprType(expr)
+		return p.exprType(expr)
 	}
-	proj, ok := ct.callReturnProjection(call, argTypes, forcedExprType, cells, refs, closures, methodReceiverType)
+	proj, ok := p.typer.callReturnProjection(p.call, argTypes, forcedExprType, p.cells, p.refs, p.closures, p.methodReceiverType)
 	if !ok {
 		return nil
 	}

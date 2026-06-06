@@ -54,17 +54,8 @@ local s: string = identity("test")
 
 	arg := product.FromType(typ.LiteralString("test"))
 	callCtx := transferlessProductCallContext([]product.AbstractValue{arg})
-	returns := ct.selectedTargetSignatureReturns(
-		prog,
-		targets[0],
-		call,
-		callCtx.ArgTypes(),
-		callCtx.ExprType,
-		flow.CaptureCellsDomain.Bottom(),
-		flow.FunctionRefsDomain.Bottom(),
-		flow.ClosureRefsDomain.Bottom(),
-		nil,
-	)
+	projection := ct.productCallOutcomeProjection(call, callCtx, productCallOutcomeOptions{}, nil)
+	returns := projection.signatureReturns(targets[0])
 	if len(returns) != 1 || !typ.TypeEquals(returns[0], typ.String) {
 		t.Fatalf("signature returns = %#v, want [string]; ctx=%v", returns, ctx)
 	}
@@ -111,17 +102,8 @@ local c = make_container("hello")
 
 	arg := product.FromType(typ.LiteralString("hello"))
 	callCtx := transferlessProductCallContext([]product.AbstractValue{arg})
-	returns := ct.selectedTargetSignatureReturns(
-		prog,
-		targets[0],
-		call,
-		callCtx.ArgTypes(),
-		callCtx.ExprType,
-		flow.CaptureCellsDomain.Bottom(),
-		flow.FunctionRefsDomain.Bottom(),
-		flow.ClosureRefsDomain.Bottom(),
-		nil,
-	)
+	projection := ct.productCallOutcomeProjection(call, callCtx, productCallOutcomeOptions{}, nil)
+	returns := projection.signatureReturns(targets[0])
 	if len(returns) != 1 {
 		t.Fatalf("signature returns = %#v, want one return; ctx=%v", returns, ctx)
 	}
