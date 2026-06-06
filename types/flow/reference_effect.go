@@ -24,6 +24,21 @@ func ReplaceFunctionRefSubtreePath(out *PointState, path constraint.Path, refs F
 	return ReplaceFunctionRefSubtree(out, addr, refs)
 }
 
+// AssignFunctionRefSubtreePath copies all function identities rooted at source
+// to target and strongly replaces the target subtree. Flow owns the projection,
+// rebase, and replacement as one reference-axis transaction; syntax-facing
+// transfer code should only decide which paths participate.
+func AssignFunctionRefSubtreePath(out *PointState, source, target constraint.Path) bool {
+	if out == nil {
+		return false
+	}
+	refs := ProjectFunctionRefsByReferencePaths(out.FunctionRefs, ReferencePathProjection{
+		Subtrees: []constraint.Path{source},
+	})
+	rebased := RebaseFunctionRefsPath(refs, source, target)
+	return ReplaceFunctionRefSubtreePath(out, target, rebased)
+}
+
 // ReplaceClosureRefSubtree clears all closure identities at addr and its
 // descendants, then joins the supplied refs into the closure-reference axis.
 func ReplaceClosureRefSubtree(out *PointState, addr StableAddress, refs ClosureRefs) bool {
@@ -44,6 +59,19 @@ func ReplaceClosureRefSubtreePath(out *PointState, path constraint.Path, refs Cl
 		return false
 	}
 	return ReplaceClosureRefSubtree(out, addr, refs)
+}
+
+// AssignClosureRefSubtreePath is the closure-value counterpart of
+// AssignFunctionRefSubtreePath.
+func AssignClosureRefSubtreePath(out *PointState, source, target constraint.Path) bool {
+	if out == nil {
+		return false
+	}
+	refs := ProjectClosureRefsByReferencePaths(out.ClosureRefs, ReferencePathProjection{
+		Subtrees: []constraint.Path{source},
+	})
+	rebased := RebaseClosureRefsPath(refs, source, target)
+	return ReplaceClosureRefSubtreePath(out, target, rebased)
 }
 
 func ClearFunctionRefSubtree(out *PointState, addr StableAddress) bool {

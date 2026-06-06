@@ -1638,10 +1638,7 @@ func (t *Transfer) recordFunctionRefAt(out *flow.PointState, path constraint.Pat
 		return
 	}
 	if srcPath, ok := t.staticPathOfExpr(src); ok {
-		refs := flow.RebaseFunctionRefsPath(flow.ProjectFunctionRefsByReferencePaths(out.FunctionRefs, flow.ReferencePathProjection{
-			Subtrees: []constraint.Path{srcPath},
-		}), srcPath, path)
-		flow.ReplaceFunctionRefSubtreePath(out, path, refs)
+		flow.AssignFunctionRefSubtreePath(out, srcPath, path)
 		return
 	}
 	set, ok := t.functionRefSetOfExpr(out, src)
@@ -1664,10 +1661,7 @@ func (t *Transfer) recordClosureRefAt(out *flow.PointState, path constraint.Path
 		return
 	}
 	if srcPath, ok := t.staticPathOfExpr(src); ok {
-		refs := flow.RebaseClosureRefsPath(flow.ProjectClosureRefsByReferencePaths(out.ClosureRefs, flow.ReferencePathProjection{
-			Subtrees: []constraint.Path{srcPath},
-		}), srcPath, path)
-		flow.ReplaceClosureRefSubtreePath(out, path, refs)
+		flow.AssignClosureRefSubtreePath(out, srcPath, path)
 		return
 	}
 	set, ok := t.closureRefSetOfExpr(out, src)

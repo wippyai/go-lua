@@ -238,6 +238,42 @@ func TestProjectClosureRefsByPathKeepsSubtree(t *testing.T) {
 	}
 }
 
+func TestAssignClosureRefSubtreePathCopiesAndReplacesTarget(t *testing.T) {
+	source := constraint.NewPath(cfg.SymbolID(47), "source")
+	sourceChild := source.Field("child")
+	target := constraint.NewPath(cfg.SymbolID(48), "target")
+	targetChild := target.Field("child")
+	staleTargetGrandchild := targetChild.Field("stale")
+	sibling := constraint.NewPath(cfg.SymbolID(49), "sibling")
+	closure := ClosureRefOf(FunctionRef{GraphID: 11}, CaptureCellsDomain.Bottom(), nil)
+	stale := ClosureRefOf(FunctionRef{GraphID: 12}, CaptureCellsDomain.Bottom(), nil)
+	other := ClosureRefOf(FunctionRef{GraphID: 13}, CaptureCellsDomain.Bottom(), nil)
+	out := PointState{
+		ClosureRefs: WithClosureRef(nil, StablePathKey(sourceChild), ClosureRefSetOf(closure)),
+	}
+	out.ClosureRefs = WithClosureRef(out.ClosureRefs, StablePathKey(staleTargetGrandchild), ClosureRefSetOf(stale))
+	out.ClosureRefs = WithClosureRef(out.ClosureRefs, StablePathKey(sibling), ClosureRefSetOf(other))
+
+	if !AssignClosureRefSubtreePath(&out, source, target) {
+		t.Fatal("AssignClosureRefSubtreePath reported no change")
+	}
+	if _, ok := ClosureRefAtPath(out.ClosureRefs, staleTargetGrandchild); ok {
+		t.Fatalf("stale target subtree survived assign: %#v", out.ClosureRefs)
+	}
+	set, ok := ClosureRefAtPath(out.ClosureRefs, targetChild)
+	if !ok {
+		t.Fatalf("rebased source child missing: %#v", out.ClosureRefs)
+	}
+	if got, singleton := set.Singleton(); !singleton || !closureRefEqual(got, closure) {
+		t.Fatalf("target child closure = %s, want %s", set.Format(), ClosureRefSetOf(closure).Format())
+	}
+	if set, ok := ClosureRefAtPath(out.ClosureRefs, sibling); !ok {
+		t.Fatalf("sibling was removed: %#v", out.ClosureRefs)
+	} else if got, singleton := set.Singleton(); !singleton || !closureRefEqual(got, other) {
+		t.Fatalf("sibling closure = %s, want %s", set.Format(), ClosureRefSetOf(other).Format())
+	}
+}
+
 func TestApplyClosureRefCellEffectsUpdatesStoredEnvironment(t *testing.T) {
 	sym := cfg.SymbolID(7)
 	path := constraint.NewPath(cfg.SymbolID(42), "fn").Key()

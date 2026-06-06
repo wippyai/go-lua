@@ -167,3 +167,36 @@ func TestReplaceFunctionRefSubtreePathClearsAndJoins(t *testing.T) {
 		t.Fatalf("sibling ref = %s, want graph 2 singleton", set.Format())
 	}
 }
+
+func TestAssignFunctionRefSubtreePathCopiesAndReplacesTarget(t *testing.T) {
+	source := constraint.NewPath(45, "source")
+	sourceChild := source.Field("child")
+	target := constraint.NewPath(46, "target")
+	targetChild := target.Field("child")
+	staleTargetGrandchild := targetChild.Field("stale")
+	sibling := constraint.NewPath(47, "sibling")
+	out := PointState{
+		FunctionRefs: WithFunctionRefPath(nil, sourceChild, FunctionRefSetOf(FunctionRef{GraphID: 1})),
+	}
+	out.FunctionRefs = WithFunctionRefPath(out.FunctionRefs, staleTargetGrandchild, FunctionRefSetOf(FunctionRef{GraphID: 2}))
+	out.FunctionRefs = WithFunctionRefPath(out.FunctionRefs, sibling, FunctionRefSetOf(FunctionRef{GraphID: 3}))
+
+	if !AssignFunctionRefSubtreePath(&out, source, target) {
+		t.Fatal("AssignFunctionRefSubtreePath reported no change")
+	}
+	if _, ok := FunctionRefAtPath(out.FunctionRefs, staleTargetGrandchild); ok {
+		t.Fatalf("stale target subtree survived assign: %#v", out.FunctionRefs)
+	}
+	set, ok := FunctionRefAtPath(out.FunctionRefs, targetChild)
+	if !ok {
+		t.Fatalf("rebased source child missing: %#v", out.FunctionRefs)
+	}
+	if ref, singleton := set.Singleton(); !singleton || ref.GraphID != 1 {
+		t.Fatalf("target child ref = %s, want graph 1 singleton", set.Format())
+	}
+	if set, ok := FunctionRefAtPath(out.FunctionRefs, sibling); !ok {
+		t.Fatalf("sibling was removed: %#v", out.FunctionRefs)
+	} else if ref, singleton := set.Singleton(); !singleton || ref.GraphID != 3 {
+		t.Fatalf("sibling ref = %s, want graph 3 singleton", set.Format())
+	}
+}
