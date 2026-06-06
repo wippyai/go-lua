@@ -3,6 +3,7 @@ package canonical
 import (
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/cfg"
+	"github.com/wippyai/go-lua/compiler/check/callsite"
 	canonicalcall "github.com/wippyai/go-lua/compiler/check/canonical/call"
 	"github.com/wippyai/go-lua/compiler/check/canonical/state"
 	"github.com/wippyai/go-lua/compiler/check/canonical/summary"
@@ -258,10 +259,22 @@ func (c callEntryProjector) valuesForRef(ref summary.FuncRef, call *ast.FuncCall
 	if call == nil || exprType == nil {
 		return nil
 	}
-	return summary.DirectCallEntryValuesWithParamCount(
+	runtimeValues := make([]product.AbstractValue, callsite.RuntimeArgExprCount(call))
+	for i := range runtimeValues {
+		arg := callsite.RuntimeArgExprAt(call, i)
+		if arg == nil {
+			continue
+		}
+		t := exprType(arg)
+		if t == nil || typ.IsAbsentOrUnknown(t) {
+			continue
+		}
+		runtimeValues[i] = product.FromType(t)
+	}
+	return summary.DirectCallEntryProductValuesWithParamCount(
 		call,
 		ref,
-		exprType,
+		runtimeValues,
 		c.paramSlot,
 		func(callee summary.FuncRef, _ *ast.FuncCallExpr) int {
 			return c.program.paramSlotCount(callee)

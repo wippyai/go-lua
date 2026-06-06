@@ -32,26 +32,25 @@ func TestMergeEntryValuesWithFixed_PreservesExplicitSlots(t *testing.T) {
 	}
 }
 
-func TestDirectCallEntryValues_ProjectsAllExactInformativeArgs(t *testing.T) {
+func TestDirectCallEntryProductValues_ProjectsAllExactInformativeArgs(t *testing.T) {
 	args := []ast.Expr{
 		&ast.StringExpr{Value: "s"},
 		&ast.NumberExpr{Value: "1"},
 		&ast.TrueExpr{},
 		&ast.IdentExpr{Value: "unknown"},
 	}
-	types := map[ast.Expr]typ.Type{
-		args[0]: typ.String,
-		args[1]: typ.Number,
-		args[2]: typ.Boolean,
-		args[3]: typ.Unknown,
-	}
 	call := &ast.FuncCallExpr{Args: args}
 	callee := summary.FuncRef{GraphID: 7}
 
-	got := summary.DirectCallEntryValuesWithParamCount(
+	got := summary.DirectCallEntryProductValuesWithParamCount(
 		call,
 		callee,
-		func(expr ast.Expr) typ.Type { return types[expr] },
+		[]product.AbstractValue{
+			product.FromType(typ.String),
+			product.FromType(typ.Number),
+			product.FromType(typ.Boolean),
+			product.FromType(typ.Unknown),
+		},
 		func(gotCallee summary.FuncRef, _ *ast.FuncCallExpr, argIdx int) (int, int, bool) {
 			if gotCallee != callee {
 				t.Fatalf("callee = %v, want %v", gotCallee, callee)
@@ -82,49 +81,6 @@ func TestDirectCallEntryValues_ProjectsAllExactInformativeArgs(t *testing.T) {
 	}
 	if !product.Equal(got[2], wantSlot2) {
 		t.Fatalf("slot 2 = %s, want %s", got[2].ProjectValue(), wantSlot2.ProjectValue())
-	}
-}
-
-func TestDirectCallEntryValues_ProjectsOmittedFixedArgsAsNil(t *testing.T) {
-	arg := &ast.StringExpr{Value: "World"}
-	call := &ast.FuncCallExpr{Args: []ast.Expr{arg}}
-	callee := summary.FuncRef{GraphID: 7}
-
-	got := summary.DirectCallEntryValuesWithParamCount(
-		call,
-		callee,
-		func(expr ast.Expr) typ.Type {
-			if expr == arg {
-				return typ.String
-			}
-			return typ.Unknown
-		},
-		func(gotCallee summary.FuncRef, _ *ast.FuncCallExpr, runtimeIdx int) (int, int, bool) {
-			if gotCallee != callee {
-				t.Fatalf("callee = %v, want %v", gotCallee, callee)
-			}
-			switch runtimeIdx {
-			case 0:
-				return 0, 0, true
-			case 1:
-				return 1, 1, true
-			default:
-				return -1, -1, false
-			}
-		},
-		func(summary.FuncRef, *ast.FuncCallExpr) int {
-			return 2
-		},
-	)
-
-	if len(got) != 2 {
-		t.Fatalf("entry values = %#v, want supplied string and omitted nil", got)
-	}
-	if !product.Equal(got[0], product.FromType(typ.String)) {
-		t.Fatalf("slot 0 = %s, want string", got[0].ProjectValue())
-	}
-	if !product.Equal(got[1], product.FromType(typ.Nil)) {
-		t.Fatalf("slot 1 = %s, want nil", got[1].ProjectValue())
 	}
 }
 
@@ -165,7 +121,7 @@ func TestDirectCallEntryProductValues_ProjectsOmittedFixedArgsAsNil(t *testing.T
 	}
 }
 
-func TestDirectCallEntryValues_ProjectsMethodReceiverRuntimeSlot(t *testing.T) {
+func TestDirectCallEntryProductValues_ProjectsMethodReceiverRuntimeSlot(t *testing.T) {
 	recv := &ast.IdentExpr{Value: "state"}
 	arg := &ast.StringExpr{Value: "payload"}
 	call := &ast.FuncCallExpr{
@@ -175,15 +131,14 @@ func TestDirectCallEntryValues_ProjectsMethodReceiverRuntimeSlot(t *testing.T) {
 	}
 	callee := summary.FuncRef{GraphID: 8}
 	receiverType := typ.NewRecord().Field("nodes", typ.NewRecord().Build()).Build()
-	types := map[ast.Expr]typ.Type{
-		recv: receiverType,
-		arg:  typ.String,
-	}
 
-	got := summary.DirectCallEntryValuesWithParamCount(
+	got := summary.DirectCallEntryProductValuesWithParamCount(
 		call,
 		callee,
-		func(expr ast.Expr) typ.Type { return types[expr] },
+		[]product.AbstractValue{
+			product.FromType(receiverType),
+			product.FromType(typ.String),
+		},
 		func(gotCallee summary.FuncRef, _ *ast.FuncCallExpr, runtimeIdx int) (int, int, bool) {
 			if gotCallee != callee {
 				t.Fatalf("callee = %v, want %v", gotCallee, callee)

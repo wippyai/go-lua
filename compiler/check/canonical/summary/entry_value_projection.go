@@ -245,38 +245,6 @@ func MergeEntryValuesWithFixed(fixed, fallback EntryValues) EntryValues {
 	return entryValuesDomain.Join(out, nil)
 }
 
-// DirectCallEntryValuesWithParamCount projects one concrete call site's runtime
-// arguments into the callee entry-value context key, including exact nil for
-// omitted fixed parameters when the caller supplies the callee's finite parameter
-// layout.
-func DirectCallEntryValuesWithParamCount(
-	call *ast.FuncCallExpr,
-	callee FuncRef,
-	typeOf func(ast.Expr) typ.Type,
-	slotOf EntryValueParamSlot,
-	slotCount EntryValueParamSlotCount,
-) EntryValues {
-	if call == nil || typeOf == nil || slotOf == nil {
-		return nil
-	}
-	var out EntryValues
-	for _, arg := range entryRuntimeArgs(callee, call, slotOf) {
-		if arg.Expr == nil {
-			continue
-		}
-		t := typeOf(arg.Expr)
-		if t == nil || typ.IsAbsentOrUnknown(t) {
-			continue
-		}
-		out = JoinEntryValue(out, arg.Slot, product.FromType(t))
-	}
-	out = joinOmittedFixedArgNil(out, callsite.RuntimeArgExprCount(call), callee, call, slotOf, slotCount)
-	if len(out) == 0 {
-		return nil
-	}
-	return out
-}
-
 // DirectCallEntryProductValuesWithParamCount projects already-solved runtime
 // argument product values, including exact nil for omitted fixed parameters when
 // supplied with a finite callee parameter layout.
