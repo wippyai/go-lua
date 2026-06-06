@@ -176,24 +176,55 @@ func TestApplyKeyArrayElementKeyProofPublishesTargetKey(t *testing.T) {
 		testStableAddressPath(t, tablePath),
 	)
 
-	tables, changed := ApplyKeyArrayElementKeyProof(&state, KeyArrayElementKeyProof{
+	result, changed := ApplyKeyArrayElementKeyProof(&state, KeyArrayElementKeyProof{
 		Array:     testStableAddressPath(t, arrayPath),
 		TargetKey: testStableAddressPath(t, targetPath),
 	})
 	if !changed {
 		t.Fatal("ApplyKeyArrayElementKeyProof reported no change")
 	}
-	if len(tables) != 1 || tables[0] != tableKey {
-		t.Fatalf("proof tables = %v, want %s", tables, tableKey)
+	if len(result.Tables) != 1 || result.Tables[0].Key() != tableKey {
+		t.Fatalf("proof tables = %v, want %s", result.Tables, tableKey)
 	}
 	if !state.KeyPresence.Has(tableKey, targetKey) {
 		t.Fatalf("proof did not publish table/target key presence: %s", state.KeyPresence.Format())
 	}
 }
 
+func TestApplyKeyArrayElementKeyProofPublishesReadbackAdmission(t *testing.T) {
+	arrayPath := constraint.NewPath(cfg.SymbolID(32), "node_order")
+	tablePath := constraint.NewPath(cfg.SymbolID(33), "nodes")
+	targetPath := constraint.NewPath(cfg.SymbolID(34), "node_id")
+	array := testStableAddressPath(t, arrayPath)
+	table := testStableAddressPath(t, tablePath)
+	target := testStableAddressPath(t, targetPath)
+	value := product.FromType(typ.String)
+	state := PointState{
+		KeyPresence: KeyPresenceFacts{}.
+			WithKeyArrayValueAddresses(array, table, value),
+	}
+
+	if _, changed := ApplyKeyArrayElementKeyProof(&state, KeyArrayElementKeyProof{
+		Array:     array,
+		TargetKey: target,
+		KeyValue:  product.FromType(typ.LiteralString("node-1")),
+	}); !changed {
+		t.Fatal("ApplyKeyArrayElementKeyProof reported no change")
+	}
+	got, ok := state.IndexWrites.AdmissionAtAddress(IndexWriteAddressQuery{
+		Target:     table,
+		KeyPath:    target,
+		HasKeyPath: true,
+		KeyValue:   product.FromType(typ.LiteralString("node-1")),
+	})
+	if !ok || !product.Domain.Equal(got, value) {
+		t.Fatalf("admission = %v/%v, want string", got, ok)
+	}
+}
+
 func TestApplyKeyArrayProofPublishesArrayTable(t *testing.T) {
-	arrayPath := constraint.NewPath(cfg.SymbolID(31), "node_order")
-	tablePath := constraint.NewPath(cfg.SymbolID(32), "nodes")
+	arrayPath := constraint.NewPath(cfg.SymbolID(35), "node_order")
+	tablePath := constraint.NewPath(cfg.SymbolID(36), "nodes")
 	arrayKey := StablePathKey(arrayPath)
 	tableKey := StablePathKey(tablePath)
 

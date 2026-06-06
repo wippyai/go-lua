@@ -160,40 +160,12 @@ func (t *Transfer) applyArrayElementKeyProvenanceEffect(
 	if !arrayOK || !targetOK {
 		return false
 	}
-	tables, presenceChanged := flow.ApplyKeyArrayElementKeyProof(out, flow.KeyArrayElementKeyProof{
+	_, presenceChanged := flow.ApplyKeyArrayElementKeyProof(out, flow.KeyArrayElementKeyProof{
 		Array:     arrayAddr,
 		TargetKey: targetAddr,
+		KeyValue:  effect.Value,
 	})
 	changed := false
-	arrayKey := arrayAddr.Key()
-	for _, table := range tables {
-		tableAddr, tableOK := flow.StableAddressFromKey(table)
-		if !tableOK {
-			continue
-		}
-		for _, value := range out.KeyPresence.KeyArrayValues(arrayKey, table) {
-			if value.IsZero() {
-				continue
-			}
-			keyValue := effect.Value
-			if keyValue.IsZero() {
-				keyValue = product.FromType(typ.Unknown)
-			}
-			keyAddr, keyOK := flow.StableAddressOfPath(effect.TargetPath)
-			if !keyOK {
-				continue
-			}
-			changed = flow.ApplyIndexWriteAdmissionProof(out, flow.IndexWriteAdmissionProof{
-				Fact: flow.IndexWriteAdmissionAddressFact{
-					Target:     tableAddr,
-					KeyPath:    keyAddr,
-					HasKeyPath: true,
-					Key:        keyValue,
-					Value:      value,
-				},
-			}) || changed
-		}
-	}
 	changed = presenceChanged || changed
 	changed = t.applyValueOriginEffect(out, ValueOriginEffect{
 		ValuePath:  effect.TargetPath,

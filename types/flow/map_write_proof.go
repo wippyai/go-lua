@@ -30,6 +30,13 @@ type KeyPresenceAliasProof struct {
 type KeyArrayElementKeyProof struct {
 	Array     StableAddress
 	TargetKey StableAddress
+	KeyValue  product.AbstractValue
+}
+
+// KeyArrayElementKeyResult reports the tables reached by a key-array element
+// proof so callers can apply non-flow refinements.
+type KeyArrayElementKeyResult struct {
+	Tables []StableAddress
 }
 
 // KeyArrayProof is the canonical proof transaction for "array contains keys of
@@ -141,20 +148,46 @@ func ApplyKeyPresenceAliasProof(out *PointState, proof KeyPresenceAliasProof) bo
 	return !KeyPresenceFactsDomain.Equal(before, out.KeyPresence)
 }
 
-// ApplyKeyArrayElementKeyProof applies key-array membership to a target key and
-// returns the tables that were considered for transfer-local follow-up effects.
-func ApplyKeyArrayElementKeyProof(out *PointState, proof KeyArrayElementKeyProof) ([]constraint.PathKey, bool) {
+// ApplyKeyArrayElementKeyProof applies key-array membership to a target key. If
+// value-carrying key-array facts exist, it also publishes table[target] readback
+// admissions for the assigned target key.
+func ApplyKeyArrayElementKeyProof(out *PointState, proof KeyArrayElementKeyProof) (KeyArrayElementKeyResult, bool) {
 	if out == nil || proof.Array.Key() == "" || proof.TargetKey.Key() == "" {
-		return nil, false
+		return KeyArrayElementKeyResult{}, false
 	}
+	result := KeyArrayElementKeyResult{}
 	arrayKey := proof.Array.Key()
 	targetKey := proof.TargetKey.Key()
-	before := out.KeyPresence
-	tables := out.KeyPresence.KeyArrayTables(arrayKey)
-	for _, table := range tables {
-		out.KeyPresence = out.KeyPresence.With(table, targetKey)
+	keyValue := proof.KeyValue
+	if keyValue.IsZero() {
+		keyValue = product.FromType(typ.Unknown)
 	}
-	return tables, !KeyPresenceFactsDomain.Equal(before, out.KeyPresence)
+	beforePresence := out.KeyPresence
+	beforeIndexWrites := out.IndexWrites
+	tables := out.KeyPresence.KeyArrayTables(arrayKey)
+	for _, tableKey := range tables {
+		table, ok := StableAddressFromKey(tableKey)
+		if !ok {
+			continue
+		}
+		result.Tables = append(result.Tables, table)
+		out.KeyPresence = out.KeyPresence.With(tableKey, targetKey)
+		for _, value := range out.KeyPresence.KeyArrayValues(arrayKey, tableKey) {
+			if value.IsZero() {
+				continue
+			}
+			out.IndexWrites = out.IndexWrites.WithAddress(IndexWriteAdmissionAddressFact{
+				Target:     table,
+				KeyPath:    proof.TargetKey,
+				HasKeyPath: true,
+				Key:        keyValue,
+				Value:      value,
+			})
+		}
+	}
+	changed := !KeyPresenceFactsDomain.Equal(beforePresence, out.KeyPresence)
+	changed = !IndexWriteAdmissionFactsDomain.Equal(beforeIndexWrites, out.IndexWrites) || changed
+	return result, changed
 }
 
 // ApplyKeyArrayProof applies a key-array provenance proof to point state.
