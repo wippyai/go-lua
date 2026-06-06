@@ -9,39 +9,70 @@ import (
 	"github.com/wippyai/go-lua/types/flow"
 )
 
+// callEntryArgEvidence is the caller-side evidence needed to resolve function
+// and closure identities carried by call arguments.
+type callEntryArgEvidence struct {
+	functionRefs flow.FunctionRefs
+	closureRefs  flow.ClosureRefs
+	captureCells func([]cfg.SymbolID) flow.CaptureCells
+	nestedCall   func(*ast.FuncCallExpr) transfer.ProductCallContext
+}
+
 // callEntryArgProjection resolves callable identities carried by call arguments
-// when projecting caller evidence into a callee entry context. It has two
-// evidence modes: solved point state for diagnostic contexts, and product call
-// context for transfer-time projection.
+// from a normalized caller-evidence carrier.
 type callEntryArgProjection struct {
 	program *program
 	graph   *cfg.Graph
 	typer   callTyper
 
-	transfer *transfer.Transfer
-	state    *flow.PointState
-
-	productCtx transfer.ProductCallContext
-	hasProduct bool
+	evidence callEntryArgEvidence
 }
 
 func (c callEntryProjector) pointArgProjection(in *flow.PointState) callEntryArgProjection {
+	evidence := callEntryArgEvidence{
+		captureCells: func(captured []cfg.SymbolID) flow.CaptureCells {
+			if c.program == nil || in == nil {
+				return flow.CaptureCellsDomain.Bottom()
+			}
+			cells := captureCellsFromPoint(in, captured)
+			return c.program.normalizeCapturedMethodReceiverCells(c.graph, in, cells, captured)
+		},
+		nestedCall: func(call *ast.FuncCallExpr) transfer.ProductCallContext {
+			if c.transfer == nil || in == nil {
+				return transfer.ProductCallContext{}
+			}
+			return c.transfer.ProductCallContext(in, call)
+		},
+	}
+	if in != nil {
+		evidence.functionRefs = in.FunctionRefs
+		evidence.closureRefs = in.ClosureRefs
+	}
 	return callEntryArgProjection{
 		program:  c.program,
 		graph:    c.graph,
 		typer:    c.typer,
-		transfer: c.transfer,
-		state:    in,
+		evidence: evidence,
 	}
 }
 
 func (c callEntryProjector) productArgProjection(ctx transfer.ProductCallContext) callEntryArgProjection {
 	return callEntryArgProjection{
-		program:    c.program,
-		graph:      c.graph,
-		typer:      c.typer,
-		productCtx: ctx,
-		hasProduct: true,
+		program: c.program,
+		graph:   c.graph,
+		typer:   c.typer,
+		evidence: callEntryArgEvidence{
+			functionRefs: ctx.FunctionRefs,
+			closureRefs:  ctx.ClosureRefs,
+			captureCells: func(captured []cfg.SymbolID) flow.CaptureCells {
+				if c.program == nil {
+					return flow.CaptureCellsDomain.Bottom()
+				}
+				cells := ctx.Cells.Project(captured)
+				return c.program.normalizeCapturedMethodReceiverCellsFromCells(c.graph, cells, captured)
+			},
+			nestedCall: ctx.ForCall,
+		},
 	}
 }
 
@@ -59,14 +90,14 @@ func (p callEntryArgProjection) functionArgRefs(arg ast.Expr) (flow.FunctionRefS
 }
 
 func (p callEntryArgProjection) functionArgTreeRefs(arg ast.Expr) (flow.FunctionRefs, bool) {
-	if !p.hasProduct && (p.transfer == nil || p.state == nil) {
+	if p.evidence.nestedCall == nil {
 		return flow.FunctionRefsDomain.Bottom(), false
 	}
 	call, ok := valueCallExpr(arg)
 	if !ok {
 		return flow.FunctionRefsDomain.Bottom(), false
 	}
-	returns := p.typer.CallReturnRefsFromValues(call, p.productContextFor(call)).FunctionRefs
+	returns := p.typer.CallReturnRefsFromValues(call, p.evidence.nestedCall(call)).FunctionRefs
 	if len(returns) == 0 || flow.FunctionRefsDomain.Equal(returns[0], flow.FunctionRefsDomain.Bottom()) {
 		return flow.FunctionRefsDomain.Bottom(), false
 	}
@@ -98,60 +129,33 @@ func (p callEntryArgProjection) closureArgRefs(arg ast.Expr) (flow.ClosureRefSet
 }
 
 func (p callEntryArgProjection) closureArgTreeRefs(arg ast.Expr) (flow.ClosureRefs, bool) {
-	if !p.hasProduct && (p.transfer == nil || p.state == nil) {
+	if p.evidence.nestedCall == nil {
 		return flow.ClosureRefsDomain.Bottom(), false
 	}
 	call, ok := valueCallExpr(arg)
 	if !ok {
 		return flow.ClosureRefsDomain.Bottom(), false
 	}
-	returns := p.typer.CallReturnRefsFromValues(call, p.productContextFor(call)).ClosureRefs
+	returns := p.typer.CallReturnRefsFromValues(call, p.evidence.nestedCall(call)).ClosureRefs
 	if len(returns) == 0 || flow.ClosureRefsDomain.Equal(returns[0], flow.ClosureRefsDomain.Bottom()) {
 		return flow.ClosureRefsDomain.Bottom(), false
 	}
 	return returns[0], true
 }
 
-func (p callEntryArgProjection) productContextFor(call *ast.FuncCallExpr) transfer.ProductCallContext {
-	if p.hasProduct {
-		return p.productCtx.ForCall(call)
-	}
-	if p.transfer == nil || p.state == nil {
-		return transfer.ProductCallContext{}
-	}
-	return p.transfer.ProductCallContext(p.state, call)
-}
-
 func (p callEntryArgProjection) captureCells(captured []cfg.SymbolID) flow.CaptureCells {
-	if p.hasProduct {
-		cells := p.productCtx.Cells.Project(captured)
-		return p.program.normalizeCapturedMethodReceiverCellsFromCells(p.graph, cells, captured)
-	}
-	if p.state == nil {
+	if len(captured) == 0 || p.evidence.captureCells == nil {
 		return flow.CaptureCellsDomain.Bottom()
 	}
-	cells := captureCellsFromPoint(p.state, captured)
-	return p.program.normalizeCapturedMethodReceiverCells(p.graph, p.state, cells, captured)
+	return p.evidence.captureCells(captured)
 }
 
 func (p callEntryArgProjection) functionRefs() flow.FunctionRefs {
-	if p.hasProduct {
-		return p.productCtx.FunctionRefs
-	}
-	if p.state != nil {
-		return p.state.FunctionRefs
-	}
-	return flow.FunctionRefsDomain.Bottom()
+	return p.evidence.functionRefs
 }
 
 func (p callEntryArgProjection) closureRefs() flow.ClosureRefs {
-	if p.hasProduct {
-		return p.productCtx.ClosureRefs
-	}
-	if p.state != nil {
-		return p.state.ClosureRefs
-	}
-	return flow.ClosureRefsDomain.Bottom()
+	return p.evidence.closureRefs
 }
 
 func valueCallExpr(expr ast.Expr) (*ast.FuncCallExpr, bool) {
