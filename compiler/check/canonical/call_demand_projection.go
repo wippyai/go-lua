@@ -27,11 +27,11 @@ func (ct callTyper) callDemandProjection(call *ast.FuncCallExpr, exprType func(a
 }
 
 func (p callDemandProjection) functionShape() *typ.Function {
-	return canonicalcall.FunctionForDemand(canonicalcall.DemandFunctionInput{
+	return (canonicalcall.DemandFunctionProjection{
 		Call:            p.call,
 		SummaryFunction: p.summaryFunction,
 		Resolver:        p.typer.callTypeResolver(p.exprType),
-	})
+	}).Function()
 }
 
 func (p callDemandProjection) summaryFunction(call *ast.FuncCallExpr) *typ.Function {

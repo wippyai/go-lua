@@ -7,42 +7,42 @@ import (
 	"github.com/wippyai/go-lua/types/typ/unwrap"
 )
 
-// DemandFunctionInput supplies the call boundary context for projecting
-// signature-owned argument obligations.
-type DemandFunctionInput struct {
+// DemandFunctionProjection supplies the call-boundary context for resolving the
+// callable shape used by signature-owned argument obligations.
+type DemandFunctionProjection struct {
 	Call            *ast.FuncCallExpr
 	SummaryFunction func(*ast.FuncCallExpr) *typ.Function
 	Resolver        TypeResolver
 }
 
-// FunctionForDemand resolves the callable function shape used for argument
-// demand projection. Summary-known module targets win; otherwise the resolved
-// caller-visible callee/receiver type is unwrapped to a function shape.
-func FunctionForDemand(in DemandFunctionInput) *typ.Function {
-	call := in.Call
+// Function resolves the callable shape used for argument demand projection.
+// Summary-known module targets win; otherwise the resolved caller-visible
+// callee/receiver type is unwrapped to a function shape.
+func (p DemandFunctionProjection) Function() *typ.Function {
+	call := p.Call
 	if call == nil {
 		return nil
 	}
-	if in.SummaryFunction != nil {
-		if fn := in.SummaryFunction(call); fn != nil {
+	if p.SummaryFunction != nil {
+		if fn := p.SummaryFunction(call); fn != nil {
 			return fn
 		}
 	}
 	var callee typ.Type
 	if call.Method != "" {
-		receiver := in.Resolver.ResolveReceiver(call.Receiver)
+		receiver := p.Resolver.ResolveReceiver(call.Receiver)
 		if receiver == nil || typ.IsAbsentOrUnknown(receiver) {
 			return nil
 		}
-		member, ok := in.Resolver.method(receiver, call.Method)
+		member, ok := p.Resolver.method(receiver, call.Method)
 		if !ok {
 			return nil
 		}
 		callee = member
 	} else {
-		callee = in.Resolver.ResolveCallee(call.Func)
+		callee = p.Resolver.ResolveCallee(call.Func)
 		if functionShape(callee) == nil {
-			callee = in.Resolver.ResolveStaticCallee(call.Func)
+			callee = p.Resolver.ResolveStaticCallee(call.Func)
 		}
 	}
 	return functionShape(callee)

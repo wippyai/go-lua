@@ -9,14 +9,14 @@ import (
 	"github.com/wippyai/go-lua/types/typ"
 )
 
-func TestFunctionForDemandSummaryWins(t *testing.T) {
+func TestDemandFunctionProjectionSummaryWins(t *testing.T) {
 	t.Parallel()
 
 	call := &ast.FuncCallExpr{Func: &ast.IdentExpr{Value: "f"}}
 	summaryFn := typ.Func().Param("x", typ.String).Build()
 	resolved := false
 
-	got := FunctionForDemand(DemandFunctionInput{
+	got := (DemandFunctionProjection{
 		Call: call,
 		SummaryFunction: func(*ast.FuncCallExpr) *typ.Function {
 			return summaryFn
@@ -27,22 +27,22 @@ func TestFunctionForDemandSummaryWins(t *testing.T) {
 				return typ.Func().Param("x", typ.Number).Build()
 			},
 		},
-	})
+	}).Function()
 	if got != summaryFn {
-		t.Fatalf("FunctionForDemand summary = %v, want summary function", got)
+		t.Fatalf("DemandFunctionProjection summary = %v, want summary function", got)
 	}
 	if resolved {
 		t.Fatal("callee resolver ran despite summary function")
 	}
 }
 
-func TestFunctionForDemandResolvesPlainCallee(t *testing.T) {
+func TestDemandFunctionProjectionResolvesPlainCallee(t *testing.T) {
 	t.Parallel()
 
 	call := &ast.FuncCallExpr{Func: &ast.IdentExpr{Value: "f"}}
 	fn := typ.Func().Param("x", typ.String).Build()
 
-	got := FunctionForDemand(DemandFunctionInput{
+	got := (DemandFunctionProjection{
 		Call: call,
 		Resolver: TypeResolver{
 			ExprType: func(expr ast.Expr) typ.Type {
@@ -52,13 +52,13 @@ func TestFunctionForDemandResolvesPlainCallee(t *testing.T) {
 				return fn
 			},
 		},
-	})
+	}).Function()
 	if got != fn {
-		t.Fatalf("FunctionForDemand plain = %v, want fn", got)
+		t.Fatalf("DemandFunctionProjection plain = %v, want fn", got)
 	}
 }
 
-func TestFunctionForDemandUsesStaticGlobalWhenLiveCalleeIsAny(t *testing.T) {
+func TestDemandFunctionProjectionUsesStaticGlobalWhenLiveCalleeIsAny(t *testing.T) {
 	t.Parallel()
 
 	ident := &ast.IdentExpr{Value: "up"}
@@ -70,7 +70,7 @@ func TestFunctionForDemandUsesStaticGlobalWhenLiveCalleeIsAny(t *testing.T) {
 	bindings.SetName(sym, "up")
 	fn := typ.Func().Param("callback", typ.Func().Build()).Build()
 
-	got := FunctionForDemand(DemandFunctionInput{
+	got := (DemandFunctionProjection{
 		Call: call,
 		Resolver: TypeResolver{
 			Bindings: bindings,
@@ -89,13 +89,13 @@ func TestFunctionForDemandUsesStaticGlobalWhenLiveCalleeIsAny(t *testing.T) {
 				},
 			},
 		},
-	})
+	}).Function()
 	if got != fn {
-		t.Fatalf("FunctionForDemand(any live global) = %v, want static function", got)
+		t.Fatalf("DemandFunctionProjection(any live global) = %v, want static function", got)
 	}
 }
 
-func TestFunctionForDemandResolvesMethodMember(t *testing.T) {
+func TestDemandFunctionProjectionResolvesMethodMember(t *testing.T) {
 	t.Parallel()
 
 	receiver := &ast.IdentExpr{Value: "obj"}
@@ -103,7 +103,7 @@ func TestFunctionForDemandResolvesMethodMember(t *testing.T) {
 	fn := typ.Func().Param("x", typ.String).Build()
 	rec := typ.NewRecord().Field("run", fn).Build()
 
-	got := FunctionForDemand(DemandFunctionInput{
+	got := (DemandFunctionProjection{
 		Call: call,
 		Resolver: TypeResolver{
 			ExprType: func(expr ast.Expr) typ.Type {
@@ -113,13 +113,13 @@ func TestFunctionForDemandResolvesMethodMember(t *testing.T) {
 				return rec
 			},
 		},
-	})
+	}).Function()
 	if got != fn {
-		t.Fatalf("FunctionForDemand method = %v, want fn", got)
+		t.Fatalf("DemandFunctionProjection method = %v, want fn", got)
 	}
 }
 
-func TestFunctionForDemandResolvesInterfaceMethod(t *testing.T) {
+func TestDemandFunctionProjectionResolvesInterfaceMethod(t *testing.T) {
 	t.Parallel()
 
 	receiver := &ast.IdentExpr{Value: "now"}
@@ -127,7 +127,7 @@ func TestFunctionForDemandResolvesInterfaceMethod(t *testing.T) {
 	fn := typ.Func().Param("self", typ.Self).Param("other", typ.Self).Build()
 	timeType := typ.NewInterface("time.Time", []typ.Method{{Name: "sub", Type: fn}})
 
-	got := FunctionForDemand(DemandFunctionInput{
+	got := (DemandFunctionProjection{
 		Call: call,
 		Resolver: TypeResolver{
 			ExprType: func(expr ast.Expr) typ.Type {
@@ -137,13 +137,13 @@ func TestFunctionForDemandResolvesInterfaceMethod(t *testing.T) {
 				return timeType
 			},
 		},
-	})
+	}).Function()
 	if got != fn {
-		t.Fatalf("FunctionForDemand interface method = %v, want %v", got, fn)
+		t.Fatalf("DemandFunctionProjection interface method = %v, want %v", got, fn)
 	}
 }
 
-func TestFunctionForDemandRejectsDynamicAndNonFunction(t *testing.T) {
+func TestDemandFunctionProjectionRejectsDynamicAndNonFunction(t *testing.T) {
 	t.Parallel()
 
 	call := &ast.FuncCallExpr{Func: &ast.IdentExpr{Value: "f"}}
@@ -153,16 +153,16 @@ func TestFunctionForDemandRejectsDynamicAndNonFunction(t *testing.T) {
 		"nil":    nil,
 	} {
 		t.Run(name, func(t *testing.T) {
-			got := FunctionForDemand(DemandFunctionInput{
+			got := (DemandFunctionProjection{
 				Call: call,
 				Resolver: TypeResolver{
 					ExprType: func(ast.Expr) typ.Type {
 						return callee
 					},
 				},
-			})
+			}).Function()
 			if got != nil {
-				t.Fatalf("FunctionForDemand(%s) = %v, want nil", name, got)
+				t.Fatalf("DemandFunctionProjection(%s) = %v, want nil", name, got)
 			}
 		})
 	}
