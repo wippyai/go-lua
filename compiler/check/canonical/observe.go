@@ -426,14 +426,7 @@ func (f *canonicalFacts) CallReturnTypesAt(point cfg.Point, call *ast.FuncCallEx
 		callCtx,
 		productCallOutcomeOptions{},
 		func(ctx canonicalcall.EntryContext) summary.Summary {
-			return f.reader.SummarizeWithEntryContextFacts(
-				ctx.Ref(),
-				ctx.CaptureCells(),
-				ctx.FunctionRefs(),
-				ctx.ClosureRefs(),
-				ctx.EntryValues(),
-				ctx.EntryFacts(),
-			)
+			return f.reader.SummarizeWithKey(ctx.Key())
 		},
 	).outcome()
 	values := outcome.InferredReturnValues()

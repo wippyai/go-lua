@@ -283,7 +283,13 @@ func (q *Queries) IntraWithEntryContext(ctx *db.QueryContext, ref FuncRef, entry
 // IntraWithEntryContextFacts returns ref's converged intraprocedural state under
 // all caller-provided entry components, including parameter-relative path facts.
 func (q *Queries) IntraWithEntryContextFacts(ctx *db.QueryContext, ref FuncRef, entry flow.CaptureCells, refs flow.FunctionRefs, closures flow.ClosureRefs, values EntryValues, facts flow.BoundaryFacts) state.FunctionState {
-	return q.intra(ctx, NewKeyWithEntryContextFacts(ref, entry, refs, closures, values, facts))
+	return q.IntraWithKey(ctx, NewKeyWithEntryContextFacts(ref, entry, refs, closures, values, facts))
+}
+
+// IntraWithKey returns the converged intraprocedural state for an already
+// normalized summary key.
+func (q *Queries) IntraWithKey(ctx *db.QueryContext, key Key) state.FunctionState {
+	return q.intra(ctx, key)
 }
 
 // ObserveIntraWithEntryContext runs the local point/demand solver under an exact
@@ -297,7 +303,13 @@ func (q *Queries) ObserveIntraWithEntryContext(ctx *db.QueryContext, ref FuncRef
 // ObserveIntraWithEntryContextFacts observes the local point/demand solver under
 // an exact entry context with parameter-relative path facts.
 func (q *Queries) ObserveIntraWithEntryContextFacts(ctx *db.QueryContext, ref FuncRef, entry flow.CaptureCells, refs flow.FunctionRefs, closures flow.ClosureRefs, values EntryValues, facts flow.BoundaryFacts) state.FunctionState {
-	key := NewKeyWithEntryContextFacts(ref, entry, refs, closures, values, facts)
+	return q.ObserveIntraWithKey(ctx, NewKeyWithEntryContextFacts(ref, entry, refs, closures, values, facts))
+}
+
+// ObserveIntraWithKey observes the local point/demand solver for an already
+// normalized exact entry key, without demanding a corresponding recursive
+// Summary cell first.
+func (q *Queries) ObserveIntraWithKey(ctx *db.QueryContext, key Key) state.FunctionState {
 	return q.solveIntra(ctx, key.Ref, q.entryCells(ctx, key), q.entryRefs(ctx, key), q.entryClosureRefs(ctx, key), q.entryValues(ctx, key), q.entryFacts(key), q.entrySymbolValues(key.Ref))
 }
 
@@ -345,7 +357,12 @@ func (q *Queries) SummarizeWithEntryContext(ctx *db.QueryContext, ref FuncRef, e
 // SummarizeWithEntryContextFacts returns ref's summary under all caller-provided
 // entry components, including parameter-relative path facts.
 func (q *Queries) SummarizeWithEntryContextFacts(ctx *db.QueryContext, ref FuncRef, entry flow.CaptureCells, refs flow.FunctionRefs, closures flow.ClosureRefs, values EntryValues, facts flow.BoundaryFacts) Summary {
-	return q.solveQ.Get(ctx, NewKeyWithEntryContextFacts(ref, entry, refs, closures, values, facts)).Summary
+	return q.SummarizeWithKey(ctx, NewKeyWithEntryContextFacts(ref, entry, refs, closures, values, facts))
+}
+
+// SummarizeWithKey returns the summary for an already normalized entry key.
+func (q *Queries) SummarizeWithKey(ctx *db.QueryContext, key Key) Summary {
+	return q.solveQ.Get(ctx, key).Summary
 }
 
 // Summarize returns ref's caller-visible summary through this reader.
@@ -369,11 +386,15 @@ func (r Reader) SummarizeWithEntryContext(ref FuncRef, entry flow.CaptureCells, 
 // SummarizeWithEntryContextFacts reads ref's summary under all caller-provided
 // entry components, including parameter-relative path facts.
 func (r Reader) SummarizeWithEntryContextFacts(ref FuncRef, entry flow.CaptureCells, refs flow.FunctionRefs, closures flow.ClosureRefs, values EntryValues, facts flow.BoundaryFacts) Summary {
+	return r.SummarizeWithKey(NewKeyWithEntryContextFacts(ref, entry, refs, closures, values, facts))
+}
+
+// SummarizeWithKey reads a summary through an already normalized entry key.
+func (r Reader) SummarizeWithKey(key Key) Summary {
 	if r.queries != nil && r.ctx != nil {
-		return r.queries.SummarizeWithEntryContextFacts(r.ctx, ref, entry, refs, closures, values, facts)
+		return r.queries.SummarizeWithKey(r.ctx, key)
 	}
 	if r.overlay != nil {
-		key := NewKeyWithEntryContextFacts(ref, entry, refs, closures, values, facts)
 		if r.overlayRead != nil {
 			r.overlayRead(key)
 		}
@@ -381,7 +402,7 @@ func (r Reader) SummarizeWithEntryContextFacts(ref FuncRef, entry flow.CaptureCe
 			return sum
 		}
 	}
-	if sum, ok := r.converged[ref]; ok {
+	if sum, ok := r.converged[key.Ref]; ok {
 		return sum
 	}
 	return SummaryDomain.Bottom()

@@ -581,7 +581,7 @@ func (d *Driver) diagnosticState(sess api.AnalysisSession, prog *program, querie
 	for _, key := range contexts {
 		fs, ok := d.diagnosticStates[key]
 		if !ok {
-			fs = queries.IntraWithEntryContextFacts(sess.Context(), ref, key.Entry.Cells(), key.Refs.Refs(), key.Closures.Refs(), key.Values.Values(), key.Facts.Facts())
+			fs = queries.IntraWithKey(sess.Context(), key)
 			if d.diagnosticStates == nil {
 				d.diagnosticStates = make(map[summary.Key]state.FunctionState)
 			}
@@ -651,7 +651,7 @@ func (d *Driver) observeDiagnosticIntra(sess api.AnalysisSession, queries *summa
 	if d == nil || sess == nil || queries == nil {
 		return state.FunctionStateDomain.Bottom()
 	}
-	return queries.ObserveIntraWithEntryContextFacts(sess.Context(), key.Ref, key.Entry.Cells(), key.Refs.Refs(), key.Closures.Refs(), key.Values.Values(), key.Facts.Facts())
+	return queries.ObserveIntraWithKey(sess.Context(), key)
 }
 
 func (d *Driver) validDiagnosticContext(prog *program, key summary.Key) bool {
@@ -1837,14 +1837,7 @@ func (ct callTyper) summaryForCallEntryContext(entry canonicalcall.EntryContext)
 	if d == nil {
 		return summary.SummaryDomain.Bottom()
 	}
-	return d.summaryReader().SummarizeWithEntryContextFacts(
-		entry.Ref(),
-		entry.CaptureCells(),
-		entry.FunctionRefs(),
-		entry.ClosureRefs(),
-		entry.EntryValues(),
-		entry.EntryFacts(),
-	)
+	return d.summaryReader().SummarizeWithKey(entry.Key())
 }
 
 // CallReturnValues is the product-carrier call-return path. It preserves product

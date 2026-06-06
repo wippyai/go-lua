@@ -96,14 +96,7 @@ func (p cellEffectProjector) effectsForRef(
 	if reader.Live() {
 		entry = p.program.CallEntryContextWithFacts(ref, cells, refs, closures, entryValues, entryFacts)
 	}
-	return reader.SummarizeWithEntryContextFacts(
-		entry.Ref(),
-		entry.CaptureCells(),
-		entry.FunctionRefs(),
-		entry.ClosureRefs(),
-		entry.EntryValues(),
-		entry.EntryFacts(),
-	).CellEffects
+	return reader.SummarizeWithKey(entry.Key()).CellEffects
 }
 
 func (p cellEffectProjector) callbackSpecForCall(call *ast.FuncCallExpr, exprType func(ast.Expr) typ.Type) *contract.Spec {
