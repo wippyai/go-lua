@@ -250,47 +250,57 @@ func (ct callTyper) productClosureCallEntryContext(ref summary.FuncRef, closure 
 	return projector.productClosureContext(ref, closure, call, ctx)
 }
 
+// productEntryAxes is the normalized callee-entry evidence shared by direct and
+// closure product calls; only the final EntryContext constructor differs.
+type productEntryAxes struct {
+	ref      summary.FuncRef
+	cells    flow.CaptureCells
+	refs     flow.FunctionRefs
+	closures flow.ClosureRefs
+	values   summary.EntryValues
+	facts    flow.BoundaryFacts
+}
+
 func (c callEntryProjector) productContext(ref summary.FuncRef, call *ast.FuncCallExpr, ctx transfer.ProductCallContext) (canonicalcall.EntryContext, bool) {
-	entryValues := c.productValuesForRef(ref, call, ctx.RuntimeArgValues)
-	entryFacts := c.factsForRef(ref, call, ctx)
-	entryRefs := flow.FunctionRefsDomain.Join(
-		c.program.CallEntryFunctionRefs(ref, ctx.FunctionRefs),
-		c.functionRefsForRef(ref, call, ctx),
-	)
-	entryClosures := flow.ClosureRefsDomain.Join(
-		c.program.CallEntryClosureRefs(ref, ctx.ClosureRefs),
-		c.closureRefsForRef(ref, call, ctx),
-	)
+	axes := c.productAxes(ref, call, ctx)
 	return canonicalcall.NewEntryContextWithFacts(
-		ref,
-		c.program.CallEntryCells(ref, ctx.Cells),
-		entryRefs,
-		entryClosures,
-		entryValues,
-		entryFacts,
+		axes.ref,
+		axes.cells,
+		axes.refs,
+		axes.closures,
+		axes.values,
+		axes.facts,
 	), true
 }
 
 func (c callEntryProjector) productClosureContext(ref summary.FuncRef, closure flow.ClosureRef, call *ast.FuncCallExpr, ctx transfer.ProductCallContext) (canonicalcall.EntryContext, bool) {
-	entryValues := c.productValuesForRef(ref, call, ctx.RuntimeArgValues)
-	entryFacts := c.factsForRef(ref, call, ctx)
-	entryRefs := flow.FunctionRefsDomain.Join(
-		c.program.CallEntryFunctionRefs(ref, ctx.FunctionRefs),
-		c.functionRefsForRef(ref, call, ctx),
-	)
-	entryClosures := flow.ClosureRefsDomain.Join(
-		c.program.CallEntryClosureRefs(ref, ctx.ClosureRefs),
-		c.closureRefsForRef(ref, call, ctx),
-	)
+	axes := c.productAxes(ref, call, ctx)
 	return canonicalcall.EntryContextFromClosureWithLiveAxesAndFacts(
-		ref,
+		axes.ref,
 		closure,
-		c.program.CallEntryCells(ref, ctx.Cells),
-		entryRefs,
-		entryClosures,
-		entryValues,
-		entryFacts,
+		axes.cells,
+		axes.refs,
+		axes.closures,
+		axes.values,
+		axes.facts,
 	), true
+}
+
+func (c callEntryProjector) productAxes(ref summary.FuncRef, call *ast.FuncCallExpr, ctx transfer.ProductCallContext) productEntryAxes {
+	return productEntryAxes{
+		ref:   ref,
+		cells: c.program.CallEntryCells(ref, ctx.Cells),
+		refs: flow.FunctionRefsDomain.Join(
+			c.program.CallEntryFunctionRefs(ref, ctx.FunctionRefs),
+			c.functionRefsForRef(ref, call, ctx),
+		),
+		closures: flow.ClosureRefsDomain.Join(
+			c.program.CallEntryClosureRefs(ref, ctx.ClosureRefs),
+			c.closureRefsForRef(ref, call, ctx),
+		),
+		values: c.productValuesForRef(ref, call, ctx.RuntimeArgValues),
+		facts:  c.factsForRef(ref, call, ctx),
+	}
 }
 
 func (c callEntryProjector) factsForRef(ref summary.FuncRef, call *ast.FuncCallExpr, ctx transfer.ProductCallContext) flow.BoundaryFacts {
