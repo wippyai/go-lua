@@ -77,15 +77,15 @@ func (p *program) CaptureEntryClosureRefs(ref summary.FuncRef, captureClosureRef
 	return out
 }
 
-func (p *program) CallEntryCells(ref summary.FuncRef, caller flow.CaptureCells) flow.CaptureCells {
+func (p *program) callEntryCells(ref summary.FuncRef, caller flow.CaptureCells) flow.CaptureCells {
 	return caller.ProjectPaths(p.referenceProjection(ref))
 }
 
-func (p *program) CallEntryFunctionRefs(ref summary.FuncRef, caller flow.FunctionRefs) flow.FunctionRefs {
+func (p *program) callEntryFunctionRefs(ref summary.FuncRef, caller flow.FunctionRefs) flow.FunctionRefs {
 	return flow.ProjectFunctionRefsByReferencePaths(caller, p.referenceProjection(ref))
 }
 
-func (p *program) CallEntryClosureRefs(ref summary.FuncRef, caller flow.ClosureRefs) flow.ClosureRefs {
+func (p *program) callEntryClosureRefs(ref summary.FuncRef, caller flow.ClosureRefs) flow.ClosureRefs {
 	return flow.ProjectClosureRefsByReferencePaths(caller, p.referenceProjection(ref))
 }
 
@@ -113,9 +113,9 @@ func (p *program) CallEntryContextWithFacts(
 ) canonicalcall.EntryContext {
 	return canonicalcall.NewEntryContextWithFacts(
 		ref,
-		p.CallEntryCells(ref, cells),
-		p.CallEntryFunctionRefs(ref, refs),
-		p.CallEntryClosureRefs(ref, closures),
+		p.callEntryCells(ref, cells),
+		p.callEntryFunctionRefs(ref, refs),
+		p.callEntryClosureRefs(ref, closures),
 		values,
 		facts,
 	)
