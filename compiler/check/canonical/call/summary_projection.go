@@ -26,10 +26,10 @@ type SummaryTargetInfo struct {
 	SkipSignatureRelations bool
 }
 
-// SummaryProjectionForTargets applies the canonical callable precedence rule,
+// summaryProjectionForTargets applies the canonical callable precedence rule,
 // converts each selected target to an entry-context summary read, and returns the
 // summary-owned projection carrier plus the selection fallback state.
-func SummaryProjectionForTargets(
+func summaryProjectionForTargets(
 	targets TargetSet,
 	entryContext SelectedEntryContext,
 	lookup SummaryLookup,
@@ -73,6 +73,6 @@ func CallOutcomeForTargets(
 	lookup SummaryLookup,
 	info SummaryTargetInfo,
 ) CallOutcome {
-	projection, selection := SummaryProjectionForTargets(targets, entryContext, lookup, info)
+	projection, selection := summaryProjectionForTargets(targets, entryContext, lookup, info)
 	return CallOutcome{Projection: projection, Selection: selection}
 }

@@ -24,7 +24,7 @@ func TestSummaryProjectionForTargetsUsesClosureEntryContext(t *testing.T) {
 	targets := NewTargetSet([]summary.FuncRef{direct}, true, []flow.ClosureRef{closure}, true)
 
 	calledDirect := false
-	projection, selection := SummaryProjectionForTargets(
+	projection, selection := summaryProjectionForTargets(
 		targets,
 		func(target SelectedTarget) EntryContext {
 			if target.IsClosure() {
@@ -86,7 +86,7 @@ func TestSummaryProjectionForTargetsPreservesSelectionFallbackState(t *testing.T
 
 	direct := summary.FuncRef{GraphID: 7}
 	targets := NewTargetSet([]summary.FuncRef{direct}, true, nil, true)
-	projection, selection := SummaryProjectionForTargets(
+	projection, selection := summaryProjectionForTargets(
 		targets,
 		func(target SelectedTarget) EntryContext {
 			return NewEntryContext(target.Ref(), flow.CaptureCellsDomain.Bottom(), nil, nil, nil, flow.BoundaryFactsDomain.Top())
