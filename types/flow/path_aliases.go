@@ -195,15 +195,7 @@ var PathAliasFactsDomain = lattice.Lattice[PathAliasFacts]{
 		if a.bottom || b.bottom {
 			return a.bottom == b.bottom
 		}
-		if len(a.entries) != len(b.entries) {
-			return false
-		}
-		for i := range a.entries {
-			if a.entries[i] != b.entries[i] {
-				return false
-			}
-		}
-		return true
+		return orderedRowsEqual(a.entries, b.entries, func(a, b PathAliasFact) bool { return a == b })
 	},
 	LessOrEq: func(a, b PathAliasFacts) bool {
 		if a.bottom {
@@ -262,30 +254,14 @@ func pathAliasLess(a, b PathAliasFact) bool {
 }
 
 func findPathAliasFact(entries []PathAliasFact, fact PathAliasFact) (int, bool) {
-	i := sort.Search(len(entries), func(i int) bool {
-		return !pathAliasLess(entries[i], fact)
-	})
-	if i < len(entries) && entries[i] == fact {
-		return i, true
-	}
-	return -1, false
+	return orderedRowsFind(entries, fact, pathAliasLess, func(a, b PathAliasFact) bool { return a == b })
 }
 
 func pathAliasFactsContainAll(have, want []PathAliasFact) bool {
-	for _, w := range want {
-		if _, ok := findPathAliasFact(have, w); !ok {
-			return false
-		}
-	}
-	return true
+	return orderedRowsContainAll(have, want, pathAliasLess, func(a, b PathAliasFact) bool { return a == b })
 }
 
 func intersectPathAliasFacts(a, b PathAliasFacts) PathAliasFacts {
-	var out []PathAliasFact
-	for _, entry := range a.entries {
-		if _, ok := findPathAliasFact(b.entries, entry); ok {
-			out = append(out, entry)
-		}
-	}
+	out := orderedRowsIntersect(a.entries, b.entries, pathAliasLess, func(a, b PathAliasFact) bool { return a == b })
 	return canonicalPathAliasFacts(out)
 }

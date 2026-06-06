@@ -256,17 +256,17 @@ func (set keyPresenceFactSet) append(other keyPresenceFactSet) keyPresenceFactSe
 }
 
 func (set keyPresenceFactSet) equal(other keyPresenceFactSet) bool {
-	return sameOrderedFacts(set.entries, other.entries, func(a, b KeyPresenceFact) bool { return a == b }) &&
-		sameOrderedFacts(set.values, other.values, func(a, b KeyValueFact) bool { return a == b }) &&
-		sameOrderedFacts(set.arrays, other.arrays, func(a, b KeyArrayFact) bool { return a == b }) &&
-		sameOrderedFacts(set.emptyArrays, other.emptyArrays, func(a, b EmptyKeyArrayFact) bool { return a == b }) &&
-		sameOrderedFacts(set.arrayValues, other.arrayValues, keyArrayValueFactEqual) &&
-		sameOrderedFacts(set.appends, other.appends, func(a, b AppendedKeyFact) bool { return a == b }) &&
-		sameOrderedFacts(set.pending, other.pending, func(a, b PendingKeyArrayFact) bool { return a == b }) &&
-		sameOrderedFacts(set.appendBases, other.appendBases, func(a, b AppendHistoryBaseFact) bool { return a == b }) &&
-		sameOrderedFacts(set.appendEvents, other.appendEvents, func(a, b AppendHistoryEventFact) bool { return a == b }) &&
-		sameOrderedFacts(set.appendCoverage, other.appendCoverage, appendHistoryCoverageFactEqual) &&
-		sameOrderedFacts(set.appendOrigins, other.appendOrigins, func(a, b AppendElementFieldOriginFact) bool { return a == b })
+	return orderedRowsEqual(set.entries, other.entries, func(a, b KeyPresenceFact) bool { return a == b }) &&
+		orderedRowsEqual(set.values, other.values, func(a, b KeyValueFact) bool { return a == b }) &&
+		orderedRowsEqual(set.arrays, other.arrays, func(a, b KeyArrayFact) bool { return a == b }) &&
+		orderedRowsEqual(set.emptyArrays, other.emptyArrays, func(a, b EmptyKeyArrayFact) bool { return a == b }) &&
+		orderedRowsEqual(set.arrayValues, other.arrayValues, keyArrayValueFactEqual) &&
+		orderedRowsEqual(set.appends, other.appends, func(a, b AppendedKeyFact) bool { return a == b }) &&
+		orderedRowsEqual(set.pending, other.pending, func(a, b PendingKeyArrayFact) bool { return a == b }) &&
+		orderedRowsEqual(set.appendBases, other.appendBases, func(a, b AppendHistoryBaseFact) bool { return a == b }) &&
+		orderedRowsEqual(set.appendEvents, other.appendEvents, func(a, b AppendHistoryEventFact) bool { return a == b }) &&
+		orderedRowsEqual(set.appendCoverage, other.appendCoverage, appendHistoryCoverageFactEqual) &&
+		orderedRowsEqual(set.appendOrigins, other.appendOrigins, func(a, b AppendElementFieldOriginFact) bool { return a == b })
 }
 
 func (set keyPresenceFactSet) lessOrEqualTo(other keyPresenceFactSet) bool {
@@ -284,7 +284,7 @@ func (set keyPresenceFactSet) lessOrEqualTo(other keyPresenceFactSet) bool {
 }
 
 func (set keyPresenceFactSet) intersect(other keyPresenceFactSet, widenPayload bool) keyPresenceFactSet {
-	appendBases := intersectOrderedFacts(set.appendBases, other.appendBases, appendHistoryBaseLess, func(a, b AppendHistoryBaseFact) bool { return a == b })
+	appendBases := orderedRowsIntersect(set.appendBases, other.appendBases, appendHistoryBaseLess, func(a, b AppendHistoryBaseFact) bool { return a == b })
 	appendBases = append(appendBases, appendHistoryBasesSpecializedByEmpty(set.emptyArrays, other.appendBases)...)
 	appendBases = append(appendBases, appendHistoryBasesSpecializedByEmpty(other.emptyArrays, set.appendBases)...)
 	appendBases = compactAppendHistoryBases(appendBases)
@@ -296,7 +296,7 @@ func (set keyPresenceFactSet) intersect(other keyPresenceFactSet, widenPayload b
 	appendCoverage := appendHistoryCoverageForBases(coverage, appendBases, appendEvents, widenPayload)
 	appendOrigins := appendElementFieldOriginsForBases(origins, appendBases)
 
-	arrays := intersectOrderedFacts(set.arrays, other.arrays, keyArrayLess, func(a, b KeyArrayFact) bool { return a == b })
+	arrays := orderedRowsIntersect(set.arrays, other.arrays, keyArrayLess, func(a, b KeyArrayFact) bool { return a == b })
 	arrays = append(arrays, keyArrayFactsSpecializedByEmpty(set.emptyArrays, other.arrays)...)
 	arrays = append(arrays, keyArrayFactsSpecializedByEmpty(other.emptyArrays, set.arrays)...)
 
@@ -305,38 +305,18 @@ func (set keyPresenceFactSet) intersect(other keyPresenceFactSet, widenPayload b
 	arrayValues = append(arrayValues, keyArrayValueFactsSpecializedByEmpty(other.emptyArrays, set.arrayValues)...)
 
 	return keyPresenceFactSet{
-		entries:        intersectOrderedFacts(set.entries, other.entries, keyPresenceLess, func(a, b KeyPresenceFact) bool { return a == b }),
-		values:         intersectOrderedFacts(set.values, other.values, keyValueLess, func(a, b KeyValueFact) bool { return a == b }),
+		entries:        orderedRowsIntersect(set.entries, other.entries, keyPresenceLess, func(a, b KeyPresenceFact) bool { return a == b }),
+		values:         orderedRowsIntersect(set.values, other.values, keyValueLess, func(a, b KeyValueFact) bool { return a == b }),
 		arrays:         arrays,
-		emptyArrays:    intersectOrderedFacts(set.emptyArrays, other.emptyArrays, emptyKeyArrayLess, func(a, b EmptyKeyArrayFact) bool { return a == b }),
+		emptyArrays:    orderedRowsIntersect(set.emptyArrays, other.emptyArrays, emptyKeyArrayLess, func(a, b EmptyKeyArrayFact) bool { return a == b }),
 		arrayValues:    arrayValues,
-		appends:        intersectOrderedFacts(set.appends, other.appends, appendedKeyLess, func(a, b AppendedKeyFact) bool { return a == b }),
-		pending:        intersectOrderedFacts(set.pending, other.pending, pendingKeyArrayLess, func(a, b PendingKeyArrayFact) bool { return a == b }),
+		appends:        orderedRowsIntersect(set.appends, other.appends, appendedKeyLess, func(a, b AppendedKeyFact) bool { return a == b }),
+		pending:        orderedRowsIntersect(set.pending, other.pending, pendingKeyArrayLess, func(a, b PendingKeyArrayFact) bool { return a == b }),
 		appendBases:    appendBases,
 		appendEvents:   appendEvents,
 		appendCoverage: appendCoverage,
 		appendOrigins:  appendOrigins,
 	}
-}
-
-func intersectOrderedFacts[T any](a, b []T, less func(T, T) bool, same func(T, T) bool) []T {
-	var out []T
-	i, j := 0, 0
-	for i < len(a) && j < len(b) {
-		switch {
-		case less(a[i], b[j]):
-			i++
-		case less(b[j], a[i]):
-			j++
-		default:
-			if same(a[i], b[j]) {
-				out = append(out, a[i])
-			}
-			i++
-			j++
-		}
-	}
-	return out
 }
 
 func intersectKeyArrayValueFacts(a, b []KeyArrayValueFact, widenPayload bool) []KeyArrayValueFact {
@@ -363,18 +343,6 @@ func intersectKeyArrayValueFacts(a, b []KeyArrayValueFact, widenPayload bool) []
 		}
 	}
 	return out
-}
-
-func sameOrderedFacts[T any](a, b []T, equal func(T, T) bool) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	for i := range a {
-		if !equal(a[i], b[i]) {
-			return false
-		}
-	}
-	return true
 }
 
 func keyArrayValueFactEqual(a, b KeyArrayValueFact) bool {
