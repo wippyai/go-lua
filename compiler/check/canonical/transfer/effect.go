@@ -161,11 +161,11 @@ func (t *Transfer) currentCellEffects(out *flow.PointState, effects flow.Capture
 }
 
 func (t *Transfer) applyCellStoreEffects(out *flow.PointState, effects flow.CaptureEffects) {
-	callerEffects.applyCellStore(out, effects)
+	flow.ApplyCaptureEffectsToCellStore(out, effects)
 }
 
 func (t *Transfer) recordCellEffects(out *flow.PointState, effects flow.CaptureEffects) {
-	callerEffects.recordCells(out, effects)
+	flow.RecordCaptureEffects(out, effects)
 }
 
 func (t *Transfer) recordReceiverEffect(
@@ -174,7 +174,7 @@ func (t *Transfer) recordReceiverEffect(
 	value product.AbstractValue,
 	mutations ...flow.ReceiverMutation,
 ) bool {
-	return callerEffects.recordReceiverWrite(out, slot, value, mutations...)
+	return flow.RecordReceiverWrite(out, slot, value, mutations...)
 }
 
 func (t *Transfer) recordReceiverMutationEffect(
@@ -192,7 +192,7 @@ func (t *Transfer) recordReceiverMutationEffect(
 		}
 		slot = t.prototypeSelfSlot
 	}
-	return callerEffects.recordReceiverMutation(out, slot, mutations...)
+	return flow.RecordReceiverMutation(out, slot, mutations...)
 }
 
 func receiverMutationForPlace(place Place, presentElementWrite bool) (flow.ReceiverMutation, bool) {
@@ -325,7 +325,7 @@ func (t *Transfer) applyClosureReferenceEffect(
 }
 
 func (t *Transfer) applyPrototypeSelfEffect(out *flow.PointState, effect PrototypeSelfEffect) bool {
-	return prototypes.recordSelf(out, effect.Prototype, effect.Value)
+	return flow.RecordPrototypeSelf(out, effect.Prototype, effect.Value)
 }
 
 func (t *Transfer) applyPrototypeSelfWriteEffect(out *flow.PointState, effect WriteEffect, updated product.AbstractValue) bool {

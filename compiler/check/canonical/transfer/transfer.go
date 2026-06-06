@@ -2173,7 +2173,7 @@ func (t *Transfer) applySetMetatableInstanceBinding(out *flow.PointState, src as
 	if !ok || proto == 0 {
 		return false
 	}
-	changed := prototypes.bindInstance(out, sym, proto)
+	changed := flow.BindPrototypeInstance(out, sym, proto)
 	if t.publishPrototypeMethodRefs(out, proto, constraint.NewPath(sym, "")) {
 		changed = true
 	}
@@ -2216,7 +2216,7 @@ func (t *Transfer) prototypeMethodRefs(proto cfg.SymbolID, base constraint.Path)
 }
 
 func (t *Transfer) clearPrototypeInstance(out *flow.PointState, sym cfg.SymbolID) bool {
-	return prototypes.clearInstance(out, sym)
+	return flow.ClearPrototypeInstance(out, sym)
 }
 
 func (t *Transfer) setMetatablePrototypeFromSource(src ast.Expr) (cfg.SymbolID, bool) {
