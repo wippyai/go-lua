@@ -46,13 +46,17 @@ type closureRefsWrite struct {
 
 // ReturnSlotEffect is the transfer payload for one caller-visible return slot.
 // Source records function/closure identity facts under the slot placeholder;
+// FunctionRefTree installs normalized relative identity surfaces such as
+// prototype methods under the same placeholder;
 // Value records the product value for non-symbol expressions whose value would
 // otherwise be lost before summary projection.
 type ReturnSlotEffect struct {
-	Index        int
-	Source       ast.Expr
-	Value        product.AbstractValue
-	FunctionRefs flow.FunctionRefs
+	Index              int
+	Source             ast.Expr
+	Value              product.AbstractValue
+	FunctionRefs       flow.FunctionRefs
+	FunctionRefTree    flow.FunctionRefTree
+	HasFunctionRefTree bool
 }
 
 // ReturnEffect is the canonical reducer payload for a normal return boundary.
@@ -219,6 +223,9 @@ func (t *Transfer) applyReturnEffect(out *flow.PointState, effect ReturnEffect) 
 				Path:         constraint.NewPlaceholder(slot.Index),
 				FunctionRefs: explicitFunctionRefsWrite(slot.FunctionRefs),
 			}) || changed
+		}
+		if slot.HasFunctionRefTree {
+			changed = flow.ReplaceFunctionRefTreePath(out, constraint.NewPlaceholder(slot.Index), slot.FunctionRefTree) || changed
 		}
 		if slot.Value.IsZero() {
 			continue

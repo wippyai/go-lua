@@ -229,6 +229,35 @@ func TestReplaceFunctionRefTreePathInstallsRootAndNestedEntries(t *testing.T) {
 	}
 }
 
+func TestJoinFunctionRefTreePathPublishesWithoutClearingTarget(t *testing.T) {
+	target := constraint.NewPath(50, "target")
+	existingChild := target.Field("existing")
+	publishedChild := target.Field("published")
+	out := PointState{
+		FunctionRefs: WithFunctionRefPath(nil, existingChild, FunctionRefSetOf(FunctionRef{GraphID: 1})),
+	}
+	tree := FunctionRefTree{
+		Entries: []FunctionRefTreeEntry{{
+			Segments: []constraint.Segment{{Kind: constraint.SegmentField, Name: "published"}},
+			Set:      FunctionRefSetOf(FunctionRef{GraphID: 2}),
+		}},
+	}
+
+	if !JoinFunctionRefTreePath(&out, target, tree) {
+		t.Fatal("JoinFunctionRefTreePath reported no change")
+	}
+	if set, ok := FunctionRefAtPath(out.FunctionRefs, existingChild); !ok {
+		t.Fatalf("existing child was cleared: %#v", out.FunctionRefs)
+	} else if ref, singleton := set.Singleton(); !singleton || ref.GraphID != 1 {
+		t.Fatalf("existing child ref = %s, want graph 1 singleton", set.Format())
+	}
+	if set, ok := FunctionRefAtPath(out.FunctionRefs, publishedChild); !ok {
+		t.Fatalf("published child missing: %#v", out.FunctionRefs)
+	} else if ref, singleton := set.Singleton(); !singleton || ref.GraphID != 2 {
+		t.Fatalf("published child ref = %s, want graph 2 singleton", set.Format())
+	}
+}
+
 func TestAssignFunctionRefSubtreePathCopiesAndReplacesTarget(t *testing.T) {
 	source := constraint.NewPath(45, "source")
 	sourceChild := source.Field("child")

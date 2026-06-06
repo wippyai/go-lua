@@ -55,6 +55,21 @@ func ReplaceFunctionRefTreePath(out *PointState, target constraint.Path, tree Fu
 	return ReplaceFunctionRefSubtreePath(out, target, functionRefsFromTree(target, tree))
 }
 
+// JoinFunctionRefTreePath additively publishes a normalized function-identity
+// tree at target without clearing existing identities.
+func JoinFunctionRefTreePath(out *PointState, target constraint.Path, tree FunctionRefTree) bool {
+	if out == nil {
+		return false
+	}
+	refs := functionRefsFromTree(target, tree)
+	if FunctionRefsDomain.Equal(refs, FunctionRefsDomain.Bottom()) {
+		return false
+	}
+	before := out.FunctionRefs
+	out.FunctionRefs = FunctionRefsDomain.Join(out.FunctionRefs, refs)
+	return !FunctionRefsDomain.Equal(before, out.FunctionRefs)
+}
+
 func functionRefsFromTree(target constraint.Path, tree FunctionRefTree) FunctionRefs {
 	var refs FunctionRefs
 	if tree.HasRoot {
@@ -185,15 +200,6 @@ func ClearClosureRefSubtreePath(out *PointState, path constraint.Path) bool {
 		return false
 	}
 	return ClearClosureRefSubtree(out, addr)
-}
-
-func JoinFunctionRefs(out *PointState, refs FunctionRefs) bool {
-	if out == nil {
-		return false
-	}
-	before := out.FunctionRefs
-	out.FunctionRefs = FunctionRefsDomain.Join(out.FunctionRefs, refs)
-	return !FunctionRefsDomain.Equal(before, out.FunctionRefs)
 }
 
 func ApplyClosureCellEffectsToRefs(out *PointState, addr StableAddress, effects CaptureEffects) bool {

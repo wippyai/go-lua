@@ -1903,31 +1903,52 @@ func (t *Transfer) publishPrototypeMethodRefs(out *flow.PointState, proto cfg.Sy
 	if out == nil || proto == 0 || base.IsEmpty() || len(t.prototypeMethods) == 0 {
 		return false
 	}
-	refs := t.prototypeMethodRefs(proto, base)
-	if flow.FunctionRefsDomain.Equal(refs, flow.FunctionRefsDomain.Bottom()) {
+	tree, ok := t.prototypeMethodRefTree(proto)
+	if !ok {
 		return false
 	}
-	return flow.JoinFunctionRefs(out, refs)
+	return flow.JoinFunctionRefTreePath(out, base, tree)
 }
 
-func (t *Transfer) prototypeMethodRefs(proto cfg.SymbolID, base constraint.Path) flow.FunctionRefs {
-	if proto == 0 || base.IsEmpty() || len(t.prototypeMethods) == 0 {
-		return flow.FunctionRefsDomain.Bottom()
+func (t *Transfer) prototypeMethodRefTree(proto cfg.SymbolID) (flow.FunctionRefTree, bool) {
+	if proto == 0 || len(t.prototypeMethods) == 0 {
+		return flow.FunctionRefTree{}, false
 	}
-	var refs flow.FunctionRefs
+	bySegment := make(map[constraint.Segment]flow.FunctionRefSet)
 	for _, method := range t.prototypeMethods {
 		if method.PrototypeSym != proto || method.FuncRef == (flow.FunctionRef{}) || method.Field == (constraint.Segment{}) {
 			continue
 		}
-		path := base
-		path.Segments = append(append([]constraint.Segment(nil), base.Segments...), method.Field)
 		set := flow.FunctionRefSetOf(method.FuncRef)
-		if existing, ok := flow.FunctionRefAtPath(refs, path); ok {
+		if existing, ok := bySegment[method.Field]; ok {
 			set = flow.FunctionRefSetDomain.Join(existing, set)
 		}
-		refs = flow.WithFunctionRefPath(refs, path, set)
+		bySegment[method.Field] = set
 	}
-	return refs
+	if len(bySegment) == 0 {
+		return flow.FunctionRefTree{}, false
+	}
+	entries := make([]flow.FunctionRefTreeEntry, 0, len(bySegment))
+	for segment, set := range bySegment {
+		entries = append(entries, flow.FunctionRefTreeEntry{
+			Segments: []constraint.Segment{segment},
+			Set:      set,
+		})
+	}
+	sort.Slice(entries, func(i, j int) bool {
+		return prototypeMethodSegmentLess(entries[i].Segments[0], entries[j].Segments[0])
+	})
+	return flow.FunctionRefTree{Entries: entries}, true
+}
+
+func prototypeMethodSegmentLess(a, b constraint.Segment) bool {
+	if a.Kind != b.Kind {
+		return a.Kind < b.Kind
+	}
+	if a.Name != b.Name {
+		return a.Name < b.Name
+	}
+	return a.Index < b.Index
 }
 
 func (t *Transfer) clearPrototypeInstance(out *flow.PointState, sym cfg.SymbolID) bool {
@@ -3973,7 +3994,10 @@ func (t *Transfer) applyReturn(
 					if i == 0 {
 						slot.Source = call.Call
 					}
-					slot.FunctionRefs = t.returnSetMetatableFunctionRefs(p, call.Call, i)
+					if tree, ok := t.returnSetMetatableFunctionRefTree(p, call.Call); ok {
+						slot.FunctionRefTree = tree
+						slot.HasFunctionRefTree = true
+					}
 					effect.Slots = append(effect.Slots, slot)
 				}
 				t.applyReturnEffect(out, effect)
@@ -3986,7 +4010,10 @@ func (t *Transfer) applyReturn(
 		slot := ReturnSlotEffect{Index: i, Source: expr}
 		if call := nestedCallExpr(expr); call != nil {
 			t.applySetMetatablePrototypeSelf(out, p, call, demand)
-			slot.FunctionRefs = t.returnSetMetatableFunctionRefs(p, call, i)
+			if tree, ok := t.returnSetMetatableFunctionRefTree(p, call); ok {
+				slot.FunctionRefTree = tree
+				slot.HasFunctionRefTree = true
+			}
 		}
 		t.publishReturnedPrototypeSelf(out, expr)
 		// A returned identifier already carries its value in the variable's Env
@@ -4002,15 +4029,15 @@ func (t *Transfer) applyReturn(
 	t.applyReturnEffect(out, effect)
 }
 
-func (t *Transfer) returnSetMetatableFunctionRefs(p cfg.Point, call *ast.FuncCallExpr, slot int) flow.FunctionRefs {
-	if call == nil || slot < 0 || t.in.Graph == nil || !metatable.IsSetMetatableCall(call, t.in.Graph.Bindings()) {
-		return flow.FunctionRefsDomain.Bottom()
+func (t *Transfer) returnSetMetatableFunctionRefTree(p cfg.Point, call *ast.FuncCallExpr) (flow.FunctionRefTree, bool) {
+	if call == nil || t.in.Graph == nil || !metatable.IsSetMetatableCall(call, t.in.Graph.Bindings()) {
+		return flow.FunctionRefTree{}, false
 	}
 	proto, ok := t.setMetatablePrototype(p, call)
 	if !ok || proto == 0 {
-		return flow.FunctionRefsDomain.Bottom()
+		return flow.FunctionRefTree{}, false
 	}
-	return t.prototypeMethodRefs(proto, constraint.NewPlaceholder(slot))
+	return t.prototypeMethodRefTree(proto)
 }
 
 func (t *Transfer) publishReturnedPrototypeSelf(out *flow.PointState, expr ast.Expr) {
