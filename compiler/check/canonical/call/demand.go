@@ -41,15 +41,14 @@ func FunctionForDemand(in DemandFunctionInput) *typ.Function {
 		callee = member
 	} else {
 		callee = in.Resolver.ResolveCallee(call.Func)
-		if FunctionShape(callee) == nil {
+		if functionShape(callee) == nil {
 			callee = in.Resolver.ResolveStaticCallee(call.Func)
 		}
 	}
-	return FunctionShape(callee)
+	return functionShape(callee)
 }
 
-// FunctionShape unwraps a caller-visible callable type into a function shape.
-func FunctionShape(t typ.Type) *typ.Function {
+func functionShape(t typ.Type) *typ.Function {
 	if t == nil || typ.IsAbsentOrUnknown(t) || typ.IsAny(t) {
 		return nil
 	}
