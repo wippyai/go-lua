@@ -2,9 +2,11 @@ package transfer
 
 import (
 	"github.com/wippyai/go-lua/compiler/ast"
+	"github.com/wippyai/go-lua/compiler/check/domain/paramevidence"
 	"github.com/wippyai/go-lua/types/domain/value/product"
 	"github.com/wippyai/go-lua/types/flow"
 	"github.com/wippyai/go-lua/types/flow/numeric"
+	"github.com/wippyai/go-lua/types/kind"
 	"github.com/wippyai/go-lua/types/typ"
 )
 
@@ -25,6 +27,60 @@ type ProductCallContext struct {
 	KeyPresence      flow.KeyPresenceFacts
 	Num              *numeric.State
 	IndexWrites      flow.IndexWriteAdmissionFacts
+}
+
+func (t *Transfer) productCallContext(
+	out *flow.PointState,
+	call *ast.FuncCallExpr,
+	demand func(int, paramevidence.ParamContract),
+) ProductCallContext {
+	argValues := t.callArgumentValues(out, call, demand)
+	ctx := ProductCallContext{
+		ArgValues:        argValues,
+		RuntimeArgValues: t.runtimeArgumentValues(out, call, argValues, demand),
+		PendingInput:     t.exprUsesPendingUnannotatedParam(out, call),
+		ExprValue:        t.projectExprValueResolver(out),
+	}
+	if call != nil && call.Method != "" && len(ctx.RuntimeArgValues) > 0 && !ctx.RuntimeArgValues[0].IsZero() {
+		if selfType := productCallSelfType(ctx.RuntimeArgValues[0]); selfType != nil {
+			ctx.SelfType = selfType
+		}
+	}
+	if out != nil {
+		ctx.Cells = out.Cells
+		ctx.FunctionRefs = out.FunctionRefs
+		ctx.ClosureRefs = out.ClosureRefs
+		ctx.KeyPresence = out.KeyPresence
+		ctx.Num = out.Num
+		ctx.IndexWrites = out.IndexWrites
+	}
+	return ctx
+}
+
+func productCallSelfType(av product.AbstractValue) typ.Type {
+	if av.IsZero() {
+		return nil
+	}
+	selfType := product.ProjectValueOrUnknown(av)
+	if !productCallSelfTypeInformative(selfType) {
+		return nil
+	}
+	return selfType
+}
+
+func productCallSelfTypeInformative(t typ.Type) bool {
+	t = typ.UnwrapAnnotated(t)
+	if t == nil || typ.IsAbsentOrUnknown(t) || typ.IsAny(t) {
+		return false
+	}
+	switch t.Kind() {
+	case kind.Self, kind.Generic:
+		return false
+	}
+	if t.Kind().IsDeferred() {
+		return false
+	}
+	return !typ.ContainsTypeParam(t) || !typ.ContainsFreeTypeParam(t)
 }
 
 // ExprType is the compatibility projection for provider code that still needs a
