@@ -1,6 +1,7 @@
 package flow
 
 import (
+	"github.com/wippyai/go-lua/types/access"
 	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/domain/value/product"
 )
@@ -50,6 +51,18 @@ func ApplyAddressWritePathInvalidation(out *PointState, proof AddressWritePathIn
 		}
 	}
 	return ApplyAddressWriteInvalidation(out, effect)
+}
+
+// ApplyAccessWriteFootprint applies a normalized access write footprint.
+func ApplyAccessWriteFootprint(out *PointState, footprint access.WriteFootprint) bool {
+	return ApplyAddressWritePathInvalidation(out, AddressWritePathInvalidation{
+		WritePath:                  footprint.WritePath,
+		PresentElementWrite:        footprint.PresentElementWrite,
+		PresentElementArrayPath:    footprint.PresentElementArrayPath,
+		HasPresentElementArrayPath: footprint.HasPresentElementArrayPath,
+		PresentElementMember:       footprint.PresentElementMember,
+		Written:                    footprint.Written,
+	})
 }
 
 // ApplyAddressWriteInvalidation applies the shared write-kill law for address

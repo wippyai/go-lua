@@ -1,17 +1,15 @@
 package transfer
 
 import (
-	canonicalplace "github.com/wippyai/go-lua/compiler/check/canonical/place"
-	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/domain/value/product"
 	"github.com/wippyai/go-lua/types/flow"
 )
 
 // PlaceMutationEffect is the canonical reductor for side facts whose truth is
 // tied to a mutable Place. Product writes and table mutators both lower through
-// this payload before installing their new value facts, so mutable-path
-// invalidation is owned by transfer rather than by liveness, the driver, or
-// ad-hoc per-assignment helpers.
+// this payload before installing their new value facts. Transfer selects which
+// fact families are invalidated; canonical access/flow layers own the write
+// footprint and address-fact laws.
 type PlaceMutationEffect struct {
 	Place                  Place
 	StaticMembers          bool
@@ -92,58 +90,9 @@ func (t *Transfer) invalidateKeyFactsForPlaceWithValue(
 	if out == nil {
 		return false
 	}
-	path, ok := place.StaticPrefixPath()
-	if !ok || path.Symbol == 0 {
+	footprint, ok := place.WriteFootprint(presentElementWrite, presentElementValue)
+	if !ok {
 		return false
 	}
-	effect := flow.AddressWritePathInvalidation{
-		WritePath:           path,
-		PresentElementWrite: presentElementWrite && len(place.Steps) > 0,
-		Written:             presentElementValue,
-	}
-	if presentElementWrite && len(place.Steps) > 0 {
-		if arrayPath, member, ok := presentElementMemberWriteFootprint(place); ok {
-			effect.PresentElementArrayPath = arrayPath
-			effect.HasPresentElementArrayPath = true
-			effect.PresentElementMember = member
-		}
-	}
-	return flow.ApplyAddressWritePathInvalidation(out, effect)
-}
-
-func presentElementMemberWriteFootprint(place Place) (constraint.Path, []constraint.Segment, bool) {
-	if place.Root == 0 {
-		return constraint.Path{}, nil, false
-	}
-	array := constraint.NewPath(place.Root, place.RootName)
-	for i, step := range place.Steps {
-		if step.Kind == PlaceStepDynamicIndex {
-			if i == len(place.Steps)-1 {
-				return constraint.Path{}, nil, false
-			}
-			member, ok := staticMemberSuffix(place.Steps[i+1:])
-			return array, member, ok
-		}
-		seg, ok := canonicalplace.SegmentFromStep(step)
-		if !ok {
-			return constraint.Path{}, nil, false
-		}
-		array.Segments = append(array.Segments, seg)
-	}
-	return constraint.Path{}, nil, false
-}
-
-func staticMemberSuffix(steps []PlaceStep) ([]constraint.Segment, bool) {
-	if len(steps) == 0 {
-		return nil, false
-	}
-	out := make([]constraint.Segment, 0, len(steps))
-	for _, step := range steps {
-		seg, ok := canonicalplace.SegmentFromStep(step)
-		if !ok {
-			return nil, false
-		}
-		out = append(out, seg)
-	}
-	return out, true
+	return flow.ApplyAccessWriteFootprint(out, footprint)
 }
