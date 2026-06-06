@@ -4,6 +4,7 @@ import (
 	"github.com/wippyai/go-lua/types/cfg"
 	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/domain/value"
+	"github.com/wippyai/go-lua/types/effect"
 	"github.com/wippyai/go-lua/types/typ"
 )
 
@@ -30,6 +31,7 @@ func InputsEqual(a, b *Inputs) bool {
 		predicateLinksEqual(a.PredicateLinks, b.PredicateLinks) &&
 		siblingAssignmentsEqual(a.SiblingAssignments, b.SiblingAssignments) &&
 		variantFieldOriginsEqual(a.VariantFieldOrigins, b.VariantFieldOrigins) &&
+		variantCaseFieldProjectionsEqual(a.VariantCaseFieldProjections, b.VariantCaseFieldProjections) &&
 		pointBoolMapEqual(a.DeadPoints, b.DeadPoints) &&
 		symbolStringMapEqual(a.ModuleAliases, b.ModuleAliases) &&
 		symbolSymbolMapEqual(a.FunctionAliases, b.FunctionAliases) &&
@@ -382,8 +384,39 @@ func variantFieldOriginsEqual(a, b []VariantFieldOrigin) bool {
 			a[i].Field != b[i].Field ||
 			!pathEqual(a[i].Source, b[i].Source) ||
 			a[i].OriginFamily != b[i].OriginFamily ||
-			a[i].CaseIndex != b[i].CaseIndex ||
-			a[i].ProjectionField != b[i].ProjectionField {
+			a[i].CaseIndex != b[i].CaseIndex {
+			return false
+		}
+	}
+	return true
+}
+
+func variantCaseFieldProjectionsEqual(a, b []VariantCaseFieldProjection) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if !pathEqual(a[i].Target, b[i].Target) ||
+			a[i].Field != b[i].Field ||
+			!pathEqual(a[i].Source, b[i].Source) ||
+			!typeProjectionStepsEqual(a[i].SourceSteps, b[i].SourceSteps) ||
+			a[i].OriginFamily != b[i].OriginFamily ||
+			a[i].CaseIndex != b[i].CaseIndex {
+			return false
+		}
+	}
+	return true
+}
+
+func typeProjectionStepsEqual(a, b []effect.TypeProjectionStep) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i].Kind != b[i].Kind ||
+			a[i].Field != b[i].Field ||
+			a[i].Index != b[i].Index ||
+			!typeEqual(a[i].Type, b[i].Type) {
 			return false
 		}
 	}

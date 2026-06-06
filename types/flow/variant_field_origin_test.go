@@ -5,6 +5,7 @@ import (
 
 	"github.com/wippyai/go-lua/types/cfg"
 	"github.com/wippyai/go-lua/types/constraint"
+	"github.com/wippyai/go-lua/types/effect"
 )
 
 func TestInputsEqualIncludesVariantOriginFamilyAndCase(t *testing.T) {
@@ -22,19 +23,35 @@ func TestInputsEqualIncludesVariantOriginFamilyAndCase(t *testing.T) {
 	if InputsEqual(&Inputs{VariantFieldOrigins: base}, &Inputs{VariantFieldOrigins: otherCase}) {
 		t.Fatalf("different case index must affect InputsEqual")
 	}
-	otherProjection := []VariantFieldOrigin{variantOriginForTest(7, 1)}
-	otherProjection[0].ProjectionField = "payload"
-	if InputsEqual(&Inputs{VariantFieldOrigins: base}, &Inputs{VariantFieldOrigins: otherProjection}) {
-		t.Fatalf("different projection field must affect InputsEqual")
+}
+
+func TestInputsEqualIncludesVariantCaseFieldProjections(t *testing.T) {
+	base := []VariantCaseFieldProjection{variantCaseProjectionForTest(7, 1)}
+	same := []VariantCaseFieldProjection{variantCaseProjectionForTest(7, 1)}
+	other := []VariantCaseFieldProjection{variantCaseProjectionForTest(7, 1)}
+	other[0].SourceSteps = []effect.TypeProjectionStep{effect.ProjectGenericArg(1)}
+
+	if !InputsEqual(&Inputs{VariantCaseFieldProjections: base}, &Inputs{VariantCaseFieldProjections: same}) {
+		t.Fatalf("same variant case field projections should be equal")
+	}
+	if InputsEqual(&Inputs{VariantCaseFieldProjections: base}, &Inputs{VariantCaseFieldProjections: other}) {
+		t.Fatalf("different source projection steps must affect InputsEqual")
 	}
 }
 
-func TestNormalizeOrdersVariantOriginsByFamilyAndCase(t *testing.T) {
-	in := Inputs{VariantFieldOrigins: []VariantFieldOrigin{
-		variantOriginForTest(9, 2),
-		variantOriginForTest(7, 2),
-		variantOriginForTest(7, 1),
-	}}
+func TestNormalizeOrdersVariantOriginsAndCaseFieldProjections(t *testing.T) {
+	in := Inputs{
+		VariantFieldOrigins: []VariantFieldOrigin{
+			variantOriginForTest(9, 2),
+			variantOriginForTest(7, 2),
+			variantOriginForTest(7, 1),
+		},
+		VariantCaseFieldProjections: []VariantCaseFieldProjection{
+			variantCaseProjectionForTest(9, 2),
+			variantCaseProjectionForTest(7, 2),
+			variantCaseProjectionForTest(7, 1),
+		},
+	}
 	in.Normalize()
 
 	got := in.VariantFieldOrigins
@@ -45,6 +62,16 @@ func TestNormalizeOrdersVariantOriginsByFamilyAndCase(t *testing.T) {
 		got[1].OriginFamily != 7 || got[1].CaseIndex != 2 ||
 		got[2].OriginFamily != 9 || got[2].CaseIndex != 2 {
 		t.Fatalf("unexpected normalized order: %#v", got)
+	}
+
+	projections := in.VariantCaseFieldProjections
+	if len(projections) != 3 {
+		t.Fatalf("normalized projections length = %d, want 3", len(projections))
+	}
+	if projections[0].OriginFamily != 7 || projections[0].CaseIndex != 1 ||
+		projections[1].OriginFamily != 7 || projections[1].CaseIndex != 2 ||
+		projections[2].OriginFamily != 9 || projections[2].CaseIndex != 2 {
+		t.Fatalf("unexpected normalized projection order: %#v", projections)
 	}
 }
 
@@ -61,6 +88,22 @@ func variantOriginForTest(family uint64, caseIndex int) VariantFieldOrigin {
 		},
 		OriginFamily: family,
 		CaseIndex:    caseIndex,
-		ProjectionField: "value",
+	}
+}
+
+func variantCaseProjectionForTest(family uint64, caseIndex int) VariantCaseFieldProjection {
+	return VariantCaseFieldProjection{
+		Target: constraint.Path{
+			Root:   "result",
+			Symbol: cfg.SymbolID(1),
+		},
+		Field: "value",
+		Source: constraint.Path{
+			Root:   "timeout",
+			Symbol: cfg.SymbolID(2),
+		},
+		SourceSteps:  []effect.TypeProjectionStep{effect.ProjectGenericArg(0)},
+		OriginFamily: family,
+		CaseIndex:    caseIndex,
 	}
 }

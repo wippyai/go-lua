@@ -35,7 +35,8 @@ type Input struct {
 // Facts are normalized passive relations consumed by the canonical product and
 // condition transfer.
 type Facts struct {
-	VariantFieldOrigins []flow.VariantFieldOrigin
+	VariantFieldOrigins         []flow.VariantFieldOrigin
+	VariantCaseFieldProjections []flow.VariantCaseFieldProjection
 }
 
 // Normalize walks assignment-producing call returns and materializes all
@@ -64,43 +65,56 @@ func Normalize(in Input) Facts {
 			}
 			effect.VisitReturnType(transform, effect.ReturnTypeVisitor[struct{}]{
 				SelectResultOfCases: func(v effect.SelectResultOfCases) struct{} {
-					out.VariantFieldOrigins = append(out.VariantFieldOrigins, selectResultOrigins(in, p, call, targetPath, v)...)
+					facts := selectResultFacts(in, p, call, targetPath, v)
+					out.VariantFieldOrigins = append(out.VariantFieldOrigins, facts.VariantFieldOrigins...)
+					out.VariantCaseFieldProjections = append(out.VariantCaseFieldProjections, facts.VariantCaseFieldProjections...)
 					return struct{}{}
 				},
 			})
 		}
 	})
-	if len(out.VariantFieldOrigins) > 1 {
-		tmp := flow.Inputs{VariantFieldOrigins: out.VariantFieldOrigins}
+	if len(out.VariantFieldOrigins) > 1 || len(out.VariantCaseFieldProjections) > 1 {
+		tmp := flow.Inputs{
+			VariantFieldOrigins:         out.VariantFieldOrigins,
+			VariantCaseFieldProjections: out.VariantCaseFieldProjections,
+		}
 		tmp.Normalize()
 		out.VariantFieldOrigins = tmp.VariantFieldOrigins
+		out.VariantCaseFieldProjections = tmp.VariantCaseFieldProjections
 	}
 	return out
 }
 
-func selectResultOrigins(in Input, p cfg.Point, call *cfg.CallInfo, target constraint.Path, transform effect.SelectResultOfCases) []flow.VariantFieldOrigin {
+func selectResultFacts(in Input, p cfg.Point, call *cfg.CallInfo, target constraint.Path, transform effect.SelectResultOfCases) Facts {
 	casesIdx, ok := effect.ResolveParamIndex(transform.Cases, callsite.RuntimeArgCount(call))
 	if !ok {
-		return nil
+		return Facts{}
 	}
 	caseExprs := selectCaseExpressions(callsite.RuntimeArgAt(call, casesIdx))
 	if len(caseExprs) == 0 {
-		return nil
+		return Facts{}
 	}
 	family := flow.VariantOriginFamily(target, effect.SelectResultChannelField)
-	out := make([]flow.VariantFieldOrigin, 0, len(caseExprs))
+	var out Facts
 	for caseIdx, caseExpr := range caseExprs {
 		sourcePath := selectCaseSourcePath(in, p, caseExpr)
 		if sourcePath.IsEmpty() {
 			continue
 		}
-		out = append(out, flow.VariantFieldOrigin{
-			Target:          target,
-			Field:           effect.SelectResultChannelField,
-			Source:          sourcePath,
-			OriginFamily:    family,
-			CaseIndex:       caseIdx,
-			ProjectionField: effect.SelectResultValueField,
+		out.VariantFieldOrigins = append(out.VariantFieldOrigins, flow.VariantFieldOrigin{
+			Target:       target,
+			Field:        effect.SelectResultChannelField,
+			Source:       sourcePath,
+			OriginFamily: family,
+			CaseIndex:    caseIdx,
+		})
+		out.VariantCaseFieldProjections = append(out.VariantCaseFieldProjections, flow.VariantCaseFieldProjection{
+			Target:       target,
+			Field:        effect.SelectResultValueField,
+			Source:       sourcePath,
+			SourceSteps:  []effect.TypeProjectionStep{effect.ProjectGenericArg(0)},
+			OriginFamily: family,
+			CaseIndex:    caseIdx,
 		})
 	}
 	return out

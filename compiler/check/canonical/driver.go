@@ -1429,6 +1429,7 @@ func (d *Driver) seedVariantFieldOrigins(p *program) {
 			},
 		})
 		in.VariantFieldOrigins = facts.VariantFieldOrigins
+		in.VariantCaseFieldProjections = facts.VariantCaseFieldProjections
 		p.inputs[ref] = in
 	}
 }

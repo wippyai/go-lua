@@ -4,12 +4,12 @@ import (
 	"sort"
 
 	"github.com/wippyai/go-lua/compiler/cfg"
+	"github.com/wippyai/go-lua/compiler/check/synth/transform"
 	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/domain/value/product"
 	"github.com/wippyai/go-lua/types/flow"
 	"github.com/wippyai/go-lua/types/kind"
 	"github.com/wippyai/go-lua/types/typ"
-	"github.com/wippyai/go-lua/types/typ/unwrap"
 )
 
 // ConditionEffect is the transfer atom for learning a path-condition fact on the
@@ -34,6 +34,9 @@ func (t *Transfer) applyConditionEffect(out *flow.PointState, effect ConditionEf
 		return true
 	}
 	if t.applyVariantOriginConditionReductions(out, effect.Fact) {
+		changed = true
+	}
+	if t.applyVariantCaseFieldProjections(out, effect.Fact) {
 		changed = true
 	}
 	if t.applyValueConditionReductions(out, effect.Fact) {
@@ -287,73 +290,106 @@ func (t *Transfer) variantOriginValueForCase(av product.AbstractValue, sym cfg.S
 		return product.AbstractValue{}, false
 	}
 	next, changed := product.NarrowVariantOriginCase(av, family, caseIndex, equal)
-	if !equal || next.IsZero() {
-		return next, changed
-	}
-	if projected := variantOriginCaseType(next.ProjectValue(), caseIndex); projected != nil {
-		// Projection authority comes from normalized provenance. Transfer does
-		// not know which producer created the family; it only checks whether the
-		// selected case's projected field is opaque enough that structural
-		// narrowing cannot recover the branch by itself.
-		if field := t.variantOriginProjectionField(path, family, caseIndex); field != "" && variantOriginCaseProjectionSafe(projected, field) {
-			refined := product.WithVariantOrigin(product.FromType(projected), family, []int{caseIndex})
-			if !product.Domain.Equal(next, refined) {
-				return refined, true
-			}
-		}
-	}
 	return next, changed
 }
 
-func (t *Transfer) variantOriginProjectionField(path constraint.Path, family uint64, caseIndex int) string {
-	if t == nil || family == 0 || len(t.in.VariantFieldOrigins) == 0 {
-		return ""
-	}
-	for _, origin := range t.in.VariantFieldOrigins {
-		if origin.OriginFamily == family &&
-			origin.CaseIndex == caseIndex &&
-			origin.Target.Equal(path) &&
-			origin.ProjectionField != "" {
-			return origin.ProjectionField
-		}
-	}
-	return ""
-}
-
-func variantOriginCaseProjectionSafe(t typ.Type, projectionField string) bool {
-	if t == nil || projectionField == "" || typ.ContainsAny(t) {
+func (t *Transfer) applyVariantCaseFieldProjections(out *flow.PointState, fact constraint.Condition) bool {
+	if t == nil || out == nil || len(t.in.VariantCaseFieldProjections) == 0 || fact.NumDisjuncts() == 0 {
 		return false
 	}
-	rec := unwrap.Record(t)
-	if rec == nil {
-		return true
+	projected := t.variantCaseFieldProjectionValues(out, fact)
+	changed := false
+	for _, entry := range projected {
+		changed = flow.SetStaticMemberPath(out, entry.path, entry.value) || changed
 	}
-	field := rec.GetField(projectionField)
-	if field == nil || field.Type == nil {
-		return true
-	}
-	_, payloadIsRecord := unwrap.Alias(field.Type).(*typ.Record)
-	return !payloadIsRecord
+	return changed
 }
 
-func variantOriginCaseType(t typ.Type, caseIndex int) typ.Type {
-	if caseIndex < 0 || t == nil {
+type variantCaseFieldProjectionValue struct {
+	path  constraint.Path
+	value product.AbstractValue
+}
+
+func (t *Transfer) variantCaseFieldProjectionValues(out *flow.PointState, fact constraint.Condition) []variantCaseFieldProjectionValue {
+	var joined map[constraint.PathKey]variantCaseFieldProjectionValue
+	for i := 0; i < fact.NumDisjuncts(); i++ {
+		local := t.variantCaseFieldProjectionValuesForDisjunct(out, fact.DisjunctConstraints(i))
+		if i == 0 {
+			joined = local
+			continue
+		}
+		for key, current := range joined {
+			next, ok := local[key]
+			if !ok {
+				delete(joined, key)
+				continue
+			}
+			current.value = product.Domain.Join(current.value, next.value)
+			joined[key] = current
+		}
+	}
+	if len(joined) == 0 {
 		return nil
 	}
-	switch v := unwrap.Alias(t).(type) {
-	case *typ.Union:
-		if caseIndex >= len(v.Members) {
-			return nil
-		}
-		return v.Members[caseIndex]
-	case *typ.Optional:
-		return variantOriginCaseType(v.Inner, caseIndex)
-	default:
-		if caseIndex == 0 {
-			return t
-		}
-		return nil
+	outValues := make([]variantCaseFieldProjectionValue, 0, len(joined))
+	for _, entry := range joined {
+		outValues = append(outValues, entry)
 	}
+	sort.Slice(outValues, func(i, j int) bool {
+		return outValues[i].path.String() < outValues[j].path.String()
+	})
+	return outValues
+}
+
+func (t *Transfer) variantCaseFieldProjectionValuesForDisjunct(out *flow.PointState, constraints []constraint.Constraint) map[constraint.PathKey]variantCaseFieldProjectionValue {
+	values := make(map[constraint.PathKey]variantCaseFieldProjectionValue)
+	for _, c := range constraints {
+		eq, ok := c.(constraint.VariantCaseEquals)
+		if !ok {
+			continue
+		}
+		for _, projection := range t.in.VariantCaseFieldProjections {
+			if projection.OriginFamily != eq.OriginFamily ||
+				projection.CaseIndex != eq.CaseIndex ||
+				!projection.Target.Equal(eq.Target) ||
+				projection.Field == "" {
+				continue
+			}
+			av, ok := t.variantCaseFieldProjectionValue(out, projection)
+			if !ok {
+				continue
+			}
+			path := projection.Target.Field(projection.Field)
+			addr, ok := flow.StableAddressOfPath(path)
+			if !ok {
+				continue
+			}
+			key := addr.Key()
+			entry, exists := values[key]
+			if exists {
+				entry.value = product.Domain.Join(entry.value, av)
+			} else {
+				entry = variantCaseFieldProjectionValue{path: path, value: av}
+			}
+			values[key] = entry
+		}
+	}
+	return values
+}
+
+func (t *Transfer) variantCaseFieldProjectionValue(out *flow.PointState, projection flow.VariantCaseFieldProjection) (product.AbstractValue, bool) {
+	if out == nil || projection.Source.IsEmpty() {
+		return product.AbstractValue{}, false
+	}
+	sourceType, ok := flow.PointFactsOf(*out).PathType(projection.Source)
+	if !ok || typ.IsAbsentOrUnknown(sourceType) || typ.ContainsAny(sourceType) {
+		return product.AbstractValue{}, false
+	}
+	projected := transform.ApplyTypeProjectionSteps(sourceType, projection.SourceSteps)
+	if typ.IsAbsentOrUnknown(projected) || typ.ContainsAny(projected) {
+		return product.AbstractValue{}, false
+	}
+	return product.FromType(projected), true
 }
 
 func variantOriginConditionSymbols(fact constraint.Condition) []cfg.SymbolID {

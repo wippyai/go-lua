@@ -4,6 +4,7 @@ import (
 	"sort"
 
 	"github.com/wippyai/go-lua/types/constraint"
+	"github.com/wippyai/go-lua/types/effect"
 	"github.com/wippyai/go-lua/types/typ"
 )
 
@@ -19,6 +20,7 @@ func (in *Inputs) Normalize() {
 	in.normalizeEdgeConditions()
 	in.normalizeEdgeNumericConstraints()
 	in.normalizeVariantFieldOrigins()
+	in.normalizeVariantCaseFieldProjections()
 }
 
 func (in *Inputs) normalizeAssignments() {
@@ -49,6 +51,14 @@ func (in *Inputs) normalizeVariantFieldOrigins() {
 	if len(in.VariantFieldOrigins) > 1 {
 		sort.Slice(in.VariantFieldOrigins, func(i, j int) bool {
 			return variantFieldOriginLess(in.VariantFieldOrigins[i], in.VariantFieldOrigins[j])
+		})
+	}
+}
+
+func (in *Inputs) normalizeVariantCaseFieldProjections() {
+	if len(in.VariantCaseFieldProjections) > 1 {
+		sort.Slice(in.VariantCaseFieldProjections, func(i, j int) bool {
+			return variantCaseFieldProjectionLess(in.VariantCaseFieldProjections[i], in.VariantCaseFieldProjections[j])
 		})
 	}
 }
@@ -108,10 +118,63 @@ func variantFieldOriginLess(a, b VariantFieldOrigin) bool {
 	if a.CaseIndex != b.CaseIndex {
 		return a.CaseIndex < b.CaseIndex
 	}
-	if a.ProjectionField != b.ProjectionField {
-		return a.ProjectionField < b.ProjectionField
+	return false
+}
+
+func variantCaseFieldProjectionLess(a, b VariantCaseFieldProjection) bool {
+	if pathLess(a.Target, b.Target) {
+		return true
+	}
+	if pathLess(b.Target, a.Target) {
+		return false
+	}
+	if a.Field != b.Field {
+		return a.Field < b.Field
+	}
+	if pathLess(a.Source, b.Source) {
+		return true
+	}
+	if pathLess(b.Source, a.Source) {
+		return false
+	}
+	if projectionStepsLess(a.SourceSteps, b.SourceSteps) {
+		return true
+	}
+	if projectionStepsLess(b.SourceSteps, a.SourceSteps) {
+		return false
+	}
+	if a.OriginFamily != b.OriginFamily {
+		return a.OriginFamily < b.OriginFamily
+	}
+	if a.CaseIndex != b.CaseIndex {
+		return a.CaseIndex < b.CaseIndex
 	}
 	return false
+}
+
+func projectionStepsLess(a, b []effect.TypeProjectionStep) bool {
+	n := len(a)
+	if len(b) < n {
+		n = len(b)
+	}
+	for i := 0; i < n; i++ {
+		if a[i].Kind != b[i].Kind {
+			return a[i].Kind < b[i].Kind
+		}
+		if a[i].Field != b[i].Field {
+			return a[i].Field < b[i].Field
+		}
+		if a[i].Index != b[i].Index {
+			return a[i].Index < b[i].Index
+		}
+		if typeLess(a[i].Type, b[i].Type) {
+			return true
+		}
+		if typeLess(b[i].Type, a[i].Type) {
+			return false
+		}
+	}
+	return len(a) < len(b)
 }
 
 func typeLess(a, b typ.Type) bool {

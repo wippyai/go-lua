@@ -79,6 +79,11 @@ type Inputs struct {
 	// lower identity tests into ordinary condition-axis constraints inside the
 	// single fixed point.
 	VariantFieldOrigins []flow.VariantFieldOrigin
+
+	// VariantCaseFieldProjections are passive return-transform payload
+	// projection facts. A proven variant-origin case may refine a specific target
+	// field from a source-path type projection without replacing the target root.
+	VariantCaseFieldProjections []flow.VariantCaseFieldProjection
 }
 
 // ScopeFacts are declared, non-flow facts about a function's symbols. Parameter

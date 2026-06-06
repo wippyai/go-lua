@@ -3,6 +3,7 @@ package flow
 import (
 	"github.com/wippyai/go-lua/types/cfg"
 	"github.com/wippyai/go-lua/types/constraint"
+	"github.com/wippyai/go-lua/types/effect"
 	"github.com/wippyai/go-lua/types/typ"
 )
 
@@ -251,6 +252,13 @@ type Inputs struct {
 	// to turn runtime identity tests into first-class variant-case constraints.
 	VariantFieldOrigins []VariantFieldOrigin
 
+	// VariantCaseFieldProjections records field-level payload refinements that
+	// become valid when a variant-origin case is selected. Unlike
+	// VariantFieldOrigin, these facts do not identify the chosen case; they only
+	// say which target field can be refined from which source-path projection
+	// after the condition axis has proven the case.
+	VariantCaseFieldProjections []VariantCaseFieldProjection
+
 	// ArrayLiteralLengths tracks sequence constructors that establish a length
 	// lower bound for their target at the construction point. A literal {e1..eN}
 	// with N positional elements proves #target >= N flow-sensitively, even when
@@ -374,10 +382,19 @@ type VariantFieldOrigin struct {
 	Source       constraint.Path
 	OriginFamily uint64
 	CaseIndex    int
-	// ProjectionField names the correlated payload field whose type may justify
-	// projecting the whole target to the selected case when structural field
-	// narrowing cannot distinguish the variants.
-	ProjectionField string
+}
+
+// VariantCaseFieldProjection refines Target.Field from Source projected through
+// SourceSteps whenever OriginFamily/CaseIndex is known selected. It is a
+// field-level proof so transfer can preserve existing child/path facts under the
+// target root.
+type VariantCaseFieldProjection struct {
+	Target       constraint.Path
+	Field        string
+	Source       constraint.Path
+	SourceSteps  []effect.TypeProjectionStep
+	OriginFamily uint64
+	CaseIndex    int
 }
 
 // IndexWriteReadQuery identifies a solved dynamic-index readback proof with

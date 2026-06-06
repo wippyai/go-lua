@@ -34,6 +34,9 @@ return result
 	if len(facts.VariantFieldOrigins) != 2 {
 		t.Fatalf("VariantFieldOrigins = %#v, want two non-default select cases", facts.VariantFieldOrigins)
 	}
+	if len(facts.VariantCaseFieldProjections) != 2 {
+		t.Fatalf("VariantCaseFieldProjections = %#v, want two non-default select payload projections", facts.VariantCaseFieldProjections)
+	}
 
 	resultSym := oneSymbolNamed(t, in.Graph, "result")
 	eventsSym := oneSymbolNamed(t, in.Graph, "events")
@@ -41,6 +44,8 @@ return result
 
 	assertSelectOrigin(t, facts.VariantFieldOrigins, resultSym, eventsSym, 0)
 	assertSelectOrigin(t, facts.VariantFieldOrigins, resultSym, timeoutSym, 1)
+	assertSelectProjection(t, facts.VariantCaseFieldProjections, resultSym, eventsSym, 0)
+	assertSelectProjection(t, facts.VariantCaseFieldProjections, resultSym, timeoutSym, 1)
 }
 
 func provenanceInputs(t *testing.T, body string, params ...string) input.Inputs {
@@ -81,4 +86,22 @@ func assertSelectOrigin(t *testing.T, origins []flow.VariantFieldOrigin, targetS
 		return
 	}
 	t.Fatalf("missing select origin target=%d source=%d case=%d in %#v", targetSym, sourceSym, caseID, origins)
+}
+
+func assertSelectProjection(t *testing.T, projections []flow.VariantCaseFieldProjection, targetSym, sourceSym cfg.SymbolID, caseID int) {
+	t.Helper()
+	for _, projection := range projections {
+		if projection.Target.Symbol != targetSym ||
+			projection.Field != effect.SelectResultValueField ||
+			projection.Source.Symbol != sourceSym ||
+			projection.OriginFamily == 0 ||
+			projection.CaseIndex != caseID ||
+			len(projection.SourceSteps) != 1 ||
+			projection.SourceSteps[0].Kind != effect.TypeProjectionGenericArg ||
+			projection.SourceSteps[0].Index != 0 {
+			continue
+		}
+		return
+	}
+	t.Fatalf("missing select projection target=%d source=%d case=%d in %#v", targetSym, sourceSym, caseID, projections)
 }

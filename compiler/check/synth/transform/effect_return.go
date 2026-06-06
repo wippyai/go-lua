@@ -491,7 +491,16 @@ func projectType(args []typ.Type, projection effect.TypeProjection) typ.Type {
 	if current == nil {
 		return nil
 	}
-	for _, step := range projection.Steps {
+	return ApplyTypeProjectionSteps(current, projection.Steps)
+}
+
+// ApplyTypeProjectionSteps walks an already-selected type witness through the
+// same projection algebra used by TypeProjection return effects.
+func ApplyTypeProjectionSteps(current typ.Type, steps []effect.TypeProjectionStep) typ.Type {
+	if current == nil {
+		return nil
+	}
+	for _, step := range steps {
 		next := projectTypeStep(current, step)
 		if next == nil {
 			return nil
