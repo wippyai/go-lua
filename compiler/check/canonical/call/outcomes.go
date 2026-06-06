@@ -2,7 +2,6 @@ package call
 
 import (
 	"github.com/wippyai/go-lua/compiler/ast"
-	canonref "github.com/wippyai/go-lua/compiler/check/canonical/ref"
 	"github.com/wippyai/go-lua/compiler/check/canonical/summary"
 	"github.com/wippyai/go-lua/compiler/check/domain/callbackenv"
 	"github.com/wippyai/go-lua/compiler/check/domain/paramevidence"
@@ -261,42 +260,6 @@ func (p ContainerElementUnionProjection) Effects() []effect.ContainerElementUnio
 		out = append(out, ceu)
 	}
 	return out
-}
-
-// CallbackArgInput is the canonical policy for resolving one callback argument
-// expression to a module function identity.
-type CallbackArgInput struct {
-	Arg ast.Expr
-
-	FunctionLiteral func(*ast.FunctionExpr) (summary.FuncRef, bool)
-	FunctionRefs    func(ast.Expr) ([]summary.FuncRef, bool)
-	StaticExpr      func(ast.Expr) (summary.FuncRef, bool)
-}
-
-// ResolveCallbackArgRefs resolves callback arguments in deterministic precision
-// order: direct function literals first, live product FunctionRefs next,
-// immutable static expression facts last. A present-but-unknown product axis
-// returns (nil, true), deliberately blocking static fallback.
-func ResolveCallbackArgRefs(in CallbackArgInput) ([]summary.FuncRef, bool) {
-	if in.Arg == nil {
-		return nil, false
-	}
-	if fn, ok := in.Arg.(*ast.FunctionExpr); ok && fn != nil && in.FunctionLiteral != nil {
-		if ref, ok := in.FunctionLiteral(fn); ok {
-			return []summary.FuncRef{ref}, true
-		}
-	}
-	if in.FunctionRefs != nil {
-		if refs, ok := in.FunctionRefs(in.Arg); ok {
-			return canonref.UniqueSortedFuncRefs(refs), true
-		}
-	}
-	if in.StaticExpr != nil {
-		if ref, ok := in.StaticExpr(in.Arg); ok {
-			return []summary.FuncRef{ref}, true
-		}
-	}
-	return nil, false
 }
 
 // StaticCallbackOverlayProjection is the canonical pre-solve policy for callback

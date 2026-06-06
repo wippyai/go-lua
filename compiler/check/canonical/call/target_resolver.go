@@ -185,16 +185,21 @@ func (r TargetResolver) ResolveCallbackArgRefsOrSymbol(
 	rawSym cfg.SymbolID,
 	functionLiteral func(*ast.FunctionExpr) (summary.FuncRef, bool),
 ) ([]summary.FuncRef, bool) {
-	return ResolveCallbackArgRefs(CallbackArgInput{
-		Arg:             arg,
-		FunctionLiteral: functionLiteral,
-		FunctionRefs: func(expr ast.Expr) ([]summary.FuncRef, bool) {
-			return r.ResolveFunctionRefsAtExprOrSymbol(expr, refs, rawSym)
-		},
-		StaticExpr: func(expr ast.Expr) (summary.FuncRef, bool) {
-			return r.ResolveStaticExprOrSymbol(expr, rawSym)
-		},
-	})
+	if arg == nil {
+		return nil, false
+	}
+	if fn, ok := arg.(*ast.FunctionExpr); ok && fn != nil && functionLiteral != nil {
+		if ref, ok := functionLiteral(fn); ok {
+			return []summary.FuncRef{ref}, true
+		}
+	}
+	if got, ok := r.ResolveFunctionRefsAtExprOrSymbol(arg, refs, rawSym); ok {
+		return ref.UniqueSortedFuncRefs(got), true
+	}
+	if got, ok := r.ResolveStaticExprOrSymbol(arg, rawSym); ok {
+		return []summary.FuncRef{got}, true
+	}
+	return nil, false
 }
 
 // ResolveStaticMethod resolves a method call through immutable topology facts

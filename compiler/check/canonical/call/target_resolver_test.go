@@ -203,6 +203,92 @@ func TestTargetResolverCallbackArgRefsUseLiveAxisBeforeStaticFallback(t *testing
 	}
 }
 
+func TestTargetResolverCallbackArgRefsFunctionLiteralBeatsStaticFallback(t *testing.T) {
+	t.Parallel()
+
+	arg := &ast.FunctionExpr{}
+	literalRef := summary.FuncRef{GraphID: 7}
+	staticUsed := false
+	resolver := TargetResolver{
+		Static: StaticTargetLookup{
+			FuncBySymbol: func(cfg.SymbolID) (summary.FuncRef, bool) {
+				staticUsed = true
+				return summary.FuncRef{GraphID: 8}, true
+			},
+		},
+	}
+
+	got, ok := resolver.ResolveCallbackArgRefs(arg, flow.FunctionRefsDomain.Bottom(), func(fn *ast.FunctionExpr) (summary.FuncRef, bool) {
+		if fn != arg {
+			t.Fatalf("function literal resolver got %#v, want arg", fn)
+		}
+		return literalRef, true
+	})
+
+	if !ok || len(got) != 1 || got[0] != literalRef {
+		t.Fatalf("ResolveCallbackArgRefs = %+v/%v; want literal ref", got, ok)
+	}
+	if staticUsed {
+		t.Fatal("static fallback ran despite function literal ref")
+	}
+}
+
+func TestTargetResolverCallbackArgRefsStaticFallback(t *testing.T) {
+	t.Parallel()
+
+	arg := &ast.IdentExpr{Value: "cb"}
+	staticRef := summary.FuncRef{GraphID: 9}
+	bindings := bind.NewBindingTable()
+	bindings.Bind(arg, 90)
+	bindings.SetName(90, "cb")
+	resolver := TargetResolver{
+		Bindings: bindings,
+		Static: StaticTargetLookup{
+			FuncBySymbol: func(sym cfg.SymbolID) (summary.FuncRef, bool) {
+				if sym != 90 {
+					t.Fatalf("FuncBySymbol sym = %d, want 90", sym)
+				}
+				return staticRef, true
+			},
+		},
+	}
+
+	got, ok := resolver.ResolveCallbackArgRefs(arg, flow.FunctionRefsDomain.Bottom(), func(*ast.FunctionExpr) (summary.FuncRef, bool) {
+		t.Fatal("function literal resolver ran for ident")
+		return summary.FuncRef{}, false
+	})
+
+	if !ok || len(got) != 1 || got[0] != staticRef {
+		t.Fatalf("ResolveCallbackArgRefs = %+v/%v; want static ref", got, ok)
+	}
+}
+
+func TestTargetResolverCallbackArgRefsLiveTopBlocksStaticFallback(t *testing.T) {
+	t.Parallel()
+
+	call, bindings := testCallForPath()
+	path := callPathKey(bindings, call.Func)
+	staticUsed := false
+	resolver := TargetResolver{
+		Bindings: bindings,
+		Static: StaticTargetLookup{
+			FuncBySymbol: func(cfg.SymbolID) (summary.FuncRef, bool) {
+				staticUsed = true
+				return summary.FuncRef{GraphID: 30}, true
+			},
+		},
+	}
+	liveRefs := flow.WithFunctionRef(nil, path, flow.FunctionRefSetTop())
+
+	got, ok := resolver.ResolveCallbackArgRefs(call.Func, liveRefs, nil)
+	if !ok || len(got) != 0 {
+		t.Fatalf("ResolveCallbackArgRefs = %+v/%v, want authoritative unknown", got, ok)
+	}
+	if staticUsed {
+		t.Fatal("static fallback ran despite authoritative unknown FunctionRefs")
+	}
+}
+
 func TestTargetResolverStaticExprOrSymbolExpandsAliases(t *testing.T) {
 	t.Parallel()
 
