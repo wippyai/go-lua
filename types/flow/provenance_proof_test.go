@@ -21,6 +21,28 @@ func TestApplyPathAliasProofPublishesAlias(t *testing.T) {
 	}
 }
 
+func TestApplyValueOriginPathProofPublishesOrigin(t *testing.T) {
+	valuePath := constraint.NewPath(cfg.SymbolID(13), "value")
+	sourcePath := constraint.NewPath(cfg.SymbolID(14), "source")
+	value := testStableAddressPath(t, valuePath)
+	source := testStableAddressPath(t, sourcePath)
+	state := PointState{}
+
+	if !ApplyValueOriginPathProof(&state, ValueOriginPathProof{
+		ValuePath:  valuePath,
+		SourcePath: sourcePath,
+		Kind:       ValueOriginIndexedIterator,
+		VarIndex:   1,
+	}) {
+		t.Fatal("ApplyValueOriginPathProof reported unchanged")
+	}
+
+	origins := state.ValueOrigins.OriginsOfAddress(value)
+	if len(origins) != 1 || origins[0].Source != source.Key() || origins[0].Kind != ValueOriginIndexedIterator || origins[0].VarIndex != 1 {
+		t.Fatalf("origins = %v, want indexed iterator source %s", origins, source.Key())
+	}
+}
+
 func TestApplyValueOriginProofPublishesOrigin(t *testing.T) {
 	value := testStableAddressPath(t, constraint.NewPath(cfg.SymbolID(3), "value"))
 	source := testStableAddressPath(t, constraint.NewPath(cfg.SymbolID(4), "source"))

@@ -1,5 +1,7 @@
 package flow
 
+import "github.com/wippyai/go-lua/types/constraint"
+
 // PathAliasProof records point-local identity provenance between two stable
 // addresses.
 type PathAliasProof struct {
@@ -14,6 +16,16 @@ type ValueOriginProof struct {
 	Source   StableAddress
 	Kind     ValueOriginKind
 	VarIndex int
+}
+
+// ValueOriginPathProof is the path-level form of ValueOriginProof. It keeps the
+// stable-address conversion in flow so producer layers publish provenance with
+// structured paths instead of rebuilding fact keys.
+type ValueOriginPathProof struct {
+	ValuePath  constraint.Path
+	SourcePath constraint.Path
+	Kind       ValueOriginKind
+	VarIndex   int
 }
 
 // ApplyPathAliasProof applies identity alias provenance to point state.
@@ -34,4 +46,26 @@ func ApplyValueOriginProof(out *PointState, proof ValueOriginProof) bool {
 	before := out.ValueOrigins
 	out.ValueOrigins = out.ValueOrigins.WithAddresses(proof.Value, proof.Source, proof.Kind, proof.VarIndex)
 	return !ValueOriginFactsDomain.Equal(before, out.ValueOrigins)
+}
+
+// ApplyValueOriginPathProof applies semantic value-origin provenance from
+// structured paths.
+func ApplyValueOriginPathProof(out *PointState, proof ValueOriginPathProof) bool {
+	if out == nil || proof.ValuePath.IsEmpty() || proof.SourcePath.IsEmpty() || proof.Kind == 0 {
+		return false
+	}
+	valueAddr, ok := StableAddressOfPath(proof.ValuePath)
+	if !ok {
+		return false
+	}
+	sourceAddr, ok := StableAddressOfPath(proof.SourcePath)
+	if !ok {
+		return false
+	}
+	return ApplyValueOriginProof(out, ValueOriginProof{
+		Value:    valueAddr,
+		Source:   sourceAddr,
+		Kind:     proof.Kind,
+		VarIndex: proof.VarIndex,
+	})
 }

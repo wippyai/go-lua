@@ -10,19 +10,20 @@ import (
 	"github.com/wippyai/go-lua/types/typ"
 )
 
-// AssignmentProvenanceEffect is the transfer reducer payload for path facts
-// introduced by a local assignment. A plain alias assignment (`b = a`) can carry
-// both value-origin identity for later index-write readback and key-presence
-// proofs where the assigned value is later used as the dynamic key.
+// AssignmentProvenanceEffect is the transfer-local publication payload for path
+// facts introduced by a local assignment. A plain alias assignment (`b = a`) can
+// carry both value-origin identity for later index-write readback and
+// key-presence proofs where the assigned value is later used as the dynamic key.
 type AssignmentProvenanceEffect struct {
 	TargetPath constraint.Path
 	SourcePath constraint.Path
 	Value      product.AbstractValue
 }
 
-// ArrayElementKeyProvenanceEffect is the transfer reducer payload for a local
-// assignment from an indexed array element. If the source array is proven to hold
-// keys for one or more tables, the assigned target is a key for those tables.
+// ArrayElementKeyProvenanceEffect is the transfer-local publication payload for
+// a local assignment from an indexed array element. If the source array is proven
+// to hold keys for one or more tables, the assigned target is a key for those
+// tables.
 type ArrayElementKeyProvenanceEffect struct {
 	TargetPath constraint.Path
 	ArrayPath  constraint.Path
@@ -167,7 +168,7 @@ func (t *Transfer) applyArrayElementKeyProvenanceEffect(
 	})
 	changed := false
 	changed = presenceChanged || changed
-	changed = t.applyValueOriginEffect(out, ValueOriginEffect{
+	changed = flow.ApplyValueOriginPathProof(out, flow.ValueOriginPathProof{
 		ValuePath:  effect.TargetPath,
 		SourcePath: effect.ArrayPath,
 		Kind:       flow.ValueOriginIndexedIterator,
@@ -202,7 +203,7 @@ func (t *Transfer) applyAssignmentAliasOrigin(out *flow.PointState, effect Assig
 	if typ.IsAbsentOrUnknown(valType) || typ.IsAny(valType) {
 		return false
 	}
-	return t.applyValueOriginEffect(out, ValueOriginEffect{
+	return flow.ApplyValueOriginPathProof(out, flow.ValueOriginPathProof{
 		ValuePath:  effect.TargetPath,
 		SourcePath: effect.SourcePath,
 		Kind:       flow.ValueOriginAssignmentAlias,

@@ -8,37 +8,6 @@ import (
 	"github.com/wippyai/go-lua/types/typ"
 )
 
-// ValueOriginEffect records that ValuePath is derived from SourcePath by a
-// semantic projection such as iterator element selection. It is a point-state
-// provenance fact, not a value update; backward demand later consumes it to route
-// typed uses of derived locals back to source parameters.
-type ValueOriginEffect struct {
-	ValuePath  constraint.Path
-	SourcePath constraint.Path
-	Kind       flow.ValueOriginKind
-	VarIndex   int
-}
-
-func (t *Transfer) applyValueOriginEffect(out *flow.PointState, effect ValueOriginEffect) bool {
-	if out == nil || effect.ValuePath.IsEmpty() || effect.SourcePath.IsEmpty() || effect.Kind == 0 {
-		return false
-	}
-	valueAddr, ok := flow.StableAddressOfPath(effect.ValuePath)
-	if !ok {
-		return false
-	}
-	sourceAddr, ok := flow.StableAddressOfPath(effect.SourcePath)
-	if !ok {
-		return false
-	}
-	return flow.ApplyValueOriginProof(out, flow.ValueOriginProof{
-		Value:    valueAddr,
-		Source:   sourceAddr,
-		Kind:     effect.Kind,
-		VarIndex: effect.VarIndex,
-	})
-}
-
 func (t *Transfer) demandExprCtx(out *flow.PointState, expr ast.Expr, ctx typ.Type, demand func(int, paramevidence.ParamContract)) {
 	if demand == nil || ctx == nil || typ.IsAbsentOrUnknown(ctx) {
 		return

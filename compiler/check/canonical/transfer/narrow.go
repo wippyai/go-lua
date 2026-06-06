@@ -1436,27 +1436,27 @@ func (t *Transfer) narrowGuardedIndexPresence(out flow.PointState, info *cfg.Bra
 		return out
 	}
 	res := flow.ClonePointState(out)
-	t.applyKeyProvenanceEffect(&res, effect)
+	t.applyKeyProvenancePathProof(&res, effect)
 	return res
 }
 
-func (t *Transfer) guardedIndexPresenceEffect(access *ast.AttrGetExpr) (KeyProvenanceEffect, bool) {
+func (t *Transfer) guardedIndexPresenceEffect(access *ast.AttrGetExpr) (flow.KeyProvenancePathProof, bool) {
 	if access == nil {
-		return KeyProvenanceEffect{}, false
+		return flow.KeyProvenancePathProof{}, false
 	}
 	if _, isStatic := staticMemberKey(access); isStatic {
-		return KeyProvenanceEffect{}, false
+		return flow.KeyProvenancePathProof{}, false
 	}
 	tablePath, ok := t.containerExprPath(access.Object)
 	if !ok || tablePath.IsEmpty() {
-		return KeyProvenanceEffect{}, false
+		return flow.KeyProvenancePathProof{}, false
 	}
 	keyPath, ok := t.dynamicIndexKeyPath(access.Key)
 	if !ok || keyPath.IsEmpty() {
-		return KeyProvenanceEffect{}, false
+		return flow.KeyProvenancePathProof{}, false
 	}
-	return KeyProvenanceEffect{
-		Kind:      KeyProvenanceGuardedIndex,
+	return flow.KeyProvenancePathProof{
+		Kind:      flow.KeyProvenanceGuardedIndex,
 		TablePath: tablePath,
 		KeyPath:   keyPath,
 	}, true

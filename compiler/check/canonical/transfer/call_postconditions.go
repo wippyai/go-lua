@@ -11,7 +11,7 @@ import (
 
 type assignCallPostconditionEffects struct {
 	relations     []flow.RelationEffect
-	keyProvenance []KeyProvenanceEffect
+	keyProvenance []flow.KeyProvenancePathProof
 	boundaryFacts []boundaryFactPostcondition
 	numericOps    []flow.NumericOp
 }
@@ -66,7 +66,7 @@ func (t *Transfer) applyAssignCallPostconditions(out *flow.PointState, effects a
 		flow.ApplyRelationEffect(out, rel)
 	}
 	for _, effect := range effects.keyProvenance {
-		t.applyKeyProvenanceEffect(out, effect)
+		t.applyKeyProvenancePathProof(out, effect)
 	}
 	for _, effect := range effects.boundaryFacts {
 		t.applyBoundaryFactsWithAppendPlans(out, effect.call, effect.facts, effect.returns, effect.appendPlans)
@@ -150,8 +150,8 @@ func (t *Transfer) appendReturnKeyParamPostconditions(
 		for _, seg := range rel.ParamSegments {
 			tablePath = tablePath.Append(seg)
 		}
-		effects.keyProvenance = append(effects.keyProvenance, KeyProvenanceEffect{
-			Kind:      KeyProvenanceDynamicIndexWrite,
+		effects.keyProvenance = append(effects.keyProvenance, flow.KeyProvenancePathProof{
+			Kind:      flow.KeyProvenanceDynamicIndexWrite,
 			TablePath: tablePath,
 			KeyPath:   keyPath,
 		})

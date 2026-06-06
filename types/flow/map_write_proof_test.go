@@ -163,6 +163,54 @@ func TestApplyKeyPresenceAliasProofCopiesMembershipAndValuePath(t *testing.T) {
 	}
 }
 
+func TestApplyKeyProvenancePathProofPublishesKeyPresence(t *testing.T) {
+	tablePath := constraint.NewPath(cfg.SymbolID(101), "nodes")
+	keyPath := constraint.NewPath(cfg.SymbolID(102), "node_id")
+	state := PointState{}
+
+	_, changed := ApplyKeyProvenancePathProof(&state, KeyProvenancePathProof{
+		Kind:      KeyProvenanceKeyedIteration,
+		TablePath: tablePath,
+		KeyPath:   keyPath,
+	})
+
+	if !changed {
+		t.Fatal("ApplyKeyProvenancePathProof reported unchanged")
+	}
+	if !state.KeyPresence.Has(StablePathKey(tablePath), StablePathKey(keyPath)) {
+		t.Fatalf("key presence missing: %s", state.KeyPresence.Format())
+	}
+}
+
+func TestApplyKeyProvenancePathProofReturnsIndexedKeyDomain(t *testing.T) {
+	arrayPath := constraint.NewPath(cfg.SymbolID(111), "keys")
+	tablePath := constraint.NewPath(cfg.SymbolID(112), "nodes")
+	keyPath := constraint.NewPath(cfg.SymbolID(113), "node_id")
+	state := PointState{
+		Env: map[ValueKey]product.AbstractValue{
+			SymbolValueKey(keyPath.Symbol): product.FromType(typ.String),
+			SymbolValueKey(tablePath.Symbol): product.FromType(
+				typ.NewRecord().Field("id", typ.Number).Build(),
+			),
+		},
+	}
+	state.KeyPresence = state.KeyPresence.WithKeyArray(StablePathKey(arrayPath), StablePathKey(tablePath))
+
+	result, changed := ApplyKeyProvenancePathProof(&state, KeyProvenancePathProof{
+		Kind:      KeyProvenanceIndexedKeyArrayIteration,
+		ArrayPath: arrayPath,
+		KeyPath:   keyPath,
+	})
+
+	if !changed {
+		t.Fatal("ApplyKeyProvenancePathProof reported unchanged")
+	}
+	wantKeyDomain := product.FromType(typ.LiteralString("id"))
+	if result.KeyRefinementPath.Key() != keyPath.Key() || !product.Domain.Equal(result.KeyRefinementValue, wantKeyDomain) {
+		t.Fatalf("key refinement = %s/%v, want %s/%v", result.KeyRefinementPath.Key(), result.KeyRefinementValue.ProjectValue(), keyPath.Key(), wantKeyDomain.ProjectValue())
+	}
+}
+
 func TestApplyKeyArrayElementKeyProofPublishesTargetKey(t *testing.T) {
 	arrayPath := constraint.NewPath(cfg.SymbolID(29), "node_order")
 	tablePath := constraint.NewPath(cfg.SymbolID(30), "nodes")

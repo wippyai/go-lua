@@ -848,8 +848,8 @@ func (t *Transfer) SeedEntryFacts(out *flow.PointState, facts flow.BoundaryFacts
 		if !ok {
 			continue
 		}
-		t.applyKeyProvenanceEffect(out, KeyProvenanceEffect{
-			Kind:      KeyProvenanceDynamicIndexWrite,
+		t.applyKeyProvenancePathProof(out, flow.KeyProvenancePathProof{
+			Kind:      flow.KeyProvenanceDynamicIndexWrite,
 			TablePath: table,
 			KeyPath:   key,
 		})
@@ -863,8 +863,8 @@ func (t *Transfer) SeedEntryFacts(out *flow.PointState, facts flow.BoundaryFacts
 		if !ok {
 			continue
 		}
-		t.applyKeyProvenanceEffect(out, KeyProvenanceEffect{
-			Kind:      KeyProvenanceKeyArrayAssignment,
+		t.applyKeyProvenancePathProof(out, flow.KeyProvenancePathProof{
+			Kind:      flow.KeyProvenanceKeyArrayAssignment,
 			ArrayPath: array,
 			TablePath: table,
 		})
@@ -2434,7 +2434,7 @@ func (t *Transfer) seedIteratorValueOriginsFromPath(out *flow.PointState, info *
 		if target.Kind != cfg.TargetIdent || target.Symbol == 0 {
 			continue
 		}
-		t.applyValueOriginEffect(out, ValueOriginEffect{
+		flow.ApplyValueOriginPathProof(out, flow.ValueOriginPathProof{
 			ValuePath:  constraint.NewPath(target.Symbol, target.Name),
 			SourcePath: source,
 			Kind:       kind,
@@ -2490,8 +2490,8 @@ func (t *Transfer) seedKeyedIterKeyOf(out *flow.PointState, info *cfg.AssignInfo
 		return
 	}
 	keyPath := constraint.NewPath(keyTarget.Symbol, keyTarget.Name)
-	effect := KeyProvenanceEffect{
-		Kind:      KeyProvenanceKeyedIteration,
+	effect := flow.KeyProvenancePathProof{
+		Kind:      flow.KeyProvenanceKeyedIteration,
 		TablePath: tablePath,
 		KeyPath:   keyPath,
 	}
@@ -2501,7 +2501,7 @@ func (t *Transfer) seedKeyedIterKeyOf(out *flow.PointState, info *cfg.AssignInfo
 			effect.ValuePath = constraint.NewPath(valueTarget.Symbol, valueTarget.Name)
 		}
 	}
-	t.applyKeyProvenanceEffect(out, effect)
+	t.applyKeyProvenancePathProof(out, effect)
 }
 
 // seedKeyArrayForAssignment records the live provenance established by
@@ -2517,8 +2517,8 @@ func (t *Transfer) seedKeyArrayForAssignment(out *flow.PointState, info *cfg.Ass
 		return
 	}
 	arrayPath := constraint.NewPath(target.Symbol, target.Name)
-	t.applyKeyProvenanceEffect(out, KeyProvenanceEffect{
-		Kind:      KeyProvenanceKeyArrayAssignment,
+	t.applyKeyProvenancePathProof(out, flow.KeyProvenancePathProof{
+		Kind:      flow.KeyProvenanceKeyArrayAssignment,
 		ArrayPath: arrayPath,
 		TablePath: tablePath,
 	})
@@ -2568,8 +2568,8 @@ func (t *Transfer) seedIndexedIterKeyOf(out *flow.PointState, info *cfg.AssignIn
 	if !ok || source.IsEmpty() {
 		return
 	}
-	t.applyKeyProvenanceEffect(out, KeyProvenanceEffect{
-		Kind:      KeyProvenanceIndexedKeyArrayIteration,
+	t.applyKeyProvenancePathProof(out, flow.KeyProvenancePathProof{
+		Kind:      flow.KeyProvenanceIndexedKeyArrayIteration,
 		ArrayPath: source,
 		KeyPath:   constraint.NewPath(valueTarget.Symbol, valueTarget.Name),
 	})
@@ -3475,8 +3475,8 @@ func (t *Transfer) applyBoundaryFactsWithAppendPlans(
 		if !ok {
 			continue
 		}
-		changed = t.applyKeyProvenanceEffect(out, KeyProvenanceEffect{
-			Kind:      KeyProvenanceDynamicIndexWrite,
+		changed = t.applyKeyProvenancePathProof(out, flow.KeyProvenancePathProof{
+			Kind:      flow.KeyProvenanceDynamicIndexWrite,
 			TablePath: table,
 			KeyPath:   key,
 		}) || changed
@@ -3490,8 +3490,8 @@ func (t *Transfer) applyBoundaryFactsWithAppendPlans(
 		if !ok {
 			continue
 		}
-		changed = t.applyKeyProvenanceEffect(out, KeyProvenanceEffect{
-			Kind:      KeyProvenanceKeyArrayAssignment,
+		changed = t.applyKeyProvenancePathProof(out, flow.KeyProvenancePathProof{
+			Kind:      flow.KeyProvenanceKeyArrayAssignment,
 			ArrayPath: array,
 			TablePath: table,
 		}) || changed
