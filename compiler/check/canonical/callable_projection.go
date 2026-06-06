@@ -194,6 +194,6 @@ func (p callableProjector) signature(ref flow.FunctionRef, cells flow.CaptureCel
 	if p.hasDeclaredReturns != nil {
 		hasDeclaredReturns = p.hasDeclaredReturns(sref)
 	}
-	sum := p.reader.SummarizeWithEntryContext(sref, entry.CaptureCells(), entry.FunctionRefs(), entry.ClosureRefs(), nil)
+	sum := p.reader.SummarizeWithKey(entry.Key())
 	return summary.FunctionSignatureWithProjectedReturns(sig, hasDeclaredReturns, sum)
 }

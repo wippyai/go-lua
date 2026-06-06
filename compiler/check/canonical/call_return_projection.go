@@ -130,6 +130,6 @@ func (p callReturnProjection) contextualFunction(projector callableProjector, re
 		return nil
 	}
 	entry := d.activeProgram.CallEntryContext(ref, p.cells, p.refs, p.closures, values)
-	sum := projector.reader.SummarizeWithEntryContext(ref, entry.CaptureCells(), entry.FunctionRefs(), entry.ClosureRefs(), entry.EntryValues())
+	sum := projector.reader.SummarizeWithKey(entry.Key())
 	return summary.FunctionSignatureWithEntryParamsAndProjectedReturns(sig, d.refHasDeclaredReturns(d.activeProgram, ref), sum, values)
 }
