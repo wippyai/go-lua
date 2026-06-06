@@ -52,25 +52,25 @@ func TestFunctionRefSetJoinMergesCanonicalSortedSets(t *testing.T) {
 }
 
 func TestFunctionRefsSubtreeStrongUpdate(t *testing.T) {
-	root := constraint.PathKey("sym1.dep")
-	child := constraint.PathKey("sym1.dep.get")
-	sibling := constraint.PathKey("sym1.run")
+	root := constraint.NewPath(cfg.SymbolID(1), "dep")
+	child := root.Field("get")
+	samePrintedRoot := constraint.NewPath(cfg.SymbolID(2), "dep")
 
-	refs := WithFunctionRef(nil, root, FunctionRefSetOf(FunctionRef{GraphID: 1}))
-	refs = WithFunctionRef(refs, child, FunctionRefSetOf(FunctionRef{GraphID: 2}))
-	refs = WithFunctionRef(refs, sibling, FunctionRefSetOf(FunctionRef{GraphID: 3}))
+	refs := WithFunctionRefPath(nil, root, FunctionRefSetOf(FunctionRef{GraphID: 1}))
+	refs = WithFunctionRefPath(refs, child, FunctionRefSetOf(FunctionRef{GraphID: 2}))
+	refs = WithFunctionRefPath(refs, samePrintedRoot, FunctionRefSetOf(FunctionRef{GraphID: 3}))
 
-	refs = WithoutFunctionRefSubtree(refs, root)
-	if _, ok := FunctionRefAt(refs, root); ok {
+	refs = WithoutFunctionRefSubtree(refs, StablePathKey(root))
+	if _, ok := FunctionRefAtPath(refs, root); ok {
 		t.Fatalf("root identity survived subtree clear: %v", refs)
 	}
-	if _, ok := FunctionRefAt(refs, child); ok {
+	if _, ok := FunctionRefAtPath(refs, child); ok {
 		t.Fatalf("child identity survived subtree clear: %v", refs)
 	}
-	if got, ok := FunctionRefAt(refs, sibling); !ok {
-		t.Fatalf("sibling identity was removed")
+	if got, ok := FunctionRefAtPath(refs, samePrintedRoot); !ok {
+		t.Fatalf("same printed root with different symbol was removed")
 	} else if ref, singleton := got.Singleton(); !singleton || ref.GraphID != 3 {
-		t.Fatalf("sibling identity = %s, want graph 3 singleton", got.Format())
+		t.Fatalf("same printed root identity = %s, want graph 3 singleton", got.Format())
 	}
 }
 

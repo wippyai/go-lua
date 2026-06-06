@@ -410,7 +410,7 @@ func WithoutClosureRefSubtreeAddress(refs ClosureRefs, addr StableAddress) Closu
 	}
 	found := false
 	for k := range refs {
-		if functionRefPathInSubtree(k, path) {
+		if functionRefPathInAddressSubtree(k, addr) {
 			found = true
 			break
 		}
@@ -420,7 +420,7 @@ func WithoutClosureRefSubtreeAddress(refs ClosureRefs, addr StableAddress) Closu
 	}
 	out := make(ClosureRefs, len(refs))
 	for k, v := range refs {
-		if !functionRefPathInSubtree(k, path) {
+		if !functionRefPathInAddressSubtree(k, addr) {
 			out[k] = v
 		}
 	}

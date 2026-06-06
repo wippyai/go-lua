@@ -456,18 +456,6 @@ func WithoutFunctionRefSubtree(refs FunctionRefs, path constraint.PathKey) Funct
 	return WithoutFunctionRefSubtreeAddress(refs, addr)
 }
 
-func functionRefPathInSubtree(path, root constraint.PathKey) bool {
-	rootAddr, ok := StableAddressFromKey(root)
-	if ok {
-		return functionRefPathInAddressSubtree(path, rootAddr)
-	}
-	if path == root {
-		return true
-	}
-	p, r := string(path), string(root)
-	return strings.HasPrefix(p, r+".") || strings.HasPrefix(p, r+"[")
-}
-
 func functionRefPathInAddressSubtree(path constraint.PathKey, root StableAddress) bool {
 	pathAddr, ok := StableAddressFromKey(path)
 	if !ok {

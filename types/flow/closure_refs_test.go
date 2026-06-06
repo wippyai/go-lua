@@ -238,6 +238,28 @@ func TestProjectClosureRefsByPathKeepsSubtree(t *testing.T) {
 	}
 }
 
+func TestClosureRefsSubtreeStrongUpdateUsesStableAddress(t *testing.T) {
+	root := constraint.NewPath(cfg.SymbolID(145), "dep")
+	child := root.Field("get")
+	samePrintedRoot := constraint.NewPath(cfg.SymbolID(146), "dep")
+	closure := ClosureRefOf(FunctionRef{GraphID: 9}, CaptureCellsDomain.Bottom(), nil)
+
+	refs := WithClosureRef(nil, StablePathKey(root), ClosureRefSetOf(closure))
+	refs = WithClosureRef(refs, StablePathKey(child), ClosureRefSetOf(closure))
+	refs = WithClosureRef(refs, StablePathKey(samePrintedRoot), ClosureRefSetOf(closure))
+
+	refs = WithoutClosureRefSubtree(refs, StablePathKey(root))
+	if _, ok := ClosureRefAtPath(refs, root); ok {
+		t.Fatalf("root closure survived subtree clear: %#v", refs)
+	}
+	if _, ok := ClosureRefAtPath(refs, child); ok {
+		t.Fatalf("child closure survived subtree clear: %#v", refs)
+	}
+	if _, ok := ClosureRefAtPath(refs, samePrintedRoot); !ok {
+		t.Fatalf("same printed root with different symbol was removed: %#v", refs)
+	}
+}
+
 func TestClosureRefRootSymbolsUsesAddressRoots(t *testing.T) {
 	root := constraint.NewPath(cfg.SymbolID(55), "root")
 	child := root.Field("child")
