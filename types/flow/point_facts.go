@@ -248,6 +248,18 @@ func (f PointFacts) IdentityAliasSourcePaths(root constraint.Path, policy Identi
 	return out
 }
 
+// ValueOriginUsesCoveringPath returns value-origin uses that cover path.
+// The relation is address-native internally because it must compare structural
+// prefixes, but consumers that reason over AST paths should not repeat that
+// lowering at each call site.
+func (f PointFacts) ValueOriginUsesCoveringPath(path constraint.Path) []ValueOriginUse {
+	addr, ok := StableAddressOfPath(path)
+	if !ok {
+		return nil
+	}
+	return f.state.ValueOrigins.OriginsCoveringAddress(addr)
+}
+
 // IndexWritePathQuery is the structured-path query form for admitted dynamic
 // index writes.
 type IndexWritePathQuery struct {

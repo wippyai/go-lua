@@ -132,16 +132,13 @@ func (t *Transfer) demandLocalPathContract(
 		if out == nil {
 			continue
 		}
-		curAddr, ok := flow.StableAddressOfPath(cur.path)
-		if !ok {
-			continue
-		}
-		for _, sourceAddr := range flow.IdentityAliasSources(*out, curAddr) {
-			if source, ok := sourceAddr.Path(); ok && source.Symbol != 0 {
+		facts := flow.PointFactsOf(*out)
+		for _, source := range facts.IdentityAliasSourcePaths(cur.path, flow.IdentityAliasReadPolicy) {
+			if source.Symbol != 0 {
 				queue = append(queue, demandRouteItem{path: source, contract: cur.contract})
 			}
 		}
-		for _, use := range out.ValueOrigins.OriginsCoveringAddress(curAddr) {
+		for _, use := range facts.ValueOriginUsesCoveringPath(cur.path) {
 			switch use.Origin.Kind {
 			case flow.ValueOriginIndexedIterator:
 				t.enqueueAppendFieldOriginDemands(out, use.Origin.Source, use.Remainder, cur.contract, &queue)

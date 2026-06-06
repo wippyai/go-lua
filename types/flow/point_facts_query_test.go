@@ -104,3 +104,32 @@ func TestPointFactsIdentityAliasSourcePathsWithPolicy(t *testing.T) {
 		t.Fatalf("descendant alias source paths = %v, want %s", got, source.Field("id").String())
 	}
 }
+
+func TestPointFactsValueOriginUsesCoveringPath(t *testing.T) {
+	valuePath := constraint.NewPath(cfg.SymbolID(141), "entry")
+	sourcePath := constraint.NewPath(cfg.SymbolID(142), "items")
+	state := PointState{
+		ValueOrigins: ValueOriginFacts{}.WithAddresses(
+			testStableAddressPath(t, valuePath),
+			testStableAddressPath(t, sourcePath),
+			ValueOriginIndexedIterator,
+			1,
+		),
+	}
+	facts := PointFactsOf(state)
+
+	uses := facts.ValueOriginUsesCoveringPath(valuePath.Field("id"))
+	if len(uses) != 1 {
+		t.Fatalf("ValueOriginUsesCoveringPath got %d uses, want 1", len(uses))
+	}
+	if uses[0].Origin.Kind != ValueOriginIndexedIterator || uses[0].Origin.VarIndex != 1 {
+		t.Fatalf("origin = %#v, want indexed iterator value origin", uses[0].Origin)
+	}
+	if len(uses[0].Remainder) != 1 || uses[0].Remainder[0].Name != "id" {
+		t.Fatalf("remainder = %#v, want [.id]", uses[0].Remainder)
+	}
+	gotSource, ok := uses[0].Origin.SourcePath()
+	if !ok || !gotSource.Equal(sourcePath) {
+		t.Fatalf("source path = %v/%v, want %s", gotSource, ok, sourcePath.String())
+	}
+}
