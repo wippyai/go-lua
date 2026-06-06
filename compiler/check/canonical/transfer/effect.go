@@ -435,7 +435,7 @@ func (t *Transfer) applyMutatorEffect(out *flow.PointState, effect MutatorEffect
 			}
 		}
 	}
-	appendDestinations := appendOriginDestinations(out, appendHistoryArray, nil)
+	appendDestinations := appendOriginDestinations(out, appendHistoryArray)
 	changed := false
 	changed = t.applyPlaceMutationEffect(out, PlaceMutationEffect{
 		Place:         effect.Place,
@@ -558,7 +558,7 @@ func (t *Transfer) recordAppendKeyFact(out *flow.PointState, place Place, kind M
 	return !flow.KeyPresenceFactsDomain.Equal(before, out.KeyPresence)
 }
 
-func (t *Transfer) recordAppendElementFieldOrigins(out *flow.PointState, place Place, kind MutatorKind, elem ast.Expr, destinations []appendOriginDestination) bool {
+func (t *Transfer) recordAppendElementFieldOrigins(out *flow.PointState, place Place, kind MutatorKind, elem ast.Expr, destinations []flow.AppendOriginDestination) bool {
 	if out == nil || kind != MutatorAppendElement || elem == nil {
 		return false
 	}
@@ -568,7 +568,7 @@ func (t *Transfer) recordAppendElementFieldOrigins(out *flow.PointState, place P
 	}
 	before := out.KeyPresence
 	if len(destinations) == 0 {
-		destinations = appendOriginDestinations(out, arrayPath, nil)
+		destinations = appendOriginDestinations(out, arrayPath)
 	}
 	if table, ok := elem.(*ast.TableExpr); ok && table != nil {
 		for _, field := range table.Fields {
@@ -585,19 +585,14 @@ func (t *Transfer) recordAppendElementFieldOrigins(out *flow.PointState, place P
 			}
 			sources := appendOriginSources(out, source)
 			for _, dst := range destinations {
-				field := append([]constraint.Segment(nil), dst.fieldPrefix...)
+				field := append([]constraint.Segment(nil), dst.FieldPrefix...)
 				field = append(field, seg)
 				for _, src := range sources {
-					arrayAddr, arrayOK := flow.StableAddressOfPath(dst.array)
-					sourceAddr, sourceOK := flow.StableAddressOfPath(src.source)
-					if !arrayOK || !sourceOK {
-						continue
-					}
 					flow.ApplyAppendElementFieldOriginProof(out, flow.AppendElementFieldOriginProof{
-						Array:       arrayAddr,
+						Array:       dst.Array,
 						Field:       field,
-						Source:      sourceAddr,
-						SourceField: src.sourceField,
+						Source:      src.Source,
+						SourceField: src.SourceField,
 					})
 				}
 			}
@@ -621,185 +616,45 @@ func (t *Transfer) recordAppendElementFieldOrigins(out *flow.PointState, place P
 			continue
 		}
 		for _, originUse := range out.ValueOrigins.OriginsCoveringAddress(elementFieldAddr) {
-			recordAppendElementFieldOriginUse(out, destinations, field, originUse)
+			flow.ApplyAppendElementFieldOriginUse(out, destinations, field, originUse)
 		}
 		for _, aliasUse := range out.PathAliases.AliasesCoveringAddress(elementFieldAddr) {
-			source, ok := pathFromKey(aliasUse.Alias.Source)
+			source, ok := flow.StableAddressFromKey(aliasUse.Alias.Source)
 			if !ok {
 				continue
 			}
-			for _, seg := range aliasUse.Remainder {
-				source = source.Append(seg)
-			}
-			sourceAddr, ok := flow.StableAddressOfPath(source)
+			source, ok = source.Append(aliasUse.Remainder)
 			if !ok {
 				continue
 			}
-			for _, originUse := range out.ValueOrigins.OriginsCoveringAddress(sourceAddr) {
-				recordAppendElementFieldOriginUse(out, destinations, field, originUse)
+			for _, originUse := range out.ValueOrigins.OriginsCoveringAddress(source) {
+				flow.ApplyAppendElementFieldOriginUse(out, destinations, field, originUse)
 			}
 		}
 	}
 	return !flow.KeyPresenceFactsDomain.Equal(before, out.KeyPresence)
 }
 
-type appendOriginDestination struct {
-	array       constraint.Path
-	fieldPrefix []constraint.Segment
-}
-
-type appendOriginSource struct {
-	source      constraint.Path
-	sourceField []constraint.Segment
-}
-
-func appendOriginDestinations(out *flow.PointState, arrayPath constraint.Path, fieldPrefix []constraint.Segment) []appendOriginDestination {
+func appendOriginDestinations(out *flow.PointState, arrayPath constraint.Path) []flow.AppendOriginDestination {
 	if out == nil || arrayPath.IsEmpty() {
 		return nil
 	}
-	seen := map[string]bool{}
-	var destinations []appendOriginDestination
-	var add func(constraint.Path, []constraint.Segment)
-	add = func(array constraint.Path, prefix []constraint.Segment) {
-		key := flow.KeyPresencePathKey(array)
-		seenKey := string(key) + "/" + string(flow.AppendElementFieldPathKey(prefix))
-		if key == "" || seen[seenKey] {
-			return
-		}
-		seen[seenKey] = true
-		destinations = append(destinations, appendOriginDestination{
-			array:       array,
-			fieldPrefix: append([]constraint.Segment(nil), prefix...),
-		})
-		arrayAddr, ok := flow.StableAddressOfPath(array)
-		if !ok {
-			return
-		}
-		for _, use := range out.ValueOrigins.OriginsCoveringAddress(arrayAddr) {
-			if use.Origin.Kind != flow.ValueOriginIndexedIterator || use.Origin.VarIndex != 1 || len(use.Remainder) == 0 {
-				continue
-			}
-			source, ok := pathFromKey(use.Origin.Source)
-			if !ok {
-				continue
-			}
-			nextPrefix := append([]constraint.Segment(nil), use.Remainder...)
-			nextPrefix = append(nextPrefix, prefix...)
-			add(source, nextPrefix)
-		}
-		for _, aliasUse := range out.PathAliases.AliasesCoveringAddress(arrayAddr) {
-			source, ok := pathFromKey(aliasUse.Alias.Source)
-			if !ok {
-				continue
-			}
-			for _, seg := range aliasUse.Remainder {
-				source = source.Append(seg)
-			}
-			add(source, prefix)
-		}
+	arrayAddr, ok := flow.StableAddressOfPath(arrayPath)
+	if !ok {
+		return nil
 	}
-	add(arrayPath, fieldPrefix)
-	return destinations
+	return flow.AppendOriginDestinations(*out, arrayAddr, nil)
 }
 
-func appendOriginSources(out *flow.PointState, sourcePath constraint.Path) []appendOriginSource {
+func appendOriginSources(out *flow.PointState, sourcePath constraint.Path) []flow.AppendOriginSource {
 	if out == nil || sourcePath.IsEmpty() {
 		return nil
 	}
-	var sources []appendOriginSource
-	add := func(source constraint.Path, sourceField []constraint.Segment) {
-		if source.IsEmpty() {
-			return
-		}
-		sources = append(sources, appendOriginSource{
-			source:      source,
-			sourceField: append([]constraint.Segment(nil), sourceField...),
-		})
-	}
-	add(sourcePath, nil)
 	sourceAddr, ok := flow.StableAddressOfPath(sourcePath)
 	if !ok {
-		return sources
+		return nil
 	}
-	for _, use := range out.ValueOrigins.OriginsCoveringAddress(sourceAddr) {
-		source, ok := pathFromKey(use.Origin.Source)
-		if !ok {
-			continue
-		}
-		switch use.Origin.Kind {
-		case flow.ValueOriginIndexedIterator:
-			if use.Origin.VarIndex == 1 && len(use.Remainder) > 0 {
-				add(source, use.Remainder)
-			}
-		case flow.ValueOriginAssignmentAlias:
-			for _, seg := range use.Remainder {
-				source = source.Append(seg)
-			}
-			add(source, nil)
-		}
-	}
-	for _, aliasUse := range out.PathAliases.AliasesCoveringAddress(sourceAddr) {
-		source, ok := pathFromKey(aliasUse.Alias.Source)
-		if !ok {
-			continue
-		}
-		for _, seg := range aliasUse.Remainder {
-			source = source.Append(seg)
-		}
-		add(source, nil)
-	}
-	return sources
-}
-
-func recordAppendElementFieldOriginUse(
-	out *flow.PointState,
-	destinations []appendOriginDestination,
-	field []constraint.Segment,
-	originUse flow.ValueOriginUse,
-) {
-	if out == nil {
-		return
-	}
-	if originUse.Origin.Kind != flow.ValueOriginIndexedIterator || originUse.Origin.VarIndex != 1 || len(originUse.Remainder) == 0 {
-		return
-	}
-	for _, sourceUse := range out.KeyPresence.AppendElementFieldSources(originUse.Origin.Source, originUse.Remainder) {
-		source, ok := pathFromKey(sourceUse.Origin.Source)
-		if !ok {
-			continue
-		}
-		sourceField := append([]constraint.Segment(nil), sourceUse.SourceField...)
-		if len(sourceField) > 0 {
-			sourceField = append(sourceField, sourceUse.FieldRemainder...)
-		} else {
-			for _, seg := range sourceUse.FieldRemainder {
-				source = source.Append(seg)
-			}
-		}
-		for _, dst := range destinations {
-			dstField := append([]constraint.Segment(nil), dst.fieldPrefix...)
-			dstField = append(dstField, field...)
-			arrayAddr, arrayOK := flow.StableAddressOfPath(dst.array)
-			sourceAddr, sourceOK := flow.StableAddressOfPath(source)
-			if !arrayOK || !sourceOK {
-				continue
-			}
-			flow.ApplyAppendElementFieldOriginProof(out, flow.AppendElementFieldOriginProof{
-				Array:       arrayAddr,
-				Field:       dstField,
-				Source:      sourceAddr,
-				SourceField: sourceField,
-			})
-		}
-	}
-}
-
-func pathFromKey(key constraint.PathKey) (constraint.Path, bool) {
-	sym, segments, ok := flow.ParseSymbolPathKey(key)
-	if !ok || sym == 0 {
-		return constraint.Path{}, false
-	}
-	return constraint.Path{Symbol: sym, Segments: segments}, true
+	return flow.AppendOriginSources(*out, sourceAddr)
 }
 
 func (t *Transfer) arrayPathCurrentlyEmpty(out *flow.PointState, path constraint.Path) bool {
