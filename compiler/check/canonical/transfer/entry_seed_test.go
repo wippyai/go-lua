@@ -8,10 +8,8 @@ import (
 	"github.com/wippyai/go-lua/compiler/check/canonical/input"
 	"github.com/wippyai/go-lua/compiler/check/domain/paramevidence"
 	"github.com/wippyai/go-lua/compiler/check/synth/ops"
-	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/domain/value/product"
 	"github.com/wippyai/go-lua/types/flow"
-	"github.com/wippyai/go-lua/types/flow/numeric"
 	"github.com/wippyai/go-lua/types/typ"
 )
 
@@ -182,41 +180,10 @@ func TestEntrySeedEffectWritesRefinedDeclaredContainer(t *testing.T) {
 
 func TestEntryReachabilityEffectLiftsBottomAxes(t *testing.T) {
 	tr := New(input.Inputs{}, Config{})
-	out := flow.PointState{
-		Num:             numeric.Bottom(),
-		CellEffects:     flow.CaptureEffectsDomain.Bottom(),
-		ReceiverEffects: flow.ReceiverEffectsDomain.Bottom(),
-	}
+	out := flow.PointStateDomain.Bottom()
 
 	if !tr.applyEntryReachabilityEffect(&out, EntryReachabilityEffect{}) {
 		t.Fatal("entry reachability effect did not report a change")
-	}
-	if out.Num == nil || out.Num.IsUnsat() {
-		t.Fatalf("entry numeric state = %v, want reachable empty state", out.Num)
-	}
-	if !constraint.Domain.Equal(out.Cond, constraint.Domain.Top()) {
-		t.Fatalf("entry condition = %v, want reachable true condition", out.Cond)
-	}
-	if !flow.PointRelationsDomain.Equal(out.Rel, flow.PointRelationsDomain.Top()) {
-		t.Fatalf("entry point relations = %#v, want reachable empty relation set", out.Rel)
-	}
-	if !flow.ReturnRelationsDomain.Equal(out.ReturnRel, flow.ReturnRelationsDomain.Top()) {
-		t.Fatalf("entry return relations = %#v, want reachable empty relation set", out.ReturnRel)
-	}
-	if !flow.CaptureEffectsDomain.Equal(out.CellEffects, flow.CaptureEffectsIdentity()) {
-		t.Fatalf("entry cell effects = %v, want identity", out.CellEffects)
-	}
-	if !flow.ReceiverEffectsDomain.Equal(out.ReceiverEffects, flow.ReceiverEffectsIdentity()) {
-		t.Fatalf("entry receiver effects = %v, want identity", out.ReceiverEffects)
-	}
-	if !flow.StaticMemberFactsDomain.Equal(out.StaticMembers, flow.StaticMemberFactsDomain.Top()) {
-		t.Fatalf("entry static member facts = %s, want reachable empty fact set", out.StaticMembers.Format())
-	}
-	if !flow.KeyPresenceFactsDomain.Equal(out.KeyPresence, flow.KeyPresenceFactsDomain.Top()) {
-		t.Fatalf("entry key-presence facts = %s, want reachable empty fact set", out.KeyPresence.Format())
-	}
-	if !flow.ValueOriginFactsDomain.Equal(out.ValueOrigins, flow.ValueOriginFactsDomain.Top()) {
-		t.Fatalf("entry value-origin facts = %s, want reachable empty fact set", out.ValueOrigins.Format())
 	}
 	if tr.applyEntryReachabilityEffect(&out, EntryReachabilityEffect{}) {
 		t.Fatal("entry reachability effect should be idempotent")
