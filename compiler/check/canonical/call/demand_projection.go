@@ -40,16 +40,3 @@ func CallArgDemandsForCall(in CallArgDemandsInput) []callobligation.Obligation {
 	}
 	return paramevidence.FunctionCallArgObligationsWithSelf(in.Call, in.FunctionShape(in.Call), selfType)
 }
-
-// DemandsForCallTargets projects selected callee demand targets onto a concrete
-// call's source arguments. Program-specific target construction stays outside
-// this package; the call-boundary projection shape is canonical here.
-func DemandsForCallTargets(call *ast.FuncCallExpr, targets []paramevidence.CallArgDemandTarget) []callobligation.Obligation {
-	if call == nil || len(targets) == 0 {
-		return nil
-	}
-	return paramevidence.CallArgDemandProjection{
-		Call:    call,
-		Targets: targets,
-	}.Obligations()
-}

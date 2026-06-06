@@ -107,7 +107,10 @@ func (p productCallProjection) argDemands() ([]callobligation.Obligation, bool) 
 	if len(targets) == 0 {
 		return nil, false
 	}
-	return canonicalcall.DemandsForCallTargets(p.call, targets), true
+	return paramevidence.CallArgDemandProjection{
+		Call:    p.call,
+		Targets: targets,
+	}.Obligations(), true
 }
 
 func (p productCallProjection) demandTargets() []paramevidence.CallArgDemandTarget {

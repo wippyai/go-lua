@@ -4,52 +4,9 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/compiler/ast"
-	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/domain/callobligation"
-	"github.com/wippyai/go-lua/compiler/check/domain/paramevidence"
 	"github.com/wippyai/go-lua/types/typ"
 )
-
-func TestDemandsForCallTargetsDelegatesProjection(t *testing.T) {
-	t.Parallel()
-
-	call := &ast.FuncCallExpr{
-		Args: []ast.Expr{&ast.IdentExpr{Value: "arg"}},
-	}
-	fn := &ast.FunctionExpr{
-		ParList: &ast.ParList{
-			Names: []string{"x"},
-			Types: []ast.TypeExpr{nil},
-		},
-	}
-	graph := cfg.Build(fn)
-	target := paramevidence.CallArgDemandTarget{
-		Graph:    graph,
-		Function: fn,
-		DeclaredSlotType: func(slot int) typ.Type {
-			if slot != 0 {
-				t.Fatalf("DeclaredSlotType slot = %d, want 0", slot)
-			}
-			return typ.String
-		},
-	}
-
-	got := DemandsForCallTargets(call, []paramevidence.CallArgDemandTarget{target})
-	if len(got) != 1 || got[0].Source != callobligation.SourceSignature || got[0].Type != typ.String {
-		t.Fatalf("DemandsForCallTargets = %#v, want string demand", got)
-	}
-}
-
-func TestDemandsForCallTargetsEmpty(t *testing.T) {
-	t.Parallel()
-
-	if got := DemandsForCallTargets(nil, nil); got != nil {
-		t.Fatalf("DemandsForCallTargets(nil) = %#v, want nil", got)
-	}
-	if got := DemandsForCallTargets(&ast.FuncCallExpr{}, nil); got != nil {
-		t.Fatalf("DemandsForCallTargets(empty targets) = %#v, want nil", got)
-	}
-}
 
 func TestCallArgDemandsForCallSummaryWins(t *testing.T) {
 	t.Parallel()
