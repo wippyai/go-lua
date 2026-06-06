@@ -561,38 +561,35 @@ func (p CallEntryContextProjection) directFunctionRefs(callee FuncRef, call *ast
 	if p.ParamSlot == nil || p.ParamPath == nil || in == nil {
 		return flow.FunctionRefsDomain.Bottom()
 	}
-	return DirectCallEntryFunctionRefs(DirectCallEntryReferenceInput{
-		Call:                   call,
-		Callee:                 callee,
-		ParamSlot:              p.ParamSlot,
-		ParamPath:              p.ParamPath,
-		ArgPath:                p.ArgPath,
-		FunctionRefs:           in.FunctionRefs,
-		ReferenceProjection:    p.referenceProjection(callee),
-		LimitReferencePaths:    p.ReferencePaths != nil,
-		State:                  in,
-		ResolveFunctionArg:     p.FunctionArgRefs,
-		ResolveFunctionArgRefs: p.FunctionArgRefTree,
-	})
+	refInput := p.referenceInput(callee, call, in)
+	refInput.FunctionRefs = in.FunctionRefs
+	refInput.ResolveFunctionArg = p.FunctionArgRefs
+	refInput.ResolveFunctionArgRefs = p.FunctionArgRefTree
+	return DirectCallEntryFunctionRefs(refInput)
 }
 
 func (p CallEntryContextProjection) directClosureRefs(callee FuncRef, call *ast.FuncCallExpr, in *flow.PointState) flow.ClosureRefs {
 	if p.ParamSlot == nil || p.ParamPath == nil || in == nil {
 		return flow.ClosureRefsDomain.Bottom()
 	}
-	return DirectCallEntryClosureRefs(DirectCallEntryReferenceInput{
-		Call:                  call,
-		Callee:                callee,
-		ParamSlot:             p.ParamSlot,
-		ParamPath:             p.ParamPath,
-		ArgPath:               p.ArgPath,
-		ClosureRefs:           in.ClosureRefs,
-		ReferenceProjection:   p.referenceProjection(callee),
-		LimitReferencePaths:   p.ReferencePaths != nil,
-		State:                 in,
-		ResolveClosureArg:     p.ClosureArgRefs,
-		ResolveClosureArgRefs: p.ClosureArgRefTree,
-	})
+	refInput := p.referenceInput(callee, call, in)
+	refInput.ClosureRefs = in.ClosureRefs
+	refInput.ResolveClosureArg = p.ClosureArgRefs
+	refInput.ResolveClosureArgRefs = p.ClosureArgRefTree
+	return DirectCallEntryClosureRefs(refInput)
+}
+
+func (p CallEntryContextProjection) referenceInput(callee FuncRef, call *ast.FuncCallExpr, in *flow.PointState) DirectCallEntryReferenceInput {
+	return DirectCallEntryReferenceInput{
+		Call:                call,
+		Callee:              callee,
+		ParamSlot:           p.ParamSlot,
+		ParamPath:           p.ParamPath,
+		ArgPath:             p.ArgPath,
+		ReferenceProjection: p.referenceProjection(callee),
+		LimitReferencePaths: p.ReferencePaths != nil,
+		State:               in,
+	}
 }
 
 func (p CallEntryContextProjection) directFacts(callee FuncRef, call *ast.FuncCallExpr, in *flow.PointState) flow.BoundaryFacts {
