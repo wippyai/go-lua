@@ -2560,29 +2560,11 @@ func (ct callTyper) callFunctionForDemand(call *ast.FuncCallExpr, exprType func(
 // callee summary return values) and falls back to the type-only CallReturns seam
 // only at external boundaries that still expose typ.Type.
 func (ct callTyper) CallReturnValues(call *ast.FuncCallExpr, ctx transfer.ProductCallContext) ([]product.AbstractValue, bool) {
-	d := ct.d
-	if call == nil || d == nil || d.activeProgram == nil {
+	proj, ok := ct.productCallProjection(call, ctx, productCallOutcomeOptions{})
+	if !ok {
 		return nil, false
 	}
-	argTypes := ctx.ArgTypes()
-	exprType := ctx.ExprType
-	outcome := ct.callOutcomeForProductCall(call, ctx)
-	summaryReturns := outcome.InferredReturnValues()
-
-	return canonicalcall.InferReturnValues(canonicalcall.ReturnValueInput{
-		Call:                 call,
-		Env:                  ct.callInterceptEnv(exprType),
-		TypePolicyAvailable:  d.cfg.Types != nil,
-		PendingInput:         ctx.PendingInput,
-		BlockDynamicFallback: outcome.HasTargets() && !outcome.HasInformativeReturnValues(),
-		SummaryReturnValues: func(call *ast.FuncCallExpr) []product.AbstractValue {
-			return summaryReturns
-		},
-		ExprValue: ctx.ExprValue,
-		TypeFallback: func() ([]typ.Type, bool) {
-			return canonicalcall.InferReturnTypes(ct.callReturnInput(call, argTypes, exprType, ctx.Cells, ctx.FunctionRefs, ctx.ClosureRefs, ctx.SelfType))
-		},
-	})
+	return proj.callReturnValues()
 }
 
 func (ct callTyper) callEntryFunctionArgRefs(arg ast.Expr, refs flow.FunctionRefs) (flow.FunctionRefSet, bool) {
@@ -2671,15 +2653,15 @@ func (ct callTyper) moduleCallSummaryReturns(call *ast.FuncCallExpr, exprType fu
 }
 
 func (ct callTyper) moduleCallSummaryReturnValues(call *ast.FuncCallExpr, ctx transfer.ProductCallContext) []product.AbstractValue {
-	d := ct.d
-	if d == nil || call == nil || d.activeProgram == nil {
+	proj, ok := ct.productCallProjection(call, ctx, productCallOutcomeOptions{})
+	if !ok {
 		return nil
 	}
 	// Keep the normalized product context intact through summary projection.
 	// Selected-target signature returns close generics from ctx.ArgValues and
 	// expression projections; rebuilding a partial context from runtime args
 	// alone loses that evidence and degrades precise calls to unknown.
-	return ct.callOutcomeForProductCall(call, ctx).InferredReturnValues()
+	return proj.inferredReturnValues()
 }
 
 func (ct callTyper) CallReturnFunctionRefs(call *ast.FuncCallExpr, exprType func(ast.Expr) typ.Type, cells flow.CaptureCells, refs flow.FunctionRefs) []flow.FunctionRefs {
@@ -2691,15 +2673,11 @@ func (ct callTyper) CallReturnFunctionRefs(call *ast.FuncCallExpr, exprType func
 }
 
 func (ct callTyper) CallReturnRefsFromValues(call *ast.FuncCallExpr, ctx transfer.ProductCallContext) transfer.CallReturnRefs {
-	d := ct.d
-	if d == nil || call == nil || d.activeProgram == nil {
+	proj, ok := ct.summaryOnlyProductCallProjection(call, ctx)
+	if !ok {
 		return transfer.CallReturnRefs{}
 	}
-	outcome := ct.summaryOnlyProductCallOutcome(call, ctx)
-	return transfer.CallReturnRefs{
-		FunctionRefs: outcome.ReturnFunctionRefs(),
-		ClosureRefs:  outcome.ReturnClosureRefs(),
-	}
+	return proj.returnRefs()
 }
 
 // ReturnRelations resolves the callee's caller-visible return relations through
@@ -2719,15 +2697,11 @@ func (ct callTyper) ReturnRelations(call *ast.FuncCallExpr, exprType func(ast.Ex
 }
 
 func (ct callTyper) ReturnRelationsFromValues(call *ast.FuncCallExpr, ctx transfer.ProductCallContext) flow.ReturnRelations {
-	d := ct.d
-	if d == nil || call == nil {
+	proj, ok := ct.productCallRelationsProjection(call, ctx)
+	if !ok {
 		return flow.ReturnRelationsDomain.Top()
 	}
-	var outcome canonicalcall.CallOutcome
-	if d.activeProgram != nil {
-		outcome = ct.callOutcomeForProductCall(call, ctx)
-	}
-	return outcome.ReturnRelations(call, ct.callTypeResolver(ctx.ExprType), ctx.ExprValue != nil)
+	return proj.returnRelations()
 }
 
 // CellEffects resolves the callee's caller-visible capture-cell transformer
@@ -2748,23 +2722,22 @@ func (ct callTyper) CellEffectsFromValues(call *ast.FuncCallExpr, ctx transfer.P
 	if !ok || call == nil {
 		return flow.CaptureEffectsDomain.Bottom()
 	}
-	outcome := ct.summaryOnlyProductCallOutcome(call, ctx)
-	return projector.productCallEffects(outcome, call, ctx)
+	proj, ok := ct.summaryOnlyProductCallProjection(call, ctx)
+	if !ok {
+		return flow.CaptureEffectsDomain.Bottom()
+	}
+	return proj.cellEffects(projector)
 }
 
 func (ct callTyper) CallPostEffectsFromValues(call *ast.FuncCallExpr, ctx transfer.ProductCallContext) transfer.CallPostEffects {
-	d := ct.d
-	if d == nil || call == nil || d.activeProgram == nil {
+	proj, ok := ct.summaryOnlyProductCallProjection(call, ctx)
+	if !ok {
 		return transfer.CallPostEffects{
 			ReceiverEffects: flow.ReceiverEffectsDomain.Bottom(),
 			BoundaryFacts:   flow.BoundaryFactsDomain.Top(),
 		}
 	}
-	outcome := ct.summaryOnlyProductCallOutcome(call, ctx)
-	return transfer.CallPostEffects{
-		ReceiverEffects: outcome.ReceiverEffects(),
-		BoundaryFacts:   outcome.BoundaryFacts(),
-	}
+	return proj.postEffects()
 }
 
 // IterVars types a generic-for loop's iteration variables from its iterator
@@ -2951,19 +2924,12 @@ func (ct callTyper) ParamNarrows(call *ast.FuncCallExpr) []transfer.ParamNarrow 
 // program proved never return normally. A statement call terminates the caller's
 // flow only when every selected target is no-return.
 func (ct callTyper) IsNoReturn(call *ast.FuncCallExpr, ctx transfer.ProductCallContext) bool {
-	if call == nil {
+	proj, ok := ct.summaryOnlyProductCallProjection(call, ctx)
+	if !ok {
 		return false
 	}
-	d := ct.d
-	if d == nil {
-		return false
-	}
-	prog := d.activeProgram
-	if prog == nil {
-		return false
-	}
-	return ct.summaryOnlyProductCallOutcome(call, ctx).NeverReturns(func(ref summary.FuncRef) bool {
-		return prog.facts.HasNoReturn(ref)
+	return proj.neverReturns(func(ref summary.FuncRef) bool {
+		return ct.d.activeProgram.facts.HasNoReturn(ref)
 	})
 }
 
