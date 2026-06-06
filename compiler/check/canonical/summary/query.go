@@ -42,14 +42,6 @@ func NewDefaultKey(ref FuncRef, values EntryValues) Key {
 	)
 }
 
-// NewKeyWithEntryContextFacts constructs the canonical summary key for every
-// caller-provided entry component, including parameter-relative path facts.
-// TODO(reference-context): remove this tuple-shaped test helper after summary
-// tests assert through NewKeyWithReferenceContext.
-func NewKeyWithEntryContextFacts(ref FuncRef, entry flow.CaptureCells, refs flow.FunctionRefs, closures flow.ClosureRefs, values EntryValues, facts flow.BoundaryFacts) Key {
-	return NewKeyWithReferenceContext(ref, flow.ReferenceContextOf(entry, refs, closures), values, facts)
-}
-
 // NewKeyWithReferenceContext constructs the canonical summary key from the
 // normalized callee-entry reference environment.
 func NewKeyWithReferenceContext(ref FuncRef, references flow.ReferenceContext, values EntryValues, facts flow.BoundaryFacts) Key {

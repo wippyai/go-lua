@@ -359,11 +359,9 @@ func TestReader_UsesConvergedSnapshotWhenNotLive(t *testing.T) {
 		t.Fatal("snapshot-only reader reported live")
 	}
 
-	got := reader.SummarizeWithKey(summary.NewKeyWithEntryContextFacts(
+	got := reader.SummarizeWithKey(summary.NewKeyWithReferenceContext(
 		ref,
-		flow.CaptureCellsDomain.Top(),
-		flow.FunctionRefsDomain.Top(),
-		flow.ClosureRefsDomain.Top(),
+		flow.ReferenceContextOf(flow.CaptureCellsDomain.Top(), flow.FunctionRefsDomain.Top(), flow.ClosureRefsDomain.Top()),
 		summary.EntryValues{0: product.FromType(typ.Number)},
 		flow.BoundaryFactsDomain.Top(),
 	))

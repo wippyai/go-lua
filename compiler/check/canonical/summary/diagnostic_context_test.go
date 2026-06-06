@@ -56,19 +56,23 @@ func TestDiagnosticContextFrontierUsesFallbackOnlyForUncalledFunctions(t *testin
 	uncalledClosure := FuncRef{GraphID: 3}
 	uncalledDefault := FuncRef{GraphID: 4}
 	calledKey := NewDefaultKey(called, nil)
-	calledClosureKey := NewKeyWithEntryContextFacts(
+	calledClosureKey := NewKeyWithReferenceContext(
 		called,
-		flow.CaptureCellsOf([]flow.CaptureCell{{Symbol: 10, Value: product.FromType(typ.String)}}),
-		flow.FunctionRefsDomain.Bottom(),
-		flow.ClosureRefsDomain.Bottom(),
+		flow.ReferenceContextOf(
+			flow.CaptureCellsOf([]flow.CaptureCell{{Symbol: 10, Value: product.FromType(typ.String)}}),
+			flow.FunctionRefsDomain.Bottom(),
+			flow.ClosureRefsDomain.Bottom(),
+		),
 		nil,
 		flow.BoundaryFactsDomain.Top(),
 	)
-	closureKey := NewKeyWithEntryContextFacts(
+	closureKey := NewKeyWithReferenceContext(
 		uncalledClosure,
-		flow.CaptureCellsOf([]flow.CaptureCell{{Symbol: 11, Value: product.FromType(typ.Number)}}),
-		flow.FunctionRefsDomain.Bottom(),
-		flow.ClosureRefsDomain.Bottom(),
+		flow.ReferenceContextOf(
+			flow.CaptureCellsOf([]flow.CaptureCell{{Symbol: 11, Value: product.FromType(typ.Number)}}),
+			flow.FunctionRefsDomain.Bottom(),
+			flow.ClosureRefsDomain.Bottom(),
+		),
 		nil,
 		flow.BoundaryFactsDomain.Top(),
 	)
@@ -115,19 +119,23 @@ func TestDiagnosticContextFrontierPromotesFallbackDiscoveredCallContext(t *testi
 	root := FuncRef{GraphID: 1}
 	caller := FuncRef{GraphID: 2}
 	callee := FuncRef{GraphID: 3}
-	callerFallback := NewKeyWithEntryContextFacts(
+	callerFallback := NewKeyWithReferenceContext(
 		caller,
-		flow.CaptureCellsOf([]flow.CaptureCell{{Symbol: 10, Value: product.FromType(typ.String)}}),
-		flow.FunctionRefsDomain.Bottom(),
-		flow.ClosureRefsDomain.Bottom(),
+		flow.ReferenceContextOf(
+			flow.CaptureCellsOf([]flow.CaptureCell{{Symbol: 10, Value: product.FromType(typ.String)}}),
+			flow.FunctionRefsDomain.Bottom(),
+			flow.ClosureRefsDomain.Bottom(),
+		),
 		nil,
 		flow.BoundaryFactsDomain.Top(),
 	)
-	calleeFallback := NewKeyWithEntryContextFacts(
+	calleeFallback := NewKeyWithReferenceContext(
 		callee,
-		flow.CaptureCellsOf([]flow.CaptureCell{{Symbol: 11, Value: product.FromType(typ.String)}}),
-		flow.FunctionRefsDomain.Bottom(),
-		flow.ClosureRefsDomain.Bottom(),
+		flow.ReferenceContextOf(
+			flow.CaptureCellsOf([]flow.CaptureCell{{Symbol: 11, Value: product.FromType(typ.String)}}),
+			flow.FunctionRefsDomain.Bottom(),
+			flow.ClosureRefsDomain.Bottom(),
+		),
 		nil,
 		flow.BoundaryFactsDomain.Top(),
 	)
@@ -172,11 +180,9 @@ func TestDiagnosticContextFrontierReducesDominatedEntryFactContexts(t *testing.T
 			Name: "nodes",
 		}}},
 	}}, nil, nil, nil, nil)
-	factful := NewKeyWithEntryContextFacts(
+	factful := NewKeyWithReferenceContext(
 		callee,
-		flow.CaptureCellsDomain.Bottom(),
-		flow.FunctionRefsDomain.Bottom(),
-		flow.ClosureRefsDomain.Bottom(),
+		flow.ReferenceContextOf(flow.CaptureCellsDomain.Bottom(), flow.FunctionRefsDomain.Bottom(), flow.ClosureRefsDomain.Bottom()),
 		EntryValues{0: product.FromType(typ.String)},
 		facts,
 	)

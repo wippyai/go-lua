@@ -183,11 +183,13 @@ return M
 	}
 	fs := q.IntraWithKey(
 		ctx,
-		summary.NewKeyWithEntryContextFacts(
+		summary.NewKeyWithReferenceContext(
 			makeRef,
-			flow.CaptureCellsOf([]flow.CaptureCell{{Symbol: tSym, Value: product.FromType(typ.NewRecord().Build())}}),
-			flow.FunctionRefsDomain.Bottom(),
-			flow.ClosureRefsDomain.Bottom(),
+			flow.ReferenceContextOf(
+				flow.CaptureCellsOf([]flow.CaptureCell{{Symbol: tSym, Value: product.FromType(typ.NewRecord().Build())}}),
+				flow.FunctionRefsDomain.Bottom(),
+				flow.ClosureRefsDomain.Bottom(),
+			),
 			nil,
 			flow.BoundaryFactsDomain.Top(),
 		),

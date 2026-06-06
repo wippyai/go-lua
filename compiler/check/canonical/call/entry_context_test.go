@@ -26,7 +26,12 @@ func TestEntryContextKeyMatchesSummaryEntryContextKey(t *testing.T) {
 	}
 
 	ctx := NewEntryContext(ref, flow.ReferenceContextOf(cells, refs, closures), values, flow.BoundaryFactsDomain.Top())
-	want := summary.NewKeyWithEntryContextFacts(ref, cells, refs, closures, values, flow.BoundaryFactsDomain.Top())
+	want := summary.NewKeyWithReferenceContext(
+		ref,
+		flow.ReferenceContextOf(cells, refs, closures),
+		values,
+		flow.BoundaryFactsDomain.Top(),
+	)
 	if got := ctx.Key(); got != want {
 		t.Fatalf("Key() = %#v, want %#v", got, want)
 	}
@@ -67,7 +72,7 @@ func TestEntryContextFromClosureWithLiveContextPreservesClosureAxes(t *testing.T
 	if got := ctx.ClosureRefs(); !flow.ClosureRefsDomain.Equal(got, closures) {
 		t.Fatalf("ClosureRefs() = %#v, want %#v", got, closures)
 	}
-	wantKey := summary.NewKeyWithEntryContextFacts(ref, closure.EntryCells(), closure.EntryFunctionRefs(), closure.EntryClosureRefs(), ctx.EntryValues(), flow.BoundaryFactsDomain.Top())
+	wantKey := summary.NewKeyWithReferenceContext(ref, closure.EntryReferenceContext(), ctx.EntryValues(), flow.BoundaryFactsDomain.Top())
 	if got := ctx.Key(); got != wantKey {
 		t.Fatalf("Key() = %#v, want %#v", got, wantKey)
 	}

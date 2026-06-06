@@ -49,11 +49,9 @@ func TestReaderProjectsSnapshotSummaryCells(t *testing.T) {
 func TestReaderSnapshotOverlayOverridesExactContext(t *testing.T) {
 	ref := FuncRef{GraphID: 17}
 	values := EntryValues{0: product.FromType(typ.Boolean)}
-	key := NewKeyWithEntryContextFacts(
+	key := NewKeyWithReferenceContext(
 		ref,
-		flow.CaptureCellsDomain.Bottom(),
-		flow.FunctionRefsDomain.Bottom(),
-		flow.ClosureRefsDomain.Bottom(),
+		flow.ReferenceContextOf(flow.CaptureCellsDomain.Bottom(), flow.FunctionRefsDomain.Bottom(), flow.ClosureRefsDomain.Bottom()),
 		values,
 		flow.BoundaryFactsDomain.Top(),
 	)
