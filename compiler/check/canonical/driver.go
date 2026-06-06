@@ -1842,26 +1842,12 @@ func (ct callTyper) ProductCallFromValues(call *ast.FuncCallExpr, ctx transfer.P
 		return transfer.ProductCallResult{
 			ReturnValues:    values,
 			HasReturnValues: hasValues,
+			ReturnRefs:      proj.returnRefs(),
+			ReturnRelations: proj.returnRelations(),
 			Effects:         transfer.EmptyCallEffects(),
 		}
 	}
 	return proj.result(projector, ct.containerElementUnions(call, ctx))
-}
-
-func (ct callTyper) CallReturnRefsFromValues(call *ast.FuncCallExpr, ctx transfer.ProductCallContext) transfer.CallReturnRefs {
-	proj, ok := ct.summaryOnlyProductCallProjection(call, ctx)
-	if !ok {
-		return transfer.CallReturnRefs{}
-	}
-	return proj.returnRefs()
-}
-
-func (ct callTyper) ReturnRelationsFromValues(call *ast.FuncCallExpr, ctx transfer.ProductCallContext) flow.ReturnRelations {
-	proj, ok := ct.productCallRelationsProjection(call, ctx)
-	if !ok {
-		return flow.ReturnRelationsDomain.Top()
-	}
-	return proj.returnRelations()
 }
 
 // IterVars types a generic-for loop's iteration variables from its iterator

@@ -393,6 +393,7 @@ func productReturnResultForTest(returns ...product.AbstractValue) ProductCallRes
 	return ProductCallResult{
 		ReturnValues:    append([]product.AbstractValue(nil), returns...),
 		HasReturnValues: true,
+		ReturnRelations: flow.ReturnRelationsDomain.Top(),
 		Effects:         EmptyCallEffects(),
 	}
 }

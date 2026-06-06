@@ -97,7 +97,7 @@ func (p callEntryArgProjection) argRefTrees(arg ast.Expr) (flow.FunctionRefs, fl
 	if !ok {
 		return flow.FunctionRefsDomain.Bottom(), flow.ClosureRefsDomain.Bottom(), false
 	}
-	returns := p.typer.CallReturnRefsFromValues(call, p.evidence.nestedCall(call))
+	returns := p.typer.ProductCallFromValues(call, p.evidence.nestedCall(call)).ReturnRefs
 	functionRefs := flow.FunctionRefsDomain.Bottom()
 	if len(returns.FunctionRefs) > 0 {
 		functionRefs = returns.FunctionRefs[0]

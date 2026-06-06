@@ -429,16 +429,14 @@ func (c captureEffectTyper) TypeCastTarget(*ast.FuncCallExpr, func(ast.Expr) typ
 	return nil, false
 }
 
-func (c captureEffectTyper) ReturnRelationsFromValues(*ast.FuncCallExpr, ProductCallContext) flow.ReturnRelations {
-	return flow.ReturnRelationsDomain.Top()
-}
-
 func (c captureEffectTyper) ProductCallFromValues(*ast.FuncCallExpr, ProductCallContext) ProductCallResult {
-	return ProductCallResult{Effects: CallEffects{
+	result := EmptyProductCallResult()
+	result.Effects = CallEffects{
 		CellEffects:     c.effects,
 		ReceiverEffects: flow.ReceiverEffectsDomain.Bottom(),
 		BoundaryFacts:   flow.BoundaryFactsDomain.Top(),
-	}}
+	}
+	return result
 }
 
 var _ ProductCallProvider = captureEffectTyper{}

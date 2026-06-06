@@ -195,20 +195,12 @@ type CallArgDemandProvider interface {
 	CallArgDemands(call *ast.FuncCallExpr, ctx ProductCallContext) []callobligation.Obligation
 }
 
-type productReturnRelationProvider interface {
-	ReturnRelationsFromValues(call *ast.FuncCallExpr, ctx ProductCallContext) flow.ReturnRelations
-}
-
 // CallReturnRefs is the product-call boundary for callable identities returned
 // by a callee. Function and closure refs are projected from the same selected
 // call outcome, so product callers consume them through one provider.
 type CallReturnRefs struct {
 	FunctionRefs []flow.FunctionRefs
 	ClosureRefs  []flow.ClosureRefs
-}
-
-type productCallReturnRefsProvider interface {
-	CallReturnRefsFromValues(call *ast.FuncCallExpr, ctx ProductCallContext) CallReturnRefs
 }
 
 // CallEffects groups product call-outcome effects that mutate caller-visible
@@ -230,16 +222,22 @@ func EmptyCallEffects() CallEffects {
 }
 
 // ProductCallResult is the product-carrier result of evaluating one concrete
-// call site. Return values and caller-visible effects travel together so transfer
-// does not rebuild selected call outcomes through parallel provider routes.
+// call site. Values, callable identities, return relations, and caller-visible
+// effects travel together so transfer does not rebuild selected call outcomes
+// through parallel provider routes.
 type ProductCallResult struct {
 	ReturnValues    []product.AbstractValue
 	HasReturnValues bool
+	ReturnRefs      CallReturnRefs
+	ReturnRelations flow.ReturnRelations
 	Effects         CallEffects
 }
 
 func EmptyProductCallResult() ProductCallResult {
-	return ProductCallResult{Effects: EmptyCallEffects()}
+	return ProductCallResult{
+		ReturnRelations: flow.ReturnRelationsDomain.Top(),
+		Effects:         EmptyCallEffects(),
+	}
 }
 
 type ProductCallProvider interface {
@@ -1132,10 +1130,10 @@ func (t *Transfer) callReturnRelations(
 	call *ast.FuncCallExpr,
 	demand func(int, paramevidence.ParamContract),
 ) flow.ReturnRelations {
-	if provider, ok := t.callTyper.(productReturnRelationProvider); ok && provider != nil && call != nil {
-		return provider.ReturnRelationsFromValues(call, t.productCallContext(out, call, demand))
+	if call == nil {
+		return flow.ReturnRelationsDomain.Top()
 	}
-	return flow.ReturnRelationsDomain.Top()
+	return t.productCallResult(call, t.productCallContext(out, call, demand)).ReturnRelations
 }
 
 // targetValue resolves the value bound to target index i. A target aligned with a
@@ -1602,11 +1600,7 @@ func (t *Transfer) callReturnReferenceWritesForPlace(
 	if !ok || path.IsEmpty() {
 		return callReturnReferenceWrites{}, false
 	}
-	provider, ok := t.callTyper.(productCallReturnRefsProvider)
-	if !ok || provider == nil {
-		return callReturnReferenceWrites{}, false
-	}
-	returns := provider.CallReturnRefsFromValues(call, t.productCallContext(out, call, demand))
+	returns := t.productCallResult(call, t.productCallContext(out, call, demand)).ReturnRefs
 	writes := callReturnReferenceWrites{
 		FunctionRefs: sourceFunctionRefsWrite(),
 		ClosureRefs:  sourceClosureRefsWrite(),

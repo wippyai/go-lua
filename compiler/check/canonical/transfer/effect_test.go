@@ -2450,14 +2450,14 @@ type boundaryAndContainerElementUnionTyper struct {
 }
 
 func (c boundaryAndContainerElementUnionTyper) ProductCallFromValues(*ast.FuncCallExpr, ProductCallContext) ProductCallResult {
-	return ProductCallResult{
-		Effects: CallEffects{
-			CellEffects:     c.captureEffectTyper.effects,
-			ReceiverEffects: flow.ReceiverEffectsDomain.Bottom(),
-			BoundaryFacts:   c.facts,
-			ElementUnions:   append([]effect.ContainerElementUnion(nil), c.effects...),
-		},
+	result := EmptyProductCallResult()
+	result.Effects = CallEffects{
+		CellEffects:     c.captureEffectTyper.effects,
+		ReceiverEffects: flow.ReceiverEffectsDomain.Bottom(),
+		BoundaryFacts:   c.facts,
+		ElementUnions:   append([]effect.ContainerElementUnion(nil), c.effects...),
 	}
+	return result
 }
 
 type boundaryAndReceiverEffectTyper struct {
@@ -2467,13 +2467,13 @@ type boundaryAndReceiverEffectTyper struct {
 }
 
 func (b boundaryAndReceiverEffectTyper) ProductCallFromValues(*ast.FuncCallExpr, ProductCallContext) ProductCallResult {
-	return ProductCallResult{
-		Effects: CallEffects{
-			CellEffects:     b.captureEffectTyper.effects,
-			ReceiverEffects: b.effects,
-			BoundaryFacts:   b.facts,
-		},
+	result := EmptyProductCallResult()
+	result.Effects = CallEffects{
+		CellEffects:     b.captureEffectTyper.effects,
+		ReceiverEffects: b.effects,
+		BoundaryFacts:   b.facts,
 	}
+	return result
 }
 
 type receiverEffectTyper struct {

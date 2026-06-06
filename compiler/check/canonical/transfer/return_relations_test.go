@@ -203,27 +203,22 @@ type productReturnRelationsTestTyper struct {
 	args []product.AbstractValue
 }
 
-func (t *productReturnRelationsTestTyper) ReturnRelationsFromValues(
+func (t *productReturnRelationsTestTyper) ProductCallFromValues(
 	_ *ast.FuncCallExpr,
 	ctx ProductCallContext,
-) flow.ReturnRelations {
+) ProductCallResult {
 	t.args = append([]product.AbstractValue(nil), ctx.ArgValues...)
-	return t.rels
+	result := EmptyProductCallResult()
+	result.ReturnRelations = t.rels
+	return result
 }
 
-var _ productReturnRelationProvider = (*productReturnRelationsTestTyper)(nil)
+var _ ProductCallProvider = (*productReturnRelationsTestTyper)(nil)
 
 type postconditionAssignTestTyper struct {
 	captureEffectTyper
 	rels    flow.ReturnRelations
 	returns []product.AbstractValue
-}
-
-func (t *postconditionAssignTestTyper) ReturnRelationsFromValues(
-	_ *ast.FuncCallExpr,
-	_ ProductCallContext,
-) flow.ReturnRelations {
-	return t.rels
 }
 
 func (t *postconditionAssignTestTyper) ProductCallFromValues(
@@ -233,9 +228,9 @@ func (t *postconditionAssignTestTyper) ProductCallFromValues(
 	return ProductCallResult{
 		ReturnValues:    t.returns,
 		HasReturnValues: true,
+		ReturnRelations: t.rels,
 		Effects:         EmptyCallEffects(),
 	}
 }
 
-var _ productReturnRelationProvider = (*postconditionAssignTestTyper)(nil)
 var _ ProductCallProvider = (*postconditionAssignTestTyper)(nil)

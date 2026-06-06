@@ -41,21 +41,6 @@ func (ct callTyper) summaryOnlyProductCallProjection(call *ast.FuncCallExpr, ctx
 	})
 }
 
-func (ct callTyper) productCallRelationsProjection(call *ast.FuncCallExpr, ctx transfer.ProductCallContext) (productCallProjection, bool) {
-	if ct.d == nil || call == nil {
-		return productCallProjection{}, false
-	}
-	proj := productCallProjection{
-		typer: ct,
-		call:  call,
-		ctx:   ctx,
-	}
-	if ct.d.activeProgram != nil {
-		proj.outcome = ct.callOutcomeForProductCall(call, ctx)
-	}
-	return proj, true
-}
-
 func (p productCallProjection) inferredReturnValues() []product.AbstractValue {
 	return p.outcome.InferredReturnValues()
 }
@@ -97,6 +82,8 @@ func (p productCallProjection) result(projector cellEffectProjector, elementUnio
 	return transfer.ProductCallResult{
 		ReturnValues:    values,
 		HasReturnValues: ok,
+		ReturnRefs:      p.returnRefs(),
+		ReturnRelations: p.returnRelations(),
 		Effects:         p.effects(projector, elementUnions),
 	}
 }
