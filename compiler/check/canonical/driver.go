@@ -1085,50 +1085,11 @@ func (p *program) CaptureEntryClosureRefs(ref summary.FuncRef, captureClosureRef
 }
 
 func (p *program) EntryValues(ref summary.FuncRef, deps summary.EntryValueDependencies) map[int]product.AbstractValue {
-	if deps == nil {
+	proj, ok := p.entryValueProjection(ref, deps)
+	if !ok {
 		return nil
 	}
-	receivers := p.facts.MethodReceivers(ref)
-	prototypeReceivers := entryValuePrototypeReceivers(receivers)
-	hasInferredSlots := p.hasInferredEntrySlot(ref)
-	out := summary.AggregateEntryValues(summary.EntryValueAggregation{
-		Callee:           ref,
-		HasInferredSlots: hasInferredSlots,
-		EachCallerEntryValues: func(yield func(summary.EntryValues)) {
-			if !hasInferredSlots {
-				return
-			}
-			for _, dep := range p.callerRefs(ref) {
-				values := deps.CallEntryValues(dep, ref)
-				if len(values) != 0 {
-					yield(values)
-				}
-			}
-		},
-		PrototypeReceivers: prototypeReceivers,
-		EachPrototypeSource: func(yield func(summary.EntryValuePrototypeSource)) {
-			for _, dep := range p.prototypePublisherRefs(prototypeReceivers) {
-				if protos := p.publishedPrototypes(dep); len(protos) > 0 {
-					yield(summary.EntryValuePrototypeSource{
-						Prototypes: protos,
-						Self:       deps.PrototypeSelf(dep),
-					})
-				}
-			}
-		},
-		SlotDeclared: func(slot int) bool {
-			return p.paramSlotFixed(ref, slot)
-		},
-	})
-	for _, seed := range p.facts.FunctionEntrySeeds(ref) {
-		out = summary.JoinEntryValue(out, seed.Slot, product.FromType(seed.Type))
-	}
-	out = p.withPrototypeReceiverBaselines(ref, out, prototypeReceivers, deps)
-	out = p.withPrototypeMethodSurfacesForRef(ref, out)
-	if len(out) == 0 {
-		return nil
-	}
-	return out
+	return proj.project()
 }
 
 // hasInferredEntrySlot is a query-dependency guard: functions whose parameters
