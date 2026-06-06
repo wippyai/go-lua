@@ -52,6 +52,22 @@ type AppendKeyProof struct {
 	Key   StableAddress
 }
 
+// AppendHistoryBaseProof preserves append-history tracking for Array across a
+// mutation that otherwise invalidates array element facts.
+type AppendHistoryBaseProof struct {
+	Array StableAddress
+}
+
+// AppendElementFieldOriginProof records that appended elements in Array carry a
+// field from Source. Field and SourceField are structured suffixes, not encoded
+// fact keys.
+type AppendElementFieldOriginProof struct {
+	Array       StableAddress
+	Field       []constraint.Segment
+	Source      StableAddress
+	SourceField []constraint.Segment
+}
+
 // ApplyKeyPresenceProof applies a key-presence proof to point state. When Value
 // is non-zero it also records value-carrying key-array consequences.
 func ApplyKeyPresenceProof(out *PointState, proof KeyPresenceProof) bool {
@@ -128,6 +144,29 @@ func ApplyAppendKeyProof(out *PointState, proof AppendKeyProof) bool {
 	before := out.KeyPresence
 	out.KeyPresence = out.KeyPresence.WithAppendedKeyAddresses(proof.Array, proof.Key)
 	out.KeyPresence = out.KeyPresence.WithAppendHistoryEvent(proof.Array.Key(), proof.Key.Key())
+	return !KeyPresenceFactsDomain.Equal(before, out.KeyPresence)
+}
+
+// ApplyAppendHistoryBaseProof applies append-history base tracking to point state.
+func ApplyAppendHistoryBaseProof(out *PointState, proof AppendHistoryBaseProof) bool {
+	if out == nil || proof.Array.Key() == "" {
+		return false
+	}
+	before := out.KeyPresence
+	out.KeyPresence = out.KeyPresence.WithAppendHistoryBaseAddress(proof.Array)
+	return !KeyPresenceFactsDomain.Equal(before, out.KeyPresence)
+}
+
+// ApplyAppendElementFieldOriginProof applies an append element-field origin
+// proof to point state.
+func ApplyAppendElementFieldOriginProof(out *PointState, proof AppendElementFieldOriginProof) bool {
+	if out == nil || proof.Array.Key() == "" || proof.Source.Key() == "" || len(proof.Field) == 0 {
+		return false
+	}
+	before := out.KeyPresence
+	out.KeyPresence = out.KeyPresence.
+		WithAppendHistoryBaseAddress(proof.Array).
+		WithAppendElementFieldOriginFromAddresses(proof.Array, proof.Field, proof.Source, proof.SourceField)
 	return !KeyPresenceFactsDomain.Equal(before, out.KeyPresence)
 }
 

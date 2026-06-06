@@ -489,11 +489,9 @@ func (t *Transfer) applyMutatorEffect(out *flow.PointState, effect MutatorEffect
 		KeyFacts:      true,
 	}) || changed
 	if preserveAppendHistoryBase {
-		before := out.KeyPresence
 		if addr, ok := flow.StableAddressOfPath(appendHistoryArray); ok {
-			out.KeyPresence = out.KeyPresence.WithAppendHistoryBaseAddress(addr)
+			changed = flow.ApplyAppendHistoryBaseProof(out, flow.AppendHistoryBaseProof{Array: addr}) || changed
 		}
-		changed = !flow.KeyPresenceFactsDomain.Equal(before, out.KeyPresence) || changed
 	}
 	changed = t.recordAppendKeyFact(out, effect.Place, effect.Kind, effect.ElementPath) || changed
 	changed = t.recordAppendElementFieldOrigins(out, effect.Place, effect.Kind, effect.ElementExpr, appendDestinations) || changed
@@ -640,9 +638,12 @@ func (t *Transfer) recordAppendElementFieldOrigins(out *flow.PointState, place P
 					if !arrayOK || !sourceOK {
 						continue
 					}
-					out.KeyPresence = out.KeyPresence.
-						WithAppendHistoryBaseAddress(arrayAddr).
-						WithAppendElementFieldOriginFromAddresses(arrayAddr, field, sourceAddr, src.sourceField)
+					flow.ApplyAppendElementFieldOriginProof(out, flow.AppendElementFieldOriginProof{
+						Array:       arrayAddr,
+						Field:       field,
+						Source:      sourceAddr,
+						SourceField: src.sourceField,
+					})
 				}
 			}
 		}
@@ -665,7 +666,7 @@ func (t *Transfer) recordAppendElementFieldOrigins(out *flow.PointState, place P
 			continue
 		}
 		for _, originUse := range out.ValueOrigins.OriginsCoveringAddress(elementFieldAddr) {
-			out.KeyPresence = recordAppendElementFieldOriginUse(out.KeyPresence, destinations, field, originUse)
+			recordAppendElementFieldOriginUse(out, destinations, field, originUse)
 		}
 		for _, aliasUse := range out.PathAliases.AliasesCoveringAddress(elementFieldAddr) {
 			source, ok := pathFromKey(aliasUse.Alias.Source)
@@ -680,7 +681,7 @@ func (t *Transfer) recordAppendElementFieldOrigins(out *flow.PointState, place P
 				continue
 			}
 			for _, originUse := range out.ValueOrigins.OriginsCoveringAddress(sourceAddr) {
-				out.KeyPresence = recordAppendElementFieldOriginUse(out.KeyPresence, destinations, field, originUse)
+				recordAppendElementFieldOriginUse(out, destinations, field, originUse)
 			}
 		}
 	}
@@ -796,15 +797,18 @@ func appendOriginSources(out *flow.PointState, sourcePath constraint.Path) []app
 }
 
 func recordAppendElementFieldOriginUse(
-	facts flow.KeyPresenceFacts,
+	out *flow.PointState,
 	destinations []appendOriginDestination,
 	field []constraint.Segment,
 	originUse flow.ValueOriginUse,
-) flow.KeyPresenceFacts {
-	if originUse.Origin.Kind != flow.ValueOriginIndexedIterator || originUse.Origin.VarIndex != 1 || len(originUse.Remainder) == 0 {
-		return facts
+) {
+	if out == nil {
+		return
 	}
-	for _, sourceUse := range facts.AppendElementFieldSources(originUse.Origin.Source, originUse.Remainder) {
+	if originUse.Origin.Kind != flow.ValueOriginIndexedIterator || originUse.Origin.VarIndex != 1 || len(originUse.Remainder) == 0 {
+		return
+	}
+	for _, sourceUse := range out.KeyPresence.AppendElementFieldSources(originUse.Origin.Source, originUse.Remainder) {
 		source, ok := pathFromKey(sourceUse.Origin.Source)
 		if !ok {
 			continue
@@ -825,12 +829,14 @@ func recordAppendElementFieldOriginUse(
 			if !arrayOK || !sourceOK {
 				continue
 			}
-			facts = facts.
-				WithAppendHistoryBaseAddress(arrayAddr).
-				WithAppendElementFieldOriginFromAddresses(arrayAddr, dstField, sourceAddr, sourceField)
+			flow.ApplyAppendElementFieldOriginProof(out, flow.AppendElementFieldOriginProof{
+				Array:       arrayAddr,
+				Field:       dstField,
+				Source:      sourceAddr,
+				SourceField: sourceField,
+			})
 		}
 	}
-	return facts
 }
 
 func pathFromKey(key constraint.PathKey) (constraint.Path, bool) {

@@ -251,6 +251,30 @@ func TestApplyAppendKeyProofPublishesHistoryEvent(t *testing.T) {
 	}
 }
 
+func TestApplyAppendElementFieldOriginProofPublishesBaseAndOrigin(t *testing.T) {
+	arrayPath := constraint.NewPath(cfg.SymbolID(81), "items")
+	sourcePath := constraint.NewPath(cfg.SymbolID(82), "source")
+	arrayKey := StablePathKey(arrayPath)
+	field := []constraint.Segment{{Kind: constraint.SegmentField, Name: "id"}}
+
+	state := PointStateDomain.Top()
+	if changed := ApplyAppendElementFieldOriginProof(&state, AppendElementFieldOriginProof{
+		Array:  testStableAddressPath(t, arrayPath),
+		Field:  field,
+		Source: testStableAddressPath(t, sourcePath),
+	}); !changed {
+		t.Fatal("ApplyAppendElementFieldOriginProof reported no change")
+	}
+
+	if !state.KeyPresence.HasAppendHistoryBase(arrayKey) {
+		t.Fatalf("append-history base missing: %s", state.KeyPresence.Format())
+	}
+	origins := state.KeyPresence.AppendElementFieldOriginEntries()
+	if len(origins) != 1 || origins[0].Array != arrayKey || origins[0].Field == "" || origins[0].Source != StablePathKey(sourcePath) {
+		t.Fatalf("append element origins = %v, want array field source", origins)
+	}
+}
+
 func testMapWriteProof(
 	t *testing.T,
 	tablePath constraint.Path,

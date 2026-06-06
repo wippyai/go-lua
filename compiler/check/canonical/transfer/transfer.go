@@ -928,9 +928,12 @@ func (t *Transfer) SeedEntryFacts(out *flow.PointState, facts flow.BoundaryFacts
 		if !arrayOK || !sourceOK {
 			continue
 		}
-		out.KeyPresence = out.KeyPresence.
-			WithAppendHistoryBaseAddress(arrayAddr).
-			WithAppendElementFieldOriginFromAddresses(arrayAddr, fact.Field, sourceAddr, fact.SourceField)
+		flow.ApplyAppendElementFieldOriginProof(out, flow.AppendElementFieldOriginProof{
+			Array:       arrayAddr,
+			Field:       fact.Field,
+			Source:      sourceAddr,
+			SourceField: fact.SourceField,
+		})
 	}
 	var ops []NumericOp
 	for _, fact := range facts.LengthLowerBounds() {
@@ -3594,15 +3597,16 @@ func (t *Transfer) applyBoundaryFactsWithAppendPlans(
 		if !ok {
 			continue
 		}
-		before := out.KeyPresence
 		arrayAddr, arrayOK := flow.StableAddressOfPath(array)
 		sourceAddr, sourceOK := flow.StableAddressOfPath(source)
 		if arrayOK && sourceOK {
-			out.KeyPresence = out.KeyPresence.
-				WithAppendHistoryBaseAddress(arrayAddr).
-				WithAppendElementFieldOriginFromAddresses(arrayAddr, fact.Field, sourceAddr, fact.SourceField)
+			changed = flow.ApplyAppendElementFieldOriginProof(out, flow.AppendElementFieldOriginProof{
+				Array:       arrayAddr,
+				Field:       fact.Field,
+				Source:      sourceAddr,
+				SourceField: fact.SourceField,
+			}) || changed
 		}
-		changed = !flow.KeyPresenceFactsDomain.Equal(before, out.KeyPresence) || changed
 	}
 	var ops []NumericOp
 	for _, fact := range facts.LengthLowerBounds() {
@@ -3641,9 +3645,7 @@ func (t *Transfer) applyBoundaryAppendKeyPlans(out *flow.PointState, plans []bou
 		out.KeyPresence = out.KeyPresence.KillAffectedByWriteAddress(arrayAddr)
 		changed = !flow.KeyPresenceFactsDomain.Equal(beforeKill, out.KeyPresence) || changed
 		if preserveAppendHistoryBase {
-			before := out.KeyPresence
-			out.KeyPresence = out.KeyPresence.WithAppendHistoryBaseAddress(arrayAddr)
-			changed = !flow.KeyPresenceFactsDomain.Equal(before, out.KeyPresence) || changed
+			changed = flow.ApplyAppendHistoryBaseProof(out, flow.AppendHistoryBaseProof{Array: arrayAddr}) || changed
 		}
 		changed = flow.ApplyAppendKeyProof(out, flow.AppendKeyProof{
 			Array: arrayAddr,
