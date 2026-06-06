@@ -1366,65 +1366,11 @@ func captureCellsFromPoint(in *flow.PointState, captured []cfg.SymbolID) flow.Ca
 }
 
 func (p *program) expectedCallArgType(g *cfg.Graph, tr *transfer.Transfer, point cfg.Point, info *cfg.CallInfo, in *flow.PointState, argIdx int) typ.Type {
-	if p == nil || p.driver == nil || g == nil || tr == nil || info == nil || info.Call == nil || in == nil || argIdx < 0 {
+	projection, ok := p.expectedArgProjection(g, tr, point, info, in)
+	if !ok {
 		return nil
 	}
-	call := info.Call
-	ctx := tr.ProductCallContext(in, call)
-	ct := callTyper{d: p.driver, g: g}
-	forceMethodReceiver := false
-	if ref, ok := p.refByGraph(g); ok {
-		forceMethodReceiver = callsite.ForceMethodReceiverAtPoint(g.Bindings(), g, p.inputs[ref].Evidence, point, call)
-	}
-	methodReceiver := ctx.SelfType
-	if methodReceiver == nil || typ.IsAbsentOrUnknown(methodReceiver) {
-		methodReceiver = ctx.ExprType(info.Receiver)
-	}
-	callee := typ.Type(nil)
-	if !callsite.IsMethodCallInfo(info) {
-		callee = ct.expectedCalleeTypeForCall(info.Callee, call, ctx)
-	}
-	expectedArgsInput := ct.expectedArgsInput(call, canonicalcall.ShallowArgTypes(call.Args, ctx.ArgTypes(), ctx.ExprType), ctx.ExprType, methodReceiver)
-	expectedArgsInput.Callee = callee
-	expectedArgsInput.IsMethod = callsite.IsMethodCallInfo(info)
-	expectedArgsInput.MethodName = info.Method
-	expectedArgsInput.ForceMethodReceiver = forceMethodReceiver
-	expectedArgs := canonicalcall.ExpectedArgTypesForCall(expectedArgsInput)
-	if argIdx >= len(expectedArgs) {
-		return nil
-	}
-	expected := expectedArgs[argIdx]
-	if expected == nil || typ.IsAbsentOrUnknown(expected) || typ.IsAny(expected) {
-		return nil
-	}
-	return expected
-}
-
-func (ct callTyper) expectedCalleeTypeForCall(expr ast.Expr, call *ast.FuncCallExpr, ctx transfer.ProductCallContext) typ.Type {
-	if ct.d != nil && ct.d.activeProgram != nil {
-		if ref, ok := ct.targetResolver(ct.d.activeProgram).ResolveStaticCall(call); ok {
-			if sig := ct.d.signatureForRef(ct.d.activeProgram, ref); sig != nil {
-				return sig
-			}
-		}
-	}
-	if nested, ok := expr.(*ast.FuncCallExpr); ok && nested != nil {
-		returns, ok := ct.CallReturnValues(nested, ctx.ForCall(nested))
-		if ok && len(returns) > 0 {
-			if t := product.ProjectValueOrUnknown(returns[0]); t != nil && !typ.IsAbsentOrUnknown(t) {
-				return t
-			}
-		}
-	}
-	if fn := ct.callFunctionForDemand(call, ctx.ExprType); fn != nil {
-		return fn
-	}
-	if expr != nil {
-		if t := ctx.ExprType(expr); t != nil && !typ.IsAbsentOrUnknown(t) {
-			return t
-		}
-	}
-	return nil
+	return projection.argType(argIdx)
 }
 
 func (ct callTyper) expectedArgsInput(call *ast.FuncCallExpr, argTypes []typ.Type, exprType func(ast.Expr) typ.Type, methodReceiverType typ.Type) canonicalcall.ExpectedArgsInput {
