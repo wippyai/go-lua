@@ -144,11 +144,7 @@ func DirectCallEntryFacts(in DirectCallEntryFactInput) flow.BoundaryFacts {
 }
 
 func entryBoundaryPathForCallerKey(in DirectCallEntryFactInput, key constraint.PathKey) (flow.BoundaryPath, bool) {
-	addr, ok := flow.StableAddressFromKey(key)
-	if !ok {
-		return flow.BoundaryPath{}, false
-	}
-	path, ok := addr.Path()
+	path, ok := flow.StablePathFromKey(key)
 	if !ok {
 		return flow.BoundaryPath{}, false
 	}

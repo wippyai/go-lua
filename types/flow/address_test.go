@@ -105,6 +105,24 @@ func TestStableAddressFromKeyRoundTripsSymbolAndRoot(t *testing.T) {
 	}
 }
 
+func TestStablePathFromKeyReturnsStructuredPath(t *testing.T) {
+	path := constraint.NewPath(cfg.SymbolID(12), "node").IndexStr("last").Field("label")
+	key := StablePathKey(path)
+
+	got, ok := StablePathFromKey(key)
+	if !ok {
+		t.Fatalf("StablePathFromKey(%s) failed", key)
+	}
+	if got.Symbol != path.Symbol || len(got.Segments) != len(path.Segments) {
+		t.Fatalf("path = %#v, want %#v", got, path)
+	}
+	for i := range path.Segments {
+		if got.Segments[i] != path.Segments[i] {
+			t.Fatalf("segment %d = %#v, want %#v", i, got.Segments[i], path.Segments[i])
+		}
+	}
+}
+
 func TestPathRootSeparatesSemanticRootKinds(t *testing.T) {
 	symbol, ok := SymbolPathRoot(cfg.SymbolID(9))
 	if !ok {

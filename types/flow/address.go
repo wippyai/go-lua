@@ -284,6 +284,17 @@ func StablePathKey(path constraint.Path) constraint.PathKey {
 	return addr.Key()
 }
 
+// StablePathFromKey returns the structured path represented by a stable path
+// key. It is the path-shaped counterpart to StableAddressFromKey for callers
+// that need source-path structure rather than address operations.
+func StablePathFromKey(key constraint.PathKey) (constraint.Path, bool) {
+	addr, ok := StableAddressFromKey(key)
+	if !ok {
+		return constraint.Path{}, false
+	}
+	return addr.Path()
+}
+
 // PathIdentityKey returns the canonical identity key for proof and queue
 // lookups. Resolved paths use stable address identity; placeholders and other
 // non-addressable paths fall back to their structural path key.
