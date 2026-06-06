@@ -155,16 +155,18 @@ func (t *Transfer) applyArrayElementKeyProvenanceEffect(
 	if out == nil || effect.TargetPath.IsEmpty() || effect.ArrayPath.IsEmpty() {
 		return false
 	}
-	arrayKey := flow.KeyPresencePathKey(effect.ArrayPath)
-	targetKey := flow.KeyPresencePathKey(effect.TargetPath)
-	if arrayKey == "" || targetKey == "" {
+	arrayAddr, arrayOK := flow.StableAddressOfPath(effect.ArrayPath)
+	targetAddr, targetOK := flow.StableAddressOfPath(effect.TargetPath)
+	if !arrayOK || !targetOK {
 		return false
 	}
-	tables := out.KeyPresence.KeyArrayTables(arrayKey)
+	tables, presenceChanged := flow.ApplyKeyArrayElementKeyProof(out, flow.KeyArrayElementKeyProof{
+		Array:     arrayAddr,
+		TargetKey: targetAddr,
+	})
 	changed := false
-	beforePresence := out.KeyPresence
+	arrayKey := arrayAddr.Key()
 	for _, table := range tables {
-		out.KeyPresence = out.KeyPresence.With(table, targetKey)
 		for _, value := range out.KeyPresence.KeyArrayValues(arrayKey, table) {
 			tablePath, ok := indexWritePathFromKey(table)
 			if !ok || tablePath.IsEmpty() || value.IsZero() {
@@ -190,7 +192,7 @@ func (t *Transfer) applyArrayElementKeyProvenanceEffect(
 			changed = !flow.IndexWriteAdmissionFactsDomain.Equal(beforeWrites, out.IndexWrites) || changed
 		}
 	}
-	changed = !flow.KeyPresenceFactsDomain.Equal(beforePresence, out.KeyPresence) || changed
+	changed = presenceChanged || changed
 	changed = t.applyValueOriginEffect(out, ValueOriginEffect{
 		ValuePath:  effect.TargetPath,
 		SourcePath: effect.ArrayPath,
@@ -233,25 +235,15 @@ func (t *Transfer) applyAssignmentAliasOrigin(out *flow.PointState, effect Assig
 }
 
 func (t *Transfer) copyAssignmentKeyPresence(out *flow.PointState, sourcePath, targetPath constraint.Path) bool {
-	sourceKey := flow.KeyPresencePathKey(sourcePath)
-	targetKey := flow.KeyPresencePathKey(targetPath)
-	if sourceKey == "" || targetKey == "" {
+	sourceAddr, sourceOK := flow.StableAddressOfPath(sourcePath)
+	targetAddr, targetOK := flow.StableAddressOfPath(targetPath)
+	if !sourceOK || !targetOK {
 		return false
 	}
-	before := out.KeyPresence
-	for _, entry := range out.KeyPresence.Entries() {
-		if entry.Key != sourceKey {
-			continue
-		}
-		out.KeyPresence = out.KeyPresence.With(entry.Table, targetKey)
-	}
-	for _, entry := range out.KeyPresence.ValueEntries() {
-		if entry.Key != sourceKey {
-			continue
-		}
-		out.KeyPresence = out.KeyPresence.WithValue(entry.Table, targetKey, entry.Value)
-	}
-	return !flow.KeyPresenceFactsDomain.Equal(before, out.KeyPresence)
+	return flow.ApplyKeyPresenceAliasProof(out, flow.KeyPresenceAliasProof{
+		SourceKey: sourceAddr,
+		TargetKey: targetAddr,
+	})
 }
 
 func (t *Transfer) copyAssignmentIndexWriteAdmissions(out *flow.PointState, sourcePath, targetPath constraint.Path) bool {

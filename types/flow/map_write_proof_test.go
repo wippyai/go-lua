@@ -134,6 +134,63 @@ func TestApplyMapWriteProofCoversTrackedAppendEvent(t *testing.T) {
 	}
 }
 
+func TestApplyKeyPresenceAliasProofCopiesMembershipAndValuePath(t *testing.T) {
+	tablePath := constraint.NewPath(cfg.SymbolID(25), "nodes")
+	sourcePath := constraint.NewPath(cfg.SymbolID(26), "source_id")
+	targetPath := constraint.NewPath(cfg.SymbolID(27), "target_id")
+	valuePath := constraint.NewPath(cfg.SymbolID(28), "node")
+	tableKey := StablePathKey(tablePath)
+	targetKey := StablePathKey(targetPath)
+	valueKey := StablePathKey(valuePath)
+
+	state := PointStateDomain.Top()
+	state.KeyPresence = state.KeyPresence.
+		WithValueAddresses(
+			testStableAddressPath(t, tablePath),
+			testStableAddressPath(t, sourcePath),
+			testStableAddressPath(t, valuePath),
+		)
+
+	if changed := ApplyKeyPresenceAliasProof(&state, KeyPresenceAliasProof{
+		SourceKey: testStableAddressPath(t, sourcePath),
+		TargetKey: testStableAddressPath(t, targetPath),
+	}); !changed {
+		t.Fatal("ApplyKeyPresenceAliasProof reported no change")
+	}
+
+	if !state.KeyPresence.Has(tableKey, targetKey) || !state.KeyPresence.HasValue(tableKey, targetKey, valueKey) {
+		t.Fatalf("alias proof did not copy membership and value path: %s", state.KeyPresence.Format())
+	}
+}
+
+func TestApplyKeyArrayElementKeyProofPublishesTargetKey(t *testing.T) {
+	arrayPath := constraint.NewPath(cfg.SymbolID(29), "node_order")
+	tablePath := constraint.NewPath(cfg.SymbolID(30), "nodes")
+	targetPath := constraint.NewPath(cfg.SymbolID(31), "node_id")
+	tableKey := StablePathKey(tablePath)
+	targetKey := StablePathKey(targetPath)
+
+	state := PointStateDomain.Top()
+	state.KeyPresence = state.KeyPresence.WithKeyArrayAddresses(
+		testStableAddressPath(t, arrayPath),
+		testStableAddressPath(t, tablePath),
+	)
+
+	tables, changed := ApplyKeyArrayElementKeyProof(&state, KeyArrayElementKeyProof{
+		Array:     testStableAddressPath(t, arrayPath),
+		TargetKey: testStableAddressPath(t, targetPath),
+	})
+	if !changed {
+		t.Fatal("ApplyKeyArrayElementKeyProof reported no change")
+	}
+	if len(tables) != 1 || tables[0] != tableKey {
+		t.Fatalf("proof tables = %v, want %s", tables, tableKey)
+	}
+	if !state.KeyPresence.Has(tableKey, targetKey) {
+		t.Fatalf("proof did not publish table/target key presence: %s", state.KeyPresence.Format())
+	}
+}
+
 func TestApplyKeyArrayProofPublishesArrayTable(t *testing.T) {
 	arrayPath := constraint.NewPath(cfg.SymbolID(31), "node_order")
 	tablePath := constraint.NewPath(cfg.SymbolID(32), "nodes")

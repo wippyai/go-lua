@@ -17,6 +17,21 @@ type KeyPresenceProof struct {
 	Value        product.AbstractValue
 }
 
+// KeyPresenceAliasProof copies key-presence facts from SourceKey to TargetKey.
+// It is used for local alias assignments where the target value denotes the
+// same dynamic map key as the source.
+type KeyPresenceAliasProof struct {
+	SourceKey StableAddress
+	TargetKey StableAddress
+}
+
+// KeyArrayElementKeyProof consumes key-array provenance for Array by proving
+// TargetKey is present in every table whose keys are carried by Array.
+type KeyArrayElementKeyProof struct {
+	Array     StableAddress
+	TargetKey StableAddress
+}
+
 // KeyArrayProof is the canonical proof transaction for "array contains keys of
 // table". It is separate from direct key presence because the array fact is a
 // quantified provenance statement, not one table/key membership.
@@ -100,6 +115,46 @@ func ApplyKeyPresenceProof(out *PointState, proof KeyPresenceProof) bool {
 		}
 	}
 	return !KeyPresenceFactsDomain.Equal(before, out.KeyPresence)
+}
+
+// ApplyKeyPresenceAliasProof applies key-presence facts proven for SourceKey to
+// TargetKey. Value-path facts are preserved with the same table/value path.
+func ApplyKeyPresenceAliasProof(out *PointState, proof KeyPresenceAliasProof) bool {
+	if out == nil || proof.SourceKey.Key() == "" || proof.TargetKey.Key() == "" {
+		return false
+	}
+	sourceKey := proof.SourceKey.Key()
+	targetKey := proof.TargetKey.Key()
+	before := out.KeyPresence
+	for _, entry := range out.KeyPresence.Entries() {
+		if entry.Key != sourceKey {
+			continue
+		}
+		out.KeyPresence = out.KeyPresence.With(entry.Table, targetKey)
+	}
+	for _, entry := range out.KeyPresence.ValueEntries() {
+		if entry.Key != sourceKey {
+			continue
+		}
+		out.KeyPresence = out.KeyPresence.WithValue(entry.Table, targetKey, entry.Value)
+	}
+	return !KeyPresenceFactsDomain.Equal(before, out.KeyPresence)
+}
+
+// ApplyKeyArrayElementKeyProof applies key-array membership to a target key and
+// returns the tables that were considered for transfer-local follow-up effects.
+func ApplyKeyArrayElementKeyProof(out *PointState, proof KeyArrayElementKeyProof) ([]constraint.PathKey, bool) {
+	if out == nil || proof.Array.Key() == "" || proof.TargetKey.Key() == "" {
+		return nil, false
+	}
+	arrayKey := proof.Array.Key()
+	targetKey := proof.TargetKey.Key()
+	before := out.KeyPresence
+	tables := out.KeyPresence.KeyArrayTables(arrayKey)
+	for _, table := range tables {
+		out.KeyPresence = out.KeyPresence.With(table, targetKey)
+	}
+	return tables, !KeyPresenceFactsDomain.Equal(before, out.KeyPresence)
 }
 
 // ApplyKeyArrayProof applies a key-array provenance proof to point state.
