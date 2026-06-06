@@ -340,15 +340,11 @@ func exactReturnValueRefines(candidate, baseline product.AbstractValue) bool {
 		!subtype.IsSubtype(baselineType, candidateType)
 }
 
-// JoinReturnFunctionRefs joins caller-visible returned-function identities slotwise.
-// This is the public summary-owned operation for consumers that combine several
-// possible callee summaries at one call site.
-func JoinReturnFunctionRefs(a, b []flow.FunctionRefs) []flow.FunctionRefs {
+func joinReturnFunctionRefs(a, b []flow.FunctionRefs) []flow.FunctionRefs {
 	return returnFunctionRefsDomain.Join(a, b)
 }
 
-// JoinReturnClosureRefs joins caller-visible returned closure identities slotwise.
-func JoinReturnClosureRefs(a, b []flow.ClosureRefs) []flow.ClosureRefs {
+func joinReturnClosureRefs(a, b []flow.ClosureRefs) []flow.ClosureRefs {
 	return returnClosureRefsDomain.Join(a, b)
 }
 

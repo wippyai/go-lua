@@ -147,7 +147,7 @@ func (p CallSummaryProjection) InferredReturnTypes() []typ.Type {
 func (p CallSummaryProjection) ReturnFunctionRefs() []flow.FunctionRefs {
 	var out []flow.FunctionRefs
 	for _, target := range p.Targets {
-		out = JoinReturnFunctionRefs(out, target.Summary.ReturnFunctionRefs)
+		out = joinReturnFunctionRefs(out, target.Summary.ReturnFunctionRefs)
 	}
 	return out
 }
@@ -157,7 +157,7 @@ func (p CallSummaryProjection) ReturnFunctionRefs() []flow.FunctionRefs {
 func (p CallSummaryProjection) ReturnClosureRefs() []flow.ClosureRefs {
 	var out []flow.ClosureRefs
 	for _, target := range p.Targets {
-		out = JoinReturnClosureRefs(out, target.Summary.ReturnClosureRefs)
+		out = joinReturnClosureRefs(out, target.Summary.ReturnClosureRefs)
 	}
 	return out
 }

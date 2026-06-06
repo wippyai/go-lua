@@ -345,64 +345,6 @@ func TestParamNarrowQ_ComposesDelegatedConditionArgumentEffects(t *testing.T) {
 	}
 }
 
-func TestJoinReturnFunctionRefs_OwnsTupleJoin(t *testing.T) {
-	slot0a := flow.WithFunctionRef(nil, constraint.NewPlaceholder(0).Field("a").Key(), flow.FunctionRefSetOf(flow.FunctionRef{GraphID: 1}))
-	slot0b := flow.WithFunctionRef(nil, constraint.NewPlaceholder(0).Field("b").Key(), flow.FunctionRefSetOf(flow.FunctionRef{GraphID: 2}))
-	slot2 := flow.WithFunctionRef(nil, constraint.NewPlaceholder(2).Field("c").Key(), flow.FunctionRefSetOf(flow.FunctionRef{GraphID: 3}))
-
-	got := summary.JoinReturnFunctionRefs(
-		[]flow.FunctionRefs{slot0a},
-		[]flow.FunctionRefs{slot0b, flow.FunctionRefsDomain.Bottom(), slot2},
-	)
-
-	if len(got) != 3 {
-		t.Fatalf("joined tuple len = %d, want 3: %#v", len(got), got)
-	}
-	want0 := flow.FunctionRefsDomain.Join(slot0a, slot0b)
-	if !flow.FunctionRefsDomain.Equal(got[0], want0) {
-		t.Fatalf("slot 0 = %#v, want %#v", got[0], want0)
-	}
-	if !flow.FunctionRefsDomain.Equal(got[1], flow.FunctionRefsDomain.Bottom()) {
-		t.Fatalf("slot 1 = %#v, want bottom", got[1])
-	}
-	if !flow.FunctionRefsDomain.Equal(got[2], slot2) {
-		t.Fatalf("slot 2 = %#v, want %#v", got[2], slot2)
-	}
-	if trimmed := summary.JoinReturnFunctionRefs(nil, []flow.FunctionRefs{flow.FunctionRefsDomain.Bottom()}); len(trimmed) != 0 {
-		t.Fatalf("bottom-only tuple was not canonicalized away: %#v", trimmed)
-	}
-}
-
-func TestJoinReturnClosureRefs_OwnsTupleJoin(t *testing.T) {
-	closureA := flow.ClosureRefOf(flow.FunctionRef{GraphID: 1}, flow.CaptureCellsDomain.Bottom(), nil)
-	closureB := flow.ClosureRefOf(flow.FunctionRef{GraphID: 2}, flow.CaptureCellsDomain.Bottom(), nil)
-	slot0a := flow.WithClosureRef(nil, constraint.NewPlaceholder(0).Field("a").Key(), flow.ClosureRefSetOf(closureA))
-	slot0b := flow.WithClosureRef(nil, constraint.NewPlaceholder(0).Field("b").Key(), flow.ClosureRefSetOf(closureB))
-	slot2 := flow.WithClosureRef(nil, constraint.NewPlaceholder(2).Field("c").Key(), flow.ClosureRefSetOf(closureA))
-
-	got := summary.JoinReturnClosureRefs(
-		[]flow.ClosureRefs{slot0a},
-		[]flow.ClosureRefs{slot0b, flow.ClosureRefsDomain.Bottom(), slot2},
-	)
-
-	if len(got) != 3 {
-		t.Fatalf("joined tuple len = %d, want 3: %#v", len(got), got)
-	}
-	want0 := flow.ClosureRefsDomain.Join(slot0a, slot0b)
-	if !flow.ClosureRefsDomain.Equal(got[0], want0) {
-		t.Fatalf("slot 0 = %#v, want %#v", got[0], want0)
-	}
-	if !flow.ClosureRefsDomain.Equal(got[1], flow.ClosureRefsDomain.Bottom()) {
-		t.Fatalf("slot 1 = %#v, want bottom", got[1])
-	}
-	if !flow.ClosureRefsDomain.Equal(got[2], slot2) {
-		t.Fatalf("slot 2 = %#v, want %#v", got[2], slot2)
-	}
-	if trimmed := summary.JoinReturnClosureRefs(nil, []flow.ClosureRefs{flow.ClosureRefsDomain.Bottom()}); len(trimmed) != 0 {
-		t.Fatalf("bottom-only tuple was not canonicalized away: %#v", trimmed)
-	}
-}
-
 func TestReader_UsesConvergedSnapshotWhenNotLive(t *testing.T) {
 	ref := summary.FuncRef{GraphID: 77}
 	want := summary.Summary{
