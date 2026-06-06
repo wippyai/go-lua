@@ -25,7 +25,7 @@ func TestEntryContextKeyMatchesSummaryEntryContextKey(t *testing.T) {
 		2: product.FromType(typ.Boolean),
 	}
 
-	ctx := NewEntryContext(ref, cells, refs, closures, values, flow.BoundaryFactsDomain.Top())
+	ctx := NewEntryContext(ref, flow.ReferenceContextOf(cells, refs, closures), values, flow.BoundaryFactsDomain.Top())
 	want := summary.NewKeyWithEntryContextFacts(ref, cells, refs, closures, values, flow.BoundaryFactsDomain.Top())
 	if got := ctx.Key(); got != want {
 		t.Fatalf("Key() = %#v, want %#v", got, want)
@@ -47,7 +47,12 @@ func TestEntryContextFromClosureWithLiveContextPreservesClosureAxes(t *testing.T
 	closures := flow.WithClosureRef(nil, constraint.NewPath(cfg.SymbolID(14), "factory").Field("inner").Key(), flow.ClosureRefSetOf(nested))
 	closure := flow.ClosureRefOf(flow.FunctionRef{GraphID: ref.GraphID, ParentHash: ref.ParentHash}, cells, refs, closures)
 
-	live := NewEntryContext(ref, flow.CaptureCellsDomain.Bottom(), nil, nil, summary.EntryValues{1: product.FromType(typ.Boolean)}, flow.BoundaryFactsDomain.Top())
+	live := NewEntryContext(
+		ref,
+		flow.ReferenceContextOf(flow.CaptureCellsDomain.Bottom(), nil, nil),
+		summary.EntryValues{1: product.FromType(typ.Boolean)},
+		flow.BoundaryFactsDomain.Top(),
+	)
 	ctx := EntryContextFromClosureWithLiveContext(closure, live)
 
 	if ctx.Ref() != ref {
@@ -90,7 +95,7 @@ func TestEntryContextFromClosureWithLiveContextOverridesSnapshot(t *testing.T) {
 		flow.ClosureRefOf(flow.FunctionRef{GraphID: 41}, liveCells, liveRefs),
 	))
 
-	live := NewEntryContext(ref, liveCells, liveRefs, liveClosures, nil, flow.BoundaryFactsDomain.Top())
+	live := NewEntryContext(ref, flow.ReferenceContextOf(liveCells, liveRefs, liveClosures), nil, flow.BoundaryFactsDomain.Top())
 	ctx := EntryContextFromClosureWithLiveContext(closure, live)
 	if av, ok := ctx.CaptureCells().Value(sym); !ok || !typ.TypeEquals(av.ProjectValue(), typ.String) {
 		t.Fatalf("CaptureCells()[%d] = %v/%v, want string", sym, av.ProjectValue(), ok)
@@ -120,7 +125,7 @@ func TestEntryContextEntryValuesNoAliasAndDeterministic(t *testing.T) {
 	sameValues[1] = stringValue
 	sameValues[2] = numberValue
 
-	ctx := NewEntryContext(ref, flow.CaptureCellsDomain.Bottom(), nil, nil, values, flow.BoundaryFactsDomain.Top())
+	ctx := NewEntryContext(ref, flow.ReferenceContextOf(flow.CaptureCellsDomain.Bottom(), nil, nil), values, flow.BoundaryFactsDomain.Top())
 	keyBefore := ctx.Key()
 
 	values[1] = booleanValue
@@ -146,7 +151,7 @@ func TestEntryContextEntryValuesNoAliasAndDeterministic(t *testing.T) {
 		t.Fatalf("Key() changed after external mutations: before %#v after %#v", keyBefore, got)
 	}
 
-	sameCtx := NewEntryContext(ref, flow.CaptureCellsDomain.Bottom(), nil, nil, sameValues, flow.BoundaryFactsDomain.Top())
+	sameCtx := NewEntryContext(ref, flow.ReferenceContextOf(flow.CaptureCellsDomain.Bottom(), nil, nil), sameValues, flow.BoundaryFactsDomain.Top())
 	if got, want := sameCtx.Key(), keyBefore; got != want {
 		t.Fatalf("equivalent entry values produced different keys: got %#v want %#v", got, want)
 	}

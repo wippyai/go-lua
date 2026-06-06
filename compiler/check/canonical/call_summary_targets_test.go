@@ -44,8 +44,7 @@ local s: string = identity("test")
 	targetSet := ct.resolveCallTargets(
 		call,
 		prog,
-		flow.FunctionRefsDomain.Bottom(),
-		flow.ClosureRefsDomain.Bottom(),
+		flow.ReferenceContextOf(flow.CaptureCellsDomain.Bottom(), flow.FunctionRefsDomain.Bottom(), flow.ClosureRefsDomain.Bottom()),
 	)
 	targets := targetSet.Select().Targets()
 	if len(targets) != 1 {
@@ -93,8 +92,7 @@ local c = make_container("hello")
 	targetSet := ct.resolveCallTargets(
 		call,
 		prog,
-		flow.FunctionRefsDomain.Bottom(),
-		flow.ClosureRefsDomain.Bottom(),
+		flow.ReferenceContextOf(flow.CaptureCellsDomain.Bottom(), flow.FunctionRefsDomain.Bottom(), flow.ClosureRefsDomain.Bottom()),
 	)
 	targets := targetSet.Select().Targets()
 	if len(targets) != 1 {

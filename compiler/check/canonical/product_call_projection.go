@@ -64,9 +64,9 @@ func (p productCallProjection) callReturnValues() ([]product.AbstractValue, bool
 				p.call,
 				argTypes,
 				exprType,
-				p.ctx.Cells,
-				p.ctx.FunctionRefs,
-				p.ctx.ClosureRefs,
+				p.ctx.CaptureCells(),
+				p.ctx.FunctionRefs(),
+				p.ctx.ClosureRefs(),
 				p.ctx.SelfType,
 			)
 			if !ok {

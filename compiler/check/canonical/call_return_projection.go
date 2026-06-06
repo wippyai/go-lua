@@ -129,7 +129,7 @@ func (p callReturnProjection) contextualFunction(projector callableProjector, re
 	if sig == nil {
 		return nil
 	}
-	entry := d.activeProgram.CallEntryContext(ref, p.cells, p.refs, p.closures, values)
+	entry := d.activeProgram.CallEntryContext(ref, flow.ReferenceContextOf(p.cells, p.refs, p.closures), values)
 	sum := projector.reader.SummarizeWithKey(entry.Key())
 	return summary.FunctionSignatureWithEntryParamsAndProjectedReturns(sig, d.refHasDeclaredReturns(d.activeProgram, ref), sum, values)
 }

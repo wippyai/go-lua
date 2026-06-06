@@ -21,9 +21,7 @@ type ProductCallContext struct {
 	PendingInput     bool
 	SelfType         typ.Type
 	ExprValue        func(ast.Expr) (product.AbstractValue, bool)
-	Cells            flow.CaptureCells
-	FunctionRefs     flow.FunctionRefs
-	ClosureRefs      flow.ClosureRefs
+	References       flow.ReferenceContext
 	KeyPresence      flow.KeyPresenceFacts
 	Num              *numeric.State
 	IndexWrites      flow.IndexWriteAdmissionFacts
@@ -47,14 +45,24 @@ func (t *Transfer) productCallContext(
 		}
 	}
 	if out != nil {
-		ctx.Cells = out.Cells
-		ctx.FunctionRefs = out.FunctionRefs
-		ctx.ClosureRefs = out.ClosureRefs
+		ctx.References = flow.ReferenceContextFromPoint(out)
 		ctx.KeyPresence = out.KeyPresence
 		ctx.Num = out.Num
 		ctx.IndexWrites = out.IndexWrites
 	}
 	return ctx
+}
+
+func (c ProductCallContext) CaptureCells() flow.CaptureCells {
+	return c.References.CaptureCells()
+}
+
+func (c ProductCallContext) FunctionRefs() flow.FunctionRefs {
+	return c.References.FunctionRefs()
+}
+
+func (c ProductCallContext) ClosureRefs() flow.ClosureRefs {
+	return c.References.ClosureRefs()
 }
 
 func productCallSelfType(av product.AbstractValue) typ.Type {

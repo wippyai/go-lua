@@ -47,34 +47,30 @@ func (p cellEffectProjector) productCallEffects(
 		CallbackArgs: call.Args,
 		MethodCall:   call.Method != "",
 		ResolveCallback: func(arg ast.Expr) ([]summary.FuncRef, bool) {
-			return p.typer.targetResolver(p.program).ResolveCallbackArgRefs(arg, ctx.FunctionRefs, p.program.refByFunc)
+			return p.typer.targetResolver(p.program).ResolveCallbackArgRefs(arg, ctx.FunctionRefs(), p.program.refByFunc)
 		},
 		EffectOf: func(ref summary.FuncRef, entryValues summary.EntryValues) flow.CaptureEffects {
 			entryFacts := p.callEntry.access().productFacts(ref, call, ctx)
-			return p.effectsForRef(ref, ctx.Cells, ctx.FunctionRefs, ctx.ClosureRefs, entryValues, entryFacts)
+			return p.effectsForRef(ref, ctx.References, entryValues, entryFacts)
 		},
 	})
 }
 
 func (p cellEffectProjector) effectsForRef(
 	ref summary.FuncRef,
-	cells flow.CaptureCells,
-	refs flow.FunctionRefs,
-	closures flow.ClosureRefs,
+	references flow.ReferenceContext,
 	entryValues summary.EntryValues,
 	entryFacts flow.BoundaryFacts,
 ) flow.CaptureEffects {
 	reader := p.driver.summaryReader()
 	entry := canonicalcall.NewEntryContext(
 		ref,
-		flow.CaptureCellsDomain.Bottom(),
-		flow.FunctionRefsDomain.Bottom(),
-		flow.ClosureRefsDomain.Bottom(),
+		flow.ReferenceContextOf(flow.CaptureCellsDomain.Bottom(), flow.FunctionRefsDomain.Bottom(), flow.ClosureRefsDomain.Bottom()),
 		entryValues,
 		entryFacts,
 	)
 	if reader.Live() {
-		entry = p.program.CallEntryContextWithFacts(ref, cells, refs, closures, entryValues, entryFacts)
+		entry = p.program.CallEntryContextWithFacts(ref, references, entryValues, entryFacts)
 	}
 	return reader.SummarizeWithKey(entry.Key()).CellEffects
 }

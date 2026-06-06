@@ -12,10 +12,9 @@ import (
 func (ct callTyper) resolveCallTargets(
 	call *ast.FuncCallExpr,
 	prog *program,
-	functionRefs flow.FunctionRefs,
-	closureRefs flow.ClosureRefs,
+	references flow.ReferenceContext,
 ) canonicalcall.TargetSet {
-	return ct.targetResolver(prog).Resolve(call, functionRefs, closureRefs)
+	return ct.targetResolver(prog).Resolve(call, references)
 }
 
 func (ct callTyper) targetResolver(prog *program) canonicalcall.TargetResolver {

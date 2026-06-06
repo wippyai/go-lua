@@ -27,8 +27,11 @@ func TestTargetResolverHonorsFunctionAndClosureAuthority(t *testing.T) {
 	absentFunctions := flow.FunctionRefsDomain.Bottom()
 	topClosures := flow.WithClosureRef(nil, path, flow.ClosureRefSetTop())
 	absentClosures := flow.ClosureRefsDomain.Bottom()
+	refs := func(functionRefs flow.FunctionRefs, closureRefs flow.ClosureRefs) flow.ReferenceContext {
+		return flow.ReferenceContextOf(flow.CaptureCellsDomain.Bottom(), functionRefs, closureRefs)
+	}
 
-	withFunctionTop := resolver.Resolve(call, topFunctions, absentClosures)
+	withFunctionTop := resolver.Resolve(call, refs(topFunctions, absentClosures))
 	if !withFunctionTop.DirectAuthoritative() {
 		t.Fatal("direct refs should be authoritative for top FunctionRefs")
 	}
@@ -36,7 +39,7 @@ func TestTargetResolverHonorsFunctionAndClosureAuthority(t *testing.T) {
 		t.Fatalf("top FunctionRefs should block static fallback; got %d refs", len(withFunctionTop.DirectRefs()))
 	}
 
-	withFunctionsAbsent := resolver.Resolve(call, absentFunctions, absentClosures)
+	withFunctionsAbsent := resolver.Resolve(call, refs(absentFunctions, absentClosures))
 	if withFunctionsAbsent.DirectAuthoritative() {
 		t.Fatal("direct refs should be non-authoritative when FunctionRefs path is absent")
 	}
@@ -44,7 +47,7 @@ func TestTargetResolverHonorsFunctionAndClosureAuthority(t *testing.T) {
 		t.Fatalf("absent FunctionRefs should not resolve direct refs without static fallback; got %d refs", len(withFunctionsAbsent.DirectRefs()))
 	}
 
-	withClosureTop := resolver.Resolve(call, absentFunctions, topClosures)
+	withClosureTop := resolver.Resolve(call, refs(absentFunctions, topClosures))
 	if !withClosureTop.ClosureAuthoritative() {
 		t.Fatal("closure refs should be authoritative for top ClosureRefs")
 	}
@@ -52,7 +55,7 @@ func TestTargetResolverHonorsFunctionAndClosureAuthority(t *testing.T) {
 		t.Fatalf("top ClosureRefs should have no concrete refs and stay authoritative; got %d", len(withClosureTop.ClosureRefs()))
 	}
 
-	withClosureTopAndFiniteDirect := resolver.Resolve(call, finiteFunctions, topClosures)
+	withClosureTopAndFiniteDirect := resolver.Resolve(call, refs(finiteFunctions, topClosures))
 	if !withClosureTopAndFiniteDirect.ClosureAuthoritative() {
 		t.Fatal("closure refs should stay authoritative for top ClosureRefs")
 	}
@@ -66,7 +69,7 @@ func TestTargetResolverHonorsFunctionAndClosureAuthority(t *testing.T) {
 		t.Fatalf("DirectRefs with top ClosureRefs = %+v, want graph 77", got)
 	}
 
-	withClosureAbsent := resolver.Resolve(call, absentFunctions, absentClosures)
+	withClosureAbsent := resolver.Resolve(call, refs(absentFunctions, absentClosures))
 	if withClosureAbsent.ClosureAuthoritative() {
 		t.Fatal("closure refs should be non-authoritative when ClosureRefs path is absent")
 	}
@@ -90,12 +93,12 @@ func TestTargetResolverStaticFallbackOnlyWhenProductAxisAbsent(t *testing.T) {
 		},
 	}
 
-	withAbsentProduct := resolver.Resolve(call, flow.FunctionRefsDomain.Bottom(), flow.ClosureRefsDomain.Bottom())
+	withAbsentProduct := resolver.Resolve(call, flow.ReferenceContextOf(flow.CaptureCellsDomain.Bottom(), flow.FunctionRefsDomain.Bottom(), flow.ClosureRefsDomain.Bottom()))
 	if got := withAbsentProduct.DirectRefs(); len(got) != 1 || got[0] != staticRef {
 		t.Fatalf("static fallback refs = %+v, want %+v", got, staticRef)
 	}
 
-	withProductTop := resolver.Resolve(call, flow.WithFunctionRef(nil, path, flow.FunctionRefSetTop()), flow.ClosureRefsDomain.Bottom())
+	withProductTop := resolver.Resolve(call, flow.ReferenceContextOf(flow.CaptureCellsDomain.Bottom(), flow.WithFunctionRef(nil, path, flow.FunctionRefSetTop()), flow.ClosureRefsDomain.Bottom()))
 	if got := withProductTop.DirectRefs(); len(got) != 0 {
 		t.Fatalf("authoritative product top should block static fallback; got %+v", got)
 	}

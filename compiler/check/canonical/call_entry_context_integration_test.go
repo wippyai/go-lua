@@ -44,9 +44,7 @@ func TestProductCallEntryContextProjectsDirectCallerAxes(t *testing.T) {
 	))
 
 	entry, ok := ct.productCallEntryContext(ref, &ast.FuncCallExpr{}, transfer.ProductCallContext{
-		Cells:        cells,
-		FunctionRefs: refs,
-		ClosureRefs:  closures,
+		References: flow.ReferenceContextOf(cells, refs, closures),
 	})
 	if !ok {
 		t.Fatal("productCallEntryContext returned false")

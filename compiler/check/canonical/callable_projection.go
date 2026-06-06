@@ -134,7 +134,7 @@ func (p callableProjector) closureSignature(closure flow.ClosureRef, in flow.Poi
 	sref := canonref.FromFlow(closure.Ref)
 	entry := canonicalcall.EntryContextFromClosureWithLiveContext(
 		closure,
-		p.prog.CallEntryContext(sref, in.Cells, in.FunctionRefs, in.ClosureRefs, nil),
+		p.prog.CallEntryContext(sref, flow.ReferenceContextFromPoint(&in), nil),
 	)
 	return p.signature(closure.Ref, entry.CaptureCells(), entry.FunctionRefs(), entry.ClosureRefs())
 }
@@ -184,7 +184,7 @@ func (p callableProjector) signature(ref flow.FunctionRef, cells flow.CaptureCel
 	if sig == nil {
 		return nil
 	}
-	entry := p.prog.CallEntryContext(sref, cells, refs, closures, nil)
+	entry := p.prog.CallEntryContext(sref, flow.ReferenceContextOf(cells, refs, closures), nil)
 	hasDeclaredReturns := false
 	if p.hasDeclaredReturns != nil {
 		hasDeclaredReturns = p.hasDeclaredReturns(sref)

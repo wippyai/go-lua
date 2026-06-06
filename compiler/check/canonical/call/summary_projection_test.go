@@ -29,12 +29,15 @@ func TestSummaryProjectionForTargetsUsesClosureEntryContext(t *testing.T) {
 		func(target SelectedTarget) EntryContext {
 			if target.IsClosure() {
 				closure, _ := target.Closure()
-				return NewEntryContext(target.Ref(), closure.EntryCells(), closure.EntryFunctionRefs(), closure.EntryClosureRefs(), summary.EntryValues{
-					0: product.FromType(typ.Boolean),
-				}, flow.BoundaryFactsDomain.Top())
+				return NewEntryContext(
+					target.Ref(),
+					flow.ReferenceContextOf(closure.EntryCells(), closure.EntryFunctionRefs(), closure.EntryClosureRefs()),
+					summary.EntryValues{0: product.FromType(typ.Boolean)},
+					flow.BoundaryFactsDomain.Top(),
+				)
 			}
 			calledDirect = true
-			return NewEntryContext(target.Ref(), flow.CaptureCellsDomain.Bottom(), nil, nil, nil, flow.BoundaryFactsDomain.Top())
+			return NewEntryContext(target.Ref(), flow.ReferenceContextOf(flow.CaptureCellsDomain.Bottom(), nil, nil), nil, flow.BoundaryFactsDomain.Top())
 		},
 		func(ctx EntryContext) summary.Summary {
 			if got := ctx.Ref(); got != closureRef {
@@ -89,7 +92,7 @@ func TestSummaryProjectionForTargetsPreservesSelectionFallbackState(t *testing.T
 	projection, selection := summaryProjectionForTargets(
 		targets,
 		func(target SelectedTarget) EntryContext {
-			return NewEntryContext(target.Ref(), flow.CaptureCellsDomain.Bottom(), nil, nil, nil, flow.BoundaryFactsDomain.Top())
+			return NewEntryContext(target.Ref(), flow.ReferenceContextOf(flow.CaptureCellsDomain.Bottom(), nil, nil), nil, flow.BoundaryFactsDomain.Top())
 		},
 		func(EntryContext) summary.Summary {
 			return summary.Summary{Returns: []product.AbstractValue{product.FromType(typ.String)}}

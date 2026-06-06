@@ -2028,7 +2028,11 @@ func (ct callTyper) resolveCalleeRef(call *ast.FuncCallExpr, prog *program) (sum
 }
 
 func (ct callTyper) resolveCalleeRefs(call *ast.FuncCallExpr, prog *program, refs flow.FunctionRefs) []summary.FuncRef {
-	return ct.resolveCallTargets(call, prog, refs, nil).DirectRefs()
+	return ct.resolveCallTargets(
+		call,
+		prog,
+		flow.ReferenceContextOf(flow.CaptureCellsDomain.Bottom(), refs, flow.ClosureRefsDomain.Bottom()),
+	).DirectRefs()
 }
 
 func (ct callTyper) exprPath(expr ast.Expr) (constraint.Path, bool) {

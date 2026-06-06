@@ -89,33 +89,31 @@ func (p *program) callEntryClosureRefs(ref summary.FuncRef, caller flow.ClosureR
 	return flow.ProjectClosureRefsByReferencePaths(caller, p.referenceProjection(ref))
 }
 
+func (p *program) callEntryReferenceContext(ref summary.FuncRef, caller flow.ReferenceContext) flow.ReferenceContext {
+	return caller.ProjectPaths(p.referenceProjection(ref))
+}
+
 // CallEntryContext projects caller-owned entry axes into the callee-visible
 // reference vocabulary.
 func (p *program) CallEntryContext(
 	ref summary.FuncRef,
-	cells flow.CaptureCells,
-	refs flow.FunctionRefs,
-	closures flow.ClosureRefs,
+	references flow.ReferenceContext,
 	values summary.EntryValues,
 ) canonicalcall.EntryContext {
-	return p.CallEntryContextWithFacts(ref, cells, refs, closures, values, flow.BoundaryFactsDomain.Top())
+	return p.CallEntryContextWithFacts(ref, references, values, flow.BoundaryFactsDomain.Top())
 }
 
 // CallEntryContextWithFacts preserves parameter-relative path facts alongside
 // the projected entry axes.
 func (p *program) CallEntryContextWithFacts(
 	ref summary.FuncRef,
-	cells flow.CaptureCells,
-	refs flow.FunctionRefs,
-	closures flow.ClosureRefs,
+	references flow.ReferenceContext,
 	values summary.EntryValues,
 	facts flow.BoundaryFacts,
 ) canonicalcall.EntryContext {
 	return canonicalcall.NewEntryContext(
 		ref,
-		p.callEntryCells(ref, cells),
-		p.callEntryFunctionRefs(ref, refs),
-		p.callEntryClosureRefs(ref, closures),
+		p.callEntryReferenceContext(ref, references),
 		values,
 		facts,
 	)

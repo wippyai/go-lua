@@ -33,12 +33,13 @@ type TargetResolver struct {
 // Resolve returns the normalized target set for call.
 func (r TargetResolver) Resolve(
 	call *ast.FuncCallExpr,
-	functionRefs flow.FunctionRefs,
-	closureRefs flow.ClosureRefs,
+	references flow.ReferenceContext,
 ) TargetSet {
 	if call == nil {
 		return TargetSet{}
 	}
+	functionRefs := references.FunctionRefs()
+	closureRefs := references.ClosureRefs()
 
 	var directRefs []summary.FuncRef
 	var directAuthoritative bool

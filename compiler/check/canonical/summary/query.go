@@ -34,17 +34,28 @@ type Key struct {
 // NewDefaultKey constructs the key for a function entered without captured
 // caller axes, preserving only caller-projected parameter values.
 func NewDefaultKey(ref FuncRef, values EntryValues) Key {
-	return NewKeyWithEntryContextFacts(ref, flow.CaptureCellsDomain.Bottom(), flow.FunctionRefsDomain.Bottom(), flow.ClosureRefsDomain.Bottom(), values, flow.BoundaryFactsDomain.Top())
+	return NewKeyWithReferenceContext(
+		ref,
+		flow.ReferenceContextOf(flow.CaptureCellsDomain.Bottom(), flow.FunctionRefsDomain.Bottom(), flow.ClosureRefsDomain.Bottom()),
+		values,
+		flow.BoundaryFactsDomain.Top(),
+	)
 }
 
 // NewKeyWithEntryContextFacts constructs the canonical summary key for every
 // caller-provided entry component, including parameter-relative path facts.
 func NewKeyWithEntryContextFacts(ref FuncRef, entry flow.CaptureCells, refs flow.FunctionRefs, closures flow.ClosureRefs, values EntryValues, facts flow.BoundaryFacts) Key {
+	return NewKeyWithReferenceContext(ref, flow.ReferenceContextOf(entry, refs, closures), values, facts)
+}
+
+// NewKeyWithReferenceContext constructs the canonical summary key from the
+// normalized callee-entry reference environment.
+func NewKeyWithReferenceContext(ref FuncRef, references flow.ReferenceContext, values EntryValues, facts flow.BoundaryFacts) Key {
 	return Key{
 		Ref:      ref,
-		Entry:    entry.Key(),
-		Refs:     flow.FunctionRefsKeyOf(refs),
-		Closures: flow.ClosureRefsKeyOf(closures),
+		Entry:    references.CaptureCells().Key(),
+		Refs:     flow.FunctionRefsKeyOf(references.FunctionRefs()),
+		Closures: flow.ClosureRefsKeyOf(references.ClosureRefs()),
 		Values:   entryValuesKeyOf(values),
 		Facts:    entryFactsKeyOf(facts),
 	}

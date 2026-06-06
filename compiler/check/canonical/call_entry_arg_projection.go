@@ -12,8 +12,7 @@ import (
 // callEntryArgEvidence is the caller-side evidence needed to resolve function
 // and closure identities carried by call arguments.
 type callEntryArgEvidence struct {
-	functionRefs flow.FunctionRefs
-	closureRefs  flow.ClosureRefs
+	references   flow.ReferenceContext
 	captureCells func([]cfg.SymbolID) flow.CaptureCells
 	nestedCall   func(*ast.FuncCallExpr) transfer.ProductCallContext
 }
@@ -45,8 +44,7 @@ func (c callEntryProjector) pointArgProjection(in *flow.PointState) callEntryArg
 		},
 	}
 	if in != nil {
-		evidence.functionRefs = in.FunctionRefs
-		evidence.closureRefs = in.ClosureRefs
+		evidence.references = flow.ReferenceContextFromPoint(in)
 	}
 	return callEntryArgProjection{
 		program:  c.program,
@@ -62,13 +60,12 @@ func (c callEntryProjector) productArgProjection(ctx transfer.ProductCallContext
 		graph:   c.graph,
 		typer:   c.typer,
 		evidence: callEntryArgEvidence{
-			functionRefs: ctx.FunctionRefs,
-			closureRefs:  ctx.ClosureRefs,
+			references: ctx.References,
 			captureCells: func(captured []cfg.SymbolID) flow.CaptureCells {
 				if c.program == nil {
 					return flow.CaptureCellsDomain.Bottom()
 				}
-				cells := ctx.Cells.Project(captured)
+				cells := ctx.CaptureCells().Project(captured)
 				return c.program.normalizeCapturedMethodReceiverCellsFromCells(c.graph, cells, captured)
 			},
 			nestedCall: ctx.NestedCall,
@@ -145,11 +142,11 @@ func (p callEntryArgProjection) captureCells(captured []cfg.SymbolID) flow.Captu
 }
 
 func (p callEntryArgProjection) functionRefs() flow.FunctionRefs {
-	return p.evidence.functionRefs
+	return p.evidence.references.FunctionRefs()
 }
 
 func (p callEntryArgProjection) closureRefs() flow.ClosureRefs {
-	return p.evidence.closureRefs
+	return p.evidence.references.ClosureRefs()
 }
 
 func valueCallExpr(expr ast.Expr) (*ast.FuncCallExpr, bool) {

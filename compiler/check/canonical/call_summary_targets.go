@@ -24,18 +24,30 @@ func (ct callTyper) callOutcomeForTypedCall(
 		typer:    ct,
 		program:  d.activeProgram,
 		call:     call,
-		targets:  ct.resolveCallTargets(call, d.activeProgram, refs, nil),
+		targets:  ct.resolveCallTargets(call, d.activeProgram, flow.ReferenceContextOf(cells, refs, flow.ClosureRefsDomain.Bottom())),
 		argTypes: argTypesFromCall(call, exprType),
 		exprType: exprType,
-		cells:    cells,
-		refs:     refs,
+		references: flow.ReferenceContextOf(
+			cells,
+			refs,
+			flow.ClosureRefsDomain.Bottom(),
+		),
 		entryContext: func(target canonicalcall.SelectedTarget) canonicalcall.EntryContext {
 			ref := target.Ref()
 			entryValues := ct.callEntryValuesForRef(ref, call, exprType)
 			if d.summaryReader().Live() {
-				return d.activeProgram.CallEntryContext(ref, cells, refs, flow.ClosureRefsDomain.Bottom(), entryValues)
+				return d.activeProgram.CallEntryContext(
+					ref,
+					flow.ReferenceContextOf(cells, refs, flow.ClosureRefsDomain.Bottom()),
+					entryValues,
+				)
 			}
-			return canonicalcall.NewEntryContext(ref, flow.CaptureCellsDomain.Bottom(), flow.FunctionRefsDomain.Bottom(), flow.ClosureRefsDomain.Bottom(), entryValues, flow.BoundaryFactsDomain.Top())
+			return canonicalcall.NewEntryContext(
+				ref,
+				flow.ReferenceContextOf(flow.CaptureCellsDomain.Bottom(), flow.FunctionRefsDomain.Bottom(), flow.ClosureRefsDomain.Bottom()),
+				entryValues,
+				flow.BoundaryFactsDomain.Top(),
+			)
 		},
 	}.outcome()
 }
@@ -71,12 +83,10 @@ func (ct callTyper) productCallOutcomeProjection(
 		typer:                    ct,
 		program:                  d.activeProgram,
 		call:                     call,
-		targets:                  ct.resolveCallTargets(call, d.activeProgram, ctx.FunctionRefs, ctx.ClosureRefs),
+		targets:                  ct.resolveCallTargets(call, d.activeProgram, ctx.References),
 		argTypes:                 ctx.ArgTypes(),
 		exprType:                 ctx.ExprType,
-		cells:                    ctx.Cells,
-		refs:                     ctx.FunctionRefs,
-		closures:                 ctx.ClosureRefs,
+		references:               ctx.References,
 		methodReceiverType:       ctx.SelfType,
 		skipSignatureReturns:     opts.skipSignatureReturns,
 		skipSignatureRelations:   opts.skipSignatureRelations,
@@ -104,9 +114,7 @@ type callOutcomeProjection struct {
 	targets                  canonicalcall.TargetSet
 	argTypes                 []typ.Type
 	exprType                 func(ast.Expr) typ.Type
-	cells                    flow.CaptureCells
-	refs                     flow.FunctionRefs
-	closures                 flow.ClosureRefs
+	references               flow.ReferenceContext
 	methodReceiverType       typ.Type
 	entryContext             canonicalcall.SelectedEntryContext
 	summaryLookup            canonicalcall.SummaryLookup
@@ -162,7 +170,15 @@ func (p callOutcomeProjection) signatureReturns(target canonicalcall.SelectedTar
 		}
 		return p.exprType(expr)
 	}
-	proj, ok := p.typer.callReturnProjection(p.call, argTypes, forcedExprType, p.cells, p.refs, p.closures, p.methodReceiverType)
+	proj, ok := p.typer.callReturnProjection(
+		p.call,
+		argTypes,
+		forcedExprType,
+		p.references.CaptureCells(),
+		p.references.FunctionRefs(),
+		p.references.ClosureRefs(),
+		p.methodReceiverType,
+	)
 	if !ok {
 		return nil
 	}

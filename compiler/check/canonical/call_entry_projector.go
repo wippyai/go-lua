@@ -175,13 +175,14 @@ func (c callEntryProjector) resolveTargets(call *ast.FuncCallExpr, in *flow.Poin
 		return nil
 	}
 	access := c.access()
-	targets := c.typer.resolveCallTargets(call, c.program, in.FunctionRefs, in.ClosureRefs)
+	targets := c.typer.resolveCallTargets(call, c.program, flow.ReferenceContextFromPoint(in))
 	selected := targets.Select().Targets()
 	out := make([]summary.CallEntryTarget, 0, len(selected))
+	references := flow.ReferenceContextFromPoint(in)
 	for _, target := range selected {
 		ref := target.Ref()
 		entryFacts := access.pointFacts(ref, call, in)
-		ctx := c.program.CallEntryContextWithFacts(ref, in.Cells, in.FunctionRefs, in.ClosureRefs, nil, entryFacts)
+		ctx := c.program.CallEntryContextWithFacts(ref, references, nil, entryFacts)
 		if closure, ok := target.Closure(); ok {
 			ctx = canonicalcall.EntryContextFromClosureWithLiveContext(closure, ctx)
 		}
@@ -304,11 +305,10 @@ func (c callEntryProjector) productClosureContext(ref summary.FuncRef, closure f
 func (c callEntryProjector) productEntryContext(ref summary.FuncRef, call *ast.FuncCallExpr, ctx transfer.ProductCallContext) canonicalcall.EntryContext {
 	access := c.access()
 	refs, closures := c.productReferencesForRef(ref, call, ctx)
+	references := ctx.References.WithFunctionRefs(refs).WithClosureRefs(closures)
 	return c.program.CallEntryContextWithFacts(
 		ref,
-		ctx.Cells,
-		flow.FunctionRefsDomain.Join(ctx.FunctionRefs, refs),
-		flow.ClosureRefsDomain.Join(ctx.ClosureRefs, closures),
+		references,
 		c.productValuesForRef(ref, call, ctx.RuntimeArgValues),
 		access.productFacts(ref, call, ctx),
 	)
@@ -336,7 +336,7 @@ func (c callEntryProjector) productReferencesForRef(ref summary.FuncRef, call *a
 		return flow.FunctionRefsDomain.Bottom(), flow.ClosureRefsDomain.Bottom()
 	}
 	access := c.access()
-	return c.referenceLayout().DirectReferences(ref, call, nil, ctx.FunctionRefs, ctx.ClosureRefs, access.productReferenceArgSources(ctx))
+	return c.referenceLayout().DirectReferences(ref, call, nil, ctx.FunctionRefs(), ctx.ClosureRefs(), access.productReferenceArgSources(ctx))
 }
 
 func (c callEntryProjector) referenceLayout() summary.CallEntryContextProjection {
