@@ -2532,37 +2532,22 @@ func (ct callTyper) TypeCastTarget(call *ast.FuncCallExpr, exprType func(ast.Exp
 // signature (the manifest function summary the module export published), so the
 // effects are recovered from that signature's FunctionRefinement instead.
 func (ct callTyper) ParamNarrows(call *ast.FuncCallExpr) []transfer.ParamNarrow {
-	if call == nil {
+	proj, ok := ct.callControlProjection()
+	if !ok {
 		return nil
 	}
-	prog := ct.d.activeProgram
-	if prog == nil {
-		return nil
-	}
-	return canonicalcall.ParamNarrowsForCall(canonicalcall.ParamNarrowsInput{
-		Call: call,
-		SummaryNarrows: func(call *ast.FuncCallExpr) ([]paramevidence.ParamNarrow, bool) {
-			ref, ok := ct.resolveCalleeRef(call, prog)
-			if !ok {
-				return nil, false
-			}
-			return ct.d.summaryReader().ParamNarrows(ref), true
-		},
-		Resolver: ct.callTypeResolver(nil),
-	})
+	return proj.paramNarrows(call)
 }
 
 // IsNoReturn reports whether call's selected callees are all module functions the
 // program proved never return normally. A statement call terminates the caller's
 // flow only when every selected target is no-return.
 func (ct callTyper) IsNoReturn(call *ast.FuncCallExpr, ctx transfer.ProductCallContext) bool {
-	proj, ok := ct.summaryOnlyProductCallProjection(call, ctx)
+	proj, ok := ct.callControlProjection()
 	if !ok {
 		return false
 	}
-	return proj.neverReturns(func(ref summary.FuncRef) bool {
-		return ct.d.activeProgram.facts.HasNoReturn(ref)
-	})
+	return proj.noReturn(call, ctx)
 }
 
 // resolveCalleeRef resolves call's callee to its module FuncRef. Method calls
