@@ -474,9 +474,7 @@ func (b *diagnosticContextBuilder) addContext(key Key) bool {
 
 func diagnosticContextSameBase(a, b Key) bool {
 	return a.Ref == b.Ref &&
-		a.Entry == b.Entry &&
-		a.Refs == b.Refs &&
-		a.Closures == b.Closures &&
+		a.References == b.References &&
 		a.Values == b.Values
 }
 

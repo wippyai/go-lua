@@ -118,3 +118,29 @@ func TestReferenceContextJoinAddsEveryAxis(t *testing.T) {
 		t.Fatal("joined right closure refs missing")
 	}
 }
+
+func TestReferenceContextKeyRoundTrip(t *testing.T) {
+	sym := cfg.SymbolID(40)
+	path := constraint.NewPath(sym, "dep").Field("make")
+	cells := CaptureCellsOf([]CaptureCell{{Symbol: sym, Value: product.FromType(typ.String)}})
+	functionRefs := WithFunctionRefPath(nil, path, FunctionRefSetOf(FunctionRef{GraphID: 40}))
+	closureRefs := WithClosureRefAddress(nil, testStableAddressPath(t, path), ClosureRefSetOf(ClosureRefOf(FunctionRef{GraphID: 41}, CaptureCellsDomain.Bottom(), nil)))
+
+	key := ReferenceContextKeyOf(ReferenceContextOf(cells, functionRefs, closureRefs))
+	if !CaptureCellsDomain.Equal(key.CaptureCells(), cells) {
+		t.Fatalf("key cells = %s, want %s", key.CaptureCells().Format(), cells.Format())
+	}
+	if !FunctionRefsDomain.Equal(key.FunctionRefs(), functionRefs) {
+		t.Fatalf("key function refs = %#v, want %#v", key.FunctionRefs(), functionRefs)
+	}
+	if !ClosureRefsDomain.Equal(key.ClosureRefs(), closureRefs) {
+		t.Fatalf("key closure refs = %s, want %s", ClosureRefsKeyOf(key.ClosureRefs()).Format(), ClosureRefsKeyOf(closureRefs).Format())
+	}
+
+	roundTrip := key.Context()
+	if !CaptureCellsDomain.Equal(roundTrip.CaptureCells(), cells) ||
+		!FunctionRefsDomain.Equal(roundTrip.FunctionRefs(), functionRefs) ||
+		!ClosureRefsDomain.Equal(roundTrip.ClosureRefs(), closureRefs) {
+		t.Fatalf("round trip = %#v", roundTrip)
+	}
+}

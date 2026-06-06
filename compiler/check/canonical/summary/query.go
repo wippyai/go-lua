@@ -18,17 +18,15 @@ import (
 // without import cycles.
 type FuncRef = ref.FuncRef
 
-// Key identifies one interprocedural summary context. Entry is the captured-cell
-// store visible at function entry; Refs is the function-identity path state that
-// must travel with captured values; Values are caller-projected parameter product
-// facts. All map-shaped components are interned as exact comparable keys.
+// Key identifies one interprocedural summary context. References is the
+// normalized callee-entry reference environment; Values are caller-projected
+// parameter product facts. All map-shaped components are interned as exact
+// comparable keys.
 type Key struct {
-	Ref      FuncRef
-	Entry    flow.CaptureCellsKey
-	Refs     flow.FunctionRefsKey
-	Closures flow.ClosureRefsKey
-	Values   EntryValuesKey
-	Facts    EntryFactsKey
+	Ref        FuncRef
+	References flow.ReferenceContextKey
+	Values     EntryValuesKey
+	Facts      EntryFactsKey
 }
 
 // NewDefaultKey constructs the key for a function entered without captured
@@ -46,12 +44,10 @@ func NewDefaultKey(ref FuncRef, values EntryValues) Key {
 // normalized callee-entry reference environment.
 func NewKeyWithReferenceContext(ref FuncRef, references flow.ReferenceContext, values EntryValues, facts flow.BoundaryFacts) Key {
 	return Key{
-		Ref:      ref,
-		Entry:    references.CaptureCells().Key(),
-		Refs:     flow.FunctionRefsKeyOf(references.FunctionRefs()),
-		Closures: flow.ClosureRefsKeyOf(references.ClosureRefs()),
-		Values:   entryValuesKeyOf(values),
-		Facts:    entryFactsKeyOf(facts),
+		Ref:        ref,
+		References: flow.ReferenceContextKeyOf(references),
+		Values:     entryValuesKeyOf(values),
+		Facts:      entryFactsKeyOf(facts),
 	}
 }
 
@@ -461,7 +457,7 @@ func delegatedParamIndex(calleeParam int, argParams []int) (int, bool) {
 }
 
 func (q *Queries) entryCells(ctx *db.QueryContext, key Key) flow.CaptureCells {
-	entries := key.Entry.Cells()
+	entries := key.References.CaptureCells()
 	if provider, ok := q.prog.(captureEntryProvider); ok {
 		lexical := provider.CaptureEntries(key.Ref, func(dep FuncRef) flow.CaptureCells {
 			return q.solveQ.Get(ctx, NewDefaultKey(dep, nil)).Summary.CaptureExports
@@ -472,7 +468,7 @@ func (q *Queries) entryCells(ctx *db.QueryContext, key Key) flow.CaptureCells {
 }
 
 func (q *Queries) entryRefs(ctx *db.QueryContext, key Key) flow.FunctionRefs {
-	refs := key.Refs.Refs()
+	refs := key.References.FunctionRefs()
 	if provider, ok := q.prog.(captureEntryRefsProvider); ok {
 		lexical := provider.CaptureEntryRefs(key.Ref, func(dep FuncRef) flow.FunctionRefs {
 			return q.solveQ.Get(ctx, NewDefaultKey(dep, nil)).Summary.CaptureFunctionRefs
@@ -483,7 +479,7 @@ func (q *Queries) entryRefs(ctx *db.QueryContext, key Key) flow.FunctionRefs {
 }
 
 func (q *Queries) entryClosureRefs(ctx *db.QueryContext, key Key) flow.ClosureRefs {
-	refs := key.Closures.Refs()
+	refs := key.References.ClosureRefs()
 	if provider, ok := q.prog.(captureEntryClosureRefsProvider); ok {
 		lexical := provider.CaptureEntryClosureRefs(key.Ref, func(dep FuncRef) flow.ClosureRefs {
 			return q.solveQ.Get(ctx, NewDefaultKey(dep, nil)).Summary.CaptureClosureRefs

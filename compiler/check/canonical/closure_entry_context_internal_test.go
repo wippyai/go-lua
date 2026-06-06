@@ -63,7 +63,7 @@ end
 			t.Fatalf("inner closure has no diagnostic contexts; diagnostics=%v", sess.DiagnosticsSlice())
 		}
 		for _, key := range contexts {
-			if av, ok := key.Entry.Cells().Value(x); !ok || !typ.TypeEquals(av.ProjectValue(), typ.Number) {
+			if av, ok := key.References.CaptureCells().Value(x); !ok || !typ.TypeEquals(av.ProjectValue(), typ.Number) {
 				t.Fatalf("inner closure context captured x=%v/%v, want number; contexts=%v diagnostics=%v", av.ProjectValue(), ok, contexts, sess.DiagnosticsSlice())
 			}
 		}
@@ -125,7 +125,7 @@ return M
 			return
 		}
 		for _, key := range contexts {
-			if av, ok := key.Entry.Cells().Value(tSym); ok && typeHasField(av.ProjectValue(), "render") {
+			if av, ok := key.References.CaptureCells().Value(tSym); ok && typeHasField(av.ProjectValue(), "render") {
 				return
 			}
 		}
@@ -385,14 +385,15 @@ func describeContextsForSymbol(contexts []summary.Key, sym cfg.SymbolID) string 
 	var parts []string
 	for _, key := range contexts {
 		cellType := "<missing>"
-		if av, ok := key.Entry.Cells().Value(sym); ok {
+		if av, ok := key.References.CaptureCells().Value(sym); ok {
 			cellType = typ.FormatShort(av.ProjectValue())
 		}
 		var refs []string
-		for _, path := range constraint.SortedPathKeys(key.Refs.Refs()) {
-			refs = append(refs, fmt.Sprintf("%s=%s", path, key.Refs.Refs()[path].Format()))
+		functionRefs := key.References.FunctionRefs()
+		for _, path := range constraint.SortedPathKeys(functionRefs) {
+			refs = append(refs, fmt.Sprintf("%s=%s", path, functionRefs[path].Format()))
 		}
-		parts = append(parts, fmt.Sprintf("{cell:%s refs:[%s] closures:%s}", cellType, strings.Join(refs, ","), key.Closures.Format()))
+		parts = append(parts, fmt.Sprintf("{cell:%s refs:[%s] closures:%s}", cellType, strings.Join(refs, ","), flow.ClosureRefsKeyOf(key.References.ClosureRefs()).Format()))
 	}
 	return "[" + strings.Join(parts, " ") + "]"
 }

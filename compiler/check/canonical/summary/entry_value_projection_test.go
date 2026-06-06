@@ -458,14 +458,14 @@ func TestCallEntryContextProjectionUsesCallEventPostState(t *testing.T) {
 	if keys[0].Ref != callee {
 		t.Fatalf("callee key = %v, want %v", keys[0].Ref, callee)
 	}
-	if !flow.CaptureCellsDomain.Equal(keys[0].Entry.Cells(), targetCells) {
-		t.Fatalf("entry cells key = %s, want %s", keys[0].Entry.Cells().Format(), targetCells.Format())
+	if !flow.CaptureCellsDomain.Equal(keys[0].References.CaptureCells(), targetCells) {
+		t.Fatalf("entry cells key = %s, want %s", keys[0].References.CaptureCells().Format(), targetCells.Format())
 	}
-	if !flow.FunctionRefsDomain.Equal(keys[0].Refs.Refs(), targetRefs) {
-		t.Fatalf("entry refs = %#v, want %#v", keys[0].Refs.Refs(), targetRefs)
+	if !flow.FunctionRefsDomain.Equal(keys[0].References.FunctionRefs(), targetRefs) {
+		t.Fatalf("entry refs = %#v, want %#v", keys[0].References.FunctionRefs(), targetRefs)
 	}
-	if !flow.ClosureRefsDomain.Equal(keys[0].Closures.Refs(), targetClosures) {
-		t.Fatalf("entry closures = %s, want %s", keys[0].Closures.Format(), flow.ClosureRefsKeyOf(targetClosures).Format())
+	if !flow.ClosureRefsDomain.Equal(keys[0].References.ClosureRefs(), targetClosures) {
+		t.Fatalf("entry closures = %s, want %s", flow.ClosureRefsKeyOf(keys[0].References.ClosureRefs()).Format(), flow.ClosureRefsKeyOf(targetClosures).Format())
 	}
 	values := keys[0].Values.Values()
 	got, ok := values[0]

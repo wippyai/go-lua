@@ -12,6 +12,15 @@ type ReferenceContext struct {
 	closureRefs  ClosureRefs
 }
 
+// ReferenceContextKey is the comparable cache key for a normalized reference
+// context. It preserves axis correlation at cache boundaries without exposing
+// independent key fields to callers.
+type ReferenceContextKey struct {
+	cells        CaptureCellsKey
+	functionRefs FunctionRefsKey
+	closureRefs  ClosureRefsKey
+}
+
 // ReferenceContextOf constructs a canonical reference context from independent
 // axes. The map-shaped axes are cloned so callers cannot mutate a stored context.
 func ReferenceContextOf(cells CaptureCells, functionRefs FunctionRefs, closureRefs ClosureRefs) ReferenceContext {
@@ -19,6 +28,15 @@ func ReferenceContextOf(cells CaptureCells, functionRefs FunctionRefs, closureRe
 		cells:        CaptureCellsDomain.Join(cells, CaptureCellsDomain.Bottom()),
 		functionRefs: FunctionRefsDomain.Join(functionRefs, FunctionRefsDomain.Bottom()),
 		closureRefs:  ClosureRefsDomain.Join(closureRefs, ClosureRefsDomain.Bottom()),
+	}
+}
+
+// ReferenceContextKeyOf constructs the comparable key for a reference context.
+func ReferenceContextKeyOf(c ReferenceContext) ReferenceContextKey {
+	return ReferenceContextKey{
+		cells:        c.CaptureCells().Key(),
+		functionRefs: FunctionRefsKeyOf(c.FunctionRefs()),
+		closureRefs:  ClosureRefsKeyOf(c.ClosureRefs()),
 	}
 }
 
@@ -44,6 +62,26 @@ func (c ReferenceContext) FunctionRefs() FunctionRefs {
 // ClosureRefs returns the closure-identity axis.
 func (c ReferenceContext) ClosureRefs() ClosureRefs {
 	return ClosureRefsDomain.Join(c.closureRefs, ClosureRefsDomain.Bottom())
+}
+
+// CaptureCells returns the captured-cell key axis.
+func (k ReferenceContextKey) CaptureCells() CaptureCells {
+	return k.cells.Cells()
+}
+
+// FunctionRefs returns the function-identity key axis.
+func (k ReferenceContextKey) FunctionRefs() FunctionRefs {
+	return k.functionRefs.Refs()
+}
+
+// ClosureRefs returns the closure-identity key axis.
+func (k ReferenceContextKey) ClosureRefs() ClosureRefs {
+	return k.closureRefs.Refs()
+}
+
+// Context reconstructs the normalized reference context represented by this key.
+func (k ReferenceContextKey) Context() ReferenceContext {
+	return ReferenceContextOf(k.CaptureCells(), k.FunctionRefs(), k.ClosureRefs())
 }
 
 // Join adds independent reference evidence from other into c. This is the
