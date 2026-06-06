@@ -2,7 +2,6 @@ package summary
 
 import (
 	"github.com/wippyai/go-lua/compiler/ast"
-	"github.com/wippyai/go-lua/compiler/check/callsite"
 	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/flow"
 )
@@ -135,22 +134,17 @@ func forEachEntryReferenceArg(in DirectCallEntryReferenceInput, visit func(runti
 	if in.Call == nil || in.ParamSlot == nil || in.ParamPath == nil {
 		return false
 	}
-	for runtimeIdx := 0; runtimeIdx < callsite.RuntimeArgExprCount(in.Call); runtimeIdx++ {
-		arg := callsite.RuntimeArgExprAt(in.Call, runtimeIdx)
-		target, ok := entryReferenceTargetPath(in, runtimeIdx)
+	for _, arg := range entryRuntimeArgs(in.Callee, in.Call, in.ParamSlot) {
+		target, ok := entryReferenceTargetPath(in, arg.Slot)
 		if !ok {
 			continue
 		}
-		visit(runtimeIdx, arg, target)
+		visit(arg.RuntimeIdx, arg.Expr, target)
 	}
 	return true
 }
 
-func entryReferenceTargetPath(in DirectCallEntryReferenceInput, runtimeIdx int) (constraint.Path, bool) {
-	_, slot, ok := in.ParamSlot(in.Callee, in.Call, runtimeIdx)
-	if !ok {
-		return constraint.Path{}, false
-	}
+func entryReferenceTargetPath(in DirectCallEntryReferenceInput, slot int) (constraint.Path, bool) {
 	target, ok := in.ParamPath(in.Callee, slot)
 	if !ok || target.IsEmpty() || target.Symbol == 0 {
 		return constraint.Path{}, false

@@ -11,6 +11,7 @@ import (
 	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/domain/value/product"
 	"github.com/wippyai/go-lua/types/flow"
+	"github.com/wippyai/go-lua/types/flow/numeric"
 	"github.com/wippyai/go-lua/types/typ"
 )
 
@@ -57,28 +58,28 @@ func (a callEntryAccess) pointFacts(ref summary.FuncRef, call *ast.FuncCallExpr,
 	if in == nil {
 		return flow.BoundaryFactsDomain.Top()
 	}
-	return a.facts(ref, call, summary.DirectCallEntryFactAxes{
-		KeyPresence: in.KeyPresence,
-		Num:         in.Num,
-		IndexWrites: in.IndexWrites,
-	})
+	return a.facts(ref, call, in.KeyPresence, in.Num, in.IndexWrites)
 }
 
 func (a callEntryAccess) productFacts(ref summary.FuncRef, call *ast.FuncCallExpr, ctx transfer.ProductCallContext) flow.BoundaryFacts {
-	return a.facts(ref, call, summary.DirectCallEntryFactAxes{
-		KeyPresence: ctx.KeyPresence,
-		Num:         ctx.Num,
-		IndexWrites: ctx.IndexWrites,
-	})
+	return a.facts(ref, call, ctx.KeyPresence, ctx.Num, ctx.IndexWrites)
 }
 
-func (a callEntryAccess) facts(ref summary.FuncRef, call *ast.FuncCallExpr, axes summary.DirectCallEntryFactAxes) flow.BoundaryFacts {
+func (a callEntryAccess) facts(
+	ref summary.FuncRef,
+	call *ast.FuncCallExpr,
+	keyPresence flow.KeyPresenceFacts,
+	num *numeric.State,
+	indexWrites flow.IndexWriteAdmissionFacts,
+) flow.BoundaryFacts {
 	return summary.DirectCallEntryFacts(summary.DirectCallEntryFactInput{
-		Call:                    call,
-		Callee:                  ref,
-		ParamSlot:               a.projector.paramSlot,
-		ArgPath:                 a.argPath,
-		DirectCallEntryFactAxes: axes,
+		Call:        call,
+		Callee:      ref,
+		ParamSlot:   a.projector.paramSlot,
+		ArgPath:     a.argPath,
+		KeyPresence: keyPresence,
+		Num:         num,
+		IndexWrites: indexWrites,
 	})
 }
 

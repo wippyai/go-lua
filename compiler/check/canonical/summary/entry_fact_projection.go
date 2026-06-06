@@ -2,7 +2,6 @@ package summary
 
 import (
 	"github.com/wippyai/go-lua/compiler/ast"
-	"github.com/wippyai/go-lua/compiler/check/callsite"
 	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/flow"
 	"github.com/wippyai/go-lua/types/flow/numeric"
@@ -18,12 +17,6 @@ type DirectCallEntryFactInput struct {
 	ParamSlot EntryValueParamSlot
 	ArgPath   EntryReferenceArgPath
 
-	DirectCallEntryFactAxes
-}
-
-// DirectCallEntryFactAxes are the caller point-local fact domains that can be
-// projected through normalized call arguments into callee entry facts.
-type DirectCallEntryFactAxes struct {
 	KeyPresence flow.KeyPresenceFacts
 	Num         *numeric.State
 	IndexWrites flow.IndexWriteAdmissionFacts
@@ -159,14 +152,12 @@ func entryBoundaryPathForCallerKey(in DirectCallEntryFactInput, key constraint.P
 	if !ok {
 		return flow.BoundaryPath{}, false
 	}
-	for runtimeIdx := 0; runtimeIdx < callsite.RuntimeArgExprCount(in.Call); runtimeIdx++ {
-		arg := callsite.RuntimeArgExprAt(in.Call, runtimeIdx)
-		source, ok := in.ArgPath(runtimeIdx, arg)
+	for _, arg := range entryRuntimeArgs(in.Callee, in.Call, in.ParamSlot) {
+		source, ok := in.ArgPath(arg.RuntimeIdx, arg.Expr)
 		if !ok || source.IsEmpty() {
 			continue
 		}
-		_, slot, ok := in.ParamSlot(in.Callee, in.Call, runtimeIdx)
-		if !ok || slot < 0 {
+		if arg.Slot < 0 {
 			continue
 		}
 		suffix, ok := entryFactPathSuffix(path, source)
@@ -175,7 +166,7 @@ func entryBoundaryPathForCallerKey(in DirectCallEntryFactInput, key constraint.P
 		}
 		return flow.BoundaryPath{
 			Kind:     flow.BoundaryPathParam,
-			Index:    slot,
+			Index:    arg.Slot,
 			Segments: suffix,
 		}, true
 	}

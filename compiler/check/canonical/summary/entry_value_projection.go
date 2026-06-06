@@ -25,6 +25,41 @@ type EntryValueParamSlot func(callee FuncRef, call *ast.FuncCallExpr, runtimeIdx
 // arguments are deliberately excluded because omission has no exact nil slot.
 type EntryValueParamSlotCount func(callee FuncRef, call *ast.FuncCallExpr) int
 
+type entryRuntimeArg struct {
+	RuntimeIdx  int
+	Expr        ast.Expr
+	SourceParam int
+	Slot        int
+}
+
+func entryRuntimeArgs(callee FuncRef, call *ast.FuncCallExpr, slotOf EntryValueParamSlot) []entryRuntimeArg {
+	if call == nil || slotOf == nil {
+		return nil
+	}
+	var out []entryRuntimeArg
+	for runtimeIdx := 0; runtimeIdx < callsite.RuntimeArgExprCount(call); runtimeIdx++ {
+		sourceParam, slot, ok := slotOf(callee, call, runtimeIdx)
+		if !ok {
+			continue
+		}
+		out = append(out, entryRuntimeArg{
+			RuntimeIdx:  runtimeIdx,
+			Expr:        callsite.RuntimeArgExprAt(call, runtimeIdx),
+			SourceParam: sourceParam,
+			Slot:        slot,
+		})
+	}
+	return out
+}
+
+func entryRuntimeSlot(callee FuncRef, call *ast.FuncCallExpr, runtimeIdx int, slotOf EntryValueParamSlot) (int, bool) {
+	if slotOf == nil {
+		return 0, false
+	}
+	_, slot, ok := slotOf(callee, call, runtimeIdx)
+	return slot, ok
+}
+
 // EntryValueParamAnnotated reports whether a callee source parameter is fixed
 // and therefore must not be inferred from aggregate entry evidence. Refinable
 // structural annotations should return false here.
@@ -243,20 +278,15 @@ func DirectCallEntryValuesWithParamCount(
 		return nil
 	}
 	var out EntryValues
-	for runtimeIdx := 0; runtimeIdx < callsite.RuntimeArgExprCount(call); runtimeIdx++ {
-		arg := callsite.RuntimeArgExprAt(call, runtimeIdx)
-		if arg == nil {
+	for _, arg := range entryRuntimeArgs(callee, call, slotOf) {
+		if arg.Expr == nil {
 			continue
 		}
-		_, slot, ok := slotOf(callee, call, runtimeIdx)
-		if !ok {
-			continue
-		}
-		t := typeOf(arg)
+		t := typeOf(arg.Expr)
 		if t == nil || typ.IsAbsentOrUnknown(t) {
 			continue
 		}
-		out = JoinEntryValue(out, slot, product.FromType(t))
+		out = JoinEntryValue(out, arg.Slot, product.FromType(t))
 	}
 	out = joinOmittedFixedArgNil(out, callsite.RuntimeArgExprCount(call), callee, call, slotOf, slotCount)
 	if len(out) == 0 {
@@ -294,7 +324,7 @@ func DirectCallEntryProductValuesWithParamCount(
 		if av.IsZero() || product.Domain.Equal(av, product.Domain.Top()) {
 			continue
 		}
-		_, slot, ok := slotOf(callee, call, runtimeIdx)
+		slot, ok := entryRuntimeSlot(callee, call, runtimeIdx, slotOf)
 		if !ok {
 			continue
 		}
@@ -316,15 +346,17 @@ func joinOmittedFixedArgNil(out EntryValues, supplied int, callee FuncRef, call 
 		return out
 	}
 	seenSlots := make(map[int]struct{}, supplied)
-	for runtimeIdx := 0; runtimeIdx < supplied; runtimeIdx++ {
-		_, slot, ok := slotOf(callee, call, runtimeIdx)
-		if ok && slot >= 0 {
-			seenSlots[slot] = struct{}{}
+	for _, arg := range entryRuntimeArgs(callee, call, slotOf) {
+		if arg.RuntimeIdx >= supplied {
+			continue
+		}
+		if arg.Slot >= 0 {
+			seenSlots[arg.Slot] = struct{}{}
 		}
 	}
 	nilValue := product.FromType(typ.Nil)
 	for runtimeIdx := supplied; runtimeIdx < limit; runtimeIdx++ {
-		_, slot, ok := slotOf(callee, call, runtimeIdx)
+		slot, ok := entryRuntimeSlot(callee, call, runtimeIdx, slotOf)
 		if !ok {
 			continue
 		}
@@ -597,15 +629,13 @@ func (p CallEntryContextProjection) directFacts(callee FuncRef, call *ast.FuncCa
 		return flow.BoundaryFactsDomain.Top()
 	}
 	return DirectCallEntryFacts(DirectCallEntryFactInput{
-		Call:      call,
-		Callee:    callee,
-		ParamSlot: p.ParamSlot,
-		ArgPath:   p.ArgPath,
-		DirectCallEntryFactAxes: DirectCallEntryFactAxes{
-			KeyPresence: in.KeyPresence,
-			Num:         in.Num,
-			IndexWrites: in.IndexWrites,
-		},
+		Call:        call,
+		Callee:      callee,
+		ParamSlot:   p.ParamSlot,
+		ArgPath:     p.ArgPath,
+		KeyPresence: in.KeyPresence,
+		Num:         in.Num,
+		IndexWrites: in.IndexWrites,
 	})
 }
 
@@ -696,20 +726,15 @@ func (p CallEntryValueProjection) Project() CallEntryValues {
 		targetState := p.callTargetState(point, in)
 		argState := callArgumentState(info.Call, targetState, in)
 		for _, target := range p.resolveTargets(info.Call, targetState, in) {
-			for runtimeIdx := 0; runtimeIdx < callsite.RuntimeArgExprCount(info.Call); runtimeIdx++ {
-				arg := callsite.RuntimeArgExprAt(info.Call, runtimeIdx)
-				if arg == nil {
+			for _, arg := range entryRuntimeArgs(target.Ref, info.Call, p.ParamSlot) {
+				if arg.Expr == nil || (p.ParamAnnotated != nil && p.ParamAnnotated(target.Ref, arg.SourceParam)) {
 					continue
 				}
-				sourceParam, slot, ok := p.ParamSlot(target.Ref, info.Call, runtimeIdx)
-				if !ok || (p.ParamAnnotated != nil && p.ParamAnnotated(target.Ref, sourceParam)) {
-					continue
-				}
-				av, ok := p.EvalArg(&argState, arg)
+				av, ok := p.EvalArg(&argState, arg.Expr)
 				if !ok {
 					continue
 				}
-				out = JoinCallEntryValue(out, target.Ref, slot, av)
+				out = JoinCallEntryValue(out, target.Ref, arg.Slot, av)
 			}
 		}
 		out = p.projectCallbackEntryValues(out, point, info, &in)
