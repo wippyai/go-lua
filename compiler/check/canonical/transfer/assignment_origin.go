@@ -227,53 +227,13 @@ func (t *Transfer) copyAssignmentIndexWriteAdmissions(out *flow.PointState, sour
 	if !sourceOK || !targetOK {
 		return false
 	}
-	sourceKey := sourceAddr.Key()
-	targetKey := targetAddr.Key()
-	before := out.IndexWrites
-	flow.ApplyIndexWriteKeyAliasProof(out, flow.IndexWriteKeyAliasProof{
-		SourceKey: sourceAddr,
-		TargetKey: targetAddr,
-	})
 	sourceValue, hasSourceValue := flow.PointFactsOf(*out).PathValue(sourcePath)
-	if hasSourceValue && sourceValue.DefinitelyAbsent() {
-		return !flow.IndexWriteAdmissionFactsDomain.Equal(before, out.IndexWrites)
-	}
 	if !hasSourceValue || sourceValue.IsZero() {
 		sourceValue = product.FromType(typ.Unknown)
 	}
-	for _, entry := range out.KeyPresence.Entries() {
-		if entry.Key != sourceKey {
-			continue
-		}
-		tableAddr, tableOK := flow.StableAddressFromKey(entry.Table)
-		if !tableOK {
-			continue
-		}
-		tableValue, ok := flow.PointFactsOf(*out).AddressValue(tableAddr)
-		if !ok || tableValue.IsZero() {
-			continue
-		}
-		read, ok := product.RuntimeIndexOf(tableValue, sourceValue)
-		if !ok || read.IsZero() {
-			continue
-		}
-		present := product.NarrowPresent(read)
-		if present.IsZero() || !flow.AdmissibleMapWriteProofValue(present) {
-			continue
-		}
-		keyAddr, keyOK := flow.StableAddressFromKey(targetKey)
-		if !keyOK {
-			continue
-		}
-		flow.ApplyIndexWriteAdmissionProof(out, flow.IndexWriteAdmissionProof{
-			Fact: flow.IndexWriteAdmissionAddressFact{
-				Target:     tableAddr,
-				KeyPath:    keyAddr,
-				HasKeyPath: true,
-				Key:        sourceValue,
-				Value:      present,
-			},
-		})
-	}
-	return !flow.IndexWriteAdmissionFactsDomain.Equal(before, out.IndexWrites)
+	return flow.ApplyIndexWriteKeyAliasReadbackProof(out, flow.IndexWriteKeyAliasReadbackProof{
+		SourceKey:   sourceAddr,
+		TargetKey:   targetAddr,
+		SourceValue: sourceValue,
+	})
 }

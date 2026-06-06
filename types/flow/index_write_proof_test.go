@@ -69,3 +69,36 @@ func TestApplyIndexWriteKeyAliasProofCopiesKeyPath(t *testing.T) {
 		t.Fatalf("alias admission = %v/%v, want number", got, ok)
 	}
 }
+
+func TestApplyIndexWriteKeyAliasReadbackProofDerivesTableRead(t *testing.T) {
+	tablePath := constraint.NewPath(cfg.SymbolID(6), "table")
+	sourcePath := constraint.NewPath(cfg.SymbolID(7), "source_key")
+	targetPath := constraint.NewPath(cfg.SymbolID(8), "target_key")
+	table := testStableAddressPath(t, tablePath)
+	source := testStableAddressPath(t, sourcePath)
+	target := testStableAddressPath(t, targetPath)
+	state := PointState{
+		Env: map[ValueKey]product.AbstractValue{
+			SymbolValueKey(tablePath.Symbol): product.FromType(typ.NewRecord().Field("id", typ.Number).Build()),
+		},
+		KeyPresence: KeyPresenceFacts{}.
+			WithAddresses(table, source),
+	}
+
+	if !ApplyIndexWriteKeyAliasReadbackProof(&state, IndexWriteKeyAliasReadbackProof{
+		SourceKey:   source,
+		TargetKey:   target,
+		SourceValue: product.FromType(typ.LiteralString("id")),
+	}) {
+		t.Fatal("ApplyIndexWriteKeyAliasReadbackProof reported no change")
+	}
+	got, ok := state.IndexWrites.AdmissionAtAddress(IndexWriteAddressQuery{
+		Target:     table,
+		KeyPath:    target,
+		HasKeyPath: true,
+		KeyValue:   product.FromType(typ.LiteralString("id")),
+	})
+	if !ok || !product.Domain.Equal(got, product.FromType(typ.Number)) {
+		t.Fatalf("derived admission = %v/%v, want number", got, ok)
+	}
+}
