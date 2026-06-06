@@ -220,11 +220,11 @@ func TestSummaryDomain_Laws(t *testing.T) {
 			{CellEffects: effects},
 			{CaptureExports: exports},
 			{CaptureFunctionRefs: exportRefs},
-			{ReturnClosureRefs: []flow.ClosureRefs{exportClosures}},
+			{ReturnRefs: flow.ReturnRefsOfSlots([]flow.ReturnRefSlot{flow.ReturnRefSlotOf(flow.FunctionRefsDomain.Bottom(), exportClosures)})},
 			{CaptureClosureRefs: exportClosures},
 			{PrototypeSelf: protos},
 			{CallEntryValues: entryValues},
-			{Returns: []product.AbstractValue{n, s}, ReturnClosureRefs: []flow.ClosureRefs{exportClosures}, Relations: rels, CellEffects: effects, CaptureExports: exports, CaptureFunctionRefs: exportRefs, CaptureClosureRefs: exportClosures, PrototypeSelf: protos, CallEntryValues: entryValues},
+			{Returns: []product.AbstractValue{n, s}, ReturnRefs: flow.ReturnRefsOfSlots([]flow.ReturnRefSlot{flow.ReturnRefSlotOf(flow.FunctionRefsDomain.Bottom(), exportClosures)}), Relations: rels, CellEffects: effects, CaptureExports: exports, CaptureFunctionRefs: exportRefs, CaptureClosureRefs: exportClosures, PrototypeSelf: protos, CallEntryValues: entryValues},
 		},
 	}.Run(t)
 }

@@ -338,64 +338,56 @@ func TestCallSummaryProjection_InferredReturnTypesUseDeclaredTargets(t *testing.
 	}
 }
 
-func TestCallSummaryProjection_ReturnFunctionRefsFold(t *testing.T) {
+func TestCallSummaryProjection_ReturnRefsFold(t *testing.T) {
 	refA := flow.FunctionRef{GraphID: 1}
 	refB := flow.FunctionRef{GraphID: 2}
 	refC := flow.FunctionRef{GraphID: 3}
 	slot0A := flow.WithFunctionRef(nil, constraint.NewPlaceholder(0).Field("a").Key(), flow.FunctionRefSetOf(refA))
 	slot0B := flow.WithFunctionRef(nil, constraint.NewPlaceholder(0).Field("b").Key(), flow.FunctionRefSetOf(refB))
 	slot2 := flow.WithFunctionRef(nil, constraint.NewPlaceholder(2).Field("c").Key(), flow.FunctionRefSetOf(refC))
-
-	projection := summary.CallSummaryProjection{
-		Targets: []summary.CallSummaryTarget{
-			{Summary: summary.Summary{ReturnFunctionRefs: []flow.FunctionRefs{slot0A}}},
-			{Summary: summary.Summary{ReturnFunctionRefs: []flow.FunctionRefs{slot0B, flow.FunctionRefsDomain.Bottom(), slot2}}},
-		},
-	}
-
-	got := projection.ReturnFunctionRefs()
-	if len(got) != 3 {
-		t.Fatalf("ReturnFunctionRefs len = %d, want 3", len(got))
-	}
-	want0 := flow.FunctionRefsDomain.Join(slot0A, slot0B)
-	if !flow.FunctionRefsDomain.Equal(got[0], want0) {
-		t.Fatalf("slot 0 = %#v, want %#v", got[0], want0)
-	}
-	if !flow.FunctionRefsDomain.Equal(got[1], flow.FunctionRefsDomain.Bottom()) {
-		t.Fatalf("slot 1 = %v, want bottom", got[1])
-	}
-	if !flow.FunctionRefsDomain.Equal(got[2], slot2) {
-		t.Fatalf("slot 2 = %#v, want %#v", got[2], slot2)
-	}
-}
-
-func TestCallSummaryProjection_ReturnClosureRefsFold(t *testing.T) {
 	closureA := flow.ClosureRefOf(flow.FunctionRef{GraphID: 1}, flow.CaptureCellsDomain.Bottom(), nil)
 	closureB := flow.ClosureRefOf(flow.FunctionRef{GraphID: 2}, flow.CaptureCellsDomain.Bottom(), nil)
-	slot0A := flow.WithClosureRef(nil, constraint.NewPlaceholder(0).Field("a").Key(), flow.ClosureRefSetOf(closureA))
-	slot0B := flow.WithClosureRef(nil, constraint.NewPlaceholder(0).Field("b").Key(), flow.ClosureRefSetOf(closureB))
-	slot2 := flow.WithClosureRef(nil, constraint.NewPlaceholder(2).Field("c").Key(), flow.ClosureRefSetOf(closureA))
+	closureSlot0A := flow.WithClosureRef(nil, constraint.NewPlaceholder(0).Field("a").Key(), flow.ClosureRefSetOf(closureA))
+	closureSlot0B := flow.WithClosureRef(nil, constraint.NewPlaceholder(0).Field("b").Key(), flow.ClosureRefSetOf(closureB))
+	closureSlot2 := flow.WithClosureRef(nil, constraint.NewPlaceholder(2).Field("c").Key(), flow.ClosureRefSetOf(closureA))
 
 	projection := summary.CallSummaryProjection{
 		Targets: []summary.CallSummaryTarget{
-			{Summary: summary.Summary{ReturnClosureRefs: []flow.ClosureRefs{slot0A}}},
-			{Summary: summary.Summary{ReturnClosureRefs: []flow.ClosureRefs{slot0B, flow.ClosureRefsDomain.Bottom(), slot2}}},
+			{Summary: summary.Summary{ReturnRefs: flow.ReturnRefsOfSlots([]flow.ReturnRefSlot{
+				flow.ReturnRefSlotOf(slot0A, closureSlot0A),
+			})}},
+			{Summary: summary.Summary{ReturnRefs: flow.ReturnRefsOfSlots([]flow.ReturnRefSlot{
+				flow.ReturnRefSlotOf(slot0B, closureSlot0B),
+				flow.ReturnRefSlotOf(flow.FunctionRefsDomain.Bottom(), flow.ClosureRefsDomain.Bottom()),
+				flow.ReturnRefSlotOf(slot2, closureSlot2),
+			})}},
 		},
 	}
 
-	got := projection.ReturnClosureRefs()
-	if len(got) != 3 {
-		t.Fatalf("ReturnClosureRefs len = %d, want 3", len(got))
+	got := projection.ReturnRefs()
+	if got.Len() != 3 {
+		t.Fatalf("ReturnRefs len = %d, want 3", got.Len())
 	}
-	want0 := flow.ClosureRefsDomain.Join(slot0A, slot0B)
-	if !flow.ClosureRefsDomain.Equal(got[0], want0) {
-		t.Fatalf("slot 0 = %#v, want %#v", got[0], want0)
+	got0 := got.Slot(0)
+	wantFunction0 := flow.FunctionRefsDomain.Join(slot0A, slot0B)
+	if !flow.FunctionRefsDomain.Equal(got0.FunctionRefs, wantFunction0) {
+		t.Fatalf("slot 0 function refs = %#v, want %#v", got0.FunctionRefs, wantFunction0)
 	}
-	if !flow.ClosureRefsDomain.Equal(got[1], flow.ClosureRefsDomain.Bottom()) {
-		t.Fatalf("slot 1 = %v, want bottom", got[1])
+	wantClosure0 := flow.ClosureRefsDomain.Join(closureSlot0A, closureSlot0B)
+	if !flow.ClosureRefsDomain.Equal(got0.ClosureRefs, wantClosure0) {
+		t.Fatalf("slot 0 closure refs = %#v, want %#v", got0.ClosureRefs, wantClosure0)
 	}
-	if !flow.ClosureRefsDomain.Equal(got[2], slot2) {
-		t.Fatalf("slot 2 = %#v, want %#v", got[2], slot2)
+	got1 := got.Slot(1)
+	if !flow.FunctionRefsDomain.Equal(got1.FunctionRefs, flow.FunctionRefsDomain.Bottom()) ||
+		!flow.ClosureRefsDomain.Equal(got1.ClosureRefs, flow.ClosureRefsDomain.Bottom()) {
+		t.Fatalf("slot 1 = %#v, want bottom", got1)
+	}
+	got2 := got.Slot(2)
+	if !flow.FunctionRefsDomain.Equal(got2.FunctionRefs, slot2) {
+		t.Fatalf("slot 2 function refs = %#v, want %#v", got2.FunctionRefs, slot2)
+	}
+	if !flow.ClosureRefsDomain.Equal(got2.ClosureRefs, closureSlot2) {
+		t.Fatalf("slot 2 closure refs = %#v, want %#v", got2.ClosureRefs, closureSlot2)
 	}
 }
 
@@ -410,24 +402,18 @@ func TestCallSummaryProjection_EmptyOrBottomFoldBehavior(t *testing.T) {
 		t.Fatalf("ReturnValues for all-bottom inputs = %#v, want empty", got)
 	}
 
-	functionRefsProjection := summary.CallSummaryProjection{
+	returnRefsProjection := summary.CallSummaryProjection{
 		Targets: []summary.CallSummaryTarget{
-			{Summary: summary.Summary{ReturnFunctionRefs: []flow.FunctionRefs{flow.FunctionRefsDomain.Bottom()}}},
-			{Summary: summary.Summary{ReturnFunctionRefs: []flow.FunctionRefs{flow.FunctionRefsDomain.Bottom()}}},
+			{Summary: summary.Summary{ReturnRefs: flow.ReturnRefsOfSlots([]flow.ReturnRefSlot{
+				flow.ReturnRefSlotOf(flow.FunctionRefsDomain.Bottom(), flow.ClosureRefsDomain.Bottom()),
+			})}},
+			{Summary: summary.Summary{ReturnRefs: flow.ReturnRefsOfSlots([]flow.ReturnRefSlot{
+				flow.ReturnRefSlotOf(flow.FunctionRefsDomain.Bottom(), flow.ClosureRefsDomain.Bottom()),
+			})}},
 		},
 	}
-	if got := functionRefsProjection.ReturnFunctionRefs(); len(got) != 0 {
-		t.Fatalf("ReturnFunctionRefs for all-bottom inputs = %#v, want empty", got)
-	}
-
-	closureRefsProjection := summary.CallSummaryProjection{
-		Targets: []summary.CallSummaryTarget{
-			{Summary: summary.Summary{ReturnClosureRefs: []flow.ClosureRefs{flow.ClosureRefsDomain.Bottom()}}},
-			{Summary: summary.Summary{ReturnClosureRefs: []flow.ClosureRefs{flow.ClosureRefsDomain.Bottom()}}},
-		},
-	}
-	if got := closureRefsProjection.ReturnClosureRefs(); len(got) != 0 {
-		t.Fatalf("ReturnClosureRefs for all-bottom inputs = %#v, want empty", got)
+	if got := returnRefsProjection.ReturnRefs(); got.Len() != 0 {
+		t.Fatalf("ReturnRefs for all-bottom inputs = %#v, want empty", got)
 	}
 }
 

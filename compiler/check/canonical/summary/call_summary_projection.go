@@ -142,22 +142,12 @@ func (p CallSummaryProjection) InferredReturnTypes() []typ.Type {
 	return out
 }
 
-// ReturnFunctionRefs joins caller-visible returned function identities across targets
+// ReturnRefs joins caller-visible returned callable identities across targets
 // slotwise.
-func (p CallSummaryProjection) ReturnFunctionRefs() []flow.FunctionRefs {
-	var out []flow.FunctionRefs
+func (p CallSummaryProjection) ReturnRefs() flow.ReturnRefs {
+	var out flow.ReturnRefs
 	for _, target := range p.Targets {
-		out = joinReturnFunctionRefs(out, target.Summary.ReturnFunctionRefs)
-	}
-	return out
-}
-
-// ReturnClosureRefs joins caller-visible returned closure identities across targets
-// slotwise.
-func (p CallSummaryProjection) ReturnClosureRefs() []flow.ClosureRefs {
-	var out []flow.ClosureRefs
-	for _, target := range p.Targets {
-		out = joinReturnClosureRefs(out, target.Summary.ReturnClosureRefs)
+		out = flow.ReturnRefsDomain.Join(out, target.Summary.ReturnRefs)
 	}
 	return out
 }

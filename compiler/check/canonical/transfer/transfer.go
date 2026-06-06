@@ -178,54 +178,6 @@ type IterVarProjector interface {
 	IterVarProjection(iter *ast.FuncCallExpr, count int, exprType func(ast.Expr) typ.Type) (iteration.VarProjection, bool)
 }
 
-// CallReturnRefs is the product-call boundary for callable identities returned
-// by a callee. Function and closure refs are projected from the same selected
-// call outcome, so product callers consume them through one provider.
-type CallReturnRefs struct {
-	FunctionRefs []flow.FunctionRefs
-	ClosureRefs  []flow.ClosureRefs
-}
-
-// SlotReferenceContext returns the callable identity evidence for one return
-// slot as a normalized reference context rooted at that slot's placeholder.
-func (r CallReturnRefs) SlotReferenceContext(slot int) (flow.ReferenceContext, bool) {
-	bottom := flow.ReferenceContextOf(flow.CaptureCellsDomain.Bottom(), flow.FunctionRefsDomain.Bottom(), flow.ClosureRefsDomain.Bottom())
-	if slot < 0 {
-		return bottom, false
-	}
-	functionRefs := flow.FunctionRefsDomain.Bottom()
-	if slot < len(r.FunctionRefs) {
-		functionRefs = r.FunctionRefs[slot]
-	}
-	closureRefs := flow.ClosureRefsDomain.Bottom()
-	if slot < len(r.ClosureRefs) {
-		closureRefs = r.ClosureRefs[slot]
-	}
-	if flow.FunctionRefsDomain.Equal(functionRefs, flow.FunctionRefsDomain.Bottom()) &&
-		flow.ClosureRefsDomain.Equal(closureRefs, flow.ClosureRefsDomain.Bottom()) {
-		return bottom, false
-	}
-	return flow.ReferenceContextOf(flow.CaptureCellsDomain.Bottom(), functionRefs, closureRefs), true
-}
-
-// FunctionRefTree returns slot's function identities as a placeholder-relative
-// tree suitable for rebasing onto an assignment target.
-func (r CallReturnRefs) FunctionRefTree(slot int) (flow.FunctionRefTree, bool) {
-	if slot < 0 || slot >= len(r.FunctionRefs) {
-		return flow.FunctionRefTree{}, false
-	}
-	return flow.FunctionRefTreeFromSubtreePath(r.FunctionRefs[slot], constraint.NewPlaceholder(slot))
-}
-
-// ClosureRefTree returns slot's closure identities as a placeholder-relative
-// tree suitable for rebasing onto an assignment target.
-func (r CallReturnRefs) ClosureRefTree(slot int) (flow.ClosureRefTree, bool) {
-	if slot < 0 || slot >= len(r.ClosureRefs) {
-		return flow.ClosureRefTree{}, false
-	}
-	return flow.ClosureRefTreeFromSubtreePath(r.ClosureRefs[slot], constraint.NewPlaceholder(slot))
-}
-
 // CallEffects groups product call-outcome effects that mutate caller-visible
 // state after a call returns. Transfer consumes this as one carrier so call-side
 // effects are projected once and then applied by axis-specific reducers.
@@ -251,7 +203,7 @@ func EmptyCallEffects() CallEffects {
 type ProductCallResult struct {
 	ReturnValues    []product.AbstractValue
 	HasReturnValues bool
-	ReturnRefs      CallReturnRefs
+	ReturnRefs      flow.ReturnRefs
 	ReturnRelations flow.ReturnRelations
 	Effects         CallEffects
 	ArgDemands      []callobligation.Obligation

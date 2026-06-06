@@ -80,7 +80,7 @@ func (p productCallProjection) result(effects transfer.CallEffects) transfer.Pro
 	return transfer.ProductCallResult{
 		ReturnValues:    values,
 		HasReturnValues: ok,
-		ReturnRefs:      p.returnRefs(),
+		ReturnRefs:      p.outcome.ReturnRefs(),
 		ReturnRelations: p.returnRelations(),
 		Effects:         effects,
 		ArgDemands:      p.typer.productCallArgDemands(p.call, p.ctx),
@@ -88,13 +88,6 @@ func (p productCallProjection) result(effects transfer.CallEffects) transfer.Pro
 			return p.typer.d.activeProgram.facts.HasNoReturn(ref)
 		}),
 		ParamNarrows: p.typer.productCallParamNarrows(p.call),
-	}
-}
-
-func (p productCallProjection) returnRefs() transfer.CallReturnRefs {
-	return transfer.CallReturnRefs{
-		FunctionRefs: p.outcome.ReturnFunctionRefs(),
-		ClosureRefs:  p.outcome.ReturnClosureRefs(),
 	}
 }
 

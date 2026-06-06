@@ -55,8 +55,7 @@ func projectWithOptions(fs state.FunctionState, g *cfg.Graph, opts projectOption
 	returns := projectReturns(fs, g, opts)
 	return Summary{
 		Returns:             returns,
-		ReturnFunctionRefs:  projectReturnFunctionRefs(fs, g),
-		ReturnClosureRefs:   projectReturnClosureRefs(fs, g),
+		ReturnRefs:          projectReturnRefs(fs, g),
 		Params:              cloneContracts(fs.Contracts),
 		Relations:           projectReturnRelations(fs, g, returns, opts.DeclaredReturns),
 		CellEffects:         projectCellEffects(fs, g),
@@ -274,12 +273,11 @@ type returnTupleRow struct {
 	tuple []product.AbstractValue
 }
 
-func projectReturnFunctionRefs(fs state.FunctionState, g *cfg.Graph) []flow.FunctionRefs {
+func projectReturnRefs(fs state.FunctionState, g *cfg.Graph) flow.ReturnRefs {
 	if g == nil {
-		return nil
+		return flow.ReturnRefsDomain.Bottom()
 	}
-	acc := returnFunctionRefsTupleLattice{}
-	var tuple []flow.FunctionRefs
+	var tuple flow.ReturnRefs
 	g.EachReturn(func(p cfg.Point, info *cfg.ReturnInfo) {
 		if info == nil || len(info.Exprs) == 0 {
 			return
@@ -288,46 +286,21 @@ func projectReturnFunctionRefs(fs state.FunctionState, g *cfg.Graph) []flow.Func
 		if !ok {
 			return
 		}
-		stmt := returnFunctionRefsTupleAt(ps, info)
-		tuple = acc.Join(tuple, stmt)
+		tuple = flow.ReturnRefsDomain.Join(tuple, returnRefsTupleAt(ps, info))
 	})
 	return tuple
 }
 
-func projectReturnClosureRefs(fs state.FunctionState, g *cfg.Graph) []flow.ClosureRefs {
-	if g == nil {
-		return nil
-	}
-	acc := returnClosureRefsTupleLattice{}
-	var tuple []flow.ClosureRefs
-	g.EachReturn(func(p cfg.Point, info *cfg.ReturnInfo) {
-		if info == nil || len(info.Exprs) == 0 {
-			return
-		}
-		ps, ok := fs.Points[p]
-		if !ok {
-			return
-		}
-		stmt := returnClosureRefsTupleAt(ps, info)
-		tuple = acc.Join(tuple, stmt)
-	})
-	return tuple
-}
-
-func returnClosureRefsTupleAt(ps flow.PointState, info *cfg.ReturnInfo) []flow.ClosureRefs {
-	out := make([]flow.ClosureRefs, len(info.Exprs))
+func returnRefsTupleAt(ps flow.PointState, info *cfg.ReturnInfo) flow.ReturnRefs {
+	out := make([]flow.ReturnRefSlot, len(info.Exprs))
 	for i := range info.Exprs {
-		out[i] = flow.ProjectClosureRefsByPath(ps.ClosureRefs, constraint.NewPlaceholder(i))
+		placeholder := constraint.NewPlaceholder(i)
+		out[i] = flow.ReturnRefSlotOf(
+			flow.ProjectFunctionRefsByPath(ps.FunctionRefs, placeholder),
+			flow.ProjectClosureRefsByPath(ps.ClosureRefs, placeholder),
+		)
 	}
-	return out
-}
-
-func returnFunctionRefsTupleAt(ps flow.PointState, info *cfg.ReturnInfo) []flow.FunctionRefs {
-	out := make([]flow.FunctionRefs, len(info.Exprs))
-	for i := range info.Exprs {
-		out[i] = flow.ProjectFunctionRefsByPath(ps.FunctionRefs, constraint.NewPlaceholder(i))
-	}
-	return out
+	return flow.ReturnRefsOfSlots(out)
 }
 
 // returnTupleAt reads the values of one return statement's expressions from the

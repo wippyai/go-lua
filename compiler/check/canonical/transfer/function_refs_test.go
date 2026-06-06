@@ -14,21 +14,18 @@ import (
 	"github.com/wippyai/go-lua/types/typ"
 )
 
-func TestCallReturnRefsSlotAccessors(t *testing.T) {
+func TestReturnRefsSlotAccessors(t *testing.T) {
 	fnPath := constraint.NewPlaceholder(1).Field("factory")
 	clPath := constraint.NewPlaceholder(1).Field("closure")
 	fnRef := flow.FunctionRef{GraphID: 10}
 	clRef := flow.ClosureRefOf(flow.FunctionRef{GraphID: 20}, flow.CaptureCellsDomain.Bottom(), nil)
-	returns := CallReturnRefs{
-		FunctionRefs: []flow.FunctionRefs{
-			flow.FunctionRefsDomain.Bottom(),
+	returns := flow.ReturnRefsOfSlots([]flow.ReturnRefSlot{
+		flow.ReturnRefSlotOf(flow.FunctionRefsDomain.Bottom(), flow.ClosureRefsDomain.Bottom()),
+		flow.ReturnRefSlotOf(
 			flow.WithFunctionRef(nil, fnPath.Key(), flow.FunctionRefSetOf(fnRef)),
-		},
-		ClosureRefs: []flow.ClosureRefs{
-			flow.ClosureRefsDomain.Bottom(),
 			flow.WithClosureRef(nil, clPath.Key(), flow.ClosureRefSetOf(clRef)),
-		},
-	}
+		),
+	})
 
 	references, ok := returns.SlotReferenceContext(1)
 	if !ok {
@@ -919,11 +916,12 @@ type returnFunctionRefsTestTyper struct {
 
 func (t returnFunctionRefsTestTyper) ProductCallFromValues(*ast.FuncCallExpr, ProductCallContext) ProductCallResult {
 	result := productReturnResultForTest(product.FromType(typ.NewRecord().Field("with_options", typ.Func().Build()).Build()))
-	result.ReturnRefs = CallReturnRefs{
-		FunctionRefs: []flow.FunctionRefs{
+	result.ReturnRefs = flow.ReturnRefsOfSlots([]flow.ReturnRefSlot{
+		flow.ReturnRefSlotOf(
 			flow.WithFunctionRef(nil, constraint.NewPlaceholder(0).Field("with_options").Key(), flow.FunctionRefSetOf(t.ref)),
-		},
-	}
+			flow.ClosureRefsDomain.Bottom(),
+		),
+	})
 	return result
 }
 
@@ -941,11 +939,12 @@ func (t *productReturnFunctionRefsTestTyper) ProductCallFromValues(
 ) ProductCallResult {
 	t.args = append([]product.AbstractValue(nil), ctx.ArgValues...)
 	result := EmptyProductCallResult()
-	result.ReturnRefs = CallReturnRefs{
-		FunctionRefs: []flow.FunctionRefs{
+	result.ReturnRefs = flow.ReturnRefsOfSlots([]flow.ReturnRefSlot{
+		flow.ReturnRefSlotOf(
 			flow.WithFunctionRef(nil, constraint.NewPlaceholder(0).Field("with_options").Key(), flow.FunctionRefSetOf(t.ref)),
-		},
-	}
+			flow.ClosureRefsDomain.Bottom(),
+		),
+	})
 	return result
 }
 
@@ -958,11 +957,12 @@ type returnClosureRefsTestTyper struct {
 
 func (t returnClosureRefsTestTyper) ProductCallFromValues(*ast.FuncCallExpr, ProductCallContext) ProductCallResult {
 	result := productReturnResultForTest(product.FromType(typ.NewRecord().Field("with_options", typ.Func().Build()).Build()))
-	result.ReturnRefs = CallReturnRefs{
-		ClosureRefs: []flow.ClosureRefs{
+	result.ReturnRefs = flow.ReturnRefsOfSlots([]flow.ReturnRefSlot{
+		flow.ReturnRefSlotOf(
+			flow.FunctionRefsDomain.Bottom(),
 			flow.WithClosureRef(nil, constraint.NewPlaceholder(0).Field("with_options").Key(), flow.ClosureRefSetOf(t.closure)),
-		},
-	}
+		),
+	})
 	return result
 }
 

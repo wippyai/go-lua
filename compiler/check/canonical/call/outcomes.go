@@ -54,15 +54,9 @@ func (o CallOutcome) InferredReturnTypes() []typ.Type {
 	return o.Projection.InferredReturnTypes()
 }
 
-// ReturnFunctionRefs projects returned function identities from selected
-// summaries.
-func (o CallOutcome) ReturnFunctionRefs() []flow.FunctionRefs {
-	return o.Projection.ReturnFunctionRefs()
-}
-
-// ReturnClosureRefs projects returned closure identities from selected summaries.
-func (o CallOutcome) ReturnClosureRefs() []flow.ClosureRefs {
-	return o.Projection.ReturnClosureRefs()
+// ReturnRefs projects returned callable identities from selected summaries.
+func (o CallOutcome) ReturnRefs() flow.ReturnRefs {
+	return o.Projection.ReturnRefs()
 }
 
 // ReturnRelations projects return-slot relations through the canonical fallback

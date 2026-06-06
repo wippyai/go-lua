@@ -43,11 +43,11 @@ import (
 //   - Relations is the finite caller-visible return-relation component: facts
 //     like Lua's `(value, err)` inverse convention that callers may consume only
 //     when every return path proves them.
-//   - ReturnFunctionRefs is the finite caller-visible function-identity tuple for
-//     returned values. Each slot is keyed under the corresponding placeholder path
-//     ($0, $1, ...); the caller rebases those identities onto its assignment target.
-//   - ReturnClosureRefs is the corresponding tuple for closure values that carry
-//     their lexical entry environment.
+//   - ReturnRefs is the finite caller-visible callable-identity tuple for returned
+//     values. Each slot is keyed under the corresponding placeholder path
+//     ($0, $1, ...); the caller rebases those identities onto its assignment
+//     target. Function and closure identity axes stay together because call
+//     outcomes and assignments consume them as one slot-relative fact.
 //   - CellEffects is the finite caller-visible capture-cell transformer. It is
 //     separate from the cell store so unchanged entry cells are not mistaken for
 //     writes.
@@ -90,8 +90,7 @@ type Summary struct {
 	// finite map domains do. Normal projected summaries never set it.
 	top                 bool
 	Returns             []product.AbstractValue
-	ReturnFunctionRefs  []flow.FunctionRefs
-	ReturnClosureRefs   []flow.ClosureRefs
+	ReturnRefs          flow.ReturnRefs
 	Params              paramevidence.Contracts
 	Relations           flow.ReturnRelations
 	CellEffects         flow.CaptureEffects
@@ -114,8 +113,6 @@ type CallEntryValues = map[FuncRef]EntryValues
 // MapLattice-style pointwise lift the Env and Contracts components use, expressed
 // over a positional tuple rather than a keyed map.
 var returnsDomain = returnTupleLattice{}
-var returnFunctionRefsDomain = returnFunctionRefsTupleLattice{}
-var returnClosureRefsDomain = returnClosureRefsTupleLattice{}
 var entryValuesDomain = latticeproduct.MapLattice[int](product.Domain)
 var callEntryValuesDomain = latticeproduct.MapLattice[FuncRef](entryValuesDomain)
 var paramNarrowsDomain = paramNarrowSetLattice{}
@@ -132,8 +129,7 @@ var SummaryDomain = lattice.Lattice[Summary]{
 	Bottom: func() Summary {
 		return Summary{
 			Returns:             nil,
-			ReturnFunctionRefs:  nil,
-			ReturnClosureRefs:   nil,
+			ReturnRefs:          flow.ReturnRefsDomain.Bottom(),
 			Params:              paramevidence.ContractDomain.Bottom(),
 			Relations:           flow.ReturnRelationsDomain.Bottom(),
 			CellEffects:         flow.CaptureEffectsDomain.Bottom(),
@@ -153,8 +149,7 @@ var SummaryDomain = lattice.Lattice[Summary]{
 			return a.top && b.top
 		}
 		return returnsDomain.Equal(a.Returns, b.Returns) &&
-			returnFunctionRefsDomain.Equal(a.ReturnFunctionRefs, b.ReturnFunctionRefs) &&
-			returnClosureRefsDomain.Equal(a.ReturnClosureRefs, b.ReturnClosureRefs) &&
+			flow.ReturnRefsDomain.Equal(a.ReturnRefs, b.ReturnRefs) &&
 			paramevidence.ContractDomain.Equal(a.Params, b.Params) &&
 			flow.ReturnRelationsDomain.Equal(a.Relations, b.Relations) &&
 			flow.CaptureEffectsDomain.Equal(a.CellEffects, b.CellEffects) &&
@@ -175,8 +170,7 @@ var SummaryDomain = lattice.Lattice[Summary]{
 			return false
 		}
 		return returnsDomain.LessOrEq(a.Returns, b.Returns) &&
-			returnFunctionRefsDomain.LessOrEq(a.ReturnFunctionRefs, b.ReturnFunctionRefs) &&
-			returnClosureRefsDomain.LessOrEq(a.ReturnClosureRefs, b.ReturnClosureRefs) &&
+			flow.ReturnRefsDomain.LessOrEq(a.ReturnRefs, b.ReturnRefs) &&
 			paramevidence.ContractDomain.LessOrEq(a.Params, b.Params) &&
 			flow.ReturnRelationsDomain.LessOrEq(a.Relations, b.Relations) &&
 			flow.CaptureEffectsDomain.LessOrEq(a.CellEffects, b.CellEffects) &&
@@ -195,8 +189,7 @@ var SummaryDomain = lattice.Lattice[Summary]{
 		}
 		return Summary{
 			Returns:             returnsDomain.Join(a.Returns, b.Returns),
-			ReturnFunctionRefs:  returnFunctionRefsDomain.Join(a.ReturnFunctionRefs, b.ReturnFunctionRefs),
-			ReturnClosureRefs:   returnClosureRefsDomain.Join(a.ReturnClosureRefs, b.ReturnClosureRefs),
+			ReturnRefs:          flow.ReturnRefsDomain.Join(a.ReturnRefs, b.ReturnRefs),
 			Params:              paramevidence.ContractDomain.Join(a.Params, b.Params),
 			Relations:           flow.ReturnRelationsDomain.Join(a.Relations, b.Relations),
 			CellEffects:         flow.CaptureEffectsDomain.Join(a.CellEffects, b.CellEffects),
@@ -217,8 +210,7 @@ var SummaryDomain = lattice.Lattice[Summary]{
 		}
 		return Summary{
 			Returns:             returnsDomain.Widen(prev.Returns, next.Returns),
-			ReturnFunctionRefs:  returnFunctionRefsDomain.Widen(prev.ReturnFunctionRefs, next.ReturnFunctionRefs),
-			ReturnClosureRefs:   returnClosureRefsDomain.Widen(prev.ReturnClosureRefs, next.ReturnClosureRefs),
+			ReturnRefs:          flow.ReturnRefsDomain.Widen(prev.ReturnRefs, next.ReturnRefs),
 			Params:              paramevidence.ContractDomain.Widen(prev.Params, next.Params),
 			Relations:           flow.ReturnRelationsDomain.Widen(prev.Relations, next.Relations),
 			CellEffects:         flow.CaptureEffectsDomain.Widen(prev.CellEffects, next.CellEffects),
@@ -238,8 +230,7 @@ func summaryTop() Summary {
 	return Summary{
 		top:                 true,
 		Returns:             nil,
-		ReturnFunctionRefs:  returnFunctionRefsDomain.Top(),
-		ReturnClosureRefs:   returnClosureRefsDomain.Top(),
+		ReturnRefs:          flow.ReturnRefsDomain.Top(),
 		Params:              paramevidence.ContractDomain.Top(),
 		Relations:           flow.ReturnRelationsDomain.Top(),
 		CellEffects:         flow.CaptureEffectsDomain.Top(),
@@ -338,14 +329,6 @@ func exactReturnValueRefines(candidate, baseline product.AbstractValue) bool {
 		baselineType != nil &&
 		subtype.IsSubtype(candidateType, baselineType) &&
 		!subtype.IsSubtype(baselineType, candidateType)
-}
-
-func joinReturnFunctionRefs(a, b []flow.FunctionRefs) []flow.FunctionRefs {
-	return returnFunctionRefsDomain.Join(a, b)
-}
-
-func joinReturnClosureRefs(a, b []flow.ClosureRefs) []flow.ClosureRefs {
-	return returnClosureRefsDomain.Join(a, b)
 }
 
 type paramNarrowSetLattice struct{}
@@ -472,134 +455,6 @@ func slot(t []product.AbstractValue, i int) product.AbstractValue {
 	}
 	if t[i].IsZero() {
 		return product.Domain.Bottom()
-	}
-	return t[i]
-}
-
-// returnFunctionRefsTupleLattice lifts FunctionRefs pointwise over return slots.
-// An absent slot denotes FunctionRefs bottom, matching returnTupleLattice.
-type returnFunctionRefsTupleLattice struct{}
-
-func (returnFunctionRefsTupleLattice) Bottom() []flow.FunctionRefs { return nil }
-
-func (returnFunctionRefsTupleLattice) Top() []flow.FunctionRefs {
-	return []flow.FunctionRefs{flow.FunctionRefsDomain.Top()}
-}
-
-func (returnFunctionRefsTupleLattice) Equal(a, b []flow.FunctionRefs) bool {
-	n := max(len(a), len(b))
-	for i := 0; i < n; i++ {
-		if !flow.FunctionRefsDomain.Equal(functionRefsSlot(a, i), functionRefsSlot(b, i)) {
-			return false
-		}
-	}
-	return true
-}
-
-func (returnFunctionRefsTupleLattice) LessOrEq(a, b []flow.FunctionRefs) bool {
-	n := max(len(a), len(b))
-	for i := 0; i < n; i++ {
-		if !flow.FunctionRefsDomain.LessOrEq(functionRefsSlot(a, i), functionRefsSlot(b, i)) {
-			return false
-		}
-	}
-	return true
-}
-
-func (returnFunctionRefsTupleLattice) Join(a, b []flow.FunctionRefs) []flow.FunctionRefs {
-	return combineFunctionRefs(a, b, flow.FunctionRefsDomain.Join)
-}
-
-func (returnFunctionRefsTupleLattice) Widen(prev, next []flow.FunctionRefs) []flow.FunctionRefs {
-	return combineFunctionRefs(prev, next, flow.FunctionRefsDomain.Widen)
-}
-
-func combineFunctionRefs(a, b []flow.FunctionRefs, op func(x, y flow.FunctionRefs) flow.FunctionRefs) []flow.FunctionRefs {
-	n := max(len(a), len(b))
-	if n == 0 {
-		return nil
-	}
-	out := make([]flow.FunctionRefs, n)
-	last := -1
-	for i := 0; i < n; i++ {
-		out[i] = op(functionRefsSlot(a, i), functionRefsSlot(b, i))
-		if !flow.FunctionRefsDomain.Equal(out[i], flow.FunctionRefsDomain.Bottom()) {
-			last = i
-		}
-	}
-	if last < 0 {
-		return nil
-	}
-	return out[:last+1]
-}
-
-func functionRefsSlot(t []flow.FunctionRefs, i int) flow.FunctionRefs {
-	if i < 0 || i >= len(t) {
-		return flow.FunctionRefsDomain.Bottom()
-	}
-	return t[i]
-}
-
-// returnClosureRefsTupleLattice lifts ClosureRefs pointwise over return slots.
-// An absent slot denotes ClosureRefs bottom.
-type returnClosureRefsTupleLattice struct{}
-
-func (returnClosureRefsTupleLattice) Bottom() []flow.ClosureRefs { return nil }
-
-func (returnClosureRefsTupleLattice) Top() []flow.ClosureRefs {
-	return []flow.ClosureRefs{flow.ClosureRefsDomain.Top()}
-}
-
-func (returnClosureRefsTupleLattice) Equal(a, b []flow.ClosureRefs) bool {
-	n := max(len(a), len(b))
-	for i := 0; i < n; i++ {
-		if !flow.ClosureRefsDomain.Equal(closureRefsSlot(a, i), closureRefsSlot(b, i)) {
-			return false
-		}
-	}
-	return true
-}
-
-func (returnClosureRefsTupleLattice) LessOrEq(a, b []flow.ClosureRefs) bool {
-	n := max(len(a), len(b))
-	for i := 0; i < n; i++ {
-		if !flow.ClosureRefsDomain.LessOrEq(closureRefsSlot(a, i), closureRefsSlot(b, i)) {
-			return false
-		}
-	}
-	return true
-}
-
-func (returnClosureRefsTupleLattice) Join(a, b []flow.ClosureRefs) []flow.ClosureRefs {
-	return combineClosureRefs(a, b, flow.ClosureRefsDomain.Join)
-}
-
-func (returnClosureRefsTupleLattice) Widen(prev, next []flow.ClosureRefs) []flow.ClosureRefs {
-	return combineClosureRefs(prev, next, flow.ClosureRefsDomain.Widen)
-}
-
-func combineClosureRefs(a, b []flow.ClosureRefs, op func(x, y flow.ClosureRefs) flow.ClosureRefs) []flow.ClosureRefs {
-	n := max(len(a), len(b))
-	if n == 0 {
-		return nil
-	}
-	out := make([]flow.ClosureRefs, n)
-	last := -1
-	for i := 0; i < n; i++ {
-		out[i] = op(closureRefsSlot(a, i), closureRefsSlot(b, i))
-		if !flow.ClosureRefsDomain.Equal(out[i], flow.ClosureRefsDomain.Bottom()) {
-			last = i
-		}
-	}
-	if last < 0 {
-		return nil
-	}
-	return out[:last+1]
-}
-
-func closureRefsSlot(t []flow.ClosureRefs, i int) flow.ClosureRefs {
-	if i < 0 || i >= len(t) {
-		return flow.ClosureRefsDomain.Bottom()
 	}
 	return t[i]
 }
