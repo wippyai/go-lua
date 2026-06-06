@@ -1704,14 +1704,12 @@ func (t *Transfer) narrowIndexPresenceLength(res flow.PointState, sym cfg.Symbol
 	if seg.Kind != constraint.SegmentIndexInt || seg.Index < 1 {
 		return res
 	}
-	flow.ApplyNumericEffect(&res, flow.NumericEffect{
-		Ops: []flow.NumericOp{{
-			Kind:  flow.NumericLenGeConst,
-			Key:   constraint.PathKey(flow.SymbolValueKey(sym)),
-			Const: int64(seg.Index),
-		}},
-		RequireExisting: true,
-	})
+	if op, ok := flow.NumericLenGeConstSymbolOp(sym, int64(seg.Index)); ok {
+		flow.ApplyNumericEffect(&res, flow.NumericEffect{
+			Ops:             []flow.NumericOp{op},
+			RequireExisting: true,
+		})
+	}
 	return res
 }
 
@@ -1769,7 +1767,10 @@ func (t *Transfer) narrowNumericComparison(out flow.PointState, info *cfg.Branch
 	if !effectiveTruthy(info.CondCheck.Kind, taken) {
 		op = negateComparisonOp(op)
 	}
-	idxKey := constraint.PathKey(flow.SymbolValueKey(idxSym))
+	idxKey, ok := flow.NumericVarKeyOfSymbol(idxSym)
+	if !ok {
+		return out
+	}
 	if c, ok := t.constInt(boundExpr); ok {
 		ops := flow.NumericConstComparisonOps(idxKey, op, c)
 		if len(ops) == 0 {
@@ -1783,14 +1784,13 @@ func (t *Transfer) narrowNumericComparison(out flow.PointState, info *cfg.Branch
 	// upper-bound senses bound the index by the container length; a lower-bound sense
 	// does not establish in-range presence and is left unseeded.
 	if arrKey, off, ok := t.lengthBoundComparison(boundExpr, op); ok {
+		numericOp, ok := flow.NumericVarLeLenOffsetSymbolOp(idxSym, arrKey, off)
+		if !ok {
+			return out
+		}
 		res := flow.ClonePointState(out)
 		flow.ApplyNumericEffect(&res, flow.NumericEffect{
-			Ops: []flow.NumericOp{{
-				Kind:   flow.NumericVarLeLenOffset,
-				Key:    idxKey,
-				Other:  arrKey,
-				Offset: off,
-			}},
+			Ops: []flow.NumericOp{numericOp},
 		})
 		return res
 	}

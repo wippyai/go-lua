@@ -59,6 +59,18 @@ func TestParseSymbolValueKey(t *testing.T) {
 	}
 }
 
+func TestValueKeyMatchesSymbol(t *testing.T) {
+	if !ValueKeyMatchesSymbol(SymbolValueKey(cfg.SymbolID(42)), cfg.SymbolID(42)) {
+		t.Fatalf("ValueKeyMatchesSymbol did not match exact symbol key")
+	}
+	if ValueKeyMatchesSymbol(SymbolValueKey(cfg.SymbolID(41)), cfg.SymbolID(42)) {
+		t.Fatalf("ValueKeyMatchesSymbol matched wrong symbol")
+	}
+	if ValueKeyMatchesSymbol(ReturnSlotValueKey(1), cfg.SymbolID(42)) {
+		t.Fatalf("ValueKeyMatchesSymbol matched non-symbol key")
+	}
+}
+
 func TestParseReturnSlotValueKey(t *testing.T) {
 	idx, ok := ParseReturnSlotValueKey(ReturnSlotValueKey(12))
 	if !ok || idx != 12 {

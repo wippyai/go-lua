@@ -3,6 +3,7 @@ package flow
 import (
 	"math"
 
+	"github.com/wippyai/go-lua/types/cfg"
 	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/flow/numeric"
 )
@@ -178,6 +179,54 @@ func NumericLengthBoundOps(key constraint.PathKey, op string, c int64) []Numeric
 		ops = append(ops, NumericOp{Kind: NumericLenLeConst, Key: key, Const: ceil})
 	}
 	return ops
+}
+
+// NumericVarKeyOfSymbol returns the numeric-component key for a scalar symbol.
+// Numeric variables are value cells, so their key is the symbol value key lifted
+// into the numeric domain's PathKey carrier.
+func NumericVarKeyOfSymbol(sym cfg.SymbolID) (constraint.PathKey, bool) {
+	if sym == 0 {
+		return "", false
+	}
+	key := constraint.PathKey(SymbolValueKey(sym))
+	return key, key != ""
+}
+
+// NumericVarGeConstSymbolOp materializes `sym >= c`.
+func NumericVarGeConstSymbolOp(sym cfg.SymbolID, c int64) (NumericOp, bool) {
+	key, ok := NumericVarKeyOfSymbol(sym)
+	if !ok {
+		return NumericOp{}, false
+	}
+	return NumericOp{Kind: NumericVarGeConst, Key: key, Const: c}, true
+}
+
+// NumericVarLeConstSymbolOp materializes `sym <= c`.
+func NumericVarLeConstSymbolOp(sym cfg.SymbolID, c int64) (NumericOp, bool) {
+	key, ok := NumericVarKeyOfSymbol(sym)
+	if !ok {
+		return NumericOp{}, false
+	}
+	return NumericOp{Kind: NumericVarLeConst, Key: key, Const: c}, true
+}
+
+// NumericVarLeLenOffsetSymbolOp materializes `sym <= len(other) + offset`.
+func NumericVarLeLenOffsetSymbolOp(sym cfg.SymbolID, other constraint.PathKey, offset int64) (NumericOp, bool) {
+	key, ok := NumericVarKeyOfSymbol(sym)
+	if !ok || other == "" {
+		return NumericOp{}, false
+	}
+	return NumericOp{Kind: NumericVarLeLenOffset, Key: key, Other: other, Offset: offset}, true
+}
+
+// NumericLenGeConstSymbolOp materializes `len(sym) >= lower` for a bare symbol
+// container.
+func NumericLenGeConstSymbolOp(sym cfg.SymbolID, lower int64) (NumericOp, bool) {
+	key, ok := NumericVarKeyOfSymbol(sym)
+	if !ok {
+		return NumericOp{}, false
+	}
+	return NumericOp{Kind: NumericLenGeConst, Key: key, Const: lower}, true
 }
 
 // NumericLenGeConstPathOp materializes a resolved path length floor as the

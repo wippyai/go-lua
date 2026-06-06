@@ -4660,7 +4660,7 @@ func (t *Transfer) isSymExpr(expr ast.Expr, key flow.ValueKey) bool {
 	if !ok {
 		return false
 	}
-	return flow.SymbolValueKey(t.symbolOf(ident)) == key
+	return flow.ValueKeyMatchesSymbol(key, t.symbolOf(ident))
 }
 
 // applyBranch records the parameter demand a branch condition imposes. Guard

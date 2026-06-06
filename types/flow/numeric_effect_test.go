@@ -96,6 +96,28 @@ func TestNumericLenGeConstPathOpUsesSymbolPathKey(t *testing.T) {
 	}
 }
 
+func TestNumericSymbolOpsUseSymbolValueKeys(t *testing.T) {
+	const sym = cfg.SymbolID(12)
+	wantKey := constraint.PathKey(SymbolValueKey(sym))
+
+	ge, ok := NumericVarGeConstSymbolOp(sym, 1)
+	if !ok || ge.Kind != NumericVarGeConst || ge.Key != wantKey || ge.Const != 1 {
+		t.Fatalf("ge symbol op = %#v/%v, want key=%s const=1", ge, ok, wantKey)
+	}
+	le, ok := NumericVarLeConstSymbolOp(sym, 5)
+	if !ok || le.Kind != NumericVarLeConst || le.Key != wantKey || le.Const != 5 {
+		t.Fatalf("le symbol op = %#v/%v, want key=%s const=5", le, ok, wantKey)
+	}
+	ref, ok := NumericVarLeLenOffsetSymbolOp(sym, "arr", -1)
+	if !ok || ref.Kind != NumericVarLeLenOffset || ref.Key != wantKey || ref.Other != "arr" || ref.Offset != -1 {
+		t.Fatalf("len-ref symbol op = %#v/%v, want key=%s other=arr offset=-1", ref, ok, wantKey)
+	}
+	length, ok := NumericLenGeConstSymbolOp(sym, 3)
+	if !ok || length.Kind != NumericLenGeConst || length.Key != wantKey || length.Const != 3 {
+		t.Fatalf("length symbol op = %#v/%v, want key=%s const=3", length, ok, wantKey)
+	}
+}
+
 func TestNumericLenGeConstIndexedPrefixOps(t *testing.T) {
 	path := constraint.NewPath(cfg.SymbolID(8), "items").
 		IndexInt(2).

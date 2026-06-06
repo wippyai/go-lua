@@ -177,7 +177,8 @@ func (t *Transfer) applyIndexWriteLength(out *flow.PointState, target cfg.Assign
 		})
 		return
 	}
-	if lenSym := t.symbolOf(lenIdent); lenSym == 0 || constraint.PathKey(flow.SymbolValueKey(lenSym)) != arrKey {
+	lenKey, ok := flow.NumericVarKeyOfSymbol(t.symbolOf(lenIdent))
+	if !ok || lenKey != arrKey {
 		flow.ApplyNumericEffect(out, flow.NumericEffect{
 			Ops:             []flow.NumericOp{{Kind: flow.NumericDropLenBound, Key: arrKey}},
 			RequireExisting: true,
@@ -544,18 +545,23 @@ func (t *Transfer) seedNumericForBounds(out *flow.PointState, idxSym cfg.SymbolI
 	if t.forStepIsNegative(info.Step) {
 		ceilEnd, floorEnd = info.Init, info.Limit
 	}
-	idxKey := constraint.PathKey(flow.SymbolValueKey(idxSym))
 	ops := make([]flow.NumericOp, 0, 2)
 	if c, ok := t.constInt(floorEnd); ok {
-		ops = append(ops, flow.NumericOp{Kind: flow.NumericVarGeConst, Key: idxKey, Const: c})
+		if op, ok := flow.NumericVarGeConstSymbolOp(idxSym, c); ok {
+			ops = append(ops, op)
+		}
 	}
 	if c, ok := t.constInt(ceilEnd); ok {
-		ops = append(ops, flow.NumericOp{Kind: flow.NumericVarLeConst, Key: idxKey, Const: c})
+		if op, ok := flow.NumericVarLeConstSymbolOp(idxSym, c); ok {
+			ops = append(ops, op)
+		}
 		flow.ApplyNumericEffect(out, flow.NumericEffect{Ops: ops, RequireExisting: true})
 		return
 	}
 	if arrKey, ok := t.lenExprContainerKey(ceilEnd); ok {
-		ops = append(ops, flow.NumericOp{Kind: flow.NumericVarLeLenOffset, Key: idxKey, Other: arrKey})
+		if op, ok := flow.NumericVarLeLenOffsetSymbolOp(idxSym, arrKey, 0); ok {
+			ops = append(ops, op)
+		}
 	}
 	flow.ApplyNumericEffect(out, flow.NumericEffect{Ops: ops, RequireExisting: true})
 }
@@ -847,7 +853,10 @@ func (t *Transfer) refineIndexRead(
 	if idxSym == 0 {
 		return ev
 	}
-	idxKey := constraint.PathKey(flow.SymbolValueKey(idxSym))
+	idxKey, ok := flow.NumericVarKeyOfSymbol(idxSym)
+	if !ok {
+		return ev
+	}
 
 	if arity, ok := narrow.TupleArity(container); ok {
 		if lower, upper, ok := numeric.BoundsForWithTheory(out.Num, idxKey); ok && lower >= 1 && upper <= arity {
