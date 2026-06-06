@@ -397,12 +397,7 @@ func (t *Transfer) applyClosureReferenceEffect(
 }
 
 func (t *Transfer) applyPrototypeSelfEffect(out *flow.PointState, effect PrototypeSelfEffect) bool {
-	if out == nil || effect.Prototype == 0 || effect.Value.IsZero() {
-		return false
-	}
-	before := out.PrototypeSelf
-	out.PrototypeSelf = out.PrototypeSelf.JoinValue(effect.Prototype, effect.Value)
-	return !flow.PrototypeSelfDomain.Equal(before, out.PrototypeSelf)
+	return prototypes.recordSelf(out, effect.Prototype, effect.Value)
 }
 
 func (t *Transfer) applyPrototypeSelfWriteEffect(out *flow.PointState, effect WriteEffect, updated product.AbstractValue) bool {
