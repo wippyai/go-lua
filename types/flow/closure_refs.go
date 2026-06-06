@@ -336,7 +336,7 @@ func ProjectClosureRefsByReferencePaths(refs ClosureRefs, projection ReferencePa
 // subtree under to.
 func RebaseClosureRefsAddress(refs ClosureRefs, from, to StableAddress) ClosureRefs {
 	if isClosureRefsTop(refs) {
-		return ClosureRefsDomain.Top()
+		return WithClosureRefAddress(nil, to, ClosureRefSetTop())
 	}
 	if len(refs) == 0 || from.Key() == "" || to.Key() == "" {
 		return ClosureRefsDomain.Bottom()

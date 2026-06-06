@@ -327,6 +327,9 @@ func ProjectFunctionRefsByReferencePaths(refs FunctionRefs, projection Reference
 // identities under placeholder paths ($0.f); the caller rebases that subtree onto
 // the concrete assignment target (x.f).
 func RebaseFunctionRefsAddress(refs FunctionRefs, from, to StableAddress) FunctionRefs {
+	if FunctionRefsDomain.Equal(refs, FunctionRefsDomain.Top()) {
+		return WithFunctionRefAddress(nil, to, FunctionRefSetTop())
+	}
 	if len(refs) == 0 || from.Key() == "" || to.Key() == "" {
 		return FunctionRefsDomain.Bottom()
 	}

@@ -138,50 +138,32 @@ func rebaseEntryFunctionRefs(refs flow.FunctionRefs, source, target constraint.P
 	if source.IsEmpty() || target.IsEmpty() {
 		return flow.FunctionRefsDomain.Bottom()
 	}
-	sourceAddr, sourceOK := flow.StableAddressOfPath(source)
-	targetAddr, targetOK := flow.StableAddressOfPath(target)
-	if !sourceOK || !targetOK {
-		return flow.FunctionRefsDomain.Bottom()
-	}
-	if flow.FunctionRefsDomain.Equal(refs, flow.FunctionRefsDomain.Top()) {
-		return flow.WithFunctionRefAddress(nil, targetAddr, flow.FunctionRefSetTop())
-	}
-	return flow.RebaseFunctionRefsAddress(refs, sourceAddr, targetAddr)
+	return flow.RebaseFunctionRefsPath(refs, source, target)
 }
 
 func rebaseEntryClosureRefs(refs flow.ClosureRefs, source, target constraint.Path) flow.ClosureRefs {
 	if source.IsEmpty() || target.IsEmpty() {
 		return flow.ClosureRefsDomain.Bottom()
 	}
-	sourceAddr, sourceOK := flow.StableAddressOfPath(source)
-	targetAddr, targetOK := flow.StableAddressOfPath(target)
-	if !sourceOK || !targetOK {
-		return flow.ClosureRefsDomain.Bottom()
-	}
-	if flow.ClosureRefsDomain.Equal(refs, flow.ClosureRefsDomain.Top()) {
-		return flow.WithClosureRefAddress(nil, targetAddr, flow.ClosureRefSetTop())
-	}
-	return flow.RebaseClosureRefsAddress(refs, sourceAddr, targetAddr)
+	return flow.RebaseClosureRefsPath(refs, source, target)
 }
 
 func joinFunctionRefAt(refs flow.FunctionRefs, path constraint.PathKey, set flow.FunctionRefSet) flow.FunctionRefs {
-	addr, ok := flow.StableAddressFromKey(path)
-	if !ok || set.IsBottom() {
+	if set.IsBottom() {
 		return refs
 	}
-	if prev, ok := flow.FunctionRefAtAddress(refs, addr); ok {
+	if prev, ok := flow.FunctionRefAt(refs, path); ok {
 		set = flow.FunctionRefSetDomain.Join(prev, set)
 	}
-	return flow.WithFunctionRefAddress(refs, addr, set)
+	return flow.WithFunctionRef(refs, path, set)
 }
 
 func joinClosureRefAt(refs flow.ClosureRefs, path constraint.PathKey, set flow.ClosureRefSet) flow.ClosureRefs {
-	addr, ok := flow.StableAddressFromKey(path)
-	if !ok || set.IsBottom() {
+	if set.IsBottom() {
 		return refs
 	}
-	if prev, ok := flow.ClosureRefAtAddress(refs, addr); ok {
+	if prev, ok := flow.ClosureRefAt(refs, path); ok {
 		set = flow.ClosureRefSetDomain.Join(prev, set)
 	}
-	return flow.WithClosureRefAddress(refs, addr, set)
+	return flow.WithClosureRef(refs, path, set)
 }

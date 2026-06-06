@@ -204,6 +204,23 @@ func TestRebaseClosureRefsPathMovesSubtree(t *testing.T) {
 	}
 }
 
+func TestRebaseClosureRefsTopScopesToTarget(t *testing.T) {
+	from := constraint.NewPlaceholder(0)
+	to := constraint.NewPath(cfg.SymbolID(43), "out")
+
+	rebased := RebaseClosureRefsPath(ClosureRefsDomain.Top(), from, to)
+	if ClosureRefsDomain.Equal(rebased, ClosureRefsDomain.Top()) {
+		t.Fatalf("rebased top leaked to global top")
+	}
+	set, ok := ClosureRefAtPath(rebased, to)
+	if !ok || !set.IsTop() {
+		t.Fatalf("target closure ref = %s/%v, want top/true", set.Format(), ok)
+	}
+	if _, ok := ClosureRefAtPath(rebased, constraint.NewPath(cfg.SymbolID(44), "other")); ok {
+		t.Fatalf("rebased top leaked to unrelated path: %#v", rebased)
+	}
+}
+
 func TestApplyClosureRefCellEffectsUpdatesStoredEnvironment(t *testing.T) {
 	sym := cfg.SymbolID(7)
 	path := constraint.NewPath(cfg.SymbolID(42), "fn").Key()

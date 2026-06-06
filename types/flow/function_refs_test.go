@@ -107,6 +107,23 @@ func TestRebaseFunctionRefsPathMovesSubtree(t *testing.T) {
 	}
 }
 
+func TestRebaseFunctionRefsTopScopesToTarget(t *testing.T) {
+	from := constraint.NewPlaceholder(0)
+	to := constraint.NewPath(42, "out")
+
+	rebased := RebaseFunctionRefsPath(FunctionRefsDomain.Top(), from, to)
+	if FunctionRefsDomain.Equal(rebased, FunctionRefsDomain.Top()) {
+		t.Fatalf("rebased top leaked to global top")
+	}
+	set, ok := FunctionRefAtPath(rebased, to)
+	if !ok || !set.IsTop() {
+		t.Fatalf("target ref = %s/%v, want top/true", set.Format(), ok)
+	}
+	if _, ok := FunctionRefAtPath(rebased, constraint.NewPath(43, "other")); ok {
+		t.Fatalf("rebased top leaked to unrelated path: %#v", rebased)
+	}
+}
+
 func TestReplaceFunctionRefSubtreePathClearsAndJoins(t *testing.T) {
 	target := constraint.NewPath(43, "target")
 	child := target.Field("child")
