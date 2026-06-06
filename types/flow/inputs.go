@@ -3,6 +3,7 @@ package flow
 import (
 	"github.com/wippyai/go-lua/types/cfg"
 	"github.com/wippyai/go-lua/types/constraint"
+	"github.com/wippyai/go-lua/types/domain/value/product"
 	"github.com/wippyai/go-lua/types/effect"
 	"github.com/wippyai/go-lua/types/typ"
 )
@@ -403,6 +404,45 @@ type IndexWriteReadQuery struct {
 	Point     cfg.Point
 	View      PathReadView
 	Admission IndexWriteAddressQuery
+}
+
+// IndexWriteReadQueryFromPaths normalizes source paths into the address-domain
+// query consumed by solved index-write facts.
+func IndexWriteReadQueryFromPaths(
+	point cfg.Point,
+	view PathReadView,
+	target constraint.Path,
+	keyPath constraint.Path,
+	keyType typ.Type,
+	valuePath constraint.Path,
+) (IndexWriteReadQuery, bool) {
+	targetAddr, ok := StableAddressOfPath(target)
+	if !ok {
+		return IndexWriteReadQuery{}, false
+	}
+	query := IndexWriteReadQuery{
+		Point:     point,
+		View:      view,
+		Admission: IndexWriteAddressQuery{Target: targetAddr},
+	}
+	if !keyPath.IsEmpty() {
+		keyAddr, ok := StableAddressOfPath(keyPath)
+		if ok {
+			query.Admission.KeyPath = keyAddr
+			query.Admission.HasKeyPath = true
+		}
+	}
+	if !valuePath.IsEmpty() {
+		valueAddr, ok := StableAddressOfPath(valuePath)
+		if ok {
+			query.Admission.ValuePath = valueAddr
+			query.Admission.HasValuePath = true
+		}
+	}
+	if !typ.IsAbsentOrUnknown(keyType) {
+		query.Admission.KeyValue = product.FromType(keyType)
+	}
+	return query, true
 }
 
 // ArrayLiteralLength records a sequence constructor's proven length lower bound.

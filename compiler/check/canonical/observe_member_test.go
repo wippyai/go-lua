@@ -5,7 +5,6 @@ import (
 
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/canonical/state"
-	"github.com/wippyai/go-lua/compiler/check/domain/indexread"
 	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/domain/value"
 	"github.com/wippyai/go-lua/types/domain/value/product"
@@ -139,7 +138,7 @@ func TestCanonicalFactsIndexWriteAdmissionReadsPostState(t *testing.T) {
 	}
 	facts := &canonicalFacts{state: fs}
 
-	query, ok := indexread.IndexWriteReadQueryFromPaths(point, flow.PathReadPost, target, constraint.Path{}, typ.String, constraint.Path{})
+	query, ok := flow.IndexWriteReadQueryFromPaths(point, flow.PathReadPost, target, constraint.Path{}, typ.String, constraint.Path{})
 	if !ok {
 		t.Fatal("index-write query")
 	}
@@ -148,7 +147,7 @@ func TestCanonicalFactsIndexWriteAdmissionReadsPostState(t *testing.T) {
 		t.Fatalf("IndexWriteAdmission = %v/%v, want post-state boolean/true", got, ok)
 	}
 
-	query, ok = indexread.IndexWriteReadQueryFromPaths(point, flow.PathReadPre, target, constraint.Path{}, typ.String, constraint.Path{})
+	query, ok = flow.IndexWriteReadQueryFromPaths(point, flow.PathReadPre, target, constraint.Path{}, typ.String, constraint.Path{})
 	if !ok {
 		t.Fatal("pre-state index-write query")
 	}
