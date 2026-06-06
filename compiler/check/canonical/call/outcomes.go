@@ -191,25 +191,21 @@ type CallbackSpecInput struct {
 // CallbackSpecForCall extracts the callback contract used by call-site cell
 // effect projection.
 func CallbackSpecForCall(in CallbackSpecInput) *contract.Spec {
-	return SpecForCall(SpecInput{
+	return specForCall(specInput{
 		Call:             in.Call,
 		SummarySignature: in.SummarySignature,
 		Resolver:         in.Resolver,
 	})
 }
 
-// SpecInput is the canonical policy for resolving the callable spec attached to
-// one call expression. Summary-known module signatures win; unresolved calls
-// fall back to caller-visible callee/receiver type resolution.
-type SpecInput struct {
+type specInput struct {
 	Call *ast.FuncCallExpr
 
 	SummarySignature func(*ast.FuncCallExpr) typ.Type
 	Resolver         TypeResolver
 }
 
-// SpecForCall resolves the callable contract spec without reading driver state.
-func SpecForCall(in SpecInput) *contract.Spec {
+func specForCall(in specInput) *contract.Spec {
 	if in.Call == nil {
 		return nil
 	}
@@ -245,7 +241,7 @@ type ContainerElementUnionInput struct {
 // call's resolved spec. It returns labels only; transfer owns lowering parameter
 // refs to runtime argument places/values and applying the product mutation.
 func ContainerElementUnionsForCall(in ContainerElementUnionInput) []effect.ContainerElementUnion {
-	spec := SpecForCall(SpecInput{
+	spec := specForCall(specInput{
 		Call:             in.Call,
 		SummarySignature: in.SummarySignature,
 		Resolver:         in.Resolver,
