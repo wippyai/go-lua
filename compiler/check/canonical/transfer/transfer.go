@@ -1308,10 +1308,16 @@ func (t *Transfer) applyFuncDef(out *flow.PointState, info *cfg.FuncDefInfo) {
 func (t *Transfer) functionRefsWriteForFuncDef(info *cfg.FuncDefInfo) functionRefsWrite {
 	if provider, ok := t.funcTyper.(functionRefProvider); ok {
 		if ref, ok := provider.MethodFuncRef(info); ok {
-			return explicitFunctionRefsWrite(flow.WithFunctionRefPath(nil, info.TargetPath, flow.FunctionRefSetOf(ref)))
+			return treeFunctionRefsWrite(flow.FunctionRefTree{
+				Root:    flow.FunctionRefSetOf(ref),
+				HasRoot: true,
+			})
 		}
 		if ref, ok := provider.FuncRef(info.FuncExpr); ok {
-			return explicitFunctionRefsWrite(flow.WithFunctionRefPath(nil, info.TargetPath, flow.FunctionRefSetOf(ref)))
+			return treeFunctionRefsWrite(flow.FunctionRefTree{
+				Root:    flow.FunctionRefSetOf(ref),
+				HasRoot: true,
+			})
 		}
 	}
 	return sourceFunctionRefsWrite()
@@ -1572,8 +1578,7 @@ func (t *Transfer) callReturnReferenceWritesForPlace(
 	if out == nil || call == nil || retIndex < 0 {
 		return callReturnReferenceWrites{}, false
 	}
-	path, ok := place.StaticPath()
-	if !ok || path.IsEmpty() {
+	if path, ok := place.StaticPath(); !ok || path.IsEmpty() {
 		return callReturnReferenceWrites{}, false
 	}
 	returns := t.productCallResult(call, t.productCallContext(out, call, demand)).ReturnRefs
@@ -1582,45 +1587,35 @@ func (t *Transfer) callReturnReferenceWritesForPlace(
 		ClosureRefs:  sourceClosureRefsWrite(),
 	}
 	got := false
-	if refs, ok := rebaseCallReturnFunctionRefs(path, retIndex, returns.FunctionRefs); ok {
-		writes.FunctionRefs = explicitFunctionRefsWrite(refs)
+	if tree, ok := callReturnFunctionRefTree(retIndex, returns.FunctionRefs); ok {
+		writes.FunctionRefs = treeFunctionRefsWrite(tree)
 		got = true
 	}
-	if refs, ok := rebaseCallReturnClosureRefs(path, retIndex, returns.ClosureRefs); ok {
-		writes.ClosureRefs = explicitClosureRefsWrite(refs)
+	if tree, ok := callReturnClosureRefTree(retIndex, returns.ClosureRefs); ok {
+		writes.ClosureRefs = treeClosureRefsWrite(tree)
 		got = true
 	}
 	return writes, got
 }
 
-func rebaseCallReturnFunctionRefs(
-	path constraint.Path,
+func callReturnFunctionRefTree(
 	retIndex int,
 	returns []flow.FunctionRefs,
-) (flow.FunctionRefs, bool) {
+) (flow.FunctionRefTree, bool) {
 	if retIndex >= len(returns) {
-		return nil, false
+		return flow.FunctionRefTree{}, false
 	}
-	rebased := flow.RebaseFunctionRefsPath(returns[retIndex], constraint.NewPlaceholder(retIndex), path)
-	if flow.FunctionRefsDomain.Equal(rebased, flow.FunctionRefsDomain.Bottom()) {
-		return nil, false
-	}
-	return rebased, true
+	return flow.FunctionRefTreeFromSubtreePath(returns[retIndex], constraint.NewPlaceholder(retIndex))
 }
 
-func rebaseCallReturnClosureRefs(
-	path constraint.Path,
+func callReturnClosureRefTree(
 	retIndex int,
 	returns []flow.ClosureRefs,
-) (flow.ClosureRefs, bool) {
+) (flow.ClosureRefTree, bool) {
 	if retIndex >= len(returns) {
-		return nil, false
+		return flow.ClosureRefTree{}, false
 	}
-	rebased := flow.RebaseClosureRefsPath(returns[retIndex], constraint.NewPlaceholder(retIndex), path)
-	if flow.ClosureRefsDomain.Equal(rebased, flow.ClosureRefsDomain.Bottom()) {
-		return nil, false
-	}
-	return rebased, true
+	return flow.ClosureRefTreeFromSubtreePath(returns[retIndex], constraint.NewPlaceholder(retIndex))
 }
 
 func (t *Transfer) recordFunctionRefAt(out *flow.PointState, path constraint.Path, src ast.Expr) {

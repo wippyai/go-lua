@@ -258,6 +258,36 @@ func TestJoinFunctionRefTreePathPublishesWithoutClearingTarget(t *testing.T) {
 	}
 }
 
+func TestFunctionRefTreeFromSubtreePathProjectsRelativeEntries(t *testing.T) {
+	source := constraint.NewPlaceholder(0)
+	child := source.Field("child")
+	other := constraint.NewPlaceholder(1).Field("child")
+	refs := WithFunctionRefPath(nil, source, FunctionRefSetOf(FunctionRef{GraphID: 1}))
+	refs = WithFunctionRefPath(refs, child, FunctionRefSetOf(FunctionRef{GraphID: 2}))
+	refs = WithFunctionRefPath(refs, other, FunctionRefSetOf(FunctionRef{GraphID: 3}))
+
+	tree, ok := FunctionRefTreeFromSubtreePath(refs, source)
+	if !ok {
+		t.Fatal("FunctionRefTreeFromSubtreePath returned no tree")
+	}
+	if !tree.HasRoot {
+		t.Fatalf("tree root missing: %#v", tree)
+	}
+	if ref, singleton := tree.Root.Singleton(); !singleton || ref.GraphID != 1 {
+		t.Fatalf("tree root = %s, want graph 1 singleton", tree.Root.Format())
+	}
+	if len(tree.Entries) != 1 {
+		t.Fatalf("tree entries = %#v, want one child entry", tree.Entries)
+	}
+	entry := tree.Entries[0]
+	if len(entry.Segments) != 1 || entry.Segments[0].Kind != constraint.SegmentField || entry.Segments[0].Name != "child" {
+		t.Fatalf("tree entry segments = %#v, want relative .child", entry.Segments)
+	}
+	if ref, singleton := entry.Set.Singleton(); !singleton || ref.GraphID != 2 {
+		t.Fatalf("tree child set = %s, want graph 2 singleton", entry.Set.Format())
+	}
+}
+
 func TestAssignFunctionRefSubtreePathCopiesAndReplacesTarget(t *testing.T) {
 	source := constraint.NewPath(45, "source")
 	sourceChild := source.Field("child")

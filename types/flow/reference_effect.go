@@ -81,6 +81,50 @@ func functionRefsFromTree(target constraint.Path, tree FunctionRefTree) Function
 	return refs
 }
 
+// FunctionRefTreeFromSubtreePath projects refs under source into a relative
+// tree. Summary return slots use placeholder roots; callers can install the
+// resulting tree at a concrete target without owning address rebasing.
+func FunctionRefTreeFromSubtreePath(refs FunctionRefs, source constraint.Path) (FunctionRefTree, bool) {
+	sourceAddr, ok := StableAddressOfPath(source)
+	if !ok {
+		return FunctionRefTree{}, false
+	}
+	if FunctionRefsDomain.Equal(refs, FunctionRefsDomain.Top()) {
+		return FunctionRefTree{Root: FunctionRefSetTop(), HasRoot: true}, true
+	}
+	if len(refs) == 0 {
+		return FunctionRefTree{}, false
+	}
+	var tree FunctionRefTree
+	for _, key := range constraint.SortedPathKeys(refs) {
+		set := refs[key]
+		if set.IsBottom() {
+			continue
+		}
+		addr, ok := StableAddressFromKey(key)
+		if !ok {
+			continue
+		}
+		remainder, ok := addr.RemainderAfterPrefix(sourceAddr)
+		if !ok {
+			continue
+		}
+		if len(remainder) == 0 {
+			if tree.HasRoot {
+				set = FunctionRefSetDomain.Join(tree.Root, set)
+			}
+			tree.Root = set
+			tree.HasRoot = true
+			continue
+		}
+		tree.Entries = append(tree.Entries, FunctionRefTreeEntry{
+			Segments: append([]constraint.Segment(nil), remainder...),
+			Set:      set,
+		})
+	}
+	return tree, tree.HasRoot || len(tree.Entries) > 0
+}
+
 // AssignFunctionRefSubtreePath copies all function identities rooted at source
 // to target and strongly replaces the target subtree. Flow owns the projection,
 // rebase, and replacement as one reference-axis transaction; syntax-facing
@@ -133,6 +177,49 @@ func closureRefsFromTree(target constraint.Path, tree ClosureRefTree) ClosureRef
 		refs = withClosureRefStructuredPath(refs, appendReferenceTreePath(target, entry.Segments), entry.Set)
 	}
 	return refs
+}
+
+// ClosureRefTreeFromSubtreePath is the closure-reference counterpart of
+// FunctionRefTreeFromSubtreePath.
+func ClosureRefTreeFromSubtreePath(refs ClosureRefs, source constraint.Path) (ClosureRefTree, bool) {
+	sourceAddr, ok := StableAddressOfPath(source)
+	if !ok {
+		return ClosureRefTree{}, false
+	}
+	if ClosureRefsDomain.Equal(refs, ClosureRefsDomain.Top()) {
+		return ClosureRefTree{Root: ClosureRefSetTop(), HasRoot: true}, true
+	}
+	if len(refs) == 0 {
+		return ClosureRefTree{}, false
+	}
+	var tree ClosureRefTree
+	for _, key := range constraint.SortedPathKeys(refs) {
+		set := refs[key]
+		if set.IsBottom() {
+			continue
+		}
+		addr, ok := StableAddressFromKey(key)
+		if !ok {
+			continue
+		}
+		remainder, ok := addr.RemainderAfterPrefix(sourceAddr)
+		if !ok {
+			continue
+		}
+		if len(remainder) == 0 {
+			if tree.HasRoot {
+				set = ClosureRefSetDomain.Join(tree.Root, set)
+			}
+			tree.Root = set
+			tree.HasRoot = true
+			continue
+		}
+		tree.Entries = append(tree.Entries, ClosureRefTreeEntry{
+			Segments: append([]constraint.Segment(nil), remainder...),
+			Set:      set,
+		})
+	}
+	return tree, tree.HasRoot || len(tree.Entries) > 0
 }
 
 func withClosureRefStructuredPath(refs ClosureRefs, path constraint.Path, set ClosureRefSet) ClosureRefs {

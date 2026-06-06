@@ -32,16 +32,19 @@ const (
 	referenceWritePreserve referenceWriteMode = iota
 	referenceWriteFromSource
 	referenceWriteExplicit
+	referenceWriteTree
 )
 
 type functionRefsWrite struct {
 	Mode referenceWriteMode
 	Refs flow.FunctionRefs
+	Tree flow.FunctionRefTree
 }
 
 type closureRefsWrite struct {
 	Mode referenceWriteMode
 	Refs flow.ClosureRefs
+	Tree flow.ClosureRefTree
 }
 
 // ReturnSlotEffect is the transfer payload for one caller-visible return slot.
@@ -96,12 +99,20 @@ func explicitFunctionRefsWrite(refs flow.FunctionRefs) functionRefsWrite {
 	return functionRefsWrite{Mode: referenceWriteExplicit, Refs: refs}
 }
 
+func treeFunctionRefsWrite(tree flow.FunctionRefTree) functionRefsWrite {
+	return functionRefsWrite{Mode: referenceWriteTree, Tree: tree}
+}
+
 func sourceClosureRefsWrite() closureRefsWrite {
 	return closureRefsWrite{Mode: referenceWriteFromSource}
 }
 
 func explicitClosureRefsWrite(refs flow.ClosureRefs) closureRefsWrite {
 	return closureRefsWrite{Mode: referenceWriteExplicit, Refs: refs}
+}
+
+func treeClosureRefsWrite(tree flow.ClosureRefTree) closureRefsWrite {
+	return closureRefsWrite{Mode: referenceWriteTree, Tree: tree}
 }
 
 // CellEffect is the canonical reducer payload for applying captured-cell effects
@@ -279,6 +290,11 @@ func (t *Transfer) applyFunctionReferenceEffect(
 		t.recordFunctionRefAt(out, path, src)
 	case referenceWriteExplicit:
 		return flow.ReplaceFunctionRefSubtreePath(out, path, write.Refs)
+	case referenceWriteTree:
+		if !exact {
+			return flow.ClearFunctionRefSubtreePath(out, path)
+		}
+		return flow.ReplaceFunctionRefTreePath(out, path, write.Tree)
 	default:
 		return false
 	}
@@ -303,6 +319,11 @@ func (t *Transfer) applyClosureReferenceEffect(
 		t.recordClosureRefAt(out, path, src)
 	case referenceWriteExplicit:
 		return flow.ReplaceClosureRefSubtreePath(out, path, write.Refs)
+	case referenceWriteTree:
+		if !exact {
+			return flow.ClearClosureRefSubtreePath(out, path)
+		}
+		return flow.ReplaceClosureRefTreePath(out, path, write.Tree)
 	default:
 		return false
 	}
