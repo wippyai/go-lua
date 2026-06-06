@@ -35,7 +35,7 @@ func (t *Transfer) applyConditionEffect(out *flow.PointState, effect ConditionEf
 	if t.applyVariantOriginConditionReductions(out, effect.Fact) {
 		changed = true
 	}
-	if t.applyVariantCaseFieldProjections(out, effect.Fact) {
+	if flow.ApplyVariantCaseFieldProjections(out, effect.Fact, t.in.VariantCaseFieldProjections) {
 		changed = true
 	}
 	if t.applyValueConditionReductions(out, effect.Fact) {
@@ -276,18 +276,6 @@ func (t *Transfer) variantOriginValueForCase(av product.AbstractValue, sym cfg.S
 	}
 	next, changed := product.NarrowVariantOriginCase(av, family, caseIndex, equal)
 	return next, changed
-}
-
-func (t *Transfer) applyVariantCaseFieldProjections(out *flow.PointState, fact constraint.Condition) bool {
-	if t == nil || out == nil {
-		return false
-	}
-	projected := flow.VariantCaseFieldProjectionValues(*out, fact, t.in.VariantCaseFieldProjections)
-	changed := false
-	for _, entry := range projected {
-		changed = flow.SetStaticMemberPath(out, entry.Path, entry.Value) || changed
-	}
-	return changed
 }
 
 func variantOriginConditionSymbols(fact constraint.Condition) []cfg.SymbolID {

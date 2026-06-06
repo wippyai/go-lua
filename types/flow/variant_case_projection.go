@@ -55,6 +55,22 @@ func VariantCaseFieldProjectionValues(
 	return out
 }
 
+// ApplyVariantCaseFieldProjections materializes payload-field projections proven
+// by the current variant-origin condition into the point-state static member
+// domain. This keeps the selected-variant projection law inside flow, next to
+// the projection reader and static-member writer it composes.
+func ApplyVariantCaseFieldProjections(out *PointState, fact constraint.Condition, projections []VariantCaseFieldProjection) bool {
+	if out == nil {
+		return false
+	}
+	projected := VariantCaseFieldProjectionValues(*out, fact, projections)
+	changed := false
+	for _, entry := range projected {
+		changed = SetStaticMemberPath(out, entry.Path, entry.Value) || changed
+	}
+	return changed
+}
+
 func variantCaseFieldProjectionValuesForDisjunct(
 	state PointState,
 	constraints []constraint.Constraint,

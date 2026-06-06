@@ -190,6 +190,45 @@ func TestVariantCaseFieldProjectionValuesJoinSelectedPayloads(t *testing.T) {
 	}
 }
 
+func TestApplyVariantCaseFieldProjectionsWritesStaticMemberFact(t *testing.T) {
+	resultSym := cfg.SymbolID(14)
+	sourceSym := cfg.SymbolID(15)
+	family := uint64(92)
+	result := constraint.Path{Root: "selected", Symbol: resultSym}
+	source := constraint.Path{Root: "events", Symbol: sourceSym}
+	payload := typ.NewRecord().Field("id", typ.String).Build()
+	channel := typ.NewGeneric("Channel", []*typ.TypeParam{typ.NewTypeParam("T", nil)}, typ.NewInterface("Channel", nil))
+	state := PointState{
+		Env: map[ValueKey]product.AbstractValue{
+			SymbolValueKey(sourceSym): product.FromType(typ.Instantiate(channel, payload)),
+		},
+	}
+	SetStaticMemberPath(&state, result.Field("value").Field("id"), product.FromType(typ.String))
+
+	changed := ApplyVariantCaseFieldProjections(&state,
+		constraint.FromConstraints(constraint.VariantCaseEquals{Target: result, OriginFamily: family, CaseIndex: 0}),
+		[]VariantCaseFieldProjection{{
+			Target:       result,
+			Field:        "value",
+			Source:       source,
+			SourceSteps:  []effect.TypeProjectionStep{effect.ProjectGenericArg(0)},
+			OriginFamily: family,
+			CaseIndex:    0,
+		}},
+	)
+	if !changed {
+		t.Fatal("ApplyVariantCaseFieldProjections reported no change")
+	}
+	valueFact, ok := PointFactsOf(state).PathValue(result.Field("value"))
+	if !ok || !typ.TypeEquals(valueFact.ProjectValue(), payload) {
+		t.Fatalf("projected value = %v/%v, want payload record", valueFact.ProjectValue(), ok)
+	}
+	childFact, ok := PointFactsOf(state).PathValue(result.Field("value").Field("id"))
+	if !ok || !typ.TypeEquals(childFact.ProjectValue(), typ.String) {
+		t.Fatalf("existing projected child = %v/%v, want string", childFact.ProjectValue(), ok)
+	}
+}
+
 func variantOriginForTest(family uint64, caseIndex int) VariantFieldOrigin {
 	return VariantFieldOrigin{
 		Target: constraint.Path{
