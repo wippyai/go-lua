@@ -191,14 +191,6 @@ func (ct callTyper) callEntryValuesForRef(ref summary.FuncRef, call *ast.FuncCal
 	return projector.valuesForRef(ref, call, exprType)
 }
 
-func (ct callTyper) callEntrySlotType(ref summary.FuncRef, call *ast.FuncCallExpr, runtimeValues []product.AbstractValue, entryValues summary.EntryValues, slot int) typ.Type {
-	projector, ok := ct.callEntryProjector()
-	if !ok {
-		return nil
-	}
-	return projector.slotType(ref, call, runtimeValues, entryValues, slot)
-}
-
 func (c callEntryProjector) slotType(ref summary.FuncRef, call *ast.FuncCallExpr, runtimeValues []product.AbstractValue, entryValues summary.EntryValues, slot int) typ.Type {
 	if slot < 0 {
 		return nil

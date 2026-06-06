@@ -5,6 +5,8 @@ import (
 	canonicalcall "github.com/wippyai/go-lua/compiler/check/canonical/call"
 	"github.com/wippyai/go-lua/compiler/check/canonical/summary"
 	"github.com/wippyai/go-lua/compiler/check/canonical/transfer"
+	"github.com/wippyai/go-lua/compiler/check/domain/callobligation"
+	"github.com/wippyai/go-lua/compiler/check/domain/paramevidence"
 	"github.com/wippyai/go-lua/types/domain/value/product"
 	"github.com/wippyai/go-lua/types/flow"
 	"github.com/wippyai/go-lua/types/typ"
@@ -94,6 +96,51 @@ func (p productCallProjection) returnRefs() transfer.CallReturnRefs {
 
 func (p productCallProjection) returnRelations() flow.ReturnRelations {
 	return p.outcome.ReturnRelations(p.call, p.typer.callTypeResolver(p.ctx.ExprType), p.ctx.ExprValue != nil)
+}
+
+func (p productCallProjection) argDemands() ([]callobligation.Obligation, bool) {
+	targets := p.demandTargets()
+	if len(targets) == 0 {
+		return nil, false
+	}
+	return canonicalcall.DemandsForCallTargets(p.call, targets), true
+}
+
+func (p productCallProjection) demandTargets() []paramevidence.CallArgDemandTarget {
+	d := p.typer.d
+	if d == nil || d.activeProgram == nil || p.call == nil || len(p.call.Args) == 0 || !p.outcome.HasTargets() {
+		return nil
+	}
+	prog := d.activeProgram
+	projector, ok := p.typer.callEntryProjector()
+	if !ok {
+		return nil
+	}
+	currentRef, hasCurrentRef := p.typer.currentRef()
+	targets := p.outcome.Targets()
+	out := make([]paramevidence.CallArgDemandTarget, 0, len(targets))
+	for _, target := range targets {
+		ref := target.Ref
+		if hasCurrentRef && ref == currentRef {
+			continue
+		}
+		fn := prog.funcExpr(ref)
+		out = append(out, paramevidence.CallArgDemandTarget{
+			Graph:     prog.Graph(ref),
+			Function:  fn,
+			Contracts: prog.publicPredicateContracts(ref, target.Summary.Params),
+			DeclaredSlotType: func(slot int) typ.Type {
+				return prog.paramSlotDeclaredType(ref, slot)
+			},
+			EntrySlotType: func(slot int) typ.Type {
+				return projector.slotType(ref, p.call, p.ctx.RuntimeArgValues, target.EntryValues, slot)
+			},
+			SourceParamAnnotated: func(sourceParam int) bool {
+				return paramevidence.SourceParamAnnotated(fn, sourceParam)
+			},
+		})
+	}
+	return out
 }
 
 func (p productCallProjection) cellEffects(projector cellEffectProjector) flow.CaptureEffects {

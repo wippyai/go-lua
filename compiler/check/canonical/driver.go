@@ -2462,7 +2462,11 @@ func (ct callTyper) CallArgDemands(call *ast.FuncCallExpr, ctx transfer.ProductC
 	return canonicalcall.CallArgDemandsForCall(canonicalcall.CallArgDemandsInput{
 		Call: call,
 		SummaryDemands: func(call *ast.FuncCallExpr) ([]callobligation.Obligation, bool) {
-			return ct.moduleCallArgDemands(call, ctx)
+			proj, ok := ct.summaryOnlyProductCallProjection(call, ctx)
+			if !ok {
+				return nil, false
+			}
+			return proj.argDemands()
 		},
 		FunctionShape: func(call *ast.FuncCallExpr) *typ.Function {
 			return ct.callFunctionForDemand(call, ctx.ExprType)
@@ -2471,47 +2475,6 @@ func (ct callTyper) CallArgDemands(call *ast.FuncCallExpr, ctx transfer.ProductC
 			return ctx.SelfType
 		},
 	})
-}
-
-func (ct callTyper) moduleCallArgDemands(call *ast.FuncCallExpr, ctx transfer.ProductCallContext) ([]callobligation.Obligation, bool) {
-	d := ct.d
-	if d == nil || d.activeProgram == nil || call == nil || len(call.Args) == 0 {
-		return nil, false
-	}
-	prog := d.activeProgram
-	proj, ok := ct.summaryOnlyProductCallProjection(call, ctx)
-	if !ok || !proj.outcome.HasTargets() {
-		return nil, false
-	}
-	targets := proj.outcome.Targets()
-	currentRef, hasCurrentRef := ct.currentRef()
-	projectionTargets := make([]paramevidence.CallArgDemandTarget, 0, len(targets))
-	for _, target := range targets {
-		ref := target.Ref
-		if hasCurrentRef && ref == currentRef {
-			continue
-		}
-		localRef := ref
-		localFn := prog.funcExpr(localRef)
-		projectionTargets = append(projectionTargets, paramevidence.CallArgDemandTarget{
-			Graph:     prog.Graph(localRef),
-			Function:  localFn,
-			Contracts: prog.publicPredicateContracts(localRef, target.Summary.Params),
-			DeclaredSlotType: func(slot int) typ.Type {
-				return prog.paramSlotDeclaredType(localRef, slot)
-			},
-			EntrySlotType: func(slot int) typ.Type {
-				return ct.callEntrySlotType(localRef, call, ctx.RuntimeArgValues, target.EntryValues, slot)
-			},
-			SourceParamAnnotated: func(sourceParam int) bool {
-				return paramevidence.SourceParamAnnotated(localFn, sourceParam)
-			},
-		})
-	}
-	if len(projectionTargets) == 0 {
-		return nil, false
-	}
-	return canonicalcall.DemandsForCallTargets(call, projectionTargets), true
 }
 
 func (ct callTyper) currentRef() (summary.FuncRef, bool) {
