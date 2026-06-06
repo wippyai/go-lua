@@ -7,6 +7,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/domain/callobligation"
 	"github.com/wippyai/go-lua/compiler/check/domain/globalenv"
+	"github.com/wippyai/go-lua/compiler/check/scope"
 	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/flow"
 	"github.com/wippyai/go-lua/types/typ"
@@ -196,6 +197,66 @@ func TestFuncResultLiteralSignatureLookupNormalizesExternalMap(t *testing.T) {
 	if got := result.LiteralSignatureLookup().Lookup(fn); got != want {
 		t.Fatalf("LiteralSignatureLookup external map projection = %v, want map signature", got)
 	}
+}
+
+func TestObservationStateNormalizesSolvedResultSurfaces(t *testing.T) {
+	fn := &ast.FunctionExpr{}
+	literal := typ.Func().Returns(typ.String).Build()
+	flowProjection := mockSolvedFlow{}
+	resolve := func(ast.TypeExpr, *scope.State) typ.Type { return typ.Boolean }
+	result := &FuncResult{
+		Facts:          resultSurfaceFacts{},
+		FlowProjection: flowProjection,
+		NarrowSynth:    observationStateSynth{mockSynth: &mockSynth{}, resolve: resolve},
+		GlobalTypeBindings: globalenv.TypeOverlay{
+			{Name: globalenv.Name("decode"), Type: typ.Number},
+		},
+		LiteralSignatureProvider: LiteralSigsLookup{fn: literal},
+	}
+
+	state := result.ObservationState()
+	if state.Flow != flowProjection {
+		t.Fatalf("ObservationState.Flow = %#v, want solved flow projection", state.Flow)
+	}
+	if state.Facts != result.Facts {
+		t.Fatal("ObservationState.Facts did not preserve result facts")
+	}
+	if got := state.LiteralSignatureProvider.Lookup(fn); got != literal {
+		t.Fatalf("ObservationState literal signature = %v, want %v", got, literal)
+	}
+	if got, ok := state.GlobalTypeOverlay.Type("decode"); !ok || !typ.TypeEquals(got, typ.Number) {
+		t.Fatalf("ObservationState overlay = %v/%v, want number/true", got, ok)
+	}
+	state.GlobalTypeOverlay[0].Type = typ.String
+	if got, ok := result.GlobalTypeOverlay().Type("decode"); !ok || !typ.TypeEquals(got, typ.Number) {
+		t.Fatalf("mutating ObservationState overlay changed result: %v/%v", got, ok)
+	}
+	if state.ResolveType == nil || !typ.TypeEquals(state.ResolveType(nil, nil), typ.Boolean) {
+		t.Fatalf("ObservationState resolver missing or wrong")
+	}
+
+	viewState := ViewFromResult(result).ObservationState()
+	if viewState.Flow != flowProjection {
+		t.Fatalf("view ObservationState.Flow = %#v, want solved flow projection", viewState.Flow)
+	}
+	if got := viewState.LiteralSignatureProvider.Lookup(fn); got != literal {
+		t.Fatalf("view ObservationState literal signature = %v, want %v", got, literal)
+	}
+	if got, ok := viewState.GlobalTypeOverlay.Type("decode"); !ok || !typ.TypeEquals(got, typ.Number) {
+		t.Fatalf("view ObservationState overlay = %v/%v, want number/true", got, ok)
+	}
+}
+
+type observationStateSynth struct {
+	*mockSynth
+	resolve func(ast.TypeExpr, *scope.State) typ.Type
+}
+
+func (s observationStateSynth) ResolveType(expr ast.TypeExpr, sc *scope.State) typ.Type {
+	if s.resolve == nil {
+		return nil
+	}
+	return s.resolve(expr, sc)
 }
 
 type mockSolvedFlow struct {

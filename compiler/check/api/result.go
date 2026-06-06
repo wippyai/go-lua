@@ -381,6 +381,82 @@ type FuncAnalysisView struct {
 	ClassFamilyJoin          func(existing, candidate typ.Type) typ.Type
 }
 
+// SolvedObservationState is the producer-neutral solved-state bundle consumed
+// by expression observation. FuncResult and FuncAnalysisView normalize into this
+// shape so observation does not duplicate carrier-specific field plumbing.
+type SolvedObservationState struct {
+	Graph                    *cfg.Graph
+	Bindings                 *bind.BindingTable
+	Scopes                   map[cfg.Point]*scope.State
+	DefaultScope             *scope.State
+	Facts                    flow.TypeFacts
+	Inputs                   *flow.Inputs
+	Flow                     FlowOps
+	Ctx                      *db.QueryContext
+	TypeOps                  core.TypeOps
+	LiteralSignatureProvider LiteralSignatureLookup
+	GlobalTypeOverlay        globalenv.TypeOverlay
+	RecursiveFamilies        *typ.RecursiveFamilyInterner
+	ClassFamilyJoin          func(existing, candidate typ.Type) typ.Type
+	ResolveType              func(ast.TypeExpr, *scope.State) typ.Type
+}
+
+// ObservationState returns the normalized solved-state bundle for expression
+// observation from a complete function result.
+func (r *FuncResult) ObservationState() SolvedObservationState {
+	if r == nil {
+		return SolvedObservationState{}
+	}
+	bindings := r.ModuleBindings
+	if r.Graph != nil && r.Graph.Bindings() != nil {
+		bindings = r.Graph.Bindings()
+	}
+	state := SolvedObservationState{
+		Graph:                    r.Graph,
+		Bindings:                 bindings,
+		Scopes:                   r.Scopes,
+		DefaultScope:             r.BaseScope,
+		Facts:                    r.Facts,
+		Inputs:                   r.FlowInputs,
+		Flow:                     r.SolvedFlow(),
+		Ctx:                      r.QueryContext,
+		TypeOps:                  r.TypeOps,
+		LiteralSignatureProvider: r.LiteralSignatureLookup(),
+		GlobalTypeOverlay:        r.GlobalTypeOverlay(),
+		RecursiveFamilies:        r.RecursiveFamilies,
+		ClassFamilyJoin:          r.ClassFamilyJoin,
+	}
+	if r.NarrowSynth != nil {
+		state.ResolveType = r.NarrowSynth.ResolveType
+	}
+	return state
+}
+
+// ObservationState returns the normalized solved-state bundle for expression
+// observation from a stable function-analysis view.
+func (r *FuncAnalysisView) ObservationState() SolvedObservationState {
+	if r == nil {
+		return SolvedObservationState{}
+	}
+	state := SolvedObservationState{
+		Graph:                    r.Graph,
+		Scopes:                   r.Scopes,
+		Facts:                    r.Facts,
+		Inputs:                   r.FlowInputs,
+		Flow:                     r.SolvedFlow(),
+		Ctx:                      r.QueryContext,
+		TypeOps:                  r.TypeOps,
+		LiteralSignatureProvider: r.LiteralSignatureLookup(),
+		GlobalTypeOverlay:        r.GlobalTypeOverlay(),
+		RecursiveFamilies:        r.RecursiveFamilies,
+		ClassFamilyJoin:          r.ClassFamilyJoin,
+	}
+	if r.NarrowSynth != nil {
+		state.ResolveType = r.NarrowSynth.ResolveType
+	}
+	return state
+}
+
 // ViewFromResult constructs the nested-processing view from a full result.
 func ViewFromResult(r *FuncResult) *FuncAnalysisView {
 	if r == nil {

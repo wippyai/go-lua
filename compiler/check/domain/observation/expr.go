@@ -213,50 +213,35 @@ func (p Projector) RuntimeIndex(t typ.Type, key typ.Type) (typ.Type, bool) {
 // FromFuncResult returns the solved-state observation projector for a completed
 // function analysis result.
 func FromFuncResult(result *api.FuncResult, functionType SymbolTypeLookup) Projector {
-	cfg := Config{FunctionType: functionType}
-	if result != nil {
-		cfg.Graph = result.Graph
-		cfg.Bindings = result.ModuleBindings
-		if result.Graph != nil && result.Graph.Bindings() != nil {
-			cfg.Bindings = result.Graph.Bindings()
-		}
-		cfg.Scopes = result.Scopes
-		cfg.DefaultScope = result.BaseScope
-		cfg.Facts = result.Facts
-		cfg.Inputs = result.FlowInputs
-		cfg.Flow = result.SolvedFlow()
-		cfg.LiteralSignatureProvider = result.LiteralSignatureLookup()
-		cfg.Ctx = result.QueryContext
-		cfg.TypeOps = result.TypeOps
-		cfg.GlobalTypeOverlay = result.GlobalTypeOverlay()
-		cfg.RecursiveFamilies = result.RecursiveFamilies
-		cfg.ClassFamilyJoin = result.ClassFamilyJoin
-		if result.NarrowSynth != nil {
-			cfg.ResolveType = result.NarrowSynth.ResolveType
-		}
-	}
-	return New(cfg)
+	return FromSolvedObservationState(result.ObservationState(), functionType)
 }
 
 // FromAnalysisView returns the solved-state observation projector for a stable
 // function-analysis view.
 func FromAnalysisView(result *api.FuncAnalysisView, functionType SymbolTypeLookup) Projector {
-	cfg := Config{FunctionType: functionType}
-	if result != nil {
-		cfg.Graph = result.Graph
-		cfg.Scopes = result.Scopes
-		cfg.Facts = result.Facts
-		cfg.Inputs = result.FlowInputs
-		cfg.Flow = result.SolvedFlow()
-		cfg.Ctx = result.QueryContext
-		cfg.TypeOps = result.TypeOps
-		cfg.GlobalTypeOverlay = result.GlobalTypeOverlay()
-		cfg.LiteralSignatureProvider = result.LiteralSignatureLookup()
-		cfg.RecursiveFamilies = result.RecursiveFamilies
-		cfg.ClassFamilyJoin = result.ClassFamilyJoin
-		if result.NarrowSynth != nil {
-			cfg.ResolveType = result.NarrowSynth.ResolveType
-		}
+	return FromSolvedObservationState(result.ObservationState(), functionType)
+}
+
+// FromSolvedObservationState returns an observation projector from the normalized
+// API state bundle. Result-like producers should normalize once into this shape
+// instead of teaching observation about their storage layout.
+func FromSolvedObservationState(state api.SolvedObservationState, functionType SymbolTypeLookup) Projector {
+	cfg := Config{
+		Graph:                    state.Graph,
+		Bindings:                 state.Bindings,
+		Scopes:                   state.Scopes,
+		DefaultScope:             state.DefaultScope,
+		Facts:                    state.Facts,
+		Inputs:                   state.Inputs,
+		Flow:                     state.Flow,
+		Ctx:                      state.Ctx,
+		TypeOps:                  state.TypeOps,
+		LiteralSignatureProvider: state.LiteralSignatureProvider,
+		FunctionType:             functionType,
+		ResolveType:              state.ResolveType,
+		GlobalTypeOverlay:        state.GlobalTypeOverlay,
+		RecursiveFamilies:        state.RecursiveFamilies,
+		ClassFamilyJoin:          state.ClassFamilyJoin,
 	}
 	return New(cfg)
 }
