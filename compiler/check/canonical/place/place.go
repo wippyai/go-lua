@@ -148,6 +148,16 @@ func (p Place) WriteFootprint(
 	return loc.WriteFootprint(presentElementWrite, written)
 }
 
+// FinalDynamicIndexTargetPath projects the table path for writes whose final
+// access step is dynamic, such as rows[id] = value.
+func (p Place) FinalDynamicIndexTargetPath() (constraint.Path, bool) {
+	loc, ok := p.Location()
+	if !ok {
+		return constraint.Path{}, false
+	}
+	return loc.FinalDynamicIndexTargetPath()
+}
+
 // UpdateRootValue applies update at p inside root and returns the rebuilt root.
 func (p Place) UpdateRootValue(root product.AbstractValue, update ValueUpdater) (product.AbstractValue, bool) {
 	if update == nil {

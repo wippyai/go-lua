@@ -18,7 +18,7 @@ func (t *Transfer) dynamicIndexWriteProof(
 	if effect.IndexTarget.Kind != cfg.TargetIndex || effect.IndexTarget.Key == nil {
 		return flow.MapWriteProof{}, false
 	}
-	targetPath, ok := indexWriteTargetPath(effect.Place)
+	targetPath, ok := effect.Place.FinalDynamicIndexTargetPath()
 	if !ok || targetPath.IsEmpty() {
 		return flow.MapWriteProof{}, false
 	}
@@ -108,21 +108,6 @@ func (t *Transfer) refineByIndexWriteAdmission(
 		return product.AbstractValue{}, false
 	}
 	return admitted, true
-}
-
-func indexWriteTargetPath(place Place) (constraint.Path, bool) {
-	if place.Root == 0 || len(place.Steps) == 0 {
-		return constraint.Path{}, false
-	}
-	if place.Steps[len(place.Steps)-1].Kind != PlaceStepDynamicIndex {
-		return constraint.Path{}, false
-	}
-	prefix := Place{
-		Root:     place.Root,
-		RootName: place.RootName,
-		Steps:    append([]PlaceStep(nil), place.Steps[:len(place.Steps)-1]...),
-	}
-	return prefix.StaticPath()
 }
 
 func (t *Transfer) indexWriteTargetSealed(path constraint.Path) bool {

@@ -653,7 +653,7 @@ func (t *Transfer) applyWriteEffectWithAliasReplay(out *flow.PointState, effect 
 	admittedIndexKey := product.AbstractValue{}
 	admittedIndexValue := product.AbstractValue{}
 	sealedIndexTarget := false
-	if targetPath, ok := indexWriteTargetPath(effect.Place); ok {
+	if targetPath, ok := effect.Place.FinalDynamicIndexTargetPath(); ok {
 		sealedIndexTarget = t.indexWriteTargetSealed(targetPath)
 	}
 	if !sealedIndexTarget && effect.IndexTarget.Kind == cfg.TargetIndex {

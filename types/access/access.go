@@ -113,6 +113,23 @@ func (l Location) WriteFootprint(presentElementWrite bool, written product.Abstr
 	return footprint, true
 }
 
+// FinalDynamicIndexTargetPath returns the table path targeted by a write whose
+// final access step is dynamic, such as rows[id] = value.
+func (l Location) FinalDynamicIndexTargetPath() (constraint.Path, bool) {
+	if l.Root == 0 || len(l.Steps) == 0 {
+		return constraint.Path{}, false
+	}
+	if l.Steps[len(l.Steps)-1].Kind != StepDynamicIndex {
+		return constraint.Path{}, false
+	}
+	target := Location{
+		Root:     l.Root,
+		RootName: l.RootName,
+		Steps:    append([]Step(nil), l.Steps[:len(l.Steps)-1]...),
+	}
+	return target.StaticPath()
+}
+
 // PresentElementMemberFootprint reports the array path and static member suffix
 // for writes like rows[k].id. The dynamic element itself is the write boundary;
 // member facts below it are preserved/killed relative to the array element.

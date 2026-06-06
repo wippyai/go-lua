@@ -131,3 +131,47 @@ func TestWriteFootprintFinalDynamicHasNoMemberFootprint(t *testing.T) {
 		t.Fatalf("unexpected member footprint: %#v", footprint)
 	}
 }
+
+func TestFinalDynamicIndexTargetPathProjectsTable(t *testing.T) {
+	t.Parallel()
+
+	loc := Location{
+		Root:     cfg.SymbolID(11),
+		RootName: "rows",
+		Steps: []Step{
+			{Kind: StepStaticMember, Member: value.MemberField("items")},
+			{Kind: StepDynamicIndex, Key: product.FromType(typ.LiteralString("bucket"))},
+			{Kind: StepStaticMember, Member: value.MemberField("by_id")},
+			{Kind: StepDynamicIndex, Key: product.FromType(typ.Unknown)},
+		},
+	}
+
+	path, ok := loc.FinalDynamicIndexTargetPath()
+	if !ok {
+		t.Fatal("FinalDynamicIndexTargetPath() failed")
+	}
+	want := constraint.NewPath(cfg.SymbolID(11), "rows").
+		Field("items").
+		IndexStr("bucket").
+		Field("by_id")
+	if !path.Equal(want) {
+		t.Fatalf("path = %v, want %v", path, want)
+	}
+}
+
+func TestFinalDynamicIndexTargetPathRejectsStaticFinalStep(t *testing.T) {
+	t.Parallel()
+
+	loc := Location{
+		Root:     cfg.SymbolID(12),
+		RootName: "rows",
+		Steps: []Step{
+			{Kind: StepStaticMember, Member: value.MemberField("items")},
+			{Kind: StepStaticMember, Member: value.MemberField("name")},
+		},
+	}
+
+	if _, ok := loc.FinalDynamicIndexTargetPath(); ok {
+		t.Fatal("FinalDynamicIndexTargetPath() succeeded for non-dynamic final step")
+	}
+}

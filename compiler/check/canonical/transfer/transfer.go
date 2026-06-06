@@ -1459,7 +1459,7 @@ func (t *Transfer) symbolicDynamicIndexWriteValue(
 }
 
 func (t *Transfer) expectedContainerWriteValueType(place Place) typ.Type {
-	targetPath, ok := indexWriteTargetPath(place)
+	targetPath, ok := place.FinalDynamicIndexTargetPath()
 	if !ok || targetPath.IsEmpty() || len(place.Steps) == 0 {
 		return nil
 	}
