@@ -886,9 +886,15 @@ func (t *Transfer) SeedEntryFacts(out *flow.PointState, facts flow.BoundaryFacts
 		if !ok {
 			continue
 		}
-		arrayKey := flow.KeyPresencePathKey(array)
-		tableKey := flow.KeyPresencePathKey(table)
-		out.KeyPresence = out.KeyPresence.WithKeyArrayValue(arrayKey, tableKey, fact.Value)
+		arrayAddr, arrayOK := flow.StableAddressOfPath(array)
+		tableAddr, tableOK := flow.StableAddressOfPath(table)
+		if arrayOK && tableOK {
+			flow.ApplyKeyArrayValueProof(out, flow.KeyArrayValueProof{
+				Array: arrayAddr,
+				Table: tableAddr,
+				Value: fact.Value,
+			})
+		}
 	}
 	for _, fact := range facts.AppendKeys() {
 		array, ok := t.rebaseEntryBoundaryPath(fact.Array)
@@ -902,7 +908,10 @@ func (t *Transfer) SeedEntryFacts(out *flow.PointState, facts flow.BoundaryFacts
 		arrayAddr, arrayOK := flow.StableAddressOfPath(array)
 		keyAddr, keyOK := flow.StableAddressOfPath(key)
 		if arrayOK && keyOK {
-			out.KeyPresence = out.KeyPresence.WithAppendedKeyAddresses(arrayAddr, keyAddr)
+			flow.ApplyAppendKeyProof(out, flow.AppendKeyProof{
+				Array: arrayAddr,
+				Key:   keyAddr,
+			})
 		}
 	}
 	for _, fact := range facts.AppendElementFieldOrigins() {
@@ -3564,11 +3573,16 @@ func (t *Transfer) applyBoundaryFactsWithAppendPlans(
 		if !ok {
 			continue
 		}
-		arrayKey := flow.KeyPresencePathKey(array)
-		tableKey := flow.KeyPresencePathKey(table)
-		before := out.KeyPresence
-		out.KeyPresence = out.KeyPresence.WithKeyArrayValue(arrayKey, tableKey, fact.Value)
-		changed = !flow.KeyPresenceFactsDomain.Equal(before, out.KeyPresence) || changed
+		arrayAddr, arrayOK := flow.StableAddressOfPath(array)
+		tableAddr, tableOK := flow.StableAddressOfPath(table)
+		if !arrayOK || !tableOK {
+			continue
+		}
+		changed = flow.ApplyKeyArrayValueProof(out, flow.KeyArrayValueProof{
+			Array: arrayAddr,
+			Table: tableAddr,
+			Value: fact.Value,
+		}) || changed
 	}
 	changed = t.applyBoundaryAppendKeyPlans(out, appendPlans) || changed
 	for _, fact := range facts.AppendElementFieldOrigins() {
@@ -3626,25 +3640,36 @@ func (t *Transfer) applyBoundaryAppendKeyPlans(out *flow.PointState, plans []bou
 		beforeKill := out.KeyPresence
 		out.KeyPresence = out.KeyPresence.KillAffectedByWriteAddress(arrayAddr)
 		changed = !flow.KeyPresenceFactsDomain.Equal(beforeKill, out.KeyPresence) || changed
-		beforeAppend := out.KeyPresence
-		out.KeyPresence = out.KeyPresence.WithAppendedKeyAddresses(arrayAddr, keyAddr)
-		changed = !flow.KeyPresenceFactsDomain.Equal(beforeAppend, out.KeyPresence) || changed
 		if preserveAppendHistoryBase {
 			before := out.KeyPresence
-			out.KeyPresence = out.KeyPresence.WithAppendHistoryBaseAddress(arrayAddr).WithAppendHistoryEvent(arrayKey, keyKey)
+			out.KeyPresence = out.KeyPresence.WithAppendHistoryBaseAddress(arrayAddr)
 			changed = !flow.KeyPresenceFactsDomain.Equal(before, out.KeyPresence) || changed
 		}
+		changed = flow.ApplyAppendKeyProof(out, flow.AppendKeyProof{
+			Array: arrayAddr,
+			Key:   keyAddr,
+		}) || changed
 		for _, table := range tables {
 			if table == "" || !out.KeyPresence.Has(table, keyKey) {
 				continue
 			}
-			before := out.KeyPresence
-			out.KeyPresence = out.KeyPresence.WithKeyArray(arrayKey, table)
-			if value, ok := t.boundaryAppendKeyValue(out, table, plan.key); ok {
-				out.KeyPresence = out.KeyPresence.WithKeyArrayValue(arrayKey, table, value)
-				out.KeyPresence = out.KeyPresence.WithAppendHistoryCoverage(arrayKey, keyKey, table, value)
+			tableAddr, ok := flow.StableAddressFromKey(table)
+			if !ok {
+				continue
 			}
-			changed = !flow.KeyPresenceFactsDomain.Equal(before, out.KeyPresence) || changed
+			changed = flow.ApplyKeyArrayProof(out, flow.KeyArrayProof{
+				Array: arrayAddr,
+				Table: tableAddr,
+			}) || changed
+			if value, ok := t.boundaryAppendKeyValue(out, table, plan.key); ok {
+				changed = flow.ApplyKeyArrayValueProof(out, flow.KeyArrayValueProof{
+					Array:        arrayAddr,
+					Table:        tableAddr,
+					Value:        value,
+					AppendKey:    keyAddr,
+					HasAppendKey: true,
+				}) || changed
+			}
 		}
 	}
 	return changed

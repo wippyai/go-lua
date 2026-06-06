@@ -597,8 +597,10 @@ func (t *Transfer) recordAppendKeyFact(out *flow.PointState, place Place, kind M
 	arrayAddr, arrayOK := flow.StableAddressOfPath(arrayPath)
 	elementAddr, elementOK := flow.StableAddressOfPath(elementPath)
 	if arrayOK && elementOK {
-		out.KeyPresence = out.KeyPresence.WithAppendedKeyAddresses(arrayAddr, elementAddr)
-		out.KeyPresence = out.KeyPresence.WithAppendHistoryEvent(arrayAddr.Key(), elementAddr.Key())
+		flow.ApplyAppendKeyProof(out, flow.AppendKeyProof{
+			Array: arrayAddr,
+			Key:   elementAddr,
+		})
 	}
 	return !flow.KeyPresenceFactsDomain.Equal(before, out.KeyPresence)
 }
@@ -906,11 +908,21 @@ func (t *Transfer) applyAppendKeyArrayFacts(
 	if !ok || arrayPath.IsEmpty() {
 		return false
 	}
-	arrayKey := flow.KeyPresencePathKey(arrayPath)
-	elementKey := flow.KeyPresencePathKey(elementPath)
+	arrayAddr, arrayOK := flow.StableAddressOfPath(arrayPath)
+	if !arrayOK {
+		return false
+	}
+	elementAddr, elementOK := flow.StableAddressOfPath(elementPath)
 	before := out.KeyPresence
 	for _, table := range tables {
-		out.KeyPresence = out.KeyPresence.WithKeyArray(arrayKey, table)
+		tableAddr, ok := flow.StableAddressFromKey(table)
+		if !ok {
+			continue
+		}
+		flow.ApplyKeyArrayProof(out, flow.KeyArrayProof{
+			Array: arrayAddr,
+			Table: tableAddr,
+		})
 		if elementPath.IsEmpty() {
 			continue
 		}
@@ -936,11 +948,28 @@ func (t *Transfer) applyAppendKeyArrayFacts(
 		if !ok || value.IsZero() {
 			continue
 		}
-		out.KeyPresence = out.KeyPresence.WithKeyArrayValue(arrayKey, table, value)
-		out.KeyPresence = out.KeyPresence.WithAppendHistoryCoverage(arrayKey, elementKey, table, value)
+		flow.ApplyKeyArrayValueProof(out, flow.KeyArrayValueProof{
+			Array:        arrayAddr,
+			Table:        tableAddr,
+			Value:        value,
+			AppendKey:    elementAddr,
+			HasAppendKey: elementOK,
+		})
 	}
 	for _, table := range pendingTables {
-		out.KeyPresence = out.KeyPresence.WithPendingKeyArray(arrayKey, table, elementKey)
+		proof := flow.PendingKeyArrayProof{
+			Array: arrayAddr,
+			Key:   elementAddr,
+		}
+		if table != "" {
+			tableAddr, ok := flow.StableAddressFromKey(table)
+			if !ok {
+				continue
+			}
+			proof.Table = tableAddr
+			proof.HasTable = true
+		}
+		flow.ApplyPendingKeyArrayProof(out, proof)
 	}
 	return !flow.KeyPresenceFactsDomain.Equal(before, out.KeyPresence)
 }
@@ -1211,7 +1240,10 @@ func (t *Transfer) seedKeyArrayForWriteEffect(out *flow.PointState, effect Write
 	arrayAddr, arrayOK := flow.StableAddressOfPath(path)
 	tableAddr, tableOK := flow.StableAddressOfPath(effect.KeyArrayTable)
 	if arrayOK && tableOK {
-		out.KeyPresence = out.KeyPresence.WithKeyArrayAddresses(arrayAddr, tableAddr)
+		flow.ApplyKeyArrayProof(out, flow.KeyArrayProof{
+			Array: arrayAddr,
+			Table: tableAddr,
+		})
 	}
 }
 

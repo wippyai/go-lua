@@ -178,6 +178,79 @@ func TestApplyIndexedKeyArrayIterationProofPublishesTableKey(t *testing.T) {
 	}
 }
 
+func TestApplyKeyArrayValueProofPublishesCoverage(t *testing.T) {
+	arrayPath := constraint.NewPath(cfg.SymbolID(51), "node_order")
+	tablePath := constraint.NewPath(cfg.SymbolID(52), "nodes")
+	keyPath := constraint.NewPath(cfg.SymbolID(53), "node_id")
+	arrayKey := StablePathKey(arrayPath)
+	tableKey := StablePathKey(tablePath)
+	value := product.FromType(typ.String)
+
+	state := PointStateDomain.Top()
+	state.KeyPresence = state.KeyPresence.WithAppendHistoryBase(arrayKey)
+
+	if changed := ApplyKeyArrayValueProof(&state, KeyArrayValueProof{
+		Array:        testStableAddressPath(t, arrayPath),
+		Table:        testStableAddressPath(t, tablePath),
+		Value:        value,
+		AppendKey:    testStableAddressPath(t, keyPath),
+		HasAppendKey: true,
+	}); !changed {
+		t.Fatal("ApplyKeyArrayValueProof reported no change")
+	}
+
+	values := state.KeyPresence.KeyArrayValues(arrayKey, tableKey)
+	if len(values) != 1 || !product.Domain.Equal(values[0], value) {
+		t.Fatalf("key-array values = %v, want string", values)
+	}
+	if got, ok := state.KeyPresence.AppendHistoryCoverageValue(arrayKey, tableKey); !ok || !product.Domain.Equal(got, value) {
+		t.Fatalf("append coverage = %v/%v, want string", got, ok)
+	}
+}
+
+func TestApplyPendingKeyArrayProofAllowsWildcardTable(t *testing.T) {
+	arrayPath := constraint.NewPath(cfg.SymbolID(61), "node_order")
+	keyPath := constraint.NewPath(cfg.SymbolID(62), "node_id")
+	arrayKey := StablePathKey(arrayPath)
+	keyKey := StablePathKey(keyPath)
+
+	state := PointStateDomain.Top()
+	if changed := ApplyPendingKeyArrayProof(&state, PendingKeyArrayProof{
+		Array: testStableAddressPath(t, arrayPath),
+		Key:   testStableAddressPath(t, keyPath),
+	}); !changed {
+		t.Fatal("ApplyPendingKeyArrayProof reported no change")
+	}
+
+	entries := state.KeyPresence.PendingKeyArrayEntries()
+	if len(entries) != 1 || entries[0].Array != arrayKey || entries[0].Key != keyKey || entries[0].Table != "" {
+		t.Fatalf("pending key-array entries = %v, want wildcard table for array/key", entries)
+	}
+}
+
+func TestApplyAppendKeyProofPublishesHistoryEvent(t *testing.T) {
+	arrayPath := constraint.NewPath(cfg.SymbolID(71), "node_order")
+	keyPath := constraint.NewPath(cfg.SymbolID(72), "node_id")
+	arrayKey := StablePathKey(arrayPath)
+	keyKey := StablePathKey(keyPath)
+
+	state := PointStateDomain.Top()
+	state.KeyPresence = state.KeyPresence.WithAppendHistoryBase(arrayKey)
+	if changed := ApplyAppendKeyProof(&state, AppendKeyProof{
+		Array: testStableAddressPath(t, arrayPath),
+		Key:   testStableAddressPath(t, keyPath),
+	}); !changed {
+		t.Fatal("ApplyAppendKeyProof reported no change")
+	}
+
+	if entries := state.KeyPresence.AppendedKeyEntries(); len(entries) != 1 || entries[0].Array != arrayKey || entries[0].Key != keyKey {
+		t.Fatalf("appended key entries = %v, want array/key", entries)
+	}
+	if events := state.KeyPresence.AppendHistoryEventEntries(); len(events) != 1 || events[0].Array != arrayKey || events[0].Key != keyKey {
+		t.Fatalf("append history events = %v, want array/key", events)
+	}
+}
+
 func testMapWriteProof(
 	t *testing.T,
 	tablePath constraint.Path,

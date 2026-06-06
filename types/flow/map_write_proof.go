@@ -25,6 +25,33 @@ type KeyArrayProof struct {
 	Table StableAddress
 }
 
+// KeyArrayValueProof is the value-carrying form of key-array provenance. When
+// AppendKey is present it also records the append-history coverage that proves
+// the appended element is backed by the same table value.
+type KeyArrayValueProof struct {
+	Array        StableAddress
+	Table        StableAddress
+	Value        product.AbstractValue
+	AppendKey    StableAddress
+	HasAppendKey bool
+}
+
+// PendingKeyArrayProof records that Array may become a key-array for Table
+// after Key is proven present. Table is optional because some empty-array seeds
+// intentionally wait for any matching table/key presence.
+type PendingKeyArrayProof struct {
+	Array    StableAddress
+	Key      StableAddress
+	Table    StableAddress
+	HasTable bool
+}
+
+// AppendKeyProof records that Key was appended into Array.
+type AppendKeyProof struct {
+	Array StableAddress
+	Key   StableAddress
+}
+
 // ApplyKeyPresenceProof applies a key-presence proof to point state. When Value
 // is non-zero it also records value-carrying key-array consequences.
 func ApplyKeyPresenceProof(out *PointState, proof KeyPresenceProof) bool {
@@ -60,6 +87,47 @@ func ApplyKeyArrayProof(out *PointState, proof KeyArrayProof) bool {
 	}
 	before := out.KeyPresence
 	out.KeyPresence = out.KeyPresence.WithKeyArrayAddresses(proof.Array, proof.Table)
+	return !KeyPresenceFactsDomain.Equal(before, out.KeyPresence)
+}
+
+// ApplyKeyArrayValueProof applies a value-carrying key-array proof to point state.
+func ApplyKeyArrayValueProof(out *PointState, proof KeyArrayValueProof) bool {
+	if out == nil || proof.Array.Key() == "" || proof.Table.Key() == "" || proof.Value.IsZero() {
+		return false
+	}
+	before := out.KeyPresence
+	out.KeyPresence = out.KeyPresence.WithKeyArrayValueAddresses(proof.Array, proof.Table, proof.Value)
+	if proof.HasAppendKey {
+		out.KeyPresence = out.KeyPresence.WithAppendHistoryCoverage(proof.Array.Key(), proof.AppendKey.Key(), proof.Table.Key(), proof.Value)
+	}
+	return !KeyPresenceFactsDomain.Equal(before, out.KeyPresence)
+}
+
+// ApplyPendingKeyArrayProof applies delayed key-array provenance to point state.
+func ApplyPendingKeyArrayProof(out *PointState, proof PendingKeyArrayProof) bool {
+	if out == nil || proof.Array.Key() == "" || proof.Key.Key() == "" {
+		return false
+	}
+	tableKey := constraint.PathKey("")
+	if proof.HasTable {
+		tableKey = proof.Table.Key()
+		if tableKey == "" {
+			return false
+		}
+	}
+	before := out.KeyPresence
+	out.KeyPresence = out.KeyPresence.WithPendingKeyArray(proof.Array.Key(), tableKey, proof.Key.Key())
+	return !KeyPresenceFactsDomain.Equal(before, out.KeyPresence)
+}
+
+// ApplyAppendKeyProof applies append-key provenance to point state.
+func ApplyAppendKeyProof(out *PointState, proof AppendKeyProof) bool {
+	if out == nil || proof.Array.Key() == "" || proof.Key.Key() == "" {
+		return false
+	}
+	before := out.KeyPresence
+	out.KeyPresence = out.KeyPresence.WithAppendedKeyAddresses(proof.Array, proof.Key)
+	out.KeyPresence = out.KeyPresence.WithAppendHistoryEvent(proof.Array.Key(), proof.Key.Key())
 	return !KeyPresenceFactsDomain.Equal(before, out.KeyPresence)
 }
 
