@@ -175,7 +175,7 @@ func (t *Transfer) enqueueAppendFieldOriginDemands(
 		paramevidence.ParamContractDomain.Equal(contract, paramevidence.ParamContractDomain.Bottom()) {
 		return
 	}
-	for _, use := range out.KeyPresence.AppendElementFieldSources(array, field) {
+	for _, use := range flow.AppendElementFieldSources(*out, array, field) {
 		source, ok := use.SourcePath()
 		if !ok || source.Symbol == 0 {
 			continue

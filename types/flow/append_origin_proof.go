@@ -569,6 +569,34 @@ func AppendElementFieldOriginUsesPath(state PointState, fieldPath constraint.Pat
 	return AppendElementFieldOriginUses(state, field)
 }
 
+// AppendElementFieldOriginFields returns the recorded appended-element fields as
+// structured suffixes. Flow owns the fact-key parsing so transfer can replay
+// append-origin implications without inspecting KeyPresence storage keys.
+func AppendElementFieldOriginFields(state PointState) [][]constraint.Segment {
+	seen := map[constraint.PathKey]struct{}{}
+	var out [][]constraint.Segment
+	for _, fact := range state.KeyPresence.AppendElementFieldOriginEntries() {
+		field, ok := AppendElementFieldSegments(fact.Field)
+		if !ok || len(field) == 0 {
+			continue
+		}
+		key := AppendElementFieldPathKey(field)
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		out = append(out, cloneAddressSegments(field))
+	}
+	return out
+}
+
+// AppendElementFieldSources returns recorded sources for an appended element
+// field. The array key may come from another flow fact, so this query keeps the
+// key-shaped boundary while hiding KeyPresence storage from transfer.
+func AppendElementFieldSources(state PointState, array constraint.PathKey, field []constraint.Segment) []AppendElementFieldOriginUse {
+	return state.KeyPresence.AppendElementFieldSources(array, field)
+}
+
 // ApplyAppendElementFieldOriginUse replays a prior field-origin use into the
 // current append destinations.
 func ApplyAppendElementFieldOriginUse(

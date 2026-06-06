@@ -1938,11 +1938,9 @@ func (t *Transfer) refineStaticMemberFactForLiteralComparison(
 	if out == nil || sym == 0 || len(segments) == 0 || lit == nil {
 		return false
 	}
-	addr, ok := flow.StableAddressOfSymbol(sym, segments)
-	if !ok {
-		return false
-	}
-	existing, ok := out.StaticMembers.ValueAtAddress(addr)
+	path := constraint.NewPath(sym, "")
+	path.Segments = append([]constraint.Segment(nil), segments...)
+	existing, ok := flow.PointFactsOf(*out).StaticMemberValue(path)
 	if !ok || existing.IsZero() {
 		return false
 	}
@@ -1964,9 +1962,9 @@ func (t *Transfer) refineStaticMemberFactForLiteralComparison(
 		return true
 	}
 	if !next.DefinitelyPresent() {
-		return flow.KillStaticMemberSubtree(out, addr)
+		return flow.KillStaticMemberSubtreePath(out, path)
 	}
-	return flow.SetStaticMemberFact(out, addr, next)
+	return flow.SetStaticMemberPath(out, path, next)
 }
 
 func narrowLiteralAtPlace(t typ.Type, steps []PlaceStep, lit *typ.Literal, include bool) typ.Type {

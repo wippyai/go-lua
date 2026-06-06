@@ -516,11 +516,7 @@ func (t *Transfer) recordAppendElementFieldOrigins(out *flow.PointState, place P
 	if !ok || elementPath.IsEmpty() {
 		return !flow.KeyPresenceFactsDomain.Equal(before, out.KeyPresence)
 	}
-	for _, fact := range out.KeyPresence.AppendElementFieldOriginEntries() {
-		field, ok := flow.AppendElementFieldSegments(fact.Field)
-		if !ok || len(field) == 0 {
-			continue
-		}
+	for _, field := range flow.AppendElementFieldOriginFields(*out) {
 		elementField := elementPath
 		for _, seg := range field {
 			elementField = elementField.Append(seg)

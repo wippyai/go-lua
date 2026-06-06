@@ -99,6 +99,27 @@ func TestApplyAppendElementFieldOriginUseReplaysSourcesToDestinations(t *testing
 	}
 }
 
+func TestAppendElementFieldOriginFieldsReturnsStructuredFields(t *testing.T) {
+	arrayPath := constraint.NewPath(cfg.SymbolID(114), "out")
+	sourcePath := constraint.NewPath(cfg.SymbolID(115), "source")
+	field := []constraint.Segment{{Kind: constraint.SegmentField, Name: "id"}}
+	state := PointState{
+		KeyPresence: KeyPresenceFacts{}.
+			WithAppendHistoryBaseAddress(testStableAddressPath(t, arrayPath)).
+			WithAppendElementFieldOriginFromAddresses(
+				testStableAddressPath(t, arrayPath),
+				field,
+				testStableAddressPath(t, sourcePath),
+				nil,
+			),
+	}
+
+	got := AppendElementFieldOriginFields(state)
+	if len(got) != 1 || len(got[0]) != 1 || got[0][0].Name != "id" {
+		t.Fatalf("AppendElementFieldOriginFields = %#v, want [.id]", got)
+	}
+}
+
 func TestAppendElementFieldOriginUsesRoutesThroughPathAlias(t *testing.T) {
 	elementPath := constraint.NewPath(cfg.SymbolID(14), "element").Field("name")
 	sourcePath := constraint.NewPath(cfg.SymbolID(15), "source")
