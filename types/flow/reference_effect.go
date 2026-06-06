@@ -2,6 +2,31 @@ package flow
 
 import "github.com/wippyai/go-lua/types/constraint"
 
+// FunctionRefTree is the normalized function-identity value of one reference
+// subtree before it is installed at a concrete target path.
+type FunctionRefTree struct {
+	Root    FunctionRefSet
+	HasRoot bool
+	Entries []FunctionRefTreeEntry
+}
+
+type FunctionRefTreeEntry struct {
+	Segments []constraint.Segment
+	Set      FunctionRefSet
+}
+
+// ClosureRefTree is the closure-identity counterpart of FunctionRefTree.
+type ClosureRefTree struct {
+	Root    ClosureRefSet
+	HasRoot bool
+	Entries []ClosureRefTreeEntry
+}
+
+type ClosureRefTreeEntry struct {
+	Segments []constraint.Segment
+	Set      ClosureRefSet
+}
+
 // ReplaceFunctionRefSubtree clears all function identities at addr and its
 // descendants, then joins the supplied refs into the function-reference axis.
 func ReplaceFunctionRefSubtree(out *PointState, addr StableAddress, refs FunctionRefs) bool {
@@ -22,6 +47,23 @@ func ReplaceFunctionRefSubtreePath(out *PointState, path constraint.Path, refs F
 		return false
 	}
 	return ReplaceFunctionRefSubtree(out, addr, refs)
+}
+
+// ReplaceFunctionRefTreePath strongly installs a normalized function-identity
+// tree at target, replacing every stale identity in the target subtree.
+func ReplaceFunctionRefTreePath(out *PointState, target constraint.Path, tree FunctionRefTree) bool {
+	return ReplaceFunctionRefSubtreePath(out, target, functionRefsFromTree(target, tree))
+}
+
+func functionRefsFromTree(target constraint.Path, tree FunctionRefTree) FunctionRefs {
+	var refs FunctionRefs
+	if tree.HasRoot {
+		refs = WithFunctionRefPath(refs, target, tree.Root)
+	}
+	for _, entry := range tree.Entries {
+		refs = WithFunctionRefPath(refs, appendReferenceTreePath(target, entry.Segments), entry.Set)
+	}
+	return refs
 }
 
 // AssignFunctionRefSubtreePath copies all function identities rooted at source
@@ -59,6 +101,40 @@ func ReplaceClosureRefSubtreePath(out *PointState, path constraint.Path, refs Cl
 		return false
 	}
 	return ReplaceClosureRefSubtree(out, addr, refs)
+}
+
+// ReplaceClosureRefTreePath strongly installs a normalized closure-identity
+// tree at target, replacing every stale identity in the target subtree.
+func ReplaceClosureRefTreePath(out *PointState, target constraint.Path, tree ClosureRefTree) bool {
+	return ReplaceClosureRefSubtreePath(out, target, closureRefsFromTree(target, tree))
+}
+
+func closureRefsFromTree(target constraint.Path, tree ClosureRefTree) ClosureRefs {
+	var refs ClosureRefs
+	if tree.HasRoot {
+		refs = withClosureRefStructuredPath(refs, target, tree.Root)
+	}
+	for _, entry := range tree.Entries {
+		refs = withClosureRefStructuredPath(refs, appendReferenceTreePath(target, entry.Segments), entry.Set)
+	}
+	return refs
+}
+
+func withClosureRefStructuredPath(refs ClosureRefs, path constraint.Path, set ClosureRefSet) ClosureRefs {
+	addr, ok := StableAddressOfPath(path)
+	if !ok {
+		return refs
+	}
+	return WithClosureRefAddress(refs, addr, set)
+}
+
+func appendReferenceTreePath(base constraint.Path, segments []constraint.Segment) constraint.Path {
+	if len(segments) == 0 {
+		return base
+	}
+	next := base
+	next.Segments = append(append([]constraint.Segment(nil), base.Segments...), segments...)
+	return next
 }
 
 // AssignClosureRefSubtreePath is the closure-value counterpart of
@@ -118,42 +194,6 @@ func JoinFunctionRefs(out *PointState, refs FunctionRefs) bool {
 	before := out.FunctionRefs
 	out.FunctionRefs = FunctionRefsDomain.Join(out.FunctionRefs, refs)
 	return !FunctionRefsDomain.Equal(before, out.FunctionRefs)
-}
-
-func SetFunctionRef(out *PointState, addr StableAddress, set FunctionRefSet) bool {
-	if out == nil {
-		return false
-	}
-	before := out.FunctionRefs
-	out.FunctionRefs = WithFunctionRefAddress(out.FunctionRefs, addr, set)
-	return !FunctionRefsDomain.Equal(before, out.FunctionRefs)
-}
-
-// SetFunctionRefPath strongly updates the identity set for a structured path.
-func SetFunctionRefPath(out *PointState, path constraint.Path, set FunctionRefSet) bool {
-	addr, ok := StableAddressOfPath(path)
-	if !ok {
-		return false
-	}
-	return SetFunctionRef(out, addr, set)
-}
-
-func SetClosureRef(out *PointState, addr StableAddress, set ClosureRefSet) bool {
-	if out == nil {
-		return false
-	}
-	before := out.ClosureRefs
-	out.ClosureRefs = WithClosureRefAddress(out.ClosureRefs, addr, set)
-	return !ClosureRefsDomain.Equal(before, out.ClosureRefs)
-}
-
-// SetClosureRefPath strongly updates the closure set for a structured path.
-func SetClosureRefPath(out *PointState, path constraint.Path, set ClosureRefSet) bool {
-	addr, ok := StableAddressOfPath(path)
-	if !ok {
-		return false
-	}
-	return SetClosureRef(out, addr, set)
 }
 
 func ApplyClosureCellEffectsToRefs(out *PointState, addr StableAddress, effects CaptureEffects) bool {

@@ -316,6 +316,52 @@ func TestAssignClosureRefSubtreePathCopiesAndReplacesTarget(t *testing.T) {
 	}
 }
 
+func TestReplaceClosureRefTreePathInstallsRootAndNestedEntries(t *testing.T) {
+	target := constraint.NewPath(cfg.SymbolID(50), "target")
+	child := target.Field("child")
+	staleGrandchild := child.Field("stale")
+	sibling := constraint.NewPath(cfg.SymbolID(51), "sibling")
+	rootClosure := ClosureRefOf(FunctionRef{GraphID: 14}, CaptureCellsDomain.Bottom(), nil)
+	childClosure := ClosureRefOf(FunctionRef{GraphID: 15}, CaptureCellsDomain.Bottom(), nil)
+	stale := ClosureRefOf(FunctionRef{GraphID: 16}, CaptureCellsDomain.Bottom(), nil)
+	other := ClosureRefOf(FunctionRef{GraphID: 17}, CaptureCellsDomain.Bottom(), nil)
+	out := PointState{
+		ClosureRefs: WithClosureRefAddress(nil, testStableAddressPath(t, staleGrandchild), ClosureRefSetOf(stale)),
+	}
+	out.ClosureRefs = WithClosureRefAddress(out.ClosureRefs, testStableAddressPath(t, sibling), ClosureRefSetOf(other))
+
+	tree := ClosureRefTree{
+		Root:    ClosureRefSetOf(rootClosure),
+		HasRoot: true,
+		Entries: []ClosureRefTreeEntry{{
+			Segments: []constraint.Segment{{Kind: constraint.SegmentField, Name: "child"}},
+			Set:      ClosureRefSetOf(childClosure),
+		}},
+	}
+
+	if !ReplaceClosureRefTreePath(&out, target, tree) {
+		t.Fatal("ReplaceClosureRefTreePath reported no change")
+	}
+	if _, ok := ClosureRefAtPath(out.ClosureRefs, staleGrandchild); ok {
+		t.Fatalf("stale target subtree survived tree replace: %#v", out.ClosureRefs)
+	}
+	if set, ok := ClosureRefAtPath(out.ClosureRefs, target); !ok {
+		t.Fatalf("root closure missing: %#v", out.ClosureRefs)
+	} else if got, singleton := set.Singleton(); !singleton || !closureRefEqual(got, rootClosure) {
+		t.Fatalf("root closure = %s, want %s", set.Format(), ClosureRefSetOf(rootClosure).Format())
+	}
+	if set, ok := ClosureRefAtPath(out.ClosureRefs, child); !ok {
+		t.Fatalf("nested closure missing: %#v", out.ClosureRefs)
+	} else if got, singleton := set.Singleton(); !singleton || !closureRefEqual(got, childClosure) {
+		t.Fatalf("nested closure = %s, want %s", set.Format(), ClosureRefSetOf(childClosure).Format())
+	}
+	if set, ok := ClosureRefAtPath(out.ClosureRefs, sibling); !ok {
+		t.Fatalf("sibling was removed: %#v", out.ClosureRefs)
+	} else if got, singleton := set.Singleton(); !singleton || !closureRefEqual(got, other) {
+		t.Fatalf("sibling closure = %s, want %s", set.Format(), ClosureRefSetOf(other).Format())
+	}
+}
+
 func TestApplyClosureRefCellEffectsUpdatesStoredEnvironment(t *testing.T) {
 	sym := cfg.SymbolID(7)
 	path := constraint.NewPath(cfg.SymbolID(42), "fn").Key()

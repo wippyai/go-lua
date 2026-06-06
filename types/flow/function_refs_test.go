@@ -187,6 +187,48 @@ func TestReplaceFunctionRefSubtreePathClearsAndJoins(t *testing.T) {
 	}
 }
 
+func TestReplaceFunctionRefTreePathInstallsRootAndNestedEntries(t *testing.T) {
+	target := constraint.NewPath(48, "target")
+	child := target.Field("child")
+	staleGrandchild := child.Field("stale")
+	sibling := constraint.NewPath(49, "sibling")
+	out := PointState{
+		FunctionRefs: WithFunctionRefPath(nil, staleGrandchild, FunctionRefSetOf(FunctionRef{GraphID: 1})),
+	}
+	out.FunctionRefs = WithFunctionRefPath(out.FunctionRefs, sibling, FunctionRefSetOf(FunctionRef{GraphID: 2}))
+
+	tree := FunctionRefTree{
+		Root:    FunctionRefSetOf(FunctionRef{GraphID: 3}),
+		HasRoot: true,
+		Entries: []FunctionRefTreeEntry{{
+			Segments: []constraint.Segment{{Kind: constraint.SegmentField, Name: "child"}},
+			Set:      FunctionRefSetOf(FunctionRef{GraphID: 4}),
+		}},
+	}
+
+	if !ReplaceFunctionRefTreePath(&out, target, tree) {
+		t.Fatal("ReplaceFunctionRefTreePath reported no change")
+	}
+	if _, ok := FunctionRefAtPath(out.FunctionRefs, staleGrandchild); ok {
+		t.Fatalf("stale target subtree survived tree replace: %#v", out.FunctionRefs)
+	}
+	if set, ok := FunctionRefAtPath(out.FunctionRefs, target); !ok {
+		t.Fatalf("root ref missing: %#v", out.FunctionRefs)
+	} else if ref, singleton := set.Singleton(); !singleton || ref.GraphID != 3 {
+		t.Fatalf("root ref = %s, want graph 3 singleton", set.Format())
+	}
+	if set, ok := FunctionRefAtPath(out.FunctionRefs, child); !ok {
+		t.Fatalf("nested ref missing: %#v", out.FunctionRefs)
+	} else if ref, singleton := set.Singleton(); !singleton || ref.GraphID != 4 {
+		t.Fatalf("nested ref = %s, want graph 4 singleton", set.Format())
+	}
+	if set, ok := FunctionRefAtPath(out.FunctionRefs, sibling); !ok {
+		t.Fatalf("sibling was removed: %#v", out.FunctionRefs)
+	} else if ref, singleton := set.Singleton(); !singleton || ref.GraphID != 2 {
+		t.Fatalf("sibling ref = %s, want graph 2 singleton", set.Format())
+	}
+}
+
 func TestAssignFunctionRefSubtreePathCopiesAndReplacesTarget(t *testing.T) {
 	source := constraint.NewPath(45, "source")
 	sourceChild := source.Field("child")

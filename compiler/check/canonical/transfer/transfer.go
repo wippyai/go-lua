@@ -1631,19 +1631,15 @@ func (t *Transfer) recordFunctionRefAt(out *flow.PointState, path constraint.Pat
 		flow.AssignFunctionRefSubtreePath(out, srcPath, path)
 		return
 	}
+	tree := flow.FunctionRefTree{
+		Entries: t.nestedFunctionRefSetsOfExpr(out, src),
+	}
 	set, ok := t.functionRefSetOfExpr(out, src)
-	nested := t.nestedFunctionRefSetsOfExpr(out, src)
-	flow.ClearFunctionRefSubtreePath(out, path)
-	if !ok {
-		for _, entry := range nested {
-			flow.SetFunctionRefPath(out, appendFunctionRefPath(path, entry.segments), entry.set)
-		}
-		return
+	if ok {
+		tree.Root = set
+		tree.HasRoot = true
 	}
-	flow.SetFunctionRefPath(out, path, set)
-	for _, entry := range nested {
-		flow.SetFunctionRefPath(out, appendFunctionRefPath(path, entry.segments), entry.set)
-	}
+	flow.ReplaceFunctionRefTreePath(out, path, tree)
 }
 
 func (t *Transfer) recordClosureRefAt(out *flow.PointState, path constraint.Path, src ast.Expr) {
@@ -1654,19 +1650,15 @@ func (t *Transfer) recordClosureRefAt(out *flow.PointState, path constraint.Path
 		flow.AssignClosureRefSubtreePath(out, srcPath, path)
 		return
 	}
+	tree := flow.ClosureRefTree{
+		Entries: t.nestedClosureRefSetsOfExpr(out, src),
+	}
 	set, ok := t.closureRefSetOfExpr(out, src)
-	nested := t.nestedClosureRefSetsOfExpr(out, src)
-	flow.ClearClosureRefSubtreePath(out, path)
-	if !ok {
-		for _, entry := range nested {
-			flow.SetClosureRefPath(out, appendFunctionRefPath(path, entry.segments), entry.set)
-		}
-		return
+	if ok {
+		tree.Root = set
+		tree.HasRoot = true
 	}
-	flow.SetClosureRefPath(out, path, set)
-	for _, entry := range nested {
-		flow.SetClosureRefPath(out, appendFunctionRefPath(path, entry.segments), entry.set)
-	}
+	flow.ReplaceClosureRefTreePath(out, path, tree)
 }
 
 func (t *Transfer) closureRefSetOfExpr(out *flow.PointState, expr ast.Expr) (flow.ClosureRefSet, bool) {
@@ -1746,22 +1738,17 @@ func (t *Transfer) closureCaptureCells(out *flow.PointState, captured []cfg.Symb
 	return cells
 }
 
-type nestedClosureRefSet struct {
-	segments []constraint.Segment
-	set      flow.ClosureRefSet
-}
-
-func (t *Transfer) nestedClosureRefSetsOfExpr(out *flow.PointState, expr ast.Expr) []nestedClosureRefSet {
+func (t *Transfer) nestedClosureRefSetsOfExpr(out *flow.PointState, expr ast.Expr) []flow.ClosureRefTreeEntry {
 	table, ok := expr.(*ast.TableExpr)
 	if !ok || table == nil {
 		return nil
 	}
-	var entries []nestedClosureRefSet
+	var entries []flow.ClosureRefTreeEntry
 	t.collectTableClosureRefs(out, table, nil, &entries)
 	return entries
 }
 
-func (t *Transfer) collectTableClosureRefs(out *flow.PointState, table *ast.TableExpr, prefix []constraint.Segment, entries *[]nestedClosureRefSet) {
+func (t *Transfer) collectTableClosureRefs(out *flow.PointState, table *ast.TableExpr, prefix []constraint.Segment, entries *[]flow.ClosureRefTreeEntry) {
 	if table == nil {
 		return
 	}
@@ -1779,9 +1766,9 @@ func (t *Transfer) collectTableClosureRefs(out *flow.PointState, table *ast.Tabl
 			t.collectTableClosureRefs(out, v, segments, entries)
 		default:
 			if set, ok := t.closureRefSetOfExpr(out, field.Value); ok {
-				*entries = append(*entries, nestedClosureRefSet{
-					segments: segments,
-					set:      set,
+				*entries = append(*entries, flow.ClosureRefTreeEntry{
+					Segments: segments,
+					Set:      set,
 				})
 			}
 		}
@@ -1807,22 +1794,17 @@ func (t *Transfer) functionRefSetOfExpr(out *flow.PointState, expr ast.Expr) (fl
 	return flow.FunctionRefAtPath(out.FunctionRefs, path)
 }
 
-type nestedFunctionRefSet struct {
-	segments []constraint.Segment
-	set      flow.FunctionRefSet
-}
-
-func (t *Transfer) nestedFunctionRefSetsOfExpr(out *flow.PointState, expr ast.Expr) []nestedFunctionRefSet {
+func (t *Transfer) nestedFunctionRefSetsOfExpr(out *flow.PointState, expr ast.Expr) []flow.FunctionRefTreeEntry {
 	table, ok := expr.(*ast.TableExpr)
 	if !ok || table == nil {
 		return nil
 	}
-	var entries []nestedFunctionRefSet
+	var entries []flow.FunctionRefTreeEntry
 	t.collectTableFunctionRefs(out, table, nil, &entries)
 	return entries
 }
 
-func (t *Transfer) collectTableFunctionRefs(out *flow.PointState, table *ast.TableExpr, prefix []constraint.Segment, entries *[]nestedFunctionRefSet) {
+func (t *Transfer) collectTableFunctionRefs(out *flow.PointState, table *ast.TableExpr, prefix []constraint.Segment, entries *[]flow.FunctionRefTreeEntry) {
 	if table == nil {
 		return
 	}
@@ -1840,22 +1822,13 @@ func (t *Transfer) collectTableFunctionRefs(out *flow.PointState, table *ast.Tab
 			t.collectTableFunctionRefs(out, v, segments, entries)
 		default:
 			if set, ok := t.functionRefSetOfExpr(out, field.Value); ok {
-				*entries = append(*entries, nestedFunctionRefSet{
-					segments: segments,
-					set:      set,
+				*entries = append(*entries, flow.FunctionRefTreeEntry{
+					Segments: segments,
+					Set:      set,
 				})
 			}
 		}
 	}
-}
-
-func appendFunctionRefPath(base constraint.Path, segments []constraint.Segment) constraint.Path {
-	if len(segments) == 0 {
-		return base
-	}
-	next := base
-	next.Segments = append(append([]constraint.Segment(nil), base.Segments...), segments...)
-	return next
 }
 
 func (t *Transfer) staticMemberExprPathAt(out *flow.PointState, p cfg.Point, expr ast.Expr) (constraint.Path, bool) {
