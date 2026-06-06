@@ -13,22 +13,10 @@ func (r Reader) ReturnValues(ref FuncRef) []product.AbstractValue {
 	return ReturnValues(r.Summarize(ref))
 }
 
-// ReturnValuesWithKey reads an exact summary key and projects its abstract
-// return tuple defensively.
-func (r Reader) ReturnValuesWithKey(key Key) []product.AbstractValue {
-	return ReturnValues(r.SummarizeWithKey(key))
-}
-
 // ReturnTypes reads ref through the summary boundary and projects its
 // caller-visible concrete return tuple.
 func (r Reader) ReturnTypes(ref FuncRef) []typ.Type {
 	return ReturnTypes(r.Summarize(ref))
-}
-
-// ReturnTypesWithKey reads an exact summary key and projects its caller-visible
-// concrete return tuple.
-func (r Reader) ReturnTypesWithKey(key Key) []typ.Type {
-	return ReturnTypes(r.SummarizeWithKey(key))
 }
 
 // ParamTypes reads ref's solved parameter-contract cell and projects it to the
