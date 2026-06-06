@@ -2767,23 +2767,6 @@ func (ct callTyper) CallPostEffectsFromValues(call *ast.FuncCallExpr, ctx transf
 	}
 }
 
-func (ct callTyper) ContainerElementUnionsFromValues(call *ast.FuncCallExpr, ctx transfer.ProductCallContext) []effect.ContainerElementUnion {
-	d := ct.d
-	if d == nil || call == nil || d.activeProgram == nil {
-		return nil
-	}
-	return canonicalcall.ContainerElementUnionsForCall(canonicalcall.ContainerElementUnionInput{
-		Call: call,
-		SummarySignature: func(call *ast.FuncCallExpr) typ.Type {
-			if ref, ok := ct.resolveCalleeRef(call, d.activeProgram); ok {
-				return d.signatureForRef(d.activeProgram, ref)
-			}
-			return nil
-		},
-		Resolver: ct.callTypeResolver(ctx.ExprType),
-	})
-}
-
 // IterVars types a generic-for loop's iteration variables from its iterator
 // expression. The driver resolves the callee and source expression; the
 // iteration domain owns Iterator-effect classification and variable projection.
