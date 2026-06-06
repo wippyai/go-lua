@@ -18,13 +18,31 @@ func (t *Transfer) applyCallSideEffects(
 	ctx ProductCallContext,
 	demand func(int, paramevidence.ParamContract),
 ) {
-	boundaryFacts, boundaryAppendPlans := t.callBoundaryFactsAndAppendPlans(out, call, ctx)
+	postEffects := t.callPostEffects(call, ctx)
+	boundaryFacts, boundaryAppendPlans := t.boundaryFactsAppendPlans(out, call, postEffects.BoundaryFacts)
 	t.applyCallCellEffects(out, call, ctx)
-	t.applyCallReceiverEffects(out, call, ctx, demand)
+	t.applyCallReceiverEffects(out, call, postEffects.ReceiverEffects, len(ctx.RuntimeArgValues), demand)
 	t.applyCallMutatorEffects(out, call, ctx, demand)
 	if boundaryFacts.HasProof() {
 		t.applyBoundaryFactsWithAppendPlans(out, call, boundaryFacts, nil, boundaryAppendPlans)
 	}
+}
+
+func (t *Transfer) callPostEffects(call *ast.FuncCallExpr, ctx ProductCallContext) CallPostEffects {
+	if call == nil || t.callTyper == nil {
+		return CallPostEffects{
+			ReceiverEffects: flow.ReceiverEffectsDomain.Bottom(),
+			BoundaryFacts:   flow.BoundaryFactsDomain.Top(),
+		}
+	}
+	provider, ok := t.callTyper.(productCallPostEffectProvider)
+	if !ok || provider == nil {
+		return CallPostEffects{
+			ReceiverEffects: flow.ReceiverEffectsDomain.Bottom(),
+			BoundaryFacts:   flow.BoundaryFactsDomain.Top(),
+		}
+	}
+	return provider.CallPostEffectsFromValues(call, ctx)
 }
 
 func (t *Transfer) applyCallCellEffects(
@@ -47,24 +65,20 @@ func (t *Transfer) applyCallCellEffects(
 func (t *Transfer) applyCallReceiverEffects(
 	out *flow.PointState,
 	call *ast.FuncCallExpr,
-	ctx ProductCallContext,
+	effects flow.ReceiverEffects,
+	runtimeArgCount int,
 	demand func(int, paramevidence.ParamContract),
 ) bool {
-	if out == nil || call == nil || t.callTyper == nil {
+	if out == nil || call == nil {
 		return false
 	}
-	provider, ok := t.callTyper.(productCallPostEffectProvider)
-	if !ok || provider == nil {
-		return false
-	}
-	effects := provider.CallPostEffectsFromValues(call, ctx).ReceiverEffects
 	if flow.ReceiverEffectsDomain.Equal(effects, flow.ReceiverEffectsDomain.Bottom()) ||
 		flow.ReceiverEffectsDomain.Equal(effects, flow.ReceiverEffectsIdentity()) {
 		return false
 	}
 	changed := false
 	if effects.IsTop() {
-		for slot := range ctx.RuntimeArgValues {
+		for slot := 0; slot < runtimeArgCount; slot++ {
 			target := callsite.RuntimeArgExprAt(call, slot)
 			if target == nil {
 				continue

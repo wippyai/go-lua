@@ -2686,26 +2686,21 @@ func (t *Transfer) applyCallBoundaryFacts(
 	call *ast.FuncCallExpr,
 	ctx ProductCallContext,
 ) bool {
-	facts, plans := t.callBoundaryFactsAndAppendPlans(out, call, ctx)
+	if out == nil || call == nil {
+		return false
+	}
+	facts, plans := t.boundaryFactsAppendPlans(out, call, t.callPostEffects(call, ctx).BoundaryFacts)
 	if !facts.HasProof() {
 		return false
 	}
 	return t.applyBoundaryFactsWithAppendPlans(out, call, facts, nil, plans)
 }
 
-func (t *Transfer) callBoundaryFactsAndAppendPlans(
+func (t *Transfer) boundaryFactsAppendPlans(
 	out *flow.PointState,
 	call *ast.FuncCallExpr,
-	ctx ProductCallContext,
+	facts flow.BoundaryFacts,
 ) (flow.BoundaryFacts, []boundaryAppendKeyPlan) {
-	if out == nil || call == nil || t.callTyper == nil {
-		return flow.BoundaryFactsDomain.Top(), nil
-	}
-	provider, ok := t.callTyper.(productCallPostEffectProvider)
-	if !ok || provider == nil {
-		return flow.BoundaryFactsDomain.Top(), nil
-	}
-	facts := provider.CallPostEffectsFromValues(call, ctx).BoundaryFacts
 	if !facts.HasProof() {
 		return facts, nil
 	}

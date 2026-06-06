@@ -286,14 +286,10 @@ func (t *Transfer) callBoundaryFacts(
 	call *ast.FuncCallExpr,
 	demand func(int, paramevidence.ParamContract),
 ) flow.BoundaryFacts {
-	if out == nil || call == nil || t.callTyper == nil {
+	if out == nil || call == nil {
 		return flow.BoundaryFactsDomain.Top()
 	}
-	provider, ok := t.callTyper.(productCallPostEffectProvider)
-	if !ok || provider == nil {
-		return flow.BoundaryFactsDomain.Top()
-	}
-	return provider.CallPostEffectsFromValues(call, t.productCallContext(out, call, demand)).BoundaryFacts
+	return t.callPostEffects(call, t.productCallContext(out, call, demand)).BoundaryFacts
 }
 
 func assignmentTargetForReturn(info *cfg.AssignInfo, callInfo *cfg.CallInfo, retIndex int) (cfg.AssignTarget, bool) {
