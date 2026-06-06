@@ -302,7 +302,7 @@ func TestStatementCallCellEffectsUseProductArgEvidence(t *testing.T) {
 
 func TestExpressionCallAppliesCalleeCellEffectsWithoutReturns(t *testing.T) {
 	effects := flow.CaptureMustWrite(cfg.SymbolID(56), product.FromType(typ.Number))
-	tr := New(input.Inputs{}, Config{CallTyper: captureEffectTyper{effects: effects, noReturns: true}})
+	tr := New(input.Inputs{}, Config{CallTyper: captureEffectTyper{effects: effects}})
 	out := flow.PointState{Env: map[flow.ValueKey]product.AbstractValue{}}
 
 	if _, ok := tr.evalCall(&out, &ast.FuncCallExpr{Func: &ast.IdentExpr{Value: "callee"}}, nil); ok {
@@ -390,16 +390,16 @@ func ownerCellParamTestTransfer(t *testing.T) (*Transfer, *ast.IdentExpr, cfg.Sy
 }
 
 type captureEffectTyper struct {
-	effects   flow.CaptureEffects
-	noReturns bool
+	effects flow.CaptureEffects
 }
 
-func (c captureEffectTyper) CallReturns(*ast.FuncCallExpr, []typ.Type, func(ast.Expr) typ.Type, flow.CaptureCells, flow.FunctionRefs) ([]typ.Type, bool) {
-	if c.noReturns {
-		return nil, false
-	}
+type numberReturnTyper struct{}
+
+func (numberReturnTyper) CallReturns(*ast.FuncCallExpr, []typ.Type, func(ast.Expr) typ.Type, flow.CaptureCells, flow.FunctionRefs) ([]typ.Type, bool) {
 	return []typ.Type{typ.Number}, true
 }
+
+var _ typeCallReturnProvider = numberReturnTyper{}
 
 func (c captureEffectTyper) IterVars(*ast.FuncCallExpr, int, func(ast.Expr) typ.Type) ([]typ.Type, bool) {
 	return nil, false
@@ -441,6 +441,7 @@ var _ productCellEffectProvider = captureEffectTyper{}
 
 type productCaptureEffectTyper struct {
 	captureEffectTyper
+	numberReturnTyper
 	args []product.AbstractValue
 }
 
@@ -453,3 +454,4 @@ func (p *productCaptureEffectTyper) CellEffectsFromValues(
 }
 
 var _ productCellEffectProvider = (*productCaptureEffectTyper)(nil)
+var _ typeCallReturnProvider = (*productCaptureEffectTyper)(nil)

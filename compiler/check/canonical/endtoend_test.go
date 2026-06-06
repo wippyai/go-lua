@@ -427,10 +427,6 @@ type staticDemandTyper struct {
 	demand typ.Type
 }
 
-func (s staticDemandTyper) CallReturns(*ast.FuncCallExpr, []typ.Type, func(ast.Expr) typ.Type, flow.CaptureCells, flow.FunctionRefs) ([]typ.Type, bool) {
-	return nil, false
-}
-
 func (s staticDemandTyper) IterVars(*ast.FuncCallExpr, int, func(ast.Expr) typ.Type) ([]typ.Type, bool) {
 	return nil, false
 }

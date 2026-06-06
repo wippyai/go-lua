@@ -142,7 +142,6 @@ type closureReferenceProjectionProvider interface {
 // value-domain unknown for an expression the transfer does not determine, so the
 // driver falls back to its module-wide signatures/globals.
 type CallTyper interface {
-	CallReturns(call *ast.FuncCallExpr, argTypes []typ.Type, exprType func(ast.Expr) typ.Type, cells flow.CaptureCells, refs flow.FunctionRefs) ([]typ.Type, bool)
 	// IterVars types a generic-for loop's iteration variables from the loop's
 	// iterator expression (`for i, v in ipairs(arr)`): it resolves the iterator
 	// function's iteration effect (indexed/keyed) and the iterated container's
@@ -195,10 +194,18 @@ type IterVarProjector interface {
 	IterVarProjection(iter *ast.FuncCallExpr, count int, exprType func(ast.Expr) typ.Type) (iteration.VarProjection, bool)
 }
 
+// typeCallReturnProvider is the compatibility fallback for call return facts
+// that are still exposed only as typ.Type. ProductCallTyper is the canonical
+// value carrier; this provider is optional so transfer-only call effects do not
+// have to implement a no-op return method.
+type typeCallReturnProvider interface {
+	CallReturns(call *ast.FuncCallExpr, argTypes []typ.Type, exprType func(ast.Expr) typ.Type, cells flow.CaptureCells, refs flow.FunctionRefs) ([]typ.Type, bool)
+}
+
 // ProductCallTyper is the product-carrier call-return seam. A CallTyper may
 // implement it when it can preserve axes that are lost by projecting through
 // typ.Type, such as the gradual-top evidence axis. The older CallReturns seam
-// remains the compatibility fallback for type-only call facts.
+// remains an optional compatibility fallback for type-only call facts.
 type ProductCallTyper interface {
 	CallReturnValues(call *ast.FuncCallExpr, ctx ProductCallContext) ([]product.AbstractValue, bool)
 }
@@ -2519,7 +2526,11 @@ func (t *Transfer) evalCall(
 			return nil, false
 		}
 	}
-	returns, ok := t.callTyper.CallReturns(call, argTypes, exprType, out.Cells, out.FunctionRefs)
+	typeTyper, ok := t.callTyper.(typeCallReturnProvider)
+	if !ok || typeTyper == nil {
+		return nil, false
+	}
+	returns, ok := typeTyper.CallReturns(call, argTypes, exprType, out.Cells, out.FunctionRefs)
 	if !ok || len(returns) == 0 {
 		return nil, false
 	}

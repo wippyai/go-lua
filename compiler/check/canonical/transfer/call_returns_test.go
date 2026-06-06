@@ -441,8 +441,10 @@ func (p *pendingBlocksTypeFallbackTyper) CallReturns(*ast.FuncCallExpr, []typ.Ty
 var _ CallTyper = (*productReturnTestTyper)(nil)
 var _ ProductCallTyper = (*productReturnTestTyper)(nil)
 var _ CallTyper = strictAnyReturnTyper{}
+var _ typeCallReturnProvider = strictAnyReturnTyper{}
 var _ CallTyper = (*pendingBlocksTypeFallbackTyper)(nil)
 var _ ProductCallTyper = (*pendingBlocksTypeFallbackTyper)(nil)
+var _ typeCallReturnProvider = (*pendingBlocksTypeFallbackTyper)(nil)
 
 type constTypeCastTyper struct {
 	captureEffectTyper

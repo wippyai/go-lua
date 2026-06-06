@@ -888,6 +888,7 @@ func (t returnFunctionRefsTestTyper) CallReturnRefsFromValues(*ast.FuncCallExpr,
 	}
 }
 
+var _ typeCallReturnProvider = returnFunctionRefsTestTyper{}
 var _ productCallReturnRefsProvider = returnFunctionRefsTestTyper{}
 
 type productReturnFunctionRefsTestTyper struct {
@@ -927,4 +928,5 @@ func (t returnClosureRefsTestTyper) CallReturnRefsFromValues(*ast.FuncCallExpr, 
 	}
 }
 
+var _ typeCallReturnProvider = returnClosureRefsTestTyper{}
 var _ productCallReturnRefsProvider = returnClosureRefsTestTyper{}

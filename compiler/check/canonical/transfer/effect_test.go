@@ -2428,6 +2428,7 @@ func tableInsertCallInfo(call *ast.FuncCallExpr) *cfg.CallInfo {
 
 type containerElementUnionTyper struct {
 	captureEffectTyper
+	numberReturnTyper
 	effects []effect.ContainerElementUnion
 }
 
@@ -2464,6 +2465,7 @@ func (b boundaryAndReceiverEffectTyper) CallPostEffectsFromValues(*ast.FuncCallE
 
 type receiverEffectTyper struct {
 	captureEffectTyper
+	numberReturnTyper
 	effects flow.ReceiverEffects
 }
 
