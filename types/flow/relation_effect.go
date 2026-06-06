@@ -58,3 +58,33 @@ func ApplyRelationEffect(out *PointState, effect RelationEffect) bool {
 	}
 	return !PointRelationsDomain.Equal(before, out.Rel)
 }
+
+// RelationTargetLengthParamPathEffect materializes a path-shaped proof that the
+// target container length/cardinality is at least runtime parameter paramIndex.
+func RelationTargetLengthParamPathEffect(path constraint.Path, paramIndex int) (RelationEffect, bool) {
+	key, ok := SymbolPathKeyOf(path)
+	if !ok || paramIndex < 0 {
+		return RelationEffect{}, false
+	}
+	return RelationEffect{
+		Kind:       RelationSeedTargetLengthParam,
+		TargetRoot: path.Symbol,
+		TargetKey:  key,
+		ParamIndex: paramIndex,
+	}, true
+}
+
+// RelationContainerLowerBoundPathEffect materializes a path-shaped cardinality
+// lower-bound proof for PointState.Rel.
+func RelationContainerLowerBoundPathEffect(path constraint.Path, lower int64) (RelationEffect, bool) {
+	key, ok := SymbolPathKeyOf(path)
+	if !ok || lower <= 0 {
+		return RelationEffect{}, false
+	}
+	return RelationEffect{
+		Kind:       RelationSeedContainerLowerBound,
+		TargetRoot: path.Symbol,
+		TargetKey:  key,
+		Lower:      lower,
+	}, true
+}

@@ -246,7 +246,7 @@ func (t *Transfer) appendLengthParamPostconditions(
 		if !ok {
 			continue
 		}
-		targetRoot, targetPath, targetKey, ok := t.lengthPostconditionTarget(target)
+		targetPath, ok := t.lengthPostconditionTarget(target)
 		if !ok {
 			continue
 		}
@@ -255,12 +255,9 @@ func (t *Transfer) appendLengthParamPostconditions(
 			continue
 		}
 		if paramIndex, ok := t.runtimeArgCallerParamIndex(arg); ok {
-			effects.relations = append(effects.relations, flow.RelationEffect{
-				Kind:       flow.RelationSeedTargetLengthParam,
-				TargetRoot: targetRoot,
-				TargetKey:  targetKey,
-				ParamIndex: paramIndex,
-			})
+			if effect, ok := flow.RelationTargetLengthParamPathEffect(targetPath, paramIndex); ok {
+				effects.relations = append(effects.relations, effect)
+			}
 		}
 		argKey, ok := t.containerExprKey(arg)
 		if !ok {
@@ -312,16 +309,12 @@ func assignmentTargetForReturn(info *cfg.AssignInfo, callInfo *cfg.CallInfo, ret
 	return cfg.AssignTarget{}, false
 }
 
-func (t *Transfer) lengthPostconditionTarget(target cfg.AssignTarget) (cfg.SymbolID, constraint.Path, constraint.PathKey, bool) {
+func (t *Transfer) lengthPostconditionTarget(target cfg.AssignTarget) (constraint.Path, bool) {
 	path, ok := t.staticPathOfAssignTarget(target)
 	if !ok || path.Symbol == 0 {
-		return 0, constraint.Path{}, "", false
+		return constraint.Path{}, false
 	}
-	key, ok := flow.SymbolPathKeyOf(path)
-	if !ok {
-		return 0, constraint.Path{}, "", false
-	}
-	return path.Symbol, path, key, true
+	return path, true
 }
 
 func (t *Transfer) runtimeArgCallerParamIndex(arg ast.Expr) (int, bool) {

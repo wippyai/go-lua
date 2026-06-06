@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/types/cfg"
+	"github.com/wippyai/go-lua/types/constraint"
 )
 
 func TestRelationEffectSeedsAndKillsSiblingNil(t *testing.T) {
@@ -36,5 +37,35 @@ func TestRelationEffectSeedsAndKillsSiblingNil(t *testing.T) {
 	})
 	if _, ok := out.Rel.SiblingNil(errSym); ok {
 		t.Fatalf("relation effect kept relation after err symbol write: %#v", out.Rel)
+	}
+}
+
+func TestRelationPathEffectsUseSymbolPathKeys(t *testing.T) {
+	path := constraint.NewPath(cfg.SymbolID(21), "rows").Field("items")
+	targetKey := SymbolPathKey(cfg.SymbolID(21), path.Segments)
+
+	length, ok := RelationTargetLengthParamPathEffect(path, 2)
+	if !ok {
+		t.Fatalf("target-length path effect was not produced")
+	}
+	if length.Kind != RelationSeedTargetLengthParam || length.TargetRoot != path.Symbol || length.TargetKey != targetKey || length.ParamIndex != 2 {
+		t.Fatalf("target-length effect = %#v, want root=%d key=%s param=2", length, path.Symbol, targetKey)
+	}
+
+	lower, ok := RelationContainerLowerBoundPathEffect(path, 4)
+	if !ok {
+		t.Fatalf("container-lower path effect was not produced")
+	}
+	if lower.Kind != RelationSeedContainerLowerBound || lower.TargetRoot != path.Symbol || lower.TargetKey != targetKey || lower.Lower != 4 {
+		t.Fatalf("container-lower effect = %#v, want root=%d key=%s lower=4", lower, path.Symbol, targetKey)
+	}
+}
+
+func TestRelationPathEffectsRejectUnresolvedPaths(t *testing.T) {
+	if _, ok := RelationTargetLengthParamPathEffect(constraint.Path{}, 0); ok {
+		t.Fatalf("target-length effect accepted unresolved path")
+	}
+	if _, ok := RelationContainerLowerBoundPathEffect(constraint.Path{}, 1); ok {
+		t.Fatalf("container-lower effect accepted unresolved path")
 	}
 }
