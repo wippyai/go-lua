@@ -108,13 +108,25 @@ func TestNumericSymbolOpsUseSymbolValueKeys(t *testing.T) {
 	if !ok || le.Kind != NumericVarLeConst || le.Key != wantKey || le.Const != 5 {
 		t.Fatalf("le symbol op = %#v/%v, want key=%s const=5", le, ok, wantKey)
 	}
+	eq, ok := NumericVarEqConstSymbolOp(sym, 4)
+	if !ok || eq.Kind != NumericVarEqConst || eq.Key != wantKey || eq.Const != 4 {
+		t.Fatalf("eq symbol op = %#v/%v, want key=%s const=4", eq, ok, wantKey)
+	}
 	ref, ok := NumericVarLeLenOffsetSymbolOp(sym, "arr", -1)
 	if !ok || ref.Kind != NumericVarLeLenOffset || ref.Key != wantKey || ref.Other != "arr" || ref.Offset != -1 {
 		t.Fatalf("len-ref symbol op = %#v/%v, want key=%s other=arr offset=-1", ref, ok, wantKey)
 	}
+	drop, ok := NumericDropLenBoundSymbolOp(sym)
+	if !ok || drop.Kind != NumericDropLenBound || drop.Key != wantKey {
+		t.Fatalf("drop symbol op = %#v/%v, want key=%s", drop, ok, wantKey)
+	}
 	length, ok := NumericLenGeConstSymbolOp(sym, 3)
 	if !ok || length.Kind != NumericLenGeConst || length.Key != wantKey || length.Const != 3 {
 		t.Fatalf("length symbol op = %#v/%v, want key=%s const=3", length, ok, wantKey)
+	}
+	inc, ok := NumericIncrementLenLowerSymbolOp(sym, 2)
+	if !ok || inc.Kind != NumericIncrementLenLower || inc.Key != wantKey || inc.Delta != 2 {
+		t.Fatalf("increment symbol op = %#v/%v, want key=%s delta=2", inc, ok, wantKey)
 	}
 }
 

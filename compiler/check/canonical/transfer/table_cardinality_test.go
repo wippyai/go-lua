@@ -24,7 +24,7 @@ func TestTableConstructorSeedsContainerCardinalityForStaticMapLiteral(t *testing
 		{Key: &ast.StringExpr{Value: "a"}, KeySyntax: ast.AttrKeyIndex, Value: &ast.NumberExpr{Value: "1"}},
 		{Key: &ast.StringExpr{Value: "b"}, KeySyntax: ast.AttrKeyIndex, Value: &ast.NumberExpr{Value: "2"}},
 	}}
-	tr.seedArrayLiteralLength(&out, flow.SymbolValueKey(sym), tbl, tr.tableLiteralCardinalityLowerBound(&out, tbl))
+	tr.seedArrayLiteralLength(&out, sym, tbl, tr.tableLiteralCardinalityLowerBound(&out, tbl))
 
 	key := flow.SymbolPathKey(sym, nil)
 	if !out.Rel.HasContainerLowerBound(sym, key, 2) {
@@ -48,7 +48,7 @@ func TestTableConstructorCardinalityUsesFinalStaticWrite(t *testing.T) {
 		{Key: &ast.StringExpr{Value: "a"}, KeySyntax: ast.AttrKeyIndex, Value: &ast.NilExpr{}},
 		{Key: &ast.StringExpr{Value: "b"}, KeySyntax: ast.AttrKeyIndex, Value: &ast.NumberExpr{Value: "2"}},
 	}}
-	tr.seedArrayLiteralLength(&out, flow.SymbolValueKey(sym), tbl, tr.tableLiteralCardinalityLowerBound(&out, tbl))
+	tr.seedArrayLiteralLength(&out, sym, tbl, tr.tableLiteralCardinalityLowerBound(&out, tbl))
 
 	key := flow.SymbolPathKey(sym, nil)
 	if !out.Rel.HasContainerLowerBound(sym, key, 1) {
@@ -71,7 +71,7 @@ func TestTableConstructorCardinalityUsesRuntimeStringKeySemantics(t *testing.T) 
 		{Key: &ast.StringExpr{Value: "a"}, KeySyntax: ast.AttrKeyDot, Value: &ast.NumberExpr{Value: "1"}},
 		{Key: &ast.StringExpr{Value: "a"}, KeySyntax: ast.AttrKeyIndex, Value: &ast.NilExpr{}},
 	}}
-	tr.seedArrayLiteralLength(&out, flow.SymbolValueKey(sym), tbl, tr.tableLiteralCardinalityLowerBound(&out, tbl))
+	tr.seedArrayLiteralLength(&out, sym, tbl, tr.tableLiteralCardinalityLowerBound(&out, tbl))
 
 	key := flow.SymbolPathKey(sym, nil)
 	if out.Rel.HasContainerLowerBound(sym, key, 1) {
@@ -91,7 +91,7 @@ func TestTableConstructorDynamicKeyDoesNotSeedCardinality(t *testing.T) {
 		{Key: &ast.StringExpr{Value: "a"}, KeySyntax: ast.AttrKeyIndex, Value: &ast.NumberExpr{Value: "1"}},
 		{Key: &ast.IdentExpr{Value: "k"}, KeySyntax: ast.AttrKeyIndex, Value: &ast.NumberExpr{Value: "2"}},
 	}}
-	tr.seedArrayLiteralLength(&out, flow.SymbolValueKey(sym), tbl, tr.tableLiteralCardinalityLowerBound(&out, tbl))
+	tr.seedArrayLiteralLength(&out, sym, tbl, tr.tableLiteralCardinalityLowerBound(&out, tbl))
 
 	key := flow.SymbolPathKey(sym, nil)
 	if out.Rel.HasContainerLowerBound(sym, key, 1) {

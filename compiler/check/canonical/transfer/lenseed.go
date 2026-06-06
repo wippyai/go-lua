@@ -129,21 +129,18 @@ func tableFieldCardinalityKey(field *ast.Field) (tableCardinalityKey, bool) {
 // on the relation axis, not #table >= 2. A binding from any other source drops a
 // prior length/cardinality floor (soundness: the new value's size is unknown),
 // so a slot reused across assignments never carries stale proof.
-func (t *Transfer) seedArrayLiteralLength(out *flow.PointState, key flow.ValueKey, src ast.Expr, cardinalityLower int64) {
+func (t *Transfer) seedArrayLiteralLength(out *flow.PointState, sym cfg.SymbolID, src ast.Expr, cardinalityLower int64) {
 	if out == nil {
 		return
 	}
-	dropOp, ok := flow.NumericDropLenBoundValueKeyOp(key)
+	dropOp, ok := flow.NumericDropLenBoundSymbolOp(sym)
 	if !ok {
 		return
 	}
-	sym, hasSymbolRoot := flow.ParseSymbolValueKey(key)
-	if hasSymbolRoot {
-		flow.ApplyRelationEffect(out, flow.RelationEffect{
-			Kind:    flow.RelationKillLengthTargets,
-			Symbols: []cfg.SymbolID{sym},
-		})
-	}
+	flow.ApplyRelationEffect(out, flow.RelationEffect{
+		Kind:    flow.RelationKillLengthTargets,
+		Symbols: []cfg.SymbolID{sym},
+	})
 	ops := []flow.NumericOp{dropOp}
 	tbl, ok := src.(*ast.TableExpr)
 	if !ok {
@@ -151,12 +148,12 @@ func (t *Transfer) seedArrayLiteralLength(out *flow.PointState, key flow.ValueKe
 		return
 	}
 	if n := arrayLiteralArity(tbl); n > 0 {
-		if op, ok := flow.NumericLenGeConstValueKeyOp(key, n); ok {
+		if op, ok := flow.NumericLenGeConstSymbolOp(sym, n); ok {
 			ops = append(ops, op)
 		}
 	}
 	flow.ApplyNumericEffect(out, flow.NumericEffect{Ops: ops, RequireExisting: true})
-	if cardinalityLower > 0 && hasSymbolRoot {
+	if cardinalityLower > 0 {
 		if effect, ok := flow.RelationContainerLowerBoundPathEffect(constraint.Path{Symbol: sym}, cardinalityLower); ok {
 			flow.ApplyRelationEffect(out, effect)
 		}
@@ -173,12 +170,11 @@ func (t *Transfer) applyIndexWriteLength(out *flow.PointState, target cfg.Assign
 	if out == nil || target.Kind != cfg.TargetIndex || target.BaseSymbol == 0 {
 		return
 	}
-	baseKey := flow.SymbolValueKey(target.BaseSymbol)
-	arrKey, ok := flow.NumericKeyOfValueKey(baseKey)
+	arrKey, ok := flow.NumericVarKeyOfSymbol(target.BaseSymbol)
 	if !ok {
 		return
 	}
-	dropOp, ok := flow.NumericDropLenBoundValueKeyOp(baseKey)
+	dropOp, ok := flow.NumericDropLenBoundSymbolOp(target.BaseSymbol)
 	if !ok {
 		return
 	}
@@ -198,7 +194,7 @@ func (t *Transfer) applyIndexWriteLength(out *flow.PointState, target cfg.Assign
 		})
 		return
 	}
-	incOp, ok := flow.NumericIncrementLenLowerValueKeyOp(baseKey, offset)
+	incOp, ok := flow.NumericIncrementLenLowerSymbolOp(target.BaseSymbol, offset)
 	if !ok {
 		return
 	}

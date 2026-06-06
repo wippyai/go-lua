@@ -238,6 +238,16 @@ func NumericVarKeyOfSymbol(sym cfg.SymbolID) (constraint.PathKey, bool) {
 	return NumericKeyOfValueKey(SymbolValueKey(sym))
 }
 
+// NumericDropLenBoundSymbolOp materializes a length-bound reset for a bare
+// symbol slot.
+func NumericDropLenBoundSymbolOp(sym cfg.SymbolID) (NumericOp, bool) {
+	key, ok := NumericVarKeyOfSymbol(sym)
+	if !ok {
+		return NumericOp{}, false
+	}
+	return NumericOp{Kind: NumericDropLenBound, Key: key}, true
+}
+
 // SymbolOfNumericVarKey returns the bare symbol identified by a numeric variable
 // key. Nested container-path length keys are not scalar symbol variables.
 func SymbolOfNumericVarKey(key constraint.PathKey) (cfg.SymbolID, bool) {
@@ -263,6 +273,15 @@ func NumericVarLeConstSymbolOp(sym cfg.SymbolID, c int64) (NumericOp, bool) {
 	return NumericOp{Kind: NumericVarLeConst, Key: key, Const: c}, true
 }
 
+// NumericVarEqConstSymbolOp materializes `sym == c`.
+func NumericVarEqConstSymbolOp(sym cfg.SymbolID, c int64) (NumericOp, bool) {
+	key, ok := NumericVarKeyOfSymbol(sym)
+	if !ok {
+		return NumericOp{}, false
+	}
+	return NumericOp{Kind: NumericVarEqConst, Key: key, Const: c}, true
+}
+
 // NumericVarLeLenOffsetSymbolOp materializes `sym <= len(other) + offset`.
 func NumericVarLeLenOffsetSymbolOp(sym cfg.SymbolID, other constraint.PathKey, offset int64) (NumericOp, bool) {
 	key, ok := NumericVarKeyOfSymbol(sym)
@@ -280,6 +299,16 @@ func NumericLenGeConstSymbolOp(sym cfg.SymbolID, lower int64) (NumericOp, bool) 
 		return NumericOp{}, false
 	}
 	return NumericOp{Kind: NumericLenGeConst, Key: key, Const: lower}, true
+}
+
+// NumericIncrementLenLowerSymbolOp materializes `len(sym) += delta` on the
+// current lower bound for a bare symbol slot.
+func NumericIncrementLenLowerSymbolOp(sym cfg.SymbolID, delta int64) (NumericOp, bool) {
+	key, ok := NumericVarKeyOfSymbol(sym)
+	if !ok || delta <= 0 {
+		return NumericOp{}, false
+	}
+	return NumericOp{Kind: NumericIncrementLenLower, Key: key, Delta: delta}, true
 }
 
 // NumericLenGeConstPathOp materializes a resolved path length floor as the

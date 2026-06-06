@@ -1091,7 +1091,6 @@ func (t *Transfer) applyAssign(
 		if withOrigin, ok := t.attachVariantOriginToAssignedValue(p, target, val); ok {
 			val = withOrigin
 		}
-		key := flow.SymbolValueKey(target.Symbol)
 		// Assignment transfer is a strong update to the target location. Loop and
 		// branch joins belong to the equation/fixpoint layer; weak-updating here
 		// pollutes ordinary branch precision (for example an `any` local overwritten
@@ -1102,8 +1101,8 @@ func (t *Transfer) applyAssign(
 			t.applyArrayElementKeyProvenanceEffect(out, provenance)
 		}
 		if src != nil {
-			t.applyNumeric(out, key, src)
-			t.seedArrayLiteralLength(out, key, src, constructorCardinalityLower)
+			t.applyNumeric(out, target.Symbol, src)
+			t.seedArrayLiteralLength(out, target.Symbol, src, constructorCardinalityLower)
 		}
 	})
 	t.applyAssignCallPostconditions(out, callPostconditions)
@@ -4584,16 +4583,16 @@ func (t *Transfer) resolveExprValue(
 //
 // Other numeric assignments leave the component untouched (the slot's prior
 // relation is dropped only when it is overwritten, which ApplyEqConst does).
-func (t *Transfer) applyNumeric(out *flow.PointState, key flow.ValueKey, src ast.Expr) {
+func (t *Transfer) applyNumeric(out *flow.PointState, sym cfg.SymbolID, src ast.Expr) {
 	if out == nil {
 		return
 	}
-	pk, ok := flow.NumericKeyOfValueKey(key)
+	pk, ok := flow.NumericVarKeyOfSymbol(sym)
 	if !ok {
 		return
 	}
 	if c, ok := t.constInt(src); ok {
-		op, ok := flow.NumericVarEqConstValueKeyOp(key, c)
+		op, ok := flow.NumericVarEqConstSymbolOp(sym, c)
 		if !ok {
 			return
 		}
@@ -4607,7 +4606,7 @@ func (t *Transfer) applyNumeric(out *flow.PointState, key flow.ValueKey, src ast
 	if !ok || arith.Operator != "+" {
 		return
 	}
-	delta, self := t.constIncrement(arith, key)
+	delta, self := t.constIncrement(arith, sym)
 	if !self || delta == 0 {
 		return
 	}
@@ -4626,7 +4625,7 @@ func (t *Transfer) applyNumeric(out *flow.PointState, key flow.ValueKey, src ast
 	if (delta > 0 && prevUpper > math.MaxInt64-delta) || (delta < 0 && prevUpper < math.MinInt64-delta) {
 		return
 	}
-	op, ok := flow.NumericVarEqConstValueKeyOp(key, prevUpper+delta)
+	op, ok := flow.NumericVarEqConstSymbolOp(sym, prevUpper+delta)
 	if !ok {
 		return
 	}
@@ -4636,13 +4635,13 @@ func (t *Transfer) applyNumeric(out *flow.PointState, key flow.ValueKey, src ast
 	})
 }
 
-// constIncrement reports whether arith is `key + const` or `const + key` (the
-// self-increment of the counter named by key) and the constant delta.
-func (t *Transfer) constIncrement(arith *ast.ArithmeticOpExpr, key flow.ValueKey) (int64, bool) {
-	if c, ok := t.constInt(arith.Rhs); ok && t.isSymExpr(arith.Lhs, key) {
+// constIncrement reports whether arith is `sym + const` or `const + sym` (the
+// self-increment of the counter named by sym) and the constant delta.
+func (t *Transfer) constIncrement(arith *ast.ArithmeticOpExpr, sym cfg.SymbolID) (int64, bool) {
+	if c, ok := t.constInt(arith.Rhs); ok && t.isSymExpr(arith.Lhs, sym) {
 		return c, true
 	}
-	if c, ok := t.constInt(arith.Lhs); ok && t.isSymExpr(arith.Rhs, key) {
+	if c, ok := t.constInt(arith.Lhs); ok && t.isSymExpr(arith.Rhs, sym) {
 		return c, true
 	}
 	return 0, false
@@ -4661,12 +4660,12 @@ func (t *Transfer) constInt(expr ast.Expr) (int64, bool) {
 	return 0, false
 }
 
-func (t *Transfer) isSymExpr(expr ast.Expr, key flow.ValueKey) bool {
+func (t *Transfer) isSymExpr(expr ast.Expr, sym cfg.SymbolID) bool {
 	ident, ok := expr.(*ast.IdentExpr)
 	if !ok {
 		return false
 	}
-	return flow.ValueKeyMatchesSymbol(key, t.symbolOf(ident))
+	return sym != 0 && sym == t.symbolOf(ident)
 }
 
 // applyBranch records the parameter demand a branch condition imposes. Guard

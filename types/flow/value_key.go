@@ -115,15 +115,6 @@ func ParseSymbolValueKey(key ValueKey) (cfg.SymbolID, bool) {
 	return cfg.SymbolID(n), true
 }
 
-// ValueKeyMatchesSymbol reports whether key is exactly sym's value slot.
-func ValueKeyMatchesSymbol(key ValueKey, sym cfg.SymbolID) bool {
-	if sym == 0 {
-		return false
-	}
-	got, ok := ParseSymbolValueKey(key)
-	return ok && got == sym
-}
-
 func parseSymbolPathSegments(s string) ([]constraint.Segment, bool) {
 	if s == "" {
 		return nil, true
