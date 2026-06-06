@@ -1281,10 +1281,10 @@ func TestReturnEffectOwnsProjectionAxes(t *testing.T) {
 	if !out.ReturnRel.HasErrorReturn(rel) {
 		t.Fatalf("return relation = %#v, want %#v", out.ReturnRel.ErrorReturns(), rel)
 	}
-	if got := out.Env[ReturnSlotKey(0)].ProjectValue(); !typ.TypeEquals(got, sig) {
+	if got := out.Env[flow.ReturnSlotValueKey(0)].ProjectValue(); !typ.TypeEquals(got, sig) {
 		t.Fatalf("return slot 0 value = %v, want %v", got, sig)
 	}
-	if got := out.Env[ReturnSlotKey(1)].ProjectValue(); !typ.TypeEquals(got, typ.Number) {
+	if got := out.Env[flow.ReturnSlotValueKey(1)].ProjectValue(); !typ.TypeEquals(got, typ.Number) {
 		t.Fatalf("return slot 1 value = %v, want number", got)
 	}
 	refs, ok := flow.FunctionRefAt(out.FunctionRefs, constraint.NewPlaceholder(0).Key())
@@ -1349,7 +1349,7 @@ func TestReturnEffectClearsStaleReturnSlotValue(t *testing.T) {
 	tr := New(input.Inputs{}, Config{})
 	out := flow.PointState{
 		Env: map[flow.ValueKey]product.AbstractValue{
-			ReturnSlotKey(0): product.FromType(typ.Number),
+			flow.ReturnSlotValueKey(0): product.FromType(typ.Number),
 		},
 	}
 
@@ -1361,7 +1361,7 @@ func TestReturnEffectClearsStaleReturnSlotValue(t *testing.T) {
 		}},
 	})
 
-	if _, ok := out.Env[ReturnSlotKey(0)]; ok {
+	if _, ok := out.Env[flow.ReturnSlotValueKey(0)]; ok {
 		t.Fatalf("stale return slot value survived identifier return: %#v", out.Env)
 	}
 }

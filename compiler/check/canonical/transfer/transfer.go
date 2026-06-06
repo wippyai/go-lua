@@ -690,14 +690,6 @@ func declaredParamBySlot(in input.Inputs) map[int]typ.Type {
 	return out
 }
 
-// ReturnSlotKey is the Env key under which applyReturn stashes the value of the
-// i-th return expression at a return point. It is distinct from any symbol key
-// (which is "s"+id), so it never collides with a variable's value. The summary
-// projection reads it to recover the typed value of a non-identifier return.
-func ReturnSlotKey(i int) flow.ValueKey {
-	return flow.ReturnSlotValueKey(i)
-}
-
 // Transfer implements equation.NodeTransfer. It computes the state holding after
 // node p from the joined predecessor state, folding in the assumed entry
 // contracts at the entry point and emitting parameter demand for body uses.
