@@ -111,20 +111,20 @@ func (p *captureSeedProgram) Transfer(ref summary.FuncRef) equation.NodeTransfer
 	return p.transfers[ref]
 }
 func (p *captureSeedProgram) Callees(summary.FuncRef) []summary.FuncRef { return nil }
-func (p *captureSeedProgram) CaptureEntries(ref summary.FuncRef, captureExportsOf func(summary.FuncRef) flow.CaptureCells) flow.CaptureCells {
+func (p *captureSeedProgram) CaptureEntryReferences(ref summary.FuncRef, captureReferencesOf func(summary.FuncRef) flow.ReferenceContext) flow.ReferenceContext {
 	if ref != p.child {
-		return flow.CaptureCellsDomain.Bottom()
+		return flow.ReferenceContextBottom()
 	}
-	if av, ok := captureExportsOf(p.parent).Value(cfg.SymbolID(7)); ok {
-		return flow.CaptureCellsOf([]flow.CaptureCell{{Symbol: cfg.SymbolID(7), Value: av}})
+	parent := captureReferencesOf(p.parent)
+	cells := flow.CaptureCellsDomain.Bottom()
+	if av, ok := parent.CaptureCells().Value(cfg.SymbolID(7)); ok {
+		cells = flow.CaptureCellsOf([]flow.CaptureCell{{Symbol: cfg.SymbolID(7), Value: av}})
 	}
-	return flow.CaptureCellsDomain.Bottom()
-}
-func (p *captureSeedProgram) CaptureEntryRefs(ref summary.FuncRef, captureFunctionRefsOf func(summary.FuncRef) flow.FunctionRefs) flow.FunctionRefs {
-	if ref != p.child {
-		return flow.FunctionRefsDomain.Bottom()
-	}
-	return flow.ProjectFunctionRefsBySymbols(captureFunctionRefsOf(p.parent), []cfg.SymbolID{7})
+	return flow.ReferenceContextOf(
+		cells,
+		flow.ProjectFunctionRefsBySymbols(parent.FunctionRefs(), []cfg.SymbolID{7}),
+		flow.ClosureRefsDomain.Bottom(),
+	)
 }
 
 type captureSeedTransfer struct {

@@ -83,16 +83,8 @@ type returnCallTargetProvider interface {
 	ReturnCallHasFiniteTarget(ref FuncRef, call *cfg.CallInfo) bool
 }
 
-type captureEntryProvider interface {
-	CaptureEntries(ref FuncRef, captureExportsOf func(FuncRef) flow.CaptureCells) flow.CaptureCells
-}
-
-type captureEntryRefsProvider interface {
-	CaptureEntryRefs(ref FuncRef, captureFunctionRefsOf func(FuncRef) flow.FunctionRefs) flow.FunctionRefs
-}
-
-type captureEntryClosureRefsProvider interface {
-	CaptureEntryClosureRefs(ref FuncRef, captureClosureRefsOf func(FuncRef) flow.ClosureRefs) flow.ClosureRefs
+type captureEntryReferencesProvider interface {
+	CaptureEntryReferences(ref FuncRef, captureReferencesOf func(FuncRef) flow.ReferenceContext) flow.ReferenceContext
 }
 
 // EntryValueDependencies exposes only the summary components needed to seed a
@@ -456,45 +448,16 @@ func delegatedParamIndex(calleeParam int, argParams []int) (int, bool) {
 	return callerParam, true
 }
 
-func (q *Queries) entryCells(ctx *db.QueryContext, key Key) flow.CaptureCells {
-	entries := key.References.CaptureCells()
-	if provider, ok := q.prog.(captureEntryProvider); ok {
-		lexical := provider.CaptureEntries(key.Ref, func(dep FuncRef) flow.CaptureCells {
-			return q.solveQ.Get(ctx, NewDefaultKey(dep, nil)).Summary.CaptureExports
-		})
-		entries = mergeCaptureCellsWithFixed(entries, lexical)
-	}
-	return entries
-}
-
-func (q *Queries) entryRefs(ctx *db.QueryContext, key Key) flow.FunctionRefs {
-	refs := key.References.FunctionRefs()
-	if provider, ok := q.prog.(captureEntryRefsProvider); ok {
-		lexical := provider.CaptureEntryRefs(key.Ref, func(dep FuncRef) flow.FunctionRefs {
-			return q.solveQ.Get(ctx, NewDefaultKey(dep, nil)).Summary.CaptureFunctionRefs
-		})
-		refs = mergeFunctionRefsWithFixed(refs, lexical)
-	}
-	return refs
-}
-
-func (q *Queries) entryClosureRefs(ctx *db.QueryContext, key Key) flow.ClosureRefs {
-	refs := key.References.ClosureRefs()
-	if provider, ok := q.prog.(captureEntryClosureRefsProvider); ok {
-		lexical := provider.CaptureEntryClosureRefs(key.Ref, func(dep FuncRef) flow.ClosureRefs {
-			return q.solveQ.Get(ctx, NewDefaultKey(dep, nil)).Summary.CaptureClosureRefs
-		})
-		refs = mergeClosureRefsWithFixed(refs, lexical)
-	}
-	return refs
-}
-
 func (q *Queries) entryReferences(ctx *db.QueryContext, key Key) flow.ReferenceContext {
-	return flow.ReferenceContextOf(
-		q.entryCells(ctx, key),
-		q.entryRefs(ctx, key),
-		q.entryClosureRefs(ctx, key),
-	)
+	references := key.References.Context()
+	if provider, ok := q.prog.(captureEntryReferencesProvider); ok {
+		lexical := provider.CaptureEntryReferences(key.Ref, func(dep FuncRef) flow.ReferenceContext {
+			sum := q.solveQ.Get(ctx, NewDefaultKey(dep, nil)).Summary
+			return flow.ReferenceContextOf(sum.CaptureExports, sum.CaptureFunctionRefs, sum.CaptureClosureRefs)
+		})
+		references = mergeReferenceContextWithFixed(references, lexical)
+	}
+	return references
 }
 
 func (q *Queries) entryValues(ctx *db.QueryContext, key Key) map[int]product.AbstractValue {
@@ -608,6 +571,14 @@ func mergeClosureRefsWithFixed(fixed, fallback flow.ClosureRefs) flow.ClosureRef
 		out = flow.WithClosureRef(out, path, set)
 	}
 	return flow.ClosureRefsDomain.Join(out, flow.ClosureRefsDomain.Bottom())
+}
+
+func mergeReferenceContextWithFixed(fixed, fallback flow.ReferenceContext) flow.ReferenceContext {
+	return flow.ReferenceContextOf(
+		mergeCaptureCellsWithFixed(fixed.CaptureCells(), fallback.CaptureCells()),
+		mergeFunctionRefsWithFixed(fixed.FunctionRefs(), fallback.FunctionRefs()),
+		mergeClosureRefsWithFixed(fixed.ClosureRefs(), fallback.ClosureRefs()),
+	)
 }
 
 func (q *Queries) entrySymbolValues(ref FuncRef) map[cfg.SymbolID]product.AbstractValue {

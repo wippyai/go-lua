@@ -167,6 +167,29 @@ func TestReferenceContextJoinRefAtAddsIdentitySets(t *testing.T) {
 	}
 }
 
+func TestReferenceContextCallableIdentityDropsCaptureCells(t *testing.T) {
+	sym := cfg.SymbolID(56)
+	path := constraint.NewPath(sym, "fn")
+	fn := FunctionRef{GraphID: 56}
+	closure := ClosureRefOf(FunctionRef{GraphID: 57}, CaptureCellsDomain.Bottom(), nil)
+	references := ReferenceContextOf(
+		CaptureCellsOf([]CaptureCell{{Symbol: sym, Value: product.FromType(typ.String)}}),
+		WithFunctionRefPath(nil, path, FunctionRefSetOf(fn)),
+		WithClosureRefAddress(nil, testStableAddressPath(t, path), ClosureRefSetOf(closure)),
+	)
+
+	identity := references.CallableIdentity()
+	if len(identity.CaptureCells().Entries()) != 0 {
+		t.Fatalf("identity projection kept capture cells: %s", identity.CaptureCells().Format())
+	}
+	if _, ok := FunctionRefAtPath(identity.FunctionRefs(), path); !ok {
+		t.Fatalf("identity projection lost function refs: %#v", identity.FunctionRefs())
+	}
+	if _, ok := ClosureRefAtPath(identity.ClosureRefs(), path); !ok {
+		t.Fatalf("identity projection lost closure refs: %#v", identity.ClosureRefs())
+	}
+}
+
 func TestReferenceContextKeyRoundTrip(t *testing.T) {
 	sym := cfg.SymbolID(40)
 	path := constraint.NewPath(sym, "dep").Field("make")

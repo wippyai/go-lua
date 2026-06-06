@@ -103,6 +103,13 @@ func (c ReferenceContext) Join(other ReferenceContext) ReferenceContext {
 	)
 }
 
+// CallableIdentity returns only function and closure identity facts. Captured
+// lexical cells have distinct value seeding policy at closure entry and should
+// not be copied by identity-only projections.
+func (c ReferenceContext) CallableIdentity() ReferenceContext {
+	return ReferenceContextOf(CaptureCellsDomain.Bottom(), c.functionRefs, c.closureRefs)
+}
+
 // RebaseCallablePaths moves callable identity facts under source to target.
 // Captured cells are lexical storage, not callable identity paths, so this
 // operation intentionally returns an empty cell axis.

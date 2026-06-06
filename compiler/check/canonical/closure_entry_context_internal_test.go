@@ -175,9 +175,10 @@ return M
 	for _, ref := range prog.refs {
 		_ = q.Summarize(ctx, ref)
 	}
-	cells := prog.CaptureEntries(makeRef, func(dep summary.FuncRef) flow.CaptureCells {
-		return q.Summarize(ctx, dep).CaptureExports
-	})
+	cells := prog.CaptureEntryReferences(makeRef, func(dep summary.FuncRef) flow.ReferenceContext {
+		sum := q.Summarize(ctx, dep)
+		return flow.ReferenceContextOf(sum.CaptureExports, sum.CaptureFunctionRefs, sum.CaptureClosureRefs)
+	}).CaptureCells()
 	if av, ok := cells.Value(tSym); !ok || !typeHasField(av.ProjectValue(), "render") {
 		t.Fatalf("CaptureEntries T = %v/%v, want render; cells=%s chain=%v", av.ProjectValue(), ok, cells.Format(), prog.captureDependencyChain(makeRef))
 	}

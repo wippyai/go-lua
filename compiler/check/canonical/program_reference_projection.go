@@ -6,22 +6,22 @@ import (
 	"github.com/wippyai/go-lua/types/flow"
 )
 
-// CaptureEntries projects captured lexical values through the callee-visible
-// reference vocabulary. The value carrier and function/closure reference axes use
-// the same referenceProjection so closures observe a single normalized view.
-func (p *program) CaptureEntries(ref summary.FuncRef, captureExportsOf func(summary.FuncRef) flow.CaptureCells) flow.CaptureCells {
+// CaptureEntryReferences projects captured lexical reference state through the
+// callee-visible reference vocabulary so closure entry observes one normalized
+// value/function/closure carrier.
+func (p *program) CaptureEntryReferences(ref summary.FuncRef, captureReferencesOf func(summary.FuncRef) flow.ReferenceContext) flow.ReferenceContext {
 	g := p.Graph(ref)
-	if g == nil || captureExportsOf == nil {
-		return flow.CaptureCellsDomain.Bottom()
+	if g == nil || captureReferencesOf == nil {
+		return flow.ReferenceContextBottom()
 	}
 	bindings := g.Bindings()
 	fn := g.Func()
 	if bindings == nil || fn == nil {
-		return flow.CaptureCellsDomain.Bottom()
+		return flow.ReferenceContextBottom()
 	}
 	captured := bindings.CapturedSymbols(fn)
 	if len(captured) == 0 {
-		return flow.CaptureCellsDomain.Bottom()
+		return flow.ReferenceContextBottom()
 	}
 	deps := p.captureDependencyChain(ref)
 	entries := make([]flow.CaptureCell, 0, len(captured))
@@ -29,64 +29,18 @@ func (p *program) CaptureEntries(ref summary.FuncRef, captureExportsOf func(summ
 		if !g.IsFreeSymbol(sym) {
 			continue
 		}
-		if av, ok := p.captureEntryValue(ref, sym, deps, captureExportsOf); ok {
+		if av, ok := p.captureEntryValue(ref, sym, deps, func(dep summary.FuncRef) flow.CaptureCells {
+			return captureReferencesOf(dep).CaptureCells()
+		}); ok {
 			entries = append(entries, flow.CaptureCell{Symbol: sym, Value: av})
 		}
 	}
-	return flow.CaptureCellsOf(entries).ProjectPaths(p.referenceProjection(ref))
-}
-
-func (p *program) CaptureEntryRefs(ref summary.FuncRef, captureFunctionRefsOf func(summary.FuncRef) flow.FunctionRefs) flow.FunctionRefs {
-	g := p.Graph(ref)
-	if g == nil || captureFunctionRefsOf == nil {
-		return flow.FunctionRefsDomain.Bottom()
-	}
-	bindings := g.Bindings()
-	fn := g.Func()
-	if bindings == nil || fn == nil {
-		return flow.FunctionRefsDomain.Bottom()
-	}
-	captured := bindings.CapturedSymbols(fn)
-	if len(captured) == 0 {
-		return flow.FunctionRefsDomain.Bottom()
-	}
 	projection := p.referenceProjection(ref)
-	if referenceProjectionEmpty(projection) {
-		return flow.FunctionRefsDomain.Bottom()
-	}
-	out := flow.FunctionRefsDomain.Bottom()
+	out := flow.ReferenceContextOf(flow.CaptureCellsOf(entries), flow.FunctionRefsDomain.Bottom(), flow.ClosureRefsDomain.Bottom()).ProjectPaths(projection)
 	for _, dep := range p.captureDependencyChain(ref) {
-		out = flow.FunctionRefsDomain.Join(out, flow.ProjectFunctionRefsByReferencePaths(captureFunctionRefsOf(dep), projection))
+		out = out.Join(captureReferencesOf(dep).ProjectPaths(projection).CallableIdentity())
 	}
 	return out
-}
-
-func (p *program) CaptureEntryClosureRefs(ref summary.FuncRef, captureClosureRefsOf func(summary.FuncRef) flow.ClosureRefs) flow.ClosureRefs {
-	g := p.Graph(ref)
-	if g == nil || captureClosureRefsOf == nil {
-		return flow.ClosureRefsDomain.Bottom()
-	}
-	projection := p.referenceProjection(ref)
-	if referenceProjectionEmpty(projection) {
-		return flow.ClosureRefsDomain.Bottom()
-	}
-	out := flow.ClosureRefsDomain.Bottom()
-	for _, dep := range p.captureDependencyChain(ref) {
-		out = flow.ClosureRefsDomain.Join(out, flow.ProjectClosureRefsByReferencePaths(captureClosureRefsOf(dep), projection))
-	}
-	return out
-}
-
-func (p *program) callEntryCells(ref summary.FuncRef, caller flow.CaptureCells) flow.CaptureCells {
-	return caller.ProjectPaths(p.referenceProjection(ref))
-}
-
-func (p *program) callEntryFunctionRefs(ref summary.FuncRef, caller flow.FunctionRefs) flow.FunctionRefs {
-	return flow.ProjectFunctionRefsByReferencePaths(caller, p.referenceProjection(ref))
-}
-
-func (p *program) callEntryClosureRefs(ref summary.FuncRef, caller flow.ClosureRefs) flow.ClosureRefs {
-	return flow.ProjectClosureRefsByReferencePaths(caller, p.referenceProjection(ref))
 }
 
 func (p *program) callEntryReferenceContext(ref summary.FuncRef, caller flow.ReferenceContext) flow.ReferenceContext {
@@ -135,8 +89,4 @@ func (p *program) referenceProjection(ref summary.FuncRef) flow.ReferencePathPro
 		p.referencePaths[ref] = projection
 	}
 	return projection
-}
-
-func referenceProjectionEmpty(projection flow.ReferencePathProjection) bool {
-	return len(projection.Exact) == 0 && len(projection.Subtrees) == 0
 }
