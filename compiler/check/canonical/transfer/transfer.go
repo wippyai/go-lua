@@ -2092,18 +2092,6 @@ func appendFunctionRefPath(base constraint.Path, segments []constraint.Segment) 
 	return next
 }
 
-func (t *Transfer) targetFunctionPath(target cfg.AssignTarget) (constraint.Path, bool) {
-	return t.staticPathOfAssignTarget(target)
-}
-
-func (t *Transfer) targetFunctionPathKey(target cfg.AssignTarget) (constraint.PathKey, bool) {
-	path, ok := t.targetFunctionPath(target)
-	if !ok {
-		return "", false
-	}
-	return path.Key(), true
-}
-
 func (t *Transfer) functionExprAddress(expr ast.Expr) (flow.StableAddress, bool) {
 	place, ok := t.staticPlaceOfExpr(expr)
 	if !ok {
