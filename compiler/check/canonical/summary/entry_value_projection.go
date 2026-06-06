@@ -413,8 +413,9 @@ func (p CallEntryContextProjection) ProjectKeys() []Key {
 			if p.NormalizeValues != nil {
 				values = p.NormalizeValues(target.Ref, site.Call, values)
 			}
-			refs := flow.FunctionRefsDomain.Join(target.EntryFunctionRefs, p.directFunctionRefs(target.Ref, site.Call, &site.ArgState))
-			closures := flow.ClosureRefsDomain.Join(target.EntryClosureRefs, p.directClosureRefs(target.Ref, site.Call, &site.ArgState))
+			refs, closures := p.directReferenceAxes(target.Ref, site.Call, &site.ArgState)
+			refs = flow.FunctionRefsDomain.Join(target.EntryFunctionRefs, refs)
+			closures = flow.ClosureRefsDomain.Join(target.EntryClosureRefs, closures)
 			facts := flow.MergeBoundaryFactProofs(target.EntryFacts, p.directFacts(target.Ref, site.Call, &site.ArgState))
 			key := NewKeyWithEntryContextFacts(
 				target.Ref,
@@ -583,26 +584,18 @@ func (p CallEntryContextProjection) directProductValues(callee FuncRef, call *as
 	return DirectCallEntryProductValuesWithParamCount(call, callee, argValues, p.ParamSlot, p.ParamSlotCount)
 }
 
-func (p CallEntryContextProjection) directFunctionRefs(callee FuncRef, call *ast.FuncCallExpr, in *flow.PointState) flow.FunctionRefs {
+func (p CallEntryContextProjection) directReferenceAxes(callee FuncRef, call *ast.FuncCallExpr, in *flow.PointState) (flow.FunctionRefs, flow.ClosureRefs) {
 	if p.ParamSlot == nil || p.ParamPath == nil || in == nil {
-		return flow.FunctionRefsDomain.Bottom()
+		return flow.FunctionRefsDomain.Bottom(), flow.ClosureRefsDomain.Bottom()
 	}
 	refInput := p.referenceInput(callee, call, in)
 	refInput.FunctionRefs = in.FunctionRefs
 	refInput.ResolveFunctionArg = p.FunctionArgRefs
 	refInput.ResolveFunctionArgRefs = p.FunctionArgRefTree
-	return DirectCallEntryFunctionRefs(refInput)
-}
-
-func (p CallEntryContextProjection) directClosureRefs(callee FuncRef, call *ast.FuncCallExpr, in *flow.PointState) flow.ClosureRefs {
-	if p.ParamSlot == nil || p.ParamPath == nil || in == nil {
-		return flow.ClosureRefsDomain.Bottom()
-	}
-	refInput := p.referenceInput(callee, call, in)
 	refInput.ClosureRefs = in.ClosureRefs
 	refInput.ResolveClosureArg = p.ClosureArgRefs
 	refInput.ResolveClosureArgRefs = p.ClosureArgRefTree
-	return DirectCallEntryClosureRefs(refInput)
+	return DirectCallEntryReferences(refInput)
 }
 
 func (p CallEntryContextProjection) referenceInput(callee FuncRef, call *ast.FuncCallExpr, in *flow.PointState) DirectCallEntryReferenceInput {

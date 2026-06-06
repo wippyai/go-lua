@@ -335,9 +335,10 @@ func (c callEntryProjector) productReferencesForRef(ref summary.FuncRef, call *a
 	in.ResolveClosureArgRefs = func(_ int, arg ast.Expr, _ *flow.PointState) (flow.ClosureRefs, bool) {
 		return argProjection.closureArgTreeRefs(arg)
 	}
+	refs, closures := summary.DirectCallEntryReferences(in)
 	return productReferenceAxes{
-		refs:     summary.DirectCallEntryFunctionRefs(in),
-		closures: summary.DirectCallEntryClosureRefs(in),
+		refs:     refs,
+		closures: closures,
 	}
 }
 
