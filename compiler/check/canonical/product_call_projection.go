@@ -63,7 +63,7 @@ func (p productCallProjection) callReturnValues() ([]product.AbstractValue, bool
 	argTypes := p.ctx.ArgTypes()
 	exprType := p.ctx.ExprType
 	summaryReturns := p.inferredReturnValues()
-	return canonicalcall.InferReturnValues(canonicalcall.ReturnValueInput{
+	return canonicalcall.ReturnValueInput{
 		Call:                 p.call,
 		Env:                  p.typer.callInterceptEnv(exprType),
 		TypePolicyAvailable:  p.typer.d.cfg.Types != nil,
@@ -86,9 +86,9 @@ func (p productCallProjection) callReturnValues() ([]product.AbstractValue, bool
 			if !ok {
 				return nil, false
 			}
-			return canonicalcall.InferReturnTypes(proj.input())
+			return proj.types()
 		},
-	})
+	}.Values()
 }
 
 func (p productCallProjection) returnRefs() transfer.CallReturnRefs {

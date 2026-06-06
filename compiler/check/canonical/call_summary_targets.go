@@ -167,9 +167,9 @@ func (p callOutcomeProjection) signatureReturns(target canonicalcall.SelectedTar
 	if !ok {
 		return nil
 	}
-	in := proj.input()
+	in := proj.projection()
 	in.SummaryReturns = nil
-	if returns, ok := canonicalcall.InferReturnTypes(in); ok && len(returns) > 0 {
+	if returns, ok := in.Types(); ok && len(returns) > 0 {
 		return returns
 	}
 	if fn := unwrap.Function(sig); fn != nil && len(fn.Returns) > 0 {

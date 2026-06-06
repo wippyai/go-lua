@@ -48,7 +48,7 @@ func (ct callTyper) callReturnProjection(
 	}, true
 }
 
-func (p callReturnProjection) input() canonicalcall.ReturnInput {
+func (p callReturnProjection) projection() canonicalcall.ReturnInput {
 	d := p.typer.d
 	return canonicalcall.ReturnInput{
 		Call:               p.call,
@@ -69,6 +69,10 @@ func (p callReturnProjection) input() canonicalcall.ReturnInput {
 			return d.resolveType(expr, d.baseScope())
 		},
 	}
+}
+
+func (p callReturnProjection) types() ([]typ.Type, bool) {
+	return p.projection().Types()
 }
 
 func (p callReturnProjection) refinedArgTypes() []typ.Type {

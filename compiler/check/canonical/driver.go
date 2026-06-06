@@ -1797,7 +1797,7 @@ func (ct callTyper) CallReturns(call *ast.FuncCallExpr, argTypes []typ.Type, exp
 	if !ok {
 		return nil, false
 	}
-	return canonicalcall.InferReturnTypes(proj.input())
+	return proj.types()
 }
 
 func (ct callTyper) CallArgDemands(call *ast.FuncCallExpr, ctx transfer.ProductCallContext) []callobligation.Obligation {
