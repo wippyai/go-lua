@@ -44,35 +44,6 @@ type closureRefsWrite struct {
 	Refs flow.ClosureRefs
 }
 
-type RelationEffectKind uint8
-
-const (
-	RelationSeedSiblingNil RelationEffectKind = iota + 1
-	RelationKillSymbols
-	RelationSeedTargetLengthParam
-	RelationSeedContainerLowerBound
-	RelationKillLengthTargets
-	RelationSeedGuardedType
-)
-
-// RelationEffect is the canonical reducer payload for point-local relation facts.
-// Relations are must-facts in PointState.Rel, so transfer code seeds and kills
-// them through this reducer rather than editing the relation axis directly.
-type RelationEffect struct {
-	Kind          RelationEffectKind
-	ErrSym        cfg.SymbolID
-	ValueSyms     []cfg.SymbolID
-	Symbols       []cfg.SymbolID
-	TargetRoot    cfg.SymbolID
-	TargetKey     constraint.PathKey
-	ParamIndex    int
-	Lower         int64
-	GuardSym      cfg.SymbolID
-	TargetSym     cfg.SymbolID
-	GuardOnTruthy bool
-	TargetType    typ.Type
-}
-
 // ReturnSlotEffect is the transfer payload for one caller-visible return slot.
 // Source records function/closure identity facts under the slot placeholder;
 // Value records the product value for non-symbol expressions whose value would
@@ -233,10 +204,6 @@ func receiverMutationForPlace(place Place, presentElementWrite bool) (flow.Recei
 		Segments:            append([]constraint.Segment(nil), path.Segments...),
 		PresentElementWrite: presentElementWrite,
 	}, true
-}
-
-func (t *Transfer) applyRelationEffect(out *flow.PointState, effect RelationEffect) bool {
-	return relations.apply(out, effect)
 }
 
 func (t *Transfer) applyReturnEffect(out *flow.PointState, effect ReturnEffect) bool {
@@ -715,9 +682,9 @@ func (t *Transfer) applyWriteEffectWithAliasReplay(out *flow.PointState, effect 
 	}
 	changed := false
 	if effect.KillRelations && len(effect.Place.Steps) == 0 {
-		changed = t.applyRelationEffect(out, RelationEffect{Kind: RelationKillSymbols, Symbols: []cfg.SymbolID{effect.Place.Root}}) || changed
+		changed = flow.ApplyRelationEffect(out, flow.RelationEffect{Kind: flow.RelationKillSymbols, Symbols: []cfg.SymbolID{effect.Place.Root}}) || changed
 	} else if len(effect.Place.Steps) > 0 {
-		changed = t.applyRelationEffect(out, RelationEffect{Kind: RelationKillLengthTargets, Symbols: []cfg.SymbolID{effect.Place.Root}}) || changed
+		changed = flow.ApplyRelationEffect(out, flow.RelationEffect{Kind: flow.RelationKillLengthTargets, Symbols: []cfg.SymbolID{effect.Place.Root}}) || changed
 	}
 	changed = t.applyPlaceMutationEffect(out, PlaceMutationEffect{
 		Place:                  effect.Place,

@@ -1199,40 +1199,6 @@ func TestSymbolWriteEffectKillsSiblingNilRelation(t *testing.T) {
 	}
 }
 
-func TestRelationEffectSeedsAndKillsSiblingNil(t *testing.T) {
-	valueSym := cfg.SymbolID(511)
-	otherSym := cfg.SymbolID(512)
-	errSym := cfg.SymbolID(513)
-	tr := New(input.Inputs{}, Config{})
-	out := flow.PointState{}
-
-	tr.applyRelationEffect(&out, RelationEffect{
-		Kind:      RelationSeedSiblingNil,
-		ErrSym:    errSym,
-		ValueSyms: []cfg.SymbolID{valueSym, otherSym},
-	})
-	if rel, ok := out.Rel.SiblingNil(errSym); !ok || len(rel.ValueSyms) != 2 {
-		t.Fatalf("relation effect did not seed sibling-nil relation: %#v", out.Rel)
-	}
-
-	tr.applyRelationEffect(&out, RelationEffect{
-		Kind:    RelationKillSymbols,
-		Symbols: []cfg.SymbolID{valueSym},
-	})
-	rel, ok := out.Rel.SiblingNil(errSym)
-	if !ok || len(rel.ValueSyms) != 1 || rel.ValueSyms[0] != otherSym {
-		t.Fatalf("relation effect kill did not remove only written symbol: %#v", out.Rel)
-	}
-
-	tr.applyRelationEffect(&out, RelationEffect{
-		Kind:    RelationKillSymbols,
-		Symbols: []cfg.SymbolID{errSym},
-	})
-	if _, ok := out.Rel.SiblingNil(errSym); ok {
-		t.Fatalf("relation effect kept relation after err symbol write: %#v", out.Rel)
-	}
-}
-
 func TestLoopAppendLengthFactSeedsNumericAndPointRelation(t *testing.T) {
 	root := cfg.SymbolID(521)
 	key := constraint.PathKey("sym521@1")

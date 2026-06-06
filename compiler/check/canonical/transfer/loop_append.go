@@ -45,8 +45,8 @@ func (t *Transfer) applyLoopAppendLengthFacts(out *flow.PointState, facts []inpu
 			}) || changed
 		}
 		if fact.ParamIndex >= 0 {
-			changed = t.applyRelationEffect(out, RelationEffect{
-				Kind:       RelationSeedTargetLengthParam,
+			changed = flow.ApplyRelationEffect(out, flow.RelationEffect{
+				Kind:       flow.RelationSeedTargetLengthParam,
 				TargetRoot: fact.TargetRoot,
 				TargetKey:  fact.TargetKey,
 				ParamIndex: fact.ParamIndex,

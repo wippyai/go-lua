@@ -10,7 +10,7 @@ import (
 )
 
 type assignCallPostconditionEffects struct {
-	relations     []RelationEffect
+	relations     []flow.RelationEffect
 	keyProvenance []KeyProvenanceEffect
 	boundaryFacts []boundaryFactPostcondition
 	numericOps    []flow.NumericOp
@@ -63,7 +63,7 @@ func (t *Transfer) applyAssignCallPostconditions(out *flow.PointState, effects a
 		return
 	}
 	for _, rel := range effects.relations {
-		t.applyRelationEffect(out, rel)
+		flow.ApplyRelationEffect(out, rel)
 	}
 	for _, effect := range effects.keyProvenance {
 		t.applyKeyProvenanceEffect(out, effect)
@@ -91,8 +91,8 @@ func (t *Transfer) appendSiblingNilPostconditions(
 		if !ok || errTarget.Kind != cfg.TargetIdent || errTarget.Symbol == 0 {
 			continue
 		}
-		effects.relations = append(effects.relations, RelationEffect{
-			Kind:      RelationSeedSiblingNil,
+		effects.relations = append(effects.relations, flow.RelationEffect{
+			Kind:      flow.RelationSeedSiblingNil,
 			ErrSym:    errTarget.Symbol,
 			ValueSyms: []cfg.SymbolID{valTarget.Symbol},
 		})
@@ -114,8 +114,8 @@ func (t *Transfer) appendGuardedTypePostconditions(
 		if !ok || valueTarget.Kind != cfg.TargetIdent || valueTarget.Symbol == 0 || rel.TargetType == nil {
 			continue
 		}
-		effects.relations = append(effects.relations, RelationEffect{
-			Kind:          RelationSeedGuardedType,
+		effects.relations = append(effects.relations, flow.RelationEffect{
+			Kind:          flow.RelationSeedGuardedType,
 			GuardSym:      guardTarget.Symbol,
 			TargetSym:     valueTarget.Symbol,
 			GuardOnTruthy: rel.GuardOnTruthy,
@@ -255,8 +255,8 @@ func (t *Transfer) appendLengthParamPostconditions(
 			continue
 		}
 		if paramIndex, ok := t.runtimeArgCallerParamIndex(arg); ok {
-			effects.relations = append(effects.relations, RelationEffect{
-				Kind:       RelationSeedTargetLengthParam,
+			effects.relations = append(effects.relations, flow.RelationEffect{
+				Kind:       flow.RelationSeedTargetLengthParam,
 				TargetRoot: targetRoot,
 				TargetKey:  targetKey,
 				ParamIndex: paramIndex,
