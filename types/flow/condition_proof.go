@@ -136,7 +136,7 @@ func (p ConditionProofProjector) resolvePath(point cfg.Point, path constraint.Pa
 			return key
 		}
 	}
-	return path.Key()
+	return PathIdentityKey(path)
 }
 
 func (p ConditionProofProjector) deriveSeedType(seedPath constraint.Path, seedType typ.Type, queryPath constraint.Path) typ.Type {

@@ -29,6 +29,21 @@ func TestStableAddressIgnoresVersionAndExportsCanonicalKey(t *testing.T) {
 	}
 }
 
+func TestPathIdentityKeyUsesStableAddressAndPlaceholderFallback(t *testing.T) {
+	a := constraint.NewPath(cfg.SymbolID(42), "node").Field("edges")
+	a.Version = 1
+	b := constraint.NewPath(cfg.SymbolID(42), "node").Field("edges")
+	b.Version = 9
+	if got, want := PathIdentityKey(a), StablePathKey(b); got != want {
+		t.Fatalf("PathIdentityKey(versioned symbol) = %s, want stable %s", got, want)
+	}
+
+	placeholder := constraint.NewPlaceholder(0).Field("item")
+	if got, want := PathIdentityKey(placeholder), placeholder.Key(); got != want {
+		t.Fatalf("PathIdentityKey(placeholder) = %s, want %s", got, want)
+	}
+}
+
 func TestStableAddressSeparatesSymbolAndRootIdentity(t *testing.T) {
 	symbol, ok := StableAddressOfPath(constraint.NewPath(cfg.SymbolID(7), "x"))
 	if !ok {

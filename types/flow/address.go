@@ -284,6 +284,16 @@ func StablePathKey(path constraint.Path) constraint.PathKey {
 	return addr.Key()
 }
 
+// PathIdentityKey returns the canonical identity key for proof and queue
+// lookups. Resolved paths use stable address identity; placeholders and other
+// non-addressable paths fall back to their structural path key.
+func PathIdentityKey(path constraint.Path) constraint.PathKey {
+	if key := StablePathKey(path); key != "" {
+		return key
+	}
+	return path.Key()
+}
+
 // Key returns the internal deterministic key for map/set carriers.
 func (a StableAddress) Key() constraint.PathKey {
 	if !a.root.isValid() {

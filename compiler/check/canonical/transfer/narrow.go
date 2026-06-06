@@ -1371,9 +1371,6 @@ func (t *Transfer) conditionAuthorizesCurrentSeed(point cfg.Point, out *flow.Poi
 		Resolver:    fieldResolver,
 		ResolveType: conditionProofTypeKey,
 		ConditionAt: func(cfg.Point) constraint.Condition { return out.Cond },
-		ResolvePath: func(_ cfg.Point, path constraint.Path) constraint.PathKey {
-			return flow.StablePathKey(path)
-		},
 	}.ConditionedSeedTypeAt(point, seedPath, seedType, seedPath, constraint.TrueCondition())
 	if typ.IsAbsentOrUnknown(projectedType) || typ.IsNever(projectedType) {
 		return false
