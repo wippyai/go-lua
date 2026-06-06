@@ -103,6 +103,71 @@ func (f StaticMemberFacts) KillSubtreeAddress(root StableAddress) StaticMemberFa
 	return canonicalStaticMemberFacts(out, product.Domain.Join)
 }
 
+func (f StaticMemberFacts) coversWithPresentValues(
+	want StaticMemberFacts,
+	present func(constraint.PathKey) (product.AbstractValue, bool),
+	pred func(product.AbstractValue, product.AbstractValue) bool,
+) bool {
+	if f.bottom {
+		return true
+	}
+	if want.bottom {
+		return false
+	}
+	for _, entry := range want.entries {
+		if idx, ok := findStaticMemberFact(f.entries, entry.Path); ok {
+			if pred(f.entries[idx].Value, entry.Value) {
+				continue
+			}
+		}
+		if value, ok := staticMemberPresentValue(present, entry.Path); ok && pred(value, entry.Value) {
+			continue
+		}
+		return false
+	}
+	return true
+}
+
+func (f StaticMemberFacts) withFactsMergedFromPresentValues(
+	facts StaticMemberFacts,
+	present func(constraint.PathKey) (product.AbstractValue, bool),
+	op func(product.AbstractValue, product.AbstractValue) product.AbstractValue,
+) StaticMemberFacts {
+	if facts.bottom {
+		return f
+	}
+	out := f
+	for _, entry := range facts.entries {
+		if _, ok := findStaticMemberFact(out.entries, entry.Path); ok {
+			continue
+		}
+		value, ok := staticMemberPresentValue(present, entry.Path)
+		if !ok {
+			continue
+		}
+		joined := op(entry.Value, value)
+		if joined.IsZero() || joined.IsBottom() {
+			continue
+		}
+		addr, ok := StableAddressFromKey(entry.Path)
+		if !ok {
+			continue
+		}
+		out = out.WithAddress(addr, joined)
+	}
+	return out
+}
+
+func staticMemberPresentValue(
+	present func(constraint.PathKey) (product.AbstractValue, bool),
+	key constraint.PathKey,
+) (product.AbstractValue, bool) {
+	if present == nil {
+		return product.AbstractValue{}, false
+	}
+	return present(key)
+}
+
 // Format renders f deterministically for tests and diagnostics.
 func (f StaticMemberFacts) Format() string {
 	if f.bottom {

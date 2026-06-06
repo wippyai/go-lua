@@ -343,24 +343,13 @@ var PointStateDomain = lattice.Lattice[PointState]{
 }
 
 func pointStaticMembersLessOrEq(a, b PointState) bool {
-	if a.StaticMembers.bottom {
-		return true
-	}
-	if b.StaticMembers.bottom {
-		return false
-	}
-	for _, want := range b.StaticMembers.Entries() {
-		if idx, ok := findStaticMemberFact(a.StaticMembers.entries, want.Path); ok {
-			if product.Domain.LessOrEq(a.StaticMembers.entries[idx].Value, want.Value) {
-				continue
-			}
-		}
-		if present, ok := pointPathKeyPresentValue(a, want.Path); ok && product.Domain.LessOrEq(present, want.Value) {
-			continue
-		}
-		return false
-	}
-	return true
+	return a.StaticMembers.coversWithPresentValues(
+		b.StaticMembers,
+		func(key constraint.PathKey) (product.AbstractValue, bool) {
+			return pointPathKeyPresentValue(a, key)
+		},
+		product.Domain.LessOrEq,
+	)
 }
 
 func pointStaticMembersJoin(
@@ -385,28 +374,13 @@ func pointStaticMembersJoinOneSided(
 	other PointState,
 	op func(product.AbstractValue, product.AbstractValue) product.AbstractValue,
 ) StaticMemberFacts {
-	if facts.bottom {
-		return out
-	}
-	for _, entry := range facts.Entries() {
-		if _, ok := findStaticMemberFact(out.entries, entry.Path); ok {
-			continue
-		}
-		present, ok := pointPathKeyPresentValue(other, entry.Path)
-		if !ok {
-			continue
-		}
-		joined := op(entry.Value, present)
-		if joined.IsZero() || joined.IsBottom() {
-			continue
-		}
-		addr, ok := StableAddressFromKey(entry.Path)
-		if !ok {
-			continue
-		}
-		out = out.WithAddress(addr, joined)
-	}
-	return out
+	return out.withFactsMergedFromPresentValues(
+		facts,
+		func(key constraint.PathKey) (product.AbstractValue, bool) {
+			return pointPathKeyPresentValue(other, key)
+		},
+		op,
+	)
 }
 
 func pointKeyPresenceLessOrEq(a, b PointState) bool {
