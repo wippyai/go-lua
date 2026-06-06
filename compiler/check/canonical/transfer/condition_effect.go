@@ -360,11 +360,10 @@ func (t *Transfer) variantCaseFieldProjectionValuesForDisjunct(out *flow.PointSt
 				continue
 			}
 			path := projection.Target.Field(projection.Field)
-			addr, ok := flow.StableAddressOfPath(path)
-			if !ok {
+			key := flow.StablePathKey(path)
+			if key == "" {
 				continue
 			}
-			key := addr.Key()
 			entry, exists := values[key]
 			if exists {
 				entry.value = product.Domain.Join(entry.value, av)

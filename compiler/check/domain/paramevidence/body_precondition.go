@@ -333,12 +333,12 @@ func pathGuardComplement(path constraint.Path, cond constraint.Condition) typ.Ty
 }
 
 func samePathIgnoringVersion(a, b constraint.Path) bool {
-	left, leftOK := flow.StableAddressOfPath(a)
-	right, rightOK := flow.StableAddressOfPath(b)
-	if !leftOK || !rightOK {
+	left := flow.StablePathKey(a)
+	right := flow.StablePathKey(b)
+	if left == "" || right == "" {
 		return false
 	}
-	return left.Equal(right)
+	return left == right
 }
 
 // guardedLeafEvidence rebuilds structural evidence for segments with the
