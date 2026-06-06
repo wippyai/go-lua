@@ -52,7 +52,6 @@ import (
 	"github.com/wippyai/go-lua/compiler/check/domain/globalenv"
 	interprocdomain "github.com/wippyai/go-lua/compiler/check/domain/interproc"
 	"github.com/wippyai/go-lua/compiler/check/domain/iteration"
-	"github.com/wippyai/go-lua/compiler/check/domain/observation"
 	"github.com/wippyai/go-lua/compiler/check/domain/paramevidence"
 	flowpath "github.com/wippyai/go-lua/compiler/check/domain/path"
 	"github.com/wippyai/go-lua/compiler/check/modules"
@@ -774,87 +773,7 @@ func (d *Driver) bridgeResults(sess api.AnalysisSession, prog *program, queries 
 // FlowEvidence; those would fabricate solver-shaped structures or
 // mutate immutable extraction evidence.
 func (d *Driver) buildFuncResult(sess api.AnalysisSession, prog *program, queries *summary.Queries, ref summary.FuncRef) *api.FuncResult {
-	g := prog.Graph(ref)
-
-	var evidence api.FlowEvidence
-	if store := sess.StoreHandle(); store != nil && g != nil {
-		evidence = store.EvidenceForGraph(g)
-	}
-	callContracts := d.projectCallContracts(prog, ref, evidence)
-
-	// Observation surface: project the converged FunctionState into the per-point /
-	// per-symbol facts and the declared-type inputs the diagnostic passes query
-	// through observation.Projector. The Projector reads those surfaces directly.
-	//
-	// The immutable annotation/global facts are computed once while assembling the
-	// canonical input carrier. Clone them here before adding bridge-only function
-	// binding facts so diagnostics cannot mutate the solver's input facts.
-	facts := cloneFunctionFacts(prog.functionFacts[ref])
-	funcSigs := prog.facts.FunctionBindingTypes(func(ref canonref.FuncRef) typ.Type {
-		return d.signatureForRef(prog, ref)
-	})
-	// A named function (a module-level definition or a local-function binding) is a
-	// defined identifier wherever it is referenced, but it is not a source type
-	// annotation. Keep its signature in the binding overlay so DeclaredAt remains
-	// annotation/global-only and EffectiveTypeAt can still type recursive or forward
-	// function references.
-	recordFunctionBindingTypes(&facts, funcSigs, g)
-	recordCallbackEnvBindingTypes(&facts, prog.facts.CallbackEnv(ref))
-	flowProjection := d.newCanonicalFacts(g, d.states[ref], facts, prog, queries, sess.Context(), evidence)
-	literalSignatures := canonicalsig.LiteralSignatures(canonicalsig.LiteralInput{
-		Graph:           g,
-		Base:            d.baseScope(),
-		ResolveType:     d.resolveType,
-		InferredReturns: d.inferredReturnsForFunction,
-		MethodFor: func(fn *ast.FunctionExpr) *cfg.FuncDefInfo {
-			if ref, ok := prog.refByFunc(fn); ok {
-				return prog.methodDef(ref)
-			}
-			return nil
-		},
-	})
-	pointScopes := d.buildPointScopes(g)
-	sourceSignature := d.declaredSignatureForRef(prog, ref)
-	result := &api.FuncResult{
-		Graph:              g,
-		Evidence:           evidence,
-		GlobalTypes:        d.globalTypes.ToMap(),
-		GlobalTypeBindings: d.globalTypes,
-		// The return check resolves the function's declared return annotation against
-		// BaseScope; a generic function returning `T` must resolve `T` to its bounded
-		// type parameter (the same scope its parameter annotations resolved in), or the
-		// return type re-resolves to an unresolved typ.Ref and a sound `return x`
-		// (x: T) mismatches it. A non-generic function's scope is the module base scope.
-		BaseScope:                d.returnScope(g),
-		Scopes:                   pointScopes,
-		FlowInputs:               buildObservationInputs(g, facts),
-		Facts:                    flowProjection,
-		FlowProjection:           flowProjection,
-		ReturnRelations:          d.summaryReader().ReturnRelations(ref),
-		LiteralSignatures:        literalSignatures,
-		LiteralSignatureProvider: api.LiteralSignatureLookupFromMap(literalSignatures),
-		SourceSignature:          sourceSignature,
-		PublicSeedSignature:      sourceSignature,
-		TypeOps:                  d.cfg.Types,
-		QueryContext: func() *db.QueryContext {
-			if sess == nil {
-				return nil
-			}
-			return sess.Context()
-		}(),
-		Extras:             d.runComputePasses(g, pointScopes),
-		DepthLimitExceeded: d.scopeDepthExceededFor(g),
-	}
-	obs := observation.FromFuncResult(result, nil).WithProofValues()
-	result.CallExpectedArgs = d.projectSolvedCallExpectedArgs(prog, ref, evidence)
-	result.CallContracts = callContracts
-	result.NarrowSynth = &returnSynth{
-		driver: d,
-		obs:    obs.TypeOf,
-		ctx:    result.QueryContext,
-	}
-	result.FnRefinement = paramevidence.FunctionRefinementFromParamNarrows(d.summaryReader().ParamNarrows(ref), prog.facts.HasNoReturn(ref))
-	return result
+	return d.funcResultProjection(sess, prog, queries, ref).build()
 }
 
 func (d *Driver) projectSolvedCallExpectedArgs(prog *program, ref summary.FuncRef, evidence api.FlowEvidence) []api.CallExpectedArgEvidence {
