@@ -6,7 +6,6 @@ import (
 	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/domain/value/product"
 	"github.com/wippyai/go-lua/types/flow"
-	"github.com/wippyai/go-lua/types/kind"
 	querycore "github.com/wippyai/go-lua/types/query/core"
 	"github.com/wippyai/go-lua/types/typ"
 )
@@ -94,37 +93,21 @@ func (t *Transfer) refineByIndexWriteAdmission(
 	if !ok || key.IsZero() {
 		return product.AbstractValue{}, false
 	}
-	keyType := flow.NormalizeDynamicKeyType(product.ProjectValueOrUnknown(key))
 	facts := flow.PointFactsOf(*out)
-	if keyPath, ok := t.staticPathOfExpr(e.Key); ok && keyPath.Symbol != 0 {
-		if admitted, ok := facts.IndexWriteAdmission(flow.IndexWritePathQuery{
-			Target:           targetPath,
-			KeyPath:          keyPath,
-			HasKeyPath:       true,
-			FollowKeyAliases: true,
-			KeyValue:         product.FromType(keyType),
-		}); ok && !admitted.IsZero() {
-			return admitted, true
-		}
+	keyPath := constraint.Path{}
+	if path, ok := t.staticPathOfExpr(e.Key); ok {
+		keyPath = path
 	}
-	if !indexWriteReadCanUseKeyValueOnly(keyType) {
-		return product.AbstractValue{}, false
-	}
-	admitted, ok := facts.IndexWriteAdmission(flow.IndexWritePathQuery{
-		Target:   targetPath,
-		KeyValue: product.FromType(keyType),
+	admitted, ok := facts.DynamicIndexReadback(flow.DynamicIndexReadbackQuery{
+		Target:           targetPath,
+		KeyPath:          keyPath,
+		KeyValue:         key,
+		FollowKeyAliases: true,
 	})
 	if !ok || admitted.IsZero() {
 		return product.AbstractValue{}, false
 	}
 	return admitted, true
-}
-
-func indexWriteReadCanUseKeyValueOnly(keyType typ.Type) bool {
-	if keyType == nil || typ.IsAbsentOrUnknown(keyType) {
-		return false
-	}
-	return typ.UnwrapAnnotated(keyType).Kind() == kind.Literal
 }
 
 func indexWriteTargetPath(place Place) (constraint.Path, bool) {

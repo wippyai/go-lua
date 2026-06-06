@@ -57,6 +57,72 @@ func TestPointFactsIndexWriteAdmissionPathQuery(t *testing.T) {
 	}
 }
 
+func TestPointFactsDynamicIndexReadbackUsesStableKeyPath(t *testing.T) {
+	target := constraint.NewPath(cfg.SymbolID(113), "target")
+	key := constraint.NewPath(cfg.SymbolID(114), "key")
+	value := product.FromType(typ.Number)
+	state := PointState{
+		IndexWrites: IndexWriteAdmissionFacts{}.WithAddress(IndexWriteAdmissionAddressFact{
+			Target:     testStableAddressPath(t, target),
+			KeyPath:    testStableAddressPath(t, key),
+			HasKeyPath: true,
+			Key:        product.FromType(typ.String),
+			Value:      value,
+		}),
+	}
+	facts := PointFactsOf(state)
+
+	got, ok := facts.DynamicIndexReadback(DynamicIndexReadbackQuery{
+		Target:   target,
+		KeyPath:  key,
+		KeyValue: product.FromType(typ.String),
+	})
+	if !ok || !product.Domain.Equal(got, value) {
+		t.Fatalf("DynamicIndexReadback path = %v/%v, want number", got, ok)
+	}
+}
+
+func TestPointFactsDynamicIndexReadbackAllowsLiteralValueOnly(t *testing.T) {
+	target := constraint.NewPath(cfg.SymbolID(115), "target")
+	key := typ.LiteralString("id")
+	value := product.FromType(typ.Boolean)
+	state := PointState{
+		IndexWrites: IndexWriteAdmissionFacts{}.WithAddress(IndexWriteAdmissionAddressFact{
+			Target: testStableAddressPath(t, target),
+			Key:    product.FromType(key),
+			Value:  value,
+		}),
+	}
+	facts := PointFactsOf(state)
+
+	got, ok := facts.DynamicIndexReadback(DynamicIndexReadbackQuery{
+		Target:   target,
+		KeyValue: product.FromType(key),
+	})
+	if !ok || !product.Domain.Equal(got, value) {
+		t.Fatalf("DynamicIndexReadback literal = %v/%v, want boolean", got, ok)
+	}
+}
+
+func TestPointFactsDynamicIndexReadbackRejectsNonLiteralValueOnly(t *testing.T) {
+	target := constraint.NewPath(cfg.SymbolID(116), "target")
+	state := PointState{
+		IndexWrites: IndexWriteAdmissionFacts{}.WithAddress(IndexWriteAdmissionAddressFact{
+			Target: testStableAddressPath(t, target),
+			Key:    product.FromType(typ.String),
+			Value:  product.FromType(typ.Number),
+		}),
+	}
+	facts := PointFactsOf(state)
+
+	if got, ok := facts.DynamicIndexReadback(DynamicIndexReadbackQuery{
+		Target:   target,
+		KeyValue: product.FromType(typ.String),
+	}); ok {
+		t.Fatalf("DynamicIndexReadback nonliteral value-only = %v/true, want false", got)
+	}
+}
+
 func TestPointFactsIdentityAliasClosurePaths(t *testing.T) {
 	root := constraint.NewPath(cfg.SymbolID(121), "root")
 	source := constraint.NewPath(cfg.SymbolID(122), "source")

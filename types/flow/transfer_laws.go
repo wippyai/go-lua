@@ -197,3 +197,14 @@ func NormalizeDynamicKeyType(keyType typ.Type) typ.Type {
 	}
 	return subtype.Widen(keyType)
 }
+
+// IndexWriteReadCanUseKeyValueOnly reports whether a dynamic indexed read may
+// consume readback proof without a stable key path. Without path identity the
+// proof is exact only for literal keys; non-literal keys need a key-path proof so
+// different dynamic writes do not collapse into one readback bucket.
+func IndexWriteReadCanUseKeyValueOnly(keyType typ.Type) bool {
+	if keyType == nil || typ.IsAbsentOrUnknown(keyType) {
+		return false
+	}
+	return typ.UnwrapAnnotated(keyType).Kind() == kind.Literal
+}

@@ -6,7 +6,6 @@ import (
 	"github.com/wippyai/go-lua/types/cfg"
 	"github.com/wippyai/go-lua/types/constraint"
 	flowfacts "github.com/wippyai/go-lua/types/flow"
-	"github.com/wippyai/go-lua/types/kind"
 	"github.com/wippyai/go-lua/types/narrow"
 	"github.com/wippyai/go-lua/types/numparse"
 	"github.com/wippyai/go-lua/types/typ"
@@ -143,7 +142,7 @@ func refineObservationByIndexWriteAdmission(q ObservationQuery) (typ.Type, bool)
 	if q.Index.TablePath.IsEmpty() {
 		return nil, false
 	}
-	if q.Index.KeyPath.IsEmpty() && !indexWriteReadCanUseKeyValueOnly(q.Index.KeyType) {
+	if q.Index.KeyPath.IsEmpty() && !flowfacts.IndexWriteReadCanUseKeyValueOnly(q.Index.KeyType) {
 		return nil, false
 	}
 	query, ok := flowfacts.IndexWriteReadQueryFromPaths(
@@ -273,13 +272,6 @@ func removeNil(t typ.Type) (typ.Type, bool) {
 	}
 	refined := narrow.RemoveNil(t)
 	return refined, refined != nil && !typ.IsNever(refined) && !typ.TypeEquals(refined, t)
-}
-
-func indexWriteReadCanUseKeyValueOnly(keyType typ.Type) bool {
-	if keyType == nil || typ.IsAbsentOrUnknown(keyType) {
-		return false
-	}
-	return typ.UnwrapAnnotated(keyType).Kind() == kind.Literal
 }
 
 func integerLiteralIndex(expr ast.Expr) (int64, bool) {

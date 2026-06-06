@@ -462,6 +462,17 @@ type IndexWritePathQuery struct {
 	HasValuePath     bool
 }
 
+// DynamicIndexReadbackQuery describes a runtime table[key] read that may be
+// refined by admitted dynamic-index write facts. KeyValue is the evaluated key
+// product; PointFacts owns the dynamic-key normalization and the rule that only
+// literal keys may use value-only readback without a stable key path.
+type DynamicIndexReadbackQuery struct {
+	Target           constraint.Path
+	KeyPath          constraint.Path
+	KeyValue         product.AbstractValue
+	FollowKeyAliases bool
+}
+
 // IndexWriteAdmissionAtAddress returns the value admitted by a dynamic index
 // write proven in this point state using normalized address-domain evidence.
 func (f PointFacts) IndexWriteAdmissionAtAddress(q IndexWriteAddressQuery) (typ.Type, bool) {
@@ -517,6 +528,41 @@ func (f PointFacts) IndexWriteAdmission(q IndexWritePathQuery) (product.Abstract
 		}
 	}
 	return product.AbstractValue{}, false
+}
+
+// DynamicIndexReadback returns the product value admitted for one runtime
+// table[key] read. It is the product-valued counterpart of IndexWriteAdmission:
+// callers provide a structural table path plus the evaluated key, and PointFacts
+// decides whether path identity or literal key value is sufficient to consume
+// the readback proof.
+func (f PointFacts) DynamicIndexReadback(q DynamicIndexReadbackQuery) (product.AbstractValue, bool) {
+	if q.Target.IsEmpty() || q.KeyValue.IsZero() {
+		return product.AbstractValue{}, false
+	}
+	keyType := NormalizeDynamicKeyType(product.ProjectValueOrUnknown(q.KeyValue))
+	keyValue := product.FromType(keyType)
+	if q.KeyPath.HasSymbol() {
+		if admitted, ok := f.IndexWriteAdmission(IndexWritePathQuery{
+			Target:           q.Target,
+			KeyPath:          q.KeyPath,
+			HasKeyPath:       true,
+			FollowKeyAliases: q.FollowKeyAliases,
+			KeyValue:         keyValue,
+		}); ok && !admitted.IsZero() {
+			return admitted, true
+		}
+	}
+	if !IndexWriteReadCanUseKeyValueOnly(keyType) {
+		return product.AbstractValue{}, false
+	}
+	admitted, ok := f.IndexWriteAdmission(IndexWritePathQuery{
+		Target:   q.Target,
+		KeyValue: keyValue,
+	})
+	if !ok || admitted.IsZero() {
+		return product.AbstractValue{}, false
+	}
+	return admitted, true
 }
 
 func productType(av product.AbstractValue, ok bool) (typ.Type, bool) {
