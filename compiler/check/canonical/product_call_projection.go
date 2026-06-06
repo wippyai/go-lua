@@ -74,7 +74,7 @@ func (p productCallProjection) callReturnValues() ([]product.AbstractValue, bool
 		},
 		ExprValue: p.ctx.ExprValue,
 		TypeFallback: func() ([]typ.Type, bool) {
-			return canonicalcall.InferReturnTypes(p.typer.callReturnInput(
+			proj, ok := p.typer.callReturnProjection(
 				p.call,
 				argTypes,
 				exprType,
@@ -82,7 +82,11 @@ func (p productCallProjection) callReturnValues() ([]product.AbstractValue, bool
 				p.ctx.FunctionRefs,
 				p.ctx.ClosureRefs,
 				p.ctx.SelfType,
-			))
+			)
+			if !ok {
+				return nil, false
+			}
+			return canonicalcall.InferReturnTypes(proj.input())
 		},
 	})
 }

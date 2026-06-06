@@ -2373,89 +2373,14 @@ func (r opsResolver) UnaryOp(op string, operand typ.Type) typ.Type {
 // exprType resolves an expression against the live point Env for callee/receiver
 // resolution.
 func (ct callTyper) CallReturns(call *ast.FuncCallExpr, argTypes []typ.Type, exprType func(ast.Expr) typ.Type, cells flow.CaptureCells, refs flow.FunctionRefs) ([]typ.Type, bool) {
-	d := ct.d
-	if call == nil || d == nil || d.cfg.Types == nil || d.activeProgram == nil {
+	if ct.d == nil || ct.d.cfg.Types == nil {
 		return nil, false
 	}
-	return canonicalcall.InferReturnTypes(ct.callReturnInput(call, argTypes, exprType, cells, refs, flow.ClosureRefsDomain.Bottom(), nil))
-}
-
-func (ct callTyper) callReturnInput(call *ast.FuncCallExpr, argTypes []typ.Type, exprType func(ast.Expr) typ.Type, cells flow.CaptureCells, refs flow.FunctionRefs, closures flow.ClosureRefs, methodReceiverType typ.Type) canonicalcall.ReturnInput {
-	d := ct.d
-	resolver := ct.callTypeResolver(exprType)
-	argTypes = ct.refineFunctionArgTypes(call, argTypes, exprType, cells, refs, closures, methodReceiverType)
-	return canonicalcall.ReturnInput{
-		Call:               call,
-		ArgTypes:           argTypes,
-		Env:                ct.callInterceptEnv(exprType),
-		Ctx:                d.activeCtx,
-		Query:              d.cfg.Types,
-		MethodReceiverType: methodReceiverType,
-		SummaryReturns: func(call *ast.FuncCallExpr, exprType func(ast.Expr) typ.Type) []typ.Type {
-			return ct.moduleCallSummaryReturns(call, exprType, cells, refs)
-		},
-		Resolver: resolver,
-		ResolveTypeArg: func(expr ast.TypeExpr) typ.Type {
-			return d.resolveType(expr, d.baseScope())
-		},
+	proj, ok := ct.callReturnProjection(call, argTypes, exprType, cells, refs, flow.ClosureRefsDomain.Bottom(), nil)
+	if !ok {
+		return nil, false
 	}
-}
-
-func (ct callTyper) refineFunctionArgTypes(call *ast.FuncCallExpr, argTypes []typ.Type, exprType func(ast.Expr) typ.Type, cells flow.CaptureCells, refs flow.FunctionRefs, closures flow.ClosureRefs, methodReceiverType typ.Type) []typ.Type {
-	d := ct.d
-	if d == nil || d.activeProgram == nil || call == nil || len(call.Args) == 0 {
-		return argTypes
-	}
-	resolver := ct.targetResolver(d.activeProgram)
-	callbackRefs := make(map[ast.Expr][]summary.FuncRef)
-	for _, arg := range call.Args {
-		argRefs, ok := resolver.ResolveCallbackArgRefs(arg, refs, d.activeProgram.refByFunc)
-		if !ok || len(argRefs) == 0 {
-			continue
-		}
-		callbackRefs[arg] = argRefs
-	}
-	if len(callbackRefs) == 0 {
-		return argTypes
-	}
-	projector := newCallableProjector(d, d.activeProgram, d.activeQueries, d.activeCtx)
-	expectedInput := ct.expectedArgsInput(call, argTypes, exprType, methodReceiverType)
-	expectedInput.CallbackArg = func(arg ast.Expr) bool {
-		_, ok := callbackRefs[arg]
-		return ok
-	}
-	expectedArgs := canonicalcall.ExpectedArgTypesForCall(expectedInput)
-	return canonicalcall.RefineCallbackArgTypes(canonicalcall.CallbackArgRefinementInput{
-		Call:         call,
-		ArgTypes:     argTypes,
-		ExpectedArgs: expectedArgs,
-		CallbackRefs: func(arg ast.Expr) ([]summary.FuncRef, bool) {
-			argRefs, ok := callbackRefs[arg]
-			return argRefs, ok
-		},
-		FunctionType: func(ref summary.FuncRef) typ.Type {
-			return projector.FunctionTypeByRef(canonref.ToFlow(ref), cells, refs, closures)
-		},
-		ContextualFunction: func(ref summary.FuncRef, values summary.EntryValues) typ.Type {
-			return ct.functionTypeByRefWithEntryValues(projector, ref, cells, refs, closures, values)
-		},
-	})
-}
-
-func (ct callTyper) functionTypeByRefWithEntryValues(projector callableProjector, ref summary.FuncRef, cells flow.CaptureCells, refs flow.FunctionRefs, closures flow.ClosureRefs, values summary.EntryValues) typ.Type {
-	d := ct.d
-	if d == nil || d.activeProgram == nil || len(values) == 0 {
-		return nil
-	}
-	sig := d.signatureForRef(d.activeProgram, ref)
-	if sig == nil {
-		return nil
-	}
-	entryCells := d.activeProgram.CallEntryCells(ref, cells)
-	entryRefs := d.activeProgram.CallEntryFunctionRefs(ref, refs)
-	entryClosures := d.activeProgram.CallEntryClosureRefs(ref, closures)
-	sum := projector.reader.SummarizeWithEntryContext(ref, entryCells, entryRefs, entryClosures, values)
-	return summary.FunctionSignatureWithEntryParamsAndProjectedReturns(sig, d.refHasDeclaredReturns(d.activeProgram, ref), sum, values)
+	return canonicalcall.InferReturnTypes(proj.input())
 }
 
 func (ct callTyper) CallArgDemands(call *ast.FuncCallExpr, ctx transfer.ProductCallContext) []callobligation.Obligation {

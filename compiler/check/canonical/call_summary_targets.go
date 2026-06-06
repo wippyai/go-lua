@@ -186,9 +186,12 @@ func (ct callTyper) selectedTargetSignatureReturns(
 		}
 		return exprType(expr)
 	}
-	in := ct.callReturnInput(call, argTypes, forcedExprType, cells, refs, closures, methodReceiverType)
+	proj, ok := ct.callReturnProjection(call, argTypes, forcedExprType, cells, refs, closures, methodReceiverType)
+	if !ok {
+		return nil
+	}
+	in := proj.input()
 	in.SummaryReturns = nil
-	in.Resolver = ct.callTypeResolver(forcedExprType)
 	if returns, ok := canonicalcall.InferReturnTypes(in); ok && len(returns) > 0 {
 		return returns
 	}
