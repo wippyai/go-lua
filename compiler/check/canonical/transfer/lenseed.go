@@ -152,10 +152,14 @@ func (t *Transfer) seedArrayLiteralLength(out *flow.PointState, key flow.ValueKe
 	}
 	flow.ApplyNumericEffect(out, flow.NumericEffect{Ops: ops, RequireExisting: true})
 	if cardinalityLower > 0 && hasSymbolRoot {
+		targetKey, ok := flow.SymbolPathKeyOf(constraint.Path{Symbol: sym})
+		if !ok {
+			return
+		}
 		flow.ApplyRelationEffect(out, flow.RelationEffect{
 			Kind:       flow.RelationSeedContainerLowerBound,
 			TargetRoot: sym,
-			TargetKey:  flow.SymbolPathKey(sym, nil),
+			TargetKey:  targetKey,
 			Lower:      cardinalityLower,
 		})
 	}

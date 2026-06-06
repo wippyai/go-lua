@@ -32,6 +32,16 @@ func SymbolPathKey(sym cfg.SymbolID, segments []constraint.Segment) constraint.P
 	return constraint.PathKey(key)
 }
 
+// SymbolPathKeyOf lowers a resolved constraint path to the canonical symbol-path
+// key used by PointState components that reason about paths rather than values.
+func SymbolPathKeyOf(path constraint.Path) (constraint.PathKey, bool) {
+	if path.Symbol == 0 {
+		return "", false
+	}
+	key := SymbolPathKey(path.Symbol, path.Segments)
+	return key, key != ""
+}
+
 // ParseSymbolPathKey inverts SymbolPathKey. Non-symbol path keys return false.
 func ParseSymbolPathKey(key constraint.PathKey) (cfg.SymbolID, []constraint.Segment, bool) {
 	s := string(key)

@@ -246,7 +246,7 @@ func (t *Transfer) appendLengthParamPostconditions(
 		if !ok {
 			continue
 		}
-		targetRoot, targetKey, ok := t.lengthPostconditionTarget(target)
+		targetRoot, targetPath, targetKey, ok := t.lengthPostconditionTarget(target)
 		if !ok {
 			continue
 		}
@@ -278,11 +278,9 @@ func (t *Transfer) appendLengthParamPostconditions(
 		if lower <= 0 {
 			continue
 		}
-		effects.numericOps = append(effects.numericOps, flow.NumericOp{
-			Kind:  flow.NumericLenGeConst,
-			Key:   targetKey,
-			Const: lower,
-		})
+		if op, ok := flow.NumericLenGeConstPathOp(targetPath, lower); ok {
+			effects.numericOps = append(effects.numericOps, op)
+		}
 	}
 }
 
@@ -314,12 +312,16 @@ func assignmentTargetForReturn(info *cfg.AssignInfo, callInfo *cfg.CallInfo, ret
 	return cfg.AssignTarget{}, false
 }
 
-func (t *Transfer) lengthPostconditionTarget(target cfg.AssignTarget) (cfg.SymbolID, constraint.PathKey, bool) {
+func (t *Transfer) lengthPostconditionTarget(target cfg.AssignTarget) (cfg.SymbolID, constraint.Path, constraint.PathKey, bool) {
 	path, ok := t.staticPathOfAssignTarget(target)
 	if !ok || path.Symbol == 0 {
-		return 0, "", false
+		return 0, constraint.Path{}, "", false
 	}
-	return path.Symbol, flow.SymbolPathKey(path.Symbol, path.Segments), true
+	key, ok := flow.SymbolPathKeyOf(path)
+	if !ok {
+		return 0, constraint.Path{}, "", false
+	}
+	return path.Symbol, path, key, true
 }
 
 func (t *Transfer) runtimeArgCallerParamIndex(arg ast.Expr) (int, bool) {

@@ -915,11 +915,9 @@ func (t *Transfer) SeedEntryFacts(out *flow.PointState, facts flow.BoundaryFacts
 		if !ok || target.Symbol == 0 {
 			continue
 		}
-		key := flow.SymbolPathKey(target.Symbol, target.Segments)
-		if key == "" {
-			continue
+		if op, ok := flow.NumericLenGeConstPathOp(target, fact.Lower); ok {
+			ops = append(ops, op)
 		}
-		ops = append(ops, flow.NumericOp{Kind: flow.NumericLenGeConst, Key: key, Const: fact.Lower})
 	}
 	if len(ops) > 0 {
 		flow.ApplyNumericEffect(out, flow.NumericEffect{Ops: ops})
@@ -3447,11 +3445,9 @@ func (t *Transfer) applyBoundaryFactsWithAppendPlans(
 		if !ok {
 			continue
 		}
-		key := flow.SymbolPathKey(target.Symbol, target.Segments)
-		if key == "" {
-			continue
+		if op, ok := flow.NumericLenGeConstPathOp(target, fact.Lower); ok {
+			ops = append(ops, op)
 		}
-		ops = append(ops, flow.NumericOp{Kind: flow.NumericLenGeConst, Key: key, Const: fact.Lower})
 	}
 	if len(ops) > 0 {
 		changed = flow.ApplyNumericEffect(out, flow.NumericEffect{Ops: ops}) || changed

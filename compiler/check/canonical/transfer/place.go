@@ -164,7 +164,7 @@ func symbolPathKey(p Place) (constraint.PathKey, bool) {
 	if !ok || path.Symbol == 0 {
 		return "", false
 	}
-	return flow.SymbolPathKey(path.Symbol, path.Segments), true
+	return flow.SymbolPathKeyOf(path)
 }
 
 func (t *Transfer) staticRootSymbolOfExpr(expr ast.Expr) (cfg.SymbolID, bool) {

@@ -180,6 +180,39 @@ func NumericLengthBoundOps(key constraint.PathKey, op string, c int64) []Numeric
 	return ops
 }
 
+// NumericLenGeConstPathOp materializes a resolved path length floor as the
+// primitive numeric atom stored in PointState.Num.
+func NumericLenGeConstPathOp(path constraint.Path, lower int64) (NumericOp, bool) {
+	key, ok := SymbolPathKeyOf(path)
+	if !ok {
+		return NumericOp{}, false
+	}
+	return NumericOp{Kind: NumericLenGeConst, Key: key, Const: lower}, true
+}
+
+// NumericLenGeConstIndexedPrefixOps translates an indexed path read/write into
+// length floors for each container prefix it proves present.
+func NumericLenGeConstIndexedPrefixOps(path constraint.Path) []NumericOp {
+	if path.Symbol == 0 || len(path.Segments) == 0 {
+		return nil
+	}
+	ops := make([]NumericOp, 0, len(path.Segments))
+	for i, seg := range path.Segments {
+		if seg.Kind != constraint.SegmentIndexInt || seg.Index < 1 {
+			continue
+		}
+		prefix := constraint.Path{Symbol: path.Symbol, Root: path.Root}
+		if i > 0 {
+			prefix.Segments = path.Segments[:i]
+		}
+		op, ok := NumericLenGeConstPathOp(prefix, int64(seg.Index))
+		if ok {
+			ops = append(ops, op)
+		}
+	}
+	return ops
+}
+
 // LengthBoundFromOp translates a proven `#x OP c` comparison into the inclusive
 // integer length floor and/or ceiling it establishes. A strict bound is tightened
 // to its integer neighbor. Equality bounds both ends; inequality bounds the

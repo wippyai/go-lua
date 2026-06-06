@@ -4,6 +4,7 @@ import (
 	"math"
 	"testing"
 
+	"github.com/wippyai/go-lua/types/cfg"
 	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/flow/numeric"
 )
@@ -79,6 +80,37 @@ func TestNumericEffectCanonicalizesEmptyStateToTop(t *testing.T) {
 	}
 	if out.Num != nil {
 		t.Fatalf("empty numeric state was not canonicalized to Top: %v", out.Num)
+	}
+}
+
+func TestNumericLenGeConstPathOpUsesSymbolPathKey(t *testing.T) {
+	path := constraint.NewPath(cfg.SymbolID(7), "items").Field("rows")
+
+	op, ok := NumericLenGeConstPathOp(path, 3)
+	if !ok {
+		t.Fatalf("path length op was not produced")
+	}
+	want := SymbolPathKey(cfg.SymbolID(7), path.Segments)
+	if op.Kind != NumericLenGeConst || op.Key != want || op.Const != 3 {
+		t.Fatalf("path length op = %#v, want key=%s lower=3", op, want)
+	}
+}
+
+func TestNumericLenGeConstIndexedPrefixOps(t *testing.T) {
+	path := constraint.NewPath(cfg.SymbolID(8), "items").
+		IndexInt(2).
+		Field("child").
+		IndexInt(4)
+
+	ops := NumericLenGeConstIndexedPrefixOps(path)
+	if len(ops) != 2 {
+		t.Fatalf("prefix ops len=%d, want 2: %#v", len(ops), ops)
+	}
+	if ops[0].Key != SymbolPathKey(cfg.SymbolID(8), nil) || ops[0].Const != 2 {
+		t.Fatalf("first prefix op = %#v", ops[0])
+	}
+	if ops[1].Key != SymbolPathKey(cfg.SymbolID(8), path.Segments[:2]) || ops[1].Const != 4 {
+		t.Fatalf("second prefix op = %#v", ops[1])
 	}
 }
 

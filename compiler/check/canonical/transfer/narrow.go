@@ -4036,22 +4036,7 @@ func (t *Transfer) seedPathIndexPresence(out *flow.PointState, expr ast.Expr) {
 	if !ok || path.Symbol == 0 || len(path.Segments) == 0 {
 		return
 	}
-	ops := make([]flow.NumericOp, 0, len(path.Segments))
-	for i, seg := range path.Segments {
-		if seg.Kind != constraint.SegmentIndexInt || seg.Index < 1 {
-			continue
-		}
-		containerKey := flow.SymbolPathKey(path.Symbol, nil)
-		if i > 0 {
-			containerKey = flow.SymbolPathKey(path.Symbol, path.Segments[:i])
-		}
-		ops = append(ops, flow.NumericOp{
-			Kind:  flow.NumericLenGeConst,
-			Key:   containerKey,
-			Const: int64(seg.Index),
-		})
-	}
-	flow.ApplyNumericEffect(out, flow.NumericEffect{Ops: ops})
+	flow.ApplyNumericEffect(out, flow.NumericEffect{Ops: flow.NumericLenGeConstIndexedPrefixOps(path)})
 }
 
 func (t *Transfer) narrowLiteralEqualityPath(out *flow.PointState, access ast.Expr, lit *typ.Literal) bool {
