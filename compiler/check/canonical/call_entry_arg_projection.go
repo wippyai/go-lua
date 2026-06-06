@@ -96,19 +96,11 @@ func (p callEntryArgProjection) argRefTrees(arg ast.Expr) (flow.ReferenceContext
 		return bottom, false
 	}
 	returns := p.typer.ProductCallFromValues(call, p.evidence.nestedCall(call)).ReturnRefs
-	functionRefs := flow.FunctionRefsDomain.Bottom()
-	if len(returns.FunctionRefs) > 0 {
-		functionRefs = returns.FunctionRefs[0]
-	}
-	closureRefs := flow.ClosureRefsDomain.Bottom()
-	if len(returns.ClosureRefs) > 0 {
-		closureRefs = returns.ClosureRefs[0]
-	}
-	if flow.FunctionRefsDomain.Equal(functionRefs, flow.FunctionRefsDomain.Bottom()) &&
-		flow.ClosureRefsDomain.Equal(closureRefs, flow.ClosureRefsDomain.Bottom()) {
+	references, ok := returns.SlotReferenceContext(0)
+	if !ok {
 		return bottom, false
 	}
-	return flow.ReferenceContextOf(flow.CaptureCellsDomain.Bottom(), functionRefs, closureRefs), true
+	return references, true
 }
 
 func (p callEntryArgProjection) closureArgRefs(arg ast.Expr) (flow.ClosureRefSet, bool) {

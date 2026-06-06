@@ -14,6 +14,47 @@ import (
 	"github.com/wippyai/go-lua/types/typ"
 )
 
+func TestCallReturnRefsSlotAccessors(t *testing.T) {
+	fnPath := constraint.NewPlaceholder(1).Field("factory")
+	clPath := constraint.NewPlaceholder(1).Field("closure")
+	fnRef := flow.FunctionRef{GraphID: 10}
+	clRef := flow.ClosureRefOf(flow.FunctionRef{GraphID: 20}, flow.CaptureCellsDomain.Bottom(), nil)
+	returns := CallReturnRefs{
+		FunctionRefs: []flow.FunctionRefs{
+			flow.FunctionRefsDomain.Bottom(),
+			flow.WithFunctionRef(nil, fnPath.Key(), flow.FunctionRefSetOf(fnRef)),
+		},
+		ClosureRefs: []flow.ClosureRefs{
+			flow.ClosureRefsDomain.Bottom(),
+			flow.WithClosureRef(nil, clPath.Key(), flow.ClosureRefSetOf(clRef)),
+		},
+	}
+
+	references, ok := returns.SlotReferenceContext(1)
+	if !ok {
+		t.Fatal("SlotReferenceContext(1) missing")
+	}
+	if set, ok := flow.FunctionRefAt(references.FunctionRefs(), fnPath.Key()); !ok {
+		t.Fatalf("slot function refs missing: %#v", references.FunctionRefs())
+	} else if got, singleton := set.Singleton(); !singleton || got != fnRef {
+		t.Fatalf("slot function refs = %s, want %v", set.Format(), fnRef)
+	}
+	if set, ok := flow.ClosureRefAt(references.ClosureRefs(), clPath.Key()); !ok {
+		t.Fatalf("slot closure refs missing: %#v", references.ClosureRefs())
+	} else if got, singleton := set.Singleton(); !singleton || got.Ref != clRef.Ref {
+		t.Fatalf("slot closure refs = %s, want %v", set.Format(), clRef.Ref)
+	}
+	if _, ok := returns.SlotReferenceContext(0); ok {
+		t.Fatal("bottom slot should not report reference evidence")
+	}
+	if _, ok := returns.FunctionRefTree(1); !ok {
+		t.Fatal("FunctionRefTree(1) missing")
+	}
+	if _, ok := returns.ClosureRefTree(1); !ok {
+		t.Fatal("ClosureRefTree(1) missing")
+	}
+}
+
 func TestFuncDefRootWritesFunctionRefAxis(t *testing.T) {
 	fn := &ast.FunctionExpr{ParList: &ast.ParList{}}
 	sym := cfg.SymbolID(101)

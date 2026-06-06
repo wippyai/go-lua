@@ -186,6 +186,46 @@ type CallReturnRefs struct {
 	ClosureRefs  []flow.ClosureRefs
 }
 
+// SlotReferenceContext returns the callable identity evidence for one return
+// slot as a normalized reference context rooted at that slot's placeholder.
+func (r CallReturnRefs) SlotReferenceContext(slot int) (flow.ReferenceContext, bool) {
+	bottom := flow.ReferenceContextOf(flow.CaptureCellsDomain.Bottom(), flow.FunctionRefsDomain.Bottom(), flow.ClosureRefsDomain.Bottom())
+	if slot < 0 {
+		return bottom, false
+	}
+	functionRefs := flow.FunctionRefsDomain.Bottom()
+	if slot < len(r.FunctionRefs) {
+		functionRefs = r.FunctionRefs[slot]
+	}
+	closureRefs := flow.ClosureRefsDomain.Bottom()
+	if slot < len(r.ClosureRefs) {
+		closureRefs = r.ClosureRefs[slot]
+	}
+	if flow.FunctionRefsDomain.Equal(functionRefs, flow.FunctionRefsDomain.Bottom()) &&
+		flow.ClosureRefsDomain.Equal(closureRefs, flow.ClosureRefsDomain.Bottom()) {
+		return bottom, false
+	}
+	return flow.ReferenceContextOf(flow.CaptureCellsDomain.Bottom(), functionRefs, closureRefs), true
+}
+
+// FunctionRefTree returns slot's function identities as a placeholder-relative
+// tree suitable for rebasing onto an assignment target.
+func (r CallReturnRefs) FunctionRefTree(slot int) (flow.FunctionRefTree, bool) {
+	if slot < 0 || slot >= len(r.FunctionRefs) {
+		return flow.FunctionRefTree{}, false
+	}
+	return flow.FunctionRefTreeFromSubtreePath(r.FunctionRefs[slot], constraint.NewPlaceholder(slot))
+}
+
+// ClosureRefTree returns slot's closure identities as a placeholder-relative
+// tree suitable for rebasing onto an assignment target.
+func (r CallReturnRefs) ClosureRefTree(slot int) (flow.ClosureRefTree, bool) {
+	if slot < 0 || slot >= len(r.ClosureRefs) {
+		return flow.ClosureRefTree{}, false
+	}
+	return flow.ClosureRefTreeFromSubtreePath(r.ClosureRefs[slot], constraint.NewPlaceholder(slot))
+}
+
 // CallEffects groups product call-outcome effects that mutate caller-visible
 // state after a call returns. Transfer consumes this as one carrier so call-side
 // effects are projected once and then applied by axis-specific reducers.
@@ -1587,35 +1627,15 @@ func (t *Transfer) callReturnReferenceWritesForPlace(
 		ClosureRefs:  sourceClosureRefsWrite(),
 	}
 	got := false
-	if tree, ok := callReturnFunctionRefTree(retIndex, returns.FunctionRefs); ok {
+	if tree, ok := returns.FunctionRefTree(retIndex); ok {
 		writes.FunctionRefs = treeFunctionRefsWrite(tree)
 		got = true
 	}
-	if tree, ok := callReturnClosureRefTree(retIndex, returns.ClosureRefs); ok {
+	if tree, ok := returns.ClosureRefTree(retIndex); ok {
 		writes.ClosureRefs = treeClosureRefsWrite(tree)
 		got = true
 	}
 	return writes, got
-}
-
-func callReturnFunctionRefTree(
-	retIndex int,
-	returns []flow.FunctionRefs,
-) (flow.FunctionRefTree, bool) {
-	if retIndex >= len(returns) {
-		return flow.FunctionRefTree{}, false
-	}
-	return flow.FunctionRefTreeFromSubtreePath(returns[retIndex], constraint.NewPlaceholder(retIndex))
-}
-
-func callReturnClosureRefTree(
-	retIndex int,
-	returns []flow.ClosureRefs,
-) (flow.ClosureRefTree, bool) {
-	if retIndex >= len(returns) {
-		return flow.ClosureRefTree{}, false
-	}
-	return flow.ClosureRefTreeFromSubtreePath(returns[retIndex], constraint.NewPlaceholder(retIndex))
 }
 
 func (t *Transfer) recordFunctionRefAt(out *flow.PointState, path constraint.Path, src ast.Expr) {
