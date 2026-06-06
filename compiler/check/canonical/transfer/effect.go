@@ -892,33 +892,18 @@ func (t *Transfer) aliasReplayWriteEffects(out *flow.PointState, effect WriteEff
 		return nil
 	}
 	var outEffects []WriteEffect
-	seen := map[constraint.PathKey]struct{}{}
 	addr, ok := flow.StableAddressOfPath(path)
 	if !ok {
 		return nil
 	}
-	for _, use := range out.ValueOrigins.OriginsCoveringAddress(addr) {
-		if use.Origin.Kind != flow.ValueOriginAssignmentAlias || len(use.Remainder) == 0 {
+	for _, sourceAddr := range flow.IdentityAliasSourcesWithPolicy(*out, addr, flow.IdentityAliasDescendantOriginPolicy) {
+		source, ok := sourceAddr.Path()
+		if !ok || source.IsEmpty() || len(source.Segments) == 0 {
 			continue
-		}
-		source, ok := indexWritePathFromKey(use.Origin.Source)
-		if !ok || source.IsEmpty() {
-			continue
-		}
-		for _, seg := range use.Remainder {
-			source = source.Append(seg)
 		}
 		if source.Equal(path) {
 			continue
 		}
-		sourceKey := flow.SymbolPathKey(source.Symbol, source.Segments)
-		if sourceKey == "" {
-			continue
-		}
-		if _, ok := seen[sourceKey]; ok {
-			continue
-		}
-		seen[sourceKey] = struct{}{}
 		place, ok := staticPlace(source.Symbol, source.Segments)
 		if !ok || place.Root == 0 || len(place.Steps) == 0 {
 			continue

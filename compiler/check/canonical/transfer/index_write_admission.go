@@ -187,51 +187,19 @@ func (t *Transfer) indexWriteReadKeyPaths(out *flow.PointState, key ast.Expr) []
 	if !ok || keyPath.Symbol == 0 {
 		return nil
 	}
-	var outPaths []constraint.Path
-	seen := map[constraint.PathKey]struct{}{}
-	queue := []constraint.Path{keyPath}
-	for len(queue) > 0 {
-		cur := queue[0]
-		queue = queue[1:]
-		curAddr, ok := flow.StableAddressOfPath(cur)
-		if !ok {
-			continue
-		}
-		curKey := curAddr.Key()
-		if _, ok := seen[curKey]; ok {
-			continue
-		}
-		seen[curKey] = struct{}{}
-		outPaths = append(outPaths, cur)
-		if out == nil {
-			continue
-		}
-		for _, use := range out.PathAliases.AliasesCoveringAddress(curAddr) {
-			source, ok := indexWritePathFromKey(use.Alias.Source)
-			if !ok {
-				continue
-			}
-			for _, seg := range use.Remainder {
-				source = source.Append(seg)
-			}
-			if !source.IsEmpty() {
-				queue = append(queue, source)
-			}
-		}
-		for _, use := range out.ValueOrigins.OriginsCoveringAddress(curAddr) {
-			if use.Origin.Kind != flow.ValueOriginAssignmentAlias {
-				continue
-			}
-			source, ok := indexWritePathFromKey(use.Origin.Source)
-			if !ok {
-				continue
-			}
-			for _, seg := range use.Remainder {
-				source = source.Append(seg)
-			}
-			if !source.IsEmpty() {
-				queue = append(queue, source)
-			}
+	keyAddr, ok := flow.StableAddressOfPath(keyPath)
+	if !ok {
+		return nil
+	}
+	if out == nil {
+		return []constraint.Path{keyPath}
+	}
+	addrs := flow.IdentityAliasClosure(*out, keyAddr)
+	outPaths := make([]constraint.Path, 0, len(addrs))
+	for _, addr := range addrs {
+		path, ok := addr.Path()
+		if ok && !path.IsEmpty() {
+			outPaths = append(outPaths, path)
 		}
 	}
 	return outPaths
