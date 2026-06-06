@@ -80,6 +80,30 @@ func ProductMemberPathValue(base product.AbstractValue, segments []constraint.Se
 	return cur, true
 }
 
+// ProductWithMemberPath overlays value at a structured member/index suffix
+// under base, rebuilding enclosing records as needed.
+func ProductWithMemberPath(base product.AbstractValue, segments []constraint.Segment, val product.AbstractValue) product.AbstractValue {
+	if len(segments) == 0 {
+		return base
+	}
+	member, ok := value.MemberFromSegment(segments[0])
+	if !ok {
+		return base
+	}
+	if len(segments) == 1 {
+		return product.WithMember(base, member, val)
+	}
+	child, ok := product.MemberOf(base, member)
+	if !ok || child.IsZero() {
+		child = product.FromType(typ.NewRecord().Build())
+	}
+	updated := ProductWithMemberPath(child, segments[1:], val)
+	if updated.IsZero() {
+		return base
+	}
+	return product.WithMember(base, member, updated)
+}
+
 // ProductDomainHasNarrowingForSymbol reports whether domain has any narrowed
 // fact rooted at sym.
 func ProductDomainHasNarrowingForSymbol(domain *ProductDomain, sym cfg.SymbolID) bool {

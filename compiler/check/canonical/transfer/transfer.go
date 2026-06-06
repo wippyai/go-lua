@@ -1979,30 +1979,6 @@ func (t *Transfer) setMetatablePrototypeFromSource(src ast.Expr) (cfg.SymbolID, 
 	return t.setMetatablePrototype(0, call)
 }
 
-// writeFieldPath overlays val at the nested static member path within base,
-// rebuilding each enclosing record so the innermost field write propagates
-// outward. Dot-field segments project to typ.Record names only at the current
-// value-domain boundary; static index segments stay structural through
-// product.MemberOf / product.WithMember.
-func writeFieldPath(base product.AbstractValue, path []constraint.Segment, val product.AbstractValue) product.AbstractValue {
-	if len(path) == 0 {
-		return base
-	}
-	member, ok := value.MemberFromSegment(path[0])
-	if !ok {
-		return base
-	}
-	if len(path) == 1 {
-		return product.WithMember(base, member, val)
-	}
-	child, ok := product.MemberOf(base, member)
-	if !ok || child.IsZero() {
-		child = product.FromType(typ.NewRecord().Build())
-	}
-	updated := writeFieldPath(child, path[1:], val)
-	return product.WithMember(base, member, updated)
-}
-
 func staticMemberKey(attr *ast.AttrGetExpr) (value.MemberKey, bool) {
 	seg, ok := pathseg.StaticAttrSegment(attr)
 	if !ok {

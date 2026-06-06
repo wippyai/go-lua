@@ -8,7 +8,6 @@ import (
 	domainpath "github.com/wippyai/go-lua/compiler/check/domain/path"
 	"github.com/wippyai/go-lua/compiler/check/domain/predicate"
 	"github.com/wippyai/go-lua/types/constraint"
-	"github.com/wippyai/go-lua/types/domain/value"
 	"github.com/wippyai/go-lua/types/domain/value/product"
 	"github.com/wippyai/go-lua/types/flow"
 	"github.com/wippyai/go-lua/types/flow/pathkey"
@@ -206,34 +205,12 @@ func captureCellWithStaticMembers(sym cfg.SymbolID, av product.AbstractValue, fa
 		if len(segments) == 0 || fact.Value.IsZero() {
 			continue
 		}
-		next := writeStaticMemberProduct(out, segments, fact.Value)
+		next := flow.ProductWithMemberPath(out, segments, fact.Value)
 		if !next.IsZero() {
 			out = next
 		}
 	}
 	return out
-}
-
-func writeStaticMemberProduct(root product.AbstractValue, segments []constraint.Segment, val product.AbstractValue) product.AbstractValue {
-	if len(segments) == 0 {
-		return val
-	}
-	member, ok := value.MemberFromSegment(segments[0])
-	if !ok {
-		return root
-	}
-	if len(segments) == 1 {
-		return product.WithMember(root, member, val)
-	}
-	child, ok := product.MemberOf(root, member)
-	if !ok || child.IsZero() {
-		child = product.FromType(typ.NewRecord().Build())
-	}
-	updated := writeStaticMemberProduct(child, segments[1:], val)
-	if updated.IsZero() {
-		return root
-	}
-	return product.WithMember(root, member, updated)
 }
 
 func captureExportSymbols(g *cfg.Graph) map[cfg.SymbolID]bool {

@@ -35,6 +35,55 @@ func TestSymbolProductEnvReadsBaseAndPointFacts(t *testing.T) {
 	}
 }
 
+func TestProductWithMemberPathUsesStructuralSegmentsAtBoundary(t *testing.T) {
+	base := product.FromType(typ.NewRecord().Build())
+	path := []constraint.Segment{
+		{Kind: constraint.SegmentField, Name: "headers"},
+		{Kind: constraint.SegmentIndexString, Name: "Accept-Language"},
+	}
+
+	got := ProductWithMemberPath(base, path, product.FromType(typ.String))
+	rec, ok := got.ProjectValue().(*typ.Record)
+	if !ok {
+		t.Fatalf("ProductWithMemberPath result = %T, want record (%v)", got.ProjectValue(), got.ProjectValue())
+	}
+	headers := rec.GetField("headers")
+	if headers == nil {
+		t.Fatalf("ProductWithMemberPath lost outer field: %v", rec)
+	}
+	inner, ok := headers.Type.(*typ.Record)
+	if !ok {
+		t.Fatalf("headers field = %T, want record with exact static member (%v)", headers.Type, headers.Type)
+	}
+	member := inner.GetStaticStringIndex("Accept-Language")
+	if member == nil || !typ.TypeEquals(member.Type, typ.String) {
+		t.Fatalf("inner static member = %#v, want [\"Accept-Language\"]: string", member)
+	}
+	if !inner.HasMapComponent() ||
+		!typ.TypeEquals(inner.MapKey, typ.LiteralString("Accept-Language")) ||
+		!typ.TypeEquals(inner.MapValue, typ.String) {
+		t.Fatalf("inner map component = [%v]: %v, want [\"Accept-Language\"]: string", inner.MapKey, inner.MapValue)
+	}
+}
+
+func TestProductWithMemberPathUsesNumericIndexAsIndexedWrite(t *testing.T) {
+	baseType := typ.NewRecord().Field("stable", typ.Number).Build()
+	base := product.FromType(baseType)
+
+	got := ProductWithMemberPath(base, []constraint.Segment{{Kind: constraint.SegmentIndexInt, Index: 1}}, product.FromType(typ.String))
+	rec, ok := got.ProjectValue().(*typ.Record)
+	if !ok {
+		t.Fatalf("numeric-index write = %T, want record (%v)", got.ProjectValue(), got.ProjectValue())
+	}
+	stable := rec.GetField("stable")
+	if stable == nil || !typ.TypeEquals(stable.Type, typ.Number) {
+		t.Fatalf("stable field changed: %v", rec)
+	}
+	if !rec.HasMapComponent() || !typ.TypeEquals(rec.MapKey, typ.LiteralInt(1)) || !typ.TypeEquals(rec.MapValue, typ.String) {
+		t.Fatalf("numeric-index write map component = [%v]: %v, want [1]: string", rec.MapKey, rec.MapValue)
+	}
+}
+
 func TestProductDomainHasNarrowingForSymbolUsesStableAddress(t *testing.T) {
 	const sym = cfg.SymbolID(51)
 	path := constraint.NewPath(sym, "node")

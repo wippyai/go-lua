@@ -15,54 +15,6 @@ import (
 	"github.com/wippyai/go-lua/types/typ"
 )
 
-func TestWriteFieldPathUsesStructuralSegmentsAtBoundary(t *testing.T) {
-	base := product.FromType(typ.NewRecord().Build())
-	path := []constraint.Segment{
-		{Kind: constraint.SegmentField, Name: "headers"},
-		{Kind: constraint.SegmentIndexString, Name: "Accept-Language"},
-	}
-
-	got := writeFieldPath(base, path, product.FromType(typ.String))
-	rec, ok := got.ProjectValue().(*typ.Record)
-	if !ok {
-		t.Fatalf("writeFieldPath result = %T, want record (%v)", got.ProjectValue(), got.ProjectValue())
-	}
-	headers := rec.GetField("headers")
-	if headers == nil {
-		t.Fatalf("writeFieldPath lost outer field: %v", rec)
-	}
-	inner, ok := headers.Type.(*typ.Record)
-	if !ok {
-		t.Fatalf("headers field = %T, want record with exact static member (%v)", headers.Type, headers.Type)
-	}
-	member := inner.GetStaticStringIndex("Accept-Language")
-	if member == nil || !typ.TypeEquals(member.Type, typ.String) {
-		t.Fatalf("inner static member = %#v, want [\"Accept-Language\"]: string", member)
-	}
-	if !inner.HasMapComponent() ||
-		!typ.TypeEquals(inner.MapKey, typ.LiteralString("Accept-Language")) ||
-		!typ.TypeEquals(inner.MapValue, typ.String) {
-		t.Fatalf("inner map component = [%v]: %v, want [\"Accept-Language\"]: string", inner.MapKey, inner.MapValue)
-	}
-}
-
-func TestWriteFieldPathUsesNumericIndexAsIndexedWrite(t *testing.T) {
-	baseType := typ.NewRecord().Field("stable", typ.Number).Build()
-	base := product.FromType(baseType)
-	got := writeFieldPath(base, []constraint.Segment{{Kind: constraint.SegmentIndexInt, Index: 1}}, product.FromType(typ.String))
-	rec, ok := got.ProjectValue().(*typ.Record)
-	if !ok {
-		t.Fatalf("numeric-index write = %T, want record (%v)", got.ProjectValue(), got.ProjectValue())
-	}
-	stable := rec.GetField("stable")
-	if stable == nil || !typ.TypeEquals(stable.Type, typ.Number) {
-		t.Fatalf("stable field changed: %v", rec)
-	}
-	if !rec.HasMapComponent() || !typ.TypeEquals(rec.MapKey, typ.LiteralInt(1)) || !typ.TypeEquals(rec.MapValue, typ.String) {
-		t.Fatalf("numeric-index write map component = [%v]: %v, want [1]: string", rec.MapKey, rec.MapValue)
-	}
-}
-
 func TestEvalTablePreservesStructuralTableKeys(t *testing.T) {
 	tr := &Transfer{}
 	out := flow.PointState{}
