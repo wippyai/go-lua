@@ -70,13 +70,6 @@ func (ct callTyper) callOutcomeForProductCall(call *ast.FuncCallExpr, ctx transf
 	return ct.callOutcomeForProductCallWithOptions(call, ctx, productCallOutcomeOptions{})
 }
 
-func (ct callTyper) summaryOnlyProductCallOutcome(call *ast.FuncCallExpr, ctx transfer.ProductCallContext) canonicalcall.CallOutcome {
-	return ct.callOutcomeForProductCallWithOptions(call, ctx, productCallOutcomeOptions{
-		skipSignatureReturns:   true,
-		skipSignatureRelations: true,
-	})
-}
-
 func (ct callTyper) callOutcomeForProductCallWithOptions(call *ast.FuncCallExpr, ctx transfer.ProductCallContext, opts productCallOutcomeOptions) canonicalcall.CallOutcome {
 	d := ct.d
 	if d == nil || call == nil || d.activeProgram == nil {

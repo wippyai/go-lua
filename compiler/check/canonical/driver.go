@@ -2478,11 +2478,11 @@ func (ct callTyper) moduleCallArgDemands(call *ast.FuncCallExpr, ctx transfer.Pr
 		return nil, false
 	}
 	prog := d.activeProgram
-	outcome := ct.summaryOnlyProductCallOutcome(call, ctx)
-	if !outcome.HasTargets() {
+	proj, ok := ct.summaryOnlyProductCallProjection(call, ctx)
+	if !ok || !proj.outcome.HasTargets() {
 		return nil, false
 	}
-	targets := outcome.Targets()
+	targets := proj.outcome.Targets()
 	currentRef, hasCurrentRef := ct.currentRef()
 	projectionTargets := make([]paramevidence.CallArgDemandTarget, 0, len(targets))
 	for _, target := range targets {
@@ -2645,11 +2645,11 @@ func valueCallExpr(expr ast.Expr) (*ast.FuncCallExpr, bool) {
 }
 
 func (ct callTyper) moduleCallSummaryReturns(call *ast.FuncCallExpr, exprType func(ast.Expr) typ.Type, cells flow.CaptureCells, refs flow.FunctionRefs) []typ.Type {
-	d := ct.d
-	if d == nil || call == nil || d.activeProgram == nil {
+	proj, ok := ct.typedCallProjection(call, exprType, cells, refs)
+	if !ok {
 		return nil
 	}
-	return ct.callOutcomeForTypedCall(call, exprType, cells, refs).InferredReturnTypes()
+	return proj.inferredReturnTypes()
 }
 
 func (ct callTyper) moduleCallSummaryReturnValues(call *ast.FuncCallExpr, ctx transfer.ProductCallContext) []product.AbstractValue {
@@ -2665,11 +2665,11 @@ func (ct callTyper) moduleCallSummaryReturnValues(call *ast.FuncCallExpr, ctx tr
 }
 
 func (ct callTyper) CallReturnFunctionRefs(call *ast.FuncCallExpr, exprType func(ast.Expr) typ.Type, cells flow.CaptureCells, refs flow.FunctionRefs) []flow.FunctionRefs {
-	d := ct.d
-	if d == nil || call == nil || d.activeProgram == nil {
+	proj, ok := ct.typedCallProjection(call, exprType, cells, refs)
+	if !ok {
 		return nil
 	}
-	return ct.callOutcomeForTypedCall(call, exprType, cells, refs).ReturnFunctionRefs()
+	return proj.returnFunctionRefs()
 }
 
 func (ct callTyper) CallReturnRefsFromValues(call *ast.FuncCallExpr, ctx transfer.ProductCallContext) transfer.CallReturnRefs {
@@ -2685,15 +2685,11 @@ func (ct callTyper) CallReturnRefsFromValues(call *ast.FuncCallExpr, ctx transfe
 // A recursive seed (Summary bottom) is not consumed as proof; the relation appears
 // only after the callee summary/projector proves it.
 func (ct callTyper) ReturnRelations(call *ast.FuncCallExpr, exprType func(ast.Expr) typ.Type, cells flow.CaptureCells, refs flow.FunctionRefs) flow.ReturnRelations {
-	d := ct.d
-	if d == nil || call == nil {
+	proj, ok := ct.typedCallRelationsProjection(call, exprType, cells, refs)
+	if !ok {
 		return flow.ReturnRelationsDomain.Top()
 	}
-	var outcome canonicalcall.CallOutcome
-	if d.activeProgram != nil {
-		outcome = ct.callOutcomeForTypedCall(call, exprType, cells, refs)
-	}
-	return outcome.ReturnRelations(call, ct.callTypeResolver(exprType), exprType != nil)
+	return proj.returnRelations()
 }
 
 func (ct callTyper) ReturnRelationsFromValues(call *ast.FuncCallExpr, ctx transfer.ProductCallContext) flow.ReturnRelations {
@@ -2713,8 +2709,11 @@ func (ct callTyper) CellEffects(call *ast.FuncCallExpr, exprType func(ast.Expr) 
 	if !ok || call == nil {
 		return flow.CaptureEffectsDomain.Bottom()
 	}
-	outcome := ct.callOutcomeForTypedCall(call, exprType, cells, refs)
-	return projector.typedCallEffects(outcome, call, exprType, cells, refs)
+	proj, ok := ct.typedCallProjection(call, exprType, cells, refs)
+	if !ok {
+		return flow.CaptureEffectsDomain.Bottom()
+	}
+	return proj.cellEffects(projector)
 }
 
 func (ct callTyper) CellEffectsFromValues(call *ast.FuncCallExpr, ctx transfer.ProductCallContext) flow.CaptureEffects {
