@@ -69,6 +69,35 @@ func (a callEntryAccess) productClosureArgTreeRefs(ctx transfer.ProductCallConte
 	return a.projector.productArgProjection(ctx).closureArgTreeRefs(arg)
 }
 
+func (a callEntryAccess) pointFacts(ref summary.FuncRef, call *ast.FuncCallExpr, in *flow.PointState) flow.BoundaryFacts {
+	if in == nil {
+		return flow.BoundaryFactsDomain.Top()
+	}
+	return a.facts(ref, call, summary.DirectCallEntryFactAxes{
+		KeyPresence: in.KeyPresence,
+		Num:         in.Num,
+		IndexWrites: in.IndexWrites,
+	})
+}
+
+func (a callEntryAccess) productFacts(ref summary.FuncRef, call *ast.FuncCallExpr, ctx transfer.ProductCallContext) flow.BoundaryFacts {
+	return a.facts(ref, call, summary.DirectCallEntryFactAxes{
+		KeyPresence: ctx.KeyPresence,
+		Num:         ctx.Num,
+		IndexWrites: ctx.IndexWrites,
+	})
+}
+
+func (a callEntryAccess) facts(ref summary.FuncRef, call *ast.FuncCallExpr, axes summary.DirectCallEntryFactAxes) flow.BoundaryFacts {
+	return summary.DirectCallEntryFacts(summary.DirectCallEntryFactInput{
+		Call:                    call,
+		Callee:                  ref,
+		ParamSlot:               a.projector.paramSlot,
+		ArgPath:                 a.argPath,
+		DirectCallEntryFactAxes: axes,
+	})
+}
+
 // callEntryProjector is the program-owned capability bundle for summary
 // call-entry projection. Summary owns the pure projection algebra; this type owns
 // the driver/program lookups needed to instantiate that algebra for one caller.
@@ -154,6 +183,7 @@ func (c callEntryProjector) resolveTargets(call *ast.FuncCallExpr, in *flow.Poin
 	if c.program == nil || c.program.driver == nil || c.graph == nil || in == nil {
 		return nil
 	}
+	access := c.access()
 	targets := c.typer.resolveCallTargets(call, c.program, in.FunctionRefs, in.ClosureRefs)
 	selected := canonicalcall.SelectTargets(targets).Targets()
 	out := make([]summary.CallEntryTarget, 0, len(selected))
@@ -162,15 +192,7 @@ func (c callEntryProjector) resolveTargets(call *ast.FuncCallExpr, in *flow.Poin
 		cells := c.program.CallEntryCells(ref, in.Cells)
 		refs := c.program.CallEntryFunctionRefs(ref, in.FunctionRefs)
 		closures := c.program.CallEntryClosureRefs(ref, in.ClosureRefs)
-		entryFacts := summary.DirectCallEntryFacts(summary.DirectCallEntryFactInput{
-			Call:        call,
-			Callee:      ref,
-			ParamSlot:   c.paramSlot,
-			ArgPath:     c.access().argPath,
-			KeyPresence: in.KeyPresence,
-			Num:         in.Num,
-			IndexWrites: in.IndexWrites,
-		})
+		entryFacts := access.pointFacts(ref, call, in)
 		entry := canonicalcall.NewEntryContextWithFacts(ref, cells, refs, closures, nil, entryFacts)
 		if closure, ok := target.Closure(); ok {
 			entry = canonicalcall.EntryContextFromClosureWithLiveAxesAndFacts(ref, closure, cells, refs, closures, nil, entryFacts)
@@ -333,15 +355,7 @@ func (c callEntryProjector) productAxes(ref summary.FuncRef, call *ast.FuncCallE
 }
 
 func (c callEntryProjector) factsForRef(ref summary.FuncRef, call *ast.FuncCallExpr, ctx transfer.ProductCallContext) flow.BoundaryFacts {
-	return summary.DirectCallEntryFacts(summary.DirectCallEntryFactInput{
-		Call:        call,
-		Callee:      ref,
-		ParamSlot:   c.paramSlot,
-		ArgPath:     c.access().argPath,
-		KeyPresence: ctx.KeyPresence,
-		Num:         ctx.Num,
-		IndexWrites: ctx.IndexWrites,
-	})
+	return c.access().productFacts(ref, call, ctx)
 }
 
 func (c callEntryProjector) productValuesForRef(ref summary.FuncRef, call *ast.FuncCallExpr, runtimeValues []product.AbstractValue) summary.EntryValues {

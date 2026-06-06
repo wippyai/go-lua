@@ -18,6 +18,12 @@ type DirectCallEntryFactInput struct {
 	ParamSlot EntryValueParamSlot
 	ArgPath   EntryReferenceArgPath
 
+	DirectCallEntryFactAxes
+}
+
+// DirectCallEntryFactAxes are the caller point-local fact domains that can be
+// projected through normalized call arguments into callee entry facts.
+type DirectCallEntryFactAxes struct {
 	KeyPresence flow.KeyPresenceFacts
 	Num         *numeric.State
 	IndexWrites flow.IndexWriteAdmissionFacts

@@ -597,13 +597,15 @@ func (p CallEntryContextProjection) directFacts(callee FuncRef, call *ast.FuncCa
 		return flow.BoundaryFactsDomain.Top()
 	}
 	return DirectCallEntryFacts(DirectCallEntryFactInput{
-		Call:        call,
-		Callee:      callee,
-		ParamSlot:   p.ParamSlot,
-		ArgPath:     p.ArgPath,
-		KeyPresence: in.KeyPresence,
-		Num:         in.Num,
-		IndexWrites: in.IndexWrites,
+		Call:      call,
+		Callee:    callee,
+		ParamSlot: p.ParamSlot,
+		ArgPath:   p.ArgPath,
+		DirectCallEntryFactAxes: DirectCallEntryFactAxes{
+			KeyPresence: in.KeyPresence,
+			Num:         in.Num,
+			IndexWrites: in.IndexWrites,
+		},
 	})
 }
 
