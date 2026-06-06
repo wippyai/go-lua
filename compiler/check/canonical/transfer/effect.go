@@ -1275,7 +1275,7 @@ func (t *Transfer) seedEmptyContainerKeyArraysForWriteEffect(out *flow.PointStat
 	before := out.KeyPresence
 	for _, array := range arrays {
 		if addr, ok := flow.StableAddressOfPath(rootPath.Field(array)); ok {
-			out.KeyPresence = out.KeyPresence.WithEmptyKeyArrayAddress(addr)
+			flow.ApplyEmptyKeyArrayProof(out, flow.EmptyKeyArrayProof{Array: addr})
 		}
 	}
 	return !flow.KeyPresenceFactsDomain.Equal(before, out.KeyPresence)

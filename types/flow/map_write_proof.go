@@ -25,6 +25,12 @@ type KeyArrayProof struct {
 	Table StableAddress
 }
 
+// EmptyKeyArrayProof records that Array is known empty and can later be used as
+// a key-array seed when keys are appended.
+type EmptyKeyArrayProof struct {
+	Array StableAddress
+}
+
 // KeyArrayValueProof is the value-carrying form of key-array provenance. When
 // AppendKey is present it also records the append-history coverage that proves
 // the appended element is backed by the same table value.
@@ -103,6 +109,16 @@ func ApplyKeyArrayProof(out *PointState, proof KeyArrayProof) bool {
 	}
 	before := out.KeyPresence
 	out.KeyPresence = out.KeyPresence.WithKeyArrayAddresses(proof.Array, proof.Table)
+	return !KeyPresenceFactsDomain.Equal(before, out.KeyPresence)
+}
+
+// ApplyEmptyKeyArrayProof applies empty key-array provenance to point state.
+func ApplyEmptyKeyArrayProof(out *PointState, proof EmptyKeyArrayProof) bool {
+	if out == nil || proof.Array.Key() == "" {
+		return false
+	}
+	before := out.KeyPresence
+	out.KeyPresence = out.KeyPresence.WithEmptyKeyArrayAddress(proof.Array)
 	return !KeyPresenceFactsDomain.Equal(before, out.KeyPresence)
 }
 

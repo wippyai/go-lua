@@ -153,6 +153,22 @@ func TestApplyKeyArrayProofPublishesArrayTable(t *testing.T) {
 	}
 }
 
+func TestApplyEmptyKeyArrayProofPublishesEmptyArray(t *testing.T) {
+	arrayPath := constraint.NewPath(cfg.SymbolID(35), "node_order")
+	arrayKey := StablePathKey(arrayPath)
+
+	state := PointStateDomain.Top()
+	if changed := ApplyEmptyKeyArrayProof(&state, EmptyKeyArrayProof{
+		Array: testStableAddressPath(t, arrayPath),
+	}); !changed {
+		t.Fatal("ApplyEmptyKeyArrayProof reported no change")
+	}
+
+	if !state.KeyPresence.HasEmptyKeyArray(arrayKey) || !state.KeyPresence.HasAppendHistoryBase(arrayKey) {
+		t.Fatalf("empty key-array proof missing empty/base facts: %s", state.KeyPresence.Format())
+	}
+}
+
 func TestApplyIndexedKeyArrayIterationProofPublishesTableKey(t *testing.T) {
 	arrayPath := constraint.NewPath(cfg.SymbolID(41), "node_order")
 	tablePath := constraint.NewPath(cfg.SymbolID(42), "nodes")
