@@ -136,6 +136,27 @@ func TestInvalidateStaticMemberWritePathBottomsAncestorsAndKillsSubtree(t *testi
 	}
 }
 
+func TestKillStaticMemberSubtreePathNormalizesPath(t *testing.T) {
+	root := cfg.SymbolID(10)
+	parentPath := constraint.NewPath(root, "root").Field("cfg")
+	childPath := constraint.NewPath(root, "root").Field("cfg").Field("value")
+	parent := testStableAddressPath(t, parentPath)
+	child := testStableAddressPath(t, childPath)
+	out := PointState{StaticMembers: StaticMemberFactsDomain.Top()}
+	SetStaticMemberFact(&out, parent, product.FromType(typ.NewRecord().Build()))
+	SetStaticMemberFact(&out, child, product.FromType(typ.String))
+
+	if !KillStaticMemberSubtreePath(&out, parentPath) {
+		t.Fatal("KillStaticMemberSubtreePath reported no change")
+	}
+	if _, ok := out.StaticMembers.ValueAtAddress(parent); ok {
+		t.Fatalf("subtree kill kept parent fact: %s", out.StaticMembers.Format())
+	}
+	if _, ok := out.StaticMembers.ValueAtAddress(child); ok {
+		t.Fatalf("subtree kill kept child fact: %s", out.StaticMembers.Format())
+	}
+}
+
 func staticMemberFactsSample() []StaticMemberFacts {
 	pField := SymbolPathKey(cfg.SymbolID(1), []constraint.Segment{{Kind: constraint.SegmentField, Name: "foo"}})
 	pIndex := SymbolPathKey(cfg.SymbolID(1), []constraint.Segment{{Kind: constraint.SegmentIndexString, Name: "foo"}})

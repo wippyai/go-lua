@@ -16,6 +16,42 @@ type AddressWriteInvalidation struct {
 	Written                product.AbstractValue
 }
 
+// AddressWritePathInvalidation is the path-shaped write footprint accepted by
+// producer layers. Flow owns the path-to-address normalization before applying
+// the address-indexed fact laws below.
+type AddressWritePathInvalidation struct {
+	WritePath                  constraint.Path
+	PresentElementWrite        bool
+	PresentElementArrayPath    constraint.Path
+	HasPresentElementArrayPath bool
+	PresentElementMember       []constraint.Segment
+	Written                    product.AbstractValue
+}
+
+func ApplyAddressWritePathInvalidation(out *PointState, proof AddressWritePathInvalidation) bool {
+	write, ok := StableAddressOfPath(proof.WritePath)
+	if !ok {
+		return false
+	}
+	effect := AddressWriteInvalidation{
+		Write:               write,
+		PresentElementWrite: proof.PresentElementWrite,
+		Written:             proof.Written,
+	}
+	if len(proof.PresentElementMember) > 0 {
+		if proof.HasPresentElementArrayPath {
+			if array, ok := StableAddressOfPath(proof.PresentElementArrayPath); ok {
+				effect.PresentElementArray = array
+				effect.HasPresentElementArray = true
+				effect.PresentElementMember = proof.PresentElementMember
+			}
+		} else {
+			effect.PresentElementMember = proof.PresentElementMember
+		}
+	}
+	return ApplyAddressWriteInvalidation(out, effect)
+}
+
 // ApplyAddressWriteInvalidation applies the shared write-kill law for address
 // indexed point facts. StaticMembers is intentionally excluded from this generic
 // reducer because it has a dedicated prefix-bottoming rule; see

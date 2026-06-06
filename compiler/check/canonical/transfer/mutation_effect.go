@@ -76,10 +76,7 @@ func (t *Transfer) invalidateStaticMembersForPlace(out *flow.PointState, place P
 	if !ok || path.Symbol == 0 {
 		return false
 	}
-	if addr, ok := flow.StableAddressOfPath(path); ok {
-		return flow.KillStaticMemberSubtree(out, addr)
-	}
-	return false
+	return flow.KillStaticMemberSubtreePath(out, path)
 }
 
 func (t *Transfer) invalidateKeyFactsForPlace(out *flow.PointState, place Place, presentElementWrite bool) bool {
@@ -99,27 +96,19 @@ func (t *Transfer) invalidateKeyFactsForPlaceWithValue(
 	if !ok || path.Symbol == 0 {
 		return false
 	}
-	addr, ok := flow.StableAddressOfPath(path)
-	if !ok {
-		return false
-	}
-	effect := flow.AddressWriteInvalidation{
-		Write:               addr,
+	effect := flow.AddressWritePathInvalidation{
+		WritePath:           path,
 		PresentElementWrite: presentElementWrite && len(place.Steps) > 0,
 		Written:             presentElementValue,
 	}
 	if presentElementWrite && len(place.Steps) > 0 {
 		if arrayPath, member, ok := presentElementMemberWriteFootprint(place); ok {
-			if arrayAddr, ok := flow.StableAddressOfPath(arrayPath); ok {
-				effect.PresentElementArray = arrayAddr
-				effect.HasPresentElementArray = true
-				effect.PresentElementMember = member
-			} else {
-				effect.PresentElementMember = nil
-			}
+			effect.PresentElementArrayPath = arrayPath
+			effect.HasPresentElementArrayPath = true
+			effect.PresentElementMember = member
 		}
 	}
-	return flow.ApplyAddressWriteInvalidation(out, effect)
+	return flow.ApplyAddressWritePathInvalidation(out, effect)
 }
 
 func presentElementMemberWriteFootprint(place Place) (constraint.Path, []constraint.Segment, bool) {

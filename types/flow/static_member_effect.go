@@ -24,6 +24,14 @@ func KillStaticMemberSubtree(out *PointState, addr StableAddress) bool {
 	return !StaticMemberFactsDomain.Equal(before, out.StaticMembers)
 }
 
+func KillStaticMemberSubtreePath(out *PointState, path constraint.Path) bool {
+	addr, ok := StableAddressOfPath(path)
+	if !ok {
+		return false
+	}
+	return KillStaticMemberSubtree(out, addr)
+}
+
 func SetStaticMemberPath(out *PointState, path constraint.Path, value product.AbstractValue) bool {
 	addr, ok := StableAddressOfPath(path)
 	if !ok {
