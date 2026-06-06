@@ -251,7 +251,7 @@ func (q *Queries) IntraWithKey(ctx *db.QueryContext, key Key) state.FunctionStat
 // normalized exact entry key, without demanding a corresponding recursive
 // Summary cell first.
 func (q *Queries) ObserveIntraWithKey(ctx *db.QueryContext, key Key) state.FunctionState {
-	return q.solveIntra(ctx, key.Ref, q.entryCells(ctx, key), q.entryRefs(ctx, key), q.entryClosureRefs(ctx, key), q.entryValues(ctx, key), q.entryFacts(key), q.entrySymbolValues(key.Ref))
+	return q.solveIntra(ctx, key.Ref, q.entryReferences(ctx, key), q.entryValues(ctx, key), q.entryFacts(key), q.entrySymbolValues(key.Ref))
 }
 
 // Summarize returns ref's interprocedural Summary, driving the call-graph
@@ -318,7 +318,7 @@ func (q *Queries) intra(ctx *db.QueryContext, key Key) state.FunctionState {
 	// observer over those dependencies; it is intentionally not memoized as a
 	// separate db fixed point.
 	_ = q.solveQ.Get(ctx, key).Summary
-	return q.solveIntra(ctx, key.Ref, q.entryCells(ctx, key), q.entryRefs(ctx, key), q.entryClosureRefs(ctx, key), q.entryValues(ctx, key), q.entryFacts(key), q.entrySymbolValues(key.Ref))
+	return q.solveIntra(ctx, key.Ref, q.entryReferences(ctx, key), q.entryValues(ctx, key), q.entryFacts(key), q.entrySymbolValues(key.Ref))
 }
 
 // ParamNarrows returns ref's context-free parameter-refinement cell: portable
@@ -335,7 +335,7 @@ func (q *Queries) ParamNarrows(ctx *db.QueryContext, ref FuncRef) []paramevidenc
 // cycle records the real semantic dependency rather than an eager bottom-context
 // call-graph edge.
 func (q *Queries) computeSolve(ctx *db.QueryContext, key Key) solveResult {
-	fs := q.solveIntra(ctx, key.Ref, q.entryCells(ctx, key), q.entryRefs(ctx, key), q.entryClosureRefs(ctx, key), q.entryValues(ctx, key), q.entryFacts(key), q.entrySymbolValues(key.Ref))
+	fs := q.solveIntra(ctx, key.Ref, q.entryReferences(ctx, key), q.entryValues(ctx, key), q.entryFacts(key), q.entrySymbolValues(key.Ref))
 	sum := q.ProjectStateSummary(ctx, key.Ref, fs)
 	return solveResult{State: fs, Summary: sum}
 }
@@ -489,6 +489,14 @@ func (q *Queries) entryClosureRefs(ctx *db.QueryContext, key Key) flow.ClosureRe
 	return refs
 }
 
+func (q *Queries) entryReferences(ctx *db.QueryContext, key Key) flow.ReferenceContext {
+	return flow.ReferenceContextOf(
+		q.entryCells(ctx, key),
+		q.entryRefs(ctx, key),
+		q.entryClosureRefs(ctx, key),
+	)
+}
+
 func (q *Queries) entryValues(ctx *db.QueryContext, key Key) map[int]product.AbstractValue {
 	values := key.Values.Values()
 	provider, ok := q.prog.(entryValueProvider)
@@ -613,7 +621,7 @@ func (q *Queries) entrySymbolValues(ref FuncRef) map[cfg.SymbolID]product.Abstra
 // solveIntra drives the equation.Builder for ref/context. It evaluates the
 // point/demand cell subgraph used by the summary cell; it does not touch the db
 // cache itself (its caller memoizes).
-func (q *Queries) solveIntra(ctx *db.QueryContext, ref FuncRef, entry flow.CaptureCells, refs flow.FunctionRefs, closures flow.ClosureRefs, entryValues map[int]product.AbstractValue, entryFacts flow.BoundaryFacts, entrySymbolValues map[cfg.SymbolID]product.AbstractValue) state.FunctionState {
+func (q *Queries) solveIntra(ctx *db.QueryContext, ref FuncRef, references flow.ReferenceContext, entryValues map[int]product.AbstractValue, entryFacts flow.BoundaryFacts, entrySymbolValues map[cfg.SymbolID]product.AbstractValue) state.FunctionState {
 	g := q.prog.Graph(ref)
 	if g == nil {
 		return state.FunctionStateDomain.Bottom()
@@ -624,9 +632,7 @@ func (q *Queries) solveIntra(ctx *db.QueryContext, ref FuncRef, entry flow.Captu
 	}
 	solve := func() state.FunctionState {
 		return equation.NewBuilder(g, q.prog.NumParams(ref), tr).
-			WithEntryCells(entry).
-			WithEntryFunctionRefs(refs).
-			WithEntryClosureRefs(closures).
+			WithEntryReferences(references).
 			WithEntryValues(entryValues).
 			WithEntryFacts(entryFacts).
 			WithEntrySymbolValues(entrySymbolValues).

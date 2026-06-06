@@ -56,28 +56,13 @@ func NewBuilder(g *cfg.Graph, numParams int, transfer NodeTransfer) *Builder {
 	return b
 }
 
-// WithEntryCells returns b after installing the immutable captured-cell store
-// visible at the function entry. SummaryQ computes it from the query key and
-// lexical parent exports; the per-node transfer receives it as ordinary incoming
-// point state, not as mutable transfer configuration.
-func (b *Builder) WithEntryCells(entry flow.CaptureCells) *Builder {
-	b.entry = entry
-	return b
-}
-
-// WithEntryFunctionRefs returns b after installing function-identity facts
-// visible at function entry. These facts are ordinary point-state product data:
-// the entry point receives them, transfer consumes them, and summary projection
-// observes only the solved result.
-func (b *Builder) WithEntryFunctionRefs(refs flow.FunctionRefs) *Builder {
-	b.entryRefs = flow.FunctionRefsDomain.Join(refs, nil)
-	return b
-}
-
-// WithEntryClosureRefs returns b after installing closure-environment facts
-// visible at function entry.
-func (b *Builder) WithEntryClosureRefs(refs flow.ClosureRefs) *Builder {
-	b.entryClosures = flow.ClosureRefsDomain.Join(refs, nil)
+// WithEntryReferences installs the caller/lexical reference context visible at
+// function entry. The builder decomposes it only when seeding PointState, keeping
+// summary/query/cache callers on the normalized reference-context carrier.
+func (b *Builder) WithEntryReferences(references flow.ReferenceContext) *Builder {
+	b.entry = references.CaptureCells()
+	b.entryRefs = flow.FunctionRefsDomain.Join(references.FunctionRefs(), nil)
+	b.entryClosures = flow.ClosureRefsDomain.Join(references.ClosureRefs(), nil)
 	return b
 }
 
