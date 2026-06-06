@@ -214,9 +214,10 @@ func (t *Transfer) applyPathAliasEffect(out *flow.PointState, effect AssignmentP
 	if !ok {
 		return false
 	}
-	before := out.PathAliases
-	out.PathAliases = out.PathAliases.WithAddresses(targetAddr, sourceAddr)
-	return !flow.PathAliasFactsDomain.Equal(before, out.PathAliases)
+	return flow.ApplyPathAliasProof(out, flow.PathAliasProof{
+		Value:  targetAddr,
+		Source: sourceAddr,
+	})
 }
 
 func (t *Transfer) applyAssignmentAliasOrigin(out *flow.PointState, effect AssignmentProvenanceEffect) bool {

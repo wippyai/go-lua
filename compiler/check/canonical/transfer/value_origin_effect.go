@@ -31,9 +31,12 @@ func (t *Transfer) applyValueOriginEffect(out *flow.PointState, effect ValueOrig
 	if !ok {
 		return false
 	}
-	before := out.ValueOrigins
-	out.ValueOrigins = out.ValueOrigins.WithAddresses(valueAddr, sourceAddr, effect.Kind, effect.VarIndex)
-	return !flow.ValueOriginFactsDomain.Equal(before, out.ValueOrigins)
+	return flow.ApplyValueOriginProof(out, flow.ValueOriginProof{
+		Value:    valueAddr,
+		Source:   sourceAddr,
+		Kind:     effect.Kind,
+		VarIndex: effect.VarIndex,
+	})
 }
 
 func (t *Transfer) demandExprCtx(out *flow.PointState, expr ast.Expr, ctx typ.Type, demand func(int, paramevidence.ParamContract)) {
