@@ -335,36 +335,36 @@ func (c callEntryProjector) functionRefsForRef(ref summary.FuncRef, call *ast.Fu
 	if call == nil {
 		return flow.FunctionRefsDomain.Bottom()
 	}
-	return summary.DirectCallEntryFunctionRefs(summary.DirectCallEntryReferenceInput{
-		Call:                call,
-		Callee:              ref,
-		FunctionRefs:        ctx.FunctionRefs,
-		ReferenceProjection: c.program.referenceProjection(ref),
-		LimitReferencePaths: true,
-		ParamSlot:           c.paramSlot,
-		ParamPath: func(callee summary.FuncRef, slot int) (constraint.Path, bool) {
-			return c.program.paramPath(callee, slot)
-		},
-		ArgPath: func(_ int, arg ast.Expr) (constraint.Path, bool) {
-			return c.typer.exprPath(arg)
-		},
-		ResolveFunctionArg: func(_ int, arg ast.Expr, _ *flow.PointState) (flow.FunctionRefSet, bool) {
-			return c.typer.callEntryFunctionArgRefs(arg, ctx.FunctionRefs)
-		},
-		ResolveFunctionArgRefs: func(_ int, arg ast.Expr, _ *flow.PointState) (flow.FunctionRefs, bool) {
-			return c.typer.callEntryFunctionArgTreeRefs(arg, ctx)
-		},
-	})
+	in := c.referenceInput(ref, call)
+	in.FunctionRefs = ctx.FunctionRefs
+	in.ResolveFunctionArg = func(_ int, arg ast.Expr, _ *flow.PointState) (flow.FunctionRefSet, bool) {
+		return c.typer.callEntryFunctionArgRefs(arg, ctx.FunctionRefs)
+	}
+	in.ResolveFunctionArgRefs = func(_ int, arg ast.Expr, _ *flow.PointState) (flow.FunctionRefs, bool) {
+		return c.typer.callEntryFunctionArgTreeRefs(arg, ctx)
+	}
+	return summary.DirectCallEntryFunctionRefs(in)
 }
 
 func (c callEntryProjector) closureRefsForRef(ref summary.FuncRef, call *ast.FuncCallExpr, ctx transfer.ProductCallContext) flow.ClosureRefs {
 	if call == nil {
 		return flow.ClosureRefsDomain.Bottom()
 	}
-	return summary.DirectCallEntryClosureRefs(summary.DirectCallEntryReferenceInput{
+	in := c.referenceInput(ref, call)
+	in.ClosureRefs = ctx.ClosureRefs
+	in.ResolveClosureArg = func(_ int, arg ast.Expr, _ *flow.PointState) (flow.ClosureRefSet, bool) {
+		return c.typer.callEntryClosureArgRefs(arg, ctx)
+	}
+	in.ResolveClosureArgRefs = func(_ int, arg ast.Expr, _ *flow.PointState) (flow.ClosureRefs, bool) {
+		return c.typer.callEntryClosureArgTreeRefs(arg, ctx)
+	}
+	return summary.DirectCallEntryClosureRefs(in)
+}
+
+func (c callEntryProjector) referenceInput(ref summary.FuncRef, call *ast.FuncCallExpr) summary.DirectCallEntryReferenceInput {
+	return summary.DirectCallEntryReferenceInput{
 		Call:                call,
 		Callee:              ref,
-		ClosureRefs:         ctx.ClosureRefs,
 		ReferenceProjection: c.program.referenceProjection(ref),
 		LimitReferencePaths: true,
 		ParamSlot:           c.paramSlot,
@@ -374,11 +374,5 @@ func (c callEntryProjector) closureRefsForRef(ref summary.FuncRef, call *ast.Fun
 		ArgPath: func(_ int, arg ast.Expr) (constraint.Path, bool) {
 			return c.typer.exprPath(arg)
 		},
-		ResolveClosureArg: func(_ int, arg ast.Expr, _ *flow.PointState) (flow.ClosureRefSet, bool) {
-			return c.typer.callEntryClosureArgRefs(arg, ctx)
-		},
-		ResolveClosureArgRefs: func(_ int, arg ast.Expr, _ *flow.PointState) (flow.ClosureRefs, bool) {
-			return c.typer.callEntryClosureArgTreeRefs(arg, ctx)
-		},
-	})
+	}
 }
