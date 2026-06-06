@@ -5,7 +5,6 @@ import (
 	"github.com/wippyai/go-lua/compiler/check/domain/callobligation"
 	"github.com/wippyai/go-lua/compiler/check/domain/paramevidence"
 	"github.com/wippyai/go-lua/types/typ"
-	"github.com/wippyai/go-lua/types/typ/subst"
 )
 
 // CallArgDemandsInput is the canonical call-site policy input for argument
@@ -17,17 +16,6 @@ type CallArgDemandsInput struct {
 	SummaryDemands func(*ast.FuncCallExpr) ([]callobligation.Obligation, bool)
 	FunctionShape  func(*ast.FuncCallExpr) *typ.Function
 	SelfType       func(*ast.FuncCallExpr) typ.Type
-}
-
-// CallArgExpectedTypesInput supplies the call-site context for contextual
-// argument typing. Unlike CallArgDemandsInput, this is not a diagnostic
-// precondition projection: a callee body may place no demand on a callback
-// parameter while the declared callable signature still gives that callback
-// literal its parameter types.
-type CallArgExpectedTypesInput struct {
-	Call          *ast.FuncCallExpr
-	FunctionShape func(*ast.FuncCallExpr) *typ.Function
-	SelfType      func(*ast.FuncCallExpr) typ.Type
 }
 
 // CallArgDemandsForCall resolves caller-visible argument obligations in
@@ -51,48 +39,6 @@ func CallArgDemandsForCall(in CallArgDemandsInput) []callobligation.Obligation {
 		selfType = in.SelfType(in.Call)
 	}
 	return paramevidence.FunctionCallArgObligationsWithSelf(in.Call, in.FunctionShape(in.Call), selfType)
-}
-
-// ExpectedArgTypeForCall resolves the declared/contextual type expected for one
-// concrete call argument. This powers function-literal callback contexts and is
-// intentionally independent of solved body obligations.
-func ExpectedArgTypeForCall(in CallArgExpectedTypesInput, argIdx int) typ.Type {
-	if in.Call == nil || argIdx < 0 || argIdx >= len(in.Call.Args) || in.FunctionShape == nil {
-		return nil
-	}
-	fn := in.FunctionShape(in.Call)
-	if fn == nil {
-		return nil
-	}
-	offset := 0
-	if in.Call.Method != "" {
-		offset = 1
-	}
-	paramIdx := argIdx + offset
-	var expected typ.Type
-	switch {
-	case paramIdx < len(fn.Params):
-		expected = fn.Params[paramIdx].Type
-	case fn.Variadic != nil:
-		expected = fn.Variadic
-	}
-	if expected == nil {
-		return nil
-	}
-	if in.SelfType != nil {
-		expected = expectedArgSignatureType(expected, in.SelfType(in.Call))
-	}
-	if typ.IsAbsentOrUnknown(expected) || typ.IsAny(expected) {
-		return nil
-	}
-	return expected
-}
-
-func expectedArgSignatureType(t typ.Type, selfType typ.Type) typ.Type {
-	if t == nil || selfType == nil {
-		return t
-	}
-	return subst.Self(t, selfType)
 }
 
 // DemandsForCallTargets projects selected callee demand targets onto a concrete

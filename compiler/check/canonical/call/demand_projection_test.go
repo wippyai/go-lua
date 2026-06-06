@@ -104,55 +104,6 @@ func TestCallArgDemandsForCallEmptySummaryHitBlocksFallback(t *testing.T) {
 	}
 }
 
-func TestExpectedArgTypeForCallUsesSignatureIndependentOfDemands(t *testing.T) {
-	t.Parallel()
-
-	callback := typ.Func().Param("value", typ.String).Build()
-	call := &ast.FuncCallExpr{Args: []ast.Expr{&ast.FunctionExpr{}}}
-
-	got := ExpectedArgTypeForCall(CallArgExpectedTypesInput{
-		Call: call,
-		FunctionShape: func(gotCall *ast.FuncCallExpr) *typ.Function {
-			if gotCall != call {
-				t.Fatalf("expected-type projection saw call %#v, want original", gotCall)
-			}
-			return typ.Func().Param("fn", callback).Build()
-		},
-	}, 0)
-
-	if !typ.TypeEquals(got, callback) {
-		t.Fatalf("ExpectedArgTypeForCall = %v, want %v", got, callback)
-	}
-}
-
-func TestExpectedArgTypeForCallSubstitutesSelfFromReceiver(t *testing.T) {
-	t.Parallel()
-
-	timeType := typ.NewInterface("time.Time", nil)
-	call := &ast.FuncCallExpr{
-		Receiver: &ast.IdentExpr{Value: "now"},
-		Method:   "sub",
-		Args:     []ast.Expr{&ast.IdentExpr{Value: "other"}},
-	}
-
-	got := ExpectedArgTypeForCall(CallArgExpectedTypesInput{
-		Call: call,
-		FunctionShape: func(*ast.FuncCallExpr) *typ.Function {
-			return typ.Func().
-				Param("self", typ.Self).
-				Param("other", typ.Self).
-				Build()
-		},
-		SelfType: func(*ast.FuncCallExpr) typ.Type {
-			return timeType
-		},
-	}, 0)
-
-	if !typ.TypeEquals(got, timeType) {
-		t.Fatalf("ExpectedArgTypeForCall self substitution = %v, want %v", got, timeType)
-	}
-}
-
 func TestCallArgDemandsForCallFunctionFallback(t *testing.T) {
 	t.Parallel()
 
