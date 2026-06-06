@@ -262,20 +262,21 @@ func (f PointFacts) ChildPathFacts(parent constraint.Path) []PathFact {
 	if parent.Symbol == 0 {
 		return nil
 	}
-	parentSegs := parent.Segments
+	parentAddr, ok := StableAddressOfPath(parent)
+	if !ok {
+		return nil
+	}
 	children := make(map[string]PathFact)
-	for _, entry := range f.state.StaticMembers.Entries() {
-		sym, segs, ok := ParseSymbolPathKey(entry.Path)
-		if !ok || sym != parent.Symbol {
+	for _, childAddr := range f.state.StaticMembers.DirectChildAddressesUnder(parentAddr) {
+		childPath, ok := childAddr.Path()
+		if !ok || childPath.Symbol != parent.Symbol {
 			continue
 		}
-		if len(segs) <= len(parentSegs) || !segmentsPrefix(parentSegs, segs) {
+		remainder, ok := childAddr.RemainderAfterPrefix(parentAddr)
+		if !ok || len(remainder) != 1 {
 			continue
 		}
-		childSeg := segs[len(parentSegs)]
-		childPath := parent
-		childPath.Segments = append(append([]constraint.Segment(nil), parentSegs...), childSeg)
-		childKey := constraint.FormatSegments([]constraint.Segment{childSeg})
+		childKey := constraint.FormatSegments(remainder)
 		if _, seen := children[childKey]; seen {
 			continue
 		}

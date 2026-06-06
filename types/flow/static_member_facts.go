@@ -103,6 +103,40 @@ func (f StaticMemberFacts) KillSubtreeAddress(root StableAddress) StaticMemberFa
 	return canonicalStaticMemberFacts(out, product.Domain.Join)
 }
 
+// DirectChildAddressesUnder returns the direct child addresses that have any
+// materialized static-member fact below parent.
+func (f StaticMemberFacts) DirectChildAddressesUnder(parent StableAddress) []StableAddress {
+	if f.bottom || parent.Key() == "" || len(f.entries) == 0 {
+		return nil
+	}
+	seen := make(map[constraint.PathKey]struct{})
+	var out []StableAddress
+	for _, entry := range f.entries {
+		addr, ok := StableAddressFromKey(entry.Path)
+		if !ok {
+			continue
+		}
+		remainder, ok := addr.RemainderAfterPrefix(parent)
+		if !ok || len(remainder) == 0 {
+			continue
+		}
+		child, ok := parent.Append(remainder[:1])
+		if !ok {
+			continue
+		}
+		key := child.Key()
+		if key == "" {
+			continue
+		}
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		out = append(out, child)
+	}
+	return out
+}
+
 func (f StaticMemberFacts) coversWithPresentValues(
 	want StaticMemberFacts,
 	present func(constraint.PathKey) (product.AbstractValue, bool),

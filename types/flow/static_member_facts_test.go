@@ -100,6 +100,35 @@ func TestStaticMemberFactsAddressAPIIsCanonicalSurface(t *testing.T) {
 	}
 }
 
+func TestStaticMemberFactsDirectChildAddressesUnder(t *testing.T) {
+	const sym = cfg.SymbolID(14)
+	root := constraint.NewPath(sym, "entry")
+	meta := root.Field("meta")
+	id := meta.Field("id")
+	name := meta.Field("name")
+	other := root.Field("other").Field("id")
+	rootAddr := testStableAddressPath(t, root)
+	metaAddr := testStableAddressPath(t, meta)
+	idAddr := testStableAddressPath(t, id)
+	nameAddr := testStableAddressPath(t, name)
+	otherAddr := testStableAddressPath(t, root.Field("other"))
+
+	facts := StaticMemberFactsDomain.Top().
+		WithAddress(testStableAddressPath(t, id), product.FromType(typ.String)).
+		WithAddress(testStableAddressPath(t, name), product.FromType(typ.Number)).
+		WithAddress(testStableAddressPath(t, other), product.FromType(typ.Boolean))
+
+	children := facts.DirectChildAddressesUnder(rootAddr)
+	if len(children) != 2 || !children[0].Equal(metaAddr) || !children[1].Equal(otherAddr) {
+		t.Fatalf("root children = %v, want meta and other", children)
+	}
+
+	metaChildren := facts.DirectChildAddressesUnder(metaAddr)
+	if len(metaChildren) != 2 || !metaChildren[0].Equal(idAddr) || !metaChildren[1].Equal(nameAddr) {
+		t.Fatalf("meta children = %v, want id and name", metaChildren)
+	}
+}
+
 func TestInvalidateStaticMemberWritePathBottomsAncestorsAndKillsSubtree(t *testing.T) {
 	root := cfg.SymbolID(9)
 	parentPath := constraint.NewPath(root, "root").Field("cfg")

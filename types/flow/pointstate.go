@@ -474,14 +474,11 @@ func pointPathKeyPresentValue(ps PointState, key constraint.PathKey) (product.Ab
 }
 
 func pointPathKeyValue(ps PointState, key constraint.PathKey) (product.AbstractValue, bool) {
-	sym, segments, ok := ParseSymbolPathKey(key)
-	if !ok || sym == 0 {
+	path, ok := StablePathFromKey(key)
+	if !ok || path.Symbol == 0 {
 		return product.AbstractValue{}, false
 	}
-	return PointFactsOf(ps).PathValue(constraint.Path{
-		Symbol:   sym,
-		Segments: append([]constraint.Segment(nil), segments...),
-	})
+	return PointFactsOf(ps).PathValue(path)
 }
 
 func pointConditionProvesPathKeyPresent(cond constraint.Condition, key constraint.PathKey) bool {
