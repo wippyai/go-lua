@@ -54,6 +54,7 @@ import (
 	"fmt"
 	"reflect"
 
+	"github.com/wippyai/go-lua/types/callshape"
 	"github.com/wippyai/go-lua/types/db"
 	"github.com/wippyai/go-lua/types/kind"
 	"github.com/wippyai/go-lua/types/query/core"
@@ -908,38 +909,11 @@ func mergeReturnVectors(vectors [][]typ.Type) []typ.Type {
 }
 
 func methodConsumesReceiver(ctx *db.QueryContext, query core.TypeOps, fn *typ.Function, receiver typ.Type, isMethod bool, forceMethodReceiver bool) bool {
-	if !isMethod || receiver == nil || fn == nil {
-		return false
-	}
-	if forceMethodReceiver {
-		return true
-	}
-	return hasExplicitSelf(ctx, query, fn, receiver)
+	return callshape.MethodConsumesReceiver(ctx, query, fn, receiver, isMethod, forceMethodReceiver)
 }
 
 func methodConsumesReceiverSimple(fn *typ.Function, receiver typ.Type, isMethod bool, forceMethodReceiver bool) bool {
-	if !isMethod || receiver == nil || fn == nil {
-		return false
-	}
-	if forceMethodReceiver {
-		return true
-	}
-	return hasExplicitSelfSimple(fn, receiver)
-}
-
-// RuntimeArgsForEffects returns the runtime argument vector seen by
-// parameter-indexed return/effect transforms. For method calls that consume an
-// explicit receiver, parameter 0 is the receiver and source-level arguments are
-// shifted by one.
-func RuntimeArgsForEffects(ctx *db.QueryContext, query core.TypeOps, callee typ.Type, args []typ.Type, receiver typ.Type, isMethod bool, forceMethodReceiver bool) []typ.Type {
-	fn, _ := unwrapCallee(callee).(*typ.Function)
-	if !methodConsumesReceiver(ctx, query, fn, receiver, isMethod, forceMethodReceiver) {
-		return args
-	}
-	out := make([]typ.Type, 0, len(args)+1)
-	out = append(out, receiver)
-	out = append(out, args...)
-	return out
+	return callshape.MethodConsumesReceiverSimple(fn, receiver, isMethod, forceMethodReceiver)
 }
 
 func callFunction(ctx *db.QueryContext, query core.TypeOps, fn *typ.Function, args []typ.Type, receiver typ.Type, isMethod bool, forceMethodReceiver bool, allowExtraArgs bool, errors []CallError) CallResult {
@@ -1145,45 +1119,6 @@ func uniqueCallErrors(errors []CallError) []CallError {
 	return unique
 }
 
-// hasExplicitSelf checks if function has explicit Self as first param.
-func hasExplicitSelf(ctx *db.QueryContext, query core.TypeOps, fn *typ.Function, receiver typ.Type) bool {
-	if len(fn.Params) == 0 {
-		return false
-	}
-	if firstParamDeclaresSelf(fn) {
-		return true
-	}
-	receiverMatch := normalizeReceiverForSelfCheck(ctx, query, receiver)
-	return hasExplicitSelfCommon(fn, receiver, receiverMatch, func(sub, super typ.Type) bool {
-		return isSubtypeCheck(ctx, query, sub, super)
-	})
-}
-
-func isLocalRefMatch(param typ.Type, receiver typ.Type) bool {
-	ref, ok := param.(*typ.Ref)
-	if !ok || ref.Module != "" {
-		return false
-	}
-
-	name, ok := receiverAliasName(receiver)
-	if !ok {
-		return false
-	}
-
-	return ref.Name == name
-}
-
-func receiverAliasName(t typ.Type) (string, bool) {
-	switch v := t.(type) {
-	case *typ.Alias:
-		return v.Name, true
-	case *typ.Optional:
-		return receiverAliasName(v.Inner)
-	}
-
-	return "", false
-}
-
 // isSubtypeCheck uses memoized query if available, otherwise falls back to package function.
 func isSubtypeCheck(ctx *db.QueryContext, query core.TypeOps, sub, super typ.Type) bool {
 	if query != nil {
@@ -1203,98 +1138,6 @@ func consistentCheck(ctx *db.QueryContext, query core.TypeOps, sub, super typ.Ty
 // same memoized subtype relation and gradual admissions as normal call checking.
 func Consistent(ctx *db.QueryContext, query core.TypeOps, sub, super typ.Type) bool {
 	return consistentCheck(ctx, query, sub, super)
-}
-
-// hasExplicitSelfSimple is a non-memoized version for use in contexts without QueryContext.
-func hasExplicitSelfSimple(fn *typ.Function, receiver typ.Type) bool {
-	if len(fn.Params) == 0 {
-		return false
-	}
-	if firstParamDeclaresSelf(fn) {
-		return true
-	}
-	receiverMatch := normalizeReceiverForSelfCheck(nil, nil, receiver)
-	return hasExplicitSelfCommon(fn, receiver, receiverMatch, subtype.IsSubtype)
-}
-
-func firstParamDeclaresSelf(fn *typ.Function) bool {
-	if fn == nil || len(fn.Params) == 0 {
-		return false
-	}
-	if name := fn.Params[0].Name; name == "self" || name == "Self" {
-		return true
-	}
-	firstParam := fn.Params[0].Type
-	return firstParam != nil && firstParam.Kind() == kind.Self
-}
-
-func hasExplicitSelfCommon(
-	fn *typ.Function,
-	receiver typ.Type,
-	receiverMatch typ.Type,
-	isSubtype func(sub, super typ.Type) bool,
-) bool {
-	if fn == nil || len(fn.Params) == 0 || isSubtype == nil {
-		return false
-	}
-
-	if name := fn.Params[0].Name; name == "self" || name == "Self" {
-		return true
-	}
-
-	firstParam := fn.Params[0].Type
-	if firstParam == nil {
-		return false
-	}
-	if firstParam.Kind() == kind.Self {
-		return true
-	}
-	if tp, ok := firstParam.(*typ.TypeParam); ok {
-		if tp.Constraint != nil && receiverMatch != nil &&
-			isExplicitSelfSubtypeCandidate(receiverMatch) &&
-			isExplicitSelfSubtypeCandidate(tp.Constraint) &&
-			(isSubtype(receiverMatch, tp.Constraint) && isSubtype(tp.Constraint, receiverMatch)) {
-			return true
-		}
-		return false
-	}
-	// Check if first param is structurally equivalent to the receiver.
-	// One-way subtyping is too permissive for structural record types where
-	// optional fields can make unrelated shapes look compatible.
-	if receiverMatch != nil &&
-		isExplicitSelfSubtypeCandidate(receiverMatch) &&
-		isExplicitSelfSubtypeCandidate(firstParam) &&
-		(isSubtype(receiverMatch, firstParam) && isSubtype(firstParam, receiverMatch)) {
-		return true
-	}
-
-	return receiver != nil && isLocalRefMatch(firstParam, receiver)
-}
-
-func normalizeReceiverForSelfCheck(ctx *db.QueryContext, query core.TypeOps, receiver typ.Type) typ.Type {
-	if receiver == nil {
-		return nil
-	}
-	if typ.ContainsRecursive(receiver) {
-		return receiver
-	}
-	if query != nil {
-		if widened := query.Widen(ctx, receiver); widened != nil {
-			return widened
-		}
-	}
-	return subtype.Widen(receiver)
-}
-
-// isExplicitSelfSubtypeCandidate filters out broad/placeholder shapes that are
-// too permissive for implicit self inference (for example `any` and `unknown`).
-func isExplicitSelfSubtypeCandidate(t typ.Type) bool {
-	if t == nil {
-		return false
-	}
-	// Soft placeholder types are intentionally broad and should not imply
-	// implicit receiver consumption in method arity checks.
-	return !typ.IsSoft(t, typ.SoftAnnotationPolicy)
 }
 
 // resolveSelf replaces Self type with concrete receiver type.

@@ -1879,7 +1879,7 @@ func (p Projector) callReturnsWithExpected(expr *ast.FuncCallExpr, point cfg.Poi
 		pipeline = pipeline.WithExpected(expected)
 	}
 	result := pipeline.Run()
-	returns := callreturn.ResultTypes(result)
+	returns := callreturn.ResultTypes(result.Type, result.Returns)
 	return callreturn.ApplyEffectTransforms(callreturn.EffectTransformInput{
 		Ctx:                 p.cfg.Ctx,
 		Query:               p.cfg.TypeOps,

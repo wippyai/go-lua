@@ -3,8 +3,8 @@
 package callreturn
 
 import (
-	"github.com/wippyai/go-lua/compiler/check/synth/ops"
 	"github.com/wippyai/go-lua/compiler/check/synth/transform"
+	"github.com/wippyai/go-lua/types/callshape"
 	"github.com/wippyai/go-lua/types/db"
 	querycore "github.com/wippyai/go-lua/types/query/core"
 	"github.com/wippyai/go-lua/types/typ"
@@ -35,10 +35,10 @@ func ApplyEffectTransforms(in EffectTransformInput) []typ.Type {
 	if fn == nil {
 		return in.Returns
 	}
-	effectArgs := ops.RuntimeArgsForEffects(
+	effectArgs := callshape.RuntimeArgsForEffects(
 		in.Ctx,
 		in.Query,
-		in.Callee,
+		fn,
 		in.Args,
 		in.Receiver,
 		in.IsMethod,

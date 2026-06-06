@@ -113,7 +113,7 @@ func (in ReturnInput) Types() ([]typ.Type, bool) {
 	}
 
 	result := ops.NewCallPipeline(in.Ctx, def, len(in.Call.Args)).Run()
-	returns := callreturn.ResultTypes(result)
+	returns := callreturn.ResultTypes(result.Type, result.Returns)
 	if len(returns) == 0 {
 		return nil, false
 	}
