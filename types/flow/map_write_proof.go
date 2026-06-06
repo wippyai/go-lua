@@ -241,18 +241,59 @@ func ApplyAppendElementFieldOriginProof(out *PointState, proof AppendElementFiel
 	return !KeyPresenceFactsDomain.Equal(before, out.KeyPresence)
 }
 
+// IndexedKeyArrayIterationProof consumes key-array provenance at an indexed
+// iteration value binding. Its consequences are direct table/key presence and
+// value-carrying readback admissions for table[key].
+type IndexedKeyArrayIterationProof struct {
+	Array    StableAddress
+	Key      StableAddress
+	KeyValue product.AbstractValue
+}
+
+// IndexedKeyArrayIterationResult reports the tables reached by an indexed
+// key-array iteration proof so callers can apply non-flow refinements.
+type IndexedKeyArrayIterationResult struct {
+	Tables []StableAddress
+}
+
 // ApplyIndexedKeyArrayIterationProof consumes a key-array provenance proof by
 // publishing direct table/key presence for every table proven for the array.
-func ApplyIndexedKeyArrayIterationProof(out *PointState, array StableAddress, key StableAddress) ([]constraint.PathKey, bool) {
-	if out == nil || array.Key() == "" || key.Key() == "" {
-		return nil, false
+func ApplyIndexedKeyArrayIterationProof(out *PointState, proof IndexedKeyArrayIterationProof) (IndexedKeyArrayIterationResult, bool) {
+	if out == nil || proof.Array.Key() == "" || proof.Key.Key() == "" {
+		return IndexedKeyArrayIterationResult{}, false
 	}
-	before := out.KeyPresence
-	tables := out.KeyPresence.KeyArrayTables(array.Key())
-	for _, table := range tables {
-		out.KeyPresence = out.KeyPresence.With(table, key.Key())
+	result := IndexedKeyArrayIterationResult{}
+	beforePresence := out.KeyPresence
+	beforeIndexWrites := out.IndexWrites
+	arrayKey := proof.Array.Key()
+	keyKey := proof.Key.Key()
+	keyValue := proof.KeyValue
+	if keyValue.IsZero() {
+		keyValue = product.FromType(typ.Unknown)
 	}
-	return tables, !KeyPresenceFactsDomain.Equal(before, out.KeyPresence)
+	for _, tableKey := range out.KeyPresence.KeyArrayTables(arrayKey) {
+		table, ok := StableAddressFromKey(tableKey)
+		if !ok {
+			continue
+		}
+		result.Tables = append(result.Tables, table)
+		out.KeyPresence = out.KeyPresence.With(tableKey, keyKey)
+		for _, value := range out.KeyPresence.KeyArrayValues(arrayKey, tableKey) {
+			if value.IsZero() {
+				continue
+			}
+			out.IndexWrites = out.IndexWrites.WithAddress(IndexWriteAdmissionAddressFact{
+				Target:     table,
+				KeyPath:    proof.Key,
+				HasKeyPath: true,
+				Key:        keyValue,
+				Value:      value,
+			})
+		}
+	}
+	changed := !KeyPresenceFactsDomain.Equal(beforePresence, out.KeyPresence)
+	changed = !IndexWriteAdmissionFactsDomain.Equal(beforeIndexWrites, out.IndexWrites) || changed
+	return result, changed
 }
 
 // MapWriteProof is the canonical point-local proof transaction for an admitted

@@ -2593,42 +2593,6 @@ func (t *Transfer) seedIndexedIterKeyOf(out *flow.PointState, info *cfg.AssignIn
 		ArrayPath: source,
 		KeyPath:   constraint.NewPath(valueTarget.Symbol, valueTarget.Name),
 	})
-	t.seedIndexedIterKeyArrayValues(out, source, constraint.NewPath(valueTarget.Symbol, valueTarget.Name))
-}
-
-func (t *Transfer) seedIndexedIterKeyArrayValues(out *flow.PointState, arrayPath, keyPath constraint.Path) {
-	if out == nil || arrayPath.IsEmpty() || keyPath.IsEmpty() {
-		return
-	}
-	arrayKey := flow.KeyPresencePathKey(arrayPath)
-	keyType := typ.Unknown
-	if keyValue, ok := flow.PointFactsOf(*out).PathValue(keyPath); ok && !keyValue.IsZero() {
-		keyType = product.ProjectValueOrUnknown(keyValue)
-	}
-	for _, table := range out.KeyPresence.KeyArrayTables(arrayKey) {
-		tableAddr, tableOK := flow.StableAddressFromKey(table)
-		if !tableOK {
-			continue
-		}
-		for _, value := range out.KeyPresence.KeyArrayValues(arrayKey, table) {
-			if value.IsZero() {
-				continue
-			}
-			keyAddr, keyOK := flow.StableAddressOfPath(keyPath)
-			if !keyOK {
-				continue
-			}
-			flow.ApplyIndexWriteAdmissionProof(out, flow.IndexWriteAdmissionProof{
-				Fact: flow.IndexWriteAdmissionAddressFact{
-					Target:     tableAddr,
-					KeyPath:    keyAddr,
-					HasKeyPath: true,
-					Key:        product.FromType(keyType),
-					Value:      value,
-				},
-			})
-		}
-	}
 }
 
 // evalExpr computes the value of a source expression against the current Env.

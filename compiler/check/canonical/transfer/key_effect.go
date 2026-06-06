@@ -76,27 +76,28 @@ func (t *Transfer) applyKeyProvenanceEffect(out *flow.PointState, effect KeyProv
 		if !arrayOK || !keyOK {
 			return false
 		}
-		var keyValue product.AbstractValue
-		tableKeys, changed := flow.ApplyIndexedKeyArrayIterationProof(out, arrayAddr, keyAddr)
-		for _, tableKey := range tableKeys {
-			tableAddr, ok := flow.StableAddressFromKey(tableKey)
-			if !ok {
-				continue
-			}
+		keyValue, _ := flow.PointFactsOf(*out).AddressValue(keyAddr)
+		result, changed := flow.ApplyIndexedKeyArrayIterationProof(out, flow.IndexedKeyArrayIterationProof{
+			Array:    arrayAddr,
+			Key:      keyAddr,
+			KeyValue: keyValue,
+		})
+		var keyDomain product.AbstractValue
+		for _, tableAddr := range result.Tables {
 			if keyType, ok := flow.PointFactsOf(*out).KeyDomainAtAddress(tableAddr); ok {
 				av := product.FromType(keyType)
-				if keyValue.IsZero() {
-					keyValue = av
+				if keyDomain.IsZero() {
+					keyDomain = av
 				} else {
-					keyValue = product.Join(keyValue, av)
+					keyDomain = product.Join(keyDomain, av)
 				}
 			}
 		}
-		if !keyValue.IsZero() && effect.KeyPath.Symbol != 0 {
+		if !keyDomain.IsZero() && effect.KeyPath.Symbol != 0 {
 			t.applyRefinementEffect(out, RefinementEffect{
 				Place: Place{Root: effect.KeyPath.Symbol},
 				Kind:  RefinementSetValue,
-				Value: keyValue,
+				Value: keyDomain,
 			})
 			changed = true
 		}

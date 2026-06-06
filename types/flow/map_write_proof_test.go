@@ -239,15 +239,49 @@ func TestApplyIndexedKeyArrayIterationProofPublishesTableKey(t *testing.T) {
 		Table: testStableAddressPath(t, tablePath),
 	})
 
-	tables, changed := ApplyIndexedKeyArrayIterationProof(&state, testStableAddressPath(t, arrayPath), testStableAddressPath(t, keyPath))
+	result, changed := ApplyIndexedKeyArrayIterationProof(&state, IndexedKeyArrayIterationProof{
+		Array: testStableAddressPath(t, arrayPath),
+		Key:   testStableAddressPath(t, keyPath),
+	})
 	if !changed {
 		t.Fatal("ApplyIndexedKeyArrayIterationProof reported no change")
 	}
-	if len(tables) != 1 || tables[0] != tableKey {
-		t.Fatalf("iteration tables = %v, want %s", tables, tableKey)
+	if len(result.Tables) != 1 || result.Tables[0].Key() != tableKey {
+		t.Fatalf("iteration tables = %v, want %s", result.Tables, tableKey)
 	}
 	if !state.KeyPresence.Has(tableKey, keyKey) {
 		t.Fatalf("iteration did not publish table/key presence: %s", state.KeyPresence.Format())
+	}
+}
+
+func TestApplyIndexedKeyArrayIterationProofPublishesReadbackAdmission(t *testing.T) {
+	arrayPath := constraint.NewPath(cfg.SymbolID(44), "ids")
+	tablePath := constraint.NewPath(cfg.SymbolID(45), "nodes")
+	keyPath := constraint.NewPath(cfg.SymbolID(46), "id")
+	array := testStableAddressPath(t, arrayPath)
+	table := testStableAddressPath(t, tablePath)
+	key := testStableAddressPath(t, keyPath)
+	value := product.FromType(typ.String)
+	state := PointState{
+		KeyPresence: KeyPresenceFacts{}.
+			WithKeyArrayValueAddresses(array, table, value),
+	}
+
+	if _, changed := ApplyIndexedKeyArrayIterationProof(&state, IndexedKeyArrayIterationProof{
+		Array:    array,
+		Key:      key,
+		KeyValue: product.FromType(typ.LiteralString("n1")),
+	}); !changed {
+		t.Fatal("ApplyIndexedKeyArrayIterationProof reported no change")
+	}
+	got, ok := state.IndexWrites.AdmissionAtAddress(IndexWriteAddressQuery{
+		Target:     table,
+		KeyPath:    key,
+		HasKeyPath: true,
+		KeyValue:   product.FromType(typ.LiteralString("n1")),
+	})
+	if !ok || !product.Domain.Equal(got, value) {
+		t.Fatalf("admission = %v/%v, want string", got, ok)
 	}
 }
 
