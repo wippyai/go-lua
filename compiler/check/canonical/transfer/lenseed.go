@@ -169,10 +169,11 @@ func (t *Transfer) seedArrayLiteralLength(out *flow.PointState, key flow.ValueKe
 // sequence. Any other index write the transfer cannot prove is a same-base border
 // append drops the floor (soundness default: the write may target a hole or an
 // index the proven floor does not cover, so the prior floor no longer holds).
-func (t *Transfer) applyIndexWriteLength(out *flow.PointState, target cfg.AssignTarget, baseKey flow.ValueKey) {
-	if out == nil {
+func (t *Transfer) applyIndexWriteLength(out *flow.PointState, target cfg.AssignTarget) {
+	if out == nil || target.Kind != cfg.TargetIndex || target.BaseSymbol == 0 {
 		return
 	}
+	baseKey := flow.SymbolValueKey(target.BaseSymbol)
 	arrKey, ok := flow.NumericKeyOfValueKey(baseKey)
 	if !ok {
 		return

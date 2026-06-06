@@ -1558,10 +1558,6 @@ func (t *Transfer) applyContainerWriteWithRefResolver(
 	if target.Kind == cfg.TargetIndex && target.BaseSymbol == place.Root && len(place.Steps) == 1 && t.writeIsSelfDerived(out, target, src) {
 		mode = DynamicWriteSelfDerived
 	}
-	var lengthBase flow.ValueKey
-	if target.Kind == cfg.TargetIndex && target.BaseSymbol != 0 {
-		lengthBase = flow.SymbolValueKey(target.BaseSymbol)
-	}
 	t.applyWriteEffect(out, WriteEffect{
 		Place:        place,
 		Value:        val,
@@ -1569,7 +1565,6 @@ func (t *Transfer) applyContainerWriteWithRefResolver(
 		IndexTarget:  target,
 		DynamicMode:  mode,
 		LengthTarget: target,
-		LengthBase:   lengthBase,
 		RecordProto:  true,
 		FunctionRefs: functionRefs,
 		ClosureRefs:  closureRefs,

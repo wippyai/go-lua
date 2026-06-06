@@ -345,7 +345,6 @@ type WriteEffect struct {
 	IndexTarget   cfg.AssignTarget
 	DynamicMode   DynamicWriteMode
 	LengthTarget  cfg.AssignTarget
-	LengthBase    flow.ValueKey
 	KeyArrayTable constraint.Path
 
 	FunctionRefs functionRefsWrite
@@ -643,9 +642,7 @@ func (t *Transfer) applyWriteEffectWithAliasReplay(out *flow.PointState, effect 
 	}
 	t.seedKeyArrayForWriteEffect(out, effect)
 	changed = t.seedEmptyContainerKeyArraysForWriteEffect(out, effect) || changed
-	if effect.LengthBase != "" {
-		t.applyIndexWriteLength(out, effect.LengthTarget, effect.LengthBase)
-	}
+	t.applyIndexWriteLength(out, effect.LengthTarget)
 	if len(effect.Place.Steps) == 0 {
 		changed = t.applyRootWriteEffect(out, effect) || changed
 		return t.applyAliasReplayWriteEffects(out, aliasWrites) || changed
