@@ -942,27 +942,22 @@ func (f KeyPresenceFacts) KillAffectedByPresentElementMemberWriteAddress(array S
 	if f.bottom || arrayKey == "" {
 		return killed
 	}
-	arrays := append(killed.KeyArrayEntries(), keyArrayFactsForArray(f.arrays, arrayKey)...)
-	arrayValues := append(killed.KeyArrayValueEntries(), keyArrayValueFactsForArray(f.arrayValues, arrayKey)...)
-	pending := append(killed.PendingKeyArrayEntries(), pendingKeyArrayFactsForArray(f.pending, arrayKey)...)
-	emptyArrays := append(killed.EmptyKeyArrayEntries(), emptyKeyArrayFactsForArray(f.emptyArrays, arrayKey)...)
-	appends := append(killed.AppendedKeyEntries(), appendedKeyFactsForArray(f.appends, arrayKey)...)
-	appendBases := append(killed.AppendHistoryBaseEntries(), appendHistoryBaseFactsForArray(f.appendBases, arrayKey)...)
-	appendEvents := append(killed.AppendHistoryEventEntries(), appendHistoryEventFactsForArray(f.appendEvents, arrayKey)...)
-	appendCoverage := append(killed.AppendHistoryCoverageEntries(), appendHistoryCoverageFactsForArray(f.appendCoverage, arrayKey)...)
-	appendOrigins := append(killed.AppendElementFieldOriginEntries(), appendElementFieldOriginFactsPreservedByMemberWrite(f.appendOrigins, arrayKey, member)...)
+	return preservePresentElementMemberWriteFacts(killed, f, arrayKey, member)
+}
+
+func preservePresentElementMemberWriteFacts(killed, original KeyPresenceFacts, arrayKey constraint.PathKey, member []constraint.Segment) KeyPresenceFacts {
 	return keyPresenceFactSet{
 		entries:        killed.Entries(),
 		values:         killed.ValueEntries(),
-		arrays:         arrays,
-		emptyArrays:    emptyArrays,
-		arrayValues:    arrayValues,
-		appends:        appends,
-		pending:        pending,
-		appendBases:    appendBases,
-		appendEvents:   appendEvents,
-		appendCoverage: appendCoverage,
-		appendOrigins:  appendOrigins,
+		arrays:         append(killed.KeyArrayEntries(), keyArrayFactsForArray(original.arrays, arrayKey)...),
+		emptyArrays:    append(killed.EmptyKeyArrayEntries(), emptyKeyArrayFactsForArray(original.emptyArrays, arrayKey)...),
+		arrayValues:    append(killed.KeyArrayValueEntries(), keyArrayValueFactsForArray(original.arrayValues, arrayKey)...),
+		appends:        append(killed.AppendedKeyEntries(), appendedKeyFactsForArray(original.appends, arrayKey)...),
+		pending:        append(killed.PendingKeyArrayEntries(), pendingKeyArrayFactsForArray(original.pending, arrayKey)...),
+		appendBases:    append(killed.AppendHistoryBaseEntries(), appendHistoryBaseFactsForArray(original.appendBases, arrayKey)...),
+		appendEvents:   append(killed.AppendHistoryEventEntries(), appendHistoryEventFactsForArray(original.appendEvents, arrayKey)...),
+		appendCoverage: append(killed.AppendHistoryCoverageEntries(), appendHistoryCoverageFactsForArray(original.appendCoverage, arrayKey)...),
+		appendOrigins:  append(killed.AppendElementFieldOriginEntries(), appendElementFieldOriginFactsPreservedByMemberWrite(original.appendOrigins, arrayKey, member)...),
 	}.canonical()
 }
 
