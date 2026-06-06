@@ -65,7 +65,7 @@ func (c callEntryProjector) productArgProjection(ctx transfer.ProductCallContext
 				if c.program == nil {
 					return flow.CaptureCellsDomain.Bottom()
 				}
-				cells := ctx.CaptureCells().Project(captured)
+				cells := ctx.References.CaptureCells().Project(captured)
 				return c.program.normalizeCapturedMethodReceiverCellsFromCells(c.graph, cells, captured)
 			},
 			nestedCall: ctx.NestedCall,

@@ -13,32 +13,27 @@ import (
 func (ct callTyper) callOutcomeForTypedCall(
 	call *ast.FuncCallExpr,
 	exprType func(ast.Expr) typ.Type,
-	cells flow.CaptureCells,
-	refs flow.FunctionRefs,
+	references flow.ReferenceContext,
 ) canonicalcall.CallOutcome {
 	d := ct.d
 	if d == nil || call == nil || d.activeProgram == nil {
 		return canonicalcall.CallOutcome{}
 	}
 	return callOutcomeProjection{
-		typer:    ct,
-		program:  d.activeProgram,
-		call:     call,
-		targets:  ct.resolveCallTargets(call, d.activeProgram, flow.ReferenceContextOf(cells, refs, flow.ClosureRefsDomain.Bottom())),
-		argTypes: argTypesFromCall(call, exprType),
-		exprType: exprType,
-		references: flow.ReferenceContextOf(
-			cells,
-			refs,
-			flow.ClosureRefsDomain.Bottom(),
-		),
+		typer:      ct,
+		program:    d.activeProgram,
+		call:       call,
+		targets:    ct.resolveCallTargets(call, d.activeProgram, references),
+		argTypes:   argTypesFromCall(call, exprType),
+		exprType:   exprType,
+		references: references,
 		entryContext: func(target canonicalcall.SelectedTarget) canonicalcall.EntryContext {
 			ref := target.Ref()
 			entryValues := ct.callEntryValuesForRef(ref, call, exprType)
 			if d.summaryReader().Live() {
 				return d.activeProgram.CallEntryContext(
 					ref,
-					flow.ReferenceContextOf(cells, refs, flow.ClosureRefsDomain.Bottom()),
+					references,
 					entryValues,
 				)
 			}

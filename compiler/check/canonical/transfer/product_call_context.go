@@ -53,18 +53,6 @@ func (t *Transfer) productCallContext(
 	return ctx
 }
 
-func (c ProductCallContext) CaptureCells() flow.CaptureCells {
-	return c.References.CaptureCells()
-}
-
-func (c ProductCallContext) FunctionRefs() flow.FunctionRefs {
-	return c.References.FunctionRefs()
-}
-
-func (c ProductCallContext) ClosureRefs() flow.ClosureRefs {
-	return c.References.ClosureRefs()
-}
-
 func productCallSelfType(av product.AbstractValue) typ.Type {
 	if av.IsZero() {
 		return nil

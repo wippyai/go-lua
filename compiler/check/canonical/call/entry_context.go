@@ -56,7 +56,7 @@ func (c EntryContext) ClosureRefs() flow.ClosureRefs { return c.references.Closu
 
 // References returns the full callee-entry reference environment.
 func (c EntryContext) References() flow.ReferenceContext {
-	return flow.ReferenceContextOf(c.CaptureCells(), c.FunctionRefs(), c.ClosureRefs())
+	return c.references
 }
 
 // EntryValues returns caller-projected parameter values.

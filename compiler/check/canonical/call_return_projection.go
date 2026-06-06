@@ -52,7 +52,7 @@ func (p callReturnProjection) projection() canonicalcall.ReturnInput {
 		Query:              d.cfg.Types,
 		MethodReceiverType: p.methodReceiverType,
 		SummaryReturns: func(call *ast.FuncCallExpr, exprType func(ast.Expr) typ.Type) []typ.Type {
-			return p.typer.callOutcomeForTypedCall(call, exprType, p.references.CaptureCells(), p.references.FunctionRefs()).InferredReturnTypes()
+			return p.typer.callOutcomeForTypedCall(call, exprType, p.references).InferredReturnTypes()
 		},
 		Resolver: p.typer.callTypeResolver(p.exprType),
 		ResolveTypeArg: func(expr ast.TypeExpr) typ.Type {
