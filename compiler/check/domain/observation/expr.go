@@ -16,6 +16,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/check/domain/metatable"
 	"github.com/wippyai/go-lua/compiler/check/domain/paramevidence"
 	flowpath "github.com/wippyai/go-lua/compiler/check/domain/path"
+	"github.com/wippyai/go-lua/compiler/check/domain/typepath"
 	"github.com/wippyai/go-lua/compiler/check/scope"
 	phasecore "github.com/wippyai/go-lua/compiler/check/synth/core"
 	"github.com/wippyai/go-lua/compiler/check/synth/intercept"
@@ -2309,51 +2310,11 @@ func (p Projector) pathDeclaredType(point cfg.Point, path constraint.Path) typ.T
 }
 
 func (p Projector) typeAtSegments(base typ.Type, segments []constraint.Segment) typ.Type {
-	if base == nil {
-		return nil
-	}
-	if len(segments) == 0 {
-		return base
-	}
-	current := base
-	for _, segment := range segments {
-		var next typ.Type
-		switch segment.Kind {
-		case constraint.SegmentField, constraint.SegmentIndexString:
-			if p.cfg.TypeOps != nil {
-				next, _ = p.cfg.TypeOps.Field(p.cfg.Ctx, current, segment.Name)
-				if next == nil {
-					next, _ = p.cfg.TypeOps.Index(p.cfg.Ctx, current, typ.LiteralString(segment.Name))
-				}
-			} else {
-				next, _ = querycore.Field(current, segment.Name)
-				if next == nil {
-					next, _ = querycore.Index(current, typ.LiteralString(segment.Name))
-				}
-			}
-		case constraint.SegmentIndexInt:
-			key := typ.LiteralInt(int64(segment.Index))
-			if p.cfg.TypeOps != nil {
-				next, _ = p.cfg.TypeOps.Index(p.cfg.Ctx, current, key)
-			} else {
-				next, _ = querycore.Index(current, key)
-			}
-		default:
-			return nil
-		}
-		if next == nil {
-			if querycore.MissingFieldReadsNil(current) {
-				next = typ.Nil
-			} else {
-				return nil
-			}
-		}
-		if next == nil {
-			return nil
-		}
-		current = next
-	}
-	return current
+	return typepath.TypeAtSegments(base, segments, typepath.Options{
+		Ctx:               p.cfg.Ctx,
+		Ops:               p.cfg.TypeOps,
+		MissingFieldAsNil: true,
+	})
 }
 
 func (p Projector) declaredSymbolType(point cfg.Point, sym cfg.SymbolID) typ.Type {

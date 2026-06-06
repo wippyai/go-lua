@@ -254,7 +254,7 @@ func (p Projector) factsNarrowedPathType(point cfg.Point, path constraint.Path) 
 	if len(path.Segments) == 0 {
 		return root, true
 	}
-	derived := p.derivePathSegments(root, path.Segments)
+	derived := p.typeAtSegments(root, path.Segments)
 	if derived == nil {
 		return nil, false
 	}
@@ -302,7 +302,7 @@ func (p Projector) refineFactsLengthIndex(point cfg.Point, path constraint.Path,
 	if !ok || lower < int64(seg.Index) {
 		return derived
 	}
-	container := p.derivePathSegments(root, path.Segments[:idx])
+	container := p.typeAtSegments(root, path.Segments[:idx])
 	if container == nil {
 		return derived
 	}
@@ -389,7 +389,7 @@ func (p Projector) refineQueryByFieldLiteral(query constraint.Path, root typ.Typ
 	if !pathHasPrefix(query, target) {
 		return nil, false
 	}
-	targetType := p.derivePathSegments(root, target.Segments)
+	targetType := p.typeAtSegments(root, target.Segments)
 	if targetType == nil {
 		return nil, false
 	}
@@ -398,7 +398,7 @@ func (p Projector) refineQueryByFieldLiteral(query constraint.Path, root typ.Typ
 		return nil, false
 	}
 	suffix := query.Segments[len(target.Segments):]
-	out := p.derivePathSegments(refinedTarget, suffix)
+	out := p.typeAtSegments(refinedTarget, suffix)
 	if out == nil {
 		return nil, false
 	}
@@ -465,48 +465,6 @@ func (p Projector) soundRootRefinement(point cfg.Point, sym cfg.SymbolID, refine
 		return nil
 	}
 	return refined
-}
-
-// derivePathSegments walks base through the field/index segments of a path,
-// returning the type the path denotes or nil when a segment does not resolve. It
-// reuses the same query-core field/index resolution pathDeclaredType uses.
-func (p Projector) derivePathSegments(base typ.Type, segments []constraint.Segment) typ.Type {
-	current := base
-	for _, segment := range segments {
-		var next typ.Type
-		switch segment.Kind {
-		case constraint.SegmentField, constraint.SegmentIndexString:
-			if p.cfg.TypeOps != nil {
-				next, _ = p.cfg.TypeOps.Field(p.cfg.Ctx, current, segment.Name)
-				if next == nil {
-					next, _ = p.cfg.TypeOps.Index(p.cfg.Ctx, current, typ.LiteralString(segment.Name))
-				}
-			} else {
-				next, _ = querycore.Field(current, segment.Name)
-				if next == nil {
-					next, _ = querycore.Index(current, typ.LiteralString(segment.Name))
-				}
-			}
-		case constraint.SegmentIndexInt:
-			key := typ.LiteralInt(int64(segment.Index))
-			if p.cfg.TypeOps != nil {
-				next, _ = p.cfg.TypeOps.Index(p.cfg.Ctx, current, key)
-			} else {
-				next, _ = querycore.Index(current, key)
-			}
-		default:
-			return nil
-		}
-		if next == nil {
-			if querycore.MissingFieldReadsNil(current) {
-				next = typ.Nil
-			} else {
-				return nil
-			}
-		}
-		current = next
-	}
-	return current
 }
 
 // AssignmentTargetWriteType projects the solved write-slot type for an

@@ -13,6 +13,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/check/domain/indexread"
 	"github.com/wippyai/go-lua/compiler/check/domain/paramevidence"
 	flowpath "github.com/wippyai/go-lua/compiler/check/domain/path"
+	"github.com/wippyai/go-lua/compiler/check/domain/typepath"
 	"github.com/wippyai/go-lua/compiler/check/scope"
 	phasecore "github.com/wippyai/go-lua/compiler/check/synth/core"
 	"github.com/wippyai/go-lua/types/constraint"
@@ -1001,7 +1002,7 @@ func (f *canonicalFacts) pathObservationRootDerivedType(q flow.PathObservationQu
 	if !ok || typ.IsAbsentOrUnknown(root) {
 		return nil, false
 	}
-	derived := deriveCanonicalPathSegments(root, q.Path.Segments)
+	derived := typepath.Strict(root, q.Path.Segments)
 	if typ.IsAbsentOrUnknown(derived) {
 		return nil, false
 	}
@@ -1106,7 +1107,7 @@ func (f *canonicalFacts) pathObservationDeclaredType(q flow.PathObservationQuery
 	if base == nil || len(path.Segments) == 0 {
 		return base
 	}
-	return deriveCanonicalPathSegments(base, path.Segments)
+	return typepath.Strict(base, path.Segments)
 }
 
 func (f *canonicalFacts) annotatedDeclaredType(point cfg.Point, sym cfg.SymbolID) typ.Type {
@@ -1131,27 +1132,6 @@ func (f *canonicalFacts) effectivePathObservationRoot(point cfg.Point, sym cfg.S
 		return tv.Type
 	}
 	return nil
-}
-
-func deriveCanonicalPathSegments(base typ.Type, segments []constraint.Segment) typ.Type {
-	current := base
-	for _, segment := range segments {
-		var next typ.Type
-		switch segment.Kind {
-		case constraint.SegmentField, constraint.SegmentIndexString:
-			next, _ = querycore.Field(current, segment.Name)
-			if next == nil {
-				next, _ = querycore.Index(current, typ.LiteralString(segment.Name))
-			}
-		case constraint.SegmentIndexInt:
-			next, _ = querycore.Index(current, typ.LiteralInt(int64(segment.Index)))
-		}
-		if next == nil {
-			return nil
-		}
-		current = next
-	}
-	return current
 }
 
 func (f *canonicalFacts) hasConditionProofAt(point cfg.Point) bool {
