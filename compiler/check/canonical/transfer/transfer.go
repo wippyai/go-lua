@@ -3641,9 +3641,7 @@ func (t *Transfer) applyBoundaryAppendKeyPlans(out *flow.PointState, plans []bou
 		keyKey := keyAddr.Key()
 		tables := t.boundaryAppendKeyPlanTables(out, plan, keyKey)
 		preserveAppendHistoryBase := plan.preserveHistoryBase || plan.freshEmpty || out.KeyPresence.HasAppendHistoryBase(arrayKey)
-		beforeKill := out.KeyPresence
-		out.KeyPresence = out.KeyPresence.KillAffectedByWriteAddress(arrayAddr)
-		changed = !flow.KeyPresenceFactsDomain.Equal(beforeKill, out.KeyPresence) || changed
+		changed = flow.ApplyAddressWriteInvalidation(out, flow.AddressWriteInvalidation{Write: arrayAddr}) || changed
 		if preserveAppendHistoryBase {
 			changed = flow.ApplyAppendHistoryBaseProof(out, flow.AppendHistoryBaseProof{Array: arrayAddr}) || changed
 		}
