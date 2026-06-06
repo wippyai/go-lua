@@ -71,7 +71,7 @@ func (c callEntryProjector) productArgProjection(ctx transfer.ProductCallContext
 				cells := ctx.Cells.Project(captured)
 				return c.program.normalizeCapturedMethodReceiverCellsFromCells(c.graph, cells, captured)
 			},
-			nestedCall: ctx.ForCall,
+			nestedCall: ctx.NestedCall,
 		},
 	}
 }
