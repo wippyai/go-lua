@@ -90,16 +90,16 @@ func (c callEntryProjector) contextProjection(fs state.FunctionState) summary.Ca
 			return c.typer.exprPath(arg)
 		},
 		FunctionArgRefs: func(_ int, arg ast.Expr, in *flow.PointState) (flow.FunctionRefSet, bool) {
-			return c.program.callEntryFunctionArgRefs(c.graph, arg, in)
+			return c.pointArgProjection(in).functionArgRefs(arg)
 		},
 		FunctionArgRefTree: func(_ int, arg ast.Expr, in *flow.PointState) (flow.FunctionRefs, bool) {
-			return c.program.callEntryFunctionArgTreeRefs(c.graph, c.transfer, arg, in)
+			return c.pointArgProjection(in).functionArgTreeRefs(arg)
 		},
 		ClosureArgRefs: func(_ int, arg ast.Expr, in *flow.PointState) (flow.ClosureRefSet, bool) {
-			return c.program.callEntryClosureArgRefs(c.graph, arg, in)
+			return c.pointArgProjection(in).closureArgRefs(arg)
 		},
 		ClosureArgRefTree: func(_ int, arg ast.Expr, in *flow.PointState) (flow.ClosureRefs, bool) {
-			return c.program.callEntryClosureArgTreeRefs(c.graph, c.transfer, arg, in)
+			return c.pointArgProjection(in).closureArgTreeRefs(arg)
 		},
 		EvalArg: c.transfer.EvalExprValue,
 		NormalizeValues: func(callee summary.FuncRef, call *ast.FuncCallExpr, values summary.EntryValues) summary.EntryValues {
@@ -150,7 +150,7 @@ func (c callEntryProjector) resolveTargets(call *ast.FuncCallExpr, in *flow.Poin
 }
 
 func (c callEntryProjector) resolveCallback(arg ast.Expr, rawSym cfg.SymbolID, in *flow.PointState) ([]summary.FuncRef, bool) {
-	return c.program.callbackArgRefs(c.graph, arg, rawSym, in)
+	return c.pointArgProjection(in).callbackRefs(arg, rawSym)
 }
 
 func (c callEntryProjector) expectedArgType(point cfg.Point, info *cfg.CallInfo, in *flow.PointState, argIdx int) typ.Type {
@@ -327,13 +327,14 @@ func (c callEntryProjector) functionRefsForRef(ref summary.FuncRef, call *ast.Fu
 	if call == nil {
 		return flow.FunctionRefsDomain.Bottom()
 	}
+	args := c.productArgProjection(ctx)
 	in := c.referenceInput(ref, call)
 	in.FunctionRefs = ctx.FunctionRefs
 	in.ResolveFunctionArg = func(_ int, arg ast.Expr, _ *flow.PointState) (flow.FunctionRefSet, bool) {
-		return c.typer.callEntryFunctionArgRefs(arg, ctx.FunctionRefs)
+		return args.functionArgRefs(arg)
 	}
 	in.ResolveFunctionArgRefs = func(_ int, arg ast.Expr, _ *flow.PointState) (flow.FunctionRefs, bool) {
-		return c.typer.callEntryFunctionArgTreeRefs(arg, ctx)
+		return args.functionArgTreeRefs(arg)
 	}
 	return summary.DirectCallEntryFunctionRefs(in)
 }
@@ -342,13 +343,14 @@ func (c callEntryProjector) closureRefsForRef(ref summary.FuncRef, call *ast.Fun
 	if call == nil {
 		return flow.ClosureRefsDomain.Bottom()
 	}
+	args := c.productArgProjection(ctx)
 	in := c.referenceInput(ref, call)
 	in.ClosureRefs = ctx.ClosureRefs
 	in.ResolveClosureArg = func(_ int, arg ast.Expr, _ *flow.PointState) (flow.ClosureRefSet, bool) {
-		return c.typer.callEntryClosureArgRefs(arg, ctx)
+		return args.closureArgRefs(arg)
 	}
 	in.ResolveClosureArgRefs = func(_ int, arg ast.Expr, _ *flow.PointState) (flow.ClosureRefs, bool) {
-		return c.typer.callEntryClosureArgTreeRefs(arg, ctx)
+		return args.closureArgTreeRefs(arg)
 	}
 	return summary.DirectCallEntryClosureRefs(in)
 }
