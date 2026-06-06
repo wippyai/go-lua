@@ -215,10 +215,6 @@ type productReturnRelationProvider interface {
 	ReturnRelationsFromValues(call *ast.FuncCallExpr, ctx ProductCallContext) flow.ReturnRelations
 }
 
-type callReturnFunctionRefsProvider interface {
-	CallReturnFunctionRefs(call *ast.FuncCallExpr, exprType func(ast.Expr) typ.Type, cells flow.CaptureCells, refs flow.FunctionRefs) []flow.FunctionRefs
-}
-
 // CallReturnRefs is the product-call boundary for callable identities returned
 // by a callee. Function and closure refs are projected from the same selected
 // call outcome, so product callers consume them through one provider.
@@ -1570,60 +1566,71 @@ func (t *Transfer) referenceWritesForAssignedPlace(
 	demand func(int, paramevidence.ParamContract),
 ) (functionRefsWrite, closureRefsWrite) {
 	functionRefs := sourceFunctionRefsWrite()
-	if refs, ok := t.callReturnFunctionRefsForAssignedPlace(out, place, info, targetIndex, src, demand); ok {
-		functionRefs = explicitFunctionRefsWrite(refs)
-	}
 	closureRefs := sourceClosureRefsWrite()
-	if refs, ok := t.callReturnClosureRefsForAssignedPlace(out, place, info, targetIndex, src, demand); ok {
-		closureRefs = explicitClosureRefsWrite(refs)
+	if callRefs, ok := t.callReturnReferenceWritesForAssignedPlace(out, place, info, targetIndex, src, demand); ok {
+		functionRefs = callRefs.FunctionRefs
+		closureRefs = callRefs.ClosureRefs
 	}
 	return functionRefs, closureRefs
 }
 
-func (t *Transfer) callReturnFunctionRefsForAssignedPlace(
+type callReturnReferenceWrites struct {
+	FunctionRefs functionRefsWrite
+	ClosureRefs  closureRefsWrite
+}
+
+func (t *Transfer) callReturnReferenceWritesForAssignedPlace(
 	out *flow.PointState,
 	place Place,
 	info *cfg.AssignInfo,
 	targetIndex int,
 	src ast.Expr,
 	demand func(int, paramevidence.ParamContract),
-) (flow.FunctionRefs, bool) {
+) (callReturnReferenceWrites, bool) {
 	if info != nil {
 		if call, retIndex := info.CallForTarget(targetIndex); call != nil && call.Call != nil {
-			return t.callReturnFunctionRefsForPlace(out, place, call.Call, retIndex, demand)
+			return t.callReturnReferenceWritesForPlace(out, place, call.Call, retIndex, demand)
 		}
 	}
 	if call, ok := src.(*ast.FuncCallExpr); ok {
-		return t.callReturnFunctionRefsForPlace(out, place, call, 0, demand)
+		return t.callReturnReferenceWritesForPlace(out, place, call, 0, demand)
 	}
-	return nil, false
+	return callReturnReferenceWrites{}, false
 }
 
-func (t *Transfer) callReturnFunctionRefsForPlace(
+func (t *Transfer) callReturnReferenceWritesForPlace(
 	out *flow.PointState,
 	place Place,
 	call *ast.FuncCallExpr,
 	retIndex int,
 	demand func(int, paramevidence.ParamContract),
-) (flow.FunctionRefs, bool) {
+) (callReturnReferenceWrites, bool) {
 	if out == nil || call == nil || retIndex < 0 {
-		return nil, false
+		return callReturnReferenceWrites{}, false
 	}
 	path, ok := place.StaticPath()
 	if !ok || path.IsEmpty() {
-		return nil, false
+		return callReturnReferenceWrites{}, false
 	}
-	if provider, ok := t.callTyper.(productCallReturnRefsProvider); ok {
-		returns := provider.CallReturnRefsFromValues(call, t.productCallContext(out, call, demand))
-		return rebaseCallReturnFunctionRefs(path, retIndex, returns.FunctionRefs)
+	provider, ok := t.callTyper.(productCallReturnRefsProvider)
+	if !ok || provider == nil {
+		return callReturnReferenceWrites{}, false
 	}
-	provider, ok := t.callTyper.(callReturnFunctionRefsProvider)
-	if !ok {
-		return nil, false
+	returns := provider.CallReturnRefsFromValues(call, t.productCallContext(out, call, demand))
+	writes := callReturnReferenceWrites{
+		FunctionRefs: sourceFunctionRefsWrite(),
+		ClosureRefs:  sourceClosureRefsWrite(),
 	}
-	exprType := t.projectExprTypeResolver(out)
-	returns := provider.CallReturnFunctionRefs(call, exprType, out.Cells, out.FunctionRefs)
-	return rebaseCallReturnFunctionRefs(path, retIndex, returns)
+	got := false
+	if refs, ok := rebaseCallReturnFunctionRefs(path, retIndex, returns.FunctionRefs); ok {
+		writes.FunctionRefs = explicitFunctionRefsWrite(refs)
+		got = true
+	}
+	if refs, ok := rebaseCallReturnClosureRefs(path, retIndex, returns.ClosureRefs); ok {
+		writes.ClosureRefs = explicitClosureRefsWrite(refs)
+		got = true
+	}
+	return writes, got
 }
 
 func rebaseCallReturnFunctionRefs(
@@ -1636,6 +1643,21 @@ func rebaseCallReturnFunctionRefs(
 	}
 	rebased := flow.RebaseFunctionRefsPath(returns[retIndex], constraint.NewPlaceholder(retIndex), path)
 	if flow.FunctionRefsDomain.Equal(rebased, flow.FunctionRefsDomain.Bottom()) {
+		return nil, false
+	}
+	return rebased, true
+}
+
+func rebaseCallReturnClosureRefs(
+	path constraint.Path,
+	retIndex int,
+	returns []flow.ClosureRefs,
+) (flow.ClosureRefs, bool) {
+	if retIndex >= len(returns) {
+		return nil, false
+	}
+	rebased := flow.RebaseClosureRefsPath(returns[retIndex], constraint.NewPlaceholder(retIndex), path)
+	if flow.ClosureRefsDomain.Equal(rebased, flow.ClosureRefsDomain.Bottom()) {
 		return nil, false
 	}
 	return rebased, true
@@ -1665,62 +1687,6 @@ func (t *Transfer) recordFunctionRefAt(out *flow.PointState, path constraint.Pat
 	for _, entry := range nested {
 		flow.SetFunctionRefPath(out, appendFunctionRefPath(path, entry.segments), entry.set)
 	}
-}
-
-func (t *Transfer) callReturnClosureRefsForAssignedPlace(
-	out *flow.PointState,
-	place Place,
-	info *cfg.AssignInfo,
-	targetIndex int,
-	src ast.Expr,
-	demand func(int, paramevidence.ParamContract),
-) (flow.ClosureRefs, bool) {
-	if info != nil {
-		if call, retIndex := info.CallForTarget(targetIndex); call != nil && call.Call != nil {
-			return t.callReturnClosureRefsForPlace(out, place, call.Call, retIndex, demand)
-		}
-	}
-	if call, ok := src.(*ast.FuncCallExpr); ok {
-		return t.callReturnClosureRefsForPlace(out, place, call, 0, demand)
-	}
-	return nil, false
-}
-
-func (t *Transfer) callReturnClosureRefsForPlace(
-	out *flow.PointState,
-	place Place,
-	call *ast.FuncCallExpr,
-	retIndex int,
-	demand func(int, paramevidence.ParamContract),
-) (flow.ClosureRefs, bool) {
-	if out == nil || call == nil || retIndex < 0 {
-		return nil, false
-	}
-	path, ok := place.StaticPath()
-	if !ok || path.IsEmpty() {
-		return nil, false
-	}
-	provider, ok := t.callTyper.(productCallReturnRefsProvider)
-	if !ok || provider == nil {
-		return nil, false
-	}
-	returns := provider.CallReturnRefsFromValues(call, t.productCallContext(out, call, demand))
-	return rebaseCallReturnClosureRefs(path, retIndex, returns.ClosureRefs)
-}
-
-func rebaseCallReturnClosureRefs(
-	path constraint.Path,
-	retIndex int,
-	returns []flow.ClosureRefs,
-) (flow.ClosureRefs, bool) {
-	if retIndex >= len(returns) {
-		return nil, false
-	}
-	rebased := flow.RebaseClosureRefsPath(returns[retIndex], constraint.NewPlaceholder(retIndex), path)
-	if flow.ClosureRefsDomain.Equal(rebased, flow.ClosureRefsDomain.Bottom()) {
-		return nil, false
-	}
-	return rebased, true
 }
 
 func (t *Transfer) recordClosureRefAt(out *flow.PointState, path constraint.Path, src ast.Expr) {

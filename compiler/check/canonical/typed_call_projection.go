@@ -64,10 +64,6 @@ func (p typedCallProjection) inferredReturnTypes() []typ.Type {
 	return p.outcome.InferredReturnTypes()
 }
 
-func (p typedCallProjection) returnFunctionRefs() []flow.FunctionRefs {
-	return p.outcome.ReturnFunctionRefs()
-}
-
 func (p typedCallProjection) returnRelations() flow.ReturnRelations {
 	return p.outcome.ReturnRelations(p.call, p.typer.callTypeResolver(p.exprType), p.exprType != nil)
 }

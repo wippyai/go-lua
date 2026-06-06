@@ -880,11 +880,15 @@ func (t returnFunctionRefsTestTyper) CallReturns(*ast.FuncCallExpr, []typ.Type, 
 	return []typ.Type{typ.NewRecord().Field("with_options", typ.Func().Build()).Build()}, true
 }
 
-func (t returnFunctionRefsTestTyper) CallReturnFunctionRefs(*ast.FuncCallExpr, func(ast.Expr) typ.Type, flow.CaptureCells, flow.FunctionRefs) []flow.FunctionRefs {
-	return []flow.FunctionRefs{
-		flow.WithFunctionRef(nil, constraint.NewPlaceholder(0).Field("with_options").Key(), flow.FunctionRefSetOf(t.ref)),
+func (t returnFunctionRefsTestTyper) CallReturnRefsFromValues(*ast.FuncCallExpr, ProductCallContext) CallReturnRefs {
+	return CallReturnRefs{
+		FunctionRefs: []flow.FunctionRefs{
+			flow.WithFunctionRef(nil, constraint.NewPlaceholder(0).Field("with_options").Key(), flow.FunctionRefSetOf(t.ref)),
+		},
 	}
 }
+
+var _ productCallReturnRefsProvider = returnFunctionRefsTestTyper{}
 
 type productReturnFunctionRefsTestTyper struct {
 	captureEffectTyper

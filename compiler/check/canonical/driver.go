@@ -1839,14 +1839,6 @@ func (ct callTyper) CallReturnValues(call *ast.FuncCallExpr, ctx transfer.Produc
 	return proj.callReturnValues()
 }
 
-func (ct callTyper) CallReturnFunctionRefs(call *ast.FuncCallExpr, exprType func(ast.Expr) typ.Type, cells flow.CaptureCells, refs flow.FunctionRefs) []flow.FunctionRefs {
-	proj, ok := ct.typedCallProjection(call, exprType, cells, refs)
-	if !ok {
-		return nil
-	}
-	return proj.returnFunctionRefs()
-}
-
 func (ct callTyper) CallReturnRefsFromValues(call *ast.FuncCallExpr, ctx transfer.ProductCallContext) transfer.CallReturnRefs {
 	proj, ok := ct.summaryOnlyProductCallProjection(call, ctx)
 	if !ok {
