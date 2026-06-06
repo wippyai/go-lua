@@ -206,6 +206,22 @@ func (set keyPresenceFactSet) filter(filter keyPresenceFactFilter) keyPresenceFa
 	}
 }
 
+func (set keyPresenceFactSet) append(other keyPresenceFactSet) keyPresenceFactSet {
+	return keyPresenceFactSet{
+		entries:        append(append([]KeyPresenceFact(nil), set.entries...), other.entries...),
+		values:         append(append([]KeyValueFact(nil), set.values...), other.values...),
+		arrays:         append(append([]KeyArrayFact(nil), set.arrays...), other.arrays...),
+		emptyArrays:    append(append([]EmptyKeyArrayFact(nil), set.emptyArrays...), other.emptyArrays...),
+		arrayValues:    append(append([]KeyArrayValueFact(nil), set.arrayValues...), other.arrayValues...),
+		appends:        append(append([]AppendedKeyFact(nil), set.appends...), other.appends...),
+		pending:        append(append([]PendingKeyArrayFact(nil), set.pending...), other.pending...),
+		appendBases:    append(append([]AppendHistoryBaseFact(nil), set.appendBases...), other.appendBases...),
+		appendEvents:   append(append([]AppendHistoryEventFact(nil), set.appendEvents...), other.appendEvents...),
+		appendCoverage: append(append([]AppendHistoryCoverageFact(nil), set.appendCoverage...), other.appendCoverage...),
+		appendOrigins:  append(append([]AppendElementFieldOriginFact(nil), set.appendOrigins...), other.appendOrigins...),
+	}
+}
+
 func keyPresenceFullAddressFilter(affected func(constraint.PathKey) bool) keyPresenceFactFilter {
 	return keyPresenceFactFilter{
 		entries: func(e KeyPresenceFact) bool {
@@ -278,6 +294,44 @@ func keyPresencePresentElementAddressFilter(affected func(constraint.PathKey) bo
 		},
 		appendOrigins: func(e AppendElementFieldOriginFact) bool {
 			return !affected(e.Array) && !affected(e.Source)
+		},
+	}
+}
+
+func keyPresencePresentElementMemberPreservationFilter(array constraint.PathKey, member []constraint.Segment) keyPresenceFactFilter {
+	return keyPresenceFactFilter{
+		entries: func(KeyPresenceFact) bool {
+			return false
+		},
+		values: func(KeyValueFact) bool {
+			return false
+		},
+		arrays: func(e KeyArrayFact) bool {
+			return e.Array == array
+		},
+		emptyArrays: func(e EmptyKeyArrayFact) bool {
+			return e.Array == array
+		},
+		arrayValues: func(e KeyArrayValueFact) bool {
+			return e.Array == array
+		},
+		appends: func(e AppendedKeyFact) bool {
+			return e.Array == array
+		},
+		pending: func(e PendingKeyArrayFact) bool {
+			return e.Array == array
+		},
+		appendBases: func(e AppendHistoryBaseFact) bool {
+			return e.Array == array
+		},
+		appendEvents: func(e AppendHistoryEventFact) bool {
+			return e.Array == array
+		},
+		appendCoverage: func(e AppendHistoryCoverageFact) bool {
+			return e.Array == array
+		},
+		appendOrigins: func(e AppendElementFieldOriginFact) bool {
+			return e.Array == array && !appendElementFieldOriginOverlapsMember(e, member)
 		},
 	}
 }
@@ -946,19 +1000,8 @@ func (f KeyPresenceFacts) KillAffectedByPresentElementMemberWriteAddress(array S
 }
 
 func preservePresentElementMemberWriteFacts(killed, original KeyPresenceFacts, arrayKey constraint.PathKey, member []constraint.Segment) KeyPresenceFacts {
-	return keyPresenceFactSet{
-		entries:        killed.Entries(),
-		values:         killed.ValueEntries(),
-		arrays:         append(killed.KeyArrayEntries(), keyArrayFactsForArray(original.arrays, arrayKey)...),
-		emptyArrays:    append(killed.EmptyKeyArrayEntries(), emptyKeyArrayFactsForArray(original.emptyArrays, arrayKey)...),
-		arrayValues:    append(killed.KeyArrayValueEntries(), keyArrayValueFactsForArray(original.arrayValues, arrayKey)...),
-		appends:        append(killed.AppendedKeyEntries(), appendedKeyFactsForArray(original.appends, arrayKey)...),
-		pending:        append(killed.PendingKeyArrayEntries(), pendingKeyArrayFactsForArray(original.pending, arrayKey)...),
-		appendBases:    append(killed.AppendHistoryBaseEntries(), appendHistoryBaseFactsForArray(original.appendBases, arrayKey)...),
-		appendEvents:   append(killed.AppendHistoryEventEntries(), appendHistoryEventFactsForArray(original.appendEvents, arrayKey)...),
-		appendCoverage: append(killed.AppendHistoryCoverageEntries(), appendHistoryCoverageFactsForArray(original.appendCoverage, arrayKey)...),
-		appendOrigins:  append(killed.AppendElementFieldOriginEntries(), appendElementFieldOriginFactsPreservedByMemberWrite(original.appendOrigins, arrayKey, member)...),
-	}.canonical()
+	preserved := original.factSet().filter(keyPresencePresentElementMemberPreservationFilter(arrayKey, member))
+	return killed.factSet().append(preserved).canonical()
 }
 
 func (f KeyPresenceFacts) Format() string {
@@ -2116,104 +2159,6 @@ func keyPresencePathAffectedByAddress(path constraint.PathKey, root StableAddres
 func keyPresencePathOverlapsAddress(path constraint.PathKey, addr StableAddress) bool {
 	pathAddr, ok := StableAddressFromKey(path)
 	return ok && pathAddr.Overlaps(addr)
-}
-
-func keyArrayFactsForArray(facts []KeyArrayFact, array constraint.PathKey) []KeyArrayFact {
-	var out []KeyArrayFact
-	for _, fact := range facts {
-		if fact.Array == array {
-			out = append(out, fact)
-		}
-	}
-	return out
-}
-
-func keyArrayValueFactsForArray(facts []KeyArrayValueFact, array constraint.PathKey) []KeyArrayValueFact {
-	var out []KeyArrayValueFact
-	for _, fact := range facts {
-		if fact.Array == array {
-			out = append(out, fact)
-		}
-	}
-	return out
-}
-
-func pendingKeyArrayFactsForArray(facts []PendingKeyArrayFact, array constraint.PathKey) []PendingKeyArrayFact {
-	var out []PendingKeyArrayFact
-	for _, fact := range facts {
-		if fact.Array == array {
-			out = append(out, fact)
-		}
-	}
-	return out
-}
-
-func emptyKeyArrayFactsForArray(facts []EmptyKeyArrayFact, array constraint.PathKey) []EmptyKeyArrayFact {
-	var out []EmptyKeyArrayFact
-	for _, fact := range facts {
-		if fact.Array == array {
-			out = append(out, fact)
-		}
-	}
-	return out
-}
-
-func appendedKeyFactsForArray(facts []AppendedKeyFact, array constraint.PathKey) []AppendedKeyFact {
-	var out []AppendedKeyFact
-	for _, fact := range facts {
-		if fact.Array == array {
-			out = append(out, fact)
-		}
-	}
-	return out
-}
-
-func appendHistoryBaseFactsForArray(facts []AppendHistoryBaseFact, array constraint.PathKey) []AppendHistoryBaseFact {
-	var out []AppendHistoryBaseFact
-	for _, fact := range facts {
-		if fact.Array == array {
-			out = append(out, fact)
-		}
-	}
-	return out
-}
-
-func appendHistoryEventFactsForArray(facts []AppendHistoryEventFact, array constraint.PathKey) []AppendHistoryEventFact {
-	var out []AppendHistoryEventFact
-	for _, fact := range facts {
-		if fact.Array == array {
-			out = append(out, fact)
-		}
-	}
-	return out
-}
-
-func appendHistoryCoverageFactsForArray(facts []AppendHistoryCoverageFact, array constraint.PathKey) []AppendHistoryCoverageFact {
-	var out []AppendHistoryCoverageFact
-	for _, fact := range facts {
-		if fact.Array == array {
-			out = append(out, fact)
-		}
-	}
-	return out
-}
-
-func appendElementFieldOriginFactsPreservedByMemberWrite(
-	facts []AppendElementFieldOriginFact,
-	array constraint.PathKey,
-	member []constraint.Segment,
-) []AppendElementFieldOriginFact {
-	var out []AppendElementFieldOriginFact
-	for _, fact := range facts {
-		if fact.Array != array {
-			continue
-		}
-		if appendElementFieldOriginOverlapsMember(fact, member) {
-			continue
-		}
-		out = append(out, fact)
-	}
-	return out
 }
 
 func appendElementFieldOriginOverlapsMember(fact AppendElementFieldOriginFact, member []constraint.Segment) bool {
