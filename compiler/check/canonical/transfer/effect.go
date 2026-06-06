@@ -267,13 +267,11 @@ func (t *Transfer) applyFunctionReferenceEffect(
 		return false
 	case referenceWriteFromSource:
 		if !exact {
-			flow.ClearFunctionRefSubtreePath(out, path)
-			return !flow.FunctionRefsDomain.Equal(before, out.FunctionRefs)
+			return flow.ClearFunctionRefSubtreePath(out, path)
 		}
 		t.recordFunctionRefAt(out, path, src)
 	case referenceWriteExplicit:
-		flow.ClearFunctionRefSubtreePath(out, path)
-		flow.JoinFunctionRefs(out, write.Refs)
+		return flow.ReplaceFunctionRefSubtreePath(out, path, write.Refs)
 	default:
 		return false
 	}
@@ -293,13 +291,11 @@ func (t *Transfer) applyClosureReferenceEffect(
 		return false
 	case referenceWriteFromSource:
 		if !exact {
-			flow.ClearClosureRefSubtreePath(out, path)
-			return !flow.ClosureRefsDomain.Equal(before, out.ClosureRefs)
+			return flow.ClearClosureRefSubtreePath(out, path)
 		}
 		t.recordClosureRefAt(out, path, src)
 	case referenceWriteExplicit:
-		flow.ClearClosureRefSubtreePath(out, path)
-		flow.JoinClosureRefs(out, write.Refs)
+		return flow.ReplaceClosureRefSubtreePath(out, path, write.Refs)
 	default:
 		return false
 	}

@@ -120,15 +120,6 @@ func JoinFunctionRefs(out *PointState, refs FunctionRefs) bool {
 	return !FunctionRefsDomain.Equal(before, out.FunctionRefs)
 }
 
-func JoinClosureRefs(out *PointState, refs ClosureRefs) bool {
-	if out == nil {
-		return false
-	}
-	before := out.ClosureRefs
-	out.ClosureRefs = ClosureRefsDomain.Join(out.ClosureRefs, refs)
-	return !ClosureRefsDomain.Equal(before, out.ClosureRefs)
-}
-
 func SetFunctionRef(out *PointState, addr StableAddress, set FunctionRefSet) bool {
 	if out == nil {
 		return false
