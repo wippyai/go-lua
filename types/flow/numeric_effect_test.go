@@ -118,6 +118,28 @@ func TestNumericSymbolOpsUseSymbolValueKeys(t *testing.T) {
 	}
 }
 
+func TestNumericValueKeyOpsUseNumericKeyCarrier(t *testing.T) {
+	key := ReturnSlotValueKey(3)
+	wantKey := constraint.PathKey(key)
+
+	drop, ok := NumericDropLenBoundValueKeyOp(key)
+	if !ok || drop.Kind != NumericDropLenBound || drop.Key != wantKey {
+		t.Fatalf("drop value-key op = %#v/%v, want key=%s", drop, ok, wantKey)
+	}
+	length, ok := NumericLenGeConstValueKeyOp(key, 2)
+	if !ok || length.Kind != NumericLenGeConst || length.Key != wantKey || length.Const != 2 {
+		t.Fatalf("length value-key op = %#v/%v, want key=%s const=2", length, ok, wantKey)
+	}
+	inc, ok := NumericIncrementLenLowerValueKeyOp(key, 4)
+	if !ok || inc.Kind != NumericIncrementLenLower || inc.Key != wantKey || inc.Delta != 4 {
+		t.Fatalf("increment value-key op = %#v/%v, want key=%s delta=4", inc, ok, wantKey)
+	}
+	eq, ok := NumericVarEqConstValueKeyOp(key, 7)
+	if !ok || eq.Kind != NumericVarEqConst || eq.Key != wantKey || eq.Const != 7 {
+		t.Fatalf("eq value-key op = %#v/%v, want key=%s const=7", eq, ok, wantKey)
+	}
+}
+
 func TestNumericLenGeConstIndexedPrefixOps(t *testing.T) {
 	path := constraint.NewPath(cfg.SymbolID(8), "items").
 		IndexInt(2).

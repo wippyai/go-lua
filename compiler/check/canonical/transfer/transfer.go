@@ -4593,10 +4593,17 @@ func (t *Transfer) applyNumeric(out *flow.PointState, key flow.ValueKey, src ast
 	if out == nil {
 		return
 	}
-	pk := constraint.PathKey(key)
+	pk, ok := flow.NumericKeyOfValueKey(key)
+	if !ok {
+		return
+	}
 	if c, ok := t.constInt(src); ok {
+		op, ok := flow.NumericVarEqConstValueKeyOp(key, c)
+		if !ok {
+			return
+		}
 		flow.ApplyNumericEffect(out, flow.NumericEffect{
-			Ops:             []flow.NumericOp{{Kind: flow.NumericVarEqConst, Key: pk, Const: c}},
+			Ops:             []flow.NumericOp{op},
 			RequireExisting: true,
 		})
 		return
@@ -4624,8 +4631,12 @@ func (t *Transfer) applyNumeric(out *flow.PointState, key flow.ValueKey, src ast
 	if (delta > 0 && prevUpper > math.MaxInt64-delta) || (delta < 0 && prevUpper < math.MinInt64-delta) {
 		return
 	}
+	op, ok := flow.NumericVarEqConstValueKeyOp(key, prevUpper+delta)
+	if !ok {
+		return
+	}
 	flow.ApplyNumericEffect(out, flow.NumericEffect{
-		Ops:             []flow.NumericOp{{Kind: flow.NumericVarEqConst, Key: pk, Const: prevUpper + delta}},
+		Ops:             []flow.NumericOp{op},
 		RequireExisting: true,
 	})
 }

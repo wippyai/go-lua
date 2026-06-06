@@ -130,8 +130,11 @@ func tableFieldCardinalityKey(field *ast.Field) (tableCardinalityKey, bool) {
 // prior length/cardinality floor (soundness: the new value's size is unknown),
 // so a slot reused across assignments never carries stale proof.
 func (t *Transfer) seedArrayLiteralLength(out *flow.PointState, key flow.ValueKey, src ast.Expr, cardinalityLower int64) {
-	arrKey := constraint.PathKey(key)
 	if out == nil {
+		return
+	}
+	dropOp, ok := flow.NumericDropLenBoundValueKeyOp(key)
+	if !ok {
 		return
 	}
 	sym, hasSymbolRoot := flow.ParseSymbolValueKey(key)
@@ -141,14 +144,16 @@ func (t *Transfer) seedArrayLiteralLength(out *flow.PointState, key flow.ValueKe
 			Symbols: []cfg.SymbolID{sym},
 		})
 	}
-	ops := []flow.NumericOp{{Kind: flow.NumericDropLenBound, Key: arrKey}}
+	ops := []flow.NumericOp{dropOp}
 	tbl, ok := src.(*ast.TableExpr)
 	if !ok {
 		flow.ApplyNumericEffect(out, flow.NumericEffect{Ops: ops, RequireExisting: true})
 		return
 	}
 	if n := arrayLiteralArity(tbl); n > 0 {
-		ops = append(ops, flow.NumericOp{Kind: flow.NumericLenGeConst, Key: arrKey, Const: n})
+		if op, ok := flow.NumericLenGeConstValueKeyOp(key, n); ok {
+			ops = append(ops, op)
+		}
 	}
 	flow.ApplyNumericEffect(out, flow.NumericEffect{Ops: ops, RequireExisting: true})
 	if cardinalityLower > 0 && hasSymbolRoot {
@@ -168,11 +173,18 @@ func (t *Transfer) applyIndexWriteLength(out *flow.PointState, target cfg.Assign
 	if out == nil {
 		return
 	}
-	arrKey := constraint.PathKey(baseKey)
+	arrKey, ok := flow.NumericKeyOfValueKey(baseKey)
+	if !ok {
+		return
+	}
+	dropOp, ok := flow.NumericDropLenBoundValueKeyOp(baseKey)
+	if !ok {
+		return
+	}
 	lenIdent, offset, ok := t.lengthIndexOffset(target.Key)
 	if !ok || offset < 1 {
 		flow.ApplyNumericEffect(out, flow.NumericEffect{
-			Ops:             []flow.NumericOp{{Kind: flow.NumericDropLenBound, Key: arrKey}},
+			Ops:             []flow.NumericOp{dropOp},
 			RequireExisting: true,
 		})
 		return
@@ -180,13 +192,17 @@ func (t *Transfer) applyIndexWriteLength(out *flow.PointState, target cfg.Assign
 	lenKey, ok := flow.NumericVarKeyOfSymbol(t.symbolOf(lenIdent))
 	if !ok || lenKey != arrKey {
 		flow.ApplyNumericEffect(out, flow.NumericEffect{
-			Ops:             []flow.NumericOp{{Kind: flow.NumericDropLenBound, Key: arrKey}},
+			Ops:             []flow.NumericOp{dropOp},
 			RequireExisting: true,
 		})
 		return
 	}
+	incOp, ok := flow.NumericIncrementLenLowerValueKeyOp(baseKey, offset)
+	if !ok {
+		return
+	}
 	flow.ApplyNumericEffect(out, flow.NumericEffect{
-		Ops:             []flow.NumericOp{{Kind: flow.NumericIncrementLenLower, Key: arrKey, Delta: offset}},
+		Ops:             []flow.NumericOp{incOp},
 		RequireExisting: true,
 	})
 }

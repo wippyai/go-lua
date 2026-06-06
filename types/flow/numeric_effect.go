@@ -181,6 +181,53 @@ func NumericLengthBoundOps(key constraint.PathKey, op string, c int64) []Numeric
 	return ops
 }
 
+// NumericKeyOfValueKey lifts a value slot key into the numeric domain's key
+// carrier. The numeric domain stores scalar value bounds and container length
+// bounds in one PathKey-indexed state, so this conversion is a flow concern.
+func NumericKeyOfValueKey(key ValueKey) (constraint.PathKey, bool) {
+	if key == "" {
+		return "", false
+	}
+	return constraint.PathKey(key), true
+}
+
+// NumericDropLenBoundValueKeyOp materializes a length-bound reset for key.
+func NumericDropLenBoundValueKeyOp(key ValueKey) (NumericOp, bool) {
+	numericKey, ok := NumericKeyOfValueKey(key)
+	if !ok {
+		return NumericOp{}, false
+	}
+	return NumericOp{Kind: NumericDropLenBound, Key: numericKey}, true
+}
+
+// NumericLenGeConstValueKeyOp materializes `len(key) >= lower`.
+func NumericLenGeConstValueKeyOp(key ValueKey, lower int64) (NumericOp, bool) {
+	numericKey, ok := NumericKeyOfValueKey(key)
+	if !ok {
+		return NumericOp{}, false
+	}
+	return NumericOp{Kind: NumericLenGeConst, Key: numericKey, Const: lower}, true
+}
+
+// NumericIncrementLenLowerValueKeyOp materializes `len(key) += delta` on the
+// current lower bound.
+func NumericIncrementLenLowerValueKeyOp(key ValueKey, delta int64) (NumericOp, bool) {
+	numericKey, ok := NumericKeyOfValueKey(key)
+	if !ok || delta <= 0 {
+		return NumericOp{}, false
+	}
+	return NumericOp{Kind: NumericIncrementLenLower, Key: numericKey, Delta: delta}, true
+}
+
+// NumericVarEqConstValueKeyOp materializes `key == c`.
+func NumericVarEqConstValueKeyOp(key ValueKey, c int64) (NumericOp, bool) {
+	numericKey, ok := NumericKeyOfValueKey(key)
+	if !ok {
+		return NumericOp{}, false
+	}
+	return NumericOp{Kind: NumericVarEqConst, Key: numericKey, Const: c}, true
+}
+
 // NumericVarKeyOfSymbol returns the numeric-component key for a scalar symbol.
 // Numeric variables are value cells, so their key is the symbol value key lifted
 // into the numeric domain's PathKey carrier.
@@ -188,8 +235,7 @@ func NumericVarKeyOfSymbol(sym cfg.SymbolID) (constraint.PathKey, bool) {
 	if sym == 0 {
 		return "", false
 	}
-	key := constraint.PathKey(SymbolValueKey(sym))
-	return key, key != ""
+	return NumericKeyOfValueKey(SymbolValueKey(sym))
 }
 
 // NumericVarGeConstSymbolOp materializes `sym >= c`.
