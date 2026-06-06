@@ -255,6 +255,59 @@ func (set keyPresenceFactSet) append(other keyPresenceFactSet) keyPresenceFactSe
 	}
 }
 
+func (set keyPresenceFactSet) equal(other keyPresenceFactSet) bool {
+	return sameOrderedFacts(set.entries, other.entries, func(a, b KeyPresenceFact) bool { return a == b }) &&
+		sameOrderedFacts(set.values, other.values, func(a, b KeyValueFact) bool { return a == b }) &&
+		sameOrderedFacts(set.arrays, other.arrays, func(a, b KeyArrayFact) bool { return a == b }) &&
+		sameOrderedFacts(set.emptyArrays, other.emptyArrays, func(a, b EmptyKeyArrayFact) bool { return a == b }) &&
+		sameOrderedFacts(set.arrayValues, other.arrayValues, keyArrayValueFactEqual) &&
+		sameOrderedFacts(set.appends, other.appends, func(a, b AppendedKeyFact) bool { return a == b }) &&
+		sameOrderedFacts(set.pending, other.pending, func(a, b PendingKeyArrayFact) bool { return a == b }) &&
+		sameOrderedFacts(set.appendBases, other.appendBases, func(a, b AppendHistoryBaseFact) bool { return a == b }) &&
+		sameOrderedFacts(set.appendEvents, other.appendEvents, func(a, b AppendHistoryEventFact) bool { return a == b }) &&
+		sameOrderedFacts(set.appendCoverage, other.appendCoverage, appendHistoryCoverageFactEqual) &&
+		sameOrderedFacts(set.appendOrigins, other.appendOrigins, func(a, b AppendElementFieldOriginFact) bool { return a == b })
+}
+
+func (set keyPresenceFactSet) lessOrEqualTo(other keyPresenceFactSet) bool {
+	return keyPresenceFactsContainAll(set.entries, other.entries) &&
+		keyValueFactsContainAll(set.values, other.values) &&
+		keyArrayFactsContainAllWithEmpty(set.arrays, set.emptyArrays, other.arrays) &&
+		emptyKeyArrayFactsContainAll(set.emptyArrays, other.emptyArrays) &&
+		keyArrayValueFactsContainAllWithEmpty(set.arrayValues, set.emptyArrays, other.arrayValues) &&
+		appendedKeyFactsContainAll(set.appends, other.appends) &&
+		pendingKeyArrayFactsContainAll(set.pending, other.pending) &&
+		appendHistoryBaseFactsContainAllWithEmpty(set.appendBases, set.emptyArrays, other.appendBases) &&
+		appendHistoryEventFactsContainAll(other.appendEvents, set.appendEvents) &&
+		appendHistoryCoverageFactsContainAll(other.appendCoverage, set.appendCoverage) &&
+		appendElementFieldOriginFactsContainAll(other.appendOrigins, set.appendOrigins)
+}
+
+func sameOrderedFacts[T any](a, b []T, equal func(T, T) bool) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if !equal(a[i], b[i]) {
+			return false
+		}
+	}
+	return true
+}
+
+func keyArrayValueFactEqual(a, b KeyArrayValueFact) bool {
+	return a.Array == b.Array &&
+		a.Table == b.Table &&
+		product.Domain.Equal(a.Value, b.Value)
+}
+
+func appendHistoryCoverageFactEqual(a, b AppendHistoryCoverageFact) bool {
+	return a.Array == b.Array &&
+		a.Key == b.Key &&
+		a.Table == b.Table &&
+		product.Domain.Equal(a.Value, b.Value)
+}
+
 func keyPresenceFullAddressFilter(affected func(constraint.PathKey) bool) keyPresenceFactFilter {
 	return keyPresenceFactFilter{
 		entries: func(e KeyPresenceFact) bool {
@@ -1183,100 +1236,7 @@ var KeyPresenceFactsDomain = lattice.Lattice[KeyPresenceFacts]{
 		if a.bottom || b.bottom {
 			return a.bottom == b.bottom
 		}
-		if len(a.entries) != len(b.entries) {
-			return false
-		}
-		for i := range a.entries {
-			if a.entries[i] != b.entries[i] {
-				return false
-			}
-		}
-		if len(a.values) != len(b.values) {
-			return false
-		}
-		for i := range a.values {
-			if a.values[i] != b.values[i] {
-				return false
-			}
-		}
-		if len(a.arrays) != len(b.arrays) {
-			return false
-		}
-		for i := range a.arrays {
-			if a.arrays[i] != b.arrays[i] {
-				return false
-			}
-		}
-		if len(a.emptyArrays) != len(b.emptyArrays) {
-			return false
-		}
-		for i := range a.emptyArrays {
-			if a.emptyArrays[i] != b.emptyArrays[i] {
-				return false
-			}
-		}
-		if len(a.arrayValues) != len(b.arrayValues) {
-			return false
-		}
-		for i := range a.arrayValues {
-			if a.arrayValues[i].Array != b.arrayValues[i].Array ||
-				a.arrayValues[i].Table != b.arrayValues[i].Table ||
-				!product.Domain.Equal(a.arrayValues[i].Value, b.arrayValues[i].Value) {
-				return false
-			}
-		}
-		if len(a.appends) != len(b.appends) {
-			return false
-		}
-		for i := range a.appends {
-			if a.appends[i] != b.appends[i] {
-				return false
-			}
-		}
-		if len(a.pending) != len(b.pending) {
-			return false
-		}
-		for i := range a.pending {
-			if a.pending[i] != b.pending[i] {
-				return false
-			}
-		}
-		if len(a.appendBases) != len(b.appendBases) {
-			return false
-		}
-		for i := range a.appendBases {
-			if a.appendBases[i] != b.appendBases[i] {
-				return false
-			}
-		}
-		if len(a.appendEvents) != len(b.appendEvents) {
-			return false
-		}
-		for i := range a.appendEvents {
-			if a.appendEvents[i] != b.appendEvents[i] {
-				return false
-			}
-		}
-		if len(a.appendCoverage) != len(b.appendCoverage) {
-			return false
-		}
-		for i := range a.appendCoverage {
-			if a.appendCoverage[i].Array != b.appendCoverage[i].Array ||
-				a.appendCoverage[i].Key != b.appendCoverage[i].Key ||
-				a.appendCoverage[i].Table != b.appendCoverage[i].Table ||
-				!product.Domain.Equal(a.appendCoverage[i].Value, b.appendCoverage[i].Value) {
-				return false
-			}
-		}
-		if len(a.appendOrigins) != len(b.appendOrigins) {
-			return false
-		}
-		for i := range a.appendOrigins {
-			if a.appendOrigins[i] != b.appendOrigins[i] {
-				return false
-			}
-		}
-		return true
+		return a.factSet().equal(b.factSet())
 	},
 	LessOrEq: func(a, b KeyPresenceFacts) bool {
 		if a.bottom {
@@ -1285,17 +1245,7 @@ var KeyPresenceFactsDomain = lattice.Lattice[KeyPresenceFacts]{
 		if b.bottom {
 			return false
 		}
-		return keyPresenceFactsContainAll(a.entries, b.entries) &&
-			keyValueFactsContainAll(a.values, b.values) &&
-			keyArrayFactsContainAllWithEmpty(a.arrays, a.emptyArrays, b.arrays) &&
-			emptyKeyArrayFactsContainAll(a.emptyArrays, b.emptyArrays) &&
-			keyArrayValueFactsContainAllWithEmpty(a.arrayValues, a.emptyArrays, b.arrayValues) &&
-			appendedKeyFactsContainAll(a.appends, b.appends) &&
-			pendingKeyArrayFactsContainAll(a.pending, b.pending) &&
-			appendHistoryBaseFactsContainAllWithEmpty(a.appendBases, a.emptyArrays, b.appendBases) &&
-			appendHistoryEventFactsContainAll(b.appendEvents, a.appendEvents) &&
-			appendHistoryCoverageFactsContainAll(b.appendCoverage, a.appendCoverage) &&
-			appendElementFieldOriginFactsContainAll(b.appendOrigins, a.appendOrigins)
+		return a.factSet().lessOrEqualTo(b.factSet())
 	},
 	Join: func(a, b KeyPresenceFacts) KeyPresenceFacts {
 		if a.bottom {
