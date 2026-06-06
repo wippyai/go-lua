@@ -52,6 +52,11 @@ func (r ClosureRef) EntryFunctionRefs() FunctionRefs { return r.EntryRefs.Refs()
 // EntryClosureRefs returns the captured closure-ref store carried by r.
 func (r ClosureRef) EntryClosureRefs() ClosureRefs { return r.Closures.Refs() }
 
+// EntryReferenceContext returns the captured reference environment carried by r.
+func (r ClosureRef) EntryReferenceContext() ReferenceContext {
+	return ReferenceContextOf(r.EntryCells(), r.EntryFunctionRefs(), r.EntryClosureRefs())
+}
+
 // ClosureRefSet is the finite may-set of closure values a runtime path may
 // denote. Bottom is the empty set. Top means "some closure, unknown which
 // environment".

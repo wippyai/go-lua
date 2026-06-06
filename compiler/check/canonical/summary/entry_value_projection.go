@@ -540,24 +540,24 @@ func (p ClosureEntryContextProjection) projectClosureRefs(out []Key, seen map[Ke
 
 func (p ClosureEntryContextProjection) closureEntryContextKey(ref FuncRef, closure flow.ClosureRef, point flow.PointState) Key {
 	captured := closureCapturedSymbols(closure)
-	entryCells := closure.EntryCells()
-	liveRefs := flow.ProjectFunctionRefsBySymbols(point.FunctionRefs, captured)
-	liveClosures := flow.ProjectClosureRefsBySymbols(point.ClosureRefs, captured)
-	entryRefs := closure.EntryFunctionRefs()
-	entryClosures := closure.EntryClosureRefs()
+	entry := closure.EntryReferenceContext()
+	live := flow.ReferenceContextOf(
+		flow.CaptureCellsDomain.Bottom(),
+		flow.ProjectFunctionRefsBySymbols(point.FunctionRefs, captured),
+		flow.ProjectClosureRefsBySymbols(point.ClosureRefs, captured),
+	)
 	if p.ReferencePaths != nil {
 		projection := p.ReferencePaths(ref)
-		entryCells = entryCells.ProjectPaths(projection)
-		liveRefs = flow.ProjectFunctionRefsByReferencePaths(point.FunctionRefs, projection)
-		liveClosures = flow.ProjectClosureRefsByReferencePaths(point.ClosureRefs, projection)
-		entryRefs = flow.ProjectFunctionRefsByReferencePaths(entryRefs, projection)
-		entryClosures = flow.ProjectClosureRefsByReferencePaths(entryClosures, projection)
+		entry = entry.ProjectPaths(projection)
+		live = flow.ReferenceContextOf(
+			flow.CaptureCellsDomain.Bottom(),
+			flow.ProjectFunctionRefsByReferencePaths(point.FunctionRefs, projection),
+			flow.ProjectClosureRefsByReferencePaths(point.ClosureRefs, projection),
+		)
 	}
-	return NewKeyWithEntryContextFacts(
+	return NewKeyWithReferenceContext(
 		ref,
-		entryCells,
-		flow.OverlayFunctionRefs(entryRefs, liveRefs),
-		flow.OverlayClosureRefs(entryClosures, liveClosures),
+		flow.OverlayReferenceContext(entry, live),
 		nil,
 		flow.BoundaryFactsDomain.Top(),
 	)
@@ -629,11 +629,9 @@ func (p CallEntryContextProjection) callbackEntryKeys(site callEntrySite) []Key 
 					if canonref.FromFlow(closure.Ref) != ref {
 						continue
 					}
-					keys = append(keys, NewKeyWithEntryContextFacts(
+					keys = append(keys, NewKeyWithReferenceContext(
 						ref,
-						closure.EntryCells(),
-						closure.EntryFunctionRefs(),
-						closure.EntryClosureRefs(),
+						closure.EntryReferenceContext(),
 						callback.Values,
 						flow.BoundaryFactsDomain.Top(),
 					))

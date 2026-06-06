@@ -34,7 +34,7 @@ func EntryContextFromClosureWithLiveContext(closure flow.ClosureRef, live EntryC
 	return NewEntryContext(
 		live.ref,
 		flow.OverlayReferenceContext(
-			flow.ReferenceContextOf(closure.EntryCells(), closure.EntryFunctionRefs(), closure.EntryClosureRefs()),
+			closure.EntryReferenceContext(),
 			live.references,
 		),
 		live.values,
