@@ -134,6 +134,50 @@ func TestApplyMapWriteProofCoversTrackedAppendEvent(t *testing.T) {
 	}
 }
 
+func TestApplyKeyArrayProofPublishesArrayTable(t *testing.T) {
+	arrayPath := constraint.NewPath(cfg.SymbolID(31), "node_order")
+	tablePath := constraint.NewPath(cfg.SymbolID(32), "nodes")
+	arrayKey := StablePathKey(arrayPath)
+	tableKey := StablePathKey(tablePath)
+
+	state := PointStateDomain.Top()
+	if changed := ApplyKeyArrayProof(&state, KeyArrayProof{
+		Array: testStableAddressPath(t, arrayPath),
+		Table: testStableAddressPath(t, tablePath),
+	}); !changed {
+		t.Fatal("ApplyKeyArrayProof reported no change")
+	}
+
+	if tables := state.KeyPresence.KeyArrayTables(arrayKey); len(tables) != 1 || tables[0] != tableKey {
+		t.Fatalf("key-array tables = %v, want %s", tables, tableKey)
+	}
+}
+
+func TestApplyIndexedKeyArrayIterationProofPublishesTableKey(t *testing.T) {
+	arrayPath := constraint.NewPath(cfg.SymbolID(41), "node_order")
+	tablePath := constraint.NewPath(cfg.SymbolID(42), "nodes")
+	keyPath := constraint.NewPath(cfg.SymbolID(43), "node_id")
+	tableKey := StablePathKey(tablePath)
+	keyKey := StablePathKey(keyPath)
+
+	state := PointStateDomain.Top()
+	ApplyKeyArrayProof(&state, KeyArrayProof{
+		Array: testStableAddressPath(t, arrayPath),
+		Table: testStableAddressPath(t, tablePath),
+	})
+
+	tables, changed := ApplyIndexedKeyArrayIterationProof(&state, testStableAddressPath(t, arrayPath), testStableAddressPath(t, keyPath))
+	if !changed {
+		t.Fatal("ApplyIndexedKeyArrayIterationProof reported no change")
+	}
+	if len(tables) != 1 || tables[0] != tableKey {
+		t.Fatalf("iteration tables = %v, want %s", tables, tableKey)
+	}
+	if !state.KeyPresence.Has(tableKey, keyKey) {
+		t.Fatalf("iteration did not publish table/key presence: %s", state.KeyPresence.Format())
+	}
+}
+
 func testMapWriteProof(
 	t *testing.T,
 	tablePath constraint.Path,

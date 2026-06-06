@@ -60,24 +60,27 @@ func (t *Transfer) applyKeyProvenanceEffect(out *flow.PointState, effect KeyProv
 		if effect.ArrayPath.IsEmpty() || effect.TablePath.IsEmpty() {
 			return false
 		}
-		before := out.KeyPresence
 		arrayAddr, arrayOK := flow.StableAddressOfPath(effect.ArrayPath)
 		tableAddr, tableOK := flow.StableAddressOfPath(effect.TablePath)
-		if arrayOK && tableOK {
-			out.KeyPresence = out.KeyPresence.WithKeyArrayAddresses(arrayAddr, tableAddr)
+		if !arrayOK || !tableOK {
+			return false
 		}
-		return !flow.KeyPresenceFactsDomain.Equal(before, out.KeyPresence)
+		return flow.ApplyKeyArrayProof(out, flow.KeyArrayProof{
+			Array: arrayAddr,
+			Table: tableAddr,
+		})
 	case KeyProvenanceIndexedKeyArrayIteration:
 		if effect.ArrayPath.IsEmpty() || effect.KeyPath.IsEmpty() {
 			return false
 		}
-		sourceKey := flow.KeyPresencePathKey(effect.ArrayPath)
-		keyKey := flow.KeyPresencePathKey(effect.KeyPath)
+		arrayAddr, arrayOK := flow.StableAddressOfPath(effect.ArrayPath)
+		keyAddr, keyOK := flow.StableAddressOfPath(effect.KeyPath)
+		if !arrayOK || !keyOK {
+			return false
+		}
 		var keyValue product.AbstractValue
-		changed := false
-		for _, tableKey := range out.KeyPresence.KeyArrayTables(sourceKey) {
-			out.KeyPresence = out.KeyPresence.With(tableKey, keyKey)
-			changed = true
+		tableKeys, changed := flow.ApplyIndexedKeyArrayIterationProof(out, arrayAddr, keyAddr)
+		for _, tableKey := range tableKeys {
 			if keyType, ok := t.keyDomainForPathKey(out, tableKey); ok {
 				av := product.FromType(keyType)
 				if keyValue.IsZero() {

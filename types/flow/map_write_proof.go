@@ -17,6 +17,14 @@ type KeyPresenceProof struct {
 	Value        product.AbstractValue
 }
 
+// KeyArrayProof is the canonical proof transaction for "array contains keys of
+// table". It is separate from direct key presence because the array fact is a
+// quantified provenance statement, not one table/key membership.
+type KeyArrayProof struct {
+	Array StableAddress
+	Table StableAddress
+}
+
 // ApplyKeyPresenceProof applies a key-presence proof to point state. When Value
 // is non-zero it also records value-carrying key-array consequences.
 func ApplyKeyPresenceProof(out *PointState, proof KeyPresenceProof) bool {
@@ -43,6 +51,30 @@ func ApplyKeyPresenceProof(out *PointState, proof KeyPresenceProof) bool {
 		}
 	}
 	return !KeyPresenceFactsDomain.Equal(before, out.KeyPresence)
+}
+
+// ApplyKeyArrayProof applies a key-array provenance proof to point state.
+func ApplyKeyArrayProof(out *PointState, proof KeyArrayProof) bool {
+	if out == nil || proof.Array.Key() == "" || proof.Table.Key() == "" {
+		return false
+	}
+	before := out.KeyPresence
+	out.KeyPresence = out.KeyPresence.WithKeyArrayAddresses(proof.Array, proof.Table)
+	return !KeyPresenceFactsDomain.Equal(before, out.KeyPresence)
+}
+
+// ApplyIndexedKeyArrayIterationProof consumes a key-array provenance proof by
+// publishing direct table/key presence for every table proven for the array.
+func ApplyIndexedKeyArrayIterationProof(out *PointState, array StableAddress, key StableAddress) ([]constraint.PathKey, bool) {
+	if out == nil || array.Key() == "" || key.Key() == "" {
+		return nil, false
+	}
+	before := out.KeyPresence
+	tables := out.KeyPresence.KeyArrayTables(array.Key())
+	for _, table := range tables {
+		out.KeyPresence = out.KeyPresence.With(table, key.Key())
+	}
+	return tables, !KeyPresenceFactsDomain.Equal(before, out.KeyPresence)
 }
 
 // MapWriteProof is the canonical point-local proof transaction for an admitted
