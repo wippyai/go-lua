@@ -105,7 +105,7 @@ func (p pathProjector) callableSignatureResolver() flow.CallableSignatureResolve
 	return func(query flow.CallableSignatureQuery) (typ.Type, bool) {
 		state := query.State
 		if query.Ref != (flow.FunctionRef{}) {
-			sig := p.callables.FunctionTypeByRef(query.Ref, state.Cells, state.FunctionRefs, state.ClosureRefs)
+			sig := p.callables.FunctionTypeByRef(query.Ref, flow.ReferenceContextFromPoint(&state))
 			return sig, !typ.IsAbsentOrUnknown(sig)
 		}
 		if !query.Path.IsEmpty() {

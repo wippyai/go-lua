@@ -62,12 +62,7 @@ func (ct callTyper) FunctionValue(query flow.CallableSignatureQuery) (typ.Type, 
 	projector := newCallableProjector(d, d.activeProgram, d.activeQueries, d.activeCtx)
 	var sig typ.Type
 	if query.Ref != (flow.FunctionRef{}) {
-		sig = projector.FunctionTypeByRef(
-			query.Ref,
-			query.State.Cells,
-			query.State.FunctionRefs,
-			query.State.ClosureRefs,
-		)
+		sig = projector.FunctionTypeByRef(query.Ref, flow.ReferenceContextFromPoint(&query.State))
 	} else if !query.Path.IsEmpty() {
 		sig = projector.TypeAt(query.State, query.Path)
 	}
@@ -89,19 +84,19 @@ func (p callableProjector) TypeAt(in flow.PointState, path constraint.Path) typ.
 	}
 	refs, ok := flow.FunctionRefAtPath(in.FunctionRefs, path)
 	if ok {
-		return p.functionRefsType(refs, in.Cells, in.FunctionRefs, in.ClosureRefs)
+		return p.functionRefsType(refs, flow.ReferenceContextFromPoint(&in))
 	}
 	if ref, ok := p.staticRefAtPath(path); ok {
-		return p.signature(canonref.ToFlow(ref), in.Cells, in.FunctionRefs, in.ClosureRefs)
+		return p.signature(canonref.ToFlow(ref), flow.ReferenceContextFromPoint(&in))
 	}
 	return nil
 }
 
-func (p callableProjector) FunctionTypeByRef(ref flow.FunctionRef, cells flow.CaptureCells, refs flow.FunctionRefs, closures flow.ClosureRefs) typ.Type {
+func (p callableProjector) FunctionTypeByRef(ref flow.FunctionRef, references flow.ReferenceContext) typ.Type {
 	if p.prog == nil {
 		return nil
 	}
-	return p.signature(ref, cells, refs, closures)
+	return p.signature(ref, references)
 }
 
 func (p callableProjector) closureTypeAtPath(in flow.PointState, path constraint.Path) typ.Type {
@@ -136,17 +131,17 @@ func (p callableProjector) closureSignature(closure flow.ClosureRef, in flow.Poi
 		closure,
 		p.prog.CallEntryContext(sref, flow.ReferenceContextFromPoint(&in), nil),
 	)
-	return p.signature(closure.Ref, entry.CaptureCells(), entry.FunctionRefs(), entry.ClosureRefs())
+	return p.signature(closure.Ref, entry.References())
 }
 
-func (p callableProjector) functionRefsType(refs flow.FunctionRefSet, cells flow.CaptureCells, fnRefs flow.FunctionRefs, closures flow.ClosureRefs) typ.Type {
+func (p callableProjector) functionRefsType(refs flow.FunctionRefSet, references flow.ReferenceContext) typ.Type {
 	flowRefs := refs.Refs()
 	if len(flowRefs) == 0 {
 		return nil
 	}
 	acc := product.Domain.Bottom()
 	for _, ref := range flowRefs {
-		sig := p.signature(ref, cells, fnRefs, closures)
+		sig := p.signature(ref, references)
 		if typ.IsAbsentOrUnknown(sig) {
 			continue
 		}
@@ -175,7 +170,7 @@ func (p callableProjector) staticRefAtPath(path constraint.Path) (summary.FuncRe
 	return summary.FuncRef{}, false
 }
 
-func (p callableProjector) signature(ref flow.FunctionRef, cells flow.CaptureCells, refs flow.FunctionRefs, closures flow.ClosureRefs) typ.Type {
+func (p callableProjector) signature(ref flow.FunctionRef, references flow.ReferenceContext) typ.Type {
 	sref := canonref.FromFlow(ref)
 	if p.baseSignature == nil {
 		return nil
@@ -184,7 +179,7 @@ func (p callableProjector) signature(ref flow.FunctionRef, cells flow.CaptureCel
 	if sig == nil {
 		return nil
 	}
-	entry := p.prog.CallEntryContext(sref, flow.ReferenceContextOf(cells, refs, closures), nil)
+	entry := p.prog.CallEntryContext(sref, references, nil)
 	hasDeclaredReturns := false
 	if p.hasDeclaredReturns != nil {
 		hasDeclaredReturns = p.hasDeclaredReturns(sref)

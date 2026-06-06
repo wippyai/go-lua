@@ -89,12 +89,7 @@ func (p callReturnProjection) refinedArgTypes() []typ.Type {
 			return argRefs, ok
 		},
 		FunctionType: func(ref summary.FuncRef) typ.Type {
-			return projector.FunctionTypeByRef(
-				canonref.ToFlow(ref),
-				p.references.CaptureCells(),
-				p.references.FunctionRefs(),
-				p.references.ClosureRefs(),
-			)
+			return projector.FunctionTypeByRef(canonref.ToFlow(ref), p.references)
 		},
 		ContextualFunction: func(ref summary.FuncRef, values summary.EntryValues) typ.Type {
 			return p.contextualFunction(projector, ref, values)

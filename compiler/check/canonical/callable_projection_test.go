@@ -308,9 +308,11 @@ func TestCallableProjectorFunctionTypeByRefUsesSameProjection(t *testing.T) {
 
 	fn := unwrap.Function(projector.FunctionTypeByRef(
 		canonref.ToFlow(ref),
-		flow.CaptureCellsDomain.Bottom(),
-		flow.FunctionRefsDomain.Bottom(),
-		flow.ClosureRefsDomain.Bottom(),
+		flow.ReferenceContextOf(
+			flow.CaptureCellsDomain.Bottom(),
+			flow.FunctionRefsDomain.Bottom(),
+			flow.ClosureRefsDomain.Bottom(),
+		),
 	))
 	if fn == nil {
 		t.Fatal("FunctionTypeByRef = nil, want projected function")
