@@ -1738,12 +1738,7 @@ func rebaseCallReturnFunctionRefs(
 	if retIndex >= len(returns) {
 		return nil, false
 	}
-	fromAddr, fromOK := flow.StableAddressOfPath(constraint.NewPlaceholder(retIndex))
-	toAddr, toOK := flow.StableAddressOfPath(path)
-	if !fromOK || !toOK {
-		return nil, false
-	}
-	rebased := flow.RebaseFunctionRefsAddress(returns[retIndex], fromAddr, toAddr)
+	rebased := flow.RebaseFunctionRefsPath(returns[retIndex], constraint.NewPlaceholder(retIndex), path)
 	if flow.FunctionRefsDomain.Equal(rebased, flow.FunctionRefsDomain.Bottom()) {
 		return nil, false
 	}
@@ -1751,35 +1746,28 @@ func rebaseCallReturnFunctionRefs(
 }
 
 func (t *Transfer) recordFunctionRefAt(out *flow.PointState, path constraint.Path, src ast.Expr) {
-	addr, ok := flow.StableAddressOfPath(path)
-	if !ok {
+	if out == nil {
 		return
 	}
 	if srcPath, ok := t.staticPathOfExpr(src); ok {
-		srcAddr, srcOK := flow.StableAddressOfPath(srcPath)
-		if !srcOK {
-			return
-		}
-		refs := flow.RebaseFunctionRefsAddress(flow.ProjectFunctionRefsByAddress(out.FunctionRefs, srcAddr), srcAddr, addr)
-		flow.ReplaceFunctionRefSubtree(out, addr, refs)
+		refs := flow.RebaseFunctionRefsPath(flow.ProjectFunctionRefsByReferencePaths(out.FunctionRefs, flow.ReferencePathProjection{
+			Subtrees: []constraint.Path{srcPath},
+		}), srcPath, path)
+		flow.ReplaceFunctionRefSubtreePath(out, path, refs)
 		return
 	}
 	set, ok := t.functionRefSetOfExpr(out, src)
 	nested := t.nestedFunctionRefSetsOfExpr(out, src)
-	flow.ClearFunctionRefSubtree(out, addr)
+	flow.ClearFunctionRefSubtreePath(out, path)
 	if !ok {
 		for _, entry := range nested {
-			if child, ok := flow.StableAddressOfPath(appendFunctionRefPath(path, entry.segments)); ok {
-				flow.SetFunctionRef(out, child, entry.set)
-			}
+			flow.SetFunctionRefPath(out, appendFunctionRefPath(path, entry.segments), entry.set)
 		}
 		return
 	}
-	flow.SetFunctionRef(out, addr, set)
+	flow.SetFunctionRefPath(out, path, set)
 	for _, entry := range nested {
-		if child, ok := flow.StableAddressOfPath(appendFunctionRefPath(path, entry.segments)); ok {
-			flow.SetFunctionRef(out, child, entry.set)
-		}
+		flow.SetFunctionRefPath(out, appendFunctionRefPath(path, entry.segments), entry.set)
 	}
 }
 
@@ -1832,12 +1820,7 @@ func rebaseCallReturnClosureRefs(
 	if retIndex >= len(returns) {
 		return nil, false
 	}
-	fromAddr, fromOK := flow.StableAddressOfPath(constraint.NewPlaceholder(retIndex))
-	toAddr, toOK := flow.StableAddressOfPath(path)
-	if !fromOK || !toOK {
-		return nil, false
-	}
-	rebased := flow.RebaseClosureRefsAddress(returns[retIndex], fromAddr, toAddr)
+	rebased := flow.RebaseClosureRefsPath(returns[retIndex], constraint.NewPlaceholder(retIndex), path)
 	if flow.ClosureRefsDomain.Equal(rebased, flow.ClosureRefsDomain.Bottom()) {
 		return nil, false
 	}
@@ -1845,35 +1828,28 @@ func rebaseCallReturnClosureRefs(
 }
 
 func (t *Transfer) recordClosureRefAt(out *flow.PointState, path constraint.Path, src ast.Expr) {
-	addr, ok := flow.StableAddressOfPath(path)
-	if out == nil || !ok {
+	if out == nil {
 		return
 	}
 	if srcPath, ok := t.staticPathOfExpr(src); ok {
-		srcAddr, srcOK := flow.StableAddressOfPath(srcPath)
-		if !srcOK {
-			return
-		}
-		refs := flow.RebaseClosureRefsAddress(flow.ProjectClosureRefsByAddress(out.ClosureRefs, srcAddr), srcAddr, addr)
-		flow.ReplaceClosureRefSubtree(out, addr, refs)
+		refs := flow.RebaseClosureRefsPath(flow.ProjectClosureRefsByReferencePaths(out.ClosureRefs, flow.ReferencePathProjection{
+			Subtrees: []constraint.Path{srcPath},
+		}), srcPath, path)
+		flow.ReplaceClosureRefSubtreePath(out, path, refs)
 		return
 	}
 	set, ok := t.closureRefSetOfExpr(out, src)
 	nested := t.nestedClosureRefSetsOfExpr(out, src)
-	flow.ClearClosureRefSubtree(out, addr)
+	flow.ClearClosureRefSubtreePath(out, path)
 	if !ok {
 		for _, entry := range nested {
-			if child, ok := flow.StableAddressOfPath(appendFunctionRefPath(path, entry.segments)); ok {
-				flow.SetClosureRef(out, child, entry.set)
-			}
+			flow.SetClosureRefPath(out, appendFunctionRefPath(path, entry.segments), entry.set)
 		}
 		return
 	}
-	flow.SetClosureRef(out, addr, set)
+	flow.SetClosureRefPath(out, path, set)
 	for _, entry := range nested {
-		if child, ok := flow.StableAddressOfPath(appendFunctionRefPath(path, entry.segments)); ok {
-			flow.SetClosureRef(out, child, entry.set)
-		}
+		flow.SetClosureRefPath(out, appendFunctionRefPath(path, entry.segments), entry.set)
 	}
 }
 

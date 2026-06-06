@@ -352,6 +352,17 @@ func RebaseClosureRefsAddress(refs ClosureRefs, from, to StableAddress) ClosureR
 	return ClosureRefsDomain.Join(out, nil)
 }
 
+// RebaseClosureRefsPath is the path-shaped form used by producers that have
+// structured paths but should not own stable-address normalization.
+func RebaseClosureRefsPath(refs ClosureRefs, from, to constraint.Path) ClosureRefs {
+	fromAddr, fromOK := StableAddressOfPath(from)
+	toAddr, toOK := StableAddressOfPath(to)
+	if !fromOK || !toOK {
+		return ClosureRefsDomain.Bottom()
+	}
+	return RebaseClosureRefsAddress(refs, fromAddr, toAddr)
+}
+
 // WithoutClosureRefSubtreeAddress returns refs with addr and every descendant
 // path removed.
 func WithoutClosureRefSubtreeAddress(refs ClosureRefs, addr StableAddress) ClosureRefs {

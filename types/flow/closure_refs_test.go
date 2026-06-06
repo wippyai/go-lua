@@ -178,6 +178,29 @@ func TestRebaseClosureRefsMovesSubtree(t *testing.T) {
 	}
 }
 
+func TestRebaseClosureRefsPathMovesSubtree(t *testing.T) {
+	closure := ClosureRefOf(
+		FunctionRef{GraphID: 9},
+		CaptureCellsOf([]CaptureCell{{Symbol: cfg.SymbolID(7), Value: product.FromType(typ.String)}}),
+		nil,
+	)
+	from := constraint.NewPlaceholder(0)
+	to := constraint.NewPath(cfg.SymbolID(43), "out")
+	method := from.Field("method")
+	toMethod := to.Field("method")
+	refs := WithClosureRef(nil, StablePathKey(method), ClosureRefSetOf(closure))
+
+	rebased := RebaseClosureRefsPath(refs, from, to)
+	set, ok := ClosureRefAt(rebased, StablePathKey(toMethod))
+	if !ok {
+		t.Fatalf("rebased closure refs missing: %#v", rebased)
+	}
+	got, singleton := set.Singleton()
+	if !singleton || !closureRefEqual(got, closure) {
+		t.Fatalf("rebased closure = %s, want %s", set.Format(), ClosureRefSetOf(closure).Format())
+	}
+}
+
 func TestApplyClosureRefCellEffectsUpdatesStoredEnvironment(t *testing.T) {
 	sym := cfg.SymbolID(7)
 	path := constraint.NewPath(cfg.SymbolID(42), "fn").Key()

@@ -331,6 +331,17 @@ func RebaseFunctionRefsAddress(refs FunctionRefs, from, to StableAddress) Functi
 	return FunctionRefsDomain.Join(out, nil)
 }
 
+// RebaseFunctionRefsPath is the path-shaped form used by producers that have
+// structured paths but should not own stable-address normalization.
+func RebaseFunctionRefsPath(refs FunctionRefs, from, to constraint.Path) FunctionRefs {
+	fromAddr, fromOK := StableAddressOfPath(from)
+	toAddr, toOK := StableAddressOfPath(to)
+	if !fromOK || !toOK {
+		return FunctionRefsDomain.Bottom()
+	}
+	return RebaseFunctionRefsAddress(refs, fromAddr, toAddr)
+}
+
 func functionRefPathBelongsToSymbol(path constraint.PathKey, sym cfg.SymbolID) bool {
 	if sym == 0 {
 		return false
