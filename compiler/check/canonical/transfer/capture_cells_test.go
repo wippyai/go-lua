@@ -429,7 +429,7 @@ func (c captureEffectTyper) TypeCastTarget(*ast.FuncCallExpr, func(ast.Expr) typ
 	return nil, false
 }
 
-func (c captureEffectTyper) ReturnRelations(*ast.FuncCallExpr, func(ast.Expr) typ.Type, flow.CaptureCells, flow.FunctionRefs) flow.ReturnRelations {
+func (c captureEffectTyper) ReturnRelationsFromValues(*ast.FuncCallExpr, ProductCallContext) flow.ReturnRelations {
 	return flow.ReturnRelationsDomain.Top()
 }
 

@@ -207,10 +207,6 @@ type CallArgDemandProvider interface {
 	CallArgDemands(call *ast.FuncCallExpr, ctx ProductCallContext) []callobligation.Obligation
 }
 
-type returnRelationProvider interface {
-	ReturnRelations(call *ast.FuncCallExpr, exprType func(ast.Expr) typ.Type, cells flow.CaptureCells, refs flow.FunctionRefs) flow.ReturnRelations
-}
-
 type productReturnRelationProvider interface {
 	ReturnRelationsFromValues(call *ast.FuncCallExpr, ctx ProductCallContext) flow.ReturnRelations
 }
@@ -1136,12 +1132,7 @@ func (t *Transfer) callReturnRelations(
 	if provider, ok := t.callTyper.(productReturnRelationProvider); ok && provider != nil && call != nil {
 		return provider.ReturnRelationsFromValues(call, t.productCallContext(out, call, demand))
 	}
-	provider, ok := t.callTyper.(returnRelationProvider)
-	if !ok || provider == nil || call == nil {
-		return flow.ReturnRelationsDomain.Top()
-	}
-	exprType := t.projectExprTypeResolver(out)
-	return provider.ReturnRelations(call, exprType, out.Cells, out.FunctionRefs)
+	return flow.ReturnRelationsDomain.Top()
 }
 
 // targetValue resolves the value bound to target index i. A target aligned with a

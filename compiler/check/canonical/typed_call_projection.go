@@ -38,32 +38,6 @@ func (ct callTyper) typedCallProjection(
 	}, true
 }
 
-func (ct callTyper) typedCallRelationsProjection(
-	call *ast.FuncCallExpr,
-	exprType func(ast.Expr) typ.Type,
-	cells flow.CaptureCells,
-	refs flow.FunctionRefs,
-) (typedCallProjection, bool) {
-	if ct.d == nil || call == nil {
-		return typedCallProjection{}, false
-	}
-	proj := typedCallProjection{
-		typer:    ct,
-		call:     call,
-		exprType: exprType,
-		cells:    cells,
-		refs:     refs,
-	}
-	if ct.d.activeProgram != nil {
-		proj.outcome = ct.callOutcomeForTypedCall(call, exprType, cells, refs)
-	}
-	return proj, true
-}
-
 func (p typedCallProjection) inferredReturnTypes() []typ.Type {
 	return p.outcome.InferredReturnTypes()
-}
-
-func (p typedCallProjection) returnRelations() flow.ReturnRelations {
-	return p.outcome.ReturnRelations(p.call, p.typer.callTypeResolver(p.exprType), p.exprType != nil)
 }

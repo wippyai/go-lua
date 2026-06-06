@@ -1847,18 +1847,6 @@ func (ct callTyper) CallReturnRefsFromValues(call *ast.FuncCallExpr, ctx transfe
 	return proj.returnRefs()
 }
 
-// ReturnRelations resolves the callee's caller-visible return relations through
-// the same interprocedural summary fixed point CallReturns uses for return values.
-// A recursive seed (Summary bottom) is not consumed as proof; the relation appears
-// only after the callee summary/projector proves it.
-func (ct callTyper) ReturnRelations(call *ast.FuncCallExpr, exprType func(ast.Expr) typ.Type, cells flow.CaptureCells, refs flow.FunctionRefs) flow.ReturnRelations {
-	proj, ok := ct.typedCallRelationsProjection(call, exprType, cells, refs)
-	if !ok {
-		return flow.ReturnRelationsDomain.Top()
-	}
-	return proj.returnRelations()
-}
-
 func (ct callTyper) ReturnRelationsFromValues(call *ast.FuncCallExpr, ctx transfer.ProductCallContext) flow.ReturnRelations {
 	proj, ok := ct.productCallRelationsProjection(call, ctx)
 	if !ok {
