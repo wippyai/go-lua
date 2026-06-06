@@ -91,11 +91,6 @@ func (in Input) Build() *typ.Function {
 	return builder.Build()
 }
 
-// Build returns the canonical function signature for in.
-func Build(in Input) *typ.Function {
-	return in.Build()
-}
-
 // ScopeInput is the input for generic type-parameter scope construction.
 type ScopeInput struct {
 	Function    *ast.FunctionExpr
@@ -129,20 +124,9 @@ func (in ScopeInput) Generic(builder *typ.FunctionBuilder) *scope.State {
 	return sc.WithTypeParams(typeParams)
 }
 
-// GenericScope extends Base with Function's type parameters and records the same
-// parameters on builder when builder is non-nil.
-func GenericScope(builder *typ.FunctionBuilder, in ScopeInput) *scope.State {
-	return in.Generic(builder)
-}
-
 // TypeParamScope returns the annotation scope for a function body/signature.
 func (in ScopeInput) TypeParams() *scope.State {
 	return in.Generic(nil)
-}
-
-// TypeParamScope returns the annotation scope for a function body/signature.
-func TypeParamScope(in ScopeInput) *scope.State {
-	return in.TypeParams()
 }
 
 // FunctionContextScope returns the lexical base extended with the function-local
@@ -175,12 +159,6 @@ func (in ScopeInput) FunctionContext() *scope.State {
 		sc = sc.WithVariadic(variadic)
 	}
 	return sc
-}
-
-// FunctionContextScope returns the lexical base extended with the function-local
-// context needed by expression observation.
-func FunctionContextScope(in ScopeInput) *scope.State {
-	return in.FunctionContext()
 }
 
 // ReturnInput is the return-vector lowering input.
@@ -220,12 +198,6 @@ func (in ReturnInput) Types() []typ.Type {
 		return nil
 	}
 	return in.InferredReturns(fn)
-}
-
-// ReturnTypes lowers a function's source return annotations or inferred summary
-// returns according to Mode.
-func ReturnTypes(in ReturnInput) []typ.Type {
-	return in.Types()
 }
 
 // DeclaredReturnTypes lowers only source-declared returns.

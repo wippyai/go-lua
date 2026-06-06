@@ -15,12 +15,12 @@ func TestBuildFunctionUnannotatedParamIsOptionalGradualAny(t *testing.T) {
 	t.Parallel()
 
 	fn := functionWithParams("x")
-	sig := Build(Input{
+	sig := (Input{
 		Function:    fn,
 		Base:        scope.NewWithBuiltins(),
 		ResolveType: testResolveType,
 		ReturnMode:  ReturnDeclaredOnly,
-	})
+	}).Build()
 
 	if sig == nil || len(sig.Params) != 1 {
 		t.Fatalf("params = %#v, want one", sig)
@@ -38,7 +38,7 @@ func TestBuildFunctionDeclaredGenericReturnBeatsInferred(t *testing.T) {
 	fn.ReturnTypes = []ast.TypeExpr{&ast.TypeRefExpr{Path: []string{"T"}}}
 	inferredUsed := false
 
-	sig := Build(Input{
+	sig := (Input{
 		Function:    fn,
 		Base:        scope.NewWithBuiltins(),
 		ResolveType: testResolveType,
@@ -47,7 +47,7 @@ func TestBuildFunctionDeclaredGenericReturnBeatsInferred(t *testing.T) {
 			return []typ.Type{typ.String}
 		},
 		ReturnMode: ReturnDeclaredThenInferred,
-	})
+	}).Build()
 
 	if sig == nil || len(sig.TypeParams) != 1 || sig.TypeParams[0].Name != "T" {
 		t.Fatalf("type params = %#v, want T", sig.TypeParams)
@@ -77,12 +77,12 @@ func TestBuildGenericCallbackSignatureClosesExpectedParam(t *testing.T) {
 	}
 	fn.ReturnTypes = []ast.TypeExpr{&ast.TypeRefExpr{Path: []string{"U"}}}
 
-	sig := Build(Input{
+	sig := (Input{
 		Function:    fn,
 		Base:        scope.NewWithBuiltins(),
 		ResolveType: testResolveType,
 		ReturnMode:  ReturnDeclaredOnly,
-	})
+	}).Build()
 	callback := typ.Func().Param("value", typ.Any).Returns(typ.Any).Build()
 	inferred := ops.InferCall(db.NewQueryContext(db.New()), ops.CallDef{
 		Callee: sig,
@@ -102,7 +102,7 @@ func TestBuildFunctionUnannotatedReturnSplicesInferred(t *testing.T) {
 	t.Parallel()
 
 	fn := functionWithParams("x")
-	sig := Build(Input{
+	sig := (Input{
 		Function:    fn,
 		Base:        scope.NewWithBuiltins(),
 		ResolveType: testResolveType,
@@ -113,7 +113,7 @@ func TestBuildFunctionUnannotatedReturnSplicesInferred(t *testing.T) {
 			return []typ.Type{typ.Number}
 		},
 		ReturnMode: ReturnDeclaredThenInferred,
-	})
+	}).Build()
 
 	if sig == nil || len(sig.Returns) != 1 || sig.Returns[0] != typ.Number {
 		t.Fatalf("returns = %#v, want inferred number", sig.Returns)
@@ -126,7 +126,7 @@ func TestResolvableDeclaredReturnFallsBackWhenNoAnnotationResolves(t *testing.T)
 	fn := functionWithParams("x")
 	fn.ReturnTypes = []ast.TypeExpr{&ast.TypeRefExpr{Path: []string{"Missing"}}}
 
-	got := ReturnTypes(ReturnInput{
+	got := (ReturnInput{
 		Function: fn,
 		Scope:    scope.NewWithBuiltins(),
 		ResolveType: func(ast.TypeExpr, *scope.State) typ.Type {
@@ -136,7 +136,7 @@ func TestResolvableDeclaredReturnFallsBackWhenNoAnnotationResolves(t *testing.T)
 			return []typ.Type{typ.Boolean}
 		},
 		Mode: ReturnResolvableDeclaredThenInferred,
-	})
+	}).Types()
 
 	if len(got) != 1 || got[0] != typ.Boolean {
 		t.Fatalf("returns = %#v, want inferred boolean fallback", got)
@@ -152,12 +152,12 @@ func TestBuildMethodPrependsNamedReceiverSelf(t *testing.T) {
 		FuncExpr:     fn,
 	}
 	self := typ.NewRecord().Field("run", typ.Func().Build()).Build()
-	sig := Build(Input{
+	sig := (Input{
 		Method:      info,
 		Base:        scope.NewWithBuiltins().WithType("Service", self),
 		ResolveType: testResolveType,
 		ReturnMode:  ReturnDeclaredOnly,
-	})
+	}).Build()
 
 	if sig == nil || len(sig.Params) != 2 {
 		t.Fatalf("params = %#v, want self + arg", sig)
@@ -171,12 +171,12 @@ func TestBuildMethodUnnamedReceiverSelfIsGradualAny(t *testing.T) {
 	t.Parallel()
 
 	fn := functionWithParams("arg")
-	sig := Build(Input{
+	sig := (Input{
 		Method:      &cfg.FuncDefInfo{FuncExpr: fn},
 		Base:        scope.NewWithBuiltins(),
 		ResolveType: testResolveType,
 		ReturnMode:  ReturnDeclaredOnly,
-	})
+	}).Build()
 
 	if sig == nil || len(sig.Params) != 2 {
 		t.Fatalf("params = %#v, want self + arg", sig)
@@ -206,11 +206,11 @@ func TestLiteralSignaturesResolveEnclosingGenericScope(t *testing.T) {
 		t.Fatal("cfg.Build returned nil")
 	}
 
-	got := LiteralSignatures(LiteralInput{
+	got := (LiteralInput{
 		Graph:       g,
 		Base:        scope.NewWithBuiltins(),
 		ResolveType: testResolveType,
-	})
+	}).Signatures()
 	sig := got[inner]
 	if sig == nil {
 		t.Fatalf("literal signatures = %#v, missing inner", got)
@@ -236,11 +236,11 @@ func TestFunctionContextScopeCarriesGenericVariadicType(t *testing.T) {
 	fn.ParList.HasVargs = true
 	fn.ParList.VarargType = &ast.TypeRefExpr{Path: []string{"T"}}
 
-	sc := FunctionContextScope(ScopeInput{
+	sc := (ScopeInput{
 		Function:    fn,
 		Base:        scope.NewWithBuiltins(),
 		ResolveType: testResolveType,
-	})
+	}).FunctionContext()
 	if sc == nil {
 		t.Fatal("FunctionContextScope returned nil")
 	}
@@ -288,7 +288,7 @@ func TestLiteralSignaturesUseMethodResolver(t *testing.T) {
 		t.Fatal("test CFG did not expose method info")
 	}
 	self := typ.NewRecord().Field("run", typ.Func().Build()).Build()
-	got := LiteralSignatures(LiteralInput{
+	got := (LiteralInput{
 		Graph:       g,
 		Base:        scope.NewWithBuiltins().WithType("Service", self),
 		ResolveType: testResolveType,
@@ -298,7 +298,7 @@ func TestLiteralSignaturesUseMethodResolver(t *testing.T) {
 			}
 			return nil
 		},
-	})
+	}).Signatures()
 	sig := got[methodBody]
 	if sig == nil || len(sig.Params) != 2 {
 		t.Fatalf("method literal signature = %#v, want self + arg", sig)

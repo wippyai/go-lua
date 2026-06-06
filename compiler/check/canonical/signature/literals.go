@@ -80,9 +80,3 @@ func (in LiteralInput) Signatures() map[*ast.FunctionExpr]*typ.Function {
 	}
 	return out
 }
-
-// LiteralSignatures lowers every function literal directly nested in Graph to
-// its canonical callable signature.
-func LiteralSignatures(in LiteralInput) map[*ast.FunctionExpr]*typ.Function {
-	return in.Signatures()
-}

@@ -139,11 +139,6 @@ func (in ReturnInput) Types() ([]typ.Type, bool) {
 	return returns, true
 }
 
-// InferReturnTypes applies the canonical type-level call-return policy.
-func InferReturnTypes(in ReturnInput) ([]typ.Type, bool) {
-	return in.Types()
-}
-
 // Values applies the canonical product-level call-return precedence:
 // type intercepts, callee summary values, gradual dynamic call evidence, then a
 // type-level fallback projected into product values. Pending argument evidence
@@ -185,11 +180,6 @@ func (in ReturnValueInput) Values() ([]product.AbstractValue, bool) {
 		return bottomReturnValues(deferredArity), true
 	}
 	return nil, false
-}
-
-// InferReturnValues applies the canonical product-level call-return precedence.
-func InferReturnValues(in ReturnValueInput) ([]product.AbstractValue, bool) {
-	return in.Values()
 }
 
 func bottomReturnValues(arity int) []product.AbstractValue {
