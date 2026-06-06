@@ -75,11 +75,11 @@ func UniqueSortedFuncRefs(in []FuncRef) []FuncRef {
 // (nil, true), preserving the caller's "authoritative but unknown" distinction
 // from an absent path, which yields (nil, false).
 func FromFlowPath(refs flow.FunctionRefs, path constraint.PathKey) ([]FuncRef, bool) {
-	addr, ok := flow.StableAddressFromKey(path)
+	set, ok := flow.FunctionRefAt(refs, path)
 	if !ok {
 		return nil, false
 	}
-	return FromFlowAddress(refs, addr)
+	return fromFlowSet(set)
 }
 
 // FromFlowAddress reads the flow-domain function identities at addr and converts
@@ -89,6 +89,10 @@ func FromFlowAddress(refs flow.FunctionRefs, addr flow.StableAddress) ([]FuncRef
 	if !ok {
 		return nil, false
 	}
+	return fromFlowSet(set)
+}
+
+func fromFlowSet(set flow.FunctionRefSet) ([]FuncRef, bool) {
 	flowRefs := set.Refs()
 	if len(flowRefs) == 0 {
 		return nil, true

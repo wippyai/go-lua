@@ -297,6 +297,15 @@ func ProjectFunctionRefsByAddress(refs FunctionRefs, addr StableAddress) Functio
 	return FunctionRefsDomain.Join(out, nil)
 }
 
+// ProjectFunctionRefsByPath keeps only path and its descendants.
+func ProjectFunctionRefsByPath(refs FunctionRefs, path constraint.Path) FunctionRefs {
+	addr, ok := StableAddressOfPath(path)
+	if !ok {
+		return FunctionRefsDomain.Bottom()
+	}
+	return ProjectFunctionRefsByAddress(refs, addr)
+}
+
 // ProjectFunctionRefsByReferencePaths keeps exactly the finite path vocabulary
 // in projection. It is more precise than ProjectFunctionRefsBySymbols: captured
 // table roots no longer pull every function-valued field into a callee context

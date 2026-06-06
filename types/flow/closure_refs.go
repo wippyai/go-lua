@@ -309,6 +309,15 @@ func ProjectClosureRefsByAddress(refs ClosureRefs, addr StableAddress) ClosureRe
 	return ClosureRefsDomain.Join(out, nil)
 }
 
+// ProjectClosureRefsByPath keeps only path and its descendants.
+func ProjectClosureRefsByPath(refs ClosureRefs, path constraint.Path) ClosureRefs {
+	addr, ok := StableAddressOfPath(path)
+	if !ok {
+		return ClosureRefsDomain.Bottom()
+	}
+	return ProjectClosureRefsByAddress(refs, addr)
+}
+
 // ProjectClosureRefsByReferencePaths is the closure-value counterpart to
 // ProjectFunctionRefsByReferencePaths.
 func ProjectClosureRefsByReferencePaths(refs ClosureRefs, projection ReferencePathProjection) ClosureRefs {

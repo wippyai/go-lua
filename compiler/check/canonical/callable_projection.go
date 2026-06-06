@@ -82,17 +82,13 @@ func (p callableProjector) TypeAt(in flow.PointState, path constraint.Path) typ.
 	if p.prog == nil || path.Symbol == 0 {
 		return nil
 	}
-	addr, ok := flow.StableAddressOfPath(path)
-	if !ok {
-		return nil
-	}
-	if t := p.closureTypeAt(in, addr); !typ.IsAbsentOrUnknown(t) {
+	if t := p.closureTypeAtPath(in, path); !typ.IsAbsentOrUnknown(t) {
 		return t
 	}
-	if _, ok := flow.ClosureRefAtAddress(in.ClosureRefs, addr); ok {
+	if _, ok := flow.ClosureRefAtPath(in.ClosureRefs, path); ok {
 		return nil
 	}
-	refs, ok := flow.FunctionRefAtAddress(in.FunctionRefs, addr)
+	refs, ok := flow.FunctionRefAtPath(in.FunctionRefs, path)
 	if ok {
 		return p.functionRefsType(refs, in.Cells, in.FunctionRefs, in.ClosureRefs)
 	}
@@ -109,8 +105,8 @@ func (p callableProjector) FunctionTypeByRef(ref flow.FunctionRef, cells flow.Ca
 	return p.signature(ref, cells, refs, closures)
 }
 
-func (p callableProjector) closureTypeAt(in flow.PointState, addr flow.StableAddress) typ.Type {
-	set, ok := flow.ClosureRefAtAddress(in.ClosureRefs, addr)
+func (p callableProjector) closureTypeAtPath(in flow.PointState, path constraint.Path) typ.Type {
+	set, ok := flow.ClosureRefAtPath(in.ClosureRefs, path)
 	if !ok {
 		return nil
 	}

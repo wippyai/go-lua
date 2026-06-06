@@ -336,9 +336,7 @@ func projectReturnClosureRefs(fs state.FunctionState, g *cfg.Graph) []flow.Closu
 func returnClosureRefsTupleAt(ps flow.PointState, info *cfg.ReturnInfo) []flow.ClosureRefs {
 	out := make([]flow.ClosureRefs, len(info.Exprs))
 	for i := range info.Exprs {
-		if addr, ok := flow.StableAddressOfPath(constraint.NewPlaceholder(i)); ok {
-			out[i] = flow.ProjectClosureRefsByAddress(ps.ClosureRefs, addr)
-		}
+		out[i] = flow.ProjectClosureRefsByPath(ps.ClosureRefs, constraint.NewPlaceholder(i))
 	}
 	return out
 }
@@ -346,9 +344,7 @@ func returnClosureRefsTupleAt(ps flow.PointState, info *cfg.ReturnInfo) []flow.C
 func returnFunctionRefsTupleAt(ps flow.PointState, info *cfg.ReturnInfo) []flow.FunctionRefs {
 	out := make([]flow.FunctionRefs, len(info.Exprs))
 	for i := range info.Exprs {
-		if addr, ok := flow.StableAddressOfPath(constraint.NewPlaceholder(i)); ok {
-			out[i] = flow.ProjectFunctionRefsByAddress(ps.FunctionRefs, addr)
-		}
+		out[i] = flow.ProjectFunctionRefsByPath(ps.FunctionRefs, constraint.NewPlaceholder(i))
 	}
 	return out
 }
@@ -425,14 +421,10 @@ func returnSlotHasFiniteCallTarget(ps flow.PointState, info *cfg.ReturnInfo, i i
 	if !ok {
 		return false
 	}
-	addr, ok := flow.StableAddressOfPath(path)
-	if !ok {
-		return false
-	}
-	if set, ok := flow.FunctionRefAtAddress(ps.FunctionRefs, addr); ok && len(set.Refs()) > 0 {
+	if set, ok := flow.FunctionRefAtPath(ps.FunctionRefs, path); ok && len(set.Refs()) > 0 {
 		return true
 	}
-	if set, ok := flow.ClosureRefAtAddress(ps.ClosureRefs, addr); ok && len(set.Refs()) > 0 {
+	if set, ok := flow.ClosureRefAtPath(ps.ClosureRefs, path); ok && len(set.Refs()) > 0 {
 		return true
 	}
 	return false

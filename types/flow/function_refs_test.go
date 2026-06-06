@@ -124,6 +124,22 @@ func TestRebaseFunctionRefsTopScopesToTarget(t *testing.T) {
 	}
 }
 
+func TestProjectFunctionRefsByPathKeepsSubtree(t *testing.T) {
+	root := constraint.NewPath(45, "root")
+	child := root.Field("child")
+	sibling := constraint.NewPath(46, "sibling")
+	refs := WithFunctionRefPath(nil, child, FunctionRefSetOf(FunctionRef{GraphID: 1}))
+	refs = WithFunctionRefPath(refs, sibling, FunctionRefSetOf(FunctionRef{GraphID: 2}))
+
+	projected := ProjectFunctionRefsByPath(refs, root)
+	if _, ok := FunctionRefAtPath(projected, child); !ok {
+		t.Fatalf("projection dropped child path: %#v", projected)
+	}
+	if _, ok := FunctionRefAtPath(projected, sibling); ok {
+		t.Fatalf("projection kept sibling path: %#v", projected)
+	}
+}
+
 func TestReplaceFunctionRefSubtreePathClearsAndJoins(t *testing.T) {
 	target := constraint.NewPath(43, "target")
 	child := target.Field("child")

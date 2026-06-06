@@ -221,6 +221,23 @@ func TestRebaseClosureRefsTopScopesToTarget(t *testing.T) {
 	}
 }
 
+func TestProjectClosureRefsByPathKeepsSubtree(t *testing.T) {
+	root := constraint.NewPath(cfg.SymbolID(45), "root")
+	child := root.Field("child")
+	sibling := constraint.NewPath(cfg.SymbolID(46), "sibling")
+	closure := ClosureRefOf(FunctionRef{GraphID: 9}, CaptureCellsDomain.Bottom(), nil)
+	refs := WithClosureRef(nil, StablePathKey(child), ClosureRefSetOf(closure))
+	refs = WithClosureRef(refs, StablePathKey(sibling), ClosureRefSetTop())
+
+	projected := ProjectClosureRefsByPath(refs, root)
+	if _, ok := ClosureRefAtPath(projected, child); !ok {
+		t.Fatalf("projection dropped child path: %#v", projected)
+	}
+	if _, ok := ClosureRefAtPath(projected, sibling); ok {
+		t.Fatalf("projection kept sibling path: %#v", projected)
+	}
+}
+
 func TestApplyClosureRefCellEffectsUpdatesStoredEnvironment(t *testing.T) {
 	sym := cfg.SymbolID(7)
 	path := constraint.NewPath(cfg.SymbolID(42), "fn").Key()
