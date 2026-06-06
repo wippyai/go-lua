@@ -21,10 +21,8 @@ import (
 // carry the captured cell store and captured function identities from its
 // creation point without asking the driver to rediscover them later.
 type ClosureRef struct {
-	Ref       FunctionRef
-	Cells     CaptureCellsKey
-	EntryRefs FunctionRefsKey
-	Closures  ClosureRefsKey
+	Ref             FunctionRef
+	EntryReferences ReferenceContextKey
 }
 
 const closureContextDepth = 2
@@ -36,25 +34,31 @@ func ClosureRefOf(ref FunctionRef, cells CaptureCells, entryRefs FunctionRefs, c
 		closureRefs = closures[0]
 	}
 	return ClosureRef{
-		Ref:       ref,
-		Cells:     cells.Key(),
-		EntryRefs: FunctionRefsKeyOf(entryRefs),
-		Closures:  closureRefsKeyOfDepth(closureRefs, closureContextDepth),
+		Ref:             ref,
+		EntryReferences: closureEntryReferenceKeyOfDepth(cells, entryRefs, closureRefs, closureContextDepth),
+	}
+}
+
+func closureEntryReferenceKeyOfDepth(cells CaptureCells, entryRefs FunctionRefs, closureRefs ClosureRefs, depth int) ReferenceContextKey {
+	return ReferenceContextKey{
+		cells:        cells.Key(),
+		functionRefs: FunctionRefsKeyOf(entryRefs),
+		closureRefs:  closureRefsKeyOfDepth(closureRefs, depth),
 	}
 }
 
 // EntryCells returns the captured-cell store carried by r.
-func (r ClosureRef) EntryCells() CaptureCells { return r.Cells.Cells() }
+func (r ClosureRef) EntryCells() CaptureCells { return r.EntryReferences.CaptureCells() }
 
 // EntryFunctionRefs returns the captured function-ref store carried by r.
-func (r ClosureRef) EntryFunctionRefs() FunctionRefs { return r.EntryRefs.Refs() }
+func (r ClosureRef) EntryFunctionRefs() FunctionRefs { return r.EntryReferences.FunctionRefs() }
 
 // EntryClosureRefs returns the captured closure-ref store carried by r.
-func (r ClosureRef) EntryClosureRefs() ClosureRefs { return r.Closures.Refs() }
+func (r ClosureRef) EntryClosureRefs() ClosureRefs { return r.EntryReferences.ClosureRefs() }
 
 // EntryReferenceContext returns the captured reference environment carried by r.
 func (r ClosureRef) EntryReferenceContext() ReferenceContext {
-	return ReferenceContextOf(r.EntryCells(), r.EntryFunctionRefs(), r.EntryClosureRefs())
+	return r.EntryReferences.Context()
 }
 
 // ClosureRefSet is the finite may-set of closure values a runtime path may
@@ -107,7 +111,7 @@ func (s ClosureRefSet) Format() string {
 	parts := make([]string, 0, len(s.refs))
 	for _, r := range s.refs {
 		parts = append(parts, fmt.Sprintf("%d/%d cells=%s refs=%s closures=%s",
-			r.Ref.GraphID, r.Ref.ParentHash, r.Cells.Format(), formatFunctionRefs(r.EntryFunctionRefs()), formatClosureRefs(r.EntryClosureRefs())))
+			r.Ref.GraphID, r.Ref.ParentHash, r.EntryReferences.cells.Format(), formatFunctionRefs(r.EntryFunctionRefs()), formatClosureRefs(r.EntryClosureRefs())))
 	}
 	return "{" + strings.Join(parts, ",") + "}"
 }
@@ -464,7 +468,12 @@ func ApplyClosureRefCellEffectsAddress(refs ClosureRefs, addr StableAddress, eff
 	}
 	updated := make([]ClosureRef, 0, len(set.refs))
 	for _, ref := range set.refs {
-		ref.Cells = effects.Apply(ref.EntryCells()).Key()
+		ref.EntryReferences = closureEntryReferenceKeyOfDepth(
+			effects.Apply(ref.EntryCells()),
+			ref.EntryFunctionRefs(),
+			ref.EntryClosureRefs(),
+			closureContextDepth,
+		)
 		updated = append(updated, ref)
 	}
 	return WithClosureRefAddress(refs, addr, ClosureRefSetOf(updated...))
@@ -549,10 +558,13 @@ func joinClosureRefEnvironment(a, b ClosureRef) ClosureRef {
 		return a
 	}
 	return ClosureRef{
-		Ref:       a.Ref,
-		Cells:     CaptureCellsDomain.Join(a.EntryCells(), b.EntryCells()).Key(),
-		EntryRefs: FunctionRefsKeyOf(FunctionRefsDomain.Join(a.EntryFunctionRefs(), b.EntryFunctionRefs())),
-		Closures:  closureRefsKeyOfDepth(joinClosureRefsFinite(a.EntryClosureRefs(), b.EntryClosureRefs()), closureContextDepth),
+		Ref: a.Ref,
+		EntryReferences: closureEntryReferenceKeyOfDepth(
+			CaptureCellsDomain.Join(a.EntryCells(), b.EntryCells()),
+			FunctionRefsDomain.Join(a.EntryFunctionRefs(), b.EntryFunctionRefs()),
+			joinClosureRefsFinite(a.EntryClosureRefs(), b.EntryClosureRefs()),
+			closureContextDepth,
+		),
 	}
 }
 
@@ -581,13 +593,20 @@ func compareClosureRef(a, b ClosureRef) int {
 	if c := compareFunctionRef(a.Ref, b.Ref); c != 0 {
 		return c
 	}
-	if c := compareCaptureCellsKey(a.Cells, b.Cells); c != 0 {
+	return compareReferenceContextKey(a.EntryReferences, b.EntryReferences)
+}
+
+func compareReferenceContextKey(a, b ReferenceContextKey) int {
+	if a == b {
+		return 0
+	}
+	if c := compareCaptureCellsKey(a.cells, b.cells); c != 0 {
 		return c
 	}
-	if c := compareFunctionRefsKey(a.EntryRefs, b.EntryRefs); c != 0 {
+	if c := compareFunctionRefsKey(a.functionRefs, b.functionRefs); c != 0 {
 		return c
 	}
-	return compareClosureRefsKey(a.Closures, b.Closures)
+	return compareClosureRefsKey(a.closureRefs, b.closureRefs)
 }
 
 func compareCaptureCellsKey(a, b CaptureCellsKey) int {
@@ -696,14 +715,14 @@ func closureRefSetHash(set ClosureRefSet) uint64 {
 	for _, ref := range set.refs {
 		h = internal.HashCombine(h, ref.Ref.GraphID)
 		h = internal.HashCombine(h, ref.Ref.ParentHash)
-		if ref.Cells.n != nil {
-			h = internal.HashCombine(h, ref.Cells.n.hash)
+		if ref.EntryReferences.cells.n != nil {
+			h = internal.HashCombine(h, ref.EntryReferences.cells.n.hash)
 		}
-		if ref.EntryRefs.n != nil {
-			h = internal.HashCombine(h, ref.EntryRefs.n.hash)
+		if ref.EntryReferences.functionRefs.n != nil {
+			h = internal.HashCombine(h, ref.EntryReferences.functionRefs.n.hash)
 		}
-		if ref.Closures.n != nil {
-			h = internal.HashCombine(h, ref.Closures.n.hash)
+		if ref.EntryReferences.closureRefs.n != nil {
+			h = internal.HashCombine(h, ref.EntryReferences.closureRefs.n.hash)
 		}
 	}
 	return h
@@ -873,7 +892,12 @@ func limitClosureRefSetDepth(set ClosureRefSet, depth int) ClosureRefSet {
 	}
 	out := make([]ClosureRef, 0, len(set.refs))
 	for _, ref := range set.refs {
-		ref.Closures = closureRefsKeyOfDepth(ref.EntryClosureRefs(), depth-1)
+		ref.EntryReferences = closureEntryReferenceKeyOfDepth(
+			ref.EntryCells(),
+			ref.EntryFunctionRefs(),
+			ref.EntryClosureRefs(),
+			depth-1,
+		)
 		out = append(out, ref)
 	}
 	return ClosureRefSetOf(out...)
