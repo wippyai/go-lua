@@ -10,7 +10,6 @@ import (
 	"github.com/wippyai/go-lua/types/domain/value/product"
 	"github.com/wippyai/go-lua/types/effect"
 	"github.com/wippyai/go-lua/types/flow"
-	"github.com/wippyai/go-lua/types/typ"
 )
 
 func (t *Transfer) applyCallSideEffects(
@@ -20,7 +19,7 @@ func (t *Transfer) applyCallSideEffects(
 	demand func(int, paramevidence.ParamContract),
 ) {
 	boundaryFacts, boundaryAppendPlans := t.callBoundaryFactsAndAppendPlans(out, call, ctx)
-	t.applyCallCellEffects(out, call, ctx, ctx.ExprType)
+	t.applyCallCellEffects(out, call, ctx)
 	t.applyCallReceiverEffects(out, call, ctx, demand)
 	t.applyCallMutatorEffects(out, call, ctx, demand)
 	if boundaryFacts.HasProof() {
@@ -32,19 +31,15 @@ func (t *Transfer) applyCallCellEffects(
 	out *flow.PointState,
 	call *ast.FuncCallExpr,
 	ctx ProductCallContext,
-	exprType func(ast.Expr) typ.Type,
 ) {
 	if out == nil || call == nil {
 		return
 	}
-	var effects flow.CaptureEffects
-	if provider, ok := t.callTyper.(productCellEffectProvider); ok {
-		effects = provider.CellEffectsFromValues(call, ctx)
-	} else if provider, ok := t.callTyper.(cellEffectProvider); ok {
-		effects = provider.CellEffects(call, exprType, out.Cells, out.FunctionRefs)
-	} else {
+	provider, ok := t.callTyper.(productCellEffectProvider)
+	if !ok || provider == nil {
 		return
 	}
+	effects := provider.CellEffectsFromValues(call, ctx)
 	closurePath, _ := t.callClosurePath(call)
 	t.applyCellEffect(out, CellEffect{Effects: effects, ClosurePath: closurePath})
 }

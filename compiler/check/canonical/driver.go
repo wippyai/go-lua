@@ -1867,22 +1867,6 @@ func (ct callTyper) ReturnRelationsFromValues(call *ast.FuncCallExpr, ctx transf
 	return proj.returnRelations()
 }
 
-// CellEffects resolves the callee's caller-visible capture-cell transformer
-// through the same interprocedural summary fixed point as return values and
-// return relations. Imported or unresolved callees have no module-local cell
-// effect in this domain.
-func (ct callTyper) CellEffects(call *ast.FuncCallExpr, exprType func(ast.Expr) typ.Type, cells flow.CaptureCells, refs flow.FunctionRefs) flow.CaptureEffects {
-	projector, ok := ct.cellEffectProjector()
-	if !ok || call == nil {
-		return flow.CaptureEffectsDomain.Bottom()
-	}
-	proj, ok := ct.typedCallProjection(call, exprType, cells, refs)
-	if !ok {
-		return flow.CaptureEffectsDomain.Bottom()
-	}
-	return proj.cellEffects(projector)
-}
-
 func (ct callTyper) CellEffectsFromValues(call *ast.FuncCallExpr, ctx transfer.ProductCallContext) flow.CaptureEffects {
 	projector, ok := ct.cellEffectProjector()
 	if !ok || call == nil {

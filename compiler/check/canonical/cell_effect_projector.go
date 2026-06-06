@@ -37,26 +37,6 @@ func (ct callTyper) cellEffectProjector() (cellEffectProjector, bool) {
 	}, true
 }
 
-func (p cellEffectProjector) typedCallEffects(
-	outcome canonicalcall.CallOutcome,
-	call *ast.FuncCallExpr,
-	exprType func(ast.Expr) typ.Type,
-	cells flow.CaptureCells,
-	refs flow.FunctionRefs,
-) flow.CaptureEffects {
-	return outcome.CellEffects(summary.CellEffectAggregation{
-		CallbackSpec: p.callbackSpecForCall(call, exprType),
-		CallbackArgs: call.Args,
-		MethodCall:   call.Method != "",
-		ResolveCallback: func(arg ast.Expr) ([]summary.FuncRef, bool) {
-			return p.typer.targetResolver(p.program).ResolveCallbackArgRefs(arg, refs, p.program.refByFunc)
-		},
-		EffectOf: func(ref summary.FuncRef, entryValues summary.EntryValues) flow.CaptureEffects {
-			return p.effectsForRef(ref, cells, refs, flow.ClosureRefsDomain.Bottom(), entryValues, flow.BoundaryFactsDomain.Top())
-		},
-	})
-}
-
 func (p cellEffectProjector) productCallEffects(
 	outcome canonicalcall.CallOutcome,
 	call *ast.FuncCallExpr,

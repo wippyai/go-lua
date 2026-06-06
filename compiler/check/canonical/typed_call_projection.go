@@ -67,7 +67,3 @@ func (p typedCallProjection) inferredReturnTypes() []typ.Type {
 func (p typedCallProjection) returnRelations() flow.ReturnRelations {
 	return p.outcome.ReturnRelations(p.call, p.typer.callTypeResolver(p.exprType), p.exprType != nil)
 }
-
-func (p typedCallProjection) cellEffects(projector cellEffectProjector) flow.CaptureEffects {
-	return projector.typedCallEffects(p.outcome, p.call, p.exprType, p.cells, p.refs)
-}

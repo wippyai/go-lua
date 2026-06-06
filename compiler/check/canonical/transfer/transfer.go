@@ -227,10 +227,6 @@ type productCallReturnRefsProvider interface {
 	CallReturnRefsFromValues(call *ast.FuncCallExpr, ctx ProductCallContext) CallReturnRefs
 }
 
-type cellEffectProvider interface {
-	CellEffects(call *ast.FuncCallExpr, exprType func(ast.Expr) typ.Type, cells flow.CaptureCells, refs flow.FunctionRefs) flow.CaptureEffects
-}
-
 type productCellEffectProvider interface {
 	CellEffectsFromValues(call *ast.FuncCallExpr, ctx ProductCallContext) flow.CaptureEffects
 }

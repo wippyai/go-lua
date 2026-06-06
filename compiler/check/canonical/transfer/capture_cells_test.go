@@ -275,7 +275,7 @@ func TestStatementCallCellEffectsUseProductArgEvidence(t *testing.T) {
 	in.Graph.Bindings().SetName(in.Scope.ParamSymbols[0], "arg")
 
 	effects := flow.CaptureMustWrite(cfg.SymbolID(57), product.FromType(typ.Boolean))
-	typer := &productCaptureEffectTyper{effects: effects}
+	typer := &productCaptureEffectTyper{captureEffectTyper: captureEffectTyper{effects: effects}}
 	tr := New(in, Config{CallTyper: typer})
 	out := flow.PointState{Env: map[flow.ValueKey]product.AbstractValue{}}
 
@@ -327,7 +327,7 @@ func TestClosureCallCellEffectsUpdateStoredClosureEnvironment(t *testing.T) {
 
 	cellSym := cfg.SymbolID(702)
 	effects := flow.CaptureMustWrite(cellSym, product.FromType(typ.String))
-	tr := New(in, Config{CallTyper: &productCaptureEffectTyper{effects: effects}})
+	tr := New(in, Config{CallTyper: &productCaptureEffectTyper{captureEffectTyper: captureEffectTyper{effects: effects}}})
 	path := constraint.NewPath(calleeSym, "fn").Key()
 	closure := flow.ClosureRefOf(
 		flow.FunctionRef{GraphID: 703},
@@ -433,14 +433,15 @@ func (c captureEffectTyper) ReturnRelations(*ast.FuncCallExpr, func(ast.Expr) ty
 	return flow.ReturnRelationsDomain.Top()
 }
 
-func (c captureEffectTyper) CellEffects(*ast.FuncCallExpr, func(ast.Expr) typ.Type, flow.CaptureCells, flow.FunctionRefs) flow.CaptureEffects {
+func (c captureEffectTyper) CellEffectsFromValues(*ast.FuncCallExpr, ProductCallContext) flow.CaptureEffects {
 	return c.effects
 }
 
+var _ productCellEffectProvider = captureEffectTyper{}
+
 type productCaptureEffectTyper struct {
 	captureEffectTyper
-	effects flow.CaptureEffects
-	args    []product.AbstractValue
+	args []product.AbstractValue
 }
 
 func (p *productCaptureEffectTyper) CellEffectsFromValues(
