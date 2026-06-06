@@ -118,6 +118,22 @@ func TestNumericSymbolOpsUseSymbolValueKeys(t *testing.T) {
 	}
 }
 
+func TestSymbolOfNumericVarKeyOnlyAcceptsBareSymbolKeys(t *testing.T) {
+	const sym = cfg.SymbolID(12)
+	key, ok := NumericVarKeyOfSymbol(sym)
+	if !ok {
+		t.Fatalf("numeric symbol key was not produced")
+	}
+	if got, ok := SymbolOfNumericVarKey(key); !ok || got != sym {
+		t.Fatalf("SymbolOfNumericVarKey(%s) = %d/%v, want %d/true", key, got, ok, sym)
+	}
+	nestedPath := constraint.NewPath(sym, "items").Field("items")
+	nested := SymbolPathKey(sym, nestedPath.Segments)
+	if got, ok := SymbolOfNumericVarKey(nested); ok || got != sym {
+		t.Fatalf("SymbolOfNumericVarKey(nested) = %d/%v, want %d/false", got, ok, sym)
+	}
+}
+
 func TestNumericValueKeyOpsUseNumericKeyCarrier(t *testing.T) {
 	key := ReturnSlotValueKey(3)
 	wantKey := constraint.PathKey(key)

@@ -859,18 +859,17 @@ func (f *canonicalFacts) pointState(p cfg.Point, post bool) flow.PointState {
 
 // LengthLowerBoundAt returns the proven lower bound on the length of the container
 // symbol sym entering point p, from the in-state's numeric component (the length
-// floor the transfer seeded from array literals and table.insert appends). The
-// numeric state keys a container by the same symbol Env key the transfer writes, so
-// the observation surface reads the same length floor `refineIndexRead` consults.
+// floor the transfer seeded from array literals and table.insert appends).
 func (f *canonicalFacts) LengthLowerBoundAt(p cfg.Point, sym cfg.SymbolID) (int64, bool) {
-	if sym == 0 {
-		return 0, false
-	}
 	num := f.inState(p).Num
 	if num == nil {
 		return 0, false
 	}
-	lower, _, ok := num.LenBoundsFor(constraint.PathKey(flow.SymbolValueKey(sym)))
+	key, ok := flow.NumericVarKeyOfSymbol(sym)
+	if !ok {
+		return 0, false
+	}
+	lower, _, ok := num.LenBoundsFor(key)
 	return lower, ok
 }
 
@@ -1248,41 +1247,38 @@ func (canonicalConditionResolver) Index(t typ.Type, key typ.Type) (typ.Type, boo
 // NumericBoundsAt returns the proven integer bounds on sym entering point p from the
 // in-state's numeric component, using the theory solver so a bound established
 // transitively through a relation (an induction variable bounded by another value)
-// is recovered. The numeric component keys a value by the same symbol Env key the
-// transfer writes, so this reads the same bounds the equation-side refineIndexRead
-// consults.
+// is recovered.
 func (f *canonicalFacts) NumericBoundsAt(p cfg.Point, sym cfg.SymbolID) (int64, int64, bool) {
-	if sym == 0 {
-		return 0, 0, false
-	}
 	num := f.inState(p).Num
 	if num == nil {
 		return 0, 0, false
 	}
-	return numeric.BoundsForWithTheory(num, constraint.PathKey(flow.SymbolValueKey(sym)))
+	key, ok := flow.NumericVarKeyOfSymbol(sym)
+	if !ok {
+		return 0, 0, false
+	}
+	return numeric.BoundsForWithTheory(num, key)
 }
 
 // ArrayLenRefAt returns the container symbol and constant offset of a proven
 // `sym <= #arr + offset` relation on sym entering point p, the symbolic length
 // reference the transfer seeds for a `for i = 1, #arr` / `while i <= #arr`
-// induction variable. The numeric component stores the array as the transfer's
-// symbol key, which symFromKey recovers, so the observation surface returns the
-// SAME container symbol the read's container path resolves to. A value with no
-// length reference, or a length reference keyed on a non-symbol path, reports
-// ok=false.
+// induction variable. A value with no length reference, or a length reference
+// keyed on a non-symbol path, reports ok=false.
 func (f *canonicalFacts) ArrayLenRefAt(p cfg.Point, sym cfg.SymbolID) (cfg.SymbolID, int64, bool) {
-	if sym == 0 {
-		return 0, 0, false
-	}
 	num := f.inState(p).Num
 	if num == nil {
 		return 0, 0, false
 	}
-	arrKey, offset, ok := num.LenRefWithOffsetFor(constraint.PathKey(flow.SymbolValueKey(sym)))
+	key, ok := flow.NumericVarKeyOfSymbol(sym)
 	if !ok {
 		return 0, 0, false
 	}
-	arrSym, ok := flow.ParseSymbolValueKey(flow.ValueKey(arrKey))
+	arrKey, offset, ok := num.LenRefWithOffsetFor(key)
+	if !ok {
+		return 0, 0, false
+	}
+	arrSym, ok := flow.SymbolOfNumericVarKey(arrKey)
 	if !ok {
 		return 0, 0, false
 	}

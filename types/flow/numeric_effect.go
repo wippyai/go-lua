@@ -238,6 +238,13 @@ func NumericVarKeyOfSymbol(sym cfg.SymbolID) (constraint.PathKey, bool) {
 	return NumericKeyOfValueKey(SymbolValueKey(sym))
 }
 
+// SymbolOfNumericVarKey returns the bare symbol identified by a numeric variable
+// key. Nested container-path length keys are not scalar symbol variables.
+func SymbolOfNumericVarKey(key constraint.PathKey) (cfg.SymbolID, bool) {
+	sym, segments, ok := ParseSymbolPathKey(key)
+	return sym, ok && len(segments) == 0
+}
+
 // NumericVarGeConstSymbolOp materializes `sym >= c`.
 func NumericVarGeConstSymbolOp(sym cfg.SymbolID, c int64) (NumericOp, bool) {
 	key, ok := NumericVarKeyOfSymbol(sym)
