@@ -410,55 +410,9 @@ func pointStaticMembersJoinOneSided(
 }
 
 func pointKeyPresenceLessOrEq(a, b PointState) bool {
-	if a.KeyPresence.bottom {
-		return true
-	}
-	if b.KeyPresence.bottom {
-		return false
-	}
-	for _, want := range b.KeyPresence.Entries() {
-		if a.KeyPresence.Has(want.Table, want.Key) || pointPathKeyDefinitelyAbsent(a, want.Key) {
-			continue
-		}
-		return false
-	}
-	for _, want := range b.KeyPresence.ValueEntries() {
-		if a.KeyPresence.HasValue(want.Table, want.Key, want.Value) || pointPathKeyDefinitelyAbsent(a, want.Key) {
-			continue
-		}
-		return false
-	}
-	return keyArrayFactsContainAllWithEmpty(
-		a.KeyPresence.KeyArrayEntries(),
-		a.KeyPresence.EmptyKeyArrayEntries(),
-		b.KeyPresence.KeyArrayEntries(),
-	) && keyArrayValueFactsContainAllWithEmpty(
-		a.KeyPresence.KeyArrayValueEntries(),
-		a.KeyPresence.EmptyKeyArrayEntries(),
-		b.KeyPresence.KeyArrayValueEntries(),
-	) && emptyKeyArrayFactsContainAll(
-		a.KeyPresence.EmptyKeyArrayEntries(),
-		b.KeyPresence.EmptyKeyArrayEntries(),
-	) && appendedKeyFactsContainAll(
-		a.KeyPresence.AppendedKeyEntries(),
-		b.KeyPresence.AppendedKeyEntries(),
-	) && pendingKeyArrayFactsContainAll(
-		a.KeyPresence.PendingKeyArrayEntries(),
-		b.KeyPresence.PendingKeyArrayEntries(),
-	) && appendHistoryBaseFactsContainAllWithEmpty(
-		a.KeyPresence.AppendHistoryBaseEntries(),
-		a.KeyPresence.EmptyKeyArrayEntries(),
-		b.KeyPresence.AppendHistoryBaseEntries(),
-	) && appendHistoryEventFactsContainAll(
-		b.KeyPresence.AppendHistoryEventEntries(),
-		a.KeyPresence.AppendHistoryEventEntries(),
-	) && appendHistoryCoverageFactsContainAll(
-		b.KeyPresence.AppendHistoryCoverageEntries(),
-		a.KeyPresence.AppendHistoryCoverageEntries(),
-	) && appendElementFieldOriginFactsContainAll(
-		b.KeyPresence.AppendElementFieldOriginEntries(),
-		a.KeyPresence.AppendElementFieldOriginEntries(),
-	)
+	return a.KeyPresence.coversWithAbsentKeys(b.KeyPresence, func(key constraint.PathKey) bool {
+		return pointPathKeyDefinitelyAbsent(a, key)
+	})
 }
 
 func pointKeyPresenceJoin(a, b PointState) KeyPresenceFacts {
@@ -469,26 +423,9 @@ func pointKeyPresenceJoin(a, b PointState) KeyPresenceFacts {
 }
 
 func pointKeyPresenceJoinOneSided(out KeyPresenceFacts, facts KeyPresenceFacts, other PointState) KeyPresenceFacts {
-	if facts.bottom {
-		return out
-	}
-	for _, entry := range facts.Entries() {
-		if out.Has(entry.Table, entry.Key) {
-			continue
-		}
-		if pointPathKeyDefinitelyAbsent(other, entry.Key) {
-			out = out.With(entry.Table, entry.Key)
-		}
-	}
-	for _, entry := range facts.ValueEntries() {
-		if out.HasValue(entry.Table, entry.Key, entry.Value) {
-			continue
-		}
-		if pointPathKeyDefinitelyAbsent(other, entry.Key) {
-			out = out.WithValue(entry.Table, entry.Key, entry.Value)
-		}
-	}
-	return out
+	return out.withFactsProvedByAbsentKeys(facts, func(key constraint.PathKey) bool {
+		return pointPathKeyDefinitelyAbsent(other, key)
+	})
 }
 
 func pointPathAliasesLessOrEq(a, b PointState) bool {

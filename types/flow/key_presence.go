@@ -465,6 +465,84 @@ func (f KeyPresenceFacts) ValueEntries() []KeyValueFact {
 	return append([]KeyValueFact(nil), f.values...)
 }
 
+// coversWithAbsentKeys reports whether f proves every fact in want, treating a
+// definitely absent key path as enough to satisfy facts guarded by that key.
+func (f KeyPresenceFacts) coversWithAbsentKeys(want KeyPresenceFacts, absent func(constraint.PathKey) bool) bool {
+	if f.bottom {
+		return true
+	}
+	if want.bottom {
+		return false
+	}
+	for _, entry := range want.entries {
+		if f.Has(entry.Table, entry.Key) || keyPresenceAbsent(absent, entry.Key) {
+			continue
+		}
+		return false
+	}
+	for _, entry := range want.values {
+		if f.HasValue(entry.Table, entry.Key, entry.Value) || keyPresenceAbsent(absent, entry.Key) {
+			continue
+		}
+		return false
+	}
+	return keyArrayFactsContainAllWithEmpty(
+		f.arrays,
+		f.emptyArrays,
+		want.arrays,
+	) && keyArrayValueFactsContainAllWithEmpty(
+		f.arrayValues,
+		f.emptyArrays,
+		want.arrayValues,
+	) && emptyKeyArrayFactsContainAll(
+		f.emptyArrays,
+		want.emptyArrays,
+	) && appendedKeyFactsContainAll(
+		f.appends,
+		want.appends,
+	) && pendingKeyArrayFactsContainAll(
+		f.pending,
+		want.pending,
+	) && appendHistoryBaseFactsContainAllWithEmpty(
+		f.appendBases,
+		f.emptyArrays,
+		want.appendBases,
+	) && appendHistoryEventFactsContainAll(
+		want.appendEvents,
+		f.appendEvents,
+	) && appendHistoryCoverageFactsContainAll(
+		want.appendCoverage,
+		f.appendCoverage,
+	) && appendElementFieldOriginFactsContainAll(
+		want.appendOrigins,
+		f.appendOrigins,
+	)
+}
+
+func keyPresenceAbsent(absent func(constraint.PathKey) bool, key constraint.PathKey) bool {
+	return absent != nil && absent(key)
+}
+
+func (f KeyPresenceFacts) withFactsProvedByAbsentKeys(facts KeyPresenceFacts, absent func(constraint.PathKey) bool) KeyPresenceFacts {
+	if facts.bottom {
+		return f
+	}
+	out := f
+	for _, entry := range facts.entries {
+		if out.Has(entry.Table, entry.Key) || !keyPresenceAbsent(absent, entry.Key) {
+			continue
+		}
+		out = out.With(entry.Table, entry.Key)
+	}
+	for _, entry := range facts.values {
+		if out.HasValue(entry.Table, entry.Key, entry.Value) || !keyPresenceAbsent(absent, entry.Key) {
+			continue
+		}
+		out = out.WithValue(entry.Table, entry.Key, entry.Value)
+	}
+	return out
+}
+
 func (f KeyPresenceFacts) WithKeyArray(array, table constraint.PathKey) KeyPresenceFacts {
 	if array == "" || table == "" {
 		return f
