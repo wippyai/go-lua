@@ -5,6 +5,8 @@ import (
 
 	"github.com/wippyai/go-lua/types/cfg"
 	"github.com/wippyai/go-lua/types/constraint"
+	"github.com/wippyai/go-lua/types/domain/value/product"
+	"github.com/wippyai/go-lua/types/typ"
 )
 
 func TestAppendOriginDestinationsRoutesThroughIteratorAndAliasFacts(t *testing.T) {
@@ -73,6 +75,49 @@ func TestApplyAppendElementFieldOriginUseReplaysSourcesToDestinations(t *testing
 	}
 	if len(state.KeyPresence.AppendElementFieldSources(testStableAddressPath(t, arrayPath).Key(), field)) != 1 {
 		t.Fatalf("destination field origin was not replayed")
+	}
+}
+
+func TestApplyAppendKeyArrayConsequencesPublishesReadbackValue(t *testing.T) {
+	arrayPath := constraint.NewPath(cfg.SymbolID(21), "keys")
+	tablePath := constraint.NewPath(cfg.SymbolID(22), "nodes")
+	keyPath := constraint.NewPath(cfg.SymbolID(23), "node_id")
+	value := product.FromType(typ.String)
+	state := PointState{
+		IndexWrites: IndexWriteAdmissionFacts{}.WithAddress(IndexWriteAdmissionAddressFact{
+			Target:     testStableAddressPath(t, tablePath),
+			KeyPath:    testStableAddressPath(t, keyPath),
+			HasKeyPath: true,
+			Key:        product.FromType(typ.String),
+			Value:      value,
+		}),
+	}
+
+	if !ApplyAppendKeyArrayConsequences(&state, AppendKeyArrayConsequences{
+		Array:    testStableAddressPath(t, arrayPath),
+		Key:      testStableAddressPath(t, keyPath),
+		HasKey:   true,
+		KeyValue: product.FromType(typ.String),
+		Tables:   []StableAddress{testStableAddressPath(t, tablePath)},
+		Pending: []PendingKeyArrayDestination{{
+			Table:    testStableAddressPath(t, tablePath),
+			HasTable: true,
+		}},
+	}) {
+		t.Fatalf("expected append key-array consequences to change state")
+	}
+
+	arrayKey := StablePathKey(arrayPath)
+	tableKey := StablePathKey(tablePath)
+	if len(state.KeyPresence.KeyArrayTables(arrayKey)) != 1 || state.KeyPresence.KeyArrayTables(arrayKey)[0] != tableKey {
+		t.Fatalf("key-array proof was not published: %s", state.KeyPresence.Format())
+	}
+	values := state.KeyPresence.KeyArrayValues(arrayKey, tableKey)
+	if len(values) != 1 || !product.Domain.Equal(values[0], value) {
+		t.Fatalf("key-array values = %v, want string", values)
+	}
+	if len(state.KeyPresence.PendingKeyArrayEntries()) != 1 {
+		t.Fatalf("pending key-array proof was not published: %s", state.KeyPresence.Format())
 	}
 }
 

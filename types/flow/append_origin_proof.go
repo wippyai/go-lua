@@ -1,6 +1,10 @@
 package flow
 
-import "github.com/wippyai/go-lua/types/constraint"
+import (
+	"github.com/wippyai/go-lua/types/constraint"
+	"github.com/wippyai/go-lua/types/domain/value/product"
+	"github.com/wippyai/go-lua/types/typ"
+)
 
 // AppendOriginDestination is a routed destination for appended element-field
 // origins. FieldPrefix is the suffix already accumulated when the append is
@@ -16,6 +20,26 @@ type AppendOriginDestination struct {
 type AppendOriginSource struct {
 	Source      StableAddress
 	SourceField []constraint.Segment
+}
+
+// PendingKeyArrayDestination is a delayed append consequence. When HasTable is
+// false, the pending fact waits for any table that is later proven to contain
+// Key.
+type PendingKeyArrayDestination struct {
+	Table    StableAddress
+	HasTable bool
+}
+
+// AppendKeyArrayConsequences is the reduced-product transaction for appending a
+// key into an array whose elements may be table keys.
+type AppendKeyArrayConsequences struct {
+	Array    StableAddress
+	Key      StableAddress
+	HasKey   bool
+	KeyValue product.AbstractValue
+
+	Tables  []StableAddress
+	Pending []PendingKeyArrayDestination
 }
 
 // AppendOriginDestinations follows value-origin and path-alias facts to every
@@ -63,6 +87,66 @@ func AppendOriginDestinations(state PointState, array StableAddress, fieldPrefix
 	}
 	add(array, fieldPrefix)
 	return destinations
+}
+
+// ApplyAppendKeyArrayConsequences applies direct and delayed key-array facts
+// after an append. When a matching index-write readback fact exists, it also
+// publishes the value-carrying key-array proof.
+func ApplyAppendKeyArrayConsequences(out *PointState, proof AppendKeyArrayConsequences) bool {
+	if out == nil || proof.Array.Key() == "" || (len(proof.Tables) == 0 && len(proof.Pending) == 0) {
+		return false
+	}
+	changed := false
+	for _, table := range proof.Tables {
+		if table.Key() == "" {
+			continue
+		}
+		changed = ApplyKeyArrayProof(out, KeyArrayProof{
+			Array: proof.Array,
+			Table: table,
+		}) || changed
+		if !proof.HasKey || proof.Key.Key() == "" {
+			continue
+		}
+		keyType := product.ProjectValueOrUnknown(proof.KeyValue)
+		if keyType == nil {
+			keyType = typ.Unknown
+		}
+		value, ok := out.IndexWrites.AdmissionAtAddress(IndexWriteAddressQuery{
+			Target:     table,
+			KeyPath:    proof.Key,
+			HasKeyPath: true,
+			KeyValue:   product.FromType(keyType),
+		})
+		if !ok || value.IsZero() {
+			continue
+		}
+		changed = ApplyKeyArrayValueProof(out, KeyArrayValueProof{
+			Array:        proof.Array,
+			Table:        table,
+			Value:        value,
+			AppendKey:    proof.Key,
+			HasAppendKey: true,
+		}) || changed
+	}
+	for _, pending := range proof.Pending {
+		if !proof.HasKey || proof.Key.Key() == "" {
+			continue
+		}
+		pendingProof := PendingKeyArrayProof{
+			Array: proof.Array,
+			Key:   proof.Key,
+		}
+		if pending.HasTable {
+			if pending.Table.Key() == "" {
+				continue
+			}
+			pendingProof.Table = pending.Table
+			pendingProof.HasTable = true
+		}
+		changed = ApplyPendingKeyArrayProof(out, pendingProof) || changed
+	}
+	return changed
 }
 
 // AppendOriginSources follows value-origin and path-alias facts backward from

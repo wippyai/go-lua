@@ -729,65 +729,35 @@ func (t *Transfer) applyAppendKeyArrayFacts(
 		return false
 	}
 	elementAddr, elementOK := flow.StableAddressOfPath(elementPath)
-	before := out.KeyPresence
+	tableAddrs := make([]flow.StableAddress, 0, len(tables))
 	for _, table := range tables {
 		tableAddr, ok := flow.StableAddressFromKey(table)
 		if !ok {
 			continue
 		}
-		flow.ApplyKeyArrayProof(out, flow.KeyArrayProof{
-			Array: arrayAddr,
-			Table: tableAddr,
-		})
-		if elementPath.IsEmpty() {
-			continue
-		}
-		tablePath, ok := indexWritePathFromKey(table)
-		if !ok || tablePath.IsEmpty() {
-			continue
-		}
-		keyType := product.ProjectValueOrUnknown(element)
-		if keyType == nil {
-			keyType = typ.Unknown
-		}
-		tableAddr, tableOK := flow.StableAddressOfPath(tablePath)
-		keyAddr, keyOK := flow.StableAddressOfPath(elementPath)
-		if !tableOK || !keyOK {
-			continue
-		}
-		value, ok := out.IndexWrites.AdmissionAtAddress(flow.IndexWriteAddressQuery{
-			Target:     tableAddr,
-			KeyPath:    keyAddr,
-			HasKeyPath: true,
-			KeyValue:   product.FromType(keyType),
-		})
-		if !ok || value.IsZero() {
-			continue
-		}
-		flow.ApplyKeyArrayValueProof(out, flow.KeyArrayValueProof{
-			Array:        arrayAddr,
-			Table:        tableAddr,
-			Value:        value,
-			AppendKey:    elementAddr,
-			HasAppendKey: elementOK,
-		})
+		tableAddrs = append(tableAddrs, tableAddr)
 	}
+	pending := make([]flow.PendingKeyArrayDestination, 0, len(pendingTables))
 	for _, table := range pendingTables {
-		proof := flow.PendingKeyArrayProof{
-			Array: arrayAddr,
-			Key:   elementAddr,
-		}
+		dst := flow.PendingKeyArrayDestination{}
 		if table != "" {
 			tableAddr, ok := flow.StableAddressFromKey(table)
 			if !ok {
 				continue
 			}
-			proof.Table = tableAddr
-			proof.HasTable = true
+			dst.Table = tableAddr
+			dst.HasTable = true
 		}
-		flow.ApplyPendingKeyArrayProof(out, proof)
+		pending = append(pending, dst)
 	}
-	return !flow.KeyPresenceFactsDomain.Equal(before, out.KeyPresence)
+	return flow.ApplyAppendKeyArrayConsequences(out, flow.AppendKeyArrayConsequences{
+		Array:    arrayAddr,
+		Key:      elementAddr,
+		HasKey:   elementOK,
+		KeyValue: element,
+		Tables:   tableAddrs,
+		Pending:  pending,
+	})
 }
 
 func slicesFindPathKey(xs []constraint.PathKey, want constraint.PathKey) (int, bool) {
