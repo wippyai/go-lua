@@ -57,23 +57,6 @@ type DirectCallEntryReferenceInput struct {
 	ResolveClosureArgRefs  EntryClosureRefsArgResolver
 }
 
-// DirectCallEntryFunctionRefs projects caller function identities into callee
-// parameter paths. A path-backed argument rebases its whole FunctionRefs subtree;
-// a direct function literal or other non-path callable seeds the parameter root.
-func DirectCallEntryFunctionRefs(in DirectCallEntryReferenceInput) flow.FunctionRefs {
-	refs, _ := DirectCallEntryReferences(in)
-	return refs
-}
-
-// DirectCallEntryClosureRefs is the closure-value counterpart to
-// DirectCallEntryFunctionRefs. It preserves closure entry environments when the
-// caller has them, while still allowing a direct function literal to seed a
-// parameter root through ResolveClosureArg.
-func DirectCallEntryClosureRefs(in DirectCallEntryReferenceInput) flow.ClosureRefs {
-	_, closures := DirectCallEntryReferences(in)
-	return closures
-}
-
 // DirectCallEntryReferences projects both callable-reference axes for one direct
 // call-boundary context. Function and closure identities share the same runtime
 // argument layout, source paths, and callee parameter paths, so they are projected

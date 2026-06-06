@@ -206,7 +206,7 @@ func TestDirectCallEntryValues_ProjectsMethodReceiverRuntimeSlot(t *testing.T) {
 	}
 }
 
-func TestDirectCallEntryFunctionRefs_ProjectRuntimeArgsToParamPaths(t *testing.T) {
+func TestDirectCallEntryReferences_ProjectFunctionRuntimeArgsToParamPaths(t *testing.T) {
 	sourceSym := cfg.SymbolID(10)
 	param0 := cfg.SymbolID(20)
 	param1 := cfg.SymbolID(21)
@@ -220,7 +220,7 @@ func TestDirectCallEntryFunctionRefs_ProjectRuntimeArgsToParamPaths(t *testing.T
 	arg1 := &ast.FunctionExpr{}
 	call := &ast.FuncCallExpr{Args: []ast.Expr{arg0, arg1}}
 
-	got := summary.DirectCallEntryFunctionRefs(summary.DirectCallEntryReferenceInput{
+	got, _ := summary.DirectCallEntryReferences(summary.DirectCallEntryReferenceInput{
 		Call:         call,
 		Callee:       summary.FuncRef{GraphID: 7},
 		FunctionRefs: flow.WithFunctionRef(flow.WithFunctionRef(nil, sourcePath.Key(), flow.FunctionRefSetOf(callbackRef)), sourcePath.Field("nested").Key(), flow.FunctionRefSetOf(nestedRef)),
@@ -274,7 +274,7 @@ func TestDirectCallEntryFunctionRefs_ProjectRuntimeArgsToParamPaths(t *testing.T
 	}
 }
 
-func TestDirectCallEntryFunctionRefs_LimitsRebasedArgsToCalleeVocabulary(t *testing.T) {
+func TestDirectCallEntryReferences_LimitsRebasedFunctionArgsToCalleeVocabulary(t *testing.T) {
 	source := constraint.NewPath(cfg.SymbolID(24), "receiver")
 	param := constraint.NewPath(cfg.SymbolID(25), "self")
 	usedRef := flow.FunctionRef{GraphID: 106}
@@ -284,7 +284,7 @@ func TestDirectCallEntryFunctionRefs_LimitsRebasedArgsToCalleeVocabulary(t *test
 	refs := flow.WithFunctionRef(nil, source.Field("used").Key(), flow.FunctionRefSetOf(usedRef))
 	refs = flow.WithFunctionRef(refs, source.Field("unused").Key(), flow.FunctionRefSetOf(unusedRef))
 
-	got := summary.DirectCallEntryFunctionRefs(summary.DirectCallEntryReferenceInput{
+	got, _ := summary.DirectCallEntryReferences(summary.DirectCallEntryReferenceInput{
 		Call:                   call,
 		Callee:                 summary.FuncRef{GraphID: 7},
 		FunctionRefs:           refs,
@@ -307,14 +307,14 @@ func TestDirectCallEntryFunctionRefs_LimitsRebasedArgsToCalleeVocabulary(t *test
 	}
 }
 
-func TestDirectCallEntryFunctionRefs_SeedsDirectLiteralWhenParamSlotMapped(t *testing.T) {
+func TestDirectCallEntryReferences_SeedsDirectFunctionLiteralWhenParamSlotMapped(t *testing.T) {
 	param := cfg.SymbolID(22)
 	paramPath := constraint.NewPath(param, "fn")
 	directRef := flow.FunctionRef{GraphID: 104}
 	arg := &ast.FunctionExpr{}
 	call := &ast.FuncCallExpr{Args: []ast.Expr{arg}}
 
-	got := summary.DirectCallEntryFunctionRefs(summary.DirectCallEntryReferenceInput{
+	got, _ := summary.DirectCallEntryReferences(summary.DirectCallEntryReferenceInput{
 		Call:   call,
 		Callee: summary.FuncRef{GraphID: 8},
 		ParamSlot: func(summary.FuncRef, *ast.FuncCallExpr, int) (int, int, bool) {
@@ -338,7 +338,7 @@ func TestDirectCallEntryFunctionRefs_SeedsDirectLiteralWhenParamSlotMapped(t *te
 	}
 }
 
-func TestDirectCallEntryFunctionRefs_RebasesCallReturnSubtreeToParamPath(t *testing.T) {
+func TestDirectCallEntryReferences_RebasesFunctionCallReturnSubtreeToParamPath(t *testing.T) {
 	param := cfg.SymbolID(23)
 	paramPath := constraint.NewPath(param, "database")
 	queryRef := flow.FunctionRef{GraphID: 105}
@@ -346,7 +346,7 @@ func TestDirectCallEntryFunctionRefs_RebasesCallReturnSubtreeToParamPath(t *test
 	call := &ast.FuncCallExpr{Args: []ast.Expr{arg}}
 	returnRefs := flow.WithFunctionRef(nil, constraint.NewPlaceholder(0).Field("query").Key(), flow.FunctionRefSetOf(queryRef))
 
-	got := summary.DirectCallEntryFunctionRefs(summary.DirectCallEntryReferenceInput{
+	got, _ := summary.DirectCallEntryReferences(summary.DirectCallEntryReferenceInput{
 		Call:   call,
 		Callee: summary.FuncRef{GraphID: 9},
 		ParamSlot: func(summary.FuncRef, *ast.FuncCallExpr, int) (int, int, bool) {
@@ -370,14 +370,14 @@ func TestDirectCallEntryFunctionRefs_RebasesCallReturnSubtreeToParamPath(t *test
 	}
 }
 
-func TestDirectCallEntryClosureRefs_ProjectRuntimeArgsToParamPaths(t *testing.T) {
+func TestDirectCallEntryReferences_ProjectClosureRuntimeArgsToParamPaths(t *testing.T) {
 	source := constraint.NewPath(cfg.SymbolID(30), "cb")
 	target := constraint.NewPath(cfg.SymbolID(31), "fn")
 	closure := flow.ClosureRefOf(flow.FunctionRef{GraphID: 201}, flow.CaptureCellsDomain.Bottom(), nil)
 	arg := &ast.IdentExpr{Value: "cb"}
 	call := &ast.FuncCallExpr{Args: []ast.Expr{arg}}
 
-	got := summary.DirectCallEntryClosureRefs(summary.DirectCallEntryReferenceInput{
+	_, got := summary.DirectCallEntryReferences(summary.DirectCallEntryReferenceInput{
 		Call:        call,
 		Callee:      summary.FuncRef{GraphID: 9},
 		ClosureRefs: flow.WithClosureRef(nil, source.Key(), flow.ClosureRefSetOf(closure)),
@@ -399,14 +399,14 @@ func TestDirectCallEntryClosureRefs_ProjectRuntimeArgsToParamPaths(t *testing.T)
 	}
 }
 
-func TestDirectCallEntryClosureRefs_RebasesCallReturnSubtreeToParamPath(t *testing.T) {
+func TestDirectCallEntryReferences_RebasesClosureCallReturnSubtreeToParamPath(t *testing.T) {
 	target := constraint.NewPath(cfg.SymbolID(32), "database")
 	closure := flow.ClosureRefOf(flow.FunctionRef{GraphID: 202}, flow.CaptureCellsDomain.Bottom(), nil)
 	arg := &ast.FuncCallExpr{Func: &ast.IdentExpr{Value: "mock"}}
 	call := &ast.FuncCallExpr{Args: []ast.Expr{arg}}
 	returnRefs := flow.WithClosureRef(nil, constraint.NewPlaceholder(0).Field("query").Key(), flow.ClosureRefSetOf(closure))
 
-	got := summary.DirectCallEntryClosureRefs(summary.DirectCallEntryReferenceInput{
+	_, got := summary.DirectCallEntryReferences(summary.DirectCallEntryReferenceInput{
 		Call:   call,
 		Callee: summary.FuncRef{GraphID: 10},
 		ParamSlot: func(summary.FuncRef, *ast.FuncCallExpr, int) (int, int, bool) {
