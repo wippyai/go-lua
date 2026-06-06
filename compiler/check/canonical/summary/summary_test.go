@@ -808,7 +808,7 @@ return r
 	// Re-summarizing the callee returns the same converged summary (memoized,
 	// deterministic).
 	again := q.Summarize(ctx, calleeRef)
-	if !summary.SummaryEqual(calleeSum, again) {
+	if !summary.SummaryDomain.Equal(calleeSum, again) {
 		t.Fatalf("callee summary is not stable across calls:\n first=%v\n again=%v", calleeSum, again)
 	}
 }
@@ -886,10 +886,10 @@ return r
 		oddSum := q.Summarize(ctx, oddRef)
 
 		// Re-summarizing yields the same converged value (a true fixpoint).
-		if !summary.SummaryEqual(evenSum, q.Summarize(ctx, evenRef)) {
+		if !summary.SummaryDomain.Equal(evenSum, q.Summarize(ctx, evenRef)) {
 			t.Fatal("is_even summary did not converge to a stable fixpoint")
 		}
-		if !summary.SummaryEqual(oddSum, q.Summarize(ctx, oddRef)) {
+		if !summary.SummaryDomain.Equal(oddSum, q.Summarize(ctx, oddRef)) {
 			t.Fatal("is_odd summary did not converge to a stable fixpoint")
 		}
 	})

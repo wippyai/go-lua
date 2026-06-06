@@ -171,7 +171,7 @@ effects into the caller function's own accumulated effect.
 
 For module-local callees, call typing reads the callee's current summary through
 the existing `SummaryQ` cycle. Recursive clusters therefore converge through the
-same db query fixed point and `SummaryWiden`.
+same db query fixed point and `SummaryDomain.Widen`.
 
 The entry-cell source is now also summary-owned:
 

@@ -254,22 +254,15 @@ func summaryTop() Summary {
 	}
 }
 
-// SummaryEqual is the convergence/equality function for Summary projections.
-func SummaryEqual(a, b Summary) bool { return SummaryDomain.Equal(a, b) }
-
-// SummaryWiden is the widening the db cycle applies to a recursive Summary
-// projection whose value keeps growing, so the fixpoint terminates by lattice
-// height rather than a cap.
-func SummaryWiden(prev, next Summary) Summary { return SummaryDomain.Widen(prev, next) }
-
 // MergeExactOverlaySummary is the reducer for diagnostic exact-context summary
-// overlays. It is deliberately not just SummaryWiden: the recursive Summary cell
-// is a monotone fixed-point carrier, while the diagnostic overlay is a snapshot of
-// an exact observer that may initially run before exact callees have published
-// their own overlay postconditions. Value axes still use widening to terminate
-// recursive exact observations. Effect and must-proof axes are latest snapshots:
-// an earlier identity/no-proof observation is not a runtime path and must not
-// survive after the exact callee overlay proves a write or boundary fact.
+// overlays. It is deliberately not just SummaryDomain.Widen: the recursive
+// Summary cell is a monotone fixed-point carrier, while the diagnostic overlay
+// is a snapshot of an exact observer that may initially run before exact callees
+// have published their own overlay postconditions. Value axes still use widening
+// to terminate recursive exact observations. Effect and must-proof axes are
+// latest snapshots: an earlier identity/no-proof observation is not a runtime
+// path and must not survive after the exact callee overlay proves a write or
+// boundary fact.
 func MergeExactOverlaySummary(prev, next Summary) Summary {
 	out := SummaryDomain.Widen(prev, next)
 	out.Returns = mergeExactOverlayReturns(prev.Returns, next.Returns, out.Returns)

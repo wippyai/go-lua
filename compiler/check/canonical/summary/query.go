@@ -653,12 +653,12 @@ func (q *Queries) returnCallHasFiniteTarget(ref FuncRef) func(*cfg.CallInfo) boo
 }
 
 func solveResultEqual(a, b solveResult) bool {
-	return SummaryEqual(a.Summary, b.Summary)
+	return SummaryDomain.Equal(a.Summary, b.Summary)
 }
 
 func solveResultWiden(prev, next solveResult) solveResult {
 	return solveResult{
 		State:   next.State,
-		Summary: SummaryWiden(prev.Summary, next.Summary),
+		Summary: SummaryDomain.Widen(prev.Summary, next.Summary),
 	}
 }
