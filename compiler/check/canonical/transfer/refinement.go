@@ -3,7 +3,6 @@ package transfer
 import (
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/types/constraint"
-	"github.com/wippyai/go-lua/types/domain/value"
 	"github.com/wippyai/go-lua/types/domain/value/product"
 	"github.com/wippyai/go-lua/types/flow"
 	"github.com/wippyai/go-lua/types/narrow"
@@ -171,7 +170,7 @@ func (t *Transfer) refineStaticMemberFactForLengthLower(out *flow.PointState, pa
 	}
 	source, has := flow.PointFactsOf(*out).StaticMemberValue(path)
 	if !has && !base.IsZero() {
-		source, has = productMemberPathValue(base, path.Segments)
+		source, has = flow.ProductMemberPathValue(base, path.Segments)
 	}
 	if !has || source.IsZero() {
 		return false
@@ -206,7 +205,7 @@ func (t *Transfer) applyStaticMemberRefinementEffect(out *flow.PointState, effec
 	}
 	leaf := product.PresentDynamic()
 	if effect.HasBase {
-		if read, ok := productMemberPathValue(effect.Base, path.Segments); ok && !read.IsZero() {
+		if read, ok := flow.ProductMemberPathValue(effect.Base, path.Segments); ok && !read.IsZero() {
 			leaf = read
 		}
 	}
@@ -238,7 +237,7 @@ func refinedStaticMemberValue(
 	var baseRefined product.AbstractValue
 	baseOK := false
 	if hasBase {
-		if read, ok := productMemberPathValue(base, segments); ok && !read.IsZero() {
+		if read, ok := flow.ProductMemberPathValue(base, segments); ok && !read.IsZero() {
 			baseRefined, baseOK = narrowValue(read, check, typeName)
 			if baseOK && (baseRefined.IsZero() || !baseRefined.DefinitelyPresent()) {
 				baseOK = false
@@ -262,20 +261,4 @@ func refinedStaticMemberValue(
 	default:
 		return product.AbstractValue{}, false
 	}
-}
-
-func productMemberPathValue(base product.AbstractValue, segments []constraint.Segment) (product.AbstractValue, bool) {
-	cur := base
-	for _, seg := range segments {
-		member, ok := value.MemberFromSegment(seg)
-		if !ok {
-			return product.AbstractValue{}, false
-		}
-		next, ok := product.MemberOf(cur, member)
-		if !ok || next.IsZero() {
-			return product.AbstractValue{}, false
-		}
-		cur = next
-	}
-	return cur, true
 }

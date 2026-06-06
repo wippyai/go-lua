@@ -954,7 +954,7 @@ func (t *Transfer) trackedExprType(out flow.PointState, expr ast.Expr) typ.Type 
 		if root := t.declaredTypes[path.Symbol]; !typ.IsAbsentOrUnknown(root) {
 			if len(path.Segments) == 0 {
 				declared = root
-			} else if av, ok := productMemberPathValue(product.FromType(root), path.Segments); ok && !av.IsZero() {
+			} else if av, ok := flow.ProductMemberPathValue(product.FromType(root), path.Segments); ok && !av.IsZero() {
 				declared = av.ProjectValue()
 			}
 		}

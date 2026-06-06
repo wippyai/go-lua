@@ -209,20 +209,6 @@ func appendPositiveFieldPresence(out []constraint.Constraint, path constraint.Pa
 	return out
 }
 
-func productPathType(base product.AbstractValue, segments []constraint.Segment) (typ.Type, bool) {
-	if base.IsZero() {
-		return nil, false
-	}
-	t := product.ProjectValueOrUnknown(base)
-	if typ.IsAbsentOrUnknown(t) {
-		return nil, false
-	}
-	if len(segments) == 0 {
-		return t, true
-	}
-	return readFieldPath(t, segments)
-}
-
 func (t *Transfer) applyVariantOriginConditionReductions(out *flow.PointState, fact constraint.Condition) bool {
 	if out == nil {
 		return false
