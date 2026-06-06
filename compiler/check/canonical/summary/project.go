@@ -995,20 +995,20 @@ func projectPointBoundaryFacts(ps flow.PointState, mapper boundaryPathMapper) fl
 }
 
 func (m boundaryPathMapper) pathsFromKey(key constraint.PathKey) []flow.BoundaryPath {
-	sym, segments, ok := flow.ParseSymbolPathKey(key)
-	if !ok || sym == 0 {
+	path, ok := flow.StablePathFromKey(key)
+	if !ok || path.Symbol == 0 {
 		return nil
 	}
 	var out []flow.BoundaryPath
-	if idx, ok := m.paramBySymbol[sym]; ok {
+	if idx, ok := m.paramBySymbol[path.Symbol]; ok {
 		out = append(out, flow.BoundaryPath{
 			Kind:     flow.BoundaryPathParam,
 			Index:    idx,
-			Segments: append([]constraint.Segment(nil), segments...),
+			Segments: append([]constraint.Segment(nil), path.Segments...),
 		})
 	}
-	for _, root := range m.returnBySymbol[sym] {
-		nextSegments := segments
+	for _, root := range m.returnBySymbol[path.Symbol] {
+		nextSegments := path.Segments
 		if len(root.Segments) > 0 {
 			trimmed, ok := trimBoundarySegmentPrefix(nextSegments, root.Segments)
 			if !ok {
@@ -1132,15 +1132,15 @@ func returnRelationParamSymbolMap(g *cfg.Graph) map[cfg.SymbolID]int {
 }
 
 func keyPresenceTableParamPath(key constraint.PathKey, paramBySymbol map[cfg.SymbolID]int) (int, []constraint.Segment, bool) {
-	sym, segments, ok := flow.ParseSymbolPathKey(key)
-	if !ok || sym == 0 {
+	path, ok := flow.StablePathFromKey(key)
+	if !ok || path.Symbol == 0 {
 		return 0, nil, false
 	}
-	idx, ok := paramBySymbol[sym]
+	idx, ok := paramBySymbol[path.Symbol]
 	if !ok {
 		return 0, nil, false
 	}
-	return idx, append([]constraint.Segment(nil), segments...), true
+	return idx, append([]constraint.Segment(nil), path.Segments...), true
 }
 
 type returnRelationProof struct {

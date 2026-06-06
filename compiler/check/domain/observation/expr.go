@@ -1386,11 +1386,11 @@ func (f factsIndexReadFlow) indexWriteAdmissionAliasAddresses(p cfg.Point, key f
 }
 
 func observationPathFromKey(key constraint.PathKey) (constraint.Path, bool) {
-	sym, segments, ok := flow.ParseSymbolPathKey(key)
-	if !ok || sym == 0 {
+	path, ok := flow.StablePathFromKey(key)
+	if !ok || path.Symbol == 0 {
 		return constraint.Path{}, false
 	}
-	return constraint.Path{Symbol: sym, Segments: append([]constraint.Segment(nil), segments...)}, true
+	return path, true
 }
 
 func (f factsIndexReadFlow) BoundsAt(p cfg.Point, name string) (int64, int64, bool) {
