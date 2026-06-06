@@ -1930,20 +1930,7 @@ func (t *Transfer) prototypeMethodRefTree(proto cfg.SymbolID) (flow.FunctionRefT
 			Set:      set,
 		})
 	}
-	sort.Slice(entries, func(i, j int) bool {
-		return prototypeMethodSegmentLess(entries[i].Segments[0], entries[j].Segments[0])
-	})
 	return flow.FunctionRefTree{Entries: entries}, true
-}
-
-func prototypeMethodSegmentLess(a, b constraint.Segment) bool {
-	if a.Kind != b.Kind {
-		return a.Kind < b.Kind
-	}
-	if a.Name != b.Name {
-		return a.Name < b.Name
-	}
-	return a.Index < b.Index
 }
 
 func (t *Transfer) clearPrototypeInstance(out *flow.PointState, sym cfg.SymbolID) bool {

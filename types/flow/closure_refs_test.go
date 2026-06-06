@@ -362,6 +362,52 @@ func TestReplaceClosureRefTreePathInstallsRootAndNestedEntries(t *testing.T) {
 	}
 }
 
+func TestReplaceClosureRefTreePathCanonicalizesEntries(t *testing.T) {
+	target := constraint.NewPath(cfg.SymbolID(52), "target")
+	rootClosure := ClosureRefOf(FunctionRef{GraphID: 18}, CaptureCellsDomain.Bottom(), nil)
+	rootEntryClosure := ClosureRefOf(FunctionRef{GraphID: 19}, CaptureCellsDomain.Bottom(), nil)
+	childA := target.Field("a")
+	childB := target.Field("b")
+	closureA := ClosureRefOf(FunctionRef{GraphID: 20}, CaptureCellsDomain.Bottom(), nil)
+	closureADuplicate := ClosureRefOf(FunctionRef{GraphID: 21}, CaptureCellsDomain.Bottom(), nil)
+	closureB := ClosureRefOf(FunctionRef{GraphID: 22}, CaptureCellsDomain.Bottom(), nil)
+	out := PointState{}
+
+	tree := ClosureRefTree{
+		Root:    ClosureRefSetOf(rootClosure),
+		HasRoot: true,
+		Entries: []ClosureRefTreeEntry{
+			{Segments: []constraint.Segment{{Kind: constraint.SegmentField, Name: "b"}}, Set: ClosureRefSetOf(closureB)},
+			{Segments: nil, Set: ClosureRefSetOf(rootEntryClosure)},
+			{Segments: []constraint.Segment{{Kind: constraint.SegmentField, Name: "a"}}, Set: ClosureRefSetOf(closureA)},
+			{Segments: []constraint.Segment{{Kind: constraint.SegmentField, Name: "a"}}, Set: ClosureRefSetOf(closureADuplicate)},
+			{Segments: []constraint.Segment{{Kind: constraint.SegmentField, Name: "dropped"}}, Set: ClosureRefSetDomain.Bottom()},
+		},
+	}
+
+	if !ReplaceClosureRefTreePath(&out, target, tree) {
+		t.Fatal("ReplaceClosureRefTreePath reported no change")
+	}
+	if got, ok := ClosureRefAtPath(out.ClosureRefs, target); !ok {
+		t.Fatalf("root closures missing: %#v", out.ClosureRefs)
+	} else if want := ClosureRefSetOf(rootClosure, rootEntryClosure); !ClosureRefSetDomain.Equal(got, want) {
+		t.Fatalf("root closures = %s, want %s", got.Format(), want.Format())
+	}
+	if got, ok := ClosureRefAtPath(out.ClosureRefs, childA); !ok {
+		t.Fatalf("merged child closures missing: %#v", out.ClosureRefs)
+	} else if want := ClosureRefSetOf(closureA, closureADuplicate); !ClosureRefSetDomain.Equal(got, want) {
+		t.Fatalf("child a closures = %s, want %s", got.Format(), want.Format())
+	}
+	if got, ok := ClosureRefAtPath(out.ClosureRefs, childB); !ok {
+		t.Fatalf("child b closures missing: %#v", out.ClosureRefs)
+	} else if want := ClosureRefSetOf(closureB); !ClosureRefSetDomain.Equal(got, want) {
+		t.Fatalf("child b closures = %s, want %s", got.Format(), want.Format())
+	}
+	if _, ok := ClosureRefAtPath(out.ClosureRefs, target.Field("dropped")); ok {
+		t.Fatalf("bottom tree entry was installed: %#v", out.ClosureRefs)
+	}
+}
+
 func TestClosureRefTreeFromSubtreePathProjectsRelativeEntries(t *testing.T) {
 	source := constraint.NewPlaceholder(0)
 	child := source.Field("child")

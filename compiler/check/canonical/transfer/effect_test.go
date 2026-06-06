@@ -1364,7 +1364,7 @@ func TestReturnEffectClearsStaleReturnSlotValue(t *testing.T) {
 	}
 }
 
-func TestReferenceEffectInstallsExplicitRefsAtStaticPlace(t *testing.T) {
+func TestReferenceEffectInstallsRefTreesAtStaticPlace(t *testing.T) {
 	sym := cfg.SymbolID(531)
 	path := constraint.NewPath(sym, "").Field("make")
 	stalePath := path.Field("stale")
@@ -1384,18 +1384,24 @@ func TestReferenceEffectInstallsExplicitRefsAtStaticPlace(t *testing.T) {
 				Member: value.MemberField("make"),
 			}},
 		},
-		FunctionRefs: explicitFunctionRefsWrite(flow.WithFunctionRef(nil, path.Key(), flow.FunctionRefSetOf(ref))),
-		ClosureRefs:  explicitClosureRefsWrite(flow.WithClosureRef(nil, path.Key(), flow.ClosureRefSetOf(closure))),
+		FunctionRefs: treeFunctionRefsWrite(flow.FunctionRefTree{
+			Root:    flow.FunctionRefSetOf(ref),
+			HasRoot: true,
+		}),
+		ClosureRefs: treeClosureRefsWrite(flow.ClosureRefTree{
+			Root:    flow.ClosureRefSetOf(closure),
+			HasRoot: true,
+		}),
 	})
 
 	if !changed {
 		t.Fatal("reference effect reported no change")
 	}
 	if _, ok := flow.FunctionRefAt(out.FunctionRefs, stalePath.Key()); ok {
-		t.Fatalf("stale nested function ref survived explicit reference write: %#v", out.FunctionRefs)
+		t.Fatalf("stale nested function ref survived tree reference write: %#v", out.FunctionRefs)
 	}
 	if _, ok := flow.ClosureRefAt(out.ClosureRefs, stalePath.Key()); ok {
-		t.Fatalf("stale nested closure ref survived explicit reference write: %#v", out.ClosureRefs)
+		t.Fatalf("stale nested closure ref survived tree reference write: %#v", out.ClosureRefs)
 	}
 	refs, ok := flow.FunctionRefAt(out.FunctionRefs, path.Key())
 	if !ok {

@@ -229,6 +229,52 @@ func TestReplaceFunctionRefTreePathInstallsRootAndNestedEntries(t *testing.T) {
 	}
 }
 
+func TestReplaceFunctionRefTreePathCanonicalizesEntries(t *testing.T) {
+	target := constraint.NewPath(52, "target")
+	rootRef := FunctionRef{GraphID: 1}
+	rootEntryRef := FunctionRef{GraphID: 2}
+	childA := target.Field("a")
+	childB := target.Field("b")
+	refA := FunctionRef{GraphID: 3}
+	refADuplicate := FunctionRef{GraphID: 4}
+	refB := FunctionRef{GraphID: 5}
+	out := PointState{}
+
+	tree := FunctionRefTree{
+		Root:    FunctionRefSetOf(rootRef),
+		HasRoot: true,
+		Entries: []FunctionRefTreeEntry{
+			{Segments: []constraint.Segment{{Kind: constraint.SegmentField, Name: "b"}}, Set: FunctionRefSetOf(refB)},
+			{Segments: nil, Set: FunctionRefSetOf(rootEntryRef)},
+			{Segments: []constraint.Segment{{Kind: constraint.SegmentField, Name: "a"}}, Set: FunctionRefSetOf(refA)},
+			{Segments: []constraint.Segment{{Kind: constraint.SegmentField, Name: "a"}}, Set: FunctionRefSetOf(refADuplicate)},
+			{Segments: []constraint.Segment{{Kind: constraint.SegmentField, Name: "dropped"}}, Set: FunctionRefSetDomain.Bottom()},
+		},
+	}
+
+	if !ReplaceFunctionRefTreePath(&out, target, tree) {
+		t.Fatal("ReplaceFunctionRefTreePath reported no change")
+	}
+	if got, ok := FunctionRefAtPath(out.FunctionRefs, target); !ok {
+		t.Fatalf("root refs missing: %#v", out.FunctionRefs)
+	} else if want := FunctionRefSetOf(rootRef, rootEntryRef); !FunctionRefSetDomain.Equal(got, want) {
+		t.Fatalf("root refs = %s, want %s", got.Format(), want.Format())
+	}
+	if got, ok := FunctionRefAtPath(out.FunctionRefs, childA); !ok {
+		t.Fatalf("merged child refs missing: %#v", out.FunctionRefs)
+	} else if want := FunctionRefSetOf(refA, refADuplicate); !FunctionRefSetDomain.Equal(got, want) {
+		t.Fatalf("child a refs = %s, want %s", got.Format(), want.Format())
+	}
+	if got, ok := FunctionRefAtPath(out.FunctionRefs, childB); !ok {
+		t.Fatalf("child b refs missing: %#v", out.FunctionRefs)
+	} else if want := FunctionRefSetOf(refB); !FunctionRefSetDomain.Equal(got, want) {
+		t.Fatalf("child b refs = %s, want %s", got.Format(), want.Format())
+	}
+	if _, ok := FunctionRefAtPath(out.FunctionRefs, target.Field("dropped")); ok {
+		t.Fatalf("bottom tree entry was installed: %#v", out.FunctionRefs)
+	}
+}
+
 func TestJoinFunctionRefTreePathPublishesWithoutClearingTarget(t *testing.T) {
 	target := constraint.NewPath(50, "target")
 	existingChild := target.Field("existing")

@@ -1,6 +1,10 @@
 package flow
 
-import "github.com/wippyai/go-lua/types/constraint"
+import (
+	"sort"
+
+	"github.com/wippyai/go-lua/types/constraint"
+)
 
 // FunctionRefTree is the normalized function-identity value of one reference
 // subtree before it is installed at a concrete target path.
@@ -71,6 +75,7 @@ func JoinFunctionRefTreePath(out *PointState, target constraint.Path, tree Funct
 }
 
 func functionRefsFromTree(target constraint.Path, tree FunctionRefTree) FunctionRefs {
+	tree = canonicalFunctionRefTree(tree)
 	var refs FunctionRefs
 	if tree.HasRoot {
 		refs = WithFunctionRefPath(refs, target, tree.Root)
@@ -122,6 +127,7 @@ func FunctionRefTreeFromSubtreePath(refs FunctionRefs, source constraint.Path) (
 			Set:      set,
 		})
 	}
+	tree = canonicalFunctionRefTree(tree)
 	return tree, tree.HasRoot || len(tree.Entries) > 0
 }
 
@@ -169,6 +175,7 @@ func ReplaceClosureRefTreePath(out *PointState, target constraint.Path, tree Clo
 }
 
 func closureRefsFromTree(target constraint.Path, tree ClosureRefTree) ClosureRefs {
+	tree = canonicalClosureRefTree(tree)
 	var refs ClosureRefs
 	if tree.HasRoot {
 		refs = withClosureRefStructuredPath(refs, target, tree.Root)
@@ -219,6 +226,7 @@ func ClosureRefTreeFromSubtreePath(refs ClosureRefs, source constraint.Path) (Cl
 			Set:      set,
 		})
 	}
+	tree = canonicalClosureRefTree(tree)
 	return tree, tree.HasRoot || len(tree.Entries) > 0
 }
 
@@ -237,6 +245,156 @@ func appendReferenceTreePath(base constraint.Path, segments []constraint.Segment
 	next := base
 	next.Segments = append(append([]constraint.Segment(nil), base.Segments...), segments...)
 	return next
+}
+
+func canonicalFunctionRefTree(tree FunctionRefTree) FunctionRefTree {
+	out := FunctionRefTree{}
+	if tree.HasRoot && !tree.Root.IsBottom() {
+		out.Root = tree.Root
+		out.HasRoot = true
+	}
+	if len(tree.Entries) == 0 {
+		return out
+	}
+	out.Entries = make([]FunctionRefTreeEntry, 0, len(tree.Entries))
+	for _, entry := range tree.Entries {
+		if len(entry.Segments) == 0 {
+			if entry.Set.IsBottom() {
+				continue
+			}
+			if out.HasRoot {
+				out.Root = FunctionRefSetDomain.Join(out.Root, entry.Set)
+			} else {
+				out.Root = entry.Set
+				out.HasRoot = true
+			}
+			continue
+		}
+		if entry.Set.IsBottom() {
+			continue
+		}
+		out.Entries = append(out.Entries, FunctionRefTreeEntry{
+			Segments: append([]constraint.Segment(nil), entry.Segments...),
+			Set:      entry.Set,
+		})
+	}
+	sort.Slice(out.Entries, func(i, j int) bool {
+		return compareReferenceTreeSegments(out.Entries[i].Segments, out.Entries[j].Segments) < 0
+	})
+	out.Entries = mergeFunctionRefTreeEntries(out.Entries)
+	return out
+}
+
+func mergeFunctionRefTreeEntries(entries []FunctionRefTreeEntry) []FunctionRefTreeEntry {
+	if len(entries) <= 1 {
+		return entries
+	}
+	out := entries[:0]
+	for _, entry := range entries {
+		last := len(out) - 1
+		if last >= 0 && compareReferenceTreeSegments(out[last].Segments, entry.Segments) == 0 {
+			out[last].Set = FunctionRefSetDomain.Join(out[last].Set, entry.Set)
+			continue
+		}
+		out = append(out, entry)
+	}
+	return out
+}
+
+func canonicalClosureRefTree(tree ClosureRefTree) ClosureRefTree {
+	out := ClosureRefTree{}
+	if tree.HasRoot && !tree.Root.IsBottom() {
+		out.Root = tree.Root
+		out.HasRoot = true
+	}
+	if len(tree.Entries) == 0 {
+		return out
+	}
+	out.Entries = make([]ClosureRefTreeEntry, 0, len(tree.Entries))
+	for _, entry := range tree.Entries {
+		if len(entry.Segments) == 0 {
+			if entry.Set.IsBottom() {
+				continue
+			}
+			if out.HasRoot {
+				out.Root = ClosureRefSetDomain.Join(out.Root, entry.Set)
+			} else {
+				out.Root = entry.Set
+				out.HasRoot = true
+			}
+			continue
+		}
+		if entry.Set.IsBottom() {
+			continue
+		}
+		out.Entries = append(out.Entries, ClosureRefTreeEntry{
+			Segments: append([]constraint.Segment(nil), entry.Segments...),
+			Set:      entry.Set,
+		})
+	}
+	sort.Slice(out.Entries, func(i, j int) bool {
+		return compareReferenceTreeSegments(out.Entries[i].Segments, out.Entries[j].Segments) < 0
+	})
+	out.Entries = mergeClosureRefTreeEntries(out.Entries)
+	return out
+}
+
+func mergeClosureRefTreeEntries(entries []ClosureRefTreeEntry) []ClosureRefTreeEntry {
+	if len(entries) <= 1 {
+		return entries
+	}
+	out := entries[:0]
+	for _, entry := range entries {
+		last := len(out) - 1
+		if last >= 0 && compareReferenceTreeSegments(out[last].Segments, entry.Segments) == 0 {
+			out[last].Set = ClosureRefSetDomain.Join(out[last].Set, entry.Set)
+			continue
+		}
+		out = append(out, entry)
+	}
+	return out
+}
+
+func compareReferenceTreeSegments(a, b []constraint.Segment) int {
+	limit := len(a)
+	if len(b) < limit {
+		limit = len(b)
+	}
+	for i := 0; i < limit; i++ {
+		if c := compareReferenceTreeSegment(a[i], b[i]); c != 0 {
+			return c
+		}
+	}
+	switch {
+	case len(a) < len(b):
+		return -1
+	case len(a) > len(b):
+		return 1
+	default:
+		return 0
+	}
+}
+
+func compareReferenceTreeSegment(a, b constraint.Segment) int {
+	if a.Kind < b.Kind {
+		return -1
+	}
+	if a.Kind > b.Kind {
+		return 1
+	}
+	if a.Name < b.Name {
+		return -1
+	}
+	if a.Name > b.Name {
+		return 1
+	}
+	if a.Index < b.Index {
+		return -1
+	}
+	if a.Index > b.Index {
+		return 1
+	}
+	return 0
 }
 
 // AssignClosureRefSubtreePath is the closure-value counterpart of
