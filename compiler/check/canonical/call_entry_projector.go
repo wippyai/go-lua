@@ -303,9 +303,7 @@ func (c callEntryProjector) productClosureContext(ref summary.FuncRef, closure f
 func (c callEntryProjector) productEntryContext(ref summary.FuncRef, call *ast.FuncCallExpr, ctx transfer.ProductCallContext) canonicalcall.EntryContext {
 	access := c.access()
 	directReferences := c.productReferencesForRef(ref, call, ctx)
-	references := ctx.References.
-		WithFunctionRefs(directReferences.FunctionRefs()).
-		WithClosureRefs(directReferences.ClosureRefs())
+	references := ctx.References.Join(directReferences)
 	return c.program.CallEntryContextWithFacts(
 		ref,
 		references,

@@ -444,11 +444,8 @@ func (p CallEntryContextProjection) ProjectKeys() []Key {
 			if p.NormalizeValues != nil {
 				values = p.NormalizeValues(target.Ref, site.Call, values)
 			}
-			references := target.EntryReferences
 			directReferences := p.directReferenceAxes(target.Ref, site.Call, &site.ArgState)
-			references = references.
-				WithFunctionRefs(directReferences.FunctionRefs()).
-				WithClosureRefs(directReferences.ClosureRefs())
+			references := target.EntryReferences.Join(directReferences)
 			facts := flow.MergeBoundaryFactProofs(target.EntryFacts, p.directFacts(target.Ref, site.Call, &site.ArgState))
 			key := NewKeyWithReferenceContext(
 				target.Ref,

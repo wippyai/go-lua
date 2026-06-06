@@ -46,6 +46,17 @@ func (c ReferenceContext) ClosureRefs() ClosureRefs {
 	return ClosureRefsDomain.Join(c.closureRefs, ClosureRefsDomain.Bottom())
 }
 
+// Join adds independent reference evidence from other into c. This is the
+// ordinary lattice join for call-entry evidence; use OverlayReferenceContext for
+// mutable closure-entry snapshots where live locations override older captures.
+func (c ReferenceContext) Join(other ReferenceContext) ReferenceContext {
+	return ReferenceContextOf(
+		CaptureCellsDomain.Join(c.cells, other.cells),
+		FunctionRefsDomain.Join(c.functionRefs, other.functionRefs),
+		ClosureRefsDomain.Join(c.closureRefs, other.closureRefs),
+	)
+}
+
 // ProjectPaths keeps only paths visible through projection on every reference
 // axis.
 func (c ReferenceContext) ProjectPaths(projection ReferencePathProjection) ReferenceContext {
@@ -62,24 +73,6 @@ func (c ReferenceContext) ProjectSymbols(symbols []cfg.SymbolID) ReferenceContex
 		c.cells.Project(symbols),
 		ProjectFunctionRefsBySymbols(c.functionRefs, symbols),
 		ProjectClosureRefsBySymbols(c.closureRefs, symbols),
-	)
-}
-
-// WithFunctionRefs joins additional function identities into this context.
-func (c ReferenceContext) WithFunctionRefs(functionRefs FunctionRefs) ReferenceContext {
-	return ReferenceContextOf(
-		c.cells,
-		FunctionRefsDomain.Join(c.functionRefs, functionRefs),
-		c.closureRefs,
-	)
-}
-
-// WithClosureRefs joins additional closure identities into this context.
-func (c ReferenceContext) WithClosureRefs(closureRefs ClosureRefs) ReferenceContext {
-	return ReferenceContextOf(
-		c.cells,
-		c.functionRefs,
-		ClosureRefsDomain.Join(c.closureRefs, closureRefs),
 	)
 }
 

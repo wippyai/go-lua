@@ -81,3 +81,40 @@ func TestReferenceContextOverlayLiveAxesOverrideSnapshot(t *testing.T) {
 		t.Fatalf("overlaid closure refs = %s, want graph 4", set.Format())
 	}
 }
+
+func TestReferenceContextJoinAddsEveryAxis(t *testing.T) {
+	leftSym := cfg.SymbolID(30)
+	rightSym := cfg.SymbolID(31)
+	leftPath := constraint.NewPath(leftSym, "left")
+	rightPath := constraint.NewPath(rightSym, "right")
+	left := ReferenceContextOf(
+		CaptureCellsOf([]CaptureCell{{Symbol: leftSym, Value: product.FromType(typ.String)}}),
+		WithFunctionRefPath(nil, leftPath, FunctionRefSetOf(FunctionRef{GraphID: 1})),
+		WithClosureRefAddress(nil, testStableAddressPath(t, leftPath), ClosureRefSetOf(ClosureRefOf(FunctionRef{GraphID: 2}, CaptureCellsDomain.Bottom(), nil))),
+	)
+	right := ReferenceContextOf(
+		CaptureCellsOf([]CaptureCell{{Symbol: rightSym, Value: product.FromType(typ.Number)}}),
+		WithFunctionRefPath(nil, rightPath, FunctionRefSetOf(FunctionRef{GraphID: 3})),
+		WithClosureRefAddress(nil, testStableAddressPath(t, rightPath), ClosureRefSetOf(ClosureRefOf(FunctionRef{GraphID: 4}, CaptureCellsDomain.Bottom(), nil))),
+	)
+
+	joined := left.Join(right)
+	if av, ok := joined.CaptureCells().Value(leftSym); !ok || !typ.TypeEquals(av.ProjectValue(), typ.String) {
+		t.Fatalf("joined left cell = %v/%v, want string", av.ProjectValue(), ok)
+	}
+	if av, ok := joined.CaptureCells().Value(rightSym); !ok || !typ.TypeEquals(av.ProjectValue(), typ.Number) {
+		t.Fatalf("joined right cell = %v/%v, want number", av.ProjectValue(), ok)
+	}
+	if _, ok := FunctionRefAtPath(joined.FunctionRefs(), leftPath); !ok {
+		t.Fatal("joined left function refs missing")
+	}
+	if _, ok := FunctionRefAtPath(joined.FunctionRefs(), rightPath); !ok {
+		t.Fatal("joined right function refs missing")
+	}
+	if _, ok := ClosureRefAtPath(joined.ClosureRefs(), leftPath); !ok {
+		t.Fatal("joined left closure refs missing")
+	}
+	if _, ok := ClosureRefAtPath(joined.ClosureRefs(), rightPath); !ok {
+		t.Fatal("joined right closure refs missing")
+	}
+}
