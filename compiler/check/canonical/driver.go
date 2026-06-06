@@ -1030,6 +1030,7 @@ func (ct callTyper) expectedArgProjection(call *ast.FuncCallExpr, argTypes []typ
 	in := canonicalcall.ExpectedArgProjection{
 		Call:               call,
 		ArgTypes:           argTypes,
+		ExprType:           exprType,
 		Resolver:           ct.callTypeResolver(exprType),
 		MethodReceiverType: methodReceiverType,
 	}

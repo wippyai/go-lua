@@ -80,39 +80,13 @@ func (p CallbackArgRefinementProjection) RefinedTypes() []typ.Type {
 	return out
 }
 
-// ShallowArgTypes builds the staged inference argument vector for a call. Direct
-// callback literals are kept shallow so their body demand cannot solve callee
-// generics before the callee provides the expected callback signature.
-func ShallowArgTypes(args []ast.Expr, projected []typ.Type, exprType func(ast.Expr) typ.Type) []typ.Type {
-	if len(args) == 0 {
-		return nil
-	}
-	out := make([]typ.Type, len(args))
-	for i, arg := range args {
-		if fn, ok := arg.(*ast.FunctionExpr); ok {
-			out[i] = phasecore.ShallowFunctionLiteralSignature(fn)
-			continue
-		}
-		if i < len(projected) && projected[i] != nil && !typ.IsUnknown(projected[i]) {
-			out[i] = projected[i]
-			continue
-		}
-		if exprType != nil {
-			out[i] = exprType(arg)
-		}
-		if out[i] == nil {
-			out[i] = typ.Unknown
-		}
-	}
-	return out
-}
-
 // ExpectedArgProjection computes the expected argument contract produced by the
 // ordinary call matcher. Callback argument normalization consumes this as entry
 // evidence for nested callback bodies.
 type ExpectedArgProjection struct {
 	Call                *ast.FuncCallExpr
 	ArgTypes            []typ.Type
+	ExprType            func(ast.Expr) typ.Type
 	CallbackArg         func(ast.Expr) bool
 	Resolver            TypeResolver
 	Ctx                 *db.QueryContext
@@ -122,6 +96,9 @@ type ExpectedArgProjection struct {
 	MethodName          string
 	MethodReceiverType  typ.Type
 	ForceMethodReceiver bool
+	// ShallowFuncLiterals prevents function-literal bodies from solving callee
+	// generics before this projection derives the callee's callback expectation.
+	ShallowFuncLiterals bool
 	ResolveTypeArg      func(ast.TypeExpr) typ.Type
 }
 
@@ -177,8 +154,15 @@ func callArgTypesForExpectedArgProjection(p ExpectedArgProjection) []typ.Type {
 	}
 	out := make([]typ.Type, n)
 	for i := 0; i < n; i++ {
-		if p.CallbackArg != nil && p.CallbackArg(p.Call.Args[i]) {
+		arg := p.Call.Args[i]
+		if p.CallbackArg != nil && p.CallbackArg(arg) {
 			out[i] = typ.Unknown
+		} else if p.ShallowFuncLiterals {
+			if fn, ok := arg.(*ast.FunctionExpr); ok {
+				out[i] = phasecore.ShallowFunctionLiteralSignature(fn)
+				continue
+			}
+			out[i] = projectedOrExprArgType(i, arg, p.ArgTypes, p.ExprType)
 		} else if i < len(p.ArgTypes) && p.ArgTypes[i] != nil {
 			out[i] = p.ArgTypes[i]
 		} else {
@@ -186,6 +170,18 @@ func callArgTypesForExpectedArgProjection(p ExpectedArgProjection) []typ.Type {
 		}
 	}
 	return out
+}
+
+func projectedOrExprArgType(i int, arg ast.Expr, projected []typ.Type, exprType func(ast.Expr) typ.Type) typ.Type {
+	if i < len(projected) && projected[i] != nil && !typ.IsUnknown(projected[i]) {
+		return projected[i]
+	}
+	if exprType != nil {
+		if t := exprType(arg); t != nil {
+			return t
+		}
+	}
+	return typ.Unknown
 }
 
 func expectedCallbackEntryValues(expected []typ.Type, idx int) summary.EntryValues {

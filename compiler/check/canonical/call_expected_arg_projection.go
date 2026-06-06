@@ -4,7 +4,6 @@ import (
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/callsite"
-	canonicalcall "github.com/wippyai/go-lua/compiler/check/canonical/call"
 	"github.com/wippyai/go-lua/compiler/check/canonical/transfer"
 	"github.com/wippyai/go-lua/types/domain/value/product"
 	"github.com/wippyai/go-lua/types/flow"
@@ -44,10 +43,11 @@ func (p expectedCallArgProjection) argType(argIdx int) typ.Type {
 	call := p.info.Call
 	expectedArgs := p.typer.expectedArgProjection(
 		call,
-		canonicalcall.ShallowArgTypes(call.Args, p.ctx.ArgTypes(), p.ctx.ExprType),
+		p.ctx.ArgTypes(),
 		p.ctx.ExprType,
 		p.methodReceiverType(),
 	)
+	expectedArgs.ShallowFuncLiterals = true
 	expectedArgs.Callee = p.calleeType()
 	expectedArgs.IsMethod = callsite.IsMethodCallInfo(p.info)
 	expectedArgs.MethodName = p.info.Method

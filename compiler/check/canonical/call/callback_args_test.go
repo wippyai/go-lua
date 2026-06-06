@@ -60,16 +60,18 @@ func TestExpectedArgProjectionMasksCallbackBodyDemandDuringExpectationProjection
 	}
 }
 
-func TestShallowArgTypesKeepsDirectFunctionLiteralShallow(t *testing.T) {
+func TestExpectedArgProjectionKeepsDirectFunctionLiteralShallow(t *testing.T) {
 	t.Parallel()
 
 	callbackArg := &ast.FunctionExpr{}
 	otherArg := &ast.IdentExpr{Value: "value"}
-	got := ShallowArgTypes(
-		[]ast.Expr{callbackArg, otherArg},
-		[]typ.Type{typ.Func().Param("x", typ.String).Returns(typ.Number).Build(), typ.Integer},
-		func(ast.Expr) typ.Type { return typ.Boolean },
-	)
+	call := &ast.FuncCallExpr{Args: []ast.Expr{callbackArg, otherArg}}
+	got := callArgTypesForExpectedArgProjection(ExpectedArgProjection{
+		Call:                call,
+		ArgTypes:            []typ.Type{typ.Func().Param("x", typ.String).Returns(typ.Number).Build(), typ.Integer},
+		ExprType:            func(ast.Expr) typ.Type { return typ.Boolean },
+		ShallowFuncLiterals: true,
+	})
 
 	if len(got) != 2 {
 		t.Fatalf("shallow args = %v, want two args", got)
