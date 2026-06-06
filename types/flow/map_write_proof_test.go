@@ -342,6 +342,23 @@ func TestApplyKeyArrayProofPublishesArrayTable(t *testing.T) {
 	}
 }
 
+func TestApplyKeyArrayPathProofNormalizesArrayTable(t *testing.T) {
+	arrayPath := constraint.NewPath(cfg.SymbolID(48), "node_order")
+	tablePath := constraint.NewPath(cfg.SymbolID(49), "nodes")
+	arrayKey := StablePathKey(arrayPath)
+	tableKey := StablePathKey(tablePath)
+
+	state := PointStateDomain.Top()
+	if changed := ApplyKeyArrayPathProof(&state, arrayPath, tablePath); !changed {
+		t.Fatal("ApplyKeyArrayPathProof reported no change")
+	}
+
+	tables := state.KeyPresence.KeyArrayTables(arrayKey)
+	if len(tables) != 1 || tables[0] != tableKey {
+		t.Fatalf("key-array tables = %v, want %s", tables, tableKey)
+	}
+}
+
 func TestApplyEmptyKeyArrayProofPublishesEmptyArray(t *testing.T) {
 	arrayPath := constraint.NewPath(cfg.SymbolID(35), "node_order")
 	arrayKey := StablePathKey(arrayPath)
@@ -355,6 +372,19 @@ func TestApplyEmptyKeyArrayProofPublishesEmptyArray(t *testing.T) {
 
 	if !state.KeyPresence.HasEmptyKeyArray(arrayKey) || !state.KeyPresence.HasAppendHistoryBase(arrayKey) {
 		t.Fatalf("empty key-array proof missing empty/base facts: %s", state.KeyPresence.Format())
+	}
+}
+
+func TestApplyEmptyKeyArrayPathProofNormalizesArray(t *testing.T) {
+	arrayPath := constraint.NewPath(cfg.SymbolID(50), "node_order")
+	arrayKey := StablePathKey(arrayPath)
+
+	state := PointStateDomain.Top()
+	if changed := ApplyEmptyKeyArrayPathProof(&state, arrayPath); !changed {
+		t.Fatal("ApplyEmptyKeyArrayPathProof reported no change")
+	}
+	if !state.KeyPresence.HasEmptyKeyArray(arrayKey) {
+		t.Fatalf("empty key-array proof missing: %s", state.KeyPresence.Format())
 	}
 }
 

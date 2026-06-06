@@ -248,6 +248,15 @@ func ApplyKeyArrayProof(out *PointState, proof KeyArrayProof) bool {
 	return !KeyPresenceFactsDomain.Equal(before, out.KeyPresence)
 }
 
+func ApplyKeyArrayPathProof(out *PointState, arrayPath, tablePath constraint.Path) bool {
+	array, arrayOK := StableAddressOfPath(arrayPath)
+	table, tableOK := StableAddressOfPath(tablePath)
+	if !arrayOK || !tableOK {
+		return false
+	}
+	return ApplyKeyArrayProof(out, KeyArrayProof{Array: array, Table: table})
+}
+
 // ApplyEmptyKeyArrayProof applies empty key-array provenance to point state.
 func ApplyEmptyKeyArrayProof(out *PointState, proof EmptyKeyArrayProof) bool {
 	if out == nil || proof.Array.Key() == "" {
@@ -256,6 +265,14 @@ func ApplyEmptyKeyArrayProof(out *PointState, proof EmptyKeyArrayProof) bool {
 	before := out.KeyPresence
 	out.KeyPresence = out.KeyPresence.WithEmptyKeyArrayAddress(proof.Array)
 	return !KeyPresenceFactsDomain.Equal(before, out.KeyPresence)
+}
+
+func ApplyEmptyKeyArrayPathProof(out *PointState, arrayPath constraint.Path) bool {
+	array, ok := StableAddressOfPath(arrayPath)
+	if !ok {
+		return false
+	}
+	return ApplyEmptyKeyArrayProof(out, EmptyKeyArrayProof{Array: array})
 }
 
 // ApplyKeyArrayValueProof applies a value-carrying key-array proof to point state.

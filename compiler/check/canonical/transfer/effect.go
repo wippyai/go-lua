@@ -833,14 +833,7 @@ func (t *Transfer) seedKeyArrayForWriteEffect(out *flow.PointState, effect Write
 	if !ok {
 		return
 	}
-	arrayAddr, arrayOK := flow.StableAddressOfPath(path)
-	tableAddr, tableOK := flow.StableAddressOfPath(effect.KeyArrayTable)
-	if arrayOK && tableOK {
-		flow.ApplyKeyArrayProof(out, flow.KeyArrayProof{
-			Array: arrayAddr,
-			Table: tableAddr,
-		})
-	}
+	flow.ApplyKeyArrayPathProof(out, path, effect.KeyArrayTable)
 }
 
 func (t *Transfer) seedEmptyContainerKeyArraysForWriteEffect(out *flow.PointState, effect WriteEffect) bool {
@@ -864,9 +857,7 @@ func (t *Transfer) seedEmptyContainerKeyArraysForWriteEffect(out *flow.PointStat
 	}
 	before := out.KeyPresence
 	for _, array := range arrays {
-		if addr, ok := flow.StableAddressOfPath(rootPath.Field(array)); ok {
-			flow.ApplyEmptyKeyArrayProof(out, flow.EmptyKeyArrayProof{Array: addr})
-		}
+		flow.ApplyEmptyKeyArrayPathProof(out, rootPath.Field(array))
 	}
 	return !flow.KeyPresenceFactsDomain.Equal(before, out.KeyPresence)
 }
