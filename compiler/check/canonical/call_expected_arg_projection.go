@@ -103,8 +103,10 @@ func (p expectedCallArgProjection) expectedCalleeType(expr ast.Expr) typ.Type {
 			}
 		}
 	}
-	if fn := p.typer.callFunctionForDemand(call, p.ctx.ExprType); fn != nil {
-		return fn
+	if demand, ok := p.typer.callDemandProjection(call, p.ctx.ExprType); ok {
+		if fn := demand.functionShape(); fn != nil {
+			return fn
+		}
 	}
 	if expr != nil {
 		if t := p.ctx.ExprType(expr); t != nil && !typ.IsAbsentOrUnknown(t) {

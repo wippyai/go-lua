@@ -2340,7 +2340,11 @@ func (ct callTyper) CallArgDemands(call *ast.FuncCallExpr, ctx transfer.ProductC
 			return proj.argDemands()
 		},
 		FunctionShape: func(call *ast.FuncCallExpr) *typ.Function {
-			return ct.callFunctionForDemand(call, ctx.ExprType)
+			proj, ok := ct.callDemandProjection(call, ctx.ExprType)
+			if !ok {
+				return nil
+			}
+			return proj.functionShape()
 		},
 		SelfType: func(*ast.FuncCallExpr) typ.Type {
 			return ctx.SelfType
@@ -2371,23 +2375,6 @@ func (ct callTyper) summaryForCallEntryContext(entry canonicalcall.EntryContext)
 		entry.EntryValues(),
 		entry.EntryFacts(),
 	)
-}
-
-func (ct callTyper) callFunctionForDemand(call *ast.FuncCallExpr, exprType func(ast.Expr) typ.Type) *typ.Function {
-	if ct.d == nil || call == nil || ct.d.activeProgram == nil {
-		return nil
-	}
-	resolver := ct.callTypeResolver(exprType)
-	return canonicalcall.FunctionForDemand(canonicalcall.DemandFunctionInput{
-		Call: call,
-		SummaryFunction: func(call *ast.FuncCallExpr) *typ.Function {
-			if ref, ok := ct.resolveCalleeRef(call, ct.d.activeProgram); ok && ct.d.activeQueries != nil && ct.d.activeCtx != nil {
-				return ct.d.signatureForRef(ct.d.activeProgram, ref)
-			}
-			return nil
-		},
-		Resolver: resolver,
-	})
 }
 
 // CallReturnValues is the product-carrier call-return path. It preserves product

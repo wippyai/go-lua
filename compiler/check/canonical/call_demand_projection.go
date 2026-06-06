@@ -1,0 +1,47 @@
+package canonical
+
+import (
+	"github.com/wippyai/go-lua/compiler/ast"
+	canonicalcall "github.com/wippyai/go-lua/compiler/check/canonical/call"
+	"github.com/wippyai/go-lua/types/typ"
+)
+
+// callDemandProjection owns the callable shape used by argument-demand fallback.
+// Summary-known targets win; otherwise it delegates to caller-visible type
+// resolution through the pure call-boundary demand normalizer.
+type callDemandProjection struct {
+	typer    callTyper
+	call     *ast.FuncCallExpr
+	exprType func(ast.Expr) typ.Type
+}
+
+func (ct callTyper) callDemandProjection(call *ast.FuncCallExpr, exprType func(ast.Expr) typ.Type) (callDemandProjection, bool) {
+	if ct.d == nil || call == nil || ct.d.activeProgram == nil {
+		return callDemandProjection{}, false
+	}
+	return callDemandProjection{
+		typer:    ct,
+		call:     call,
+		exprType: exprType,
+	}, true
+}
+
+func (p callDemandProjection) functionShape() *typ.Function {
+	return canonicalcall.FunctionForDemand(canonicalcall.DemandFunctionInput{
+		Call:            p.call,
+		SummaryFunction: p.summaryFunction,
+		Resolver:        p.typer.callTypeResolver(p.exprType),
+	})
+}
+
+func (p callDemandProjection) summaryFunction(call *ast.FuncCallExpr) *typ.Function {
+	d := p.typer.d
+	if d == nil || d.activeProgram == nil || d.activeQueries == nil || d.activeCtx == nil {
+		return nil
+	}
+	ref, ok := p.typer.resolveCalleeRef(call, d.activeProgram)
+	if !ok {
+		return nil
+	}
+	return d.signatureForRef(d.activeProgram, ref)
+}
