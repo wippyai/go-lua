@@ -42,16 +42,8 @@ func TestDirectCallEntryProductValues_ProjectsAllExactInformativeArgs(t *testing
 	call := &ast.FuncCallExpr{Args: args}
 	callee := summary.FuncRef{GraphID: 7}
 
-	got := summary.DirectCallEntryProductValuesWithParamCount(
-		call,
-		callee,
-		[]product.AbstractValue{
-			product.FromType(typ.String),
-			product.FromType(typ.Number),
-			product.FromType(typ.Boolean),
-			product.FromType(typ.Unknown),
-		},
-		func(gotCallee summary.FuncRef, _ *ast.FuncCallExpr, argIdx int) (int, int, bool) {
+	projection := summary.CallEntryContextProjection{
+		ParamSlot: func(gotCallee summary.FuncRef, _ *ast.FuncCallExpr, argIdx int) (int, int, bool) {
 			if gotCallee != callee {
 				t.Fatalf("callee = %v, want %v", gotCallee, callee)
 			}
@@ -68,8 +60,13 @@ func TestDirectCallEntryProductValues_ProjectsAllExactInformativeArgs(t *testing
 				return -1, -1, false
 			}
 		},
-		nil,
-	)
+	}
+	got := projection.DirectProductValues(callee, call, []product.AbstractValue{
+		product.FromType(typ.String),
+		product.FromType(typ.Number),
+		product.FromType(typ.Boolean),
+		product.FromType(typ.Unknown),
+	})
 
 	wantSlot0 := product.Join(product.FromType(typ.String), product.FromType(typ.Number))
 	wantSlot2 := product.FromType(typ.Boolean)
@@ -88,11 +85,8 @@ func TestDirectCallEntryProductValues_ProjectsOmittedFixedArgsAsNil(t *testing.T
 	call := &ast.FuncCallExpr{Args: []ast.Expr{&ast.StringExpr{Value: "World"}}}
 	callee := summary.FuncRef{GraphID: 7}
 
-	got := summary.DirectCallEntryProductValuesWithParamCount(
-		call,
-		callee,
-		[]product.AbstractValue{product.FromType(typ.String)},
-		func(gotCallee summary.FuncRef, _ *ast.FuncCallExpr, runtimeIdx int) (int, int, bool) {
+	projection := summary.CallEntryContextProjection{
+		ParamSlot: func(gotCallee summary.FuncRef, _ *ast.FuncCallExpr, runtimeIdx int) (int, int, bool) {
 			if gotCallee != callee {
 				t.Fatalf("callee = %v, want %v", gotCallee, callee)
 			}
@@ -105,10 +99,11 @@ func TestDirectCallEntryProductValues_ProjectsOmittedFixedArgsAsNil(t *testing.T
 				return -1, -1, false
 			}
 		},
-		func(summary.FuncRef, *ast.FuncCallExpr) int {
+		ParamSlotCount: func(summary.FuncRef, *ast.FuncCallExpr) int {
 			return 2
 		},
-	)
+	}
+	got := projection.DirectProductValues(callee, call, []product.AbstractValue{product.FromType(typ.String)})
 
 	if len(got) != 2 {
 		t.Fatalf("entry values = %#v, want supplied string and omitted nil", got)
@@ -132,14 +127,8 @@ func TestDirectCallEntryProductValues_ProjectsMethodReceiverRuntimeSlot(t *testi
 	callee := summary.FuncRef{GraphID: 8}
 	receiverType := typ.NewRecord().Field("nodes", typ.NewRecord().Build()).Build()
 
-	got := summary.DirectCallEntryProductValuesWithParamCount(
-		call,
-		callee,
-		[]product.AbstractValue{
-			product.FromType(receiverType),
-			product.FromType(typ.String),
-		},
-		func(gotCallee summary.FuncRef, _ *ast.FuncCallExpr, runtimeIdx int) (int, int, bool) {
+	projection := summary.CallEntryContextProjection{
+		ParamSlot: func(gotCallee summary.FuncRef, _ *ast.FuncCallExpr, runtimeIdx int) (int, int, bool) {
 			if gotCallee != callee {
 				t.Fatalf("callee = %v, want %v", gotCallee, callee)
 			}
@@ -152,8 +141,11 @@ func TestDirectCallEntryProductValues_ProjectsMethodReceiverRuntimeSlot(t *testi
 				return 0, 0, false
 			}
 		},
-		nil,
-	)
+	}
+	got := projection.DirectProductValues(callee, call, []product.AbstractValue{
+		product.FromType(receiverType),
+		product.FromType(typ.String),
+	})
 
 	if gotSlot0, ok := got[0]; !ok || !typ.TypeEquals(gotSlot0.ProjectValue(), receiverType) {
 		t.Fatalf("receiver slot = %v/%v, want %v", gotSlot0.ProjectValue(), ok, receiverType)

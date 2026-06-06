@@ -271,15 +271,7 @@ func (c callEntryProjector) valuesForRef(ref summary.FuncRef, call *ast.FuncCall
 		}
 		runtimeValues[i] = product.FromType(t)
 	}
-	return summary.DirectCallEntryProductValuesWithParamCount(
-		call,
-		ref,
-		runtimeValues,
-		c.paramSlot,
-		func(callee summary.FuncRef, _ *ast.FuncCallExpr) int {
-			return c.program.paramSlotCount(callee)
-		},
-	)
+	return c.entryValueLayout().DirectProductValues(ref, call, runtimeValues)
 }
 
 func (ct callTyper) productCallEntryContext(ref summary.FuncRef, call *ast.FuncCallExpr, ctx transfer.ProductCallContext) (canonicalcall.EntryContext, bool) {
@@ -323,16 +315,17 @@ func (c callEntryProjector) productValuesForRef(ref summary.FuncRef, call *ast.F
 	if call == nil {
 		return nil
 	}
-	values := summary.DirectCallEntryProductValuesWithParamCount(
-		call,
-		ref,
-		runtimeValues,
-		c.paramSlot,
-		func(callee summary.FuncRef, _ *ast.FuncCallExpr) int {
+	values := c.entryValueLayout().DirectProductValues(ref, call, runtimeValues)
+	return c.program.withPrototypeMethodSurfacesForMethodCall(ref, call, values)
+}
+
+func (c callEntryProjector) entryValueLayout() summary.CallEntryContextProjection {
+	return summary.CallEntryContextProjection{
+		ParamSlot: c.paramSlot,
+		ParamSlotCount: func(callee summary.FuncRef, _ *ast.FuncCallExpr) int {
 			return c.program.paramSlotCount(callee)
 		},
-	)
-	return c.program.withPrototypeMethodSurfacesForMethodCall(ref, call, values)
+	}
 }
 
 func (c callEntryProjector) productReferencesForRef(ref summary.FuncRef, call *ast.FuncCallExpr, ctx transfer.ProductCallContext) (flow.FunctionRefs, flow.ClosureRefs) {

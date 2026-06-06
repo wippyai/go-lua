@@ -245,10 +245,10 @@ func MergeEntryValuesWithFixed(fixed, fallback EntryValues) EntryValues {
 	return entryValuesDomain.Join(out, nil)
 }
 
-// DirectCallEntryProductValuesWithParamCount projects already-solved runtime
+// directCallEntryProductValuesWithParamCount projects already-solved runtime
 // argument product values, including exact nil for omitted fixed parameters when
 // supplied with a finite callee parameter layout.
-func DirectCallEntryProductValuesWithParamCount(
+func directCallEntryProductValuesWithParamCount(
 	call *ast.FuncCallExpr,
 	callee FuncRef,
 	runtimeValues []product.AbstractValue,
@@ -329,6 +329,12 @@ type CallEntryContextProjection struct {
 	EvalArg             EntryValueEvaluator
 	NormalizeValues     EntryValuesNormalizer
 	ReferencePaths      EntryReferenceProjection
+}
+
+// DirectProductValues projects already-solved runtime argument values for one
+// callee using this projection's runtime-slot layout.
+func (p CallEntryContextProjection) DirectProductValues(callee FuncRef, call *ast.FuncCallExpr, runtimeValues []product.AbstractValue) EntryValues {
+	return directCallEntryProductValuesWithParamCount(call, callee, runtimeValues, p.ParamSlot, p.ParamSlotCount)
 }
 
 // ProjectKeys returns deterministic, de-duplicated callee summary keys for every
@@ -518,7 +524,7 @@ func (p CallEntryContextProjection) directProductValues(callee FuncRef, call *as
 		}
 		argValues[i] = av
 	}
-	return DirectCallEntryProductValuesWithParamCount(call, callee, argValues, p.ParamSlot, p.ParamSlotCount)
+	return directCallEntryProductValuesWithParamCount(call, callee, argValues, p.ParamSlot, p.ParamSlotCount)
 }
 
 func (p CallEntryContextProjection) directReferenceAxes(callee FuncRef, call *ast.FuncCallExpr, in *flow.PointState) (flow.FunctionRefs, flow.ClosureRefs) {
