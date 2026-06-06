@@ -228,23 +228,23 @@ func specForCall(in specInput) *contract.Spec {
 	return contract.ExtractSpec(callee)
 }
 
-// ContainerElementUnionInput is the canonical call-site policy for mutator specs
-// that widen a container's element slot.
-type ContainerElementUnionInput struct {
+// ContainerElementUnionProjection is the canonical call-site policy for mutator
+// specs that widen a container's element slot.
+type ContainerElementUnionProjection struct {
 	Call *ast.FuncCallExpr
 
 	SummarySignature func(*ast.FuncCallExpr) typ.Type
 	Resolver         TypeResolver
 }
 
-// ContainerElementUnionsForCall extracts ContainerElementUnion labels from a
-// call's resolved spec. It returns labels only; transfer owns lowering parameter
-// refs to runtime argument places/values and applying the product mutation.
-func ContainerElementUnionsForCall(in ContainerElementUnionInput) []effect.ContainerElementUnion {
+// Effects extracts ContainerElementUnion labels from a call's resolved spec. It
+// returns labels only; transfer owns lowering parameter refs to runtime argument
+// places/values and applying the product mutation.
+func (p ContainerElementUnionProjection) Effects() []effect.ContainerElementUnion {
 	spec := specForCall(specInput{
-		Call:             in.Call,
-		SummarySignature: in.SummarySignature,
-		Resolver:         in.Resolver,
+		Call:             p.Call,
+		SummarySignature: p.SummarySignature,
+		Resolver:         p.Resolver,
 	})
 	if spec == nil || len(spec.Effects.Labels) == 0 {
 		return nil

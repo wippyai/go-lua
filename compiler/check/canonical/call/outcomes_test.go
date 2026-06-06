@@ -439,7 +439,7 @@ func TestCallbackSpecForCallMethodReceiverFallback(t *testing.T) {
 	}
 }
 
-func TestContainerElementUnionsForCallExtractsMutateLabels(t *testing.T) {
+func TestContainerElementUnionProjectionExtractsMutateLabels(t *testing.T) {
 	t.Parallel()
 
 	call := &ast.FuncCallExpr{Func: &ast.IdentExpr{Value: "send"}}
@@ -450,13 +450,13 @@ func TestContainerElementUnionsForCallExtractsMutateLabels(t *testing.T) {
 		},
 	})
 
-	got := ContainerElementUnionsForCall(ContainerElementUnionInput{
+	got := (ContainerElementUnionProjection{
 		Call: call,
 		SummarySignature: func(*ast.FuncCallExpr) typ.Type {
 			return typ.Func().Spec(spec).Build()
 		},
 		Resolver: TypeResolver{},
-	})
+	}).Effects()
 
 	if len(got) != 1 || got[0].Container.Index != 0 || got[0].Value.Index != 1 {
 		t.Fatalf("container element unions = %#v, want one 0<-1 effect", got)

@@ -17,7 +17,7 @@ func (ct callTyper) ContainerElementUnionsFromValues(call *ast.FuncCallExpr, ctx
 	if d == nil || call == nil || d.activeProgram == nil {
 		return nil
 	}
-	return canonicalcall.ContainerElementUnionsForCall(canonicalcall.ContainerElementUnionInput{
+	return (canonicalcall.ContainerElementUnionProjection{
 		Call: call,
 		SummarySignature: func(call *ast.FuncCallExpr) typ.Type {
 			if ref, ok := ct.resolveCalleeRef(call, d.activeProgram); ok {
@@ -26,5 +26,5 @@ func (ct callTyper) ContainerElementUnionsFromValues(call *ast.FuncCallExpr, ctx
 			return nil
 		},
 		Resolver: ct.callTypeResolver(ctx.ExprType),
-	})
+	}).Effects()
 }
