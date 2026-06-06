@@ -283,6 +283,88 @@ func (set keyPresenceFactSet) lessOrEqualTo(other keyPresenceFactSet) bool {
 		appendElementFieldOriginFactsContainAll(other.appendOrigins, set.appendOrigins)
 }
 
+func (set keyPresenceFactSet) intersect(other keyPresenceFactSet, widenPayload bool) keyPresenceFactSet {
+	appendBases := intersectOrderedFacts(set.appendBases, other.appendBases, appendHistoryBaseLess, func(a, b AppendHistoryBaseFact) bool { return a == b })
+	appendBases = append(appendBases, appendHistoryBasesSpecializedByEmpty(set.emptyArrays, other.appendBases)...)
+	appendBases = append(appendBases, appendHistoryBasesSpecializedByEmpty(other.emptyArrays, set.appendBases)...)
+	appendBases = compactAppendHistoryBases(appendBases)
+
+	events := append(append([]AppendHistoryEventFact(nil), set.appendEvents...), other.appendEvents...)
+	coverage := append(append([]AppendHistoryCoverageFact(nil), set.appendCoverage...), other.appendCoverage...)
+	origins := append(append([]AppendElementFieldOriginFact(nil), set.appendOrigins...), other.appendOrigins...)
+	appendEvents := appendHistoryEventsForBases(events, appendBases)
+	appendCoverage := appendHistoryCoverageForBases(coverage, appendBases, appendEvents, widenPayload)
+	appendOrigins := appendElementFieldOriginsForBases(origins, appendBases)
+
+	arrays := intersectOrderedFacts(set.arrays, other.arrays, keyArrayLess, func(a, b KeyArrayFact) bool { return a == b })
+	arrays = append(arrays, keyArrayFactsSpecializedByEmpty(set.emptyArrays, other.arrays)...)
+	arrays = append(arrays, keyArrayFactsSpecializedByEmpty(other.emptyArrays, set.arrays)...)
+
+	arrayValues := intersectKeyArrayValueFacts(set.arrayValues, other.arrayValues, widenPayload)
+	arrayValues = append(arrayValues, keyArrayValueFactsSpecializedByEmpty(set.emptyArrays, other.arrayValues)...)
+	arrayValues = append(arrayValues, keyArrayValueFactsSpecializedByEmpty(other.emptyArrays, set.arrayValues)...)
+
+	return keyPresenceFactSet{
+		entries:        intersectOrderedFacts(set.entries, other.entries, keyPresenceLess, func(a, b KeyPresenceFact) bool { return a == b }),
+		values:         intersectOrderedFacts(set.values, other.values, keyValueLess, func(a, b KeyValueFact) bool { return a == b }),
+		arrays:         arrays,
+		emptyArrays:    intersectOrderedFacts(set.emptyArrays, other.emptyArrays, emptyKeyArrayLess, func(a, b EmptyKeyArrayFact) bool { return a == b }),
+		arrayValues:    arrayValues,
+		appends:        intersectOrderedFacts(set.appends, other.appends, appendedKeyLess, func(a, b AppendedKeyFact) bool { return a == b }),
+		pending:        intersectOrderedFacts(set.pending, other.pending, pendingKeyArrayLess, func(a, b PendingKeyArrayFact) bool { return a == b }),
+		appendBases:    appendBases,
+		appendEvents:   appendEvents,
+		appendCoverage: appendCoverage,
+		appendOrigins:  appendOrigins,
+	}
+}
+
+func intersectOrderedFacts[T any](a, b []T, less func(T, T) bool, same func(T, T) bool) []T {
+	var out []T
+	i, j := 0, 0
+	for i < len(a) && j < len(b) {
+		switch {
+		case less(a[i], b[j]):
+			i++
+		case less(b[j], a[i]):
+			j++
+		default:
+			if same(a[i], b[j]) {
+				out = append(out, a[i])
+			}
+			i++
+			j++
+		}
+	}
+	return out
+}
+
+func intersectKeyArrayValueFacts(a, b []KeyArrayValueFact, widenPayload bool) []KeyArrayValueFact {
+	var out []KeyArrayValueFact
+	i, j := 0, 0
+	for i < len(a) && j < len(b) {
+		switch {
+		case keyArrayValueLess(a[i], b[j]):
+			i++
+		case keyArrayValueLess(b[j], a[i]):
+			j++
+		default:
+			value := product.Domain.Join(a[i].Value, b[j].Value)
+			if widenPayload {
+				value = product.Domain.Widen(a[i].Value, b[j].Value)
+			}
+			out = append(out, KeyArrayValueFact{
+				Array: a[i].Array,
+				Table: a[i].Table,
+				Value: value,
+			})
+			i++
+			j++
+		}
+	}
+	return out
+}
+
 func sameOrderedFacts[T any](a, b []T, equal func(T, T) bool) bool {
 	if len(a) != len(b) {
 		return false
@@ -1855,149 +1937,7 @@ func intersectKeyPresenceFactsWiden(prev, next KeyPresenceFacts) KeyPresenceFact
 }
 
 func intersectKeyPresenceFactsWithPayload(a, b KeyPresenceFacts, widenPayload bool) KeyPresenceFacts {
-	var out []KeyPresenceFact
-	i, j := 0, 0
-	for i < len(a.entries) && j < len(b.entries) {
-		switch {
-		case keyPresenceLess(a.entries[i], b.entries[j]):
-			i++
-		case keyPresenceLess(b.entries[j], a.entries[i]):
-			j++
-		default:
-			out = append(out, a.entries[i])
-			i++
-			j++
-		}
-	}
-	var values []KeyValueFact
-	i, j = 0, 0
-	for i < len(a.values) && j < len(b.values) {
-		switch {
-		case keyValueLess(a.values[i], b.values[j]):
-			i++
-		case keyValueLess(b.values[j], a.values[i]):
-			j++
-		default:
-			values = append(values, a.values[i])
-			i++
-			j++
-		}
-	}
-	var arrays []KeyArrayFact
-	i, j = 0, 0
-	for i < len(a.arrays) && j < len(b.arrays) {
-		switch {
-		case keyArrayLess(a.arrays[i], b.arrays[j]):
-			i++
-		case keyArrayLess(b.arrays[j], a.arrays[i]):
-			j++
-		default:
-			arrays = append(arrays, a.arrays[i])
-			i++
-			j++
-		}
-	}
-	arrays = append(arrays, keyArrayFactsSpecializedByEmpty(a.emptyArrays, b.arrays)...)
-	arrays = append(arrays, keyArrayFactsSpecializedByEmpty(b.emptyArrays, a.arrays)...)
-	var emptyArrays []EmptyKeyArrayFact
-	i, j = 0, 0
-	for i < len(a.emptyArrays) && j < len(b.emptyArrays) {
-		switch {
-		case emptyKeyArrayLess(a.emptyArrays[i], b.emptyArrays[j]):
-			i++
-		case emptyKeyArrayLess(b.emptyArrays[j], a.emptyArrays[i]):
-			j++
-		default:
-			emptyArrays = append(emptyArrays, a.emptyArrays[i])
-			i++
-			j++
-		}
-	}
-	var arrayValues []KeyArrayValueFact
-	i, j = 0, 0
-	for i < len(a.arrayValues) && j < len(b.arrayValues) {
-		switch {
-		case keyArrayValueLess(a.arrayValues[i], b.arrayValues[j]):
-			i++
-		case keyArrayValueLess(b.arrayValues[j], a.arrayValues[i]):
-			j++
-		default:
-			value := product.Domain.Join(a.arrayValues[i].Value, b.arrayValues[j].Value)
-			if widenPayload {
-				value = product.Domain.Widen(a.arrayValues[i].Value, b.arrayValues[j].Value)
-			}
-			arrayValues = append(arrayValues, KeyArrayValueFact{
-				Array: a.arrayValues[i].Array,
-				Table: a.arrayValues[i].Table,
-				Value: value,
-			})
-			i++
-			j++
-		}
-	}
-	arrayValues = append(arrayValues, keyArrayValueFactsSpecializedByEmpty(a.emptyArrays, b.arrayValues)...)
-	arrayValues = append(arrayValues, keyArrayValueFactsSpecializedByEmpty(b.emptyArrays, a.arrayValues)...)
-	var pending []PendingKeyArrayFact
-	var appends []AppendedKeyFact
-	i, j = 0, 0
-	for i < len(a.appends) && j < len(b.appends) {
-		switch {
-		case appendedKeyLess(a.appends[i], b.appends[j]):
-			i++
-		case appendedKeyLess(b.appends[j], a.appends[i]):
-			j++
-		default:
-			appends = append(appends, a.appends[i])
-			i++
-			j++
-		}
-	}
-	i, j = 0, 0
-	for i < len(a.pending) && j < len(b.pending) {
-		switch {
-		case pendingKeyArrayLess(a.pending[i], b.pending[j]):
-			i++
-		case pendingKeyArrayLess(b.pending[j], a.pending[i]):
-			j++
-		default:
-			pending = append(pending, a.pending[i])
-			i++
-			j++
-		}
-	}
-	var appendBases []AppendHistoryBaseFact
-	i, j = 0, 0
-	for i < len(a.appendBases) && j < len(b.appendBases) {
-		switch {
-		case appendHistoryBaseLess(a.appendBases[i], b.appendBases[j]):
-			i++
-		case appendHistoryBaseLess(b.appendBases[j], a.appendBases[i]):
-			j++
-		default:
-			appendBases = append(appendBases, a.appendBases[i])
-			i++
-			j++
-		}
-	}
-	appendBases = append(appendBases, appendHistoryBasesSpecializedByEmpty(a.emptyArrays, b.appendBases)...)
-	appendBases = append(appendBases, appendHistoryBasesSpecializedByEmpty(b.emptyArrays, a.appendBases)...)
-	appendBases = compactAppendHistoryBases(appendBases)
-	appendEvents := appendHistoryEventsForBases(append(a.AppendHistoryEventEntries(), b.AppendHistoryEventEntries()...), appendBases)
-	appendCoverage := appendHistoryCoverageForBases(append(a.AppendHistoryCoverageEntries(), b.AppendHistoryCoverageEntries()...), appendBases, appendEvents, widenPayload)
-	appendOrigins := appendElementFieldOriginsForBases(append(a.AppendElementFieldOriginEntries(), b.AppendElementFieldOriginEntries()...), appendBases)
-	return keyPresenceFactSet{
-		entries:        out,
-		values:         values,
-		arrays:         arrays,
-		emptyArrays:    emptyArrays,
-		arrayValues:    arrayValues,
-		appends:        appends,
-		pending:        pending,
-		appendBases:    appendBases,
-		appendEvents:   appendEvents,
-		appendCoverage: appendCoverage,
-		appendOrigins:  appendOrigins,
-	}.canonical()
+	return a.factSet().intersect(b.factSet(), widenPayload).canonical()
 }
 
 func keyArrayFactsSpecializedByEmpty(empty []EmptyKeyArrayFact, concrete []KeyArrayFact) []KeyArrayFact {
