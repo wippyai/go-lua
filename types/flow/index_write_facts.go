@@ -226,6 +226,63 @@ func validIndexWriteAdmissionFact(fact IndexWriteAdmissionFact) bool {
 	return fact.Target != "" && !fact.Key.IsZero() && !fact.Value.IsZero()
 }
 
+func (f IndexWriteAdmissionFacts) coversWithAbsentKeyPaths(
+	want IndexWriteAdmissionFacts,
+	pred func(product.AbstractValue, product.AbstractValue) bool,
+	absent func(constraint.PathKey) bool,
+) bool {
+	if f.bottom {
+		return true
+	}
+	if want.bottom {
+		return false
+	}
+	for _, entry := range want.entries {
+		if idx, ok := findIndexWriteAdmissionFact(f.entries, entry); ok {
+			have := f.entries[idx]
+			if pred(have.Key, entry.Key) && pred(have.Value, entry.Value) {
+				continue
+			}
+		}
+		if entry.KeyPath != "" && indexWriteAdmissionAbsent(absent, entry.KeyPath) {
+			continue
+		}
+		return false
+	}
+	return true
+}
+
+func (f IndexWriteAdmissionFacts) withFactsProvedByAbsentKeyPaths(
+	facts IndexWriteAdmissionFacts,
+	absent func(constraint.PathKey) bool,
+) IndexWriteAdmissionFacts {
+	if facts.bottom {
+		return f
+	}
+	out := f
+	for _, entry := range facts.entries {
+		if entry.KeyPath == "" || out.hasIdentity(entry) {
+			continue
+		}
+		if indexWriteAdmissionAbsent(absent, entry.KeyPath) {
+			out = out.With(entry)
+		}
+	}
+	return out
+}
+
+func (f IndexWriteAdmissionFacts) hasIdentity(fact IndexWriteAdmissionFact) bool {
+	if f.bottom {
+		return false
+	}
+	_, ok := findIndexWriteAdmissionFact(f.entries, fact)
+	return ok
+}
+
+func indexWriteAdmissionAbsent(absent func(constraint.PathKey) bool, key constraint.PathKey) bool {
+	return absent != nil && absent(key)
+}
+
 // Format renders f deterministically for tests and diagnostics.
 func (f IndexWriteAdmissionFacts) Format() string {
 	if f.bottom {

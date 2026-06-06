@@ -429,22 +429,9 @@ func pointKeyPresenceJoinOneSided(out KeyPresenceFacts, facts KeyPresenceFacts, 
 }
 
 func pointPathAliasesLessOrEq(a, b PointState) bool {
-	if a.PathAliases.bottom {
-		return true
-	}
-	if b.PathAliases.bottom {
-		return false
-	}
-	for _, want := range b.PathAliases.Entries() {
-		if _, ok := findPathAliasFact(a.PathAliases.entries, want); ok {
-			continue
-		}
-		if pointPathKeyDefinitelyAbsent(a, want.Value) {
-			continue
-		}
-		return false
-	}
-	return true
+	return a.PathAliases.coversWithAbsentValues(b.PathAliases, func(key constraint.PathKey) bool {
+		return pointPathKeyDefinitelyAbsent(a, key)
+	})
 }
 
 func pointPathAliasesJoin(a, b PointState) PathAliasFacts {
@@ -455,40 +442,19 @@ func pointPathAliasesJoin(a, b PointState) PathAliasFacts {
 }
 
 func pointPathAliasesJoinOneSided(out PathAliasFacts, facts PathAliasFacts, other PointState) PathAliasFacts {
-	if facts.bottom {
-		return out
-	}
-	for _, entry := range facts.Entries() {
-		if _, ok := findPathAliasFact(out.entries, entry); ok {
-			continue
-		}
-		if pointPathKeyDefinitelyAbsent(other, entry.Value) {
-			out = out.With(entry)
-		}
-	}
-	return out
+	return out.withAliasesProvedByAbsentValues(facts, func(key constraint.PathKey) bool {
+		return pointPathKeyDefinitelyAbsent(other, key)
+	})
 }
 
 func pointIndexWritesLessOrEq(a, b PointState) bool {
-	if a.IndexWrites.bottom {
-		return true
-	}
-	if b.IndexWrites.bottom {
-		return false
-	}
-	for _, want := range b.IndexWrites.Entries() {
-		if idx, ok := findIndexWriteAdmissionFact(a.IndexWrites.entries, want); ok {
-			have := a.IndexWrites.entries[idx]
-			if product.Domain.LessOrEq(have.Key, want.Key) && product.Domain.LessOrEq(have.Value, want.Value) {
-				continue
-			}
-		}
-		if want.KeyPath != "" && pointPathKeyDefinitelyAbsent(a, want.KeyPath) {
-			continue
-		}
-		return false
-	}
-	return true
+	return a.IndexWrites.coversWithAbsentKeyPaths(
+		b.IndexWrites,
+		product.Domain.LessOrEq,
+		func(key constraint.PathKey) bool {
+			return pointPathKeyDefinitelyAbsent(a, key)
+		},
+	)
 }
 
 func pointIndexWritesJoin(
@@ -512,26 +478,9 @@ func pointIndexWritesJoinOneSided(
 	facts IndexWriteAdmissionFacts,
 	other PointState,
 ) IndexWriteAdmissionFacts {
-	if facts.bottom {
-		return out
-	}
-	for _, entry := range facts.Entries() {
-		if entry.KeyPath == "" || pointIndexWritesHasIdentity(out, entry) {
-			continue
-		}
-		if pointPathKeyDefinitelyAbsent(other, entry.KeyPath) {
-			out = out.With(entry)
-		}
-	}
-	return out
-}
-
-func pointIndexWritesHasIdentity(facts IndexWriteAdmissionFacts, fact IndexWriteAdmissionFact) bool {
-	if facts.bottom {
-		return false
-	}
-	_, ok := findIndexWriteAdmissionFact(facts.entries, fact)
-	return ok
+	return out.withFactsProvedByAbsentKeyPaths(facts, func(key constraint.PathKey) bool {
+		return pointPathKeyDefinitelyAbsent(other, key)
+	})
 }
 
 func pointPathKeyDefinitelyAbsent(ps PointState, key constraint.PathKey) bool {
