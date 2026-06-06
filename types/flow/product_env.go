@@ -1,0 +1,110 @@
+package flow
+
+import (
+	"github.com/wippyai/go-lua/types/cfg"
+	"github.com/wippyai/go-lua/types/constraint"
+	"github.com/wippyai/go-lua/types/domain/value"
+	"github.com/wippyai/go-lua/types/domain/value/product"
+	"github.com/wippyai/go-lua/types/narrow"
+	"github.com/wippyai/go-lua/types/typ"
+)
+
+// SymbolProductEnv builds the ProductDomain environment for reducing
+// constraints against one symbol-rooted product value.
+func SymbolProductEnv(
+	sym cfg.SymbolID,
+	base product.AbstractValue,
+	facts PointFacts,
+	resolver narrow.Resolver,
+) (constraint.Env, constraint.PathKey) {
+	rootKey := SymbolPathKey(sym, nil)
+	env := constraint.Env{
+		Resolver: resolver,
+		ResolvePath: func(path constraint.Path) constraint.PathKey {
+			return StablePathKey(path)
+		},
+		PathTypeAt: func(key constraint.PathKey) typ.Type {
+			addr, ok := StableAddressFromKey(key)
+			if !ok {
+				return nil
+			}
+			keySym, ok := addr.Symbol()
+			if !ok || keySym != sym {
+				return nil
+			}
+			segments := addr.Segments()
+			if len(segments) == 0 {
+				return product.ProjectValueOrUnknown(base)
+			}
+			if t, ok := ProductMemberPathType(base, segments); ok {
+				return t
+			}
+			if t, ok := facts.PathType(constraint.Path{Symbol: sym, Segments: segments}); ok {
+				return t
+			}
+			return nil
+		},
+	}
+	return env, rootKey
+}
+
+// ProductMemberPathType projects the type at a structured member/index suffix
+// under base.
+func ProductMemberPathType(base product.AbstractValue, segments []constraint.Segment) (typ.Type, bool) {
+	value, ok := ProductMemberPathValue(base, segments)
+	if !ok || value.IsZero() {
+		return nil, false
+	}
+	t := product.ProjectValueOrUnknown(value)
+	return t, !typ.IsAbsentOrUnknown(t)
+}
+
+// ProductMemberPathValue projects the product value at a structured
+// member/index suffix under base.
+func ProductMemberPathValue(base product.AbstractValue, segments []constraint.Segment) (product.AbstractValue, bool) {
+	if base.IsZero() {
+		return product.AbstractValue{}, false
+	}
+	cur := base
+	for _, seg := range segments {
+		member, ok := value.MemberFromSegment(seg)
+		if !ok {
+			return product.AbstractValue{}, false
+		}
+		next, ok := product.MemberOf(cur, member)
+		if !ok || next.IsZero() {
+			return product.AbstractValue{}, false
+		}
+		cur = next
+	}
+	return cur, true
+}
+
+// ProductDomainHasNarrowingForSymbol reports whether domain has any narrowed
+// fact rooted at sym.
+func ProductDomainHasNarrowingForSymbol(domain *ProductDomain, sym cfg.SymbolID) bool {
+	if domain == nil || sym == 0 {
+		return false
+	}
+	for key := range domain.Type.Narrowed {
+		if StableAddressKeyHasSymbol(key, sym) {
+			return true
+		}
+	}
+	for key := range domain.Shape.Narrowed {
+		if StableAddressKeyHasSymbol(key, sym) {
+			return true
+		}
+	}
+	return false
+}
+
+// StableAddressKeyHasSymbol reports whether key denotes a path rooted at sym.
+func StableAddressKeyHasSymbol(key constraint.PathKey, sym cfg.SymbolID) bool {
+	addr, ok := StableAddressFromKey(key)
+	if !ok {
+		return false
+	}
+	keySym, ok := addr.Symbol()
+	return ok && keySym == sym
+}

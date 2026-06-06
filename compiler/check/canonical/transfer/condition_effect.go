@@ -112,44 +112,12 @@ func (t *Transfer) conditionProductReductionValue(
 		base = product.Top()
 	}
 	fact = conditionWithPositiveFieldPresence(fact)
-	rootKey := flow.SymbolPathKey(sym, nil)
-	pathTypeCache := make(map[constraint.PathKey]typ.Type)
-	env := constraint.Env{
-		Resolver: fieldResolver,
-		ResolvePath: func(path constraint.Path) constraint.PathKey {
-			return flow.StablePathKey(path)
-		},
-		PathTypeAt: func(key constraint.PathKey) typ.Type {
-			if cached, ok := pathTypeCache[key]; ok {
-				return cached
-			}
-			keySym, segments, ok := flow.ParseSymbolPathKey(key)
-			if !ok || keySym != sym {
-				return nil
-			}
-			if len(segments) == 0 {
-				t := product.ProjectValueOrUnknown(base)
-				pathTypeCache[key] = t
-				return t
-			}
-			if t, ok := productPathType(base, segments); ok {
-				pathTypeCache[key] = t
-				return t
-			}
-			path := constraint.Path{Symbol: sym, Segments: append([]constraint.Segment(nil), segments...)}
-			if t, ok := flow.PointFactsOf(*out).PathType(path); ok {
-				pathTypeCache[key] = t
-				return t
-			}
-			pathTypeCache[key] = nil
-			return nil
-		},
-	}
+	env, rootKey := flow.SymbolProductEnv(sym, base, flow.PointFactsOf(*out), fieldResolver)
 	domain := flow.NewProductDomain(env)
 	if !domain.ApplyCondition(fact) {
 		return product.AbstractValue{}, false
 	}
-	if !productDomainHasSymbolNarrowing(domain, sym) {
+	if !flow.ProductDomainHasNarrowingForSymbol(domain, sym) {
 		return product.AbstractValue{}, false
 	}
 	projected := domain.ProjectedTypeAt(rootKey, fieldResolver)
@@ -164,28 +132,6 @@ func (t *Transfer) conditionProductReductionValue(
 		return product.AbstractValue{}, false
 	}
 	return product.FromRefinedType(base, projected), true
-}
-
-func productDomainHasSymbolNarrowing(domain *flow.ProductDomain, sym cfg.SymbolID) bool {
-	if domain == nil || sym == 0 {
-		return false
-	}
-	for key := range domain.Type.Narrowed {
-		if productDomainKeyBelongsToSymbol(key, sym) {
-			return true
-		}
-	}
-	for key := range domain.Shape.Narrowed {
-		if productDomainKeyBelongsToSymbol(key, sym) {
-			return true
-		}
-	}
-	return false
-}
-
-func productDomainKeyBelongsToSymbol(key constraint.PathKey, sym cfg.SymbolID) bool {
-	keySym, _, ok := flow.ParseSymbolPathKey(key)
-	return ok && keySym == sym
 }
 
 func conditionWithPositiveFieldPresence(fact constraint.Condition) constraint.Condition {
