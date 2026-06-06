@@ -19,28 +19,23 @@ type EntryReferenceArgPath func(runtimeIdx int, arg ast.Expr) (constraint.Path, 
 // path, for example a direct function literal.
 type EntryFunctionRefArgResolver func(runtimeIdx int, arg ast.Expr, in *flow.PointState) (flow.FunctionRefSet, bool)
 
-// EntryFunctionRefsArgResolver resolves a whole function-identity subtree for a
-// runtime argument expression whose value is not represented by a caller storage
-// path, for example a call expression returning a record with function fields.
-// Returned paths are rooted at placeholder 0 and are rebased to the callee
-// parameter path.
-type EntryFunctionRefsArgResolver func(runtimeIdx int, arg ast.Expr, in *flow.PointState) (flow.FunctionRefs, bool)
-
 // EntryClosureRefArgResolver resolves closure identity carried by a runtime
 // argument expression when it is not represented by rebasing caller ClosureRefs.
 type EntryClosureRefArgResolver func(runtimeIdx int, arg ast.Expr, in *flow.PointState) (flow.ClosureRefSet, bool)
 
-// EntryClosureRefsArgResolver is the closure-value counterpart to
-// EntryFunctionRefsArgResolver.
-type EntryClosureRefsArgResolver func(runtimeIdx int, arg ast.Expr, in *flow.PointState) (flow.ClosureRefs, bool)
+// EntryReferenceTreesArgResolver resolves whole function/closure identity
+// subtrees carried by one runtime argument whose value is not represented by a
+// caller storage path, for example a call expression returning a record with
+// callable fields. Returned paths are rooted at placeholder 0 and are rebased to
+// the callee parameter path.
+type EntryReferenceTreesArgResolver func(runtimeIdx int, arg ast.Expr, in *flow.PointState) (flow.FunctionRefs, flow.ClosureRefs, bool)
 
 // EntryReferenceArgSources resolves callable-reference evidence carried by a
 // runtime argument when simple caller-path rebasing is not enough.
 type EntryReferenceArgSources struct {
-	FunctionRefs    EntryFunctionRefArgResolver
-	FunctionRefTree EntryFunctionRefsArgResolver
-	ClosureRefs     EntryClosureRefArgResolver
-	ClosureRefTree  EntryClosureRefsArgResolver
+	FunctionRefs EntryFunctionRefArgResolver
+	RefTrees     EntryReferenceTreesArgResolver
+	ClosureRefs  EntryClosureRefArgResolver
 }
 
 // directCallEntryReferenceInput is the call-boundary projection for reference
@@ -77,21 +72,20 @@ func directCallEntryReferences(in directCallEntryReferenceInput) (flow.FunctionR
 				closureRefs = flow.ClosureRefsDomain.Join(closureRefs, rebaseEntryClosureRefs(in.ClosureRefs, source, target))
 			}
 		}
-		if in.ArgSources.FunctionRefTree != nil {
-			if refs, ok := in.ArgSources.FunctionRefTree(runtimeIdx, arg, in.State); ok &&
-				!flow.FunctionRefsDomain.Equal(refs, flow.FunctionRefsDomain.Bottom()) {
-				functionRefs = flow.FunctionRefsDomain.Join(functionRefs, rebaseEntryFunctionRefs(refs, constraint.NewPlaceholder(0), target))
+		if in.ArgSources.RefTrees != nil {
+			functionTree, closureTree, ok := in.ArgSources.RefTrees(runtimeIdx, arg, in.State)
+			if ok {
+				if !flow.FunctionRefsDomain.Equal(functionTree, flow.FunctionRefsDomain.Bottom()) {
+					functionRefs = flow.FunctionRefsDomain.Join(functionRefs, rebaseEntryFunctionRefs(functionTree, constraint.NewPlaceholder(0), target))
+				}
+				if !flow.ClosureRefsDomain.Equal(closureTree, flow.ClosureRefsDomain.Bottom()) {
+					closureRefs = flow.ClosureRefsDomain.Join(closureRefs, rebaseEntryClosureRefs(closureTree, constraint.NewPlaceholder(0), target))
+				}
 			}
 		}
 		if in.ArgSources.FunctionRefs != nil {
 			if set, ok := in.ArgSources.FunctionRefs(runtimeIdx, arg, in.State); ok && !set.IsBottom() {
 				functionRefs = joinFunctionRefAt(functionRefs, target.Key(), set)
-			}
-		}
-		if in.ArgSources.ClosureRefTree != nil {
-			if refs, ok := in.ArgSources.ClosureRefTree(runtimeIdx, arg, in.State); ok &&
-				!flow.ClosureRefsDomain.Equal(refs, flow.ClosureRefsDomain.Bottom()) {
-				closureRefs = flow.ClosureRefsDomain.Join(closureRefs, rebaseEntryClosureRefs(refs, constraint.NewPlaceholder(0), target))
 			}
 		}
 		if in.ArgSources.ClosureRefs != nil {

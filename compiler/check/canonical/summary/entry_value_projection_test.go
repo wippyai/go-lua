@@ -286,11 +286,11 @@ func TestDirectCallEntryReferences_RebasesFunctionCallReturnSubtreeToParamPath(t
 		},
 	}
 	got, _ := projection.DirectReferences(callee, call, nil, flow.FunctionRefsDomain.Bottom(), flow.ClosureRefsDomain.Bottom(), summary.EntryReferenceArgSources{
-		FunctionRefTree: func(_ int, gotArg ast.Expr, _ *flow.PointState) (flow.FunctionRefs, bool) {
+		RefTrees: func(_ int, gotArg ast.Expr, _ *flow.PointState) (flow.FunctionRefs, flow.ClosureRefs, bool) {
 			if gotArg != arg {
 				t.Fatalf("arg = %#v, want call expression", gotArg)
 			}
-			return returnRefs, true
+			return returnRefs, flow.ClosureRefsDomain.Bottom(), true
 		},
 	})
 
@@ -347,11 +347,11 @@ func TestDirectCallEntryReferences_RebasesClosureCallReturnSubtreeToParamPath(t 
 		},
 	}
 	_, got := projection.DirectReferences(callee, call, nil, flow.FunctionRefsDomain.Bottom(), flow.ClosureRefsDomain.Bottom(), summary.EntryReferenceArgSources{
-		ClosureRefTree: func(_ int, gotArg ast.Expr, _ *flow.PointState) (flow.ClosureRefs, bool) {
+		RefTrees: func(_ int, gotArg ast.Expr, _ *flow.PointState) (flow.FunctionRefs, flow.ClosureRefs, bool) {
 			if gotArg != arg {
 				t.Fatalf("arg = %#v, want call expression", gotArg)
 			}
-			return returnRefs, true
+			return flow.FunctionRefsDomain.Bottom(), returnRefs, true
 		},
 	})
 

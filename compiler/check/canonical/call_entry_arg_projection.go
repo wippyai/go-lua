@@ -89,19 +89,28 @@ func (p callEntryArgProjection) functionArgRefs(arg ast.Expr) (flow.FunctionRefS
 	return functionRefSetFromSummaryRefs(got, ok)
 }
 
-func (p callEntryArgProjection) functionArgTreeRefs(arg ast.Expr) (flow.FunctionRefs, bool) {
+func (p callEntryArgProjection) argRefTrees(arg ast.Expr) (flow.FunctionRefs, flow.ClosureRefs, bool) {
 	if p.evidence.nestedCall == nil {
-		return flow.FunctionRefsDomain.Bottom(), false
+		return flow.FunctionRefsDomain.Bottom(), flow.ClosureRefsDomain.Bottom(), false
 	}
 	call, ok := valueCallExpr(arg)
 	if !ok {
-		return flow.FunctionRefsDomain.Bottom(), false
+		return flow.FunctionRefsDomain.Bottom(), flow.ClosureRefsDomain.Bottom(), false
 	}
-	returns := p.typer.CallReturnRefsFromValues(call, p.evidence.nestedCall(call)).FunctionRefs
-	if len(returns) == 0 || flow.FunctionRefsDomain.Equal(returns[0], flow.FunctionRefsDomain.Bottom()) {
-		return flow.FunctionRefsDomain.Bottom(), false
+	returns := p.typer.CallReturnRefsFromValues(call, p.evidence.nestedCall(call))
+	functionRefs := flow.FunctionRefsDomain.Bottom()
+	if len(returns.FunctionRefs) > 0 {
+		functionRefs = returns.FunctionRefs[0]
 	}
-	return returns[0], true
+	closureRefs := flow.ClosureRefsDomain.Bottom()
+	if len(returns.ClosureRefs) > 0 {
+		closureRefs = returns.ClosureRefs[0]
+	}
+	if flow.FunctionRefsDomain.Equal(functionRefs, flow.FunctionRefsDomain.Bottom()) &&
+		flow.ClosureRefsDomain.Equal(closureRefs, flow.ClosureRefsDomain.Bottom()) {
+		return flow.FunctionRefsDomain.Bottom(), flow.ClosureRefsDomain.Bottom(), false
+	}
+	return functionRefs, closureRefs, true
 }
 
 func (p callEntryArgProjection) closureArgRefs(arg ast.Expr) (flow.ClosureRefSet, bool) {
@@ -126,21 +135,6 @@ func (p callEntryArgProjection) closureArgRefs(arg ast.Expr) (flow.ClosureRefSet
 	}
 	resolver := p.typer.targetResolver(p.program)
 	return resolver.ResolveClosureRefSetAtExpr(arg, p.closureRefs())
-}
-
-func (p callEntryArgProjection) closureArgTreeRefs(arg ast.Expr) (flow.ClosureRefs, bool) {
-	if p.evidence.nestedCall == nil {
-		return flow.ClosureRefsDomain.Bottom(), false
-	}
-	call, ok := valueCallExpr(arg)
-	if !ok {
-		return flow.ClosureRefsDomain.Bottom(), false
-	}
-	returns := p.typer.CallReturnRefsFromValues(call, p.evidence.nestedCall(call)).ClosureRefs
-	if len(returns) == 0 || flow.ClosureRefsDomain.Equal(returns[0], flow.ClosureRefsDomain.Bottom()) {
-		return flow.ClosureRefsDomain.Bottom(), false
-	}
-	return returns[0], true
 }
 
 func (p callEntryArgProjection) captureCells(captured []cfg.SymbolID) flow.CaptureCells {

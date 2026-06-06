@@ -44,14 +44,11 @@ func (a callEntryAccess) pointReferenceArgSources() summary.EntryReferenceArgSou
 		FunctionRefs: func(_ int, arg ast.Expr, in *flow.PointState) (flow.FunctionRefSet, bool) {
 			return a.projector.pointArgProjection(in).functionArgRefs(arg)
 		},
-		FunctionRefTree: func(_ int, arg ast.Expr, in *flow.PointState) (flow.FunctionRefs, bool) {
-			return a.projector.pointArgProjection(in).functionArgTreeRefs(arg)
+		RefTrees: func(_ int, arg ast.Expr, in *flow.PointState) (flow.FunctionRefs, flow.ClosureRefs, bool) {
+			return a.projector.pointArgProjection(in).argRefTrees(arg)
 		},
 		ClosureRefs: func(_ int, arg ast.Expr, in *flow.PointState) (flow.ClosureRefSet, bool) {
 			return a.projector.pointArgProjection(in).closureArgRefs(arg)
-		},
-		ClosureRefTree: func(_ int, arg ast.Expr, in *flow.PointState) (flow.ClosureRefs, bool) {
-			return a.projector.pointArgProjection(in).closureArgTreeRefs(arg)
 		},
 	}
 }
@@ -62,14 +59,11 @@ func (a callEntryAccess) productReferenceArgSources(ctx transfer.ProductCallCont
 		FunctionRefs: func(_ int, arg ast.Expr, _ *flow.PointState) (flow.FunctionRefSet, bool) {
 			return projection.functionArgRefs(arg)
 		},
-		FunctionRefTree: func(_ int, arg ast.Expr, _ *flow.PointState) (flow.FunctionRefs, bool) {
-			return projection.functionArgTreeRefs(arg)
+		RefTrees: func(_ int, arg ast.Expr, _ *flow.PointState) (flow.FunctionRefs, flow.ClosureRefs, bool) {
+			return projection.argRefTrees(arg)
 		},
 		ClosureRefs: func(_ int, arg ast.Expr, _ *flow.PointState) (flow.ClosureRefSet, bool) {
 			return projection.closureArgRefs(arg)
-		},
-		ClosureRefTree: func(_ int, arg ast.Expr, _ *flow.PointState) (flow.ClosureRefs, bool) {
-			return projection.closureArgTreeRefs(arg)
 		},
 	}
 }
