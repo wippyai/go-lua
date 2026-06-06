@@ -860,86 +860,19 @@ func (d *Driver) buildFuncResult(sess api.AnalysisSession, prog *program, querie
 }
 
 func (d *Driver) projectSolvedCallExpectedArgs(prog *program, ref summary.FuncRef, evidence api.FlowEvidence) []api.CallExpectedArgEvidence {
-	if d == nil || prog == nil || len(evidence.Calls) == 0 {
+	proj, ok := d.solvedCallEvidenceProjection(prog, ref, evidence)
+	if !ok {
 		return nil
 	}
-	g := prog.Graph(ref)
-	tr, _ := prog.transfers[ref].(*transfer.Transfer)
-	fs, ok := d.states[ref]
-	if g == nil || tr == nil || !ok {
-		return nil
-	}
-	var out []api.CallExpectedArgEvidence
-	for i, ev := range evidence.Calls {
-		info := ev.Info
-		if info == nil || info.Call == nil || len(info.Call.Args) == 0 {
-			continue
-		}
-		ps, ok := callEventPointState(fs, ev.Point)
-		if !ok {
-			continue
-		}
-		args := make([]typ.Type, len(info.Call.Args))
-		any := false
-		for argIdx := range info.Call.Args {
-			expected := prog.expectedCallArgType(g, tr, ev.Point, info, &ps, argIdx)
-			if expected == nil || typ.IsAbsentOrUnknown(expected) || typ.IsAny(expected) {
-				continue
-			}
-			args[argIdx] = expected
-			any = true
-		}
-		if !any {
-			continue
-		}
-		if out == nil {
-			out = make([]api.CallExpectedArgEvidence, len(evidence.Calls))
-		}
-		out[i] = api.NewCallExpectedArgEvidence(args)
-	}
-	return out
-}
-
-func callEventPointState(fs state.FunctionState, point cfg.Point) (flow.PointState, bool) {
-	ps, ok := fs.Points[point]
-	if ok {
-		return ps, true
-	}
-	ps, ok = fs.InPoints[point]
-	return ps, ok
+	return proj.expectedArgs()
 }
 
 func (d *Driver) projectCallContracts(prog *program, ref summary.FuncRef, evidence api.FlowEvidence) []api.CallContractEvidence {
-	if d == nil || prog == nil || len(evidence.Calls) == 0 {
+	proj, ok := d.solvedCallEvidenceProjection(prog, ref, evidence)
+	if !ok {
 		return nil
 	}
-	g := prog.Graph(ref)
-	tr, _ := prog.transfers[ref].(*transfer.Transfer)
-	fs, ok := d.states[ref]
-	if g == nil || tr == nil || !ok {
-		return nil
-	}
-	ct := callTyper{d: d, g: g, ref: ref}
-	var contracts []api.CallContractEvidence
-	for i, ev := range evidence.Calls {
-		if ev.Info == nil || ev.Info.Call == nil || len(ev.Info.Call.Args) == 0 {
-			continue
-		}
-		ps, ok := fs.Points[ev.Point]
-		if !ok {
-			continue
-		}
-		ctx := tr.ProductCallContext(&ps, ev.Info.Call)
-		demands := ct.CallArgDemands(ev.Info.Call, ctx)
-		if len(demands) == 0 {
-			continue
-		}
-		if contracts == nil {
-			contracts = make([]api.CallContractEvidence, len(evidence.Calls))
-		}
-		contracts[i] = api.NewCallContractEvidence(demands)
-	}
-	return contracts
+	return proj.contracts()
 }
 
 // program is the canonical driver's summary.Program: the module's call graph,
