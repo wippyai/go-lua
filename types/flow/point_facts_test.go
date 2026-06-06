@@ -91,6 +91,21 @@ func TestPointFactsPathValueUsesStaticMemberFactsBeforeRootTraversal(t *testing.
 	}
 }
 
+func TestPointFactsAddressValueUsesPathReadLaw(t *testing.T) {
+	const sym = cfg.SymbolID(13)
+	path := constraint.NewPath(sym, "entry").Field("id")
+	want := product.FromType(typ.String)
+	addr := testStableAddressKey(t, SymbolPathKey(sym, path.Segments))
+	state := PointState{
+		StaticMembers: StaticMemberFactsDomain.Top().WithAddress(addr, want),
+	}
+
+	got, ok := PointFactsOf(state).AddressValue(addr)
+	if !ok || !product.Domain.Equal(got, want) {
+		t.Fatalf("AddressValue(static fact) = %v/%v, want string/true", got, ok)
+	}
+}
+
 func TestPointFactsChildPathFactsEnumeratesDirectMaterializedChildren(t *testing.T) {
 	const sym = cfg.SymbolID(12)
 	root := constraint.NewPath(sym, "entry")

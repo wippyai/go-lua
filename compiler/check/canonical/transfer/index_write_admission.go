@@ -205,14 +205,6 @@ func (t *Transfer) indexWriteReadKeyPaths(out *flow.PointState, key ast.Expr) []
 	return outPaths
 }
 
-func indexWritePathFromKey(key constraint.PathKey) (constraint.Path, bool) {
-	addr, ok := flow.StableAddressFromKey(key)
-	if !ok {
-		return constraint.Path{}, false
-	}
-	return addr.Path()
-}
-
 func indexWriteReadCanUseKeyValueOnly(keyType typ.Type) bool {
 	if keyType == nil || typ.IsAbsentOrUnknown(keyType) {
 		return false

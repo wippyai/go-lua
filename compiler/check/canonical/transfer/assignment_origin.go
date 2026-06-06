@@ -167,18 +167,20 @@ func (t *Transfer) applyArrayElementKeyProvenanceEffect(
 	changed := false
 	arrayKey := arrayAddr.Key()
 	for _, table := range tables {
+		tableAddr, tableOK := flow.StableAddressFromKey(table)
+		if !tableOK {
+			continue
+		}
 		for _, value := range out.KeyPresence.KeyArrayValues(arrayKey, table) {
-			tablePath, ok := indexWritePathFromKey(table)
-			if !ok || tablePath.IsEmpty() || value.IsZero() {
+			if value.IsZero() {
 				continue
 			}
 			keyValue := effect.Value
 			if keyValue.IsZero() {
 				keyValue = product.FromType(typ.Unknown)
 			}
-			tableAddr, tableOK := flow.StableAddressOfPath(tablePath)
 			keyAddr, keyOK := flow.StableAddressOfPath(effect.TargetPath)
-			if !tableOK || !keyOK {
+			if !keyOK {
 				continue
 			}
 			changed = flow.ApplyIndexWriteAdmissionProof(out, flow.IndexWriteAdmissionProof{
@@ -271,11 +273,11 @@ func (t *Transfer) copyAssignmentIndexWriteAdmissions(out *flow.PointState, sour
 		if entry.Key != sourceKey {
 			continue
 		}
-		tablePath, ok := indexWritePathFromKey(entry.Table)
-		if !ok || tablePath.IsEmpty() {
+		tableAddr, tableOK := flow.StableAddressFromKey(entry.Table)
+		if !tableOK {
 			continue
 		}
-		tableValue, ok := flow.PointFactsOf(*out).PathValue(tablePath)
+		tableValue, ok := flow.PointFactsOf(*out).AddressValue(tableAddr)
 		if !ok || tableValue.IsZero() {
 			continue
 		}
@@ -287,9 +289,8 @@ func (t *Transfer) copyAssignmentIndexWriteAdmissions(out *flow.PointState, sour
 		if present.IsZero() || !flow.AdmissibleMapWriteProofValue(present) {
 			continue
 		}
-		tableAddr, tableOK := flow.StableAddressFromKey(entry.Table)
 		keyAddr, keyOK := flow.StableAddressFromKey(targetKey)
-		if !tableOK || !keyOK {
+		if !keyOK {
 			continue
 		}
 		flow.ApplyIndexWriteAdmissionProof(out, flow.IndexWriteAdmissionProof{

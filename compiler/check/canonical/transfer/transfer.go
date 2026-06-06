@@ -2606,14 +2606,16 @@ func (t *Transfer) seedIndexedIterKeyArrayValues(out *flow.PointState, arrayPath
 		keyType = product.ProjectValueOrUnknown(keyValue)
 	}
 	for _, table := range out.KeyPresence.KeyArrayTables(arrayKey) {
+		tableAddr, tableOK := flow.StableAddressFromKey(table)
+		if !tableOK {
+			continue
+		}
 		for _, value := range out.KeyPresence.KeyArrayValues(arrayKey, table) {
-			tablePath, ok := indexWritePathFromKey(table)
-			if !ok || tablePath.IsEmpty() || value.IsZero() {
+			if value.IsZero() {
 				continue
 			}
-			tableAddr, tableOK := flow.StableAddressOfPath(tablePath)
 			keyAddr, keyOK := flow.StableAddressOfPath(keyPath)
-			if !tableOK || !keyOK {
+			if !keyOK {
 				continue
 			}
 			flow.ApplyIndexWriteAdmissionProof(out, flow.IndexWriteAdmissionProof{
@@ -3689,17 +3691,16 @@ func (t *Transfer) boundaryAppendKeyPlanTables(out *flow.PointState, plan bounda
 }
 
 func (t *Transfer) boundaryAppendKeyValue(out *flow.PointState, table constraint.PathKey, keyPath constraint.Path) (product.AbstractValue, bool) {
-	tablePath, ok := indexWritePathFromKey(table)
-	if !ok || tablePath.IsEmpty() || keyPath.IsEmpty() {
+	tableAddr, tableOK := flow.StableAddressFromKey(table)
+	if !tableOK || keyPath.IsEmpty() {
 		return product.AbstractValue{}, false
 	}
 	keyType := typ.Unknown
 	if keyValue, ok := flow.PointFactsOf(*out).PathValue(keyPath); ok && !keyValue.IsZero() {
 		keyType = product.ProjectValueOrUnknown(keyValue)
 	}
-	tableAddr, tableOK := flow.StableAddressOfPath(tablePath)
 	keyAddr, keyOK := flow.StableAddressOfPath(keyPath)
-	if !tableOK || !keyOK {
+	if !keyOK {
 		return product.AbstractValue{}, false
 	}
 	value, ok := out.IndexWrites.AdmissionAtAddress(flow.IndexWriteAddressQuery{

@@ -84,6 +84,17 @@ func (f PointFacts) StaticMemberValue(path constraint.Path) (product.AbstractVal
 	return f.state.StaticMembers.ValueAtAddress(addr)
 }
 
+// AddressValue returns a product value for a stable symbol-rooted address. It
+// is the address-domain form of PathValue for callers that already operate on
+// normalized fact identities.
+func (f PointFacts) AddressValue(addr StableAddress) (product.AbstractValue, bool) {
+	path, ok := addr.Path()
+	if !ok || path.Symbol == 0 {
+		return product.AbstractValue{}, false
+	}
+	return f.PathValue(path)
+}
+
 // PathValue returns a product value for path by applying point-local static
 // member facts and structural product-member traversal from the root value.
 func (f PointFacts) PathValue(path constraint.Path) (product.AbstractValue, bool) {
