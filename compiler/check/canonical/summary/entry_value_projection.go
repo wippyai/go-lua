@@ -517,12 +517,13 @@ func (p ClosureEntryContextProjection) closureEntryContextKey(ref FuncRef, closu
 		entryRefs = flow.ProjectFunctionRefsByReferencePaths(entryRefs, projection)
 		entryClosures = flow.ProjectClosureRefsByReferencePaths(entryClosures, projection)
 	}
-	return NewKeyWithEntryContext(
+	return NewKeyWithEntryContextFacts(
 		ref,
 		entryCells,
 		flow.OverlayFunctionRefs(entryRefs, liveRefs),
 		flow.OverlayClosureRefs(entryClosures, liveClosures),
 		nil,
+		flow.BoundaryFactsDomain.Top(),
 	)
 }
 
@@ -637,12 +638,13 @@ func (p CallEntryContextProjection) callbackEntryKeys(site callEntrySite) []Key 
 					if canonref.FromFlow(closure.Ref) != ref {
 						continue
 					}
-					keys = append(keys, NewKeyWithEntryContext(
+					keys = append(keys, NewKeyWithEntryContextFacts(
 						ref,
 						closure.EntryCells(),
 						closure.EntryFunctionRefs(),
 						closure.EntryClosureRefs(),
 						callback.Values,
+						flow.BoundaryFactsDomain.Top(),
 					))
 					emitted = true
 				}

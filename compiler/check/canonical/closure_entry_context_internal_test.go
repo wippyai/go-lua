@@ -183,12 +183,13 @@ return M
 	}
 	fs := q.IntraWithKey(
 		ctx,
-		summary.NewKeyWithEntryContext(
+		summary.NewKeyWithEntryContextFacts(
 			makeRef,
 			flow.CaptureCellsOf([]flow.CaptureCell{{Symbol: tSym, Value: product.FromType(typ.NewRecord().Build())}}),
 			flow.FunctionRefsDomain.Bottom(),
 			flow.ClosureRefsDomain.Bottom(),
 			nil,
+			flow.BoundaryFactsDomain.Top(),
 		),
 	)
 	got, ok := flow.PointFactsOf(fs.InPoints[prog.Graph(makeRef).Entry()]).SymbolType(tSym)

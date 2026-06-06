@@ -57,19 +57,21 @@ func TestDiagnosticContextFrontierUsesFallbackOnlyForUncalledFunctions(t *testin
 	uncalledClosure := summary.FuncRef{GraphID: 3}
 	uncalledDefault := summary.FuncRef{GraphID: 4}
 	calledKey := summary.NewDefaultKey(called, nil)
-	calledClosureKey := summary.NewKeyWithEntryContext(
+	calledClosureKey := summary.NewKeyWithEntryContextFacts(
 		called,
 		flow.CaptureCellsOf([]flow.CaptureCell{{Symbol: 10, Value: product.FromType(typ.String)}}),
 		flow.FunctionRefsDomain.Bottom(),
 		flow.ClosureRefsDomain.Bottom(),
 		nil,
+		flow.BoundaryFactsDomain.Top(),
 	)
-	closureKey := summary.NewKeyWithEntryContext(
+	closureKey := summary.NewKeyWithEntryContextFacts(
 		uncalledClosure,
 		flow.CaptureCellsOf([]flow.CaptureCell{{Symbol: 11, Value: product.FromType(typ.Number)}}),
 		flow.FunctionRefsDomain.Bottom(),
 		flow.ClosureRefsDomain.Bottom(),
 		nil,
+		flow.BoundaryFactsDomain.Top(),
 	)
 	defaultKey := summary.NewDefaultKey(uncalledDefault, nil)
 
@@ -114,19 +116,21 @@ func TestDiagnosticContextFrontierPromotesFallbackDiscoveredCallContext(t *testi
 	root := summary.FuncRef{GraphID: 1}
 	caller := summary.FuncRef{GraphID: 2}
 	callee := summary.FuncRef{GraphID: 3}
-	callerFallback := summary.NewKeyWithEntryContext(
+	callerFallback := summary.NewKeyWithEntryContextFacts(
 		caller,
 		flow.CaptureCellsOf([]flow.CaptureCell{{Symbol: 10, Value: product.FromType(typ.String)}}),
 		flow.FunctionRefsDomain.Bottom(),
 		flow.ClosureRefsDomain.Bottom(),
 		nil,
+		flow.BoundaryFactsDomain.Top(),
 	)
-	calleeFallback := summary.NewKeyWithEntryContext(
+	calleeFallback := summary.NewKeyWithEntryContextFacts(
 		callee,
 		flow.CaptureCellsOf([]flow.CaptureCell{{Symbol: 11, Value: product.FromType(typ.String)}}),
 		flow.FunctionRefsDomain.Bottom(),
 		flow.ClosureRefsDomain.Bottom(),
 		nil,
+		flow.BoundaryFactsDomain.Top(),
 	)
 	calleeCall := summary.NewDefaultKey(callee, summary.EntryValues{0: product.FromType(typ.Number)})
 

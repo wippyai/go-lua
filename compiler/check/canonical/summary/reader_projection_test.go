@@ -49,12 +49,13 @@ func TestReaderProjectsSnapshotSummaryCells(t *testing.T) {
 func TestReaderSnapshotOverlayOverridesExactContext(t *testing.T) {
 	ref := FuncRef{GraphID: 17}
 	values := EntryValues{0: product.FromType(typ.Boolean)}
-	key := NewKeyWithEntryContext(
+	key := NewKeyWithEntryContextFacts(
 		ref,
 		flow.CaptureCellsDomain.Bottom(),
 		flow.FunctionRefsDomain.Bottom(),
 		flow.ClosureRefsDomain.Bottom(),
 		values,
+		flow.BoundaryFactsDomain.Top(),
 	)
 	reader := NewReaderWithOverlay(nil, nil, map[FuncRef]Summary{
 		ref: {Returns: []product.AbstractValue{product.FromType(typ.String)}},

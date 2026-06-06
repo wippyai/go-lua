@@ -37,12 +37,6 @@ func NewDefaultKey(ref FuncRef, values EntryValues) Key {
 	return NewKeyWithEntryContextFacts(ref, flow.CaptureCellsDomain.Bottom(), flow.FunctionRefsDomain.Bottom(), flow.ClosureRefsDomain.Bottom(), values, flow.BoundaryFactsDomain.Top())
 }
 
-// NewKeyWithEntryContext constructs the canonical summary key for every
-// caller-provided entry component.
-func NewKeyWithEntryContext(ref FuncRef, entry flow.CaptureCells, refs flow.FunctionRefs, closures flow.ClosureRefs, values EntryValues) Key {
-	return NewKeyWithEntryContextFacts(ref, entry, refs, closures, values, flow.BoundaryFactsDomain.Top())
-}
-
 // NewKeyWithEntryContextFacts constructs the canonical summary key for every
 // caller-provided entry component, including parameter-relative path facts.
 func NewKeyWithEntryContextFacts(ref FuncRef, entry flow.CaptureCells, refs flow.FunctionRefs, closures flow.ClosureRefs, values EntryValues, facts flow.BoundaryFacts) Key {

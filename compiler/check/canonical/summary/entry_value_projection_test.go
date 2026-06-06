@@ -698,8 +698,8 @@ func TestCallEntryContextProjection_UsesCallEntryTargetResolverAxesForClosureAnd
 	if len(keys) != 2 {
 		t.Fatalf("context keys = %d, want 2", len(keys))
 	}
-	wantA := summary.NewKeyWithEntryContext(callee, closureA.EntryCells, closureA.EntryFunctionRefs, closureA.EntryClosureRefs, nil)
-	wantB := summary.NewKeyWithEntryContext(callee, closureB.EntryCells, closureB.EntryFunctionRefs, closureB.EntryClosureRefs, nil)
+	wantA := summary.NewKeyWithEntryContextFacts(callee, closureA.EntryCells, closureA.EntryFunctionRefs, closureA.EntryClosureRefs, nil, flow.BoundaryFactsDomain.Top())
+	wantB := summary.NewKeyWithEntryContextFacts(callee, closureB.EntryCells, closureB.EntryFunctionRefs, closureB.EntryClosureRefs, nil, flow.BoundaryFactsDomain.Top())
 	if keys[0] != wantA {
 		t.Fatalf("first key = %+v, want closure-A key", keys[0])
 	}
@@ -737,8 +737,8 @@ func TestClosureEntryContextProjection_ProjectsDeclarationClosureContexts(t *tes
 	if len(keys) != 2 {
 		t.Fatalf("context keys = %d, want 2", len(keys))
 	}
-	wantA := summary.NewKeyWithEntryContext(refA, cellsA, refsA, nested, nil)
-	wantB := summary.NewKeyWithEntryContext(refB, cellsB, nil, nil, nil)
+	wantA := summary.NewKeyWithEntryContextFacts(refA, cellsA, refsA, nested, nil, flow.BoundaryFactsDomain.Top())
+	wantB := summary.NewKeyWithEntryContextFacts(refB, cellsB, nil, nil, nil, flow.BoundaryFactsDomain.Top())
 	if keys[0] != wantA {
 		t.Fatalf("first key = %+v, want declaration closure A", keys[0])
 	}
