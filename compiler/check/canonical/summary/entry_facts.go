@@ -28,16 +28,16 @@ type entryFactsKeyInterner struct {
 
 var canonicalEntryFactsKeys = &entryFactsKeyInterner{buckets: make(map[uint64][]*entryFactsKeyNode)}
 
-// ResetEntryFactsKeyInterner clears the comparable-key interner for one checker
+// resetEntryFactsKeyInterner clears the comparable-key interner for one checker
 // analysis scope.
-func ResetEntryFactsKeyInterner() {
+func resetEntryFactsKeyInterner() {
 	canonicalEntryFactsKeys.mu.Lock()
 	defer canonicalEntryFactsKeys.mu.Unlock()
 	canonicalEntryFactsKeys.buckets = make(map[uint64][]*entryFactsKeyNode)
 }
 
-// EntryFactsKeyOf returns an exact comparable key for facts.
-func EntryFactsKeyOf(facts flow.BoundaryFacts) EntryFactsKey {
+// entryFactsKeyOf returns an exact comparable key for facts.
+func entryFactsKeyOf(facts flow.BoundaryFacts) EntryFactsKey {
 	return internEntryFactsKey(facts)
 }
 

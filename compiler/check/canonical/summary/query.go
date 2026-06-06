@@ -45,8 +45,8 @@ func NewKeyWithEntryContextFacts(ref FuncRef, entry flow.CaptureCells, refs flow
 		Entry:    entry.Key(),
 		Refs:     flow.FunctionRefsKeyOf(refs),
 		Closures: flow.ClosureRefsKeyOf(closures),
-		Values:   EntryValuesKeyOf(values),
-		Facts:    EntryFactsKeyOf(facts),
+		Values:   entryValuesKeyOf(values),
+		Facts:    entryFactsKeyOf(facts),
 	}
 }
 
