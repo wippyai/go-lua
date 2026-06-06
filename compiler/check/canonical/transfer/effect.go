@@ -243,18 +243,12 @@ func (t *Transfer) applyReturnEffect(out *flow.PointState, effect ReturnEffect) 
 	if out == nil {
 		return false
 	}
-	changed := false
-	if !flow.ReturnRelationsDomain.Equal(out.ReturnRel, effect.Relations) {
-		out.ReturnRel = effect.Relations
-		changed = true
-	}
-	writer := flow.NewPointWriter(out)
+	changed := returns.setRelations(out, effect.Relations)
 	for _, slot := range effect.Slots {
 		if slot.Index < 0 {
 			continue
 		}
-		key := ReturnSlotKey(slot.Index)
-		changed = writer.DeleteValueKey(key) || changed
+		changed = returns.clearSlot(out, slot.Index) || changed
 		if slot.Source != nil {
 			changed = t.applyReferenceEffect(out, ReferenceEffect{
 				Path:         constraint.NewPlaceholder(slot.Index),
@@ -272,7 +266,7 @@ func (t *Transfer) applyReturnEffect(out *flow.PointState, effect ReturnEffect) 
 		if slot.Value.IsZero() {
 			continue
 		}
-		changed = writer.WriteValueKey(key, slot.Value, false) || changed
+		changed = returns.writeSlot(out, slot.Index, slot.Value) || changed
 	}
 	return changed
 }
