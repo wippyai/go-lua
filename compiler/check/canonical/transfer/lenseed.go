@@ -521,16 +521,6 @@ func (t *Transfer) tableInsertMutatorEffect(
 	return effect, true
 }
 
-func (t *Transfer) rootContainerValue(out *flow.PointState, sym cfg.SymbolID) (product.AbstractValue, bool, bool) {
-	targetsCell := t.symbolStorage.isCellBacked(sym)
-	base, had := t.symbolValue(out, sym)
-	return base, had, targetsCell
-}
-
-func (t *Transfer) writeRootContainer(out *flow.PointState, sym cfg.SymbolID, updated product.AbstractValue) {
-	t.writeSymbolValue(out, sym, updated, false, true)
-}
-
 // seedNumericForBounds seeds the numeric component with a numeric-for loop's
 // induction RANGE [floor, ceil]: the interval the control variable ranges over
 // across the whole loop body. The step direction selects which control expression

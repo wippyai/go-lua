@@ -1372,7 +1372,7 @@ func (t *Transfer) applyContainerWriteWithRefResolver(
 	var base product.AbstractValue
 	if target.BaseSymbol != 0 {
 		var had bool
-		base, had, _ = t.rootContainerValue(out, target.BaseSymbol)
+		base, had = t.symbolValue(out, target.BaseSymbol)
 		if !had || base.IsZero() {
 			// The base container has no value the transfer tracks: an imported module, a
 			// captured variable, or a parameter whose type lives in the observation

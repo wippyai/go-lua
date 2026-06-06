@@ -184,12 +184,13 @@ func (t *Transfer) applyReceiverValueEffect(
 	updated := value
 	if len(place.Steps) > 0 {
 		var ok bool
-		updated, _, ok = t.assignPlaceValue(out, place, value, nil)
+		updated, ok = t.placeWriter().Assign(out, place, value, nil)
 		if !ok {
 			return false
 		}
+	} else {
+		t.writeSymbolValue(out, place.Root, updated, false, true)
 	}
-	t.writeRootContainer(out, place.Root, updated)
 	changed := true
 	changed = t.recordPrototypeSelfWrite(out, place.Root, updated, true, mutations...) || changed
 	return changed

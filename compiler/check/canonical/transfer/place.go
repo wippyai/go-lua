@@ -4,12 +4,12 @@ import (
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/canonical/place"
+	canonicalpoint "github.com/wippyai/go-lua/compiler/check/canonical/point"
 	"github.com/wippyai/go-lua/compiler/check/domain/paramevidence"
 	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/domain/value"
 	"github.com/wippyai/go-lua/types/domain/value/product"
 	"github.com/wippyai/go-lua/types/flow"
-	"github.com/wippyai/go-lua/types/typ"
 )
 
 type Place = place.Place
@@ -20,10 +20,6 @@ const (
 	PlaceStepStaticMember = place.StepStaticMember
 	PlaceStepDynamicIndex = place.StepDynamicIndex
 )
-
-type placeValueUpdater = place.ValueUpdater
-
-type finalPlaceWriter = place.FinalDynamicWriter
 
 type staticAccess struct {
 	Root  *ast.IdentExpr
@@ -240,57 +236,20 @@ func (t *Transfer) pathSymbolInStateWithPoint(
 	return t.pathSymbol(expr)
 }
 
-// updatePlace applies update at p and returns the rebuilt root value. The caller
-// writes the returned root through writeRootContainer so Env/Cells remain the
-// only stores.
-func (t *Transfer) updatePlace(
-	out *flow.PointState,
-	p Place,
-	update placeValueUpdater,
-) (product.AbstractValue, bool, bool) {
-	return t.rewritePlace(out, p, func(root product.AbstractValue) (product.AbstractValue, bool) {
-		return p.UpdateRootValue(root, update)
-	})
-}
-
-// assignPlaceValue writes val at p and returns the rebuilt root value. Static
-// members are structural replacements. Dynamic indexes are replacements at the
-// final step and element mutations at intermediate steps, which is the lvalue
-// distinction `x[k] = v` vs `x[k].f = v`.
-func (t *Transfer) assignPlaceValue(
-	out *flow.PointState,
-	p Place,
-	val product.AbstractValue,
-	finalDynamic finalPlaceWriter,
-) (product.AbstractValue, bool, bool) {
-	if val.IsZero() {
-		return product.AbstractValue{}, false, false
+func (t *Transfer) placeWriter() canonicalpoint.PlaceWriter {
+	return canonicalpoint.PlaceWriter{
+		ReadRoot: func(out *flow.PointState, sym cfg.SymbolID) canonicalpoint.RootValue {
+			base, had := t.symbolValue(out, sym)
+			return canonicalpoint.RootValue{
+				Value:      base,
+				Present:    had,
+				CellBacked: t.symbolStorage.isCellBacked(sym),
+			}
+		},
+		WriteRoot: func(out *flow.PointState, sym cfg.SymbolID, updated product.AbstractValue) {
+			t.writeSymbolValue(out, sym, updated, false, true)
+		},
 	}
-	return t.rewritePlace(out, p, func(root product.AbstractValue) (product.AbstractValue, bool) {
-		return p.AssignRootValue(root, val, finalDynamic)
-	})
-}
-
-func (t *Transfer) rewritePlace(
-	out *flow.PointState,
-	p Place,
-	rewrite func(product.AbstractValue) (product.AbstractValue, bool),
-) (product.AbstractValue, bool, bool) {
-	if out == nil || p.Root == 0 || rewrite == nil {
-		return product.AbstractValue{}, false, false
-	}
-	root, had, targetsCell := t.rootContainerValue(out, p.Root)
-	if targetsCell && had && valueIsBottom(root) {
-		root = product.FromType(typ.NewRecord().SetOpen(true).Build())
-	}
-	if !had || root.IsZero() {
-		return product.AbstractValue{}, false, false
-	}
-	updated, ok := rewrite(root)
-	if !ok || updated.IsZero() {
-		return product.AbstractValue{}, false, false
-	}
-	return updated, targetsCell, true
 }
 
 func (t *Transfer) placeOfAssignTarget(

@@ -410,7 +410,7 @@ func (t *Transfer) applyMutatorEffect(out *flow.PointState, effect MutatorEffect
 	if effect.Place.Root == 0 || effect.Element.IsZero() {
 		return changed
 	}
-	updated, _, ok := t.updatePlace(out, effect.Place, func(base product.AbstractValue) (product.AbstractValue, bool) {
+	updated, ok := t.placeWriter().Update(out, effect.Place, func(base product.AbstractValue) (product.AbstractValue, bool) {
 		switch effect.Kind {
 		case MutatorAppendElement:
 			return product.AppendElement(base, effect.Element), true
@@ -428,7 +428,6 @@ func (t *Transfer) applyMutatorEffect(out *flow.PointState, effect MutatorEffect
 	if !ok {
 		return changed
 	}
-	t.writeRootContainer(out, effect.Place.Root, updated)
 	if mutationOK {
 		changed = t.recordPrototypeSelfWrite(out, effect.Place.Root, updated, true, mutation) || changed
 	} else {
@@ -661,7 +660,7 @@ func (t *Transfer) applyWriteEffectWithAliasReplay(out *flow.PointState, effect 
 		symbolicChanged := t.applySymbolicDynamicIndexWriteProof(out, effect.IndexTarget, effect.Source, effect.Value)
 		changed = symbolicChanged || changed
 	}
-	updated, _, ok := t.assignPlaceValue(out, effect.Place, effect.Value, func(base product.AbstractValue, step PlaceStep, val product.AbstractValue) (product.AbstractValue, bool) {
+	updated, ok := t.placeWriter().Assign(out, effect.Place, effect.Value, func(base product.AbstractValue, step PlaceStep, val product.AbstractValue) (product.AbstractValue, bool) {
 		if sealedIndexTarget {
 			if !product.SealedIndexWriteAdmits(base, step.Key, val) {
 				return product.AbstractValue{}, false
@@ -694,7 +693,6 @@ func (t *Transfer) applyWriteEffectWithAliasReplay(out *flow.PointState, effect 
 	if proof, ok := t.dynamicIndexWriteProof(effect, admittedIndexKey, admittedIndexValue); ok {
 		changed = flow.ApplyMapWriteProof(out, proof) || changed
 	}
-	t.writeRootContainer(out, effect.Place.Root, updated)
 	t.applyPrototypeSelfWriteEffect(out, effect, updated)
 	t.applyReferenceEffect(out, referenceEffectForWrite(effect))
 	changed = true
