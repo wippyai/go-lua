@@ -20,6 +20,18 @@ type PointFacts struct {
 	state PointState
 }
 
+// CallableSignatureQuery asks the checker-owned callable projector for the
+// signature represented by either a concrete function identity or a runtime
+// value path. State carries the live axes needed to project closure captures.
+type CallableSignatureQuery struct {
+	Ref   FunctionRef
+	Path  constraint.Path
+	State PointState
+}
+
+// CallableSignatureResolver resolves callable identity facts to signatures.
+type CallableSignatureResolver func(CallableSignatureQuery) (typ.Type, bool)
+
 // PointFactsOf returns the read-only facts view for state.
 func PointFactsOf(state PointState) PointFacts {
 	return PointFacts{state: state}
@@ -246,6 +258,68 @@ func (f PointFacts) PathValue(path constraint.Path) (product.AbstractValue, bool
 		cur = next
 	}
 	return cur, true
+}
+
+// CallablePathValue is the canonical product read for a runtime path that may
+// carry function identity facts. It first reads the point-state product value,
+// then overlays the callable signature proven by FunctionRefs/ClosureRefs or a
+// static path resolver. Function identity does not by itself prove a nested slot
+// is present, so member reads use RefineCallableRead while root values use
+// RefineCallableValue.
+func (f PointFacts) CallablePathValue(path constraint.Path, resolve CallableSignatureResolver) (product.AbstractValue, bool) {
+	if path.Symbol == 0 {
+		return product.AbstractValue{}, false
+	}
+	av, hasValue := f.PathValue(path)
+	if !hasValue {
+		av = product.AbstractValue{}
+	}
+	return f.CallablePathRead(path, av, resolve)
+}
+
+// CallablePathRead overlays callable identity facts onto an already-computed
+// runtime read for path. Use this when the caller must preserve Lua runtime
+// read semantics, for example table/member reads that distinguish strict shape
+// lookup from missing-slot nil.
+func (f PointFacts) CallablePathRead(path constraint.Path, read product.AbstractValue, resolve CallableSignatureResolver) (product.AbstractValue, bool) {
+	if path.Symbol == 0 {
+		return product.AbstractValue{}, false
+	}
+	sig, hasSig := f.CallablePathType(path, resolve)
+	if !hasSig {
+		if read.IsZero() {
+			return product.AbstractValue{}, false
+		}
+		return read, true
+	}
+	if len(path.Segments) == 0 {
+		return product.RefineCallableValue(read, sig), true
+	}
+	return product.RefineCallableRead(read, sig), true
+}
+
+// CallablePathType resolves the signature for a function-valued path without
+// reading its product value.
+func (f PointFacts) CallablePathType(path constraint.Path, resolve CallableSignatureResolver) (typ.Type, bool) {
+	if path.Symbol == 0 || resolve == nil {
+		return nil, false
+	}
+	state := PointState{
+		Cells:        f.state.Cells,
+		FunctionRefs: f.state.FunctionRefs,
+		ClosureRefs:  f.state.ClosureRefs,
+	}
+	if refs, ok := FunctionRefAtPath(f.state.FunctionRefs, path); ok {
+		if ref, singleton := refs.Singleton(); singleton {
+			if sig, ok := resolve(CallableSignatureQuery{Ref: ref, State: state}); ok && !typ.IsAbsentOrUnknown(sig) {
+				return sig, true
+			}
+		}
+	}
+	if sig, ok := resolve(CallableSignatureQuery{Path: path, State: state}); ok && !typ.IsAbsentOrUnknown(sig) {
+		return sig, true
+	}
+	return nil, false
 }
 
 // PathType returns path's projected structural type when a product value is

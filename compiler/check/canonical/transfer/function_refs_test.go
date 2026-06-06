@@ -203,23 +203,23 @@ func TestCapturedIdentUsesCallableProjectionWhenCellValueAbsent(t *testing.T) {
 	}
 }
 
-func TestFunctionValueForPathUsesPathCallableProjectionWhenFunctionRefsAbsent(t *testing.T) {
+func TestCallablePathValueUsesPathProjectionWhenFunctionRefsAbsent(t *testing.T) {
 	sym := cfg.SymbolID(405)
 	sig := typ.Func().Returns(typ.Number).Build()
 	path := constraint.NewPath(sym, "")
 	tr := New(input.Inputs{}, Config{CallTyper: pathFunctionValueTyper{path: path, sig: sig}})
 	out := flow.PointState{}
 
-	got, ok := tr.functionValueForPath(&out, path)
+	got, ok := tr.callablePathValue(&out, path)
 	if !ok {
 		t.Fatal("function path did not resolve")
 	}
-	if !typ.TypeEquals(got, sig) {
-		t.Fatalf("function path type = %v, want %v", got, sig)
+	if !typ.TypeEquals(got.ProjectValue(), sig) {
+		t.Fatalf("function path value = %v, want %v", got.ProjectValue(), sig)
 	}
 }
 
-func TestFunctionValueForPathPassesClosureRefsAxis(t *testing.T) {
+func TestCallablePathTypePassesClosureRefsAxis(t *testing.T) {
 	fn := &ast.FunctionExpr{ParList: &ast.ParList{}}
 	in := input.BuildFromFunction(fn, nil, nil)
 	if in.Graph == nil || in.Graph.Bindings() == nil {
@@ -237,7 +237,7 @@ func TestFunctionValueForPathPassesClosureRefsAxis(t *testing.T) {
 		ClosureRefs:  closures,
 	}
 
-	got, ok := tr.functionValueForPath(&out, path)
+	got, ok := flow.PointFactsOf(out).CallablePathType(path, tr.callableSignatureResolver(&out))
 	if !ok || !typ.TypeEquals(got, provider.sig) {
 		t.Fatalf("function value = %v, %v; want %v, true", got, ok, provider.sig)
 	}
@@ -836,7 +836,7 @@ type functionValueTestTyper struct {
 	sig typ.Type
 }
 
-func (t functionValueTestTyper) FunctionValue(query CallableValueQuery) (typ.Type, bool) {
+func (t functionValueTestTyper) FunctionValue(query flow.CallableSignatureQuery) (typ.Type, bool) {
 	if query.Ref != t.ref {
 		return nil, false
 	}
@@ -850,7 +850,7 @@ type capturingFunctionValueTyper struct {
 	closures flow.ClosureRefs
 }
 
-func (t *capturingFunctionValueTyper) FunctionValue(query CallableValueQuery) (typ.Type, bool) {
+func (t *capturingFunctionValueTyper) FunctionValue(query flow.CallableSignatureQuery) (typ.Type, bool) {
 	t.closures = query.State.ClosureRefs
 	if query.Ref != t.ref {
 		return nil, false
@@ -864,7 +864,7 @@ type pathFunctionValueTyper struct {
 	sig  typ.Type
 }
 
-func (t pathFunctionValueTyper) FunctionValue(query CallableValueQuery) (typ.Type, bool) {
+func (t pathFunctionValueTyper) FunctionValue(query flow.CallableSignatureQuery) (typ.Type, bool) {
 	if query.Path.Key() != t.path.Key() {
 		return nil, false
 	}

@@ -230,18 +230,8 @@ type ProductCallProvider interface {
 	ProductCallFromValues(call *ast.FuncCallExpr, ctx ProductCallContext) ProductCallResult
 }
 
-// CallableValueQuery is the transfer boundary for resolving a function-valued
-// product read to its callable signature. Exactly one of Ref or Path should be
-// populated by callers; State carries the live axes needed to project closure
-// environments and function summary returns.
-type CallableValueQuery struct {
-	Ref   flow.FunctionRef
-	Path  constraint.Path
-	State flow.PointState
-}
-
 type functionValueProvider interface {
-	FunctionValue(query CallableValueQuery) (typ.Type, bool)
+	FunctionValue(query flow.CallableSignatureQuery) (typ.Type, bool)
 }
 
 // Config is immutable construction-time configuration for a Transfer. These are
@@ -2972,7 +2962,7 @@ func (t *Transfer) prototypeSurfaceType(out *flow.PointState, proto cfg.SymbolID
 		if method.PrototypeSym != proto || method.FuncRef == (flow.FunctionRef{}) || method.Field == (constraint.Segment{}) {
 			continue
 		}
-		fnType, ok := t.functionValueForRef(out, method.FuncRef)
+		fnType, ok := t.callableSignature(out, flow.CallableSignatureQuery{Ref: method.FuncRef})
 		if !ok || typ.IsAbsentOrUnknown(fnType) {
 			continue
 		}
@@ -3233,7 +3223,7 @@ func (t *Transfer) evalAttrGet(
 	if out != nil {
 		if path, hasPath := t.staticPathOfExpr(e); hasPath {
 			if fact, ok := flow.PointFactsOf(*out).StaticMemberValue(path); ok {
-				return fact, true
+				return t.callablePathRead(out, path, fact)
 			}
 		}
 	}
@@ -3245,15 +3235,15 @@ func (t *Transfer) evalAttrGet(
 		fv, ok := product.RuntimeMemberOf(base, member)
 		if !ok || fv.IsZero() {
 			if path, hasPath := t.staticPathOfExpr(e); hasPath {
-				if ft, ok := t.functionValueForPath(out, path); ok {
-					return product.RefineCallableRead(fv, ft), true
+				if cv, ok := t.callablePathReadIfCallable(out, path, fv); ok {
+					return cv, true
 				}
 			}
 			return product.AbstractValue{}, false
 		}
 		if path, hasPath := t.staticPathOfExpr(e); hasPath {
-			if ft, ok := t.functionValueForPath(out, path); ok {
-				return product.RefineCallableRead(fv, ft), true
+			if cv, ok := t.callablePathReadIfCallable(out, path, fv); ok {
+				return cv, true
 			}
 		}
 		return t.refineIndexRead(out, e, base, fv), true
@@ -3278,10 +3268,12 @@ func (t *Transfer) evalAttrGetAt(
 	e *ast.AttrGetExpr,
 	demand func(int, paramevidence.ParamContract),
 ) (product.AbstractValue, bool) {
+	readPath := constraint.Path{}
 	if out != nil {
 		if path, hasPath := t.staticMemberExprPathAt(out, p, e); hasPath {
+			readPath = path
 			if fact, ok := flow.PointFactsOf(*out).StaticMemberValue(path); ok {
-				return fact, true
+				return t.callablePathRead(out, path, fact)
 			}
 		}
 	}
@@ -3292,16 +3284,16 @@ func (t *Transfer) evalAttrGetAt(
 	if member, isStatic := staticMemberKeyWithConst(e, t.constResolverAt(p)); isStatic {
 		fv, ok := product.RuntimeMemberOf(base, member)
 		if !ok || fv.IsZero() {
-			if path, hasPath := t.staticPathOfExpr(e); hasPath {
-				if ft, ok := t.functionValueForPath(out, path); ok {
-					return product.RefineCallableRead(fv, ft), true
+			if !readPath.IsEmpty() {
+				if cv, ok := t.callablePathReadIfCallable(out, readPath, fv); ok {
+					return cv, true
 				}
 			}
 			return product.AbstractValue{}, false
 		}
-		if path, hasPath := t.staticPathOfExpr(e); hasPath {
-			if ft, ok := t.functionValueForPath(out, path); ok {
-				return product.RefineCallableRead(fv, ft), true
+		if !readPath.IsEmpty() {
+			if cv, ok := t.callablePathReadIfCallable(out, readPath, fv); ok {
+				return cv, true
 			}
 		}
 		return t.refineIndexRead(out, e, base, fv), true
@@ -3337,8 +3329,8 @@ func (t *Transfer) evalIdent(
 	av, ok := t.symbolValue(out, sym)
 	path := constraint.NewPath(sym, "")
 	if !ok || av.IsZero() {
-		if ft, ok := t.functionValueForPath(out, path); ok {
-			return product.FromType(ft), true
+		if cv, ok := t.callablePathValue(out, path); ok {
+			return cv, true
 		}
 		// A symbol with no flow value may name a `type` used as a value (the `type X`
 		// binding carries a symbol but no runtime value); resolve it to that type's Meta.
@@ -3348,17 +3340,20 @@ func (t *Transfer) evalIdent(
 		return product.AbstractValue{}, false
 	}
 	if pt := av.ProjectValue(); pt != nil && pt.Kind() == kind.Function {
-		if ft, ok := t.functionValueForPath(out, path); ok {
-			return product.RefineCallableValue(av, ft), true
+		if cv, ok := t.callablePathRead(out, path, av); ok {
+			return cv, true
 		}
 	}
 	return av, true
 }
 
-func (t *Transfer) functionValueForPath(out *flow.PointState, path constraint.Path) (typ.Type, bool) {
-	if ft, ok := t.functionValueForFunctionRefsPath(out, path); ok {
-		return ft, true
+func (t *Transfer) callableSignatureResolver(out *flow.PointState) flow.CallableSignatureResolver {
+	return func(query flow.CallableSignatureQuery) (typ.Type, bool) {
+		return t.callableSignature(out, query)
 	}
+}
+
+func (t *Transfer) callableSignature(out *flow.PointState, query flow.CallableSignatureQuery) (typ.Type, bool) {
 	if out == nil || t.callTyper == nil {
 		return nil, false
 	}
@@ -3366,55 +3361,47 @@ func (t *Transfer) functionValueForPath(out *flow.PointState, path constraint.Pa
 	if !ok {
 		return nil, false
 	}
-	ft, ok := provider.FunctionValue(CallableValueQuery{
-		Path: path,
-		State: flow.PointState{
-			Cells:        out.Cells,
-			FunctionRefs: out.FunctionRefs,
-			ClosureRefs:  out.ClosureRefs,
-		},
-	})
+	if query.Ref == (flow.FunctionRef{}) && query.Path.IsEmpty() {
+		return nil, false
+	}
+	query.State = flow.PointState{
+		Cells:        out.Cells,
+		FunctionRefs: out.FunctionRefs,
+		ClosureRefs:  out.ClosureRefs,
+	}
+	ft, ok := provider.FunctionValue(query)
 	if !ok || typ.IsAbsentOrUnknown(ft) {
 		return nil, false
 	}
 	return ft, true
 }
 
-func (t *Transfer) functionValueForFunctionRefsPath(out *flow.PointState, path constraint.Path) (typ.Type, bool) {
-	if out == nil || t.callTyper == nil {
-		return nil, false
+func (t *Transfer) callablePathValue(out *flow.PointState, path constraint.Path) (product.AbstractValue, bool) {
+	if out == nil || path.IsEmpty() {
+		return product.AbstractValue{}, false
 	}
-	refs, ok := flow.FunctionRefAtPath(out.FunctionRefs, path)
-	if !ok {
-		return nil, false
-	}
-	ref, singleton := refs.Singleton()
-	if !singleton {
-		return nil, false
-	}
-	return t.functionValueForRef(out, ref)
+	return flow.PointFactsOf(*out).CallablePathValue(path, t.callableSignatureResolver(out))
 }
 
-func (t *Transfer) functionValueForRef(out *flow.PointState, ref flow.FunctionRef) (typ.Type, bool) {
-	if out == nil || t.callTyper == nil || ref == (flow.FunctionRef{}) {
-		return nil, false
+func (t *Transfer) callablePathRead(out *flow.PointState, path constraint.Path, read product.AbstractValue) (product.AbstractValue, bool) {
+	if out == nil || path.IsEmpty() {
+		if read.IsZero() {
+			return product.AbstractValue{}, false
+		}
+		return read, true
 	}
-	provider, ok := t.callTyper.(functionValueProvider)
-	if !ok {
-		return nil, false
+	return flow.PointFactsOf(*out).CallablePathRead(path, read, t.callableSignatureResolver(out))
+}
+
+func (t *Transfer) callablePathReadIfCallable(out *flow.PointState, path constraint.Path, read product.AbstractValue) (product.AbstractValue, bool) {
+	if out == nil || path.IsEmpty() {
+		return product.AbstractValue{}, false
 	}
-	ft, ok := provider.FunctionValue(CallableValueQuery{
-		Ref: ref,
-		State: flow.PointState{
-			Cells:        out.Cells,
-			FunctionRefs: out.FunctionRefs,
-			ClosureRefs:  out.ClosureRefs,
-		},
-	})
-	if !ok || typ.IsAbsentOrUnknown(ft) {
-		return nil, false
+	facts := flow.PointFactsOf(*out)
+	if _, ok := facts.CallablePathType(path, t.callableSignatureResolver(out)); !ok {
+		return product.AbstractValue{}, false
 	}
-	return ft, true
+	return facts.CallablePathRead(path, read, t.callableSignatureResolver(out))
 }
 
 func (t *Transfer) symbolValue(out *flow.PointState, sym cfg.SymbolID) (product.AbstractValue, bool) {

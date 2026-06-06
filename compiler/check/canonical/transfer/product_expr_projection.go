@@ -114,8 +114,8 @@ func (t *Transfer) projectIdentValue(out *flow.PointState, e *ast.IdentExpr) (pr
 	av, ok := t.symbolValue(out, sym)
 	path := constraint.NewPath(sym, "")
 	if !ok || av.IsZero() {
-		if ft, ok := t.functionValueForPath(out, path); ok {
-			return product.FromType(ft), true
+		if cv, ok := t.callablePathValue(out, path); ok {
+			return cv, true
 		}
 		if meta, ok := t.typeValueOf(e); ok {
 			return meta, true
@@ -126,8 +126,8 @@ func (t *Transfer) projectIdentValue(out *flow.PointState, e *ast.IdentExpr) (pr
 		return product.AbstractValue{}, false
 	}
 	if pt := av.ProjectValue(); pt != nil && pt.Kind() == kind.Function {
-		if ft, ok := t.functionValueForPath(out, constraint.NewPath(sym, "")); ok {
-			return product.RefineCallableValue(av, ft), true
+		if cv, ok := t.callablePathRead(out, path, av); ok {
+			return cv, true
 		}
 	}
 	return av, true
@@ -137,7 +137,7 @@ func (t *Transfer) projectAttrGetValue(out *flow.PointState, e *ast.AttrGetExpr)
 	if out != nil {
 		if path, hasPath := t.staticPathOfExpr(e); hasPath {
 			if fact, ok := flow.PointFactsOf(*out).StaticMemberValue(path); ok {
-				return fact, true
+				return t.callablePathRead(out, path, fact)
 			}
 		}
 	}
@@ -152,8 +152,8 @@ func (t *Transfer) projectAttrGetValue(out *flow.PointState, e *ast.AttrGetExpr)
 		fv, ok := product.RuntimeMemberOf(base, member)
 		if !ok || fv.IsZero() {
 			if path, hasPath := t.staticPathOfExpr(e); hasPath {
-				if ft, ok := t.functionValueForPath(out, path); ok {
-					return product.RefineCallableRead(fv, ft), true
+				if cv, ok := t.callablePathReadIfCallable(out, path, fv); ok {
+					return cv, true
 				}
 			}
 			if t.gradualAnySource(out, e) {
@@ -162,8 +162,8 @@ func (t *Transfer) projectAttrGetValue(out *flow.PointState, e *ast.AttrGetExpr)
 			return product.AbstractValue{}, false
 		}
 		if path, hasPath := t.staticPathOfExpr(e); hasPath {
-			if ft, ok := t.functionValueForPath(out, path); ok {
-				return product.RefineCallableRead(fv, ft), true
+			if cv, ok := t.callablePathReadIfCallable(out, path, fv); ok {
+				return cv, true
 			}
 		}
 		return t.refineIndexRead(out, e, base, fv), true

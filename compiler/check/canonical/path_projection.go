@@ -79,13 +79,7 @@ func (p pathProjector) RefinedPathValueAt(point cfg.Point, path constraint.Path)
 	if len(path.Segments) == 0 {
 		return p.RefinedValueAt(point, path.Symbol)
 	}
-	if sig := p.callables.TypeAt(p.inState(point), path); !typ.IsAbsentOrUnknown(sig) {
-		if av, ok := p.pathValueAt(point, path); ok && !av.IsZero() {
-			return flow.ProductValue{Value: product.RefineCallableRead(av, sig), State: flow.StateResolved}
-		}
-		return flow.ProductValue{Value: product.RefineCallableRead(product.AbstractValue{}, sig), State: flow.StateResolved}
-	}
-	if av, ok := p.pathValueAt(point, path); ok && !av.IsZero() {
+	if av, ok := p.pointFacts(point).CallablePathValue(path, p.callableSignatureResolver()); ok && !av.IsZero() {
 		return flow.ProductValue{Value: av, State: flow.StateResolved}
 	}
 	if p.unannotatedParams[path.Symbol] {
@@ -105,6 +99,21 @@ func (p pathProjector) RefinedPathValueAt(point cfg.Point, path constraint.Path)
 		return flow.ProductValue{State: flow.StateUnknown}
 	}
 	return flow.ProductValue{State: flow.StateUnknown}
+}
+
+func (p pathProjector) callableSignatureResolver() flow.CallableSignatureResolver {
+	return func(query flow.CallableSignatureQuery) (typ.Type, bool) {
+		state := query.State
+		if query.Ref != (flow.FunctionRef{}) {
+			sig := p.callables.FunctionTypeByRef(query.Ref, state.Cells, state.FunctionRefs, state.ClosureRefs)
+			return sig, !typ.IsAbsentOrUnknown(sig)
+		}
+		if !query.Path.IsEmpty() {
+			sig := p.callables.TypeAt(state, query.Path)
+			return sig, !typ.IsAbsentOrUnknown(sig)
+		}
+		return nil, false
+	}
 }
 
 func (p pathProjector) LengthLowerBoundForPathAt(point cfg.Point, path constraint.Path) (int64, bool) {
