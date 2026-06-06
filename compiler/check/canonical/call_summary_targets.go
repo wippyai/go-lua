@@ -57,6 +57,19 @@ func (ct callTyper) callOutcomeForProductCallWithOptions(call *ast.FuncCallExpr,
 	if d == nil || call == nil || d.activeProgram == nil {
 		return canonicalcall.CallOutcome{}
 	}
+	return ct.productCallOutcomeProjection(call, ctx, opts, nil).outcome()
+}
+
+func (ct callTyper) productCallOutcomeProjection(
+	call *ast.FuncCallExpr,
+	ctx transfer.ProductCallContext,
+	opts productCallOutcomeOptions,
+	lookup canonicalcall.SummaryLookup,
+) callOutcomeProjection {
+	d := ct.d
+	if d == nil || call == nil || d.activeProgram == nil {
+		return callOutcomeProjection{}
+	}
 	return callOutcomeProjection{
 		typer:                    ct,
 		program:                  d.activeProgram,
@@ -80,7 +93,8 @@ func (ct callTyper) callOutcomeForProductCallWithOptions(call *ast.FuncCallExpr,
 			entry, _ := ct.productCallEntryContext(ref, call, ctx)
 			return entry
 		},
-	}.outcome()
+		summaryLookup: lookup,
+	}
 }
 
 // callOutcomeProjection centralizes the selected-target summary policy for both
@@ -98,6 +112,7 @@ type callOutcomeProjection struct {
 	closures                 flow.ClosureRefs
 	methodReceiverType       typ.Type
 	entryContext             canonicalcall.SelectedEntryContext
+	summaryLookup            canonicalcall.SummaryLookup
 	skipSignatureReturns     bool
 	skipSignatureRelations   bool
 	omitClosureRelationProof bool
@@ -108,6 +123,9 @@ func (p callOutcomeProjection) outcome() canonicalcall.CallOutcome {
 		p.targets,
 		p.entryContext,
 		func(ctx canonicalcall.EntryContext) summary.Summary {
+			if p.summaryLookup != nil {
+				return p.summaryLookup(ctx)
+			}
 			return p.typer.summaryForCallEntryContext(ctx)
 		},
 		canonicalcall.SummaryTargetInfo{

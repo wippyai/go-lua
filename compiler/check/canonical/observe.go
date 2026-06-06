@@ -421,18 +421,10 @@ func (f *canonicalFacts) CallReturnTypesAt(point cfg.Point, call *ast.FuncCallEx
 		return nil, false
 	}
 	ct := callTyper{d: f.driver, g: f.graph}
-	targets := ct.resolveCallTargets(call, f.program, callCtx.FunctionRefs, callCtx.ClosureRefs)
-	outcome := canonicalcall.CallOutcomeForTargets(
-		targets,
-		func(target canonicalcall.SelectedTarget) canonicalcall.EntryContext {
-			ref := target.Ref()
-			if closure, ok := target.Closure(); ok {
-				entry, _ := ct.productClosureCallEntryContext(ref, closure, call, callCtx)
-				return entry
-			}
-			entry, _ := ct.productCallEntryContext(ref, call, callCtx)
-			return entry
-		},
+	outcome := ct.productCallOutcomeProjection(
+		call,
+		callCtx,
+		productCallOutcomeOptions{},
 		func(ctx canonicalcall.EntryContext) summary.Summary {
 			return f.reader.SummarizeWithEntryContextFacts(
 				ctx.Ref(),
@@ -443,28 +435,7 @@ func (f *canonicalFacts) CallReturnTypesAt(point cfg.Point, call *ast.FuncCallEx
 				ctx.EntryFacts(),
 			)
 		},
-		canonicalcall.SummaryTargetInfo{
-			DeclaredReturns: func(target canonicalcall.SelectedTarget) bool {
-				return f.program.refHasClosedDeclaredReturns(target.Ref())
-			},
-			SignatureReturns: func(target canonicalcall.SelectedTarget) []typ.Type {
-				return ct.selectedTargetSignatureReturns(
-					f.program,
-					target,
-					call,
-					callCtx.ArgTypes(),
-					callCtx.ExprType,
-					callCtx.Cells,
-					callCtx.FunctionRefs,
-					flow.ClosureRefsDomain.Bottom(),
-					callCtx.SelfType,
-				)
-			},
-			SignatureRelations: func(target canonicalcall.SelectedTarget) flow.ReturnRelations {
-				return flow.ReturnRelationsFromFunctionType(f.driver.signatureForRef(f.program, target.Ref()))
-			},
-		},
-	)
+	).outcome()
 	values := outcome.InferredReturnValues()
 	if len(values) == 0 {
 		return nil, false
