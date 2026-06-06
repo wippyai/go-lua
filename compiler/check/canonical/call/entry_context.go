@@ -79,6 +79,20 @@ func EntryContextFromClosureWithLiveAxesAndFacts(
 	)
 }
 
+// EntryContextFromClosureWithLiveContext overlays a closure's captured
+// environment with an already-projected live entry context for the same callee.
+func EntryContextFromClosureWithLiveContext(closure flow.ClosureRef, live EntryContext) EntryContext {
+	return EntryContextFromClosureWithLiveAxesAndFacts(
+		live.ref,
+		closure,
+		live.cells,
+		live.refs,
+		live.closures,
+		live.values,
+		live.facts,
+	)
+}
+
 // Ref returns the callee function identity for this entry context.
 func (c EntryContext) Ref() summary.FuncRef { return c.ref }
 
