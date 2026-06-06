@@ -229,6 +229,25 @@ func (f PointFacts) IdentityAliasClosurePaths(root constraint.Path) []constraint
 	return out
 }
 
+// IdentityAliasSourcePaths returns alias-source paths selected by policy.
+// PointFacts owns this normalization so AST-facing transfer code can stay in
+// structured paths while the flow relation remains address-native internally.
+func (f PointFacts) IdentityAliasSourcePaths(root constraint.Path, policy IdentityAliasRoutePolicy) []constraint.Path {
+	rootAddr, ok := StableAddressOfPath(root)
+	if !ok {
+		return nil
+	}
+	addrs := IdentityAliasSourcesWithPolicy(f.state, rootAddr, policy)
+	out := make([]constraint.Path, 0, len(addrs))
+	for _, addr := range addrs {
+		path, ok := addr.Path()
+		if ok && !path.IsEmpty() {
+			out = append(out, path)
+		}
+	}
+	return out
+}
+
 // IndexWritePathQuery is the structured-path query form for admitted dynamic
 // index writes.
 type IndexWritePathQuery struct {

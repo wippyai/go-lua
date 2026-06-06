@@ -76,3 +76,31 @@ func TestPointFactsIdentityAliasClosurePaths(t *testing.T) {
 		t.Fatalf("IdentityAliasClosurePaths = %v, want %s then %s", got, root.String(), source.String())
 	}
 }
+
+func TestPointFactsIdentityAliasSourcePathsWithPolicy(t *testing.T) {
+	target := constraint.NewPath(cfg.SymbolID(131), "target")
+	source := constraint.NewPath(cfg.SymbolID(132), "source")
+	state := PointState{
+		PathAliases: PathAliasFacts{}.WithAddresses(
+			testStableAddressPath(t, target),
+			testStableAddressPath(t, constraint.NewPath(cfg.SymbolID(133), "path_source")),
+		),
+		ValueOrigins: ValueOriginFacts{}.WithAddresses(
+			testStableAddressPath(t, target),
+			testStableAddressPath(t, source),
+			ValueOriginAssignmentAlias,
+			0,
+		),
+	}
+	facts := PointFactsOf(state)
+
+	exact := facts.IdentityAliasSourcePaths(target, IdentityAliasDescendantOriginPolicy)
+	if len(exact) != 0 {
+		t.Fatalf("exact alias source paths = %d, want none for descendant-only policy", len(exact))
+	}
+
+	got := facts.IdentityAliasSourcePaths(target.Field("id"), IdentityAliasDescendantOriginPolicy)
+	if len(got) != 1 || !got[0].Equal(source.Field("id")) {
+		t.Fatalf("descendant alias source paths = %v, want %s", got, source.Field("id").String())
+	}
+}
