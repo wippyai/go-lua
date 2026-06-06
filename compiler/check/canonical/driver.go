@@ -1384,21 +1384,12 @@ func (p *program) expectedCallArgType(g *cfg.Graph, tr *transfer.Transfer, point
 	if !callsite.IsMethodCallInfo(info) {
 		callee = ct.expectedCalleeTypeForCall(info.Callee, call, ctx)
 	}
-	expectedArgs := canonicalcall.ExpectedArgTypesForCall(canonicalcall.ExpectedArgsInput{
-		Call:                call,
-		ArgTypes:            canonicalcall.ShallowArgTypes(call.Args, ctx.ArgTypes(), ctx.ExprType),
-		Resolver:            ct.callTypeResolver(ctx.ExprType),
-		Ctx:                 p.driver.activeCtx,
-		Query:               p.driver.cfg.Types,
-		Callee:              callee,
-		IsMethod:            callsite.IsMethodCallInfo(info),
-		MethodName:          info.Method,
-		MethodReceiverType:  methodReceiver,
-		ForceMethodReceiver: forceMethodReceiver,
-		ResolveTypeArg: func(expr ast.TypeExpr) typ.Type {
-			return p.driver.resolveType(expr, p.driver.baseScope())
-		},
-	})
+	expectedArgsInput := ct.expectedArgsInput(call, canonicalcall.ShallowArgTypes(call.Args, ctx.ArgTypes(), ctx.ExprType), ctx.ExprType, methodReceiver)
+	expectedArgsInput.Callee = callee
+	expectedArgsInput.IsMethod = callsite.IsMethodCallInfo(info)
+	expectedArgsInput.MethodName = info.Method
+	expectedArgsInput.ForceMethodReceiver = forceMethodReceiver
+	expectedArgs := canonicalcall.ExpectedArgTypesForCall(expectedArgsInput)
 	if argIdx >= len(expectedArgs) {
 		return nil
 	}
@@ -1434,6 +1425,25 @@ func (ct callTyper) expectedCalleeTypeForCall(expr ast.Expr, call *ast.FuncCallE
 		}
 	}
 	return nil
+}
+
+func (ct callTyper) expectedArgsInput(call *ast.FuncCallExpr, argTypes []typ.Type, exprType func(ast.Expr) typ.Type, methodReceiverType typ.Type) canonicalcall.ExpectedArgsInput {
+	d := ct.d
+	in := canonicalcall.ExpectedArgsInput{
+		Call:               call,
+		ArgTypes:           argTypes,
+		Resolver:           ct.callTypeResolver(exprType),
+		MethodReceiverType: methodReceiverType,
+	}
+	if d == nil {
+		return in
+	}
+	in.Ctx = d.activeCtx
+	in.Query = d.cfg.Types
+	in.ResolveTypeArg = func(expr ast.TypeExpr) typ.Type {
+		return d.resolveType(expr, d.baseScope())
+	}
+	return in
 }
 
 func (p *program) EntrySymbolValues(ref summary.FuncRef) map[cfg.SymbolID]product.AbstractValue {
@@ -2409,21 +2419,12 @@ func (ct callTyper) refineFunctionArgTypes(call *ast.FuncCallExpr, argTypes []ty
 		return argTypes
 	}
 	projector := newCallableProjector(d, d.activeProgram, d.activeQueries, d.activeCtx)
-	expectedArgs := canonicalcall.ExpectedArgTypesForCall(canonicalcall.ExpectedArgsInput{
-		Call:     call,
-		ArgTypes: argTypes,
-		CallbackArg: func(arg ast.Expr) bool {
-			_, ok := callbackRefs[arg]
-			return ok
-		},
-		Resolver:           ct.callTypeResolver(exprType),
-		Ctx:                d.activeCtx,
-		Query:              d.cfg.Types,
-		MethodReceiverType: methodReceiverType,
-		ResolveTypeArg: func(expr ast.TypeExpr) typ.Type {
-			return d.resolveType(expr, d.baseScope())
-		},
-	})
+	expectedInput := ct.expectedArgsInput(call, argTypes, exprType, methodReceiverType)
+	expectedInput.CallbackArg = func(arg ast.Expr) bool {
+		_, ok := callbackRefs[arg]
+		return ok
+	}
+	expectedArgs := canonicalcall.ExpectedArgTypesForCall(expectedInput)
 	return canonicalcall.RefineCallbackArgTypes(canonicalcall.CallbackArgRefinementInput{
 		Call:         call,
 		ArgTypes:     argTypes,
