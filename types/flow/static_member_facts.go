@@ -18,6 +18,13 @@ type StaticMemberFact struct {
 	Value product.AbstractValue
 }
 
+// StaticMemberAddressFact is the address-domain view of one materialized
+// static-member fact.
+type StaticMemberAddressFact struct {
+	Address StableAddress
+	Value   product.AbstractValue
+}
+
 // StaticMemberFacts is the point-local must-fact domain for guarded static member
 // precision. It exists to keep exact-key presence/value evidence out of record
 // field overlays: a branch can prove `m["k"]` present without pretending the
@@ -101,6 +108,26 @@ func (f StaticMemberFacts) KillSubtreeAddress(root StableAddress) StaticMemberFa
 		out = append(out, e)
 	}
 	return canonicalStaticMemberFacts(out, product.Domain.Join)
+}
+
+// AddressEntriesUnder returns materialized facts at or below root as structured
+// address facts.
+func (f StaticMemberFacts) AddressEntriesUnder(root StableAddress) []StaticMemberAddressFact {
+	if f.bottom || root.Key() == "" || len(f.entries) == 0 {
+		return nil
+	}
+	var out []StaticMemberAddressFact
+	for _, entry := range f.entries {
+		addr, ok := StableAddressFromKey(entry.Path)
+		if !ok || !addr.HasPrefix(root) {
+			continue
+		}
+		out = append(out, StaticMemberAddressFact{
+			Address: addr,
+			Value:   entry.Value,
+		})
+	}
+	return out
 }
 
 // DirectChildAddressesUnder returns the direct child addresses that have any

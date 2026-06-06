@@ -196,10 +196,14 @@ func captureCellWithStaticMembers(sym cfg.SymbolID, av product.AbstractValue, fa
 	if sym == 0 || av.IsZero() {
 		return av
 	}
+	root, ok := flow.StableAddressOfSymbol(sym, nil)
+	if !ok {
+		return av
+	}
 	out := av
-	for _, fact := range facts.Entries() {
-		factSym, segments, ok := flow.ParseSymbolPathKey(fact.Path)
-		if !ok || factSym != sym || len(segments) == 0 || fact.Value.IsZero() {
+	for _, fact := range facts.AddressEntriesUnder(root) {
+		segments := fact.Address.Segments()
+		if len(segments) == 0 || fact.Value.IsZero() {
 			continue
 		}
 		next := writeStaticMemberProduct(out, segments, fact.Value)

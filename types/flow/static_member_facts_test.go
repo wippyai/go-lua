@@ -129,6 +129,29 @@ func TestStaticMemberFactsDirectChildAddressesUnder(t *testing.T) {
 	}
 }
 
+func TestStaticMemberFactsAddressEntriesUnder(t *testing.T) {
+	const sym = cfg.SymbolID(15)
+	root := constraint.NewPath(sym, "entry")
+	meta := root.Field("meta")
+	id := meta.Field("id")
+	other := root.Field("other")
+	metaAddr := testStableAddressPath(t, meta)
+	idAddr := testStableAddressPath(t, id)
+
+	facts := StaticMemberFactsDomain.Top().
+		WithAddress(metaAddr, product.FromType(typ.NewRecord().Build())).
+		WithAddress(idAddr, product.FromType(typ.String)).
+		WithAddress(testStableAddressPath(t, other), product.FromType(typ.Boolean))
+
+	entries := facts.AddressEntriesUnder(metaAddr)
+	if len(entries) != 2 || !entries[0].Address.Equal(metaAddr) || !entries[1].Address.Equal(idAddr) {
+		t.Fatalf("entries under meta = %v, want meta and id", entries)
+	}
+	if !typ.TypeEquals(entries[1].Value.ProjectValue(), typ.String) {
+		t.Fatalf("id entry value = %s, want string", entries[1].Value.ProjectValue())
+	}
+}
+
 func TestInvalidateStaticMemberWritePathBottomsAncestorsAndKillsSubtree(t *testing.T) {
 	root := cfg.SymbolID(9)
 	parentPath := constraint.NewPath(root, "root").Field("cfg")
