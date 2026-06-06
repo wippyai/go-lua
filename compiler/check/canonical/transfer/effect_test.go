@@ -452,24 +452,22 @@ func TestSealedDynamicIndexWriteAdmissionUsesReadBackSlot(t *testing.T) {
 	}
 }
 
-func TestDynamicIndexWriteProofEffectKeepsOpaqueUnsealedReadbackLightweight(t *testing.T) {
-	tr := New(input.Inputs{}, Config{})
+func TestDynamicIndexWriteProofKeepsOpaqueUnsealedReadbackLightweight(t *testing.T) {
 	tablePath := constraint.NewPath(cfg.SymbolID(438), "nodes")
 	keyPath := constraint.NewPath(cfg.SymbolID(439), "node_id")
 	out := flow.PointState{}
 
-	proof, ok := normalizeDynamicIndexWriteProof(
-		tablePath,
-		keyPath,
-		product.FromType(typ.Unknown),
-		constraint.Path{},
-		product.FromType(typ.String),
-		false,
-	)
+	proof, ok := flow.MapWriteProofOfPathProof(flow.MapWritePathProof{
+		TablePath:              tablePath,
+		KeyPath:                keyPath,
+		KeyValue:               product.FromType(typ.Unknown),
+		Value:                  product.FromType(typ.String),
+		AllowOpaqueKeyReadback: false,
+	})
 	if !ok {
 		t.Fatal("dynamic index write proof did not resolve")
 	}
-	changed := tr.applyDynamicIndexWriteProofEffect(&out, DynamicIndexWriteProofEffect{Proof: proof})
+	changed := flow.ApplyMapWriteProof(&out, proof)
 
 	if !changed {
 		t.Fatal("dynamic index write proof did not report key-presence change")
@@ -1812,18 +1810,17 @@ func TestDelayedIndexWriteMaterializesPendingAppendKeyArrayValue(t *testing.T) {
 		t.Fatalf("pending append materialized before table key proof: %s", out.KeyPresence.Format())
 	}
 
-	proof, ok := normalizeDynamicIndexWriteProof(
-		tablePath,
-		keyPath,
-		product.FromType(typ.Unknown),
-		constraint.Path{},
-		product.FromType(edgeType),
-		true,
-	)
+	proof, ok := flow.MapWriteProofOfPathProof(flow.MapWritePathProof{
+		TablePath:              tablePath,
+		KeyPath:                keyPath,
+		KeyValue:               product.FromType(typ.Unknown),
+		Value:                  product.FromType(edgeType),
+		AllowOpaqueKeyReadback: true,
+	})
 	if !ok {
 		t.Fatal("dynamic index write proof did not resolve")
 	}
-	tr.applyDynamicIndexWriteProofEffect(&out, DynamicIndexWriteProofEffect{Proof: proof})
+	flow.ApplyMapWriteProof(&out, proof)
 
 	values := out.KeyPresence.KeyArrayValues(flow.KeyPresencePathKey(arrayPath), flow.KeyPresencePathKey(tablePath))
 	if len(values) != 1 || !typ.TypeEquals(values[0].ProjectValue(), edgeType) {

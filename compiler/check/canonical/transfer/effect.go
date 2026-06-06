@@ -758,8 +758,8 @@ func (t *Transfer) applyWriteEffectWithAliasReplay(out *flow.PointState, effect 
 		symbolicChanged := t.applySymbolicDynamicIndexWriteProof(out, effect.IndexTarget, effect.Source, effect.Value)
 		changed = symbolicChanged || changed
 	}
-	if proof, ok := t.dynamicIndexWriteProofEffect(effect, admittedIndexKey, admittedIndexValue); ok {
-		changed = t.applyDynamicIndexWriteProofEffect(out, proof) || changed
+	if proof, ok := t.dynamicIndexWriteProof(effect, admittedIndexKey, admittedIndexValue); ok {
+		changed = flow.ApplyMapWriteProof(out, proof) || changed
 	}
 	t.writeRootContainer(out, effect.Place.Root, updated)
 	t.applyPrototypeSelfWriteEffect(out, effect, updated)

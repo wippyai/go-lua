@@ -344,6 +344,56 @@ type MapWriteProof struct {
 	AllowOpaqueKeyReadback bool
 }
 
+// MapWritePathProof is the structured-path publication form for a dynamic map
+// write. Flow owns lowering these paths to stable addresses before applying the
+// reduced-product map-write transaction.
+type MapWritePathProof struct {
+	TablePath              constraint.Path
+	KeyPath                constraint.Path
+	ValuePath              constraint.Path
+	KeyValue               product.AbstractValue
+	Value                  product.AbstractValue
+	AllowOpaqueKeyReadback bool
+}
+
+// MapWriteProofOfPathProof lowers a path-level dynamic map write proof to the
+// stable-address proof consumed by ApplyMapWriteProof.
+func MapWriteProofOfPathProof(proof MapWritePathProof) (MapWriteProof, bool) {
+	tableAddr, ok := StableAddressOfPath(proof.TablePath)
+	if !ok {
+		return MapWriteProof{}, false
+	}
+	out := MapWriteProof{
+		Table:                  tableAddr,
+		KeyValue:               proof.KeyValue,
+		Value:                  proof.Value,
+		AllowOpaqueKeyReadback: proof.AllowOpaqueKeyReadback,
+	}
+	if !proof.KeyPath.IsEmpty() {
+		if keyAddr, ok := StableAddressOfPath(proof.KeyPath); ok {
+			out.Key = keyAddr
+			out.HasKey = true
+		}
+	}
+	if !proof.ValuePath.IsEmpty() {
+		if valueAddr, ok := StableAddressOfPath(proof.ValuePath); ok {
+			out.ValuePath = valueAddr
+			out.HasValuePath = true
+		}
+	}
+	return out, true
+}
+
+// ApplyMapWritePathProof lowers and applies a path-level dynamic map write
+// proof.
+func ApplyMapWritePathProof(out *PointState, proof MapWritePathProof) bool {
+	normalized, ok := MapWriteProofOfPathProof(proof)
+	if !ok {
+		return false
+	}
+	return ApplyMapWriteProof(out, normalized)
+}
+
 // ApplyMapWriteProof applies all reduced-product consequences of one dynamic
 // map write. Key facts and readback facts are intentionally independent, so a
 // readback admission failure cannot suppress lightweight provenance.

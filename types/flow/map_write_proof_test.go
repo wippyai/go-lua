@@ -69,6 +69,35 @@ func TestApplyMapWriteProofPublishesReadbackWhenAdmissible(t *testing.T) {
 	}
 }
 
+func TestApplyMapWritePathProofLowersStructuredPaths(t *testing.T) {
+	tablePath := constraint.NewPath(cfg.SymbolID(8), "nodes")
+	keyPath := constraint.NewPath(cfg.SymbolID(9), "node_id")
+	valuePath := constraint.NewPath(cfg.SymbolID(10), "node")
+	state := PointState{}
+
+	if changed := ApplyMapWritePathProof(&state, MapWritePathProof{
+		TablePath:              tablePath,
+		KeyPath:                keyPath,
+		KeyValue:               product.FromType(typ.LiteralString("n1")),
+		ValuePath:              valuePath,
+		Value:                  product.FromType(typ.Number),
+		AllowOpaqueKeyReadback: true,
+	}); !changed {
+		t.Fatal("ApplyMapWritePathProof reported unchanged")
+	}
+
+	if !state.KeyPresence.Has(StablePathKey(tablePath), StablePathKey(keyPath)) {
+		t.Fatalf("path proof did not publish key presence: %s", state.KeyPresence.Format())
+	}
+	got, ok := state.IndexWrites.AdmissionAtAddress(testIndexWriteAddressQuery(t, tablePath, keyPath, typ.LiteralString("n1"), valuePath))
+	if !ok {
+		t.Fatal("path proof readback missing")
+	}
+	if !product.Domain.Equal(got, product.FromType(typ.Number)) {
+		t.Fatalf("path proof readback = %v, want number", got.ProjectValue())
+	}
+}
+
 func TestApplyMapWriteProofWidensExistingKeyArrayValueForPresentWrite(t *testing.T) {
 	arrayPath := constraint.NewPath(cfg.SymbolID(11), "node_order")
 	tablePath := constraint.NewPath(cfg.SymbolID(12), "nodes")

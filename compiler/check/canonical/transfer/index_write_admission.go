@@ -11,25 +11,17 @@ import (
 	"github.com/wippyai/go-lua/types/typ"
 )
 
-// DynamicIndexWriteProofEffect is the transfer reducer payload for the proof
-// transaction produced by one admitted dynamic-index write. Source paths are
-// lowered before the effect is published; the reducer only consumes flow-domain
-// addresses and product evidence.
-type DynamicIndexWriteProofEffect struct {
-	Proof flow.MapWriteProof
-}
-
-func (t *Transfer) dynamicIndexWriteProofEffect(
+func (t *Transfer) dynamicIndexWriteProof(
 	effect WriteEffect,
 	key product.AbstractValue,
 	value product.AbstractValue,
-) (DynamicIndexWriteProofEffect, bool) {
+) (flow.MapWriteProof, bool) {
 	if effect.IndexTarget.Kind != cfg.TargetIndex || effect.IndexTarget.Key == nil {
-		return DynamicIndexWriteProofEffect{}, false
+		return flow.MapWriteProof{}, false
 	}
 	targetPath, ok := indexWriteTargetPath(effect.Place)
 	if !ok || targetPath.IsEmpty() {
-		return DynamicIndexWriteProofEffect{}, false
+		return flow.MapWriteProof{}, false
 	}
 	keyPath := constraint.Path{}
 	if path, ok := t.staticPathOfExpr(effect.IndexTarget.Key); ok {
@@ -39,61 +31,18 @@ func (t *Transfer) dynamicIndexWriteProofEffect(
 	if path, ok := t.staticPathOfExpr(effect.Source); ok {
 		valuePath = path
 	}
-	proof, ok := normalizeDynamicIndexWriteProof(
-		targetPath,
-		keyPath,
-		key,
-		valuePath,
-		value,
-		t.indexWriteTargetSealed(targetPath) || !keyPath.IsEmpty(),
-	)
-	if !ok {
-		return DynamicIndexWriteProofEffect{}, false
-	}
-	return DynamicIndexWriteProofEffect{Proof: proof}, true
-}
-
-func normalizeDynamicIndexWriteProof(
-	targetPath constraint.Path,
-	keyPath constraint.Path,
-	key product.AbstractValue,
-	valuePath constraint.Path,
-	value product.AbstractValue,
-	allowOpaqueKeyReadback bool,
-) (flow.MapWriteProof, bool) {
-	targetAddr, ok := flow.StableAddressOfPath(targetPath)
+	proof, ok := flow.MapWriteProofOfPathProof(flow.MapWritePathProof{
+		TablePath:              targetPath,
+		KeyPath:                keyPath,
+		KeyValue:               key,
+		ValuePath:              valuePath,
+		Value:                  value,
+		AllowOpaqueKeyReadback: t.indexWriteTargetSealed(targetPath) || !keyPath.IsEmpty(),
+	})
 	if !ok {
 		return flow.MapWriteProof{}, false
 	}
-	proof := flow.MapWriteProof{
-		Table:                  targetAddr,
-		KeyValue:               key,
-		Value:                  value,
-		AllowOpaqueKeyReadback: allowOpaqueKeyReadback,
-	}
-	if !keyPath.IsEmpty() {
-		if keyAddr, ok := flow.StableAddressOfPath(keyPath); ok {
-			proof.Key = keyAddr
-			proof.HasKey = true
-		}
-	}
-	if !valuePath.IsEmpty() {
-		if valueAddr, ok := flow.StableAddressOfPath(valuePath); ok {
-			proof.ValuePath = valueAddr
-			proof.HasValuePath = true
-		}
-	}
 	return proof, true
-}
-
-func (t *Transfer) applyDynamicIndexWriteProofEffect(
-	out *flow.PointState,
-	effect DynamicIndexWriteProofEffect,
-) bool {
-	if out == nil {
-		return false
-	}
-	return flow.ApplyMapWriteProof(out, effect.Proof)
 }
 
 func (t *Transfer) applySymbolicDynamicIndexWriteProof(
@@ -120,14 +69,14 @@ func (t *Transfer) applySymbolicDynamicIndexWriteProof(
 	if src != nil {
 		valuePath, _ = t.staticPathOfExpr(src)
 	}
-	proof, ok := normalizeDynamicIndexWriteProof(
-		tablePath,
-		keyPath,
-		product.FromType(typ.Unknown),
-		valuePath,
-		value,
-		true,
-	)
+	proof, ok := flow.MapWriteProofOfPathProof(flow.MapWritePathProof{
+		TablePath:              tablePath,
+		KeyPath:                keyPath,
+		KeyValue:               product.FromType(typ.Unknown),
+		ValuePath:              valuePath,
+		Value:                  value,
+		AllowOpaqueKeyReadback: true,
+	})
 	if !ok {
 		return false
 	}

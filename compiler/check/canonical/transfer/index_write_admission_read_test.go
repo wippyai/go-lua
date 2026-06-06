@@ -102,7 +102,7 @@ func TestDynamicIndexWriteProofBuilderAllowsOpaqueExactKeyPathReadback(t *testin
 	out := flow.PointState{}
 	payload := product.FromType(typ.NewRecord().Field("kind", typ.String).Build())
 
-	proof, ok := tr.dynamicIndexWriteProofEffect(WriteEffect{
+	proof, ok := tr.dynamicIndexWriteProof(WriteEffect{
 		Place: Place{
 			Root:     nodesSym,
 			RootName: "nodes",
@@ -122,7 +122,7 @@ func TestDynamicIndexWriteProofBuilderAllowsOpaqueExactKeyPathReadback(t *testin
 	if !ok {
 		t.Fatal("dynamic index write proof was not constructed")
 	}
-	tr.applyDynamicIndexWriteProofEffect(&out, proof)
+	flow.ApplyMapWriteProof(&out, proof)
 
 	got, ok := testIndexWriteAdmission(t, out.IndexWrites, nodesPath, idPath, typ.Any)
 	if !ok || !product.Domain.Equal(got, payload) {
