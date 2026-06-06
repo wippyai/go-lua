@@ -43,11 +43,11 @@ type EntryReferenceArgSources struct {
 	ClosureRefTree  EntryClosureRefsArgResolver
 }
 
-// DirectCallEntryReferenceInput is the call-boundary projection for reference
+// directCallEntryReferenceInput is the call-boundary projection for reference
 // axes. It is the reference-axis counterpart of direct entry-value projection:
 // both consume normalized runtime arguments, the callee's ParamSlots mapping,
 // and the callee's parameter paths.
-type DirectCallEntryReferenceInput struct {
+type directCallEntryReferenceInput struct {
 	Call   *ast.FuncCallExpr
 	Callee FuncRef
 
@@ -63,11 +63,11 @@ type DirectCallEntryReferenceInput struct {
 	ArgSources          EntryReferenceArgSources
 }
 
-// DirectCallEntryReferences projects both callable-reference axes for one direct
+// directCallEntryReferences projects both callable-reference axes for one direct
 // call-boundary context. Function and closure identities share the same runtime
 // argument layout, source paths, and callee parameter paths, so they are projected
 // together to preserve a single boundary traversal.
-func DirectCallEntryReferences(in DirectCallEntryReferenceInput) (flow.FunctionRefs, flow.ClosureRefs) {
+func directCallEntryReferences(in directCallEntryReferenceInput) (flow.FunctionRefs, flow.ClosureRefs) {
 	functionRefs := flow.FunctionRefsDomain.Bottom()
 	closureRefs := flow.ClosureRefsDomain.Bottom()
 	ok := forEachEntryReferenceArg(in, func(runtimeIdx int, arg ast.Expr, target constraint.Path) {
@@ -112,7 +112,7 @@ func DirectCallEntryReferences(in DirectCallEntryReferenceInput) (flow.FunctionR
 		flow.ProjectClosureRefsByReferencePaths(closureRefs, in.ReferenceProjection)
 }
 
-func forEachEntryReferenceArg(in DirectCallEntryReferenceInput, visit func(runtimeIdx int, arg ast.Expr, target constraint.Path)) bool {
+func forEachEntryReferenceArg(in directCallEntryReferenceInput, visit func(runtimeIdx int, arg ast.Expr, target constraint.Path)) bool {
 	if in.Call == nil || in.ParamSlot == nil || in.ParamPath == nil {
 		return false
 	}
@@ -126,7 +126,7 @@ func forEachEntryReferenceArg(in DirectCallEntryReferenceInput, visit func(runti
 	return true
 }
 
-func entryReferenceTargetPath(in DirectCallEntryReferenceInput, slot int) (constraint.Path, bool) {
+func entryReferenceTargetPath(in directCallEntryReferenceInput, slot int) (constraint.Path, bool) {
 	target, ok := in.ParamPath(in.Callee, slot)
 	if !ok || target.IsEmpty() || target.Symbol == 0 {
 		return constraint.Path{}, false

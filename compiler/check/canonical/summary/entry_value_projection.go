@@ -359,6 +359,31 @@ func (p CallEntryContextProjection) DirectFacts(
 	})
 }
 
+// DirectReferences projects callable-reference axes for one direct call using
+// this projection's runtime-slot, parameter-path, and argument-path layout.
+func (p CallEntryContextProjection) DirectReferences(
+	callee FuncRef,
+	call *ast.FuncCallExpr,
+	state *flow.PointState,
+	functionRefs flow.FunctionRefs,
+	closureRefs flow.ClosureRefs,
+	argSources EntryReferenceArgSources,
+) (flow.FunctionRefs, flow.ClosureRefs) {
+	return directCallEntryReferences(directCallEntryReferenceInput{
+		Call:                call,
+		Callee:              callee,
+		ParamSlot:           p.ParamSlot,
+		ParamPath:           p.ParamPath,
+		ArgPath:             p.ArgPath,
+		FunctionRefs:        functionRefs,
+		ClosureRefs:         closureRefs,
+		ReferenceProjection: p.referenceProjection(callee),
+		LimitReferencePaths: p.ReferencePaths != nil,
+		State:               state,
+		ArgSources:          argSources,
+	})
+}
+
 // ProjectKeys returns deterministic, de-duplicated callee summary keys for every
 // module-local call site in Graph.
 func (p CallEntryContextProjection) ProjectKeys() []Key {
@@ -553,24 +578,7 @@ func (p CallEntryContextProjection) directReferenceAxes(callee FuncRef, call *as
 	if p.ParamSlot == nil || p.ParamPath == nil || in == nil {
 		return flow.FunctionRefsDomain.Bottom(), flow.ClosureRefsDomain.Bottom()
 	}
-	refInput := p.referenceInput(callee, call, in)
-	refInput.FunctionRefs = in.FunctionRefs
-	refInput.ClosureRefs = in.ClosureRefs
-	refInput.ArgSources = p.ReferenceArgSources
-	return DirectCallEntryReferences(refInput)
-}
-
-func (p CallEntryContextProjection) referenceInput(callee FuncRef, call *ast.FuncCallExpr, in *flow.PointState) DirectCallEntryReferenceInput {
-	return DirectCallEntryReferenceInput{
-		Call:                call,
-		Callee:              callee,
-		ParamSlot:           p.ParamSlot,
-		ParamPath:           p.ParamPath,
-		ArgPath:             p.ArgPath,
-		ReferenceProjection: p.referenceProjection(callee),
-		LimitReferencePaths: p.ReferencePaths != nil,
-		State:               in,
-	}
+	return p.DirectReferences(callee, call, in, in.FunctionRefs, in.ClosureRefs, p.ReferenceArgSources)
 }
 
 func (p CallEntryContextProjection) directFacts(callee FuncRef, call *ast.FuncCallExpr, in *flow.PointState) flow.BoundaryFacts {

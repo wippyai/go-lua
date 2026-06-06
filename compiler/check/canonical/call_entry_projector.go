@@ -327,24 +327,19 @@ func (c callEntryProjector) productReferencesForRef(ref summary.FuncRef, call *a
 	if call == nil {
 		return flow.FunctionRefsDomain.Bottom(), flow.ClosureRefsDomain.Bottom()
 	}
-	in := c.referenceInput(ref, call)
 	access := c.access()
-	in.FunctionRefs = ctx.FunctionRefs
-	in.ClosureRefs = ctx.ClosureRefs
-	in.ArgSources = access.productReferenceArgSources(ctx)
-	return summary.DirectCallEntryReferences(in)
+	return c.referenceLayout().DirectReferences(ref, call, nil, ctx.FunctionRefs, ctx.ClosureRefs, access.productReferenceArgSources(ctx))
 }
 
-func (c callEntryProjector) referenceInput(ref summary.FuncRef, call *ast.FuncCallExpr) summary.DirectCallEntryReferenceInput {
-	return summary.DirectCallEntryReferenceInput{
-		Call:                call,
-		Callee:              ref,
-		ReferenceProjection: c.program.referenceProjection(ref),
-		LimitReferencePaths: true,
-		ParamSlot:           c.paramSlot,
+func (c callEntryProjector) referenceLayout() summary.CallEntryContextProjection {
+	return summary.CallEntryContextProjection{
+		ParamSlot: c.paramSlot,
 		ParamPath: func(callee summary.FuncRef, slot int) (constraint.Path, bool) {
 			return c.program.paramPath(callee, slot)
 		},
 		ArgPath: c.access().argPath,
+		ReferencePaths: func(callee summary.FuncRef) flow.ReferencePathProjection {
+			return c.program.referenceProjection(callee)
+		},
 	}
 }
