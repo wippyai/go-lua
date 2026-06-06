@@ -62,16 +62,8 @@ type DirectCallEntryReferenceInput struct {
 // parameter paths. A path-backed argument rebases its whole FunctionRefs subtree;
 // a direct function literal or other non-path callable seeds the parameter root.
 func DirectCallEntryFunctionRefs(in DirectCallEntryReferenceInput) flow.FunctionRefs {
-	if in.Call == nil || in.ParamSlot == nil || in.ParamPath == nil {
-		return flow.FunctionRefsDomain.Bottom()
-	}
 	out := flow.FunctionRefsDomain.Bottom()
-	for runtimeIdx := 0; runtimeIdx < callsite.RuntimeArgExprCount(in.Call); runtimeIdx++ {
-		arg := callsite.RuntimeArgExprAt(in.Call, runtimeIdx)
-		target, ok := entryReferenceTargetPath(in, runtimeIdx)
-		if !ok {
-			continue
-		}
+	ok := forEachEntryReferenceArg(in, func(runtimeIdx int, arg ast.Expr, target constraint.Path) {
 		if in.ArgPath != nil {
 			if source, ok := in.ArgPath(runtimeIdx, arg); ok {
 				out = flow.FunctionRefsDomain.Join(out, rebaseEntryFunctionRefs(in.FunctionRefs, source, target))
@@ -84,13 +76,16 @@ func DirectCallEntryFunctionRefs(in DirectCallEntryReferenceInput) flow.Function
 			}
 		}
 		if in.ResolveFunctionArg == nil {
-			continue
+			return
 		}
 		set, ok := in.ResolveFunctionArg(runtimeIdx, arg, in.State)
 		if !ok || set.IsBottom() {
-			continue
+			return
 		}
 		out = joinFunctionRefAt(out, target.Key(), set)
+	})
+	if !ok {
+		return flow.FunctionRefsDomain.Bottom()
 	}
 	out = flow.FunctionRefsDomain.Join(out, nil)
 	if !in.LimitReferencePaths {
@@ -104,16 +99,8 @@ func DirectCallEntryFunctionRefs(in DirectCallEntryReferenceInput) flow.Function
 // caller has them, while still allowing a direct function literal to seed a
 // parameter root through ResolveClosureArg.
 func DirectCallEntryClosureRefs(in DirectCallEntryReferenceInput) flow.ClosureRefs {
-	if in.Call == nil || in.ParamSlot == nil || in.ParamPath == nil {
-		return flow.ClosureRefsDomain.Bottom()
-	}
 	out := flow.ClosureRefsDomain.Bottom()
-	for runtimeIdx := 0; runtimeIdx < callsite.RuntimeArgExprCount(in.Call); runtimeIdx++ {
-		arg := callsite.RuntimeArgExprAt(in.Call, runtimeIdx)
-		target, ok := entryReferenceTargetPath(in, runtimeIdx)
-		if !ok {
-			continue
-		}
+	ok := forEachEntryReferenceArg(in, func(runtimeIdx int, arg ast.Expr, target constraint.Path) {
 		if in.ArgPath != nil {
 			if source, ok := in.ArgPath(runtimeIdx, arg); ok {
 				out = flow.ClosureRefsDomain.Join(out, rebaseEntryClosureRefs(in.ClosureRefs, source, target))
@@ -126,19 +113,37 @@ func DirectCallEntryClosureRefs(in DirectCallEntryReferenceInput) flow.ClosureRe
 			}
 		}
 		if in.ResolveClosureArg == nil {
-			continue
+			return
 		}
 		set, ok := in.ResolveClosureArg(runtimeIdx, arg, in.State)
 		if !ok || set.IsBottom() {
-			continue
+			return
 		}
 		out = joinClosureRefAt(out, target.Key(), set)
+	})
+	if !ok {
+		return flow.ClosureRefsDomain.Bottom()
 	}
 	out = flow.ClosureRefsDomain.Join(out, nil)
 	if !in.LimitReferencePaths {
 		return out
 	}
 	return flow.ProjectClosureRefsByReferencePaths(out, in.ReferenceProjection)
+}
+
+func forEachEntryReferenceArg(in DirectCallEntryReferenceInput, visit func(runtimeIdx int, arg ast.Expr, target constraint.Path)) bool {
+	if in.Call == nil || in.ParamSlot == nil || in.ParamPath == nil {
+		return false
+	}
+	for runtimeIdx := 0; runtimeIdx < callsite.RuntimeArgExprCount(in.Call); runtimeIdx++ {
+		arg := callsite.RuntimeArgExprAt(in.Call, runtimeIdx)
+		target, ok := entryReferenceTargetPath(in, runtimeIdx)
+		if !ok {
+			continue
+		}
+		visit(runtimeIdx, arg, target)
+	}
+	return true
 }
 
 func entryReferenceTargetPath(in DirectCallEntryReferenceInput, runtimeIdx int) (constraint.Path, bool) {
