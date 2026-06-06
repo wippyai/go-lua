@@ -4,7 +4,6 @@ import (
 	"sort"
 
 	"github.com/wippyai/go-lua/compiler/cfg"
-	"github.com/wippyai/go-lua/compiler/check/synth/transform"
 	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/domain/value/product"
 	"github.com/wippyai/go-lua/types/flow"
@@ -280,101 +279,15 @@ func (t *Transfer) variantOriginValueForCase(av product.AbstractValue, sym cfg.S
 }
 
 func (t *Transfer) applyVariantCaseFieldProjections(out *flow.PointState, fact constraint.Condition) bool {
-	if t == nil || out == nil || len(t.in.VariantCaseFieldProjections) == 0 || fact.NumDisjuncts() == 0 {
+	if t == nil || out == nil {
 		return false
 	}
-	projected := t.variantCaseFieldProjectionValues(out, fact)
+	projected := flow.VariantCaseFieldProjectionValues(*out, fact, t.in.VariantCaseFieldProjections)
 	changed := false
 	for _, entry := range projected {
-		changed = flow.SetStaticMemberPath(out, entry.path, entry.value) || changed
+		changed = flow.SetStaticMemberPath(out, entry.Path, entry.Value) || changed
 	}
 	return changed
-}
-
-type variantCaseFieldProjectionValue struct {
-	path  constraint.Path
-	value product.AbstractValue
-}
-
-func (t *Transfer) variantCaseFieldProjectionValues(out *flow.PointState, fact constraint.Condition) []variantCaseFieldProjectionValue {
-	var joined map[constraint.PathKey]variantCaseFieldProjectionValue
-	for i := 0; i < fact.NumDisjuncts(); i++ {
-		local := t.variantCaseFieldProjectionValuesForDisjunct(out, fact.DisjunctConstraints(i))
-		if i == 0 {
-			joined = local
-			continue
-		}
-		for key, current := range joined {
-			next, ok := local[key]
-			if !ok {
-				delete(joined, key)
-				continue
-			}
-			current.value = product.Domain.Join(current.value, next.value)
-			joined[key] = current
-		}
-	}
-	if len(joined) == 0 {
-		return nil
-	}
-	outValues := make([]variantCaseFieldProjectionValue, 0, len(joined))
-	for _, entry := range joined {
-		outValues = append(outValues, entry)
-	}
-	sort.Slice(outValues, func(i, j int) bool {
-		return outValues[i].path.String() < outValues[j].path.String()
-	})
-	return outValues
-}
-
-func (t *Transfer) variantCaseFieldProjectionValuesForDisjunct(out *flow.PointState, constraints []constraint.Constraint) map[constraint.PathKey]variantCaseFieldProjectionValue {
-	values := make(map[constraint.PathKey]variantCaseFieldProjectionValue)
-	for _, c := range constraints {
-		eq, ok := c.(constraint.VariantCaseEquals)
-		if !ok {
-			continue
-		}
-		for _, projection := range t.in.VariantCaseFieldProjections {
-			if projection.OriginFamily != eq.OriginFamily ||
-				projection.CaseIndex != eq.CaseIndex ||
-				!projection.Target.Equal(eq.Target) ||
-				projection.Field == "" {
-				continue
-			}
-			av, ok := t.variantCaseFieldProjectionValue(out, projection)
-			if !ok {
-				continue
-			}
-			path := projection.Target.Field(projection.Field)
-			key := flow.StablePathKey(path)
-			if key == "" {
-				continue
-			}
-			entry, exists := values[key]
-			if exists {
-				entry.value = product.Domain.Join(entry.value, av)
-			} else {
-				entry = variantCaseFieldProjectionValue{path: path, value: av}
-			}
-			values[key] = entry
-		}
-	}
-	return values
-}
-
-func (t *Transfer) variantCaseFieldProjectionValue(out *flow.PointState, projection flow.VariantCaseFieldProjection) (product.AbstractValue, bool) {
-	if out == nil || projection.Source.IsEmpty() {
-		return product.AbstractValue{}, false
-	}
-	sourceType, ok := flow.PointFactsOf(*out).PathType(projection.Source)
-	if !ok || typ.IsAbsentOrUnknown(sourceType) || typ.ContainsAny(sourceType) {
-		return product.AbstractValue{}, false
-	}
-	projected := transform.ApplyTypeProjectionSteps(sourceType, projection.SourceSteps)
-	if typ.IsAbsentOrUnknown(projected) || typ.ContainsAny(projected) {
-		return product.AbstractValue{}, false
-	}
-	return product.FromType(projected), true
 }
 
 func variantOriginConditionSymbols(fact constraint.Condition) []cfg.SymbolID {

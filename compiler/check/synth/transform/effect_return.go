@@ -4,6 +4,7 @@ import (
 	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/contract"
 	"github.com/wippyai/go-lua/types/effect"
+	"github.com/wippyai/go-lua/types/effect/typeprojection"
 	"github.com/wippyai/go-lua/types/kind"
 	"github.com/wippyai/go-lua/types/narrow"
 	querycore "github.com/wippyai/go-lua/types/query/core"
@@ -70,20 +71,20 @@ func ApplyEffectTransform(fn *typ.Function, args []typ.Type, returnIdx int, base
 			}
 		}
 	case effect.TypeProjection:
-		if projected := projectType(args, transform); projected != nil {
+		if projected := typeprojection.FromArgs(args, transform); projected != nil {
 			transformedReturn = projected
 			break
 		}
 	case effect.CallbackReturn:
 		if resolved := resolveParamType(args, transform.CallbackParam); resolved != nil {
-			if cbRet := callbackReturnType(resolved); cbRet != nil {
+			if cbRet := typeprojection.CallableReturn(resolved); cbRet != nil {
 				transformedReturn = cbRet
 				break
 			}
 		}
 	case effect.ArrayOfCallbackReturn:
 		if resolved := resolveParamType(args, transform.CallbackParam); resolved != nil {
-			if cbRet := callbackReturnType(resolved); cbRet != nil {
+			if cbRet := typeprojection.CallableReturn(resolved); cbRet != nil {
 				transformedReturn = typ.NewArray(cbRet)
 				break
 			}
@@ -449,99 +450,6 @@ func refineFlowTargetType(existing, candidate typ.Type) typ.Type {
 		return existing
 	}
 	return typjoin.Types(existing, candidate)
-}
-
-func callbackReturnType(t typ.Type) typ.Type {
-	t = unwrap.Alias(t)
-	if t == nil {
-		return nil
-	}
-	switch v := t.(type) {
-	case *typ.Function:
-		if len(v.Returns) == 0 || v.Returns[0] == nil {
-			return nil
-		}
-		return v.Returns[0]
-	case *typ.Optional:
-		return callbackReturnType(v.Inner)
-	case *typ.Union:
-		var members []typ.Type
-		for _, m := range v.Members {
-			if rt := callbackReturnType(m); rt != nil {
-				members = append(members, rt)
-			}
-		}
-		if len(members) == 0 {
-			return nil
-		}
-		return typ.NewUnion(members...)
-	default:
-		if typ.IsAny(t) {
-			return typ.Any
-		}
-		if typ.IsUnknown(t) {
-			return typ.Unknown
-		}
-		return nil
-	}
-}
-
-func projectType(args []typ.Type, projection effect.TypeProjection) typ.Type {
-	current := resolveParamType(args, projection.Source)
-	if current == nil {
-		return nil
-	}
-	return ApplyTypeProjectionSteps(current, projection.Steps)
-}
-
-// ApplyTypeProjectionSteps walks an already-selected type witness through the
-// same projection algebra used by TypeProjection return effects.
-func ApplyTypeProjectionSteps(current typ.Type, steps []effect.TypeProjectionStep) typ.Type {
-	if current == nil {
-		return nil
-	}
-	for _, step := range steps {
-		next := projectTypeStep(current, step)
-		if next == nil {
-			return nil
-		}
-		current = next
-	}
-	return current
-}
-
-func projectTypeStep(t typ.Type, step effect.TypeProjectionStep) typ.Type {
-	switch step.Kind {
-	case effect.TypeProjectionField:
-		ft, ok := querycore.Field(t, step.Field)
-		if !ok {
-			return nil
-		}
-		return ft
-	case effect.TypeProjectionCallableReturn:
-		return callbackReturnType(t)
-	case effect.TypeProjectionGenericArg:
-		inst, ok := unwrap.Alias(t).(*typ.Instantiated)
-		if !ok || step.Index < 0 || step.Index >= len(inst.TypeArgs) {
-			return nil
-		}
-		return inst.TypeArgs[step.Index]
-	case effect.TypeProjectionInstantiateGeneric:
-		generic, ok := unwrap.Alias(step.Type).(*typ.Generic)
-		if !ok || len(generic.TypeParams) != 1 {
-			return nil
-		}
-		return typ.Instantiate(generic, typeEvidencePayload(t))
-	default:
-		return nil
-	}
-}
-
-func typeEvidencePayload(t typ.Type) typ.Type {
-	if meta, ok := unwrap.Alias(t).(*typ.Meta); ok && meta != nil && meta.Of != nil {
-		return meta.Of
-	}
-	return t
 }
 
 func deepElementType(t typ.Type) typ.Type {

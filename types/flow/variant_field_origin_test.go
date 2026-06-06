@@ -5,7 +5,9 @@ import (
 
 	"github.com/wippyai/go-lua/types/cfg"
 	"github.com/wippyai/go-lua/types/constraint"
+	"github.com/wippyai/go-lua/types/domain/value/product"
 	"github.com/wippyai/go-lua/types/effect"
+	"github.com/wippyai/go-lua/types/typ"
 )
 
 func TestInputsEqualIncludesVariantOriginFamilyAndCase(t *testing.T) {
@@ -72,6 +74,57 @@ func TestNormalizeOrdersVariantOriginsAndCaseFieldProjections(t *testing.T) {
 		projections[1].OriginFamily != 7 || projections[1].CaseIndex != 2 ||
 		projections[2].OriginFamily != 9 || projections[2].CaseIndex != 2 {
 		t.Fatalf("unexpected normalized projection order: %#v", projections)
+	}
+}
+
+func TestVariantCaseFieldProjectionValuesJoinSelectedPayloads(t *testing.T) {
+	resultSym := cfg.SymbolID(11)
+	eventsSym := cfg.SymbolID(12)
+	timersSym := cfg.SymbolID(13)
+	family := uint64(91)
+	result := constraint.Path{Root: "selected", Symbol: resultSym}
+	events := constraint.Path{Root: "events", Symbol: eventsSym}
+	timers := constraint.Path{Root: "timers", Symbol: timersSym}
+	channel := typ.NewGeneric("Channel", []*typ.TypeParam{typ.NewTypeParam("T", nil)}, typ.NewInterface("Channel", nil))
+	state := PointState{
+		Env: map[ValueKey]product.AbstractValue{
+			SymbolValueKey(eventsSym): product.FromType(typ.Instantiate(channel, typ.String)),
+			SymbolValueKey(timersSym): product.FromType(typ.Instantiate(channel, typ.Number)),
+		},
+	}
+	projections := []VariantCaseFieldProjection{
+		{
+			Target:       result,
+			Field:        "value",
+			Source:       events,
+			SourceSteps:  []effect.TypeProjectionStep{effect.ProjectGenericArg(0)},
+			OriginFamily: family,
+			CaseIndex:    0,
+		},
+		{
+			Target:       result,
+			Field:        "value",
+			Source:       timers,
+			SourceSteps:  []effect.TypeProjectionStep{effect.ProjectGenericArg(0)},
+			OriginFamily: family,
+			CaseIndex:    1,
+		},
+	}
+	fact := constraint.Or(
+		constraint.FromConstraints(constraint.VariantCaseEquals{Target: result, OriginFamily: family, CaseIndex: 0}),
+		constraint.FromConstraints(constraint.VariantCaseEquals{Target: result, OriginFamily: family, CaseIndex: 1}),
+	)
+
+	values := VariantCaseFieldProjectionValues(state, fact, projections)
+	if len(values) != 1 {
+		t.Fatalf("projection values = %#v, want one joined selected.value proof", values)
+	}
+	if !values[0].Path.Equal(result.Field("value")) {
+		t.Fatalf("projected path = %s, want selected.value", values[0].Path.String())
+	}
+	want := typ.NewUnion(typ.String, typ.Number)
+	if !typ.TypeEquals(values[0].Value.ProjectValue(), want) {
+		t.Fatalf("projected payload = %v, want %v", values[0].Value.ProjectValue(), want)
 	}
 }
 
