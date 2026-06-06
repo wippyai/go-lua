@@ -2062,7 +2062,7 @@ func (ct callTyper) callInterceptEnv(exprType func(ast.Expr) typ.Type) canonical
 
 // TypeCastTarget reports whether call is a type-cast/assertion call `T(arg)`.
 func (ct callTyper) TypeCastTarget(call *ast.FuncCallExpr, exprType func(ast.Expr) typ.Type) (typ.Type, bool) {
-	return canonicalcall.InferTypeCastTarget(call, ct.callInterceptEnv(exprType))
+	return ct.callInterceptEnv(exprType).TypeCastTarget(call)
 }
 
 // ParamNarrows resolves the callee of call to a module function and returns its

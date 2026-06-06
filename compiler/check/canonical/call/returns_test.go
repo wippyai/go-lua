@@ -262,9 +262,9 @@ func TestTypeCastTargetAndInterceptShareEnvironment(t *testing.T) {
 		},
 	}
 
-	target, ok := InferTypeCastTarget(call, env)
+	target, ok := env.TypeCastTarget(call)
 	if !ok || target != typ.String {
-		t.Fatalf("InferTypeCastTarget = %v, %v; want string, true", target, ok)
+		t.Fatalf("TypeCastTarget = %v, %v; want string, true", target, ok)
 	}
 	returns, ok := interceptReturnTypes(call, env)
 	if !ok || len(returns) != 1 || returns[0] != typ.String {

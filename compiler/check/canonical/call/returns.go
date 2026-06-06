@@ -328,9 +328,8 @@ func interceptReturnTypes(call *ast.FuncCallExpr, env InterceptEnv) ([]typ.Type,
 	return nil, false
 }
 
-// InferTypeCastTarget recognizes callable-type casts using the same intercept
-// environment as InferReturnTypes.
-func InferTypeCastTarget(call *ast.FuncCallExpr, env InterceptEnv) (typ.Type, bool) {
+// TypeCastTarget recognizes callable-type casts using this intercept environment.
+func (env InterceptEnv) TypeCastTarget(call *ast.FuncCallExpr) (typ.Type, bool) {
 	if call == nil || call.Method != "" {
 		return nil, false
 	}
