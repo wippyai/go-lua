@@ -285,11 +285,6 @@ func (ct callTyper) productClosureCallEntryContext(ref summary.FuncRef, closure 
 	return projector.productClosureContext(ref, closure, call, ctx)
 }
 
-type productReferenceAxes struct {
-	refs     flow.FunctionRefs
-	closures flow.ClosureRefs
-}
-
 func (c callEntryProjector) productContext(ref summary.FuncRef, call *ast.FuncCallExpr, ctx transfer.ProductCallContext) (canonicalcall.EntryContext, bool) {
 	return c.productEntryContext(ref, call, ctx), true
 }
@@ -300,16 +295,15 @@ func (c callEntryProjector) productClosureContext(ref summary.FuncRef, closure f
 
 func (c callEntryProjector) productEntryContext(ref summary.FuncRef, call *ast.FuncCallExpr, ctx transfer.ProductCallContext) canonicalcall.EntryContext {
 	access := c.access()
-	references := c.productReferencesForRef(ref, call, ctx)
-	entry := c.program.CallEntryContextWithFacts(
+	refs, closures := c.productReferencesForRef(ref, call, ctx)
+	return c.program.CallEntryContextWithFacts(
 		ref,
 		ctx.Cells,
-		ctx.FunctionRefs,
-		ctx.ClosureRefs,
+		flow.FunctionRefsDomain.Join(ctx.FunctionRefs, refs),
+		flow.ClosureRefsDomain.Join(ctx.ClosureRefs, closures),
 		c.productValuesForRef(ref, call, ctx.RuntimeArgValues),
 		access.productFacts(ref, call, ctx),
 	)
-	return entry.WithReferenceAxes(references.refs, references.closures)
 }
 
 func (c callEntryProjector) productValuesForRef(ref summary.FuncRef, call *ast.FuncCallExpr, runtimeValues []product.AbstractValue) summary.EntryValues {
@@ -328,23 +322,16 @@ func (c callEntryProjector) productValuesForRef(ref summary.FuncRef, call *ast.F
 	return c.program.withPrototypeMethodSurfacesForMethodCall(ref, call, values)
 }
 
-func (c callEntryProjector) productReferencesForRef(ref summary.FuncRef, call *ast.FuncCallExpr, ctx transfer.ProductCallContext) productReferenceAxes {
+func (c callEntryProjector) productReferencesForRef(ref summary.FuncRef, call *ast.FuncCallExpr, ctx transfer.ProductCallContext) (flow.FunctionRefs, flow.ClosureRefs) {
 	if call == nil {
-		return productReferenceAxes{
-			refs:     flow.FunctionRefsDomain.Bottom(),
-			closures: flow.ClosureRefsDomain.Bottom(),
-		}
+		return flow.FunctionRefsDomain.Bottom(), flow.ClosureRefsDomain.Bottom()
 	}
 	in := c.referenceInput(ref, call)
 	access := c.access()
 	in.FunctionRefs = ctx.FunctionRefs
 	in.ClosureRefs = ctx.ClosureRefs
 	in.ArgSources = access.productReferenceArgSources(ctx)
-	refs, closures := summary.DirectCallEntryReferences(in)
-	return productReferenceAxes{
-		refs:     refs,
-		closures: closures,
-	}
+	return summary.DirectCallEntryReferences(in)
 }
 
 func (c callEntryProjector) referenceInput(ref summary.FuncRef, call *ast.FuncCallExpr) summary.DirectCallEntryReferenceInput {
