@@ -746,8 +746,8 @@ func (p Projector) bodyContractPathTypeAtPath(point cfg.Point, path constraint.P
 func (p Projector) projectBodyContractOriginTypes(point cfg.Point, pathAddr flow.StableAddress, seen map[constraint.PathKey]bool) []typ.Type {
 	var types []typ.Type
 	for _, use := range p.pathAliasesAt(point).AliasesCoveringAddress(pathAddr) {
-		sourcePath, ok := observationPathFromKey(use.Alias.Source)
-		if !ok {
+		sourcePath, ok := use.Alias.SourcePath()
+		if !ok || sourcePath.Symbol == 0 {
 			continue
 		}
 		for _, seg := range use.Remainder {
@@ -762,8 +762,8 @@ func (p Projector) projectBodyContractOriginTypes(point cfg.Point, pathAddr flow
 	origins := p.valueOriginsAt(point)
 	if !origins.IsBottom() {
 		for _, use := range origins.OriginsCoveringAddress(pathAddr) {
-			sourcePath, ok := observationPathFromKey(use.Origin.Source)
-			if !ok {
+			sourcePath, ok := use.Origin.SourcePath()
+			if !ok || sourcePath.Symbol == 0 {
 				continue
 			}
 			if use.Origin.Kind == flow.ValueOriginIndexedIterator && use.Origin.VarIndex == 1 && len(use.Remainder) > 0 {
@@ -821,8 +821,8 @@ func (p Projector) appendElementFieldOriginTypes(point cfg.Point, arrayPath cons
 }
 
 func (p Projector) appendElementFieldOriginSourceType(point cfg.Point, use flow.AppendElementFieldOriginUse, extra []constraint.Segment, seen map[constraint.PathKey]bool) typ.Type {
-	sourcePath, ok := observationPathFromKey(use.Origin.Source)
-	if !ok {
+	sourcePath, ok := use.SourcePath()
+	if !ok || sourcePath.Symbol == 0 {
 		return nil
 	}
 	if len(use.SourceField) > 0 {
@@ -1350,14 +1350,6 @@ func (f factsIndexReadFlow) IndexWriteAdmission(q flow.IndexWriteReadQuery) (typ
 		}
 	}
 	return nil, false
-}
-
-func observationPathFromKey(key constraint.PathKey) (constraint.Path, bool) {
-	path, ok := flow.StablePathFromKey(key)
-	if !ok || path.Symbol == 0 {
-		return constraint.Path{}, false
-	}
-	return path, true
 }
 
 func (f factsIndexReadFlow) BoundsAt(p cfg.Point, name string) (int64, int64, bool) {

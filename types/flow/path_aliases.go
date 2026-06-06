@@ -21,6 +21,21 @@ type PathAliasFact struct {
 	Source constraint.PathKey
 }
 
+// SourceAddress returns the normalized source address carried by this alias.
+func (f PathAliasFact) SourceAddress() (StableAddress, bool) {
+	return StableAddressFromKey(f.Source)
+}
+
+// SourcePath returns the source path carried by this alias when it is
+// symbol-rooted.
+func (f PathAliasFact) SourcePath() (constraint.Path, bool) {
+	addr, ok := f.SourceAddress()
+	if !ok {
+		return constraint.Path{}, false
+	}
+	return addr.Path()
+}
+
 // PathAliasUse is a path-alias fact covering a consumed path. Remainder is the
 // suffix under Alias.Value, so an alias `b <- a` also covers `b.x` as `a.x`.
 type PathAliasUse struct {
