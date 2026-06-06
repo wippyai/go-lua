@@ -187,11 +187,9 @@ func (c callEntryProjector) resolveTargets(call *ast.FuncCallExpr, in *flow.Poin
 			ctx = canonicalcall.EntryContextFromClosureWithLiveContext(closure, ctx)
 		}
 		out = append(out, summary.CallEntryTarget{
-			Ref:               ctx.Ref(),
-			EntryCells:        ctx.CaptureCells(),
-			EntryFunctionRefs: ctx.FunctionRefs(),
-			EntryClosureRefs:  ctx.ClosureRefs(),
-			EntryFacts:        ctx.EntryFacts(),
+			Ref:             ctx.Ref(),
+			EntryReferences: ctx.References(),
+			EntryFacts:      ctx.EntryFacts(),
 		})
 	}
 	return out

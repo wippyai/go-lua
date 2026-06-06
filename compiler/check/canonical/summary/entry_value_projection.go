@@ -82,11 +82,9 @@ type EntryReferenceProjection func(callee FuncRef) flow.ReferencePathProjection
 // CallEntryTarget is a resolved callee target plus the captured-entry context that
 // must be used when summarizing that callee under this call.
 type CallEntryTarget struct {
-	Ref               FuncRef
-	EntryCells        flow.CaptureCells
-	EntryFunctionRefs flow.FunctionRefs
-	EntryClosureRefs  flow.ClosureRefs
-	EntryFacts        flow.BoundaryFacts
+	Ref             FuncRef
+	EntryReferences flow.ReferenceContext
+	EntryFacts      flow.BoundaryFacts
 }
 
 // CallEntryTargetResolver resolves one call site plus caller point state to the
@@ -446,7 +444,7 @@ func (p CallEntryContextProjection) ProjectKeys() []Key {
 			if p.NormalizeValues != nil {
 				values = p.NormalizeValues(target.Ref, site.Call, values)
 			}
-			references := flow.ReferenceContextOf(target.EntryCells, target.EntryFunctionRefs, target.EntryClosureRefs)
+			references := target.EntryReferences
 			directReferences := p.directReferenceAxes(target.Ref, site.Call, &site.ArgState)
 			references = references.
 				WithFunctionRefs(directReferences.FunctionRefs()).

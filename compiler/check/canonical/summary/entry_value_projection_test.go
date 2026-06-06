@@ -440,10 +440,8 @@ func TestCallEntryContextProjectionUsesCallEventPostState(t *testing.T) {
 		},
 		ResolveTargets: func(*ast.FuncCallExpr, *flow.PointState) []summary.CallEntryTarget {
 			return []summary.CallEntryTarget{{
-				Ref:               callee,
-				EntryCells:        targetCells,
-				EntryFunctionRefs: targetRefs,
-				EntryClosureRefs:  targetClosures,
+				Ref:             callee,
+				EntryReferences: flow.ReferenceContextOf(targetCells, targetRefs, targetClosures),
 			}}
 		},
 		ParamSlot: func(summary.FuncRef, *ast.FuncCallExpr, int) (int, int, bool) {
@@ -617,28 +615,32 @@ func TestCallEntryContextProjection_UsesCallEntryTargetResolverAxesForClosureAnd
 
 	callee := summary.FuncRef{GraphID: 11, ParentHash: 4}
 	closureA := summary.CallEntryTarget{
-		Ref:               callee,
-		EntryCells:        flow.CaptureCellsOf([]flow.CaptureCell{{Symbol: 1, Value: product.FromType(typ.String)}}),
-		EntryFunctionRefs: flow.WithFunctionRef(nil, constraint.NewPath(cfg.SymbolID(2), "a").Key(), flow.FunctionRefSetOf(flow.FunctionRef{GraphID: 101})),
-		EntryClosureRefs: flow.WithClosureRef(nil, constraint.NewPath(cfg.SymbolID(3), "a").Key(), flow.ClosureRefSetOf(
-			flow.ClosureRefOf(
-				flow.FunctionRef{GraphID: 201},
-				flow.CaptureCellsOf([]flow.CaptureCell{{Symbol: cfg.SymbolID(12), Value: product.FromType(typ.Number)}}),
-				flow.FunctionRefsDomain.Bottom(),
-			),
-		)),
+		Ref: callee,
+		EntryReferences: flow.ReferenceContextOf(
+			flow.CaptureCellsOf([]flow.CaptureCell{{Symbol: 1, Value: product.FromType(typ.String)}}),
+			flow.WithFunctionRef(nil, constraint.NewPath(cfg.SymbolID(2), "a").Key(), flow.FunctionRefSetOf(flow.FunctionRef{GraphID: 101})),
+			flow.WithClosureRef(nil, constraint.NewPath(cfg.SymbolID(3), "a").Key(), flow.ClosureRefSetOf(
+				flow.ClosureRefOf(
+					flow.FunctionRef{GraphID: 201},
+					flow.CaptureCellsOf([]flow.CaptureCell{{Symbol: cfg.SymbolID(12), Value: product.FromType(typ.Number)}}),
+					flow.FunctionRefsDomain.Bottom(),
+				),
+			)),
+		),
 	}
 	closureB := summary.CallEntryTarget{
-		Ref:               callee,
-		EntryCells:        flow.CaptureCellsOf([]flow.CaptureCell{{Symbol: 2, Value: product.FromType(typ.Boolean)}}),
-		EntryFunctionRefs: flow.WithFunctionRef(nil, constraint.NewPath(cfg.SymbolID(4), "b").Key(), flow.FunctionRefSetOf(flow.FunctionRef{GraphID: 102})),
-		EntryClosureRefs: flow.WithClosureRef(nil, constraint.NewPath(cfg.SymbolID(5), "b").Key(), flow.ClosureRefSetOf(
-			flow.ClosureRefOf(
-				flow.FunctionRef{GraphID: 202},
-				flow.CaptureCellsOf([]flow.CaptureCell{{Symbol: cfg.SymbolID(13), Value: product.FromType(typ.Boolean)}}),
-				flow.FunctionRefsDomain.Bottom(),
-			),
-		)),
+		Ref: callee,
+		EntryReferences: flow.ReferenceContextOf(
+			flow.CaptureCellsOf([]flow.CaptureCell{{Symbol: 2, Value: product.FromType(typ.Boolean)}}),
+			flow.WithFunctionRef(nil, constraint.NewPath(cfg.SymbolID(4), "b").Key(), flow.FunctionRefSetOf(flow.FunctionRef{GraphID: 102})),
+			flow.WithClosureRef(nil, constraint.NewPath(cfg.SymbolID(5), "b").Key(), flow.ClosureRefSetOf(
+				flow.ClosureRefOf(
+					flow.FunctionRef{GraphID: 202},
+					flow.CaptureCellsOf([]flow.CaptureCell{{Symbol: cfg.SymbolID(13), Value: product.FromType(typ.Boolean)}}),
+					flow.FunctionRefsDomain.Bottom(),
+				),
+			)),
+		),
 	}
 
 	keys := summary.CallEntryContextProjection{
@@ -662,13 +664,13 @@ func TestCallEntryContextProjection_UsesCallEntryTargetResolverAxesForClosureAnd
 	}
 	wantA := summary.NewKeyWithReferenceContext(
 		callee,
-		flow.ReferenceContextOf(closureA.EntryCells, closureA.EntryFunctionRefs, closureA.EntryClosureRefs),
+		closureA.EntryReferences,
 		nil,
 		flow.BoundaryFactsDomain.Top(),
 	)
 	wantB := summary.NewKeyWithReferenceContext(
 		callee,
-		flow.ReferenceContextOf(closureB.EntryCells, closureB.EntryFunctionRefs, closureB.EntryClosureRefs),
+		closureB.EntryReferences,
 		nil,
 		flow.BoundaryFactsDomain.Top(),
 	)
