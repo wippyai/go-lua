@@ -48,12 +48,6 @@ func SelectTargets(targets TargetSet) TargetSelection {
 	}
 }
 
-// SelectedTargets returns only the selected targets for callers that do not need
-// fallback classification.
-func SelectedTargets(targets TargetSet) []SelectedTarget {
-	return SelectTargets(targets).Targets()
-}
-
 // Targets returns the selected callees after target precedence.
 func (s TargetSelection) Targets() []SelectedTarget {
 	return append([]SelectedTarget(nil), s.targets...)

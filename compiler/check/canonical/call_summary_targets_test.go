@@ -42,12 +42,12 @@ local s: string = identity("test")
 	}()
 
 	ct := callTyper{d: driver, g: rootGraph}
-	targets := canonicalcall.SelectedTargets(ct.resolveCallTargets(
+	targets := canonicalcall.SelectTargets(ct.resolveCallTargets(
 		call,
 		prog,
 		flow.FunctionRefsDomain.Bottom(),
 		flow.ClosureRefsDomain.Bottom(),
-	))
+	)).Targets()
 	if len(targets) != 1 {
 		t.Fatalf("selected targets = %d, want one", len(targets))
 	}
@@ -90,12 +90,12 @@ local c = make_container("hello")
 	}()
 
 	ct := callTyper{d: driver, g: rootGraph}
-	targets := canonicalcall.SelectedTargets(ct.resolveCallTargets(
+	targets := canonicalcall.SelectTargets(ct.resolveCallTargets(
 		call,
 		prog,
 		flow.FunctionRefsDomain.Bottom(),
 		flow.ClosureRefsDomain.Bottom(),
-	))
+	)).Targets()
 	if len(targets) != 1 {
 		t.Fatalf("selected targets = %d, want one", len(targets))
 	}

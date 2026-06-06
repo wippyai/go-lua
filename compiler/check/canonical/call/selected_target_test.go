@@ -18,9 +18,9 @@ func TestSelectedTargetsFiniteClosureDominatesDirect(t *testing.T) {
 		true,
 	)
 
-	selected := SelectedTargets(targets)
+	selected := SelectTargets(targets).Targets()
 	if len(selected) != 1 {
-		t.Fatalf("SelectedTargets len = %d, want 1", len(selected))
+		t.Fatalf("selected targets len = %d, want 1", len(selected))
 	}
 	if !selected[0].IsClosure() {
 		t.Fatal("finite closure target was not selected as a closure")
@@ -43,9 +43,9 @@ func TestSelectedTargetsFallsBackToDirectWhenClosureTopHasNoFiniteTargets(t *tes
 		true,
 	)
 
-	selected := SelectedTargets(targets)
+	selected := SelectTargets(targets).Targets()
 	if len(selected) != 2 {
-		t.Fatalf("SelectedTargets len = %d, want 2", len(selected))
+		t.Fatalf("selected targets len = %d, want 2", len(selected))
 	}
 	if selected[0].IsClosure() || selected[1].IsClosure() {
 		t.Fatal("direct fallback targets should not be closure targets")
