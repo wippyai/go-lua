@@ -370,6 +370,27 @@ func AppendOriginSources(state PointState, source StableAddress) []AppendOriginS
 	return sources
 }
 
+// AppendElementFieldOriginUses returns value-origin uses for an appended
+// element field, including origins reached through path aliases.
+func AppendElementFieldOriginUses(state PointState, field StableAddress) []ValueOriginUse {
+	if field.Key() == "" {
+		return nil
+	}
+	uses := append([]ValueOriginUse(nil), state.ValueOrigins.OriginsCoveringAddress(field)...)
+	for _, aliasUse := range state.PathAliases.AliasesCoveringAddress(field) {
+		source, ok := StableAddressFromKey(aliasUse.Alias.Source)
+		if !ok {
+			continue
+		}
+		source, ok = source.Append(aliasUse.Remainder)
+		if !ok {
+			continue
+		}
+		uses = append(uses, state.ValueOrigins.OriginsCoveringAddress(source)...)
+	}
+	return uses
+}
+
 // ApplyAppendElementFieldOriginUse replays a prior field-origin use into the
 // current append destinations.
 func ApplyAppendElementFieldOriginUse(

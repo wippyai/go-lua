@@ -78,6 +78,32 @@ func TestApplyAppendElementFieldOriginUseReplaysSourcesToDestinations(t *testing
 	}
 }
 
+func TestAppendElementFieldOriginUsesRoutesThroughPathAlias(t *testing.T) {
+	elementPath := constraint.NewPath(cfg.SymbolID(14), "element").Field("name")
+	sourcePath := constraint.NewPath(cfg.SymbolID(15), "source")
+	arrayPath := constraint.NewPath(cfg.SymbolID(16), "items")
+	state := PointState{
+		PathAliases: PathAliasFacts{}.WithAddresses(
+			testStableAddressPath(t, elementPath),
+			testStableAddressPath(t, sourcePath),
+		),
+		ValueOrigins: ValueOriginFacts{}.WithAddresses(
+			testStableAddressPath(t, sourcePath),
+			testStableAddressPath(t, arrayPath),
+			ValueOriginIndexedIterator,
+			1,
+		),
+	}
+
+	uses := AppendElementFieldOriginUses(state, testStableAddressPath(t, elementPath))
+	if len(uses) != 1 {
+		t.Fatalf("uses got %d, want alias-routed origin", len(uses))
+	}
+	if uses[0].Origin.Source != testStableAddressPath(t, arrayPath).Key() || uses[0].Origin.Kind != ValueOriginIndexedIterator {
+		t.Fatalf("use = %#v, want indexed iterator source", uses[0])
+	}
+}
+
 func TestApplyAppendKeyArrayConsequencesPublishesReadbackValue(t *testing.T) {
 	arrayPath := constraint.NewPath(cfg.SymbolID(21), "keys")
 	tablePath := constraint.NewPath(cfg.SymbolID(22), "nodes")

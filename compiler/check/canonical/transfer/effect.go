@@ -591,21 +591,8 @@ func (t *Transfer) recordAppendElementFieldOrigins(out *flow.PointState, place P
 		if !ok {
 			continue
 		}
-		for _, originUse := range out.ValueOrigins.OriginsCoveringAddress(elementFieldAddr) {
+		for _, originUse := range flow.AppendElementFieldOriginUses(*out, elementFieldAddr) {
 			flow.ApplyAppendElementFieldOriginUse(out, destinations, field, originUse)
-		}
-		for _, aliasUse := range out.PathAliases.AliasesCoveringAddress(elementFieldAddr) {
-			source, ok := flow.StableAddressFromKey(aliasUse.Alias.Source)
-			if !ok {
-				continue
-			}
-			source, ok = source.Append(aliasUse.Remainder)
-			if !ok {
-				continue
-			}
-			for _, originUse := range out.ValueOrigins.OriginsCoveringAddress(source) {
-				flow.ApplyAppendElementFieldOriginUse(out, destinations, field, originUse)
-			}
 		}
 	}
 	return !flow.KeyPresenceFactsDomain.Equal(before, out.KeyPresence)
