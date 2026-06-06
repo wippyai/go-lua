@@ -169,27 +169,13 @@ func (c callEntryProjector) resolveTargets(call *ast.FuncCallExpr, in *flow.Poin
 	}
 	access := c.access()
 	targets := c.typer.resolveCallTargets(call, c.program, in.FunctionRefs, in.ClosureRefs)
-	selected := canonicalcall.SelectTargets(targets).Targets()
-	out := make([]summary.CallEntryTarget, 0, len(selected))
-	for _, target := range selected {
-		ref := target.Ref()
+	return canonicalcall.SummaryEntryTargetsWithLiveContext(targets, func(ref summary.FuncRef) canonicalcall.EntryContext {
 		cells := c.program.CallEntryCells(ref, in.Cells)
 		refs := c.program.CallEntryFunctionRefs(ref, in.FunctionRefs)
 		closures := c.program.CallEntryClosureRefs(ref, in.ClosureRefs)
 		entryFacts := access.pointFacts(ref, call, in)
-		entry := canonicalcall.NewEntryContextWithFacts(ref, cells, refs, closures, nil, entryFacts)
-		if closure, ok := target.Closure(); ok {
-			entry = canonicalcall.EntryContextFromClosureWithLiveAxesAndFacts(ref, closure, cells, refs, closures, nil, entryFacts)
-		}
-		out = append(out, summary.CallEntryTarget{
-			Ref:               entry.Ref(),
-			EntryCells:        entry.CaptureCells(),
-			EntryFunctionRefs: entry.FunctionRefs(),
-			EntryClosureRefs:  entry.ClosureRefs(),
-			EntryFacts:        entry.EntryFacts(),
-		})
-	}
-	return out
+		return canonicalcall.NewEntryContextWithFacts(ref, cells, refs, closures, nil, entryFacts)
+	})
 }
 
 func (c callEntryProjector) resolveCallback(arg ast.Expr, rawSym cfg.SymbolID, in *flow.PointState) ([]summary.FuncRef, bool) {

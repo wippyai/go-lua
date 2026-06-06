@@ -84,3 +84,50 @@ func TestSummaryEntryTargetsUseDirectWhenClosureTopHasNoFiniteTargets(t *testing
 		t.Fatalf("target closure refs = %#v, want %#v", got, closures)
 	}
 }
+
+func TestSummaryEntryTargetsWithLiveContextOverlaysClosureTargets(t *testing.T) {
+	t.Parallel()
+
+	callee := summary.FuncRef{GraphID: 2}
+	capturedCells := flow.CaptureCellsOf([]flow.CaptureCell{
+		{Symbol: cfg.SymbolID(10), Value: product.FromType(typ.String)},
+	})
+	liveCells := flow.CaptureCellsOf([]flow.CaptureCell{
+		{Symbol: cfg.SymbolID(10), Value: product.FromType(typ.Number)},
+		{Symbol: cfg.SymbolID(11), Value: product.FromType(typ.Boolean)},
+	})
+	capturedRefs := flow.WithFunctionRef(nil, constraint.NewPath(cfg.SymbolID(20), "captured").Key(), flow.FunctionRefSetOf(flow.FunctionRef{GraphID: 30}))
+	liveRefs := flow.WithFunctionRef(nil, constraint.NewPath(cfg.SymbolID(20), "captured").Key(), flow.FunctionRefSetOf(flow.FunctionRef{GraphID: 31}))
+	capturedClosures := flow.WithClosureRef(nil, constraint.NewPath(cfg.SymbolID(21), "captured").Key(), flow.ClosureRefSetOf(
+		flow.ClosureRefOf(flow.FunctionRef{GraphID: 40}, nil, nil),
+	))
+	liveClosures := flow.WithClosureRef(nil, constraint.NewPath(cfg.SymbolID(22), "live").Key(), flow.ClosureRefSetOf(
+		flow.ClosureRefOf(flow.FunctionRef{GraphID: 41}, nil, nil),
+	))
+	facts := flow.BoundaryFactsOf(nil, nil, nil, nil, []flow.BoundaryLengthLowerBound{{
+		Target: flow.BoundaryPath{Kind: flow.BoundaryPathParam, Index: 0},
+		Lower:  1,
+	}}, nil)
+	closure := flow.ClosureRefOf(flow.FunctionRef{GraphID: callee.GraphID}, capturedCells, capturedRefs, capturedClosures)
+	targets := NewTargetSet(nil, false, []flow.ClosureRef{closure}, true)
+
+	out := SummaryEntryTargetsWithLiveContext(targets, func(ref summary.FuncRef) EntryContext {
+		return NewEntryContextWithFacts(ref, liveCells, liveRefs, liveClosures, nil, facts)
+	})
+
+	if len(out) != 1 {
+		t.Fatalf("SummaryEntryTargetsWithLiveContext len = %d, want 1", len(out))
+	}
+	if got := out[0].EntryCells; !flow.CaptureCellsDomain.Equal(got, flow.OverlayCaptureCells(capturedCells, liveCells)) {
+		t.Fatalf("target cells = %s, want live overlay", got.Format())
+	}
+	if got := out[0].EntryFunctionRefs; !flow.FunctionRefsDomain.Equal(got, flow.OverlayFunctionRefs(capturedRefs, liveRefs)) {
+		t.Fatalf("target function refs = %#v, want live overlay", got)
+	}
+	if got := out[0].EntryClosureRefs; !flow.ClosureRefsDomain.Equal(got, flow.OverlayClosureRefs(capturedClosures, liveClosures)) {
+		t.Fatalf("target closure refs = %#v, want live overlay", got)
+	}
+	if got := out[0].EntryFacts; !got.HasProof() {
+		t.Fatal("target entry facts dropped live proof")
+	}
+}
