@@ -13,10 +13,10 @@ func (r Reader) ReturnValues(ref FuncRef) []product.AbstractValue {
 	return ReturnValues(r.Summarize(ref))
 }
 
-// ReturnValuesWithEntryContext reads ref under an explicit caller entry context
-// and projects its abstract return tuple defensively.
-func (r Reader) ReturnValuesWithEntryContext(ref FuncRef, entry flow.CaptureCells, refs flow.FunctionRefs, closures flow.ClosureRefs, values EntryValues) []product.AbstractValue {
-	return ReturnValues(r.SummarizeWithEntryContext(ref, entry, refs, closures, values))
+// ReturnValuesWithKey reads an exact summary key and projects its abstract
+// return tuple defensively.
+func (r Reader) ReturnValuesWithKey(key Key) []product.AbstractValue {
+	return ReturnValues(r.SummarizeWithKey(key))
 }
 
 // ReturnTypes reads ref through the summary boundary and projects its
@@ -25,10 +25,10 @@ func (r Reader) ReturnTypes(ref FuncRef) []typ.Type {
 	return ReturnTypes(r.Summarize(ref))
 }
 
-// ReturnTypesWithEntryContext reads ref under an explicit caller entry context
-// and projects its caller-visible concrete return tuple.
-func (r Reader) ReturnTypesWithEntryContext(ref FuncRef, entry flow.CaptureCells, refs flow.FunctionRefs, closures flow.ClosureRefs, values EntryValues) []typ.Type {
-	return ReturnTypes(r.SummarizeWithEntryContext(ref, entry, refs, closures, values))
+// ReturnTypesWithKey reads an exact summary key and projects its caller-visible
+// concrete return tuple.
+func (r Reader) ReturnTypesWithKey(key Key) []typ.Type {
+	return ReturnTypes(r.SummarizeWithKey(key))
 }
 
 // ParamTypes reads ref's solved parameter-contract cell and projects it to the

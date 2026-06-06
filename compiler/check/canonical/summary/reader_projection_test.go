@@ -62,13 +62,7 @@ func TestReaderSnapshotOverlayOverridesExactContext(t *testing.T) {
 		key: {Returns: []product.AbstractValue{product.FromType(typ.Number)}},
 	})
 
-	got := reader.ReturnTypesWithEntryContext(
-		ref,
-		flow.CaptureCellsDomain.Bottom(),
-		flow.FunctionRefsDomain.Bottom(),
-		flow.ClosureRefsDomain.Bottom(),
-		values,
-	)
+	got := reader.ReturnTypesWithKey(key)
 	if len(got) != 1 || !typ.TypeEquals(got[0], typ.Number) {
 		t.Fatalf("exact ReturnTypes = %#v, want number from overlay", got)
 	}
