@@ -420,7 +420,7 @@ func (f PointFacts) IdentityAliasClosurePaths(root constraint.Path) []constraint
 	if !ok {
 		return nil
 	}
-	addrs := IdentityAliasClosure(f.state, rootAddr)
+	addrs := f.IdentityAliasClosureAddresses(rootAddr)
 	out := make([]constraint.Path, 0, len(addrs))
 	for _, addr := range addrs {
 		path, ok := addr.Path()
@@ -429,6 +429,12 @@ func (f PointFacts) IdentityAliasClosurePaths(root constraint.Path) []constraint
 		}
 	}
 	return out
+}
+
+// IdentityAliasClosureAddresses returns root plus every assignment/path alias
+// reachable through the identity-alias relation.
+func (f PointFacts) IdentityAliasClosureAddresses(root StableAddress) []StableAddress {
+	return IdentityAliasClosure(f.state, root)
 }
 
 // IndexWritePathQuery is the structured-path query form for admitted dynamic

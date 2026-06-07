@@ -1150,7 +1150,7 @@ func (p Projector) indexReadFlow() indexread.Flow {
 	lf, hasLen := p.cfg.Facts.(flow.LengthFacts)
 	iw, hasIndexWrites := p.cfg.Facts.(flow.IndexWriteFacts)
 	mr, _ := p.cfg.Facts.(indexread.MapReadbackFlow)
-	vo, _ := p.cfg.Facts.(valueOriginFacts)
+	aliases, _ := p.cfg.Facts.(indexWriteKeyAliasFacts)
 	if !hasKeyOf && !hasNum && !hasLen && !hasIndexWrites && mr == nil {
 		return nil
 	}
@@ -1160,7 +1160,7 @@ func (p Projector) indexReadFlow() indexread.Flow {
 		length:      lf,
 		indexWrites: iw,
 		mapReadback: mr,
-		valueOrigin: vo,
+		keyAliases:  aliases,
 		graph:       p.cfg.Graph,
 		bindings:    p.cfg.Bindings,
 	}
@@ -1220,10 +1220,8 @@ type provenanceRouteFacts interface {
 	ProvenanceRoutesAt(p cfg.Point, path constraint.Path) []flow.ProvenanceRoute
 }
 
-// TODO(route-algebra): remove this storage-shaped fallback once index-read
-// aliasing consumes provenance routes instead of raw value-origin facts.
-type valueOriginFacts interface {
-	ValueOriginsAt(p cfg.Point) flow.ValueOriginFacts
+type indexWriteKeyAliasFacts interface {
+	IndexWriteKeyAliasesAt(p cfg.Point, key flow.StableAddress) []flow.StableAddress
 }
 
 // TODO(route-algebra): fold direct append-field source checks into route queries
@@ -1246,7 +1244,7 @@ type factsIndexReadFlow struct {
 	length      flow.LengthFacts
 	indexWrites flow.IndexWriteFacts
 	mapReadback indexread.MapReadbackFlow
-	valueOrigin valueOriginFacts
+	keyAliases  indexWriteKeyAliasFacts
 	graph       *cfg.Graph
 	bindings    *bind.BindingTable
 }
@@ -1271,25 +1269,15 @@ func (f factsIndexReadFlow) IndexWriteAdmission(q flow.IndexWriteReadQuery) (typ
 	if f.indexWrites == nil {
 		return nil, false
 	}
-	if got, ok := f.indexWrites.IndexWriteAdmission(q); ok {
-		return got, true
+	var aliases flow.IndexWriteKeyAliases
+	if f.keyAliases != nil {
+		aliases = f.keyAliases.IndexWriteKeyAliasesAt
 	}
-	if !q.Admission.HasKeyPath || f.valueOrigin == nil {
-		return nil, false
-	}
-	origins := f.valueOrigin.ValueOriginsAt(q.Point)
-	for _, keyAddr := range flow.IdentityAliasClosure(flow.PointState{ValueOrigins: origins}, q.Admission.KeyPath) {
-		if keyAddr.Equal(q.Admission.KeyPath) {
-			continue
-		}
-		aliasQuery := q
-		aliasQuery.Admission.KeyPath = keyAddr
-		aliasQuery.Admission.HasKeyPath = true
-		if got, ok := f.indexWrites.IndexWriteAdmission(aliasQuery); ok {
-			return got, true
-		}
-	}
-	return nil, false
+	return flow.IndexWriteAdmissionWithKeyAliases(
+		q,
+		f.indexWrites.IndexWriteAdmission,
+		aliases,
+	)
 }
 
 func (f factsIndexReadFlow) BoundsAt(p cfg.Point, name string) (int64, int64, bool) {

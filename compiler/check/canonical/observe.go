@@ -800,6 +800,10 @@ func (f *canonicalFacts) MapReadback(q flow.IndexWriteReadQuery) (typ.Type, bool
 	return t, true
 }
 
+func (f *canonicalFacts) IndexWriteKeyAliasesAt(p cfg.Point, key flow.StableAddress) []flow.StableAddress {
+	return flow.PointFactsOf(f.pointState(p, true)).IdentityAliasClosureAddresses(key)
+}
+
 func (f *canonicalFacts) indexReadState(p cfg.Point, view flow.PathReadView) flow.PointState {
 	switch view {
 	case flow.PathReadPre:
