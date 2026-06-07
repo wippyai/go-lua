@@ -474,7 +474,11 @@ func pointPathKeyPresentValue(ps PointState, key constraint.PathKey) (product.Ab
 }
 
 func pointPathKeyValue(ps PointState, key constraint.PathKey) (product.AbstractValue, bool) {
-	path, ok := StablePathFromKey(key)
+	addr, ok := StableAddressFromCanonicalKey(key)
+	if !ok {
+		return product.AbstractValue{}, false
+	}
+	path, ok := addr.Path()
 	if !ok || path.Symbol == 0 {
 		return product.AbstractValue{}, false
 	}
