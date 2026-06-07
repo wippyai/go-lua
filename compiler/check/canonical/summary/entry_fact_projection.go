@@ -144,12 +144,20 @@ func directCallEntryFacts(in directCallEntryFactInput) flow.BoundaryFacts {
 }
 
 func entryBoundaryPathForCallerKey(in directCallEntryFactInput, key constraint.PathKey) (flow.BoundaryPath, bool) {
+	addr, ok := flow.StableAddressFromCanonicalKey(key)
+	if !ok {
+		return flow.BoundaryPath{}, false
+	}
+	target, ok := addr.Path()
+	if !ok {
+		return flow.BoundaryPath{}, false
+	}
 	for _, arg := range entryRuntimeArgs(in.Callee, in.Call, in.ParamSlot) {
 		source, ok := in.ArgPath(arg.RuntimeIdx, arg.Expr)
 		if !ok || source.IsEmpty() {
 			continue
 		}
-		if path, ok := flow.BoundaryParamPathFromKey(key, source, arg.Slot); ok {
+		if path, ok := flow.BoundaryParamPathFromPath(target, source, arg.Slot); ok {
 			return path, true
 		}
 	}

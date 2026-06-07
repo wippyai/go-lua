@@ -285,8 +285,7 @@ func StablePathKey(path constraint.Path) constraint.PathKey {
 }
 
 // StablePathFromKey returns the structured path represented by a canonical
-// stable path key. Callers that intentionally accept legacy path-key encodings
-// must use StableAddressFromKey at that explicit compatibility boundary.
+// stable path key.
 func StablePathFromKey(key constraint.PathKey) (constraint.Path, bool) {
 	addr, ok := StableAddressFromCanonicalKey(key)
 	if !ok {

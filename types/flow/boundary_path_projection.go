@@ -5,9 +5,9 @@ import (
 	"github.com/wippyai/go-lua/types/constraint"
 )
 
-// BoundaryPathProjection maps point-local stable paths onto caller-visible
-// function boundary roots. Producers supply the CFG-derived root map; flow owns
-// stable-key decoding, suffix trimming, and BoundaryPath construction.
+// BoundaryPathProjection maps point-local addresses onto caller-visible function
+// boundary roots. Producers supply the CFG-derived root map; stored fact readers
+// own key decoding before entering this boundary algebra.
 type BoundaryPathProjection struct {
 	paramBySymbol  map[cfg.SymbolID]int
 	returnBySymbol map[cfg.SymbolID][]BoundaryPath
@@ -22,34 +22,42 @@ func NewBoundaryPathProjection(paramBySymbol map[cfg.SymbolID]int, returnBySymbo
 	}
 }
 
-// PathsFromKey projects a stable path key into all matching boundary-relative
-// paths. Non-symbol keys do not cross function boundaries and project to nil.
-func (p BoundaryPathProjection) PathsFromKey(key constraint.PathKey) []BoundaryPath {
-	path, ok := StablePathFromKey(key)
+// PathsFromAddress projects a stable symbol-rooted address into all matching
+// boundary-relative paths.
+func (p BoundaryPathProjection) PathsFromAddress(addr StableAddress) []BoundaryPath {
+	sym, ok := addr.Symbol()
 	if !ok {
 		return nil
 	}
-	return p.PathsFromPath(path)
+	return p.pathsFromSymbolSegments(sym, addr.Segments())
 }
 
 // PathsFromPath projects a symbol-rooted point-local path into all matching
 // boundary-relative paths.
 func (p BoundaryPathProjection) PathsFromPath(path constraint.Path) []BoundaryPath {
-	if path.Symbol == 0 {
+	addr, ok := StableAddressOfPath(path)
+	if !ok {
+		return nil
+	}
+	return p.PathsFromAddress(addr)
+}
+
+func (p BoundaryPathProjection) pathsFromSymbolSegments(sym cfg.SymbolID, segments []constraint.Segment) []BoundaryPath {
+	if sym == 0 {
 		return nil
 	}
 	var out []BoundaryPath
-	if idx, ok := p.paramBySymbol[path.Symbol]; ok && idx >= 0 {
+	if idx, ok := p.paramBySymbol[sym]; ok && idx >= 0 {
 		out = append(out, BoundaryPath{
 			Kind:     BoundaryPathParam,
 			Index:    idx,
-			Segments: cloneSegments(path.Segments),
+			Segments: cloneSegments(segments),
 		})
 	}
-	for _, root := range p.returnBySymbol[path.Symbol] {
-		nextSegments := path.Segments
+	for _, root := range p.returnBySymbol[sym] {
+		nextSegments := segments
 		if len(root.Segments) > 0 {
-			trimmed, ok := boundaryPathSuffix(path.Segments, root.Segments)
+			trimmed, ok := boundaryPathSuffix(segments, root.Segments)
 			if !ok {
 				continue
 			}
@@ -75,16 +83,6 @@ func (p BoundaryPathProjection) MappedReturnIndices() map[int]bool {
 		}
 	}
 	return out
-}
-
-// BoundaryParamPathFromKey projects a caller-side stable key into a callee
-// parameter boundary path when it is inside source.
-func BoundaryParamPathFromKey(key constraint.PathKey, source constraint.Path, paramIndex int) (BoundaryPath, bool) {
-	path, ok := StablePathFromKey(key)
-	if !ok {
-		return BoundaryPath{}, false
-	}
-	return BoundaryParamPathFromPath(path, source, paramIndex)
 }
 
 // BoundaryParamPathFromPath projects path into a callee parameter boundary path

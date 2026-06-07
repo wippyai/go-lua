@@ -734,11 +734,11 @@ func appendBoundaryIndexKey(out []byte, idx int) []byte {
 func projectPointBoundaryFacts(ps flow.PointState, mapper flow.BoundaryPathProjection) flow.BoundaryFacts {
 	var keyPresence []flow.BoundaryKeyPresenceFact
 	for _, fact := range ps.KeyPresence.Entries() {
-		tables := mapper.PathsFromKey(fact.Table)
+		tables := projectBoundaryPathsFromStoredKey(mapper, fact.Table)
 		if len(tables) == 0 {
 			continue
 		}
-		keys := mapper.PathsFromKey(fact.Key)
+		keys := projectBoundaryPathsFromStoredKey(mapper, fact.Key)
 		if len(keys) == 0 {
 			continue
 		}
@@ -750,11 +750,11 @@ func projectPointBoundaryFacts(ps flow.PointState, mapper flow.BoundaryPathProje
 	}
 	var keyArrays []flow.BoundaryKeyArrayFact
 	for _, fact := range ps.KeyPresence.KeyArrayEntries() {
-		arrays := mapper.PathsFromKey(fact.Array)
+		arrays := projectBoundaryPathsFromStoredKey(mapper, fact.Array)
 		if len(arrays) == 0 {
 			continue
 		}
-		tables := mapper.PathsFromKey(fact.Table)
+		tables := projectBoundaryPathsFromStoredKey(mapper, fact.Table)
 		if len(tables) == 0 {
 			continue
 		}
@@ -766,11 +766,11 @@ func projectPointBoundaryFacts(ps flow.PointState, mapper flow.BoundaryPathProje
 	}
 	var keyArrayValues []flow.BoundaryKeyArrayValueFact
 	for _, fact := range ps.KeyPresence.KeyArrayValueEntries() {
-		arrays := mapper.PathsFromKey(fact.Array)
+		arrays := projectBoundaryPathsFromStoredKey(mapper, fact.Array)
 		if len(arrays) == 0 {
 			continue
 		}
-		tables := mapper.PathsFromKey(fact.Table)
+		tables := projectBoundaryPathsFromStoredKey(mapper, fact.Table)
 		if len(tables) == 0 {
 			continue
 		}
@@ -786,11 +786,11 @@ func projectPointBoundaryFacts(ps flow.PointState, mapper flow.BoundaryPathProje
 	}
 	var appendKeys []flow.BoundaryAppendKeyFact
 	for _, fact := range ps.KeyPresence.AppendedKeyEntries() {
-		arrays := mapper.PathsFromKey(fact.Array)
+		arrays := projectBoundaryPathsFromStoredKey(mapper, fact.Array)
 		if len(arrays) == 0 {
 			continue
 		}
-		keys := mapper.PathsFromKey(fact.Key)
+		keys := projectBoundaryPathsFromStoredKey(mapper, fact.Key)
 		if len(keys) == 0 {
 			continue
 		}
@@ -805,7 +805,7 @@ func projectPointBoundaryFacts(ps flow.PointState, mapper flow.BoundaryPathProje
 	}
 	var appendOrigins []flow.BoundaryAppendElementFieldOriginFact
 	for _, fact := range ps.KeyPresence.AppendElementFieldOriginEntries() {
-		arrays := mapper.PathsFromKey(fact.Array)
+		arrays := projectBoundaryPathsFromStoredKey(mapper, fact.Array)
 		if len(arrays) == 0 {
 			continue
 		}
@@ -813,7 +813,7 @@ func projectPointBoundaryFacts(ps flow.PointState, mapper flow.BoundaryPathProje
 		if !ok {
 			continue
 		}
-		sources := mapper.PathsFromKey(fact.Source)
+		sources := projectBoundaryPathsFromStoredKey(mapper, fact.Source)
 		if len(sources) == 0 {
 			continue
 		}
@@ -830,17 +830,17 @@ func projectPointBoundaryFacts(ps flow.PointState, mapper flow.BoundaryPathProje
 		}
 	}
 	for _, fact := range ps.KeyPresence.PendingKeyArrayEntries() {
-		arrays := mapper.PathsFromKey(fact.Array)
+		arrays := projectBoundaryPathsFromStoredKey(mapper, fact.Array)
 		if len(arrays) == 0 {
 			continue
 		}
-		keys := mapper.PathsFromKey(fact.Key)
+		keys := projectBoundaryPathsFromStoredKey(mapper, fact.Key)
 		if len(keys) == 0 {
 			continue
 		}
 		var tables []flow.BoundaryPath
 		if fact.Table != "" {
-			tables = mapper.PathsFromKey(fact.Table)
+			tables = projectBoundaryPathsFromStoredKey(mapper, fact.Table)
 			if len(tables) == 0 {
 				continue
 			}
@@ -868,7 +868,7 @@ func projectPointBoundaryFacts(ps flow.PointState, mapper flow.BoundaryPathProje
 	var lengths []flow.BoundaryLengthLowerBound
 	if ps.Num != nil {
 		ps.Num.ForEachLenBound(func(key constraint.PathKey, lower, _ int64) bool {
-			targets := mapper.PathsFromKey(key)
+			targets := projectBoundaryPathsFromStoredKey(mapper, key)
 			if lower > 0 {
 				for _, target := range targets {
 					lengths = append(lengths, flow.BoundaryLengthLowerBound{Target: target, Lower: lower})
@@ -882,11 +882,11 @@ func projectPointBoundaryFacts(ps flow.PointState, mapper flow.BoundaryPathProje
 		if fact.Target == "" || fact.KeyPath == "" || fact.Value.IsZero() {
 			continue
 		}
-		tables := mapper.PathsFromKey(fact.Target)
+		tables := projectBoundaryPathsFromStoredKey(mapper, fact.Target)
 		if len(tables) == 0 {
 			continue
 		}
-		keys := mapper.PathsFromKey(fact.KeyPath)
+		keys := projectBoundaryPathsFromStoredKey(mapper, fact.KeyPath)
 		if len(keys) == 0 {
 			continue
 		}
@@ -902,6 +902,14 @@ func projectPointBoundaryFacts(ps flow.PointState, mapper flow.BoundaryPathProje
 	}
 	return flow.BoundaryFactsOf(keyPresence, keyArrays, keyArrayValues, appendKeys, lengths, indexWrites).
 		WithAppendElementFieldOrigins(appendOrigins)
+}
+
+func projectBoundaryPathsFromStoredKey(mapper flow.BoundaryPathProjection, key constraint.PathKey) []flow.BoundaryPath {
+	addr, ok := flow.StableAddressFromCanonicalKey(key)
+	if !ok {
+		return nil
+	}
+	return mapper.PathsFromAddress(addr)
 }
 
 func returnBoundarySymbolMap(g *cfg.Graph, p cfg.Point, info *cfg.ReturnInfo) map[cfg.SymbolID][]flow.BoundaryPath {
@@ -987,7 +995,7 @@ func returnRelationParamSymbolMap(g *cfg.Graph) map[cfg.SymbolID]int {
 }
 
 func keyPresenceTableParamPath(key constraint.PathKey, projection flow.BoundaryPathProjection) (int, []constraint.Segment, bool) {
-	for _, path := range projection.PathsFromKey(key) {
+	for _, path := range projectBoundaryPathsFromStoredKey(projection, key) {
 		if path.Kind == flow.BoundaryPathParam && path.Index >= 0 {
 			return path.Index, append([]constraint.Segment(nil), path.Segments...), true
 		}

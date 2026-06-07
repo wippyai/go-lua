@@ -21,7 +21,11 @@ func TestBoundaryPathProjectionProjectsParamAndReturnRoots(t *testing.T) {
 		},
 	)
 
-	paths := projection.PathsFromKey(StablePathKey(path))
+	addr, ok := StableAddressOfPath(path)
+	if !ok {
+		t.Fatalf("stable address for path %s", path.Key())
+	}
+	paths := projection.PathsFromAddress(addr)
 	if len(paths) != 2 {
 		t.Fatalf("projected paths = %v, want param and return", paths)
 	}
@@ -38,7 +42,7 @@ func TestBoundaryParamPathFromKeyProjectsSourceSubtree(t *testing.T) {
 	source := constraint.NewPath(sym, "payload").Field("items")
 	target := source.IndexStr("primary").Field("value")
 
-	path, ok := BoundaryParamPathFromKey(StablePathKey(target), source, 2)
+	path, ok := BoundaryParamPathFromPath(target, source, 2)
 	if !ok {
 		t.Fatal("expected target below source to project")
 	}
@@ -50,7 +54,7 @@ func TestBoundaryParamPathFromKeyProjectsSourceSubtree(t *testing.T) {
 	}
 
 	sibling := constraint.NewPath(sym, "payload").Field("other")
-	if _, ok := BoundaryParamPathFromKey(StablePathKey(sibling), source, 2); ok {
+	if _, ok := BoundaryParamPathFromPath(sibling, source, 2); ok {
 		t.Fatal("sibling path should not project")
 	}
 }
