@@ -168,14 +168,11 @@ func (t *Transfer) refineStaticMemberFactForLengthLower(out *flow.PointState, pa
 	if out == nil || path.Symbol == 0 || len(path.Segments) == 0 || lower <= 0 {
 		return false
 	}
-	source, has := flow.PointFactsOf(*out).StaticMemberValue(path)
-	if !has && !base.IsZero() {
-		source, has = flow.ProductMemberPathValue(base, path.Segments)
-	}
-	if !has || source.IsZero() {
+	source := flow.PointFactsOf(*out).StaticMemberRefinementReads(path, base, !base.IsZero()).Preferred()
+	if source.State != flow.StateResolved {
 		return false
 	}
-	refined := product.NarrowLengthLowerBound(source, lower)
+	refined := product.NarrowLengthLowerBound(source.Value, lower)
 	if valueIsBottom(refined) {
 		return flow.KillStaticMemberSubtreePath(out, path)
 	}
@@ -193,8 +190,9 @@ func (t *Transfer) applyStaticMemberRefinementEffect(out *flow.PointState, effec
 	if !ok || path.Symbol == 0 || len(path.Segments) == 0 {
 		return false
 	}
-	if existing, ok := flow.PointFactsOf(*out).StaticMemberValue(path); ok {
-		refined, ok := refinedStaticMemberValue(existing, true, effect.Base, effect.HasBase, path.Segments, effect.Check, effect.TypeName)
+	sources := flow.PointFactsOf(*out).StaticMemberRefinementReads(path, effect.Base, effect.HasBase)
+	if sources.Existing.State == flow.StateResolved {
+		refined, ok := refinedStaticMemberValue(sources, effect.Check, effect.TypeName)
 		if !ok || refined.IsZero() || !refined.DefinitelyPresent() {
 			return flow.KillStaticMemberSubtreePath(out, path)
 		}
@@ -204,10 +202,8 @@ func (t *Transfer) applyStaticMemberRefinementEffect(out *flow.PointState, effec
 		return false
 	}
 	leaf := product.PresentDynamic()
-	if effect.HasBase {
-		if read, ok := flow.ProductMemberPathValue(effect.Base, path.Segments); ok && !read.IsZero() {
-			leaf = read
-		}
+	if sources.Base.State == flow.StateResolved {
+		leaf = sources.Base.Value
 	}
 	refined, ok := narrowValue(leaf, effect.Check, effect.TypeName)
 	if !ok || refined.IsZero() || !refined.DefinitelyPresent() {
@@ -217,18 +213,14 @@ func (t *Transfer) applyStaticMemberRefinementEffect(out *flow.PointState, effec
 }
 
 func refinedStaticMemberValue(
-	existing product.AbstractValue,
-	hasExisting bool,
-	base product.AbstractValue,
-	hasBase bool,
-	segments []constraint.Segment,
+	sources flow.StaticMemberRefinementReads,
 	check cfg.CondCheckKind,
 	typeName string,
 ) (product.AbstractValue, bool) {
 	var existingRefined product.AbstractValue
 	existingOK := false
-	if hasExisting && !existing.IsZero() {
-		existingRefined, existingOK = narrowValue(existing, check, typeName)
+	if sources.Existing.State == flow.StateResolved {
+		existingRefined, existingOK = narrowValue(sources.Existing.Value, check, typeName)
 		if existingOK && (existingRefined.IsZero() || !existingRefined.DefinitelyPresent()) {
 			existingOK = false
 		}
@@ -236,12 +228,10 @@ func refinedStaticMemberValue(
 
 	var baseRefined product.AbstractValue
 	baseOK := false
-	if hasBase {
-		if read, ok := flow.ProductMemberPathValue(base, segments); ok && !read.IsZero() {
-			baseRefined, baseOK = narrowValue(read, check, typeName)
-			if baseOK && (baseRefined.IsZero() || !baseRefined.DefinitelyPresent()) {
-				baseOK = false
-			}
+	if sources.Base.State == flow.StateResolved {
+		baseRefined, baseOK = narrowValue(sources.Base.Value, check, typeName)
+		if baseOK && (baseRefined.IsZero() || !baseRefined.DefinitelyPresent()) {
+			baseOK = false
 		}
 	}
 
