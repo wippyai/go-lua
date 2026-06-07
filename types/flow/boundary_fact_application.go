@@ -225,7 +225,7 @@ func applyBoundaryAppendKeyPlans(out *PointState, plans []BoundaryAppendKeyPlan)
 	}
 	changed := false
 	for _, plan := range plans {
-		changed = ApplyAppendKeyReplayPathProof(out, AppendKeyReplayPathProof{
+		changed = ApplyAppendKeyReplayPathTransaction(out, AppendKeyReplayPathTransaction{
 			ArrayPath:           plan.array,
 			KeyPath:             plan.key,
 			ExplicitTablePath:   plan.table,

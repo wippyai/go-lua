@@ -502,7 +502,7 @@ func TestAppendKeyArrayTablesPathLowersStructuredInputs(t *testing.T) {
 	}
 }
 
-func TestApplyAppendKeyReplayPathProofAppliesAppendTransaction(t *testing.T) {
+func TestApplyAppendKeyReplayPathTransactionAppliesAppendTransaction(t *testing.T) {
 	arrayPath := constraint.NewPath(cfg.SymbolID(137), "keys")
 	tablePath := constraint.NewPath(cfg.SymbolID(138), "nodes")
 	keyPath := constraint.NewPath(cfg.SymbolID(139), "node_id")
@@ -519,13 +519,13 @@ func TestApplyAppendKeyReplayPathProofAppliesAppendTransaction(t *testing.T) {
 		}),
 	}
 
-	if !ApplyAppendKeyReplayPathProof(&state, AppendKeyReplayPathProof{
+	if !ApplyAppendKeyReplayPathTransaction(&state, AppendKeyReplayPathTransaction{
 		ArrayPath:         arrayPath,
 		KeyPath:           keyPath,
 		WrittenTablePaths: []constraint.Path{tablePath},
 		FreshEmpty:        true,
 	}) {
-		t.Fatal("ApplyAppendKeyReplayPathProof reported no change")
+		t.Fatal("ApplyAppendKeyReplayPathTransaction reported no change")
 	}
 	appends := state.KeyPresence.AppendedKeyEntries()
 	if len(appends) != 1 || appends[0].Array != StablePathKey(arrayPath) || appends[0].Key != StablePathKey(keyPath) {
@@ -534,6 +534,38 @@ func TestApplyAppendKeyReplayPathProofAppliesAppendTransaction(t *testing.T) {
 	values := state.KeyPresence.KeyArrayValues(StablePathKey(arrayPath), StablePathKey(tablePath))
 	if len(values) != 1 || !product.Domain.Equal(values[0], value) {
 		t.Fatalf("key-array values = %v, want string", values)
+	}
+}
+
+func TestApplyAppendKeyReplayPathTransactionUsesPreWriteSelection(t *testing.T) {
+	arrayPath := constraint.NewPath(cfg.SymbolID(140), "keys")
+	tablePath := constraint.NewPath(cfg.SymbolID(141), "nodes")
+	keyPath := constraint.NewPath(cfg.SymbolID(142), "node_id")
+	value := product.FromType(typ.Number)
+	state := PointState{
+		Env: map[ValueKey]product.AbstractValue{
+			SymbolValueKey(keyPath.Symbol): product.FromType(typ.String),
+		},
+		KeyPresence: KeyPresenceFacts{}.
+			WithKeyArrayAddresses(testStableAddressPath(t, arrayPath), testStableAddressPath(t, tablePath)),
+		IndexWrites: IndexWriteAdmissionFacts{}.WithAddress(IndexWriteAdmissionAddressFact{
+			Target:     testStableAddressPath(t, tablePath),
+			KeyPath:    testStableAddressPath(t, keyPath),
+			HasKeyPath: true,
+			Key:        product.FromType(typ.String),
+			Value:      value,
+		}),
+	}
+
+	if !ApplyAppendKeyReplayPathTransaction(&state, AppendKeyReplayPathTransaction{
+		ArrayPath: arrayPath,
+		KeyPath:   keyPath,
+	}) {
+		t.Fatal("ApplyAppendKeyReplayPathTransaction reported no change")
+	}
+	values := state.KeyPresence.KeyArrayValues(StablePathKey(arrayPath), StablePathKey(tablePath))
+	if len(values) != 1 || !product.Domain.Equal(values[0], value) {
+		t.Fatalf("pre-write key-array value was not replayed: %v", values)
 	}
 }
 

@@ -94,10 +94,10 @@ type AppendKeyArrayPathTableQuery struct {
 	FreshEmpty        bool
 }
 
-// AppendKeyReplayPathProof is the path-shaped reduced-product transaction for
-// an append write. It applies the write invalidation, preserves append-history
-// when required, records the appended key, and publishes key-array consequences.
-type AppendKeyReplayPathProof struct {
+// AppendKeyReplayPathTransaction is the source-facing transaction for an append
+// write. It is normalized against the pre-write point state before the address
+// transaction applies invalidation and replay.
+type AppendKeyReplayPathTransaction struct {
 	ArrayPath           constraint.Path
 	KeyPath             constraint.Path
 	ExplicitTablePath   constraint.Path
@@ -105,6 +105,17 @@ type AppendKeyReplayPathProof struct {
 	WrittenTablePaths   []constraint.Path
 	FreshEmpty          bool
 	PreserveHistoryBase bool
+}
+
+// AppendKeyReplayTransaction is the address-space append-key replay
+// transaction. All pre-write evidence has already been selected by the path
+// boundary, so application cannot accidentally read facts after invalidation.
+type AppendKeyReplayTransaction struct {
+	Array               StableAddress
+	Key                 StableAddress
+	KeyValue            product.AbstractValue
+	PreserveHistoryBase bool
+	Tables              []StableAddress
 }
 
 // AppendElementMutationPathTransaction is the source-facing transaction for
@@ -388,41 +399,69 @@ func AppendKeyArrayTablesPath(state PointState, q AppendKeyArrayPathTableQuery) 
 	return AppendKeyArrayTables(state, addressQuery)
 }
 
-func ApplyAppendKeyReplayPathProof(out *PointState, proof AppendKeyReplayPathProof) bool {
+// AppendKeyReplayTransactionOfPath selects pre-write evidence for an append-key
+// replay and lowers stable paths once.
+func AppendKeyReplayTransactionOfPath(state PointState, tx AppendKeyReplayPathTransaction) (AppendKeyReplayTransaction, bool) {
+	if tx.ArrayPath.IsEmpty() || tx.KeyPath.IsEmpty() {
+		return AppendKeyReplayTransaction{}, false
+	}
+	array, arrayOK := StableAddressOfPath(tx.ArrayPath)
+	key, keyOK := StableAddressOfPath(tx.KeyPath)
+	if !arrayOK || !keyOK {
+		return AppendKeyReplayTransaction{}, false
+	}
+	facts := PointFactsOf(state)
+	keyValue, _ := facts.PathValue(tx.KeyPath)
+	return AppendKeyReplayTransaction{
+		Array:               array,
+		Key:                 key,
+		KeyValue:            keyValue,
+		PreserveHistoryBase: tx.PreserveHistoryBase || tx.FreshEmpty || facts.HasAppendHistoryBase(tx.ArrayPath),
+		Tables: AppendKeyArrayTablesPath(state, AppendKeyArrayPathTableQuery{
+			ArrayPath:         tx.ArrayPath,
+			KeyPath:           tx.KeyPath,
+			ExplicitTablePath: tx.ExplicitTablePath,
+			HasExplicitTable:  tx.HasExplicitTable,
+			WrittenTablePaths: tx.WrittenTablePaths,
+			FreshEmpty:        tx.FreshEmpty,
+		}),
+	}, true
+}
+
+// ApplyAppendKeyReplayPathTransaction normalizes a source-level append replay
+// against pre-write state, then applies the address transaction.
+func ApplyAppendKeyReplayPathTransaction(out *PointState, tx AppendKeyReplayPathTransaction) bool {
 	if out == nil {
 		return false
 	}
-	array, arrayOK := StableAddressOfPath(proof.ArrayPath)
-	key, keyOK := StableAddressOfPath(proof.KeyPath)
-	if !arrayOK || !keyOK {
+	normalized, ok := AppendKeyReplayTransactionOfPath(*out, tx)
+	if !ok {
 		return false
 	}
-	arrayKey := array.Key()
-	preserveHistoryBase := proof.PreserveHistoryBase || proof.FreshEmpty || out.KeyPresence.HasAppendHistoryBase(arrayKey)
-	changed := ApplyAddressWritePathInvalidation(out, AddressWritePathInvalidation{WritePath: proof.ArrayPath})
-	if preserveHistoryBase {
-		changed = ApplyAppendHistoryBaseProof(out, AppendHistoryBaseProof{Array: array}) || changed
+	return ApplyAppendKeyReplayTransaction(out, normalized)
+}
+
+// ApplyAppendKeyReplayTransaction applies all address-fact consequences of a
+// local append-key replay using pre-selected evidence.
+func ApplyAppendKeyReplayTransaction(out *PointState, tx AppendKeyReplayTransaction) bool {
+	if out == nil || tx.Array.Key() == "" || tx.Key.Key() == "" {
+		return false
+	}
+	changed := ApplyAddressWriteInvalidation(out, AddressWriteInvalidation{Write: tx.Array})
+	if tx.PreserveHistoryBase {
+		changed = ApplyAppendHistoryBaseProof(out, AppendHistoryBaseProof{Array: tx.Array}) || changed
 	}
 	changed = ApplyAppendKeyProof(out, AppendKeyProof{
-		Array: array,
-		Key:   key,
+		Array: tx.Array,
+		Key:   tx.Key,
 	}) || changed
-	keyValue, _ := PointFactsOf(*out).PathValue(proof.KeyPath)
-	tables := AppendKeyArrayTablesPath(*out, AppendKeyArrayPathTableQuery{
-		ArrayPath:         proof.ArrayPath,
-		KeyPath:           proof.KeyPath,
-		ExplicitTablePath: proof.ExplicitTablePath,
-		HasExplicitTable:  proof.HasExplicitTable,
-		WrittenTablePaths: proof.WrittenTablePaths,
-		FreshEmpty:        proof.FreshEmpty,
-	})
-	if len(tables) > 0 {
+	if len(tx.Tables) > 0 {
 		changed = ApplyAppendKeyArrayConsequences(out, AppendKeyArrayConsequences{
-			Array:    array,
-			Key:      key,
+			Array:    tx.Array,
+			Key:      tx.Key,
 			HasKey:   true,
-			KeyValue: keyValue,
-			Tables:   tables,
+			KeyValue: tx.KeyValue,
+			Tables:   tx.Tables,
 		}) || changed
 	}
 	return changed
