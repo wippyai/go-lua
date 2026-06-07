@@ -1887,10 +1887,6 @@ func (t *Transfer) prototypeMethodRefTree(proto cfg.SymbolID) (flow.FunctionRefT
 	return flow.FunctionRefTree{Entries: entries}, true
 }
 
-func (t *Transfer) clearPrototypeInstance(out *flow.PointState, sym cfg.SymbolID) bool {
-	return flow.ClearPrototypeInstance(out, sym)
-}
-
 func (t *Transfer) setMetatablePrototypeFromSource(src ast.Expr) (cfg.SymbolID, bool) {
 	call, ok := src.(*ast.FuncCallExpr)
 	if !ok || call == nil || t.in.Graph == nil || !metatable.IsSetMetatableCall(call, t.in.Graph.Bindings()) {

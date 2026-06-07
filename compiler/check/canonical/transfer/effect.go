@@ -755,14 +755,14 @@ func (t *Transfer) applySymbolWriteEffect(
 
 func (t *Transfer) applyRootWriteEffect(out *flow.PointState, effect WriteEffect) bool {
 	if effect.ClearValue {
-		t.clearPrototypeInstance(out, effect.Place.Root)
+		flow.ClearPrototypeInstance(out, effect.Place.Root)
 		t.symbolStorage.clear(out, effect.Place.Root, effect.JoinExisting, true)
 	} else {
 		if effect.Value.IsZero() {
 			return t.applyReferenceEffect(out, referenceEffectForWrite(effect))
 		}
 		if _, ok := t.setMetatablePrototypeFromSource(effect.Source); !ok {
-			t.clearPrototypeInstance(out, effect.Place.Root)
+			flow.ClearPrototypeInstance(out, effect.Place.Root)
 		}
 		t.writeSymbolValue(out, effect.Place.Root, effect.Value, effect.JoinExisting, true)
 		t.applyPrototypeSelfWriteEffect(out, effect, effect.Value)
