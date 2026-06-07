@@ -411,20 +411,15 @@ func (ce *ConditionExtractor) keyOfConstraintsForTruthyValue(valuePath constrain
 	if ce == nil || ce.Inputs == nil || valuePath.IsEmpty() || valuePath.Symbol == 0 {
 		return nil
 	}
-	var out []constraint.Constraint
-	for _, assign := range ce.Inputs.Assignments {
-		if assign.Source.Kind != flow.AssignmentSourceMapElement || assign.TargetPath.IsEmpty() {
-			continue
-		}
-		targetPath := flowpath.WithVersion(assign.TargetPath, ce.graph(), ce.P)
-		if !targetPath.Equal(valuePath) {
-			continue
-		}
-		if keyOf := ce.keyOfConstraintFromMapElementSource(assign.Source); keyOf != nil {
-			out = append(out, *keyOf)
-		}
-	}
-	return out
+	graph := ce.graph()
+	point := ce.P
+	return flow.TruthyAssignmentValueKeyOfConstraints(flow.TruthyAssignmentValueKeyOfQuery{
+		Assignments: ce.Inputs.Assignments,
+		ValuePath:   valuePath,
+		VersionPath: func(path constraint.Path) constraint.Path {
+			return flowpath.WithVersion(path, graph, point)
+		},
+	})
 }
 
 func (ce *ConditionExtractor) keyOfConstraintsFromDynamicIndex(attr *ast.AttrGetExpr) []constraint.Constraint {
@@ -455,28 +450,6 @@ func (ce *ConditionExtractor) keyOfConstraintsFromDynamicIndex(attr *ast.AttrGet
 		return nil
 	}
 	return []constraint.Constraint{constraint.KeyOf{Table: basePath, Key: keyPath}}
-}
-
-func (ce *ConditionExtractor) keyOfConstraintFromMapElementSource(src flow.AssignmentSource) *constraint.KeyOf {
-	if ce == nil || src.Kind != flow.AssignmentSourceMapElement || src.MapPath.IsEmpty() || src.KeySymbol == 0 {
-		return nil
-	}
-	tablePath := flowpath.WithVersion(src.MapPath, ce.graph(), ce.P)
-	if tablePath.IsEmpty() {
-		return nil
-	}
-	keyRoot := src.KeyVar
-	if keyRoot == "" {
-		keyRoot = src.MapPath.Root
-	}
-	keyPath := flowpath.WithVersion(constraint.Path{
-		Root:   keyRoot,
-		Symbol: src.KeySymbol,
-	}, ce.graph(), ce.P)
-	if keyPath.IsEmpty() {
-		return nil
-	}
-	return &constraint.KeyOf{Table: tablePath, Key: keyPath}
 }
 
 func (ce *ConditionExtractor) branchConditionsFromPredicateCall(expr *ast.FuncCallExpr) (BranchConditions, bool) {
