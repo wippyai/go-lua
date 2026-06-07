@@ -300,6 +300,54 @@ func TestAppendKeyArrayTablesUsesFreshEmptyEvidence(t *testing.T) {
 	}
 }
 
+func TestAppendKeyArrayTablesIgnoresLegacyStoredKeyArrayTable(t *testing.T) {
+	arrayPath := constraint.NewPath(cfg.SymbolID(234), "keys")
+	tablePath := constraint.NewPath(cfg.SymbolID(235), "nodes")
+	keyPath := constraint.NewPath(cfg.SymbolID(236), "node_id")
+	array := testStableAddressPath(t, arrayPath)
+	key := testStableAddressPath(t, keyPath)
+	state := PointState{
+		KeyPresence: KeyPresenceFacts{}.
+			WithKeyArray(array.Key(), tablePath.Key()),
+	}
+	if tables := state.KeyPresence.KeyArrayTables(array.Key()); len(tables) != 1 || tables[0] != tablePath.Key() {
+		t.Fatalf("test setup did not keep legacy stored table key: %s", state.KeyPresence.Format())
+	}
+
+	tables := AppendKeyArrayTables(state, AppendKeyArrayTableQuery{
+		Array: array,
+		Key:   key,
+	})
+	if len(tables) != 0 {
+		t.Fatalf("legacy key-array table was selected: %v", tables)
+	}
+}
+
+func TestAppendKeyArrayTablesFreshEmptyIgnoresLegacyStoredDirectTable(t *testing.T) {
+	arrayPath := constraint.NewPath(cfg.SymbolID(237), "keys")
+	tablePath := constraint.NewPath(cfg.SymbolID(238), "nodes")
+	keyPath := constraint.NewPath(cfg.SymbolID(239), "node_id")
+	array := testStableAddressPath(t, arrayPath)
+	key := testStableAddressPath(t, keyPath)
+	state := PointState{
+		KeyPresence: KeyPresenceFacts{}.
+			With(tablePath.Key(), key.Key()),
+	}
+	entries := state.KeyPresence.Entries()
+	if len(entries) != 1 || entries[0].Table != tablePath.Key() {
+		t.Fatalf("test setup did not keep legacy stored table key: %s", state.KeyPresence.Format())
+	}
+
+	tables := AppendKeyArrayTables(state, AppendKeyArrayTableQuery{
+		Array:      array,
+		Key:        key,
+		FreshEmpty: true,
+	})
+	if len(tables) != 0 {
+		t.Fatalf("legacy direct table/key fact was selected: %v", tables)
+	}
+}
+
 func TestAppendKeyArrayTablesPathLowersStructuredInputs(t *testing.T) {
 	arrayPath := constraint.NewPath(cfg.SymbolID(134), "keys")
 	tablePath := constraint.NewPath(cfg.SymbolID(135), "nodes")
@@ -406,6 +454,57 @@ func TestAppendKeyArrayPreservationUsesFreshEmptySeed(t *testing.T) {
 	}
 	if len(selection.Tables) != 1 || !selection.Tables[0].Equal(table) {
 		t.Fatalf("direct tables = %v, want table with key", selection.Tables)
+	}
+}
+
+func TestAppendKeyArrayPreservationIgnoresLegacyStoredKeyArrayTable(t *testing.T) {
+	arrayPath := constraint.NewPath(cfg.SymbolID(242), "keys")
+	tablePath := constraint.NewPath(cfg.SymbolID(243), "nodes")
+	keyPath := constraint.NewPath(cfg.SymbolID(244), "id")
+	array := testStableAddressPath(t, arrayPath)
+	key := testStableAddressPath(t, keyPath)
+	state := PointState{
+		KeyPresence: KeyPresenceFacts{}.
+			WithKeyArray(array.Key(), tablePath.Key()),
+	}
+	if tables := state.KeyPresence.KeyArrayTables(array.Key()); len(tables) != 1 || tables[0] != tablePath.Key() {
+		t.Fatalf("test setup did not keep legacy stored table key: %s", state.KeyPresence.Format())
+	}
+
+	selection := AppendKeyArrayPreservation(state, AppendKeyArrayPreservationQuery{
+		Array: array,
+		Key:   key,
+	})
+	if len(selection.Tables) != 0 || len(selection.Pending) != 0 {
+		t.Fatalf("legacy key-array table produced preservation selection: %+v", selection)
+	}
+}
+
+func TestAppendKeyArrayPreservationFreshEmptyIgnoresLegacyStoredDirectTable(t *testing.T) {
+	arrayPath := constraint.NewPath(cfg.SymbolID(245), "keys")
+	tablePath := constraint.NewPath(cfg.SymbolID(246), "nodes")
+	keyPath := constraint.NewPath(cfg.SymbolID(247), "id")
+	array := testStableAddressPath(t, arrayPath)
+	key := testStableAddressPath(t, keyPath)
+	state := PointState{
+		KeyPresence: KeyPresenceFacts{}.
+			With(tablePath.Key(), key.Key()),
+	}
+	entries := state.KeyPresence.Entries()
+	if len(entries) != 1 || entries[0].Table != tablePath.Key() {
+		t.Fatalf("test setup did not keep legacy stored table key: %s", state.KeyPresence.Format())
+	}
+
+	selection := AppendKeyArrayPreservation(state, AppendKeyArrayPreservationQuery{
+		Array:          array,
+		Key:            key,
+		FreshEmptySeed: true,
+	})
+	if len(selection.Tables) != 0 {
+		t.Fatalf("legacy direct table/key fact produced table selection: %+v", selection)
+	}
+	if len(selection.Pending) != 1 || selection.Pending[0].HasTable {
+		t.Fatalf("fresh-empty wildcard pending was not preserved: %+v", selection)
 	}
 }
 

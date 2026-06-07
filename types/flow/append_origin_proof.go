@@ -287,7 +287,7 @@ func AppendKeyArrayTables(state PointState, q AppendKeyArrayTableQuery) []Stable
 		}
 		return append(out, table)
 	}
-	existingTables := state.KeyPresence.KeyArrayTables(arrayKey)
+	existingTables := state.KeyPresence.KeyArrayTableAddresses(q.Array)
 	var out []StableAddress
 	if q.HasExplicitTable {
 		tableKey := q.ExplicitTable.Key()
@@ -296,7 +296,7 @@ func AppendKeyArrayTables(state PointState, q AppendKeyArrayTableQuery) []Stable
 		}
 		hasExisting := false
 		for _, existing := range existingTables {
-			if existing == tableKey {
+			if existing.Key == tableKey {
 				hasExisting = true
 				break
 			}
@@ -306,24 +306,15 @@ func AppendKeyArrayTables(state PointState, q AppendKeyArrayTableQuery) []Stable
 		}
 		return out
 	}
-	for _, tableKey := range existingTables {
-		table, ok := StableAddressFromKey(tableKey)
-		if ok {
-			out = add(out, table)
-		}
+	for _, tableUse := range existingTables {
+		out = add(out, tableUse.Address)
 	}
 	if q.FreshEmpty {
 		for _, table := range q.WrittenTables {
 			out = add(out, table)
 		}
-		for _, fact := range state.KeyPresence.Entries() {
-			if fact.Key != keyKey {
-				continue
-			}
-			table, ok := StableAddressFromKey(fact.Table)
-			if ok {
-				out = add(out, table)
-			}
+		for _, tableUse := range state.KeyPresence.TablesWithKeyAddress(q.Key) {
+			out = add(out, tableUse.Address)
 		}
 	}
 	return out
@@ -430,33 +421,26 @@ func AppendKeyArrayPreservation(state PointState, q AppendKeyArrayPreservationQu
 		}
 		return append(out, pending)
 	}
-	existingTables := state.KeyPresence.KeyArrayTables(arrayKey)
+	existingTables := state.KeyPresence.KeyArrayTableAddresses(q.Array)
 	canSeedFromEmpty := len(existingTables) == 0 && q.FreshEmptySeed
 	var out AppendKeyArraySelection
 	if canSeedFromEmpty {
 		out.Pending = addPending(out.Pending, PendingKeyArrayDestination{})
 	}
-	for _, tableKey := range existingTables {
-		table, ok := StableAddressFromKey(tableKey)
-		if !ok {
-			continue
-		}
-		if state.KeyPresence.Has(tableKey, keyKey) {
-			out.Tables = addTable(out.Tables, table)
+	for _, tableUse := range existingTables {
+		if state.KeyPresence.Has(tableUse.Key, keyKey) {
+			out.Tables = addTable(out.Tables, tableUse.Address)
 			continue
 		}
 		out.Pending = addPending(out.Pending, PendingKeyArrayDestination{
-			Table:    table,
+			Table:    tableUse.Address,
 			HasTable: true,
 		})
 	}
-	for _, fact := range state.KeyPresence.Entries() {
-		if fact.Key != keyKey {
-			continue
-		}
+	for _, tableUse := range state.KeyPresence.TablesWithKeyAddress(q.Key) {
 		hasExisting := false
 		for _, existing := range existingTables {
-			if existing == fact.Table {
+			if existing.Key == tableUse.Key {
 				hasExisting = true
 				break
 			}
@@ -464,10 +448,7 @@ func AppendKeyArrayPreservation(state PointState, q AppendKeyArrayPreservationQu
 		if !hasExisting && !canSeedFromEmpty {
 			continue
 		}
-		table, ok := StableAddressFromKey(fact.Table)
-		if ok {
-			out.Tables = addTable(out.Tables, table)
-		}
+		out.Tables = addTable(out.Tables, tableUse.Address)
 	}
 	return out
 }
