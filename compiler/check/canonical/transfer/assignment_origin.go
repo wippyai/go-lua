@@ -6,8 +6,6 @@ import (
 	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/domain/value/product"
 	"github.com/wippyai/go-lua/types/flow"
-	"github.com/wippyai/go-lua/types/flow/pathkey"
-	"github.com/wippyai/go-lua/types/typ"
 )
 
 // AssignmentProvenanceEffect is the transfer-local publication payload for path
@@ -142,23 +140,11 @@ func (t *Transfer) applyAssignmentProvenanceEffect(
 	if out == nil || effect.TargetPath.IsEmpty() || effect.SourcePath.IsEmpty() {
 		return false
 	}
-	changed := false
-	if !pathkey.PathRelated(effect.TargetPath, effect.SourcePath) {
-		changed = flow.ApplyPathAliasPathProof(out, flow.PathAliasPathProof{
-			ValuePath:  effect.TargetPath,
-			SourcePath: effect.SourcePath,
-		}) || changed
-	}
-	changed = t.applyAssignmentAliasOrigin(out, effect) || changed
-	changed = flow.ApplyKeyPresenceAliasPathProof(out, flow.KeyPresenceAliasPathProof{
-		SourcePath: effect.SourcePath,
-		TargetPath: effect.TargetPath,
-	}) || changed
-	changed = flow.ApplyIndexWriteKeyAliasReadbackPathProof(out, flow.IndexWriteKeyAliasReadbackPathProof{
-		SourcePath: effect.SourcePath,
-		TargetPath: effect.TargetPath,
-	}) || changed
-	return changed
+	return flow.ApplyAssignmentAliasPathTransaction(out, flow.AssignmentAliasPathTransaction{
+		TargetPath:  effect.TargetPath,
+		SourcePath:  effect.SourcePath,
+		SourceValue: effect.Value,
+	})
 }
 
 func (t *Transfer) applyArrayElementKeyProvenanceEffect(
@@ -168,33 +154,9 @@ func (t *Transfer) applyArrayElementKeyProvenanceEffect(
 	if out == nil || effect.TargetPath.IsEmpty() || effect.ArrayPath.IsEmpty() {
 		return false
 	}
-	_, presenceChanged := flow.ApplyKeyArrayElementKeyPathProof(out, flow.KeyArrayElementKeyPathProof{
-		ArrayPath:     effect.ArrayPath,
-		TargetKeyPath: effect.TargetPath,
-		KeyValue:      effect.Value,
-	})
-	changed := false
-	changed = presenceChanged || changed
-	changed = flow.ApplyValueOriginPathProof(out, flow.ValueOriginPathProof{
-		ValuePath:  effect.TargetPath,
-		SourcePath: effect.ArrayPath,
-		Kind:       flow.ValueOriginIndexedIterator,
-		VarIndex:   1,
-	}) || changed
-	return changed
-}
-
-func (t *Transfer) applyAssignmentAliasOrigin(out *flow.PointState, effect AssignmentProvenanceEffect) bool {
-	if effect.Value.IsZero() || pathkey.PathRelated(effect.TargetPath, effect.SourcePath) {
-		return false
-	}
-	valType := product.ProjectValueOrUnknown(effect.Value)
-	if typ.IsAbsentOrUnknown(valType) || typ.IsAny(valType) {
-		return false
-	}
-	return flow.ApplyValueOriginPathProof(out, flow.ValueOriginPathProof{
-		ValuePath:  effect.TargetPath,
-		SourcePath: effect.SourcePath,
-		Kind:       flow.ValueOriginAssignmentAlias,
+	return flow.ApplyArrayElementKeyPathTransaction(out, flow.ArrayElementKeyPathTransaction{
+		TargetPath: effect.TargetPath,
+		ArrayPath:  effect.ArrayPath,
+		KeyValue:   effect.Value,
 	})
 }
