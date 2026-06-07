@@ -70,6 +70,10 @@ func (t *Transfer) readAccessValue(out *flow.PointState, q accessValueReadQuery)
 	if q.Expr == nil || q.ReadExpr == nil {
 		return product.AbstractValue{}, false
 	}
+	facts := flow.PointFactsOf(flow.PointState{})
+	if out != nil {
+		facts = flow.PointFactsOf(*out)
+	}
 	staticPath := q.StaticPath
 	if staticPath == nil {
 		staticPath = t.staticPathOfExpr
@@ -80,14 +84,19 @@ func (t *Transfer) readAccessValue(out *flow.PointState, q accessValueReadQuery)
 	}
 
 	path, hasPath := staticPath(q.Expr)
-	if out != nil && hasPath {
-		if fact := flow.PointFactsOf(*out).ReadStaticMemberValue(path, t.pointReadPolicy(out)); fact.State == flow.StateResolved {
-			return fact.Value, true
-		}
-	}
-
 	base, ok := q.ReadExpr(q.Expr.Object)
 	if !ok || base.IsZero() {
+		if out != nil {
+			read := facts.ReadAccess(flow.AccessReadQuery{
+				Kind:    flow.AccessReadStaticMember,
+				Path:    path,
+				HasPath: hasPath,
+				Policy:  t.pointReadPolicy(out),
+			})
+			if read.State == flow.StateResolved {
+				return read.Value, true
+			}
+		}
 		if q.AllowGradualFallback && t.gradualAnySource(out, q.Expr) {
 			return product.GradualAny(), true
 		}
@@ -95,43 +104,37 @@ func (t *Transfer) readAccessValue(out *flow.PointState, q accessValueReadQuery)
 	}
 
 	if member, isStatic := staticMember(q.Expr); isStatic {
-		read, ok := product.RuntimeMemberOf(base, member)
-		if !ok || read.IsZero() {
-			if cv, ok := t.readKnownCallableAccess(out, path, hasPath, read); ok {
-				return cv, true
-			}
+		read := facts.ReadAccess(flow.AccessReadQuery{
+			Kind:    flow.AccessReadStaticMember,
+			Path:    path,
+			HasPath: hasPath,
+			Base:    base,
+			Member:  member,
+			Policy:  t.pointReadPolicy(out),
+		})
+		if read.State != flow.StateResolved || read.Value.IsZero() {
 			if q.AllowGradualFallback && t.gradualAnySource(out, q.Expr) {
 				return product.GradualAny(), true
 			}
 			return product.AbstractValue{}, false
 		}
-		if cv, ok := t.readKnownCallableAccess(out, path, hasPath, read); ok {
-			return cv, true
-		}
-		return t.refineIndexRead(out, q.Expr, base, read), true
+		return t.refineIndexRead(out, q.Expr, base, read.Value), true
 	}
 
 	key, ok := q.ReadExpr(q.Expr.Key)
 	if !ok || key.IsZero() {
 		return product.AbstractValue{}, false
 	}
-	read, ok := product.RuntimeIndexOf(base, key)
-	if !ok || read.IsZero() {
+	read := facts.ReadAccess(flow.AccessReadQuery{
+		Kind: flow.AccessReadDynamicIndex,
+		Base: base,
+		Key:  key,
+	})
+	if read.State != flow.StateResolved || read.Value.IsZero() {
 		if admitted, admittedOK := t.refineByIndexWriteAdmission(out, q.Expr); admittedOK {
 			return admitted, true
 		}
 		return product.AbstractValue{}, false
 	}
-	return t.refineIndexRead(out, q.Expr, base, read), true
-}
-
-func (t *Transfer) readKnownCallableAccess(out *flow.PointState, path constraint.Path, hasPath bool, read product.AbstractValue) (product.AbstractValue, bool) {
-	if out == nil || !hasPath {
-		return product.AbstractValue{}, false
-	}
-	cv := flow.PointFactsOf(*out).ReadKnownCallablePath(path, read, t.pointReadPolicy(out))
-	if cv.State != flow.StateResolved {
-		return product.AbstractValue{}, false
-	}
-	return cv.Value, true
+	return t.refineIndexRead(out, q.Expr, base, read.Value), true
 }
