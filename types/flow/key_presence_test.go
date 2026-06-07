@@ -282,6 +282,31 @@ func TestKeyPresenceFactsAddressInvalidationSupportsNamedRoots(t *testing.T) {
 	}
 }
 
+func TestKeyPresenceAddressFilterCachesPredicateByStoredKey(t *testing.T) {
+	table, _ := StableAddressOfSymbol(cfg.SymbolID(80), nil)
+	key, _ := StableAddressOfSymbol(cfg.SymbolID(81), nil)
+	value, _ := StableAddressOfSymbol(cfg.SymbolID(82), nil)
+	array, _ := StableAddressOfSymbol(cfg.SymbolID(83), nil)
+	calls := map[constraint.PathKey]int{}
+
+	facts := KeyPresenceFacts{}.
+		WithAddresses(table, key).
+		WithValueAddresses(table, key, value).
+		WithKeyArrayAddresses(array, table).
+		WithPendingKeyArrayAddresses(array, table, true, key)
+
+	_ = facts.factSet().filter(keyPresenceFullAddressFilter(func(addr StableAddress) bool {
+		calls[addr.Key()]++
+		return false
+	}))
+
+	for _, addr := range []StableAddress{table, key, value, array} {
+		if got := calls[addr.Key()]; got != 1 {
+			t.Fatalf("predicate calls for %s = %d, want one", addr.Key(), got)
+		}
+	}
+}
+
 func TestKeyPresenceFactsPresentElementWriteKeepsKeyPresenceButDropsValueFacts(t *testing.T) {
 	table := SymbolPathKey(cfg.SymbolID(1), nil)
 	tableMember := SymbolPathKey(cfg.SymbolID(1), []constraint.Segment{

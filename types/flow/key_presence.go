@@ -374,80 +374,111 @@ func appendHistoryCoverageFactEqual(a, b AppendHistoryCoverageFact) bool {
 		product.Domain.Equal(a.Value, b.Value)
 }
 
-func keyPresenceFullAddressFilter(affected func(constraint.PathKey) bool) keyPresenceFactFilter {
+func keyPresenceFullAddressFilter(affected addressPredicate) keyPresenceFactFilter {
+	matcher := keyPresenceAddressMatcher{pred: affected}
 	return keyPresenceFactFilter{
 		entries: func(e KeyPresenceFact) bool {
-			return !affected(e.Table) && !affected(e.Key)
+			return !matcher.matches(e.Table) && !matcher.matches(e.Key)
 		},
 		values: func(e KeyValueFact) bool {
-			return !affected(e.Table) && !affected(e.Key) && !affected(e.Value)
+			return !matcher.matches(e.Table) &&
+				!matcher.matches(e.Key) &&
+				!matcher.matches(e.Value)
 		},
 		arrays: func(e KeyArrayFact) bool {
-			return !affected(e.Array) && !affected(e.Table)
+			return !matcher.matches(e.Array) && !matcher.matches(e.Table)
 		},
 		emptyArrays: func(e EmptyKeyArrayFact) bool {
-			return !affected(e.Array)
+			return !matcher.matches(e.Array)
 		},
 		arrayValues: func(e KeyArrayValueFact) bool {
-			return !affected(e.Array) && !affected(e.Table)
+			return !matcher.matches(e.Array) && !matcher.matches(e.Table)
 		},
 		appends: func(e AppendedKeyFact) bool {
-			return !affected(e.Array) && !affected(e.Key)
+			return !matcher.matches(e.Array) && !matcher.matches(e.Key)
 		},
 		pending: func(e PendingKeyArrayFact) bool {
-			return !affected(e.Array) && !affected(e.Key) && (e.Table == "" || !affected(e.Table))
+			return !matcher.matches(e.Array) &&
+				!matcher.matches(e.Key) &&
+				(e.Table == "" || !matcher.matches(e.Table))
 		},
 		appendBases: func(e AppendHistoryBaseFact) bool {
-			return !affected(e.Array)
+			return !matcher.matches(e.Array)
 		},
 		appendEvents: func(e AppendHistoryEventFact) bool {
-			return !affected(e.Array) && !affected(e.Key)
+			return !matcher.matches(e.Array) && !matcher.matches(e.Key)
 		},
 		appendCoverage: func(e AppendHistoryCoverageFact) bool {
-			return !affected(e.Array) && !affected(e.Key) && !affected(e.Table)
+			return !matcher.matches(e.Array) &&
+				!matcher.matches(e.Key) &&
+				!matcher.matches(e.Table)
 		},
 		appendOrigins: func(e AppendElementFieldOriginFact) bool {
-			return !affected(e.Array) && !affected(e.Source)
+			return !matcher.matches(e.Array) && !matcher.matches(e.Source)
 		},
 	}
 }
 
-func keyPresencePresentElementAddressFilter(affected func(constraint.PathKey) bool) keyPresenceFactFilter {
+func keyPresencePresentElementAddressFilter(affected addressPredicate) keyPresenceFactFilter {
+	matcher := keyPresenceAddressMatcher{pred: affected}
 	return keyPresenceFactFilter{
 		entries: func(e KeyPresenceFact) bool {
-			return !affected(e.Key)
+			return !matcher.matches(e.Key)
 		},
 		values: func(e KeyValueFact) bool {
-			return !affected(e.Table) && !affected(e.Key) && !affected(e.Value)
+			return !matcher.matches(e.Table) &&
+				!matcher.matches(e.Key) &&
+				!matcher.matches(e.Value)
 		},
 		arrays: func(e KeyArrayFact) bool {
-			return !affected(e.Array)
+			return !matcher.matches(e.Array)
 		},
 		emptyArrays: func(e EmptyKeyArrayFact) bool {
-			return !affected(e.Array)
+			return !matcher.matches(e.Array)
 		},
 		arrayValues: func(e KeyArrayValueFact) bool {
-			return !affected(e.Array)
+			return !matcher.matches(e.Array)
 		},
 		appends: func(e AppendedKeyFact) bool {
-			return !affected(e.Array) && !affected(e.Key)
+			return !matcher.matches(e.Array) && !matcher.matches(e.Key)
 		},
 		pending: func(e PendingKeyArrayFact) bool {
-			return !affected(e.Array) && !affected(e.Key)
+			return !matcher.matches(e.Array) && !matcher.matches(e.Key)
 		},
 		appendBases: func(e AppendHistoryBaseFact) bool {
-			return !affected(e.Array)
+			return !matcher.matches(e.Array)
 		},
 		appendEvents: func(e AppendHistoryEventFact) bool {
-			return !affected(e.Array) && !affected(e.Key)
+			return !matcher.matches(e.Array) && !matcher.matches(e.Key)
 		},
 		appendCoverage: func(e AppendHistoryCoverageFact) bool {
-			return !affected(e.Array) && !affected(e.Key)
+			return !matcher.matches(e.Array) && !matcher.matches(e.Key)
 		},
 		appendOrigins: func(e AppendElementFieldOriginFact) bool {
-			return !affected(e.Array) && !affected(e.Source)
+			return !matcher.matches(e.Array) && !matcher.matches(e.Source)
 		},
 	}
+}
+
+type keyPresenceAddressMatcher struct {
+	pred  addressPredicate
+	cache map[constraint.PathKey]bool
+}
+
+func (m *keyPresenceAddressMatcher) matches(key constraint.PathKey) bool {
+	if m.pred == nil {
+		return false
+	}
+	if matched, ok := m.cache[key]; ok {
+		return matched
+	}
+	addr, ok := StableAddressFromCanonicalKey(key)
+	matched := ok && m.pred(addr)
+	if m.cache == nil {
+		m.cache = make(map[constraint.PathKey]bool)
+	}
+	m.cache[key] = matched
+	return matched
 }
 
 func keyPresencePresentElementMemberPreservationFilter(array constraint.PathKey, member []constraint.Segment) keyPresenceFactFilter {
@@ -1581,9 +1612,7 @@ func (f KeyPresenceFacts) KillSubtreeAddress(root StableAddress) KeyPresenceFact
 	if f.bottom || root.Key() == "" || !f.hasFacts() {
 		return f
 	}
-	affected := func(key constraint.PathKey) bool {
-		return keyPresencePathAffectedByAddress(key, root)
-	}
+	affected := func(addr StableAddress) bool { return addr.HasPrefix(root) }
 	return f.factSet().filter(keyPresenceFullAddressFilter(affected)).canonical()
 }
 
@@ -1593,9 +1622,7 @@ func (f KeyPresenceFacts) KillAffectedByWriteAddress(write StableAddress) KeyPre
 	if f.bottom || write.Key() == "" || !f.hasFacts() {
 		return f
 	}
-	overlaps := func(key constraint.PathKey) bool {
-		return keyPresencePathOverlapsAddress(key, write)
-	}
+	overlaps := func(addr StableAddress) bool { return addr.Overlaps(write) }
 	return f.factSet().filter(keyPresenceFullAddressFilter(overlaps)).canonical()
 }
 
@@ -1605,9 +1632,7 @@ func (f KeyPresenceFacts) KillAffectedByPresentElementWriteAddress(write StableA
 	if f.bottom || write.Key() == "" || !f.hasFacts() {
 		return f
 	}
-	overlaps := func(key constraint.PathKey) bool {
-		return keyPresencePathOverlapsAddress(key, write)
-	}
+	overlaps := func(addr StableAddress) bool { return addr.Overlaps(write) }
 	return f.factSet().filter(keyPresencePresentElementAddressFilter(overlaps)).canonical()
 }
 
@@ -2367,16 +2392,6 @@ func appendElementFieldOriginsForBases(
 		out = append(out, origin)
 	}
 	return append([]AppendElementFieldOriginFact(nil), out...)
-}
-
-func keyPresencePathAffectedByAddress(path constraint.PathKey, root StableAddress) bool {
-	pathAddr, ok := StableAddressFromCanonicalKey(path)
-	return ok && pathAddr.HasPrefix(root)
-}
-
-func keyPresencePathOverlapsAddress(path constraint.PathKey, addr StableAddress) bool {
-	pathAddr, ok := StableAddressFromCanonicalKey(path)
-	return ok && pathAddr.Overlaps(addr)
 }
 
 func appendElementFieldOriginOverlapsMember(fact AppendElementFieldOriginFact, member []constraint.Segment) bool {
