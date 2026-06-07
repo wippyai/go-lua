@@ -112,6 +112,22 @@ func (p *program) callEntryProjector(ref summary.FuncRef) (callEntryProjector, b
 	}, true
 }
 
+func (p *program) ProjectCallEntryValues(ref summary.FuncRef, fs state.FunctionState) summary.CallEntryValues {
+	projector, ok := p.callEntryProjector(ref)
+	if !ok {
+		return nil
+	}
+	return projector.valueProjection(fs).Project()
+}
+
+func (p *program) ProjectCallEntryContextKeys(ref summary.FuncRef, fs state.FunctionState) []summary.Key {
+	projector, ok := p.callEntryProjector(ref)
+	if !ok {
+		return nil
+	}
+	return projector.contextProjection(fs).ProjectKeys()
+}
+
 func (c callEntryProjector) valueProjection(fs state.FunctionState) summary.CallEntryValueProjection {
 	return summary.CallEntryValueProjection{
 		Graph: c.graph,

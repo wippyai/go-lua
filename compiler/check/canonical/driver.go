@@ -965,22 +965,6 @@ func (p *program) publishedPrototypes(ref summary.FuncRef) []cfg.SymbolID {
 	return slices.Compact(out)
 }
 
-func (p *program) ProjectCallEntryValues(ref summary.FuncRef, fs state.FunctionState) summary.CallEntryValues {
-	projector, ok := p.callEntryProjector(ref)
-	if !ok {
-		return nil
-	}
-	return projector.valueProjection(fs).Project()
-}
-
-func (p *program) ProjectCallEntryContextKeys(ref summary.FuncRef, fs state.FunctionState) []summary.Key {
-	projector, ok := p.callEntryProjector(ref)
-	if !ok {
-		return nil
-	}
-	return projector.contextProjection(fs).ProjectKeys()
-}
-
 func captureCellsFromPoint(in *flow.PointState, captured []cfg.SymbolID) flow.CaptureCells {
 	if in == nil || len(captured) == 0 {
 		return flow.CaptureCellsDomain.Bottom()
@@ -998,14 +982,6 @@ func captureCellsFromPoint(in *flow.PointState, captured []cfg.SymbolID) flow.Ca
 		}
 	}
 	return cells
-}
-
-func (p *program) expectedCallArgType(g *cfg.Graph, tr *transfer.Transfer, point cfg.Point, info *cfg.CallInfo, in *flow.PointState, argIdx int) typ.Type {
-	projection, ok := p.expectedArgProjection(g, tr, point, info, in)
-	if !ok {
-		return nil
-	}
-	return projection.argType(argIdx)
 }
 
 func (p *program) EntrySymbolValues(ref summary.FuncRef) map[cfg.SymbolID]product.AbstractValue {

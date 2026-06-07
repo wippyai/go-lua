@@ -39,6 +39,14 @@ func (p *program) expectedArgProjection(g *cfg.Graph, tr *transfer.Transfer, poi
 	}, true
 }
 
+func (p *program) expectedCallArgType(g *cfg.Graph, tr *transfer.Transfer, point cfg.Point, info *cfg.CallInfo, in *flow.PointState, argIdx int) typ.Type {
+	projection, ok := p.expectedArgProjection(g, tr, point, info, in)
+	if !ok {
+		return nil
+	}
+	return projection.argType(argIdx)
+}
+
 func (p expectedCallArgProjection) argType(argIdx int) typ.Type {
 	if argIdx < 0 {
 		return nil
