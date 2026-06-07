@@ -3,6 +3,7 @@ package transfer
 import (
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/check/domain/paramevidence"
+	"github.com/wippyai/go-lua/compiler/check/domain/provenance"
 	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/flow"
 	"github.com/wippyai/go-lua/types/typ"
@@ -108,7 +109,7 @@ func (t *Transfer) demandLocalPathContract(
 		paramevidence.ParamContractDomain.Equal(contract, paramevidence.ParamContractDomain.Bottom()) {
 		return
 	}
-	var routes paramevidence.ProvenanceRouteResolver
+	var routes provenance.RouteResolver
 	if out != nil {
 		facts := flow.PointFactsOf(*out)
 		routes = facts.ProvenanceRoutes

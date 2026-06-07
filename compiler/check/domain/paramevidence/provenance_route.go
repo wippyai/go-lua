@@ -14,42 +14,50 @@ type ProvenanceRouteContractTarget struct {
 	Contract ParamContract
 }
 
-// ProvenanceRouteResolver returns one-step provenance routes for path.
-type ProvenanceRouteResolver func(path constraint.Path) []flow.ProvenanceRoute
-
 // ProvenanceRouteContractClosure follows provenance routes backward from a local
 // path obligation to every source-path obligation implied by the current route
-// graph. The first target is the seed obligation. Paths are visited once by
-// stable identity, matching flow's point-state route semantics.
+// graph. The first target is the seed obligation. Contracts that reach the same
+// stable path identity are joined and revisited when the joined demand grows.
 func ProvenanceRouteContractClosure(
 	path constraint.Path,
 	contract ParamContract,
-	routes ProvenanceRouteResolver,
+	routes provenance.RouteResolver,
 ) []ProvenanceRouteContractTarget {
 	if path.Symbol == 0 || isContractBottom(contract) {
 		return nil
 	}
-	queue := []ProvenanceRouteContractTarget{{Path: path, Contract: contract}}
-	seen := map[constraint.PathKey]struct{}{}
-	var out []ProvenanceRouteContractTarget
-	for len(queue) > 0 {
-		cur := queue[0]
-		queue = queue[1:]
-		key := flow.PathIdentityKey(cur.Path)
-		if key == "" {
-			continue
-		}
-		if _, ok := seen[key]; ok {
-			continue
-		}
-		seen[key] = struct{}{}
-		out = append(out, cur)
-		if routes == nil {
-			continue
-		}
-		for _, route := range routes(cur.Path) {
-			queue = append(queue, ProvenanceRouteContractTargets(route, cur.Contract)...)
-		}
+	closure := provenance.RouteClosure(provenance.RouteClosureConfig[ParamContract]{
+		Seed: provenance.RouteClosureTarget[ParamContract]{
+			Path:    path,
+			Payload: contract,
+		},
+		Routes:   routes,
+		Targets:  routeContractClosureTargets,
+		IsBottom: isContractBottom,
+		Join:     ParamContractDomain.Join,
+		Equal:    ParamContractDomain.Equal,
+	})
+	out := make([]ProvenanceRouteContractTarget, 0, len(closure))
+	for _, target := range closure {
+		out = append(out, ProvenanceRouteContractTarget{
+			Path:     target.Path,
+			Contract: target.Payload,
+		})
+	}
+	return out
+}
+
+func routeContractClosureTargets(route flow.ProvenanceRoute, contract ParamContract) []provenance.RouteClosureTarget[ParamContract] {
+	targets := ProvenanceRouteContractTargets(route, contract)
+	if len(targets) == 0 {
+		return nil
+	}
+	out := make([]provenance.RouteClosureTarget[ParamContract], 0, len(targets))
+	for _, target := range targets {
+		out = append(out, provenance.RouteClosureTarget[ParamContract]{
+			Path:    target.Path,
+			Payload: target.Contract,
+		})
 	}
 	return out
 }

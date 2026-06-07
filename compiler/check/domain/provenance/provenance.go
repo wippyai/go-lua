@@ -25,6 +25,93 @@ type FreshTableLiteral struct {
 // SegmentTypeProjector projects a structural type through a field/index suffix.
 type SegmentTypeProjector func(base typ.Type, segments []constraint.Segment) typ.Type
 
+// RouteResolver returns one-step provenance routes for path.
+type RouteResolver func(path constraint.Path) []flow.ProvenanceRoute
+
+// RouteClosureTarget is one path-scoped payload carried through a provenance
+// route closure.
+type RouteClosureTarget[T any] struct {
+	Path    constraint.Path
+	Payload T
+}
+
+// RouteClosureConfig supplies the domain-specific parts of a provenance route
+// closure. Provenance owns path identity and graph traversal; callers own the
+// payload algebra.
+type RouteClosureConfig[T any] struct {
+	Seed     RouteClosureTarget[T]
+	Routes   RouteResolver
+	Targets  func(flow.ProvenanceRoute, T) []RouteClosureTarget[T]
+	IsBottom func(T) bool
+	Join     func(T, T) T
+	Equal    func(T, T) bool
+}
+
+// RouteClosure follows provenance routes backward from Seed and joins payloads
+// that reach the same stable path identity. If a joined payload grows, that path
+// is revisited so downstream routes see the stronger obligation.
+func RouteClosure[T any](cfg RouteClosureConfig[T]) []RouteClosureTarget[T] {
+	if cfg.Seed.Path.Symbol == 0 || routePayloadBottom(cfg.IsBottom, cfg.Seed.Payload) {
+		return nil
+	}
+	var out []RouteClosureTarget[T]
+	index := map[constraint.PathKey]int{}
+	var queue []RouteClosureTarget[T]
+	add := func(target RouteClosureTarget[T]) {
+		if target.Path.Symbol == 0 || routePayloadBottom(cfg.IsBottom, target.Payload) {
+			return
+		}
+		key := flow.PathIdentityKey(target.Path)
+		if key == "" {
+			return
+		}
+		if i, ok := index[key]; ok {
+			joined := routePayloadJoin(cfg.Join, out[i].Payload, target.Payload)
+			if routePayloadEqual(cfg.Equal, out[i].Payload, joined) {
+				return
+			}
+			out[i].Payload = joined
+			queue = append(queue, out[i])
+			return
+		}
+		index[key] = len(out)
+		out = append(out, target)
+		queue = append(queue, target)
+	}
+	add(cfg.Seed)
+	for len(queue) > 0 {
+		cur := queue[0]
+		queue = queue[1:]
+		if cfg.Routes == nil || cfg.Targets == nil {
+			continue
+		}
+		for _, route := range cfg.Routes(cur.Path) {
+			for _, target := range cfg.Targets(route, cur.Payload) {
+				add(target)
+			}
+		}
+	}
+	return out
+}
+
+func routePayloadBottom[T any](isBottom func(T) bool, payload T) bool {
+	return isBottom != nil && isBottom(payload)
+}
+
+func routePayloadJoin[T any](join func(T, T) T, a, b T) T {
+	if join == nil {
+		return a
+	}
+	return join(a, b)
+}
+
+func routePayloadEqual[T any](equal func(T, T) bool, a, b T) bool {
+	if equal == nil {
+		return true
+	}
+	return equal(a, b)
+}
+
 // SourceReadKind identifies the evidence surface used to read a route source.
 type SourceReadKind uint8
 

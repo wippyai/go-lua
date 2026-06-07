@@ -13,8 +13,7 @@ const (
 )
 
 // ProvenanceRoute is the structured-path view of a point-local provenance edge.
-// Flow owns storage normalization; callers own domain-specific interpretation of
-// the route, such as mapping iterator edges to parameter evidence.
+// Flow owns storage normalization; domain/provenance owns route interpretation.
 type ProvenanceRoute struct {
 	Kind           ProvenanceRouteKind
 	Source         constraint.Path
