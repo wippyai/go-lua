@@ -1326,22 +1326,9 @@ func versionSiblingConstraints(constraints []constraint.Constraint, graph interf
 	}
 	out := make([]constraint.Constraint, 0, len(constraints))
 	for _, c := range constraints {
-		switch v := c.(type) {
-		case constraint.IsNil:
-			v.Path = flowpath.WithVersion(v.Path, graph, p)
-			out = append(out, v)
-		case constraint.NotNil:
-			v.Path = flowpath.WithVersion(v.Path, graph, p)
-			out = append(out, v)
-		case constraint.Truthy:
-			v.Path = flowpath.WithVersion(v.Path, graph, p)
-			out = append(out, v)
-		case constraint.Falsy:
-			v.Path = flowpath.WithVersion(v.Path, graph, p)
-			out = append(out, v)
-		default:
-			out = append(out, c)
-		}
+		out = append(out, constraint.MapConstraintPaths(c, func(path constraint.Path) constraint.Path {
+			return flowpath.WithVersion(path, graph, p)
+		}))
 	}
 	return out
 }

@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/compiler/ast"
+	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/api"
 	"github.com/wippyai/go-lua/compiler/check/domain/resolve"
 	"github.com/wippyai/go-lua/types/constraint"
@@ -78,6 +79,41 @@ func TestConditionExtractor_ConditionFromExpr_FalseExpr(t *testing.T) {
 	result := ce.ConditionFromExpr(&ast.FalseExpr{})
 	if !result.IsFalse() {
 		t.Error("FalseExpr should produce FalseCondition")
+	}
+}
+
+type fixedVersionGraph struct {
+	versions map[cfg.SymbolID]cfg.Version
+}
+
+func (g fixedVersionGraph) VisibleVersion(_ cfg.Point, sym cfg.SymbolID) cfg.Version {
+	return g.versions[sym]
+}
+
+func TestVersionSiblingConstraintsVersionsHasTypePath(t *testing.T) {
+	sym := cfg.SymbolID(41)
+	constraints := []constraint.Constraint{
+		constraint.HasType{
+			Path: constraint.Path{Root: "result", Symbol: sym},
+			Type: narrow.BuiltinTypeKey("string"),
+		},
+	}
+
+	got := versionSiblingConstraints(constraints, fixedVersionGraph{
+		versions: map[cfg.SymbolID]cfg.Version{
+			sym: {Root: "result", Symbol: sym, ID: 7},
+		},
+	}, 10)
+
+	if len(got) != 1 {
+		t.Fatalf("expected one constraint, got %d", len(got))
+	}
+	hasType, ok := got[0].(constraint.HasType)
+	if !ok {
+		t.Fatalf("constraint = %T, want HasType", got[0])
+	}
+	if hasType.Path.Version != 7 {
+		t.Fatalf("path version = %d, want 7", hasType.Path.Version)
 	}
 }
 
