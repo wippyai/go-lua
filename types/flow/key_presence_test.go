@@ -417,13 +417,13 @@ func TestKeyPresenceFactsKillAffectedByWriteDropsArrayMemberFacts(t *testing.T) 
 	}
 }
 
-func TestKeyPresencePathKeyIgnoresVersion(t *testing.T) {
+func TestStablePathKeyIgnoresVersion(t *testing.T) {
 	a := constraint.NewPath(cfg.SymbolID(1), "m").Field("items")
 	a.Version = 3
 	b := constraint.NewPath(cfg.SymbolID(1), "m").Field("items")
 	b.Version = 9
-	if got, want := KeyPresencePathKey(a), KeyPresencePathKey(b); got != want {
-		t.Fatalf("KeyPresencePathKey version-sensitive: got %s, want %s", got, want)
+	if got, want := StablePathKey(a), StablePathKey(b); got != want {
+		t.Fatalf("StablePathKey version-sensitive: got %s, want %s", got, want)
 	}
 }
 

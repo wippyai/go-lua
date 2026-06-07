@@ -515,13 +515,6 @@ func KeyPresenceFactsOf(entries []KeyPresenceFact) KeyPresenceFacts {
 	return canonicalKeyPresenceFacts(entries)
 }
 
-// KeyPresencePathKey returns the typed structural key used by key-presence facts.
-// Symbol paths use the stable symbol/segment key; root-only fallback is accepted
-// only for boundary paths that have not been symbolized.
-func KeyPresencePathKey(path constraint.Path) constraint.PathKey {
-	return StablePathKey(path)
-}
-
 func (f KeyPresenceFacts) IsBottom() bool { return f.bottom }
 
 func (f KeyPresenceFacts) Entries() []KeyPresenceFact {

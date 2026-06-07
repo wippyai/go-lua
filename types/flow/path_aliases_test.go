@@ -38,8 +38,8 @@ func TestPathAliasFactsAliasesCoveringPath(t *testing.T) {
 	if len(uses) != 1 {
 		t.Fatalf("AliasesCoveringPath(alias.id) got %d uses, want 1: %s", len(uses), facts.Format())
 	}
-	if uses[0].Alias.Source != KeyPresencePathKey(source) {
-		t.Fatalf("source = %s, want %s", uses[0].Alias.Source, KeyPresencePathKey(source))
+	if uses[0].Alias.Source != StablePathKey(source) {
+		t.Fatalf("source = %s, want %s", uses[0].Alias.Source, StablePathKey(source))
 	}
 	if len(uses[0].Remainder) != 1 || uses[0].Remainder[0].Name != "id" {
 		t.Fatalf("remainder = %#v, want [.id]", uses[0].Remainder)

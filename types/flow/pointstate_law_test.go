@@ -194,8 +194,8 @@ func TestPointStateOrderSeesKeyArrayValuePayload(t *testing.T) {
 }
 
 func TestPointStateOrderSeesAppendHistoryAxes(t *testing.T) {
-	array := KeyPresencePathKey(constraint.NewPath(cfg.SymbolID(947), "node_order"))
-	key := KeyPresencePathKey(constraint.NewPath(cfg.SymbolID(948), "node_id"))
+	array := StablePathKey(constraint.NewPath(cfg.SymbolID(947), "node_order"))
+	key := StablePathKey(constraint.NewPath(cfg.SymbolID(948), "node_id"))
 	plain := reachableEmptyPointState()
 	base := reachableEmptyPointState()
 	base.KeyPresence = base.KeyPresence.WithAppendHistoryBase(array)
@@ -270,7 +270,7 @@ func TestPointStateJoinDropsOneBranchMustFacts(t *testing.T) {
 	empty := reachableEmptyPointState()
 	factful := reachableEmptyPointState()
 	factful.StaticMembers = factful.StaticMembers.WithAddress(
-		testStableAddressKey(t, KeyPresencePathKey(table.IndexStr("root"))),
+		testStableAddressKey(t, StablePathKey(table.IndexStr("root"))),
 		product.FromType(typ.String),
 	)
 	factful.KeyPresence = factful.KeyPresence.
@@ -284,15 +284,15 @@ func TestPointStateJoinDropsOneBranchMustFacts(t *testing.T) {
 	)
 	factful.PathAliases = factful.PathAliases.WithAddresses(testStableAddressPath(t, key), testStableAddressPath(t, sourcePath))
 	factful.IndexWrites = factful.IndexWrites.With(IndexWriteAdmissionFact{
-		Target:    KeyPresencePathKey(table),
-		KeyPath:   KeyPresencePathKey(key),
+		Target:    StablePathKey(table),
+		KeyPath:   StablePathKey(key),
 		Key:       product.FromType(typ.String),
-		ValuePath: KeyPresencePathKey(valuePath),
+		ValuePath: StablePathKey(valuePath),
 		Value:     product.FromType(typ.Number),
 	})
 	factful.Rel = factful.Rel.
 		WithSiblingNil(errSym, []cfg.SymbolID{valuePath.Symbol}).
-		WithContainerLowerBound(table.Symbol, KeyPresencePathKey(table), 2)
+		WithContainerLowerBound(table.Symbol, StablePathKey(table), 2)
 
 	if !PointStateDomain.LessOrEq(factful, empty) {
 		t.Fatalf("factful reachable state should be below empty must-fact state:\nfactful=%s\nempty=%s", formatPointState(factful), formatPointState(empty))
@@ -334,7 +334,7 @@ func reachableEmptyPointState() PointState {
 
 func assertPointStateDroppedOneBranchMustFacts(t *testing.T, ps PointState, table, key, valuePath constraint.Path, errSym cfg.SymbolID) {
 	t.Helper()
-	if _, ok := ps.StaticMembers.ValueAtAddress(testStableAddressKey(t, KeyPresencePathKey(table.IndexStr("root")))); ok {
+	if _, ok := ps.StaticMembers.ValueAtAddress(testStableAddressKey(t, StablePathKey(table.IndexStr("root")))); ok {
 		t.Fatalf("PointState kept one-branch StaticMembers fact: %s", ps.StaticMembers.Format())
 	}
 	if ps.KeyPresence.HasAddresses(testStableAddressPath(t, table), testStableAddressPath(t, key)) ||
@@ -350,7 +350,7 @@ func assertPointStateDroppedOneBranchMustFacts(t *testing.T, ps PointState, tabl
 	if rel, ok := ps.Rel.SiblingNil(errSym); ok {
 		t.Fatalf("PointState kept one-branch relation: %#v", rel)
 	}
-	if ps.Rel.HasContainerLowerBound(table.Symbol, KeyPresencePathKey(table), 1) {
+	if ps.Rel.HasContainerLowerBound(table.Symbol, StablePathKey(table), 1) {
 		t.Fatalf("PointState kept one-branch container cardinality relation: %#v", ps.Rel)
 	}
 	if _, ok := ps.IndexWrites.AdmissionAtAddress(testIndexWriteAddressQuery(t, table, key, typ.String, valuePath)); ok {

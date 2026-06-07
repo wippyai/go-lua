@@ -157,8 +157,8 @@ func TestAssignmentProvenanceCopiesKeyPresence(t *testing.T) {
 	}
 	origins := out.ValueOrigins.OriginsOfAddress(testFlowPathAddress(t, targetPath))
 	if len(origins) != 1 || origins[0].Kind != flow.ValueOriginAssignmentAlias ||
-		origins[0].Source != flow.KeyPresencePathKey(sourcePath) {
-		t.Fatalf("assignment provenance origins = %v, want alias from %s", origins, flow.KeyPresencePathKey(sourcePath))
+		origins[0].Source != flow.StablePathKey(sourcePath) {
+		t.Fatalf("assignment provenance origins = %v, want alias from %s", origins, flow.StablePathKey(sourcePath))
 	}
 }
 
@@ -257,8 +257,8 @@ func TestAssignmentProvenanceRecordsStaticMemberAlias(t *testing.T) {
 	sourcePath := constraint.NewPath(cfg.SymbolID(631), "s")
 	origins := out.ValueOrigins.OriginsOfAddress(testFlowPathAddress(t, targetPath))
 	if len(origins) != 1 || origins[0].Kind != flow.ValueOriginAssignmentAlias ||
-		origins[0].Source != flow.KeyPresencePathKey(sourcePath) {
-		t.Fatalf("static member assignment origins = %v, want alias from %s", origins, flow.KeyPresencePathKey(sourcePath))
+		origins[0].Source != flow.StablePathKey(sourcePath) {
+		t.Fatalf("static member assignment origins = %v, want alias from %s", origins, flow.StablePathKey(sourcePath))
 	}
 }
 
@@ -285,7 +285,7 @@ func TestAssignmentValueOriginRejectsGradualAnyAlias(t *testing.T) {
 	}
 	targetPath := constraint.NewPath(cfg.SymbolID(611), "alias")
 	if aliases := out.PathAliases.AliasesOfAddress(testFlowPathAddress(t, targetPath)); len(aliases) != 1 ||
-		aliases[0].Source != flow.KeyPresencePathKey(constraint.NewPath(cfg.SymbolID(612), "id")) {
+		aliases[0].Source != flow.StablePathKey(constraint.NewPath(cfg.SymbolID(612), "id")) {
 		t.Fatalf("strict any assignment path aliases = %v in %s, want alias<-id", aliases, out.PathAliases.Format())
 	}
 }

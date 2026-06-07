@@ -375,7 +375,7 @@ func TestKeysCollectorAssignmentSeedsLiveIndexedKeyPresence(t *testing.T) {
 	}
 
 	tr.seedKeyArrayForAssignment(&out, assign, 0, assign.Targets[0])
-	if tables := out.KeyPresence.KeyArrayTables(flow.KeyPresencePathKey(namesPath)); len(tables) != 1 || tables[0] != flow.KeyPresencePathKey(containerPath) {
+	if tables := out.KeyPresence.KeyArrayTables(flow.StablePathKey(namesPath)); len(tables) != 1 || tables[0] != flow.StablePathKey(containerPath) {
 		t.Fatalf("keys-collector assignment did not seed key-array fact: %s", out.KeyPresence.Format())
 	}
 
@@ -385,7 +385,7 @@ func TestKeysCollectorAssignmentSeedsLiveIndexedKeyPresence(t *testing.T) {
 			{Kind: cfg.TargetIdent, Name: "name", Symbol: keySym},
 		},
 	}, &ast.FuncCallExpr{})
-	if !out.KeyPresence.Has(flow.KeyPresencePathKey(containerPath), flow.SymbolPathKey(keySym, nil)) {
+	if !out.KeyPresence.Has(flow.StablePathKey(containerPath), flow.SymbolPathKey(keySym, nil)) {
 		t.Fatalf("indexed iteration did not consume live key-array fact: %s", out.KeyPresence.Format())
 	}
 }
@@ -443,7 +443,7 @@ func TestIndexedKeyPresenceKilledByKeysArrayMutation(t *testing.T) {
 			{Kind: cfg.TargetIdent, Name: "name", Symbol: keySym},
 		},
 	}, &ast.FuncCallExpr{})
-	if out.KeyPresence.Has(flow.KeyPresencePathKey(containerPath), flow.SymbolPathKey(keySym, nil)) {
+	if out.KeyPresence.Has(flow.StablePathKey(containerPath), flow.SymbolPathKey(keySym, nil)) {
 		t.Fatalf("indexed iteration consumed stale mutated key-array fact: %s", out.KeyPresence.Format())
 	}
 }
@@ -467,7 +467,7 @@ func TestTableInsertKillsKeyArrayProvenance(t *testing.T) {
 		CalleePath: constraint.NewPath(0, "table").Field("insert"),
 	}, nil)
 
-	if tables := out.KeyPresence.KeyArrayTables(flow.KeyPresencePathKey(namesPath)); len(tables) != 0 {
+	if tables := out.KeyPresence.KeyArrayTables(flow.StablePathKey(namesPath)); len(tables) != 0 {
 		t.Fatalf("table.insert kept stale key-array provenance: %s", out.KeyPresence.Format())
 	}
 }

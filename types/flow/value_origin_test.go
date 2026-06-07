@@ -142,14 +142,14 @@ func TestValueOriginFactsJoinKeepsMustFacts(t *testing.T) {
 	tests := constraint.NewPath(cfg.SymbolID(22), "tests")
 	other := constraint.NewPath(cfg.SymbolID(23), "other")
 	common := ValueOriginFact{
-		Value:    KeyPresencePathKey(entry),
-		Source:   KeyPresencePathKey(tests),
+		Value:    StablePathKey(entry),
+		Source:   StablePathKey(tests),
 		Kind:     ValueOriginIndexedIterator,
 		VarIndex: 1,
 	}
 	extra := ValueOriginFact{
-		Value:    KeyPresencePathKey(other),
-		Source:   KeyPresencePathKey(tests),
+		Value:    StablePathKey(other),
+		Source:   StablePathKey(tests),
 		Kind:     ValueOriginIndexedIterator,
 		VarIndex: 1,
 	}
@@ -168,14 +168,14 @@ func TestValueOriginFactsCanonicalizationIsDeterministic(t *testing.T) {
 	name := constraint.NewPath(cfg.SymbolID(26), "name")
 	items := constraint.NewPath(cfg.SymbolID(27), "items")
 	a := ValueOriginFact{
-		Value:    KeyPresencePathKey(entry),
-		Source:   KeyPresencePathKey(tests),
+		Value:    StablePathKey(entry),
+		Source:   StablePathKey(tests),
 		Kind:     ValueOriginIndexedIterator,
 		VarIndex: 1,
 	}
 	b := ValueOriginFact{
-		Value:    KeyPresencePathKey(name),
-		Source:   KeyPresencePathKey(items),
+		Value:    StablePathKey(name),
+		Source:   StablePathKey(items),
 		Kind:     ValueOriginKeyedIterator,
 		VarIndex: 0,
 	}

@@ -959,7 +959,7 @@ func returnExprKeyPresenceKey(g *cfg.Graph, p cfg.Point, info *cfg.ReturnInfo, i
 	if path.Symbol == 0 {
 		return "", false
 	}
-	key := flow.KeyPresencePathKey(path)
+	key := flow.StablePathKey(path)
 	return key, key != ""
 }
 

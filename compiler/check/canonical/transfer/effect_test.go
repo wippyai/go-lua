@@ -175,8 +175,8 @@ func TestSymbolWriteEffectSeedsKeyArrayProvenance(t *testing.T) {
 		RecordStatic:  true,
 	})
 
-	if tables := out.KeyPresence.KeyArrayTables(flow.SymbolPathKey(namesSym, nil)); len(tables) != 1 || tables[0] != flow.KeyPresencePathKey(container) {
-		t.Fatalf("key-array provenance = %v, want %s", tables, flow.KeyPresencePathKey(container))
+	if tables := out.KeyPresence.KeyArrayTables(flow.SymbolPathKey(namesSym, nil)); len(tables) != 1 || tables[0] != flow.StablePathKey(container) {
+		t.Fatalf("key-array provenance = %v, want %s", tables, flow.StablePathKey(container))
 	}
 }
 
@@ -200,16 +200,16 @@ func TestRootWriteEffectSeedsEmptyArrayInvariants(t *testing.T) {
 		RecordStatic: true,
 	})
 
-	if !out.KeyPresence.HasEmptyKeyArray(flow.KeyPresencePathKey(graphPath.Field("node_order"))) {
+	if !out.KeyPresence.HasEmptyKeyArray(flow.StablePathKey(graphPath.Field("node_order"))) {
 		t.Fatalf("node_order missing empty key-array invariant: %s", out.KeyPresence.Format())
 	}
-	if !out.KeyPresence.HasEmptyKeyArray(flow.KeyPresencePathKey(graphPath.Field("operations"))) {
+	if !out.KeyPresence.HasEmptyKeyArray(flow.StablePathKey(graphPath.Field("operations"))) {
 		t.Fatalf("operations missing empty key-array invariant: %s", out.KeyPresence.Format())
 	}
-	if out.KeyPresence.HasEmptyKeyArray(flow.KeyPresencePathKey(graphPath.Field("name"))) {
+	if out.KeyPresence.HasEmptyKeyArray(flow.StablePathKey(graphPath.Field("name"))) {
 		t.Fatalf("scalar sibling became an empty key-array carrier: %s", out.KeyPresence.Format())
 	}
-	if tables := out.KeyPresence.KeyArrayTables(flow.KeyPresencePathKey(graphPath.Field("node_order"))); len(tables) != 0 {
+	if tables := out.KeyPresence.KeyArrayTables(flow.StablePathKey(graphPath.Field("node_order"))); len(tables) != 0 {
 		t.Fatalf("root write enumerated concrete table pairs: %s", out.KeyPresence.Format())
 	}
 }
@@ -232,7 +232,7 @@ func TestRootWriteEffectSeedsEmptyArrayInvariantsForInferredRecord(t *testing.T)
 		RecordStatic: true,
 	})
 
-	if !out.KeyPresence.HasEmptyKeyArray(flow.KeyPresencePathKey(graphPath.Field("node_order"))) {
+	if !out.KeyPresence.HasEmptyKeyArray(flow.StablePathKey(graphPath.Field("node_order"))) {
 		t.Fatalf("inferred record missing empty-array/table invariant: %s", out.KeyPresence.Format())
 	}
 }
@@ -254,7 +254,7 @@ func TestRootWriteEffectDoesNotSeedEmptyArrayInvariantFromReadAlias(t *testing.T
 		RecordStatic: true,
 	})
 
-	if out.KeyPresence.HasEmptyKeyArray(flow.KeyPresencePathKey(graphPath.Field("node_order"))) {
+	if out.KeyPresence.HasEmptyKeyArray(flow.StablePathKey(graphPath.Field("node_order"))) {
 		t.Fatalf("read alias seeded empty-array invariant: %s", out.KeyPresence.Format())
 	}
 }
@@ -704,7 +704,7 @@ func TestBoundaryFactBatchPreservesFinalKeyArrayValueProofs(t *testing.T) {
 	if !changed {
 		t.Fatal("boundary fact batch did not report a change")
 	}
-	values := out.KeyPresence.KeyArrayValues(flow.KeyPresencePathKey(arrayPath), flow.KeyPresencePathKey(tablePath))
+	values := out.KeyPresence.KeyArrayValues(flow.StablePathKey(arrayPath), flow.StablePathKey(tablePath))
 	if len(values) != 1 || !typ.TypeEquals(values[0].ProjectValue(), nodeType) {
 		t.Fatalf("boundary key-array value = %s, want final node_order -> nodes proof", out.KeyPresence.Format())
 	}
@@ -755,20 +755,20 @@ func TestBoundaryAppendKeyBatchDerivesFreshEmptyTableFromSameBatchIndexWrite(t *
 	if !tr.applyBoundaryFacts(&out, call, facts, nil) {
 		t.Fatal("boundary append/index-write batch did not report a change")
 	}
-	values := out.KeyPresence.KeyArrayValues(flow.KeyPresencePathKey(arrayPath), flow.KeyPresencePathKey(tablePath))
+	values := out.KeyPresence.KeyArrayValues(flow.StablePathKey(arrayPath), flow.StablePathKey(tablePath))
 	if len(values) != 1 || !typ.TypeEquals(values[0].ProjectValue(), nodeType) {
 		t.Fatalf("fresh-empty append batch value = %s, want node_order -> nodes proof", out.KeyPresence.Format())
 	}
 
 	out = flow.PointState{}
 	tr.applyBoundaryFacts(&out, call, facts, nil)
-	if values := out.KeyPresence.KeyArrayValues(flow.KeyPresencePathKey(arrayPath), flow.KeyPresencePathKey(tablePath)); len(values) != 0 {
+	if values := out.KeyPresence.KeyArrayValues(flow.StablePathKey(arrayPath), flow.StablePathKey(tablePath)); len(values) != 0 {
 		t.Fatalf("non-empty/unknown append batch derived table proof: %s", out.KeyPresence.Format())
 	}
 	appends := out.KeyPresence.AppendedKeyEntries()
 	if len(appends) != 1 ||
-		appends[0].Array != flow.KeyPresencePathKey(arrayPath) ||
-		appends[0].Key != flow.KeyPresencePathKey(constraint.NewPath(cfg.SymbolID(447), "node_id")) {
+		appends[0].Array != flow.StablePathKey(arrayPath) ||
+		appends[0].Key != flow.StablePathKey(constraint.NewPath(cfg.SymbolID(447), "node_id")) {
 		t.Fatalf("non-empty/unknown append batch dropped direct append event: %s", out.KeyPresence.Format())
 	}
 }
@@ -844,7 +844,7 @@ func TestBoundaryAppendKeyBatchRebasesReturnKeyForFreshEmptyTable(t *testing.T) 
 	if !tr.applyBoundaryFacts(&out, call, facts, map[int]constraint.Path{0: constraint.NewPath(cfg.SymbolID(449), "node_id")}) {
 		t.Fatal("return-relative boundary append/index-write batch did not report a change")
 	}
-	values := out.KeyPresence.KeyArrayValues(flow.KeyPresencePathKey(arrayPath), flow.KeyPresencePathKey(tablePath))
+	values := out.KeyPresence.KeyArrayValues(flow.StablePathKey(arrayPath), flow.StablePathKey(tablePath))
 	if len(values) != 1 || !typ.TypeEquals(values[0].ProjectValue(), nodeType) {
 		t.Fatalf("return-key append batch value = %s, want node_order -> nodes proof", out.KeyPresence.Format())
 	}
@@ -912,7 +912,7 @@ func TestAssignCallPostconditionDerivesFreshEmptyKeyArrayFromReturnAppend(t *tes
 
 	tr.applyAssign(&out, 0, info, nil)
 
-	values := out.KeyPresence.KeyArrayValues(flow.KeyPresencePathKey(arrayPath), flow.KeyPresencePathKey(tablePath))
+	values := out.KeyPresence.KeyArrayValues(flow.StablePathKey(arrayPath), flow.StablePathKey(tablePath))
 	if len(values) != 1 || !typ.TypeEquals(values[0].ProjectValue(), nodeType) {
 		t.Fatalf("assign-call return append value = %s, want graph.node_order -> graph.nodes proof", out.KeyPresence.Format())
 	}
@@ -972,8 +972,8 @@ func TestAssignCallPostconditionPreservesAppendHistoryAcrossReceiverMutation(t *
 	}})
 	arrayPath := constraint.NewPath(graphSym, "graph").Field("node_order")
 	tablePath := constraint.NewPath(graphSym, "graph").Field("nodes")
-	arrayKey := flow.KeyPresencePathKey(arrayPath)
-	tableKey := flow.KeyPresencePathKey(tablePath)
+	arrayKey := flow.StablePathKey(arrayPath)
+	tableKey := flow.StablePathKey(tablePath)
 	out := flow.PointState{
 		KeyPresence: testKeyPresenceWithEmptyKeyArray(t, flow.KeyPresenceFacts{}, arrayPath),
 	}
@@ -1703,7 +1703,7 @@ func TestMutatorEffectAppendsElementAndUpdatesSideAxes(t *testing.T) {
 		LengthIncrement: 1,
 	})
 
-	if tables := out.KeyPresence.KeyArrayTables(flow.KeyPresencePathKey(namesPath)); len(tables) != 0 {
+	if tables := out.KeyPresence.KeyArrayTables(flow.StablePathKey(namesPath)); len(tables) != 0 {
 		t.Fatalf("mutator kept stale key-array provenance: %v", tables)
 	}
 	if lower, _, ok := out.Num.LenBoundsFor(arrKey); !ok || lower != 1 {
@@ -1738,8 +1738,8 @@ func TestMutatorEffectAppendKeySeedsKeyArrayForFreshEmptyArray(t *testing.T) {
 		ElementPath: keyPath,
 	})
 
-	if tables := out.KeyPresence.KeyArrayTables(flow.KeyPresencePathKey(arrayPath)); len(tables) != 1 ||
-		tables[0] != flow.KeyPresencePathKey(tablePath) {
+	if tables := out.KeyPresence.KeyArrayTables(flow.StablePathKey(arrayPath)); len(tables) != 1 ||
+		tables[0] != flow.StablePathKey(tablePath) {
 		t.Fatalf("append of proven key did not seed key-array provenance: %s", out.KeyPresence.Format())
 	}
 }
@@ -1774,7 +1774,7 @@ func TestMutatorEffectAppendKeySeedsKeyArrayValueForFreshEmptyArray(t *testing.T
 		ElementPath: keyPath,
 	})
 
-	values := out.KeyPresence.KeyArrayValues(flow.KeyPresencePathKey(arrayPath), flow.KeyPresencePathKey(tablePath))
+	values := out.KeyPresence.KeyArrayValues(flow.StablePathKey(arrayPath), flow.StablePathKey(tablePath))
 	if len(values) != 1 || !typ.TypeEquals(values[0].ProjectValue(), nodeType) {
 		t.Fatalf("append of proven key did not seed key-array value: %s", out.KeyPresence.Format())
 	}
@@ -1805,7 +1805,7 @@ func TestDelayedIndexWriteMaterializesPendingAppendKeyArrayValue(t *testing.T) {
 		Element:     product.FromType(typ.String),
 		ElementPath: keyPath,
 	})
-	if tables := out.KeyPresence.KeyArrayTables(flow.KeyPresencePathKey(arrayPath)); len(tables) != 0 {
+	if tables := out.KeyPresence.KeyArrayTables(flow.StablePathKey(arrayPath)); len(tables) != 0 {
 		t.Fatalf("pending append materialized before table key proof: %s", out.KeyPresence.Format())
 	}
 
@@ -1821,7 +1821,7 @@ func TestDelayedIndexWriteMaterializesPendingAppendKeyArrayValue(t *testing.T) {
 	}
 	flow.ApplyMapWriteProof(&out, proof)
 
-	values := out.KeyPresence.KeyArrayValues(flow.KeyPresencePathKey(arrayPath), flow.KeyPresencePathKey(tablePath))
+	values := out.KeyPresence.KeyArrayValues(flow.StablePathKey(arrayPath), flow.StablePathKey(tablePath))
 	if len(values) != 1 || !typ.TypeEquals(values[0].ProjectValue(), edgeType) {
 		t.Fatalf("delayed index write did not materialize key-array value: %s", out.KeyPresence.Format())
 	}
@@ -1850,7 +1850,7 @@ func TestMutatorEffectAppendKeyDoesNotSeedKeyArrayForUnknownExistingArray(t *tes
 		ElementPath: keyPath,
 	})
 
-	if tables := out.KeyPresence.KeyArrayTables(flow.KeyPresencePathKey(arrayPath)); len(tables) != 0 {
+	if tables := out.KeyPresence.KeyArrayTables(flow.StablePathKey(arrayPath)); len(tables) != 0 {
 		t.Fatalf("append into existing array seeded unsound key-array provenance: %s", out.KeyPresence.Format())
 	}
 }
@@ -2252,7 +2252,7 @@ func TestCallBoundaryFactsReplayAfterGenericMutatorEffects(t *testing.T) {
 
 	arrayPath := constraint.NewPath(graphSym, "graph").Field("node_order")
 	tablePath := constraint.NewPath(graphSym, "graph").Field("nodes")
-	values := out.KeyPresence.KeyArrayValues(flow.KeyPresencePathKey(arrayPath), flow.KeyPresencePathKey(tablePath))
+	values := out.KeyPresence.KeyArrayValues(flow.StablePathKey(arrayPath), flow.StablePathKey(tablePath))
 	if len(values) != 1 || !typ.TypeEquals(values[0].ProjectValue(), typ.String) {
 		t.Fatalf("boundary key-array value after mutator = %s, want graph.node_order -> graph.nodes string", out.KeyPresence.Format())
 	}

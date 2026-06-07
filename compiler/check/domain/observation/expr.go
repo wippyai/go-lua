@@ -330,7 +330,7 @@ func (p contractPathProof) ElementFieldSatisfies(array []constraint.Segment, fie
 	for _, seg := range array {
 		arrayPath = arrayPath.Append(seg)
 	}
-	arrayKey := flow.KeyPresencePathKey(arrayPath)
+	arrayKey := flow.StablePathKey(arrayPath)
 	if arrayKey == "" {
 		return false
 	}
@@ -778,7 +778,7 @@ func (p Projector) appendElementFieldOriginTypes(point cfg.Point, arrayPath cons
 	if arrayPath.IsEmpty() || len(field) == 0 {
 		return nil
 	}
-	arrayKey := flow.KeyPresencePathKey(arrayPath)
+	arrayKey := flow.StablePathKey(arrayPath)
 	if arrayKey == "" {
 		return nil
 	}

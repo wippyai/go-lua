@@ -98,7 +98,7 @@ func TestAssignmentProvenanceUsesCFGSourceSymbolFallback(t *testing.T) {
 	out := flow.PointState{}
 	tr.applyAssignmentProvenanceEffect(&out, provenance)
 	if aliases := out.PathAliases.AliasesOfAddress(testFlowPathAddress(t, constraint.NewPath(cfg.SymbolID(156), "route_entry"))); len(aliases) != 1 ||
-		aliases[0].Source != flow.KeyPresencePathKey(constraint.NewPath(srcSym, "route")) {
+		aliases[0].Source != flow.StablePathKey(constraint.NewPath(srcSym, "route")) {
 		t.Fatalf("path aliases = %s, want route_entry<-route", out.PathAliases.Format())
 	}
 }
