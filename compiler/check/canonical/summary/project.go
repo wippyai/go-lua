@@ -596,15 +596,12 @@ func projectPointReturnKeyParamRelations(fs state.FunctionState, g *cfg.Graph) f
 		rels := flow.ReturnRelationsDomain.Top()
 		var proven []flow.ReturnKeyParamRelation
 		for i := range info.Exprs {
-			key, ok := returnExprKeyPresenceKey(g, p, info, i)
+			key, ok := returnExprKeyPresenceAddress(g, p, info, i)
 			if !ok {
 				continue
 			}
-			for _, entry := range ps.KeyPresence.Entries() {
-				if entry.Key != key {
-					continue
-				}
-				param, segments, ok := keyPresenceTableParamPath(entry.Table, paramProjection)
+			for _, table := range ps.KeyPresence.TablesWithKeyAddress(key) {
+				param, segments, ok := keyPresenceTableParamAddress(table.Address, paramProjection)
 				if !ok {
 					continue
 				}
@@ -830,16 +827,15 @@ func returnExprPathKey(g *cfg.Graph, resolver *pathkey.Resolver, p cfg.Point, in
 	return key, key != ""
 }
 
-func returnExprKeyPresenceKey(g *cfg.Graph, p cfg.Point, info *cfg.ReturnInfo, i int) (constraint.PathKey, bool) {
+func returnExprKeyPresenceAddress(g *cfg.Graph, p cfg.Point, info *cfg.ReturnInfo, i int) (flow.StableAddress, bool) {
 	if g == nil || info == nil || i < 0 || i >= len(info.Exprs) {
-		return "", false
+		return flow.StableAddress{}, false
 	}
 	path := returnSourceBoundaryPath(g, p, info, i)
 	if path.Symbol == 0 {
-		return "", false
+		return flow.StableAddress{}, false
 	}
-	key := flow.StablePathKey(path)
-	return key, key != ""
+	return flow.StableAddressOfPath(path)
 }
 
 func returnSourceBoundaryPath(g *cfg.Graph, p cfg.Point, info *cfg.ReturnInfo, i int) constraint.Path {
@@ -873,8 +869,8 @@ func returnRelationParamSymbolMap(g *cfg.Graph) map[cfg.SymbolID]int {
 	return out
 }
 
-func keyPresenceTableParamPath(key constraint.PathKey, projection flow.BoundaryPathProjection) (int, []constraint.Segment, bool) {
-	for _, path := range projectBoundaryPathsFromStoredKey(projection, key) {
+func keyPresenceTableParamAddress(addr flow.StableAddress, projection flow.BoundaryPathProjection) (int, []constraint.Segment, bool) {
+	for _, path := range projection.PathsFromAddress(addr) {
 		if path.Kind == flow.BoundaryPathParam && path.Index >= 0 {
 			return path.Index, append([]constraint.Segment(nil), path.Segments...), true
 		}
