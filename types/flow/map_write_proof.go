@@ -700,8 +700,8 @@ func IndexedIteratorKeyArrayReadback(
 				}
 			}
 		}
-		for _, alias := range origins.AssignmentAliasSourceAddressesCoveringAddress(cur) {
-			source, ok := alias.Source.Append(alias.Remainder)
+		for _, alias := range origins.assignmentAliasSourceRoutesCoveringAddress(cur) {
+			source, ok := alias.source.Append(alias.remainder)
 			if ok {
 				queue = append(queue, source)
 			}

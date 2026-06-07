@@ -80,6 +80,33 @@ func TestIdentityAliasSourcesPolicyCanRequireAssignmentOriginRemainder(t *testin
 	assertStableAddressPath(t, descendant[0], source.Field("id"))
 }
 
+func TestIdentityAliasSourcesIgnoreLegacyStoredSources(t *testing.T) {
+	target := constraint.NewPath(cfg.SymbolID(31), "target")
+	pathSource := constraint.NewPath(cfg.SymbolID(32), "path_source")
+	valueSource := constraint.NewPath(cfg.SymbolID(33), "value_source")
+	targetAddr := testStableAddressPath(t, target)
+	state := PointState{
+		PathAliases: PathAliasFacts{}.With(PathAliasFact{
+			Value:  targetAddr.Key(),
+			Source: pathSource.Key(),
+		}),
+		ValueOrigins: ValueOriginFacts{}.With(ValueOriginFact{
+			Value:  targetAddr.Key(),
+			Source: valueSource.Key(),
+			Kind:   ValueOriginAssignmentAlias,
+		}),
+	}
+	if len(state.PathAliases.AliasesCoveringAddress(targetAddr)) != 1 ||
+		len(state.ValueOrigins.OriginsCoveringAddress(targetAddr)) != 1 {
+		t.Fatalf("test setup did not keep legacy stored source keys: aliases=%s origins=%s", state.PathAliases.Format(), state.ValueOrigins.Format())
+	}
+
+	got := IdentityAliasSources(state, targetAddr)
+	if len(got) != 0 {
+		t.Fatalf("legacy stored sources produced identity routes: %v", got)
+	}
+}
+
 func assertStableAddressPath(t *testing.T, got StableAddress, want constraint.Path) {
 	t.Helper()
 	wantAddr := testStableAddressPath(t, want)

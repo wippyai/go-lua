@@ -113,7 +113,7 @@ func TestValueOriginAssignmentAliasSourceAddressesIgnoreLegacyStoredSource(t *te
 		t.Fatalf("test setup did not keep legacy stored source key: %s", facts.Format())
 	}
 
-	if got := facts.AssignmentAliasSourceAddressesCoveringAddress(value); len(got) != 0 {
+	if got := facts.assignmentAliasSourceRoutesCoveringAddress(value); len(got) != 0 {
 		t.Fatalf("canonical assignment-alias view accepted legacy source key: %#v", got)
 	}
 }

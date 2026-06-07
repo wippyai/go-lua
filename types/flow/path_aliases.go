@@ -117,6 +117,18 @@ func (f PathAliasFacts) AliasesCoveringAddress(value StableAddress) []PathAliasU
 	return out
 }
 
+func (f PathAliasFacts) sourceRoutesCoveringAddress(value StableAddress) []sourceRoute {
+	uses := f.AliasesCoveringAddress(value)
+	if len(uses) == 0 {
+		return nil
+	}
+	var out []sourceRoute
+	for _, use := range uses {
+		out = appendCanonicalSourceRoute(out, use.Alias.Source, use.Remainder)
+	}
+	return out
+}
+
 func (f PathAliasFacts) KillAffectedByWriteAddress(write StableAddress) PathAliasFacts {
 	if f.bottom || write.Key() == "" || len(f.entries) == 0 {
 		return f

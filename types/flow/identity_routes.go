@@ -55,38 +55,22 @@ func IdentityAliasSourcesWithPolicy(state PointState, target StableAddress, poli
 		seen[key] = struct{}{}
 		out = append(out, addr)
 	}
-	if policy.PathAliases {
-		for _, use := range state.PathAliases.AliasesCoveringAddress(target) {
-			if policy.RequireRemainder && len(use.Remainder) == 0 {
+	applyRoutes := func(routes []sourceRoute) {
+		for _, route := range routes {
+			if policy.RequireRemainder && len(route.remainder) == 0 {
 				continue
 			}
-			source, ok := StableAddressFromKey(use.Alias.Source)
-			if !ok {
-				continue
-			}
-			source, ok = source.Append(use.Remainder)
+			source, ok := route.source.Append(route.remainder)
 			if ok {
 				add(source)
 			}
 		}
 	}
+	if policy.PathAliases {
+		applyRoutes(state.PathAliases.sourceRoutesCoveringAddress(target))
+	}
 	if policy.AssignmentOrigins {
-		for _, use := range state.ValueOrigins.OriginsCoveringAddress(target) {
-			if use.Origin.Kind != ValueOriginAssignmentAlias {
-				continue
-			}
-			if policy.RequireRemainder && len(use.Remainder) == 0 {
-				continue
-			}
-			source, ok := StableAddressFromKey(use.Origin.Source)
-			if !ok {
-				continue
-			}
-			source, ok = source.Append(use.Remainder)
-			if ok {
-				add(source)
-			}
-		}
+		applyRoutes(state.ValueOrigins.assignmentAliasSourceRoutesCoveringAddress(target))
 	}
 	return out
 }
