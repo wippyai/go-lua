@@ -2871,46 +2871,12 @@ func (t *Transfer) evalAttrGet(
 	e *ast.AttrGetExpr,
 	demand func(int, paramevidence.ParamContract),
 ) (product.AbstractValue, bool) {
-	if out != nil {
-		if path, hasPath := t.staticPathOfExpr(e); hasPath {
-			if fact := flow.PointFactsOf(*out).ReadStaticMemberValue(path, t.pointReadPolicy(out)); fact.State == flow.StateResolved {
-				return fact.Value, true
-			}
-		}
-	}
-	base, ok := t.evalExpr(out, e.Object, demand)
-	if !ok || base.IsZero() {
-		return product.AbstractValue{}, false
-	}
-	if member, isStatic := staticMemberKey(e); isStatic {
-		fv, ok := product.RuntimeMemberOf(base, member)
-		if !ok || fv.IsZero() {
-			if path, hasPath := t.staticPathOfExpr(e); out != nil && hasPath {
-				if cv := flow.PointFactsOf(*out).ReadKnownCallablePath(path, fv, t.pointReadPolicy(out)); cv.State == flow.StateResolved {
-					return cv.Value, true
-				}
-			}
-			return product.AbstractValue{}, false
-		}
-		if path, hasPath := t.staticPathOfExpr(e); out != nil && hasPath {
-			if cv := flow.PointFactsOf(*out).ReadKnownCallablePath(path, fv, t.pointReadPolicy(out)); cv.State == flow.StateResolved {
-				return cv.Value, true
-			}
-		}
-		return t.refineIndexRead(out, e, base, fv), true
-	}
-	key, ok := t.evalExpr(out, e.Key, demand)
-	if !ok || key.IsZero() {
-		return product.AbstractValue{}, false
-	}
-	ev, ok := product.RuntimeIndexOf(base, key)
-	if !ok || ev.IsZero() {
-		if admitted, admittedOK := t.refineByIndexWriteAdmission(out, e); admittedOK {
-			return admitted, true
-		}
-		return product.AbstractValue{}, false
-	}
-	return t.refineIndexRead(out, e, base, ev), true
+	return t.readAccessValue(out, accessValueReadQuery{
+		Expr: e,
+		ReadExpr: func(expr ast.Expr) (product.AbstractValue, bool) {
+			return t.evalExpr(out, expr, demand)
+		},
+	})
 }
 
 func (t *Transfer) evalAttrGetAt(
@@ -2919,48 +2885,22 @@ func (t *Transfer) evalAttrGetAt(
 	e *ast.AttrGetExpr,
 	demand func(int, paramevidence.ParamContract),
 ) (product.AbstractValue, bool) {
-	readPath := constraint.Path{}
-	if out != nil {
-		if path, hasPath := t.staticMemberExprPathAt(out, p, e); hasPath {
-			readPath = path
-			if fact := flow.PointFactsOf(*out).ReadStaticMemberValue(path, t.pointReadPolicy(out)); fact.State == flow.StateResolved {
-				return fact.Value, true
+	return t.readAccessValue(out, accessValueReadQuery{
+		Expr: e,
+		ReadExpr: func(expr ast.Expr) (product.AbstractValue, bool) {
+			return t.evalExprAt(out, p, expr, demand)
+		},
+		StaticPath: func(expr ast.Expr) (constraint.Path, bool) {
+			attr, ok := expr.(*ast.AttrGetExpr)
+			if !ok {
+				return t.staticPathOfExpr(expr)
 			}
-		}
-	}
-	base, ok := t.evalExprAt(out, p, e.Object, demand)
-	if !ok || base.IsZero() {
-		return product.AbstractValue{}, false
-	}
-	if member, isStatic := staticMemberKeyWithConst(e, t.constResolverAt(p)); isStatic {
-		fv, ok := product.RuntimeMemberOf(base, member)
-		if !ok || fv.IsZero() {
-			if !readPath.IsEmpty() {
-				if cv := flow.PointFactsOf(*out).ReadKnownCallablePath(readPath, fv, t.pointReadPolicy(out)); cv.State == flow.StateResolved {
-					return cv.Value, true
-				}
-			}
-			return product.AbstractValue{}, false
-		}
-		if !readPath.IsEmpty() {
-			if cv := flow.PointFactsOf(*out).ReadKnownCallablePath(readPath, fv, t.pointReadPolicy(out)); cv.State == flow.StateResolved {
-				return cv.Value, true
-			}
-		}
-		return t.refineIndexRead(out, e, base, fv), true
-	}
-	key, ok := t.evalExprAt(out, p, e.Key, demand)
-	if !ok || key.IsZero() {
-		return product.AbstractValue{}, false
-	}
-	ev, ok := product.RuntimeIndexOf(base, key)
-	if !ok || ev.IsZero() {
-		if admitted, admittedOK := t.refineByIndexWriteAdmission(out, e); admittedOK {
-			return admitted, true
-		}
-		return product.AbstractValue{}, false
-	}
-	return t.refineIndexRead(out, e, base, ev), true
+			return t.staticMemberExprPathAt(out, p, attr)
+		},
+		StaticMember: func(attr *ast.AttrGetExpr) (value.MemberKey, bool) {
+			return staticMemberKeyWithConst(attr, t.constResolverAt(p))
+		},
+	})
 }
 
 // evalIdent reads an identifier's value from Env and emits parameter demand when

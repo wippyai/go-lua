@@ -138,50 +138,11 @@ func (t *Transfer) projectIdentValue(out *flow.PointState, e *ast.IdentExpr) (pr
 }
 
 func (t *Transfer) projectAttrGetValue(out *flow.PointState, e *ast.AttrGetExpr) (product.AbstractValue, bool) {
-	if out != nil {
-		if path, hasPath := t.staticPathOfExpr(e); hasPath {
-			if fact := flow.PointFactsOf(*out).ReadStaticMemberValue(path, t.pointReadPolicy(out)); fact.State == flow.StateResolved {
-				return fact.Value, true
-			}
-		}
-	}
-	base, ok := t.projectExprValue(out, e.Object)
-	if !ok || base.IsZero() {
-		if t.gradualAnySource(out, e) {
-			return product.GradualAny(), true
-		}
-		return product.AbstractValue{}, false
-	}
-	if member, isStatic := staticMemberKey(e); isStatic {
-		fv, ok := product.RuntimeMemberOf(base, member)
-		if !ok || fv.IsZero() {
-			if path, hasPath := t.staticPathOfExpr(e); out != nil && hasPath {
-				if cv := flow.PointFactsOf(*out).ReadKnownCallablePath(path, fv, t.pointReadPolicy(out)); cv.State == flow.StateResolved {
-					return cv.Value, true
-				}
-			}
-			if t.gradualAnySource(out, e) {
-				return product.GradualAny(), true
-			}
-			return product.AbstractValue{}, false
-		}
-		if path, hasPath := t.staticPathOfExpr(e); out != nil && hasPath {
-			if cv := flow.PointFactsOf(*out).ReadKnownCallablePath(path, fv, t.pointReadPolicy(out)); cv.State == flow.StateResolved {
-				return cv.Value, true
-			}
-		}
-		return t.refineIndexRead(out, e, base, fv), true
-	}
-	key, ok := t.projectExprValue(out, e.Key)
-	if !ok || key.IsZero() {
-		return product.AbstractValue{}, false
-	}
-	ev, ok := product.RuntimeIndexOf(base, key)
-	if !ok || ev.IsZero() {
-		if admitted, admittedOK := t.refineByIndexWriteAdmission(out, e); admittedOK {
-			return admitted, true
-		}
-		return product.AbstractValue{}, false
-	}
-	return t.refineIndexRead(out, e, base, ev), true
+	return t.readAccessValue(out, accessValueReadQuery{
+		Expr: e,
+		ReadExpr: func(expr ast.Expr) (product.AbstractValue, bool) {
+			return t.projectExprValue(out, expr)
+		},
+		AllowGradualFallback: true,
+	})
 }
