@@ -181,12 +181,42 @@ func (p productCallFrame) demandTargets() []paramevidence.CallArgDemandTarget {
 }
 
 func (p productCallFrame) effects(projector cellEffectProjector, elementUnions []effect.ContainerElementUnion) transfer.CallEffects {
+	callbackRefs := p.callbackArgRefs()
 	return transfer.CallEffects{
-		CellEffects:     projector.productCallEffects(p.outcome, p.call, p.ctx),
+		CellEffects: p.outcome.CellEffects(summary.CellEffectAggregation{
+			CallbackSpec: projector.callbackSpecForCall(p.call, p.ctx.ExprType),
+			CallbackArgs: p.call.Args,
+			MethodCall:   p.call.Method != "",
+			ResolveCallback: func(arg ast.Expr) ([]summary.FuncRef, bool) {
+				refs, ok := callbackRefs[arg]
+				return refs, ok
+			},
+			EffectOf: func(ref summary.FuncRef, entryValues summary.EntryValues) flow.CaptureEffects {
+				entryFacts := projector.callEntry.access().productFacts(ref, p.call, p.ctx)
+				return projector.effectsForRef(ref, p.ctx.References, entryValues, entryFacts)
+			},
+		}),
 		ReceiverEffects: p.outcome.ReceiverEffects(),
 		BoundaryFacts:   p.outcome.BoundaryFacts(),
 		ElementUnions:   elementUnions,
 	}
+}
+
+func (p productCallFrame) callbackArgRefs() map[ast.Expr][]summary.FuncRef {
+	d := p.typer.d
+	if d == nil || d.activeProgram == nil || p.call == nil || len(p.call.Args) == 0 {
+		return nil
+	}
+	resolver := p.typer.targetResolver(d.activeProgram)
+	out := make(map[ast.Expr][]summary.FuncRef)
+	for _, arg := range p.call.Args {
+		refs, ok := resolver.ResolveCallbackArgRefs(arg, p.ctx.References, d.activeProgram.refByFunc)
+		if !ok || len(refs) == 0 {
+			continue
+		}
+		out[arg] = refs
+	}
+	return out
 }
 
 func (p productCallFrame) neverReturns(isNoReturn func(summary.FuncRef) bool) bool {

@@ -4,7 +4,6 @@ import (
 	"github.com/wippyai/go-lua/compiler/ast"
 	canonicalcall "github.com/wippyai/go-lua/compiler/check/canonical/call"
 	"github.com/wippyai/go-lua/compiler/check/canonical/summary"
-	"github.com/wippyai/go-lua/compiler/check/canonical/transfer"
 	"github.com/wippyai/go-lua/types/contract"
 	"github.com/wippyai/go-lua/types/flow"
 	"github.com/wippyai/go-lua/types/typ"
@@ -19,8 +18,8 @@ type cellEffectProjector struct {
 
 // cellEffectProjector is the canonical/program-owned adapter for caller-visible
 // capture-cell effects. The summary package owns callback ordering and effect
-// algebra; this type supplies callback specs, callback target refs, and summary
-// effect lookups without making driver.go wire that policy inline.
+// algebra; productCallFrame owns call-local callback target resolution, while
+// this type supplies callback specs and summary effect lookups.
 func (ct callTyper) cellEffectProjector() (cellEffectProjector, bool) {
 	if ct.d == nil || ct.d.activeProgram == nil {
 		return cellEffectProjector{}, false
@@ -35,25 +34,6 @@ func (ct callTyper) cellEffectProjector() (cellEffectProjector, bool) {
 		driver:    ct.d,
 		callEntry: callEntry,
 	}, true
-}
-
-func (p cellEffectProjector) productCallEffects(
-	outcome canonicalcall.CallOutcome,
-	call *ast.FuncCallExpr,
-	ctx transfer.ProductCallContext,
-) flow.CaptureEffects {
-	return outcome.CellEffects(summary.CellEffectAggregation{
-		CallbackSpec: p.callbackSpecForCall(call, ctx.ExprType),
-		CallbackArgs: call.Args,
-		MethodCall:   call.Method != "",
-		ResolveCallback: func(arg ast.Expr) ([]summary.FuncRef, bool) {
-			return p.typer.targetResolver(p.program).ResolveCallbackArgRefs(arg, ctx.References, p.program.refByFunc)
-		},
-		EffectOf: func(ref summary.FuncRef, entryValues summary.EntryValues) flow.CaptureEffects {
-			entryFacts := p.callEntry.access().productFacts(ref, call, ctx)
-			return p.effectsForRef(ref, ctx.References, entryValues, entryFacts)
-		},
-	})
 }
 
 func (p cellEffectProjector) effectsForRef(
