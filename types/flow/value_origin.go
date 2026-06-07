@@ -51,6 +51,13 @@ type ValueOriginUse struct {
 	Remainder []constraint.Segment
 }
 
+// ValueOriginSourceAddress is the canonical source-address view of a value
+// origin use.
+type ValueOriginSourceAddress struct {
+	Source    StableAddress
+	Remainder []constraint.Segment
+}
+
 // ValueOriginFacts is a finite must-set lattice over value-origin provenance.
 // Bottom is unreachable, Top is the empty fact set, and Join/Widen keep only
 // origins proven by every predecessor.
@@ -123,6 +130,28 @@ func (f ValueOriginFacts) OriginsCoveringAddress(value StableAddress) []ValueOri
 		}
 		return valueOriginLess(out[i].Origin, out[j].Origin)
 	})
+	return out
+}
+
+func (f ValueOriginFacts) AssignmentAliasSourceAddressesCoveringAddress(value StableAddress) []ValueOriginSourceAddress {
+	uses := f.OriginsCoveringAddress(value)
+	if len(uses) == 0 {
+		return nil
+	}
+	var out []ValueOriginSourceAddress
+	for _, use := range uses {
+		if use.Origin.Kind != ValueOriginAssignmentAlias {
+			continue
+		}
+		source, ok := StableAddressFromCanonicalKey(use.Origin.Source)
+		if !ok {
+			continue
+		}
+		out = append(out, ValueOriginSourceAddress{
+			Source:    source,
+			Remainder: cloneAddressSegments(use.Remainder),
+		})
+	}
 	return out
 }
 

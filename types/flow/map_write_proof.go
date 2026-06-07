@@ -698,15 +698,12 @@ func IndexedIteratorKeyArrayReadback(
 						out = product.Domain.Join(out, value)
 					}
 				}
-			case ValueOriginAssignmentAlias:
-				source, ok := StableAddressFromKey(use.Origin.Source)
-				if !ok {
-					continue
-				}
-				source, ok = source.Append(use.Remainder)
-				if ok {
-					queue = append(queue, source)
-				}
+			}
+		}
+		for _, alias := range origins.AssignmentAliasSourceAddressesCoveringAddress(cur) {
+			source, ok := alias.Source.Append(alias.Remainder)
+			if ok {
+				queue = append(queue, source)
 			}
 		}
 	}

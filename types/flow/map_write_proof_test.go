@@ -795,3 +795,30 @@ func TestIndexedIteratorKeyArrayReadbackFollowsAssignmentAlias(t *testing.T) {
 		t.Fatalf("alias readback = %v/%v, want number", got, ok)
 	}
 }
+
+func TestIndexedIteratorKeyArrayReadbackIgnoresLegacyAliasSource(t *testing.T) {
+	arrayPath := constraint.NewPath(cfg.SymbolID(11), "node_order")
+	tablePath := constraint.NewPath(cfg.SymbolID(12), "edges")
+	iterKeyPath := constraint.NewPath(cfg.SymbolID(13), "node_id")
+	aliasPath := constraint.NewPath(cfg.SymbolID(14), "current_node_id")
+	iterKey := testStableAddressPath(t, iterKeyPath)
+	alias := testStableAddressPath(t, aliasPath)
+
+	keyPresence := KeyPresenceFacts{}.
+		WithKeyArrayValueAddresses(testStableAddressPath(t, arrayPath), testStableAddressPath(t, tablePath), product.FromType(typ.Number))
+	origins := ValueOriginFacts{}.
+		WithAddresses(iterKey, testStableAddressPath(t, arrayPath), ValueOriginIndexedIterator, 1).
+		With(ValueOriginFact{
+			Value:  alias.Key(),
+			Source: iterKeyPath.Key(),
+			Kind:   ValueOriginAssignmentAlias,
+		})
+	raw := origins.OriginsCoveringAddress(alias)
+	if len(raw) != 1 || raw[0].Origin.Source != iterKeyPath.Key() {
+		t.Fatalf("test setup did not keep legacy stored source key: %s", origins.Format())
+	}
+
+	if got, ok := IndexedIteratorKeyArrayReadback(keyPresence, origins, testStableAddressPath(t, tablePath), alias); ok || !got.IsZero() {
+		t.Fatalf("legacy alias source produced readback = %v/%v", got, ok)
+	}
+}

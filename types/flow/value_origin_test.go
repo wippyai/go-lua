@@ -99,6 +99,25 @@ func TestValueOriginFactsAddressCoverageSupportsNamedRoots(t *testing.T) {
 	}
 }
 
+func TestValueOriginAssignmentAliasSourceAddressesIgnoreLegacyStoredSource(t *testing.T) {
+	valuePath := constraint.NewPath(cfg.SymbolID(17), "alias")
+	sourcePath := constraint.NewPath(cfg.SymbolID(18), "source")
+	value := testStableAddressPath(t, valuePath)
+	facts := ValueOriginFacts{}.With(ValueOriginFact{
+		Value:  value.Key(),
+		Source: sourcePath.Key(),
+		Kind:   ValueOriginAssignmentAlias,
+	})
+	raw := facts.OriginsCoveringAddress(value)
+	if len(raw) != 1 || raw[0].Origin.Source != sourcePath.Key() {
+		t.Fatalf("test setup did not keep legacy stored source key: %s", facts.Format())
+	}
+
+	if got := facts.AssignmentAliasSourceAddressesCoveringAddress(value); len(got) != 0 {
+		t.Fatalf("canonical assignment-alias view accepted legacy source key: %#v", got)
+	}
+}
+
 func TestValueOriginFactsJoinKeepsMustFacts(t *testing.T) {
 	entry := constraint.NewPath(cfg.SymbolID(21), "entry")
 	tests := constraint.NewPath(cfg.SymbolID(22), "tests")
