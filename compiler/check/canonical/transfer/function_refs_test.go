@@ -251,12 +251,12 @@ func TestCallablePathValueUsesPathProjectionWhenFunctionRefsAbsent(t *testing.T)
 	tr := New(input.Inputs{}, Config{CallTyper: pathFunctionValueTyper{path: path, sig: sig}})
 	out := flow.PointState{}
 
-	got, ok := tr.callablePathValue(&out, path)
-	if !ok {
+	got := flow.PointFactsOf(out).ReadCallablePathValue(path, tr.pointReadPolicy(&out))
+	if got.State != flow.StateResolved {
 		t.Fatal("function path did not resolve")
 	}
-	if !typ.TypeEquals(got.ProjectValue(), sig) {
-		t.Fatalf("function path value = %v, want %v", got.ProjectValue(), sig)
+	if !typ.TypeEquals(got.Value.ProjectValue(), sig) {
+		t.Fatalf("function path value = %v, want %v", got.Value.ProjectValue(), sig)
 	}
 }
 

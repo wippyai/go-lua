@@ -114,8 +114,10 @@ func (t *Transfer) projectIdentValue(out *flow.PointState, e *ast.IdentExpr) (pr
 	av, ok := t.symbolValue(out, sym)
 	path := constraint.NewPath(sym, "")
 	if !ok || av.IsZero() {
-		if cv, ok := t.callablePathValue(out, path); ok {
-			return cv, true
+		if out != nil {
+			if cv := flow.PointFactsOf(*out).ReadCallablePathValue(path, t.pointReadPolicy(out)); cv.State == flow.StateResolved {
+				return cv.Value, true
+			}
 		}
 		if meta, ok := t.typeValueOf(e); ok {
 			return meta, true
@@ -126,8 +128,10 @@ func (t *Transfer) projectIdentValue(out *flow.PointState, e *ast.IdentExpr) (pr
 		return product.AbstractValue{}, false
 	}
 	if pt := av.ProjectValue(); pt != nil && pt.Kind() == kind.Function {
-		if cv, ok := t.callablePathRead(out, path, av); ok {
-			return cv, true
+		if out != nil {
+			if cv := flow.PointFactsOf(*out).ReadCallablePath(path, av, t.pointReadPolicy(out)); cv.State == flow.StateResolved {
+				return cv.Value, true
+			}
 		}
 	}
 	return av, true
@@ -136,8 +140,8 @@ func (t *Transfer) projectIdentValue(out *flow.PointState, e *ast.IdentExpr) (pr
 func (t *Transfer) projectAttrGetValue(out *flow.PointState, e *ast.AttrGetExpr) (product.AbstractValue, bool) {
 	if out != nil {
 		if path, hasPath := t.staticPathOfExpr(e); hasPath {
-			if fact, ok := flow.PointFactsOf(*out).StaticMemberValue(path); ok {
-				return t.callablePathRead(out, path, fact)
+			if fact := flow.PointFactsOf(*out).ReadStaticMemberValue(path, t.pointReadPolicy(out)); fact.State == flow.StateResolved {
+				return fact.Value, true
 			}
 		}
 	}
@@ -151,9 +155,9 @@ func (t *Transfer) projectAttrGetValue(out *flow.PointState, e *ast.AttrGetExpr)
 	if member, isStatic := staticMemberKey(e); isStatic {
 		fv, ok := product.RuntimeMemberOf(base, member)
 		if !ok || fv.IsZero() {
-			if path, hasPath := t.staticPathOfExpr(e); hasPath {
-				if cv, ok := t.callablePathReadIfCallable(out, path, fv); ok {
-					return cv, true
+			if path, hasPath := t.staticPathOfExpr(e); out != nil && hasPath {
+				if cv := flow.PointFactsOf(*out).ReadKnownCallablePath(path, fv, t.pointReadPolicy(out)); cv.State == flow.StateResolved {
+					return cv.Value, true
 				}
 			}
 			if t.gradualAnySource(out, e) {
@@ -161,9 +165,9 @@ func (t *Transfer) projectAttrGetValue(out *flow.PointState, e *ast.AttrGetExpr)
 			}
 			return product.AbstractValue{}, false
 		}
-		if path, hasPath := t.staticPathOfExpr(e); hasPath {
-			if cv, ok := t.callablePathReadIfCallable(out, path, fv); ok {
-				return cv, true
+		if path, hasPath := t.staticPathOfExpr(e); out != nil && hasPath {
+			if cv := flow.PointFactsOf(*out).ReadKnownCallablePath(path, fv, t.pointReadPolicy(out)); cv.State == flow.StateResolved {
+				return cv.Value, true
 			}
 		}
 		return t.refineIndexRead(out, e, base, fv), true

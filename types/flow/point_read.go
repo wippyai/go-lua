@@ -40,8 +40,8 @@ func (f PointFacts) ReadPathValue(path constraint.Path, policy PointReadPolicy) 
 	if len(path.Segments) == 0 {
 		return f.ReadSymbolValue(path.Symbol, policy)
 	}
-	if av, ok := f.CallablePathValue(path, policy.CallableSignature); ok && !av.IsZero() {
-		return ProductValue{Value: av, State: StateResolved}
+	if pv := f.ReadCallablePathValue(path, policy); pv.State == StateResolved {
+		return pv
 	}
 	if policy.UnannotatedSymbol != nil && policy.UnannotatedSymbol(path.Symbol) {
 		root := f.ReadSymbolValue(path.Symbol, policy)
@@ -59,6 +59,46 @@ func (f PointFacts) ReadPathValue(path constraint.Path, policy PointReadPolicy) 
 		}
 	}
 	return ProductValue{State: StateUnknown}
+}
+
+// ReadStaticMemberValue returns the exact static-member fact for path, with
+// callable identity evidence folded over the runtime read when available.
+func (f PointFacts) ReadStaticMemberValue(path constraint.Path, policy PointReadPolicy) ProductValue {
+	read, ok := f.StaticMemberValue(path)
+	if !ok || read.IsZero() {
+		return ProductValue{State: StateUnknown}
+	}
+	return f.ReadCallablePath(path, read, policy)
+}
+
+// ReadCallablePathValue reads path through the callable identity overlay
+// without applying checker-only gradual parameter fallback.
+func (f PointFacts) ReadCallablePathValue(path constraint.Path, policy PointReadPolicy) ProductValue {
+	av, ok := f.CallablePathValue(path, policy.CallableSignature)
+	if !ok || av.IsZero() {
+		return ProductValue{State: StateUnknown}
+	}
+	return ProductValue{Value: av, State: StateResolved}
+}
+
+// ReadCallablePath overlays callable identity facts over an already-computed
+// runtime read, preserving the read when no callable evidence exists.
+func (f PointFacts) ReadCallablePath(path constraint.Path, read product.AbstractValue, policy PointReadPolicy) ProductValue {
+	av, ok := f.CallablePathRead(path, read, policy.CallableSignature)
+	if !ok || av.IsZero() {
+		return ProductValue{State: StateUnknown}
+	}
+	return ProductValue{Value: av, State: StateResolved}
+}
+
+// ReadKnownCallablePath overlays callable evidence only when the point state can
+// prove path is callable. Callers use this for strict member/index reads where a
+// missing product slot should not become present unless callable identity says so.
+func (f PointFacts) ReadKnownCallablePath(path constraint.Path, read product.AbstractValue, policy PointReadPolicy) ProductValue {
+	if _, ok := f.CallablePathType(path, policy.CallableSignature); !ok {
+		return ProductValue{State: StateUnknown}
+	}
+	return f.ReadCallablePath(path, read, policy)
 }
 
 // ReadPathType projects ReadPathValue to a concrete type and applies the

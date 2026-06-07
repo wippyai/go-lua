@@ -3145,8 +3145,8 @@ func (t *Transfer) evalAttrGet(
 ) (product.AbstractValue, bool) {
 	if out != nil {
 		if path, hasPath := t.staticPathOfExpr(e); hasPath {
-			if fact, ok := flow.PointFactsOf(*out).StaticMemberValue(path); ok {
-				return t.callablePathRead(out, path, fact)
+			if fact := flow.PointFactsOf(*out).ReadStaticMemberValue(path, t.pointReadPolicy(out)); fact.State == flow.StateResolved {
+				return fact.Value, true
 			}
 		}
 	}
@@ -3157,16 +3157,16 @@ func (t *Transfer) evalAttrGet(
 	if member, isStatic := staticMemberKey(e); isStatic {
 		fv, ok := product.RuntimeMemberOf(base, member)
 		if !ok || fv.IsZero() {
-			if path, hasPath := t.staticPathOfExpr(e); hasPath {
-				if cv, ok := t.callablePathReadIfCallable(out, path, fv); ok {
-					return cv, true
+			if path, hasPath := t.staticPathOfExpr(e); out != nil && hasPath {
+				if cv := flow.PointFactsOf(*out).ReadKnownCallablePath(path, fv, t.pointReadPolicy(out)); cv.State == flow.StateResolved {
+					return cv.Value, true
 				}
 			}
 			return product.AbstractValue{}, false
 		}
-		if path, hasPath := t.staticPathOfExpr(e); hasPath {
-			if cv, ok := t.callablePathReadIfCallable(out, path, fv); ok {
-				return cv, true
+		if path, hasPath := t.staticPathOfExpr(e); out != nil && hasPath {
+			if cv := flow.PointFactsOf(*out).ReadKnownCallablePath(path, fv, t.pointReadPolicy(out)); cv.State == flow.StateResolved {
+				return cv.Value, true
 			}
 		}
 		return t.refineIndexRead(out, e, base, fv), true
@@ -3195,8 +3195,8 @@ func (t *Transfer) evalAttrGetAt(
 	if out != nil {
 		if path, hasPath := t.staticMemberExprPathAt(out, p, e); hasPath {
 			readPath = path
-			if fact, ok := flow.PointFactsOf(*out).StaticMemberValue(path); ok {
-				return t.callablePathRead(out, path, fact)
+			if fact := flow.PointFactsOf(*out).ReadStaticMemberValue(path, t.pointReadPolicy(out)); fact.State == flow.StateResolved {
+				return fact.Value, true
 			}
 		}
 	}
@@ -3208,15 +3208,15 @@ func (t *Transfer) evalAttrGetAt(
 		fv, ok := product.RuntimeMemberOf(base, member)
 		if !ok || fv.IsZero() {
 			if !readPath.IsEmpty() {
-				if cv, ok := t.callablePathReadIfCallable(out, readPath, fv); ok {
-					return cv, true
+				if cv := flow.PointFactsOf(*out).ReadKnownCallablePath(readPath, fv, t.pointReadPolicy(out)); cv.State == flow.StateResolved {
+					return cv.Value, true
 				}
 			}
 			return product.AbstractValue{}, false
 		}
 		if !readPath.IsEmpty() {
-			if cv, ok := t.callablePathReadIfCallable(out, readPath, fv); ok {
-				return cv, true
+			if cv := flow.PointFactsOf(*out).ReadKnownCallablePath(readPath, fv, t.pointReadPolicy(out)); cv.State == flow.StateResolved {
+				return cv.Value, true
 			}
 		}
 		return t.refineIndexRead(out, e, base, fv), true
@@ -3252,8 +3252,10 @@ func (t *Transfer) evalIdent(
 	av, ok := t.symbolValue(out, sym)
 	path := constraint.NewPath(sym, "")
 	if !ok || av.IsZero() {
-		if cv, ok := t.callablePathValue(out, path); ok {
-			return cv, true
+		if out != nil {
+			if cv := flow.PointFactsOf(*out).ReadCallablePathValue(path, t.pointReadPolicy(out)); cv.State == flow.StateResolved {
+				return cv.Value, true
+			}
 		}
 		// A symbol with no flow value may name a `type` used as a value (the `type X`
 		// binding carries a symbol but no runtime value); resolve it to that type's Meta.
@@ -3263,8 +3265,10 @@ func (t *Transfer) evalIdent(
 		return product.AbstractValue{}, false
 	}
 	if pt := av.ProjectValue(); pt != nil && pt.Kind() == kind.Function {
-		if cv, ok := t.callablePathRead(out, path, av); ok {
-			return cv, true
+		if out != nil {
+			if cv := flow.PointFactsOf(*out).ReadCallablePath(path, av, t.pointReadPolicy(out)); cv.State == flow.StateResolved {
+				return cv.Value, true
+			}
 		}
 	}
 	return av, true
@@ -3273,6 +3277,15 @@ func (t *Transfer) evalIdent(
 func (t *Transfer) callableSignatureResolver(out *flow.PointState) flow.CallableSignatureResolver {
 	return func(query flow.CallableSignatureQuery) (typ.Type, bool) {
 		return t.callableSignature(out, query)
+	}
+}
+
+func (t *Transfer) pointReadPolicy(out *flow.PointState) flow.PointReadPolicy {
+	return flow.PointReadPolicy{
+		UnannotatedSymbol: func(sym cfg.SymbolID) bool {
+			return t.unannotatedParam[sym]
+		},
+		CallableSignature: t.callableSignatureResolver(out),
 	}
 }
 
@@ -3297,34 +3310,6 @@ func (t *Transfer) callableSignature(out *flow.PointState, query flow.CallableSi
 		return nil, false
 	}
 	return ft, true
-}
-
-func (t *Transfer) callablePathValue(out *flow.PointState, path constraint.Path) (product.AbstractValue, bool) {
-	if out == nil || path.IsEmpty() {
-		return product.AbstractValue{}, false
-	}
-	return flow.PointFactsOf(*out).CallablePathValue(path, t.callableSignatureResolver(out))
-}
-
-func (t *Transfer) callablePathRead(out *flow.PointState, path constraint.Path, read product.AbstractValue) (product.AbstractValue, bool) {
-	if out == nil || path.IsEmpty() {
-		if read.IsZero() {
-			return product.AbstractValue{}, false
-		}
-		return read, true
-	}
-	return flow.PointFactsOf(*out).CallablePathRead(path, read, t.callableSignatureResolver(out))
-}
-
-func (t *Transfer) callablePathReadIfCallable(out *flow.PointState, path constraint.Path, read product.AbstractValue) (product.AbstractValue, bool) {
-	if out == nil || path.IsEmpty() {
-		return product.AbstractValue{}, false
-	}
-	facts := flow.PointFactsOf(*out)
-	if _, ok := facts.CallablePathType(path, t.callableSignatureResolver(out)); !ok {
-		return product.AbstractValue{}, false
-	}
-	return facts.CallablePathRead(path, read, t.callableSignatureResolver(out))
 }
 
 func (t *Transfer) symbolValue(out *flow.PointState, sym cfg.SymbolID) (product.AbstractValue, bool) {
