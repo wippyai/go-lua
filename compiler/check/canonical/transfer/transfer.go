@@ -682,111 +682,8 @@ func (t *Transfer) SeedEntryFacts(out *flow.PointState, facts flow.BoundaryFacts
 	if t == nil || out == nil || !facts.HasProof() {
 		return
 	}
-	for _, fact := range facts.IndexWrites() {
-		table, ok := t.rebaseEntryBoundaryPath(fact.Table)
-		if !ok {
-			continue
-		}
-		key, ok := t.rebaseEntryBoundaryPath(fact.Key)
-		if !ok {
-			continue
-		}
-		flow.ApplyMapWritePathProof(out, flow.MapWritePathProof{
-			TablePath:              table,
-			KeyPath:                key,
-			KeyValue:               product.FromType(typ.Unknown),
-			Value:                  fact.Value,
-			AllowOpaqueKeyReadback: true,
-		})
-	}
-	for _, fact := range facts.KeyPresence() {
-		table, ok := t.rebaseEntryBoundaryPath(fact.Table)
-		if !ok {
-			continue
-		}
-		key, ok := t.rebaseEntryBoundaryPath(fact.Key)
-		if !ok {
-			continue
-		}
-		t.applyKeyProvenancePathProof(out, flow.KeyProvenancePathProof{
-			Kind:      flow.KeyProvenanceDynamicIndexWrite,
-			TablePath: table,
-			KeyPath:   key,
-		})
-	}
-	for _, fact := range facts.KeyArrays() {
-		array, ok := t.rebaseEntryBoundaryPath(fact.Array)
-		if !ok {
-			continue
-		}
-		table, ok := t.rebaseEntryBoundaryPath(fact.Table)
-		if !ok {
-			continue
-		}
-		t.applyKeyProvenancePathProof(out, flow.KeyProvenancePathProof{
-			Kind:      flow.KeyProvenanceKeyArrayAssignment,
-			ArrayPath: array,
-			TablePath: table,
-		})
-	}
-	for _, fact := range facts.KeyArrayValues() {
-		array, ok := t.rebaseEntryBoundaryPath(fact.Array)
-		if !ok {
-			continue
-		}
-		table, ok := t.rebaseEntryBoundaryPath(fact.Table)
-		if !ok {
-			continue
-		}
-		flow.ApplyKeyArrayValuePathProof(out, flow.KeyArrayValuePathProof{
-			ArrayPath: array,
-			TablePath: table,
-			Value:     fact.Value,
-		})
-	}
-	for _, fact := range facts.AppendKeys() {
-		array, ok := t.rebaseEntryBoundaryPath(fact.Array)
-		if !ok {
-			continue
-		}
-		key, ok := t.rebaseEntryBoundaryPath(fact.Key)
-		if !ok {
-			continue
-		}
-		flow.ApplyAppendKeyPathProof(out, flow.AppendKeyPathProof{
-			ArrayPath: array,
-			KeyPath:   key,
-		})
-	}
-	for _, fact := range facts.AppendElementFieldOrigins() {
-		array, ok := t.rebaseEntryBoundaryPath(fact.Array)
-		if !ok {
-			continue
-		}
-		source, ok := t.rebaseEntryBoundaryPath(fact.Source)
-		if !ok {
-			continue
-		}
-		flow.ApplyAppendElementFieldOriginPathProof(out, flow.AppendElementFieldOriginPathProof{
-			ArrayPath:   array,
-			Field:       fact.Field,
-			SourcePath:  source,
-			SourceField: fact.SourceField,
-		})
-	}
-	var ops []flow.NumericOp
-	for _, fact := range facts.LengthLowerBounds() {
-		target, ok := t.rebaseEntryBoundaryPath(fact.Target)
-		if !ok || target.Symbol == 0 {
-			continue
-		}
-		if op, ok := flow.NumericLenGeConstPathOp(target, fact.Lower); ok {
-			ops = append(ops, op)
-		}
-	}
-	if len(ops) > 0 {
-		flow.ApplyNumericEffect(out, flow.NumericEffect{Ops: ops})
-	}
+	app, _ := flow.ApplyBoundaryFacts(out, facts, t.rebaseEntryBoundaryPath, nil)
+	t.applyBoundaryFactApplication(out, app)
 }
 
 func (t *Transfer) rebaseEntryBoundaryPath(path flow.BoundaryPath) (constraint.Path, bool) {
@@ -2521,7 +2418,7 @@ func (t *Transfer) boundaryFactsAppendPlans(
 	out *flow.PointState,
 	call *ast.FuncCallExpr,
 	facts flow.BoundaryFacts,
-) (flow.BoundaryFacts, []boundaryAppendKeyPlan) {
+) (flow.BoundaryFacts, []flow.BoundaryAppendKeyPlan) {
 	if !facts.HasProof() {
 		return facts, nil
 	}
@@ -2538,87 +2435,16 @@ func (t *Transfer) applyBoundaryFacts(
 	return t.applyBoundaryFactsWithAppendPlans(out, call, facts, returns, plans)
 }
 
-type boundaryAppendKeyPlan struct {
-	array               constraint.Path
-	key                 constraint.Path
-	table               constraint.Path
-	hasTable            bool
-	writtenTables       []constraint.Path
-	freshEmpty          bool
-	preserveHistoryBase bool
-}
-
 func (t *Transfer) boundaryAppendKeyPlans(
 	out *flow.PointState,
 	call *ast.FuncCallExpr,
 	facts flow.BoundaryFacts,
 	returns map[int]constraint.Path,
-) []boundaryAppendKeyPlan {
+) []flow.BoundaryAppendKeyPlan {
 	if out == nil || call == nil {
 		return nil
 	}
-	appendKeys := facts.AppendKeys()
-	if len(appendKeys) == 0 {
-		return nil
-	}
-	var plans []boundaryAppendKeyPlan
-	for _, fact := range appendKeys {
-		array, ok := t.rebaseBoundaryPath(call, returns, fact.Array)
-		if !ok || array.IsEmpty() {
-			continue
-		}
-		key, ok := t.rebaseBoundaryPath(call, returns, fact.Key)
-		if !ok || key.IsEmpty() {
-			continue
-		}
-		factsView := flow.PointFactsOf(*out)
-		plan := boundaryAppendKeyPlan{
-			array:               array,
-			key:                 key,
-			freshEmpty:          flow.AppendFreshEmptySeedPath(*out, array),
-			preserveHistoryBase: factsView.HasAppendHistoryBase(array),
-		}
-		if fact.HasTable {
-			table, ok := t.rebaseBoundaryPath(call, returns, fact.Table)
-			if !ok || table.IsEmpty() {
-				continue
-			}
-			plan.table = table
-			plan.hasTable = true
-		}
-		plan.writtenTables = t.boundaryIndexWriteTablesForAppendedKey(call, returns, facts.IndexWrites(), key, plan.table, plan.hasTable)
-		plans = append(plans, plan)
-	}
-	return plans
-}
-
-func (t *Transfer) boundaryIndexWriteTablesForAppendedKey(
-	call *ast.FuncCallExpr,
-	returns map[int]constraint.Path,
-	indexWrites []flow.BoundaryIndexWriteFact,
-	key constraint.Path,
-	explicitTable constraint.Path,
-	hasExplicitTable bool,
-) []constraint.Path {
-	if call == nil || key.IsEmpty() || len(indexWrites) == 0 {
-		return nil
-	}
-	var tables []constraint.Path
-	for _, fact := range indexWrites {
-		writeKey, ok := t.rebaseBoundaryPath(call, returns, fact.Key)
-		if !ok || !writeKey.Equal(key) {
-			continue
-		}
-		table, ok := t.rebaseBoundaryPath(call, returns, fact.Table)
-		if !ok || table.IsEmpty() {
-			continue
-		}
-		if hasExplicitTable && !table.Equal(explicitTable) {
-			continue
-		}
-		tables = append(tables, table)
-	}
-	return tables
+	return flow.BoundaryAppendKeyPlans(*out, facts, t.callBoundaryPathRebaser(call, returns))
 }
 
 func (t *Transfer) applyBoundaryFactsWithAppendPlans(
@@ -2626,124 +2452,26 @@ func (t *Transfer) applyBoundaryFactsWithAppendPlans(
 	call *ast.FuncCallExpr,
 	facts flow.BoundaryFacts,
 	returns map[int]constraint.Path,
-	appendPlans []boundaryAppendKeyPlan,
+	appendPlans []flow.BoundaryAppendKeyPlan,
 ) bool {
 	if out == nil || call == nil {
 		return false
 	}
-	changed := false
-	for _, fact := range facts.IndexWrites() {
-		table, ok := t.rebaseBoundaryPath(call, returns, fact.Table)
-		if !ok {
-			continue
-		}
-		key, ok := t.rebaseBoundaryPath(call, returns, fact.Key)
-		if !ok {
-			continue
-		}
-		changed = flow.ApplyMapWritePathProof(out, flow.MapWritePathProof{
-			TablePath:              table,
-			KeyPath:                key,
-			KeyValue:               product.FromType(typ.Unknown),
-			Value:                  fact.Value,
-			AllowOpaqueKeyReadback: true,
-		}) || changed
-	}
-	for _, fact := range facts.KeyPresence() {
-		table, ok := t.rebaseBoundaryPath(call, returns, fact.Table)
-		if !ok {
-			continue
-		}
-		key, ok := t.rebaseBoundaryPath(call, returns, fact.Key)
-		if !ok {
-			continue
-		}
-		changed = t.applyKeyProvenancePathProof(out, flow.KeyProvenancePathProof{
-			Kind:      flow.KeyProvenanceDynamicIndexWrite,
-			TablePath: table,
-			KeyPath:   key,
-		}) || changed
-	}
-	for _, fact := range facts.KeyArrays() {
-		array, ok := t.rebaseBoundaryPath(call, returns, fact.Array)
-		if !ok {
-			continue
-		}
-		table, ok := t.rebaseBoundaryPath(call, returns, fact.Table)
-		if !ok {
-			continue
-		}
-		changed = t.applyKeyProvenancePathProof(out, flow.KeyProvenancePathProof{
-			Kind:      flow.KeyProvenanceKeyArrayAssignment,
-			ArrayPath: array,
-			TablePath: table,
-		}) || changed
-	}
-	for _, fact := range facts.KeyArrayValues() {
-		array, ok := t.rebaseBoundaryPath(call, returns, fact.Array)
-		if !ok {
-			continue
-		}
-		table, ok := t.rebaseBoundaryPath(call, returns, fact.Table)
-		if !ok {
-			continue
-		}
-		changed = flow.ApplyKeyArrayValuePathProof(out, flow.KeyArrayValuePathProof{
-			ArrayPath: array,
-			TablePath: table,
-			Value:     fact.Value,
-		}) || changed
-	}
-	changed = t.applyBoundaryAppendKeyPlans(out, appendPlans) || changed
-	for _, fact := range facts.AppendElementFieldOrigins() {
-		array, ok := t.rebaseBoundaryPath(call, returns, fact.Array)
-		if !ok {
-			continue
-		}
-		source, ok := t.rebaseBoundaryPath(call, returns, fact.Source)
-		if !ok {
-			continue
-		}
-		changed = flow.ApplyAppendElementFieldOriginPathProof(out, flow.AppendElementFieldOriginPathProof{
-			ArrayPath:   array,
-			Field:       fact.Field,
-			SourcePath:  source,
-			SourceField: fact.SourceField,
-		}) || changed
-	}
-	var ops []flow.NumericOp
-	for _, fact := range facts.LengthLowerBounds() {
-		target, ok := t.rebaseBoundaryPath(call, returns, fact.Target)
-		if !ok {
-			continue
-		}
-		if op, ok := flow.NumericLenGeConstPathOp(target, fact.Lower); ok {
-			ops = append(ops, op)
-		}
-	}
-	if len(ops) > 0 {
-		changed = flow.ApplyNumericEffect(out, flow.NumericEffect{Ops: ops}) || changed
-	}
-	return changed
+	app, changed := flow.ApplyBoundaryFacts(out, facts, t.callBoundaryPathRebaser(call, returns), appendPlans)
+	t.applyBoundaryFactApplication(out, app)
+	return changed || len(app.KeyProvenance) > 0
 }
 
-func (t *Transfer) applyBoundaryAppendKeyPlans(out *flow.PointState, plans []boundaryAppendKeyPlan) bool {
-	if out == nil || len(plans) == 0 {
-		return false
+func (t *Transfer) applyBoundaryFactApplication(out *flow.PointState, app flow.BoundaryFactApplication) {
+	for _, result := range app.KeyProvenance {
+		t.applyKeyProvenanceResult(out, result)
 	}
-	changed := false
-	for _, plan := range plans {
-		changed = flow.ApplyAppendKeyReplayPathProof(out, flow.AppendKeyReplayPathProof{
-			ArrayPath:           plan.array,
-			KeyPath:             plan.key,
-			ExplicitTablePath:   plan.table,
-			HasExplicitTable:    plan.hasTable,
-			WrittenTablePaths:   plan.writtenTables,
-			FreshEmpty:          plan.freshEmpty,
-			PreserveHistoryBase: plan.preserveHistoryBase,
-		}) || changed
+}
+
+func (t *Transfer) callBoundaryPathRebaser(call *ast.FuncCallExpr, returns map[int]constraint.Path) flow.BoundaryPathRebaser {
+	return func(path flow.BoundaryPath) (constraint.Path, bool) {
+		return t.rebaseBoundaryPath(call, returns, path)
 	}
-	return changed
 }
 
 func (t *Transfer) rebaseBoundaryPath(

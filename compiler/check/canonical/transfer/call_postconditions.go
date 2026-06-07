@@ -20,7 +20,7 @@ type boundaryFactPostcondition struct {
 	call        *ast.FuncCallExpr
 	facts       flow.BoundaryFacts
 	returns     map[int]constraint.Path
-	appendPlans []boundaryAppendKeyPlan
+	appendPlans []flow.BoundaryAppendKeyPlan
 }
 
 // buildAssignCallPostconditions rebases callee return-relation predicates into
