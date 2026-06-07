@@ -61,6 +61,27 @@ func (e CaptureEffects) Entries() []CaptureEffect {
 	return append([]CaptureEffect(nil), e.entries...)
 }
 
+// HasFiniteEntries reports whether e has at least one concrete effect entry.
+func (e CaptureEffects) HasFiniteEntries() bool {
+	return !e.bottom && !e.top && len(e.entries) > 0
+}
+
+// FilterSymbols keeps finite effects whose symbol satisfies keep. Bottom and
+// Top are preserved: callers that need to refine Top must do so using the
+// domain-specific evidence that made Top informative.
+func (e CaptureEffects) FilterSymbols(keep func(cfg.SymbolID) bool) CaptureEffects {
+	if e.bottom || e.top || len(e.entries) == 0 || keep == nil {
+		return e
+	}
+	out := make([]CaptureEffect, 0, len(e.entries))
+	for _, entry := range e.entries {
+		if keep(entry.Symbol) {
+			out = append(out, entry)
+		}
+	}
+	return CaptureEffectsOf(out)
+}
+
 // May weakens every finite write to a may-write. It is used when a caller-visible
 // callback may execute zero times: the written value is still possible, but the
 // incoming cell value may remain unchanged.

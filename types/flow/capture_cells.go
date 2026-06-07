@@ -83,6 +83,13 @@ func (c CaptureCells) Entries() []CaptureCell {
 	return append([]CaptureCell(nil), c.entries...)
 }
 
+// HasFiniteEntries reports whether c has at least one concrete captured cell.
+// Top is not finite, so callers that need to know whether an unknown effect can
+// target a known current cell should decide how to handle Top explicitly.
+func (c CaptureCells) HasFiniteEntries() bool {
+	return !c.top && len(c.entries) > 0
+}
+
 // Project keeps only the requested symbols. The symbol list may be unsorted or
 // contain duplicates; the result is canonical and deterministic.
 func (c CaptureCells) Project(symbols []cfg.SymbolID) CaptureCells {

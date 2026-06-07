@@ -102,6 +102,20 @@ func (e ReceiverEffects) Entries() []ReceiverEffect {
 	return append([]ReceiverEffect(nil), e.entries...)
 }
 
+// HasMutations reports whether any finite receiver effect carries a mutable
+// footprint. Top has no finite proof entries, matching Entries() semantics.
+func (e ReceiverEffects) HasMutations() bool {
+	if e.bottom || e.top {
+		return false
+	}
+	for _, entry := range e.entries {
+		if len(entry.Mutations) > 0 {
+			return true
+		}
+	}
+	return false
+}
+
 func (e ReceiverEffects) IsTop() bool { return e.top }
 
 func (e ReceiverEffects) IsBottom() bool { return e.bottom }

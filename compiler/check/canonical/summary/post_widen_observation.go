@@ -47,7 +47,7 @@ func SelectPostWidenObservationRefs(in PostWidenObservationInput) []FuncRef {
 		out = append(out, ref)
 	}
 	for _, ref := range in.Refs {
-		if in.IsMethod != nil && in.IsMethod(ref) && summaryNeedsObservedReceiverEffects(in.summary(ref)) {
+		if in.IsMethod != nil && in.IsMethod(ref) && in.summary(ref).ReceiverEffects.HasMutations() {
 			add(ref)
 		}
 	}
@@ -70,15 +70,6 @@ func (in PostWidenObservationInput) summary(ref FuncRef) Summary {
 		return SummaryDomain.Bottom()
 	}
 	return in.Summary(ref)
-}
-
-func summaryNeedsObservedReceiverEffects(sum Summary) bool {
-	for _, entry := range sum.ReceiverEffects.Entries() {
-		if len(entry.Mutations) > 0 {
-			return true
-		}
-	}
-	return false
 }
 
 func summaryNeedsObservedWidenedReturns(sum Summary) bool {

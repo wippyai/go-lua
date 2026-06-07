@@ -138,21 +138,18 @@ func (t *Transfer) currentCellEffects(out *flow.PointState, effects flow.Capture
 		return flow.CaptureEffectsDomain.Bottom()
 	}
 	if effects.IsTop() {
-		if len(out.Cells.Entries()) > 0 {
+		if out.Cells.HasFiniteEntries() {
 			return effects
 		}
 		return flow.CaptureEffectsDomain.Bottom()
 	}
-	var entries []flow.CaptureEffect
-	for _, entry := range effects.Entries() {
-		if t.symbolStorage.hasCellEffectTarget(out, entry.Symbol) {
-			entries = append(entries, entry)
-		}
-	}
-	if len(entries) == 0 {
+	filtered := effects.FilterSymbols(func(sym cfg.SymbolID) bool {
+		return t.symbolStorage.hasCellEffectTarget(out, sym)
+	})
+	if flow.CaptureEffectsDomain.Equal(filtered, flow.CaptureEffectsIdentity()) {
 		return flow.CaptureEffectsDomain.Bottom()
 	}
-	return flow.CaptureEffectsOf(entries)
+	return filtered
 }
 
 func (t *Transfer) applyCellStoreEffects(out *flow.PointState, effects flow.CaptureEffects) {

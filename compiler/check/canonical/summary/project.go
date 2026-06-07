@@ -308,10 +308,6 @@ func materializeImplicitNilReturnSlots(info *cfg.ReturnInfo, tuple []product.Abs
 }
 
 func returnSlotValue(ps flow.PointState, info *cfg.ReturnInfo, i int, opts projectOptions) product.AbstractValue {
-	return returnSlotValueFromPointState(ps, info, i, opts)
-}
-
-func returnSlotValueFromPointState(ps flow.PointState, info *cfg.ReturnInfo, i int, opts projectOptions) product.AbstractValue {
 	if i < len(info.Symbols) && info.Symbols[i] != 0 {
 		if av, ok := flow.PointFactsOf(ps).SymbolValue(info.Symbols[i]); ok && !av.IsZero() {
 			return av
@@ -794,7 +790,7 @@ func returnBoundarySymbolMap(g *cfg.Graph, p cfg.Point, info *cfg.ReturnInfo) ma
 	}
 	out := make(map[cfg.SymbolID][]flow.BoundaryPath)
 	for i := range info.Exprs {
-		path := returnExprBoundaryPath(g, p, info, i)
+		path := returnSourceBoundaryPath(g, p, info, i)
 		if path.Symbol == 0 {
 			continue
 		}
@@ -808,10 +804,6 @@ func returnBoundarySymbolMap(g *cfg.Graph, p cfg.Point, info *cfg.ReturnInfo) ma
 		return nil
 	}
 	return out
-}
-
-func returnExprBoundaryPath(g *cfg.Graph, p cfg.Point, info *cfg.ReturnInfo, i int) constraint.Path {
-	return returnSourceBoundaryPath(g, p, info, i)
 }
 
 func returnExprPathKey(g *cfg.Graph, resolver *pathkey.Resolver, p cfg.Point, info *cfg.ReturnInfo, i int) (constraint.PathKey, bool) {

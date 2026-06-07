@@ -248,7 +248,7 @@ func mergeExactOverlaySummary(prev, next Summary) Summary {
 }
 
 func mergeExactOverlayCellEffects(prev, next flow.CaptureEffects) flow.CaptureEffects {
-	if !next.IsTop() && !next.IsBottom() && len(next.Entries()) == 0 && len(prev.Entries()) > 0 {
+	if !next.IsTop() && !next.IsBottom() && !next.HasFiniteEntries() && prev.HasFiniteEntries() {
 		return prev
 	}
 	return next
