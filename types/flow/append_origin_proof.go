@@ -157,16 +157,18 @@ func AppendOriginDestinations(state PointState, array StableAddress, fieldPrefix
 	if array.Key() == "" {
 		return nil
 	}
-	seen := map[string]bool{}
+	seen := map[addressSuffixKey]struct{}{}
 	var destinations []AppendOriginDestination
 	var add func(StableAddress, []constraint.Segment)
 	add = func(array StableAddress, prefix []constraint.Segment) {
-		key := array.Key()
-		seenKey := string(key) + "/" + string(AppendElementFieldPathKey(prefix))
-		if key == "" || seen[seenKey] {
+		seenKey, ok := appendOriginEffectiveAddressIdentity(array, prefix)
+		if !ok {
 			return
 		}
-		seen[seenKey] = true
+		if _, ok := seen[seenKey]; ok {
+			return
+		}
+		seen[seenKey] = struct{}{}
 		destinations = append(destinations, AppendOriginDestination{
 			Array:       array,
 			FieldPrefix: cloneAddressSegments(prefix),
@@ -695,11 +697,17 @@ func AppendOriginSources(state PointState, source StableAddress) []AppendOriginS
 	if source.Key() == "" {
 		return nil
 	}
+	seen := map[addressSuffixKey]struct{}{}
 	var sources []AppendOriginSource
 	add := func(source StableAddress, sourceField []constraint.Segment) {
-		if source.Key() == "" {
+		seenKey, ok := appendOriginEffectiveAddressIdentity(source, sourceField)
+		if !ok {
 			return
 		}
+		if _, ok := seen[seenKey]; ok {
+			return
+		}
+		seen[seenKey] = struct{}{}
 		sources = append(sources, AppendOriginSource{
 			Source:      source,
 			SourceField: cloneAddressSegments(sourceField),
@@ -722,6 +730,17 @@ func AppendOriginSources(state PointState, source StableAddress) []AppendOriginS
 		}
 	}
 	return sources
+}
+
+func appendOriginEffectiveAddressIdentity(address StableAddress, suffix []constraint.Segment) (addressSuffixKey, bool) {
+	if len(suffix) == 0 {
+		return addressSuffixIdentity(address, nil)
+	}
+	effective, ok := address.Append(suffix)
+	if !ok {
+		return addressSuffixKey{}, false
+	}
+	return addressSuffixIdentity(effective, nil)
 }
 
 func AppendOriginSourcesPath(state PointState, sourcePath constraint.Path) []AppendOriginSource {

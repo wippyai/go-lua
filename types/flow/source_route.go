@@ -30,6 +30,14 @@ type sourceRoute struct {
 	remainder []constraint.Segment
 }
 
+// addressSuffixKey is the comparable identity for one address plus a structured
+// suffix. It is used for route de-duplication without string-concatenating
+// address and segment encodings at call sites.
+type addressSuffixKey struct {
+	address constraint.PathKey
+	suffix  constraint.PathKey
+}
+
 func sourceRouteOf(source StableAddress, remainder []constraint.Segment) (sourceRoute, bool) {
 	if source.Key() == "" {
 		return sourceRoute{}, false
@@ -37,6 +45,17 @@ func sourceRouteOf(source StableAddress, remainder []constraint.Segment) (source
 	return sourceRoute{
 		source:    source,
 		remainder: cloneAddressSegments(remainder),
+	}, true
+}
+
+func addressSuffixIdentity(address StableAddress, suffix []constraint.Segment) (addressSuffixKey, bool) {
+	key := address.Key()
+	if key == "" {
+		return addressSuffixKey{}, false
+	}
+	return addressSuffixKey{
+		address: key,
+		suffix:  constraint.PathKey(constraint.FormatSegments(suffix)),
 	}, true
 }
 

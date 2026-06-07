@@ -37,6 +37,31 @@ func TestAppendOriginDestinationsRoutesThroughIteratorAndAliasFacts(t *testing.T
 	assertAppendDestination(t, got[2], aliasArrayPath.Field("id"), nil)
 }
 
+func TestAppendOriginDestinationsDeduplicatesEquivalentRoutes(t *testing.T) {
+	outPath := constraint.NewPath(cfg.SymbolID(301), "out")
+	arrayPath := outPath.Field("id")
+	sourcePath := constraint.NewPath(cfg.SymbolID(302), "source")
+	state := PointState{
+		ValueOrigins: ValueOriginFacts{}.WithAddresses(
+			testStableAddressPath(t, outPath),
+			testStableAddressPath(t, sourcePath),
+			ValueOriginIndexedIterator,
+			1,
+		),
+		PathAliases: PathAliasFacts{}.WithAddresses(
+			testStableAddressPath(t, outPath),
+			testStableAddressPath(t, sourcePath),
+		),
+	}
+
+	got := AppendOriginDestinations(state, testStableAddressPath(t, arrayPath), nil)
+	if len(got) != 2 {
+		t.Fatalf("destinations got %d, want direct + one routed source", len(got))
+	}
+	assertAppendDestination(t, got[0], arrayPath, nil)
+	assertAppendDestination(t, got[1], sourcePath, []constraint.Segment{{Kind: constraint.SegmentField, Name: "id"}})
+}
+
 func TestAppendOriginDestinationsPathNormalizesArray(t *testing.T) {
 	outPath := constraint.NewPath(cfg.SymbolID(4), "out")
 	arrayPath := outPath.Field("id")
@@ -254,6 +279,36 @@ func TestAppendOriginSourcesIgnoresLegacyStoredRoutes(t *testing.T) {
 	got := AppendOriginSources(state, field)
 	if len(got) != 1 || !got[0].Source.Equal(field) || len(got[0].SourceField) != 0 {
 		t.Fatalf("sources = %+v, want only direct source for legacy routes", got)
+	}
+}
+
+func TestAppendOriginSourcesDeduplicatesEquivalentRoutes(t *testing.T) {
+	targetPath := constraint.NewPath(cfg.SymbolID(303), "target")
+	fieldPath := targetPath.Field("id")
+	sourcePath := constraint.NewPath(cfg.SymbolID(304), "source")
+	target := testStableAddressPath(t, targetPath)
+	field := testStableAddressPath(t, fieldPath)
+	source := testStableAddressPath(t, sourcePath)
+	state := PointState{
+		ValueOrigins: ValueOriginFacts{}.WithAddresses(
+			target,
+			source,
+			ValueOriginAssignmentAlias,
+			0,
+		),
+		PathAliases: PathAliasFacts{}.WithAddresses(target, source),
+	}
+
+	got := AppendOriginSources(state, field)
+	if len(got) != 2 {
+		t.Fatalf("sources got %d, want direct + one routed source", len(got))
+	}
+	if !got[0].Source.Equal(field) || len(got[0].SourceField) != 0 {
+		t.Fatalf("direct source = %+v, want field without source field", got[0])
+	}
+	wantRouted := testStableAddressPath(t, sourcePath.Field("id"))
+	if !got[1].Source.Equal(wantRouted) || len(got[1].SourceField) != 0 {
+		t.Fatalf("routed source = %+v, want %s", got[1], wantRouted.Key())
 	}
 }
 
