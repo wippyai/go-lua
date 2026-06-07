@@ -349,6 +349,49 @@ func TestKeyPresenceFactsAddressSubtreeKillUsesPrefixOnly(t *testing.T) {
 	}
 }
 
+func TestKeyPresenceFactsAddressInvalidationIgnoresLegacyStoredKeys(t *testing.T) {
+	table := constraint.NewPath(cfg.SymbolID(43), "table")
+	member := table.Field("child")
+	key := constraint.NewPath(cfg.SymbolID(44), "key")
+	value := constraint.NewPath(cfg.SymbolID(45), "value")
+	array := constraint.NewPath(cfg.SymbolID(46), "array")
+	facts := KeyPresenceFacts{}.
+		With(table.Key(), key.Key()).
+		WithValue(table.Key(), key.Key(), value.Key()).
+		WithKeyArray(array.Key(), table.Key()).
+		WithEmptyKeyArray(array.Key()).
+		WithPendingKeyArray(array.Key(), table.Key(), key.Key())
+
+	killed := facts.KillAffectedByWriteAddress(testStableAddressPath(t, member))
+	if !KeyPresenceFactsDomain.Equal(killed, facts) {
+		t.Fatalf("write invalidation treated legacy stored keys as canonical: got %s want %s", killed.Format(), facts.Format())
+	}
+
+	killed = facts.KillSubtreeAddress(testStableAddressPath(t, table))
+	if !KeyPresenceFactsDomain.Equal(killed, facts) {
+		t.Fatalf("subtree invalidation treated legacy stored keys as canonical: got %s want %s", killed.Format(), facts.Format())
+	}
+}
+
+func TestKeyPresenceFactsPresentElementInvalidationIgnoresLegacyStoredKeys(t *testing.T) {
+	table := constraint.NewPath(cfg.SymbolID(47), "table")
+	member := table.Field("child")
+	key := constraint.NewPath(cfg.SymbolID(48), "key")
+	value := constraint.NewPath(cfg.SymbolID(49), "value")
+	array := constraint.NewPath(cfg.SymbolID(50), "array")
+	facts := KeyPresenceFacts{}.
+		With(table.Key(), key.Key()).
+		WithValue(table.Key(), key.Key(), value.Key()).
+		WithKeyArray(array.Key(), table.Key()).
+		WithKeyArrayValue(array.Key(), table.Key(), product.FromType(typ.String)).
+		WithPendingKeyArray(array.Key(), table.Key(), key.Key())
+
+	killed := facts.KillAffectedByPresentElementWriteAddress(testStableAddressPath(t, member))
+	if !KeyPresenceFactsDomain.Equal(killed, facts) {
+		t.Fatalf("present-element invalidation treated legacy stored keys as canonical: got %s want %s", killed.Format(), facts.Format())
+	}
+}
+
 func TestKeyPresenceFactsKillAffectedByWriteDropsArrayMemberFacts(t *testing.T) {
 	array := SymbolPathKey(cfg.SymbolID(1), nil)
 	arrayMember := SymbolPathKey(cfg.SymbolID(1), []constraint.Segment{

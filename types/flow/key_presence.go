@@ -2018,12 +2018,12 @@ func appendElementFieldOriginsForBases(
 }
 
 func keyPresencePathAffectedByAddress(path constraint.PathKey, root StableAddress) bool {
-	pathAddr, ok := StableAddressFromKey(path)
+	pathAddr, ok := StableAddressFromCanonicalKey(path)
 	return ok && pathAddr.HasPrefix(root)
 }
 
 func keyPresencePathOverlapsAddress(path constraint.PathKey, addr StableAddress) bool {
-	pathAddr, ok := StableAddressFromKey(path)
+	pathAddr, ok := StableAddressFromCanonicalKey(path)
 	return ok && pathAddr.Overlaps(addr)
 }
 
