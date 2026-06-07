@@ -30,7 +30,7 @@ func (t *Transfer) dynamicIndexWriteProof(
 	if path, ok := t.staticPathOfExpr(effect.Source); ok {
 		valuePath = path
 	}
-	proof, ok := flow.MapWriteProofOfPathProof(flow.MapWritePathProof{
+	proof, ok := flow.MapWriteTransactionOfPath(flow.MapWritePathTransaction{
 		TablePath:              targetPath,
 		KeyPath:                keyPath,
 		KeyValue:               key,
@@ -68,7 +68,7 @@ func (t *Transfer) applySymbolicDynamicIndexWriteProof(
 	if src != nil {
 		valuePath, _ = t.staticPathOfExpr(src)
 	}
-	return flow.ApplyMapWritePathProof(out, flow.MapWritePathProof{
+	return flow.ApplyMapWritePathTransaction(out, flow.MapWritePathTransaction{
 		TablePath:              tablePath,
 		KeyPath:                keyPath,
 		KeyValue:               product.FromType(typ.Unknown),

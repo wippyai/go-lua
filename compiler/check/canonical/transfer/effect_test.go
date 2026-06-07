@@ -455,7 +455,7 @@ func TestDynamicIndexWriteProofKeepsOpaqueUnsealedReadbackLightweight(t *testing
 	keyPath := constraint.NewPath(cfg.SymbolID(439), "node_id")
 	out := flow.PointState{}
 
-	proof, ok := flow.MapWriteProofOfPathProof(flow.MapWritePathProof{
+	proof, ok := flow.MapWriteTransactionOfPath(flow.MapWritePathTransaction{
 		TablePath:              tablePath,
 		KeyPath:                keyPath,
 		KeyValue:               product.FromType(typ.Unknown),
@@ -1787,7 +1787,7 @@ func TestDelayedIndexWriteMaterializesPendingAppendKeyArrayValue(t *testing.T) {
 		t.Fatalf("pending append materialized before table key proof: %s", out.KeyPresence.Format())
 	}
 
-	proof, ok := flow.MapWriteProofOfPathProof(flow.MapWritePathProof{
+	proof, ok := flow.MapWriteTransactionOfPath(flow.MapWritePathTransaction{
 		TablePath:              tablePath,
 		KeyPath:                keyPath,
 		KeyValue:               product.FromType(typ.Unknown),

@@ -121,7 +121,7 @@ func ApplyBoundaryFacts(
 		if !ok {
 			continue
 		}
-		changed = ApplyMapWritePathProof(out, MapWritePathProof{
+		changed = ApplyMapWritePathTransaction(out, MapWritePathTransaction{
 			TablePath:              table,
 			KeyPath:                key,
 			KeyValue:               product.FromType(typ.Unknown),

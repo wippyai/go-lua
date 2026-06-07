@@ -69,13 +69,13 @@ func TestApplyMapWriteProofPublishesReadbackWhenAdmissible(t *testing.T) {
 	}
 }
 
-func TestApplyMapWritePathProofLowersStructuredPaths(t *testing.T) {
+func TestApplyMapWritePathTransactionLowersStructuredPaths(t *testing.T) {
 	tablePath := constraint.NewPath(cfg.SymbolID(8), "nodes")
 	keyPath := constraint.NewPath(cfg.SymbolID(9), "node_id")
 	valuePath := constraint.NewPath(cfg.SymbolID(10), "node")
 	state := PointState{}
 
-	if changed := ApplyMapWritePathProof(&state, MapWritePathProof{
+	if changed := ApplyMapWritePathTransaction(&state, MapWritePathTransaction{
 		TablePath:              tablePath,
 		KeyPath:                keyPath,
 		KeyValue:               product.FromType(typ.LiteralString("n1")),
@@ -83,7 +83,7 @@ func TestApplyMapWritePathProofLowersStructuredPaths(t *testing.T) {
 		Value:                  product.FromType(typ.Number),
 		AllowOpaqueKeyReadback: true,
 	}); !changed {
-		t.Fatal("ApplyMapWritePathProof reported unchanged")
+		t.Fatal("ApplyMapWritePathTransaction reported unchanged")
 	}
 
 	if !state.KeyPresence.Has(StablePathKey(tablePath), StablePathKey(keyPath)) {

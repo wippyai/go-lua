@@ -458,10 +458,9 @@ type MapWriteProof struct {
 	AllowOpaqueKeyReadback bool
 }
 
-// MapWritePathProof is the structured-path publication form for a dynamic map
-// write. Flow owns lowering these paths to stable addresses before applying the
-// reduced-product map-write transaction.
-type MapWritePathProof struct {
+// MapWritePathTransaction is the source-facing publication form for a dynamic
+// map write. Flow lowers paths once before applying the address transaction.
+type MapWritePathTransaction struct {
 	TablePath              constraint.Path
 	KeyPath                constraint.Path
 	ValuePath              constraint.Path
@@ -470,27 +469,27 @@ type MapWritePathProof struct {
 	AllowOpaqueKeyReadback bool
 }
 
-// MapWriteProofOfPathProof lowers a path-level dynamic map write proof to the
-// stable-address proof consumed by ApplyMapWriteProof.
-func MapWriteProofOfPathProof(proof MapWritePathProof) (MapWriteProof, bool) {
-	tableAddr, ok := StableAddressOfPath(proof.TablePath)
+// MapWriteTransactionOfPath lowers a source-level dynamic map write transaction
+// to the stable-address transaction consumed by ApplyMapWriteProof.
+func MapWriteTransactionOfPath(tx MapWritePathTransaction) (MapWriteProof, bool) {
+	tableAddr, ok := StableAddressOfPath(tx.TablePath)
 	if !ok {
 		return MapWriteProof{}, false
 	}
 	out := MapWriteProof{
 		Table:                  tableAddr,
-		KeyValue:               proof.KeyValue,
-		Value:                  proof.Value,
-		AllowOpaqueKeyReadback: proof.AllowOpaqueKeyReadback,
+		KeyValue:               tx.KeyValue,
+		Value:                  tx.Value,
+		AllowOpaqueKeyReadback: tx.AllowOpaqueKeyReadback,
 	}
-	if !proof.KeyPath.IsEmpty() {
-		if keyAddr, ok := StableAddressOfPath(proof.KeyPath); ok {
+	if !tx.KeyPath.IsEmpty() {
+		if keyAddr, ok := StableAddressOfPath(tx.KeyPath); ok {
 			out.Key = keyAddr
 			out.HasKey = true
 		}
 	}
-	if !proof.ValuePath.IsEmpty() {
-		if valueAddr, ok := StableAddressOfPath(proof.ValuePath); ok {
+	if !tx.ValuePath.IsEmpty() {
+		if valueAddr, ok := StableAddressOfPath(tx.ValuePath); ok {
 			out.ValuePath = valueAddr
 			out.HasValuePath = true
 		}
@@ -498,10 +497,10 @@ func MapWriteProofOfPathProof(proof MapWritePathProof) (MapWriteProof, bool) {
 	return out, true
 }
 
-// ApplyMapWritePathProof lowers and applies a path-level dynamic map write
-// proof.
-func ApplyMapWritePathProof(out *PointState, proof MapWritePathProof) bool {
-	normalized, ok := MapWriteProofOfPathProof(proof)
+// ApplyMapWritePathTransaction lowers and applies a source-level dynamic map
+// write transaction.
+func ApplyMapWritePathTransaction(out *PointState, tx MapWritePathTransaction) bool {
+	normalized, ok := MapWriteTransactionOfPath(tx)
 	if !ok {
 		return false
 	}
