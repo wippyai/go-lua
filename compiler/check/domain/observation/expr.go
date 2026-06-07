@@ -102,10 +102,12 @@ func New(cfg Config) Projector {
 		cfg:         cfg,
 		globalTypes: globalenv.NormalizeTypeOverlay(cfg.GlobalTypeOverlay),
 		proofs: evidence.New(evidence.Config{
-			Graph:  cfg.Graph,
-			Facts:  cfg.Facts,
-			Inputs: cfg.Inputs,
-			Flow:   cfg.Flow,
+			Graph:   cfg.Graph,
+			Facts:   cfg.Facts,
+			Inputs:  cfg.Inputs,
+			Flow:    cfg.Flow,
+			Ctx:     cfg.Ctx,
+			TypeOps: cfg.TypeOps,
 		}),
 	}
 }
@@ -1780,7 +1782,7 @@ func (p Projector) ObservePath(q flow.PathObservationQuery) flow.PathObservation
 			Proof:         proof,
 			AdmitSelected: false,
 		}))
-	} else if t, ok := p.factsNarrowedPathType(q.Point, path); ok {
+	} else if t, ok := p.proofs.ProjectedPathType(q.Point, path); ok {
 		return p.withPathObservationIndexRead(q, flow.SelectPathObservationResult(flow.PathObservationSelection{
 			Query:    q,
 			Declared: declared,

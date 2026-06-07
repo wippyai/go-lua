@@ -10,17 +10,26 @@ import (
 	"github.com/wippyai/go-lua/compiler/check/domain/indexread"
 	"github.com/wippyai/go-lua/compiler/check/domain/paramevidence"
 	flowpath "github.com/wippyai/go-lua/compiler/check/domain/path"
+	"github.com/wippyai/go-lua/compiler/check/domain/typepath"
 	"github.com/wippyai/go-lua/types/constraint"
+	"github.com/wippyai/go-lua/types/db"
 	"github.com/wippyai/go-lua/types/flow"
+	"github.com/wippyai/go-lua/types/kind"
+	"github.com/wippyai/go-lua/types/narrow"
+	querycore "github.com/wippyai/go-lua/types/query/core"
+	"github.com/wippyai/go-lua/types/subtype"
 	"github.com/wippyai/go-lua/types/typ"
+	"github.com/wippyai/go-lua/types/typ/unwrap"
 )
 
 // Config supplies the solved carriers needed to build semantic evidence views.
 type Config struct {
-	Graph  *cfg.Graph
-	Facts  flow.TypeFacts
-	Inputs *flow.Inputs
-	Flow   api.FlowOps
+	Graph   *cfg.Graph
+	Facts   flow.TypeFacts
+	Inputs  *flow.Inputs
+	Flow    api.FlowOps
+	Ctx     *db.QueryContext
+	TypeOps querycore.TypeOps
 }
 
 // Projection is the canonical lens from raw solved carriers to semantic proof
@@ -110,6 +119,44 @@ func (p Projection) DirectPathCandidate(point cfg.Point, path constraint.Path, v
 		Source: flow.PathObservationDirectPath,
 		OK:     true,
 	}
+}
+
+// ProjectedPathType derives a path type from per-point facts for producers that
+// have not published the full PathObservationFacts surface. It keeps root
+// refinement admission, member projection, length-index proofs, and condition
+// projection together so consumers do not rebuild a partial path-read algebra.
+func (p Projection) ProjectedPathType(point cfg.Point, path constraint.Path) (typ.Type, bool) {
+	if p.cfg.Facts == nil || path.Symbol == 0 {
+		return nil, false
+	}
+	if len(path.Segments) > 0 {
+		if pathFacts, ok := p.cfg.Facts.(flow.PathFacts); ok {
+			refined := pathFacts.RefinedPathAt(point, path)
+			if refined.State == flow.StateResolved && !typ.IsAbsentOrUnknown(refined.Type) {
+				return refined.Type, true
+			}
+		}
+	}
+	refined := p.cfg.Facts.RefinedAt(point, path.Symbol)
+	if refined.State != flow.StateResolved || refined.Type == nil || typ.IsUnknown(refined.Type) {
+		return nil, false
+	}
+	root := p.soundRootRefinement(point, path.Symbol, refined.Type)
+	if root == nil {
+		return nil, false
+	}
+	if len(path.Segments) == 0 {
+		return root, true
+	}
+	derived := p.typeAtSegments(root, path.Segments)
+	if derived == nil {
+		return nil, false
+	}
+	derived = p.refineLengthIndex(point, path, root, derived)
+	if cf, ok := p.cfg.Facts.(conditionFacts); ok {
+		derived = p.refineCondition(path, root, derived, cf.ConditionAt(point))
+	}
+	return derived, true
 }
 
 // AssignmentSourceFacts returns the transfer-owned RHS source evidence surface.
@@ -213,6 +260,10 @@ type postStateTypeFacts interface {
 
 type postStatePathFacts interface {
 	PostRefinedPathAt(point cfg.Point, path constraint.Path) flow.TypedValue
+}
+
+type conditionFacts interface {
+	ConditionAt(point cfg.Point) constraint.Condition
 }
 
 type bodyContractFacts interface {
@@ -337,6 +388,184 @@ func (f factsIndexReadFlow) symbolAt(p cfg.Point, name string) (cfg.SymbolID, bo
 	return sym, true
 }
 
+func (p Projection) soundRootRefinement(point cfg.Point, sym cfg.SymbolID, refined typ.Type) typ.Type {
+	declared := p.declaredSymbolType(point, sym)
+	if declared == nil {
+		return refined
+	}
+	if declared.Kind().IsPlaceholder() {
+		// A gradual declaration remains the assignment contract unless flow has
+		// proven a concrete guard narrowing for the current read.
+		if refined.Kind().IsPlaceholder() {
+			return nil
+		}
+		return refined
+	}
+	if !subtype.IsSubtype(refined, declared) {
+		return nil
+	}
+	return refined
+}
+
+func (p Projection) declaredSymbolType(point cfg.Point, sym cfg.SymbolID) typ.Type {
+	if p.cfg.Facts == nil || sym == 0 || !p.cfg.Facts.IsAnnotated(sym) {
+		return nil
+	}
+	tv := p.cfg.Facts.DeclaredAt(point, sym)
+	if tv.State != flow.StateResolved || tv.Type == nil || typ.IsUnknown(tv.Type) {
+		return nil
+	}
+	return tv.Type
+}
+
+func (p Projection) typeAtSegments(base typ.Type, segments []constraint.Segment) typ.Type {
+	return typepath.TypeAtSegments(base, segments, typepath.Options{
+		Ctx:               p.cfg.Ctx,
+		Ops:               p.cfg.TypeOps,
+		MissingFieldAsNil: true,
+	})
+}
+
+func (p Projection) refineLengthIndex(point cfg.Point, path constraint.Path, root, derived typ.Type) typ.Type {
+	if len(path.Segments) == 0 {
+		return derived
+	}
+	idx := -1
+	for i := len(path.Segments) - 1; i >= 0; i-- {
+		if path.Segments[i].Kind == constraint.SegmentIndexInt {
+			idx = i
+			break
+		}
+	}
+	if idx < 0 {
+		return derived
+	}
+	seg := path.Segments[idx]
+	if seg.Kind != constraint.SegmentIndexInt || seg.Index < 1 {
+		return derived
+	}
+	lengthFacts, ok := p.cfg.Facts.(flow.LengthFacts)
+	if !ok {
+		return derived
+	}
+	containerPath := constraint.Path{
+		Root:     path.Root,
+		Symbol:   path.Symbol,
+		Version:  path.Version,
+		Segments: append([]constraint.Segment(nil), path.Segments[:idx]...),
+	}
+	lower, ok := lengthFacts.LengthLowerBoundAt(point, path.Symbol)
+	if pathFacts, hasPathFacts := p.cfg.Facts.(flow.PathLengthFacts); hasPathFacts {
+		if pathLower, pathOK := pathFacts.LengthLowerBoundForPathAt(point, containerPath); pathOK {
+			lower, ok = pathLower, true
+		}
+	}
+	if !ok || lower < int64(seg.Index) {
+		return derived
+	}
+	container := p.typeAtSegments(root, path.Segments[:idx])
+	if container == nil {
+		return derived
+	}
+	if refined := narrow.RefineSequenceIndex(container, derived, int64(seg.Index)); refined != nil {
+		return refined
+	}
+	return derived
+}
+
+func (p Projection) refineCondition(query constraint.Path, root, derived typ.Type, cond constraint.Condition) typ.Type {
+	if root == nil || derived == nil || !cond.HasConstraints() || cond.IsFalse() || cond.IsTrue() {
+		return derived
+	}
+	var out typ.Type
+	applied := false
+	for i := 0; i < cond.NumDisjuncts(); i++ {
+		next, ok := p.refineConditionDisjunct(query, root, cond.DisjunctConstraints(i))
+		if !ok || next == nil {
+			next = derived
+		} else {
+			applied = true
+		}
+		out = typ.JoinPreferNonSoft(out, next)
+	}
+	if !applied || out == nil {
+		return derived
+	}
+	return typ.PruneSoftUnionMembers(out)
+}
+
+func (p Projection) refineConditionDisjunct(query constraint.Path, root typ.Type, constraints []constraint.Constraint) (typ.Type, bool) {
+	if root == nil || len(constraints) == 0 {
+		return nil, false
+	}
+	for _, c := range constraints {
+		switch v := c.(type) {
+		case constraint.FieldEquals:
+			if next, ok := p.refineQueryByFieldEquals(query, root, v.Target, v.Field, v.Value); ok {
+				return next, true
+			}
+		case constraint.IndexEquals:
+			if lit, ok := v.Key.(*typ.Literal); ok && lit.Base == kind.Integer {
+				if n, ok := lit.Value.(int64); ok {
+					target := v.Target.Append(constraint.Segment{Kind: constraint.SegmentIndexInt, Index: int(n)})
+					if next, ok := p.refineQueryByLiteralPath(query, root, target, v.Value); ok {
+						return next, true
+					}
+				}
+			}
+		}
+	}
+	return nil, false
+}
+
+func (p Projection) refineQueryByFieldEquals(query constraint.Path, root typ.Type, target constraint.Path, field string, value typ.Type) (typ.Type, bool) {
+	if field == "" {
+		return nil, false
+	}
+	return p.refineQueryByFieldLiteral(query, root, target, field, value)
+}
+
+func (p Projection) refineQueryByLiteralPath(query constraint.Path, root typ.Type, literalPath constraint.Path, value typ.Type) (typ.Type, bool) {
+	if len(literalPath.Segments) == 0 {
+		return nil, false
+	}
+	fieldSeg := literalPath.Segments[len(literalPath.Segments)-1]
+	if fieldSeg.Kind != constraint.SegmentField && fieldSeg.Kind != constraint.SegmentIndexString {
+		return nil, false
+	}
+	target := constraint.Path{
+		Root:     literalPath.Root,
+		Symbol:   literalPath.Symbol,
+		Version:  literalPath.Version,
+		Segments: append([]constraint.Segment(nil), literalPath.Segments[:len(literalPath.Segments)-1]...),
+	}
+	return p.refineQueryByFieldLiteral(query, root, target, fieldSeg.Name, value)
+}
+
+func (p Projection) refineQueryByFieldLiteral(query constraint.Path, root typ.Type, target constraint.Path, field string, value typ.Type) (typ.Type, bool) {
+	lit, ok := unwrap.Alias(value).(*typ.Literal)
+	if !ok || lit == nil {
+		return nil, false
+	}
+	if !pathHasPrefix(query, target) {
+		return nil, false
+	}
+	targetType := p.typeAtSegments(root, target.Segments)
+	if targetType == nil {
+		return nil, false
+	}
+	refinedTarget := narrow.ByFieldLiteral(targetType, field, lit, queryResolver{})
+	if refinedTarget == nil || typ.TypeEquals(refinedTarget, targetType) {
+		return nil, false
+	}
+	suffix := query.Segments[len(target.Segments):]
+	out := p.typeAtSegments(refinedTarget, suffix)
+	if out == nil {
+		return nil, false
+	}
+	return out, true
+}
+
 func firstProvider[T any](facts flow.TypeFacts, flowOps api.FlowOps) (T, bool) {
 	if provider, ok := factsProvider[T](facts); ok {
 		return provider, true
@@ -348,6 +577,39 @@ func firstProvider[T any](facts flow.TypeFacts, flowOps api.FlowOps) (T, bool) {
 	}
 	var zero T
 	return zero, false
+}
+
+type queryResolver struct{}
+
+func (queryResolver) Field(t typ.Type, name string) (typ.Type, bool) {
+	return querycore.Field(t, name)
+}
+
+func (queryResolver) Index(t typ.Type, key typ.Type) (typ.Type, bool) {
+	return querycore.Index(t, key)
+}
+
+func pathHasPrefix(path, prefix constraint.Path) bool {
+	if path.Symbol != 0 && prefix.Symbol != 0 {
+		if path.Symbol != prefix.Symbol {
+			return false
+		}
+	} else if path.Root != prefix.Root {
+		return false
+	}
+	if len(prefix.Segments) > len(path.Segments) {
+		return false
+	}
+	for i := range prefix.Segments {
+		if !segmentEqual(path.Segments[i], prefix.Segments[i]) {
+			return false
+		}
+	}
+	return true
+}
+
+func segmentEqual(a, b constraint.Segment) bool {
+	return a.Kind == b.Kind && a.Name == b.Name && a.Index == b.Index
 }
 
 func factsProvider[T any](facts flow.TypeFacts) (T, bool) {

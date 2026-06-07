@@ -322,7 +322,7 @@ func (f bodyContractOriginFactsStub) ConditionedSeedTypeAt(point cfg.Point, seed
 
 func (f bodyContractOriginFactsStub) conditionProjector() flow.ConditionProofProjector {
 	return flow.ConditionProofProjector{
-		Resolver:    observationResolver{},
+		Resolver:    querycore.Resolver(),
 		ConditionAt: f.ConditionAt,
 		RootTypeAt: func(point cfg.Point, path constraint.Path) typ.Type {
 			tv := f.EffectiveTypeAt(point, path.Symbol)

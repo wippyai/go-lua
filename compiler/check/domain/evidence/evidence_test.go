@@ -103,9 +103,41 @@ func TestProjectionExposesAuxiliaryObservationEvidence(t *testing.T) {
 	}
 }
 
+func TestProjectedPathTypeAppliesRootConditionProjection(t *testing.T) {
+	root := constraint.NewPath(cfg.SymbolID(31), "payload")
+	query := root.Field("value")
+	a := typ.NewRecord().
+		Field("tag", typ.LiteralString("a")).
+		Field("value", typ.String).
+		Build()
+	b := typ.NewRecord().
+		Field("tag", typ.LiteralString("b")).
+		Field("value", typ.Number).
+		Build()
+	facts := evidenceFacts{
+		refined: map[cfg.SymbolID]flow.TypedValue{
+			root.Symbol: {Type: typ.NewUnion(a, b), State: flow.StateResolved},
+		},
+		cond: constraint.FromConstraints(constraint.FieldEquals{
+			Target: root,
+			Field:  "tag",
+			Value:  typ.LiteralString("a"),
+		}),
+	}
+
+	got, ok := New(Config{Facts: facts}).ProjectedPathType(cfg.Point(3), query)
+	if !ok || !typ.TypeEquals(got, typ.String) {
+		t.Fatalf("ProjectedPathType = %v/%v, want string/true", got, ok)
+	}
+}
+
 type evidenceFacts struct {
 	current        map[constraint.PathKey]flow.TypedValue
 	post           map[constraint.PathKey]flow.TypedValue
+	refined        map[cfg.SymbolID]flow.TypedValue
+	declared       map[cfg.SymbolID]flow.TypedValue
+	annotated      map[cfg.SymbolID]bool
+	cond           constraint.Condition
 	effective      flow.TypedValue
 	postSymbol     flow.TypedValue
 	contracts      paramevidence.Contracts
@@ -120,11 +152,17 @@ type evidenceFacts struct {
 	indexAdmission typ.Type
 }
 
-func (f evidenceFacts) DeclaredAt(cfg.Point, cfg.SymbolID) flow.TypedValue {
+func (f evidenceFacts) DeclaredAt(_ cfg.Point, sym cfg.SymbolID) flow.TypedValue {
+	if f.declared != nil {
+		return f.declared[sym]
+	}
 	return flow.TypedValue{Type: typ.Unknown, State: flow.StateUnknown}
 }
 
-func (f evidenceFacts) RefinedAt(cfg.Point, cfg.SymbolID) flow.TypedValue {
+func (f evidenceFacts) RefinedAt(_ cfg.Point, sym cfg.SymbolID) flow.TypedValue {
+	if f.refined != nil {
+		return f.refined[sym]
+	}
 	return flow.TypedValue{Type: typ.Unknown, State: flow.StateUnknown}
 }
 
@@ -135,7 +173,9 @@ func (f evidenceFacts) EffectiveTypeAt(cfg.Point, cfg.SymbolID) flow.TypedValue 
 	return flow.TypedValue{Type: typ.Unknown, State: flow.StateUnknown}
 }
 
-func (f evidenceFacts) IsAnnotated(cfg.SymbolID) bool { return false }
+func (f evidenceFacts) IsAnnotated(sym cfg.SymbolID) bool {
+	return f.annotated != nil && f.annotated[sym]
+}
 
 func (f evidenceFacts) RefinedPathAt(_ cfg.Point, path constraint.Path) flow.TypedValue {
 	if f.current == nil {
@@ -175,6 +215,13 @@ func (f evidenceFacts) AppendElementFieldSourceRoutesAt(cfg.Point, flow.AppendEl
 
 func (f evidenceFacts) CallReturnTypesAt(cfg.Point, *ast.FuncCallExpr, typ.Type) ([]typ.Type, bool) {
 	return f.callReturns, len(f.callReturns) > 0
+}
+
+func (f evidenceFacts) ConditionAt(cfg.Point) constraint.Condition {
+	if f.cond.HasConstraints() || f.cond.IsFalse() {
+		return f.cond
+	}
+	return constraint.TrueCondition()
 }
 
 func (f evidenceFacts) HasKeyOf(cfg.Point, constraint.Path, constraint.Path) bool {
