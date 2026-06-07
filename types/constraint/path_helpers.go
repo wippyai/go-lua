@@ -76,6 +76,24 @@ func IsReturnPath(p Path) bool {
 	return p.Symbol == 0 && len(p.Segments) == 0 && ReturnIndexFromString(p.Root) >= 0
 }
 
+// SplitFieldPath splits a path into its parent path and field name.
+// Returns false if the path has no field segment. The returned parent path owns
+// its own segment slice.
+func SplitFieldPath(path Path) (parent Path, field string, ok bool) {
+	if path.IsEmpty() || len(path.Segments) == 0 {
+		return Path{}, "", false
+	}
+	last := path.Segments[len(path.Segments)-1]
+	if last.Kind != SegmentField {
+		return Path{}, "", false
+	}
+	parent = Path{Root: path.Root, Symbol: path.Symbol, Version: path.Version}
+	if len(path.Segments) > 1 {
+		parent.Segments = append(parent.Segments, path.Segments[:len(path.Segments)-1]...)
+	}
+	return parent, last.Name, true
+}
+
 // SplitIndexPath splits a path into its parent path and literal index key.
 // Returns false if the path has no static index segment. The returned parent
 // path owns its own segment slice.

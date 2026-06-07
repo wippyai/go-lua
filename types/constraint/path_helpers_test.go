@@ -1,6 +1,7 @@
 package constraint
 
 import (
+	"reflect"
 	"strconv"
 	"testing"
 )
@@ -143,6 +144,42 @@ func TestPathHelpers_UniqueKeys(t *testing.T) {
 			t.Errorf("Key collision: %s and %s both have key %q", existing, p.name, key)
 		}
 		seen[key] = p.name
+	}
+}
+
+func TestSplitFieldPath(t *testing.T) {
+	base := Path{Root: "record", Symbol: 7, Version: 3}.Field("payload")
+	path := base.Field("id")
+
+	parent, field, ok := SplitFieldPath(path)
+	if !ok {
+		t.Fatal("SplitFieldPath returned false")
+	}
+	if field != "id" {
+		t.Fatalf("field = %q, want id", field)
+	}
+	if !reflect.DeepEqual(parent, base) {
+		t.Fatalf("parent = %#v, want %#v", parent, base)
+	}
+
+	parent.Segments[0].Name = "mutated"
+	if path.Segments[0].Name != "payload" {
+		t.Fatalf("SplitFieldPath parent aliases input segments")
+	}
+}
+
+func TestSplitFieldPathRejectsNonFieldPaths(t *testing.T) {
+	tests := []Path{
+		{},
+		{Root: "value"},
+		Path{Root: "value"}.IndexStr("field"),
+		Path{Root: "value"}.IndexInt(1),
+	}
+
+	for _, path := range tests {
+		if parent, field, ok := SplitFieldPath(path); ok {
+			t.Fatalf("SplitFieldPath(%#v) = (%#v, %q, true), want rejected", path, parent, field)
+		}
 	}
 }
 

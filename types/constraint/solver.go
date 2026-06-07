@@ -1524,24 +1524,6 @@ func IsBooleanDiscriminantField(parentType typ.Type, field string, resolver narr
 	return hasBoolLiteral
 }
 
-// SplitFieldPath splits a path into its parent path and field name.
-// Returns false if the path has no field segments.
-// The returned parent path owns its own segment slice (safe to mutate).
-func SplitFieldPath(path Path) (parent Path, field string, ok bool) {
-	if path.IsEmpty() || len(path.Segments) == 0 {
-		return Path{}, "", false
-	}
-	last := path.Segments[len(path.Segments)-1]
-	if last.Kind != SegmentField {
-		return Path{}, "", false
-	}
-	parent = Path{Root: path.Root, Symbol: path.Symbol, Version: path.Version}
-	if len(path.Segments) > 1 {
-		parent.Segments = append(parent.Segments, path.Segments[:len(path.Segments)-1]...)
-	}
-	return parent, last.Name, true
-}
-
 // propagateFieldNarrowingToParents propagates field narrowing up the path chain.
 // For r.a.b == "x", this narrows r based on a.b == "x".
 func propagateFieldNarrowingToParents(out *map[PathKey]typ.Type, target Path, field string, value *typ.Literal, env Env) bool {
