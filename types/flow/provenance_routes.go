@@ -2,32 +2,68 @@ package flow
 
 import "github.com/wippyai/go-lua/types/constraint"
 
+// ProvenanceRouteQuery selects the provenance edges to expose for a path.
+type ProvenanceRouteQuery struct {
+	Path                      constraint.Path
+	IdentityAliases           bool
+	IdentityAliasPolicy       IdentityAliasRoutePolicy
+	ValueOrigins              bool
+	AppendElementFieldOrigins bool
+}
+
 // ProvenanceRoutes returns one-step source routes that may explain a read of
 // path. It composes the currently separate alias, value-origin, and append-field
 // origin domains into one normalized route boundary for checker layers.
 func (f PointFacts) ProvenanceRoutes(path constraint.Path) []ProvenanceRoute {
-	target, ok := StableAddressOfPath(path)
+	return f.ProvenanceRoutesFor(ProvenanceRouteQuery{
+		Path:                      path,
+		IdentityAliases:           true,
+		IdentityAliasPolicy:       IdentityAliasReadPolicy,
+		ValueOrigins:              true,
+		AppendElementFieldOrigins: true,
+	})
+}
+
+// ProvenanceRoutesFor returns one-step source routes selected by query. Flow
+// owns the storage-domain composition; caller layers choose which semantic edge
+// classes are meaningful for their operation.
+func (f PointFacts) ProvenanceRoutesFor(q ProvenanceRouteQuery) []ProvenanceRoute {
+	target, ok := StableAddressOfPath(q.Path)
 	if !ok {
 		return nil
 	}
 	var out []ProvenanceRoute
-	for _, source := range IdentityAliasSourcesWithPolicy(f.state, target, IdentityAliasReadPolicy) {
-		sourcePath, ok := source.Path()
-		if !ok || sourcePath.IsEmpty() || sourcePath.Symbol == 0 {
-			continue
+	if q.IdentityAliases {
+		policy := q.IdentityAliasPolicy
+		if !policy.PathAliases && !policy.AssignmentOrigins {
+			policy = IdentityAliasReadPolicy
 		}
-		out = append(out, ProvenanceRoute{
-			Kind:   ProvenanceRouteIdentityAlias,
-			Source: sourcePath,
-		})
+		for _, source := range IdentityAliasSourcesWithPolicy(f.state, target, policy) {
+			sourcePath, ok := source.Path()
+			if !ok || sourcePath.IsEmpty() || sourcePath.Symbol == 0 {
+				continue
+			}
+			out = append(out, ProvenanceRoute{
+				Kind:   ProvenanceRouteIdentityAlias,
+				Source: sourcePath,
+			})
+		}
 	}
-	for _, use := range f.state.ValueOrigins.OriginsCoveringAddress(target) {
-		switch use.Origin.Kind {
-		case ValueOriginIndexedIterator:
-			out = appendAppendFieldProvenanceRoutes(out, f.state, use)
-			out = appendValueOriginProvenanceRoute(out, use, ProvenanceRouteIndexedIterator)
-		case ValueOriginKeyedIterator:
-			out = appendValueOriginProvenanceRoute(out, use, ProvenanceRouteKeyedIterator)
+	if q.ValueOrigins || q.AppendElementFieldOrigins {
+		for _, use := range f.state.ValueOrigins.OriginsCoveringAddress(target) {
+			switch use.Origin.Kind {
+			case ValueOriginIndexedIterator:
+				if q.AppendElementFieldOrigins {
+					out = appendAppendFieldProvenanceRoutes(out, f.state, use)
+				}
+				if q.ValueOrigins {
+					out = appendValueOriginProvenanceRoute(out, use, ProvenanceRouteIndexedIterator)
+				}
+			case ValueOriginKeyedIterator:
+				if q.ValueOrigins {
+					out = appendValueOriginProvenanceRoute(out, use, ProvenanceRouteKeyedIterator)
+				}
+			}
 		}
 	}
 	return out

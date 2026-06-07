@@ -547,8 +547,12 @@ func (t *Transfer) aliasReplayWriteEffects(out *flow.PointState, effect WriteEff
 		return nil
 	}
 	var outEffects []WriteEffect
-	facts := flow.PointFactsOf(*out)
-	for _, source := range facts.IdentityAliasSourcePaths(path, flow.IdentityAliasDescendantOriginPolicy) {
+	for _, route := range flow.PointFactsOf(*out).ProvenanceRoutesFor(flow.ProvenanceRouteQuery{
+		Path:                path,
+		IdentityAliases:     true,
+		IdentityAliasPolicy: flow.IdentityAliasDescendantOriginPolicy,
+	}) {
+		source := route.Source
 		if source.IsEmpty() || len(source.Segments) == 0 {
 			continue
 		}

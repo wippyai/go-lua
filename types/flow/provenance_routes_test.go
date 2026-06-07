@@ -52,3 +52,44 @@ func TestPointFactsProvenanceRoutesComposeIteratorAppendFieldSources(t *testing.
 		t.Fatalf("iterator remainder = %#v, want .id", routes[1].Remainder)
 	}
 }
+
+func TestPointFactsProvenanceRoutesForDescendantAssignmentAliases(t *testing.T) {
+	target := constraint.NewPath(cfg.SymbolID(311), "target")
+	pathAliasSource := constraint.NewPath(cfg.SymbolID(312), "path_source")
+	assignmentSource := constraint.NewPath(cfg.SymbolID(313), "assignment_source")
+	state := PointState{
+		PathAliases: PathAliasFacts{}.WithAddresses(
+			testStableAddressPath(t, target),
+			testStableAddressPath(t, pathAliasSource),
+		),
+		ValueOrigins: ValueOriginFacts{}.WithAddresses(
+			testStableAddressPath(t, target),
+			testStableAddressPath(t, assignmentSource),
+			ValueOriginAssignmentAlias,
+			0,
+		),
+	}
+
+	exact := PointFactsOf(state).ProvenanceRoutesFor(ProvenanceRouteQuery{
+		Path:                target,
+		IdentityAliases:     true,
+		IdentityAliasPolicy: IdentityAliasDescendantOriginPolicy,
+	})
+	if len(exact) != 0 {
+		t.Fatalf("exact descendant routes got %d, want none", len(exact))
+	}
+	descendant := PointFactsOf(state).ProvenanceRoutesFor(ProvenanceRouteQuery{
+		Path:                target.Field("id"),
+		IdentityAliases:     true,
+		IdentityAliasPolicy: IdentityAliasDescendantOriginPolicy,
+	})
+	if len(descendant) != 1 {
+		t.Fatalf("descendant routes got %d, want assignment alias only", len(descendant))
+	}
+	if descendant[0].Kind != ProvenanceRouteIdentityAlias {
+		t.Fatalf("route kind = %v, want identity alias", descendant[0].Kind)
+	}
+	if !descendant[0].Source.Equal(assignmentSource.Field("id")) {
+		t.Fatalf("route source = %v, want %v", descendant[0].Source, assignmentSource.Field("id"))
+	}
+}
