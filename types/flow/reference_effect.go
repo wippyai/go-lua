@@ -106,7 +106,7 @@ func FunctionRefTreeFromSubtreePath(refs FunctionRefs, source constraint.Path) (
 		if set.IsBottom() {
 			continue
 		}
-		addr, ok := StableAddressFromKey(key)
+		addr, ok := StableAddressFromCanonicalKey(key)
 		if !ok {
 			continue
 		}
@@ -205,7 +205,7 @@ func ClosureRefTreeFromSubtreePath(refs ClosureRefs, source constraint.Path) (Cl
 		if set.IsBottom() {
 			continue
 		}
-		addr, ok := StableAddressFromKey(key)
+		addr, ok := StableAddressFromCanonicalKey(key)
 		if !ok {
 			continue
 		}

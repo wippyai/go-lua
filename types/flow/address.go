@@ -217,17 +217,17 @@ func StableAddressOfRootAndSuffix(root PathRoot, suffix PathSuffix) (StableAddre
 	return StableAddress{root: root, suffix: PathSuffixOfSegments(suffix.segments)}, true
 }
 
-// StableAddressFromKey parses a deterministic fact key back into structured
-// identity. It accepts keys produced by StableAddress.Key.
-func StableAddressFromKey(key constraint.PathKey) (StableAddress, bool) {
+// StableAddressFromCanonicalKey parses a stored fact key back into structured
+// identity. It accepts only keys produced by StableAddress.Key.
+func StableAddressFromCanonicalKey(key constraint.PathKey) (StableAddress, bool) {
 	if key == "" {
 		return StableAddress{}, false
 	}
 	if sym, segments, ok := ParseSymbolPathKey(key); ok {
 		return StableAddressOfSymbol(sym, segments)
 	}
-	if sym, segments, ok := parseLegacyConstraintSymbolPathKey(key); ok {
-		return StableAddressOfSymbol(sym, segments)
+	if _, _, ok := parseLegacyConstraintSymbolPathKey(key); ok {
+		return StableAddress{}, false
 	}
 	root, suffix, ok := splitStableRootKey(string(key))
 	if !ok {
@@ -238,6 +238,19 @@ func StableAddressFromKey(key constraint.PathKey) (StableAddress, bool) {
 		return StableAddress{}, false
 	}
 	return StableAddressOfRoot(root, segments)
+}
+
+// StableAddressFromKey accepts a caller-supplied path key at compatibility
+// boundaries. Stored fact maps should use StableAddressFromCanonicalKey so legacy
+// source path encodings cannot silently participate as canonical facts.
+func StableAddressFromKey(key constraint.PathKey) (StableAddress, bool) {
+	if addr, ok := StableAddressFromCanonicalKey(key); ok {
+		return addr, true
+	}
+	if sym, segments, ok := parseLegacyConstraintSymbolPathKey(key); ok {
+		return StableAddressOfSymbol(sym, segments)
+	}
+	return StableAddress{}, false
 }
 
 func parseLegacyConstraintSymbolPathKey(key constraint.PathKey) (cfg.SymbolID, []constraint.Segment, bool) {

@@ -541,7 +541,7 @@ func mergeFunctionRefsWithFixed(fixed, fallback flow.FunctionRefs) flow.Function
 		if set.IsBottom() {
 			continue
 		}
-		addr, ok := flow.StableAddressFromKey(path)
+		addr, ok := flow.StableAddressFromCanonicalKey(path)
 		if !ok {
 			continue
 		}
@@ -569,7 +569,7 @@ func mergeClosureRefsWithFixed(fixed, fallback flow.ClosureRefs) flow.ClosureRef
 		if set.IsBottom() {
 			continue
 		}
-		addr, ok := flow.StableAddressFromKey(path)
+		addr, ok := flow.StableAddressFromCanonicalKey(path)
 		if !ok {
 			continue
 		}

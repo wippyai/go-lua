@@ -159,6 +159,33 @@ func TestProjectFunctionRefsByPathKeepsSubtree(t *testing.T) {
 	}
 }
 
+func TestProjectFunctionRefsByPathIgnoresLegacyStoredKey(t *testing.T) {
+	root := constraint.NewPath(45, "root")
+	child := root.Field("child")
+	refs := FunctionRefs{
+		child.Key(): FunctionRefSetOf(FunctionRef{GraphID: 11}),
+	}
+
+	projected := ProjectFunctionRefsByPath(refs, root)
+	if _, ok := FunctionRefAtPath(projected, child); ok {
+		t.Fatalf("projection accepted legacy stored key %s: %#v", child.Key(), projected)
+	}
+}
+
+func TestRebaseFunctionRefsPathIgnoresLegacyStoredKey(t *testing.T) {
+	source := constraint.NewPath(46, "source")
+	target := constraint.NewPath(47, "target")
+	child := source.Field("child")
+	refs := FunctionRefs{
+		child.Key(): FunctionRefSetOf(FunctionRef{GraphID: 12}),
+	}
+
+	rebased := RebaseFunctionRefsPath(refs, source, target)
+	if _, ok := FunctionRefAtPath(rebased, target.Field("child")); ok {
+		t.Fatalf("rebase accepted legacy stored key %s: %#v", child.Key(), rebased)
+	}
+}
+
 func TestFunctionRefRootSymbolsUsesAddressRoots(t *testing.T) {
 	root := constraint.NewPath(cfg.SymbolID(51), "root")
 	child := root.Field("child")

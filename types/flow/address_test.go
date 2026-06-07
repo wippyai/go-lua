@@ -105,6 +105,22 @@ func TestStableAddressFromKeyRoundTripsSymbolAndRoot(t *testing.T) {
 	}
 }
 
+func TestStableAddressCanonicalKeyRejectsLegacyPathKey(t *testing.T) {
+	path := constraint.NewPath(cfg.SymbolID(12), "node").Field("label")
+	path.Version = 7
+	legacyKey := path.Key()
+	canonicalKey := StablePathKey(path)
+	if legacyKey == canonicalKey {
+		t.Fatalf("legacy key is already canonical: %s", legacyKey)
+	}
+	if _, ok := StableAddressFromCanonicalKey(legacyKey); ok {
+		t.Fatalf("canonical decoder accepted legacy key %s", legacyKey)
+	}
+	if addr, ok := StableAddressFromKey(legacyKey); !ok || addr.Key() != canonicalKey {
+		t.Fatalf("compat decoder = %s/%v, want canonical %s/true", addr.Key(), ok, canonicalKey)
+	}
+}
+
 func TestStablePathFromKeyReturnsStructuredPath(t *testing.T) {
 	path := constraint.NewPath(cfg.SymbolID(12), "node").IndexStr("last").Field("label")
 	key := StablePathKey(path)

@@ -377,7 +377,7 @@ func RebaseClosureRefsAddress(refs ClosureRefs, from, to StableAddress) ClosureR
 	out := make(ClosureRefs)
 	for _, path := range constraint.SortedPathKeys(refs) {
 		set := refs[path]
-		pathAddr, ok := StableAddressFromKey(path)
+		pathAddr, ok := StableAddressFromCanonicalKey(path)
 		if set.IsBottom() || !ok {
 			continue
 		}

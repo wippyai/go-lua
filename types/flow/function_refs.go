@@ -361,7 +361,7 @@ func RebaseFunctionRefsAddress(refs FunctionRefs, from, to StableAddress) Functi
 	out := make(FunctionRefs)
 	for _, path := range constraint.SortedPathKeys(refs) {
 		set := refs[path]
-		pathAddr, ok := StableAddressFromKey(path)
+		pathAddr, ok := StableAddressFromCanonicalKey(path)
 		if set.IsBottom() || !ok {
 			continue
 		}
@@ -398,7 +398,7 @@ func functionRefPathBelongsToSymbol(path constraint.PathKey, sym cfg.SymbolID) b
 }
 
 func appendReferencePathRootSymbol(symbols []cfg.SymbolID, path constraint.PathKey) []cfg.SymbolID {
-	addr, ok := StableAddressFromKey(path)
+	addr, ok := StableAddressFromCanonicalKey(path)
 	if !ok {
 		return symbols
 	}
@@ -455,7 +455,7 @@ func WithoutFunctionRefSubtree(refs FunctionRefs, path constraint.PathKey) Funct
 }
 
 func functionRefPathInAddressSubtree(path constraint.PathKey, root StableAddress) bool {
-	pathAddr, ok := StableAddressFromKey(path)
+	pathAddr, ok := StableAddressFromCanonicalKey(path)
 	if !ok {
 		return false
 	}
@@ -466,7 +466,7 @@ func referenceProjectionContainsPath(projection ReferencePathProjection, path co
 	if path == "" {
 		return false
 	}
-	pathAddr, ok := StableAddressFromKey(path)
+	pathAddr, ok := StableAddressFromCanonicalKey(path)
 	if !ok {
 		return false
 	}

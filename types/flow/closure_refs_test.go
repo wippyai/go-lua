@@ -460,6 +460,19 @@ func TestClosureRefTreeFromSubtreePathProjectsRelativeEntries(t *testing.T) {
 	}
 }
 
+func TestClosureRefTreeFromSubtreePathIgnoresLegacyStoredKey(t *testing.T) {
+	source := constraint.NewPath(cfg.SymbolID(58), "source")
+	child := source.Field("child")
+	closure := ClosureRefOf(FunctionRef{GraphID: 23}, CaptureCellsDomain.Bottom(), nil)
+	refs := ClosureRefs{
+		child.Key(): ClosureRefSetOf(closure),
+	}
+
+	if tree, ok := ClosureRefTreeFromSubtreePath(refs, source); ok {
+		t.Fatalf("tree accepted legacy stored key %s: %#v", child.Key(), tree)
+	}
+}
+
 func TestApplyClosureRefCellEffectsUpdatesStoredEnvironment(t *testing.T) {
 	sym := cfg.SymbolID(7)
 	path := constraint.NewPath(cfg.SymbolID(42), "fn").Key()
