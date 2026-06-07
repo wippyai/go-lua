@@ -1,6 +1,9 @@
 package flow
 
-import "github.com/wippyai/go-lua/types/constraint"
+import (
+	"github.com/wippyai/go-lua/types/constraint"
+	"github.com/wippyai/go-lua/types/domain/value/product"
+)
 
 // BoundaryAddressProjector maps point-local stable addresses into boundary
 // paths. Different callers can project to return slots or to direct-call
@@ -26,67 +29,79 @@ func ProjectKeyPresenceBoundaryFacts(
 	if f.IsBottom() || projector == nil {
 		return BoundaryFactsDomain.Top()
 	}
+	paths := newBoundaryAddressPathCache(projector)
+	return projectKeyPresenceBoundaryFactsWithPaths(f, paths, cfg)
+}
+
+func projectKeyPresenceBoundaryFactsWithPaths(
+	f KeyPresenceFacts,
+	paths boundaryAddressPathCache,
+	cfg KeyPresenceBoundaryProjection,
+) BoundaryFacts {
+	if f.IsBottom() || paths.projector == nil {
+		return BoundaryFactsDomain.Top()
+	}
 	var keyPresence []BoundaryKeyPresenceFact
-	for _, fact := range f.Entries() {
-		for _, table := range boundaryPathsFromStoredKey(projector, fact.Table) {
-			for _, key := range boundaryPathsFromStoredKey(projector, fact.Key) {
+	f.ForEachAddress(func(tableAddr, keyAddr StableAddress) bool {
+		for _, table := range paths.fromAddress(tableAddr) {
+			for _, key := range paths.fromAddress(keyAddr) {
 				keyPresence = append(keyPresence, BoundaryKeyPresenceFact{Table: table, Key: key})
 			}
 		}
-	}
+		return true
+	})
 
 	var keyArrays []BoundaryKeyArrayFact
-	for _, fact := range f.KeyArrayEntries() {
-		for _, array := range boundaryPathsFromStoredKey(projector, fact.Array) {
-			for _, table := range boundaryPathsFromStoredKey(projector, fact.Table) {
+	f.ForEachKeyArrayAddress(func(arrayAddr, tableAddr StableAddress) bool {
+		for _, array := range paths.fromAddress(arrayAddr) {
+			for _, table := range paths.fromAddress(tableAddr) {
 				keyArrays = append(keyArrays, BoundaryKeyArrayFact{Array: array, Table: table})
 			}
 		}
-	}
+		return true
+	})
 
 	var keyArrayValues []BoundaryKeyArrayValueFact
-	for _, fact := range f.KeyArrayValueEntries() {
-		for _, array := range boundaryPathsFromStoredKey(projector, fact.Array) {
-			for _, table := range boundaryPathsFromStoredKey(projector, fact.Table) {
+	f.ForEachKeyArrayValueAddress(func(arrayAddr, tableAddr StableAddress, value product.AbstractValue) bool {
+		for _, array := range paths.fromAddress(arrayAddr) {
+			for _, table := range paths.fromAddress(tableAddr) {
 				keyArrayValues = append(keyArrayValues, BoundaryKeyArrayValueFact{
 					Array: array,
 					Table: table,
-					Value: fact.Value,
+					Value: value,
 				})
 			}
 		}
-	}
+		return true
+	})
 
 	var appendKeys []BoundaryAppendKeyFact
-	for _, fact := range f.AppendedKeyEntries() {
-		for _, array := range boundaryPathsFromStoredKey(projector, fact.Array) {
-			for _, key := range boundaryPathsFromStoredKey(projector, fact.Key) {
+	f.ForEachAppendedKeyAddress(func(arrayAddr, keyAddr StableAddress) bool {
+		for _, array := range paths.fromAddress(arrayAddr) {
+			for _, key := range paths.fromAddress(keyAddr) {
 				appendKeys = append(appendKeys, BoundaryAppendKeyFact{Array: array, Key: key})
 			}
 		}
-	}
+		return true
+	})
 
 	var appendOrigins []BoundaryAppendElementFieldOriginFact
-	for _, fact := range f.AppendElementFieldOriginEntries() {
-		field, ok := AppendElementFieldSegments(fact.Field)
-		if !ok {
-			continue
-		}
-		sourceField, _ := AppendElementFieldSegments(fact.SourceField)
-		for _, array := range boundaryPathsFromStoredKey(projector, fact.Array) {
-			for _, source := range boundaryPathsFromStoredKey(projector, fact.Source) {
+	f.ForEachAppendElementFieldOriginAddress(func(arrayAddr StableAddress, field []constraint.Segment, sourceAddr StableAddress, sourceField []constraint.Segment) bool {
+		for _, array := range paths.fromAddress(arrayAddr) {
+			for _, source := range paths.fromAddress(sourceAddr) {
 				appendOrigins = append(appendOrigins, BoundaryAppendElementFieldOriginFact{
 					Array:       array,
-					Field:       field,
+					Field:       cloneAddressSegments(field),
 					Source:      source,
-					SourceField: sourceField,
+					SourceField: cloneAddressSegments(sourceField),
 				})
 			}
 		}
-	}
+		return true
+	})
 
 	if cfg.IncludePendingKeyArrays {
-		appendKeys = projectPendingKeyArraysToBoundary(f, projector, appendKeys)
+		appendKeys = projectPendingKeyArraysToBoundary(f, paths, appendKeys)
 	}
 
 	return BoundaryFactsOf(keyPresence, keyArrays, keyArrayValues, appendKeys, nil, nil).
@@ -95,23 +110,23 @@ func ProjectKeyPresenceBoundaryFacts(
 
 func projectPendingKeyArraysToBoundary(
 	f KeyPresenceFacts,
-	projector BoundaryAddressProjector,
+	paths boundaryAddressPathCache,
 	appendKeys []BoundaryAppendKeyFact,
 ) []BoundaryAppendKeyFact {
-	for _, fact := range f.PendingKeyArrayEntries() {
-		arrays := boundaryPathsFromStoredKey(projector, fact.Array)
+	f.ForEachPendingKeyArrayAddress(func(arrayAddr StableAddress, tableAddr StableAddress, hasTable bool, keyAddr StableAddress) bool {
+		arrays := paths.fromAddress(arrayAddr)
 		if len(arrays) == 0 {
-			continue
+			return true
 		}
-		keys := boundaryPathsFromStoredKey(projector, fact.Key)
+		keys := paths.fromAddress(keyAddr)
 		if len(keys) == 0 {
-			continue
+			return true
 		}
 		var tables []BoundaryPath
-		if fact.Table != "" {
-			tables = boundaryPathsFromStoredKey(projector, fact.Table)
+		if hasTable {
+			tables = paths.fromAddress(tableAddr)
 			if len(tables) == 0 {
-				continue
+				return true
 			}
 		}
 		for _, array := range arrays {
@@ -130,14 +145,43 @@ func projectPendingKeyArraysToBoundary(
 				}
 			}
 		}
-	}
+		return true
+	})
 	return appendKeys
 }
 
-func boundaryPathsFromStoredKey(projector BoundaryAddressProjector, key constraint.PathKey) []BoundaryPath {
+type boundaryAddressPathCache struct {
+	projector BoundaryAddressProjector
+	paths     map[constraint.PathKey][]BoundaryPath
+}
+
+func newBoundaryAddressPathCache(projector BoundaryAddressProjector) boundaryAddressPathCache {
+	return boundaryAddressPathCache{
+		projector: projector,
+		paths:     make(map[constraint.PathKey][]BoundaryPath),
+	}
+}
+
+func (c boundaryAddressPathCache) fromAddress(addr StableAddress) []BoundaryPath {
+	key := addr.Key()
+	if key == "" || c.projector == nil {
+		return nil
+	}
+	if cached, ok := c.paths[key]; ok {
+		return cached
+	}
+	paths := c.projector.PathsFromAddress(addr)
+	if len(paths) != 0 {
+		paths = append([]BoundaryPath(nil), paths...)
+	}
+	c.paths[key] = paths
+	return paths
+}
+
+func (c boundaryAddressPathCache) fromStoredKey(key constraint.PathKey) []BoundaryPath {
 	addr, ok := StableAddressFromCanonicalKey(key)
 	if !ok {
 		return nil
 	}
-	return projector.PathsFromAddress(addr)
+	return c.fromAddress(addr)
 }

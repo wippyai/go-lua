@@ -536,6 +536,24 @@ func (f KeyPresenceFacts) Entries() []KeyPresenceFact {
 	return append([]KeyPresenceFact(nil), f.entries...)
 }
 
+// ForEachAddress visits direct table/key-presence facts in normalized address
+// form. Invalid legacy stored keys are ignored at this domain boundary.
+func (f KeyPresenceFacts) ForEachAddress(fn func(table, key StableAddress) bool) {
+	if f.bottom || len(f.entries) == 0 || fn == nil {
+		return
+	}
+	for _, entry := range f.entries {
+		table, tableOK := StableAddressFromCanonicalKey(entry.Table)
+		key, keyOK := StableAddressFromCanonicalKey(entry.Key)
+		if !tableOK || !keyOK {
+			continue
+		}
+		if !fn(table, key) {
+			return
+		}
+	}
+}
+
 func (f KeyPresenceFacts) Has(table, key constraint.PathKey) bool {
 	if f.bottom || table == "" || key == "" || len(f.entries) == 0 {
 		return false
@@ -835,6 +853,51 @@ func (f KeyPresenceFacts) KeyArrayEntries() []KeyArrayFact {
 	return out
 }
 
+// ForEachKeyArrayAddress visits key-array facts in normalized address form,
+// including append-history-specialized facts exposed by KeyArrayEntries.
+func (f KeyPresenceFacts) ForEachKeyArrayAddress(fn func(array, table StableAddress) bool) {
+	if f.bottom || fn == nil {
+		return
+	}
+	var emitted map[KeyArrayFact]struct{}
+	for _, entry := range f.arrays {
+		array, arrayOK := StableAddressFromCanonicalKey(entry.Array)
+		table, tableOK := StableAddressFromCanonicalKey(entry.Table)
+		if !arrayOK || !tableOK {
+			continue
+		}
+		if !fn(array, table) {
+			return
+		}
+		if len(f.appendBases) != 0 {
+			if emitted == nil {
+				emitted = make(map[KeyArrayFact]struct{})
+			}
+			emitted[entry] = struct{}{}
+		}
+	}
+	for _, base := range f.appendBases {
+		for _, tableKey := range f.appendHistoryCoveredTables(base.Array) {
+			entry := KeyArrayFact{Array: base.Array, Table: tableKey}
+			if _, ok := emitted[entry]; ok {
+				continue
+			}
+			array, arrayOK := StableAddressFromCanonicalKey(entry.Array)
+			table, tableOK := StableAddressFromCanonicalKey(entry.Table)
+			if !arrayOK || !tableOK {
+				continue
+			}
+			if !fn(array, table) {
+				return
+			}
+			if emitted == nil {
+				emitted = make(map[KeyArrayFact]struct{})
+			}
+			emitted[entry] = struct{}{}
+		}
+	}
+}
+
 func (f KeyPresenceFacts) WithEmptyKeyArray(array constraint.PathKey) KeyPresenceFacts {
 	if array == "" {
 		return f
@@ -957,6 +1020,40 @@ func (f KeyPresenceFacts) KeyArrayValueEntries() []KeyArrayValueFact {
 	return out
 }
 
+// ForEachKeyArrayValueAddress visits value-carrying key-array facts in
+// normalized address form, including append-history-derived values.
+func (f KeyPresenceFacts) ForEachKeyArrayValueAddress(fn func(array, table StableAddress, value product.AbstractValue) bool) {
+	if f.bottom || fn == nil {
+		return
+	}
+	for _, entry := range f.arrayValues {
+		array, arrayOK := StableAddressFromCanonicalKey(entry.Array)
+		table, tableOK := StableAddressFromCanonicalKey(entry.Table)
+		if !arrayOK || !tableOK || entry.Value.IsZero() {
+			continue
+		}
+		if !fn(array, table, entry.Value) {
+			return
+		}
+	}
+	for _, base := range f.appendBases {
+		for _, tableKey := range f.appendHistoryCoveredTables(base.Array) {
+			value, ok := f.AppendHistoryCoverageValue(base.Array, tableKey)
+			if !ok || value.IsZero() {
+				continue
+			}
+			array, arrayOK := StableAddressFromCanonicalKey(base.Array)
+			table, tableOK := StableAddressFromCanonicalKey(tableKey)
+			if !arrayOK || !tableOK {
+				continue
+			}
+			if !fn(array, table, value) {
+				return
+			}
+		}
+	}
+}
+
 func (f KeyPresenceFacts) WithAppendedKey(array, key constraint.PathKey) KeyPresenceFacts {
 	if array == "" || key == "" {
 		return f
@@ -983,6 +1080,24 @@ func (f KeyPresenceFacts) AppendedKeyEntries() []AppendedKeyFact {
 		return nil
 	}
 	return append([]AppendedKeyFact(nil), f.appends...)
+}
+
+// ForEachAppendedKeyAddress visits appended-key events in normalized address
+// form.
+func (f KeyPresenceFacts) ForEachAppendedKeyAddress(fn func(array, key StableAddress) bool) {
+	if f.bottom || len(f.appends) == 0 || fn == nil {
+		return
+	}
+	for _, entry := range f.appends {
+		array, arrayOK := StableAddressFromCanonicalKey(entry.Array)
+		key, keyOK := StableAddressFromCanonicalKey(entry.Key)
+		if !arrayOK || !keyOK {
+			continue
+		}
+		if !fn(array, key) {
+			return
+		}
+	}
 }
 
 func (f KeyPresenceFacts) WithPendingKeyArray(array, table, key constraint.PathKey) KeyPresenceFacts {
@@ -1020,6 +1135,34 @@ func (f KeyPresenceFacts) PendingKeyArrayEntries() []PendingKeyArrayFact {
 		return nil
 	}
 	return append([]PendingKeyArrayFact(nil), f.pending...)
+}
+
+// ForEachPendingKeyArrayAddress visits delayed key-array facts in normalized
+// address form. Facts with an explicit table require that table to decode.
+func (f KeyPresenceFacts) ForEachPendingKeyArrayAddress(fn func(array StableAddress, table StableAddress, hasTable bool, key StableAddress) bool) {
+	if f.bottom || len(f.pending) == 0 || fn == nil {
+		return
+	}
+	for _, entry := range f.pending {
+		array, arrayOK := StableAddressFromCanonicalKey(entry.Array)
+		key, keyOK := StableAddressFromCanonicalKey(entry.Key)
+		if !arrayOK || !keyOK {
+			continue
+		}
+		var table StableAddress
+		hasTable := false
+		if entry.Table != "" {
+			decodedTable, tableOK := StableAddressFromCanonicalKey(entry.Table)
+			if !tableOK {
+				continue
+			}
+			table = decodedTable
+			hasTable = true
+		}
+		if !fn(array, table, hasTable, key) {
+			return
+		}
+	}
 }
 
 func (f KeyPresenceFacts) PendingKeyArraysFor(table, key constraint.PathKey) []constraint.PathKey {
@@ -1229,6 +1372,36 @@ func (f KeyPresenceFacts) AppendElementFieldOriginEntries() []AppendElementField
 		return nil
 	}
 	return append([]AppendElementFieldOriginFact(nil), f.appendOrigins...)
+}
+
+// ForEachAppendElementFieldOriginAddress visits appended-element field origins
+// in normalized address/segment form.
+func (f KeyPresenceFacts) ForEachAppendElementFieldOriginAddress(fn func(array StableAddress, field []constraint.Segment, source StableAddress, sourceField []constraint.Segment) bool) {
+	if f.bottom || len(f.appendOrigins) == 0 || fn == nil {
+		return
+	}
+	for _, entry := range f.appendOrigins {
+		array, arrayOK := StableAddressFromCanonicalKey(entry.Array)
+		source, sourceOK := StableAddressFromCanonicalKey(entry.Source)
+		field, fieldOK := AppendElementFieldSegments(entry.Field)
+		if !arrayOK || !sourceOK || !fieldOK {
+			continue
+		}
+		sourceField, sourceFieldOK := appendElementFieldOptionalSegments(entry.SourceField)
+		if !sourceFieldOK {
+			continue
+		}
+		if !fn(array, field, source, sourceField) {
+			return
+		}
+	}
+}
+
+func appendElementFieldOptionalSegments(key constraint.PathKey) ([]constraint.Segment, bool) {
+	if key == "" {
+		return nil, true
+	}
+	return AppendElementFieldSegments(key)
 }
 
 func (f KeyPresenceFacts) appendElementFieldOriginUses(array constraint.PathKey, field []constraint.Segment) []AppendElementFieldOriginUse {

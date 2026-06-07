@@ -58,6 +58,57 @@ func TestProjectBoundaryFactsProjectsPointFactLanesTogether(t *testing.T) {
 	}
 }
 
+func TestProjectBoundaryFactsCachesAddressProjectionAcrossLanes(t *testing.T) {
+	sym := cfg.SymbolID(32)
+	root := constraint.NewPath(sym, "graph")
+	tablePath := root.Field("nodes")
+	keyPath := root.Field("last_node_id")
+	table := boundaryProjectionTestAddress(t, tablePath)
+	key := boundaryProjectionTestAddress(t, keyPath)
+
+	num := numeric.NewState()
+	num.ApplyLenGeConst(table.Key(), 2)
+	projector := &countingBoundaryProjector{
+		inner: NewBoundaryPathProjection(map[cfg.SymbolID]int{sym: 0}, nil),
+		calls: make(map[constraint.PathKey]int),
+	}
+
+	_ = ProjectBoundaryFacts(
+		BoundaryFactProjectionInput{
+			KeyPresence: KeyPresenceFacts{}.
+				WithAddresses(table, key).
+				WithKeyArrayAddresses(key, table),
+			Num: num,
+			IndexWrites: IndexWriteAdmissionFacts{}.WithAddress(IndexWriteAdmissionAddressFact{
+				Target:     table,
+				KeyPath:    key,
+				HasKeyPath: true,
+				Key:        product.FromType(typ.String),
+				Value:      product.FromType(typ.Number),
+			}),
+		},
+		projector,
+		BoundaryFactProjectionPolicy{},
+	)
+
+	if got := projector.calls[table.Key()]; got != 1 {
+		t.Fatalf("table address projected %d times, want once", got)
+	}
+	if got := projector.calls[key.Key()]; got != 1 {
+		t.Fatalf("key address projected %d times, want once", got)
+	}
+}
+
+type countingBoundaryProjector struct {
+	inner BoundaryPathProjection
+	calls map[constraint.PathKey]int
+}
+
+func (p *countingBoundaryProjector) PathsFromAddress(addr StableAddress) []BoundaryPath {
+	p.calls[addr.Key()]++
+	return p.inner.PathsFromAddress(addr)
+}
+
 func boundaryProjectionTestAddress(t *testing.T, path constraint.Path) StableAddress {
 	t.Helper()
 	addr, ok := StableAddressOfPath(path)

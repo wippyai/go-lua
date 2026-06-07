@@ -30,7 +30,8 @@ func ProjectBoundaryFacts(
 	if projector == nil {
 		return BoundaryFactsDomain.Top()
 	}
-	keyFacts := ProjectKeyPresenceBoundaryFacts(in.KeyPresence, projector, policy.KeyPresence)
+	paths := newBoundaryAddressPathCache(projector)
+	keyFacts := projectKeyPresenceBoundaryFactsWithPaths(in.KeyPresence, paths, policy.KeyPresence)
 
 	var lenLower []BoundaryLengthLowerBound
 	if in.Num != nil && !in.Num.IsUnsat() {
@@ -38,7 +39,7 @@ func ProjectBoundaryFacts(
 			if lower <= 0 {
 				return true
 			}
-			for _, target := range boundaryPathsFromStoredKey(projector, key) {
+			for _, target := range paths.fromStoredKey(key) {
 				lenLower = append(lenLower, BoundaryLengthLowerBound{Target: target, Lower: lower})
 			}
 			return true
@@ -50,11 +51,11 @@ func ProjectBoundaryFacts(
 		if !fact.HasKeyPath || fact.Value.IsZero() {
 			return true
 		}
-		tables := projector.PathsFromAddress(fact.Target)
+		tables := paths.fromAddress(fact.Target)
 		if len(tables) == 0 {
 			return true
 		}
-		keys := projector.PathsFromAddress(fact.KeyPath)
+		keys := paths.fromAddress(fact.KeyPath)
 		if len(keys) == 0 {
 			return true
 		}
