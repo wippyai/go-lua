@@ -37,7 +37,7 @@ func TestBoundaryPathProjectionProjectsParamAndReturnRoots(t *testing.T) {
 	}
 }
 
-func TestBoundaryParamPathFromKeyProjectsSourceSubtree(t *testing.T) {
+func TestBoundaryParamPathFromPathProjectsSourceSubtree(t *testing.T) {
 	sym := cfg.SymbolID(7)
 	source := constraint.NewPath(sym, "payload").Field("items")
 	target := source.IndexStr("primary").Field("value")
