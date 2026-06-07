@@ -13,7 +13,7 @@ import (
 	"github.com/wippyai/go-lua/types/typ"
 )
 
-func TestSiblingTypeForGraph_UsesCanonicalParent(t *testing.T) {
+func TestStoreProjectionGraphSymbol_UsesCanonicalParent(t *testing.T) {
 	st := store.NewSessionStore()
 	fn := &ast.FunctionExpr{}
 	graph := cfg.Build(fn)
@@ -28,17 +28,26 @@ func TestSiblingTypeForGraph_UsesCanonicalParent(t *testing.T) {
 	second := typ.Func().Returns(typ.Number).Build()
 	writeFunctionFactType(st, graph, storedParent, sym, first)
 
-	if got := functionfact.SiblingTypeForGraph(st, graph, sym, defaultParent); !typ.TypeEquals(got, first) {
-		t.Fatalf("SiblingTypeForGraph() = %v, want %v", got, first)
+	view := functionfact.StoreProjection(st, defaultParent)
+	sv, ok := view.GraphSymbol(graph, sym, api.SynthModeDeclared)
+	if !ok {
+		t.Fatal("GraphSymbol() did not resolve")
+	}
+	if got := sv.Type(functionfact.ProjectionSibling, api.SynthModeDeclared); !typ.TypeEquals(got, first) {
+		t.Fatalf("GraphSymbol().Type() = %v, want %v", got, first)
 	}
 
 	writeFunctionFactType(st, graph, storedParent, sym, second)
-	if got := functionfact.SiblingTypeForGraph(st, graph, sym, defaultParent); !typ.TypeEquals(got, second) {
-		t.Fatalf("SiblingTypeForGraph() after update = %v, want %v", got, second)
+	sv, ok = view.GraphSymbol(graph, sym, api.SynthModeDeclared)
+	if !ok {
+		t.Fatal("GraphSymbol() after update did not resolve")
+	}
+	if got := sv.Type(functionfact.ProjectionSibling, api.SynthModeDeclared); !typ.TypeEquals(got, second) {
+		t.Fatalf("GraphSymbol().Type() after update = %v, want %v", got, second)
 	}
 }
 
-func TestSiblingTypeForSymbol_ResolvesOwningParentGraph(t *testing.T) {
+func TestStoreProjectionSymbol_ResolvesOwningParentGraph(t *testing.T) {
 	st := store.NewSessionStore()
 	parentFn := &ast.FunctionExpr{}
 	childFn := &ast.FunctionExpr{}
@@ -55,15 +64,42 @@ func TestSiblingTypeForSymbol_ResolvesOwningParentGraph(t *testing.T) {
 	st.RegisterFunctionRef(sym, childFn, childGraph, parentGraph.ID(), 0)
 	writeFunctionFactType(st, parentGraph, parent, sym, fnType)
 
-	if got := functionfact.SiblingTypeForSymbol(st, sym, nil); !typ.TypeEquals(got, fnType) {
-		t.Fatalf("SiblingTypeForSymbol() = %v, want %v", got, fnType)
-	}
-	key, ok := functionfact.GraphKeyForSymbol(st, sym, nil)
+	sv, ok := functionfact.StoreProjection(st, nil).Symbol(sym, api.SynthModeDeclared)
 	if !ok {
-		t.Fatal("GraphKeyForSymbol() did not resolve key")
+		t.Fatal("Symbol() did not resolve")
 	}
-	if key.GraphID != parentGraph.ID() || key.ParentHash != parent.Hash() {
-		t.Fatalf("GraphKeyForSymbol() = %#v, want graph %d parent %d", key, parentGraph.ID(), parent.Hash())
+	if got := sv.Type(functionfact.ProjectionSibling, api.SynthModeDeclared); !typ.TypeEquals(got, fnType) {
+		t.Fatalf("Symbol().Type() = %v, want %v", got, fnType)
+	}
+	if sv.Key.GraphID != parentGraph.ID() || sv.Key.ParentHash != parent.Hash() {
+		t.Fatalf("Symbol().Key = %#v, want graph %d parent %d", sv.Key, parentGraph.ID(), parent.Hash())
+	}
+}
+
+func TestStoreProjectionOwner_ResolvesBeforeFactsExist(t *testing.T) {
+	st := store.NewSessionStore()
+	parentFn := &ast.FunctionExpr{}
+	childFn := &ast.FunctionExpr{}
+	parentGraph := cfg.Build(parentFn)
+	childGraph := cfg.Build(childFn)
+	st.RegisterGraph(parentGraph, parentFn)
+	st.RegisterGraph(childGraph, childFn)
+
+	parent := scope.New().WithType("parent", typ.String)
+	registerGraphParent(t, st, parentGraph, parent)
+
+	sym := cfg.SymbolID(12)
+	st.RegisterFunctionRef(sym, childFn, childGraph, parentGraph.ID(), 0)
+
+	owner, ok := functionfact.StoreProjection(st, nil).Owner(sym)
+	if !ok {
+		t.Fatal("Owner() did not resolve empty product owner")
+	}
+	if owner.Key.GraphID != parentGraph.ID() || owner.Key.ParentHash != parent.Hash() {
+		t.Fatalf("Owner().Key = %#v, want graph %d parent %d", owner.Key, parentGraph.ID(), parent.Hash())
+	}
+	if sv, ok := functionfact.StoreProjection(st, nil).Symbol(sym, api.SynthModeDeclared); ok {
+		t.Fatalf("Symbol() resolved empty fact product: %#v", sv)
 	}
 }
 
@@ -126,7 +162,7 @@ func TestProjectionLookup_ProjectsCanonicalFunctionTypes(t *testing.T) {
 	}
 }
 
-func TestStoreProjectionLookup_UsesOwningFunctionFactProduct(t *testing.T) {
+func TestStoreProjectionTypeLookup_UsesOwningFunctionFactProduct(t *testing.T) {
 	st := store.NewSessionStore()
 	parentFn := &ast.FunctionExpr{}
 	childFn := &ast.FunctionExpr{}
@@ -143,9 +179,9 @@ func TestStoreProjectionLookup_UsesOwningFunctionFactProduct(t *testing.T) {
 	st.RegisterFunctionRef(sym, childFn, childGraph, parentGraph.ID(), 0)
 	writeFunctionFactType(st, parentGraph, parent, sym, fnType)
 
-	lookup := functionfact.StoreProjectionLookup(st, functionfact.ProjectionSibling, api.SynthModeDeclared, nil)
+	lookup := functionfact.StoreProjection(st, nil).TypeLookup(functionfact.ProjectionSibling, api.SynthModeDeclared)
 	if lookup == nil {
-		t.Fatal("StoreProjectionLookup() returned nil")
+		t.Fatal("TypeLookup() returned nil")
 	}
 	if got := lookup(sym); !typ.TypeEquals(got, fnType) {
 		t.Fatalf("lookup(%d) = %v, want %v", sym, got, fnType)

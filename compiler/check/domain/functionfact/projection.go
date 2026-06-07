@@ -35,143 +35,94 @@ const (
 	ProjectionSibling
 )
 
-// ForSymbol returns the canonical stored function fact for sym.
-func ForSymbol(store api.StoreReader, sym cfg.SymbolID, defaultParent *scope.State) (api.FunctionFact, bool) {
-	if store == nil || sym == 0 {
-		return api.FunctionFact{}, false
-	}
-	ref := store.FunctionRefBySym(sym)
-	if ref == nil {
-		return api.FunctionFact{}, false
-	}
-	return FactForGraph(store, graphForRef(store, ref), sym, defaultParent)
+// StoreView is the canonical store-backed read surface for function facts. It
+// keeps symbol ownership, parent graph-key resolution, synth mode, and type
+// projection in one place so callers do not rebuild partial views.
+type StoreView struct {
+	store         api.StoreReader
+	defaultParent *scope.State
 }
 
-// BodyTypeForSymbol returns the body-view function projection for sym.
-func BodyTypeForSymbol(store api.StoreReader, sym cfg.SymbolID, defaultParent *scope.State) typ.Type {
-	if store == nil || sym == 0 {
-		return nil
-	}
-	ref := store.FunctionRefBySym(sym)
-	if ref == nil {
-		return nil
-	}
-	return BodyTypeForGraph(store, graphForRef(store, ref), sym, defaultParent)
+// StoreProjection returns a normalized view over store-backed function facts.
+func StoreProjection(store api.StoreReader, defaultParent *scope.State) StoreView {
+	return StoreView{store: store, defaultParent: defaultParent}
 }
 
-// SiblingTypeForSymbol returns the same-scope sibling function projection for sym.
-func SiblingTypeForSymbol(store api.StoreReader, sym cfg.SymbolID, defaultParent *scope.State) typ.Type {
-	if store == nil || sym == 0 {
-		return nil
-	}
-	ref := store.FunctionRefBySym(sym)
-	if ref == nil {
-		return nil
-	}
-	return SiblingTypeForGraph(store, graphForRef(store, ref), sym, defaultParent)
+// StoreSymbolView is one resolved function-fact product plus its owning key.
+type StoreSymbolView struct {
+	Fact api.FunctionFact
+	Key  api.GraphKey
 }
 
-// StoreProjectionLookup returns a store-backed function projection lookup for
-// solved-state observers.
-func StoreProjectionLookup(store api.StoreReader, projection Projection, mode api.SynthMode, defaultParent *scope.State) func(cfg.SymbolID) typ.Type {
-	if store == nil {
+// StoreSymbolOwner is the canonical placement for a symbol's function-fact
+// product. It can exist before the product has any facts.
+type StoreSymbolOwner struct {
+	Graph  *cfg.Graph
+	Parent *scope.State
+	Key    api.GraphKey
+}
+
+// Owner resolves sym to the parent graph-key product that owns its facts.
+func (v StoreView) Owner(sym cfg.SymbolID) (StoreSymbolOwner, bool) {
+	if v.store == nil || sym == 0 {
+		return StoreSymbolOwner{}, false
+	}
+	ref := v.store.FunctionRefBySym(sym)
+	if ref == nil {
+		return StoreSymbolOwner{}, false
+	}
+	return v.GraphOwner(graphForRef(v.store, ref))
+}
+
+// GraphOwner resolves graph's parent-key function-fact product.
+func (v StoreView) GraphOwner(graph *cfg.Graph) (StoreSymbolOwner, bool) {
+	return storeOwnerForGraph(v.store, graph, v.defaultParent)
+}
+
+// Symbol resolves sym to the function-fact product owned by its parent graph.
+func (v StoreView) Symbol(sym cfg.SymbolID, mode api.SynthMode) (StoreSymbolView, bool) {
+	if v.store == nil || sym == 0 {
+		return StoreSymbolView{}, false
+	}
+	ref := v.store.FunctionRefBySym(sym)
+	if ref == nil {
+		return StoreSymbolView{}, false
+	}
+	return v.GraphSymbol(graphForRef(v.store, ref), sym, mode)
+}
+
+// GraphSymbol resolves sym in graph's parent-key function-fact product.
+func (v StoreView) GraphSymbol(graph *cfg.Graph, sym cfg.SymbolID, mode api.SynthMode) (StoreSymbolView, bool) {
+	ff, owner, ok := storeFactForGraphInMode(v.store, graph, sym, v.defaultParent, mode)
+	if !ok {
+		return StoreSymbolView{}, false
+	}
+	return StoreSymbolView{Fact: ff, Key: owner.Key}, true
+}
+
+// Type projects a resolved function fact into one semantic view.
+func (v StoreSymbolView) Type(projection Projection, mode api.SynthMode) typ.Type {
+	return ProjectType(v.Fact, projection, mode)
+}
+
+// Returns projects a resolved function fact's visible return vector.
+func (v StoreSymbolView) Returns(mode api.SynthMode) []typ.Type {
+	return returnsForMode(v.Fact, mode)
+}
+
+// TypeLookup returns a store-backed function projection lookup for solved-state
+// observers.
+func (v StoreView) TypeLookup(projection Projection, mode api.SynthMode) func(cfg.SymbolID) typ.Type {
+	if v.store == nil {
 		return nil
 	}
 	return func(sym cfg.SymbolID) typ.Type {
-		if sym == 0 {
-			return nil
-		}
-		ref := store.FunctionRefBySym(sym)
-		if ref == nil {
-			return nil
-		}
-		ff, ok := FactForGraph(store, graphForRef(store, ref), sym, defaultParent)
+		sv, ok := v.Symbol(sym, mode)
 		if !ok {
 			return nil
 		}
-		return ProjectType(ff, projection, mode)
+		return sv.Type(projection, mode)
 	}
-}
-
-// ReturnSummaryForSymbol returns the canonical declared/pre-flow return summary
-// for sym from its owning function-fact product.
-func ReturnSummaryForSymbol(store api.StoreReader, sym cfg.SymbolID, defaultParent *scope.State) []typ.Type {
-	ff, ok := factForSymbolInMode(store, sym, defaultParent, api.SynthModeDeclared)
-	if !ok {
-		return nil
-	}
-	return summaryTypes(ff)
-}
-
-// NarrowSummaryForSymbol returns the canonical post-flow return summary for sym
-// from its owning function-fact product.
-func NarrowSummaryForSymbol(store api.StoreReader, sym cfg.SymbolID, defaultParent *scope.State) []typ.Type {
-	ff, ok := factForSymbolInMode(store, sym, defaultParent, api.SynthModeFlow)
-	if !ok {
-		return nil
-	}
-	return narrowTypes(ff)
-}
-
-// GraphKeyForSymbol returns the canonical parent graph key that owns sym's
-// function-fact product.
-func GraphKeyForSymbol(store api.StoreReader, sym cfg.SymbolID, defaultParent *scope.State) (api.GraphKey, bool) {
-	if store == nil || sym == 0 {
-		return api.GraphKey{}, false
-	}
-	ref := store.FunctionRefBySym(sym)
-	if ref == nil {
-		return api.GraphKey{}, false
-	}
-	graph := graphForRef(store, ref)
-	if graph == nil {
-		return api.GraphKey{}, false
-	}
-	parent := api.ParentScopeForGraph(store, graph.ID(), defaultParent)
-	if parent == nil {
-		return api.GraphKey{}, false
-	}
-	return store.GraphKeyFor(graph, parent)
-}
-
-// BodyTypeForGraph returns the body-view function projection for sym from
-// graph's function-fact product.
-func BodyTypeForGraph(store api.StoreReader, graph *cfg.Graph, sym cfg.SymbolID, defaultParent *scope.State) typ.Type {
-	ff, ok := FactForGraph(store, graph, sym, defaultParent)
-	if !ok {
-		return nil
-	}
-	return ProjectType(ff, ProjectionBody, api.SynthModeDeclared)
-}
-
-// SiblingTypeForGraph returns the same-scope sibling function projection for
-// sym from graph's function-fact product.
-func SiblingTypeForGraph(store api.StoreReader, graph *cfg.Graph, sym cfg.SymbolID, defaultParent *scope.State) typ.Type {
-	ff, ok := FactForGraph(store, graph, sym, defaultParent)
-	if !ok {
-		return nil
-	}
-	return ProjectType(ff, ProjectionSibling, api.SynthModeDeclared)
-}
-
-// ReturnSummaryForGraph returns the canonical declared/pre-flow return summary
-// for sym from graph's function-fact product.
-func ReturnSummaryForGraph(store api.StoreReader, graph *cfg.Graph, sym cfg.SymbolID, defaultParent *scope.State) []typ.Type {
-	ff, ok := factForGraphInMode(store, graph, sym, defaultParent, api.SynthModeDeclared)
-	if !ok {
-		return nil
-	}
-	return summaryTypes(ff)
-}
-
-// NarrowSummaryForGraph returns the canonical post-flow return summary for sym
-// from graph's function-fact product.
-func NarrowSummaryForGraph(store api.StoreReader, graph *cfg.Graph, sym cfg.SymbolID, defaultParent *scope.State) []typ.Type {
-	ff, ok := factForGraphInMode(store, graph, sym, defaultParent, api.SynthModeFlow)
-	if !ok {
-		return nil
-	}
-	return narrowTypes(ff)
 }
 
 // ReturnProjection returns the return vector visible in mode.
@@ -514,35 +465,18 @@ func lookupStored(facts api.FunctionFacts, sym cfg.SymbolID) (api.FunctionFact, 
 	return ff, !Empty(ff)
 }
 
-// FactForGraph returns the canonical stored function fact for sym from graph's
-// function-fact product.
-func FactForGraph(store api.StoreReader, graph *cfg.Graph, sym cfg.SymbolID, defaultParent *scope.State) (api.FunctionFact, bool) {
-	return factForGraphInMode(store, graph, sym, defaultParent, api.SynthModeDeclared)
-}
-
-func factForSymbolInMode(store api.StoreReader, sym cfg.SymbolID, defaultParent *scope.State, mode api.SynthMode) (api.FunctionFact, bool) {
-	if store == nil || sym == 0 {
-		return api.FunctionFact{}, false
-	}
-	ref := store.FunctionRefBySym(sym)
-	if ref == nil {
-		return api.FunctionFact{}, false
-	}
-	return factForGraphInMode(store, graphForRef(store, ref), sym, defaultParent, mode)
-}
-
-func factForGraphInMode(store api.StoreReader, graph *cfg.Graph, sym cfg.SymbolID, defaultParent *scope.State, mode api.SynthMode) (api.FunctionFact, bool) {
+func storeFactForGraphInMode(store api.StoreReader, graph *cfg.Graph, sym cfg.SymbolID, defaultParent *scope.State, mode api.SynthMode) (api.FunctionFact, StoreSymbolOwner, bool) {
 	if store == nil || graph == nil || sym == 0 {
-		return api.FunctionFact{}, false
+		return api.FunctionFact{}, StoreSymbolOwner{}, false
 	}
-	parent := api.ParentScopeForGraph(store, graph.ID(), defaultParent)
-	if parent == nil {
-		return api.FunctionFact{}, false
+	owner, ok := storeOwnerForGraph(store, graph, defaultParent)
+	if !ok {
+		return api.FunctionFact{}, StoreSymbolOwner{}, false
 	}
 	var ff api.FunctionFact
 	var found bool
 	load := func() {
-		ff, found = store.InterprocFacts(graph, parent).FunctionFact(sym)
+		ff, found = store.InterprocFacts(owner.Graph, owner.Parent).FunctionFact(sym)
 	}
 	if switcher, ok := store.(interface{ WithSynthMode(api.SynthMode, func()) }); ok {
 		switcher.WithSynthMode(mode, load)
@@ -550,9 +484,24 @@ func factForGraphInMode(store api.StoreReader, graph *cfg.Graph, sym cfg.SymbolI
 		load()
 	}
 	if !found || Empty(ff) {
-		return api.FunctionFact{}, false
+		return api.FunctionFact{}, StoreSymbolOwner{}, false
 	}
-	return ff, true
+	return ff, owner, true
+}
+
+func storeOwnerForGraph(store api.StoreReader, graph *cfg.Graph, defaultParent *scope.State) (StoreSymbolOwner, bool) {
+	if store == nil || graph == nil {
+		return StoreSymbolOwner{}, false
+	}
+	parent := api.ParentScopeForGraph(store, graph.ID(), defaultParent)
+	if parent == nil {
+		return StoreSymbolOwner{}, false
+	}
+	key, ok := store.GraphKeyFor(graph, parent)
+	if !ok {
+		return StoreSymbolOwner{}, false
+	}
+	return StoreSymbolOwner{Graph: graph, Parent: parent, Key: key}, true
 }
 
 // RefinementsFromStore projects canonical function facts as refinement facts.
@@ -560,12 +509,13 @@ func RefinementsFromStore(store api.StoreReader, defaultParent *scope.State) api
 	if store == nil {
 		return nil
 	}
+	view := StoreProjection(store, defaultParent)
 	return api.NewRefinementFacts(func(sym cfg.SymbolID) *constraint.FunctionRefinement {
-		ff, ok := ForSymbol(store, sym, defaultParent)
+		sv, ok := view.Symbol(sym, api.SynthModeDeclared)
 		if !ok {
 			return nil
 		}
-		return ff.Refinement
+		return sv.Fact.Refinement
 	})
 }
 

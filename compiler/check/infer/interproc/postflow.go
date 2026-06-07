@@ -537,7 +537,7 @@ func CollectParameterEvidenceFromResult(store Store, result *api.FuncResult, par
 			EvidenceAllowed: func(sym cfg.SymbolID, idx int) bool {
 				return callArgumentEvidenceAllowedForSymbol(store, sym, idx)
 			},
-			Observer: observation.FromFuncResult(result, functionfact.StoreProjectionLookup(store, functionfact.ProjectionSibling, api.SynthModeDeclared, parent)),
+			Observer: observation.FromFuncResult(result, functionfact.StoreProjection(store, parent).TypeLookup(functionfact.ProjectionSibling, api.SynthModeDeclared)),
 			ArgumentObservation: func(point cfg.Point, arg ast.Expr, current typ.Type) typ.Type {
 				return observation.ObservedArgumentType(result, point, arg, current, bindings)
 			},
@@ -598,7 +598,7 @@ func (c *parameterEvidenceCollector) collectCallEvidence(evidence api.CallEviden
 	if calleeSym == 0 {
 		return
 	}
-	parentKey, ok := functionfact.GraphKeyForSymbol(c.store, calleeSym, c.parent)
+	calleeOwner, ok := functionfact.StoreProjection(c.store, c.parent).Owner(calleeSym)
 	if !ok {
 		return
 	}
@@ -606,7 +606,7 @@ func (c *parameterEvidenceCollector) collectCallEvidence(evidence api.CallEviden
 	if len(facts) == 0 {
 		return
 	}
-	c.store.MergeInterprocFactsNext(parentKey, interprocdomain.FunctionFactsDelta(facts))
+	c.store.MergeInterprocFactsNext(calleeOwner.Key, interprocdomain.FunctionFactsDelta(facts))
 }
 
 func (c *parameterEvidenceCollector) recordCurrentBodyPreconditions(p cfg.Point, evidence api.CallEvidence) {
