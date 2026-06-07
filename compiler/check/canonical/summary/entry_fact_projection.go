@@ -120,24 +120,25 @@ func directCallEntryFacts(in directCallEntryFactInput) flow.BoundaryFacts {
 	}
 	var indexWrites []flow.BoundaryIndexWriteFact
 	if !in.IndexWrites.IsBottom() {
-		for _, fact := range in.IndexWrites.Entries() {
-			if fact.Target == "" || fact.KeyPath == "" || fact.Value.IsZero() {
-				continue
+		in.IndexWrites.ForEachAddress(func(fact flow.IndexWriteAdmissionAddressFact) bool {
+			if !fact.HasKeyPath || fact.Value.IsZero() {
+				return true
 			}
-			table, ok := entryBoundaryPathForCallerKey(in, fact.Target)
+			table, ok := entryBoundaryPathForCallerAddress(in, fact.Target)
 			if !ok {
-				continue
+				return true
 			}
-			key, ok := entryBoundaryPathForCallerKey(in, fact.KeyPath)
+			key, ok := entryBoundaryPathForCallerAddress(in, fact.KeyPath)
 			if !ok {
-				continue
+				return true
 			}
 			indexWrites = append(indexWrites, flow.BoundaryIndexWriteFact{
 				Table: table,
 				Key:   key,
 				Value: fact.Value,
 			})
-		}
+			return true
+		})
 	}
 	return flow.BoundaryFactsOf(keyPresence, keyArrays, keyArrayValues, appendKeys, lenLower, indexWrites).
 		WithAppendElementFieldOrigins(appendOrigins)
@@ -148,6 +149,10 @@ func entryBoundaryPathForCallerKey(in directCallEntryFactInput, key constraint.P
 	if !ok {
 		return flow.BoundaryPath{}, false
 	}
+	return entryBoundaryPathForCallerAddress(in, addr)
+}
+
+func entryBoundaryPathForCallerAddress(in directCallEntryFactInput, addr flow.StableAddress) (flow.BoundaryPath, bool) {
 	target, ok := addr.Path()
 	if !ok {
 		return flow.BoundaryPath{}, false

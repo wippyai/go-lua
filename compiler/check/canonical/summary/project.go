@@ -878,17 +878,17 @@ func projectPointBoundaryFacts(ps flow.PointState, mapper flow.BoundaryPathProje
 		})
 	}
 	var indexWrites []flow.BoundaryIndexWriteFact
-	for _, fact := range ps.IndexWrites.Entries() {
-		if fact.Target == "" || fact.KeyPath == "" || fact.Value.IsZero() {
-			continue
+	ps.IndexWrites.ForEachAddress(func(fact flow.IndexWriteAdmissionAddressFact) bool {
+		if !fact.HasKeyPath || fact.Value.IsZero() {
+			return true
 		}
-		tables := projectBoundaryPathsFromStoredKey(mapper, fact.Target)
+		tables := mapper.PathsFromAddress(fact.Target)
 		if len(tables) == 0 {
-			continue
+			return true
 		}
-		keys := projectBoundaryPathsFromStoredKey(mapper, fact.KeyPath)
+		keys := mapper.PathsFromAddress(fact.KeyPath)
 		if len(keys) == 0 {
-			continue
+			return true
 		}
 		for _, table := range tables {
 			for _, key := range keys {
@@ -899,7 +899,8 @@ func projectPointBoundaryFacts(ps flow.PointState, mapper flow.BoundaryPathProje
 				})
 			}
 		}
-	}
+		return true
+	})
 	return flow.BoundaryFactsOf(keyPresence, keyArrays, keyArrayValues, appendKeys, lengths, indexWrites).
 		WithAppendElementFieldOrigins(appendOrigins)
 }

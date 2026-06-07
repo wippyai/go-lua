@@ -25,6 +25,38 @@ type IndexWriteAdmissionFact struct {
 	Value     product.AbstractValue
 }
 
+// AddressFact projects a stored fact into the public address-domain form.
+// Stored keys are private deterministic identities; consumers that reason about
+// source locations should use this view rather than parsing keys themselves.
+func (fact IndexWriteAdmissionFact) AddressFact() (IndexWriteAdmissionAddressFact, bool) {
+	target, ok := StableAddressFromCanonicalKey(fact.Target)
+	if !ok || fact.Key.IsZero() || fact.Value.IsZero() {
+		return IndexWriteAdmissionAddressFact{}, false
+	}
+	addressFact := IndexWriteAdmissionAddressFact{
+		Target: target,
+		Key:    fact.Key,
+		Value:  fact.Value,
+	}
+	if fact.KeyPath != "" {
+		keyPath, ok := StableAddressFromCanonicalKey(fact.KeyPath)
+		if !ok {
+			return IndexWriteAdmissionAddressFact{}, false
+		}
+		addressFact.KeyPath = keyPath
+		addressFact.HasKeyPath = true
+	}
+	if fact.ValuePath != "" {
+		valuePath, ok := StableAddressFromCanonicalKey(fact.ValuePath)
+		if !ok {
+			return IndexWriteAdmissionAddressFact{}, false
+		}
+		addressFact.ValuePath = valuePath
+		addressFact.HasValuePath = true
+	}
+	return addressFact, true
+}
+
 // IndexWriteAdmissionAddressFact is the normalized publication form for
 // dynamic-index write readback proofs. The finite domain stores deterministic
 // private keys internally, but callers should publish structural identities as
@@ -94,6 +126,46 @@ func (f IndexWriteAdmissionFacts) WithAddress(fact IndexWriteAdmissionAddressFac
 		return f
 	}
 	return f.With(keyed)
+}
+
+// ForEachAddress visits each admission fact through its normalized address view.
+func (f IndexWriteAdmissionFacts) ForEachAddress(fn func(IndexWriteAdmissionAddressFact) bool) {
+	if f.bottom || len(f.entries) == 0 || fn == nil {
+		return
+	}
+	for _, entry := range f.entries {
+		fact, ok := entry.AddressFact()
+		if !ok {
+			continue
+		}
+		if !fn(fact) {
+			return
+		}
+	}
+}
+
+// WithAliasedKeyPathAddress copies all admissions whose key identity is source
+// under target. This keeps key-path replay inside the admission domain instead
+// of exposing raw storage keys to transfer proofs.
+func (f IndexWriteAdmissionFacts) WithAliasedKeyPathAddress(
+	source StableAddress,
+	target StableAddress,
+) IndexWriteAdmissionFacts {
+	sourceKey := source.Key()
+	targetKey := target.Key()
+	if f.bottom || sourceKey == "" || targetKey == "" || len(f.entries) == 0 {
+		return f
+	}
+	out := f
+	for _, entry := range f.entries {
+		if entry.KeyPath != sourceKey {
+			continue
+		}
+		next := entry
+		next.KeyPath = targetKey
+		out = out.With(next)
+	}
+	return out
 }
 
 // AdmissionAtAddress returns the admitted value proof matching q.

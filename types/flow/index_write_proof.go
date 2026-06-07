@@ -53,17 +53,8 @@ func ApplyIndexWriteKeyAliasProof(out *PointState, proof IndexWriteKeyAliasProof
 	if out == nil || proof.SourceKey.Key() == "" || proof.TargetKey.Key() == "" {
 		return false
 	}
-	sourceKey := proof.SourceKey.Key()
-	targetKey := proof.TargetKey.Key()
 	before := out.IndexWrites
-	for _, entry := range out.IndexWrites.Entries() {
-		if entry.KeyPath != sourceKey {
-			continue
-		}
-		next := entry
-		next.KeyPath = targetKey
-		out.IndexWrites = out.IndexWrites.With(next)
-	}
+	out.IndexWrites = out.IndexWrites.WithAliasedKeyPathAddress(proof.SourceKey, proof.TargetKey)
 	return !IndexWriteAdmissionFactsDomain.Equal(before, out.IndexWrites)
 }
 
