@@ -151,6 +151,30 @@ func TestCaptureCellsProjectPathsNestedSubtreeKeepsSubtree(t *testing.T) {
 	}
 }
 
+func TestCaptureCellsWithStaticMembersOverlaysMemberFacts(t *testing.T) {
+	const sym = cfg.SymbolID(42)
+	base := product.FromType(typ.NewRecord().Build())
+	member := constraint.NewPath(sym, "captured").Field("config").Field("used")
+	addr, ok := StableAddressOfPath(member)
+	if !ok {
+		t.Fatal("member path did not lower to stable address")
+	}
+	facts := StaticMemberFactsDomain.Top().WithAddress(addr, product.FromType(typ.Number))
+
+	got := CaptureCellsOf([]CaptureCell{{Symbol: sym, Value: base}}).WithStaticMembers(facts)
+	cell, ok := got.Value(sym)
+	if !ok {
+		t.Fatalf("captured cell missing after static overlay: %s", got.Format())
+	}
+	used, ok := ProductMemberPathValue(cell, []constraint.Segment{
+		{Kind: constraint.SegmentField, Name: "config"},
+		{Kind: constraint.SegmentField, Name: "used"},
+	})
+	if !ok || !typ.TypeEquals(used.ProjectValue(), typ.Number) {
+		t.Fatalf("config.used = %v/%v, want number", used.ProjectValue(), ok)
+	}
+}
+
 func TestCaptureCellsProjectPathsTopProjectsRequestedSymbolsToTop(t *testing.T) {
 	got := CaptureCellsTop().ProjectPaths(ReferencePathProjection{
 		Exact: []constraint.Path{constraint.NewPath(2, "captured").Field("config")},

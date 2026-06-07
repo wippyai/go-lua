@@ -165,6 +165,47 @@ func (c CaptureCells) ProjectPaths(projection ReferencePathProjection) CaptureCe
 	return CaptureCellsOf(out)
 }
 
+// WithStaticMembers overlays point-local static-member facts onto captured cell
+// root values. Summary projection uses this to carry exact member facts through
+// the reference context without teaching summary how static-member facts are
+// stored or rebased.
+func (c CaptureCells) WithStaticMembers(facts StaticMemberFacts) CaptureCells {
+	if c.top || facts.IsBottom() || len(facts.entries) == 0 {
+		return c
+	}
+	out := c
+	for _, entry := range c.entries {
+		next := captureCellWithStaticMembers(entry.Symbol, entry.Value, facts)
+		if next.IsZero() || product.Domain.Equal(next, entry.Value) {
+			continue
+		}
+		out = out.With(entry.Symbol, next)
+	}
+	return out
+}
+
+func captureCellWithStaticMembers(sym cfg.SymbolID, av product.AbstractValue, facts StaticMemberFacts) product.AbstractValue {
+	if sym == 0 || av.IsZero() {
+		return av
+	}
+	root, ok := StableAddressOfSymbol(sym, nil)
+	if !ok {
+		return av
+	}
+	out := av
+	for _, fact := range facts.AddressEntriesUnder(root) {
+		segments := fact.Address.Segments()
+		if len(segments) == 0 || fact.Value.IsZero() {
+			continue
+		}
+		next := ProductWithMemberPath(out, segments, fact.Value)
+		if !next.IsZero() {
+			out = next
+		}
+	}
+	return out
+}
+
 // IsTop reports whether c is the greatest capture-cell state.
 func (c CaptureCells) IsTop() bool { return c.top }
 

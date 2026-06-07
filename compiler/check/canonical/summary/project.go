@@ -118,7 +118,7 @@ func projectCaptureReferences(fs state.FunctionState, g *cfg.Graph) flow.Referen
 			return
 		}
 		cells := flow.CaptureCellsDomain.Join(ps.Cells, flow.PointFactsOf(ps).EnvCaptureCells(envExports))
-		cells = captureCellsWithStaticMembers(cells, ps.StaticMembers)
+		cells = cells.WithStaticMembers(ps.StaticMembers)
 		out = flow.ReferenceContextDomain.Join(out, flow.ReferenceContextOf(cells, ps.FunctionRefs, ps.ClosureRefs))
 	})
 	return out
@@ -139,43 +139,6 @@ func projectPrototypeSelf(fs state.FunctionState, g *cfg.Graph) flow.PrototypeSe
 		}
 		out = flow.PrototypeSelfDomain.Join(out, ps.PrototypeSelf)
 	})
-	return out
-}
-
-func captureCellsWithStaticMembers(cells flow.CaptureCells, facts flow.StaticMemberFacts) flow.CaptureCells {
-	if cells.IsTop() || facts.IsBottom() || len(facts.Entries()) == 0 {
-		return cells
-	}
-	out := cells
-	for _, entry := range cells.Entries() {
-		next := captureCellWithStaticMembers(entry.Symbol, entry.Value, facts)
-		if next.IsZero() || product.Domain.Equal(next, entry.Value) {
-			continue
-		}
-		out = out.With(entry.Symbol, next)
-	}
-	return out
-}
-
-func captureCellWithStaticMembers(sym cfg.SymbolID, av product.AbstractValue, facts flow.StaticMemberFacts) product.AbstractValue {
-	if sym == 0 || av.IsZero() {
-		return av
-	}
-	root, ok := flow.StableAddressOfSymbol(sym, nil)
-	if !ok {
-		return av
-	}
-	out := av
-	for _, fact := range facts.AddressEntriesUnder(root) {
-		segments := fact.Address.Segments()
-		if len(segments) == 0 || fact.Value.IsZero() {
-			continue
-		}
-		next := flow.ProductWithMemberPath(out, segments, fact.Value)
-		if !next.IsZero() {
-			out = next
-		}
-	}
 	return out
 }
 
