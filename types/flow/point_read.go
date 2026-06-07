@@ -6,6 +6,7 @@ import (
 	"github.com/wippyai/go-lua/types/domain/value/product"
 	"github.com/wippyai/go-lua/types/narrow"
 	"github.com/wippyai/go-lua/types/typ"
+	"github.com/wippyai/go-lua/types/typ/unwrap"
 )
 
 // PointReadPolicy supplies checker-owned evidence needed by the flow point
@@ -13,6 +14,14 @@ import (
 type PointReadPolicy struct {
 	UnannotatedSymbol func(cfg.SymbolID) bool
 	CallableSignature CallableSignatureResolver
+}
+
+// PresentKeyReadQuery describes an indexed read whose key may be proven present
+// for the table by the key-presence axis.
+type PresentKeyReadQuery struct {
+	TablePath constraint.Path
+	KeyPath   constraint.Path
+	Result    typ.Type
 }
 
 // ReadSymbolValue returns the product value visible for sym under policy.
@@ -99,6 +108,74 @@ func (f PointFacts) ReadKnownCallablePath(path constraint.Path, read product.Abs
 		return ProductValue{State: StateUnknown}
 	}
 	return f.ReadCallablePath(path, read, policy)
+}
+
+// ReadPresentKeyValue removes nil from an indexed read when KeyPresence proves
+// key is drawn from table and nil is only the product read's flow uncertainty.
+func (f PointFacts) ReadPresentKeyValue(q PresentKeyReadQuery) ProductValue {
+	if q.TablePath.IsEmpty() || q.KeyPath.IsEmpty() || typ.IsAbsentOrUnknown(q.Result) {
+		return ProductValue{State: StateUnknown}
+	}
+	if !f.HasKeyPresence(q.TablePath, q.KeyPath) {
+		return ProductValue{State: StateUnknown}
+	}
+	if keyValue, ok := f.PathValue(q.KeyPath); ok && keyValue.DefinitelyAbsent() {
+		return ProductValue{State: StateUnknown}
+	}
+	if !narrow.NilPresenceIsOnlyFlowUncertainty(q.Result) {
+		return ProductValue{State: StateUnknown}
+	}
+	refined := narrow.RemoveNil(q.Result)
+	if refined == nil || typ.IsNever(refined) || typ.TypeEquals(refined, q.Result) {
+		return ProductValue{State: StateUnknown}
+	}
+	return ProductValue{Value: product.FromType(refined), State: StateResolved}
+}
+
+// ReadPresentRecordKeyValue synthesizes the key's value-domain from a closed
+// record table after KeyPresence proves the key belongs to that table.
+func (f PointFacts) ReadPresentRecordKeyValue(tablePath, keyPath constraint.Path, table product.AbstractValue) ProductValue {
+	if tablePath.IsEmpty() || keyPath.IsEmpty() || table.IsZero() {
+		return ProductValue{State: StateUnknown}
+	}
+	if !f.HasKeyPresence(tablePath, keyPath) {
+		return ProductValue{State: StateUnknown}
+	}
+	names := recordFieldNameDomain(table)
+	if names == nil {
+		return ProductValue{State: StateUnknown}
+	}
+	return ProductValue{Value: product.FromType(names), State: StateResolved}
+}
+
+func recordFieldNameDomain(av product.AbstractValue) typ.Type {
+	t := av.ProjectValue()
+	if t == nil {
+		return nil
+	}
+	rec, ok := unwrapRecord(t)
+	if !ok || len(rec.Fields) == 0 {
+		return nil
+	}
+	if rec.Open || rec.HasMapComponent() || rec.Metatable != nil || len(rec.StaticMembers) != 0 {
+		return nil
+	}
+	names := make([]typ.Type, 0, len(rec.Fields))
+	for _, f := range rec.Fields {
+		names = append(names, typ.LiteralString(f.Name))
+	}
+	if len(names) == 0 {
+		return nil
+	}
+	return typ.NewUnion(names...)
+}
+
+func unwrapRecord(t typ.Type) (*typ.Record, bool) {
+	switch r := unwrap.Alias(t).(type) {
+	case *typ.Record:
+		return r, true
+	}
+	return nil, false
 }
 
 // ReadPathType projects ReadPathValue to a concrete type and applies the

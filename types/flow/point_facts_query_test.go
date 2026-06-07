@@ -31,6 +31,86 @@ func TestPointFactsPathKeyPresenceQueries(t *testing.T) {
 	}
 }
 
+func TestPointFactsReadPresentKeyValueRemovesFlowOptionalNil(t *testing.T) {
+	table := constraint.NewPath(cfg.SymbolID(105), "table")
+	key := constraint.NewPath(cfg.SymbolID(106), "key")
+	state := PointState{
+		KeyPresence: KeyPresenceFacts{}.
+			WithAddresses(testStableAddressPath(t, table), testStableAddressPath(t, key)),
+	}
+
+	got := PointFactsOf(state).ReadPresentKeyValue(PresentKeyReadQuery{
+		TablePath: table,
+		KeyPath:   key,
+		Result:    typ.NewOptional(typ.String),
+	})
+
+	if got.State != StateResolved || !typ.TypeEquals(got.Value.ProjectValue(), typ.String) {
+		t.Fatalf("ReadPresentKeyValue = %v/%v, want string/resolved", got.Value.ProjectValue(), got.State)
+	}
+}
+
+func TestPointFactsReadPresentKeyValueRejectsDefinitelyAbsentKey(t *testing.T) {
+	table := constraint.NewPath(cfg.SymbolID(107), "table")
+	key := constraint.NewPath(cfg.SymbolID(108), "key")
+	state := PointState{
+		Env: map[ValueKey]product.AbstractValue{
+			SymbolValueKey(key.Symbol): product.FromType(typ.Nil),
+		},
+		KeyPresence: KeyPresenceFacts{}.
+			WithAddresses(testStableAddressPath(t, table), testStableAddressPath(t, key)),
+	}
+
+	got := PointFactsOf(state).ReadPresentKeyValue(PresentKeyReadQuery{
+		TablePath: table,
+		KeyPath:   key,
+		Result:    typ.NewOptional(typ.String),
+	})
+
+	if got.State != StateUnknown {
+		t.Fatalf("ReadPresentKeyValue(nil key) = %#v, want unknown", got)
+	}
+}
+
+func TestPointFactsReadPresentRecordKeyValueSynthesizesClosedRecordFieldNames(t *testing.T) {
+	table := constraint.NewPath(cfg.SymbolID(109), "table")
+	key := constraint.NewPath(cfg.SymbolID(110), "key")
+	record := product.FromType(typ.NewRecord().
+		Field("id", typ.String).
+		Field("name", typ.String).
+		Build())
+	state := PointState{
+		KeyPresence: KeyPresenceFacts{}.
+			WithAddresses(testStableAddressPath(t, table), testStableAddressPath(t, key)),
+	}
+
+	got := PointFactsOf(state).ReadPresentRecordKeyValue(table, key, record)
+	want := typ.NewUnion(typ.LiteralString("id"), typ.LiteralString("name"))
+
+	if got.State != StateResolved || !typ.TypeEquals(got.Value.ProjectValue(), want) {
+		t.Fatalf("ReadPresentRecordKeyValue = %v/%v, want %v/resolved", got.Value.ProjectValue(), got.State, want)
+	}
+}
+
+func TestPointFactsReadPresentRecordKeyValueRejectsOpenRecord(t *testing.T) {
+	table := constraint.NewPath(cfg.SymbolID(113), "table")
+	key := constraint.NewPath(cfg.SymbolID(114), "key")
+	record := product.FromType(typ.NewRecord().
+		SetOpen(true).
+		Field("id", typ.String).
+		Build())
+	state := PointState{
+		KeyPresence: KeyPresenceFacts{}.
+			WithAddresses(testStableAddressPath(t, table), testStableAddressPath(t, key)),
+	}
+
+	got := PointFactsOf(state).ReadPresentRecordKeyValue(table, key, record)
+
+	if got.State != StateUnknown {
+		t.Fatalf("ReadPresentRecordKeyValue(open record) = %#v, want unknown", got)
+	}
+}
+
 func TestPointFactsIndexWriteAdmissionPathQuery(t *testing.T) {
 	target := constraint.NewPath(cfg.SymbolID(111), "target")
 	key := constraint.NewPath(cfg.SymbolID(112), "key")

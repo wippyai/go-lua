@@ -11,7 +11,6 @@ import (
 	"github.com/wippyai/go-lua/types/flow/numeric"
 	"github.com/wippyai/go-lua/types/narrow"
 	"github.com/wippyai/go-lua/types/typ"
-	"github.com/wippyai/go-lua/types/typ/unwrap"
 )
 
 // lenseed.go carries two related but distinct size proofs plus the in-bounds
@@ -607,21 +606,15 @@ func (t *Transfer) refineByKeyPresence(
 	if !ok {
 		return product.AbstractValue{}, false
 	}
-	if !flow.PointFactsOf(*out).HasKeyPresence(tablePath, keyPath) {
+	refined := flow.PointFactsOf(*out).ReadPresentKeyValue(flow.PresentKeyReadQuery{
+		TablePath: tablePath,
+		KeyPath:   keyPath,
+		Result:    result,
+	})
+	if refined.State != flow.StateResolved {
 		return product.AbstractValue{}, false
 	}
-	keyValue, ok := flow.PointFactsOf(*out).PathValue(keyPath)
-	if ok && keyValue.DefinitelyAbsent() {
-		return product.AbstractValue{}, false
-	}
-	if !narrow.NilPresenceIsOnlyFlowUncertainty(result) {
-		return product.AbstractValue{}, false
-	}
-	refined := narrow.RemoveNil(result)
-	if refined == nil || typ.IsNever(refined) || typ.TypeEquals(refined, result) {
-		return product.AbstractValue{}, false
-	}
-	return product.FromType(refined), true
+	return refined.Value, true
 }
 
 func (t *Transfer) dynamicIndexKeyPath(expr ast.Expr) (constraint.Path, bool) {
@@ -664,50 +657,11 @@ func (t *Transfer) dynamicWriteKey(
 		return product.AbstractValue{}
 	}
 	keyPath := constraint.NewPath(keySym, keyIdent.Value)
-	if !flow.PointFactsOf(*out).HasKeyPresence(basePath, keyPath) {
+	keyValue := flow.PointFactsOf(*out).ReadPresentRecordKeyValue(basePath, keyPath, base)
+	if keyValue.State != flow.StateResolved {
 		return product.AbstractValue{}
 	}
-	names := recordFieldNameDomain(base)
-	if names == nil {
-		return product.AbstractValue{}
-	}
-	return product.FromType(names)
-}
-
-// recordFieldNameDomain returns the union of the string field-name literals of the
-// record av carries, the key domain a `pairs` iteration over a closed record ranges
-// over. A non-record value, or a record with no named string fields, yields nil so
-// the caller declines to synthesize a key.
-func recordFieldNameDomain(av product.AbstractValue) typ.Type {
-	if av.IsZero() {
-		return nil
-	}
-	t := av.ProjectValue()
-	if t == nil {
-		return nil
-	}
-	rec, ok := unwrapRecord(t)
-	if !ok || len(rec.Fields) == 0 {
-		return nil
-	}
-	names := make([]typ.Type, 0, len(rec.Fields))
-	for _, f := range rec.Fields {
-		names = append(names, typ.LiteralString(f.Name))
-	}
-	if len(names) == 0 {
-		return nil
-	}
-	return typ.NewUnion(names...)
-}
-
-// unwrapRecord resolves t to its underlying record through an alias, reporting false
-// for a non-record type.
-func unwrapRecord(t typ.Type) (*typ.Record, bool) {
-	switch r := unwrap.Alias(t).(type) {
-	case *typ.Record:
-		return r, true
-	}
-	return nil, false
+	return keyValue.Value
 }
 
 // writeIsSelfDerived reports whether the dynamic-key write base[key] = src writes
