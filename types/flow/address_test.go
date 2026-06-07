@@ -29,6 +29,19 @@ func TestStableAddressIgnoresVersionAndExportsCanonicalKey(t *testing.T) {
 	}
 }
 
+func TestSameStablePathIgnoresVersion(t *testing.T) {
+	a := constraint.NewPath(cfg.SymbolID(42), "node").Field("edges")
+	a.Version = 1
+	b := constraint.NewPath(cfg.SymbolID(42), "node").Field("edges")
+	b.Version = 9
+	if !SameStablePath(a, b) {
+		t.Fatalf("SameStablePath(%s, %s) = false, want true", a.Key(), b.Key())
+	}
+	if SameStablePath(a, b.Field("label")) {
+		t.Fatalf("SameStablePath accepted distinct paths: %s and %s", a.Key(), b.Field("label").Key())
+	}
+}
+
 func TestPathIdentityKeyUsesStableAddressAndPlaceholderFallback(t *testing.T) {
 	a := constraint.NewPath(cfg.SymbolID(42), "node").Field("edges")
 	a.Version = 1

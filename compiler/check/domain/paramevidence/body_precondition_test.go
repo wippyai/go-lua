@@ -396,7 +396,7 @@ func TestBodyPreconditionContext_NonRecursiveHardUseCanPublishPublic(t *testing.
 	}
 }
 
-func TestConditionedPathEvidenceFromCondition_AddsDiscriminant(t *testing.T) {
+func TestGuardedPathObligation_AddsDiscriminant(t *testing.T) {
 	msg := constraint.NewPath(1, "msg")
 	evidence := typ.NewRecord().
 		ReadonlyField("function_call", typ.NewRecord().ReadonlyField("id", typ.String).Build()).
@@ -407,9 +407,12 @@ func TestConditionedPathEvidenceFromCondition_AddsDiscriminant(t *testing.T) {
 		Value:  typ.LiteralString("function_call"),
 	})
 
-	got, conditional := conditionedPathEvidenceFromCondition(msg.Field("function_call").Field("id"), evidence, cond, nil)
+	got, conditional := GuardedPathObligation{
+		Path:      msg.Field("function_call").Field("id"),
+		Condition: cond,
+	}.Evidence(evidence)
 	if !conditional {
-		t.Fatal("conditionedPathEvidenceFromCondition() did not mark discriminant evidence conditional")
+		t.Fatal("GuardedPathObligation did not mark discriminant evidence conditional")
 	}
 	want := typ.NewRecord().
 		ReadonlyField("role", typ.LiteralString("function_call")).
@@ -420,7 +423,7 @@ func TestConditionedPathEvidenceFromCondition_AddsDiscriminant(t *testing.T) {
 	}
 }
 
-func TestConditionedPathEvidenceFromCondition_FieldNotEqualsAdmitsExcludedLiteral(t *testing.T) {
+func TestGuardedPathObligation_FieldNotEqualsAdmitsExcludedLiteral(t *testing.T) {
 	page := constraint.NewPath(1, "page")
 	evidence := typ.NewRecord().
 		ReadonlyField("data_func", typ.String).
@@ -434,9 +437,12 @@ func TestConditionedPathEvidenceFromCondition_FieldNotEqualsAdmitsExcludedLitera
 		},
 	)
 
-	got, conditional := conditionedPathEvidenceFromCondition(page.Field("data_func"), evidence, cond, nil)
+	got, conditional := GuardedPathObligation{
+		Path:      page.Field("data_func"),
+		Condition: cond,
+	}.Evidence(evidence)
 	if !conditional {
-		t.Fatal("conditionedPathEvidenceFromCondition() did not mark field disequality evidence conditional")
+		t.Fatal("GuardedPathObligation did not mark field disequality evidence conditional")
 	}
 	want := typ.NewRecord().
 		ReadonlyField("data_func", typ.NewUnion(typ.String, typ.Nil, typ.False, typ.LiteralString(""))).
@@ -472,7 +478,7 @@ func TestMergeConditionedRecordEvidence_OrdersByStructuralFieldKey(t *testing.T)
 	}
 }
 
-func TestConditionedPathEvidenceFromCondition_ResolvesDiscriminantPath(t *testing.T) {
+func TestGuardedPathObligation_ResolvesDiscriminantPath(t *testing.T) {
 	msg := constraint.NewPath(1, "msg")
 	roleConst := constraint.NewPath(2, "prompt").Field("ROLE").Field("FUNCTION_CALL")
 	evidence := typ.NewRecord().
@@ -484,14 +490,18 @@ func TestConditionedPathEvidenceFromCondition_ResolvesDiscriminantPath(t *testin
 		Value:  roleConst,
 	})
 
-	got, conditional := conditionedPathEvidenceFromCondition(msg.Field("function_call").Field("id"), evidence, cond, func(path constraint.Path) *typ.Literal {
-		if path.Equal(roleConst) {
-			return typ.LiteralString("function_call")
-		}
-		return nil
-	})
+	got, conditional := GuardedPathObligation{
+		Path:      msg.Field("function_call").Field("id"),
+		Condition: cond,
+		ResolveLiteral: func(path constraint.Path) *typ.Literal {
+			if path.Equal(roleConst) {
+				return typ.LiteralString("function_call")
+			}
+			return nil
+		},
+	}.Evidence(evidence)
 	if !conditional {
-		t.Fatal("conditionedPathEvidenceFromCondition() did not mark path discriminant evidence conditional")
+		t.Fatal("GuardedPathObligation did not mark path discriminant evidence conditional")
 	}
 	want := typ.NewRecord().
 		ReadonlyField("role", typ.LiteralString("function_call")).
@@ -502,7 +512,7 @@ func TestConditionedPathEvidenceFromCondition_ResolvesDiscriminantPath(t *testin
 	}
 }
 
-func TestConditionedPathEvidenceFromCondition_UnresolvedDiscriminantPathStillGuarded(t *testing.T) {
+func TestGuardedPathObligation_UnresolvedDiscriminantPathStillGuarded(t *testing.T) {
 	msg := constraint.NewPath(1, "msg")
 	roleConst := constraint.NewPath(2, "prompt").Field("ROLE").Field("FUNCTION_CALL")
 	evidence := typ.NewRecord().
@@ -514,7 +524,10 @@ func TestConditionedPathEvidenceFromCondition_UnresolvedDiscriminantPathStillGua
 		Value:  roleConst,
 	})
 
-	got, conditional := conditionedPathEvidenceFromCondition(msg.Field("function_call").Field("id"), evidence, cond, nil)
+	got, conditional := GuardedPathObligation{
+		Path:      msg.Field("function_call").Field("id"),
+		Condition: cond,
+	}.Evidence(evidence)
 	if !conditional {
 		t.Fatal("unresolved path discriminant did not mark evidence branch-conditional")
 	}
@@ -523,12 +536,15 @@ func TestConditionedPathEvidenceFromCondition_UnresolvedDiscriminantPathStillGua
 	}
 }
 
-func TestConditionedPathEvidenceFromCondition_TruthyGuardAdmitsFalsyLeaf(t *testing.T) {
+func TestGuardedPathObligation_TruthyGuardAdmitsFalsyLeaf(t *testing.T) {
 	pageData := constraint.NewPath(1, "page").Field("data_func")
 	evidence := PathEvidence(pageData.Segments, typ.String)
 	cond := constraint.FromConstraints(constraint.Truthy{Path: pageData})
 
-	got, conditional := conditionedPathEvidenceFromCondition(pageData, evidence, cond, nil)
+	got, conditional := GuardedPathObligation{
+		Path:      pageData,
+		Condition: cond,
+	}.Evidence(evidence)
 	if !conditional {
 		t.Fatal("truthy guard did not mark path evidence conditional")
 	}
@@ -540,12 +556,15 @@ func TestConditionedPathEvidenceFromCondition_TruthyGuardAdmitsFalsyLeaf(t *test
 	}
 }
 
-func TestConditionedPathEvidenceFromCondition_NotNilGuardAdmitsNilLeaf(t *testing.T) {
+func TestGuardedPathObligation_NotNilGuardAdmitsNilLeaf(t *testing.T) {
 	pageData := constraint.NewPath(1, "page").Field("data_func")
 	evidence := PathEvidence(pageData.Segments, typ.String)
 	cond := constraint.FromConstraints(constraint.NotNil{Path: pageData})
 
-	got, conditional := conditionedPathEvidenceFromCondition(pageData, evidence, cond, nil)
+	got, conditional := GuardedPathObligation{
+		Path:      pageData,
+		Condition: cond,
+	}.Evidence(evidence)
 	if !conditional {
 		t.Fatal("not-nil guard did not mark path evidence conditional")
 	}
@@ -557,12 +576,15 @@ func TestConditionedPathEvidenceFromCondition_NotNilGuardAdmitsNilLeaf(t *testin
 	}
 }
 
-func TestConditionedPathEvidenceFromCondition_TruthyGuardAdmitsNestedFalsyLeaf(t *testing.T) {
+func TestGuardedPathObligation_TruthyGuardAdmitsNestedFalsyLeaf(t *testing.T) {
 	nested := constraint.NewPath(1, "page").Field("meta").Field("data_func")
 	evidence := PathEvidence(nested.Segments, typ.String)
 	cond := constraint.FromConstraints(constraint.Truthy{Path: nested})
 
-	got, conditional := conditionedPathEvidenceFromCondition(nested, evidence, cond, nil)
+	got, conditional := GuardedPathObligation{
+		Path:      nested,
+		Condition: cond,
+	}.Evidence(evidence)
 	if !conditional {
 		t.Fatal("nested truthy guard did not mark path evidence conditional")
 	}

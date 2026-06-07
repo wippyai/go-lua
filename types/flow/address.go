@@ -189,6 +189,14 @@ func StableAddressOfPath(path constraint.Path) (StableAddress, bool) {
 	return StableAddressOfRootAndSuffix(root, PathSuffixOfSegments(path.Segments))
 }
 
+// SameStablePath reports whether two source paths name the same runtime path in
+// the stable must-fact identity space. SSA versions are ignored.
+func SameStablePath(a, b constraint.Path) bool {
+	left, leftOK := StableAddressOfPath(a)
+	right, rightOK := StableAddressOfPath(b)
+	return leftOK && rightOK && left.Equal(right)
+}
+
 // StableAddressOfSymbol builds a stable symbol-rooted address.
 func StableAddressOfSymbol(sym cfg.SymbolID, segments []constraint.Segment) (StableAddress, bool) {
 	root, ok := SymbolPathRoot(sym)

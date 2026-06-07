@@ -166,23 +166,19 @@ func (c BodyPreconditionContext) conditionedPathEvidence(path constraint.Path, e
 	if proofs == nil {
 		return evidence, false
 	}
-	return conditionedPathEvidenceFromCondition(path, evidence, proofs.ConditionAt(p), func(value constraint.Path) *typ.Literal {
-		return c.literalValueAtPath(p, value)
-	})
-}
-
-// ConditionedPathEvidence weakens hard path evidence when the current abstract
-// condition proves the use is locally guarded. It is the transfer-time counterpart
-// of BodyPreconditionContext.conditionedPathEvidence for demand that is already
-// being computed inside the single product fixpoint.
-func ConditionedPathEvidence(path constraint.Path, evidence typ.Type, cond constraint.Condition) (typ.Type, bool) {
-	return conditionedPathEvidenceFromCondition(path, evidence, cond, nil)
+	return GuardedPathObligation{
+		Path:      path,
+		Condition: proofs.ConditionAt(p),
+		ResolveLiteral: func(value constraint.Path) *typ.Literal {
+			return c.literalValueAtPath(p, value)
+		},
+	}.Evidence(evidence)
 }
 
 // ConditionedPathContract wraps a leaf contract under path, then weakens the
 // caller-visible contract when the current abstract condition proves the path is
 // locally guarded. It is the native ParamContract counterpart to
-// ConditionedPathEvidence, used by transfer so type, capability, and contract
+// GuardedPathObligation, used by transfer so type, capability, and contract
 // demands share one guard policy.
 func ConditionedPathContract(path constraint.Path, leaf ParamContract, cond constraint.Condition) (ParamContract, bool) {
 	contract := DemandFromPathContract(path.Segments, leaf)
@@ -193,7 +189,7 @@ func ConditionedPathContract(path constraint.Path, leaf ParamContract, cond cons
 	if evidence == nil {
 		return contract, false
 	}
-	conditioned, ok := ConditionedPathEvidence(path, evidence, cond)
+	conditioned, ok := GuardedPathObligation{Path: path, Condition: cond}.Evidence(evidence)
 	if !ok || conditioned == nil {
 		return contract, ok
 	}
@@ -213,11 +209,11 @@ func ConditionedLeafContract(path constraint.Path, leaf ParamContract, cond cons
 	if evidence == nil {
 		return leaf, false
 	}
-	complement := pathGuardComplement(path, cond)
-	if complement == nil {
-		return leaf, false
+	conditioned, ok := GuardedPathObligation{Path: path, Condition: cond}.LeafEvidence(evidence)
+	if !ok || conditioned == nil {
+		return leaf, ok
 	}
-	return DemandFromType(typ.NewUnion(evidence, complement)), true
+	return DemandFromType(conditioned), true
 }
 
 func (c BodyPreconditionContext) literalValueAtPath(p cfg.Point, path constraint.Path) *typ.Literal {
@@ -237,8 +233,19 @@ func (c BodyPreconditionContext) literalValueAtPath(p cfg.Point, path constraint
 	return nil
 }
 
-func conditionedPathEvidenceFromCondition(path constraint.Path, evidence typ.Type, cond constraint.Condition, resolveLiteral func(constraint.Path) *typ.Literal) (typ.Type, bool) {
-	if evidence == nil || path.Symbol == 0 || cond.IsFalse() || !cond.HasConstraints() {
+// GuardedPathObligation weakens caller-visible evidence when the current path
+// demand is already guarded locally. It interprets branch facts as implications:
+// a caller must satisfy the demanded shape only on paths where the guard holds.
+type GuardedPathObligation struct {
+	Path           constraint.Path
+	Condition      constraint.Condition
+	ResolveLiteral func(constraint.Path) *typ.Literal
+}
+
+// Evidence returns the caller-visible evidence after admitting locally guarded
+// alternatives and discriminants.
+func (q GuardedPathObligation) Evidence(evidence typ.Type) (typ.Type, bool) {
+	if evidence == nil || q.Path.Symbol == 0 || q.Condition.IsFalse() || !q.Condition.HasConstraints() {
 		return evidence, false
 	}
 	// A guard dominating a path use turns the exported caller obligation into an
@@ -246,20 +253,20 @@ func conditionedPathEvidenceFromCondition(path constraint.Path, evidence typ.Typ
 	// guard complement at the consumed path leaf so guarded-away runtime values
 	// remain admitted by the public contract while the guarded branch still sees
 	// the precise body-local evidence.
-	if complement := pathGuardComplement(path, cond); complement != nil {
-		if relaxed := guardedLeafEvidence(path.Segments, evidence, complement); relaxed != nil && !typ.TypeEquals(relaxed, evidence) {
+	if complement := q.guardComplement(); complement != nil {
+		if relaxed := guardedLeafEvidence(q.Path.Segments, evidence, complement); relaxed != nil && !typ.TypeEquals(relaxed, evidence) {
 			return relaxed, true
 		}
 		return evidence, true
 	}
 	conditionEvidence := typ.Type(nil)
 	guarded := false
-	for _, item := range cond.MustConstraints() {
-		target, field, value, ok := fieldConditionConstraint(item, resolveLiteral)
-		if !ok || target.Symbol != path.Symbol {
+	for _, item := range q.Condition.MustConstraints() {
+		target, field, value, ok := fieldConditionConstraint(item, q.ResolveLiteral)
+		if !ok || target.Symbol != q.Path.Symbol {
 			continue
 		}
-		if !conditionTargetAppliesToPath(target, path) {
+		if !conditionTargetAppliesToPath(target, q.Path) {
 			continue
 		}
 		guarded = true
@@ -296,13 +303,22 @@ func conditionedPathEvidenceFromCondition(path constraint.Path, evidence typ.Typ
 	return conditioned, true
 }
 
-// pathGuardComplement returns the type admitted by the negation of unary guards
-// that dominate a demand on path. Versions are ignored: the guard and the use
-// refer to the same runtime location by symbol and segment chain even when their
-// SSA versions differ.
-func pathGuardComplement(path constraint.Path, cond constraint.Condition) typ.Type {
+// LeafEvidence is the leaf-relative counterpart to Evidence. It is used before a
+// derived-local demand is lifted back through provenance.
+func (q GuardedPathObligation) LeafEvidence(evidence typ.Type) (typ.Type, bool) {
+	if evidence == nil || q.Path.Symbol == 0 || q.Condition.IsFalse() || !q.Condition.HasConstraints() {
+		return evidence, false
+	}
+	complement := q.guardComplement()
+	if complement == nil {
+		return evidence, false
+	}
+	return typ.NewUnion(evidence, complement), true
+}
+
+func (q GuardedPathObligation) guardComplement() typ.Type {
 	var complement typ.Type
-	for _, item := range cond.MustConstraints() {
+	for _, item := range q.Condition.MustConstraints() {
 		var guardPath constraint.Path
 		var next typ.Type
 		switch v := item.(type) {
@@ -321,7 +337,7 @@ func pathGuardComplement(path constraint.Path, cond constraint.Condition) typ.Ty
 		default:
 			continue
 		}
-		if samePathIgnoringVersion(guardPath, path) {
+		if flow.SameStablePath(guardPath, q.Path) {
 			if complement == nil {
 				complement = next
 			} else {
@@ -330,15 +346,6 @@ func pathGuardComplement(path constraint.Path, cond constraint.Condition) typ.Ty
 		}
 	}
 	return complement
-}
-
-func samePathIgnoringVersion(a, b constraint.Path) bool {
-	left := flow.StablePathKey(a)
-	right := flow.StablePathKey(b)
-	if left == "" || right == "" {
-		return false
-	}
-	return left == right
 }
 
 // guardedLeafEvidence rebuilds structural evidence for segments with the
