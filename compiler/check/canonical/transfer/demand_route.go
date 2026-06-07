@@ -98,11 +98,6 @@ func (t *Transfer) conditionedLeafContract(
 	return conditioned
 }
 
-type demandRouteItem struct {
-	path     constraint.Path
-	contract paramevidence.ParamContract
-}
-
 func (t *Transfer) demandLocalPathContract(
 	out *flow.PointState,
 	path constraint.Path,
@@ -113,40 +108,14 @@ func (t *Transfer) demandLocalPathContract(
 		paramevidence.ParamContractDomain.Equal(contract, paramevidence.ParamContractDomain.Bottom()) {
 		return
 	}
-	queue := []demandRouteItem{{path: path, contract: contract}}
-	seen := map[constraint.PathKey]struct{}{}
-	for len(queue) > 0 {
-		cur := queue[0]
-		queue = queue[1:]
-		key := flow.PathIdentityKey(cur.path)
-		if key == "" {
-			continue
-		}
-		if _, ok := seen[key]; ok {
-			continue
-		}
-		seen[key] = struct{}{}
-		if idx, isParam := t.paramBySym[cur.path.Symbol]; isParam {
-			t.demandParamPathContract(out, idx, cur.path, cur.contract, demand)
-		}
-		if out == nil {
-			continue
-		}
-		for _, route := range flow.PointFactsOf(*out).ProvenanceRoutes(cur.path) {
-			t.enqueueDemandRoute(cur.contract, route, &queue)
-		}
+	var routes paramevidence.ProvenanceRouteResolver
+	if out != nil {
+		facts := flow.PointFactsOf(*out)
+		routes = facts.ProvenanceRoutes
 	}
-}
-
-func (t *Transfer) enqueueDemandRoute(
-	contract paramevidence.ParamContract,
-	route flow.ProvenanceRoute,
-	queue *[]demandRouteItem,
-) {
-	if queue == nil {
-		return
-	}
-	for _, target := range paramevidence.ProvenanceRouteContractTargets(route, contract) {
-		*queue = append(*queue, demandRouteItem{path: target.Path, contract: target.Contract})
+	for _, target := range paramevidence.ProvenanceRouteContractClosure(path, contract, routes) {
+		if idx, isParam := t.paramBySym[target.Path.Symbol]; isParam {
+			t.demandParamPathContract(out, idx, target.Path, target.Contract, demand)
+		}
 	}
 }

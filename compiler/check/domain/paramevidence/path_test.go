@@ -149,6 +149,39 @@ func TestProvenanceRouteContractTargets_AppendElementFieldRelativeSource(t *test
 	requireRouteTarget(t, targets, source.Field("payload"), typ.NewRecord().ReadonlyField("id", typ.String).Build())
 }
 
+func TestProvenanceRouteContractClosure_ChainsIteratorAndAliasRoutes(t *testing.T) {
+	item := constraint.NewPath(2, "item").Field("id")
+	array := constraint.NewPath(3, "records")
+	param := constraint.NewPath(4, "arg")
+	contract := DemandFromType(typ.String)
+
+	targets := ProvenanceRouteContractClosure(item, contract, func(path constraint.Path) []flow.ProvenanceRoute {
+		switch {
+		case path.Equal(item):
+			return []flow.ProvenanceRoute{{
+				Kind:     flow.ProvenanceRouteIndexedIterator,
+				Source:   array,
+				VarIndex: 1,
+				Remainder: []constraint.Segment{
+					{Kind: constraint.SegmentField, Name: "id"},
+				},
+			}}
+		case path.Equal(array):
+			return []flow.ProvenanceRoute{{
+				Kind:   flow.ProvenanceRouteIdentityAlias,
+				Source: param,
+			}}
+		default:
+			return nil
+		}
+	})
+
+	requireRouteTargetAt(t, targets, item, typ.String)
+	wantArray := typ.NewArray(typ.NewRecord().ReadonlyField("id", typ.String).Build())
+	requireRouteTargetAt(t, targets, array, wantArray)
+	requireRouteTargetAt(t, targets, param, wantArray)
+}
+
 func requireRouteTarget(t *testing.T, targets []ProvenanceRouteContractTarget, path constraint.Path, projected typ.Type) {
 	t.Helper()
 	if len(targets) != 1 {
@@ -160,4 +193,18 @@ func requireRouteTarget(t *testing.T, targets []ProvenanceRouteContractTarget, p
 	if got := targets[0].Contract.ProjectValue(); !typ.TypeEquals(got, projected) {
 		t.Fatalf("route target contract = %v, want %v", got, projected)
 	}
+}
+
+func requireRouteTargetAt(t *testing.T, targets []ProvenanceRouteContractTarget, path constraint.Path, projected typ.Type) {
+	t.Helper()
+	for _, target := range targets {
+		if !target.Path.Equal(path) {
+			continue
+		}
+		if got := target.Contract.ProjectValue(); !typ.TypeEquals(got, projected) {
+			t.Fatalf("route target %s contract = %v, want %v", path.Key(), got, projected)
+		}
+		return
+	}
+	t.Fatalf("route target %s missing from %#v", path.Key(), targets)
 }
