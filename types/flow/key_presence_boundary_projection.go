@@ -177,11 +177,3 @@ func (c boundaryAddressPathCache) fromAddress(addr StableAddress) []BoundaryPath
 	c.paths[key] = paths
 	return paths
 }
-
-func (c boundaryAddressPathCache) fromStoredKey(key constraint.PathKey) []BoundaryPath {
-	addr, ok := StableAddressFromCanonicalKey(key)
-	if !ok {
-		return nil
-	}
-	return c.fromAddress(addr)
-}

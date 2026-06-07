@@ -1,9 +1,6 @@
 package flow
 
-import (
-	"github.com/wippyai/go-lua/types/constraint"
-	"github.com/wippyai/go-lua/types/flow/numeric"
-)
+import "github.com/wippyai/go-lua/types/flow/numeric"
 
 // BoundaryFactProjectionInput is the point-local proof state that can be
 // published across a function boundary once its stable addresses are rebased.
@@ -34,17 +31,15 @@ func ProjectBoundaryFacts(
 	keyFacts := projectKeyPresenceBoundaryFactsWithPaths(in.KeyPresence, paths, policy.KeyPresence)
 
 	var lenLower []BoundaryLengthLowerBound
-	if in.Num != nil && !in.Num.IsUnsat() {
-		in.Num.ForEachLenBound(func(key constraint.PathKey, lower, _ int64) bool {
-			if lower <= 0 {
-				return true
-			}
-			for _, target := range paths.fromStoredKey(key) {
-				lenLower = append(lenLower, BoundaryLengthLowerBound{Target: target, Lower: lower})
-			}
+	ForEachNumericLenBoundAddress(in.Num, func(targetAddr StableAddress, lower, _ int64) bool {
+		if lower <= 0 {
 			return true
-		})
-	}
+		}
+		for _, target := range paths.fromAddress(targetAddr) {
+			lenLower = append(lenLower, BoundaryLengthLowerBound{Target: target, Lower: lower})
+		}
+		return true
+	})
 
 	var indexWrites []BoundaryIndexWriteFact
 	in.IndexWrites.ForEachAddress(func(fact IndexWriteAdmissionAddressFact) bool {

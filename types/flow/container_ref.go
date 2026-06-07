@@ -55,6 +55,16 @@ func (r ContainerRef) Root() cfg.SymbolID {
 	return r.root
 }
 
+// StableAddress returns the normalized address view for container facts that
+// must cross domains or function boundaries.
+func (r ContainerRef) StableAddress() (StableAddress, bool) {
+	if !r.IsValid() {
+		return StableAddress{}, false
+	}
+	addr, ok := StableAddressFromCanonicalKey(r.key)
+	return addr, ok
+}
+
 func (r ContainerRef) pathKey() constraint.PathKey {
 	return r.key
 }

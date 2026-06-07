@@ -20,8 +20,7 @@ func TestProjectBoundaryFactsProjectsPointFactLanesTogether(t *testing.T) {
 	key := boundaryProjectionTestAddress(t, keyPath)
 	value := product.FromType(typ.Number)
 
-	num := numeric.NewState()
-	num.ApplyLenGeConst(table.Key(), 2)
+	num := numericStateWithLenLower(t, tablePath, 2)
 	facts := ProjectBoundaryFacts(
 		BoundaryFactProjectionInput{
 			KeyPresence: KeyPresenceFacts{}.WithAddresses(table, key),
@@ -66,8 +65,7 @@ func TestProjectBoundaryFactsCachesAddressProjectionAcrossLanes(t *testing.T) {
 	table := boundaryProjectionTestAddress(t, tablePath)
 	key := boundaryProjectionTestAddress(t, keyPath)
 
-	num := numeric.NewState()
-	num.ApplyLenGeConst(table.Key(), 2)
+	num := numericStateWithLenLower(t, tablePath, 2)
 	projector := &countingBoundaryProjector{
 		inner: NewBoundaryPathProjection(map[cfg.SymbolID]int{sym: 0}, nil),
 		calls: make(map[constraint.PathKey]int),
@@ -99,6 +97,26 @@ func TestProjectBoundaryFactsCachesAddressProjectionAcrossLanes(t *testing.T) {
 	}
 }
 
+func TestProjectBoundaryFactsIgnoresNonContainerNumericLengthKeys(t *testing.T) {
+	sym := cfg.SymbolID(33)
+	root := constraint.NewPath(sym, "graph")
+	tablePath := root.Field("nodes")
+
+	num := numericStateWithLenLower(t, tablePath, 2)
+	num.ApplyLenGeConst(constraint.PathKey("legacy.nodes"), 9)
+	facts := ProjectBoundaryFacts(
+		BoundaryFactProjectionInput{Num: num},
+		NewBoundaryPathProjection(map[cfg.SymbolID]int{sym: 0}, nil),
+		BoundaryFactProjectionPolicy{},
+	)
+
+	wantTable := BoundaryPath{Kind: BoundaryPathParam, Index: 0, Segments: tablePath.Segments}
+	got := facts.LengthLowerBounds()
+	if len(got) != 1 || !boundaryProjectionPathEqual(got[0].Target, wantTable) || got[0].Lower != 2 {
+		t.Fatalf("length facts = %#v, want only normalized container %#v >= 2", got, wantTable)
+	}
+}
+
 type countingBoundaryProjector struct {
 	inner BoundaryPathProjection
 	calls map[constraint.PathKey]int
@@ -116,6 +134,23 @@ func boundaryProjectionTestAddress(t *testing.T, path constraint.Path) StableAdd
 		t.Fatalf("stable address for path %s", path.Key())
 	}
 	return addr
+}
+
+func numericStateWithLenLower(t *testing.T, path constraint.Path, lower int64) *numeric.State {
+	t.Helper()
+	container, ok := ContainerRefOfPath(path)
+	if !ok {
+		t.Fatalf("ContainerRefOfPath(%v) failed", path)
+	}
+	op, ok := NumericLenGeConstContainerOp(container, lower)
+	if !ok {
+		t.Fatalf("NumericLenGeConstContainerOp(%#v, %d) failed", container, lower)
+	}
+	state := PointState{}
+	if !ApplyNumericEffect(&state, NumericEffect{Ops: []NumericOp{op}}) {
+		t.Fatalf("ApplyNumericEffect did not apply len lower %d for %v", lower, path)
+	}
+	return state.Num
 }
 
 func boundaryProjectionPathEqual(a, b BoundaryPath) bool {

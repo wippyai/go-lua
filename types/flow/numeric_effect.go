@@ -372,6 +372,26 @@ func NumericLenBoundsForContainer(num *numeric.State, container ContainerRef) (l
 	return num.LenBoundsFor(container.pathKey())
 }
 
+// ForEachNumericLenBoundAddress visits numeric length facts through the shared
+// stable-address vocabulary. Non-container numeric keys remain private to the
+// numeric domain and are not exported as boundary container proofs.
+func ForEachNumericLenBoundAddress(num *numeric.State, fn func(target StableAddress, lower, upper int64) bool) {
+	if num == nil || num.IsUnsat() || fn == nil {
+		return
+	}
+	num.ForEachLenBound(func(key constraint.PathKey, lower, upper int64) bool {
+		container, ok := containerRefOfKey(key)
+		if !ok {
+			return true
+		}
+		target, ok := container.StableAddress()
+		if !ok {
+			return true
+		}
+		return fn(target, lower, upper)
+	})
+}
+
 // NumericLenRefWithOffsetForVar reports the container length reference currently
 // bounding sym, if the numeric domain carries one.
 func NumericLenRefWithOffsetForVar(num *numeric.State, sym cfg.SymbolID) (ContainerRef, int64, bool) {
