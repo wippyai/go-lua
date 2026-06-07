@@ -587,7 +587,7 @@ func (t *Transfer) Transfer(
 	// satisfiable empty state — the initial reachable numeric environment that
 	// the forward join propagates and the per-node numeric transfer refines.
 	if p == g.Entry() {
-		t.applyEntryReachabilityEffect(&out, EntryReachabilityEffect{})
+		flow.LiftEntryReachability(&out)
 		t.seedEntry(&out, entryContracts)
 	}
 	t.applyLoopAppendLengthFacts(&out, t.loopAppendLengthsByPoint[p])

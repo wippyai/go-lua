@@ -178,18 +178,6 @@ func TestEntrySeedEffectWritesRefinedDeclaredContainer(t *testing.T) {
 	}
 }
 
-func TestEntryReachabilityEffectLiftsBottomAxes(t *testing.T) {
-	tr := New(input.Inputs{}, Config{})
-	out := flow.PointStateDomain.Bottom()
-
-	if !tr.applyEntryReachabilityEffect(&out, EntryReachabilityEffect{}) {
-		t.Fatal("entry reachability effect did not report a change")
-	}
-	if tr.applyEntryReachabilityEffect(&out, EntryReachabilityEffect{}) {
-		t.Fatal("entry reachability effect should be idempotent")
-	}
-}
-
 func TestLocalSoftContainerAnnotationDoesNotEraseKnownEmptyInitializer(t *testing.T) {
 	const sym = cfg.SymbolID(31)
 	tr := New(input.Inputs{}, Config{})

@@ -14,16 +14,6 @@ import (
 	"github.com/wippyai/go-lua/types/typ/subst"
 )
 
-// EntryReachabilityEffect lifts bottom-only axes to their reachable identity at a
-// function entry point. The graph entry has no predecessor, so the solver's bottom
-// seed must become the empty numeric environment and no-op cell-effect summary
-// before ordinary parameter entry seeds run.
-type EntryReachabilityEffect struct{}
-
-func (t *Transfer) applyEntryReachabilityEffect(out *flow.PointState, _ EntryReachabilityEffect) bool {
-	return flow.LiftEntryReachability(out)
-}
-
 // EntrySeedEffect is the entry-point reducer for one parameter slot. It composes
 // the sources visible at function entry in a single product-state write:
 // declared annotation, exact caller-provided entry value, and, only for
