@@ -77,7 +77,7 @@ func TestNormalizeOrdersVariantOriginsAndCaseFieldProjections(t *testing.T) {
 	}
 }
 
-func TestVariantFieldOriginEqualityConstraintsSelectMatchingCase(t *testing.T) {
+func TestVariantFieldPathRelationConstraintsSelectMatchingCase(t *testing.T) {
 	target := constraint.Path{Root: "selected", Symbol: cfg.SymbolID(11), Version: 2}
 	source := constraint.Path{Root: "events", Symbol: cfg.SymbolID(12)}
 	origin := VariantFieldOrigin{
@@ -88,20 +88,55 @@ func TestVariantFieldOriginEqualityConstraintsSelectMatchingCase(t *testing.T) {
 		CaseIndex:    3,
 	}
 
-	got := VariantFieldOriginEqualityConstraints([]VariantFieldOrigin{origin}, target, "channel", source)
-	if len(got) != 1 {
-		t.Fatalf("equality constraints = %#v, want one selected case", got)
+	got := VariantFieldPathRelationConstraints(VariantFieldPathRelation{
+		Origins: []VariantFieldOrigin{origin},
+		Target:  target,
+		Field:   "channel",
+		Source:  source,
+		Kind:    VariantFieldPathEquals,
+	})
+	if len(got) != 2 {
+		t.Fatalf("equality constraints = %#v, want base relation and selected case", got)
 	}
-	eq, ok := got[0].(constraint.VariantCaseEquals)
+	base, ok := got[0].(constraint.FieldEqualsPath)
 	if !ok {
-		t.Fatalf("constraint = %#v, want VariantCaseEquals", got[0])
+		t.Fatalf("constraint = %#v, want FieldEqualsPath", got[0])
+	}
+	if !base.Target.Equal(target) || base.Field != "channel" || !base.Value.Equal(source) {
+		t.Fatalf("base relation = %#v, want target channel source relation", base)
+	}
+	eq, ok := got[1].(constraint.VariantCaseEquals)
+	if !ok {
+		t.Fatalf("constraint = %#v, want VariantCaseEquals", got[1])
 	}
 	if !eq.Target.Equal(target) || eq.OriginFamily != 91 || eq.CaseIndex != 3 {
 		t.Fatalf("constraint = %#v, want selected family/case", eq)
 	}
 }
 
-func TestVariantFieldOriginNotEqualityConstraintsExcludeMatchingCase(t *testing.T) {
+func TestVariantFieldPathRelationConstraintsWithoutOriginsKeepsBaseRelation(t *testing.T) {
+	target := constraint.Path{Root: "selected", Symbol: cfg.SymbolID(11)}
+	source := constraint.Path{Root: "events", Symbol: cfg.SymbolID(12)}
+
+	got := VariantFieldPathRelationConstraints(VariantFieldPathRelation{
+		Target: target,
+		Field:  "channel",
+		Source: source,
+		Kind:   VariantFieldPathEquals,
+	})
+	if len(got) != 1 {
+		t.Fatalf("equality constraints = %#v, want base relation only", got)
+	}
+	base, ok := got[0].(constraint.FieldEqualsPath)
+	if !ok {
+		t.Fatalf("constraint = %#v, want FieldEqualsPath", got[0])
+	}
+	if !base.Target.Equal(target) || base.Field != "channel" || !base.Value.Equal(source) {
+		t.Fatalf("base relation = %#v, want target channel source relation", base)
+	}
+}
+
+func TestVariantFieldPathRelationConstraintsExcludeMatchingCase(t *testing.T) {
 	target := constraint.Path{Root: "selected", Symbol: cfg.SymbolID(11)}
 	source := constraint.Path{Root: "events", Symbol: cfg.SymbolID(12)}
 	origin := VariantFieldOrigin{
@@ -112,13 +147,26 @@ func TestVariantFieldOriginNotEqualityConstraintsExcludeMatchingCase(t *testing.
 		CaseIndex:    3,
 	}
 
-	got := VariantFieldOriginNotEqualityConstraints([]VariantFieldOrigin{origin}, target, "channel", source)
-	if len(got) != 1 {
-		t.Fatalf("not-equality constraints = %#v, want one excluded case", got)
+	got := VariantFieldPathRelationConstraints(VariantFieldPathRelation{
+		Origins: []VariantFieldOrigin{origin},
+		Target:  target,
+		Field:   "channel",
+		Source:  source,
+		Kind:    VariantFieldPathNotEquals,
+	})
+	if len(got) != 2 {
+		t.Fatalf("not-equality constraints = %#v, want base relation and excluded case", got)
 	}
-	neq, ok := got[0].(constraint.VariantCaseNotEquals)
+	base, ok := got[0].(constraint.FieldNotEqualsPath)
 	if !ok {
-		t.Fatalf("constraint = %#v, want VariantCaseNotEquals", got[0])
+		t.Fatalf("constraint = %#v, want FieldNotEqualsPath", got[0])
+	}
+	if !base.Target.Equal(target) || base.Field != "channel" || !base.Value.Equal(source) {
+		t.Fatalf("base relation = %#v, want target channel source relation", base)
+	}
+	neq, ok := got[1].(constraint.VariantCaseNotEquals)
+	if !ok {
+		t.Fatalf("constraint = %#v, want VariantCaseNotEquals", got[1])
 	}
 	if !neq.Target.Equal(target) || neq.OriginFamily != 91 || neq.CaseIndex != 3 {
 		t.Fatalf("constraint = %#v, want excluded family/case", neq)

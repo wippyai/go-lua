@@ -12,15 +12,54 @@ func VariantOriginFamily(target constraint.Path, field string) uint64 {
 	return internal.HashCombine(h, internal.FnvString(field))
 }
 
-// VariantFieldOriginEqualityConstraints maps an observed field/path equality
-// onto the finite variant case selected by matching origin evidence.
-func VariantFieldOriginEqualityConstraints(origins []VariantFieldOrigin, target constraint.Path, field string, source constraint.Path) []constraint.Constraint {
+// VariantFieldPathRelationKind describes an observed relation between a
+// variant result field and the path that produced one of its cases.
+type VariantFieldPathRelationKind uint8
+
+const (
+	VariantFieldPathEquals VariantFieldPathRelationKind = iota + 1
+	VariantFieldPathNotEquals
+)
+
+// VariantFieldPathRelation projects an observed field/path relation into the
+// complete constraint set that represents it, including variant provenance.
+type VariantFieldPathRelation struct {
+	Origins []VariantFieldOrigin
+	Target  constraint.Path
+	Field   string
+	Source  constraint.Path
+	Kind    VariantFieldPathRelationKind
+}
+
+// VariantFieldPathRelationConstraints is the canonical projection for field
+// relation observations. Consumers should not assemble the base field relation
+// and variant-origin case facts separately.
+func VariantFieldPathRelationConstraints(relation VariantFieldPathRelation) []constraint.Constraint {
+	switch relation.Kind {
+	case VariantFieldPathEquals:
+		out := []constraint.Constraint{constraint.FieldEqualsPath{
+			Target: relation.Target,
+			Field:  relation.Field,
+			Value:  relation.Source,
+		}}
+		return append(out, variantFieldOriginEqualityConstraints(relation.Origins, relation.Target, relation.Field, relation.Source)...)
+	case VariantFieldPathNotEquals:
+		out := []constraint.Constraint{constraint.FieldNotEqualsPath{
+			Target: relation.Target,
+			Field:  relation.Field,
+			Value:  relation.Source,
+		}}
+		return append(out, variantFieldOriginNotEqualityConstraints(relation.Origins, relation.Target, relation.Field, relation.Source)...)
+	default:
+		return nil
+	}
+}
+
+func variantFieldOriginEqualityConstraints(origins []VariantFieldOrigin, target constraint.Path, field string, source constraint.Path) []constraint.Constraint {
 	return variantFieldOriginConstraints(origins, target, field, source, true)
 }
 
-// VariantFieldOriginNotEqualityConstraints maps an observed field/path
-// inequality onto the finite variant case excluded by matching origin evidence.
-func VariantFieldOriginNotEqualityConstraints(origins []VariantFieldOrigin, target constraint.Path, field string, source constraint.Path) []constraint.Constraint {
+func variantFieldOriginNotEqualityConstraints(origins []VariantFieldOrigin, target constraint.Path, field string, source constraint.Path) []constraint.Constraint {
 	return variantFieldOriginConstraints(origins, target, field, source, false)
 }
 

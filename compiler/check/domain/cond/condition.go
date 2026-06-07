@@ -716,18 +716,10 @@ func (ce *ConditionExtractor) ConditionFromEquality(lhs, rhs ast.Expr) constrain
 		return constraint.TrueCondition()
 	}
 	if target, field, ok := constraint.SplitFieldPath(left); ok {
-		constraints := []constraint.Constraint{constraint.FieldEqualsPath{Target: target, Field: field, Value: right}}
-		if ce != nil && ce.Inputs != nil {
-			constraints = append(constraints, flow.VariantFieldOriginEqualityConstraints(ce.Inputs.VariantFieldOrigins, target, field, right)...)
-		}
-		return constraint.FromConstraints(constraints...)
+		return constraint.FromConstraints(ce.variantFieldPathRelationConstraints(target, field, right, flow.VariantFieldPathEquals)...)
 	}
 	if target, field, ok := constraint.SplitFieldPath(right); ok {
-		constraints := []constraint.Constraint{constraint.FieldEqualsPath{Target: target, Field: field, Value: left}}
-		if ce != nil && ce.Inputs != nil {
-			constraints = append(constraints, flow.VariantFieldOriginEqualityConstraints(ce.Inputs.VariantFieldOrigins, target, field, left)...)
-		}
-		return constraint.FromConstraints(constraints...)
+		return constraint.FromConstraints(ce.variantFieldPathRelationConstraints(target, field, left, flow.VariantFieldPathEquals)...)
 	}
 	if target, key, ok := flowpath.SplitIndexPath(left); ok {
 		return constraint.FromConstraints(constraint.IndexEqualsPath{Target: target, Key: key, Value: right})
@@ -918,18 +910,10 @@ func (ce *ConditionExtractor) ConditionFromInequality(lhs, rhs ast.Expr) constra
 	right := ce.pathFromExpr(rhs)
 	if !left.IsEmpty() && !right.IsEmpty() {
 		if target, field, ok := constraint.SplitFieldPath(left); ok {
-			constraints := []constraint.Constraint{constraint.FieldNotEqualsPath{Target: target, Field: field, Value: right}}
-			if ce != nil && ce.Inputs != nil {
-				constraints = append(constraints, flow.VariantFieldOriginNotEqualityConstraints(ce.Inputs.VariantFieldOrigins, target, field, right)...)
-			}
-			return constraint.FromConstraints(constraints...)
+			return constraint.FromConstraints(ce.variantFieldPathRelationConstraints(target, field, right, flow.VariantFieldPathNotEquals)...)
 		}
 		if target, field, ok := constraint.SplitFieldPath(right); ok {
-			constraints := []constraint.Constraint{constraint.FieldNotEqualsPath{Target: target, Field: field, Value: left}}
-			if ce != nil && ce.Inputs != nil {
-				constraints = append(constraints, flow.VariantFieldOriginNotEqualityConstraints(ce.Inputs.VariantFieldOrigins, target, field, left)...)
-			}
-			return constraint.FromConstraints(constraints...)
+			return constraint.FromConstraints(ce.variantFieldPathRelationConstraints(target, field, left, flow.VariantFieldPathNotEquals)...)
 		}
 	}
 
@@ -939,6 +923,20 @@ func (ce *ConditionExtractor) ConditionFromInequality(lhs, rhs ast.Expr) constra
 		return constraint.TrueCondition()
 	}
 	return constraint.Not(eq)
+}
+
+func (ce *ConditionExtractor) variantFieldPathRelationConstraints(target constraint.Path, field string, source constraint.Path, kind flow.VariantFieldPathRelationKind) []constraint.Constraint {
+	var origins []flow.VariantFieldOrigin
+	if ce != nil && ce.Inputs != nil {
+		origins = ce.Inputs.VariantFieldOrigins
+	}
+	return flow.VariantFieldPathRelationConstraints(flow.VariantFieldPathRelation{
+		Origins: origins,
+		Target:  target,
+		Field:   field,
+		Source:  source,
+		Kind:    kind,
+	})
 }
 
 // constraintsFromPathLiteral handles path == literal for static paths.
