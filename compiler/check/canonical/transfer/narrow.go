@@ -951,25 +951,23 @@ func (t *Transfer) trackedExprType(out flow.PointState, expr ast.Expr) typ.Type 
 	}
 	var declared typ.Type
 	if path.Symbol != 0 && t.declaredTypes != nil {
-		if root := t.declaredTypes[path.Symbol]; !typ.IsAbsentOrUnknown(root) {
-			if len(path.Segments) == 0 {
-				declared = root
-			} else if av, ok := flow.ProductMemberPathValue(product.FromType(root), path.Segments); ok && !av.IsZero() {
-				declared = av.ProjectValue()
-			}
-		}
+		declared = t.declaredTypes[path.Symbol]
 	}
-	if av, ok := flow.PointFactsOf(out).PathValue(path); ok && !av.IsZero() {
-		projected := av.ProjectValue()
-		if !typ.IsAbsentOrUnknown(projected) {
-			if isDiscriminatingType(projected) {
-				return projected
-			}
-			if isDiscriminatingType(declared) && narrow.TypesOverlap(projected, declared) {
-				return declared
-			}
+	evidence := flow.PointFactsOf(out).PathTypeEvidence(path, declared)
+	if evidence.Declared.State == flow.StateResolved {
+		declared = evidence.Declared.Type
+	} else {
+		declared = nil
+	}
+	if evidence.Current.State == flow.StateResolved {
+		projected := evidence.Current.Type
+		if isDiscriminatingType(projected) {
 			return projected
 		}
+		if isDiscriminatingType(declared) && narrow.TypesOverlap(projected, declared) {
+			return declared
+		}
+		return projected
 	}
 	if !typ.IsAbsentOrUnknown(declared) {
 		return declared
@@ -1907,10 +1905,11 @@ func (t *Transfer) refineStaticMemberFactForLiteralComparison(
 	}
 	path := constraint.NewPath(sym, "")
 	path.Segments = append([]constraint.Segment(nil), segments...)
-	existing, ok := flow.PointFactsOf(*out).StaticMemberValue(path)
-	if !ok || existing.IsZero() {
+	source := flow.PointFactsOf(*out).StaticMemberRefinementReads(path, product.AbstractValue{}, false).Existing
+	if source.State != flow.StateResolved {
 		return false
 	}
+	existing := source.Value
 	current := existing.ProjectValue()
 	if current == nil {
 		return false
