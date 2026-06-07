@@ -535,7 +535,11 @@ func IndexedIteratorKeyArrayReadback(
 				if use.Origin.VarIndex != 1 || len(use.Remainder) != 0 {
 					continue
 				}
-				for _, value := range keyPresence.KeyArrayValues(use.Origin.Source, tableKey) {
+				source, ok := use.SourceAddress()
+				if !ok {
+					continue
+				}
+				for _, value := range keyPresence.KeyArrayValuesAddresses(source, table) {
 					if value.IsZero() {
 						continue
 					}

@@ -56,6 +56,29 @@ type ValueOriginUse struct {
 	Remainder []constraint.Segment
 }
 
+// SourceAddress returns the normalized source address represented by this use.
+func (u ValueOriginUse) SourceAddress() (StableAddress, bool) {
+	return u.Origin.SourceAddress()
+}
+
+// SourcePath returns the symbol-rooted source path represented by this use.
+func (u ValueOriginUse) SourcePath() (constraint.Path, bool) {
+	addr, ok := u.SourceAddress()
+	if !ok {
+		return constraint.Path{}, false
+	}
+	return addr.Path()
+}
+
+// SourceRoute returns the normalized source route represented by this use.
+func (u ValueOriginUse) SourceRoute() (sourceRoute, bool) {
+	source, ok := u.SourceAddress()
+	if !ok {
+		return sourceRoute{}, false
+	}
+	return sourceRouteOf(source, u.Remainder)
+}
+
 // ValueOriginFacts is a finite must-set lattice over value-origin provenance.
 // Bottom is unreachable, Top is the empty fact set, and Join/Widen keep only
 // origins proven by every predecessor.
@@ -157,7 +180,11 @@ func (f ValueOriginFacts) sourceRoutesCoveringAddress(value StableAddress, accep
 		if accept != nil && !accept(use) {
 			continue
 		}
-		out = appendCanonicalSourceRoute(out, use.Origin.Source, use.Remainder)
+		route, ok := use.SourceRoute()
+		if !ok {
+			continue
+		}
+		out = append(out, route)
 	}
 	return out
 }

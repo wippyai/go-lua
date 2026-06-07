@@ -30,23 +30,14 @@ type sourceRoute struct {
 	remainder []constraint.Segment
 }
 
-func canonicalSourceRoute(sourceKey constraint.PathKey, remainder []constraint.Segment) (sourceRoute, bool) {
-	source, ok := StableAddressFromCanonicalKey(sourceKey)
-	if !ok {
+func sourceRouteOf(source StableAddress, remainder []constraint.Segment) (sourceRoute, bool) {
+	if source.Key() == "" {
 		return sourceRoute{}, false
 	}
 	return sourceRoute{
 		source:    source,
 		remainder: cloneAddressSegments(remainder),
 	}, true
-}
-
-func appendCanonicalSourceRoute(out []sourceRoute, sourceKey constraint.PathKey, remainder []constraint.Segment) []sourceRoute {
-	route, ok := canonicalSourceRoute(sourceKey, remainder)
-	if !ok {
-		return out
-	}
-	return append(out, route)
 }
 
 func (r sourceRoute) appendedSource() (StableAddress, bool) {

@@ -48,6 +48,15 @@ type PathAliasUse struct {
 	Remainder []constraint.Segment
 }
 
+// SourceRoute returns the normalized source route represented by this use.
+func (u PathAliasUse) SourceRoute() (sourceRoute, bool) {
+	source, ok := u.Alias.SourceAddress()
+	if !ok {
+		return sourceRoute{}, false
+	}
+	return sourceRouteOf(source, u.Remainder)
+}
+
 // PathAliasFacts is a finite must-set lattice over assignment identity facts.
 // Bottom is unreachable; Top is the empty fact set.
 type PathAliasFacts struct {
@@ -133,7 +142,11 @@ func (f PathAliasFacts) sourceRoutesCoveringAddress(value StableAddress) []sourc
 	}
 	var out []sourceRoute
 	for _, use := range uses {
-		out = appendCanonicalSourceRoute(out, use.Alias.Source, use.Remainder)
+		route, ok := use.SourceRoute()
+		if !ok {
+			continue
+		}
+		out = append(out, route)
 	}
 	return out
 }

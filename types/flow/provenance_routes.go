@@ -77,7 +77,7 @@ func (f PointFacts) ProvenanceRoutesFor(q ProvenanceRouteQuery) []ProvenanceRout
 }
 
 func appendValueOriginProvenanceRoute(out []ProvenanceRoute, use ValueOriginUse, kind ProvenanceRouteKind) []ProvenanceRoute {
-	source, ok := use.Origin.SourcePath()
+	source, ok := use.SourcePath()
 	if !ok || source.IsEmpty() || source.Symbol == 0 {
 		return out
 	}
@@ -90,10 +90,10 @@ func appendValueOriginProvenanceRoute(out []ProvenanceRoute, use ValueOriginUse,
 }
 
 func appendAppendFieldProvenanceRoutes(out []ProvenanceRoute, state PointState, use ValueOriginUse) []ProvenanceRoute {
-	if use.Origin.Source == "" || len(use.Remainder) == 0 {
+	if len(use.Remainder) == 0 {
 		return out
 	}
-	source, ok := StableAddressFromCanonicalKey(use.Origin.Source)
+	source, ok := use.SourceAddress()
 	if !ok {
 		return out
 	}

@@ -143,11 +143,16 @@ type AppendElementFieldSourceQuery struct {
 
 // SourcePath returns the symbol-rooted source path carried by this origin use.
 func (u AppendElementFieldOriginUse) SourcePath() (constraint.Path, bool) {
-	addr, ok := StableAddressFromCanonicalKey(u.Origin.Source)
+	addr, ok := u.SourceAddress()
 	if !ok {
 		return constraint.Path{}, false
 	}
 	return addr.Path()
+}
+
+// SourceAddress returns the normalized source address carried by this origin use.
+func (u AppendElementFieldOriginUse) SourceAddress() (StableAddress, bool) {
+	return StableAddressFromCanonicalKey(u.Origin.Source)
 }
 
 // KeyPresenceFacts is a finite must-set lattice over KeyOf provenance. Bottom is
@@ -1270,7 +1275,7 @@ func (f KeyPresenceFacts) AppendElementFieldSourceAddresses(q AppendElementField
 	}
 	var out []AppendElementFieldSourceAddress
 	for _, use := range uses {
-		source, ok := StableAddressFromCanonicalKey(use.Origin.Source)
+		source, ok := use.SourceAddress()
 		if !ok {
 			continue
 		}

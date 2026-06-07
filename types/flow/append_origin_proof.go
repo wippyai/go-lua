@@ -793,7 +793,7 @@ func ApplyAppendElementFieldOriginUse(
 		return false
 	}
 	before := out.KeyPresence
-	originSource, ok := StableAddressFromCanonicalKey(originUse.Origin.Source)
+	originSource, ok := originUse.SourceAddress()
 	if !ok {
 		return false
 	}
