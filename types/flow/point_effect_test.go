@@ -40,13 +40,19 @@ func TestPointEffectRecordsPrototypeFacts(t *testing.T) {
 	proto := cfg.SymbolID(31)
 	instance := cfg.SymbolID(32)
 	self := product.FromType(typ.NewRecord().Build())
+	otherSelf := product.FromType(typ.NewRecord().Field("label", typ.String).Build())
 	out := PointState{}
 
 	if !RecordPrototypeSelf(&out, proto, self) {
 		t.Fatal("RecordPrototypeSelf reported no change")
 	}
-	if got, ok := out.PrototypeSelf.Value(proto); !ok || !product.Domain.Equal(got, self) {
-		t.Fatalf("prototype self = %v/%v, want %v", got.ProjectValue(), ok, self.ProjectValue())
+	if !RecordPrototypeSelf(&out, proto, otherSelf) {
+		t.Fatal("RecordPrototypeSelf reported no change for joined receiver value")
+	}
+	if got, ok := out.PrototypeSelf.Value(proto); !ok ||
+		!product.Domain.LessOrEq(self, got) ||
+		!product.Domain.LessOrEq(otherSelf, got) {
+		t.Fatalf("prototype self = %v/%v, want joined receiver value", got.ProjectValue(), ok)
 	}
 	if !BindPrototypeInstance(&out, instance, proto) {
 		t.Fatal("BindPrototypeInstance reported no change")

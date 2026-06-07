@@ -1446,28 +1446,6 @@ func TestReferenceEffectDynamicPlaceClearsRootSubtree(t *testing.T) {
 	}
 }
 
-func TestPrototypeSelfEffectJoinsReceiverValue(t *testing.T) {
-	proto := cfg.SymbolID(551)
-	first := product.FromType(typ.NewRecord().Field("id", typ.String).Build())
-	second := product.FromType(typ.NewRecord().Field("label", typ.Number).Build())
-	tr := New(input.Inputs{}, Config{})
-	out := flow.PointState{}
-
-	if !tr.applyPrototypeSelfEffect(&out, PrototypeSelfEffect{Prototype: proto, Value: first}) {
-		t.Fatal("prototype-self effect reported no change")
-	}
-	tr.applyPrototypeSelfEffect(&out, PrototypeSelfEffect{Prototype: proto, Value: second})
-
-	got, ok := out.PrototypeSelf.Value(proto)
-	if !ok {
-		t.Fatalf("prototype-self value missing: %s", out.PrototypeSelf.Format())
-	}
-	if !subtype.IsSubtype(first.ProjectValue(), got.ProjectValue()) ||
-		!subtype.IsSubtype(second.ProjectValue(), got.ProjectValue()) {
-		t.Fatalf("prototype-self joined value = %v, want supertype of both inputs", got.ProjectValue())
-	}
-}
-
 func TestWriteEffectRecordsPrototypeSelfThroughReducer(t *testing.T) {
 	proto := cfg.SymbolID(561)
 	selfSym := cfg.SymbolID(562)

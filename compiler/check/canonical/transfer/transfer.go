@@ -1817,16 +1817,16 @@ func (t *Transfer) recordPrototypeSelfWrite(
 	}
 	changed := false
 	if t.prototypeReceiverSym != 0 && t.prototypeSelfSymbol != 0 && sym == t.prototypeSelfSymbol &&
-		t.applyPrototypeSelfEffect(out, PrototypeSelfEffect{Prototype: t.prototypeReceiverSym, Value: updated}) {
+		flow.RecordPrototypeSelf(out, t.prototypeReceiverSym, updated) {
 		changed = true
 	}
 	if publishParamEffect {
 		if slot, ok := t.paramBySym[sym]; ok {
-			if t.recordReceiverEffect(out, slot, updated, mutations...) {
+			if flow.RecordReceiverWrite(out, slot, updated, mutations...) {
 				changed = true
 			}
 		} else if t.prototypeSelfSymbol != 0 && sym == t.prototypeSelfSymbol && t.prototypeSelfSlot >= 0 &&
-			t.recordReceiverEffect(out, t.prototypeSelfSlot, updated, mutations...) {
+			flow.RecordReceiverWrite(out, t.prototypeSelfSlot, updated, mutations...) {
 			changed = true
 		}
 	}
@@ -2830,10 +2830,7 @@ func (t *Transfer) applySetMetatablePrototypeSelf(
 			instance = withMeta
 		}
 	}
-	t.applyPrototypeSelfEffect(out, PrototypeSelfEffect{
-		Prototype: proto,
-		Value:     instance,
-	})
+	flow.RecordPrototypeSelf(out, proto, instance)
 }
 
 func (t *Transfer) setMetatablePrototype(p cfg.Point, call *ast.FuncCallExpr) (cfg.SymbolID, bool) {
@@ -3996,7 +3993,7 @@ func (t *Transfer) publishReturnedPrototypeSelf(out *flow.PointState, expr ast.E
 		if proto == 0 {
 			continue
 		}
-		t.applyPrototypeSelfEffect(out, PrototypeSelfEffect{Prototype: proto, Value: current})
+		flow.RecordPrototypeSelf(out, proto, current)
 	}
 }
 

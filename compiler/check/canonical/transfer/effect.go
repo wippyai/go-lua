@@ -75,14 +75,6 @@ type ReferenceEffect struct {
 	References referenceWrite
 }
 
-// PrototypeSelfEffect records the runtime `self` value that flows into methods
-// of one prototype table in Lua split-pattern OOP. Both setmetatable publishing
-// sites and method-body self writes lower through this reducer.
-type PrototypeSelfEffect struct {
-	Prototype cfg.SymbolID
-	Value     product.AbstractValue
-}
-
 func sourceReferenceWrite() referenceWrite {
 	return referenceWrite{
 		FunctionMode: referenceWriteFromSource,
@@ -158,15 +150,6 @@ func (t *Transfer) applyCellStoreEffects(out *flow.PointState, effects flow.Capt
 
 func (t *Transfer) recordCellEffects(out *flow.PointState, effects flow.CaptureEffects) {
 	flow.RecordCaptureEffects(out, effects)
-}
-
-func (t *Transfer) recordReceiverEffect(
-	out *flow.PointState,
-	slot int,
-	value product.AbstractValue,
-	mutations ...flow.ReceiverMutation,
-) bool {
-	return flow.RecordReceiverWrite(out, slot, value, mutations...)
 }
 
 func (t *Transfer) recordReceiverMutationEffect(
@@ -292,10 +275,6 @@ func (t *Transfer) applyReferenceWrite(
 		}
 	}
 	return changed
-}
-
-func (t *Transfer) applyPrototypeSelfEffect(out *flow.PointState, effect PrototypeSelfEffect) bool {
-	return flow.RecordPrototypeSelf(out, effect.Prototype, effect.Value)
 }
 
 func (t *Transfer) applyPrototypeSelfWriteEffect(out *flow.PointState, effect WriteEffect, updated product.AbstractValue) bool {
