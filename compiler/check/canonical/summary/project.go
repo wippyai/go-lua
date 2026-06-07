@@ -301,13 +301,7 @@ func returnSlotHasFiniteCallTarget(ps flow.PointState, info *cfg.ReturnInfo, i i
 	if !ok {
 		return false
 	}
-	if set, ok := flow.FunctionRefAtPath(ps.FunctionRefs, path); ok && len(set.Refs()) > 0 {
-		return true
-	}
-	if set, ok := flow.ClosureRefAtPath(ps.ClosureRefs, path); ok && len(set.Refs()) > 0 {
-		return true
-	}
-	return false
+	return flow.ReferenceContextFromPoint(&ps).HasCallablePath(path)
 }
 
 func returnCallTargetPath(call *cfg.CallInfo) (constraint.Path, bool) {

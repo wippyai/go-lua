@@ -150,6 +150,32 @@ func TestReferenceContextJoinAddsEveryAxis(t *testing.T) {
 	}
 }
 
+func TestReferenceContextHasCallablePathChecksIdentityAxes(t *testing.T) {
+	sym := cfg.SymbolID(60)
+	fnPath := constraint.NewPath(sym, "module").Field("factory")
+	closurePath := constraint.NewPath(sym, "module").Field("builder")
+	cellPath := constraint.NewPath(sym, "module")
+
+	references := ReferenceContextOf(
+		CaptureCellsOf([]CaptureCell{{Symbol: sym, Value: product.FromType(typ.String)}}),
+		WithFunctionRefPath(nil, fnPath, FunctionRefSetOf(FunctionRef{GraphID: 60})),
+		WithClosureRefPath(nil, closurePath, ClosureRefSetOf(ClosureRefOf(FunctionRef{GraphID: 61}, CaptureCellsDomain.Bottom(), nil))),
+	)
+
+	if !references.HasCallablePath(fnPath) {
+		t.Fatalf("function identity path was not callable")
+	}
+	if !references.HasCallablePath(closurePath) {
+		t.Fatalf("closure identity path was not callable")
+	}
+	if references.HasCallablePath(cellPath) {
+		t.Fatalf("capture-cell-only path was treated as callable")
+	}
+	if references.HasCallablePath(constraint.Path{}) {
+		t.Fatalf("empty path was treated as callable")
+	}
+}
+
 func TestMergeReferenceContextWithFixedPreservesExplicitContext(t *testing.T) {
 	sym := cfg.SymbolID(7)
 	other := cfg.SymbolID(8)

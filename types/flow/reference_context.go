@@ -156,6 +156,22 @@ func (c ReferenceContext) Join(other ReferenceContext) ReferenceContext {
 	)
 }
 
+// HasCallablePath reports whether path has finite function or closure identity
+// evidence. It is the identity-only existence query; signature projection and
+// value refinement live in PointFacts because they also need product values.
+func (c ReferenceContext) HasCallablePath(path constraint.Path) bool {
+	if path.IsEmpty() {
+		return false
+	}
+	if set, ok := FunctionRefAtPath(c.FunctionRefs(), path); ok && len(set.Refs()) > 0 {
+		return true
+	}
+	if set, ok := ClosureRefAtPath(c.ClosureRefs(), path); ok && len(set.Refs()) > 0 {
+		return true
+	}
+	return false
+}
+
 func mergeCaptureCellsWithFixed(fixed, fallback CaptureCells) CaptureCells {
 	if fixed.IsTop() || fallback.IsTop() {
 		if fixed.IsTop() {
