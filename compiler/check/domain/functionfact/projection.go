@@ -125,68 +125,161 @@ func (v StoreView) TypeLookup(projection Projection, mode api.SynthMode) func(cf
 	}
 }
 
-// ReturnProjection returns the return vector visible in mode.
-func ReturnProjection(facts api.FunctionFacts, sym cfg.SymbolID, mode api.SynthMode) []typ.Type {
-	ff, ok := Lookup(facts, sym)
+// FactsView is the canonical read surface for one in-memory FunctionFacts
+// product. It gives product-local consumers the same vocabulary as StoreView
+// without repeating lookup and projection policy at call sites.
+type FactsView struct {
+	facts api.FunctionFacts
+}
+
+// FactsProjection returns a normalized view over an in-memory FunctionFacts product.
+func FactsProjection(facts api.FunctionFacts) FactsView {
+	return FactsView{facts: facts}
+}
+
+// FactSymbolView is one resolved function-fact product.
+type FactSymbolView struct {
+	Fact api.FunctionFact
+}
+
+// Symbol resolves sym inside this function-fact product.
+func (v FactsView) Symbol(sym cfg.SymbolID) (FactSymbolView, bool) {
+	ff, ok := lookupStored(v.facts, sym)
+	if !ok {
+		return FactSymbolView{}, false
+	}
+	return FactSymbolView{Fact: ff}, true
+}
+
+// Type projects sym into one semantic function view.
+func (v FactsView) Type(sym cfg.SymbolID, projection Projection, mode api.SynthMode) typ.Type {
+	sv, ok := v.Symbol(sym)
 	if !ok {
 		return nil
 	}
-	return returnsForMode(ff, mode)
+	return sv.Type(projection, mode)
 }
 
-// BodyTypeProjection returns the body-view function type projection.
-func BodyTypeProjection(facts api.FunctionFacts, sym cfg.SymbolID, mode api.SynthMode) typ.Type {
-	ff, ok := lookupStored(facts, sym)
+// Returns projects sym's visible return vector in mode.
+func (v FactsView) Returns(sym cfg.SymbolID, mode api.SynthMode) []typ.Type {
+	sv, ok := v.Symbol(sym)
 	if !ok {
 		return nil
 	}
-	return projectTypeNormalized(ff, ProjectionBody, mode)
+	return sv.Returns(mode)
 }
 
-// FlowInputTypeProjection returns the function view allowed while extracting
-// abstract-interpreter inputs.
-func FlowInputTypeProjection(facts api.FunctionFacts, sym cfg.SymbolID, mode api.SynthMode) typ.Type {
-	ff, ok := lookupStored(facts, sym)
+// BodyEntryEvidence returns sym's observed entry evidence.
+func (v FactsView) BodyEntryEvidence(sym cfg.SymbolID) []typ.Type {
+	sv, ok := v.Symbol(sym)
 	if !ok {
 		return nil
 	}
-	return projectTypeNormalized(ff, ProjectionFlowInput, mode)
+	return sv.BodyEntryEvidence()
 }
 
-// PublicTypeProjection returns the caller-facing public function type projection.
-func PublicTypeProjection(facts api.FunctionFacts, sym cfg.SymbolID, mode api.SynthMode) typ.Type {
-	ff, ok := lookupStored(facts, sym)
+// BodyContractEvidence returns sym's body contract evidence.
+func (v FactsView) BodyContractEvidence(sym cfg.SymbolID) []typ.Type {
+	sv, ok := v.Symbol(sym)
 	if !ok {
 		return nil
 	}
-	return projectTypeNormalized(ff, ProjectionPublic, mode)
+	return sv.BodyContractEvidence()
 }
 
-// ExportTypeProjection returns the module-boundary function type projection.
-func ExportTypeProjection(facts api.FunctionFacts, sym cfg.SymbolID, mode api.SynthMode) typ.Type {
-	ff, ok := lookupStored(facts, sym)
+// PublicParameterEvidence returns sym's public caller parameter evidence.
+func (v FactsView) PublicParameterEvidence(sym cfg.SymbolID) []typ.Type {
+	sv, ok := v.Symbol(sym)
 	if !ok {
 		return nil
 	}
-	return projectTypeNormalized(ff, ProjectionExport, mode)
+	return sv.PublicParameterEvidence()
 }
 
-// SiblingTypeProjection returns the same-scope sibling function type projection.
-func SiblingTypeProjection(facts api.FunctionFacts, sym cfg.SymbolID, mode api.SynthMode) typ.Type {
-	ff, ok := lookupStored(facts, sym)
+// ReturnSummary returns sym's declared/pre-flow return summary projection.
+func (v FactsView) ReturnSummary(sym cfg.SymbolID) []typ.Type {
+	sv, ok := v.Symbol(sym)
 	if !ok {
 		return nil
 	}
-	return projectTypeNormalized(ff, ProjectionSibling, mode)
+	return sv.ReturnSummary()
 }
 
-// SynthesisTypeProjection is the default function-fact projection for expression
+// NarrowSummary returns sym's post-flow return summary projection.
+func (v FactsView) NarrowSummary(sym cfg.SymbolID) []typ.Type {
+	sv, ok := v.Symbol(sym)
+	if !ok {
+		return nil
+	}
+	return sv.NarrowSummary()
+}
+
+// Refinement returns sym's function refinement.
+func (v FactsView) Refinement(sym cfg.SymbolID) *constraint.FunctionRefinement {
+	sv, ok := v.Symbol(sym)
+	if !ok {
+		return nil
+	}
+	return sv.Refinement()
+}
+
+// SynthesisType is the default function-fact projection for expression
 // synthesis in a requested mode.
-func SynthesisTypeProjection(facts api.FunctionFacts, sym cfg.SymbolID, mode api.SynthMode) typ.Type {
+func (v FactsView) SynthesisType(sym cfg.SymbolID, mode api.SynthMode) typ.Type {
 	if mode == api.SynthModeFlow {
-		return SiblingTypeProjection(facts, sym, mode)
+		return v.Type(sym, ProjectionSibling, mode)
 	}
-	return FlowInputTypeProjection(facts, sym, mode)
+	return v.Type(sym, ProjectionFlowInput, mode)
+}
+
+// TypeLookup returns a named function type projection function.
+func (v FactsView) TypeLookup(projection Projection, mode api.SynthMode) func(cfg.SymbolID) typ.Type {
+	if len(v.facts) == 0 {
+		return nil
+	}
+	return func(sym cfg.SymbolID) typ.Type {
+		return v.Type(sym, projection, mode)
+	}
+}
+
+// Type projects a resolved fact into one semantic function view.
+func (v FactSymbolView) Type(projection Projection, mode api.SynthMode) typ.Type {
+	return projectTypeNormalized(v.Fact, projection, mode)
+}
+
+// Returns projects a resolved fact's visible return vector in mode.
+func (v FactSymbolView) Returns(mode api.SynthMode) []typ.Type {
+	return returnsForMode(v.Fact, mode)
+}
+
+// BodyEntryEvidence returns observed entry evidence used to interpret a body.
+func (v FactSymbolView) BodyEntryEvidence() []typ.Type {
+	return BodyEntryEvidence(v.Fact)
+}
+
+// BodyContractEvidence returns body contract evidence without entry specialization.
+func (v FactSymbolView) BodyContractEvidence() []typ.Type {
+	return bodyParamsTypes(v.Fact)
+}
+
+// PublicParameterEvidence returns public caller parameter evidence.
+func (v FactSymbolView) PublicParameterEvidence() []typ.Type {
+	return paramsTypes(v.Fact)
+}
+
+// ReturnSummary returns the declared/pre-flow return summary projection.
+func (v FactSymbolView) ReturnSummary() []typ.Type {
+	return summaryTypes(v.Fact)
+}
+
+// NarrowSummary returns the post-flow return summary projection.
+func (v FactSymbolView) NarrowSummary() []typ.Type {
+	return narrowTypes(v.Fact)
+}
+
+// Refinement returns the canonical refinement projection.
+func (v FactSymbolView) Refinement() *constraint.FunctionRefinement {
+	return v.Fact.Refinement
 }
 
 // SignatureWithReturnSummary applies the canonical pre-flow return projection
@@ -195,28 +288,11 @@ func SignatureWithReturnSummary(facts api.FunctionFacts, sym cfg.SymbolID, fn *t
 	if fn == nil || len(facts) == 0 || sym == 0 {
 		return fn
 	}
-	summary := ReturnSummary(facts, sym)
+	summary := FactsProjection(facts).Returns(sym, api.SynthModeDeclared)
 	if len(summary) == 0 {
 		return fn
 	}
 	return returnsummary.ApplyToFunctionType(fn, summary)
-}
-
-// ProjectionLookup returns a named function type projection function.
-func ProjectionLookup(facts api.FunctionFacts, projection Projection, mode api.SynthMode) func(cfg.SymbolID) typ.Type {
-	if len(facts) == 0 {
-		return nil
-	}
-	return func(sym cfg.SymbolID) typ.Type {
-		if sym == 0 {
-			return nil
-		}
-		ff, ok := lookupStored(facts, sym)
-		if !ok {
-			return nil
-		}
-		return projectTypeNormalized(ff, projection, mode)
-	}
 }
 
 // RecursiveTypeProjection returns the read-only function projection used when
@@ -240,7 +316,7 @@ func RecursiveTypeProjection(
 		}
 	}
 	if sym != 0 {
-		return typejoin.WithReturnsOrUnknown(fn, ReturnProjection(facts, sym, mode))
+		return typejoin.WithReturnsOrUnknown(fn, FactsProjection(facts).Returns(sym, mode))
 	}
 	return typejoin.WithReturnsOrUnknown(fn, nil)
 }
@@ -371,15 +447,6 @@ func preserveDeclaredDynamicReturns(declared, projected []typ.Type) []typ.Type {
 	return projected
 }
 
-// PublicParameterEvidence returns the public caller parameter evidence.
-func PublicParameterEvidence(facts api.FunctionFacts, sym cfg.SymbolID) []typ.Type {
-	ff, ok := Lookup(facts, sym)
-	if !ok {
-		return nil
-	}
-	return paramsTypes(ff)
-}
-
 // BodyEntryEvidence returns the observed entry state used to interpret a
 // function body. Body contracts are obligations and are intentionally excluded
 // to avoid treating consumer requirements as producer proof.
@@ -395,54 +462,6 @@ func BodyEntryEvidence(ff api.FunctionFact) []typ.Type {
 func SiblingParameterEvidence(ff api.FunctionFact) []typ.Type {
 	ff = Normalize(ff)
 	return paramevidence.ApplyBodyContractsToEntries(paramsTypes(ff), entryParamsTypes(ff))
-}
-
-// BodyEntryEvidenceForSymbol returns the observed entry evidence used to
-// interpret sym's body.
-func BodyEntryEvidenceForSymbol(facts api.FunctionFacts, sym cfg.SymbolID) []typ.Type {
-	ff, ok := Lookup(facts, sym)
-	if !ok {
-		return nil
-	}
-	return BodyEntryEvidence(ff)
-}
-
-// BodyContractEvidence returns body contract evidence without observed
-// call-entry specialization.
-func BodyContractEvidence(facts api.FunctionFacts, sym cfg.SymbolID) []typ.Type {
-	ff, ok := Lookup(facts, sym)
-	if !ok {
-		return nil
-	}
-	return bodyParamsTypes(ff)
-}
-
-// ReturnSummary returns the canonical declared/pre-flow return summary
-// projection.
-func ReturnSummary(facts api.FunctionFacts, sym cfg.SymbolID) []typ.Type {
-	ff, ok := Lookup(facts, sym)
-	if !ok {
-		return nil
-	}
-	return summaryTypes(ff)
-}
-
-// NarrowSummary returns the canonical post-flow return summary projection.
-func NarrowSummary(facts api.FunctionFacts, sym cfg.SymbolID) []typ.Type {
-	ff, ok := Lookup(facts, sym)
-	if !ok {
-		return nil
-	}
-	return narrowTypes(ff)
-}
-
-// Refinement returns the canonical refinement projection.
-func Refinement(facts api.FunctionFacts, sym cfg.SymbolID) *constraint.FunctionRefinement {
-	ff, ok := Lookup(facts, sym)
-	if !ok {
-		return nil
-	}
-	return ff.Refinement
 }
 
 // Lookup returns the canonical stored function fact for sym from facts.

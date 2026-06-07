@@ -391,7 +391,7 @@ func (s *Synthesizer) canonicalReturnProjection(functionFacts api.FunctionFacts,
 	if len(functionFacts) == 0 || fnSym == 0 {
 		return nil
 	}
-	rt := functionfact.ReturnProjection(functionFacts, fnSym, s.mode)
+	rt := functionfact.FactsProjection(functionFacts).Returns(fnSym, s.mode)
 	if len(rt) == 0 || !typ.HasKnownType(rt) {
 		return nil
 	}
@@ -444,7 +444,7 @@ func (s *Synthesizer) initialReturnOverlay(
 		fnGraph,
 		resolveScope,
 		expected,
-		functionfact.BodyEntryEvidenceForSymbol(functionFacts, fnSym),
+		functionfact.FactsProjection(functionFacts).BodyEntryEvidence(fnSym),
 	)
 	s.addLocalFunctionFactsToOverlay(resolveScope, functionFacts, graphEvidence, overlay)
 	s.addCapturedTypesToOverlay(fn, fnGraph, capturePoint, captureTypes, overlay)
@@ -622,7 +622,7 @@ func (f *returnSynthFactory) Synth() *Synthesizer {
 		DeclaredTypes: f.overlay,
 		GlobalOverlay: f.globalTypes,
 		ModuleAliases: f.moduleAliases,
-		FunctionType:  functionfact.ProjectionLookup(f.functionFacts, functionfact.ProjectionSibling, f.owner.mode),
+		FunctionType:  functionfact.FactsProjection(f.functionFacts).TypeLookup(functionfact.ProjectionSibling, f.owner.mode),
 	})
 	deps := &Deps{
 		Ctx:               f.owner.deps.Ctx,
@@ -817,7 +817,7 @@ func (s *Synthesizer) newReturnInferenceSynth(
 		DeclaredTypes: overlay,
 		GlobalOverlay: globalTypes,
 		ModuleAliases: moduleAliases,
-		FunctionType:  functionfact.ProjectionLookup(functionFacts, functionfact.ProjectionSibling, s.mode),
+		FunctionType:  functionfact.FactsProjection(functionFacts).TypeLookup(functionfact.ProjectionSibling, s.mode),
 	})
 
 	deps := &Deps{
@@ -994,7 +994,7 @@ func (s *Synthesizer) buildLocalFunctionTypeFromFacts(
 
 	var returnTypes []typ.Type
 	if functionFacts != nil && sym != 0 {
-		returnTypes = functionfact.ReturnProjection(functionFacts, sym, api.SynthModeDeclared)
+		returnTypes = functionfact.FactsProjection(functionFacts).Returns(sym, api.SynthModeDeclared)
 	}
 
 	return join.WithReturnsOrUnknown(sig, returnTypes)
@@ -1112,7 +1112,7 @@ func applyBodyCallConstraintsToOverlay(
 		if calleeSym == 0 {
 			continue
 		}
-		bodyParams := functionfact.BodyContractEvidence(functionFacts, calleeSym)
+		bodyParams := functionfact.FactsProjection(functionFacts).BodyContractEvidence(calleeSym)
 		for runtimeIdx, expected := range bodyParams {
 			if !paramevidence.HardPublicEvidence(expected) {
 				continue
@@ -1147,7 +1147,7 @@ func (s *Synthesizer) inferCallbackOverlaySpec(
 
 	functionFacts := s.functionFactsInput()
 	fnSym := s.symbolForFunction(fn)
-	bodyEvidence := functionfact.BodyEntryEvidenceForSymbol(functionFacts, fnSym)
+	bodyEvidence := functionfact.FactsProjection(functionFacts).BodyEntryEvidence(fnSym)
 
 	tempSynths := make(map[*cfg.Graph]*Synthesizer)
 	synthForGraph := func(graph *cfg.Graph) *Synthesizer {
@@ -1182,7 +1182,7 @@ func (s *Synthesizer) inferCallbackOverlaySpec(
 			DeclaredTypes: overlay,
 			GlobalOverlay: globalTypes,
 			ModuleAliases: moduleAliases,
-			FunctionType:  functionfact.ProjectionLookup(functionFacts, functionfact.ProjectionFlowInput, s.mode),
+			FunctionType:  functionfact.FactsProjection(functionFacts).TypeLookup(functionfact.ProjectionFlowInput, s.mode),
 		})
 		tempDeps := &Deps{
 			Ctx:               s.deps.Ctx,

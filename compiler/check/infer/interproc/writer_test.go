@@ -82,7 +82,7 @@ func TestInterprocFactWriter_MergeParentFactsForSymbol(t *testing.T) {
 		t.Fatal("expected update to succeed")
 	}
 	got := stub.factsByGraphKeyNext[key]
-	if params := functionfact.PublicParameterEvidence(got.FunctionFacts, 3); len(params) != 1 || !typ.TypeEquals(params[0], typ.String) {
+	if params := functionfact.FactsProjection(got.FunctionFacts).PublicParameterEvidence(3); len(params) != 1 || !typ.TypeEquals(params[0], typ.String) {
 		t.Fatalf("unexpected parent facts update: %#v", got.FunctionFacts)
 	}
 

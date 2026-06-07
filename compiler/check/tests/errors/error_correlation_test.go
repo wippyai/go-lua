@@ -299,7 +299,7 @@ db:release()
 		if !ok || sym == 0 {
 			t.Fatalf("missing symbol for %s", name)
 		}
-		rets := returnsummary.Normalize(functionfact.ReturnSummary(functionFacts, sym))
+		rets := returnsummary.Normalize(functionfact.FactsProjection(functionFacts).ReturnSummary(sym))
 		if len(rets) == 0 {
 			t.Fatalf("missing return summary for %s", name)
 		}

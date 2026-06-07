@@ -525,7 +525,7 @@ func (s *Session) RefinementsForExport() map[cfg.SymbolID]*constraint.FunctionRe
 		for _, key := range api.SortedGraphKeys(s.Store.InterprocPrev.Facts) {
 			facts := s.Store.InterprocPrev.Facts[key]
 			for _, sym := range cfg.SortedSymbolIDs(facts.FunctionFacts) {
-				if refinement := functionfact.Refinement(facts.FunctionFacts, sym); refinement != nil {
+				if refinement := functionfact.FactsProjection(facts.FunctionFacts).Refinement(sym); refinement != nil {
 					refinements[sym] = refinement
 				}
 			}

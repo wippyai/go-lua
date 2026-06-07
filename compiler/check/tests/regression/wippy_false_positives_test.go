@@ -284,7 +284,7 @@ func TestLocalFunctionShadowsModule_BindingDiagnostic(t *testing.T) {
 			if sess.Store.ModuleBindings() != nil {
 				name = sess.Store.ModuleBindings().Name(sym)
 			}
-			ty := functionfact.SiblingTypeProjection(functionFacts, sym, api.SynthModeDeclared)
+			ty := functionfact.FactsProjection(functionFacts).Type(sym, functionfact.ProjectionSibling, api.SynthModeDeclared)
 			if ty != nil {
 				t.Logf("  sym %d (%s): %s", sym, name, ty.String())
 			}

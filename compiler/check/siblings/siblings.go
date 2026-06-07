@@ -254,7 +254,7 @@ func siblingFunctionType(c BuildConfig, entry FuncEntry) typ.Type {
 	if entry.Symbol == 0 {
 		return nil
 	}
-	if fnType := functionfact.SiblingTypeProjection(c.FunctionFacts, entry.Symbol, api.SynthModeDeclared); fnType != nil {
+	if fnType := functionfact.FactsProjection(c.FunctionFacts).Type(entry.Symbol, functionfact.ProjectionSibling, api.SynthModeDeclared); fnType != nil {
 		return fnType
 	}
 	if c.Services == nil {

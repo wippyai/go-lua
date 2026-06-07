@@ -61,13 +61,14 @@ return { f = f }
 	parent := sess.Store.Parents()[parentHash]
 	functionFacts := sess.Store.InterprocFacts(sess.RootResult.Graph, parent).FunctionFacts()
 
-	if got := functionfact.ReturnSummary(functionFacts, sym); len(got) != 1 || containsNever(got[0]) {
+	view := functionfact.FactsProjection(functionFacts)
+	if got := view.ReturnSummary(sym); len(got) != 1 || containsNever(got[0]) {
 		t.Fatalf("summary contains never artifact: %v", got)
 	}
-	if got := functionfact.NarrowSummary(functionFacts, sym); len(got) != 1 || containsNever(got[0]) {
+	if got := view.NarrowSummary(sym); len(got) != 1 || containsNever(got[0]) {
 		t.Fatalf("narrow contains never artifact: %v", got)
 	}
-	if got := functionfact.SiblingTypeProjection(functionFacts, sym, api.SynthModeDeclared); got == nil || containsNever(got) {
+	if got := view.Type(sym, functionfact.ProjectionSibling, api.SynthModeDeclared); got == nil || containsNever(got) {
 		t.Fatalf("function fact contains never artifact: %v", got)
 	}
 

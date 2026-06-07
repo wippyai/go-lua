@@ -233,14 +233,14 @@ func (s *Synthesizer) functionFactType(sym compcfg.SymbolID) typ.Type {
 	if s == nil || sym == 0 {
 		return nil
 	}
-	return functionfact.SiblingTypeProjection(s.functionFactsInput(), sym, s.mode)
+	return functionfact.FactsProjection(s.functionFactsInput()).Type(sym, functionfact.ProjectionSibling, s.mode)
 }
 
 func (s *Synthesizer) functionFactValueType(sym compcfg.SymbolID) typ.Type {
 	if s == nil || sym == 0 {
 		return nil
 	}
-	return functionfact.SynthesisTypeProjection(s.functionFactsInput(), sym, s.mode)
+	return functionfact.FactsProjection(s.functionFactsInput()).SynthesisType(sym, s.mode)
 }
 
 func (s *Synthesizer) stableLocalFunctionValueType(

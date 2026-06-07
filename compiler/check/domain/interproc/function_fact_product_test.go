@@ -31,13 +31,14 @@ func TestJoinFacts_BatchMergeFunctionFacts(t *testing.T) {
 		},
 	)
 
-	if got := functionfact.ReturnSummary(facts.FunctionFacts, symSummary); !returnsummary.Equal(got, []typ.Type{typ.String}) {
+	view := functionfact.FactsProjection(facts.FunctionFacts)
+	if got := view.ReturnSummary(symSummary); !returnsummary.Equal(got, []typ.Type{typ.String}) {
 		t.Fatalf("summary mismatch: got %v", got)
 	}
-	if got := functionfact.NarrowSummary(facts.FunctionFacts, symNarrow); !returnsummary.Equal(got, []typ.Type{typ.Number}) {
+	if got := view.NarrowSummary(symNarrow); !returnsummary.Equal(got, []typ.Type{typ.Number}) {
 		t.Fatalf("narrow mismatch: got %v", got)
 	}
-	if got := functionfact.SiblingTypeProjection(facts.FunctionFacts, symFunc, api.SynthModeDeclared); !typ.TypeEquals(got, funcType) {
+	if got := view.Type(symFunc, functionfact.ProjectionSibling, api.SynthModeDeclared); !typ.TypeEquals(got, funcType) {
 		t.Fatalf("func mismatch: got %v", got)
 	}
 }

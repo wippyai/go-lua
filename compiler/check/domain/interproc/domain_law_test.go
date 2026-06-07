@@ -51,13 +51,14 @@ func TestFactsDomain_ProductOperatorsAreIdempotentAcrossAllDomains(t *testing.T)
 		t.Fatalf("Join must be idempotent across the product domain")
 	}
 
-	if got := functionfact.ReturnSummary(normalized.FunctionFacts, fnSym); !returnsummary.Equal(got, []typ.Type{typ.String}) {
+	view := functionfact.FactsProjection(normalized.FunctionFacts)
+	if got := view.ReturnSummary(fnSym); !returnsummary.Equal(got, []typ.Type{typ.String}) {
 		t.Fatalf("summary must come from canonical FunctionFacts, got %v", got)
 	}
-	if got := functionfact.NarrowSummary(normalized.FunctionFacts, fnSym); !returnsummary.Equal(got, []typ.Type{typ.String}) {
+	if got := view.NarrowSummary(fnSym); !returnsummary.Equal(got, []typ.Type{typ.String}) {
 		t.Fatalf("narrow summary must come from canonical FunctionFacts, got %v", got)
 	}
-	if got := functionfact.SiblingTypeProjection(normalized.FunctionFacts, fnSym, api.SynthModeDeclared); got == nil {
+	if got := view.Type(fnSym, functionfact.ProjectionSibling, api.SynthModeDeclared); got == nil {
 		t.Fatalf("function type must come from canonical FunctionFacts")
 	}
 }
@@ -113,7 +114,7 @@ func TestFactsDomain_WidenFunctionParamsIsVarianceAware(t *testing.T) {
 		t.Fatalf("Widen must be idempotent for function param facts")
 	}
 
-	fn := unwrapFunctionForDomainTest(t, functionfact.SiblingTypeProjection(widened.FunctionFacts, sym, api.SynthModeDeclared))
+	fn := unwrapFunctionForDomainTest(t, functionfact.FactsProjection(widened.FunctionFacts).Type(sym, functionfact.ProjectionSibling, api.SynthModeDeclared))
 	if len(fn.Params) != 1 || !typ.TypeEquals(fn.Params[0].Type, typ.Any) {
 		t.Fatalf("expected widening to preserve broad parameter upper bound, got %v", fn)
 	}
@@ -132,7 +133,7 @@ func TestFactsDomain_PreservesArityAndNilabilityAsSeparateParamAxes(t *testing.T
 	}
 
 	widened := WidenFacts(api.Facts{}, raw)
-	fn := unwrapFunctionForDomainTest(t, functionfact.SiblingTypeProjection(widened.FunctionFacts, sym, api.SynthModeDeclared))
+	fn := unwrapFunctionForDomainTest(t, functionfact.FactsProjection(widened.FunctionFacts).Type(sym, functionfact.ProjectionSibling, api.SynthModeDeclared))
 	if len(fn.Params) != 1 || !fn.Params[0].Optional {
 		t.Fatalf("expected optional parameter slot, got %v", fn)
 	}

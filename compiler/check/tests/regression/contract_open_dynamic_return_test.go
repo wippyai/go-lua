@@ -91,7 +91,7 @@ end
 	if !ok || sym == 0 {
 		t.Fatal("missing symbol get_tracker")
 	}
-	functionType := functionfact.SiblingTypeProjection(functionFacts, sym, api.SynthModeDeclared)
+	functionType := functionfact.FactsProjection(functionFacts).Type(sym, functionfact.ProjectionSibling, api.SynthModeDeclared)
 	fn := unwrap.Function(functionType)
 	if fn == nil || len(fn.Returns) == 0 || fn.Returns[0] == nil {
 		t.Fatalf("expected get_tracker function return type, got %v", functionType)

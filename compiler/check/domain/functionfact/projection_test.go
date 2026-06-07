@@ -103,23 +103,24 @@ func TestStoreProjectionOwner_ResolvesBeforeFactsExist(t *testing.T) {
 	}
 }
 
-func TestReturnProjection_SelectsNarrowingProjection(t *testing.T) {
+func TestFactsProjectionReturns_SelectsNarrowingProjection(t *testing.T) {
 	facts := api.FunctionFacts{
 		1: {
 			Summary: product.LiftVector([]typ.Type{typ.Nil}),
 			Narrow:  product.LiftVector([]typ.Type{typ.String}),
 		},
 	}
+	view := functionfact.FactsProjection(facts)
 
-	if got := functionfact.ReturnProjection(facts, 1, api.SynthModeDeclared); len(got) != 1 || !typ.TypeEquals(got[0], typ.Nil) {
+	if got := view.Returns(1, api.SynthModeDeclared); len(got) != 1 || !typ.TypeEquals(got[0], typ.Nil) {
 		t.Fatalf("scope returns = %v, want nil summary", got)
 	}
-	if got := functionfact.ReturnProjection(facts, 1, api.SynthModeFlow); len(got) != 1 || !typ.TypeEquals(got[0], typ.String) {
+	if got := view.Returns(1, api.SynthModeFlow); len(got) != 1 || !typ.TypeEquals(got[0], typ.String) {
 		t.Fatalf("narrow returns = %v, want string narrow summary", got)
 	}
 }
 
-func TestReturnProjection_NarrowingRepairsWithoutDroppingSummaryTop(t *testing.T) {
+func TestFactsProjectionReturns_NarrowingRepairsWithoutDroppingSummaryTop(t *testing.T) {
 	sym := cfg.SymbolID(1)
 	dynamic := []typ.Type{typ.Any}
 	narrow := []typ.Type{typ.NewRecord().Field("data", typ.String).Build()}
@@ -131,7 +132,7 @@ func TestReturnProjection_NarrowingRepairsWithoutDroppingSummaryTop(t *testing.T
 		},
 	}
 
-	if got := functionfact.ReturnProjection(facts, sym, api.SynthModeFlow); len(got) != 1 || !typ.TypeEquals(got[0], typ.Any) {
+	if got := functionfact.FactsProjection(facts).Returns(sym, api.SynthModeFlow); len(got) != 1 || !typ.TypeEquals(got[0], typ.Any) {
 		t.Fatalf("narrowing returns = %v, want whole-slot any summary", got)
 	}
 
@@ -142,7 +143,7 @@ func TestReturnProjection_NarrowingRepairsWithoutDroppingSummaryTop(t *testing.T
 	}
 }
 
-func TestProjectionLookup_ProjectsCanonicalFunctionTypes(t *testing.T) {
+func TestFactsProjectionTypeLookup_ProjectsCanonicalFunctionTypes(t *testing.T) {
 	sym := cfg.SymbolID(3)
 	fnType := typ.Func().Returns(typ.String).Build()
 	facts := api.FunctionFacts{
@@ -150,9 +151,9 @@ func TestProjectionLookup_ProjectsCanonicalFunctionTypes(t *testing.T) {
 		4:   {Params: product.LiftVector([]typ.Type{typ.String})},
 	}
 
-	lookup := functionfact.ProjectionLookup(facts, functionfact.ProjectionSibling, api.SynthModeDeclared)
+	lookup := functionfact.FactsProjection(facts).TypeLookup(functionfact.ProjectionSibling, api.SynthModeDeclared)
 	if lookup == nil {
-		t.Fatal("ProjectionLookup() returned nil")
+		t.Fatal("TypeLookup() returned nil")
 	}
 	if got := lookup(sym); !typ.TypeEquals(got, fnType) {
 		t.Fatalf("lookup(%d) = %v, want %v", sym, got, fnType)
@@ -323,7 +324,7 @@ func TestProjectionFlowInputExcludesEntryAndBodyEvidence(t *testing.T) {
 	}
 }
 
-func TestSynthesisTypeProjectionUsesFlowInputBeforeNarrowing(t *testing.T) {
+func TestFactsProjectionSynthesisTypeUsesFlowInputBeforeNarrowing(t *testing.T) {
 	sym := cfg.SymbolID(21)
 	entry := typ.NewRecord().Field("id", typ.String).Build()
 	publicParam := typ.Any
@@ -334,13 +335,13 @@ func TestSynthesisTypeProjectionUsesFlowInputBeforeNarrowing(t *testing.T) {
 		},
 	}
 
-	scopeType := functionfact.SynthesisTypeProjection(facts, sym, api.SynthModeDeclared)
+	scopeType := functionfact.FactsProjection(facts).SynthesisType(sym, api.SynthModeDeclared)
 	scopeFn, ok := scopeType.(*typ.Function)
 	if !ok || len(scopeFn.Params) != 1 || !typ.TypeEquals(scopeFn.Params[0].Type, publicParam) {
 		t.Fatalf("scope synthesis projection = %v, want public parameter", scopeType)
 	}
 
-	narrowType := functionfact.SynthesisTypeProjection(facts, sym, api.SynthModeFlow)
+	narrowType := functionfact.FactsProjection(facts).SynthesisType(sym, api.SynthModeFlow)
 	narrowFn, ok := narrowType.(*typ.Function)
 	if !ok || len(narrowFn.Params) != 1 || !typ.TypeEquals(narrowFn.Params[0].Type, entry) {
 		t.Fatalf("narrow synthesis projection = %v, want entry parameter", narrowType)
@@ -540,7 +541,7 @@ func TestParameterEvidenceSignatures_UsesEntryParamsNotPublicOrBodyContracts(t *
 	if len(evidence) != 1 || !typ.TypeEquals(evidence[0], entryParam) {
 		t.Fatalf("signature evidence = %v, want entry param %v", evidence, entryParam)
 	}
-	if public := functionfact.PublicParameterEvidence(st.InterprocPrev.Facts[key].FunctionFacts, sym); len(public) != 1 || !typ.TypeEquals(public[0], typ.Any) {
+	if public := functionfact.FactsProjection(st.InterprocPrev.Facts[key].FunctionFacts).PublicParameterEvidence(sym); len(public) != 1 || !typ.TypeEquals(public[0], typ.Any) {
 		t.Fatalf("public evidence = %v, want any", public)
 	}
 }
@@ -575,11 +576,11 @@ func TestVisibleFactsForGraph_ProjectsParentScopeFunctionFacts(t *testing.T) {
 	}
 
 	got := functionfact.VisibleFactsForGraph(st, childGraph, nil, parent)
-	evidence := functionfact.BodyEntryEvidenceForSymbol(got, sym)
+	evidence := functionfact.FactsProjection(got).BodyEntryEvidence(sym)
 	if len(evidence) != 1 || !typ.TypeEquals(evidence[0], typ.String) {
 		t.Fatalf("visible entry evidence = %v, want string", evidence)
 	}
-	siblingEvidence := functionfact.BodyEntryEvidenceForSymbol(got, siblingSym)
+	siblingEvidence := functionfact.FactsProjection(got).BodyEntryEvidence(siblingSym)
 	if len(siblingEvidence) != 1 || !typ.TypeEquals(siblingEvidence[0], typ.Number) {
 		t.Fatalf("visible sibling entry evidence = %v, want number", siblingEvidence)
 	}

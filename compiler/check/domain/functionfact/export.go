@@ -36,7 +36,7 @@ func projectExportTypeForNames(export typ.Type, rootName string, facts api.Funct
 	}
 	fieldTypes := make(exportFieldTypes)
 	for _, sym := range cfg.SortedSymbolIDs(facts) {
-		projected := ExportTypeProjection(facts, sym, api.SynthModeFlow)
+		projected := FactsProjection(facts).Type(sym, ProjectionExport, api.SynthModeFlow)
 		if projected == nil || unwrap.Function(projected) == nil {
 			continue
 		}

@@ -96,7 +96,7 @@ end
 		if root.NameOf(sym) != "wait_for_exit" {
 			continue
 		}
-		helperFn = unwrap.Function(functionfact.SiblingTypeProjection(functionFacts, sym, api.SynthModeDeclared))
+		helperFn = unwrap.Function(functionfact.FactsProjection(functionFacts).Type(sym, functionfact.ProjectionSibling, api.SynthModeDeclared))
 		break
 	}
 	if helperFn == nil || len(helperFn.Returns) == 0 {

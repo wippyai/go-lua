@@ -146,7 +146,7 @@ func projectCallFactType(ff api.FunctionFact, sym cfg.SymbolID) typ.Type {
 	// from solved body/public evidence are enforced through CallContracts, where the
 	// paramevidence reducer can prove paths and capabilities without collapsing them
 	// into a structural parameter type.
-	return PublicTypeProjection(facts, sym, api.SynthModeDeclared)
+	return FactsProjection(facts).Type(sym, ProjectionPublic, api.SynthModeDeclared)
 }
 
 func callShapeFact(ff api.FunctionFact) api.FunctionFact {

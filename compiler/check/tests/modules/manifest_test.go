@@ -207,12 +207,13 @@ func TestManifest_SoftLocalAnnotations(t *testing.T) {
 	if len(groupFact.Narrow) != 2 || !typ.TypeEquals(groupFact.Narrow[0].ProjectValue(), suiteMap) || !typ.TypeEquals(groupFact.Narrow[1].ProjectValue(), entryArray) {
 		t.Fatalf("expected group_by_suite narrow summary (%v, %v), got %v", suiteMap, entryArray, groupFact.Narrow)
 	}
-	groupType := functionfact.SiblingTypeProjection(functionFacts, groupSym, api.SynthModeDeclared)
+	view := functionfact.FactsProjection(functionFacts)
+	groupType := view.Type(groupSym, functionfact.ProjectionSibling, api.SynthModeDeclared)
 	groupFn := unwrap.Function(groupType)
 	if groupFn == nil || len(groupFn.Returns) != 2 || !typ.TypeEquals(groupFn.Returns[0], suiteMap) || !typ.TypeEquals(groupFn.Returns[1], entryArray) {
 		t.Fatalf("expected group_by_suite function returns (%v, %v), got %v", suiteMap, entryArray, groupType)
 	}
-	runSuiteType := functionfact.SiblingTypeProjection(functionFacts, runSuiteSym, api.SynthModeDeclared)
+	runSuiteType := view.Type(runSuiteSym, functionfact.ProjectionSibling, api.SynthModeDeclared)
 	runSuiteFn := unwrap.Function(runSuiteType)
 	if runSuiteFn == nil || len(runSuiteFn.Params) < 2 || !typ.TypeEquals(runSuiteFn.Params[1].Type, entryArray) {
 		t.Fatalf("expected run_suite tests param to refine to %v, got %v", entryArray, runSuiteType)
@@ -220,7 +221,7 @@ func TestManifest_SoftLocalAnnotations(t *testing.T) {
 	if siblingEvidence := functionfact.SiblingParameterEvidence(functionFacts[runSuiteSym]); len(siblingEvidence) < 2 || !typ.TypeEquals(siblingEvidence[1], entryArray) {
 		t.Fatalf("expected run_suite sibling entry evidence %v, got %v", entryArray, siblingEvidence)
 	}
-	if publicEvidence := functionfact.PublicParameterEvidence(functionFacts, runSuiteSym); len(publicEvidence) != 0 {
+	if publicEvidence := view.PublicParameterEvidence(runSuiteSym); len(publicEvidence) != 0 {
 		t.Fatalf("run_suite entry evidence leaked into public evidence: %v", publicEvidence)
 	}
 }
