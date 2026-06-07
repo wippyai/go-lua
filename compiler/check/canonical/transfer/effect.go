@@ -337,33 +337,19 @@ func (t *Transfer) applyMutatorEffect(out *flow.PointState, effect MutatorEffect
 	if out == nil {
 		return false
 	}
-	keyArraySelection := t.keyArraySelectionPreservedByAppend(out, effect)
-	appendHistoryArray := constraint.Path{}
-	preserveAppendHistoryBase := false
-	if effect.Kind == MutatorAppendElement {
-		if path, ok := effect.Place.StaticPath(); ok && !path.IsEmpty() {
-			appendHistoryArray = path
-			preserveAppendHistoryBase = flow.PointFactsOf(*out).HasAppendHistoryBase(path)
-		}
-	}
-	appendDestinations := flow.AppendOriginDestinationsPath(*out, appendHistoryArray, nil)
 	changed := false
-	changed = t.applyPlaceMutationEffect(out, PlaceMutationEffect{
-		Place:         effect.Place,
-		StaticMembers: true,
-		Conditions:    true,
-		KeyFacts:      true,
-	}) || changed
-	if preserveAppendHistoryBase {
-		changed = flow.ApplyAppendHistoryBasePathProof(out, appendHistoryArray) || changed
+	if effect.Kind == MutatorAppendElement {
+		changed = t.applyAppendElementMutationFacts(out, effect) || changed
+	} else {
+		changed = t.applyPlaceMutationEffect(out, PlaceMutationEffect{
+			Place:         effect.Place,
+			StaticMembers: true,
+			Conditions:    true,
+			KeyFacts:      true,
+		}) || changed
 	}
-	changed = t.recordAppendKeyFact(out, effect.Place, effect.Kind, effect.ElementPath) || changed
-	changed = t.recordAppendElementFieldOrigins(out, effect.Place, effect.Kind, effect.ElementExpr, appendDestinations) || changed
 	if effect.LengthKey != "" && effect.LengthIncrement > 0 {
 		changed = t.incrementLenBound(out, effect.LengthKey, effect.LengthIncrement) || changed
-	}
-	if len(keyArraySelection.Tables) > 0 || len(keyArraySelection.Pending) > 0 {
-		changed = t.applyAppendKeyArrayFacts(out, effect.Place, keyArraySelection, effect.ElementPath, effect.Element) || changed
 	}
 	mutation, mutationOK := receiverMutationForPlace(effect.Place, false)
 	if mutationOK {
@@ -398,170 +384,61 @@ func (t *Transfer) applyMutatorEffect(out *flow.PointState, effect MutatorEffect
 	return true
 }
 
-func (t *Transfer) keyArraySelectionPreservedByAppend(out *flow.PointState, effect MutatorEffect) flow.AppendKeyArraySelection {
-	if out == nil || effect.Kind != MutatorAppendElement || effect.ElementPath.IsEmpty() {
-		return flow.AppendKeyArraySelection{}
+func (t *Transfer) applyAppendElementMutationFacts(out *flow.PointState, effect MutatorEffect) bool {
+	if out == nil {
+		return false
 	}
 	arrayPath, ok := effect.Place.StaticPath()
 	if !ok || arrayPath.IsEmpty() {
-		return flow.AppendKeyArraySelection{}
+		return t.applyPlaceMutationEffect(out, PlaceMutationEffect{
+			Place:         effect.Place,
+			StaticMembers: true,
+			Conditions:    true,
+			KeyFacts:      true,
+		})
 	}
-	freshEmptySeed := flow.PointFactsOf(*out).HasEmptyKeyArray(arrayPath) ||
-		flow.AppendHistoryBaseWithoutEventsPath(*out, arrayPath) ||
-		t.arrayPathCurrentlyEmpty(out, arrayPath)
-	return flow.AppendKeyArrayPathPreservation(*out, flow.AppendKeyArrayPathPreservationQuery{
-		ArrayPath:      arrayPath,
-		KeyPath:        effect.ElementPath,
-		FreshEmptySeed: freshEmptySeed,
+	footprint, ok := effect.Place.WriteFootprint(false, product.AbstractValue{})
+	if !ok {
+		return t.applyPlaceMutationEffect(out, PlaceMutationEffect{
+			Place:         effect.Place,
+			StaticMembers: true,
+			Conditions:    true,
+			KeyFacts:      true,
+		})
+	}
+	return flow.ApplyAppendElementMutationPathProof(out, flow.AppendElementMutationPathProof{
+		Footprint:    footprint,
+		ArrayPath:    arrayPath,
+		ElementPath:  effect.ElementPath,
+		ElementValue: effect.Element,
+		FieldSources: t.appendElementFieldOriginSources(effect.ElementExpr),
 	})
 }
 
-func (t *Transfer) recordAppendKeyFact(out *flow.PointState, place Place, kind MutatorKind, elementPath constraint.Path) bool {
-	if out == nil || kind != MutatorAppendElement || elementPath.IsEmpty() {
-		return false
+func (t *Transfer) appendElementFieldOriginSources(elem ast.Expr) []flow.AppendElementFieldOriginPathSource {
+	table, ok := elem.(*ast.TableExpr)
+	if !ok || table == nil {
+		return nil
 	}
-	arrayPath, ok := place.StaticPath()
-	if !ok || arrayPath.IsEmpty() {
-		return false
-	}
-	before := out.KeyPresence
-	flow.ApplyAppendKeyPathProof(out, flow.AppendKeyPathProof{
-		ArrayPath: arrayPath,
-		KeyPath:   elementPath,
-	})
-	return !flow.KeyPresenceFactsDomain.Equal(before, out.KeyPresence)
-}
-
-func (t *Transfer) recordAppendElementFieldOrigins(out *flow.PointState, place Place, kind MutatorKind, elem ast.Expr, destinations []flow.AppendOriginDestination) bool {
-	if out == nil || kind != MutatorAppendElement || elem == nil {
-		return false
-	}
-	arrayPath, ok := place.StaticPath()
-	if !ok || arrayPath.IsEmpty() {
-		return false
-	}
-	before := out.KeyPresence
-	if len(destinations) == 0 {
-		destinations = flow.AppendOriginDestinationsPath(*out, arrayPath, nil)
-	}
-	if table, ok := elem.(*ast.TableExpr); ok && table != nil {
-		for _, field := range table.Fields {
-			if field == nil || field.Value == nil {
-				continue
-			}
-			seg, ok := fieldkey.FromTableField(field)
-			if !ok {
-				continue
-			}
-			source, ok := t.staticPathOfExpr(field.Value)
-			if !ok || source.IsEmpty() {
-				continue
-			}
-			sources := flow.AppendOriginSourcesPath(*out, source)
-			for _, dst := range destinations {
-				field := append([]constraint.Segment(nil), dst.FieldPrefix...)
-				field = append(field, seg)
-				for _, src := range sources {
-					flow.ApplyAppendElementFieldOriginProof(out, flow.AppendElementFieldOriginProof{
-						Array:       dst.Array,
-						Field:       field,
-						Source:      src.Source,
-						SourceField: src.SourceField,
-					})
-				}
-			}
+	var out []flow.AppendElementFieldOriginPathSource
+	for _, field := range table.Fields {
+		if field == nil || field.Value == nil {
+			continue
 		}
-	}
-	elementPath, ok := t.staticPathOfExpr(elem)
-	if !ok || elementPath.IsEmpty() {
-		return !flow.KeyPresenceFactsDomain.Equal(before, out.KeyPresence)
-	}
-	for _, field := range flow.AppendElementFieldOriginFields(*out) {
-		elementField := elementPath
-		for _, seg := range field {
-			elementField = elementField.Append(seg)
+		seg, ok := fieldkey.FromTableField(field)
+		if !ok {
+			continue
 		}
-		for _, originUse := range flow.AppendElementFieldOriginUsesPath(*out, elementField) {
-			flow.ApplyAppendElementFieldOriginUse(out, destinations, field, originUse)
+		source, ok := t.staticPathOfExpr(field.Value)
+		if !ok || source.IsEmpty() {
+			continue
 		}
+		out = append(out, flow.AppendElementFieldOriginPathSource{
+			Field:      []constraint.Segment{seg},
+			SourcePath: source,
+		})
 	}
-	return !flow.KeyPresenceFactsDomain.Equal(before, out.KeyPresence)
-}
-
-func (t *Transfer) arrayPathCurrentlyEmpty(out *flow.PointState, path constraint.Path) bool {
-	if out == nil || path.IsEmpty() {
-		return false
-	}
-	av, ok := flow.PointFactsOf(*out).PathValue(path)
-	if !ok || av.IsZero() || !av.DefinitelyPresent() {
-		return false
-	}
-	return productValueIsFreshEmptySequence(av)
-}
-
-func productValueIsFreshEmptySequence(av product.AbstractValue) bool {
-	t := unwrap.Alias(av.ProjectValue())
-	switch v := t.(type) {
-	case *typ.Array:
-		return v.Fresh || typ.IsNever(v.Element)
-	case *typ.Record:
-		return len(v.Fields) == 0 &&
-			len(v.StaticMembers) == 0 &&
-			!v.HasMapComponent() &&
-			!v.Open &&
-			v.Metatable == nil
-	case *typ.Union:
-		if len(v.Members) == 0 {
-			return false
-		}
-		for _, member := range v.Members {
-			if !productTypeIsFreshEmptySequence(member) {
-				return false
-			}
-		}
-		return true
-	default:
-		return false
-	}
-}
-
-func productTypeIsFreshEmptySequence(t typ.Type) bool {
-	switch v := unwrap.Alias(t).(type) {
-	case *typ.Array:
-		return v.Fresh || typ.IsNever(v.Element)
-	case *typ.Record:
-		return len(v.Fields) == 0 &&
-			len(v.StaticMembers) == 0 &&
-			!v.HasMapComponent() &&
-			!v.Open &&
-			v.Metatable == nil
-	default:
-		return false
-	}
-}
-
-func (t *Transfer) applyAppendKeyArrayFacts(
-	out *flow.PointState,
-	place Place,
-	selection flow.AppendKeyArraySelection,
-	elementPath constraint.Path,
-	element product.AbstractValue,
-) bool {
-	if out == nil || (len(selection.Tables) == 0 && len(selection.Pending) == 0) {
-		return false
-	}
-	arrayPath, ok := place.StaticPath()
-	if !ok || arrayPath.IsEmpty() {
-		return false
-	}
-	return flow.ApplyAppendKeyArrayPathConsequences(out, flow.AppendKeyArrayPathConsequences{
-		ArrayPath: arrayPath,
-		KeyPath:   elementPath,
-		HasKey:    !elementPath.IsEmpty(),
-		KeyValue:  element,
-		Tables:    selection.Tables,
-		Pending:   selection.Pending,
-	})
+	return out
 }
 
 func (t *Transfer) applyWriteEffect(out *flow.PointState, effect WriteEffect) bool {

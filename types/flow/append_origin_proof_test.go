@@ -3,6 +3,7 @@ package flow
 import (
 	"testing"
 
+	"github.com/wippyai/go-lua/types/access"
 	"github.com/wippyai/go-lua/types/cfg"
 	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/domain/value/product"
@@ -533,6 +534,61 @@ func TestApplyAppendKeyReplayPathProofAppliesAppendTransaction(t *testing.T) {
 	values := state.KeyPresence.KeyArrayValues(StablePathKey(arrayPath), StablePathKey(tablePath))
 	if len(values) != 1 || !product.Domain.Equal(values[0], value) {
 		t.Fatalf("key-array values = %v, want string", values)
+	}
+}
+
+func TestApplyAppendElementMutationPathProofAppliesCollectionTransaction(t *testing.T) {
+	arrayPath := constraint.NewPath(cfg.SymbolID(249), "node_order")
+	tablePath := constraint.NewPath(cfg.SymbolID(250), "nodes")
+	keyPath := constraint.NewPath(cfg.SymbolID(251), "node_id")
+	sourcePath := constraint.NewPath(cfg.SymbolID(252), "node").Field("status")
+	nodeType := typ.NewRecord().Field("node_id", typ.String).Field("status", typ.String).Build()
+	state := PointState{
+		Env: map[ValueKey]product.AbstractValue{
+			SymbolValueKey(arrayPath.Symbol): product.FromType(typ.NewFreshArray()),
+			SymbolValueKey(keyPath.Symbol):   product.FromType(typ.String),
+		},
+		KeyPresence: KeyPresenceFacts{}.
+			WithAddresses(testStableAddressPath(t, tablePath), testStableAddressPath(t, keyPath)),
+		IndexWrites: IndexWriteAdmissionFacts{}.WithAddress(IndexWriteAdmissionAddressFact{
+			Target:     testStableAddressPath(t, tablePath),
+			KeyPath:    testStableAddressPath(t, keyPath),
+			HasKeyPath: true,
+			Key:        product.FromType(typ.String),
+			Value:      product.FromType(nodeType),
+		}),
+	}
+
+	changed := ApplyAppendElementMutationPathProof(&state, AppendElementMutationPathProof{
+		Footprint: access.WriteFootprint{
+			WritePath:         arrayPath,
+			ExactWritePath:    arrayPath,
+			HasExactWritePath: true,
+		},
+		ArrayPath:    arrayPath,
+		ElementPath:  keyPath,
+		ElementValue: product.FromType(typ.String),
+		FieldSources: []AppendElementFieldOriginPathSource{{
+			Field:      []constraint.Segment{{Kind: constraint.SegmentField, Name: "status"}},
+			SourcePath: sourcePath,
+		}},
+	})
+	if !changed {
+		t.Fatal("ApplyAppendElementMutationPathProof reported no change")
+	}
+	if tables := state.KeyPresence.KeyArrayTables(StablePathKey(arrayPath)); len(tables) != 1 || tables[0] != StablePathKey(tablePath) {
+		t.Fatalf("append transaction did not seed key-array table: %s", state.KeyPresence.Format())
+	}
+	values := state.KeyPresence.KeyArrayValues(StablePathKey(arrayPath), StablePathKey(tablePath))
+	if len(values) != 1 || !product.Domain.Equal(values[0], product.FromType(nodeType)) {
+		t.Fatalf("append transaction key-array values = %v, want node record", values)
+	}
+	fieldSources := state.KeyPresence.AppendElementFieldSources(
+		StablePathKey(arrayPath),
+		[]constraint.Segment{{Kind: constraint.SegmentField, Name: "status"}},
+	)
+	if len(fieldSources) != 1 {
+		t.Fatalf("append transaction field sources = %v, want one source; facts=%s", fieldSources, state.KeyPresence.Format())
 	}
 }
 

@@ -2575,7 +2575,7 @@ func (t *Transfer) boundaryAppendKeyPlans(
 		plan := boundaryAppendKeyPlan{
 			array:               array,
 			key:                 key,
-			freshEmpty:          factsView.HasEmptyKeyArray(array) || flow.AppendHistoryBaseWithoutEventsPath(*out, array) || t.arrayPathCurrentlyEmpty(out, array),
+			freshEmpty:          flow.AppendFreshEmptySeedPath(*out, array),
 			preserveHistoryBase: factsView.HasAppendHistoryBase(array),
 		}
 		if fact.HasTable {

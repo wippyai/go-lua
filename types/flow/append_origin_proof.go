@@ -1,9 +1,11 @@
 package flow
 
 import (
+	"github.com/wippyai/go-lua/types/access"
 	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/domain/value/product"
 	"github.com/wippyai/go-lua/types/typ"
+	"github.com/wippyai/go-lua/types/typ/unwrap"
 )
 
 // AppendOriginDestination is a routed destination for appended element-field
@@ -20,6 +22,14 @@ type AppendOriginDestination struct {
 type AppendOriginSource struct {
 	Source      StableAddress
 	SourceField []constraint.Segment
+}
+
+// AppendElementFieldOriginPathSource is producer-facing syntax evidence for one
+// field carried by an appended element. Flow owns routing the source through
+// aliases/origins and projecting it to every live append destination.
+type AppendElementFieldOriginPathSource struct {
+	Field      []constraint.Segment
+	SourcePath constraint.Path
 }
 
 // PendingKeyArrayDestination is a delayed append consequence. When HasTable is
@@ -88,6 +98,20 @@ type AppendKeyReplayPathProof struct {
 	WrittenTablePaths   []constraint.Path
 	FreshEmpty          bool
 	PreserveHistoryBase bool
+}
+
+// AppendElementMutationPathProof is the reduced-product transaction for
+// appending one element to a collection. Producers provide the source-level
+// append footprint and optional syntactic field sources; flow owns invalidation,
+// append history preservation, key-array consequences, and append-origin replay.
+type AppendElementMutationPathProof struct {
+	Footprint access.WriteFootprint
+	ArrayPath constraint.Path
+
+	ElementPath  constraint.Path
+	ElementValue product.AbstractValue
+
+	FieldSources []AppendElementFieldOriginPathSource
 }
 
 // AppendKeyArraySelection is the direct plus delayed consequence set for an
@@ -378,6 +402,172 @@ func ApplyAppendKeyReplayPathProof(out *PointState, proof AppendKeyReplayPathPro
 		}) || changed
 	}
 	return changed
+}
+
+// ApplyAppendElementMutationPathProof applies all address-fact consequences of a
+// local append mutation while preserving the pre-write evidence needed by the
+// reduced product.
+func ApplyAppendElementMutationPathProof(out *PointState, proof AppendElementMutationPathProof) bool {
+	if out == nil || proof.ArrayPath.IsEmpty() {
+		return false
+	}
+	array, arrayOK := StableAddressOfPath(proof.ArrayPath)
+	if !arrayOK {
+		return false
+	}
+	facts := PointFactsOf(*out)
+	preserveHistoryBase := facts.HasAppendHistoryBase(proof.ArrayPath)
+	freshEmptySeed := AppendFreshEmptySeedPath(*out, proof.ArrayPath)
+	destinations := AppendOriginDestinations(*out, array, nil)
+	key, hasKey := StableAddress{}, false
+	selection := AppendKeyArraySelection{}
+	if !proof.ElementPath.IsEmpty() {
+		if keyAddr, ok := StableAddressOfPath(proof.ElementPath); ok {
+			key = keyAddr
+			hasKey = true
+			selection = AppendKeyArrayPreservation(*out, AppendKeyArrayPreservationQuery{
+				Array:          array,
+				Key:            keyAddr,
+				FreshEmptySeed: freshEmptySeed,
+			})
+		}
+	}
+
+	changed := ApplyAccessMutation(out, AccessMutation{
+		Footprint:     proof.Footprint,
+		StaticMembers: true,
+		Conditions:    true,
+		AddressFacts:  true,
+	})
+	if preserveHistoryBase {
+		changed = ApplyAppendHistoryBaseProof(out, AppendHistoryBaseProof{Array: array}) || changed
+	}
+	if hasKey {
+		changed = ApplyAppendKeyProof(out, AppendKeyProof{Array: array, Key: key}) || changed
+	}
+	changed = applyAppendElementFieldOriginPathSources(out, destinations, proof.FieldSources) || changed
+	if hasKey {
+		changed = replayAppendElementFieldOriginUses(out, destinations, proof.ElementPath) || changed
+	}
+	if len(selection.Tables) > 0 || len(selection.Pending) > 0 {
+		changed = ApplyAppendKeyArrayConsequences(out, AppendKeyArrayConsequences{
+			Array:    array,
+			Key:      key,
+			HasKey:   hasKey,
+			KeyValue: proof.ElementValue,
+			Tables:   selection.Tables,
+			Pending:  selection.Pending,
+		}) || changed
+	}
+	return changed
+}
+
+func applyAppendElementFieldOriginPathSources(
+	out *PointState,
+	destinations []AppendOriginDestination,
+	sources []AppendElementFieldOriginPathSource,
+) bool {
+	if out == nil || len(destinations) == 0 || len(sources) == 0 {
+		return false
+	}
+	changed := false
+	for _, source := range sources {
+		if len(source.Field) == 0 || source.SourcePath.IsEmpty() {
+			continue
+		}
+		routedSources := AppendOriginSourcesPath(*out, source.SourcePath)
+		for _, dst := range destinations {
+			field := append(cloneAddressSegments(dst.FieldPrefix), source.Field...)
+			for _, src := range routedSources {
+				changed = ApplyAppendElementFieldOriginProof(out, AppendElementFieldOriginProof{
+					Array:       dst.Array,
+					Field:       field,
+					Source:      src.Source,
+					SourceField: src.SourceField,
+				}) || changed
+			}
+		}
+	}
+	return changed
+}
+
+func replayAppendElementFieldOriginUses(out *PointState, destinations []AppendOriginDestination, elementPath constraint.Path) bool {
+	if out == nil || len(destinations) == 0 || elementPath.IsEmpty() {
+		return false
+	}
+	changed := false
+	for _, field := range AppendElementFieldOriginFields(*out) {
+		elementField := elementPath
+		for _, seg := range field {
+			elementField = elementField.Append(seg)
+		}
+		for _, originUse := range AppendElementFieldOriginUsesPath(*out, elementField) {
+			changed = ApplyAppendElementFieldOriginUse(out, destinations, field, originUse) || changed
+		}
+	}
+	return changed
+}
+
+// AppendFreshEmptySeedPath reports whether appending to array can seed key-array
+// provenance from an empty collection/history base.
+func AppendFreshEmptySeedPath(state PointState, arrayPath constraint.Path) bool {
+	array, ok := StableAddressOfPath(arrayPath)
+	if !ok {
+		return false
+	}
+	facts := PointFactsOf(state)
+	return facts.HasEmptyKeyArray(arrayPath) ||
+		AppendHistoryBaseWithoutEvents(state, array) ||
+		pathValueIsFreshEmptySequence(facts, arrayPath)
+}
+
+func pathValueIsFreshEmptySequence(facts PointFacts, path constraint.Path) bool {
+	av, ok := facts.PathValue(path)
+	if !ok || av.IsZero() || !av.DefinitelyPresent() {
+		return false
+	}
+	return productValueIsFreshEmptySequence(av)
+}
+
+func productValueIsFreshEmptySequence(av product.AbstractValue) bool {
+	t := unwrap.Alias(av.ProjectValue())
+	switch v := t.(type) {
+	case *typ.Array:
+		return v.Fresh || typ.IsNever(v.Element)
+	case *typ.Record:
+		return len(v.Fields) == 0 &&
+			len(v.StaticMembers) == 0 &&
+			!v.HasMapComponent() &&
+			!v.Open &&
+			v.Metatable == nil
+	case *typ.Union:
+		if len(v.Members) == 0 {
+			return false
+		}
+		for _, member := range v.Members {
+			if !productTypeIsFreshEmptySequence(member) {
+				return false
+			}
+		}
+		return true
+	default:
+		return false
+	}
+}
+
+func productTypeIsFreshEmptySequence(t typ.Type) bool {
+	switch v := unwrap.Alias(t).(type) {
+	case *typ.Array:
+		return v.Fresh || typ.IsNever(v.Element)
+	case *typ.Record:
+		return len(v.Fields) == 0 &&
+			len(v.StaticMembers) == 0 &&
+			!v.HasMapComponent() &&
+			!v.Open &&
+			v.Metatable == nil
+	default:
+		return false
+	}
 }
 
 // AppendKeyArrayPreservation selects direct and delayed key-array consequences
