@@ -201,7 +201,9 @@ func New(prog Program) *Queries {
 	q.solveQ = db.NewQueryWithSeedAndWiden(
 		"CanonicalSummarySolve",
 		q.computeSolve,
-		solveResultEqual,
+		func(a, b solveResult) bool {
+			return SummaryDomain.Equal(a.Summary, b.Summary)
+		},
 		func(*db.QueryContext, Key) solveResult {
 			return solveResult{
 				State:   state.FunctionStateDomain.Bottom(),
@@ -526,10 +528,6 @@ func (q *Queries) returnCallHasFiniteTarget(ref FuncRef) func(*cfg.CallInfo) boo
 	return func(call *cfg.CallInfo) bool {
 		return prog.ReturnCallHasFiniteTarget(ref, call)
 	}
-}
-
-func solveResultEqual(a, b solveResult) bool {
-	return SummaryDomain.Equal(a.Summary, b.Summary)
 }
 
 func solveResultWiden(prev, next solveResult) solveResult {

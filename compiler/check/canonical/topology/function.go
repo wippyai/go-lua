@@ -32,9 +32,3 @@ type FieldFunction struct {
 	FuncRef      ref.FuncRef
 	Order        int
 }
-
-// FieldKey lowers a source field name to the structural field key used by static
-// table-field function topology.
-func FieldKey(name string) (fieldkey.Key, bool) {
-	return fieldkey.FromName(name)
-}

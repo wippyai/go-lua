@@ -33,10 +33,6 @@ func ReturnValues(s Summary) []product.AbstractValue {
 	return out
 }
 
-func functionSignatureWithSummaryReturns(sig *typ.Function, s Summary) *typ.Function {
-	return functionSignatureWithReturnTypes(sig, ReturnTypes(s))
-}
-
 // FunctionSignatureWithProjectedReturns returns sig unchanged when source
 // declarations already own the return contract; otherwise it splices the
 // caller-visible return tuple projected from s. Parameter contracts and other
@@ -45,7 +41,7 @@ func FunctionSignatureWithProjectedReturns(sig *typ.Function, hasDeclaredReturns
 	if sig == nil || hasDeclaredReturns {
 		return sig
 	}
-	return functionSignatureWithSummaryReturns(sig, s)
+	return functionSignatureWithReturnTypes(sig, ReturnTypes(s))
 }
 
 // FunctionSignatureWithEntryParamsAndProjectedReturns is the callable-value
@@ -61,7 +57,7 @@ func FunctionSignatureWithEntryParamsAndProjectedReturns(sig *typ.Function, hasD
 	if hasDeclaredReturns {
 		return out
 	}
-	return functionSignatureWithSummaryReturns(out, s)
+	return functionSignatureWithReturnTypes(out, ReturnTypes(s))
 }
 
 // functionSignatureWithProjectedParams refines only gradual source parameter

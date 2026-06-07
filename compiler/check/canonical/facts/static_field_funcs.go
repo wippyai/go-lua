@@ -62,7 +62,7 @@ func collectFieldFunctions(p Program) []topology.FieldFunction {
 					if field == nil || field.Key == nil {
 						continue
 					}
-					key, ok := tableLiteralFieldKey(field)
+					key, ok := fieldkey.FromTableField(field)
 					if !ok {
 						continue
 					}
@@ -103,10 +103,4 @@ func fieldFuncDefinition(info *cfg.FuncDefInfo) (cfg.SymbolID, fieldkey.Key, boo
 		return 0, fieldkey.Key{}, false
 	}
 	return base, key, true
-}
-
-// tableLiteralFieldKey resolves a static table-literal field key to a structural
-// field key, or false for dynamic/positional keys.
-func tableLiteralFieldKey(field *ast.Field) (fieldkey.Key, bool) {
-	return fieldkey.FromTableField(field)
 }

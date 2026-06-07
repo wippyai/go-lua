@@ -343,9 +343,11 @@ func projectTypeNormalized(ff api.FunctionFact, projection Projection, mode api.
 	fn = ClearOptionalForNonNilableObligation(fn, paramsTypes(ff))
 	switch projection {
 	case ProjectionBody:
-		fn = BodyInputProjection(fn, nil, bodyEntryEvidenceNormalized(ff))
+		fn = BodyInputProjection(fn, nil, entryParamsTypes(ff))
 	case ProjectionSibling:
-		fn = ApplyBodySignatureEvidence(fn, siblingParameterEvidenceNormalized(ff))
+		publicParams := paramsTypes(ff)
+		entryParams := entryParamsTypes(ff)
+		fn = ApplyBodySignatureEvidence(fn, paramevidence.ApplyBodyContractsToEntries(publicParams, entryParams))
 	case ProjectionFlowInput, ProjectionPublic, ProjectionExport:
 		fn = ApplyPublicSignatureEvidence(fn, paramevidence.PublicSignatureVector(paramsTypes(ff)))
 	}
@@ -432,10 +434,6 @@ func PublicParameterEvidence(facts api.FunctionFacts, sym cfg.SymbolID) []typ.Ty
 // to avoid treating consumer requirements as producer proof.
 func BodyEntryEvidence(ff api.FunctionFact) []typ.Type {
 	ff = Normalize(ff)
-	return bodyEntryEvidenceNormalized(ff)
-}
-
-func bodyEntryEvidenceNormalized(ff api.FunctionFact) []typ.Type {
 	return entryParamsTypes(ff)
 }
 
@@ -445,10 +443,6 @@ func bodyEntryEvidenceNormalized(ff api.FunctionFact) []typ.Type {
 // the entry shapes they proved.
 func SiblingParameterEvidence(ff api.FunctionFact) []typ.Type {
 	ff = Normalize(ff)
-	return siblingParameterEvidenceNormalized(ff)
-}
-
-func siblingParameterEvidenceNormalized(ff api.FunctionFact) []typ.Type {
 	return paramevidence.ApplyBodyContractsToEntries(paramsTypes(ff), entryParamsTypes(ff))
 }
 

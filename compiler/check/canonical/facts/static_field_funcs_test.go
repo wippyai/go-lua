@@ -5,6 +5,7 @@ import (
 
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/cfg"
+	"github.com/wippyai/go-lua/compiler/check/domain/fieldkey"
 	"github.com/wippyai/go-lua/types/constraint"
 )
 
@@ -32,8 +33,8 @@ func TestFieldFuncDefinitionKeepsStringIndexKeyStructural(t *testing.T) {
 	}
 }
 
-func TestTableLiteralFieldKeyKeepsFieldSyntaxCompatibility(t *testing.T) {
-	field, ok := tableLiteralFieldKey(&ast.Field{Key: &ast.StringExpr{Value: "handler"}})
+func TestTableLiteralFieldKeysKeepFieldSyntaxCompatibility(t *testing.T) {
+	field, ok := fieldkey.FromTableField(&ast.Field{Key: &ast.StringExpr{Value: "handler"}})
 	if !ok {
 		t.Fatal("string table key rejected")
 	}
@@ -42,8 +43,8 @@ func TestTableLiteralFieldKeyKeepsFieldSyntaxCompatibility(t *testing.T) {
 	}
 }
 
-func TestTableLiteralFieldKeyKeepsBracketStringStructural(t *testing.T) {
-	field, ok := tableLiteralFieldKey(&ast.Field{
+func TestTableLiteralFieldKeysKeepBracketStringStructural(t *testing.T) {
+	field, ok := fieldkey.FromTableField(&ast.Field{
 		Key:       &ast.StringExpr{Value: "handler"},
 		KeySyntax: ast.AttrKeyIndex,
 	})
