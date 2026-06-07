@@ -9,8 +9,7 @@ import (
 // function and closure axes stay together because callers consume them as one
 // slot-relative reference fact before rebasing onto assignment targets.
 type ReturnRefSlot struct {
-	FunctionRefs FunctionRefs
-	ClosureRefs  ClosureRefs
+	references ReferenceContext
 }
 
 // ReturnRefs is the caller-visible tuple of returned callable identities. Slot
@@ -24,10 +23,24 @@ type ReturnRefs struct {
 
 // ReturnRefSlotOf canonicalizes one slot's reference axes.
 func ReturnRefSlotOf(functionRefs FunctionRefs, closureRefs ClosureRefs) ReturnRefSlot {
-	return ReturnRefSlot{
-		FunctionRefs: FunctionRefsDomain.Join(functionRefs, FunctionRefsDomain.Bottom()),
-		ClosureRefs:  ClosureRefsDomain.Join(closureRefs, ClosureRefsDomain.Bottom()),
-	}
+	return ReturnRefSlotOfReferenceContext(ReferenceContextOf(
+		CaptureCellsDomain.Bottom(),
+		functionRefs,
+		closureRefs,
+	))
+}
+
+// ReturnRefSlotOfReferenceContext canonicalizes callable identity evidence for
+// one return slot. Captured cells are not returnable identity facts, so they are
+// intentionally dropped at this boundary.
+func ReturnRefSlotOfReferenceContext(references ReferenceContext) ReturnRefSlot {
+	return ReturnRefSlot{references: references.CallableIdentity()}
+}
+
+// ReferenceContext returns the normalized callable identity evidence for this
+// slot.
+func (s ReturnRefSlot) ReferenceContext() ReferenceContext {
+	return s.references.CallableIdentity()
 }
 
 // ReturnRefsOfSlots constructs a canonical finite return-ref tuple.
@@ -38,7 +51,7 @@ func ReturnRefsOfSlots(slots []ReturnRefSlot) ReturnRefs {
 	out := make([]ReturnRefSlot, len(slots))
 	last := -1
 	for i, slot := range slots {
-		out[i] = ReturnRefSlotOf(slot.FunctionRefs, slot.ClosureRefs)
+		out[i] = ReturnRefSlotOfReferenceContext(slot.ReferenceContext())
 		if !returnRefSlotIsBottom(out[i]) {
 			last = i
 		}
@@ -76,7 +89,7 @@ func (r ReturnRefs) SlotReferenceContext(slot int) (ReferenceContext, bool) {
 	if returnRefSlotIsBottom(s) {
 		return bottom, false
 	}
-	return ReferenceContextOf(CaptureCellsDomain.Bottom(), s.FunctionRefs, s.ClosureRefs), true
+	return s.ReferenceContext(), true
 }
 
 // FunctionRefTree returns slot's function identities as a placeholder-relative
@@ -88,7 +101,7 @@ func (r ReturnRefs) FunctionRefTree(slot int) (FunctionRefTree, bool) {
 	if slot < 0 || slot >= len(r.slots) {
 		return FunctionRefTree{}, false
 	}
-	return FunctionRefTreeFromSubtreePath(r.slots[slot].FunctionRefs, constraint.NewPlaceholder(slot))
+	return FunctionRefTreeFromSubtreePath(r.slots[slot].references.FunctionRefs(), constraint.NewPlaceholder(slot))
 }
 
 // ClosureRefTree returns slot's closure identities as a placeholder-relative
@@ -100,7 +113,7 @@ func (r ReturnRefs) ClosureRefTree(slot int) (ClosureRefTree, bool) {
 	if slot < 0 || slot >= len(r.slots) {
 		return ClosureRefTree{}, false
 	}
-	return ClosureRefTreeFromSubtreePath(r.slots[slot].ClosureRefs, constraint.NewPlaceholder(slot))
+	return ClosureRefTreeFromSubtreePath(r.slots[slot].references.ClosureRefs(), constraint.NewPlaceholder(slot))
 }
 
 // ReturnRefsDomain is the slotwise lattice for ReturnRefs.
@@ -176,35 +189,44 @@ func returnRefsSlot(t ReturnRefs, i int) ReturnRefSlot {
 	if i < 0 || i >= len(t.slots) {
 		return ReturnRefSlotOf(FunctionRefsDomain.Bottom(), ClosureRefsDomain.Bottom())
 	}
-	return ReturnRefSlotOf(t.slots[i].FunctionRefs, t.slots[i].ClosureRefs)
+	return ReturnRefSlotOfReferenceContext(t.slots[i].ReferenceContext())
 }
 
 func returnRefSlotIsBottom(s ReturnRefSlot) bool {
-	return FunctionRefsDomain.Equal(s.FunctionRefs, FunctionRefsDomain.Bottom()) &&
-		ClosureRefsDomain.Equal(s.ClosureRefs, ClosureRefsDomain.Bottom())
+	refs := s.ReferenceContext()
+	return FunctionRefsDomain.Equal(refs.FunctionRefs(), FunctionRefsDomain.Bottom()) &&
+		ClosureRefsDomain.Equal(refs.ClosureRefs(), ClosureRefsDomain.Bottom())
 }
 
 func returnRefSlotEqual(a, b ReturnRefSlot) bool {
-	return FunctionRefsDomain.Equal(a.FunctionRefs, b.FunctionRefs) &&
-		ClosureRefsDomain.Equal(a.ClosureRefs, b.ClosureRefs)
+	aRefs := a.ReferenceContext()
+	bRefs := b.ReferenceContext()
+	return FunctionRefsDomain.Equal(aRefs.FunctionRefs(), bRefs.FunctionRefs()) &&
+		ClosureRefsDomain.Equal(aRefs.ClosureRefs(), bRefs.ClosureRefs())
 }
 
 func returnRefSlotLessOrEq(a, b ReturnRefSlot) bool {
-	return FunctionRefsDomain.LessOrEq(a.FunctionRefs, b.FunctionRefs) &&
-		ClosureRefsDomain.LessOrEq(a.ClosureRefs, b.ClosureRefs)
+	aRefs := a.ReferenceContext()
+	bRefs := b.ReferenceContext()
+	return FunctionRefsDomain.LessOrEq(aRefs.FunctionRefs(), bRefs.FunctionRefs()) &&
+		ClosureRefsDomain.LessOrEq(aRefs.ClosureRefs(), bRefs.ClosureRefs())
 }
 
 func returnRefSlotJoin(a, b ReturnRefSlot) ReturnRefSlot {
+	aRefs := a.ReferenceContext()
+	bRefs := b.ReferenceContext()
 	return ReturnRefSlotOf(
-		FunctionRefsDomain.Join(a.FunctionRefs, b.FunctionRefs),
-		ClosureRefsDomain.Join(a.ClosureRefs, b.ClosureRefs),
+		FunctionRefsDomain.Join(aRefs.FunctionRefs(), bRefs.FunctionRefs()),
+		ClosureRefsDomain.Join(aRefs.ClosureRefs(), bRefs.ClosureRefs()),
 	)
 }
 
 func returnRefSlotWiden(prev, next ReturnRefSlot) ReturnRefSlot {
+	prevRefs := prev.ReferenceContext()
+	nextRefs := next.ReferenceContext()
 	return ReturnRefSlotOf(
-		FunctionRefsDomain.Widen(prev.FunctionRefs, next.FunctionRefs),
-		ClosureRefsDomain.Widen(prev.ClosureRefs, next.ClosureRefs),
+		FunctionRefsDomain.Widen(prevRefs.FunctionRefs(), nextRefs.FunctionRefs()),
+		ClosureRefsDomain.Widen(prevRefs.ClosureRefs(), nextRefs.ClosureRefs()),
 	)
 }
 

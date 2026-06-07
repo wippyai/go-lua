@@ -3,8 +3,11 @@ package flow
 import (
 	"testing"
 
+	"github.com/wippyai/go-lua/types/cfg"
 	"github.com/wippyai/go-lua/types/constraint"
+	"github.com/wippyai/go-lua/types/domain/value/product"
 	"github.com/wippyai/go-lua/types/lattice"
+	"github.com/wippyai/go-lua/types/typ"
 )
 
 func TestReturnRefsLatticeLaws(t *testing.T) {
@@ -60,5 +63,22 @@ func TestReturnRefsOfSlotsCanonicalizesSlots(t *testing.T) {
 	}
 	if _, ok := got.SlotReferenceContext(1); ok {
 		t.Fatal("trimmed bottom slot should not report reference evidence")
+	}
+}
+
+func TestReturnRefSlotDropsCaptureCells(t *testing.T) {
+	fnPath := constraint.NewPlaceholder(0).Field("factory")
+	slot := ReturnRefSlotOfReferenceContext(ReferenceContextOf(
+		CaptureCellsOf([]CaptureCell{{Symbol: cfg.SymbolID(12), Value: product.FromType(typ.String)}}),
+		WithFunctionRef(nil, fnPath.Key(), FunctionRefSetOf(FunctionRef{GraphID: 12})),
+		ClosureRefsDomain.Bottom(),
+	))
+
+	refs := slot.ReferenceContext()
+	if entries := refs.CaptureCells().Entries(); len(entries) != 0 {
+		t.Fatalf("return slot retained capture cells: %#v", entries)
+	}
+	if set, ok := FunctionRefAt(refs.FunctionRefs(), fnPath.Key()); !ok || set.IsBottom() {
+		t.Fatalf("return slot lost callable identity: %#v", refs.FunctionRefs())
 	}
 }

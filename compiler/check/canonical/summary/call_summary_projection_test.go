@@ -368,26 +368,26 @@ func TestCallSummaryProjection_ReturnRefsFold(t *testing.T) {
 	if got.Len() != 3 {
 		t.Fatalf("ReturnRefs len = %d, want 3", got.Len())
 	}
-	got0 := got.Slot(0)
+	got0 := got.Slot(0).ReferenceContext()
 	wantFunction0 := flow.FunctionRefsDomain.Join(slot0A, slot0B)
-	if !flow.FunctionRefsDomain.Equal(got0.FunctionRefs, wantFunction0) {
-		t.Fatalf("slot 0 function refs = %#v, want %#v", got0.FunctionRefs, wantFunction0)
+	if !flow.FunctionRefsDomain.Equal(got0.FunctionRefs(), wantFunction0) {
+		t.Fatalf("slot 0 function refs = %#v, want %#v", got0.FunctionRefs(), wantFunction0)
 	}
 	wantClosure0 := flow.ClosureRefsDomain.Join(closureSlot0A, closureSlot0B)
-	if !flow.ClosureRefsDomain.Equal(got0.ClosureRefs, wantClosure0) {
-		t.Fatalf("slot 0 closure refs = %#v, want %#v", got0.ClosureRefs, wantClosure0)
+	if !flow.ClosureRefsDomain.Equal(got0.ClosureRefs(), wantClosure0) {
+		t.Fatalf("slot 0 closure refs = %#v, want %#v", got0.ClosureRefs(), wantClosure0)
 	}
-	got1 := got.Slot(1)
-	if !flow.FunctionRefsDomain.Equal(got1.FunctionRefs, flow.FunctionRefsDomain.Bottom()) ||
-		!flow.ClosureRefsDomain.Equal(got1.ClosureRefs, flow.ClosureRefsDomain.Bottom()) {
+	got1 := got.Slot(1).ReferenceContext()
+	if !flow.FunctionRefsDomain.Equal(got1.FunctionRefs(), flow.FunctionRefsDomain.Bottom()) ||
+		!flow.ClosureRefsDomain.Equal(got1.ClosureRefs(), flow.ClosureRefsDomain.Bottom()) {
 		t.Fatalf("slot 1 = %#v, want bottom", got1)
 	}
-	got2 := got.Slot(2)
-	if !flow.FunctionRefsDomain.Equal(got2.FunctionRefs, slot2) {
-		t.Fatalf("slot 2 function refs = %#v, want %#v", got2.FunctionRefs, slot2)
+	got2 := got.Slot(2).ReferenceContext()
+	if !flow.FunctionRefsDomain.Equal(got2.FunctionRefs(), slot2) {
+		t.Fatalf("slot 2 function refs = %#v, want %#v", got2.FunctionRefs(), slot2)
 	}
-	if !flow.ClosureRefsDomain.Equal(got2.ClosureRefs, closureSlot2) {
-		t.Fatalf("slot 2 closure refs = %#v, want %#v", got2.ClosureRefs, closureSlot2)
+	if !flow.ClosureRefsDomain.Equal(got2.ClosureRefs(), closureSlot2) {
+		t.Fatalf("slot 2 closure refs = %#v, want %#v", got2.ClosureRefs(), closureSlot2)
 	}
 }
 

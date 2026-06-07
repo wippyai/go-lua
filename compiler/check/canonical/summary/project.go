@@ -293,12 +293,12 @@ func projectReturnRefs(fs state.FunctionState, g *cfg.Graph) flow.ReturnRefs {
 
 func returnRefsTupleAt(ps flow.PointState, info *cfg.ReturnInfo) flow.ReturnRefs {
 	out := make([]flow.ReturnRefSlot, len(info.Exprs))
+	references := flow.ReferenceContextFromPoint(&ps).CallableIdentity()
 	for i := range info.Exprs {
 		placeholder := constraint.NewPlaceholder(i)
-		out[i] = flow.ReturnRefSlotOf(
-			flow.ProjectFunctionRefsByPath(ps.FunctionRefs, placeholder),
-			flow.ProjectClosureRefsByPath(ps.ClosureRefs, placeholder),
-		)
+		out[i] = flow.ReturnRefSlotOfReferenceContext(references.ProjectPaths(flow.ReferencePathProjection{
+			Subtrees: []constraint.Path{placeholder},
+		}))
 	}
 	return flow.ReturnRefsOfSlots(out)
 }
