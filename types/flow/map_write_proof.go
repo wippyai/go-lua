@@ -144,8 +144,6 @@ func ApplyKeyArrayElementKeyProof(out *PointState, proof KeyArrayElementKeyProof
 		return KeyArrayElementKeyResult{}, false
 	}
 	result := KeyArrayElementKeyResult{}
-	arrayKey := proof.Array.Key()
-	targetKey := proof.TargetKey.Key()
 	keyValue := proof.KeyValue
 	if keyValue.IsZero() {
 		keyValue = product.FromType(typ.Unknown)
@@ -155,8 +153,8 @@ func ApplyKeyArrayElementKeyProof(out *PointState, proof KeyArrayElementKeyProof
 	for _, tableUse := range out.KeyPresence.KeyArrayTableAddresses(proof.Array) {
 		table := tableUse.Address
 		result.Tables = append(result.Tables, table)
-		out.KeyPresence = out.KeyPresence.With(tableUse.Key, targetKey)
-		for _, value := range out.KeyPresence.KeyArrayValues(arrayKey, tableUse.Key) {
+		out.KeyPresence = out.KeyPresence.WithAddresses(table, proof.TargetKey)
+		for _, value := range out.KeyPresence.KeyArrayValuesAddresses(proof.Array, table) {
 			if value.IsZero() {
 				continue
 			}
@@ -229,7 +227,7 @@ func ApplyKeyArrayValueProof(out *PointState, proof KeyArrayValueProof) bool {
 	before := out.KeyPresence
 	out.KeyPresence = out.KeyPresence.WithKeyArrayValueAddresses(proof.Array, proof.Table, proof.Value)
 	if proof.HasAppendKey {
-		out.KeyPresence = out.KeyPresence.WithAppendHistoryCoverage(proof.Array.Key(), proof.AppendKey.Key(), proof.Table.Key(), proof.Value)
+		out.KeyPresence = out.KeyPresence.WithAppendHistoryCoverageAddresses(proof.Array, proof.AppendKey, proof.Table, proof.Value)
 	}
 	return !KeyPresenceFactsDomain.Equal(before, out.KeyPresence)
 }
@@ -239,15 +237,13 @@ func ApplyPendingKeyArrayProof(out *PointState, proof PendingKeyArrayProof) bool
 	if out == nil || proof.Array.Key() == "" || proof.Key.Key() == "" {
 		return false
 	}
-	tableKey := constraint.PathKey("")
 	if proof.HasTable {
-		tableKey = proof.Table.Key()
-		if tableKey == "" {
+		if proof.Table.Key() == "" {
 			return false
 		}
 	}
 	before := out.KeyPresence
-	out.KeyPresence = out.KeyPresence.WithPendingKeyArray(proof.Array.Key(), tableKey, proof.Key.Key())
+	out.KeyPresence = out.KeyPresence.WithPendingKeyArrayAddresses(proof.Array, proof.Table, proof.HasTable, proof.Key)
 	return !KeyPresenceFactsDomain.Equal(before, out.KeyPresence)
 }
 
@@ -258,7 +254,7 @@ func ApplyAppendKeyProof(out *PointState, proof AppendKeyProof) bool {
 	}
 	before := out.KeyPresence
 	out.KeyPresence = out.KeyPresence.WithAppendedKeyAddresses(proof.Array, proof.Key)
-	out.KeyPresence = out.KeyPresence.WithAppendHistoryEvent(proof.Array.Key(), proof.Key.Key())
+	out.KeyPresence = out.KeyPresence.WithAppendHistoryEventAddresses(proof.Array, proof.Key)
 	return !KeyPresenceFactsDomain.Equal(before, out.KeyPresence)
 }
 
@@ -309,8 +305,6 @@ func ApplyIndexedKeyArrayIterationProof(out *PointState, proof IndexedKeyArrayIt
 	result := IndexedKeyArrayIterationResult{}
 	beforePresence := out.KeyPresence
 	beforeIndexWrites := out.IndexWrites
-	arrayKey := proof.Array.Key()
-	keyKey := proof.Key.Key()
 	keyValue := proof.KeyValue
 	if keyValue.IsZero() {
 		keyValue = product.FromType(typ.Unknown)
@@ -318,8 +312,8 @@ func ApplyIndexedKeyArrayIterationProof(out *PointState, proof IndexedKeyArrayIt
 	for _, tableUse := range out.KeyPresence.KeyArrayTableAddresses(proof.Array) {
 		table := tableUse.Address
 		result.Tables = append(result.Tables, table)
-		out.KeyPresence = out.KeyPresence.With(tableUse.Key, keyKey)
-		for _, value := range out.KeyPresence.KeyArrayValues(arrayKey, tableUse.Key) {
+		out.KeyPresence = out.KeyPresence.WithAddresses(table, proof.Key)
+		for _, value := range out.KeyPresence.KeyArrayValuesAddresses(proof.Array, table) {
 			if value.IsZero() {
 				continue
 			}

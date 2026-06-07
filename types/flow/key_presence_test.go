@@ -136,7 +136,11 @@ func TestAppendElementFieldOriginUseSourcePath(t *testing.T) {
 			nil,
 		)
 
-	uses := facts.AppendElementFieldSources(testStableAddressPath(t, arrayPath).Key(), field)
+	array := testStableAddressPath(t, arrayPath)
+	uses := facts.AppendElementFieldOriginUses(AppendElementFieldSourceQuery{
+		Array: array,
+		Field: field,
+	})
 	if len(uses) != 1 {
 		t.Fatalf("uses got %d, want one source", len(uses))
 	}
@@ -159,12 +163,18 @@ func TestAppendElementFieldSourceAddressesIgnoreLegacyStoredSource(t *testing.T)
 			sourcePath.Key(),
 			"",
 		)
-	raw := facts.AppendElementFieldSources(array.Key(), field)
+	raw := facts.AppendElementFieldOriginUses(AppendElementFieldSourceQuery{
+		Array: array,
+		Field: field,
+	})
 	if len(raw) != 1 || raw[0].Origin.Source != sourcePath.Key() {
 		t.Fatalf("test setup did not keep legacy stored source key: %s", facts.Format())
 	}
 
-	if got := facts.AppendElementFieldSourceAddresses(array.Key(), field); len(got) != 0 {
+	if got := facts.AppendElementFieldSourceAddresses(AppendElementFieldSourceQuery{
+		Array: array,
+		Field: field,
+	}); len(got) != 0 {
 		t.Fatalf("canonical source view accepted legacy stored source key: %#v", got)
 	}
 }

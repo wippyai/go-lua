@@ -134,6 +134,13 @@ type AppendElementFieldSourceAddress struct {
 	FieldRemainder []constraint.Segment
 }
 
+// AppendElementFieldSourceQuery asks for recorded sources that can satisfy a
+// demand for Array element field Field.
+type AppendElementFieldSourceQuery struct {
+	Array StableAddress
+	Field []constraint.Segment
+}
+
 // SourcePath returns the symbol-rooted source path carried by this origin use.
 func (u AppendElementFieldOriginUse) SourcePath() (constraint.Path, bool) {
 	addr, ok := StableAddressFromCanonicalKey(u.Origin.Source)
@@ -857,6 +864,12 @@ func (f KeyPresenceFacts) HasEmptyKeyArray(array constraint.PathKey) bool {
 	return ok
 }
 
+// HasEmptyKeyArrayAddress reports the empty key-array invariant for a normalized
+// array identity.
+func (f KeyPresenceFacts) HasEmptyKeyArrayAddress(array StableAddress) bool {
+	return f.HasEmptyKeyArray(array.Key())
+}
+
 func (f KeyPresenceFacts) EmptyKeyArrayEntries() []EmptyKeyArrayFact {
 	if f.bottom || len(f.emptyArrays) == 0 {
 		return nil
@@ -882,6 +895,12 @@ func (f KeyPresenceFacts) WithKeyArrayValue(array, table constraint.PathKey, val
 
 func (f KeyPresenceFacts) WithKeyArrayValueAddresses(array, table StableAddress, value product.AbstractValue) KeyPresenceFacts {
 	return f.WithKeyArrayValue(array.Key(), table.Key(), value)
+}
+
+// KeyArrayValuesAddresses returns the joined value evidence carried by a
+// key-array/table pair in normalized address form.
+func (f KeyPresenceFacts) KeyArrayValuesAddresses(array, table StableAddress) []product.AbstractValue {
+	return f.KeyArrayValues(array.Key(), table.Key())
 }
 
 // WithTablePresentWriteValueAddress updates every value-carrying proof for a
@@ -978,6 +997,19 @@ func (f KeyPresenceFacts) WithPendingKeyArray(array, table, key constraint.PathK
 	return set.canonical()
 }
 
+// WithPendingKeyArrayAddresses records a delayed key-array proof in normalized
+// address form. Table is optional when hasTable is false.
+func (f KeyPresenceFacts) WithPendingKeyArrayAddresses(array StableAddress, table StableAddress, hasTable bool, key StableAddress) KeyPresenceFacts {
+	tableKey := constraint.PathKey("")
+	if hasTable {
+		tableKey = table.Key()
+		if tableKey == "" {
+			return f
+		}
+	}
+	return f.WithPendingKeyArray(array.Key(), tableKey, key.Key())
+}
+
 func (f KeyPresenceFacts) PendingKeyArrayEntries() []PendingKeyArrayFact {
 	if f.bottom || len(f.pending) == 0 {
 		return nil
@@ -1031,6 +1063,27 @@ func (f KeyPresenceFacts) HasAppendHistoryBase(array constraint.PathKey) bool {
 	return ok
 }
 
+// HasAppendHistoryBaseAddress reports whether append-history tracking exists
+// for a normalized array identity.
+func (f KeyPresenceFacts) HasAppendHistoryBaseAddress(array StableAddress) bool {
+	return f.HasAppendHistoryBase(array.Key())
+}
+
+// HasAppendHistoryBaseWithoutEventsAddress reports whether append-history
+// tracking exists for array before any append event has been recorded.
+func (f KeyPresenceFacts) HasAppendHistoryBaseWithoutEventsAddress(array StableAddress) bool {
+	arrayKey := array.Key()
+	if arrayKey == "" || !f.HasAppendHistoryBase(arrayKey) {
+		return false
+	}
+	for _, event := range f.appendEvents {
+		if event.Array == arrayKey {
+			return false
+		}
+	}
+	return true
+}
+
 func (f KeyPresenceFacts) AppendHistoryBaseEntries() []AppendHistoryBaseFact {
 	if f.bottom || len(f.appendBases) == 0 {
 		return nil
@@ -1052,6 +1105,12 @@ func (f KeyPresenceFacts) WithAppendHistoryEvent(array, key constraint.PathKey) 
 	return set.canonical()
 }
 
+// WithAppendHistoryEventAddresses records an appended key event in normalized
+// address form.
+func (f KeyPresenceFacts) WithAppendHistoryEventAddresses(array, key StableAddress) KeyPresenceFacts {
+	return f.WithAppendHistoryEvent(array.Key(), key.Key())
+}
+
 func (f KeyPresenceFacts) AppendHistoryEventEntries() []AppendHistoryEventFact {
 	if f.bottom || len(f.appendEvents) == 0 {
 		return nil
@@ -1069,6 +1128,12 @@ func (f KeyPresenceFacts) WithAppendHistoryCoverage(array, key, table constraint
 	set := f.factSet()
 	set.appendCoverage = next
 	return set.canonical()
+}
+
+// WithAppendHistoryCoverageAddresses records value coverage for an append
+// history event in normalized address form.
+func (f KeyPresenceFacts) WithAppendHistoryCoverageAddresses(array, key, table StableAddress, value product.AbstractValue) KeyPresenceFacts {
+	return f.WithAppendHistoryCoverage(array.Key(), key.Key(), table.Key(), value)
 }
 
 // WithAppendHistoryCoverageForKeyAddress covers every tracked append event that
@@ -1161,7 +1226,7 @@ func (f KeyPresenceFacts) AppendElementFieldOriginEntries() []AppendElementField
 	return append([]AppendElementFieldOriginFact(nil), f.appendOrigins...)
 }
 
-func (f KeyPresenceFacts) AppendElementFieldSources(array constraint.PathKey, field []constraint.Segment) []AppendElementFieldOriginUse {
+func (f KeyPresenceFacts) appendElementFieldOriginUses(array constraint.PathKey, field []constraint.Segment) []AppendElementFieldOriginUse {
 	fieldKey := AppendElementFieldPathKey(field)
 	if f.bottom || array == "" || fieldKey == "" || !f.HasAppendHistoryBase(array) || len(f.appendOrigins) == 0 {
 		return nil
@@ -1190,8 +1255,16 @@ func (f KeyPresenceFacts) AppendElementFieldSources(array constraint.PathKey, fi
 	return out
 }
 
-func (f KeyPresenceFacts) AppendElementFieldSourceAddresses(array constraint.PathKey, field []constraint.Segment) []AppendElementFieldSourceAddress {
-	uses := f.AppendElementFieldSources(array, field)
+// AppendElementFieldOriginUses returns appended-element field origins selected
+// by a semantic address query.
+func (f KeyPresenceFacts) AppendElementFieldOriginUses(q AppendElementFieldSourceQuery) []AppendElementFieldOriginUse {
+	return f.appendElementFieldOriginUses(q.Array.Key(), q.Field)
+}
+
+// AppendElementFieldSourceAddresses returns appended-element field origin
+// sources as normalized addresses.
+func (f KeyPresenceFacts) AppendElementFieldSourceAddresses(q AppendElementFieldSourceQuery) []AppendElementFieldSourceAddress {
+	uses := f.AppendElementFieldOriginUses(q)
 	if len(uses) == 0 {
 		return nil
 	}

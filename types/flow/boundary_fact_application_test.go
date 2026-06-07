@@ -88,10 +88,10 @@ func TestApplyBoundaryFactsAppliesCollectionProvenanceTransaction(t *testing.T) 
 	if len(values) != 1 || !product.Domain.Equal(values[0], product.FromType(nodeType)) {
 		t.Fatalf("boundary key-array values = %v, want node record", values)
 	}
-	sources := state.KeyPresence.AppendElementFieldSources(
-		StablePathKey(arrayPath),
-		[]constraint.Segment{{Kind: constraint.SegmentField, Name: "status"}},
-	)
+	sources := state.KeyPresence.AppendElementFieldOriginUses(AppendElementFieldSourceQuery{
+		Array: testStableAddressPath(t, arrayPath),
+		Field: []constraint.Segment{{Kind: constraint.SegmentField, Name: "status"}},
+	})
 	if len(sources) != 1 {
 		t.Fatalf("boundary append field sources = %v, want one; facts=%s", sources, state.KeyPresence.Format())
 	}

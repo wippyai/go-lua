@@ -93,7 +93,14 @@ func appendAppendFieldProvenanceRoutes(out []ProvenanceRoute, state PointState, 
 	if use.Origin.Source == "" || len(use.Remainder) == 0 {
 		return out
 	}
-	return appendAppendFieldSourceRoutes(out, state.KeyPresence.AppendElementFieldSources(use.Origin.Source, use.Remainder))
+	source, ok := StableAddressFromCanonicalKey(use.Origin.Source)
+	if !ok {
+		return out
+	}
+	return appendAppendFieldSourceRoutes(out, state.KeyPresence.AppendElementFieldOriginUses(AppendElementFieldSourceQuery{
+		Array: source,
+		Field: use.Remainder,
+	}))
 }
 
 // AppendElementFieldSourceRoutes returns source routes for a structural demand
@@ -103,7 +110,10 @@ func (f PointFacts) AppendElementFieldSourceRoutes(q AppendElementFieldRouteQuer
 	if !ok {
 		return nil
 	}
-	uses := f.state.KeyPresence.AppendElementFieldSources(array.Key(), q.Field)
+	uses := f.state.KeyPresence.AppendElementFieldOriginUses(AppendElementFieldSourceQuery{
+		Array: array,
+		Field: q.Field,
+	})
 	return appendAppendFieldSourceRoutes(nil, uses)
 }
 

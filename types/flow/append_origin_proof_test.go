@@ -125,7 +125,10 @@ func TestApplyAppendElementFieldOriginUseReplaysSourcesToDestinations(t *testing
 		{Kind: constraint.SegmentField, Name: "payload"},
 		{Kind: constraint.SegmentField, Name: "name"},
 	}
-	if len(state.KeyPresence.AppendElementFieldSources(testStableAddressPath(t, arrayPath).Key(), field)) != 1 {
+	if len(state.KeyPresence.AppendElementFieldOriginUses(AppendElementFieldSourceQuery{
+		Array: testStableAddressPath(t, arrayPath),
+		Field: field,
+	})) != 1 {
 		t.Fatalf("destination field origin was not replayed")
 	}
 }
@@ -145,7 +148,10 @@ func TestApplyAppendElementFieldOriginUseIgnoresLegacyStoredSource(t *testing.T)
 				"",
 			),
 	}
-	raw := state.KeyPresence.AppendElementFieldSources(source.Key(), []constraint.Segment{{Kind: constraint.SegmentField, Name: "id"}})
+	raw := state.KeyPresence.AppendElementFieldOriginUses(AppendElementFieldSourceQuery{
+		Array: source,
+		Field: []constraint.Segment{{Kind: constraint.SegmentField, Name: "id"}},
+	})
 	if len(raw) != 1 || raw[0].Origin.Source != iterPath.Key() {
 		t.Fatalf("test setup did not keep legacy stored source key: %s", state.KeyPresence.Format())
 	}
@@ -618,10 +624,10 @@ func TestApplyAppendElementMutationPathTransactionAppliesCollectionTransaction(t
 	if len(values) != 1 || !product.Domain.Equal(values[0], product.FromType(nodeType)) {
 		t.Fatalf("append transaction key-array values = %v, want node record", values)
 	}
-	fieldSources := state.KeyPresence.AppendElementFieldSources(
-		StablePathKey(arrayPath),
-		[]constraint.Segment{{Kind: constraint.SegmentField, Name: "status"}},
-	)
+	fieldSources := state.KeyPresence.AppendElementFieldOriginUses(AppendElementFieldSourceQuery{
+		Array: testStableAddressPath(t, arrayPath),
+		Field: []constraint.Segment{{Kind: constraint.SegmentField, Name: "status"}},
+	})
 	if len(fieldSources) != 1 {
 		t.Fatalf("append transaction field sources = %v, want one source; facts=%s", fieldSources, state.KeyPresence.Format())
 	}

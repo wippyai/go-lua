@@ -258,16 +258,7 @@ func ApplyAppendKeyArrayConsequences(out *PointState, proof AppendKeyArrayConseq
 // AppendHistoryBaseWithoutEvents reports whether Array still has a tracked
 // append-history base with no recorded append events.
 func AppendHistoryBaseWithoutEvents(state PointState, array StableAddress) bool {
-	arrayKey := array.Key()
-	if arrayKey == "" || !state.KeyPresence.HasAppendHistoryBase(arrayKey) {
-		return false
-	}
-	for _, event := range state.KeyPresence.AppendHistoryEventEntries() {
-		if event.Array == arrayKey {
-			return false
-		}
-	}
-	return true
+	return state.KeyPresence.HasAppendHistoryBaseWithoutEventsAddress(array)
 }
 
 func AppendHistoryBaseWithoutEventsPath(state PointState, arrayPath constraint.Path) bool {
@@ -673,7 +664,7 @@ func AppendKeyArrayPreservation(state PointState, q AppendKeyArrayPreservationQu
 		out.Pending = addPending(out.Pending, PendingKeyArrayDestination{})
 	}
 	for _, tableUse := range existingTables {
-		if state.KeyPresence.Has(tableUse.Key, keyKey) {
+		if state.KeyPresence.HasAddresses(tableUse.Address, q.Key) {
 			out.Tables = addTable(out.Tables, tableUse.Address)
 			continue
 		}
@@ -787,13 +778,6 @@ func AppendElementFieldOriginFields(state PointState) [][]constraint.Segment {
 	return out
 }
 
-// AppendElementFieldSources returns recorded sources for an appended element
-// field. The array key may come from another flow fact, so this query keeps the
-// key-shaped boundary while hiding KeyPresence storage from transfer.
-func AppendElementFieldSources(state PointState, array constraint.PathKey, field []constraint.Segment) []AppendElementFieldOriginUse {
-	return state.KeyPresence.AppendElementFieldSources(array, field)
-}
-
 // ApplyAppendElementFieldOriginUse replays a prior field-origin use into the
 // current append destinations.
 func ApplyAppendElementFieldOriginUse(
@@ -809,7 +793,14 @@ func ApplyAppendElementFieldOriginUse(
 		return false
 	}
 	before := out.KeyPresence
-	for _, sourceUse := range out.KeyPresence.AppendElementFieldSourceAddresses(originUse.Origin.Source, originUse.Remainder) {
+	originSource, ok := StableAddressFromCanonicalKey(originUse.Origin.Source)
+	if !ok {
+		return false
+	}
+	for _, sourceUse := range out.KeyPresence.AppendElementFieldSourceAddresses(AppendElementFieldSourceQuery{
+		Array: originSource,
+		Field: originUse.Remainder,
+	}) {
 		source := sourceUse.Source
 		sourceField := cloneAddressSegments(sourceUse.SourceField)
 		if len(sourceField) > 0 {

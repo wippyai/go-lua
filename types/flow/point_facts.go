@@ -406,12 +406,12 @@ func (f PointFacts) HasKeyValueReadbackSource(q KeyValueReadbackSourceQuery) boo
 
 func (f PointFacts) HasEmptyKeyArray(array constraint.Path) bool {
 	arrayAddr, ok := StableAddressOfPath(array)
-	return ok && f.state.KeyPresence.HasEmptyKeyArray(arrayAddr.Key())
+	return ok && f.state.KeyPresence.HasEmptyKeyArrayAddress(arrayAddr)
 }
 
 func (f PointFacts) HasAppendHistoryBase(array constraint.Path) bool {
 	arrayAddr, ok := StableAddressOfPath(array)
-	return ok && f.state.KeyPresence.HasAppendHistoryBase(arrayAddr.Key())
+	return ok && f.state.KeyPresence.HasAppendHistoryBaseAddress(arrayAddr)
 }
 
 // IdentityAliasClosurePaths returns root plus every assignment/path alias
