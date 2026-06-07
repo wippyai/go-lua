@@ -141,25 +141,17 @@ func ApplyKeyPresenceProof(out *PointState, proof KeyPresenceProof) bool {
 	if out == nil {
 		return false
 	}
-	tableKey := proof.Table.Key()
-	keyKey := proof.Key.Key()
-	if tableKey == "" || keyKey == "" {
+	if proof.Table.Key() == "" || proof.Key.Key() == "" {
 		return false
 	}
 	before := out.KeyPresence
-	out.KeyPresence = out.KeyPresence.With(tableKey, keyKey)
-	if proof.HasValuePath {
-		valuePath := proof.ValuePath.Key()
-		if valuePath != "" {
-			out.KeyPresence = out.KeyPresence.WithValue(tableKey, keyKey, valuePath)
-		}
-	}
-	for _, array := range out.KeyPresence.PendingKeyArraysFor(tableKey, keyKey) {
-		out.KeyPresence = out.KeyPresence.WithKeyArray(array, tableKey)
-		if !proof.Value.IsZero() {
-			out.KeyPresence = out.KeyPresence.WithKeyArrayValue(array, tableKey, proof.Value)
-		}
-	}
+	out.KeyPresence = out.KeyPresence.WithProofAddress(
+		proof.Table,
+		proof.Key,
+		proof.Value,
+		proof.ValuePath,
+		proof.HasValuePath,
+	)
 	return !KeyPresenceFactsDomain.Equal(before, out.KeyPresence)
 }
 
@@ -169,21 +161,8 @@ func ApplyKeyPresenceAliasProof(out *PointState, proof KeyPresenceAliasProof) bo
 	if out == nil || proof.SourceKey.Key() == "" || proof.TargetKey.Key() == "" {
 		return false
 	}
-	sourceKey := proof.SourceKey.Key()
-	targetKey := proof.TargetKey.Key()
 	before := out.KeyPresence
-	for _, entry := range out.KeyPresence.Entries() {
-		if entry.Key != sourceKey {
-			continue
-		}
-		out.KeyPresence = out.KeyPresence.With(entry.Table, targetKey)
-	}
-	for _, entry := range out.KeyPresence.ValueEntries() {
-		if entry.Key != sourceKey {
-			continue
-		}
-		out.KeyPresence = out.KeyPresence.WithValue(entry.Table, targetKey, entry.Value)
-	}
+	out.KeyPresence = out.KeyPresence.WithKeyAliasAddress(proof.SourceKey, proof.TargetKey)
 	return !KeyPresenceFactsDomain.Equal(before, out.KeyPresence)
 }
 
@@ -564,20 +543,8 @@ func ApplyTablePresentWriteValueProof(out *PointState, table StableAddress, writ
 	if out == nil || table.Key() == "" || !written.DefinitelyPresent() {
 		return false
 	}
-	tableKey := table.Key()
 	before := out.KeyPresence
-	for _, fact := range out.KeyPresence.KeyArrayValueEntries() {
-		if fact.Table != tableKey {
-			continue
-		}
-		out.KeyPresence = out.KeyPresence.WithKeyArrayValue(fact.Array, tableKey, written)
-	}
-	for _, fact := range out.KeyPresence.AppendHistoryCoverageEntries() {
-		if fact.Table != tableKey {
-			continue
-		}
-		out.KeyPresence = out.KeyPresence.WithAppendHistoryCoverage(fact.Array, fact.Key, tableKey, written)
-	}
+	out.KeyPresence = out.KeyPresence.WithTablePresentWriteValueAddress(table, written)
 	return !KeyPresenceFactsDomain.Equal(before, out.KeyPresence)
 }
 
@@ -589,15 +556,8 @@ func ApplyAppendHistoryCoverageProof(out *PointState, table StableAddress, key S
 	if out == nil || table.Key() == "" || key.Key() == "" || value.IsZero() {
 		return false
 	}
-	tableKey := table.Key()
-	keyKey := key.Key()
 	before := out.KeyPresence
-	for _, event := range out.KeyPresence.AppendHistoryEventEntries() {
-		if event.Key != keyKey {
-			continue
-		}
-		out.KeyPresence = out.KeyPresence.WithAppendHistoryCoverage(event.Array, keyKey, tableKey, value)
-	}
+	out.KeyPresence = out.KeyPresence.WithAppendHistoryCoverageForKeyAddress(table, key, value)
 	return !KeyPresenceFactsDomain.Equal(before, out.KeyPresence)
 }
 

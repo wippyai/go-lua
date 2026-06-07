@@ -29,82 +29,11 @@ func directCallEntryFacts(in directCallEntryFactInput) flow.BoundaryFacts {
 	if in.Call == nil || in.ParamSlot == nil || in.ArgPath == nil {
 		return flow.BoundaryFactsDomain.Top()
 	}
-	var keyPresence []flow.BoundaryKeyPresenceFact
-	var keyArrays []flow.BoundaryKeyArrayFact
-	var keyArrayValues []flow.BoundaryKeyArrayValueFact
-	var appendKeys []flow.BoundaryAppendKeyFact
-	var appendOrigins []flow.BoundaryAppendElementFieldOriginFact
-	if !in.KeyPresence.IsBottom() {
-		for _, fact := range in.KeyPresence.Entries() {
-			table, ok := entryBoundaryPathForCallerKey(in, fact.Table)
-			if !ok {
-				continue
-			}
-			key, ok := entryBoundaryPathForCallerKey(in, fact.Key)
-			if !ok {
-				continue
-			}
-			keyPresence = append(keyPresence, flow.BoundaryKeyPresenceFact{Table: table, Key: key})
-		}
-		for _, fact := range in.KeyPresence.KeyArrayEntries() {
-			array, ok := entryBoundaryPathForCallerKey(in, fact.Array)
-			if !ok {
-				continue
-			}
-			table, ok := entryBoundaryPathForCallerKey(in, fact.Table)
-			if !ok {
-				continue
-			}
-			keyArrays = append(keyArrays, flow.BoundaryKeyArrayFact{Array: array, Table: table})
-		}
-		for _, fact := range in.KeyPresence.KeyArrayValueEntries() {
-			array, ok := entryBoundaryPathForCallerKey(in, fact.Array)
-			if !ok {
-				continue
-			}
-			table, ok := entryBoundaryPathForCallerKey(in, fact.Table)
-			if !ok {
-				continue
-			}
-			keyArrayValues = append(keyArrayValues, flow.BoundaryKeyArrayValueFact{
-				Array: array,
-				Table: table,
-				Value: fact.Value,
-			})
-		}
-		for _, fact := range in.KeyPresence.AppendedKeyEntries() {
-			array, ok := entryBoundaryPathForCallerKey(in, fact.Array)
-			if !ok {
-				continue
-			}
-			key, ok := entryBoundaryPathForCallerKey(in, fact.Key)
-			if !ok {
-				continue
-			}
-			appendKeys = append(appendKeys, flow.BoundaryAppendKeyFact{Array: array, Key: key})
-		}
-		for _, fact := range in.KeyPresence.AppendElementFieldOriginEntries() {
-			array, ok := entryBoundaryPathForCallerKey(in, fact.Array)
-			if !ok {
-				continue
-			}
-			field, ok := flow.AppendElementFieldSegments(fact.Field)
-			if !ok {
-				continue
-			}
-			source, ok := entryBoundaryPathForCallerKey(in, fact.Source)
-			if !ok {
-				continue
-			}
-			sourceField, _ := flow.AppendElementFieldSegments(fact.SourceField)
-			appendOrigins = append(appendOrigins, flow.BoundaryAppendElementFieldOriginFact{
-				Array:       array,
-				Field:       field,
-				Source:      source,
-				SourceField: sourceField,
-			})
-		}
-	}
+	keyFacts := flow.ProjectKeyPresenceBoundaryFacts(
+		in.KeyPresence,
+		entryBoundaryProjector{in: in},
+		flow.KeyPresenceBoundaryProjection{},
+	)
 	var lenLower []flow.BoundaryLengthLowerBound
 	if in.Num != nil && !in.Num.IsUnsat() {
 		in.Num.ForEachLenBound(func(key constraint.PathKey, lower, _ int64) bool {
@@ -140,8 +69,14 @@ func directCallEntryFacts(in directCallEntryFactInput) flow.BoundaryFacts {
 			return true
 		})
 	}
-	return flow.BoundaryFactsOf(keyPresence, keyArrays, keyArrayValues, appendKeys, lenLower, indexWrites).
-		WithAppendElementFieldOrigins(appendOrigins)
+	return flow.BoundaryFactsOf(
+		keyFacts.KeyPresence(),
+		keyFacts.KeyArrays(),
+		keyFacts.KeyArrayValues(),
+		keyFacts.AppendKeys(),
+		lenLower,
+		indexWrites,
+	).WithAppendElementFieldOrigins(keyFacts.AppendElementFieldOrigins())
 }
 
 func entryBoundaryPathForCallerKey(in directCallEntryFactInput, key constraint.PathKey) (flow.BoundaryPath, bool) {
@@ -153,18 +88,30 @@ func entryBoundaryPathForCallerKey(in directCallEntryFactInput, key constraint.P
 }
 
 func entryBoundaryPathForCallerAddress(in directCallEntryFactInput, addr flow.StableAddress) (flow.BoundaryPath, bool) {
-	target, ok := addr.Path()
-	if !ok {
+	paths := (entryBoundaryProjector{in: in}).PathsFromAddress(addr)
+	if len(paths) == 0 {
 		return flow.BoundaryPath{}, false
 	}
-	for _, arg := range entryRuntimeArgs(in.Callee, in.Call, in.ParamSlot) {
-		source, ok := in.ArgPath(arg.RuntimeIdx, arg.Expr)
+	return paths[0], true
+}
+
+type entryBoundaryProjector struct {
+	in directCallEntryFactInput
+}
+
+func (p entryBoundaryProjector) PathsFromAddress(addr flow.StableAddress) []flow.BoundaryPath {
+	target, ok := addr.Path()
+	if !ok {
+		return nil
+	}
+	for _, arg := range entryRuntimeArgs(p.in.Callee, p.in.Call, p.in.ParamSlot) {
+		source, ok := p.in.ArgPath(arg.RuntimeIdx, arg.Expr)
 		if !ok || source.IsEmpty() {
 			continue
 		}
 		if path, ok := flow.BoundaryParamPathFromPath(target, source, arg.Slot); ok {
-			return path, true
+			return []flow.BoundaryPath{path}
 		}
 	}
-	return flow.BoundaryPath{}, false
+	return nil
 }

@@ -557,6 +557,62 @@ func (f KeyPresenceFacts) WithAddresses(table, key StableAddress) KeyPresenceFac
 	return f.With(table.Key(), key.Key())
 }
 
+// WithProofAddress applies a table/key proof and its delayed key-array
+// consequences. The value path is optional identity evidence; value is the
+// payload used to update value-carrying key-array facts.
+func (f KeyPresenceFacts) WithProofAddress(
+	table StableAddress,
+	key StableAddress,
+	value product.AbstractValue,
+	valuePath StableAddress,
+	hasValuePath bool,
+) KeyPresenceFacts {
+	tableKey := table.Key()
+	keyKey := key.Key()
+	if tableKey == "" || keyKey == "" {
+		return f
+	}
+	out := f.With(tableKey, keyKey)
+	if hasValuePath {
+		valueKey := valuePath.Key()
+		if valueKey != "" {
+			out = out.WithValue(tableKey, keyKey, valueKey)
+		}
+	}
+	for _, array := range out.PendingKeyArraysFor(tableKey, keyKey) {
+		out = out.WithKeyArray(array, tableKey)
+		if !value.IsZero() {
+			out = out.WithKeyArrayValue(array, tableKey, value)
+		}
+	}
+	return out
+}
+
+// WithKeyAliasAddress copies all table/key and table/key/value proofs from
+// source under target. Alias replay belongs to this domain because the caller
+// should not inspect the carrier's private key slices.
+func (f KeyPresenceFacts) WithKeyAliasAddress(source StableAddress, target StableAddress) KeyPresenceFacts {
+	sourceKey := source.Key()
+	targetKey := target.Key()
+	if f.bottom || sourceKey == "" || targetKey == "" {
+		return f
+	}
+	out := f
+	for _, entry := range f.entries {
+		if entry.Key != sourceKey {
+			continue
+		}
+		out = out.With(entry.Table, targetKey)
+	}
+	for _, entry := range f.values {
+		if entry.Key != sourceKey {
+			continue
+		}
+		out = out.WithValue(entry.Table, targetKey, entry.Value)
+	}
+	return out
+}
+
 func (f KeyPresenceFacts) HasValue(table, key, value constraint.PathKey) bool {
 	if f.bottom || table == "" || key == "" || value == "" || len(f.values) == 0 {
 		return false
@@ -828,6 +884,32 @@ func (f KeyPresenceFacts) WithKeyArrayValueAddresses(array, table StableAddress,
 	return f.WithKeyArrayValue(array.Key(), table.Key(), value)
 }
 
+// WithTablePresentWriteValueAddress updates every value-carrying proof for a
+// definitely-present write to table[element].
+func (f KeyPresenceFacts) WithTablePresentWriteValueAddress(
+	table StableAddress,
+	written product.AbstractValue,
+) KeyPresenceFacts {
+	tableKey := table.Key()
+	if f.bottom || tableKey == "" || !written.DefinitelyPresent() {
+		return f
+	}
+	out := f
+	for _, fact := range f.KeyArrayValueEntries() {
+		if fact.Table != tableKey {
+			continue
+		}
+		out = out.WithKeyArrayValue(fact.Array, tableKey, written)
+	}
+	for _, fact := range f.AppendHistoryCoverageEntries() {
+		if fact.Table != tableKey {
+			continue
+		}
+		out = out.WithAppendHistoryCoverage(fact.Array, fact.Key, tableKey, written)
+	}
+	return out
+}
+
 func (f KeyPresenceFacts) KeyArrayValueEntries() []KeyArrayValueFact {
 	if f.bottom {
 		return nil
@@ -987,6 +1069,28 @@ func (f KeyPresenceFacts) WithAppendHistoryCoverage(array, key, table constraint
 	set := f.factSet()
 	set.appendCoverage = next
 	return set.canonical()
+}
+
+// WithAppendHistoryCoverageForKeyAddress covers every tracked append event that
+// appended key with the value now proven for table[key].
+func (f KeyPresenceFacts) WithAppendHistoryCoverageForKeyAddress(
+	table StableAddress,
+	key StableAddress,
+	value product.AbstractValue,
+) KeyPresenceFacts {
+	tableKey := table.Key()
+	keyKey := key.Key()
+	if f.bottom || tableKey == "" || keyKey == "" || value.IsZero() {
+		return f
+	}
+	out := f
+	for _, event := range f.appendEvents {
+		if event.Key != keyKey {
+			continue
+		}
+		out = out.WithAppendHistoryCoverage(event.Array, keyKey, tableKey, value)
+	}
+	return out
 }
 
 func (f KeyPresenceFacts) AppendHistoryCoverageEntries() []AppendHistoryCoverageFact {
