@@ -246,16 +246,18 @@ func (f bodyContractOriginFactsStub) BodyContracts() paramevidence.Contracts {
 	return f.contracts
 }
 
-func (f bodyContractOriginFactsStub) AppendElementFieldSourcesAt(_ cfg.Point, array constraint.PathKey, field []constraint.Segment) []flow.AppendElementFieldOriginUse {
-	return f.appendOrigins.AppendElementFieldSources(array, field)
-}
-
 func (f bodyContractOriginFactsStub) ProvenanceRoutesAt(_ cfg.Point, path constraint.Path) []flow.ProvenanceRoute {
 	return flow.PointFactsOf(flow.PointState{
 		PathAliases:  f.aliases,
 		ValueOrigins: f.origins,
 		KeyPresence:  f.appendOrigins,
 	}).ProvenanceRoutes(path)
+}
+
+func (f bodyContractOriginFactsStub) AppendElementFieldSourceRoutesAt(_ cfg.Point, q flow.AppendElementFieldRouteQuery) []flow.ProvenanceRoute {
+	return flow.PointFactsOf(flow.PointState{
+		KeyPresence: f.appendOrigins,
+	}).AppendElementFieldSourceRoutes(q)
 }
 
 func (f bodyContractOriginFactsStub) IsAnnotated(sym cfg.SymbolID) bool {

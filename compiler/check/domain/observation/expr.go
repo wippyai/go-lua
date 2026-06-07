@@ -330,16 +330,15 @@ func (p contractPathProof) ElementFieldSatisfies(array []constraint.Segment, fie
 	for _, seg := range array {
 		arrayPath = arrayPath.Append(seg)
 	}
-	arrayKey := flow.StablePathKey(arrayPath)
-	if arrayKey == "" {
-		return false
-	}
-	provider := p.projector.appendElementFieldOriginProvider()
+	provider := p.projector.appendElementFieldRouteProvider()
 	if provider == nil {
 		return false
 	}
-	for _, use := range provider.AppendElementFieldSourcesAt(p.point, arrayKey, field) {
-		sourceType := p.projector.appendElementFieldOriginSourceType(p.point, use, nil, nil)
+	for _, route := range provider.AppendElementFieldSourceRoutesAt(p.point, flow.AppendElementFieldRouteQuery{
+		ArrayPath: arrayPath,
+		Field:     field,
+	}) {
+		sourceType := p.projector.appendElementFieldRouteSourceType(p.point, route, nil, nil)
 		if !typ.IsAbsentOrUnknown(sourceType) && subtype.IsSubtype(sourceType, expected) {
 			return true
 		}
@@ -755,19 +754,6 @@ func (p Projector) projectBodyContractOriginTypes(point cfg.Point, path constrai
 		}
 	}
 	return types
-}
-
-func (p Projector) appendElementFieldOriginSourceType(point cfg.Point, use flow.AppendElementFieldOriginUse, extra []constraint.Segment, seen map[constraint.PathKey]bool) typ.Type {
-	sourcePath, ok := use.SourcePath()
-	if !ok || sourcePath.Symbol == 0 {
-		return nil
-	}
-	return p.appendElementFieldRouteSourceType(point, flow.ProvenanceRoute{
-		Kind:           flow.ProvenanceRouteAppendElementField,
-		Source:         sourcePath,
-		SourceField:    use.SourceField,
-		FieldRemainder: use.FieldRemainder,
-	}, extra, seen)
 }
 
 func (p Projector) appendElementFieldRouteSourceType(point cfg.Point, route flow.ProvenanceRoute, extra []constraint.Segment, seen map[constraint.PathKey]bool) typ.Type {
@@ -1224,10 +1210,8 @@ type indexWriteKeyAliasFacts interface {
 	IndexWriteKeyAliasesAt(p cfg.Point, key flow.StableAddress) []flow.StableAddress
 }
 
-// TODO(route-algebra): fold direct append-field source checks into route queries
-// so observation no longer depends on key-presence storage-shaped providers.
-type appendElementFieldOriginFacts interface {
-	AppendElementFieldSourcesAt(p cfg.Point, array constraint.PathKey, field []constraint.Segment) []flow.AppendElementFieldOriginUse
+type appendElementFieldRouteFacts interface {
+	AppendElementFieldSourceRoutesAt(p cfg.Point, q flow.AppendElementFieldRouteQuery) []flow.ProvenanceRoute
 }
 
 // factsIndexReadFlow adapts per-point Facts proofs to the indexread.Flow surface.
@@ -1959,14 +1943,14 @@ func (p Projector) pathObservationFacts() flow.PathObservationFacts {
 	return p
 }
 
-func (p Projector) appendElementFieldOriginProvider() appendElementFieldOriginFacts {
+func (p Projector) appendElementFieldRouteProvider() appendElementFieldRouteFacts {
 	if p.cfg.Facts != nil {
-		if facts, ok := p.cfg.Facts.(appendElementFieldOriginFacts); ok {
+		if facts, ok := p.cfg.Facts.(appendElementFieldRouteFacts); ok {
 			return facts
 		}
 	}
 	if p.cfg.Flow != nil {
-		if facts, ok := p.cfg.Flow.(appendElementFieldOriginFacts); ok {
+		if facts, ok := p.cfg.Flow.(appendElementFieldRouteFacts); ok {
 			return facts
 		}
 	}

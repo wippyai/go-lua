@@ -11,6 +11,13 @@ type ProvenanceRouteQuery struct {
 	AppendElementFieldOrigins bool
 }
 
+// AppendElementFieldRouteQuery asks for source routes for one element field of a
+// tracked append-history array.
+type AppendElementFieldRouteQuery struct {
+	ArrayPath constraint.Path
+	Field     []constraint.Segment
+}
+
 // ProvenanceRoutes returns one-step source routes that may explain a read of
 // path. It composes the currently separate alias, value-origin, and append-field
 // origin domains into one normalized route boundary for checker layers.
@@ -86,17 +93,37 @@ func appendAppendFieldProvenanceRoutes(out []ProvenanceRoute, state PointState, 
 	if use.Origin.Source == "" || len(use.Remainder) == 0 {
 		return out
 	}
-	for _, fieldUse := range state.KeyPresence.AppendElementFieldSources(use.Origin.Source, use.Remainder) {
-		source, ok := fieldUse.SourcePath()
-		if !ok || source.IsEmpty() || source.Symbol == 0 {
-			continue
-		}
-		out = append(out, ProvenanceRoute{
-			Kind:           ProvenanceRouteAppendElementField,
-			Source:         source,
-			SourceField:    cloneAddressSegments(fieldUse.SourceField),
-			FieldRemainder: cloneAddressSegments(fieldUse.FieldRemainder),
-		})
+	return appendAppendFieldSourceRoutes(out, state.KeyPresence.AppendElementFieldSources(use.Origin.Source, use.Remainder))
+}
+
+// AppendElementFieldSourceRoutes returns source routes for a structural demand
+// on an appended element field.
+func (f PointFacts) AppendElementFieldSourceRoutes(q AppendElementFieldRouteQuery) []ProvenanceRoute {
+	array, ok := StableAddressOfPath(q.ArrayPath)
+	if !ok {
+		return nil
 	}
+	uses := f.state.KeyPresence.AppendElementFieldSources(array.Key(), q.Field)
+	return appendAppendFieldSourceRoutes(nil, uses)
+}
+
+func appendAppendFieldSourceRoutes(out []ProvenanceRoute, uses []AppendElementFieldOriginUse) []ProvenanceRoute {
+	for _, use := range uses {
+		out = appendAppendFieldSourceRoute(out, use)
+	}
+	return out
+}
+
+func appendAppendFieldSourceRoute(out []ProvenanceRoute, use AppendElementFieldOriginUse) []ProvenanceRoute {
+	source, ok := use.SourcePath()
+	if !ok || source.IsEmpty() || source.Symbol == 0 {
+		return out
+	}
+	out = append(out, ProvenanceRoute{
+		Kind:           ProvenanceRouteAppendElementField,
+		Source:         source,
+		SourceField:    cloneAddressSegments(use.SourceField),
+		FieldRemainder: cloneAddressSegments(use.FieldRemainder),
+	})
 	return out
 }

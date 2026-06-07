@@ -93,3 +93,33 @@ func TestPointFactsProvenanceRoutesForDescendantAssignmentAliases(t *testing.T) 
 		t.Fatalf("route source = %v, want %v", descendant[0].Source, assignmentSource.Field("id"))
 	}
 }
+
+func TestPointFactsAppendElementFieldSourceRoutes(t *testing.T) {
+	array := constraint.NewPath(cfg.SymbolID(321), "records")
+	source := constraint.NewPath(cfg.SymbolID(322), "payload")
+	field := []constraint.Segment{{Kind: constraint.SegmentField, Name: "id"}}
+	state := PointState{
+		KeyPresence: KeyPresenceFacts{}.
+			WithAppendHistoryBaseAddress(testStableAddressPath(t, array)).
+			WithAppendElementFieldOriginFromAddresses(
+				testStableAddressPath(t, array),
+				field,
+				testStableAddressPath(t, source),
+				nil,
+			),
+	}
+
+	routes := PointFactsOf(state).AppendElementFieldSourceRoutes(AppendElementFieldRouteQuery{
+		ArrayPath: array,
+		Field:     field,
+	})
+	if len(routes) != 1 {
+		t.Fatalf("AppendElementFieldSourceRoutes got %d routes, want 1", len(routes))
+	}
+	if routes[0].Kind != ProvenanceRouteAppendElementField {
+		t.Fatalf("route kind = %v, want append-element-field", routes[0].Kind)
+	}
+	if !routes[0].Source.Equal(source) {
+		t.Fatalf("route source = %v, want %v", routes[0].Source, source)
+	}
+}
