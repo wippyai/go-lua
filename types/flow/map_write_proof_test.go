@@ -461,15 +461,19 @@ func TestApplyKeyArrayProofPublishesArrayTable(t *testing.T) {
 	}
 }
 
-func TestApplyKeyArrayPathProofNormalizesArrayTable(t *testing.T) {
+func TestApplyKeyArraySeedPathTransactionNormalizesArrayTable(t *testing.T) {
 	arrayPath := constraint.NewPath(cfg.SymbolID(48), "node_order")
 	tablePath := constraint.NewPath(cfg.SymbolID(49), "nodes")
 	arrayKey := StablePathKey(arrayPath)
 	tableKey := StablePathKey(tablePath)
 
 	state := PointStateDomain.Top()
-	if changed := ApplyKeyArrayPathProof(&state, arrayPath, tablePath); !changed {
-		t.Fatal("ApplyKeyArrayPathProof reported no change")
+	if changed := ApplyKeyArraySeedPathTransaction(&state, KeyArraySeedPathTransaction{
+		ArrayPath: arrayPath,
+		TablePath: tablePath,
+		HasTable:  true,
+	}); !changed {
+		t.Fatal("ApplyKeyArraySeedPathTransaction reported no change")
 	}
 
 	tables := state.KeyPresence.KeyArrayTables(arrayKey)
@@ -494,13 +498,16 @@ func TestApplyEmptyKeyArrayProofPublishesEmptyArray(t *testing.T) {
 	}
 }
 
-func TestApplyEmptyKeyArrayPathProofNormalizesArray(t *testing.T) {
+func TestApplyKeyArraySeedPathTransactionPublishesEmptyArray(t *testing.T) {
 	arrayPath := constraint.NewPath(cfg.SymbolID(50), "node_order")
 	arrayKey := StablePathKey(arrayPath)
 
 	state := PointStateDomain.Top()
-	if changed := ApplyEmptyKeyArrayPathProof(&state, arrayPath); !changed {
-		t.Fatal("ApplyEmptyKeyArrayPathProof reported no change")
+	if changed := ApplyKeyArraySeedPathTransaction(&state, KeyArraySeedPathTransaction{
+		ArrayPath: arrayPath,
+		Empty:     true,
+	}); !changed {
+		t.Fatal("ApplyKeyArraySeedPathTransaction reported no change")
 	}
 	if !state.KeyPresence.HasEmptyKeyArray(arrayKey) {
 		t.Fatalf("empty key-array proof missing: %s", state.KeyPresence.Format())

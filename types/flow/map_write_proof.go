@@ -53,6 +53,15 @@ type EmptyKeyArrayProof struct {
 	Array StableAddress
 }
 
+// KeyArraySeedPathTransaction is the source-facing write-seed transaction for
+// key-array facts. Flow lowers paths once, then applies address-native proofs.
+type KeyArraySeedPathTransaction struct {
+	ArrayPath constraint.Path
+	TablePath constraint.Path
+	HasTable  bool
+	Empty     bool
+}
+
 // KeyArrayValueProof is the value-carrying form of key-array provenance. When
 // AppendKey is present it also records the append-history coverage that proves
 // the appended element is backed by the same table value.
@@ -175,15 +184,6 @@ func ApplyKeyArrayProof(out *PointState, proof KeyArrayProof) bool {
 	return !KeyPresenceFactsDomain.Equal(before, out.KeyPresence)
 }
 
-func ApplyKeyArrayPathProof(out *PointState, arrayPath, tablePath constraint.Path) bool {
-	array, arrayOK := StableAddressOfPath(arrayPath)
-	table, tableOK := StableAddressOfPath(tablePath)
-	if !arrayOK || !tableOK {
-		return false
-	}
-	return ApplyKeyArrayProof(out, KeyArrayProof{Array: array, Table: table})
-}
-
 // ApplyEmptyKeyArrayProof applies empty key-array provenance to point state.
 func ApplyEmptyKeyArrayProof(out *PointState, proof EmptyKeyArrayProof) bool {
 	if out == nil || proof.Array.Key() == "" {
@@ -194,12 +194,31 @@ func ApplyEmptyKeyArrayProof(out *PointState, proof EmptyKeyArrayProof) bool {
 	return !KeyPresenceFactsDomain.Equal(before, out.KeyPresence)
 }
 
-func ApplyEmptyKeyArrayPathProof(out *PointState, arrayPath constraint.Path) bool {
-	array, ok := StableAddressOfPath(arrayPath)
-	if !ok {
+// ApplyKeyArraySeedPathTransaction normalizes and applies source-level
+// key-array seed facts.
+func ApplyKeyArraySeedPathTransaction(out *PointState, tx KeyArraySeedPathTransaction) bool {
+	if tx.ArrayPath.IsEmpty() {
 		return false
 	}
-	return ApplyEmptyKeyArrayProof(out, EmptyKeyArrayProof{Array: array})
+	array, arrayOK := StableAddressOfPath(tx.ArrayPath)
+	if !arrayOK {
+		return false
+	}
+	changed := false
+	if tx.HasTable {
+		table, tableOK := StableAddressOfPath(tx.TablePath)
+		if !tableOK {
+			return false
+		}
+		changed = ApplyKeyArrayProof(out, KeyArrayProof{
+			Array: array,
+			Table: table,
+		}) || changed
+	}
+	if tx.Empty {
+		changed = ApplyEmptyKeyArrayProof(out, EmptyKeyArrayProof{Array: array}) || changed
+	}
+	return changed
 }
 
 // ApplyKeyArrayValueProof applies a value-carrying key-array proof to point state.

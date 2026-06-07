@@ -660,7 +660,11 @@ func (t *Transfer) seedKeyArrayForWriteEffect(out *flow.PointState, effect Write
 	if !ok {
 		return
 	}
-	flow.ApplyKeyArrayPathProof(out, path, effect.KeyArrayTable)
+	flow.ApplyKeyArraySeedPathTransaction(out, flow.KeyArraySeedPathTransaction{
+		ArrayPath: path,
+		TablePath: effect.KeyArrayTable,
+		HasTable:  true,
+	})
 }
 
 func (t *Transfer) seedEmptyContainerKeyArraysForWriteEffect(out *flow.PointState, effect WriteEffect) bool {
@@ -684,7 +688,10 @@ func (t *Transfer) seedEmptyContainerKeyArraysForWriteEffect(out *flow.PointStat
 	}
 	before := out.KeyPresence
 	for _, array := range arrays {
-		flow.ApplyEmptyKeyArrayPathProof(out, rootPath.Field(array))
+		flow.ApplyKeyArraySeedPathTransaction(out, flow.KeyArraySeedPathTransaction{
+			ArrayPath: rootPath.Field(array),
+			Empty:     true,
+		})
 	}
 	return !flow.KeyPresenceFactsDomain.Equal(before, out.KeyPresence)
 }
