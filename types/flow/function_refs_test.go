@@ -113,10 +113,10 @@ func TestRebaseFunctionRefsPathMovesSubtree(t *testing.T) {
 	to := constraint.NewPath(42, "out")
 	method := from.Field("method")
 	toMethod := to.Field("method")
-	refs := WithFunctionRef(nil, StablePathKey(method), FunctionRefSetOf(FunctionRef{GraphID: 7}))
+	refs := WithFunctionRefPath(nil, method, FunctionRefSetOf(FunctionRef{GraphID: 7}))
 
 	rebased := RebaseFunctionRefsPath(refs, from, to)
-	set, ok := FunctionRefAt(rebased, StablePathKey(toMethod))
+	set, ok := FunctionRefAtPath(rebased, toMethod)
 	if !ok {
 		t.Fatalf("rebased function refs missing: %#v", rebased)
 	}
@@ -210,23 +210,23 @@ func TestReplaceFunctionRefSubtreePathClearsAndJoins(t *testing.T) {
 	child := target.Field("child")
 	sibling := constraint.NewPath(44, "sibling")
 	out := PointState{
-		FunctionRefs: WithFunctionRef(nil, StablePathKey(child), FunctionRefSetOf(FunctionRef{GraphID: 1})),
+		FunctionRefs: WithFunctionRefPath(nil, child, FunctionRefSetOf(FunctionRef{GraphID: 1})),
 	}
-	out.FunctionRefs = WithFunctionRef(out.FunctionRefs, StablePathKey(sibling), FunctionRefSetOf(FunctionRef{GraphID: 2}))
-	incoming := WithFunctionRef(nil, StablePathKey(target), FunctionRefSetOf(FunctionRef{GraphID: 3}))
+	out.FunctionRefs = WithFunctionRefPath(out.FunctionRefs, sibling, FunctionRefSetOf(FunctionRef{GraphID: 2}))
+	incoming := WithFunctionRefPath(nil, target, FunctionRefSetOf(FunctionRef{GraphID: 3}))
 
 	if !ReplaceFunctionRefSubtreePath(&out, target, incoming) {
 		t.Fatal("ReplaceFunctionRefSubtreePath reported no change")
 	}
-	if _, ok := FunctionRefAt(out.FunctionRefs, StablePathKey(child)); ok {
+	if _, ok := FunctionRefAtPath(out.FunctionRefs, child); ok {
 		t.Fatalf("child survived subtree replace: %#v", out.FunctionRefs)
 	}
-	if set, ok := FunctionRefAt(out.FunctionRefs, StablePathKey(target)); !ok {
+	if set, ok := FunctionRefAtPath(out.FunctionRefs, target); !ok {
 		t.Fatalf("incoming target ref missing: %#v", out.FunctionRefs)
 	} else if ref, singleton := set.Singleton(); !singleton || ref.GraphID != 3 {
 		t.Fatalf("target ref = %s, want graph 3 singleton", set.Format())
 	}
-	if set, ok := FunctionRefAt(out.FunctionRefs, StablePathKey(sibling)); !ok {
+	if set, ok := FunctionRefAtPath(out.FunctionRefs, sibling); !ok {
 		t.Fatalf("sibling was removed: %#v", out.FunctionRefs)
 	} else if ref, singleton := set.Singleton(); !singleton || ref.GraphID != 2 {
 		t.Fatalf("sibling ref = %s, want graph 2 singleton", set.Format())

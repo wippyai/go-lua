@@ -13,7 +13,10 @@ import (
 func TestClosureRefsDomain_Laws(t *testing.T) {
 	cellString := CaptureCellsOf([]CaptureCell{{Symbol: cfg.SymbolID(10), Value: product.FromType(typ.String)}})
 	cellNumber := CaptureCellsOf([]CaptureCell{{Symbol: cfg.SymbolID(10), Value: product.FromType(typ.Number)}})
-	fnRefs := WithFunctionRef(nil, constraint.NewPath(cfg.SymbolID(12), "fn").Key(), FunctionRefSetOf(FunctionRef{GraphID: 12}))
+	fnPath := constraint.NewPath(cfg.SymbolID(12), "fn")
+	fPath := constraint.NewPath(cfg.SymbolID(1), "f")
+	gPath := constraint.NewPath(cfg.SymbolID(2), "g")
+	fnRefs := WithFunctionRefPath(nil, fnPath, FunctionRefSetOf(FunctionRef{GraphID: 12}))
 	a := ClosureRefOf(FunctionRef{GraphID: 1}, cellString, FunctionRefsDomain.Bottom())
 	b := ClosureRefOf(FunctionRef{GraphID: 1}, cellNumber, FunctionRefsDomain.Bottom())
 	c := ClosureRefOf(FunctionRef{GraphID: 2}, cellString, fnRefs)
@@ -24,12 +27,12 @@ func TestClosureRefsDomain_Laws(t *testing.T) {
 		Sample: []ClosureRefs{
 			ClosureRefsDomain.Bottom(),
 			ClosureRefsDomain.Top(),
-			WithClosureRef(nil, constraint.NewPath(cfg.SymbolID(1), "f").Key(), ClosureRefSetOf(a)),
-			WithClosureRef(nil, constraint.NewPath(cfg.SymbolID(1), "f").Key(), ClosureRefSetOf(b)),
-			WithClosureRef(nil, constraint.NewPath(cfg.SymbolID(2), "g").Field("h").Key(), ClosureRefSetOf(c)),
+			WithClosureRefPath(nil, fPath, ClosureRefSetOf(a)),
+			WithClosureRefPath(nil, fPath, ClosureRefSetOf(b)),
+			WithClosureRefPath(nil, gPath.Field("h"), ClosureRefSetOf(c)),
 			ClosureRefs{
-				constraint.NewPath(cfg.SymbolID(1), "f").Key(): ClosureRefSetOf(a, b),
-				constraint.NewPath(cfg.SymbolID(2), "g").Key(): ClosureRefSetOf(c),
+				StablePathKey(fPath): ClosureRefSetOf(a, b),
+				StablePathKey(gPath): ClosureRefSetOf(c),
 			},
 		},
 	}.Run(t)
@@ -62,12 +65,12 @@ func TestClosureRefSetJoinMergesSameFunctionContexts(t *testing.T) {
 	stringCell := CaptureCellsOf([]CaptureCell{{Symbol: cfg.SymbolID(7), Value: product.FromType(typ.String)}})
 	numberCell := CaptureCellsOf([]CaptureCell{{Symbol: cfg.SymbolID(7), Value: product.FromType(typ.Number)}})
 	ref := FunctionRef{GraphID: 99}
-	path := constraint.NewPath(cfg.SymbolID(1), "fn").Key()
+	path := constraint.NewPath(cfg.SymbolID(1), "fn")
 
-	a := WithClosureRef(nil, path, ClosureRefSetOf(ClosureRefOf(ref, stringCell, nil)))
-	b := WithClosureRef(nil, path, ClosureRefSetOf(ClosureRefOf(ref, numberCell, nil)))
+	a := WithClosureRefPath(nil, path, ClosureRefSetOf(ClosureRefOf(ref, stringCell, nil)))
+	b := WithClosureRefPath(nil, path, ClosureRefSetOf(ClosureRefOf(ref, numberCell, nil)))
 	joined := ClosureRefsDomain.Join(a, b)
-	set, ok := ClosureRefAt(joined, path)
+	set, ok := ClosureRefAtPath(joined, path)
 	if !ok {
 		t.Fatalf("join same-function closure contexts missing set")
 	}
@@ -84,18 +87,18 @@ func TestClosureRefSetJoinMergesSameFunctionContexts(t *testing.T) {
 }
 
 func TestClosureRefsKeyBoundsNestedClosureEnvironment(t *testing.T) {
-	path := constraint.NewPath(cfg.SymbolID(42), "fn").Key()
-	refs := WithClosureRef(nil, path, ClosureRefSetOf(
+	path := constraint.NewPath(cfg.SymbolID(42), "fn")
+	refs := WithClosureRefPath(nil, path, ClosureRefSetOf(
 		ClosureRefOf(FunctionRef{GraphID: 1}, CaptureCellsDomain.Bottom(), nil),
 	))
 	for graphID := uint64(2); graphID <= 8; graphID++ {
-		refs = WithClosureRef(nil, path, ClosureRefSetOf(
+		refs = WithClosureRefPath(nil, path, ClosureRefSetOf(
 			ClosureRefOf(FunctionRef{GraphID: graphID}, CaptureCellsDomain.Bottom(), nil, refs),
 		))
 	}
 
 	key := ClosureRefsKeyOf(refs)
-	outerSet, ok := ClosureRefAt(key.Refs(), path)
+	outerSet, ok := ClosureRefAtPath(key.Refs(), path)
 	if !ok {
 		t.Fatalf("bounded key lost outer closure: %s", key.Format())
 	}
@@ -103,7 +106,7 @@ func TestClosureRefsKeyBoundsNestedClosureEnvironment(t *testing.T) {
 	if !singleton {
 		t.Fatalf("outer closure set = %s, want singleton", outerSet.Format())
 	}
-	firstNestedSet, ok := ClosureRefAt(outer.EntryClosureRefs(), path)
+	firstNestedSet, ok := ClosureRefAtPath(outer.EntryClosureRefs(), path)
 	if !ok {
 		t.Fatalf("bounded key lost first nested closure: %s", formatClosureRefs(outer.EntryClosureRefs()))
 	}
@@ -111,7 +114,7 @@ func TestClosureRefsKeyBoundsNestedClosureEnvironment(t *testing.T) {
 	if !singleton {
 		t.Fatalf("first nested closure set = %s, want singleton", firstNestedSet.Format())
 	}
-	limited, ok := ClosureRefAt(firstNested.EntryClosureRefs(), path)
+	limited, ok := ClosureRefAtPath(firstNested.EntryClosureRefs(), path)
 	if !ok || !limited.IsTop() {
 		t.Fatalf("second nested closure env = %s/%v, want top/true", limited.Format(), ok)
 	}
@@ -120,12 +123,12 @@ func TestClosureRefsKeyBoundsNestedClosureEnvironment(t *testing.T) {
 func TestClosureRefEqualUsesCanonicalEnvironmentKeys(t *testing.T) {
 	cell := CaptureCellsOf([]CaptureCell{{Symbol: cfg.SymbolID(7), Value: product.FromType(typ.String)}})
 	fnPath := constraint.NewPath(cfg.SymbolID(9), "captured")
-	fnRefsA := WithFunctionRef(nil, fnPath.Key(), FunctionRefSetOf(FunctionRef{GraphID: 100}))
-	fnRefsB := WithFunctionRef(nil, fnPath.Key(), FunctionRefSetOf(FunctionRef{GraphID: 100}))
-	nestedA := WithClosureRef(nil, fnPath.Field("inner").Key(), ClosureRefSetOf(
+	fnRefsA := WithFunctionRefPath(nil, fnPath, FunctionRefSetOf(FunctionRef{GraphID: 100}))
+	fnRefsB := WithFunctionRefPath(nil, fnPath, FunctionRefSetOf(FunctionRef{GraphID: 100}))
+	nestedA := WithClosureRefPath(nil, fnPath.Field("inner"), ClosureRefSetOf(
 		ClosureRefOf(FunctionRef{GraphID: 101}, CaptureCellsDomain.Bottom(), nil),
 	))
-	nestedB := WithClosureRef(nil, fnPath.Field("inner").Key(), ClosureRefSetOf(
+	nestedB := WithClosureRefPath(nil, fnPath.Field("inner"), ClosureRefSetOf(
 		ClosureRefOf(FunctionRef{GraphID: 101}, CaptureCellsDomain.Bottom(), nil),
 	))
 
@@ -188,10 +191,10 @@ func TestRebaseClosureRefsPathMovesSubtree(t *testing.T) {
 	to := constraint.NewPath(cfg.SymbolID(43), "out")
 	method := from.Field("method")
 	toMethod := to.Field("method")
-	refs := WithClosureRef(nil, StablePathKey(method), ClosureRefSetOf(closure))
+	refs := WithClosureRefPath(nil, method, ClosureRefSetOf(closure))
 
 	rebased := RebaseClosureRefsPath(refs, from, to)
-	set, ok := ClosureRefAt(rebased, StablePathKey(toMethod))
+	set, ok := ClosureRefAtPath(rebased, toMethod)
 	if !ok {
 		t.Fatalf("rebased closure refs missing: %#v", rebased)
 	}
@@ -226,8 +229,8 @@ func TestProjectClosureRefsByPathKeepsSubtree(t *testing.T) {
 	child := root.Field("child")
 	sibling := constraint.NewPath(cfg.SymbolID(46), "sibling")
 	closure := ClosureRefOf(FunctionRef{GraphID: 9}, CaptureCellsDomain.Bottom(), nil)
-	refs := WithClosureRef(nil, StablePathKey(child), ClosureRefSetOf(closure))
-	refs = WithClosureRef(refs, StablePathKey(sibling), ClosureRefSetTop())
+	refs := WithClosureRefPath(nil, child, ClosureRefSetOf(closure))
+	refs = WithClosureRefPath(refs, sibling, ClosureRefSetTop())
 
 	projected := ProjectClosureRefsByPath(refs, root)
 	if _, ok := ClosureRefAtPath(projected, child); !ok {
@@ -244,9 +247,9 @@ func TestClosureRefsSubtreeStrongUpdateUsesStableAddress(t *testing.T) {
 	samePrintedRoot := constraint.NewPath(cfg.SymbolID(146), "dep")
 	closure := ClosureRefOf(FunctionRef{GraphID: 9}, CaptureCellsDomain.Bottom(), nil)
 
-	refs := WithClosureRef(nil, StablePathKey(root), ClosureRefSetOf(closure))
-	refs = WithClosureRef(refs, StablePathKey(child), ClosureRefSetOf(closure))
-	refs = WithClosureRef(refs, StablePathKey(samePrintedRoot), ClosureRefSetOf(closure))
+	refs := WithClosureRefPath(nil, root, ClosureRefSetOf(closure))
+	refs = WithClosureRefPath(refs, child, ClosureRefSetOf(closure))
+	refs = WithClosureRefPath(refs, samePrintedRoot, ClosureRefSetOf(closure))
 
 	refs = WithoutClosureRefSubtree(refs, StablePathKey(root))
 	if _, ok := ClosureRefAtPath(refs, root); ok {
@@ -310,10 +313,10 @@ func TestAssignClosureRefSubtreePathCopiesAndReplacesTarget(t *testing.T) {
 	stale := ClosureRefOf(FunctionRef{GraphID: 12}, CaptureCellsDomain.Bottom(), nil)
 	other := ClosureRefOf(FunctionRef{GraphID: 13}, CaptureCellsDomain.Bottom(), nil)
 	out := PointState{
-		ClosureRefs: WithClosureRef(nil, StablePathKey(sourceChild), ClosureRefSetOf(closure)),
+		ClosureRefs: WithClosureRefPath(nil, sourceChild, ClosureRefSetOf(closure)),
 	}
-	out.ClosureRefs = WithClosureRef(out.ClosureRefs, StablePathKey(staleTargetGrandchild), ClosureRefSetOf(stale))
-	out.ClosureRefs = WithClosureRef(out.ClosureRefs, StablePathKey(sibling), ClosureRefSetOf(other))
+	out.ClosureRefs = WithClosureRefPath(out.ClosureRefs, staleTargetGrandchild, ClosureRefSetOf(stale))
+	out.ClosureRefs = WithClosureRefPath(out.ClosureRefs, sibling, ClosureRefSetOf(other))
 
 	if !AssignClosureRefSubtreePath(&out, source, target) {
 		t.Fatal("AssignClosureRefSubtreePath reported no change")
@@ -434,9 +437,9 @@ func TestClosureRefTreeFromSubtreePathProjectsRelativeEntries(t *testing.T) {
 	rootClosure := ClosureRefOf(FunctionRef{GraphID: 18}, CaptureCellsDomain.Bottom(), nil)
 	childClosure := ClosureRefOf(FunctionRef{GraphID: 19}, CaptureCellsDomain.Bottom(), nil)
 	otherClosure := ClosureRefOf(FunctionRef{GraphID: 20}, CaptureCellsDomain.Bottom(), nil)
-	refs := WithClosureRef(nil, source.Key(), ClosureRefSetOf(rootClosure))
-	refs = WithClosureRef(refs, child.Key(), ClosureRefSetOf(childClosure))
-	refs = WithClosureRef(refs, other.Key(), ClosureRefSetOf(otherClosure))
+	refs := WithClosureRefPath(nil, source, ClosureRefSetOf(rootClosure))
+	refs = WithClosureRefPath(refs, child, ClosureRefSetOf(childClosure))
+	refs = WithClosureRefPath(refs, other, ClosureRefSetOf(otherClosure))
 
 	tree, ok := ClosureRefTreeFromSubtreePath(refs, source)
 	if !ok {
@@ -475,16 +478,16 @@ func TestClosureRefTreeFromSubtreePathIgnoresLegacyStoredKey(t *testing.T) {
 
 func TestApplyClosureRefCellEffectsUpdatesStoredEnvironment(t *testing.T) {
 	sym := cfg.SymbolID(7)
-	path := constraint.NewPath(cfg.SymbolID(42), "fn").Key()
+	path := constraint.NewPath(cfg.SymbolID(42), "fn")
 	closure := ClosureRefOf(
 		FunctionRef{GraphID: 9},
 		CaptureCellsOf([]CaptureCell{{Symbol: sym, Value: product.FromType(typ.Number)}}),
 		nil,
 	)
-	refs := WithClosureRef(nil, path, ClosureRefSetOf(closure))
+	refs := WithClosureRefPath(nil, path, ClosureRefSetOf(closure))
 
-	updated := ApplyClosureRefCellEffects(refs, path, CaptureMustWrite(sym, product.FromType(typ.String)))
-	set, ok := ClosureRefAt(updated, path)
+	updated := ApplyClosureRefCellEffectsPath(refs, path, CaptureMustWrite(sym, product.FromType(typ.String)))
+	set, ok := ClosureRefAtPath(updated, path)
 	if !ok {
 		t.Fatalf("updated closure refs missing: %#v", updated)
 	}

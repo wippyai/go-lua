@@ -11,9 +11,9 @@ import (
 )
 
 func TestReturnRefsLatticeLaws(t *testing.T) {
-	fnA := WithFunctionRef(nil, constraint.NewPlaceholder(0).Field("a").Key(), FunctionRefSetOf(FunctionRef{GraphID: 1}))
-	fnB := WithFunctionRef(nil, constraint.NewPlaceholder(1).Field("b").Key(), FunctionRefSetOf(FunctionRef{GraphID: 2}))
-	closureA := WithClosureRef(nil, constraint.NewPlaceholder(0).Field("c").Key(), ClosureRefSetOf(ClosureRefOf(FunctionRef{GraphID: 3}, CaptureCellsDomain.Bottom(), nil)))
+	fnA := WithFunctionRefPath(nil, constraint.NewPlaceholder(0).Field("a"), FunctionRefSetOf(FunctionRef{GraphID: 1}))
+	fnB := WithFunctionRefPath(nil, constraint.NewPlaceholder(1).Field("b"), FunctionRefSetOf(FunctionRef{GraphID: 2}))
+	closureA := WithClosureRefPath(nil, constraint.NewPlaceholder(0).Field("c"), ClosureRefSetOf(ClosureRefOf(FunctionRef{GraphID: 3}, CaptureCellsDomain.Bottom(), nil)))
 
 	lattice.LawSuite[ReturnRefs]{
 		Name:   "ReturnRefs",
@@ -39,8 +39,8 @@ func TestReturnRefsOfSlotsCanonicalizesSlots(t *testing.T) {
 
 	got := ReturnRefsOfSlots([]ReturnRefSlot{
 		ReturnRefSlotOf(
-			WithFunctionRef(nil, fnPath.Key(), FunctionRefSetOf(fn)),
-			WithClosureRef(nil, clPath.Key(), ClosureRefSetOf(cl)),
+			WithFunctionRefPath(nil, fnPath, FunctionRefSetOf(fn)),
+			WithClosureRefPath(nil, clPath, ClosureRefSetOf(cl)),
 		),
 		ReturnRefSlotOf(FunctionRefsDomain.Bottom(), ClosureRefsDomain.Bottom()),
 	})
@@ -51,12 +51,12 @@ func TestReturnRefsOfSlotsCanonicalizesSlots(t *testing.T) {
 	if !ok {
 		t.Fatal("SlotReferenceContext(0) missing")
 	}
-	if set, ok := FunctionRefAt(ctx.FunctionRefs(), fnPath.Key()); !ok {
+	if set, ok := FunctionRefAtPath(ctx.FunctionRefs(), fnPath); !ok {
 		t.Fatalf("function refs missing: %#v", ctx.FunctionRefs())
 	} else if gotRef, singleton := set.Singleton(); !singleton || gotRef != fn {
 		t.Fatalf("function ref = %s, want %v", set.Format(), fn)
 	}
-	if set, ok := ClosureRefAt(ctx.ClosureRefs(), clPath.Key()); !ok {
+	if set, ok := ClosureRefAtPath(ctx.ClosureRefs(), clPath); !ok {
 		t.Fatalf("closure refs missing: %#v", ctx.ClosureRefs())
 	} else if gotRef, singleton := set.Singleton(); !singleton || gotRef.Ref != cl.Ref {
 		t.Fatalf("closure ref = %s, want %v", set.Format(), cl.Ref)
@@ -70,7 +70,7 @@ func TestReturnRefSlotDropsCaptureCells(t *testing.T) {
 	fnPath := constraint.NewPlaceholder(0).Field("factory")
 	slot := ReturnRefSlotOfReferenceContext(ReferenceContextOf(
 		CaptureCellsOf([]CaptureCell{{Symbol: cfg.SymbolID(12), Value: product.FromType(typ.String)}}),
-		WithFunctionRef(nil, fnPath.Key(), FunctionRefSetOf(FunctionRef{GraphID: 12})),
+		WithFunctionRefPath(nil, fnPath, FunctionRefSetOf(FunctionRef{GraphID: 12})),
 		ClosureRefsDomain.Bottom(),
 	))
 
@@ -78,7 +78,7 @@ func TestReturnRefSlotDropsCaptureCells(t *testing.T) {
 	if entries := refs.CaptureCells().Entries(); len(entries) != 0 {
 		t.Fatalf("return slot retained capture cells: %#v", entries)
 	}
-	if set, ok := FunctionRefAt(refs.FunctionRefs(), fnPath.Key()); !ok || set.IsBottom() {
+	if set, ok := FunctionRefAtPath(refs.FunctionRefs(), fnPath); !ok || set.IsBottom() {
 		t.Fatalf("return slot lost callable identity: %#v", refs.FunctionRefs())
 	}
 }

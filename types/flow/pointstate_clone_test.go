@@ -15,6 +15,7 @@ func TestClonePointStateCopiesMutableCarriers(t *testing.T) {
 	const other = cfg.SymbolID(2)
 	path := SymbolPathKey(sym, nil)
 	otherPath := SymbolPathKey(other, nil)
+	addr, _ := StableAddressOfSymbol(sym, nil)
 	num := numeric.NewState()
 	num.ApplyLenGeConst(path, 1)
 	ref := FunctionRef{GraphID: 11, ParentHash: 3}
@@ -24,8 +25,8 @@ func TestClonePointStateCopiesMutableCarriers(t *testing.T) {
 			SymbolValueKey(sym): product.FromType(typ.String),
 		},
 		Num:          num,
-		FunctionRefs: WithFunctionRef(nil, path, FunctionRefSetOf(ref)),
-		ClosureRefs:  WithClosureRef(nil, path, ClosureRefSetOf(closure)),
+		FunctionRefs: WithFunctionRefAddress(nil, addr, FunctionRefSetOf(ref)),
+		ClosureRefs:  WithClosureRefAddress(nil, addr, ClosureRefSetOf(closure)),
 	}
 
 	cloned := ClonePointState(original)

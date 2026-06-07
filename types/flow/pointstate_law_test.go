@@ -406,13 +406,15 @@ func pointStateSample() []PointState {
 		{Symbol: cfg.SymbolID(25), Prototypes: []cfg.SymbolID{20, 21}},
 		{Symbol: cfg.SymbolID(26), Prototypes: []cfg.SymbolID{22}},
 	})
-	refsOne := WithFunctionRef(nil, constraint.NewPath(cfg.SymbolID(30), "fn").Key(), FunctionRefSetOf(FunctionRef{GraphID: 300}))
-	closureOne := WithClosureRef(nil, constraint.NewPath(cfg.SymbolID(31), "closure").Key(), ClosureRefSetOf(ClosureRefOf(
+	fnPath := constraint.NewPath(cfg.SymbolID(30), "fn")
+	closurePath := constraint.NewPath(cfg.SymbolID(31), "closure")
+	refsOne := WithFunctionRefPath(nil, fnPath, FunctionRefSetOf(FunctionRef{GraphID: 300}))
+	closureOne := WithClosureRefPath(nil, closurePath, ClosureRefSetOf(ClosureRefOf(
 		FunctionRef{GraphID: 301},
 		CaptureCellsOf([]CaptureCell{{Symbol: cfg.SymbolID(10), Value: product.FromType(typ.String)}}),
 		refsOne,
 	)))
-	closureTwo := WithClosureRef(nil, constraint.NewPath(cfg.SymbolID(31), "closure").Key(), ClosureRefSetOf(
+	closureTwo := WithClosureRefPath(nil, closurePath, ClosureRefSetOf(
 		ClosureRefOf(
 			FunctionRef{GraphID: 301},
 			CaptureCellsOf([]CaptureCell{{Symbol: cfg.SymbolID(10), Value: product.FromType(typ.Number)}}),

@@ -252,6 +252,16 @@ func WithClosureRefAddress(refs ClosureRefs, addr StableAddress, set ClosureRefS
 	return ClosureRefsDomain.Join(out, nil)
 }
 
+// WithClosureRefPath returns refs with a structured path strongly updated to
+// set. Updating to Bottom removes the key.
+func WithClosureRefPath(refs ClosureRefs, path constraint.Path, set ClosureRefSet) ClosureRefs {
+	addr, ok := StableAddressOfPath(path)
+	if !ok {
+		return refs
+	}
+	return WithClosureRefAddress(refs, addr, set)
+}
+
 // ClosureRefAt returns the closure set for path.
 func ClosureRefAt(refs ClosureRefs, path constraint.PathKey) (ClosureRefSet, bool) {
 	addr, ok := StableAddressFromKey(path)
@@ -475,6 +485,16 @@ func ApplyClosureRefCellEffectsAddress(refs ClosureRefs, addr StableAddress, eff
 		updated = append(updated, ref)
 	}
 	return WithClosureRefAddress(refs, addr, ClosureRefSetOf(updated...))
+}
+
+// ApplyClosureRefCellEffectsPath applies cell effects to the closure
+// environment stored at path.
+func ApplyClosureRefCellEffectsPath(refs ClosureRefs, path constraint.Path, effects CaptureEffects) ClosureRefs {
+	addr, ok := StableAddressOfPath(path)
+	if !ok {
+		return refs
+	}
+	return ApplyClosureRefCellEffectsAddress(refs, addr, effects)
 }
 
 // ApplyClosureRefCellEffects applies cell effects to the closure environment
