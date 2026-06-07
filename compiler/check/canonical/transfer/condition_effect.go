@@ -41,53 +41,33 @@ func (t *Transfer) applyValueConditionReductions(out *flow.PointState, fact cons
 	if out == nil {
 		return false
 	}
-	syms := flow.ConditionValueSymbols(fact)
-	if len(syms) == 0 {
-		return false
-	}
-	originSyms := make(map[cfg.SymbolID]struct{})
-	for _, sym := range flow.VariantOriginConditionSymbols(fact) {
-		originSyms[sym] = struct{}{}
-	}
-	changed := false
-	for _, sym := range syms {
-		if _, hasOriginConstraint := originSyms[sym]; hasOriginConstraint {
-			continue
-		}
-		av, hasValue := t.symbolValue(out, sym)
-		base, hasBase := t.narrowBase(sym, av, false)
-		if !hasBase && t.unannotatedParam[sym] && (!hasValue || av.IsZero()) {
-			// Parameter contracts are co-solved with the body. Until an unannotated
-			// parameter has a declared or entry-projected value to reduce, keep the
-			// proof in Cond rather than materializing a broad value fact into Env.
-			continue
-		}
-		if !hasBase {
-			base = av
-			hasBase = hasValue
-		}
-		next, narrowed := flow.ProductConditionReductionValue(flow.ProductConditionReduction{
-			Symbol:   sym,
-			Base:     base,
-			HasBase:  hasBase,
-			Fact:     fact,
-			Facts:    flow.PointFactsOf(*out),
-			Resolver: fieldResolver,
-		})
-		if !narrowed || next.IsZero() {
-			continue
-		}
-		if hasValue && !av.IsZero() {
-			if !flow.SemanticProductReduction(av, next) {
-				continue
+	reductions := flow.ProductConditionReducer{
+		Fact:     fact,
+		Facts:    flow.PointFactsOf(*out),
+		Resolver: fieldResolver,
+		Base: func(sym cfg.SymbolID) flow.ProductConditionBase {
+			av, hasValue := t.symbolValue(out, sym)
+			base, hasBase := t.narrowBase(sym, av, false)
+			if !hasBase && t.unannotatedParam[sym] && (!hasValue || av.IsZero()) {
+				// Parameter contracts are co-solved with the body. Until an unannotated
+				// parameter has a declared or entry-projected value to reduce, keep the
+				// proof in Cond rather than materializing a broad value fact into Env.
+				return flow.ProductConditionBase{Skip: true}
 			}
-		} else if !base.IsZero() && !flow.SemanticProductReduction(base, next) {
-			continue
-		}
+			return flow.ProductConditionBase{
+				Current:    av,
+				HasCurrent: hasValue,
+				Base:       base,
+				HasBase:    hasBase,
+			}
+		},
+	}.Reductions()
+	changed := false
+	for _, reduction := range reductions {
 		t.applyRefinementEffect(out, RefinementEffect{
-			Place: Place{Root: sym},
+			Place: Place{Root: reduction.Symbol},
 			Kind:  RefinementSetValue,
-			Value: next,
+			Value: reduction.Value,
 		})
 		changed = true
 	}

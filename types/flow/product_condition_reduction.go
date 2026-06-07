@@ -22,6 +22,81 @@ type ProductConditionReduction struct {
 	Resolver narrow.Resolver
 }
 
+// ProductConditionBase is the caller-authorized value seed for reducing one
+// symbol under a condition.
+type ProductConditionBase struct {
+	Current    product.AbstractValue
+	HasCurrent bool
+	Base       product.AbstractValue
+	HasBase    bool
+	Skip       bool
+}
+
+// ProductConditionBaseReader supplies the current and authoritative base value
+// for a symbol. Transfer uses this to keep declared-type and lexical policy out
+// of flow.
+type ProductConditionBaseReader func(cfg.SymbolID) ProductConditionBase
+
+// ProductConditionReducer applies product-domain condition reductions for every
+// non-variant-origin symbol mentioned by a condition fact.
+type ProductConditionReducer struct {
+	Fact     constraint.Condition
+	Facts    PointFacts
+	Resolver narrow.Resolver
+	Base     ProductConditionBaseReader
+}
+
+// Reductions returns proven symbol value reductions under Fact.
+func (r ProductConditionReducer) Reductions() []SymbolValueReduction {
+	if r.Base == nil || r.Fact.IsTrue() || !r.Fact.HasConstraints() {
+		return nil
+	}
+	syms := ConditionValueSymbols(r.Fact)
+	if len(syms) == 0 {
+		return nil
+	}
+	originSyms := make(map[cfg.SymbolID]struct{})
+	for _, sym := range VariantOriginConditionSymbols(r.Fact) {
+		originSyms[sym] = struct{}{}
+	}
+	out := make([]SymbolValueReduction, 0, len(syms))
+	for _, sym := range syms {
+		if _, hasOriginConstraint := originSyms[sym]; hasOriginConstraint {
+			continue
+		}
+		base := r.Base(sym)
+		if base.Skip {
+			continue
+		}
+		reductionBase := base.Base
+		hasReductionBase := base.HasBase
+		if !hasReductionBase {
+			reductionBase = base.Current
+			hasReductionBase = base.HasCurrent
+		}
+		next, narrowed := ProductConditionReductionValue(ProductConditionReduction{
+			Symbol:   sym,
+			Base:     reductionBase,
+			HasBase:  hasReductionBase,
+			Fact:     r.Fact,
+			Facts:    r.Facts,
+			Resolver: r.Resolver,
+		})
+		if !narrowed || next.IsZero() {
+			continue
+		}
+		if base.HasCurrent && !base.Current.IsZero() {
+			if !SemanticProductReduction(base.Current, next) {
+				continue
+			}
+		} else if !reductionBase.IsZero() && !SemanticProductReduction(reductionBase, next) {
+			continue
+		}
+		out = append(out, SymbolValueReduction{Symbol: sym, Value: next})
+	}
+	return out
+}
+
 // ProductConditionReductionValue applies the product-domain condition algebra
 // for one symbol. Callers own choosing the authoritative base and storing the
 // resulting value.

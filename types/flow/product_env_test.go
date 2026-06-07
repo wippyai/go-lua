@@ -178,3 +178,70 @@ func TestConditionValueSymbolsReturnsStableRootSet(t *testing.T) {
 		}
 	}
 }
+
+func TestProductConditionReducerSkipsVariantOriginSymbols(t *testing.T) {
+	const sym = cfg.SymbolID(81)
+	family := uint64(108)
+	path := constraint.NewPath(sym, "selected")
+	base := product.WithVariantOrigin(product.FromType(typ.NewOptional(typ.String)), family, []int{0, 1})
+	fact := constraint.FromConstraints(
+		constraint.VariantCaseEquals{Target: path, OriginFamily: family, CaseIndex: 0},
+		constraint.NotNil{Path: path},
+	)
+
+	got := ProductConditionReducer{
+		Fact:     fact,
+		Facts:    PointFactsOf(PointState{}),
+		Resolver: &core.FuncResolver{FieldFunc: core.Field},
+		Base: func(got cfg.SymbolID) ProductConditionBase {
+			if got != sym {
+				return ProductConditionBase{Skip: true}
+			}
+			return ProductConditionBase{Current: base, HasCurrent: true, Base: base, HasBase: true}
+		},
+	}.Reductions()
+	if len(got) != 0 {
+		t.Fatalf("ProductConditionReducer reductions = %#v, want variant-origin symbol skipped", got)
+	}
+}
+
+func TestProductConditionReducerUsesCallerBasePolicy(t *testing.T) {
+	const sym = cfg.SymbolID(82)
+	path := constraint.NewPath(sym, "maybe")
+	current := product.FromType(typ.String)
+	base := product.FromType(typ.NewOptional(typ.String))
+	fact := constraint.FromConstraints(constraint.NotNil{Path: path})
+
+	got := ProductConditionReducer{
+		Fact:     fact,
+		Facts:    PointFactsOf(PointState{}),
+		Resolver: &core.FuncResolver{FieldFunc: core.Field},
+		Base: func(got cfg.SymbolID) ProductConditionBase {
+			if got != sym {
+				return ProductConditionBase{Skip: true}
+			}
+			return ProductConditionBase{Current: current, HasCurrent: true, Base: base, HasBase: true}
+		},
+	}.Reductions()
+	if len(got) != 0 {
+		t.Fatalf("ProductConditionReducer reductions = %#v, want no non-semantic current narrowing", got)
+	}
+
+	got = ProductConditionReducer{
+		Fact:     fact,
+		Facts:    PointFactsOf(PointState{}),
+		Resolver: &core.FuncResolver{FieldFunc: core.Field},
+		Base: func(got cfg.SymbolID) ProductConditionBase {
+			if got != sym {
+				return ProductConditionBase{Skip: true}
+			}
+			return ProductConditionBase{Base: base, HasBase: true}
+		},
+	}.Reductions()
+	if len(got) != 1 {
+		t.Fatalf("ProductConditionReducer reductions = %#v, want one base narrowing", got)
+	}
+	if got[0].Symbol != sym || !typ.TypeEquals(got[0].Value.ProjectValue(), typ.String) {
+		t.Fatalf("ProductConditionReducer reduction = %#v, want string", got[0])
+	}
+}
