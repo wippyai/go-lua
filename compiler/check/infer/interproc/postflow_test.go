@@ -192,3 +192,7 @@ func (noopFlowOps) IsPointDead(cfg.Point) bool {
 func (noopFlowOps) HasKeyOf(cfg.Point, constraint.Path, constraint.Path) bool {
 	return false
 }
+
+func (noopFlowOps) IndexReadback(flow.IndexWriteReadQuery) (typ.Type, bool) {
+	return nil, false
+}

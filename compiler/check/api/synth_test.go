@@ -98,6 +98,7 @@ func (m *mockFlowOps) LengthBoundsAt(cfg.Point, constraint.Path) (int64, int64, 
 }
 func (m *mockFlowOps) IsPointDead(cfg.Point) bool                                { return false }
 func (m *mockFlowOps) HasKeyOf(cfg.Point, constraint.Path, constraint.Path) bool { return false }
+func (m *mockFlowOps) IndexReadback(flow.IndexWriteReadQuery) (typ.Type, bool)   { return nil, false }
 
 type mockLiteralSynth struct{}
 

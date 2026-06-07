@@ -254,6 +254,10 @@ func (f flowOpsStub) HasKeyOf(cfg.Point, constraint.Path, constraint.Path) bool 
 	return false
 }
 
+func (f flowOpsStub) IndexReadback(flow.IndexWriteReadQuery) (typ.Type, bool) {
+	return nil, false
+}
+
 type pathObservationFactsStub struct {
 	factsStub
 	observation flow.PathObservation

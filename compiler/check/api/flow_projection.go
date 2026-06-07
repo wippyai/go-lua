@@ -3,6 +3,7 @@ package api
 import (
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/types/constraint"
+	"github.com/wippyai/go-lua/types/flow"
 	"github.com/wippyai/go-lua/types/typ"
 )
 
@@ -74,6 +75,10 @@ func (p preStateFlowOps) IsPointDead(point cfg.Point) bool {
 
 func (p preStateFlowOps) HasKeyOf(point cfg.Point, tablePath, keyPath constraint.Path) bool {
 	return p.inner.HasKeyOf(point, tablePath, keyPath)
+}
+
+func (p preStateFlowOps) IndexReadback(q flow.IndexWriteReadQuery) (typ.Type, bool) {
+	return p.inner.IndexReadback(q)
 }
 
 type conditionFlowOps struct {
@@ -153,4 +158,11 @@ func (o conditionFlowOps) HasKeyOf(point cfg.Point, tablePath, keyPath constrain
 		return o.inner.HasKeyOf(point, tablePath, keyPath)
 	}
 	return false
+}
+
+func (o conditionFlowOps) IndexReadback(q flow.IndexWriteReadQuery) (typ.Type, bool) {
+	if o.inner != nil {
+		return o.inner.IndexReadback(q)
+	}
+	return nil, false
 }

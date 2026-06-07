@@ -42,7 +42,7 @@ func TestIndexReadFlowAdaptsPointFacts(t *testing.T) {
 		hasKeyOf:       true,
 		lengthPath:     member,
 		lengthLower:    3,
-		mapReadback:    typ.String,
+		readback:       typ.String,
 		indexAdmission: typ.Number,
 	}
 	flowProof := New(Config{Facts: facts}).IndexReadFlow()
@@ -56,14 +56,14 @@ func TestIndexReadFlowAdaptsPointFacts(t *testing.T) {
 		t.Fatalf("LengthBoundsAt = %d/%v, want 3/true", lower, ok)
 	}
 	readback, ok := flowProof.(interface {
-		MapReadback(flow.IndexWriteReadQuery) (typ.Type, bool)
+		IndexReadback(flow.IndexWriteReadQuery) (typ.Type, bool)
 	})
 	if !ok {
-		t.Fatal("IndexReadFlow did not expose map readback")
+		t.Fatal("IndexReadFlow did not expose index readback")
 	}
-	got, ok := readback.MapReadback(flow.IndexWriteReadQuery{Point: cfg.Point(20)})
+	got, ok := readback.IndexReadback(flow.IndexWriteReadQuery{Point: cfg.Point(20)})
 	if !ok || !typ.TypeEquals(got, typ.String) {
-		t.Fatalf("MapReadback = %v/%v, want string/true", got, ok)
+		t.Fatalf("IndexReadback = %v/%v, want string/true", got, ok)
 	}
 }
 
@@ -148,7 +148,7 @@ type evidenceFacts struct {
 	hasKeyOf       bool
 	lengthPath     constraint.Path
 	lengthLower    int64
-	mapReadback    typ.Type
+	readback       typ.Type
 	indexAdmission typ.Type
 }
 
@@ -243,6 +243,6 @@ func (f evidenceFacts) IndexWriteAdmission(flow.IndexWriteReadQuery) (typ.Type, 
 	return f.indexAdmission, f.indexAdmission != nil
 }
 
-func (f evidenceFacts) MapReadback(flow.IndexWriteReadQuery) (typ.Type, bool) {
-	return f.mapReadback, f.mapReadback != nil
+func (f evidenceFacts) IndexReadback(flow.IndexWriteReadQuery) (typ.Type, bool) {
+	return f.readback, f.readback != nil
 }

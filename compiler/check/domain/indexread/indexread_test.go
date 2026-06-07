@@ -11,12 +11,12 @@ import (
 )
 
 type fakeFlow struct {
-	bounds        map[string][2]int64
-	lenBounds     map[string][2]int64
-	lenRefs       map[string]lenRef
-	keyOf         bool
-	mapReadback   typ.Type
-	mapReadbackOK bool
+	bounds     map[string][2]int64
+	lenBounds  map[string][2]int64
+	lenRefs    map[string]lenRef
+	keyOf      bool
+	readback   typ.Type
+	readbackOK bool
 }
 
 type lenRef struct {
@@ -52,8 +52,8 @@ func (f fakeFlow) HasKeyOf(_ cfg.Point, tablePath, keyPath constraint.Path) bool
 	return f.keyOf && !tablePath.IsEmpty() && !keyPath.IsEmpty()
 }
 
-func (f fakeFlow) MapReadback(_ flow.IndexWriteReadQuery) (typ.Type, bool) {
-	return f.mapReadback, f.mapReadbackOK
+func (f fakeFlow) IndexReadback(_ flow.IndexWriteReadQuery) (typ.Type, bool) {
+	return f.readback, f.readbackOK
 }
 
 func TestRefine_TupleIndexBoundedByNumericForRemovesNil(t *testing.T) {
@@ -147,7 +147,7 @@ func TestRefine_KeyPresenceRemovesNil(t *testing.T) {
 	}
 }
 
-func TestRefine_MapReadbackComposesKeyPresence(t *testing.T) {
+func TestRefine_IndexReadbackComposesKeyPresence(t *testing.T) {
 	obj := &ast.IdentExpr{Value: "map"}
 	key := &ast.IdentExpr{Value: "name"}
 	objPath := constraint.Path{Root: "map", Symbol: 61}
@@ -160,9 +160,9 @@ func TestRefine_MapReadbackComposesKeyPresence(t *testing.T) {
 		Object:    obj,
 		Key:       key,
 		Flow: fakeFlow{
-			keyOf:         true,
-			mapReadback:   typ.NewOptional(typ.Number),
-			mapReadbackOK: true,
+			keyOf:      true,
+			readback:   typ.NewOptional(typ.Number),
+			readbackOK: true,
 		},
 		PathOf: func(expr ast.Expr) constraint.Path {
 			switch expr {

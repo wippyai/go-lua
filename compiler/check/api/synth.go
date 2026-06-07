@@ -211,6 +211,9 @@ type FlowOps interface {
 	// HasKeyOf checks if table contains a key from another path.
 	// Used for key-existence narrowing after table access patterns.
 	HasKeyOf(p cfg.Point, tablePath, keyPath constraint.Path) bool
+
+	// IndexReadback returns the solved proof value for table[key] reads.
+	IndexReadback(q flow.IndexWriteReadQuery) (typ.Type, bool)
 }
 
 // LiteralSynth provides synthesis capabilities for function literals.

@@ -17,18 +17,11 @@ type Flow interface {
 	ArrayLenBoundWithOffsetAt(p cfg.Point, varName string) (arrKey string, offset int64, ok bool)
 	LengthBoundsAt(p cfg.Point, path constraint.Path) (lower, upper int64, ok bool)
 	HasKeyOf(p cfg.Point, tablePath, keyPath constraint.Path) bool
+	IndexReadback(q flowfacts.IndexWriteReadQuery) (typ.Type, bool)
 }
 
 // PathOf maps an expression to its flow path at the read point.
 type PathOf func(ast.Expr) constraint.Path
-
-type IndexWriteAdmissionFlow interface {
-	IndexWriteAdmission(q flowfacts.IndexWriteReadQuery) (typ.Type, bool)
-}
-
-type MapReadbackFlow interface {
-	MapReadback(q flowfacts.IndexWriteReadQuery) (typ.Type, bool)
-}
 
 // Query describes one indexed read projection.
 type Query struct {
@@ -149,15 +142,8 @@ func refineObservationByIndexWriteAdmission(q ObservationQuery) (typ.Type, bool)
 	if !ok {
 		return nil, false
 	}
-	if flow, ok := q.Flow.(MapReadbackFlow); ok {
-		if admitted, ok := flow.MapReadback(query); readbackIsInformative(admitted, ok) {
-			return refineReadbackPresence(q, admitted), true
-		}
-	}
-	if flow, ok := q.Flow.(IndexWriteAdmissionFlow); ok {
-		if admitted, ok := flow.IndexWriteAdmission(query); readbackIsInformative(admitted, ok) {
-			return refineReadbackPresence(q, admitted), true
-		}
+	if admitted, ok := q.Flow.IndexReadback(query); readbackIsInformative(admitted, ok) {
+		return refineReadbackPresence(q, admitted), true
 	}
 	return nil, false
 }

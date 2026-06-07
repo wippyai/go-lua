@@ -183,6 +183,13 @@ type IndexWriteFacts interface {
 	IndexWriteAdmission(q IndexWriteReadQuery) (typ.Type, bool)
 }
 
+// IndexReadbackFacts exposes the solved proof value for an indexed read. It is
+// wider than IndexWriteFacts: providers may compose direct index-write
+// admission with other readback proofs such as key-array/value-origin evidence.
+type IndexReadbackFacts interface {
+	IndexReadback(q IndexWriteReadQuery) (typ.Type, bool)
+}
+
 // ConditionProofFacts exposes condition-only proof queries over the converged
 // point condition. Implementations must not re-enter general narrowed-state
 // transfer to answer these queries; they project the finite point condition over

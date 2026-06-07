@@ -9,6 +9,7 @@ import (
 	"github.com/wippyai/go-lua/types/cfg"
 	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/db"
+	"github.com/wippyai/go-lua/types/flow"
 	"github.com/wippyai/go-lua/types/narrow"
 	querycore "github.com/wippyai/go-lua/types/query/core"
 	"github.com/wippyai/go-lua/types/typ"
@@ -131,6 +132,10 @@ func (m mockFlowOps) IsPointDead(p cfg.Point) bool {
 
 func (m mockFlowOps) HasKeyOf(p cfg.Point, tablePath, keyPath constraint.Path) bool {
 	return false
+}
+
+func (m mockFlowOps) IndexReadback(flow.IndexWriteReadQuery) (typ.Type, bool) {
+	return nil, false
 }
 
 type mockGraph struct {

@@ -790,11 +790,10 @@ func (f *canonicalFacts) IndexWriteAdmission(q flow.IndexWriteReadQuery) (typ.Ty
 	return got, ok
 }
 
-// MapReadback returns the normalized proof value for table[key] reads. It first
-// consumes the heavy point-local dynamic-write admission lane, then derives the
-// same readback from stable key-array/value-origin facts when a loop key was
-// yielded from a proven key array.
-func (f *canonicalFacts) MapReadback(q flow.IndexWriteReadQuery) (typ.Type, bool) {
+// IndexReadback returns the normalized proof value for table[key] reads. It
+// composes direct dynamic-write admission with stable key-array/value-origin
+// evidence so consumers do not need to know which proof lane produced it.
+func (f *canonicalFacts) IndexReadback(q flow.IndexWriteReadQuery) (typ.Type, bool) {
 	if got, ok := f.IndexWriteAdmission(q); ok {
 		return got, true
 	}

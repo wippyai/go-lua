@@ -238,9 +238,9 @@ func (p Projection) IndexReadFlow() indexread.Flow {
 	nf, hasNum := p.cfg.Facts.(flow.NumericFacts)
 	lf, hasLen := p.cfg.Facts.(flow.LengthFacts)
 	iw, hasIndexWrites := p.cfg.Facts.(flow.IndexWriteFacts)
-	mr, _ := p.cfg.Facts.(indexread.MapReadbackFlow)
+	ir, _ := p.cfg.Facts.(flow.IndexReadbackFacts)
 	aliases, _ := p.cfg.Facts.(indexWriteKeyAliasFacts)
-	if !hasKeyOf && !hasNum && !hasLen && !hasIndexWrites && mr == nil {
+	if !hasKeyOf && !hasNum && !hasLen && !hasIndexWrites && ir == nil {
 		return nil
 	}
 	return factsIndexReadFlow{
@@ -248,7 +248,7 @@ func (p Projection) IndexReadFlow() indexread.Flow {
 		numeric:     nf,
 		length:      lf,
 		indexWrites: iw,
-		mapReadback: mr,
+		readback:    ir,
 		keyAliases:  aliases,
 		graph:       p.cfg.Graph,
 	}
@@ -295,7 +295,7 @@ type factsIndexReadFlow struct {
 	numeric     flow.NumericFacts
 	length      flow.LengthFacts
 	indexWrites flow.IndexWriteFacts
-	mapReadback indexread.MapReadbackFlow
+	readback    flow.IndexReadbackFacts
 	keyAliases  indexWriteKeyAliasFacts
 	graph       *cfg.Graph
 }
@@ -307,9 +307,9 @@ func (f factsIndexReadFlow) HasKeyOf(p cfg.Point, tablePath, keyPath constraint.
 	return f.keyOf.HasKeyOf(p, tablePath, keyPath)
 }
 
-func (f factsIndexReadFlow) MapReadback(q flow.IndexWriteReadQuery) (typ.Type, bool) {
-	if f.mapReadback != nil {
-		if got, ok := f.mapReadback.MapReadback(q); ok {
+func (f factsIndexReadFlow) IndexReadback(q flow.IndexWriteReadQuery) (typ.Type, bool) {
+	if f.readback != nil {
+		if got, ok := f.readback.IndexReadback(q); ok {
 			return got, true
 		}
 	}
