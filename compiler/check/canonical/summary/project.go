@@ -682,63 +682,17 @@ func appendBoundaryIndexKey(out []byte, idx int) []byte {
 }
 
 func projectPointBoundaryFacts(ps flow.PointState, mapper flow.BoundaryPathProjection) flow.BoundaryFacts {
-	keyFacts := flow.ProjectKeyPresenceBoundaryFacts(
-		ps.KeyPresence,
+	return flow.ProjectBoundaryFacts(
+		flow.BoundaryFactProjectionInput{
+			KeyPresence: ps.KeyPresence,
+			Num:         ps.Num,
+			IndexWrites: ps.IndexWrites,
+		},
 		mapper,
-		flow.KeyPresenceBoundaryProjection{IncludePendingKeyArrays: true},
+		flow.BoundaryFactProjectionPolicy{
+			KeyPresence: flow.KeyPresenceBoundaryProjection{IncludePendingKeyArrays: true},
+		},
 	)
-	var lengths []flow.BoundaryLengthLowerBound
-	if ps.Num != nil {
-		ps.Num.ForEachLenBound(func(key constraint.PathKey, lower, _ int64) bool {
-			targets := projectBoundaryPathsFromStoredKey(mapper, key)
-			if lower > 0 {
-				for _, target := range targets {
-					lengths = append(lengths, flow.BoundaryLengthLowerBound{Target: target, Lower: lower})
-				}
-			}
-			return true
-		})
-	}
-	var indexWrites []flow.BoundaryIndexWriteFact
-	ps.IndexWrites.ForEachAddress(func(fact flow.IndexWriteAdmissionAddressFact) bool {
-		if !fact.HasKeyPath || fact.Value.IsZero() {
-			return true
-		}
-		tables := mapper.PathsFromAddress(fact.Target)
-		if len(tables) == 0 {
-			return true
-		}
-		keys := mapper.PathsFromAddress(fact.KeyPath)
-		if len(keys) == 0 {
-			return true
-		}
-		for _, table := range tables {
-			for _, key := range keys {
-				indexWrites = append(indexWrites, flow.BoundaryIndexWriteFact{
-					Table: table,
-					Key:   key,
-					Value: fact.Value,
-				})
-			}
-		}
-		return true
-	})
-	return flow.BoundaryFactsOf(
-		keyFacts.KeyPresence(),
-		keyFacts.KeyArrays(),
-		keyFacts.KeyArrayValues(),
-		keyFacts.AppendKeys(),
-		lengths,
-		indexWrites,
-	).WithAppendElementFieldOrigins(keyFacts.AppendElementFieldOrigins())
-}
-
-func projectBoundaryPathsFromStoredKey(mapper flow.BoundaryPathProjection, key constraint.PathKey) []flow.BoundaryPath {
-	addr, ok := flow.StableAddressFromCanonicalKey(key)
-	if !ok {
-		return nil
-	}
-	return mapper.PathsFromAddress(addr)
 }
 
 func returnBoundarySymbolMap(g *cfg.Graph, p cfg.Point, info *cfg.ReturnInfo) map[cfg.SymbolID][]flow.BoundaryPath {
