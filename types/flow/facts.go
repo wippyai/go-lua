@@ -15,7 +15,7 @@ import (
 	"github.com/wippyai/go-lua/types/cfg"
 	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/domain/value/product"
-	querycore "github.com/wippyai/go-lua/types/query/core"
+	"github.com/wippyai/go-lua/types/query/typepath"
 	"github.com/wippyai/go-lua/types/typ"
 )
 
@@ -72,13 +72,9 @@ func AnnotatedDeclaredPathAt(facts TypeFacts, p cfg.Point, path constraint.Path)
 	if root.State != StateResolved || root.Type == nil || typ.IsUnknown(root.Type) {
 		return TypedValue{Type: typ.Unknown, State: StateUnknown}
 	}
-	current := root.Type
-	for _, segment := range path.Segments {
-		next, ok := declaredSegmentType(current, segment)
-		if !ok || next == nil {
-			return TypedValue{Type: typ.Unknown, State: StateUnknown}
-		}
-		current = next
+	current := typepath.Strict(root.Type, path.Segments)
+	if current == nil {
+		return TypedValue{Type: typ.Unknown, State: StateUnknown}
 	}
 	return TypedValue{Type: current, State: StateResolved}
 }
@@ -92,21 +88,6 @@ func AnnotatedDeclaredPathSealed(facts TypeFacts, p cfg.Point, path constraint.P
 		tv.Type != nil &&
 		!typ.IsAbsentOrUnknown(tv.Type) &&
 		!typ.IsRefinableAnnotation(tv.Type)
-}
-
-func declaredSegmentType(t typ.Type, segment constraint.Segment) (typ.Type, bool) {
-	switch segment.Kind {
-	case constraint.SegmentField, constraint.SegmentIndexString:
-		next, ok := querycore.Field(t, segment.Name)
-		if ok && next != nil {
-			return next, true
-		}
-		return querycore.Index(t, typ.LiteralString(segment.Name))
-	case constraint.SegmentIndexInt:
-		return querycore.Index(t, typ.LiteralInt(int64(segment.Index)))
-	default:
-		return nil, false
-	}
 }
 
 // BindingValueFacts exposes immutable value-binding facts, such as a named

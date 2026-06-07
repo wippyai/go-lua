@@ -1,3 +1,5 @@
+// Package typepath projects structural paths through types using query-core
+// field/index semantics.
 package typepath
 
 import (

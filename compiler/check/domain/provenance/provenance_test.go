@@ -4,10 +4,10 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/wippyai/go-lua/compiler/check/domain/typepath"
 	"github.com/wippyai/go-lua/types/cfg"
 	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/flow"
+	"github.com/wippyai/go-lua/types/query/typepath"
 	"github.com/wippyai/go-lua/types/typ"
 )
 
