@@ -1786,24 +1786,6 @@ func (r opsResolver) UnaryOp(op string, operand typ.Type) typ.Type {
 	return res.UnaryOp(op, operand)
 }
 
-func (ct callTyper) productCallParamNarrows(call *ast.FuncCallExpr) []transfer.ParamNarrow {
-	if ct.d == nil || ct.d.activeProgram == nil || call == nil {
-		return nil
-	}
-	prog := ct.d.activeProgram
-	return (canonicalcall.ParamNarrowProjection{
-		Call: call,
-		SummaryNarrows: func(call *ast.FuncCallExpr) ([]paramevidence.ParamNarrow, bool) {
-			ref, ok := ct.resolveCalleeRef(call, prog)
-			if !ok {
-				return nil, false
-			}
-			return ct.d.summaryReader().ParamNarrows(ref), true
-		},
-		Resolver: ct.callTypeResolver(nil),
-	}).Narrows()
-}
-
 func (ct callTyper) currentRef() (summary.FuncRef, bool) {
 	if ct.ref != (summary.FuncRef{}) {
 		return ct.ref, true

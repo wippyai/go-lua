@@ -82,7 +82,7 @@ func (p productCallFrame) result(effects transfer.CallEffects) transfer.ProductC
 		NeverReturns: p.neverReturns(func(ref summary.FuncRef) bool {
 			return p.typer.d.activeProgram.facts.HasNoReturn(ref)
 		}),
-		ParamNarrows: p.typer.productCallParamNarrows(p.call),
+		ParamNarrows: p.paramNarrows(),
 	}
 }
 
@@ -111,6 +111,25 @@ func (p productCallFrame) callFunctionShape() *typ.Function {
 		return nil
 	}
 	return proj.functionShape()
+}
+
+func (p productCallFrame) paramNarrows() []transfer.ParamNarrow {
+	d := p.typer.d
+	if d == nil || d.activeProgram == nil || p.call == nil {
+		return nil
+	}
+	prog := d.activeProgram
+	return (canonicalcall.ParamNarrowProjection{
+		Call: p.call,
+		SummaryNarrows: func(call *ast.FuncCallExpr) ([]paramevidence.ParamNarrow, bool) {
+			ref, ok := p.typer.resolveCalleeRef(call, prog)
+			if !ok {
+				return nil, false
+			}
+			return d.summaryReader().ParamNarrows(ref), true
+		},
+		Resolver: p.typer.callTypeResolver(nil),
+	}).Narrows()
 }
 
 func (p productCallFrame) argDemands() ([]callobligation.Obligation, bool) {
