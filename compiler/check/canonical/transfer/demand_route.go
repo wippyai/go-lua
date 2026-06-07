@@ -143,42 +143,10 @@ func (t *Transfer) enqueueDemandRoute(
 	route flow.ProvenanceRoute,
 	queue *[]demandRouteItem,
 ) {
-	if route.Source.Symbol == 0 || queue == nil ||
-		paramevidence.ParamContractDomain.Equal(contract, paramevidence.ParamContractDomain.Bottom()) {
+	if queue == nil {
 		return
 	}
-	switch route.Kind {
-	case flow.ProvenanceRouteIdentityAlias:
-		*queue = append(*queue, demandRouteItem{path: route.Source, contract: contract})
-	case flow.ProvenanceRouteIndexedIterator, flow.ProvenanceRouteKeyedIterator:
-		localEvidence := paramevidence.DemandFromPathContract(route.Remainder, contract)
-		evidence := iteratorRouteContract(route, localEvidence)
-		if !paramevidence.ParamContractDomain.Equal(evidence, paramevidence.ParamContractDomain.Bottom()) {
-			*queue = append(*queue, demandRouteItem{path: route.Source, contract: evidence})
-		}
-	case flow.ProvenanceRouteAppendElementField:
-		if len(route.SourceField) > 0 {
-			sourceField := append([]constraint.Segment(nil), route.SourceField...)
-			sourceField = append(sourceField, route.FieldRemainder...)
-			evidence := paramevidence.DemandFromSequenceElement(paramevidence.DemandFromPathContract(sourceField, contract))
-			*queue = append(*queue, demandRouteItem{path: route.Source, contract: evidence})
-			return
-		}
-		source := route.Source
-		for _, seg := range route.FieldRemainder {
-			source = source.Append(seg)
-		}
-		*queue = append(*queue, demandRouteItem{path: source, contract: contract})
-	}
-}
-
-func iteratorRouteContract(route flow.ProvenanceRoute, local paramevidence.ParamContract) paramevidence.ParamContract {
-	switch route.Kind {
-	case flow.ProvenanceRouteIndexedIterator:
-		return paramevidence.IndexedIteratorContract(route.VarIndex, local)
-	case flow.ProvenanceRouteKeyedIterator:
-		return paramevidence.KeyedIteratorContract(route.VarIndex, local)
-	default:
-		return paramevidence.ParamContractDomain.Bottom()
+	for _, target := range paramevidence.ProvenanceRouteContractTargets(route, contract) {
+		*queue = append(*queue, demandRouteItem{path: target.Path, contract: target.Contract})
 	}
 }
