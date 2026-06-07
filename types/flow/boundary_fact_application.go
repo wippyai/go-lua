@@ -172,10 +172,15 @@ func ApplyBoundaryFacts(
 		if !ok {
 			continue
 		}
-		changed = ApplyKeyArrayValuePathProof(out, KeyArrayValuePathProof{
-			ArrayPath: array,
-			TablePath: table,
-			Value:     fact.Value,
+		arrayAddr, arrayOK := StableAddressOfPath(array)
+		tableAddr, tableOK := StableAddressOfPath(table)
+		if !arrayOK || !tableOK {
+			continue
+		}
+		changed = ApplyKeyArrayValueProof(out, KeyArrayValueProof{
+			Array: arrayAddr,
+			Table: tableAddr,
+			Value: fact.Value,
 		}) || changed
 	}
 	changed = applyBoundaryAppendKeyPlans(out, appendPlans) || changed
@@ -188,10 +193,15 @@ func ApplyBoundaryFacts(
 		if !ok {
 			continue
 		}
-		changed = ApplyAppendElementFieldOriginPathProof(out, AppendElementFieldOriginPathProof{
-			ArrayPath:   array,
+		arrayAddr, arrayOK := StableAddressOfPath(array)
+		sourceAddr, sourceOK := StableAddressOfPath(source)
+		if !arrayOK || !sourceOK {
+			continue
+		}
+		changed = ApplyAppendElementFieldOriginProof(out, AppendElementFieldOriginProof{
+			Array:       arrayAddr,
 			Field:       fact.Field,
-			SourcePath:  source,
+			Source:      sourceAddr,
 			SourceField: fact.SourceField,
 		}) || changed
 	}

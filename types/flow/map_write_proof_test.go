@@ -628,25 +628,28 @@ func TestApplyKeyArrayValueProofPublishesCoverage(t *testing.T) {
 	}
 }
 
-func TestApplyKeyArrayValuePathProofNormalizesCoverage(t *testing.T) {
+func TestApplyKeyArrayValueProofRecordsAppendCoverage(t *testing.T) {
 	arrayPath := constraint.NewPath(cfg.SymbolID(54), "node_order")
 	tablePath := constraint.NewPath(cfg.SymbolID(55), "nodes")
 	keyPath := constraint.NewPath(cfg.SymbolID(56), "node_id")
 	arrayKey := StablePathKey(arrayPath)
 	tableKey := StablePathKey(tablePath)
+	array := testStableAddressPath(t, arrayPath)
+	table := testStableAddressPath(t, tablePath)
+	key := testStableAddressPath(t, keyPath)
 	value := product.FromType(typ.String)
 
 	state := PointStateDomain.Top()
 	state.KeyPresence = state.KeyPresence.WithAppendHistoryBase(arrayKey)
 
-	if changed := ApplyKeyArrayValuePathProof(&state, KeyArrayValuePathProof{
-		ArrayPath:        arrayPath,
-		TablePath:        tablePath,
-		Value:            value,
-		AppendKeyPath:    keyPath,
-		HasAppendKeyPath: true,
+	if changed := ApplyKeyArrayValueProof(&state, KeyArrayValueProof{
+		Array:        array,
+		Table:        table,
+		Value:        value,
+		AppendKey:    key,
+		HasAppendKey: true,
 	}); !changed {
-		t.Fatal("ApplyKeyArrayValuePathProof reported no change")
+		t.Fatal("ApplyKeyArrayValueProof reported no change")
 	}
 
 	values := state.KeyPresence.KeyArrayValues(arrayKey, tableKey)
@@ -761,26 +764,29 @@ func TestApplyAppendElementFieldOriginProofPublishesBaseAndOrigin(t *testing.T) 
 	}
 }
 
-func TestApplyAppendElementFieldOriginPathProofNormalizesOrigin(t *testing.T) {
+func TestApplyAppendElementFieldOriginProofRecordsSourceField(t *testing.T) {
 	arrayPath := constraint.NewPath(cfg.SymbolID(83), "items")
 	sourcePath := constraint.NewPath(cfg.SymbolID(84), "source")
 	arrayKey := StablePathKey(arrayPath)
 	field := []constraint.Segment{{Kind: constraint.SegmentField, Name: "id"}}
+	sourceField := []constraint.Segment{{Kind: constraint.SegmentField, Name: "payload"}}
 
 	state := PointStateDomain.Top()
-	if changed := ApplyAppendElementFieldOriginPathProof(&state, AppendElementFieldOriginPathProof{
-		ArrayPath:  arrayPath,
-		Field:      field,
-		SourcePath: sourcePath,
+	if changed := ApplyAppendElementFieldOriginProof(&state, AppendElementFieldOriginProof{
+		Array:       testStableAddressPath(t, arrayPath),
+		Field:       field,
+		Source:      testStableAddressPath(t, sourcePath),
+		SourceField: sourceField,
 	}); !changed {
-		t.Fatal("ApplyAppendElementFieldOriginPathProof reported no change")
+		t.Fatal("ApplyAppendElementFieldOriginProof reported no change")
 	}
 
 	if !state.KeyPresence.HasAppendHistoryBase(arrayKey) {
 		t.Fatalf("append-history base missing: %s", state.KeyPresence.Format())
 	}
 	origins := state.KeyPresence.AppendElementFieldOriginEntries()
-	if len(origins) != 1 || origins[0].Array != arrayKey || origins[0].Field == "" || origins[0].Source != StablePathKey(sourcePath) {
+	if len(origins) != 1 || origins[0].Array != arrayKey || origins[0].Field == "" ||
+		origins[0].Source != StablePathKey(sourcePath) || origins[0].SourceField == "" {
 		t.Fatalf("append element origins = %v, want array field source", origins)
 	}
 }
