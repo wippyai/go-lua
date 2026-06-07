@@ -235,6 +235,25 @@ func TestApplyKeyProvenancePathProofPublishesKeyPresence(t *testing.T) {
 	}
 }
 
+func TestApplyKeyProvenanceTransactionPublishesKeyPresence(t *testing.T) {
+	table := testStableAddressPath(t, constraint.NewPath(cfg.SymbolID(103), "nodes"))
+	key := testStableAddressPath(t, constraint.NewPath(cfg.SymbolID(104), "node_id"))
+	state := PointState{}
+
+	_, changed := ApplyKeyProvenanceTransaction(&state, KeyProvenanceTransaction{
+		Kind:  KeyProvenanceKeyedIteration,
+		Table: table,
+		Key:   key,
+	})
+
+	if !changed {
+		t.Fatal("ApplyKeyProvenanceTransaction reported unchanged")
+	}
+	if !state.KeyPresence.HasAddresses(table, key) {
+		t.Fatalf("key presence missing: %s", state.KeyPresence.Format())
+	}
+}
+
 func TestApplyKeyProvenancePathProofReturnsIndexedKeyDomain(t *testing.T) {
 	arrayPath := constraint.NewPath(cfg.SymbolID(111), "keys")
 	tablePath := constraint.NewPath(cfg.SymbolID(112), "nodes")
@@ -261,6 +280,38 @@ func TestApplyKeyProvenancePathProofReturnsIndexedKeyDomain(t *testing.T) {
 	wantKeyDomain := product.FromType(typ.LiteralString("id"))
 	if result.KeyRefinementPath.Key() != keyPath.Key() || !product.Domain.Equal(result.KeyRefinementValue, wantKeyDomain) {
 		t.Fatalf("key refinement = %s/%v, want %s/%v", result.KeyRefinementPath.Key(), result.KeyRefinementValue.ProjectValue(), keyPath.Key(), wantKeyDomain.ProjectValue())
+	}
+}
+
+func TestApplyKeyProvenanceTransactionReturnsIndexedKeyDomain(t *testing.T) {
+	arrayPath := constraint.NewPath(cfg.SymbolID(114), "keys")
+	tablePath := constraint.NewPath(cfg.SymbolID(115), "nodes")
+	keyPath := constraint.NewPath(cfg.SymbolID(116), "node_id")
+	array := testStableAddressPath(t, arrayPath)
+	table := testStableAddressPath(t, tablePath)
+	key := testStableAddressPath(t, keyPath)
+	state := PointState{
+		Env: map[ValueKey]product.AbstractValue{
+			SymbolValueKey(keyPath.Symbol): product.FromType(typ.String),
+			SymbolValueKey(tablePath.Symbol): product.FromType(
+				typ.NewRecord().Field("id", typ.Number).Build(),
+			),
+		},
+	}
+	state.KeyPresence = state.KeyPresence.WithKeyArrayAddresses(array, table)
+
+	result, changed := ApplyKeyProvenanceTransaction(&state, KeyProvenanceTransaction{
+		Kind:  KeyProvenanceIndexedKeyArrayIteration,
+		Array: array,
+		Key:   key,
+	})
+
+	if !changed {
+		t.Fatal("ApplyKeyProvenanceTransaction reported unchanged")
+	}
+	wantKeyDomain := product.FromType(typ.LiteralString("id"))
+	if !result.KeyRefinementAddress.Equal(key) || !product.Domain.Equal(result.KeyRefinementValue, wantKeyDomain) {
+		t.Fatalf("key refinement = %s/%v, want %s/%v", result.KeyRefinementAddress.Key(), result.KeyRefinementValue.ProjectValue(), key.Key(), wantKeyDomain.ProjectValue())
 	}
 }
 

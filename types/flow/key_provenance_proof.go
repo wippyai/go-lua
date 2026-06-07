@@ -28,6 +28,18 @@ type KeyProvenancePathProof struct {
 	ValuePath constraint.Path
 }
 
+// KeyProvenanceTransaction is the normalized address-space form of
+// KeyProvenancePathProof. Path validation and lowering happen once at the
+// source boundary; reduced-product application consumes only stable identities.
+type KeyProvenanceTransaction struct {
+	Kind         KeyProvenanceKind
+	Table        StableAddress
+	Array        StableAddress
+	Key          StableAddress
+	ValuePath    StableAddress
+	HasValuePath bool
+}
+
 // KeyProvenanceResult reports non-flow refinements derived while applying a
 // key-provenance proof. Producers may consume these through their own policy
 // layer; flow only computes the evidence.
@@ -36,82 +48,125 @@ type KeyProvenanceResult struct {
 	KeyRefinementValue product.AbstractValue
 }
 
+// KeyProvenanceTransactionResult is the address-space result of applying a
+// normalized key-provenance transaction.
+type KeyProvenanceTransactionResult struct {
+	KeyRefinementAddress StableAddress
+	KeyRefinementValue   product.AbstractValue
+}
+
 // ApplyKeyProvenancePathProof applies a key-provenance proof from structured
 // paths.
 func ApplyKeyProvenancePathProof(out *PointState, proof KeyProvenancePathProof) (KeyProvenanceResult, bool) {
 	if out == nil {
 		return KeyProvenanceResult{}, false
 	}
+	tx, ok := KeyProvenanceTransactionOfPathProof(proof)
+	if !ok {
+		return KeyProvenanceResult{}, false
+	}
+	result, changed := ApplyKeyProvenanceTransaction(out, tx)
+	return KeyProvenanceResult{
+		KeyRefinementPath:  proof.KeyPath,
+		KeyRefinementValue: result.KeyRefinementValue,
+	}, changed
+}
+
+// KeyProvenanceTransactionOfPathProof lowers a source-level path proof into the
+// canonical address transaction consumed by flow.
+func KeyProvenanceTransactionOfPathProof(proof KeyProvenancePathProof) (KeyProvenanceTransaction, bool) {
+	tx := KeyProvenanceTransaction{Kind: proof.Kind}
 	switch proof.Kind {
 	case KeyProvenanceKeyedIteration, KeyProvenanceGuardedIndex, KeyProvenanceDynamicIndexWrite:
-		return applyKeyPresencePathProof(out, proof)
-	case KeyProvenanceKeyArrayAssignment:
-		return applyKeyArrayPathProof(out, proof)
-	case KeyProvenanceIndexedKeyArrayIteration:
-		return applyIndexedKeyArrayIterationPathProof(out, proof)
-	default:
-		return KeyProvenanceResult{}, false
-	}
-}
-
-func applyKeyPresencePathProof(out *PointState, proof KeyProvenancePathProof) (KeyProvenanceResult, bool) {
-	if proof.TablePath.IsEmpty() || proof.KeyPath.IsEmpty() {
-		return KeyProvenanceResult{}, false
-	}
-	tableAddr, tableOK := StableAddressOfPath(proof.TablePath)
-	keyAddr, keyOK := StableAddressOfPath(proof.KeyPath)
-	if !tableOK || !keyOK {
-		return KeyProvenanceResult{}, false
-	}
-	keyProof := KeyPresenceProof{
-		Table: tableAddr,
-		Key:   keyAddr,
-	}
-	if !proof.ValuePath.IsEmpty() {
-		if valueAddr, valueOK := StableAddressOfPath(proof.ValuePath); valueOK {
-			keyProof.ValuePath = valueAddr
-			keyProof.HasValuePath = true
+		if proof.TablePath.IsEmpty() || proof.KeyPath.IsEmpty() {
+			return KeyProvenanceTransaction{}, false
 		}
+		table, tableOK := StableAddressOfPath(proof.TablePath)
+		key, keyOK := StableAddressOfPath(proof.KeyPath)
+		if !tableOK || !keyOK {
+			return KeyProvenanceTransaction{}, false
+		}
+		tx.Table = table
+		tx.Key = key
+		if !proof.ValuePath.IsEmpty() {
+			if value, ok := StableAddressOfPath(proof.ValuePath); ok {
+				tx.ValuePath = value
+				tx.HasValuePath = true
+			}
+		}
+		return tx, true
+	case KeyProvenanceKeyArrayAssignment:
+		if proof.ArrayPath.IsEmpty() || proof.TablePath.IsEmpty() {
+			return KeyProvenanceTransaction{}, false
+		}
+		array, arrayOK := StableAddressOfPath(proof.ArrayPath)
+		table, tableOK := StableAddressOfPath(proof.TablePath)
+		if !arrayOK || !tableOK {
+			return KeyProvenanceTransaction{}, false
+		}
+		tx.Array = array
+		tx.Table = table
+		return tx, true
+	case KeyProvenanceIndexedKeyArrayIteration:
+		if proof.ArrayPath.IsEmpty() || proof.KeyPath.IsEmpty() {
+			return KeyProvenanceTransaction{}, false
+		}
+		array, arrayOK := StableAddressOfPath(proof.ArrayPath)
+		key, keyOK := StableAddressOfPath(proof.KeyPath)
+		if !arrayOK || !keyOK {
+			return KeyProvenanceTransaction{}, false
+		}
+		tx.Array = array
+		tx.Key = key
+		return tx, true
+	default:
+		return KeyProvenanceTransaction{}, false
 	}
-	return KeyProvenanceResult{}, ApplyKeyPresenceProof(out, keyProof)
 }
 
-func applyKeyArrayPathProof(out *PointState, proof KeyProvenancePathProof) (KeyProvenanceResult, bool) {
-	if proof.ArrayPath.IsEmpty() || proof.TablePath.IsEmpty() {
-		return KeyProvenanceResult{}, false
+// ApplyKeyProvenanceTransaction applies a normalized key-provenance transaction
+// to the point-state reduced products.
+func ApplyKeyProvenanceTransaction(out *PointState, tx KeyProvenanceTransaction) (KeyProvenanceTransactionResult, bool) {
+	if out == nil {
+		return KeyProvenanceTransactionResult{}, false
 	}
-	arrayAddr, arrayOK := StableAddressOfPath(proof.ArrayPath)
-	tableAddr, tableOK := StableAddressOfPath(proof.TablePath)
-	if !arrayOK || !tableOK {
-		return KeyProvenanceResult{}, false
+	switch tx.Kind {
+	case KeyProvenanceKeyedIteration, KeyProvenanceGuardedIndex, KeyProvenanceDynamicIndexWrite:
+		if tx.Table.Key() == "" || tx.Key.Key() == "" {
+			return KeyProvenanceTransactionResult{}, false
+		}
+		return KeyProvenanceTransactionResult{}, ApplyKeyPresenceProof(out, KeyPresenceProof{
+			Table:        tx.Table,
+			Key:          tx.Key,
+			ValuePath:    tx.ValuePath,
+			HasValuePath: tx.HasValuePath,
+		})
+	case KeyProvenanceKeyArrayAssignment:
+		if tx.Array.Key() == "" || tx.Table.Key() == "" {
+			return KeyProvenanceTransactionResult{}, false
+		}
+		changed := ApplyKeyArrayProof(out, KeyArrayProof{
+			Array: tx.Array,
+			Table: tx.Table,
+		})
+		return KeyProvenanceTransactionResult{}, changed
+	case KeyProvenanceIndexedKeyArrayIteration:
+		if tx.Array.Key() == "" || tx.Key.Key() == "" {
+			return KeyProvenanceTransactionResult{}, false
+		}
+		keyValue, _ := PointFactsOf(*out).AddressValue(tx.Key)
+		iteration, changed := ApplyIndexedKeyArrayIterationProof(out, IndexedKeyArrayIterationProof{
+			Array:    tx.Array,
+			Key:      tx.Key,
+			KeyValue: keyValue,
+		})
+		return KeyProvenanceTransactionResult{
+			KeyRefinementAddress: tx.Key,
+			KeyRefinementValue:   keyDomainFromIterationTables(out, iteration.Tables),
+		}, changed
+	default:
+		return KeyProvenanceTransactionResult{}, false
 	}
-	changed := ApplyKeyArrayProof(out, KeyArrayProof{
-		Array: arrayAddr,
-		Table: tableAddr,
-	})
-	return KeyProvenanceResult{}, changed
-}
-
-func applyIndexedKeyArrayIterationPathProof(out *PointState, proof KeyProvenancePathProof) (KeyProvenanceResult, bool) {
-	if proof.ArrayPath.IsEmpty() || proof.KeyPath.IsEmpty() {
-		return KeyProvenanceResult{}, false
-	}
-	arrayAddr, arrayOK := StableAddressOfPath(proof.ArrayPath)
-	keyAddr, keyOK := StableAddressOfPath(proof.KeyPath)
-	if !arrayOK || !keyOK {
-		return KeyProvenanceResult{}, false
-	}
-	keyValue, _ := PointFactsOf(*out).AddressValue(keyAddr)
-	iteration, changed := ApplyIndexedKeyArrayIterationProof(out, IndexedKeyArrayIterationProof{
-		Array:    arrayAddr,
-		Key:      keyAddr,
-		KeyValue: keyValue,
-	})
-	result := KeyProvenanceResult{
-		KeyRefinementPath:  proof.KeyPath,
-		KeyRefinementValue: keyDomainFromIterationTables(out, iteration.Tables),
-	}
-	return result, changed
 }
 
 func keyDomainFromIterationTables(out *PointState, tables []StableAddress) product.AbstractValue {
