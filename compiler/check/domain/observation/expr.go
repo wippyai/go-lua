@@ -17,6 +17,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/check/domain/metatable"
 	"github.com/wippyai/go-lua/compiler/check/domain/paramevidence"
 	flowpath "github.com/wippyai/go-lua/compiler/check/domain/path"
+	"github.com/wippyai/go-lua/compiler/check/domain/provenance"
 	"github.com/wippyai/go-lua/compiler/check/domain/typepath"
 	"github.com/wippyai/go-lua/compiler/check/scope"
 	phasecore "github.com/wippyai/go-lua/compiler/check/synth/core"
@@ -727,12 +728,9 @@ func (p Projector) projectBodyContractOriginTypes(point cfg.Point, path constrai
 			if sourceType == nil {
 				continue
 			}
-			localType := p.provenanceRouteLocalType(route, sourceType)
+			localType := provenance.RouteLocalType(route, sourceType, p.typeAtSegments)
 			if localType == nil {
 				continue
-			}
-			if len(route.Remainder) > 0 {
-				localType = p.typeAtSegments(localType, route.Remainder)
 			}
 			if localType != nil {
 				types = append(types, localType)
@@ -841,32 +839,6 @@ func (p Projector) conditionBodyContractSeedType(point cfg.Point, path constrain
 
 func (p Projector) provenanceRoutesAt(point cfg.Point, path constraint.Path) []flow.ProvenanceRoute {
 	return p.proofs.ProvenanceRoutesAt(point, path)
-}
-
-func (p Projector) provenanceRouteLocalType(route flow.ProvenanceRoute, source typ.Type) typ.Type {
-	if source == nil {
-		return nil
-	}
-	switch route.Kind {
-	case flow.ProvenanceRouteIdentityAlias:
-		return source
-	case flow.ProvenanceRouteIndexedIterator:
-		if route.VarIndex != 1 {
-			return nil
-		}
-		return querycore.ElementType(source)
-	case flow.ProvenanceRouteKeyedIterator:
-		switch route.VarIndex {
-		case 0:
-			return querycore.EntryKeyType(source)
-		case 1:
-			return querycore.EntryValueType(source)
-		default:
-			return nil
-		}
-	default:
-		return nil
-	}
 }
 
 func (p Projector) paramSlotForSymbol(sym cfg.SymbolID) (int, bool) {

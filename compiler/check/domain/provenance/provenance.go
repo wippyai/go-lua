@@ -4,6 +4,10 @@ import (
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/api"
+	"github.com/wippyai/go-lua/types/constraint"
+	"github.com/wippyai/go-lua/types/flow"
+	querycore "github.com/wippyai/go-lua/types/query/core"
+	"github.com/wippyai/go-lua/types/typ"
 )
 
 // IdentBindingLookup resolves identifier expressions to graph symbols.
@@ -16,6 +20,46 @@ type IdentBindingLookup interface {
 type FreshTableLiteral struct {
 	Table *ast.TableExpr
 	Point cfg.Point
+}
+
+// SegmentTypeProjector projects a structural type through a field/index suffix.
+type SegmentTypeProjector func(base typ.Type, segments []constraint.Segment) typ.Type
+
+// RouteLocalType projects a source type forward through one provenance route to
+// the local routed value type. Route discovery is flow-owned; this package owns
+// route interpretation that is independent of checker observation state.
+func RouteLocalType(route flow.ProvenanceRoute, source typ.Type, project SegmentTypeProjector) typ.Type {
+	if source == nil {
+		return nil
+	}
+	var local typ.Type
+	switch route.Kind {
+	case flow.ProvenanceRouteIdentityAlias:
+		local = source
+	case flow.ProvenanceRouteIndexedIterator:
+		if route.VarIndex != 1 {
+			return nil
+		}
+		local = querycore.ElementType(source)
+	case flow.ProvenanceRouteKeyedIterator:
+		switch route.VarIndex {
+		case 0:
+			local = querycore.EntryKeyType(source)
+		case 1:
+			local = querycore.EntryValueType(source)
+		default:
+			return nil
+		}
+	default:
+		return nil
+	}
+	if local == nil || len(route.Remainder) == 0 {
+		return local
+	}
+	if project == nil {
+		return nil
+	}
+	return project(local, route.Remainder)
 }
 
 // CurrentFreshTableLiteral returns the transfer-proven fresh table literal for
