@@ -54,17 +54,15 @@ func projectWithDeclaredReturns(fs state.FunctionState, g *cfg.Graph, declaredRe
 func projectWithOptions(fs state.FunctionState, g *cfg.Graph, opts projectOptions) Summary {
 	returns := projectReturns(fs, g, opts)
 	return Summary{
-		Returns:             returns,
-		ReturnRefs:          projectReturnRefs(fs, g),
-		Params:              cloneContracts(fs.Contracts),
-		Relations:           projectReturnRelations(fs, g, returns, opts.DeclaredReturns),
-		CellEffects:         projectCellEffects(fs, g),
-		ReceiverEffects:     projectReceiverEffects(fs, g),
-		BoundaryFacts:       projectBoundaryFacts(fs, g),
-		CaptureExports:      projectCaptureExports(fs, g),
-		CaptureFunctionRefs: projectCaptureFunctionRefs(fs, g),
-		CaptureClosureRefs:  projectCaptureClosureRefs(fs, g),
-		PrototypeSelf:       projectPrototypeSelf(fs, g),
+		Returns:           returns,
+		ReturnRefs:        projectReturnRefs(fs, g),
+		Params:            cloneContracts(fs.Contracts),
+		Relations:         projectReturnRelations(fs, g, returns, opts.DeclaredReturns),
+		CellEffects:       projectCellEffects(fs, g),
+		ReceiverEffects:   projectReceiverEffects(fs, g),
+		BoundaryFacts:     projectBoundaryFacts(fs, g),
+		CaptureReferences: projectCaptureReferences(fs, g),
+		PrototypeSelf:     projectPrototypeSelf(fs, g),
 	}
 }
 
@@ -104,55 +102,24 @@ func projectReceiverEffects(fs state.FunctionState, g *cfg.Graph) flow.ReceiverE
 	return out
 }
 
-// projectCaptureExports folds the captured-cell store visible at normal function
-// boundaries. It includes both explicit captured cells this function carries and
-// ordinary Env symbols this function declares: a nested closure captures lexical
-// locations, and a parent publishes those locations as store entries for the
-// child entry-state seed. Unlike CellEffects, this is a store snapshot.
-func projectCaptureExports(fs state.FunctionState, g *cfg.Graph) flow.CaptureCells {
+// projectCaptureReferences folds the lexical/reference store visible at normal
+// function boundaries. It includes explicit captured cells, ordinary Env symbols
+// this function declares for direct nested closures, and callable identity paths
+// that live alongside those values. Unlike CellEffects, this is a store snapshot.
+func projectCaptureReferences(fs state.FunctionState, g *cfg.Graph) flow.ReferenceContext {
 	if g == nil {
-		return flow.CaptureCellsDomain.Top()
+		return flow.ReferenceContextDomain.Top()
 	}
 	envExports := captureExportSymbols(g)
-	out := flow.CaptureCellsDomain.Bottom()
+	out := flow.ReferenceContextDomain.Bottom()
 	g.EachReturn(func(p cfg.Point, _ *cfg.ReturnInfo) {
 		ps, ok := fs.Points[p]
 		if !ok {
 			return
 		}
-		point := flow.CaptureCellsDomain.Join(ps.Cells, flow.PointFactsOf(ps).EnvCaptureCells(envExports))
-		point = captureCellsWithStaticMembers(point, ps.StaticMembers)
-		out = flow.CaptureCellsDomain.Join(out, point)
-	})
-	return out
-}
-
-func projectCaptureFunctionRefs(fs state.FunctionState, g *cfg.Graph) flow.FunctionRefs {
-	if g == nil {
-		return flow.FunctionRefsDomain.Top()
-	}
-	out := flow.FunctionRefsDomain.Bottom()
-	g.EachReturn(func(p cfg.Point, _ *cfg.ReturnInfo) {
-		ps, ok := fs.Points[p]
-		if !ok {
-			return
-		}
-		out = flow.FunctionRefsDomain.Join(out, ps.FunctionRefs)
-	})
-	return out
-}
-
-func projectCaptureClosureRefs(fs state.FunctionState, g *cfg.Graph) flow.ClosureRefs {
-	if g == nil {
-		return flow.ClosureRefsDomain.Top()
-	}
-	out := flow.ClosureRefsDomain.Bottom()
-	g.EachReturn(func(p cfg.Point, _ *cfg.ReturnInfo) {
-		ps, ok := fs.Points[p]
-		if !ok {
-			return
-		}
-		out = flow.ClosureRefsDomain.Join(out, ps.ClosureRefs)
+		cells := flow.CaptureCellsDomain.Join(ps.Cells, flow.PointFactsOf(ps).EnvCaptureCells(envExports))
+		cells = captureCellsWithStaticMembers(cells, ps.StaticMembers)
+		out = flow.ReferenceContextDomain.Join(out, flow.ReferenceContextOf(cells, ps.FunctionRefs, ps.ClosureRefs))
 	})
 	return out
 }

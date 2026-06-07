@@ -173,24 +173,25 @@ For module-local callees, call typing reads the callee's current summary through
 the existing `SummaryQ` cycle. Recursive clusters therefore converge through the
 same db query fixed point and `SummaryDomain.Widen`.
 
-The entry-cell source is now also summary-owned:
+The entry reference source is now also summary-owned:
 
 ```text
-Summary = Returns x Params x Relations x CellEffects x CaptureExports
+Summary = Returns x Params x Relations x CellEffects x CaptureReferences
 ```
 
-`CaptureExports` is a `flow.CaptureCells` store snapshot projected from normal
-return-boundary states. It is intentionally distinct from `CellEffects`:
+`CaptureReferences` is a `flow.ReferenceContext` store snapshot projected from
+normal return-boundary states. It carries captured cell values plus function and
+closure identity paths together. It is intentionally distinct from `CellEffects`:
 
-- `CaptureExports` answers "what values can a directly nested closure initially
-  capture from this lexical parent?"
+- `CaptureReferences` answers "what lexical values and callable identities can a
+  directly nested closure initially capture from this lexical parent?"
 - `CellEffects` answers "what captured cells does a call to this function write
   in its caller?"
 
-`SummaryQ` seeds a child transfer's `PointState.Cells` from its lexical parent
-chain's `CaptureExports` before solving the child. That records lexical capture
-dependencies in the same summary fixed point instead of a driver post-solve
-mutation.
+`SummaryQ` seeds a child transfer's entry `ReferenceContext` from its lexical
+parent chain's `CaptureReferences` before solving the child. That records lexical
+capture dependencies in the same summary fixed point instead of a driver
+post-solve mutation.
 
 The summary dependency graph must include lexical capture edges in addition to
 call edges where a function's entry capture cells are initialized from an
@@ -234,9 +235,9 @@ Rules:
    solved return-boundary states. Done.
 5. Make call transfer apply callee cell effects and compose them into the
    caller's own accumulated effect. Done.
-5a. Add `Summary.CaptureExports` and seed child capture entries from parent
-    exports through `SummaryQ`. Done as a transitional canonical source; the
-    old resolver fallback is gone.
+5a. Add `Summary.CaptureReferences` and seed child capture entries from parent
+    reference snapshots through `SummaryQ`. Done; the old resolver fallback is
+    gone.
 5b. Move captured container writes into transfer:
     - `table.insert(captured.path, v)` updates the captured cell and emits
       `CellEffects`;

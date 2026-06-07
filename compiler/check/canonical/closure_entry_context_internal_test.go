@@ -129,7 +129,7 @@ return M
 				return
 			}
 		}
-		t.Fatalf("returned closure contexts did not capture live T.render surface; entryT=%v free=%v contexts=%s summaries=%s diagnostics=%v", result.NarrowedTypeAt(result.Graph.Entry(), constraint.NewPath(tSym, "T")), result.Graph.IsFreeSymbol(tSym), describeContextsForSymbol(contexts, tSym), describeSummaryCaptureExports(driver), sess.DiagnosticsSlice())
+		t.Fatalf("returned closure contexts did not capture live T.render surface; entryT=%v free=%v contexts=%s summaries=%s diagnostics=%v", result.NarrowedTypeAt(result.Graph.Entry(), constraint.NewPath(tSym, "T")), result.Graph.IsFreeSymbol(tSym), describeContextsForSymbol(contexts, tSym), describeSummaryCaptureReferences(driver), sess.DiagnosticsSlice())
 	}
 	t.Fatal("returned closure capturing T was not found")
 }
@@ -177,7 +177,7 @@ return M
 	}
 	cells := prog.CaptureEntryReferences(makeRef, func(dep summary.FuncRef) flow.ReferenceContext {
 		sum := q.Summarize(ctx, dep)
-		return flow.ReferenceContextOf(sum.CaptureExports, sum.CaptureFunctionRefs, sum.CaptureClosureRefs)
+		return sum.CaptureReferences
 	}).CaptureCells()
 	if av, ok := cells.Value(tSym); !ok || !typeHasField(av.ProjectValue(), "render") {
 		t.Fatalf("CaptureEntries T = %v/%v, want render; cells=%s chain=%v", av.ProjectValue(), ok, cells.Format(), prog.captureDependencyChain(makeRef))
@@ -399,7 +399,7 @@ func describeContextsForSymbol(contexts []summary.Key, sym cfg.SymbolID) string 
 	return "[" + strings.Join(parts, " ") + "]"
 }
 
-func describeSummaryCaptureExports(driver *Driver) string {
+func describeSummaryCaptureReferences(driver *Driver) string {
 	if driver == nil {
 		return "[]"
 	}
@@ -409,7 +409,7 @@ func describeSummaryCaptureExports(driver *Driver) string {
 		if !ok {
 			continue
 		}
-		parts = append(parts, fmt.Sprintf("%v:%s", ref, sum.CaptureExports.Format()))
+		parts = append(parts, fmt.Sprintf("%v:%s", ref, sum.CaptureReferences.CaptureCells().Format()))
 	}
 	return "[" + strings.Join(parts, " ") + "]"
 }

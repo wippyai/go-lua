@@ -453,7 +453,7 @@ func (q *Queries) entryReferences(ctx *db.QueryContext, key Key) flow.ReferenceC
 	if provider, ok := q.prog.(captureEntryReferencesProvider); ok {
 		lexical := provider.CaptureEntryReferences(key.Ref, func(dep FuncRef) flow.ReferenceContext {
 			sum := q.solveQ.Get(ctx, NewDefaultKey(dep, nil)).Summary
-			return flow.ReferenceContextOf(sum.CaptureExports, sum.CaptureFunctionRefs, sum.CaptureClosureRefs)
+			return sum.CaptureReferences
 		})
 		references = mergeReferenceContextWithFixed(references, lexical)
 	}

@@ -1,6 +1,7 @@
 package check_test
 
 import (
+	"reflect"
 	"testing"
 
 	"github.com/wippyai/go-lua/compiler/ast"
@@ -335,12 +336,9 @@ return captured
 	if !ok {
 		t.Fatal("make summary missing")
 	}
-	if len(makeSum.ReturnFunctionRefs) == 0 {
-		t.Fatalf("make ReturnFunctionRefs missing: %#v", makeSum)
-	}
-	returnMethodKey := constraint.NewPlaceholder(0).Field("with_options").Key()
-	if _, ok := flow.FunctionRefAt(makeSum.ReturnFunctionRefs[0], returnMethodKey); !ok {
-		t.Fatalf("make return slot missing with_options function ref at %s: %#v", returnMethodKey, makeSum.ReturnFunctionRefs)
+	returnMethodPath := constraint.NewPlaceholder(0).Field("with_options")
+	if !returnFunctionRefTreeHasPath(makeSum.ReturnRefs, 0, returnMethodPath) {
+		t.Fatalf("make return slot missing with_options function ref at %s: %#v", returnMethodPath.Key(), makeSum.ReturnRefs)
 	}
 	withOptionsSum, ok := driver.SummaryFor(withOptions)
 	if !ok {
@@ -356,7 +354,7 @@ return captured
 	}
 	entry, ok := rootSum.CallEntryValues[withOptions][1]
 	if !ok {
-		t.Fatalf("root CallEntryValues missing with_options opts slot 1: entries=%#v root function refs=%#v make returns=%v make return refs=%#v", rootSum.CallEntryValues, rootSum.CaptureFunctionRefs, makeSum.Returns, makeSum.ReturnFunctionRefs)
+		t.Fatalf("root CallEntryValues missing with_options opts slot 1: entries=%#v root function refs=%#v make returns=%v make return refs=%#v", rootSum.CallEntryValues, rootSum.CaptureReferences.FunctionRefs(), makeSum.Returns, makeSum.ReturnRefs)
 	}
 	assertNestedNumberField(t, "root method call-entry opts", entry, "retry", "max_attempts")
 	assertNestedNumberField(t, "root method call-entry opts", entry, "retry", "initial_delay")
@@ -490,13 +488,30 @@ return table_exists(M.mock())
 	if !ok {
 		t.Fatal("mock summary missing")
 	}
-	if len(mockSum.ReturnFunctionRefs) == 0 {
-		t.Fatalf("mock ReturnFunctionRefs missing: %#v", mockSum)
+	queryPath := constraint.NewPlaceholder(0).Field("query")
+	if !returnFunctionRefTreeHasPath(mockSum.ReturnRefs, 0, queryPath) {
+		t.Fatalf("mock return slot missing query FunctionRef at %s: %#v", queryPath.Key(), mockSum.ReturnRefs)
 	}
-	queryKey := constraint.NewPlaceholder(0).Field("query").Key()
-	if _, ok := flow.FunctionRefAt(mockSum.ReturnFunctionRefs[0], queryKey); !ok {
-		t.Fatalf("mock return slot missing query FunctionRef at %s: %#v", queryKey, mockSum.ReturnFunctionRefs)
+}
+
+func returnFunctionRefTreeHasPath(refs flow.ReturnRefs, slot int, path constraint.Path) bool {
+	tree, ok := refs.FunctionRefTree(slot)
+	if !ok {
+		return false
 	}
+	placeholder := constraint.NewPlaceholder(slot)
+	if path.Equal(placeholder) {
+		return tree.HasRoot && !tree.Root.IsBottom()
+	}
+	if len(path.Segments) == 0 {
+		return false
+	}
+	for _, entry := range tree.Entries {
+		if reflect.DeepEqual(entry.Segments, path.Segments) && !entry.Set.IsBottom() {
+			return true
+		}
+	}
+	return false
 }
 
 func assertNestedNumberField(t *testing.T, label string, av product.AbstractValue, first, second string) {

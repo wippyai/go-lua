@@ -6,8 +6,39 @@ import (
 	"github.com/wippyai/go-lua/types/cfg"
 	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/domain/value/product"
+	"github.com/wippyai/go-lua/types/lattice"
 	"github.com/wippyai/go-lua/types/typ"
 )
+
+func TestReferenceContextDomainLaws(t *testing.T) {
+	leftSym := cfg.SymbolID(1)
+	rightSym := cfg.SymbolID(2)
+	leftPath := constraint.NewPath(leftSym, "left")
+	rightPath := constraint.NewPath(rightSym, "right")
+	left := ReferenceContextOf(
+		CaptureCellsOf([]CaptureCell{{Symbol: leftSym, Value: product.FromType(typ.String)}}),
+		WithFunctionRefPath(nil, leftPath, FunctionRefSetOf(FunctionRef{GraphID: 1})),
+		WithClosureRefAddress(nil, testStableAddressPath(t, leftPath), ClosureRefSetOf(ClosureRefOf(FunctionRef{GraphID: 2}, CaptureCellsDomain.Bottom(), nil))),
+	)
+	right := ReferenceContextOf(
+		CaptureCellsOf([]CaptureCell{{Symbol: rightSym, Value: product.FromType(typ.Number)}}),
+		WithFunctionRefPath(nil, rightPath, FunctionRefSetOf(FunctionRef{GraphID: 3})),
+		WithClosureRefAddress(nil, testStableAddressPath(t, rightPath), ClosureRefSetOf(ClosureRefOf(FunctionRef{GraphID: 4}, CaptureCellsDomain.Bottom(), nil))),
+	)
+
+	lattice.LawSuite[ReferenceContext]{
+		Name:   "ReferenceContext",
+		Domain: ReferenceContextDomain,
+		Sample: []ReferenceContext{
+			ReferenceContextDomain.Bottom(),
+			ReferenceContextDomain.Top(),
+			left,
+			right,
+			left.Join(right),
+			left.CallableIdentity(),
+		},
+	}.Run(t)
+}
 
 func TestReferenceContextProjectsAllAxesTogether(t *testing.T) {
 	kept := cfg.SymbolID(10)

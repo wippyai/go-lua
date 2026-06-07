@@ -3,6 +3,7 @@ package flow
 import (
 	"github.com/wippyai/go-lua/types/cfg"
 	"github.com/wippyai/go-lua/types/constraint"
+	"github.com/wippyai/go-lua/types/lattice"
 )
 
 // ReferenceContext is the callee-entry view of caller-owned reference state:
@@ -37,6 +38,43 @@ func ReferenceContextOf(cells CaptureCells, functionRefs FunctionRefs, closureRe
 // ReferenceContextBottom returns the empty finite reference context.
 func ReferenceContextBottom() ReferenceContext {
 	return ReferenceContextOf(CaptureCellsDomain.Bottom(), FunctionRefsDomain.Bottom(), ClosureRefsDomain.Bottom())
+}
+
+// ReferenceContextTop returns the greatest reference context.
+func ReferenceContextTop() ReferenceContext {
+	return ReferenceContextOf(CaptureCellsDomain.Top(), FunctionRefsDomain.Top(), ClosureRefsDomain.Top())
+}
+
+// ReferenceContextDomain is the product lattice for correlated lexical/reference
+// context. Callers use it when a boundary owns all reference axes together.
+var ReferenceContextDomain = lattice.Lattice[ReferenceContext]{
+	Bottom: ReferenceContextBottom,
+	Top:    ReferenceContextTop,
+	Equal: func(a, b ReferenceContext) bool {
+		return CaptureCellsDomain.Equal(a.CaptureCells(), b.CaptureCells()) &&
+			FunctionRefsDomain.Equal(a.FunctionRefs(), b.FunctionRefs()) &&
+			ClosureRefsDomain.Equal(a.ClosureRefs(), b.ClosureRefs())
+	},
+	LessOrEq: func(a, b ReferenceContext) bool {
+		return CaptureCellsDomain.LessOrEq(a.CaptureCells(), b.CaptureCells()) &&
+			FunctionRefsDomain.LessOrEq(a.FunctionRefs(), b.FunctionRefs()) &&
+			ClosureRefsDomain.LessOrEq(a.ClosureRefs(), b.ClosureRefs())
+	},
+	Join: func(a, b ReferenceContext) ReferenceContext {
+		return ReferenceContextOf(
+			CaptureCellsDomain.Join(a.CaptureCells(), b.CaptureCells()),
+			FunctionRefsDomain.Join(a.FunctionRefs(), b.FunctionRefs()),
+			ClosureRefsDomain.Join(a.ClosureRefs(), b.ClosureRefs()),
+		)
+	},
+	Meet: nil,
+	Widen: func(prev, next ReferenceContext) ReferenceContext {
+		return ReferenceContextOf(
+			CaptureCellsDomain.Widen(prev.CaptureCells(), next.CaptureCells()),
+			FunctionRefsDomain.Widen(prev.FunctionRefs(), next.FunctionRefs()),
+			ClosureRefsDomain.Widen(prev.ClosureRefs(), next.ClosureRefs()),
+		)
+	},
 }
 
 // ReferenceContextKeyOf constructs the comparable key for a reference context.

@@ -218,13 +218,13 @@ func TestSummaryDomain_Laws(t *testing.T) {
 			{Returns: []product.AbstractValue{n}},
 			{Relations: rels},
 			{CellEffects: effects},
-			{CaptureExports: exports},
-			{CaptureFunctionRefs: exportRefs},
+			{CaptureReferences: flow.ReferenceContextOf(exports, flow.FunctionRefsDomain.Bottom(), flow.ClosureRefsDomain.Bottom())},
+			{CaptureReferences: flow.ReferenceContextOf(flow.CaptureCellsDomain.Bottom(), exportRefs, flow.ClosureRefsDomain.Bottom())},
 			{ReturnRefs: flow.ReturnRefsOfSlots([]flow.ReturnRefSlot{flow.ReturnRefSlotOf(flow.FunctionRefsDomain.Bottom(), exportClosures)})},
-			{CaptureClosureRefs: exportClosures},
+			{CaptureReferences: flow.ReferenceContextOf(flow.CaptureCellsDomain.Bottom(), flow.FunctionRefsDomain.Bottom(), exportClosures)},
 			{PrototypeSelf: protos},
 			{CallEntryValues: entryValues},
-			{Returns: []product.AbstractValue{n, s}, ReturnRefs: flow.ReturnRefsOfSlots([]flow.ReturnRefSlot{flow.ReturnRefSlotOf(flow.FunctionRefsDomain.Bottom(), exportClosures)}), Relations: rels, CellEffects: effects, CaptureExports: exports, CaptureFunctionRefs: exportRefs, CaptureClosureRefs: exportClosures, PrototypeSelf: protos, CallEntryValues: entryValues},
+			{Returns: []product.AbstractValue{n, s}, ReturnRefs: flow.ReturnRefsOfSlots([]flow.ReturnRefSlot{flow.ReturnRefSlotOf(flow.FunctionRefsDomain.Bottom(), exportClosures)}), Relations: rels, CellEffects: effects, CaptureReferences: flow.ReferenceContextOf(exports, exportRefs, exportClosures), PrototypeSelf: protos, CallEntryValues: entryValues},
 		},
 	}.Run(t)
 }
@@ -413,7 +413,7 @@ func TestProject_CellEffectsFromReturnBoundaries(t *testing.T) {
 	}
 }
 
-func TestProject_CaptureExportsFromReturnBoundaryCells(t *testing.T) {
+func TestProject_CaptureReferencesFromReturnBoundaryCells(t *testing.T) {
 	g := cfg.Build(&ast.FunctionExpr{
 		Stmts: []ast.Stmt{
 			&ast.ReturnStmt{},
@@ -452,20 +452,21 @@ func TestProject_CaptureExportsFromReturnBoundaryCells(t *testing.T) {
 		},
 	}, g)
 
-	if v, ok := sum.CaptureExports.Value(cfg.SymbolID(42)); ok {
-		t.Fatalf("ordinary env symbol leaked into capture exports: %v; exports=%s", v.ProjectValue(), sum.CaptureExports.Format())
+	captures := sum.CaptureReferences.CaptureCells()
+	if v, ok := captures.Value(cfg.SymbolID(42)); ok {
+		t.Fatalf("ordinary env symbol leaked into capture exports: %v; exports=%s", v.ProjectValue(), captures.Format())
 	}
-	if v, ok := sum.CaptureExports.Value(cfg.SymbolID(77)); !ok {
-		t.Fatalf("exported captured cell 77 missing; exports=%s", sum.CaptureExports.Format())
+	if v, ok := captures.Value(cfg.SymbolID(77)); !ok {
+		t.Fatalf("exported captured cell 77 missing; exports=%s", captures.Format())
 	} else if member, ok := product.MemberOf(v, value.MemberField("render")); !ok || typ.IsAbsentOrUnknown(member.ProjectValue()) {
-		t.Fatalf("exported captured cell 77.render = %v/%v; exports=%s", member.ProjectValue(), ok, sum.CaptureExports.Format())
+		t.Fatalf("exported captured cell 77.render = %v/%v; exports=%s", member.ProjectValue(), ok, captures.Format())
 	}
-	if _, ok := sum.CaptureExports.Value(cfg.SymbolID(99)); ok {
-		t.Fatalf("entry-only symbol leaked into capture exports: %s", sum.CaptureExports.Format())
+	if _, ok := captures.Value(cfg.SymbolID(99)); ok {
+		t.Fatalf("entry-only symbol leaked into capture exports: %s", captures.Format())
 	}
 }
 
-func TestProject_CaptureFunctionRefsFromReturnBoundaries(t *testing.T) {
+func TestProject_CaptureReferencesFunctionRefsFromReturnBoundaries(t *testing.T) {
 	g := cfg.Build(&ast.FunctionExpr{
 		Stmts: []ast.Stmt{
 			&ast.ReturnStmt{},
@@ -489,9 +490,9 @@ func TestProject_CaptureFunctionRefsFromReturnBoundaries(t *testing.T) {
 		},
 	}, g)
 
-	refs, ok := flow.FunctionRefAt(sum.CaptureFunctionRefs, constraint.NewPath(sym, "captured").Key())
+	refs, ok := flow.FunctionRefAt(sum.CaptureReferences.FunctionRefs(), constraint.NewPath(sym, "captured").Key())
 	if !ok {
-		t.Fatalf("projected capture function refs missing; refs=%v", sum.CaptureFunctionRefs)
+		t.Fatalf("projected capture function refs missing; refs=%v", sum.CaptureReferences.FunctionRefs())
 	}
 	got, singleton := refs.Singleton()
 	if !singleton || got != ref {
@@ -644,8 +645,8 @@ func TestSummary_IntraObserverUsesExactLocalSolve(t *testing.T) {
 	if afterSummary == 0 {
 		t.Fatal("Summarize did not drive the intraprocedural solve")
 	}
-	if _, ok := sum.CaptureExports.Value(cfg.SymbolID(7)); !ok {
-		t.Fatalf("summary did not project transfer result: %s", sum.CaptureExports.Format())
+	if _, ok := sum.CaptureReferences.CaptureCells().Value(cfg.SymbolID(7)); !ok {
+		t.Fatalf("summary did not project transfer result: %s", sum.CaptureReferences.CaptureCells().Format())
 	}
 
 	fs := q.Intra(ctx, ref)
@@ -663,7 +664,7 @@ func TestSummary_IntraObserverUsesExactLocalSolve(t *testing.T) {
 	}
 }
 
-func TestSummarySolve_SeedsCaptureFunctionRefsFromParentExports(t *testing.T) {
+func TestSummarySolve_SeedsCaptureFunctionRefsFromParentReferences(t *testing.T) {
 	parentGraph := cfg.Build(&ast.FunctionExpr{})
 	childGraph := cfg.Build(&ast.FunctionExpr{})
 	parentRef := summary.FuncRef{GraphID: parentGraph.ID()}
