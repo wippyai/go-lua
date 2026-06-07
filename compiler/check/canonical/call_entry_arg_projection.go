@@ -54,6 +54,25 @@ func (c callEntryProjector) pointArgProjection(in *flow.PointState) callEntryArg
 	}
 }
 
+func captureCellsFromPoint(in *flow.PointState, captured []cfg.SymbolID) flow.CaptureCells {
+	if in == nil || len(captured) == 0 {
+		return flow.CaptureCellsDomain.Bottom()
+	}
+	cells := in.Cells.Project(captured)
+	for _, sym := range captured {
+		if sym == 0 {
+			continue
+		}
+		if _, ok := cells.Value(sym); ok {
+			continue
+		}
+		if av, ok := flow.SymbolValue(*in, sym); ok && !av.IsZero() {
+			cells = cells.With(sym, av)
+		}
+	}
+	return cells
+}
+
 func (c callEntryProjector) productArgProjection(ctx transfer.ProductCallContext) callEntryArgProjection {
 	return callEntryArgProjection{
 		program: c.program,

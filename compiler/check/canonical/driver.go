@@ -27,7 +27,6 @@ package canonical
 
 import (
 	"fmt"
-	"slices"
 
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/bind"
@@ -60,7 +59,6 @@ import (
 	"github.com/wippyai/go-lua/types/contract"
 	"github.com/wippyai/go-lua/types/db"
 	"github.com/wippyai/go-lua/types/diag"
-	"github.com/wippyai/go-lua/types/domain/value/product"
 	"github.com/wippyai/go-lua/types/effect"
 	"github.com/wippyai/go-lua/types/flow"
 	"github.com/wippyai/go-lua/types/io"
@@ -917,25 +915,6 @@ func (p *program) ResolveDelegatedCallee(ref summary.FuncRef, call *ast.FuncCall
 	return callTyper{d: p.driver, g: g}.resolveCalleeRef(call, p)
 }
 
-func captureCellsFromPoint(in *flow.PointState, captured []cfg.SymbolID) flow.CaptureCells {
-	if in == nil || len(captured) == 0 {
-		return flow.CaptureCellsDomain.Bottom()
-	}
-	cells := in.Cells.Project(captured)
-	for _, sym := range captured {
-		if sym == 0 {
-			continue
-		}
-		if _, ok := cells.Value(sym); ok {
-			continue
-		}
-		if av, ok := flow.SymbolValue(*in, sym); ok && !av.IsZero() {
-			cells = cells.With(sym, av)
-		}
-	}
-	return cells
-}
-
 func (p *program) paramSlotDeclared(ref summary.FuncRef, slot int) bool {
 	t := p.paramSlotDeclaredType(ref, slot)
 	return t != nil && !typ.IsAbsentOrUnknown(t)
@@ -1009,52 +988,6 @@ func (p *program) paramPath(ref summary.FuncRef, slot int) (constraint.Path, boo
 		return constraint.Path{}, false
 	}
 	return constraint.NewPath(params[slot], ""), true
-}
-
-func (p *program) capturedSymbols(ref summary.FuncRef) []cfg.SymbolID {
-	g := p.Graph(ref)
-	if g == nil || g.Bindings() == nil || g.Func() == nil {
-		return nil
-	}
-	var out []cfg.SymbolID
-	for _, sym := range g.Bindings().CapturedSymbols(g.Func()) {
-		if g.IsFreeSymbol(sym) {
-			out = append(out, sym)
-		}
-	}
-	if len(out) == 0 {
-		return nil
-	}
-	slices.Sort(out)
-	return slices.Compact(out)
-}
-
-func (p *program) captureEntryValue(
-	ref summary.FuncRef,
-	sym cfg.SymbolID,
-	deps []summary.FuncRef,
-	captureExportsOf func(summary.FuncRef) flow.CaptureCells,
-) (product.AbstractValue, bool) {
-	if t, ok := p.facts.ModuleAliasType(sym); ok {
-		return product.FromType(t), true
-	}
-	if t := p.declaredType(ref, sym); t != nil && !typ.IsAbsentOrUnknown(t) {
-		return product.FromType(t), true
-	}
-	for _, dep := range deps {
-		exports := captureExportsOf(dep)
-		if av, ok := exports.Value(sym); ok && !av.IsZero() {
-			return p.withCapturedPrototypeReceiverSurface(dep, sym, av), true
-		}
-		if t := p.declaredType(dep, sym); t != nil && !typ.IsAbsentOrUnknown(t) {
-			return p.withCapturedPrototypeReceiverSurface(dep, sym, product.FromType(t)), true
-		}
-	}
-	return product.AbstractValue{}, false
-}
-
-func (p *program) captureDependencyChain(ref summary.FuncRef) []summary.FuncRef {
-	return p.funcTopology.ParentChain(ref)
 }
 
 // Callees derives ref's call-graph edges by walking every call site in its graph

@@ -1,9 +1,14 @@
 package canonical
 
 import (
+	"slices"
+
+	"github.com/wippyai/go-lua/compiler/cfg"
 	canonicalcall "github.com/wippyai/go-lua/compiler/check/canonical/call"
 	"github.com/wippyai/go-lua/compiler/check/canonical/summary"
+	"github.com/wippyai/go-lua/types/domain/value/product"
 	"github.com/wippyai/go-lua/types/flow"
+	"github.com/wippyai/go-lua/types/typ"
 )
 
 // CaptureEntryReferences projects captured lexical reference state through the
@@ -41,6 +46,52 @@ func (p *program) CaptureEntryReferences(ref summary.FuncRef, captureReferencesO
 		out = out.Join(captureReferencesOf(dep).ProjectPaths(projection).CallableIdentity())
 	}
 	return out
+}
+
+func (p *program) capturedSymbols(ref summary.FuncRef) []cfg.SymbolID {
+	g := p.Graph(ref)
+	if g == nil || g.Bindings() == nil || g.Func() == nil {
+		return nil
+	}
+	var out []cfg.SymbolID
+	for _, sym := range g.Bindings().CapturedSymbols(g.Func()) {
+		if g.IsFreeSymbol(sym) {
+			out = append(out, sym)
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	slices.Sort(out)
+	return slices.Compact(out)
+}
+
+func (p *program) captureEntryValue(
+	ref summary.FuncRef,
+	sym cfg.SymbolID,
+	deps []summary.FuncRef,
+	captureExportsOf func(summary.FuncRef) flow.CaptureCells,
+) (product.AbstractValue, bool) {
+	if t, ok := p.facts.ModuleAliasType(sym); ok {
+		return product.FromType(t), true
+	}
+	if t := p.declaredType(ref, sym); t != nil && !typ.IsAbsentOrUnknown(t) {
+		return product.FromType(t), true
+	}
+	for _, dep := range deps {
+		exports := captureExportsOf(dep)
+		if av, ok := exports.Value(sym); ok && !av.IsZero() {
+			return p.withCapturedPrototypeReceiverSurface(dep, sym, av), true
+		}
+		if t := p.declaredType(dep, sym); t != nil && !typ.IsAbsentOrUnknown(t) {
+			return p.withCapturedPrototypeReceiverSurface(dep, sym, product.FromType(t)), true
+		}
+	}
+	return product.AbstractValue{}, false
+}
+
+func (p *program) captureDependencyChain(ref summary.FuncRef) []summary.FuncRef {
+	return p.funcTopology.ParentChain(ref)
 }
 
 func (p *program) callEntryReferenceContext(ref summary.FuncRef, caller flow.ReferenceContext) flow.ReferenceContext {
