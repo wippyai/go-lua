@@ -5,6 +5,7 @@ import (
 
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/bind"
+	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/domain/path"
 	"github.com/wippyai/go-lua/compiler/parse"
 	"github.com/wippyai/go-lua/types/constraint"
@@ -24,6 +25,55 @@ func TestPathFromExpr_IdentExpr(t *testing.T) {
 	if len(p.Segments) != 0 {
 		t.Errorf("expected no segments, got %d", len(p.Segments))
 	}
+}
+
+func TestArrayLenBoundKeyWithOffsetProjectsVersionedArrayKey(t *testing.T) {
+	const point cfg.Point = 9
+	const indexSym cfg.SymbolID = 11
+	const arraySym cfg.SymbolID = 12
+
+	got, offset, ok := path.ArrayLenBoundKeyWithOffset(
+		point,
+		"i",
+		pathTestGraph{versions: map[cfg.SymbolID]cfg.Version{arraySym: {ID: 7}}},
+		pathTestNumeric{refs: map[cfg.SymbolID]pathTestLenRef{indexSym: {array: arraySym, offset: -1}}},
+		func(p cfg.Point, name string) (cfg.SymbolID, bool) {
+			if p == point && name == "i" {
+				return indexSym, true
+			}
+			return 0, false
+		},
+	)
+	want := (constraint.Path{Symbol: arraySym, Version: 7}).Key()
+	if !ok || offset != -1 || got != string(want) {
+		t.Fatalf("ArrayLenBoundKeyWithOffset = %q/%d/%v, want %q/-1/true", got, offset, ok, want)
+	}
+}
+
+type pathTestGraph struct {
+	versions map[cfg.SymbolID]cfg.Version
+}
+
+func (g pathTestGraph) VisibleVersion(_ cfg.Point, sym cfg.SymbolID) cfg.Version {
+	return g.versions[sym]
+}
+
+type pathTestLenRef struct {
+	array  cfg.SymbolID
+	offset int64
+}
+
+type pathTestNumeric struct {
+	refs map[cfg.SymbolID]pathTestLenRef
+}
+
+func (n pathTestNumeric) NumericBoundsAt(cfg.Point, cfg.SymbolID) (int64, int64, bool) {
+	return 0, 0, false
+}
+
+func (n pathTestNumeric) ArrayLenRefAt(_ cfg.Point, sym cfg.SymbolID) (cfg.SymbolID, int64, bool) {
+	ref, ok := n.refs[sym]
+	return ref.array, ref.offset, ok
 }
 
 func TestPathFromExpr_AttrGetExpr_StringKey(t *testing.T) {

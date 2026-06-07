@@ -343,19 +343,7 @@ func (f factsIndexReadFlow) BoundsAt(p cfg.Point, name string) (int64, int64, bo
 }
 
 func (f factsIndexReadFlow) ArrayLenBoundWithOffsetAt(p cfg.Point, varName string) (string, int64, bool) {
-	if f.numeric == nil {
-		return "", 0, false
-	}
-	sym, ok := f.symbolAt(p, varName)
-	if !ok {
-		return "", 0, false
-	}
-	arrSym, offset, ok := f.numeric.ArrayLenRefAt(p, sym)
-	if !ok {
-		return "", 0, false
-	}
-	arrPath := flowpath.WithVersion(constraint.Path{Symbol: arrSym}, f.graph, p)
-	return string(arrPath.Key()), offset, true
+	return flowpath.ArrayLenBoundKeyWithOffset(p, varName, f.graph, f.numeric, f.symbolAt)
 }
 
 func (f factsIndexReadFlow) LengthBoundsAt(p cfg.Point, path constraint.Path) (int64, int64, bool) {

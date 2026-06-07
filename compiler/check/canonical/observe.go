@@ -1358,16 +1358,7 @@ func (f *canonicalFacts) ArrayLenBoundAt(p cfg.Point, varName string) (string, b
 }
 
 func (f *canonicalFacts) ArrayLenBoundWithOffsetAt(p cfg.Point, varName string) (string, int64, bool) {
-	sym, ok := f.symbolAt(p, varName)
-	if !ok {
-		return "", 0, false
-	}
-	arrSym, offset, ok := f.ArrayLenRefAt(p, sym)
-	if !ok {
-		return "", 0, false
-	}
-	arrPath := flowpath.WithVersion(constraint.Path{Symbol: arrSym}, f.graph, p)
-	return string(arrPath.Key()), offset, true
+	return flowpath.ArrayLenBoundKeyWithOffset(p, varName, f.graph, f, f.symbolAt)
 }
 
 func (f *canonicalFacts) LengthBoundsAt(p cfg.Point, path constraint.Path) (int64, int64, bool) {

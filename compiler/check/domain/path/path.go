@@ -23,6 +23,34 @@ type versionedGraph interface {
 	VisibleVersion(p cfg.Point, sym cfg.SymbolID) cfg.Version
 }
 
+// SymbolLookupAt resolves a visible source name to its graph symbol at a CFG
+// point.
+type SymbolLookupAt func(cfg.Point, string) (cfg.SymbolID, bool)
+
+// ArrayLenBoundKeyWithOffset projects a numeric `i <= #arr + offset` proof from
+// symbol space to the versioned path key expected by indexed-read refiners.
+func ArrayLenBoundKeyWithOffset(
+	point cfg.Point,
+	varName string,
+	graph versionedGraph,
+	numeric flow.NumericFacts,
+	symbolAt SymbolLookupAt,
+) (string, int64, bool) {
+	if numeric == nil || symbolAt == nil {
+		return "", 0, false
+	}
+	sym, ok := symbolAt(point, varName)
+	if !ok {
+		return "", 0, false
+	}
+	arrSym, offset, ok := numeric.ArrayLenRefAt(point, sym)
+	if !ok {
+		return "", 0, false
+	}
+	arrPath := WithVersion(constraint.Path{Symbol: arrSym}, graph, point)
+	return string(arrPath.Key()), offset, true
+}
+
 // StaticKeySegment converts a syntactically static table-constructor key
 // expression into a path segment using the hand-built-AST heuristic.
 //
