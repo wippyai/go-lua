@@ -6,11 +6,9 @@ import (
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/canonical/input"
-	"github.com/wippyai/go-lua/compiler/check/domain/iteration"
 	"github.com/wippyai/go-lua/compiler/parse"
 	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/domain/value/product"
-	"github.com/wippyai/go-lua/types/effect"
 	"github.com/wippyai/go-lua/types/flow"
 	"github.com/wippyai/go-lua/types/typ"
 )
@@ -687,7 +685,7 @@ end
 		t.Fatal("iterator call not found")
 	}
 	sourceType := tr.resolveExprType(&out, iterCall.Args[0], nil)
-	proj, projOK := iteration.ProjectVarTypes(effect.IterateKeyed, len(info.Targets), sourceType)
+	proj, projOK := flow.ProjectIteratorVarTypes(flow.IterateKeyed, len(info.Targets), sourceType)
 	if !projOK || len(proj.Types) < 2 || !typ.TypeEquals(proj.Types[1], elem) {
 		t.Fatalf("captured iterator projection = %#v/%v from source %v, want value %v", proj, projOK, sourceType, elem)
 	}
@@ -778,11 +776,11 @@ type firstArgKeyedIterTyper struct {
 	captureEffectTyper
 }
 
-func (t firstArgKeyedIterTyper) IterVarProjection(iter *ast.FuncCallExpr, count int, exprType func(ast.Expr) typ.Type) (iteration.VarProjection, bool) {
+func (t firstArgKeyedIterTyper) IterVarProjection(iter *ast.FuncCallExpr, count int, exprType func(ast.Expr) typ.Type) (flow.IteratorVarProjection, bool) {
 	if iter == nil || len(iter.Args) == 0 || exprType == nil {
-		return iteration.VarProjection{}, false
+		return flow.IteratorVarProjection{}, false
 	}
-	return iteration.ProjectVarTypes(effect.IterateKeyed, count, exprType(iter.Args[0]))
+	return flow.ProjectIteratorVarTypes(flow.IterateKeyed, count, exprType(iter.Args[0]))
 }
 
 func (t firstArgKeyedIterTyper) KeyedIterSource(call *ast.FuncCallExpr) (ast.Expr, bool) {

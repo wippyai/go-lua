@@ -184,6 +184,28 @@ func TestPointFactsDynamicIndexReadbackAllowsLiteralValueOnly(t *testing.T) {
 	}
 }
 
+func TestPointFactsDynamicIndexReadbackNormalizesOptionalLiteralKeyValue(t *testing.T) {
+	target := constraint.NewPath(cfg.SymbolID(117), "target")
+	key := typ.LiteralString("id")
+	value := product.FromType(typ.Boolean)
+	state := PointState{
+		IndexWrites: IndexWriteAdmissionFacts{}.WithAddress(IndexWriteAdmissionAddressFact{
+			Target: testStableAddressPath(t, target),
+			Key:    product.FromType(key),
+			Value:  value,
+		}),
+	}
+	facts := PointFactsOf(state)
+
+	got, ok := facts.DynamicIndexReadback(DynamicIndexReadbackQuery{
+		Target:   target,
+		KeyValue: product.FromType(typ.NewOptional(key)),
+	})
+	if !ok || !product.Domain.Equal(got, value) {
+		t.Fatalf("DynamicIndexReadback optional literal = %v/%v, want boolean", got, ok)
+	}
+}
+
 func TestPointFactsDynamicIndexReadbackRejectsNonLiteralValueOnly(t *testing.T) {
 	target := constraint.NewPath(cfg.SymbolID(116), "target")
 	state := PointState{

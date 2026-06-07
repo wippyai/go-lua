@@ -4,6 +4,7 @@ import (
 	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/domain/value"
 	"github.com/wippyai/go-lua/types/kind"
+	"github.com/wippyai/go-lua/types/narrow"
 	"github.com/wippyai/go-lua/types/subtype"
 	"github.com/wippyai/go-lua/types/typ"
 )
@@ -189,6 +190,7 @@ func addValueTemplateRecordField(builder *typ.RecordBuilder, name string, fieldT
 // NormalizeDynamicKeyType is the dynamic-key normalization law shared by current
 // transfer and producer-neutral mutation fact surfaces.
 func NormalizeDynamicKeyType(keyType typ.Type) typ.Type {
+	keyType = narrow.ToTruthy(keyType)
 	if keyType == nil || typ.IsAbsentOrUnknown(keyType) {
 		return typ.Unknown
 	}

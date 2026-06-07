@@ -7,22 +7,22 @@ import (
 	"github.com/wippyai/go-lua/compiler/bind"
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/types/constraint"
-	"github.com/wippyai/go-lua/types/effect"
+	"github.com/wippyai/go-lua/types/flow"
 )
 
 func TestKeyedSource(t *testing.T) {
 	source := ident("items")
 	iter := &ast.FuncCallExpr{Args: []ast.Expr{source}}
 
-	got, ok := KeyedSource(iter, func(*ast.FuncCallExpr) (effect.IteratorKind, int, bool) {
-		return effect.IterateKeyed, 0, true
+	got, ok := KeyedSource(iter, func(*ast.FuncCallExpr) (flow.IteratorKind, int, bool) {
+		return flow.IterateKeyed, 0, true
 	})
 	if !ok || got != source {
 		t.Fatalf("KeyedSource() = (%#v, %v), want source/true", got, ok)
 	}
 
-	if _, ok := KeyedSource(iter, func(*ast.FuncCallExpr) (effect.IteratorKind, int, bool) {
-		return effect.IterateIndexed, 0, true
+	if _, ok := KeyedSource(iter, func(*ast.FuncCallExpr) (flow.IteratorKind, int, bool) {
+		return flow.IterateIndexed, 0, true
 	}); ok {
 		t.Fatal("KeyedSource accepted indexed iterator")
 	}
@@ -38,8 +38,8 @@ func TestIndexedSourceSymbol(t *testing.T) {
 		t.Fatalf("IndexedSourceSymbol() = (%d, %v), want 10/true", got, ok)
 	}
 
-	if _, ok := IndexedSourceSymbol(iter, bindings, func(*ast.FuncCallExpr) (effect.IteratorKind, int, bool) {
-		return effect.IterateKeyed, 0, true
+	if _, ok := IndexedSourceSymbol(iter, bindings, func(*ast.FuncCallExpr) (flow.IteratorKind, int, bool) {
+		return flow.IterateKeyed, 0, true
 	}); ok {
 		t.Fatal("IndexedSourceSymbol accepted keyed iterator")
 	}
@@ -76,8 +76,8 @@ func TestContainerPath_StaticField(t *testing.T) {
 	}
 }
 
-func indexedSource0(*ast.FuncCallExpr) (effect.IteratorKind, int, bool) {
-	return effect.IterateIndexed, 0, true
+func indexedSource0(*ast.FuncCallExpr) (flow.IteratorKind, int, bool) {
+	return flow.IterateIndexed, 0, true
 }
 
 func call(name string, args ...ast.Expr) *ast.FuncCallExpr {

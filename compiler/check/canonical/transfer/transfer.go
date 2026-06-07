@@ -47,7 +47,6 @@ import (
 	abstractcond "github.com/wippyai/go-lua/compiler/check/domain/cond"
 	"github.com/wippyai/go-lua/compiler/check/domain/fieldkey"
 	"github.com/wippyai/go-lua/compiler/check/domain/guard"
-	"github.com/wippyai/go-lua/compiler/check/domain/iteration"
 	"github.com/wippyai/go-lua/compiler/check/domain/literal"
 	"github.com/wippyai/go-lua/compiler/check/domain/metatable"
 	"github.com/wippyai/go-lua/compiler/check/domain/paramevidence"
@@ -175,7 +174,7 @@ type CallTyper interface {
 }
 
 type IterVarProjector interface {
-	IterVarProjection(iter *ast.FuncCallExpr, count int, exprType func(ast.Expr) typ.Type) (iteration.VarProjection, bool)
+	IterVarProjection(iter *ast.FuncCallExpr, count int, exprType func(ast.Expr) typ.Type) (flow.IteratorVarProjection, bool)
 }
 
 // CallEffects groups product call-outcome effects that mutate caller-visible
@@ -1996,15 +1995,15 @@ func (t *Transfer) iterVarProjection(
 	iterCall *ast.FuncCallExpr,
 	count int,
 	exprType func(ast.Expr) typ.Type,
-) (iteration.VarProjection, bool) {
+) (flow.IteratorVarProjection, bool) {
 	if projector, ok := t.callTyper.(IterVarProjector); ok {
 		return projector.IterVarProjection(iterCall, count, exprType)
 	}
 	varTypes, ok := t.callTyper.IterVars(iterCall, count, exprType)
 	if !ok {
-		return iteration.VarProjection{}, false
+		return flow.IteratorVarProjection{}, false
 	}
-	return iteration.VarProjection{Types: varTypes}, true
+	return flow.IteratorVarProjection{Types: varTypes}, true
 }
 
 func (t *Transfer) assignGenericForEmpty(out *flow.PointState, targets []cfg.AssignTarget) {

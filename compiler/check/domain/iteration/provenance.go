@@ -6,16 +6,16 @@ import (
 	"github.com/wippyai/go-lua/compiler/cfg"
 	flowpath "github.com/wippyai/go-lua/compiler/check/domain/path"
 	"github.com/wippyai/go-lua/types/constraint"
-	"github.com/wippyai/go-lua/types/effect"
+	"github.com/wippyai/go-lua/types/flow"
 )
 
 // KindResolver resolves a generic-for iterator call into its abstract iterator
 // kind and source runtime argument index.
-type KindResolver func(iter *ast.FuncCallExpr) (effect.IteratorKind, int, bool)
+type KindResolver func(iter *ast.FuncCallExpr) (flow.IteratorKind, int, bool)
 
 // KeyedSource returns the iterated source expression for a keyed iterator.
 func KeyedSource(iter *ast.FuncCallExpr, resolveKind KindResolver) (ast.Expr, bool) {
-	source, _, ok := sourceArg(iter, effect.IterateKeyed, resolveKind)
+	source, _, ok := sourceArg(iter, flow.IterateKeyed, resolveKind)
 	return source, ok
 }
 
@@ -23,7 +23,7 @@ func KeyedSource(iter *ast.FuncCallExpr, resolveKind KindResolver) (ast.Expr, bo
 // call. The provenance proof for that path is owned by canonical facts; transfer
 // uses this helper only to identify which fact to read.
 func IndexedSourcePath(iter *ast.FuncCallExpr, bindings *bind.BindingTable, resolveKind KindResolver) (constraint.Path, bool) {
-	source, _, ok := sourceArg(iter, effect.IterateIndexed, resolveKind)
+	source, _, ok := sourceArg(iter, flow.IterateIndexed, resolveKind)
 	if !ok || bindings == nil {
 		return constraint.Path{}, false
 	}
@@ -58,7 +58,7 @@ func ContainerPath(arg ast.Expr, bindings *bind.BindingTable) (constraint.Path, 
 	return path, true
 }
 
-func sourceArg(iter *ast.FuncCallExpr, want effect.IteratorKind, resolveKind KindResolver) (ast.Expr, int, bool) {
+func sourceArg(iter *ast.FuncCallExpr, want flow.IteratorKind, resolveKind KindResolver) (ast.Expr, int, bool) {
 	if iter == nil || iter.Method != "" || resolveKind == nil {
 		return nil, 0, false
 	}

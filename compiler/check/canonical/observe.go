@@ -8,7 +8,6 @@ import (
 	"github.com/wippyai/go-lua/compiler/check/canonical/state"
 	"github.com/wippyai/go-lua/compiler/check/canonical/summary"
 	"github.com/wippyai/go-lua/compiler/check/canonical/transfer"
-	"github.com/wippyai/go-lua/compiler/check/domain/assignsource"
 	"github.com/wippyai/go-lua/compiler/check/domain/callbackenv"
 	"github.com/wippyai/go-lua/compiler/check/domain/paramevidence"
 	flowpath "github.com/wippyai/go-lua/compiler/check/domain/path"
@@ -729,7 +728,7 @@ func (f *canonicalFacts) ObserveChildPaths(q flow.PathChildQuery) []flow.PathFac
 // canonical solved product projection. The target annotation/static slot is not
 // consulted here; observation reconciles boundary types separately.
 func (f *canonicalFacts) AssignmentSourceValueAt(p cfg.Point, target constraint.Path, source flow.AssignmentSource) typ.Type {
-	return assignsource.Value(assignsource.Query{
+	return flow.AssignmentSourceValue(flow.AssignmentSourceQuery{
 		Point:  p,
 		Target: target,
 		Source: source,

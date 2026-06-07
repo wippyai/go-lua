@@ -1523,15 +1523,15 @@ func (ct callTyper) IterVars(iter *ast.FuncCallExpr, count int, exprType func(as
 	return proj.Types, true
 }
 
-func (ct callTyper) IterVarProjection(iter *ast.FuncCallExpr, count int, exprType func(ast.Expr) typ.Type) (iteration.VarProjection, bool) {
+func (ct callTyper) IterVarProjection(iter *ast.FuncCallExpr, count int, exprType func(ast.Expr) typ.Type) (flow.IteratorVarProjection, bool) {
 	if iter == nil || count <= 0 || iter.Method != "" || exprType == nil {
-		return iteration.VarProjection{}, false
+		return flow.IteratorVarProjection{}, false
 	}
 	kind, srcIdx, ok := ct.iteratorKind(iter)
 	if !ok || srcIdx < 0 || srcIdx >= len(iter.Args) {
-		return iteration.VarProjection{}, false
+		return flow.IteratorVarProjection{}, false
 	}
-	return iteration.ProjectVarTypes(kind, count, exprType(iter.Args[srcIdx]))
+	return flow.ProjectIteratorVarTypes(kind, count, exprType(iter.Args[srcIdx]))
 }
 
 // iteratorKind resolves a generic-for iterator's iteration kind and iterated source
@@ -1539,7 +1539,7 @@ func (ct callTyper) IterVarProjection(iter *ast.FuncCallExpr, count int, exprTyp
 // spec (so a user-defined or stdlib iterator with a declared iteration effect types
 // its loop variables), falling back to the ipairs/pairs builtin recognition on a
 // predeclared global, the documented builtin iteration forms.
-func (ct callTyper) iteratorKind(iter *ast.FuncCallExpr) (effect.IteratorKind, int, bool) {
+func (ct callTyper) iteratorKind(iter *ast.FuncCallExpr) (flow.IteratorKind, int, bool) {
 	fnType := ct.callTypeResolver(func(e ast.Expr) typ.Type {
 		// Resolve only the callee through the standard callee resolution; the source
 		// argument is typed by the caller's exprType, so a bare exprType here suffices.
