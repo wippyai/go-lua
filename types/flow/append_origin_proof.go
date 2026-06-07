@@ -59,19 +59,6 @@ type AppendKeyArrayConsequences struct {
 	Pending []PendingKeyArrayDestination
 }
 
-// AppendKeyArrayPathConsequences is the producer-facing path form for append
-// key-array consequences. Tables and pending destinations may remain
-// address-native when they came from prior flow queries.
-type AppendKeyArrayPathConsequences struct {
-	ArrayPath constraint.Path
-	KeyPath   constraint.Path
-	HasKey    bool
-	KeyValue  product.AbstractValue
-
-	Tables  []StableAddress
-	Pending []PendingKeyArrayDestination
-}
-
 // AppendKeyArrayTableQuery selects the tables for which appending Key into
 // Array proves or delays key-array provenance.
 type AppendKeyArrayTableQuery struct {
@@ -83,9 +70,9 @@ type AppendKeyArrayTableQuery struct {
 	FreshEmpty       bool
 }
 
-// AppendKeyArrayPathTableQuery is the structured-path form of
+// appendKeyArrayPathTableQuery is the structured-path form of
 // AppendKeyArrayTableQuery.
-type AppendKeyArrayPathTableQuery struct {
+type appendKeyArrayPathTableQuery struct {
 	ArrayPath         constraint.Path
 	KeyPath           constraint.Path
 	ExplicitTablePath constraint.Path
@@ -161,14 +148,6 @@ type AppendKeyArraySelection struct {
 type AppendKeyArrayPreservationQuery struct {
 	Array          StableAddress
 	Key            StableAddress
-	FreshEmptySeed bool
-}
-
-// AppendKeyArrayPathPreservationQuery selects append preservation consequences
-// from structured paths.
-type AppendKeyArrayPathPreservationQuery struct {
-	ArrayPath      constraint.Path
-	KeyPath        constraint.Path
 	FreshEmptySeed bool
 }
 
@@ -276,26 +255,6 @@ func ApplyAppendKeyArrayConsequences(out *PointState, proof AppendKeyArrayConseq
 	return changed
 }
 
-func ApplyAppendKeyArrayPathConsequences(out *PointState, proof AppendKeyArrayPathConsequences) bool {
-	array, arrayOK := StableAddressOfPath(proof.ArrayPath)
-	if !arrayOK {
-		return false
-	}
-	key := StableAddress{}
-	keyOK := false
-	if proof.HasKey {
-		key, keyOK = StableAddressOfPath(proof.KeyPath)
-	}
-	return ApplyAppendKeyArrayConsequences(out, AppendKeyArrayConsequences{
-		Array:    array,
-		Key:      key,
-		HasKey:   proof.HasKey && keyOK,
-		KeyValue: proof.KeyValue,
-		Tables:   proof.Tables,
-		Pending:  proof.Pending,
-	})
-}
-
 // AppendHistoryBaseWithoutEvents reports whether Array still has a tracked
 // append-history base with no recorded append events.
 func AppendHistoryBaseWithoutEvents(state PointState, array StableAddress) bool {
@@ -368,7 +327,7 @@ func AppendKeyArrayTables(state PointState, q AppendKeyArrayTableQuery) []Stable
 	return out
 }
 
-func AppendKeyArrayTablesPath(state PointState, q AppendKeyArrayPathTableQuery) []StableAddress {
+func appendKeyArrayTablesOfPath(state PointState, q appendKeyArrayPathTableQuery) []StableAddress {
 	array, arrayOK := StableAddressOfPath(q.ArrayPath)
 	key, keyOK := StableAddressOfPath(q.KeyPath)
 	if !arrayOK || !keyOK {
@@ -417,7 +376,7 @@ func AppendKeyReplayTransactionOfPath(state PointState, tx AppendKeyReplayPathTr
 		Key:                 key,
 		KeyValue:            keyValue,
 		PreserveHistoryBase: tx.PreserveHistoryBase || tx.FreshEmpty || facts.HasAppendHistoryBase(tx.ArrayPath),
-		Tables: AppendKeyArrayTablesPath(state, AppendKeyArrayPathTableQuery{
+		Tables: appendKeyArrayTablesOfPath(state, appendKeyArrayPathTableQuery{
 			ArrayPath:         tx.ArrayPath,
 			KeyPath:           tx.KeyPath,
 			ExplicitTablePath: tx.ExplicitTablePath,
@@ -737,19 +696,6 @@ func AppendKeyArrayPreservation(state PointState, q AppendKeyArrayPreservationQu
 		out.Tables = addTable(out.Tables, tableUse.Address)
 	}
 	return out
-}
-
-func AppendKeyArrayPathPreservation(state PointState, q AppendKeyArrayPathPreservationQuery) AppendKeyArraySelection {
-	array, arrayOK := StableAddressOfPath(q.ArrayPath)
-	key, keyOK := StableAddressOfPath(q.KeyPath)
-	if !arrayOK || !keyOK {
-		return AppendKeyArraySelection{}
-	}
-	return AppendKeyArrayPreservation(state, AppendKeyArrayPreservationQuery{
-		Array:          array,
-		Key:            key,
-		FreshEmptySeed: q.FreshEmptySeed,
-	})
 }
 
 // AppendOriginSources follows value-origin and path-alias facts backward from

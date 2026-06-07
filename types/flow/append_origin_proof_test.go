@@ -305,7 +305,7 @@ func TestAppendElementFieldOriginUsesPathNormalizesField(t *testing.T) {
 	}
 }
 
-func TestApplyAppendKeyArrayConsequencesPublishesReadbackValue(t *testing.T) {
+func TestApplyAppendKeyArrayConsequencesUsesAddressKeyForReadback(t *testing.T) {
 	arrayPath := constraint.NewPath(cfg.SymbolID(21), "keys")
 	tablePath := constraint.NewPath(cfg.SymbolID(22), "nodes")
 	keyPath := constraint.NewPath(cfg.SymbolID(23), "node_id")
@@ -348,29 +348,32 @@ func TestApplyAppendKeyArrayConsequencesPublishesReadbackValue(t *testing.T) {
 	}
 }
 
-func TestApplyAppendKeyArrayPathConsequencesPublishesReadbackValue(t *testing.T) {
+func TestApplyAppendKeyArrayConsequencesPublishesReadbackValue(t *testing.T) {
 	arrayPath := constraint.NewPath(cfg.SymbolID(24), "keys")
 	tablePath := constraint.NewPath(cfg.SymbolID(25), "nodes")
 	keyPath := constraint.NewPath(cfg.SymbolID(26), "node_id")
+	array := testStableAddressPath(t, arrayPath)
+	table := testStableAddressPath(t, tablePath)
+	key := testStableAddressPath(t, keyPath)
 	value := product.FromType(typ.String)
 	state := PointState{
 		IndexWrites: IndexWriteAdmissionFacts{}.WithAddress(IndexWriteAdmissionAddressFact{
-			Target:     testStableAddressPath(t, tablePath),
-			KeyPath:    testStableAddressPath(t, keyPath),
+			Target:     table,
+			KeyPath:    key,
 			HasKeyPath: true,
 			Key:        product.FromType(typ.String),
 			Value:      value,
 		}),
 	}
 
-	if !ApplyAppendKeyArrayPathConsequences(&state, AppendKeyArrayPathConsequences{
-		ArrayPath: arrayPath,
-		KeyPath:   keyPath,
-		HasKey:    true,
-		KeyValue:  product.FromType(typ.String),
-		Tables:    []StableAddress{testStableAddressPath(t, tablePath)},
+	if !ApplyAppendKeyArrayConsequences(&state, AppendKeyArrayConsequences{
+		Array:    array,
+		Key:      key,
+		HasKey:   true,
+		KeyValue: product.FromType(typ.String),
+		Tables:   []StableAddress{table},
 	}) {
-		t.Fatalf("expected append key-array path consequences to change state")
+		t.Fatalf("expected append key-array consequences to change state")
 	}
 
 	values := state.KeyPresence.KeyArrayValues(StablePathKey(arrayPath), StablePathKey(tablePath))
@@ -481,7 +484,7 @@ func TestAppendKeyArrayTablesFreshEmptyIgnoresLegacyStoredDirectTable(t *testing
 	}
 }
 
-func TestAppendKeyArrayTablesPathLowersStructuredInputs(t *testing.T) {
+func TestAppendKeyArrayTablesOfPathLowersStructuredInputs(t *testing.T) {
 	arrayPath := constraint.NewPath(cfg.SymbolID(134), "keys")
 	tablePath := constraint.NewPath(cfg.SymbolID(135), "nodes")
 	keyPath := constraint.NewPath(cfg.SymbolID(136), "node_id")
@@ -491,7 +494,7 @@ func TestAppendKeyArrayTablesPathLowersStructuredInputs(t *testing.T) {
 			WithKeyArrayAddresses(testStableAddressPath(t, arrayPath), table),
 	}
 
-	tables := AppendKeyArrayTablesPath(state, AppendKeyArrayPathTableQuery{
+	tables := appendKeyArrayTablesOfPath(state, appendKeyArrayPathTableQuery{
 		ArrayPath:         arrayPath,
 		KeyPath:           keyPath,
 		ExplicitTablePath: tablePath,
@@ -771,19 +774,21 @@ func TestAppendKeyArrayPreservationFreshEmptyIgnoresLegacyStoredDirectTable(t *t
 	}
 }
 
-func TestAppendKeyArrayPathPreservationNormalizesPaths(t *testing.T) {
+func TestAppendKeyArrayPreservationSelectsFreshEmptyAddressFacts(t *testing.T) {
 	arrayPath := constraint.NewPath(cfg.SymbolID(45), "keys")
 	tablePath := constraint.NewPath(cfg.SymbolID(46), "nodes")
 	keyPath := constraint.NewPath(cfg.SymbolID(47), "id")
+	array := testStableAddressPath(t, arrayPath)
 	table := testStableAddressPath(t, tablePath)
+	key := testStableAddressPath(t, keyPath)
 	state := PointState{
 		KeyPresence: KeyPresenceFacts{}.
-			WithAddresses(table, testStableAddressPath(t, keyPath)),
+			WithAddresses(table, key),
 	}
 
-	selection := AppendKeyArrayPathPreservation(state, AppendKeyArrayPathPreservationQuery{
-		ArrayPath:      arrayPath,
-		KeyPath:        keyPath,
+	selection := AppendKeyArrayPreservation(state, AppendKeyArrayPreservationQuery{
+		Array:          array,
+		Key:            key,
 		FreshEmptySeed: true,
 	})
 	if len(selection.Pending) != 1 || selection.Pending[0].HasTable {
