@@ -34,14 +34,11 @@ const (
 	referenceWriteTree
 )
 
-type functionRefsWrite struct {
-	Mode referenceWriteMode
-	Tree flow.FunctionRefTree
-}
-
-type closureRefsWrite struct {
-	Mode referenceWriteMode
-	Tree flow.ClosureRefTree
+type referenceWrite struct {
+	FunctionMode referenceWriteMode
+	FunctionTree flow.FunctionRefTree
+	ClosureMode  referenceWriteMode
+	ClosureTree  flow.ClosureRefTree
 }
 
 // ReturnSlotEffect is the transfer payload for one caller-visible return slot.
@@ -72,11 +69,10 @@ type ReturnEffect struct {
 // relative identity surface. Place targets use exact static paths when available
 // and fall back to root-subtree invalidation for dynamic places.
 type ReferenceEffect struct {
-	Place        Place
-	Path         constraint.Path
-	Source       ast.Expr
-	FunctionRefs functionRefsWrite
-	ClosureRefs  closureRefsWrite
+	Place      Place
+	Path       constraint.Path
+	Source     ast.Expr
+	References referenceWrite
 }
 
 // PrototypeSelfEffect records the runtime `self` value that flows into methods
@@ -87,20 +83,23 @@ type PrototypeSelfEffect struct {
 	Value     product.AbstractValue
 }
 
-func sourceFunctionRefsWrite() functionRefsWrite {
-	return functionRefsWrite{Mode: referenceWriteFromSource}
+func sourceReferenceWrite() referenceWrite {
+	return referenceWrite{
+		FunctionMode: referenceWriteFromSource,
+		ClosureMode:  referenceWriteFromSource,
+	}
 }
 
-func treeFunctionRefsWrite(tree flow.FunctionRefTree) functionRefsWrite {
-	return functionRefsWrite{Mode: referenceWriteTree, Tree: tree}
+func (write referenceWrite) WithFunctionTree(tree flow.FunctionRefTree) referenceWrite {
+	write.FunctionMode = referenceWriteTree
+	write.FunctionTree = tree
+	return write
 }
 
-func sourceClosureRefsWrite() closureRefsWrite {
-	return closureRefsWrite{Mode: referenceWriteFromSource}
-}
-
-func treeClosureRefsWrite(tree flow.ClosureRefTree) closureRefsWrite {
-	return closureRefsWrite{Mode: referenceWriteTree, Tree: tree}
+func (write referenceWrite) WithClosureTree(tree flow.ClosureRefTree) referenceWrite {
+	write.ClosureMode = referenceWriteTree
+	write.ClosureTree = tree
+	return write
 }
 
 // CellEffect is the canonical reducer payload for applying captured-cell effects
@@ -211,10 +210,9 @@ func (t *Transfer) applyReturnEffect(out *flow.PointState, effect ReturnEffect) 
 		changed = flow.ClearReturnSlotValue(out, slot.Index) || changed
 		if slot.Source != nil {
 			changed = t.applyReferenceEffect(out, ReferenceEffect{
-				Path:         constraint.NewPlaceholder(slot.Index),
-				Source:       slot.Source,
-				FunctionRefs: sourceFunctionRefsWrite(),
-				ClosureRefs:  sourceClosureRefsWrite(),
+				Path:       constraint.NewPlaceholder(slot.Index),
+				Source:     slot.Source,
+				References: sourceReferenceWrite(),
 			}) || changed
 		}
 		if slot.HasFunctionRefTree {
@@ -236,9 +234,7 @@ func (t *Transfer) applyReferenceEffect(out *flow.PointState, effect ReferenceEf
 	if !ok {
 		return false
 	}
-	changed := t.applyFunctionReferenceEffect(out, path, exact, effect.Source, effect.FunctionRefs)
-	changed = t.applyClosureReferenceEffect(out, path, exact, effect.Source, effect.ClosureRefs) || changed
-	return changed
+	return t.applyReferenceWrite(out, path, exact, effect.Source, effect.References)
 }
 
 func (effect ReferenceEffect) referenceTarget() (constraint.Path, bool, bool) {
@@ -254,58 +250,51 @@ func (effect ReferenceEffect) referenceTarget() (constraint.Path, bool, bool) {
 	return constraint.NewPath(effect.Place.Root, effect.Place.RootName), false, true
 }
 
-func (t *Transfer) applyFunctionReferenceEffect(
+func (t *Transfer) applyReferenceWrite(
 	out *flow.PointState,
 	path constraint.Path,
 	exact bool,
 	src ast.Expr,
-	write functionRefsWrite,
+	write referenceWrite,
 ) bool {
-	before := out.FunctionRefs
-	switch write.Mode {
+	changed := false
+	switch write.FunctionMode {
 	case referenceWritePreserve:
-		return false
+		// No function identity change for this write.
 	case referenceWriteFromSource:
 		if !exact {
-			return flow.ClearFunctionRefSubtreePath(out, path)
+			changed = flow.ClearFunctionRefSubtreePath(out, path) || changed
+		} else {
+			before := out.FunctionRefs
+			t.recordFunctionRefAt(out, path, src)
+			changed = !flow.FunctionRefsDomain.Equal(before, out.FunctionRefs) || changed
 		}
-		t.recordFunctionRefAt(out, path, src)
 	case referenceWriteTree:
 		if !exact {
-			return flow.ClearFunctionRefSubtreePath(out, path)
+			changed = flow.ClearFunctionRefSubtreePath(out, path) || changed
+		} else {
+			changed = flow.ReplaceFunctionRefTreePath(out, path, write.FunctionTree) || changed
 		}
-		return flow.ReplaceFunctionRefTreePath(out, path, write.Tree)
-	default:
-		return false
 	}
-	return !flow.FunctionRefsDomain.Equal(before, out.FunctionRefs)
-}
-
-func (t *Transfer) applyClosureReferenceEffect(
-	out *flow.PointState,
-	path constraint.Path,
-	exact bool,
-	src ast.Expr,
-	write closureRefsWrite,
-) bool {
-	before := out.ClosureRefs
-	switch write.Mode {
+	switch write.ClosureMode {
 	case referenceWritePreserve:
-		return false
+		// No closure identity change for this write.
 	case referenceWriteFromSource:
 		if !exact {
-			return flow.ClearClosureRefSubtreePath(out, path)
+			changed = flow.ClearClosureRefSubtreePath(out, path) || changed
+		} else {
+			before := out.ClosureRefs
+			t.recordClosureRefAt(out, path, src)
+			changed = !flow.ClosureRefsDomain.Equal(before, out.ClosureRefs) || changed
 		}
-		t.recordClosureRefAt(out, path, src)
 	case referenceWriteTree:
 		if !exact {
-			return flow.ClearClosureRefSubtreePath(out, path)
+			changed = flow.ClearClosureRefSubtreePath(out, path) || changed
+		} else {
+			changed = flow.ReplaceClosureRefTreePath(out, path, write.ClosureTree) || changed
 		}
-		return flow.ReplaceClosureRefTreePath(out, path, write.Tree)
-	default:
-		return false
 	}
-	return !flow.ClosureRefsDomain.Equal(before, out.ClosureRefs)
+	return changed
 }
 
 func (t *Transfer) applyPrototypeSelfEffect(out *flow.PointState, effect PrototypeSelfEffect) bool {
@@ -325,10 +314,9 @@ func (t *Transfer) applyPrototypeSelfWriteEffect(out *flow.PointState, effect Wr
 
 func referenceEffectForWrite(effect WriteEffect) ReferenceEffect {
 	return ReferenceEffect{
-		Place:        effect.Place,
-		Source:       effect.Source,
-		FunctionRefs: effect.FunctionRefs,
-		ClosureRefs:  effect.ClosureRefs,
+		Place:      effect.Place,
+		Source:     effect.Source,
+		References: effect.References,
 	}
 }
 
@@ -346,8 +334,7 @@ type WriteEffect struct {
 	LengthTarget  cfg.AssignTarget
 	KeyArrayTable constraint.Path
 
-	FunctionRefs functionRefsWrite
-	ClosureRefs  closureRefsWrite
+	References referenceWrite
 
 	KillRelations bool
 	RecordProto   bool
@@ -725,8 +712,7 @@ func (t *Transfer) aliasReplayWriteEffects(out *flow.PointState, effect WriteEff
 			ClearValue:    effect.ClearValue,
 			JoinExisting:  effect.JoinExisting,
 			Source:        effect.Source,
-			FunctionRefs:  effect.FunctionRefs,
-			ClosureRefs:   effect.ClosureRefs,
+			References:    effect.References,
 			KillRelations: effect.KillRelations,
 			RecordProto:   effect.RecordProto,
 			RecordStatic:  effect.RecordStatic,
@@ -768,8 +754,7 @@ func (t *Transfer) applySymbolWriteEffect(
 	joinExisting bool,
 	src ast.Expr,
 	keyArrayTable constraint.Path,
-	functionRefs functionRefsWrite,
-	closureRefs closureRefsWrite,
+	references referenceWrite,
 ) bool {
 	if target.Kind != cfg.TargetIdent || target.Symbol == 0 {
 		return false
@@ -781,8 +766,7 @@ func (t *Transfer) applySymbolWriteEffect(
 		JoinExisting:  joinExisting,
 		Source:        src,
 		KeyArrayTable: keyArrayTable,
-		FunctionRefs:  functionRefs,
-		ClosureRefs:   closureRefs,
+		References:    references,
 		KillRelations: true,
 		RecordProto:   true,
 		RecordStatic:  true,

@@ -45,8 +45,7 @@ func TestSymbolWriteEffectClearsStaleProductAxes(t *testing.T) {
 		Place:        Place{Root: sym},
 		Value:        product.FromType(typ.String),
 		Source:       &ast.NumberExpr{Value: "1"},
-		FunctionRefs: sourceFunctionRefsWrite(),
-		ClosureRefs:  sourceClosureRefsWrite(),
+		References:   sourceReferenceWrite(),
 		RecordStatic: true,
 	})
 
@@ -106,8 +105,7 @@ func TestWriteEffectReplaysStaticAliasDescendantWrite(t *testing.T) {
 			},
 		},
 		Value:        product.FromType(fnType),
-		FunctionRefs: sourceFunctionRefsWrite(),
-		ClosureRefs:  sourceClosureRefsWrite(),
+		References:   sourceReferenceWrite(),
 		RecordStatic: true,
 	})
 
@@ -1074,8 +1072,7 @@ func TestWriteEffectInvalidatesStaleConditionFactsForStaticPlace(t *testing.T) {
 			}},
 		},
 		Value:        product.FromType(typ.String),
-		FunctionRefs: sourceFunctionRefsWrite(),
-		ClosureRefs:  sourceClosureRefsWrite(),
+		References:   sourceReferenceWrite(),
 		RecordStatic: true,
 	})
 
@@ -1127,8 +1124,7 @@ func TestWriteEffectInvalidatesIndexConditionFactsForStaticPlace(t *testing.T) {
 			}},
 		},
 		Value:        product.FromType(typ.String),
-		FunctionRefs: sourceFunctionRefsWrite(),
-		ClosureRefs:  sourceClosureRefsWrite(),
+		References:   sourceReferenceWrite(),
 		RecordStatic: true,
 	})
 
@@ -1186,8 +1182,7 @@ func TestSymbolWriteEffectKillsSiblingNilRelation(t *testing.T) {
 
 	tr.applyWriteEffect(&out, WriteEffect{
 		Place:         Place{Root: valueSym},
-		FunctionRefs:  sourceFunctionRefsWrite(),
-		ClosureRefs:   sourceClosureRefsWrite(),
+		References:    sourceReferenceWrite(),
 		KillRelations: true,
 		RecordStatic:  true,
 	})
@@ -1245,8 +1240,7 @@ func TestFieldWriteKillsTargetLengthRelationOnly(t *testing.T) {
 				Key:  product.FromType(typ.String),
 			}},
 		},
-		FunctionRefs: sourceFunctionRefsWrite(),
-		ClosureRefs:  sourceClosureRefsWrite(),
+		References: sourceReferenceWrite(),
 	})
 
 	if out.Rel.HasTargetLengthParam(root, key, 0) {
@@ -1384,11 +1378,10 @@ func TestReferenceEffectInstallsRefTreesAtStaticPlace(t *testing.T) {
 				Member: value.MemberField("make"),
 			}},
 		},
-		FunctionRefs: treeFunctionRefsWrite(flow.FunctionRefTree{
+		References: sourceReferenceWrite().WithFunctionTree(flow.FunctionRefTree{
 			Root:    flow.FunctionRefSetOf(ref),
 			HasRoot: true,
-		}),
-		ClosureRefs: treeClosureRefsWrite(flow.ClosureRefTree{
+		}).WithClosureTree(flow.ClosureRefTree{
 			Root:    flow.ClosureRefSetOf(closure),
 			HasRoot: true,
 		}),
@@ -1440,9 +1433,8 @@ func TestReferenceEffectDynamicPlaceClearsRootSubtree(t *testing.T) {
 				Key:  product.FromType(typ.String),
 			}},
 		},
-		Source:       &ast.NumberExpr{Value: "1"},
-		FunctionRefs: sourceFunctionRefsWrite(),
-		ClosureRefs:  sourceClosureRefsWrite(),
+		Source:     &ast.NumberExpr{Value: "1"},
+		References: sourceReferenceWrite(),
 	})
 
 	if _, ok := flow.FunctionRefAt(out.FunctionRefs, fieldPath.Key()); ok {

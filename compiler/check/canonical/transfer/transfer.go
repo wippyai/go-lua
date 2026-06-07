@@ -869,7 +869,7 @@ func (t *Transfer) applyAssign(
 			return
 		}
 		keyArrayTable, _ := t.keyArrayTableForAssignment(info, i, target)
-		functionRefs, closureRefs := t.referenceWritesForAssignedPlace(out, Place{Root: target.Symbol}, info, i, src, demand)
+		references := t.referenceWritesForAssignedPlace(out, Place{Root: target.Symbol}, info, i, src, demand)
 		applyAssignmentProvenance := func(value product.AbstractValue) {
 			if provenance, ok := t.assignmentProvenanceEffectWithSourceSymbol(target, src, assignSourceSymbol(info, i), value); ok {
 				t.applyAssignmentProvenanceEffect(out, provenance)
@@ -882,12 +882,12 @@ func (t *Transfer) applyAssign(
 		}
 		if !ok {
 			if src != nil && t.pendingUnannotatedParamSource(out, src) {
-				t.applySymbolWriteEffect(out, target, product.AbstractValue{}, false, false, src, keyArrayTable, functionRefs, closureRefs)
+				t.applySymbolWriteEffect(out, target, product.AbstractValue{}, false, false, src, keyArrayTable, references)
 				applyAssignmentProvenance(product.AbstractValue{})
 				return
 			}
 			if t.symbolStorage.isCellBacked(target.Symbol) && src != nil {
-				t.applySymbolWriteEffect(out, target, product.Domain.Top(), false, false, nil, keyArrayTable, functionRefs, closureRefs)
+				t.applySymbolWriteEffect(out, target, product.Domain.Top(), false, false, nil, keyArrayTable, references)
 				applyAssignmentProvenance(product.Domain.Top())
 				return
 			}
@@ -905,7 +905,7 @@ func (t *Transfer) applyAssign(
 			// the gradual-admission gate does not silently admit.
 			if t.declaredGradualTop(target.Symbol) {
 				anyValue := product.FromType(typ.Any)
-				t.applySymbolWriteEffect(out, target, anyValue, false, false, nil, keyArrayTable, functionRefs, closureRefs)
+				t.applySymbolWriteEffect(out, target, anyValue, false, false, nil, keyArrayTable, references)
 				applyAssignmentProvenance(anyValue)
 				return
 			}
@@ -916,13 +916,13 @@ func (t *Transfer) applyAssign(
 			// slot sees the declared element/key/value rather than collapsing to unknown.
 			if dc, has := t.declaredContainerType(target.Symbol); has {
 				declaredValue := product.FromType(dc)
-				t.applySymbolWriteEffect(out, target, declaredValue, false, false, nil, keyArrayTable, functionRefs, closureRefs)
+				t.applySymbolWriteEffect(out, target, declaredValue, false, false, nil, keyArrayTable, references)
 				applyAssignmentProvenance(declaredValue)
 				return
 			}
 			// Unknown source: clear any stale narrowing so the slot is the value
 			// domain's Top (the most general value), never a stale precise type.
-			t.applySymbolWriteEffect(out, target, product.AbstractValue{}, true, false, nil, keyArrayTable, functionRefs, closureRefs)
+			t.applySymbolWriteEffect(out, target, product.AbstractValue{}, true, false, nil, keyArrayTable, references)
 			applyAssignmentProvenance(product.AbstractValue{})
 			return
 		}
@@ -960,7 +960,7 @@ func (t *Transfer) applyAssign(
 		// branch joins belong to the equation/fixpoint layer; weak-updating here
 		// pollutes ordinary branch precision (for example an `any` local overwritten
 		// by a string inside the true edge stays `any` forever).
-		t.applySymbolWriteEffect(out, target, val, false, false, src, keyArrayTable, functionRefs, closureRefs)
+		t.applySymbolWriteEffect(out, target, val, false, false, src, keyArrayTable, references)
 		applyAssignmentProvenance(val)
 		if provenance, ok := t.arrayElementKeyProvenanceEffect(target, src, val); ok {
 			t.applyArrayElementKeyProvenanceEffect(out, provenance)
@@ -1246,8 +1246,7 @@ func (t *Transfer) applyFuncDef(out *flow.PointState, info *cfg.FuncDefInfo) {
 	}
 	t.applyWriteEffect(out, WriteEffect{
 		Place:        place,
-		FunctionRefs: sourceFunctionRefsWrite(),
-		ClosureRefs:  sourceClosureRefsWrite(),
+		References:   sourceReferenceWrite(),
 		RecordStatic: true,
 	})
 	if t.funcTyper == nil || info.FuncExpr == nil {
@@ -1274,8 +1273,7 @@ func (t *Transfer) applyFuncDef(out *flow.PointState, info *cfg.FuncDefInfo) {
 			Value:         product.FromType(fn),
 			JoinExisting:  had,
 			Source:        info.FuncExpr,
-			FunctionRefs:  t.functionRefsWriteForFuncDef(info),
-			ClosureRefs:   sourceClosureRefsWrite(),
+			References:    t.referenceWriteForFuncDef(info),
 			KillRelations: true,
 			RecordStatic:  true,
 		})
@@ -1291,28 +1289,27 @@ func (t *Transfer) applyFuncDef(out *flow.PointState, info *cfg.FuncDefInfo) {
 		Place:        place,
 		Value:        product.FromType(fn),
 		Source:       info.FuncExpr,
-		FunctionRefs: t.functionRefsWriteForFuncDef(info),
-		ClosureRefs:  sourceClosureRefsWrite(),
+		References:   t.referenceWriteForFuncDef(info),
 		RecordStatic: true,
 	})
 }
 
-func (t *Transfer) functionRefsWriteForFuncDef(info *cfg.FuncDefInfo) functionRefsWrite {
+func (t *Transfer) referenceWriteForFuncDef(info *cfg.FuncDefInfo) referenceWrite {
 	if provider, ok := t.funcTyper.(functionRefProvider); ok {
 		if ref, ok := provider.MethodFuncRef(info); ok {
-			return treeFunctionRefsWrite(flow.FunctionRefTree{
+			return sourceReferenceWrite().WithFunctionTree(flow.FunctionRefTree{
 				Root:    flow.FunctionRefSetOf(ref),
 				HasRoot: true,
 			})
 		}
 		if ref, ok := provider.FuncRef(info.FuncExpr); ok {
-			return treeFunctionRefsWrite(flow.FunctionRefTree{
+			return sourceReferenceWrite().WithFunctionTree(flow.FunctionRefTree{
 				Root:    flow.FunctionRefSetOf(ref),
 				HasRoot: true,
 			})
 		}
 	}
-	return sourceFunctionRefsWrite()
+	return sourceReferenceWrite()
 }
 
 // applyContainerWrite applies a field or index write (t.f = v, t.a.b = v, t[k] = v)
@@ -1331,7 +1328,7 @@ func (t *Transfer) applyContainerWrite(
 	src ast.Expr,
 	demand func(int, paramevidence.ParamContract),
 ) {
-	t.applyContainerWriteWithRefs(out, target, src, demand, sourceFunctionRefsWrite(), sourceClosureRefsWrite())
+	t.applyContainerWriteWithRefs(out, target, src, demand, sourceReferenceWrite())
 }
 
 func (t *Transfer) applyContainerWriteForAssign(
@@ -1342,7 +1339,7 @@ func (t *Transfer) applyContainerWriteForAssign(
 	targetIndex int,
 	demand func(int, paramevidence.ParamContract),
 ) {
-	t.applyContainerWriteWithRefResolver(out, target, src, demand, func(place Place) (functionRefsWrite, closureRefsWrite) {
+	t.applyContainerWriteWithRefResolver(out, target, src, demand, func(place Place) referenceWrite {
 		return t.referenceWritesForAssignedPlace(out, place, info, targetIndex, src, demand)
 	})
 }
@@ -1352,11 +1349,10 @@ func (t *Transfer) applyContainerWriteWithRefs(
 	target cfg.AssignTarget,
 	src ast.Expr,
 	demand func(int, paramevidence.ParamContract),
-	functionRefs functionRefsWrite,
-	closureRefs closureRefsWrite,
+	references referenceWrite,
 ) {
-	t.applyContainerWriteWithRefResolver(out, target, src, demand, func(Place) (functionRefsWrite, closureRefsWrite) {
-		return functionRefs, closureRefs
+	t.applyContainerWriteWithRefResolver(out, target, src, demand, func(Place) referenceWrite {
+		return references
 	})
 }
 
@@ -1365,7 +1361,7 @@ func (t *Transfer) applyContainerWriteWithRefResolver(
 	target cfg.AssignTarget,
 	src ast.Expr,
 	demand func(int, paramevidence.ParamContract),
-	refWrites func(Place) (functionRefsWrite, closureRefsWrite),
+	refWrites func(Place) referenceWrite,
 ) {
 	var base product.AbstractValue
 	if target.BaseSymbol != 0 {
@@ -1387,16 +1383,15 @@ func (t *Transfer) applyContainerWriteWithRefResolver(
 		// container prefix (`items.byName[k] = v`). Emit an invalidation-only effect
 		// for that footprint; do not pretend we know the exact key or root value.
 		if prefix, prefixOK := t.invalidationPlaceOfAssignTarget(target); prefixOK && prefix.Root != 0 {
-			functionRefs, closureRefs := sourceFunctionRefsWrite(), sourceClosureRefsWrite()
+			references := sourceReferenceWrite()
 			if refWrites != nil {
-				functionRefs, closureRefs = refWrites(prefix)
+				references = refWrites(prefix)
 			}
 			t.applyWriteEffect(out, WriteEffect{
 				Place:        prefix,
 				Source:       src,
 				RecordProto:  true,
-				FunctionRefs: functionRefs,
-				ClosureRefs:  closureRefs,
+				References:   references,
 				RecordStatic: true,
 			})
 		}
@@ -1405,9 +1400,9 @@ func (t *Transfer) applyContainerWriteWithRefResolver(
 		// to update; its container value lives nowhere this transfer tracks.
 		return
 	}
-	functionRefs, closureRefs := sourceFunctionRefsWrite(), sourceClosureRefsWrite()
+	references := sourceReferenceWrite()
 	if refWrites != nil {
-		functionRefs, closureRefs = refWrites(place)
+		references = refWrites(place)
 	}
 	val := product.AbstractValue{}
 	if src != nil {
@@ -1431,8 +1426,7 @@ func (t *Transfer) applyContainerWriteWithRefResolver(
 		DynamicMode:  mode,
 		LengthTarget: target,
 		RecordProto:  true,
-		FunctionRefs: functionRefs,
-		ClosureRefs:  closureRefs,
+		References:   references,
 		RecordStatic: true,
 	})
 	if provenance, ok := t.assignmentProvenanceEffect(target, src, val); ok {
@@ -1507,8 +1501,7 @@ func (t *Transfer) applyIterationTargetWrite(
 		joinExisting,
 		nil,
 		constraint.Path{},
-		sourceFunctionRefsWrite(),
-		sourceClosureRefsWrite(),
+		sourceReferenceWrite(),
 	)
 }
 
@@ -1526,19 +1519,11 @@ func (t *Transfer) referenceWritesForAssignedPlace(
 	targetIndex int,
 	src ast.Expr,
 	demand func(int, paramevidence.ParamContract),
-) (functionRefsWrite, closureRefsWrite) {
-	functionRefs := sourceFunctionRefsWrite()
-	closureRefs := sourceClosureRefsWrite()
-	if callRefs, ok := t.callReturnReferenceWritesForAssignedPlace(out, place, info, targetIndex, src, demand); ok {
-		functionRefs = callRefs.FunctionRefs
-		closureRefs = callRefs.ClosureRefs
+) referenceWrite {
+	if references, ok := t.callReturnReferenceWritesForAssignedPlace(out, place, info, targetIndex, src, demand); ok {
+		return references
 	}
-	return functionRefs, closureRefs
-}
-
-type callReturnReferenceWrites struct {
-	FunctionRefs functionRefsWrite
-	ClosureRefs  closureRefsWrite
+	return sourceReferenceWrite()
 }
 
 func (t *Transfer) callReturnReferenceWritesForAssignedPlace(
@@ -1548,7 +1533,7 @@ func (t *Transfer) callReturnReferenceWritesForAssignedPlace(
 	targetIndex int,
 	src ast.Expr,
 	demand func(int, paramevidence.ParamContract),
-) (callReturnReferenceWrites, bool) {
+) (referenceWrite, bool) {
 	if info != nil {
 		if call, retIndex := info.CallForTarget(targetIndex); call != nil && call.Call != nil {
 			return t.callReturnReferenceWritesForPlace(out, place, call.Call, retIndex, demand)
@@ -1557,7 +1542,7 @@ func (t *Transfer) callReturnReferenceWritesForAssignedPlace(
 	if call, ok := src.(*ast.FuncCallExpr); ok {
 		return t.callReturnReferenceWritesForPlace(out, place, call, 0, demand)
 	}
-	return callReturnReferenceWrites{}, false
+	return referenceWrite{}, false
 }
 
 func (t *Transfer) callReturnReferenceWritesForPlace(
@@ -1566,25 +1551,22 @@ func (t *Transfer) callReturnReferenceWritesForPlace(
 	call *ast.FuncCallExpr,
 	retIndex int,
 	demand func(int, paramevidence.ParamContract),
-) (callReturnReferenceWrites, bool) {
+) (referenceWrite, bool) {
 	if out == nil || call == nil || retIndex < 0 {
-		return callReturnReferenceWrites{}, false
+		return referenceWrite{}, false
 	}
 	if path, ok := place.StaticPath(); !ok || path.IsEmpty() {
-		return callReturnReferenceWrites{}, false
+		return referenceWrite{}, false
 	}
 	returns := t.productCallResult(call, t.productCallContext(out, call, demand)).ReturnRefs
-	writes := callReturnReferenceWrites{
-		FunctionRefs: sourceFunctionRefsWrite(),
-		ClosureRefs:  sourceClosureRefsWrite(),
-	}
+	writes := sourceReferenceWrite()
 	got := false
 	if tree, ok := returns.FunctionRefTree(retIndex); ok {
-		writes.FunctionRefs = treeFunctionRefsWrite(tree)
+		writes = writes.WithFunctionTree(tree)
 		got = true
 	}
 	if tree, ok := returns.ClosureRefTree(retIndex); ok {
-		writes.ClosureRefs = treeClosureRefsWrite(tree)
+		writes = writes.WithClosureTree(tree)
 		got = true
 	}
 	return writes, got
