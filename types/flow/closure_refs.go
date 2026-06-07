@@ -425,16 +425,6 @@ func WithoutClosureRefSubtreeAddress(refs ClosureRefs, addr StableAddress) Closu
 	return ClosureRefsDomain.Join(out, nil)
 }
 
-// WithoutClosureRefSubtree returns refs with path and every descendant path
-// removed.
-func WithoutClosureRefSubtree(refs ClosureRefs, path constraint.PathKey) ClosureRefs {
-	addr, ok := StableAddressFromKey(path)
-	if !ok {
-		return refs
-	}
-	return WithoutClosureRefSubtreeAddress(refs, addr)
-}
-
 // ApplyClosureRefCellEffectsAddress applies cell effects to the closure
 // environment stored at addr. This is the closure-call counterpart of
 // CaptureEffects.Apply: the callee mutates its captured lexical store, so the
@@ -472,16 +462,6 @@ func ApplyClosureRefCellEffectsAddress(refs ClosureRefs, addr StableAddress, eff
 // environment stored at path.
 func ApplyClosureRefCellEffectsPath(refs ClosureRefs, path constraint.Path, effects CaptureEffects) ClosureRefs {
 	addr, ok := StableAddressOfPath(path)
-	if !ok {
-		return refs
-	}
-	return ApplyClosureRefCellEffectsAddress(refs, addr, effects)
-}
-
-// ApplyClosureRefCellEffects applies cell effects to the closure environment
-// stored at path.
-func ApplyClosureRefCellEffects(refs ClosureRefs, path constraint.PathKey, effects CaptureEffects) ClosureRefs {
-	addr, ok := StableAddressFromKey(path)
 	if !ok {
 		return refs
 	}

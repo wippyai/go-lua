@@ -60,7 +60,11 @@ func TestFunctionRefsSubtreeStrongUpdate(t *testing.T) {
 	refs = WithFunctionRefPath(refs, child, FunctionRefSetOf(FunctionRef{GraphID: 2}))
 	refs = WithFunctionRefPath(refs, samePrintedRoot, FunctionRefSetOf(FunctionRef{GraphID: 3}))
 
-	refs = WithoutFunctionRefSubtree(refs, StablePathKey(root))
+	rootAddr, ok := StableAddressOfPath(root)
+	if !ok {
+		t.Fatalf("stable address for path %s", root.Key())
+	}
+	refs = WithoutFunctionRefSubtreeAddress(refs, rootAddr)
 	if _, ok := FunctionRefAtPath(refs, root); ok {
 		t.Fatalf("root identity survived subtree clear: %v", refs)
 	}

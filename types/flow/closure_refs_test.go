@@ -251,7 +251,11 @@ func TestClosureRefsSubtreeStrongUpdateUsesStableAddress(t *testing.T) {
 	refs = WithClosureRefPath(refs, child, ClosureRefSetOf(closure))
 	refs = WithClosureRefPath(refs, samePrintedRoot, ClosureRefSetOf(closure))
 
-	refs = WithoutClosureRefSubtree(refs, StablePathKey(root))
+	rootAddr, ok := StableAddressOfPath(root)
+	if !ok {
+		t.Fatalf("stable address for path %s", root.Key())
+	}
+	refs = WithoutClosureRefSubtreeAddress(refs, rootAddr)
 	if _, ok := ClosureRefAtPath(refs, root); ok {
 		t.Fatalf("root closure survived subtree clear: %#v", refs)
 	}

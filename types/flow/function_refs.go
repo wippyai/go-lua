@@ -424,17 +424,6 @@ func WithoutFunctionRefSubtreeAddress(refs FunctionRefs, addr StableAddress) Fun
 	return FunctionRefsDomain.Join(out, nil)
 }
 
-// WithoutFunctionRefSubtree returns refs with path and every descendant path
-// removed. A strong write to a container path invalidates all function identities
-// beneath that runtime value.
-func WithoutFunctionRefSubtree(refs FunctionRefs, path constraint.PathKey) FunctionRefs {
-	addr, ok := StableAddressFromKey(path)
-	if !ok {
-		return refs
-	}
-	return WithoutFunctionRefSubtreeAddress(refs, addr)
-}
-
 func functionRefPathInAddressSubtree(path constraint.PathKey, root StableAddress) bool {
 	pathAddr, ok := StableAddressFromCanonicalKey(path)
 	if !ok {
