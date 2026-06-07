@@ -145,14 +145,7 @@ func refineObservationByIndexWriteAdmission(q ObservationQuery) (typ.Type, bool)
 	if q.Index.KeyPath.IsEmpty() && !flowfacts.IndexWriteReadCanUseKeyValueOnly(q.Index.KeyType) {
 		return nil, false
 	}
-	query, ok := flowfacts.IndexWriteReadQueryFromPaths(
-		q.Point,
-		q.View,
-		q.Index.TablePath,
-		q.Index.KeyPath,
-		q.Index.KeyType,
-		constraint.Path{},
-	)
+	query, ok := q.Index.ReadbackQuery(q.Point, q.View)
 	if !ok {
 		return nil, false
 	}
