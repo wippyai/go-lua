@@ -406,7 +406,7 @@ func (t *Transfer) applyAppendElementMutationFacts(out *flow.PointState, effect 
 			KeyFacts:      true,
 		})
 	}
-	return flow.ApplyAppendElementMutationPathProof(out, flow.AppendElementMutationPathProof{
+	return flow.ApplyAppendElementMutationPathTransaction(out, flow.AppendElementMutationPathTransaction{
 		Footprint:    footprint,
 		ArrayPath:    arrayPath,
 		ElementPath:  effect.ElementPath,

@@ -537,7 +537,7 @@ func TestApplyAppendKeyReplayPathProofAppliesAppendTransaction(t *testing.T) {
 	}
 }
 
-func TestApplyAppendElementMutationPathProofAppliesCollectionTransaction(t *testing.T) {
+func TestApplyAppendElementMutationPathTransactionAppliesCollectionTransaction(t *testing.T) {
 	arrayPath := constraint.NewPath(cfg.SymbolID(249), "node_order")
 	tablePath := constraint.NewPath(cfg.SymbolID(250), "nodes")
 	keyPath := constraint.NewPath(cfg.SymbolID(251), "node_id")
@@ -559,7 +559,7 @@ func TestApplyAppendElementMutationPathProofAppliesCollectionTransaction(t *test
 		}),
 	}
 
-	changed := ApplyAppendElementMutationPathProof(&state, AppendElementMutationPathProof{
+	changed := ApplyAppendElementMutationPathTransaction(&state, AppendElementMutationPathTransaction{
 		Footprint: access.WriteFootprint{
 			WritePath:         arrayPath,
 			ExactWritePath:    arrayPath,
@@ -574,7 +574,7 @@ func TestApplyAppendElementMutationPathProofAppliesCollectionTransaction(t *test
 		}},
 	})
 	if !changed {
-		t.Fatal("ApplyAppendElementMutationPathProof reported no change")
+		t.Fatal("ApplyAppendElementMutationPathTransaction reported no change")
 	}
 	if tables := state.KeyPresence.KeyArrayTables(StablePathKey(arrayPath)); len(tables) != 1 || tables[0] != StablePathKey(tablePath) {
 		t.Fatalf("append transaction did not seed key-array table: %s", state.KeyPresence.Format())
@@ -589,6 +589,49 @@ func TestApplyAppendElementMutationPathProofAppliesCollectionTransaction(t *test
 	)
 	if len(fieldSources) != 1 {
 		t.Fatalf("append transaction field sources = %v, want one source; facts=%s", fieldSources, state.KeyPresence.Format())
+	}
+}
+
+func TestAppendElementMutationTransactionOfPathSelectsPreWriteEvidence(t *testing.T) {
+	arrayPath := constraint.NewPath(cfg.SymbolID(260), "keys")
+	tablePath := constraint.NewPath(cfg.SymbolID(261), "nodes")
+	keyPath := constraint.NewPath(cfg.SymbolID(262), "node_id")
+	array := testStableAddressPath(t, arrayPath)
+	table := testStableAddressPath(t, tablePath)
+	key := testStableAddressPath(t, keyPath)
+	state := PointState{
+		Env: map[ValueKey]product.AbstractValue{
+			SymbolValueKey(arrayPath.Symbol): product.FromType(typ.NewFreshArray()),
+			SymbolValueKey(keyPath.Symbol):   product.FromType(typ.String),
+		},
+		KeyPresence: KeyPresenceFacts{}.
+			WithKeyArrayAddresses(array, table),
+	}
+
+	tx, ok := AppendElementMutationTransactionOfPath(state, AppendElementMutationPathTransaction{
+		Footprint: access.WriteFootprint{
+			WritePath:         arrayPath,
+			ExactWritePath:    arrayPath,
+			HasExactWritePath: true,
+		},
+		ArrayPath:    arrayPath,
+		ElementPath:  keyPath,
+		ElementValue: product.FromType(typ.String),
+	})
+	if !ok {
+		t.Fatal("AppendElementMutationTransactionOfPath failed")
+	}
+	if !tx.Array.Equal(array) || !tx.Element.Equal(key) || !tx.HasElement {
+		t.Fatalf("normalized addresses = array %s element %s has %v", tx.Array.Key(), tx.Element.Key(), tx.HasElement)
+	}
+	if len(tx.Selection.Pending) != 1 || !tx.Selection.Pending[0].HasTable || !tx.Selection.Pending[0].Table.Equal(table) {
+		t.Fatalf("pre-write selection = %#v, want pending table", tx.Selection)
+	}
+	if !ApplyAppendElementMutationTransaction(&state, tx) {
+		t.Fatal("ApplyAppendElementMutationTransaction reported no change")
+	}
+	if appends := state.KeyPresence.AppendedKeyEntries(); len(appends) != 1 || appends[0].Array != array.Key() || appends[0].Key != key.Key() {
+		t.Fatalf("append transaction did not record key: %s", state.KeyPresence.Format())
 	}
 }
 

@@ -32,6 +32,13 @@ type AppendElementFieldOriginPathSource struct {
 	SourcePath constraint.Path
 }
 
+// AppendElementFieldOriginSource is the normalized, routed source set for one
+// field carried by an appended element.
+type AppendElementFieldOriginSource struct {
+	Field   []constraint.Segment
+	Sources []AppendOriginSource
+}
+
 // PendingKeyArrayDestination is a delayed append consequence. When HasTable is
 // false, the pending fact waits for any table that is later proven to contain
 // Key.
@@ -100,11 +107,10 @@ type AppendKeyReplayPathProof struct {
 	PreserveHistoryBase bool
 }
 
-// AppendElementMutationPathProof is the reduced-product transaction for
-// appending one element to a collection. Producers provide the source-level
-// append footprint and optional syntactic field sources; flow owns invalidation,
-// append history preservation, key-array consequences, and append-origin replay.
-type AppendElementMutationPathProof struct {
+// AppendElementMutationPathTransaction is the source-facing transaction for
+// appending one element to a collection. It is normalized against pre-write
+// point state before the address transaction applies invalidation and replay.
+type AppendElementMutationPathTransaction struct {
 	Footprint access.WriteFootprint
 	ArrayPath constraint.Path
 
@@ -112,6 +118,24 @@ type AppendElementMutationPathProof struct {
 	ElementValue product.AbstractValue
 
 	FieldSources []AppendElementFieldOriginPathSource
+}
+
+// AppendElementMutationTransaction is the address-space append mutation
+// transaction. All pre-write evidence has already been selected by the path
+// boundary, so applying it cannot accidentally read facts after invalidation.
+type AppendElementMutationTransaction struct {
+	Footprint access.WriteFootprint
+	Array     StableAddress
+
+	PreserveHistoryBase bool
+	Destinations        []AppendOriginDestination
+
+	Element      StableAddress
+	HasElement   bool
+	ElementValue product.AbstractValue
+
+	FieldSources []AppendElementFieldOriginSource
+	Selection    AppendKeyArraySelection
 }
 
 // AppendKeyArraySelection is the direct plus delayed consequence set for an
@@ -404,81 +428,125 @@ func ApplyAppendKeyReplayPathProof(out *PointState, proof AppendKeyReplayPathPro
 	return changed
 }
 
-// ApplyAppendElementMutationPathProof applies all address-fact consequences of a
-// local append mutation while preserving the pre-write evidence needed by the
-// reduced product.
-func ApplyAppendElementMutationPathProof(out *PointState, proof AppendElementMutationPathProof) bool {
-	if out == nil || proof.ArrayPath.IsEmpty() {
-		return false
+// AppendElementMutationTransactionOfPath selects pre-write evidence for a
+// source-facing append mutation transaction and lowers stable paths once.
+func AppendElementMutationTransactionOfPath(state PointState, tx AppendElementMutationPathTransaction) (AppendElementMutationTransaction, bool) {
+	if tx.ArrayPath.IsEmpty() {
+		return AppendElementMutationTransaction{}, false
 	}
-	array, arrayOK := StableAddressOfPath(proof.ArrayPath)
+	array, arrayOK := StableAddressOfPath(tx.ArrayPath)
 	if !arrayOK {
-		return false
+		return AppendElementMutationTransaction{}, false
 	}
-	facts := PointFactsOf(*out)
-	preserveHistoryBase := facts.HasAppendHistoryBase(proof.ArrayPath)
-	freshEmptySeed := AppendFreshEmptySeedPath(*out, proof.ArrayPath)
-	destinations := AppendOriginDestinations(*out, array, nil)
-	key, hasKey := StableAddress{}, false
-	selection := AppendKeyArraySelection{}
-	if !proof.ElementPath.IsEmpty() {
-		if keyAddr, ok := StableAddressOfPath(proof.ElementPath); ok {
-			key = keyAddr
-			hasKey = true
-			selection = AppendKeyArrayPreservation(*out, AppendKeyArrayPreservationQuery{
+	facts := PointFactsOf(state)
+	out := AppendElementMutationTransaction{
+		Footprint:           tx.Footprint,
+		Array:               array,
+		PreserveHistoryBase: facts.HasAppendHistoryBase(tx.ArrayPath),
+		Destinations:        AppendOriginDestinations(state, array, nil),
+		ElementValue:        tx.ElementValue,
+		FieldSources:        appendElementFieldOriginSourcesOfPath(state, tx.FieldSources),
+	}
+	freshEmptySeed := AppendFreshEmptySeedPath(state, tx.ArrayPath)
+	if !tx.ElementPath.IsEmpty() {
+		if key, ok := StableAddressOfPath(tx.ElementPath); ok {
+			out.Element = key
+			out.HasElement = true
+			out.Selection = AppendKeyArrayPreservation(state, AppendKeyArrayPreservationQuery{
 				Array:          array,
-				Key:            keyAddr,
+				Key:            key,
 				FreshEmptySeed: freshEmptySeed,
 			})
 		}
 	}
+	return out, true
+}
 
+// ApplyAppendElementMutationPathTransaction normalizes a source-level append
+// mutation against pre-write state, then applies the address transaction.
+func ApplyAppendElementMutationPathTransaction(out *PointState, tx AppendElementMutationPathTransaction) bool {
+	if out == nil {
+		return false
+	}
+	normalized, ok := AppendElementMutationTransactionOfPath(*out, tx)
+	if !ok {
+		return false
+	}
+	return ApplyAppendElementMutationTransaction(out, normalized)
+}
+
+// ApplyAppendElementMutationTransaction applies all address-fact consequences of
+// a local append mutation using pre-selected evidence.
+func ApplyAppendElementMutationTransaction(out *PointState, tx AppendElementMutationTransaction) bool {
+	if out == nil || tx.Array.Key() == "" {
+		return false
+	}
 	changed := ApplyAccessMutation(out, AccessMutation{
-		Footprint:     proof.Footprint,
+		Footprint:     tx.Footprint,
 		StaticMembers: true,
 		Conditions:    true,
 		AddressFacts:  true,
 	})
-	if preserveHistoryBase {
-		changed = ApplyAppendHistoryBaseProof(out, AppendHistoryBaseProof{Array: array}) || changed
+	if tx.PreserveHistoryBase {
+		changed = ApplyAppendHistoryBaseProof(out, AppendHistoryBaseProof{Array: tx.Array}) || changed
 	}
-	if hasKey {
-		changed = ApplyAppendKeyProof(out, AppendKeyProof{Array: array, Key: key}) || changed
+	if tx.HasElement {
+		changed = ApplyAppendKeyProof(out, AppendKeyProof{Array: tx.Array, Key: tx.Element}) || changed
 	}
-	changed = applyAppendElementFieldOriginPathSources(out, destinations, proof.FieldSources) || changed
-	if hasKey {
-		changed = replayAppendElementFieldOriginUses(out, destinations, proof.ElementPath) || changed
+	changed = applyAppendElementFieldOriginSources(out, tx.Destinations, tx.FieldSources) || changed
+	if tx.HasElement {
+		changed = replayAppendElementFieldOriginUses(out, tx.Destinations, tx.Element) || changed
 	}
-	if len(selection.Tables) > 0 || len(selection.Pending) > 0 {
+	if len(tx.Selection.Tables) > 0 || len(tx.Selection.Pending) > 0 {
 		changed = ApplyAppendKeyArrayConsequences(out, AppendKeyArrayConsequences{
-			Array:    array,
-			Key:      key,
-			HasKey:   hasKey,
-			KeyValue: proof.ElementValue,
-			Tables:   selection.Tables,
-			Pending:  selection.Pending,
+			Array:    tx.Array,
+			Key:      tx.Element,
+			HasKey:   tx.HasElement,
+			KeyValue: tx.ElementValue,
+			Tables:   tx.Selection.Tables,
+			Pending:  tx.Selection.Pending,
 		}) || changed
 	}
 	return changed
 }
 
-func applyAppendElementFieldOriginPathSources(
+func appendElementFieldOriginSourcesOfPath(state PointState, sources []AppendElementFieldOriginPathSource) []AppendElementFieldOriginSource {
+	if len(sources) == 0 {
+		return nil
+	}
+	var out []AppendElementFieldOriginSource
+	for _, source := range sources {
+		if len(source.Field) == 0 || source.SourcePath.IsEmpty() {
+			continue
+		}
+		routed := AppendOriginSourcesPath(state, source.SourcePath)
+		if len(routed) == 0 {
+			continue
+		}
+		out = append(out, AppendElementFieldOriginSource{
+			Field:   cloneAddressSegments(source.Field),
+			Sources: routed,
+		})
+	}
+	return out
+}
+
+func applyAppendElementFieldOriginSources(
 	out *PointState,
 	destinations []AppendOriginDestination,
-	sources []AppendElementFieldOriginPathSource,
+	sources []AppendElementFieldOriginSource,
 ) bool {
 	if out == nil || len(destinations) == 0 || len(sources) == 0 {
 		return false
 	}
 	changed := false
 	for _, source := range sources {
-		if len(source.Field) == 0 || source.SourcePath.IsEmpty() {
+		if len(source.Field) == 0 || len(source.Sources) == 0 {
 			continue
 		}
-		routedSources := AppendOriginSourcesPath(*out, source.SourcePath)
 		for _, dst := range destinations {
 			field := append(cloneAddressSegments(dst.FieldPrefix), source.Field...)
-			for _, src := range routedSources {
+			for _, src := range source.Sources {
 				changed = ApplyAppendElementFieldOriginProof(out, AppendElementFieldOriginProof{
 					Array:       dst.Array,
 					Field:       field,
@@ -491,17 +559,17 @@ func applyAppendElementFieldOriginPathSources(
 	return changed
 }
 
-func replayAppendElementFieldOriginUses(out *PointState, destinations []AppendOriginDestination, elementPath constraint.Path) bool {
-	if out == nil || len(destinations) == 0 || elementPath.IsEmpty() {
+func replayAppendElementFieldOriginUses(out *PointState, destinations []AppendOriginDestination, element StableAddress) bool {
+	if out == nil || len(destinations) == 0 || element.Key() == "" {
 		return false
 	}
 	changed := false
 	for _, field := range AppendElementFieldOriginFields(*out) {
-		elementField := elementPath
-		for _, seg := range field {
-			elementField = elementField.Append(seg)
+		elementField, ok := element.Append(field)
+		if !ok {
+			continue
 		}
-		for _, originUse := range AppendElementFieldOriginUsesPath(*out, elementField) {
+		for _, originUse := range AppendElementFieldOriginUses(*out, elementField) {
 			changed = ApplyAppendElementFieldOriginUse(out, destinations, field, originUse) || changed
 		}
 	}
