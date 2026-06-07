@@ -91,6 +91,22 @@ func TestIndexWriteAdmissionFactsKillAffectedByWrite(t *testing.T) {
 	}
 }
 
+func TestIndexWriteAdmissionFactsKillIgnoresLegacyStoredPathKeys(t *testing.T) {
+	target := constraint.NewPath(cfg.SymbolID(16), "store").Field("items")
+	key := constraint.NewPath(cfg.SymbolID(17), "id")
+	facts := IndexWriteAdmissionFacts{}.With(IndexWriteAdmissionFact{
+		Target:  target.Key(),
+		KeyPath: key.Key(),
+		Key:     product.FromType(typ.String),
+		Value:   product.FromType(typ.Number),
+	})
+
+	killed := facts.KillAffectedByWriteAddress(testStableAddress(t, target))
+	if len(killed.Entries()) == 0 {
+		t.Fatalf("kill treated legacy stored keys as canonical: %s", facts.Format())
+	}
+}
+
 func testStableAddress(t *testing.T, path constraint.Path) StableAddress {
 	t.Helper()
 	addr, ok := StableAddressOfPath(path)

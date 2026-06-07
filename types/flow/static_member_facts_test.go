@@ -74,6 +74,26 @@ func TestStaticMemberFactsKillSubtreeUsesStructuralPathPrefix(t *testing.T) {
 	}
 }
 
+func TestStaticMemberFactsStoredScansIgnoreLegacyPathKeys(t *testing.T) {
+	root := constraint.NewPath(cfg.SymbolID(7), "entry")
+	child := root.Field("name")
+	facts := StaticMemberFactsOf([]StaticMemberFact{
+		{Path: child.Key(), Value: product.FromType(typ.String)},
+	})
+	rootAddr := testStableAddressPath(t, root)
+
+	if entries := facts.AddressEntriesUnder(rootAddr); len(entries) != 0 {
+		t.Fatalf("address entries accepted legacy stored key %s: %v", child.Key(), entries)
+	}
+	if children := facts.DirectChildAddressesUnder(rootAddr); len(children) != 0 {
+		t.Fatalf("direct children accepted legacy stored key %s: %v", child.Key(), children)
+	}
+	killed := facts.KillSubtreeAddress(rootAddr)
+	if len(killed.Entries()) == 0 {
+		t.Fatalf("subtree kill treated legacy stored key %s as canonical", child.Key())
+	}
+}
+
 func TestStaticMemberFactsAddressAPIIsCanonicalSurface(t *testing.T) {
 	root, _ := SymbolPathRoot(cfg.SymbolID(8))
 	field := PathSuffixOfSegments([]constraint.Segment{{Kind: constraint.SegmentField, Name: "field"}})

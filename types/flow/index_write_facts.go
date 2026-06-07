@@ -218,7 +218,7 @@ func indexWriteAdmissionFactFromAddress(fact IndexWriteAdmissionAddressFact) (In
 }
 
 func indexWritePathOverlapsAddress(path constraint.PathKey, addr StableAddress) bool {
-	pathAddr, ok := StableAddressFromKey(path)
+	pathAddr, ok := StableAddressFromCanonicalKey(path)
 	return ok && pathAddr.Overlaps(addr)
 }
 

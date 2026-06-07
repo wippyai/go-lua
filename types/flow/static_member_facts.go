@@ -101,7 +101,7 @@ func (f StaticMemberFacts) KillSubtreeAddress(root StableAddress) StaticMemberFa
 	}
 	out := make([]StaticMemberFact, 0, len(f.entries))
 	for _, e := range f.entries {
-		pathAddr, ok := StableAddressFromKey(e.Path)
+		pathAddr, ok := StableAddressFromCanonicalKey(e.Path)
 		if ok && pathAddr.HasPrefix(root) {
 			continue
 		}
@@ -118,7 +118,7 @@ func (f StaticMemberFacts) AddressEntriesUnder(root StableAddress) []StaticMembe
 	}
 	var out []StaticMemberAddressFact
 	for _, entry := range f.entries {
-		addr, ok := StableAddressFromKey(entry.Path)
+		addr, ok := StableAddressFromCanonicalKey(entry.Path)
 		if !ok || !addr.HasPrefix(root) {
 			continue
 		}
@@ -139,7 +139,7 @@ func (f StaticMemberFacts) DirectChildAddressesUnder(parent StableAddress) []Sta
 	seen := make(map[constraint.PathKey]struct{})
 	var out []StableAddress
 	for _, entry := range f.entries {
-		addr, ok := StableAddressFromKey(entry.Path)
+		addr, ok := StableAddressFromCanonicalKey(entry.Path)
 		if !ok {
 			continue
 		}
@@ -210,7 +210,7 @@ func (f StaticMemberFacts) withFactsMergedFromPresentValues(
 		if joined.IsZero() || joined.IsBottom() {
 			continue
 		}
-		addr, ok := StableAddressFromKey(entry.Path)
+		addr, ok := StableAddressFromCanonicalKey(entry.Path)
 		if !ok {
 			continue
 		}
