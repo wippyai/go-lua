@@ -69,7 +69,7 @@ func TestCapturedTypeAtPointMergesPathSensitiveRecordField(t *testing.T) {
 	}
 }
 
-func TestProjectPathFacts_UsesParentIdentityWhenRecursingIntoChildFacts(t *testing.T) {
+func TestProjectObservedPathShape_UsesParentIdentityWhenRecursingIntoChildFacts(t *testing.T) {
 	const sym cfg.SymbolID = 38
 	const point cfg.Point = 6
 	root := constraint.Path{Root: "class_mt", Symbol: sym}
@@ -77,7 +77,7 @@ func TestProjectPathFacts_UsesParentIdentityWhenRecursingIntoChildFacts(t *testi
 	method := typ.Func().Param("self", typ.Any).Returns(typ.Boolean).Build()
 	base := typ.NewRecord().Field("__index", typ.NewRecord().Build()).Build()
 
-	got := projectPathFacts(point, root, base, PathProjection{
+	got := flow.ProjectObservedPathShape(point, root, base, PathProjection{
 		Children: projectionSurface{
 			childTypes: func(p cfg.Point, path constraint.Path) []flow.PathFact {
 				if p != point {
@@ -95,15 +95,15 @@ func TestProjectPathFacts_UsesParentIdentityWhenRecursingIntoChildFacts(t *testi
 				return nil
 			},
 		},
-	}, nil, true)
+	})
 
 	rec, ok := got.(*typ.Record)
 	if !ok {
-		t.Fatalf("projectPathFacts = %T, want record", got)
+		t.Fatalf("ProjectObservedPathShape = %T, want record", got)
 	}
 	indexField := rec.GetField("__index")
 	if indexField == nil {
-		t.Fatalf("projectPathFacts dropped __index: %v", rec)
+		t.Fatalf("ProjectObservedPathShape dropped __index: %v", rec)
 	}
 	indexRec, ok := indexField.Type.(*typ.Record)
 	if !ok {
@@ -115,7 +115,7 @@ func TestProjectPathFacts_UsesParentIdentityWhenRecursingIntoChildFacts(t *testi
 	}
 }
 
-func TestProjectPathFacts_UsesVersionedChildFactIdentityForRecursion(t *testing.T) {
+func TestProjectObservedPathShape_UsesVersionedChildFactIdentityForRecursion(t *testing.T) {
 	const sym cfg.SymbolID = 38
 	const version = 12
 	const point cfg.Point = 6
@@ -124,7 +124,7 @@ func TestProjectPathFacts_UsesVersionedChildFactIdentityForRecursion(t *testing.
 	method := typ.Func().Param("self", typ.Any).Returns(typ.Boolean).Build()
 	base := typ.NewRecord().Field("__index", typ.NewRecord().Build()).Build()
 
-	got := projectPathFacts(point, root, base, PathProjection{
+	got := flow.ProjectObservedPathShape(point, root, base, PathProjection{
 		Children: projectionSurface{
 			childTypes: func(p cfg.Point, path constraint.Path) []flow.PathFact {
 				if p != point {
@@ -142,15 +142,15 @@ func TestProjectPathFacts_UsesVersionedChildFactIdentityForRecursion(t *testing.
 				return nil
 			},
 		},
-	}, nil, true)
+	})
 
 	rec, ok := got.(*typ.Record)
 	if !ok {
-		t.Fatalf("projectPathFacts = %T, want record", got)
+		t.Fatalf("ProjectObservedPathShape = %T, want record", got)
 	}
 	indexField := rec.GetField("__index")
 	if indexField == nil {
-		t.Fatalf("projectPathFacts dropped __index: %v", rec)
+		t.Fatalf("ProjectObservedPathShape dropped __index: %v", rec)
 	}
 	indexRec, ok := indexField.Type.(*typ.Record)
 	if !ok {
@@ -162,7 +162,7 @@ func TestProjectPathFacts_UsesVersionedChildFactIdentityForRecursion(t *testing.
 	}
 }
 
-func TestProjectPathFacts_AppliesDirectPathFactOnceForUnion(t *testing.T) {
+func TestProjectObservedPathShape_AppliesDirectPathFactOnceForUnion(t *testing.T) {
 	const sym cfg.SymbolID = 8
 	const point cfg.Point = 4
 	path := constraint.Path{Symbol: sym}.Field("suite")
@@ -176,7 +176,7 @@ func TestProjectPathFacts_AppliesDirectPathFactOnceForUnion(t *testing.T) {
 	)
 	calls := 0
 
-	got := projectPathFacts(point, path, base, PathProjection{
+	got := flow.ProjectObservedPathShape(point, path, base, PathProjection{
 		Paths: projectionSurface{
 			pathType: func(p cfg.Point, q constraint.Path) typ.Type {
 				if p == point && q.Equal(path) {
@@ -186,17 +186,17 @@ func TestProjectPathFacts_AppliesDirectPathFactOnceForUnion(t *testing.T) {
 				return nil
 			},
 		},
-	}, nil, true)
+	})
 
 	if calls != 1 {
 		t.Fatalf("direct path fact calls = %d, want 1", calls)
 	}
 	if !typ.TypeEquals(got, direct) {
-		t.Fatalf("projectPathFacts = %v, want direct path fact %v", got, direct)
+		t.Fatalf("ProjectObservedPathShape = %v, want direct path fact %v", got, direct)
 	}
 }
 
-func TestProjectPathFacts_ReconcilesDirectInitWitnessUnionWithDeclaredCapture(t *testing.T) {
+func TestProjectObservedPathShape_ReconcilesDirectInitWitnessUnionWithDeclaredCapture(t *testing.T) {
 	const sym cfg.SymbolID = 10
 	const point cfg.Point = 7
 	root := constraint.Path{Symbol: sym}
@@ -205,7 +205,7 @@ func TestProjectPathFacts_ReconcilesDirectInitWitnessUnionWithDeclaredCapture(t 
 		Build()
 	direct := typ.NewUnion(declared, typ.NewRecord().Build())
 
-	got := projectPathFacts(point, root, declared, PathProjection{
+	got := flow.ProjectObservedPathShape(point, root, declared, PathProjection{
 		Paths: projectionSurface{
 			pathType: func(p cfg.Point, path constraint.Path) typ.Type {
 				if p == point && path.Equal(root) {
@@ -214,14 +214,14 @@ func TestProjectPathFacts_ReconcilesDirectInitWitnessUnionWithDeclaredCapture(t 
 				return nil
 			},
 		},
-	}, nil, true)
+	})
 
 	if !typ.TypeEquals(got, declared) {
-		t.Fatalf("projectPathFacts = %v, want declared capture contract %v", got, declared)
+		t.Fatalf("ProjectObservedPathShape = %v, want declared capture contract %v", got, declared)
 	}
 }
 
-func TestProjectPathFacts_UsesFiniteChildFactsInsteadOfDerivedRecursivePaths(t *testing.T) {
+func TestProjectObservedPathShape_UsesFiniteChildFactsInsteadOfDerivedRecursivePaths(t *testing.T) {
 	const sym cfg.SymbolID = 9
 	const point cfg.Point = 5
 	root := constraint.Path{Symbol: sym}
@@ -239,7 +239,7 @@ func TestProjectPathFacts_UsesFiniteChildFactsInsteadOfDerivedRecursivePaths(t *
 		Build()
 	parentCalls := 0
 
-	got := projectPathFacts(point, root, base, PathProjection{
+	got := flow.ProjectObservedPathShape(point, root, base, PathProjection{
 		Children: projectionSurface{
 			childTypes: func(p cfg.Point, path constraint.Path) []flow.PathFact {
 				if p != point {
@@ -254,15 +254,15 @@ func TestProjectPathFacts_UsesFiniteChildFactsInsteadOfDerivedRecursivePaths(t *
 				return nil
 			},
 		},
-	}, nil, true)
+	})
 
 	rec, ok := got.(*typ.Record)
 	if !ok {
-		t.Fatalf("projectPathFacts = %T, want record", got)
+		t.Fatalf("ProjectObservedPathShape = %T, want record", got)
 	}
 	field := rec.GetField("parent")
 	if field == nil {
-		t.Fatalf("projectPathFacts dropped parent field: %v", rec)
+		t.Fatalf("ProjectObservedPathShape dropped parent field: %v", rec)
 	}
 	if !typ.TypeEquals(field.Type, parentType) {
 		t.Fatalf("parent = %v, want direct child fact %v", field.Type, parentType)
