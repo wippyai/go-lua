@@ -1,6 +1,7 @@
 package canonical
 
 import (
+	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/api"
 	"github.com/wippyai/go-lua/compiler/check/canonical/state"
@@ -24,6 +25,11 @@ type solvedCallEvidenceProjection struct {
 	evidence api.FlowEvidence
 }
 
+type solvedCallEdgeEvidence struct {
+	ExpectedArgs []api.CallExpectedArgEvidence
+	Contracts    []api.CallContractEvidence
+}
+
 func (d *Driver) solvedCallEvidenceProjection(prog *program, ref summary.FuncRef, evidence api.FlowEvidence) (solvedCallEvidenceProjection, bool) {
 	if d == nil || prog == nil || len(evidence.Calls) == 0 {
 		return solvedCallEvidenceProjection{}, false
@@ -45,64 +51,64 @@ func (d *Driver) solvedCallEvidenceProjection(prog *program, ref summary.FuncRef
 	}, true
 }
 
-func (p solvedCallEvidenceProjection) expectedArgs() []api.CallExpectedArgEvidence {
-	var out []api.CallExpectedArgEvidence
+func (p solvedCallEvidenceProjection) project() solvedCallEdgeEvidence {
+	var out solvedCallEdgeEvidence
+	ct := callTyper{d: p.driver, g: p.graph, ref: p.ref}
 	for i, ev := range p.evidence.Calls {
 		info := ev.Info
 		if info == nil || info.Call == nil || len(info.Call.Args) == 0 {
 			continue
 		}
-		ps, ok := callEventPointState(p.state, ev.Point)
-		if !ok {
-			continue
+		if ps, ok := callEventPointState(p.state, ev.Point); ok {
+			if args, ok := p.expectedArgsForCall(ev.Point, info, &ps); ok {
+				if out.ExpectedArgs == nil {
+					out.ExpectedArgs = make([]api.CallExpectedArgEvidence, len(p.evidence.Calls))
+				}
+				out.ExpectedArgs[i] = args
+			}
 		}
-		args := make([]typ.Type, len(info.Call.Args))
-		any := false
-		for argIdx := range info.Call.Args {
-			expected := p.program.expectedCallArgType(p.graph, p.transfer, ev.Point, info, &ps, argIdx)
-			if expected == nil || typ.IsAbsentOrUnknown(expected) || typ.IsAny(expected) {
+		if ps, ok := p.state.Points[ev.Point]; ok {
+			contracts, ok := p.contractsForCall(ct, info.Call, &ps)
+			if !ok {
 				continue
 			}
-			args[argIdx] = expected
-			any = true
+			if out.Contracts == nil {
+				out.Contracts = make([]api.CallContractEvidence, len(p.evidence.Calls))
+			}
+			out.Contracts[i] = contracts
 		}
-		if !any {
-			continue
-		}
-		if out == nil {
-			out = make([]api.CallExpectedArgEvidence, len(p.evidence.Calls))
-		}
-		out[i] = api.NewCallExpectedArgEvidence(args)
 	}
 	return out
 }
 
-func (p solvedCallEvidenceProjection) contracts() []api.CallContractEvidence {
-	ct := callTyper{d: p.driver, g: p.graph, ref: p.ref}
-	var contracts []api.CallContractEvidence
-	for i, ev := range p.evidence.Calls {
-		if ev.Info == nil || ev.Info.Call == nil || len(ev.Info.Call.Args) == 0 {
+func (p solvedCallEvidenceProjection) expectedArgsForCall(point cfg.Point, info *cfg.CallInfo, ps *flow.PointState) (api.CallExpectedArgEvidence, bool) {
+	args := make([]typ.Type, len(info.Call.Args))
+	any := false
+	for argIdx := range info.Call.Args {
+		expected := p.program.expectedCallArgType(p.graph, p.transfer, point, info, ps, argIdx)
+		if expected == nil || typ.IsAbsentOrUnknown(expected) || typ.IsAny(expected) {
 			continue
 		}
-		ps, ok := p.state.Points[ev.Point]
-		if !ok {
-			continue
-		}
-		ctx := p.transfer.ProductCallContext(&ps, ev.Info.Call)
-		frame, ok := ct.productCallFrame(ev.Info.Call, ctx, productCallOutcomeOptions{})
-		if !ok {
-			continue
-		}
-		demands := frame.callArgDemands()
-		if len(demands) == 0 {
-			continue
-		}
-		if contracts == nil {
-			contracts = make([]api.CallContractEvidence, len(p.evidence.Calls))
-		}
-		contracts[i] = api.NewCallContractEvidence(demands)
+		args[argIdx] = expected
+		any = true
 	}
-	return contracts
+	if !any {
+		return api.CallExpectedArgEvidence{}, false
+	}
+	return api.NewCallExpectedArgEvidence(args), true
+}
+
+func (p solvedCallEvidenceProjection) contractsForCall(ct callTyper, call *ast.FuncCallExpr, ps *flow.PointState) (api.CallContractEvidence, bool) {
+	ctx := p.transfer.ProductCallContext(ps, call)
+	frame, ok := ct.productCallFrame(call, ctx, productCallOutcomeOptions{})
+	if !ok {
+		return api.CallContractEvidence{}, false
+	}
+	demands := frame.callArgDemands()
+	if len(demands) == 0 {
+		return api.CallContractEvidence{}, false
+	}
+	return api.NewCallContractEvidence(demands), true
 }
 
 func callEventPointState(fs state.FunctionState, point cfg.Point) (flow.PointState, bool) {

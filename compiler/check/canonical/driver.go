@@ -776,22 +776,6 @@ func (d *Driver) buildFuncResult(sess api.AnalysisSession, prog *program, querie
 	return d.funcResultProjection(sess, prog, queries, ref).build()
 }
 
-func (d *Driver) projectSolvedCallExpectedArgs(prog *program, ref summary.FuncRef, evidence api.FlowEvidence) []api.CallExpectedArgEvidence {
-	proj, ok := d.solvedCallEvidenceProjection(prog, ref, evidence)
-	if !ok {
-		return nil
-	}
-	return proj.expectedArgs()
-}
-
-func (d *Driver) projectCallContracts(prog *program, ref summary.FuncRef, evidence api.FlowEvidence) []api.CallContractEvidence {
-	proj, ok := d.solvedCallEvidenceProjection(prog, ref, evidence)
-	if !ok {
-		return nil
-	}
-	return proj.contracts()
-}
-
 // program is the canonical driver's summary.Program: the module's call graph,
 // with each function's inputs and per-node transfer assembled once. It is the
 // concrete seam the summary fixpoint ranges over.

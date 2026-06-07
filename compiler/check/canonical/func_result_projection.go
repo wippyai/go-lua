@@ -37,7 +37,7 @@ func (d *Driver) funcResultProjection(sess api.AnalysisSession, prog *program, q
 
 func (p funcResultProjection) build() *api.FuncResult {
 	evidence := p.evidence()
-	callContracts := p.driver.projectCallContracts(p.program, p.ref, evidence)
+	callEdges := p.callEdgeEvidence(evidence)
 	facts := p.functionFacts()
 	flowProjection := p.driver.newCanonicalFacts(
 		p.graph,
@@ -72,8 +72,8 @@ func (p funcResultProjection) build() *api.FuncResult {
 		DepthLimitExceeded:       p.driver.scopeDepthExceededFor(p.graph),
 	}
 	obs := observation.FromFuncResult(result, nil).WithProofValues()
-	result.CallExpectedArgs = p.driver.projectSolvedCallExpectedArgs(p.program, p.ref, evidence)
-	result.CallContracts = callContracts
+	result.CallExpectedArgs = callEdges.ExpectedArgs
+	result.CallContracts = callEdges.Contracts
 	result.NarrowSynth = &returnSynth{
 		driver: p.driver,
 		obs:    obs.TypeOf,
@@ -84,6 +84,14 @@ func (p funcResultProjection) build() *api.FuncResult {
 		p.program.facts.HasNoReturn(p.ref),
 	)
 	return result
+}
+
+func (p funcResultProjection) callEdgeEvidence(evidence api.FlowEvidence) solvedCallEdgeEvidence {
+	projection, ok := p.driver.solvedCallEvidenceProjection(p.program, p.ref, evidence)
+	if !ok {
+		return solvedCallEdgeEvidence{}
+	}
+	return projection.project()
 }
 
 func (p funcResultProjection) evidence() api.FlowEvidence {
