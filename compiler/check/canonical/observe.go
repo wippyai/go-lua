@@ -811,16 +811,12 @@ func (f *canonicalFacts) indexReadState(p cfg.Point, view flow.PathReadView) flo
 	}
 }
 
-func (f *canonicalFacts) ValueOriginsAt(p cfg.Point) flow.ValueOriginFacts {
-	return f.pointState(p, true).ValueOrigins
-}
-
-func (f *canonicalFacts) PathAliasesAt(p cfg.Point) flow.PathAliasFacts {
-	return f.pointState(p, true).PathAliases
-}
-
 func (f *canonicalFacts) AppendElementFieldSourcesAt(p cfg.Point, array constraint.PathKey, field []constraint.Segment) []flow.AppendElementFieldOriginUse {
 	return f.pointState(p, true).KeyPresence.AppendElementFieldSources(array, field)
+}
+
+func (f *canonicalFacts) ProvenanceRoutesAt(p cfg.Point, path constraint.Path) []flow.ProvenanceRoute {
+	return flow.PointFactsOf(f.pointState(p, true)).ProvenanceRoutes(path)
 }
 
 func (f *canonicalFacts) BodyContracts() paramevidence.Contracts {

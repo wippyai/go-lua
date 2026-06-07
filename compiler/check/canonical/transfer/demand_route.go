@@ -132,85 +132,52 @@ func (t *Transfer) demandLocalPathContract(
 		if out == nil {
 			continue
 		}
-		facts := flow.PointFactsOf(*out)
-		for _, source := range facts.IdentityAliasSourcePaths(cur.path, flow.IdentityAliasReadPolicy) {
-			if source.Symbol != 0 {
-				queue = append(queue, demandRouteItem{path: source, contract: cur.contract})
-			}
-		}
-		for _, use := range facts.ValueOriginUsesCoveringPath(cur.path) {
-			switch use.Origin.Kind {
-			case flow.ValueOriginIndexedIterator:
-				t.enqueueAppendFieldOriginDemands(out, use.Origin.Source, use.Remainder, cur.contract, &queue)
-				localEvidence := paramevidence.DemandFromPathContract(use.Remainder, cur.contract)
-				evidence := iteratorOriginContract(use.Origin, localEvidence)
-				if paramevidence.ParamContractDomain.Equal(evidence, paramevidence.ParamContractDomain.Bottom()) {
-					continue
-				}
-				if source, ok := use.Origin.SourcePath(); ok && source.Symbol != 0 {
-					queue = append(queue, demandRouteItem{path: source, contract: evidence})
-				}
-			case flow.ValueOriginKeyedIterator:
-				localEvidence := paramevidence.DemandFromPathContract(use.Remainder, cur.contract)
-				evidence := iteratorOriginContract(use.Origin, localEvidence)
-				if paramevidence.ParamContractDomain.Equal(evidence, paramevidence.ParamContractDomain.Bottom()) {
-					continue
-				}
-				if source, ok := use.Origin.SourcePath(); ok && source.Symbol != 0 {
-					queue = append(queue, demandRouteItem{path: source, contract: evidence})
-				}
-			}
+		for _, route := range flow.PointFactsOf(*out).ProvenanceRoutes(cur.path) {
+			t.enqueueDemandRoute(cur.contract, route, &queue)
 		}
 	}
 }
 
-func (t *Transfer) enqueueAppendFieldOriginDemands(
-	out *flow.PointState,
-	array constraint.PathKey,
-	field []constraint.Segment,
+func (t *Transfer) enqueueDemandRoute(
 	contract paramevidence.ParamContract,
+	route flow.ProvenanceRoute,
 	queue *[]demandRouteItem,
 ) {
-	if out == nil || array == "" || len(field) == 0 || queue == nil ||
+	if route.Source.Symbol == 0 || queue == nil ||
 		paramevidence.ParamContractDomain.Equal(contract, paramevidence.ParamContractDomain.Bottom()) {
 		return
 	}
-	for _, use := range flow.AppendElementFieldSources(*out, array, field) {
-		source, ok := use.SourcePath()
-		if !ok || source.Symbol == 0 {
-			continue
+	switch route.Kind {
+	case flow.ProvenanceRouteIdentityAlias:
+		*queue = append(*queue, demandRouteItem{path: route.Source, contract: contract})
+	case flow.ProvenanceRouteIndexedIterator, flow.ProvenanceRouteKeyedIterator:
+		localEvidence := paramevidence.DemandFromPathContract(route.Remainder, contract)
+		evidence := iteratorRouteContract(route, localEvidence)
+		if !paramevidence.ParamContractDomain.Equal(evidence, paramevidence.ParamContractDomain.Bottom()) {
+			*queue = append(*queue, demandRouteItem{path: route.Source, contract: evidence})
 		}
-		if len(use.SourceField) > 0 {
-			sourceField := append([]constraint.Segment(nil), use.SourceField...)
-			sourceField = append(sourceField, use.FieldRemainder...)
+	case flow.ProvenanceRouteAppendElementField:
+		if len(route.SourceField) > 0 {
+			sourceField := append([]constraint.Segment(nil), route.SourceField...)
+			sourceField = append(sourceField, route.FieldRemainder...)
 			evidence := paramevidence.DemandFromSequenceElement(paramevidence.DemandFromPathContract(sourceField, contract))
-			*queue = append(*queue, demandRouteItem{path: source, contract: evidence})
-			continue
+			*queue = append(*queue, demandRouteItem{path: route.Source, contract: evidence})
+			return
 		}
-		for _, seg := range use.FieldRemainder {
+		source := route.Source
+		for _, seg := range route.FieldRemainder {
 			source = source.Append(seg)
 		}
 		*queue = append(*queue, demandRouteItem{path: source, contract: contract})
 	}
 }
 
-func iteratorOriginEvidence(origin flow.ValueOriginFact, local typ.Type) typ.Type {
-	switch origin.Kind {
-	case flow.ValueOriginIndexedIterator:
-		return paramevidence.IndexedIteratorEvidence(origin.VarIndex, local)
-	case flow.ValueOriginKeyedIterator:
-		return paramevidence.KeyedIteratorEvidence(origin.VarIndex, local)
-	default:
-		return nil
-	}
-}
-
-func iteratorOriginContract(origin flow.ValueOriginFact, local paramevidence.ParamContract) paramevidence.ParamContract {
-	switch origin.Kind {
-	case flow.ValueOriginIndexedIterator:
-		return paramevidence.IndexedIteratorContract(origin.VarIndex, local)
-	case flow.ValueOriginKeyedIterator:
-		return paramevidence.KeyedIteratorContract(origin.VarIndex, local)
+func iteratorRouteContract(route flow.ProvenanceRoute, local paramevidence.ParamContract) paramevidence.ParamContract {
+	switch route.Kind {
+	case flow.ProvenanceRouteIndexedIterator:
+		return paramevidence.IndexedIteratorContract(route.VarIndex, local)
+	case flow.ProvenanceRouteKeyedIterator:
+		return paramevidence.KeyedIteratorContract(route.VarIndex, local)
 	default:
 		return paramevidence.ParamContractDomain.Bottom()
 	}

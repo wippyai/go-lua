@@ -714,11 +714,7 @@ func (p Projector) bodyContractPathTypeAtPath(point cfg.Point, path constraint.P
 	if !p.cfg.CallArgumentProofs {
 		return nil
 	}
-	pathAddr, ok := flow.StableAddressOfPath(path)
-	if !ok {
-		return nil
-	}
-	types := p.projectBodyContractOriginTypes(point, pathAddr, seen)
+	types := p.projectBodyContractOriginTypes(point, path, seen)
 	switch len(types) {
 	case 0:
 		return nil
@@ -729,78 +725,33 @@ func (p Projector) bodyContractPathTypeAtPath(point cfg.Point, path constraint.P
 	}
 }
 
-func (p Projector) projectBodyContractOriginTypes(point cfg.Point, pathAddr flow.StableAddress, seen map[constraint.PathKey]bool) []typ.Type {
+func (p Projector) projectBodyContractOriginTypes(point cfg.Point, path constraint.Path, seen map[constraint.PathKey]bool) []typ.Type {
 	var types []typ.Type
-	for _, use := range p.pathAliasesAt(point).AliasesCoveringAddress(pathAddr) {
-		sourcePath, ok := use.Alias.SourcePath()
-		if !ok || sourcePath.Symbol == 0 {
-			continue
-		}
-		for _, seg := range use.Remainder {
-			sourcePath = sourcePath.Append(seg)
-		}
-		sourceType := p.bodyContractPathTypeAtPath(point, sourcePath, seen)
-		if sourceType == nil {
-			continue
-		}
-		types = append(types, sourceType)
-	}
-	origins := p.valueOriginsAt(point)
-	if !origins.IsBottom() {
-		for _, use := range origins.OriginsCoveringAddress(pathAddr) {
-			sourcePath, ok := use.Origin.SourcePath()
-			if !ok || sourcePath.Symbol == 0 {
-				continue
+	for _, route := range p.provenanceRoutesAt(point, path) {
+		switch route.Kind {
+		case flow.ProvenanceRouteIdentityAlias:
+			if sourceType := p.bodyContractPathTypeAtPath(point, route.Source, seen); sourceType != nil {
+				types = append(types, sourceType)
 			}
-			if use.Origin.Kind == flow.ValueOriginIndexedIterator && use.Origin.VarIndex == 1 && len(use.Remainder) > 0 {
-				types = append(types, p.appendElementFieldOriginTypes(point, sourcePath, use.Remainder, seen)...)
-			}
-			sourceType := p.bodyContractPathTypeAtPath(point, sourcePath, seen)
+		case flow.ProvenanceRouteIndexedIterator, flow.ProvenanceRouteKeyedIterator:
+			sourceType := p.bodyContractPathTypeAtPath(point, route.Source, seen)
 			if sourceType == nil {
 				continue
 			}
-			localType := p.valueOriginLocalType(use.Origin, sourceType)
+			localType := p.provenanceRouteLocalType(route, sourceType)
 			if localType == nil {
 				continue
 			}
-			if len(use.Remainder) > 0 {
-				localType = p.typeAtSegments(localType, use.Remainder)
+			if len(route.Remainder) > 0 {
+				localType = p.typeAtSegments(localType, route.Remainder)
 			}
 			if localType != nil {
 				types = append(types, localType)
 			}
-		}
-	}
-	return types
-}
-
-func (p Projector) appendElementFieldOriginTypes(point cfg.Point, arrayPath constraint.Path, field []constraint.Segment, seen map[constraint.PathKey]bool) []typ.Type {
-	if arrayPath.IsEmpty() || len(field) == 0 {
-		return nil
-	}
-	arrayKey := flow.StablePathKey(arrayPath)
-	if arrayKey == "" {
-		return nil
-	}
-	var provider appendElementFieldOriginFacts
-	if p.cfg.Facts != nil {
-		if facts, ok := p.cfg.Facts.(appendElementFieldOriginFacts); ok {
-			provider = facts
-		}
-	}
-	if provider == nil && p.cfg.Flow != nil {
-		if facts, ok := p.cfg.Flow.(appendElementFieldOriginFacts); ok {
-			provider = facts
-		}
-	}
-	if provider == nil {
-		return nil
-	}
-	var types []typ.Type
-	for _, use := range provider.AppendElementFieldSourcesAt(point, arrayKey, field) {
-		sourceType := p.appendElementFieldOriginSourceType(point, use, nil, seen)
-		if sourceType != nil {
-			types = append(types, sourceType)
+		case flow.ProvenanceRouteAppendElementField:
+			if sourceType := p.appendElementFieldRouteSourceType(point, route, nil, seen); sourceType != nil {
+				types = append(types, sourceType)
+			}
 		}
 	}
 	return types
@@ -811,14 +762,26 @@ func (p Projector) appendElementFieldOriginSourceType(point cfg.Point, use flow.
 	if !ok || sourcePath.Symbol == 0 {
 		return nil
 	}
-	if len(use.SourceField) > 0 {
-		segments := append([]constraint.Segment(nil), use.SourceField...)
-		segments = append(segments, use.FieldRemainder...)
+	return p.appendElementFieldRouteSourceType(point, flow.ProvenanceRoute{
+		Kind:           flow.ProvenanceRouteAppendElementField,
+		Source:         sourcePath,
+		SourceField:    use.SourceField,
+		FieldRemainder: use.FieldRemainder,
+	}, extra, seen)
+}
+
+func (p Projector) appendElementFieldRouteSourceType(point cfg.Point, route flow.ProvenanceRoute, extra []constraint.Segment, seen map[constraint.PathKey]bool) typ.Type {
+	if route.Source.Symbol == 0 {
+		return nil
+	}
+	if len(route.SourceField) > 0 {
+		segments := append([]constraint.Segment(nil), route.SourceField...)
+		segments = append(segments, route.FieldRemainder...)
 		segments = append(segments, extra...)
 		var fallback typ.Type
 		for _, sourceType := range []typ.Type{
-			p.pathTypeAtPath(sourcePath, point),
-			p.bodyContractPathTypeAtPath(point, sourcePath, seen),
+			p.pathTypeAtPath(route.Source, point),
+			p.bodyContractPathTypeAtPath(point, route.Source, seen),
 		} {
 			if typ.IsAbsentOrUnknown(sourceType) {
 				continue
@@ -838,7 +801,8 @@ func (p Projector) appendElementFieldOriginSourceType(point cfg.Point, use flow.
 		}
 		return fallback
 	}
-	for _, seg := range use.FieldRemainder {
+	sourcePath := route.Source
+	for _, seg := range route.FieldRemainder {
 		sourcePath = sourcePath.Append(seg)
 	}
 	for _, seg := range extra {
@@ -903,48 +867,34 @@ func (p Projector) conditionBodyContractSeedType(point cfg.Point, path constrain
 	return conditioned
 }
 
-func (p Projector) valueOriginsAt(point cfg.Point) flow.ValueOriginFacts {
+func (p Projector) provenanceRoutesAt(point cfg.Point, path constraint.Path) []flow.ProvenanceRoute {
 	if p.cfg.Facts != nil {
-		if facts, ok := p.cfg.Facts.(valueOriginFacts); ok {
-			return facts.ValueOriginsAt(point)
+		if facts, ok := p.cfg.Facts.(provenanceRouteFacts); ok {
+			return facts.ProvenanceRoutesAt(point, path)
 		}
 	}
 	if p.cfg.Flow != nil {
-		if facts, ok := p.cfg.Flow.(valueOriginFacts); ok {
-			return facts.ValueOriginsAt(point)
+		if facts, ok := p.cfg.Flow.(provenanceRouteFacts); ok {
+			return facts.ProvenanceRoutesAt(point, path)
 		}
 	}
-	return flow.ValueOriginFacts{}
+	return nil
 }
 
-func (p Projector) pathAliasesAt(point cfg.Point) flow.PathAliasFacts {
-	if p.cfg.Facts != nil {
-		if facts, ok := p.cfg.Facts.(pathAliasFacts); ok {
-			return facts.PathAliasesAt(point)
-		}
-	}
-	if p.cfg.Flow != nil {
-		if facts, ok := p.cfg.Flow.(pathAliasFacts); ok {
-			return facts.PathAliasesAt(point)
-		}
-	}
-	return flow.PathAliasFacts{}
-}
-
-func (p Projector) valueOriginLocalType(origin flow.ValueOriginFact, source typ.Type) typ.Type {
+func (p Projector) provenanceRouteLocalType(route flow.ProvenanceRoute, source typ.Type) typ.Type {
 	if source == nil {
 		return nil
 	}
-	switch origin.Kind {
-	case flow.ValueOriginAssignmentAlias:
+	switch route.Kind {
+	case flow.ProvenanceRouteIdentityAlias:
 		return source
-	case flow.ValueOriginIndexedIterator:
-		if origin.VarIndex != 1 {
+	case flow.ProvenanceRouteIndexedIterator:
+		if route.VarIndex != 1 {
 			return nil
 		}
 		return querycore.ElementType(source)
-	case flow.ValueOriginKeyedIterator:
-		switch origin.VarIndex {
+	case flow.ProvenanceRouteKeyedIterator:
+		switch route.VarIndex {
 		case 0:
 			return querycore.EntryKeyType(source)
 		case 1:
@@ -1266,14 +1216,18 @@ type keyOfFacts interface {
 	HasKeyOf(p cfg.Point, tablePath, keyPath constraint.Path) bool
 }
 
+type provenanceRouteFacts interface {
+	ProvenanceRoutesAt(p cfg.Point, path constraint.Path) []flow.ProvenanceRoute
+}
+
+// TODO(route-algebra): remove this storage-shaped fallback once index-read
+// aliasing consumes provenance routes instead of raw value-origin facts.
 type valueOriginFacts interface {
 	ValueOriginsAt(p cfg.Point) flow.ValueOriginFacts
 }
 
-type pathAliasFacts interface {
-	PathAliasesAt(p cfg.Point) flow.PathAliasFacts
-}
-
+// TODO(route-algebra): fold direct append-field source checks into route queries
+// so observation no longer depends on key-presence storage-shaped providers.
 type appendElementFieldOriginFacts interface {
 	AppendElementFieldSourcesAt(p cfg.Point, array constraint.PathKey, field []constraint.Segment) []flow.AppendElementFieldOriginUse
 }
