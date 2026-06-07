@@ -481,9 +481,9 @@ func TestPlaceStaticProjectionOwnsPathKeys(t *testing.T) {
 	if !ok || pathKey != path.Key() {
 		t.Fatalf("StaticPathKey = %q/%v, want %q", pathKey, ok, path.Key())
 	}
-	symbolKey, ok := symbolPathKey(place)
-	if !ok || symbolKey != flow.SymbolPathKey(sym, path.Segments) {
-		t.Fatalf("SymbolPathKey = %q/%v, want %q", symbolKey, ok, flow.SymbolPathKey(sym, path.Segments))
+	container, ok := flow.ContainerRefOfPath(path)
+	if !ok || !container.IsValid() || container.Root() != sym {
+		t.Fatalf("ContainerRefOfPath = %#v/%v, want valid root %d", container, ok, sym)
 	}
 
 	dynamic := Place{

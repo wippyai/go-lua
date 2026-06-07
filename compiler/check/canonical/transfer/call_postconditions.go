@@ -259,17 +259,17 @@ func (t *Transfer) appendLengthParamPostconditions(
 				effects.relations = append(effects.relations, effect)
 			}
 		}
-		argKey, ok := t.containerExprKey(arg)
+		argRef, ok := t.containerExprRef(arg)
 		if !ok {
 			continue
 		}
 		lower := int64(0)
 		if out.Num != nil {
-			if numericLower, _, ok := out.Num.LenBoundsFor(argKey); ok && numericLower > lower {
+			if numericLower, _, ok := flow.NumericLenBoundsForContainer(out.Num, argRef); ok && numericLower > lower {
 				lower = numericLower
 			}
 		}
-		if relationLower, ok := out.Rel.ContainerLowerBoundFor(argKey); ok && relationLower > lower {
+		if relationLower, ok := out.Rel.ContainerLowerBoundForRef(argRef); ok && relationLower > lower {
 			lower = relationLower
 		}
 		if lower <= 0 {

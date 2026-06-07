@@ -1748,8 +1748,8 @@ func (t *Transfer) narrowNumericComparison(out flow.PointState, info *cfg.Branch
 	// `var <= #container` / `var < #container`: a symbolic length reference. Only the
 	// upper-bound senses bound the index by the container length; a lower-bound sense
 	// does not establish in-range presence and is left unseeded.
-	if arrKey, off, ok := t.lengthBoundComparison(boundExpr, op); ok {
-		numericOp, ok := flow.NumericVarLeLenOffsetSymbolOp(idxSym, arrKey, off)
+	if container, off, ok := t.lengthBoundComparison(boundExpr, op); ok {
+		numericOp, ok := flow.NumericVarLeLenOffsetContainerOp(idxSym, container, off)
 		if !ok {
 			return out
 		}
@@ -2099,7 +2099,7 @@ func excludeExactLiteral(t typ.Type, lit *typ.Literal) typ.Type {
 // proves on the edge it holds. It orients the comparison so the `#container` side is
 // the value and the integer constant the bound, applies the comparison's
 // proven-edge operator, and translates it into a length floor / ceiling on the
-// container's numeric key:
+// container's canonical flow ref:
 //
 //   - `#x >  c`  proves  #x >= c+1  (floor c+1)
 //   - `#x >= c`  proves  #x >= c    (floor c)
@@ -2122,7 +2122,7 @@ func (t *Transfer) narrowLengthGuard(out flow.PointState, rel *ast.RelationalOpE
 	default:
 		return out, false
 	}
-	place, arrKey, c, op, ok := t.orientLengthComparison(rel.Lhs, rel.Rhs, rel.Operator)
+	place, container, c, op, ok := t.orientLengthComparison(rel.Lhs, rel.Rhs, rel.Operator)
 	if !ok {
 		return out, false
 	}
@@ -2131,17 +2131,11 @@ func (t *Transfer) narrowLengthGuard(out flow.PointState, rel *ast.RelationalOpE
 	if !effectiveTruthy(info.CondCheck.Kind, taken) {
 		op = negateLengthOp(op)
 	}
-	floor, ceil, hasFloor, hasCeil := flow.LengthBoundFromOp(op, c)
+	floor, _, hasFloor, hasCeil := flow.LengthBoundFromOp(op, c)
 	if !hasFloor && !hasCeil {
 		return out, false
 	}
-	ops := make([]flow.NumericOp, 0, 2)
-	if hasFloor {
-		ops = append(ops, flow.NumericOp{Kind: flow.NumericLenGeConst, Key: arrKey, Const: floor})
-	}
-	if hasCeil {
-		ops = append(ops, flow.NumericOp{Kind: flow.NumericLenLeConst, Key: arrKey, Const: ceil})
-	}
+	ops := flow.NumericLengthBoundContainerOps(container, op, c)
 	res := flow.ClonePointState(out)
 	flow.ApplyNumericEffect(&res, flow.NumericEffect{Ops: ops})
 	if hasFloor && floor > 0 {
@@ -2156,23 +2150,23 @@ func (t *Transfer) narrowLengthGuard(out flow.PointState, rel *ast.RelationalOpE
 }
 
 // orientLengthComparison resolves a `#container OP const` comparison into the
-// container's numeric key, the integer constant, and the operator oriented so it
+// container's canonical flow ref, the integer constant, and the operator oriented so it
 // reads `#container OP const`. The `#container` side may be either operand; when it
 // is on the right the operator is flipped. A comparison neither side of which is
 // `#container` over a tracked sequence, or whose other side is not an integer
 // constant, reports ok=false.
-func (t *Transfer) orientLengthComparison(lhs, rhs ast.Expr, op string) (Place, constraint.PathKey, int64, string, bool) {
-	if place, arrKey, ok := t.lenExprContainerPlace(lhs); ok {
+func (t *Transfer) orientLengthComparison(lhs, rhs ast.Expr, op string) (Place, flow.ContainerRef, int64, string, bool) {
+	if place, container, ok := t.lenExprContainerPlace(lhs); ok {
 		if c, ok := t.constInt(rhs); ok {
-			return place, arrKey, c, op, true
+			return place, container, c, op, true
 		}
 	}
-	if place, arrKey, ok := t.lenExprContainerPlace(rhs); ok {
+	if place, container, ok := t.lenExprContainerPlace(rhs); ok {
 		if c, ok := t.constInt(lhs); ok {
-			return place, arrKey, c, flipComparisonOp(op), true
+			return place, container, c, flipComparisonOp(op), true
 		}
 	}
-	return Place{}, "", 0, op, false
+	return Place{}, flow.ContainerRef{}, 0, op, false
 }
 
 // negateLengthOp returns the logical negation of a relational operator over the
@@ -2253,22 +2247,22 @@ func effectiveTruthy(check cfg.CondCheckKind, taken bool) bool {
 }
 
 // lengthBoundComparison recognizes a `var <= #container` / `var < #container`
-// upper bound, returning the container's numeric key and the inclusive integer
+// upper bound, returning the container's canonical flow ref and the inclusive integer
 // offset (a strict `<` is `<= #container - 1`). Only the upper-bound senses (`<`,
 // `<=`) bound the index by the container length; a lower-bound sense proves no
 // in-range presence and reports ok=false.
-func (t *Transfer) lengthBoundComparison(boundExpr ast.Expr, op string) (constraint.PathKey, int64, bool) {
-	arrKey, ok := t.lenExprContainerKey(boundExpr)
+func (t *Transfer) lengthBoundComparison(boundExpr ast.Expr, op string) (flow.ContainerRef, int64, bool) {
+	container, ok := t.lenExprContainerRef(boundExpr)
 	if !ok {
-		return "", 0, false
+		return flow.ContainerRef{}, 0, false
 	}
 	switch op {
 	case "<=":
-		return arrKey, 0, true
+		return container, 0, true
 	case "<":
-		return arrKey, -1, true
+		return container, -1, true
 	default:
-		return "", 0, false
+		return flow.ContainerRef{}, 0, false
 	}
 }
 
@@ -3964,11 +3958,11 @@ func (t *Transfer) applyArgumentEqualityProof(out *flow.PointState, point cfg.Po
 }
 
 func (t *Transfer) applyLengthEqualityProof(out *flow.PointState, left, right ast.Expr) {
-	place, arrKey, c, op, ok := t.orientLengthComparison(left, right, "==")
+	place, container, c, op, ok := t.orientLengthComparison(left, right, "==")
 	if !ok {
 		return
 	}
-	ops := flow.NumericLengthBoundOps(arrKey, op, c)
+	ops := flow.NumericLengthBoundContainerOps(container, op, c)
 	if len(ops) == 0 {
 		return
 	}

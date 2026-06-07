@@ -181,6 +181,15 @@ func NumericLengthBoundOps(key constraint.PathKey, op string, c int64) []Numeric
 	return ops
 }
 
+// NumericLengthBoundContainerOps translates a proven `#container OP c`
+// comparison into primitive numeric atoms for the container identity.
+func NumericLengthBoundContainerOps(container ContainerRef, op string, c int64) []NumericOp {
+	if !container.IsValid() {
+		return nil
+	}
+	return NumericLengthBoundOps(container.pathKey(), op, c)
+}
+
 // NumericKeyOfValueKey lifts a value slot key into the numeric domain's key
 // carrier. The numeric domain stores scalar value bounds and container length
 // bounds in one PathKey-indexed state, so this conversion is a flow concern.
@@ -241,11 +250,11 @@ func NumericVarKeyOfSymbol(sym cfg.SymbolID) (constraint.PathKey, bool) {
 // NumericDropLenBoundSymbolOp materializes a length-bound reset for a bare
 // symbol slot.
 func NumericDropLenBoundSymbolOp(sym cfg.SymbolID) (NumericOp, bool) {
-	key, ok := NumericVarKeyOfSymbol(sym)
+	ref, ok := ContainerRefOfSymbol(sym)
 	if !ok {
 		return NumericOp{}, false
 	}
-	return NumericOp{Kind: NumericDropLenBound, Key: key}, true
+	return NumericDropLenBoundContainerOp(ref)
 }
 
 // SymbolOfNumericVarKey returns the bare symbol identified by a numeric variable
@@ -282,43 +291,93 @@ func NumericVarEqConstSymbolOp(sym cfg.SymbolID, c int64) (NumericOp, bool) {
 	return NumericOp{Kind: NumericVarEqConst, Key: key, Const: c}, true
 }
 
-// NumericVarLeLenOffsetSymbolOp materializes `sym <= len(other) + offset`.
-func NumericVarLeLenOffsetSymbolOp(sym cfg.SymbolID, other constraint.PathKey, offset int64) (NumericOp, bool) {
+// NumericVarLeLenOffsetContainerOp materializes `sym <= len(container) + offset`.
+func NumericVarLeLenOffsetContainerOp(sym cfg.SymbolID, container ContainerRef, offset int64) (NumericOp, bool) {
 	key, ok := NumericVarKeyOfSymbol(sym)
-	if !ok || other == "" {
+	if !ok || !container.IsValid() {
 		return NumericOp{}, false
 	}
-	return NumericOp{Kind: NumericVarLeLenOffset, Key: key, Other: other, Offset: offset}, true
+	return NumericOp{Kind: NumericVarLeLenOffset, Key: key, Other: container.pathKey(), Offset: offset}, true
 }
 
 // NumericLenGeConstSymbolOp materializes `len(sym) >= lower` for a bare symbol
 // container.
 func NumericLenGeConstSymbolOp(sym cfg.SymbolID, lower int64) (NumericOp, bool) {
-	key, ok := NumericVarKeyOfSymbol(sym)
+	ref, ok := ContainerRefOfSymbol(sym)
 	if !ok {
 		return NumericOp{}, false
 	}
-	return NumericOp{Kind: NumericLenGeConst, Key: key, Const: lower}, true
+	return NumericLenGeConstContainerOp(ref, lower)
 }
 
 // NumericIncrementLenLowerSymbolOp materializes `len(sym) += delta` on the
 // current lower bound for a bare symbol slot.
 func NumericIncrementLenLowerSymbolOp(sym cfg.SymbolID, delta int64) (NumericOp, bool) {
-	key, ok := NumericVarKeyOfSymbol(sym)
-	if !ok || delta <= 0 {
+	ref, ok := ContainerRefOfSymbol(sym)
+	if !ok {
 		return NumericOp{}, false
 	}
-	return NumericOp{Kind: NumericIncrementLenLower, Key: key, Delta: delta}, true
+	return NumericIncrementLenLowerContainerOp(ref, delta)
+}
+
+// NumericDropLenBoundContainerOp materializes a length-bound reset for container.
+func NumericDropLenBoundContainerOp(container ContainerRef) (NumericOp, bool) {
+	if !container.IsValid() {
+		return NumericOp{}, false
+	}
+	return NumericOp{Kind: NumericDropLenBound, Key: container.pathKey()}, true
+}
+
+// NumericLenGeConstContainerOp materializes `len(container) >= lower`.
+func NumericLenGeConstContainerOp(container ContainerRef, lower int64) (NumericOp, bool) {
+	if !container.IsValid() {
+		return NumericOp{}, false
+	}
+	return NumericOp{Kind: NumericLenGeConst, Key: container.pathKey(), Const: lower}, true
+}
+
+// NumericIncrementLenLowerContainerOp materializes `len(container) += delta`.
+func NumericIncrementLenLowerContainerOp(container ContainerRef, delta int64) (NumericOp, bool) {
+	if !container.IsValid() || delta <= 0 {
+		return NumericOp{}, false
+	}
+	return NumericOp{Kind: NumericIncrementLenLower, Key: container.pathKey(), Delta: delta}, true
 }
 
 // NumericLenGeConstPathOp materializes a resolved path length floor as the
 // primitive numeric atom stored in PointState.Num.
 func NumericLenGeConstPathOp(path constraint.Path, lower int64) (NumericOp, bool) {
-	key, ok := SymbolPathKeyOf(path)
+	ref, ok := ContainerRefOfPath(path)
 	if !ok {
 		return NumericOp{}, false
 	}
-	return NumericOp{Kind: NumericLenGeConst, Key: key, Const: lower}, true
+	return NumericLenGeConstContainerOp(ref, lower)
+}
+
+// NumericLenBoundsForContainer reads the numeric length interval for container.
+func NumericLenBoundsForContainer(num *numeric.State, container ContainerRef) (lower, upper int64, ok bool) {
+	if num == nil || !container.IsValid() {
+		return 0, 0, false
+	}
+	return num.LenBoundsFor(container.pathKey())
+}
+
+// NumericLenRefWithOffsetForVar reports the container length reference currently
+// bounding sym, if the numeric domain carries one.
+func NumericLenRefWithOffsetForVar(num *numeric.State, sym cfg.SymbolID) (ContainerRef, int64, bool) {
+	if num == nil {
+		return ContainerRef{}, 0, false
+	}
+	idxKey, ok := NumericVarKeyOfSymbol(sym)
+	if !ok {
+		return ContainerRef{}, 0, false
+	}
+	refKey, offset, ok := num.LenRefWithOffsetFor(idxKey)
+	if !ok {
+		return ContainerRef{}, 0, false
+	}
+	ref, ok := containerRefOfKey(refKey)
+	return ref, offset, ok
 }
 
 // NumericLenGeConstIndexedPrefixOps translates an indexed path read/write into

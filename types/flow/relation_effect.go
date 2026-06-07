@@ -59,32 +59,50 @@ func ApplyRelationEffect(out *PointState, effect RelationEffect) bool {
 	return !PointRelationsDomain.Equal(before, out.Rel)
 }
 
-// RelationTargetLengthParamPathEffect materializes a path-shaped proof that the
-// target container length/cardinality is at least runtime parameter paramIndex.
-func RelationTargetLengthParamPathEffect(path constraint.Path, paramIndex int) (RelationEffect, bool) {
-	key, ok := SymbolPathKeyOf(path)
-	if !ok || paramIndex < 0 {
+// RelationTargetLengthParamContainerEffect materializes a proof that container
+// length/cardinality is at least runtime parameter paramIndex.
+func RelationTargetLengthParamContainerEffect(container ContainerRef, paramIndex int) (RelationEffect, bool) {
+	if !container.IsValid() || paramIndex < 0 {
 		return RelationEffect{}, false
 	}
 	return RelationEffect{
 		Kind:       RelationSeedTargetLengthParam,
-		TargetRoot: path.Symbol,
-		TargetKey:  key,
+		TargetRoot: container.Root(),
+		TargetKey:  container.pathKey(),
 		ParamIndex: paramIndex,
+	}, true
+}
+
+// RelationTargetLengthParamPathEffect materializes a path-shaped proof that the
+// target container length/cardinality is at least runtime parameter paramIndex.
+func RelationTargetLengthParamPathEffect(path constraint.Path, paramIndex int) (RelationEffect, bool) {
+	ref, ok := ContainerRefOfPath(path)
+	if !ok {
+		return RelationEffect{}, false
+	}
+	return RelationTargetLengthParamContainerEffect(ref, paramIndex)
+}
+
+// RelationContainerLowerBoundContainerEffect materializes a cardinality lower
+// bound proof for container.
+func RelationContainerLowerBoundContainerEffect(container ContainerRef, lower int64) (RelationEffect, bool) {
+	if !container.IsValid() || lower <= 0 {
+		return RelationEffect{}, false
+	}
+	return RelationEffect{
+		Kind:       RelationSeedContainerLowerBound,
+		TargetRoot: container.Root(),
+		TargetKey:  container.pathKey(),
+		Lower:      lower,
 	}, true
 }
 
 // RelationContainerLowerBoundPathEffect materializes a path-shaped cardinality
 // lower-bound proof for PointState.Rel.
 func RelationContainerLowerBoundPathEffect(path constraint.Path, lower int64) (RelationEffect, bool) {
-	key, ok := SymbolPathKeyOf(path)
-	if !ok || lower <= 0 {
+	ref, ok := ContainerRefOfPath(path)
+	if !ok {
 		return RelationEffect{}, false
 	}
-	return RelationEffect{
-		Kind:       RelationSeedContainerLowerBound,
-		TargetRoot: path.Symbol,
-		TargetKey:  key,
-		Lower:      lower,
-	}, true
+	return RelationContainerLowerBoundContainerEffect(ref, lower)
 }

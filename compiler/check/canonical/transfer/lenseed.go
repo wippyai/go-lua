@@ -203,9 +203,13 @@ func (t *Transfer) applyIndexWriteLength(out *flow.PointState, target cfg.Assign
 	})
 }
 
-func (t *Transfer) incrementLenBound(out *flow.PointState, arrKey constraint.PathKey, delta int64) bool {
+func (t *Transfer) incrementLenBound(out *flow.PointState, container flow.ContainerRef, delta int64) bool {
+	op, ok := flow.NumericIncrementLenLowerContainerOp(container, delta)
+	if !ok {
+		return false
+	}
 	return flow.ApplyNumericEffect(out, flow.NumericEffect{
-		Ops:             []flow.NumericOp{{Kind: flow.NumericIncrementLenLower, Key: arrKey, Delta: delta}},
+		Ops:             []flow.NumericOp{op},
 		RequireExisting: true,
 	})
 }
@@ -257,28 +261,10 @@ func lenExprBase(expr ast.Expr) (*ast.IdentExpr, bool) {
 	return ident, true
 }
 
-// containerExprKey returns the numeric-component path key for a sequence
-// container expression. A bare identifier keys on its symbol; a static field
-// path rooted at an identifier (`saga.compensations`) keys on the root symbol
-// plus its field-segment suffix. The key is internal to the transfer package's
-// numeric component (it never crosses the package boundary), so any shape the
-// seeding and the read both derive identically is sufficient; a non-static or
-// non-identifier-rooted base reports ok=false so no length fact is keyed.
-func (t *Transfer) containerExprKey(expr ast.Expr) (constraint.PathKey, bool) {
-	place, ok := t.staticPlaceOfExpr(expr)
-	if !ok {
-		return "", false
-	}
-	return symbolPathKey(place)
-}
-
-// containerExprPath builds the constraint.Path for a tracked container expression
-// (a bare identifier or a static field path), the path-typed counterpart of
-// containerExprKey. The KeyOf production (applyGenericFor) and the index-read
-// consumption (refineIndexRead) both derive their table/key paths through this
-// helper, so a key drawn from `pairs(container)` and the same container indexed by
-// that key resolve to Equal paths. A non-static or non-identifier-rooted base
-// reports ok=false.
+// containerExprPath builds the resolved static path for a tracked container
+// expression (a bare identifier or a static field path). Transfer passes this
+// path to flow-owned container projections instead of choosing numeric/relation
+// map keys locally.
 func (t *Transfer) containerExprPath(expr ast.Expr) (constraint.Path, bool) {
 	place, ok := t.staticPlaceOfExpr(expr)
 	if !ok {
@@ -287,32 +273,42 @@ func (t *Transfer) containerExprPath(expr ast.Expr) (constraint.Path, bool) {
 	return place.StaticPath()
 }
 
-// lenExprContainerKey reports whether expr is `#container` over a tracked
-// sequence container (a bare identifier or a static field path) and returns that
-// container's numeric path key. It generalizes lenExprBase from
-// identifier-only bases to field-path bases (`#saga.compensations`).
-func (t *Transfer) lenExprContainerKey(expr ast.Expr) (constraint.PathKey, bool) {
-	lenOp, ok := expr.(*ast.UnaryLenOpExpr)
+func (t *Transfer) containerExprRef(expr ast.Expr) (flow.ContainerRef, bool) {
+	path, ok := t.containerExprPath(expr)
 	if !ok {
-		return "", false
+		return flow.ContainerRef{}, false
 	}
-	return t.containerExprKey(lenOp.Expr)
+	return flow.ContainerRefOfPath(path)
 }
 
-func (t *Transfer) lenExprContainerPlace(expr ast.Expr) (Place, constraint.PathKey, bool) {
+// lenExprContainerRef reports whether expr is `#container` over a tracked
+// sequence container and returns the canonical flow container identity.
+func (t *Transfer) lenExprContainerRef(expr ast.Expr) (flow.ContainerRef, bool) {
 	lenOp, ok := expr.(*ast.UnaryLenOpExpr)
 	if !ok {
-		return Place{}, "", false
+		return flow.ContainerRef{}, false
+	}
+	return t.containerExprRef(lenOp.Expr)
+}
+
+func (t *Transfer) lenExprContainerPlace(expr ast.Expr) (Place, flow.ContainerRef, bool) {
+	lenOp, ok := expr.(*ast.UnaryLenOpExpr)
+	if !ok {
+		return Place{}, flow.ContainerRef{}, false
 	}
 	place, ok := t.staticPlaceOfExpr(lenOp.Expr)
 	if !ok {
-		return Place{}, "", false
+		return Place{}, flow.ContainerRef{}, false
 	}
-	key, ok := symbolPathKey(place)
+	path, ok := place.StaticPath()
 	if !ok {
-		return Place{}, "", false
+		return Place{}, flow.ContainerRef{}, false
 	}
-	return place, key, true
+	ref, ok := flow.ContainerRefOfPath(path)
+	if !ok {
+		return Place{}, flow.ContainerRef{}, false
+	}
+	return place, ref, true
 }
 
 // lengthIndexOffset reports whether key is `#base + c` or `c + #base` (the
@@ -343,27 +339,27 @@ func (t *Transfer) lengthIndexOffset(key ast.Expr) (*ast.IdentExpr, int64, bool)
 // lengthIndexContainerOffset is the field-path-aware form of lengthIndexOffset:
 // it reports whether key is `#container + c` / `c + #container` / bare
 // `#container` over a tracked sequence container (a bare identifier or a static
-// field path), returning that container's numeric path key and the constant
+// field path), returning that container's canonical flow ref and the constant
 // offset c. Any other shape reports ok=false.
-func (t *Transfer) lengthIndexContainerOffset(key ast.Expr) (constraint.PathKey, int64, bool) {
-	if k, ok := t.lenExprContainerKey(key); ok {
-		return k, 0, true
+func (t *Transfer) lengthIndexContainerOffset(key ast.Expr) (flow.ContainerRef, int64, bool) {
+	if ref, ok := t.lenExprContainerRef(key); ok {
+		return ref, 0, true
 	}
 	arith, ok := key.(*ast.ArithmeticOpExpr)
 	if !ok || arith.Operator != "+" {
-		return "", 0, false
+		return flow.ContainerRef{}, 0, false
 	}
-	if k, ok := t.lenExprContainerKey(arith.Lhs); ok {
+	if ref, ok := t.lenExprContainerRef(arith.Lhs); ok {
 		if c, ok := t.constInt(arith.Rhs); ok {
-			return k, c, true
+			return ref, c, true
 		}
 	}
-	if k, ok := t.lenExprContainerKey(arith.Rhs); ok {
+	if ref, ok := t.lenExprContainerRef(arith.Rhs); ok {
 		if c, ok := t.constInt(arith.Lhs); ok {
-			return k, c, true
+			return ref, c, true
 		}
 	}
-	return "", 0, false
+	return flow.ContainerRef{}, 0, false
 }
 
 // isTableInsertCallee reports whether info's callee is precisely the standard
@@ -418,7 +414,7 @@ func (t *Transfer) isTableCreateCall(call *ast.FuncCallExpr) bool {
 
 // applyTableInsert lowers `table.insert` into a MutatorEffect. Direct sequence
 // targets (`arr`, `saga.compensations`, `groups["default"]`) append to the exact
-// Place and raise that sequence's length floor when it has a static numeric key.
+// Place and raise that sequence's length floor when it has a static container ref.
 // Dynamic map-element targets (`suites[suite]`) append into the map value slot
 // through the base Place with an explicit abstract key; those per-key lengths are
 // not represented in the numeric component.
@@ -439,7 +435,7 @@ func (t *Transfer) applyTableInsert(
 	if out.Num == nil {
 		effect, ok := t.tableInsertMutatorEffect(out, target, elemExpr, product.AbstractValue{}, demand)
 		if ok {
-			effect.LengthKey = ""
+			effect.LengthRef = flow.ContainerRef{}
 			effect.LengthIncrement = 0
 			t.applyMutatorEffect(out, effect)
 		}
@@ -513,8 +509,8 @@ func (t *Transfer) tableInsertMutatorEffect(
 		ElementExpr: elemExpr,
 		ElementPath: elemPath,
 	}
-	if arrKey, ok := t.containerExprKey(target); ok {
-		effect.LengthKey = arrKey
+	if container, ok := t.containerExprRef(target); ok {
+		effect.LengthRef = container
 		effect.LengthIncrement = 1
 	}
 	return effect, true
@@ -560,8 +556,8 @@ func (t *Transfer) seedNumericForBounds(out *flow.PointState, idxSym cfg.SymbolI
 		flow.ApplyNumericEffect(out, flow.NumericEffect{Ops: ops, RequireExisting: true})
 		return
 	}
-	if arrKey, ok := t.lenExprContainerKey(ceilEnd); ok {
-		if op, ok := flow.NumericVarLeLenOffsetSymbolOp(idxSym, arrKey, 0); ok {
+	if container, ok := t.lenExprContainerRef(ceilEnd); ok {
+		if op, ok := flow.NumericVarLeLenOffsetContainerOp(idxSym, container, 0); ok {
 			ops = append(ops, op)
 		}
 	}
@@ -766,7 +762,7 @@ func (t *Transfer) refineIndexRead(
 		return ev
 	}
 
-	arrKey, _ := t.containerExprKey(e.Object)
+	containerRef, _ := t.containerExprRef(e.Object)
 
 	// Literal index within a proven length lower bound: arr[k] with #arr >= k.
 	if lit, ok := t.constInt(e.Key); ok && lit >= 1 {
@@ -776,8 +772,8 @@ func (t *Transfer) refineIndexRead(
 				return product.FromType(refined)
 			}
 		}
-		if arrKey != "" {
-			if lower, _, ok := out.Num.LenBoundsFor(arrKey); ok && lower >= lit {
+		if containerRef.IsValid() {
+			if lower, _, ok := flow.NumericLenBoundsForContainer(out.Num, containerRef); ok && lower >= lit {
 				if refined := narrow.RefineSequenceIndex(container, result, lit); refined != nil {
 					return product.FromType(refined)
 				}
@@ -787,15 +783,15 @@ func (t *Transfer) refineIndexRead(
 	}
 
 	// Length-relative index `#base + k` (or bare `#base`) on the same container.
-	if lenKey, offset, ok := t.lengthIndexContainerOffset(e.Key); ok {
-		if lenKey != "" && lenKey == arrKey {
+	if lenRef, offset, ok := t.lengthIndexContainerOffset(e.Key); ok {
+		if lenRef.IsValid() && lenRef.Equal(containerRef) {
 			// A fixed-arity tuple resolves #t to its static arity directly.
 			if arity, ok := narrow.TupleArity(container); ok {
 				if refined := narrow.RefineLengthIndex(container, result, arity, offset); refined != nil {
 					return product.FromType(refined)
 				}
 			}
-			if lower, _, ok := out.Num.LenBoundsFor(arrKey); ok {
+			if lower, _, ok := flow.NumericLenBoundsForContainer(out.Num, containerRef); ok {
 				if refined := narrow.RefineLengthIndex(container, result, lower, offset); refined != nil {
 					return product.FromType(refined)
 				}
@@ -827,9 +823,9 @@ func (t *Transfer) refineIndexRead(
 		}
 	}
 
-	if arrKey != "" {
-		refArr, offset, ok := out.Num.LenRefWithOffsetFor(idxKey)
-		if ok && refArr == arrKey {
+	if containerRef.IsValid() {
+		refArr, offset, ok := flow.NumericLenRefWithOffsetForVar(out.Num, idxSym)
+		if ok && refArr.Equal(containerRef) {
 			if lower, _, ok := numeric.BoundsForWithTheory(out.Num, idxKey); ok && lower+offset >= 1 && offset <= 0 {
 				if refined := narrow.RefineSequenceIndex(container, result, lower+offset); refined != nil {
 					return product.FromType(refined)

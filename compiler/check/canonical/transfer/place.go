@@ -155,14 +155,6 @@ func staticPathOfExprWithRootSymbol(expr ast.Expr, sym cfg.SymbolID) (constraint
 	return place.StaticPath()
 }
 
-func symbolPathKey(p Place) (constraint.PathKey, bool) {
-	path, ok := p.StaticPath()
-	if !ok || path.Symbol == 0 {
-		return "", false
-	}
-	return flow.SymbolPathKeyOf(path)
-}
-
 func (t *Transfer) staticRootSymbolOfExpr(expr ast.Expr) (cfg.SymbolID, bool) {
 	access, ok := staticAccessOfExpr(expr)
 	if !ok || access.Root == nil {

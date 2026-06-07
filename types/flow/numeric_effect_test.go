@@ -112,9 +112,13 @@ func TestNumericSymbolOpsUseSymbolValueKeys(t *testing.T) {
 	if !ok || eq.Kind != NumericVarEqConst || eq.Key != wantKey || eq.Const != 4 {
 		t.Fatalf("eq symbol op = %#v/%v, want key=%s const=4", eq, ok, wantKey)
 	}
-	ref, ok := NumericVarLeLenOffsetSymbolOp(sym, "arr", -1)
-	if !ok || ref.Kind != NumericVarLeLenOffset || ref.Key != wantKey || ref.Other != "arr" || ref.Offset != -1 {
-		t.Fatalf("len-ref symbol op = %#v/%v, want key=%s other=arr offset=-1", ref, ok, wantKey)
+	container, ok := ContainerRefOfPath(constraint.NewPath(cfg.SymbolID(8), "arr"))
+	if !ok {
+		t.Fatal("ContainerRefOfPath(arr) failed")
+	}
+	ref, ok := NumericVarLeLenOffsetContainerOp(sym, container, -1)
+	if !ok || ref.Kind != NumericVarLeLenOffset || ref.Key != wantKey || ref.Other != SymbolPathKey(cfg.SymbolID(8), nil) || ref.Offset != -1 {
+		t.Fatalf("len-ref symbol op = %#v/%v, want key=%s other=%s offset=-1", ref, ok, wantKey, SymbolPathKey(cfg.SymbolID(8), nil))
 	}
 	drop, ok := NumericDropLenBoundSymbolOp(sym)
 	if !ok || drop.Kind != NumericDropLenBound || drop.Key != wantKey {

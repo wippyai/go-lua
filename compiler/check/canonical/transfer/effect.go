@@ -329,7 +329,7 @@ type MutatorEffect struct {
 	ElementExpr     ast.Expr
 	ElementPath     constraint.Path
 	Key             product.AbstractValue
-	LengthKey       constraint.PathKey
+	LengthRef       flow.ContainerRef
 	LengthIncrement int64
 }
 
@@ -348,8 +348,8 @@ func (t *Transfer) applyMutatorEffect(out *flow.PointState, effect MutatorEffect
 			KeyFacts:      true,
 		}) || changed
 	}
-	if effect.LengthKey != "" && effect.LengthIncrement > 0 {
-		changed = t.incrementLenBound(out, effect.LengthKey, effect.LengthIncrement) || changed
+	if effect.LengthRef.IsValid() && effect.LengthIncrement > 0 {
+		changed = t.incrementLenBound(out, effect.LengthRef, effect.LengthIncrement) || changed
 	}
 	mutation, mutationOK := receiverMutationForPlace(effect.Place, false)
 	if mutationOK {

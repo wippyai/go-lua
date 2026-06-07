@@ -551,6 +551,15 @@ func (r PointRelations) ContainerLowerBoundFor(target constraint.PathKey) (int64
 	return 0, false
 }
 
+// ContainerLowerBoundForRef returns the proven cardinality lower bound for a
+// canonical container identity.
+func (r PointRelations) ContainerLowerBoundForRef(container ContainerRef) (int64, bool) {
+	if !container.IsValid() {
+		return 0, false
+	}
+	return r.ContainerLowerBoundFor(container.pathKey())
+}
+
 // HasContainerLowerBound reports whether r proves target has at least lower
 // entries.
 func (r PointRelations) HasContainerLowerBound(root cfg.SymbolID, target constraint.PathKey, lower int64) bool {

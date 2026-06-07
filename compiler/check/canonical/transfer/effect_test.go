@@ -1664,6 +1664,10 @@ func TestMutatorEffectAppendsElementAndUpdatesSideAxes(t *testing.T) {
 	namesPath := constraint.NewPath(namesSym, "names")
 	container := constraint.NewPath(cfg.SymbolID(702), "container")
 	arrKey := constraint.PathKey(flow.SymbolValueKey(namesSym))
+	arrRef, ok := flow.ContainerRefOfPath(namesPath)
+	if !ok {
+		t.Fatalf("ContainerRefOfPath(%v) failed", namesPath)
+	}
 	tr := New(input.Inputs{}, Config{})
 	out := flow.PointState{
 		Env: map[flow.ValueKey]product.AbstractValue{
@@ -1677,7 +1681,7 @@ func TestMutatorEffectAppendsElementAndUpdatesSideAxes(t *testing.T) {
 		Place:           Place{Root: namesSym},
 		Kind:            MutatorAppendElement,
 		Element:         product.FromType(typ.Number),
-		LengthKey:       arrKey,
+		LengthRef:       arrRef,
 		LengthIncrement: 1,
 	})
 
