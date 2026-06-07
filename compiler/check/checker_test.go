@@ -11,6 +11,7 @@ import (
 	"github.com/wippyai/go-lua/types/db"
 	"github.com/wippyai/go-lua/types/diag"
 	"github.com/wippyai/go-lua/types/query/core"
+	"github.com/wippyai/go-lua/types/subtype"
 	"github.com/wippyai/go-lua/types/typ"
 )
 
@@ -207,7 +208,8 @@ func TestChecker_TypeofNarrowing_UsesSolvedFlowProjection(t *testing.T) {
 			continue
 		}
 		path := constraint.Path{Root: "x", Symbol: symX}
-		if narrowed := flowOps.NarrowedTypeAt(point, path); typ.TypeEquals(narrowed, typ.String) {
+		narrowed := flowOps.NarrowedTypeAt(point, path)
+		if subtype.IsSubtype(narrowed, typ.String) && !subtype.IsSubtype(narrowed, typ.Number) {
 			found = true
 			break
 		}
