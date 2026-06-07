@@ -151,7 +151,8 @@ func TestDirectCallEntryReferences_ProjectFunctionRuntimeArgsToParamPaths(t *tes
 	call := &ast.FuncCallExpr{Args: []ast.Expr{arg0, arg1}}
 
 	callee := summary.FuncRef{GraphID: 7}
-	functionRefs := flow.WithFunctionRef(flow.WithFunctionRef(nil, sourcePath.Key(), flow.FunctionRefSetOf(callbackRef)), sourcePath.Field("nested").Key(), flow.FunctionRefSetOf(nestedRef))
+	functionRefs := flow.WithFunctionRefPath(nil, sourcePath, flow.FunctionRefSetOf(callbackRef))
+	functionRefs = flow.WithFunctionRefPath(functionRefs, sourcePath.Field("nested"), flow.FunctionRefSetOf(nestedRef))
 	projection := summary.CallEntryContextProjection{
 		ParamSlot: func(_ summary.FuncRef, _ *ast.FuncCallExpr, runtimeIdx int) (int, int, bool) {
 			switch runtimeIdx {
@@ -194,17 +195,17 @@ func TestDirectCallEntryReferences_ProjectFunctionRuntimeArgsToParamPaths(t *tes
 		},
 	).FunctionRefs()
 
-	if refs, ok := flow.FunctionRefAt(got, param0Path.Key()); !ok {
+	if refs, ok := flow.FunctionRefAtPath(got, param0Path); !ok {
 		t.Fatalf("rebased root refs missing: %#v", got)
 	} else if ref, singleton := refs.Singleton(); !singleton || ref != callbackRef {
 		t.Fatalf("rebased root refs = %s, want %v", refs.Format(), callbackRef)
 	}
-	if refs, ok := flow.FunctionRefAt(got, param0Path.Field("nested").Key()); !ok {
+	if refs, ok := flow.FunctionRefAtPath(got, param0Path.Field("nested")); !ok {
 		t.Fatalf("rebased nested refs missing: %#v", got)
 	} else if ref, singleton := refs.Singleton(); !singleton || ref != nestedRef {
 		t.Fatalf("rebased nested refs = %s, want %v", refs.Format(), nestedRef)
 	}
-	if refs, ok := flow.FunctionRefAt(got, param1Path.Key()); !ok {
+	if refs, ok := flow.FunctionRefAtPath(got, param1Path); !ok {
 		t.Fatalf("direct literal refs missing: %#v", got)
 	} else if ref, singleton := refs.Singleton(); !singleton || ref != directRef {
 		t.Fatalf("direct literal refs = %s, want %v", refs.Format(), directRef)
@@ -218,8 +219,8 @@ func TestDirectCallEntryReferences_LimitsRebasedFunctionArgsToCalleeVocabulary(t
 	unusedRef := flow.FunctionRef{GraphID: 107}
 	arg := &ast.IdentExpr{Value: "receiver"}
 	call := &ast.FuncCallExpr{Args: []ast.Expr{arg}}
-	refs := flow.WithFunctionRef(nil, source.Field("used").Key(), flow.FunctionRefSetOf(usedRef))
-	refs = flow.WithFunctionRef(refs, source.Field("unused").Key(), flow.FunctionRefSetOf(unusedRef))
+	refs := flow.WithFunctionRefPath(nil, source.Field("used"), flow.FunctionRefSetOf(usedRef))
+	refs = flow.WithFunctionRefPath(refs, source.Field("unused"), flow.FunctionRefSetOf(unusedRef))
 
 	callee := summary.FuncRef{GraphID: 7}
 	projection := summary.CallEntryContextProjection{
@@ -238,12 +239,12 @@ func TestDirectCallEntryReferences_LimitsRebasedFunctionArgsToCalleeVocabulary(t
 		summary.EntryReferenceArgSources{},
 	).FunctionRefs()
 
-	if refs, ok := flow.FunctionRefAt(got, param.Field("used").Key()); !ok {
+	if refs, ok := flow.FunctionRefAtPath(got, param.Field("used")); !ok {
 		t.Fatalf("projected used ref missing: %#v", got)
 	} else if ref, singleton := refs.Singleton(); !singleton || ref != usedRef {
 		t.Fatalf("projected used ref = %s, want %v", refs.Format(), usedRef)
 	}
-	if _, ok := flow.FunctionRefAt(got, param.Field("unused").Key()); ok {
+	if _, ok := flow.FunctionRefAtPath(got, param.Field("unused")); ok {
 		t.Fatalf("projected refs retained unused path: %#v", got)
 	}
 }
@@ -279,7 +280,7 @@ func TestDirectCallEntryReferences_SeedsDirectFunctionLiteralWhenParamSlotMapped
 		},
 	).FunctionRefs()
 
-	if refs, ok := flow.FunctionRefAt(got, paramPath.Key()); !ok {
+	if refs, ok := flow.FunctionRefAtPath(got, paramPath); !ok {
 		t.Fatalf("direct literal refs missing: %#v", got)
 	} else if ref, singleton := refs.Singleton(); !singleton || ref != directRef {
 		t.Fatalf("direct literal refs = %s, want %v", refs.Format(), directRef)
@@ -292,7 +293,7 @@ func TestDirectCallEntryReferences_RebasesFunctionCallReturnSubtreeToParamPath(t
 	queryRef := flow.FunctionRef{GraphID: 105}
 	arg := &ast.FuncCallExpr{Func: &ast.IdentExpr{Value: "mock"}}
 	call := &ast.FuncCallExpr{Args: []ast.Expr{arg}}
-	returnRefs := flow.WithFunctionRef(nil, constraint.NewPlaceholder(0).Field("query").Key(), flow.FunctionRefSetOf(queryRef))
+	returnRefs := flow.WithFunctionRefPath(nil, constraint.NewPlaceholder(0).Field("query"), flow.FunctionRefSetOf(queryRef))
 
 	callee := summary.FuncRef{GraphID: 9}
 	projection := summary.CallEntryContextProjection{
@@ -318,7 +319,7 @@ func TestDirectCallEntryReferences_RebasesFunctionCallReturnSubtreeToParamPath(t
 		},
 	).FunctionRefs()
 
-	if refs, ok := flow.FunctionRefAt(got, paramPath.Field("query").Key()); !ok {
+	if refs, ok := flow.FunctionRefAtPath(got, paramPath.Field("query")); !ok {
 		t.Fatalf("rebased call-return subtree refs missing: %#v", got)
 	} else if ref, singleton := refs.Singleton(); !singleton || ref != queryRef {
 		t.Fatalf("rebased call-return subtree refs = %s, want %v", refs.Format(), queryRef)
@@ -333,7 +334,7 @@ func TestDirectCallEntryReferences_ProjectClosureRuntimeArgsToParamPaths(t *test
 	call := &ast.FuncCallExpr{Args: []ast.Expr{arg}}
 
 	callee := summary.FuncRef{GraphID: 9}
-	closureRefs := flow.WithClosureRef(nil, source.Key(), flow.ClosureRefSetOf(closure))
+	closureRefs := flow.WithClosureRefPath(nil, source, flow.ClosureRefSetOf(closure))
 	projection := summary.CallEntryContextProjection{
 		ParamSlot: func(summary.FuncRef, *ast.FuncCallExpr, int) (int, int, bool) {
 			return 0, 0, true
@@ -353,7 +354,7 @@ func TestDirectCallEntryReferences_ProjectClosureRuntimeArgsToParamPaths(t *test
 		summary.EntryReferenceArgSources{},
 	).ClosureRefs()
 
-	if refs, ok := flow.ClosureRefAt(got, target.Key()); !ok {
+	if refs, ok := flow.ClosureRefAtPath(got, target); !ok {
 		t.Fatalf("rebased closure refs missing: %#v", got)
 	} else if ref, singleton := refs.Singleton(); !singleton || ref.Ref != closure.Ref {
 		t.Fatalf("rebased closure refs = %s, want %v", refs.Format(), closure.Ref)
@@ -365,7 +366,7 @@ func TestDirectCallEntryReferences_RebasesClosureCallReturnSubtreeToParamPath(t 
 	closure := flow.ClosureRefOf(flow.FunctionRef{GraphID: 202}, flow.CaptureCellsDomain.Bottom(), nil)
 	arg := &ast.FuncCallExpr{Func: &ast.IdentExpr{Value: "mock"}}
 	call := &ast.FuncCallExpr{Args: []ast.Expr{arg}}
-	returnRefs := flow.WithClosureRef(nil, constraint.NewPlaceholder(0).Field("query").Key(), flow.ClosureRefSetOf(closure))
+	returnRefs := flow.WithClosureRefPath(nil, constraint.NewPlaceholder(0).Field("query"), flow.ClosureRefSetOf(closure))
 
 	callee := summary.FuncRef{GraphID: 10}
 	projection := summary.CallEntryContextProjection{
@@ -391,7 +392,7 @@ func TestDirectCallEntryReferences_RebasesClosureCallReturnSubtreeToParamPath(t 
 		},
 	).ClosureRefs()
 
-	if refs, ok := flow.ClosureRefAt(got, target.Field("query").Key()); !ok {
+	if refs, ok := flow.ClosureRefAtPath(got, target.Field("query")); !ok {
 		t.Fatalf("rebased call-return closure subtree missing: %#v", got)
 	} else if ref, singleton := refs.Singleton(); !singleton || ref.Ref != closure.Ref {
 		t.Fatalf("rebased call-return closure subtree = %s, want %v", refs.Format(), closure.Ref)
@@ -416,8 +417,8 @@ func TestCallEntryContextProjectionUsesCallEventPostState(t *testing.T) {
 
 	callee := summary.FuncRef{GraphID: 9}
 	targetCells := flow.CaptureCellsOf([]flow.CaptureCell{{Symbol: cfg.SymbolID(99), Value: product.FromType(typ.String)}})
-	targetRefs := flow.WithFunctionRef(nil, constraint.NewPath(cfg.SymbolID(8), "ref").Key(), flow.FunctionRefSetOf(flow.FunctionRef{GraphID: 7}))
-	targetClosures := flow.WithClosureRef(nil, constraint.NewPath(cfg.SymbolID(9), "closure").Key(), flow.ClosureRefSetOf(
+	targetRefs := flow.WithFunctionRefPath(nil, constraint.NewPath(cfg.SymbolID(8), "ref"), flow.FunctionRefSetOf(flow.FunctionRef{GraphID: 7}))
+	targetClosures := flow.WithClosureRefPath(nil, constraint.NewPath(cfg.SymbolID(9), "closure"), flow.ClosureRefSetOf(
 		flow.ClosureRefOf(
 			flow.FunctionRef{GraphID: 9},
 			flow.CaptureCellsOf([]flow.CaptureCell{{Symbol: cfg.SymbolID(12), Value: product.FromType(typ.Number)}}),
@@ -498,7 +499,7 @@ func TestCallEntryContextProjectionResolvesTargetsFromPreCallState(t *testing.T)
 	callee := summary.FuncRef{GraphID: 10}
 	methodRef := flow.FunctionRef{GraphID: 10}
 	methodPath := info.CalleePath.Field(info.Method)
-	postRoot := flow.WithFunctionRef(nil, info.CalleePath.Key(), flow.FunctionRefSetOf(flow.FunctionRef{GraphID: 99}))
+	postRoot := flow.WithFunctionRefPath(nil, info.CalleePath, flow.FunctionRefSetOf(flow.FunctionRef{GraphID: 99}))
 	preValue := product.FromType(typ.Number)
 	postValue := product.FromType(typ.String)
 	keys := summary.CallEntryContextProjection{
@@ -509,7 +510,7 @@ func TestCallEntryContextProjectionResolvesTargetsFromPreCallState(t *testing.T)
 					Env: map[flow.ValueKey]product.AbstractValue{
 						flow.SymbolValueKey(1): preValue,
 					},
-					FunctionRefs: flow.WithFunctionRef(nil, methodPath.Key(), flow.FunctionRefSetOf(methodRef)),
+					FunctionRefs: flow.WithFunctionRefPath(nil, methodPath, flow.FunctionRefSetOf(methodRef)),
 				},
 			},
 			Points: map[cfg.Point]flow.PointState{
@@ -525,7 +526,7 @@ func TestCallEntryContextProjectionResolvesTargetsFromPreCallState(t *testing.T)
 			if gotCall != call {
 				t.Fatalf("call = %#v, want test call", gotCall)
 			}
-			if set, ok := flow.FunctionRefAt(in.FunctionRefs, methodPath.Key()); ok && !set.IsBottom() {
+			if set, ok := flow.FunctionRefAtPath(in.FunctionRefs, methodPath); ok && !set.IsBottom() {
 				return []summary.CallEntryTarget{{Ref: callee}}
 			}
 			return nil
@@ -618,8 +619,8 @@ func TestCallEntryContextProjection_UsesCallEntryTargetResolverAxesForClosureAnd
 		Ref: callee,
 		EntryReferences: flow.ReferenceContextOf(
 			flow.CaptureCellsOf([]flow.CaptureCell{{Symbol: 1, Value: product.FromType(typ.String)}}),
-			flow.WithFunctionRef(nil, constraint.NewPath(cfg.SymbolID(2), "a").Key(), flow.FunctionRefSetOf(flow.FunctionRef{GraphID: 101})),
-			flow.WithClosureRef(nil, constraint.NewPath(cfg.SymbolID(3), "a").Key(), flow.ClosureRefSetOf(
+			flow.WithFunctionRefPath(nil, constraint.NewPath(cfg.SymbolID(2), "a"), flow.FunctionRefSetOf(flow.FunctionRef{GraphID: 101})),
+			flow.WithClosureRefPath(nil, constraint.NewPath(cfg.SymbolID(3), "a"), flow.ClosureRefSetOf(
 				flow.ClosureRefOf(
 					flow.FunctionRef{GraphID: 201},
 					flow.CaptureCellsOf([]flow.CaptureCell{{Symbol: cfg.SymbolID(12), Value: product.FromType(typ.Number)}}),
@@ -632,8 +633,8 @@ func TestCallEntryContextProjection_UsesCallEntryTargetResolverAxesForClosureAnd
 		Ref: callee,
 		EntryReferences: flow.ReferenceContextOf(
 			flow.CaptureCellsOf([]flow.CaptureCell{{Symbol: 2, Value: product.FromType(typ.Boolean)}}),
-			flow.WithFunctionRef(nil, constraint.NewPath(cfg.SymbolID(4), "b").Key(), flow.FunctionRefSetOf(flow.FunctionRef{GraphID: 102})),
-			flow.WithClosureRef(nil, constraint.NewPath(cfg.SymbolID(5), "b").Key(), flow.ClosureRefSetOf(
+			flow.WithFunctionRefPath(nil, constraint.NewPath(cfg.SymbolID(4), "b"), flow.FunctionRefSetOf(flow.FunctionRef{GraphID: 102})),
+			flow.WithClosureRefPath(nil, constraint.NewPath(cfg.SymbolID(5), "b"), flow.ClosureRefSetOf(
 				flow.ClosureRefOf(
 					flow.FunctionRef{GraphID: 202},
 					flow.CaptureCellsOf([]flow.CaptureCell{{Symbol: cfg.SymbolID(13), Value: product.FromType(typ.Boolean)}}),
@@ -689,8 +690,8 @@ func TestClosureEntryContextProjection_ProjectsDeclarationClosureContexts(t *tes
 	refB := summary.FuncRef{GraphID: 22, ParentHash: 2}
 	cellsA := flow.CaptureCellsOf([]flow.CaptureCell{{Symbol: cfg.SymbolID(10), Value: product.FromType(typ.Number)}})
 	cellsB := flow.CaptureCellsOf([]flow.CaptureCell{{Symbol: cfg.SymbolID(11), Value: product.FromType(typ.String)}})
-	refsA := flow.WithFunctionRef(nil, constraint.NewPath(cfg.SymbolID(12), "helper").Key(), flow.FunctionRefSetOf(flow.FunctionRef{GraphID: 101}))
-	nested := flow.WithClosureRef(nil, constraint.NewPath(cfg.SymbolID(13), "factory").Key(), flow.ClosureRefSetOf(
+	refsA := flow.WithFunctionRefPath(nil, constraint.NewPath(cfg.SymbolID(12), "helper"), flow.FunctionRefSetOf(flow.FunctionRef{GraphID: 101}))
+	nested := flow.WithClosureRefPath(nil, constraint.NewPath(cfg.SymbolID(13), "factory"), flow.ClosureRefSetOf(
 		flow.ClosureRefOf(flow.FunctionRef{GraphID: 102}, flow.CaptureCellsDomain.Bottom(), nil),
 	))
 	closureA := flow.ClosureRefOf(flow.FunctionRef{GraphID: refA.GraphID, ParentHash: refA.ParentHash}, cellsA, refsA, nested)
@@ -699,11 +700,11 @@ func TestClosureEntryContextProjection_ProjectsDeclarationClosureContexts(t *tes
 	keys := summary.ClosureEntryContextProjection{
 		State: state.FunctionState{
 			Points: map[cfg.Point]flow.PointState{
-				1: {ClosureRefs: flow.WithClosureRef(nil, pathA.Key(), flow.ClosureRefSetOf(closureA))},
-				2: {ClosureRefs: flow.WithClosureRef(nil, pathB.Key(), flow.ClosureRefSetOf(closureB))},
+				1: {ClosureRefs: flow.WithClosureRefPath(nil, pathA, flow.ClosureRefSetOf(closureA))},
+				2: {ClosureRefs: flow.WithClosureRefPath(nil, pathB, flow.ClosureRefSetOf(closureB))},
 			},
 			InPoints: map[cfg.Point]flow.PointState{
-				3: {ClosureRefs: flow.WithClosureRef(nil, pathA.Key(), flow.ClosureRefSetOf(closureA))},
+				3: {ClosureRefs: flow.WithClosureRefPath(nil, pathA, flow.ClosureRefSetOf(closureA))},
 			},
 		},
 	}.ProjectKeys()

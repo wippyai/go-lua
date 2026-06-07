@@ -22,8 +22,8 @@ func TestReturnRefsSlotAccessors(t *testing.T) {
 	returns := flow.ReturnRefsOfSlots([]flow.ReturnRefSlot{
 		flow.ReturnRefSlotOf(flow.FunctionRefsDomain.Bottom(), flow.ClosureRefsDomain.Bottom()),
 		flow.ReturnRefSlotOf(
-			flow.WithFunctionRef(nil, fnPath.Key(), flow.FunctionRefSetOf(fnRef)),
-			flow.WithClosureRef(nil, clPath.Key(), flow.ClosureRefSetOf(clRef)),
+			flow.WithFunctionRefPath(nil, fnPath, flow.FunctionRefSetOf(fnRef)),
+			flow.WithClosureRefPath(nil, clPath, flow.ClosureRefSetOf(clRef)),
 		),
 	})
 
@@ -31,12 +31,12 @@ func TestReturnRefsSlotAccessors(t *testing.T) {
 	if !ok {
 		t.Fatal("SlotReferenceContext(1) missing")
 	}
-	if set, ok := flow.FunctionRefAt(references.FunctionRefs(), fnPath.Key()); !ok {
+	if set, ok := flow.FunctionRefAtPath(references.FunctionRefs(), fnPath); !ok {
 		t.Fatalf("slot function refs missing: %#v", references.FunctionRefs())
 	} else if got, singleton := set.Singleton(); !singleton || got != fnRef {
 		t.Fatalf("slot function refs = %s, want %v", set.Format(), fnRef)
 	}
-	if set, ok := flow.ClosureRefAt(references.ClosureRefs(), clPath.Key()); !ok {
+	if set, ok := flow.ClosureRefAtPath(references.ClosureRefs(), clPath); !ok {
 		t.Fatalf("slot closure refs missing: %#v", references.ClosureRefs())
 	} else if got, singleton := set.Singleton(); !singleton || got.Ref != clRef.Ref {
 		t.Fatalf("slot closure refs = %s, want %v", set.Format(), clRef.Ref)
@@ -73,7 +73,8 @@ func TestFuncDefRootWritesFunctionRefAxis(t *testing.T) {
 	if !typ.TypeEquals(got.ProjectValue(), sig) {
 		t.Fatalf("root function value = %v, want %v", got.ProjectValue(), sig)
 	}
-	refs, ok := flow.FunctionRefAt(out.FunctionRefs, constraint.NewPath(sym, "f").Key())
+	targetPath := constraint.NewPath(sym, "f")
+	refs, ok := flow.FunctionRefAtPath(out.FunctionRefs, targetPath)
 	if !ok {
 		t.Fatal("root function definition did not write FunctionRefs")
 	}
@@ -105,8 +106,8 @@ func TestFuncDefRootWritesClosureRefEnvironment(t *testing.T) {
 			Symbol: captureSym,
 			Value:  product.FromType(typ.String),
 		}}),
-		FunctionRefs: flow.WithFunctionRef(nil, constraint.NewPath(captureSym, "captured").Key(), flow.FunctionRefSetOf(capturedFn)),
-		ClosureRefs:  flow.WithClosureRef(nil, constraint.NewPath(captureSym, "captured").Field("factory").Key(), flow.ClosureRefSetOf(capturedClosure)),
+		FunctionRefs: flow.WithFunctionRefPath(nil, constraint.NewPath(captureSym, "captured"), flow.FunctionRefSetOf(capturedFn)),
+		ClosureRefs:  flow.WithClosureRefPath(nil, constraint.NewPath(captureSym, "captured").Field("factory"), flow.ClosureRefSetOf(capturedClosure)),
 	}
 
 	tr.applyFuncDef(&out, &cfg.FuncDefInfo{
@@ -115,7 +116,8 @@ func TestFuncDefRootWritesClosureRefEnvironment(t *testing.T) {
 		TargetPath: constraint.NewPath(targetSym, "f"),
 	})
 
-	set, ok := flow.ClosureRefAt(out.ClosureRefs, constraint.NewPath(targetSym, "f").Key())
+	targetPath := constraint.NewPath(targetSym, "f")
+	set, ok := flow.ClosureRefAtPath(out.ClosureRefs, targetPath)
 	if !ok {
 		t.Fatalf("root function definition did not write ClosureRefs: %#v", out.ClosureRefs)
 	}
@@ -129,12 +131,12 @@ func TestFuncDefRootWritesClosureRefEnvironment(t *testing.T) {
 	if av, ok := got.EntryCells().Value(envCaptureSym); !ok || !typ.TypeEquals(av.ProjectValue(), typ.Boolean) {
 		t.Fatalf("closure env-captured cell = %s, want %d:boolean", got.EntryCells().Format(), envCaptureSym)
 	}
-	if refs, ok := flow.FunctionRefAt(got.EntryFunctionRefs(), constraint.NewPath(captureSym, "captured").Key()); !ok {
+	if refs, ok := flow.FunctionRefAtPath(got.EntryFunctionRefs(), constraint.NewPath(captureSym, "captured")); !ok {
 		t.Fatalf("closure captured function refs missing: %#v", got.EntryFunctionRefs())
 	} else if gotRef, singleton := refs.Singleton(); !singleton || gotRef != capturedFn {
 		t.Fatalf("closure captured function refs = %s, want %v", refs.Format(), capturedFn)
 	}
-	if refs, ok := flow.ClosureRefAt(got.EntryClosureRefs(), constraint.NewPath(captureSym, "captured").Field("factory").Key()); !ok {
+	if refs, ok := flow.ClosureRefAtPath(got.EntryClosureRefs(), constraint.NewPath(captureSym, "captured").Field("factory")); !ok {
 		t.Fatalf("closure captured closure refs missing: %#v", got.EntryClosureRefs())
 	} else if gotClosure, singleton := refs.Singleton(); !singleton || gotClosure.Ref != capturedClosure.Ref {
 		t.Fatalf("closure captured closure refs = %s, want %v", refs.Format(), capturedClosure.Ref)
@@ -170,7 +172,8 @@ func TestAssignFunctionExprWritesClosureRefEnvironment(t *testing.T) {
 		Sources: []ast.Expr{fn},
 	}, nil)
 
-	set, ok := flow.ClosureRefAt(out.ClosureRefs, constraint.NewPath(targetSym, "f").Key())
+	targetPath := constraint.NewPath(targetSym, "f")
+	set, ok := flow.ClosureRefAtPath(out.ClosureRefs, targetPath)
 	if !ok {
 		t.Fatalf("function expression assignment did not write ClosureRefs: %#v", out.ClosureRefs)
 	}
@@ -200,7 +203,7 @@ func TestEvalIdentUsesFunctionRefAxisForSolvedSignature(t *testing.T) {
 	tr := New(in, Config{CallTyper: functionValueTestTyper{ref: ref, sig: solved}})
 	out := flow.PointState{
 		Env:          map[flow.ValueKey]product.AbstractValue{flow.SymbolValueKey(sym): product.FromType(raw)},
-		FunctionRefs: flow.WithFunctionRef(nil, constraint.NewPath(sym, "callee").Key(), flow.FunctionRefSetOf(ref)),
+		FunctionRefs: flow.WithFunctionRefPath(nil, constraint.NewPath(sym, "callee"), flow.FunctionRefSetOf(ref)),
 	}
 
 	got, ok := tr.evalExpr(&out, ident, nil)
@@ -267,11 +270,11 @@ func TestCallablePathTypePassesClosureRefsAxis(t *testing.T) {
 	ref := flow.FunctionRef{GraphID: 515, ParentHash: 616}
 	path := constraint.NewPath(sym, "callee")
 	closure := flow.ClosureRefOf(flow.FunctionRef{GraphID: 717}, flow.CaptureCellsDomain.Bottom(), flow.FunctionRefsDomain.Bottom())
-	closures := flow.WithClosureRef(nil, path.Field("factory").Key(), flow.ClosureRefSetOf(closure))
+	closures := flow.WithClosureRefPath(nil, path.Field("factory"), flow.ClosureRefSetOf(closure))
 	provider := &capturingFunctionValueTyper{ref: ref, sig: typ.Func().Returns(typ.Boolean).Build()}
 	tr := New(in, Config{CallTyper: provider})
 	out := flow.PointState{
-		FunctionRefs: flow.WithFunctionRef(nil, path.Key(), flow.FunctionRefSetOf(ref)),
+		FunctionRefs: flow.WithFunctionRefPath(nil, path, flow.FunctionRefSetOf(ref)),
 		ClosureRefs:  closures,
 	}
 
@@ -307,7 +310,8 @@ func TestAssignCallRebasesReturnFunctionRefsToTarget(t *testing.T) {
 		Sources: []ast.Expr{call},
 	}, nil)
 
-	refs, ok := flow.FunctionRefAt(out.FunctionRefs, constraint.NewPath(targetSym, "chain").Field("with_options").Key())
+	chainPath := constraint.NewPath(targetSym, "chain").Field("with_options")
+	refs, ok := flow.FunctionRefAtPath(out.FunctionRefs, chainPath)
 	if !ok {
 		t.Fatalf("call assignment did not rebase return function refs: %#v", out.FunctionRefs)
 	}
@@ -359,7 +363,8 @@ func TestSetMetatableAssignmentPublishesPrototypeMethodFunctionRefs(t *testing.T
 	if !tr.applySetMetatableInstanceBinding(&out, call, targetSym) {
 		t.Fatal("setmetatable source did not publish prototype instance")
 	}
-	refs, ok := flow.FunctionRefAt(out.FunctionRefs, constraint.NewPath(targetSym, "obj").Field("run").Key())
+	objRunPath := constraint.NewPath(targetSym, "obj").Field("run")
+	refs, ok := flow.FunctionRefAtPath(out.FunctionRefs, objRunPath)
 	if !ok {
 		t.Fatalf("prototype method FunctionRefs missing: %#v", out.FunctionRefs)
 	}
@@ -410,7 +415,8 @@ func TestReturnSetMetatablePublishesPrototypeMethodFunctionRefs(t *testing.T) {
 
 	tr.applyReturn(&out, 0, &cfg.ReturnInfo{Exprs: []ast.Expr{call}}, nil)
 
-	refs, ok := flow.FunctionRefAt(out.FunctionRefs, constraint.NewPlaceholder(0).Field("run").Key())
+	returnRunPath := constraint.NewPlaceholder(0).Field("run")
+	refs, ok := flow.FunctionRefAtPath(out.FunctionRefs, returnRunPath)
 	if !ok {
 		t.Fatalf("return prototype method FunctionRefs missing: %#v", out.FunctionRefs)
 	}
@@ -570,7 +576,7 @@ func TestEvalAttrGetUsesFunctionRefsWhenStructuralMemberMissing(t *testing.T) {
 		Env: map[flow.ValueKey]product.AbstractValue{
 			flow.SymbolValueKey(objSym): product.FromType(typ.NewRecord().Build()),
 		},
-		FunctionRefs: flow.WithFunctionRef(nil, constraint.NewPath(objSym, "obj").Field("run").Key(), flow.FunctionRefSetOf(methodRef)),
+		FunctionRefs: flow.WithFunctionRefPath(nil, constraint.NewPath(objSym, "obj").Field("run"), flow.FunctionRefSetOf(methodRef)),
 	}
 	attr := &ast.AttrGetExpr{
 		Object:    obj,
@@ -621,7 +627,7 @@ func TestContainerFunctionRefWriteUsesPlaceForMixedStaticPath(t *testing.T) {
 	tr.applyContainerWrite(&out, target, fn, nil)
 
 	path := constraint.NewPath(rootSym, "registry").IndexStr("handlers").Field("make")
-	refs, ok := flow.FunctionRefAt(out.FunctionRefs, path.Key())
+	refs, ok := flow.FunctionRefAtPath(out.FunctionRefs, path)
 	if !ok {
 		t.Fatalf("mixed static path function ref missing at %s: %#v", path.Key(), out.FunctionRefs)
 	}
@@ -677,7 +683,7 @@ func TestCellBackedContainerWritePublishesNestedFunctionRefs(t *testing.T) {
 		t.Fatalf("cell-backed write missing dep field in cell: %v", got.ProjectValue())
 	}
 	path := constraint.NewPath(rootSym, "M").Field("dep").Field("get")
-	refs, ok := flow.FunctionRefAt(out.FunctionRefs, path.Key())
+	refs, ok := flow.FunctionRefAtPath(out.FunctionRefs, path)
 	if !ok {
 		t.Fatalf("cell-backed nested function ref missing at %s: %#v", path.Key(), out.FunctionRefs)
 	}
@@ -720,7 +726,8 @@ func TestAssignCallReturnFunctionRefsUsesProductArgEvidence(t *testing.T) {
 	if len(typer.args) != 1 || typer.args[0].IsZero() || !typer.args[0].IsGradualTop() {
 		t.Fatalf("product call-entry args = %#v, want one gradual-top product value", typer.args)
 	}
-	refs, ok := flow.FunctionRefAt(out.FunctionRefs, constraint.NewPath(targetSym, "chain").Field("with_options").Key())
+	chainPath := constraint.NewPath(targetSym, "chain").Field("with_options")
+	refs, ok := flow.FunctionRefAtPath(out.FunctionRefs, chainPath)
 	if !ok {
 		t.Fatalf("call assignment did not rebase product return function refs: %#v", out.FunctionRefs)
 	}
@@ -755,7 +762,7 @@ func TestContainerCallRebasesReturnFunctionRefsToStaticPlace(t *testing.T) {
 	}, nil)
 
 	path := constraint.NewPath(rootSym, "registry").Field("chain").Field("with_options")
-	refs, ok := flow.FunctionRefAt(out.FunctionRefs, path.Key())
+	refs, ok := flow.FunctionRefAtPath(out.FunctionRefs, path)
 	if !ok {
 		t.Fatalf("call assignment did not rebase return function refs to container place: %#v", out.FunctionRefs)
 	}
@@ -789,7 +796,8 @@ func TestAssignCallRebasesReturnClosureRefsToTarget(t *testing.T) {
 		Sources: []ast.Expr{call},
 	}, nil)
 
-	refs, ok := flow.ClosureRefAt(out.ClosureRefs, constraint.NewPath(targetSym, "chain").Field("with_options").Key())
+	chainPath := constraint.NewPath(targetSym, "chain").Field("with_options")
+	refs, ok := flow.ClosureRefAtPath(out.ClosureRefs, chainPath)
 	if !ok {
 		t.Fatalf("call assignment did not rebase return closure refs: %#v", out.ClosureRefs)
 	}
@@ -829,7 +837,7 @@ func TestContainerCallRebasesReturnClosureRefsToStaticPlace(t *testing.T) {
 	}, nil)
 
 	path := constraint.NewPath(rootSym, "registry").Field("chain").Field("with_options")
-	refs, ok := flow.ClosureRefAt(out.ClosureRefs, path.Key())
+	refs, ok := flow.ClosureRefAtPath(out.ClosureRefs, path)
 	if !ok {
 		t.Fatalf("call assignment did not rebase return closure refs to container place: %#v", out.ClosureRefs)
 	}
@@ -918,7 +926,7 @@ func (t returnFunctionRefsTestTyper) ProductCallFromValues(*ast.FuncCallExpr, Pr
 	result := productReturnResultForTest(product.FromType(typ.NewRecord().Field("with_options", typ.Func().Build()).Build()))
 	result.ReturnRefs = flow.ReturnRefsOfSlots([]flow.ReturnRefSlot{
 		flow.ReturnRefSlotOf(
-			flow.WithFunctionRef(nil, constraint.NewPlaceholder(0).Field("with_options").Key(), flow.FunctionRefSetOf(t.ref)),
+			flow.WithFunctionRefPath(nil, constraint.NewPlaceholder(0).Field("with_options"), flow.FunctionRefSetOf(t.ref)),
 			flow.ClosureRefsDomain.Bottom(),
 		),
 	})
@@ -941,7 +949,7 @@ func (t *productReturnFunctionRefsTestTyper) ProductCallFromValues(
 	result := EmptyProductCallResult()
 	result.ReturnRefs = flow.ReturnRefsOfSlots([]flow.ReturnRefSlot{
 		flow.ReturnRefSlotOf(
-			flow.WithFunctionRef(nil, constraint.NewPlaceholder(0).Field("with_options").Key(), flow.FunctionRefSetOf(t.ref)),
+			flow.WithFunctionRefPath(nil, constraint.NewPlaceholder(0).Field("with_options"), flow.FunctionRefSetOf(t.ref)),
 			flow.ClosureRefsDomain.Bottom(),
 		),
 	})
@@ -960,7 +968,7 @@ func (t returnClosureRefsTestTyper) ProductCallFromValues(*ast.FuncCallExpr, Pro
 	result.ReturnRefs = flow.ReturnRefsOfSlots([]flow.ReturnRefSlot{
 		flow.ReturnRefSlotOf(
 			flow.FunctionRefsDomain.Bottom(),
-			flow.WithClosureRef(nil, constraint.NewPlaceholder(0).Field("with_options").Key(), flow.ClosureRefSetOf(t.closure)),
+			flow.WithClosureRefPath(nil, constraint.NewPlaceholder(0).Field("with_options"), flow.ClosureRefSetOf(t.closure)),
 		),
 	})
 	return result

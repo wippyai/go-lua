@@ -342,14 +342,14 @@ func TestCallSummaryProjection_ReturnRefsFold(t *testing.T) {
 	refA := flow.FunctionRef{GraphID: 1}
 	refB := flow.FunctionRef{GraphID: 2}
 	refC := flow.FunctionRef{GraphID: 3}
-	slot0A := flow.WithFunctionRef(nil, constraint.NewPlaceholder(0).Field("a").Key(), flow.FunctionRefSetOf(refA))
-	slot0B := flow.WithFunctionRef(nil, constraint.NewPlaceholder(0).Field("b").Key(), flow.FunctionRefSetOf(refB))
-	slot2 := flow.WithFunctionRef(nil, constraint.NewPlaceholder(2).Field("c").Key(), flow.FunctionRefSetOf(refC))
+	slot0A := flow.WithFunctionRefPath(nil, constraint.NewPlaceholder(0).Field("a"), flow.FunctionRefSetOf(refA))
+	slot0B := flow.WithFunctionRefPath(nil, constraint.NewPlaceholder(0).Field("b"), flow.FunctionRefSetOf(refB))
+	slot2 := flow.WithFunctionRefPath(nil, constraint.NewPlaceholder(2).Field("c"), flow.FunctionRefSetOf(refC))
 	closureA := flow.ClosureRefOf(flow.FunctionRef{GraphID: 1}, flow.CaptureCellsDomain.Bottom(), nil)
 	closureB := flow.ClosureRefOf(flow.FunctionRef{GraphID: 2}, flow.CaptureCellsDomain.Bottom(), nil)
-	closureSlot0A := flow.WithClosureRef(nil, constraint.NewPlaceholder(0).Field("a").Key(), flow.ClosureRefSetOf(closureA))
-	closureSlot0B := flow.WithClosureRef(nil, constraint.NewPlaceholder(0).Field("b").Key(), flow.ClosureRefSetOf(closureB))
-	closureSlot2 := flow.WithClosureRef(nil, constraint.NewPlaceholder(2).Field("c").Key(), flow.ClosureRefSetOf(closureA))
+	closureSlot0A := flow.WithClosureRefPath(nil, constraint.NewPlaceholder(0).Field("a"), flow.ClosureRefSetOf(closureA))
+	closureSlot0B := flow.WithClosureRefPath(nil, constraint.NewPlaceholder(0).Field("b"), flow.ClosureRefSetOf(closureB))
+	closureSlot2 := flow.WithClosureRefPath(nil, constraint.NewPlaceholder(2).Field("c"), flow.ClosureRefSetOf(closureA))
 
 	projection := summary.CallSummaryProjection{
 		Targets: []summary.CallSummaryTarget{

@@ -16,8 +16,10 @@ func TestEntryContextKeyMatchesSummaryEntryContextKey(t *testing.T) {
 	cells := flow.CaptureCellsOf([]flow.CaptureCell{
 		{Symbol: cfg.SymbolID(7), Value: product.FromType(typ.String)},
 	})
-	refs := flow.WithFunctionRef(nil, constraint.NewPath(cfg.SymbolID(8), "fn").Key(), flow.FunctionRefSetOf(flow.FunctionRef{GraphID: 30}))
-	closures := flow.WithClosureRef(nil, constraint.NewPath(cfg.SymbolID(9), "closure").Key(), flow.ClosureRefSetOf(
+	fnPath := constraint.NewPath(cfg.SymbolID(8), "fn")
+	closurePath := constraint.NewPath(cfg.SymbolID(9), "closure")
+	refs := flow.WithFunctionRefPath(nil, fnPath, flow.FunctionRefSetOf(flow.FunctionRef{GraphID: 30}))
+	closures := flow.WithClosureRefPath(nil, closurePath, flow.ClosureRefSetOf(
 		flow.ClosureRefOf(flow.FunctionRef{GraphID: 40}, cells, refs),
 	))
 	values := summary.EntryValues{
@@ -42,14 +44,16 @@ func TestEntryContextFromClosureWithLiveContextPreservesClosureAxes(t *testing.T
 	cells := flow.CaptureCellsOf([]flow.CaptureCell{
 		{Symbol: cfg.SymbolID(11), Value: product.FromType(typ.String)},
 	})
-	refs := flow.WithFunctionRef(nil, constraint.NewPath(cfg.SymbolID(12), "captured").Key(), flow.FunctionRefSetOf(
+	capturedPath := constraint.NewPath(cfg.SymbolID(12), "captured")
+	refs := flow.WithFunctionRefPath(nil, capturedPath, flow.FunctionRefSetOf(
 		flow.FunctionRef{GraphID: 120, ParentHash: 1},
 	))
 	nestedCells := flow.CaptureCellsOf([]flow.CaptureCell{
 		{Symbol: cfg.SymbolID(13), Value: product.FromType(typ.Number)},
 	})
 	nested := flow.ClosureRefOf(flow.FunctionRef{GraphID: 130}, nestedCells, nil)
-	closures := flow.WithClosureRef(nil, constraint.NewPath(cfg.SymbolID(14), "factory").Field("inner").Key(), flow.ClosureRefSetOf(nested))
+	factoryInnerPath := constraint.NewPath(cfg.SymbolID(14), "factory").Field("inner")
+	closures := flow.WithClosureRefPath(nil, factoryInnerPath, flow.ClosureRefSetOf(nested))
 	closure := flow.ClosureRefOf(flow.FunctionRef{GraphID: ref.GraphID, ParentHash: ref.ParentHash}, cells, refs, closures)
 
 	live := NewEntryContext(
@@ -86,8 +90,8 @@ func TestEntryContextFromClosureWithLiveContextOverridesSnapshot(t *testing.T) {
 	oldCells := flow.CaptureCellsOf([]flow.CaptureCell{
 		{Symbol: sym, Value: product.FromType(typ.Nil)},
 	})
-	oldRefs := flow.WithFunctionRef(nil, path.Key(), flow.FunctionRefSetOf(flow.FunctionRef{GraphID: 30}))
-	oldClosures := flow.WithClosureRef(nil, path.Key(), flow.ClosureRefSetOf(
+	oldRefs := flow.WithFunctionRefPath(nil, path, flow.FunctionRefSetOf(flow.FunctionRef{GraphID: 30}))
+	oldClosures := flow.WithClosureRefPath(nil, path, flow.ClosureRefSetOf(
 		flow.ClosureRefOf(flow.FunctionRef{GraphID: 40}, oldCells, oldRefs),
 	))
 	closure := flow.ClosureRefOf(flow.FunctionRef{GraphID: ref.GraphID, ParentHash: ref.ParentHash}, oldCells, oldRefs, oldClosures)
@@ -95,8 +99,8 @@ func TestEntryContextFromClosureWithLiveContextOverridesSnapshot(t *testing.T) {
 	liveCells := flow.CaptureCellsOf([]flow.CaptureCell{
 		{Symbol: sym, Value: product.FromType(typ.String)},
 	})
-	liveRefs := flow.WithFunctionRef(nil, path.Key(), flow.FunctionRefSetOf(flow.FunctionRef{GraphID: 31}))
-	liveClosures := flow.WithClosureRef(nil, path.Key(), flow.ClosureRefSetOf(
+	liveRefs := flow.WithFunctionRefPath(nil, path, flow.FunctionRefSetOf(flow.FunctionRef{GraphID: 31}))
+	liveClosures := flow.WithClosureRefPath(nil, path, flow.ClosureRefSetOf(
 		flow.ClosureRefOf(flow.FunctionRef{GraphID: 41}, liveCells, liveRefs),
 	))
 
@@ -105,12 +109,12 @@ func TestEntryContextFromClosureWithLiveContextOverridesSnapshot(t *testing.T) {
 	if av, ok := ctx.CaptureCells().Value(sym); !ok || !typ.TypeEquals(av.ProjectValue(), typ.String) {
 		t.Fatalf("CaptureCells()[%d] = %v/%v, want string", sym, av.ProjectValue(), ok)
 	}
-	if set, ok := flow.FunctionRefAt(ctx.FunctionRefs(), path.Key()); !ok {
+	if set, ok := flow.FunctionRefAtPath(ctx.FunctionRefs(), path); !ok {
 		t.Fatal("FunctionRefs missing live path")
 	} else if got, ok := set.Singleton(); !ok || got.GraphID != 31 {
 		t.Fatalf("FunctionRefs live path = %s, want graph 31", set.Format())
 	}
-	if set, ok := flow.ClosureRefAt(ctx.ClosureRefs(), path.Key()); !ok {
+	if set, ok := flow.ClosureRefAtPath(ctx.ClosureRefs(), path); !ok {
 		t.Fatal("ClosureRefs missing live path")
 	} else if got, ok := set.Singleton(); !ok || got.Ref.GraphID != 41 {
 		t.Fatalf("ClosureRefs live path = %s, want graph 41", set.Format())

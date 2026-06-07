@@ -224,25 +224,6 @@ func WithFunctionRefPath(refs FunctionRefs, path constraint.Path, set FunctionRe
 	return WithFunctionRefAddress(refs, addr, set)
 }
 
-// FunctionRefAt returns the identity set for path.
-func FunctionRefAt(refs FunctionRefs, path constraint.PathKey) (FunctionRefSet, bool) {
-	addr, ok := StableAddressFromKey(path)
-	if !ok {
-		return FunctionRefSet{}, false
-	}
-	return FunctionRefAtAddress(refs, addr)
-}
-
-// WithFunctionRef returns refs with path strongly updated to set. Updating to
-// Bottom removes the key.
-func WithFunctionRef(refs FunctionRefs, path constraint.PathKey, set FunctionRefSet) FunctionRefs {
-	addr, ok := StableAddressFromKey(path)
-	if !ok {
-		return refs
-	}
-	return WithFunctionRefAddress(refs, addr, set)
-}
-
 // FunctionRefsKeyOf returns an exact comparable key for refs.
 func FunctionRefsKeyOf(refs FunctionRefs) FunctionRefsKey {
 	return internFunctionRefsKey(refs)

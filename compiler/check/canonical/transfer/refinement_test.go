@@ -27,8 +27,8 @@ func TestRefinementEffectDoesNotInvalidateAssignmentOwnedAxes(t *testing.T) {
 		},
 		StaticMembers: flow.StaticMemberFacts{}.WithAddress(testStaticMemberAddressKey(t, memberKey), product.FromType(typ.Boolean)),
 		KeyPresence:   testKeyPresenceWith(t, flow.KeyPresenceFacts{}, path, constraint.NewPath(keySym, "k")),
-		FunctionRefs:  flow.WithFunctionRef(nil, memberPath.Key(), flow.FunctionRefSetOf(ref)),
-		ClosureRefs:   flow.WithClosureRef(nil, memberPath.Key(), flow.ClosureRefSetOf(closure)),
+		FunctionRefs:  flow.WithFunctionRefPath(nil, memberPath, flow.FunctionRefSetOf(ref)),
+		ClosureRefs:   flow.WithClosureRefPath(nil, memberPath, flow.ClosureRefSetOf(closure)),
 		Rel:           flow.PointRelations{}.WithSiblingNil(keySym, []cfg.SymbolID{sym}),
 	}
 
@@ -47,10 +47,10 @@ func TestRefinementEffectDoesNotInvalidateAssignmentOwnedAxes(t *testing.T) {
 	if !testKeyPresenceHas(t, out.KeyPresence, path, constraint.NewPath(keySym, "k")) {
 		t.Fatalf("refinement killed key presence: %s", out.KeyPresence.Format())
 	}
-	if _, ok := flow.FunctionRefAt(out.FunctionRefs, memberPath.Key()); !ok {
+	if _, ok := flow.FunctionRefAtPath(out.FunctionRefs, memberPath); !ok {
 		t.Fatalf("refinement killed function refs: %#v", out.FunctionRefs)
 	}
-	if _, ok := flow.ClosureRefAt(out.ClosureRefs, memberPath.Key()); !ok {
+	if _, ok := flow.ClosureRefAtPath(out.ClosureRefs, memberPath); !ok {
 		t.Fatalf("refinement killed closure refs: %#v", out.ClosureRefs)
 	}
 	if _, ok := out.Rel.SiblingNil(keySym); !ok {

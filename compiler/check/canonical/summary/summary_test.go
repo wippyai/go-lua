@@ -148,7 +148,7 @@ func (t *captureSeedTransfer) Transfer(
 		out.Cells = out.Cells.With(t.exportSym, t.exportValue)
 	}
 	if t.exportSym != 0 && t.exportRef != (flow.FunctionRef{}) {
-		out.FunctionRefs = flow.WithFunctionRef(out.FunctionRefs, constraint.NewPath(t.exportSym, "captured").Key(), flow.FunctionRefSetOf(t.exportRef))
+		out.FunctionRefs = flow.WithFunctionRefPath(out.FunctionRefs, constraint.NewPath(t.exportSym, "captured"), flow.FunctionRefSetOf(t.exportRef))
 	}
 	return out
 }
@@ -200,9 +200,9 @@ func TestSummaryDomain_Laws(t *testing.T) {
 	s := product.FromType(typ.String)
 	effects := flow.CaptureMustWrite(cfg.SymbolID(1), s)
 	exports := flow.CaptureCellsOf([]flow.CaptureCell{{Symbol: cfg.SymbolID(2), Value: n}})
-	exportRefs := flow.WithFunctionRef(nil, constraint.NewPath(cfg.SymbolID(2), "captured").Key(), flow.FunctionRefSetOf(flow.FunctionRef{GraphID: 4}))
+	exportRefs := flow.WithFunctionRefPath(nil, constraint.NewPath(cfg.SymbolID(2), "captured"), flow.FunctionRefSetOf(flow.FunctionRef{GraphID: 4}))
 	closure := flow.ClosureRefOf(flow.FunctionRef{GraphID: 5}, exports, exportRefs)
-	exportClosures := flow.WithClosureRef(nil, constraint.NewPath(cfg.SymbolID(2), "captured").Field("factory").Key(), flow.ClosureRefSetOf(closure))
+	exportClosures := flow.WithClosureRefPath(nil, constraint.NewPath(cfg.SymbolID(2), "captured").Field("factory"), flow.ClosureRefSetOf(closure))
 	protos := flow.PrototypeSelfOf([]flow.PrototypeSelfEntry{{Prototype: cfg.SymbolID(3), Value: s}})
 	entryValues := summary.CallEntryValues{
 		summary.FuncRef{GraphID: 99}: summary.EntryValues{0: n},
@@ -485,12 +485,12 @@ func TestProject_CaptureReferencesFunctionRefsFromReturnBoundaries(t *testing.T)
 	sum := summary.Project(state.FunctionState{
 		Points: map[cfg.Point]flow.PointState{
 			ret: {
-				FunctionRefs: flow.WithFunctionRef(nil, constraint.NewPath(sym, "captured").Key(), flow.FunctionRefSetOf(ref)),
+				FunctionRefs: flow.WithFunctionRefPath(nil, constraint.NewPath(sym, "captured"), flow.FunctionRefSetOf(ref)),
 			},
 		},
 	}, g)
 
-	refs, ok := flow.FunctionRefAt(sum.CaptureReferences.FunctionRefs(), constraint.NewPath(sym, "captured").Key())
+	refs, ok := flow.FunctionRefAtPath(sum.CaptureReferences.FunctionRefs(), constraint.NewPath(sym, "captured"))
 	if !ok {
 		t.Fatalf("projected capture function refs missing; refs=%v", sum.CaptureReferences.FunctionRefs())
 	}
@@ -690,7 +690,7 @@ func TestSummarySolve_SeedsCaptureFunctionRefsFromParentReferences(t *testing.T)
 	_ = q.Summarize(ctx, childRef)
 	fs := q.Intra(ctx, childRef)
 
-	refs, ok := flow.FunctionRefAt(fs.Points[childGraph.Entry()].FunctionRefs, constraint.NewPath(cfg.SymbolID(7), "captured").Key())
+	refs, ok := flow.FunctionRefAtPath(fs.Points[childGraph.Entry()].FunctionRefs, constraint.NewPath(cfg.SymbolID(7), "captured"))
 	if !ok {
 		t.Fatalf("child capture function refs missing: %v", fs.Points[childGraph.Entry()].FunctionRefs)
 	}

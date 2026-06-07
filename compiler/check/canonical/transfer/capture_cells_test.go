@@ -328,7 +328,7 @@ func TestClosureCallCellEffectsUpdateStoredClosureEnvironment(t *testing.T) {
 	cellSym := cfg.SymbolID(702)
 	effects := flow.CaptureMustWrite(cellSym, product.FromType(typ.String))
 	tr := New(in, Config{CallTyper: &productCaptureEffectTyper{captureEffectTyper: captureEffectTyper{effects: effects}}})
-	path := constraint.NewPath(calleeSym, "fn").Key()
+	path := constraint.NewPath(calleeSym, "fn")
 	closure := flow.ClosureRefOf(
 		flow.FunctionRef{GraphID: 703},
 		flow.CaptureCellsOf([]flow.CaptureCell{{Symbol: cellSym, Value: product.FromType(typ.Number)}}),
@@ -336,7 +336,7 @@ func TestClosureCallCellEffectsUpdateStoredClosureEnvironment(t *testing.T) {
 	)
 	out := flow.PointState{
 		Env:         map[flow.ValueKey]product.AbstractValue{},
-		ClosureRefs: flow.WithClosureRef(nil, path, flow.ClosureRefSetOf(closure)),
+		ClosureRefs: flow.WithClosureRefPath(nil, path, flow.ClosureRefSetOf(closure)),
 	}
 
 	if _, ok := tr.evalCall(&out, &ast.FuncCallExpr{Func: callee}, nil); !ok {
@@ -348,7 +348,7 @@ func TestClosureCallCellEffectsUpdateStoredClosureEnvironment(t *testing.T) {
 	if !flow.CaptureEffectsDomain.Equal(out.CellEffects, effects) {
 		t.Fatalf("escaped closure effect was not recorded for summary: %s, want %s", out.CellEffects.Format(), effects.Format())
 	}
-	refs, ok := flow.ClosureRefAt(out.ClosureRefs, path)
+	refs, ok := flow.ClosureRefAtPath(out.ClosureRefs, path)
 	if !ok {
 		t.Fatalf("closure refs missing after call: %#v", out.ClosureRefs)
 	}

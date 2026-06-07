@@ -147,7 +147,7 @@ func TestCallableProjectorUsesSummaryReaderForFunctionRefReturns(t *testing.T) {
 	ref := summary.FuncRef{GraphID: 7}
 	path := constraint.NewPath(cfg.SymbolID(10), "make")
 	state := flow.PointState{
-		FunctionRefs: flow.WithFunctionRef(nil, path.Key(), flow.FunctionRefSetOf(canonref.ToFlow(ref))),
+		FunctionRefs: flow.WithFunctionRefPath(nil, path, flow.FunctionRefSetOf(canonref.ToFlow(ref))),
 	}
 	projector := callableProjector{
 		prog: &program{declaredReturns: map[summary.FuncRef][]typ.Type{}},
@@ -331,7 +331,7 @@ func TestCallableProjectorPreservesDeclaredReturnSignature(t *testing.T) {
 	ref := summary.FuncRef{GraphID: 8}
 	path := constraint.NewPath(cfg.SymbolID(11), "declared")
 	state := flow.PointState{
-		FunctionRefs: flow.WithFunctionRef(nil, path.Key(), flow.FunctionRefSetOf(canonref.ToFlow(ref))),
+		FunctionRefs: flow.WithFunctionRefPath(nil, path, flow.FunctionRefSetOf(canonref.ToFlow(ref))),
 	}
 	projector := callableProjector{
 		prog: &program{declaredReturns: map[summary.FuncRef][]typ.Type{
@@ -391,7 +391,7 @@ func TestCallableProjectorLiveFunctionTopBlocksStaticFallback(t *testing.T) {
 	ref := summary.FuncRef{GraphID: 19}
 	path := constraint.NewPath(sym, "maybe")
 	state := flow.PointState{
-		FunctionRefs: flow.WithFunctionRef(nil, path.Key(), flow.FunctionRefSetTop()),
+		FunctionRefs: flow.WithFunctionRefPath(nil, path, flow.FunctionRefSetTop()),
 	}
 	projector := callableProjector{
 		prog: &program{
@@ -422,8 +422,8 @@ func TestCallableProjectorClosureRefsDominateFunctionRefs(t *testing.T) {
 	path := constraint.NewPath(cfg.SymbolID(12), "fn")
 	closure := flow.ClosureRefOf(canonref.ToFlow(closureRef), flow.CaptureCellsDomain.Bottom(), nil)
 	state := flow.PointState{
-		FunctionRefs: flow.WithFunctionRef(nil, path.Key(), flow.FunctionRefSetOf(canonref.ToFlow(direct))),
-		ClosureRefs:  flow.WithClosureRef(nil, path.Key(), flow.ClosureRefSetOf(closure)),
+		FunctionRefs: flow.WithFunctionRefPath(nil, path, flow.FunctionRefSetOf(canonref.ToFlow(direct))),
+		ClosureRefs:  flow.WithClosureRefPath(nil, path, flow.ClosureRefSetOf(closure)),
 	}
 	projector := callableProjector{
 		prog: &program{declaredReturns: map[summary.FuncRef][]typ.Type{}},

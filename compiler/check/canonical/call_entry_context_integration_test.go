@@ -34,12 +34,12 @@ func TestProductCallEntryContextProjectsDirectCallerAxes(t *testing.T) {
 		{Symbol: captured, Value: product.FromType(typ.String)},
 		{Symbol: other, Value: product.FromType(typ.Number)},
 	})
-	refs := flow.WithFunctionRef(nil, capturedPath.Key(), flow.FunctionRefSetOf(flow.FunctionRef{GraphID: 11}))
-	refs = flow.WithFunctionRef(refs, otherPath.Key(), flow.FunctionRefSetOf(flow.FunctionRef{GraphID: 22}))
-	closures := flow.WithClosureRef(nil, capturedPath.Key(), flow.ClosureRefSetOf(
+	refs := flow.WithFunctionRefPath(nil, capturedPath, flow.FunctionRefSetOf(flow.FunctionRef{GraphID: 11}))
+	refs = flow.WithFunctionRefPath(refs, otherPath, flow.FunctionRefSetOf(flow.FunctionRef{GraphID: 22}))
+	closures := flow.WithClosureRefPath(nil, capturedPath, flow.ClosureRefSetOf(
 		flow.ClosureRefOf(flow.FunctionRef{GraphID: 33}, flow.CaptureCellsDomain.Bottom(), nil),
 	))
-	closures = flow.WithClosureRef(closures, otherPath.Key(), flow.ClosureRefSetOf(
+	closures = flow.WithClosureRefPath(closures, otherPath, flow.ClosureRefSetOf(
 		flow.ClosureRefOf(flow.FunctionRef{GraphID: 44}, flow.CaptureCellsDomain.Bottom(), nil),
 	))
 
@@ -58,16 +58,16 @@ func TestProductCallEntryContextProjectsDirectCallerAxes(t *testing.T) {
 	if _, ok := entry.CaptureCells().Value(other); ok {
 		t.Fatal("non-captured cell leaked into entry context")
 	}
-	if set, ok := flow.FunctionRefAt(entry.FunctionRefs(), capturedPath.Key()); !ok || set.IsBottom() {
+	if set, ok := flow.FunctionRefAtPath(entry.FunctionRefs(), capturedPath); !ok || set.IsBottom() {
 		t.Fatalf("captured function refs missing: %v/%v", set, ok)
 	}
-	if _, ok := flow.FunctionRefAt(entry.FunctionRefs(), otherPath.Key()); ok {
+	if _, ok := flow.FunctionRefAtPath(entry.FunctionRefs(), otherPath); ok {
 		t.Fatal("non-captured function ref leaked into entry context")
 	}
-	if set, ok := flow.ClosureRefAt(entry.ClosureRefs(), capturedPath.Key()); !ok || set.IsBottom() {
+	if set, ok := flow.ClosureRefAtPath(entry.ClosureRefs(), capturedPath); !ok || set.IsBottom() {
 		t.Fatalf("captured closure refs missing: %v/%v", set, ok)
 	}
-	if _, ok := flow.ClosureRefAt(entry.ClosureRefs(), otherPath.Key()); ok {
+	if _, ok := flow.ClosureRefAtPath(entry.ClosureRefs(), otherPath); ok {
 		t.Fatal("non-captured closure ref leaked into entry context")
 	}
 }

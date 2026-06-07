@@ -24,12 +24,12 @@ func TestTargetResolverHonorsFunctionAndClosureAuthority(t *testing.T) {
 
 	call, bindings := testCallForPath()
 	resolver := TargetResolver{Bindings: bindings}
-	path := callPathKey(bindings, call.Func)
+	path := callPath(bindings, call.Func)
 
-	topFunctions := flow.WithFunctionRef(nil, path, flow.FunctionRefSetTop())
-	finiteFunctions := flow.WithFunctionRef(nil, path, flow.FunctionRefSetOf(flow.FunctionRef{GraphID: 77}))
+	topFunctions := flow.WithFunctionRefPath(nil, path, flow.FunctionRefSetTop())
+	finiteFunctions := flow.WithFunctionRefPath(nil, path, flow.FunctionRefSetOf(flow.FunctionRef{GraphID: 77}))
 	absentFunctions := flow.FunctionRefsDomain.Bottom()
-	topClosures := flow.WithClosureRef(nil, path, flow.ClosureRefSetTop())
+	topClosures := flow.WithClosureRefPath(nil, path, flow.ClosureRefSetTop())
 	absentClosures := flow.ClosureRefsDomain.Bottom()
 	refs := func(functionRefs flow.FunctionRefs, closureRefs flow.ClosureRefs) flow.ReferenceContext {
 		return flow.ReferenceContextOf(flow.CaptureCellsDomain.Bottom(), functionRefs, closureRefs)
@@ -86,7 +86,7 @@ func TestTargetResolverStaticFallbackOnlyWhenProductAxisAbsent(t *testing.T) {
 	t.Parallel()
 
 	call, bindings := testCallForPath()
-	path := callPathKey(bindings, call.Func)
+	path := callPath(bindings, call.Func)
 	staticRef := summary.FuncRef{GraphID: 99}
 	resolver := TargetResolver{
 		Bindings: bindings,
@@ -102,7 +102,7 @@ func TestTargetResolverStaticFallbackOnlyWhenProductAxisAbsent(t *testing.T) {
 		t.Fatalf("static fallback refs = %+v, want %+v", got, staticRef)
 	}
 
-	withProductTop := resolver.Resolve(call, flow.ReferenceContextOf(flow.CaptureCellsDomain.Bottom(), flow.WithFunctionRef(nil, path, flow.FunctionRefSetTop()), flow.ClosureRefsDomain.Bottom()))
+	withProductTop := resolver.Resolve(call, flow.ReferenceContextOf(flow.CaptureCellsDomain.Bottom(), flow.WithFunctionRefPath(nil, path, flow.FunctionRefSetTop()), flow.ClosureRefsDomain.Bottom()))
 	if got := withProductTop.DirectRefs(); len(got) != 0 {
 		t.Fatalf("authoritative product top should block static fallback; got %+v", got)
 	}
@@ -112,7 +112,7 @@ func TestTargetResolverFunctionRefsAtExprAreAuthoritative(t *testing.T) {
 	t.Parallel()
 
 	call, bindings := testCallForPath()
-	path := callPathKey(bindings, call.Func)
+	path := callPath(bindings, call.Func)
 	staticRef := summary.FuncRef{GraphID: 99}
 	resolver := TargetResolver{
 		Bindings: bindings,
@@ -123,7 +123,7 @@ func TestTargetResolverFunctionRefsAtExprAreAuthoritative(t *testing.T) {
 		},
 	}
 
-	liveRefs := flow.WithFunctionRef(nil, path, flow.FunctionRefSetOf(
+	liveRefs := flow.WithFunctionRefPath(nil, path, flow.FunctionRefSetOf(
 		flow.FunctionRef{GraphID: 20},
 		flow.FunctionRef{GraphID: 10},
 	))
@@ -132,7 +132,7 @@ func TestTargetResolverFunctionRefsAtExprAreAuthoritative(t *testing.T) {
 		t.Fatalf("ResolveFunctionRefsAtExpr finite = %+v/%v, want sorted live refs 10,20", got, ok)
 	}
 
-	topRefs := flow.WithFunctionRef(nil, path, flow.FunctionRefSetTop())
+	topRefs := flow.WithFunctionRefPath(nil, path, flow.FunctionRefSetTop())
 	got, ok = resolver.ResolveFunctionRefsAtExpr(call.Func, topRefs)
 	if !ok || len(got) != 0 {
 		t.Fatalf("ResolveFunctionRefsAtExpr top = %+v/%v, want authoritative unknown", got, ok)
@@ -145,7 +145,11 @@ func TestTargetResolverFunctionRefsFallbackToRawSymbol(t *testing.T) {
 	const rawSym cfg.SymbolID = 88
 	arg := &ast.IdentExpr{Value: "cb"}
 	resolver := TargetResolver{}
-	liveRefs := flow.WithFunctionRef(nil, flow.SymbolPathKey(rawSym, nil), flow.FunctionRefSetOf(
+	rawAddr, ok := flow.StableAddressOfSymbol(rawSym, nil)
+	if !ok {
+		t.Fatal("raw symbol did not produce a stable address")
+	}
+	liveRefs := flow.WithFunctionRefAddress(nil, rawAddr, flow.FunctionRefSetOf(
 		flow.FunctionRef{GraphID: 30},
 		flow.FunctionRef{GraphID: 10},
 	))
@@ -160,10 +164,10 @@ func TestTargetResolverClosureRefSetAtExprIsAuthoritative(t *testing.T) {
 	t.Parallel()
 
 	call, bindings := testCallForPath()
-	path := callPathKey(bindings, call.Func)
+	path := callPath(bindings, call.Func)
 	resolver := TargetResolver{Bindings: bindings}
 	closure := flow.ClosureRefOf(flow.FunctionRef{GraphID: 20}, flow.CaptureCellsDomain.Bottom(), flow.FunctionRefsDomain.Bottom())
-	liveRefs := flow.WithClosureRef(nil, path, flow.ClosureRefSetOf(closure))
+	liveRefs := flow.WithClosureRefPath(nil, path, flow.ClosureRefSetOf(closure))
 
 	got, ok := resolver.ResolveClosureRefSetAtExpr(call.Func, liveRefs)
 	if !ok || got.IsBottom() || got.IsTop() {
@@ -174,7 +178,7 @@ func TestTargetResolverClosureRefSetAtExprIsAuthoritative(t *testing.T) {
 		t.Fatalf("ResolveClosureRefSetAtExpr refs = %+v, want graph 20", refs)
 	}
 
-	topRefs := flow.WithClosureRef(nil, path, flow.ClosureRefSetTop())
+	topRefs := flow.WithClosureRefPath(nil, path, flow.ClosureRefSetTop())
 	got, ok = resolver.ResolveClosureRefSetAtExpr(call.Func, topRefs)
 	if !ok || !got.IsTop() {
 		t.Fatalf("ResolveClosureRefSetAtExpr top = %v/%v, want authoritative top", got.Format(), ok)
@@ -185,7 +189,7 @@ func TestTargetResolverCallbackArgRefsUseLiveAxisBeforeStaticFallback(t *testing
 	t.Parallel()
 
 	call, bindings := testCallForPath()
-	path := callPathKey(bindings, call.Func)
+	path := callPath(bindings, call.Func)
 	staticUsed := false
 	resolver := TargetResolver{
 		Bindings: bindings,
@@ -196,7 +200,7 @@ func TestTargetResolverCallbackArgRefsUseLiveAxisBeforeStaticFallback(t *testing
 			},
 		},
 	}
-	liveRefs := flow.WithFunctionRef(nil, path, flow.FunctionRefSetOf(
+	liveRefs := flow.WithFunctionRefPath(nil, path, flow.FunctionRefSetOf(
 		flow.FunctionRef{GraphID: 20},
 		flow.FunctionRef{GraphID: 10},
 	))
@@ -274,7 +278,7 @@ func TestTargetResolverCallbackArgRefsLiveTopBlocksStaticFallback(t *testing.T) 
 	t.Parallel()
 
 	call, bindings := testCallForPath()
-	path := callPathKey(bindings, call.Func)
+	path := callPath(bindings, call.Func)
 	staticUsed := false
 	resolver := TargetResolver{
 		Bindings: bindings,
@@ -285,7 +289,7 @@ func TestTargetResolverCallbackArgRefsLiveTopBlocksStaticFallback(t *testing.T) 
 			},
 		},
 	}
-	liveRefs := flow.WithFunctionRef(nil, path, flow.FunctionRefSetTop())
+	liveRefs := flow.WithFunctionRefPath(nil, path, flow.FunctionRefSetTop())
 
 	got, ok := resolver.ResolveCallbackArgRefs(call.Func, functionRefContext(liveRefs), nil)
 	if !ok || len(got) != 0 {
@@ -502,10 +506,10 @@ func testCallForPath() (*ast.FuncCallExpr, *bind.BindingTable) {
 	return &ast.FuncCallExpr{Func: ident}, b
 }
 
-func callPathKey(bindings *bind.BindingTable, expr ast.Expr) constraint.PathKey {
+func callPath(bindings *bind.BindingTable, expr ast.Expr) constraint.Path {
 	path := flowpath.FromExprWithBindings(expr, nil, bindings)
 	if path.IsEmpty() {
 		panic(fmt.Sprintf("unexpected empty path for %T", expr))
 	}
-	return path.Key()
+	return path
 }

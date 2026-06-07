@@ -37,8 +37,8 @@ func TestSymbolWriteEffectClearsStaleProductAxes(t *testing.T) {
 			Key:    product.FromType(typ.String),
 			Value:  product.FromType(typ.Number),
 		}),
-		FunctionRefs: flow.WithFunctionRef(nil, fieldPath.Key(), flow.FunctionRefSetOf(ref)),
-		ClosureRefs:  flow.WithClosureRef(nil, fieldPath.Key(), flow.ClosureRefSetOf(closure)),
+		FunctionRefs: flow.WithFunctionRefPath(nil, fieldPath, flow.FunctionRefSetOf(ref)),
+		ClosureRefs:  flow.WithClosureRefPath(nil, fieldPath, flow.ClosureRefSetOf(closure)),
 	}
 
 	tr.applyWriteEffect(&out, WriteEffect{
@@ -61,10 +61,10 @@ func TestSymbolWriteEffectClearsStaleProductAxes(t *testing.T) {
 	if _, ok := testIndexWriteAdmission(t, out.IndexWrites, root.Field("items"), constraint.Path{}, typ.String); ok {
 		t.Fatalf("stale index-write admission survived symbol write: %s", out.IndexWrites.Format())
 	}
-	if _, ok := flow.FunctionRefAt(out.FunctionRefs, fieldPath.Key()); ok {
+	if _, ok := flow.FunctionRefAtPath(out.FunctionRefs, fieldPath); ok {
 		t.Fatalf("stale function ref survived symbol write: %#v", out.FunctionRefs)
 	}
-	if _, ok := flow.ClosureRefAt(out.ClosureRefs, fieldPath.Key()); ok {
+	if _, ok := flow.ClosureRefAtPath(out.ClosureRefs, fieldPath); ok {
 		t.Fatalf("stale closure ref survived symbol write: %#v", out.ClosureRefs)
 	}
 }
@@ -134,8 +134,8 @@ func TestUnresolvedContainerWriteInvalidatesStaleProductAxes(t *testing.T) {
 			Key:    product.FromType(typ.String),
 			Value:  product.FromType(typ.String),
 		}),
-		FunctionRefs: flow.WithFunctionRef(nil, fieldPath.Key(), flow.FunctionRefSetOf(ref)),
-		ClosureRefs:  flow.WithClosureRef(nil, fieldPath.Key(), flow.ClosureRefSetOf(closure)),
+		FunctionRefs: flow.WithFunctionRefPath(nil, fieldPath, flow.FunctionRefSetOf(ref)),
+		ClosureRefs:  flow.WithClosureRefPath(nil, fieldPath, flow.ClosureRefSetOf(closure)),
 	}
 
 	tr.applyContainerWrite(&out, cfg.AssignTarget{
@@ -154,10 +154,10 @@ func TestUnresolvedContainerWriteInvalidatesStaleProductAxes(t *testing.T) {
 	if _, ok := testIndexWriteAdmission(t, out.IndexWrites, fieldPath, constraint.Path{}, typ.String); ok {
 		t.Fatalf("stale index-write admission survived unresolved container write: %s", out.IndexWrites.Format())
 	}
-	if _, ok := flow.FunctionRefAt(out.FunctionRefs, fieldPath.Key()); ok {
+	if _, ok := flow.FunctionRefAtPath(out.FunctionRefs, fieldPath); ok {
 		t.Fatalf("stale function ref survived unresolved container write: %#v", out.FunctionRefs)
 	}
-	if _, ok := flow.ClosureRefAt(out.ClosureRefs, fieldPath.Key()); ok {
+	if _, ok := flow.ClosureRefAtPath(out.ClosureRefs, fieldPath); ok {
 		t.Fatalf("stale closure ref survived unresolved container write: %#v", out.ClosureRefs)
 	}
 }
@@ -1279,7 +1279,8 @@ func TestReturnEffectOwnsProjectionAxes(t *testing.T) {
 	if got := out.Env[flow.ReturnSlotValueKey(1)].ProjectValue(); !typ.TypeEquals(got, typ.Number) {
 		t.Fatalf("return slot 1 value = %v, want number", got)
 	}
-	refs, ok := flow.FunctionRefAt(out.FunctionRefs, constraint.NewPlaceholder(0).Key())
+	returnPath := constraint.NewPlaceholder(0)
+	refs, ok := flow.FunctionRefAtPath(out.FunctionRefs, returnPath)
 	if !ok {
 		t.Fatalf("return slot function refs missing: %#v", out.FunctionRefs)
 	}
@@ -1287,7 +1288,7 @@ func TestReturnEffectOwnsProjectionAxes(t *testing.T) {
 	if !singleton || gotRef != ref {
 		t.Fatalf("return slot function refs = %s, want %v", refs.Format(), ref)
 	}
-	closures, ok := flow.ClosureRefAt(out.ClosureRefs, constraint.NewPlaceholder(0).Key())
+	closures, ok := flow.ClosureRefAtPath(out.ClosureRefs, returnPath)
 	if !ok {
 		t.Fatalf("return slot closure refs missing: %#v", out.ClosureRefs)
 	}
@@ -1313,8 +1314,8 @@ func TestReturnEffectRebasesPathBackedNestedRefsToPlaceholder(t *testing.T) {
 	closure := flow.ClosureRefOf(flow.FunctionRef{GraphID: 703}, flow.CaptureCellsDomain.Bottom(), nil)
 	sourcePath := constraint.NewPath(sourceSym, "database").Field("query")
 	out := flow.PointState{
-		FunctionRefs: flow.WithFunctionRef(nil, sourcePath.Key(), flow.FunctionRefSetOf(fnRef)),
-		ClosureRefs:  flow.WithClosureRef(nil, sourcePath.Key(), flow.ClosureRefSetOf(closure)),
+		FunctionRefs: flow.WithFunctionRefPath(nil, sourcePath, flow.FunctionRefSetOf(fnRef)),
+		ClosureRefs:  flow.WithClosureRefPath(nil, sourcePath, flow.ClosureRefSetOf(closure)),
 	}
 
 	tr.applyReturnEffect(&out, ReturnEffect{
@@ -1325,12 +1326,12 @@ func TestReturnEffectRebasesPathBackedNestedRefsToPlaceholder(t *testing.T) {
 	})
 
 	target := constraint.NewPlaceholder(0).Field("query")
-	if refs, ok := flow.FunctionRefAt(out.FunctionRefs, target.Key()); !ok {
+	if refs, ok := flow.FunctionRefAtPath(out.FunctionRefs, target); !ok {
 		t.Fatalf("return slot nested function refs missing: %#v", out.FunctionRefs)
 	} else if got, singleton := refs.Singleton(); !singleton || got != fnRef {
 		t.Fatalf("return slot nested function refs = %s, want %v", refs.Format(), fnRef)
 	}
-	if refs, ok := flow.ClosureRefAt(out.ClosureRefs, target.Key()); !ok {
+	if refs, ok := flow.ClosureRefAtPath(out.ClosureRefs, target); !ok {
 		t.Fatalf("return slot nested closure refs missing: %#v", out.ClosureRefs)
 	} else if got, singleton := refs.Singleton(); !singleton || got.Ref != closure.Ref {
 		t.Fatalf("return slot nested closure refs = %s, want %v", refs.Format(), closure.Ref)
@@ -1366,8 +1367,8 @@ func TestReferenceEffectInstallsRefTreesAtStaticPlace(t *testing.T) {
 	closure := flow.ClosureRefOf(flow.FunctionRef{GraphID: 533}, flow.CaptureCellsDomain.Bottom(), nil)
 	tr := New(input.Inputs{}, Config{})
 	out := flow.PointState{
-		FunctionRefs: flow.WithFunctionRef(nil, stalePath.Key(), flow.FunctionRefSetOf(flow.FunctionRef{GraphID: 534})),
-		ClosureRefs:  flow.WithClosureRef(nil, stalePath.Key(), flow.ClosureRefSetOf(flow.ClosureRefOf(flow.FunctionRef{GraphID: 535}, flow.CaptureCellsDomain.Bottom(), nil))),
+		FunctionRefs: flow.WithFunctionRefPath(nil, stalePath, flow.FunctionRefSetOf(flow.FunctionRef{GraphID: 534})),
+		ClosureRefs:  flow.WithClosureRefPath(nil, stalePath, flow.ClosureRefSetOf(flow.ClosureRefOf(flow.FunctionRef{GraphID: 535}, flow.CaptureCellsDomain.Bottom(), nil))),
 	}
 
 	changed := tr.applyReferenceEffect(&out, ReferenceEffect{
@@ -1390,13 +1391,13 @@ func TestReferenceEffectInstallsRefTreesAtStaticPlace(t *testing.T) {
 	if !changed {
 		t.Fatal("reference effect reported no change")
 	}
-	if _, ok := flow.FunctionRefAt(out.FunctionRefs, stalePath.Key()); ok {
+	if _, ok := flow.FunctionRefAtPath(out.FunctionRefs, stalePath); ok {
 		t.Fatalf("stale nested function ref survived tree reference write: %#v", out.FunctionRefs)
 	}
-	if _, ok := flow.ClosureRefAt(out.ClosureRefs, stalePath.Key()); ok {
+	if _, ok := flow.ClosureRefAtPath(out.ClosureRefs, stalePath); ok {
 		t.Fatalf("stale nested closure ref survived tree reference write: %#v", out.ClosureRefs)
 	}
-	refs, ok := flow.FunctionRefAt(out.FunctionRefs, path.Key())
+	refs, ok := flow.FunctionRefAtPath(out.FunctionRefs, path)
 	if !ok {
 		t.Fatalf("function refs missing at static place: %#v", out.FunctionRefs)
 	}
@@ -1404,7 +1405,7 @@ func TestReferenceEffectInstallsRefTreesAtStaticPlace(t *testing.T) {
 	if !singleton || gotRef != ref {
 		t.Fatalf("function refs = %s, want %v", refs.Format(), ref)
 	}
-	closures, ok := flow.ClosureRefAt(out.ClosureRefs, path.Key())
+	closures, ok := flow.ClosureRefAtPath(out.ClosureRefs, path)
 	if !ok {
 		t.Fatalf("closure refs missing at static place: %#v", out.ClosureRefs)
 	}
@@ -1421,8 +1422,8 @@ func TestReferenceEffectDynamicPlaceClearsRootSubtree(t *testing.T) {
 	closure := flow.ClosureRefOf(flow.FunctionRef{GraphID: 543}, flow.CaptureCellsDomain.Bottom(), nil)
 	tr := New(input.Inputs{}, Config{})
 	out := flow.PointState{
-		FunctionRefs: flow.WithFunctionRef(nil, fieldPath.Key(), flow.FunctionRefSetOf(ref)),
-		ClosureRefs:  flow.WithClosureRef(nil, fieldPath.Key(), flow.ClosureRefSetOf(closure)),
+		FunctionRefs: flow.WithFunctionRefPath(nil, fieldPath, flow.FunctionRefSetOf(ref)),
+		ClosureRefs:  flow.WithClosureRefPath(nil, fieldPath, flow.ClosureRefSetOf(closure)),
 	}
 
 	tr.applyReferenceEffect(&out, ReferenceEffect{
@@ -1437,10 +1438,10 @@ func TestReferenceEffectDynamicPlaceClearsRootSubtree(t *testing.T) {
 		References: sourceReferenceWrite(),
 	})
 
-	if _, ok := flow.FunctionRefAt(out.FunctionRefs, fieldPath.Key()); ok {
+	if _, ok := flow.FunctionRefAtPath(out.FunctionRefs, fieldPath); ok {
 		t.Fatalf("dynamic reference write kept stale function ref: %#v", out.FunctionRefs)
 	}
-	if _, ok := flow.ClosureRefAt(out.ClosureRefs, fieldPath.Key()); ok {
+	if _, ok := flow.ClosureRefAtPath(out.ClosureRefs, fieldPath); ok {
 		t.Fatalf("dynamic reference write kept stale closure ref: %#v", out.ClosureRefs)
 	}
 }
@@ -1656,7 +1657,7 @@ func TestCellEffectReducerUpdatesClosureEnvironment(t *testing.T) {
 	)
 	tr := New(input.Inputs{}, Config{})
 	out := flow.PointState{
-		ClosureRefs: flow.WithClosureRef(nil, path.Key(), flow.ClosureRefSetOf(closure)),
+		ClosureRefs: flow.WithClosureRefPath(nil, path, flow.ClosureRefSetOf(closure)),
 	}
 
 	tr.applyCellEffect(&out, CellEffect{Effects: effects, ClosurePath: path})
@@ -1667,7 +1668,7 @@ func TestCellEffectReducerUpdatesClosureEnvironment(t *testing.T) {
 	if !flow.CaptureEffectsDomain.Equal(out.CellEffects, effects) {
 		t.Fatalf("recorded cell effects = %s, want %s", out.CellEffects.Format(), effects.Format())
 	}
-	refs, ok := flow.ClosureRefAt(out.ClosureRefs, path.Key())
+	refs, ok := flow.ClosureRefAtPath(out.ClosureRefs, path)
 	if !ok {
 		t.Fatalf("closure refs missing after cell effect: %#v", out.ClosureRefs)
 	}

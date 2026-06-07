@@ -33,7 +33,7 @@ func TestPathProjectorCallableRefPreservesMapReadOptionality(t *testing.T) {
 					Env: map[flow.ValueKey]product.AbstractValue{
 						flow.SymbolValueKey(sym): product.FromType(rootType),
 					},
-					FunctionRefs: flow.WithFunctionRef(nil, path.Key(), flow.FunctionRefSetOf(canonref.ToFlow(ref))),
+					FunctionRefs: flow.WithFunctionRefPath(nil, path, flow.FunctionRefSetOf(canonref.ToFlow(ref))),
 				},
 			},
 		},
@@ -70,7 +70,7 @@ func TestPathProjectorCallableRefRefinesMustPresentPath(t *testing.T) {
 					Env: map[flow.ValueKey]product.AbstractValue{
 						flow.SymbolValueKey(sym): product.FromType(typ.NewRecord().Field("run", declaredSig).Build()),
 					},
-					FunctionRefs: flow.WithFunctionRef(nil, path.Key(), flow.FunctionRefSetOf(canonref.ToFlow(ref))),
+					FunctionRefs: flow.WithFunctionRefPath(nil, path, flow.FunctionRefSetOf(canonref.ToFlow(ref))),
 				},
 			},
 		},
@@ -101,7 +101,7 @@ func TestObservePathCallableRefPreservesDeclaredMapReadOptionalityWithoutProduct
 	fs := state.FunctionState{
 		InPoints: map[cfg.Point]flow.PointState{
 			point: {
-				FunctionRefs: flow.WithFunctionRef(nil, path.Key(), flow.FunctionRefSetOf(canonref.ToFlow(ref))),
+				FunctionRefs: flow.WithFunctionRefPath(nil, path, flow.FunctionRefSetOf(canonref.ToFlow(ref))),
 			},
 		},
 	}
@@ -171,7 +171,7 @@ func TestObservePathCallableRefKeepsMustPresentProductValueDefinite(t *testing.T
 			point: {
 				StaticMembers: flow.StaticMemberFactsDomain.Top().
 					WithAddress(addr, product.FromType(declaredSig)),
-				FunctionRefs: flow.WithFunctionRef(nil, path.Key(), flow.FunctionRefSetOf(canonref.ToFlow(ref))),
+				FunctionRefs: flow.WithFunctionRefPath(nil, path, flow.FunctionRefSetOf(canonref.ToFlow(ref))),
 			},
 		},
 	}

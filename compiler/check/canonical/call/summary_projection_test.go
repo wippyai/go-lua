@@ -19,7 +19,7 @@ func TestSummaryProjectionForTargetsUsesClosureEntryContext(t *testing.T) {
 	entryCells := flow.CaptureCellsOf([]flow.CaptureCell{
 		{Symbol: cfg.SymbolID(10), Value: product.FromType(typ.String)},
 	})
-	entryRefs := flow.WithFunctionRef(nil, constraint.NewPath(cfg.SymbolID(11), "fn").Key(), flow.FunctionRefSetOf(flow.FunctionRef{GraphID: 20}))
+	entryRefs := flow.WithFunctionRefPath(nil, constraint.NewPath(cfg.SymbolID(11), "fn"), flow.FunctionRefSetOf(flow.FunctionRef{GraphID: 20}))
 	closure := flow.ClosureRefOf(flow.FunctionRef{GraphID: closureRef.GraphID, ParentHash: closureRef.ParentHash}, entryCells, entryRefs)
 	targets := NewTargetSet([]summary.FuncRef{direct}, true, []flow.ClosureRef{closure}, true)
 

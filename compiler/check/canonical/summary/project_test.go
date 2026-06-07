@@ -114,7 +114,7 @@ func TestProject_ReturnProjectionTreatsFiniteReturnedCallTargetAsPendingBottom(t
 	if call == nil {
 		t.Fatal("return call info not found")
 	}
-	refs := flow.WithFunctionRef(nil, call.CalleePath.Key(), flow.FunctionRefSetOf(flow.FunctionRef{GraphID: 77}))
+	refs := flow.WithFunctionRefPath(nil, call.CalleePath, flow.FunctionRefSetOf(flow.FunctionRef{GraphID: 77}))
 	numberValue := product.FromType(typ.Number)
 
 	sum := Project(state.FunctionState{

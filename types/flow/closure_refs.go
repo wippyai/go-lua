@@ -262,25 +262,6 @@ func WithClosureRefPath(refs ClosureRefs, path constraint.Path, set ClosureRefSe
 	return WithClosureRefAddress(refs, addr, set)
 }
 
-// ClosureRefAt returns the closure set for path.
-func ClosureRefAt(refs ClosureRefs, path constraint.PathKey) (ClosureRefSet, bool) {
-	addr, ok := StableAddressFromKey(path)
-	if !ok {
-		return ClosureRefSet{}, false
-	}
-	return ClosureRefAtAddress(refs, addr)
-}
-
-// WithClosureRef returns refs with path strongly updated to set. Updating to
-// Bottom removes the key.
-func WithClosureRef(refs ClosureRefs, path constraint.PathKey, set ClosureRefSet) ClosureRefs {
-	addr, ok := StableAddressFromKey(path)
-	if !ok {
-		return refs
-	}
-	return WithClosureRefAddress(refs, addr, set)
-}
-
 // ProjectClosureRefsBySymbols keeps only paths rooted at one of symbols.
 func ProjectClosureRefsBySymbols(refs ClosureRefs, symbols []cfg.SymbolID) ClosureRefs {
 	if isClosureRefsTop(refs) {
