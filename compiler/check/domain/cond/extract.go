@@ -1243,16 +1243,10 @@ func ConstraintsFromCallOnReturn(
 				}
 				continue
 			}
-		case constraint.EqPath:
-			if reconstructed, ok := callConstraintFromOriginalArgs(ce, callArgs, argPaths, v, true); ok {
-				must = append(must, reconstructed...)
-				continue
-			}
-		case constraint.NotEqPath:
-			if reconstructed, ok := callConstraintFromOriginalArgs(ce, callArgs, argPaths, v, false); ok {
-				must = append(must, reconstructed...)
-				continue
-			}
+		}
+		if reconstructed, ok := callConstraintFromOriginalArgs(ce, callArgs, argPaths, c); ok {
+			must = append(must, reconstructed...)
+			continue
 		}
 
 		sub := constraint.FromConstraints(c).Substitute(argPaths)
@@ -1447,24 +1441,22 @@ func callConstraintFromOriginalArgs(
 	args []ast.Expr,
 	argPaths []constraint.Path,
 	c constraint.Constraint,
-	equality bool,
 ) ([]constraint.Constraint, bool) {
 	if ce == nil || len(args) == 0 {
 		return nil, false
 	}
 
-	var left, right constraint.Path
-	switch v := c.(type) {
-	case constraint.EqPath:
-		left, right = v.Left, v.Right
-	case constraint.NotEqPath:
-		left, right = v.Left, v.Right
-	default:
+	relation, ok := constraint.DirectPathRelation(c)
+	if !ok {
+		return nil, false
+	}
+	equality, ok := relation.IsEquality()
+	if !ok {
 		return nil, false
 	}
 
-	lIdx, lOK := constraint.PlaceholderArgIndex(left, len(args))
-	rIdx, rOK := constraint.PlaceholderArgIndex(right, len(args))
+	lIdx, lOK := constraint.PlaceholderArgIndex(relation.Left, len(args))
+	rIdx, rOK := constraint.PlaceholderArgIndex(relation.Right, len(args))
 	if !lOK || !rOK {
 		return nil, false
 	}

@@ -199,27 +199,8 @@ func ParamNarrowsFromFunctionType(sig typ.Type) []ParamNarrow {
 // OnReturn constraints. Non-portable paths and unsupported constraint kinds are
 // rejected rather than leaking callee-local identities into caller evidence.
 func ParamNarrowFromConstraint(c constraint.Constraint) (ParamNarrow, bool) {
-	switch rel := c.(type) {
-	case constraint.EqPath:
-		left, right := rel.Left, rel.Right
-		if !left.IsPlaceholder() || !right.IsPlaceholder() || len(left.Segments) != 0 || len(right.Segments) != 0 {
-			return ParamNarrow{}, false
-		}
-		a, b := left.PlaceholderIndex(), right.PlaceholderIndex()
-		if a < 0 || b < 0 || a == b {
-			return ParamNarrow{}, false
-		}
-		return ParamNarrow{Param: a, EqParam: b}, true
-	case constraint.NotEqPath:
-		left, right := rel.Left, rel.Right
-		if !left.IsPlaceholder() || !right.IsPlaceholder() || len(left.Segments) != 0 || len(right.Segments) != 0 {
-			return ParamNarrow{}, false
-		}
-		a, b := left.PlaceholderIndex(), right.PlaceholderIndex()
-		if a < 0 || b < 0 || a == b {
-			return ParamNarrow{}, false
-		}
-		return ParamNarrow{Param: a, EqParam: b, NotEqual: true}, true
+	if relation, ok := constraint.DirectPathRelation(c); ok {
+		return paramNarrowFromPathRelation(relation)
 	}
 	predicate, ok := constraint.SinglePathPredicate(c)
 	if !ok || !predicate.Path.IsPlaceholder() {
@@ -239,6 +220,21 @@ func ParamNarrowFromConstraint(c constraint.Constraint) (ParamNarrow, bool) {
 		segs = append(segs, path.Segments...)
 	}
 	return ParamNarrow{Param: idx, Segments: segs, Check: check, TypeKey: key, EqParam: -1}, true
+}
+
+func paramNarrowFromPathRelation(relation constraint.PathRelation) (ParamNarrow, bool) {
+	if !relation.Left.IsPlaceholder() || !relation.Right.IsPlaceholder() || len(relation.Left.Segments) != 0 || len(relation.Right.Segments) != 0 {
+		return ParamNarrow{}, false
+	}
+	a, b := relation.Left.PlaceholderIndex(), relation.Right.PlaceholderIndex()
+	if a < 0 || b < 0 || a == b {
+		return ParamNarrow{}, false
+	}
+	equality, ok := relation.IsEquality()
+	if !ok {
+		return ParamNarrow{}, false
+	}
+	return ParamNarrow{Param: a, EqParam: b, NotEqual: !equality}, true
 }
 
 func condCheckFromPathPredicate(predicate constraint.PathPredicate) (cfg.CondCheckKind, narrow.TypeKey, bool) {
