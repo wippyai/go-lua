@@ -59,3 +59,59 @@ func (r PathRelation) IsEquality() (bool, bool) {
 		return false, false
 	}
 }
+
+// SpecializePathRelationConstraint rewrites a direct path relation into the
+// most specific relation carrier when either side is a static field or index
+// member path. Non-direct relations and already-specialized constraints are
+// returned unchanged.
+func SpecializePathRelationConstraint(c Constraint) Constraint {
+	relation, ok := DirectPathRelation(c)
+	if !ok {
+		return c
+	}
+	equality, ok := relation.IsEquality()
+	if !ok {
+		return c
+	}
+	if equality {
+		if target, field, ok := SplitFieldPath(relation.Left); ok {
+			return FieldEqualsPath{Target: target, Field: field, Value: relation.Right}
+		}
+		if target, field, ok := SplitFieldPath(relation.Right); ok {
+			return FieldEqualsPath{Target: target, Field: field, Value: relation.Left}
+		}
+		if target, key, ok := SplitIndexPath(relation.Left); ok {
+			return IndexEqualsPath{Target: target, Key: key, Value: relation.Right}
+		}
+		if target, key, ok := SplitIndexPath(relation.Right); ok {
+			return IndexEqualsPath{Target: target, Key: key, Value: relation.Left}
+		}
+		return c
+	}
+	if target, field, ok := SplitFieldPath(relation.Left); ok {
+		return FieldNotEqualsPath{Target: target, Field: field, Value: relation.Right}
+	}
+	if target, field, ok := SplitFieldPath(relation.Right); ok {
+		return FieldNotEqualsPath{Target: target, Field: field, Value: relation.Left}
+	}
+	if target, key, ok := SplitIndexPath(relation.Left); ok {
+		return IndexNotEqualsPath{Target: target, Key: key, Value: relation.Right}
+	}
+	if target, key, ok := SplitIndexPath(relation.Right); ok {
+		return IndexNotEqualsPath{Target: target, Key: key, Value: relation.Left}
+	}
+	return c
+}
+
+// SpecializePathRelationConstraints applies SpecializePathRelationConstraint to
+// each constraint in a conjunction.
+func SpecializePathRelationConstraints(conj []Constraint) []Constraint {
+	if len(conj) == 0 {
+		return conj
+	}
+	out := make([]Constraint, 0, len(conj))
+	for _, c := range conj {
+		out = append(out, SpecializePathRelationConstraint(c))
+	}
+	return out
+}

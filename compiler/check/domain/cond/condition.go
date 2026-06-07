@@ -694,10 +694,10 @@ func (ce *ConditionExtractor) ConditionFromEquality(lhs, rhs ast.Expr) constrain
 	if target, field, ok := constraint.SplitFieldPath(right); ok {
 		return constraint.FromConstraints(ce.variantFieldPathRelationConstraints(target, field, left, flow.VariantFieldPathEquals)...)
 	}
-	if target, key, ok := flowpath.SplitIndexPath(left); ok {
+	if target, key, ok := constraint.SplitIndexPath(left); ok {
 		return constraint.FromConstraints(constraint.IndexEqualsPath{Target: target, Key: key, Value: right})
 	}
-	if target, key, ok := flowpath.SplitIndexPath(right); ok {
+	if target, key, ok := constraint.SplitIndexPath(right); ok {
 		return constraint.FromConstraints(constraint.IndexEqualsPath{Target: target, Key: key, Value: left})
 	}
 	return constraint.FromConstraints(constraint.NewEqPath(left, right))
@@ -924,7 +924,7 @@ func (ce *ConditionExtractor) constraintsFromPathLiteral(expr ast.Expr, lit *typ
 	if target, field, ok := constraint.SplitFieldPath(path); ok {
 		return []constraint.Constraint{constraint.FieldEquals{Target: target, Field: field, Value: lit}}
 	}
-	if target, key, ok := flowpath.SplitIndexPath(path); ok {
+	if target, key, ok := constraint.SplitIndexPath(path); ok {
 		return []constraint.Constraint{constraint.IndexEquals{Target: target, Key: key, Value: lit}}
 	}
 	// Boolean literal equality on a path must remain portable across function

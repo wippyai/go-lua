@@ -1254,7 +1254,7 @@ func ConstraintsFromCallOnReturn(
 			must = append(must, substituteReturnConstraintPaths(mc, retTargets))
 		}
 	}
-	must = normalizePathConstraints(must)
+	must = constraint.SpecializePathRelationConstraints(must)
 	if len(must) == 0 {
 		return constraint.Condition{}
 	}
@@ -1387,49 +1387,6 @@ func siblingConstraintsFromOnReturn(disj []constraint.Constraint, inputs *flow.I
 		out = append(out, versionSiblingConstraints(raw, graph, p)...)
 	}
 	return out
-}
-
-func normalizePathConstraints(conj []constraint.Constraint) []constraint.Constraint {
-	if len(conj) == 0 {
-		return conj
-	}
-	out := make([]constraint.Constraint, 0, len(conj))
-	for _, c := range conj {
-		out = append(out, normalizePathConstraint(c))
-	}
-	return out
-}
-
-func normalizePathConstraint(c constraint.Constraint) constraint.Constraint {
-	switch v := c.(type) {
-	case constraint.EqPath:
-		if target, field, ok := constraint.SplitFieldPath(v.Left); ok {
-			return constraint.FieldEqualsPath{Target: target, Field: field, Value: v.Right}
-		}
-		if target, field, ok := constraint.SplitFieldPath(v.Right); ok {
-			return constraint.FieldEqualsPath{Target: target, Field: field, Value: v.Left}
-		}
-		if target, key, ok := path.SplitIndexPath(v.Left); ok {
-			return constraint.IndexEqualsPath{Target: target, Key: key, Value: v.Right}
-		}
-		if target, key, ok := path.SplitIndexPath(v.Right); ok {
-			return constraint.IndexEqualsPath{Target: target, Key: key, Value: v.Left}
-		}
-	case constraint.NotEqPath:
-		if target, field, ok := constraint.SplitFieldPath(v.Left); ok {
-			return constraint.FieldNotEqualsPath{Target: target, Field: field, Value: v.Right}
-		}
-		if target, field, ok := constraint.SplitFieldPath(v.Right); ok {
-			return constraint.FieldNotEqualsPath{Target: target, Field: field, Value: v.Left}
-		}
-		if target, key, ok := path.SplitIndexPath(v.Left); ok {
-			return constraint.IndexNotEqualsPath{Target: target, Key: key, Value: v.Right}
-		}
-		if target, key, ok := path.SplitIndexPath(v.Right); ok {
-			return constraint.IndexNotEqualsPath{Target: target, Key: key, Value: v.Left}
-		}
-	}
-	return c
 }
 
 // callConstraintFromOriginalArgs canonicalizes EqPath/NotEqPath placeholder

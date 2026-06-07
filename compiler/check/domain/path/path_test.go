@@ -9,7 +9,6 @@ import (
 	"github.com/wippyai/go-lua/compiler/parse"
 	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/flow"
-	"github.com/wippyai/go-lua/types/typ"
 )
 
 func TestPathFromExpr_IdentExpr(t *testing.T) {
@@ -292,77 +291,6 @@ func TestFromExprWithBindings_NilBindingsParam(t *testing.T) {
 	}
 	if p.Symbol != 0 {
 		t.Errorf("expected symbol 0, got %d", p.Symbol)
-	}
-}
-
-func TestSplitIndexPath_EmptyPath(t *testing.T) {
-	_, _, ok := path.SplitIndexPath(constraint.Path{})
-	if ok {
-		t.Error("expected ok=false for empty path")
-	}
-}
-
-func TestSplitIndexPath_WithoutSegments(t *testing.T) {
-	p := constraint.Path{Root: "x"}
-	_, _, ok := path.SplitIndexPath(p)
-	if ok {
-		t.Error("expected ok=false for path without segments")
-	}
-}
-
-func TestSplitIndexPath_FieldSegmentOnly(t *testing.T) {
-	p := constraint.Path{
-		Root:     "x",
-		Segments: []constraint.Segment{{Kind: constraint.SegmentField, Name: "field"}},
-	}
-	_, _, ok := path.SplitIndexPath(p)
-	if ok {
-		t.Error("expected ok=false for field segment")
-	}
-}
-
-func TestSplitIndexPath_StringIndexKey(t *testing.T) {
-	p := constraint.Path{
-		Root:     "x",
-		Segments: []constraint.Segment{{Kind: constraint.SegmentIndexString, Name: "key"}},
-	}
-	base, key, ok := path.SplitIndexPath(p)
-	if !ok {
-		t.Fatal("expected ok=true")
-	}
-	if base.Root != "x" {
-		t.Error("expected base root 'x'")
-	}
-	if len(base.Segments) != 0 {
-		t.Error("expected no segments in base")
-	}
-	lit, isLit := key.(*typ.Literal)
-	if !isLit {
-		t.Fatal("expected literal key")
-	}
-	if lit.Value.(string) != "key" {
-		t.Error("expected literal string 'key'")
-	}
-}
-
-func TestSplitIndexPath_IntIndex(t *testing.T) {
-	p := constraint.Path{
-		Root:     "arr",
-		Segments: []constraint.Segment{{Kind: constraint.SegmentIndexInt, Index: 3}},
-	}
-	base, key, ok := path.SplitIndexPath(p)
-	if !ok {
-		t.Fatal("expected ok=true")
-	}
-	if base.Root != "arr" {
-		t.Error("expected base root 'arr'")
-	}
-	lit, isLit := key.(*typ.Literal)
-	if !isLit {
-		t.Fatal("expected literal key")
-	}
-	if lit.Value.(int64) != 3 {
-		t.Error("expected literal int 3")
 	}
 }
 

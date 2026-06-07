@@ -16,7 +16,6 @@ import (
 	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/flow"
 	"github.com/wippyai/go-lua/types/flow/pathkey"
-	"github.com/wippyai/go-lua/types/typ"
 )
 
 type versionedGraph interface {
@@ -190,28 +189,6 @@ func FromExprWithBindings(expr ast.Expr, constResolver func(string) *flow.ConstV
 func FromExprWithBindingsAt(expr ast.Expr, constResolver func(string) *flow.ConstValue, bindings *bind.BindingTable, graph versionedGraph, p cfg.Point) constraint.Path {
 	path := FromExprWithBindings(expr, constResolver, bindings)
 	return WithVersion(path, graph, p)
-}
-
-// SplitIndexPath splits a path into base and index key.
-func SplitIndexPath(path constraint.Path) (constraint.Path, typ.Type, bool) {
-	if path.IsEmpty() || len(path.Segments) == 0 {
-		return constraint.Path{}, nil, false
-	}
-	last := path.Segments[len(path.Segments)-1]
-	var key typ.Type
-	switch last.Kind {
-	case constraint.SegmentIndexString:
-		key = typ.LiteralString(last.Name)
-	case constraint.SegmentIndexInt:
-		key = typ.LiteralInt(int64(last.Index))
-	default:
-		return constraint.Path{}, nil, false
-	}
-	base := constraint.Path{Root: path.Root, Symbol: path.Symbol, Version: path.Version}
-	if len(path.Segments) > 1 {
-		base.Segments = append(base.Segments, path.Segments[:len(path.Segments)-1]...)
-	}
-	return base, key, true
 }
 
 // TypeOfCallPathWithBindings extracts the path argument from a type() call using bindings.

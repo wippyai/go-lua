@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/wippyai/go-lua/types/numparse"
+	"github.com/wippyai/go-lua/types/typ"
 )
 
 // ParamPath returns the path for a parameter value.
@@ -73,4 +74,27 @@ func ReturnIndexFromString(s string) int {
 // IsReturnPath checks if the path represents a return value (ret[N] format).
 func IsReturnPath(p Path) bool {
 	return p.Symbol == 0 && len(p.Segments) == 0 && ReturnIndexFromString(p.Root) >= 0
+}
+
+// SplitIndexPath splits a path into its parent path and literal index key.
+// Returns false if the path has no static index segment. The returned parent
+// path owns its own segment slice.
+func SplitIndexPath(path Path) (parent Path, key typ.Type, ok bool) {
+	if path.IsEmpty() || len(path.Segments) == 0 {
+		return Path{}, nil, false
+	}
+	last := path.Segments[len(path.Segments)-1]
+	switch last.Kind {
+	case SegmentIndexString:
+		key = typ.LiteralString(last.Name)
+	case SegmentIndexInt:
+		key = typ.LiteralInt(int64(last.Index))
+	default:
+		return Path{}, nil, false
+	}
+	parent = Path{Root: path.Root, Symbol: path.Symbol, Version: path.Version}
+	if len(path.Segments) > 1 {
+		parent.Segments = append(parent.Segments, path.Segments[:len(path.Segments)-1]...)
+	}
+	return parent, key, true
 }
