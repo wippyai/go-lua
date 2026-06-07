@@ -214,11 +214,9 @@ func ClosureRefAtAddress(refs ClosureRefs, addr StableAddress) (ClosureRefSet, b
 	if len(refs) == 0 {
 		return ClosureRefSet{}, false
 	}
-	for _, path := range functionRefAddressKeys(addr) {
-		set, ok := refs[path]
-		if ok && !set.IsBottom() {
-			return set, true
-		}
+	set, ok := refs[addr.Key()]
+	if ok && !set.IsBottom() {
+		return set, true
 	}
 	return ClosureRefSet{}, false
 }

@@ -179,11 +179,9 @@ func FunctionRefAtAddress(refs FunctionRefs, addr StableAddress) (FunctionRefSet
 	if len(refs) == 0 || addr.Key() == "" {
 		return FunctionRefSet{}, false
 	}
-	for _, path := range functionRefAddressKeys(addr) {
-		set, ok := refs[path]
-		if ok && !set.IsBottom() {
-			return set, true
-		}
+	set, ok := refs[addr.Key()]
+	if ok && !set.IsBottom() {
+		return set, true
 	}
 	return FunctionRefSet{}, false
 }
@@ -483,20 +481,6 @@ func referenceProjectionContainsPath(projection ReferencePathProjection, path co
 		}
 	}
 	return false
-}
-
-func functionRefAddressKeys(addr StableAddress) []constraint.PathKey {
-	key := addr.Key()
-	if key == "" {
-		return nil
-	}
-	keys := []constraint.PathKey{key}
-	if path, ok := addr.Path(); ok {
-		if pathKey := path.Key(); pathKey != "" && pathKey != key {
-			keys = append(keys, pathKey)
-		}
-	}
-	return keys
 }
 
 func internFunctionRefsKey(refs FunctionRefs) FunctionRefsKey {

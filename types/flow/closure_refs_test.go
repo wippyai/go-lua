@@ -280,6 +280,25 @@ func TestClosureRefRootSymbolsUsesAddressRoots(t *testing.T) {
 	}
 }
 
+func TestClosureRefAtAddressDoesNotReadLegacyPathKeyEntry(t *testing.T) {
+	path := constraint.NewPath(cfg.SymbolID(57), "closure").Field("call")
+	addr, ok := StableAddressOfPath(path)
+	if !ok {
+		t.Fatal("stable address did not resolve")
+	}
+	legacyKey := path.Key()
+	if legacyKey == addr.Key() {
+		t.Fatalf("test key is already canonical: %s", legacyKey)
+	}
+	refs := ClosureRefs{
+		legacyKey: ClosureRefSetOf(ClosureRefOf(FunctionRef{GraphID: 57}, CaptureCellsDomain.Bottom(), nil)),
+	}
+
+	if _, ok := ClosureRefAtAddress(refs, addr); ok {
+		t.Fatalf("legacy path key %s was accepted as canonical address storage %s", legacyKey, addr.Key())
+	}
+}
+
 func TestAssignClosureRefSubtreePathCopiesAndReplacesTarget(t *testing.T) {
 	source := constraint.NewPath(cfg.SymbolID(47), "source")
 	sourceChild := source.Field("child")

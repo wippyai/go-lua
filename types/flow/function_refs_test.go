@@ -89,6 +89,25 @@ func TestFunctionRefsPathAPINormalizesStructuredPath(t *testing.T) {
 	}
 }
 
+func TestFunctionRefAtAddressDoesNotReadLegacyPathKeyEntry(t *testing.T) {
+	path := constraint.NewPath(cfg.SymbolID(41), "fn").Field("call")
+	addr, ok := StableAddressOfPath(path)
+	if !ok {
+		t.Fatal("stable address did not resolve")
+	}
+	legacyKey := path.Key()
+	if legacyKey == addr.Key() {
+		t.Fatalf("test key is already canonical: %s", legacyKey)
+	}
+	refs := FunctionRefs{
+		legacyKey: FunctionRefSetOf(FunctionRef{GraphID: 41}),
+	}
+
+	if _, ok := FunctionRefAtAddress(refs, addr); ok {
+		t.Fatalf("legacy path key %s was accepted as canonical address storage %s", legacyKey, addr.Key())
+	}
+}
+
 func TestRebaseFunctionRefsPathMovesSubtree(t *testing.T) {
 	from := constraint.NewPlaceholder(0)
 	to := constraint.NewPath(42, "out")
