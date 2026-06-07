@@ -2,6 +2,7 @@ package flow
 
 import (
 	"github.com/wippyai/go-lua/types/cfg"
+	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/domain/value/product"
 	"github.com/wippyai/go-lua/types/flow/numeric"
 	"github.com/wippyai/go-lua/types/narrow"
@@ -14,23 +15,53 @@ type IndexReadRefinementQuery struct {
 	Read              product.AbstractValue
 	ContainerRef      ContainerRef
 	LiteralIndex      int64
+	ReadbackTarget    constraint.Path
+	ReadbackKeyPath   constraint.Path
+	ReadbackKeyValue  product.AbstractValue
+	PresentTablePath  constraint.Path
+	PresentKeyPath    constraint.Path
 	LengthIndexRef    ContainerRef
 	LengthIndexOffset int64
 	IndexSymbol       cfg.SymbolID
 }
 
-// RefineIndexRead removes nil when lowered evidence proves an in-bounds read.
+// RefineIndexRead composes lowered point-state proofs for one indexed read:
+// admitted dynamic-write readback, proven key presence, then in-bounds sequence
+// narrowing. Callers lower syntax to paths, refs, and key values before entering
+// this law.
 func (f PointFacts) RefineIndexRead(q IndexReadRefinementQuery) ProductValue {
-	container := q.Container.ProjectValue()
-	result := q.Read.ProjectValue()
-	if container == nil || result == nil {
-		return ProductValue{State: StateUnknown}
+	if admitted, ok := f.DynamicIndexReadback(DynamicIndexReadbackQuery{
+		Target:           q.ReadbackTarget,
+		KeyPath:          q.ReadbackKeyPath,
+		KeyValue:         q.ReadbackKeyValue,
+		FollowKeyAliases: true,
+	}); ok && !admitted.IsZero() {
+		return ProductValue{Value: admitted, State: StateResolved}
+	}
+
+	var result typ.Type
+	if !q.Read.IsZero() {
+		result = q.Read.ProjectValue()
 	}
 	resolved := func(refined typ.Type) ProductValue {
 		if refined == nil {
 			return ProductValue{State: StateUnknown}
 		}
 		return ProductValue{Value: product.FromType(refined), State: StateResolved}
+	}
+	if present := f.ReadPresentKeyValue(PresentKeyReadQuery{
+		TablePath: q.PresentTablePath,
+		KeyPath:   q.PresentKeyPath,
+		Result:    result,
+	}); present.State == StateResolved {
+		return present
+	}
+	if q.Container.IsZero() || result == nil {
+		return ProductValue{State: StateUnknown}
+	}
+	container := q.Container.ProjectValue()
+	if container == nil {
+		return ProductValue{State: StateUnknown}
 	}
 
 	if q.LiteralIndex >= 1 {

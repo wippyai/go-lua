@@ -271,6 +271,14 @@ func (t *Transfer) containerExprPath(expr ast.Expr) (constraint.Path, bool) {
 	return place.StaticPath()
 }
 
+func (t *Transfer) dynamicIndexKeyPath(expr ast.Expr) (constraint.Path, bool) {
+	path, ok := t.staticPathOfExpr(expr)
+	if !ok || path.Symbol == 0 {
+		return constraint.Path{}, false
+	}
+	return path, true
+}
+
 func (t *Transfer) containerExprRef(expr ast.Expr) (flow.ContainerRef, bool) {
 	path, ok := t.containerExprPath(expr)
 	if !ok {
@@ -582,43 +590,6 @@ func (t *Transfer) forStepIsNegative(step ast.Expr) bool {
 	return false
 }
 
-// refineByKeyPresence strips the optional from an index read `container[key]`
-// when the product-state KeyPresence axis proves that key came from the same
-// container. A non-identifier key, an empty path, or a missing fact declines,
-// leaving the optional intact. Removal is gated by the narrow laws: only a result
-// whose nil is pure flow-uncertainty (an optional element value) is narrowed.
-func (t *Transfer) refineByKeyPresence(
-	out *flow.PointState,
-	e *ast.AttrGetExpr,
-	result typ.Type,
-) (product.AbstractValue, bool) {
-	tablePath, ok := t.containerExprPath(e.Object)
-	if !ok || tablePath.IsEmpty() {
-		return product.AbstractValue{}, false
-	}
-	keyPath, ok := t.dynamicIndexKeyPath(e.Key)
-	if !ok {
-		return product.AbstractValue{}, false
-	}
-	refined := flow.PointFactsOf(*out).ReadPresentKeyValue(flow.PresentKeyReadQuery{
-		TablePath: tablePath,
-		KeyPath:   keyPath,
-		Result:    result,
-	})
-	if refined.State != flow.StateResolved {
-		return product.AbstractValue{}, false
-	}
-	return refined.Value, true
-}
-
-func (t *Transfer) dynamicIndexKeyPath(expr ast.Expr) (constraint.Path, bool) {
-	path, ok := t.staticPathOfExpr(expr)
-	if !ok || path.Symbol == 0 {
-		return constraint.Path{}, false
-	}
-	return path, true
-}
-
 // dynamicWriteKey resolves the value-domain key of a dynamic-key write base[key] = v.
 // It first reads the key expression's tracked value; when that does not resolve — a
 // `pairs` key variable over a closed record is left untyped by the iteration typing,
@@ -736,30 +707,47 @@ func (t *Transfer) refineIndexRead(
 	e *ast.AttrGetExpr,
 	base product.AbstractValue,
 	ev product.AbstractValue,
+	keyValue product.AbstractValue,
 ) product.AbstractValue {
-	result := ev.ProjectValue()
-	if out == nil || result == nil {
+	if out == nil {
 		return ev
 	}
-
-	if refined, ok := t.refineByIndexWriteAdmission(out, e); ok {
-		return refined
+	refined := flow.PointFactsOf(*out).RefineIndexRead(t.indexReadRefinementQuery(out, e, base, ev, keyValue))
+	if refined.State == flow.StateResolved {
+		return refined.Value
 	}
+	return ev
+}
 
-	// Key-presence (KeyOf): a key drawn from `pairs(container)` indexing that same
-	// container reads a present value, so the optional is stripped. The fact is
-	// produced by iteration transfer into PointState.KeyPresence and matched here
-	// for the exact (container, key) path pair, so a key from a different container
-	// or an arbitrary key never matches and its read stays optional.
-	if refined, ok := t.refineByKeyPresence(out, e, result); ok {
-		return refined
-	}
-
+func (t *Transfer) indexReadRefinementQuery(
+	out *flow.PointState,
+	e *ast.AttrGetExpr,
+	base product.AbstractValue,
+	read product.AbstractValue,
+	keyValue product.AbstractValue,
+) flow.IndexReadRefinementQuery {
 	query := flow.IndexReadRefinementQuery{
 		Container: base,
-		Read:      ev,
+		Read:      read,
+	}
+	if e == nil {
+		return query
+	}
+	if keyValue.IsZero() && out != nil && e.Key != nil {
+		keyValue, _ = t.evalExpr(out, e.Key, nil)
 	}
 	query.ContainerRef, _ = t.containerExprRef(e.Object)
+	query.PresentTablePath, _ = t.containerExprPath(e.Object)
+	if path, ok := t.staticPathOfExpr(e.Key); ok {
+		query.ReadbackKeyPath = path
+		if path.Symbol != 0 {
+			query.PresentKeyPath = path
+		}
+	}
+	if target, ok := t.staticPathOfExpr(e.Object); ok {
+		query.ReadbackTarget = target
+	}
+	query.ReadbackKeyValue = keyValue
 	if lit, ok := t.constInt(e.Key); ok && lit >= 1 {
 		query.LiteralIndex = lit
 	} else if lenRef, offset, ok := t.lengthIndexContainerOffset(e.Key); ok {
@@ -768,8 +756,5 @@ func (t *Transfer) refineIndexRead(
 	} else if idxIdent, ok := e.Key.(*ast.IdentExpr); ok {
 		query.IndexSymbol = t.symbolOf(idxIdent)
 	}
-	if refined := flow.PointFactsOf(*out).RefineIndexRead(query); refined.State == flow.StateResolved {
-		return refined.Value
-	}
-	return ev
+	return query
 }

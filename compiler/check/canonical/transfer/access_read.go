@@ -118,7 +118,7 @@ func (t *Transfer) readAccessValue(out *flow.PointState, q accessValueReadQuery)
 			}
 			return product.AbstractValue{}, false
 		}
-		return t.refineIndexRead(out, q.Expr, base, read.Value), true
+		return t.refineIndexRead(out, q.Expr, base, read.Value, product.AbstractValue{}), true
 	}
 
 	key, ok := q.ReadExpr(q.Expr.Key)
@@ -131,10 +131,13 @@ func (t *Transfer) readAccessValue(out *flow.PointState, q accessValueReadQuery)
 		Key:  key,
 	})
 	if read.State != flow.StateResolved || read.Value.IsZero() {
-		if admitted, admittedOK := t.refineByIndexWriteAdmission(out, q.Expr); admittedOK {
-			return admitted, true
+		if out != nil {
+			refined := facts.RefineIndexRead(t.indexReadRefinementQuery(out, q.Expr, base, product.AbstractValue{}, key))
+			if refined.State == flow.StateResolved {
+				return refined.Value, true
+			}
 		}
 		return product.AbstractValue{}, false
 	}
-	return t.refineIndexRead(out, q.Expr, base, read.Value), true
+	return t.refineIndexRead(out, q.Expr, base, read.Value, key), true
 }

@@ -67,18 +67,9 @@ func TestSeedKeyedIterKeyOfWritesValueOriginFact(t *testing.T) {
 	}
 }
 
-func TestRefineByKeyPresenceDoesNotScanCond(t *testing.T) {
-	table := &ast.IdentExpr{Value: "items"}
-	key := &ast.IdentExpr{Value: "k"}
-	in := keyPresenceInput(t, map[*ast.IdentExpr]cfg.SymbolID{
-		table: cfg.SymbolID(21),
-		key:   cfg.SymbolID(22),
-	})
-	tr := New(in, Config{})
-
+func TestIndexReadRefinementDoesNotScanCondForKeyPresence(t *testing.T) {
 	tablePath := constraint.NewPath(cfg.SymbolID(21), "items")
 	keyPath := constraint.NewPath(cfg.SymbolID(22), "k")
-	read := &ast.AttrGetExpr{Object: table, Key: key, KeySyntax: ast.AttrKeyIndex}
 	result := typ.NewOptional(typ.String)
 
 	out := flow.PointState{
@@ -87,14 +78,23 @@ func TestRefineByKeyPresenceDoesNotScanCond(t *testing.T) {
 			flow.SymbolValueKey(cfg.SymbolID(22)): product.FromType(typ.String),
 		},
 	}
-	if got, ok := tr.refineByKeyPresence(&out, read, result); ok {
-		t.Fatalf("refined from Cond without product proof: %v", got.ProjectValue())
+	got := flow.PointFactsOf(out).RefineIndexRead(flow.IndexReadRefinementQuery{
+		Read:             product.FromType(result),
+		PresentTablePath: tablePath,
+		PresentKeyPath:   keyPath,
+	})
+	if got.State == flow.StateResolved {
+		t.Fatalf("refined from Cond without product proof: %v", got.Value.ProjectValue())
 	}
 
 	out.KeyPresence = testKeyPresenceWith(t, out.KeyPresence, tablePath, keyPath)
-	got, ok := tr.refineByKeyPresence(&out, read, result)
-	if !ok || !typ.TypeEquals(got.ProjectValue(), typ.String) {
-		t.Fatalf("refineByKeyPresence = %v, %v; want string,true", got.ProjectValue(), ok)
+	got = flow.PointFactsOf(out).RefineIndexRead(flow.IndexReadRefinementQuery{
+		Read:             product.FromType(result),
+		PresentTablePath: tablePath,
+		PresentKeyPath:   keyPath,
+	})
+	if got.State != flow.StateResolved || !typ.TypeEquals(got.Value.ProjectValue(), typ.String) {
+		t.Fatalf("key-presence refinement = %v, %v; want string,resolved", got.Value.ProjectValue(), got.State)
 	}
 }
 

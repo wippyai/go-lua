@@ -78,38 +78,6 @@ func (t *Transfer) applySymbolicDynamicIndexWriteProof(
 	})
 }
 
-func (t *Transfer) refineByIndexWriteAdmission(
-	out *flow.PointState,
-	e *ast.AttrGetExpr,
-) (product.AbstractValue, bool) {
-	if out == nil || e == nil || e.Object == nil || e.Key == nil {
-		return product.AbstractValue{}, false
-	}
-	targetPath, ok := t.staticPathOfExpr(e.Object)
-	if !ok || targetPath.IsEmpty() {
-		return product.AbstractValue{}, false
-	}
-	key, ok := t.evalExpr(out, e.Key, nil)
-	if !ok || key.IsZero() {
-		return product.AbstractValue{}, false
-	}
-	facts := flow.PointFactsOf(*out)
-	keyPath := constraint.Path{}
-	if path, ok := t.staticPathOfExpr(e.Key); ok {
-		keyPath = path
-	}
-	admitted, ok := facts.DynamicIndexReadback(flow.DynamicIndexReadbackQuery{
-		Target:           targetPath,
-		KeyPath:          keyPath,
-		KeyValue:         key,
-		FollowKeyAliases: true,
-	})
-	if !ok || admitted.IsZero() {
-		return product.AbstractValue{}, false
-	}
-	return admitted, true
-}
-
 func (t *Transfer) indexWriteTargetSealed(path constraint.Path) bool {
 	declared, ok := t.declaredTypeForStaticPath(path)
 	if !ok || declared == nil || typ.IsAbsentOrUnknown(declared) {
