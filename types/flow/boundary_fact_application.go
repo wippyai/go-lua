@@ -138,13 +138,13 @@ func ApplyBoundaryFacts(
 		if !ok {
 			continue
 		}
-		proofResult, proofChanged := ApplyKeyProvenancePathProof(out, KeyProvenancePathProof{
+		txResult, txChanged := ApplyKeyProvenancePathTransaction(out, KeyProvenancePathTransaction{
 			Kind:      KeyProvenanceDynamicIndexWrite,
 			TablePath: table,
 			KeyPath:   key,
 		})
-		result = appendBoundaryKeyProvenanceResult(result, proofResult)
-		changed = proofChanged || changed
+		result = appendBoundaryKeyProvenanceResult(result, txResult)
+		changed = txChanged || changed
 	}
 	for _, fact := range facts.KeyArrays() {
 		array, ok := rebase(fact.Array)
@@ -155,13 +155,13 @@ func ApplyBoundaryFacts(
 		if !ok {
 			continue
 		}
-		proofResult, proofChanged := ApplyKeyProvenancePathProof(out, KeyProvenancePathProof{
+		txResult, txChanged := ApplyKeyProvenancePathTransaction(out, KeyProvenancePathTransaction{
 			Kind:      KeyProvenanceKeyArrayAssignment,
 			ArrayPath: array,
 			TablePath: table,
 		})
-		result = appendBoundaryKeyProvenanceResult(result, proofResult)
-		changed = proofChanged || changed
+		result = appendBoundaryKeyProvenanceResult(result, txResult)
+		changed = txChanged || changed
 	}
 	for _, fact := range facts.KeyArrayValues() {
 		array, ok := rebase(fact.Array)

@@ -87,14 +87,14 @@ func TestApplyMapWritePathTransactionLowersStructuredPaths(t *testing.T) {
 	}
 
 	if !state.KeyPresence.Has(StablePathKey(tablePath), StablePathKey(keyPath)) {
-		t.Fatalf("path proof did not publish key presence: %s", state.KeyPresence.Format())
+		t.Fatalf("path transaction did not publish key presence: %s", state.KeyPresence.Format())
 	}
 	got, ok := state.IndexWrites.AdmissionAtAddress(testIndexWriteAddressQuery(t, tablePath, keyPath, typ.LiteralString("n1"), valuePath))
 	if !ok {
-		t.Fatal("path proof readback missing")
+		t.Fatal("path transaction readback missing")
 	}
 	if !product.Domain.Equal(got, product.FromType(typ.Number)) {
-		t.Fatalf("path proof readback = %v, want number", got.ProjectValue())
+		t.Fatalf("path transaction readback = %v, want number", got.ProjectValue())
 	}
 }
 
@@ -218,19 +218,19 @@ func TestApplyKeyPresenceAliasProofCopiesAddressMembership(t *testing.T) {
 	}
 }
 
-func TestApplyKeyProvenancePathProofPublishesKeyPresence(t *testing.T) {
+func TestApplyKeyProvenancePathTransactionPublishesKeyPresence(t *testing.T) {
 	tablePath := constraint.NewPath(cfg.SymbolID(101), "nodes")
 	keyPath := constraint.NewPath(cfg.SymbolID(102), "node_id")
 	state := PointState{}
 
-	_, changed := ApplyKeyProvenancePathProof(&state, KeyProvenancePathProof{
+	_, changed := ApplyKeyProvenancePathTransaction(&state, KeyProvenancePathTransaction{
 		Kind:      KeyProvenanceKeyedIteration,
 		TablePath: tablePath,
 		KeyPath:   keyPath,
 	})
 
 	if !changed {
-		t.Fatal("ApplyKeyProvenancePathProof reported unchanged")
+		t.Fatal("ApplyKeyProvenancePathTransaction reported unchanged")
 	}
 	if !state.KeyPresence.Has(StablePathKey(tablePath), StablePathKey(keyPath)) {
 		t.Fatalf("key presence missing: %s", state.KeyPresence.Format())
@@ -256,7 +256,7 @@ func TestApplyKeyProvenanceTransactionPublishesKeyPresence(t *testing.T) {
 	}
 }
 
-func TestApplyKeyProvenancePathProofReturnsIndexedKeyDomain(t *testing.T) {
+func TestApplyKeyProvenancePathTransactionReturnsIndexedKeyDomain(t *testing.T) {
 	arrayPath := constraint.NewPath(cfg.SymbolID(111), "keys")
 	tablePath := constraint.NewPath(cfg.SymbolID(112), "nodes")
 	keyPath := constraint.NewPath(cfg.SymbolID(113), "node_id")
@@ -270,14 +270,14 @@ func TestApplyKeyProvenancePathProofReturnsIndexedKeyDomain(t *testing.T) {
 	}
 	state.KeyPresence = state.KeyPresence.WithKeyArray(StablePathKey(arrayPath), StablePathKey(tablePath))
 
-	result, changed := ApplyKeyProvenancePathProof(&state, KeyProvenancePathProof{
+	result, changed := ApplyKeyProvenancePathTransaction(&state, KeyProvenancePathTransaction{
 		Kind:      KeyProvenanceIndexedKeyArrayIteration,
 		ArrayPath: arrayPath,
 		KeyPath:   keyPath,
 	})
 
 	if !changed {
-		t.Fatal("ApplyKeyProvenancePathProof reported unchanged")
+		t.Fatal("ApplyKeyProvenancePathTransaction reported unchanged")
 	}
 	wantKeyDomain := product.FromType(typ.LiteralString("id"))
 	if result.KeyRefinementPath.Key() != keyPath.Key() || !product.Domain.Equal(result.KeyRefinementValue, wantKeyDomain) {

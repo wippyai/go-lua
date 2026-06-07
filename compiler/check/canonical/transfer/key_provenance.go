@@ -2,8 +2,8 @@ package transfer
 
 import "github.com/wippyai/go-lua/types/flow"
 
-func (t *Transfer) applyKeyProvenancePathProof(out *flow.PointState, proof flow.KeyProvenancePathProof) bool {
-	result, changed := flow.ApplyKeyProvenancePathProof(out, proof)
+func (t *Transfer) applyKeyProvenancePathTransaction(out *flow.PointState, tx flow.KeyProvenancePathTransaction) bool {
+	result, changed := flow.ApplyKeyProvenancePathTransaction(out, tx)
 	if t.applyKeyProvenanceResult(out, result) {
 		return true
 	}

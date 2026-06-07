@@ -2039,7 +2039,7 @@ func (t *Transfer) seedKeyedIterKeyOf(out *flow.PointState, info *cfg.AssignInfo
 		return
 	}
 	keyPath := constraint.NewPath(keyTarget.Symbol, keyTarget.Name)
-	effect := flow.KeyProvenancePathProof{
+	effect := flow.KeyProvenancePathTransaction{
 		Kind:      flow.KeyProvenanceKeyedIteration,
 		TablePath: tablePath,
 		KeyPath:   keyPath,
@@ -2050,7 +2050,7 @@ func (t *Transfer) seedKeyedIterKeyOf(out *flow.PointState, info *cfg.AssignInfo
 			effect.ValuePath = constraint.NewPath(valueTarget.Symbol, valueTarget.Name)
 		}
 	}
-	t.applyKeyProvenancePathProof(out, effect)
+	t.applyKeyProvenancePathTransaction(out, effect)
 }
 
 // seedKeyArrayForAssignment records the live provenance established by
@@ -2066,7 +2066,7 @@ func (t *Transfer) seedKeyArrayForAssignment(out *flow.PointState, info *cfg.Ass
 		return
 	}
 	arrayPath := constraint.NewPath(target.Symbol, target.Name)
-	t.applyKeyProvenancePathProof(out, flow.KeyProvenancePathProof{
+	t.applyKeyProvenancePathTransaction(out, flow.KeyProvenancePathTransaction{
 		Kind:      flow.KeyProvenanceKeyArrayAssignment,
 		ArrayPath: arrayPath,
 		TablePath: tablePath,
@@ -2117,7 +2117,7 @@ func (t *Transfer) seedIndexedIterKeyOf(out *flow.PointState, info *cfg.AssignIn
 	if !ok || source.IsEmpty() {
 		return
 	}
-	t.applyKeyProvenancePathProof(out, flow.KeyProvenancePathProof{
+	t.applyKeyProvenancePathTransaction(out, flow.KeyProvenancePathTransaction{
 		Kind:      flow.KeyProvenanceIndexedKeyArrayIteration,
 		ArrayPath: source,
 		KeyPath:   constraint.NewPath(valueTarget.Symbol, valueTarget.Name),
