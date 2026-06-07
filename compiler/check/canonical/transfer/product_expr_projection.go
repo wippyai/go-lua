@@ -3,10 +3,8 @@ package transfer
 import (
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/check/domain/literal"
-	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/domain/value/product"
 	"github.com/wippyai/go-lua/types/flow"
-	"github.com/wippyai/go-lua/types/kind"
 	"github.com/wippyai/go-lua/types/typ"
 )
 
@@ -104,37 +102,10 @@ func (t *Transfer) projectDynamicCallValue(out *flow.PointState, call *ast.FuncC
 }
 
 func (t *Transfer) projectIdentValue(out *flow.PointState, e *ast.IdentExpr) (product.AbstractValue, bool) {
-	sym := t.symbolOf(e)
-	if sym == 0 {
-		if meta, ok := t.typeValueOf(e); ok {
-			return meta, true
-		}
-		return product.AbstractValue{}, false
-	}
-	av, ok := t.symbolValue(out, sym)
-	path := constraint.NewPath(sym, "")
-	if !ok || av.IsZero() {
-		if out != nil {
-			if cv := flow.PointFactsOf(*out).ReadCallablePathValue(path, t.pointReadPolicy(out)); cv.State == flow.StateResolved {
-				return cv.Value, true
-			}
-		}
-		if meta, ok := t.typeValueOf(e); ok {
-			return meta, true
-		}
-		if t.unannotatedParam[sym] {
-			return product.GradualAny(), true
-		}
-		return product.AbstractValue{}, false
-	}
-	if pt := av.ProjectValue(); pt != nil && pt.Kind() == kind.Function {
-		if out != nil {
-			if cv := flow.PointFactsOf(*out).ReadCallablePath(path, av, t.pointReadPolicy(out)); cv.State == flow.StateResolved {
-				return cv.Value, true
-			}
-		}
-	}
-	return av, true
+	return t.readIdentValue(out, identValueReadQuery{
+		Expr:                 e,
+		AllowGradualFallback: true,
+	})
 }
 
 func (t *Transfer) projectAttrGetValue(out *flow.PointState, e *ast.AttrGetExpr) (product.AbstractValue, bool) {

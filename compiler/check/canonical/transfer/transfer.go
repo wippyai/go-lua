@@ -2903,43 +2903,15 @@ func (t *Transfer) evalAttrGetAt(
 	})
 }
 
-// evalIdent reads an identifier's value from Env and emits parameter demand when
-// the identifier is a parameter (a body read pins the parameter's value).
+// evalIdent reads an identifier's value through the shared access-read law.
+// Parameter-use demands are emitted by the surrounding demand pass, not by the
+// root value read itself.
 func (t *Transfer) evalIdent(
 	out *flow.PointState,
 	e *ast.IdentExpr,
 	demand func(int, paramevidence.ParamContract),
 ) (product.AbstractValue, bool) {
-	sym := t.symbolOf(e)
-	if sym == 0 {
-		if meta, ok := t.typeValueOf(e); ok {
-			return meta, true
-		}
-		return product.AbstractValue{}, false
-	}
-	av, ok := t.symbolValue(out, sym)
-	path := constraint.NewPath(sym, "")
-	if !ok || av.IsZero() {
-		if out != nil {
-			if cv := flow.PointFactsOf(*out).ReadCallablePathValue(path, t.pointReadPolicy(out)); cv.State == flow.StateResolved {
-				return cv.Value, true
-			}
-		}
-		// A symbol with no flow value may name a `type` used as a value (the `type X`
-		// binding carries a symbol but no runtime value); resolve it to that type's Meta.
-		if meta, ok := t.typeValueOf(e); ok {
-			return meta, true
-		}
-		return product.AbstractValue{}, false
-	}
-	if pt := av.ProjectValue(); pt != nil && pt.Kind() == kind.Function {
-		if out != nil {
-			if cv := flow.PointFactsOf(*out).ReadCallablePath(path, av, t.pointReadPolicy(out)); cv.State == flow.StateResolved {
-				return cv.Value, true
-			}
-		}
-	}
-	return av, true
+	return t.readIdentValue(out, identValueReadQuery{Expr: e})
 }
 
 func (t *Transfer) callableSignatureResolver(out *flow.PointState) flow.CallableSignatureResolver {

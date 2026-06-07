@@ -6,7 +6,13 @@ import (
 	"github.com/wippyai/go-lua/types/domain/value"
 	"github.com/wippyai/go-lua/types/domain/value/product"
 	"github.com/wippyai/go-lua/types/flow"
+	"github.com/wippyai/go-lua/types/kind"
 )
+
+type identValueReadQuery struct {
+	Expr                 *ast.IdentExpr
+	AllowGradualFallback bool
+}
 
 type accessValueReadQuery struct {
 	Expr                 *ast.AttrGetExpr
@@ -14,6 +20,46 @@ type accessValueReadQuery struct {
 	StaticPath           func(ast.Expr) (constraint.Path, bool)
 	StaticMember         func(*ast.AttrGetExpr) (value.MemberKey, bool)
 	AllowGradualFallback bool
+}
+
+// readIdentValue is the canonical transfer read for a root identifier. It keeps
+// symbol storage, callable identity overlays, type-value bindings, and optional
+// gradual reads in one law shared by evaluation and product-call projection.
+func (t *Transfer) readIdentValue(out *flow.PointState, q identValueReadQuery) (product.AbstractValue, bool) {
+	if q.Expr == nil {
+		return product.AbstractValue{}, false
+	}
+	sym := t.symbolOf(q.Expr)
+	if sym == 0 {
+		if meta, ok := t.typeValueOf(q.Expr); ok {
+			return meta, true
+		}
+		return product.AbstractValue{}, false
+	}
+	av, ok := t.symbolValue(out, sym)
+	path := constraint.NewPath(sym, "")
+	if !ok || av.IsZero() {
+		if out != nil {
+			if cv := flow.PointFactsOf(*out).ReadCallablePathValue(path, t.pointReadPolicy(out)); cv.State == flow.StateResolved {
+				return cv.Value, true
+			}
+		}
+		if meta, ok := t.typeValueOf(q.Expr); ok {
+			return meta, true
+		}
+		if q.AllowGradualFallback && t.unannotatedParam[sym] {
+			return product.GradualAny(), true
+		}
+		return product.AbstractValue{}, false
+	}
+	if pt := av.ProjectValue(); pt != nil && pt.Kind() == kind.Function {
+		if out != nil {
+			if cv := flow.PointFactsOf(*out).ReadCallablePath(path, av, t.pointReadPolicy(out)); cv.State == flow.StateResolved {
+				return cv.Value, true
+			}
+		}
+	}
+	return av, true
 }
 
 // readAccessValue is the canonical value-read reducer for field/index access.
