@@ -136,7 +136,7 @@ type AppendElementFieldSourceAddress struct {
 
 // SourcePath returns the symbol-rooted source path carried by this origin use.
 func (u AppendElementFieldOriginUse) SourcePath() (constraint.Path, bool) {
-	addr, ok := StableAddressFromKey(u.Origin.Source)
+	addr, ok := StableAddressFromCanonicalKey(u.Origin.Source)
 	if !ok {
 		return constraint.Path{}, false
 	}
@@ -1016,7 +1016,7 @@ func AppendElementFieldPathKey(segments []constraint.Segment) constraint.PathKey
 }
 
 func AppendElementFieldSegments(key constraint.PathKey) ([]constraint.Segment, bool) {
-	addr, ok := StableAddressFromKey(key)
+	addr, ok := StableAddressFromCanonicalKey(key)
 	if !ok {
 		return nil, false
 	}

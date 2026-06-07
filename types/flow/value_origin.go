@@ -30,7 +30,7 @@ type ValueOriginFact struct {
 
 // SourceAddress returns the normalized source address carried by this origin.
 func (f ValueOriginFact) SourceAddress() (StableAddress, bool) {
-	return StableAddressFromKey(f.Source)
+	return StableAddressFromCanonicalKey(f.Source)
 }
 
 // SourcePath returns the source path carried by this origin when it is
