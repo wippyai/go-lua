@@ -221,10 +221,15 @@ func ParamNarrowFromConstraint(c constraint.Constraint) (ParamNarrow, bool) {
 		}
 		return ParamNarrow{Param: a, EqParam: b, NotEqual: true}, true
 	}
-	path, check, key, ok := portableConstraintPathAndCheck(c)
-	if !ok || !path.IsPlaceholder() {
+	predicate, ok := constraint.SinglePathPredicate(c)
+	if !ok || !predicate.Path.IsPlaceholder() {
 		return ParamNarrow{}, false
 	}
+	check, key, ok := condCheckFromPathPredicate(predicate)
+	if !ok {
+		return ParamNarrow{}, false
+	}
+	path := predicate.Path
 	idx := path.PlaceholderIndex()
 	if idx < 0 {
 		return ParamNarrow{}, false
@@ -236,28 +241,22 @@ func ParamNarrowFromConstraint(c constraint.Constraint) (ParamNarrow, bool) {
 	return ParamNarrow{Param: idx, Segments: segs, Check: check, TypeKey: key, EqParam: -1}, true
 }
 
-func portableConstraintPathAndCheck(c constraint.Constraint) (constraint.Path, cfg.CondCheckKind, narrow.TypeKey, bool) {
-	switch v := c.(type) {
-	case constraint.IsNil:
-		return v.Path, cfg.CheckNil, narrow.TypeKey{}, true
-	case constraint.Falsy:
-		return v.Path, cfg.CheckFalsy, narrow.TypeKey{}, true
-	case constraint.NotNil:
-		return v.Path, cfg.CheckNotNil, narrow.TypeKey{}, true
-	case constraint.Truthy:
-		return v.Path, cfg.CheckTruthy, narrow.TypeKey{}, true
-	case constraint.HasType:
-		if v.Type.IsZero() {
-			return constraint.Path{}, cfg.CheckNone, narrow.TypeKey{}, false
-		}
-		return v.Path, cfg.CheckTypeEqual, v.Type, true
-	case constraint.NotHasType:
-		if v.Type.IsZero() {
-			return constraint.Path{}, cfg.CheckNone, narrow.TypeKey{}, false
-		}
-		return v.Path, cfg.CheckTypeNot, v.Type, true
+func condCheckFromPathPredicate(predicate constraint.PathPredicate) (cfg.CondCheckKind, narrow.TypeKey, bool) {
+	switch predicate.Kind {
+	case constraint.PathPredicateIsNil:
+		return cfg.CheckNil, narrow.TypeKey{}, true
+	case constraint.PathPredicateFalsy:
+		return cfg.CheckFalsy, narrow.TypeKey{}, true
+	case constraint.PathPredicateNotNil:
+		return cfg.CheckNotNil, narrow.TypeKey{}, true
+	case constraint.PathPredicateTruthy:
+		return cfg.CheckTruthy, narrow.TypeKey{}, true
+	case constraint.PathPredicateHasType:
+		return cfg.CheckTypeEqual, predicate.Type, !predicate.Type.IsZero()
+	case constraint.PathPredicateNotHasType:
+		return cfg.CheckTypeNot, predicate.Type, !predicate.Type.IsZero()
 	default:
-		return constraint.Path{}, cfg.CheckNone, narrow.TypeKey{}, false
+		return cfg.CheckNone, narrow.TypeKey{}, false
 	}
 }
 

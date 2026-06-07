@@ -1373,44 +1373,24 @@ func siblingConstraintsFromOnReturn(disj []constraint.Constraint, inputs *flow.I
 	}
 	var out []constraint.Constraint
 	for _, c := range disj {
-		var cpath constraint.Path
-		var wantNil bool
-		switch v := c.(type) {
-		case constraint.IsNil:
-			cpath = v.Path
-			wantNil = false
-		case constraint.Falsy:
-			cpath = v.Path
-			wantNil = false
-		case constraint.NotNil:
-			cpath = v.Path
-			wantNil = true
-		case constraint.Truthy:
-			cpath = v.Path
-			wantNil = true
-		default:
+		predicate, ok := constraint.SinglePathPredicate(c)
+		if !ok {
 			continue
 		}
+		wantNonNil, ok := predicate.NonNilBranch()
+		if !ok {
+			continue
+		}
+		cpath := predicate.Path
 		if cpath.Symbol == 0 {
 			continue
 		}
 		version := graph.VisibleVersion(p, cpath.Symbol)
-		raw := sibling.ConstraintsForSymbol(cpath.Symbol, version.ID, inputs, wantNil, bindings)
+		raw := sibling.ConstraintsForSymbol(cpath.Symbol, version.ID, inputs, wantNonNil, bindings)
 		if len(raw) == 0 {
 			continue
 		}
-		for _, rc := range raw {
-			switch v := rc.(type) {
-			case constraint.IsNil:
-				v.Path = path.WithVersion(v.Path, graph, p)
-				out = append(out, v)
-			case constraint.NotNil:
-				v.Path = path.WithVersion(v.Path, graph, p)
-				out = append(out, v)
-			default:
-				out = append(out, rc)
-			}
-		}
+		out = append(out, versionSiblingConstraints(raw, graph, p)...)
 	}
 	return out
 }
