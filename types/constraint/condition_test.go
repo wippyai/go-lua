@@ -832,6 +832,28 @@ func TestCondition_MapPathsRewritesAllEmbeddedPaths(t *testing.T) {
 	}
 }
 
+func TestMapConstraintPathsRewritesSingleConstraint(t *testing.T) {
+	source := Path{Root: "ret0"}.Field("payload")
+	target := Path{Root: "value", Symbol: 12, Version: 3}.Field("payload")
+	key := Path{Root: "key", Symbol: 13, Version: 2}
+
+	got := MapConstraintPaths(KeyOf{Table: source, Key: key}, func(p Path) Path {
+		if p.Root == "ret0" {
+			out := target
+			if len(p.Segments) > 1 {
+				out.Segments = append(append([]Segment{}, out.Segments...), p.Segments[1:]...)
+			}
+			return out
+		}
+		return p
+	})
+
+	want := KeyOf{Table: target, Key: key}
+	if !got.Equals(want) {
+		t.Fatalf("MapConstraintPaths() = %v, want %v", got, want)
+	}
+}
+
 func TestCondition_MapPathsNoOpKeepsCanonicalStorage(t *testing.T) {
 	path := Path{Root: "x", Symbol: 1, Version: 2}.Field("config")
 	cond := FromConstraints(

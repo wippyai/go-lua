@@ -1364,76 +1364,7 @@ func substituteReturnConstraintPaths(c constraint.Constraint, retTargets map[int
 		}
 		return out
 	}
-	return constraint.VisitConstraint(c, constraint.ConstraintVisitor[constraint.Constraint]{
-		Truthy: func(v constraint.Truthy) constraint.Constraint { v.Path = subPath(v.Path); return v },
-		Falsy:  func(v constraint.Falsy) constraint.Constraint { v.Path = subPath(v.Path); return v },
-		IsNil:  func(v constraint.IsNil) constraint.Constraint { v.Path = subPath(v.Path); return v },
-		NotNil: func(v constraint.NotNil) constraint.Constraint { v.Path = subPath(v.Path); return v },
-		HasType: func(v constraint.HasType) constraint.Constraint {
-			v.Path = subPath(v.Path)
-			return v
-		},
-		NotHasType: func(v constraint.NotHasType) constraint.Constraint {
-			v.Path = subPath(v.Path)
-			return v
-		},
-		HasField: func(v constraint.HasField) constraint.Constraint {
-			v.Path = subPath(v.Path)
-			return v
-		},
-		FieldEquals: func(v constraint.FieldEquals) constraint.Constraint {
-			v.Target = subPath(v.Target)
-			return v
-		},
-		FieldNotEquals: func(v constraint.FieldNotEquals) constraint.Constraint {
-			v.Target = subPath(v.Target)
-			return v
-		},
-		IndexEquals: func(v constraint.IndexEquals) constraint.Constraint {
-			v.Target = subPath(v.Target)
-			return v
-		},
-		IndexNotEquals: func(v constraint.IndexNotEquals) constraint.Constraint {
-			v.Target = subPath(v.Target)
-			return v
-		},
-		EqPath: func(v constraint.EqPath) constraint.Constraint {
-			v.Left = subPath(v.Left)
-			v.Right = subPath(v.Right)
-			return constraint.NewEqPath(v.Left, v.Right)
-		},
-		NotEqPath: func(v constraint.NotEqPath) constraint.Constraint {
-			v.Left = subPath(v.Left)
-			v.Right = subPath(v.Right)
-			return constraint.NewNotEqPath(v.Left, v.Right)
-		},
-		FieldEqualsPath: func(v constraint.FieldEqualsPath) constraint.Constraint {
-			v.Target = subPath(v.Target)
-			v.Value = subPath(v.Value)
-			return v
-		},
-		FieldNotEqualsPath: func(v constraint.FieldNotEqualsPath) constraint.Constraint {
-			v.Target = subPath(v.Target)
-			v.Value = subPath(v.Value)
-			return v
-		},
-		IndexEqualsPath: func(v constraint.IndexEqualsPath) constraint.Constraint {
-			v.Target = subPath(v.Target)
-			v.Value = subPath(v.Value)
-			return v
-		},
-		IndexNotEqualsPath: func(v constraint.IndexNotEqualsPath) constraint.Constraint {
-			v.Target = subPath(v.Target)
-			v.Value = subPath(v.Value)
-			return v
-		},
-		KeyOf: func(v constraint.KeyOf) constraint.Constraint {
-			v.Table = subPath(v.Table)
-			v.Key = subPath(v.Key)
-			return v
-		},
-		Default: func(constraint.Constraint) constraint.Constraint { return c },
-	})
+	return constraint.MapConstraintPaths(c, subPath)
 }
 
 func siblingConstraintsFromOnReturn(disj []constraint.Constraint, inputs *flow.Inputs, bindings *bind.BindingTable, graph *cfg.Graph, p cfg.Point) []constraint.Constraint {

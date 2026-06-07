@@ -760,7 +760,7 @@ func mapPathsConjunction(conj []Constraint, fn func(Path) Path) ([]Constraint, b
 	out := make([]Constraint, 0, len(conj))
 	changed := false
 	for _, c := range conj {
-		mapped := mapConstraintPaths(c, fn)
+		mapped := MapConstraintPaths(c, fn)
 		if !mapped.Equals(c) {
 			changed = true
 		}
@@ -769,7 +769,13 @@ func mapPathsConjunction(conj []Constraint, fn func(Path) Path) ([]Constraint, b
 	return out, changed
 }
 
-func mapConstraintPaths(c Constraint, fn func(Path) Path) Constraint {
+// MapConstraintPaths rewrites every semantic path embedded in c. The mapper is
+// total: it must return the replacement path for each input path and must not
+// mutate the input path's segment slice.
+func MapConstraintPaths(c Constraint, fn func(Path) Path) Constraint {
+	if c == nil || fn == nil {
+		return c
+	}
 	return VisitConstraint(c, ConstraintVisitor[Constraint]{
 		Truthy: func(v Truthy) Constraint {
 			return Truthy{Path: fn(v.Path)}
