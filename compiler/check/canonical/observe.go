@@ -502,6 +502,7 @@ var _ flow.BindingValueFacts = (*canonicalFacts)(nil)
 var _ flow.PathFacts = (*canonicalFacts)(nil)
 var _ flow.ProductFacts = (*canonicalFacts)(nil)
 var _ flow.ProductPathFacts = (*canonicalFacts)(nil)
+var _ flow.ProductPathObservationFacts = (*canonicalFacts)(nil)
 var _ flow.PathChildFacts = (*canonicalFacts)(nil)
 var _ flow.AssignmentSourceFacts = (*canonicalFacts)(nil)
 var _ flow.TransferValueFacts = (*canonicalFacts)(nil)
@@ -697,6 +698,19 @@ func (f *canonicalFacts) RefinedPathAt(p cfg.Point, path constraint.Path) flow.T
 // without dropping carrier evidence at the typ.Type boundary.
 func (f *canonicalFacts) RefinedPathValueAt(p cfg.Point, path constraint.Path) flow.ProductValue {
 	return f.paths.RefinedPathValueAt(p, path)
+}
+
+// ObserveProductPathValue exposes product-carrier evidence through one
+// normalized path-read surface. It preserves gradual-top provenance and other
+// product-domain facts that typ.Type projection intentionally erases.
+func (f *canonicalFacts) ObserveProductPathValue(q flow.ProductPathObservationQuery) flow.ProductValue {
+	if q.Path.IsEmpty() || q.Path.Symbol == 0 {
+		return flow.ProductValue{State: flow.StateUnknown}
+	}
+	if len(q.Path.Segments) == 0 {
+		return f.RefinedValueAt(q.Point, q.Path.Symbol)
+	}
+	return f.RefinedPathValueAt(q.Point, q.Path)
 }
 
 // ObserveChildPaths exposes finite child path facts already materialized in the

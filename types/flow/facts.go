@@ -146,6 +146,22 @@ type ProductPathFacts interface {
 	RefinedPathValueAt(p cfg.Point, path constraint.Path) ProductValue
 }
 
+// ProductPathObservationQuery is the normalized request for product-carrier
+// evidence at a source path. Consumers use it when typ.Type projection would
+// erase semantic carrier information such as gradual-top provenance.
+type ProductPathObservationQuery struct {
+	Point cfg.Point
+	Path  constraint.Path
+	View  PathReadView
+}
+
+// ProductPathObservationFacts exposes product-carrier path reads through one
+// root-or-member surface. Producers may store roots and member paths separately;
+// consumers should not reconstruct that split.
+type ProductPathObservationFacts interface {
+	ObserveProductPathValue(ProductPathObservationQuery) ProductValue
+}
+
 // AssignmentSourceFacts exposes the source-owned RHS value for an assignment
 // source. It evaluates AssignmentSource against solved abstract state without
 // reconciling the result against the target annotation/static slot type.

@@ -928,18 +928,31 @@ func (p Projector) productGradualTopAt(point cfg.Point, path constraint.Path) (b
 // path when the active facts expose product evidence. It is the observation
 // boundary for consumers that need semantic carrier facts such as presence.
 func (p Projector) ProductValueAtPath(point cfg.Point, path constraint.Path) flow.ProductValue {
-	if p.cfg.Facts == nil || path.IsEmpty() || path.Symbol == 0 {
+	if path.IsEmpty() || path.Symbol == 0 {
 		return flow.ProductValue{State: flow.StateUnknown}
 	}
-	if len(path.Segments) == 0 {
-		if valueFacts, ok := p.cfg.Facts.(flow.ProductFacts); ok {
-			return valueFacts.RefinedValueAt(point, path.Symbol)
-		}
-	}
-	if pathFacts, ok := p.cfg.Facts.(flow.ProductPathFacts); ok {
-		return pathFacts.RefinedPathValueAt(point, path)
+	if facts := p.productPathObservationFacts(); facts != nil {
+		return facts.ObserveProductPathValue(flow.ProductPathObservationQuery{
+			Point: point,
+			Path:  path,
+			View:  p.pathReadView(),
+		})
 	}
 	return flow.ProductValue{State: flow.StateUnknown}
+}
+
+func (p Projector) productPathObservationFacts() flow.ProductPathObservationFacts {
+	if p.cfg.Facts != nil {
+		if facts, ok := p.cfg.Facts.(flow.ProductPathObservationFacts); ok {
+			return facts
+		}
+	}
+	if p.cfg.Flow != nil {
+		if facts, ok := p.cfg.Flow.(flow.ProductPathObservationFacts); ok {
+			return facts
+		}
+	}
+	return nil
 }
 
 // PathHasPresentProductValue reports whether solved product evidence proves a

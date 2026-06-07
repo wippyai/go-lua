@@ -111,13 +111,13 @@ func (p Projector) admitGradualAssignmentSource(t typ.Type, source ast.Expr, poi
 // gradual top admissible at a CONSISTENCY boundary (assignment to a typed local,
 // return, call argument), rather than an `any` the boundary check must still flag.
 //
-// The preferred proof is the product-valued observation boundary
-// (flow.ProductFacts / flow.ProductPathFacts), which reads the product carrier's
-// evidence axis. That distinguishes a gradual `any` introduced by an unannotated
-// source from a strict declared `any`, even though both project to typ.Any.
-// Product evidence is authoritative when present; the unannotated-parameter root
-// check is only a compatibility fallback for flow surfaces that do not yet expose
-// product facts.
+// The preferred proof is the product-valued path observation boundary, which
+// reads the product carrier's evidence axis without splitting root and member
+// reads at the caller. That distinguishes a gradual `any` introduced by an
+// unannotated source from a strict declared `any`, even though both project to
+// typ.Any. Product evidence is authoritative when present; the unannotated-
+// parameter root check is only a compatibility fallback for flow surfaces that
+// do not yet expose product facts.
 //
 // This relation gates CONSISTENCY boundaries only. A WRITE into a typed container's
 // element slot (a structured index-write target) is a store into invariant

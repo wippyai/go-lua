@@ -99,6 +99,39 @@ func (f productFactsStub) RefinedPathValueAt(_ cfg.Point, path constraint.Path) 
 	return flow.ProductValue{State: flow.StateUnknown}
 }
 
+func (f productFactsStub) ObserveProductPathValue(q flow.ProductPathObservationQuery) flow.ProductValue {
+	return f.RefinedPathValueAt(q.Point, q.Path)
+}
+
+type productPathObservationFactsStub struct {
+	factsStub
+	values map[constraint.PathKey]product.AbstractValue
+}
+
+func (f productPathObservationFactsStub) ObserveProductPathValue(q flow.ProductPathObservationQuery) flow.ProductValue {
+	if av, ok := f.values[q.Path.Key()]; ok && !av.IsZero() {
+		return flow.ProductValue{Value: av, State: flow.StateResolved}
+	}
+	return flow.ProductValue{State: flow.StateUnknown}
+}
+
+func TestProjectorProductValueAtPathUsesProductPathObservationFacts(t *testing.T) {
+	const point cfg.Point = 7
+	path := constraint.NewPath(12, "payload").Field("id")
+	want := product.GradualAny()
+	projector := New(Config{
+		Facts: productPathObservationFactsStub{
+			factsStub: factsStub{12: typ.Any},
+			values:    map[constraint.PathKey]product.AbstractValue{path.Key(): want},
+		},
+	})
+
+	got := projector.ProductValueAtPath(point, path)
+	if got.State != flow.StateResolved || got.Value.IsZero() || !got.Value.IsGradualTop() {
+		t.Fatalf("ProductValueAtPath = %#v, want gradual-top product value", got)
+	}
+}
+
 type assignmentSourceFactsStub struct {
 	factsStub
 	value typ.Type
