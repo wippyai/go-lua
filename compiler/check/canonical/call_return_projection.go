@@ -98,20 +98,11 @@ func (p callReturnProjection) refinedArgTypes() []typ.Type {
 }
 
 func (p callReturnProjection) callbackRefs() map[ast.Expr][]summary.FuncRef {
-	d := p.typer.d
-	if d == nil || d.activeProgram == nil {
+	entryProjector, ok := p.typer.callEntryProjector()
+	if !ok {
 		return nil
 	}
-	resolver := p.typer.targetResolver(d.activeProgram)
-	out := make(map[ast.Expr][]summary.FuncRef)
-	for _, arg := range p.call.Args {
-		argRefs, ok := resolver.ResolveCallbackArgRefs(arg, p.references, d.activeProgram.refByFunc)
-		if !ok || len(argRefs) == 0 {
-			continue
-		}
-		out[arg] = argRefs
-	}
-	return out
+	return entryProjector.referenceArgProjection(p.references).callbackRefsForCall(p.call)
 }
 
 func (p callReturnProjection) contextualFunction(projector callableProjector, ref summary.FuncRef, values summary.EntryValues) typ.Type {
