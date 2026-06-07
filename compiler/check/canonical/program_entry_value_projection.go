@@ -1,8 +1,14 @@
 package canonical
 
 import (
+	"slices"
+
+	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/canonical/facts"
+	canonref "github.com/wippyai/go-lua/compiler/check/canonical/ref"
 	"github.com/wippyai/go-lua/compiler/check/canonical/summary"
+	"github.com/wippyai/go-lua/types/domain/value/product"
+	"github.com/wippyai/go-lua/types/typ"
 )
 
 // programEntryValueProjection owns the summary-level entry values for one
@@ -29,6 +35,55 @@ func (p *program) entryValueProjection(ref summary.FuncRef, deps summary.EntryVa
 		prototypeReceivers: entryValuePrototypeReceivers(receivers),
 		hasInferredSlots:   p.hasInferredEntrySlot(ref),
 	}, true
+}
+
+func (p *program) EntryValues(ref summary.FuncRef, deps summary.EntryValueDependencies) map[int]product.AbstractValue {
+	proj, ok := p.entryValueProjection(ref, deps)
+	if !ok {
+		return nil
+	}
+	return proj.project()
+}
+
+func (p *program) EntrySymbolValues(ref summary.FuncRef) map[cfg.SymbolID]product.AbstractValue {
+	var out map[cfg.SymbolID]product.AbstractValue
+	add := func(sym cfg.SymbolID, t typ.Type) {
+		if sym == 0 || t == nil || typ.IsAbsentOrUnknown(t) {
+			return
+		}
+		if out == nil {
+			out = make(map[cfg.SymbolID]product.AbstractValue)
+		}
+		seed := product.FromType(t)
+		if prev, had := out[sym]; had {
+			out[sym] = product.Domain.Join(prev, seed)
+		} else {
+			out[sym] = seed
+		}
+	}
+
+	if g := p.Graph(ref); g != nil {
+		if fnFacts, ok := p.functionFacts[ref]; ok && len(fnFacts.declared) > 0 {
+			bindings := g.Bindings()
+			if bindings != nil {
+				for _, sym := range bindings.ReferencedGlobals() {
+					if _, ok := fnFacts.declared[sym]; !ok {
+						continue
+					}
+					add(sym, fnFacts.declared[sym])
+				}
+			}
+		}
+	}
+
+	entries := p.facts.CallbackEnv(ref)
+	for _, entry := range entries {
+		add(entry.Symbol, entry.Type)
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }
 
 func (p programEntryValueProjection) project() summary.EntryValues {
@@ -83,6 +138,87 @@ func (p programEntryValueProjection) withSourceEntrySeeds(values summary.EntryVa
 	if seeds := entryValueSeeds(p.program.facts.FunctionEntrySeeds(p.ref)); len(seeds) != 0 {
 		out = summary.EntryValuesWithSeeds(out, seeds)
 	}
+	return out
+}
+
+// hasInferredEntrySlot is a query-dependency guard: functions whose parameters
+// are all fixed declarations do not need aggregate caller entry evidence, so
+// EntryValues must not read caller summaries and perturb the interprocedural
+// cache/fixpoint. Refinable structural annotations (`{any}`, `any[]`, maps with
+// dynamic interiors) are not fixed; EntrySeedEffect can compose caller evidence
+// with them.
+func (p *program) hasInferredEntrySlot(ref summary.FuncRef) bool {
+	if p == nil {
+		return false
+	}
+	g := p.Graph(ref)
+	if g == nil {
+		return false
+	}
+	for slot := range g.ParamSymbols() {
+		if !p.paramSlotFixed(ref, slot) {
+			return true
+		}
+	}
+	return false
+}
+
+func (p *program) publishedPrototypes(ref summary.FuncRef) []cfg.SymbolID {
+	sites := p.facts.SetMetatableSites(ref)
+	if len(sites) == 0 {
+		return nil
+	}
+	out := make([]cfg.SymbolID, 0, len(sites))
+	for _, site := range sites {
+		if site.PrototypeSym != 0 {
+			out = append(out, site.PrototypeSym)
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	slices.Sort(out)
+	return slices.Compact(out)
+}
+
+func (p *program) callerRefs(ref summary.FuncRef) []summary.FuncRef {
+	if p == nil {
+		return nil
+	}
+	if p.callerRefsByCallee != nil {
+		return append([]summary.FuncRef(nil), p.callerRefsByCallee[ref]...)
+	}
+	var out []summary.FuncRef
+	for _, caller := range p.refs {
+		for _, callee := range p.Callees(caller) {
+			if callee == ref {
+				out = append(out, caller)
+				break
+			}
+		}
+	}
+	return out
+}
+
+func (p *program) prototypePublisherRefs(receivers []summary.EntryValuePrototypeReceiver) []summary.FuncRef {
+	if p == nil || len(receivers) == 0 || len(p.prototypePublishersBySym) == 0 {
+		return nil
+	}
+	var out []summary.FuncRef
+	seen := make(map[summary.FuncRef]bool)
+	for _, receiver := range receivers {
+		if receiver.Prototype == 0 {
+			continue
+		}
+		for _, dep := range p.prototypePublishersBySym[receiver.Prototype] {
+			if seen[dep] {
+				continue
+			}
+			seen[dep] = true
+			out = append(out, dep)
+		}
+	}
+	canonref.SortFuncRefs(out)
 	return out
 }
 
