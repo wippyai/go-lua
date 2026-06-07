@@ -854,6 +854,56 @@ func TestMapConstraintPathsRewritesSingleConstraint(t *testing.T) {
 	}
 }
 
+func TestProjectConstraintPathsKeepsSelectedPortableConstraint(t *testing.T) {
+	param := Path{Root: "arg", Symbol: 10}.Field("id")
+	ret := RetPath(0)
+	project := func(path Path) PathProjection {
+		if path.Symbol == param.Symbol {
+			return PathProjection{Path: ParamPath(0).Field("id"), Keep: true, Selected: true}
+		}
+		if IsReturnPath(path) {
+			return PathProjection{Path: path, Keep: true}
+		}
+		return PathProjection{}
+	}
+
+	got := ProjectConstraintPaths(KeyOf{Table: param, Key: ret}, project)
+	want := KeyOf{Table: ParamPath(0).Field("id"), Key: ret}
+	if !got.Equals(want) {
+		t.Fatalf("ProjectConstraintPaths() = %v, want %v", got, want)
+	}
+}
+
+func TestProjectConstraintPathsDropsNonPortablePath(t *testing.T) {
+	param := Path{Root: "arg", Symbol: 10}
+	local := Path{Root: "tmp", Symbol: 20}
+	project := func(path Path) PathProjection {
+		if path.Symbol == param.Symbol {
+			return PathProjection{Path: ParamPath(0), Keep: true, Selected: true}
+		}
+		return PathProjection{}
+	}
+
+	got := ProjectConstraintPaths(EqPath{Left: param, Right: local}, project)
+	if got != nil {
+		t.Fatalf("ProjectConstraintPaths() = %v, want nil", got)
+	}
+}
+
+func TestProjectConstraintPathsDropsPortableUnselectedConstraint(t *testing.T) {
+	project := func(path Path) PathProjection {
+		if IsReturnPath(path) {
+			return PathProjection{Path: path, Keep: true}
+		}
+		return PathProjection{}
+	}
+
+	got := ProjectConstraintPaths(NotNil{Path: RetPath(0)}, project)
+	if got != nil {
+		t.Fatalf("ProjectConstraintPaths() = %v, want nil", got)
+	}
+}
+
 func TestCondition_MapPathsNoOpKeepsCanonicalStorage(t *testing.T) {
 	path := Path{Root: "x", Symbol: 1, Version: 2}.Field("config")
 	cond := FromConstraints(

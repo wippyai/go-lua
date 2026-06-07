@@ -843,6 +843,139 @@ func MapConstraintPaths(c Constraint, fn func(Path) Path) Constraint {
 	})
 }
 
+// PathProjection is one path's result under a partial projection.
+//
+// Keep means the path is legal in the projected constraint. Selected means the
+// path is the reason the constraint should survive projection. This lets callers
+// keep constraints such as KeyOf{$0, ret0}, while dropping ret0-only constraints
+// and constraints that mention non-portable local paths.
+type PathProjection struct {
+	Path     Path
+	Keep     bool
+	Selected bool
+}
+
+// ProjectConstraintPaths rewrites paths under a partial projection. The
+// resulting constraint is kept only when every embedded path has Keep=true and at
+// least one embedded path has Selected=true.
+func ProjectConstraintPaths(c Constraint, project func(Path) PathProjection) Constraint {
+	if c == nil || project == nil {
+		return nil
+	}
+	state := constraintPathProjection{project: project, valid: true}
+	out := VisitConstraint(c, ConstraintVisitor[Constraint]{
+		Truthy: func(v Truthy) Constraint {
+			return state.finish(Truthy{Path: state.path(v.Path)})
+		},
+		Falsy: func(v Falsy) Constraint {
+			return state.finish(Falsy{Path: state.path(v.Path)})
+		},
+		IsNil: func(v IsNil) Constraint {
+			return state.finish(IsNil{Path: state.path(v.Path)})
+		},
+		NotNil: func(v NotNil) Constraint {
+			return state.finish(NotNil{Path: state.path(v.Path)})
+		},
+		HasType: func(v HasType) Constraint {
+			return state.finish(HasType{Path: state.path(v.Path), Type: v.Type})
+		},
+		NotHasType: func(v NotHasType) Constraint {
+			return state.finish(NotHasType{Path: state.path(v.Path), Type: v.Type})
+		},
+		HasField: func(v HasField) Constraint {
+			return state.finish(HasField{Path: state.path(v.Path), Field: v.Field})
+		},
+		FieldEquals: func(v FieldEquals) Constraint {
+			return state.finish(FieldEquals{Target: state.path(v.Target), Field: v.Field, Value: v.Value})
+		},
+		FieldNotEquals: func(v FieldNotEquals) Constraint {
+			return state.finish(FieldNotEquals{Target: state.path(v.Target), Field: v.Field, Value: v.Value})
+		},
+		IndexEquals: func(v IndexEquals) Constraint {
+			return state.finish(IndexEquals{Target: state.path(v.Target), Key: v.Key, Value: v.Value})
+		},
+		IndexNotEquals: func(v IndexNotEquals) Constraint {
+			return state.finish(IndexNotEquals{Target: state.path(v.Target), Key: v.Key, Value: v.Value})
+		},
+		EqPath: func(v EqPath) Constraint {
+			left := state.path(v.Left)
+			right := state.path(v.Right)
+			return state.finish(NewEqPath(left, right))
+		},
+		NotEqPath: func(v NotEqPath) Constraint {
+			left := state.path(v.Left)
+			right := state.path(v.Right)
+			return state.finish(NewNotEqPath(left, right))
+		},
+		FieldEqualsPath: func(v FieldEqualsPath) Constraint {
+			target := state.path(v.Target)
+			value := state.path(v.Value)
+			return state.finish(FieldEqualsPath{Target: target, Field: v.Field, Value: value})
+		},
+		FieldNotEqualsPath: func(v FieldNotEqualsPath) Constraint {
+			target := state.path(v.Target)
+			value := state.path(v.Value)
+			return state.finish(FieldNotEqualsPath{Target: target, Field: v.Field, Value: value})
+		},
+		IndexEqualsPath: func(v IndexEqualsPath) Constraint {
+			target := state.path(v.Target)
+			value := state.path(v.Value)
+			return state.finish(IndexEqualsPath{Target: target, Key: v.Key, Value: value})
+		},
+		IndexNotEqualsPath: func(v IndexNotEqualsPath) Constraint {
+			target := state.path(v.Target)
+			value := state.path(v.Value)
+			return state.finish(IndexNotEqualsPath{Target: target, Key: v.Key, Value: value})
+		},
+		VariantCaseEquals: func(v VariantCaseEquals) Constraint {
+			return state.finish(VariantCaseEquals{Target: state.path(v.Target), OriginFamily: v.OriginFamily, CaseIndex: v.CaseIndex})
+		},
+		VariantCaseNotEquals: func(v VariantCaseNotEquals) Constraint {
+			return state.finish(VariantCaseNotEquals{Target: state.path(v.Target), OriginFamily: v.OriginFamily, CaseIndex: v.CaseIndex})
+		},
+		KeyOf: func(v KeyOf) Constraint {
+			table := state.path(v.Table)
+			key := state.path(v.Key)
+			return state.finish(KeyOf{Table: table, Key: key})
+		},
+		Default: func(Constraint) Constraint {
+			return nil
+		},
+	})
+	if !state.valid || !state.selected {
+		return nil
+	}
+	return out
+}
+
+type constraintPathProjection struct {
+	project  func(Path) PathProjection
+	valid    bool
+	selected bool
+}
+
+func (p *constraintPathProjection) path(path Path) Path {
+	if !p.valid {
+		return Path{}
+	}
+	projected := p.project(path)
+	if !projected.Keep {
+		p.valid = false
+		return Path{}
+	}
+	if projected.Selected {
+		p.selected = true
+	}
+	return projected.Path
+}
+
+func (p *constraintPathProjection) finish(c Constraint) Constraint {
+	if !p.valid || !p.selected {
+		return nil
+	}
+	return c
+}
+
 func substituteConstraint(c Constraint, args []Path) Constraint {
 	return VisitConstraint(c, ConstraintVisitor[Constraint]{
 		Truthy: func(v Truthy) Constraint {

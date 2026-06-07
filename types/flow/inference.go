@@ -342,21 +342,29 @@ func substituteToPlaceholders(set []constraint.Constraint, projection parameterP
 	return constraint.NewConjunction(substituted...)
 }
 
-// substitutePathsInConstraint replaces path roots with placeholders.
-//
-// This function implements the core substitution logic for a single constraint.
-// It handles each constraint type, replacing parameter paths with placeholder roots.
-// The constraint type determines which paths to substitute:
-//
-//   - Unary constraints (Truthy, IsNil, HasType, etc.): Substitute Path
-//   - Binary path constraints (EqPath, FieldEqualsPath): Substitute both paths
-//   - Field/Index constraints: Substitute Target path
-//
-// Returns nil if the constraint cannot be expressed in the exported refinement
-// vocabulary. Exported path references must be parameter placeholders or explicit
-// return paths; callee locals/globals must not leak into a caller-facing effect.
+// substitutePathsInConstraint replaces parameter paths with call-site
+// placeholders. Exported path references must be parameter placeholders or
+// explicit return paths; callee locals/globals must not leak into caller-facing
+// effects.
 func substitutePathsInConstraint(c constraint.Constraint, projection parameterProjection) constraint.Constraint {
-	return newParameterPathSubstituter(projection).constraint(c)
+	switch c.(type) {
+	case constraint.VariantCaseEquals, *constraint.VariantCaseEquals,
+		constraint.VariantCaseNotEquals, *constraint.VariantCaseNotEquals:
+		return nil
+	}
+	return constraint.ProjectConstraintPaths(c, func(path constraint.Path) constraint.PathProjection {
+		if newRoot, ok := projection.placeholderRoot(path); ok {
+			return constraint.PathProjection{
+				Path:     pathWithNewRoot(path, newRoot),
+				Keep:     true,
+				Selected: true,
+			}
+		}
+		if constraint.IsReturnPath(path) {
+			return constraint.PathProjection{Path: path, Keep: true}
+		}
+		return constraint.PathProjection{}
+	})
 }
 
 // pathWithNewRoot creates a new path with a placeholder root.
