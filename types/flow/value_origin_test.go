@@ -118,6 +118,25 @@ func TestValueOriginAssignmentAliasSourceAddressesIgnoreLegacyStoredSource(t *te
 	}
 }
 
+func TestValueOriginFactsOriginsCoveringAddressIgnoresLegacyStoredValue(t *testing.T) {
+	valuePath := constraint.NewPath(cfg.SymbolID(19), "entry")
+	sourcePath := constraint.NewPath(cfg.SymbolID(20), "items")
+	value := testStableAddressPath(t, valuePath)
+	facts := ValueOriginFacts{}.With(ValueOriginFact{
+		Value:    valuePath.Key(),
+		Source:   testStableAddressPath(t, sourcePath).Key(),
+		Kind:     ValueOriginIndexedIterator,
+		VarIndex: 1,
+	})
+	if entries := facts.Entries(); len(entries) != 1 || entries[0].Value != valuePath.Key() {
+		t.Fatalf("test setup did not keep legacy stored value key: %s", facts.Format())
+	}
+
+	if got := facts.OriginsCoveringAddress(value); len(got) != 0 {
+		t.Fatalf("legacy stored value key produced origin uses: %#v", got)
+	}
+}
+
 func TestValueOriginFactsJoinKeepsMustFacts(t *testing.T) {
 	entry := constraint.NewPath(cfg.SymbolID(21), "entry")
 	tests := constraint.NewPath(cfg.SymbolID(22), "tests")

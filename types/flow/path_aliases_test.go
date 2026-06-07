@@ -82,6 +82,23 @@ func TestPathAliasSourceRoutesIgnoreLegacyStoredSource(t *testing.T) {
 	}
 }
 
+func TestPathAliasFactsAliasesCoveringAddressIgnoresLegacyStoredValue(t *testing.T) {
+	aliasPath := constraint.NewPath(cfg.SymbolID(19), "alias")
+	sourcePath := constraint.NewPath(cfg.SymbolID(20), "source")
+	alias := testStableAddressPath(t, aliasPath)
+	facts := PathAliasFacts{}.With(PathAliasFact{
+		Value:  aliasPath.Key(),
+		Source: testStableAddressPath(t, sourcePath).Key(),
+	})
+	if entries := facts.Entries(); len(entries) != 1 || entries[0].Value != aliasPath.Key() {
+		t.Fatalf("test setup did not keep legacy stored value key: %s", facts.Format())
+	}
+
+	if got := facts.AliasesCoveringAddress(alias); len(got) != 0 {
+		t.Fatalf("legacy stored value key produced alias uses: %#v", got)
+	}
+}
+
 func TestPathAliasFactsKillAffectedByWrite(t *testing.T) {
 	alias := constraint.NewPath(cfg.SymbolID(21), "alias")
 	source := constraint.NewPath(cfg.SymbolID(22), "source")

@@ -235,6 +235,12 @@ func TestStableAddressKeyRelationsOwnKeyParsing(t *testing.T) {
 	if AddressKeyOverlaps(StablePathKey(other), rootAddr) {
 		t.Fatalf("different symbol key should not overlap root address")
 	}
+	if _, ok := childAddr.RemainderAfterAddressKey(root.Key()); ok {
+		t.Fatalf("legacy root key covered child address")
+	}
+	if AddressKeyOverlaps(child.Key(), rootAddr) {
+		t.Fatalf("legacy child key should not overlap root address")
+	}
 }
 
 func TestStableAddressOfRootAndSuffixKeepsVocabularyCanonical(t *testing.T) {
