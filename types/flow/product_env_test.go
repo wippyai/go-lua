@@ -6,7 +6,9 @@ import (
 	"github.com/wippyai/go-lua/types/cfg"
 	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/domain/value/product"
+	"github.com/wippyai/go-lua/types/narrow"
 	"github.com/wippyai/go-lua/types/query/core"
+	"github.com/wippyai/go-lua/types/subtype"
 	"github.com/wippyai/go-lua/types/typ"
 )
 
@@ -120,5 +122,59 @@ func TestProductDomainHasNarrowingForSymbolUsesStableAddress(t *testing.T) {
 	}
 	if ProductDomainHasNarrowingForSymbol(dom, cfg.SymbolID(52)) {
 		t.Fatalf("unexpected narrowing for unrelated symbol")
+	}
+}
+
+func TestProductConditionReductionValueAddsPositiveFieldPresence(t *testing.T) {
+	const sym = cfg.SymbolID(61)
+	path := constraint.NewPath(sym, "tool_specs")
+	spec := typ.NewRecord().
+		Field("id", typ.String).
+		OptField("alias", typ.String).
+		Build()
+	toolSpec := typ.NewAlias("ToolSpec", typ.NewUnion(typ.String, spec))
+	toolSpecArray := typ.NewArray(toolSpec)
+	base := product.FromType(typ.NewUnion(toolSpec, toolSpecArray))
+	fact := constraint.FromConstraints(
+		constraint.HasType{Path: path, Type: narrow.BuiltinTypeKey("table")},
+		constraint.NotHasType{Path: path, Type: narrow.BuiltinTypeKey("string")},
+		constraint.Truthy{Path: path.Field("id")},
+	)
+
+	got, ok := ProductConditionReductionValue(ProductConditionReduction{
+		Symbol:   sym,
+		Base:     base,
+		HasBase:  true,
+		Fact:     fact,
+		Facts:    PointFactsOf(PointState{}),
+		Resolver: &core.FuncResolver{FieldFunc: core.Field},
+	})
+	if !ok || got.IsZero() {
+		t.Fatalf("ProductConditionReductionValue = %v/%v, want narrowed record", got.ProjectValue(), ok)
+	}
+	projected := got.ProjectValue()
+	if !subtype.IsSubtype(spec, projected) {
+		t.Fatalf("reduced type = %v, want ToolSpec record branch retained", projected)
+	}
+	if subtype.IsSubtype(toolSpecArray, projected) {
+		t.Fatalf("reduced type = %v, array branch should be excluded by inferred field presence", projected)
+	}
+}
+
+func TestConditionValueSymbolsReturnsStableRootSet(t *testing.T) {
+	first := constraint.NewPath(cfg.SymbolID(71), "first")
+	second := constraint.NewPath(cfg.SymbolID(72), "second")
+	got := ConditionValueSymbols(constraint.FromConstraints(
+		constraint.Truthy{Path: second.Field("id")},
+		constraint.FieldEqualsPath{Target: first, Field: "owner", Value: second},
+	))
+	want := []cfg.SymbolID{71, 72}
+	if len(got) != len(want) {
+		t.Fatalf("ConditionValueSymbols = %#v, want %#v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("ConditionValueSymbols = %#v, want %#v", got, want)
+		}
 	}
 }

@@ -1,14 +1,10 @@
 package transfer
 
 import (
-	"sort"
-
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/domain/value/product"
 	"github.com/wippyai/go-lua/types/flow"
-	"github.com/wippyai/go-lua/types/kind"
-	"github.com/wippyai/go-lua/types/typ"
 )
 
 // ConditionEffect is the transfer atom for learning a path-condition fact on the
@@ -48,7 +44,7 @@ func (t *Transfer) applyValueConditionReductions(out *flow.PointState, fact cons
 	if out == nil {
 		return false
 	}
-	syms := conditionValueSymbols(fact)
+	syms := flow.ConditionValueSymbols(fact)
 	if len(syms) == 0 {
 		return false
 	}
@@ -73,15 +69,22 @@ func (t *Transfer) applyValueConditionReductions(out *flow.PointState, fact cons
 			base = av
 			hasBase = hasValue
 		}
-		next, narrowed := t.conditionProductReductionValue(out, sym, base, hasBase, fact)
+		next, narrowed := flow.ProductConditionReductionValue(flow.ProductConditionReduction{
+			Symbol:   sym,
+			Base:     base,
+			HasBase:  hasBase,
+			Fact:     fact,
+			Facts:    flow.PointFactsOf(*out),
+			Resolver: fieldResolver,
+		})
 		if !narrowed || next.IsZero() {
 			continue
 		}
 		if hasValue && !av.IsZero() {
-			if !semanticProductReduction(av, next) {
+			if !flow.SemanticProductReduction(av, next) {
 				continue
 			}
-		} else if !base.IsZero() && !semanticProductReduction(base, next) {
+		} else if !base.IsZero() && !flow.SemanticProductReduction(base, next) {
 			continue
 		}
 		t.applyRefinementEffect(out, RefinementEffect{
@@ -92,123 +95,6 @@ func (t *Transfer) applyValueConditionReductions(out *flow.PointState, fact cons
 		changed = true
 	}
 	return changed
-}
-
-func semanticProductReduction(current, next product.AbstractValue) bool {
-	if current.IsZero() || next.IsZero() {
-		return false
-	}
-	if product.Domain.Equal(current, next) {
-		return false
-	}
-	return current.Covers(next)
-}
-
-func (t *Transfer) conditionProductReductionValue(
-	out *flow.PointState,
-	sym cfg.SymbolID,
-	base product.AbstractValue,
-	hasBase bool,
-	fact constraint.Condition,
-) (product.AbstractValue, bool) {
-	if out == nil || sym == 0 || fact.IsTrue() || !fact.HasConstraints() {
-		return product.AbstractValue{}, false
-	}
-	if !hasBase || base.IsZero() {
-		base = product.Top()
-	}
-	fact = conditionWithPositiveFieldPresence(fact)
-	env, rootKey := flow.SymbolProductEnv(sym, base, flow.PointFactsOf(*out), fieldResolver)
-	domain := flow.NewProductDomain(env)
-	if !domain.ApplyCondition(fact) {
-		return product.AbstractValue{}, false
-	}
-	if !flow.ProductDomainHasNarrowingForSymbol(domain, sym) {
-		return product.AbstractValue{}, false
-	}
-	projected := domain.ProjectedTypeAt(rootKey, fieldResolver)
-	if typ.IsAbsentOrUnknown(projected) {
-		return product.AbstractValue{}, false
-	}
-	if typ.IsNever(projected) {
-		return product.Bottom(), true
-	}
-	baseType := product.ProjectValueOrUnknown(base)
-	if typ.SameNode(projected, baseType) || typ.SameNodeOrAcyclicEqual(projected, baseType) {
-		return product.AbstractValue{}, false
-	}
-	return product.FromRefinedType(base, projected), true
-}
-
-func conditionWithPositiveFieldPresence(fact constraint.Condition) constraint.Condition {
-	if fact.NumDisjuncts() == 0 || !fact.HasConstraints() {
-		return fact
-	}
-	conjunctions := make([][]constraint.Constraint, 0, fact.NumDisjuncts())
-	changed := false
-	for i := 0; i < fact.NumDisjuncts(); i++ {
-		disjunct := fact.DisjunctConstraints(i)
-		next := append([]constraint.Constraint(nil), disjunct...)
-		for _, c := range disjunct {
-			before := len(next)
-			switch cc := c.(type) {
-			case constraint.Truthy:
-				next = appendPositiveFieldPresence(next, cc.Path)
-			case constraint.NotNil:
-				next = appendPositiveFieldPresence(next, cc.Path)
-			case constraint.HasType:
-				if hasTypeImpliesPresentPath(cc) {
-					next = appendPositiveFieldPresence(next, cc.Path)
-				}
-			case constraint.FieldEquals:
-				if cc.Value != nil && cc.Field != "" {
-					next = appendPositiveFieldPresence(next, cc.Target.Field(cc.Field))
-				}
-			}
-			if len(next) != before {
-				changed = true
-			}
-		}
-		conjunctions = append(conjunctions, next)
-	}
-	if !changed {
-		return fact
-	}
-	return constraint.FromDisjuncts(conjunctions)
-}
-
-func hasTypeImpliesPresentPath(c constraint.HasType) bool {
-	if c.Type.IsZero() {
-		return false
-	}
-	if k, ok := c.Type.BuiltinKind(); ok && k == kind.Nil {
-		return false
-	}
-	return true
-}
-
-func appendPositiveFieldPresence(out []constraint.Constraint, path constraint.Path) []constraint.Constraint {
-	if path.IsEmpty() || len(path.Segments) == 0 {
-		return out
-	}
-	parent := constraint.Path{
-		Root:    path.Root,
-		Symbol:  path.Symbol,
-		Version: path.Version,
-	}
-	for _, seg := range path.Segments {
-		switch seg.Kind {
-		case constraint.SegmentField, constraint.SegmentIndexString:
-			if seg.Name != "" {
-				out = append(out, constraint.HasField{
-					Path:  parent,
-					Field: seg.Name,
-				})
-			}
-		}
-		parent = parent.Append(seg)
-	}
-	return out
 }
 
 func (t *Transfer) applyVariantOriginConditionReductions(out *flow.PointState, fact constraint.Condition) bool {
@@ -226,27 +112,4 @@ func (t *Transfer) applyVariantOriginConditionReductions(out *flow.PointState, f
 		changed = true
 	}
 	return changed
-}
-
-func conditionValueSymbols(fact constraint.Condition) []cfg.SymbolID {
-	seen := make(map[cfg.SymbolID]struct{})
-	for i := 0; i < fact.NumDisjuncts(); i++ {
-		for _, c := range fact.DisjunctConstraints(i) {
-			constraint.VisitPaths(c, func(path constraint.Path) bool {
-				if path.Symbol != 0 {
-					seen[path.Symbol] = struct{}{}
-				}
-				return false
-			})
-		}
-	}
-	if len(seen) == 0 {
-		return nil
-	}
-	out := make([]cfg.SymbolID, 0, len(seen))
-	for sym := range seen {
-		out = append(out, sym)
-	}
-	sort.Slice(out, func(i, j int) bool { return out[i] < out[j] })
-	return out
 }

@@ -1337,7 +1337,7 @@ func (t *Transfer) narrowByCondCheckAtPoint(point cfg.Point, out flow.PointState
 		}
 	} else if !seed.fromDeclared() && hasCurrent && !currentAV.IsZero() && !currentAV.Covers(narrowed) {
 		currentNarrowed, currentOK := narrowAtPath(currentAV, segments, check, info.CondCheck.TypeName)
-		if !currentOK || !semanticProductReduction(currentAV, currentNarrowed) {
+		if !currentOK || !flow.SemanticProductReduction(currentAV, currentNarrowed) {
 			return res
 		}
 		narrowed = currentNarrowed
@@ -2713,7 +2713,14 @@ func (t *Transfer) conditionRefinedCaptureValue(out *flow.PointState, sym cfg.Sy
 	if out == nil || sym == 0 || !out.Cond.HasConstraints() {
 		return product.AbstractValue{}, false
 	}
-	next, ok := t.conditionProductReductionValue(out, sym, base, hasBase, out.Cond)
+	next, ok := flow.ProductConditionReductionValue(flow.ProductConditionReduction{
+		Symbol:   sym,
+		Base:     base,
+		HasBase:  hasBase,
+		Fact:     out.Cond,
+		Facts:    flow.PointFactsOf(*out),
+		Resolver: fieldResolver,
+	})
 	if !ok || next.IsZero() {
 		return product.AbstractValue{}, false
 	}
