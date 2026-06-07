@@ -515,7 +515,7 @@ func pointConjunctionProvesPathKeyPresent(conj []constraint.Constraint, key cons
 
 func pointConditionPathMatchesKey(path constraint.Path, key constraint.PathKey) bool {
 	pathAddr, pathOK := StableAddressOfPath(path)
-	keyAddr, keyOK := StableAddressFromKey(key)
+	keyAddr, keyOK := StableAddressFromCanonicalKey(key)
 	return pathOK && keyOK && pathAddr.Equal(keyAddr)
 }
 

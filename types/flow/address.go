@@ -240,19 +240,6 @@ func StableAddressFromCanonicalKey(key constraint.PathKey) (StableAddress, bool)
 	return StableAddressOfRoot(root, segments)
 }
 
-// StableAddressFromKey accepts a caller-supplied path key at compatibility
-// boundaries. Stored fact maps should use StableAddressFromCanonicalKey so legacy
-// source path encodings cannot silently participate as canonical facts.
-func StableAddressFromKey(key constraint.PathKey) (StableAddress, bool) {
-	if addr, ok := StableAddressFromCanonicalKey(key); ok {
-		return addr, true
-	}
-	if sym, segments, ok := parseLegacyConstraintSymbolPathKey(key); ok {
-		return StableAddressOfSymbol(sym, segments)
-	}
-	return StableAddress{}, false
-}
-
 func parseLegacyConstraintSymbolPathKey(key constraint.PathKey) (cfg.SymbolID, []constraint.Segment, bool) {
 	s := string(key)
 	if len(s) < 4 || s[0] != 's' || s[1] != 'y' || s[2] != 'm' {
@@ -297,11 +284,11 @@ func StablePathKey(path constraint.Path) constraint.PathKey {
 	return addr.Key()
 }
 
-// StablePathFromKey returns the structured path represented by a stable path
-// key. It is the path-shaped counterpart to StableAddressFromKey for callers
-// that need source-path structure rather than address operations.
+// StablePathFromKey returns the structured path represented by a canonical
+// stable path key. Callers that intentionally accept legacy path-key encodings
+// must use StableAddressFromKey at that explicit compatibility boundary.
 func StablePathFromKey(key constraint.PathKey) (constraint.Path, bool) {
-	addr, ok := StableAddressFromKey(key)
+	addr, ok := StableAddressFromCanonicalKey(key)
 	if !ok {
 		return constraint.Path{}, false
 	}

@@ -80,12 +80,12 @@ func TestStableAddressOverlapIsStructuredPrefix(t *testing.T) {
 	}
 }
 
-func TestStableAddressFromKeyRoundTripsSymbolAndRoot(t *testing.T) {
+func TestStableAddressFromCanonicalKeyRoundTripsSymbolAndRoot(t *testing.T) {
 	symbol, _ := StableAddressOfSymbol(cfg.SymbolID(11), []constraint.Segment{
 		{Kind: constraint.SegmentIndexString, Name: "node-id"},
 		{Kind: constraint.SegmentField, Name: "label"},
 	})
-	parsedSymbol, ok := StableAddressFromKey(symbol.Key())
+	parsedSymbol, ok := StableAddressFromCanonicalKey(symbol.Key())
 	if !ok {
 		t.Fatalf("failed to parse symbol key %s", symbol.Key())
 	}
@@ -96,7 +96,7 @@ func TestStableAddressFromKeyRoundTripsSymbolAndRoot(t *testing.T) {
 	root, _ := StableAddressOfRoot("$0", []constraint.Segment{
 		{Kind: constraint.SegmentIndexString, Name: "node-id"},
 	})
-	parsedRoot, ok := StableAddressFromKey(root.Key())
+	parsedRoot, ok := StableAddressFromCanonicalKey(root.Key())
 	if !ok {
 		t.Fatalf("failed to parse root key %s", root.Key())
 	}
@@ -116,8 +116,8 @@ func TestStableAddressCanonicalKeyRejectsLegacyPathKey(t *testing.T) {
 	if _, ok := StableAddressFromCanonicalKey(legacyKey); ok {
 		t.Fatalf("canonical decoder accepted legacy key %s", legacyKey)
 	}
-	if addr, ok := StableAddressFromKey(legacyKey); !ok || addr.Key() != canonicalKey {
-		t.Fatalf("compat decoder = %s/%v, want canonical %s/true", addr.Key(), ok, canonicalKey)
+	if got, ok := StableAddressFromCanonicalKey(canonicalKey); !ok || got.Key() != canonicalKey {
+		t.Fatalf("canonical decoder = %s/%v, want %s/true", got.Key(), ok, canonicalKey)
 	}
 }
 

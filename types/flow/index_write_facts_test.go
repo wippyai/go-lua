@@ -118,7 +118,7 @@ func testStableAddress(t *testing.T, path constraint.Path) StableAddress {
 
 func testStableAddressKey(t *testing.T, key constraint.PathKey) StableAddress {
 	t.Helper()
-	addr, ok := StableAddressFromKey(key)
+	addr, ok := StableAddressFromCanonicalKey(key)
 	if !ok {
 		t.Fatalf("stable address for %s", key)
 	}

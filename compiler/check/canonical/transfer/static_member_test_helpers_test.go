@@ -25,7 +25,7 @@ func testStaticMemberAddressKey(t *testing.T, key constraint.PathKey) flow.Stabl
 
 func testFlowAddressKey(t *testing.T, key constraint.PathKey) flow.StableAddress {
 	t.Helper()
-	addr, ok := flow.StableAddressFromKey(key)
+	addr, ok := flow.StableAddressFromCanonicalKey(key)
 	if !ok {
 		t.Fatalf("flow address for key %s", key)
 	}

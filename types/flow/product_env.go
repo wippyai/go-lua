@@ -24,7 +24,7 @@ func SymbolProductEnv(
 			return StablePathKey(path)
 		},
 		PathTypeAt: func(key constraint.PathKey) typ.Type {
-			addr, ok := StableAddressFromKey(key)
+			addr, ok := StableAddressFromCanonicalKey(key)
 			if !ok {
 				return nil
 			}
