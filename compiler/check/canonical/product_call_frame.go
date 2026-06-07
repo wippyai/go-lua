@@ -47,11 +47,10 @@ func (p productCallFrame) inferredReturnValues() []product.AbstractValue {
 }
 
 func (p productCallFrame) callReturnValues() ([]product.AbstractValue, bool) {
-	exprType := p.ctx.ExprType
 	summaryReturns := p.inferredReturnValues()
 	return canonicalcall.ReturnValueInput{
 		Call:                 p.call,
-		Env:                  p.typer.callInterceptEnv(exprType),
+		Env:                  p.typer.callInterceptEnv(p.site.exprType),
 		TypePolicyAvailable:  p.typer.d.cfg.Types != nil,
 		PendingInput:         p.ctx.PendingInput,
 		BlockDynamicFallback: p.outcome.HasTargets() && !p.outcome.HasInformativeReturnValues(),
@@ -61,7 +60,7 @@ func (p productCallFrame) callReturnValues() ([]product.AbstractValue, bool) {
 		ExprValue: p.ctx.ExprValue,
 		TypeFallback: func() ([]typ.Type, bool) {
 			return p.site.returnTypes(func(call *ast.FuncCallExpr, exprType func(ast.Expr) typ.Type) []typ.Type {
-				return p.typer.callOutcomeForTypedCall(call, exprType, p.ctx.References).InferredReturnTypes()
+				return p.typer.callOutcomeForTypedCall(call, exprType, p.site.references).InferredReturnTypes()
 			})
 		},
 	}.Values()

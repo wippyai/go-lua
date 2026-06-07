@@ -153,7 +153,7 @@ local c = make_container("hello")
 	ct := callTyper{d: driver, g: rootGraph}
 	arg := product.FromType(typ.LiteralString("hello"))
 	callCtx := transferlessProductCallContext([]product.AbstractValue{arg})
-	outcome := ct.callOutcomeForProductCall(call, callCtx)
+	outcome := ct.callOutcomeForProductCallWithOptions(call, callCtx, productCallOutcomeOptions{})
 	targets := outcome.Targets()
 	if len(targets) != 1 || len(targets[0].Summary.Returns) != 1 {
 		t.Fatalf("product outcome targets = %#v, want one target with one summary return", targets)

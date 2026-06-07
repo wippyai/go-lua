@@ -19,21 +19,22 @@ func (ct callTyper) callOutcomeForTypedCall(
 	if d == nil || call == nil || d.activeProgram == nil {
 		return canonicalcall.CallOutcome{}
 	}
+	site, ok := ct.typedCallSiteFrame(call, argTypesFromCall(call, exprType), exprType, references, nil)
+	if !ok {
+		return canonicalcall.CallOutcome{}
+	}
 	return callOutcomeProjection{
-		typer:      ct,
-		program:    d.activeProgram,
-		call:       call,
-		targets:    ct.resolveCallTargets(call, d.activeProgram, references),
-		argTypes:   argTypesFromCall(call, exprType),
-		exprType:   exprType,
-		references: references,
+		typer:   ct,
+		program: d.activeProgram,
+		site:    site,
+		targets: ct.resolveCallTargets(site.call, d.activeProgram, site.references),
 		entryContext: func(target canonicalcall.SelectedTarget) canonicalcall.EntryContext {
 			ref := target.Ref()
-			entryValues := ct.callEntryValuesForRef(ref, call, exprType)
+			entryValues := ct.callEntryValuesForRef(ref, site.call, site.exprType)
 			if d.summaryReader().Live() {
 				return d.activeProgram.CallEntryContext(
 					ref,
-					references,
+					site.references,
 					entryValues,
 				)
 			}
@@ -50,10 +51,6 @@ func (ct callTyper) callOutcomeForTypedCall(
 type productCallOutcomeOptions struct {
 	skipSignatureReturns   bool
 	skipSignatureRelations bool
-}
-
-func (ct callTyper) callOutcomeForProductCall(call *ast.FuncCallExpr, ctx transfer.ProductCallContext) canonicalcall.CallOutcome {
-	return ct.callOutcomeForProductCallWithOptions(call, ctx, productCallOutcomeOptions{})
 }
 
 func (ct callTyper) callOutcomeForProductCallWithOptions(call *ast.FuncCallExpr, ctx transfer.ProductCallContext, opts productCallOutcomeOptions) canonicalcall.CallOutcome {
@@ -74,15 +71,15 @@ func (ct callTyper) productCallOutcomeProjection(
 	if d == nil || call == nil || d.activeProgram == nil {
 		return callOutcomeProjection{}
 	}
+	site, ok := ct.productCallSiteFrame(call, ctx)
+	if !ok {
+		return callOutcomeProjection{}
+	}
 	return callOutcomeProjection{
 		typer:                    ct,
 		program:                  d.activeProgram,
-		call:                     call,
-		targets:                  ct.resolveCallTargets(call, d.activeProgram, ctx.References),
-		argTypes:                 ctx.ArgTypes(),
-		exprType:                 ctx.ExprType,
-		references:               ctx.References,
-		methodReceiverType:       ctx.SelfType,
+		site:                     site,
+		targets:                  ct.resolveCallTargets(site.call, d.activeProgram, site.references),
 		skipSignatureReturns:     opts.skipSignatureReturns,
 		skipSignatureRelations:   opts.skipSignatureRelations,
 		omitClosureRelationProof: true,
@@ -105,12 +102,8 @@ func (ct callTyper) productCallOutcomeProjection(
 type callOutcomeProjection struct {
 	typer                    callTyper
 	program                  *program
-	call                     *ast.FuncCallExpr
+	site                     callSiteFrame
 	targets                  canonicalcall.TargetSet
-	argTypes                 []typ.Type
-	exprType                 func(ast.Expr) typ.Type
-	references               flow.ReferenceContext
-	methodReceiverType       typ.Type
 	entryContext             canonicalcall.SelectedEntryContext
 	summaryLookup            canonicalcall.SummaryLookup
 	skipSignatureReturns     bool
@@ -148,29 +141,29 @@ func (p callOutcomeProjection) outcome() canonicalcall.CallOutcome {
 
 func (p callOutcomeProjection) signatureReturns(target canonicalcall.SelectedTarget) []typ.Type {
 	d := p.typer.d
-	if d == nil || p.program == nil || p.call == nil {
+	if d == nil || p.program == nil || p.site.call == nil {
 		return nil
 	}
 	sig := d.signatureForRef(p.program, target.Ref())
 	if sig == nil || typ.IsAbsentOrUnknown(sig) {
 		return nil
 	}
-	argTypes := callArgTypesWithExprFallback(p.call, p.argTypes, p.exprType)
+	argTypes := callArgTypesWithExprFallback(p.site.call, p.site.argTypes, p.site.exprType)
 	forcedExprType := func(expr ast.Expr) typ.Type {
-		if expr == p.call.Func {
+		if expr == p.site.call.Func {
 			return sig
 		}
-		if p.exprType == nil {
+		if p.site.exprType == nil {
 			return nil
 		}
-		return p.exprType(expr)
+		return p.site.exprType(expr)
 	}
 	frame, ok := p.typer.typedCallSiteFrame(
-		p.call,
+		p.site.call,
 		argTypes,
 		forcedExprType,
-		p.references,
-		p.methodReceiverType,
+		p.site.references,
+		p.site.methodReceiverType,
 	)
 	if !ok {
 		return nil
