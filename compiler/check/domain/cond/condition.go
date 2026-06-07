@@ -1275,7 +1275,7 @@ func (ce *ConditionExtractor) constraintsFromDynamicIndexLiteral(lhs ast.Expr, l
 		return nil
 	}
 
-	return EmitIndexEqualsLiteral(basePath, keyType, lit)
+	return constraint.IndexLiteralEqualityConstraints(basePath, keyType, lit)
 }
 
 // constraintsFromDynamicIndexPath handles x[y] == z where y is a variable and z is a path.
@@ -1315,59 +1315,7 @@ func (ce *ConditionExtractor) constraintsFromDynamicIndexPath(lhs, rhs ast.Expr,
 		return nil
 	}
 
-	return EmitIndexEqualsPath(basePath, keyType, valuePath, isEquals)
-}
-
-// EmitIndexEqualsLiteral creates IndexEquals constraints for the given key type.
-func EmitIndexEqualsLiteral(target constraint.Path, keyType typ.Type, value *typ.Literal) []constraint.Constraint {
-	if lit, ok := keyType.(*typ.Literal); ok {
-		return []constraint.Constraint{constraint.IndexEquals{Target: target, Key: lit, Value: value}}
-	}
-
-	if union, ok := keyType.(*typ.Union); ok {
-		var constraints []constraint.Constraint
-		for _, member := range union.Members {
-			if lit, ok := member.(*typ.Literal); ok {
-				constraints = append(constraints, constraint.IndexEquals{Target: target, Key: lit, Value: value})
-			}
-		}
-		if len(constraints) > 0 {
-			return constraints
-		}
-	}
-
-	return []constraint.Constraint{constraint.IndexEquals{Target: target, Key: keyType, Value: value}}
-}
-
-// EmitIndexEqualsPath creates IndexEqualsPath or IndexNotEqualsPath constraints.
-func EmitIndexEqualsPath(target constraint.Path, keyType typ.Type, valuePath constraint.Path, isEquals bool) []constraint.Constraint {
-	if lit, ok := keyType.(*typ.Literal); ok {
-		if isEquals {
-			return []constraint.Constraint{constraint.IndexEqualsPath{Target: target, Key: lit, Value: valuePath}}
-		}
-		return []constraint.Constraint{constraint.IndexNotEqualsPath{Target: target, Key: lit, Value: valuePath}}
-	}
-
-	if union, ok := keyType.(*typ.Union); ok {
-		var constraints []constraint.Constraint
-		for _, member := range union.Members {
-			if lit, ok := member.(*typ.Literal); ok {
-				if isEquals {
-					constraints = append(constraints, constraint.IndexEqualsPath{Target: target, Key: lit, Value: valuePath})
-				} else {
-					constraints = append(constraints, constraint.IndexNotEqualsPath{Target: target, Key: lit, Value: valuePath})
-				}
-			}
-		}
-		if len(constraints) > 0 {
-			return constraints
-		}
-	}
-
-	if isEquals {
-		return []constraint.Constraint{constraint.IndexEqualsPath{Target: target, Key: keyType, Value: valuePath}}
-	}
-	return []constraint.Constraint{constraint.IndexNotEqualsPath{Target: target, Key: keyType, Value: valuePath}}
+	return constraint.IndexPathEqualityConstraints(basePath, keyType, valuePath, isEquals)
 }
 
 func versionSiblingConstraints(constraints []constraint.Constraint, graph interface {

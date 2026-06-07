@@ -196,51 +196,6 @@ func TestExtractReturnExprConstraints_IdentExpr(t *testing.T) {
 	}
 }
 
-func TestEmitIndexEqualsLiteral_NilValue(t *testing.T) {
-	result := EmitIndexEqualsLiteral(constraint.Path{Root: "x"}, typ.String, nil)
-	if len(result) != 1 {
-		t.Error("should return single constraint even with nil value")
-	}
-}
-
-func TestEmitIndexEqualsLiteral_LiteralKey(t *testing.T) {
-	key := typ.LiteralString("key")
-	value := typ.LiteralString("value")
-	result := EmitIndexEqualsLiteral(constraint.Path{Root: "x"}, key, value)
-	if len(result) != 1 {
-		t.Errorf("literal key should produce 1 constraint, got %d", len(result))
-	}
-}
-
-func TestEmitIndexEqualsLiteral_UnionKey(t *testing.T) {
-	key := typ.NewUnion(typ.LiteralString("a"), typ.LiteralString("b"))
-	value := typ.LiteralString("value")
-	result := EmitIndexEqualsLiteral(constraint.Path{Root: "x"}, key, value)
-	if len(result) != 2 {
-		t.Errorf("union key with 2 literals should produce 2 constraints, got %d", len(result))
-	}
-}
-
-func TestEmitIndexEqualsPath_LiteralKey_Equals(t *testing.T) {
-	key := typ.LiteralString("key")
-	target := constraint.Path{Root: "x"}
-	value := constraint.Path{Root: "y"}
-	result := EmitIndexEqualsPath(target, key, value, true)
-	if len(result) != 1 {
-		t.Errorf("literal key equals should produce 1 constraint, got %d", len(result))
-	}
-}
-
-func TestEmitIndexEqualsPath_LiteralKey_NotEquals(t *testing.T) {
-	key := typ.LiteralString("key")
-	target := constraint.Path{Root: "x"}
-	value := constraint.Path{Root: "y"}
-	result := EmitIndexEqualsPath(target, key, value, false)
-	if len(result) != 1 {
-		t.Errorf("literal key not equals should produce 1 constraint, got %d", len(result))
-	}
-}
-
 func TestTypeKeyFromStringExpr(t *testing.T) {
 	expr := &ast.StringExpr{Value: "string"}
 	key, ok := typeKeyFromStringExpr(expr)
