@@ -165,7 +165,7 @@ func (p callOutcomeProjection) signatureReturns(target canonicalcall.SelectedTar
 		}
 		return p.exprType(expr)
 	}
-	proj, ok := p.typer.callReturnProjection(
+	frame, ok := p.typer.typedCallSiteFrame(
 		p.call,
 		argTypes,
 		forcedExprType,
@@ -175,7 +175,7 @@ func (p callOutcomeProjection) signatureReturns(target canonicalcall.SelectedTar
 	if !ok {
 		return nil
 	}
-	in := proj.projection()
+	in := frame.returnInput(nil)
 	in.SummaryReturns = nil
 	if returns, ok := in.Types(); ok && len(returns) > 0 {
 		return returns

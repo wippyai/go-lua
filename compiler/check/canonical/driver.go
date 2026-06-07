@@ -1024,26 +1024,6 @@ func (p *program) expectedCallArgType(g *cfg.Graph, tr *transfer.Transfer, point
 	return projection.argType(argIdx)
 }
 
-func (ct callTyper) expectedArgProjection(call *ast.FuncCallExpr, argTypes []typ.Type, exprType func(ast.Expr) typ.Type, methodReceiverType typ.Type) canonicalcall.ExpectedArgProjection {
-	d := ct.d
-	in := canonicalcall.ExpectedArgProjection{
-		Call:               call,
-		ArgTypes:           argTypes,
-		ExprType:           exprType,
-		Resolver:           ct.callTypeResolver(exprType),
-		MethodReceiverType: methodReceiverType,
-	}
-	if d == nil {
-		return in
-	}
-	in.Ctx = d.activeCtx
-	in.Query = d.cfg.Types
-	in.ResolveTypeArg = func(expr ast.TypeExpr) typ.Type {
-		return d.resolveType(expr, d.baseScope())
-	}
-	return in
-}
-
 func (p *program) EntrySymbolValues(ref summary.FuncRef) map[cfg.SymbolID]product.AbstractValue {
 	var out map[cfg.SymbolID]product.AbstractValue
 	add := func(sym cfg.SymbolID, t typ.Type) {

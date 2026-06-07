@@ -21,6 +21,7 @@ type productCallFrame struct {
 	typer   callTyper
 	call    *ast.FuncCallExpr
 	ctx     transfer.ProductCallContext
+	site    callSiteFrame
 	outcome canonicalcall.CallOutcome
 }
 
@@ -28,10 +29,15 @@ func (ct callTyper) productCallFrame(call *ast.FuncCallExpr, ctx transfer.Produc
 	if ct.d == nil || call == nil || ct.d.activeProgram == nil {
 		return productCallFrame{}, false
 	}
+	site, ok := ct.productCallSiteFrame(call, ctx)
+	if !ok {
+		return productCallFrame{}, false
+	}
 	return productCallFrame{
 		typer:   ct,
 		call:    call,
 		ctx:     ctx,
+		site:    site,
 		outcome: ct.callOutcomeForProductCallWithOptions(call, ctx, opts),
 	}, true
 }
@@ -41,7 +47,6 @@ func (p productCallFrame) inferredReturnValues() []product.AbstractValue {
 }
 
 func (p productCallFrame) callReturnValues() ([]product.AbstractValue, bool) {
-	argTypes := p.ctx.ArgTypes()
 	exprType := p.ctx.ExprType
 	summaryReturns := p.inferredReturnValues()
 	return canonicalcall.ReturnValueInput{
@@ -55,17 +60,9 @@ func (p productCallFrame) callReturnValues() ([]product.AbstractValue, bool) {
 		},
 		ExprValue: p.ctx.ExprValue,
 		TypeFallback: func() ([]typ.Type, bool) {
-			proj, ok := p.typer.callReturnProjection(
-				p.call,
-				argTypes,
-				exprType,
-				p.ctx.References,
-				p.ctx.SelfType,
-			)
-			if !ok {
-				return nil, false
-			}
-			return proj.types()
+			return p.site.returnTypes(func(call *ast.FuncCallExpr, exprType func(ast.Expr) typ.Type) []typ.Type {
+				return p.typer.callOutcomeForTypedCall(call, exprType, p.ctx.References).InferredReturnTypes()
+			})
 		},
 	}.Values()
 }
@@ -106,11 +103,7 @@ func (p productCallFrame) callArgDemands() []callobligation.Obligation {
 }
 
 func (p productCallFrame) callFunctionShape() *typ.Function {
-	proj, ok := p.typer.callFunctionShapeProjection(p.call, p.ctx.ExprType)
-	if !ok {
-		return nil
-	}
-	return proj.functionShape()
+	return p.site.functionShape()
 }
 
 func (p productCallFrame) paramNarrows() []transfer.ParamNarrow {

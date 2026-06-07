@@ -1,11 +1,9 @@
 package canonical
 
 import (
-	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/callsite"
 	"github.com/wippyai/go-lua/compiler/check/canonical/transfer"
-	"github.com/wippyai/go-lua/types/domain/value/product"
 	"github.com/wippyai/go-lua/types/flow"
 	"github.com/wippyai/go-lua/types/typ"
 )
@@ -19,20 +17,25 @@ type expectedCallArgProjection struct {
 	typer   callTyper
 	point   cfg.Point
 	info    *cfg.CallInfo
-	ctx     transfer.ProductCallContext
+	site    callSiteFrame
 }
 
 func (p *program) expectedArgProjection(g *cfg.Graph, tr *transfer.Transfer, point cfg.Point, info *cfg.CallInfo, in *flow.PointState) (expectedCallArgProjection, bool) {
 	if p == nil || p.driver == nil || g == nil || tr == nil || info == nil || info.Call == nil || in == nil {
 		return expectedCallArgProjection{}, false
 	}
+	typer := callTyper{d: p.driver, g: g}
+	site, ok := typer.productCallSiteFrame(info.Call, tr.ProductCallContext(in, info.Call))
+	if !ok {
+		return expectedCallArgProjection{}, false
+	}
 	return expectedCallArgProjection{
 		program: p,
 		graph:   g,
-		typer:   callTyper{d: p.driver, g: g},
+		typer:   typer,
 		point:   point,
 		info:    info,
-		ctx:     tr.ProductCallContext(in, info.Call),
+		site:    site,
 	}, true
 }
 
@@ -40,15 +43,11 @@ func (p expectedCallArgProjection) argType(argIdx int) typ.Type {
 	if argIdx < 0 {
 		return nil
 	}
-	call := p.info.Call
-	expectedArgs := p.typer.expectedArgProjection(
-		call,
-		p.ctx.ArgTypes(),
-		p.ctx.ExprType,
-		p.methodReceiverType(),
-	)
+	expectedArgs := p.site.expectedArgProjection()
 	expectedArgs.ShallowFuncLiterals = true
-	expectedArgs.Callee = p.calleeType()
+	if !callsite.IsMethodCallInfo(p.info) {
+		expectedArgs.Callee = p.site.expectedCalleeType(p.info.Callee)
+	}
 	expectedArgs.IsMethod = callsite.IsMethodCallInfo(p.info)
 	expectedArgs.MethodName = p.info.Method
 	expectedArgs.ForceMethodReceiver = p.forceMethodReceiver()
@@ -69,49 +68,4 @@ func (p expectedCallArgProjection) forceMethodReceiver() bool {
 		return false
 	}
 	return callsite.ForceMethodReceiverAtPoint(p.graph.Bindings(), p.graph, p.program.inputs[ref].Evidence, p.point, p.info.Call)
-}
-
-func (p expectedCallArgProjection) methodReceiverType() typ.Type {
-	methodReceiver := p.ctx.SelfType
-	if methodReceiver != nil && !typ.IsAbsentOrUnknown(methodReceiver) {
-		return methodReceiver
-	}
-	return p.ctx.ExprType(p.info.Receiver)
-}
-
-func (p expectedCallArgProjection) calleeType() typ.Type {
-	if callsite.IsMethodCallInfo(p.info) {
-		return nil
-	}
-	return p.expectedCalleeType(p.info.Callee)
-}
-
-func (p expectedCallArgProjection) expectedCalleeType(expr ast.Expr) typ.Type {
-	call := p.info.Call
-	if p.typer.d != nil && p.typer.d.activeProgram != nil {
-		if ref, ok := p.typer.targetResolver(p.typer.d.activeProgram).ResolveStaticCall(call); ok {
-			if sig := p.typer.d.signatureForRef(p.typer.d.activeProgram, ref); sig != nil {
-				return sig
-			}
-		}
-	}
-	if nested, ok := expr.(*ast.FuncCallExpr); ok && nested != nil {
-		result := p.typer.ProductCallFromValues(nested, p.ctx.NestedCall(nested))
-		if result.HasReturnValues && len(result.ReturnValues) > 0 {
-			if t := product.ProjectValueOrUnknown(result.ReturnValues[0]); t != nil && !typ.IsAbsentOrUnknown(t) {
-				return t
-			}
-		}
-	}
-	if shape, ok := p.typer.callFunctionShapeProjection(call, p.ctx.ExprType); ok {
-		if fn := shape.functionShape(); fn != nil {
-			return fn
-		}
-	}
-	if expr != nil {
-		if t := p.ctx.ExprType(expr); t != nil && !typ.IsAbsentOrUnknown(t) {
-			return t
-		}
-	}
-	return nil
 }
