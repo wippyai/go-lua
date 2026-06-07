@@ -455,6 +455,43 @@ func TestProductDomain_NarrowedChildPaths_IncludesIndexChildren(t *testing.T) {
 	}
 }
 
+func TestProductProjectionViewChildPathsMatchDomainQuery(t *testing.T) {
+	env := makeMockEnv(nil)
+	d := NewProductDomain(env)
+
+	parent := constraint.PathKey("sym1@1")
+	nestedParent := constraint.PathKey("sym1@1.meta")
+	nestedChild := constraint.PathKey("sym1@1.meta.kind")
+	sharedChild := constraint.PathKey("sym1@1.ok")
+	unrelated := constraint.PathKey("sym2@1.meta.kind")
+
+	d.Type.Narrowed[nestedChild] = typ.String
+	d.Type.Narrowed[sharedChild] = typ.NewUnion(typ.Boolean, typ.Nil)
+	d.Shape.Narrowed[sharedChild] = typ.Boolean
+	d.Shape.Narrowed[unrelated] = typ.Number
+
+	view := newProductProjectionView(d)
+	for _, key := range []constraint.PathKey{parent, nestedParent} {
+		fromDomain := d.NarrowedChildPaths(key)
+		fromView := view.NarrowedChildPaths(key)
+		if len(fromView) != len(fromDomain) {
+			t.Fatalf("indexed children for %q = %v, want %v", key, fromView, fromDomain)
+		}
+		for child, want := range fromDomain {
+			got, ok := fromView[child]
+			if !ok {
+				t.Fatalf("indexed children for %q missing %q", key, child)
+			}
+			if !typ.TypeEquals(got, want) {
+				t.Fatalf("indexed child %q for %q = %v, want %v", child, key, got, want)
+			}
+		}
+	}
+	if _, ok := view.NarrowedChildPaths(parent)[unrelated]; ok {
+		t.Fatalf("indexed children included unrelated path %q", unrelated)
+	}
+}
+
 func TestClassifyAtom(t *testing.T) {
 	tests := []struct {
 		name     string

@@ -1,8 +1,6 @@
 package flow
 
 import (
-	"sort"
-
 	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/constraint/theory"
 	"github.com/wippyai/go-lua/types/flow/domain"
@@ -253,22 +251,14 @@ func (p *productSatisfiabilityProof) propagateEqualityTypes() bool {
 }
 
 func (p *productSatisfiabilityProof) constraintTargetKeys(c constraint.Constraint) []constraint.PathKey {
-	seen := make(map[constraint.PathKey]struct{})
+	var keys pathKeyList
 	constraint.VisitPaths(c, func(path constraint.Path) bool {
 		if key := p.resolvePath(path); key != "" {
-			seen[key] = struct{}{}
+			keys.Add(key)
 		}
 		return false
 	})
-	if len(seen) == 0 {
-		return nil
-	}
-	keys := make([]constraint.PathKey, 0, len(seen))
-	for key := range seen {
-		keys = append(keys, key)
-	}
-	sort.Slice(keys, func(i, j int) bool { return keys[i] < keys[j] })
-	return keys
+	return keys.SortedValues()
 }
 
 func (p *productSatisfiabilityProof) typeAt(key constraint.PathKey) typ.Type {

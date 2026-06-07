@@ -16,17 +16,28 @@ func (d *ProductDomain) ProjectedTypeAt(key constraint.PathKey, resolver narrow.
 	if d == nil || key == "" {
 		return nil
 	}
+	ancestor, hasAncestor := d.deriveFromNarrowedAncestors(key, resolver)
+	return d.projectedTypeAtWithEvidence(key, resolver, ancestor, hasAncestor, d.NarrowedChildPaths(key))
+}
+
+func (d *ProductDomain) projectedTypeAtWithEvidence(
+	key constraint.PathKey,
+	resolver narrow.Resolver,
+	ancestor typ.Type,
+	hasAncestor bool,
+	children map[constraint.PathKey]typ.Type,
+) typ.Type {
 	current := d.TypeAt(key)
 
-	if narrowed, ok := d.deriveFromNarrowedAncestors(key, resolver); ok {
+	if hasAncestor {
 		if current == nil {
-			current = narrowed
+			current = ancestor
 		} else {
-			current = narrow.Intersect(current, narrowed)
+			current = narrow.Intersect(current, ancestor)
 		}
 	}
 
-	if children := d.NarrowedChildPaths(key); len(children) > 0 {
+	if len(children) > 0 {
 		current = filterByChildNarrowings(current, key, children, resolver)
 	}
 
@@ -37,10 +48,12 @@ func (d *ProductDomain) withProjectedJoinFacts(left, right *ProductDomain) *Prod
 	if d == nil || left == nil || right == nil {
 		return d
 	}
-	keys := productJoinSupportKeys(left, right)
-	for _, key := range constraint.SortedPathKeys(keys) {
-		leftType := left.projectedTypeForJoin(key)
-		rightType := right.projectedTypeForJoin(key)
+	leftProjection := newProductProjectionView(left)
+	rightProjection := newProductProjectionView(right)
+	keys := productJoinSupportKeys(leftProjection, rightProjection)
+	for _, key := range keys {
+		leftType := leftProjection.ProjectedTypeAt(key)
+		rightType := rightProjection.ProjectedTypeAt(key)
 		if leftType == nil || rightType == nil {
 			continue
 		}
@@ -60,30 +73,134 @@ func (d *ProductDomain) withProjectedJoinFacts(left, right *ProductDomain) *Prod
 	return d
 }
 
-func productJoinSupportKeys(left, right *ProductDomain) map[constraint.PathKey]struct{} {
-	keys := make(map[constraint.PathKey]struct{})
-	addProductSupportKeys(keys, left)
-	addProductSupportKeys(keys, right)
-	return keys
+func productJoinSupportKeys(left, right productProjectionView) []constraint.PathKey {
+	var keys pathKeyList
+	keys.AddList(left.SupportKeys())
+	keys.AddList(right.SupportKeys())
+	return keys.SortedValues()
 }
 
-func addProductSupportKeys(keys map[constraint.PathKey]struct{}, d *ProductDomain) {
+type productProjectionView struct {
+	domain        *ProductDomain
+	resolver      narrow.Resolver
+	narrowed      pathKeySet
+	support       pathKeyList
+	childByParent map[constraint.PathKey]map[constraint.PathKey]typ.Type
+}
+
+// newProductProjectionView indexes one product domain's projection evidence for
+// multi-key queries such as join. One-off reads can use ProductDomain directly;
+// joins should not rescan every narrowed path for every support key.
+func newProductProjectionView(d *ProductDomain) productProjectionView {
+	view := productProjectionView{
+		domain:        d,
+		childByParent: make(map[constraint.PathKey]map[constraint.PathKey]typ.Type),
+	}
 	if d == nil {
+		return view
+	}
+	view.resolver = d.env.Resolver
+	if d.Type != nil {
+		for _, key := range constraint.SortedPathKeys(d.Type.Narrowed) {
+			view.addNarrowing(key, d.Type.Narrowed[key])
+		}
+	}
+	if d.Shape != nil {
+		for _, key := range constraint.SortedPathKeys(d.Shape.Narrowed) {
+			view.addNarrowing(key, d.Shape.Narrowed[key])
+		}
+	}
+	return view
+}
+
+func (v productProjectionView) SupportKeys() []constraint.PathKey {
+	return v.support.SortedValues()
+}
+
+func (v productProjectionView) ProjectedTypeAt(key constraint.PathKey) typ.Type {
+	if v.domain == nil || key == "" {
+		return nil
+	}
+	ancestor, hasAncestor := v.deriveFromNarrowedAncestors(key)
+	return v.domain.projectedTypeAtWithEvidence(key, v.resolver, ancestor, hasAncestor, v.NarrowedChildPaths(key))
+}
+
+func (v productProjectionView) NarrowedChildPaths(parentKey constraint.PathKey) map[constraint.PathKey]typ.Type {
+	if parentKey == "" || v.childByParent == nil {
+		return nil
+	}
+	children := v.childByParent[parentKey]
+	if len(children) == 0 {
+		return nil
+	}
+	return children
+}
+
+func (v *productProjectionView) addNarrowing(key constraint.PathKey, t typ.Type) {
+	if key == "" || t == nil {
 		return
 	}
-	for _, key := range constraint.SortedPathKeys(d.Type.Narrowed) {
-		addProductSupportKey(keys, key)
-	}
-	for _, key := range constraint.SortedPathKeys(d.Shape.Narrowed) {
-		addProductSupportKey(keys, key)
+	v.narrowed.Add(key)
+	v.addSupportKey(key)
+	for _, parent := range productProjectionAncestorKeys(key) {
+		children := v.childByParent[parent]
+		if children == nil {
+			children = make(map[constraint.PathKey]typ.Type)
+			v.childByParent[parent] = children
+		}
+		if existing, ok := children[key]; ok {
+			children[key] = narrow.Intersect(existing, t)
+		} else {
+			children[key] = t
+		}
 	}
 }
 
-func addProductSupportKey(keys map[constraint.PathKey]struct{}, key constraint.PathKey) {
+func (v productProjectionView) deriveFromNarrowedAncestors(targetKey constraint.PathKey) (typ.Type, bool) {
+	if v.domain == nil || v.resolver == nil || targetKey == "" {
+		return nil, false
+	}
+	targetSym, targetVersion, targetSuffix, ok := pathkey.ParseKeyUnchecked(targetKey)
+	if !ok || targetSuffix == "" {
+		return nil, false
+	}
+	targetSegs := pathkey.ParseSuffix(targetSuffix)
+	var combined typ.Type
+	for _, candidateKey := range productProjectionAncestorKeys(targetKey) {
+		if !v.narrowed.Contains(candidateKey) {
+			continue
+		}
+		ancestorType := v.domain.TypeAt(candidateKey)
+		if ancestorType == nil {
+			continue
+		}
+		sym, version, suffix, ok := pathkey.ParseKeyUnchecked(candidateKey)
+		if !ok || sym != targetSym || version != targetVersion {
+			continue
+		}
+		ancestorSegs := pathkey.ParseSuffix(suffix)
+		if len(ancestorSegs) >= len(targetSegs) || !pathkey.SegmentsPrefix(ancestorSegs, targetSegs) {
+			continue
+		}
+		remaining := targetSegs[len(ancestorSegs):]
+		derived, ok := deriveTypeFrom(v.resolver, ancestorType, remaining)
+		if !ok || derived == nil {
+			continue
+		}
+		if combined == nil {
+			combined = derived
+		} else {
+			combined = narrow.Intersect(combined, derived)
+		}
+	}
+	return combined, combined != nil
+}
+
+func (v *productProjectionView) addSupportKey(key constraint.PathKey) {
 	if key == "" {
 		return
 	}
-	keys[key] = struct{}{}
+	v.support.Add(key)
 	root, suffix, ok := pathkey.ParseRootAndSuffix(key)
 	if !ok || suffix == "" {
 		return
@@ -91,20 +208,27 @@ func addProductSupportKey(keys map[constraint.PathKey]struct{}, key constraint.P
 	segs := pathkey.ParseSuffix(suffix)
 	for depth := len(segs) - 1; depth >= 0; depth-- {
 		parent := constraint.PathKey(root + pathkey.SegmentsSuffix(segs[:depth]))
-		if parent != "" {
-			keys[parent] = struct{}{}
-		}
+		v.support.Add(parent)
 	}
 }
 
-func (d *ProductDomain) projectedTypeForJoin(key constraint.PathKey) typ.Type {
-	if d == nil || key == "" {
+func productProjectionAncestorKeys(key constraint.PathKey) []constraint.PathKey {
+	root, suffix, ok := pathkey.ParseRootAndSuffix(key)
+	if !ok || suffix == "" {
 		return nil
 	}
-	if d.env.Resolver != nil {
-		return d.ProjectedTypeAt(key, d.env.Resolver)
+	segs := pathkey.ParseSuffix(suffix)
+	if len(segs) == 0 {
+		return nil
 	}
-	return d.TypeAt(key)
+	var out pathKeyList
+	for depth := len(segs) - 1; depth >= 0; depth-- {
+		parent := constraint.PathKey(root + pathkey.SegmentsSuffix(segs[:depth]))
+		if parent != "" {
+			out.Add(parent)
+		}
+	}
+	return out.SortedValues()
 }
 
 func (d *ProductDomain) baseTypeAt(key constraint.PathKey) typ.Type {

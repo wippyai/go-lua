@@ -99,9 +99,22 @@ func (l *pathKeyList) Add(key constraint.PathKey) bool {
 	return true
 }
 
+func (l *pathKeyList) AddList(keys []constraint.PathKey) {
+	for _, key := range keys {
+		l.Add(key)
+	}
+}
+
 func (l *pathKeyList) Values() []constraint.PathKey {
 	if len(l.values) == 0 {
 		return nil
 	}
 	return l.values
+}
+
+func (l *pathKeyList) SortedValues() []constraint.PathKey {
+	if l.set.seen == nil {
+		return nil
+	}
+	return constraint.SortedPathKeys(l.set.seen)
 }

@@ -207,6 +207,29 @@ func BenchmarkProductDomain_NarrowedChildPaths(b *testing.B) {
 	}
 }
 
+func BenchmarkProductDomain_JoinProjectedChildNarrowings(b *testing.B) {
+	env := benchProductEnv(nil)
+	left := NewProductDomain(env)
+	right := NewProductDomain(env)
+
+	for i := 0; i < 200; i++ {
+		child := constraint.PathKey("sym1@1.field" + string(rune(i/26+'a')) + string(rune(i%26+'a')))
+		if i%2 == 0 {
+			left.Type.Narrowed[child] = typ.String
+			right.Type.Narrowed[child] = typ.String
+		} else {
+			left.Shape.Narrowed[child] = typ.Number
+			right.Shape.Narrowed[child] = typ.Number
+		}
+	}
+
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_ = left.Join(right)
+	}
+}
+
 func BenchmarkProductDomain_EqPath_Propagation(b *testing.B) {
 	pathX := constraint.Path{Root: "x", Symbol: 1}
 	pathY := constraint.Path{Root: "y", Symbol: 2}
