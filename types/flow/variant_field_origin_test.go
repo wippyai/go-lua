@@ -384,7 +384,7 @@ func TestVariantOriginConditionReducerKeepsUnconstrainedDNFBranch(t *testing.T) 
 	}
 }
 
-func TestConditionDerivedFactsBatchesSymbolAndStaticMemberReductions(t *testing.T) {
+func TestConditionReducerBatchesSymbolAndStaticMemberReductions(t *testing.T) {
 	resultSym := cfg.SymbolID(27)
 	sourceSym := cfg.SymbolID(28)
 	family := uint64(106)
@@ -404,7 +404,7 @@ func TestConditionDerivedFactsBatchesSymbolAndStaticMemberReductions(t *testing.
 		CaseIndex:    1,
 	})
 
-	reductions := ConditionDerivedFacts{
+	reductions := ConditionReducer{
 		State: state,
 		Fact:  fact,
 		VariantCaseFieldProjections: []VariantCaseFieldProjection{{

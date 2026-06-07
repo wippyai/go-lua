@@ -3,6 +3,7 @@ package flow
 import (
 	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/domain/value/product"
+	"github.com/wippyai/go-lua/types/narrow"
 )
 
 // StaticMemberReduction is a proven point-local value for an exact static path.
@@ -11,35 +12,46 @@ type StaticMemberReduction struct {
 	Value product.AbstractValue
 }
 
-// ConditionDerivedFacts asks flow for all point facts derivable directly from a
-// condition fact, independent of transfer's lexical storage policy.
-type ConditionDerivedFacts struct {
+// ConditionReducer asks flow for all point-state reductions implied by one
+// condition fact. Transfer supplies only policy boundaries that flow cannot own:
+// lexical symbol storage, declared-type bases, and callable field resolution.
+type ConditionReducer struct {
 	State                       PointState
 	Fact                        constraint.Condition
 	VariantCaseFieldProjections []VariantCaseFieldProjection
 	SymbolValue                 SymbolProductReader
+	ProductBase                 ProductConditionBaseReader
+	Resolver                    narrow.Resolver
 }
 
-// ConditionDerivedFactReductions is the flow-owned result of interpreting a
-// condition fact. Callers apply reductions through their storage boundary.
-type ConditionDerivedFactReductions struct {
+// ConditionReductions is the flow-owned result of interpreting a condition
+// fact. Callers apply symbol reductions through their storage boundary and
+// static-member reductions through flow writers.
+type ConditionReductions struct {
 	SymbolValues  []SymbolValueReduction
 	StaticMembers []StaticMemberReduction
 }
 
-// Reductions interprets condition-derived facts that do not require caller
-// policy about declared types or lexical storage.
-func (q ConditionDerivedFacts) Reductions() ConditionDerivedFactReductions {
-	return ConditionDerivedFactReductions{
-		SymbolValues: VariantOriginConditionReducer{
-			SymbolValue: q.SymbolValue,
-		}.Reductions(q.Fact),
+// Reductions interprets condition-derived facts and product-domain narrowings
+// through one canonical flow-domain route.
+func (q ConditionReducer) Reductions() ConditionReductions {
+	out := ConditionReductions{
 		StaticMembers: VariantCaseFieldProjectionReductions(q.State, q.Fact, q.VariantCaseFieldProjections),
 	}
+	out.SymbolValues = append(out.SymbolValues, VariantOriginConditionReducer{
+		SymbolValue: q.SymbolValue,
+	}.Reductions(q.Fact)...)
+	out.SymbolValues = append(out.SymbolValues, ProductConditionReducer{
+		Fact:     q.Fact,
+		Facts:    PointFactsOf(q.State),
+		Resolver: q.Resolver,
+		Base:     q.ProductBase,
+	}.Reductions()...)
+	return out
 }
 
 // HasReductions reports whether the batch contains any concrete fact updates.
-func (r ConditionDerivedFactReductions) HasReductions() bool {
+func (r ConditionReductions) HasReductions() bool {
 	return len(r.SymbolValues) > 0 || len(r.StaticMembers) > 0
 }
 

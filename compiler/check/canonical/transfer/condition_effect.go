@@ -28,24 +28,15 @@ func (t *Transfer) applyConditionEffect(out *flow.PointState, effect ConditionEf
 	if flow.PointStateDomain.Equal(*out, flow.PointStateDomain.Bottom()) {
 		return true
 	}
-	if t.applyConditionDerivedFacts(out, effect.Fact) {
-		changed = true
-	}
-	if t.applyValueConditionReductions(out, effect.Fact) {
-		changed = true
-	}
-	return changed
-}
-
-func (t *Transfer) applyValueConditionReductions(out *flow.PointState, fact constraint.Condition) bool {
-	if out == nil {
-		return false
-	}
-	reductions := flow.ProductConditionReducer{
-		Fact:     fact,
-		Facts:    flow.PointFactsOf(*out),
+	reductions := flow.ConditionReducer{
+		State:                       *out,
+		Fact:                        effect.Fact,
+		VariantCaseFieldProjections: t.in.VariantCaseFieldProjections,
+		SymbolValue: func(sym cfg.SymbolID) (product.AbstractValue, bool) {
+			return t.symbolValue(out, sym)
+		},
 		Resolver: fieldResolver,
-		Base: func(sym cfg.SymbolID) flow.ProductConditionBase {
+		ProductBase: func(sym cfg.SymbolID) flow.ProductConditionBase {
 			av, hasValue := t.symbolValue(out, sym)
 			base, hasBase := t.narrowBase(sym, av, false)
 			if !hasBase && t.unannotatedParam[sym] && (!hasValue || av.IsZero()) {
@@ -62,33 +53,12 @@ func (t *Transfer) applyValueConditionReductions(out *flow.PointState, fact cons
 			}
 		},
 	}.Reductions()
-	changed := false
-	for _, reduction := range reductions {
+	for _, reduction := range reductions.SymbolValues {
 		t.applyRefinementEffect(out, RefinementEffect{
 			Place: Place{Root: reduction.Symbol},
 			Kind:  RefinementSetValue,
 			Value: reduction.Value,
 		})
-		changed = true
-	}
-	return changed
-}
-
-func (t *Transfer) applyConditionDerivedFacts(out *flow.PointState, fact constraint.Condition) bool {
-	if out == nil {
-		return false
-	}
-	reductions := flow.ConditionDerivedFacts{
-		State:                       *out,
-		Fact:                        fact,
-		VariantCaseFieldProjections: t.in.VariantCaseFieldProjections,
-		SymbolValue: func(sym cfg.SymbolID) (product.AbstractValue, bool) {
-			return t.symbolValue(out, sym)
-		},
-	}.Reductions()
-	changed := false
-	for _, reduction := range reductions.SymbolValues {
-		t.setSymbolValue(out, reduction.Symbol, reduction.Value, false)
 		changed = true
 	}
 	if flow.ApplyStaticMemberReductions(out, reductions.StaticMembers) {
