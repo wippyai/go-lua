@@ -8,8 +8,6 @@ import (
 	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/domain/value/product"
 	"github.com/wippyai/go-lua/types/flow"
-	"github.com/wippyai/go-lua/types/flow/numeric"
-	"github.com/wippyai/go-lua/types/narrow"
 	"github.com/wippyai/go-lua/types/typ"
 )
 
@@ -739,9 +737,8 @@ func (t *Transfer) refineIndexRead(
 	base product.AbstractValue,
 	ev product.AbstractValue,
 ) product.AbstractValue {
-	container := base.ProjectValue()
 	result := ev.ProjectValue()
-	if container == nil || result == nil {
+	if out == nil || result == nil {
 		return ev
 	}
 
@@ -758,81 +755,21 @@ func (t *Transfer) refineIndexRead(
 		return refined
 	}
 
-	if out.Num == nil {
-		return ev
+	query := flow.IndexReadRefinementQuery{
+		Container: base,
+		Read:      ev,
 	}
-
-	containerRef, _ := t.containerExprRef(e.Object)
-
-	// Literal index within a proven length lower bound: arr[k] with #arr >= k.
+	query.ContainerRef, _ = t.containerExprRef(e.Object)
 	if lit, ok := t.constInt(e.Key); ok && lit >= 1 {
-		// A fixed-arity tuple's runtime length is its static arity.
-		if arity, ok := narrow.TupleArity(container); ok && arity >= lit {
-			if refined := narrow.RefineSequenceIndex(container, result, lit); refined != nil {
-				return product.FromType(refined)
-			}
-		}
-		if containerRef.IsValid() {
-			if lower, _, ok := flow.NumericLenBoundsForContainer(out.Num, containerRef); ok && lower >= lit {
-				if refined := narrow.RefineSequenceIndex(container, result, lit); refined != nil {
-					return product.FromType(refined)
-				}
-			}
-		}
-		return ev
+		query.LiteralIndex = lit
+	} else if lenRef, offset, ok := t.lengthIndexContainerOffset(e.Key); ok {
+		query.LengthIndexRef = lenRef
+		query.LengthIndexOffset = offset
+	} else if idxIdent, ok := e.Key.(*ast.IdentExpr); ok {
+		query.IndexSymbol = t.symbolOf(idxIdent)
 	}
-
-	// Length-relative index `#base + k` (or bare `#base`) on the same container.
-	if lenRef, offset, ok := t.lengthIndexContainerOffset(e.Key); ok {
-		if lenRef.IsValid() && lenRef.Equal(containerRef) {
-			// A fixed-arity tuple resolves #t to its static arity directly.
-			if arity, ok := narrow.TupleArity(container); ok {
-				if refined := narrow.RefineLengthIndex(container, result, arity, offset); refined != nil {
-					return product.FromType(refined)
-				}
-			}
-			if lower, _, ok := flow.NumericLenBoundsForContainer(out.Num, containerRef); ok {
-				if refined := narrow.RefineLengthIndex(container, result, lower, offset); refined != nil {
-					return product.FromType(refined)
-				}
-			}
-		}
-		return ev
+	if refined := flow.PointFactsOf(*out).RefineIndexRead(query); refined.State == flow.StateResolved {
+		return refined.Value
 	}
-
-	// Index variable: a fixed-arity tuple indexed within [1, arity], or a sequence
-	// indexed by a variable bounded by its own length (i <= #arr).
-	idxIdent, ok := e.Key.(*ast.IdentExpr)
-	if !ok {
-		return ev
-	}
-	idxSym := t.symbolOf(idxIdent)
-	if idxSym == 0 {
-		return ev
-	}
-	idxKey, ok := flow.NumericVarKeyOfSymbol(idxSym)
-	if !ok {
-		return ev
-	}
-
-	if arity, ok := narrow.TupleArity(container); ok {
-		if lower, upper, ok := numeric.BoundsForWithTheory(out.Num, idxKey); ok && lower >= 1 && upper <= arity {
-			if refined := narrow.RefineSequenceIndex(container, result, lower); refined != nil {
-				return product.FromType(refined)
-			}
-		}
-	}
-
-	if containerRef.IsValid() {
-		refArr, offset, ok := flow.NumericLenRefWithOffsetForVar(out.Num, idxSym)
-		if ok && refArr.Equal(containerRef) {
-			if lower, _, ok := numeric.BoundsForWithTheory(out.Num, idxKey); ok && lower+offset >= 1 && offset <= 0 {
-				if refined := narrow.RefineSequenceIndex(container, result, lower+offset); refined != nil {
-					return product.FromType(refined)
-				}
-			}
-		}
-	}
-
 	return ev
 }
