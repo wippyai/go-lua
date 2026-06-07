@@ -271,53 +271,36 @@ func AppendHistoryBaseWithoutEventsPath(state PointState, arrayPath constraint.P
 // AppendKeyArrayTables selects concrete key-array consequence tables from the
 // current key-presence state and boundary write evidence.
 func AppendKeyArrayTables(state PointState, q AppendKeyArrayTableQuery) []StableAddress {
-	arrayKey := q.Array.Key()
-	keyKey := q.Key.Key()
-	if arrayKey == "" || keyKey == "" {
+	if q.Array.Key() == "" || q.Key.Key() == "" {
 		return nil
 	}
-	add := func(out []StableAddress, table StableAddress) []StableAddress {
-		if table.Key() == "" {
-			return out
-		}
-		for _, existing := range out {
-			if existing.Equal(table) {
-				return out
-			}
-		}
-		return append(out, table)
-	}
 	existingTables := state.KeyPresence.KeyArrayTableAddresses(q.Array)
-	var out []StableAddress
+	var existingSet stableAddressSet
+	for _, existing := range existingTables {
+		existingSet.Add(existing.Address)
+	}
+	var out stableAddressList
 	if q.HasExplicitTable {
-		tableKey := q.ExplicitTable.Key()
-		if tableKey == "" {
+		if q.ExplicitTable.Key() == "" {
 			return nil
 		}
-		hasExisting := false
-		for _, existing := range existingTables {
-			if existing.Key == tableKey {
-				hasExisting = true
-				break
-			}
+		if q.FreshEmpty || existingSet.Contains(q.ExplicitTable) {
+			out.Add(q.ExplicitTable)
 		}
-		if q.FreshEmpty || hasExisting {
-			out = add(out, q.ExplicitTable)
-		}
-		return out
+		return out.Values()
 	}
 	for _, tableUse := range existingTables {
-		out = add(out, tableUse.Address)
+		out.Add(tableUse.Address)
 	}
 	if q.FreshEmpty {
 		for _, table := range q.WrittenTables {
-			out = add(out, table)
+			out.Add(table)
 		}
 		for _, tableUse := range state.KeyPresence.TablesWithKeyAddress(q.Key) {
-			out = add(out, tableUse.Address)
+			out.Add(tableUse.Address)
 		}
 	}
-	return out
+	return out.Values()
 }
 
 func appendKeyArrayTablesOfPath(state PointState, q appendKeyArrayPathTableQuery) []StableAddress {
@@ -632,62 +615,54 @@ func productTypeIsFreshEmptySequence(t typ.Type) bool {
 // AppendKeyArrayPreservation selects direct and delayed key-array consequences
 // for a local append into Array.
 func AppendKeyArrayPreservation(state PointState, q AppendKeyArrayPreservationQuery) AppendKeyArraySelection {
-	arrayKey := q.Array.Key()
-	keyKey := q.Key.Key()
-	if arrayKey == "" || keyKey == "" {
+	if q.Array.Key() == "" || q.Key.Key() == "" {
 		return AppendKeyArraySelection{}
 	}
-	addTable := func(out []StableAddress, table StableAddress) []StableAddress {
-		if table.Key() == "" {
-			return out
-		}
-		for _, existing := range out {
-			if existing.Equal(table) {
-				return out
-			}
-		}
-		return append(out, table)
-	}
-	addPending := func(out []PendingKeyArrayDestination, pending PendingKeyArrayDestination) []PendingKeyArrayDestination {
+	var out AppendKeyArraySelection
+	var tables stableAddressList
+	var pendingTables stableAddressSet
+	pendingWithoutTable := false
+	addPending := func(pending PendingKeyArrayDestination) {
 		if pending.HasTable && pending.Table.Key() == "" {
-			return out
+			return
 		}
-		for _, existing := range out {
-			if existing.HasTable == pending.HasTable && (!existing.HasTable || existing.Table.Equal(pending.Table)) {
-				return out
+		if pending.HasTable {
+			if !pendingTables.Add(pending.Table) {
+				return
 			}
+		} else if pendingWithoutTable {
+			return
+		} else {
+			pendingWithoutTable = true
 		}
-		return append(out, pending)
+		out.Pending = append(out.Pending, pending)
 	}
 	existingTables := state.KeyPresence.KeyArrayTableAddresses(q.Array)
+	var existingSet stableAddressSet
+	for _, existing := range existingTables {
+		existingSet.Add(existing.Address)
+	}
 	canSeedFromEmpty := len(existingTables) == 0 && q.FreshEmptySeed
-	var out AppendKeyArraySelection
 	if canSeedFromEmpty {
-		out.Pending = addPending(out.Pending, PendingKeyArrayDestination{})
+		addPending(PendingKeyArrayDestination{})
 	}
 	for _, tableUse := range existingTables {
 		if state.KeyPresence.HasAddresses(tableUse.Address, q.Key) {
-			out.Tables = addTable(out.Tables, tableUse.Address)
+			tables.Add(tableUse.Address)
 			continue
 		}
-		out.Pending = addPending(out.Pending, PendingKeyArrayDestination{
+		addPending(PendingKeyArrayDestination{
 			Table:    tableUse.Address,
 			HasTable: true,
 		})
 	}
 	for _, tableUse := range state.KeyPresence.TablesWithKeyAddress(q.Key) {
-		hasExisting := false
-		for _, existing := range existingTables {
-			if existing.Key == tableUse.Key {
-				hasExisting = true
-				break
-			}
-		}
-		if !hasExisting && !canSeedFromEmpty {
+		if !existingSet.Contains(tableUse.Address) && !canSeedFromEmpty {
 			continue
 		}
-		out.Tables = addTable(out.Tables, tableUse.Address)
+		tables.Add(tableUse.Address)
 	}
+	out.Tables = tables.Values()
 	return out
 }
 
@@ -780,7 +755,7 @@ func AppendElementFieldOriginUsesPath(state PointState, fieldPath constraint.Pat
 // structured suffixes. Flow owns the fact-key parsing so transfer can replay
 // append-origin implications without inspecting KeyPresence storage keys.
 func AppendElementFieldOriginFields(state PointState) [][]constraint.Segment {
-	seen := map[constraint.PathKey]struct{}{}
+	var seen pathKeySet
 	var out [][]constraint.Segment
 	for _, fact := range state.KeyPresence.AppendElementFieldOriginEntries() {
 		field, ok := AppendElementFieldSegments(fact.Field)
@@ -788,10 +763,9 @@ func AppendElementFieldOriginFields(state PointState) [][]constraint.Segment {
 			continue
 		}
 		key := AppendElementFieldPathKey(field)
-		if _, ok := seen[key]; ok {
+		if !seen.Add(key) {
 			continue
 		}
-		seen[key] = struct{}{}
 		out = append(out, cloneAddressSegments(field))
 	}
 	return out

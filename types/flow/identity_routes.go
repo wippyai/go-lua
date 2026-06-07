@@ -1,7 +1,5 @@
 package flow
 
-import "github.com/wippyai/go-lua/types/constraint"
-
 // IdentityAliasRoutePolicy selects which identity carriers are followed by an
 // alias route query. RequireRemainder keeps exact aliases out of callers that
 // only want descendant replay.
@@ -42,19 +40,7 @@ func IdentityAliasSourcesWithPolicy(state PointState, target StableAddress, poli
 	if target.Key() == "" {
 		return nil
 	}
-	var out []StableAddress
-	seen := map[constraint.PathKey]struct{}{}
-	add := func(addr StableAddress) {
-		key := addr.Key()
-		if key == "" {
-			return
-		}
-		if _, ok := seen[key]; ok {
-			return
-		}
-		seen[key] = struct{}{}
-		out = append(out, addr)
-	}
+	var out stableAddressList
 	applyRoutes := func(routes []sourceRoute) {
 		for _, route := range routes {
 			if policy.RequireRemainder && len(route.remainder) == 0 {
@@ -62,7 +48,7 @@ func IdentityAliasSourcesWithPolicy(state PointState, target StableAddress, poli
 			}
 			source, ok := route.appendedSource()
 			if ok {
-				add(source)
+				out.Add(source)
 			}
 		}
 	}
@@ -72,7 +58,7 @@ func IdentityAliasSourcesWithPolicy(state PointState, target StableAddress, poli
 	if policy.AssignmentOrigins {
 		applyRoutes(state.ValueOrigins.assignmentAliasSourceRoutesCoveringAddress(target))
 	}
-	return out
+	return out.Values()
 }
 
 // IdentityAliasClosure returns root plus every assignment-alias source reachable
@@ -82,22 +68,15 @@ func IdentityAliasClosure(state PointState, root StableAddress) []StableAddress 
 	if root.Key() == "" {
 		return nil
 	}
-	var out []StableAddress
-	seen := map[constraint.PathKey]struct{}{}
+	var out stableAddressList
 	queue := []StableAddress{root}
 	for len(queue) > 0 {
 		cur := queue[0]
 		queue = queue[1:]
-		key := cur.Key()
-		if key == "" {
+		if !out.Add(cur) {
 			continue
 		}
-		if _, ok := seen[key]; ok {
-			continue
-		}
-		seen[key] = struct{}{}
-		out = append(out, cur)
 		queue = append(queue, IdentityAliasSources(state, cur)...)
 	}
-	return out
+	return out.Values()
 }

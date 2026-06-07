@@ -516,19 +516,14 @@ func IndexedIteratorKeyArrayReadback(
 		return product.AbstractValue{}, false
 	}
 	var out product.AbstractValue
-	seen := map[constraint.PathKey]struct{}{}
+	var seen stableAddressSet
 	queue := []StableAddress{key}
 	for len(queue) > 0 {
 		cur := queue[0]
 		queue = queue[1:]
-		curKey := cur.Key()
-		if curKey == "" {
+		if !seen.Add(cur) {
 			continue
 		}
-		if _, ok := seen[curKey]; ok {
-			continue
-		}
-		seen[curKey] = struct{}{}
 		for _, use := range origins.OriginsCoveringAddress(cur) {
 			switch use.Origin.Kind {
 			case ValueOriginIndexedIterator:

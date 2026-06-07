@@ -822,18 +822,16 @@ func (f KeyPresenceFacts) KeyArrayTables(array constraint.PathKey) []constraint.
 	if f.bottom || array == "" {
 		return nil
 	}
-	var out []constraint.PathKey
+	var out pathKeyList
 	for _, fact := range f.arrays {
 		if fact.Array == array {
-			out = append(out, fact.Table)
+			out.Add(fact.Table)
 		}
 	}
 	for _, table := range f.appendHistoryCoveredTables(array) {
-		if _, ok := findPathKeyLinear(out, table); !ok {
-			out = append(out, table)
-		}
+		out.Add(table)
 	}
-	return out
+	return out.Values()
 }
 
 func (f KeyPresenceFacts) KeyArrayTableAddresses(array StableAddress) []KeyPresenceTableAddress {
@@ -1524,26 +1522,11 @@ func (f KeyPresenceFacts) KeyArrayValues(array, table constraint.PathKey) []prod
 }
 
 func (f KeyPresenceFacts) AppendHistoryCoverageValue(array, table constraint.PathKey) (product.AbstractValue, bool) {
-	if f.bottom || array == "" || table == "" || !f.HasAppendHistoryBase(array) {
+	index, ok := f.appendHistoryCoverageIndex(array)
+	if !ok {
 		return product.AbstractValue{}, false
 	}
-	events := f.appendHistoryEventsFor(array)
-	if len(events) == 0 {
-		return product.AbstractValue{}, false
-	}
-	var out product.AbstractValue
-	for _, event := range events {
-		value, ok := f.appendHistoryCoverageFor(array, event.Key, table)
-		if !ok || value.IsZero() {
-			return product.AbstractValue{}, false
-		}
-		if out.IsZero() {
-			out = value
-		} else {
-			out = product.Domain.Join(out, value)
-		}
-	}
-	return out, !out.IsZero()
+	return index.CoverageValue(table)
 }
 
 func (f KeyPresenceFacts) appendHistoryEventsFor(array constraint.PathKey) []AppendHistoryEventFact {
@@ -1556,54 +1539,81 @@ func (f KeyPresenceFacts) appendHistoryEventsFor(array constraint.PathKey) []App
 	return out
 }
 
-func (f KeyPresenceFacts) appendHistoryCoverageFor(array, key, table constraint.PathKey) (product.AbstractValue, bool) {
-	var out product.AbstractValue
+type appendHistoryCoverageIndex struct {
+	events []AppendHistoryEventFact
+	tables pathKeyList
+	values map[constraint.PathKey]map[constraint.PathKey]product.AbstractValue
+}
+
+// appendHistoryCoverageIndex groups one array's coverage facts into the proof
+// shape needed by both value and table queries: every event must be covered by
+// the same table.
+func (f KeyPresenceFacts) appendHistoryCoverageIndex(array constraint.PathKey) (appendHistoryCoverageIndex, bool) {
+	if f.bottom || array == "" || !f.HasAppendHistoryBase(array) {
+		return appendHistoryCoverageIndex{}, false
+	}
+	events := f.appendHistoryEventsFor(array)
+	if len(events) == 0 {
+		return appendHistoryCoverageIndex{}, false
+	}
+	index := appendHistoryCoverageIndex{
+		events: events,
+		values: make(map[constraint.PathKey]map[constraint.PathKey]product.AbstractValue),
+	}
 	for _, coverage := range f.appendCoverage {
-		if coverage.Array != array || coverage.Key != key || coverage.Table != table || coverage.Value.IsZero() {
+		if coverage.Array != array || coverage.Key == "" || coverage.Table == "" || coverage.Value.IsZero() {
 			continue
 		}
-		if out.IsZero() {
-			out = coverage.Value
+		byTable := index.values[coverage.Key]
+		if byTable == nil {
+			byTable = make(map[constraint.PathKey]product.AbstractValue)
+			index.values[coverage.Key] = byTable
+		}
+		if existing := byTable[coverage.Table]; existing.IsZero() {
+			byTable[coverage.Table] = coverage.Value
 		} else {
-			out = product.Domain.Join(out, coverage.Value)
+			byTable[coverage.Table] = product.Domain.Join(existing, coverage.Value)
+		}
+		index.tables.Add(coverage.Table)
+	}
+	return index, true
+}
+
+func (i appendHistoryCoverageIndex) CoverageValue(table constraint.PathKey) (product.AbstractValue, bool) {
+	if table == "" || len(i.events) == 0 {
+		return product.AbstractValue{}, false
+	}
+	var out product.AbstractValue
+	for _, event := range i.events {
+		value, ok := i.values[event.Key][table]
+		if !ok || value.IsZero() {
+			return product.AbstractValue{}, false
+		}
+		if out.IsZero() {
+			out = value
+		} else {
+			out = product.Domain.Join(out, value)
 		}
 	}
 	return out, !out.IsZero()
 }
 
-func (f KeyPresenceFacts) appendHistoryCoveredTables(array constraint.PathKey) []constraint.PathKey {
-	if f.bottom || array == "" || !f.HasAppendHistoryBase(array) {
-		return nil
-	}
-	events := f.appendHistoryEventsFor(array)
-	if len(events) == 0 {
-		return nil
-	}
-	var candidates []constraint.PathKey
-	for _, coverage := range f.appendCoverage {
-		if coverage.Array != array || coverage.Table == "" {
-			continue
-		}
-		if _, ok := findPathKeyLinear(candidates, coverage.Table); !ok {
-			candidates = append(candidates, coverage.Table)
+func (i appendHistoryCoverageIndex) CoveredTables() []constraint.PathKey {
+	var out pathKeyList
+	for _, table := range i.tables.Values() {
+		if _, ok := i.CoverageValue(table); ok {
+			out.Add(table)
 		}
 	}
-	var out []constraint.PathKey
-	for _, table := range candidates {
-		if _, ok := f.AppendHistoryCoverageValue(array, table); ok {
-			out = append(out, table)
-		}
-	}
-	return out
+	return out.Values()
 }
 
-func findPathKeyLinear(xs []constraint.PathKey, want constraint.PathKey) (int, bool) {
-	for i, x := range xs {
-		if x == want {
-			return i, true
-		}
+func (f KeyPresenceFacts) appendHistoryCoveredTables(array constraint.PathKey) []constraint.PathKey {
+	index, ok := f.appendHistoryCoverageIndex(array)
+	if !ok {
+		return nil
 	}
-	return -1, false
+	return index.CoveredTables()
 }
 
 // KillSubtreeAddress removes every presence, value-origin, or key-array fact

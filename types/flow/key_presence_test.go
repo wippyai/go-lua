@@ -88,10 +88,14 @@ func TestKeyPresenceAppendHistoryJoinUnionsCoveredEvents(t *testing.T) {
 	if len(tables) != 2 {
 		t.Fatalf("covered tables = %v, want nodes and edges; facts=%s", tables, joined.Format())
 	}
-	if _, ok := findPathKeyLinear(tables, nodes); !ok {
+	var tableSet pathKeySet
+	for _, table := range tables {
+		tableSet.Add(table)
+	}
+	if !tableSet.Contains(nodes) {
 		t.Fatalf("covered tables missing nodes: %v facts=%s", tables, joined.Format())
 	}
-	if _, ok := findPathKeyLinear(tables, edges); !ok {
+	if !tableSet.Contains(edges) {
 		t.Fatalf("covered tables missing edges: %v facts=%s", tables, joined.Format())
 	}
 	nodeValues := joined.KeyArrayValues(array, nodes)
