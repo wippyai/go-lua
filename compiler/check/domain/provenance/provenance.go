@@ -256,6 +256,44 @@ const (
 	RouteProjectionSequenceElement
 )
 
+// RouteProjectionAlgebra interprets a route projection in one semantic domain.
+// Provenance owns which projection applies; callers own what "element", "key",
+// or "value" means for their carrier.
+type RouteProjectionAlgebra[T any] struct {
+	IndexedIteratorValue func(T) T
+	KeyedIteratorKey     func(T) T
+	KeyedIteratorValue   func(T) T
+	SequenceElement      func(T) T
+}
+
+// ApplyRouteProjection applies projection through algebra. Keeping this switch
+// in provenance prevents observation and contract propagation from re-encoding
+// route projection identity independently.
+func ApplyRouteProjection[T any](projection RouteProjectionKind, value T, algebra RouteProjectionAlgebra[T]) T {
+	switch projection {
+	case RouteProjectionDirect:
+		return value
+	case RouteProjectionIndexedIteratorValue:
+		if algebra.IndexedIteratorValue != nil {
+			return algebra.IndexedIteratorValue(value)
+		}
+	case RouteProjectionKeyedIteratorKey:
+		if algebra.KeyedIteratorKey != nil {
+			return algebra.KeyedIteratorKey(value)
+		}
+	case RouteProjectionKeyedIteratorValue:
+		if algebra.KeyedIteratorValue != nil {
+			return algebra.KeyedIteratorValue(value)
+		}
+	case RouteProjectionSequenceElement:
+		if algebra.SequenceElement != nil {
+			return algebra.SequenceElement(value)
+		}
+	}
+	var zero T
+	return zero
+}
+
 // RouteSourceQuery is one source read and projection implied by a provenance
 // route. Type observation and contract propagation consume the same query shape:
 // observation projects source type forward; paramevidence inverts the projection
@@ -340,19 +378,7 @@ func (q RouteSourceQuery) ProjectType(source typ.Type, project SegmentTypeProjec
 	if source == nil {
 		return nil
 	}
-	var local typ.Type
-	switch q.Projection {
-	case RouteProjectionDirect:
-		local = source
-	case RouteProjectionIndexedIteratorValue, RouteProjectionSequenceElement:
-		local = querycore.ElementType(source)
-	case RouteProjectionKeyedIteratorKey:
-		local = querycore.EntryKeyType(source)
-	case RouteProjectionKeyedIteratorValue:
-		local = querycore.EntryValueType(source)
-	default:
-		return nil
-	}
+	local := ApplyRouteProjection(q.Projection, source, routeTypeProjection)
 	if local == nil || len(q.Segments) == 0 {
 		return local
 	}
@@ -360,6 +386,13 @@ func (q RouteSourceQuery) ProjectType(source typ.Type, project SegmentTypeProjec
 		return nil
 	}
 	return project(local, q.Segments)
+}
+
+var routeTypeProjection = RouteProjectionAlgebra[typ.Type]{
+	IndexedIteratorValue: querycore.ElementType,
+	KeyedIteratorKey:     querycore.EntryKeyType,
+	KeyedIteratorValue:   querycore.EntryValueType,
+	SequenceElement:      querycore.ElementType,
 }
 
 func appendElementFieldRouteSourceQueries(route flow.ProvenanceRoute, extra []constraint.Segment) []RouteSourceQuery {

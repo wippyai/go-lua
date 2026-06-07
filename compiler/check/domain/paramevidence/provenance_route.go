@@ -82,18 +82,12 @@ func ProvenanceRouteContractTargets(route flow.ProvenanceRoute, contract ParamCo
 
 func sourceContractFromRouteQuery(query provenance.RouteSourceQuery, contract ParamContract) ParamContract {
 	local := DemandFromPathContract(query.Segments, contract)
-	switch query.Projection {
-	case provenance.RouteProjectionDirect:
-		return local
-	case provenance.RouteProjectionIndexedIteratorValue:
-		return IndexedIteratorContract(1, local)
-	case provenance.RouteProjectionKeyedIteratorKey:
-		return KeyedIteratorContract(0, local)
-	case provenance.RouteProjectionKeyedIteratorValue:
-		return KeyedIteratorContract(1, local)
-	case provenance.RouteProjectionSequenceElement:
-		return DemandFromSequenceElement(local)
-	default:
-		return paramContractBottom()
-	}
+	return provenance.ApplyRouteProjection(query.Projection, local, routeContractProjection)
+}
+
+var routeContractProjection = provenance.RouteProjectionAlgebra[ParamContract]{
+	IndexedIteratorValue: func(local ParamContract) ParamContract { return IndexedIteratorContract(1, local) },
+	KeyedIteratorKey:     func(local ParamContract) ParamContract { return KeyedIteratorContract(0, local) },
+	KeyedIteratorValue:   func(local ParamContract) ParamContract { return KeyedIteratorContract(1, local) },
+	SequenceElement:      DemandFromSequenceElement,
 }
