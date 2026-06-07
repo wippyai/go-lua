@@ -167,7 +167,7 @@ func (f PathAliasFacts) KillAffectedByWriteAddress(write StableAddress) PathAlia
 	return canonicalPathAliasFacts(entries)
 }
 
-func (f PathAliasFacts) coversWithAbsentValues(want PathAliasFacts, absent func(constraint.PathKey) bool) bool {
+func (f PathAliasFacts) coversWithAbsentValues(want PathAliasFacts, absent addressAbsentProof) bool {
 	if f.bottom {
 		return true
 	}
@@ -186,7 +186,7 @@ func (f PathAliasFacts) coversWithAbsentValues(want PathAliasFacts, absent func(
 	return true
 }
 
-func (f PathAliasFacts) withAliasesProvedByAbsentValues(facts PathAliasFacts, absent func(constraint.PathKey) bool) PathAliasFacts {
+func (f PathAliasFacts) withAliasesProvedByAbsentValues(facts PathAliasFacts, absent addressAbsentProof) PathAliasFacts {
 	if facts.bottom {
 		return f
 	}
@@ -202,8 +202,12 @@ func (f PathAliasFacts) withAliasesProvedByAbsentValues(facts PathAliasFacts, ab
 	return out
 }
 
-func pathAliasAbsent(absent func(constraint.PathKey) bool, key constraint.PathKey) bool {
-	return absent != nil && absent(key)
+func pathAliasAbsent(absent addressAbsentProof, key constraint.PathKey) bool {
+	if absent == nil {
+		return false
+	}
+	addr, ok := StableAddressFromCanonicalKey(key)
+	return ok && absent(addr)
 }
 
 func (f PathAliasFacts) Format() string {

@@ -301,7 +301,7 @@ func validIndexWriteAdmissionFact(fact IndexWriteAdmissionFact) bool {
 func (f IndexWriteAdmissionFacts) coversWithAbsentKeyPaths(
 	want IndexWriteAdmissionFacts,
 	pred func(product.AbstractValue, product.AbstractValue) bool,
-	absent func(constraint.PathKey) bool,
+	absent addressAbsentProof,
 ) bool {
 	if f.bottom {
 		return true
@@ -326,7 +326,7 @@ func (f IndexWriteAdmissionFacts) coversWithAbsentKeyPaths(
 
 func (f IndexWriteAdmissionFacts) withFactsProvedByAbsentKeyPaths(
 	facts IndexWriteAdmissionFacts,
-	absent func(constraint.PathKey) bool,
+	absent addressAbsentProof,
 ) IndexWriteAdmissionFacts {
 	if facts.bottom {
 		return f
@@ -351,8 +351,12 @@ func (f IndexWriteAdmissionFacts) hasIdentity(fact IndexWriteAdmissionFact) bool
 	return ok
 }
 
-func indexWriteAdmissionAbsent(absent func(constraint.PathKey) bool, key constraint.PathKey) bool {
-	return absent != nil && absent(key)
+func indexWriteAdmissionAbsent(absent addressAbsentProof, key constraint.PathKey) bool {
+	if absent == nil {
+		return false
+	}
+	addr, ok := StableAddressFromCanonicalKey(key)
+	return ok && absent(addr)
 }
 
 // Format renders f deterministically for tests and diagnostics.

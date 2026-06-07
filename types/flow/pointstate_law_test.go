@@ -37,23 +37,30 @@ func TestPointStateDomain_Laws(t *testing.T) {
 	}.Run(t)
 }
 
-func TestPointPathKeyPresentValueUsesStableAddressCondition(t *testing.T) {
+func TestPointAddressPresentValueUsesStableAddressCondition(t *testing.T) {
 	path := constraint.NewPath(cfg.SymbolID(991), "node").Field("id")
 	versioned := path
 	versioned.Version = 7
-	key := StablePathKey(path)
+	addr, ok := StableAddressOfPath(path)
+	if !ok {
+		t.Fatalf("StableAddressOfPath(%v) failed", path)
+	}
 	state := PointState{
 		Cond: constraint.FromConstraints(constraint.Truthy{Path: versioned}),
 	}
 
-	if got, ok := pointPathKeyPresentValue(state, key); !ok || !got.DefinitelyPresent() {
+	if got, ok := pointAddressPresentValue(state, addr); !ok || !got.DefinitelyPresent() {
 		t.Fatalf("versioned condition did not prove stable key present: %v/%v", got, ok)
 	}
 }
 
-func TestPointPathKeyPresentValueRejectsSameRootDifferentSymbol(t *testing.T) {
+func TestPointAddressPresentValueRejectsSameRootDifferentSymbol(t *testing.T) {
 	path := constraint.NewPath(cfg.SymbolID(992), "node").Field("id")
 	other := constraint.NewPath(cfg.SymbolID(993), "node").Field("id")
+	addr, ok := StableAddressOfPath(path)
+	if !ok {
+		t.Fatalf("StableAddressOfPath(%v) failed", path)
+	}
 	state := PointState{
 		Cond: constraint.FromConstraints(constraint.HasType{
 			Path: other,
@@ -61,7 +68,7 @@ func TestPointPathKeyPresentValueRejectsSameRootDifferentSymbol(t *testing.T) {
 		}),
 	}
 
-	if got, ok := pointPathKeyPresentValue(state, StablePathKey(path)); ok {
+	if got, ok := pointAddressPresentValue(state, addr); ok {
 		t.Fatalf("different symbol condition proved stable key present: %v", got)
 	}
 }

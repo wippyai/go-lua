@@ -166,7 +166,7 @@ func (f StaticMemberFacts) DirectChildAddressesUnder(parent StableAddress) []Sta
 
 func (f StaticMemberFacts) coversWithPresentValues(
 	want StaticMemberFacts,
-	present func(constraint.PathKey) (product.AbstractValue, bool),
+	present addressPresentValueProof,
 	pred func(product.AbstractValue, product.AbstractValue) bool,
 ) bool {
 	if f.bottom {
@@ -191,7 +191,7 @@ func (f StaticMemberFacts) coversWithPresentValues(
 
 func (f StaticMemberFacts) withFactsMergedFromPresentValues(
 	facts StaticMemberFacts,
-	present func(constraint.PathKey) (product.AbstractValue, bool),
+	present addressPresentValueProof,
 	op func(product.AbstractValue, product.AbstractValue) product.AbstractValue,
 ) StaticMemberFacts {
 	if facts.bottom {
@@ -220,13 +220,17 @@ func (f StaticMemberFacts) withFactsMergedFromPresentValues(
 }
 
 func staticMemberPresentValue(
-	present func(constraint.PathKey) (product.AbstractValue, bool),
+	present addressPresentValueProof,
 	key constraint.PathKey,
 ) (product.AbstractValue, bool) {
 	if present == nil {
 		return product.AbstractValue{}, false
 	}
-	return present(key)
+	addr, ok := StableAddressFromCanonicalKey(key)
+	if !ok {
+		return product.AbstractValue{}, false
+	}
+	return present(addr)
 }
 
 // Format renders f deterministically for tests and diagnostics.

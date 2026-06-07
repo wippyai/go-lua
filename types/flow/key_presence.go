@@ -686,7 +686,7 @@ func (f KeyPresenceFacts) ValueEntries() []KeyValueFact {
 
 // coversWithAbsentKeys reports whether f proves every fact in want, treating a
 // definitely absent key path as enough to satisfy facts guarded by that key.
-func (f KeyPresenceFacts) coversWithAbsentKeys(want KeyPresenceFacts, absent func(constraint.PathKey) bool) bool {
+func (f KeyPresenceFacts) coversWithAbsentKeys(want KeyPresenceFacts, absent addressAbsentProof) bool {
 	if f.bottom {
 		return true
 	}
@@ -738,11 +738,15 @@ func (f KeyPresenceFacts) coversWithAbsentKeys(want KeyPresenceFacts, absent fun
 	)
 }
 
-func keyPresenceAbsent(absent func(constraint.PathKey) bool, key constraint.PathKey) bool {
-	return absent != nil && absent(key)
+func keyPresenceAbsent(absent addressAbsentProof, key constraint.PathKey) bool {
+	if absent == nil {
+		return false
+	}
+	addr, ok := StableAddressFromCanonicalKey(key)
+	return ok && absent(addr)
 }
 
-func (f KeyPresenceFacts) withFactsProvedByAbsentKeys(facts KeyPresenceFacts, absent func(constraint.PathKey) bool) KeyPresenceFacts {
+func (f KeyPresenceFacts) withFactsProvedByAbsentKeys(facts KeyPresenceFacts, absent addressAbsentProof) KeyPresenceFacts {
 	if facts.bottom {
 		return f
 	}

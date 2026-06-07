@@ -345,9 +345,7 @@ var PointStateDomain = lattice.Lattice[PointState]{
 func pointStaticMembersLessOrEq(a, b PointState) bool {
 	return a.StaticMembers.coversWithPresentValues(
 		b.StaticMembers,
-		func(key constraint.PathKey) (product.AbstractValue, bool) {
-			return pointPathKeyPresentValue(a, key)
-		},
+		func(addr StableAddress) (product.AbstractValue, bool) { return pointAddressPresentValue(a, addr) },
 		product.Domain.LessOrEq,
 	)
 }
@@ -376,16 +374,14 @@ func pointStaticMembersJoinOneSided(
 ) StaticMemberFacts {
 	return out.withFactsMergedFromPresentValues(
 		facts,
-		func(key constraint.PathKey) (product.AbstractValue, bool) {
-			return pointPathKeyPresentValue(other, key)
-		},
+		func(addr StableAddress) (product.AbstractValue, bool) { return pointAddressPresentValue(other, addr) },
 		op,
 	)
 }
 
 func pointKeyPresenceLessOrEq(a, b PointState) bool {
-	return a.KeyPresence.coversWithAbsentKeys(b.KeyPresence, func(key constraint.PathKey) bool {
-		return pointPathKeyDefinitelyAbsent(a, key)
+	return a.KeyPresence.coversWithAbsentKeys(b.KeyPresence, func(addr StableAddress) bool {
+		return pointAddressDefinitelyAbsent(a, addr)
 	})
 }
 
@@ -397,14 +393,14 @@ func pointKeyPresenceJoin(a, b PointState) KeyPresenceFacts {
 }
 
 func pointKeyPresenceJoinOneSided(out KeyPresenceFacts, facts KeyPresenceFacts, other PointState) KeyPresenceFacts {
-	return out.withFactsProvedByAbsentKeys(facts, func(key constraint.PathKey) bool {
-		return pointPathKeyDefinitelyAbsent(other, key)
+	return out.withFactsProvedByAbsentKeys(facts, func(addr StableAddress) bool {
+		return pointAddressDefinitelyAbsent(other, addr)
 	})
 }
 
 func pointPathAliasesLessOrEq(a, b PointState) bool {
-	return a.PathAliases.coversWithAbsentValues(b.PathAliases, func(key constraint.PathKey) bool {
-		return pointPathKeyDefinitelyAbsent(a, key)
+	return a.PathAliases.coversWithAbsentValues(b.PathAliases, func(addr StableAddress) bool {
+		return pointAddressDefinitelyAbsent(a, addr)
 	})
 }
 
@@ -416,8 +412,8 @@ func pointPathAliasesJoin(a, b PointState) PathAliasFacts {
 }
 
 func pointPathAliasesJoinOneSided(out PathAliasFacts, facts PathAliasFacts, other PointState) PathAliasFacts {
-	return out.withAliasesProvedByAbsentValues(facts, func(key constraint.PathKey) bool {
-		return pointPathKeyDefinitelyAbsent(other, key)
+	return out.withAliasesProvedByAbsentValues(facts, func(addr StableAddress) bool {
+		return pointAddressDefinitelyAbsent(other, addr)
 	})
 }
 
@@ -425,8 +421,8 @@ func pointIndexWritesLessOrEq(a, b PointState) bool {
 	return a.IndexWrites.coversWithAbsentKeyPaths(
 		b.IndexWrites,
 		product.Domain.LessOrEq,
-		func(key constraint.PathKey) bool {
-			return pointPathKeyDefinitelyAbsent(a, key)
+		func(addr StableAddress) bool {
+			return pointAddressDefinitelyAbsent(a, addr)
 		},
 	)
 }
@@ -452,32 +448,28 @@ func pointIndexWritesJoinOneSided(
 	facts IndexWriteAdmissionFacts,
 	other PointState,
 ) IndexWriteAdmissionFacts {
-	return out.withFactsProvedByAbsentKeyPaths(facts, func(key constraint.PathKey) bool {
-		return pointPathKeyDefinitelyAbsent(other, key)
+	return out.withFactsProvedByAbsentKeyPaths(facts, func(addr StableAddress) bool {
+		return pointAddressDefinitelyAbsent(other, addr)
 	})
 }
 
-func pointPathKeyDefinitelyAbsent(ps PointState, key constraint.PathKey) bool {
-	av, ok := pointPathKeyValue(ps, key)
+func pointAddressDefinitelyAbsent(ps PointState, addr StableAddress) bool {
+	av, ok := pointAddressValue(ps, addr)
 	return ok && av.DefinitelyAbsent()
 }
 
-func pointPathKeyPresentValue(ps PointState, key constraint.PathKey) (product.AbstractValue, bool) {
-	av, ok := pointPathKeyValue(ps, key)
+func pointAddressPresentValue(ps PointState, addr StableAddress) (product.AbstractValue, bool) {
+	av, ok := pointAddressValue(ps, addr)
 	if ok && av.DefinitelyPresent() {
 		return av, true
 	}
-	if pointConditionProvesPathKeyPresent(ps.Cond, key) {
+	if pointConditionProvesAddressPresent(ps.Cond, addr) {
 		return product.PresentDynamic(), true
 	}
 	return product.AbstractValue{}, false
 }
 
-func pointPathKeyValue(ps PointState, key constraint.PathKey) (product.AbstractValue, bool) {
-	addr, ok := StableAddressFromCanonicalKey(key)
-	if !ok {
-		return product.AbstractValue{}, false
-	}
+func pointAddressValue(ps PointState, addr StableAddress) (product.AbstractValue, bool) {
 	path, ok := addr.Path()
 	if !ok || path.Symbol == 0 {
 		return product.AbstractValue{}, false
@@ -485,31 +477,31 @@ func pointPathKeyValue(ps PointState, key constraint.PathKey) (product.AbstractV
 	return PointFactsOf(ps).PathValue(path)
 }
 
-func pointConditionProvesPathKeyPresent(cond constraint.Condition, key constraint.PathKey) bool {
-	if key == "" || cond.IsFalse() || !cond.HasConstraints() || cond.NumDisjuncts() == 0 {
+func pointConditionProvesAddressPresent(cond constraint.Condition, addr StableAddress) bool {
+	if addr.Key() == "" || cond.IsFalse() || !cond.HasConstraints() || cond.NumDisjuncts() == 0 {
 		return false
 	}
 	for i := 0; i < cond.NumDisjuncts(); i++ {
-		if !pointConjunctionProvesPathKeyPresent(cond.DisjunctConstraints(i), key) {
+		if !pointConjunctionProvesAddressPresent(cond.DisjunctConstraints(i), addr) {
 			return false
 		}
 	}
 	return true
 }
 
-func pointConjunctionProvesPathKeyPresent(conj []constraint.Constraint, key constraint.PathKey) bool {
+func pointConjunctionProvesAddressPresent(conj []constraint.Constraint, addr StableAddress) bool {
 	for _, c := range conj {
 		switch cc := c.(type) {
 		case constraint.Truthy:
-			if pointConditionPathMatchesKey(cc.Path, key) {
+			if pointConditionPathMatchesAddress(cc.Path, addr) {
 				return true
 			}
 		case constraint.NotNil:
-			if pointConditionPathMatchesKey(cc.Path, key) {
+			if pointConditionPathMatchesAddress(cc.Path, addr) {
 				return true
 			}
 		case constraint.HasType:
-			if pointConditionPathMatchesKey(cc.Path, key) && pointHasTypeImpliesPresent(cc) {
+			if pointConditionPathMatchesAddress(cc.Path, addr) && pointHasTypeImpliesPresent(cc) {
 				return true
 			}
 		}
@@ -517,10 +509,9 @@ func pointConjunctionProvesPathKeyPresent(conj []constraint.Constraint, key cons
 	return false
 }
 
-func pointConditionPathMatchesKey(path constraint.Path, key constraint.PathKey) bool {
+func pointConditionPathMatchesAddress(path constraint.Path, addr StableAddress) bool {
 	pathAddr, pathOK := StableAddressOfPath(path)
-	keyAddr, keyOK := StableAddressFromCanonicalKey(key)
-	return pathOK && keyOK && pathAddr.Equal(keyAddr)
+	return pathOK && pathAddr.Equal(addr)
 }
 
 func pointHasTypeImpliesPresent(c constraint.HasType) bool {
