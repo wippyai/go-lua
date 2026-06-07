@@ -113,7 +113,7 @@ func DemandFromPathContract(segments []constraint.Segment, leaf ParamContract) P
 	if len(segments) == 0 {
 		return leaf
 	}
-	field, ok := contractFieldName(segments[0])
+	field, ok := constraint.SegmentFieldName(segments[0])
 	if !ok {
 		return paramContractBottom()
 	}
@@ -863,14 +863,5 @@ func capabilityBit(cap Capability) capabilitySet {
 		return capOrderable
 	default:
 		return 0
-	}
-}
-
-func contractFieldName(seg constraint.Segment) (string, bool) {
-	switch seg.Kind {
-	case constraint.SegmentField, constraint.SegmentIndexString:
-		return seg.Name, seg.Name != ""
-	default:
-		return "", false
 	}
 }

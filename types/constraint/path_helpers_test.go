@@ -183,6 +183,49 @@ func TestSplitFieldPathRejectsNonFieldPaths(t *testing.T) {
 	}
 }
 
+func TestSegmentFieldName(t *testing.T) {
+	tests := []struct {
+		name      string
+		segment   Segment
+		want      string
+		wantValid bool
+	}{
+		{
+			name:      "field",
+			segment:   Segment{Kind: SegmentField, Name: "id"},
+			want:      "id",
+			wantValid: true,
+		},
+		{
+			name:      "string index",
+			segment:   Segment{Kind: SegmentIndexString, Name: "id"},
+			want:      "id",
+			wantValid: true,
+		},
+		{
+			name:    "empty field",
+			segment: Segment{Kind: SegmentField},
+		},
+		{
+			name:    "empty string index",
+			segment: Segment{Kind: SegmentIndexString},
+		},
+		{
+			name:    "int index",
+			segment: Segment{Kind: SegmentIndexInt, Index: 1},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, ok := SegmentFieldName(tt.segment)
+			if ok != tt.wantValid || got != tt.want {
+				t.Fatalf("SegmentFieldName(%#v) = (%q, %v), want (%q, %v)", tt.segment, got, ok, tt.want, tt.wantValid)
+			}
+		})
+	}
+}
+
 func TestPlaceholderIndexFromString(t *testing.T) {
 	maxInt := int(^uint(0) >> 1)
 	overflow := strconv.FormatInt(int64(maxInt), 10) + "0"

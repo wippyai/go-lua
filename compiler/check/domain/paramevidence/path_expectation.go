@@ -207,7 +207,7 @@ func MergeExpectedAtPath(base typ.Type, segments []constraint.Segment, expected 
 		return MergeCallExpectation(base, expected, isParam)
 	}
 	seg := segments[0]
-	field, ok := segmentFieldName(seg)
+	field, ok := constraint.SegmentFieldName(seg)
 	if !ok {
 		return base
 	}
@@ -241,7 +241,7 @@ func WidenArrayElementAtPath(base typ.Type, segments []constraint.Segment, eleme
 		return value.AdmitArrayElementMutation(base, element, value.MergeForConvergence)
 	}
 	seg := segments[0]
-	field, ok := segmentFieldName(seg)
+	field, ok := constraint.SegmentFieldName(seg)
 	if !ok {
 		return base
 	}
@@ -267,15 +267,6 @@ func WidenArrayElementAtPath(base typ.Type, segments []constraint.Segment, eleme
 
 func pathFieldReadonly(access PathAccess, remainingSegments int) bool {
 	return access == PathAccessRead || remainingSegments > 1
-}
-
-func segmentFieldName(seg constraint.Segment) (string, bool) {
-	switch seg.Kind {
-	case constraint.SegmentField, constraint.SegmentIndexString:
-		return seg.Name, seg.Name != ""
-	default:
-		return "", false
-	}
 }
 
 func recordForPathMerge(t typ.Type) *typ.Record {

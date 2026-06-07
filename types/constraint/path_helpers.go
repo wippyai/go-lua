@@ -76,6 +76,20 @@ func IsReturnPath(p Path) bool {
 	return p.Symbol == 0 && len(p.Segments) == 0 && ReturnIndexFromString(p.Root) >= 0
 }
 
+// SegmentFieldName returns the record-field name addressed by a field-like
+// segment. Dot fields and string indexes both project through record fields for
+// structural typing. Empty names are rejected; callers that need runtime Lua
+// string-key semantics, where an empty bracket string is valid, should keep that
+// policy separate.
+func SegmentFieldName(seg Segment) (string, bool) {
+	switch seg.Kind {
+	case SegmentField, SegmentIndexString:
+		return seg.Name, seg.Name != ""
+	default:
+		return "", false
+	}
+}
+
 // SplitFieldPath splits a path into its parent path and field name.
 // Returns false if the path has no field segment. The returned parent path owns
 // its own segment slice.
