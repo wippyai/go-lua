@@ -10,7 +10,6 @@ import (
 	"github.com/wippyai/go-lua/compiler/check/canonical/transfer"
 	"github.com/wippyai/go-lua/compiler/check/domain/assignsource"
 	"github.com/wippyai/go-lua/compiler/check/domain/callbackenv"
-	"github.com/wippyai/go-lua/compiler/check/domain/indexread"
 	"github.com/wippyai/go-lua/compiler/check/domain/paramevidence"
 	flowpath "github.com/wippyai/go-lua/compiler/check/domain/path"
 	"github.com/wippyai/go-lua/compiler/check/domain/typepath"
@@ -1154,11 +1153,11 @@ func (f *canonicalFacts) withPathObservationIndexRead(q flow.PathObservationQuer
 	if !obs.Resolved() || typ.IsNever(obs.Type) || q.IndexRead == nil {
 		return obs
 	}
-	if refined, ok := indexread.RefineObservation(indexread.ObservationQuery{
+	if refined, ok := flow.RefineIndexReadObservation(flow.IndexReadObservationQuery{
 		Point:  q.Point,
 		Result: obs.Type,
 		Index:  *q.IndexRead,
-		Flow:   f,
+		Proofs: f,
 	}); ok {
 		obs.Type = refined
 	}

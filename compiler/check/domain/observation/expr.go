@@ -1706,12 +1706,12 @@ func (p Projector) applyPathObservationIndexRead(t typ.Type, q flow.PathObservat
 	if flowProof == nil {
 		return t
 	}
-	if refined, ok := indexread.RefineObservation(indexread.ObservationQuery{
+	if refined, ok := flow.RefineIndexReadObservation(flow.IndexReadObservationQuery{
 		Point:  q.Point,
 		View:   q.View,
 		Result: t,
 		Index:  *q.IndexRead,
-		Flow:   flowProof,
+		Proofs: flowProof,
 	}); ok {
 		return refined
 	}
