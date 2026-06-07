@@ -60,7 +60,7 @@ func IdentityAliasSourcesWithPolicy(state PointState, target StableAddress, poli
 			if policy.RequireRemainder && len(route.remainder) == 0 {
 				continue
 			}
-			source, ok := route.source.Append(route.remainder)
+			source, ok := route.appendedSource()
 			if ok {
 				add(source)
 			}

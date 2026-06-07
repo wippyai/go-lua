@@ -133,24 +133,13 @@ func AppendOriginDestinations(state PointState, array StableAddress, fieldPrefix
 			Array:       array,
 			FieldPrefix: cloneAddressSegments(prefix),
 		})
-		for _, use := range state.ValueOrigins.OriginsCoveringAddress(array) {
-			if use.Origin.Kind != ValueOriginIndexedIterator || use.Origin.VarIndex != 1 || len(use.Remainder) == 0 {
-				continue
-			}
-			source, ok := StableAddressFromKey(use.Origin.Source)
-			if !ok {
-				continue
-			}
-			nextPrefix := cloneAddressSegments(use.Remainder)
+		for _, route := range state.ValueOrigins.indexedIteratorValueSourceRoutesCoveringAddress(array) {
+			nextPrefix := cloneAddressSegments(route.remainder)
 			nextPrefix = append(nextPrefix, prefix...)
-			add(source, nextPrefix)
+			add(route.source, nextPrefix)
 		}
-		for _, aliasUse := range state.PathAliases.AliasesCoveringAddress(array) {
-			source, ok := StableAddressFromKey(aliasUse.Alias.Source)
-			if !ok {
-				continue
-			}
-			source, ok = source.Append(aliasUse.Remainder)
+		for _, route := range state.PathAliases.sourceRoutesCoveringAddress(array) {
+			source, ok := route.appendedSource()
 			if ok {
 				add(source, prefix)
 			}
@@ -483,29 +472,17 @@ func AppendOriginSources(state PointState, source StableAddress) []AppendOriginS
 		})
 	}
 	add(source, nil)
-	for _, use := range state.ValueOrigins.OriginsCoveringAddress(source) {
-		routed, ok := StableAddressFromKey(use.Origin.Source)
-		if !ok {
-			continue
-		}
-		switch use.Origin.Kind {
-		case ValueOriginIndexedIterator:
-			if use.Origin.VarIndex == 1 && len(use.Remainder) > 0 {
-				add(routed, use.Remainder)
-			}
-		case ValueOriginAssignmentAlias:
-			routed, ok = routed.Append(use.Remainder)
-			if ok {
-				add(routed, nil)
-			}
+	for _, route := range state.ValueOrigins.indexedIteratorValueSourceRoutesCoveringAddress(source) {
+		add(route.source, route.remainder)
+	}
+	for _, route := range state.ValueOrigins.assignmentAliasSourceRoutesCoveringAddress(source) {
+		routed, ok := route.appendedSource()
+		if ok {
+			add(routed, nil)
 		}
 	}
-	for _, aliasUse := range state.PathAliases.AliasesCoveringAddress(source) {
-		routed, ok := StableAddressFromKey(aliasUse.Alias.Source)
-		if !ok {
-			continue
-		}
-		routed, ok = routed.Append(aliasUse.Remainder)
+	for _, route := range state.PathAliases.sourceRoutesCoveringAddress(source) {
+		routed, ok := route.appendedSource()
 		if ok {
 			add(routed, nil)
 		}
@@ -528,12 +505,8 @@ func AppendElementFieldOriginUses(state PointState, field StableAddress) []Value
 		return nil
 	}
 	uses := append([]ValueOriginUse(nil), state.ValueOrigins.OriginsCoveringAddress(field)...)
-	for _, aliasUse := range state.PathAliases.AliasesCoveringAddress(field) {
-		source, ok := StableAddressFromKey(aliasUse.Alias.Source)
-		if !ok {
-			continue
-		}
-		source, ok = source.Append(aliasUse.Remainder)
+	for _, route := range state.PathAliases.sourceRoutesCoveringAddress(field) {
+		source, ok := route.appendedSource()
 		if !ok {
 			continue
 		}

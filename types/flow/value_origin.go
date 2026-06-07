@@ -127,13 +127,25 @@ func (f ValueOriginFacts) OriginsCoveringAddress(value StableAddress) []ValueOri
 }
 
 func (f ValueOriginFacts) assignmentAliasSourceRoutesCoveringAddress(value StableAddress) []sourceRoute {
+	return f.sourceRoutesCoveringAddress(value, func(use ValueOriginUse) bool {
+		return use.Origin.Kind == ValueOriginAssignmentAlias
+	})
+}
+
+func (f ValueOriginFacts) indexedIteratorValueSourceRoutesCoveringAddress(value StableAddress) []sourceRoute {
+	return f.sourceRoutesCoveringAddress(value, func(use ValueOriginUse) bool {
+		return use.Origin.Kind == ValueOriginIndexedIterator && use.Origin.VarIndex == 1 && len(use.Remainder) > 0
+	})
+}
+
+func (f ValueOriginFacts) sourceRoutesCoveringAddress(value StableAddress, accept func(ValueOriginUse) bool) []sourceRoute {
 	uses := f.OriginsCoveringAddress(value)
 	if len(uses) == 0 {
 		return nil
 	}
 	var out []sourceRoute
 	for _, use := range uses {
-		if use.Origin.Kind != ValueOriginAssignmentAlias {
+		if accept != nil && !accept(use) {
 			continue
 		}
 		out = appendCanonicalSourceRoute(out, use.Origin.Source, use.Remainder)

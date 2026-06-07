@@ -57,6 +57,36 @@ func TestAppendOriginDestinationsPathNormalizesArray(t *testing.T) {
 	assertAppendDestination(t, got[1], iterArrayPath, []constraint.Segment{{Kind: constraint.SegmentField, Name: "id"}})
 }
 
+func TestAppendOriginDestinationsIgnoresLegacyStoredRoutes(t *testing.T) {
+	outPath := constraint.NewPath(cfg.SymbolID(204), "out")
+	arrayPath := outPath.Field("id")
+	iterArrayPath := constraint.NewPath(cfg.SymbolID(205), "source")
+	aliasArrayPath := constraint.NewPath(cfg.SymbolID(206), "alias")
+	out := testStableAddressPath(t, outPath)
+	state := PointState{
+		ValueOrigins: ValueOriginFacts{}.With(ValueOriginFact{
+			Value:    out.Key(),
+			Source:   iterArrayPath.Key(),
+			Kind:     ValueOriginIndexedIterator,
+			VarIndex: 1,
+		}),
+		PathAliases: PathAliasFacts{}.With(PathAliasFact{
+			Value:  out.Key(),
+			Source: aliasArrayPath.Key(),
+		}),
+	}
+	if len(state.ValueOrigins.OriginsCoveringAddress(testStableAddressPath(t, arrayPath))) != 1 ||
+		len(state.PathAliases.AliasesCoveringAddress(testStableAddressPath(t, arrayPath))) != 1 {
+		t.Fatalf("test setup did not keep legacy stored routes: origins=%s aliases=%s", state.ValueOrigins.Format(), state.PathAliases.Format())
+	}
+
+	got := AppendOriginDestinations(state, testStableAddressPath(t, arrayPath), nil)
+	if len(got) != 1 {
+		t.Fatalf("destinations got %d, want only direct destination for legacy routes: %v", len(got), got)
+	}
+	assertAppendDestination(t, got[0], arrayPath, nil)
+}
+
 func TestApplyAppendElementFieldOriginUseReplaysSourcesToDestinations(t *testing.T) {
 	arrayPath := constraint.NewPath(cfg.SymbolID(11), "out")
 	sourcePath := constraint.NewPath(cfg.SymbolID(12), "source")
@@ -180,6 +210,71 @@ func TestAppendElementFieldOriginUsesRoutesThroughPathAlias(t *testing.T) {
 	}
 	if uses[0].Origin.Source != testStableAddressPath(t, arrayPath).Key() || uses[0].Origin.Kind != ValueOriginIndexedIterator {
 		t.Fatalf("use = %#v, want indexed iterator source", uses[0])
+	}
+}
+
+func TestAppendOriginSourcesIgnoresLegacyStoredRoutes(t *testing.T) {
+	targetPath := constraint.NewPath(cfg.SymbolID(217), "target")
+	fieldPath := targetPath.Field("id")
+	iterArrayPath := constraint.NewPath(cfg.SymbolID(218), "items")
+	assignmentSourcePath := constraint.NewPath(cfg.SymbolID(219), "assigned")
+	aliasSourcePath := constraint.NewPath(cfg.SymbolID(220), "alias")
+	target := testStableAddressPath(t, targetPath)
+	field := testStableAddressPath(t, fieldPath)
+	state := PointState{
+		ValueOrigins: ValueOriginFacts{}.
+			With(ValueOriginFact{
+				Value:    target.Key(),
+				Source:   iterArrayPath.Key(),
+				Kind:     ValueOriginIndexedIterator,
+				VarIndex: 1,
+			}).
+			With(ValueOriginFact{
+				Value:  target.Key(),
+				Source: assignmentSourcePath.Key(),
+				Kind:   ValueOriginAssignmentAlias,
+			}),
+		PathAliases: PathAliasFacts{}.With(PathAliasFact{
+			Value:  target.Key(),
+			Source: aliasSourcePath.Key(),
+		}),
+	}
+	if len(state.ValueOrigins.OriginsCoveringAddress(field)) != 2 ||
+		len(state.PathAliases.AliasesCoveringAddress(field)) != 1 {
+		t.Fatalf("test setup did not keep legacy stored routes: origins=%s aliases=%s", state.ValueOrigins.Format(), state.PathAliases.Format())
+	}
+
+	got := AppendOriginSources(state, field)
+	if len(got) != 1 || !got[0].Source.Equal(field) || len(got[0].SourceField) != 0 {
+		t.Fatalf("sources = %+v, want only direct source for legacy routes", got)
+	}
+}
+
+func TestAppendElementFieldOriginUsesIgnoresLegacyStoredAliasSource(t *testing.T) {
+	elementPath := constraint.NewPath(cfg.SymbolID(214), "element").Field("name")
+	sourcePath := constraint.NewPath(cfg.SymbolID(215), "source")
+	arrayPath := constraint.NewPath(cfg.SymbolID(216), "items")
+	element := testStableAddressPath(t, elementPath)
+	source := testStableAddressPath(t, sourcePath)
+	state := PointState{
+		PathAliases: PathAliasFacts{}.With(PathAliasFact{
+			Value:  element.Key(),
+			Source: sourcePath.Key(),
+		}),
+		ValueOrigins: ValueOriginFacts{}.WithAddresses(
+			source,
+			testStableAddressPath(t, arrayPath),
+			ValueOriginIndexedIterator,
+			1,
+		),
+	}
+	if len(state.PathAliases.AliasesCoveringAddress(element)) != 1 {
+		t.Fatalf("test setup did not keep legacy stored alias source: %s", state.PathAliases.Format())
+	}
+
+	uses := AppendElementFieldOriginUses(state, element)
+	if len(uses) != 0 {
+		t.Fatalf("legacy alias source produced append element origin uses: %#v", uses)
 	}
 }
 

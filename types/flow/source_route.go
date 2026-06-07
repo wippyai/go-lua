@@ -27,3 +27,7 @@ func appendCanonicalSourceRoute(out []sourceRoute, sourceKey constraint.PathKey,
 	}
 	return append(out, route)
 }
+
+func (r sourceRoute) appendedSource() (StableAddress, bool) {
+	return r.source.Append(r.remainder)
+}
