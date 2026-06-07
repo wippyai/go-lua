@@ -1275,6 +1275,14 @@ func (f *canonicalFacts) ArrayLenRefAt(p cfg.Point, sym cfg.SymbolID) (cfg.Symbo
 	return arrSym, offset, true
 }
 
+func (f *canonicalFacts) ArrayLenRefPathAt(p cfg.Point, sym cfg.SymbolID) (constraint.Path, int64, bool) {
+	arrSym, offset, ok := f.ArrayLenRefAt(p, sym)
+	if !ok {
+		return constraint.Path{}, 0, false
+	}
+	return flowpath.WithVersion(constraint.Path{Symbol: arrSym}, f.graph, p), offset, true
+}
+
 // HasKeyOf reports whether the product-state KeyPresence axis proves that
 // keyPath was drawn from tablePath. This is the diagnostic counterpart of
 // transfer's index-read refinement and deliberately does not scan Cond: key
@@ -1338,26 +1346,6 @@ func (f *canonicalFacts) ExcludesTypeAt(p cfg.Point, path constraint.Path, decla
 		}
 	}
 	return true
-}
-
-func (f *canonicalFacts) BoundsAt(p cfg.Point, name string) (int64, int64, bool) {
-	sym, ok := f.symbolAt(p, name)
-	if !ok {
-		return 0, 0, false
-	}
-	return f.NumericBoundsAt(p, sym)
-}
-
-func (f *canonicalFacts) ArrayLenBoundAt(p cfg.Point, varName string) (string, bool) {
-	key, offset, ok := f.ArrayLenBoundWithOffsetAt(p, varName)
-	if !ok || offset != 0 {
-		return "", false
-	}
-	return key, true
-}
-
-func (f *canonicalFacts) ArrayLenBoundWithOffsetAt(p cfg.Point, varName string) (string, int64, bool) {
-	return flowpath.ArrayLenBoundKeyWithOffset(p, varName, f.graph, f, f.symbolAt)
 }
 
 func (f *canonicalFacts) LengthBoundsAt(p cfg.Point, path constraint.Path) (int64, int64, bool) {

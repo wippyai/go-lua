@@ -331,19 +331,22 @@ func (f factsIndexReadFlow) IndexWriteAdmission(q flow.IndexWriteReadQuery) (typ
 	)
 }
 
-func (f factsIndexReadFlow) BoundsAt(p cfg.Point, name string) (int64, int64, bool) {
-	if f.numeric == nil {
-		return 0, 0, false
-	}
-	sym, ok := f.symbolAt(p, name)
-	if !ok {
+func (f factsIndexReadFlow) NumericBoundsAt(p cfg.Point, sym cfg.SymbolID) (int64, int64, bool) {
+	if f.numeric == nil || sym == 0 {
 		return 0, 0, false
 	}
 	return f.numeric.NumericBoundsAt(p, sym)
 }
 
-func (f factsIndexReadFlow) ArrayLenBoundWithOffsetAt(p cfg.Point, varName string) (string, int64, bool) {
-	return flowpath.ArrayLenBoundKeyWithOffset(p, varName, f.graph, f.numeric, f.symbolAt)
+func (f factsIndexReadFlow) ArrayLenRefPathAt(p cfg.Point, sym cfg.SymbolID) (constraint.Path, int64, bool) {
+	if f.numeric == nil || sym == 0 {
+		return constraint.Path{}, 0, false
+	}
+	arrSym, offset, ok := f.numeric.ArrayLenRefAt(p, sym)
+	if !ok {
+		return constraint.Path{}, 0, false
+	}
+	return flowpath.WithVersion(constraint.Path{Symbol: arrSym}, f.graph, p), offset, true
 }
 
 func (f factsIndexReadFlow) LengthBoundsAt(p cfg.Point, path constraint.Path) (int64, int64, bool) {
@@ -363,17 +366,6 @@ func (f factsIndexReadFlow) LengthBoundsAt(p cfg.Point, path constraint.Path) (i
 		return 0, 0, false
 	}
 	return lower, 0, true
-}
-
-func (f factsIndexReadFlow) symbolAt(p cfg.Point, name string) (cfg.SymbolID, bool) {
-	if f.graph == nil || name == "" {
-		return 0, false
-	}
-	sym, ok := f.graph.SymbolAt(p, name)
-	if !ok || sym == 0 {
-		return 0, false
-	}
-	return sym, true
 }
 
 func (p Projection) soundRootRefinement(point cfg.Point, sym cfg.SymbolID, refined typ.Type) typ.Type {

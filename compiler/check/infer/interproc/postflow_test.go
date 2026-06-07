@@ -169,16 +169,12 @@ func (noopFlowOps) ExcludesTypeAt(cfg.Point, constraint.Path, typ.Type) bool {
 	return false
 }
 
-func (noopFlowOps) BoundsAt(cfg.Point, string) (int64, int64, bool) {
+func (noopFlowOps) NumericBoundsAt(cfg.Point, cfg.SymbolID) (int64, int64, bool) {
 	return 0, 0, false
 }
 
-func (noopFlowOps) ArrayLenBoundAt(cfg.Point, string) (string, bool) {
-	return "", false
-}
-
-func (noopFlowOps) ArrayLenBoundWithOffsetAt(cfg.Point, string) (string, int64, bool) {
-	return "", 0, false
+func (noopFlowOps) ArrayLenRefPathAt(cfg.Point, cfg.SymbolID) (constraint.Path, int64, bool) {
+	return constraint.Path{}, 0, false
 }
 
 func (noopFlowOps) LengthBoundsAt(cfg.Point, constraint.Path) (int64, int64, bool) {

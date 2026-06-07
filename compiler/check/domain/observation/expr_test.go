@@ -230,16 +230,12 @@ func (f flowOpsStub) ExcludesTypeAt(cfg.Point, constraint.Path, typ.Type) bool {
 	return false
 }
 
-func (f flowOpsStub) BoundsAt(cfg.Point, string) (int64, int64, bool) {
+func (f flowOpsStub) NumericBoundsAt(cfg.Point, cfg.SymbolID) (int64, int64, bool) {
 	return 0, 0, false
 }
 
-func (f flowOpsStub) ArrayLenBoundAt(cfg.Point, string) (string, bool) {
-	return "", false
-}
-
-func (f flowOpsStub) ArrayLenBoundWithOffsetAt(cfg.Point, string) (string, int64, bool) {
-	return "", 0, false
+func (f flowOpsStub) ArrayLenRefPathAt(cfg.Point, cfg.SymbolID) (constraint.Path, int64, bool) {
+	return constraint.Path{}, 0, false
 }
 
 func (f flowOpsStub) LengthBoundsAt(cfg.Point, constraint.Path) (int64, int64, bool) {

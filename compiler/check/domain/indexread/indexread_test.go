@@ -11,33 +11,33 @@ import (
 )
 
 type fakeFlow struct {
-	bounds     map[string][2]int64
+	bounds     map[cfg.SymbolID][2]int64
 	lenBounds  map[string][2]int64
-	lenRefs    map[string]lenRef
+	lenRefs    map[cfg.SymbolID]lenRef
 	keyOf      bool
 	readback   typ.Type
 	readbackOK bool
 }
 
 type lenRef struct {
-	key    string
+	path   constraint.Path
 	offset int64
 }
 
-func (f fakeFlow) BoundsAt(_ cfg.Point, name string) (int64, int64, bool) {
+func (f fakeFlow) NumericBoundsAt(_ cfg.Point, sym cfg.SymbolID) (int64, int64, bool) {
 	if f.bounds == nil {
 		return 0, 0, false
 	}
-	b, ok := f.bounds[name]
+	b, ok := f.bounds[sym]
 	return b[0], b[1], ok
 }
 
-func (f fakeFlow) ArrayLenBoundWithOffsetAt(_ cfg.Point, name string) (string, int64, bool) {
+func (f fakeFlow) ArrayLenRefPathAt(_ cfg.Point, sym cfg.SymbolID) (constraint.Path, int64, bool) {
 	if f.lenRefs == nil {
-		return "", 0, false
+		return constraint.Path{}, 0, false
 	}
-	ref, ok := f.lenRefs[name]
-	return ref.key, ref.offset, ok
+	ref, ok := f.lenRefs[sym]
+	return ref.path, ref.offset, ok
 }
 
 func (f fakeFlow) LengthBoundsAt(_ cfg.Point, path constraint.Path) (int64, int64, bool) {
@@ -59,6 +59,7 @@ func (f fakeFlow) IndexReadback(_ flow.IndexWriteReadQuery) (typ.Type, bool) {
 func TestRefine_TupleIndexBoundedByNumericForRemovesNil(t *testing.T) {
 	obj := &ast.IdentExpr{Value: "values"}
 	key := &ast.IdentExpr{Value: "i"}
+	keyPath := constraint.Path{Root: "i", Symbol: 11}
 	result := typ.NewOptional(typ.NewUnion(typ.LiteralInt(10), typ.LiteralInt(20), typ.LiteralInt(30)))
 
 	refined, ok := Refine(Query{
@@ -67,7 +68,13 @@ func TestRefine_TupleIndexBoundedByNumericForRemovesNil(t *testing.T) {
 		Result:    result,
 		Object:    obj,
 		Key:       key,
-		Flow:      fakeFlow{bounds: map[string][2]int64{"i": {1, 3}}},
+		Flow:      fakeFlow{bounds: map[cfg.SymbolID][2]int64{11: {1, 3}}},
+		PathOf: func(expr ast.Expr) constraint.Path {
+			if expr == key {
+				return keyPath
+			}
+			return constraint.Path{}
+		},
 	})
 
 	want := typ.NewUnion(typ.LiteralInt(10), typ.LiteralInt(20), typ.LiteralInt(30))
@@ -78,17 +85,74 @@ func TestRefine_TupleIndexBoundedByNumericForRemovesNil(t *testing.T) {
 
 func TestRefine_TupleIndexOutOfRangeKeepsNil(t *testing.T) {
 	result := typ.NewOptional(typ.Number)
+	key := &ast.IdentExpr{Value: "i"}
+	keyPath := constraint.Path{Root: "i", Symbol: 12}
 
 	refined, ok := Refine(Query{
 		Point:     7,
 		Container: typ.NewTuple(typ.Number, typ.Number, typ.Number),
 		Result:    result,
-		Key:       &ast.IdentExpr{Value: "i"},
-		Flow:      fakeFlow{bounds: map[string][2]int64{"i": {1, 4}}},
+		Key:       key,
+		Flow:      fakeFlow{bounds: map[cfg.SymbolID][2]int64{12: {1, 4}}},
+		PathOf: func(expr ast.Expr) constraint.Path {
+			if expr == key {
+				return keyPath
+			}
+			return constraint.Path{}
+		},
 	})
 
 	if ok || refined != nil {
 		t.Fatalf("Refine(tuple[i]) = %v, %v; want no refinement", refined, ok)
+	}
+}
+
+func TestRefine_NumericBoundsRequireSymbolPath(t *testing.T) {
+	result := typ.NewOptional(typ.Number)
+
+	refined, ok := Refine(Query{
+		Point:     7,
+		Container: typ.NewTuple(typ.Number),
+		Result:    result,
+		Key:       &ast.IdentExpr{Value: "i"},
+		Flow:      fakeFlow{bounds: map[cfg.SymbolID][2]int64{12: {1, 1}}},
+	})
+
+	if ok || refined != nil {
+		t.Fatalf("Refine(tuple[i] without symbol path) = %v, %v; want no refinement", refined, ok)
+	}
+}
+
+func TestRefine_LengthRelationUsesSymbolPath(t *testing.T) {
+	obj := &ast.IdentExpr{Value: "rows"}
+	key := &ast.IdentExpr{Value: "i"}
+	objPath := constraint.Path{Root: "rows", Symbol: 31}
+	keyPath := constraint.Path{Root: "i", Symbol: 32}
+
+	refined, ok := Refine(Query{
+		Point:     9,
+		Container: typ.NewArray(typ.String),
+		Result:    typ.NewOptional(typ.String),
+		Object:    obj,
+		Key:       key,
+		Flow: fakeFlow{
+			bounds:  map[cfg.SymbolID][2]int64{32: {1, 3}},
+			lenRefs: map[cfg.SymbolID]lenRef{32: {path: objPath}},
+		},
+		PathOf: func(expr ast.Expr) constraint.Path {
+			switch expr {
+			case obj:
+				return objPath
+			case key:
+				return keyPath
+			default:
+				return constraint.Path{}
+			}
+		},
+	})
+
+	if !ok || !typ.TypeEquals(refined, typ.String) {
+		t.Fatalf("Refine(rows[i] with length relation) = %v, %v; want string,true", refined, ok)
 	}
 }
 

@@ -190,17 +190,12 @@ type FlowOps interface {
 	// ExcludesTypeAt checks if solved flow proves a type impossible at a point.
 	ExcludesTypeAt(p cfg.Point, path constraint.Path, declared typ.Type) bool
 
-	// BoundsAt returns numeric bounds for a variable at a point.
-	// Used for array length inference and index bounds checking.
-	BoundsAt(p cfg.Point, name string) (lower, upper int64, ok bool)
+	// NumericBoundsAt returns numeric bounds for a resolved symbol at a point.
+	// Reducers should prefer this over source-name lookups.
+	NumericBoundsAt(p cfg.Point, sym cfg.SymbolID) (lower, upper int64, ok bool)
 
-	// ArrayLenBoundAt returns the array variable whose length bounds this variable.
-	// Used for index-length relationship tracking.
-	ArrayLenBoundAt(p cfg.Point, varName string) (arrKey string, ok bool)
-
-	// ArrayLenBoundWithOffsetAt returns array variable and offset for symbolic bound:
-	// varName <= len(array) + offset.
-	ArrayLenBoundWithOffsetAt(p cfg.Point, varName string) (arrKey string, offset int64, ok bool)
+	// ArrayLenRefPathAt returns the normalized array path whose length bounds sym.
+	ArrayLenRefPathAt(p cfg.Point, sym cfg.SymbolID) (array constraint.Path, offset int64, ok bool)
 
 	// LengthBoundsAt returns numeric bounds for len(path) at a point.
 	LengthBoundsAt(p cfg.Point, path constraint.Path) (lower, upper int64, ok bool)

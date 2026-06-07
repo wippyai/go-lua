@@ -273,12 +273,12 @@ func (mockSolvedFlow) PreStateTypeAt(cfg.Point, constraint.Path) typ.Type { retu
 
 func (m mockSolvedFlow) ExcludesTypeAt(cfg.Point, constraint.Path, typ.Type) bool { return m.excludes }
 
-func (mockSolvedFlow) BoundsAt(cfg.Point, string) (int64, int64, bool) { return 0, 0, false }
+func (mockSolvedFlow) NumericBoundsAt(cfg.Point, cfg.SymbolID) (int64, int64, bool) {
+	return 0, 0, false
+}
 
-func (mockSolvedFlow) ArrayLenBoundAt(cfg.Point, string) (string, bool) { return "", false }
-
-func (mockSolvedFlow) ArrayLenBoundWithOffsetAt(cfg.Point, string) (string, int64, bool) {
-	return "", 0, false
+func (mockSolvedFlow) ArrayLenRefPathAt(cfg.Point, cfg.SymbolID) (constraint.Path, int64, bool) {
+	return constraint.Path{}, 0, false
 }
 
 func (mockSolvedFlow) LengthBoundsAt(cfg.Point, constraint.Path) (int64, int64, bool) {

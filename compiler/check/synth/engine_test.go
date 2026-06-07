@@ -110,16 +110,12 @@ func (m mockFlowOps) ExcludesTypeAt(p cfg.Point, path constraint.Path, declared 
 	return false
 }
 
-func (m mockFlowOps) BoundsAt(p cfg.Point, name string) (lower, upper int64, ok bool) {
+func (m mockFlowOps) NumericBoundsAt(p cfg.Point, sym cfg.SymbolID) (lower, upper int64, ok bool) {
 	return 0, 0, false
 }
 
-func (m mockFlowOps) ArrayLenBoundAt(p cfg.Point, varName string) (arrKey string, ok bool) {
-	return "", false
-}
-
-func (m mockFlowOps) ArrayLenBoundWithOffsetAt(p cfg.Point, varName string) (arrKey string, offset int64, ok bool) {
-	return "", 0, false
+func (m mockFlowOps) ArrayLenRefPathAt(p cfg.Point, sym cfg.SymbolID) (array constraint.Path, offset int64, ok bool) {
+	return constraint.Path{}, 0, false
 }
 
 func (m mockFlowOps) LengthBoundsAt(p cfg.Point, path constraint.Path) (lower, upper int64, ok bool) {

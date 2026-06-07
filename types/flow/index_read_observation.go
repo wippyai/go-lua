@@ -10,11 +10,8 @@ import (
 // IndexReadObservationProofs exposes solved proof facts needed by the indexed
 // read observation reducer.
 type IndexReadObservationProofs interface {
-	// TODO(canonical-address): replace name-based numeric bound queries with
-	// symbol/path-normalized evidence so observation reducers do not carry source
-	// spelling into future salsa keys.
-	BoundsAt(p cfg.Point, name string) (lower, upper int64, ok bool)
-	ArrayLenBoundWithOffsetAt(p cfg.Point, varName string) (arrKey string, offset int64, ok bool)
+	NumericBoundsAt(p cfg.Point, sym cfg.SymbolID) (lower, upper int64, ok bool)
+	ArrayLenRefPathAt(p cfg.Point, sym cfg.SymbolID) (array constraint.Path, offset int64, ok bool)
 	LengthBoundsAt(p cfg.Point, path constraint.Path) (lower, upper int64, ok bool)
 	HasKeyOf(p cfg.Point, tablePath, keyPath constraint.Path) bool
 	IndexReadback(q IndexWriteReadQuery) (typ.Type, bool)
@@ -99,14 +96,14 @@ func refineObservationByKeyPresence(q IndexReadObservationQuery) (typ.Type, bool
 }
 
 func refineObservationTupleIndexByNumericBounds(q IndexReadObservationQuery) (typ.Type, bool) {
-	if !q.Index.HasIndexVar || q.Index.IndexVarPath.Root == "" {
+	if !q.Index.HasIndexVar || q.Index.IndexVarPath.Symbol == 0 {
 		return nil, false
 	}
 	arity, ok := narrow.TupleArity(q.Index.Container)
 	if !ok {
 		return nil, false
 	}
-	lower, upper, ok := q.Proofs.BoundsAt(q.Point, q.Index.IndexVarPath.Root)
+	lower, upper, ok := q.Proofs.NumericBoundsAt(q.Point, q.Index.IndexVarPath.Symbol)
 	if !ok {
 		return nil, false
 	}
@@ -119,18 +116,18 @@ func refineObservationTupleIndexByNumericBounds(q IndexReadObservationQuery) (ty
 }
 
 func refineObservationSequenceIndexByLengthRelation(q IndexReadObservationQuery) (typ.Type, bool) {
-	if !q.Index.HasIndexVar || q.Index.IndexVarPath.Root == "" || q.Index.TablePath.IsEmpty() {
+	if !q.Index.HasIndexVar || q.Index.IndexVarPath.Symbol == 0 || q.Index.TablePath.IsEmpty() {
 		return nil, false
 	}
-	lower, _, ok := q.Proofs.BoundsAt(q.Point, q.Index.IndexVarPath.Root)
+	lower, _, ok := q.Proofs.NumericBoundsAt(q.Point, q.Index.IndexVarPath.Symbol)
 	if !ok || lower+q.Index.IndexVarOffset < 1 {
 		return nil, false
 	}
-	arrKey, lenOffset, ok := q.Proofs.ArrayLenBoundWithOffsetAt(q.Point, q.Index.IndexVarPath.Root)
+	arrPath, lenOffset, ok := q.Proofs.ArrayLenRefPathAt(q.Point, q.Index.IndexVarPath.Symbol)
 	if !ok {
 		return nil, false
 	}
-	if string(q.Index.TablePath.Key()) != arrKey {
+	if !arrPath.Equal(q.Index.TablePath) && arrPath.Key() != q.Index.TablePath.Key() {
 		return nil, false
 	}
 	if lenOffset > -q.Index.IndexVarOffset {

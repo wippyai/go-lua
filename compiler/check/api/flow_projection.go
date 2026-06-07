@@ -53,16 +53,12 @@ func (p preStateFlowOps) ExcludesTypeAt(point cfg.Point, path constraint.Path, d
 	return p.inner.ExcludesTypeAt(point, path, declared)
 }
 
-func (p preStateFlowOps) BoundsAt(point cfg.Point, name string) (lower, upper int64, ok bool) {
-	return p.inner.BoundsAt(point, name)
+func (p preStateFlowOps) NumericBoundsAt(point cfg.Point, sym cfg.SymbolID) (lower, upper int64, ok bool) {
+	return p.inner.NumericBoundsAt(point, sym)
 }
 
-func (p preStateFlowOps) ArrayLenBoundAt(point cfg.Point, varName string) (arrKey string, ok bool) {
-	return p.inner.ArrayLenBoundAt(point, varName)
-}
-
-func (p preStateFlowOps) ArrayLenBoundWithOffsetAt(point cfg.Point, varName string) (arrKey string, offset int64, ok bool) {
-	return p.inner.ArrayLenBoundWithOffsetAt(point, varName)
+func (p preStateFlowOps) ArrayLenRefPathAt(point cfg.Point, sym cfg.SymbolID) (array constraint.Path, offset int64, ok bool) {
+	return p.inner.ArrayLenRefPathAt(point, sym)
 }
 
 func (p preStateFlowOps) LengthBoundsAt(point cfg.Point, path constraint.Path) (lower, upper int64, ok bool) {
@@ -118,25 +114,18 @@ func (o conditionFlowOps) ExcludesTypeAt(point cfg.Point, path constraint.Path, 
 	return false
 }
 
-func (o conditionFlowOps) BoundsAt(point cfg.Point, name string) (lower, upper int64, ok bool) {
+func (o conditionFlowOps) NumericBoundsAt(point cfg.Point, sym cfg.SymbolID) (lower, upper int64, ok bool) {
 	if o.inner != nil {
-		return o.inner.BoundsAt(point, name)
+		return o.inner.NumericBoundsAt(point, sym)
 	}
 	return 0, 0, false
 }
 
-func (o conditionFlowOps) ArrayLenBoundAt(point cfg.Point, varName string) (arrKey string, ok bool) {
+func (o conditionFlowOps) ArrayLenRefPathAt(point cfg.Point, sym cfg.SymbolID) (array constraint.Path, offset int64, ok bool) {
 	if o.inner != nil {
-		return o.inner.ArrayLenBoundAt(point, varName)
+		return o.inner.ArrayLenRefPathAt(point, sym)
 	}
-	return "", false
-}
-
-func (o conditionFlowOps) ArrayLenBoundWithOffsetAt(point cfg.Point, varName string) (arrKey string, offset int64, ok bool) {
-	if o.inner != nil {
-		return o.inner.ArrayLenBoundWithOffsetAt(point, varName)
-	}
-	return "", 0, false
+	return constraint.Path{}, 0, false
 }
 
 func (o conditionFlowOps) LengthBoundsAt(point cfg.Point, path constraint.Path) (lower, upper int64, ok bool) {
