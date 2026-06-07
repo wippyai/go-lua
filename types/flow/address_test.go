@@ -211,35 +211,30 @@ func TestStableAddressRemainderAfterPrefixIsStructuredAndDefensive(t *testing.T)
 	}
 }
 
-func TestStableAddressKeyRelationsOwnKeyParsing(t *testing.T) {
+func TestStableAddressRelationsUseStructuredAddresses(t *testing.T) {
 	root := constraint.NewPath(cfg.SymbolID(28), "root")
 	child := root.Field("child").IndexStr("id")
 	other := constraint.NewPath(cfg.SymbolID(29), "root").Field("child")
 
 	rootAddr, _ := StableAddressOfPath(root)
 	childAddr, _ := StableAddressOfPath(child)
+	otherAddr, _ := StableAddressOfPath(other)
 
-	remainder, ok := childAddr.RemainderAfterAddressKey(StablePathKey(root))
+	remainder, ok := childAddr.RemainderAfterPrefix(rootAddr)
 	if !ok {
-		t.Fatal("child should be under root key")
+		t.Fatal("child should be under root address")
 	}
 	if len(remainder) != 2 || remainder[0].Name != "child" || remainder[1].Name != "id" {
 		t.Fatalf("remainder = %#v, want child/id suffix", remainder)
 	}
-	if _, ok := childAddr.RemainderAfterAddressKey(StablePathKey(other)); ok {
-		t.Fatalf("different symbol key covered child address")
+	if _, ok := childAddr.RemainderAfterPrefix(otherAddr); ok {
+		t.Fatalf("different symbol address covered child address")
 	}
-	if !AddressKeyOverlaps(StablePathKey(child), rootAddr) {
-		t.Fatalf("child key should overlap root address")
+	if !childAddr.Overlaps(rootAddr) {
+		t.Fatalf("child address should overlap root address")
 	}
-	if AddressKeyOverlaps(StablePathKey(other), rootAddr) {
-		t.Fatalf("different symbol key should not overlap root address")
-	}
-	if _, ok := childAddr.RemainderAfterAddressKey(root.Key()); ok {
-		t.Fatalf("legacy root key covered child address")
-	}
-	if AddressKeyOverlaps(child.Key(), rootAddr) {
-		t.Fatalf("legacy child key should not overlap root address")
+	if otherAddr.Overlaps(rootAddr) {
+		t.Fatalf("different symbol address should not overlap root address")
 	}
 }
 

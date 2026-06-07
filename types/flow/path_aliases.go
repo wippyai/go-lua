@@ -21,6 +21,11 @@ type PathAliasFact struct {
 	Source constraint.PathKey
 }
 
+// ValueAddress returns the normalized value address carried by this alias.
+func (f PathAliasFact) ValueAddress() (StableAddress, bool) {
+	return StableAddressFromCanonicalKey(f.Value)
+}
+
 // SourceAddress returns the normalized source address carried by this alias.
 func (f PathAliasFact) SourceAddress() (StableAddress, bool) {
 	return StableAddressFromCanonicalKey(f.Source)
@@ -102,7 +107,11 @@ func (f PathAliasFacts) AliasesCoveringAddress(value StableAddress) []PathAliasU
 	}
 	var out []PathAliasUse
 	for _, entry := range f.entries {
-		remainder, ok := value.RemainderAfterAddressKey(entry.Value)
+		entryValue, ok := entry.ValueAddress()
+		if !ok {
+			continue
+		}
+		remainder, ok := value.RemainderAfterPrefix(entryValue)
 		if !ok {
 			continue
 		}
@@ -135,7 +144,9 @@ func (f PathAliasFacts) KillAffectedByWriteAddress(write StableAddress) PathAlia
 	}
 	entries := make([]PathAliasFact, 0, len(f.entries))
 	for _, entry := range f.entries {
-		if AddressKeyOverlaps(entry.Value, write) || AddressKeyOverlaps(entry.Source, write) {
+		value, valueOK := entry.ValueAddress()
+		source, sourceOK := entry.SourceAddress()
+		if (valueOK && value.Overlaps(write)) || (sourceOK && source.Overlaps(write)) {
 			continue
 		}
 		entries = append(entries, entry)

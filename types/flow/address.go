@@ -406,22 +406,6 @@ func (a StableAddress) Overlaps(b StableAddress) bool {
 	return a.HasPrefix(b) || b.HasPrefix(a)
 }
 
-// RemainderAfterAddressKey returns the suffix below prefixKey when prefixKey is
-// this address or one of its ancestors.
-func (a StableAddress) RemainderAfterAddressKey(prefixKey constraint.PathKey) ([]constraint.Segment, bool) {
-	prefix, ok := StableAddressFromCanonicalKey(prefixKey)
-	if !ok {
-		return nil, false
-	}
-	return a.RemainderAfterPrefix(prefix)
-}
-
-// AddressKeyOverlaps reports whether key denotes an address that overlaps addr.
-func AddressKeyOverlaps(key constraint.PathKey, addr StableAddress) bool {
-	keyAddr, ok := StableAddressFromCanonicalKey(key)
-	return ok && keyAddr.Overlaps(addr)
-}
-
 func (a StableAddress) sameRoot(b StableAddress) bool {
 	return a.root.isValid() && a.root.Equal(b.root)
 }
