@@ -44,6 +44,13 @@ func TestPathEvidence_RejectsNumericSegment(t *testing.T) {
 	}
 }
 
+func TestPathEvidence_RejectsEmptyStringIndexAsRecordEvidence(t *testing.T) {
+	got := PathEvidence([]constraint.Segment{{Kind: constraint.SegmentIndexString}}, typ.String)
+	if got != nil {
+		t.Fatalf("PathEvidence() = %v, want nil", got)
+	}
+}
+
 func TestIteratorAndMapElementEvidence(t *testing.T) {
 	if got := IndexedIteratorEvidence(1, typ.String); !typ.TypeEquals(got, typ.NewArray(typ.String)) {
 		t.Fatalf("IndexedIteratorEvidence() = %v, want string[]", got)

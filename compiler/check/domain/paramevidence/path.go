@@ -13,15 +13,8 @@ func PathEvidence(segments []constraint.Segment, leaf typ.Type) typ.Type {
 	if len(segments) == 0 {
 		return leaf
 	}
-	seg := segments[0]
-	var field string
-	switch seg.Kind {
-	case constraint.SegmentField, constraint.SegmentIndexString:
-		field = seg.Name
-	default:
-		return nil
-	}
-	if field == "" {
+	field, ok := constraint.SegmentFieldName(segments[0])
+	if !ok {
 		return nil
 	}
 	child := PathEvidence(segments[1:], leaf)
