@@ -137,39 +137,3 @@ func TestApplyIndexWriteKeyAliasReadbackProofIgnoresLegacyStoredTableKey(t *test
 		t.Fatal("readback accepted a legacy stored table key as canonical")
 	}
 }
-
-func TestApplyIndexWriteKeyAliasReadbackPathProofDerivesTableRead(t *testing.T) {
-	tablePath := constraint.NewPath(cfg.SymbolID(16), "table")
-	sourcePath := constraint.NewPath(cfg.SymbolID(17), "source_key")
-	targetPath := constraint.NewPath(cfg.SymbolID(18), "target_key")
-	table := testStableAddressPath(t, tablePath)
-	source := testStableAddressPath(t, sourcePath)
-	target := testStableAddressPath(t, targetPath)
-	state := PointState{
-		Env: map[ValueKey]product.AbstractValue{
-			SymbolValueKey(tablePath.Symbol):  product.FromType(typ.NewRecord().Field("id", typ.Number).Build()),
-			SymbolValueKey(sourcePath.Symbol): product.FromType(typ.LiteralString("id")),
-		},
-		KeyPresence: KeyPresenceFacts{}.
-			WithAddresses(table, source),
-	}
-
-	if !ApplyIndexWriteKeyAliasReadbackPathProof(&state, IndexWriteKeyAliasReadbackPathProof{
-		SourcePath: sourcePath,
-		TargetPath: targetPath,
-	}) {
-		t.Fatal("ApplyIndexWriteKeyAliasReadbackPathProof reported unchanged")
-	}
-	got, ok := state.IndexWrites.AdmissionAtAddress(IndexWriteAddressQuery{
-		Target:     table,
-		KeyPath:    target,
-		HasKeyPath: true,
-		KeyValue:   product.FromType(typ.LiteralString("id")),
-	})
-	if !ok {
-		t.Fatal("path alias readback missing")
-	}
-	if !product.Domain.Equal(got, product.FromType(typ.Number)) {
-		t.Fatalf("path alias readback = %v, want number", got.ProjectValue())
-	}
-}

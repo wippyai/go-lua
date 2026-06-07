@@ -13,12 +13,6 @@ type PathAliasProof struct {
 	Source StableAddress
 }
 
-// PathAliasPathProof is the structured-path form of PathAliasProof.
-type PathAliasPathProof struct {
-	ValuePath  constraint.Path
-	SourcePath constraint.Path
-}
-
 // ValueOriginProof records semantic value provenance between two stable
 // addresses.
 type ValueOriginProof struct {
@@ -28,10 +22,9 @@ type ValueOriginProof struct {
 	VarIndex int
 }
 
-// ValueOriginPathProof is the path-level form of ValueOriginProof. It keeps the
-// stable-address conversion in flow so producer layers publish provenance with
-// structured paths instead of rebuilding fact keys.
-type ValueOriginPathProof struct {
+// ValueOriginPathTransaction is the source-facing publication form for semantic
+// value provenance. Flow lowers paths once before applying the address proof.
+type ValueOriginPathTransaction struct {
 	ValuePath  constraint.Path
 	SourcePath constraint.Path
 	Kind       ValueOriginKind
@@ -81,26 +74,6 @@ func ApplyPathAliasProof(out *PointState, proof PathAliasProof) bool {
 	return !PathAliasFactsDomain.Equal(before, out.PathAliases)
 }
 
-// ApplyPathAliasPathProof applies identity alias provenance from structured
-// paths.
-func ApplyPathAliasPathProof(out *PointState, proof PathAliasPathProof) bool {
-	if out == nil || proof.ValuePath.IsEmpty() || proof.SourcePath.IsEmpty() {
-		return false
-	}
-	valueAddr, ok := StableAddressOfPath(proof.ValuePath)
-	if !ok {
-		return false
-	}
-	sourceAddr, ok := StableAddressOfPath(proof.SourcePath)
-	if !ok {
-		return false
-	}
-	return ApplyPathAliasProof(out, PathAliasProof{
-		Value:  valueAddr,
-		Source: sourceAddr,
-	})
-}
-
 // ApplyValueOriginProof applies semantic value-origin provenance to point state.
 func ApplyValueOriginProof(out *PointState, proof ValueOriginProof) bool {
 	if out == nil || proof.Value.Key() == "" || proof.Source.Key() == "" || proof.Kind == 0 {
@@ -111,25 +84,25 @@ func ApplyValueOriginProof(out *PointState, proof ValueOriginProof) bool {
 	return !ValueOriginFactsDomain.Equal(before, out.ValueOrigins)
 }
 
-// ApplyValueOriginPathProof applies semantic value-origin provenance from
-// structured paths.
-func ApplyValueOriginPathProof(out *PointState, proof ValueOriginPathProof) bool {
-	if out == nil || proof.ValuePath.IsEmpty() || proof.SourcePath.IsEmpty() || proof.Kind == 0 {
+// ApplyValueOriginPathTransaction lowers and applies a source-level value-origin
+// transaction.
+func ApplyValueOriginPathTransaction(out *PointState, tx ValueOriginPathTransaction) bool {
+	if out == nil || tx.ValuePath.IsEmpty() || tx.SourcePath.IsEmpty() || tx.Kind == 0 {
 		return false
 	}
-	valueAddr, ok := StableAddressOfPath(proof.ValuePath)
+	valueAddr, ok := StableAddressOfPath(tx.ValuePath)
 	if !ok {
 		return false
 	}
-	sourceAddr, ok := StableAddressOfPath(proof.SourcePath)
+	sourceAddr, ok := StableAddressOfPath(tx.SourcePath)
 	if !ok {
 		return false
 	}
 	return ApplyValueOriginProof(out, ValueOriginProof{
 		Value:    valueAddr,
 		Source:   sourceAddr,
-		Kind:     proof.Kind,
-		VarIndex: proof.VarIndex,
+		Kind:     tx.Kind,
+		VarIndex: tx.VarIndex,
 	})
 }
 

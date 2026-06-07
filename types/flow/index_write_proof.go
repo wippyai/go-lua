@@ -1,7 +1,6 @@
 package flow
 
 import (
-	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/domain/value/product"
 	"github.com/wippyai/go-lua/types/typ"
 )
@@ -25,15 +24,6 @@ type IndexWriteKeyAliasProof struct {
 type IndexWriteKeyAliasReadbackProof struct {
 	SourceKey   StableAddress
 	TargetKey   StableAddress
-	SourceValue product.AbstractValue
-}
-
-// IndexWriteKeyAliasReadbackPathProof is the structured-path form of
-// IndexWriteKeyAliasReadbackProof. SourceValue may be omitted; flow reads it
-// from the current point facts and falls back to unknown.
-type IndexWriteKeyAliasReadbackPathProof struct {
-	SourcePath  constraint.Path
-	TargetPath  constraint.Path
 	SourceValue product.AbstractValue
 }
 
@@ -99,30 +89,4 @@ func ApplyIndexWriteKeyAliasReadbackProof(out *PointState, proof IndexWriteKeyAl
 		})
 	}
 	return !IndexWriteAdmissionFactsDomain.Equal(before, out.IndexWrites)
-}
-
-// ApplyIndexWriteKeyAliasReadbackPathProof applies readback alias consequences
-// from structured paths.
-func ApplyIndexWriteKeyAliasReadbackPathProof(out *PointState, proof IndexWriteKeyAliasReadbackPathProof) bool {
-	if out == nil || proof.SourcePath.IsEmpty() || proof.TargetPath.IsEmpty() {
-		return false
-	}
-	sourceAddr, sourceOK := StableAddressOfPath(proof.SourcePath)
-	targetAddr, targetOK := StableAddressOfPath(proof.TargetPath)
-	if !sourceOK || !targetOK {
-		return false
-	}
-	sourceValue := proof.SourceValue
-	if sourceValue.IsZero() {
-		if value, ok := PointFactsOf(*out).PathValue(proof.SourcePath); ok && !value.IsZero() {
-			sourceValue = value
-		} else {
-			sourceValue = product.FromType(typ.Unknown)
-		}
-	}
-	return ApplyIndexWriteKeyAliasReadbackProof(out, IndexWriteKeyAliasReadbackProof{
-		SourceKey:   sourceAddr,
-		TargetKey:   targetAddr,
-		SourceValue: sourceValue,
-	})
 }

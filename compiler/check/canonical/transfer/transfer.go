@@ -1983,7 +1983,7 @@ func (t *Transfer) seedIteratorValueOriginsFromPath(out *flow.PointState, info *
 		if target.Kind != cfg.TargetIdent || target.Symbol == 0 {
 			continue
 		}
-		flow.ApplyValueOriginPathProof(out, flow.ValueOriginPathProof{
+		flow.ApplyValueOriginPathTransaction(out, flow.ValueOriginPathTransaction{
 			ValuePath:  constraint.NewPath(target.Symbol, target.Name),
 			SourcePath: source,
 			Kind:       kind,

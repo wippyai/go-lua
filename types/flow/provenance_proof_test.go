@@ -23,36 +23,20 @@ func TestApplyPathAliasProofPublishesAlias(t *testing.T) {
 	}
 }
 
-func TestApplyPathAliasPathProofPublishesAlias(t *testing.T) {
-	valuePath := constraint.NewPath(cfg.SymbolID(11), "value")
-	sourcePath := constraint.NewPath(cfg.SymbolID(12), "source")
-	value := testStableAddressPath(t, valuePath)
-	source := testStableAddressPath(t, sourcePath)
-	state := PointState{}
-
-	if !ApplyPathAliasPathProof(&state, PathAliasPathProof{ValuePath: valuePath, SourcePath: sourcePath}) {
-		t.Fatal("ApplyPathAliasPathProof reported unchanged")
-	}
-	aliases := state.PathAliases.AliasesOfAddress(value)
-	if len(aliases) != 1 || aliases[0].Source != source.Key() {
-		t.Fatalf("aliases = %v, want source %s", aliases, source.Key())
-	}
-}
-
-func TestApplyValueOriginPathProofPublishesOrigin(t *testing.T) {
+func TestApplyValueOriginPathTransactionPublishesOrigin(t *testing.T) {
 	valuePath := constraint.NewPath(cfg.SymbolID(13), "value")
 	sourcePath := constraint.NewPath(cfg.SymbolID(14), "source")
 	value := testStableAddressPath(t, valuePath)
 	source := testStableAddressPath(t, sourcePath)
 	state := PointState{}
 
-	if !ApplyValueOriginPathProof(&state, ValueOriginPathProof{
+	if !ApplyValueOriginPathTransaction(&state, ValueOriginPathTransaction{
 		ValuePath:  valuePath,
 		SourcePath: sourcePath,
 		Kind:       ValueOriginIndexedIterator,
 		VarIndex:   1,
 	}) {
-		t.Fatal("ApplyValueOriginPathProof reported unchanged")
+		t.Fatal("ApplyValueOriginPathTransaction reported unchanged")
 	}
 
 	origins := state.ValueOrigins.OriginsOfAddress(value)
