@@ -23,8 +23,8 @@ func TestPointFactsPathKeyPresenceQueries(t *testing.T) {
 	if !facts.HasKeyPresence(table, key) {
 		t.Fatal("HasKeyPresence missed table/key fact")
 	}
-	if !facts.HasKeyValuePresence(table, key, value) {
-		t.Fatal("HasKeyValuePresence missed table/key/value fact")
+	if !facts.HasKeyValueReadbackSource(KeyValueReadbackSourceQuery{TablePath: table, KeyPath: key, ValuePath: value}) {
+		t.Fatal("HasKeyValueReadbackSource missed table/key/value fact")
 	}
 	if facts.HasKeyPresence(table, constraint.NewPath(cfg.SymbolID(104), "other_key")) {
 		t.Fatal("HasKeyPresence accepted unrelated key")

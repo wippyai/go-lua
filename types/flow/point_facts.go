@@ -380,13 +380,27 @@ func (f PointFacts) HasKeyPresence(table, key constraint.Path) bool {
 	return tableOK && keyOK && f.state.KeyPresence.HasAddresses(tableAddr, keyAddr)
 }
 
-// HasKeyValuePresence reports whether key-presence also tracks the value path
-// produced by table[key].
-func (f PointFacts) HasKeyValuePresence(table, key, value constraint.Path) bool {
+func (f PointFacts) hasKeyValuePresence(table, key, value constraint.Path) bool {
 	tableAddr, tableOK := StableAddressOfPath(table)
 	keyAddr, keyOK := StableAddressOfPath(key)
 	valueAddr, valueOK := StableAddressOfPath(value)
 	return tableOK && keyOK && valueOK && f.state.KeyPresence.HasValueAddresses(tableAddr, keyAddr, valueAddr)
+}
+
+// KeyValueReadbackSourceQuery asks whether ValuePath is proven to be the current
+// readback value of TablePath[KeyPath].
+type KeyValueReadbackSourceQuery struct {
+	TablePath constraint.Path
+	KeyPath   constraint.Path
+	ValuePath constraint.Path
+}
+
+// HasKeyValueReadbackSource reports whether the reduced product proves
+// ValuePath was read from TablePath[KeyPath]. Producers use this as an identity
+// proof for self-derived dynamic writes; the raw key-presence storage stays
+// hidden behind this semantic query.
+func (f PointFacts) HasKeyValueReadbackSource(q KeyValueReadbackSourceQuery) bool {
+	return f.hasKeyValuePresence(q.TablePath, q.KeyPath, q.ValuePath)
 }
 
 func (f PointFacts) HasEmptyKeyArray(array constraint.Path) bool {

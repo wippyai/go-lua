@@ -720,7 +720,11 @@ func (t *Transfer) writeIsSelfDerived(out *flow.PointState, target cfg.AssignTar
 	}
 	keyPath := constraint.NewPath(keySym, keyIdent.Value)
 	valuePath := constraint.NewPath(valueSym, srcIdent.Value)
-	return out != nil && flow.PointFactsOf(*out).HasKeyValuePresence(basePath, keyPath, valuePath)
+	return out != nil && flow.PointFactsOf(*out).HasKeyValueReadbackSource(flow.KeyValueReadbackSourceQuery{
+		TablePath: basePath,
+		KeyPath:   keyPath,
+		ValuePath: valuePath,
+	})
 }
 
 // refineIndexRead recovers a non-optional element type for a provably in-bounds
