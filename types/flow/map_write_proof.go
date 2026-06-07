@@ -220,15 +220,11 @@ func ApplyKeyArrayElementKeyProof(out *PointState, proof KeyArrayElementKeyProof
 	}
 	beforePresence := out.KeyPresence
 	beforeIndexWrites := out.IndexWrites
-	tables := out.KeyPresence.KeyArrayTables(arrayKey)
-	for _, tableKey := range tables {
-		table, ok := StableAddressFromKey(tableKey)
-		if !ok {
-			continue
-		}
+	for _, tableUse := range out.KeyPresence.KeyArrayTableAddresses(proof.Array) {
+		table := tableUse.Address
 		result.Tables = append(result.Tables, table)
-		out.KeyPresence = out.KeyPresence.With(tableKey, targetKey)
-		for _, value := range out.KeyPresence.KeyArrayValues(arrayKey, tableKey) {
+		out.KeyPresence = out.KeyPresence.With(tableUse.Key, targetKey)
+		for _, value := range out.KeyPresence.KeyArrayValues(arrayKey, tableUse.Key) {
 			if value.IsZero() {
 				continue
 			}
@@ -446,14 +442,11 @@ func ApplyIndexedKeyArrayIterationProof(out *PointState, proof IndexedKeyArrayIt
 	if keyValue.IsZero() {
 		keyValue = product.FromType(typ.Unknown)
 	}
-	for _, tableKey := range out.KeyPresence.KeyArrayTables(arrayKey) {
-		table, ok := StableAddressFromKey(tableKey)
-		if !ok {
-			continue
-		}
+	for _, tableUse := range out.KeyPresence.KeyArrayTableAddresses(proof.Array) {
+		table := tableUse.Address
 		result.Tables = append(result.Tables, table)
-		out.KeyPresence = out.KeyPresence.With(tableKey, keyKey)
-		for _, value := range out.KeyPresence.KeyArrayValues(arrayKey, tableKey) {
+		out.KeyPresence = out.KeyPresence.With(tableUse.Key, keyKey)
+		for _, value := range out.KeyPresence.KeyArrayValues(arrayKey, tableUse.Key) {
 			if value.IsZero() {
 				continue
 			}

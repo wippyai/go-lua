@@ -351,6 +351,42 @@ func TestApplyKeyArrayElementKeyProofPublishesReadbackAdmission(t *testing.T) {
 	}
 }
 
+func TestApplyKeyArrayElementKeyProofIgnoresLegacyStoredTableKey(t *testing.T) {
+	arrayPath := constraint.NewPath(cfg.SymbolID(132), "node_order")
+	tablePath := constraint.NewPath(cfg.SymbolID(133), "nodes")
+	targetPath := constraint.NewPath(cfg.SymbolID(134), "node_id")
+	array := testStableAddressPath(t, arrayPath)
+	table := testStableAddressPath(t, tablePath)
+	target := testStableAddressPath(t, targetPath)
+	state := PointState{
+		KeyPresence: KeyPresenceFacts{}.
+			WithKeyArrayValue(array.Key(), tablePath.Key(), product.FromType(typ.String)),
+	}
+	if tables := state.KeyPresence.KeyArrayTables(array.Key()); len(tables) != 1 || tables[0] != tablePath.Key() {
+		t.Fatalf("test setup did not keep legacy stored table key: %s", state.KeyPresence.Format())
+	}
+
+	result, changed := ApplyKeyArrayElementKeyProof(&state, KeyArrayElementKeyProof{
+		Array:     array,
+		TargetKey: target,
+		KeyValue:  product.FromType(typ.LiteralString("node-1")),
+	})
+	if changed || len(result.Tables) != 0 {
+		t.Fatalf("legacy table key produced proof result: changed=%v tables=%v", changed, result.Tables)
+	}
+	if state.KeyPresence.Has(table.Key(), target.Key()) {
+		t.Fatalf("legacy table key produced key-presence fact: %s", state.KeyPresence.Format())
+	}
+	if _, ok := state.IndexWrites.AdmissionAtAddress(IndexWriteAddressQuery{
+		Target:     table,
+		KeyPath:    target,
+		HasKeyPath: true,
+		KeyValue:   product.FromType(typ.LiteralString("node-1")),
+	}); ok {
+		t.Fatal("legacy table key produced readback admission")
+	}
+}
+
 func TestApplyKeyArrayProofPublishesArrayTable(t *testing.T) {
 	arrayPath := constraint.NewPath(cfg.SymbolID(35), "node_order")
 	tablePath := constraint.NewPath(cfg.SymbolID(36), "nodes")
@@ -472,6 +508,42 @@ func TestApplyIndexedKeyArrayIterationProofPublishesReadbackAdmission(t *testing
 	})
 	if !ok || !product.Domain.Equal(got, value) {
 		t.Fatalf("admission = %v/%v, want string", got, ok)
+	}
+}
+
+func TestApplyIndexedKeyArrayIterationProofIgnoresLegacyStoredTableKey(t *testing.T) {
+	arrayPath := constraint.NewPath(cfg.SymbolID(144), "ids")
+	tablePath := constraint.NewPath(cfg.SymbolID(145), "nodes")
+	keyPath := constraint.NewPath(cfg.SymbolID(146), "id")
+	array := testStableAddressPath(t, arrayPath)
+	table := testStableAddressPath(t, tablePath)
+	key := testStableAddressPath(t, keyPath)
+	state := PointState{
+		KeyPresence: KeyPresenceFacts{}.
+			WithKeyArrayValue(array.Key(), tablePath.Key(), product.FromType(typ.String)),
+	}
+	if tables := state.KeyPresence.KeyArrayTables(array.Key()); len(tables) != 1 || tables[0] != tablePath.Key() {
+		t.Fatalf("test setup did not keep legacy stored table key: %s", state.KeyPresence.Format())
+	}
+
+	result, changed := ApplyIndexedKeyArrayIterationProof(&state, IndexedKeyArrayIterationProof{
+		Array:    array,
+		Key:      key,
+		KeyValue: product.FromType(typ.LiteralString("n1")),
+	})
+	if changed || len(result.Tables) != 0 {
+		t.Fatalf("legacy table key produced iteration result: changed=%v tables=%v", changed, result.Tables)
+	}
+	if state.KeyPresence.Has(table.Key(), key.Key()) {
+		t.Fatalf("legacy table key produced key-presence fact: %s", state.KeyPresence.Format())
+	}
+	if _, ok := state.IndexWrites.AdmissionAtAddress(IndexWriteAddressQuery{
+		Target:     table,
+		KeyPath:    key,
+		HasKeyPath: true,
+		KeyValue:   product.FromType(typ.LiteralString("n1")),
+	}); ok {
+		t.Fatal("legacy table key produced readback admission")
 	}
 }
 

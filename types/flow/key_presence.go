@@ -34,6 +34,14 @@ type KeyArrayFact struct {
 	Table constraint.PathKey
 }
 
+// KeyPresenceTableAddress is the canonical address view of one stored table key
+// in the key-presence carrier. Key is retained for reducers that also need
+// payload lookups in the underlying fact carrier.
+type KeyPresenceTableAddress struct {
+	Key     constraint.PathKey
+	Address StableAddress
+}
+
 // EmptyKeyArrayFact is a point-local must-fact proving that Array is currently
 // empty, therefore its elements are keys of every table by vacuity. It is kept
 // separate from concrete KeyArrayFact entries so constructors do not enumerate a
@@ -702,6 +710,41 @@ func (f KeyPresenceFacts) KeyArrayTables(array constraint.PathKey) []constraint.
 		if _, ok := findPathKeyLinear(out, table); !ok {
 			out = append(out, table)
 		}
+	}
+	return out
+}
+
+func (f KeyPresenceFacts) KeyArrayTableAddresses(array StableAddress) []KeyPresenceTableAddress {
+	arrayKey := array.Key()
+	if f.bottom || arrayKey == "" {
+		return nil
+	}
+	var out []KeyPresenceTableAddress
+	for _, tableKey := range f.KeyArrayTables(arrayKey) {
+		table, ok := StableAddressFromCanonicalKey(tableKey)
+		if !ok {
+			continue
+		}
+		out = append(out, KeyPresenceTableAddress{Key: tableKey, Address: table})
+	}
+	return out
+}
+
+func (f KeyPresenceFacts) TablesWithKeyAddress(key StableAddress) []KeyPresenceTableAddress {
+	keyKey := key.Key()
+	if f.bottom || keyKey == "" {
+		return nil
+	}
+	var out []KeyPresenceTableAddress
+	for _, entry := range f.entries {
+		if entry.Key != keyKey {
+			continue
+		}
+		table, ok := StableAddressFromCanonicalKey(entry.Table)
+		if !ok {
+			continue
+		}
+		out = append(out, KeyPresenceTableAddress{Key: entry.Table, Address: table})
 	}
 	return out
 }

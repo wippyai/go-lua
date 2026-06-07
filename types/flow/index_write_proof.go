@@ -85,15 +85,8 @@ func ApplyIndexWriteKeyAliasReadbackProof(out *PointState, proof IndexWriteKeyAl
 	if sourceValue.IsZero() {
 		sourceValue = product.FromType(typ.Unknown)
 	}
-	sourceKey := proof.SourceKey.Key()
-	for _, entry := range out.KeyPresence.Entries() {
-		if entry.Key != sourceKey {
-			continue
-		}
-		table, ok := StableAddressFromKey(entry.Table)
-		if !ok {
-			continue
-		}
+	for _, tableUse := range out.KeyPresence.TablesWithKeyAddress(proof.SourceKey) {
+		table := tableUse.Address
 		tableValue, ok := PointFactsOf(*out).AddressValue(table)
 		if !ok || tableValue.IsZero() {
 			continue

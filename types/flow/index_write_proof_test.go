@@ -103,6 +103,41 @@ func TestApplyIndexWriteKeyAliasReadbackProofDerivesTableRead(t *testing.T) {
 	}
 }
 
+func TestApplyIndexWriteKeyAliasReadbackProofIgnoresLegacyStoredTableKey(t *testing.T) {
+	tablePath := constraint.NewPath(cfg.SymbolID(60), "table")
+	sourcePath := constraint.NewPath(cfg.SymbolID(61), "source_key")
+	targetPath := constraint.NewPath(cfg.SymbolID(62), "target_key")
+	table := testStableAddressPath(t, tablePath)
+	source := testStableAddressPath(t, sourcePath)
+	target := testStableAddressPath(t, targetPath)
+	state := PointState{
+		Env: map[ValueKey]product.AbstractValue{
+			SymbolValueKey(tablePath.Symbol): product.FromType(typ.NewRecord().Field("id", typ.Number).Build()),
+		},
+		KeyPresence: KeyPresenceFacts{}.
+			With(tablePath.Key(), source.Key()),
+	}
+	entries := state.KeyPresence.Entries()
+	if len(entries) != 1 || entries[0].Table != tablePath.Key() {
+		t.Fatalf("test setup did not keep legacy stored table key: %s", state.KeyPresence.Format())
+	}
+
+	ApplyIndexWriteKeyAliasReadbackProof(&state, IndexWriteKeyAliasReadbackProof{
+		SourceKey:   source,
+		TargetKey:   target,
+		SourceValue: product.FromType(typ.LiteralString("id")),
+	})
+
+	if _, ok := state.IndexWrites.AdmissionAtAddress(IndexWriteAddressQuery{
+		Target:     table,
+		KeyPath:    target,
+		HasKeyPath: true,
+		KeyValue:   product.FromType(typ.LiteralString("id")),
+	}); ok {
+		t.Fatal("readback accepted a legacy stored table key as canonical")
+	}
+}
+
 func TestApplyIndexWriteKeyAliasReadbackPathProofDerivesTableRead(t *testing.T) {
 	tablePath := constraint.NewPath(cfg.SymbolID(16), "table")
 	sourcePath := constraint.NewPath(cfg.SymbolID(17), "source_key")
