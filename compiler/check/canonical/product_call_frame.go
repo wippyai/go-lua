@@ -19,7 +19,6 @@ import (
 // of reconstructing call facts through driver helpers.
 type productCallFrame struct {
 	typer   callTyper
-	call    *ast.FuncCallExpr
 	ctx     transfer.ProductCallContext
 	site    callSiteFrame
 	outcome canonicalcall.CallOutcome
@@ -35,10 +34,9 @@ func (ct callTyper) productCallFrame(call *ast.FuncCallExpr, ctx transfer.Produc
 	}
 	return productCallFrame{
 		typer:   ct,
-		call:    call,
 		ctx:     ctx,
 		site:    site,
-		outcome: ct.callOutcomeForProductCallWithOptions(call, ctx, opts),
+		outcome: ct.productCallOutcomeProjection(site, ctx, opts, nil).outcome(),
 	}, true
 }
 
@@ -49,7 +47,7 @@ func (p productCallFrame) inferredReturnValues() []product.AbstractValue {
 func (p productCallFrame) callReturnValues() ([]product.AbstractValue, bool) {
 	summaryReturns := p.inferredReturnValues()
 	return canonicalcall.ReturnValueInput{
-		Call:                 p.call,
+		Call:                 p.site.call,
 		Env:                  p.typer.callInterceptEnv(p.site.exprType),
 		TypePolicyAvailable:  p.typer.d.cfg.Types != nil,
 		PendingInput:         p.ctx.PendingInput,
@@ -83,12 +81,12 @@ func (p productCallFrame) result(effects transfer.CallEffects) transfer.ProductC
 }
 
 func (p productCallFrame) returnRelations() flow.ReturnRelations {
-	return p.outcome.ReturnRelations(p.call, p.typer.callTypeResolver(p.ctx.ExprType), p.ctx.ExprValue != nil)
+	return p.outcome.ReturnRelations(p.site.call, p.typer.callTypeResolver(p.site.exprType), p.ctx.ExprValue != nil)
 }
 
 func (p productCallFrame) callArgDemands() []callobligation.Obligation {
 	return (canonicalcall.CallArgDemandProjection{
-		Call: p.call,
+		Call: p.site.call,
 		SummaryDemands: func(*ast.FuncCallExpr) ([]callobligation.Obligation, bool) {
 			return p.argDemands()
 		},
@@ -107,12 +105,12 @@ func (p productCallFrame) callFunctionShape() *typ.Function {
 
 func (p productCallFrame) paramNarrows() []transfer.ParamNarrow {
 	d := p.typer.d
-	if d == nil || d.activeProgram == nil || p.call == nil {
+	if d == nil || d.activeProgram == nil || p.site.call == nil {
 		return nil
 	}
 	prog := d.activeProgram
 	return (canonicalcall.ParamNarrowProjection{
-		Call: p.call,
+		Call: p.site.call,
 		SummaryNarrows: func(call *ast.FuncCallExpr) ([]paramevidence.ParamNarrow, bool) {
 			ref, ok := p.typer.resolveCalleeRef(call, prog)
 			if !ok {
@@ -130,14 +128,14 @@ func (p productCallFrame) argDemands() ([]callobligation.Obligation, bool) {
 		return nil, false
 	}
 	return paramevidence.CallArgDemandProjection{
-		Call:    p.call,
+		Call:    p.site.call,
 		Targets: targets,
 	}.Obligations(), true
 }
 
 func (p productCallFrame) demandTargets() []paramevidence.CallArgDemandTarget {
 	d := p.typer.d
-	if d == nil || d.activeProgram == nil || p.call == nil || len(p.call.Args) == 0 || !p.outcome.HasTargets() {
+	if d == nil || d.activeProgram == nil || p.site.call == nil || len(p.site.call.Args) == 0 || !p.outcome.HasTargets() {
 		return nil
 	}
 	prog := d.activeProgram
@@ -162,7 +160,7 @@ func (p productCallFrame) demandTargets() []paramevidence.CallArgDemandTarget {
 				return prog.paramSlotDeclaredType(ref, slot)
 			},
 			EntrySlotType: func(slot int) typ.Type {
-				return projector.slotType(ref, p.call, p.ctx.RuntimeArgValues, target.EntryValues, slot)
+				return projector.slotType(ref, p.site.call, p.ctx.RuntimeArgValues, target.EntryValues, slot)
 			},
 			SourceParamAnnotated: func(sourceParam int) bool {
 				return paramevidence.SourceParamAnnotated(fn, sourceParam)
@@ -173,19 +171,19 @@ func (p productCallFrame) demandTargets() []paramevidence.CallArgDemandTarget {
 }
 
 func (p productCallFrame) effects(projector cellEffectProjector, elementUnions []effect.ContainerElementUnion) transfer.CallEffects {
-	callbackRefs := projector.callEntry.productArgProjection(p.ctx).callbackRefsForCall(p.call)
+	callbackRefs := projector.callEntry.productArgProjection(p.ctx).callbackRefsForCall(p.site.call)
 	return transfer.CallEffects{
 		CellEffects: p.outcome.CellEffects(summary.CellEffectAggregation{
-			CallbackSpec: projector.callbackSpecForCall(p.call, p.ctx.ExprType),
-			CallbackArgs: p.call.Args,
-			MethodCall:   p.call.Method != "",
+			CallbackSpec: projector.callbackSpecForCall(p.site.call, p.site.exprType),
+			CallbackArgs: p.site.call.Args,
+			MethodCall:   p.site.call.Method != "",
 			ResolveCallback: func(arg ast.Expr) ([]summary.FuncRef, bool) {
 				refs, ok := callbackRefs[arg]
 				return refs, ok
 			},
 			EffectOf: func(ref summary.FuncRef, entryValues summary.EntryValues) flow.CaptureEffects {
-				entryFacts := projector.callEntry.access().productFacts(ref, p.call, p.ctx)
-				return projector.effectsForRef(ref, p.ctx.References, entryValues, entryFacts)
+				entryFacts := projector.callEntry.access().productFacts(ref, p.site.call, p.ctx)
+				return projector.effectsForRef(ref, p.site.references, entryValues, entryFacts)
 			},
 		}),
 		ReceiverEffects: p.outcome.ReceiverEffects(),

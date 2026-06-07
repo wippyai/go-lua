@@ -53,7 +53,11 @@ local s: string = identity("test")
 
 	arg := product.FromType(typ.LiteralString("test"))
 	callCtx := transferlessProductCallContext([]product.AbstractValue{arg})
-	projection := ct.productCallOutcomeProjection(call, callCtx, productCallOutcomeOptions{}, nil)
+	site, ok := ct.productCallSiteFrame(call, callCtx)
+	if !ok {
+		t.Fatal("productCallSiteFrame failed")
+	}
+	projection := ct.productCallOutcomeProjection(site, callCtx, productCallOutcomeOptions{}, nil)
 	returns := projection.signatureReturns(targets[0])
 	if len(returns) != 1 || !typ.TypeEquals(returns[0], typ.String) {
 		t.Fatalf("signature returns = %#v, want [string]; ctx=%v", returns, ctx)
@@ -101,7 +105,11 @@ local c = make_container("hello")
 
 	arg := product.FromType(typ.LiteralString("hello"))
 	callCtx := transferlessProductCallContext([]product.AbstractValue{arg})
-	projection := ct.productCallOutcomeProjection(call, callCtx, productCallOutcomeOptions{}, nil)
+	site, ok := ct.productCallSiteFrame(call, callCtx)
+	if !ok {
+		t.Fatal("productCallSiteFrame failed")
+	}
+	projection := ct.productCallOutcomeProjection(site, callCtx, productCallOutcomeOptions{}, nil)
 	returns := projection.signatureReturns(targets[0])
 	if len(returns) != 1 {
 		t.Fatalf("signature returns = %#v, want one return; ctx=%v", returns, ctx)
@@ -153,7 +161,11 @@ local c = make_container("hello")
 	ct := callTyper{d: driver, g: rootGraph}
 	arg := product.FromType(typ.LiteralString("hello"))
 	callCtx := transferlessProductCallContext([]product.AbstractValue{arg})
-	outcome := ct.callOutcomeForProductCallWithOptions(call, callCtx, productCallOutcomeOptions{})
+	site, ok := ct.productCallSiteFrame(call, callCtx)
+	if !ok {
+		t.Fatal("productCallSiteFrame failed")
+	}
+	outcome := ct.productCallOutcomeProjection(site, callCtx, productCallOutcomeOptions{}, nil).outcome()
 	targets := outcome.Targets()
 	if len(targets) != 1 || len(targets[0].Summary.Returns) != 1 {
 		t.Fatalf("product outcome targets = %#v, want one target with one summary return", targets)

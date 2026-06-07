@@ -53,26 +53,14 @@ type productCallOutcomeOptions struct {
 	skipSignatureRelations bool
 }
 
-func (ct callTyper) callOutcomeForProductCallWithOptions(call *ast.FuncCallExpr, ctx transfer.ProductCallContext, opts productCallOutcomeOptions) canonicalcall.CallOutcome {
-	d := ct.d
-	if d == nil || call == nil || d.activeProgram == nil {
-		return canonicalcall.CallOutcome{}
-	}
-	return ct.productCallOutcomeProjection(call, ctx, opts, nil).outcome()
-}
-
 func (ct callTyper) productCallOutcomeProjection(
-	call *ast.FuncCallExpr,
+	site callSiteFrame,
 	ctx transfer.ProductCallContext,
 	opts productCallOutcomeOptions,
 	lookup canonicalcall.SummaryLookup,
 ) callOutcomeProjection {
 	d := ct.d
-	if d == nil || call == nil || d.activeProgram == nil {
-		return callOutcomeProjection{}
-	}
-	site, ok := ct.productCallSiteFrame(call, ctx)
-	if !ok {
+	if d == nil || site.call == nil || d.activeProgram == nil {
 		return callOutcomeProjection{}
 	}
 	return callOutcomeProjection{
@@ -86,10 +74,10 @@ func (ct callTyper) productCallOutcomeProjection(
 		entryContext: func(target canonicalcall.SelectedTarget) canonicalcall.EntryContext {
 			ref := target.Ref()
 			if closure, ok := target.Closure(); ok {
-				entry, _ := ct.productClosureCallEntryContext(ref, closure, call, ctx)
+				entry, _ := ct.productClosureCallEntryContext(ref, closure, site.call, ctx)
 				return entry
 			}
-			entry, _ := ct.productCallEntryContext(ref, call, ctx)
+			entry, _ := ct.productCallEntryContext(ref, site.call, ctx)
 			return entry
 		},
 		summaryLookup: lookup,

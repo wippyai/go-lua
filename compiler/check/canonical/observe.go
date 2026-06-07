@@ -422,8 +422,12 @@ func (f *canonicalFacts) CallReturnTypesAt(point cfg.Point, call *ast.FuncCallEx
 		return nil, false
 	}
 	ct := callTyper{d: f.driver, g: f.graph}
+	site, ok := ct.productCallSiteFrame(call, callCtx)
+	if !ok {
+		return nil, false
+	}
 	outcome := ct.productCallOutcomeProjection(
-		call,
+		site,
 		callCtx,
 		productCallOutcomeOptions{},
 		func(ctx canonicalcall.EntryContext) summary.Summary {
