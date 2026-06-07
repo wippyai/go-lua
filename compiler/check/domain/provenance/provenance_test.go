@@ -215,6 +215,34 @@ func TestRouteSourceTypeGraphStopsIdentityCycles(t *testing.T) {
 	}
 }
 
+func TestRouteClosureRejectsInvalidPathIdentities(t *testing.T) {
+	targets := RouteClosure(RouteClosureConfig[typ.Type]{
+		Seed: RouteClosureTarget[typ.Type]{
+			Path:    constraint.Path{Root: "name_only"},
+			Payload: typ.String,
+		},
+		Targets: func(flow.ProvenanceRoute, typ.Type) []RouteClosureTarget[typ.Type] {
+			t.Fatal("invalid seed should not traverse routes")
+			return nil
+		},
+	})
+	if len(targets) != 0 {
+		t.Fatalf("RouteClosure invalid seed = %v, want none", targets)
+	}
+}
+
+func TestRouteSourceTypeGraphRejectsInvalidPathIdentity(t *testing.T) {
+	graph := RouteSourceTypeGraph{
+		BodyContractRead: func(constraint.Path) typ.Type {
+			t.Fatal("invalid path should not reach body-contract reads")
+			return nil
+		},
+	}
+	if got := graph.TypeAt(constraint.Path{Root: "name_only"}); got != nil {
+		t.Fatalf("RouteSourceTypeGraph invalid path = %v, want nil", got)
+	}
+}
+
 func testProjectSegments(base typ.Type, segments []constraint.Segment) typ.Type {
 	return typepath.TypeAtSegments(base, segments, typepath.Options{MissingFieldAsNil: true})
 }

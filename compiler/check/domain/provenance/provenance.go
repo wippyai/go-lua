@@ -47,6 +47,35 @@ type RouteClosureConfig[T any] struct {
 	Equal    func(T, T) bool
 }
 
+type routeIdentitySet struct {
+	seen map[constraint.PathKey]bool
+}
+
+func routePathIdentity(path constraint.Path) (constraint.PathKey, bool) {
+	if path.Symbol == 0 {
+		return "", false
+	}
+	key := flow.PathIdentityKey(path)
+	return key, key != ""
+}
+
+func (s *routeIdentitySet) Enter(path constraint.Path) (func(), bool) {
+	key, ok := routePathIdentity(path)
+	if !ok {
+		return nil, false
+	}
+	if s.seen == nil {
+		s.seen = make(map[constraint.PathKey]bool)
+	}
+	if s.seen[key] {
+		return nil, false
+	}
+	s.seen[key] = true
+	return func() {
+		delete(s.seen, key)
+	}, true
+}
+
 // RouteClosure follows provenance routes backward from Seed and joins payloads
 // that reach the same stable path identity. If a joined payload grows, that path
 // is revisited so downstream routes see the stronger obligation.
@@ -61,8 +90,8 @@ func RouteClosure[T any](cfg RouteClosureConfig[T]) []RouteClosureTarget[T] {
 		if target.Path.Symbol == 0 || routePayloadBottom(cfg.IsBottom, target.Payload) {
 			return
 		}
-		key := flow.PathIdentityKey(target.Path)
-		if key == "" {
+		key, ok := routePathIdentity(target.Path)
+		if !ok {
 			return
 		}
 		if i, ok := index[key]; ok {
@@ -148,22 +177,15 @@ func (g RouteSourceTypeGraph) RouteType(route flow.ProvenanceRoute) typ.Type {
 	return RouteSourceType(route, nil, g.resolver(nil), g.Project)
 }
 
-func (g RouteSourceTypeGraph) typeAt(path constraint.Path, seen map[constraint.PathKey]bool) typ.Type {
-	if path.Symbol == 0 {
-		return nil
-	}
-	key := flow.PathIdentityKey(path)
-	if key == "" {
-		return nil
-	}
+func (g RouteSourceTypeGraph) typeAt(path constraint.Path, seen *routeIdentitySet) typ.Type {
 	if seen == nil {
-		seen = make(map[constraint.PathKey]bool)
+		seen = &routeIdentitySet{}
 	}
-	if seen[key] {
+	leave, ok := seen.Enter(path)
+	if !ok {
 		return nil
 	}
-	seen[key] = true
-	defer delete(seen, key)
+	defer leave()
 
 	if direct := g.bodyContractRead(path); direct != nil {
 		return g.finalize(path, direct)
@@ -188,7 +210,7 @@ func (g RouteSourceTypeGraph) typeAt(path constraint.Path, seen map[constraint.P
 	}
 }
 
-func (g RouteSourceTypeGraph) resolver(seen map[constraint.PathKey]bool) RouteSourceTypeResolver {
+func (g RouteSourceTypeGraph) resolver(seen *routeIdentitySet) RouteSourceTypeResolver {
 	return func(path constraint.Path, read SourceReadKind) typ.Type {
 		switch read {
 		case SourceReadBodyContract:
