@@ -146,6 +146,29 @@ func TestAppendElementFieldOriginUseSourcePath(t *testing.T) {
 	}
 }
 
+func TestAppendElementFieldSourceAddressesIgnoreLegacyStoredSource(t *testing.T) {
+	arrayPath := constraint.NewPath(cfg.SymbolID(130), "routes")
+	sourcePath := constraint.NewPath(cfg.SymbolID(131), "op")
+	array := testStableAddressPath(t, arrayPath)
+	field := []constraint.Segment{{Kind: constraint.SegmentField, Name: "target_name"}}
+	facts := KeyPresenceFacts{}.
+		WithAppendHistoryBaseAddress(array).
+		WithAppendElementFieldOriginFromSource(
+			array.Key(),
+			AppendElementFieldPathKey(field),
+			sourcePath.Key(),
+			"",
+		)
+	raw := facts.AppendElementFieldSources(array.Key(), field)
+	if len(raw) != 1 || raw[0].Origin.Source != sourcePath.Key() {
+		t.Fatalf("test setup did not keep legacy stored source key: %s", facts.Format())
+	}
+
+	if got := facts.AppendElementFieldSourceAddresses(array.Key(), field); len(got) != 0 {
+		t.Fatalf("canonical source view accepted legacy stored source key: %#v", got)
+	}
+}
+
 func TestKeyPresenceFactsKillSubtreeRemovesDependentFacts(t *testing.T) {
 	table := SymbolPathKey(cfg.SymbolID(1), nil)
 	key := SymbolPathKey(cfg.SymbolID(2), nil)

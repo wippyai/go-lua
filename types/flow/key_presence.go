@@ -126,6 +126,14 @@ type AppendElementFieldOriginUse struct {
 	FieldRemainder []constraint.Segment
 }
 
+// AppendElementFieldSourceAddress is the canonical source-address view of an
+// appended element-field origin use.
+type AppendElementFieldSourceAddress struct {
+	Source         StableAddress
+	SourceField    []constraint.Segment
+	FieldRemainder []constraint.Segment
+}
+
 // SourcePath returns the symbol-rooted source path carried by this origin use.
 func (u AppendElementFieldOriginUse) SourcePath() (constraint.Path, bool) {
 	addr, ok := StableAddressFromKey(u.Origin.Source)
@@ -1080,6 +1088,26 @@ func (f KeyPresenceFacts) AppendElementFieldSources(array constraint.PathKey, fi
 			Origin:         fact,
 			SourceField:    append([]constraint.Segment(nil), sourceField...),
 			FieldRemainder: append([]constraint.Segment(nil), remainder...),
+		})
+	}
+	return out
+}
+
+func (f KeyPresenceFacts) AppendElementFieldSourceAddresses(array constraint.PathKey, field []constraint.Segment) []AppendElementFieldSourceAddress {
+	uses := f.AppendElementFieldSources(array, field)
+	if len(uses) == 0 {
+		return nil
+	}
+	var out []AppendElementFieldSourceAddress
+	for _, use := range uses {
+		source, ok := StableAddressFromCanonicalKey(use.Origin.Source)
+		if !ok {
+			continue
+		}
+		out = append(out, AppendElementFieldSourceAddress{
+			Source:         source,
+			SourceField:    cloneAddressSegments(use.SourceField),
+			FieldRemainder: cloneAddressSegments(use.FieldRemainder),
 		})
 	}
 	return out

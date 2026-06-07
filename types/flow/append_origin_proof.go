@@ -593,15 +593,13 @@ func ApplyAppendElementFieldOriginUse(
 		return false
 	}
 	before := out.KeyPresence
-	for _, sourceUse := range out.KeyPresence.AppendElementFieldSources(originUse.Origin.Source, originUse.Remainder) {
-		source, ok := StableAddressFromKey(sourceUse.Origin.Source)
-		if !ok {
-			continue
-		}
+	for _, sourceUse := range out.KeyPresence.AppendElementFieldSourceAddresses(originUse.Origin.Source, originUse.Remainder) {
+		source := sourceUse.Source
 		sourceField := cloneAddressSegments(sourceUse.SourceField)
 		if len(sourceField) > 0 {
 			sourceField = append(sourceField, sourceUse.FieldRemainder...)
 		} else {
+			var ok bool
 			source, ok = source.Append(sourceUse.FieldRemainder)
 			if !ok {
 				continue

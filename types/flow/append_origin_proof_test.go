@@ -99,6 +99,43 @@ func TestApplyAppendElementFieldOriginUseReplaysSourcesToDestinations(t *testing
 	}
 }
 
+func TestApplyAppendElementFieldOriginUseIgnoresLegacyStoredSource(t *testing.T) {
+	arrayPath := constraint.NewPath(cfg.SymbolID(211), "out")
+	sourcePath := constraint.NewPath(cfg.SymbolID(212), "source")
+	iterPath := constraint.NewPath(cfg.SymbolID(213), "entry")
+	source := testStableAddressPath(t, sourcePath)
+	state := PointState{
+		KeyPresence: KeyPresenceFacts{}.
+			WithAppendHistoryBaseAddress(source).
+			WithAppendElementFieldOriginFromSource(
+				source.Key(),
+				AppendElementFieldPathKey([]constraint.Segment{{Kind: constraint.SegmentField, Name: "id"}}),
+				iterPath.Key(),
+				"",
+			),
+	}
+	raw := state.KeyPresence.AppendElementFieldSources(source.Key(), []constraint.Segment{{Kind: constraint.SegmentField, Name: "id"}})
+	if len(raw) != 1 || raw[0].Origin.Source != iterPath.Key() {
+		t.Fatalf("test setup did not keep legacy stored source key: %s", state.KeyPresence.Format())
+	}
+	originUse := ValueOriginUse{
+		Origin: ValueOriginFact{
+			Source:   source.Key(),
+			Kind:     ValueOriginIndexedIterator,
+			VarIndex: 1,
+		},
+		Remainder: []constraint.Segment{{Kind: constraint.SegmentField, Name: "id"}},
+	}
+	destinations := []AppendOriginDestination{{
+		Array:       testStableAddressPath(t, arrayPath),
+		FieldPrefix: []constraint.Segment{{Kind: constraint.SegmentField, Name: "payload"}},
+	}}
+
+	if ApplyAppendElementFieldOriginUse(&state, destinations, []constraint.Segment{{Kind: constraint.SegmentField, Name: "name"}}, originUse) {
+		t.Fatal("legacy stored source key replayed as canonical append field origin")
+	}
+}
+
 func TestAppendElementFieldOriginFieldsReturnsStructuredFields(t *testing.T) {
 	arrayPath := constraint.NewPath(cfg.SymbolID(114), "out")
 	sourcePath := constraint.NewPath(cfg.SymbolID(115), "source")
