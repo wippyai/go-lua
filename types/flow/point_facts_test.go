@@ -246,3 +246,41 @@ func TestPointFactsLengthLowerBoundUsesSymbolPathKey(t *testing.T) {
 		t.Fatalf("LengthLowerBound(%s) = %d/%v, want 3/true", path, got, ok)
 	}
 }
+
+func TestPointFactsReadPathValueProjectsUnannotatedGradualRoot(t *testing.T) {
+	const sym = cfg.SymbolID(21)
+	path := constraint.NewPath(sym, "payload").Field("id")
+
+	got := PointFactsOf(PointState{}).ReadPathValue(path, PointReadPolicy{
+		UnannotatedSymbol: func(candidate cfg.SymbolID) bool {
+			return candidate == sym
+		},
+	})
+
+	if got.State != StateResolved || got.Value.IsZero() || !got.Value.IsGradualTop() {
+		t.Fatalf("ReadPathValue(unannotated member) = %#v, want resolved gradual-top value", got)
+	}
+	if !typ.IsAny(got.Value.ProjectValue()) {
+		t.Fatalf("ReadPathValue(unannotated member) type = %v, want any", got.Value.ProjectValue())
+	}
+}
+
+func TestPointFactsReadPathTypeRefinesStaticIndexWithLengthProof(t *testing.T) {
+	const sym = cfg.SymbolID(22)
+	root := constraint.NewPath(sym, "items")
+	indexed := root.IndexInt(1)
+	num := numeric.NewState()
+	num.ApplyLenGeConst(SymbolPathKey(sym, nil), 1)
+	state := PointState{
+		Env: map[ValueKey]product.AbstractValue{
+			SymbolValueKey(sym): product.FromType(typ.NewArray(typ.String)),
+		},
+		Num: num,
+	}
+
+	got := PointFactsOf(state).ReadPathType(indexed, PointReadPolicy{})
+
+	if got.State != StateResolved || !typ.TypeEquals(got.Type, typ.String) {
+		t.Fatalf("ReadPathType(static in-bounds index) = %#v, want resolved string", got)
+	}
+}
