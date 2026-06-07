@@ -63,12 +63,25 @@ func ApplyVariantCaseFieldProjections(out *PointState, fact constraint.Condition
 	if out == nil {
 		return false
 	}
-	projected := VariantCaseFieldProjectionValues(*out, fact, projections)
-	changed := false
-	for _, entry := range projected {
-		changed = SetStaticMemberPath(out, entry.Path, entry.Value) || changed
+	return ApplyStaticMemberReductions(out, VariantCaseFieldProjectionReductions(*out, fact, projections))
+}
+
+// VariantCaseFieldProjectionReductions selects static-member reductions
+// justified by variant-origin condition facts.
+func VariantCaseFieldProjectionReductions(
+	state PointState,
+	fact constraint.Condition,
+	projections []VariantCaseFieldProjection,
+) []StaticMemberReduction {
+	values := VariantCaseFieldProjectionValues(state, fact, projections)
+	if len(values) == 0 {
+		return nil
 	}
-	return changed
+	out := make([]StaticMemberReduction, 0, len(values))
+	for _, value := range values {
+		out = append(out, StaticMemberReduction{Path: value.Path, Value: value.Value})
+	}
+	return out
 }
 
 func variantCaseFieldProjectionValuesForDisjunct(

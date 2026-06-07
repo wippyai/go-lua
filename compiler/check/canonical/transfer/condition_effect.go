@@ -28,10 +28,7 @@ func (t *Transfer) applyConditionEffect(out *flow.PointState, effect ConditionEf
 	if flow.PointStateDomain.Equal(*out, flow.PointStateDomain.Bottom()) {
 		return true
 	}
-	if t.applyVariantOriginConditionReductions(out, effect.Fact) {
-		changed = true
-	}
-	if flow.ApplyVariantCaseFieldProjections(out, effect.Fact, t.in.VariantCaseFieldProjections) {
+	if t.applyConditionDerivedFacts(out, effect.Fact) {
 		changed = true
 	}
 	if t.applyValueConditionReductions(out, effect.Fact) {
@@ -97,18 +94,24 @@ func (t *Transfer) applyValueConditionReductions(out *flow.PointState, fact cons
 	return changed
 }
 
-func (t *Transfer) applyVariantOriginConditionReductions(out *flow.PointState, fact constraint.Condition) bool {
+func (t *Transfer) applyConditionDerivedFacts(out *flow.PointState, fact constraint.Condition) bool {
 	if out == nil {
 		return false
 	}
-	reductions := flow.VariantOriginConditionReducer{
+	reductions := flow.ConditionDerivedFacts{
+		State:                       *out,
+		Fact:                        fact,
+		VariantCaseFieldProjections: t.in.VariantCaseFieldProjections,
 		SymbolValue: func(sym cfg.SymbolID) (product.AbstractValue, bool) {
 			return t.symbolValue(out, sym)
 		},
-	}.Reductions(fact)
+	}.Reductions()
 	changed := false
-	for _, reduction := range reductions {
+	for _, reduction := range reductions.SymbolValues {
 		t.setSymbolValue(out, reduction.Symbol, reduction.Value, false)
+		changed = true
+	}
+	if flow.ApplyStaticMemberReductions(out, reductions.StaticMembers) {
 		changed = true
 	}
 	return changed

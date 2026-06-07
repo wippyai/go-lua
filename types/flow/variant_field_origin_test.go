@@ -384,6 +384,61 @@ func TestVariantOriginConditionReducerKeepsUnconstrainedDNFBranch(t *testing.T) 
 	}
 }
 
+func TestConditionDerivedFactsBatchesSymbolAndStaticMemberReductions(t *testing.T) {
+	resultSym := cfg.SymbolID(27)
+	sourceSym := cfg.SymbolID(28)
+	family := uint64(106)
+	result := constraint.Path{Root: "selected", Symbol: resultSym}
+	source := constraint.Path{Root: "records", Symbol: sourceSym}
+	payload := typ.NewRecord().Field("id", typ.String).Build()
+	channel := typ.NewGeneric("Channel", []*typ.TypeParam{typ.NewTypeParam("T", nil)}, typ.NewInterface("Channel", nil))
+	state := PointState{
+		Env: map[ValueKey]product.AbstractValue{
+			SymbolValueKey(sourceSym): product.FromType(typ.Instantiate(channel, payload)),
+		},
+	}
+	rootValue := product.WithVariantOrigin(product.FromType(typ.NewRecord().Build()), family, []int{0, 1})
+	fact := constraint.FromConstraints(constraint.VariantCaseEquals{
+		Target:       result,
+		OriginFamily: family,
+		CaseIndex:    1,
+	})
+
+	reductions := ConditionDerivedFacts{
+		State: state,
+		Fact:  fact,
+		VariantCaseFieldProjections: []VariantCaseFieldProjection{{
+			Target:       result,
+			Field:        "value",
+			Source:       source,
+			SourceSteps:  []effect.TypeProjectionStep{effect.ProjectGenericArg(0)},
+			OriginFamily: family,
+			CaseIndex:    1,
+		}},
+		SymbolValue: func(sym cfg.SymbolID) (product.AbstractValue, bool) {
+			if sym != resultSym {
+				return product.AbstractValue{}, false
+			}
+			return rootValue, true
+		},
+	}.Reductions()
+
+	if len(reductions.SymbolValues) != 1 {
+		t.Fatalf("symbol reductions = %#v, want one root reduction", reductions.SymbolValues)
+	}
+	wantRoot := product.WithVariantOrigin(product.FromType(typ.NewRecord().Build()), family, []int{1})
+	if reductions.SymbolValues[0].Symbol != resultSym || !product.Domain.Equal(reductions.SymbolValues[0].Value, wantRoot) {
+		t.Fatalf("symbol reduction = %#v, want %d -> %#v", reductions.SymbolValues[0], resultSym, wantRoot)
+	}
+	if len(reductions.StaticMembers) != 1 {
+		t.Fatalf("static member reductions = %#v, want one payload projection", reductions.StaticMembers)
+	}
+	if !reductions.StaticMembers[0].Path.Equal(result.Field("value")) ||
+		!typ.TypeEquals(reductions.StaticMembers[0].Value.ProjectValue(), payload) {
+		t.Fatalf("static member reduction = %#v, want selected.value payload", reductions.StaticMembers[0])
+	}
+}
+
 func variantOriginForTest(family uint64, caseIndex int) VariantFieldOrigin {
 	return VariantFieldOrigin{
 		Target: constraint.Path{
