@@ -10,7 +10,6 @@ import (
 	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/domain/value/product"
 	"github.com/wippyai/go-lua/types/flow"
-	"github.com/wippyai/go-lua/types/flow/pathkey"
 	"github.com/wippyai/go-lua/types/typ"
 )
 
@@ -19,6 +18,15 @@ func testSummaryStableAddress(t *testing.T, path constraint.Path) flow.StableAdd
 	addr, ok := flow.StableAddressOfPath(path)
 	if !ok {
 		t.Fatalf("stable address for path %s", path.Key())
+	}
+	return addr
+}
+
+func testSummaryLocalAddress(t *testing.T, path constraint.Path) flow.LocalAddress {
+	t.Helper()
+	addr, ok := flow.LocalAddressOfPath(path)
+	if !ok {
+		t.Fatalf("local address for path %s", path.Key())
 	}
 	return addr
 }
@@ -218,13 +226,15 @@ func TestProject_ExportsPointLengthParamRelationForReturnedTarget(t *testing.T) 
 	if len(info.Symbols) != 1 || info.Symbols[0] == 0 {
 		t.Fatalf("identifier return info not found: %#v", info.Symbols)
 	}
-	targetKey := pathkey.NewResolver(g).KeyAt(ret, constraint.Path{Symbol: info.Symbols[0]})
+	targetPath := constraint.Path{Symbol: info.Symbols[0]}
+	targetPath.Version = g.VisibleVersion(ret, info.Symbols[0]).ID
+	target := testSummaryLocalAddress(t, targetPath)
 	rel := flow.ReturnLengthParamRelation{ReturnIndex: 0, ParamIndex: 1}
 
 	sum := Project(state.FunctionState{
 		Points: map[cfg.Point]flow.PointState{
 			ret: {
-				Rel: flow.PointRelations{}.WithTargetLengthParam(info.Symbols[0], targetKey, rel.ParamIndex),
+				Rel: flow.PointRelations{}.WithTargetLengthParamLocal(target, rel.ParamIndex),
 			},
 		},
 	}, g)
@@ -278,13 +288,13 @@ func TestProject_RejectsStalePointLengthParamRelationKey(t *testing.T) {
 	if len(info.Symbols) != 1 || info.Symbols[0] == 0 {
 		t.Fatalf("identifier return info not found: %#v", info.Symbols)
 	}
-	staleKey := pathkey.NewResolver(g).KeyAtVersion(info.Symbols[0], 999, nil)
+	stale := testSummaryLocalAddress(t, constraint.Path{Symbol: info.Symbols[0], Version: 999})
 	rel := flow.ReturnLengthParamRelation{ReturnIndex: 0, ParamIndex: 1}
 
 	sum := Project(state.FunctionState{
 		Points: map[cfg.Point]flow.PointState{
 			ret: {
-				Rel: flow.PointRelations{}.WithTargetLengthParam(info.Symbols[0], staleKey, rel.ParamIndex),
+				Rel: flow.PointRelations{}.WithTargetLengthParamLocal(stale, rel.ParamIndex),
 			},
 		},
 	}, g)

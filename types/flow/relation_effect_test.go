@@ -43,13 +43,17 @@ func TestRelationEffectSeedsAndKillsSiblingNil(t *testing.T) {
 func TestRelationPathEffectsUseSymbolPathKeys(t *testing.T) {
 	path := constraint.NewPath(cfg.SymbolID(21), "rows").Field("items")
 	targetKey := SymbolPathKey(cfg.SymbolID(21), path.Segments)
-
-	length, ok := RelationTargetLengthParamPathEffect(path, 2)
+	target, ok := LocalAddressOfPath(path)
 	if !ok {
-		t.Fatalf("target-length path effect was not produced")
+		t.Fatalf("local address was not produced")
 	}
-	if length.Kind != RelationSeedTargetLengthParam || length.TargetRoot != path.Symbol || length.TargetKey != targetKey || length.ParamIndex != 2 {
-		t.Fatalf("target-length effect = %#v, want root=%d key=%s param=2", length, path.Symbol, targetKey)
+
+	length, ok := RelationTargetLengthParamLocalEffect(target, 2)
+	if !ok {
+		t.Fatalf("target-length local effect was not produced")
+	}
+	if length.Kind != RelationSeedTargetLengthParam || length.TargetLocal.Key() != path.Key() || length.ParamIndex != 2 {
+		t.Fatalf("target-length effect = %#v, want target=%s param=2", length, path.Key())
 	}
 
 	lower, ok := RelationContainerLowerBoundPathEffect(path, 4)
@@ -62,8 +66,8 @@ func TestRelationPathEffectsUseSymbolPathKeys(t *testing.T) {
 }
 
 func TestRelationPathEffectsRejectUnresolvedPaths(t *testing.T) {
-	if _, ok := RelationTargetLengthParamPathEffect(constraint.Path{}, 0); ok {
-		t.Fatalf("target-length effect accepted unresolved path")
+	if _, ok := RelationTargetLengthParamLocalEffect(LocalAddress{}, 0); ok {
+		t.Fatalf("target-length effect accepted unresolved local address")
 	}
 	if _, ok := RelationContainerLowerBoundPathEffect(constraint.Path{}, 1); ok {
 		t.Fatalf("container-lower effect accepted unresolved path")

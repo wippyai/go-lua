@@ -238,12 +238,11 @@ type PointGuardRelation struct {
 }
 
 // PointLengthParamRelation records a point-local proof that the sequence at
-// TargetKey has length/cardinality at least the function parameter ParamIndex.
-// TargetRoot is the root symbol used for invalidation; TargetKey is the
-// versioned path key used for exact summary projection.
+// Target has length/cardinality at least the function parameter ParamIndex.
+// Target preserves SSA identity so exact summary projection can reject stale
+// proofs after an intervening assignment.
 type PointLengthParamRelation struct {
-	TargetRoot cfg.SymbolID
-	TargetKey  constraint.PathKey
+	Target     LocalAddress
 	ParamIndex int
 }
 
@@ -273,7 +272,7 @@ var PointRelationsDomain = lattice.Lattice[PointRelations]{
 		}
 		return slices.EqualFunc(a.siblingNil, b.siblingNil, siblingNilEqual) &&
 			pointGuardRelationsEqual(a.guarded, b.guarded) &&
-			slices.Equal(a.lengthParam, b.lengthParam) &&
+			pointLengthParamsEqual(a.lengthParam, b.lengthParam) &&
 			slices.Equal(a.sizeLower, b.sizeLower)
 	},
 	LessOrEq: func(a, b PointRelations) bool {
@@ -401,7 +400,8 @@ func (r PointRelations) KillSymbols(symbols ...cfg.SymbolID) PointRelations {
 	}
 	lengths := make([]PointLengthParamRelation, 0, len(r.lengthParam))
 	for _, rel := range r.lengthParam {
-		if !killed[rel.TargetRoot] {
+		path := rel.Target.Path()
+		if !killed[path.Symbol] {
 			lengths = append(lengths, rel)
 		}
 	}
@@ -447,11 +447,13 @@ func (r PointRelations) GuardedTypesForGuard(guard cfg.SymbolID, guardTruthy boo
 	return out
 }
 
-// WithTargetLengthParam returns r plus the target-length >= parameter-length
-// must relation. The target key is versioned, so summary projection can reject
-// stale proofs after an intervening reassignment.
-func (r PointRelations) WithTargetLengthParam(root cfg.SymbolID, target constraint.PathKey, paramIndex int) PointRelations {
-	if root == 0 || target == "" || paramIndex < 0 {
+// WithTargetLengthParamLocal returns r plus the target-length >= parameter-length
+// must relation. The target is point-local SSA identity, so summary projection
+// can reject stale proofs after an intervening reassignment.
+func (r PointRelations) WithTargetLengthParamLocal(target LocalAddress, paramIndex int) PointRelations {
+	path := target.Path()
+	targetKey := target.Key()
+	if path.Symbol == 0 || targetKey == "" || paramIndex < 0 {
 		return r
 	}
 	if r.bottom {
@@ -459,8 +461,7 @@ func (r PointRelations) WithTargetLengthParam(root cfg.SymbolID, target constrai
 	}
 	entries := append([]PointLengthParamRelation(nil), r.lengthParam...)
 	entries = append(entries, PointLengthParamRelation{
-		TargetRoot: root,
-		TargetKey:  target,
+		Target:     target,
 		ParamIndex: paramIndex,
 	})
 	return PointRelations{
@@ -511,7 +512,8 @@ func (r PointRelations) KillLengthTargets(symbols ...cfg.SymbolID) PointRelation
 	}
 	out := make([]PointLengthParamRelation, 0, len(r.lengthParam))
 	for _, rel := range r.lengthParam {
-		if !killed[rel.TargetRoot] {
+		path := rel.Target.Path()
+		if !killed[path.Symbol] {
 			out = append(out, rel)
 		}
 	}
@@ -523,14 +525,16 @@ func (r PointRelations) KillLengthTargets(symbols ...cfg.SymbolID) PointRelation
 	}
 }
 
-// LengthParamsForTarget returns every proven target-length relation for target.
-func (r PointRelations) LengthParamsForTarget(target constraint.PathKey) []PointLengthParamRelation {
-	if r.bottom || target == "" || len(r.lengthParam) == 0 {
+// LengthParamsForTargetLocal returns every proven target-length relation for a
+// point-local target identity.
+func (r PointRelations) LengthParamsForTargetLocal(target LocalAddress) []PointLengthParamRelation {
+	targetKey := target.Key()
+	if r.bottom || targetKey == "" || len(r.lengthParam) == 0 {
 		return nil
 	}
 	var out []PointLengthParamRelation
 	for _, rel := range r.lengthParam {
-		if rel.TargetKey == target {
+		if rel.Target.Key() == targetKey {
 			out = append(out, rel)
 		}
 	}
@@ -578,15 +582,16 @@ func (r PointRelations) HasContainerLowerBound(root cfg.SymbolID, target constra
 	return false
 }
 
-// HasTargetLengthParam reports whether r proves one exact target/parameter
+// HasTargetLengthParamLocal reports whether r proves one exact target/parameter
 // length relation in a reachable state.
-func (r PointRelations) HasTargetLengthParam(root cfg.SymbolID, target constraint.PathKey, paramIndex int) bool {
-	if r.bottom || root == 0 || target == "" || paramIndex < 0 {
+func (r PointRelations) HasTargetLengthParamLocal(target LocalAddress, paramIndex int) bool {
+	path := target.Path()
+	targetKey := target.Key()
+	if r.bottom || path.Symbol == 0 || targetKey == "" || paramIndex < 0 {
 		return false
 	}
 	_, ok := slices.BinarySearchFunc(r.lengthParam, PointLengthParamRelation{
-		TargetRoot: root,
-		TargetKey:  target,
+		Target:     target,
 		ParamIndex: paramIndex,
 	}, comparePointLengthParam)
 	return ok
@@ -848,7 +853,8 @@ func compactPointLengthParams(xs []PointLengthParamRelation) []PointLengthParamR
 	}
 	out := make([]PointLengthParamRelation, 0, len(xs))
 	for _, rel := range xs {
-		if rel.TargetRoot == 0 || rel.TargetKey == "" || rel.ParamIndex < 0 {
+		path := rel.Target.Path()
+		if path.Symbol == 0 || rel.Target.Key() == "" || rel.ParamIndex < 0 {
 			continue
 		}
 		out = append(out, rel)
@@ -864,13 +870,22 @@ func compactPointLengthParams(xs []PointLengthParamRelation) []PointLengthParamR
 }
 
 func comparePointLengthParam(a, b PointLengthParamRelation) int {
-	if c := cmp.Compare(a.TargetRoot, b.TargetRoot); c != 0 {
-		return c
-	}
-	if c := cmp.Compare(a.TargetKey, b.TargetKey); c != 0 {
+	if c := cmp.Compare(a.Target.Key(), b.Target.Key()); c != 0 {
 		return c
 	}
 	return cmp.Compare(a.ParamIndex, b.ParamIndex)
+}
+
+func pointLengthParamsEqual(a, b []PointLengthParamRelation) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if comparePointLengthParam(a[i], b[i]) != 0 {
+			return false
+		}
+	}
+	return true
 }
 
 func pointLengthParamsContainAll(have, want []PointLengthParamRelation) bool {

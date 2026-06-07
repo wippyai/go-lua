@@ -1194,7 +1194,10 @@ func TestSymbolWriteEffectKillsSiblingNilRelation(t *testing.T) {
 
 func TestLoopAppendLengthFactSeedsNumericAndPointRelation(t *testing.T) {
 	root := cfg.SymbolID(521)
-	key := constraint.PathKey("sym521@1")
+	target, ok := flow.LocalAddressOfPath(constraint.Path{Symbol: root, Version: 1})
+	if !ok {
+		t.Fatal("local target address was not produced")
+	}
 	tr := New(input.Inputs{}, Config{})
 	out := flow.PointState{
 		Num: numeric.NewState(),
@@ -1202,20 +1205,19 @@ func TestLoopAppendLengthFactSeedsNumericAndPointRelation(t *testing.T) {
 	}
 
 	changed := tr.applyLoopAppendLengthFacts(&out, []input.LoopAppendLengthFact{{
-		Point:      7,
-		TargetRoot: root,
-		TargetKey:  key,
-		Count:      4,
-		ParamIndex: 1,
+		Point:       7,
+		TargetLocal: target,
+		Count:       4,
+		ParamIndex:  1,
 	}})
 
 	if !changed {
 		t.Fatal("loop append length fact did not report a state change")
 	}
-	if lower, _, ok := out.Num.LenBoundsFor(key); !ok || lower != 4 {
+	if lower, _, ok := out.Num.LenBoundsFor(target.Key()); !ok || lower != 4 {
 		t.Fatalf("length lower bound = %v/%v, want 4", lower, ok)
 	}
-	if !out.Rel.HasTargetLengthParam(root, key, 1) {
+	if !out.Rel.HasTargetLengthParamLocal(target, 1) {
 		t.Fatalf("point relation = %#v, want target length >= param 1", out.Rel)
 	}
 }
@@ -1224,11 +1226,14 @@ func TestFieldWriteKillsTargetLengthRelationOnly(t *testing.T) {
 	root := cfg.SymbolID(531)
 	errSym := cfg.SymbolID(532)
 	valueSym := cfg.SymbolID(533)
-	key := constraint.PathKey("sym531@1")
+	target, ok := flow.LocalAddressOfPath(constraint.Path{Symbol: root, Version: 1})
+	if !ok {
+		t.Fatal("local target address was not produced")
+	}
 	tr := New(input.Inputs{}, Config{})
 	out := flow.PointState{
 		Rel: flow.PointRelations{}.
-			WithTargetLengthParam(root, key, 0).
+			WithTargetLengthParamLocal(target, 0).
 			WithSiblingNil(errSym, []cfg.SymbolID{valueSym}),
 	}
 
@@ -1243,7 +1248,7 @@ func TestFieldWriteKillsTargetLengthRelationOnly(t *testing.T) {
 		References: sourceReferenceWrite(),
 	})
 
-	if out.Rel.HasTargetLengthParam(root, key, 0) {
+	if out.Rel.HasTargetLengthParamLocal(target, 0) {
 		t.Fatalf("field/index write kept stale target-length relation: %#v", out.Rel)
 	}
 	if _, ok := out.Rel.SiblingNil(errSym); !ok {

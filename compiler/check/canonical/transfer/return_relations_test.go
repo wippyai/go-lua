@@ -82,14 +82,18 @@ func TestAssignCallPostconditionsMaterializeLengthParamLowerBound(t *testing.T) 
 		SourceCalls: []*cfg.CallInfo{callInfo},
 	}
 
-	effects := tr.buildAssignCallPostconditions(&out, info, nil)
+	effects := tr.buildAssignCallPostconditions(&out, 0, info, nil)
 	tr.applyAssignCallPostconditions(&out, effects)
 
+	targetLocal, ok := flow.LocalAddressOfPath(constraint.NewPath(targetSym, "ks"))
+	if !ok {
+		t.Fatal("local target address was not produced")
+	}
 	targetKey := flow.SymbolPathKey(targetSym, nil)
 	if lower, _, ok := out.Num.LenBoundsFor(targetKey); !ok || lower != 2 {
 		t.Fatalf("target length lower = %d/%v, want 2", lower, ok)
 	}
-	if !out.Rel.HasTargetLengthParam(targetSym, targetKey, 0) {
+	if !out.Rel.HasTargetLengthParamLocal(targetLocal, 0) {
 		t.Fatalf("point relations = %#v, want wrapper-preserving target length >= param 0", out.Rel)
 	}
 }
@@ -134,7 +138,7 @@ func TestAssignCallPostconditionsMaterializeReturnKeyParam(t *testing.T) {
 		SourceCalls: []*cfg.CallInfo{callInfo},
 	}
 
-	effects := tr.buildAssignCallPostconditions(&out, info, nil)
+	effects := tr.buildAssignCallPostconditions(&out, 0, info, nil)
 	tr.applyAssignCallPostconditions(&out, effects)
 
 	tablePath := constraint.NewPath(selfSym, "self").Field("nodes")
@@ -188,11 +192,15 @@ func TestAssignCallPostconditionsUsePreWriteArgumentLength(t *testing.T) {
 
 	tr.applyAssign(&out, 0, info, nil)
 
+	targetLocal, ok := flow.LocalAddressOfPath(constraint.NewPath(argSym, "arg"))
+	if !ok {
+		t.Fatal("local target address was not produced")
+	}
 	targetKey := flow.SymbolPathKey(argSym, nil)
 	if lower, _, ok := out.Num.LenBoundsFor(targetKey); !ok || lower != 3 {
 		t.Fatalf("rewritten target length lower = %d/%v, want pre-call lower 3", lower, ok)
 	}
-	if !out.Rel.HasTargetLengthParam(argSym, targetKey, 0) {
+	if !out.Rel.HasTargetLengthParamLocal(targetLocal, 0) {
 		t.Fatalf("point relations = %#v, want rewritten target length >= original param 0", out.Rel)
 	}
 }

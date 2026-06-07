@@ -336,6 +336,16 @@ func NumericLenGeConstContainerOp(container ContainerRef, lower int64) (NumericO
 	return NumericOp{Kind: NumericLenGeConst, Key: container.pathKey(), Const: lower}, true
 }
 
+// NumericLenGeConstLocalOp materializes `len(target) >= lower` for a point-local
+// SSA identity. Use this for proofs that must not survive a reassignment.
+func NumericLenGeConstLocalOp(target LocalAddress, lower int64) (NumericOp, bool) {
+	key := target.Key()
+	if key == "" {
+		return NumericOp{}, false
+	}
+	return NumericOp{Kind: NumericLenGeConst, Key: key, Const: lower}, true
+}
+
 // NumericIncrementLenLowerContainerOp materializes `len(container) += delta`.
 func NumericIncrementLenLowerContainerOp(container ContainerRef, delta int64) (NumericOp, bool) {
 	if !container.IsValid() || delta <= 0 {

@@ -12,7 +12,7 @@ func indexLoopAppendLengthFacts(facts []input.LoopAppendLengthFact) map[cfg.Poin
 	}
 	out := make(map[cfg.Point][]input.LoopAppendLengthFact)
 	for _, fact := range facts {
-		if fact.Point == 0 || fact.TargetRoot == 0 || fact.TargetKey == "" {
+		if fact.Point == 0 || fact.TargetLocal.Key() == "" {
 			continue
 		}
 		if fact.Count <= 0 && fact.ParamIndex < 0 {
@@ -36,21 +36,16 @@ func (t *Transfer) applyLoopAppendLengthFacts(out *flow.PointState, facts []inpu
 	changed := false
 	for _, fact := range facts {
 		if fact.Count > 0 {
-			changed = flow.ApplyNumericEffect(out, flow.NumericEffect{
-				Ops: []flow.NumericOp{{
-					Kind:  flow.NumericLenGeConst,
-					Key:   fact.TargetKey,
-					Const: fact.Count,
-				}},
-			}) || changed
+			if op, ok := flow.NumericLenGeConstLocalOp(fact.TargetLocal, fact.Count); ok {
+				changed = flow.ApplyNumericEffect(out, flow.NumericEffect{
+					Ops: []flow.NumericOp{op},
+				}) || changed
+			}
 		}
 		if fact.ParamIndex >= 0 {
-			changed = flow.ApplyRelationEffect(out, flow.RelationEffect{
-				Kind:       flow.RelationSeedTargetLengthParam,
-				TargetRoot: fact.TargetRoot,
-				TargetKey:  fact.TargetKey,
-				ParamIndex: fact.ParamIndex,
-			}) || changed
+			if effect, ok := flow.RelationTargetLengthParamLocalEffect(fact.TargetLocal, fact.ParamIndex); ok {
+				changed = flow.ApplyRelationEffect(out, effect) || changed
+			}
 		}
 	}
 	return changed

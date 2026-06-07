@@ -120,20 +120,25 @@ func TestReturnRelationsKeyParamJoinIsMust(t *testing.T) {
 func TestPointRelationsLengthParamJoinAndKill(t *testing.T) {
 	root := cfg.SymbolID(10)
 	otherRoot := cfg.SymbolID(11)
-	key := constraint.PathKey("sym10@1")
-	otherKey := constraint.PathKey("sym11@1")
-	common := PointLengthParamRelation{TargetRoot: root, TargetKey: key, ParamIndex: 0}
+	target, ok := LocalAddressOfPath(constraint.Path{Symbol: root, Version: 1})
+	if !ok {
+		t.Fatalf("local address for root %d was not produced", root)
+	}
+	otherTarget, ok := LocalAddressOfPath(constraint.Path{Symbol: otherRoot, Version: 1})
+	if !ok {
+		t.Fatalf("local address for root %d was not produced", otherRoot)
+	}
 
 	a := PointRelations{}.
-		WithTargetLengthParam(common.TargetRoot, common.TargetKey, common.ParamIndex).
-		WithTargetLengthParam(otherRoot, otherKey, 1)
-	b := PointRelations{}.WithTargetLengthParam(common.TargetRoot, common.TargetKey, common.ParamIndex)
+		WithTargetLengthParamLocal(target, 0).
+		WithTargetLengthParamLocal(otherTarget, 1)
+	b := PointRelations{}.WithTargetLengthParamLocal(target, 0)
 
 	got := PointRelationsDomain.Join(a, b)
-	if !got.HasTargetLengthParam(common.TargetRoot, common.TargetKey, common.ParamIndex) {
+	if !got.HasTargetLengthParamLocal(target, 0) {
 		t.Fatalf("joined point relations lost common length-param proof: %#v", got)
 	}
-	if got.HasTargetLengthParam(otherRoot, otherKey, 1) {
+	if got.HasTargetLengthParamLocal(otherTarget, 1) {
 		t.Fatalf("joined point relations kept non-must length-param proof: %#v", got)
 	}
 
@@ -141,7 +146,7 @@ func TestPointRelationsLengthParamJoinAndKill(t *testing.T) {
 	valueSym := cfg.SymbolID(13)
 	withSibling := got.WithSiblingNil(errSym, []cfg.SymbolID{valueSym})
 	killedLength := withSibling.KillLengthTargets(root)
-	if killedLength.HasTargetLengthParam(common.TargetRoot, common.TargetKey, common.ParamIndex) {
+	if killedLength.HasTargetLengthParamLocal(target, 0) {
 		t.Fatalf("KillLengthTargets kept stale length-param proof: %#v", killedLength)
 	}
 	if _, ok := killedLength.SiblingNil(errSym); !ok {
@@ -149,7 +154,7 @@ func TestPointRelationsLengthParamJoinAndKill(t *testing.T) {
 	}
 
 	killedSymbol := withSibling.KillSymbols(root)
-	if killedSymbol.HasTargetLengthParam(common.TargetRoot, common.TargetKey, common.ParamIndex) {
+	if killedSymbol.HasTargetLengthParamLocal(target, 0) {
 		t.Fatalf("KillSymbols kept stale target-length proof: %#v", killedSymbol)
 	}
 }

@@ -160,6 +160,15 @@ func (a LocalAddress) Path() constraint.Path {
 	return cloneAddressPath(a.path)
 }
 
+// Key returns the deterministic point-local map key for this address. Unlike
+// StableAddress.Key, this preserves the SSA version carried by the source path.
+func (a LocalAddress) Key() constraint.PathKey {
+	if a.path.IsEmpty() {
+		return ""
+	}
+	return a.path.Key()
+}
+
 // Stable returns the version-insensitive address for must-fact domains.
 func (a LocalAddress) Stable() (StableAddress, bool) {
 	return StableAddressOfPath(a.path)

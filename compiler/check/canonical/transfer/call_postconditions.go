@@ -5,6 +5,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/callsite"
 	"github.com/wippyai/go-lua/compiler/check/domain/paramevidence"
+	flowpath "github.com/wippyai/go-lua/compiler/check/domain/path"
 	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/flow"
 )
@@ -37,6 +38,7 @@ type boundaryFactPostcondition struct {
 // belongs here; new postcondition atoms extend this materializer.
 func (t *Transfer) buildAssignCallPostconditions(
 	out *flow.PointState,
+	p cfg.Point,
 	info *cfg.AssignInfo,
 	demand func(int, paramevidence.ParamContract),
 ) assignCallPostconditionEffects {
@@ -51,7 +53,7 @@ func (t *Transfer) buildAssignCallPostconditions(
 		rels := t.callReturnRelations(out, callInfo.Call, demand)
 		t.appendSiblingNilPostconditions(info, callInfo, rels, &effects)
 		t.appendGuardedTypePostconditions(info, callInfo, rels, &effects)
-		t.appendLengthParamPostconditions(out, info, callInfo, rels, &effects)
+		t.appendLengthParamPostconditions(out, p, info, callInfo, rels, &effects)
 		t.appendReturnKeyParamPostconditions(info, callInfo, rels, &effects)
 		t.appendBoundaryFactPostconditions(out, info, callInfo, demand, &effects)
 	})
@@ -236,6 +238,7 @@ func (t *Transfer) collectBoundaryReturnPath(
 
 func (t *Transfer) appendLengthParamPostconditions(
 	out *flow.PointState,
+	p cfg.Point,
 	info *cfg.AssignInfo,
 	callInfo *cfg.CallInfo,
 	rels flow.ReturnRelations,
@@ -255,7 +258,12 @@ func (t *Transfer) appendLengthParamPostconditions(
 			continue
 		}
 		if paramIndex, ok := t.runtimeArgCallerParamIndex(arg); ok {
-			if effect, ok := flow.RelationTargetLengthParamPathEffect(targetPath, paramIndex); ok {
+			targetLocalPath := flowpath.WithVersion(targetPath, t.in.Graph, p)
+			targetLocal, targetOK := flow.LocalAddressOfPath(targetLocalPath)
+			if !targetOK {
+				continue
+			}
+			if effect, ok := flow.RelationTargetLengthParamLocalEffect(targetLocal, paramIndex); ok {
 				effects.relations = append(effects.relations, effect)
 			}
 		}

@@ -10,7 +10,6 @@ import (
 	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/domain/value/product"
 	"github.com/wippyai/go-lua/types/flow"
-	"github.com/wippyai/go-lua/types/flow/pathkey"
 	"github.com/wippyai/go-lua/types/kind"
 	"github.com/wippyai/go-lua/types/typ"
 	"github.com/wippyai/go-lua/types/typ/unwrap"
@@ -490,7 +489,6 @@ func projectPointLengthParamRelations(fs state.FunctionState, g *cfg.Graph) flow
 	if g == nil {
 		return flow.ReturnRelationsDomain.Top()
 	}
-	resolver := pathkey.NewResolver(g)
 	out := flow.ReturnRelationsDomain.Bottom()
 	sawReturn := false
 	g.EachReturn(func(p cfg.Point, info *cfg.ReturnInfo) {
@@ -504,11 +502,11 @@ func projectPointLengthParamRelations(fs state.FunctionState, g *cfg.Graph) flow
 		rels := flow.ReturnRelationsDomain.Top()
 		var proven []flow.ReturnLengthParamRelation
 		for i := range info.Exprs {
-			key, ok := returnExprPathKey(g, resolver, p, info, i)
+			target, ok := returnExprLocalAddress(g, p, info, i)
 			if !ok {
 				continue
 			}
-			for _, rel := range ps.Rel.LengthParamsForTarget(key) {
+			for _, rel := range ps.Rel.LengthParamsForTargetLocal(target) {
 				proven = append(proven, flow.ReturnLengthParamRelation{
 					ReturnIndex: i,
 					ParamIndex:  rel.ParamIndex,
@@ -708,17 +706,16 @@ func returnBoundarySymbolMap(g *cfg.Graph, p cfg.Point, info *cfg.ReturnInfo) ma
 	return out
 }
 
-func returnExprPathKey(g *cfg.Graph, resolver *pathkey.Resolver, p cfg.Point, info *cfg.ReturnInfo, i int) (constraint.PathKey, bool) {
-	if g == nil || resolver == nil || info == nil || i < 0 || i >= len(info.Exprs) {
-		return "", false
+func returnExprLocalAddress(g *cfg.Graph, p cfg.Point, info *cfg.ReturnInfo, i int) (flow.LocalAddress, bool) {
+	if g == nil || info == nil || i < 0 || i >= len(info.Exprs) {
+		return flow.LocalAddress{}, false
 	}
 	path := returnSourceBoundaryPath(g, p, info, i)
 	if path.Symbol == 0 {
-		return "", false
+		return flow.LocalAddress{}, false
 	}
-	path.Version = 0
-	key := resolver.KeyAt(p, path)
-	return key, key != ""
+	path = domainpath.WithVersion(path, g, p)
+	return flow.LocalAddressOfPath(path)
 }
 
 func returnSourceBoundaryPath(g *cfg.Graph, p cfg.Point, info *cfg.ReturnInfo, i int) constraint.Path {

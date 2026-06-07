@@ -13,7 +13,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/check/domain/predicate"
 	basecfg "github.com/wippyai/go-lua/types/cfg"
 	"github.com/wippyai/go-lua/types/constraint"
-	"github.com/wippyai/go-lua/types/flow/pathkey"
+	"github.com/wippyai/go-lua/types/flow"
 	"github.com/wippyai/go-lua/types/typ"
 	"github.com/wippyai/go-lua/types/typ/unwrap"
 )
@@ -22,18 +22,18 @@ import (
 // interpretation and consumed by transfer at Point. It says a loop with one
 // unconditional append establishes either:
 //
-//   - Count > 0: len(TargetKey) >= Count at Point; or
-//   - ParamIndex >= 0: len/cardinality(TargetKey) >= len/cardinality(param).
+//   - Count > 0: len(TargetLocal) >= Count at Point; or
+//   - ParamIndex >= 0: len/cardinality(TargetLocal) >= len/cardinality(param).
 //
-// TargetKey is versioned at Point. If the target is reassigned before return,
-// summary projection will see a different key and refuse to export the proof.
+// TargetLocal is versioned at Point. If the target is reassigned before return,
+// summary projection will see a different local address and refuse to export the
+// proof.
 type LoopAppendLengthFact struct {
-	Point      cfg.Point
-	TargetRoot cfg.SymbolID
-	Target     constraint.Path
-	TargetKey  constraint.PathKey
-	Count      int64
-	ParamIndex int
+	Point       cfg.Point
+	Target      constraint.Path
+	TargetLocal flow.LocalAddress
+	Count       int64
+	ParamIndex  int
 }
 
 type loopAppendSite struct {
@@ -50,7 +50,6 @@ func BuildLoopAppendLengths(in Inputs) []LoopAppendLengthFact {
 		return nil
 	}
 	doms := cfganalysis.ComputeImmediateDominatorInfo(g)
-	resolver := pathkey.NewResolver(g)
 	var facts []LoopAppendLengthFact
 
 	for _, header := range g.RPO() {
@@ -79,16 +78,15 @@ func BuildLoopAppendLengths(in Inputs) []LoopAppendLengthFact {
 		if loopBodyMutatesTarget(g, body, appendSite, target) {
 			continue
 		}
-		targetKey := resolver.KeyAt(exit, target)
-		if targetKey == "" {
+		targetLocal, ok := flow.LocalAddressOfPath(domainpath.WithVersion(target, g, exit))
+		if !ok || targetLocal.Key() == "" {
 			continue
 		}
 		base := LoopAppendLengthFact{
-			Point:      exit,
-			TargetRoot: target.Symbol,
-			Target:     target,
-			TargetKey:  targetKey,
-			ParamIndex: -1,
+			Point:       exit,
+			Target:      target,
+			TargetLocal: targetLocal,
+			ParamIndex:  -1,
 		}
 		switch {
 		case info.NumericFor != nil:
@@ -499,7 +497,7 @@ func compactLoopAppendLengthFacts(xs []LoopAppendLengthFact) []LoopAppendLengthF
 	}
 	out := make([]LoopAppendLengthFact, 0, len(xs))
 	for _, fact := range xs {
-		if fact.Point == 0 || fact.TargetRoot == 0 || fact.TargetKey == "" {
+		if fact.Point == 0 || fact.TargetLocal.Key() == "" {
 			continue
 		}
 		if fact.Count <= 0 && fact.ParamIndex < 0 {
@@ -522,10 +520,7 @@ func compareLoopAppendLengthFact(a, b LoopAppendLengthFact) int {
 	if c := cmp.Compare(a.Point, b.Point); c != 0 {
 		return c
 	}
-	if c := cmp.Compare(a.TargetRoot, b.TargetRoot); c != 0 {
-		return c
-	}
-	if c := cmp.Compare(a.TargetKey, b.TargetKey); c != 0 {
+	if c := cmp.Compare(a.TargetLocal.Key(), b.TargetLocal.Key()); c != 0 {
 		return c
 	}
 	if c := cmp.Compare(a.Count, b.Count); c != 0 {

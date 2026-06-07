@@ -25,6 +25,7 @@ type RelationEffect struct {
 	ErrSym        cfg.SymbolID
 	ValueSyms     []cfg.SymbolID
 	Symbols       []cfg.SymbolID
+	TargetLocal   LocalAddress
 	TargetRoot    cfg.SymbolID
 	TargetKey     constraint.PathKey
 	ParamIndex    int
@@ -46,7 +47,7 @@ func ApplyRelationEffect(out *PointState, effect RelationEffect) bool {
 	case RelationKillSymbols:
 		out.Rel = out.Rel.KillSymbols(effect.Symbols...)
 	case RelationSeedTargetLengthParam:
-		out.Rel = out.Rel.WithTargetLengthParam(effect.TargetRoot, effect.TargetKey, effect.ParamIndex)
+		out.Rel = out.Rel.WithTargetLengthParamLocal(effect.TargetLocal, effect.ParamIndex)
 	case RelationSeedContainerLowerBound:
 		out.Rel = out.Rel.WithContainerLowerBound(effect.TargetRoot, effect.TargetKey, effect.Lower)
 	case RelationKillLengthTargets:
@@ -59,28 +60,17 @@ func ApplyRelationEffect(out *PointState, effect RelationEffect) bool {
 	return !PointRelationsDomain.Equal(before, out.Rel)
 }
 
-// RelationTargetLengthParamContainerEffect materializes a proof that container
-// length/cardinality is at least runtime parameter paramIndex.
-func RelationTargetLengthParamContainerEffect(container ContainerRef, paramIndex int) (RelationEffect, bool) {
-	if !container.IsValid() || paramIndex < 0 {
+// RelationTargetLengthParamLocalEffect materializes a proof that a point-local
+// target length/cardinality is at least runtime parameter paramIndex.
+func RelationTargetLengthParamLocalEffect(target LocalAddress, paramIndex int) (RelationEffect, bool) {
+	if target.Key() == "" || paramIndex < 0 {
 		return RelationEffect{}, false
 	}
 	return RelationEffect{
-		Kind:       RelationSeedTargetLengthParam,
-		TargetRoot: container.Root(),
-		TargetKey:  container.pathKey(),
-		ParamIndex: paramIndex,
+		Kind:        RelationSeedTargetLengthParam,
+		TargetLocal: target,
+		ParamIndex:  paramIndex,
 	}, true
-}
-
-// RelationTargetLengthParamPathEffect materializes a path-shaped proof that the
-// target container length/cardinality is at least runtime parameter paramIndex.
-func RelationTargetLengthParamPathEffect(path constraint.Path, paramIndex int) (RelationEffect, bool) {
-	ref, ok := ContainerRefOfPath(path)
-	if !ok {
-		return RelationEffect{}, false
-	}
-	return RelationTargetLengthParamContainerEffect(ref, paramIndex)
 }
 
 // RelationContainerLowerBoundContainerEffect materializes a cardinality lower

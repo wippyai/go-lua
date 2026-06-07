@@ -23,7 +23,7 @@ return out
 		t.Fatalf("LoopAppendLengths = %#v, want one numeric count fact", in.LoopAppendLengths)
 	}
 	fact := in.LoopAppendLengths[0]
-	if fact.Count != 3 || fact.ParamIndex != -1 || fact.TargetRoot == 0 || fact.TargetKey == "" {
+	if fact.Count != 3 || fact.ParamIndex != -1 || fact.TargetLocal.Key() == "" {
 		t.Fatalf("numeric loop fact = %#v, want count=3 with versioned target", fact)
 	}
 }
@@ -43,7 +43,7 @@ return out
 		t.Fatalf("LoopAppendLengths = %#v, want one param relation fact", facts)
 	}
 	fact := facts[0]
-	if fact.Count != 0 || fact.ParamIndex != 0 || fact.TargetRoot == 0 || fact.TargetKey == "" {
+	if fact.Count != 0 || fact.ParamIndex != 0 || fact.TargetLocal.Key() == "" {
 		t.Fatalf("pairs loop fact = %#v, want ParamIndex=0 with versioned target", fact)
 	}
 }

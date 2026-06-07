@@ -750,7 +750,7 @@ func (t *Transfer) applyAssign(
 			t.applyTypeCastNarrow(out, p, srcCall, demand)
 		}
 	}
-	callPostconditions := t.buildAssignCallPostconditions(out, info, demand)
+	callPostconditions := t.buildAssignCallPostconditions(out, p, info, demand)
 	// A call source feeding more targets than sources expands to a multi-return
 	// tuple: bind each target to the matching return slot (target i -> return i),
 	// the Lua multi-assignment semantics (`local a, b = f()`). Resolved once here so
