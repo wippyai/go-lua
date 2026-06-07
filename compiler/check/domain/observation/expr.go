@@ -43,14 +43,6 @@ type SymbolTypeLookup func(sym cfg.SymbolID) typ.Type
 // visible at a CFG point.
 type TypeResolver func(ast.TypeExpr, *scope.State) typ.Type
 
-type postStateTypeFacts interface {
-	PostEffectiveTypeAt(point cfg.Point, sym cfg.SymbolID) flow.TypedValue
-}
-
-type callReturnFacts interface {
-	CallReturnTypesAt(point cfg.Point, call *ast.FuncCallExpr, expected typ.Type) ([]typ.Type, bool)
-}
-
 // Config supplies immutable solved-state inputs for expression observation.
 type Config struct {
 	Graph                    *cfg.Graph
@@ -334,11 +326,7 @@ func (p contractPathProof) ElementFieldSatisfies(array []constraint.Segment, fie
 	for _, seg := range array {
 		arrayPath = arrayPath.Append(seg)
 	}
-	provider := p.projector.appendElementFieldRouteProvider()
-	if provider == nil {
-		return false
-	}
-	for _, route := range provider.AppendElementFieldSourceRoutesAt(p.point, flow.AppendElementFieldRouteQuery{
+	for _, route := range p.projector.proofs.AppendElementFieldSourceRoutesAt(p.point, flow.AppendElementFieldRouteQuery{
 		ArrayPath: arrayPath,
 		Field:     field,
 	}) {
@@ -681,10 +669,6 @@ func (p Projector) callArgumentProofObservation(observed typ.Type, expected typ.
 	return expected
 }
 
-type bodyContractFacts interface {
-	BodyContracts() paramevidence.Contracts
-}
-
 func (p Projector) bodyContractPathType(expr ast.Expr, point cfg.Point) typ.Type {
 	path := p.pathOfExpr(expr, point)
 	if path.IsEmpty() || path.Symbol == 0 {
@@ -812,15 +796,11 @@ func (p Projector) directBodyContractPathType(path constraint.Path) typ.Type {
 	if !p.cfg.CallArgumentProofs && !p.isUnannotatedParamSymbol(path.Symbol) {
 		return nil
 	}
-	bodyFacts, ok := p.cfg.Facts.(bodyContractFacts)
-	if !ok {
-		return nil
-	}
 	slot, ok := p.paramSlotForSymbol(path.Symbol)
 	if !ok {
 		return nil
 	}
-	contract, ok := bodyFacts.BodyContracts()[slot]
+	contract, ok := p.proofs.BodyContracts()[slot]
 	if !ok || paramevidence.ParamContractDomain.Equal(contract, paramevidence.ParamContractDomain.Bottom()) {
 		return nil
 	}
@@ -858,17 +838,7 @@ func (p Projector) conditionBodyContractSeedType(point cfg.Point, path constrain
 }
 
 func (p Projector) provenanceRoutesAt(point cfg.Point, path constraint.Path) []flow.ProvenanceRoute {
-	if p.cfg.Facts != nil {
-		if facts, ok := p.cfg.Facts.(provenanceRouteFacts); ok {
-			return facts.ProvenanceRoutesAt(point, path)
-		}
-	}
-	if p.cfg.Flow != nil {
-		if facts, ok := p.cfg.Flow.(provenanceRouteFacts); ok {
-			return facts.ProvenanceRoutesAt(point, path)
-		}
-	}
-	return nil
+	return p.proofs.ProvenanceRoutesAt(point, path)
 }
 
 func (p Projector) provenanceRouteLocalType(route flow.ProvenanceRoute, source typ.Type) typ.Type {
@@ -1121,14 +1091,6 @@ func (p Projector) applyIndexReadProof(t typ.Type, objType typ.Type, obj ast.Exp
 		return refined
 	}
 	return t
-}
-
-type provenanceRouteFacts interface {
-	ProvenanceRoutesAt(p cfg.Point, path constraint.Path) []flow.ProvenanceRoute
-}
-
-type appendElementFieldRouteFacts interface {
-	AppendElementFieldSourceRoutesAt(p cfg.Point, q flow.AppendElementFieldRouteQuery) []flow.ProvenanceRoute
 }
 
 func (p Projector) tableType(expr *ast.TableExpr, point cfg.Point, expected typ.Type) typ.Type {
@@ -1519,10 +1481,8 @@ func (p Projector) callReturnsWithExpected(expr *ast.FuncCallExpr, point cfg.Poi
 	if types, ok := p.interceptMethodCall(expr, point); ok {
 		return types
 	}
-	if facts, ok := p.cfg.Facts.(callReturnFacts); ok {
-		if types, ok := facts.CallReturnTypesAt(point, expr, expected); ok && len(types) > 0 {
-			return types
-		}
+	if types, ok := p.proofs.CallReturnTypesAt(point, expr, expected); ok && len(types) > 0 {
+		return types
 	}
 	var callee typ.Type
 	var receiver typ.Type
@@ -1729,20 +1689,6 @@ func (p Projector) pathReadView() flow.PathReadView {
 	default:
 		return flow.PathReadCurrent
 	}
-}
-
-func (p Projector) appendElementFieldRouteProvider() appendElementFieldRouteFacts {
-	if p.cfg.Facts != nil {
-		if facts, ok := p.cfg.Facts.(appendElementFieldRouteFacts); ok {
-			return facts
-		}
-	}
-	if p.cfg.Flow != nil {
-		if facts, ok := p.cfg.Flow.(appendElementFieldRouteFacts); ok {
-			return facts
-		}
-	}
-	return nil
 }
 
 func (p Projector) pathObservationIndexRead(expr ast.Expr, point cfg.Point) *flow.PathObservationIndexRead {
@@ -2005,19 +1951,9 @@ func (p Projector) symbolType(point cfg.Point, sym cfg.SymbolID) typ.Type {
 	if sym == 0 {
 		return nil
 	}
-	if p.cfg.Facts != nil {
-		if p.cfg.PreferPostState {
-			if post, ok := p.cfg.Facts.(postStateTypeFacts); ok {
-				tv := post.PostEffectiveTypeAt(point, sym)
-				if tv.Type != nil && (tv.State == flow.StateResolved || !typ.IsUnknown(tv.Type)) {
-					return tv.Type
-				}
-			}
-		}
-		tv := p.cfg.Facts.EffectiveTypeAt(point, sym)
-		if tv.Type != nil && (tv.State == flow.StateResolved || !typ.IsUnknown(tv.Type)) {
-			return tv.Type
-		}
+	tv := p.proofs.EffectiveTypeAt(point, sym, p.cfg.PreferPostState)
+	if tv.Type != nil && (tv.State == flow.StateResolved || !typ.IsUnknown(tv.Type)) {
+		return tv.Type
 	}
 	if p.cfg.FunctionType != nil {
 		if t := p.cfg.FunctionType(sym); t != nil {

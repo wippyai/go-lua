@@ -4,9 +4,11 @@
 package evidence
 
 import (
+	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/api"
 	"github.com/wippyai/go-lua/compiler/check/domain/indexread"
+	"github.com/wippyai/go-lua/compiler/check/domain/paramevidence"
 	flowpath "github.com/wippyai/go-lua/compiler/check/domain/path"
 	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/flow"
@@ -51,32 +53,35 @@ func (p Projection) PathReadFlow() api.FlowOps {
 // PathObservationFacts returns the high-level path observation surface, falling
 // back to the caller-supplied observer only after canonical carriers decline it.
 func (p Projection) PathObservationFacts(fallback flow.PathObservationFacts) flow.PathObservationFacts {
-	if p.cfg.Facts != nil {
-		if facts, ok := p.cfg.Facts.(flow.PathObservationFacts); ok {
-			return facts
-		}
-	}
-	if p.cfg.Flow != nil {
-		if facts, ok := p.cfg.Flow.(flow.PathObservationFacts); ok {
-			return facts
-		}
+	if facts, ok := firstProvider[flow.PathObservationFacts](p.cfg.Facts, p.cfg.Flow); ok {
+		return facts
 	}
 	return fallback
 }
 
 // ProductPathObservationFacts returns the product-carrier path evidence surface.
 func (p Projection) ProductPathObservationFacts() flow.ProductPathObservationFacts {
-	if p.cfg.Facts != nil {
-		if facts, ok := p.cfg.Facts.(flow.ProductPathObservationFacts); ok {
-			return facts
-		}
-	}
-	if p.cfg.Flow != nil {
-		if facts, ok := p.cfg.Flow.(flow.ProductPathObservationFacts); ok {
-			return facts
-		}
+	if facts, ok := firstProvider[flow.ProductPathObservationFacts](p.cfg.Facts, p.cfg.Flow); ok {
+		return facts
 	}
 	return nil
+}
+
+// EffectiveTypeAt returns a symbol's effective type from the point facts. When
+// preferPost is set, post-state facts may answer before the normal point view.
+func (p Projection) EffectiveTypeAt(point cfg.Point, sym cfg.SymbolID, preferPost bool) flow.TypedValue {
+	if p.cfg.Facts == nil || sym == 0 {
+		return flow.TypedValue{Type: typ.Unknown, State: flow.StateUnknown}
+	}
+	if preferPost {
+		if post, ok := p.cfg.Facts.(postStateTypeFacts); ok {
+			tv := post.PostEffectiveTypeAt(point, sym)
+			if tv.Type != nil && (tv.State == flow.StateResolved || !typ.IsUnknown(tv.Type)) {
+				return tv
+			}
+		}
+	}
+	return p.cfg.Facts.EffectiveTypeAt(point, sym)
 }
 
 // DirectPathCandidate projects a direct materialized path fact for a source path.
@@ -109,45 +114,24 @@ func (p Projection) DirectPathCandidate(point cfg.Point, path constraint.Path, v
 
 // AssignmentSourceFacts returns the transfer-owned RHS source evidence surface.
 func (p Projection) AssignmentSourceFacts() flow.AssignmentSourceFacts {
-	if p.cfg.Facts != nil {
-		if facts, ok := p.cfg.Facts.(flow.AssignmentSourceFacts); ok {
-			return facts
-		}
-	}
-	if p.cfg.Flow != nil {
-		if facts, ok := p.cfg.Flow.(flow.AssignmentSourceFacts); ok {
-			return facts
-		}
+	if facts, ok := firstProvider[flow.AssignmentSourceFacts](p.cfg.Facts, p.cfg.Flow); ok {
+		return facts
 	}
 	return nil
 }
 
 // IndexWriteFacts returns the solved dynamic-index write proof surface.
 func (p Projection) IndexWriteFacts() flow.IndexWriteFacts {
-	if p.cfg.Facts != nil {
-		if facts, ok := p.cfg.Facts.(flow.IndexWriteFacts); ok {
-			return facts
-		}
-	}
-	if p.cfg.Flow != nil {
-		if facts, ok := p.cfg.Flow.(flow.IndexWriteFacts); ok {
-			return facts
-		}
+	if facts, ok := firstProvider[flow.IndexWriteFacts](p.cfg.Facts, p.cfg.Flow); ok {
+		return facts
 	}
 	return nil
 }
 
 // ConditionProofFacts returns condition-only type proof evidence.
 func (p Projection) ConditionProofFacts() flow.ConditionProofFacts {
-	if p.cfg.Facts != nil {
-		if facts, ok := p.cfg.Facts.(flow.ConditionProofFacts); ok {
-			return facts
-		}
-	}
-	if p.cfg.Flow != nil {
-		if facts, ok := p.cfg.Flow.(flow.ConditionProofFacts); ok {
-			return facts
-		}
+	if facts, ok := firstProvider[flow.ConditionProofFacts](p.cfg.Facts, p.cfg.Flow); ok {
+		return facts
 	}
 	return nil
 }
@@ -155,20 +139,47 @@ func (p Projection) ConditionProofFacts() flow.ConditionProofFacts {
 // ConstFacts returns immutable constant facts; flow inputs are the canonical
 // fallback because constants are captured before a solved flow may exist.
 func (p Projection) ConstFacts() flow.ConstFacts {
-	if p.cfg.Facts != nil {
-		if facts, ok := p.cfg.Facts.(flow.ConstFacts); ok {
-			return facts
-		}
-	}
-	if p.cfg.Flow != nil {
-		if facts, ok := p.cfg.Flow.(flow.ConstFacts); ok {
-			return facts
-		}
+	if facts, ok := firstProvider[flow.ConstFacts](p.cfg.Facts, p.cfg.Flow); ok {
+		return facts
 	}
 	if p.cfg.Inputs != nil {
 		return p.cfg.Inputs
 	}
 	return nil
+}
+
+// BodyContracts returns body-level parameter contracts published by the current
+// facts carrier.
+func (p Projection) BodyContracts() paramevidence.Contracts {
+	if facts, ok := factsProvider[bodyContractFacts](p.cfg.Facts); ok {
+		return facts.BodyContracts()
+	}
+	return nil
+}
+
+// ProvenanceRoutesAt returns source-route proofs for a materialized path.
+func (p Projection) ProvenanceRoutesAt(point cfg.Point, path constraint.Path) []flow.ProvenanceRoute {
+	if facts, ok := firstProvider[provenanceRouteFacts](p.cfg.Facts, p.cfg.Flow); ok {
+		return facts.ProvenanceRoutesAt(point, path)
+	}
+	return nil
+}
+
+// AppendElementFieldSourceRoutesAt returns append-origin routes for array
+// element fields.
+func (p Projection) AppendElementFieldSourceRoutesAt(point cfg.Point, q flow.AppendElementFieldRouteQuery) []flow.ProvenanceRoute {
+	if facts, ok := firstProvider[appendElementFieldRouteFacts](p.cfg.Facts, p.cfg.Flow); ok {
+		return facts.AppendElementFieldSourceRoutesAt(point, q)
+	}
+	return nil
+}
+
+// CallReturnTypesAt returns call-result evidence published by the point facts.
+func (p Projection) CallReturnTypesAt(point cfg.Point, call *ast.FuncCallExpr, expected typ.Type) ([]typ.Type, bool) {
+	if facts, ok := factsProvider[callReturnFacts](p.cfg.Facts); ok {
+		return facts.CallReturnTypesAt(point, call, expected)
+	}
+	return nil, false
 }
 
 // IndexReadFlow returns the solved proof surface needed by indexread refiners.
@@ -196,8 +207,28 @@ func (p Projection) IndexReadFlow() indexread.Flow {
 	}
 }
 
+type postStateTypeFacts interface {
+	PostEffectiveTypeAt(point cfg.Point, sym cfg.SymbolID) flow.TypedValue
+}
+
 type postStatePathFacts interface {
 	PostRefinedPathAt(point cfg.Point, path constraint.Path) flow.TypedValue
+}
+
+type bodyContractFacts interface {
+	BodyContracts() paramevidence.Contracts
+}
+
+type provenanceRouteFacts interface {
+	ProvenanceRoutesAt(p cfg.Point, path constraint.Path) []flow.ProvenanceRoute
+}
+
+type appendElementFieldRouteFacts interface {
+	AppendElementFieldSourceRoutesAt(p cfg.Point, q flow.AppendElementFieldRouteQuery) []flow.ProvenanceRoute
+}
+
+type callReturnFacts interface {
+	CallReturnTypesAt(point cfg.Point, call *ast.FuncCallExpr, expected typ.Type) ([]typ.Type, bool)
 }
 
 type keyOfFacts interface {
@@ -304,4 +335,27 @@ func (f factsIndexReadFlow) symbolAt(p cfg.Point, name string) (cfg.SymbolID, bo
 		return 0, false
 	}
 	return sym, true
+}
+
+func firstProvider[T any](facts flow.TypeFacts, flowOps api.FlowOps) (T, bool) {
+	if provider, ok := factsProvider[T](facts); ok {
+		return provider, true
+	}
+	if flowOps != nil {
+		if provider, ok := any(flowOps).(T); ok {
+			return provider, true
+		}
+	}
+	var zero T
+	return zero, false
+}
+
+func factsProvider[T any](facts flow.TypeFacts) (T, bool) {
+	if facts != nil {
+		if provider, ok := any(facts).(T); ok {
+			return provider, true
+		}
+	}
+	var zero T
+	return zero, false
 }
