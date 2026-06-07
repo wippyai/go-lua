@@ -3,7 +3,9 @@ package flow
 import (
 	"github.com/wippyai/go-lua/types/cfg"
 	"github.com/wippyai/go-lua/types/constraint"
+	"github.com/wippyai/go-lua/types/domain/value/product"
 	"github.com/wippyai/go-lua/types/lattice"
+	"github.com/wippyai/go-lua/types/typ"
 )
 
 // ReferenceContext is the callee-entry view of caller-owned reference state:
@@ -95,6 +97,19 @@ func ReferenceContextFromPoint(point *PointState) ReferenceContext {
 	return ReferenceContextOf(point.Cells, point.FunctionRefs, point.ClosureRefs)
 }
 
+// MergeReferenceContextWithFixed combines caller-provided fixed reference
+// context with a fallback context discovered from the callee/call site. Fixed
+// entries dominate equal roots; missing roots inherit fallback evidence. Capture
+// cell values keep the more precise product value when the fallback refines the
+// fixed seed.
+func MergeReferenceContextWithFixed(fixed, fallback ReferenceContext) ReferenceContext {
+	return ReferenceContextOf(
+		mergeCaptureCellsWithFixed(fixed.CaptureCells(), fallback.CaptureCells()),
+		mergeFunctionRefsWithFixed(fixed.FunctionRefs(), fallback.FunctionRefs()),
+		mergeClosureRefsWithFixed(fixed.ClosureRefs(), fallback.ClosureRefs()),
+	)
+}
+
 // CaptureCells returns the captured-cell axis.
 func (c ReferenceContext) CaptureCells() CaptureCells {
 	return CaptureCellsDomain.Join(c.cells, CaptureCellsDomain.Bottom())
@@ -139,6 +154,107 @@ func (c ReferenceContext) Join(other ReferenceContext) ReferenceContext {
 		FunctionRefsDomain.Join(c.functionRefs, other.functionRefs),
 		ClosureRefsDomain.Join(c.closureRefs, other.closureRefs),
 	)
+}
+
+func mergeCaptureCellsWithFixed(fixed, fallback CaptureCells) CaptureCells {
+	if fixed.IsTop() || fallback.IsTop() {
+		if fixed.IsTop() {
+			return fixed
+		}
+		return fallback
+	}
+	if !fixed.HasFiniteEntries() {
+		return CaptureCellsDomain.Join(fallback, CaptureCellsDomain.Bottom())
+	}
+	out := fixed
+	for _, entry := range fallback.entries {
+		if current, ok := out.Value(entry.Symbol); ok {
+			out = out.With(entry.Symbol, mergeCaptureCellValue(current, entry.Value))
+			continue
+		}
+		out = out.With(entry.Symbol, entry.Value)
+	}
+	return CaptureCellsDomain.Join(out, CaptureCellsDomain.Bottom())
+}
+
+func mergeCaptureCellValue(fixed, fallback product.AbstractValue) product.AbstractValue {
+	if fixed.IsZero() {
+		return fallback
+	}
+	if fallback.IsZero() || product.Domain.Equal(fixed, fallback) {
+		return fixed
+	}
+	fixedType := product.ProjectValueOrUnknown(fixed)
+	fallbackType := product.ProjectValueOrUnknown(fallback)
+	if typ.MorePrecise(fallbackType, fixedType) {
+		return fallback
+	}
+	if typ.MorePrecise(fixedType, fallbackType) {
+		return fixed
+	}
+	if fallback.Covers(fixed) {
+		return fixed
+	}
+	if fixed.Covers(fallback) {
+		return fallback
+	}
+	return fixed
+}
+
+func mergeFunctionRefsWithFixed(fixed, fallback FunctionRefs) FunctionRefs {
+	if FunctionRefsDomain.Equal(fixed, FunctionRefsDomain.Top()) ||
+		FunctionRefsDomain.Equal(fallback, FunctionRefsDomain.Top()) {
+		if FunctionRefsDomain.Equal(fixed, FunctionRefsDomain.Top()) {
+			return fixed
+		}
+		return fallback
+	}
+	if len(fixed) == 0 {
+		return FunctionRefsDomain.Join(fallback, FunctionRefsDomain.Bottom())
+	}
+	out := FunctionRefsDomain.Join(fixed, FunctionRefsDomain.Bottom())
+	for path, set := range fallback {
+		if set.IsBottom() {
+			continue
+		}
+		addr, ok := StableAddressFromCanonicalKey(path)
+		if !ok {
+			continue
+		}
+		if _, ok := FunctionRefAtAddress(out, addr); ok {
+			continue
+		}
+		out = WithFunctionRefAddress(out, addr, set)
+	}
+	return FunctionRefsDomain.Join(out, FunctionRefsDomain.Bottom())
+}
+
+func mergeClosureRefsWithFixed(fixed, fallback ClosureRefs) ClosureRefs {
+	if ClosureRefsDomain.Equal(fixed, ClosureRefsDomain.Top()) ||
+		ClosureRefsDomain.Equal(fallback, ClosureRefsDomain.Top()) {
+		if ClosureRefsDomain.Equal(fixed, ClosureRefsDomain.Top()) {
+			return fixed
+		}
+		return fallback
+	}
+	if len(fixed) == 0 {
+		return ClosureRefsDomain.Join(fallback, ClosureRefsDomain.Bottom())
+	}
+	out := ClosureRefsDomain.Join(fixed, ClosureRefsDomain.Bottom())
+	for path, set := range fallback {
+		if set.IsBottom() {
+			continue
+		}
+		addr, ok := StableAddressFromCanonicalKey(path)
+		if !ok {
+			continue
+		}
+		if _, ok := ClosureRefAtAddress(out, addr); ok {
+			continue
+		}
+		out = WithClosureRefAddress(out, addr, set)
+	}
+	return ClosureRefsDomain.Join(out, ClosureRefsDomain.Bottom())
 }
 
 // CallableIdentity returns only function and closure identity facts. Captured

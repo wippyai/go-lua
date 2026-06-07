@@ -150,6 +150,112 @@ func TestReferenceContextJoinAddsEveryAxis(t *testing.T) {
 	}
 }
 
+func TestMergeReferenceContextWithFixedPreservesExplicitContext(t *testing.T) {
+	sym := cfg.SymbolID(7)
+	other := cfg.SymbolID(8)
+	path := constraint.NewPath(sym, "M").Field("dep").Field("get")
+	otherPath := constraint.NewPath(other, "N").Field("make")
+
+	fixedCells := CaptureCellsOf([]CaptureCell{
+		{Symbol: sym, Value: product.FromType(typ.String)},
+	})
+	fallbackCells := CaptureCellsOf([]CaptureCell{
+		{Symbol: sym, Value: product.FromType(typ.Nil)},
+		{Symbol: other, Value: product.FromType(typ.Number)},
+	})
+	got := MergeReferenceContextWithFixed(
+		ReferenceContextOf(fixedCells, nil, nil),
+		ReferenceContextOf(fallbackCells, nil, nil),
+	)
+	gotCells := got.CaptureCells()
+	if av, ok := gotCells.Value(sym); !ok || !typ.TypeEquals(av.ProjectValue(), typ.String) {
+		t.Fatalf("fixed cell overwritten: got %v/%v, want string", av.ProjectValue(), ok)
+	}
+	if av, ok := gotCells.Value(other); !ok || !typ.TypeEquals(av.ProjectValue(), typ.Number) {
+		t.Fatalf("fallback missing cell: got %v/%v, want number", av.ProjectValue(), ok)
+	}
+
+	emptyRecord := typ.NewRecord().Build()
+	recordWithMethod := typ.NewRecord().Field("render", typ.Func().Returns(typ.String).Build()).Build()
+	got = MergeReferenceContextWithFixed(
+		ReferenceContextOf(
+			CaptureCellsOf([]CaptureCell{{Symbol: sym, Value: product.FromType(emptyRecord)}}),
+			nil,
+			nil,
+		),
+		ReferenceContextOf(
+			CaptureCellsOf([]CaptureCell{{Symbol: sym, Value: product.FromType(recordWithMethod)}}),
+			nil,
+			nil,
+		),
+	)
+	gotCells = got.CaptureCells()
+	if av, ok := gotCells.Value(sym); !ok || !typ.TypeEquals(av.ProjectValue(), recordWithMethod) {
+		t.Fatalf("narrower fallback cell = %v/%v, want record with render", av.ProjectValue(), ok)
+	}
+
+	got = MergeReferenceContextWithFixed(
+		ReferenceContextOf(
+			CaptureCellsOf([]CaptureCell{{Symbol: sym, Value: product.FromType(typ.Number)}}),
+			nil,
+			nil,
+		),
+		ReferenceContextOf(
+			CaptureCellsOf([]CaptureCell{{Symbol: sym, Value: product.FromType(typ.Any)}}),
+			nil,
+			nil,
+		),
+	)
+	gotCells = got.CaptureCells()
+	if av, ok := gotCells.Value(sym); !ok || !typ.TypeEquals(av.ProjectValue(), typ.Number) {
+		t.Fatalf("broad fallback cell = %v/%v, want fixed number", av.ProjectValue(), ok)
+	}
+
+	fixedRefs := WithFunctionRefPath(nil, path, FunctionRefSetOf(FunctionRef{GraphID: 11}))
+	fallbackRefs := WithFunctionRefPath(nil, path, FunctionRefSetOf(FunctionRef{GraphID: 12}))
+	fallbackRefs = WithFunctionRefPath(fallbackRefs, otherPath, FunctionRefSetOf(FunctionRef{GraphID: 13}))
+	got = MergeReferenceContextWithFixed(
+		ReferenceContextOf(CaptureCellsDomain.Bottom(), fixedRefs, nil),
+		ReferenceContextOf(CaptureCellsDomain.Bottom(), fallbackRefs, nil),
+	)
+	gotRefs := got.FunctionRefs()
+	if set, ok := FunctionRefAtPath(gotRefs, path); !ok {
+		t.Fatal("fixed function refs missing")
+	} else if got, ok := set.Singleton(); !ok || got.GraphID != 11 {
+		t.Fatalf("fixed function refs overwritten: got %s, want graph 11", set.Format())
+	}
+	if set, ok := FunctionRefAtPath(gotRefs, otherPath); !ok {
+		t.Fatal("fallback function refs missing")
+	} else if got, ok := set.Singleton(); !ok || got.GraphID != 13 {
+		t.Fatalf("fallback function refs = %s, want graph 13", set.Format())
+	}
+
+	fixedClosures := WithClosureRefPath(nil, path, ClosureRefSetOf(
+		ClosureRefOf(FunctionRef{GraphID: 21}, fixedCells, fixedRefs),
+	))
+	fallbackClosures := WithClosureRefPath(nil, path, ClosureRefSetOf(
+		ClosureRefOf(FunctionRef{GraphID: 22}, fallbackCells, fallbackRefs),
+	))
+	fallbackClosures = WithClosureRefPath(fallbackClosures, otherPath, ClosureRefSetOf(
+		ClosureRefOf(FunctionRef{GraphID: 23}, fallbackCells, fallbackRefs),
+	))
+	got = MergeReferenceContextWithFixed(
+		ReferenceContextOf(CaptureCellsDomain.Bottom(), nil, fixedClosures),
+		ReferenceContextOf(CaptureCellsDomain.Bottom(), nil, fallbackClosures),
+	)
+	gotClosures := got.ClosureRefs()
+	if set, ok := ClosureRefAtPath(gotClosures, path); !ok {
+		t.Fatal("fixed closure refs missing")
+	} else if got, ok := set.Singleton(); !ok || got.Ref.GraphID != 21 {
+		t.Fatalf("fixed closure refs overwritten: got %s, want graph 21", set.Format())
+	}
+	if set, ok := ClosureRefAtPath(gotClosures, otherPath); !ok {
+		t.Fatal("fallback closure refs missing")
+	} else if got, ok := set.Singleton(); !ok || got.Ref.GraphID != 23 {
+		t.Fatalf("fallback closure refs = %s, want graph 23", set.Format())
+	}
+}
+
 func TestReferenceContextRebaseCallablePathsMovesIdentityAxes(t *testing.T) {
 	source := constraint.NewPath(cfg.SymbolID(50), "source")
 	target := constraint.NewPath(cfg.SymbolID(51), "target")

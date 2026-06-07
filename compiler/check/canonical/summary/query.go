@@ -243,7 +243,7 @@ func (q *Queries) IntraWithKey(ctx *db.QueryContext, key Key) state.FunctionStat
 // normalized exact entry key, without demanding a corresponding recursive
 // Summary cell first.
 func (q *Queries) ObserveIntraWithKey(ctx *db.QueryContext, key Key) state.FunctionState {
-	return q.solveIntra(ctx, key.Ref, q.entryReferences(ctx, key), q.entryValues(ctx, key), q.entryFacts(key), q.entrySymbolValues(key.Ref))
+	return q.solveIntra(ctx, key.Ref, q.entryReferences(ctx, key), q.entryValues(ctx, key), key.Facts.Facts(), q.entrySymbolValues(key.Ref))
 }
 
 // Summarize returns ref's interprocedural Summary, driving the call-graph
@@ -310,7 +310,7 @@ func (q *Queries) intra(ctx *db.QueryContext, key Key) state.FunctionState {
 	// observer over those dependencies; it is intentionally not memoized as a
 	// separate db fixed point.
 	_ = q.solveQ.Get(ctx, key).Summary
-	return q.solveIntra(ctx, key.Ref, q.entryReferences(ctx, key), q.entryValues(ctx, key), q.entryFacts(key), q.entrySymbolValues(key.Ref))
+	return q.solveIntra(ctx, key.Ref, q.entryReferences(ctx, key), q.entryValues(ctx, key), key.Facts.Facts(), q.entrySymbolValues(key.Ref))
 }
 
 // ParamNarrows returns ref's context-free parameter-refinement cell: portable
@@ -327,7 +327,7 @@ func (q *Queries) ParamNarrows(ctx *db.QueryContext, ref FuncRef) []paramevidenc
 // cycle records the real semantic dependency rather than an eager bottom-context
 // call-graph edge.
 func (q *Queries) computeSolve(ctx *db.QueryContext, key Key) solveResult {
-	fs := q.solveIntra(ctx, key.Ref, q.entryReferences(ctx, key), q.entryValues(ctx, key), q.entryFacts(key), q.entrySymbolValues(key.Ref))
+	fs := q.solveIntra(ctx, key.Ref, q.entryReferences(ctx, key), q.entryValues(ctx, key), key.Facts.Facts(), q.entrySymbolValues(key.Ref))
 	sum := q.ProjectStateSummary(ctx, key.Ref, fs)
 	return solveResult{State: fs, Summary: sum}
 }
@@ -455,7 +455,7 @@ func (q *Queries) entryReferences(ctx *db.QueryContext, key Key) flow.ReferenceC
 			sum := q.solveQ.Get(ctx, NewDefaultKey(dep, nil)).Summary
 			return sum.CaptureReferences
 		})
-		references = mergeReferenceContextWithFixed(references, lexical)
+		references = flow.MergeReferenceContextWithFixed(references, lexical)
 	}
 	return references
 }
@@ -474,119 +474,6 @@ func (q *Queries) entryValues(ctx *db.QueryContext, key Key) map[int]product.Abs
 		Fixed:    values,
 		Fallback: provided,
 	}).Values()
-}
-
-func (q *Queries) entryFacts(key Key) flow.BoundaryFacts {
-	return key.Facts.Facts()
-}
-
-func mergeCaptureCellsWithFixed(fixed, fallback flow.CaptureCells) flow.CaptureCells {
-	if fixed.IsTop() || fallback.IsTop() {
-		if fixed.IsTop() {
-			return fixed
-		}
-		return fallback
-	}
-	if len(fixed.Entries()) == 0 {
-		return flow.CaptureCellsDomain.Join(fallback, flow.CaptureCellsDomain.Bottom())
-	}
-	out := fixed
-	for _, entry := range fallback.Entries() {
-		if current, ok := out.Value(entry.Symbol); ok {
-			out = out.With(entry.Symbol, mergeCaptureCellValue(current, entry.Value))
-			continue
-		}
-		out = out.With(entry.Symbol, entry.Value)
-	}
-	return flow.CaptureCellsDomain.Join(out, flow.CaptureCellsDomain.Bottom())
-}
-
-func mergeCaptureCellValue(fixed, fallback product.AbstractValue) product.AbstractValue {
-	if fixed.IsZero() {
-		return fallback
-	}
-	if fallback.IsZero() || product.Domain.Equal(fixed, fallback) {
-		return fixed
-	}
-	fixedType := product.ProjectValueOrUnknown(fixed)
-	fallbackType := product.ProjectValueOrUnknown(fallback)
-	if typ.MorePrecise(fallbackType, fixedType) {
-		return fallback
-	}
-	if typ.MorePrecise(fixedType, fallbackType) {
-		return fixed
-	}
-	if fallback.Covers(fixed) {
-		return fixed
-	}
-	if fixed.Covers(fallback) {
-		return fallback
-	}
-	return fixed
-}
-
-func mergeFunctionRefsWithFixed(fixed, fallback flow.FunctionRefs) flow.FunctionRefs {
-	if flow.FunctionRefsDomain.Equal(fixed, flow.FunctionRefsDomain.Top()) ||
-		flow.FunctionRefsDomain.Equal(fallback, flow.FunctionRefsDomain.Top()) {
-		if flow.FunctionRefsDomain.Equal(fixed, flow.FunctionRefsDomain.Top()) {
-			return fixed
-		}
-		return fallback
-	}
-	if len(fixed) == 0 {
-		return flow.FunctionRefsDomain.Join(fallback, flow.FunctionRefsDomain.Bottom())
-	}
-	out := flow.FunctionRefsDomain.Join(fixed, flow.FunctionRefsDomain.Bottom())
-	for path, set := range fallback {
-		if set.IsBottom() {
-			continue
-		}
-		addr, ok := flow.StableAddressFromCanonicalKey(path)
-		if !ok {
-			continue
-		}
-		if _, ok := flow.FunctionRefAtAddress(out, addr); ok {
-			continue
-		}
-		out = flow.WithFunctionRefAddress(out, addr, set)
-	}
-	return flow.FunctionRefsDomain.Join(out, flow.FunctionRefsDomain.Bottom())
-}
-
-func mergeClosureRefsWithFixed(fixed, fallback flow.ClosureRefs) flow.ClosureRefs {
-	if flow.ClosureRefsDomain.Equal(fixed, flow.ClosureRefsDomain.Top()) ||
-		flow.ClosureRefsDomain.Equal(fallback, flow.ClosureRefsDomain.Top()) {
-		if flow.ClosureRefsDomain.Equal(fixed, flow.ClosureRefsDomain.Top()) {
-			return fixed
-		}
-		return fallback
-	}
-	if len(fixed) == 0 {
-		return flow.ClosureRefsDomain.Join(fallback, flow.ClosureRefsDomain.Bottom())
-	}
-	out := flow.ClosureRefsDomain.Join(fixed, flow.ClosureRefsDomain.Bottom())
-	for path, set := range fallback {
-		if set.IsBottom() {
-			continue
-		}
-		addr, ok := flow.StableAddressFromCanonicalKey(path)
-		if !ok {
-			continue
-		}
-		if _, ok := flow.ClosureRefAtAddress(out, addr); ok {
-			continue
-		}
-		out = flow.WithClosureRefAddress(out, addr, set)
-	}
-	return flow.ClosureRefsDomain.Join(out, flow.ClosureRefsDomain.Bottom())
-}
-
-func mergeReferenceContextWithFixed(fixed, fallback flow.ReferenceContext) flow.ReferenceContext {
-	return flow.ReferenceContextOf(
-		mergeCaptureCellsWithFixed(fixed.CaptureCells(), fallback.CaptureCells()),
-		mergeFunctionRefsWithFixed(fixed.FunctionRefs(), fallback.FunctionRefs()),
-		mergeClosureRefsWithFixed(fixed.ClosureRefs(), fallback.ClosureRefs()),
-	)
 }
 
 func (q *Queries) entrySymbolValues(ref FuncRef) map[cfg.SymbolID]product.AbstractValue {
