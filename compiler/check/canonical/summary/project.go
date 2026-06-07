@@ -547,26 +547,17 @@ func projectPointReturnKeyParamRelations(fs state.FunctionState, g *cfg.Graph) f
 			return
 		}
 		rels := flow.ReturnRelationsDomain.Top()
-		var proven []flow.ReturnKeyParamRelation
 		for i := range info.Exprs {
-			key, ok := returnExprKeyPresenceAddress(g, p, info, i)
-			if !ok {
+			path := returnSourceBoundaryPath(g, p, info, i)
+			if path.Symbol == 0 {
 				continue
 			}
-			for _, table := range ps.KeyPresence.TablesWithKeyAddress(key) {
-				param, segments, ok := keyPresenceTableParamAddress(table.Address, paramProjection)
-				if !ok {
-					continue
-				}
-				proven = append(proven, flow.ReturnKeyParamRelation{
-					ReturnIndex:   i,
-					ParamIndex:    param,
-					ParamSegments: segments,
-				})
-			}
-		}
-		if len(proven) > 0 {
-			rels = flow.ReturnRelationsOfKeyParams(proven)
+			rels = flow.MergeReturnRelationProofs(rels, flow.ProjectReturnKeyParamProof(flow.ReturnKeyParamProofQuery{
+				ReturnIndex: i,
+				KeyPath:     path,
+				KeyPresence: ps.KeyPresence,
+				Boundary:    paramProjection,
+			}))
 		}
 		out = flow.ReturnRelationsDomain.Join(out, rels)
 		sawReturn = true
@@ -730,17 +721,6 @@ func returnExprPathKey(g *cfg.Graph, resolver *pathkey.Resolver, p cfg.Point, in
 	return key, key != ""
 }
 
-func returnExprKeyPresenceAddress(g *cfg.Graph, p cfg.Point, info *cfg.ReturnInfo, i int) (flow.StableAddress, bool) {
-	if g == nil || info == nil || i < 0 || i >= len(info.Exprs) {
-		return flow.StableAddress{}, false
-	}
-	path := returnSourceBoundaryPath(g, p, info, i)
-	if path.Symbol == 0 {
-		return flow.StableAddress{}, false
-	}
-	return flow.StableAddressOfPath(path)
-}
-
 func returnSourceBoundaryPath(g *cfg.Graph, p cfg.Point, info *cfg.ReturnInfo, i int) constraint.Path {
 	if g == nil || info == nil || i < 0 || i >= len(info.Exprs) {
 		return constraint.Path{}
@@ -770,15 +750,6 @@ func returnRelationParamSymbolMap(g *cfg.Graph) map[cfg.SymbolID]int {
 		}
 	}
 	return out
-}
-
-func keyPresenceTableParamAddress(addr flow.StableAddress, projection flow.BoundaryPathProjection) (int, []constraint.Segment, bool) {
-	for _, path := range projection.PathsFromAddress(addr) {
-		if path.Kind == flow.BoundaryPathParam && path.Index >= 0 {
-			return path.Index, append([]constraint.Segment(nil), path.Segments...), true
-		}
-	}
-	return 0, nil, false
 }
 
 type returnRelationProof struct {
