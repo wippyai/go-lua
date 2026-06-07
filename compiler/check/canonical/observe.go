@@ -873,19 +873,13 @@ func (f *canonicalFacts) pointState(p cfg.Point, post bool) flow.PointState {
 }
 
 // LengthLowerBoundAt returns the proven lower bound on the length of the container
-// symbol sym entering point p, from the in-state's numeric component (the length
-// floor the transfer seeded from array literals and table.insert appends).
+// symbol sym entering point p. The path-shaped projector owns the flow container
+// identity; this symbol compatibility method delegates to that canonical route.
 func (f *canonicalFacts) LengthLowerBoundAt(p cfg.Point, sym cfg.SymbolID) (int64, bool) {
-	num := f.inState(p).Num
-	if num == nil {
+	if sym == 0 {
 		return 0, false
 	}
-	key, ok := flow.NumericVarKeyOfSymbol(sym)
-	if !ok {
-		return 0, false
-	}
-	lower, _, ok := num.LenBoundsFor(key)
-	return lower, ok
+	return f.LengthLowerBoundForPathAt(p, constraint.Path{Symbol: sym})
 }
 
 // LengthLowerBoundForPathAt returns the proven lower bound on a container path,

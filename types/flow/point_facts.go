@@ -365,10 +365,11 @@ func (f PointFacts) ChildPathFacts(parent constraint.Path) []PathFact {
 
 // LengthLowerBound returns the numeric lower-bound proof for #path when known.
 func (f PointFacts) LengthLowerBound(path constraint.Path) (int64, bool) {
-	if path.Symbol == 0 || f.state.Num == nil {
+	ref, ok := ContainerRefOfPath(path)
+	if !ok {
 		return 0, false
 	}
-	lower, _, ok := f.state.Num.LenBoundsFor(SymbolPathKey(path.Symbol, path.Segments))
+	lower, _, ok := NumericLenBoundsForContainer(f.state.Num, ref)
 	return lower, ok
 }
 
