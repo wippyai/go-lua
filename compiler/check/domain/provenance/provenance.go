@@ -25,41 +25,169 @@ type FreshTableLiteral struct {
 // SegmentTypeProjector projects a structural type through a field/index suffix.
 type SegmentTypeProjector func(base typ.Type, segments []constraint.Segment) typ.Type
 
-// RouteLocalType projects a source type forward through one provenance route to
-// the local routed value type. Route discovery is flow-owned; this package owns
-// route interpretation that is independent of checker observation state.
-func RouteLocalType(route flow.ProvenanceRoute, source typ.Type, project SegmentTypeProjector) typ.Type {
-	if source == nil {
+// SourceReadKind identifies the evidence surface used to read a route source.
+type SourceReadKind uint8
+
+const (
+	SourceReadBodyContract SourceReadKind = iota + 1
+	SourceReadPointPath
+)
+
+// RouteSourceTypeResolver reads one source path from the requested evidence
+// surface. Callers own evidence lookup; provenance owns route shape.
+type RouteSourceTypeResolver func(path constraint.Path, read SourceReadKind) typ.Type
+
+type sourceProjectionKind uint8
+
+const (
+	sourceProjectionDirect sourceProjectionKind = iota + 1
+	sourceProjectionIndexedIteratorValue
+	sourceProjectionKeyedIteratorKey
+	sourceProjectionKeyedIteratorValue
+	sourceProjectionSequenceElement
+)
+
+// RouteSourceTypeQuery is one source read and projection implied by a
+// provenance route.
+type RouteSourceTypeQuery struct {
+	Path      constraint.Path
+	ReadOrder []SourceReadKind
+	Segments  []constraint.Segment
+	project   sourceProjectionKind
+}
+
+// RouteSourceType projects the best source type available for route. It applies
+// route semantics once, while the caller supplies the evidence resolver.
+func RouteSourceType(route flow.ProvenanceRoute, extra []constraint.Segment, resolve RouteSourceTypeResolver, project SegmentTypeProjector) typ.Type {
+	if resolve == nil {
 		return nil
 	}
-	var local typ.Type
+	var fallback typ.Type
+	for _, query := range RouteSourceTypeQueries(route, extra) {
+		for _, read := range query.ReadOrder {
+			source := resolve(query.Path, read)
+			projected := query.ProjectType(source, project)
+			if typ.IsAbsentOrUnknown(projected) {
+				continue
+			}
+			if !typ.IsAny(projected) {
+				return projected
+			}
+			fallback = projected
+		}
+	}
+	return fallback
+}
+
+// RouteSourceTypeQueries lowers a provenance route into source reads and local
+// type projections. Evidence precedence is part of the query because it is a
+// semantic property of the route, not of observation.
+func RouteSourceTypeQueries(route flow.ProvenanceRoute, extra []constraint.Segment) []RouteSourceTypeQuery {
+	if route.Source.Symbol == 0 {
+		return nil
+	}
 	switch route.Kind {
 	case flow.ProvenanceRouteIdentityAlias:
-		local = source
+		return []RouteSourceTypeQuery{{
+			Path:      route.Source,
+			ReadOrder: []SourceReadKind{SourceReadBodyContract},
+			Segments:  cloneSegments(extra),
+			project:   sourceProjectionDirect,
+		}}
 	case flow.ProvenanceRouteIndexedIterator:
 		if route.VarIndex != 1 {
 			return nil
 		}
-		local = querycore.ElementType(source)
+		return []RouteSourceTypeQuery{{
+			Path:      route.Source,
+			ReadOrder: []SourceReadKind{SourceReadBodyContract},
+			Segments:  joinedSegments(route.Remainder, extra),
+			project:   sourceProjectionIndexedIteratorValue,
+		}}
 	case flow.ProvenanceRouteKeyedIterator:
-		switch route.VarIndex {
-		case 0:
-			local = querycore.EntryKeyType(source)
-		case 1:
-			local = querycore.EntryValueType(source)
-		default:
+		project := sourceProjectionKeyedIteratorValue
+		if route.VarIndex == 0 {
+			project = sourceProjectionKeyedIteratorKey
+		} else if route.VarIndex != 1 {
 			return nil
 		}
+		return []RouteSourceTypeQuery{{
+			Path:      route.Source,
+			ReadOrder: []SourceReadKind{SourceReadBodyContract},
+			Segments:  joinedSegments(route.Remainder, extra),
+			project:   project,
+		}}
+	case flow.ProvenanceRouteAppendElementField:
+		return appendElementFieldRouteSourceTypeQueries(route, extra)
 	default:
 		return nil
 	}
-	if local == nil || len(route.Remainder) == 0 {
+}
+
+// ProjectType applies q's route projection to source.
+func (q RouteSourceTypeQuery) ProjectType(source typ.Type, project SegmentTypeProjector) typ.Type {
+	if source == nil {
+		return nil
+	}
+	var local typ.Type
+	switch q.project {
+	case sourceProjectionDirect:
+		local = source
+	case sourceProjectionIndexedIteratorValue, sourceProjectionSequenceElement:
+		local = querycore.ElementType(source)
+	case sourceProjectionKeyedIteratorKey:
+		local = querycore.EntryKeyType(source)
+	case sourceProjectionKeyedIteratorValue:
+		local = querycore.EntryValueType(source)
+	default:
+		return nil
+	}
+	if local == nil || len(q.Segments) == 0 {
 		return local
 	}
 	if project == nil {
 		return nil
 	}
-	return project(local, route.Remainder)
+	return project(local, q.Segments)
+}
+
+func appendElementFieldRouteSourceTypeQueries(route flow.ProvenanceRoute, extra []constraint.Segment) []RouteSourceTypeQuery {
+	if len(route.SourceField) > 0 {
+		return []RouteSourceTypeQuery{{
+			Path:      route.Source,
+			ReadOrder: []SourceReadKind{SourceReadPointPath, SourceReadBodyContract},
+			Segments:  joinedSegments(joinedSegments(route.SourceField, route.FieldRemainder), extra),
+			project:   sourceProjectionSequenceElement,
+		}}
+	}
+	return []RouteSourceTypeQuery{{
+		Path:      appendSegments(route.Source, joinedSegments(route.FieldRemainder, extra)),
+		ReadOrder: []SourceReadKind{SourceReadBodyContract, SourceReadPointPath},
+		project:   sourceProjectionDirect,
+	}}
+}
+
+func appendSegments(path constraint.Path, segments []constraint.Segment) constraint.Path {
+	for _, seg := range segments {
+		path = path.Append(seg)
+	}
+	return path
+}
+
+func joinedSegments(first, second []constraint.Segment) []constraint.Segment {
+	if len(first) == 0 {
+		return cloneSegments(second)
+	}
+	out := cloneSegments(first)
+	out = append(out, second...)
+	return out
+}
+
+func cloneSegments(segments []constraint.Segment) []constraint.Segment {
+	if len(segments) == 0 {
+		return nil
+	}
+	return append([]constraint.Segment(nil), segments...)
 }
 
 // CurrentFreshTableLiteral returns the transfer-proven fresh table literal for

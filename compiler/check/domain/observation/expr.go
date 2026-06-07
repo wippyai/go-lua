@@ -329,11 +329,12 @@ func (p contractPathProof) ElementFieldSatisfies(array []constraint.Segment, fie
 	for _, seg := range array {
 		arrayPath = arrayPath.Append(seg)
 	}
+	resolve := p.projector.routeSourceTypeResolver(p.point, nil)
 	for _, route := range p.projector.proofs.AppendElementFieldSourceRoutesAt(p.point, flow.AppendElementFieldRouteQuery{
 		ArrayPath: arrayPath,
 		Field:     field,
 	}) {
-		sourceType := p.projector.appendElementFieldRouteSourceType(p.point, route, nil, nil)
+		sourceType := provenance.RouteSourceType(route, nil, resolve, p.projector.typeAtSegments)
 		if !typ.IsAbsentOrUnknown(sourceType) && subtype.IsSubtype(sourceType, expected) {
 			return true
 		}
@@ -717,76 +718,26 @@ func (p Projector) bodyContractPathTypeAtPath(point cfg.Point, path constraint.P
 
 func (p Projector) projectBodyContractOriginTypes(point cfg.Point, path constraint.Path, seen map[constraint.PathKey]bool) []typ.Type {
 	var types []typ.Type
+	resolve := p.routeSourceTypeResolver(point, seen)
 	for _, route := range p.provenanceRoutesAt(point, path) {
-		switch route.Kind {
-		case flow.ProvenanceRouteIdentityAlias:
-			if sourceType := p.bodyContractPathTypeAtPath(point, route.Source, seen); sourceType != nil {
-				types = append(types, sourceType)
-			}
-		case flow.ProvenanceRouteIndexedIterator, flow.ProvenanceRouteKeyedIterator:
-			sourceType := p.bodyContractPathTypeAtPath(point, route.Source, seen)
-			if sourceType == nil {
-				continue
-			}
-			localType := provenance.RouteLocalType(route, sourceType, p.typeAtSegments)
-			if localType == nil {
-				continue
-			}
-			if localType != nil {
-				types = append(types, localType)
-			}
-		case flow.ProvenanceRouteAppendElementField:
-			if sourceType := p.appendElementFieldRouteSourceType(point, route, nil, seen); sourceType != nil {
-				types = append(types, sourceType)
-			}
+		if sourceType := provenance.RouteSourceType(route, nil, resolve, p.typeAtSegments); sourceType != nil {
+			types = append(types, sourceType)
 		}
 	}
 	return types
 }
 
-func (p Projector) appendElementFieldRouteSourceType(point cfg.Point, route flow.ProvenanceRoute, extra []constraint.Segment, seen map[constraint.PathKey]bool) typ.Type {
-	if route.Source.Symbol == 0 {
-		return nil
-	}
-	if len(route.SourceField) > 0 {
-		segments := append([]constraint.Segment(nil), route.SourceField...)
-		segments = append(segments, route.FieldRemainder...)
-		segments = append(segments, extra...)
-		var fallback typ.Type
-		for _, sourceType := range []typ.Type{
-			p.pathTypeAtPath(route.Source, point),
-			p.bodyContractPathTypeAtPath(point, route.Source, seen),
-		} {
-			if typ.IsAbsentOrUnknown(sourceType) {
-				continue
-			}
-			elemType := querycore.ElementType(sourceType)
-			if typ.IsAbsentOrUnknown(elemType) {
-				continue
-			}
-			projected := p.typeAtSegments(elemType, segments)
-			if typ.IsAbsentOrUnknown(projected) {
-				continue
-			}
-			if !typ.IsAny(projected) {
-				return projected
-			}
-			fallback = projected
+func (p Projector) routeSourceTypeResolver(point cfg.Point, seen map[constraint.PathKey]bool) provenance.RouteSourceTypeResolver {
+	return func(path constraint.Path, read provenance.SourceReadKind) typ.Type {
+		switch read {
+		case provenance.SourceReadBodyContract:
+			return p.bodyContractPathTypeAtPath(point, path, seen)
+		case provenance.SourceReadPointPath:
+			return p.pathTypeAtPath(path, point)
+		default:
+			return nil
 		}
-		return fallback
 	}
-	sourcePath := route.Source
-	for _, seg := range route.FieldRemainder {
-		sourcePath = sourcePath.Append(seg)
-	}
-	for _, seg := range extra {
-		sourcePath = sourcePath.Append(seg)
-	}
-	sourceType := p.bodyContractPathTypeAtPath(point, sourcePath, seen)
-	if sourceType != nil {
-		return sourceType
-	}
-	return p.pathTypeAtPath(sourcePath, point)
 }
 
 func (p Projector) directBodyContractPathType(path constraint.Path) typ.Type {
