@@ -13,20 +13,22 @@ import (
 	"github.com/wippyai/go-lua/types/typ"
 )
 
-// productCallProjection is the canonical adapter from one product call context
-// to the caller-visible projections derived from its selected summary outcome.
-type productCallProjection struct {
+// productCallFrame is the canonical semantic frame for one product-domain call
+// boundary. It is built once from the call expression, solved point context, and
+// selected summary outcome; callers ask the frame for outward projections instead
+// of reconstructing call facts through driver helpers.
+type productCallFrame struct {
 	typer   callTyper
 	call    *ast.FuncCallExpr
 	ctx     transfer.ProductCallContext
 	outcome canonicalcall.CallOutcome
 }
 
-func (ct callTyper) productCallProjection(call *ast.FuncCallExpr, ctx transfer.ProductCallContext, opts productCallOutcomeOptions) (productCallProjection, bool) {
+func (ct callTyper) productCallFrame(call *ast.FuncCallExpr, ctx transfer.ProductCallContext, opts productCallOutcomeOptions) (productCallFrame, bool) {
 	if ct.d == nil || call == nil || ct.d.activeProgram == nil {
-		return productCallProjection{}, false
+		return productCallFrame{}, false
 	}
-	return productCallProjection{
+	return productCallFrame{
 		typer:   ct,
 		call:    call,
 		ctx:     ctx,
@@ -34,18 +36,11 @@ func (ct callTyper) productCallProjection(call *ast.FuncCallExpr, ctx transfer.P
 	}, true
 }
 
-func (ct callTyper) summaryOnlyProductCallProjection(call *ast.FuncCallExpr, ctx transfer.ProductCallContext) (productCallProjection, bool) {
-	return ct.productCallProjection(call, ctx, productCallOutcomeOptions{
-		skipSignatureReturns:   true,
-		skipSignatureRelations: true,
-	})
-}
-
-func (p productCallProjection) inferredReturnValues() []product.AbstractValue {
+func (p productCallFrame) inferredReturnValues() []product.AbstractValue {
 	return p.outcome.InferredReturnValues()
 }
 
-func (p productCallProjection) callReturnValues() ([]product.AbstractValue, bool) {
+func (p productCallFrame) callReturnValues() ([]product.AbstractValue, bool) {
 	argTypes := p.ctx.ArgTypes()
 	exprType := p.ctx.ExprType
 	summaryReturns := p.inferredReturnValues()
@@ -75,7 +70,7 @@ func (p productCallProjection) callReturnValues() ([]product.AbstractValue, bool
 	}.Values()
 }
 
-func (p productCallProjection) result(effects transfer.CallEffects) transfer.ProductCallResult {
+func (p productCallFrame) result(effects transfer.CallEffects) transfer.ProductCallResult {
 	values, ok := p.callReturnValues()
 	return transfer.ProductCallResult{
 		ReturnValues:    values,
@@ -83,7 +78,7 @@ func (p productCallProjection) result(effects transfer.CallEffects) transfer.Pro
 		ReturnRefs:      p.outcome.ReturnRefs(),
 		ReturnRelations: p.returnRelations(),
 		Effects:         effects,
-		ArgDemands:      p.typer.productCallArgDemands(p.call, p.ctx),
+		ArgDemands:      p.callArgDemands(),
 		NeverReturns: p.neverReturns(func(ref summary.FuncRef) bool {
 			return p.typer.d.activeProgram.facts.HasNoReturn(ref)
 		}),
@@ -91,11 +86,34 @@ func (p productCallProjection) result(effects transfer.CallEffects) transfer.Pro
 	}
 }
 
-func (p productCallProjection) returnRelations() flow.ReturnRelations {
+func (p productCallFrame) returnRelations() flow.ReturnRelations {
 	return p.outcome.ReturnRelations(p.call, p.typer.callTypeResolver(p.ctx.ExprType), p.ctx.ExprValue != nil)
 }
 
-func (p productCallProjection) argDemands() ([]callobligation.Obligation, bool) {
+func (p productCallFrame) callArgDemands() []callobligation.Obligation {
+	return (canonicalcall.CallArgDemandProjection{
+		Call: p.call,
+		SummaryDemands: func(*ast.FuncCallExpr) ([]callobligation.Obligation, bool) {
+			return p.argDemands()
+		},
+		FunctionShape: func(*ast.FuncCallExpr) *typ.Function {
+			return p.callFunctionShape()
+		},
+		SelfType: func(*ast.FuncCallExpr) typ.Type {
+			return p.ctx.SelfType
+		},
+	}).Demands()
+}
+
+func (p productCallFrame) callFunctionShape() *typ.Function {
+	proj, ok := p.typer.callFunctionShapeProjection(p.call, p.ctx.ExprType)
+	if !ok {
+		return nil
+	}
+	return proj.functionShape()
+}
+
+func (p productCallFrame) argDemands() ([]callobligation.Obligation, bool) {
 	targets := p.demandTargets()
 	if len(targets) == 0 {
 		return nil, false
@@ -106,7 +124,7 @@ func (p productCallProjection) argDemands() ([]callobligation.Obligation, bool) 
 	}.Obligations(), true
 }
 
-func (p productCallProjection) demandTargets() []paramevidence.CallArgDemandTarget {
+func (p productCallFrame) demandTargets() []paramevidence.CallArgDemandTarget {
 	d := p.typer.d
 	if d == nil || d.activeProgram == nil || p.call == nil || len(p.call.Args) == 0 || !p.outcome.HasTargets() {
 		return nil
@@ -143,7 +161,7 @@ func (p productCallProjection) demandTargets() []paramevidence.CallArgDemandTarg
 	return out
 }
 
-func (p productCallProjection) effects(projector cellEffectProjector, elementUnions []effect.ContainerElementUnion) transfer.CallEffects {
+func (p productCallFrame) effects(projector cellEffectProjector, elementUnions []effect.ContainerElementUnion) transfer.CallEffects {
 	return transfer.CallEffects{
 		CellEffects:     projector.productCallEffects(p.outcome, p.call, p.ctx),
 		ReceiverEffects: p.outcome.ReceiverEffects(),
@@ -152,6 +170,6 @@ func (p productCallProjection) effects(projector cellEffectProjector, elementUni
 	}
 }
 
-func (p productCallProjection) neverReturns(isNoReturn func(summary.FuncRef) bool) bool {
+func (p productCallFrame) neverReturns(isNoReturn func(summary.FuncRef) bool) bool {
 	return p.outcome.NeverReturns(isNoReturn)
 }

@@ -46,7 +46,6 @@ import (
 	"github.com/wippyai/go-lua/compiler/check/canonical/topology"
 	"github.com/wippyai/go-lua/compiler/check/canonical/transfer"
 	"github.com/wippyai/go-lua/compiler/check/domain/callbackenv"
-	"github.com/wippyai/go-lua/compiler/check/domain/callobligation"
 	"github.com/wippyai/go-lua/compiler/check/domain/fieldkey"
 	"github.com/wippyai/go-lua/compiler/check/domain/functionfact"
 	"github.com/wippyai/go-lua/compiler/check/domain/globalenv"
@@ -1787,14 +1786,6 @@ func (r opsResolver) UnaryOp(op string, operand typ.Type) typ.Type {
 	return res.UnaryOp(op, operand)
 }
 
-func (ct callTyper) productCallArgDemands(call *ast.FuncCallExpr, ctx transfer.ProductCallContext) []callobligation.Obligation {
-	proj, ok := ct.callDemandProjection(call, ctx.ExprType)
-	if !ok {
-		return nil
-	}
-	return proj.demands(ctx)
-}
-
 func (ct callTyper) productCallParamNarrows(call *ast.FuncCallExpr) []transfer.ParamNarrow {
 	if ct.d == nil || ct.d.activeProgram == nil || call == nil {
 		return nil
@@ -1836,16 +1827,16 @@ func (ct callTyper) summaryForCallEntryContext(entry canonicalcall.EntryContext)
 // callee summary return values), projects caller-visible effects from the same
 // selected outcome, and keeps type-only signature fallback inside this boundary.
 func (ct callTyper) ProductCallFromValues(call *ast.FuncCallExpr, ctx transfer.ProductCallContext) transfer.ProductCallResult {
-	proj, ok := ct.productCallProjection(call, ctx, productCallOutcomeOptions{})
+	frame, ok := ct.productCallFrame(call, ctx, productCallOutcomeOptions{})
 	if !ok {
 		return transfer.EmptyProductCallResult()
 	}
 	effects := transfer.EmptyCallEffects()
 	projector, ok := ct.cellEffectProjector()
 	if ok {
-		effects = proj.effects(projector, ct.containerElementUnions(call, ctx))
+		effects = frame.effects(projector, ct.containerElementUnions(call, ctx))
 	}
-	return proj.result(effects)
+	return frame.result(effects)
 }
 
 // IterVars types a generic-for loop's iteration variables from its iterator
