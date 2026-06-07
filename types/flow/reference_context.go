@@ -175,28 +175,46 @@ func (c ReferenceContext) RebaseCallablePaths(source, target constraint.Path) Re
 	)
 }
 
-// JoinFunctionRefAt additively publishes function identity at path.
-func (c ReferenceContext) JoinFunctionRefAt(path constraint.PathKey, set FunctionRefSet) ReferenceContext {
+// JoinFunctionRefAddress additively publishes function identity at addr.
+func (c ReferenceContext) JoinFunctionRefAddress(addr StableAddress, set FunctionRefSet) ReferenceContext {
 	if set.IsBottom() {
 		return c
 	}
 	refs := c.functionRefs
-	if prev, ok := FunctionRefAt(refs, path); ok {
+	if prev, ok := FunctionRefAtAddress(refs, addr); ok {
 		set = FunctionRefSetDomain.Join(prev, set)
 	}
-	return ReferenceContextOf(c.cells, WithFunctionRef(refs, path, set), c.closureRefs)
+	return ReferenceContextOf(c.cells, WithFunctionRefAddress(refs, addr, set), c.closureRefs)
 }
 
-// JoinClosureRefAt additively publishes closure identity at path.
-func (c ReferenceContext) JoinClosureRefAt(path constraint.PathKey, set ClosureRefSet) ReferenceContext {
+// JoinFunctionRefPath additively publishes function identity at path.
+func (c ReferenceContext) JoinFunctionRefPath(path constraint.Path, set FunctionRefSet) ReferenceContext {
+	addr, ok := StableAddressOfPath(path)
+	if !ok {
+		return c
+	}
+	return c.JoinFunctionRefAddress(addr, set)
+}
+
+// JoinClosureRefAddress additively publishes closure identity at addr.
+func (c ReferenceContext) JoinClosureRefAddress(addr StableAddress, set ClosureRefSet) ReferenceContext {
 	if set.IsBottom() {
 		return c
 	}
 	refs := c.closureRefs
-	if prev, ok := ClosureRefAt(refs, path); ok {
+	if prev, ok := ClosureRefAtAddress(refs, addr); ok {
 		set = ClosureRefSetDomain.Join(prev, set)
 	}
-	return ReferenceContextOf(c.cells, c.functionRefs, WithClosureRef(refs, path, set))
+	return ReferenceContextOf(c.cells, c.functionRefs, WithClosureRefAddress(refs, addr, set))
+}
+
+// JoinClosureRefPath additively publishes closure identity at path.
+func (c ReferenceContext) JoinClosureRefPath(path constraint.Path, set ClosureRefSet) ReferenceContext {
+	addr, ok := StableAddressOfPath(path)
+	if !ok {
+		return c
+	}
+	return c.JoinClosureRefAddress(addr, set)
 }
 
 // ProjectPaths keeps only paths visible through projection on every reference

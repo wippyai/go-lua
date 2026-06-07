@@ -177,23 +177,23 @@ func TestReferenceContextRebaseCallablePathsMovesIdentityAxes(t *testing.T) {
 	}
 }
 
-func TestReferenceContextJoinRefAtAddsIdentitySets(t *testing.T) {
-	path := constraint.NewPath(cfg.SymbolID(52), "fn").Key()
+func TestReferenceContextJoinRefPathAddsIdentitySets(t *testing.T) {
+	path := constraint.NewPath(cfg.SymbolID(52), "fn")
 	firstFn := FunctionRef{GraphID: 52}
 	secondFn := FunctionRef{GraphID: 53}
 	firstClosure := ClosureRefOf(FunctionRef{GraphID: 54}, CaptureCellsDomain.Bottom(), nil)
 	secondClosure := ClosureRefOf(FunctionRef{GraphID: 55}, CaptureCellsDomain.Bottom(), nil)
 
 	references := ReferenceContextBottom().
-		JoinFunctionRefAt(path, FunctionRefSetOf(firstFn)).
-		JoinFunctionRefAt(path, FunctionRefSetOf(secondFn)).
-		JoinClosureRefAt(path, ClosureRefSetOf(firstClosure)).
-		JoinClosureRefAt(path, ClosureRefSetOf(secondClosure))
+		JoinFunctionRefPath(path, FunctionRefSetOf(firstFn)).
+		JoinFunctionRefPath(path, FunctionRefSetOf(secondFn)).
+		JoinClosureRefPath(path, ClosureRefSetOf(firstClosure)).
+		JoinClosureRefPath(path, ClosureRefSetOf(secondClosure))
 
-	if set, ok := FunctionRefAt(references.FunctionRefs(), path); !ok || len(set.Refs()) != 2 {
+	if set, ok := FunctionRefAtPath(references.FunctionRefs(), path); !ok || len(set.Refs()) != 2 {
 		t.Fatalf("joined function refs = %s/%v, want two refs", set.Format(), ok)
 	}
-	if set, ok := ClosureRefAt(references.ClosureRefs(), path); !ok || len(set.Refs()) != 2 {
+	if set, ok := ClosureRefAtPath(references.ClosureRefs(), path); !ok || len(set.Refs()) != 2 {
 		t.Fatalf("joined closure refs = %s/%v, want two refs", set.Format(), ok)
 	}
 }

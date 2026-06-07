@@ -541,10 +541,14 @@ func mergeFunctionRefsWithFixed(fixed, fallback flow.FunctionRefs) flow.Function
 		if set.IsBottom() {
 			continue
 		}
-		if _, ok := flow.FunctionRefAt(out, path); ok {
+		addr, ok := flow.StableAddressFromKey(path)
+		if !ok {
 			continue
 		}
-		out = flow.WithFunctionRef(out, path, set)
+		if _, ok := flow.FunctionRefAtAddress(out, addr); ok {
+			continue
+		}
+		out = flow.WithFunctionRefAddress(out, addr, set)
 	}
 	return flow.FunctionRefsDomain.Join(out, flow.FunctionRefsDomain.Bottom())
 }
@@ -565,10 +569,14 @@ func mergeClosureRefsWithFixed(fixed, fallback flow.ClosureRefs) flow.ClosureRef
 		if set.IsBottom() {
 			continue
 		}
-		if _, ok := flow.ClosureRefAt(out, path); ok {
+		addr, ok := flow.StableAddressFromKey(path)
+		if !ok {
 			continue
 		}
-		out = flow.WithClosureRef(out, path, set)
+		if _, ok := flow.ClosureRefAtAddress(out, addr); ok {
+			continue
+		}
+		out = flow.WithClosureRefAddress(out, addr, set)
 	}
 	return flow.ClosureRefsDomain.Join(out, flow.ClosureRefsDomain.Bottom())
 }

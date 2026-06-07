@@ -70,18 +70,6 @@ func UniqueSortedFuncRefs(in []FuncRef) []FuncRef {
 	return append([]FuncRef(nil), dst...)
 }
 
-// FromFlowPath reads the flow-domain function identities at path and converts the
-// finite may-set to canonical function identities. A present Top set yields
-// (nil, true), preserving the caller's "authoritative but unknown" distinction
-// from an absent path, which yields (nil, false).
-func FromFlowPath(refs flow.FunctionRefs, path constraint.PathKey) ([]FuncRef, bool) {
-	set, ok := flow.FunctionRefAt(refs, path)
-	if !ok {
-		return nil, false
-	}
-	return fromFlowSet(set)
-}
-
 // FromFlowStructuredPath reads flow-domain function identities at a structured
 // path without exposing stable-address normalization to callers.
 func FromFlowStructuredPath(refs flow.FunctionRefs, path constraint.Path) ([]FuncRef, bool) {

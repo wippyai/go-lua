@@ -78,12 +78,12 @@ func directCallEntryReferences(in directCallEntryReferenceInput) flow.ReferenceC
 		}
 		if in.ArgSources.FunctionRefs != nil {
 			if set, ok := in.ArgSources.FunctionRefs(runtimeIdx, arg, in.State); ok && !set.IsBottom() {
-				out = out.JoinFunctionRefAt(target.Key(), set)
+				out = out.JoinFunctionRefPath(target, set)
 			}
 		}
 		if in.ArgSources.ClosureRefs != nil {
 			if set, ok := in.ArgSources.ClosureRefs(runtimeIdx, arg, in.State); ok && !set.IsBottom() {
-				out = out.JoinClosureRefAt(target.Key(), set)
+				out = out.JoinClosureRefPath(target, set)
 			}
 		}
 	})
