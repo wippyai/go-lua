@@ -52,7 +52,10 @@ func (t *Transfer) applyValueConditionReductions(out *flow.PointState, fact cons
 	if len(syms) == 0 {
 		return false
 	}
-	originSyms := variantOriginConditionSymbolSet(fact)
+	originSyms := make(map[cfg.SymbolID]struct{})
+	for _, sym := range flow.VariantOriginConditionSymbols(fact) {
+		originSyms[sym] = struct{}{}
+	}
 	changed := false
 	for _, sym := range syms {
 		if _, hasOriginConstraint := originSyms[sym]; hasOriginConstraint {
@@ -212,102 +215,17 @@ func (t *Transfer) applyVariantOriginConditionReductions(out *flow.PointState, f
 	if out == nil {
 		return false
 	}
-	syms := variantOriginConditionSymbols(fact)
-	if len(syms) == 0 {
-		return false
-	}
+	reductions := flow.VariantOriginConditionReducer{
+		SymbolValue: func(sym cfg.SymbolID) (product.AbstractValue, bool) {
+			return t.symbolValue(out, sym)
+		},
+	}.Reductions(fact)
 	changed := false
-	for _, sym := range syms {
-		av, ok := t.symbolValue(out, sym)
-		if !ok || av.IsZero() {
-			continue
-		}
-		next, narrowed := t.variantOriginValueForCondition(av, sym, fact)
-		if !narrowed || product.Domain.Equal(av, next) {
-			continue
-		}
-		t.setSymbolValue(out, sym, next, false)
+	for _, reduction := range reductions {
+		t.setSymbolValue(out, reduction.Symbol, reduction.Value, false)
 		changed = true
 	}
 	return changed
-}
-
-func (t *Transfer) variantOriginValueForCondition(av product.AbstractValue, sym cfg.SymbolID, fact constraint.Condition) (product.AbstractValue, bool) {
-	if fact.NumDisjuncts() == 0 {
-		return product.AbstractValue{}, false
-	}
-	var joined product.AbstractValue
-	joinedSet := false
-	for i := 0; i < fact.NumDisjuncts(); i++ {
-		candidate := av
-		for _, c := range fact.DisjunctConstraints(i) {
-			next, ok := t.variantOriginValueForConstraint(candidate, sym, c)
-			if ok {
-				candidate = next
-			}
-		}
-		if !joinedSet {
-			joined = candidate
-			joinedSet = true
-			continue
-		}
-		joined = product.Domain.Join(joined, candidate)
-	}
-	if !joinedSet {
-		return product.AbstractValue{}, false
-	}
-	return joined, true
-}
-
-func (t *Transfer) variantOriginValueForConstraint(av product.AbstractValue, sym cfg.SymbolID, c constraint.Constraint) (product.AbstractValue, bool) {
-	switch cc := c.(type) {
-	case constraint.VariantCaseEquals:
-		return t.variantOriginValueForCase(av, sym, cc.Target, cc.OriginFamily, cc.CaseIndex, true)
-	case constraint.VariantCaseNotEquals:
-		return t.variantOriginValueForCase(av, sym, cc.Target, cc.OriginFamily, cc.CaseIndex, false)
-	default:
-		return product.AbstractValue{}, false
-	}
-}
-
-func (t *Transfer) variantOriginValueForCase(av product.AbstractValue, sym cfg.SymbolID, path constraint.Path, family uint64, caseIndex int, equal bool) (product.AbstractValue, bool) {
-	if path.Symbol != sym || len(path.Segments) != 0 {
-		return product.AbstractValue{}, false
-	}
-	next, changed := product.NarrowVariantOriginCase(av, family, caseIndex, equal)
-	return next, changed
-}
-
-func variantOriginConditionSymbols(fact constraint.Condition) []cfg.SymbolID {
-	seen := variantOriginConditionSymbolSet(fact)
-	if len(seen) == 0 {
-		return nil
-	}
-	out := make([]cfg.SymbolID, 0, len(seen))
-	for sym := range seen {
-		out = append(out, sym)
-	}
-	sort.Slice(out, func(i, j int) bool { return out[i] < out[j] })
-	return out
-}
-
-func variantOriginConditionSymbolSet(fact constraint.Condition) map[cfg.SymbolID]struct{} {
-	seen := make(map[cfg.SymbolID]struct{})
-	for i := 0; i < fact.NumDisjuncts(); i++ {
-		for _, c := range fact.DisjunctConstraints(i) {
-			switch cc := c.(type) {
-			case constraint.VariantCaseEquals:
-				if cc.Target.Symbol != 0 && len(cc.Target.Segments) == 0 {
-					seen[cc.Target.Symbol] = struct{}{}
-				}
-			case constraint.VariantCaseNotEquals:
-				if cc.Target.Symbol != 0 && len(cc.Target.Segments) == 0 {
-					seen[cc.Target.Symbol] = struct{}{}
-				}
-			}
-		}
-	}
-	return seen
 }
 
 func conditionValueSymbols(fact constraint.Condition) []cfg.SymbolID {

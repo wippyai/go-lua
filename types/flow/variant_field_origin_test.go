@@ -277,6 +277,113 @@ func TestApplyVariantCaseFieldProjectionsWritesStaticMemberFact(t *testing.T) {
 	}
 }
 
+func TestVariantOriginConditionReducerJoinsDNFCaseReductions(t *testing.T) {
+	sym := cfg.SymbolID(21)
+	family := uint64(101)
+	path := constraint.Path{Root: "selected", Symbol: sym}
+	base := product.WithVariantOrigin(product.FromType(typ.String), family, []int{0, 1, 2})
+	fact := constraint.Or(
+		constraint.FromConstraints(constraint.VariantCaseEquals{Target: path, OriginFamily: family, CaseIndex: 0}),
+		constraint.FromConstraints(constraint.VariantCaseEquals{Target: path, OriginFamily: family, CaseIndex: 1}),
+	)
+
+	reductions := VariantOriginConditionReducer{
+		SymbolValue: func(got cfg.SymbolID) (product.AbstractValue, bool) {
+			if got != sym {
+				return product.AbstractValue{}, false
+			}
+			return base, true
+		},
+	}.Reductions(fact)
+	if len(reductions) != 1 {
+		t.Fatalf("reductions = %#v, want one symbol reduction", reductions)
+	}
+	want := product.WithVariantOrigin(product.FromType(typ.String), family, []int{0, 1})
+	if reductions[0].Symbol != sym || !product.Domain.Equal(reductions[0].Value, want) {
+		t.Fatalf("reduction = %#v, want %d -> %#v", reductions[0], sym, want)
+	}
+}
+
+func TestVariantOriginConditionReducerIgnoresNestedTargets(t *testing.T) {
+	sym := cfg.SymbolID(22)
+	family := uint64(102)
+	path := constraint.Path{Root: "selected", Symbol: sym}.Field("value")
+	base := product.WithVariantOrigin(product.FromType(typ.String), family, []int{0, 1})
+	fact := constraint.FromConstraints(constraint.VariantCaseEquals{Target: path, OriginFamily: family, CaseIndex: 0})
+
+	reductions := VariantOriginConditionReducer{
+		SymbolValue: func(got cfg.SymbolID) (product.AbstractValue, bool) {
+			if got != sym {
+				return product.AbstractValue{}, false
+			}
+			return base, true
+		},
+	}.Reductions(fact)
+	if len(reductions) != 0 {
+		t.Fatalf("nested target reductions = %#v, want none", reductions)
+	}
+}
+
+func TestVariantOriginConditionReducerReducesMultipleSymbolsWithExclusions(t *testing.T) {
+	leftSym := cfg.SymbolID(23)
+	rightSym := cfg.SymbolID(24)
+	leftFamily := uint64(103)
+	rightFamily := uint64(104)
+	leftPath := constraint.Path{Root: "left", Symbol: leftSym}
+	rightPath := constraint.Path{Root: "right", Symbol: rightSym}
+	values := map[cfg.SymbolID]product.AbstractValue{
+		leftSym:  product.WithVariantOrigin(product.FromType(typ.String), leftFamily, []int{0, 1, 2}),
+		rightSym: product.WithVariantOrigin(product.FromType(typ.Number), rightFamily, []int{0, 1, 2}),
+	}
+	fact := constraint.FromConstraints(
+		constraint.VariantCaseEquals{Target: leftPath, OriginFamily: leftFamily, CaseIndex: 2},
+		constraint.VariantCaseNotEquals{Target: rightPath, OriginFamily: rightFamily, CaseIndex: 1},
+	)
+
+	reductions := VariantOriginConditionReducer{
+		SymbolValue: func(sym cfg.SymbolID) (product.AbstractValue, bool) {
+			av, ok := values[sym]
+			return av, ok
+		},
+	}.Reductions(fact)
+	if len(reductions) != 2 {
+		t.Fatalf("reductions = %#v, want two symbol reductions", reductions)
+	}
+	wantLeft := product.WithVariantOrigin(product.FromType(typ.String), leftFamily, []int{2})
+	wantRight := product.WithVariantOrigin(product.FromType(typ.Number), rightFamily, []int{0, 2})
+	if reductions[0].Symbol != leftSym || !product.Domain.Equal(reductions[0].Value, wantLeft) {
+		t.Fatalf("left reduction = %#v, want %d -> %#v", reductions[0], leftSym, wantLeft)
+	}
+	if reductions[1].Symbol != rightSym || !product.Domain.Equal(reductions[1].Value, wantRight) {
+		t.Fatalf("right reduction = %#v, want %d -> %#v", reductions[1], rightSym, wantRight)
+	}
+}
+
+func TestVariantOriginConditionReducerKeepsUnconstrainedDNFBranch(t *testing.T) {
+	sym := cfg.SymbolID(25)
+	otherSym := cfg.SymbolID(26)
+	family := uint64(105)
+	path := constraint.Path{Root: "selected", Symbol: sym}
+	other := constraint.Path{Root: "other", Symbol: otherSym}
+	base := product.WithVariantOrigin(product.FromType(typ.String), family, []int{0, 1})
+	fact := constraint.Or(
+		constraint.FromConstraints(constraint.VariantCaseEquals{Target: path, OriginFamily: family, CaseIndex: 0}),
+		constraint.FromConstraints(constraint.Truthy{Path: other}),
+	)
+
+	reductions := VariantOriginConditionReducer{
+		SymbolValue: func(got cfg.SymbolID) (product.AbstractValue, bool) {
+			if got != sym {
+				return product.AbstractValue{}, false
+			}
+			return base, true
+		},
+	}.Reductions(fact)
+	if len(reductions) != 0 {
+		t.Fatalf("unconstrained DNF branch reductions = %#v, want none", reductions)
+	}
+}
+
 func variantOriginForTest(family uint64, caseIndex int) VariantFieldOrigin {
 	return VariantFieldOrigin{
 		Target: constraint.Path{
