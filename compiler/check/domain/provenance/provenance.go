@@ -37,23 +37,27 @@ const (
 // surface. Callers own evidence lookup; provenance owns route shape.
 type RouteSourceTypeResolver func(path constraint.Path, read SourceReadKind) typ.Type
 
-type sourceProjectionKind uint8
+// RouteProjectionKind identifies how a provenance route relates the source
+// value to the local routed value.
+type RouteProjectionKind uint8
 
 const (
-	sourceProjectionDirect sourceProjectionKind = iota + 1
-	sourceProjectionIndexedIteratorValue
-	sourceProjectionKeyedIteratorKey
-	sourceProjectionKeyedIteratorValue
-	sourceProjectionSequenceElement
+	RouteProjectionDirect RouteProjectionKind = iota + 1
+	RouteProjectionIndexedIteratorValue
+	RouteProjectionKeyedIteratorKey
+	RouteProjectionKeyedIteratorValue
+	RouteProjectionSequenceElement
 )
 
-// RouteSourceTypeQuery is one source read and projection implied by a
-// provenance route.
-type RouteSourceTypeQuery struct {
-	Path      constraint.Path
-	ReadOrder []SourceReadKind
-	Segments  []constraint.Segment
-	project   sourceProjectionKind
+// RouteSourceQuery is one source read and projection implied by a provenance
+// route. Type observation and contract propagation consume the same query shape:
+// observation projects source type forward; paramevidence inverts the projection
+// into a source contract.
+type RouteSourceQuery struct {
+	Path       constraint.Path
+	ReadOrder  []SourceReadKind
+	Segments   []constraint.Segment
+	Projection RouteProjectionKind
 }
 
 // RouteSourceType projects the best source type available for route. It applies
@@ -63,7 +67,7 @@ func RouteSourceType(route flow.ProvenanceRoute, extra []constraint.Segment, res
 		return nil
 	}
 	var fallback typ.Type
-	for _, query := range RouteSourceTypeQueries(route, extra) {
+	for _, query := range RouteSourceQueries(route, extra) {
 		for _, read := range query.ReadOrder {
 			source := resolve(query.Path, read)
 			projected := query.ProjectType(source, project)
@@ -79,65 +83,65 @@ func RouteSourceType(route flow.ProvenanceRoute, extra []constraint.Segment, res
 	return fallback
 }
 
-// RouteSourceTypeQueries lowers a provenance route into source reads and local
-// type projections. Evidence precedence is part of the query because it is a
-// semantic property of the route, not of observation.
-func RouteSourceTypeQueries(route flow.ProvenanceRoute, extra []constraint.Segment) []RouteSourceTypeQuery {
+// RouteSourceQueries lowers a provenance route into source reads and local
+// projections. Evidence precedence is part of the query because it is a semantic
+// property of the route, not of observation.
+func RouteSourceQueries(route flow.ProvenanceRoute, extra []constraint.Segment) []RouteSourceQuery {
 	if route.Source.Symbol == 0 {
 		return nil
 	}
 	switch route.Kind {
 	case flow.ProvenanceRouteIdentityAlias:
-		return []RouteSourceTypeQuery{{
-			Path:      route.Source,
-			ReadOrder: []SourceReadKind{SourceReadBodyContract},
-			Segments:  cloneSegments(extra),
-			project:   sourceProjectionDirect,
+		return []RouteSourceQuery{{
+			Path:       route.Source,
+			ReadOrder:  []SourceReadKind{SourceReadBodyContract},
+			Segments:   cloneSegments(extra),
+			Projection: RouteProjectionDirect,
 		}}
 	case flow.ProvenanceRouteIndexedIterator:
 		if route.VarIndex != 1 {
 			return nil
 		}
-		return []RouteSourceTypeQuery{{
-			Path:      route.Source,
-			ReadOrder: []SourceReadKind{SourceReadBodyContract},
-			Segments:  joinedSegments(route.Remainder, extra),
-			project:   sourceProjectionIndexedIteratorValue,
+		return []RouteSourceQuery{{
+			Path:       route.Source,
+			ReadOrder:  []SourceReadKind{SourceReadBodyContract},
+			Segments:   joinedSegments(route.Remainder, extra),
+			Projection: RouteProjectionIndexedIteratorValue,
 		}}
 	case flow.ProvenanceRouteKeyedIterator:
-		project := sourceProjectionKeyedIteratorValue
+		projection := RouteProjectionKeyedIteratorValue
 		if route.VarIndex == 0 {
-			project = sourceProjectionKeyedIteratorKey
+			projection = RouteProjectionKeyedIteratorKey
 		} else if route.VarIndex != 1 {
 			return nil
 		}
-		return []RouteSourceTypeQuery{{
-			Path:      route.Source,
-			ReadOrder: []SourceReadKind{SourceReadBodyContract},
-			Segments:  joinedSegments(route.Remainder, extra),
-			project:   project,
+		return []RouteSourceQuery{{
+			Path:       route.Source,
+			ReadOrder:  []SourceReadKind{SourceReadBodyContract},
+			Segments:   joinedSegments(route.Remainder, extra),
+			Projection: projection,
 		}}
 	case flow.ProvenanceRouteAppendElementField:
-		return appendElementFieldRouteSourceTypeQueries(route, extra)
+		return appendElementFieldRouteSourceQueries(route, extra)
 	default:
 		return nil
 	}
 }
 
 // ProjectType applies q's route projection to source.
-func (q RouteSourceTypeQuery) ProjectType(source typ.Type, project SegmentTypeProjector) typ.Type {
+func (q RouteSourceQuery) ProjectType(source typ.Type, project SegmentTypeProjector) typ.Type {
 	if source == nil {
 		return nil
 	}
 	var local typ.Type
-	switch q.project {
-	case sourceProjectionDirect:
+	switch q.Projection {
+	case RouteProjectionDirect:
 		local = source
-	case sourceProjectionIndexedIteratorValue, sourceProjectionSequenceElement:
+	case RouteProjectionIndexedIteratorValue, RouteProjectionSequenceElement:
 		local = querycore.ElementType(source)
-	case sourceProjectionKeyedIteratorKey:
+	case RouteProjectionKeyedIteratorKey:
 		local = querycore.EntryKeyType(source)
-	case sourceProjectionKeyedIteratorValue:
+	case RouteProjectionKeyedIteratorValue:
 		local = querycore.EntryValueType(source)
 	default:
 		return nil
@@ -151,19 +155,19 @@ func (q RouteSourceTypeQuery) ProjectType(source typ.Type, project SegmentTypePr
 	return project(local, q.Segments)
 }
 
-func appendElementFieldRouteSourceTypeQueries(route flow.ProvenanceRoute, extra []constraint.Segment) []RouteSourceTypeQuery {
+func appendElementFieldRouteSourceQueries(route flow.ProvenanceRoute, extra []constraint.Segment) []RouteSourceQuery {
 	if len(route.SourceField) > 0 {
-		return []RouteSourceTypeQuery{{
-			Path:      route.Source,
-			ReadOrder: []SourceReadKind{SourceReadPointPath, SourceReadBodyContract},
-			Segments:  joinedSegments(joinedSegments(route.SourceField, route.FieldRemainder), extra),
-			project:   sourceProjectionSequenceElement,
+		return []RouteSourceQuery{{
+			Path:       route.Source,
+			ReadOrder:  []SourceReadKind{SourceReadPointPath, SourceReadBodyContract},
+			Segments:   joinedSegments(joinedSegments(route.SourceField, route.FieldRemainder), extra),
+			Projection: RouteProjectionSequenceElement,
 		}}
 	}
-	return []RouteSourceTypeQuery{{
-		Path:      appendSegments(route.Source, joinedSegments(route.FieldRemainder, extra)),
-		ReadOrder: []SourceReadKind{SourceReadBodyContract, SourceReadPointPath},
-		project:   sourceProjectionDirect,
+	return []RouteSourceQuery{{
+		Path:       appendSegments(route.Source, joinedSegments(route.FieldRemainder, extra)),
+		ReadOrder:  []SourceReadKind{SourceReadBodyContract, SourceReadPointPath},
+		Projection: RouteProjectionDirect,
 	}}
 }
 

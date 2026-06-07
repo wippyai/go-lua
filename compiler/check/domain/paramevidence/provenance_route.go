@@ -1,6 +1,7 @@
 package paramevidence
 
 import (
+	"github.com/wippyai/go-lua/compiler/check/domain/provenance"
 	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/flow"
 )
@@ -54,54 +55,37 @@ func ProvenanceRouteContractClosure(
 }
 
 // ProvenanceRouteContractTargets translates a local obligation on a routed value
-// back to obligations on the route's source path. Flow owns route discovery;
-// paramevidence owns the contract algebra for identity, iterator, and append
-// routes.
+// back to obligations on the route's source path. Provenance owns route shape;
+// paramevidence owns inversion into the parameter-contract algebra.
 func ProvenanceRouteContractTargets(route flow.ProvenanceRoute, contract ParamContract) []ProvenanceRouteContractTarget {
 	if route.Source.Symbol == 0 || isContractBottom(contract) {
 		return nil
 	}
-	switch route.Kind {
-	case flow.ProvenanceRouteIdentityAlias:
-		return []ProvenanceRouteContractTarget{{Path: route.Source, Contract: contract}}
-	case flow.ProvenanceRouteIndexedIterator, flow.ProvenanceRouteKeyedIterator:
-		local := DemandFromPathContract(route.Remainder, contract)
-		source := iteratorRouteContract(route, local)
+	var out []ProvenanceRouteContractTarget
+	for _, query := range provenance.RouteSourceQueries(route, nil) {
+		source := sourceContractFromRouteQuery(query, contract)
 		if isContractBottom(source) {
-			return nil
+			continue
 		}
-		return []ProvenanceRouteContractTarget{{Path: route.Source, Contract: source}}
-	case flow.ProvenanceRouteAppendElementField:
-		return appendElementFieldRouteContractTargets(route, contract)
-	default:
-		return nil
+		out = append(out, ProvenanceRouteContractTarget{Path: query.Path, Contract: source})
 	}
+	return out
 }
 
-func iteratorRouteContract(route flow.ProvenanceRoute, local ParamContract) ParamContract {
-	switch route.Kind {
-	case flow.ProvenanceRouteIndexedIterator:
-		return IndexedIteratorContract(route.VarIndex, local)
-	case flow.ProvenanceRouteKeyedIterator:
-		return KeyedIteratorContract(route.VarIndex, local)
+func sourceContractFromRouteQuery(query provenance.RouteSourceQuery, contract ParamContract) ParamContract {
+	local := DemandFromPathContract(query.Segments, contract)
+	switch query.Projection {
+	case provenance.RouteProjectionDirect:
+		return local
+	case provenance.RouteProjectionIndexedIteratorValue:
+		return IndexedIteratorContract(1, local)
+	case provenance.RouteProjectionKeyedIteratorKey:
+		return KeyedIteratorContract(0, local)
+	case provenance.RouteProjectionKeyedIteratorValue:
+		return KeyedIteratorContract(1, local)
+	case provenance.RouteProjectionSequenceElement:
+		return DemandFromSequenceElement(local)
 	default:
 		return paramContractBottom()
 	}
-}
-
-func appendElementFieldRouteContractTargets(route flow.ProvenanceRoute, contract ParamContract) []ProvenanceRouteContractTarget {
-	if len(route.SourceField) > 0 {
-		sourceField := append([]constraint.Segment(nil), route.SourceField...)
-		sourceField = append(sourceField, route.FieldRemainder...)
-		source := DemandFromSequenceElement(DemandFromPathContract(sourceField, contract))
-		if isContractBottom(source) {
-			return nil
-		}
-		return []ProvenanceRouteContractTarget{{Path: route.Source, Contract: source}}
-	}
-	source := route.Source
-	for _, seg := range route.FieldRemainder {
-		source = source.Append(seg)
-	}
-	return []ProvenanceRouteContractTarget{{Path: source, Contract: contract}}
 }
