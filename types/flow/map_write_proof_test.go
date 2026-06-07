@@ -192,27 +192,29 @@ func TestApplyKeyPresenceAliasProofCopiesMembershipAndValuePath(t *testing.T) {
 	}
 }
 
-func TestApplyKeyPresenceAliasPathProofCopiesMembership(t *testing.T) {
+func TestApplyKeyPresenceAliasProofCopiesAddressMembership(t *testing.T) {
 	tablePath := constraint.NewPath(cfg.SymbolID(29), "nodes")
 	sourcePath := constraint.NewPath(cfg.SymbolID(30), "source_id")
 	targetPath := constraint.NewPath(cfg.SymbolID(31), "target_id")
 	tableKey := StablePathKey(tablePath)
 	targetKey := StablePathKey(targetPath)
+	source := testStableAddressPath(t, sourcePath)
+	target := testStableAddressPath(t, targetPath)
 
 	state := PointStateDomain.Top()
 	state.KeyPresence = state.KeyPresence.WithAddresses(
 		testStableAddressPath(t, tablePath),
-		testStableAddressPath(t, sourcePath),
+		source,
 	)
 
-	if !ApplyKeyPresenceAliasPathProof(&state, KeyPresenceAliasPathProof{
-		SourcePath: sourcePath,
-		TargetPath: targetPath,
+	if !ApplyKeyPresenceAliasProof(&state, KeyPresenceAliasProof{
+		SourceKey: source,
+		TargetKey: target,
 	}) {
-		t.Fatal("ApplyKeyPresenceAliasPathProof reported unchanged")
+		t.Fatal("ApplyKeyPresenceAliasProof reported unchanged")
 	}
 	if !state.KeyPresence.Has(tableKey, targetKey) {
-		t.Fatalf("path alias did not copy key presence: %s", state.KeyPresence.Format())
+		t.Fatalf("alias did not copy key presence: %s", state.KeyPresence.Format())
 	}
 }
 
@@ -343,31 +345,33 @@ func TestApplyKeyArrayElementKeyProofPublishesTargetKey(t *testing.T) {
 	}
 }
 
-func TestApplyKeyArrayElementKeyPathProofLowersStructuredPaths(t *testing.T) {
+func TestApplyKeyArrayElementKeyProofUsesAddressInputs(t *testing.T) {
 	arrayPath := constraint.NewPath(cfg.SymbolID(129), "node_order")
 	tablePath := constraint.NewPath(cfg.SymbolID(130), "nodes")
 	targetPath := constraint.NewPath(cfg.SymbolID(131), "node_id")
+	array := testStableAddressPath(t, arrayPath)
 	tableKey := StablePathKey(tablePath)
+	target := testStableAddressPath(t, targetPath)
 	targetKey := StablePathKey(targetPath)
 
 	state := PointStateDomain.Top()
 	state.KeyPresence = state.KeyPresence.WithKeyArrayAddresses(
-		testStableAddressPath(t, arrayPath),
+		array,
 		testStableAddressPath(t, tablePath),
 	)
 
-	result, changed := ApplyKeyArrayElementKeyPathProof(&state, KeyArrayElementKeyPathProof{
-		ArrayPath:     arrayPath,
-		TargetKeyPath: targetPath,
+	result, changed := ApplyKeyArrayElementKeyProof(&state, KeyArrayElementKeyProof{
+		Array:     array,
+		TargetKey: target,
 	})
 	if !changed {
-		t.Fatal("ApplyKeyArrayElementKeyPathProof reported no change")
+		t.Fatal("ApplyKeyArrayElementKeyProof reported no change")
 	}
 	if len(result.Tables) != 1 || result.Tables[0].Key() != tableKey {
-		t.Fatalf("path proof tables = %v, want %s", result.Tables, tableKey)
+		t.Fatalf("proof tables = %v, want %s", result.Tables, tableKey)
 	}
 	if !state.KeyPresence.Has(tableKey, targetKey) {
-		t.Fatalf("path proof did not publish table/target key presence: %s", state.KeyPresence.Format())
+		t.Fatalf("proof did not publish table/target key presence: %s", state.KeyPresence.Format())
 	}
 }
 
@@ -704,20 +708,22 @@ func TestApplyAppendKeyProofPublishesHistoryEvent(t *testing.T) {
 	}
 }
 
-func TestApplyAppendHistoryBasePathProofNormalizesPath(t *testing.T) {
+func TestApplyAppendHistoryBaseProofRecordsAddress(t *testing.T) {
 	arrayPath := constraint.NewPath(cfg.SymbolID(75), "node_order")
 	arrayKey := StablePathKey(arrayPath)
 
 	state := PointStateDomain.Top()
-	if changed := ApplyAppendHistoryBasePathProof(&state, arrayPath); !changed {
-		t.Fatal("ApplyAppendHistoryBasePathProof reported no change")
+	if changed := ApplyAppendHistoryBaseProof(&state, AppendHistoryBaseProof{
+		Array: testStableAddressPath(t, arrayPath),
+	}); !changed {
+		t.Fatal("ApplyAppendHistoryBaseProof reported no change")
 	}
 	if !state.KeyPresence.HasAppendHistoryBase(arrayKey) {
 		t.Fatalf("append-history base missing: %s", state.KeyPresence.Format())
 	}
 }
 
-func TestApplyAppendKeyPathProofNormalizesHistoryEvent(t *testing.T) {
+func TestApplyAppendKeyProofRecordsAddressHistoryEvent(t *testing.T) {
 	arrayPath := constraint.NewPath(cfg.SymbolID(73), "node_order")
 	keyPath := constraint.NewPath(cfg.SymbolID(74), "node_id")
 	arrayKey := StablePathKey(arrayPath)
@@ -725,11 +731,11 @@ func TestApplyAppendKeyPathProofNormalizesHistoryEvent(t *testing.T) {
 
 	state := PointStateDomain.Top()
 	state.KeyPresence = state.KeyPresence.WithAppendHistoryBase(arrayKey)
-	if changed := ApplyAppendKeyPathProof(&state, AppendKeyPathProof{
-		ArrayPath: arrayPath,
-		KeyPath:   keyPath,
+	if changed := ApplyAppendKeyProof(&state, AppendKeyProof{
+		Array: testStableAddressPath(t, arrayPath),
+		Key:   testStableAddressPath(t, keyPath),
 	}); !changed {
-		t.Fatal("ApplyAppendKeyPathProof reported no change")
+		t.Fatal("ApplyAppendKeyProof reported no change")
 	}
 
 	if entries := state.KeyPresence.AppendedKeyEntries(); len(entries) != 1 || entries[0].Array != arrayKey || entries[0].Key != keyKey {

@@ -25,26 +25,12 @@ type KeyPresenceAliasProof struct {
 	TargetKey StableAddress
 }
 
-// KeyPresenceAliasPathProof is the structured-path form of KeyPresenceAliasProof.
-type KeyPresenceAliasPathProof struct {
-	SourcePath constraint.Path
-	TargetPath constraint.Path
-}
-
 // KeyArrayElementKeyProof consumes key-array provenance for Array by proving
 // TargetKey is present in every table whose keys are carried by Array.
 type KeyArrayElementKeyProof struct {
 	Array     StableAddress
 	TargetKey StableAddress
 	KeyValue  product.AbstractValue
-}
-
-// KeyArrayElementKeyPathProof is the structured-path form of
-// KeyArrayElementKeyProof for producer-facing transfer code.
-type KeyArrayElementKeyPathProof struct {
-	ArrayPath     constraint.Path
-	TargetKeyPath constraint.Path
-	KeyValue      product.AbstractValue
 }
 
 // KeyArrayElementKeyResult reports the tables reached by a key-array element
@@ -94,12 +80,6 @@ type AppendKeyProof struct {
 	Key   StableAddress
 }
 
-// AppendKeyPathProof records append-key provenance from structured paths.
-type AppendKeyPathProof struct {
-	ArrayPath constraint.Path
-	KeyPath   constraint.Path
-}
-
 // AppendHistoryBaseProof preserves append-history tracking for Array across a
 // mutation that otherwise invalidates array element facts.
 type AppendHistoryBaseProof struct {
@@ -147,23 +127,6 @@ func ApplyKeyPresenceAliasProof(out *PointState, proof KeyPresenceAliasProof) bo
 	return !KeyPresenceFactsDomain.Equal(before, out.KeyPresence)
 }
 
-// ApplyKeyPresenceAliasPathProof applies key-presence alias facts from
-// structured paths.
-func ApplyKeyPresenceAliasPathProof(out *PointState, proof KeyPresenceAliasPathProof) bool {
-	if out == nil || proof.SourcePath.IsEmpty() || proof.TargetPath.IsEmpty() {
-		return false
-	}
-	sourceAddr, sourceOK := StableAddressOfPath(proof.SourcePath)
-	targetAddr, targetOK := StableAddressOfPath(proof.TargetPath)
-	if !sourceOK || !targetOK {
-		return false
-	}
-	return ApplyKeyPresenceAliasProof(out, KeyPresenceAliasProof{
-		SourceKey: sourceAddr,
-		TargetKey: targetAddr,
-	})
-}
-
 // ApplyKeyArrayElementKeyProof applies key-array membership to a target key. If
 // value-carrying key-array facts exist, it also publishes table[target] readback
 // admissions for the assigned target key.
@@ -200,19 +163,6 @@ func ApplyKeyArrayElementKeyProof(out *PointState, proof KeyArrayElementKeyProof
 	changed := !KeyPresenceFactsDomain.Equal(beforePresence, out.KeyPresence)
 	changed = !IndexWriteAdmissionFactsDomain.Equal(beforeIndexWrites, out.IndexWrites) || changed
 	return result, changed
-}
-
-func ApplyKeyArrayElementKeyPathProof(out *PointState, proof KeyArrayElementKeyPathProof) (KeyArrayElementKeyResult, bool) {
-	array, arrayOK := StableAddressOfPath(proof.ArrayPath)
-	target, targetOK := StableAddressOfPath(proof.TargetKeyPath)
-	if !arrayOK || !targetOK {
-		return KeyArrayElementKeyResult{}, false
-	}
-	return ApplyKeyArrayElementKeyProof(out, KeyArrayElementKeyProof{
-		Array:     array,
-		TargetKey: target,
-		KeyValue:  proof.KeyValue,
-	})
 }
 
 // ApplyKeyArrayProof applies a key-array provenance proof to point state.
@@ -293,18 +243,6 @@ func ApplyAppendKeyProof(out *PointState, proof AppendKeyProof) bool {
 	return !KeyPresenceFactsDomain.Equal(before, out.KeyPresence)
 }
 
-func ApplyAppendKeyPathProof(out *PointState, proof AppendKeyPathProof) bool {
-	array, arrayOK := StableAddressOfPath(proof.ArrayPath)
-	key, keyOK := StableAddressOfPath(proof.KeyPath)
-	if !arrayOK || !keyOK {
-		return false
-	}
-	return ApplyAppendKeyProof(out, AppendKeyProof{
-		Array: array,
-		Key:   key,
-	})
-}
-
 // ApplyAppendHistoryBaseProof applies append-history base tracking to point state.
 func ApplyAppendHistoryBaseProof(out *PointState, proof AppendHistoryBaseProof) bool {
 	if out == nil || proof.Array.Key() == "" {
@@ -313,14 +251,6 @@ func ApplyAppendHistoryBaseProof(out *PointState, proof AppendHistoryBaseProof) 
 	before := out.KeyPresence
 	out.KeyPresence = out.KeyPresence.WithAppendHistoryBaseAddress(proof.Array)
 	return !KeyPresenceFactsDomain.Equal(before, out.KeyPresence)
-}
-
-func ApplyAppendHistoryBasePathProof(out *PointState, arrayPath constraint.Path) bool {
-	array, ok := StableAddressOfPath(arrayPath)
-	if !ok {
-		return false
-	}
-	return ApplyAppendHistoryBaseProof(out, AppendHistoryBaseProof{Array: array})
 }
 
 // ApplyAppendElementFieldOriginProof applies an append element-field origin
