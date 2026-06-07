@@ -54,6 +54,31 @@ func TestPathObservationIndexReadBuildsReadbackQuery(t *testing.T) {
 	}
 }
 
+func TestIndexReadbackPathQueryBuildsValuePathAdmission(t *testing.T) {
+	table := constraint.NewPath(cfg.SymbolID(51), "rows")
+	key := constraint.NewPath(cfg.SymbolID(52), "id")
+	value := constraint.NewPath(cfg.SymbolID(53), "source")
+
+	got, ok := (IndexReadbackPathQuery{
+		Point:     cfg.Point(9),
+		View:      PathReadPost,
+		Target:    table,
+		KeyPath:   key,
+		KeyType:   typ.String,
+		ValuePath: value,
+	}).ReadbackQuery()
+	if !ok {
+		t.Fatal("ReadbackQuery returned false")
+	}
+	valueAddr, ok := StableAddressOfPath(value)
+	if !ok {
+		t.Fatal("value address")
+	}
+	if !got.Admission.HasValuePath || !got.Admission.ValuePath.Equal(valueAddr) {
+		t.Fatalf("query admission = %#v, want value-path address", got.Admission)
+	}
+}
+
 func TestSelectPathObservationResult_ProofOnlyReportsConditionProof(t *testing.T) {
 	got := SelectPathObservationResult(PathObservationSelection{
 		Query: PathObservationQuery{

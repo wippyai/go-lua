@@ -406,41 +406,46 @@ type IndexWriteReadQuery struct {
 	Admission IndexWriteAddressQuery
 }
 
-// IndexWriteReadQueryFromPaths normalizes source paths into the address-domain
-// query consumed by solved index-write facts.
-func IndexWriteReadQueryFromPaths(
-	point cfg.Point,
-	view PathReadView,
-	target constraint.Path,
-	keyPath constraint.Path,
-	keyType typ.Type,
-	valuePath constraint.Path,
-) (IndexWriteReadQuery, bool) {
-	targetAddr, ok := StableAddressOfPath(target)
+// IndexReadbackPathQuery is the path-domain readback query before address
+// normalization. AST-facing producers build this once; flow owns lowering it to
+// the address-domain query consumed by solved index-write facts.
+type IndexReadbackPathQuery struct {
+	Point     cfg.Point
+	View      PathReadView
+	Target    constraint.Path
+	KeyPath   constraint.Path
+	KeyType   typ.Type
+	ValuePath constraint.Path
+}
+
+// ReadbackQuery normalizes source paths into the address-domain query consumed
+// by solved index-write facts.
+func (q IndexReadbackPathQuery) ReadbackQuery() (IndexWriteReadQuery, bool) {
+	targetAddr, ok := StableAddressOfPath(q.Target)
 	if !ok {
 		return IndexWriteReadQuery{}, false
 	}
 	query := IndexWriteReadQuery{
-		Point:     point,
-		View:      view,
+		Point:     q.Point,
+		View:      q.View,
 		Admission: IndexWriteAddressQuery{Target: targetAddr},
 	}
-	if !keyPath.IsEmpty() {
-		keyAddr, ok := StableAddressOfPath(keyPath)
+	if !q.KeyPath.IsEmpty() {
+		keyAddr, ok := StableAddressOfPath(q.KeyPath)
 		if ok {
 			query.Admission.KeyPath = keyAddr
 			query.Admission.HasKeyPath = true
 		}
 	}
-	if !valuePath.IsEmpty() {
-		valueAddr, ok := StableAddressOfPath(valuePath)
+	if !q.ValuePath.IsEmpty() {
+		valueAddr, ok := StableAddressOfPath(q.ValuePath)
 		if ok {
 			query.Admission.ValuePath = valueAddr
 			query.Admission.HasValuePath = true
 		}
 	}
-	if !typ.IsAbsentOrUnknown(keyType) {
-		query.Admission.KeyValue = product.FromType(keyType)
+	if !typ.IsAbsentOrUnknown(q.KeyType) {
+		query.Admission.KeyValue = product.FromType(q.KeyType)
 	}
 	return query, true
 }

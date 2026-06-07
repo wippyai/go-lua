@@ -80,7 +80,13 @@ type PathObservationIndexRead struct {
 // ReadbackQuery projects this indexed-read context to the address-domain query
 // consumed by dynamic-index readback proofs.
 func (r PathObservationIndexRead) ReadbackQuery(point cfg.Point, view PathReadView) (IndexWriteReadQuery, bool) {
-	return IndexWriteReadQueryFromPaths(point, view, r.TablePath, r.KeyPath, r.KeyType, constraint.Path{})
+	return IndexReadbackPathQuery{
+		Point:   point,
+		View:    view,
+		Target:  r.TablePath,
+		KeyPath: r.KeyPath,
+		KeyType: r.KeyType,
+	}.ReadbackQuery()
 }
 
 // PathObservation is the high-level result of observing one path through the

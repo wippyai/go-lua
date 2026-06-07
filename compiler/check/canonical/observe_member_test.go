@@ -138,7 +138,12 @@ func TestCanonicalFactsIndexWriteAdmissionReadsPostState(t *testing.T) {
 	}
 	facts := &canonicalFacts{state: fs}
 
-	query, ok := flow.IndexWriteReadQueryFromPaths(point, flow.PathReadPost, target, constraint.Path{}, typ.String, constraint.Path{})
+	query, ok := flow.IndexReadbackPathQuery{
+		Point:   point,
+		View:    flow.PathReadPost,
+		Target:  target,
+		KeyType: typ.String,
+	}.ReadbackQuery()
 	if !ok {
 		t.Fatal("index-write query")
 	}
@@ -147,7 +152,12 @@ func TestCanonicalFactsIndexWriteAdmissionReadsPostState(t *testing.T) {
 		t.Fatalf("IndexWriteAdmission = %v/%v, want post-state boolean/true", got, ok)
 	}
 
-	query, ok = flow.IndexWriteReadQueryFromPaths(point, flow.PathReadPre, target, constraint.Path{}, typ.String, constraint.Path{})
+	query, ok = flow.IndexReadbackPathQuery{
+		Point:   point,
+		View:    flow.PathReadPre,
+		Target:  target,
+		KeyType: typ.String,
+	}.ReadbackQuery()
 	if !ok {
 		t.Fatal("pre-state index-write query")
 	}
