@@ -11,6 +11,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/check/api"
 	"github.com/wippyai/go-lua/compiler/check/domain/callreturn"
 	"github.com/wippyai/go-lua/compiler/check/domain/conditionexpr"
+	"github.com/wippyai/go-lua/compiler/check/domain/evidence"
 	"github.com/wippyai/go-lua/compiler/check/domain/globalenv"
 	"github.com/wippyai/go-lua/compiler/check/domain/indexread"
 	"github.com/wippyai/go-lua/compiler/check/domain/metatable"
@@ -44,10 +45,6 @@ type TypeResolver func(ast.TypeExpr, *scope.State) typ.Type
 
 type postStateTypeFacts interface {
 	PostEffectiveTypeAt(point cfg.Point, sym cfg.SymbolID) flow.TypedValue
-}
-
-type postStatePathFacts interface {
-	PostRefinedPathAt(point cfg.Point, path constraint.Path) flow.TypedValue
 }
 
 type callReturnFacts interface {
@@ -99,6 +96,7 @@ type Config struct {
 type Projector struct {
 	cfg         Config
 	globalTypes globalenv.TypeOverlay
+	proofs      evidence.Projection
 }
 
 var _ flow.PathObservationFacts = Projector{}
@@ -111,6 +109,12 @@ func New(cfg Config) Projector {
 	return Projector{
 		cfg:         cfg,
 		globalTypes: globalenv.NormalizeTypeOverlay(cfg.GlobalTypeOverlay),
+		proofs: evidence.New(evidence.Config{
+			Graph:  cfg.Graph,
+			Facts:  cfg.Facts,
+			Inputs: cfg.Inputs,
+			Flow:   cfg.Flow,
+		}),
 	}
 }
 
@@ -258,7 +262,7 @@ func ObservedArgumentType(result *api.FuncResult, point cfg.Point, arg ast.Expr,
 	}
 	argPath = flowpath.WithVersion(argPath, result.Graph, point)
 	projector := FromFuncResult(result, nil)
-	obs := projector.pathObservationFacts().ObservePath(flow.PathObservationQuery{
+	obs := projector.proofs.PathObservationFacts(projector).ObservePath(flow.PathObservationQuery{
 		Point:               point,
 		Path:                argPath,
 		View:                flow.PathReadPre,
@@ -578,7 +582,7 @@ func (p Projector) finishExpectedObservation(observed typ.Type, expected typ.Typ
 }
 
 func (p Projector) provesExprType(point cfg.Point, expr ast.Expr, expected typ.Type) bool {
-	proofs := p.conditionProofFacts()
+	proofs := p.proofs.ConditionProofFacts()
 	if proofs == nil || expr == nil || expected == nil {
 		return false
 	}
@@ -842,7 +846,7 @@ func (p Projector) conditionBodyContractSeedType(point cfg.Point, path constrain
 	if typ.IsAbsentOrUnknown(seed) || path.IsEmpty() {
 		return seed
 	}
-	proofs := p.conditionProofFacts()
+	proofs := p.proofs.ConditionProofFacts()
 	if proofs == nil {
 		return seed
 	}
@@ -931,7 +935,7 @@ func (p Projector) ProductValueAtPath(point cfg.Point, path constraint.Path) flo
 	if path.IsEmpty() || path.Symbol == 0 {
 		return flow.ProductValue{State: flow.StateUnknown}
 	}
-	if facts := p.productPathObservationFacts(); facts != nil {
+	if facts := p.proofs.ProductPathObservationFacts(); facts != nil {
 		return facts.ObserveProductPathValue(flow.ProductPathObservationQuery{
 			Point: point,
 			Path:  path,
@@ -939,20 +943,6 @@ func (p Projector) ProductValueAtPath(point cfg.Point, path constraint.Path) flo
 		})
 	}
 	return flow.ProductValue{State: flow.StateUnknown}
-}
-
-func (p Projector) productPathObservationFacts() flow.ProductPathObservationFacts {
-	if p.cfg.Facts != nil {
-		if facts, ok := p.cfg.Facts.(flow.ProductPathObservationFacts); ok {
-			return facts
-		}
-	}
-	if p.cfg.Flow != nil {
-		if facts, ok := p.cfg.Flow.(flow.ProductPathObservationFacts); ok {
-			return facts
-		}
-	}
-	return nil
 }
 
 // PathHasPresentProductValue reports whether solved product evidence proves a
@@ -1084,7 +1074,7 @@ func (p Projector) attrType(expr *ast.AttrGetExpr, point cfg.Point) typ.Type {
 // the observation layer asks the normalized proof domain before treating a weak
 // object type as a failed runtime-index read.
 func (p Projector) IndexedReadProofType(obj ast.Expr, key ast.Expr, keyType typ.Type, point cfg.Point) (typ.Type, bool) {
-	flowProof := p.indexReadFlow()
+	flowProof := p.proofs.IndexReadFlow()
 	if flowProof == nil {
 		return nil, false
 	}
@@ -1111,7 +1101,7 @@ func (p Projector) applyIndexReadProof(t typ.Type, objType typ.Type, obj ast.Exp
 	if t == nil {
 		return t
 	}
-	flowProof := p.indexReadFlow()
+	flowProof := p.proofs.IndexReadFlow()
 	if flowProof == nil {
 		return t
 	}
@@ -1133,213 +1123,12 @@ func (p Projector) applyIndexReadProof(t typ.Type, objType typ.Type, obj ast.Exp
 	return t
 }
 
-// indexReadFlow returns the index-read proof surface for the current flow. A
-// concrete solver result supplies it directly. A producer that exposes only
-// per-point facts answers HasKeyOf from the converged per-point condition (a
-// `container[k]` read with a held KeyOf strips the optional), and numeric / length
-// proofs from the numeric component so a dynamic-index read `arr[i]` with a loop
-// bound or length guard drops the soundly-optional element on the diagnostic path
-// too. Returns nil when no proof is available.
-func (p Projector) indexReadFlow() indexread.Flow {
-	if flowOps := p.pathReadFlow(); flowOps != nil {
-		return flowOps
-	}
-	kf, hasKeyOf := p.cfg.Facts.(keyOfFacts)
-	nf, hasNum := p.cfg.Facts.(flow.NumericFacts)
-	lf, hasLen := p.cfg.Facts.(flow.LengthFacts)
-	iw, hasIndexWrites := p.cfg.Facts.(flow.IndexWriteFacts)
-	mr, _ := p.cfg.Facts.(indexread.MapReadbackFlow)
-	aliases, _ := p.cfg.Facts.(indexWriteKeyAliasFacts)
-	if !hasKeyOf && !hasNum && !hasLen && !hasIndexWrites && mr == nil {
-		return nil
-	}
-	return factsIndexReadFlow{
-		keyOf:       kf,
-		numeric:     nf,
-		length:      lf,
-		indexWrites: iw,
-		mapReadback: mr,
-		keyAliases:  aliases,
-		graph:       p.cfg.Graph,
-		bindings:    p.cfg.Bindings,
-	}
-}
-
-func (p Projector) solvedFlow() api.FlowOps {
-	return p.cfg.Flow
-}
-
-func (p Projector) pathReadFlow() api.FlowOps {
-	if p.cfg.Facts == nil {
-		return p.cfg.Flow
-	}
-	return nil
-}
-
-func (p Projector) conditionProofFacts() flow.ConditionProofFacts {
-	if p.cfg.Facts != nil {
-		if facts, ok := p.cfg.Facts.(flow.ConditionProofFacts); ok {
-			return facts
-		}
-	}
-	if p.cfg.Flow != nil {
-		if facts, ok := p.cfg.Flow.(flow.ConditionProofFacts); ok {
-			return facts
-		}
-	}
-	return nil
-}
-
-func (p Projector) constValueFacts() flow.ConstFacts {
-	if p.cfg.Facts != nil {
-		if facts, ok := p.cfg.Facts.(flow.ConstFacts); ok {
-			return facts
-		}
-	}
-	if p.cfg.Flow != nil {
-		if facts, ok := p.cfg.Flow.(flow.ConstFacts); ok {
-			return facts
-		}
-	}
-	if p.cfg.Inputs != nil {
-		return p.cfg.Inputs
-	}
-	return nil
-}
-
-// keyOfFacts is the key-presence proof exposed by a per-point facts carrier:
-// HasKeyOf reports whether a KeyOf(table, key) fact holds at point p, i.e. the
-// key was drawn from `pairs(table)` over the same container so the lookup is
-// present.
-type keyOfFacts interface {
-	HasKeyOf(p cfg.Point, tablePath, keyPath constraint.Path) bool
-}
-
 type provenanceRouteFacts interface {
 	ProvenanceRoutesAt(p cfg.Point, path constraint.Path) []flow.ProvenanceRoute
 }
 
-type indexWriteKeyAliasFacts interface {
-	IndexWriteKeyAliasesAt(p cfg.Point, key flow.StableAddress) []flow.StableAddress
-}
-
 type appendElementFieldRouteFacts interface {
 	AppendElementFieldSourceRoutesAt(p cfg.Point, q flow.AppendElementFieldRouteQuery) []flow.ProvenanceRoute
-}
-
-// factsIndexReadFlow adapts per-point Facts proofs to the indexread.Flow surface.
-// HasKeyOf answers the key-presence proof; numeric bound and length queries are
-// answered from the numeric component (flow.NumericFacts / flow.LengthFacts),
-// resolving a variable NAME to its symbol at the read point through the graph so
-// the index-var bound / length-reference of a `for i = 1, #arr` / `while i <= n`
-// induction variable is consulted. A flow that implements none of these, or a
-// name the graph cannot resolve, answers no proof so the read stays soundly
-// optional.
-type factsIndexReadFlow struct {
-	keyOf       keyOfFacts
-	numeric     flow.NumericFacts
-	length      flow.LengthFacts
-	indexWrites flow.IndexWriteFacts
-	mapReadback indexread.MapReadbackFlow
-	keyAliases  indexWriteKeyAliasFacts
-	graph       *cfg.Graph
-	bindings    *bind.BindingTable
-}
-
-func (f factsIndexReadFlow) HasKeyOf(p cfg.Point, tablePath, keyPath constraint.Path) bool {
-	if f.keyOf == nil {
-		return false
-	}
-	return f.keyOf.HasKeyOf(p, tablePath, keyPath)
-}
-
-func (f factsIndexReadFlow) MapReadback(q flow.IndexWriteReadQuery) (typ.Type, bool) {
-	if f.mapReadback != nil {
-		if got, ok := f.mapReadback.MapReadback(q); ok {
-			return got, true
-		}
-	}
-	return f.IndexWriteAdmission(q)
-}
-
-func (f factsIndexReadFlow) IndexWriteAdmission(q flow.IndexWriteReadQuery) (typ.Type, bool) {
-	if f.indexWrites == nil {
-		return nil, false
-	}
-	var aliases flow.IndexWriteKeyAliases
-	if f.keyAliases != nil {
-		aliases = f.keyAliases.IndexWriteKeyAliasesAt
-	}
-	return flow.IndexWriteAdmissionWithKeyAliases(
-		q,
-		f.indexWrites.IndexWriteAdmission,
-		aliases,
-	)
-}
-
-func (f factsIndexReadFlow) BoundsAt(p cfg.Point, name string) (int64, int64, bool) {
-	if f.numeric == nil {
-		return 0, 0, false
-	}
-	sym, ok := f.symbolAt(p, name)
-	if !ok {
-		return 0, 0, false
-	}
-	return f.numeric.NumericBoundsAt(p, sym)
-}
-
-func (f factsIndexReadFlow) ArrayLenBoundWithOffsetAt(p cfg.Point, varName string) (string, int64, bool) {
-	if f.numeric == nil {
-		return "", 0, false
-	}
-	sym, ok := f.symbolAt(p, varName)
-	if !ok {
-		return "", 0, false
-	}
-	arrSym, offset, ok := f.numeric.ArrayLenRefAt(p, sym)
-	if !ok {
-		return "", 0, false
-	}
-	// indexread.Refine compares this key against the container expression's
-	// constraint.Path.Key(), which is bound to the container symbol's SSA version at
-	// the read point. The numeric component is version-insensitive, so the array
-	// symbol's path is versioned at p the same way the container path is, yielding
-	// the matching key.
-	arrPath := flowpath.WithVersion(constraint.Path{Symbol: arrSym}, f.graph, p)
-	return string(arrPath.Key()), offset, true
-}
-
-func (f factsIndexReadFlow) LengthBoundsAt(p cfg.Point, path constraint.Path) (int64, int64, bool) {
-	if f.length == nil || path.Symbol == 0 {
-		return 0, 0, false
-	}
-	if pathFacts, ok := f.length.(flow.PathLengthFacts); ok {
-		if lower, ok := pathFacts.LengthLowerBoundForPathAt(p, path); ok {
-			return lower, 0, true
-		}
-	}
-	if len(path.Segments) != 0 {
-		return 0, 0, false
-	}
-	lower, ok := f.length.LengthLowerBoundAt(p, path.Symbol)
-	if !ok {
-		return 0, 0, false
-	}
-	return lower, 0, true
-}
-
-// symbolAt resolves a variable name to its symbol visible at point p, the bridge
-// between the indexread.Flow's name-keyed numeric queries and the symbol-keyed
-// canonical numeric component.
-func (f factsIndexReadFlow) symbolAt(p cfg.Point, name string) (cfg.SymbolID, bool) {
-	if f.graph == nil || name == "" {
-		return 0, false
-	}
-	sym, ok := f.graph.SymbolAt(p, name)
-	if !ok || sym == 0 {
-		return 0, false
-	}
-	return sym, true
 }
 
 func (p Projector) tableType(expr *ast.TableExpr, point cfg.Point, expected typ.Type) typ.Type {
@@ -1889,7 +1678,7 @@ func (p Projector) pathType(expr ast.Expr, point cfg.Point) typ.Type {
 	if path.IsEmpty() {
 		return nil
 	}
-	obs := p.pathObservationFacts().ObservePath(flow.PathObservationQuery{
+	obs := p.proofs.PathObservationFacts(p).ObservePath(flow.PathObservationQuery{
 		Point:               point,
 		Path:                path,
 		View:                p.pathReadView(),
@@ -1914,7 +1703,7 @@ func (p Projector) pathTypeAtPath(path constraint.Path, point cfg.Point) typ.Typ
 	if path.IsEmpty() || path.Symbol == 0 {
 		return nil
 	}
-	obs := p.pathObservationFacts().ObservePath(flow.PathObservationQuery{
+	obs := p.proofs.PathObservationFacts(p).ObservePath(flow.PathObservationQuery{
 		Point:               point,
 		Path:                path,
 		View:                p.pathReadView(),
@@ -1940,20 +1729,6 @@ func (p Projector) pathReadView() flow.PathReadView {
 	default:
 		return flow.PathReadCurrent
 	}
-}
-
-func (p Projector) pathObservationFacts() flow.PathObservationFacts {
-	if p.cfg.Facts != nil {
-		if facts, ok := p.cfg.Facts.(flow.PathObservationFacts); ok {
-			return facts
-		}
-	}
-	if p.cfg.Flow != nil {
-		if facts, ok := p.cfg.Flow.(flow.PathObservationFacts); ok {
-			return facts
-		}
-	}
-	return p
 }
 
 func (p Projector) appendElementFieldRouteProvider() appendElementFieldRouteFacts {
@@ -1997,15 +1772,9 @@ func (p Projector) ObservePath(q flow.PathObservationQuery) flow.PathObservation
 		return flow.PathObservation{}
 	}
 	declared := p.pathDeclaredType(q.Point, path)
-	var direct flow.PathObservationCandidate
+	direct := flow.PathObservationCandidate{}
 	if q.LocalCondition == nil && len(path.Segments) > 0 {
-		if t, ok := p.directFactsPathTypeForView(q.Point, path, q.View); ok {
-			direct = flow.PathObservationCandidate{
-				Type:   t,
-				Source: flow.PathObservationDirectPath,
-				OK:     true,
-			}
-		}
+		direct = p.proofs.DirectPathCandidate(q.Point, path, q.View)
 	}
 	if direct.OK {
 		return p.withPathObservationIndexRead(q, flow.SelectPathObservationResult(flow.PathObservationSelection{
@@ -2015,7 +1784,7 @@ func (p Projector) ObservePath(q flow.PathObservationQuery) flow.PathObservation
 			AdmitSelected: true,
 		}))
 	}
-	if flowOps := p.pathReadFlow(); flowOps != nil {
+	if flowOps := p.proofs.PathReadFlow(); flowOps != nil {
 		var solved typ.Type
 		var proof typ.Type
 		if q.View == flow.PathReadPre {
@@ -2098,7 +1867,7 @@ func (p Projector) applyPathObservationIndexRead(t typ.Type, q flow.PathObservat
 	if t == nil || q.IndexRead == nil {
 		return t
 	}
-	flowProof := p.indexReadFlow()
+	flowProof := p.proofs.IndexReadFlow()
 	if flowProof == nil {
 		return t
 	}
@@ -2114,36 +1883,13 @@ func (p Projector) applyPathObservationIndexRead(t typ.Type, q flow.PathObservat
 	return t
 }
 
-func (p Projector) directFactsPathTypeForView(point cfg.Point, path constraint.Path, view flow.PathReadView) (typ.Type, bool) {
-	if p.cfg.Facts == nil || path.Symbol == 0 || len(path.Segments) == 0 {
-		return nil, false
-	}
-	if view == flow.PathReadPost {
-		if post, ok := p.cfg.Facts.(postStatePathFacts); ok {
-			refined := post.PostRefinedPathAt(point, path)
-			if refined.State == flow.StateResolved && !typ.IsAbsentOrUnknown(refined.Type) {
-				return refined.Type, true
-			}
-		}
-	}
-	pathFacts, ok := p.cfg.Facts.(flow.PathFacts)
-	if !ok {
-		return nil, false
-	}
-	refined := pathFacts.RefinedPathAt(point, path)
-	if refined.State != flow.StateResolved || typ.IsAbsentOrUnknown(refined.Type) {
-		return nil, false
-	}
-	return refined.Type, true
-}
-
 func (p Projector) conditionedPathTypeWithCondition(point cfg.Point, path constraint.Path, solved typ.Type, declared typ.Type, localCondition *constraint.Condition, view flow.PathReadView) typ.Type {
 	if localCondition == nil || path.IsEmpty() {
 		return nil
 	}
-	proofs := p.conditionProofFacts()
+	proofs := p.proofs.ConditionProofFacts()
 	if proofs == nil {
-		if flowOps := p.solvedFlow(); flowOps != nil {
+		if flowOps := p.proofs.SolvedFlow(); flowOps != nil {
 			return flowOps.NarrowedTypeAtWithCondition(point, path, *localCondition)
 		}
 		return nil
@@ -2166,7 +1912,7 @@ func (p Projector) conditionedPathTypeWithCondition(point cfg.Point, path constr
 }
 
 func (p Projector) currentPathTypeForView(point cfg.Point, path constraint.Path, view flow.PathReadView) typ.Type {
-	flowOps := p.solvedFlow()
+	flowOps := p.proofs.SolvedFlow()
 	if flowOps == nil || path.IsEmpty() {
 		return nil
 	}
@@ -2183,7 +1929,7 @@ func (p Projector) currentPathTypeForView(point cfg.Point, path constraint.Path,
 }
 
 func (p Projector) hasConditionProofAt(point cfg.Point) bool {
-	proofs := p.conditionProofFacts()
+	proofs := p.proofs.ConditionProofFacts()
 	if proofs == nil {
 		return false
 	}
@@ -2192,7 +1938,7 @@ func (p Projector) hasConditionProofAt(point cfg.Point) bool {
 }
 
 func (p Projector) conditionProofType(point cfg.Point, path constraint.Path) typ.Type {
-	if proofs := p.conditionProofFacts(); proofs != nil {
+	if proofs := p.proofs.ConditionProofFacts(); proofs != nil {
 		return proofs.ConditionTypeAt(point, path)
 	}
 	return nil
@@ -2203,7 +1949,7 @@ func (p Projector) pathOfExpr(expr ast.Expr, point cfg.Point) constraint.Path {
 }
 
 func (p Projector) constResolver(point cfg.Point) func(string) *flow.ConstValue {
-	facts := p.constValueFacts()
+	facts := p.proofs.ConstFacts()
 	if facts == nil || p.cfg.Graph == nil {
 		return nil
 	}

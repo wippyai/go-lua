@@ -161,7 +161,7 @@ func (p Projector) assignmentSourceProductType(point cfg.Point, targetSym cfg.Sy
 	if p.cfg.Inputs == nil || targetSym == 0 {
 		return nil, false
 	}
-	sourceFacts := p.assignmentSourceFacts()
+	sourceFacts := p.proofs.AssignmentSourceFacts()
 	if sourceFacts == nil {
 		return nil, false
 	}
@@ -181,20 +181,6 @@ func (p Projector) assignmentSourceProductType(point cfg.Point, targetSym cfg.Sy
 	return nil, false
 }
 
-func (p Projector) assignmentSourceFacts() flow.AssignmentSourceFacts {
-	if p.cfg.Facts != nil {
-		if facts, ok := p.cfg.Facts.(flow.AssignmentSourceFacts); ok {
-			return facts
-		}
-	}
-	if p.cfg.Flow != nil {
-		if facts, ok := p.cfg.Flow.(flow.AssignmentSourceFacts); ok {
-			return facts
-		}
-	}
-	return nil
-}
-
 func (p Projector) assignmentPathSourceType(source ast.Expr, point cfg.Point, targetSym cfg.SymbolID) (typ.Type, bool) {
 	path := p.pathOfExpr(source, point)
 	if path.IsEmpty() {
@@ -205,7 +191,7 @@ func (p Projector) assignmentPathSourceType(source ast.Expr, point cfg.Point, ta
 	if selfReference {
 		view = flow.PathReadPre
 	}
-	obs := p.pathObservationFacts().ObservePath(flow.PathObservationQuery{
+	obs := p.proofs.PathObservationFacts(p).ObservePath(flow.PathObservationQuery{
 		Point:               point,
 		Path:                path,
 		View:                view,
@@ -559,7 +545,7 @@ func (p Projector) indexTargetSealed(target cfg.AssignTarget, point cfg.Point) b
 }
 
 func (p Projector) assignmentTargetFlowWriteType(target cfg.AssignTarget, source ast.Expr, point cfg.Point) typ.Type {
-	facts := p.indexWriteFacts()
+	facts := p.proofs.IndexWriteFacts()
 	if facts == nil {
 		return nil
 	}
@@ -584,20 +570,6 @@ func (p Projector) assignmentTargetFlowWriteType(target cfg.AssignTarget, source
 		return nil
 	}
 	return value
-}
-
-func (p Projector) indexWriteFacts() flow.IndexWriteFacts {
-	if p.cfg.Facts != nil {
-		if facts, ok := p.cfg.Facts.(flow.IndexWriteFacts); ok {
-			return facts
-		}
-	}
-	if p.cfg.Flow != nil {
-		if facts, ok := p.cfg.Flow.(flow.IndexWriteFacts); ok {
-			return facts
-		}
-	}
-	return nil
 }
 
 func (p Projector) indexTargetBasePath(target cfg.AssignTarget, point cfg.Point) constraint.Path {
