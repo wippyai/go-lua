@@ -602,11 +602,11 @@ func TestProjector_CallArgumentProofUsesRootLocalBodyContractValueOrigin(t *test
 	if direct := proofProjector.directBodyContractPathType(nodesPath); direct == nil || typ.IsNever(direct) {
 		t.Fatalf("directBodyContractPathType(self.nodes) = %v, want readonly map", direct)
 	}
-	sourceType := proofProjector.bodyContractPathTypeAtPath(point, nodesPath, nil)
+	sourceType := proofProjector.bodyContractPathTypeAtPath(point, nodesPath)
 	if keyType := querycore.EntryKeyType(sourceType); !typ.TypeEquals(keyType, typ.String) {
 		t.Fatalf("bodyContractPathTypeAtPath(self.nodes) = %v, key %v, want string key", sourceType, keyType)
 	}
-	if localType := proofProjector.bodyContractPathTypeAtPath(point, nodePath, nil); !typ.TypeEquals(localType, typ.String) {
+	if localType := proofProjector.bodyContractPathTypeAtPath(point, nodePath); !typ.TypeEquals(localType, typ.String) {
 		t.Fatalf("bodyContractPathTypeAtPath(node_id) = %v, want string", localType)
 	}
 

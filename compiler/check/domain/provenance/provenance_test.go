@@ -151,6 +151,70 @@ func TestRouteSourceTypeAppendRelativeSourceReadsContractThenPointPath(t *testin
 	}
 }
 
+func TestRouteSourceTypeGraphFollowsBodyContractRoutes(t *testing.T) {
+	local := constraint.NewPath(cfg.SymbolID(21), "local_id")
+	source := constraint.NewPath(cfg.SymbolID(22), "source_id")
+	var finalized []constraint.Path
+	graph := RouteSourceTypeGraph{
+		Routes: func(path constraint.Path) []flow.ProvenanceRoute {
+			if path.Equal(local) {
+				return []flow.ProvenanceRoute{{
+					Kind:   flow.ProvenanceRouteIdentityAlias,
+					Source: source,
+				}}
+			}
+			return nil
+		},
+		BodyContractRead: func(path constraint.Path) typ.Type {
+			if path.Equal(source) {
+				return typ.String
+			}
+			return nil
+		},
+		Finalize: func(path constraint.Path, t typ.Type) typ.Type {
+			finalized = append(finalized, path)
+			return t
+		},
+		Project: testProjectSegments,
+	}
+
+	got := graph.TypeAt(local)
+	if !typ.TypeEquals(got, typ.String) {
+		t.Fatalf("RouteSourceTypeGraph.TypeAt(local) = %v, want string", got)
+	}
+	if !reflect.DeepEqual(finalized, []constraint.Path{source, local}) {
+		t.Fatalf("finalized paths = %v, want source then local", finalized)
+	}
+}
+
+func TestRouteSourceTypeGraphStopsIdentityCycles(t *testing.T) {
+	a := constraint.NewPath(cfg.SymbolID(31), "a")
+	b := constraint.NewPath(cfg.SymbolID(32), "b")
+	graph := RouteSourceTypeGraph{
+		Routes: func(path constraint.Path) []flow.ProvenanceRoute {
+			switch {
+			case path.Equal(a):
+				return []flow.ProvenanceRoute{{
+					Kind:   flow.ProvenanceRouteIdentityAlias,
+					Source: b,
+				}}
+			case path.Equal(b):
+				return []flow.ProvenanceRoute{{
+					Kind:   flow.ProvenanceRouteIdentityAlias,
+					Source: a,
+				}}
+			default:
+				return nil
+			}
+		},
+		Project: testProjectSegments,
+	}
+
+	if got := graph.TypeAt(a); got != nil {
+		t.Fatalf("RouteSourceTypeGraph.TypeAt(cycle) = %v, want nil", got)
+	}
+}
+
 func testProjectSegments(base typ.Type, segments []constraint.Segment) typ.Type {
 	return typepath.TypeAtSegments(base, segments, typepath.Options{MissingFieldAsNil: true})
 }

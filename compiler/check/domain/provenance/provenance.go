@@ -124,6 +124,104 @@ const (
 // surface. Callers own evidence lookup; provenance owns route shape.
 type RouteSourceTypeResolver func(path constraint.Path, read SourceReadKind) typ.Type
 
+// RouteSourceTypeGraph is the route-backed type evidence graph used by
+// observation. Direct body-contract reads, point-path reads, source-read
+// precedence, path identity, and cycle control are interpreted together here so
+// consumers do not each rebuild route recursion.
+type RouteSourceTypeGraph struct {
+	Routes           RouteResolver
+	BodyContractRead func(constraint.Path) typ.Type
+	PointPathRead    func(constraint.Path) typ.Type
+	Finalize         func(constraint.Path, typ.Type) typ.Type
+	Project          SegmentTypeProjector
+}
+
+// TypeAt returns the best route-backed type evidence for path.
+func (g RouteSourceTypeGraph) TypeAt(path constraint.Path) typ.Type {
+	return g.typeAt(path, nil)
+}
+
+// RouteType returns the type projected by one provenance route. The route target
+// itself is not finalized; source body-contract reads are finalized at their own
+// paths through TypeAt.
+func (g RouteSourceTypeGraph) RouteType(route flow.ProvenanceRoute) typ.Type {
+	return RouteSourceType(route, nil, g.resolver(nil), g.Project)
+}
+
+func (g RouteSourceTypeGraph) typeAt(path constraint.Path, seen map[constraint.PathKey]bool) typ.Type {
+	if path.Symbol == 0 {
+		return nil
+	}
+	key := flow.PathIdentityKey(path)
+	if key == "" {
+		return nil
+	}
+	if seen == nil {
+		seen = make(map[constraint.PathKey]bool)
+	}
+	if seen[key] {
+		return nil
+	}
+	seen[key] = true
+	defer delete(seen, key)
+
+	if direct := g.bodyContractRead(path); direct != nil {
+		return g.finalize(path, direct)
+	}
+	if g.Routes == nil {
+		return nil
+	}
+	var types []typ.Type
+	resolve := g.resolver(seen)
+	for _, route := range g.Routes(path) {
+		if sourceType := RouteSourceType(route, nil, resolve, g.Project); sourceType != nil {
+			types = append(types, sourceType)
+		}
+	}
+	switch len(types) {
+	case 0:
+		return nil
+	case 1:
+		return g.finalize(path, types[0])
+	default:
+		return g.finalize(path, typ.NewUnion(types...))
+	}
+}
+
+func (g RouteSourceTypeGraph) resolver(seen map[constraint.PathKey]bool) RouteSourceTypeResolver {
+	return func(path constraint.Path, read SourceReadKind) typ.Type {
+		switch read {
+		case SourceReadBodyContract:
+			return g.typeAt(path, seen)
+		case SourceReadPointPath:
+			return g.pointPathRead(path)
+		default:
+			return nil
+		}
+	}
+}
+
+func (g RouteSourceTypeGraph) bodyContractRead(path constraint.Path) typ.Type {
+	if g.BodyContractRead == nil {
+		return nil
+	}
+	return g.BodyContractRead(path)
+}
+
+func (g RouteSourceTypeGraph) pointPathRead(path constraint.Path) typ.Type {
+	if g.PointPathRead == nil {
+		return nil
+	}
+	return g.PointPathRead(path)
+}
+
+func (g RouteSourceTypeGraph) finalize(path constraint.Path, t typ.Type) typ.Type {
+	if g.Finalize == nil {
+		return t
+	}
+	return g.Finalize(path, t)
+}
+
 // RouteProjectionKind identifies how a provenance route relates the source
 // value to the local routed value.
 type RouteProjectionKind uint8

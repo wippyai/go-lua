@@ -329,12 +329,12 @@ func (p contractPathProof) ElementFieldSatisfies(array []constraint.Segment, fie
 	for _, seg := range array {
 		arrayPath = arrayPath.Append(seg)
 	}
-	resolve := p.projector.routeSourceTypeResolver(p.point, nil)
+	graph := p.projector.bodyContractTypeGraph(p.point)
 	for _, route := range p.projector.proofs.AppendElementFieldSourceRoutesAt(p.point, flow.AppendElementFieldRouteQuery{
 		ArrayPath: arrayPath,
 		Field:     field,
 	}) {
-		sourceType := provenance.RouteSourceType(route, nil, resolve, p.projector.typeAtSegments)
+		sourceType := graph.RouteType(route)
 		if !typ.IsAbsentOrUnknown(sourceType) && subtype.IsSubtype(sourceType, expected) {
 			return true
 		}
@@ -666,7 +666,7 @@ func (p Projector) callArgumentProofObservation(observed typ.Type, expected typ.
 			return expected
 		}
 	}
-	contractPathType := p.bodyContractPathTypeAtPath(point, path, nil)
+	contractPathType := p.bodyContractPathTypeAtPath(point, path)
 	if typ.IsAbsentOrUnknown(contractPathType) || !subtype.IsSubtype(contractPathType, expected) {
 		return observed
 	}
@@ -678,65 +678,29 @@ func (p Projector) bodyContractPathType(expr ast.Expr, point cfg.Point) typ.Type
 	if path.IsEmpty() || path.Symbol == 0 {
 		return nil
 	}
-	return p.bodyContractPathTypeAtPath(point, path, nil)
+	return p.bodyContractPathTypeAtPath(point, path)
 }
 
-func (p Projector) bodyContractPathTypeAtPath(point cfg.Point, path constraint.Path, seen map[constraint.PathKey]bool) typ.Type {
-	if path.IsEmpty() || path.Symbol == 0 {
-		return nil
-	}
-	key := flow.StablePathKey(path)
-	if key == "" {
-		return nil
-	}
-	if seen == nil {
-		seen = make(map[constraint.PathKey]bool)
-	}
-	if seen[key] {
-		return nil
-	}
-	seen[key] = true
-	defer delete(seen, key)
-
-	if direct := p.directBodyContractPathType(path); direct != nil {
-		return p.conditionBodyContractSeedType(point, path, direct)
-	}
-
-	if !p.cfg.CallArgumentProofs {
-		return nil
-	}
-	types := p.projectBodyContractOriginTypes(point, path, seen)
-	switch len(types) {
-	case 0:
-		return nil
-	case 1:
-		return p.conditionBodyContractSeedType(point, path, types[0])
-	default:
-		return p.conditionBodyContractSeedType(point, path, typ.NewUnion(types...))
-	}
+func (p Projector) bodyContractPathTypeAtPath(point cfg.Point, path constraint.Path) typ.Type {
+	return p.bodyContractTypeGraph(point).TypeAt(path)
 }
 
-func (p Projector) projectBodyContractOriginTypes(point cfg.Point, path constraint.Path, seen map[constraint.PathKey]bool) []typ.Type {
-	var types []typ.Type
-	resolve := p.routeSourceTypeResolver(point, seen)
-	for _, route := range p.provenanceRoutesAt(point, path) {
-		if sourceType := provenance.RouteSourceType(route, nil, resolve, p.typeAtSegments); sourceType != nil {
-			types = append(types, sourceType)
-		}
-	}
-	return types
-}
-
-func (p Projector) routeSourceTypeResolver(point cfg.Point, seen map[constraint.PathKey]bool) provenance.RouteSourceTypeResolver {
-	return func(path constraint.Path, read provenance.SourceReadKind) typ.Type {
-		switch read {
-		case provenance.SourceReadBodyContract:
-			return p.bodyContractPathTypeAtPath(point, path, seen)
-		case provenance.SourceReadPointPath:
+func (p Projector) bodyContractTypeGraph(point cfg.Point) provenance.RouteSourceTypeGraph {
+	return provenance.RouteSourceTypeGraph{
+		Routes: func(path constraint.Path) []flow.ProvenanceRoute {
+			if !p.cfg.CallArgumentProofs {
+				return nil
+			}
+			return p.provenanceRoutesAt(point, path)
+		},
+		BodyContractRead: p.directBodyContractPathType,
+		PointPathRead: func(path constraint.Path) typ.Type {
 			return p.pathTypeAtPath(path, point)
-		default:
-			return nil
-		}
+		},
+		Finalize: func(path constraint.Path, t typ.Type) typ.Type {
+			return p.conditionBodyContractSeedType(point, path, t)
+		},
+		Project: p.typeAtSegments,
 	}
 }
 
@@ -769,7 +733,7 @@ func (p Projector) pathIsBodyContractSeed(point cfg.Point, path constraint.Path,
 	if path.IsEmpty() || path.Symbol == 0 || expected == nil {
 		return false
 	}
-	contractPathType := p.bodyContractPathTypeAtPath(point, path, nil)
+	contractPathType := p.bodyContractPathTypeAtPath(point, path)
 	return !typ.IsAbsentOrUnknown(contractPathType) && subtype.IsSubtype(contractPathType, expected)
 }
 
