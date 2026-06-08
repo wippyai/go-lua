@@ -34,7 +34,7 @@ type legacyFixpointSpySession struct {
 	spy *legacyFixpointSpyStore
 }
 
-func (s *legacyFixpointSpySession) StoreHandle() api.IterationStore {
+func (s *legacyFixpointSpySession) CanonicalStoreHandle() api.CanonicalStore {
 	return s.spy
 }
 

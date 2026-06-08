@@ -128,7 +128,17 @@ func (s *Session) Context() *db.QueryContext {
 	return s.Ctx
 }
 
-// StoreHandle returns the session store as an interation-capable interface.
+// CanonicalStoreHandle returns the store surface admitted to the canonical
+// summary engine.
+func (s *Session) CanonicalStoreHandle() api.CanonicalStore {
+	if s == nil {
+		return nil
+	}
+	return s.Store
+}
+
+// StoreHandle returns the session store as an iteration-capable interface for
+// legacy interproc paths.
 func (s *Session) StoreHandle() api.IterationStore {
 	if s == nil {
 		return nil

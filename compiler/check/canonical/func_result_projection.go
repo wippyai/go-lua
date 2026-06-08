@@ -133,8 +133,8 @@ func (p funcResultProjection) callEdgeEvidence(evidence api.FlowEvidence) solved
 }
 
 func (p funcResultProjection) evidence() api.FlowEvidence {
-	if store := p.session.StoreHandle(); store != nil && p.graph != nil {
-		return store.EvidenceForGraph(p.graph)
+	if p.session != nil && p.graph != nil {
+		return p.session.EvidenceForGraph(p.graph)
 	}
 	return api.FlowEvidence{}
 }

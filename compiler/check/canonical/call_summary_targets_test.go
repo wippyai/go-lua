@@ -287,7 +287,7 @@ func testDriverProgram(t *testing.T, chunk []ast.Stmt) (*Driver, *program, *cfg.
 	root := &ast.FunctionExpr{ParList: &ast.ParList{HasVargs: true}, Stmts: chunk}
 	sess.SetRootFuncNode(root)
 	moduleBindings := bind.Bind(root, driver.globalTypes.Names())
-	if store := sess.StoreHandle(); store != nil {
+	if store := sess.CanonicalStoreHandle(); store != nil {
 		store.SetModuleBindings(moduleBindings)
 	}
 	rootGraph := sess.GetOrBuildCFG(root)

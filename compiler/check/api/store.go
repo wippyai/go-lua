@@ -12,8 +12,9 @@
 //	InterprocFactReader   - Visible interproc fact products
 //	FunctionRefs    - Symbol/function bidirectional lookup
 //	StoreReader     - Read-only combination of above
-//	NestedStore     - StoreReader + canonical fact product writes
-//	IterationStore  - Full mutation capability for fixpoint
+//	CanonicalStore  - Canonical module metadata plus final fact projection
+//	NestedStore     - StoreReader + legacy fact product writes
+//	IterationStore  - Full mutation capability for legacy fixpoint paths
 package api
 
 import (
@@ -124,13 +125,27 @@ type CanonicalFactProjectionSink interface {
 	SetCanonicalFactsProjection(facts map[GraphKey]Facts)
 }
 
+// CanonicalStore is the store surface the canonical summary engine is allowed to
+// mutate: module metadata, graph-parent publication, and final Summary-derived
+// fact projection. It intentionally excludes legacy interproc iteration methods.
+type CanonicalStore interface {
+	StoreReader
+	CanonicalFactProjectionSink
+
+	SetModuleBindings(bindings *bind.BindingTable)
+	SetModuleAliases(aliases map[cfg.SymbolID]string)
+	SetParentScope(parentHash uint64, parent *scope.State)
+	SetGraphParentHash(graphID, parentHash uint64)
+	ParentGraphKeyForSymbol(sym cfg.SymbolID) (GraphKey, bool)
+}
+
 // NestedStore is the store interface required by nested processing.
 type NestedStore interface {
 	StoreReader
 	InterprocFactSink
 }
 
-// IterationStore provides mutation operations required by the fixpoint driver.
+// IterationStore provides mutation operations required by legacy fixpoint paths.
 type IterationStore interface {
 	NestedStore
 

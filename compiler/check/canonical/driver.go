@@ -274,7 +274,7 @@ func (d *Driver) Run(sess api.AnalysisSession, chunk []ast.Stmt) {
 	globals := d.globalTypes.Names()
 	moduleBindings := bind.Bind(root, globals)
 	d.moduleBindings = moduleBindings
-	if store := sess.StoreHandle(); store != nil {
+	if store := sess.CanonicalStoreHandle(); store != nil {
 		store.SetModuleBindings(moduleBindings)
 	}
 
@@ -413,7 +413,7 @@ func (d *Driver) registerStoreGraphParents(sess api.AnalysisSession, prog *progr
 	if d == nil || sess == nil || prog == nil {
 		return
 	}
-	store := sess.StoreHandle()
+	store := sess.CanonicalStoreHandle()
 	if store == nil {
 		return
 	}
@@ -439,16 +439,12 @@ func (d *Driver) publishFunctionFacts(sess api.AnalysisSession, prog *program) {
 	if d == nil || sess == nil || prog == nil {
 		return
 	}
-	store := sess.StoreHandle()
+	store := sess.CanonicalStoreHandle()
 	if store == nil {
 		return
 	}
-	sink, ok := store.(api.CanonicalFactProjectionSink)
-	if !ok || sink == nil {
-		return
-	}
 	projection := d.canonicalFunctionFacts(prog, store)
-	sink.SetCanonicalFactsProjection(projection)
+	store.SetCanonicalFactsProjection(projection)
 }
 
 type functionFactProjectionStore interface {

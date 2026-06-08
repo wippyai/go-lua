@@ -7,12 +7,12 @@ import (
 	"github.com/wippyai/go-lua/types/diag"
 )
 
-// AnalysisSession is the minimal session interface needed by the fixpoint driver.
+// AnalysisSession is the minimal session interface needed by the canonical driver.
 // Implemented by check.Session.
 type AnalysisSession interface {
 	Context() *db.QueryContext
 	Source() string
-	StoreHandle() IterationStore
+	CanonicalStoreHandle() CanonicalStore
 
 	GetOrBuildCFG(fn *ast.FunctionExpr) *cfg.Graph
 	EvidenceForGraph(graph *cfg.Graph) FlowEvidence
