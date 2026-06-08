@@ -12,9 +12,10 @@ import (
 	"github.com/wippyai/go-lua/types/typ"
 )
 
-// factInputs are the Salsa-style source inputs for interprocedural reads.
-// They publish projected product slots at fixpoint boundaries so FuncResult
-// queries depend on the exact slots they read.
+// factInputs are the Salsa-style source inputs for interprocedural reads. They
+// publish projected product slots so FuncResult queries depend on the exact
+// slots they read; canonical uses them only for final Summary-derived output
+// projection, while legacy paths may still refresh them at iteration boundaries.
 type factInputs struct {
 	database *db.DB
 
@@ -527,6 +528,40 @@ func (s *SessionStore) syncProjectedFactInputs(batch *db.InputBatch, key api.Gra
 		return
 	}
 	s.factInputs.setProjectedFacts(batch, key, s.visibleProjectedInterprocFacts(key))
+}
+
+// SetCanonicalFactsProjection publishes final canonical fact projections without
+// mutating InterprocPrev/InterprocNext or advancing the legacy fixpoint product.
+func (s *SessionStore) SetCanonicalFactsProjection(facts map[api.GraphKey]api.Facts) {
+	if s == nil || s.factInputs == nil {
+		return
+	}
+	keys := make(map[api.GraphKey]struct{}, len(facts)+len(s.factInputs.functionMapValues))
+	for key := range facts {
+		keys[key] = struct{}{}
+	}
+	for key := range s.factInputs.functionMapValues {
+		keys[key] = struct{}{}
+	}
+	for key := range s.factInputs.functionFactValues {
+		keys[key.GraphKey] = struct{}{}
+	}
+	for key := range s.factInputs.literalSigValues {
+		keys[key.GraphKey] = struct{}{}
+	}
+	for key := range s.factInputs.capturedTypeValues {
+		keys[key.GraphKey] = struct{}{}
+	}
+	for key := range s.factInputs.capturedFieldValues {
+		keys[key] = struct{}{}
+	}
+	for key := range s.factInputs.constructorValues {
+		keys[key.GraphKey] = struct{}{}
+	}
+	batch := s.factInputs.database.NewInputBatch()
+	for key := range keys {
+		s.factInputs.setProjectedFacts(batch, key, facts[key])
+	}
 }
 
 func (s *SessionStore) visibleProjectedInterprocFacts(key api.GraphKey) api.Facts {

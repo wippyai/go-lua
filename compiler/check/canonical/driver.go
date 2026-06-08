@@ -49,7 +49,6 @@ import (
 	"github.com/wippyai/go-lua/compiler/check/domain/functionfact"
 	"github.com/wippyai/go-lua/compiler/check/domain/functionsymbols"
 	"github.com/wippyai/go-lua/compiler/check/domain/globalenv"
-	interprocdomain "github.com/wippyai/go-lua/compiler/check/domain/interproc"
 	"github.com/wippyai/go-lua/compiler/check/domain/iteration"
 	"github.com/wippyai/go-lua/compiler/check/domain/paramevidence"
 	flowpath "github.com/wippyai/go-lua/compiler/check/domain/path"
@@ -357,7 +356,6 @@ func (d *Driver) Run(sess api.AnalysisSession, chunk []ast.Stmt) {
 	d.solvePass(sess, prog, queries)
 	d.withSnapshotSummaryReads(func() {
 		d.publishFunctionFacts(sess, prog)
-		d.commitPublishedFunctionFacts(sess)
 		d.bridgeResults(sess, prog, queries)
 	})
 }
@@ -445,7 +443,24 @@ func (d *Driver) publishFunctionFacts(sess api.AnalysisSession, prog *program) {
 	if store == nil {
 		return
 	}
+	sink, ok := store.(api.CanonicalFactProjectionSink)
+	if !ok || sink == nil {
+		return
+	}
+	projection := d.canonicalFunctionFacts(prog, store)
+	sink.SetCanonicalFactsProjection(projection)
+}
+
+type functionFactProjectionStore interface {
+	ParentGraphKeyForSymbol(cfg.SymbolID) (api.GraphKey, bool)
+}
+
+func (d *Driver) canonicalFunctionFacts(prog *program, store functionFactProjectionStore) map[api.GraphKey]api.Facts {
+	if d == nil || prog == nil || store == nil {
+		return nil
+	}
 	reader := d.summaryReader()
+	out := make(map[api.GraphKey]api.Facts)
 	for _, ref := range prog.refs {
 		symbols := prog.symbolsForRef(ref)
 		if len(symbols) == 0 {
@@ -473,21 +488,29 @@ func (d *Driver) publishFunctionFacts(sess api.AnalysisSession, prog *program) {
 			builder.AddPublicParams(sym, publicParams)
 			builder.AddRefinement(sym, refinement)
 			if facts := builder.Build(); len(facts) > 0 {
-				store.MergeInterprocFactsNext(key, interprocdomain.FunctionFactsDelta(facts))
+				current := out[key]
+				current.FunctionFacts = mergeFunctionFacts(current.FunctionFacts, facts)
+				out[key] = current
 			}
 		}
 	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }
 
-func (d *Driver) commitPublishedFunctionFacts(sess api.AnalysisSession) {
-	if d == nil || sess == nil {
-		return
+func mergeFunctionFacts(out api.FunctionFacts, facts api.FunctionFacts) api.FunctionFacts {
+	if len(facts) == 0 {
+		return out
 	}
-	store := sess.StoreHandle()
-	if store == nil {
-		return
+	if out == nil {
+		out = make(api.FunctionFacts, len(facts))
 	}
-	store.FixpointSwap()
+	for sym, fact := range facts {
+		out[sym] = fact
+	}
+	return out
 }
 
 func contractTypeVector(contracts paramevidence.Contracts, minLen int) []typ.Type {

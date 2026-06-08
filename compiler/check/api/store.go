@@ -118,6 +118,12 @@ type InterprocFactSink interface {
 	MergeInterprocFactsNext(key GraphKey, delta Facts)
 }
 
+// CanonicalFactProjectionSink installs final canonical fact projections without
+// participating in the legacy interproc iteration product.
+type CanonicalFactProjectionSink interface {
+	SetCanonicalFactsProjection(facts map[GraphKey]Facts)
+}
+
 // NestedStore is the store interface required by nested processing.
 type NestedStore interface {
 	StoreReader

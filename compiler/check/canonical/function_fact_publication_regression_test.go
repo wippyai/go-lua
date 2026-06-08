@@ -1,7 +1,6 @@
 package canonical_test
 
 import (
-	"fmt"
 	"github.com/wippyai/go-lua/compiler/check/api"
 	"github.com/wippyai/go-lua/compiler/check/tests/testutil"
 	"github.com/wippyai/go-lua/types/domain/value/product"
@@ -36,19 +35,9 @@ local value, label = get_db()
 	fact, ok := facts[sym]
 	if !ok {
 		key, keyOK := res.Session.Store.ParentGraphKeyForSymbol(sym)
-		nextKeys := make([]string, 0, len(res.Session.Store.InterprocNext.Facts))
-		for nextKey, nextFacts := range res.Session.Store.InterprocNext.Facts {
-			names := make([]string, 0, len(nextFacts.FunctionFacts))
-			for factSym := range nextFacts.FunctionFacts {
-				names = append(names, fmt.Sprintf("%d:%q", factSym, root.NameOf(factSym)))
-			}
-			nextKeys = append(nextKeys, fmt.Sprintf("%+v:functions=%v", nextKey, names))
-		}
 		t.Fatalf(
-			"missing get_db function fact; root facts=%d next=%v prevKeys=%d sym=%d parentHash=%d parentKey=%+v/%v nested=%v",
+			"missing get_db function fact; root facts=%d sym=%d parentHash=%d parentKey=%+v/%v nested=%v",
 			len(facts),
-			nextKeys,
-			len(res.Session.Store.InterprocPrev.Facts),
 			sym,
 			parentHash,
 			key,

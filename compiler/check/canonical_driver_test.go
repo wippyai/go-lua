@@ -6,8 +6,10 @@ import (
 
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/check"
+	"github.com/wippyai/go-lua/compiler/check/api"
 	"github.com/wippyai/go-lua/compiler/check/canonical"
 	"github.com/wippyai/go-lua/compiler/check/canonical/summary"
+	checkstore "github.com/wippyai/go-lua/compiler/check/store"
 	"github.com/wippyai/go-lua/compiler/parse"
 	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/db"
@@ -16,6 +18,25 @@ import (
 	"github.com/wippyai/go-lua/types/kind"
 	"github.com/wippyai/go-lua/types/typ"
 )
+
+type legacyFixpointSpyStore struct {
+	*checkstore.SessionStore
+	swaps int
+}
+
+func (s *legacyFixpointSpyStore) FixpointSwap() bool {
+	s.swaps++
+	return s.SessionStore.FixpointSwap()
+}
+
+type legacyFixpointSpySession struct {
+	*check.Session
+	spy *legacyFixpointSpyStore
+}
+
+func (s *legacyFixpointSpySession) StoreHandle() api.IterationStore {
+	return s.spy
+}
 
 // TestCanonicalDriver_MultiFunctionModuleSummarizesEachFunction verifies that the
 // module driver runs over a small multi-function module without panic and produces
@@ -65,6 +86,32 @@ return {
 		if _, ok := driver.SummaryFor(ref); !ok {
 			t.Fatalf("function %v has no converged summary", ref)
 		}
+	}
+}
+
+func TestCanonicalDriver_DoesNotAdvanceLegacyInterprocIteration(t *testing.T) {
+	const src = `
+local function get_db()
+	return 1
+end
+
+return get_db()
+`
+	chunk, err := parse.ParseString(src, "no-legacy-iteration.lua")
+	if err != nil {
+		t.Fatalf("parse failed: %v", err)
+	}
+
+	base := check.New(db.NewQueryContext(db.New()), "no-legacy-iteration.lua")
+	sess := &legacyFixpointSpySession{
+		Session: base,
+		spy:     &legacyFixpointSpyStore{SessionStore: base.Store},
+	}
+	driver := canonical.NewDriver(canonical.Config{})
+	driver.Run(sess, chunk)
+
+	if sess.spy.swaps != 0 {
+		t.Fatalf("canonical driver advanced legacy interproc iteration %d times, want 0", sess.spy.swaps)
 	}
 }
 
