@@ -134,6 +134,25 @@ type AppendElementFieldSourceAddress struct {
 	FieldRemainder []constraint.Segment
 }
 
+// SourcePath returns the symbol-rooted source path carried by this source route.
+func (s AppendElementFieldSourceAddress) SourcePath() (constraint.Path, bool) {
+	return s.Source.Path()
+}
+
+// ReplaySource returns the proof source used when replaying this field route.
+// SourceField is non-empty when Source denotes the containing element and the
+// remaining demanded suffix should stay field-relative to that element.
+func (s AppendElementFieldSourceAddress) ReplaySource() (StableAddress, []constraint.Segment, bool) {
+	source := s.Source
+	sourceField := cloneAddressSegments(s.SourceField)
+	if len(sourceField) > 0 {
+		sourceField = append(sourceField, s.FieldRemainder...)
+		return source, sourceField, source.Key() != ""
+	}
+	replayed, ok := source.Append(s.FieldRemainder)
+	return replayed, nil, ok
+}
+
 // AppendElementFieldSourceQuery asks for recorded sources that can satisfy a
 // demand for Array element field Field.
 type AppendElementFieldSourceQuery struct {

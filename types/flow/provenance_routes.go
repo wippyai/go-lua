@@ -97,7 +97,7 @@ func appendAppendFieldProvenanceRoutes(out []ProvenanceRoute, state PointState, 
 	if !ok {
 		return out
 	}
-	return appendAppendFieldSourceRoutes(out, state.KeyPresence.AppendElementFieldOriginUses(AppendElementFieldSourceQuery{
+	return appendAppendFieldSourceRoutes(out, state.KeyPresence.AppendElementFieldSourceAddresses(AppendElementFieldSourceQuery{
 		Array: source,
 		Field: use.Remainder,
 	}))
@@ -110,30 +110,30 @@ func (f PointFacts) AppendElementFieldSourceRoutes(q AppendElementFieldRouteQuer
 	if !ok {
 		return nil
 	}
-	uses := f.state.KeyPresence.AppendElementFieldOriginUses(AppendElementFieldSourceQuery{
+	uses := f.state.KeyPresence.AppendElementFieldSourceAddresses(AppendElementFieldSourceQuery{
 		Array: array,
 		Field: q.Field,
 	})
 	return appendAppendFieldSourceRoutes(nil, uses)
 }
 
-func appendAppendFieldSourceRoutes(out []ProvenanceRoute, uses []AppendElementFieldOriginUse) []ProvenanceRoute {
-	for _, use := range uses {
-		out = appendAppendFieldSourceRoute(out, use)
+func appendAppendFieldSourceRoutes(out []ProvenanceRoute, sources []AppendElementFieldSourceAddress) []ProvenanceRoute {
+	for _, source := range sources {
+		out = appendAppendFieldSourceRoute(out, source)
 	}
 	return out
 }
 
-func appendAppendFieldSourceRoute(out []ProvenanceRoute, use AppendElementFieldOriginUse) []ProvenanceRoute {
-	source, ok := use.SourcePath()
+func appendAppendFieldSourceRoute(out []ProvenanceRoute, sourceRoute AppendElementFieldSourceAddress) []ProvenanceRoute {
+	source, ok := sourceRoute.SourcePath()
 	if !ok || source.IsEmpty() || source.Symbol == 0 {
 		return out
 	}
 	out = append(out, ProvenanceRoute{
 		Kind:           ProvenanceRouteAppendElementField,
 		Source:         source,
-		SourceField:    cloneAddressSegments(use.SourceField),
-		FieldRemainder: cloneAddressSegments(use.FieldRemainder),
+		SourceField:    cloneAddressSegments(sourceRoute.SourceField),
+		FieldRemainder: cloneAddressSegments(sourceRoute.FieldRemainder),
 	})
 	return out
 }

@@ -794,16 +794,9 @@ func ApplyAppendElementFieldOriginUse(
 		Array: originSource,
 		Field: originUse.Remainder,
 	}) {
-		source := sourceUse.Source
-		sourceField := cloneAddressSegments(sourceUse.SourceField)
-		if len(sourceField) > 0 {
-			sourceField = append(sourceField, sourceUse.FieldRemainder...)
-		} else {
-			var ok bool
-			source, ok = source.Append(sourceUse.FieldRemainder)
-			if !ok {
-				continue
-			}
+		source, sourceField, ok := sourceUse.ReplaySource()
+		if !ok {
+			continue
 		}
 		for _, dst := range destinations {
 			dstField := cloneAddressSegments(dst.FieldPrefix)
