@@ -30,7 +30,13 @@ func TestDirectCallEntryFactsProjectsLengthBoundsToParamPaths(t *testing.T) {
 			return source, true
 		},
 	}
-	got := projection.DirectFacts(callee, call, flow.KeyPresenceFacts{}, num, flow.IndexWriteAdmissionFacts{})
+	got := projection.DirectEvidence(summary.DirectEntryEvidenceInput{
+		Callee:      callee,
+		Call:        call,
+		KeyPresence: flow.KeyPresenceFacts{},
+		Num:         num,
+		IndexWrites: flow.IndexWriteAdmissionFacts{},
+	}).Facts
 
 	bounds := got.LengthLowerBounds()
 	if len(bounds) != 1 {
@@ -68,7 +74,12 @@ func TestDirectCallEntryFactsProjectsIndexWritesToParamPaths(t *testing.T) {
 		Key:     product.FromType(typ.String),
 		Value:   value,
 	})
-	got := projection.DirectFacts(callee, call, flow.KeyPresenceFacts{}, nil, indexWrites)
+	got := projection.DirectEvidence(summary.DirectEntryEvidenceInput{
+		Callee:      callee,
+		Call:        call,
+		KeyPresence: flow.KeyPresenceFacts{},
+		IndexWrites: indexWrites,
+	}).Facts
 
 	writes := got.IndexWrites()
 	if len(writes) != 1 {

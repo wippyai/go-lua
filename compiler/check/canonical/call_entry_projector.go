@@ -12,7 +12,6 @@ import (
 	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/domain/value/product"
 	"github.com/wippyai/go-lua/types/flow"
-	"github.com/wippyai/go-lua/types/flow/numeric"
 	"github.com/wippyai/go-lua/types/typ"
 )
 
@@ -68,28 +67,49 @@ func (a callEntryAccess) productReferenceArgSources(ctx transfer.ProductCallCont
 	}
 }
 
+func (a callEntryAccess) entryEvidenceProjection() summary.CallEntryContextProjection {
+	return summary.CallEntryContextProjection{
+		ParamSlot: a.projector.paramSlot,
+		ParamSlotCount: func(callee summary.FuncRef, _ *ast.FuncCallExpr) int {
+			return a.projector.program.paramSlotCount(callee)
+		},
+		ParamPath: func(callee summary.FuncRef, slot int) (constraint.Path, bool) {
+			return a.projector.program.paramPath(callee, slot)
+		},
+		ArgPath: a.argPath,
+		ReferencePaths: func(callee summary.FuncRef) flow.ReferencePathProjection {
+			return a.projector.program.referenceProjection(callee)
+		},
+	}
+}
+
+func (a callEntryAccess) productEvidence(ref summary.FuncRef, call *ast.FuncCallExpr, ctx transfer.ProductCallContext) summary.DirectEntryEvidence {
+	return a.entryEvidenceProjection().DirectEvidence(summary.DirectEntryEvidenceInput{
+		Callee:        ref,
+		Call:          call,
+		RuntimeValues: ctx.RuntimeArgValues,
+		References:    ctx.References,
+		ArgSources:    a.productReferenceArgSources(ctx),
+		KeyPresence:   ctx.KeyPresence,
+		Num:           ctx.Num,
+		IndexWrites:   ctx.IndexWrites,
+	})
+}
+
 func (a callEntryAccess) pointFacts(ref summary.FuncRef, call *ast.FuncCallExpr, in *flow.PointState) flow.BoundaryFacts {
 	if in == nil {
 		return flow.BoundaryFactsDomain.Top()
 	}
-	return a.facts(ref, call, in.KeyPresence, in.Num, in.IndexWrites)
-}
-
-func (a callEntryAccess) productFacts(ref summary.FuncRef, call *ast.FuncCallExpr, ctx transfer.ProductCallContext) flow.BoundaryFacts {
-	return a.facts(ref, call, ctx.KeyPresence, ctx.Num, ctx.IndexWrites)
-}
-
-func (a callEntryAccess) facts(
-	ref summary.FuncRef,
-	call *ast.FuncCallExpr,
-	keyPresence flow.KeyPresenceFacts,
-	num *numeric.State,
-	indexWrites flow.IndexWriteAdmissionFacts,
-) flow.BoundaryFacts {
 	return summary.CallEntryContextProjection{
 		ParamSlot: a.projector.paramSlot,
 		ArgPath:   a.argPath,
-	}.DirectFacts(ref, call, keyPresence, num, indexWrites)
+	}.DirectEvidence(summary.DirectEntryEvidenceInput{
+		Callee:      ref,
+		Call:        call,
+		KeyPresence: in.KeyPresence,
+		Num:         in.Num,
+		IndexWrites: in.IndexWrites,
+	}).Facts
 }
 
 // callEntryProjector is the program-owned capability bundle for summary
@@ -289,7 +309,11 @@ func (c callEntryProjector) valuesForRef(ref summary.FuncRef, call *ast.FuncCall
 		}
 		runtimeValues[i] = product.FromType(t)
 	}
-	return c.entryValueLayout().DirectProductValues(ref, call, runtimeValues)
+	return c.access().entryEvidenceProjection().DirectEvidence(summary.DirectEntryEvidenceInput{
+		Callee:        ref,
+		Call:          call,
+		RuntimeValues: runtimeValues,
+	}).Values
 }
 
 func (ct callTyper) productCallEntryContext(ref summary.FuncRef, call *ast.FuncCallExpr, ctx transfer.ProductCallContext) (canonicalcall.EntryContext, bool) {
@@ -318,50 +342,13 @@ func (c callEntryProjector) productClosureContext(ref summary.FuncRef, closure f
 
 func (c callEntryProjector) productEntryContext(ref summary.FuncRef, call *ast.FuncCallExpr, ctx transfer.ProductCallContext) canonicalcall.EntryContext {
 	access := c.access()
-	directReferences := c.productReferencesForRef(ref, call, ctx)
-	references := ctx.References.Join(directReferences)
+	evidence := access.productEvidence(ref, call, ctx)
+	values := c.program.withPrototypeMethodSurfacesForMethodCall(ref, call, evidence.Values)
+	references := ctx.References.Join(evidence.References)
 	return c.program.CallEntryContextWithFacts(
 		ref,
 		references,
-		c.productValuesForRef(ref, call, ctx.RuntimeArgValues),
-		access.productFacts(ref, call, ctx),
+		values,
+		evidence.Facts,
 	)
-}
-
-func (c callEntryProjector) productValuesForRef(ref summary.FuncRef, call *ast.FuncCallExpr, runtimeValues []product.AbstractValue) summary.EntryValues {
-	if call == nil {
-		return nil
-	}
-	values := c.entryValueLayout().DirectProductValues(ref, call, runtimeValues)
-	return c.program.withPrototypeMethodSurfacesForMethodCall(ref, call, values)
-}
-
-func (c callEntryProjector) entryValueLayout() summary.CallEntryContextProjection {
-	return summary.CallEntryContextProjection{
-		ParamSlot: c.paramSlot,
-		ParamSlotCount: func(callee summary.FuncRef, _ *ast.FuncCallExpr) int {
-			return c.program.paramSlotCount(callee)
-		},
-	}
-}
-
-func (c callEntryProjector) productReferencesForRef(ref summary.FuncRef, call *ast.FuncCallExpr, ctx transfer.ProductCallContext) flow.ReferenceContext {
-	if call == nil {
-		return flow.ReferenceContextOf(flow.CaptureCellsDomain.Bottom(), flow.FunctionRefsDomain.Bottom(), flow.ClosureRefsDomain.Bottom())
-	}
-	access := c.access()
-	return c.referenceLayout().DirectReferences(ref, call, nil, ctx.References, access.productReferenceArgSources(ctx))
-}
-
-func (c callEntryProjector) referenceLayout() summary.CallEntryContextProjection {
-	return summary.CallEntryContextProjection{
-		ParamSlot: c.paramSlot,
-		ParamPath: func(callee summary.FuncRef, slot int) (constraint.Path, bool) {
-			return c.program.paramPath(callee, slot)
-		},
-		ArgPath: c.access().argPath,
-		ReferencePaths: func(callee summary.FuncRef) flow.ReferencePathProjection {
-			return c.program.referenceProjection(callee)
-		},
-	}
 }

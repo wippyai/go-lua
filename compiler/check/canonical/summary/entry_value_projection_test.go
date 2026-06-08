@@ -42,12 +42,16 @@ func TestDirectCallEntryProductValues_ProjectsAllExactInformativeArgs(t *testing
 			}
 		},
 	}
-	got := projection.DirectProductValues(callee, call, []product.AbstractValue{
-		product.FromType(typ.String),
-		product.FromType(typ.Number),
-		product.FromType(typ.Boolean),
-		product.FromType(typ.Unknown),
-	})
+	got := projection.DirectEvidence(summary.DirectEntryEvidenceInput{
+		Callee: callee,
+		Call:   call,
+		RuntimeValues: []product.AbstractValue{
+			product.FromType(typ.String),
+			product.FromType(typ.Number),
+			product.FromType(typ.Boolean),
+			product.FromType(typ.Unknown),
+		},
+	}).Values
 
 	wantSlot0 := product.Join(product.FromType(typ.String), product.FromType(typ.Number))
 	wantSlot2 := product.FromType(typ.Boolean)
@@ -84,7 +88,11 @@ func TestDirectCallEntryProductValues_ProjectsOmittedFixedArgsAsNil(t *testing.T
 			return 2
 		},
 	}
-	got := projection.DirectProductValues(callee, call, []product.AbstractValue{product.FromType(typ.String)})
+	got := projection.DirectEvidence(summary.DirectEntryEvidenceInput{
+		Callee:        callee,
+		Call:          call,
+		RuntimeValues: []product.AbstractValue{product.FromType(typ.String)},
+	}).Values
 
 	if len(got) != 2 {
 		t.Fatalf("entry values = %#v, want supplied string and omitted nil", got)
@@ -123,10 +131,14 @@ func TestDirectCallEntryProductValues_ProjectsMethodReceiverRuntimeSlot(t *testi
 			}
 		},
 	}
-	got := projection.DirectProductValues(callee, call, []product.AbstractValue{
-		product.FromType(receiverType),
-		product.FromType(typ.String),
-	})
+	got := projection.DirectEvidence(summary.DirectEntryEvidenceInput{
+		Callee: callee,
+		Call:   call,
+		RuntimeValues: []product.AbstractValue{
+			product.FromType(receiverType),
+			product.FromType(typ.String),
+		},
+	}).Values
 
 	if gotSlot0, ok := got[0]; !ok || !typ.TypeEquals(gotSlot0.ProjectValue(), receiverType) {
 		t.Fatalf("receiver slot = %v/%v, want %v", gotSlot0.ProjectValue(), ok, receiverType)
@@ -180,12 +192,11 @@ func TestDirectCallEntryReferences_ProjectFunctionRuntimeArgsToParamPaths(t *tes
 			return constraint.Path{}, false
 		},
 	}
-	got := projection.DirectReferences(
-		callee,
-		call,
-		nil,
-		flow.ReferenceContextOf(flow.CaptureCellsDomain.Bottom(), functionRefs, flow.ClosureRefsDomain.Bottom()),
-		summary.EntryReferenceArgSources{
+	got := projection.DirectEvidence(summary.DirectEntryEvidenceInput{
+		Callee:     callee,
+		Call:       call,
+		References: flow.ReferenceContextOf(flow.CaptureCellsDomain.Bottom(), functionRefs, flow.ClosureRefsDomain.Bottom()),
+		ArgSources: summary.EntryReferenceArgSources{
 			FunctionRefs: func(runtimeIdx int, _ ast.Expr, _ *flow.PointState) (flow.FunctionRefSet, bool) {
 				if runtimeIdx == 1 {
 					return flow.FunctionRefSetOf(directRef), true
@@ -193,7 +204,7 @@ func TestDirectCallEntryReferences_ProjectFunctionRuntimeArgsToParamPaths(t *tes
 				return flow.FunctionRefSet{}, false
 			},
 		},
-	).FunctionRefs()
+	}).References.FunctionRefs()
 
 	if refs, ok := flow.FunctionRefAtPath(got, param0Path); !ok {
 		t.Fatalf("rebased root refs missing: %#v", got)
@@ -231,13 +242,12 @@ func TestDirectCallEntryReferences_LimitsRebasedFunctionArgsToCalleeVocabulary(t
 			return flow.ReferencePathProjection{Exact: []constraint.Path{param.Field("used")}}
 		},
 	}
-	got := projection.DirectReferences(
-		callee,
-		call,
-		nil,
-		flow.ReferenceContextOf(flow.CaptureCellsDomain.Bottom(), refs, flow.ClosureRefsDomain.Bottom()),
-		summary.EntryReferenceArgSources{},
-	).FunctionRefs()
+	got := projection.DirectEvidence(summary.DirectEntryEvidenceInput{
+		Callee:     callee,
+		Call:       call,
+		References: flow.ReferenceContextOf(flow.CaptureCellsDomain.Bottom(), refs, flow.ClosureRefsDomain.Bottom()),
+		ArgSources: summary.EntryReferenceArgSources{},
+	}).References.FunctionRefs()
 
 	if refs, ok := flow.FunctionRefAtPath(got, param.Field("used")); !ok {
 		t.Fatalf("projected used ref missing: %#v", got)
@@ -265,12 +275,11 @@ func TestDirectCallEntryReferences_SeedsDirectFunctionLiteralWhenParamSlotMapped
 			return paramPath, true
 		},
 	}
-	got := projection.DirectReferences(
-		callee,
-		call,
-		nil,
-		flow.ReferenceContextOf(flow.CaptureCellsDomain.Bottom(), flow.FunctionRefsDomain.Bottom(), flow.ClosureRefsDomain.Bottom()),
-		summary.EntryReferenceArgSources{
+	got := projection.DirectEvidence(summary.DirectEntryEvidenceInput{
+		Callee:     callee,
+		Call:       call,
+		References: flow.ReferenceContextOf(flow.CaptureCellsDomain.Bottom(), flow.FunctionRefsDomain.Bottom(), flow.ClosureRefsDomain.Bottom()),
+		ArgSources: summary.EntryReferenceArgSources{
 			FunctionRefs: func(_ int, gotArg ast.Expr, _ *flow.PointState) (flow.FunctionRefSet, bool) {
 				if gotArg != arg {
 					t.Fatalf("arg = %#v, want direct literal", gotArg)
@@ -278,7 +287,7 @@ func TestDirectCallEntryReferences_SeedsDirectFunctionLiteralWhenParamSlotMapped
 				return flow.FunctionRefSetOf(directRef), true
 			},
 		},
-	).FunctionRefs()
+	}).References.FunctionRefs()
 
 	if refs, ok := flow.FunctionRefAtPath(got, paramPath); !ok {
 		t.Fatalf("direct literal refs missing: %#v", got)
@@ -304,12 +313,11 @@ func TestDirectCallEntryReferences_RebasesFunctionCallReturnSubtreeToParamPath(t
 			return paramPath, true
 		},
 	}
-	got := projection.DirectReferences(
-		callee,
-		call,
-		nil,
-		flow.ReferenceContextOf(flow.CaptureCellsDomain.Bottom(), flow.FunctionRefsDomain.Bottom(), flow.ClosureRefsDomain.Bottom()),
-		summary.EntryReferenceArgSources{
+	got := projection.DirectEvidence(summary.DirectEntryEvidenceInput{
+		Callee:     callee,
+		Call:       call,
+		References: flow.ReferenceContextOf(flow.CaptureCellsDomain.Bottom(), flow.FunctionRefsDomain.Bottom(), flow.ClosureRefsDomain.Bottom()),
+		ArgSources: summary.EntryReferenceArgSources{
 			RefTrees: func(_ int, gotArg ast.Expr, _ *flow.PointState) (flow.ReferenceContext, bool) {
 				if gotArg != arg {
 					t.Fatalf("arg = %#v, want call expression", gotArg)
@@ -317,7 +325,7 @@ func TestDirectCallEntryReferences_RebasesFunctionCallReturnSubtreeToParamPath(t
 				return flow.ReferenceContextOf(flow.CaptureCellsDomain.Bottom(), returnRefs, flow.ClosureRefsDomain.Bottom()), true
 			},
 		},
-	).FunctionRefs()
+	}).References.FunctionRefs()
 
 	if refs, ok := flow.FunctionRefAtPath(got, paramPath.Field("query")); !ok {
 		t.Fatalf("rebased call-return subtree refs missing: %#v", got)
@@ -346,13 +354,12 @@ func TestDirectCallEntryReferences_ProjectClosureRuntimeArgsToParamPaths(t *test
 			return source, true
 		},
 	}
-	got := projection.DirectReferences(
-		callee,
-		call,
-		nil,
-		flow.ReferenceContextOf(flow.CaptureCellsDomain.Bottom(), flow.FunctionRefsDomain.Bottom(), closureRefs),
-		summary.EntryReferenceArgSources{},
-	).ClosureRefs()
+	got := projection.DirectEvidence(summary.DirectEntryEvidenceInput{
+		Callee:     callee,
+		Call:       call,
+		References: flow.ReferenceContextOf(flow.CaptureCellsDomain.Bottom(), flow.FunctionRefsDomain.Bottom(), closureRefs),
+		ArgSources: summary.EntryReferenceArgSources{},
+	}).References.ClosureRefs()
 
 	if refs, ok := flow.ClosureRefAtPath(got, target); !ok {
 		t.Fatalf("rebased closure refs missing: %#v", got)
@@ -377,12 +384,11 @@ func TestDirectCallEntryReferences_RebasesClosureCallReturnSubtreeToParamPath(t 
 			return target, true
 		},
 	}
-	got := projection.DirectReferences(
-		callee,
-		call,
-		nil,
-		flow.ReferenceContextOf(flow.CaptureCellsDomain.Bottom(), flow.FunctionRefsDomain.Bottom(), flow.ClosureRefsDomain.Bottom()),
-		summary.EntryReferenceArgSources{
+	got := projection.DirectEvidence(summary.DirectEntryEvidenceInput{
+		Callee:     callee,
+		Call:       call,
+		References: flow.ReferenceContextOf(flow.CaptureCellsDomain.Bottom(), flow.FunctionRefsDomain.Bottom(), flow.ClosureRefsDomain.Bottom()),
+		ArgSources: summary.EntryReferenceArgSources{
 			RefTrees: func(_ int, gotArg ast.Expr, _ *flow.PointState) (flow.ReferenceContext, bool) {
 				if gotArg != arg {
 					t.Fatalf("arg = %#v, want call expression", gotArg)
@@ -390,7 +396,7 @@ func TestDirectCallEntryReferences_RebasesClosureCallReturnSubtreeToParamPath(t 
 				return flow.ReferenceContextOf(flow.CaptureCellsDomain.Bottom(), flow.FunctionRefsDomain.Bottom(), returnRefs), true
 			},
 		},
-	).ClosureRefs()
+	}).References.ClosureRefs()
 
 	if refs, ok := flow.ClosureRefAtPath(got, target.Field("query")); !ok {
 		t.Fatalf("rebased call-return closure subtree missing: %#v", got)

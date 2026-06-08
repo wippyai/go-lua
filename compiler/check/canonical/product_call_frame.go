@@ -205,8 +205,8 @@ func (p productCallFrame) cellEffectAggregation(projector cellEffectProjector) s
 			return refs, ok
 		},
 		EffectOf: func(ref summary.FuncRef, entryValues summary.EntryValues) flow.CaptureEffects {
-			entryFacts := projector.callEntry.access().productFacts(ref, p.site.call, p.ctx)
-			return projector.effectsForRef(ref, p.site.references, entryValues, entryFacts)
+			evidence := projector.callEntry.access().productEvidence(ref, p.site.call, p.ctx)
+			return projector.effectsForRef(ref, p.site.references, entryValues, evidence.Facts)
 		},
 	}
 }

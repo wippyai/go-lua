@@ -376,54 +376,104 @@ type CallEntryContextProjection struct {
 	ReferencePaths      EntryReferenceProjection
 }
 
-// DirectProductValues projects already-solved runtime argument values for one
-// callee using this projection's runtime-slot layout.
-func (p CallEntryContextProjection) DirectProductValues(callee FuncRef, call *ast.FuncCallExpr, runtimeValues []product.AbstractValue) EntryValues {
-	return directCallEntryProductValuesWithParamCount(call, callee, runtimeValues, p.ParamSlot, p.ParamSlotCount)
+// DirectEntryEvidenceInput is the normalized caller-side evidence for one
+// resolved call target. Runtime argument values, callable references, and path
+// facts are kept together because they describe the same call-boundary frame.
+type DirectEntryEvidenceInput struct {
+	Callee FuncRef
+	Call   *ast.FuncCallExpr
+
+	State         *flow.PointState
+	RuntimeValues []product.AbstractValue
+
+	References flow.ReferenceContext
+	ArgSources EntryReferenceArgSources
+
+	KeyPresence flow.KeyPresenceFacts
+	Num         *numeric.State
+	IndexWrites flow.IndexWriteAdmissionFacts
 }
 
-// DirectFacts projects caller point-local path facts into parameter-relative
-// facts for one callee using this projection's runtime-slot and argument-path
-// layout.
-func (p CallEntryContextProjection) DirectFacts(
-	callee FuncRef,
-	call *ast.FuncCallExpr,
-	keyPresence flow.KeyPresenceFacts,
-	num *numeric.State,
-	indexWrites flow.IndexWriteAdmissionFacts,
-) flow.BoundaryFacts {
-	return directCallEntryFacts(directCallEntryFactInput{
-		Call:        call,
-		Callee:      callee,
-		ParamSlot:   p.ParamSlot,
-		ArgPath:     p.ArgPath,
-		KeyPresence: keyPresence,
-		Num:         num,
-		IndexWrites: indexWrites,
+// DirectEntryEvidence is the callee-entry evidence produced by one direct call.
+type DirectEntryEvidence struct {
+	Values     EntryValues
+	References flow.ReferenceContext
+	Facts      flow.BoundaryFacts
+}
+
+// DirectEvidence projects all direct call-entry axes for one resolved target.
+// Call-entry consumers should use this carrier instead of independently
+// rebuilding value, reference, and fact routes from the same call arguments.
+func (p CallEntryContextProjection) DirectEvidence(in DirectEntryEvidenceInput) DirectEntryEvidence {
+	return DirectEntryEvidence{
+		Values: directCallEntryProductValuesWithParamCount(
+			in.Call,
+			in.Callee,
+			in.RuntimeValues,
+			p.ParamSlot,
+			p.ParamSlotCount,
+		),
+		References: directCallEntryReferences(directCallEntryReferenceInput{
+			Call:                in.Call,
+			Callee:              in.Callee,
+			ParamSlot:           p.ParamSlot,
+			ParamPath:           p.ParamPath,
+			ArgPath:             p.ArgPath,
+			References:          in.References,
+			ReferenceProjection: p.referenceProjection(in.Callee),
+			LimitReferencePaths: p.ReferencePaths != nil,
+			State:               in.State,
+			ArgSources:          in.ArgSources,
+		}),
+		Facts: directCallEntryFacts(directCallEntryFactInput{
+			Call:        in.Call,
+			Callee:      in.Callee,
+			ParamSlot:   p.ParamSlot,
+			ArgPath:     p.ArgPath,
+			KeyPresence: in.KeyPresence,
+			Num:         in.Num,
+			IndexWrites: in.IndexWrites,
+		}),
+	}
+}
+
+func (p CallEntryContextProjection) directEvidenceFromPoint(callee FuncRef, call *ast.FuncCallExpr, in *flow.PointState) DirectEntryEvidence {
+	if in == nil {
+		return DirectEntryEvidence{
+			References: flow.ReferenceContextBottom(),
+			Facts:      flow.BoundaryFactsDomain.Top(),
+		}
+	}
+	return p.DirectEvidence(DirectEntryEvidenceInput{
+		Callee:        callee,
+		Call:          call,
+		State:         in,
+		RuntimeValues: p.runtimeArgValues(call, in),
+		References:    flow.ReferenceContextFromPoint(in),
+		ArgSources:    p.ReferenceArgSources,
+		KeyPresence:   in.KeyPresence,
+		Num:           in.Num,
+		IndexWrites:   in.IndexWrites,
 	})
 }
 
-// DirectReferences projects callable-reference axes for one direct call using
-// this projection's runtime-slot, parameter-path, and argument-path layout.
-func (p CallEntryContextProjection) DirectReferences(
-	callee FuncRef,
-	call *ast.FuncCallExpr,
-	state *flow.PointState,
-	references flow.ReferenceContext,
-	argSources EntryReferenceArgSources,
-) flow.ReferenceContext {
-	return directCallEntryReferences(directCallEntryReferenceInput{
-		Call:                call,
-		Callee:              callee,
-		ParamSlot:           p.ParamSlot,
-		ParamPath:           p.ParamPath,
-		ArgPath:             p.ArgPath,
-		References:          references,
-		ReferenceProjection: p.referenceProjection(callee),
-		LimitReferencePaths: p.ReferencePaths != nil,
-		State:               state,
-		ArgSources:          argSources,
-	})
+func (p CallEntryContextProjection) runtimeArgValues(call *ast.FuncCallExpr, in *flow.PointState) []product.AbstractValue {
+	if p.ParamSlot == nil || p.EvalArg == nil || call == nil || in == nil {
+		return nil
+	}
+	argValues := make([]product.AbstractValue, callsite.RuntimeArgExprCount(call))
+	for i := range argValues {
+		arg := callsite.RuntimeArgExprAt(call, i)
+		if arg == nil {
+			continue
+		}
+		av, ok := p.EvalArg(in, arg)
+		if !ok {
+			continue
+		}
+		argValues[i] = av
+	}
+	return argValues
 }
 
 // ProjectKeys returns deterministic, de-duplicated callee summary keys for every
@@ -440,13 +490,13 @@ func (p CallEntryContextProjection) ProjectKeys() []Key {
 			return
 		}
 		for _, target := range site.targets(p.ResolveTargets) {
-			values := p.directProductValues(target.Ref, site.Call, &site.ArgState)
+			evidence := p.directEvidenceFromPoint(target.Ref, site.Call, &site.ArgState)
+			values := evidence.Values
 			if p.NormalizeValues != nil {
 				values = p.NormalizeValues(target.Ref, site.Call, values)
 			}
-			directReferences := p.directReferenceAxes(target.Ref, site.Call, &site.ArgState)
-			references := target.EntryReferences.Join(directReferences)
-			facts := flow.MergeBoundaryFactProofs(target.EntryFacts, p.directFacts(target.Ref, site.Call, &site.ArgState))
+			references := target.EntryReferences.Join(evidence.References)
+			facts := flow.MergeBoundaryFactProofs(target.EntryFacts, evidence.Facts)
 			key := NewKeyWithReferenceContext(
 				target.Ref,
 				references,
@@ -547,39 +597,6 @@ func (p ClosureEntryContextProjection) closureEntryContextKey(ref FuncRef, closu
 		nil,
 		flow.BoundaryFactsDomain.Top(),
 	)
-}
-
-func (p CallEntryContextProjection) directProductValues(callee FuncRef, call *ast.FuncCallExpr, in *flow.PointState) EntryValues {
-	if p.ParamSlot == nil || p.EvalArg == nil || call == nil || in == nil {
-		return nil
-	}
-	argValues := make([]product.AbstractValue, callsite.RuntimeArgExprCount(call))
-	for i := range argValues {
-		arg := callsite.RuntimeArgExprAt(call, i)
-		if arg == nil {
-			continue
-		}
-		av, ok := p.EvalArg(in, arg)
-		if !ok {
-			continue
-		}
-		argValues[i] = av
-	}
-	return directCallEntryProductValuesWithParamCount(call, callee, argValues, p.ParamSlot, p.ParamSlotCount)
-}
-
-func (p CallEntryContextProjection) directReferenceAxes(callee FuncRef, call *ast.FuncCallExpr, in *flow.PointState) flow.ReferenceContext {
-	if p.ParamSlot == nil || p.ParamPath == nil || in == nil {
-		return flow.ReferenceContextOf(flow.CaptureCellsDomain.Bottom(), flow.FunctionRefsDomain.Bottom(), flow.ClosureRefsDomain.Bottom())
-	}
-	return p.DirectReferences(callee, call, in, flow.ReferenceContextFromPoint(in), p.ReferenceArgSources)
-}
-
-func (p CallEntryContextProjection) directFacts(callee FuncRef, call *ast.FuncCallExpr, in *flow.PointState) flow.BoundaryFacts {
-	if in == nil {
-		return flow.BoundaryFactsDomain.Top()
-	}
-	return p.DirectFacts(callee, call, in.KeyPresence, in.Num, in.IndexWrites)
 }
 
 func (p CallEntryContextProjection) referenceProjection(callee FuncRef) flow.ReferencePathProjection {
