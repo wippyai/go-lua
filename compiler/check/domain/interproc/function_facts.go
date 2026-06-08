@@ -4,24 +4,17 @@ import (
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/api"
 	"github.com/wippyai/go-lua/compiler/check/domain/functionfact"
+	"github.com/wippyai/go-lua/compiler/check/domain/functionsymbols"
 )
 
 func collectCanonicalFunctionFactSymbols(factSets ...api.FunctionFacts) []cfg.SymbolID {
-	total := 0
+	var symbols functionsymbols.Set
 	for _, facts := range factSets {
-		total += len(facts)
+		for sym := range facts {
+			symbols.Add(sym)
+		}
 	}
-	symbols := make(map[cfg.SymbolID]bool, total)
-	for _, facts := range factSets {
-		markFunctionFactSymbols(symbols, facts)
-	}
-	return cfg.SortedSymbolIDs(symbols)
-}
-
-func markFunctionFactSymbols[T any](dst map[cfg.SymbolID]bool, src map[cfg.SymbolID]T) {
-	for sym := range src {
-		dst[sym] = true
-	}
+	return symbols.Slice()
 }
 
 func readFunctionFactFromFacts(facts *api.Facts, sym cfg.SymbolID) api.FunctionFact {
