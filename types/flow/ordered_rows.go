@@ -56,7 +56,7 @@ func (id orderedRowIdentity[T]) Intersect(a, b []T) []T {
 // Union merges two canonical row slices, preserving identity order and removing
 // duplicate identities. keep owns domain-specific validity and payload policy.
 func (id orderedRowIdentity[T]) Union(a, b []T, keep func(T) (T, bool)) []T {
-	var out []T
+	out := make([]T, 0, len(a)+len(b))
 	i, j := 0, 0
 	for i < len(a) || j < len(b) {
 		var row T
@@ -91,7 +91,7 @@ func (id orderedRowIdentity[T]) Union(a, b []T, keep func(T) (T, bool)) []T {
 }
 
 func (id orderedRowIdentity[T]) MergeIntersect(a, b []T, merge func(T, T) (T, bool)) []T {
-	var out []T
+	out := make([]T, 0, min(len(a), len(b)))
 	i, j := 0, 0
 	for i < len(a) && j < len(b) {
 		switch {
