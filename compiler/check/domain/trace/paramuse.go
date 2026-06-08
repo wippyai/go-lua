@@ -6,6 +6,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/api"
 	"github.com/wippyai/go-lua/compiler/check/domain/fieldkey"
+	"github.com/wippyai/go-lua/compiler/check/domain/functionsymbols"
 	"github.com/wippyai/go-lua/compiler/check/domain/paramuse"
 	flowpath "github.com/wippyai/go-lua/compiler/check/domain/path"
 	"github.com/wippyai/go-lua/types/constraint"
@@ -16,20 +17,15 @@ func ParameterUses(graph *cfg.Graph, fn *ast.FunctionExpr) []api.ParameterUseEvi
 	if graph == nil || fn == nil {
 		return nil
 	}
-	paramSymbols := make(map[cfg.SymbolID]struct{})
-	for _, slot := range graph.ParamSlotsReadOnly() {
-		if slot.Symbol != 0 {
-			paramSymbols[slot.Symbol] = struct{}{}
-		}
-	}
-	if len(paramSymbols) == 0 {
+	paramSymbols := functionsymbols.Parameters(graph)
+	if paramSymbols.IsEmpty() {
 		return nil
 	}
 
 	collector := parameterUseCollector{
 		bindings:               graph.Bindings(),
 		paramSymbols:           paramSymbols,
-		currentFunctionSymbols: currentFunctionSymbols(graph, fn),
+		currentFunctionSymbols: functionsymbols.CurrentFunction(graph, fn),
 	}
 	for _, stmt := range fn.Stmts {
 		collector.stmt(stmt)
@@ -39,8 +35,8 @@ func ParameterUses(graph *cfg.Graph, fn *ast.FunctionExpr) []api.ParameterUseEvi
 
 type parameterUseCollector struct {
 	bindings               *bind.BindingTable
-	paramSymbols           map[cfg.SymbolID]struct{}
-	currentFunctionSymbols map[cfg.SymbolID]struct{}
+	paramSymbols           functionsymbols.Set
+	currentFunctionSymbols functionsymbols.Set
 	uses                   paramuse.Set
 }
 
@@ -249,15 +245,14 @@ func (c *parameterUseCollector) isBuiltinTypeCall(call *ast.FuncCallExpr) bool {
 }
 
 func (c *parameterUseCollector) isDirectRecursiveCall(call *ast.FuncCallExpr) bool {
-	if call == nil || call.Method != "" || len(c.currentFunctionSymbols) == 0 {
+	if call == nil || call.Method != "" || c.currentFunctionSymbols.IsEmpty() {
 		return false
 	}
 	callee := flowpath.FromExprWithBindings(call.Func, nil, c.bindings)
 	if callee.Symbol == 0 || len(callee.Segments) != 0 {
 		return false
 	}
-	_, ok := c.currentFunctionSymbols[callee.Symbol]
-	return ok
+	return c.currentFunctionSymbols.Contains(callee.Symbol)
 }
 
 func (c *parameterUseCollector) lvalue(expr ast.Expr) {
@@ -329,7 +324,7 @@ func (c *parameterUseCollector) whole(expr ast.Expr) {
 	if !ok || sym == 0 {
 		return
 	}
-	if _, isParam := c.paramSymbols[sym]; !isParam {
+	if !c.paramSymbols.Contains(sym) {
 		return
 	}
 	c.markWhole(sym)
@@ -348,8 +343,7 @@ func (c *parameterUseCollector) isParamIdent(ident *ast.IdentExpr) bool {
 	if !ok || sym == 0 {
 		return false
 	}
-	_, ok = c.paramSymbols[sym]
-	return ok
+	return c.paramSymbols.Contains(sym)
 }
 
 func (c *parameterUseCollector) sameParamIdent(a, b *ast.IdentExpr) bool {
@@ -361,8 +355,7 @@ func (c *parameterUseCollector) sameParamIdent(a, b *ast.IdentExpr) bool {
 	if !aok || !bok || asym == 0 || bsym == 0 || asym != bsym {
 		return false
 	}
-	_, ok := c.paramSymbols[asym]
-	return ok
+	return c.paramSymbols.Contains(asym)
 }
 
 func isNilLiteral(expr ast.Expr) bool {
@@ -374,8 +367,7 @@ func (c *parameterUseCollector) isParamPath(p constraint.Path) bool {
 	if p.IsEmpty() || p.Symbol == 0 {
 		return false
 	}
-	_, ok := c.paramSymbols[p.Symbol]
-	return ok
+	return c.paramSymbols.Contains(p.Symbol)
 }
 
 func (c *parameterUseCollector) markWhole(sym cfg.SymbolID) {
@@ -402,30 +394,4 @@ func (c *parameterUseCollector) fieldSegment(sym cfg.SymbolID, seg constraint.Se
 
 func (c *parameterUseCollector) field(sym cfg.SymbolID, key fieldkey.Key) {
 	c.uses.Field(sym, key)
-}
-
-func currentFunctionSymbols(graph *cfg.Graph, fn *ast.FunctionExpr) map[cfg.SymbolID]struct{} {
-	if graph == nil || fn == nil {
-		return nil
-	}
-	syms := make(map[cfg.SymbolID]struct{}, 1)
-	if bindings := graph.Bindings(); bindings != nil {
-		if sym, ok := bindings.FuncLitSymbol(fn); ok && sym != 0 {
-			syms[sym] = struct{}{}
-		}
-	}
-	for _, localFn := range graph.LocalFunctionAssignments() {
-		if localFn.Func == fn && localFn.Symbol != 0 {
-			syms[localFn.Symbol] = struct{}{}
-		}
-	}
-	for _, def := range FunctionDefinitions(graph) {
-		if def.FuncDef != nil && def.FuncDef.FuncExpr == fn && def.Symbol != 0 {
-			syms[def.Symbol] = struct{}{}
-		}
-	}
-	if len(syms) == 0 {
-		return nil
-	}
-	return syms
 }

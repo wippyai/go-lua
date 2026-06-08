@@ -84,6 +84,53 @@ func Captured(bindings *bind.BindingTable, fn *ast.FunctionExpr) Set {
 	return set
 }
 
+// Parameters returns the formal parameter root symbols owned by g.
+func Parameters(g *cfg.Graph) Set {
+	var set Set
+	if g == nil {
+		return set
+	}
+	for _, slot := range g.ParamSlotsReadOnly() {
+		set.Add(slot.Symbol)
+	}
+	return set
+}
+
+// CurrentFunction returns symbols that name fn at its own function boundary.
+func CurrentFunction(g *cfg.Graph, fn *ast.FunctionExpr) Set {
+	var set Set
+	if g == nil || fn == nil {
+		return set
+	}
+	if bindings := g.Bindings(); bindings != nil {
+		if sym, ok := bindings.FuncLitSymbol(fn); ok {
+			set.Add(sym)
+		}
+	}
+	for _, localFn := range g.LocalFunctionAssignments() {
+		if localFn.Func == fn {
+			set.Add(localFn.Symbol)
+		}
+	}
+	for _, nested := range g.NestedFunctions() {
+		if nested.Func != fn {
+			continue
+		}
+		if funcDef := g.FuncDef(nested.Point); funcDef != nil {
+			set.Add(funcDef.Symbol)
+		}
+		if assign := g.Assign(nested.Point); assign != nil && assign.IsLocal {
+			if len(assign.Targets) == 1 && assign.Targets[0].Kind == cfg.TargetIdent {
+				if len(assign.Sources) == 1 && assign.Sources[0] == nested.Func {
+					set.Add(assign.Targets[0].Symbol)
+				}
+			}
+		}
+		set.Add(nested.Symbol)
+	}
+	return set
+}
+
 // NonGlobalCaptures returns captured symbols excluding globals.
 func NonGlobalCaptures(bindings *bind.BindingTable, fn *ast.FunctionExpr) Set {
 	var set Set

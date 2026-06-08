@@ -36,6 +36,25 @@ return owned
 	}
 }
 
+func TestParametersAndCurrentFunctionUseGraphBoundaryIdentity(t *testing.T) {
+	graph, nested := boundaryGraph(t, `
+local function recur(value)
+	if value then
+		return recur(value)
+	end
+end
+`)
+	childGraph := ccfg.BuildWithBindings(nested, graph.Bindings())
+	param := firstParamSymbol(t, childGraph)
+
+	if got := Parameters(childGraph); !got.Contains(param) {
+		t.Fatalf("Parameters() = %#v, want parameter symbol %d", got.Slice(), param)
+	}
+	if got := CurrentFunction(graph, nested); !got.Contains(nestedFunctionSymbol(t, graph, nested)) {
+		t.Fatalf("CurrentFunction() = %#v, want local function symbol", got.Slice())
+	}
+}
+
 func boundaryGraph(t *testing.T, src string) (*ccfg.Graph, *ast.FunctionExpr) {
 	t.Helper()
 	stmts, err := parse.ParseString(src, "functionsymbols.lua")
@@ -62,5 +81,27 @@ func firstOwnedCapture(t *testing.T, graph *ccfg.Graph, fn *ast.FunctionExpr) cc
 		}
 	}
 	t.Fatal("expected nested function to capture an owned symbol")
+	return 0
+}
+
+func firstParamSymbol(t *testing.T, graph *ccfg.Graph) ccfg.SymbolID {
+	t.Helper()
+	for _, slot := range graph.ParamSlotsReadOnly() {
+		if slot.Symbol != 0 {
+			return slot.Symbol
+		}
+	}
+	t.Fatal("expected parameter symbol")
+	return 0
+}
+
+func nestedFunctionSymbol(t *testing.T, graph *ccfg.Graph, fn *ast.FunctionExpr) ccfg.SymbolID {
+	t.Helper()
+	for _, nested := range graph.NestedFunctions() {
+		if nested.Func == fn && nested.Symbol != 0 {
+			return nested.Symbol
+		}
+	}
+	t.Fatal("expected nested function symbol")
 	return 0
 }
