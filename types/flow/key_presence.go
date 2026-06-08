@@ -221,6 +221,24 @@ func canonicalKeyPresenceSlice[T any](facts []T, spec keyPresenceCanonicalSpec[T
 	if len(facts) == 0 || spec.less == nil || spec.same == nil {
 		return nil
 	}
+	alreadyCanonical := true
+	for i, fact := range facts {
+		if spec.valid != nil && !spec.valid(fact) {
+			alreadyCanonical = false
+			break
+		}
+		if i == 0 {
+			continue
+		}
+		prev := facts[i-1]
+		if spec.less(fact, prev) || spec.same(prev, fact) {
+			alreadyCanonical = false
+			break
+		}
+	}
+	if alreadyCanonical {
+		return facts
+	}
 	out := append([]T(nil), facts...)
 	for i := 1; i < len(out); i++ {
 		for j := i; j > 0 && spec.less(out[j], out[j-1]); j-- {
@@ -240,7 +258,10 @@ func canonicalKeyPresenceSlice[T any](facts []T, spec keyPresenceCanonicalSpec[T
 		}
 		dst = append(dst, fact)
 	}
-	return append([]T(nil), dst...)
+	if len(dst) == 0 {
+		return nil
+	}
+	return dst
 }
 
 func filterKeyPresenceFacts[T any](facts []T, keep func(T) bool) []T {

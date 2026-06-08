@@ -1,6 +1,7 @@
 package flow
 
 import (
+	"reflect"
 	"testing"
 
 	"github.com/wippyai/go-lua/types/cfg"
@@ -38,6 +39,32 @@ func TestKeyPresenceFactsJoinKeepsCommonProvenPairs(t *testing.T) {
 	}
 	if joined.Has(table, keyB) {
 		t.Fatal("join kept key-presence proof not present on every predecessor")
+	}
+}
+
+func TestKeyPresenceCanonicalizationReusesCanonicalRows(t *testing.T) {
+	table := SymbolPathKey(cfg.SymbolID(1), nil)
+	keyA := SymbolPathKey(cfg.SymbolID(2), nil)
+	keyB := SymbolPathKey(cfg.SymbolID(3), nil)
+	rows := []KeyPresenceFact{
+		{Table: table, Key: keyA},
+		{Table: table, Key: keyB},
+	}
+
+	facts := canonicalKeyPresenceFactSet(keyPresenceFactSet{entries: rows})
+	if !facts.Has(table, keyA) || !facts.Has(table, keyB) {
+		t.Fatalf("canonical rows lost key-presence facts: %s", facts.Format())
+	}
+	if reflect.ValueOf(facts.rows.entries).Pointer() != reflect.ValueOf(rows).Pointer() {
+		t.Fatalf("canonical key-presence rows were copied")
+	}
+
+	filtered := canonicalKeyPresenceFactSet(keyPresenceFactSet{entries: []KeyPresenceFact{
+		{Table: table, Key: keyA},
+		{Table: "", Key: keyB},
+	}})
+	if filtered.Has("", keyB) {
+		t.Fatalf("invalid key-presence row survived canonicalization: %s", filtered.Format())
 	}
 }
 
