@@ -1527,11 +1527,13 @@ func (ct callTyper) ProductCallFromValues(call *ast.FuncCallExpr, ctx transfer.P
 		return transfer.EmptyProductCallResult()
 	}
 	effects := transfer.EmptyCallEffects()
+	evidence := frame.boundaryEvidence(summary.CellEffectAggregation{})
 	projector, ok := ct.cellEffectProjector()
 	if ok {
-		effects = frame.effects(projector, ct.containerElementUnions(call, ctx))
+		evidence = frame.boundaryEvidence(frame.cellEffectAggregation(projector))
+		effects = callEffectsFromBoundaryEvidence(evidence, ct.containerElementUnions(call, ctx))
 	}
-	return frame.result(effects)
+	return frame.result(evidence, effects)
 }
 
 // IterVars types a generic-for loop's iteration variables from its iterator

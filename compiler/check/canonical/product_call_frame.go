@@ -64,24 +64,18 @@ func (p productCallFrame) callReturnValues() ([]product.AbstractValue, bool) {
 	}.Values()
 }
 
-func (p productCallFrame) result(effects transfer.CallEffects) transfer.ProductCallResult {
+func (p productCallFrame) result(evidence canonicalcall.BoundaryEvidence, effects transfer.CallEffects) transfer.ProductCallResult {
 	values, ok := p.callReturnValues()
 	return transfer.ProductCallResult{
 		ReturnValues:    values,
 		HasReturnValues: ok,
-		ReturnRefs:      p.outcome.ReturnRefs(),
-		ReturnRelations: p.returnRelations(),
+		ReturnRefs:      evidence.ReturnRefs,
+		ReturnRelations: evidence.ReturnRelations,
 		Effects:         effects,
-		ArgDemands:      p.callArgDemands(),
-		NeverReturns: p.neverReturns(func(ref summary.FuncRef) bool {
-			return p.typer.d.activeProgram.facts.HasNoReturn(ref)
-		}),
-		ParamNarrows: p.paramNarrows(),
+		ArgDemands:      evidence.ArgDemands,
+		NeverReturns:    evidence.NeverReturns,
+		ParamNarrows:    evidence.ParamNarrows,
 	}
-}
-
-func (p productCallFrame) returnRelations() flow.ReturnRelations {
-	return p.outcome.ReturnRelations(p.site.call, p.typer.callTypeResolver(p.site.exprType), p.ctx.ExprValue != nil)
 }
 
 func (p productCallFrame) callArgDemands() []callobligation.Obligation {
@@ -170,28 +164,42 @@ func (p productCallFrame) demandTargets() []paramevidence.CallArgDemandTarget {
 	return out
 }
 
-func (p productCallFrame) effects(projector cellEffectProjector, elementUnions []effect.ContainerElementUnion) transfer.CallEffects {
+func (p productCallFrame) boundaryEvidence(cellEffects summary.CellEffectAggregation) canonicalcall.BoundaryEvidence {
+	return p.outcome.BoundaryEvidence(canonicalcall.BoundaryEvidenceInput{
+		Call:                 p.site.call,
+		Resolver:             p.typer.callTypeResolver(p.site.exprType),
+		UseResolvedSignature: p.ctx.ExprValue != nil,
+		CellEffects:          cellEffects,
+		ArgDemands:           p.callArgDemands(),
+		ParamNarrows:         p.paramNarrows(),
+		HasNoReturn: func(ref summary.FuncRef) bool {
+			return p.typer.d.activeProgram.facts.HasNoReturn(ref)
+		},
+	})
+}
+
+func (p productCallFrame) cellEffectAggregation(projector cellEffectProjector) summary.CellEffectAggregation {
 	callbackRefs := projector.callEntry.productArgProjection(p.ctx).callbackRefsForCall(p.site.call)
-	return transfer.CallEffects{
-		CellEffects: p.outcome.CellEffects(summary.CellEffectAggregation{
-			CallbackSpec: projector.callbackSpecForCall(p.site.call, p.site.exprType),
-			CallbackArgs: p.site.call.Args,
-			MethodCall:   p.site.call.Method != "",
-			ResolveCallback: func(arg ast.Expr) ([]summary.FuncRef, bool) {
-				refs, ok := callbackRefs[arg]
-				return refs, ok
-			},
-			EffectOf: func(ref summary.FuncRef, entryValues summary.EntryValues) flow.CaptureEffects {
-				entryFacts := projector.callEntry.access().productFacts(ref, p.site.call, p.ctx)
-				return projector.effectsForRef(ref, p.site.references, entryValues, entryFacts)
-			},
-		}),
-		ReceiverEffects: p.outcome.ReceiverEffects(),
-		BoundaryFacts:   p.outcome.BoundaryFacts(),
-		ElementUnions:   elementUnions,
+	return summary.CellEffectAggregation{
+		CallbackSpec: projector.callbackSpecForCall(p.site.call, p.site.exprType),
+		CallbackArgs: p.site.call.Args,
+		MethodCall:   p.site.call.Method != "",
+		ResolveCallback: func(arg ast.Expr) ([]summary.FuncRef, bool) {
+			refs, ok := callbackRefs[arg]
+			return refs, ok
+		},
+		EffectOf: func(ref summary.FuncRef, entryValues summary.EntryValues) flow.CaptureEffects {
+			entryFacts := projector.callEntry.access().productFacts(ref, p.site.call, p.ctx)
+			return projector.effectsForRef(ref, p.site.references, entryValues, entryFacts)
+		},
 	}
 }
 
-func (p productCallFrame) neverReturns(isNoReturn func(summary.FuncRef) bool) bool {
-	return p.outcome.NeverReturns(isNoReturn)
+func callEffectsFromBoundaryEvidence(evidence canonicalcall.BoundaryEvidence, elementUnions []effect.ContainerElementUnion) transfer.CallEffects {
+	return transfer.CallEffects{
+		CellEffects:     evidence.CellEffects,
+		ReceiverEffects: evidence.ReceiverEffects,
+		BoundaryFacts:   evidence.BoundaryFacts,
+		ElementUnions:   elementUnions,
+	}
 }

@@ -7,6 +7,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/bind"
 	compilecfg "github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/canonical/summary"
+	"github.com/wippyai/go-lua/compiler/check/domain/callobligation"
 	"github.com/wippyai/go-lua/compiler/check/domain/fieldkey"
 	"github.com/wippyai/go-lua/compiler/check/domain/paramevidence"
 	valuecfg "github.com/wippyai/go-lua/types/cfg"
@@ -218,6 +219,86 @@ func TestCallOutcomeCellEffectsComposesCallbackFallbackWhenAllowed(t *testing.T)
 	want := flow.CooccurringCaptureEffects(direct, callback)
 	if !flow.CaptureEffectsDomain.Equal(got, want) {
 		t.Fatalf("effects = %s, want %s", got.Format(), want.Format())
+	}
+}
+
+func TestCallOutcomeBoundaryEvidenceCarriesSelectedBoundaryAxes(t *testing.T) {
+	t.Parallel()
+
+	ref := summary.FuncRef{GraphID: 42}
+	call := &ast.FuncCallExpr{Func: &ast.IdentExpr{Value: "f"}}
+	returnPath := constraint.NewPlaceholder(0).Field("run")
+	returnRefs := flow.ReturnRefsOfSlots([]flow.ReturnRefSlot{
+		flow.ReturnRefSlotOf(
+			flow.WithFunctionRefPath(nil, returnPath, flow.FunctionRefSetOf(flow.FunctionRef{GraphID: 9})),
+			flow.ClosureRefsDomain.Bottom(),
+		),
+	})
+	relations := flow.ReturnRelationsOfErrorReturns([]flow.ReturnCorrelation{{ValueIndex: 0, ErrorIndex: 1}})
+	cellEffects := flow.CaptureMustWrite(valuecfg.SymbolID(12), product.FromType(typ.String))
+	receiverEffects := flow.ReceiverMustWrite(0, product.FromType(typ.Number))
+	table := flow.BoundaryPath{Kind: flow.BoundaryPathParam, Index: 0}
+	key := flow.BoundaryPath{Kind: flow.BoundaryPathParam, Index: 1}
+	boundaryFacts := flow.BoundaryFactsOf([]flow.BoundaryKeyPresenceFact{{Table: table, Key: key}}, nil, nil, nil, nil, nil)
+	demands := []callobligation.Obligation{callobligation.Body(typ.String)}
+	narrows := []paramevidence.ParamNarrow{{Param: 0, Check: compilecfg.CheckTruthy, EqParam: -1}}
+
+	got := (CallOutcome{
+		Projection: summary.CallSummaryProjection{
+			Targets: []summary.CallSummaryTarget{
+				{Ref: ref, Summary: summary.Summary{
+					ReturnRefs:      returnRefs,
+					Relations:       relations,
+					CellEffects:     cellEffects,
+					ReceiverEffects: receiverEffects,
+					BoundaryFacts:   boundaryFacts,
+				}},
+			},
+		},
+		Selection: NewTargetSet([]summary.FuncRef{ref}, true, nil, false).Select(),
+	}).BoundaryEvidence(BoundaryEvidenceInput{
+		Call:                 call,
+		CellEffects:          summary.CellEffectAggregation{},
+		ArgDemands:           demands,
+		ParamNarrows:         narrows,
+		UseResolvedSignature: true,
+		HasNoReturn: func(got summary.FuncRef) bool {
+			return got == ref
+		},
+	})
+
+	if got.ReturnRefs.Len() != 1 {
+		t.Fatalf("ReturnRefs len = %d, want 1", got.ReturnRefs.Len())
+	}
+	if !flow.ReturnRelationsDomain.Equal(got.ReturnRelations, relations) {
+		t.Fatalf("ReturnRelations = %#v, want %#v", got.ReturnRelations, relations)
+	}
+	if !flow.CaptureEffectsDomain.Equal(got.CellEffects, cellEffects) {
+		t.Fatalf("CellEffects = %s, want %s", got.CellEffects.Format(), cellEffects.Format())
+	}
+	if !flow.ReceiverEffectsDomain.Equal(got.ReceiverEffects, receiverEffects) {
+		t.Fatalf("ReceiverEffects = %#v, want %#v", got.ReceiverEffects, receiverEffects)
+	}
+	if !flow.BoundaryFactsDomain.Equal(got.BoundaryFacts, boundaryFacts) {
+		t.Fatalf("BoundaryFacts = %#v, want %#v", got.BoundaryFacts, boundaryFacts)
+	}
+	if len(got.ArgDemands) != 1 || got.ArgDemands[0].Source != callobligation.SourceBody {
+		t.Fatalf("ArgDemands = %#v, want one body demand", got.ArgDemands)
+	}
+	if len(got.ParamNarrows) != 1 || got.ParamNarrows[0].Param != 0 {
+		t.Fatalf("ParamNarrows = %#v, want one param narrow", got.ParamNarrows)
+	}
+	if !got.NeverReturns {
+		t.Fatal("NeverReturns = false, want true")
+	}
+
+	demands[0] = callobligation.Signature(typ.Number)
+	narrows[0].Param = 1
+	if got.ArgDemands[0].Source != callobligation.SourceBody {
+		t.Fatalf("ArgDemands aliased input: %#v", got.ArgDemands)
+	}
+	if got.ParamNarrows[0].Param != 0 {
+		t.Fatalf("ParamNarrows aliased input: %#v", got.ParamNarrows)
 	}
 }
 
