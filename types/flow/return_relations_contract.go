@@ -1,7 +1,6 @@
 package flow
 
 import (
-	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/contract"
 	"github.com/wippyai/go-lua/types/effect"
 	"github.com/wippyai/go-lua/types/kind"
@@ -55,39 +54,10 @@ func ReturnRelationsFromSpec(spec *contract.Spec) ReturnRelations {
 		return ReturnRelationsDomain.Top()
 	}
 	var out []ReturnCorrelation
-	var lengthParams []ReturnLengthParamRelation
 	for _, label := range spec.Effects.Labels {
 		if er, ok := label.(effect.ErrorReturn); ok {
 			out = append(out, ReturnCorrelation{ValueIndex: er.ValueIndex, ErrorIndex: er.ErrorIndex})
 		}
-		if rl, ok := label.(effect.ReturnLength); ok {
-			if param, ok := rl.Length.(constraint.ParamLen); ok {
-				lengthParams = append(lengthParams, ReturnLengthParamRelation{ReturnIndex: rl.ReturnIndex, ParamIndex: param.Index})
-			}
-		}
 	}
-	for _, ensure := range spec.ExprEnsures {
-		if rel, ok := returnLengthParamRelationFromExprCompare(ensure); ok {
-			lengthParams = append(lengthParams, rel)
-		}
-	}
-	return MergeReturnRelationProofs(
-		ReturnRelationsOfErrorReturns(out),
-		ReturnRelationsOfLengthParams(lengthParams),
-	)
-}
-
-func returnLengthParamRelationFromExprCompare(c constraint.ExprCompare) (ReturnLengthParamRelation, bool) {
-	if c.Rel != constraint.ExprGe && c.Rel != constraint.ExprEq {
-		return ReturnLengthParamRelation{}, false
-	}
-	left, ok := c.Left.(constraint.RetLen)
-	if !ok {
-		return ReturnLengthParamRelation{}, false
-	}
-	right, ok := c.Right.(constraint.ParamLen)
-	if !ok {
-		return ReturnLengthParamRelation{}, false
-	}
-	return ReturnLengthParamRelation{ReturnIndex: left.Index, ParamIndex: right.Index}, true
+	return ReturnRelationsOfErrorReturns(out)
 }

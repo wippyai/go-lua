@@ -166,28 +166,8 @@ func attachReturnLengthEnsures(signature *typ.Function, result *api.FuncResult) 
 		}
 		ensures = append(ensures, constraint.GeExpr(constraint.RL(i), constraint.C(lower)))
 	}
-	ensures = append(ensures, returnLengthRelationEnsures(result.ReturnRelations)...)
 	ensures = append(ensures, returnLengthParamEnsures(result)...)
 	return functionfact.AttachReturnLengthEnsures(signature, ensures)
-}
-
-// returnLengthRelationEnsures lowers canonical summary relations to public
-// contract postconditions. This is the normalized path for facts such as
-// len(ret_i) >= len(param_j): the relation is stored by return/parameter slot,
-// not by source names or flow-input paths.
-func returnLengthRelationEnsures(rels flow.ReturnRelations) []constraint.ExprCompare {
-	lengthParams := rels.LengthParams()
-	if len(lengthParams) == 0 {
-		return nil
-	}
-	ensures := make([]constraint.ExprCompare, 0, len(lengthParams))
-	for _, rel := range lengthParams {
-		if rel.ReturnIndex < 0 || rel.ParamIndex < 0 {
-			continue
-		}
-		ensures = append(ensures, constraint.GeExpr(constraint.RL(rel.ReturnIndex), constraint.PL(rel.ParamIndex)))
-	}
-	return ensures
 }
 
 // returnLengthParamEnsures proves the relational arm of return-length

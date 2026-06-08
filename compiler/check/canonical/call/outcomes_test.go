@@ -135,21 +135,25 @@ func TestCallOutcomeReturnRelationsUsesTypeThenStaticFallback(t *testing.T) {
 	}
 }
 
-func TestCallOutcomeReturnRelationsUsesLengthOnlyTypeFallback(t *testing.T) {
+func TestCallOutcomeBoundaryFactsUsesLengthTypeFallback(t *testing.T) {
 	t.Parallel()
 
 	ident := &ast.IdentExpr{Value: "keys"}
 	call := &ast.FuncCallExpr{Func: ident}
-	lengthRel := flow.ReturnRelationsOfLengthParams([]flow.ReturnLengthParamRelation{{ReturnIndex: 0, ParamIndex: 0}})
+	spec := contract.NewSpec().WithEffects(effect.ReturnLength{ReturnIndex: 0, Length: constraint.ParamLen{Index: 0}})
 
-	got := (CallOutcome{}).ReturnRelations(call, TypeResolver{
+	got := (CallOutcome{}).BoundaryFacts(call, TypeResolver{
 		ExprType: func(ast.Expr) typ.Type {
-			return signatureWithRelation(lengthRel)
+			return typ.Func().Returns(typ.String).Spec(spec).Build()
 		},
 	}, true)
 
-	if !got.HasLengthParam(flow.ReturnLengthParamRelation{ReturnIndex: 0, ParamIndex: 0}) {
-		t.Fatalf("relations = %#v, want length-only type fallback %#v", got.LengthParams(), lengthRel.LengthParams())
+	want := flow.BoundaryLengthRelationFact{
+		Target: flow.BoundaryPath{Kind: flow.BoundaryPathReturn, Index: 0},
+		Source: flow.BoundaryPath{Kind: flow.BoundaryPathParam, Index: 0},
+	}
+	if !got.HasLengthRelation(want) {
+		t.Fatalf("boundary facts = %#v, want length type fallback %#v", got.LengthRelations(), want)
 	}
 }
 
@@ -686,12 +690,6 @@ func signatureWithRelation(rels flow.ReturnRelations) typ.Type {
 		spec = spec.WithEffects(effect.ErrorReturn{
 			ValueIndex: rel.ValueIndex,
 			ErrorIndex: rel.ErrorIndex,
-		})
-	}
-	for _, rel := range rels.LengthParams() {
-		spec = spec.WithEffects(effect.ReturnLength{
-			ReturnIndex: rel.ReturnIndex,
-			Length:      constraint.ParamLen{Index: rel.ParamIndex},
 		})
 	}
 	return typ.Func().Returns(typ.String, typ.Nil).Spec(spec).Build()

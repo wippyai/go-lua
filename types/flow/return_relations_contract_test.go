@@ -34,27 +34,12 @@ func TestReturnRelationsFromSpec(t *testing.T) {
 			want: ReturnRelationsOfErrorReturns([]ReturnCorrelation{rel}),
 		},
 		{
-			name: "return length label becomes length relation",
-			spec: contract.NewSpec().WithEffects(effect.ReturnLength{ReturnIndex: 0, Length: constraint.PL(1)}),
-			want: ReturnRelationsOfLengthParams([]ReturnLengthParamRelation{{ReturnIndex: 0, ParamIndex: 1}}),
-		},
-		{
-			name: "expr ensure becomes length relation",
-			spec: &contract.Spec{ExprEnsures: []constraint.ExprCompare{
-				constraint.GeExpr(constraint.RL(2), constraint.PL(0)),
-			}},
-			want: ReturnRelationsOfLengthParams([]ReturnLengthParamRelation{{ReturnIndex: 2, ParamIndex: 0}}),
-		},
-		{
-			name: "error and length proofs merge",
+			name: "length proof does not enter return relations",
 			spec: contract.NewSpec().WithEffects(
 				effect.ErrorReturn{ValueIndex: rel.ValueIndex, ErrorIndex: rel.ErrorIndex},
 				effect.ReturnLength{ReturnIndex: 0, Length: constraint.PL(1)},
 			),
-			want: MergeReturnRelationProofs(
-				ReturnRelationsOfErrorReturns([]ReturnCorrelation{rel}),
-				ReturnRelationsOfLengthParams([]ReturnLengthParamRelation{{ReturnIndex: 0, ParamIndex: 1}}),
-			),
+			want: ReturnRelationsOfErrorReturns([]ReturnCorrelation{rel}),
 		},
 	}
 
@@ -68,18 +53,24 @@ func TestReturnRelationsFromSpec(t *testing.T) {
 	}
 }
 
-func TestReturnRelationsLengthParamJoinIsMust(t *testing.T) {
-	common := ReturnLengthParamRelation{ReturnIndex: 0, ParamIndex: 1}
-	other := ReturnLengthParamRelation{ReturnIndex: 1, ParamIndex: 1}
-	a := ReturnRelationsOfLengthParams([]ReturnLengthParamRelation{common, other})
-	b := ReturnRelationsOfLengthParams([]ReturnLengthParamRelation{common})
+func TestBoundaryFactsFromSpecProjectsLengthRelations(t *testing.T) {
+	common := BoundaryLengthRelationFact{
+		Target: BoundaryPath{Kind: BoundaryPathReturn, Index: 0},
+		Source: BoundaryPath{Kind: BoundaryPathParam, Index: 1},
+	}
+	other := BoundaryLengthRelationFact{
+		Target: BoundaryPath{Kind: BoundaryPathReturn, Index: 2},
+		Source: BoundaryPath{Kind: BoundaryPathParam, Index: 0},
+	}
+	spec := contract.NewSpec().WithEffects(effect.ReturnLength{ReturnIndex: common.Target.Index, Length: constraint.PL(common.Source.Index)})
+	spec.ExprEnsures = append(spec.ExprEnsures, constraint.GeExpr(constraint.RL(other.Target.Index), constraint.PL(other.Source.Index)))
 
-	got := ReturnRelationsDomain.Join(a, b)
-	if !got.HasLengthParam(common) || got.HasLengthParam(other) {
-		t.Fatalf("Join(%#v, %#v) = %#v, want only common length-param proof", a, b, got)
+	got := BoundaryFactsFromSpec(spec)
+	if !got.HasLengthRelation(common) || !got.HasLengthRelation(other) {
+		t.Fatalf("BoundaryFactsFromSpec() = %#v, want length relations %#v and %#v", got, common, other)
 	}
 	if !got.HasProof() {
-		t.Fatalf("joined length-param relation should be finite proof")
+		t.Fatalf("boundary length relations should be finite proof")
 	}
 }
 

@@ -636,10 +636,13 @@ func TestDiagnosticContextFrontierLetsExactProofOverlayRefineFromTop(t *testing.
 	facts := flow.BoundaryFactsOf(nil, nil, nil, nil, []flow.BoundaryLengthLowerBound{{
 		Target: flow.BoundaryPath{Kind: flow.BoundaryPathParam, Index: 0},
 		Lower:  1,
-	}}, nil)
-	relations := flow.ReturnRelationsOfLengthParams([]flow.ReturnLengthParamRelation{{
-		ReturnIndex: 0,
-		ParamIndex:  0,
+	}}, nil).WithLengthRelations([]flow.BoundaryLengthRelationFact{{
+		Target: flow.BoundaryPath{Kind: flow.BoundaryPathReturn, Index: 0},
+		Source: flow.BoundaryPath{Kind: flow.BoundaryPathParam, Index: 0},
+	}})
+	relations := flow.ReturnRelationsOfErrorReturns([]flow.ReturnCorrelation{{
+		ValueIndex: 0,
+		ErrorIndex: 1,
 	}})
 
 	result := DiagnosticContextFrontier{

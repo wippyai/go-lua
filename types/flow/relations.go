@@ -12,10 +12,10 @@ import (
 
 // ReturnRelations is the finite caller-visible relation component of a function
 // summary. It records return-slot relations the function proves for every normal
-// return path, such as Lua's `(value, err)` inverse convention, length
-// postconditions like `len(ret_i) >= len(param_j)`, and guarded return-slot
-// refinements. Boundary-relative key and map postconditions live in
-// BoundaryFacts, which owns path rebasing and point-state replay.
+// return path, such as Lua's `(value, err)` inverse convention and guarded
+// return-slot refinements. Boundary-relative path facts, including length
+// relations like `len(ret_i) >= len(param_j)`, live in BoundaryFacts, which owns
+// path rebasing and point-state replay.
 //
 // The carrier is a must-fact lattice: a relation may be consumed by callers only
 // when every incoming summary path proves it. Join is therefore intersection. The
@@ -26,7 +26,6 @@ type ReturnRelations struct {
 	bottom      bool
 	errorReturn []ReturnCorrelation
 	guarded     []ReturnGuardRelation
-	lengthParam []ReturnLengthParamRelation
 }
 
 // ReturnRelationsDomain is the abstract domain of finite return relations.
@@ -42,8 +41,7 @@ var ReturnRelationsDomain = lattice.Lattice[ReturnRelations]{
 			return a.bottom == b.bottom
 		}
 		return slices.Equal(a.errorReturn, b.errorReturn) &&
-			returnGuardRelationsEqual(a.guarded, b.guarded) &&
-			slices.Equal(a.lengthParam, b.lengthParam)
+			returnGuardRelationsEqual(a.guarded, b.guarded)
 	},
 	LessOrEq: func(a, b ReturnRelations) bool {
 		if a.bottom {
@@ -53,8 +51,7 @@ var ReturnRelationsDomain = lattice.Lattice[ReturnRelations]{
 			return false
 		}
 		return returnCorrelationsContainAll(a.errorReturn, b.errorReturn) &&
-			returnGuardRelationsContainAll(a.guarded, b.guarded) &&
-			returnLengthParamsContainAll(a.lengthParam, b.lengthParam)
+			returnGuardRelationsContainAll(a.guarded, b.guarded)
 	},
 	Join: joinReturnRelations,
 	Meet: nil,
@@ -75,12 +72,6 @@ func ReturnRelationsOfGuardedTypes(xs []ReturnGuardRelation) ReturnRelations {
 	return ReturnRelations{guarded: compactReturnGuardRelations(xs)}
 }
 
-// ReturnRelationsOfLengthParams builds a canonical finite return-length relation
-// value. Each relation means len(return[ReturnIndex]) >= len(param[ParamIndex]).
-func ReturnRelationsOfLengthParams(xs []ReturnLengthParamRelation) ReturnRelations {
-	return ReturnRelations{lengthParam: compactReturnLengthParams(xs)}
-}
-
 // MergeReturnRelationProofs combines independently-proven finite relation facts.
 // It is a proof builder, not the lattice Join: if two derivations both hold on
 // the same path, callers may consume the union of their facts. Top contributes no
@@ -95,7 +86,6 @@ func MergeReturnRelationProofs(a, b ReturnRelations) ReturnRelations {
 	return ReturnRelations{
 		errorReturn: compactReturnCorrelations(append(a.ErrorReturns(), b.ErrorReturns()...)),
 		guarded:     compactReturnGuardRelations(append(a.GuardedTypes(), b.GuardedTypes()...)),
-		lengthParam: compactReturnLengthParams(append(a.LengthParams(), b.LengthParams()...)),
 	}
 }
 
@@ -106,7 +96,7 @@ func (r ReturnRelations) IsBottom() bool { return r.bottom }
 // caller-visible fact. Top has no finite proof; Bottom is a recursive/unreachable
 // seed and is deliberately not consumable.
 func (r ReturnRelations) HasProof() bool {
-	return !r.bottom && (len(r.errorReturn) > 0 || len(r.guarded) > 0 || len(r.lengthParam) > 0)
+	return !r.bottom && (len(r.errorReturn) > 0 || len(r.guarded) > 0)
 }
 
 // ErrorReturns returns a defensive copy of the proven ErrorReturn relations.
@@ -142,31 +132,6 @@ func (r ReturnRelations) GuardedTypes() []ReturnGuardRelation {
 		return nil
 	}
 	return append([]ReturnGuardRelation(nil), r.guarded...)
-}
-
-// ReturnLengthParamRelation records a caller-visible length postcondition:
-// len(return[ReturnIndex]) >= len(param[ParamIndex]).
-type ReturnLengthParamRelation struct {
-	ReturnIndex int
-	ParamIndex  int
-}
-
-// LengthParams returns a defensive copy of the proven return/parameter length
-// relations.
-func (r ReturnRelations) LengthParams() []ReturnLengthParamRelation {
-	if r.bottom || len(r.lengthParam) == 0 {
-		return nil
-	}
-	return append([]ReturnLengthParamRelation(nil), r.lengthParam...)
-}
-
-// HasLengthParam reports whether the reachable finite carrier proves relation c.
-func (r ReturnRelations) HasLengthParam(c ReturnLengthParamRelation) bool {
-	if r.bottom {
-		return false
-	}
-	_, ok := slices.BinarySearchFunc(r.lengthParam, c, compareReturnLengthParam)
-	return ok
 }
 
 // PointRelations is the finite point-local relation component of a PointState.
@@ -265,7 +230,6 @@ func joinReturnRelations(a, b ReturnRelations) ReturnRelations {
 	return ReturnRelations{
 		errorReturn: intersectReturnCorrelations(a.errorReturn, b.errorReturn),
 		guarded:     intersectReturnGuardRelations(a.guarded, b.guarded),
-		lengthParam: intersectReturnLengthParams(a.lengthParam, b.lengthParam),
 	}
 }
 
@@ -637,25 +601,6 @@ func intersectReturnGuardRelations(a, b []ReturnGuardRelation) []ReturnGuardRela
 	return out
 }
 
-func compactReturnLengthParams(xs []ReturnLengthParamRelation) []ReturnLengthParamRelation {
-	if len(xs) == 0 {
-		return nil
-	}
-	out := append([]ReturnLengthParamRelation(nil), xs...)
-	slices.SortFunc(out, compareReturnLengthParam)
-	out = slices.CompactFunc(out, func(a, b ReturnLengthParamRelation) bool {
-		return compareReturnLengthParam(a, b) == 0
-	})
-	return out
-}
-
-func compareReturnLengthParam(a, b ReturnLengthParamRelation) int {
-	if c := cmp.Compare(a.ReturnIndex, b.ReturnIndex); c != 0 {
-		return c
-	}
-	return cmp.Compare(a.ParamIndex, b.ParamIndex)
-}
-
 func compareConstraintSegments(a, b []constraint.Segment) int {
 	min := len(a)
 	if len(b) < min {
@@ -688,15 +633,6 @@ func returnCorrelationsContainAll(have, want []ReturnCorrelation) bool {
 	return true
 }
 
-func returnLengthParamsContainAll(have, want []ReturnLengthParamRelation) bool {
-	for _, w := range want {
-		if _, ok := slices.BinarySearchFunc(have, w, compareReturnLengthParam); !ok {
-			return false
-		}
-	}
-	return true
-}
-
 func intersectReturnCorrelations(a, b []ReturnCorrelation) []ReturnCorrelation {
 	if len(a) == 0 || len(b) == 0 {
 		return nil
@@ -704,19 +640,6 @@ func intersectReturnCorrelations(a, b []ReturnCorrelation) []ReturnCorrelation {
 	var out []ReturnCorrelation
 	for _, x := range a {
 		if _, ok := slices.BinarySearchFunc(b, x, compareReturnCorrelation); ok {
-			out = append(out, x)
-		}
-	}
-	return out
-}
-
-func intersectReturnLengthParams(a, b []ReturnLengthParamRelation) []ReturnLengthParamRelation {
-	if len(a) == 0 || len(b) == 0 {
-		return nil
-	}
-	var out []ReturnLengthParamRelation
-	for _, x := range a {
-		if _, ok := slices.BinarySearchFunc(b, x, compareReturnLengthParam); ok {
 			out = append(out, x)
 		}
 	}

@@ -61,9 +61,9 @@ func TestAssignCallPostconditionsMaterializeLengthParamLowerBound(t *testing.T) 
 	}
 	callInfo := &cfg.CallInfo{Call: call, Callee: call.Func, Args: call.Args}
 	typer := &productReturnRelationsTestTyper{
-		rels: flow.ReturnRelationsOfLengthParams([]flow.ReturnLengthParamRelation{{
-			ReturnIndex: 0,
-			ParamIndex:  0,
+		facts: flow.BoundaryFactsDomain.Top().WithLengthRelations([]flow.BoundaryLengthRelationFact{{
+			Target: flow.BoundaryPath{Kind: flow.BoundaryPathReturn, Index: 0},
+			Source: flow.BoundaryPath{Kind: flow.BoundaryPathParam, Index: 0},
 		}}),
 	}
 	tr := New(in, Config{CallTyper: typer})
@@ -82,7 +82,7 @@ func TestAssignCallPostconditionsMaterializeLengthParamLowerBound(t *testing.T) 
 		SourceCalls: []*cfg.CallInfo{callInfo},
 	}
 
-	effects := tr.buildAssignCallPostconditions(&out, 0, info, nil)
+	effects := tr.buildAssignCallPostconditions(&out, in.Graph.Entry(), info, nil)
 	tr.applyAssignCallPostconditions(&out, effects)
 
 	targetLocal, ok := flow.LocalAddressOfPath(constraint.NewPath(targetSym, "ks"))
@@ -165,9 +165,9 @@ func TestAssignCallPostconditionsUsePreWriteArgumentLength(t *testing.T) {
 	}
 	callInfo := &cfg.CallInfo{Call: call, Callee: call.Func, Args: call.Args}
 	typer := &postconditionAssignTestTyper{
-		rels: flow.ReturnRelationsOfLengthParams([]flow.ReturnLengthParamRelation{{
-			ReturnIndex: 0,
-			ParamIndex:  0,
+		facts: flow.BoundaryFactsDomain.Top().WithLengthRelations([]flow.BoundaryLengthRelationFact{{
+			Target: flow.BoundaryPath{Kind: flow.BoundaryPathReturn, Index: 0},
+			Source: flow.BoundaryPath{Kind: flow.BoundaryPathParam, Index: 0},
 		}}),
 		returns: []product.AbstractValue{product.FromType(typ.NewArray(typ.String))},
 	}
@@ -205,6 +205,61 @@ func TestAssignCallPostconditionsUsePreWriteArgumentLength(t *testing.T) {
 	}
 }
 
+func TestAssignCallPostconditionsMaterializeBoundaryLengthRelation(t *testing.T) {
+	fn := &ast.FunctionExpr{ParList: &ast.ParList{Names: []string{"arg"}}}
+	in := input.BuildFromFunction(fn, nil, nil)
+	if in.Graph == nil || len(in.Scope.ParamSymbols) != 1 {
+		t.Fatal("test graph did not build one parameter")
+	}
+	argSym := in.Scope.ParamSymbols[0]
+	targetSym := cfg.SymbolID(7005)
+	arg := &ast.IdentExpr{Value: "arg"}
+	in.Graph.Bindings().Bind(arg, argSym)
+	in.Graph.Bindings().SetName(argSym, "arg")
+
+	call := &ast.FuncCallExpr{
+		Func: &ast.IdentExpr{Value: "keys"},
+		Args: []ast.Expr{arg},
+	}
+	callInfo := &cfg.CallInfo{Call: call, Callee: call.Func, Args: call.Args}
+	typer := &productReturnRelationsTestTyper{
+		facts: flow.BoundaryFactsDomain.Top().WithLengthRelations([]flow.BoundaryLengthRelationFact{{
+			Target: flow.BoundaryPath{Kind: flow.BoundaryPathReturn, Index: 0},
+			Source: flow.BoundaryPath{Kind: flow.BoundaryPathParam, Index: 0},
+		}}),
+	}
+	tr := New(in, Config{CallTyper: typer})
+	out := flow.PointState{
+		Num: numeric.NewState(),
+		Rel: flow.PointRelationsDomain.Top(),
+	}
+	out.Num.ApplyLenGeConst(flow.SymbolPathKey(argSym, nil), 4)
+	info := &cfg.AssignInfo{
+		Targets: []cfg.AssignTarget{{
+			Kind:   cfg.TargetIdent,
+			Name:   "ks",
+			Symbol: targetSym,
+		}},
+		Sources:     []ast.Expr{call},
+		SourceCalls: []*cfg.CallInfo{callInfo},
+	}
+
+	effects := tr.buildAssignCallPostconditions(&out, in.Graph.Entry(), info, nil)
+	tr.applyAssignCallPostconditions(&out, effects)
+
+	targetLocal, ok := flow.LocalAddressOfPath(constraint.NewPath(targetSym, "ks"))
+	if !ok {
+		t.Fatal("local target address was not produced")
+	}
+	targetKey := flow.SymbolPathKey(targetSym, nil)
+	if lower, _, ok := out.Num.LenBoundsFor(targetKey); !ok || lower != 4 {
+		t.Fatalf("target length lower = %d/%v, want 4", lower, ok)
+	}
+	if !out.Rel.HasTargetLengthParamLocal(targetLocal, 0) {
+		t.Fatalf("point relations = %#v, want boundary length relation to re-export param 0", out.Rel)
+	}
+}
+
 type productReturnRelationsTestTyper struct {
 	captureEffectTyper
 	rels  flow.ReturnRelations
@@ -229,7 +284,7 @@ var _ ProductCallProvider = (*productReturnRelationsTestTyper)(nil)
 
 type postconditionAssignTestTyper struct {
 	captureEffectTyper
-	rels    flow.ReturnRelations
+	facts   flow.BoundaryFacts
 	returns []product.AbstractValue
 }
 
@@ -237,11 +292,13 @@ func (t *postconditionAssignTestTyper) ProductCallFromValues(
 	_ *ast.FuncCallExpr,
 	_ ProductCallContext,
 ) ProductCallResult {
+	effects := EmptyCallEffects()
+	effects.BoundaryFacts = t.facts
 	return ProductCallResult{
 		ReturnValues:    t.returns,
 		HasReturnValues: true,
-		ReturnRelations: t.rels,
-		Effects:         EmptyCallEffects(),
+		ReturnRelations: flow.ReturnRelationsDomain.Top(),
+		Effects:         effects,
 	}
 }
 

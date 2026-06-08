@@ -135,18 +135,6 @@ func TestCollectParameterEvidenceFromResult_CanonicalProjectionSkipsLegacyBodyPr
 	}
 }
 
-func TestReturnLengthRelationEnsuresFromCanonicalRelations(t *testing.T) {
-	rels := flow.ReturnRelationsOfLengthParams([]flow.ReturnLengthParamRelation{
-		{ReturnIndex: 0, ParamIndex: 2},
-	})
-
-	got := returnLengthRelationEnsures(rels)
-	want := constraint.GeExpr(constraint.RL(0), constraint.PL(2))
-	if len(got) != 1 || !got[0].Equals(want) {
-		t.Fatalf("returnLengthRelationEnsures() = %#v, want %#v", got, want)
-	}
-}
-
 func scopeForPostflowTest() *scope.State {
 	return scope.New()
 }

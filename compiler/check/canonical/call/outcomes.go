@@ -95,9 +95,25 @@ func (o CallOutcome) ReceiverEffects() flow.ReceiverEffects {
 	return o.Projection.ReceiverEffects()
 }
 
-// BoundaryFacts projects caller-visible parameter/return-relative facts.
-func (o CallOutcome) BoundaryFacts() flow.BoundaryFacts {
-	return o.Projection.BoundaryFacts()
+// BoundaryFacts projects caller-visible parameter/return-relative facts through
+// the canonical summary-first, static-contract-fallback policy.
+func (o CallOutcome) BoundaryFacts(call *ast.FuncCallExpr, resolver TypeResolver, useResolvedSignature bool) flow.BoundaryFacts {
+	if len(o.Projection.Targets) > 0 {
+		return o.Projection.BoundaryFacts()
+	}
+	if o.Selection.BlocksTypeFallback() {
+		return flow.BoundaryFactsDomain.Top()
+	}
+	if useResolvedSignature && call != nil {
+		facts := flow.BoundaryFactsFromFunctionType(resolver.ResolveCallee(call.Func))
+		if facts.HasProof() {
+			return facts
+		}
+	}
+	if call == nil {
+		return flow.BoundaryFactsFromFunctionType(nil)
+	}
+	return flow.BoundaryFactsFromFunctionType(resolver.ResolveStaticCallee(call.Func))
 }
 
 // Postconditions projects portable normal-return proofs from selected summaries.

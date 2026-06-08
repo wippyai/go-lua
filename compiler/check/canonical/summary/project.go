@@ -301,11 +301,8 @@ func projectReturnRelations(fs state.FunctionState, g *cfg.Graph, returns []prod
 	return flow.MergeReturnRelationProofs(
 		projectErrorReturnRelations(fs, g, returns, declaredReturns),
 		flow.MergeReturnRelationProofs(
-			flow.MergeReturnRelationProofs(
-				projectForwardedReturnRelations(fs, g),
-				projectGuardedReturnRelations(fs, g),
-			),
-			projectPointLengthParamRelations(fs, g),
+			projectForwardedReturnRelations(fs, g),
+			projectGuardedReturnRelations(fs, g),
 		),
 	)
 }
@@ -462,46 +459,6 @@ func projectForwardedReturnRelations(fs state.FunctionState, g *cfg.Graph) flow.
 	return out
 }
 
-func projectPointLengthParamRelations(fs state.FunctionState, g *cfg.Graph) flow.ReturnRelations {
-	if g == nil {
-		return flow.ReturnRelationsDomain.Top()
-	}
-	out := flow.ReturnRelationsDomain.Bottom()
-	sawReturn := false
-	g.EachReturn(func(p cfg.Point, info *cfg.ReturnInfo) {
-		if info == nil {
-			return
-		}
-		ps, ok := fs.Points[p]
-		if !ok {
-			return
-		}
-		rels := flow.ReturnRelationsDomain.Top()
-		var proven []flow.ReturnLengthParamRelation
-		for i := range info.Exprs {
-			target, ok := returnExprLocalAddress(g, p, info, i)
-			if !ok {
-				continue
-			}
-			for _, rel := range ps.Rel.LengthParamsForTargetLocal(target) {
-				proven = append(proven, flow.ReturnLengthParamRelation{
-					ReturnIndex: i,
-					ParamIndex:  rel.ParamIndex,
-				})
-			}
-		}
-		if len(proven) > 0 {
-			rels = flow.ReturnRelationsOfLengthParams(proven)
-		}
-		out = flow.ReturnRelationsDomain.Join(out, rels)
-		sawReturn = true
-	})
-	if !sawReturn || flow.ReturnRelationsDomain.Equal(out, flow.ReturnRelationsDomain.Bottom()) {
-		return flow.ReturnRelationsDomain.Top()
-	}
-	return out
-}
-
 func projectBoundaryFacts(fs state.FunctionState, g *cfg.Graph) flow.BoundaryFacts {
 	if g == nil {
 		return flow.BoundaryFactsDomain.Top()
@@ -519,7 +476,11 @@ func projectBoundaryFacts(fs state.FunctionState, g *cfg.Graph) flow.BoundaryFac
 			return
 		}
 		mapper := flow.NewBoundaryPathProjection(paramBySymbol, returnBoundarySymbolMap(g, p, info))
-		paramFacts, buckets := projectPointBoundaryFacts(ps, mapper).PartitionByReturnIndices()
+		facts := flow.MergeBoundaryFactProofs(
+			projectPointBoundaryFacts(ps, mapper),
+			projectReturnLengthBoundaryFacts(ps, g, p, info, mapper),
+		)
+		paramFacts, buckets := facts.PartitionByReturnIndices()
 		point := boundaryPointFacts{
 			mappedReturns: mapper.MappedReturnIndices(),
 			paramFacts:    paramFacts,
@@ -618,6 +579,34 @@ func projectPointBoundaryFacts(ps flow.PointState, mapper flow.BoundaryPathProje
 			KeyPresence: flow.KeyPresenceBoundaryProjection{IncludePendingKeyArrays: true},
 		},
 	)
+}
+
+func projectReturnLengthBoundaryFacts(ps flow.PointState, g *cfg.Graph, p cfg.Point, info *cfg.ReturnInfo, mapper flow.BoundaryPathProjection) flow.BoundaryFacts {
+	var facts []flow.BoundaryLengthRelationFact
+	for i := range info.Exprs {
+		target, ok := returnExprLocalAddress(g, p, info, i)
+		if !ok {
+			continue
+		}
+		targetAddr, ok := target.Stable()
+		if !ok {
+			continue
+		}
+		targets := mapper.PathsFromAddress(targetAddr)
+		if len(targets) == 0 {
+			continue
+		}
+		for _, rel := range ps.Rel.LengthParamsForTargetLocal(target) {
+			source := flow.BoundaryPath{Kind: flow.BoundaryPathParam, Index: rel.ParamIndex}
+			for _, boundaryTarget := range targets {
+				facts = append(facts, flow.BoundaryLengthRelationFact{
+					Target: boundaryTarget,
+					Source: source,
+				})
+			}
+		}
+	}
+	return flow.BoundaryFactsDomain.Top().WithLengthRelations(facts)
 }
 
 func returnBoundarySymbolMap(g *cfg.Graph, p cfg.Point, info *cfg.ReturnInfo) map[cfg.SymbolID][]flow.BoundaryPath {

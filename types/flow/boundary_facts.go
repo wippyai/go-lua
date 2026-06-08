@@ -75,6 +75,14 @@ type BoundaryLengthLowerBound struct {
 	Lower  int64
 }
 
+// BoundaryLengthRelationFact proves len(Target) >= len(Source) after the call
+// returns. Both sides are boundary-relative paths so callers can replay the
+// relation against concrete call arguments and assignment targets.
+type BoundaryLengthRelationFact struct {
+	Target BoundaryPath
+	Source BoundaryPath
+}
+
 // BoundaryIndexWriteFact proves Table[Key] has Value after the call returns.
 // Table and Key are boundary-relative paths; Value is a product value because the
 // fact is symbolic readback, not just key presence.
@@ -95,6 +103,7 @@ type BoundaryFacts struct {
 	appendKeys     []BoundaryAppendKeyFact
 	appendOrigins  []BoundaryAppendElementFieldOriginFact
 	lenLower       []BoundaryLengthLowerBound
+	lenRelations   []BoundaryLengthRelationFact
 	indexWrites    []BoundaryIndexWriteFact
 }
 
@@ -107,7 +116,7 @@ func BoundaryFactsOf(
 	lenLower []BoundaryLengthLowerBound,
 	indexWrites []BoundaryIndexWriteFact,
 ) BoundaryFacts {
-	return boundaryFactsOfFull(keyPresence, keyArrays, keyArrayValues, appendKeys, nil, lenLower, indexWrites)
+	return boundaryFactsOfFull(keyPresence, keyArrays, keyArrayValues, appendKeys, nil, lenLower, nil, indexWrites)
 }
 
 func boundaryFactsOfFull(
@@ -117,6 +126,7 @@ func boundaryFactsOfFull(
 	appendKeys []BoundaryAppendKeyFact,
 	appendOrigins []BoundaryAppendElementFieldOriginFact,
 	lenLower []BoundaryLengthLowerBound,
+	lenRelations []BoundaryLengthRelationFact,
 	indexWrites []BoundaryIndexWriteFact,
 ) BoundaryFacts {
 	return BoundaryFacts{
@@ -126,6 +136,7 @@ func boundaryFactsOfFull(
 		appendKeys:     compactBoundaryAppendKeys(appendKeys),
 		appendOrigins:  compactBoundaryAppendElementFieldOrigins(appendOrigins),
 		lenLower:       compactBoundaryLengthLower(lenLower),
+		lenRelations:   compactBoundaryLengthRelations(lenRelations),
 		indexWrites:    compactBoundaryIndexWrites(indexWrites),
 	}
 }
@@ -145,6 +156,25 @@ func (f BoundaryFacts) WithAppendElementFieldOrigins(origins []BoundaryAppendEle
 		f.appendKeys,
 		append(f.AppendElementFieldOrigins(), origins...),
 		f.lenLower,
+		f.lenRelations,
+		f.indexWrites,
+	)
+}
+
+// WithLengthRelations returns f plus boundary-relative length/cardinality
+// relation proofs.
+func (f BoundaryFacts) WithLengthRelations(relations []BoundaryLengthRelationFact) BoundaryFacts {
+	if f.bottom || len(relations) == 0 {
+		return f
+	}
+	return boundaryFactsOfFull(
+		f.keyPresence,
+		f.keyArrays,
+		f.keyArrayValues,
+		f.appendKeys,
+		f.appendOrigins,
+		f.lenLower,
+		append(f.LengthRelations(), relations...),
 		f.indexWrites,
 	)
 }
@@ -185,6 +215,7 @@ func MergeBoundaryFactProofs(a, b BoundaryFacts) BoundaryFacts {
 		append(a.AppendKeys(), b.AppendKeys()...),
 		append(a.AppendElementFieldOrigins(), b.AppendElementFieldOrigins()...),
 		append(a.LengthLowerBounds(), b.LengthLowerBounds()...),
+		append(a.LengthRelations(), b.LengthRelations()...),
 		append(a.IndexWrites(), b.IndexWrites()...),
 	)
 }
@@ -205,6 +236,7 @@ var BoundaryFactsDomain = lattice.Lattice[BoundaryFacts]{
 			boundaryAppendKeyRowIdentity.Equal(a.appendKeys, b.appendKeys) &&
 			boundaryAppendElementFieldOriginRowIdentity.Equal(a.appendOrigins, b.appendOrigins) &&
 			boundaryLengthLowerRowIdentity.Equal(a.lenLower, b.lenLower) &&
+			boundaryLengthRelationRowIdentity.Equal(a.lenRelations, b.lenRelations) &&
 			boundaryIndexWriteRowIdentity.EqualBy(a.indexWrites, b.indexWrites, func(x, y BoundaryIndexWriteFact) bool {
 				return compareBoundaryIndexWrite(x, y) == 0 && product.Domain.Equal(x.Value, y.Value)
 			})
@@ -222,6 +254,7 @@ var BoundaryFactsDomain = lattice.Lattice[BoundaryFacts]{
 			boundaryAppendKeysContainAll(a.appendKeys, b.appendKeys) &&
 			boundaryAppendElementFieldOriginsContainAll(a.appendOrigins, b.appendOrigins) &&
 			boundaryLengthLowerContainAll(a.lenLower, b.lenLower) &&
+			boundaryLengthRelationContainAll(a.lenRelations, b.lenRelations) &&
 			boundaryIndexWritesContainAll(a.indexWrites, b.indexWrites)
 	},
 	Join:  joinBoundaryFacts,
@@ -232,7 +265,7 @@ var BoundaryFactsDomain = lattice.Lattice[BoundaryFacts]{
 func (f BoundaryFacts) IsBottom() bool { return f.bottom }
 
 func (f BoundaryFacts) HasProof() bool {
-	return !f.bottom && (len(f.keyPresence) > 0 || len(f.keyArrays) > 0 || len(f.keyArrayValues) > 0 || len(f.appendKeys) > 0 || len(f.appendOrigins) > 0 || len(f.lenLower) > 0 || len(f.indexWrites) > 0)
+	return !f.bottom && (len(f.keyPresence) > 0 || len(f.keyArrays) > 0 || len(f.keyArrayValues) > 0 || len(f.appendKeys) > 0 || len(f.appendOrigins) > 0 || len(f.lenLower) > 0 || len(f.lenRelations) > 0 || len(f.indexWrites) > 0)
 }
 
 // PartitionByReturnIndices separates parameter-only facts from facts whose
@@ -318,6 +351,16 @@ func (f BoundaryFacts) PartitionByReturnIndices() (BoundaryFacts, []BoundaryRetu
 		}
 		addReturnFact(indices, func(parts *boundaryFactParts) {
 			parts.lenLower = append(parts.lenLower, fact)
+		})
+	}
+	for _, fact := range f.LengthRelations() {
+		indices := boundaryPathReturnIndices(fact.Target, fact.Source)
+		if len(indices) == 0 {
+			params.lenRelations = append(params.lenRelations, fact)
+			continue
+		}
+		addReturnFact(indices, func(parts *boundaryFactParts) {
+			parts.lenRelations = append(parts.lenRelations, fact)
 		})
 	}
 	for _, fact := range f.IndexWrites() {
@@ -411,6 +454,17 @@ func (f BoundaryFacts) LengthLowerBounds() []BoundaryLengthLowerBound {
 	return out
 }
 
+func (f BoundaryFacts) LengthRelations() []BoundaryLengthRelationFact {
+	if f.bottom || len(f.lenRelations) == 0 {
+		return nil
+	}
+	out := make([]BoundaryLengthRelationFact, 0, len(f.lenRelations))
+	for _, fact := range f.lenRelations {
+		out = append(out, cloneBoundaryLengthRelation(fact))
+	}
+	return out
+}
+
 func (f BoundaryFacts) IndexWrites() []BoundaryIndexWriteFact {
 	if f.bottom || len(f.indexWrites) == 0 {
 		return nil
@@ -446,6 +500,14 @@ func (f BoundaryFacts) HasLengthLowerBound(fact BoundaryLengthLowerBound) bool {
 	return ok
 }
 
+func (f BoundaryFacts) HasLengthRelation(fact BoundaryLengthRelationFact) bool {
+	if f.bottom {
+		return false
+	}
+	_, ok := boundaryLengthRelationRowIdentity.Find(f.lenRelations, fact)
+	return ok
+}
+
 func (f BoundaryFacts) HasIndexWrite(fact BoundaryIndexWriteFact) bool {
 	if f.bottom {
 		return false
@@ -476,6 +538,7 @@ func mergeBoundaryFacts(a, b BoundaryFacts, widenPayload bool) BoundaryFacts {
 		appendKeys:     intersectBoundaryAppendKeys(a.appendKeys, b.appendKeys),
 		appendOrigins:  intersectBoundaryAppendElementFieldOrigins(a.appendOrigins, b.appendOrigins),
 		lenLower:       intersectBoundaryLengthLower(a.lenLower, b.lenLower),
+		lenRelations:   intersectBoundaryLengthRelations(a.lenRelations, b.lenRelations),
 		indexWrites:    intersectBoundaryIndexWrites(a.indexWrites, b.indexWrites, widenPayload),
 	}
 }
@@ -487,11 +550,12 @@ type boundaryFactParts struct {
 	appendKeys     []BoundaryAppendKeyFact
 	appendOrigins  []BoundaryAppendElementFieldOriginFact
 	lenLower       []BoundaryLengthLowerBound
+	lenRelations   []BoundaryLengthRelationFact
 	indexWrites    []BoundaryIndexWriteFact
 }
 
 func (p boundaryFactParts) facts() BoundaryFacts {
-	return boundaryFactsOfFull(p.keyPresence, p.keyArrays, p.keyArrayValues, p.appendKeys, p.appendOrigins, p.lenLower, p.indexWrites)
+	return boundaryFactsOfFull(p.keyPresence, p.keyArrays, p.keyArrayValues, p.appendKeys, p.appendOrigins, p.lenLower, p.lenRelations, p.indexWrites)
 }
 
 func boundaryPathReturnIndices(paths ...BoundaryPath) []int {
@@ -662,6 +726,26 @@ func compactBoundaryLengthLower(xs []BoundaryLengthLowerBound) []BoundaryLengthL
 	})
 }
 
+func compactBoundaryLengthRelations(xs []BoundaryLengthRelationFact) []BoundaryLengthRelationFact {
+	if len(xs) == 0 {
+		return nil
+	}
+	out := make([]BoundaryLengthRelationFact, 0, len(xs))
+	for _, fact := range xs {
+		if !validBoundaryPath(fact.Target) || !validBoundaryPath(fact.Source) {
+			continue
+		}
+		out = append(out, cloneBoundaryLengthRelation(fact))
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	slices.SortFunc(out, compareBoundaryLengthRelation)
+	return slices.CompactFunc(out, func(a, b BoundaryLengthRelationFact) bool {
+		return compareBoundaryLengthRelation(a, b) == 0
+	})
+}
+
 func compactBoundaryIndexWrites(xs []BoundaryIndexWriteFact) []BoundaryIndexWriteFact {
 	if len(xs) == 0 {
 		return nil
@@ -748,6 +832,13 @@ func cloneBoundaryLengthLower(f BoundaryLengthLowerBound) BoundaryLengthLowerBou
 	}
 }
 
+func cloneBoundaryLengthRelation(f BoundaryLengthRelationFact) BoundaryLengthRelationFact {
+	return BoundaryLengthRelationFact{
+		Target: cloneBoundaryPath(f.Target),
+		Source: cloneBoundaryPath(f.Source),
+	}
+}
+
 func cloneBoundaryIndexWrite(f BoundaryIndexWriteFact) BoundaryIndexWriteFact {
 	return BoundaryIndexWriteFact{
 		Table: cloneBoundaryPath(f.Table),
@@ -816,6 +907,13 @@ func compareBoundaryLengthLower(a, b BoundaryLengthLowerBound) int {
 	return cmp.Compare(a.Lower, b.Lower)
 }
 
+func compareBoundaryLengthRelation(a, b BoundaryLengthRelationFact) int {
+	if c := compareBoundaryPath(a.Target, b.Target); c != 0 {
+		return c
+	}
+	return compareBoundaryPath(a.Source, b.Source)
+}
+
 func compareBoundaryIndexWrite(a, b BoundaryIndexWriteFact) int {
 	if c := compareBoundaryPath(a.Table, b.Table); c != 0 {
 		return c
@@ -864,6 +962,10 @@ var (
 		less: func(a, b BoundaryLengthLowerBound) bool { return compareBoundaryLengthLower(a, b) < 0 },
 		same: func(a, b BoundaryLengthLowerBound) bool { return compareBoundaryLengthLower(a, b) == 0 },
 	}
+	boundaryLengthRelationRowIdentity = orderedRowIdentity[BoundaryLengthRelationFact]{
+		less: func(a, b BoundaryLengthRelationFact) bool { return compareBoundaryLengthRelation(a, b) < 0 },
+		same: func(a, b BoundaryLengthRelationFact) bool { return compareBoundaryLengthRelation(a, b) == 0 },
+	}
 	boundaryIndexWriteRowIdentity = orderedRowIdentity[BoundaryIndexWriteFact]{
 		less: func(a, b BoundaryIndexWriteFact) bool { return compareBoundaryIndexWrite(a, b) < 0 },
 		same: func(a, b BoundaryIndexWriteFact) bool { return compareBoundaryIndexWrite(a, b) == 0 },
@@ -895,6 +997,10 @@ func boundaryAppendElementFieldOriginsContainAll(have, want []BoundaryAppendElem
 
 func boundaryLengthLowerContainAll(have, want []BoundaryLengthLowerBound) bool {
 	return boundaryLengthLowerRowIdentity.ContainsAll(have, want)
+}
+
+func boundaryLengthRelationContainAll(have, want []BoundaryLengthRelationFact) bool {
+	return boundaryLengthRelationRowIdentity.ContainsAll(have, want)
 }
 
 func boundaryIndexWritesContainAll(have, want []BoundaryIndexWriteFact) bool {
@@ -944,6 +1050,12 @@ func intersectBoundaryAppendElementFieldOrigins(a, b []BoundaryAppendElementFiel
 func intersectBoundaryLengthLower(a, b []BoundaryLengthLowerBound) []BoundaryLengthLowerBound {
 	return boundaryLengthLowerRowIdentity.MergeIntersect(a, b, func(left, _ BoundaryLengthLowerBound) (BoundaryLengthLowerBound, bool) {
 		return cloneBoundaryLengthLower(left), true
+	})
+}
+
+func intersectBoundaryLengthRelations(a, b []BoundaryLengthRelationFact) []BoundaryLengthRelationFact {
+	return boundaryLengthRelationRowIdentity.MergeIntersect(a, b, func(left, _ BoundaryLengthRelationFact) (BoundaryLengthRelationFact, bool) {
+		return cloneBoundaryLengthRelation(left), true
 	})
 }
 

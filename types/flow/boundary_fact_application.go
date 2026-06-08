@@ -88,7 +88,64 @@ type BoundaryAppendKeyPlan struct {
 // boundary facts. Flow owns the fact transactions; transfer owns materializing
 // these results into its refinement effect vocabulary.
 type BoundaryFactApplication struct {
-	KeyProvenance []KeyProvenanceResult
+	KeyProvenance     []KeyProvenanceResult
+	LengthLowerBounds []BoundaryLengthLowerApplication
+	LengthRelations   []BoundaryLengthRelationApplication
+}
+
+// BoundaryLengthLowerApplication is the caller-local form of a boundary length
+// lower bound after boundary paths have been rebased.
+type BoundaryLengthLowerApplication struct {
+	Target constraint.Path
+	Lower  int64
+}
+
+// BoundaryLengthRelationApplication is the caller-local form of a boundary
+// length relation after boundary paths have been rebased.
+type BoundaryLengthRelationApplication struct {
+	Target constraint.Path
+	Source constraint.Path
+}
+
+// BoundaryFactPrestateApplication captures boundary consequences that must be
+// computed from the pre-call state but may be replayed after assignment targets
+// or receiver effects have been overwritten.
+func BoundaryFactPrestateApplication(
+	state PointState,
+	facts BoundaryFacts,
+	rebase BoundaryPathRebaser,
+) BoundaryFactApplication {
+	if rebase == nil || !facts.HasProof() {
+		return BoundaryFactApplication{}
+	}
+	var app BoundaryFactApplication
+	for _, fact := range facts.LengthLowerBounds() {
+		target, ok := rebase(fact.Target)
+		if !ok || target.path.IsEmpty() || fact.Lower <= 0 {
+			continue
+		}
+		app.LengthLowerBounds = append(app.LengthLowerBounds, BoundaryLengthLowerApplication{
+			Target: target.path,
+			Lower:  fact.Lower,
+		})
+	}
+	for _, fact := range facts.LengthRelations() {
+		target, ok := rebase(fact.Target)
+		if !ok || target.path.IsEmpty() {
+			continue
+		}
+		source, ok := rebase(fact.Source)
+		if !ok || source.path.IsEmpty() {
+			continue
+		}
+		if lower := boundaryLengthRelationSourceLower(state, source.path); lower > 0 {
+			app.LengthLowerBounds = append(app.LengthLowerBounds, BoundaryLengthLowerApplication{
+				Target: target.path,
+				Lower:  lower,
+			})
+		}
+	}
+	return app
 }
 
 // BoundaryAppendKeyPlans selects append-key replay plans from the current
@@ -263,6 +320,12 @@ func ApplyBoundaryFacts(
 		if !ok {
 			continue
 		}
+		if fact.Lower > 0 {
+			result.LengthLowerBounds = append(result.LengthLowerBounds, BoundaryLengthLowerApplication{
+				Target: target.path,
+				Lower:  fact.Lower,
+			})
+		}
 		if op, ok := NumericLenGeConstPathOp(target.path, fact.Lower); ok {
 			ops = append(ops, op)
 		}
@@ -270,7 +333,47 @@ func ApplyBoundaryFacts(
 	if len(ops) > 0 {
 		changed = ApplyNumericEffect(out, NumericEffect{Ops: ops}) || changed
 	}
+	for _, fact := range facts.LengthRelations() {
+		target, ok := rebase(fact.Target)
+		if !ok || target.path.IsEmpty() {
+			continue
+		}
+		source, ok := rebase(fact.Source)
+		if !ok || source.path.IsEmpty() {
+			continue
+		}
+		result.LengthRelations = append(result.LengthRelations, BoundaryLengthRelationApplication{
+			Target: target.path,
+			Source: source.path,
+		})
+		if lower := boundaryLengthRelationSourceLower(*out, source.path); lower > 0 {
+			result.LengthLowerBounds = append(result.LengthLowerBounds, BoundaryLengthLowerApplication{
+				Target: target.path,
+				Lower:  lower,
+			})
+			if op, ok := NumericLenGeConstPathOp(target.path, lower); ok {
+				changed = ApplyNumericEffect(out, NumericEffect{Ops: []NumericOp{op}}) || changed
+			}
+		}
+	}
 	return result, changed
+}
+
+func boundaryLengthRelationSourceLower(state PointState, source constraint.Path) int64 {
+	ref, ok := ContainerRefOfPath(source)
+	if !ok {
+		return 0
+	}
+	lower := int64(0)
+	if state.Num != nil {
+		if numericLower, _, ok := NumericLenBoundsForContainer(state.Num, ref); ok && numericLower > lower {
+			lower = numericLower
+		}
+	}
+	if relationLower, ok := state.Rel.ContainerLowerBoundForRef(ref); ok && relationLower > lower {
+		lower = relationLower
+	}
+	return lower
 }
 
 func appendBoundaryKeyProvenanceResult(app BoundaryFactApplication, result KeyProvenanceResult) BoundaryFactApplication {

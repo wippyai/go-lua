@@ -690,7 +690,14 @@ func (t *Transfer) SeedEntryFacts(out *flow.PointState, facts flow.BoundaryFacts
 	}
 	roots := t.entryBoundaryLocalRoots()
 	app, _ := flow.ApplyBoundaryFacts(out, facts, roots.Rebase, nil)
-	t.applyBoundaryFactApplication(out, app)
+	t.applyBoundaryFactApplication(out, t.entryPoint(), app)
+}
+
+func (t *Transfer) entryPoint() cfg.Point {
+	if t == nil || t.in.Graph == nil {
+		return cfg.Point(0)
+	}
+	return t.in.Graph.Entry()
 }
 
 func (t *Transfer) entryBoundaryLocalRoots() flow.BoundaryLocalRoots {
@@ -2423,11 +2430,14 @@ func (t *Transfer) boundaryFactsAppendPlans(
 	out *flow.PointState,
 	call *ast.FuncCallExpr,
 	facts flow.BoundaryFacts,
-) (flow.BoundaryFacts, []flow.BoundaryAppendKeyPlan) {
-	if !facts.HasProof() {
-		return facts, nil
+) (flow.BoundaryFacts, []flow.BoundaryAppendKeyPlan, flow.BoundaryFactApplication) {
+	if out == nil || !facts.HasProof() {
+		return facts, nil, flow.BoundaryFactApplication{}
 	}
-	return facts, t.boundaryAppendKeyPlans(out, call, facts, nil)
+	roots := t.callBoundaryLocalRoots(call, nil)
+	return facts,
+		t.boundaryAppendKeyPlans(out, call, facts, nil),
+		flow.BoundaryFactPrestateApplication(*out, facts, roots.Rebase)
 }
 
 func (t *Transfer) applyBoundaryFacts(
@@ -2436,8 +2446,13 @@ func (t *Transfer) applyBoundaryFacts(
 	facts flow.BoundaryFacts,
 	returns map[int]constraint.Path,
 ) bool {
+	if out == nil {
+		return false
+	}
 	plans := t.boundaryAppendKeyPlans(out, call, facts, returns)
-	return t.applyBoundaryFactsWithAppendPlans(out, call, facts, returns, plans)
+	roots := t.callBoundaryLocalRoots(call, returns)
+	preApp := flow.BoundaryFactPrestateApplication(*out, facts, roots.Rebase)
+	return t.applyBoundaryFactsWithAppendPlans(out, cfg.Point(0), call, facts, returns, plans, preApp)
 }
 
 func (t *Transfer) boundaryAppendKeyPlans(
@@ -2455,24 +2470,50 @@ func (t *Transfer) boundaryAppendKeyPlans(
 
 func (t *Transfer) applyBoundaryFactsWithAppendPlans(
 	out *flow.PointState,
+	p cfg.Point,
 	call *ast.FuncCallExpr,
 	facts flow.BoundaryFacts,
 	returns map[int]constraint.Path,
 	appendPlans []flow.BoundaryAppendKeyPlan,
+	preApp flow.BoundaryFactApplication,
 ) bool {
 	if out == nil || call == nil {
 		return false
 	}
 	roots := t.callBoundaryLocalRoots(call, returns)
 	app, changed := flow.ApplyBoundaryFacts(out, facts, roots.Rebase, appendPlans)
-	t.applyBoundaryFactApplication(out, app)
-	return changed || len(app.KeyProvenance) > 0
+	t.applyBoundaryFactApplication(out, p, app)
+	t.applyBoundaryFactApplication(out, p, preApp)
+	return changed || boundaryFactApplicationHasEffects(app) || boundaryFactApplicationHasEffects(preApp)
 }
 
-func (t *Transfer) applyBoundaryFactApplication(out *flow.PointState, app flow.BoundaryFactApplication) {
+func (t *Transfer) applyBoundaryFactApplication(out *flow.PointState, p cfg.Point, app flow.BoundaryFactApplication) {
 	for _, result := range app.KeyProvenance {
 		t.applyKeyProvenanceResult(out, result)
 	}
+	for _, lower := range app.LengthLowerBounds {
+		if op, ok := flow.NumericLenGeConstPathOp(lower.Target, lower.Lower); ok {
+			flow.ApplyNumericEffect(out, flow.NumericEffect{Ops: []flow.NumericOp{op}})
+		}
+	}
+	for _, rel := range app.LengthRelations {
+		paramIndex, ok := t.callerParamIndexForPath(rel.Source)
+		if !ok {
+			continue
+		}
+		targetLocalPath := domainpath.WithVersion(rel.Target, t.in.Graph, p)
+		targetLocal, targetOK := flow.LocalAddressOfPath(targetLocalPath)
+		if !targetOK {
+			continue
+		}
+		if effect, ok := flow.RelationTargetLengthParamLocalEffect(targetLocal, paramIndex); ok {
+			flow.ApplyRelationEffect(out, effect)
+		}
+	}
+}
+
+func boundaryFactApplicationHasEffects(app flow.BoundaryFactApplication) bool {
+	return len(app.KeyProvenance) > 0 || len(app.LengthLowerBounds) > 0 || len(app.LengthRelations) > 0
 }
 
 func (t *Transfer) callBoundaryLocalRoots(call *ast.FuncCallExpr, returns map[int]constraint.Path) flow.BoundaryLocalRoots {

@@ -184,42 +184,6 @@ func TestProject_ReturnProjectionDoesNotMutateInputEnv(t *testing.T) {
 	}
 }
 
-func TestProject_ForwardsTailCallReturnLengthRelations(t *testing.T) {
-	g := returnFunctionGraph(t, "return callee()")
-	ret, _ := returnPointAndInfo(t, g)
-	rel := flow.ReturnLengthParamRelation{ReturnIndex: 0, ParamIndex: 1}
-
-	sum := Project(state.FunctionState{
-		Points: map[cfg.Point]flow.PointState{
-			ret: {
-				ReturnRel: flow.ReturnRelationsOfLengthParams([]flow.ReturnLengthParamRelation{rel}),
-			},
-		},
-	}, g)
-
-	if !sum.Relations.HasLengthParam(rel) {
-		t.Fatalf("summary relations = %#v, want forwarded tail-call length relation %#v", sum.Relations, rel)
-	}
-}
-
-func TestProject_DoesNotForwardStaleReturnRelationsFromNonCallReturn(t *testing.T) {
-	g := returnFunctionGraph(t, "return x")
-	ret, _ := returnPointAndInfo(t, g)
-	rel := flow.ReturnLengthParamRelation{ReturnIndex: 0, ParamIndex: 1}
-
-	sum := Project(state.FunctionState{
-		Points: map[cfg.Point]flow.PointState{
-			ret: {
-				ReturnRel: flow.ReturnRelationsOfLengthParams([]flow.ReturnLengthParamRelation{rel}),
-			},
-		},
-	}, g)
-
-	if sum.Relations.HasLengthParam(rel) {
-		t.Fatalf("summary relations forwarded non-call ReturnRel: %#v", sum.Relations)
-	}
-}
-
 func TestProject_ExportsPointLengthParamRelationForReturnedTarget(t *testing.T) {
 	g := returnFunctionGraph(t, "return out")
 	ret, info := returnPointAndInfo(t, g)
@@ -229,18 +193,23 @@ func TestProject_ExportsPointLengthParamRelationForReturnedTarget(t *testing.T) 
 	targetPath := constraint.Path{Symbol: info.Symbols[0]}
 	targetPath.Version = g.VisibleVersion(ret, info.Symbols[0]).ID
 	target := testSummaryLocalAddress(t, targetPath)
-	rel := flow.ReturnLengthParamRelation{ReturnIndex: 0, ParamIndex: 1}
+	paramIndex := 1
 
 	sum := Project(state.FunctionState{
 		Points: map[cfg.Point]flow.PointState{
 			ret: {
-				Rel: flow.PointRelations{}.WithTargetLengthParamLocal(target, rel.ParamIndex),
+				Rel: flow.PointRelations{}.WithTargetLengthParamLocal(target, paramIndex),
 			},
 		},
 	}, g)
 
-	if !sum.Relations.HasLengthParam(rel) {
-		t.Fatalf("summary relations = %#v, want point-local length relation %#v", sum.Relations, rel)
+	lengthFacts := sum.BoundaryFacts.LengthRelations()
+	want := flow.BoundaryLengthRelationFact{
+		Target: flow.BoundaryPath{Kind: flow.BoundaryPathReturn, Index: 0},
+		Source: flow.BoundaryPath{Kind: flow.BoundaryPathParam, Index: paramIndex},
+	}
+	if len(lengthFacts) != 1 || !summaryBoundaryLengthRelationEqual(lengthFacts[0], want) {
+		t.Fatalf("summary boundary length facts = %#v, want %#v", lengthFacts, want)
 	}
 }
 
@@ -295,6 +264,10 @@ func summaryBoundaryPathEqual(a, b flow.BoundaryPath) bool {
 	return true
 }
 
+func summaryBoundaryLengthRelationEqual(a, b flow.BoundaryLengthRelationFact) bool {
+	return summaryBoundaryPathEqual(a.Target, b.Target) && summaryBoundaryPathEqual(a.Source, b.Source)
+}
+
 func TestProject_RejectsStalePointLengthParamRelationKey(t *testing.T) {
 	g := returnFunctionGraph(t, "return out")
 	ret, info := returnPointAndInfo(t, g)
@@ -302,18 +275,17 @@ func TestProject_RejectsStalePointLengthParamRelationKey(t *testing.T) {
 		t.Fatalf("identifier return info not found: %#v", info.Symbols)
 	}
 	stale := testSummaryLocalAddress(t, constraint.Path{Symbol: info.Symbols[0], Version: 999})
-	rel := flow.ReturnLengthParamRelation{ReturnIndex: 0, ParamIndex: 1}
 
 	sum := Project(state.FunctionState{
 		Points: map[cfg.Point]flow.PointState{
 			ret: {
-				Rel: flow.PointRelations{}.WithTargetLengthParamLocal(stale, rel.ParamIndex),
+				Rel: flow.PointRelations{}.WithTargetLengthParamLocal(stale, 1),
 			},
 		},
 	}, g)
 
-	if sum.Relations.HasLengthParam(rel) {
-		t.Fatalf("summary relations exported stale target key: %#v", sum.Relations)
+	if got := sum.BoundaryFacts.LengthRelations(); len(got) != 0 {
+		t.Fatalf("summary boundary facts exported stale target key: %#v", got)
 	}
 }
 

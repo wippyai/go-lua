@@ -3,9 +3,7 @@ package transfer
 import (
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/cfg"
-	"github.com/wippyai/go-lua/compiler/check/callsite"
 	"github.com/wippyai/go-lua/compiler/check/domain/paramevidence"
-	flowpath "github.com/wippyai/go-lua/compiler/check/domain/path"
 	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/flow"
 )
@@ -18,9 +16,11 @@ type assignCallPostconditionEffects struct {
 
 type boundaryFactPostcondition struct {
 	call        *ast.FuncCallExpr
+	point       cfg.Point
 	facts       flow.BoundaryFacts
 	returns     map[int]constraint.Path
 	appendPlans []flow.BoundaryAppendKeyPlan
+	preApp      flow.BoundaryFactApplication
 }
 
 // buildAssignCallPostconditions rebases callee return-relation predicates into
@@ -54,8 +54,7 @@ func (t *Transfer) buildAssignCallPostconditions(
 		rels := t.callReturnRelations(out, callInfo.Call, demand)
 		t.appendSiblingNilPostconditions(info, callInfo, rels, &effects)
 		t.appendGuardedTypePostconditions(info, callInfo, rels, &effects)
-		t.appendLengthParamPostconditions(out, p, info, callInfo, rels, &effects)
-		t.appendBoundaryFactPostconditions(out, info, callInfo, demand, &effects)
+		t.appendBoundaryFactPostconditions(out, p, info, callInfo, demand, &effects)
 	})
 	return effects
 }
@@ -68,7 +67,7 @@ func (t *Transfer) applyAssignCallPostconditions(out *flow.PointState, effects a
 		flow.ApplyRelationEffect(out, rel)
 	}
 	for _, effect := range effects.boundaryFacts {
-		t.applyBoundaryFactsWithAppendPlans(out, effect.call, effect.facts, effect.returns, effect.appendPlans)
+		t.applyBoundaryFactsWithAppendPlans(out, effect.point, effect.call, effect.facts, effect.returns, effect.appendPlans, effect.preApp)
 	}
 	if len(effects.numericOps) > 0 {
 		flow.ApplyNumericEffect(out, flow.NumericEffect{Ops: effects.numericOps})
@@ -125,6 +124,7 @@ func (t *Transfer) appendGuardedTypePostconditions(
 
 func (t *Transfer) appendBoundaryFactPostconditions(
 	out *flow.PointState,
+	p cfg.Point,
 	info *cfg.AssignInfo,
 	callInfo *cfg.CallInfo,
 	demand func(int, paramevidence.ParamContract),
@@ -138,11 +138,14 @@ func (t *Transfer) appendBoundaryFactPostconditions(
 		return
 	}
 	returns := t.boundaryReturnPaths(info, callInfo, facts)
+	roots := t.callBoundaryLocalRoots(callInfo.Call, returns)
 	effects.boundaryFacts = append(effects.boundaryFacts, boundaryFactPostcondition{
 		call:        callInfo.Call,
+		point:       p,
 		facts:       facts,
 		returns:     returns,
 		appendPlans: t.boundaryAppendKeyPlans(out, callInfo.Call, facts, returns),
+		preApp:      flow.BoundaryFactPrestateApplication(*out, facts, roots.Rebase),
 	})
 }
 
@@ -187,59 +190,6 @@ func (t *Transfer) collectBoundaryReturnIndex(
 	out[index] = targetPath
 }
 
-func (t *Transfer) appendLengthParamPostconditions(
-	out *flow.PointState,
-	p cfg.Point,
-	info *cfg.AssignInfo,
-	callInfo *cfg.CallInfo,
-	rels flow.ReturnRelations,
-	effects *assignCallPostconditionEffects,
-) {
-	for _, rel := range rels.LengthParams() {
-		target, ok := assignmentTargetForReturn(info, callInfo, rel.ReturnIndex)
-		if !ok {
-			continue
-		}
-		targetPath, ok := t.lengthPostconditionTarget(target)
-		if !ok {
-			continue
-		}
-		arg := callsite.RuntimeArgAt(callInfo, rel.ParamIndex)
-		if arg == nil {
-			continue
-		}
-		if paramIndex, ok := t.runtimeArgCallerParamIndex(arg); ok {
-			targetLocalPath := flowpath.WithVersion(targetPath, t.in.Graph, p)
-			targetLocal, targetOK := flow.LocalAddressOfPath(targetLocalPath)
-			if !targetOK {
-				continue
-			}
-			if effect, ok := flow.RelationTargetLengthParamLocalEffect(targetLocal, paramIndex); ok {
-				effects.relations = append(effects.relations, effect)
-			}
-		}
-		argRef, ok := t.containerExprRef(arg)
-		if !ok {
-			continue
-		}
-		lower := int64(0)
-		if out.Num != nil {
-			if numericLower, _, ok := flow.NumericLenBoundsForContainer(out.Num, argRef); ok && numericLower > lower {
-				lower = numericLower
-			}
-		}
-		if relationLower, ok := out.Rel.ContainerLowerBoundForRef(argRef); ok && relationLower > lower {
-			lower = relationLower
-		}
-		if lower <= 0 {
-			continue
-		}
-		if op, ok := flow.NumericLenGeConstPathOp(targetPath, lower); ok {
-			effects.numericOps = append(effects.numericOps, op)
-		}
-	}
-}
-
 func (t *Transfer) callBoundaryFacts(
 	out *flow.PointState,
 	call *ast.FuncCallExpr,
@@ -264,17 +214,8 @@ func assignmentTargetForReturn(info *cfg.AssignInfo, callInfo *cfg.CallInfo, ret
 	return cfg.AssignTarget{}, false
 }
 
-func (t *Transfer) lengthPostconditionTarget(target cfg.AssignTarget) (constraint.Path, bool) {
-	path, ok := t.staticPathOfAssignTarget(target)
-	if !ok || path.Symbol == 0 {
-		return constraint.Path{}, false
-	}
-	return path, true
-}
-
-func (t *Transfer) runtimeArgCallerParamIndex(arg ast.Expr) (int, bool) {
-	path, ok := t.staticPathOfExpr(arg)
-	if !ok || path.Symbol == 0 || len(path.Segments) != 0 {
+func (t *Transfer) callerParamIndexForPath(path constraint.Path) (int, bool) {
+	if path.Symbol == 0 || len(path.Segments) != 0 {
 		return 0, false
 	}
 	param, ok := t.params.Lookup(path.Symbol)

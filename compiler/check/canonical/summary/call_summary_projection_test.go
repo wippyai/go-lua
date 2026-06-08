@@ -476,24 +476,24 @@ func TestCallSummaryProjection_ReturnRelationsUsesSignatureFallback(t *testing.T
 	}
 }
 
-func TestCallSummaryProjection_ReturnRelationsTreatsLengthParamAsProof(t *testing.T) {
-	summaryRel := flow.ReturnRelationsOfLengthParams([]flow.ReturnLengthParamRelation{{ReturnIndex: 0, ParamIndex: 1}})
-	fallbackRel := flow.ReturnRelationsOfErrorReturns([]flow.ReturnCorrelation{{ValueIndex: 0, ErrorIndex: 1}})
+func TestCallSummaryProjection_BoundaryFactsTreatsLengthRelationAsProof(t *testing.T) {
+	lengthRel := flow.BoundaryLengthRelationFact{
+		Target: flow.BoundaryPath{Kind: flow.BoundaryPathReturn, Index: 0},
+		Source: flow.BoundaryPath{Kind: flow.BoundaryPathParam, Index: 1},
+	}
 	projection := summary.CallSummaryProjection{
 		Targets: []summary.CallSummaryTarget{
 			{
-				Summary:            summary.Summary{Relations: summaryRel},
-				SignatureRelations: fallbackRel,
+				Summary: summary.Summary{
+					BoundaryFacts: flow.BoundaryFactsDomain.Top().WithLengthRelations([]flow.BoundaryLengthRelationFact{lengthRel}),
+				},
 			},
 		},
 	}
 
-	got := projection.ReturnRelations()
-	if !got.HasLengthParam(flow.ReturnLengthParamRelation{ReturnIndex: 0, ParamIndex: 1}) {
-		t.Fatalf("ReturnRelations = %#v, want summary length-param proof", got)
-	}
-	if len(got.ErrorReturns()) != 0 {
-		t.Fatalf("ReturnRelations used fallback despite summary proof: %#v", got)
+	got := projection.BoundaryFacts()
+	if !got.HasLengthRelation(lengthRel) {
+		t.Fatalf("BoundaryFacts = %#v, want summary length-param proof", got)
 	}
 }
 

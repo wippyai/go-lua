@@ -206,9 +206,12 @@ return out
 	`, "table", "pairs")
 
 	sum := summary.Project(fs, g)
-	rel := flow.ReturnLengthParamRelation{ReturnIndex: 0, ParamIndex: 0}
-	if !sum.Relations.HasLengthParam(rel) {
-		t.Fatalf("summary relations = %#v, want loop-derived length relation %#v", sum.Relations, rel)
+	rel := flow.BoundaryLengthRelationFact{
+		Target: flow.BoundaryPath{Kind: flow.BoundaryPathReturn, Index: 0},
+		Source: flow.BoundaryPath{Kind: flow.BoundaryPathParam, Index: 0},
+	}
+	if !sum.BoundaryFacts.HasLengthRelation(rel) {
+		t.Fatalf("summary boundary facts = %#v, want loop-derived length relation %#v", sum.BoundaryFacts, rel)
 	}
 }
 
@@ -229,9 +232,12 @@ return out
 	`, "table", "pairs")
 
 	sum := summary.Project(fs, g)
-	rel := flow.ReturnLengthParamRelation{ReturnIndex: 0, ParamIndex: 0}
-	if sum.Relations.HasLengthParam(rel) {
-		t.Fatalf("summary relations exported stale loop-derived target: %#v", sum.Relations)
+	rel := flow.BoundaryLengthRelationFact{
+		Target: flow.BoundaryPath{Kind: flow.BoundaryPathReturn, Index: 0},
+		Source: flow.BoundaryPath{Kind: flow.BoundaryPathParam, Index: 0},
+	}
+	if sum.BoundaryFacts.HasLengthRelation(rel) {
+		t.Fatalf("summary boundary facts exported stale loop-derived target: %#v", sum.BoundaryFacts)
 	}
 }
 

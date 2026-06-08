@@ -35,7 +35,7 @@ func (t *Transfer) applyProductCallBoundary(
 		return true
 	}
 	t.applyCallArgDemands(out, call, result.ArgDemands, demand)
-	t.applyCallResultEffects(out, call, ctx, result.Effects, demand)
+	t.applyCallResultEffects(out, app.Point, call, ctx, result.Effects, demand)
 	if app.ApplyParamNarrows && (result.Postconditions.HasConstraints() || len(result.ParamNarrows) > 0) {
 		return t.applyParamEvidenceAtPoint(out, app.Point, call, result.Postconditions, result.ParamNarrows)
 	}
@@ -44,17 +44,18 @@ func (t *Transfer) applyProductCallBoundary(
 
 func (t *Transfer) applyCallResultEffects(
 	out *flow.PointState,
+	p cfg.Point,
 	call *ast.FuncCallExpr,
 	ctx ProductCallContext,
 	effects CallEffects,
 	demand func(int, paramevidence.ParamContract),
 ) {
-	boundaryFacts, boundaryAppendPlans := t.boundaryFactsAppendPlans(out, call, effects.BoundaryFacts)
+	boundaryFacts, boundaryAppendPlans, boundaryPreApp := t.boundaryFactsAppendPlans(out, call, effects.BoundaryFacts)
 	t.applyCallCellEffects(out, call, effects.CellEffects)
 	t.applyCallReceiverEffects(out, call, effects.ReceiverEffects, len(ctx.RuntimeArgValues), demand)
 	t.applyCallMutatorEffects(out, call, ctx, effects.ElementUnions, demand)
 	if boundaryFacts.HasProof() {
-		t.applyBoundaryFactsWithAppendPlans(out, call, boundaryFacts, nil, boundaryAppendPlans)
+		t.applyBoundaryFactsWithAppendPlans(out, p, call, boundaryFacts, nil, boundaryAppendPlans, boundaryPreApp)
 	}
 }
 

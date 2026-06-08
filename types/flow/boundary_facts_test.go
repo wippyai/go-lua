@@ -46,6 +46,9 @@ func TestBoundaryFactsPartitionByReturnIndices(t *testing.T) {
 		Array:  ret0Array,
 		Field:  []constraint.Segment{{Kind: constraint.SegmentField, Name: "child"}},
 		Source: ret1Key,
+	}}).WithLengthRelations([]BoundaryLengthRelationFact{{
+		Target: ret0Array,
+		Source: paramTable,
 	}})
 
 	params, buckets := facts.PartitionByReturnIndices()
@@ -57,6 +60,9 @@ func TestBoundaryFactsPartitionByReturnIndices(t *testing.T) {
 	}
 	if bucket := boundaryBucketForTest(t, buckets, []int{0}); len(bucket.Facts().KeyArrays()) != 1 || len(bucket.Facts().KeyArrayValues()) != 1 {
 		t.Fatalf("bucket [0] = %#v, want key-array and key-array-value facts", bucket.Facts())
+	}
+	if bucket := boundaryBucketForTest(t, buckets, []int{0}); len(bucket.Facts().LengthRelations()) != 1 {
+		t.Fatalf("bucket [0] = %#v, want length relation fact", bucket.Facts())
 	}
 	if bucket := boundaryBucketForTest(t, buckets, []int{1}); len(bucket.Facts().LengthLowerBounds()) != 1 {
 		t.Fatalf("bucket [1] = %#v, want length lower bound", bucket.Facts())

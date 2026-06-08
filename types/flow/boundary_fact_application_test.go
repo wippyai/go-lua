@@ -6,6 +6,7 @@ import (
 	"github.com/wippyai/go-lua/types/cfg"
 	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/domain/value/product"
+	"github.com/wippyai/go-lua/types/flow/numeric"
 	"github.com/wippyai/go-lua/types/typ"
 )
 
@@ -78,6 +79,32 @@ func TestApplyBoundaryFactsAppliesCollectionProvenanceTransaction(t *testing.T) 
 	})
 	if len(sources) != 1 {
 		t.Fatalf("boundary append field sources = %v, want one; facts=%s", sources, state.KeyPresence.Format())
+	}
+}
+
+func TestApplyBoundaryFactsAppliesLengthRelation(t *testing.T) {
+	sourcePath := constraint.NewPath(cfg.SymbolID(411), "source")
+	targetPath := constraint.NewPath(cfg.SymbolID(412), "target")
+	state := PointState{Num: numeric.NewState()}
+	state.Num.ApplyLenGeConst(SymbolPathKey(sourcePath.Symbol, nil), 3)
+	roots := NewBoundaryLocalRoots(
+		map[int]constraint.Path{0: sourcePath},
+		map[int]constraint.Path{0: targetPath},
+	)
+	facts := BoundaryFactsDomain.Top().WithLengthRelations([]BoundaryLengthRelationFact{{
+		Target: BoundaryPath{Kind: BoundaryPathReturn, Index: 0},
+		Source: BoundaryPath{Kind: BoundaryPathParam, Index: 0},
+	}})
+
+	app, changed := ApplyBoundaryFacts(&state, facts, roots.Rebase, nil)
+	if !changed {
+		t.Fatal("ApplyBoundaryFacts reported no change")
+	}
+	if len(app.LengthRelations) != 1 || !app.LengthRelations[0].Target.Equal(targetPath) || !app.LengthRelations[0].Source.Equal(sourcePath) {
+		t.Fatalf("length relation application = %#v, want target/source paths", app.LengthRelations)
+	}
+	if lower, _, ok := state.Num.LenBoundsFor(SymbolPathKey(targetPath.Symbol, nil)); !ok || lower != 3 {
+		t.Fatalf("target length lower = %d/%v, want 3", lower, ok)
 	}
 }
 

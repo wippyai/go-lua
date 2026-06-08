@@ -45,7 +45,7 @@ func (o CallOutcome) BoundaryEvidence(in BoundaryEvidenceInput) BoundaryEvidence
 		ReturnRelations: o.ReturnRelations(in.Call, in.Resolver, in.UseResolvedSignature),
 		CellEffects:     o.CellEffects(in.CellEffects),
 		ReceiverEffects: o.ReceiverEffects(),
-		BoundaryFacts:   o.BoundaryFacts(),
+		BoundaryFacts:   o.BoundaryFacts(in.Call, in.Resolver, in.UseResolvedSignature),
 		ArgDemands:      cloneArgDemands(in.ArgDemands),
 		Postconditions:  postconditionsOrCompatibility(in.Postconditions, in.ParamNarrows),
 		ParamNarrows:    paramevidence.SortParamNarrows(in.ParamNarrows),
