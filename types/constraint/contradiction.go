@@ -14,7 +14,11 @@ type conjunctionContradictionIndex struct {
 	hasContradiction bool
 	exact            map[uint64][]contradictionClass
 	hasType          map[uint64][]hasTypeClass
-	paths            map[uint64][]pathPredicateClass
+	// Most conjunctions mention at most one truthiness/nilness path; keep that
+	// case allocation-free and spill to paths only for distinct paths.
+	pathSingle    pathPredicateClass
+	hasPathSingle bool
+	paths         map[uint64][]pathPredicateClass
 }
 
 type contradictionClass struct {
@@ -221,6 +225,9 @@ func (idx conjunctionContradictionIndex) pathPredicateContradicts(ct Constraint)
 	if !ok {
 		return false
 	}
+	if idx.hasPathSingle && idx.pathSingle.path.Equal(path) {
+		return pathPredicateContradicts(idx.pathSingle.bits, bits, path)
+	}
 	key := path.Hash()
 	for _, seen := range idx.paths[key] {
 		if !seen.path.Equal(path) {
@@ -236,6 +243,24 @@ func (idx conjunctionContradictionIndex) pathPredicateContradicts(ct Constraint)
 func (idx *conjunctionContradictionIndex) observePathPredicate(ct Constraint) bool {
 	path, bits, ok := pathPredicateOf(ct)
 	if !ok {
+		return false
+	}
+	if idx.hasPathSingle {
+		if idx.pathSingle.path.Equal(path) {
+			if pathPredicateContradicts(idx.pathSingle.bits, bits, path) {
+				return true
+			}
+			idx.pathSingle.bits |= bits
+			return false
+		}
+		if idx.paths == nil {
+			idx.paths = make(map[uint64][]pathPredicateClass)
+			key := idx.pathSingle.path.Hash()
+			idx.paths[key] = append(idx.paths[key], idx.pathSingle)
+		}
+	} else {
+		idx.pathSingle = pathPredicateClass{path: path, bits: bits}
+		idx.hasPathSingle = true
 		return false
 	}
 	key := path.Hash()
