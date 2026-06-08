@@ -8,7 +8,6 @@ import (
 	"github.com/wippyai/go-lua/compiler/check/canonical/ref"
 	"github.com/wippyai/go-lua/compiler/check/canonical/summary"
 	"github.com/wippyai/go-lua/compiler/check/domain/fieldkey"
-	flowpath "github.com/wippyai/go-lua/compiler/check/domain/path"
 	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/flow"
 )
@@ -96,7 +95,7 @@ func (r TargetResolver) ResolveStaticExpr(expr ast.Expr) (summary.FuncRef, bool)
 		}
 	}
 	if r.Static.FieldFunc != nil {
-		if sym, field, ok := r.directFieldPath(expr); ok {
+		if sym, field, ok := (staticAccess{Bindings: r.Bindings}).directField(expr); ok {
 			if ref, ok := r.Static.FieldFunc(sym, field); ok {
 				return ref, true
 			}
@@ -157,7 +156,7 @@ func (r TargetResolver) ResolveFunctionRefsAtExprOrSymbol(expr ast.Expr, refs fl
 // function-valued expression. The bool has the same authority meaning as
 // ResolveFunctionRefsAtExpr: a present Top set returns (Top, true).
 func (r TargetResolver) ResolveClosureRefSetAtExpr(expr ast.Expr, refs flow.ClosureRefs) (flow.ClosureRefSet, bool) {
-	path, ok := r.exprPath(expr)
+	path, ok := (staticAccess{Bindings: r.Bindings}).exprPath(expr)
 	if !ok {
 		return flow.ClosureRefSet{}, false
 	}
@@ -235,7 +234,7 @@ func (r TargetResolver) ResolveStaticMethod(call *ast.FuncCallExpr) (summary.Fun
 }
 
 func (r TargetResolver) directMethodRefsFromState(call *ast.FuncCallExpr, refs flow.FunctionRefs) ([]summary.FuncRef, bool) {
-	path, ok := r.methodPath(call)
+	path, ok := (staticAccess{Bindings: r.Bindings}).methodPath(call)
 	if !ok {
 		return nil, false
 	}
@@ -243,7 +242,7 @@ func (r TargetResolver) directMethodRefsFromState(call *ast.FuncCallExpr, refs f
 }
 
 func (r TargetResolver) directExprRefsFromState(expr ast.Expr, refs flow.FunctionRefs) ([]summary.FuncRef, bool) {
-	path, ok := r.exprPath(expr)
+	path, ok := (staticAccess{Bindings: r.Bindings}).exprPath(expr)
 	if !ok {
 		return nil, false
 	}
@@ -251,7 +250,7 @@ func (r TargetResolver) directExprRefsFromState(expr ast.Expr, refs flow.Functio
 }
 
 func (r TargetResolver) closureMethodRefs(call *ast.FuncCallExpr, refs flow.ClosureRefs) ([]flow.ClosureRef, bool) {
-	path, ok := r.methodPath(call)
+	path, ok := (staticAccess{Bindings: r.Bindings}).methodPath(call)
 	if !ok {
 		return nil, false
 	}
@@ -259,46 +258,11 @@ func (r TargetResolver) closureMethodRefs(call *ast.FuncCallExpr, refs flow.Clos
 }
 
 func (r TargetResolver) closureExprRefs(expr ast.Expr, refs flow.ClosureRefs) ([]flow.ClosureRef, bool) {
-	path, ok := r.exprPath(expr)
+	path, ok := (staticAccess{Bindings: r.Bindings}).exprPath(expr)
 	if !ok {
 		return nil, false
 	}
 	return closureRefsAtPath(refs, path)
-}
-
-func (r TargetResolver) methodPath(call *ast.FuncCallExpr) (constraint.Path, bool) {
-	if call == nil || call.Method == "" {
-		return constraint.Path{}, false
-	}
-	path, ok := r.exprPath(call.Receiver)
-	if !ok {
-		return constraint.Path{}, false
-	}
-	path.Segments = append(append([]constraint.Segment(nil), path.Segments...), constraint.Segment{
-		Kind: constraint.SegmentField,
-		Name: call.Method,
-	})
-	return path, true
-}
-
-func (r TargetResolver) directFieldPath(expr ast.Expr) (cfg.SymbolID, fieldkey.Key, bool) {
-	path, ok := r.exprPath(expr)
-	if !ok || path.Symbol == 0 || len(path.Segments) != 1 {
-		return 0, fieldkey.Key{}, false
-	}
-	key, ok := fieldkey.FromSegment(path.Segments[0])
-	return path.Symbol, key, ok
-}
-
-func (r TargetResolver) exprPath(expr ast.Expr) (constraint.Path, bool) {
-	if r.Bindings == nil || expr == nil {
-		return constraint.Path{}, false
-	}
-	path := flowpath.FromExprWithBindings(expr, nil, r.Bindings)
-	if path.IsEmpty() || path.Symbol == 0 {
-		return constraint.Path{}, false
-	}
-	return path, true
 }
 
 func (r TargetResolver) symbolOf(ident *ast.IdentExpr) (cfg.SymbolID, bool) {

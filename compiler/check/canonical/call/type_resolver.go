@@ -5,7 +5,6 @@ import (
 	"github.com/wippyai/go-lua/compiler/bind"
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/domain/fieldkey"
-	flowpath "github.com/wippyai/go-lua/compiler/check/domain/path"
 	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/db"
 	"github.com/wippyai/go-lua/types/query/core"
@@ -110,7 +109,7 @@ func (r TypeResolver) ResolveGlobalIdentType(ident *ast.IdentExpr) typ.Type {
 // ResolveStaticFieldCallee resolves local field-function facts before imported
 // module/global member types.
 func (r TypeResolver) ResolveStaticFieldCallee(expr ast.Expr) typ.Type {
-	sym, field, ok := r.directFieldPath(expr)
+	sym, field, ok := (staticAccess{Bindings: r.Bindings}).directField(expr)
 	if !ok {
 		return nil
 	}
@@ -128,7 +127,7 @@ func (r TypeResolver) ResolveStaticFieldCallee(expr ast.Expr) typ.Type {
 // ResolveImportedFieldCallee resolves a field-path callee through an immutable
 // imported base type.
 func (r TypeResolver) ResolveImportedFieldCallee(expr ast.Expr) typ.Type {
-	sym, field, ok := r.directFieldPath(expr)
+	sym, field, ok := (staticAccess{Bindings: r.Bindings}).directField(expr)
 	if !ok || r.Static.ImportedBase == nil {
 		return nil
 	}
@@ -212,26 +211,6 @@ func (r TypeResolver) funcByIdent(ident *ast.IdentExpr) typ.Type {
 		return nil
 	}
 	return sig
-}
-
-func (r TypeResolver) directFieldPath(expr ast.Expr) (cfg.SymbolID, fieldkey.Key, bool) {
-	path, ok := r.exprPath(expr)
-	if !ok || path.Symbol == 0 || len(path.Segments) != 1 {
-		return 0, fieldkey.Key{}, false
-	}
-	key, ok := fieldkey.FromSegment(path.Segments[0])
-	return path.Symbol, key, ok
-}
-
-func (r TypeResolver) exprPath(expr ast.Expr) (constraint.Path, bool) {
-	if r.Bindings == nil || expr == nil {
-		return constraint.Path{}, false
-	}
-	path := flowpath.FromExprWithBindings(expr, nil, r.Bindings)
-	if path.IsEmpty() || path.Symbol == 0 {
-		return constraint.Path{}, false
-	}
-	return path, true
 }
 
 func (r TypeResolver) symbolOf(ident *ast.IdentExpr) (cfg.SymbolID, bool) {
