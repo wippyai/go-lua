@@ -32,13 +32,6 @@ func (v ReturnVector) Types() []typ.Type {
 	return cloneTypes(v.slots)
 }
 
-// ResultTypes extracts the Lua return vector from a packed call result. Prefer
-// ReturnVectorOfCallResult at new call-boundary code; this compatibility helper
-// keeps older callers on the same normalization.
-func ResultTypes(packed typ.Type, returns []typ.Type) []typ.Type {
-	return ReturnVectorOfCallResult(packed, returns).Types()
-}
-
 func cloneTypes(types []typ.Type) []typ.Type {
 	if len(types) == 0 {
 		return nil

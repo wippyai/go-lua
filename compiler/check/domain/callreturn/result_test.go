@@ -40,9 +40,3 @@ func TestReturnVectorSingleAndNil(t *testing.T) {
 		t.Fatalf("ReturnVector(empty) = %#v, want nil", got)
 	}
 }
-
-func TestResultTypesUsesReturnVectorCompatibility(t *testing.T) {
-	if got := ResultTypes(typ.String, nil); len(got) != 1 || got[0] != typ.String {
-		t.Fatalf("ResultTypes(single) = %#v, want string", got)
-	}
-}
