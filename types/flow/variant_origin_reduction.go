@@ -1,8 +1,6 @@
 package flow
 
 import (
-	"sort"
-
 	"github.com/wippyai/go-lua/types/cfg"
 	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/domain/value/product"
@@ -51,24 +49,16 @@ func (r VariantOriginConditionReducer) Reductions(fact constraint.Condition) []S
 // VariantOriginConditionSymbols returns the root symbols constrained by
 // VariantCase facts in stable order.
 func VariantOriginConditionSymbols(fact constraint.Condition) []cfg.SymbolID {
-	seen := make(map[cfg.SymbolID]struct{})
+	var syms cfgSymbolList
 	for i := 0; i < fact.NumDisjuncts(); i++ {
 		for _, c := range fact.DisjunctConstraints(i) {
 			sym := variantOriginConstraintSymbol(c)
 			if sym != 0 {
-				seen[sym] = struct{}{}
+				syms.Add(sym)
 			}
 		}
 	}
-	if len(seen) == 0 {
-		return nil
-	}
-	out := make([]cfg.SymbolID, 0, len(seen))
-	for sym := range seen {
-		out = append(out, sym)
-	}
-	sort.Slice(out, func(i, j int) bool { return out[i] < out[j] })
-	return out
+	return syms.SortedValues()
 }
 
 func variantOriginValueForCondition(av product.AbstractValue, sym cfg.SymbolID, fact constraint.Condition) (product.AbstractValue, bool) {

@@ -225,16 +225,12 @@ func (p ConditionProofProjector) applyConditionProofConstraints(point cfg.Point,
 		return conditionProjectionResult{status: conditionProjectionNone}
 	}
 
-	values := p.conditionProofValueMap(point, seedPath, seedType, constraints)
+	proofEnv := p.conditionProofValueEnv(point, seedPath, seedType, constraints)
 	env := constraint.Env{
 		ResolveType: p.ResolveType,
 		Resolver:    p.Resolver,
-		PathTypeAt: func(key constraint.PathKey) typ.Type {
-			return values[key]
-		},
-		ResolvePath: func(path constraint.Path) constraint.PathKey {
-			return p.resolvePath(point, path)
-		},
+		PathTypeAt:  proofEnv.TypeAt,
+		ResolvePath: proofEnv.ResolvePath,
 	}
 	dom := NewProductDomain(env)
 	if !dom.ApplyCondition(constraint.FromConstraints(constraints...)) {
@@ -269,37 +265,59 @@ func projectedDescendantRead(dom *ProductDomain, resolver narrow.Resolver, seedK
 	return typ.Nil, true
 }
 
-func (p ConditionProofProjector) conditionProofValueMap(point cfg.Point, seedPath constraint.Path, seedType typ.Type, constraints []constraint.Constraint) map[constraint.PathKey]typ.Type {
-	values := make(map[constraint.PathKey]typ.Type, len(constraints)+2)
+type conditionProofValueEnv struct {
+	projector ConditionProofProjector
+	point     cfg.Point
+	seedPath  constraint.Path
+	seedType  typ.Type
+	values    map[constraint.PathKey]typ.Type
+}
+
+func (p ConditionProofProjector) conditionProofValueEnv(point cfg.Point, seedPath constraint.Path, seedType typ.Type, constraints []constraint.Constraint) conditionProofValueEnv {
 	seedPath = normalizeConstraintPathForQuery(seedPath)
-	if seedKey := p.resolvePath(point, seedPath); seedKey != "" && seedType != nil {
-		values[seedKey] = seedType
+	env := conditionProofValueEnv{
+		projector: p,
+		point:     point,
+		seedPath:  seedPath,
+		seedType:  seedType,
+		values:    make(map[constraint.PathKey]typ.Type, len(constraints)+2),
+	}
+	if seedKey := env.ResolvePath(seedPath); seedKey != "" && seedType != nil {
+		env.values[seedKey] = seedType
 	}
 	for _, c := range constraints {
 		constraint.VisitPaths(c, func(path constraint.Path) bool {
-			p.recordConditionProofPath(point, values, seedPath, seedType, path)
+			env.RecordPath(path)
 			return false
 		})
 	}
-	return values
+	return env
 }
 
-func (p ConditionProofProjector) recordConditionProofPath(point cfg.Point, values map[constraint.PathKey]typ.Type, seedPath constraint.Path, seedType typ.Type, path constraint.Path) {
+func (e conditionProofValueEnv) TypeAt(key constraint.PathKey) typ.Type {
+	return e.values[key]
+}
+
+func (e conditionProofValueEnv) ResolvePath(path constraint.Path) constraint.PathKey {
+	return e.projector.resolvePath(e.point, path)
+}
+
+func (e conditionProofValueEnv) RecordPath(path constraint.Path) {
 	if path.IsEmpty() {
 		return
 	}
 	path = normalizeConstraintPathForQuery(path)
-	key := p.resolvePath(point, path)
+	key := e.ResolvePath(path)
 	if key == "" {
 		return
 	}
-	if _, exists := values[key]; exists {
+	if _, exists := e.values[key]; exists {
 		return
 	}
-	if seedType != nil && isDescendantOf(path, seedPath) {
-		relative := path.Segments[len(seedPath.Segments):]
-		if derived, ok := deriveTypeFrom(p.Resolver, seedType, relative); ok {
-			values[key] = derived
+	if e.seedType != nil && isDescendantOf(path, e.seedPath) {
+		relative := path.Segments[len(e.seedPath.Segments):]
+		if derived, ok := deriveTypeFrom(e.projector.Resolver, e.seedType, relative); ok {
+			e.values[key] = derived
 			return
 		}
 	}
@@ -307,16 +325,16 @@ func (p ConditionProofProjector) recordConditionProofPath(point cfg.Point, value
 		return
 	}
 	rootPath := constraint.Path{Root: path.Root, Symbol: path.Symbol}
-	rootType := p.rootTypeAt(point, rootPath)
+	rootType := e.projector.rootTypeAt(e.point, rootPath)
 	if rootType == nil {
 		return
 	}
 	if len(path.Segments) == 0 {
-		values[key] = rootType
+		e.values[key] = rootType
 		return
 	}
-	if derived, ok := deriveTypeFrom(p.Resolver, rootType, path.Segments); ok {
-		values[key] = derived
+	if derived, ok := deriveTypeFrom(e.projector.Resolver, rootType, path.Segments); ok {
+		e.values[key] = derived
 	}
 }
 
