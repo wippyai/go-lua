@@ -50,12 +50,17 @@ func (t *Transfer) applyCallResultEffects(
 	effects CallEffects,
 	demand func(int, paramevidence.ParamContract),
 ) {
-	boundaryFacts, boundaryAppendPlans, boundaryPreApp := t.boundaryFactsAppendPlans(out, call, effects.BoundaryFacts)
+	if out == nil {
+		return
+	}
+	boundaryFacts := effects.BoundaryFacts
+	boundaryRoots := t.callBoundaryLocalRoots(call, nil)
+	boundaryPlan := flow.PrepareBoundaryFactReplay(*out, boundaryFacts, boundaryRoots)
 	t.applyCallCellEffects(out, call, effects.CellEffects)
 	t.applyCallReceiverEffects(out, call, effects.ReceiverEffects, len(ctx.RuntimeArgValues), demand)
 	t.applyCallMutatorEffects(out, call, ctx, effects.ElementUnions, demand)
 	if boundaryFacts.HasProof() {
-		t.applyBoundaryFactsWithAppendPlans(out, p, call, boundaryFacts, nil, boundaryAppendPlans, boundaryPreApp)
+		t.applyBoundaryFactsWithPlan(out, p, call, boundaryFacts, nil, boundaryPlan)
 	}
 }
 

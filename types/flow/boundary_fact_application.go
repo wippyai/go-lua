@@ -84,19 +84,23 @@ type BoundaryAppendKeyPlan struct {
 	preserveHistoryBase bool
 }
 
-// BoundaryFactApplication reports boundary consequences that must be replayed
-// outside the immediate flow transaction, either because they belong to a
-// transfer-local refinement vocabulary or because they were computed from
-// prestate evidence that may be unavailable after call side effects.
+// BoundaryFactApplication reports transfer-local consequences produced while
+// applying boundary facts. Flow applies point-state fact lanes itself; only
+// refinements outside the flow vocabulary are returned to transfer.
 type BoundaryFactApplication struct {
-	KeyProvenance     []KeyProvenanceResult
-	LengthLowerBounds []BoundaryLengthLowerApplication
-	LengthRelations   []BoundaryLengthRelationApplication
+	KeyProvenance   []KeyProvenanceResult
+	LengthRelations []BoundaryLengthRelationApplication
 }
 
-// BoundaryLengthLowerApplication is the caller-local form of a boundary length
-// lower bound after boundary paths have been rebased.
-type BoundaryLengthLowerApplication struct {
+// BoundaryFactReplayPlan records boundary replay decisions that must be made
+// before a call mutates caller state. Flow owns these prestate facts because
+// they are part of the boundary algebra, not transfer-site control flow.
+type BoundaryFactReplayPlan struct {
+	appendKeys     []BoundaryAppendKeyPlan
+	prestateLowers []boundaryLengthLowerApplication
+}
+
+type boundaryLengthLowerApplication struct {
 	Target constraint.Path
 	Lower  int64
 }
@@ -108,24 +112,21 @@ type BoundaryLengthRelationApplication struct {
 	Source constraint.Path
 }
 
-// BoundaryFactPrestateApplication captures boundary consequences that must be
-// computed from the pre-call state but may be replayed after assignment targets
-// or receiver effects have been overwritten.
-func BoundaryFactPrestateApplication(
+func boundaryFactPrestateLengthLowers(
 	state PointState,
 	facts BoundaryFacts,
 	rebase BoundaryPathRebaser,
-) BoundaryFactApplication {
+) []boundaryLengthLowerApplication {
 	if rebase == nil || !facts.HasProof() {
-		return BoundaryFactApplication{}
+		return nil
 	}
-	var app BoundaryFactApplication
+	var lowers []boundaryLengthLowerApplication
 	for _, fact := range facts.LengthLowerBounds() {
 		target, ok := rebase(fact.Target)
 		if !ok || target.path.IsEmpty() || fact.Lower <= 0 {
 			continue
 		}
-		app.LengthLowerBounds = append(app.LengthLowerBounds, BoundaryLengthLowerApplication{
+		lowers = append(lowers, boundaryLengthLowerApplication{
 			Target: target.path,
 			Lower:  fact.Lower,
 		})
@@ -140,13 +141,25 @@ func BoundaryFactPrestateApplication(
 			continue
 		}
 		if lower := boundaryLengthRelationSourceLower(state, source.path); lower > 0 {
-			app.LengthLowerBounds = append(app.LengthLowerBounds, BoundaryLengthLowerApplication{
+			lowers = append(lowers, boundaryLengthLowerApplication{
 				Target: target.path,
 				Lower:  lower,
 			})
 		}
 	}
-	return app
+	return lowers
+}
+
+// PrepareBoundaryFactReplay captures all prestate-sensitive replay decisions for
+// applying facts through roots.
+func PrepareBoundaryFactReplay(state PointState, facts BoundaryFacts, roots BoundaryLocalRoots) BoundaryFactReplayPlan {
+	if !facts.HasProof() {
+		return BoundaryFactReplayPlan{}
+	}
+	return BoundaryFactReplayPlan{
+		appendKeys:     BoundaryAppendKeyPlans(state, facts, roots.Rebase),
+		prestateLowers: boundaryFactPrestateLengthLowers(state, facts, roots.Rebase),
+	}
 }
 
 // BoundaryAppendKeyPlans selects append-key replay plans from the current
@@ -350,6 +363,20 @@ func ApplyBoundaryFacts(
 	return result, changed
 }
 
+// ApplyBoundaryFactsWithReplay applies facts with replay decisions captured before
+// caller-side mutation. The returned application contains only consequences that
+// still require transfer-local materialization.
+func ApplyBoundaryFactsWithReplay(
+	out *PointState,
+	facts BoundaryFacts,
+	roots BoundaryLocalRoots,
+	plan BoundaryFactReplayPlan,
+) (BoundaryFactApplication, bool) {
+	app, changed := ApplyBoundaryFacts(out, facts, roots.Rebase, plan.appendKeys)
+	changed = applyBoundaryLengthLowerApplications(out, plan.prestateLowers) || changed
+	return app, changed
+}
+
 func boundaryLengthRelationSourceLower(state PointState, source constraint.Path) int64 {
 	ref, ok := ContainerRefOfPath(source)
 	if !ok {
@@ -373,6 +400,22 @@ func appendBoundaryKeyProvenanceResult(app BoundaryFactApplication, result KeyPr
 	}
 	app.KeyProvenance = append(app.KeyProvenance, result)
 	return app
+}
+
+func applyBoundaryLengthLowerApplications(out *PointState, lowers []boundaryLengthLowerApplication) bool {
+	if out == nil || len(lowers) == 0 {
+		return false
+	}
+	ops := make([]NumericOp, 0, len(lowers))
+	for _, lower := range lowers {
+		if op, ok := NumericLenGeConstPathOp(lower.Target, lower.Lower); ok {
+			ops = append(ops, op)
+		}
+	}
+	if len(ops) == 0 {
+		return false
+	}
+	return ApplyNumericEffect(out, NumericEffect{Ops: ops})
 }
 
 func applyBoundaryAppendKeyPlans(out *PointState, plans []BoundaryAppendKeyPlan) bool {

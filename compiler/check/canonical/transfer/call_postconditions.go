@@ -15,12 +15,11 @@ type assignCallPostconditionEffects struct {
 }
 
 type boundaryFactPostcondition struct {
-	call        *ast.FuncCallExpr
-	point       cfg.Point
-	facts       flow.BoundaryFacts
-	returns     map[int]constraint.Path
-	appendPlans []flow.BoundaryAppendKeyPlan
-	preApp      flow.BoundaryFactApplication
+	call    *ast.FuncCallExpr
+	point   cfg.Point
+	facts   flow.BoundaryFacts
+	returns map[int]constraint.Path
+	plan    flow.BoundaryFactReplayPlan
 }
 
 // buildAssignCallPostconditions rebases callee return-relation predicates into
@@ -67,7 +66,7 @@ func (t *Transfer) applyAssignCallPostconditions(out *flow.PointState, effects a
 		flow.ApplyRelationEffect(out, rel)
 	}
 	for _, effect := range effects.boundaryFacts {
-		t.applyBoundaryFactsWithAppendPlans(out, effect.point, effect.call, effect.facts, effect.returns, effect.appendPlans, effect.preApp)
+		t.applyBoundaryFactsWithPlan(out, effect.point, effect.call, effect.facts, effect.returns, effect.plan)
 	}
 	if len(effects.numericOps) > 0 {
 		flow.ApplyNumericEffect(out, flow.NumericEffect{Ops: effects.numericOps})
@@ -140,12 +139,11 @@ func (t *Transfer) appendBoundaryFactPostconditions(
 	returns := t.boundaryReturnPaths(info, callInfo, facts)
 	roots := t.callBoundaryLocalRoots(callInfo.Call, returns)
 	effects.boundaryFacts = append(effects.boundaryFacts, boundaryFactPostcondition{
-		call:        callInfo.Call,
-		point:       p,
-		facts:       facts,
-		returns:     returns,
-		appendPlans: t.boundaryAppendKeyPlans(out, callInfo.Call, facts, returns),
-		preApp:      flow.BoundaryFactPrestateApplication(*out, facts, roots.Rebase),
+		call:    callInfo.Call,
+		point:   p,
+		facts:   facts,
+		returns: returns,
+		plan:    flow.PrepareBoundaryFactReplay(*out, facts, roots),
 	})
 }
 
