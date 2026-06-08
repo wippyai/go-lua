@@ -299,7 +299,7 @@ func canonicalValueOriginFacts(entries []ValueOriginFact) ValueOriginFacts {
 		}
 		dst = append(dst, entry)
 	}
-	return ValueOriginFacts{entries: append([]ValueOriginFact(nil), dst...)}
+	return ValueOriginFacts{entries: dst}
 }
 
 func valueOriginLess(a, b ValueOriginFact) bool {
