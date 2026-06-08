@@ -12,7 +12,6 @@ import (
 
 type assignCallPostconditionEffects struct {
 	relations     []flow.RelationEffect
-	keyProvenance []flow.KeyProvenancePathTransaction
 	boundaryFacts []boundaryFactPostcondition
 	numericOps    []flow.NumericOp
 }
@@ -29,6 +28,8 @@ type boundaryFactPostcondition struct {
 // the normalized call-postcondition carrier: every atom is interpreted here by
 // mapping callee return slots to assignment targets and callee runtime parameters
 // to call-site runtime arguments, then lowering through the canonical reducers.
+// Boundary-relative key and map postconditions are carried separately by
+// `BoundaryFacts` so flow owns their path rebasing and point-state replay.
 //
 // Representative case: `keys(data)` proves `len(return[0]) >= len(param[0])`.
 // If the caller already knows `len(data) >= 1`, this materializes `len(ks) >= 1`
@@ -54,7 +55,6 @@ func (t *Transfer) buildAssignCallPostconditions(
 		t.appendSiblingNilPostconditions(info, callInfo, rels, &effects)
 		t.appendGuardedTypePostconditions(info, callInfo, rels, &effects)
 		t.appendLengthParamPostconditions(out, p, info, callInfo, rels, &effects)
-		t.appendReturnKeyParamPostconditions(info, callInfo, rels, &effects)
 		t.appendBoundaryFactPostconditions(out, info, callInfo, demand, &effects)
 	})
 	return effects
@@ -66,9 +66,6 @@ func (t *Transfer) applyAssignCallPostconditions(out *flow.PointState, effects a
 	}
 	for _, rel := range effects.relations {
 		flow.ApplyRelationEffect(out, rel)
-	}
-	for _, effect := range effects.keyProvenance {
-		t.applyKeyProvenancePathTransaction(out, effect)
 	}
 	for _, effect := range effects.boundaryFacts {
 		t.applyBoundaryFactsWithAppendPlans(out, effect.call, effect.facts, effect.returns, effect.appendPlans)
@@ -122,40 +119,6 @@ func (t *Transfer) appendGuardedTypePostconditions(
 			TargetSym:     valueTarget.Symbol,
 			GuardOnTruthy: rel.GuardOnTruthy,
 			TargetType:    rel.TargetType,
-		})
-	}
-}
-
-func (t *Transfer) appendReturnKeyParamPostconditions(
-	info *cfg.AssignInfo,
-	callInfo *cfg.CallInfo,
-	rels flow.ReturnRelations,
-	effects *assignCallPostconditionEffects,
-) {
-	for _, rel := range rels.KeyParams() {
-		target, ok := assignmentTargetForReturn(info, callInfo, rel.ReturnIndex)
-		if !ok {
-			continue
-		}
-		keyPath, ok := t.staticPathOfAssignTarget(target)
-		if !ok || keyPath.IsEmpty() {
-			continue
-		}
-		arg := callsite.RuntimeArgAt(callInfo, rel.ParamIndex)
-		if arg == nil {
-			continue
-		}
-		tablePath, ok := t.staticPathOfExpr(arg)
-		if !ok || tablePath.IsEmpty() {
-			continue
-		}
-		for _, seg := range rel.ParamSegments {
-			tablePath = tablePath.Append(seg)
-		}
-		effects.keyProvenance = append(effects.keyProvenance, flow.KeyProvenancePathTransaction{
-			Kind:      flow.KeyProvenanceDynamicIndexWrite,
-			TablePath: tablePath,
-			KeyPath:   keyPath,
 		})
 	}
 }

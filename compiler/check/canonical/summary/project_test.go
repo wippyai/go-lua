@@ -244,7 +244,7 @@ func TestProject_ExportsPointLengthParamRelationForReturnedTarget(t *testing.T) 
 	}
 }
 
-func TestProject_ExportsReturnKeyParamRelationForReturnedKey(t *testing.T) {
+func TestProject_ExportsReturnKeyBoundaryFactForReturnedKey(t *testing.T) {
 	g := returnFunctionGraphWithParams(t, []string{"self"}, "local id = \"node\"\nreturn id")
 	ret, info := returnPointAndInfo(t, g)
 	params := g.ParamSymbols()
@@ -257,14 +257,6 @@ func TestProject_ExportsReturnKeyParamRelationForReturnedKey(t *testing.T) {
 	selfPath := constraint.NewPath(params[0], "self")
 	nodesPath := selfPath.Field("nodes")
 	idPath := constraint.NewPath(info.Symbols[0], "id")
-	rel := flow.ReturnKeyParamRelation{
-		ReturnIndex: 0,
-		ParamIndex:  0,
-		ParamSegments: []constraint.Segment{{
-			Kind: constraint.SegmentField,
-			Name: "nodes",
-		}},
-	}
 
 	sum := Project(state.FunctionState{
 		Points: map[cfg.Point]flow.PointState{
@@ -277,9 +269,30 @@ func TestProject_ExportsReturnKeyParamRelationForReturnedKey(t *testing.T) {
 		},
 	}, g)
 
-	if !sum.Relations.HasKeyParam(rel) {
-		t.Fatalf("summary relations = %#v, want return-key relation %#v", sum.Relations, rel)
+	facts := sum.BoundaryFacts.KeyPresence()
+	wantTable := flow.BoundaryPath{
+		Kind:     flow.BoundaryPathParam,
+		Index:    0,
+		Segments: []constraint.Segment{{Kind: constraint.SegmentField, Name: "nodes"}},
 	}
+	wantKey := flow.BoundaryPath{Kind: flow.BoundaryPathReturn, Index: 0}
+	if len(facts) != 1 ||
+		!summaryBoundaryPathEqual(facts[0].Table, wantTable) ||
+		!summaryBoundaryPathEqual(facts[0].Key, wantKey) {
+		t.Fatalf("summary boundary facts = %#v, want table %#v key %#v", facts, wantTable, wantKey)
+	}
+}
+
+func summaryBoundaryPathEqual(a, b flow.BoundaryPath) bool {
+	if a.Kind != b.Kind || a.Index != b.Index || len(a.Segments) != len(b.Segments) {
+		return false
+	}
+	for i := range a.Segments {
+		if a.Segments[i] != b.Segments[i] {
+			return false
+		}
+	}
+	return true
 }
 
 func TestProject_RejectsStalePointLengthParamRelationKey(t *testing.T) {

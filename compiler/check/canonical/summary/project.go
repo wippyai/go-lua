@@ -305,10 +305,7 @@ func projectReturnRelations(fs state.FunctionState, g *cfg.Graph, returns []prod
 				projectForwardedReturnRelations(fs, g),
 				projectGuardedReturnRelations(fs, g),
 			),
-			flow.MergeReturnRelationProofs(
-				projectPointLengthParamRelations(fs, g),
-				projectPointReturnKeyParamRelations(fs, g),
-			),
+			projectPointLengthParamRelations(fs, g),
 		),
 	)
 }
@@ -495,47 +492,6 @@ func projectPointLengthParamRelations(fs state.FunctionState, g *cfg.Graph) flow
 		}
 		if len(proven) > 0 {
 			rels = flow.ReturnRelationsOfLengthParams(proven)
-		}
-		out = flow.ReturnRelationsDomain.Join(out, rels)
-		sawReturn = true
-	})
-	if !sawReturn || flow.ReturnRelationsDomain.Equal(out, flow.ReturnRelationsDomain.Bottom()) {
-		return flow.ReturnRelationsDomain.Top()
-	}
-	return out
-}
-
-func projectPointReturnKeyParamRelations(fs state.FunctionState, g *cfg.Graph) flow.ReturnRelations {
-	if g == nil {
-		return flow.ReturnRelationsDomain.Top()
-	}
-	paramBySymbol := returnRelationParamSymbolMap(g)
-	if len(paramBySymbol) == 0 {
-		return flow.ReturnRelationsDomain.Top()
-	}
-	paramProjection := flow.NewBoundaryPathProjection(paramBySymbol, nil)
-	out := flow.ReturnRelationsDomain.Bottom()
-	sawReturn := false
-	g.EachReturn(func(p cfg.Point, info *cfg.ReturnInfo) {
-		if info == nil {
-			return
-		}
-		ps, ok := fs.Points[p]
-		if !ok {
-			return
-		}
-		rels := flow.ReturnRelationsDomain.Top()
-		for i := range info.Exprs {
-			path := returnSourceBoundaryPath(g, p, info, i)
-			if path.Symbol == 0 {
-				continue
-			}
-			rels = flow.MergeReturnRelationProofs(rels, flow.ProjectReturnKeyParamProof(flow.ReturnKeyParamProofQuery{
-				ReturnIndex: i,
-				KeyPath:     path,
-				KeyPresence: ps.KeyPresence,
-				Boundary:    paramProjection,
-			}))
 		}
 		out = flow.ReturnRelationsDomain.Join(out, rels)
 		sawReturn = true

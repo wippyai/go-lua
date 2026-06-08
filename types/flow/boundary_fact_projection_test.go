@@ -57,6 +57,70 @@ func TestProjectBoundaryFactsProjectsPointFactLanesTogether(t *testing.T) {
 	}
 }
 
+func TestProjectBoundaryFactsProjectsReturnedKeyOfParamTable(t *testing.T) {
+	paramSym := cfg.SymbolID(11)
+	keySym := cfg.SymbolID(12)
+	tablePath := constraint.NewPath(paramSym, "self").Field("nodes")
+	keyPath := constraint.NewPath(keySym, "id")
+
+	facts := ProjectBoundaryFacts(
+		BoundaryFactProjectionInput{
+			KeyPresence: KeyPresenceFacts{}.WithAddresses(
+				boundaryProjectionTestAddress(t, tablePath),
+				boundaryProjectionTestAddress(t, keyPath),
+			),
+		},
+		NewBoundaryPathProjection(
+			map[cfg.SymbolID]int{paramSym: 2},
+			map[cfg.SymbolID][]BoundaryPath{
+				keySym: {{Kind: BoundaryPathReturn, Index: 0}},
+			},
+		),
+		BoundaryFactProjectionPolicy{},
+	)
+
+	wantTable := BoundaryPath{
+		Kind:     BoundaryPathParam,
+		Index:    2,
+		Segments: []constraint.Segment{{Kind: constraint.SegmentField, Name: "nodes"}},
+	}
+	wantKey := BoundaryPath{Kind: BoundaryPathReturn, Index: 0}
+	got := facts.KeyPresence()
+	if len(got) != 1 ||
+		!boundaryProjectionPathEqual(got[0].Table, wantTable) ||
+		!boundaryProjectionPathEqual(got[0].Key, wantKey) {
+		t.Fatalf("key-presence facts = %#v, want table %#v key %#v", got, wantTable, wantKey)
+	}
+}
+
+func TestProjectBoundaryFactsIgnoresNonBoundaryTableForReturnedKey(t *testing.T) {
+	paramSym := cfg.SymbolID(21)
+	otherSym := cfg.SymbolID(22)
+	keySym := cfg.SymbolID(23)
+	tablePath := constraint.NewPath(otherSym, "localTable")
+	keyPath := constraint.NewPath(keySym, "id")
+
+	facts := ProjectBoundaryFacts(
+		BoundaryFactProjectionInput{
+			KeyPresence: KeyPresenceFacts{}.WithAddresses(
+				boundaryProjectionTestAddress(t, tablePath),
+				boundaryProjectionTestAddress(t, keyPath),
+			),
+		},
+		NewBoundaryPathProjection(
+			map[cfg.SymbolID]int{paramSym: 0},
+			map[cfg.SymbolID][]BoundaryPath{
+				keySym: {{Kind: BoundaryPathReturn, Index: 0}},
+			},
+		),
+		BoundaryFactProjectionPolicy{},
+	)
+
+	if facts.HasProof() {
+		t.Fatalf("projected non-boundary table into boundary facts: %#v", facts)
+	}
+}
+
 func TestProjectBoundaryFactsCachesAddressProjectionAcrossLanes(t *testing.T) {
 	sym := cfg.SymbolID(32)
 	root := constraint.NewPath(sym, "graph")

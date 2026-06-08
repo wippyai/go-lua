@@ -98,7 +98,7 @@ func TestAssignCallPostconditionsMaterializeLengthParamLowerBound(t *testing.T) 
 	}
 }
 
-func TestAssignCallPostconditionsMaterializeReturnKeyParam(t *testing.T) {
+func TestAssignCallPostconditionsMaterializeReturnKeyBoundaryFact(t *testing.T) {
 	fn := &ast.FunctionExpr{ParList: &ast.ParList{Names: []string{"self"}}}
 	in := input.BuildFromFunction(fn, nil, nil)
 	if in.Graph == nil || len(in.Scope.ParamSymbols) != 1 {
@@ -115,16 +115,16 @@ func TestAssignCallPostconditionsMaterializeReturnKeyParam(t *testing.T) {
 		Method:   "create_node",
 	}
 	callInfo := &cfg.CallInfo{Call: call, Method: call.Method, Receiver: self}
-	rel := flow.ReturnKeyParamRelation{
-		ReturnIndex: 0,
-		ParamIndex:  0,
-		ParamSegments: []constraint.Segment{{
-			Kind: constraint.SegmentField,
-			Name: "nodes",
-		}},
-	}
+	boundaryFacts := flow.BoundaryFactsOf([]flow.BoundaryKeyPresenceFact{{
+		Table: flow.BoundaryPath{
+			Kind:     flow.BoundaryPathParam,
+			Index:    0,
+			Segments: []constraint.Segment{{Kind: constraint.SegmentField, Name: "nodes"}},
+		},
+		Key: flow.BoundaryPath{Kind: flow.BoundaryPathReturn, Index: 0},
+	}}, nil, nil, nil, nil, nil)
 	typer := &productReturnRelationsTestTyper{
-		rels: flow.ReturnRelationsOfKeyParams([]flow.ReturnKeyParamRelation{rel}),
+		facts: boundaryFacts,
 	}
 	tr := New(in, Config{CallTyper: typer})
 	out := flow.PointState{KeyPresence: flow.KeyPresenceFactsDomain.Top()}
@@ -207,8 +207,9 @@ func TestAssignCallPostconditionsUsePreWriteArgumentLength(t *testing.T) {
 
 type productReturnRelationsTestTyper struct {
 	captureEffectTyper
-	rels flow.ReturnRelations
-	args []product.AbstractValue
+	rels  flow.ReturnRelations
+	facts flow.BoundaryFacts
+	args  []product.AbstractValue
 }
 
 func (t *productReturnRelationsTestTyper) ProductCallFromValues(
@@ -218,6 +219,9 @@ func (t *productReturnRelationsTestTyper) ProductCallFromValues(
 	t.args = append([]product.AbstractValue(nil), ctx.ArgValues...)
 	result := EmptyProductCallResult()
 	result.ReturnRelations = t.rels
+	if t.facts.HasProof() {
+		result.Effects.BoundaryFacts = t.facts
+	}
 	return result
 }
 

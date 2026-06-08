@@ -13,8 +13,9 @@ import (
 // ReturnRelations is the finite caller-visible relation component of a function
 // summary. It records return-slot relations the function proves for every normal
 // return path, such as Lua's `(value, err)` inverse convention, length
-// postconditions like `len(ret_i) >= len(param_j)`, and key-presence
-// postconditions like `ret_i is a key of param_j.path`.
+// postconditions like `len(ret_i) >= len(param_j)`, and guarded return-slot
+// refinements. Boundary-relative key and map postconditions live in
+// BoundaryFacts, which owns path rebasing and point-state replay.
 //
 // The carrier is a must-fact lattice: a relation may be consumed by callers only
 // when every incoming summary path proves it. Join is therefore intersection. The
@@ -26,7 +27,6 @@ type ReturnRelations struct {
 	errorReturn []ReturnCorrelation
 	guarded     []ReturnGuardRelation
 	lengthParam []ReturnLengthParamRelation
-	keyParam    []ReturnKeyParamRelation
 }
 
 // ReturnRelationsDomain is the abstract domain of finite return relations.
@@ -43,8 +43,7 @@ var ReturnRelationsDomain = lattice.Lattice[ReturnRelations]{
 		}
 		return slices.Equal(a.errorReturn, b.errorReturn) &&
 			returnGuardRelationsEqual(a.guarded, b.guarded) &&
-			slices.Equal(a.lengthParam, b.lengthParam) &&
-			returnKeyParamsEqual(a.keyParam, b.keyParam)
+			slices.Equal(a.lengthParam, b.lengthParam)
 	},
 	LessOrEq: func(a, b ReturnRelations) bool {
 		if a.bottom {
@@ -55,8 +54,7 @@ var ReturnRelationsDomain = lattice.Lattice[ReturnRelations]{
 		}
 		return returnCorrelationsContainAll(a.errorReturn, b.errorReturn) &&
 			returnGuardRelationsContainAll(a.guarded, b.guarded) &&
-			returnLengthParamsContainAll(a.lengthParam, b.lengthParam) &&
-			returnKeyParamsContainAll(a.keyParam, b.keyParam)
+			returnLengthParamsContainAll(a.lengthParam, b.lengthParam)
 	},
 	Join: joinReturnRelations,
 	Meet: nil,
@@ -83,13 +81,6 @@ func ReturnRelationsOfLengthParams(xs []ReturnLengthParamRelation) ReturnRelatio
 	return ReturnRelations{lengthParam: compactReturnLengthParams(xs)}
 }
 
-// ReturnRelationsOfKeyParams builds a canonical finite return-key relation
-// value. Each relation means return[ReturnIndex] is a key of
-// param[ParamIndex].ParamSegments.
-func ReturnRelationsOfKeyParams(xs []ReturnKeyParamRelation) ReturnRelations {
-	return ReturnRelations{keyParam: compactReturnKeyParams(xs)}
-}
-
 // MergeReturnRelationProofs combines independently-proven finite relation facts.
 // It is a proof builder, not the lattice Join: if two derivations both hold on
 // the same path, callers may consume the union of their facts. Top contributes no
@@ -105,7 +96,6 @@ func MergeReturnRelationProofs(a, b ReturnRelations) ReturnRelations {
 		errorReturn: compactReturnCorrelations(append(a.ErrorReturns(), b.ErrorReturns()...)),
 		guarded:     compactReturnGuardRelations(append(a.GuardedTypes(), b.GuardedTypes()...)),
 		lengthParam: compactReturnLengthParams(append(a.LengthParams(), b.LengthParams()...)),
-		keyParam:    compactReturnKeyParams(append(a.KeyParams(), b.KeyParams()...)),
 	}
 }
 
@@ -116,7 +106,7 @@ func (r ReturnRelations) IsBottom() bool { return r.bottom }
 // caller-visible fact. Top has no finite proof; Bottom is a recursive/unreachable
 // seed and is deliberately not consumable.
 func (r ReturnRelations) HasProof() bool {
-	return !r.bottom && (len(r.errorReturn) > 0 || len(r.guarded) > 0 || len(r.lengthParam) > 0 || len(r.keyParam) > 0)
+	return !r.bottom && (len(r.errorReturn) > 0 || len(r.guarded) > 0 || len(r.lengthParam) > 0)
 }
 
 // ErrorReturns returns a defensive copy of the proven ErrorReturn relations.
@@ -176,35 +166,6 @@ func (r ReturnRelations) HasLengthParam(c ReturnLengthParamRelation) bool {
 		return false
 	}
 	_, ok := slices.BinarySearchFunc(r.lengthParam, c, compareReturnLengthParam)
-	return ok
-}
-
-// ReturnKeyParamRelation records a caller-visible key-presence postcondition:
-// return[ReturnIndex] is a key of param[ParamIndex].ParamSegments.
-type ReturnKeyParamRelation struct {
-	ReturnIndex   int
-	ParamIndex    int
-	ParamSegments []constraint.Segment
-}
-
-// KeyParams returns a defensive copy of the proven return-key relations.
-func (r ReturnRelations) KeyParams() []ReturnKeyParamRelation {
-	if r.bottom || len(r.keyParam) == 0 {
-		return nil
-	}
-	out := make([]ReturnKeyParamRelation, 0, len(r.keyParam))
-	for _, rel := range r.keyParam {
-		out = append(out, cloneReturnKeyParam(rel))
-	}
-	return out
-}
-
-// HasKeyParam reports whether the reachable finite carrier proves relation c.
-func (r ReturnRelations) HasKeyParam(c ReturnKeyParamRelation) bool {
-	if r.bottom {
-		return false
-	}
-	_, ok := slices.BinarySearchFunc(r.keyParam, c, compareReturnKeyParam)
 	return ok
 }
 
@@ -305,7 +266,6 @@ func joinReturnRelations(a, b ReturnRelations) ReturnRelations {
 		errorReturn: intersectReturnCorrelations(a.errorReturn, b.errorReturn),
 		guarded:     intersectReturnGuardRelations(a.guarded, b.guarded),
 		lengthParam: intersectReturnLengthParams(a.lengthParam, b.lengthParam),
-		keyParam:    intersectReturnKeyParams(a.keyParam, b.keyParam),
 	}
 }
 
@@ -696,6 +656,29 @@ func compareReturnLengthParam(a, b ReturnLengthParamRelation) int {
 	return cmp.Compare(a.ParamIndex, b.ParamIndex)
 }
 
+func compareConstraintSegments(a, b []constraint.Segment) int {
+	min := len(a)
+	if len(b) < min {
+		min = len(b)
+	}
+	for i := 0; i < min; i++ {
+		if c := compareConstraintSegment(a[i], b[i]); c != 0 {
+			return c
+		}
+	}
+	return cmp.Compare(len(a), len(b))
+}
+
+func compareConstraintSegment(a, b constraint.Segment) int {
+	if c := cmp.Compare(a.Kind, b.Kind); c != 0 {
+		return c
+	}
+	if c := cmp.Compare(a.Name, b.Name); c != 0 {
+		return c
+	}
+	return cmp.Compare(a.Index, b.Index)
+}
+
 func returnCorrelationsContainAll(have, want []ReturnCorrelation) bool {
 	for _, w := range want {
 		if _, ok := slices.BinarySearchFunc(have, w, compareReturnCorrelation); !ok {
@@ -735,103 +718,6 @@ func intersectReturnLengthParams(a, b []ReturnLengthParamRelation) []ReturnLengt
 	for _, x := range a {
 		if _, ok := slices.BinarySearchFunc(b, x, compareReturnLengthParam); ok {
 			out = append(out, x)
-		}
-	}
-	return out
-}
-
-func compactReturnKeyParams(xs []ReturnKeyParamRelation) []ReturnKeyParamRelation {
-	if len(xs) == 0 {
-		return nil
-	}
-	out := make([]ReturnKeyParamRelation, 0, len(xs))
-	for _, rel := range xs {
-		if rel.ReturnIndex < 0 || rel.ParamIndex < 0 {
-			continue
-		}
-		out = append(out, cloneReturnKeyParam(rel))
-	}
-	if len(out) == 0 {
-		return nil
-	}
-	slices.SortFunc(out, compareReturnKeyParam)
-	out = slices.CompactFunc(out, func(a, b ReturnKeyParamRelation) bool {
-		return compareReturnKeyParam(a, b) == 0
-	})
-	return out
-}
-
-func cloneReturnKeyParam(rel ReturnKeyParamRelation) ReturnKeyParamRelation {
-	if len(rel.ParamSegments) == 0 {
-		rel.ParamSegments = nil
-		return rel
-	}
-	rel.ParamSegments = append([]constraint.Segment(nil), rel.ParamSegments...)
-	return rel
-}
-
-func compareReturnKeyParam(a, b ReturnKeyParamRelation) int {
-	if c := cmp.Compare(a.ReturnIndex, b.ReturnIndex); c != 0 {
-		return c
-	}
-	if c := cmp.Compare(a.ParamIndex, b.ParamIndex); c != 0 {
-		return c
-	}
-	return compareConstraintSegments(a.ParamSegments, b.ParamSegments)
-}
-
-func compareConstraintSegments(a, b []constraint.Segment) int {
-	min := len(a)
-	if len(b) < min {
-		min = len(b)
-	}
-	for i := 0; i < min; i++ {
-		if c := compareConstraintSegment(a[i], b[i]); c != 0 {
-			return c
-		}
-	}
-	return cmp.Compare(len(a), len(b))
-}
-
-func compareConstraintSegment(a, b constraint.Segment) int {
-	if c := cmp.Compare(a.Kind, b.Kind); c != 0 {
-		return c
-	}
-	if c := cmp.Compare(a.Name, b.Name); c != 0 {
-		return c
-	}
-	return cmp.Compare(a.Index, b.Index)
-}
-
-func returnKeyParamsEqual(a, b []ReturnKeyParamRelation) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	for i := range a {
-		if compareReturnKeyParam(a[i], b[i]) != 0 {
-			return false
-		}
-	}
-	return true
-}
-
-func returnKeyParamsContainAll(have, want []ReturnKeyParamRelation) bool {
-	for _, w := range want {
-		if _, ok := slices.BinarySearchFunc(have, w, compareReturnKeyParam); !ok {
-			return false
-		}
-	}
-	return true
-}
-
-func intersectReturnKeyParams(a, b []ReturnKeyParamRelation) []ReturnKeyParamRelation {
-	if len(a) == 0 || len(b) == 0 {
-		return nil
-	}
-	var out []ReturnKeyParamRelation
-	for _, x := range a {
-		if _, ok := slices.BinarySearchFunc(b, x, compareReturnKeyParam); ok {
-			out = append(out, cloneReturnKeyParam(x))
 		}
 	}
 	return out
