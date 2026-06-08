@@ -13,7 +13,7 @@ import (
 
 // callSiteFrame is the normalized caller-side evidence for one call boundary.
 // It owns the type-only projections that still need to exist at the boundary;
-// selected summary/product facts are layered on top by productCallFrame.
+// selected summary/product facts are layered on top by callBoundaryFrame.
 type callSiteFrame struct {
 	typer              callTyper
 	call               *ast.FuncCallExpr

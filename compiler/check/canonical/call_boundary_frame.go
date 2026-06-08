@@ -2,6 +2,9 @@ package canonical
 
 import (
 	"github.com/wippyai/go-lua/compiler/ast"
+	"github.com/wippyai/go-lua/compiler/cfg"
+	"github.com/wippyai/go-lua/compiler/check/api"
+	"github.com/wippyai/go-lua/compiler/check/callsite"
 	canonicalcall "github.com/wippyai/go-lua/compiler/check/canonical/call"
 	"github.com/wippyai/go-lua/compiler/check/canonical/summary"
 	"github.com/wippyai/go-lua/compiler/check/canonical/transfer"
@@ -13,26 +16,26 @@ import (
 	"github.com/wippyai/go-lua/types/typ"
 )
 
-// productCallFrame is the canonical semantic frame for one product-domain call
-// boundary. It is built once from the call expression, solved point context, and
-// selected summary outcome; callers ask the frame for outward projections instead
-// of reconstructing call facts through driver helpers.
-type productCallFrame struct {
+// callBoundaryFrame is the canonical semantic frame for one call boundary. It is
+// built once from the call expression, solved point context, and selected
+// summary outcome; callers ask the frame for outward projections instead of
+// reconstructing call facts through driver helpers.
+type callBoundaryFrame struct {
 	typer   callTyper
 	ctx     transfer.ProductCallContext
 	site    callSiteFrame
 	outcome canonicalcall.CallOutcome
 }
 
-func (ct callTyper) productCallFrame(call *ast.FuncCallExpr, ctx transfer.ProductCallContext, opts productCallOutcomeOptions) (productCallFrame, bool) {
+func (ct callTyper) callBoundaryFrame(call *ast.FuncCallExpr, ctx transfer.ProductCallContext, opts productCallOutcomeOptions) (callBoundaryFrame, bool) {
 	if ct.d == nil || call == nil || ct.d.activeProgram == nil {
-		return productCallFrame{}, false
+		return callBoundaryFrame{}, false
 	}
 	site, ok := ct.productCallSiteFrame(call, ctx)
 	if !ok {
-		return productCallFrame{}, false
+		return callBoundaryFrame{}, false
 	}
-	return productCallFrame{
+	return callBoundaryFrame{
 		typer:   ct,
 		ctx:     ctx,
 		site:    site,
@@ -40,11 +43,11 @@ func (ct callTyper) productCallFrame(call *ast.FuncCallExpr, ctx transfer.Produc
 	}, true
 }
 
-func (p productCallFrame) inferredReturnValues() []product.AbstractValue {
+func (p callBoundaryFrame) inferredReturnValues() []product.AbstractValue {
 	return p.outcome.InferredReturnValues()
 }
 
-func (p productCallFrame) callReturnValues() ([]product.AbstractValue, bool) {
+func (p callBoundaryFrame) callReturnValues() ([]product.AbstractValue, bool) {
 	summaryReturns := p.inferredReturnValues()
 	return canonicalcall.ReturnValueInput{
 		Call:                 p.site.call,
@@ -64,7 +67,7 @@ func (p productCallFrame) callReturnValues() ([]product.AbstractValue, bool) {
 	}.Values()
 }
 
-func (p productCallFrame) result(evidence canonicalcall.BoundaryEvidence, effects transfer.CallEffects) transfer.ProductCallResult {
+func (p callBoundaryFrame) result(evidence canonicalcall.BoundaryEvidence, effects transfer.CallEffects) transfer.ProductCallResult {
 	values, ok := p.callReturnValues()
 	return transfer.ProductCallResult{
 		ReturnValues:    values,
@@ -79,7 +82,7 @@ func (p productCallFrame) result(evidence canonicalcall.BoundaryEvidence, effect
 	}
 }
 
-func (p productCallFrame) callArgDemands() []callobligation.Obligation {
+func (p callBoundaryFrame) callArgDemands() []callobligation.Obligation {
 	return (canonicalcall.CallArgDemandProjection{
 		Call: p.site.call,
 		SummaryDemands: func(*ast.FuncCallExpr) ([]callobligation.Obligation, bool) {
@@ -94,11 +97,11 @@ func (p productCallFrame) callArgDemands() []callobligation.Obligation {
 	}).Demands()
 }
 
-func (p productCallFrame) callFunctionShape() *typ.Function {
+func (p callBoundaryFrame) callFunctionShape() *typ.Function {
 	return p.site.functionShape()
 }
 
-func (p productCallFrame) paramNarrows() []transfer.ParamNarrow {
+func (p callBoundaryFrame) paramNarrows() []transfer.ParamNarrow {
 	d := p.typer.d
 	if d == nil || d.activeProgram == nil || p.site.call == nil {
 		return nil
@@ -117,7 +120,7 @@ func (p productCallFrame) paramNarrows() []transfer.ParamNarrow {
 	}).Narrows()
 }
 
-func (p productCallFrame) returnPostconditions() paramevidence.ReturnPostconditions {
+func (p callBoundaryFrame) returnPostconditions() paramevidence.ReturnPostconditions {
 	d := p.typer.d
 	if d == nil || d.activeProgram == nil || p.site.call == nil {
 		return paramevidence.ReturnPostconditionsDomain.Bottom()
@@ -131,7 +134,7 @@ func (p productCallFrame) returnPostconditions() paramevidence.ReturnPostconditi
 	}).Postconditions()
 }
 
-func (p productCallFrame) argDemands() ([]callobligation.Obligation, bool) {
+func (p callBoundaryFrame) argDemands() ([]callobligation.Obligation, bool) {
 	targets := p.demandTargets()
 	if len(targets) == 0 {
 		return nil, false
@@ -142,7 +145,7 @@ func (p productCallFrame) argDemands() ([]callobligation.Obligation, bool) {
 	}.Obligations(), true
 }
 
-func (p productCallFrame) demandTargets() []paramevidence.CallArgDemandTarget {
+func (p callBoundaryFrame) demandTargets() []paramevidence.CallArgDemandTarget {
 	d := p.typer.d
 	if d == nil || d.activeProgram == nil || p.site.call == nil || len(p.site.call.Args) == 0 || !p.outcome.HasTargets() {
 		return nil
@@ -179,7 +182,58 @@ func (p productCallFrame) demandTargets() []paramevidence.CallArgDemandTarget {
 	return out
 }
 
-func (p productCallFrame) boundaryEvidence(cellEffects summary.CellEffectAggregation) canonicalcall.BoundaryEvidence {
+func (p callBoundaryFrame) expectedArgEvidence(info *cfg.CallInfo, forceMethodReceiver bool) (api.CallExpectedArgEvidence, bool) {
+	if info == nil || info.Call == nil || len(info.Call.Args) == 0 {
+		return api.CallExpectedArgEvidence{}, false
+	}
+	expectedArgs := p.site.expectedArgProjection()
+	expectedArgs.ShallowFuncLiterals = true
+	if !callsite.IsMethodCallInfo(info) {
+		expectedArgs.Callee = p.site.expectedCalleeType(info.Callee)
+	}
+	expectedArgs.IsMethod = callsite.IsMethodCallInfo(info)
+	expectedArgs.MethodName = info.Method
+	expectedArgs.ForceMethodReceiver = forceMethodReceiver
+	expectedTypes := expectedArgs.ExpectedTypes()
+	args := make([]typ.Type, len(info.Call.Args))
+	any := false
+	for argIdx := range info.Call.Args {
+		if argIdx >= len(expectedTypes) {
+			break
+		}
+		expected := expectedTypes[argIdx]
+		if expected == nil || typ.IsAbsentOrUnknown(expected) || typ.IsAny(expected) {
+			continue
+		}
+		args[argIdx] = expected
+		any = true
+	}
+	if !any {
+		return api.CallExpectedArgEvidence{}, false
+	}
+	return api.NewCallExpectedArgEvidence(args), true
+}
+
+func (p callBoundaryFrame) expectedArgType(info *cfg.CallInfo, forceMethodReceiver bool, argIdx int) typ.Type {
+	if argIdx < 0 {
+		return nil
+	}
+	evidence, ok := p.expectedArgEvidence(info, forceMethodReceiver)
+	if !ok || argIdx >= len(evidence.Args) {
+		return nil
+	}
+	return evidence.Args[argIdx]
+}
+
+func (p callBoundaryFrame) contractEvidence() (api.CallContractEvidence, bool) {
+	demands := p.callArgDemands()
+	if len(demands) == 0 {
+		return api.CallContractEvidence{}, false
+	}
+	return api.NewCallContractEvidence(demands), true
+}
+
+func (p callBoundaryFrame) boundaryEvidence(cellEffects summary.CellEffectAggregation) canonicalcall.BoundaryEvidence {
 	return p.outcome.BoundaryEvidence(canonicalcall.BoundaryEvidenceInput{
 		Call:                 p.site.call,
 		Resolver:             p.typer.callTypeResolver(p.site.exprType),
@@ -194,7 +248,7 @@ func (p productCallFrame) boundaryEvidence(cellEffects summary.CellEffectAggrega
 	})
 }
 
-func (p productCallFrame) cellEffectAggregation(projector cellEffectProjector) summary.CellEffectAggregation {
+func (p callBoundaryFrame) cellEffectAggregation(projector cellEffectProjector) summary.CellEffectAggregation {
 	callbackRefs := projector.callEntry.productArgProjection(p.ctx).callbackRefsForCall(p.site.call)
 	return summary.CellEffectAggregation{
 		CallbackSpec: projector.callbackSpecForCall(p.site.call, p.site.exprType),

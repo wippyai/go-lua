@@ -1522,7 +1522,7 @@ func (ct callTyper) summaryForCallEntryContext(entry canonicalcall.EntryContext)
 // callee summary return values), projects caller-visible effects from the same
 // selected outcome, and keeps type-only signature fallback inside this boundary.
 func (ct callTyper) ProductCallFromValues(call *ast.FuncCallExpr, ctx transfer.ProductCallContext) transfer.ProductCallResult {
-	frame, ok := ct.productCallFrame(call, ctx, productCallOutcomeOptions{})
+	frame, ok := ct.callBoundaryFrame(call, ctx, productCallOutcomeOptions{})
 	if !ok {
 		return transfer.EmptyProductCallResult()
 	}

@@ -18,7 +18,7 @@ type cellEffectProjector struct {
 
 // cellEffectProjector is the canonical/program-owned adapter for caller-visible
 // capture-cell effects. The summary package owns callback ordering and effect
-// algebra; productCallFrame owns call-local callback target resolution, while
+// algebra; callBoundaryFrame owns call-local callback target resolution, while
 // this type supplies callback specs and summary effect lookups.
 func (ct callTyper) cellEffectProjector() (cellEffectProjector, bool) {
 	if ct.d == nil || ct.d.activeProgram == nil {

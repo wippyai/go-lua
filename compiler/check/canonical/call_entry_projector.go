@@ -235,10 +235,6 @@ func (c callEntryProjector) resolveCallback(arg ast.Expr, rawSym cfg.SymbolID, i
 	return c.pointArgProjection(in).callbackRefs(arg, rawSym)
 }
 
-func (c callEntryProjector) expectedArgType(point cfg.Point, info *cfg.CallInfo, in *flow.PointState, argIdx int) typ.Type {
-	return c.program.expectedCallArgType(c.graph, c.transfer, point, info, in, argIdx)
-}
-
 func (c callEntryProjector) paramSlot(callee summary.FuncRef, call *ast.FuncCallExpr, argIdx int) (int, int, bool) {
 	return paramevidence.ParamSlotForRuntimeArg(c.program.Graph(callee), c.program.funcExpr(callee), argIdx)
 }
