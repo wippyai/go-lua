@@ -14,7 +14,7 @@ type ValueKey string
 
 // SymbolValueKey identifies the current point-local value of a CFG symbol.
 func SymbolValueKey(sym cfg.SymbolID) ValueKey {
-	return ValueKey("s" + valueKeyItoa(uint64(sym)))
+	return prefixedValueKey('s', uint64(sym))
 }
 
 // SymbolPathKey identifies a path rooted at a CFG symbol for components, such as
@@ -77,7 +77,7 @@ func parseInternedSymbolPathKey(key constraint.PathKey) (cfg.SymbolID, []constra
 // ReturnSlotValueKey identifies the value stashed for a non-identifier return
 // expression at a return point.
 func ReturnSlotValueKey(i int) ValueKey {
-	return ValueKey("r" + valueKeyItoa(uint64(i)))
+	return prefixedValueKey('r', uint64(i))
 }
 
 // ParseReturnSlotValueKey inverts ReturnSlotValueKey. Non-return-slot keys or
@@ -121,16 +121,18 @@ func ParseSymbolValueKey(key ValueKey) (cfg.SymbolID, bool) {
 	return cfg.SymbolID(n), true
 }
 
-func valueKeyItoa(v uint64) string {
-	if v == 0 {
-		return "0"
-	}
-	var buf [20]byte
+func prefixedValueKey(prefix byte, v uint64) ValueKey {
+	var buf [21]byte
 	i := len(buf)
-	for v > 0 {
+	for {
 		i--
 		buf[i] = byte('0' + v%10)
 		v /= 10
+		if v == 0 {
+			break
+		}
 	}
-	return string(buf[i:])
+	i--
+	buf[i] = prefix
+	return ValueKey(string(buf[i:]))
 }

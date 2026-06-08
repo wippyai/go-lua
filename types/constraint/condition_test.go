@@ -784,6 +784,12 @@ func TestCondition_ContradictionIndexSemanticRules(t *testing.T) {
 	); !got.IsFalse() {
 		t.Fatalf("root truthy/nil contradiction should be false condition, got %v", got)
 	}
+	if got := FromConstraints(
+		Truthy{Path: root},
+		NotNil{Path: root},
+	); got.IsFalse() || len(got.MustConstraints()) != 2 {
+		t.Fatalf("root truthy/not-nil should merge path predicate bits without contradiction, got %v", got)
+	}
 
 	if got := FromConstraints(
 		HasType{Path: root, Type: narrow.BuiltinTypeKey("string")},
