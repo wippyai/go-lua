@@ -134,6 +134,28 @@ func TestStableAddressCanonicalKeyRejectsLegacyPathKey(t *testing.T) {
 	}
 }
 
+func TestStableAddressPublicConstructorsAreDefensive(t *testing.T) {
+	segments := []constraint.Segment{{Kind: constraint.SegmentField, Name: "payload"}}
+	addr, ok := StableAddressOfSymbol(cfg.SymbolID(13), segments)
+	if !ok {
+		t.Fatal("symbol address did not build")
+	}
+	segments[0].Name = "mutated"
+	if got, want := addr.Key(), SymbolPathKey(cfg.SymbolID(13), []constraint.Segment{{Kind: constraint.SegmentField, Name: "payload"}}); got != want {
+		t.Fatalf("symbol address observed caller mutation: %s, want %s", got, want)
+	}
+
+	rootSegments := []constraint.Segment{{Kind: constraint.SegmentIndexString, Name: "k"}}
+	rootAddr, ok := StableAddressOfRoot("$0", rootSegments)
+	if !ok {
+		t.Fatal("root address did not build")
+	}
+	rootSegments[0].Name = "mutated"
+	if got, want := rootAddr.Key(), constraint.PathKey(`$0["k"]`); got != want {
+		t.Fatalf("root address observed caller mutation: %s, want %s", got, want)
+	}
+}
+
 func TestPathRootSeparatesSemanticRootKinds(t *testing.T) {
 	symbol, ok := SymbolPathRoot(cfg.SymbolID(9))
 	if !ok {

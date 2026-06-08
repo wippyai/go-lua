@@ -224,6 +224,14 @@ func StableAddressOfSymbol(sym cfg.SymbolID, segments []constraint.Segment) (Sta
 	return stableAddressOfRootAndSuffix(root, PathSuffixOfSegments(segments))
 }
 
+func stableAddressOfSymbolOwnedSegments(sym cfg.SymbolID, segments []constraint.Segment) (StableAddress, bool) {
+	root, ok := SymbolPathRoot(sym)
+	if !ok {
+		return StableAddress{}, false
+	}
+	return stableAddressOfRootAndSuffix(root, pathSuffixOfOwnedSegments(segments))
+}
+
 // StableAddressOfRoot builds a stable root-name address for placeholders and
 // boundary paths that are not represented by CFG symbols.
 func StableAddressOfRoot(root string, segments []constraint.Segment) (StableAddress, bool) {
@@ -232,6 +240,14 @@ func StableAddressOfRoot(root string, segments []constraint.Segment) (StableAddr
 		return StableAddress{}, false
 	}
 	return stableAddressOfRootAndSuffix(pathRoot, PathSuffixOfSegments(segments))
+}
+
+func stableAddressOfRootOwnedSegments(root string, segments []constraint.Segment) (StableAddress, bool) {
+	pathRoot, ok := NamedPathRoot(root)
+	if !ok {
+		return StableAddress{}, false
+	}
+	return stableAddressOfRootAndSuffix(pathRoot, pathSuffixOfOwnedSegments(segments))
 }
 
 // StableAddressOfRootAndSuffix builds a stable address from normalized root and
@@ -254,7 +270,7 @@ func StableAddressFromCanonicalKey(key constraint.PathKey) (StableAddress, bool)
 		return StableAddress{}, false
 	}
 	if sym, segments, ok := ParseSymbolPathKey(key); ok {
-		return StableAddressOfSymbol(sym, segments)
+		return stableAddressOfSymbolOwnedSegments(sym, segments)
 	}
 	if _, _, ok := parseLegacyConstraintSymbolPathKey(key); ok {
 		return StableAddress{}, false
@@ -267,7 +283,7 @@ func StableAddressFromCanonicalKey(key constraint.PathKey) (StableAddress, bool)
 	if !ok {
 		return StableAddress{}, false
 	}
-	return StableAddressOfRoot(root, segments)
+	return stableAddressOfRootOwnedSegments(root, segments)
 }
 
 func parseLegacyConstraintSymbolPathKey(key constraint.PathKey) (cfg.SymbolID, []constraint.Segment, bool) {
