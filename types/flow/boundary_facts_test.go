@@ -92,6 +92,28 @@ func TestMergeBoundaryFactProofsUnionsIndependentProofs(t *testing.T) {
 	}
 }
 
+func TestBoundaryFactsIdentityHashTracksCanonicalLanes(t *testing.T) {
+	target := BoundaryPath{Kind: BoundaryPathParam, Index: 0}
+	relA := BoundaryLengthRelationFact{
+		Target: target,
+		Source: BoundaryPath{Kind: BoundaryPathParam, Index: 1},
+	}
+	relB := BoundaryLengthRelationFact{
+		Target: target,
+		Source: BoundaryPath{Kind: BoundaryPathParam, Index: 2},
+	}
+	factsA := BoundaryFactsDomain.Top().WithLengthRelations([]BoundaryLengthRelationFact{relA})
+	factsACopy := BoundaryFactsDomain.Top().WithLengthRelations([]BoundaryLengthRelationFact{relA})
+	factsB := BoundaryFactsDomain.Top().WithLengthRelations([]BoundaryLengthRelationFact{relB})
+
+	if got, want := factsA.IdentityHash("test"), factsACopy.IdentityHash("test"); got != want {
+		t.Fatalf("same boundary facts hash = %d, want %d", got, want)
+	}
+	if got, other := factsA.IdentityHash("test"), factsB.IdentityHash("test"); got == other {
+		t.Fatalf("distinct boundary length relations collapsed to hash %d", got)
+	}
+}
+
 func boundaryBucketForTest(t *testing.T, buckets []BoundaryReturnFactBucket, indices []int) BoundaryReturnFactBucket {
 	t.Helper()
 	for _, bucket := range buckets {

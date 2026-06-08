@@ -4,6 +4,7 @@ import (
 	"cmp"
 	"slices"
 
+	"github.com/wippyai/go-lua/internal"
 	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/domain/value/product"
 	"github.com/wippyai/go-lua/types/lattice"
@@ -158,6 +159,67 @@ func (f BoundaryFacts) Clone() BoundaryFacts {
 		f.lenRelations,
 		f.indexWrites,
 	)
+}
+
+// IdentityHash returns a canonical hash for the exact boundary-fact set. It is
+// intentionally owned with the lane compactors/comparators so adding a fact lane
+// updates equality and hash identity in one package.
+func (f BoundaryFacts) IdentityHash(seed string) uint64 {
+	h := internal.FnvString(seed)
+	if f.bottom || !f.HasProof() {
+		return h
+	}
+	for _, fact := range f.KeyPresence() {
+		h = internal.HashCombine(h, internal.FnvString("kp"))
+		h = hashBoundaryPath(h, fact.Table)
+		h = hashBoundaryPath(h, fact.Key)
+	}
+	for _, fact := range f.KeyArrays() {
+		h = internal.HashCombine(h, internal.FnvString("ka"))
+		h = hashBoundaryPath(h, fact.Array)
+		h = hashBoundaryPath(h, fact.Table)
+	}
+	for _, fact := range f.KeyArrayValues() {
+		h = internal.HashCombine(h, internal.FnvString("kav"))
+		h = hashBoundaryPath(h, fact.Array)
+		h = hashBoundaryPath(h, fact.Table)
+		h = internal.HashCombine(h, fact.Value.Hash())
+	}
+	for _, fact := range f.AppendKeys() {
+		h = internal.HashCombine(h, internal.FnvString("ak"))
+		h = hashBoundaryPath(h, fact.Array)
+		h = hashBoundaryPath(h, fact.Key)
+		if fact.HasTable {
+			h = internal.HashCombine(h, 1)
+			h = hashBoundaryPath(h, fact.Table)
+		} else {
+			h = internal.HashCombine(h, 0)
+		}
+	}
+	for _, fact := range f.AppendElementFieldOrigins() {
+		h = internal.HashCombine(h, internal.FnvString("aefo"))
+		h = hashBoundaryPath(h, fact.Array)
+		h = internal.HashCombine(h, internal.FnvString(constraint.FormatSegments(fact.Field)))
+		h = hashBoundaryPath(h, fact.Source)
+		h = internal.HashCombine(h, internal.FnvString(constraint.FormatSegments(fact.SourceField)))
+	}
+	for _, fact := range f.LengthLowerBounds() {
+		h = internal.HashCombine(h, internal.FnvString("len"))
+		h = hashBoundaryPath(h, fact.Target)
+		h = internal.HashCombine(h, uint64(fact.Lower))
+	}
+	for _, fact := range f.LengthRelations() {
+		h = internal.HashCombine(h, internal.FnvString("lenrel"))
+		h = hashBoundaryPath(h, fact.Target)
+		h = hashBoundaryPath(h, fact.Source)
+	}
+	for _, fact := range f.IndexWrites() {
+		h = internal.HashCombine(h, internal.FnvString("iw"))
+		h = hashBoundaryPath(h, fact.Table)
+		h = hashBoundaryPath(h, fact.Key)
+		h = internal.HashCombine(h, fact.Value.Hash())
+	}
+	return h
 }
 
 // WithAppendElementFieldOrigins returns f plus canonical append-field origin
@@ -802,6 +864,13 @@ func cloneBoundaryPath(p BoundaryPath) BoundaryPath {
 	}
 	p.Segments = append([]constraint.Segment(nil), p.Segments...)
 	return p
+}
+
+func hashBoundaryPath(h uint64, path BoundaryPath) uint64 {
+	h = internal.HashCombine(h, uint64(path.Kind))
+	h = internal.HashCombine(h, uint64(path.Index+1))
+	h = internal.HashCombine(h, internal.FnvString(constraint.FormatSegments(path.Segments)))
+	return h
 }
 
 func cloneBoundaryKeyPresence(f BoundaryKeyPresenceFact) BoundaryKeyPresenceFact {

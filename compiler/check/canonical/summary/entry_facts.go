@@ -3,8 +3,6 @@ package summary
 import (
 	"sync"
 
-	"github.com/wippyai/go-lua/internal"
-	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/flow"
 )
 
@@ -55,7 +53,7 @@ func internEntryFactsKey(facts flow.BoundaryFacts) EntryFactsKey {
 	if !canonical.HasProof() {
 		return EntryFactsKey{}
 	}
-	h := entryFactsKeyHash(canonical)
+	h := canonical.IdentityHash("summary.EntryFactsKey")
 
 	canonicalEntryFactsKeys.mu.RLock()
 	if existing, ok := lookupEntryFactsKey(canonicalEntryFactsKeys.buckets[h], canonical); ok {
@@ -81,68 +79,6 @@ func lookupEntryFactsKey(bucket []*entryFactsKeyNode, facts flow.BoundaryFacts) 
 		}
 	}
 	return nil, false
-}
-
-func entryFactsKeyHash(facts flow.BoundaryFacts) uint64 {
-	h := internal.FnvString("summary.EntryFactsKey")
-	for _, fact := range facts.KeyPresence() {
-		h = internal.HashCombine(h, internal.FnvString("kp"))
-		h = hashBoundaryPath(h, fact.Table)
-		h = hashBoundaryPath(h, fact.Key)
-	}
-	for _, fact := range facts.KeyArrays() {
-		h = internal.HashCombine(h, internal.FnvString("ka"))
-		h = hashBoundaryPath(h, fact.Array)
-		h = hashBoundaryPath(h, fact.Table)
-	}
-	for _, fact := range facts.KeyArrayValues() {
-		h = internal.HashCombine(h, internal.FnvString("kav"))
-		h = hashBoundaryPath(h, fact.Array)
-		h = hashBoundaryPath(h, fact.Table)
-		h = internal.HashCombine(h, fact.Value.Hash())
-	}
-	for _, fact := range facts.AppendKeys() {
-		h = internal.HashCombine(h, internal.FnvString("ak"))
-		h = hashBoundaryPath(h, fact.Array)
-		h = hashBoundaryPath(h, fact.Key)
-		if fact.HasTable {
-			h = internal.HashCombine(h, 1)
-			h = hashBoundaryPath(h, fact.Table)
-		} else {
-			h = internal.HashCombine(h, 0)
-		}
-	}
-	for _, fact := range facts.AppendElementFieldOrigins() {
-		h = internal.HashCombine(h, internal.FnvString("aefo"))
-		h = hashBoundaryPath(h, fact.Array)
-		h = internal.HashCombine(h, internal.FnvString(constraint.FormatSegments(fact.Field)))
-		h = hashBoundaryPath(h, fact.Source)
-		h = internal.HashCombine(h, internal.FnvString(constraint.FormatSegments(fact.SourceField)))
-	}
-	for _, fact := range facts.LengthLowerBounds() {
-		h = internal.HashCombine(h, internal.FnvString("len"))
-		h = hashBoundaryPath(h, fact.Target)
-		h = internal.HashCombine(h, uint64(fact.Lower))
-	}
-	for _, fact := range facts.LengthRelations() {
-		h = internal.HashCombine(h, internal.FnvString("lenrel"))
-		h = hashBoundaryPath(h, fact.Target)
-		h = hashBoundaryPath(h, fact.Source)
-	}
-	for _, fact := range facts.IndexWrites() {
-		h = internal.HashCombine(h, internal.FnvString("iw"))
-		h = hashBoundaryPath(h, fact.Table)
-		h = hashBoundaryPath(h, fact.Key)
-		h = internal.HashCombine(h, fact.Value.Hash())
-	}
-	return h
-}
-
-func hashBoundaryPath(h uint64, path flow.BoundaryPath) uint64 {
-	h = internal.HashCombine(h, uint64(path.Kind))
-	h = internal.HashCombine(h, uint64(path.Index+1))
-	h = internal.HashCombine(h, internal.FnvString(constraint.FormatSegments(path.Segments)))
-	return h
 }
 
 func mergeEntryFacts(a, b flow.BoundaryFacts) flow.BoundaryFacts {
