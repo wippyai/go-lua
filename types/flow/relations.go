@@ -373,23 +373,18 @@ func (r PointRelations) KillSymbols(symbols ...cfg.SymbolID) PointRelations {
 	if r.bottom || len(symbols) == 0 || (len(r.siblingNil) == 0 && len(r.guarded) == 0 && len(r.lengthParam) == 0 && len(r.sizeLower) == 0) {
 		return r
 	}
-	killed := make(map[cfg.SymbolID]bool, len(symbols))
-	for _, sym := range symbols {
-		if sym != 0 {
-			killed[sym] = true
-		}
-	}
-	if len(killed) == 0 {
+	killed := relationKillRoots(symbols)
+	if killed.Len() == 0 {
 		return r
 	}
 	siblings := make([]SiblingNilRelation, 0, len(r.siblingNil))
 	for _, rel := range r.siblingNil {
-		if killed[rel.ErrSym] {
+		if killed.Contains(rel.ErrSym) {
 			continue
 		}
 		values := rel.ValueSyms[:0]
 		for _, sym := range rel.ValueSyms {
-			if !killed[sym] {
+			if !killed.Contains(sym) {
 				values = append(values, sym)
 			}
 		}
@@ -401,13 +396,13 @@ func (r PointRelations) KillSymbols(symbols ...cfg.SymbolID) PointRelations {
 	lengths := make([]PointLengthParamRelation, 0, len(r.lengthParam))
 	for _, rel := range r.lengthParam {
 		path := rel.Target.Path()
-		if !killed[path.Symbol] {
+		if !killed.Contains(path.Symbol) {
 			lengths = append(lengths, rel)
 		}
 	}
 	guarded := make([]PointGuardRelation, 0, len(r.guarded))
 	for _, rel := range r.guarded {
-		if !killed[rel.GuardSym] && !killed[rel.TargetSym] {
+		if !killed.Contains(rel.GuardSym) && !killed.Contains(rel.TargetSym) {
 			guarded = append(guarded, rel)
 		}
 	}
@@ -501,19 +496,14 @@ func (r PointRelations) KillLengthTargets(symbols ...cfg.SymbolID) PointRelation
 	if r.bottom || (len(r.lengthParam) == 0 && len(r.sizeLower) == 0) || len(symbols) == 0 {
 		return r
 	}
-	killed := make(map[cfg.SymbolID]bool, len(symbols))
-	for _, sym := range symbols {
-		if sym != 0 {
-			killed[sym] = true
-		}
-	}
-	if len(killed) == 0 {
+	killed := relationKillRoots(symbols)
+	if killed.Len() == 0 {
 		return r
 	}
 	out := make([]PointLengthParamRelation, 0, len(r.lengthParam))
 	for _, rel := range r.lengthParam {
 		path := rel.Target.Path()
-		if !killed[path.Symbol] {
+		if !killed.Contains(path.Symbol) {
 			out = append(out, rel)
 		}
 	}
@@ -995,13 +985,21 @@ func joinPointContainerLowerBounds(a, b []PointContainerLowerBound) []PointConta
 	return compactPointContainerLowerBounds(out)
 }
 
-func filterContainerLowerBoundsByKilledRoots(xs []PointContainerLowerBound, killed map[cfg.SymbolID]bool) []PointContainerLowerBound {
-	if len(xs) == 0 || len(killed) == 0 {
+func relationKillRoots(symbols []cfg.SymbolID) cfgSymbolSet {
+	var roots cfgSymbolSet
+	for _, sym := range symbols {
+		roots.Add(sym)
+	}
+	return roots
+}
+
+func filterContainerLowerBoundsByKilledRoots(xs []PointContainerLowerBound, killed cfgSymbolSet) []PointContainerLowerBound {
+	if len(xs) == 0 || killed.Len() == 0 {
 		return append([]PointContainerLowerBound(nil), xs...)
 	}
 	out := make([]PointContainerLowerBound, 0, len(xs))
 	for _, rel := range xs {
-		if !killed[rel.TargetRoot] {
+		if !killed.Contains(rel.TargetRoot) {
 			out = append(out, rel)
 		}
 	}
