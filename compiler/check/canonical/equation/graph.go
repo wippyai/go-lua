@@ -80,14 +80,7 @@ func (b *Builder) WithEntryValues(values map[int]product.AbstractValue) *Builder
 // visible at function entry. These facts are seeded into PointState before local
 // node transfer so the same kill/reduction logic owns their lifetime.
 func (b *Builder) WithEntryFacts(facts flow.BoundaryFacts) *Builder {
-	b.entryFacts = flow.BoundaryFactsOf(
-		facts.KeyPresence(),
-		facts.KeyArrays(),
-		facts.KeyArrayValues(),
-		facts.AppendKeys(),
-		facts.LengthLowerBounds(),
-		facts.IndexWrites(),
-	).WithAppendElementFieldOrigins(facts.AppendElementFieldOrigins())
+	b.entryFacts = facts.Clone()
 	return b
 }
 

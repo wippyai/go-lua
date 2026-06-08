@@ -22,7 +22,7 @@ func NewEntryContext(ref summary.FuncRef, references flow.ReferenceContext, valu
 		ref:        ref,
 		references: flow.ReferenceContextOf(references.CaptureCells(), references.FunctionRefs(), references.ClosureRefs()),
 		values:     cloneEntryValues(values),
-		facts:      cloneBoundaryFacts(facts),
+		facts:      facts.Clone(),
 	}
 }
 
@@ -63,7 +63,7 @@ func (c EntryContext) References() flow.ReferenceContext {
 func (c EntryContext) EntryValues() summary.EntryValues { return cloneEntryValues(c.values) }
 
 // EntryFacts returns caller-projected parameter-relative path facts.
-func (c EntryContext) EntryFacts() flow.BoundaryFacts { return cloneBoundaryFacts(c.facts) }
+func (c EntryContext) EntryFacts() flow.BoundaryFacts { return c.facts.Clone() }
 
 // Key returns the canonical summary key for this exact entry context.
 func (c EntryContext) Key() summary.Key {
@@ -79,18 +79,4 @@ func cloneEntryValues(in summary.EntryValues) summary.EntryValues {
 		out[k] = v
 	}
 	return out
-}
-
-func cloneBoundaryFacts(in flow.BoundaryFacts) flow.BoundaryFacts {
-	if in.IsBottom() || !in.HasProof() {
-		return flow.BoundaryFactsDomain.Top()
-	}
-	return flow.BoundaryFactsOf(
-		in.KeyPresence(),
-		in.KeyArrays(),
-		in.KeyArrayValues(),
-		in.AppendKeys(),
-		in.LengthLowerBounds(),
-		in.IndexWrites(),
-	).WithAppendElementFieldOrigins(in.AppendElementFieldOrigins())
 }

@@ -47,11 +47,11 @@ func (k EntryFactsKey) Facts() flow.BoundaryFacts {
 	if k.n == nil {
 		return flow.BoundaryFactsDomain.Top()
 	}
-	return cloneEntryFacts(k.n.facts)
+	return k.n.facts.Clone()
 }
 
 func internEntryFactsKey(facts flow.BoundaryFacts) EntryFactsKey {
-	canonical := cloneEntryFacts(facts)
+	canonical := facts.Clone()
 	if !canonical.HasProof() {
 		return EntryFactsKey{}
 	}
@@ -81,20 +81,6 @@ func lookupEntryFactsKey(bucket []*entryFactsKeyNode, facts flow.BoundaryFacts) 
 		}
 	}
 	return nil, false
-}
-
-func cloneEntryFacts(facts flow.BoundaryFacts) flow.BoundaryFacts {
-	if facts.IsBottom() || !facts.HasProof() {
-		return flow.BoundaryFactsDomain.Top()
-	}
-	return flow.BoundaryFactsOf(
-		facts.KeyPresence(),
-		facts.KeyArrays(),
-		facts.KeyArrayValues(),
-		facts.AppendKeys(),
-		facts.LengthLowerBounds(),
-		facts.IndexWrites(),
-	).WithAppendElementFieldOrigins(facts.AppendElementFieldOrigins())
 }
 
 func entryFactsKeyHash(facts flow.BoundaryFacts) uint64 {
@@ -138,6 +124,11 @@ func entryFactsKeyHash(facts flow.BoundaryFacts) uint64 {
 		h = hashBoundaryPath(h, fact.Target)
 		h = internal.HashCombine(h, uint64(fact.Lower))
 	}
+	for _, fact := range facts.LengthRelations() {
+		h = internal.HashCombine(h, internal.FnvString("lenrel"))
+		h = hashBoundaryPath(h, fact.Target)
+		h = hashBoundaryPath(h, fact.Source)
+	}
 	for _, fact := range facts.IndexWrites() {
 		h = internal.HashCombine(h, internal.FnvString("iw"))
 		h = hashBoundaryPath(h, fact.Table)
@@ -155,5 +146,5 @@ func hashBoundaryPath(h uint64, path flow.BoundaryPath) uint64 {
 }
 
 func mergeEntryFacts(a, b flow.BoundaryFacts) flow.BoundaryFacts {
-	return flow.MergeBoundaryFactProofs(cloneEntryFacts(a), cloneEntryFacts(b))
+	return flow.MergeBoundaryFactProofs(a.Clone(), b.Clone())
 }

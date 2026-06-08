@@ -141,6 +141,25 @@ func boundaryFactsOfFull(
 	}
 }
 
+// Clone returns a canonical, alias-free copy of f. BoundaryFacts owns its lane
+// set; external packages should not rebuild it field by field because that makes
+// every new fact lane a cross-package migration hazard.
+func (f BoundaryFacts) Clone() BoundaryFacts {
+	if f.bottom || !f.HasProof() {
+		return BoundaryFactsDomain.Top()
+	}
+	return boundaryFactsOfFull(
+		f.keyPresence,
+		f.keyArrays,
+		f.keyArrayValues,
+		f.appendKeys,
+		f.appendOrigins,
+		f.lenLower,
+		f.lenRelations,
+		f.indexWrites,
+	)
+}
+
 // WithAppendElementFieldOrigins returns f plus canonical append-field origin
 // proofs. The base constructor intentionally stays source-compatible while this
 // fact lane stabilizes; reduction can later group all fact lanes behind one

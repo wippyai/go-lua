@@ -166,6 +166,23 @@ func TestEntryContextEntryValuesNoAliasAndDeterministic(t *testing.T) {
 	}
 }
 
+func TestEntryContextEntryFactsPreserveLengthRelations(t *testing.T) {
+	ref := summary.FuncRef{GraphID: 300}
+	rel := flow.BoundaryLengthRelationFact{
+		Target: flow.BoundaryPath{Kind: flow.BoundaryPathParam, Index: 0},
+		Source: flow.BoundaryPath{Kind: flow.BoundaryPathParam, Index: 1},
+	}
+	facts := flow.BoundaryFactsDomain.Top().WithLengthRelations([]flow.BoundaryLengthRelationFact{rel})
+
+	ctx := NewEntryContext(ref, flow.ReferenceContextOf(flow.CaptureCellsDomain.Bottom(), nil, nil), nil, facts)
+	if got := ctx.EntryFacts(); !got.HasLengthRelation(rel) {
+		t.Fatalf("EntryFacts() = %#v, want length relation %#v", got.LengthRelations(), rel)
+	}
+	if got := ctx.Key().Facts.Facts(); !got.HasLengthRelation(rel) {
+		t.Fatalf("Key entry facts = %#v, want length relation %#v", got.LengthRelations(), rel)
+	}
+}
+
 func entryValueEqual(a, b product.AbstractValue) bool {
 	return product.Domain.Equal(a, b)
 }
