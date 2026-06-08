@@ -28,7 +28,7 @@ type CallEntryConfig struct {
 	Graph               *cfg.Graph
 	Bindings            *bind.BindingTable
 	ModuleBindings      *bind.BindingTable
-	PreAssignTargets    map[*cfg.CallInfo]map[cfg.SymbolID]bool
+	PreAssignTargets    checkcallsite.PreAssignmentTargets
 	HasFunctionRef      func(cfg.SymbolID) bool
 	EvidenceAllowed     func(cfg.SymbolID, int) bool
 	Observer            ExpressionObserver
@@ -87,7 +87,6 @@ func (p CallEntryProjector) EntryEvidence(point cfg.Point, evidence api.CallEvid
 
 func (p CallEntryProjector) callArgumentTypes(point cfg.Point, info *cfg.CallInfo) []typ.Type {
 	argTypes := make([]typ.Type, len(info.Args))
-	callTargets := p.cfg.PreAssignTargets[info]
 	for i, arg := range info.Args {
 		if arg == nil {
 			continue
@@ -95,7 +94,7 @@ func (p CallEntryProjector) callArgumentTypes(point cfg.Point, info *cfg.CallInf
 		argType := p.typeOf(arg, point)
 		argSym := p.callArgumentSymbol(info, i, arg)
 		if preType := p.preAssignmentType(point, argSym); preType != nil {
-			if callTargets[argSym] {
+			if p.cfg.PreAssignTargets.Contains(info, argSym) {
 				argType = preType
 			} else {
 				argType = typ.JoinPreferNonSoft(argType, preType)

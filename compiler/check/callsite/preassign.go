@@ -9,15 +9,27 @@ import (
 // SymbolTypeAtPoint resolves a symbol type at a CFG point.
 type SymbolTypeAtPoint func(cfg.Point, cfg.SymbolID) (typ.Type, bool)
 
+// PreAssignmentTargets owns the call-site target symbols that must read
+// predecessor state under Lua RHS-before-LHS assignment semantics.
+type PreAssignmentTargets map[*cfg.CallInfo]map[cfg.SymbolID]bool
+
+// Contains reports whether call writes sym after evaluating its arguments.
+func (t PreAssignmentTargets) Contains(call *cfg.CallInfo, sym cfg.SymbolID) bool {
+	if call == nil || sym == 0 || len(t) == 0 {
+		return false
+	}
+	return t[call][sym]
+}
+
 // PreAssignmentTargetsByCall indexes assignment target symbols by source call.
 // For calls used as assignment RHS at point p (x = f(...)), the returned target
 // set captures symbols that must be typed from predecessor state when computing
 // argument evidence at that call site.
-func PreAssignmentTargetsByCall(assignments []api.AssignmentEvidence) map[*cfg.CallInfo]map[cfg.SymbolID]bool {
+func PreAssignmentTargetsByCall(assignments []api.AssignmentEvidence) PreAssignmentTargets {
 	if len(assignments) == 0 {
 		return nil
 	}
-	out := make(map[*cfg.CallInfo]map[cfg.SymbolID]bool)
+	out := make(PreAssignmentTargets)
 	for _, assign := range assignments {
 		info := assign.Info
 		if info == nil || len(info.Targets) == 0 || len(info.SourceCalls) == 0 {

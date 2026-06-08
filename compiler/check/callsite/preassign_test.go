@@ -5,9 +5,38 @@ import (
 
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/cfg"
+	"github.com/wippyai/go-lua/compiler/check/api"
 	"github.com/wippyai/go-lua/compiler/parse"
 	"github.com/wippyai/go-lua/types/typ"
 )
+
+func TestPreAssignmentTargetsContainsAssignmentSourceCallTarget(t *testing.T) {
+	graph := buildGraph(t, `
+local x = "old"
+x = update(x)
+`)
+	var assignPoint cfg.Point
+	var assignInfo *cfg.AssignInfo
+	graph.EachAssign(func(p cfg.Point, info *cfg.AssignInfo) {
+		if info != nil && !info.IsLocal && len(info.SourceCalls) == 1 {
+			assignPoint = p
+			assignInfo = info
+		}
+	})
+	if assignInfo == nil {
+		t.Fatal("expected assignment with one source call")
+	}
+	targetSym := assignInfo.Targets[0].Symbol
+	sourceCall := assignInfo.SourceCalls[0]
+
+	targets := PreAssignmentTargetsByCall([]api.AssignmentEvidence{{Point: assignPoint, Info: assignInfo}})
+	if !targets.Contains(sourceCall, targetSym) {
+		t.Fatalf("pre-assignment targets did not contain call target symbol %d", targetSym)
+	}
+	if targets.Contains(sourceCall, cfg.SymbolID(99999)) {
+		t.Fatal("pre-assignment targets contained unrelated symbol")
+	}
+}
 
 func TestPreAssignmentTypeAtJoin_JoinsPredecessorsOnly(t *testing.T) {
 	graph, joinPoint := buildGraphWithJoinPoint(t)
@@ -80,19 +109,7 @@ else
 end
 return 0
 `
-	stmts, err := parse.ParseString(code, "preassign_join.lua")
-	if err != nil {
-		t.Fatalf("parse error: %v", err)
-	}
-
-	fn := &ast.FunctionExpr{
-		ParList: &ast.ParList{},
-		Stmts:   stmts,
-	}
-	graph := cfg.Build(fn, "cond")
-	if graph == nil {
-		t.Fatal("expected graph")
-	}
+	graph := buildGraph(t, code, "cond")
 
 	var joinPoint cfg.Point
 	for _, p := range graph.RPO() {
@@ -105,4 +122,21 @@ return 0
 		t.Fatal("expected graph point with multiple predecessors")
 	}
 	return graph, joinPoint
+}
+
+func buildGraph(t *testing.T, code string, params ...string) *cfg.Graph {
+	t.Helper()
+	stmts, err := parse.ParseString(code, "preassign.lua")
+	if err != nil {
+		t.Fatalf("parse error: %v", err)
+	}
+	fn := &ast.FunctionExpr{
+		ParList: &ast.ParList{Names: params},
+		Stmts:   stmts,
+	}
+	graph := cfg.Build(fn, params...)
+	if graph == nil {
+		t.Fatal("expected graph")
+	}
+	return graph
 }
