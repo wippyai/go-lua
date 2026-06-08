@@ -19,6 +19,19 @@ func NewPointWriter(state *PointState) PointWriter {
 	return PointWriter{state: state}
 }
 
+func (w PointWriter) detachEnvForMutation() {
+	if w.state == nil {
+		return
+	}
+	if w.state.envShared {
+		w.state.Env = cloneEnv(w.state.Env)
+		w.state.envShared = false
+	}
+	if w.state.Env == nil {
+		w.state.Env = make(map[ValueKey]product.AbstractValue)
+	}
+}
+
 // DeleteValueKey removes a non-axis Env value by typed key.
 func (w PointWriter) DeleteValueKey(key ValueKey) bool {
 	if w.state == nil || w.state.Env == nil {
@@ -27,6 +40,7 @@ func (w PointWriter) DeleteValueKey(key ValueKey) bool {
 	if _, had := w.state.Env[key]; !had {
 		return false
 	}
+	w.detachEnvForMutation()
 	delete(w.state.Env, key)
 	return true
 }
@@ -47,17 +61,18 @@ func (w PointWriter) WriteValueKey(key ValueKey, val product.AbstractValue, join
 	if w.state == nil || key == "" {
 		return false
 	}
-	if w.state.Env == nil {
-		w.state.Env = make(map[ValueKey]product.AbstractValue)
-	}
 	if joinExisting {
 		if prev, had := w.state.Env[key]; had {
 			val = product.Domain.Join(prev, val)
 		}
 	}
+	if val.IsZero() || val.IsBottom() {
+		return w.DeleteValueKey(key)
+	}
 	if prev, had := w.state.Env[key]; had && product.Domain.Equal(prev, val) {
 		return false
 	}
+	w.detachEnvForMutation()
 	w.state.Env[key] = val
 	return true
 }
@@ -85,12 +100,8 @@ func (w PointWriter) WriteSymbolValue(sym cfg.SymbolID, val product.AbstractValu
 		if emitCellEffect {
 			w.state.CellEffects = w.state.CellEffects.WithMustWrite(sym, val)
 		}
-		delete(w.state.Env, SymbolValueKey(sym))
+		w.DeleteValueKey(SymbolValueKey(sym))
 		return
-	}
-
-	if w.state.Env == nil {
-		w.state.Env = make(map[ValueKey]product.AbstractValue)
 	}
 
 	key := SymbolValueKey(sym)
@@ -99,5 +110,13 @@ func (w PointWriter) WriteSymbolValue(sym cfg.SymbolID, val product.AbstractValu
 			val = product.Domain.Join(prev, val)
 		}
 	}
+	if val.IsZero() || val.IsBottom() {
+		w.DeleteValueKey(key)
+		return
+	}
+	if prev, had := w.state.Env[key]; had && product.Domain.Equal(prev, val) {
+		return
+	}
+	w.detachEnvForMutation()
 	w.state.Env[key] = val
 }

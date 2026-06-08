@@ -10,7 +10,7 @@ import (
 	"github.com/wippyai/go-lua/types/typ"
 )
 
-func TestClonePointStateCopiesMutableCarriersAndSharesPersistentReferenceAxes(t *testing.T) {
+func TestClonePointStateUsesCopyOnWriteEnvAndSharesPersistentReferenceAxes(t *testing.T) {
 	const sym = cfg.SymbolID(1)
 	const other = cfg.SymbolID(2)
 	path := SymbolPathKey(sym, nil)
@@ -30,8 +30,9 @@ func TestClonePointStateCopiesMutableCarriersAndSharesPersistentReferenceAxes(t 
 	}
 
 	cloned := ClonePointState(original)
-	cloned.Env[SymbolValueKey(sym)] = product.FromType(typ.Number)
-	cloned.Env[SymbolValueKey(other)] = product.FromType(typ.Boolean)
+	writer := NewPointWriter(&cloned)
+	writer.WriteValueKey(SymbolValueKey(sym), product.FromType(typ.Number), false)
+	writer.WriteValueKey(SymbolValueKey(other), product.FromType(typ.Boolean), false)
 	cloned.Num.ApplyLenGeConst(path, 5)
 	cloned.FunctionRefs = WithFunctionRefAddress(cloned.FunctionRefs, otherAddr, FunctionRefSetOf(FunctionRef{GraphID: 99}))
 	cloned.ClosureRefs = WithClosureRefAddress(cloned.ClosureRefs, otherAddr, ClosureRefSetOf(ClosureRefOf(FunctionRef{GraphID: 100}, CaptureCellsDomain.Bottom(), nil)))
@@ -59,8 +60,8 @@ func TestClonePointStateForEdgeFactEffectCopiesOnlyEdgeFactMutableAxes(t *testin
 	const sym = cfg.SymbolID(1)
 	const other = cfg.SymbolID(2)
 	path := SymbolPathKey(sym, nil)
-	otherPath := SymbolPathKey(other, nil)
 	addr, _ := StableAddressOfSymbol(sym, nil)
+	otherAddr, _ := StableAddressOfSymbol(other, nil)
 	num := numeric.NewState()
 	num.ApplyLenGeConst(path, 1)
 	ref := FunctionRef{GraphID: 11, ParentHash: 3}
@@ -75,8 +76,9 @@ func TestClonePointStateForEdgeFactEffectCopiesOnlyEdgeFactMutableAxes(t *testin
 	}
 
 	cloned := ClonePointStateForEdgeFactEffect(original)
-	cloned.Env[SymbolValueKey(sym)] = product.FromType(typ.Number)
-	cloned.Env[SymbolValueKey(other)] = product.FromType(typ.Boolean)
+	writer := NewPointWriter(&cloned)
+	writer.WriteValueKey(SymbolValueKey(sym), product.FromType(typ.Number), false)
+	writer.WriteValueKey(SymbolValueKey(other), product.FromType(typ.Boolean), false)
 
 	got, ok := original.Env[SymbolValueKey(sym)]
 	if !ok || !typ.TypeEquals(got.ProjectValue(), typ.String) {
@@ -88,13 +90,13 @@ func TestClonePointStateForEdgeFactEffectCopiesOnlyEdgeFactMutableAxes(t *testin
 	if cloned.Num != original.Num {
 		t.Fatalf("edge-fact clone copied numeric state; edge proof effects do not mutate Num")
 	}
-	cloned.FunctionRefs[otherPath] = FunctionRefSetOf(FunctionRef{GraphID: 99})
-	if _, ok := original.FunctionRefs[otherPath]; !ok {
-		t.Fatalf("edge-fact clone copied FunctionRefs; edge proof effects do not mutate them")
+	cloned.FunctionRefs = WithFunctionRefAddress(cloned.FunctionRefs, otherAddr, FunctionRefSetOf(FunctionRef{GraphID: 99}))
+	if _, ok := FunctionRefAtAddress(original.FunctionRefs, otherAddr); ok {
+		t.Fatalf("persistent FunctionRefs update leaked into original")
 	}
-	cloned.ClosureRefs[otherPath] = ClosureRefSetOf(ClosureRefOf(FunctionRef{GraphID: 100}, CaptureCellsDomain.Bottom(), nil))
-	if _, ok := original.ClosureRefs[otherPath]; !ok {
-		t.Fatalf("edge-fact clone copied ClosureRefs; edge proof effects do not mutate them")
+	cloned.ClosureRefs = WithClosureRefAddress(cloned.ClosureRefs, otherAddr, ClosureRefSetOf(ClosureRefOf(FunctionRef{GraphID: 100}, CaptureCellsDomain.Bottom(), nil)))
+	if _, ok := ClosureRefAtAddress(original.ClosureRefs, otherAddr); ok {
+		t.Fatalf("persistent ClosureRefs update leaked into original")
 	}
 }
 
@@ -121,17 +123,19 @@ func TestDetachPointStateEnvCopiesBorrowedEnvOnly(t *testing.T) {
 	}
 }
 
-func TestClonePointStateCanonicalizesMutableEnv(t *testing.T) {
+func TestPointWriterCanonicalizesBottomEnvWrites(t *testing.T) {
 	const sym = cfg.SymbolID(1)
-	original := PointState{
+	state := PointState{
 		Env: map[ValueKey]product.AbstractValue{
-			SymbolValueKey(sym): product.Bottom(),
+			SymbolValueKey(sym): product.FromType(typ.String),
 		},
 	}
 
-	cloned := ClonePointState(original)
-	if len(cloned.Env) != 0 {
-		t.Fatalf("cloned Env retained bottom entries: %#v", cloned.Env)
+	if !NewPointWriter(&state).WriteValueKey(SymbolValueKey(sym), product.Bottom(), false) {
+		t.Fatalf("bottom write should delete existing Env key")
+	}
+	if len(state.Env) != 0 {
+		t.Fatalf("bottom Env write retained entries: %#v", state.Env)
 	}
 }
 

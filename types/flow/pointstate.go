@@ -92,6 +92,7 @@ import (
 // product.Domain populates its fields over its axes.
 type PointState struct {
 	Env                map[ValueKey]product.AbstractValue
+	envShared          bool
 	Cond               constraint.Condition
 	Num                *numeric.State
 	Rel                PointRelations
@@ -133,13 +134,15 @@ func SymbolValue(ps PointState, sym cfg.SymbolID) (product.AbstractValue, bool) 
 // ClonePointState returns a canonical, mutation-safe copy of ps.
 //
 // Transfer and narrowing code may speculatively update Env and Num while
-// deriving a successor state. Those mutable carriers are cloned here so
-// predecessor states owned by the solver are never aliased. Reference facts and
-// the remaining finite fact axes are persistent-by-construction: their update
-// methods return new values, so copying the axis value is sufficient.
+// deriving a successor state. Env is copy-on-write: cloned states share the
+// published map until PointWriter performs the first Env mutation. Num remains a
+// mutable solver object and is cloned eagerly. Reference facts and the remaining
+// finite fact axes are persistent-by-construction: their update methods return
+// new values, so copying the axis value is sufficient.
 func ClonePointState(ps PointState) PointState {
 	out := PointState{
-		Env:                cloneEnv(ps.Env),
+		Env:                ps.Env,
+		envShared:          true,
 		Cond:               ps.Cond,
 		Rel:                ps.Rel,
 		ReturnRel:          ps.ReturnRel,
@@ -167,25 +170,26 @@ func ClonePointState(ps PointState) PointState {
 //
 // Edge proof effects may update Cond, root values in Env, captured Cells and
 // CellEffects, point-local StaticMembers, and finite proof axes such as
-// KeyPresence. Cells, CellEffects, StaticMembers, and the finite proof axes are
-// persistent carriers whose writes return a new value, so only Env needs a
-// defensive copy here. Callable reference axes and the numeric state are
-// intentionally shared because this transaction never mutates them.
+// KeyPresence. Env is copy-on-write through PointWriter/DetachPointStateEnv;
+// Cells, CellEffects, StaticMembers, and the finite proof axes are persistent
+// carriers whose writes return a new value. Callable reference axes and the
+// numeric state are intentionally shared because this transaction never mutates
+// them.
 func ClonePointStateForEdgeFactEffect(ps PointState) PointState {
 	out := ps
-	out.Env = cloneEnv(ps.Env)
+	out.envShared = true
 	return out
 }
 
-// DetachPointStateEnv makes ps.Env safe to mutate after ps was produced by a
-// shallow PointState copy. Persistent axes may be copied by value, but Env is a
-// mutable map; borrowed-edge reducers call this only when they actually
-// materialize a value refinement.
+// DetachPointStateEnv makes ps.Env safe to mutate after an explicit shallow
+// PointState copy. Most Env writes should go through PointWriter, which detaches
+// lazily and only when a write changes the map.
 func DetachPointStateEnv(ps *PointState) {
 	if ps == nil {
 		return
 	}
 	ps.Env = cloneEnv(ps.Env)
+	ps.envShared = false
 }
 
 func cloneEnv(env map[ValueKey]product.AbstractValue) map[ValueKey]product.AbstractValue {
@@ -266,6 +270,7 @@ var PointStateDomain = lattice.Lattice[PointState]{
 	Top: func() PointState {
 		return PointState{
 			Env:                envDomain.Top(),
+			envShared:          true,
 			Cond:               constraint.Domain.Top(),
 			Num:                numeric.StateDomain.Top(),
 			Rel:                PointRelationsDomain.Top(),
@@ -325,6 +330,7 @@ var PointStateDomain = lattice.Lattice[PointState]{
 	Join: func(a, b PointState) PointState {
 		return PointState{
 			Env:                envDomain.Join(a.Env, b.Env),
+			envShared:          true,
 			Cond:               constraint.Domain.Join(a.Cond, b.Cond),
 			Num:                numeric.StateDomain.Join(a.Num, b.Num),
 			Rel:                PointRelationsDomain.Join(a.Rel, b.Rel),
@@ -347,6 +353,7 @@ var PointStateDomain = lattice.Lattice[PointState]{
 	Widen: func(prev, next PointState) PointState {
 		return PointState{
 			Env:                envDomain.Widen(prev.Env, next.Env),
+			envShared:          true,
 			Cond:               constraint.Domain.Widen(prev.Cond, next.Cond),
 			Num:                numeric.StateDomain.Widen(prev.Num, next.Num),
 			Rel:                PointRelationsDomain.Widen(prev.Rel, next.Rel),
