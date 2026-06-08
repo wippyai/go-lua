@@ -15,6 +15,14 @@ type BoundaryLocalPath struct {
 	address StableAddress
 }
 
+// BoundaryLocalRoots names the concrete caller- or entry-local roots available
+// for a boundary fact application. It keeps root selection separate from fact
+// replay, while flow owns the boundary-path rebasing and normalization rules.
+type BoundaryLocalRoots struct {
+	params  map[int]constraint.Path
+	returns map[int]constraint.Path
+}
+
 // BoundaryLocalPathOfPath normalizes a concrete local path into the address
 // view used by point-state fact domains.
 func BoundaryLocalPathOfPath(path constraint.Path) (BoundaryLocalPath, bool) {
@@ -26,6 +34,38 @@ func BoundaryLocalPathOfPath(path constraint.Path) (BoundaryLocalPath, bool) {
 		path:    cloneAddressPath(path),
 		address: addr,
 	}, true
+}
+
+// NewBoundaryLocalRoots copies concrete local roots for parameter and return
+// boundary paths. Invalid/empty roots are ignored.
+func NewBoundaryLocalRoots(params, returns map[int]constraint.Path) BoundaryLocalRoots {
+	return BoundaryLocalRoots{
+		params:  cloneBoundaryLocalRootPaths(params),
+		returns: cloneBoundaryLocalRootPaths(returns),
+	}
+}
+
+// Rebase maps a boundary-relative path to its concrete local path and stable
+// address. Callers supply only root identities; suffix composition is part of
+// the boundary algebra.
+func (r BoundaryLocalRoots) Rebase(path BoundaryPath) (BoundaryLocalPath, bool) {
+	var root constraint.Path
+	var ok bool
+	switch path.Kind {
+	case BoundaryPathParam:
+		root, ok = r.params[path.Index]
+	case BoundaryPathReturn:
+		root, ok = r.returns[path.Index]
+	default:
+		return BoundaryLocalPath{}, false
+	}
+	if !ok || root.IsEmpty() {
+		return BoundaryLocalPath{}, false
+	}
+	for _, seg := range path.Segments {
+		root = root.Append(seg)
+	}
+	return BoundaryLocalPathOfPath(root)
 }
 
 // BoundaryPathRebaser maps a boundary-relative fact path to the normalized
@@ -258,4 +298,18 @@ func applyBoundaryAppendKeyPlans(out *PointState, plans []BoundaryAppendKeyPlan)
 		}) || changed
 	}
 	return changed
+}
+
+func cloneBoundaryLocalRootPaths(in map[int]constraint.Path) map[int]constraint.Path {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make(map[int]constraint.Path, len(in))
+	for idx, path := range in {
+		if idx < 0 || path.IsEmpty() {
+			continue
+		}
+		out[idx] = cloneAddressPath(path)
+	}
+	return out
 }

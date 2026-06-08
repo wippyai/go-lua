@@ -688,22 +688,22 @@ func (t *Transfer) SeedEntryFacts(out *flow.PointState, facts flow.BoundaryFacts
 	if t == nil || out == nil || !facts.HasProof() {
 		return
 	}
-	app, _ := flow.ApplyBoundaryFacts(out, facts, t.rebaseEntryBoundaryPath, nil)
+	roots := t.entryBoundaryLocalRoots()
+	app, _ := flow.ApplyBoundaryFacts(out, facts, roots.Rebase, nil)
 	t.applyBoundaryFactApplication(out, app)
 }
 
-func (t *Transfer) rebaseEntryBoundaryPath(path flow.BoundaryPath) (flow.BoundaryLocalPath, bool) {
-	if t == nil || path.Kind != flow.BoundaryPathParam || path.Index < 0 || path.Index >= len(t.in.Scope.ParamSymbols) {
-		return flow.BoundaryLocalPath{}, false
+func (t *Transfer) entryBoundaryLocalRoots() flow.BoundaryLocalRoots {
+	if t == nil || len(t.in.Scope.ParamSymbols) == 0 {
+		return flow.BoundaryLocalRoots{}
 	}
-	sym := t.in.Scope.ParamSymbols[path.Index]
-	if sym == 0 {
-		return flow.BoundaryLocalPath{}, false
+	params := make(map[int]constraint.Path, len(t.in.Scope.ParamSymbols))
+	for idx, sym := range t.in.Scope.ParamSymbols {
+		if sym != 0 {
+			params[idx] = constraint.Path{Symbol: sym}
+		}
 	}
-	return flow.BoundaryLocalPathOfPath(constraint.Path{
-		Symbol:   sym,
-		Segments: append([]constraint.Segment(nil), path.Segments...),
-	})
+	return flow.NewBoundaryLocalRoots(params, nil)
 }
 
 // SeedEntrySymbolValues writes immutable entry values keyed directly by graph
@@ -2449,7 +2449,8 @@ func (t *Transfer) boundaryAppendKeyPlans(
 	if out == nil || call == nil {
 		return nil
 	}
-	return flow.BoundaryAppendKeyPlans(*out, facts, t.callBoundaryPathRebaser(call, returns))
+	roots := t.callBoundaryLocalRoots(call, returns)
+	return flow.BoundaryAppendKeyPlans(*out, facts, roots.Rebase)
 }
 
 func (t *Transfer) applyBoundaryFactsWithAppendPlans(
@@ -2462,7 +2463,8 @@ func (t *Transfer) applyBoundaryFactsWithAppendPlans(
 	if out == nil || call == nil {
 		return false
 	}
-	app, changed := flow.ApplyBoundaryFacts(out, facts, t.callBoundaryPathRebaser(call, returns), appendPlans)
+	roots := t.callBoundaryLocalRoots(call, returns)
+	app, changed := flow.ApplyBoundaryFacts(out, facts, roots.Rebase, appendPlans)
 	t.applyBoundaryFactApplication(out, app)
 	return changed || len(app.KeyProvenance) > 0
 }
@@ -2473,49 +2475,20 @@ func (t *Transfer) applyBoundaryFactApplication(out *flow.PointState, app flow.B
 	}
 }
 
-func (t *Transfer) callBoundaryPathRebaser(call *ast.FuncCallExpr, returns map[int]constraint.Path) flow.BoundaryPathRebaser {
-	return func(path flow.BoundaryPath) (flow.BoundaryLocalPath, bool) {
-		local, ok := t.rebaseBoundaryPath(call, returns, path)
-		if !ok {
-			return flow.BoundaryLocalPath{}, false
-		}
-		return flow.BoundaryLocalPathOfPath(local)
+func (t *Transfer) callBoundaryLocalRoots(call *ast.FuncCallExpr, returns map[int]constraint.Path) flow.BoundaryLocalRoots {
+	if t == nil || call == nil {
+		return flow.NewBoundaryLocalRoots(nil, returns)
 	}
-}
-
-func (t *Transfer) rebaseBoundaryPath(
-	call *ast.FuncCallExpr,
-	returns map[int]constraint.Path,
-	path flow.BoundaryPath,
-) (constraint.Path, bool) {
-	var out constraint.Path
-	switch path.Kind {
-	case flow.BoundaryPathParam:
-		arg := callsite.RuntimeArgExprAt(call, path.Index)
-		if arg == nil {
-			return constraint.Path{}, false
-		}
+	count := callsite.RuntimeArgExprCount(call)
+	params := make(map[int]constraint.Path, count)
+	for idx := 0; idx < count; idx++ {
+		arg := callsite.RuntimeArgExprAt(call, idx)
 		argPath, ok := t.staticPathOfExpr(arg)
-		if !ok || argPath.IsEmpty() {
-			return constraint.Path{}, false
+		if ok && !argPath.IsEmpty() {
+			params[idx] = argPath
 		}
-		out = argPath
-	case flow.BoundaryPathReturn:
-		if returns == nil {
-			return constraint.Path{}, false
-		}
-		retPath, ok := returns[path.Index]
-		if !ok || retPath.IsEmpty() {
-			return constraint.Path{}, false
-		}
-		out = retPath
-	default:
-		return constraint.Path{}, false
 	}
-	for _, seg := range path.Segments {
-		out = out.Append(seg)
-	}
-	return out, true
+	return flow.NewBoundaryLocalRoots(params, returns)
 }
 
 func (t *Transfer) callClosurePath(call *ast.FuncCallExpr) (constraint.Path, bool) {

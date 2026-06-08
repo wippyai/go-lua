@@ -30,28 +30,12 @@ func TestApplyBoundaryFactsAppliesCollectionProvenanceTransaction(t *testing.T) 
 			Segments: append([]constraint.Segment(nil), path.Segments...),
 		}
 	}
-	rebase := func(path BoundaryPath) (BoundaryLocalPath, bool) {
-		if path.Kind != BoundaryPathParam {
-			return BoundaryLocalPath{}, false
-		}
-		var root constraint.Path
-		switch path.Index {
-		case 0:
-			root = constraint.NewPath(arrayPath.Symbol, arrayPath.Root)
-		case 1:
-			root = constraint.NewPath(tablePath.Symbol, tablePath.Root)
-		case 2:
-			root = constraint.NewPath(keyPath.Symbol, keyPath.Root)
-		case 3:
-			root = constraint.NewPath(sourcePath.Symbol, sourcePath.Root)
-		default:
-			return BoundaryLocalPath{}, false
-		}
-		for _, seg := range path.Segments {
-			root = root.Append(seg)
-		}
-		return BoundaryLocalPathOfPath(root)
-	}
+	roots := NewBoundaryLocalRoots(map[int]constraint.Path{
+		0: constraint.NewPath(arrayPath.Symbol, arrayPath.Root),
+		1: constraint.NewPath(tablePath.Symbol, tablePath.Root),
+		2: constraint.NewPath(keyPath.Symbol, keyPath.Root),
+		3: constraint.NewPath(sourcePath.Symbol, sourcePath.Root),
+	}, nil)
 	facts := BoundaryFactsOf(
 		nil,
 		nil,
@@ -74,11 +58,11 @@ func TestApplyBoundaryFactsAppliesCollectionProvenanceTransaction(t *testing.T) 
 		Source: param(3, sourcePath),
 	}})
 
-	plans := BoundaryAppendKeyPlans(state, facts, rebase)
+	plans := BoundaryAppendKeyPlans(state, facts, roots.Rebase)
 	if len(plans) != 1 {
 		t.Fatalf("BoundaryAppendKeyPlans = %d, want one", len(plans))
 	}
-	if _, changed := ApplyBoundaryFacts(&state, facts, rebase, plans); !changed {
+	if _, changed := ApplyBoundaryFacts(&state, facts, roots.Rebase, plans); !changed {
 		t.Fatal("ApplyBoundaryFacts reported no change")
 	}
 	if tables := state.KeyPresence.KeyArrayTables(StablePathKey(arrayPath)); len(tables) != 1 || tables[0] != StablePathKey(tablePath) {
@@ -94,5 +78,35 @@ func TestApplyBoundaryFactsAppliesCollectionProvenanceTransaction(t *testing.T) 
 	})
 	if len(sources) != 1 {
 		t.Fatalf("boundary append field sources = %v, want one; facts=%s", sources, state.KeyPresence.Format())
+	}
+}
+
+func TestBoundaryLocalRootsRebaseCopiesRootsAndAppendsSuffix(t *testing.T) {
+	paramRoot := constraint.NewPath(cfg.SymbolID(401), "payload")
+	returnRoot := constraint.NewPath(cfg.SymbolID(402), "result")
+	roots := NewBoundaryLocalRoots(
+		map[int]constraint.Path{0: paramRoot},
+		map[int]constraint.Path{1: returnRoot},
+	)
+
+	paramRoot = paramRoot.Field("mutated")
+	local, ok := roots.Rebase(BoundaryPath{
+		Kind:     BoundaryPathParam,
+		Index:    0,
+		Segments: []constraint.Segment{{Kind: constraint.SegmentField, Name: "id"}},
+	})
+	if !ok || !local.path.Equal(constraint.NewPath(cfg.SymbolID(401), "payload").Field("id")) {
+		t.Fatalf("param rebase = %v/%v, want copied root plus suffix", local.path, ok)
+	}
+	local, ok = roots.Rebase(BoundaryPath{
+		Kind:     BoundaryPathReturn,
+		Index:    1,
+		Segments: []constraint.Segment{{Kind: constraint.SegmentField, Name: "status"}},
+	})
+	if !ok || !local.path.Equal(constraint.NewPath(cfg.SymbolID(402), "result").Field("status")) {
+		t.Fatalf("return rebase = %v/%v, want return root plus suffix", local.path, ok)
+	}
+	if _, ok := roots.Rebase(BoundaryPath{Kind: BoundaryPathParam, Index: 99}); ok {
+		t.Fatal("missing boundary root should not rebase")
 	}
 }
