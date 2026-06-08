@@ -243,6 +243,26 @@ func TestCondition_HasTypeBuiltinKindsContradictOnSamePath(t *testing.T) {
 	}
 }
 
+func TestCondition_FieldContradictionRequiresVersionScopedMutablePath(t *testing.T) {
+	current := Path{Root: "item", Symbol: 1, Version: 7}
+	stale := Path{Root: "item", Symbol: 1}
+	a := typ.LiteralString("a")
+
+	if got := FromConstraints(
+		FieldEquals{Target: current, Field: "kind", Value: a},
+		FieldNotEquals{Target: current, Field: "kind", Value: a},
+	); !got.IsFalse() {
+		t.Fatalf("current field equality contradiction = %v, want false", got)
+	}
+
+	if got := FromConstraints(
+		FieldEquals{Target: stale, Field: "kind", Value: a},
+		FieldNotEquals{Target: stale, Field: "kind", Value: a},
+	); got.IsFalse() {
+		t.Fatalf("unversioned mutable field contradiction = false, want retained historical facts")
+	}
+}
+
 func TestCondition_Equals(t *testing.T) {
 	path := Path{Root: "x", Symbol: 1}
 	set := NewConjunction(Truthy{Path: path})

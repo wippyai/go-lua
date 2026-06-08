@@ -82,7 +82,16 @@ type PathSuffix struct {
 
 // PathSuffixOfSegments builds a defensive structured suffix value.
 func PathSuffixOfSegments(segments []constraint.Segment) PathSuffix {
-	return PathSuffix{segments: cloneAddressSegments(segments)}
+	return pathSuffixOfOwnedSegments(cloneAddressSegments(segments))
+}
+
+// pathSuffixOfOwnedSegments wraps a segment slice already owned by this package.
+// PathSuffix has no mutating operations; callers must not pass shared slices.
+func pathSuffixOfOwnedSegments(segments []constraint.Segment) PathSuffix {
+	if len(segments) == 0 {
+		return PathSuffix{}
+	}
+	return PathSuffix{segments: segments}
 }
 
 // Segments returns a defensive copy of the suffix segments.
@@ -195,7 +204,7 @@ func StableAddressOfPath(path constraint.Path) (StableAddress, bool) {
 	if !ok {
 		return StableAddress{}, false
 	}
-	return StableAddressOfRootAndSuffix(root, PathSuffixOfSegments(path.Segments))
+	return stableAddressOfRootAndSuffix(root, pathSuffixOfOwnedSegments(cloneAddressSegments(path.Segments)))
 }
 
 // SameStablePath reports whether two source paths name the same runtime path in
@@ -212,7 +221,7 @@ func StableAddressOfSymbol(sym cfg.SymbolID, segments []constraint.Segment) (Sta
 	if !ok {
 		return StableAddress{}, false
 	}
-	return StableAddressOfRootAndSuffix(root, PathSuffixOfSegments(segments))
+	return stableAddressOfRootAndSuffix(root, PathSuffixOfSegments(segments))
 }
 
 // StableAddressOfRoot builds a stable root-name address for placeholders and
@@ -222,16 +231,20 @@ func StableAddressOfRoot(root string, segments []constraint.Segment) (StableAddr
 	if !ok {
 		return StableAddress{}, false
 	}
-	return StableAddressOfRootAndSuffix(pathRoot, PathSuffixOfSegments(segments))
+	return stableAddressOfRootAndSuffix(pathRoot, PathSuffixOfSegments(segments))
 }
 
 // StableAddressOfRootAndSuffix builds a stable address from normalized root and
 // suffix vocabulary.
 func StableAddressOfRootAndSuffix(root PathRoot, suffix PathSuffix) (StableAddress, bool) {
+	return stableAddressOfRootAndSuffix(root, suffix)
+}
+
+func stableAddressOfRootAndSuffix(root PathRoot, suffix PathSuffix) (StableAddress, bool) {
 	if !root.isValid() {
 		return StableAddress{}, false
 	}
-	return StableAddress{root: root, suffix: PathSuffixOfSegments(suffix.segments)}, true
+	return StableAddress{root: root, suffix: suffix}, true
 }
 
 // StableAddressFromCanonicalKey parses a stored fact key back into structured
@@ -320,7 +333,7 @@ func (a StableAddress) Key() constraint.PathKey {
 		return SymbolPathKey(sym, a.suffix.segments)
 	}
 	root, _ := a.root.Name()
-	return constraint.Path{Root: root, Segments: a.suffix.Segments()}.Key()
+	return constraint.Path{Root: root, Segments: a.suffix.segments}.Key()
 }
 
 // Path returns a path view for consumers that still operate on constraint.Path.
@@ -368,10 +381,12 @@ func (a StableAddress) Append(segments []constraint.Segment) (StableAddress, boo
 		return StableAddress{}, false
 	}
 	if len(segments) == 0 {
-		return StableAddressOfRootAndSuffix(a.root, a.suffix)
+		return stableAddressOfRootAndSuffix(a.root, a.suffix)
 	}
-	next := append(a.suffix.Segments(), segments...)
-	return StableAddressOfRootAndSuffix(a.root, PathSuffixOfSegments(next))
+	next := make([]constraint.Segment, len(a.suffix.segments)+len(segments))
+	copy(next, a.suffix.segments)
+	copy(next[len(a.suffix.segments):], segments)
+	return stableAddressOfRootAndSuffix(a.root, pathSuffixOfOwnedSegments(next))
 }
 
 // Equal reports stable identity equality.

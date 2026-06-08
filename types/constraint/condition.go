@@ -1438,39 +1438,152 @@ func hasTypeBuiltinContradiction(a, b Constraint) bool {
 }
 
 func rootStableConstraint(c Constraint) bool {
-	switch c.Kind() {
-	case KindTruthy, KindFalsy, KindIsNil, KindNotNil, KindHasType, KindNotHasType,
-		KindEqPath, KindNotEqPath, KindVariantCaseEquals, KindVariantCaseNotEquals:
+	switch v := c.(type) {
+	case Truthy:
+		return rootStablePath(v.Path)
+	case Falsy:
+		return rootStablePath(v.Path)
+	case IsNil:
+		return rootStablePath(v.Path)
+	case NotNil:
+		return rootStablePath(v.Path)
+	case HasType:
+		return rootStablePath(v.Path)
+	case NotHasType:
+		return rootStablePath(v.Path)
+	case EqPath:
+		return rootStablePath(v.Left) && rootStablePath(v.Right)
+	case NotEqPath:
+		return rootStablePath(v.Left) && rootStablePath(v.Right)
+	case VariantCaseEquals:
+		return rootStablePath(v.Target)
+	case VariantCaseNotEquals:
+		return rootStablePath(v.Target)
 	default:
 		return false
 	}
-	for _, p := range c.Paths() {
-		if !rootStablePath(p) {
-			return false
-		}
-	}
-	return true
 }
 
 func rootStablePath(p Path) bool {
 	return len(p.Segments) == 0
 }
 
+// versionScopedMutableConstraint is the allocation-free contradiction
+// classifier for mutable access predicates. It mirrors SemanticAffectedPaths:
+// every semantic path must be symbol-rooted, and every mutable descendant path
+// must carry the current SSA version so historical field facts cannot
+// contradict current facts after a write.
 func versionScopedMutableConstraint(c Constraint) bool {
-	hasMutablePath := false
-	for _, p := range SemanticAffectedPaths(c) {
-		if p.Symbol == 0 {
-			return false
+	var scan versionScopedMutableScan
+	switch v := c.(type) {
+	case Truthy:
+		scan.observe(v.Path)
+	case Falsy:
+		scan.observe(v.Path)
+	case IsNil:
+		scan.observe(v.Path)
+	case NotNil:
+		scan.observe(v.Path)
+	case HasType:
+		scan.observe(v.Path)
+	case NotHasType:
+		scan.observe(v.Path)
+	case HasField:
+		scan.observe(v.Path)
+		scan.observeDescendantOf(v.Path)
+	case FieldEquals:
+		scan.observe(v.Target)
+		scan.observeDescendantOf(v.Target)
+	case FieldNotEquals:
+		scan.observe(v.Target)
+		scan.observeDescendantOf(v.Target)
+	case FieldEqualsPath:
+		scan.observe(v.Target)
+		scan.observeDescendantOf(v.Target)
+		scan.observe(v.Value)
+	case FieldNotEqualsPath:
+		scan.observe(v.Target)
+		scan.observeDescendantOf(v.Target)
+		scan.observe(v.Value)
+	case IndexEquals:
+		scan.observe(v.Target)
+		if _, ok := indexSegmentForKey(v.Key); ok {
+			scan.observeDescendantOf(v.Target)
 		}
-		if len(p.Segments) == 0 {
-			continue
+	case IndexNotEquals:
+		scan.observe(v.Target)
+		if _, ok := indexSegmentForKey(v.Key); ok {
+			scan.observeDescendantOf(v.Target)
 		}
-		hasMutablePath = true
-		if p.Version == 0 {
-			return false
+	case IndexEqualsPath:
+		scan.observe(v.Target)
+		if _, ok := indexSegmentForKey(v.Key); ok {
+			scan.observeDescendantOf(v.Target)
 		}
+		scan.observe(v.Value)
+	case IndexNotEqualsPath:
+		scan.observe(v.Target)
+		if _, ok := indexSegmentForKey(v.Key); ok {
+			scan.observeDescendantOf(v.Target)
+		}
+		scan.observe(v.Value)
+	case EqPath:
+		scan.observe(v.Left)
+		scan.observe(v.Right)
+	case NotEqPath:
+		scan.observe(v.Left)
+		scan.observe(v.Right)
+	case VariantCaseEquals:
+		scan.observe(v.Target)
+	case VariantCaseNotEquals:
+		scan.observe(v.Target)
+	case KeyOf:
+		scan.observe(v.Table)
+		scan.observe(v.Key)
+	default:
+		return false
 	}
-	return hasMutablePath
+	return scan.valid()
+}
+
+type versionScopedMutableScan struct {
+	hasPath     bool
+	hasMutable  bool
+	invalidPath bool
+}
+
+func (s *versionScopedMutableScan) observe(p Path) {
+	if s == nil || s.invalidPath {
+		return
+	}
+	s.hasPath = true
+	if p.Symbol == 0 {
+		s.invalidPath = true
+		return
+	}
+	if len(p.Segments) == 0 {
+		return
+	}
+	s.hasMutable = true
+	if p.Version == 0 {
+		s.invalidPath = true
+	}
+}
+
+func (s *versionScopedMutableScan) observeDescendantOf(p Path) {
+	if s == nil || s.invalidPath {
+		return
+	}
+	s.hasPath = true
+	if p.Symbol == 0 || p.Version == 0 {
+		s.invalidPath = true
+		return
+	}
+	s.hasMutable = true
+}
+
+func (s versionScopedMutableScan) valid() bool {
+	return s.hasPath && s.hasMutable && !s.invalidPath
 }
 
 func truthyNilContradiction(a, b Constraint) bool {
