@@ -231,6 +231,8 @@ func TestCondition_HasTypeBuiltinKindsContradictOnSamePath(t *testing.T) {
 	path := Path{Root: "x", Symbol: 1}
 	str := HasType{Path: path, Type: narrow.BuiltinTypeKey("string")}
 	num := HasType{Path: path, Type: narrow.BuiltinTypeKey("number")}
+	notStr := NotHasType{Path: path, Type: narrow.BuiltinTypeKey("string")}
+	notNum := NotHasType{Path: path, Type: narrow.BuiltinTypeKey("number")}
 
 	if got := FromConstraints(str, num); !got.IsFalse() {
 		t.Fatalf("hastype string and number on same path = %v, want false", got)
@@ -240,6 +242,15 @@ func TestCondition_HasTypeBuiltinKindsContradictOnSamePath(t *testing.T) {
 	}
 	if got := FromConstraints(str, str); got.IsFalse() {
 		t.Fatalf("duplicate hastype string = false, want satisfiable")
+	}
+	if got := FromConstraints(str, notNum); got.IsFalse() {
+		t.Fatalf("hastype string and not-hastype number = false, want satisfiable")
+	}
+	if got := FromConstraints(notStr, num); got.IsFalse() {
+		t.Fatalf("not-hastype string and hastype number = false, want satisfiable")
+	}
+	if got := FromConstraints(notStr, notNum); got.IsFalse() {
+		t.Fatalf("not-hastype string and not-hastype number = false, want satisfiable")
 	}
 }
 

@@ -13,7 +13,7 @@ import (
 type conjunctionContradictionIndex struct {
 	hasContradiction bool
 	exact            map[uint64][]contradictionClass
-	hasType          map[uint64][]hasTypeBuiltinClass
+	hasType          map[uint64][]hasTypeClass
 	paths            map[uint64][]pathPredicateClass
 }
 
@@ -43,9 +43,13 @@ type pathPredicateClass struct {
 	bits pathPredicateBits
 }
 
-type hasTypeBuiltinClass struct {
-	path Path
-	kind kind.Kind
+// hasTypeClass owns both exact HasType/NotHasType negation and the stronger
+// rule that two positive builtin type predicates on the same path are exclusive.
+type hasTypeClass struct {
+	path     Path
+	ty       narrow.TypeKey
+	positive bool
+	builtin  kind.Kind
 }
 
 func conjunctionContradictionIndexOf(conj []Constraint) conjunctionContradictionIndex {
@@ -67,8 +71,8 @@ func (idx *conjunctionContradictionIndex) Observe(ct Constraint) bool {
 		return idx != nil && idx.hasContradiction
 	}
 	if idx.observePathPredicate(ct) ||
-		idx.observeExactComplement(ct) ||
-		idx.observeBuiltinHasType(ct) {
+		idx.observeHasType(ct) ||
+		idx.observeExactComplement(ct) {
 		idx.hasContradiction = true
 	}
 	return idx.hasContradiction
@@ -98,26 +102,50 @@ func (idx *conjunctionContradictionIndex) observeExactComplement(ct Constraint) 
 	return false
 }
 
-func (idx *conjunctionContradictionIndex) observeBuiltinHasType(ct Constraint) bool {
-	hasType, ok := ct.(HasType)
-	if !ok || !constraintCanContradict(ct) {
-		return false
-	}
-	builtinKind, ok := hasType.Type.BuiltinKind()
+func (idx *conjunctionContradictionIndex) observeHasType(ct Constraint) bool {
+	path, ty, positive, ok := hasTypeClassOf(ct)
 	if !ok {
 		return false
 	}
-	key := hasType.Path.Hash()
+	key := path.Hash()
+	builtinKind, _ := ty.BuiltinKind()
 	for _, seen := range idx.hasType[key] {
-		if seen.path.Equal(hasType.Path) && seen.kind != builtinKind {
+		if !seen.path.Equal(path) {
+			continue
+		}
+		if seen.positive != positive && seen.ty.Equal(ty) {
+			return true
+		}
+		if positive && seen.positive &&
+			builtinKind != kind.Unknown && seen.builtin != kind.Unknown &&
+			seen.builtin != builtinKind {
 			return true
 		}
 	}
 	if idx.hasType == nil {
-		idx.hasType = make(map[uint64][]hasTypeBuiltinClass)
+		idx.hasType = make(map[uint64][]hasTypeClass)
 	}
-	idx.hasType[key] = append(idx.hasType[key], hasTypeBuiltinClass{path: hasType.Path, kind: builtinKind})
+	idx.hasType[key] = append(idx.hasType[key], hasTypeClass{
+		path:     path,
+		ty:       ty,
+		positive: positive,
+		builtin:  builtinKind,
+	})
 	return false
+}
+
+func hasTypeClassOf(ct Constraint) (Path, narrow.TypeKey, bool, bool) {
+	if !constraintCanContradict(ct) {
+		return Path{}, narrow.TypeKey{}, false, false
+	}
+	switch v := ct.(type) {
+	case HasType:
+		return v.Path, v.Type, true, true
+	case NotHasType:
+		return v.Path, v.Type, false, true
+	default:
+		return Path{}, narrow.TypeKey{}, false, false
+	}
 }
 
 func (idx *conjunctionContradictionIndex) observePathPredicate(ct Constraint) bool {
@@ -190,12 +218,6 @@ func exactContradictionSignatureOf(ct Constraint) (exactContradictionSignature, 
 		return exactContradictionSignature{}, false
 	}
 	switch v := ct.(type) {
-	case HasType:
-		h := internal.HashCombine(hashPathConstraint(KindHasType, v.Path), v.Type.Hash64())
-		return exactContradictionSignature{kind: KindHasType, hash: h, positive: true}, true
-	case NotHasType:
-		h := internal.HashCombine(hashPathConstraint(KindHasType, v.Path), v.Type.Hash64())
-		return exactContradictionSignature{kind: KindHasType, hash: h, positive: false}, true
 	case EqPath:
 		eq := NewEqPath(v.Left, v.Right)
 		return exactContradictionSignature{kind: KindEqPath, hash: eq.Hash(), positive: true}, true
@@ -279,10 +301,6 @@ func hashVariantCaseEqualsClass(target Path, originFamily uint64, caseIndex int)
 
 func sameExactContradictionClass(a, b Constraint, classKind Kind) bool {
 	switch classKind {
-	case KindHasType:
-		ap, at, aOK := exactHasTypeClass(a)
-		bp, bt, bOK := exactHasTypeClass(b)
-		return aOK && bOK && ap.Equal(bp) && at.Equal(bt)
 	case KindEqPath:
 		al, ar, aOK := exactEqPathClass(a)
 		bl, br, bOK := exactEqPathClass(b)
@@ -309,17 +327,6 @@ func sameExactContradictionClass(a, b Constraint, classKind Kind) bool {
 		return aOK && bOK && at.Equal(bt) && af == bf && ai == bi
 	default:
 		return false
-	}
-}
-
-func exactHasTypeClass(ct Constraint) (Path, narrow.TypeKey, bool) {
-	switch v := ct.(type) {
-	case HasType:
-		return v.Path, v.Type, true
-	case NotHasType:
-		return v.Path, v.Type, true
-	default:
-		return Path{}, narrow.TypeKey{}, false
 	}
 }
 
