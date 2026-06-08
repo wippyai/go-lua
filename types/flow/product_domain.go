@@ -58,10 +58,10 @@ type ProductDomain struct {
 //
 // The environment provides type resolution functions needed by the subdomains:
 //
-//   - env.PathTypeAt: Returns the base type at a given path key. Used to look up
+//   - env.LookupPathType: Returns the base type at a path key. Used to look up
 //     original types before narrowing is applied.
 //
-//   - env.ResolvePath: Converts a constraint.Path to its canonical PathKey. Used
+//   - env.ResolvePathKey: Converts a constraint.Path to its canonical PathKey. Used
 //     for consistent key resolution across all operations.
 //
 //   - env.ResolveType: Resolves type keys (like "string", "number") to actual types.
@@ -141,7 +141,7 @@ func (d *ProductDomain) ApplyAtom(atom constraint.Atom) bool {
 // Solver for more sophisticated shape analysis.
 //
 // The method first resolves the target path to a canonical key using
-// env.ResolvePath. If the constraint has no paths or the path cannot be
+// the product path environment. If the constraint has no paths or the path cannot be
 // resolved, the constraint is silently accepted (returns true) since we
 // cannot reason about it without a target.
 //
@@ -151,10 +151,10 @@ func (d *ProductDomain) ApplyLeftoverConstraint(c constraint.Constraint) bool {
 	if !ok {
 		return true
 	}
-	if d.env.ResolvePath == nil {
+	if !d.env.HasPathResolver() {
 		return true
 	}
-	target := d.env.ResolvePath(path)
+	target := d.env.ResolvePathKey(path)
 	if target == "" {
 		return true
 	}
@@ -166,10 +166,9 @@ func (d *ProductDomain) ApplyLeftoverConstraint(c constraint.Constraint) bool {
 // This is the primary method for applying multiple constraints that must all
 // hold simultaneously. The method performs several steps in order:
 //
-//  1. Constraint conversion: Uses constraint.ToAtomsWithResolver to convert
+//  1. Constraint conversion: Uses constraint.ToAtomsWithEnv to convert
 //     high-level constraints into atoms (primitive narrowings) and leftover
-//     constraints (complex shapes). The resolver ensures paths are converted
-//     to canonical keys.
+//     constraints (complex shapes). The path environment owns canonical keys.
 //
 //  2. Congruence closure: Builds an E-graph from EqPath constraints. When
 //     `x == y` is asserted, the E-graph records that paths x and y are in
@@ -191,8 +190,8 @@ func (d *ProductDomain) ApplyLeftoverConstraint(c constraint.Constraint) bool {
 //
 // Returns false if any step proves the domain unsatisfiable.
 func (d *ProductDomain) ApplyConjunction(constraints []constraint.Constraint) bool {
-	// Use canonical key resolver for path→key conversion
-	result := constraint.ToAtomsWithResolver(constraints, d.env.ResolvePath)
+	// Use the canonical path environment for path-to-key conversion.
+	result := constraint.ToAtomsWithEnv(constraints, &d.env)
 
 	// Build congruence closure before consistency checks so aliases share facts.
 	d.buildCongruenceClosure(result.Atoms, constraints)
@@ -222,19 +221,11 @@ func (d *ProductDomain) ApplyConjunction(constraints []constraint.Constraint) bo
 		return false
 	}
 
-	// Update PathTypeAt to include Type domain narrowings for leftover constraints
-	originalPathTypeAt := d.Shape.Solver.Env.PathTypeAt
-	narrowedPathTypeAt := func(key constraint.PathKey) typ.Type {
-		if narrowed := d.Type.NarrowedTypeAt(key); narrowed != nil {
-			return narrowed
-		}
-		if originalPathTypeAt != nil {
-			return originalPathTypeAt(key)
-		}
-		return nil
-	}
-	d.Shape.Solver.Env.PathTypeAt = narrowedPathTypeAt
-	d.Shape.Env.PathTypeAt = narrowedPathTypeAt
+	// Shape leftovers need the Type-domain facts already proven by atom
+	// reduction, but should still resolve paths through the same environment.
+	overlay := d.Shape.Solver.Env.WithPathTypeOverlay(d.Type.NarrowedTypeAt)
+	d.Shape.Solver.Env = overlay
+	d.Shape.Env = overlay
 
 	// Apply leftovers (Shape domain via wrapped Solver)
 	for _, c := range result.Leftover {
@@ -338,8 +329,8 @@ func (d *ProductDomain) resolvePathKey(path constraint.Path) constraint.PathKey 
 	if path.IsEmpty() {
 		return ""
 	}
-	if d.env.ResolvePath != nil {
-		return d.env.ResolvePath(path)
+	if d.env.HasPathResolver() {
+		return d.env.ResolvePathKey(path)
 	}
 	return path.Key()
 }
@@ -372,7 +363,7 @@ func atomsContainContradiction(atoms []constraint.Atom, equalities *theory.EGrap
 //  2. Union: For each path-equality atom, the left and right paths are
 //     unified in the E-graph. After union, Find(left) == Find(right).
 //
-// Paths are converted to canonical keys via env.ResolvePath when available.
+// Paths are converted to canonical keys through the product path environment.
 // Atom keys are still registered directly, so equality reasoning remains
 // available in resolver-free callers that already use stable path keys.
 //
@@ -647,8 +638,8 @@ func (d *ProductDomain) IsTop() bool {
 //  3. Combined narrowing: If both domains have narrowings, computes their
 //     intersection. A value must satisfy both type and shape constraints.
 //
-//  4. Base type query: If no narrowings exist, asks env.PathTypeAt
-//     to retrieve the original declared or inferred type.
+//  4. Base type query: If no narrowings exist, asks the path environment to
+//     retrieve the original declared or inferred type.
 //
 // Returns nil if the path has no type information in any source.
 //
@@ -678,10 +669,7 @@ func (d *ProductDomain) TypeAt(key constraint.PathKey) typ.Type {
 		return shapeNarrowed
 	}
 
-	if d.env.PathTypeAt != nil {
-		return d.env.PathTypeAt(key)
-	}
-	return nil
+	return d.env.LookupPathType(key)
 }
 
 // IsUnsat returns true if the domain state represents a contradiction.

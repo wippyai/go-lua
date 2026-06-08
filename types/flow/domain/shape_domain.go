@@ -29,7 +29,7 @@ import (
 // required structure.
 //
 // The domain maintains a Narrowed map from path keys to narrowed types.
-// Missing keys are read from env.PathTypeAt for base types.
+// Missing keys are read from env.LookupPathType for base types.
 type ShapeDomain struct {
 	Narrowed map[constraint.PathKey]typ.Type
 	Solver   constraint.Solver
@@ -53,17 +53,14 @@ func NewShapeDomain(env constraint.Env) *ShapeDomain {
 //
 // Lookup order:
 //  1. d.Narrowed[key] - explicitly narrowed type from shape constraints
-//  2. env.PathTypeAt(key) - base type from declarations
+//  2. env.LookupPathType(key) - base type from declarations
 //
 // Returns nil if the key has no type in either source.
 func (d *ShapeDomain) TypeAt(key constraint.PathKey) typ.Type {
 	if t, ok := d.Narrowed[key]; ok {
 		return t
 	}
-	if d.Env.PathTypeAt != nil {
-		return d.Env.PathTypeAt(key)
-	}
-	return nil
+	return d.Env.LookupPathType(key)
 }
 
 // NarrowedTypeAt returns only the explicitly narrowed type, not the base type.
@@ -104,7 +101,7 @@ func (d *ShapeDomain) ApplyConstraint(c constraint.Constraint, target constraint
 		return true
 	}
 
-	narrowed := d.Solver.ApplyToSingle([]constraint.Constraint{c}, target, base, d.Env.ResolvePath)
+	narrowed := d.Solver.ApplyToSingleWithEnv([]constraint.Constraint{c}, target, base)
 
 	if narrowed == nil || narrowed.Kind().IsNever() {
 		d.Unsat = true
@@ -125,10 +122,10 @@ func (d *ShapeDomain) ApplyConstraint(c constraint.Constraint, target constraint
 				Symbol:   path.Symbol,
 				Segments: path.Segments[:depth],
 			}
-			if d.Env.ResolvePath == nil {
+			if !d.Env.HasPathResolver() {
 				continue
 			}
-			ancestorKey := d.Env.ResolvePath(ancestorPath)
+			ancestorKey := d.Env.ResolvePathKey(ancestorPath)
 			if ancestorKey == "" || ancestorKey == target {
 				continue
 			}
@@ -136,7 +133,7 @@ func (d *ShapeDomain) ApplyConstraint(c constraint.Constraint, target constraint
 			if ancestorBase == nil {
 				continue
 			}
-			ancestorNarrowed := d.Solver.ApplyToSingle([]constraint.Constraint{c}, ancestorKey, ancestorBase, d.Env.ResolvePath)
+			ancestorNarrowed := d.Solver.ApplyToSingleWithEnv([]constraint.Constraint{c}, ancestorKey, ancestorBase)
 			if ancestorNarrowed != nil && !ancestorNarrowed.Kind().IsNever() && !typ.TypeEquals(ancestorNarrowed, ancestorBase) {
 				d.Narrowed[ancestorKey] = ancestorNarrowed
 			}

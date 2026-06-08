@@ -26,13 +26,13 @@ func TestSymbolProductEnvReadsBaseAndPointFacts(t *testing.T) {
 	}
 	env, rootKey := SymbolProductEnv(sym, base, PointFactsOf(state), &core.FuncResolver{FieldFunc: core.Field})
 
-	if got := env.PathTypeAt(rootKey); !typ.TypeEquals(got, base.ProjectValue()) {
+	if got := env.LookupPathType(rootKey); !typ.TypeEquals(got, base.ProjectValue()) {
 		t.Fatalf("root type = %s, want %s", got, base.ProjectValue())
 	}
-	if got := env.PathTypeAt(StablePathKey(constraint.NewPath(sym, "node").Field("id"))); !typ.TypeEquals(got, typ.String) {
+	if got := env.LookupPathType(StablePathKey(constraint.NewPath(sym, "node").Field("id"))); !typ.TypeEquals(got, typ.String) {
 		t.Fatalf("base member type = %s, want string", got)
 	}
-	if got := env.PathTypeAt(StablePathKey(extraPath)); !typ.TypeEquals(got, typ.Number) {
+	if got := env.LookupPathType(StablePathKey(extraPath)); !typ.TypeEquals(got, typ.Number) {
 		t.Fatalf("point fact type = %s, want number", got)
 	}
 }

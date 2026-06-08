@@ -29,7 +29,7 @@ import (
 //     Example: x ~= nil on x:string|nil yields x:string
 //
 // The domain maintains a map of narrowed types keyed by canonical path keys.
-// When no narrowing exists, the domain falls back to env.PathTypeAt for base types.
+// When no narrowing exists, the domain falls back to env.LookupPathType for base types.
 //
 // TypeDomain supports boolean discriminant narrowing: when a field like .ok is
 // tested for truthiness, and the parent type uses .ok as a discriminant, the
@@ -49,7 +49,7 @@ type TypeDomain struct {
 // NewTypeDomain creates a new TypeDomain with the given environment.
 //
 // The environment provides type resolution functions:
-//   - env.PathTypeAt: Returns base type for a path key before narrowing
+//   - env.LookupPathType: Returns base type for a path key before narrowing
 //   - env.ResolveType: Resolves type keys to actual types (for HasType atoms)
 //   - env.Resolver: Field/index access for boolean discriminant narrowing
 func NewTypeDomain(env constraint.Env) *TypeDomain {
@@ -63,17 +63,14 @@ func NewTypeDomain(env constraint.Env) *TypeDomain {
 //
 // Lookup order:
 //  1. d.Narrowed[key] - explicitly narrowed type from constraint application
-//  2. env.PathTypeAt(key) - base type from declarations
+//  2. env.LookupPathType(key) - base type from declarations
 //
 // Returns nil if the key has no type in either source.
 func (d *TypeDomain) TypeAt(key constraint.PathKey) typ.Type {
 	if t, ok := d.Narrowed[key]; ok {
 		return t
 	}
-	if d.Env.PathTypeAt != nil {
-		return d.Env.PathTypeAt(key)
-	}
-	return nil
+	return d.Env.LookupPathType(key)
 }
 
 // NarrowedTypeAt returns only the explicitly narrowed type, not the base type.

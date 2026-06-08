@@ -12,6 +12,13 @@ import (
 // PathTypeResolver resolves a constraint path key to its type at a program point.
 type PathTypeResolver func(PathKey) typ.Type
 
+// PathContext resolves path identities and their current types as one semantic
+// environment. Hot callers use this instead of per-query closure fields.
+type PathContext interface {
+	PathTypeAt(PathKey) typ.Type
+	ResolvePath(Path) PathKey
+}
+
 // Env provides external resolvers needed for constraint solving.
 //
 // The solver itself is pure and deterministic; Env supplies the context-specific
@@ -41,6 +48,65 @@ type Env struct {
 	// ResolvePath converts unversioned paths to versioned PathKeys.
 	// Used for SSA-aware path resolution in ApplyToSingle.
 	ResolvePath PathResolver
+
+	// PathContext provides path resolution and type lookup through one context
+	// object. When set, it owns path lookup ahead of PathTypeAt/ResolvePath.
+	PathContext PathContext
+
+	// PathTypeOverlay contributes proven local type facts before the base path
+	// context is queried. It does not own path identity.
+	PathTypeOverlay PathTypeResolver
+}
+
+// WithPathTypeOverlay returns a shallow Env copy whose path-type lookup first
+// asks typeAt, then falls back to the original Env. Path identity resolution is
+// preserved through the same context.
+func (e Env) WithPathTypeOverlay(typeAt PathTypeResolver) Env {
+	e.PathTypeOverlay = typeAt
+	return e
+}
+
+// LookupPathType retrieves the current type for key from the path context.
+func (e *Env) LookupPathType(key PathKey) typ.Type {
+	if e == nil {
+		return nil
+	}
+	if e.PathTypeOverlay != nil {
+		if t := e.PathTypeOverlay(key); t != nil {
+			return t
+		}
+	}
+	if e.PathContext != nil {
+		return e.PathContext.PathTypeAt(key)
+	}
+	if e.PathTypeAt != nil {
+		return e.PathTypeAt(key)
+	}
+	return nil
+}
+
+// HasPathTypeResolver reports whether Env can resolve path-key types.
+func (e *Env) HasPathTypeResolver() bool {
+	return e != nil && (e.PathTypeOverlay != nil || e.PathContext != nil || e.PathTypeAt != nil)
+}
+
+// ResolvePathKey resolves path to its canonical key when a resolver is present.
+func (e *Env) ResolvePathKey(path Path) PathKey {
+	if e == nil {
+		return ""
+	}
+	if e.PathContext != nil {
+		return e.PathContext.ResolvePath(path)
+	}
+	if e.ResolvePath != nil {
+		return e.ResolvePath(path)
+	}
+	return ""
+}
+
+// HasPathResolver reports whether Env can resolve constraint paths to keys.
+func (e *Env) HasPathResolver() bool {
+	return e != nil && (e.PathContext != nil || e.ResolvePath != nil)
 }
 
 // Field resolves a field type using Resolver.
@@ -286,6 +352,15 @@ func (s Solver) ApplyToSingle(constraints []Constraint, target PathKey, base typ
 	return result
 }
 
+// ApplyToSingleWithEnv applies constraints to target using Solver.Env's path
+// context instead of a per-call resolver function.
+func (s Solver) ApplyToSingleWithEnv(constraints []Constraint, target PathKey, base typ.Type) typ.Type {
+	if !s.Env.HasPathResolver() {
+		return s.ApplyToSingle(constraints, target, base, nil)
+	}
+	return s.ApplyToSingle(constraints, target, base, s.Env.ResolvePathKey)
+}
+
 // applySingleConstraint applies a single constraint if it matches the target path.
 func (s Solver) applySingleConstraint(c Constraint, target PathKey, t typ.Type, resolve PathResolver) typ.Type {
 	return VisitConstraint(c, ConstraintVisitor[typ.Type]{
@@ -400,19 +475,19 @@ func (s Solver) applySingleConstraint(c Constraint, target PathKey, t typ.Type, 
 		},
 		FieldEqualsPath: func(v FieldEqualsPath) typ.Type {
 			// result.channel == timeout -> narrow result by field type matching timeout's type.
-			if s.Env.PathTypeAt != nil {
+			if s.Env.HasPathTypeResolver() {
 				targetKey := resolve(v.Target)
 				valueKey := resolve(v.Value)
 				if targetKey == target {
 					// Narrow target: keep variants where field type matches value's type.
-					valueType := s.Env.PathTypeAt(valueKey)
+					valueType := s.Env.LookupPathType(valueKey)
 					if valueType != nil {
 						return narrowByFieldType(t, v.Field, valueType, &s.Env)
 					}
 				}
 				if valueKey == target {
 					// Narrow value: intersect with the field type of target.
-					targetType := s.Env.PathTypeAt(targetKey)
+					targetType := s.Env.LookupPathType(targetKey)
 					if targetType != nil {
 						if ft, ok := s.Env.Field(targetType, v.Field); ok && ft != nil {
 							return narrow.Intersect(t, ft)
@@ -424,12 +499,12 @@ func (s Solver) applySingleConstraint(c Constraint, target PathKey, t typ.Type, 
 		},
 		FieldNotEqualsPath: func(v FieldNotEqualsPath) typ.Type {
 			// result.channel ~= timeout -> narrow result by excluding field type matching timeout's type.
-			if s.Env.PathTypeAt != nil {
+			if s.Env.HasPathTypeResolver() {
 				targetKey := resolve(v.Target)
 				valueKey := resolve(v.Value)
 				if targetKey == target {
 					// Narrow target: exclude variants where field type matches value's type.
-					valueType := s.Env.PathTypeAt(valueKey)
+					valueType := s.Env.LookupPathType(valueKey)
 					if valueType != nil {
 						return excludeByFieldType(t, v.Field, valueType, &s.Env)
 					}
@@ -439,19 +514,19 @@ func (s Solver) applySingleConstraint(c Constraint, target PathKey, t typ.Type, 
 		},
 		IndexEqualsPath: func(v IndexEqualsPath) typ.Type {
 			// result[key] == value -> narrow result by index type matching value's type.
-			if s.Env.PathTypeAt != nil && s.Env.HasResolver() {
+			if s.Env.HasPathTypeResolver() && s.Env.HasResolver() {
 				targetKey := resolve(v.Target)
 				valueKey := resolve(v.Value)
 				if targetKey == target {
 					// Narrow target: keep variants where index type matches value's type.
-					valueType := s.Env.PathTypeAt(valueKey)
+					valueType := s.Env.LookupPathType(valueKey)
 					if valueType != nil {
 						return narrowByIndexType(t, v.Key, valueType, &s.Env)
 					}
 				}
 				if valueKey == target {
 					// Narrow value: intersect with the index type of target.
-					targetType := s.Env.PathTypeAt(targetKey)
+					targetType := s.Env.LookupPathType(targetKey)
 					if targetType != nil {
 						if it, ok := s.Env.Index(targetType, v.Key); ok && it != nil {
 							return narrow.Intersect(t, it)
@@ -463,12 +538,12 @@ func (s Solver) applySingleConstraint(c Constraint, target PathKey, t typ.Type, 
 		},
 		IndexNotEqualsPath: func(v IndexNotEqualsPath) typ.Type {
 			// result[key] ~= value -> narrow result by excluding index type matching value's type.
-			if s.Env.PathTypeAt != nil && s.Env.HasResolver() {
+			if s.Env.HasPathTypeResolver() && s.Env.HasResolver() {
 				targetKey := resolve(v.Target)
 				valueKey := resolve(v.Value)
 				if targetKey == target {
 					// Narrow target: exclude variants where index type matches value's type.
-					valueType := s.Env.PathTypeAt(valueKey)
+					valueType := s.Env.LookupPathType(valueKey)
 					if valueType != nil {
 						return excludeByIndexType(t, v.Key, valueType, &s.Env)
 					}

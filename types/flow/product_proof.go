@@ -30,16 +30,14 @@ func newProductSatisfiabilityProof(source *ProductDomain) *productSatisfiability
 		shapes:     make(map[constraint.PathKey]typ.Type),
 		equalities: theory.NewEGraph(),
 	}
-	typeEnv := source.env
-	typeEnv.PathTypeAt = p.typeBaseForTypeDomain
+	typeEnv := source.env.WithPathTypeOverlay(p.typeBaseForTypeDomain)
 	p.types = domain.NewTypeDomain(typeEnv)
 	if source.Numeric != nil {
 		p.numeric = source.Numeric.Clone().(*numeric.Domain)
 	} else {
 		p.numeric = numeric.NewDomain(source.env)
 	}
-	p.structuralEnv = source.env
-	p.structuralEnv.PathTypeAt = p.typeAt
+	p.structuralEnv = source.env.WithPathTypeOverlay(p.typeAt)
 	return p
 }
 
@@ -47,7 +45,7 @@ func (p *productSatisfiabilityProof) CanSatisfyConjunction(constraints []constra
 	if p == nil || p.source == nil || p.source.IsUnsat() {
 		return false
 	}
-	result := constraint.ToAtomsWithResolver(constraints, p.env.ResolvePath)
+	result := constraint.ToAtomsWithEnv(constraints, &p.env)
 	p.buildEqualities(result.Atoms, constraints)
 	if atomsContainContradiction(result.Atoms, p.equalities) {
 		return false
@@ -179,7 +177,7 @@ func (p *productSatisfiabilityProof) applyStructuralConstraint(c constraint.Cons
 		if base == nil {
 			continue
 		}
-		narrowed := solver.ApplyToSingle([]constraint.Constraint{c}, target, base, p.env.ResolvePath)
+		narrowed := solver.ApplyToSingleWithEnv([]constraint.Constraint{c}, target, base)
 		if narrowed == nil || narrowed.Kind().IsNever() {
 			return false
 		}
@@ -255,8 +253,8 @@ func (p *productSatisfiabilityProof) resolvePath(path constraint.Path) constrain
 	if path.IsEmpty() {
 		return ""
 	}
-	if p != nil && p.env.ResolvePath != nil {
-		return p.env.ResolvePath(path)
+	if p != nil && p.env.HasPathResolver() {
+		return p.env.ResolvePathKey(path)
 	}
 	return path.Key()
 }

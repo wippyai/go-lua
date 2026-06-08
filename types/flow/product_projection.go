@@ -232,10 +232,10 @@ func productProjectionAncestorKeys(key constraint.PathKey) []constraint.PathKey 
 }
 
 func (d *ProductDomain) baseTypeAt(key constraint.PathKey) typ.Type {
-	if d == nil || d.env.PathTypeAt == nil || key == "" {
+	if d == nil || key == "" {
 		return nil
 	}
-	return d.env.PathTypeAt(key)
+	return d.env.LookupPathType(key)
 }
 
 func meetTypeAndShapeFacts(typeFact, shapeFact typ.Type, resolver narrow.Resolver) typ.Type {

@@ -360,7 +360,10 @@ type AtomResult struct {
 // Constraints that don't map cleanly are returned in Leftover.
 // Uses path.Key() for path resolution (symbol-only keys).
 func ToAtoms(constraints []Constraint) AtomResult {
-	var result AtomResult
+	result := AtomResult{
+		Atoms:    make([]Atom, 0, len(constraints)),
+		Leftover: make([]Constraint, 0, len(constraints)),
+	}
 	for _, c := range constraints {
 		if atom, ok := TypeConstraintToAtom(c); ok {
 			result.Atoms = append(result.Atoms, atom)
@@ -371,16 +374,17 @@ func ToAtoms(constraints []Constraint) AtomResult {
 	return result
 }
 
-// ToAtomsWithResolver converts type constraints to unified Atoms using a PathResolver.
-// The resolver converts Path objects to canonical PathKeys.
-// Constraints that don't map cleanly are returned in Leftover.
-func ToAtomsWithResolver(constraints []Constraint, resolve PathResolver) AtomResult {
-	if resolve == nil {
+// ToAtomsWithEnv converts constraints to atoms through Env's path context.
+func ToAtomsWithEnv(constraints []Constraint, env *Env) AtomResult {
+	if env == nil || !env.HasPathResolver() {
 		return ToAtoms(constraints)
 	}
-	var result AtomResult
+	result := AtomResult{
+		Atoms:    make([]Atom, 0, len(constraints)),
+		Leftover: make([]Constraint, 0, len(constraints)),
+	}
 	for _, c := range constraints {
-		if atom, ok := TypeConstraintToAtomWithResolver(c, resolve); ok {
+		if atom, ok := TypeConstraintToAtomWithEnv(c, env); ok {
 			result.Atoms = append(result.Atoms, atom)
 		} else {
 			result.Leftover = append(result.Leftover, c)
@@ -389,37 +393,40 @@ func ToAtomsWithResolver(constraints []Constraint, resolve PathResolver) AtomRes
 	return result
 }
 
-// TypeConstraintToAtomWithResolver converts a type constraint to a unified Atom using a PathResolver.
-// Returns (atom, true) for supported constraints, (Atom{}, false) for unsupported.
-func TypeConstraintToAtomWithResolver(c Constraint, resolve PathResolver) (Atom, bool) {
+// TypeConstraintToAtomWithEnv converts a type constraint using Env's path
+// context without allocating a PathResolver closure.
+func TypeConstraintToAtomWithEnv(c Constraint, env *Env) (Atom, bool) {
+	if env == nil || !env.HasPathResolver() {
+		return TypeConstraintToAtom(c)
+	}
 	type result struct {
 		atom Atom
 		ok   bool
 	}
 	out := VisitConstraint(c, ConstraintVisitor[result]{
 		Truthy: func(v Truthy) result {
-			return result{atom: AtomTruthy(TermVar(resolve(v.Path))), ok: true}
+			return result{atom: AtomTruthy(TermVar(env.ResolvePathKey(v.Path))), ok: true}
 		},
 		Falsy: func(v Falsy) result {
-			return result{atom: AtomFalsy(TermVar(resolve(v.Path))), ok: true}
+			return result{atom: AtomFalsy(TermVar(env.ResolvePathKey(v.Path))), ok: true}
 		},
 		IsNil: func(v IsNil) result {
-			return result{atom: AtomEq(TermVar(resolve(v.Path)), TermNil()), ok: true}
+			return result{atom: AtomEq(TermVar(env.ResolvePathKey(v.Path)), TermNil()), ok: true}
 		},
 		NotNil: func(v NotNil) result {
-			return result{atom: AtomNe(TermVar(resolve(v.Path)), TermNil()), ok: true}
+			return result{atom: AtomNe(TermVar(env.ResolvePathKey(v.Path)), TermNil()), ok: true}
 		},
 		HasType: func(v HasType) result {
-			return result{atom: AtomHasType(TermVar(resolve(v.Path)), v.Type), ok: true}
+			return result{atom: AtomHasType(TermVar(env.ResolvePathKey(v.Path)), v.Type), ok: true}
 		},
 		NotHasType: func(v NotHasType) result {
-			return result{atom: AtomNotHasType(TermVar(resolve(v.Path)), v.Type), ok: true}
+			return result{atom: AtomNotHasType(TermVar(env.ResolvePathKey(v.Path)), v.Type), ok: true}
 		},
 		EqPath: func(v EqPath) result {
-			return result{atom: AtomEq(TermVar(resolve(v.Left)), TermVar(resolve(v.Right))), ok: true}
+			return result{atom: AtomEq(TermVar(env.ResolvePathKey(v.Left)), TermVar(env.ResolvePathKey(v.Right))), ok: true}
 		},
 		NotEqPath: func(v NotEqPath) result {
-			return result{atom: AtomNe(TermVar(resolve(v.Left)), TermVar(resolve(v.Right))), ok: true}
+			return result{atom: AtomNe(TermVar(env.ResolvePathKey(v.Left)), TermVar(env.ResolvePathKey(v.Right))), ok: true}
 		},
 		Default: func(Constraint) result {
 			return result{}

@@ -18,34 +18,48 @@ func SymbolProductEnv(
 	resolver narrow.Resolver,
 ) (constraint.Env, constraint.PathKey) {
 	rootKey := SymbolPathKey(sym, nil)
+	ctx := symbolProductPathContext{
+		sym:   sym,
+		base:  base,
+		facts: facts,
+	}
 	env := constraint.Env{
-		Resolver: resolver,
-		ResolvePath: func(path constraint.Path) constraint.PathKey {
-			return StablePathKey(path)
-		},
-		PathTypeAt: func(key constraint.PathKey) typ.Type {
-			addr, ok := StableAddressFromCanonicalKey(key)
-			if !ok {
-				return nil
-			}
-			keySym, ok := addr.Symbol()
-			if !ok || keySym != sym {
-				return nil
-			}
-			segments := addr.Segments()
-			if len(segments) == 0 {
-				return product.ProjectValueOrUnknown(base)
-			}
-			if t, ok := ProductMemberPathType(base, segments); ok {
-				return t
-			}
-			if t, ok := facts.PathType(constraint.Path{Symbol: sym, Segments: segments}); ok {
-				return t
-			}
-			return nil
-		},
+		Resolver:    resolver,
+		PathContext: ctx,
 	}
 	return env, rootKey
+}
+
+type symbolProductPathContext struct {
+	sym   cfg.SymbolID
+	base  product.AbstractValue
+	facts PointFacts
+}
+
+func (c symbolProductPathContext) ResolvePath(path constraint.Path) constraint.PathKey {
+	return StablePathKey(path)
+}
+
+func (c symbolProductPathContext) PathTypeAt(key constraint.PathKey) typ.Type {
+	addr, ok := StableAddressFromCanonicalKey(key)
+	if !ok {
+		return nil
+	}
+	keySym, ok := addr.Symbol()
+	if !ok || keySym != c.sym {
+		return nil
+	}
+	segments := addr.Segments()
+	if len(segments) == 0 {
+		return product.ProjectValueOrUnknown(c.base)
+	}
+	if t, ok := ProductMemberPathType(c.base, segments); ok {
+		return t
+	}
+	if t, ok := c.facts.PathType(constraint.Path{Symbol: c.sym, Segments: segments}); ok {
+		return t
+	}
+	return nil
 }
 
 // ProductMemberPathType projects the type at a structured member/index suffix
