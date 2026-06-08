@@ -84,9 +84,10 @@ type BoundaryAppendKeyPlan struct {
 	preserveHistoryBase bool
 }
 
-// BoundaryFactApplication reports non-flow consequences produced while applying
-// boundary facts. Flow owns the fact transactions; transfer owns materializing
-// these results into its refinement effect vocabulary.
+// BoundaryFactApplication reports boundary consequences that must be replayed
+// outside the immediate flow transaction, either because they belong to a
+// transfer-local refinement vocabulary or because they were computed from
+// prestate evidence that may be unavailable after call side effects.
 type BoundaryFactApplication struct {
 	KeyProvenance     []KeyProvenanceResult
 	LengthLowerBounds []BoundaryLengthLowerApplication
@@ -320,12 +321,6 @@ func ApplyBoundaryFacts(
 		if !ok {
 			continue
 		}
-		if fact.Lower > 0 {
-			result.LengthLowerBounds = append(result.LengthLowerBounds, BoundaryLengthLowerApplication{
-				Target: target.path,
-				Lower:  fact.Lower,
-			})
-		}
 		if op, ok := NumericLenGeConstPathOp(target.path, fact.Lower); ok {
 			ops = append(ops, op)
 		}
@@ -347,10 +342,6 @@ func ApplyBoundaryFacts(
 			Source: source.path,
 		})
 		if lower := boundaryLengthRelationSourceLower(*out, source.path); lower > 0 {
-			result.LengthLowerBounds = append(result.LengthLowerBounds, BoundaryLengthLowerApplication{
-				Target: target.path,
-				Lower:  lower,
-			})
 			if op, ok := NumericLenGeConstPathOp(target.path, lower); ok {
 				changed = ApplyNumericEffect(out, NumericEffect{Ops: []NumericOp{op}}) || changed
 			}

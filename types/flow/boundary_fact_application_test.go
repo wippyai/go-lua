@@ -103,8 +103,33 @@ func TestApplyBoundaryFactsAppliesLengthRelation(t *testing.T) {
 	if len(app.LengthRelations) != 1 || !app.LengthRelations[0].Target.Equal(targetPath) || !app.LengthRelations[0].Source.Equal(sourcePath) {
 		t.Fatalf("length relation application = %#v, want target/source paths", app.LengthRelations)
 	}
+	if len(app.LengthLowerBounds) != 0 {
+		t.Fatalf("ApplyBoundaryFacts returned already-applied length lower replay events: %#v", app.LengthLowerBounds)
+	}
 	if lower, _, ok := state.Num.LenBoundsFor(SymbolPathKey(targetPath.Symbol, nil)); !ok || lower != 3 {
 		t.Fatalf("target length lower = %d/%v, want 3", lower, ok)
+	}
+}
+
+func TestBoundaryFactPrestateApplicationCapturesLengthLowerReplay(t *testing.T) {
+	sourcePath := constraint.NewPath(cfg.SymbolID(421), "source")
+	targetPath := constraint.NewPath(cfg.SymbolID(422), "target")
+	state := PointState{Num: numeric.NewState()}
+	state.Num.ApplyLenGeConst(SymbolPathKey(sourcePath.Symbol, nil), 5)
+	roots := NewBoundaryLocalRoots(
+		map[int]constraint.Path{0: sourcePath},
+		map[int]constraint.Path{0: targetPath},
+	)
+	facts := BoundaryFactsDomain.Top().WithLengthRelations([]BoundaryLengthRelationFact{{
+		Target: BoundaryPath{Kind: BoundaryPathReturn, Index: 0},
+		Source: BoundaryPath{Kind: BoundaryPathParam, Index: 0},
+	}})
+
+	app := BoundaryFactPrestateApplication(state, facts, roots.Rebase)
+	if len(app.LengthLowerBounds) != 1 ||
+		!app.LengthLowerBounds[0].Target.Equal(targetPath) ||
+		app.LengthLowerBounds[0].Lower != 5 {
+		t.Fatalf("prestate length lower replay = %#v, want target >= 5", app.LengthLowerBounds)
 	}
 }
 
