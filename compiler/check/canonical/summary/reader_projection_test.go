@@ -94,22 +94,22 @@ func TestReaderReturnPostconditionsDefensiveCopy(t *testing.T) {
 	}
 }
 
-func TestReaderEntryValueDependenciesUseSnapshotSummary(t *testing.T) {
+func TestReaderEntryPublicationDependenciesUseSnapshotSummary(t *testing.T) {
 	dep := FuncRef{GraphID: 9}
 	callee := FuncRef{GraphID: 10}
 	reader := NewReader(nil, nil, map[FuncRef]Summary{
 		dep: {
-			CallEntryValues: CallEntryValues{
-				callee: EntryValues{2: product.FromType(typ.String)},
-			},
-			CallEntryFacts: CallEntryFacts{
-				callee: flow.BoundaryFactsOf(
-					[]flow.BoundaryKeyPresenceFact{{
-						Table: flow.BoundaryPath{Kind: flow.BoundaryPathParam, Index: 2},
-						Key:   flow.BoundaryPath{Kind: flow.BoundaryPathParam, Index: 2, Segments: []constraint.Segment{{Kind: constraint.SegmentField, Name: "id"}}},
-					}},
-					nil, nil, nil, nil, nil,
-				),
+			CallEntryPublication: CallEntryPublications{
+				callee: {
+					Values: EntryValues{2: product.FromType(typ.String)},
+					Facts: flow.BoundaryFactsOf(
+						[]flow.BoundaryKeyPresenceFact{{
+							Table: flow.BoundaryPath{Kind: flow.BoundaryPathParam, Index: 2},
+							Key:   flow.BoundaryPath{Kind: flow.BoundaryPathParam, Index: 2, Segments: []constraint.Segment{{Kind: constraint.SegmentField, Name: "id"}}},
+						}},
+						nil, nil, nil, nil, nil,
+					),
+				},
 			},
 			PrototypeSelf: flow.PrototypeSelfOf([]flow.PrototypeSelfEntry{{
 				Prototype: 99,
@@ -118,24 +118,25 @@ func TestReaderEntryValueDependenciesUseSnapshotSummary(t *testing.T) {
 		},
 	})
 
-	values := reader.CallEntryValues(dep, callee)
+	pub := reader.CallEntryPublication(dep, callee)
+	values := pub.Values
 	if len(values) != 1 || !typ.TypeEquals(values[2].ProjectValue(), typ.String) {
-		t.Fatalf("CallEntryValues = %#v, want slot 2 string", values)
+		t.Fatalf("CallEntryPublication.Values = %#v, want slot 2 string", values)
 	}
-	facts := reader.CallEntryFacts(dep, callee)
+	facts := pub.Facts
 	if !facts.HasKeyPresence(flow.BoundaryKeyPresenceFact{
 		Table: flow.BoundaryPath{Kind: flow.BoundaryPathParam, Index: 2},
 		Key:   flow.BoundaryPath{Kind: flow.BoundaryPathParam, Index: 2, Segments: []constraint.Segment{{Kind: constraint.SegmentField, Name: "id"}}},
 	}) {
-		t.Fatalf("CallEntryFacts = %#v, want param key proof", facts.KeyPresence())
+		t.Fatalf("CallEntryPublication.Facts = %#v, want param key proof", facts.KeyPresence())
 	}
-	if missing := reader.CallEntryFacts(dep, FuncRef{GraphID: 99}); missing.HasProof() {
-		t.Fatalf("missing CallEntryFacts = %#v, want no finite proof", missing)
+	if missing := reader.CallEntryPublication(dep, FuncRef{GraphID: 99}).Facts; missing.HasProof() {
+		t.Fatalf("missing CallEntryPublication.Facts = %#v, want no finite proof", missing)
 	}
 	values[2] = product.FromType(typ.Number)
-	again := reader.CallEntryValues(dep, callee)
+	again := reader.CallEntryPublication(dep, callee).Values
 	if !typ.TypeEquals(again[2].ProjectValue(), typ.String) {
-		t.Fatalf("CallEntryValues exposed mutable backing: %#v", again)
+		t.Fatalf("CallEntryPublication.Values exposed mutable backing: %#v", again)
 	}
 
 	self, ok := reader.PrototypeSelf(dep).Value(99)

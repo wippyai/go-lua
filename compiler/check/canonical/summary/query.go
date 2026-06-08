@@ -88,27 +88,20 @@ type captureEntryReferencesProvider interface {
 	CaptureEntryReferences(ref FuncRef, captureReferencesOf func(FuncRef) flow.ReferenceContext) flow.ReferenceContext
 }
 
-// EntryValueDependencies exposes only the summary components needed to seed a
-// callee's entry-value evidence. The solve query owns the actual Summary
-// projection read; a provider must not inspect unrelated Summary axes or
-// introduce driver-owned precision logic.
-type EntryValueDependencies interface {
-	CallEntryValues(dep FuncRef, callee FuncRef) EntryValues
+// EntryPublicationDependencies exposes only caller-to-callee entry publication
+// evidence. The solve query owns the actual Summary projection read; providers
+// must not inspect unrelated Summary axes or introduce driver-owned precision.
+type EntryPublicationDependencies interface {
+	CallEntryPublication(dep FuncRef, callee FuncRef) CallEntryPublication
 	PrototypeSelf(dep FuncRef) flow.PrototypeSelf
 }
 
-// EntryFactDependencies exposes summary-published caller entry facts for one
-// callee. Aggregate facts are must proofs; Top means no finite proof.
-type EntryFactDependencies interface {
-	CallEntryFacts(dep FuncRef, callee FuncRef) flow.BoundaryFacts
-}
-
 type entryValueProvider interface {
-	EntryValues(ref FuncRef, deps EntryValueDependencies) map[int]product.AbstractValue
+	EntryValues(ref FuncRef, deps EntryPublicationDependencies) map[int]product.AbstractValue
 }
 
 type entryFactProvider interface {
-	EntryFacts(ref FuncRef, deps EntryFactDependencies) flow.BoundaryFacts
+	EntryFacts(ref FuncRef, deps EntryPublicationDependencies) flow.BoundaryFacts
 }
 
 type entryValueMerger interface {
@@ -116,7 +109,7 @@ type entryValueMerger interface {
 }
 
 type callEntryPublicationProjector interface {
-	ProjectCallEntryPublication(ref FuncRef, fs state.FunctionState) CallEntryPublication
+	ProjectCallEntryPublication(ref FuncRef, fs state.FunctionState) CallEntryPublications
 }
 
 type solveContextRunner interface {
@@ -458,9 +451,7 @@ func (q *Queries) ProjectStateSummary(ctx *db.QueryContext, ref FuncRef, fs stat
 	})
 	sum.Postconditions = q.ReturnPostconditions(ctx, ref)
 	if projector, ok := q.prog.(callEntryPublicationProjector); ok && projector != nil {
-		entry := projector.ProjectCallEntryPublication(ref, fs)
-		sum.CallEntryValues = entry.Values
-		sum.CallEntryFacts = entry.Facts
+		sum.CallEntryPublication = projector.ProjectCallEntryPublication(ref, fs)
 	}
 	return sum
 }

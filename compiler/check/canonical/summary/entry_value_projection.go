@@ -201,18 +201,6 @@ func joinObservedEntryValue(out EntryValues, slot int, av product.AbstractValue)
 	return joinEntryValue(out, slot, av)
 }
 
-func joinCallEntryValue(out CallEntryValues, callee FuncRef, slot int, av product.AbstractValue) CallEntryValues {
-	values := joinObservedEntryValue(out[callee], slot, av)
-	if len(values) == 0 {
-		return out
-	}
-	if out == nil {
-		out = make(CallEntryValues)
-	}
-	out[callee] = values
-	return out
-}
-
 // AggregateEntryFacts folds caller-projected path proofs for one callee. Facts
 // are must evidence: every possible caller contributes a BoundaryFacts value,
 // with Top meaning "this caller proves nothing finite".
@@ -296,7 +284,7 @@ func entryValueSourcePublishes(source EntryValuePrototypeSource, proto cfg.Symbo
 
 // mergeEntryValuesWithFixed merges fallback evidence into fixed entry evidence,
 // preserving every slot already present in fixed. This is the summary-key rule:
-// explicit EntryValuesKey context wins; aggregate CallEntryValues fills only
+// explicit EntryValuesKey context wins; aggregate CallEntryPublication fills only
 // unspecified slots.
 func mergeEntryValuesWithFixed(fixed, fallback EntryValues) EntryValues {
 	if len(fixed) == 0 {
@@ -379,9 +367,9 @@ func joinOmittedFixedArgNil(out EntryValues, supplied int, callee FuncRef, call 
 }
 
 // CallEntryContextProjection projects exact call-site contexts from one solved
-// caller state. Unlike Summary.CallEntryValues, this relation is not joined by
-// callee: diagnostics use it to replay every reachable callee under the finite
-// context that an actual call site produced.
+// caller state. Unlike aggregate CallEntryPublication, this relation is not
+// joined by callee: diagnostics use it to replay every reachable callee under the
+// finite context that an actual call site produced.
 type CallEntryContextProjection struct {
 	Graph               *cfg.Graph
 	State               state.FunctionState
@@ -659,14 +647,6 @@ func (p CallEntryContextProjection) callbackEntryKeys(site callEntrySite) []Key 
 	return keys
 }
 
-// CallEntryPublication is the caller-projected evidence a solved function
-// publishes for callees it invokes. Summary still stores values and facts in
-// compatibility fields, but they are computed as one semantic publication.
-type CallEntryPublication struct {
-	Values CallEntryValues
-	Facts  CallEntryFacts
-}
-
 // CallEntryPublicationProjection projects caller-to-callee entry evidence from
 // one solved caller state. Values and boundary facts are emitted together because
 // both come from the same call-boundary frame; splitting them reintroduced two
@@ -687,9 +667,9 @@ type CallEntryPublicationProjection struct {
 }
 
 // Project returns finite caller-to-callee entry-publication summary components.
-func (p CallEntryPublicationProjection) Project() CallEntryPublication {
+func (p CallEntryPublicationProjection) Project() CallEntryPublications {
 	if p.Graph == nil || p.ResolveTargets == nil || p.ParamSlot == nil || p.EvalArg == nil {
-		return CallEntryPublication{}
+		return nil
 	}
 	evidenceProjection := CallEntryContextProjection{
 		ParamSlot:      p.ParamSlot,
@@ -700,30 +680,24 @@ func (p CallEntryPublicationProjection) Project() CallEntryPublication {
 		EvalArg:        p.EvalArg,
 	}
 	blockedFacts := make(map[FuncRef]struct{})
-	var out CallEntryPublication
+	var out CallEntryPublications
 	p.Graph.EachCallSite(func(point cfg.Point, info *cfg.CallInfo) {
 		site, ok := newCallEntrySite(p.State, point, info)
 		if !ok {
 			return
 		}
 		for _, target := range site.targets(p.ResolveTargets) {
-			out.Values = p.projectTargetEntryValues(out.Values, site, target.Ref)
+			out = p.projectTargetEntryValues(out, site, target.Ref)
 			evidence := evidenceProjection.directEvidenceFromPoint(target.Ref, site.Call, &site.ArgState)
 			facts := flow.MergeBoundaryFactProofs(target.EntryFacts, evidence.Facts)
-			out.Facts = joinCallEntryFacts(out.Facts, blockedFacts, target.Ref, facts)
+			out = joinCallEntryPublicationFacts(out, blockedFacts, target.Ref, facts)
 		}
-		out.Values = p.projectCallbackEntryValues(out.Values, site)
+		out = p.projectCallbackEntryValues(out, site)
 	})
-	if len(out.Values) == 0 {
-		out.Values = nil
-	}
-	if len(out.Facts) == 0 {
-		out.Facts = nil
-	}
 	return out
 }
 
-func (p CallEntryPublicationProjection) projectTargetEntryValues(out CallEntryValues, site callEntrySite, ref FuncRef) CallEntryValues {
+func (p CallEntryPublicationProjection) projectTargetEntryValues(out CallEntryPublications, site callEntrySite, ref FuncRef) CallEntryPublications {
 	for _, arg := range entryRuntimeArgs(ref, site.Call, p.ParamSlot) {
 		if arg.Expr == nil || (p.ParamAnnotated != nil && p.ParamAnnotated(ref, arg.SourceParam)) {
 			continue
@@ -732,39 +706,64 @@ func (p CallEntryPublicationProjection) projectTargetEntryValues(out CallEntryVa
 		if !ok {
 			continue
 		}
-		out = joinCallEntryValue(out, ref, arg.Slot, av)
+		out = joinCallEntryPublicationValue(out, ref, arg.Slot, av)
 	}
 	return out
 }
 
-// joinCallEntryFacts folds finite must-facts per callee. A call to the same
-// callee that proves no finite fact weakens the callee to Top and blocks later
-// call sites from reintroducing a definite proof.
-func joinCallEntryFacts(out CallEntryFacts, blocked map[FuncRef]struct{}, ref FuncRef, facts flow.BoundaryFacts) CallEntryFacts {
-	if _, weak := blocked[ref]; weak {
+func joinCallEntryPublicationValue(out CallEntryPublications, ref FuncRef, slot int, av product.AbstractValue) CallEntryPublications {
+	if slot < 0 || av.IsZero() {
 		return out
 	}
-	if !facts.HasProof() {
-		delete(out, ref)
-		blocked[ref] = struct{}{}
+	if t := av.ProjectValue(); t == nil || typ.IsAbsentOrUnknown(t) {
 		return out
 	}
 	if out == nil {
-		out = make(CallEntryFacts)
+		out = make(CallEntryPublications)
 	}
-	if prev, had := out[ref]; had {
-		facts = flow.BoundaryFactsDomain.Join(prev, facts)
+	pub := out[ref]
+	pub.Values = joinEntryValue(pub.Values, slot, av)
+	if !pub.Facts.HasProof() {
+		pub.Facts = flow.BoundaryFactsDomain.Top()
+	}
+	out[ref] = pub
+	return out
+}
+
+// joinCallEntryPublicationFacts folds finite must-facts per callee. A call to the same
+// callee that proves no finite fact weakens the callee to Top and blocks later
+// call sites from reintroducing a definite proof.
+func joinCallEntryPublicationFacts(out CallEntryPublications, blocked map[FuncRef]struct{}, ref FuncRef, facts flow.BoundaryFacts) CallEntryPublications {
+	if out == nil {
+		out = make(CallEntryPublications)
+	}
+	pub := out[ref]
+	if _, weak := blocked[ref]; weak {
+		pub.Facts = flow.BoundaryFactsDomain.Top()
+		out[ref] = pub
+		return out
+	}
+	if !facts.HasProof() {
+		pub.Facts = flow.BoundaryFactsDomain.Top()
+		out[ref] = pub
+		blocked[ref] = struct{}{}
+		return out
+	}
+	if pub.Facts.HasProof() {
+		facts = flow.BoundaryFactsDomain.Join(pub.Facts, facts)
 		if !facts.HasProof() {
-			delete(out, ref)
+			pub.Facts = flow.BoundaryFactsDomain.Top()
+			out[ref] = pub
 			blocked[ref] = struct{}{}
 			return out
 		}
 	}
-	out[ref] = facts.Clone()
+	pub.Facts = facts.Clone()
+	out[ref] = pub
 	return out
 }
 
-func (p CallEntryPublicationProjection) projectCallbackEntryValues(out CallEntryValues, site callEntrySite) CallEntryValues {
+func (p CallEntryPublicationProjection) projectCallbackEntryValues(out CallEntryPublications, site callEntrySite) CallEntryPublications {
 	if p.ExpectedArgType == nil {
 		return out
 	}
@@ -774,7 +773,7 @@ func (p CallEntryPublicationProjection) projectCallbackEntryValues(out CallEntry
 		}
 		for _, ref := range callback.Refs {
 			for slot, av := range callback.Values {
-				out = joinCallEntryValue(out, ref, slot, av)
+				out = joinCallEntryPublicationValue(out, ref, slot, av)
 			}
 		}
 	}

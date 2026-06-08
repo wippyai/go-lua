@@ -30,21 +30,17 @@ func (r Reader) ReturnRelations(ref FuncRef) flow.ReturnRelations {
 	return r.Summarize(ref).Relations
 }
 
-// CallEntryValues reads the caller-to-callee entry-value evidence dep published
-// for callee. This lets diagnostic and projection observers consume
-// EntryValueDependencies through the same live-or-converged Reader boundary
-// instead of indexing Summary axes directly.
-func (r Reader) CallEntryValues(dep FuncRef, callee FuncRef) EntryValues {
-	return cloneEntryValues(r.Summarize(dep).CallEntryValues[callee])
-}
-
-// CallEntryFacts reads caller-to-callee parameter-relative path proof published
-// by dep. Missing entries deliberately mean no finite aggregate proof.
-func (r Reader) CallEntryFacts(dep FuncRef, callee FuncRef) flow.BoundaryFacts {
-	if facts, ok := r.Summarize(dep).CallEntryFacts[callee]; ok {
-		return facts.Clone()
+// CallEntryPublication reads caller-to-callee entry evidence dep published for
+// callee. Missing facts deliberately mean no finite aggregate proof.
+func (r Reader) CallEntryPublication(dep FuncRef, callee FuncRef) CallEntryPublication {
+	pub, ok := r.Summarize(dep).CallEntryPublication[callee]
+	if !ok {
+		return CallEntryPublication{Facts: flow.BoundaryFactsDomain.Top()}
 	}
-	return flow.BoundaryFactsDomain.Top()
+	return CallEntryPublication{
+		Values: cloneEntryValues(pub.Values),
+		Facts:  pub.Facts.Clone(),
+	}
 }
 
 // PrototypeSelf reads dep's published prototype-self relation through the

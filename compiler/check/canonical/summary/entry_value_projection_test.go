@@ -785,24 +785,24 @@ func TestCallEntryPublicationProjection_UsesResolvedTargetsForRefAndDedupesSlots
 			av, ok := argValues[expr]
 			return av, ok
 		},
-	}.Project().Values
+	}.Project()
 
 	if len(out) != 2 {
-		t.Fatalf("projected call-entry values = %#v, want exactly two callees", out)
+		t.Fatalf("projected call-entry publication = %#v, want exactly two callees", out)
 	}
 
 	wantA := product.Join(argValues[arg0], argValues[arg1])
-	if got, ok := out[calleeA][0]; !ok || !product.Equal(got, wantA) {
+	if got, ok := out[calleeA].Values[0]; !ok || !product.Equal(got, wantA) {
 		t.Fatalf("callee=%+v slot 0 = %#v/%v, want %v", calleeA, got, ok, wantA.ProjectValue())
 	}
-	if got, ok := out[calleeA][1]; ok || got != (product.AbstractValue{}) {
+	if got, ok := out[calleeA].Values[1]; ok || got != (product.AbstractValue{}) {
 		t.Fatalf("callee=%+v should not have slot 1 evidence, got %#v", calleeA, got)
 	}
 
-	if got, ok := out[calleeB][1]; ok {
+	if got, ok := out[calleeB].Values[1]; ok {
 		t.Fatalf("callee=%+v slot 1 should be filtered by ParamAnnotated, got %#v", calleeB, got)
 	}
-	if got, ok := out[calleeB][0]; !ok || !product.Equal(got, argValues[arg0]) {
+	if got, ok := out[calleeB].Values[0]; !ok || !product.Equal(got, argValues[arg0]) {
 		t.Fatalf("callee=%+v slot 0 = %#v, want %v", calleeB, got, argValues[arg0].ProjectValue())
 	}
 }
@@ -849,11 +849,67 @@ func TestCallEntryPublicationProjection_PublishesValuesAndFactsTogether(t *testi
 		},
 	}.Project()
 
-	if gotValue, ok := got.Values[callee][0]; !ok || !typ.TypeEquals(gotValue.ProjectValue(), typ.String) {
+	if gotValue, ok := got[callee].Values[0]; !ok || !typ.TypeEquals(gotValue.ProjectValue(), typ.String) {
 		t.Fatalf("published value = %v/%v, want string", gotValue.ProjectValue(), ok)
 	}
-	if gotFacts, ok := got.Facts[callee]; !ok || !gotFacts.HasKeyPresence(flow.BoundaryKeyPresenceFact{Table: table, Key: key}) {
-		t.Fatalf("published facts = %#v/%v, want key-presence proof", gotFacts, ok)
+	if gotFacts := got[callee].Facts; !gotFacts.HasKeyPresence(flow.BoundaryKeyPresenceFact{Table: table, Key: key}) {
+		t.Fatalf("published facts = %#v, want key-presence proof", gotFacts)
+	}
+}
+
+func TestCallEntryPublicationProjection_WeakFactsDoNotEraseValuesOrReintroduceLater(t *testing.T) {
+	arg0 := &ast.IdentExpr{Value: "payload0"}
+	arg1 := &ast.IdentExpr{Value: "payload1"}
+	call0 := &ast.FuncCallExpr{Func: &ast.IdentExpr{Value: "callee"}, Args: []ast.Expr{arg0}}
+	call1 := &ast.FuncCallExpr{Func: &ast.IdentExpr{Value: "callee"}, Args: []ast.Expr{arg1}}
+	fn := &ast.FunctionExpr{Stmts: []ast.Stmt{
+		&ast.FuncCallStmt{Expr: call0},
+		&ast.FuncCallStmt{Expr: call1},
+	}}
+	graph := cfg.Build(fn, "caller")
+	points := make(map[cfg.Point]flow.PointState)
+	graph.EachCallSite(func(p cfg.Point, _ *cfg.CallInfo) {
+		points[p] = flow.PointState{}
+	})
+	if len(points) != 2 {
+		t.Fatalf("test graph exposed %d call sites, want 2", len(points))
+	}
+
+	callee := summary.FuncRef{GraphID: 42}
+	table := flow.BoundaryPath{Kind: flow.BoundaryPathParam, Index: 0}
+	key := flow.BoundaryPath{Kind: flow.BoundaryPathParam, Index: 0, Segments: []constraint.Segment{{Kind: constraint.SegmentField, Name: "id"}}}
+	proof := flow.BoundaryFactsOf([]flow.BoundaryKeyPresenceFact{{Table: table, Key: key}}, nil, nil, nil, nil, nil)
+	got := summary.CallEntryPublicationProjection{
+		Graph: graph,
+		State: state.FunctionState{Points: points},
+		ResolveTargets: func(call *ast.FuncCallExpr, _ *flow.PointState) []summary.CallEntryTarget {
+			if call == call0 {
+				return []summary.CallEntryTarget{{Ref: callee, EntryFacts: flow.BoundaryFactsDomain.Top()}}
+			}
+			return []summary.CallEntryTarget{{Ref: callee, EntryFacts: proof}}
+		},
+		ParamSlot: func(summary.FuncRef, *ast.FuncCallExpr, int) (int, int, bool) {
+			return 0, 0, true
+		},
+		EvalArg: func(_ *flow.PointState, expr ast.Expr) (product.AbstractValue, bool) {
+			switch expr {
+			case arg0:
+				return product.FromType(typ.String), true
+			case arg1:
+				return product.FromType(typ.Number), true
+			default:
+				return product.AbstractValue{}, false
+			}
+		},
+	}.Project()
+
+	if gotValue, ok := got[callee].Values[0]; !ok {
+		t.Fatalf("published values = %#v, want slot 0 value despite weak facts", got[callee].Values)
+	} else if typ.IsAbsentOrUnknown(gotValue.ProjectValue()) {
+		t.Fatalf("published value = %#v, want informative joined value", gotValue)
+	}
+	if facts := got[callee].Facts; facts.HasProof() {
+		t.Fatalf("published facts = %#v, want weak facts to block later proof reintroduction", facts)
 	}
 }
 
@@ -886,7 +942,7 @@ func TestCallEntryPublicationProjection_EmptyTargetsYieldNoEvidence(t *testing.T
 			return product.FromType(typ.String), true
 		},
 	}.Project()
-	if len(got.Values) != 0 || len(got.Facts) != 0 {
+	if len(got) != 0 {
 		t.Fatalf("projected call-entry publication = %#v, want none", got)
 	}
 }
@@ -937,12 +993,12 @@ func TestCallEntryPublicationProjection_ProjectsCallbackExpectedParams(t *testin
 		EvalArg: func(*flow.PointState, ast.Expr) (product.AbstractValue, bool) {
 			return product.AbstractValue{}, false
 		},
-	}.Project().Values
+	}.Project()
 
-	if gotValue, ok := got[callbackRef][0]; !ok || !typ.TypeEquals(gotValue.ProjectValue(), typ.String) {
+	if gotValue, ok := got[callbackRef].Values[0]; !ok || !typ.TypeEquals(gotValue.ProjectValue(), typ.String) {
 		t.Fatalf("callback slot 0 = %v/%v, want string", gotValue.ProjectValue(), ok)
 	}
-	if gotValue, ok := got[callbackRef2][0]; !ok || !typ.TypeEquals(gotValue.ProjectValue(), typ.String) {
+	if gotValue, ok := got[callbackRef2].Values[0]; !ok || !typ.TypeEquals(gotValue.ProjectValue(), typ.String) {
 		t.Fatalf("second callback slot 0 = %v/%v, want string", gotValue.ProjectValue(), ok)
 	}
 }

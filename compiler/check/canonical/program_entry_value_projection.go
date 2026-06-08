@@ -18,12 +18,12 @@ import (
 type programEntryValueProjection struct {
 	program            *program
 	ref                summary.FuncRef
-	deps               summary.EntryValueDependencies
+	deps               summary.EntryPublicationDependencies
 	prototypeReceivers []summary.EntryValuePrototypeReceiver
 	hasInferredSlots   bool
 }
 
-func (p *program) entryValueProjection(ref summary.FuncRef, deps summary.EntryValueDependencies) (programEntryValueProjection, bool) {
+func (p *program) entryValueProjection(ref summary.FuncRef, deps summary.EntryPublicationDependencies) (programEntryValueProjection, bool) {
 	if p == nil || deps == nil {
 		return programEntryValueProjection{}, false
 	}
@@ -37,7 +37,7 @@ func (p *program) entryValueProjection(ref summary.FuncRef, deps summary.EntryVa
 	}, true
 }
 
-func (p *program) EntryValues(ref summary.FuncRef, deps summary.EntryValueDependencies) map[int]product.AbstractValue {
+func (p *program) EntryValues(ref summary.FuncRef, deps summary.EntryPublicationDependencies) map[int]product.AbstractValue {
 	proj, ok := p.entryValueProjection(ref, deps)
 	if !ok {
 		return nil
@@ -115,7 +115,7 @@ func (p programEntryValueProjection) eachCallerEntryValues(yield func(summary.En
 		return
 	}
 	for _, dep := range p.program.callerRefs(p.ref) {
-		values := p.deps.CallEntryValues(dep, p.ref)
+		values := p.deps.CallEntryPublication(dep, p.ref).Values
 		if len(values) != 0 {
 			yield(values)
 		}

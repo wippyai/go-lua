@@ -38,7 +38,7 @@ func (p *program) withPrototypeReceiverBaselines(
 	ref summary.FuncRef,
 	values summary.EntryValues,
 	receivers []summary.EntryValuePrototypeReceiver,
-	deps summary.EntryValueDependencies,
+	deps summary.EntryPublicationDependencies,
 ) summary.EntryValues {
 	if p == nil || deps == nil || len(values) == 0 || len(receivers) == 0 {
 		return values
@@ -78,7 +78,7 @@ func (p *program) withPrototypeReceiverBaselines(
 
 func (p *program) prototypeReceiverBaselines(
 	receivers []summary.EntryValuePrototypeReceiver,
-	deps summary.EntryValueDependencies,
+	deps summary.EntryPublicationDependencies,
 ) map[cfg.SymbolID]product.AbstractValue {
 	if p == nil || deps == nil || len(receivers) == 0 {
 		return nil

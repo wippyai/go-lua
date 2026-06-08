@@ -119,10 +119,10 @@ func (p *program) callEntryProjector(ref summary.FuncRef) (callEntryProjector, b
 	}, true
 }
 
-func (p *program) ProjectCallEntryPublication(ref summary.FuncRef, fs state.FunctionState) summary.CallEntryPublication {
+func (p *program) ProjectCallEntryPublication(ref summary.FuncRef, fs state.FunctionState) summary.CallEntryPublications {
 	projector, ok := p.callEntryProjector(ref)
 	if !ok {
-		return summary.CallEntryPublication{}
+		return nil
 	}
 	return projector.publicationProjection(fs).Project()
 }

@@ -205,17 +205,17 @@ func TestSummaryDomain_Laws(t *testing.T) {
 	closure := flow.ClosureRefOf(flow.FunctionRef{GraphID: 5}, exports, exportRefs)
 	exportClosures := flow.WithClosureRefPath(nil, constraint.NewPath(cfg.SymbolID(2), "captured").Field("factory"), flow.ClosureRefSetOf(closure))
 	protos := flow.PrototypeSelfOf([]flow.PrototypeSelfEntry{{Prototype: cfg.SymbolID(3), Value: s}})
-	entryValues := summary.CallEntryValues{
-		summary.FuncRef{GraphID: 99}: summary.EntryValues{0: n},
-	}
-	entryFacts := summary.CallEntryFacts{
-		summary.FuncRef{GraphID: 99}: flow.BoundaryFactsOf(
-			[]flow.BoundaryKeyPresenceFact{{
-				Table: flow.BoundaryPath{Kind: flow.BoundaryPathParam, Index: 0, Segments: []constraint.Segment{{Kind: constraint.SegmentField, Name: "nodes"}}},
-				Key:   flow.BoundaryPath{Kind: flow.BoundaryPathParam, Index: 0, Segments: []constraint.Segment{{Kind: constraint.SegmentField, Name: "last_node_id"}}},
-			}},
-			nil, nil, nil, nil, nil,
-		),
+	entryPublication := summary.CallEntryPublications{
+		summary.FuncRef{GraphID: 99}: {
+			Values: summary.EntryValues{0: n},
+			Facts: flow.BoundaryFactsOf(
+				[]flow.BoundaryKeyPresenceFact{{
+					Table: flow.BoundaryPath{Kind: flow.BoundaryPathParam, Index: 0, Segments: []constraint.Segment{{Kind: constraint.SegmentField, Name: "nodes"}}},
+					Key:   flow.BoundaryPath{Kind: flow.BoundaryPathParam, Index: 0, Segments: []constraint.Segment{{Kind: constraint.SegmentField, Name: "last_node_id"}}},
+				}},
+				nil, nil, nil, nil, nil,
+			),
+		},
 	}
 	rels := flow.ReturnRelationsOfErrorReturns([]flow.ReturnCorrelation{{ValueIndex: 0, ErrorIndex: 1}})
 
@@ -233,9 +233,8 @@ func TestSummaryDomain_Laws(t *testing.T) {
 			{ReturnRefs: flow.ReturnRefsOfSlots([]flow.ReturnRefSlot{flow.ReturnRefSlotOf(flow.FunctionRefsDomain.Bottom(), exportClosures)})},
 			{CaptureReferences: flow.ReferenceContextOf(flow.CaptureCellsDomain.Bottom(), flow.FunctionRefsDomain.Bottom(), exportClosures)},
 			{PrototypeSelf: protos},
-			{CallEntryValues: entryValues},
-			{CallEntryFacts: entryFacts},
-			{Returns: []product.AbstractValue{n, s}, ReturnRefs: flow.ReturnRefsOfSlots([]flow.ReturnRefSlot{flow.ReturnRefSlotOf(flow.FunctionRefsDomain.Bottom(), exportClosures)}), Relations: rels, CellEffects: effects, CaptureReferences: flow.ReferenceContextOf(exports, exportRefs, exportClosures), PrototypeSelf: protos, CallEntryValues: entryValues, CallEntryFacts: entryFacts},
+			{CallEntryPublication: entryPublication},
+			{Returns: []product.AbstractValue{n, s}, ReturnRefs: flow.ReturnRefsOfSlots([]flow.ReturnRefSlot{flow.ReturnRefSlotOf(flow.FunctionRefsDomain.Bottom(), exportClosures)}), Relations: rels, CellEffects: effects, CaptureReferences: flow.ReferenceContextOf(exports, exportRefs, exportClosures), PrototypeSelf: protos, CallEntryPublication: entryPublication},
 		},
 	}.Run(t)
 }

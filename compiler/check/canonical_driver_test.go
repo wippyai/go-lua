@@ -275,9 +275,9 @@ return attempts, delay
 	if !ok {
 		t.Fatal("root summary missing")
 	}
-	entry, ok := rootSum.CallEntryValues[setter][0]
+	entry, ok := rootSum.CallEntryPublication[setter].Values[0]
 	if !ok {
-		t.Fatalf("root CallEntryValues missing setter slot 0: %#v", rootSum.CallEntryValues)
+		t.Fatalf("root CallEntryPublication missing setter slot 0: %#v", rootSum.CallEntryPublication)
 	}
 	assertNestedNumberField(t, "root call-entry opts", entry, "retry", "max_attempts")
 	assertNestedNumberField(t, "root call-entry opts", entry, "retry", "initial_delay")
@@ -352,9 +352,9 @@ return captured
 	if !ok {
 		t.Fatal("root summary missing")
 	}
-	entry, ok := rootSum.CallEntryValues[withOptions][1]
+	entry, ok := rootSum.CallEntryPublication[withOptions].Values[1]
 	if !ok {
-		t.Fatalf("root CallEntryValues missing with_options opts slot 1: entries=%#v root function refs=%#v make returns=%v make return refs=%#v", rootSum.CallEntryValues, rootSum.CaptureReferences.FunctionRefs(), makeSum.Returns, makeSum.ReturnRefs)
+		t.Fatalf("root CallEntryPublication missing with_options opts slot 1: entries=%#v root function refs=%#v make returns=%v make return refs=%#v", rootSum.CallEntryPublication, rootSum.CaptureReferences.FunctionRefs(), makeSum.Returns, makeSum.ReturnRefs)
 	}
 	assertNestedNumberField(t, "root method call-entry opts", entry, "retry", "max_attempts")
 	assertNestedNumberField(t, "root method call-entry opts", entry, "retry", "initial_delay")
@@ -414,9 +414,9 @@ return captured
 	if !ok {
 		t.Fatal("root summary missing")
 	}
-	openEntry, ok := rootSum.CallEntryValues[openRef][0]
+	openEntry, ok := rootSum.CallEntryPublication[openRef].Values[0]
 	if !ok {
-		t.Fatalf("root CallEntryValues missing open overrides slot 0: %#v", rootSum.CallEntryValues)
+		t.Fatalf("root CallEntryPublication missing open overrides slot 0: %#v", rootSum.CallEntryPublication)
 	}
 	assertNestedNumberField(t, "root open call-entry overrides", openEntry, "retry", "max_attempts")
 
