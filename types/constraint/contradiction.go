@@ -13,10 +13,8 @@ import (
 type conjunctionContradictionIndex struct {
 	hasContradiction bool
 	exact            map[uint64][]contradictionClass
-	exactPath        map[uint64][]pathContradictionClass
 	hasType          map[uint64][]hasTypeBuiltinClass
-	truthy           map[uint64][]Path
-	isNil            map[uint64][]Path
+	paths            map[uint64][]pathPredicateClass
 }
 
 type contradictionClass struct {
@@ -31,23 +29,18 @@ type exactContradictionSignature struct {
 	positive bool
 }
 
-type pathContradictionKind uint8
+type pathPredicateBits uint8
 
 const (
-	pathContradictionTruthy pathContradictionKind = iota + 1
-	pathContradictionIsNil
+	pathPredicateTruthy pathPredicateBits = 1 << iota
+	pathPredicateFalsy
+	pathPredicateIsNil
+	pathPredicateNotNil
 )
 
-type pathContradictionClass struct {
-	constraint Constraint
-	kind       pathContradictionKind
-	positive   bool
-}
-
-type pathContradictionSignature struct {
-	kind     pathContradictionKind
-	hash     uint64
-	positive bool
+type pathPredicateClass struct {
+	path Path
+	bits pathPredicateBits
 }
 
 type hasTypeBuiltinClass struct {
@@ -73,18 +66,15 @@ func (idx *conjunctionContradictionIndex) Observe(ct Constraint) bool {
 	if idx == nil || idx.hasContradiction {
 		return idx != nil && idx.hasContradiction
 	}
-	if idx.observeExactComplement(ct) ||
-		idx.observeBuiltinHasType(ct) ||
-		idx.observeTruthyNil(ct) {
+	if idx.observePathPredicate(ct) ||
+		idx.observeExactComplement(ct) ||
+		idx.observeBuiltinHasType(ct) {
 		idx.hasContradiction = true
 	}
 	return idx.hasContradiction
 }
 
 func (idx *conjunctionContradictionIndex) observeExactComplement(ct Constraint) bool {
-	if sig, ok := exactPathContradictionSignatureOf(ct); ok {
-		return idx.observeExactPathComplement(sig, ct)
-	}
 	sig, ok := exactContradictionSignatureOf(ct)
 	if !ok {
 		return false
@@ -101,26 +91,6 @@ func (idx *conjunctionContradictionIndex) observeExactComplement(ct Constraint) 
 		idx.exact = make(map[uint64][]contradictionClass)
 	}
 	idx.exact[sig.hash] = append(idx.exact[sig.hash], contradictionClass{
-		constraint: ct,
-		kind:       sig.kind,
-		positive:   sig.positive,
-	})
-	return false
-}
-
-func (idx *conjunctionContradictionIndex) observeExactPathComplement(sig pathContradictionSignature, ct Constraint) bool {
-	for _, seen := range idx.exactPath[sig.hash] {
-		if seen.positive == sig.positive || seen.kind != sig.kind {
-			continue
-		}
-		if pathContradictionClassPath(seen.constraint).Equal(pathContradictionClassPath(ct)) {
-			return true
-		}
-	}
-	if idx.exactPath == nil {
-		idx.exactPath = make(map[uint64][]pathContradictionClass)
-	}
-	idx.exactPath[sig.hash] = append(idx.exactPath[sig.hash], pathContradictionClass{
 		constraint: ct,
 		kind:       sig.kind,
 		positive:   sig.positive,
@@ -150,88 +120,69 @@ func (idx *conjunctionContradictionIndex) observeBuiltinHasType(ct Constraint) b
 	return false
 }
 
-func (idx *conjunctionContradictionIndex) observeTruthyNil(ct Constraint) bool {
-	switch v := ct.(type) {
-	case Truthy:
-		if !rootStablePath(v.Path) {
-			return false
-		}
-		key := v.Path.Hash()
-		if pathSetContains(idx.isNil[key], v.Path) {
-			return true
-		}
-		if idx.truthy == nil {
-			idx.truthy = make(map[uint64][]Path)
-		}
-		idx.truthy[key] = appendPathSet(idx.truthy[key], v.Path)
-	case IsNil:
-		if !rootStablePath(v.Path) {
-			return false
-		}
-		key := v.Path.Hash()
-		if pathSetContains(idx.truthy[key], v.Path) {
-			return true
-		}
-		if idx.isNil == nil {
-			idx.isNil = make(map[uint64][]Path)
-		}
-		idx.isNil[key] = appendPathSet(idx.isNil[key], v.Path)
+func (idx *conjunctionContradictionIndex) observePathPredicate(ct Constraint) bool {
+	path, bits, ok := pathPredicateOf(ct)
+	if !ok {
+		return false
 	}
+	key := path.Hash()
+	for i, seen := range idx.paths[key] {
+		if !seen.path.Equal(path) {
+			continue
+		}
+		if pathPredicateContradicts(seen.bits, bits, path) {
+			return true
+		}
+		idx.paths[key][i].bits |= bits
+		return false
+	}
+	if idx.paths == nil {
+		idx.paths = make(map[uint64][]pathPredicateClass)
+	}
+	idx.paths[key] = append(idx.paths[key], pathPredicateClass{path: path, bits: bits})
 	return false
 }
 
-func pathSetContains(paths []Path, want Path) bool {
-	for _, path := range paths {
-		if path.Equal(want) {
-			return true
-		}
-	}
-	return false
-}
-
-func appendPathSet(paths []Path, path Path) []Path {
-	if pathSetContains(paths, path) {
-		return paths
-	}
-	return append(paths, path)
-}
-
-func exactPathContradictionSignatureOf(ct Constraint) (pathContradictionSignature, bool) {
+func pathPredicateOf(ct Constraint) (Path, pathPredicateBits, bool) {
 	if !constraintCanContradict(ct) {
-		return pathContradictionSignature{}, false
+		return Path{}, 0, false
 	}
 	switch v := ct.(type) {
 	case Truthy:
-		return pathContradictionSignature{kind: pathContradictionTruthy, hash: pathContradictionClassHash(pathContradictionTruthy, v.Path), positive: true}, true
+		return v.Path, pathPredicateTruthy, true
 	case Falsy:
-		return pathContradictionSignature{kind: pathContradictionTruthy, hash: pathContradictionClassHash(pathContradictionTruthy, v.Path), positive: false}, true
+		return v.Path, pathPredicateFalsy, true
 	case IsNil:
-		return pathContradictionSignature{kind: pathContradictionIsNil, hash: pathContradictionClassHash(pathContradictionIsNil, v.Path), positive: true}, true
+		return v.Path, pathPredicateIsNil, true
 	case NotNil:
-		return pathContradictionSignature{kind: pathContradictionIsNil, hash: pathContradictionClassHash(pathContradictionIsNil, v.Path), positive: false}, true
+		return v.Path, pathPredicateNotNil, true
 	default:
-		return pathContradictionSignature{}, false
+		return Path{}, 0, false
 	}
 }
 
-func pathContradictionClassHash(kind pathContradictionKind, path Path) uint64 {
-	h := uint64(kind)
-	return (h << 1) ^ path.Hash()
-}
-
-func pathContradictionClassPath(ct Constraint) Path {
-	switch v := ct.(type) {
-	case Truthy:
-		return v.Path
-	case Falsy:
-		return v.Path
-	case IsNil:
-		return v.Path
-	case NotNil:
-		return v.Path
-	default:
-		return Path{}
+func pathPredicateContradicts(seen, next pathPredicateBits, path Path) bool {
+	if next&pathPredicateTruthy != 0 && seen&pathPredicateFalsy != 0 {
+		return true
 	}
+	if next&pathPredicateFalsy != 0 && seen&pathPredicateTruthy != 0 {
+		return true
+	}
+	if next&pathPredicateIsNil != 0 && seen&pathPredicateNotNil != 0 {
+		return true
+	}
+	if next&pathPredicateNotNil != 0 && seen&pathPredicateIsNil != 0 {
+		return true
+	}
+	if rootStablePath(path) {
+		if next&pathPredicateTruthy != 0 && seen&pathPredicateIsNil != 0 {
+			return true
+		}
+		if next&pathPredicateIsNil != 0 && seen&pathPredicateTruthy != 0 {
+			return true
+		}
+	}
+	return false
 }
 
 func exactContradictionSignatureOf(ct Constraint) (exactContradictionSignature, bool) {

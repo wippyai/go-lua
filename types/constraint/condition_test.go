@@ -789,6 +789,19 @@ func TestCondition_ContradictionIndexSemanticRules(t *testing.T) {
 	); !got.IsFalse() {
 		t.Fatalf("version-scoped field complement should be false condition, got %v", got)
 	}
+	versionedField := versioned.Field("status")
+	if got := FromConstraints(
+		Truthy{Path: versionedField},
+		IsNil{Path: versionedField},
+	); got.IsFalse() {
+		t.Fatalf("version-scoped field truthy/nil should not use root-only contradiction, got %v", got)
+	}
+	if got := FromConstraints(
+		Truthy{Path: versionedField},
+		Falsy{Path: versionedField},
+	); !got.IsFalse() {
+		t.Fatalf("version-scoped field truthy/falsy exact complement should be false, got %v", got)
+	}
 
 	historical := Path{Root: "x", Symbol: 1}
 	if got := FromConstraints(
