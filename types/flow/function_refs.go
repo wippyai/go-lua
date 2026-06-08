@@ -425,11 +425,7 @@ func WithoutFunctionRefSubtreeAddress(refs FunctionRefs, addr StableAddress) Fun
 }
 
 func functionRefPathInAddressSubtree(path constraint.PathKey, root StableAddress) bool {
-	pathAddr, ok := StableAddressFromCanonicalKey(path)
-	if !ok {
-		return false
-	}
-	return pathAddr.HasPrefix(root)
+	return StableAddressKeyHasPrefix(path, root)
 }
 
 func referenceProjectionContainsPath(projection ReferencePathProjection, path constraint.PathKey) bool {

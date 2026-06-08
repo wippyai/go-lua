@@ -340,6 +340,79 @@ func PathIdentityKey(path constraint.Path) constraint.PathKey {
 	return path.Key()
 }
 
+// StableAddressKeyHasPrefix reports whether key denotes prefix or a descendant
+// of prefix in the stable-address key space. It is the key-domain form of
+// StableAddress.HasPrefix and avoids projecting segment slices for callers that
+// only need subtree membership.
+func StableAddressKeyHasPrefix(key constraint.PathKey, prefix StableAddress) bool {
+	if key == "" || !prefix.root.isValid() {
+		return false
+	}
+	root, suffix, ok := stableAddressKeyRootAndSuffix(key)
+	if !ok || !root.Equal(prefix.root) {
+		return false
+	}
+	return stableSuffixStringHasPrefix(suffix, prefix.suffix.KeySuffix())
+}
+
+func stableAddressKeyRootAndSuffix(key constraint.PathKey) (PathRoot, string, bool) {
+	s := string(key)
+	if sym, suffix, ok := splitSymbolPathKey(s); ok {
+		root, rootOK := SymbolPathRoot(sym)
+		return root, suffix, rootOK
+	}
+	if _, _, ok := parseLegacyConstraintSymbolPathKey(key); ok {
+		return PathRoot{}, "", false
+	}
+	root, suffix, ok := splitStableRootKey(s)
+	if !ok {
+		return PathRoot{}, "", false
+	}
+	pathRoot, ok := NamedPathRoot(root)
+	return pathRoot, suffix, ok
+}
+
+func splitSymbolPathKey(s string) (cfg.SymbolID, string, bool) {
+	if len(s) < 2 || s[0] != 's' {
+		return 0, "", false
+	}
+	i := 1
+	var n uint64
+	for i < len(s) {
+		c := s[i]
+		if c < '0' || c > '9' {
+			break
+		}
+		n = n*10 + uint64(c-'0')
+		i++
+	}
+	if n == 0 || n > uint64(^cfg.SymbolID(0)) {
+		return 0, "", false
+	}
+	if i < len(s) && s[i] != '.' && s[i] != '[' {
+		return 0, "", false
+	}
+	return cfg.SymbolID(n), s[i:], true
+}
+
+func stableSuffixStringHasPrefix(suffix, prefix string) bool {
+	if prefix == "" {
+		return true
+	}
+	if suffix == prefix {
+		return true
+	}
+	if len(suffix) <= len(prefix) || suffix[:len(prefix)] != prefix {
+		return false
+	}
+	switch suffix[len(prefix)] {
+	case '.', '[':
+		return true
+	default:
+		return false
+	}
+}
+
 // Key returns the internal deterministic key for map/set carriers.
 func (a StableAddress) Key() constraint.PathKey {
 	if !a.root.isValid() {

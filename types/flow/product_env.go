@@ -145,10 +145,9 @@ func ProductDomainHasNarrowingForSymbol(domain *ProductDomain, sym cfg.SymbolID)
 
 // StableAddressKeyHasSymbol reports whether key denotes a path rooted at sym.
 func StableAddressKeyHasSymbol(key constraint.PathKey, sym cfg.SymbolID) bool {
-	addr, ok := StableAddressFromCanonicalKey(key)
+	root, ok := StableAddressOfSymbol(sym, nil)
 	if !ok {
 		return false
 	}
-	keySym, ok := addr.Symbol()
-	return ok && keySym == sym
+	return StableAddressKeyHasPrefix(key, root)
 }

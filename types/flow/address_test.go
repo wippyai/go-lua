@@ -255,6 +255,39 @@ func TestStableAddressRelationsUseStructuredAddresses(t *testing.T) {
 	}
 }
 
+func TestStableAddressKeyHasPrefixUsesStructuredBoundaries(t *testing.T) {
+	root, _ := StableAddressOfPath(constraint.NewPath(cfg.SymbolID(7), "root"))
+	field, _ := StableAddressOfPath(constraint.NewPath(cfg.SymbolID(7), "root").Field("foo"))
+	child := SymbolPathKey(cfg.SymbolID(7), []constraint.Segment{
+		{Kind: constraint.SegmentField, Name: "foo"},
+		{Kind: constraint.SegmentField, Name: "bar"},
+	})
+	siblingPrefixCollision := SymbolPathKey(cfg.SymbolID(7), []constraint.Segment{
+		{Kind: constraint.SegmentField, Name: "foobar"},
+	})
+
+	if !StableAddressKeyHasPrefix(child, root) {
+		t.Fatalf("%s should be under root %s", child, root.Key())
+	}
+	if !StableAddressKeyHasPrefix(child, field) {
+		t.Fatalf("%s should be under field %s", child, field.Key())
+	}
+	if StableAddressKeyHasPrefix(siblingPrefixCollision, field) {
+		t.Fatalf("%s should not be under field %s", siblingPrefixCollision, field.Key())
+	}
+
+	otherSymbol := SymbolPathKey(cfg.SymbolID(70), nil)
+	if StableAddressKeyHasPrefix(otherSymbol, root) {
+		t.Fatalf("symbol prefix collision accepted: %s under %s", otherSymbol, root.Key())
+	}
+
+	legacy := constraint.NewPath(cfg.SymbolID(7), "root").Field("foo")
+	legacy.Version = 1
+	if StableAddressKeyHasPrefix(legacy.Key(), root) {
+		t.Fatalf("legacy path key accepted as stable key: %s", legacy.Key())
+	}
+}
+
 func TestStableAddressOfRootAndSuffixKeepsVocabularyCanonical(t *testing.T) {
 	root, _ := SymbolPathRoot(cfg.SymbolID(27))
 	suffix := PathSuffixOfSegments([]constraint.Segment{
