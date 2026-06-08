@@ -26,22 +26,18 @@ type Place struct {
 }
 
 // StepKind identifies the structural kind of a location segment.
-type StepKind uint8
+type StepKind = access.StepKind
 
 const (
-	StepStaticMember StepKind = iota + 1
-	StepDynamicIndex
+	StepStaticMember = access.StepStaticMember
+	StepDynamicIndex = access.StepDynamicIndex
 )
 
 // Step identifies a structural path segment under a Place root.
 //
 // Static steps store a resolved MemberKey. Dynamic steps keep an already-evaluated
 // abstract key value for the eventual lvalue semantics consumed by product.
-type Step struct {
-	Kind   StepKind
-	Member value.MemberKey
-	Key    product.AbstractValue
-}
+type Step = access.Step
 
 // ValueUpdater rewrites the value currently stored at a Place.
 type ValueUpdater func(product.AbstractValue) (product.AbstractValue, bool)
@@ -77,15 +73,12 @@ func FromLocation(loc access.Location) (Place, bool) {
 	if loc.Root == 0 {
 		return Place{}, false
 	}
-	steps := make([]Step, 0, len(loc.Steps))
 	for _, step := range loc.Steps {
-		placeStep, ok := placeStepFromAccessStep(step)
-		if !ok {
+		if !validStep(step) {
 			return Place{}, false
 		}
-		steps = append(steps, placeStep)
 	}
-	return Place{Root: loc.Root, RootName: loc.RootName, Steps: steps}, true
+	return Place{Root: loc.Root, RootName: loc.RootName, Steps: loc.Steps}, true
 }
 
 // StaticPath projects a fully-static Place to a constraint.Path.
@@ -125,15 +118,12 @@ func (p Place) Location() (access.Location, bool) {
 	if p.Root == 0 {
 		return access.Location{}, false
 	}
-	steps := make([]access.Step, 0, len(p.Steps))
 	for _, step := range p.Steps {
-		accessStep, ok := accessStepFromPlaceStep(step)
-		if !ok {
+		if !validStep(step) {
 			return access.Location{}, false
 		}
-		steps = append(steps, accessStep)
 	}
-	return access.Location{Root: p.Root, RootName: p.RootName, Steps: steps}, true
+	return access.Location{Root: p.Root, RootName: p.RootName, Steps: p.Steps}, true
 }
 
 // WriteFootprint derives the shared access write footprint for this Place.
@@ -212,32 +202,20 @@ func (p Place) String() string {
 // possible. Dynamic indexes with concrete literal values are converted to their
 // static segment form.
 func SegmentFromStep(step Step) (constraint.Segment, bool) {
-	accessStep, ok := accessStepFromPlaceStep(step)
-	if !ok {
+	if !validStep(step) {
 		return constraint.Segment{}, false
 	}
-	return access.SegmentFromStep(accessStep)
+	return access.SegmentFromStep(step)
 }
 
-func accessStepFromPlaceStep(step Step) (access.Step, bool) {
+func validStep(step Step) bool {
 	switch step.Kind {
 	case StepStaticMember:
-		return access.Step{Kind: access.StepStaticMember, Member: step.Member}, true
+		return step.Member.IsValid()
 	case StepDynamicIndex:
-		return access.Step{Kind: access.StepDynamicIndex, Key: step.Key}, true
+		return true
 	default:
-		return access.Step{}, false
-	}
-}
-
-func placeStepFromAccessStep(step access.Step) (Step, bool) {
-	switch step.Kind {
-	case access.StepStaticMember:
-		return Step{Kind: StepStaticMember, Member: step.Member}, true
-	case access.StepDynamicIndex:
-		return Step{Kind: StepDynamicIndex, Key: step.Key}, true
-	default:
-		return Step{}, false
+		return false
 	}
 }
 
