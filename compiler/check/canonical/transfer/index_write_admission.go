@@ -10,72 +10,36 @@ import (
 	"github.com/wippyai/go-lua/types/typ"
 )
 
-func (t *Transfer) dynamicIndexWriteProof(
-	effect WriteEffect,
-	key product.AbstractValue,
-	value product.AbstractValue,
-) (flow.MapWriteProof, bool) {
-	if effect.IndexTarget.Kind != cfg.TargetIndex || effect.IndexTarget.Key == nil {
-		return flow.MapWriteProof{}, false
-	}
-	targetPath, ok := effect.Place.FinalDynamicIndexTargetPath()
-	if !ok || targetPath.IsEmpty() {
-		return flow.MapWriteProof{}, false
+// dynamicIndexWritePathTransaction lowers transfer-owned source syntax into the
+// flow-domain transaction. Flow owns publication; transfer only supplies stable
+// table/key/value paths and the already-proven product values.
+func (t *Transfer) dynamicIndexWritePathTransaction(
+	target cfg.AssignTarget,
+	source ast.Expr,
+	tablePath constraint.Path,
+	keyValue product.AbstractValue,
+	writtenValue product.AbstractValue,
+	readbackValue product.AbstractValue,
+) (flow.DynamicIndexWritePathTransaction, bool) {
+	if target.Kind != cfg.TargetIndex || target.Key == nil || tablePath.IsEmpty() || writtenValue.IsZero() {
+		return flow.DynamicIndexWritePathTransaction{}, false
 	}
 	keyPath := constraint.Path{}
-	if path, ok := t.staticPathOfExpr(effect.IndexTarget.Key); ok {
+	if path, ok := t.staticPathOfExpr(target.Key); ok {
 		keyPath = path
 	}
 	valuePath := constraint.Path{}
-	if path, ok := t.staticPathOfExpr(effect.Source); ok {
+	if path, ok := t.staticPathOfExpr(source); ok {
 		valuePath = path
 	}
-	proof, ok := flow.MapWriteTransactionOfPath(flow.MapWritePathTransaction{
-		TablePath:              targetPath,
-		KeyPath:                keyPath,
-		KeyValue:               key,
-		ValuePath:              valuePath,
-		Value:                  value,
-		AllowOpaqueKeyReadback: t.indexWriteTargetSealed(targetPath) || !keyPath.IsEmpty(),
-	})
-	if !ok {
-		return flow.MapWriteProof{}, false
-	}
-	return proof, true
-}
-
-func (t *Transfer) applySymbolicDynamicIndexWriteProof(
-	out *flow.PointState,
-	target cfg.AssignTarget,
-	src ast.Expr,
-	value product.AbstractValue,
-) bool {
-	if out == nil || target.Kind != cfg.TargetIndex || value.IsZero() {
-		return false
-	}
-	tablePath, ok := t.staticContainerPathOfAssignTarget(target)
-	if !ok || tablePath.IsEmpty() {
-		return false
-	}
-	keyPath := constraint.Path{}
-	if target.Key != nil {
-		keyPath, _ = t.staticPathOfExpr(target.Key)
-	}
-	if keyPath.IsEmpty() {
-		return false
-	}
-	valuePath := constraint.Path{}
-	if src != nil {
-		valuePath, _ = t.staticPathOfExpr(src)
-	}
-	return flow.ApplyMapWritePathTransaction(out, flow.MapWritePathTransaction{
-		TablePath:              tablePath,
-		KeyPath:                keyPath,
-		KeyValue:               product.FromType(typ.Unknown),
-		ValuePath:              valuePath,
-		Value:                  value,
-		AllowOpaqueKeyReadback: true,
-	})
+	return flow.DynamicIndexWritePathTransaction{
+		TablePath:     tablePath,
+		KeyPath:       keyPath,
+		KeyValue:      keyValue,
+		ValuePath:     valuePath,
+		WrittenValue:  writtenValue,
+		ReadbackValue: readbackValue,
+	}, true
 }
 
 func (t *Transfer) indexWriteTargetSealed(path constraint.Path) bool {

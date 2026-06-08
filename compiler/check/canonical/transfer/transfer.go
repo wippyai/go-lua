@@ -81,7 +81,7 @@ import (
 // (x ~= nil, type(x) == k, x.kind == "tag") per branch edge via NarrowEdge
 // (narrow.go).
 var DeferredNodeKinds = []string{
-	"container/map writes not represented by table.insert or spec-level ContainerElementUnion (table.remove)",
+	"container/dynamic-index writes not represented by table.insert or spec-level ContainerElementUnion (table.remove)",
 	"generic-for iteration variable element typing",
 	"method-call receiver narrowing (unannotated self) and OnReturn argument refinement",
 	"logical-op (and/or) value flow and field-default (x.f or d) patterns",
@@ -1280,7 +1280,18 @@ func (t *Transfer) applyContainerWriteWithRefResolver(
 				RecordStatic: true,
 			})
 		}
-		t.applySymbolicDynamicIndexWriteProof(out, target, src, symbolicValue)
+		if tablePath, tableOK := t.staticContainerPathOfAssignTarget(target); tableOK {
+			if tx, ok := t.dynamicIndexWritePathTransaction(
+				target,
+				src,
+				tablePath,
+				product.FromType(typ.Unknown),
+				symbolicValue,
+				symbolicValue,
+			); ok && !tx.KeyPath.IsEmpty() {
+				flow.ApplyDynamicIndexWritePathTransaction(out, tx)
+			}
+		}
 		// A write through a non-identifier base (e.g. f().x = v) has no root slot
 		// to update; its container value lives nowhere this transfer tracks.
 		return

@@ -254,12 +254,12 @@ func ApplyBoundaryFacts(
 		if !ok {
 			continue
 		}
-		changed = ApplyMapWritePathTransaction(out, MapWritePathTransaction{
-			TablePath:              table.path,
-			KeyPath:                key.path,
-			KeyValue:               product.FromType(typ.Unknown),
-			Value:                  fact.Value,
-			AllowOpaqueKeyReadback: true,
+		changed = ApplyDynamicIndexWritePathTransaction(out, DynamicIndexWritePathTransaction{
+			TablePath:     table.path,
+			KeyPath:       key.path,
+			KeyValue:      product.FromType(typ.Unknown),
+			WrittenValue:  fact.Value,
+			ReadbackValue: fact.Value,
 		}) || changed
 	}
 	for _, fact := range facts.KeyPresence() {

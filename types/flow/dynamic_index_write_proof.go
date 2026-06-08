@@ -331,44 +331,45 @@ func ApplyIndexedKeyArrayIterationProof(out *PointState, proof IndexedKeyArrayIt
 	return result, changed
 }
 
-// MapWriteProof is the canonical point-local proof transaction for an admitted
-// dynamic map write. It has two independent consequences:
-//   - lightweight key/provenance facts when the write value is definitely present
-//   - optional heavy readback facts when key/value products are admissible
-type MapWriteProof struct {
-	Table                  StableAddress
-	Key                    StableAddress
-	HasKey                 bool
-	ValuePath              StableAddress
-	HasValuePath           bool
-	KeyValue               product.AbstractValue
-	Value                  product.AbstractValue
-	AllowOpaqueKeyReadback bool
+// DynamicIndexWriteProof is the canonical point-local proof transaction for one
+// dynamic table[index] write. WrittenValue is the value that actually flows into
+// key-presence/provenance consequences; ReadbackValue is the optional value safe
+// to publish through the heavier dynamic-readback lane.
+type DynamicIndexWriteProof struct {
+	Table         StableAddress
+	Key           StableAddress
+	HasKey        bool
+	ValuePath     StableAddress
+	HasValuePath  bool
+	KeyValue      product.AbstractValue
+	WrittenValue  product.AbstractValue
+	ReadbackValue product.AbstractValue
 }
 
-// MapWritePathTransaction is the source-facing publication form for a dynamic
-// map write. Flow lowers paths once before applying the address transaction.
-type MapWritePathTransaction struct {
-	TablePath              constraint.Path
-	KeyPath                constraint.Path
-	ValuePath              constraint.Path
-	KeyValue               product.AbstractValue
-	Value                  product.AbstractValue
-	AllowOpaqueKeyReadback bool
+// DynamicIndexWritePathTransaction is the source-facing publication form for a
+// dynamic table[index] write. Flow lowers paths once before applying the address
+// transaction.
+type DynamicIndexWritePathTransaction struct {
+	TablePath     constraint.Path
+	KeyPath       constraint.Path
+	ValuePath     constraint.Path
+	KeyValue      product.AbstractValue
+	WrittenValue  product.AbstractValue
+	ReadbackValue product.AbstractValue
 }
 
-// MapWriteTransactionOfPath lowers a source-level dynamic map write transaction
-// to the stable-address transaction consumed by ApplyMapWriteProof.
-func MapWriteTransactionOfPath(tx MapWritePathTransaction) (MapWriteProof, bool) {
+// DynamicIndexWriteProofOfPath lowers a source-level dynamic-index transaction
+// to the stable-address proof consumed by ApplyDynamicIndexWriteProof.
+func DynamicIndexWriteProofOfPath(tx DynamicIndexWritePathTransaction) (DynamicIndexWriteProof, bool) {
 	tableAddr, ok := StableAddressOfPath(tx.TablePath)
 	if !ok {
-		return MapWriteProof{}, false
+		return DynamicIndexWriteProof{}, false
 	}
-	out := MapWriteProof{
-		Table:                  tableAddr,
-		KeyValue:               tx.KeyValue,
-		Value:                  tx.Value,
-		AllowOpaqueKeyReadback: tx.AllowOpaqueKeyReadback,
+	out := DynamicIndexWriteProof{
+		Table:         tableAddr,
+		KeyValue:      tx.KeyValue,
+		WrittenValue:  tx.WrittenValue,
+		ReadbackValue: tx.ReadbackValue,
 	}
 	if !tx.KeyPath.IsEmpty() {
 		if keyAddr, ok := StableAddressOfPath(tx.KeyPath); ok {
@@ -385,34 +386,35 @@ func MapWriteTransactionOfPath(tx MapWritePathTransaction) (MapWriteProof, bool)
 	return out, true
 }
 
-// ApplyMapWritePathTransaction lowers and applies a source-level dynamic map
-// write transaction.
-func ApplyMapWritePathTransaction(out *PointState, tx MapWritePathTransaction) bool {
-	normalized, ok := MapWriteTransactionOfPath(tx)
+// ApplyDynamicIndexWritePathTransaction lowers and applies a source-level
+// dynamic-index write transaction.
+func ApplyDynamicIndexWritePathTransaction(out *PointState, tx DynamicIndexWritePathTransaction) bool {
+	normalized, ok := DynamicIndexWriteProofOfPath(tx)
 	if !ok {
 		return false
 	}
-	return ApplyMapWriteProof(out, normalized)
+	return ApplyDynamicIndexWriteProof(out, normalized)
 }
 
-// ApplyMapWriteProof applies all reduced-product consequences of one dynamic
-// map write. Key facts and readback facts are intentionally independent, so a
-// readback admission failure cannot suppress lightweight provenance.
-func ApplyMapWriteProof(out *PointState, proof MapWriteProof) bool {
+// ApplyDynamicIndexWriteProof applies all reduced-product consequences of one
+// dynamic-index write. Key facts and readback facts are intentionally
+// independent, so a readback admission failure cannot suppress lightweight
+// provenance.
+func ApplyDynamicIndexWriteProof(out *PointState, proof DynamicIndexWriteProof) bool {
 	if out == nil || proof.Table.Key() == "" {
 		return false
 	}
 	changed := false
-	if proof.Value.DefinitelyPresent() {
-		changed = ApplyTablePresentWriteValueProof(out, proof.Table, proof.Value) || changed
+	if proof.WrittenValue.DefinitelyPresent() {
+		changed = ApplyTablePresentWriteValueProof(out, proof.Table, proof.WrittenValue) || changed
 	}
-	if proof.HasKey && proof.Value.DefinitelyPresent() {
+	if proof.HasKey && proof.WrittenValue.DefinitelyPresent() {
 		changed = ApplyKeyPresenceProof(out, KeyPresenceProof{
 			Table: proof.Table,
 			Key:   proof.Key,
-			Value: proof.Value,
+			Value: proof.WrittenValue,
 		}) || changed
-		changed = ApplyAppendHistoryCoverageProof(out, proof.Table, proof.Key, proof.Value) || changed
+		changed = ApplyAppendHistoryCoverageProof(out, proof.Table, proof.Key, proof.WrittenValue) || changed
 	}
 	if fact, ok := proof.IndexWriteAdmissionAddressFact(); ok {
 		before := out.IndexWrites
@@ -448,30 +450,27 @@ func ApplyAppendHistoryCoverageProof(out *PointState, table StableAddress, key S
 	return !KeyPresenceFactsDomain.Equal(before, out.KeyPresence)
 }
 
-// IndexWriteAdmissionAddressFact returns the optional heavy readback consequence
-// of the map write proof.
-func (p MapWriteProof) IndexWriteAdmissionAddressFact() (IndexWriteAdmissionAddressFact, bool) {
-	if p.Table.Key() == "" || p.KeyValue.IsZero() || p.Value.IsZero() {
+// IndexWriteAdmissionAddressFact returns the optional heavy readback
+// consequence of the dynamic-index write proof.
+func (p DynamicIndexWriteProof) IndexWriteAdmissionAddressFact() (IndexWriteAdmissionAddressFact, bool) {
+	if p.Table.Key() == "" || p.KeyValue.IsZero() || p.ReadbackValue.IsZero() {
 		return IndexWriteAdmissionAddressFact{}, false
 	}
-	if !p.HasKey && !AdmissibleMapWriteProofValue(p.KeyValue) {
+	if !p.HasKey && !AdmissibleDynamicIndexWriteProofValue(p.KeyValue) {
 		return IndexWriteAdmissionAddressFact{}, false
 	}
 	if p.HasKey {
 		if p.KeyValue.DefinitelyAbsent() {
 			return IndexWriteAdmissionAddressFact{}, false
 		}
-		if !AdmissibleMapWriteProofValue(p.KeyValue) && !p.AllowOpaqueKeyReadback {
-			return IndexWriteAdmissionAddressFact{}, false
-		}
 	}
-	if !AdmissibleMapWriteProofValue(p.Value) {
+	if !AdmissibleDynamicIndexWriteProofValue(p.ReadbackValue) {
 		return IndexWriteAdmissionAddressFact{}, false
 	}
 	fact := IndexWriteAdmissionAddressFact{
 		Target: p.Table,
 		Key:    p.KeyValue,
-		Value:  p.Value,
+		Value:  p.ReadbackValue,
 	}
 	if p.HasKey {
 		fact.KeyPath = p.Key
@@ -484,14 +483,35 @@ func (p MapWriteProof) IndexWriteAdmissionAddressFact() (IndexWriteAdmissionAddr
 	return fact, true
 }
 
-// AdmissibleMapWriteProofValue reports whether a product value is finite enough
+// AdmissibleDynamicIndexWriteProofValue reports whether a product value is finite enough
 // to publish through the heavy IndexWrites readback lane.
-func AdmissibleMapWriteProofValue(av product.AbstractValue) bool {
+func AdmissibleDynamicIndexWriteProofValue(av product.AbstractValue) bool {
 	if av.IsZero() {
 		return false
 	}
 	t := product.ProjectValueOrUnknown(av)
 	return !typ.IsAbsentOrUnknown(t) && !typ.IsAny(t)
+}
+
+// DynamicIndexWriteReadbackValue returns the value safe to expose through the
+// heavy readback lane after a product-domain index write. When the post-write
+// container has a more precise table[key] slot than the RHS, readback uses that
+// slot; otherwise it falls back to the written value.
+func DynamicIndexWriteReadbackValue(container, key, written product.AbstractValue) product.AbstractValue {
+	if container.IsZero() || key.IsZero() {
+		return written
+	}
+	read, ok := product.RuntimeIndexOf(container, key)
+	if !ok || read.IsZero() {
+		return written
+	}
+	if written.DefinitelyPresent() {
+		present := product.NarrowPresent(read)
+		if !present.IsZero() {
+			return present
+		}
+	}
+	return read
 }
 
 // IndexedIteratorKeyArrayReadback derives a map-readback value for table[key]

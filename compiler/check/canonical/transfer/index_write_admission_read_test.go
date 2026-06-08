@@ -70,12 +70,16 @@ func TestSymbolicDynamicIndexWriteSeedsKeyPresenceAndReadback(t *testing.T) {
 		Build()
 	out := flow.PointState{}
 
-	changed := tr.applySymbolicDynamicIndexWriteProof(&out, cfg.AssignTarget{
+	tx, ok := tr.dynamicIndexWritePathTransaction(cfg.AssignTarget{
 		Kind:       cfg.TargetIndex,
 		BaseName:   "nodes",
 		BaseSymbol: nodesSym,
 		Key:        id,
-	}, nil, product.FromType(nodeType))
+	}, nil, nodesPath, product.FromType(typ.Unknown), product.FromType(nodeType), product.FromType(nodeType))
+	if !ok {
+		t.Fatal("symbolic dynamic-index transaction was not constructed")
+	}
+	changed := flow.ApplyDynamicIndexWritePathTransaction(&out, tx)
 
 	if !changed {
 		t.Fatal("symbolic dynamic-index write did not report a fact change")
@@ -89,7 +93,7 @@ func TestSymbolicDynamicIndexWriteSeedsKeyPresenceAndReadback(t *testing.T) {
 	}
 }
 
-func TestDynamicIndexWriteProofBuilderAllowsOpaqueExactKeyPathReadback(t *testing.T) {
+func TestDynamicIndexWriteTransactionAllowsOpaqueExactKeyPathReadback(t *testing.T) {
 	nodesSym := cfg.SymbolID(521)
 	id := &ast.IdentExpr{Value: "id"}
 	idSym := cfg.SymbolID(522)
@@ -102,27 +106,16 @@ func TestDynamicIndexWriteProofBuilderAllowsOpaqueExactKeyPathReadback(t *testin
 	out := flow.PointState{}
 	payload := product.FromType(typ.NewRecord().Field("kind", typ.String).Build())
 
-	proof, ok := tr.dynamicIndexWriteProof(WriteEffect{
-		Place: Place{
-			Root:     nodesSym,
-			RootName: "nodes",
-			Steps: []PlaceStep{{
-				Kind: PlaceStepDynamicIndex,
-				Key:  product.FromType(typ.Any),
-			}},
-		},
-		IndexTarget: cfg.AssignTarget{
-			Kind:       cfg.TargetIndex,
-			BaseName:   "nodes",
-			BaseSymbol: nodesSym,
-			Key:        id,
-		},
-		Value: payload,
-	}, product.FromType(typ.Any), payload)
+	tx, ok := tr.dynamicIndexWritePathTransaction(cfg.AssignTarget{
+		Kind:       cfg.TargetIndex,
+		BaseName:   "nodes",
+		BaseSymbol: nodesSym,
+		Key:        id,
+	}, nil, nodesPath, product.FromType(typ.Any), payload, payload)
 	if !ok {
-		t.Fatal("dynamic index write proof was not constructed")
+		t.Fatal("dynamic index write transaction was not constructed")
 	}
-	flow.ApplyMapWriteProof(&out, proof)
+	flow.ApplyDynamicIndexWritePathTransaction(&out, tx)
 
 	got, ok := testIndexWriteAdmission(t, out.IndexWrites, nodesPath, idPath, typ.Any)
 	if !ok || !product.Domain.Equal(got, payload) {

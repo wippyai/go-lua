@@ -497,8 +497,18 @@ func (t *Transfer) applyWriteEffectWithAliasReplay(out *flow.PointState, effect 
 		sealedIndexTarget = t.indexWriteTargetSealed(targetPath)
 	}
 	if !sealedIndexTarget && effect.IndexTarget.Kind == cfg.TargetIndex {
-		symbolicChanged := t.applySymbolicDynamicIndexWriteProof(out, effect.IndexTarget, effect.Source, effect.Value)
-		changed = symbolicChanged || changed
+		if targetPath, ok := effect.Place.FinalDynamicIndexTargetPath(); ok {
+			if tx, ok := t.dynamicIndexWritePathTransaction(
+				effect.IndexTarget,
+				effect.Source,
+				targetPath,
+				product.FromType(typ.Unknown),
+				effect.Value,
+				effect.Value,
+			); ok && !tx.KeyPath.IsEmpty() {
+				changed = flow.ApplyDynamicIndexWritePathTransaction(out, tx) || changed
+			}
+		}
 	}
 	updated, ok := t.placeWriter().Assign(out, effect.Place, effect.Value, func(base product.AbstractValue, step PlaceStep, val product.AbstractValue) (product.AbstractValue, bool) {
 		if sealedIndexTarget {
@@ -507,7 +517,7 @@ func (t *Transfer) applyWriteEffectWithAliasReplay(out *flow.PointState, effect 
 			}
 			written := product.WriteIndex(base, step.Key, val)
 			admittedIndexKey = step.Key
-			admittedIndexValue = indexWriteReadBackValue(written, step.Key, val)
+			admittedIndexValue = flow.DynamicIndexWriteReadbackValue(written, step.Key, val)
 			return written, true
 		}
 		if effect.DynamicMode == DynamicWriteSelfDerived {
@@ -527,11 +537,30 @@ func (t *Transfer) applyWriteEffectWithAliasReplay(out *flow.PointState, effect 
 		return t.applyAliasReplayWriteEffects(out, aliasWrites) || changed
 	}
 	if sealedIndexTarget && effect.IndexTarget.Kind == cfg.TargetIndex {
-		symbolicChanged := t.applySymbolicDynamicIndexWriteProof(out, effect.IndexTarget, effect.Source, effect.Value)
-		changed = symbolicChanged || changed
+		if targetPath, ok := effect.Place.FinalDynamicIndexTargetPath(); ok {
+			if tx, ok := t.dynamicIndexWritePathTransaction(
+				effect.IndexTarget,
+				effect.Source,
+				targetPath,
+				product.FromType(typ.Unknown),
+				effect.Value,
+				effect.Value,
+			); ok && !tx.KeyPath.IsEmpty() {
+				changed = flow.ApplyDynamicIndexWritePathTransaction(out, tx) || changed
+			}
+		}
 	}
-	if proof, ok := t.dynamicIndexWriteProof(effect, admittedIndexKey, admittedIndexValue); ok {
-		changed = flow.ApplyMapWriteProof(out, proof) || changed
+	if targetPath, ok := effect.Place.FinalDynamicIndexTargetPath(); ok {
+		if tx, ok := t.dynamicIndexWritePathTransaction(
+			effect.IndexTarget,
+			effect.Source,
+			targetPath,
+			admittedIndexKey,
+			effect.Value,
+			admittedIndexValue,
+		); ok {
+			changed = flow.ApplyDynamicIndexWritePathTransaction(out, tx) || changed
+		}
 	}
 	t.applyPrototypeSelfWriteEffect(out, effect, updated)
 	t.applyReferenceEffect(out, referenceEffectForWrite(effect))
@@ -585,23 +614,6 @@ func (t *Transfer) applyAliasReplayWriteEffects(out *flow.PointState, effects []
 		changed = t.applyWriteEffectWithAliasReplay(out, effect, false) || changed
 	}
 	return changed
-}
-
-func indexWriteReadBackValue(container, key, written product.AbstractValue) product.AbstractValue {
-	if container.IsZero() || key.IsZero() {
-		return written
-	}
-	read, ok := product.RuntimeIndexOf(container, key)
-	if !ok || read.IsZero() {
-		return written
-	}
-	if written.DefinitelyPresent() {
-		present := product.NarrowPresent(read)
-		if !present.IsZero() {
-			return present
-		}
-	}
-	return read
 }
 
 func (t *Transfer) applySymbolWriteEffect(

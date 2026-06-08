@@ -313,7 +313,7 @@ func TestDynamicIndexWriteSeedsAdmissionFactOnlyWhenAdmitted(t *testing.T) {
 		RecordStatic: true,
 	})
 	if _, ok := testIndexWriteAdmission(t, out.IndexWrites, tablePath, constraint.Path{}, typ.String); ok {
-		t.Fatalf("readonly map write seeded admission: %s", out.IndexWrites.Format())
+		t.Fatalf("readonly dynamic-index write seeded admission: %s", out.IndexWrites.Format())
 	}
 }
 
@@ -439,7 +439,7 @@ func TestSealedDynamicIndexWriteAdmissionUsesReadBackSlot(t *testing.T) {
 
 	admitted, ok := testIndexWriteAdmission(t, out.IndexWrites, constraint.NewPath(selfSym, "self").Field("nodes"), constraint.Path{}, typ.String)
 	if !ok {
-		t.Fatalf("sealed map write did not seed admission: %s", out.IndexWrites.Format())
+		t.Fatalf("sealed dynamic-index write did not seed admission: %s", out.IndexWrites.Format())
 	}
 	config, ok := product.FieldOf(admitted, "config")
 	if !ok {
@@ -456,17 +456,17 @@ func TestDynamicIndexWriteProofKeepsOpaqueUnsealedReadbackLightweight(t *testing
 	keyPath := constraint.NewPath(cfg.SymbolID(439), "node_id")
 	out := flow.PointState{}
 
-	proof, ok := flow.MapWriteTransactionOfPath(flow.MapWritePathTransaction{
-		TablePath:              tablePath,
-		KeyPath:                keyPath,
-		KeyValue:               product.FromType(typ.Unknown),
-		Value:                  product.FromType(typ.String),
-		AllowOpaqueKeyReadback: false,
+	proof, ok := flow.DynamicIndexWriteProofOfPath(flow.DynamicIndexWritePathTransaction{
+		TablePath:     tablePath,
+		KeyPath:       keyPath,
+		KeyValue:      product.FromType(typ.Unknown),
+		WrittenValue:  product.FromType(typ.String),
+		ReadbackValue: product.AbstractValue{},
 	})
 	if !ok {
 		t.Fatal("dynamic index write proof did not resolve")
 	}
-	changed := flow.ApplyMapWriteProof(&out, proof)
+	changed := flow.ApplyDynamicIndexWriteProof(&out, proof)
 
 	if !changed {
 		t.Fatal("dynamic index write proof did not report key-presence change")
@@ -1797,17 +1797,17 @@ func TestDelayedIndexWriteMaterializesPendingAppendKeyArrayValue(t *testing.T) {
 		t.Fatalf("pending append materialized before table key proof: %s", out.KeyPresence.Format())
 	}
 
-	proof, ok := flow.MapWriteTransactionOfPath(flow.MapWritePathTransaction{
-		TablePath:              tablePath,
-		KeyPath:                keyPath,
-		KeyValue:               product.FromType(typ.Unknown),
-		Value:                  product.FromType(edgeType),
-		AllowOpaqueKeyReadback: true,
+	proof, ok := flow.DynamicIndexWriteProofOfPath(flow.DynamicIndexWritePathTransaction{
+		TablePath:     tablePath,
+		KeyPath:       keyPath,
+		KeyValue:      product.FromType(typ.Unknown),
+		WrittenValue:  product.FromType(edgeType),
+		ReadbackValue: product.FromType(edgeType),
 	})
 	if !ok {
 		t.Fatal("dynamic index write proof did not resolve")
 	}
-	flow.ApplyMapWriteProof(&out, proof)
+	flow.ApplyDynamicIndexWriteProof(&out, proof)
 
 	values := out.KeyPresence.KeyArrayValues(flow.StablePathKey(arrayPath), flow.StablePathKey(tablePath))
 	if len(values) != 1 || !typ.TypeEquals(values[0].ProjectValue(), edgeType) {

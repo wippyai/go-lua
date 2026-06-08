@@ -77,7 +77,7 @@ func ApplyIndexWriteKeyAliasReadbackProof(out *PointState, proof IndexWriteKeyAl
 			continue
 		}
 		present := product.NarrowPresent(read)
-		if present.IsZero() || !AdmissibleMapWriteProofValue(present) {
+		if present.IsZero() || !AdmissibleDynamicIndexWriteProofValue(present) {
 			continue
 		}
 		out.IndexWrites = out.IndexWrites.WithAddress(IndexWriteAdmissionAddressFact{

@@ -9,7 +9,7 @@ import (
 	"github.com/wippyai/go-lua/types/typ"
 )
 
-func TestApplyMapWriteProofDecouplesKeyArrayFromReadbackAdmission(t *testing.T) {
+func TestApplyDynamicIndexWriteProofDecouplesKeyArrayFromReadbackAdmission(t *testing.T) {
 	arrayPath := constraint.NewPath(cfg.SymbolID(1), "node_order")
 	tablePath := constraint.NewPath(cfg.SymbolID(2), "edges")
 	keyPath := constraint.NewPath(cfg.SymbolID(3), "node_id")
@@ -20,17 +20,17 @@ func TestApplyMapWriteProofDecouplesKeyArrayFromReadbackAdmission(t *testing.T) 
 	state := PointStateDomain.Top()
 	state.KeyPresence = state.KeyPresence.WithPendingKeyArray(arrayKey, tableKey, keyKey)
 
-	proof := testMapWriteProof(
+	proof := testDynamicIndexWriteProof(
 		t,
 		tablePath,
 		keyPath,
 		product.FromType(typ.Any),
 		constraint.Path{},
 		product.FromType(typ.String),
-		false,
+		product.AbstractValue{},
 	)
-	if changed := ApplyMapWriteProof(&state, proof); !changed {
-		t.Fatal("ApplyMapWriteProof reported no change")
+	if changed := ApplyDynamicIndexWriteProof(&state, proof); !changed {
+		t.Fatal("ApplyDynamicIndexWriteProof reported no change")
 	}
 	if !state.KeyPresence.Has(tableKey, keyKey) {
 		t.Fatalf("key presence missing in %s", state.KeyPresence.Format())
@@ -47,21 +47,21 @@ func TestApplyMapWriteProofDecouplesKeyArrayFromReadbackAdmission(t *testing.T) 
 	}
 }
 
-func TestApplyMapWriteProofPublishesReadbackWhenAdmissible(t *testing.T) {
+func TestApplyDynamicIndexWriteProofPublishesReadbackWhenAdmissible(t *testing.T) {
 	tablePath := constraint.NewPath(cfg.SymbolID(2), "edges")
 	keyPath := constraint.NewPath(cfg.SymbolID(3), "node_id")
 
 	state := PointStateDomain.Top()
-	proof := testMapWriteProof(
+	proof := testDynamicIndexWriteProof(
 		t,
 		tablePath,
 		keyPath,
 		product.FromType(typ.String),
 		constraint.Path{},
 		product.FromType(typ.Number),
-		false,
+		product.FromType(typ.Number),
 	)
-	ApplyMapWriteProof(&state, proof)
+	ApplyDynamicIndexWriteProof(&state, proof)
 
 	value, ok := state.IndexWrites.AdmissionAtAddress(testIndexWriteAddressQuery(t, tablePath, keyPath, typ.String, constraint.Path{}))
 	if !ok || !product.Domain.Equal(value, product.FromType(typ.Number)) {
@@ -69,21 +69,21 @@ func TestApplyMapWriteProofPublishesReadbackWhenAdmissible(t *testing.T) {
 	}
 }
 
-func TestApplyMapWritePathTransactionLowersStructuredPaths(t *testing.T) {
+func TestApplyDynamicIndexWritePathTransactionLowersStructuredPaths(t *testing.T) {
 	tablePath := constraint.NewPath(cfg.SymbolID(8), "nodes")
 	keyPath := constraint.NewPath(cfg.SymbolID(9), "node_id")
 	valuePath := constraint.NewPath(cfg.SymbolID(10), "node")
 	state := PointState{}
 
-	if changed := ApplyMapWritePathTransaction(&state, MapWritePathTransaction{
-		TablePath:              tablePath,
-		KeyPath:                keyPath,
-		KeyValue:               product.FromType(typ.LiteralString("n1")),
-		ValuePath:              valuePath,
-		Value:                  product.FromType(typ.Number),
-		AllowOpaqueKeyReadback: true,
+	if changed := ApplyDynamicIndexWritePathTransaction(&state, DynamicIndexWritePathTransaction{
+		TablePath:     tablePath,
+		KeyPath:       keyPath,
+		KeyValue:      product.FromType(typ.LiteralString("n1")),
+		ValuePath:     valuePath,
+		WrittenValue:  product.FromType(typ.Number),
+		ReadbackValue: product.FromType(typ.Number),
 	}); !changed {
-		t.Fatal("ApplyMapWritePathTransaction reported unchanged")
+		t.Fatal("ApplyDynamicIndexWritePathTransaction reported unchanged")
 	}
 
 	if !state.KeyPresence.Has(StablePathKey(tablePath), StablePathKey(keyPath)) {
@@ -98,7 +98,7 @@ func TestApplyMapWritePathTransactionLowersStructuredPaths(t *testing.T) {
 	}
 }
 
-func TestApplyMapWriteProofWidensExistingKeyArrayValueForPresentWrite(t *testing.T) {
+func TestApplyDynamicIndexWriteProofWidensExistingKeyArrayValueForPresentWrite(t *testing.T) {
 	arrayPath := constraint.NewPath(cfg.SymbolID(11), "node_order")
 	tablePath := constraint.NewPath(cfg.SymbolID(12), "nodes")
 	keyPath := constraint.NewPath(cfg.SymbolID(13), "node_id")
@@ -110,17 +110,17 @@ func TestApplyMapWriteProofWidensExistingKeyArrayValueForPresentWrite(t *testing
 	state := PointStateDomain.Top()
 	state.KeyPresence = state.KeyPresence.WithKeyArrayValue(arrayKey, tableKey, oldValue)
 
-	proof := testMapWriteProof(
+	proof := testDynamicIndexWriteProof(
 		t,
 		tablePath,
 		keyPath,
 		product.FromType(typ.String),
 		constraint.Path{},
 		writtenValue,
-		false,
+		writtenValue,
 	)
-	if changed := ApplyMapWriteProof(&state, proof); !changed {
-		t.Fatal("ApplyMapWriteProof reported no change")
+	if changed := ApplyDynamicIndexWriteProof(&state, proof); !changed {
+		t.Fatal("ApplyDynamicIndexWriteProof reported no change")
 	}
 
 	values := state.KeyPresence.KeyArrayValues(arrayKey, tableKey)
@@ -130,7 +130,7 @@ func TestApplyMapWriteProofWidensExistingKeyArrayValueForPresentWrite(t *testing
 	}
 }
 
-func TestApplyMapWriteProofCoversTrackedAppendEvent(t *testing.T) {
+func TestApplyDynamicIndexWriteProofCoversTrackedAppendEvent(t *testing.T) {
 	arrayPath := constraint.NewPath(cfg.SymbolID(21), "node_order")
 	tablePath := constraint.NewPath(cfg.SymbolID(22), "nodes")
 	keyPath := constraint.NewPath(cfg.SymbolID(23), "node_id")
@@ -144,17 +144,17 @@ func TestApplyMapWriteProofCoversTrackedAppendEvent(t *testing.T) {
 		WithAppendHistoryBase(arrayKey).
 		WithAppendHistoryEvent(arrayKey, keyKey)
 
-	proof := testMapWriteProof(
+	proof := testDynamicIndexWriteProof(
 		t,
 		tablePath,
 		keyPath,
 		product.FromType(typ.String),
 		constraint.Path{},
 		nodeValue,
-		false,
+		nodeValue,
 	)
-	if changed := ApplyMapWriteProof(&state, proof); !changed {
-		t.Fatal("ApplyMapWriteProof reported no change")
+	if changed := ApplyDynamicIndexWriteProof(&state, proof); !changed {
+		t.Fatal("ApplyDynamicIndexWriteProof reported no change")
 	}
 
 	values := state.KeyPresence.KeyArrayValues(arrayKey, tableKey)
@@ -804,22 +804,22 @@ func TestApplyAppendElementFieldOriginProofRecordsSourceField(t *testing.T) {
 	}
 }
 
-func testMapWriteProof(
+func testDynamicIndexWriteProof(
 	t *testing.T,
 	tablePath constraint.Path,
 	keyPath constraint.Path,
 	keyValue product.AbstractValue,
 	valuePath constraint.Path,
-	value product.AbstractValue,
-	allowOpaqueKeyReadback bool,
-) MapWriteProof {
+	writtenValue product.AbstractValue,
+	readbackValue product.AbstractValue,
+) DynamicIndexWriteProof {
 	t.Helper()
 	table := testStableAddressPath(t, tablePath)
-	proof := MapWriteProof{
-		Table:                  table,
-		KeyValue:               keyValue,
-		Value:                  value,
-		AllowOpaqueKeyReadback: allowOpaqueKeyReadback,
+	proof := DynamicIndexWriteProof{
+		Table:         table,
+		KeyValue:      keyValue,
+		WrittenValue:  writtenValue,
+		ReadbackValue: readbackValue,
 	}
 	if !keyPath.IsEmpty() {
 		proof.Key = testStableAddressPath(t, keyPath)
