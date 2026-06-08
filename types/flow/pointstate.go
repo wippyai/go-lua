@@ -162,6 +162,21 @@ func ClonePointState(ps PointState) PointState {
 	return out
 }
 
+// ClonePointStateForEdgeFactEffect returns a mutation-safe copy for applying a
+// branch-local proof effect.
+//
+// Edge proof effects may update Cond, root values in Env, captured Cells and
+// CellEffects, point-local StaticMembers, and finite proof axes such as
+// KeyPresence. Cells, CellEffects, StaticMembers, and the finite proof axes are
+// persistent carriers whose writes return a new value, so only Env needs a
+// defensive copy here. Callable reference axes and the numeric state are
+// intentionally shared because this transaction never mutates them.
+func ClonePointStateForEdgeFactEffect(ps PointState) PointState {
+	out := ps
+	out.Env = cloneEnv(ps.Env)
+	return out
+}
+
 func cloneEnv(env map[ValueKey]product.AbstractValue) map[ValueKey]product.AbstractValue {
 	if envDomain.Equal(env, envDomain.Top()) {
 		return envDomain.Top()

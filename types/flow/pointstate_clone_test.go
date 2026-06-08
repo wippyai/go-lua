@@ -55,6 +55,49 @@ func TestClonePointStateCopiesMutableCarriers(t *testing.T) {
 	}
 }
 
+func TestClonePointStateForEdgeFactEffectCopiesOnlyEdgeFactMutableAxes(t *testing.T) {
+	const sym = cfg.SymbolID(1)
+	const other = cfg.SymbolID(2)
+	path := SymbolPathKey(sym, nil)
+	otherPath := SymbolPathKey(other, nil)
+	addr, _ := StableAddressOfSymbol(sym, nil)
+	num := numeric.NewState()
+	num.ApplyLenGeConst(path, 1)
+	ref := FunctionRef{GraphID: 11, ParentHash: 3}
+	closure := ClosureRefOf(FunctionRef{GraphID: 12, ParentHash: 4}, CaptureCellsDomain.Bottom(), nil)
+	original := PointState{
+		Env: map[ValueKey]product.AbstractValue{
+			SymbolValueKey(sym): product.FromType(typ.String),
+		},
+		Num:          num,
+		FunctionRefs: WithFunctionRefAddress(nil, addr, FunctionRefSetOf(ref)),
+		ClosureRefs:  WithClosureRefAddress(nil, addr, ClosureRefSetOf(closure)),
+	}
+
+	cloned := ClonePointStateForEdgeFactEffect(original)
+	cloned.Env[SymbolValueKey(sym)] = product.FromType(typ.Number)
+	cloned.Env[SymbolValueKey(other)] = product.FromType(typ.Boolean)
+
+	got, ok := original.Env[SymbolValueKey(sym)]
+	if !ok || !typ.TypeEquals(got.ProjectValue(), typ.String) {
+		t.Fatalf("original Env[%s] = %v/%v, want string/true", SymbolValueKey(sym), got.ProjectValue(), ok)
+	}
+	if _, ok := original.Env[SymbolValueKey(other)]; ok {
+		t.Fatalf("edge-fact clone Env mutation leaked into original Env[%s]", SymbolValueKey(other))
+	}
+	if cloned.Num != original.Num {
+		t.Fatalf("edge-fact clone copied numeric state; edge proof effects do not mutate Num")
+	}
+	cloned.FunctionRefs[otherPath] = FunctionRefSetOf(FunctionRef{GraphID: 99})
+	if _, ok := original.FunctionRefs[otherPath]; !ok {
+		t.Fatalf("edge-fact clone copied FunctionRefs; edge proof effects do not mutate them")
+	}
+	cloned.ClosureRefs[otherPath] = ClosureRefSetOf(ClosureRefOf(FunctionRef{GraphID: 100}, CaptureCellsDomain.Bottom(), nil))
+	if _, ok := original.ClosureRefs[otherPath]; !ok {
+		t.Fatalf("edge-fact clone copied ClosureRefs; edge proof effects do not mutate them")
+	}
+}
+
 func TestClonePointStateCanonicalizesMutableFiniteMaps(t *testing.T) {
 	const sym = cfg.SymbolID(1)
 	path := SymbolPathKey(sym, nil)

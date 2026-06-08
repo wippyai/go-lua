@@ -274,7 +274,7 @@ func (t *Transfer) narrowExitDiscriminantChain(g *cfg.Graph, pred cfg.Point, inf
 	if refined == nil || !unionMembersReduced(base, refined) {
 		return flow.PointState{}, false
 	}
-	res := flow.ClonePointState(out)
+	res := flow.ClonePointStateForEdgeFactEffect(out)
 	if refined.Kind().IsNever() {
 		t.setNarrowedSymbol(&res, d.sym, product.Bottom())
 	} else {
@@ -438,7 +438,7 @@ func (t *Transfer) narrowByBranchConditionEffect(point cfg.Point, out flow.Point
 	if !ok {
 		return out
 	}
-	res := flow.ClonePointState(out)
+	res := flow.ClonePointStateForEdgeFactEffect(out)
 	t.applyConditionEffect(&res, effect)
 	return res
 }
@@ -509,7 +509,7 @@ func (t *Transfer) narrowBySiblingNil(out flow.PointState, info *cfg.BranchInfo,
 	default:
 		return out
 	}
-	res := flow.ClonePointState(out)
+	res := flow.ClonePointStateForEdgeFactEffect(out)
 	applied := false
 	for _, vs := range bind.ValueSyms {
 		if vs == 0 {
@@ -550,7 +550,7 @@ func (t *Transfer) narrowByGuardedType(out flow.PointState, info *cfg.BranchInfo
 	if len(rels) == 0 {
 		return out
 	}
-	res := flow.ClonePointState(out)
+	res := flow.ClonePointStateForEdgeFactEffect(out)
 	applied := false
 	for _, rel := range rels {
 		if rel.TargetSym == 0 || rel.TargetType == nil {
@@ -689,7 +689,7 @@ func (t *Transfer) narrowSameValueUnion(point cfg.Point, out flow.PointState, lh
 		return out, false
 	}
 	joined := product.Join(lv, rv)
-	res := flow.ClonePointState(out)
+	res := flow.ClonePointStateForEdgeFactEffect(out)
 	t.setValueBySlot(&res, lslot, joined, false)
 	return res, true
 }
@@ -873,7 +873,7 @@ func (t *Transfer) narrowByTypedDiscriminant(out flow.PointState, info *cfg.Bran
 	if refined == nil || refined == base {
 		return out, false
 	}
-	res := flow.ClonePointState(out)
+	res := flow.ClonePointStateForEdgeFactEffect(out)
 	if refined.Kind().IsNever() {
 		t.setNarrowedSymbol(&res, g.sym, product.Bottom())
 	} else {
@@ -1232,7 +1232,7 @@ func (t *Transfer) narrowByTypeCheck(out flow.PointState, info *cfg.BranchInfo, 
 	if val.IsZero() {
 		return out, false
 	}
-	res := flow.ClonePointState(out)
+	res := flow.ClonePointStateForEdgeFactEffect(out)
 	for _, sym := range bind.NarrowSyms {
 		if sym == 0 {
 			continue
@@ -1400,7 +1400,7 @@ func (t *Transfer) narrowGuardedIndexPresence(out flow.PointState, info *cfg.Bra
 	if !ok {
 		return out
 	}
-	res := flow.ClonePointState(out)
+	res := flow.ClonePointStateForEdgeFactEffect(out)
 	t.applyKeyProvenancePathTransaction(&res, effect)
 	return res
 }
@@ -1537,7 +1537,7 @@ func (t *Transfer) narrowByPredicate(out flow.PointState, info *cfg.BranchInfo, 
 	if !ok {
 		return out
 	}
-	res := flow.ClonePointState(out)
+	res := flow.ClonePointStateForEdgeFactEffect(out)
 	t.setNarrowedSymbol(&res, argSym, narrowed)
 	return res
 }
@@ -1785,7 +1785,7 @@ func (t *Transfer) narrowByScalarLiteralComparison(out flow.PointState, info *cf
 		baseAV, has := t.narrowBaseFor(out, sym, atExit)
 		if !has {
 			if includeLiteral && len(segments) == 0 {
-				res := flow.ClonePointState(out)
+				res := flow.ClonePointStateForEdgeFactEffect(out)
 				t.setNarrowedSymbol(&res, sym, product.FromType(lit))
 				return res, true
 			}
@@ -1799,7 +1799,7 @@ func (t *Transfer) narrowByScalarLiteralComparison(out flow.PointState, info *cf
 			return narrowByLiteralEquality(ft, lit, includeLiteral)
 		}
 		refined := refineAtPath(base, segments, refine)
-		res := flow.ClonePointState(out)
+		res := flow.ClonePointStateForEdgeFactEffect(out)
 		applied := false
 		if refined != nil && !typ.TypeEquals(refined, base) {
 			applied = true
@@ -1834,7 +1834,7 @@ func (t *Transfer) narrowByScalarLiteralComparison(out flow.PointState, info *cf
 	if refined == nil || typ.TypeEquals(refined, base) {
 		return out, false
 	}
-	res := flow.ClonePointState(out)
+	res := flow.ClonePointStateForEdgeFactEffect(out)
 	if refined.Kind().IsNever() {
 		t.setNarrowedSymbol(&res, place.Root, product.Bottom())
 		return res, true
@@ -2812,7 +2812,7 @@ func (t *Transfer) narrowByDiscriminant(out flow.PointState, info *cfg.BranchInf
 		// An unchanged base carries no refinement; leave it to the plain join.
 		return out, false
 	}
-	res := flow.ClonePointState(out)
+	res := flow.ClonePointStateForEdgeFactEffect(out)
 	if refined.Kind().IsNever() {
 		// An impossible edge (the discriminant pins the value to the other variant):
 		// the base narrows to the lattice Bottom so the edge's reads are unreachable,
@@ -2858,7 +2858,7 @@ func (t *Transfer) narrowByMemberDiscriminant(out flow.PointState, g discriminan
 	if rewritten == nil || rewritten == root {
 		return out, false
 	}
-	res := flow.ClonePointState(out)
+	res := flow.ClonePointStateForEdgeFactEffect(out)
 	if rewritten.Kind().IsNever() {
 		t.setNarrowedSymbol(&res, g.sym, product.Bottom())
 	} else {
