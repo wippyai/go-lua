@@ -12,12 +12,13 @@ import (
 // ProductConditionReduction asks whether a condition fact proves a narrower
 // product value for one symbol root.
 type ProductConditionReduction struct {
-	Symbol   cfg.SymbolID
-	Base     product.AbstractValue
-	HasBase  bool
-	Fact     constraint.Condition
-	Facts    PointFacts
-	Resolver narrow.Resolver
+	Symbol      cfg.SymbolID
+	Base        product.AbstractValue
+	HasBase     bool
+	Fact        constraint.Condition
+	Facts       PointFacts
+	Resolver    narrow.Resolver
+	ResolveType narrow.TypeResolver
 }
 
 // ProductConditionBase is the caller-authorized value seed for reducing one
@@ -38,10 +39,11 @@ type ProductConditionBaseReader func(cfg.SymbolID) ProductConditionBase
 // ProductConditionReducer applies product-domain condition reductions for every
 // non-variant-origin symbol mentioned by a condition fact.
 type ProductConditionReducer struct {
-	Fact     constraint.Condition
-	Facts    PointFacts
-	Resolver narrow.Resolver
-	Base     ProductConditionBaseReader
+	Fact        constraint.Condition
+	Facts       PointFacts
+	Resolver    narrow.Resolver
+	ResolveType narrow.TypeResolver
+	Base        ProductConditionBaseReader
 }
 
 // Reductions returns proven symbol value reductions under Fact.
@@ -71,12 +73,13 @@ func (r ProductConditionReducer) Reductions() []SymbolValueReduction {
 		}
 		fact := evidence.ValueConditionForSymbol(sym)
 		next, narrowed := ProductConditionReductionValue(ProductConditionReduction{
-			Symbol:   sym,
-			Base:     reductionBase,
-			HasBase:  hasReductionBase,
-			Fact:     fact,
-			Facts:    r.Facts,
-			Resolver: r.Resolver,
+			Symbol:      sym,
+			Base:        reductionBase,
+			HasBase:     hasReductionBase,
+			Fact:        fact,
+			Facts:       r.Facts,
+			Resolver:    r.Resolver,
+			ResolveType: r.ResolveType,
 		})
 		if !narrowed || next.IsZero() {
 			continue
@@ -106,6 +109,7 @@ func ProductConditionReductionValue(q ProductConditionReduction) (product.Abstra
 	}
 	fact := conditionWithPositiveFieldPresence(q.Fact)
 	env, rootKey := SymbolProductEnv(q.Symbol, base, q.Facts, q.Resolver)
+	env.ResolveType = q.ResolveType
 	domain := NewProductDomain(env)
 	if !domain.ApplyCondition(fact) {
 		return product.AbstractValue{}, false

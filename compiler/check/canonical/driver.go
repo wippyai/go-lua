@@ -854,15 +854,15 @@ func (p *program) WithSolveContext(ctx *db.QueryContext, solve func() state.Func
 	return solve()
 }
 
-func (p *program) LocalParamNarrows(ref summary.FuncRef) []paramevidence.ParamNarrow {
+func (p *program) LocalReturnPostconditions(ref summary.FuncRef) paramevidence.ReturnPostconditions {
 	tr, ok := p.transfers[ref].(*transfer.Transfer)
 	if !ok || tr == nil {
-		return nil
+		return paramevidence.ReturnPostconditionsDomain.Bottom()
 	}
-	return tr.ParamNarrowEffects()
+	return paramevidence.ReturnPostconditionsFromParamNarrows(tr.ParamNarrowEffects())
 }
 
-func (p *program) DelegatedParamNarrowCalls(ref summary.FuncRef) []paramevidence.DelegatedCall {
+func (p *program) DelegatedReturnPostconditionCalls(ref summary.FuncRef) []paramevidence.DelegatedCall {
 	tr, ok := p.transfers[ref].(*transfer.Transfer)
 	if !ok || tr == nil {
 		return nil

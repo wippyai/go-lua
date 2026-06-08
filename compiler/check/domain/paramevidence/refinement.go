@@ -107,9 +107,11 @@ func SortParamNarrows(in []ParamNarrow) []ParamNarrow {
 	return compactParamNarrows(out)
 }
 
-// ReturnPostconditions is the portable, placeholder-rooted proof a callee publishes
-// about a normal return. Local-only transfer effects such as condition arguments and
-// casts stay in ParamNarrow; exported/imported evidence travels as constraints.
+// ReturnPostconditions is the portable, placeholder-rooted proof a callee
+// publishes about a normal return. Transfer may discover these facts through
+// local ParamNarrow extraction, but the boundary carrier is the constraint
+// language itself: truthiness/nilness, type keys, concrete closed type hashes,
+// and placeholder relations.
 type ReturnPostconditions struct {
 	condition constraint.Condition
 	has       bool
@@ -141,7 +143,7 @@ var ReturnPostconditionsDomain = lattice.Lattice[ReturnPostconditions]{
 func ReturnPostconditionsFromParamNarrows(narrows []ParamNarrow) ReturnPostconditions {
 	var onReturn []constraint.Constraint
 	for _, e := range narrows {
-		if e.CondArg || e.CastType != nil || e.Param < 0 {
+		if e.Param < 0 {
 			continue
 		}
 		c, ok := ParamNarrowConstraint(e)
@@ -229,6 +231,13 @@ func ParamNarrowConstraint(e ParamNarrow) (constraint.Constraint, bool) {
 	path := constraint.ParamPath(e.Param)
 	for _, seg := range e.Segments {
 		path = path.Append(seg)
+	}
+	if e.CastType != nil && !typ.IsAbsentOrUnknown(e.CastType) {
+		key := narrow.HashTypeKey(e.CastType.Hash())
+		if key.IsZero() {
+			return nil, false
+		}
+		return constraint.HasType{Path: path, Type: key}, true
 	}
 	switch e.Check {
 	case cfg.CheckNil:

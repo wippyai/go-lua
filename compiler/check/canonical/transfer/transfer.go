@@ -63,6 +63,7 @@ import (
 	"github.com/wippyai/go-lua/types/flow/pathkey"
 	"github.com/wippyai/go-lua/types/flow/propagate"
 	"github.com/wippyai/go-lua/types/kind"
+	"github.com/wippyai/go-lua/types/narrow"
 	querycore "github.com/wippyai/go-lua/types/query/core"
 	"github.com/wippyai/go-lua/types/typ"
 	"github.com/wippyai/go-lua/types/typ/unwrap"
@@ -186,7 +187,6 @@ type ProductCallResult struct {
 	ArgDemands          []callobligation.Obligation
 	NeverReturns        bool
 	Postconditions      paramevidence.ReturnPostconditions
-	ParamNarrows        []ParamNarrow
 }
 
 func EmptyProductCallResult() ProductCallResult {
@@ -227,6 +227,8 @@ type Config struct {
 	// CastType resolves the annotated type of an `expr :: T` cast against the
 	// function's base scope.
 	CastType func(expr ast.TypeExpr) typ.Type
+	// TypeKey resolves portable type keys from condition/postcondition atoms.
+	TypeKey func(narrow.TypeKey) typ.Type
 	// TypeNameValue resolves an identifier that names a type used as a value to the
 	// reified Meta of that type.
 	TypeNameValue func(name string) typ.Type
@@ -313,6 +315,10 @@ type Transfer struct {
 	// `(x :: SomeType)` operand, collapses to unknown. Nil leaves a cast resolved
 	// only by its inner expression (the sound carry-forward).
 	castType func(expr ast.TypeExpr) typ.Type
+	// typeKey resolves portable HasType/NotHasType keys carried by conditions and
+	// return postconditions. Builtins are intrinsic; hash keys come from source
+	// type definitions known to the canonical driver.
+	typeKey func(narrow.TypeKey) typ.Type
 	// typeNameValue resolves an identifier that names a TYPE used as a value
 	// (`M.AppError = AppError`, where AppError is a `type` not a local) to the
 	// reified Meta of that type — the type value carrying the built-in `:is` guard
@@ -351,6 +357,7 @@ func New(in input.Inputs, config Config) *Transfer {
 		callTyper:     config.CallTyper,
 		declaredTypes: in.Scope.DeclaredTypes,
 		castType:      config.CastType,
+		typeKey:       config.TypeKey,
 		typeNameValue: config.TypeNameValue,
 	}
 	t.branchConditions = branchConditionReductor{
@@ -3674,9 +3681,9 @@ func (t *Transfer) applyCallArgs(
 		ctx := t.productCallContext(out, info.Call, demand)
 		result := t.productCallResult(info.Call, ctx)
 		if t.applyProductCallBoundary(out, info.Call, ctx, result, demand, ProductCallBoundaryApplication{
-			Point:             p,
-			PruneNoReturn:     true,
-			ApplyParamNarrows: true,
+			Point:               p,
+			PruneNoReturn:       true,
+			ApplyPostconditions: true,
 		}) {
 			return true
 		}

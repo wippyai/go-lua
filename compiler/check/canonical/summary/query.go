@@ -7,6 +7,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/check/canonical/ref"
 	"github.com/wippyai/go-lua/compiler/check/canonical/state"
 	"github.com/wippyai/go-lua/compiler/check/domain/paramevidence"
+	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/db"
 	"github.com/wippyai/go-lua/types/domain/value/product"
 	"github.com/wippyai/go-lua/types/flow"
@@ -130,9 +131,9 @@ type entrySymbolValueProvider interface {
 	EntrySymbolValues(ref FuncRef) map[cfg.SymbolID]product.AbstractValue
 }
 
-type paramNarrowProvider interface {
-	LocalParamNarrows(ref FuncRef) []paramevidence.ParamNarrow
-	DelegatedParamNarrowCalls(ref FuncRef) []paramevidence.DelegatedCall
+type returnPostconditionProvider interface {
+	LocalReturnPostconditions(ref FuncRef) paramevidence.ReturnPostconditions
+	DelegatedReturnPostconditionCalls(ref FuncRef) []paramevidence.DelegatedCall
 	ResolveDelegatedCallee(ref FuncRef, call *ast.FuncCallExpr) (FuncRef, bool)
 }
 
@@ -227,15 +228,9 @@ type Queries struct {
 	// not a second memoized fixed point.
 	solveQ *db.Query[Key, solveResult]
 
-	// ParamNarrowQ evaluates context-free, caller-visible parameter-refinement
-	// cells. These facts are expressed only over parameter placeholders, so they do
-	// not vary with entry values/captures; transfer reads this cell directly instead
-	// of forcing a full bottom-context Summary dependency.
-	ParamNarrowQ *db.Query[FuncRef, []paramevidence.ParamNarrow]
-
 	// ReturnPostconditionQ is the portable caller-visible normal-return proof
-	// cell. ParamNarrowQ remains as the local-effect compatibility projection; this
-	// condition carrier is the summary/export/call-boundary authority.
+	// cell. It is the single interprocedural language for callee-proven argument
+	// refinements after normal return.
 	ReturnPostconditionQ *db.Query[FuncRef, paramevidence.ReturnPostconditions]
 
 	// demanded records Summary keys the canonical query was asked to solve. A
@@ -274,20 +269,6 @@ func New(prog Program) *Queries {
 			}
 		},
 		solveResultWiden,
-	)
-
-	q.ParamNarrowQ = db.NewQueryWithSeedAndWiden(
-		"CanonicalParamNarrows",
-		q.computeParamNarrows,
-		func(a, b []paramevidence.ParamNarrow) bool {
-			return paramNarrowsDomain.Equal(a, b)
-		},
-		func(*db.QueryContext, FuncRef) []paramevidence.ParamNarrow {
-			return paramNarrowsDomain.Bottom()
-		},
-		func(prev, next []paramevidence.ParamNarrow) []paramevidence.ParamNarrow {
-			return paramNarrowsDomain.Widen(prev, next)
-		},
 	)
 
 	q.ReturnPostconditionQ = db.NewQueryWithSeedAndWiden(
@@ -431,31 +412,13 @@ func cloneSummaryByKey(in map[Key]Summary) map[Key]Summary {
 	return out
 }
 
-// ParamNarrows reads ref's compatibility parameter-effect projection through the
-// same live-or-converged observation boundary.
-func (r Reader) ParamNarrows(ref FuncRef) []paramevidence.ParamNarrow {
-	if r.queries != nil && r.ctx != nil {
-		return r.queries.ParamNarrows(r.ctx, ref)
-	}
-	if sum, ok := r.snapshot.SummaryForRef(ref); ok {
-		if len(sum.ParamNarrows) > 0 {
-			return paramevidence.SortParamNarrows(sum.ParamNarrows)
-		}
-		return paramevidence.ParamNarrowsFromReturnPostconditions(sum.Postconditions)
-	}
-	return nil
-}
-
 // ReturnPostconditions reads ref's portable normal-return proof cell.
 func (r Reader) ReturnPostconditions(ref FuncRef) paramevidence.ReturnPostconditions {
 	if r.queries != nil && r.ctx != nil {
 		return paramevidence.CloneReturnPostconditions(r.queries.ReturnPostconditions(r.ctx, ref))
 	}
 	if sum, ok := r.snapshot.SummaryForRef(ref); ok {
-		if sum.Postconditions.HasConstraints() {
-			return paramevidence.CloneReturnPostconditions(sum.Postconditions)
-		}
-		return paramevidence.ReturnPostconditionsFromParamNarrows(sum.ParamNarrows)
+		return paramevidence.CloneReturnPostconditions(sum.Postconditions)
 	}
 	return paramevidence.ReturnPostconditionsDomain.Bottom()
 }
@@ -467,11 +430,6 @@ func (q *Queries) intra(ctx *db.QueryContext, key Key) state.FunctionState {
 	// separate db fixed point.
 	_ = q.canonicalSummary(ctx, key)
 	return q.solveIntra(ctx, key.Ref, q.entryReferences(ctx, key), q.entryValues(ctx, key), q.entryFacts(ctx, key), q.entrySymbolValues(key.Ref))
-}
-
-// ParamNarrows returns ref's context-free compatibility parameter-effect cell.
-func (q *Queries) ParamNarrows(ctx *db.QueryContext, ref FuncRef) []paramevidence.ParamNarrow {
-	return q.ParamNarrowQ.Get(ctx, ref)
 }
 
 // ReturnPostconditions returns ref's context-free portable normal-return proof
@@ -502,7 +460,6 @@ func (q *Queries) ProjectStateSummary(ctx *db.QueryContext, ref FuncRef, fs stat
 		DeclaredReturns:           q.declaredReturns(ref),
 		ReturnCallHasFiniteTarget: q.returnCallHasFiniteTarget(ref),
 	})
-	sum.ParamNarrows = q.ParamNarrows(ctx, ref)
 	sum.Postconditions = q.ReturnPostconditions(ctx, ref)
 	if projector, ok := q.prog.(callEntryValueProjector); ok && projector != nil {
 		sum.CallEntryValues = projector.ProjectCallEntryValues(ref, fs)
@@ -514,107 +471,70 @@ func (q *Queries) ProjectStateSummary(ctx *db.QueryContext, ref FuncRef, fs stat
 }
 
 func (q *Queries) computeReturnPostconditions(ctx *db.QueryContext, ref FuncRef) paramevidence.ReturnPostconditions {
-	return paramevidence.ReturnPostconditionsFromParamNarrows(q.ParamNarrows(ctx, ref))
-}
-
-func (q *Queries) computeParamNarrows(ctx *db.QueryContext, ref FuncRef) []paramevidence.ParamNarrow {
-	provider, ok := q.prog.(paramNarrowProvider)
+	provider, ok := q.prog.(returnPostconditionProvider)
 	if !ok || provider == nil {
-		return nil
+		return paramevidence.ReturnPostconditionsDomain.Bottom()
 	}
-	out := paramevidence.SortParamNarrows(provider.LocalParamNarrows(ref))
-	for _, dc := range provider.DelegatedParamNarrowCalls(ref) {
+	out := paramevidence.CloneReturnPostconditions(provider.LocalReturnPostconditions(ref))
+	for _, dc := range provider.DelegatedReturnPostconditionCalls(ref) {
 		calleeRef, ok := provider.ResolveDelegatedCallee(ref, dc.Call)
 		if !ok {
 			continue
 		}
-		for _, ce := range q.ParamNarrows(ctx, calleeRef) {
-			for _, inherited := range delegatedParamNarrows(ce, dc) {
-				out = paramNarrowSetLattice{}.Join(out, []paramevidence.ParamNarrow{inherited})
-			}
-		}
+		out = paramevidence.ReturnPostconditionsDomain.Join(out, delegatedReturnPostconditions(q.ReturnPostconditions(ctx, calleeRef), dc))
 	}
-	return paramevidence.SortParamNarrows(out)
+	return out
 }
 
-func delegatedParamNarrows(callee paramevidence.ParamNarrow, dc paramevidence.DelegatedCall) []paramevidence.ParamNarrow {
-	if callee.IsParamEquality() {
-		left, ok := delegatedParamIndex(callee.Param, dc.ArgParams)
-		if !ok {
-			return nil
-		}
-		right, ok := delegatedParamIndex(callee.EqParam, dc.ArgParams)
-		if !ok || left == right {
-			return nil
-		}
-		return []paramevidence.ParamNarrow{{Param: left, EqParam: right}}
+func delegatedReturnPostconditions(callee paramevidence.ReturnPostconditions, dc paramevidence.DelegatedCall) paramevidence.ReturnPostconditions {
+	if !callee.HasConstraints() {
+		return paramevidence.ReturnPostconditionsDomain.Bottom()
 	}
-	if callee.IsParamInequality() {
-		left, ok := delegatedParamIndex(callee.Param, dc.ArgParams)
-		if !ok {
-			return nil
-		}
-		right, ok := delegatedParamIndex(callee.EqParam, dc.ArgParams)
-		if !ok || left == right {
-			return nil
-		}
-		return []paramevidence.ParamNarrow{{Param: left, EqParam: right, NotEqual: true}}
+	args := delegatedPlaceholderPaths(dc.ArgParams)
+	out := paramevidence.ReturnPostconditionsFromCondition(callee.Substitute(args))
+	for _, c := range callee.Condition().MustConstraints() {
+		out = paramevidence.ReturnPostconditionsDomain.Join(out, delegatedConditionArgumentPostconditions(c, dc))
 	}
-	if callee.CondArg {
-		return delegatedConditionArgNarrows(callee, dc)
-	}
-	if len(callee.Segments) != 0 || callee.EqParam >= 0 || callee.CastType != nil {
+	return out
+}
+
+func delegatedPlaceholderPaths(argParams []int) []constraint.Path {
+	if len(argParams) == 0 {
 		return nil
 	}
-	switch callee.Check {
-	case cfg.CheckTruthy, cfg.CheckNotNil, cfg.CheckNil, cfg.CheckFalsy, cfg.CheckTypeEqual, cfg.CheckTypeNot:
+	args := make([]constraint.Path, len(argParams))
+	for calleeParam, callerParam := range argParams {
+		if callerParam >= 0 {
+			args[calleeParam] = constraint.ParamPath(callerParam)
+		}
+	}
+	return args
+}
+
+func delegatedConditionArgumentPostconditions(c constraint.Constraint, dc paramevidence.DelegatedCall) paramevidence.ReturnPostconditions {
+	pred, ok := constraint.SinglePathPredicate(c)
+	if !ok || len(pred.Path.Segments) != 0 {
+		return paramevidence.ReturnPostconditionsDomain.Bottom()
+	}
+	calleeArg := pred.Path.PlaceholderIndex()
+	if calleeArg < 0 {
+		return paramevidence.ReturnPostconditionsDomain.Bottom()
+	}
+	switch pred.Kind {
+	case constraint.PathPredicateTruthy:
+		return paramevidence.ReturnPostconditionsFromParamNarrows(delegatedArgumentEffects(dc.ArgTruthyEffects, calleeArg))
+	case constraint.PathPredicateFalsy:
+		return paramevidence.ReturnPostconditionsFromParamNarrows(delegatedArgumentEffects(dc.ArgFalsyEffects, calleeArg))
 	default:
-		return nil
+		return paramevidence.ReturnPostconditionsDomain.Bottom()
 	}
-	callerParam, ok := delegatedParamIndex(callee.Param, dc.ArgParams)
-	if !ok {
-		return nil
-	}
-	return []paramevidence.ParamNarrow{{
-		Param:   callerParam,
-		Check:   callee.Check,
-		TypeKey: callee.TypeKey,
-		EqParam: -1,
-	}}
 }
 
-func delegatedConditionArgNarrows(callee paramevidence.ParamNarrow, dc paramevidence.DelegatedCall) []paramevidence.ParamNarrow {
-	if callee.Param < 0 {
-		return nil
-	}
-	var effects []paramevidence.ParamNarrow
-	switch callee.Check {
-	case cfg.CheckTruthy:
-		effects = delegatedArgEffects(dc.ArgTruthyEffects, callee.Param)
-	case cfg.CheckFalsy:
-		effects = delegatedArgEffects(dc.ArgFalsyEffects, callee.Param)
-	default:
-		return nil
-	}
-	return paramevidence.SortParamNarrows(effects)
-}
-
-func delegatedArgEffects(all [][]paramevidence.ParamNarrow, arg int) []paramevidence.ParamNarrow {
+func delegatedArgumentEffects(all [][]paramevidence.ParamNarrow, arg int) []paramevidence.ParamNarrow {
 	if arg < 0 || arg >= len(all) || len(all[arg]) == 0 {
 		return nil
 	}
 	return paramevidence.SortParamNarrows(all[arg])
-}
-
-func delegatedParamIndex(calleeParam int, argParams []int) (int, bool) {
-	if calleeParam < 0 || calleeParam >= len(argParams) {
-		return 0, false
-	}
-	callerParam := argParams[calleeParam]
-	if callerParam < 0 {
-		return 0, false
-	}
-	return callerParam, true
 }
 
 func (q *Queries) entryReferences(ctx *db.QueryContext, key Key) flow.ReferenceContext {

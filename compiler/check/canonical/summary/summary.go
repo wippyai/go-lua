@@ -80,9 +80,8 @@ import (
 //     caller facts seed default contexts only when every possible caller proves
 //     them.
 //   - Postconditions is the portable placeholder-rooted proof the function
-//     publishes on every normal return. ParamNarrows is the compatibility/local
-//     effect projection used while condition-argument and cast replay still need
-//     the older finite carrier.
+//     publishes on every normal return. It is the only cross-boundary language
+//     for callee-proven refinements of caller arguments.
 //
 // A Summary is the caller-facing half of the summary solve product; SummaryDomain
 // gives it the lattice structure (order, join, widen) the db cycle needs to
@@ -105,7 +104,6 @@ type Summary struct {
 	CallEntryValues     CallEntryValues
 	CallEntryFacts      CallEntryFacts
 	Postconditions      paramevidence.ReturnPostconditions
-	ParamNarrows        []paramevidence.ParamNarrow
 }
 
 type EntryValues = map[int]product.AbstractValue
@@ -122,7 +120,6 @@ var returnStaticMembersDomain = returnStaticMemberTupleLattice{}
 var entryValuesDomain = latticeproduct.MapLattice[int](product.Domain)
 var callEntryValuesDomain = latticeproduct.MapLattice[FuncRef](entryValuesDomain)
 var callEntryFactsDomain = latticeproduct.MapLattice[FuncRef](flow.BoundaryFactsDomain)
-var paramNarrowsDomain = paramNarrowSetLattice{}
 var returnPostconditionsDomain = paramevidence.ReturnPostconditionsDomain
 
 // SummaryDomain is the abstract domain of Summary: the componentwise reduced
@@ -149,7 +146,6 @@ var SummaryDomain = lattice.Lattice[Summary]{
 			CallEntryValues:     callEntryValuesDomain.Bottom(),
 			CallEntryFacts:      callEntryFactsDomain.Bottom(),
 			Postconditions:      returnPostconditionsDomain.Bottom(),
-			ParamNarrows:        paramNarrowsDomain.Bottom(),
 		}
 	},
 	Top: summaryTop,
@@ -169,8 +165,7 @@ var SummaryDomain = lattice.Lattice[Summary]{
 			flow.PrototypeSelfDomain.Equal(a.PrototypeSelf, b.PrototypeSelf) &&
 			callEntryValuesDomain.Equal(a.CallEntryValues, b.CallEntryValues) &&
 			callEntryFactsDomain.Equal(a.CallEntryFacts, b.CallEntryFacts) &&
-			returnPostconditionsDomain.Equal(a.Postconditions, b.Postconditions) &&
-			paramNarrowsDomain.Equal(a.ParamNarrows, b.ParamNarrows)
+			returnPostconditionsDomain.Equal(a.Postconditions, b.Postconditions)
 	},
 	LessOrEq: func(a, b Summary) bool {
 		if b.top {
@@ -191,8 +186,7 @@ var SummaryDomain = lattice.Lattice[Summary]{
 			flow.PrototypeSelfDomain.LessOrEq(a.PrototypeSelf, b.PrototypeSelf) &&
 			callEntryValuesDomain.LessOrEq(a.CallEntryValues, b.CallEntryValues) &&
 			callEntryFactsDomain.LessOrEq(a.CallEntryFacts, b.CallEntryFacts) &&
-			returnPostconditionsDomain.LessOrEq(a.Postconditions, b.Postconditions) &&
-			paramNarrowsDomain.LessOrEq(a.ParamNarrows, b.ParamNarrows)
+			returnPostconditionsDomain.LessOrEq(a.Postconditions, b.Postconditions)
 	},
 	Join: func(a, b Summary) Summary {
 		if a.top || b.top {
@@ -212,7 +206,6 @@ var SummaryDomain = lattice.Lattice[Summary]{
 			CallEntryValues:     callEntryValuesDomain.Join(a.CallEntryValues, b.CallEntryValues),
 			CallEntryFacts:      callEntryFactsDomain.Join(a.CallEntryFacts, b.CallEntryFacts),
 			Postconditions:      returnPostconditionsDomain.Join(a.Postconditions, b.Postconditions),
-			ParamNarrows:        paramNarrowsDomain.Join(a.ParamNarrows, b.ParamNarrows),
 		}
 	},
 	Meet: nil,
@@ -234,7 +227,6 @@ var SummaryDomain = lattice.Lattice[Summary]{
 			CallEntryValues:     callEntryValuesDomain.Widen(prev.CallEntryValues, next.CallEntryValues),
 			CallEntryFacts:      callEntryFactsDomain.Widen(prev.CallEntryFacts, next.CallEntryFacts),
 			Postconditions:      returnPostconditionsDomain.Widen(prev.Postconditions, next.Postconditions),
-			ParamNarrows:        paramNarrowsDomain.Widen(prev.ParamNarrows, next.ParamNarrows),
 		}
 	},
 }
@@ -255,64 +247,7 @@ func summaryTop() Summary {
 		CallEntryValues:     callEntryValuesDomain.Top(),
 		CallEntryFacts:      callEntryFactsDomain.Top(),
 		Postconditions:      returnPostconditionsDomain.Top(),
-		ParamNarrows:        paramNarrowsDomain.Top(),
 	}
-}
-
-type paramNarrowSetLattice struct{}
-
-func (paramNarrowSetLattice) Bottom() []paramevidence.ParamNarrow { return nil }
-
-func (paramNarrowSetLattice) Top() []paramevidence.ParamNarrow { return nil }
-
-func (paramNarrowSetLattice) Equal(a, b []paramevidence.ParamNarrow) bool {
-	aa := paramevidence.SortParamNarrows(a)
-	bb := paramevidence.SortParamNarrows(b)
-	if len(aa) != len(bb) {
-		return false
-	}
-	for i := range aa {
-		if paramevidence.CompareParamNarrow(aa[i], bb[i]) != 0 {
-			return false
-		}
-	}
-	return true
-}
-
-func (paramNarrowSetLattice) LessOrEq(a, b []paramevidence.ParamNarrow) bool {
-	aa := paramevidence.SortParamNarrows(a)
-	bb := paramevidence.SortParamNarrows(b)
-	j := 0
-	for _, x := range aa {
-		for j < len(bb) && paramevidence.CompareParamNarrow(bb[j], x) < 0 {
-			j++
-		}
-		if j >= len(bb) || paramevidence.CompareParamNarrow(bb[j], x) != 0 {
-			return false
-		}
-	}
-	return true
-}
-
-func (paramNarrowSetLattice) Join(a, b []paramevidence.ParamNarrow) []paramevidence.ParamNarrow {
-	if len(a) == 0 {
-		return paramevidence.SortParamNarrows(b)
-	}
-	if len(b) == 0 {
-		return paramevidence.SortParamNarrows(a)
-	}
-	out := make([]paramevidence.ParamNarrow, 0, len(a)+len(b))
-	for _, e := range a {
-		out = append(out, paramevidence.CloneParamNarrow(e))
-	}
-	for _, e := range b {
-		out = append(out, paramevidence.CloneParamNarrow(e))
-	}
-	return paramevidence.SortParamNarrows(out)
-}
-
-func (d paramNarrowSetLattice) Widen(prev, next []paramevidence.ParamNarrow) []paramevidence.ParamNarrow {
-	return d.Join(prev, next)
 }
 
 // returnTupleLattice is the value-domain product lifted positionally over a

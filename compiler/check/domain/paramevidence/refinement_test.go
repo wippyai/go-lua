@@ -121,7 +121,7 @@ func TestReturnPostconditionsDomainJoinsByConjunction(t *testing.T) {
 	}
 }
 
-func TestReturnPostconditionsFunctionRefinementSkipsNonPortableEffects(t *testing.T) {
+func TestReturnPostconditionsFunctionRefinementSkipsInvalidEffects(t *testing.T) {
 	if got := ReturnPostconditionsFromParamNarrows(nil).FunctionRefinement(false); got != nil {
 		t.Fatalf("empty nonterminating refinement = %#v, want nil", got)
 	}
@@ -133,13 +133,28 @@ func TestReturnPostconditionsFunctionRefinementSkipsNonPortableEffects(t *testin
 		{Param: 0, EqParam: 0},
 		{Param: 0, EqParam: 1, Check: cfg.CheckNotNil},
 		{Param: 0, EqParam: 1, Segments: []constraint.Segment{{Kind: constraint.SegmentField, Name: "value"}}},
-		{Param: 0, CondArg: true, Check: cfg.CheckNotNil, EqParam: -1},
-		{Param: 0, CastType: typ.String, Check: cfg.CheckNotNil, EqParam: -1},
 		{Param: -1, Check: cfg.CheckNotNil, EqParam: -1},
 		{Param: 0, Check: cfg.CheckNone, EqParam: -1},
 	}).FunctionRefinement(false)
 	if refinement != nil {
-		t.Fatalf("non-portable effects produced refinement %#v", refinement)
+		t.Fatalf("invalid effects produced refinement %#v", refinement)
+	}
+}
+
+func TestReturnPostconditionsFunctionRefinementProjectsConditionArgsAndCasts(t *testing.T) {
+	refinement := ReturnPostconditionsFromParamNarrows([]ParamNarrow{
+		{Param: 0, CondArg: true, Check: cfg.CheckFalsy, EqParam: -1},
+		{Param: 1, CastType: typ.String, EqParam: -1},
+	}).FunctionRefinement(false)
+	if refinement == nil || !refinement.OnReturn.HasConstraints() {
+		t.Fatalf("portable condition/cast effects produced %#v, want refinement", refinement)
+	}
+	must := refinement.OnReturn.MustConstraints()
+	if !containsConstraint(must, constraint.Falsy{Path: constraint.ParamPath(0)}) {
+		t.Fatalf("OnReturn = %v, want condition argument falsy proof", refinement.OnReturn)
+	}
+	if !containsConstraint(must, constraint.HasType{Path: constraint.ParamPath(1), Type: narrow.HashTypeKey(typ.String.Hash())}) {
+		t.Fatalf("OnReturn = %v, want concrete cast type proof", refinement.OnReturn)
 	}
 }
 

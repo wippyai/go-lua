@@ -5,7 +5,6 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/compiler/ast"
-	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check"
 	"github.com/wippyai/go-lua/compiler/check/canonical"
 	"github.com/wippyai/go-lua/compiler/check/canonical/summary"
@@ -147,12 +146,13 @@ end
 	if !ok {
 		t.Fatal("outerAssert has no summary")
 	}
-	for _, e := range sum.ParamNarrows {
-		if e.Param == 0 && e.Check == cfg.CheckTruthy && e.EqParam < 0 && len(e.Segments) == 0 {
+	want := constraint.Truthy{Path: constraint.ParamPath(0)}
+	for _, c := range sum.Postconditions.Condition().MustConstraints() {
+		if c.Equals(want) {
 			return
 		}
 	}
-	t.Fatalf("outerAssert ParamNarrows = %#v, want truthy narrow on parameter 0", sum.ParamNarrows)
+	t.Fatalf("outerAssert Postconditions = %v, want truthy narrow on parameter 0", sum.Postconditions.Condition())
 }
 
 // TestCanonicalDriver_BridgePopulatesSessionResults verifies the diagnostic bridge:

@@ -20,7 +20,6 @@ type BoundaryEvidence struct {
 	BoundaryFacts   flow.BoundaryFacts
 	ArgDemands      []callobligation.Obligation
 	Postconditions  paramevidence.ReturnPostconditions
-	ParamNarrows    []paramevidence.ParamNarrow
 	NeverReturns    bool
 }
 
@@ -33,7 +32,6 @@ type BoundaryEvidenceInput struct {
 	CellEffects          summary.CellEffectAggregation
 	ArgDemands           []callobligation.Obligation
 	Postconditions       paramevidence.ReturnPostconditions
-	ParamNarrows         []paramevidence.ParamNarrow
 	HasNoReturn          func(summary.FuncRef) bool
 }
 
@@ -47,17 +45,9 @@ func (o CallOutcome) BoundaryEvidence(in BoundaryEvidenceInput) BoundaryEvidence
 		ReceiverEffects: o.ReceiverEffects(),
 		BoundaryFacts:   o.BoundaryFacts(in.Call, in.Resolver, in.UseResolvedSignature),
 		ArgDemands:      cloneArgDemands(in.ArgDemands),
-		Postconditions:  postconditionsOrCompatibility(in.Postconditions, in.ParamNarrows),
-		ParamNarrows:    paramevidence.SortParamNarrows(in.ParamNarrows),
+		Postconditions:  paramevidence.CloneReturnPostconditions(in.Postconditions),
 		NeverReturns:    o.NeverReturns(in.HasNoReturn),
 	}
-}
-
-func postconditionsOrCompatibility(post paramevidence.ReturnPostconditions, narrows []paramevidence.ParamNarrow) paramevidence.ReturnPostconditions {
-	if post.HasConstraints() {
-		return paramevidence.CloneReturnPostconditions(post)
-	}
-	return paramevidence.ReturnPostconditionsFromParamNarrows(narrows)
 }
 
 func cloneArgDemands(in []callobligation.Obligation) []callobligation.Obligation {

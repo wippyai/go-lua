@@ -1,6 +1,7 @@
 package summary_test
 
 import (
+	"reflect"
 	"testing"
 
 	"github.com/wippyai/go-lua/compiler/ast"
@@ -172,25 +173,25 @@ func (t *countingTransfer) Transfer(
 	return t.delegate.Transfer(g, p, incoming, contracts, emitParamContract)
 }
 
-type paramNarrowCellProgram struct {
+type returnPostconditionCellProgram struct {
 	local     map[summary.FuncRef][]paramevidence.ParamNarrow
 	delegated map[summary.FuncRef][]paramevidence.DelegatedCall
 	targets   map[*ast.FuncCallExpr]summary.FuncRef
 }
 
-func (p *paramNarrowCellProgram) Graph(summary.FuncRef) *cfg.Graph { return nil }
-func (p *paramNarrowCellProgram) NumParams(summary.FuncRef) int    { return 0 }
-func (p *paramNarrowCellProgram) Transfer(summary.FuncRef) equation.NodeTransfer {
+func (p *returnPostconditionCellProgram) Graph(summary.FuncRef) *cfg.Graph { return nil }
+func (p *returnPostconditionCellProgram) NumParams(summary.FuncRef) int    { return 0 }
+func (p *returnPostconditionCellProgram) Transfer(summary.FuncRef) equation.NodeTransfer {
 	return nil
 }
-func (p *paramNarrowCellProgram) Callees(summary.FuncRef) []summary.FuncRef { return nil }
-func (p *paramNarrowCellProgram) LocalParamNarrows(ref summary.FuncRef) []paramevidence.ParamNarrow {
-	return append([]paramevidence.ParamNarrow(nil), p.local[ref]...)
+func (p *returnPostconditionCellProgram) Callees(summary.FuncRef) []summary.FuncRef { return nil }
+func (p *returnPostconditionCellProgram) LocalReturnPostconditions(ref summary.FuncRef) paramevidence.ReturnPostconditions {
+	return paramevidence.ReturnPostconditionsFromParamNarrows(p.local[ref])
 }
-func (p *paramNarrowCellProgram) DelegatedParamNarrowCalls(ref summary.FuncRef) []paramevidence.DelegatedCall {
+func (p *returnPostconditionCellProgram) DelegatedReturnPostconditionCalls(ref summary.FuncRef) []paramevidence.DelegatedCall {
 	return append([]paramevidence.DelegatedCall(nil), p.delegated[ref]...)
 }
-func (p *paramNarrowCellProgram) ResolveDelegatedCallee(_ summary.FuncRef, call *ast.FuncCallExpr) (summary.FuncRef, bool) {
+func (p *returnPostconditionCellProgram) ResolveDelegatedCallee(_ summary.FuncRef, call *ast.FuncCallExpr) (summary.FuncRef, bool) {
 	ref, ok := p.targets[call]
 	return ref, ok
 }
@@ -239,11 +240,11 @@ func TestSummaryDomain_Laws(t *testing.T) {
 	}.Run(t)
 }
 
-func TestParamNarrowQ_InheritsDelegatedEffectsWithoutSummaryContext(t *testing.T) {
+func TestReturnPostconditionQ_InheritsDelegatedEffectsWithoutSummaryContext(t *testing.T) {
 	inner := summary.FuncRef{GraphID: 1}
 	outer := summary.FuncRef{GraphID: 2}
 	call := &ast.FuncCallExpr{}
-	prog := &paramNarrowCellProgram{
+	prog := &returnPostconditionCellProgram{
 		local: map[summary.FuncRef][]paramevidence.ParamNarrow{
 			inner: {{Param: 0, Check: cfg.CheckNotNil, EqParam: -1}},
 		},
@@ -255,28 +256,22 @@ func TestParamNarrowQ_InheritsDelegatedEffectsWithoutSummaryContext(t *testing.T
 	q := summary.New(prog)
 	ctx := db.NewQueryContext(db.New())
 
-	got := q.ParamNarrows(ctx, outer)
-	if len(got) != 1 {
-		t.Fatalf("ParamNarrows len = %d, want 1: %#v", len(got), got)
-	}
-	if got[0].Param != 1 || got[0].Check != cfg.CheckNotNil || got[0].EqParam != -1 {
-		t.Fatalf("inherited ParamNarrow = %#v, want param 1 not-nil", got[0])
+	got := q.ReturnPostconditions(ctx, outer)
+	if !containsConstraint(got.Condition().MustConstraints(), constraint.NotNil{Path: constraint.ParamPath(1)}) {
+		t.Fatalf("ReturnPostconditions = %v, want param 1 not-nil", got.Condition())
 	}
 
 	sum := q.Summarize(ctx, outer)
-	if len(sum.ParamNarrows) != 1 || sum.ParamNarrows[0].Param != 1 {
-		t.Fatalf("Summary.ParamNarrows = %#v, want same context-free cell", sum.ParamNarrows)
-	}
-	if !sum.Postconditions.HasConstraints() {
-		t.Fatal("Summary.Postconditions missing delegated not-nil proof")
+	if !containsConstraint(sum.Postconditions.Condition().MustConstraints(), constraint.NotNil{Path: constraint.ParamPath(1)}) {
+		t.Fatalf("Summary.Postconditions = %v, want delegated not-nil proof", sum.Postconditions.Condition())
 	}
 }
 
-func TestParamNarrowQ_InheritsDelegatedEqualityEffects(t *testing.T) {
+func TestReturnPostconditionQ_InheritsDelegatedEqualityEffects(t *testing.T) {
 	inner := summary.FuncRef{GraphID: 11}
 	outer := summary.FuncRef{GraphID: 12}
 	call := &ast.FuncCallExpr{}
-	prog := &paramNarrowCellProgram{
+	prog := &returnPostconditionCellProgram{
 		local: map[summary.FuncRef][]paramevidence.ParamNarrow{
 			inner: {{Param: 0, EqParam: 1}},
 		},
@@ -288,28 +283,23 @@ func TestParamNarrowQ_InheritsDelegatedEqualityEffects(t *testing.T) {
 	q := summary.New(prog)
 	ctx := db.NewQueryContext(db.New())
 
-	got := q.ParamNarrows(ctx, outer)
-	if len(got) != 1 {
-		t.Fatalf("ParamNarrows len = %d, want 1: %#v", len(got), got)
-	}
-	if got[0].Param != 2 || got[0].EqParam != 0 || !got[0].IsParamEquality() {
-		t.Fatalf("inherited equality = %#v, want param 2 == param 0", got[0])
+	want := constraint.NewEqPath(constraint.ParamPath(0), constraint.ParamPath(2))
+	got := q.ReturnPostconditions(ctx, outer)
+	if !containsConstraint(got.Condition().MustConstraints(), want) {
+		t.Fatalf("ReturnPostconditions = %v, want %v", got.Condition(), want)
 	}
 
 	sum := q.Summarize(ctx, outer)
-	if len(sum.ParamNarrows) != 1 || !sum.ParamNarrows[0].IsParamEquality() {
-		t.Fatalf("Summary.ParamNarrows = %#v, want delegated equality", sum.ParamNarrows)
-	}
-	if !sum.Postconditions.HasConstraints() {
-		t.Fatal("Summary.Postconditions missing delegated equality proof")
+	if !containsConstraint(sum.Postconditions.Condition().MustConstraints(), want) {
+		t.Fatalf("Summary.Postconditions = %v, want delegated equality", sum.Postconditions.Condition())
 	}
 }
 
-func TestParamNarrowQ_InheritsDelegatedInequalityEffects(t *testing.T) {
+func TestReturnPostconditionQ_InheritsDelegatedInequalityEffects(t *testing.T) {
 	inner := summary.FuncRef{GraphID: 13}
 	outer := summary.FuncRef{GraphID: 14}
 	call := &ast.FuncCallExpr{}
-	prog := &paramNarrowCellProgram{
+	prog := &returnPostconditionCellProgram{
 		local: map[summary.FuncRef][]paramevidence.ParamNarrow{
 			inner: {{Param: 0, EqParam: 1, NotEqual: true}},
 		},
@@ -321,20 +311,18 @@ func TestParamNarrowQ_InheritsDelegatedInequalityEffects(t *testing.T) {
 	q := summary.New(prog)
 	ctx := db.NewQueryContext(db.New())
 
-	got := q.ParamNarrows(ctx, outer)
-	if len(got) != 1 {
-		t.Fatalf("ParamNarrows len = %d, want 1: %#v", len(got), got)
-	}
-	if got[0].Param != 2 || got[0].EqParam != 0 || !got[0].IsParamInequality() {
-		t.Fatalf("inherited inequality = %#v, want param 2 ~= param 0", got[0])
+	want := constraint.NewNotEqPath(constraint.ParamPath(0), constraint.ParamPath(2))
+	got := q.ReturnPostconditions(ctx, outer)
+	if !containsConstraint(got.Condition().MustConstraints(), want) {
+		t.Fatalf("ReturnPostconditions = %v, want %v", got.Condition(), want)
 	}
 }
 
-func TestParamNarrowQ_ComposesDelegatedConditionArgumentEffects(t *testing.T) {
+func TestReturnPostconditionQ_ComposesDelegatedConditionArgumentEffects(t *testing.T) {
 	inner := summary.FuncRef{GraphID: 21}
 	outer := summary.FuncRef{GraphID: 22}
 	call := &ast.FuncCallExpr{}
-	prog := &paramNarrowCellProgram{
+	prog := &returnPostconditionCellProgram{
 		local: map[summary.FuncRef][]paramevidence.ParamNarrow{
 			inner: {{Param: 0, Check: cfg.CheckTruthy, CondArg: true, EqParam: -1}},
 		},
@@ -352,22 +340,26 @@ func TestParamNarrowQ_ComposesDelegatedConditionArgumentEffects(t *testing.T) {
 	q := summary.New(prog)
 	ctx := db.NewQueryContext(db.New())
 
-	got := q.ParamNarrows(ctx, outer)
-	if len(got) != 1 {
-		t.Fatalf("ParamNarrows len = %d, want 1: %#v", len(got), got)
+	got := q.ReturnPostconditions(ctx, outer)
+	if !containsConstraint(got.Condition().MustConstraints(), constraint.NotNil{Path: constraint.ParamPath(1)}) {
+		t.Fatalf("ReturnPostconditions = %v, want param 1 not-nil from delegated condition arg", got.Condition())
 	}
-	if got[0].Param != 1 || got[0].Check != cfg.CheckNotNil || got[0].CondArg {
-		t.Fatalf("delegated condition narrow = %#v, want param 1 not-nil value effect", got[0])
+}
+
+func TestSummaryHasNoParamNarrowsLane(t *testing.T) {
+	if _, ok := reflect.TypeOf(summary.Summary{}).FieldByName("ParamNarrows"); ok {
+		t.Fatal("Summary must not expose ParamNarrows as an interprocedural lane")
 	}
 }
 
 func TestReader_UsesConvergedSnapshotWhenNotLive(t *testing.T) {
 	ref := summary.FuncRef{GraphID: 77}
+	post := paramevidence.ReturnPostconditionsFromParamNarrows([]paramevidence.ParamNarrow{
+		{Param: 1, Check: cfg.CheckNotNil, EqParam: -1},
+	})
 	want := summary.Summary{
-		Returns: []product.AbstractValue{product.FromType(typ.String)},
-		ParamNarrows: []paramevidence.ParamNarrow{
-			{Param: 1, Check: cfg.CheckNotNil, EqParam: -1},
-		},
+		Returns:        []product.AbstractValue{product.FromType(typ.String)},
+		Postconditions: post,
 	}
 
 	reader := summary.NewReader(nil, nil, map[summary.FuncRef]summary.Summary{ref: want})
@@ -379,9 +371,9 @@ func TestReader_UsesConvergedSnapshotWhenNotLive(t *testing.T) {
 	if !summary.SummaryDomain.Equal(got, want) {
 		t.Fatalf("reader summary = %#v, want snapshot %#v", got, want)
 	}
-	narrows := reader.ParamNarrows(ref)
-	if len(narrows) != 1 || narrows[0].Param != 1 || narrows[0].Check != cfg.CheckNotNil {
-		t.Fatalf("reader ParamNarrows = %#v, want snapshot narrows", narrows)
+	gotPost := reader.ReturnPostconditions(ref)
+	if !containsConstraint(gotPost.Condition().MustConstraints(), constraint.NotNil{Path: constraint.ParamPath(1)}) {
+		t.Fatalf("reader ReturnPostconditions = %v, want snapshot postconditions", gotPost.Condition())
 	}
 }
 
@@ -390,9 +382,18 @@ func TestReader_MissingSnapshotIsBottom(t *testing.T) {
 	if !summary.SummaryDomain.Equal(got, summary.SummaryDomain.Bottom()) {
 		t.Fatalf("missing snapshot summary = %#v, want bottom", got)
 	}
-	if narrows := summary.NewReader(nil, nil, nil).ParamNarrows(summary.FuncRef{GraphID: 88}); len(narrows) != 0 {
-		t.Fatalf("missing snapshot ParamNarrows = %#v, want nil", narrows)
+	if post := summary.NewReader(nil, nil, nil).ReturnPostconditions(summary.FuncRef{GraphID: 88}); post.HasConstraints() {
+		t.Fatalf("missing snapshot ReturnPostconditions = %v, want bottom", post.Condition())
 	}
+}
+
+func containsConstraint(haystack []constraint.Constraint, needle constraint.Constraint) bool {
+	for _, c := range haystack {
+		if c.Equals(needle) {
+			return true
+		}
+	}
+	return false
 }
 
 func TestProject_CellEffectsFromReturnBoundaries(t *testing.T) {

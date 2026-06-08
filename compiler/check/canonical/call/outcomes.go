@@ -134,33 +134,8 @@ func (o CallOutcome) NeverReturns(hasNoReturn func(summary.FuncRef) bool) bool {
 	return selectionNeverReturns(o.Selection, hasNoReturn)
 }
 
-// ParamNarrowProjection is the compatibility call-site policy for local value-axis
-// replay of callee-proven argument refinements. Portable normal-return proofs use
-// PostconditionProjection; this view remains while transfer still needs casts,
-// condition-argument replay, equality value refinement, and sibling nil repair.
-type ParamNarrowProjection struct {
-	Call *ast.FuncCallExpr
-
-	SummaryNarrows func(*ast.FuncCallExpr) ([]paramevidence.ParamNarrow, bool)
-	Resolver       TypeResolver
-}
-
-// Narrows resolves caller-visible compatibility parameter refinements.
-func (p ParamNarrowProjection) Narrows() []paramevidence.ParamNarrow {
-	if p.Call == nil {
-		return nil
-	}
-	if p.SummaryNarrows != nil {
-		if narrows, ok := p.SummaryNarrows(p.Call); ok {
-			return paramevidence.SortParamNarrows(narrows)
-		}
-	}
-	return paramevidence.ParamNarrowsFromFunctionType(p.Resolver.ResolveStaticCallee(p.Call.Func))
-}
-
 // PostconditionProjection resolves portable normal-return postconditions without
-// collapsing imported FunctionRefinement conditions into the finite ParamNarrow
-// compatibility view.
+// collapsing imported FunctionRefinement conditions into a local extraction view.
 type PostconditionProjection struct {
 	Call *ast.FuncCallExpr
 

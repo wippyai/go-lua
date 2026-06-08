@@ -68,7 +68,7 @@ func TestReaderSnapshotRequiresExactContextSummary(t *testing.T) {
 	}
 }
 
-func TestReaderParamNarrowsDefensiveCopy(t *testing.T) {
+func TestReaderReturnPostconditionsDefensiveCopy(t *testing.T) {
 	ref := FuncRef{GraphID: 8}
 	post := paramevidence.ReturnPostconditionsFromParamNarrows([]paramevidence.ParamNarrow{{
 		Param:    0,
@@ -79,23 +79,8 @@ func TestReaderParamNarrowsDefensiveCopy(t *testing.T) {
 	reader := NewReader(nil, nil, map[FuncRef]Summary{
 		ref: {
 			Postconditions: post,
-			ParamNarrows: []paramevidence.ParamNarrow{{
-				Param:    0,
-				Segments: []constraint.Segment{{Kind: constraint.SegmentField, Name: "kind"}},
-				Check:    cfg.CheckNotNil,
-			}},
 		},
 	})
-
-	got := reader.ParamNarrows(ref)
-	if len(got) != 1 || len(got[0].Segments) != 1 {
-		t.Fatalf("ParamNarrows = %#v, want one segmented narrow", got)
-	}
-	got[0].Segments[0] = constraint.Segment{Kind: constraint.SegmentField, Name: "mutated"}
-	again := reader.ParamNarrows(ref)
-	if again[0].Segments[0].Name != "kind" {
-		t.Fatalf("ParamNarrows exposed mutable backing: %#v", again)
-	}
 
 	postCopy := reader.ReturnPostconditions(ref)
 	if !postCopy.HasConstraints() {

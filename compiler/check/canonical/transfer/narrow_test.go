@@ -7,6 +7,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/canonical/input"
 	"github.com/wippyai/go-lua/compiler/check/domain/guard"
+	"github.com/wippyai/go-lua/compiler/check/domain/paramevidence"
 	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/domain/value/product"
 	"github.com/wippyai/go-lua/types/effect"
@@ -711,7 +712,7 @@ func TestApplyParamInequalityNarrowsTypedDiscriminantPath(t *testing.T) {
 		ch,
 	}}
 
-	tr.ApplyParamNarrows(&out, call, []ParamNarrow{{Param: 0, EqParam: 1, NotEqual: true}})
+	tr.ApplyReturnPostconditions(&out, call, paramevidence.ReturnPostconditionsFromParamNarrows([]ParamNarrow{{Param: 0, EqParam: 1, NotEqual: true}}))
 	av, ok := tr.symbolValue(&out, resultSym)
 	if !ok {
 		t.Fatal("narrowed result value missing")
@@ -721,7 +722,7 @@ func TestApplyParamInequalityNarrowsTypedDiscriminantPath(t *testing.T) {
 	}
 }
 
-func TestApplyParamNarrowWritesConditionAxisForStaticPath(t *testing.T) {
+func TestApplyReturnPostconditionWritesConditionAxisForStaticPath(t *testing.T) {
 	pageSym := cfg.SymbolID(41)
 	page := &ast.IdentExpr{Value: "page"}
 	proxy := &ast.AttrGetExpr{
@@ -735,7 +736,8 @@ func TestApplyParamNarrowWritesConditionAxisForStaticPath(t *testing.T) {
 	out := flow.PointState{}
 	call := &ast.FuncCallExpr{Args: []ast.Expr{proxy}}
 
-	if dead := tr.ApplyParamNarrows(&out, call, []ParamNarrow{{Param: 0, Check: cfg.CheckNotNil, EqParam: -1}}); dead {
+	post := paramevidence.ReturnPostconditionsFromParamNarrows([]ParamNarrow{{Param: 0, Check: cfg.CheckNotNil, EqParam: -1}})
+	if dead := tr.ApplyReturnPostconditions(&out, call, post); dead {
 		t.Fatal("not_nil(page.proxy) should not kill an unconstrained continuation")
 	}
 
@@ -752,7 +754,7 @@ func TestApplyParamNarrowWritesConditionAxisForStaticPath(t *testing.T) {
 	}
 }
 
-func TestApplyParamNarrowDeadWhenPostconditionImpossible(t *testing.T) {
+func TestApplyReturnPostconditionDeadWhenPostconditionImpossible(t *testing.T) {
 	sym := cfg.SymbolID(42)
 	x := &ast.IdentExpr{Value: "x"}
 	tr := New(keyPresenceInput(t, map[*ast.IdentExpr]cfg.SymbolID{
@@ -765,7 +767,8 @@ func TestApplyParamNarrowDeadWhenPostconditionImpossible(t *testing.T) {
 	}
 	call := &ast.FuncCallExpr{Args: []ast.Expr{x}}
 
-	if dead := tr.ApplyParamNarrows(&out, call, []ParamNarrow{{Param: 0, Check: cfg.CheckNotNil, EqParam: -1}}); !dead {
+	post := paramevidence.ReturnPostconditionsFromParamNarrows([]ParamNarrow{{Param: 0, Check: cfg.CheckNotNil, EqParam: -1}})
+	if dead := tr.ApplyReturnPostconditions(&out, call, post); !dead {
 		t.Fatal("not_nil(x) over nil-only x should kill the continuation")
 	}
 }

@@ -245,7 +245,6 @@ func TestCallOutcomeBoundaryEvidenceCarriesSelectedBoundaryAxes(t *testing.T) {
 	key := flow.BoundaryPath{Kind: flow.BoundaryPathParam, Index: 1}
 	boundaryFacts := flow.BoundaryFactsOf([]flow.BoundaryKeyPresenceFact{{Table: table, Key: key}}, nil, nil, nil, nil, nil)
 	demands := []callobligation.Obligation{callobligation.Body(typ.String)}
-	narrows := []paramevidence.ParamNarrow{{Param: 0, Check: compilecfg.CheckTruthy, EqParam: -1}}
 	post := paramevidence.ReturnPostconditionsFromParamNarrows([]paramevidence.ParamNarrow{
 		{Param: 1, Check: compilecfg.CheckNotNil, EqParam: -1},
 	})
@@ -268,7 +267,6 @@ func TestCallOutcomeBoundaryEvidenceCarriesSelectedBoundaryAxes(t *testing.T) {
 		CellEffects:          summary.CellEffectAggregation{},
 		ArgDemands:           demands,
 		Postconditions:       post,
-		ParamNarrows:         narrows,
 		UseResolvedSignature: true,
 		HasNoReturn: func(got summary.FuncRef) bool {
 			return got == ref
@@ -293,9 +291,6 @@ func TestCallOutcomeBoundaryEvidenceCarriesSelectedBoundaryAxes(t *testing.T) {
 	if len(got.ArgDemands) != 1 || got.ArgDemands[0].Source != callobligation.SourceBody {
 		t.Fatalf("ArgDemands = %#v, want one body demand", got.ArgDemands)
 	}
-	if len(got.ParamNarrows) != 1 || got.ParamNarrows[0].Param != 0 {
-		t.Fatalf("ParamNarrows = %#v, want one param narrow", got.ParamNarrows)
-	}
 	if !got.Postconditions.HasConstraints() {
 		t.Fatal("Postconditions missing portable param narrow evidence")
 	}
@@ -307,16 +302,12 @@ func TestCallOutcomeBoundaryEvidenceCarriesSelectedBoundaryAxes(t *testing.T) {
 	}
 
 	demands[0] = callobligation.Signature(typ.Number)
-	narrows[0].Param = 1
 	if got.ArgDemands[0].Source != callobligation.SourceBody {
 		t.Fatalf("ArgDemands aliased input: %#v", got.ArgDemands)
 	}
-	if got.ParamNarrows[0].Param != 0 {
-		t.Fatalf("ParamNarrows aliased input: %#v", got.ParamNarrows)
-	}
 }
 
-func TestParamNarrowProjectionSummaryBeatsImportedSignature(t *testing.T) {
+func TestPostconditionProjectionSummaryBeatsImportedSignature(t *testing.T) {
 	t.Parallel()
 
 	base := &ast.IdentExpr{Value: "svc"}
@@ -325,13 +316,13 @@ func TestParamNarrowProjectionSummaryBeatsImportedSignature(t *testing.T) {
 	bindings := bind.NewBindingTable()
 	bindings.Bind(base, 99)
 	bindings.SetName(99, "svc")
-	summaryNarrow := paramevidence.ParamNarrow{Param: 0, Check: compilecfg.CheckTruthy}
+	summaryPost := paramevidence.ReturnPostconditionsFromParamNarrows([]paramevidence.ParamNarrow{{Param: 0, Check: compilecfg.CheckTruthy, EqParam: -1}})
 	importedUsed := false
 
-	got := (ParamNarrowProjection{
+	got := (PostconditionProjection{
 		Call: call,
-		SummaryNarrows: func(*ast.FuncCallExpr) ([]paramevidence.ParamNarrow, bool) {
-			return []paramevidence.ParamNarrow{summaryNarrow}, true
+		SummaryPostconditions: func(*ast.FuncCallExpr) (paramevidence.ReturnPostconditions, bool) {
+			return summaryPost, true
 		},
 		Resolver: TypeResolver{
 			Bindings: bindings,
@@ -344,17 +335,17 @@ func TestParamNarrowProjectionSummaryBeatsImportedSignature(t *testing.T) {
 				},
 			},
 		},
-	}).Narrows()
+	}).Postconditions()
 
-	if len(got) != 1 || got[0].Param != 0 || got[0].Check != compilecfg.CheckTruthy {
-		t.Fatalf("param narrows = %#v, want summary narrow", got)
+	if !containsConstraint(got.Condition().MustConstraints(), constraint.Truthy{Path: constraint.ParamPath(0)}) {
+		t.Fatalf("postconditions = %v, want summary truthy proof", got.Condition())
 	}
 	if importedUsed {
-		t.Fatal("imported signature fallback ran despite summary narrows")
+		t.Fatal("imported signature fallback ran despite summary postconditions")
 	}
 }
 
-func TestParamNarrowProjectionImportedSignatureFallback(t *testing.T) {
+func TestPostconditionProjectionImportedSignatureFallback(t *testing.T) {
 	t.Parallel()
 
 	base := &ast.IdentExpr{Value: "svc"}
@@ -363,10 +354,10 @@ func TestParamNarrowProjectionImportedSignatureFallback(t *testing.T) {
 	bindings := bind.NewBindingTable()
 	bindings.Bind(base, 100)
 	bindings.SetName(100, "svc")
-	got := (ParamNarrowProjection{
+	got := (PostconditionProjection{
 		Call: call,
-		SummaryNarrows: func(*ast.FuncCallExpr) ([]paramevidence.ParamNarrow, bool) {
-			return nil, false
+		SummaryPostconditions: func(*ast.FuncCallExpr) (paramevidence.ReturnPostconditions, bool) {
+			return paramevidence.ReturnPostconditionsDomain.Bottom(), false
 		},
 		Resolver: TypeResolver{
 			Bindings: bindings,
@@ -381,10 +372,10 @@ func TestParamNarrowProjectionImportedSignatureFallback(t *testing.T) {
 				},
 			},
 		},
-	}).Narrows()
+	}).Postconditions()
 
-	if len(got) != 1 || got[0].Param != 1 || got[0].Check != compilecfg.CheckNotNil {
-		t.Fatalf("param narrows = %#v, want imported signature narrow", got)
+	if !containsConstraint(got.Condition().MustConstraints(), constraint.NotNil{Path: constraint.ParamPath(1)}) {
+		t.Fatalf("postconditions = %v, want imported signature not-nil proof", got.Condition())
 	}
 }
 
@@ -422,11 +413,11 @@ func TestPostconditionProjectionPreservesImportedDNF(t *testing.T) {
 	}
 	narrows := paramevidence.ParamNarrowsFromReturnPostconditions(got)
 	if len(narrows) != 1 || narrows[0].Param != 0 || narrows[0].Check != compilecfg.CheckNotNil {
-		t.Fatalf("compatibility ParamNarrows = %#v, want only common not-nil fact", narrows)
+		t.Fatalf("recovered local ParamNarrows = %#v, want only common not-nil fact", narrows)
 	}
 }
 
-func TestParamNarrowProjectionStaticGlobalFieldFallback(t *testing.T) {
+func TestPostconditionProjectionStaticGlobalFieldFallback(t *testing.T) {
 	t.Parallel()
 
 	base := &ast.IdentExpr{Value: "assert"}
@@ -436,10 +427,10 @@ func TestParamNarrowProjectionStaticGlobalFieldFallback(t *testing.T) {
 	bindings.Bind(base, 101)
 	bindings.SetName(101, "assert")
 
-	got := (ParamNarrowProjection{
+	got := (PostconditionProjection{
 		Call: call,
-		SummaryNarrows: func(*ast.FuncCallExpr) ([]paramevidence.ParamNarrow, bool) {
-			return nil, false
+		SummaryPostconditions: func(*ast.FuncCallExpr) (paramevidence.ReturnPostconditions, bool) {
+			return paramevidence.ReturnPostconditionsDomain.Bottom(), false
 		},
 		Resolver: TypeResolver{
 			Bindings: bindings,
@@ -454,14 +445,14 @@ func TestParamNarrowProjectionStaticGlobalFieldFallback(t *testing.T) {
 				},
 			},
 		},
-	}).Narrows()
+	}).Postconditions()
 
-	if len(got) != 1 || got[0].Param != 0 || got[0].Check != compilecfg.CheckNotNil {
-		t.Fatalf("param narrows = %#v, want static global-field signature narrow", got)
+	if !containsConstraint(got.Condition().MustConstraints(), constraint.NotNil{Path: constraint.ParamPath(0)}) {
+		t.Fatalf("postconditions = %v, want static global-field not-nil proof", got.Condition())
 	}
 }
 
-func TestParamNarrowProjectionStaticIdentFallback(t *testing.T) {
+func TestPostconditionProjectionStaticIdentFallback(t *testing.T) {
 	t.Parallel()
 
 	callee := &ast.IdentExpr{Value: "expect_present"}
@@ -470,10 +461,10 @@ func TestParamNarrowProjectionStaticIdentFallback(t *testing.T) {
 	bindings.Bind(callee, 102)
 	bindings.SetName(102, "expect_present")
 
-	got := (ParamNarrowProjection{
+	got := (PostconditionProjection{
 		Call: call,
-		SummaryNarrows: func(*ast.FuncCallExpr) ([]paramevidence.ParamNarrow, bool) {
-			return nil, false
+		SummaryPostconditions: func(*ast.FuncCallExpr) (paramevidence.ReturnPostconditions, bool) {
+			return paramevidence.ReturnPostconditionsDomain.Bottom(), false
 		},
 		Resolver: TypeResolver{
 			Bindings: bindings,
@@ -486,10 +477,10 @@ func TestParamNarrowProjectionStaticIdentFallback(t *testing.T) {
 				},
 			},
 		},
-	}).Narrows()
+	}).Postconditions()
 
-	if len(got) != 1 || got[0].Param != 0 || got[0].Check != compilecfg.CheckNotNil {
-		t.Fatalf("param narrows = %#v, want static identifier signature narrow", got)
+	if !containsConstraint(got.Condition().MustConstraints(), constraint.NotNil{Path: constraint.ParamPath(0)}) {
+		t.Fatalf("postconditions = %v, want static identifier not-nil proof", got.Condition())
 	}
 }
 

@@ -203,11 +203,7 @@ func (p CallSummaryProjection) BoundaryFacts() flow.BoundaryFacts {
 func (p CallSummaryProjection) Postconditions() paramevidence.ReturnPostconditions {
 	out := paramevidence.ReturnPostconditionsDomain.Bottom()
 	for _, target := range p.Targets {
-		post := target.Summary.Postconditions
-		if !post.HasConstraints() {
-			post = paramevidence.ReturnPostconditionsFromParamNarrows(target.Summary.ParamNarrows)
-		}
-		out = paramevidence.ReturnPostconditionsDomain.Join(out, post)
+		out = paramevidence.ReturnPostconditionsDomain.Join(out, target.Summary.Postconditions)
 	}
 	return out
 }

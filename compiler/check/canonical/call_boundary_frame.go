@@ -81,7 +81,6 @@ func (p callBoundaryFrame) result(evidence canonicalcall.BoundaryEvidence, effec
 		ArgDemands:          evidence.ArgDemands,
 		NeverReturns:        evidence.NeverReturns,
 		Postconditions:      evidence.Postconditions,
-		ParamNarrows:        evidence.ParamNarrows,
 	}
 }
 
@@ -102,25 +101,6 @@ func (p callBoundaryFrame) callArgDemands() []callobligation.Obligation {
 
 func (p callBoundaryFrame) callFunctionShape() *typ.Function {
 	return p.site.functionShape()
-}
-
-func (p callBoundaryFrame) paramNarrows() []transfer.ParamNarrow {
-	d := p.typer.d
-	if d == nil || d.activeProgram == nil || p.site.call == nil {
-		return nil
-	}
-	prog := d.activeProgram
-	return (canonicalcall.ParamNarrowProjection{
-		Call: p.site.call,
-		SummaryNarrows: func(call *ast.FuncCallExpr) ([]paramevidence.ParamNarrow, bool) {
-			ref, ok := p.typer.resolveCalleeRef(call, prog)
-			if !ok {
-				return nil, false
-			}
-			return d.summaryReader().ParamNarrows(ref), true
-		},
-		Resolver: p.typer.callTypeResolver(nil),
-	}).Narrows()
 }
 
 func (p callBoundaryFrame) returnPostconditions() paramevidence.ReturnPostconditions {
@@ -277,7 +257,6 @@ func (p callBoundaryFrame) boundaryEvidence(cellEffects summary.CellEffectAggreg
 		CellEffects:          cellEffects,
 		ArgDemands:           p.callArgDemands(),
 		Postconditions:       p.returnPostconditions(),
-		ParamNarrows:         p.paramNarrows(),
 		HasNoReturn: func(ref summary.FuncRef) bool {
 			return p.typer.d.activeProgram.facts.HasNoReturn(ref)
 		},

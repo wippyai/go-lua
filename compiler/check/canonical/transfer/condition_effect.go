@@ -47,7 +47,8 @@ func (t *Transfer) applyConditionEffectWithOwnership(
 		SymbolValue: func(sym cfg.SymbolID) (product.AbstractValue, bool) {
 			return t.symbolValue(out, sym)
 		},
-		Resolver: fieldResolver,
+		Resolver:    fieldResolver,
+		ResolveType: t.resolveTypeKey,
 		ProductBase: func(sym cfg.SymbolID) flow.ProductConditionBase {
 			av, hasValue := t.symbolValue(out, sym)
 			base, hasBase := t.narrowBase(sym, av, false)

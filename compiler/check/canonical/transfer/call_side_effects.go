@@ -19,9 +19,9 @@ import (
 // additionally prune no-return callees and instantiate callee-proven parameter
 // postconditions.
 type ProductCallBoundaryApplication struct {
-	Point             cfg.Point
-	PruneNoReturn     bool
-	ApplyParamNarrows bool
+	Point               cfg.Point
+	PruneNoReturn       bool
+	ApplyPostconditions bool
 }
 
 func (t *Transfer) applyProductCallBoundary(
@@ -37,8 +37,8 @@ func (t *Transfer) applyProductCallBoundary(
 	}
 	t.applyCallArgDemands(out, call, result.ArgDemands, demand)
 	t.applyCallResultEffects(out, app.Point, call, ctx, result.Effects, demand)
-	if app.ApplyParamNarrows && (result.Postconditions.HasConstraints() || len(result.ParamNarrows) > 0) {
-		return t.applyParamEvidenceAtPoint(out, app.Point, call, result.Postconditions, result.ParamNarrows)
+	if app.ApplyPostconditions && result.Postconditions.HasConstraints() {
+		return t.ApplyReturnPostconditionsAtPoint(out, app.Point, call, result.Postconditions)
 	}
 	return false
 }

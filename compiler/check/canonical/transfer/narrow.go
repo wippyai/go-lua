@@ -1411,7 +1411,7 @@ func (t *Transfer) conditionAuthorizesCurrentSeed(point cfg.Point, out *flow.Poi
 	seedPath := constraint.Path{Symbol: sym}
 	projectedType := flow.ConditionProofProjector{
 		Resolver:    fieldResolver,
-		ResolveType: conditionProofTypeKey,
+		ResolveType: t.resolveTypeKey,
 		ConditionAt: func(cfg.Point) constraint.Condition { return out.Cond },
 	}.ConditionedSeedTypeAt(point, seedPath, seedType, seedPath, constraint.TrueCondition())
 	if typ.IsAbsentOrUnknown(projectedType) || typ.IsNever(projectedType) {
@@ -1424,15 +1424,18 @@ func (t *Transfer) conditionAuthorizesCurrentSeed(point cfg.Point, out *flow.Poi
 	return projected.Covers(live)
 }
 
-func conditionProofTypeKey(key narrow.TypeKey) typ.Type {
-	if key.Kind != narrow.TypeKeyBuiltin {
+func (t *Transfer) resolveTypeKey(key narrow.TypeKey) typ.Type {
+	if key.Kind == narrow.TypeKeyBuiltin {
+		builtin, ok := key.BuiltinKind()
+		if !ok {
+			return nil
+		}
+		return narrow.TypeForKind(builtin)
+	}
+	if t == nil || t.typeKey == nil {
 		return nil
 	}
-	builtin, ok := key.BuiltinKind()
-	if !ok {
-		return nil
-	}
-	return narrow.TypeForKind(builtin)
+	return t.typeKey(key)
 }
 
 func (t *Transfer) narrowGuardedIndexPresence(out flow.PointState, info *cfg.BranchInfo, check cfg.CondCheckKind) flow.PointState {
@@ -3520,7 +3523,8 @@ func (t *Transfer) paramEffectFromCondition(cond ast.Expr, _ bool) (ParamNarrow,
 // x ~= nil then error() end`) proves the argument nil, which both narrows the
 // argument to nil and -- when the argument is a recorded multi-return error symbol --
 // strips nil from its correlated value siblings (the call-site form of the (value,
-// err) inverse correlation, applied by ApplyParamNarrows/applySiblingNilForErr).
+// err) inverse correlation, applied by return postcondition replay and
+// applySiblingNilForErr.
 func (t *Transfer) toParamEffect(sym cfg.SymbolID, segs []constraint.Segment, check cfg.CondCheckKind, key narrow.TypeKey) (ParamNarrow, bool) {
 	param, isParam := t.params.Lookup(sym)
 	if !isParam {
@@ -3781,76 +3785,142 @@ func dominatesExit(g *cfg.Graph, q cfg.Point) bool {
 	return true
 }
 
-// ApplyParamNarrows refines the call arguments in out by the callee's parameter
-// narrowing effects: an effect on parameter i narrows the i-th argument's value
-// (along its field path) by the proven check, and materializes the same proof in
-// PointState.Cond through ConditionEffect. It applies only to an identifier or
-// field-path argument whose root the flow tracks, so a wrapper call `check(y)`
-// narrows `y` exactly as the wrapper's body proved its parameter. An argument the
-// flow does not track, or an effect with no matching argument, is left unchanged.
-// It reports dead when a callee-proven postcondition cannot hold for the current
-// argument value; the call continuation is then unreachable, like a failed assert.
-func (t *Transfer) ApplyParamNarrows(out *flow.PointState, call *ast.FuncCallExpr, effects []ParamNarrow) (dead bool) {
-	return t.ApplyParamNarrowsAtPoint(out, 0, call, effects)
+// ApplyReturnPostconditions instantiates a callee's portable normal-return proof
+// at a call continuation. ReturnPostconditions are the only cross-boundary
+// carrier: transfer-local ParamNarrow effects must have been lowered before they
+// reach this API.
+func (t *Transfer) ApplyReturnPostconditions(out *flow.PointState, call *ast.FuncCallExpr, post paramevidence.ReturnPostconditions) (dead bool) {
+	return t.ApplyReturnPostconditionsAtPoint(out, 0, call, post)
 }
 
-func (t *Transfer) ApplyParamNarrowsAtPoint(out *flow.PointState, point cfg.Point, call *ast.FuncCallExpr, effects []ParamNarrow) (dead bool) {
-	return t.applyParamEvidenceAtPoint(out, point, call, paramevidence.ReturnPostconditionsFromParamNarrows(effects), effects)
-}
-
-func (t *Transfer) applyParamEvidenceAtPoint(out *flow.PointState, point cfg.Point, call *ast.FuncCallExpr, post paramevidence.ReturnPostconditions, effects []ParamNarrow) (dead bool) {
-	if call == nil || len(effects) == 0 {
-		if call != nil && post.HasConstraints() {
-			t.applyConditionEffect(out, ConditionEffect{Fact: post.Substitute(t.callArgumentPostconditionPaths(point, call))})
-		}
+func (t *Transfer) ApplyReturnPostconditionsAtPoint(out *flow.PointState, point cfg.Point, call *ast.FuncCallExpr, post paramevidence.ReturnPostconditions) (dead bool) {
+	if call == nil || !post.HasConstraints() {
 		return false
 	}
 	if post.HasConstraints() {
 		t.applyConditionEffect(out, ConditionEffect{Fact: post.Substitute(t.callArgumentPostconditionPaths(point, call))})
 	}
-	for _, e := range effects {
-		if e.Param < 0 || e.Param >= len(call.Args) {
-			continue
-		}
-		if e.IsParamEquality() {
-			t.applyParamEqNarrow(out, point, call, e)
-			continue
-		}
-		if e.IsParamInequality() {
-			t.applyParamNeqNarrow(out, point, call, e)
-			continue
-		}
-		if e.CastType != nil {
-			t.applyParamCastNarrow(out, call.Args[e.Param], e.CastType)
-			continue
-		}
-		if e.CondArg {
-			t.applyParamCondNarrowAtPoint(out, point, call.Args[e.Param], e.Check)
-			continue
-		}
-		argSym, argSegs, ok := t.pathSymbol(call.Args[e.Param])
-		if !ok {
-			continue
-		}
-		segs := append(append([]constraint.Segment{}, argSegs...), e.Segments...)
-		if !e.TypeKey.IsZero() {
-			if t.narrowAssertTypePath(out, argSym, segs, e.Check, e.TypeKey) {
-				return true
-			}
-			continue
-		}
-		if t.narrowAssertPath(out, argSym, segs, e.Check) {
+	if out != nil && flow.PointStateDomain.Equal(*out, flow.PointStateDomain.Bottom()) {
+		return true
+	}
+	for _, c := range post.Condition().MustConstraints() {
+		if t.applyReturnPostconditionConstraint(out, point, call, c) {
 			return true
 		}
-		// When the narrowed argument is a recorded multi-return error symbol proven nil
-		// (a `test.is_nil(err)` wrapper that errors unless err is nil), its correlated
-		// value siblings are non-nil, so strip nil from them — the same correlation a
-		// branch `if err ~= nil then ... end` triggers, here proven by the wrapper call.
-		if len(segs) == 0 && (e.Check == cfg.CheckNil || e.Check == cfg.CheckFalsy) {
+	}
+	return false
+}
+
+func (t *Transfer) applyReturnPostconditionConstraint(out *flow.PointState, point cfg.Point, call *ast.FuncCallExpr, c constraint.Constraint) (dead bool) {
+	if relation, ok := constraint.DirectPathRelation(c); ok {
+		return t.applyReturnPostconditionRelation(out, point, call, relation)
+	}
+	predicate, ok := constraint.SinglePathPredicate(c)
+	if !ok {
+		return false
+	}
+	return t.applyReturnPostconditionPredicate(out, point, call, predicate)
+}
+
+func (t *Transfer) applyReturnPostconditionRelation(out *flow.PointState, point cfg.Point, call *ast.FuncCallExpr, relation constraint.PathRelation) (dead bool) {
+	left, ok := placeholderArgument(relation.Left, call)
+	if !ok || len(relation.Left.Segments) != 0 {
+		return false
+	}
+	right, ok := placeholderArgument(relation.Right, call)
+	if !ok || len(relation.Right.Segments) != 0 {
+		return false
+	}
+	equality, ok := relation.IsEquality()
+	if !ok {
+		return false
+	}
+	if equality {
+		t.applyArgumentEqualityProof(out, point, left, right)
+		t.applyArgumentValueIntersection(out, left, right)
+		return false
+	}
+	t.applyArgumentInequalityProof(out, point, left, right)
+	return false
+}
+
+func (t *Transfer) applyReturnPostconditionPredicate(out *flow.PointState, point cfg.Point, call *ast.FuncCallExpr, predicate constraint.PathPredicate) (dead bool) {
+	arg, ok := placeholderArgument(predicate.Path, call)
+	if !ok {
+		return false
+	}
+	if len(predicate.Path.Segments) == 0 {
+		if check, ok := conditionArgumentCheckFromPathPredicate(predicate); ok {
+			t.applyParamCondNarrowAtPoint(out, point, arg, check)
+			if out != nil && flow.PointStateDomain.Equal(*out, flow.PointStateDomain.Bottom()) {
+				return true
+			}
+		}
+	}
+	argSym, argSegs, ok := t.pathSymbol(arg)
+	if !ok {
+		return false
+	}
+	segs := append(append([]constraint.Segment{}, argSegs...), predicate.Path.Segments...)
+	switch predicate.Kind {
+	case constraint.PathPredicateHasType, constraint.PathPredicateNotHasType:
+		check := cfg.CheckTypeEqual
+		if predicate.Kind == constraint.PathPredicateNotHasType {
+			check = cfg.CheckTypeNot
+		}
+		if t.narrowAssertTypePath(out, argSym, segs, check, predicate.Type) {
+			return true
+		}
+	case constraint.PathPredicateIsNil, constraint.PathPredicateFalsy, constraint.PathPredicateNotNil, constraint.PathPredicateTruthy:
+		check, ok := conditionCheckFromPathPredicate(predicate)
+		if !ok {
+			return false
+		}
+		if t.narrowAssertPath(out, argSym, segs, check) {
+			return true
+		}
+		if len(segs) == 0 && (check == cfg.CheckNil || check == cfg.CheckFalsy) {
 			t.applySiblingNilForErr(out, argSym)
 		}
 	}
 	return false
+}
+
+func placeholderArgument(path constraint.Path, call *ast.FuncCallExpr) (ast.Expr, bool) {
+	if call == nil {
+		return nil, false
+	}
+	idx := path.PlaceholderIndex()
+	if idx < 0 || idx >= len(call.Args) {
+		return nil, false
+	}
+	return call.Args[idx], call.Args[idx] != nil
+}
+
+func conditionArgumentCheckFromPathPredicate(predicate constraint.PathPredicate) (cfg.CondCheckKind, bool) {
+	switch predicate.Kind {
+	case constraint.PathPredicateTruthy:
+		return cfg.CheckTruthy, true
+	case constraint.PathPredicateFalsy:
+		return cfg.CheckFalsy, true
+	default:
+		return cfg.CheckNone, false
+	}
+}
+
+func conditionCheckFromPathPredicate(predicate constraint.PathPredicate) (cfg.CondCheckKind, bool) {
+	switch predicate.Kind {
+	case constraint.PathPredicateTruthy:
+		return cfg.CheckTruthy, true
+	case constraint.PathPredicateFalsy:
+		return cfg.CheckFalsy, true
+	case constraint.PathPredicateIsNil:
+		return cfg.CheckNil, true
+	case constraint.PathPredicateNotNil:
+		return cfg.CheckNotNil, true
+	default:
+		return cfg.CheckNone, false
+	}
 }
 
 // callArgumentPostconditionPaths is the call-site binding for placeholder-rooted
@@ -3925,44 +3995,11 @@ func (t *Transfer) applyParamCondNarrowAtPoint(out *flow.PointState, point cfg.P
 	applyNarrowedEdgeState(out, narrowed)
 }
 
-// applyParamCastNarrow narrows the argument of a forwarded type-cast effect to the
-// asserted type at the call site: the callee's body proved its parameter IS castType
-// on every normal return (a `function expect(x) return T(x) end` wrapper), so the
-// matching argument here provably IS castType too. It rewrites the argument's tracked
-// value (or the field path within it) to castType, the call-site counterpart of
-// applyTypeCastNarrow. An argument the flow does not track is left unchanged.
-func (t *Transfer) applyParamCastNarrow(out *flow.PointState, arg ast.Expr, castType typ.Type) {
-	if castType == nil || typ.IsAbsentOrUnknown(castType) {
-		return
-	}
-	sym, segs, ok := t.pathSymbolInState(out, arg, nil)
-	if !ok || sym == 0 {
-		return
-	}
-	place, ok := staticPlace(sym, segs)
-	if !ok {
-		return
-	}
-	t.applyRefinementEffect(out, RefinementEffect{
-		Place:     place,
-		Kind:      RefinementTypeCast,
-		Target:    castType,
-		PreferEnv: true,
-	})
-}
-
-// applyParamEqNarrow applies a parameter-equality effect at the call site: argument
-// e.Param is narrowed to the intersection of its tracked value with argument
-// e.EqParam's value, the value-domain form of the equality the callee proved (the two
-// parameters are equal on every normal return, so their argument types must overlap).
-// An argument the flow does not track, or an empty intersection, leaves the value
-// unchanged (sound: a precision loss, never a fabricated narrowing).
-func (t *Transfer) applyParamEqNarrow(out *flow.PointState, point cfg.Point, call *ast.FuncCallExpr, e ParamNarrow) {
-	if !e.IsParamEquality() || e.EqParam >= len(call.Args) {
-		return
-	}
-	t.applyArgumentEqualityProof(out, point, call.Args[e.Param], call.Args[e.EqParam])
-	targetSym, segs, ok := t.pathSymbol(call.Args[e.Param])
+// applyArgumentValueIntersection is the value-domain half of a proven argument
+// equality. The condition axis records the relation; this opportunistically
+// narrows a tracked left-hand argument to the overlap with the right-hand value.
+func (t *Transfer) applyArgumentValueIntersection(out *flow.PointState, left, right ast.Expr) {
+	targetSym, segs, ok := t.pathSymbol(left)
 	if !ok || len(segs) != 0 {
 		return
 	}
@@ -3970,7 +4007,7 @@ func (t *Transfer) applyParamEqNarrow(out *flow.PointState, point cfg.Point, cal
 	if !has {
 		return
 	}
-	otherAV, ok := t.evalExpr(out, call.Args[e.EqParam], nil)
+	otherAV, ok := t.evalExpr(out, right, nil)
 	if !ok || otherAV.IsZero() {
 		return
 	}
@@ -3990,14 +4027,14 @@ func (t *Transfer) applyParamEqNarrow(out *flow.PointState, point cfg.Point, cal
 	t.setNarrowedSymbol(out, targetSym, product.FromType(refined))
 }
 
-func (t *Transfer) applyParamNeqNarrow(out *flow.PointState, point cfg.Point, call *ast.FuncCallExpr, e ParamNarrow) {
-	if out == nil || !e.IsParamInequality() || e.EqParam >= len(call.Args) {
+func (t *Transfer) applyArgumentInequalityProof(out *flow.PointState, point cfg.Point, left, right ast.Expr) {
+	if out == nil || left == nil || right == nil {
 		return
 	}
 	rel := &ast.RelationalOpExpr{
-		Lhs:      call.Args[e.Param],
+		Lhs:      left,
 		Operator: "~=",
-		Rhs:      call.Args[e.EqParam],
+		Rhs:      right,
 	}
 	leaf := &cfg.BranchInfo{Condition: rel}
 	narrowed := t.narrowEdgeInner(point, *out, leaf, true, false)

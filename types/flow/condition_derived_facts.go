@@ -22,6 +22,7 @@ type ConditionReducer struct {
 	SymbolValue                 SymbolProductReader
 	ProductBase                 ProductConditionBaseReader
 	Resolver                    narrow.Resolver
+	ResolveType                 narrow.TypeResolver
 }
 
 // ConditionReductions is the flow-owned result of interpreting a condition
@@ -45,10 +46,11 @@ func (q ConditionReducer) Reductions() ConditionReductions {
 		SymbolValue: q.SymbolValue,
 	}.Reductions(q.Fact)...)
 	out.SymbolValues = append(out.SymbolValues, ProductConditionReducer{
-		Fact:     q.Fact,
-		Facts:    PointFactsOfBorrowed(q.State),
-		Resolver: q.Resolver,
-		Base:     q.ProductBase,
+		Fact:        q.Fact,
+		Facts:       PointFactsOfBorrowed(q.State),
+		Resolver:    q.Resolver,
+		ResolveType: q.ResolveType,
+		Base:        q.ProductBase,
 	}.Reductions()...)
 	return out
 }

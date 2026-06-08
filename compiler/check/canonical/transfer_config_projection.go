@@ -7,6 +7,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/check/canonical/transfer"
 	"github.com/wippyai/go-lua/compiler/check/scope"
 	phasecore "github.com/wippyai/go-lua/compiler/check/synth/core"
+	"github.com/wippyai/go-lua/types/narrow"
 	"github.com/wippyai/go-lua/types/typ"
 )
 
@@ -45,12 +46,51 @@ func (p transferConfigProjection) config() transfer.Config {
 		PredicateFacts:    p.program.facts.PredicateFacts(),
 		PredicateGuards:   p.program.facts.PredicateGuards(p.ref),
 		CastType:          p.castType,
+		TypeKey:           p.typeKey,
 		TypeNameValue:     p.typeNameValue,
 	}
 }
 
 func (p transferConfigProjection) castType(expr ast.TypeExpr) typ.Type {
 	return p.driver.resolveType(expr, p.base)
+}
+
+func (p transferConfigProjection) typeKey(key narrow.TypeKey) typ.Type {
+	switch key.Kind {
+	case narrow.TypeKeyBuiltin:
+		if builtinKind, ok := key.BuiltinKind(); ok {
+			return narrow.TypeForKind(builtinKind)
+		}
+	case narrow.TypeKeyHash:
+		return p.typeByHash(key.Hash)
+	}
+	return nil
+}
+
+func (p transferConfigProjection) typeByHash(hash uint64) typ.Type {
+	if hash == 0 || p.base == nil {
+		return nil
+	}
+	var out typ.Type
+	ambiguous := false
+	p.base.RangeTypes(func(_ string, t typ.Type) bool {
+		if ambiguous || t == nil || t.Hash() != hash {
+			return true
+		}
+		if out == nil {
+			out = t
+			return true
+		}
+		if !typ.TypeEquals(out, t) {
+			out = nil
+			ambiguous = true
+		}
+		return true
+	})
+	if ambiguous {
+		return nil
+	}
+	return out
 }
 
 // typeNameValue resolves a bare identifier naming a source `type` used as a
