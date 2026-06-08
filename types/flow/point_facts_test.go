@@ -76,7 +76,10 @@ func TestPointFactsEnvCaptureCellsProjectsAllowedEnvSymbolsOnly(t *testing.T) {
 		Cells: CaptureCellsDomain.Bottom().With(cellSym, product.FromType(typ.Boolean)),
 	}
 
-	cells := PointFactsOf(state).EnvCaptureCells(map[cfg.SymbolID]bool{allowedSym: true, cellSym: true})
+	var allowed cfgSymbolSet
+	allowed.Add(allowedSym)
+	allowed.Add(cellSym)
+	cells := PointFactsOf(state).EnvCaptureCells(allowed)
 	entries := cells.Entries()
 	if len(entries) != 1 {
 		t.Fatalf("EnvCaptureCells entries = %#v, want one allowed Env symbol", entries)

@@ -24,12 +24,16 @@ func (s *cfgSymbolSet) Add(sym cfg.SymbolID) bool {
 	return true
 }
 
-func (s *cfgSymbolSet) Contains(sym cfg.SymbolID) bool {
+func (s cfgSymbolSet) Contains(sym cfg.SymbolID) bool {
 	if sym == 0 || s.seen == nil {
 		return false
 	}
 	_, ok := s.seen[sym]
 	return ok
+}
+
+func (s cfgSymbolSet) Len() int {
+	return len(s.seen)
 }
 
 type cfgSymbolList struct {

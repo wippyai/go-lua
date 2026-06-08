@@ -110,7 +110,7 @@ func projectCaptureReferences(fs state.FunctionState, g *cfg.Graph) flow.Referen
 	if g == nil {
 		return flow.ReferenceContextDomain.Top()
 	}
-	envExports := captureExportSymbols(g)
+	envExports := functionsymbols.OwnedCapturedByNested(g)
 	out := flow.ReferenceContextDomain.Bottom()
 	g.EachReturn(func(p cfg.Point, _ *cfg.ReturnInfo) {
 		ps, ok := fs.Points[p]
@@ -139,18 +139,6 @@ func projectPrototypeSelf(fs state.FunctionState, g *cfg.Graph) flow.PrototypeSe
 		}
 		out = flow.PrototypeSelfDomain.Join(out, ps.PrototypeSelf)
 	})
-	return out
-}
-
-func captureExportSymbols(g *cfg.Graph) map[cfg.SymbolID]bool {
-	syms := functionsymbols.OwnedCapturedByNested(g).Slice()
-	if len(syms) == 0 {
-		return nil
-	}
-	out := make(map[cfg.SymbolID]bool, len(syms))
-	for _, sym := range syms {
-		out[sym] = true
-	}
 	return out
 }
 

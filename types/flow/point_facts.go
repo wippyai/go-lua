@@ -20,6 +20,13 @@ type PointFacts struct {
 	state PointState
 }
 
+// CaptureCellExportRoots is the finite set of Env-backed symbols a boundary may
+// publish as capture cells.
+type CaptureCellExportRoots interface {
+	Contains(cfg.SymbolID) bool
+	Len() int
+}
+
 // CallableSignatureQuery asks the checker-owned callable projector for the
 // signature represented by either a concrete function identity or a runtime
 // value path. State carries the live axes needed to project closure captures.
@@ -123,14 +130,14 @@ func (f PointFacts) EnvSymbolValue(sym cfg.SymbolID) (product.AbstractValue, boo
 // domain for the requested symbols. It deliberately reads only Env entries:
 // existing Cells are already represented on the Cells axis and should be joined
 // by the caller when publishing capture exports.
-func (f PointFacts) EnvCaptureCells(allowed map[cfg.SymbolID]bool) CaptureCells {
-	if len(f.state.Env) == 0 || len(allowed) == 0 {
+func (f PointFacts) EnvCaptureCells(allowed CaptureCellExportRoots) CaptureCells {
+	if len(f.state.Env) == 0 || allowed == nil || allowed.Len() == 0 {
 		return CaptureCellsDomain.Bottom()
 	}
-	entries := make([]CaptureCell, 0, len(allowed))
+	entries := make([]CaptureCell, 0, allowed.Len())
 	for key, av := range f.state.Env {
 		sym, ok := ParseSymbolValueKey(key)
-		if !ok || !allowed[sym] || av.IsZero() {
+		if !ok || !allowed.Contains(sym) || av.IsZero() {
 			continue
 		}
 		entries = append(entries, CaptureCell{Symbol: sym, Value: av})
