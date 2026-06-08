@@ -238,6 +238,10 @@ func constructTop() AbstractValue {
 // shape stays top (`any`), but the presence axis is Present so downstream product
 // consumers can distinguish "unknown but non-nil" from "unknown and maybe nil".
 func PresentDynamic() AbstractValue {
+	return cachedPresentDynamic
+}
+
+func constructPresentDynamic() AbstractValue {
 	return New(
 		shapevalue.Top(),
 		presence.Present(),
@@ -255,6 +259,10 @@ func PresentDynamic() AbstractValue {
 // distinguishes it from a strict declared `any`, so consistency boundaries can
 // admit the former without erasing the latter.
 func GradualAny() AbstractValue {
+	return cachedGradualAny
+}
+
+func constructGradualAny() AbstractValue {
 	return New(
 		shapevalue.Top(),
 		presence.Top(),
@@ -269,6 +277,10 @@ func GradualAny() AbstractValue {
 
 // PresentGradualAny is GradualAny refined by a not-nil/truthy proof.
 func PresentGradualAny() AbstractValue {
+	return cachedPresentGradualAny
+}
+
+func constructPresentGradualAny() AbstractValue {
 	return New(
 		shapevalue.Top(),
 		presence.Present(),
@@ -279,6 +291,12 @@ func PresentGradualAny() AbstractValue {
 		identityrecursion.Top(),
 		evidence.GradualTop(),
 	)
+}
+
+func refreshCachedDynamicAdmissions() {
+	cachedPresentDynamic = constructPresentDynamic()
+	cachedGradualAny = constructGradualAny()
+	cachedPresentGradualAny = constructPresentGradualAny()
 }
 
 // presentRefinementFromType admits a type after a control-flow proof has removed

@@ -55,6 +55,27 @@ func TestInterningIdentity(t *testing.T) {
 	}
 }
 
+func TestDynamicAdmissionsUseCanonicalSingletons(t *testing.T) {
+	if PresentDynamic().n != PresentDynamic().n {
+		t.Fatal("PresentDynamic must reuse one canonical node")
+	}
+	if !PresentDynamic().DefinitelyPresent() {
+		t.Fatalf("PresentDynamic presence = %s, want present", PresentDynamic().Presence())
+	}
+	if GradualAny().n != GradualAny().n {
+		t.Fatal("GradualAny must reuse one canonical node")
+	}
+	if !GradualAny().IsGradualTop() {
+		t.Fatalf("GradualAny evidence = %s, want gradual top", GradualAny().Evidence())
+	}
+	if PresentGradualAny().n != PresentGradualAny().n {
+		t.Fatal("PresentGradualAny must reuse one canonical node")
+	}
+	if !PresentGradualAny().DefinitelyPresent() || !PresentGradualAny().IsGradualTop() {
+		t.Fatalf("PresentGradualAny presence/evidence = %s/%s, want present/gradual top", PresentGradualAny().Presence(), PresentGradualAny().Evidence())
+	}
+}
+
 // TestEqualImpliesEqualHash is the load-bearing invariant for the db red-green
 // firewall: Equal values must hash identically, even when constructed differently.
 func TestEqualImpliesEqualHash(t *testing.T) {

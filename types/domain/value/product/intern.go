@@ -48,6 +48,10 @@ var (
 	cachedAny     AbstractValue
 	cachedUnknown AbstractValue
 	cachedNever   AbstractValue
+
+	cachedPresentDynamic    AbstractValue
+	cachedGradualAny        AbstractValue
+	cachedPresentGradualAny AbstractValue
 )
 
 func init() {
@@ -58,6 +62,7 @@ func refreshCachedExtrema() {
 	cachedBottom = constructBottom()
 	cachedTop = constructTop()
 	refreshCachedTypeAdmissions()
+	refreshCachedDynamicAdmissions()
 }
 
 // ResetCanonicalInterner clears the package-level product-value interner.
