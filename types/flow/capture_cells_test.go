@@ -1,6 +1,7 @@
 package flow
 
 import (
+	"reflect"
 	"testing"
 
 	"github.com/wippyai/go-lua/types/cfg"
@@ -49,6 +50,33 @@ func TestCaptureCellsCanonicalization(t *testing.T) {
 	want := product.Domain.Join(product.FromType(typ.String), product.FromType(typ.Number))
 	if !product.Domain.Equal(entries[0].Value, want) {
 		t.Fatalf("merged value = %s, want %s", entries[0].Value.ProjectValue(), want.ProjectValue())
+	}
+}
+
+func TestCaptureCellsJoinBottomNormalizesCanonicalCellsWithoutCopy(t *testing.T) {
+	canonical := CaptureCellsOf([]CaptureCell{
+		{Symbol: 1, Value: product.FromType(typ.Number)},
+		{Symbol: 2, Value: product.FromType(typ.String)},
+	})
+
+	got := CaptureCellsDomain.Join(canonical, CaptureCellsDomain.Bottom())
+	if !CaptureCellsDomain.Equal(got, canonical) {
+		t.Fatalf("Join(canonical, Bottom) = %s, want %s", got.Format(), canonical.Format())
+	}
+	if reflect.ValueOf(got.entries).Pointer() != reflect.ValueOf(canonical.entries).Pointer() {
+		t.Fatalf("Join(canonical, Bottom) copied already canonical capture cells")
+	}
+
+	withBottom := CaptureCells{entries: []CaptureCell{
+		{Symbol: 1, Value: product.Domain.Bottom()},
+		{Symbol: 2, Value: product.FromType(typ.String)},
+	}}
+	normalized := CaptureCellsDomain.Join(withBottom, CaptureCellsDomain.Bottom())
+	if _, ok := normalized.Value(1); ok {
+		t.Fatalf("Join(with explicit bottom, Bottom) retained bottom cell: %s", normalized.Format())
+	}
+	if v, ok := normalized.Value(2); !ok || !product.Domain.Equal(v, product.FromType(typ.String)) {
+		t.Fatalf("Join(with explicit bottom, Bottom) lost live cell: %s", normalized.Format())
 	}
 }
 

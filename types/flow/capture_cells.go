@@ -382,6 +382,12 @@ var CaptureCellsDomain = lattice.Lattice[CaptureCells]{
 		if a.top || b.top {
 			return CaptureCellsTop()
 		}
+		if len(a.entries) == 0 {
+			return canonicalCaptureCellsValue(b)
+		}
+		if len(b.entries) == 0 {
+			return canonicalCaptureCellsValue(a)
+		}
 		return combineCaptureCells(a, b, product.Domain.Join)
 	},
 	Meet: nil,
@@ -432,6 +438,24 @@ func canonicalCaptureCells(entries []CaptureCell, merge func(product.AbstractVal
 		dst = append(dst, e)
 	}
 	return CaptureCells{entries: append([]CaptureCell(nil), dst...)}
+}
+
+func canonicalCaptureCellsValue(c CaptureCells) CaptureCells {
+	if c.top {
+		return CaptureCellsTop()
+	}
+	if len(c.entries) == 0 {
+		return CaptureCells{}
+	}
+	for i, entry := range c.entries {
+		if entry.Symbol == 0 || valueIsBottom(entry.Value) {
+			return canonicalCaptureCells(c.entries, product.Domain.Join)
+		}
+		if i > 0 && c.entries[i-1].Symbol >= entry.Symbol {
+			return canonicalCaptureCells(c.entries, product.Domain.Join)
+		}
+	}
+	return c
 }
 
 func sortCaptureCells(entries []CaptureCell) {
