@@ -42,7 +42,11 @@ func TestBoundaryFactsPartitionByReturnIndices(t *testing.T) {
 		[]BoundaryAppendKeyFact{{Array: ret0Array, Key: ret1Key}},
 		[]BoundaryLengthLowerBound{{Target: ret1Key, Lower: 1}},
 		[]BoundaryIndexWriteFact{{Table: ret0Table, Key: ret1Key, Value: product.FromType(typ.Number)}},
-	)
+	).WithAppendElementFieldOrigins([]BoundaryAppendElementFieldOriginFact{{
+		Array:  ret0Array,
+		Field:  []constraint.Segment{{Kind: constraint.SegmentField, Name: "child"}},
+		Source: ret1Key,
+	}})
 
 	params, buckets := facts.PartitionByReturnIndices()
 	if len(params.KeyPresence()) != 1 {
@@ -62,6 +66,9 @@ func TestBoundaryFactsPartitionByReturnIndices(t *testing.T) {
 	}
 	if bucket := boundaryBucketForTest(t, buckets, []int{0, 1}); len(bucket.Facts().AppendKeys()) != 1 {
 		t.Fatalf("bucket [0,1] = %#v, want append-key fact", bucket.Facts())
+	}
+	if bucket := boundaryBucketForTest(t, buckets, []int{0, 1}); len(bucket.Facts().AppendElementFieldOrigins()) != 1 {
+		t.Fatalf("bucket [0,1] = %#v, want append-element-field origin", bucket.Facts())
 	}
 }
 

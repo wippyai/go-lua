@@ -174,37 +174,7 @@ func (t *Transfer) appendBoundaryFactPostconditions(
 	if !facts.HasProof() {
 		return
 	}
-	returns := make(map[int]constraint.Path)
-	for _, fact := range facts.KeyPresence() {
-		t.collectBoundaryReturnPath(info, callInfo, fact.Table, returns)
-		t.collectBoundaryReturnPath(info, callInfo, fact.Key, returns)
-	}
-	for _, fact := range facts.KeyArrays() {
-		t.collectBoundaryReturnPath(info, callInfo, fact.Array, returns)
-		t.collectBoundaryReturnPath(info, callInfo, fact.Table, returns)
-	}
-	for _, fact := range facts.KeyArrayValues() {
-		t.collectBoundaryReturnPath(info, callInfo, fact.Array, returns)
-		t.collectBoundaryReturnPath(info, callInfo, fact.Table, returns)
-	}
-	for _, fact := range facts.AppendKeys() {
-		t.collectBoundaryReturnPath(info, callInfo, fact.Array, returns)
-		t.collectBoundaryReturnPath(info, callInfo, fact.Key, returns)
-		if fact.HasTable {
-			t.collectBoundaryReturnPath(info, callInfo, fact.Table, returns)
-		}
-	}
-	for _, fact := range facts.AppendElementFieldOrigins() {
-		t.collectBoundaryReturnPath(info, callInfo, fact.Array, returns)
-		t.collectBoundaryReturnPath(info, callInfo, fact.Source, returns)
-	}
-	for _, fact := range facts.LengthLowerBounds() {
-		t.collectBoundaryReturnPath(info, callInfo, fact.Target, returns)
-	}
-	for _, fact := range facts.IndexWrites() {
-		t.collectBoundaryReturnPath(info, callInfo, fact.Table, returns)
-		t.collectBoundaryReturnPath(info, callInfo, fact.Key, returns)
-	}
+	returns := t.boundaryReturnPaths(info, callInfo, facts)
 	effects.boundaryFacts = append(effects.boundaryFacts, boundaryFactPostcondition{
 		call:        callInfo.Call,
 		facts:       facts,
@@ -213,19 +183,37 @@ func (t *Transfer) appendBoundaryFactPostconditions(
 	})
 }
 
-func (t *Transfer) collectBoundaryReturnPath(
+func (t *Transfer) boundaryReturnPaths(
 	info *cfg.AssignInfo,
 	callInfo *cfg.CallInfo,
-	path flow.BoundaryPath,
+	facts flow.BoundaryFacts,
+) map[int]constraint.Path {
+	_, buckets := facts.PartitionByReturnIndices()
+	if len(buckets) == 0 {
+		return nil
+	}
+	out := make(map[int]constraint.Path)
+	for _, bucket := range buckets {
+		for _, index := range bucket.Indices() {
+			t.collectBoundaryReturnIndex(info, callInfo, index, out)
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+func (t *Transfer) collectBoundaryReturnIndex(
+	info *cfg.AssignInfo,
+	callInfo *cfg.CallInfo,
+	index int,
 	out map[int]constraint.Path,
 ) {
-	if path.Kind != flow.BoundaryPathReturn {
+	if _, ok := out[index]; ok {
 		return
 	}
-	if _, ok := out[path.Index]; ok {
-		return
-	}
-	target, ok := assignmentTargetForReturn(info, callInfo, path.Index)
+	target, ok := assignmentTargetForReturn(info, callInfo, index)
 	if !ok {
 		return
 	}
@@ -233,7 +221,7 @@ func (t *Transfer) collectBoundaryReturnPath(
 	if !ok || targetPath.IsEmpty() {
 		return
 	}
-	out[path.Index] = targetPath
+	out[index] = targetPath
 }
 
 func (t *Transfer) appendLengthParamPostconditions(
