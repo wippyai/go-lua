@@ -220,6 +220,30 @@ func TestAppendElementFieldSegmentsUsesFieldRelativeVocabulary(t *testing.T) {
 	}
 }
 
+func TestAppendElementFieldOriginsForBaseSetsReusesCoveredRows(t *testing.T) {
+	array := SymbolPathKey(cfg.SymbolID(41), nil)
+	source := SymbolPathKey(cfg.SymbolID(42), nil)
+	origin := AppendElementFieldOriginFact{
+		Array:  array,
+		Field:  AppendElementFieldPathKey([]constraint.Segment{{Kind: constraint.SegmentField, Name: "id"}}),
+		Source: source,
+	}
+	rows := []AppendElementFieldOriginFact{origin}
+	bases := []AppendHistoryBaseFact{{Array: array}}
+
+	got := appendElementFieldOriginsForBaseSets(rows, rows, bases)
+	if len(got) != 1 || got[0] != origin {
+		t.Fatalf("covered rows = %#v, want origin", got)
+	}
+	if len(got) > 0 && &got[0] != &rows[0] {
+		t.Fatalf("covered canonical rows were copied instead of reused")
+	}
+
+	if filtered := appendElementFieldOriginsForBaseSets(rows, nil, nil); len(filtered) != 0 {
+		t.Fatalf("uncovered rows survived without base proof: %#v", filtered)
+	}
+}
+
 func TestAppendElementFieldSourceAddressesIgnoreLegacyStoredSource(t *testing.T) {
 	arrayPath := constraint.NewPath(cfg.SymbolID(130), "routes")
 	sourcePath := constraint.NewPath(cfg.SymbolID(131), "op")

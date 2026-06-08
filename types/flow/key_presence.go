@@ -2414,21 +2414,44 @@ func appendElementFieldOriginsForBaseSets(
 	if (len(left) == 0 && len(right) == 0) || len(bases) == 0 {
 		return nil
 	}
+	if len(right) == 0 && appendElementFieldOriginsCoveredByBases(left, bases) {
+		return left
+	}
+	if len(left) == 0 && appendElementFieldOriginsCoveredByBases(right, bases) {
+		return right
+	}
+	if appendElementFieldOriginRowIdentity.Equal(left, right) &&
+		appendElementFieldOriginsCoveredByBases(left, bases) {
+		return left
+	}
 	return appendElementFieldOriginRowIdentity.Union(left, right, func(origin AppendElementFieldOriginFact) (AppendElementFieldOriginFact, bool) {
-		if origin.Array == "" || origin.Field == "" || origin.Source == "" {
-			return AppendElementFieldOriginFact{}, false
-		}
-		if origin.SourceField != "" && !appendElementFieldPathKeyHasSegments(origin.SourceField) {
-			return AppendElementFieldOriginFact{}, false
-		}
-		if _, ok := findAppendHistoryBaseFact(bases, AppendHistoryBaseFact{Array: origin.Array}); !ok {
-			return AppendElementFieldOriginFact{}, false
-		}
-		if !appendElementFieldPathKeyHasSegments(origin.Field) {
+		if !appendElementFieldOriginCoveredByBases(origin, bases) {
 			return AppendElementFieldOriginFact{}, false
 		}
 		return origin, true
 	})
+}
+
+func appendElementFieldOriginsCoveredByBases(origins []AppendElementFieldOriginFact, bases []AppendHistoryBaseFact) bool {
+	for _, origin := range origins {
+		if !appendElementFieldOriginCoveredByBases(origin, bases) {
+			return false
+		}
+	}
+	return true
+}
+
+func appendElementFieldOriginCoveredByBases(origin AppendElementFieldOriginFact, bases []AppendHistoryBaseFact) bool {
+	if origin.Array == "" || origin.Field == "" || origin.Source == "" {
+		return false
+	}
+	if origin.SourceField != "" && !appendElementFieldPathKeyHasSegments(origin.SourceField) {
+		return false
+	}
+	if _, ok := findAppendHistoryBaseFact(bases, AppendHistoryBaseFact{Array: origin.Array}); !ok {
+		return false
+	}
+	return appendElementFieldPathKeyHasSegments(origin.Field)
 }
 
 func appendElementFieldOriginOverlapsMember(fact AppendElementFieldOriginFact, member []constraint.Segment) bool {
