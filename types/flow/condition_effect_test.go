@@ -48,11 +48,11 @@ func TestForgetConditionAffectedByWriteRemovesDescendantConstraints(t *testing.T
 		t.Fatalf("write invalidation dropped all constraints: %v", out.Cond)
 	}
 	for _, c := range out.Cond.MustConstraints() {
-		if conditionConstraintAffectedByWrite(c, parent) {
+		if constraint.ConstraintAffectedByWrite(c, parent) {
 			t.Fatalf("write invalidation kept affected constraint %#v in %v", c, out.Cond)
 		}
 	}
-	if conditionPathAffectedByWrite(other, parent) {
+	if constraint.PathAffectedByWrite(other, parent) {
 		t.Fatal("test setup invalid: unrelated path considered affected")
 	}
 }

@@ -412,20 +412,25 @@ func versionedDemandKey(stripped constraint.PathKey, sym cfg.SymbolID, ver int) 
 // path keeps the literal, so projection can never unsoundly narrow a downstream
 // query. Reassignment kill is handled separately by KillRedefinedConditions.
 func literalLive(live *liveSets, p cfg.Point, lit constraint.Constraint, out bool) bool {
-	paths := constraint.SemanticAffectedPaths(lit)
-	if len(paths) == 0 {
-		return true
-	}
-	for _, path := range paths {
+	visited := false
+	isLive := false
+	constraint.VisitSemanticAffectedPaths(lit, func(path constraint.Path) bool {
+		visited = true
 		if path.Symbol == 0 {
 			// A placeholder/unresolved referenced path is conservatively live.
+			isLive = true
 			return true
 		}
 		if live.fieldPathLive(p, path, out) {
+			isLive = true
 			return true
 		}
+		return false
+	})
+	if !visited {
+		return true
 	}
-	return false
+	return isLive
 }
 
 func sameDemandSet(a, b map[pathDemandKey]struct{}) bool {

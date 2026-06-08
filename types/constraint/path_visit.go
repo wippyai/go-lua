@@ -1,6 +1,7 @@
 package constraint
 
 import (
+	"github.com/wippyai/go-lua/types/cfg"
 	"github.com/wippyai/go-lua/types/kind"
 	"github.com/wippyai/go-lua/types/typ"
 )
@@ -133,62 +134,195 @@ func visitParentFieldPath(path Path, fn func(Path) bool) bool {
 //
 // The returned slice is read-only.
 func SemanticAffectedPaths(c Constraint) []Path {
+	var out []Path
+	VisitSemanticAffectedPaths(c, func(path Path) bool {
+		out = append(out, path)
+		return false
+	})
+	return out
+}
+
+// VisitSemanticAffectedPaths calls fn for each semantic access path c reads.
+// It is the canonical, allocation-light form of SemanticAffectedPaths for
+// consumers that need membership, liveness, or write invalidation instead of a
+// materialized path slice.
+func VisitSemanticAffectedPaths(c Constraint, fn func(Path) bool) bool {
+	if fn == nil {
+		return false
+	}
+	return visitSemanticAffectedPathViews(c, semanticAffectedPathFunc{fn: fn})
+}
+
+type semanticAffectedPathVisitor interface {
+	Path(Path) bool
+	PathWithSegment(Path, Segment) bool
+}
+
+type semanticAffectedPathFunc struct {
+	fn func(Path) bool
+}
+
+func (v semanticAffectedPathFunc) Path(path Path) bool {
+	return v.fn(path)
+}
+
+func (v semanticAffectedPathFunc) PathWithSegment(path Path, seg Segment) bool {
+	return visitPathWithSegment(path, seg, v.fn)
+}
+
+func visitSemanticAffectedPathViews(c Constraint, visitor semanticAffectedPathVisitor) bool {
 	switch v := c.(type) {
 	case Truthy:
-		return []Path{v.Path}
+		return visitor.Path(v.Path)
 	case Falsy:
-		return []Path{v.Path}
+		return visitor.Path(v.Path)
 	case IsNil:
-		return []Path{v.Path}
+		return visitor.Path(v.Path)
 	case NotNil:
-		return []Path{v.Path}
+		return visitor.Path(v.Path)
 	case HasType:
-		return []Path{v.Path}
+		return visitor.Path(v.Path)
 	case NotHasType:
-		return []Path{v.Path}
+		return visitor.Path(v.Path)
 	case HasField:
-		return []Path{v.Path, v.Path.Field(v.Field)}
+		return visitor.Path(v.Path) || visitor.PathWithSegment(v.Path, Segment{Kind: SegmentField, Name: v.Field})
 	case FieldEquals:
-		return []Path{v.Target, v.Target.Field(v.Field)}
+		return visitor.Path(v.Target) || visitor.PathWithSegment(v.Target, Segment{Kind: SegmentField, Name: v.Field})
 	case FieldNotEquals:
-		return []Path{v.Target, v.Target.Field(v.Field)}
+		return visitor.Path(v.Target) || visitor.PathWithSegment(v.Target, Segment{Kind: SegmentField, Name: v.Field})
 	case FieldEqualsPath:
-		return []Path{v.Target, v.Target.Field(v.Field), v.Value}
+		return visitor.Path(v.Target) ||
+			visitor.PathWithSegment(v.Target, Segment{Kind: SegmentField, Name: v.Field}) ||
+			visitor.Path(v.Value)
 	case FieldNotEqualsPath:
-		return []Path{v.Target, v.Target.Field(v.Field), v.Value}
+		return visitor.Path(v.Target) ||
+			visitor.PathWithSegment(v.Target, Segment{Kind: SegmentField, Name: v.Field}) ||
+			visitor.Path(v.Value)
 	case IndexEquals:
 		if seg, ok := indexSegmentForKey(v.Key); ok {
-			return []Path{v.Target, v.Target.Append(seg)}
+			return visitor.Path(v.Target) || visitor.PathWithSegment(v.Target, seg)
 		}
-		return []Path{v.Target}
+		return visitor.Path(v.Target)
 	case IndexNotEquals:
 		if seg, ok := indexSegmentForKey(v.Key); ok {
-			return []Path{v.Target, v.Target.Append(seg)}
+			return visitor.Path(v.Target) || visitor.PathWithSegment(v.Target, seg)
 		}
-		return []Path{v.Target}
+		return visitor.Path(v.Target)
 	case IndexEqualsPath:
 		if seg, ok := indexSegmentForKey(v.Key); ok {
-			return []Path{v.Target, v.Target.Append(seg), v.Value}
+			return visitor.Path(v.Target) || visitor.PathWithSegment(v.Target, seg) || visitor.Path(v.Value)
 		}
-		return []Path{v.Target, v.Value}
+		return visitor.Path(v.Target) || visitor.Path(v.Value)
 	case IndexNotEqualsPath:
 		if seg, ok := indexSegmentForKey(v.Key); ok {
-			return []Path{v.Target, v.Target.Append(seg), v.Value}
+			return visitor.Path(v.Target) || visitor.PathWithSegment(v.Target, seg) || visitor.Path(v.Value)
 		}
-		return []Path{v.Target, v.Value}
+		return visitor.Path(v.Target) || visitor.Path(v.Value)
 	case EqPath:
-		return []Path{v.Left, v.Right}
+		return visitor.Path(v.Left) || visitor.Path(v.Right)
 	case NotEqPath:
-		return []Path{v.Left, v.Right}
+		return visitor.Path(v.Left) || visitor.Path(v.Right)
 	case VariantCaseEquals:
-		return []Path{v.Target}
+		return visitor.Path(v.Target)
 	case VariantCaseNotEquals:
-		return []Path{v.Target}
+		return visitor.Path(v.Target)
 	case KeyOf:
-		return []Path{v.Table, v.Key}
+		return visitor.Path(v.Table) || visitor.Path(v.Key)
 	default:
-		return nil
+		return false
 	}
+}
+
+// ConstraintAffectedByWrite reports whether a write to writePath invalidates
+// any semantic read path of c.
+func ConstraintAffectedByWrite(c Constraint, writePath Path) bool {
+	if writePath.Symbol == 0 {
+		return false
+	}
+	return ConstraintAffectedBySymbolWrite(c, writePath.Symbol, writePath.Segments)
+}
+
+// ConstraintAffectedBySymbolWrite is the AST-free form of
+// ConstraintAffectedByWrite for propagation data that already stores the write
+// target as a symbol plus segment suffix.
+func ConstraintAffectedBySymbolWrite(c Constraint, writeSym cfg.SymbolID, writeSegs []Segment) bool {
+	if writeSym == 0 {
+		return false
+	}
+	return visitSemanticAffectedPathViews(c, semanticWriteAffectedVisitor{sym: writeSym, segs: writeSegs})
+}
+
+type semanticWriteAffectedVisitor struct {
+	sym  cfg.SymbolID
+	segs []Segment
+}
+
+func (v semanticWriteAffectedVisitor) Path(path Path) bool {
+	return PathAffectedBySymbolWrite(path, v.sym, v.segs)
+}
+
+func (v semanticWriteAffectedVisitor) PathWithSegment(path Path, seg Segment) bool {
+	return pathWithSegmentAffectedBySymbolWrite(path, seg, v.sym, v.segs)
+}
+
+// PathAffectedByWrite reports whether writing writePath shadows readPath.
+func PathAffectedByWrite(readPath, writePath Path) bool {
+	if writePath.Symbol == 0 {
+		return false
+	}
+	return PathAffectedBySymbolWrite(readPath, writePath.Symbol, writePath.Segments)
+}
+
+// PathAffectedBySymbolWrite reports whether writing (writeSym, writeSegs)
+// shadows readPath. The assignment must be at or above the read path; sibling
+// and descendant writes do not invalidate the read.
+func PathAffectedBySymbolWrite(readPath Path, writeSym cfg.SymbolID, writeSegs []Segment) bool {
+	if readPath.Symbol == 0 || readPath.Symbol != writeSym {
+		return false
+	}
+	if len(writeSegs) > len(readPath.Segments) {
+		return false
+	}
+	for i := range writeSegs {
+		if writeSegs[i] != readPath.Segments[i] {
+			return false
+		}
+	}
+	return true
+}
+
+// pathWithSegmentAffectedBySymbolWrite matches a semantic read path formed by
+// appending one synthetic segment to base without materializing that child path.
+func pathWithSegmentAffectedBySymbolWrite(base Path, tail Segment, writeSym cfg.SymbolID, writeSegs []Segment) bool {
+	if base.Symbol == 0 || base.Symbol != writeSym {
+		return false
+	}
+	readLen := len(base.Segments) + 1
+	if len(writeSegs) > readLen {
+		return false
+	}
+	for i, seg := range writeSegs {
+		if i < len(base.Segments) {
+			if seg != base.Segments[i] {
+				return false
+			}
+			continue
+		}
+		if seg != tail {
+			return false
+		}
+	}
+	return true
+}
+
+func visitPathWithSegment(path Path, seg Segment, fn func(Path) bool) bool {
+	if path.IsEmpty() {
+		return false
+	}
+	segs := make([]Segment, len(path.Segments)+1)
+	copy(segs, path.Segments)
+	segs[len(path.Segments)] = seg
+	return fn(Path{Root: path.Root, Symbol: path.Symbol, Version: path.Version, Segments: segs})
 }
 
 // indexSegmentForKey converts a literal index Key into a Path Segment, when

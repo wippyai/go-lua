@@ -534,15 +534,9 @@ func KillRedefinedConditions(cond constraint.Condition, p cfg.Point, assignments
 // literalKilledByAssignments returns true if any of the literal's semantic
 // access paths is affected by any assignment at the current point.
 func literalKilledByAssignments(c constraint.Constraint, assigns []Assignment) bool {
-	paths := constraint.SemanticAffectedPaths(c)
-	for _, cpath := range paths {
-		if cpath.Symbol == 0 {
-			continue
-		}
-		for _, ap := range assigns {
-			if PathAffectedByAssignment(cpath, ap.TargetSym, ap.TargetSegs) {
-				return true
-			}
+	for _, ap := range assigns {
+		if constraint.ConstraintAffectedBySymbolWrite(c, ap.TargetSym, ap.TargetSegs) {
+			return true
 		}
 	}
 	return false
@@ -577,23 +571,5 @@ func literalKilledByAssignments(c constraint.Constraint, assigns []Assignment) b
 //   - Assigning to x.foo does NOT affect x          — assignment to a deeper
 //     subpath does not shadow the parent read.
 func PathAffectedByAssignment(cpath constraint.Path, assignSym cfg.SymbolID, assignSegs []constraint.Segment) bool {
-	if cpath.Symbol != assignSym {
-		return false
-	}
-	return segmentsPrefix(assignSegs, cpath.Segments)
-}
-
-// segmentsPrefix reports whether prefix's segments match the first
-// len(prefix) segments of full.
-func segmentsPrefix(prefix, full []constraint.Segment) bool {
-	if len(prefix) > len(full) {
-		return false
-	}
-	for i, seg := range prefix {
-		fseg := full[i]
-		if fseg.Kind != seg.Kind || fseg.Name != seg.Name || fseg.Index != seg.Index {
-			return false
-		}
-	}
-	return true
+	return constraint.PathAffectedBySymbolWrite(cpath, assignSym, assignSegs)
 }
