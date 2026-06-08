@@ -384,43 +384,7 @@ func atomsContainContradiction(atoms []constraint.Atom, equalities *theory.EGrap
 //  2. Union a and b (now Find(a) == Find(b))
 //  3. When Type domain narrows a to string, propagation narrows b to string
 func (d *ProductDomain) buildCongruenceClosure(atoms []constraint.Atom, constraints []constraint.Constraint) {
-	resolve := d.env.ResolvePath
-
-	if resolve != nil {
-		for _, c := range constraints {
-			constraint.VisitPaths(c, func(path constraint.Path) bool {
-				key := resolve(path)
-				if key != "" {
-					d.EGraph.RegisterKey(key)
-				}
-				return false
-			})
-		}
-
-		for _, c := range constraints {
-			if eq, ok := c.(constraint.EqPath); ok {
-				leftKey := resolve(eq.Left)
-				rightKey := resolve(eq.Right)
-				if leftKey != "" && rightKey != "" {
-					d.EGraph.Union(leftKey, rightKey)
-				}
-			}
-		}
-	}
-
-	for _, atom := range atoms {
-		for _, path := range atom.Paths() {
-			if path != "" {
-				d.EGraph.RegisterKey(path)
-			}
-		}
-		if atom.Kind != constraint.AtomKindEq || !atom.Left.IsVar() || !atom.Right.IsVar() {
-			continue
-		}
-		if atom.Left.Path != "" && atom.Right.Path != "" {
-			d.EGraph.Union(atom.Left.Path, atom.Right.Path)
-		}
-	}
+	newConditionPathEvidence(atoms, constraints, d.resolvePathKey).RegisterInto(d.EGraph)
 }
 
 // propagateTypeNarrowingsCC propagates Type domain narrowings across equivalence classes.

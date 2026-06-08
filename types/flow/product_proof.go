@@ -73,34 +73,7 @@ func (p *productSatisfiabilityProof) buildEqualities(atoms []constraint.Atom, co
 	if p.equalities == nil {
 		p.equalities = theory.NewEGraph()
 	}
-	if p.env.ResolvePath != nil {
-		for _, c := range constraints {
-			constraint.VisitPaths(c, func(path constraint.Path) bool {
-				if key := p.resolvePath(path); key != "" {
-					p.equalities.RegisterKey(key)
-				}
-				return false
-			})
-			if eq, ok := c.(constraint.EqPath); ok {
-				left := p.resolvePath(eq.Left)
-				right := p.resolvePath(eq.Right)
-				if left != "" && right != "" {
-					p.equalities.Union(left, right)
-				}
-			}
-		}
-	}
-	for _, atom := range atoms {
-		for _, path := range atom.Paths() {
-			if path != "" {
-				p.equalities.RegisterKey(path)
-			}
-		}
-		if atom.Kind == constraint.AtomKindEq && atom.Left.IsVar() && atom.Right.IsVar() &&
-			atom.Left.Path != "" && atom.Right.Path != "" {
-			p.equalities.Union(atom.Left.Path, atom.Right.Path)
-		}
-	}
+	newConditionPathEvidence(atoms, constraints, p.resolvePath).RegisterInto(p.equalities)
 }
 
 func (p *productSatisfiabilityProof) applyAtom(atom constraint.Atom) bool {
@@ -251,14 +224,7 @@ func (p *productSatisfiabilityProof) propagateEqualityTypes() bool {
 }
 
 func (p *productSatisfiabilityProof) constraintTargetKeys(c constraint.Constraint) []constraint.PathKey {
-	var keys pathKeyList
-	constraint.VisitPaths(c, func(path constraint.Path) bool {
-		if key := p.resolvePath(path); key != "" {
-			keys.Add(key)
-		}
-		return false
-	})
-	return keys.SortedValues()
+	return newConstraintPathEvidence(c, p.resolvePath).Keys()
 }
 
 func (p *productSatisfiabilityProof) typeAt(key constraint.PathKey) typ.Type {
