@@ -27,10 +27,7 @@ func ReferencePathProjectionForGraph(g *cfg.Graph) flow.ReferencePathProjection 
 	for _, stmt := range g.Func().Stmts {
 		c.stmt(stmt)
 	}
-	return flow.ReferencePathProjection{
-		Exact:    c.paths(c.exact),
-		Subtrees: c.paths(c.subtrees),
-	}
+	return flow.NewReferencePathProjection(c.paths(c.exact), c.paths(c.subtrees))
 }
 
 type referencePathCollector struct {

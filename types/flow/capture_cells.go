@@ -288,27 +288,30 @@ type captureCellPathRequest struct {
 
 func captureCellPathRequests(projection ReferencePathProjection) map[cfg.SymbolID]captureCellPathRequest {
 	requests := make(map[cfg.SymbolID]captureCellPathRequest)
-	addPath := func(path constraint.Path) {
-		if path.Symbol == 0 {
+	addAddress := func(addr StableAddress) {
+		sym, ok := addr.Symbol()
+		if !ok || sym == 0 {
 			return
 		}
-		req := requests[path.Symbol]
-		if len(path.Segments) == 0 {
+		segments := addr.suffix.segments
+		req := requests[sym]
+		if len(segments) == 0 {
 			req.full = true
 			req.segments = nil
-			requests[path.Symbol] = req
+			requests[sym] = req
 			return
 		}
-		if !req.full && !captureCellRequestHasSegments(req, path.Segments) {
-			req.segments = append(req.segments, append([]constraint.Segment(nil), path.Segments...))
+		if !req.full && !captureCellRequestHasSegments(req, segments) {
+			req.segments = append(req.segments, segments)
 		}
-		requests[path.Symbol] = req
+		requests[sym] = req
 	}
-	for _, path := range projection.Exact {
-		addPath(path)
+	addresses := projection.addressProjection()
+	for _, addr := range addresses.Exact {
+		addAddress(addr)
 	}
-	for _, path := range projection.Subtrees {
-		addPath(path)
+	for _, addr := range addresses.Subtrees {
+		addAddress(addr)
 	}
 	if len(requests) == 0 {
 		return nil

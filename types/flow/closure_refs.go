@@ -336,7 +336,8 @@ func ProjectClosureRefsByPath(refs ClosureRefs, path constraint.Path) ClosureRef
 // ProjectClosureRefsByReferencePaths is the closure-value counterpart to
 // ProjectFunctionRefsByReferencePaths.
 func ProjectClosureRefsByReferencePaths(refs ClosureRefs, projection ReferencePathProjection) ClosureRefs {
-	if len(projection.Exact) == 0 && len(projection.Subtrees) == 0 {
+	addresses := projection.addressProjection()
+	if addresses.isEmpty() {
 		return ClosureRefsDomain.Bottom()
 	}
 	if isClosureRefsTop(refs) {
@@ -348,7 +349,7 @@ func ProjectClosureRefsByReferencePaths(refs ClosureRefs, projection ReferencePa
 	out := make(ClosureRefs)
 	for _, path := range constraint.SortedPathKeys(refs) {
 		set := refs[path]
-		if set.IsBottom() || !referenceProjectionContainsPath(projection, path) {
+		if set.IsBottom() || !addresses.contains(path) {
 			continue
 		}
 		out[path] = set

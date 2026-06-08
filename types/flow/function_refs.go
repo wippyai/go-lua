@@ -140,8 +140,99 @@ type FunctionRefs = map[constraint.PathKey]FunctionRefSet
 // function/closure identities a callee can observe, without falling back to
 // whole-symbol projection.
 type ReferencePathProjection struct {
-	Exact    []constraint.Path
-	Subtrees []constraint.Path
+	Exact      []constraint.Path
+	Subtrees   []constraint.Path
+	addresses  referenceAddressProjection
+	normalized bool
+}
+
+// referenceAddressProjection is the consumption form of ReferencePathProjection.
+// It is normalized once from source paths so fact carriers can test exact keys
+// and subtrees without repeatedly lowering paths back into stable addresses.
+type referenceAddressProjection struct {
+	ExactKeys []constraint.PathKey
+	Exact     []StableAddress
+	Subtrees  []StableAddress
+}
+
+// NewReferencePathProjection builds a projection from source paths and records
+// its stable-address view. Source paths remain available for compatibility, but
+// flow domains consume the normalized address view.
+func NewReferencePathProjection(exact, subtrees []constraint.Path) ReferencePathProjection {
+	p := ReferencePathProjection{
+		Exact:    cloneReferenceProjectionPaths(exact),
+		Subtrees: cloneReferenceProjectionPaths(subtrees),
+	}
+	p.addresses = referenceAddressProjectionOfPaths(p.Exact, p.Subtrees)
+	p.normalized = true
+	return p
+}
+
+// IsEmpty reports whether projection has no addressable reference vocabulary.
+func (p ReferencePathProjection) IsEmpty() bool {
+	return p.addressProjection().isEmpty()
+}
+
+// addressProjection returns the stable-address consumption view. Projections
+// built through NewReferencePathProjection already carry this view; literal test
+// values are normalized on demand.
+func (p ReferencePathProjection) addressProjection() referenceAddressProjection {
+	if p.normalized {
+		return p.addresses
+	}
+	return referenceAddressProjectionOfPaths(p.Exact, p.Subtrees)
+}
+
+func (p referenceAddressProjection) isEmpty() bool {
+	return len(p.ExactKeys) == 0 && len(p.Subtrees) == 0
+}
+
+func (p referenceAddressProjection) contains(path constraint.PathKey) bool {
+	if path == "" {
+		return false
+	}
+	for _, exact := range p.ExactKeys {
+		if exact == path {
+			return true
+		}
+	}
+	for _, root := range p.Subtrees {
+		if StableAddressKeyHasPrefix(path, root) {
+			return true
+		}
+	}
+	return false
+}
+
+func referenceAddressProjectionOfPaths(exact, subtrees []constraint.Path) referenceAddressProjection {
+	var out referenceAddressProjection
+	for _, path := range exact {
+		addr, ok := StableAddressOfPath(path)
+		if !ok {
+			continue
+		}
+		out.Exact = append(out.Exact, addr)
+		out.ExactKeys = append(out.ExactKeys, addr.Key())
+	}
+	for _, path := range subtrees {
+		addr, ok := StableAddressOfPath(path)
+		if !ok {
+			continue
+		}
+		out.Subtrees = append(out.Subtrees, addr)
+	}
+	return out
+}
+
+func cloneReferenceProjectionPaths(paths []constraint.Path) []constraint.Path {
+	if len(paths) == 0 {
+		return nil
+	}
+	out := make([]constraint.Path, len(paths))
+	for i, path := range paths {
+		out[i] = cloneAddressPath(path)
+	}
+	return out
 }
 
 // FunctionRefsKey is an exact comparable key for a function-identity path map.
@@ -308,7 +399,8 @@ func ProjectFunctionRefsByPath(refs FunctionRefs, path constraint.Path) Function
 // table roots no longer pull every function-valued field into a callee context
 // unless that table escapes as a whole subtree.
 func ProjectFunctionRefsByReferencePaths(refs FunctionRefs, projection ReferencePathProjection) FunctionRefs {
-	if len(projection.Exact) == 0 && len(projection.Subtrees) == 0 {
+	addresses := projection.addressProjection()
+	if addresses.isEmpty() {
 		return FunctionRefsDomain.Bottom()
 	}
 	if FunctionRefsDomain.Equal(refs, FunctionRefsDomain.Top()) {
@@ -320,7 +412,7 @@ func ProjectFunctionRefsByReferencePaths(refs FunctionRefs, projection Reference
 	out := make(FunctionRefs)
 	for _, path := range constraint.SortedPathKeys(refs) {
 		set := refs[path]
-		if set.IsBottom() || !referenceProjectionContainsPath(projection, path) {
+		if set.IsBottom() || !addresses.contains(path) {
 			continue
 		}
 		out[path] = set
@@ -429,24 +521,7 @@ func functionRefPathInAddressSubtree(path constraint.PathKey, root StableAddress
 }
 
 func referenceProjectionContainsPath(projection ReferencePathProjection, path constraint.PathKey) bool {
-	if path == "" {
-		return false
-	}
-	pathAddr, ok := StableAddressFromCanonicalKey(path)
-	if !ok {
-		return false
-	}
-	for _, exact := range projection.Exact {
-		if addr, ok := StableAddressOfPath(exact); ok && pathAddr.Equal(addr) {
-			return true
-		}
-	}
-	for _, root := range projection.Subtrees {
-		if addr, ok := StableAddressOfPath(root); ok && pathAddr.HasPrefix(addr) {
-			return true
-		}
-	}
-	return false
+	return projection.addressProjection().contains(path)
 }
 
 func internFunctionRefsKey(refs FunctionRefs) FunctionRefsKey {
