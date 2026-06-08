@@ -156,22 +156,11 @@ func (u AppendElementFieldOriginUse) SourceAddress() (StableAddress, bool) {
 }
 
 // KeyPresenceFacts is a finite must-set lattice over KeyOf provenance. Bottom is
-// unreachable, Top is the empty fact set, and finite states are sorted
-// table/key, table/key/value, key-array, key-array/value, and delayed key-array
-// facts. Join keeps only facts proven by every predecessor.
+// unreachable, Top is the empty row bundle, and finite states are canonical
+// key-presence row bundles. Join keeps only facts proven by every predecessor.
 type KeyPresenceFacts struct {
-	bottom         bool
-	entries        []KeyPresenceFact
-	values         []KeyValueFact
-	arrays         []KeyArrayFact
-	emptyArrays    []EmptyKeyArrayFact
-	arrayValues    []KeyArrayValueFact
-	appends        []AppendedKeyFact
-	pending        []PendingKeyArrayFact
-	appendBases    []AppendHistoryBaseFact
-	appendEvents   []AppendHistoryEventFact
-	appendCoverage []AppendHistoryCoverageFact
-	appendOrigins  []AppendElementFieldOriginFact
+	bottom bool
+	rows   keyPresenceFactSet
 }
 
 type keyPresenceFactSet struct {
@@ -534,19 +523,7 @@ func (f KeyPresenceFacts) factSet() keyPresenceFactSet {
 	if f.bottom {
 		return keyPresenceFactSet{}
 	}
-	return keyPresenceFactSet{
-		entries:        f.entries,
-		values:         f.values,
-		arrays:         f.arrays,
-		emptyArrays:    f.emptyArrays,
-		arrayValues:    f.arrayValues,
-		appends:        f.appends,
-		pending:        f.pending,
-		appendBases:    f.appendBases,
-		appendEvents:   f.appendEvents,
-		appendCoverage: f.appendCoverage,
-		appendOrigins:  f.appendOrigins,
-	}
+	return f.rows
 }
 
 func (f KeyPresenceFacts) hasFacts() bool {
@@ -561,19 +538,19 @@ func KeyPresenceFactsOf(entries []KeyPresenceFact) KeyPresenceFacts {
 func (f KeyPresenceFacts) IsBottom() bool { return f.bottom }
 
 func (f KeyPresenceFacts) Entries() []KeyPresenceFact {
-	if f.bottom || len(f.entries) == 0 {
+	if f.bottom || len(f.rows.entries) == 0 {
 		return nil
 	}
-	return append([]KeyPresenceFact(nil), f.entries...)
+	return append([]KeyPresenceFact(nil), f.rows.entries...)
 }
 
 // ForEachAddress visits direct table/key-presence facts in normalized address
 // form. Invalid legacy stored keys are ignored at this domain boundary.
 func (f KeyPresenceFacts) ForEachAddress(fn func(table, key StableAddress) bool) {
-	if f.bottom || len(f.entries) == 0 || fn == nil {
+	if f.bottom || len(f.rows.entries) == 0 || fn == nil {
 		return
 	}
-	for _, entry := range f.entries {
+	for _, entry := range f.rows.entries {
 		table, tableOK := StableAddressFromCanonicalKey(entry.Table)
 		key, keyOK := StableAddressFromCanonicalKey(entry.Key)
 		if !tableOK || !keyOK {
@@ -586,10 +563,10 @@ func (f KeyPresenceFacts) ForEachAddress(fn func(table, key StableAddress) bool)
 }
 
 func (f KeyPresenceFacts) Has(table, key constraint.PathKey) bool {
-	if f.bottom || table == "" || key == "" || len(f.entries) == 0 {
+	if f.bottom || table == "" || key == "" || len(f.rows.entries) == 0 {
 		return false
 	}
-	_, ok := findKeyPresenceFact(f.entries, KeyPresenceFact{Table: table, Key: key})
+	_, ok := findKeyPresenceFact(f.rows.entries, KeyPresenceFact{Table: table, Key: key})
 	return ok
 }
 
@@ -659,13 +636,13 @@ func (f KeyPresenceFacts) WithKeyAliasAddress(source StableAddress, target Stabl
 		return f
 	}
 	out := f
-	for _, entry := range f.entries {
+	for _, entry := range f.rows.entries {
 		if entry.Key != sourceKey {
 			continue
 		}
 		out = out.With(entry.Table, targetKey)
 	}
-	for _, entry := range f.values {
+	for _, entry := range f.rows.values {
 		if entry.Key != sourceKey {
 			continue
 		}
@@ -675,10 +652,10 @@ func (f KeyPresenceFacts) WithKeyAliasAddress(source StableAddress, target Stabl
 }
 
 func (f KeyPresenceFacts) HasValue(table, key, value constraint.PathKey) bool {
-	if f.bottom || table == "" || key == "" || value == "" || len(f.values) == 0 {
+	if f.bottom || table == "" || key == "" || value == "" || len(f.rows.values) == 0 {
 		return false
 	}
-	_, ok := findKeyValueFact(f.values, KeyValueFact{Table: table, Key: key, Value: value})
+	_, ok := findKeyValueFact(f.rows.values, KeyValueFact{Table: table, Key: key, Value: value})
 	return ok
 }
 
@@ -709,10 +686,10 @@ func (f KeyPresenceFacts) WithValueAddresses(table, key, value StableAddress) Ke
 }
 
 func (f KeyPresenceFacts) ValueEntries() []KeyValueFact {
-	if f.bottom || len(f.values) == 0 {
+	if f.bottom || len(f.rows.values) == 0 {
 		return nil
 	}
-	return append([]KeyValueFact(nil), f.values...)
+	return append([]KeyValueFact(nil), f.rows.values...)
 }
 
 // coversWithAbsentKeys reports whether f proves every fact in want, treating a
@@ -724,48 +701,49 @@ func (f KeyPresenceFacts) coversWithAbsentKeys(want KeyPresenceFacts, absent add
 	if want.bottom {
 		return false
 	}
-	for _, entry := range want.entries {
+	wantRows := want.factSet()
+	for _, entry := range wantRows.entries {
 		if f.Has(entry.Table, entry.Key) || keyPresenceAbsent(absent, entry.Key) {
 			continue
 		}
 		return false
 	}
-	for _, entry := range want.values {
+	for _, entry := range wantRows.values {
 		if f.HasValue(entry.Table, entry.Key, entry.Value) || keyPresenceAbsent(absent, entry.Key) {
 			continue
 		}
 		return false
 	}
 	return keyArrayFactsContainAllWithEmpty(
-		f.arrays,
-		f.emptyArrays,
-		want.arrays,
+		f.rows.arrays,
+		f.rows.emptyArrays,
+		wantRows.arrays,
 	) && keyArrayValueFactsContainAllWithEmpty(
-		f.arrayValues,
-		f.emptyArrays,
-		want.arrayValues,
+		f.rows.arrayValues,
+		f.rows.emptyArrays,
+		wantRows.arrayValues,
 	) && emptyKeyArrayFactsContainAll(
-		f.emptyArrays,
-		want.emptyArrays,
+		f.rows.emptyArrays,
+		wantRows.emptyArrays,
 	) && appendedKeyFactsContainAll(
-		f.appends,
-		want.appends,
+		f.rows.appends,
+		wantRows.appends,
 	) && pendingKeyArrayFactsContainAll(
-		f.pending,
-		want.pending,
+		f.rows.pending,
+		wantRows.pending,
 	) && appendHistoryBaseFactsContainAllWithEmpty(
-		f.appendBases,
-		f.emptyArrays,
-		want.appendBases,
+		f.rows.appendBases,
+		f.rows.emptyArrays,
+		wantRows.appendBases,
 	) && appendHistoryEventFactsContainAll(
-		want.appendEvents,
-		f.appendEvents,
+		wantRows.appendEvents,
+		f.rows.appendEvents,
 	) && appendHistoryCoverageFactsContainAll(
-		want.appendCoverage,
-		f.appendCoverage,
+		wantRows.appendCoverage,
+		f.rows.appendCoverage,
 	) && appendElementFieldOriginFactsContainAll(
-		want.appendOrigins,
-		f.appendOrigins,
+		wantRows.appendOrigins,
+		f.rows.appendOrigins,
 	)
 }
 
@@ -782,13 +760,14 @@ func (f KeyPresenceFacts) withFactsProvedByAbsentKeys(facts KeyPresenceFacts, ab
 		return f
 	}
 	out := f
-	for _, entry := range facts.entries {
+	factRows := facts.factSet()
+	for _, entry := range factRows.entries {
 		if out.Has(entry.Table, entry.Key) || !keyPresenceAbsent(absent, entry.Key) {
 			continue
 		}
 		out = out.With(entry.Table, entry.Key)
 	}
-	for _, entry := range facts.values {
+	for _, entry := range factRows.values {
 		if out.HasValue(entry.Table, entry.Key, entry.Value) || !keyPresenceAbsent(absent, entry.Key) {
 			continue
 		}
@@ -823,7 +802,7 @@ func (f KeyPresenceFacts) KeyArrayTables(array constraint.PathKey) []constraint.
 		return nil
 	}
 	var out pathKeyList
-	for _, fact := range f.arrays {
+	for _, fact := range f.rows.arrays {
 		if fact.Array == array {
 			out.Add(fact.Table)
 		}
@@ -856,7 +835,7 @@ func (f KeyPresenceFacts) TablesWithKeyAddress(key StableAddress) []KeyPresenceT
 		return nil
 	}
 	var out []KeyPresenceTableAddress
-	for _, entry := range f.entries {
+	for _, entry := range f.rows.entries {
 		if entry.Key != keyKey {
 			continue
 		}
@@ -873,8 +852,8 @@ func (f KeyPresenceFacts) KeyArrayEntries() []KeyArrayFact {
 	if f.bottom {
 		return nil
 	}
-	out := append([]KeyArrayFact(nil), f.arrays...)
-	for _, base := range f.appendBases {
+	out := append([]KeyArrayFact(nil), f.rows.arrays...)
+	for _, base := range f.rows.appendBases {
 		for _, table := range f.appendHistoryCoveredTables(base.Array) {
 			fact := KeyArrayFact{Array: base.Array, Table: table}
 			if _, ok := findKeyArrayFact(out, fact); !ok {
@@ -893,7 +872,7 @@ func (f KeyPresenceFacts) ForEachKeyArrayAddress(fn func(array, table StableAddr
 		return
 	}
 	var emitted map[KeyArrayFact]struct{}
-	for _, entry := range f.arrays {
+	for _, entry := range f.rows.arrays {
 		array, arrayOK := StableAddressFromCanonicalKey(entry.Array)
 		table, tableOK := StableAddressFromCanonicalKey(entry.Table)
 		if !arrayOK || !tableOK {
@@ -902,14 +881,14 @@ func (f KeyPresenceFacts) ForEachKeyArrayAddress(fn func(array, table StableAddr
 		if !fn(array, table) {
 			return
 		}
-		if len(f.appendBases) != 0 {
+		if len(f.rows.appendBases) != 0 {
 			if emitted == nil {
 				emitted = make(map[KeyArrayFact]struct{})
 			}
 			emitted[entry] = struct{}{}
 		}
 	}
-	for _, base := range f.appendBases {
+	for _, base := range f.rows.appendBases {
 		for _, tableKey := range f.appendHistoryCoveredTables(base.Array) {
 			entry := KeyArrayFact{Array: base.Array, Table: tableKey}
 			if _, ok := emitted[entry]; ok {
@@ -958,10 +937,10 @@ func (f KeyPresenceFacts) WithEmptyKeyArrayAddress(array StableAddress) KeyPrese
 }
 
 func (f KeyPresenceFacts) HasEmptyKeyArray(array constraint.PathKey) bool {
-	if f.bottom || array == "" || len(f.emptyArrays) == 0 {
+	if f.bottom || array == "" || len(f.rows.emptyArrays) == 0 {
 		return false
 	}
-	_, ok := findEmptyKeyArrayFact(f.emptyArrays, EmptyKeyArrayFact{Array: array})
+	_, ok := findEmptyKeyArrayFact(f.rows.emptyArrays, EmptyKeyArrayFact{Array: array})
 	return ok
 }
 
@@ -972,10 +951,10 @@ func (f KeyPresenceFacts) HasEmptyKeyArrayAddress(array StableAddress) bool {
 }
 
 func (f KeyPresenceFacts) EmptyKeyArrayEntries() []EmptyKeyArrayFact {
-	if f.bottom || len(f.emptyArrays) == 0 {
+	if f.bottom || len(f.rows.emptyArrays) == 0 {
 		return nil
 	}
-	return append([]EmptyKeyArrayFact(nil), f.emptyArrays...)
+	return append([]EmptyKeyArrayFact(nil), f.rows.emptyArrays...)
 }
 
 func (f KeyPresenceFacts) WithKeyArrayValue(array, table constraint.PathKey, value product.AbstractValue) KeyPresenceFacts {
@@ -1034,8 +1013,8 @@ func (f KeyPresenceFacts) KeyArrayValueEntries() []KeyArrayValueFact {
 	if f.bottom {
 		return nil
 	}
-	out := append([]KeyArrayValueFact(nil), f.arrayValues...)
-	for _, base := range f.appendBases {
+	out := append([]KeyArrayValueFact(nil), f.rows.arrayValues...)
+	for _, base := range f.rows.appendBases {
 		for _, table := range f.appendHistoryCoveredTables(base.Array) {
 			value, ok := f.AppendHistoryCoverageValue(base.Array, table)
 			if !ok || value.IsZero() {
@@ -1059,7 +1038,7 @@ func (f KeyPresenceFacts) ForEachKeyArrayValueAddress(fn func(array, table Stabl
 	if f.bottom || fn == nil {
 		return
 	}
-	for _, entry := range f.arrayValues {
+	for _, entry := range f.rows.arrayValues {
 		array, arrayOK := StableAddressFromCanonicalKey(entry.Array)
 		table, tableOK := StableAddressFromCanonicalKey(entry.Table)
 		if !arrayOK || !tableOK || entry.Value.IsZero() {
@@ -1069,7 +1048,7 @@ func (f KeyPresenceFacts) ForEachKeyArrayValueAddress(fn func(array, table Stabl
 			return
 		}
 	}
-	for _, base := range f.appendBases {
+	for _, base := range f.rows.appendBases {
 		for _, tableKey := range f.appendHistoryCoveredTables(base.Array) {
 			value, ok := f.AppendHistoryCoverageValue(base.Array, tableKey)
 			if !ok || value.IsZero() {
@@ -1109,19 +1088,19 @@ func (f KeyPresenceFacts) WithAppendedKeyAddresses(array, key StableAddress) Key
 }
 
 func (f KeyPresenceFacts) AppendedKeyEntries() []AppendedKeyFact {
-	if f.bottom || len(f.appends) == 0 {
+	if f.bottom || len(f.rows.appends) == 0 {
 		return nil
 	}
-	return append([]AppendedKeyFact(nil), f.appends...)
+	return append([]AppendedKeyFact(nil), f.rows.appends...)
 }
 
 // ForEachAppendedKeyAddress visits appended-key events in normalized address
 // form.
 func (f KeyPresenceFacts) ForEachAppendedKeyAddress(fn func(array, key StableAddress) bool) {
-	if f.bottom || len(f.appends) == 0 || fn == nil {
+	if f.bottom || len(f.rows.appends) == 0 || fn == nil {
 		return
 	}
-	for _, entry := range f.appends {
+	for _, entry := range f.rows.appends {
 		array, arrayOK := StableAddressFromCanonicalKey(entry.Array)
 		key, keyOK := StableAddressFromCanonicalKey(entry.Key)
 		if !arrayOK || !keyOK {
@@ -1164,19 +1143,19 @@ func (f KeyPresenceFacts) WithPendingKeyArrayAddresses(array StableAddress, tabl
 }
 
 func (f KeyPresenceFacts) PendingKeyArrayEntries() []PendingKeyArrayFact {
-	if f.bottom || len(f.pending) == 0 {
+	if f.bottom || len(f.rows.pending) == 0 {
 		return nil
 	}
-	return append([]PendingKeyArrayFact(nil), f.pending...)
+	return append([]PendingKeyArrayFact(nil), f.rows.pending...)
 }
 
 // ForEachPendingKeyArrayAddress visits delayed key-array facts in normalized
 // address form. Facts with an explicit table require that table to decode.
 func (f KeyPresenceFacts) ForEachPendingKeyArrayAddress(fn func(array StableAddress, table StableAddress, hasTable bool, key StableAddress) bool) {
-	if f.bottom || len(f.pending) == 0 || fn == nil {
+	if f.bottom || len(f.rows.pending) == 0 || fn == nil {
 		return
 	}
-	for _, entry := range f.pending {
+	for _, entry := range f.rows.pending {
 		array, arrayOK := StableAddressFromCanonicalKey(entry.Array)
 		key, keyOK := StableAddressFromCanonicalKey(entry.Key)
 		if !arrayOK || !keyOK {
@@ -1199,11 +1178,11 @@ func (f KeyPresenceFacts) ForEachPendingKeyArrayAddress(fn func(array StableAddr
 }
 
 func (f KeyPresenceFacts) PendingKeyArraysFor(table, key constraint.PathKey) []constraint.PathKey {
-	if f.bottom || key == "" || len(f.pending) == 0 {
+	if f.bottom || key == "" || len(f.rows.pending) == 0 {
 		return nil
 	}
 	var out []constraint.PathKey
-	for _, fact := range f.pending {
+	for _, fact := range f.rows.pending {
 		if fact.Key != key {
 			continue
 		}
@@ -1237,10 +1216,10 @@ func (f KeyPresenceFacts) WithAppendHistoryBaseAddress(array StableAddress) KeyP
 }
 
 func (f KeyPresenceFacts) HasAppendHistoryBase(array constraint.PathKey) bool {
-	if f.bottom || array == "" || len(f.appendBases) == 0 {
+	if f.bottom || array == "" || len(f.rows.appendBases) == 0 {
 		return false
 	}
-	_, ok := findAppendHistoryBaseFact(f.appendBases, AppendHistoryBaseFact{Array: array})
+	_, ok := findAppendHistoryBaseFact(f.rows.appendBases, AppendHistoryBaseFact{Array: array})
 	return ok
 }
 
@@ -1257,7 +1236,7 @@ func (f KeyPresenceFacts) HasAppendHistoryBaseWithoutEventsAddress(array StableA
 	if arrayKey == "" || !f.HasAppendHistoryBase(arrayKey) {
 		return false
 	}
-	for _, event := range f.appendEvents {
+	for _, event := range f.rows.appendEvents {
 		if event.Array == arrayKey {
 			return false
 		}
@@ -1266,10 +1245,10 @@ func (f KeyPresenceFacts) HasAppendHistoryBaseWithoutEventsAddress(array StableA
 }
 
 func (f KeyPresenceFacts) AppendHistoryBaseEntries() []AppendHistoryBaseFact {
-	if f.bottom || len(f.appendBases) == 0 {
+	if f.bottom || len(f.rows.appendBases) == 0 {
 		return nil
 	}
-	return append([]AppendHistoryBaseFact(nil), f.appendBases...)
+	return append([]AppendHistoryBaseFact(nil), f.rows.appendBases...)
 }
 
 func (f KeyPresenceFacts) WithAppendHistoryEvent(array, key constraint.PathKey) KeyPresenceFacts {
@@ -1293,10 +1272,10 @@ func (f KeyPresenceFacts) WithAppendHistoryEventAddresses(array, key StableAddre
 }
 
 func (f KeyPresenceFacts) AppendHistoryEventEntries() []AppendHistoryEventFact {
-	if f.bottom || len(f.appendEvents) == 0 {
+	if f.bottom || len(f.rows.appendEvents) == 0 {
 		return nil
 	}
-	return append([]AppendHistoryEventFact(nil), f.appendEvents...)
+	return append([]AppendHistoryEventFact(nil), f.rows.appendEvents...)
 }
 
 func (f KeyPresenceFacts) WithAppendHistoryCoverage(array, key, table constraint.PathKey, value product.AbstractValue) KeyPresenceFacts {
@@ -1330,7 +1309,7 @@ func (f KeyPresenceFacts) WithAppendHistoryCoverageForKeyAddress(
 		return f
 	}
 	out := f
-	for _, event := range f.appendEvents {
+	for _, event := range f.rows.appendEvents {
 		if event.Key != keyKey {
 			continue
 		}
@@ -1340,10 +1319,10 @@ func (f KeyPresenceFacts) WithAppendHistoryCoverageForKeyAddress(
 }
 
 func (f KeyPresenceFacts) AppendHistoryCoverageEntries() []AppendHistoryCoverageFact {
-	if f.bottom || len(f.appendCoverage) == 0 {
+	if f.bottom || len(f.rows.appendCoverage) == 0 {
 		return nil
 	}
-	return append([]AppendHistoryCoverageFact(nil), f.appendCoverage...)
+	return append([]AppendHistoryCoverageFact(nil), f.rows.appendCoverage...)
 }
 
 const appendElementFieldRoot = "__element"
@@ -1401,19 +1380,19 @@ func (f KeyPresenceFacts) WithAppendElementFieldOriginFromAddresses(array Stable
 }
 
 func (f KeyPresenceFacts) AppendElementFieldOriginEntries() []AppendElementFieldOriginFact {
-	if f.bottom || len(f.appendOrigins) == 0 {
+	if f.bottom || len(f.rows.appendOrigins) == 0 {
 		return nil
 	}
-	return append([]AppendElementFieldOriginFact(nil), f.appendOrigins...)
+	return append([]AppendElementFieldOriginFact(nil), f.rows.appendOrigins...)
 }
 
 // ForEachAppendElementFieldOriginAddress visits appended-element field origins
 // in normalized address/segment form.
 func (f KeyPresenceFacts) ForEachAppendElementFieldOriginAddress(fn func(array StableAddress, field []constraint.Segment, source StableAddress, sourceField []constraint.Segment) bool) {
-	if f.bottom || len(f.appendOrigins) == 0 || fn == nil {
+	if f.bottom || len(f.rows.appendOrigins) == 0 || fn == nil {
 		return
 	}
-	for _, entry := range f.appendOrigins {
+	for _, entry := range f.rows.appendOrigins {
 		array, arrayOK := StableAddressFromCanonicalKey(entry.Array)
 		source, sourceOK := StableAddressFromCanonicalKey(entry.Source)
 		field, fieldOK := AppendElementFieldSegments(entry.Field)
@@ -1439,7 +1418,7 @@ func appendElementFieldOptionalSegments(key constraint.PathKey) ([]constraint.Se
 
 func (f KeyPresenceFacts) appendElementFieldOriginUses(array constraint.PathKey, field []constraint.Segment) []AppendElementFieldOriginUse {
 	fieldKey := AppendElementFieldPathKey(field)
-	if f.bottom || array == "" || fieldKey == "" || !f.HasAppendHistoryBase(array) || len(f.appendOrigins) == 0 {
+	if f.bottom || array == "" || fieldKey == "" || !f.HasAppendHistoryBase(array) || len(f.rows.appendOrigins) == 0 {
 		return nil
 	}
 	fieldSegs, ok := AppendElementFieldSegments(fieldKey)
@@ -1447,7 +1426,7 @@ func (f KeyPresenceFacts) appendElementFieldOriginUses(array constraint.PathKey,
 		return nil
 	}
 	var out []AppendElementFieldOriginUse
-	for _, fact := range f.appendOrigins {
+	for _, fact := range f.rows.appendOrigins {
 		if fact.Array != array {
 			continue
 		}
@@ -1499,7 +1478,7 @@ func (f KeyPresenceFacts) KeyArrayValues(array, table constraint.PathKey) []prod
 		return nil
 	}
 	var out product.AbstractValue
-	for _, fact := range f.arrayValues {
+	for _, fact := range f.rows.arrayValues {
 		if fact.Array == array && fact.Table == table {
 			if out.IsZero() {
 				out = fact.Value
@@ -1531,7 +1510,7 @@ func (f KeyPresenceFacts) AppendHistoryCoverageValue(array, table constraint.Pat
 
 func (f KeyPresenceFacts) appendHistoryEventsFor(array constraint.PathKey) []AppendHistoryEventFact {
 	var out []AppendHistoryEventFact
-	for _, event := range f.appendEvents {
+	for _, event := range f.rows.appendEvents {
 		if event.Array == array {
 			out = append(out, event)
 		}
@@ -1560,7 +1539,7 @@ func (f KeyPresenceFacts) appendHistoryCoverageIndex(array constraint.PathKey) (
 		events: events,
 		values: make(map[constraint.PathKey]map[constraint.PathKey]product.AbstractValue),
 	}
-	for _, coverage := range f.appendCoverage {
+	for _, coverage := range f.rows.appendCoverage {
 		if coverage.Array != array || coverage.Key == "" || coverage.Table == "" || coverage.Value.IsZero() {
 			continue
 		}
@@ -1668,51 +1647,51 @@ func (f KeyPresenceFacts) Format() string {
 	if f.bottom {
 		return "⊥"
 	}
-	if len(f.entries) == 0 && len(f.values) == 0 && len(f.arrays) == 0 &&
-		len(f.emptyArrays) == 0 && len(f.arrayValues) == 0 && len(f.appends) == 0 &&
-		len(f.pending) == 0 && len(f.appendBases) == 0 && len(f.appendEvents) == 0 &&
-		len(f.appendCoverage) == 0 && len(f.appendOrigins) == 0 {
+	if len(f.rows.entries) == 0 && len(f.rows.values) == 0 && len(f.rows.arrays) == 0 &&
+		len(f.rows.emptyArrays) == 0 && len(f.rows.arrayValues) == 0 && len(f.rows.appends) == 0 &&
+		len(f.rows.pending) == 0 && len(f.rows.appendBases) == 0 && len(f.rows.appendEvents) == 0 &&
+		len(f.rows.appendCoverage) == 0 && len(f.rows.appendOrigins) == 0 {
 		return "⊤"
 	}
 	parts := make([]string, 0,
-		len(f.entries)+len(f.values)+len(f.arrays)+len(f.emptyArrays)+len(f.arrayValues)+
-			len(f.appends)+len(f.pending)+len(f.appendBases)+len(f.appendEvents)+
-			len(f.appendCoverage)+len(f.appendOrigins))
-	for _, e := range f.entries {
+		len(f.rows.entries)+len(f.rows.values)+len(f.rows.arrays)+len(f.rows.emptyArrays)+len(f.rows.arrayValues)+
+			len(f.rows.appends)+len(f.rows.pending)+len(f.rows.appendBases)+len(f.rows.appendEvents)+
+			len(f.rows.appendCoverage)+len(f.rows.appendOrigins))
+	for _, e := range f.rows.entries {
 		parts = append(parts, fmt.Sprintf("%s[%s]", e.Table, e.Key))
 	}
-	for _, e := range f.values {
+	for _, e := range f.rows.values {
 		parts = append(parts, fmt.Sprintf("%s[%s]=%s", e.Table, e.Key, e.Value))
 	}
-	for _, e := range f.arrays {
+	for _, e := range f.rows.arrays {
 		parts = append(parts, fmt.Sprintf("keys(%s)->%s", e.Array, e.Table))
 	}
-	for _, e := range f.emptyArrays {
+	for _, e := range f.rows.emptyArrays {
 		parts = append(parts, fmt.Sprintf("keys(%s)->*", e.Array))
 	}
-	for _, e := range f.arrayValues {
+	for _, e := range f.rows.arrayValues {
 		parts = append(parts, fmt.Sprintf("keys(%s)->%s=%s", e.Array, e.Table, e.Value.ProjectValue()))
 	}
-	for _, e := range f.appends {
+	for _, e := range f.rows.appends {
 		parts = append(parts, fmt.Sprintf("append_key(%s,%s)", e.Array, e.Key))
 	}
-	for _, e := range f.pending {
+	for _, e := range f.rows.pending {
 		table := e.Table
 		if table == "" {
 			table = "*"
 		}
 		parts = append(parts, fmt.Sprintf("pending_keys(%s,%s)->%s", e.Array, e.Key, table))
 	}
-	for _, e := range f.appendBases {
+	for _, e := range f.rows.appendBases {
 		parts = append(parts, fmt.Sprintf("append_base(%s)", e.Array))
 	}
-	for _, e := range f.appendEvents {
+	for _, e := range f.rows.appendEvents {
 		parts = append(parts, fmt.Sprintf("append_event(%s,%s)", e.Array, e.Key))
 	}
-	for _, e := range f.appendCoverage {
+	for _, e := range f.rows.appendCoverage {
 		parts = append(parts, fmt.Sprintf("append_cover(%s,%s)->%s=%s", e.Array, e.Key, e.Table, e.Value.ProjectValue()))
 	}
-	for _, e := range f.appendOrigins {
+	for _, e := range f.rows.appendOrigins {
 		parts = append(parts, fmt.Sprintf("append_origin(%s,%s)->%s", e.Array, e.Field, e.Source))
 	}
 	return "{" + strings.Join(parts, ",") + "}"
@@ -1874,17 +1853,19 @@ func canonicalKeyPresenceFactSet(set keyPresenceFactSet) KeyPresenceFacts {
 		same: func(a, b AppendElementFieldOriginFact) bool { return a == b },
 	})
 	return KeyPresenceFacts{
-		entries:        dst,
-		values:         valueDst,
-		arrays:         arrayDst,
-		emptyArrays:    emptyDst,
-		arrayValues:    arrayValueDst,
-		appends:        appendDst,
-		pending:        pendingDst,
-		appendBases:    appendBaseDst,
-		appendEvents:   appendEventDst,
-		appendCoverage: appendCoverageDst,
-		appendOrigins:  appendOriginDst,
+		rows: keyPresenceFactSet{
+			entries:        dst,
+			values:         valueDst,
+			arrays:         arrayDst,
+			emptyArrays:    emptyDst,
+			arrayValues:    arrayValueDst,
+			appends:        appendDst,
+			pending:        pendingDst,
+			appendBases:    appendBaseDst,
+			appendEvents:   appendEventDst,
+			appendCoverage: appendCoverageDst,
+			appendOrigins:  appendOriginDst,
+		},
 	}
 }
 
