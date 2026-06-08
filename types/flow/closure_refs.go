@@ -451,7 +451,7 @@ func ApplyClosureRefCellEffectsAddress(refs ClosureRefs, addr StableAddress, eff
 		)
 		updated = append(updated, ref)
 	}
-	return WithClosureRefAddress(refs, addr, ClosureRefSetOf(updated...))
+	return WithClosureRefAddress(refs, addr, canonicalClosureRefSetOwned(updated))
 }
 
 // ApplyClosureRefCellEffectsPath applies cell effects to the closure
@@ -469,6 +469,15 @@ func canonicalClosureRefSet(refs []ClosureRef) ClosureRefSet {
 		return ClosureRefSet{}
 	}
 	out := append([]ClosureRef(nil), refs...)
+	return canonicalClosureRefSetOwned(out)
+}
+
+// canonicalClosureRefSetOwned consumes a caller-owned slice and returns it as
+// the immutable closure-set backing store after sorting and environment joining.
+func canonicalClosureRefSetOwned(out []ClosureRef) ClosureRefSet {
+	if len(out) == 0 {
+		return ClosureRefSet{}
+	}
 	for i := 1; i < len(out); i++ {
 		for j := i; j > 0 && compareClosureRef(out[j], out[j-1]) < 0; j-- {
 			out[j], out[j-1] = out[j-1], out[j]
@@ -488,7 +497,10 @@ func canonicalClosureRefSet(refs []ClosureRef) ClosureRefSet {
 		}
 		dst = append(dst, r)
 	}
-	return ClosureRefSet{refs: append([]ClosureRef(nil), dst...)}
+	if len(dst) == 0 {
+		return ClosureRefSet{}
+	}
+	return ClosureRefSet{refs: dst}
 }
 
 func joinClosureRefSet(a, b ClosureRefSet) ClosureRefSet {
@@ -496,7 +508,7 @@ func joinClosureRefSet(a, b ClosureRefSet) ClosureRefSet {
 		return ClosureRefSetTop()
 	}
 	out := append(a.Refs(), b.refs...)
-	return canonicalClosureRefSet(out)
+	return canonicalClosureRefSetOwned(out)
 }
 
 func closureRefSetLessOrEq(a, b ClosureRefSet) bool {
@@ -867,5 +879,5 @@ func limitClosureRefSetDepth(set ClosureRefSet, depth int) ClosureRefSet {
 		)
 		out = append(out, ref)
 	}
-	return ClosureRefSetOf(out...)
+	return canonicalClosureRefSetOwned(out)
 }
