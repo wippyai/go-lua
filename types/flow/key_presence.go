@@ -1381,7 +1381,7 @@ func AppendElementFieldSegments(key constraint.PathKey) ([]constraint.Segment, b
 	if !ok {
 		return nil, false
 	}
-	segs, ok := parseSymbolPathSegments(suffix)
+	segs, ok := constraint.ParseFormattedSegments(suffix)
 	if !ok {
 		return nil, false
 	}
@@ -1393,7 +1393,7 @@ func AppendElementFieldSegments(key constraint.PathKey) ([]constraint.Segment, b
 // consumers that inspect a field path should use AppendElementFieldSegments.
 func appendElementFieldPathKeyHasSegments(key constraint.PathKey) bool {
 	suffix, ok := appendElementFieldSuffix(key)
-	return ok && validAppendElementFieldSuffix(suffix)
+	return ok && constraint.ValidFormattedSegments(suffix)
 }
 
 func appendElementFieldSuffix(key constraint.PathKey) (string, bool) {
@@ -1405,64 +1405,6 @@ func appendElementFieldSuffix(key constraint.PathKey) (string, bool) {
 		return "", false
 	}
 	return suffix, true
-}
-
-func validAppendElementFieldSuffix(s string) bool {
-	for len(s) > 0 {
-		switch s[0] {
-		case '.':
-			end := 1
-			for end < len(s) && s[end] != '.' && s[end] != '[' {
-				end++
-			}
-			if end == 1 {
-				return false
-			}
-			s = s[end:]
-		case '[':
-			if len(s) < 3 {
-				return false
-			}
-			if s[1] == '"' {
-				end, ok := canonicalQuotedSegmentEnd(s)
-				if !ok || end+1 >= len(s) || s[end+1] != ']' {
-					return false
-				}
-				s = s[end+2:]
-				continue
-			}
-			end := 1
-			if s[end] == '-' {
-				end++
-			}
-			startDigits := end
-			for end < len(s) && s[end] >= '0' && s[end] <= '9' {
-				end++
-			}
-			if end == startDigits || end >= len(s) || s[end] != ']' {
-				return false
-			}
-			s = s[end+1:]
-		default:
-			return false
-		}
-	}
-	return true
-}
-
-func canonicalQuotedSegmentEnd(s string) (int, bool) {
-	for i := 2; i < len(s); i++ {
-		switch s[i] {
-		case '\\':
-			i++
-			if i >= len(s) || (s[i] != '\\' && s[i] != '"') {
-				return 0, false
-			}
-		case '"':
-			return i, true
-		}
-	}
-	return 0, false
 }
 
 func (f KeyPresenceFacts) WithAppendElementFieldOrigin(array, field, source constraint.PathKey) KeyPresenceFacts {

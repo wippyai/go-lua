@@ -1,8 +1,6 @@
 package flow
 
 import (
-	"strconv"
-
 	"github.com/wippyai/go-lua/types/cfg"
 	"github.com/wippyai/go-lua/types/constraint"
 )
@@ -44,6 +42,14 @@ func SymbolPathKeyOf(path constraint.Path) (constraint.PathKey, bool) {
 
 // ParseSymbolPathKey inverts SymbolPathKey. Non-symbol path keys return false.
 func ParseSymbolPathKey(key constraint.PathKey) (cfg.SymbolID, []constraint.Segment, bool) {
+	sym, segments, ok := parseInternedSymbolPathKey(key)
+	if !ok {
+		return 0, nil, false
+	}
+	return sym, cloneAddressSegments(segments), true
+}
+
+func parseInternedSymbolPathKey(key constraint.PathKey) (cfg.SymbolID, []constraint.Segment, bool) {
 	s := string(key)
 	if len(s) < 2 || s[0] != 's' {
 		return 0, nil, false
@@ -61,7 +67,7 @@ func ParseSymbolPathKey(key constraint.PathKey) (cfg.SymbolID, []constraint.Segm
 	if n == 0 {
 		return 0, nil, false
 	}
-	segments, ok := parseSymbolPathSegments(s[i:])
+	segments, ok := constraint.InternFormattedSegments(s[i:])
 	if !ok {
 		return 0, nil, false
 	}
@@ -113,75 +119,6 @@ func ParseSymbolValueKey(key ValueKey) (cfg.SymbolID, bool) {
 		return 0, false
 	}
 	return cfg.SymbolID(n), true
-}
-
-func parseSymbolPathSegments(s string) ([]constraint.Segment, bool) {
-	if s == "" {
-		return nil, true
-	}
-	var segments []constraint.Segment
-	for len(s) > 0 {
-		switch s[0] {
-		case '.':
-			end := 1
-			for end < len(s) && s[end] != '.' && s[end] != '[' {
-				end++
-			}
-			if end == 1 {
-				return nil, false
-			}
-			segments = append(segments, constraint.Segment{Kind: constraint.SegmentField, Name: s[1:end]})
-			s = s[end:]
-		case '[':
-			if len(s) < 3 {
-				return nil, false
-			}
-			if s[1] == '"' {
-				end, ok := quotedSegmentEnd(s)
-				if !ok || end+1 >= len(s) || s[end+1] != ']' {
-					return nil, false
-				}
-				name, err := strconv.Unquote(s[1 : end+1])
-				if err != nil {
-					return nil, false
-				}
-				segments = append(segments, constraint.Segment{Kind: constraint.SegmentIndexString, Name: name})
-				s = s[end+2:]
-				continue
-			}
-			end := 1
-			for end < len(s) && s[end] != ']' {
-				end++
-			}
-			if end == 1 || end >= len(s) {
-				return nil, false
-			}
-			v, err := strconv.Atoi(s[1:end])
-			if err != nil {
-				return nil, false
-			}
-			segments = append(segments, constraint.Segment{Kind: constraint.SegmentIndexInt, Index: v})
-			s = s[end+1:]
-		default:
-			return nil, false
-		}
-	}
-	return segments, true
-}
-
-func quotedSegmentEnd(s string) (int, bool) {
-	escaped := false
-	for i := 2; i < len(s); i++ {
-		switch {
-		case escaped:
-			escaped = false
-		case s[i] == '\\':
-			escaped = true
-		case s[i] == '"':
-			return i, true
-		}
-	}
-	return 0, false
 }
 
 func valueKeyItoa(v uint64) string {

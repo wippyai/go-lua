@@ -85,8 +85,9 @@ func PathSuffixOfSegments(segments []constraint.Segment) PathSuffix {
 	return pathSuffixOfOwnedSegments(cloneAddressSegments(segments))
 }
 
-// pathSuffixOfOwnedSegments wraps a segment slice already owned by this package.
-// PathSuffix has no mutating operations; callers must not pass shared slices.
+// pathSuffixOfOwnedSegments wraps a segment slice already owned by this package
+// or interned by the canonical segment parser. PathSuffix has no mutating
+// operations; callers must not pass caller-owned mutable slices.
 func pathSuffixOfOwnedSegments(segments []constraint.Segment) PathSuffix {
 	if len(segments) == 0 {
 		return PathSuffix{}
@@ -269,7 +270,7 @@ func StableAddressFromCanonicalKey(key constraint.PathKey) (StableAddress, bool)
 	if key == "" {
 		return StableAddress{}, false
 	}
-	if sym, segments, ok := ParseSymbolPathKey(key); ok {
+	if sym, segments, ok := parseInternedSymbolPathKey(key); ok {
 		return stableAddressOfSymbolOwnedSegments(sym, segments)
 	}
 	if _, _, ok := parseLegacyConstraintSymbolPathKey(key); ok {
@@ -279,7 +280,7 @@ func StableAddressFromCanonicalKey(key constraint.PathKey) (StableAddress, bool)
 	if !ok {
 		return StableAddress{}, false
 	}
-	segments, ok := parseSymbolPathSegments(suffix)
+	segments, ok := constraint.InternFormattedSegments(suffix)
 	if !ok {
 		return StableAddress{}, false
 	}
@@ -314,7 +315,7 @@ func parseLegacyConstraintSymbolPathKey(key constraint.PathKey) (cfg.SymbolID, [
 			i++
 		}
 	}
-	segments, ok := parseSymbolPathSegments(s[i:])
+	segments, ok := constraint.InternFormattedSegments(s[i:])
 	if !ok {
 		return 0, nil, false
 	}
