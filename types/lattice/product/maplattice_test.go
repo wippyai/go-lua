@@ -145,6 +145,28 @@ func TestMapLattice_JoinBottomNormalizesCanonicalMapWithoutCopy(t *testing.T) {
 	}
 }
 
+func TestMapLattice_JoinSubsumedMapWithoutCopy(t *testing.T) {
+	d := MapLattice[string, sign](signLattice())
+	superset := map[string]sign{"x": sTop, "y": sPos}
+	subset := map[string]sign{"x": sNeg}
+
+	got := d.Join(superset, subset)
+	if !d.Equal(got, superset) {
+		t.Fatalf("Join(superset, subset) = %s, want %s", formatMap(got), formatMap(superset))
+	}
+	if reflect.ValueOf(got).Pointer() != reflect.ValueOf(superset).Pointer() {
+		t.Fatalf("Join(superset, subset) copied an already-canonical upper bound")
+	}
+
+	got = d.Join(subset, superset)
+	if !d.Equal(got, superset) {
+		t.Fatalf("Join(subset, superset) = %s, want %s", formatMap(got), formatMap(superset))
+	}
+	if reflect.ValueOf(got).Pointer() != reflect.ValueOf(superset).Pointer() {
+		t.Fatalf("Join(subset, superset) copied an already-canonical upper bound")
+	}
+}
+
 // TestMapLattice_Order pins the pointwise partial order, especially that a
 // finite map is strictly below the Top sentinel and that Bottom is below all.
 func TestMapLattice_Order(t *testing.T) {
