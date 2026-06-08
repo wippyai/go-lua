@@ -2270,8 +2270,7 @@ func (t *Transfer) evalCall(
 	// argument's product value for the call pipeline's generic inference and arity.
 	ctx := t.productCallContext(out, call, demand)
 	result := t.productCallResult(call, ctx)
-	t.applyCallArgDemands(out, call, result.ArgDemands, demand)
-	t.applyCallResultEffects(out, call, ctx, result.Effects, demand)
+	t.applyProductCallBoundary(out, call, ctx, result, demand, ProductCallBoundaryApplication{})
 	if result.HasReturnValues && len(result.ReturnValues) > 0 {
 		out2 := make([]product.AbstractValue, len(result.ReturnValues))
 		copy(out2, result.ReturnValues)
@@ -3713,15 +3712,11 @@ func (t *Transfer) applyCallArgs(
 	if t.callTyper != nil {
 		ctx := t.productCallContext(out, info.Call, demand)
 		result := t.productCallResult(info.Call, ctx)
-		if result.NeverReturns {
-			return true
-		}
-		t.applyCallArgDemands(out, info.Call, result.ArgDemands, demand)
-		t.applyCallResultEffects(out, info.Call, ctx, result.Effects, demand)
-		// A call to a function that narrows its parameters (a wrapper around assert /
-		// `if x == nil then error()`) carries that narrowing to the matching argument
-		// here, so `check(y); use(y)` sees `y` narrowed.
-		if len(result.ParamNarrows) > 0 && t.ApplyParamNarrowsAtPoint(out, p, info.Call, result.ParamNarrows) {
+		if t.applyProductCallBoundary(out, info.Call, ctx, result, demand, ProductCallBoundaryApplication{
+			Point:             p,
+			PruneNoReturn:     true,
+			ApplyParamNarrows: true,
+		}) {
 			return true
 		}
 	}

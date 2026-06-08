@@ -12,6 +12,36 @@ import (
 	"github.com/wippyai/go-lua/types/flow"
 )
 
+// ProductCallBoundaryApplication selects which continuation-only call-boundary
+// facts are admissible at this transfer site. Expression calls apply obligations
+// and effects but do not narrow their argument continuations; statement calls can
+// additionally prune no-return callees and instantiate callee-proven parameter
+// postconditions.
+type ProductCallBoundaryApplication struct {
+	Point             cfg.Point
+	PruneNoReturn     bool
+	ApplyParamNarrows bool
+}
+
+func (t *Transfer) applyProductCallBoundary(
+	out *flow.PointState,
+	call *ast.FuncCallExpr,
+	ctx ProductCallContext,
+	result ProductCallResult,
+	demand func(int, paramevidence.ParamContract),
+	app ProductCallBoundaryApplication,
+) (dead bool) {
+	if app.PruneNoReturn && result.NeverReturns {
+		return true
+	}
+	t.applyCallArgDemands(out, call, result.ArgDemands, demand)
+	t.applyCallResultEffects(out, call, ctx, result.Effects, demand)
+	if app.ApplyParamNarrows && len(result.ParamNarrows) > 0 {
+		return t.ApplyParamNarrowsAtPoint(out, app.Point, call, result.ParamNarrows)
+	}
+	return false
+}
+
 func (t *Transfer) applyCallResultEffects(
 	out *flow.PointState,
 	call *ast.FuncCallExpr,
