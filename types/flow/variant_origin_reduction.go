@@ -49,16 +49,7 @@ func (r VariantOriginConditionReducer) Reductions(fact constraint.Condition) []S
 // VariantOriginConditionSymbols returns the root symbols constrained by
 // VariantCase facts in stable order.
 func VariantOriginConditionSymbols(fact constraint.Condition) []cfg.SymbolID {
-	var syms cfgSymbolList
-	for i := 0; i < fact.NumDisjuncts(); i++ {
-		for _, c := range fact.DisjunctConstraints(i) {
-			sym := variantOriginConstraintSymbol(c)
-			if sym != 0 {
-				syms.Add(sym)
-			}
-		}
-	}
-	return syms.SortedValues()
+	return newConditionSymbolEvidence(fact).VariantOriginSymbols()
 }
 
 func variantOriginValueForCondition(av product.AbstractValue, sym cfg.SymbolID, fact constraint.Condition) (product.AbstractValue, bool) {

@@ -13,6 +13,7 @@ package propagate
 import (
 	"github.com/wippyai/go-lua/types/cfg"
 	"github.com/wippyai/go-lua/types/constraint"
+	"github.com/wippyai/go-lua/types/flow"
 )
 
 // Graph provides CFG traversal operations for propagation.
@@ -445,13 +446,8 @@ func FilterConditionSymbols(cond constraint.Condition, syms []cfg.SymbolID) cons
 		return cond
 	}
 
-	symSet := make(map[cfg.SymbolID]struct{}, len(syms))
-	for _, sym := range syms {
-		if sym != 0 {
-			symSet[sym] = struct{}{}
-		}
-	}
-	if len(symSet) == 0 {
+	mask := flow.NewConditionSymbolMask(syms)
+	if mask.IsEmpty() {
 		return cond
 	}
 
@@ -462,18 +458,7 @@ func FilterConditionSymbols(cond constraint.Condition, syms []cfg.SymbolID) cons
 		}
 		var kept []constraint.Constraint
 		for _, c := range d {
-			shouldKeep := true
-			constraint.VisitPaths(c, func(p constraint.Path) bool {
-				if p.Symbol == 0 {
-					return false
-				}
-				if _, ok := symSet[p.Symbol]; ok {
-					shouldKeep = false
-					return true
-				}
-				return false
-			})
-			if shouldKeep {
+			if !mask.MatchesConstraint(c) {
 				kept = append(kept, c)
 			}
 		}

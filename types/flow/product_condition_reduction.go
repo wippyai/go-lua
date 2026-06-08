@@ -49,14 +49,14 @@ func (r ProductConditionReducer) Reductions() []SymbolValueReduction {
 	if r.Base == nil || r.Fact.IsTrue() || !r.Fact.HasConstraints() {
 		return nil
 	}
-	index := newProductConditionIndex(r.Fact)
-	syms := index.ValueSymbols()
+	evidence := newConditionSymbolEvidence(r.Fact)
+	syms := evidence.ValueSymbols()
 	if len(syms) == 0 {
 		return nil
 	}
 	out := make([]SymbolValueReduction, 0, len(syms))
 	for _, sym := range syms {
-		if index.HasVariantOriginSymbol(sym) {
+		if evidence.HasVariantOriginSymbol(sym) {
 			continue
 		}
 		base := r.Base(sym)
@@ -126,37 +126,6 @@ func ProductConditionReductionValue(q ProductConditionReduction) (product.Abstra
 	return product.FromRefinedType(base, projected), true
 }
 
-type productConditionIndex struct {
-	valueSymbols  cfgSymbolList
-	variantOrigin cfgSymbolSet
-}
-
-func newProductConditionIndex(fact constraint.Condition) productConditionIndex {
-	index := productConditionIndex{}
-	for i := 0; i < fact.NumDisjuncts(); i++ {
-		for _, c := range fact.DisjunctConstraints(i) {
-			constraint.VisitPaths(c, func(path constraint.Path) bool {
-				if path.Symbol != 0 {
-					index.valueSymbols.Add(path.Symbol)
-				}
-				return false
-			})
-			if sym := variantOriginConstraintSymbol(c); sym != 0 {
-				index.variantOrigin.Add(sym)
-			}
-		}
-	}
-	return index
-}
-
-func (i *productConditionIndex) ValueSymbols() []cfg.SymbolID {
-	return i.valueSymbols.SortedValues()
-}
-
-func (i *productConditionIndex) HasVariantOriginSymbol(sym cfg.SymbolID) bool {
-	return i.variantOrigin.Contains(sym)
-}
-
 // SemanticProductReduction reports whether next is a real narrowing of current.
 func SemanticProductReduction(current, next product.AbstractValue) bool {
 	if current.IsZero() || next.IsZero() {
@@ -170,18 +139,7 @@ func SemanticProductReduction(current, next product.AbstractValue) bool {
 
 // ConditionValueSymbols returns all symbol roots mentioned by condition paths.
 func ConditionValueSymbols(fact constraint.Condition) []cfg.SymbolID {
-	var syms cfgSymbolList
-	for i := 0; i < fact.NumDisjuncts(); i++ {
-		for _, c := range fact.DisjunctConstraints(i) {
-			constraint.VisitPaths(c, func(path constraint.Path) bool {
-				if path.Symbol != 0 {
-					syms.Add(path.Symbol)
-				}
-				return false
-			})
-		}
-	}
-	return syms.SortedValues()
+	return newConditionSymbolEvidence(fact).ValueSymbols()
 }
 
 func conditionWithPositiveFieldPresence(fact constraint.Condition) constraint.Condition {
