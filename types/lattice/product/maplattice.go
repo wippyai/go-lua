@@ -50,20 +50,30 @@ func MapLattice[K comparable, V any](elem lattice.Lattice[V]) lattice.Lattice[ma
 
 	// canonicalize drops keys whose value Equals elem.Bottom() so that an
 	// explicit bottom entry and an absent key denote the same function and
-	// compare Equal. Returns nil for the empty (Bottom) function.
+	// compare Equal. Returns nil for the empty (Bottom) function. When the
+	// input is already canonical, it returns the input map itself; finite map
+	// lattice values are immutable once published.
 	canonicalize := func(m map[K]V) map[K]V {
+		if len(m) == 0 {
+			return nil
+		}
 		bot := elem.Bottom()
-		var out map[K]V
 		for k, v := range m {
 			if elem.Equal(v, bot) {
-				continue
+				out := make(map[K]V, len(m)-1)
+				for kk, vv := range m {
+					if kk == k || elem.Equal(vv, bot) {
+						continue
+					}
+					out[kk] = vv
+				}
+				if len(out) == 0 {
+					return nil
+				}
+				return out
 			}
-			if out == nil {
-				out = make(map[K]V, len(m))
-			}
-			out[k] = v
 		}
-		return out
+		return m
 	}
 
 	l := lattice.Lattice[map[K]V]{
@@ -130,6 +140,12 @@ func MapLattice[K comparable, V any](elem lattice.Lattice[V]) lattice.Lattice[ma
 		Join: func(a, b map[K]V) map[K]V {
 			if isTop(a) || isTop(b) {
 				return topSentinel
+			}
+			if len(a) == 0 {
+				return canonicalize(b)
+			}
+			if len(b) == 0 {
+				return canonicalize(a)
 			}
 			return pointwiseMap(a, b, elem.Bottom(), elem.Join, elem.Equal)
 		},

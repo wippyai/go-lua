@@ -2,6 +2,7 @@ package product
 
 import (
 	"fmt"
+	"reflect"
 	"sort"
 	"testing"
 
@@ -119,6 +120,28 @@ func TestMapLattice_AbsentKeyIsBottom(t *testing.T) {
 	want := map[string]sign{"x": sTop, "y": sZero, "z": sPos} // Join(sNeg,sPos)=sTop
 	if !d.Equal(got, want) {
 		t.Errorf("Join %s ⊔ %s = %s, want %s", formatMap(a), formatMap(b), formatMap(got), formatMap(want))
+	}
+}
+
+func TestMapLattice_JoinBottomNormalizesCanonicalMapWithoutCopy(t *testing.T) {
+	d := MapLattice[string, sign](signLattice())
+	canonical := map[string]sign{"x": sNeg, "y": sPos}
+
+	got := d.Join(canonical, d.Bottom())
+	if !d.Equal(got, canonical) {
+		t.Fatalf("Join(canonical, Bottom) = %s, want %s", formatMap(got), formatMap(canonical))
+	}
+	if reflect.ValueOf(got).Pointer() != reflect.ValueOf(canonical).Pointer() {
+		t.Fatalf("Join(canonical, Bottom) copied an already canonical finite map")
+	}
+
+	withBottom := map[string]sign{"x": sNeg, "y": sBottom}
+	normalized := d.Join(withBottom, d.Bottom())
+	if !d.Equal(normalized, map[string]sign{"x": sNeg}) {
+		t.Fatalf("Join(with explicit bottom, Bottom) = %s, want {x}", formatMap(normalized))
+	}
+	if _, ok := normalized["y"]; ok {
+		t.Fatalf("Join(with explicit bottom, Bottom) kept bottom-valued key: %s", formatMap(normalized))
 	}
 }
 
