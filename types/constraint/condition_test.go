@@ -243,6 +243,25 @@ func TestCondition_HasTypeBuiltinKindsContradictOnSamePath(t *testing.T) {
 	}
 }
 
+func TestCondition_HasTypeExactClassKeepsHashTypeIdentity(t *testing.T) {
+	path := Path{Root: "x", Symbol: 1}
+	userA := narrow.HashTypeKey(101)
+	userB := narrow.HashTypeKey(202)
+
+	if got := FromConstraints(
+		HasType{Path: path, Type: userA},
+		NotHasType{Path: path, Type: userA},
+	); !got.IsFalse() {
+		t.Fatalf("same hash type exact complement = %v, want false", got)
+	}
+	if got := FromConstraints(
+		HasType{Path: path, Type: userA},
+		NotHasType{Path: path, Type: userB},
+	); got.IsFalse() {
+		t.Fatalf("different hash type exact complement collapsed to false")
+	}
+}
+
 func TestCondition_FieldContradictionRequiresVersionScopedMutablePath(t *testing.T) {
 	current := Path{Root: "item", Symbol: 1, Version: 7}
 	stale := Path{Root: "item", Symbol: 1}
