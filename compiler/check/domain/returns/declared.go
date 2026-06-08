@@ -55,7 +55,7 @@ func refineDeclaredReturnType(annotation, evidence typ.Type, topLevel bool) (typ
 	if !topLevel && (typ.IsAny(annotation) || typ.IsAbsentOrUnknown(annotation)) {
 		return evidence, !typ.TypeEquals(annotation, evidence)
 	}
-	if typ.MorePrecise(evidence, annotation) {
+	if !declaredRecordEvidenceHasDynamicField(annotation, evidence) && typ.MorePrecise(evidence, annotation) {
 		return evidence, true
 	}
 	if refined, ok := refineDeclaredStructuralReturn(annotation, evidence); ok {
@@ -65,6 +65,27 @@ func refineDeclaredReturnType(annotation, evidence typ.Type, topLevel bool) (typ
 		return refined, true
 	}
 	return annotation, false
+}
+
+func declaredRecordEvidenceHasDynamicField(annotation, evidence typ.Type) bool {
+	annotationRecord, ok := unwrap.Alias(annotation).(*typ.Record)
+	if !ok {
+		return false
+	}
+	evidenceRecord := declaredRecordEvidence(evidence)
+	if evidenceRecord == nil {
+		return false
+	}
+	for _, field := range evidenceRecord.Fields {
+		existing := annotationRecord.GetField(field.Name)
+		if existing == nil {
+			continue
+		}
+		if typ.IsAny(existing.Type) || typ.IsAbsentOrUnknown(existing.Type) {
+			return true
+		}
+	}
+	return false
 }
 
 func refineDeclaredStructuralReturn(annotation, evidence typ.Type) (typ.Type, bool) {
@@ -205,6 +226,9 @@ func refineDeclaredRecordWithRecord(annotation *typ.Record, evidence *typ.Record
 	fieldChanged := false
 	for _, evidenceField := range evidence.Fields {
 		if existing, ok := fields[evidenceField.Name]; ok {
+			if typ.IsAny(existing.Type) || typ.IsAbsentOrUnknown(existing.Type) {
+				continue
+			}
 			refined, changed := refineDeclaredReturnType(existing.Type, evidenceField.Type, false)
 			if changed {
 				existing.Type = refined

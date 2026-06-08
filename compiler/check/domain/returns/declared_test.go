@@ -46,6 +46,42 @@ func TestRefineDeclaredReturnVectorPreservesTopLevelAny(t *testing.T) {
 	}
 }
 
+func TestRefineDeclaredReturnVectorPreservesExplicitRecordAnyField(t *testing.T) {
+	declared := typ.NewRecord().Field("x", typ.Any).Build()
+	evidence := typ.NewRecord().Field("x", typ.Integer).Build()
+
+	got, ok := RefineDeclaredReturnVector([]typ.Type{declared}, []typ.Type{evidence})
+	if ok {
+		t.Fatalf("RefineDeclaredReturnVector refined explicit any field to %v", got)
+	}
+}
+
+func TestRefineDeclaredReturnVectorSkipsAnyFieldButRefinesOtherFields(t *testing.T) {
+	declared := typ.NewRecord().
+		Field("x", typ.Any).
+		Field("y", typ.Number).
+		Build()
+	evidence := typ.NewRecord().
+		Field("x", typ.Integer).
+		Field("y", typ.Integer).
+		Build()
+
+	got, ok := RefineDeclaredReturnVector([]typ.Type{declared}, []typ.Type{evidence})
+	if !ok || len(got) != 1 {
+		t.Fatalf("RefineDeclaredReturnVector ok=%v got=%v, want refined record", ok, got)
+	}
+	rec, ok := got[0].(*typ.Record)
+	if !ok {
+		t.Fatalf("refined return = %T, want record", got[0])
+	}
+	if x := rec.GetField("x"); x == nil || !typ.IsAny(x.Type) {
+		t.Fatalf("field x = %v, want any", x)
+	}
+	if y := rec.GetField("y"); y == nil || !typ.TypeEquals(y.Type, typ.Integer) {
+		t.Fatalf("field y = %v, want integer", y)
+	}
+}
+
 func TestRefineDeclaredReturnVectorRejectsIncompatibleScalar(t *testing.T) {
 	got, ok := RefineDeclaredReturnVector([]typ.Type{typ.Number}, []typ.Type{typ.Boolean})
 	if ok {
