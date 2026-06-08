@@ -179,6 +179,34 @@ func TestCaptureCellsProjectPathsNestedSubtreeKeepsSubtree(t *testing.T) {
 	}
 }
 
+func TestCaptureCellsProjectPathsUsesNormalizedProjectionPlan(t *testing.T) {
+	root := captureCellProjectionRoot()
+	cells := CaptureCellsOf([]CaptureCell{
+		{Symbol: 1, Value: root},
+		{Symbol: 2, Value: product.FromType(typ.String)},
+	})
+
+	projection := NewReferencePathProjection(
+		[]constraint.Path{
+			constraint.NewPath(1, "captured").Field("config").Field("used"),
+			constraint.NewPath(1, "captured"),
+		},
+		nil,
+	)
+	got := cells.ProjectPaths(projection)
+
+	projected, ok := got.Value(1)
+	if !ok {
+		t.Fatalf("projected cell 1 missing: %s", got.Format())
+	}
+	requireProjectedMember(t, projected, "stable")
+	config := requireProjectedMember(t, projected, "config")
+	requireProjectedMember(t, config, "dropped")
+	if _, ok := got.Value(2); ok {
+		t.Fatalf("project retained unrequested symbol 2: %s", got.Format())
+	}
+}
+
 func TestCaptureCellsWithStaticMembersOverlaysMemberFacts(t *testing.T) {
 	const sym = cfg.SymbolID(42)
 	base := product.FromType(typ.NewRecord().Build())

@@ -140,10 +140,11 @@ type FunctionRefs = map[constraint.PathKey]FunctionRefSet
 // function/closure identities a callee can observe, without falling back to
 // whole-symbol projection.
 type ReferencePathProjection struct {
-	Exact      []constraint.Path
-	Subtrees   []constraint.Path
-	addresses  referenceAddressProjection
-	normalized bool
+	Exact        []constraint.Path
+	Subtrees     []constraint.Path
+	addresses    referenceAddressProjection
+	captureCells captureCellPathProjection
+	normalized   bool
 }
 
 // referenceAddressProjection is the consumption form of ReferencePathProjection.
@@ -164,6 +165,7 @@ func NewReferencePathProjection(exact, subtrees []constraint.Path) ReferencePath
 		Subtrees: cloneReferenceProjectionPaths(subtrees),
 	}
 	p.addresses = referenceAddressProjectionOfPaths(p.Exact, p.Subtrees)
+	p.captureCells = captureCellProjectionOfAddresses(p.addresses)
 	p.normalized = true
 	return p
 }
@@ -181,6 +183,13 @@ func (p ReferencePathProjection) addressProjection() referenceAddressProjection 
 		return p.addresses
 	}
 	return referenceAddressProjectionOfPaths(p.Exact, p.Subtrees)
+}
+
+func (p ReferencePathProjection) captureCellProjection() captureCellPathProjection {
+	if p.normalized {
+		return p.captureCells
+	}
+	return captureCellProjectionOfAddresses(p.addressProjection())
 }
 
 func (p referenceAddressProjection) isEmpty() bool {

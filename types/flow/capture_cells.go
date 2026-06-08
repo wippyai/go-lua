@@ -126,14 +126,14 @@ func (c CaptureCells) Project(symbols []cfg.SymbolID) CaptureCells {
 // only the requested static member path, avoiding whole-object context keys when
 // a callee observes only a few fields.
 func (c CaptureCells) ProjectPaths(projection ReferencePathProjection) CaptureCells {
-	requests := captureCellPathRequests(projection)
+	requests := projection.captureCellProjection()
 	if len(requests) == 0 {
 		return CaptureCells{}
 	}
 	if c.top {
 		entries := make([]CaptureCell, 0, len(requests))
-		for _, sym := range sortedRequestSymbols(requests) {
-			entries = append(entries, CaptureCell{Symbol: sym, Value: product.Domain.Top()})
+		for _, req := range requests {
+			entries = append(entries, CaptureCell{Symbol: req.symbol, Value: product.Domain.Top()})
 		}
 		return CaptureCellsOf(entries)
 	}
@@ -141,13 +141,21 @@ func (c CaptureCells) ProjectPaths(projection ReferencePathProjection) CaptureCe
 		return CaptureCells{}
 	}
 	var out []CaptureCell
-	for _, entry := range c.entries {
-		req, ok := requests[entry.Symbol]
-		if !ok {
+	for i, j := 0, 0; i < len(c.entries) && j < len(requests); {
+		entry := c.entries[i]
+		req := requests[j]
+		switch {
+		case entry.Symbol < req.symbol:
+			i++
+			continue
+		case req.symbol < entry.Symbol:
+			j++
 			continue
 		}
 		if req.full {
 			out = append(out, entry)
+			i++
+			j++
 			continue
 		}
 		projected := product.Domain.Bottom()
@@ -161,6 +169,8 @@ func (c CaptureCells) ProjectPaths(projection ReferencePathProjection) CaptureCe
 		if !projected.IsZero() && !product.Domain.Equal(projected, product.Domain.Bottom()) {
 			out = append(out, CaptureCell{Symbol: entry.Symbol, Value: projected})
 		}
+		i++
+		j++
 	}
 	return CaptureCellsOf(out)
 }
@@ -282,31 +292,38 @@ func (k CaptureCellsKey) Format() string {
 }
 
 type captureCellPathRequest struct {
+	symbol   cfg.SymbolID
 	full     bool
 	segments [][]constraint.Segment
 }
 
-func captureCellPathRequests(projection ReferencePathProjection) map[cfg.SymbolID]captureCellPathRequest {
-	requests := make(map[cfg.SymbolID]captureCellPathRequest)
+type captureCellPathProjection []captureCellPathRequest
+
+func captureCellProjectionOfAddresses(addresses referenceAddressProjection) captureCellPathProjection {
+	requests := make(captureCellPathProjection, 0, len(addresses.Exact)+len(addresses.Subtrees))
 	addAddress := func(addr StableAddress) {
 		sym, ok := addr.Symbol()
 		if !ok || sym == 0 {
 			return
 		}
 		segments := addr.suffix.segments
-		req := requests[sym]
+		idx, ok := findCaptureCellPathRequest(requests, sym)
+		if !ok {
+			requests = append(requests, captureCellPathRequest{symbol: sym})
+			idx = len(requests) - 1
+		}
+		req := requests[idx]
 		if len(segments) == 0 {
 			req.full = true
 			req.segments = nil
-			requests[sym] = req
+			requests[idx] = req
 			return
 		}
 		if !req.full && !captureCellRequestHasSegments(req, segments) {
 			req.segments = append(req.segments, segments)
 		}
-		requests[sym] = req
+		requests[idx] = req
 	}
-	addresses := projection.addressProjection()
 	for _, addr := range addresses.Exact {
 		addAddress(addr)
 	}
@@ -316,7 +333,17 @@ func captureCellPathRequests(projection ReferencePathProjection) map[cfg.SymbolI
 	if len(requests) == 0 {
 		return nil
 	}
+	sortCaptureCellPathProjection(requests)
 	return requests
+}
+
+func findCaptureCellPathRequest(requests captureCellPathProjection, sym cfg.SymbolID) (int, bool) {
+	for i, req := range requests {
+		if req.symbol == sym {
+			return i, true
+		}
+	}
+	return 0, false
 }
 
 func captureCellRequestHasSegments(req captureCellPathRequest, segments []constraint.Segment) bool {
@@ -340,15 +367,12 @@ func captureCellSegmentsEqual(left, right []constraint.Segment) bool {
 	return true
 }
 
-func sortedRequestSymbols(requests map[cfg.SymbolID]captureCellPathRequest) []cfg.SymbolID {
-	if len(requests) == 0 {
-		return nil
+func sortCaptureCellPathProjection(requests captureCellPathProjection) {
+	for i := 1; i < len(requests); i++ {
+		for j := i; j > 0 && requests[j].symbol < requests[j-1].symbol; j-- {
+			requests[j], requests[j-1] = requests[j-1], requests[j]
+		}
 	}
-	symbols := make([]cfg.SymbolID, 0, len(requests))
-	for sym := range requests {
-		symbols = append(symbols, sym)
-	}
-	return sortedUniqueSymbols(symbols)
 }
 
 // CaptureCellsDomain is the finite-map lattice over captured lexical cells.
