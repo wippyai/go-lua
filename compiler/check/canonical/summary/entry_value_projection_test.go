@@ -728,7 +728,7 @@ func TestClosureEntryContextProjection_ProjectsDeclarationClosureContexts(t *tes
 	}
 }
 
-func TestCallEntryValueProjection_UsesResolvedTargetsForRefAndDedupesSlots(t *testing.T) {
+func TestCallEntryPublicationProjection_UsesResolvedTargetsForRefAndDedupesSlots(t *testing.T) {
 	arg0 := &ast.IdentExpr{Value: "arg0"}
 	arg1 := &ast.IdentExpr{Value: "arg1"}
 	call := &ast.FuncCallExpr{
@@ -751,7 +751,7 @@ func TestCallEntryValueProjection_UsesResolvedTargetsForRefAndDedupesSlots(t *te
 		arg0: product.FromType(typ.String),
 		arg1: product.FromType(typ.Number),
 	}
-	out := summary.CallEntryValueProjection{
+	out := summary.CallEntryPublicationProjection{
 		Graph: graph,
 		State: state.FunctionState{
 			Points: map[cfg.Point]flow.PointState{
@@ -785,7 +785,7 @@ func TestCallEntryValueProjection_UsesResolvedTargetsForRefAndDedupesSlots(t *te
 			av, ok := argValues[expr]
 			return av, ok
 		},
-	}.Project()
+	}.Project().Values
 
 	if len(out) != 2 {
 		t.Fatalf("projected call-entry values = %#v, want exactly two callees", out)
@@ -807,7 +807,57 @@ func TestCallEntryValueProjection_UsesResolvedTargetsForRefAndDedupesSlots(t *te
 	}
 }
 
-func TestCallEntryValueProjection_EmptyTargetsYieldNoEvidence(t *testing.T) {
+func TestCallEntryPublicationProjection_PublishesValuesAndFactsTogether(t *testing.T) {
+	arg := &ast.IdentExpr{Value: "payload"}
+	call := &ast.FuncCallExpr{
+		Func: &ast.IdentExpr{Value: "callee"},
+		Args: []ast.Expr{arg},
+	}
+	fn := &ast.FunctionExpr{Stmts: []ast.Stmt{&ast.FuncCallStmt{Expr: call}}}
+	graph := cfg.Build(fn, "caller")
+	var point cfg.Point
+	graph.EachCallSite(func(p cfg.Point, _ *cfg.CallInfo) {
+		point = p
+	})
+	if point == 0 {
+		t.Fatal("test graph did not expose a call site")
+	}
+
+	callee := summary.FuncRef{GraphID: 41}
+	table := flow.BoundaryPath{Kind: flow.BoundaryPathParam, Index: 0}
+	key := flow.BoundaryPath{Kind: flow.BoundaryPathParam, Index: 0, Segments: []constraint.Segment{{Kind: constraint.SegmentField, Name: "id"}}}
+	facts := flow.BoundaryFactsOf([]flow.BoundaryKeyPresenceFact{{Table: table, Key: key}}, nil, nil, nil, nil, nil)
+
+	got := summary.CallEntryPublicationProjection{
+		Graph: graph,
+		State: state.FunctionState{
+			Points: map[cfg.Point]flow.PointState{
+				point: {},
+			},
+		},
+		ResolveTargets: func(_ *ast.FuncCallExpr, _ *flow.PointState) []summary.CallEntryTarget {
+			return []summary.CallEntryTarget{{Ref: callee, EntryFacts: facts}}
+		},
+		ParamSlot: func(summary.FuncRef, *ast.FuncCallExpr, int) (int, int, bool) {
+			return 0, 0, true
+		},
+		EvalArg: func(_ *flow.PointState, expr ast.Expr) (product.AbstractValue, bool) {
+			if expr != arg {
+				return product.AbstractValue{}, false
+			}
+			return product.FromType(typ.String), true
+		},
+	}.Project()
+
+	if gotValue, ok := got.Values[callee][0]; !ok || !typ.TypeEquals(gotValue.ProjectValue(), typ.String) {
+		t.Fatalf("published value = %v/%v, want string", gotValue.ProjectValue(), ok)
+	}
+	if gotFacts, ok := got.Facts[callee]; !ok || !gotFacts.HasKeyPresence(flow.BoundaryKeyPresenceFact{Table: table, Key: key}) {
+		t.Fatalf("published facts = %#v/%v, want key-presence proof", gotFacts, ok)
+	}
+}
+
+func TestCallEntryPublicationProjection_EmptyTargetsYieldNoEvidence(t *testing.T) {
 	call := &ast.FuncCallExpr{Func: &ast.IdentExpr{Value: "callee"}}
 	fn := &ast.FunctionExpr{Stmts: []ast.Stmt{&ast.FuncCallStmt{Expr: call}}}
 	graph := cfg.Build(fn, "caller")
@@ -819,7 +869,7 @@ func TestCallEntryValueProjection_EmptyTargetsYieldNoEvidence(t *testing.T) {
 		t.Fatal("test graph did not expose a call site")
 	}
 
-	got := summary.CallEntryValueProjection{
+	got := summary.CallEntryPublicationProjection{
 		Graph: graph,
 		State: state.FunctionState{
 			Points: map[cfg.Point]flow.PointState{
@@ -836,12 +886,12 @@ func TestCallEntryValueProjection_EmptyTargetsYieldNoEvidence(t *testing.T) {
 			return product.FromType(typ.String), true
 		},
 	}.Project()
-	if len(got) != 0 {
-		t.Fatalf("projected call-entry values = %#v, want none", got)
+	if len(got.Values) != 0 || len(got.Facts) != 0 {
+		t.Fatalf("projected call-entry publication = %#v, want none", got)
 	}
 }
 
-func TestCallEntryValueProjection_ProjectsCallbackExpectedParams(t *testing.T) {
+func TestCallEntryPublicationProjection_ProjectsCallbackExpectedParams(t *testing.T) {
 	callbackArg := &ast.FunctionExpr{}
 	call := &ast.FuncCallExpr{
 		Func: &ast.IdentExpr{Value: "up"},
@@ -859,7 +909,7 @@ func TestCallEntryValueProjection_ProjectsCallbackExpectedParams(t *testing.T) {
 
 	callbackRef := summary.FuncRef{GraphID: 21}
 	callbackRef2 := summary.FuncRef{GraphID: 31}
-	got := summary.CallEntryValueProjection{
+	got := summary.CallEntryPublicationProjection{
 		Graph: graph,
 		State: state.FunctionState{
 			Points: map[cfg.Point]flow.PointState{
@@ -887,7 +937,7 @@ func TestCallEntryValueProjection_ProjectsCallbackExpectedParams(t *testing.T) {
 		EvalArg: func(*flow.PointState, ast.Expr) (product.AbstractValue, bool) {
 			return product.AbstractValue{}, false
 		},
-	}.Project()
+	}.Project().Values
 
 	if gotValue, ok := got[callbackRef][0]; !ok || !typ.TypeEquals(gotValue.ProjectValue(), typ.String) {
 		t.Fatalf("callback slot 0 = %v/%v, want string", gotValue.ProjectValue(), ok)

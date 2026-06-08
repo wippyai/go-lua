@@ -115,12 +115,8 @@ type entryValueMerger interface {
 	MergeEntryValues(ref FuncRef, fixed, fallback EntryValues) EntryValues
 }
 
-type callEntryValueProjector interface {
-	ProjectCallEntryValues(ref FuncRef, fs state.FunctionState) CallEntryValues
-}
-
-type callEntryFactProjector interface {
-	ProjectCallEntryFacts(ref FuncRef, fs state.FunctionState) CallEntryFacts
+type callEntryPublicationProjector interface {
+	ProjectCallEntryPublication(ref FuncRef, fs state.FunctionState) CallEntryPublication
 }
 
 type solveContextRunner interface {
@@ -461,11 +457,10 @@ func (q *Queries) ProjectStateSummary(ctx *db.QueryContext, ref FuncRef, fs stat
 		ReturnCallHasFiniteTarget: q.returnCallHasFiniteTarget(ref),
 	})
 	sum.Postconditions = q.ReturnPostconditions(ctx, ref)
-	if projector, ok := q.prog.(callEntryValueProjector); ok && projector != nil {
-		sum.CallEntryValues = projector.ProjectCallEntryValues(ref, fs)
-	}
-	if projector, ok := q.prog.(callEntryFactProjector); ok && projector != nil {
-		sum.CallEntryFacts = projector.ProjectCallEntryFacts(ref, fs)
+	if projector, ok := q.prog.(callEntryPublicationProjector); ok && projector != nil {
+		entry := projector.ProjectCallEntryPublication(ref, fs)
+		sum.CallEntryValues = entry.Values
+		sum.CallEntryFacts = entry.Facts
 	}
 	return sum
 }

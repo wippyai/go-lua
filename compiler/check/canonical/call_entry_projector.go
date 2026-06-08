@@ -119,20 +119,12 @@ func (p *program) callEntryProjector(ref summary.FuncRef) (callEntryProjector, b
 	}, true
 }
 
-func (p *program) ProjectCallEntryValues(ref summary.FuncRef, fs state.FunctionState) summary.CallEntryValues {
+func (p *program) ProjectCallEntryPublication(ref summary.FuncRef, fs state.FunctionState) summary.CallEntryPublication {
 	projector, ok := p.callEntryProjector(ref)
 	if !ok {
-		return nil
+		return summary.CallEntryPublication{}
 	}
-	return projector.valueProjection(fs).Project()
-}
-
-func (p *program) ProjectCallEntryFacts(ref summary.FuncRef, fs state.FunctionState) summary.CallEntryFacts {
-	projector, ok := p.callEntryProjector(ref)
-	if !ok {
-		return nil
-	}
-	return projector.factProjection(fs).Project()
+	return projector.publicationProjection(fs).Project()
 }
 
 func (p *program) ProjectCallEntryContextKeys(ref summary.FuncRef, fs state.FunctionState) []summary.Key {
@@ -143,8 +135,8 @@ func (p *program) ProjectCallEntryContextKeys(ref summary.FuncRef, fs state.Func
 	return projector.contextProjection(fs).ProjectKeys()
 }
 
-func (c callEntryProjector) valueProjection(fs state.FunctionState) summary.CallEntryValueProjection {
-	return summary.CallEntryValueProjection{
+func (c callEntryProjector) publicationProjection(fs state.FunctionState) summary.CallEntryPublicationProjection {
+	return summary.CallEntryPublicationProjection{
 		Graph: c.graph,
 		State: fs,
 		ResolveTargets: func(call *ast.FuncCallExpr, in *flow.PointState) []summary.CallEntryTarget {
@@ -164,16 +156,6 @@ func (c callEntryProjector) valueProjection(fs state.FunctionState) summary.Call
 			}
 			return c.program.paramSlotFixed(callee, slot)
 		},
-		EvalArg: c.transfer.EvalExprValue,
-	}
-}
-
-func (c callEntryProjector) factProjection(fs state.FunctionState) summary.CallEntryFactProjection {
-	return summary.CallEntryFactProjection{
-		Graph:          c.graph,
-		State:          fs,
-		ResolveTargets: c.resolveTargets,
-		ParamSlot:      c.paramSlot,
 		ParamSlotCount: func(callee summary.FuncRef, _ *ast.FuncCallExpr) int {
 			return c.program.paramSlotCount(callee)
 		},
