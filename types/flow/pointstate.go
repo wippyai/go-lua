@@ -195,13 +195,32 @@ func cloneEnv(env map[ValueKey]product.AbstractValue) map[ValueKey]product.Abstr
 	if len(env) == 0 {
 		return nil
 	}
-	var out map[ValueKey]product.AbstractValue
+	if len(env) <= 8 {
+		var out map[ValueKey]product.AbstractValue
+		for k, v := range env {
+			if v.IsZero() || v.IsBottom() {
+				continue
+			}
+			if out == nil {
+				out = make(map[ValueKey]product.AbstractValue, len(env))
+			}
+			out[k] = v
+		}
+		return out
+	}
+	live := 0
+	for _, v := range env {
+		if !v.IsZero() && !v.IsBottom() {
+			live++
+		}
+	}
+	if live == 0 {
+		return nil
+	}
+	out := make(map[ValueKey]product.AbstractValue, live)
 	for k, v := range env {
 		if v.IsZero() || v.IsBottom() {
 			continue
-		}
-		if out == nil {
-			out = make(map[ValueKey]product.AbstractValue, len(env))
 		}
 		out[k] = v
 	}
