@@ -504,6 +504,36 @@ func TestPlaceStaticProjectionOwnsPathKeys(t *testing.T) {
 	}
 }
 
+func TestAssignTargetStaticPathModesSeparateExactAndFootprint(t *testing.T) {
+	tr := &Transfer{}
+	rootSym := cfg.SymbolID(42)
+	target := cfg.AssignTarget{
+		Kind:       cfg.TargetIndex,
+		BaseSymbol: rootSym,
+		BaseName:   "root",
+		FieldPath:  []string{"items"},
+		Key:        &ast.IdentExpr{Value: "dynamic_key"},
+	}
+
+	footprint, ok := tr.staticPathOfAssignTarget(target)
+	if !ok || footprint.Symbol != rootSym || len(footprint.Segments) != 1 || footprint.Segments[0].Name != "items" {
+		t.Fatalf("write footprint = %#v/%v, want root.items prefix", footprint, ok)
+	}
+	if exact, ok := tr.exactStaticAssignTargetPath(target); ok {
+		t.Fatalf("exact dynamic target path = %#v, want no exact alias proof", exact)
+	}
+	container, ok := tr.staticContainerPathOfAssignTarget(target)
+	if !ok || container.Key() != footprint.Key() {
+		t.Fatalf("container = %#v/%v, want same static prefix %#v", container, ok, footprint)
+	}
+
+	target.Key = &ast.StringExpr{Value: "name"}
+	exact, ok := tr.exactStaticAssignTargetPath(target)
+	if !ok || exact.Symbol != rootSym || len(exact.Segments) != 2 || exact.Segments[1].Name != "name" {
+		t.Fatalf("exact static target path = %#v/%v, want root.items[\"name\"]", exact, ok)
+	}
+}
+
 func TestStaticMemberWriteFactsInstallAndKillByStructuralPath(t *testing.T) {
 	tr := &Transfer{}
 	sym := cfg.SymbolID(7)

@@ -45,7 +45,7 @@ func (t *Transfer) assignmentProvenanceEffectWithSourceSymbol(
 	if src == nil {
 		return AssignmentProvenanceEffect{}, false
 	}
-	targetPath, ok := t.exactStaticAliasTargetPath(target)
+	targetPath, ok := t.exactStaticAssignTargetPath(target)
 	if !ok || targetPath.Symbol == 0 || targetPath.IsEmpty() {
 		return AssignmentProvenanceEffect{}, false
 	}
@@ -68,7 +68,7 @@ func (t *Transfer) arrayElementKeyProvenanceEffect(
 	src ast.Expr,
 	val product.AbstractValue,
 ) (ArrayElementKeyProvenanceEffect, bool) {
-	targetPath, ok := t.exactStaticAliasTargetPath(target)
+	targetPath, ok := t.exactStaticAssignTargetPath(target)
 	if !ok || targetPath.Symbol == 0 || targetPath.IsEmpty() {
 		return ArrayElementKeyProvenanceEffect{}, false
 	}
@@ -85,52 +85,6 @@ func (t *Transfer) arrayElementKeyProvenanceEffect(
 		ArrayPath:  arrayPath,
 		Value:      val,
 	}, true
-}
-
-func (t *Transfer) exactStaticAliasTargetPath(target cfg.AssignTarget) (constraint.Path, bool) {
-	if target.Expr != nil {
-		return t.staticPathOfExpr(target.Expr)
-	}
-	switch target.Kind {
-	case cfg.TargetIdent:
-		if target.Symbol == 0 {
-			return constraint.Path{}, false
-		}
-		return constraint.NewPath(target.Symbol, target.Name), true
-	case cfg.TargetField:
-		if target.BaseSymbol == 0 || len(target.FieldPath) == 0 {
-			return constraint.Path{}, false
-		}
-		path := constraint.NewPath(target.BaseSymbol, target.BaseName)
-		path.Segments = append(path.Segments, fieldSegments(target.FieldPath)...)
-		return path, true
-	case cfg.TargetIndex:
-		if target.Base == nil {
-			if target.BaseSymbol == 0 {
-				return constraint.Path{}, false
-			}
-			path := constraint.NewPath(target.BaseSymbol, target.BaseName)
-			path.Segments = append(path.Segments, fieldSegments(target.FieldPath)...)
-			seg, ok := staticIndexSegment(target.Key)
-			if !ok {
-				return constraint.Path{}, false
-			}
-			path.Segments = append(path.Segments, seg)
-			return path, true
-		}
-		path, ok := t.staticPathOfExpr(target.Base)
-		if !ok || path.Symbol == 0 {
-			return constraint.Path{}, false
-		}
-		seg, ok := staticIndexSegment(target.Key)
-		if !ok {
-			return constraint.Path{}, false
-		}
-		path.Segments = append(path.Segments, seg)
-		return path, true
-	default:
-		return constraint.Path{}, false
-	}
 }
 
 func (t *Transfer) applyAssignmentProvenanceEffect(

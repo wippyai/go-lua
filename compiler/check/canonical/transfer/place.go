@@ -349,8 +349,31 @@ func (t *Transfer) placeStepForIndexTarget(
 	return PlaceStep{Kind: PlaceStepDynamicIndex, Key: key}, true
 }
 
-func (t *Transfer) staticPathOfAssignTarget(target cfg.AssignTarget) (constraint.Path, bool) {
+type assignTargetPathMode int
+
+const (
+	assignTargetPathWriteFootprint assignTargetPathMode = iota
+	assignTargetPathExact
+	assignTargetPathContainer
+)
+
+// assignTargetStaticPath is the single static-path projection for assignment
+// targets. The mode names the proof strength the caller needs: exact alias
+// targets require a concrete final segment, write footprints may stop at the
+// affected container when a dynamic key is unknown, and container mode returns
+// the assignable table prefix.
+func (t *Transfer) assignTargetStaticPath(target cfg.AssignTarget, mode assignTargetPathMode) (constraint.Path, bool) {
+	switch mode {
+	case assignTargetPathContainer:
+		return t.assignTargetContainerPath(target)
+	case assignTargetPathExact, assignTargetPathWriteFootprint:
+	default:
+		return constraint.Path{}, false
+	}
 	if target.Expr != nil {
+		if mode == assignTargetPathExact {
+			return t.staticPathOfExpr(target.Expr)
+		}
 		if path, ok := t.staticPathOfExpr(target.Expr); ok && !path.IsEmpty() {
 			return path, true
 		}
@@ -363,6 +386,8 @@ func (t *Transfer) staticPathOfAssignTarget(target cfg.AssignTarget) (constraint
 		if target.Kind == cfg.TargetIndex {
 			if seg, ok := staticIndexSegment(target.Key); ok {
 				path.Segments = append(path.Segments, seg)
+			} else if mode == assignTargetPathExact {
+				return constraint.Path{}, false
 			}
 		}
 		return path, true
@@ -388,6 +413,8 @@ func (t *Transfer) staticPathOfAssignTarget(target cfg.AssignTarget) (constraint
 		path.Segments = append(path.Segments, fieldSegments(target.FieldPath)...)
 		if seg, ok := staticIndexSegment(target.Key); ok {
 			path.Segments = append(path.Segments, seg)
+		} else if mode == assignTargetPathExact {
+			return constraint.Path{}, false
 		}
 		return path, true
 	default:
@@ -395,7 +422,7 @@ func (t *Transfer) staticPathOfAssignTarget(target cfg.AssignTarget) (constraint
 	}
 }
 
-func (t *Transfer) staticContainerPathOfAssignTarget(target cfg.AssignTarget) (constraint.Path, bool) {
+func (t *Transfer) assignTargetContainerPath(target cfg.AssignTarget) (constraint.Path, bool) {
 	if target.Base != nil {
 		path, ok := t.staticPathOfExpr(target.Base)
 		if !ok || path.Symbol == 0 {
@@ -417,6 +444,18 @@ func (t *Transfer) staticContainerPathOfAssignTarget(target cfg.AssignTarget) (c
 	path := constraint.NewPath(target.BaseSymbol, target.BaseName)
 	path.Segments = append(path.Segments, fieldSegments(target.FieldPath)...)
 	return path, true
+}
+
+func (t *Transfer) staticPathOfAssignTarget(target cfg.AssignTarget) (constraint.Path, bool) {
+	return t.assignTargetStaticPath(target, assignTargetPathWriteFootprint)
+}
+
+func (t *Transfer) exactStaticAssignTargetPath(target cfg.AssignTarget) (constraint.Path, bool) {
+	return t.assignTargetStaticPath(target, assignTargetPathExact)
+}
+
+func (t *Transfer) staticContainerPathOfAssignTarget(target cfg.AssignTarget) (constraint.Path, bool) {
+	return t.assignTargetStaticPath(target, assignTargetPathContainer)
 }
 
 func staticPlace(sym cfg.SymbolID, segments []constraint.Segment) (Place, bool) {
