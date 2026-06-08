@@ -231,10 +231,7 @@ func computeLiveSets(inputs *Inputs) *liveSets {
 
 	liveIn := make(map[cfg.Point]map[pathDemandKey]struct{}, len(rpo))
 	liveOut := make(map[cfg.Point]map[pathDemandKey]struct{}, len(rpo))
-	for _, p := range rpo {
-		liveIn[p] = make(map[pathDemandKey]struct{})
-		liveOut[p] = make(map[pathDemandKey]struct{})
-	}
+	liveScratch := make(map[cfg.Point]map[pathDemandKey]struct{}, len(rpo))
 	phiEdgeDemand := buildPhiEdgeDemandRenames(g)
 
 	// Worklist over the backward dataflow: a point is re-evaluated only when one
@@ -266,7 +263,12 @@ func computeLiveSets(inputs *Inputs) *liveSets {
 		inQueue[p] = false
 
 		dset := defs[p]
-		out := make(map[pathDemandKey]struct{})
+		out := liveOut[p]
+		if out == nil {
+			out = make(map[pathDemandKey]struct{})
+		} else {
+			clearDemandSet(out)
+		}
 		for _, succ := range graphSuccessors(g, p) {
 			renames := phiEdgeDemand[edgeKey{from: p, to: succ}]
 			for k := range liveIn[succ] {
@@ -279,7 +281,13 @@ func computeLiveSets(inputs *Inputs) *liveSets {
 		}
 		liveOut[p] = out
 
-		next := make(map[pathDemandKey]struct{}, len(out)+len(uses[p]))
+		old := liveIn[p]
+		next := liveScratch[p]
+		if next == nil {
+			next = make(map[pathDemandKey]struct{}, len(out)+len(uses[p]))
+		} else {
+			clearDemandSet(next)
+		}
 		for k := range out {
 			if dset != nil {
 				if _, killed := dset[symVer{sym: k.sym, ver: k.ver}]; killed {
@@ -291,8 +299,9 @@ func computeLiveSets(inputs *Inputs) *liveSets {
 		for k := range uses[p] {
 			next[k] = struct{}{}
 		}
-		if !sameDemandSet(next, liveIn[p]) {
+		if !sameDemandSet(next, old) {
 			liveIn[p] = next
+			liveScratch[p] = old
 			for _, pred := range preds[p] {
 				if !inQueue[pred] {
 					worklist = append(worklist, pred)
@@ -305,6 +314,12 @@ func computeLiveSets(inputs *Inputs) *liveSets {
 	return &liveSets{
 		liveIn:  liveIn,
 		liveOut: liveOut,
+	}
+}
+
+func clearDemandSet(set map[pathDemandKey]struct{}) {
+	for k := range set {
+		delete(set, k)
 	}
 }
 
