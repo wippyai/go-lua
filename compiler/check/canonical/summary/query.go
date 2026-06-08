@@ -187,13 +187,7 @@ func NewCanonicalSummarySnapshot(byRef map[FuncRef]Summary, byKey map[Key]Summar
 
 func (s CanonicalSummarySnapshot) ExactSummaryForKey(key Key) (Summary, bool) {
 	sum, ok := s.byKey[key]
-	if ok {
-		return sum, true
-	}
-	if key == NewDefaultKey(key.Ref, nil) {
-		return s.SummaryForRef(key.Ref)
-	}
-	return Summary{}, false
+	return sum, ok
 }
 
 func (s CanonicalSummarySnapshot) SummaryForRef(ref FuncRef) (Summary, bool) {
@@ -205,8 +199,7 @@ func (s CanonicalSummarySnapshot) HasExactKey(key Key) bool {
 	if _, ok := s.byKey[key]; ok {
 		return true
 	}
-	_, ok := s.byRef[key.Ref]
-	return key == NewDefaultKey(key.Ref, nil) && ok
+	return false
 }
 
 // Live reports whether this reader is observing the active summary query cycle.
@@ -341,13 +334,20 @@ func (r Reader) Summarize(ref FuncRef) Summary {
 
 // SummarizeWithKey reads a summary through an already normalized entry key.
 func (r Reader) SummarizeWithKey(key Key) Summary {
-	if r.queries != nil && r.ctx != nil {
-		return r.queries.SummarizeWithKey(r.ctx, key)
-	}
-	if sum, ok := r.snapshot.ExactSummaryForKey(key); ok {
+	if sum, ok := r.ExactSummaryForKey(key); ok {
 		return sum
 	}
 	return SummaryDomain.Bottom()
+}
+
+// ExactSummaryForKey reads exactly the requested entry-context Summary. Live
+// readers demand that key in the recursive query; snapshot readers return only
+// keys the canonical solve already demanded.
+func (r Reader) ExactSummaryForKey(key Key) (Summary, bool) {
+	if r.queries != nil && r.ctx != nil {
+		return r.queries.SummarizeWithKey(r.ctx, key), true
+	}
+	return r.snapshot.ExactSummaryForKey(key)
 }
 
 // CanonicalSummarySnapshot returns a keyed snapshot for canonical Summary cells

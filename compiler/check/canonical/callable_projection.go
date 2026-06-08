@@ -184,6 +184,12 @@ func (p callableProjector) signature(ref flow.FunctionRef, references flow.Refer
 	if p.hasDeclaredReturns != nil {
 		hasDeclaredReturns = p.hasDeclaredReturns(sref)
 	}
-	sum := p.reader.SummarizeWithKey(entry.Key())
+	sum, exact := p.reader.ExactSummaryForKey(entry.Key())
+	if !exact {
+		// A callable projection from a bare function ref can still use the aggregate
+		// by-ref summary as degraded return precision. That fallback is explicit here:
+		// exact entry-context facts are never synthesized from the aggregate summary.
+		sum = p.reader.Summarize(sref)
+	}
 	return summary.FunctionSignatureWithProjectedReturns(sig, hasDeclaredReturns, sum)
 }

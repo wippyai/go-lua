@@ -377,6 +377,30 @@ func TestReader_UsesConvergedSnapshotWhenNotLive(t *testing.T) {
 	}
 }
 
+func TestCanonicalSummarySnapshot_ExactKeyDoesNotFallbackToRef(t *testing.T) {
+	ref := summary.FuncRef{GraphID: 78}
+	key := summary.NewDefaultKey(ref, nil)
+	refSummary := summary.Summary{Returns: []product.AbstractValue{product.FromType(typ.String)}}
+	snapshot := summary.NewCanonicalSummarySnapshot(map[summary.FuncRef]summary.Summary{ref: refSummary}, nil)
+
+	if _, ok := snapshot.ExactSummaryForKey(key); ok {
+		t.Fatal("ExactSummaryForKey must not treat aggregate by-ref summaries as exact keyed summaries")
+	}
+	if snapshot.HasExactKey(key) {
+		t.Fatal("HasExactKey must report only demanded canonical summary keys")
+	}
+	reader := summary.NewSnapshotReader(snapshot)
+	if _, ok := reader.ExactSummaryForKey(key); ok {
+		t.Fatal("Reader.ExactSummaryForKey must not fall back to aggregate by-ref summaries")
+	}
+	if got := reader.SummarizeWithKey(key); !summary.SummaryDomain.Equal(got, summary.SummaryDomain.Bottom()) {
+		t.Fatalf("SummarizeWithKey without exact key = %#v, want bottom", got)
+	}
+	if got := reader.Summarize(ref); !summary.SummaryDomain.Equal(got, refSummary) {
+		t.Fatalf("Summarize(ref) = %#v, want aggregate by-ref summary %#v", got, refSummary)
+	}
+}
+
 func TestReader_MissingSnapshotIsBottom(t *testing.T) {
 	got := summary.NewReader(nil, nil, nil).Summarize(summary.FuncRef{GraphID: 88})
 	if !summary.SummaryDomain.Equal(got, summary.SummaryDomain.Bottom()) {
