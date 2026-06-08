@@ -527,7 +527,7 @@ func (p Projector) globalNameType(point cfg.Point, name string) typ.Type {
 // already exposes.
 func (p Projector) isUnannotatedParamSymbol(sym cfg.SymbolID) bool {
 	return paramboundary.SourceUnannotated(p.cfg.Graph, sym, func(sym cfg.SymbolID) bool {
-		if p.cfg.Inputs != nil && p.cfg.Inputs.AnnotatedVars[sym] {
+		if p.cfg.Inputs != nil && p.cfg.Inputs.AnnotatedVars.Contains(sym) {
 			return true
 		}
 		return p.cfg.Facts != nil && p.cfg.Facts.IsAnnotated(sym)

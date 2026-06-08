@@ -22,7 +22,7 @@ type Config struct {
 	Declared      flow.DeclaredTypes
 	FunctionType  FunctionTypeLookup
 	Literals      flow.DeclaredTypes
-	AnnotatedVars map[cfg.SymbolID]bool
+	AnnotatedVars flow.AnnotatedSymbols
 }
 
 // TypeFacts implements flow.TypeFacts over the checker product state.
@@ -30,7 +30,7 @@ type TypeFacts struct {
 	declared      flow.DeclaredTypes
 	functionType  FunctionTypeLookup
 	literals      flow.DeclaredTypes
-	annotatedVars map[cfg.SymbolID]bool
+	annotatedVars flow.AnnotatedSymbols
 }
 
 var _ flow.TypeFacts = (*TypeFacts)(nil)
@@ -53,7 +53,7 @@ func (f *TypeFacts) DeclaredAt(p cfg.Point, sym cfg.SymbolID) flow.TypedValue {
 	if sym == 0 {
 		return flow.TypedValue{Type: typ.Unknown, State: flow.StateUnknown}
 	}
-	if f != nil && f.annotatedVars != nil && f.annotatedVars[sym] {
+	if f != nil && f.annotatedVars.Contains(sym) {
 		if tv, ok := f.declaredTypedValue(sym); ok {
 			return tv
 		}
@@ -64,7 +64,7 @@ func (f *TypeFacts) DeclaredAt(p cfg.Point, sym cfg.SymbolID) flow.TypedValue {
 		}
 	}
 	if f != nil && f.literals != nil {
-		if f.annotatedVars == nil || !f.annotatedVars[sym] {
+		if !f.annotatedVars.Contains(sym) {
 			if t, ok := f.literals[sym]; ok && t != nil {
 				return typedValue(t)
 			}
@@ -107,10 +107,10 @@ func (f *TypeFacts) EffectiveTypeAt(p cfg.Point, sym cfg.SymbolID) flow.TypedVal
 
 // IsAnnotated reports whether a symbol has an explicit source annotation.
 func (f *TypeFacts) IsAnnotated(sym cfg.SymbolID) bool {
-	if f == nil || f.annotatedVars == nil {
+	if f == nil {
 		return false
 	}
-	return f.annotatedVars[sym]
+	return f.annotatedVars.Contains(sym)
 }
 
 func (f *TypeFacts) declaredTypedValue(sym cfg.SymbolID) (flow.TypedValue, bool) {

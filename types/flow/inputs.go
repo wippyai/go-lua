@@ -213,8 +213,8 @@ type Inputs struct {
 	// All per-variable type data is keyed by SymbolID for proper scope handling.
 	DeclaredTypes map[cfg.SymbolID]typ.Type
 
-	// AnnotatedVars tracks variables with explicit type annotations.
-	AnnotatedVars map[cfg.SymbolID]bool
+	// AnnotatedVars tracks roots with explicit source annotations.
+	AnnotatedVars AnnotatedSymbols
 
 	Assignments    []UnifiedAssignment
 	ConstValues    map[cfg.SymbolID]map[cfg.Point]*ConstValue

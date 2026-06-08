@@ -20,7 +20,7 @@ func TestTypeFactsDeclaredAtPrefersAnnotatedDeclaration(t *testing.T) {
 		Declared:      flow.DeclaredTypes{sym: typ.String},
 		FunctionType:  functionTypeMap{sym: typ.Number}.lookup,
 		Literals:      flow.DeclaredTypes{sym: typ.Boolean},
-		AnnotatedVars: map[cfg.SymbolID]bool{sym: true},
+		AnnotatedVars: flow.AnnotatedSymbolsFromMap(map[cfg.SymbolID]bool{sym: true}),
 	})
 
 	got := facts.DeclaredAt(0, sym)

@@ -20,7 +20,7 @@ func InputsEqual(a, b *Inputs) bool {
 	}
 	return a.Graph == b.Graph &&
 		symbolTypeMapEqual(a.DeclaredTypes, b.DeclaredTypes) &&
-		symbolBoolMapEqual(a.AnnotatedVars, b.AnnotatedVars) &&
+		annotatedSymbolsEqual(a.AnnotatedVars, b.AnnotatedVars) &&
 		assignmentsEqual(a.Assignments, b.Assignments) &&
 		constValuesEqual(a.ConstValues, b.ConstValues) &&
 		edgeConditionsEqual(a.EdgeConditions, b.EdgeConditions) &&
@@ -54,18 +54,6 @@ func symbolTypeMapEqual(a, b map[cfg.SymbolID]typ.Type) bool {
 	}
 	for k, av := range a {
 		if !typeEqual(av, b[k]) {
-			return false
-		}
-	}
-	return true
-}
-
-func symbolBoolMapEqual(a, b map[cfg.SymbolID]bool) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	for k, av := range a {
-		if av != b[k] {
 			return false
 		}
 	}

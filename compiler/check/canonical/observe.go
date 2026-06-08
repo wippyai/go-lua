@@ -1536,7 +1536,6 @@ func (s *returnSynth) Context() *db.QueryContext { return s.ctx }
 func buildObservationInputs(g *cfg.Graph, facts functionFacts) *flow.Inputs {
 	in := &flow.Inputs{
 		DeclaredTypes: make(map[cfg.SymbolID]typ.Type, len(facts.declared)),
-		AnnotatedVars: make(map[cfg.SymbolID]bool, len(facts.annotated)),
 		BindingTypes:  make(map[cfg.SymbolID]typ.Type, len(facts.bindings)),
 	}
 	if g != nil {
@@ -1546,7 +1545,7 @@ func buildObservationInputs(g *cfg.Graph, facts functionFacts) *flow.Inputs {
 		in.DeclaredTypes[sym] = t
 	}
 	for sym := range facts.annotated {
-		in.AnnotatedVars[sym] = true
+		in.AnnotatedVars.Add(sym)
 	}
 	for sym, t := range facts.bindings {
 		in.BindingTypes[sym] = t

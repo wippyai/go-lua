@@ -268,7 +268,7 @@ func (p Projector) indexTargetSealed(target cfg.AssignTarget, point cfg.Point) b
 	if p.cfg.Facts != nil {
 		return flow.AnnotatedDeclaredPathSealed(p.cfg.Facts, point, basePath)
 	}
-	if p.cfg.Inputs == nil || p.cfg.Inputs.AnnotatedVars == nil || !p.cfg.Inputs.AnnotatedVars[basePath.Symbol] {
+	if p.cfg.Inputs == nil || !p.cfg.Inputs.AnnotatedVars.Contains(basePath.Symbol) {
 		return false
 	}
 	declared := DeclaredPathType(p.cfg.Inputs.DeclaredTypes, basePath)
