@@ -251,10 +251,10 @@ func And(a, b Condition) Condition {
 
 	// Fast path: single disjunct on both sides (very common)
 	if len(a.Disjuncts) == 1 && len(b.Disjuncts) == 1 {
-		merged := mergeConjunctions(a.Disjuncts[0], b.Disjuncts[0])
-		if conjunctionContradicts(merged) {
+		if conjunctionsContradictAcross(a.Disjuncts[0], b.Disjuncts[0]) {
 			return FalseCondition()
 		}
+		merged := mergeConjunctions(a.Disjuncts[0], b.Disjuncts[0])
 		return Condition{Disjuncts: [][]Constraint{merged}}
 	}
 
@@ -269,10 +269,10 @@ func And(a, b Condition) Condition {
 				out = append(out, da)
 				continue
 			}
-			merged := mergeConjunctions(da, db)
-			if conjunctionContradicts(merged) {
+			if conjunctionsContradictAcross(da, db) {
 				continue
 			}
+			merged := mergeConjunctions(da, db)
 			out = append(out, merged)
 		}
 	}

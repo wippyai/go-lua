@@ -66,6 +66,35 @@ func (idx conjunctionContradictionIndex) HasContradiction() bool {
 	return idx.hasContradiction
 }
 
+// conjunctionsContradictAcross composes two already-consistent conjunctions:
+// only cross-side contradictions can be introduced by the meet.
+func conjunctionsContradictAcross(a, b []Constraint) bool {
+	if len(a) == 0 || len(b) == 0 {
+		return false
+	}
+	indexed, probed := a, b
+	if len(b) < len(a) {
+		indexed, probed = b, a
+	}
+	idx := conjunctionContradictionIndexOf(indexed)
+	if idx.HasContradiction() {
+		return true
+	}
+	for _, ct := range probed {
+		if idx.Contradicts(ct) {
+			return true
+		}
+	}
+	return false
+}
+
+func (idx conjunctionContradictionIndex) Contradicts(ct Constraint) bool {
+	return idx.hasContradiction ||
+		idx.pathPredicateContradicts(ct) ||
+		idx.hasTypeContradicts(ct) ||
+		idx.exactComplementContradicts(ct)
+}
+
 func (idx *conjunctionContradictionIndex) Observe(ct Constraint) bool {
 	if idx == nil || idx.hasContradiction {
 		return idx != nil && idx.hasContradiction
@@ -76,6 +105,22 @@ func (idx *conjunctionContradictionIndex) Observe(ct Constraint) bool {
 		idx.hasContradiction = true
 	}
 	return idx.hasContradiction
+}
+
+func (idx conjunctionContradictionIndex) exactComplementContradicts(ct Constraint) bool {
+	sig, ok := exactContradictionSignatureOf(ct)
+	if !ok {
+		return false
+	}
+	for _, seen := range idx.exact[sig.hash] {
+		if seen.positive == sig.positive || seen.kind != sig.kind {
+			continue
+		}
+		if sameExactContradictionClass(seen.constraint, ct, sig.kind) {
+			return true
+		}
+	}
+	return false
 }
 
 func (idx *conjunctionContradictionIndex) observeExactComplement(ct Constraint) bool {
@@ -99,6 +144,29 @@ func (idx *conjunctionContradictionIndex) observeExactComplement(ct Constraint) 
 		kind:       sig.kind,
 		positive:   sig.positive,
 	})
+	return false
+}
+
+func (idx conjunctionContradictionIndex) hasTypeContradicts(ct Constraint) bool {
+	path, ty, positive, ok := hasTypeClassOf(ct)
+	if !ok {
+		return false
+	}
+	key := path.Hash()
+	builtinKind, _ := ty.BuiltinKind()
+	for _, seen := range idx.hasType[key] {
+		if !seen.path.Equal(path) {
+			continue
+		}
+		if seen.positive != positive && seen.ty.Equal(ty) {
+			return true
+		}
+		if positive && seen.positive &&
+			builtinKind != kind.Unknown && seen.builtin != kind.Unknown &&
+			seen.builtin != builtinKind {
+			return true
+		}
+	}
 	return false
 }
 
@@ -146,6 +214,23 @@ func hasTypeClassOf(ct Constraint) (Path, narrow.TypeKey, bool, bool) {
 	default:
 		return Path{}, narrow.TypeKey{}, false, false
 	}
+}
+
+func (idx conjunctionContradictionIndex) pathPredicateContradicts(ct Constraint) bool {
+	path, bits, ok := pathPredicateOf(ct)
+	if !ok {
+		return false
+	}
+	key := path.Hash()
+	for _, seen := range idx.paths[key] {
+		if !seen.path.Equal(path) {
+			continue
+		}
+		if pathPredicateContradicts(seen.bits, bits, path) {
+			return true
+		}
+	}
+	return false
 }
 
 func (idx *conjunctionContradictionIndex) observePathPredicate(ct Constraint) bool {
