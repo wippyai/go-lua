@@ -7,7 +7,6 @@ import (
 	"github.com/wippyai/go-lua/compiler/bind"
 	"github.com/wippyai/go-lua/compiler/check/api"
 	"github.com/wippyai/go-lua/compiler/check/scope"
-	"github.com/wippyai/go-lua/compiler/check/synth/extract"
 	"github.com/wippyai/go-lua/types/cfg"
 	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/contract"
@@ -366,39 +365,6 @@ func TestEngineCallQuery_NilTypes(t *testing.T) {
 	_, ok = q.Method(nil, typ.String, "x")
 	if ok {
 		t.Fatal("nil types should return false")
-	}
-}
-
-func TestCopyTypes_Empty(t *testing.T) {
-	result := extract.CopyTypes(nil)
-	if result != nil {
-		t.Fatalf("got %v, want nil", result)
-	}
-}
-
-func TestCopyTypes_Single(t *testing.T) {
-	input := []typ.Type{typ.String}
-	result := extract.CopyTypes(input)
-
-	if len(result) != 1 {
-		t.Fatalf("got %d, want 1", len(result))
-	}
-	if result[0] != typ.String {
-		t.Fatalf("got %v, want string", result[0])
-	}
-}
-
-func TestCopyTypes_Multiple(t *testing.T) {
-	input := []typ.Type{typ.String, typ.Integer, typ.Boolean}
-	result := extract.CopyTypes(input)
-
-	if len(result) != 3 {
-		t.Fatalf("got %d, want 3", len(result))
-	}
-
-	input[0] = typ.Number
-	if result[0] != typ.String {
-		t.Fatal("copy should be independent of original")
 	}
 }
 

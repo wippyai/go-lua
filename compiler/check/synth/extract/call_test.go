@@ -153,30 +153,6 @@ func TestSynthArgs(t *testing.T) {
 	}
 }
 
-func TestCopyTypes(t *testing.T) {
-	types := []typ.Type{typ.String, typ.Integer}
-	copied := CopyTypes(types)
-
-	if len(copied) != 2 {
-		t.Fatalf("got %d types, want 2", len(copied))
-	}
-	if copied[0] != typ.String || copied[1] != typ.Integer {
-		t.Fatal("copy mismatch")
-	}
-
-	types[0] = typ.Boolean
-	if copied[0] != typ.String {
-		t.Fatal("copy not independent")
-	}
-}
-
-func TestCopyTypes_Empty(t *testing.T) {
-	copied := CopyTypes(nil)
-	if copied != nil {
-		t.Fatal("expected nil for empty input")
-	}
-}
-
 func TestApplyPostCallTransforms_MethodEffectsUseRuntimeReceiverSlot(t *testing.T) {
 	s := newTestSynthesizer()
 	receiver := typ.NewRecord().

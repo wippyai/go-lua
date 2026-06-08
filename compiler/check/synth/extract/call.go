@@ -207,7 +207,7 @@ func (s *Synthesizer) synthCallCoreWithCaptureTypes(
 
 	result := pipeline.Run()
 
-	returns := unwrapCallResult(result)
+	returns := callreturn.ReturnVectorOfCallResult(result.Type, result.Returns).Types()
 	returns = s.applyPostCallTransforms(calleeType, args, returns, nil, false, false)
 	returns = s.applyEnvironmentReturnProjection(calleeType, ex, ownerExpr, ownerType, args, p, sc, returns)
 
@@ -360,7 +360,7 @@ func (s *Synthesizer) synthMethodCallCoreWithExpected(ex *ast.FuncCallExpr, p cf
 	}
 
 	result := pipeline.Run()
-	returns := unwrapCallResult(result)
+	returns := callreturn.ReturnVectorOfCallResult(result.Type, result.Returns).Types()
 	returns = s.applyPostCallTransforms(calleeType, args, returns, recvType, true, forceReceiver)
 	returns = s.applyEnvironmentReturnProjection(calleeType, ex, ex.Receiver, recvType, args, p, sc, returns)
 
@@ -409,7 +409,7 @@ func (s *Synthesizer) SynthCallWithReceiverType(ex *ast.FuncCallExpr, p cfg.Poin
 		WithReSynth(s.contextualArgReSynth(calleeType, ex.Args, sc, p))
 
 	result := pipeline.Run()
-	returns := unwrapCallResult(result)
+	returns := callreturn.ReturnVectorOfCallResult(result.Type, result.Returns).Types()
 	returns = s.applyPostCallTransforms(calleeType, args, returns, recvType, true, forceReceiver)
 	returns = s.applyEnvironmentReturnProjection(calleeType, ex, ex.Receiver, recvType, args, p, sc, returns)
 
@@ -998,27 +998,6 @@ func (s *Synthesizer) specReturnOverride(fnType typ.Type, astArgs []ast.Expr, ar
 	return transform.ApplySpecReturnCases(fn, argTypes)
 }
 
-// unwrapCallResult converts CallResult to a slice of types.
-func unwrapCallResult(result ops.CallResult) []typ.Type {
-	if len(result.Returns) > 0 {
-		return CopyTypes(result.Returns)
-	}
-	if tuple, ok := result.Type.(*typ.Tuple); ok {
-		return CopyTypes(tuple.Elements)
-	}
-	return []typ.Type{result.Type}
-}
-
-// CopyTypes returns a copy of a type slice.
-func CopyTypes(types []typ.Type) []typ.Type {
-	if len(types) == 0 {
-		return nil
-	}
-	result := make([]typ.Type, len(types))
-	copy(result, types)
-	return result
-}
-
 // applyPostCallTransforms applies effect-based return type transforms.
 func (s *Synthesizer) applyPostCallTransforms(calleeType typ.Type, args []typ.Type, returns []typ.Type, receiver typ.Type, isMethod bool, forceMethodReceiver bool) []typ.Type {
 	return callreturn.ApplyEffectTransforms(callreturn.EffectTransformInput{
@@ -1114,7 +1093,7 @@ func (s *Synthesizer) evaluateEnvironmentReturn(
 		def.Callee = targetType
 	}
 	result := ops.NewCallPipeline(s.deps.Ctx, def, len(def.Args)).Run()
-	returns := unwrapCallResult(result)
+	returns := callreturn.ReturnVectorOfCallResult(result.Type, result.Returns).Types()
 	return s.applyPostCallTransforms(callType, def.Args, returns, targetType, spec.Method != "", false)
 }
 
@@ -1138,7 +1117,7 @@ func (s *Synthesizer) evaluateEnvironmentReturnSource(spec contract.EnvReturnSpe
 		Query:  s.GetCallQuery(),
 	}
 	result := ops.NewCallPipeline(s.deps.Ctx, def, len(def.Args)).Run()
-	returns := unwrapCallResult(result)
+	returns := callreturn.ReturnVectorOfCallResult(result.Type, result.Returns).Types()
 	return s.applyPostCallTransforms(fnType, def.Args, returns, nil, false, false)
 }
 
