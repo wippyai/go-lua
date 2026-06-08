@@ -99,6 +99,28 @@ func TestValueOriginFactsAddressCoverageSupportsNamedRoots(t *testing.T) {
 	}
 }
 
+func TestValueOriginIndexedIteratorSourceRoutesDistinguishExactAndDescendant(t *testing.T) {
+	entry := constraint.NewPath(cfg.SymbolID(24), "entry")
+	items := constraint.NewPath(cfg.SymbolID(25), "items")
+	entryAddr := testStableAddressPath(t, entry)
+	entryIDAddr := testStableAddressPath(t, entry.Field("id"))
+	itemsAddr := testStableAddressPath(t, items)
+	facts := ValueOriginFacts{}.WithAddresses(entryAddr, itemsAddr, ValueOriginIndexedIterator, 1)
+
+	exact := facts.exactIndexedIteratorSourceRoutesCoveringAddress(entryAddr, 1)
+	if len(exact) != 1 || !exact[0].source.Equal(itemsAddr) || len(exact[0].remainder) != 0 {
+		t.Fatalf("exact indexed route = %#v, want items with no remainder", exact)
+	}
+	if got := facts.exactIndexedIteratorSourceRoutesCoveringAddress(entryIDAddr, 1); len(got) != 0 {
+		t.Fatalf("exact indexed route accepted descendant read: %#v", got)
+	}
+	descendant := facts.indexedIteratorValueSourceRoutesCoveringAddress(entryIDAddr)
+	if len(descendant) != 1 || !descendant[0].source.Equal(itemsAddr) ||
+		len(descendant[0].remainder) != 1 || descendant[0].remainder[0].Name != "id" {
+		t.Fatalf("descendant indexed route = %#v, want items with [.id]", descendant)
+	}
+}
+
 func TestValueOriginAssignmentAliasSourceAddressesIgnoreLegacyStoredSource(t *testing.T) {
 	valuePath := constraint.NewPath(cfg.SymbolID(17), "alias")
 	sourcePath := constraint.NewPath(cfg.SymbolID(18), "source")

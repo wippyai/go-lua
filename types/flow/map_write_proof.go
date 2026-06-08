@@ -524,25 +524,15 @@ func IndexedIteratorKeyArrayReadback(
 		if !seen.Add(cur) {
 			continue
 		}
-		for _, use := range origins.OriginsCoveringAddress(cur) {
-			switch use.Origin.Kind {
-			case ValueOriginIndexedIterator:
-				if use.Origin.VarIndex != 1 || len(use.Remainder) != 0 {
+		for _, route := range origins.exactIndexedIteratorSourceRoutesCoveringAddress(cur, 1) {
+			for _, value := range keyPresence.KeyArrayValuesAddresses(route.source, table) {
+				if value.IsZero() {
 					continue
 				}
-				source, ok := use.SourceAddress()
-				if !ok {
-					continue
-				}
-				for _, value := range keyPresence.KeyArrayValuesAddresses(source, table) {
-					if value.IsZero() {
-						continue
-					}
-					if out.IsZero() {
-						out = value
-					} else {
-						out = product.Domain.Join(out, value)
-					}
+				if out.IsZero() {
+					out = value
+				} else {
+					out = product.Domain.Join(out, value)
 				}
 			}
 		}

@@ -56,6 +56,22 @@ type ValueOriginUse struct {
 	Remainder []constraint.Segment
 }
 
+type valueOriginRouteRemainder uint8
+
+const (
+	valueOriginRouteAnyRemainder valueOriginRouteRemainder = iota
+	valueOriginRouteRequireRemainder
+	valueOriginRouteForbidRemainder
+)
+
+type valueOriginRouteQuery struct {
+	value     StableAddress
+	kind      ValueOriginKind
+	varIndex  int
+	hasVar    bool
+	remainder valueOriginRouteRemainder
+}
+
 // SourceAddress returns the normalized source address represented by this use.
 func (u ValueOriginUse) SourceAddress() (StableAddress, bool) {
 	return u.Origin.SourceAddress()
@@ -159,25 +175,40 @@ func (f ValueOriginFacts) OriginsCoveringAddress(value StableAddress) []ValueOri
 }
 
 func (f ValueOriginFacts) assignmentAliasSourceRoutesCoveringAddress(value StableAddress) []sourceRoute {
-	return f.sourceRoutesCoveringAddress(value, func(use ValueOriginUse) bool {
-		return use.Origin.Kind == ValueOriginAssignmentAlias
+	return f.sourceRoutes(valueOriginRouteQuery{
+		value: value,
+		kind:  ValueOriginAssignmentAlias,
 	})
 }
 
 func (f ValueOriginFacts) indexedIteratorValueSourceRoutesCoveringAddress(value StableAddress) []sourceRoute {
-	return f.sourceRoutesCoveringAddress(value, func(use ValueOriginUse) bool {
-		return use.Origin.Kind == ValueOriginIndexedIterator && use.Origin.VarIndex == 1 && len(use.Remainder) > 0
+	return f.sourceRoutes(valueOriginRouteQuery{
+		value:     value,
+		kind:      ValueOriginIndexedIterator,
+		varIndex:  1,
+		hasVar:    true,
+		remainder: valueOriginRouteRequireRemainder,
 	})
 }
 
-func (f ValueOriginFacts) sourceRoutesCoveringAddress(value StableAddress, accept func(ValueOriginUse) bool) []sourceRoute {
-	uses := f.OriginsCoveringAddress(value)
+func (f ValueOriginFacts) exactIndexedIteratorSourceRoutesCoveringAddress(value StableAddress, varIndex int) []sourceRoute {
+	return f.sourceRoutes(valueOriginRouteQuery{
+		value:     value,
+		kind:      ValueOriginIndexedIterator,
+		varIndex:  varIndex,
+		hasVar:    true,
+		remainder: valueOriginRouteForbidRemainder,
+	})
+}
+
+func (f ValueOriginFacts) sourceRoutes(q valueOriginRouteQuery) []sourceRoute {
+	uses := f.OriginsCoveringAddress(q.value)
 	if len(uses) == 0 {
 		return nil
 	}
 	var out []sourceRoute
 	for _, use := range uses {
-		if accept != nil && !accept(use) {
+		if !valueOriginRouteAccepts(q, use) {
 			continue
 		}
 		route, ok := use.SourceRoute()
@@ -187,6 +218,23 @@ func (f ValueOriginFacts) sourceRoutesCoveringAddress(value StableAddress, accep
 		out = append(out, route)
 	}
 	return out
+}
+
+func valueOriginRouteAccepts(q valueOriginRouteQuery, use ValueOriginUse) bool {
+	if q.kind != 0 && use.Origin.Kind != q.kind {
+		return false
+	}
+	if q.hasVar && use.Origin.VarIndex != q.varIndex {
+		return false
+	}
+	switch q.remainder {
+	case valueOriginRouteRequireRemainder:
+		return len(use.Remainder) > 0
+	case valueOriginRouteForbidRemainder:
+		return len(use.Remainder) == 0
+	default:
+		return true
+	}
 }
 
 func (f ValueOriginFacts) KillAffectedByWriteAddress(write StableAddress) ValueOriginFacts {
