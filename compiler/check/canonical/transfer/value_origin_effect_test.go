@@ -18,7 +18,7 @@ func TestValueOriginDemandIndexedIteratorNestedField(t *testing.T) {
 	entry := &ast.IdentExpr{Value: "entry"}
 	in := valueOriginInput(t, map[*ast.IdentExpr]cfg.SymbolID{entry: cfg.SymbolID(12)})
 	tr := New(in, Config{})
-	tr.paramBySym[cfg.SymbolID(11)] = 0
+	setTransferParamSlotsForTest(tr, cfg.SymbolID(11))
 
 	out := flow.PointState{
 		ValueOrigins: flow.ValueOriginFacts{}.WithAddresses(
@@ -45,7 +45,7 @@ func TestValueOriginDemandRoutesThroughAppendElementFieldOrigin(t *testing.T) {
 	routeEntry := &ast.IdentExpr{Value: "route_entry"}
 	in := valueOriginInput(t, map[*ast.IdentExpr]cfg.SymbolID{routeEntry: cfg.SymbolID(156)})
 	tr := New(in, Config{})
-	tr.paramBySym[cfg.SymbolID(120)] = 0
+	setTransferParamSlotsForTest(tr, cfg.SymbolID(120))
 
 	routePath := constraint.NewPath(cfg.SymbolID(155), "route")
 	routeEntryPath := constraint.NewPath(cfg.SymbolID(156), "route_entry")
@@ -107,7 +107,7 @@ func TestConditionReadDemandUnaryLengthOperand(t *testing.T) {
 	operations := &ast.IdentExpr{Value: "operations"}
 	in := valueOriginInput(t, map[*ast.IdentExpr]cfg.SymbolID{operations: cfg.SymbolID(12)})
 	tr := New(in, Config{})
-	tr.paramBySym[cfg.SymbolID(12)] = 0
+	setTransferParamSlotsForTest(tr, cfg.SymbolID(12))
 
 	cond := &ast.RelationalOpExpr{
 		Operator: "==",
@@ -129,7 +129,7 @@ func TestCapabilityDemandDirectParamFieldPathUnderTruthyGuardAdmitsFalsyLeaf(t *
 	}
 	in := valueOriginInput(t, map[*ast.IdentExpr]cfg.SymbolID{template: cfg.SymbolID(12)})
 	tr := New(in, Config{})
-	tr.paramBySym[cfg.SymbolID(12)] = 0
+	setTransferParamSlotsForTest(tr, cfg.SymbolID(12))
 	path := constraint.NewPath(cfg.SymbolID(12), "template").Field("operations")
 	out := flow.PointState{Cond: constraint.FromConstraints(constraint.Truthy{Path: path})}
 
@@ -145,7 +145,7 @@ func TestValueOriginDemandLiftsThroughNestedSourcePath(t *testing.T) {
 	entry := &ast.IdentExpr{Value: "entry"}
 	in := valueOriginInput(t, map[*ast.IdentExpr]cfg.SymbolID{entry: cfg.SymbolID(52)})
 	tr := New(in, Config{})
-	tr.paramBySym[cfg.SymbolID(51)] = 0
+	setTransferParamSlotsForTest(tr, cfg.SymbolID(51))
 
 	out := flow.PointState{
 		ValueOrigins: flow.ValueOriginFacts{}.WithAddresses(
@@ -178,8 +178,7 @@ func TestValueOriginDemandUsesAllCoveringOrigins(t *testing.T) {
 	}
 	in := valueOriginInput(t, map[*ast.IdentExpr]cfg.SymbolID{entry: cfg.SymbolID(62)})
 	tr := New(in, Config{})
-	tr.paramBySym[cfg.SymbolID(61)] = 0
-	tr.paramBySym[cfg.SymbolID(63)] = 1
+	setTransferParamSlotsForTest(tr, cfg.SymbolID(61), cfg.SymbolID(63))
 
 	entryPath := constraint.NewPath(cfg.SymbolID(62), "entry")
 	testsPath := constraint.NewPath(cfg.SymbolID(61), "tests")
@@ -221,7 +220,7 @@ func TestValueOriginDemandKeyedIteratorKeyAndValue(t *testing.T) {
 		entry: cfg.SymbolID(23),
 	})
 	tr := New(in, Config{})
-	tr.paramBySym[cfg.SymbolID(21)] = 0
+	setTransferParamSlotsForTest(tr, cfg.SymbolID(21))
 
 	namePath := constraint.NewPath(cfg.SymbolID(22), "name")
 	itemsPath := constraint.NewPath(cfg.SymbolID(21), "items")
@@ -270,7 +269,7 @@ func TestValueOriginContractDemandGuardedDerivedLeafAdmitsFalsyLeaf(t *testing.T
 	}
 	in := valueOriginInput(t, map[*ast.IdentExpr]cfg.SymbolID{op: cfg.SymbolID(52)})
 	tr := New(in, Config{})
-	tr.paramBySym[cfg.SymbolID(51)] = 0
+	setTransferParamSlotsForTest(tr, cfg.SymbolID(51))
 	sourcePath := constraint.NewPath(cfg.SymbolID(51), "template").Field("operations")
 	valuePath := constraint.NewPath(cfg.SymbolID(52), "op").Field("config").Field("template")
 	out := flow.PointState{
@@ -306,7 +305,7 @@ func TestValueOriginDemandDirectParamRoot(t *testing.T) {
 	page := &ast.IdentExpr{Value: "page"}
 	in := valueOriginInput(t, map[*ast.IdentExpr]cfg.SymbolID{page: cfg.SymbolID(31)})
 	tr := New(in, Config{})
-	tr.paramBySym[cfg.SymbolID(31)] = 0
+	setTransferParamSlotsForTest(tr, cfg.SymbolID(31))
 
 	got := collectDemand(t, func(demand func(int, paramevidence.ParamContract)) {
 		tr.demandExprCtx(&flow.PointState{}, page, typ.NewRecord().ReadonlyField("data_func", typ.String).Build(), demand)
@@ -318,7 +317,7 @@ func TestValueOriginDemandDirectParamRootUnderTruthyGuardAdmitsFalsyRoot(t *test
 	page := &ast.IdentExpr{Value: "page"}
 	in := valueOriginInput(t, map[*ast.IdentExpr]cfg.SymbolID{page: cfg.SymbolID(31)})
 	tr := New(in, Config{})
-	tr.paramBySym[cfg.SymbolID(31)] = 0
+	setTransferParamSlotsForTest(tr, cfg.SymbolID(31))
 	path := constraint.NewPath(cfg.SymbolID(31), "page")
 	out := flow.PointState{Cond: constraint.FromConstraints(constraint.Truthy{Path: path})}
 
@@ -332,7 +331,7 @@ func TestValueOriginDemandDirectParamFieldPath(t *testing.T) {
 	entry := &ast.IdentExpr{Value: "entry"}
 	in := valueOriginInput(t, map[*ast.IdentExpr]cfg.SymbolID{entry: cfg.SymbolID(41)})
 	tr := New(in, Config{})
-	tr.paramBySym[cfg.SymbolID(41)] = 0
+	setTransferParamSlotsForTest(tr, cfg.SymbolID(41))
 
 	got := collectDemand(t, func(demand func(int, paramevidence.ParamContract)) {
 		tr.demandExprCtx(&flow.PointState{}, &ast.AttrGetExpr{
@@ -348,7 +347,7 @@ func TestValueOriginDemandDirectParamFieldPathUnderTruthyGuardAdmitsFalsyLeaf(t 
 	entry := &ast.IdentExpr{Value: "entry"}
 	in := valueOriginInput(t, map[*ast.IdentExpr]cfg.SymbolID{entry: cfg.SymbolID(41)})
 	tr := New(in, Config{})
-	tr.paramBySym[cfg.SymbolID(41)] = 0
+	setTransferParamSlotsForTest(tr, cfg.SymbolID(41))
 	path := constraint.NewPath(cfg.SymbolID(41), "entry").Field("id")
 	out := flow.PointState{Cond: constraint.FromConstraints(constraint.Truthy{Path: path})}
 
@@ -368,7 +367,7 @@ func TestValueOriginDemandDirectParamFieldPathUnderNonEmptyGuardAdmitsGuardedAwa
 	page := &ast.IdentExpr{Value: "page"}
 	in := valueOriginInput(t, map[*ast.IdentExpr]cfg.SymbolID{page: cfg.SymbolID(42)})
 	tr := New(in, Config{})
-	tr.paramBySym[cfg.SymbolID(42)] = 0
+	setTransferParamSlotsForTest(tr, cfg.SymbolID(42))
 	pagePath := constraint.NewPath(cfg.SymbolID(42), "page")
 	out := flow.PointState{Cond: constraint.FromConstraints(
 		constraint.Truthy{Path: pagePath.Field("data_func")},

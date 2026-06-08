@@ -326,6 +326,6 @@ func (t *Transfer) runtimeArgCallerParamIndex(arg ast.Expr) (int, bool) {
 	if !ok || path.Symbol == 0 || len(path.Segments) != 0 {
 		return 0, false
 	}
-	idx, ok := t.paramBySym[path.Symbol]
-	return idx, ok
+	param, ok := t.params.Lookup(path.Symbol)
+	return param.Index, ok
 }

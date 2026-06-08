@@ -3289,7 +3289,7 @@ type ParamNarrow = paramevidence.ParamNarrow
 // terminate, yields no effect (sound: the caller simply does not narrow).
 func (t *Transfer) ParamNarrowEffects() []ParamNarrow {
 	g := t.in.Graph
-	if g == nil || len(t.paramBySym) == 0 {
+	if g == nil || t.params.IsEmpty() {
 		return nil
 	}
 	var out []ParamNarrow
@@ -3447,10 +3447,11 @@ func (t *Transfer) condArgEffect(cond ast.Expr, taken bool) (ParamNarrow, bool) 
 	default:
 		return ParamNarrow{}, false
 	}
-	idx, isParam := t.paramBySym[t.symbolOf(ident)]
+	param, isParam := t.params.Lookup(t.symbolOf(ident))
 	if !isParam {
 		return ParamNarrow{}, false
 	}
+	idx := param.Index
 	proven := effectiveCheck(check, taken)
 	switch proven {
 	case cfg.CheckTruthy, cfg.CheckFalsy:
@@ -3476,10 +3477,11 @@ func (t *Transfer) paramEffectFromCondition(cond ast.Expr, _ bool) (ParamNarrow,
 // strips nil from its correlated value siblings (the call-site form of the (value,
 // err) inverse correlation, applied by ApplyParamNarrows/applySiblingNilForErr).
 func (t *Transfer) toParamEffect(sym cfg.SymbolID, segs []constraint.Segment, check cfg.CondCheckKind, key narrow.TypeKey) (ParamNarrow, bool) {
-	idx, isParam := t.paramBySym[sym]
+	param, isParam := t.params.Lookup(sym)
 	if !isParam {
 		return ParamNarrow{}, false
 	}
+	idx := param.Index
 	switch check {
 	case cfg.CheckTruthy, cfg.CheckNotNil, cfg.CheckNil, cfg.CheckFalsy:
 		return ParamNarrow{Param: idx, Segments: segs, Check: check, EqParam: -1}, true
@@ -3541,10 +3543,11 @@ func (t *Transfer) paramCastEffect(call *ast.FuncCallExpr) (ParamNarrow, bool) {
 	if sym == 0 {
 		return ParamNarrow{}, false
 	}
-	idx, isParam := t.paramBySym[sym]
+	param, isParam := t.params.Lookup(sym)
 	if !isParam {
 		return ParamNarrow{}, false
 	}
+	idx := param.Index
 	return ParamNarrow{Param: idx, EqParam: -1, CastType: target}, true
 }
 
@@ -3579,8 +3582,8 @@ func (t *Transfer) paramOperand(expr ast.Expr) (int, bool) {
 	if sym == 0 {
 		return 0, false
 	}
-	idx, isParam := t.paramBySym[sym]
-	return idx, isParam
+	param, isParam := t.params.Lookup(sym)
+	return param.Index, isParam
 }
 
 // relEqualLive reports whether the equality (==) sense holds on the chosen edge for a
@@ -3646,7 +3649,7 @@ type DelegatedCall = paramevidence.DelegatedCall
 // does not hold on the skipping path.
 func (t *Transfer) ExitDominatingCalls() []DelegatedCall {
 	g := t.in.Graph
-	if g == nil || len(t.paramBySym) == 0 {
+	if g == nil || t.params.IsEmpty() {
 		return nil
 	}
 	var out []DelegatedCall
@@ -3679,8 +3682,8 @@ func (t *Transfer) ExitDominatingCalls() []DelegatedCall {
 			if sym == 0 {
 				continue
 			}
-			if idx, isParam := t.paramBySym[sym]; isParam {
-				argParams[i] = idx
+			if param, isParam := t.params.Lookup(sym); isParam {
+				argParams[i] = param.Index
 				any = true
 			}
 		}

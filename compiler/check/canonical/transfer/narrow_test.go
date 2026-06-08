@@ -1142,7 +1142,7 @@ func TestNarrowAndFalseEdgeUnionsSameSymbolLiteralRefinement(t *testing.T) {
 		lhs:      sym,
 		rhsIdent: sym,
 	}), Config{})
-	tr.paramBySym[sym] = 0
+	setTransferParamSlotsForTest(tr, sym)
 	out := flow.PointStateDomain.Bottom()
 	out.Env = map[flow.ValueKey]product.AbstractValue{
 		flow.SymbolValueKey(sym): product.FromType(typ.NewUnion(typ.String, typ.Boolean, typ.Nil)),

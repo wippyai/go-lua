@@ -115,8 +115,8 @@ func (t *Transfer) demandLocalPathContract(
 		routes = facts.ProvenanceRoutes
 	}
 	for _, target := range paramevidence.ProvenanceRouteContractClosure(path, contract, routes) {
-		if idx, isParam := t.paramBySym[target.Path.Symbol]; isParam {
-			t.demandParamPathContract(out, idx, target.Path, target.Contract, demand)
+		if param, isParam := t.params.Lookup(target.Path.Symbol); isParam {
+			t.demandParamPathContract(out, param.Index, target.Path, target.Contract, demand)
 		}
 	}
 }

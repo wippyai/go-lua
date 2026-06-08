@@ -160,7 +160,8 @@ func (t *Transfer) recordReceiverMutationEffect(
 	if out == nil || sym == 0 || len(mutations) == 0 {
 		return false
 	}
-	slot, ok := t.paramBySym[sym]
+	param, ok := t.params.Lookup(sym)
+	slot := param.Index
 	if !ok {
 		if t.prototypeSelfSymbol == 0 || sym != t.prototypeSelfSymbol || t.prototypeSelfSlot < 0 {
 			return false

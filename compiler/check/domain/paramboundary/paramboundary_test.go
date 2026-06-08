@@ -31,6 +31,25 @@ func TestParameterSlotsFromSlotsNormalizesLookup(t *testing.T) {
 	}
 }
 
+func TestParameterSlotsFromSymbolsUsesSlotOrder(t *testing.T) {
+	first := cfg.SymbolID(5)
+	second := cfg.SymbolID(8)
+
+	got := ParameterSlotsFromSymbols([]cfg.SymbolID{first, 0, second})
+
+	slot, ok := got.Lookup(first)
+	if !ok || slot.Index != 0 {
+		t.Fatalf("Lookup(first) = %#v/%v, want index 0", slot, ok)
+	}
+	slot, ok = got.Lookup(second)
+	if !ok || slot.Index != 2 {
+		t.Fatalf("Lookup(second) = %#v/%v, want index 2", slot, ok)
+	}
+	if _, ok := got.Lookup(0); ok {
+		t.Fatal("Lookup(0) unexpectedly succeeded")
+	}
+}
+
 func TestUnannotatedRootsFromFactsExcludesExplicitAny(t *testing.T) {
 	untyped := cfg.SymbolID(1)
 	explicitAny := cfg.SymbolID(2)

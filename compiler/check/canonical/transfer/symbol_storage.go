@@ -3,6 +3,7 @@ package transfer
 import (
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/domain/functionsymbols"
+	"github.com/wippyai/go-lua/compiler/check/domain/paramboundary"
 	"github.com/wippyai/go-lua/types/domain/value/product"
 	"github.com/wippyai/go-lua/types/flow"
 )
@@ -32,11 +33,11 @@ func (c symbolStorageClass) emitsCellEffects() bool {
 // policy lives here, then delegates mechanics to PointFacts/PointWriter.
 type symbolStoragePolicy struct {
 	graph      *cfg.Graph
-	params     map[cfg.SymbolID]int
+	params     paramboundary.ParameterSlots
 	ownerCells functionsymbols.Set
 }
 
-func newSymbolStoragePolicy(g *cfg.Graph, params map[cfg.SymbolID]int, ownerCells functionsymbols.Set) symbolStoragePolicy {
+func newSymbolStoragePolicy(g *cfg.Graph, params paramboundary.ParameterSlots, ownerCells functionsymbols.Set) symbolStoragePolicy {
 	return symbolStoragePolicy{
 		graph:      g,
 		params:     params,
@@ -131,7 +132,7 @@ func (p symbolStoragePolicy) isCapturedFreeVar(sym cfg.SymbolID) bool {
 	if sym == 0 || p.graph == nil {
 		return false
 	}
-	if _, isParam := p.params[sym]; isParam {
+	if _, isParam := p.params.Lookup(sym); isParam {
 		return false
 	}
 	if k, ok := p.graph.SymbolKind(sym); ok {

@@ -285,9 +285,9 @@ type Transfer struct {
 	// callTyper exposes call-derived facts. Product results are consumed only when
 	// this value also implements ProductCallProvider.
 	callTyper CallTyper
-	// paramBySym maps a parameter's symbol ID to its parameter index, so a body
-	// use of a parameter routes demand to the right contract cell.
-	paramBySym map[cfg.SymbolID]int
+	// params maps parameter root symbols to canonical slot indexes, so body uses
+	// route demand and receiver effects to the right contract cell.
+	params paramboundary.ParameterSlots
 	// typeCheckByErr maps a type-check assignment's error-result symbol to the
 	// value narrowing the guard proves on the err == nil edge. NarrowEdge reads it
 	// so a branch testing the error symbol narrows the checked value to the checked
@@ -372,7 +372,6 @@ func New(in input.Inputs, config Config) *Transfer {
 		ops:           config.Ops,
 		funcTyper:     config.FuncTyper,
 		callTyper:     config.CallTyper,
-		paramBySym:    make(map[cfg.SymbolID]int),
 		declaredTypes: in.Scope.DeclaredTypes,
 		castType:      config.CastType,
 		typeNameValue: config.TypeNameValue,
@@ -391,14 +390,9 @@ func New(in input.Inputs, config Config) *Transfer {
 		}
 		t.declaredParamBySlot[0] = config.SelfType
 	}
-	for i, sym := range in.Scope.ParamSymbols {
-		if sym == 0 {
-			continue
-		}
-		t.paramBySym[sym] = i
-	}
+	t.params = paramboundary.ParameterSlotsFromSymbols(in.Scope.ParamSymbols)
 	t.unannotatedParam = paramboundary.UnannotatedRootsBySlot(in.Scope.ParamSymbols, t.declaredParamBySlot)
-	t.symbolStorage = newSymbolStoragePolicy(in.Graph, t.paramBySym, in.Scope.CellSymbols)
+	t.symbolStorage = newSymbolStoragePolicy(in.Graph, t.params, in.Scope.CellSymbols)
 	for _, b := range config.TypeChecks {
 		if b.ErrSym == 0 || b.Type == nil || len(b.NarrowSyms) == 0 {
 			continue
@@ -1714,8 +1708,8 @@ func (t *Transfer) recordPrototypeSelfWrite(
 		changed = true
 	}
 	if publishParamEffect {
-		if slot, ok := t.paramBySym[sym]; ok {
-			if flow.RecordReceiverWrite(out, slot, updated, mutations...) {
+		if param, ok := t.params.Lookup(sym); ok {
+			if flow.RecordReceiverWrite(out, param.Index, updated, mutations...) {
 				changed = true
 			}
 		} else if t.prototypeSelfSymbol != 0 && sym == t.prototypeSelfSymbol && t.prototypeSelfSlot >= 0 &&
@@ -3034,8 +3028,8 @@ func (t *Transfer) demandParamCtx(expr ast.Expr, ctx typ.Type, demand func(int, 
 	if sym == 0 {
 		return
 	}
-	if idx, isParam := t.paramBySym[sym]; isParam {
-		demand(idx, paramevidence.DemandFromType(ctx))
+	if param, isParam := t.params.Lookup(sym); isParam {
+		demand(param.Index, paramevidence.DemandFromType(ctx))
 	}
 }
 

@@ -33,6 +33,22 @@ func ParameterSlotsFromGraph(g *cfg.Graph) ParameterSlots {
 	return ParameterSlotsFromSlots(g.ParamSlotsReadOnly())
 }
 
+// ParameterSlotsFromSymbols returns a boundary lookup from canonical slot-order
+// parameter symbols when declaration points are not needed by the consumer.
+func ParameterSlotsFromSymbols(symbols []cfg.SymbolID) ParameterSlots {
+	if len(symbols) == 0 {
+		return ParameterSlots{}
+	}
+	out := ParameterSlots{bySymbol: make(map[cfg.SymbolID]ParameterSlot, len(symbols))}
+	for idx, sym := range symbols {
+		if sym == 0 {
+			continue
+		}
+		out.bySymbol[sym] = ParameterSlot{Index: idx}
+	}
+	return out
+}
+
 // ParameterSlotsFromSlots normalizes a canonical parameter-slot slice into a
 // symbol-keyed boundary lookup.
 func ParameterSlotsFromSlots(slots []cfg.ParamSlot) ParameterSlots {
