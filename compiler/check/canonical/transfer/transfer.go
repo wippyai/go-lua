@@ -55,10 +55,10 @@ import (
 	domainpath "github.com/wippyai/go-lua/compiler/check/domain/path"
 	"github.com/wippyai/go-lua/compiler/check/synth/ops"
 	"github.com/wippyai/go-lua/compiler/pathseg"
+	"github.com/wippyai/go-lua/types/callboundary"
 	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/domain/value"
 	"github.com/wippyai/go-lua/types/domain/value/product"
-	"github.com/wippyai/go-lua/types/effect"
 	"github.com/wippyai/go-lua/types/flow"
 	"github.com/wippyai/go-lua/types/flow/pathkey"
 	"github.com/wippyai/go-lua/types/flow/propagate"
@@ -179,24 +179,6 @@ type IterVarProjector interface {
 	IterVarProjection(iter *ast.FuncCallExpr, count int, exprType func(ast.Expr) typ.Type) (flow.IteratorVarProjection, bool)
 }
 
-// CallEffects groups product call-outcome effects that mutate caller-visible
-// state after a call returns. Transfer consumes this as one carrier so call-side
-// effects are projected once and then applied by axis-specific reducers.
-type CallEffects struct {
-	CellEffects     flow.CaptureEffects
-	ReceiverEffects flow.ReceiverEffects
-	BoundaryFacts   flow.BoundaryFacts
-	ElementUnions   []effect.ContainerElementUnion
-}
-
-func EmptyCallEffects() CallEffects {
-	return CallEffects{
-		CellEffects:     flow.CaptureEffectsDomain.Bottom(),
-		ReceiverEffects: flow.ReceiverEffectsDomain.Bottom(),
-		BoundaryFacts:   flow.BoundaryFactsDomain.Top(),
-	}
-}
-
 // ProductCallResult is the product-carrier result of evaluating one concrete
 // call site. Values, callable identities, return relations, and caller-visible
 // effects, pre-call obligations, and control facts travel together so transfer
@@ -206,7 +188,7 @@ type ProductCallResult struct {
 	HasReturnValues bool
 	ReturnRefs      flow.ReturnRefs
 	ReturnRelations flow.ReturnRelations
-	Effects         CallEffects
+	Effects         callboundary.Effects
 	ArgDemands      []callobligation.Obligation
 	NeverReturns    bool
 	Postconditions  paramevidence.ReturnPostconditions
@@ -216,7 +198,7 @@ type ProductCallResult struct {
 func EmptyProductCallResult() ProductCallResult {
 	return ProductCallResult{
 		ReturnRelations: flow.ReturnRelationsDomain.Top(),
-		Effects:         EmptyCallEffects(),
+		Effects:         callboundary.EmptyEffects(),
 	}
 }
 

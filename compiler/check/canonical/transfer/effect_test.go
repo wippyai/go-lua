@@ -7,6 +7,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/canonical/input"
 	"github.com/wippyai/go-lua/compiler/check/domain/paramevidence"
+	"github.com/wippyai/go-lua/types/callboundary"
 	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/domain/value"
 	"github.com/wippyai/go-lua/types/domain/value/product"
@@ -2420,7 +2421,7 @@ type containerElementUnionTyper struct {
 
 func (c containerElementUnionTyper) ProductCallFromValues(*ast.FuncCallExpr, ProductCallContext) ProductCallResult {
 	result := productReturnResultForTest(product.FromType(typ.Number))
-	result.Effects = CallEffects{
+	result.Effects = callboundary.Effects{
 		CellEffects:     c.captureEffectTyper.effects,
 		ReceiverEffects: flow.ReceiverEffectsDomain.Bottom(),
 		BoundaryFacts:   flow.BoundaryFactsDomain.Top(),
@@ -2437,7 +2438,7 @@ type boundaryAndContainerElementUnionTyper struct {
 
 func (c boundaryAndContainerElementUnionTyper) ProductCallFromValues(*ast.FuncCallExpr, ProductCallContext) ProductCallResult {
 	result := EmptyProductCallResult()
-	result.Effects = CallEffects{
+	result.Effects = callboundary.Effects{
 		CellEffects:     c.captureEffectTyper.effects,
 		ReceiverEffects: flow.ReceiverEffectsDomain.Bottom(),
 		BoundaryFacts:   c.facts,
@@ -2454,7 +2455,7 @@ type boundaryAndReceiverEffectTyper struct {
 
 func (b boundaryAndReceiverEffectTyper) ProductCallFromValues(*ast.FuncCallExpr, ProductCallContext) ProductCallResult {
 	result := EmptyProductCallResult()
-	result.Effects = CallEffects{
+	result.Effects = callboundary.Effects{
 		CellEffects:     b.captureEffectTyper.effects,
 		ReceiverEffects: b.effects,
 		BoundaryFacts:   b.facts,
@@ -2470,7 +2471,7 @@ type receiverEffectTyper struct {
 
 func (r receiverEffectTyper) ProductCallFromValues(*ast.FuncCallExpr, ProductCallContext) ProductCallResult {
 	result := productReturnResultForTest(product.FromType(typ.Number))
-	result.Effects = CallEffects{
+	result.Effects = callboundary.Effects{
 		CellEffects:     r.captureEffectTyper.effects,
 		ReceiverEffects: r.effects,
 		BoundaryFacts:   flow.BoundaryFactsDomain.Top(),

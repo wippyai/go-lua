@@ -6,6 +6,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/canonical/input"
+	"github.com/wippyai/go-lua/types/callboundary"
 	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/domain/value/product"
 	"github.com/wippyai/go-lua/types/flow"
@@ -292,7 +293,7 @@ func (t *postconditionAssignTestTyper) ProductCallFromValues(
 	_ *ast.FuncCallExpr,
 	_ ProductCallContext,
 ) ProductCallResult {
-	effects := EmptyCallEffects()
+	effects := callboundary.EmptyEffects()
 	effects.BoundaryFacts = t.facts
 	return ProductCallResult{
 		ReturnValues:    t.returns,

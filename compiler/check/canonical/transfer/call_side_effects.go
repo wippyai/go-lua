@@ -6,6 +6,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/check/callsite"
 	canonicalplace "github.com/wippyai/go-lua/compiler/check/canonical/place"
 	"github.com/wippyai/go-lua/compiler/check/domain/paramevidence"
+	"github.com/wippyai/go-lua/types/callboundary"
 	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/domain/value/product"
 	"github.com/wippyai/go-lua/types/effect"
@@ -47,7 +48,7 @@ func (t *Transfer) applyCallResultEffects(
 	p cfg.Point,
 	call *ast.FuncCallExpr,
 	ctx ProductCallContext,
-	effects CallEffects,
+	effects callboundary.Effects,
 	demand func(int, paramevidence.ParamContract),
 ) {
 	if out == nil {

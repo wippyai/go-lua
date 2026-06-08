@@ -10,6 +10,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/check/canonical/transfer"
 	"github.com/wippyai/go-lua/compiler/check/domain/callobligation"
 	"github.com/wippyai/go-lua/compiler/check/domain/paramevidence"
+	"github.com/wippyai/go-lua/types/callboundary"
 	"github.com/wippyai/go-lua/types/contract"
 	"github.com/wippyai/go-lua/types/domain/value/product"
 	"github.com/wippyai/go-lua/types/effect"
@@ -68,7 +69,7 @@ func (p callBoundaryFrame) callReturnValues() ([]product.AbstractValue, bool) {
 	}.Values()
 }
 
-func (p callBoundaryFrame) result(evidence canonicalcall.BoundaryEvidence, effects transfer.CallEffects) transfer.ProductCallResult {
+func (p callBoundaryFrame) result(evidence canonicalcall.BoundaryEvidence, effects callboundary.Effects) transfer.ProductCallResult {
 	values, ok := p.callReturnValues()
 	return transfer.ProductCallResult{
 		ReturnValues:    values,
@@ -234,18 +235,18 @@ func (p callBoundaryFrame) contractEvidence() (api.CallContractEvidence, bool) {
 	return api.NewCallContractEvidence(demands), true
 }
 
-func (p callBoundaryFrame) boundaryEvidenceAndEffects() (canonicalcall.BoundaryEvidence, transfer.CallEffects) {
+func (p callBoundaryFrame) boundaryEvidenceAndEffects() (canonicalcall.BoundaryEvidence, callboundary.Effects) {
 	cellEffects, ok := p.cellEffectAggregation()
 	if !ok {
-		return p.boundaryEvidence(summary.CellEffectAggregation{}), transfer.EmptyCallEffects()
+		return p.boundaryEvidence(summary.CellEffectAggregation{}), callboundary.EmptyEffects()
 	}
 	evidence := p.boundaryEvidence(cellEffects)
-	return evidence, transfer.CallEffects{
-		CellEffects:     evidence.CellEffects,
-		ReceiverEffects: evidence.ReceiverEffects,
-		BoundaryFacts:   evidence.BoundaryFacts,
-		ElementUnions:   p.containerElementUnions(),
-	}
+	return evidence, callboundary.EffectsOf(
+		evidence.CellEffects,
+		evidence.ReceiverEffects,
+		evidence.BoundaryFacts,
+		p.containerElementUnions(),
+	)
 }
 
 func (p callBoundaryFrame) boundaryEvidence(cellEffects summary.CellEffectAggregation) canonicalcall.BoundaryEvidence {

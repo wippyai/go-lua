@@ -9,6 +9,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/check/domain/functionsymbols"
 	"github.com/wippyai/go-lua/compiler/check/domain/metatable"
 	"github.com/wippyai/go-lua/compiler/check/domain/paramevidence"
+	"github.com/wippyai/go-lua/types/callboundary"
 	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/domain/value/product"
 	"github.com/wippyai/go-lua/types/flow"
@@ -424,7 +425,7 @@ func (c captureEffectTyper) TypeCastTarget(*ast.FuncCallExpr, func(ast.Expr) typ
 
 func (c captureEffectTyper) ProductCallFromValues(*ast.FuncCallExpr, ProductCallContext) ProductCallResult {
 	result := EmptyProductCallResult()
-	result.Effects = CallEffects{
+	result.Effects = callboundary.Effects{
 		CellEffects:     c.effects,
 		ReceiverEffects: flow.ReceiverEffectsDomain.Bottom(),
 		BoundaryFacts:   flow.BoundaryFactsDomain.Top(),
@@ -446,7 +447,7 @@ func (p *productCaptureEffectTyper) ProductCallFromValues(
 ) ProductCallResult {
 	p.args = append([]product.AbstractValue(nil), ctx.ArgValues...)
 	result := productReturnResultForTest(product.FromType(typ.Number))
-	result.Effects = CallEffects{
+	result.Effects = callboundary.Effects{
 		CellEffects:     p.effects,
 		ReceiverEffects: flow.ReceiverEffectsDomain.Bottom(),
 		BoundaryFacts:   flow.BoundaryFactsDomain.Top(),
