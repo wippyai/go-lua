@@ -37,6 +37,17 @@ var binaryCache = &nodePairCache{
 var (
 	cachedBottom AbstractValue
 	cachedTop    AbstractValue
+	// Exact singleton admissions are tied to the current canonical interner.
+	// ResetCanonicalInterner refreshes them so analysis-local node identity stays
+	// isolated between checker runs.
+	cachedNil     AbstractValue
+	cachedBool    AbstractValue
+	cachedNumber  AbstractValue
+	cachedInt     AbstractValue
+	cachedString  AbstractValue
+	cachedAny     AbstractValue
+	cachedUnknown AbstractValue
+	cachedNever   AbstractValue
 )
 
 func init() {
@@ -46,6 +57,7 @@ func init() {
 func refreshCachedExtrema() {
 	cachedBottom = constructBottom()
 	cachedTop = constructTop()
+	refreshCachedTypeAdmissions()
 }
 
 // ResetCanonicalInterner clears the package-level product-value interner.

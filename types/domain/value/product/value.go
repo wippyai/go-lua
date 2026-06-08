@@ -95,6 +95,13 @@ func New(
 //
 // The remaining axes carry their identity (Top) value.
 func FromType(t typ.Type) AbstractValue {
+	if cached, ok := cachedExactTypeAdmission(t); ok {
+		return cached
+	}
+	return constructFromType(t)
+}
+
+func constructFromType(t typ.Type) AbstractValue {
 	return New(
 		shapeOf(t),
 		presenceOf(t),
@@ -105,6 +112,40 @@ func FromType(t typ.Type) AbstractValue {
 		identityOf(t),
 		evidence.Top(),
 	)
+}
+
+func refreshCachedTypeAdmissions() {
+	cachedNil = constructFromType(typ.Nil)
+	cachedBool = constructFromType(typ.Boolean)
+	cachedNumber = constructFromType(typ.Number)
+	cachedInt = constructFromType(typ.Integer)
+	cachedString = constructFromType(typ.String)
+	cachedAny = constructFromType(typ.Any)
+	cachedUnknown = constructFromType(typ.Unknown)
+	cachedNever = constructFromType(typ.Never)
+}
+
+func cachedExactTypeAdmission(t typ.Type) (AbstractValue, bool) {
+	switch t {
+	case typ.Nil:
+		return cachedNil, true
+	case typ.Boolean:
+		return cachedBool, true
+	case typ.Number:
+		return cachedNumber, true
+	case typ.Integer:
+		return cachedInt, true
+	case typ.String:
+		return cachedString, true
+	case typ.Any:
+		return cachedAny, true
+	case typ.Unknown:
+		return cachedUnknown, true
+	case typ.Never:
+		return cachedNever, true
+	default:
+		return AbstractValue{}, false
+	}
 }
 
 // FreshFromType admits a newly allocated, still-confined runtime value into the
