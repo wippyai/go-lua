@@ -3,6 +3,7 @@ package callsite
 import (
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/api"
+	"github.com/wippyai/go-lua/compiler/check/domain/functionsymbols"
 	"github.com/wippyai/go-lua/types/typ"
 )
 
@@ -11,14 +12,15 @@ type SymbolTypeAtPoint func(cfg.Point, cfg.SymbolID) (typ.Type, bool)
 
 // PreAssignmentTargets owns the call-site target symbols that must read
 // predecessor state under Lua RHS-before-LHS assignment semantics.
-type PreAssignmentTargets map[*cfg.CallInfo]map[cfg.SymbolID]bool
+type PreAssignmentTargets map[*cfg.CallInfo]functionsymbols.Set
 
 // Contains reports whether call writes sym after evaluating its arguments.
 func (t PreAssignmentTargets) Contains(call *cfg.CallInfo, sym cfg.SymbolID) bool {
 	if call == nil || sym == 0 || len(t) == 0 {
 		return false
 	}
-	return t[call][sym]
+	targets, ok := t[call]
+	return ok && targets.Contains(sym)
 }
 
 // PreAssignmentTargetsByCall indexes assignment target symbols by source call.
@@ -35,13 +37,13 @@ func PreAssignmentTargetsByCall(assignments []api.AssignmentEvidence) PreAssignm
 		if info == nil || len(info.Targets) == 0 || len(info.SourceCalls) == 0 {
 			continue
 		}
-		targets := make(map[cfg.SymbolID]bool, len(info.Targets))
+		var targets functionsymbols.Set
 		for _, target := range info.Targets {
 			if target.Kind == cfg.TargetIdent && target.Symbol != 0 {
-				targets[target.Symbol] = true
+				targets.Add(target.Symbol)
 			}
 		}
-		if len(targets) == 0 {
+		if targets.IsEmpty() {
 			continue
 		}
 		for _, call := range info.SourceCalls {
@@ -49,13 +51,10 @@ func PreAssignmentTargetsByCall(assignments []api.AssignmentEvidence) PreAssignm
 				continue
 			}
 			existing := out[call]
-			if existing == nil {
-				existing = make(map[cfg.SymbolID]bool, len(targets))
-				out[call] = existing
+			for _, sym := range targets.Slice() {
+				existing.Add(sym)
 			}
-			for sym := range targets {
-				existing[sym] = true
-			}
+			out[call] = existing
 		}
 	}
 	return out
