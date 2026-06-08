@@ -36,8 +36,8 @@ func (t *Transfer) applyProductCallBoundary(
 	}
 	t.applyCallArgDemands(out, call, result.ArgDemands, demand)
 	t.applyCallResultEffects(out, call, ctx, result.Effects, demand)
-	if app.ApplyParamNarrows && len(result.ParamNarrows) > 0 {
-		return t.ApplyParamNarrowsAtPoint(out, app.Point, call, result.ParamNarrows)
+	if app.ApplyParamNarrows && (result.Postconditions.HasConstraints() || len(result.ParamNarrows) > 0) {
+		return t.applyParamEvidenceAtPoint(out, app.Point, call, result.Postconditions, result.ParamNarrows)
 	}
 	return false
 }

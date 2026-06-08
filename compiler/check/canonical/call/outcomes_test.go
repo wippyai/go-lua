@@ -288,6 +288,9 @@ func TestCallOutcomeBoundaryEvidenceCarriesSelectedBoundaryAxes(t *testing.T) {
 	if len(got.ParamNarrows) != 1 || got.ParamNarrows[0].Param != 0 {
 		t.Fatalf("ParamNarrows = %#v, want one param narrow", got.ParamNarrows)
 	}
+	if !got.Postconditions.HasConstraints() {
+		t.Fatal("Postconditions missing portable param narrow evidence")
+	}
 	if !got.NeverReturns {
 		t.Fatal("NeverReturns = false, want true")
 	}

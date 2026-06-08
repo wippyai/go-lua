@@ -3754,14 +3754,23 @@ func (t *Transfer) ApplyParamNarrows(out *flow.PointState, call *ast.FuncCallExp
 }
 
 func (t *Transfer) ApplyParamNarrowsAtPoint(out *flow.PointState, point cfg.Point, call *ast.FuncCallExpr, effects []ParamNarrow) (dead bool) {
+	return t.applyParamEvidenceAtPoint(out, point, call, paramevidence.ReturnPostconditionsFromParamNarrows(effects), effects)
+}
+
+func (t *Transfer) applyParamEvidenceAtPoint(out *flow.PointState, point cfg.Point, call *ast.FuncCallExpr, post paramevidence.ReturnPostconditions, effects []ParamNarrow) (dead bool) {
 	if call == nil || len(effects) == 0 {
+		if call != nil && post.HasConstraints() {
+			t.applyConditionEffect(out, ConditionEffect{Fact: post.Substitute(t.callArgumentPostconditionPaths(point, call))})
+		}
 		return false
+	}
+	if post.HasConstraints() {
+		t.applyConditionEffect(out, ConditionEffect{Fact: post.Substitute(t.callArgumentPostconditionPaths(point, call))})
 	}
 	for _, e := range effects {
 		if e.Param < 0 || e.Param >= len(call.Args) {
 			continue
 		}
-		t.applyParamNarrowConditionEffect(out, point, call, e)
 		if e.IsParamEquality() {
 			t.applyParamEqNarrow(out, point, call, e)
 			continue
@@ -3803,17 +3812,10 @@ func (t *Transfer) ApplyParamNarrowsAtPoint(out *flow.PointState, point cfg.Poin
 	return false
 }
 
-// applyParamNarrowConditionEffect lowers a portable callee postcondition from
-// placeholder paths ($0, $1.field, ...) to the caller's normalized static argument
-// paths, then writes it through ConditionEffect. This is the condition-axis half
-// of parameter-effect application; value narrowing below remains the value-axis
-// half. Dynamic or untracked argument paths are intentionally not fabricated: their
-// placeholder substitution drops the fact, preserving soundness as precision loss.
-func (t *Transfer) applyParamNarrowConditionEffect(out *flow.PointState, point cfg.Point, call *ast.FuncCallExpr, e ParamNarrow) bool {
-	c, ok := paramevidence.ParamNarrowConstraint(e)
-	if !ok {
-		return false
-	}
+// callArgumentPostconditionPaths is the call-site binding for placeholder-rooted
+// callee postconditions. Untracked or dynamic arguments are left empty so
+// constraint substitution drops only the facts that cannot be grounded in flow.
+func (t *Transfer) callArgumentPostconditionPaths(point cfg.Point, call *ast.FuncCallExpr) []constraint.Path {
 	args := make([]constraint.Path, len(call.Args))
 	for i, arg := range call.Args {
 		path, ok := t.versionedStaticPathOfExpr(point, arg)
@@ -3822,8 +3824,7 @@ func (t *Transfer) applyParamNarrowConditionEffect(out *flow.PointState, point c
 		}
 		args[i] = path
 	}
-	cond := constraint.FromConstraints(c).Substitute(args)
-	return t.applyConditionEffect(out, ConditionEffect{Fact: cond})
+	return args
 }
 
 func (t *Transfer) narrowAssertTypePath(out *flow.PointState, sym cfg.SymbolID, segments []constraint.Segment, check cfg.CondCheckKind, key narrow.TypeKey) (dead bool) {

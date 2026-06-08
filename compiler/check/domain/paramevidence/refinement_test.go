@@ -66,6 +66,43 @@ func TestFunctionRefinementFromParamNarrowsProjectsTypeKey(t *testing.T) {
 	}
 }
 
+func TestReturnPostconditionsOwnPortableConditionProjection(t *testing.T) {
+	post := ReturnPostconditionsFromParamNarrows([]ParamNarrow{
+		{Param: 0, Check: cfg.CheckNotNil, EqParam: -1},
+		{Param: 1, EqParam: 2},
+		{Param: 3, CondArg: true, Check: cfg.CheckTruthy, EqParam: -1},
+		{Param: 4, CastType: typ.String, EqParam: -1},
+	})
+	if !post.HasConstraints() {
+		t.Fatal("ReturnPostconditionsFromParamNarrows dropped portable facts")
+	}
+	got := post.Substitute([]constraint.Path{
+		constraint.NewPath(10, "a"),
+		constraint.NewPath(11, "b"),
+		constraint.NewPath(12, "c"),
+	})
+	if !containsConstraint(got.MustConstraints(), constraint.NotNil{Path: constraint.NewPath(10, "a")}) {
+		t.Fatalf("substituted postcondition missing a ~= nil: %#v", got.MustConstraints())
+	}
+	if !containsConstraint(got.MustConstraints(), constraint.NewEqPath(constraint.NewPath(11, "b"), constraint.NewPath(12, "c"))) {
+		t.Fatalf("substituted postcondition missing b == c: %#v", got.MustConstraints())
+	}
+}
+
+func TestParamNarrowsFromReturnPostconditionsRecoversOnlyMustFacts(t *testing.T) {
+	common := constraint.NotNil{Path: constraint.ParamPath(0)}
+	left := constraint.Truthy{Path: constraint.ParamPath(1)}
+	right := constraint.Falsy{Path: constraint.ParamPath(1)}
+	post := ReturnPostconditionsFromCondition(constraint.FromDisjuncts([][]constraint.Constraint{
+		{common, left},
+		{common, right},
+	}))
+	got := ParamNarrowsFromReturnPostconditions(post)
+	if len(got) != 1 || got[0].Param != 0 || got[0].Check != cfg.CheckNotNil {
+		t.Fatalf("ParamNarrowsFromReturnPostconditions = %#v, want only common not-nil fact", got)
+	}
+}
+
 func TestFunctionRefinementFromParamNarrowsSkipsNonPortableEffects(t *testing.T) {
 	if got := FunctionRefinementFromParamNarrows(nil, false); got != nil {
 		t.Fatalf("empty nonterminating refinement = %#v, want nil", got)

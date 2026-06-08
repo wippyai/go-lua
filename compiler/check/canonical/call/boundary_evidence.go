@@ -19,6 +19,7 @@ type BoundaryEvidence struct {
 	ReceiverEffects flow.ReceiverEffects
 	BoundaryFacts   flow.BoundaryFacts
 	ArgDemands      []callobligation.Obligation
+	Postconditions  paramevidence.ReturnPostconditions
 	ParamNarrows    []paramevidence.ParamNarrow
 	NeverReturns    bool
 }
@@ -45,6 +46,7 @@ func (o CallOutcome) BoundaryEvidence(in BoundaryEvidenceInput) BoundaryEvidence
 		ReceiverEffects: o.ReceiverEffects(),
 		BoundaryFacts:   o.BoundaryFacts(),
 		ArgDemands:      cloneArgDemands(in.ArgDemands),
+		Postconditions:  paramevidence.ReturnPostconditionsFromParamNarrows(in.ParamNarrows),
 		ParamNarrows:    paramevidence.SortParamNarrows(in.ParamNarrows),
 		NeverReturns:    o.NeverReturns(in.HasNoReturn),
 	}

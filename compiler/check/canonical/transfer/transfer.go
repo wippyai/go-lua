@@ -209,6 +209,7 @@ type ProductCallResult struct {
 	Effects         CallEffects
 	ArgDemands      []callobligation.Obligation
 	NeverReturns    bool
+	Postconditions  paramevidence.ReturnPostconditions
 	ParamNarrows    []ParamNarrow
 }
 

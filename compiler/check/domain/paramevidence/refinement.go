@@ -106,10 +106,16 @@ func SortParamNarrows(in []ParamNarrow) []ParamNarrow {
 	return compactParamNarrows(out)
 }
 
-// FunctionRefinementFromParamNarrows projects solved parameter-narrowing effects
-// to the portable placeholder-rooted FunctionRefinement vocabulary used at module
-// export/import boundaries.
-func FunctionRefinementFromParamNarrows(narrows []ParamNarrow, terminates bool) *constraint.FunctionRefinement {
+// ReturnPostconditions is the portable, placeholder-rooted proof a callee publishes
+// about a normal return. Local-only transfer effects such as condition arguments and
+// casts stay in ParamNarrow; exported/imported evidence travels as constraints.
+type ReturnPostconditions struct {
+	condition constraint.Condition
+}
+
+// ReturnPostconditionsFromParamNarrows projects solved local parameter effects to
+// the portable normal-return vocabulary used at module and call boundaries.
+func ReturnPostconditionsFromParamNarrows(narrows []ParamNarrow) ReturnPostconditions {
 	var onReturn []constraint.Constraint
 	for _, e := range narrows {
 		if e.CondArg || e.CastType != nil || e.Param < 0 {
@@ -121,14 +127,56 @@ func FunctionRefinementFromParamNarrows(narrows []ParamNarrow, terminates bool) 
 		}
 		onReturn = append(onReturn, c)
 	}
-	if len(onReturn) == 0 && !terminates {
+	if len(onReturn) == 0 {
+		return ReturnPostconditions{}
+	}
+	return ReturnPostconditions{condition: constraint.FromConstraints(onReturn...)}
+}
+
+// ReturnPostconditionsFromCondition imports a portable normal-return condition.
+// Only constraints present in every disjunct can be recovered as ParamNarrow facts;
+// the full DNF remains available for direct call-site instantiation.
+func ReturnPostconditionsFromCondition(cond constraint.Condition) ReturnPostconditions {
+	if !cond.HasConstraints() {
+		return ReturnPostconditions{}
+	}
+	return ReturnPostconditions{condition: cond}
+}
+
+func (p ReturnPostconditions) HasConstraints() bool {
+	return p.condition.HasConstraints()
+}
+
+func (p ReturnPostconditions) Condition() constraint.Condition {
+	if !p.HasConstraints() {
+		return constraint.TrueCondition()
+	}
+	return p.condition
+}
+
+func (p ReturnPostconditions) Substitute(args []constraint.Path) constraint.Condition {
+	if !p.HasConstraints() {
+		return constraint.TrueCondition()
+	}
+	return p.condition.Substitute(args)
+}
+
+func (p ReturnPostconditions) FunctionRefinement(terminates bool) *constraint.FunctionRefinement {
+	if !p.HasConstraints() && !terminates {
 		return nil
 	}
 	refinement := &constraint.FunctionRefinement{Terminates: terminates}
-	if len(onReturn) > 0 {
-		refinement.OnReturn = constraint.FromConstraints(onReturn...)
+	if p.HasConstraints() {
+		refinement.OnReturn = p.condition
 	}
 	return refinement
+}
+
+// FunctionRefinementFromParamNarrows projects solved parameter-narrowing effects
+// to the portable placeholder-rooted FunctionRefinement vocabulary used at module
+// export/import boundaries.
+func FunctionRefinementFromParamNarrows(narrows []ParamNarrow, terminates bool) *constraint.FunctionRefinement {
+	return ReturnPostconditionsFromParamNarrows(narrows).FunctionRefinement(terminates)
 }
 
 // ParamNarrowConstraint maps one body-proven parameter check to the portable
@@ -186,8 +234,18 @@ func ParamNarrowsFromFunctionType(sig typ.Type) []ParamNarrow {
 	if !ok || refinement == nil || !refinement.OnReturn.HasConstraints() {
 		return nil
 	}
+	return ParamNarrowsFromReturnPostconditions(ReturnPostconditionsFromCondition(refinement.OnReturn))
+}
+
+// ParamNarrowsFromReturnPostconditions recovers the finite ParamNarrow projection
+// from imported postconditions. Disjunctive facts that are not guaranteed on every
+// return remain in the condition domain instead of being downgraded to a narrow.
+func ParamNarrowsFromReturnPostconditions(post ReturnPostconditions) []ParamNarrow {
+	if !post.HasConstraints() {
+		return nil
+	}
 	var out []ParamNarrow
-	for _, c := range refinement.OnReturn.MustConstraints() {
+	for _, c := range post.Condition().MustConstraints() {
 		if e, ok := ParamNarrowFromConstraint(c); ok {
 			out = append(out, e)
 		}

@@ -74,6 +74,7 @@ func (p productCallFrame) result(evidence canonicalcall.BoundaryEvidence, effect
 		Effects:         effects,
 		ArgDemands:      evidence.ArgDemands,
 		NeverReturns:    evidence.NeverReturns,
+		Postconditions:  evidence.Postconditions,
 		ParamNarrows:    evidence.ParamNarrows,
 	}
 }
