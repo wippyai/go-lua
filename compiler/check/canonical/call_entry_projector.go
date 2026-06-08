@@ -312,30 +312,6 @@ func (c callEntryProjector) valuesForRef(ref summary.FuncRef, call *ast.FuncCall
 	}).Values
 }
 
-func (ct callTyper) productCallEntryContext(ref summary.FuncRef, call *ast.FuncCallExpr, ctx transfer.ProductCallContext) (canonicalcall.EntryContext, bool) {
-	projector, ok := ct.callEntryProjector()
-	if !ok {
-		return canonicalcall.EntryContext{}, false
-	}
-	return projector.productContext(ref, call, ctx)
-}
-
-func (ct callTyper) productClosureCallEntryContext(ref summary.FuncRef, closure flow.ClosureRef, call *ast.FuncCallExpr, ctx transfer.ProductCallContext) (canonicalcall.EntryContext, bool) {
-	projector, ok := ct.callEntryProjector()
-	if !ok {
-		return canonicalcall.EntryContext{}, false
-	}
-	return projector.productClosureContext(ref, closure, call, ctx)
-}
-
-func (c callEntryProjector) productContext(ref summary.FuncRef, call *ast.FuncCallExpr, ctx transfer.ProductCallContext) (canonicalcall.EntryContext, bool) {
-	return c.productEntryContext(ref, call, ctx), true
-}
-
-func (c callEntryProjector) productClosureContext(ref summary.FuncRef, closure flow.ClosureRef, call *ast.FuncCallExpr, ctx transfer.ProductCallContext) (canonicalcall.EntryContext, bool) {
-	return canonicalcall.EntryContextFromClosureWithLiveContext(closure, c.productEntryContext(ref, call, ctx)), true
-}
-
 func (c callEntryProjector) productEntryContext(ref summary.FuncRef, call *ast.FuncCallExpr, ctx transfer.ProductCallContext) canonicalcall.EntryContext {
 	access := c.access()
 	evidence := access.productEvidence(ref, call, ctx)

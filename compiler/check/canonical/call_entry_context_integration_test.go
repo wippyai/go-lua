@@ -43,12 +43,10 @@ func TestProductCallEntryContextProjectsDirectCallerAxes(t *testing.T) {
 		flow.ClosureRefOf(flow.FunctionRef{GraphID: 44}, flow.CaptureCellsDomain.Bottom(), nil),
 	))
 
-	entry, ok := ct.productCallEntryContext(ref, &ast.FuncCallExpr{}, transfer.ProductCallContext{
+	projector := callEntryProjector{program: prog, typer: ct}
+	entry := projector.productEntryContext(ref, &ast.FuncCallExpr{}, transfer.ProductCallContext{
 		References: flow.ReferenceContextOf(cells, refs, closures),
 	})
-	if !ok {
-		t.Fatal("productCallEntryContext returned false")
-	}
 	if entry.Ref() != ref {
 		t.Fatalf("Ref() = %+v, want %+v", entry.Ref(), ref)
 	}

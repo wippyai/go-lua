@@ -63,6 +63,7 @@ func (ct callTyper) productCallOutcomeProjection(
 	if d == nil || site.call == nil || d.activeProgram == nil {
 		return callOutcomeProjection{}
 	}
+	entryProjector, hasEntryProjector := ct.callEntryProjector()
 	return callOutcomeProjection{
 		typer:                    ct,
 		program:                  d.activeProgram,
@@ -72,12 +73,14 @@ func (ct callTyper) productCallOutcomeProjection(
 		skipSignatureRelations:   opts.skipSignatureRelations,
 		omitClosureRelationProof: true,
 		entryContext: func(target canonicalcall.SelectedTarget) canonicalcall.EntryContext {
-			ref := target.Ref()
-			if closure, ok := target.Closure(); ok {
-				entry, _ := ct.productClosureCallEntryContext(ref, closure, site.call, ctx)
-				return entry
+			if !hasEntryProjector {
+				return canonicalcall.EntryContext{}
 			}
-			entry, _ := ct.productCallEntryContext(ref, site.call, ctx)
+			ref := target.Ref()
+			entry := entryProjector.productEntryContext(ref, site.call, ctx)
+			if closure, ok := target.Closure(); ok {
+				return canonicalcall.EntryContextFromClosureWithLiveContext(closure, entry)
+			}
 			return entry
 		},
 		summaryLookup: lookup,
