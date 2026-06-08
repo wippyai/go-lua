@@ -196,7 +196,7 @@ func TestCanonicalFactsConditionTypeAtProjectsDiscriminatedChildWithoutSolution(
 	facts := &canonicalFacts{
 		state:    fs,
 		declared: map[cfg.SymbolID]typ.Type{sym: declared},
-		annotate: map[cfg.SymbolID]bool{sym: true},
+		annotate: flow.AnnotatedSymbolsFromMap(map[cfg.SymbolID]bool{sym: true}),
 		paths:    newPathProjector(fs, canonicalTestSymbolSet(), callableProjector{}),
 	}
 
@@ -391,7 +391,7 @@ func TestCanonicalFactsObservePathKeepsNilRefinementOfOptionalDeclaredRead(t *te
 	facts := &canonicalFacts{
 		state:    fs,
 		declared: map[cfg.SymbolID]typ.Type{sym: typ.NewOptional(typ.String)},
-		annotate: map[cfg.SymbolID]bool{sym: true},
+		annotate: flow.AnnotatedSymbolsFromMap(map[cfg.SymbolID]bool{sym: true}),
 		paths:    newPathProjector(fs, canonicalTestSymbolSet(), callableProjector{}),
 	}
 
@@ -426,7 +426,7 @@ func TestCanonicalFactsObservePathUsesLocalConditionProof(t *testing.T) {
 		declared: map[cfg.SymbolID]typ.Type{
 			sym: typ.NewUnion(aVariant, bVariant),
 		},
-		annotate: map[cfg.SymbolID]bool{sym: true},
+		annotate: flow.AnnotatedSymbolsFromMap(map[cfg.SymbolID]bool{sym: true}),
 	}
 	local := constraint.FromConstraints(constraint.FieldEquals{
 		Target: root,

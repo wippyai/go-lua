@@ -55,7 +55,7 @@ import (
 // and annotated local declarations) and the annotated-symbol set.
 type functionFacts struct {
 	declared  map[cfg.SymbolID]typ.Type
-	annotated map[cfg.SymbolID]bool
+	annotated flow.AnnotatedSymbols
 	// bindings are immutable value-binding facts, not source declarations. They
 	// carry canonical signatures for named/local function bindings so effective
 	// reads and identifier-definedness can see the binding without polluting
@@ -78,14 +78,7 @@ func cloneFunctionFacts(in functionFacts) functionFacts {
 	} else {
 		out.declared = make(map[cfg.SymbolID]typ.Type)
 	}
-	if len(in.annotated) > 0 {
-		out.annotated = make(map[cfg.SymbolID]bool, len(in.annotated))
-		for sym, ok := range in.annotated {
-			out.annotated[sym] = ok
-		}
-	} else {
-		out.annotated = make(map[cfg.SymbolID]bool)
-	}
+	out.annotated = in.annotated.Clone()
 	if len(in.bindings) > 0 {
 		out.bindings = make(map[cfg.SymbolID]typ.Type, len(in.bindings))
 		for sym, t := range in.bindings {
@@ -106,8 +99,7 @@ func cloneFunctionFacts(in functionFacts) functionFacts {
 // base scope through the driver's resolver.
 func (d *Driver) buildFunctionFacts(g *cfg.Graph, evidence api.FlowEvidence) functionFacts {
 	facts := functionFacts{
-		declared:  make(map[cfg.SymbolID]typ.Type),
-		annotated: make(map[cfg.SymbolID]bool),
+		declared: make(map[cfg.SymbolID]typ.Type),
 	}
 	if g == nil {
 		return facts
@@ -161,7 +153,7 @@ func (d *Driver) buildFunctionFacts(g *cfg.Graph, evidence api.FlowEvidence) fun
 			continue
 		}
 		facts.declared[slot.Symbol] = t
-		facts.annotated[slot.Symbol] = true
+		facts.annotated.Add(slot.Symbol)
 	}
 
 	// Annotated local declarations: local x: T = ... pins x's declared type from
@@ -198,7 +190,7 @@ func (d *Driver) buildFunctionFacts(g *cfg.Graph, evidence api.FlowEvidence) fun
 			// scope would drop a generic parameter's bound (`x: T` -> unresolved Ref
 			// instead of the bounded type parameter). Leave the param's declared type
 			// intact; this loop pins only genuine local declarations.
-			if _, isParam := facts.declared[target.Symbol]; isParam && facts.annotated[target.Symbol] {
+			if _, isParam := facts.declared[target.Symbol]; isParam && facts.annotated.Contains(target.Symbol) {
 				continue
 			}
 			// Resolve a local declaration against the scope lexically visible at its
@@ -213,7 +205,7 @@ func (d *Driver) buildFunctionFacts(g *cfg.Graph, evidence api.FlowEvidence) fun
 				continue
 			}
 			facts.declared[target.Symbol] = t
-			facts.annotated[target.Symbol] = true
+			facts.annotated.Add(target.Symbol)
 		}
 	}
 	return facts
@@ -268,7 +260,7 @@ func (d *Driver) seedMethodSelf(facts *functionFacts, prog *program, g *cfg.Grap
 		return
 	}
 	facts.declared[selfSym] = recv
-	facts.annotated[selfSym] = true
+	facts.annotated.Add(selfSym)
 }
 
 // namedReceiverType resolves only an explicit type-namespace receiver binding.
@@ -348,7 +340,7 @@ type canonicalFacts struct {
 	graph    *cfg.Graph
 	state    state.FunctionState
 	declared map[cfg.SymbolID]typ.Type
-	annotate map[cfg.SymbolID]bool
+	annotate flow.AnnotatedSymbols
 	bindings map[cfg.SymbolID]typ.Type
 	consts   map[cfg.SymbolID]map[cfg.Point]*flow.ConstValue
 
@@ -834,7 +826,7 @@ func (f *canonicalFacts) BodyContracts() paramevidence.Contracts {
 
 // IsAnnotated reports whether sym carries an explicit type annotation.
 func (f *canonicalFacts) IsAnnotated(sym cfg.SymbolID) bool {
-	return f.annotate[sym]
+	return f.annotate.Contains(sym)
 }
 
 // inState is the converged state entering point p: a pure read of the solver's
@@ -1544,7 +1536,7 @@ func buildObservationInputs(g *cfg.Graph, facts functionFacts) *flow.Inputs {
 	for sym, t := range facts.declared {
 		in.DeclaredTypes[sym] = t
 	}
-	for sym := range facts.annotated {
+	for _, sym := range facts.annotated.Symbols() {
 		in.AnnotatedVars.Add(sym)
 	}
 	for sym, t := range facts.bindings {

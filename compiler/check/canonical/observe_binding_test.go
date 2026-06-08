@@ -16,7 +16,6 @@ func TestCanonicalFactsBindingTypesStayOutOfDeclaredFacts(t *testing.T) {
 	sig := typ.Func().Param("x", typ.Number).Returns(typ.String).Build()
 	facts := &canonicalFacts{
 		declared: make(map[cfg.SymbolID]typ.Type),
-		annotate: make(map[cfg.SymbolID]bool),
 		bindings: map[cfg.SymbolID]typ.Type{fnSym: sig},
 	}
 
@@ -38,7 +37,7 @@ func TestCanonicalFactsAnnotatedDeclarationWinsOverBindingType(t *testing.T) {
 	sig := typ.Func().Returns(typ.String).Build()
 	facts := &canonicalFacts{
 		declared: map[cfg.SymbolID]typ.Type{sym: typ.Number},
-		annotate: map[cfg.SymbolID]bool{sym: true},
+		annotate: flow.AnnotatedSymbolsFromMap(map[cfg.SymbolID]bool{sym: true}),
 		bindings: map[cfg.SymbolID]typ.Type{sym: sig},
 	}
 
@@ -53,9 +52,8 @@ func TestBuildObservationInputsKeepsBindingTypesOutOfDeclaredTypes(t *testing.T)
 
 	sig := typ.Func().Returns(typ.String).Build()
 	inputs := buildObservationInputs(nil, functionFacts{
-		declared:  map[cfg.SymbolID]typ.Type{},
-		annotated: map[cfg.SymbolID]bool{},
-		bindings:  map[cfg.SymbolID]typ.Type{fnSym: sig},
+		declared: map[cfg.SymbolID]typ.Type{},
+		bindings: map[cfg.SymbolID]typ.Type{fnSym: sig},
 	})
 
 	if inputs.DeclaredTypes[fnSym] != nil {
@@ -71,8 +69,7 @@ func TestRecordCallbackEnvBindingTypesKeepsOverlayOutOfDeclaredTypes(t *testing.
 
 	overlayType := typ.Func().Returns(typ.Nil).Build()
 	facts := functionFacts{
-		declared:  map[cfg.SymbolID]typ.Type{},
-		annotated: map[cfg.SymbolID]bool{},
+		declared: map[cfg.SymbolID]typ.Type{},
 	}
 
 	recordCallbackEnvBindingTypes(&facts, []callbackenv.GlobalBinding{
@@ -95,7 +92,7 @@ func TestRecordCallbackEnvBindingTypesDoesNotOverrideDeclaredType(t *testing.T) 
 	overlayType := typ.Func().Returns(typ.Nil).Build()
 	facts := functionFacts{
 		declared:  map[cfg.SymbolID]typ.Type{sym: declaredType},
-		annotated: map[cfg.SymbolID]bool{sym: true},
+		annotated: flow.AnnotatedSymbolsFromMap(map[cfg.SymbolID]bool{sym: true}),
 	}
 
 	recordCallbackEnvBindingTypes(&facts, []callbackenv.GlobalBinding{

@@ -25,6 +25,11 @@ type ParameterSlots struct {
 	bySymbol map[cfg.SymbolID]ParameterSlot
 }
 
+// AnnotationRoots is the minimal annotation-authority query this package needs.
+type AnnotationRoots interface {
+	Contains(cfg.SymbolID) bool
+}
+
 // ParameterSlotsFromGraph returns the normalized parameter-boundary lookup for g.
 func ParameterSlotsFromGraph(g *cfg.Graph) ParameterSlots {
 	if g == nil {
@@ -83,15 +88,17 @@ func (s ParameterSlots) IsEmpty() bool {
 }
 
 // UnannotatedRootsFromFacts returns parameter roots that have no explicit
-// annotation and no resolved declared type.
+// annotation and no resolved declared type. annotated is a query port, not a
+// storage contract: callers may back it with source facts, solved facts, or a
+// normalized annotation carrier.
 func UnannotatedRootsFromFacts(
 	paramSyms []cfg.SymbolID,
 	declared map[cfg.SymbolID]typ.Type,
-	annotated map[cfg.SymbolID]bool,
+	annotated AnnotationRoots,
 ) functionsymbols.Set {
 	var set functionsymbols.Set
 	for _, sym := range paramSyms {
-		if sym == 0 || annotated[sym] {
+		if sym == 0 || (annotated != nil && annotated.Contains(sym)) {
 			continue
 		}
 		if t, ok := declared[sym]; ok && t != nil && !typ.IsAbsentOrUnknown(t) {

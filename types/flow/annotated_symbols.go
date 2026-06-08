@@ -1,6 +1,10 @@
 package flow
 
-import "github.com/wippyai/go-lua/types/cfg"
+import (
+	"sort"
+
+	"github.com/wippyai/go-lua/types/cfg"
+)
 
 // AnnotatedSymbols is the finite root-symbol set with explicit source
 // annotations. It is separate from DeclaredTypes because not every declared
@@ -30,6 +34,28 @@ func (s *AnnotatedSymbols) Add(sym cfg.SymbolID) bool {
 // Contains reports whether sym has explicit source annotation authority.
 func (s AnnotatedSymbols) Contains(sym cfg.SymbolID) bool {
 	return s.symbols.Contains(sym)
+}
+
+// Clone returns an independent copy of the annotation-authority set.
+func (s AnnotatedSymbols) Clone() AnnotatedSymbols {
+	var out AnnotatedSymbols
+	for _, sym := range s.Symbols() {
+		out.Add(sym)
+	}
+	return out
+}
+
+// Symbols returns annotated roots in stable order for deterministic projection.
+func (s AnnotatedSymbols) Symbols() []cfg.SymbolID {
+	if s.symbols.Len() == 0 {
+		return nil
+	}
+	out := make([]cfg.SymbolID, 0, s.symbols.Len())
+	for sym := range s.symbols.seen {
+		out = append(out, sym)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i] < out[j] })
+	return out
 }
 
 func annotatedSymbolsEqual(a, b AnnotatedSymbols) bool {

@@ -109,7 +109,7 @@ func TestObservePathCallableRefPreservesDeclaredMapReadOptionalityWithoutProduct
 	facts := &canonicalFacts{
 		state:    fs,
 		declared: map[cfg.SymbolID]typ.Type{sym: rootType},
-		annotate: map[cfg.SymbolID]bool{sym: true},
+		annotate: flow.AnnotatedSymbolsFromMap(map[cfg.SymbolID]bool{sym: true}),
 		paths:    newPathProjector(fs, canonicalTestSymbolSet(), testCallableProjector(ref, handlerSig)),
 	}
 
@@ -179,7 +179,7 @@ func TestObservePathCallableRefKeepsMustPresentProductValueDefinite(t *testing.T
 	facts := &canonicalFacts{
 		state:    fs,
 		declared: map[cfg.SymbolID]typ.Type{sym: rootType},
-		annotate: map[cfg.SymbolID]bool{sym: true},
+		annotate: flow.AnnotatedSymbolsFromMap(map[cfg.SymbolID]bool{sym: true}),
 		paths:    newPathProjector(fs, canonicalTestSymbolSet(), testCallableProjector(ref, solvedSig)),
 	}
 

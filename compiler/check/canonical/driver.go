@@ -1093,11 +1093,8 @@ func (d *Driver) seedCapturedDeclaredTypes(facts *functionFacts, p *program, ref
 				facts.declared = make(map[cfg.SymbolID]typ.Type)
 			}
 			facts.declared[sym] = t
-			if ownerFacts.annotated[sym] {
-				if facts.annotated == nil {
-					facts.annotated = make(map[cfg.SymbolID]bool)
-				}
-				facts.annotated[sym] = true
+			if ownerFacts.annotated.Contains(sym) {
+				facts.annotated.Add(sym)
 			}
 			break
 		}

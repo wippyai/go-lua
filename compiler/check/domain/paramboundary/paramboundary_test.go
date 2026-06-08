@@ -5,6 +5,7 @@ import (
 
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/cfg"
+	"github.com/wippyai/go-lua/compiler/check/domain/functionsymbols"
 	"github.com/wippyai/go-lua/compiler/parse"
 	"github.com/wippyai/go-lua/types/typ"
 )
@@ -54,6 +55,8 @@ func TestUnannotatedRootsFromFactsExcludesExplicitAny(t *testing.T) {
 	untyped := cfg.SymbolID(1)
 	explicitAny := cfg.SymbolID(2)
 	declared := cfg.SymbolID(3)
+	var annotated functionsymbols.Set
+	annotated.Add(explicitAny)
 
 	got := UnannotatedRootsFromFacts(
 		[]cfg.SymbolID{untyped, explicitAny, declared},
@@ -61,7 +64,7 @@ func TestUnannotatedRootsFromFactsExcludesExplicitAny(t *testing.T) {
 			explicitAny: typ.Any,
 			declared:    typ.String,
 		},
-		map[cfg.SymbolID]bool{explicitAny: true},
+		annotated,
 	)
 
 	if !got.Contains(untyped) {
