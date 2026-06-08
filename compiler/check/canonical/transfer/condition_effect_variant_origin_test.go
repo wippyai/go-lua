@@ -240,7 +240,7 @@ func TestConditionEffectKeepsPendingUnannotatedParamProofInConditionOnly(t *test
 	path := constraint.Path{Root: "name", Symbol: sym}
 	fact := constraint.FromConstraints(constraint.Truthy{Path: path})
 	state := flow.PointState{Cond: constraint.TrueCondition()}
-	tr := &Transfer{unannotatedParam: transferTestSymbolSet(sym)}
+	tr := &Transfer{unannotatedParam: functionsymbols.FromSymbols(sym)}
 
 	if !tr.applyConditionEffect(&state, ConditionEffect{Fact: fact}) {
 		t.Fatal("condition effect reported no change")
@@ -251,14 +251,6 @@ func TestConditionEffectKeepsPendingUnannotatedParamProofInConditionOnly(t *test
 	if got, ok := tr.symbolValue(&state, sym); ok {
 		t.Fatalf("pending unannotated parameter materialized value %v; proof should stay in Cond", got.ProjectValue())
 	}
-}
-
-func transferTestSymbolSet(syms ...cfg.SymbolID) functionsymbols.Set {
-	var set functionsymbols.Set
-	for _, sym := range syms {
-		set.Add(sym)
-	}
-	return set
 }
 
 func TestConditionEffectReducesCompoundFieldProofOverDeclaredUnion(t *testing.T) {

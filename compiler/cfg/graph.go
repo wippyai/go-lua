@@ -740,35 +740,6 @@ func (g *Graph) NestedFunctions() []NestedFunc {
 	return g.nested
 }
 
-// CellBackedSymbols returns symbols declared by this graph that are captured by
-// nested functions. Those lexical locations are shared cells, so transfer stores
-// them in PointState.Cells instead of the ordinary Env.
-func (g *Graph) CellBackedSymbols() []basecfg.SymbolID {
-	if g == nil || g.bindings == nil {
-		return nil
-	}
-	set := make(map[basecfg.SymbolID]struct{})
-	for _, nested := range g.nested {
-		if nested.Func == nil {
-			continue
-		}
-		for _, sym := range g.bindings.CapturedSymbols(nested.Func) {
-			if g.OwnsSymbol(sym) {
-				set[sym] = struct{}{}
-			}
-		}
-	}
-	if len(set) == 0 {
-		return nil
-	}
-	out := make([]basecfg.SymbolID, 0, len(set))
-	for sym := range set {
-		out = append(out, sym)
-	}
-	sort.Slice(out, func(i, j int) bool { return out[i] < out[j] })
-	return out
-}
-
 // LocalFunctionAssignments returns local identifiers bound directly to function literals.
 func (g *Graph) LocalFunctionAssignments() []LocalFunctionAssignment {
 	if g == nil {

@@ -47,6 +47,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/check/domain/callbackenv"
 	"github.com/wippyai/go-lua/compiler/check/domain/fieldkey"
 	"github.com/wippyai/go-lua/compiler/check/domain/functionfact"
+	"github.com/wippyai/go-lua/compiler/check/domain/functionsymbols"
 	"github.com/wippyai/go-lua/compiler/check/domain/globalenv"
 	interprocdomain "github.com/wippyai/go-lua/compiler/check/domain/interproc"
 	"github.com/wippyai/go-lua/compiler/check/domain/iteration"
@@ -1043,7 +1044,7 @@ func (d *Driver) addFunction(sess api.AnalysisSession, p *program, ref summary.F
 
 	evidence := sess.EvidenceForGraph(g)
 	in := input.Build(g, evidence, d.resolveType, d.typeParamScope(g.Func()))
-	in.Scope.CellSymbols = g.CellBackedSymbols()
+	in.Scope.CellSymbols = functionsymbols.OwnedCapturedByNested(g)
 	p.params[ref] = in.Scope.NumParams()
 	// The declared types of annotated parameters and annotated locals are the
 	// narrowing base the transfer's edge narrowing widens to: a `local r: A|B = {...}`

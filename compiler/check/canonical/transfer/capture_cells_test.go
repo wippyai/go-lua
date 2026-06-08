@@ -6,6 +6,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/canonical/input"
+	"github.com/wippyai/go-lua/compiler/check/domain/functionsymbols"
 	"github.com/wippyai/go-lua/compiler/check/domain/metatable"
 	"github.com/wippyai/go-lua/compiler/check/domain/paramevidence"
 	"github.com/wippyai/go-lua/types/constraint"
@@ -383,7 +384,7 @@ func ownerCellParamTestTransfer(t *testing.T) (*Transfer, *ast.IdentExpr, cfg.Sy
 		t.Fatal("test graph did not build one param")
 	}
 	sym := in.Scope.ParamSymbols[0]
-	in.Scope.CellSymbols = []cfg.SymbolID{sym}
+	in.Scope.CellSymbols = functionsymbols.FromSymbols(sym)
 	ident := &ast.IdentExpr{Value: "cap"}
 	in.Graph.Bindings().Bind(ident, sym)
 	return New(in, Config{}), ident, sym

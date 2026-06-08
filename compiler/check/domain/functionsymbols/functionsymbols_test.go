@@ -1,12 +1,20 @@
 package functionsymbols
 
 import (
+	"slices"
 	"testing"
 
 	"github.com/wippyai/go-lua/compiler/ast"
 	ccfg "github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/parse"
 )
+
+func TestFromSymbolsNormalizesBoundarySet(t *testing.T) {
+	got := FromSymbols(3, 0, 1, 3).Slice()
+	if !slices.Equal(got, []ccfg.SymbolID{1, 3}) {
+		t.Fatalf("FromSymbols().Slice() = %v, want [1 3]", got)
+	}
+}
 
 func TestFunctionBoundarySymbolsShareCapturedReturnedLocal(t *testing.T) {
 	graph, nested := boundaryGraph(t, `

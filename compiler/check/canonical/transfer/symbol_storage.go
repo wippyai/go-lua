@@ -2,6 +2,7 @@ package transfer
 
 import (
 	"github.com/wippyai/go-lua/compiler/cfg"
+	"github.com/wippyai/go-lua/compiler/check/domain/functionsymbols"
 	"github.com/wippyai/go-lua/types/domain/value/product"
 	"github.com/wippyai/go-lua/types/flow"
 )
@@ -32,30 +33,22 @@ func (c symbolStorageClass) emitsCellEffects() bool {
 type symbolStoragePolicy struct {
 	graph      *cfg.Graph
 	params     map[cfg.SymbolID]int
-	ownerCells map[cfg.SymbolID]struct{}
+	ownerCells functionsymbols.Set
 }
 
-func newSymbolStoragePolicy(g *cfg.Graph, params map[cfg.SymbolID]int, ownerCells []cfg.SymbolID) symbolStoragePolicy {
-	p := symbolStoragePolicy{
-		graph:  g,
-		params: params,
+func newSymbolStoragePolicy(g *cfg.Graph, params map[cfg.SymbolID]int, ownerCells functionsymbols.Set) symbolStoragePolicy {
+	return symbolStoragePolicy{
+		graph:      g,
+		params:     params,
+		ownerCells: ownerCells,
 	}
-	if len(ownerCells) != 0 {
-		p.ownerCells = make(map[cfg.SymbolID]struct{}, len(ownerCells))
-		for _, sym := range ownerCells {
-			if sym != 0 {
-				p.ownerCells[sym] = struct{}{}
-			}
-		}
-	}
-	return p
 }
 
 func (p symbolStoragePolicy) class(sym cfg.SymbolID) symbolStorageClass {
 	if sym == 0 {
 		return symbolStorageEnv
 	}
-	if _, ok := p.ownerCells[sym]; ok {
+	if p.ownerCells.Contains(sym) {
 		return symbolStorageOwnerCell
 	}
 	if p.isCapturedFreeVar(sym) {

@@ -6,6 +6,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/canonical/input"
+	"github.com/wippyai/go-lua/compiler/check/domain/functionsymbols"
 	"github.com/wippyai/go-lua/compiler/check/domain/metatable"
 	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/domain/value/product"
@@ -647,7 +648,7 @@ func TestCellBackedContainerWritePublishesNestedFunctionRefs(t *testing.T) {
 	rootSym := cfg.SymbolID(711)
 	in.Graph.Bindings().Bind(root, rootSym)
 	in.Graph.Bindings().SetName(rootSym, root.Value)
-	in.Scope.CellSymbols = []cfg.SymbolID{rootSym}
+	in.Scope.CellSymbols = functionsymbols.FromSymbols(rootSym)
 
 	getFn := &ast.FunctionExpr{ParList: &ast.ParList{}}
 	ref := flow.FunctionRef{GraphID: 812, ParentHash: 913}

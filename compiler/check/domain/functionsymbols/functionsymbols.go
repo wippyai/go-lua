@@ -15,6 +15,15 @@ type Set struct {
 	symbols map[cfg.SymbolID]struct{}
 }
 
+// FromSymbols returns a normalized boundary-symbol set from a raw symbol list.
+func FromSymbols(symbols ...cfg.SymbolID) Set {
+	var set Set
+	for _, sym := range symbols {
+		set.Add(sym)
+	}
+	return set
+}
+
 // Add records sym when it is a valid root symbol.
 func (s *Set) Add(sym cfg.SymbolID) {
 	if sym == 0 {

@@ -26,6 +26,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/check/api"
 	"github.com/wippyai/go-lua/compiler/check/domain/constprop"
 	flowctx "github.com/wippyai/go-lua/compiler/check/domain/flowctx"
+	"github.com/wippyai/go-lua/compiler/check/domain/functionsymbols"
 	domainpath "github.com/wippyai/go-lua/compiler/check/domain/path"
 	"github.com/wippyai/go-lua/compiler/check/domain/trace"
 	"github.com/wippyai/go-lua/compiler/check/scope"
@@ -105,10 +106,10 @@ type ScopeFacts struct {
 	// declared-container handling, and discriminant/typeof narrowing bases.
 	DeclaredTypes map[cfg.SymbolID]typ.Type
 	// CellSymbols are symbols declared by this function whose lexical locations
-	// are captured by nested closures. They are sorted unique immutable input facts:
+	// are captured by nested closures. They are normalized boundary facts:
 	// transfer stores them in PointState.Cells instead of Env so owner and child
 	// closures share the same abstract location inside the product fixed point.
-	CellSymbols []cfg.SymbolID
+	CellSymbols functionsymbols.Set
 }
 
 // NumParams is the parameter count, the number of contract cells the equation
