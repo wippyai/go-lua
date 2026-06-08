@@ -181,6 +181,31 @@ func TestAppendElementFieldOriginUseSourcePath(t *testing.T) {
 	}
 }
 
+func TestAppendElementFieldSegmentsUsesFieldRelativeVocabulary(t *testing.T) {
+	field := []constraint.Segment{
+		{Kind: constraint.SegmentField, Name: "payload"},
+		{Kind: constraint.SegmentIndexString, Name: "id"},
+	}
+	key := AppendElementFieldPathKey(field)
+	got, ok := AppendElementFieldSegments(key)
+	if !ok {
+		t.Fatalf("append field key did not decode: %s", key)
+	}
+	if len(got) != len(field) || got[0] != field[0] || got[1] != field[1] {
+		t.Fatalf("append field segments = %#v, want %#v", got, field)
+	}
+	got[0].Name = "mutated"
+	again, ok := AppendElementFieldSegments(key)
+	if !ok || again[0].Name != "payload" {
+		t.Fatalf("append field decoder exposed mutable storage: %#v", again)
+	}
+
+	stableKey := SymbolPathKey(cfg.SymbolID(30), field)
+	if _, ok := AppendElementFieldSegments(stableKey); ok {
+		t.Fatalf("append field decoder accepted stable address key: %s", stableKey)
+	}
+}
+
 func TestAppendElementFieldSourceAddressesIgnoreLegacyStoredSource(t *testing.T) {
 	arrayPath := constraint.NewPath(cfg.SymbolID(130), "routes")
 	sourcePath := constraint.NewPath(cfg.SymbolID(131), "op")

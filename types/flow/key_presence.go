@@ -1378,15 +1378,20 @@ func AppendElementFieldPathKey(segments []constraint.Segment) constraint.PathKey
 }
 
 func AppendElementFieldSegments(key constraint.PathKey) ([]constraint.Segment, bool) {
-	addr, ok := StableAddressFromCanonicalKey(key)
+	if key == "" {
+		return nil, false
+	}
+	root, suffix, ok := splitStableRootKey(string(key))
 	if !ok {
 		return nil, false
 	}
-	root, ok := addr.Root()
-	if !ok || root != appendElementFieldRoot {
+	if root != appendElementFieldRoot {
 		return nil, false
 	}
-	segs := addr.Segments()
+	segs, ok := parseSymbolPathSegments(suffix)
+	if !ok {
+		return nil, false
+	}
 	return segs, len(segs) > 0
 }
 
