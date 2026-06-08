@@ -10,12 +10,12 @@ import (
 	"github.com/wippyai/go-lua/types/typ"
 )
 
-func TestClonePointStateCopiesMutableCarriers(t *testing.T) {
+func TestClonePointStateCopiesMutableCarriersAndSharesPersistentReferenceAxes(t *testing.T) {
 	const sym = cfg.SymbolID(1)
 	const other = cfg.SymbolID(2)
 	path := SymbolPathKey(sym, nil)
-	otherPath := SymbolPathKey(other, nil)
 	addr, _ := StableAddressOfSymbol(sym, nil)
+	otherAddr, _ := StableAddressOfSymbol(other, nil)
 	num := numeric.NewState()
 	num.ApplyLenGeConst(path, 1)
 	ref := FunctionRef{GraphID: 11, ParentHash: 3}
@@ -33,8 +33,8 @@ func TestClonePointStateCopiesMutableCarriers(t *testing.T) {
 	cloned.Env[SymbolValueKey(sym)] = product.FromType(typ.Number)
 	cloned.Env[SymbolValueKey(other)] = product.FromType(typ.Boolean)
 	cloned.Num.ApplyLenGeConst(path, 5)
-	cloned.FunctionRefs[otherPath] = FunctionRefSetOf(FunctionRef{GraphID: 99})
-	cloned.ClosureRefs[otherPath] = ClosureRefSetOf(ClosureRefOf(FunctionRef{GraphID: 100}, CaptureCellsDomain.Bottom(), nil))
+	cloned.FunctionRefs = WithFunctionRefAddress(cloned.FunctionRefs, otherAddr, FunctionRefSetOf(FunctionRef{GraphID: 99}))
+	cloned.ClosureRefs = WithClosureRefAddress(cloned.ClosureRefs, otherAddr, ClosureRefSetOf(ClosureRefOf(FunctionRef{GraphID: 100}, CaptureCellsDomain.Bottom(), nil)))
 
 	got, ok := original.Env[SymbolValueKey(sym)]
 	if !ok || !typ.TypeEquals(got.ProjectValue(), typ.String) {
@@ -47,11 +47,11 @@ func TestClonePointStateCopiesMutableCarriers(t *testing.T) {
 	if !ok || lower != 1 {
 		t.Fatalf("original Num len lower = %d/%v, want 1/true", lower, ok)
 	}
-	if _, ok := original.FunctionRefs[otherPath]; ok {
-		t.Fatalf("clone FunctionRefs mutation leaked into original")
+	if _, ok := FunctionRefAtAddress(original.FunctionRefs, otherAddr); ok {
+		t.Fatalf("persistent FunctionRefs update leaked into original")
 	}
-	if _, ok := original.ClosureRefs[otherPath]; ok {
-		t.Fatalf("clone ClosureRefs mutation leaked into original")
+	if _, ok := ClosureRefAtAddress(original.ClosureRefs, otherAddr); ok {
+		t.Fatalf("persistent ClosureRefs update leaked into original")
 	}
 }
 
@@ -121,30 +121,17 @@ func TestDetachPointStateEnvCopiesBorrowedEnvOnly(t *testing.T) {
 	}
 }
 
-func TestClonePointStateCanonicalizesMutableFiniteMaps(t *testing.T) {
+func TestClonePointStateCanonicalizesMutableEnv(t *testing.T) {
 	const sym = cfg.SymbolID(1)
-	path := SymbolPathKey(sym, nil)
 	original := PointState{
 		Env: map[ValueKey]product.AbstractValue{
 			SymbolValueKey(sym): product.Bottom(),
-		},
-		FunctionRefs: FunctionRefs{
-			path: FunctionRefSet{},
-		},
-		ClosureRefs: ClosureRefs{
-			path: ClosureRefSet{},
 		},
 	}
 
 	cloned := ClonePointState(original)
 	if len(cloned.Env) != 0 {
 		t.Fatalf("cloned Env retained bottom entries: %#v", cloned.Env)
-	}
-	if len(cloned.FunctionRefs) != 0 {
-		t.Fatalf("cloned FunctionRefs retained bottom entries: %#v", cloned.FunctionRefs)
-	}
-	if len(cloned.ClosureRefs) != 0 {
-		t.Fatalf("cloned ClosureRefs retained bottom entries: %#v", cloned.ClosureRefs)
 	}
 }
 

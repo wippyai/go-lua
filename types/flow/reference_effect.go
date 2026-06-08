@@ -101,8 +101,7 @@ func FunctionRefTreeFromSubtreePath(refs FunctionRefs, source constraint.Path) (
 		return FunctionRefTree{}, false
 	}
 	var tree FunctionRefTree
-	for _, key := range constraint.SortedPathKeys(refs) {
-		set := refs[key]
+	for key, set := range refs {
 		if set.IsBottom() {
 			continue
 		}
@@ -200,8 +199,7 @@ func ClosureRefTreeFromSubtreePath(refs ClosureRefs, source constraint.Path) (Cl
 		return ClosureRefTree{}, false
 	}
 	var tree ClosureRefTree
-	for _, key := range constraint.SortedPathKeys(refs) {
-		set := refs[key]
+	for key, set := range refs {
 		if set.IsBottom() {
 			continue
 		}

@@ -132,10 +132,10 @@ func SymbolValue(ps PointState, sym cfg.SymbolID) (product.AbstractValue, bool) 
 
 // ClonePointState returns a canonical, mutation-safe copy of ps.
 //
-// Transfer and narrowing code may speculatively update Env, Num, FunctionRefs,
-// and ClosureRefs while deriving a successor state. Those mutable carriers are
-// cloned here so predecessor states owned by the solver are never aliased. The
-// remaining finite fact axes are persistent-by-construction: their update
+// Transfer and narrowing code may speculatively update Env and Num while
+// deriving a successor state. Those mutable carriers are cloned here so
+// predecessor states owned by the solver are never aliased. Reference facts and
+// the remaining finite fact axes are persistent-by-construction: their update
 // methods return new values, so copying the axis value is sufficient.
 func ClonePointState(ps PointState) PointState {
 	out := PointState{
@@ -148,8 +148,8 @@ func ClonePointState(ps PointState) PointState {
 		ReceiverEffects:    ps.ReceiverEffects,
 		PrototypeSelf:      ps.PrototypeSelf,
 		PrototypeInstances: ps.PrototypeInstances,
-		FunctionRefs:       cloneFunctionRefs(ps.FunctionRefs),
-		ClosureRefs:        cloneClosureRefs(ps.ClosureRefs),
+		FunctionRefs:       ps.FunctionRefs,
+		ClosureRefs:        ps.ClosureRefs,
 		StaticMembers:      ps.StaticMembers,
 		KeyPresence:        ps.KeyPresence,
 		ValueOrigins:       ps.ValueOrigins,
@@ -221,26 +221,6 @@ func cloneEnv(env map[ValueKey]product.AbstractValue) map[ValueKey]product.Abstr
 	for k, v := range env {
 		if v.IsZero() || v.IsBottom() {
 			continue
-		}
-		out[k] = v
-	}
-	return out
-}
-
-func cloneFunctionRefs(refs FunctionRefs) FunctionRefs {
-	if FunctionRefsDomain.Equal(refs, FunctionRefsDomain.Top()) {
-		return FunctionRefsDomain.Top()
-	}
-	if len(refs) == 0 {
-		return nil
-	}
-	var out FunctionRefs
-	for k, v := range refs {
-		if v.IsBottom() {
-			continue
-		}
-		if out == nil {
-			out = make(FunctionRefs, len(refs))
 		}
 		out[k] = v
 	}

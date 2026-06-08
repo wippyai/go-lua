@@ -271,8 +271,7 @@ func ProjectClosureRefsBySymbols(refs ClosureRefs, symbols []cfg.SymbolID) Closu
 		return ClosureRefsDomain.Bottom()
 	}
 	out := make(ClosureRefs)
-	for _, path := range constraint.SortedPathKeys(refs) {
-		set := refs[path]
+	for path, set := range refs {
 		if set.IsBottom() {
 			continue
 		}
@@ -293,8 +292,7 @@ func ClosureRefRootSymbols(refs ClosureRefs) []cfg.SymbolID {
 		return nil
 	}
 	var out []cfg.SymbolID
-	for _, path := range constraint.SortedPathKeys(refs) {
-		set := refs[path]
+	for path, set := range refs {
 		if set.IsBottom() {
 			continue
 		}
@@ -312,8 +310,7 @@ func ProjectClosureRefsByAddress(refs ClosureRefs, addr StableAddress) ClosureRe
 		return ClosureRefsDomain.Bottom()
 	}
 	out := make(ClosureRefs)
-	for _, path := range constraint.SortedPathKeys(refs) {
-		set := refs[path]
+	for path, set := range refs {
 		if set.IsBottom() {
 			continue
 		}
@@ -347,8 +344,7 @@ func ProjectClosureRefsByReferencePaths(refs ClosureRefs, projection ReferencePa
 		return ClosureRefsDomain.Bottom()
 	}
 	out := make(ClosureRefs)
-	for _, path := range constraint.SortedPathKeys(refs) {
-		set := refs[path]
+	for path, set := range refs {
 		if set.IsBottom() || !addresses.contains(path) {
 			continue
 		}
@@ -367,8 +363,7 @@ func RebaseClosureRefsAddress(refs ClosureRefs, from, to StableAddress) ClosureR
 		return ClosureRefsDomain.Bottom()
 	}
 	out := make(ClosureRefs)
-	for _, path := range constraint.SortedPathKeys(refs) {
-		set := refs[path]
+	for path, set := range refs {
 		pathAddr, ok := StableAddressFromCanonicalKey(path)
 		if set.IsBottom() || !ok {
 			continue
@@ -679,10 +674,10 @@ func lookupClosureRefsKey(bucket []*closureRefsKeyNode, refs ClosureRefs) (*clos
 
 func closureRefsKeyHash(refs ClosureRefs) uint64 {
 	h := internal.FnvString("flow.ClosureRefsKey")
-	for _, path := range constraint.SortedPathKeys(refs) {
+	constraint.ForEachSortedPathKey(refs, func(path constraint.PathKey) {
 		h = internal.HashCombine(h, internal.FnvString(string(path)))
 		h = internal.HashCombine(h, closureRefSetHash(refs[path]))
-	}
+	})
 	return h
 }
 
@@ -728,13 +723,6 @@ func formatClosureRefs(refs ClosureRefs) string {
 		parts = append(parts, fmt.Sprintf("%s:%s", path, refs[path].Format()))
 	}
 	return "{" + strings.Join(parts, ",") + "}"
-}
-
-func cloneClosureRefs(refs ClosureRefs) ClosureRefs {
-	if isClosureRefsTop(refs) {
-		return ClosureRefsDomain.Top()
-	}
-	return cloneClosureRefsFinite(refs)
 }
 
 func cloneClosureRefsFinite(refs ClosureRefs) ClosureRefs {
@@ -810,8 +798,7 @@ func canonicalClosureRefsFinite(refs ClosureRefs) ClosureRefs {
 		return nil
 	}
 	var out ClosureRefs
-	for _, path := range constraint.SortedPathKeys(refs) {
-		set := refs[path]
+	for path, set := range refs {
 		if set.IsTop() {
 			// Per-path Top is a finite map value and remains representable in a
 			// closure environment key.
@@ -853,7 +840,7 @@ func limitClosureRefsDepth(refs ClosureRefs, depth int) ClosureRefs {
 		return refs
 	}
 	out := make(ClosureRefs)
-	for _, path := range constraint.SortedPathKeys(refs) {
+	for path := range refs {
 		set := limitClosureRefSetDepth(refs[path], depth)
 		if set.IsBottom() {
 			continue

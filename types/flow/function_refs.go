@@ -344,8 +344,7 @@ func ProjectFunctionRefsBySymbols(refs FunctionRefs, symbols []cfg.SymbolID) Fun
 		return FunctionRefsDomain.Bottom()
 	}
 	out := make(FunctionRefs)
-	for _, path := range constraint.SortedPathKeys(refs) {
-		set := refs[path]
+	for path, set := range refs {
 		if set.IsBottom() {
 			continue
 		}
@@ -366,8 +365,7 @@ func FunctionRefRootSymbols(refs FunctionRefs) []cfg.SymbolID {
 		return nil
 	}
 	var out []cfg.SymbolID
-	for _, path := range constraint.SortedPathKeys(refs) {
-		set := refs[path]
+	for path, set := range refs {
 		if set.IsBottom() {
 			continue
 		}
@@ -382,8 +380,7 @@ func ProjectFunctionRefsByAddress(refs FunctionRefs, addr StableAddress) Functio
 		return FunctionRefsDomain.Bottom()
 	}
 	out := make(FunctionRefs)
-	for _, path := range constraint.SortedPathKeys(refs) {
-		set := refs[path]
+	for path, set := range refs {
 		if set.IsBottom() {
 			continue
 		}
@@ -419,8 +416,7 @@ func ProjectFunctionRefsByReferencePaths(refs FunctionRefs, projection Reference
 		return FunctionRefsDomain.Bottom()
 	}
 	out := make(FunctionRefs)
-	for _, path := range constraint.SortedPathKeys(refs) {
-		set := refs[path]
+	for path, set := range refs {
 		if set.IsBottom() || !addresses.contains(path) {
 			continue
 		}
@@ -441,8 +437,7 @@ func RebaseFunctionRefsAddress(refs FunctionRefs, from, to StableAddress) Functi
 		return FunctionRefsDomain.Bottom()
 	}
 	out := make(FunctionRefs)
-	for _, path := range constraint.SortedPathKeys(refs) {
-		set := refs[path]
+	for path, set := range refs {
 		pathAddr, ok := StableAddressFromCanonicalKey(path)
 		if set.IsBottom() || !ok {
 			continue
@@ -568,10 +563,10 @@ func lookupFunctionRefsKey(bucket []*functionRefsKeyNode, refs FunctionRefs) (*f
 
 func functionRefsKeyHash(refs FunctionRefs) uint64 {
 	h := internal.FnvString("flow.FunctionRefsKey")
-	for _, path := range constraint.SortedPathKeys(refs) {
+	constraint.ForEachSortedPathKey(refs, func(path constraint.PathKey) {
 		h = internal.HashCombine(h, internal.FnvString(string(path)))
 		h = internal.HashCombine(h, functionRefSetHash(refs[path]))
-	}
+	})
 	return h
 }
 
