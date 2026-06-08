@@ -1378,14 +1378,8 @@ func AppendElementFieldPathKey(segments []constraint.Segment) constraint.PathKey
 }
 
 func AppendElementFieldSegments(key constraint.PathKey) ([]constraint.Segment, bool) {
-	if key == "" {
-		return nil, false
-	}
-	root, suffix, ok := splitStableRootKey(string(key))
+	suffix, ok := appendElementFieldSuffix(key)
 	if !ok {
-		return nil, false
-	}
-	if root != appendElementFieldRoot {
 		return nil, false
 	}
 	segs, ok := parseSymbolPathSegments(suffix)
@@ -1393,6 +1387,83 @@ func AppendElementFieldSegments(key constraint.PathKey) ([]constraint.Segment, b
 		return nil, false
 	}
 	return segs, len(segs) > 0
+}
+
+// appendElementFieldPathKeyHasSegments validates the field-relative key without
+// projecting segment values. Canonicalization paths only need this predicate;
+// consumers that inspect a field path should use AppendElementFieldSegments.
+func appendElementFieldPathKeyHasSegments(key constraint.PathKey) bool {
+	suffix, ok := appendElementFieldSuffix(key)
+	return ok && validAppendElementFieldSuffix(suffix)
+}
+
+func appendElementFieldSuffix(key constraint.PathKey) (string, bool) {
+	if key == "" {
+		return "", false
+	}
+	root, suffix, ok := splitStableRootKey(string(key))
+	if !ok || root != appendElementFieldRoot || suffix == "" {
+		return "", false
+	}
+	return suffix, true
+}
+
+func validAppendElementFieldSuffix(s string) bool {
+	for len(s) > 0 {
+		switch s[0] {
+		case '.':
+			end := 1
+			for end < len(s) && s[end] != '.' && s[end] != '[' {
+				end++
+			}
+			if end == 1 {
+				return false
+			}
+			s = s[end:]
+		case '[':
+			if len(s) < 3 {
+				return false
+			}
+			if s[1] == '"' {
+				end, ok := canonicalQuotedSegmentEnd(s)
+				if !ok || end+1 >= len(s) || s[end+1] != ']' {
+					return false
+				}
+				s = s[end+2:]
+				continue
+			}
+			end := 1
+			if s[end] == '-' {
+				end++
+			}
+			startDigits := end
+			for end < len(s) && s[end] >= '0' && s[end] <= '9' {
+				end++
+			}
+			if end == startDigits || end >= len(s) || s[end] != ']' {
+				return false
+			}
+			s = s[end+1:]
+		default:
+			return false
+		}
+	}
+	return true
+}
+
+func canonicalQuotedSegmentEnd(s string) (int, bool) {
+	for i := 2; i < len(s); i++ {
+		switch s[i] {
+		case '\\':
+			i++
+			if i >= len(s) || (s[i] != '\\' && s[i] != '"') {
+				return 0, false
+			}
+		case '"':
+			return i, true
+		}
+	}
+	return 0, false
 }
 
 func (f KeyPresenceFacts) WithAppendElementFieldOrigin(array, field, source constraint.PathKey) KeyPresenceFacts {
@@ -1884,16 +1955,13 @@ func canonicalKeyPresenceFactSet(set keyPresenceFactSet) KeyPresenceFacts {
 			if e.Array == "" || e.Field == "" || e.Source == "" {
 				return false
 			}
-			if e.SourceField != "" {
-				if _, ok := AppendElementFieldSegments(e.SourceField); !ok {
-					return false
-				}
+			if e.SourceField != "" && !appendElementFieldPathKeyHasSegments(e.SourceField) {
+				return false
 			}
 			if _, ok := findAppendHistoryBaseFact(appendBaseDst, AppendHistoryBaseFact{Array: e.Array}); !ok {
 				return false
 			}
-			_, ok := AppendElementFieldSegments(e.Field)
-			return ok
+			return appendElementFieldPathKeyHasSegments(e.Field)
 		},
 		same: func(a, b AppendElementFieldOriginFact) bool { return a == b },
 	})
@@ -2411,15 +2479,13 @@ func appendElementFieldOriginsForBases(
 		if origin.Array == "" || origin.Field == "" || origin.Source == "" {
 			continue
 		}
-		if origin.SourceField != "" {
-			if _, ok := AppendElementFieldSegments(origin.SourceField); !ok {
-				continue
-			}
+		if origin.SourceField != "" && !appendElementFieldPathKeyHasSegments(origin.SourceField) {
+			continue
 		}
 		if _, ok := findAppendHistoryBaseFact(bases, AppendHistoryBaseFact{Array: origin.Array}); !ok {
 			continue
 		}
-		if _, ok := AppendElementFieldSegments(origin.Field); !ok {
+		if !appendElementFieldPathKeyHasSegments(origin.Field) {
 			continue
 		}
 		if len(out) > 0 && out[len(out)-1] == origin {

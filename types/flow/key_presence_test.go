@@ -187,6 +187,9 @@ func TestAppendElementFieldSegmentsUsesFieldRelativeVocabulary(t *testing.T) {
 		{Kind: constraint.SegmentIndexString, Name: "id"},
 	}
 	key := AppendElementFieldPathKey(field)
+	if !appendElementFieldPathKeyHasSegments(key) {
+		t.Fatalf("append field validator rejected canonical key: %s", key)
+	}
 	got, ok := AppendElementFieldSegments(key)
 	if !ok {
 		t.Fatalf("append field key did not decode: %s", key)
@@ -203,6 +206,17 @@ func TestAppendElementFieldSegmentsUsesFieldRelativeVocabulary(t *testing.T) {
 	stableKey := SymbolPathKey(cfg.SymbolID(30), field)
 	if _, ok := AppendElementFieldSegments(stableKey); ok {
 		t.Fatalf("append field decoder accepted stable address key: %s", stableKey)
+	}
+	if appendElementFieldPathKeyHasSegments(stableKey) {
+		t.Fatalf("append field validator accepted stable address key: %s", stableKey)
+	}
+
+	escaped := AppendElementFieldPathKey([]constraint.Segment{{Kind: constraint.SegmentIndexString, Name: `a"b\c`}})
+	if !appendElementFieldPathKeyHasSegments(escaped) {
+		t.Fatalf("append field validator rejected canonical escaped key: %s", escaped)
+	}
+	if appendElementFieldPathKeyHasSegments(constraint.PathKey(appendElementFieldRoot + `["\q"]`)) {
+		t.Fatalf("append field validator accepted malformed escaped key")
 	}
 }
 
