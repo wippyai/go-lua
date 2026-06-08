@@ -12,6 +12,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/check/domain/paramevidence"
 	"github.com/wippyai/go-lua/types/contract"
 	"github.com/wippyai/go-lua/types/domain/value/product"
+	"github.com/wippyai/go-lua/types/effect"
 	"github.com/wippyai/go-lua/types/flow"
 	"github.com/wippyai/go-lua/types/typ"
 )
@@ -243,7 +244,7 @@ func (p callBoundaryFrame) boundaryEvidenceAndEffects() (canonicalcall.BoundaryE
 		CellEffects:     evidence.CellEffects,
 		ReceiverEffects: evidence.ReceiverEffects,
 		BoundaryFacts:   evidence.BoundaryFacts,
-		ElementUnions:   p.typer.containerElementUnions(p.site.call, p.ctx),
+		ElementUnions:   p.containerElementUnions(),
 	}
 }
 
@@ -285,15 +286,18 @@ func (p callBoundaryFrame) cellEffectAggregation() (summary.CellEffectAggregatio
 
 func (p callBoundaryFrame) callbackSpec() *contract.Spec {
 	return (canonicalcall.CallbackSpecProjection{
-		Call: p.site.call,
-		SummarySignature: func(call *ast.FuncCallExpr) typ.Type {
-			if ref, ok := p.typer.resolveCalleeRef(call, p.typer.d.activeProgram); ok {
-				return p.typer.d.signatureForRef(p.typer.d.activeProgram, ref)
-			}
-			return nil
-		},
-		Resolver: p.typer.callTypeResolver(p.site.exprType),
+		Call:             p.site.call,
+		SummarySignature: p.site.summarySignature,
+		Resolver:         p.typer.callTypeResolver(p.site.exprType),
 	}).Spec()
+}
+
+func (p callBoundaryFrame) containerElementUnions() []effect.ContainerElementUnion {
+	return (canonicalcall.ContainerElementUnionProjection{
+		Call:             p.site.call,
+		SummarySignature: p.site.summarySignature,
+		Resolver:         p.typer.callTypeResolver(p.site.exprType),
+	}).Effects()
 }
 
 func (p callBoundaryFrame) effectsForRef(

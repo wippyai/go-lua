@@ -89,7 +89,16 @@ func (f callSiteFrame) functionShape() *typ.Function {
 
 func (f callSiteFrame) summaryFunction(call *ast.FuncCallExpr) *typ.Function {
 	d := f.typer.d
-	if d == nil || d.activeProgram == nil || d.activeQueries == nil || d.activeCtx == nil {
+	if d == nil || d.activeQueries == nil || d.activeCtx == nil {
+		return nil
+	}
+	fn, _ := f.summarySignature(call).(*typ.Function)
+	return fn
+}
+
+func (f callSiteFrame) summarySignature(call *ast.FuncCallExpr) typ.Type {
+	d := f.typer.d
+	if d == nil || d.activeProgram == nil {
 		return nil
 	}
 	ref, ok := f.typer.resolveCalleeRef(call, d.activeProgram)
