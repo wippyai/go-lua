@@ -1526,13 +1526,7 @@ func (ct callTyper) ProductCallFromValues(call *ast.FuncCallExpr, ctx transfer.P
 	if !ok {
 		return transfer.EmptyProductCallResult()
 	}
-	effects := transfer.EmptyCallEffects()
-	evidence := frame.boundaryEvidence(summary.CellEffectAggregation{})
-	projector, ok := ct.cellEffectProjector()
-	if ok {
-		evidence = frame.boundaryEvidence(frame.cellEffectAggregation(projector))
-		effects = callEffectsFromBoundaryEvidence(evidence, ct.containerElementUnions(call, ctx))
-	}
+	evidence, effects := frame.boundaryEvidenceAndEffects()
 	return frame.result(evidence, effects)
 }
 

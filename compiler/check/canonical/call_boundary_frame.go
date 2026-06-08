@@ -10,8 +10,8 @@ import (
 	"github.com/wippyai/go-lua/compiler/check/canonical/transfer"
 	"github.com/wippyai/go-lua/compiler/check/domain/callobligation"
 	"github.com/wippyai/go-lua/compiler/check/domain/paramevidence"
+	"github.com/wippyai/go-lua/types/contract"
 	"github.com/wippyai/go-lua/types/domain/value/product"
-	"github.com/wippyai/go-lua/types/effect"
 	"github.com/wippyai/go-lua/types/flow"
 	"github.com/wippyai/go-lua/types/typ"
 )
@@ -233,6 +233,20 @@ func (p callBoundaryFrame) contractEvidence() (api.CallContractEvidence, bool) {
 	return api.NewCallContractEvidence(demands), true
 }
 
+func (p callBoundaryFrame) boundaryEvidenceAndEffects() (canonicalcall.BoundaryEvidence, transfer.CallEffects) {
+	cellEffects, ok := p.cellEffectAggregation()
+	if !ok {
+		return p.boundaryEvidence(summary.CellEffectAggregation{}), transfer.EmptyCallEffects()
+	}
+	evidence := p.boundaryEvidence(cellEffects)
+	return evidence, transfer.CallEffects{
+		CellEffects:     evidence.CellEffects,
+		ReceiverEffects: evidence.ReceiverEffects,
+		BoundaryFacts:   evidence.BoundaryFacts,
+		ElementUnions:   p.typer.containerElementUnions(p.site.call, p.ctx),
+	}
+}
+
 func (p callBoundaryFrame) boundaryEvidence(cellEffects summary.CellEffectAggregation) canonicalcall.BoundaryEvidence {
 	return p.outcome.BoundaryEvidence(canonicalcall.BoundaryEvidenceInput{
 		Call:                 p.site.call,
@@ -248,10 +262,14 @@ func (p callBoundaryFrame) boundaryEvidence(cellEffects summary.CellEffectAggreg
 	})
 }
 
-func (p callBoundaryFrame) cellEffectAggregation(projector cellEffectProjector) summary.CellEffectAggregation {
-	callbackRefs := projector.callEntry.productArgProjection(p.ctx).callbackRefsForCall(p.site.call)
+func (p callBoundaryFrame) cellEffectAggregation() (summary.CellEffectAggregation, bool) {
+	callEntry, ok := p.typer.callEntryProjector()
+	if !ok {
+		return summary.CellEffectAggregation{}, false
+	}
+	callbackRefs := callEntry.productArgProjection(p.ctx).callbackRefsForCall(p.site.call)
 	return summary.CellEffectAggregation{
-		CallbackSpec: projector.callbackSpecForCall(p.site.call, p.site.exprType),
+		CallbackSpec: p.callbackSpec(),
 		CallbackArgs: p.site.call.Args,
 		MethodCall:   p.site.call.Method != "",
 		ResolveCallback: func(arg ast.Expr) ([]summary.FuncRef, bool) {
@@ -259,17 +277,39 @@ func (p callBoundaryFrame) cellEffectAggregation(projector cellEffectProjector) 
 			return refs, ok
 		},
 		EffectOf: func(ref summary.FuncRef, entryValues summary.EntryValues) flow.CaptureEffects {
-			evidence := projector.callEntry.access().productEvidence(ref, p.site.call, p.ctx)
-			return projector.effectsForRef(ref, p.site.references, entryValues, evidence.Facts)
+			evidence := callEntry.access().productEvidence(ref, p.site.call, p.ctx)
+			return p.effectsForRef(ref, entryValues, evidence.Facts)
 		},
-	}
+	}, true
 }
 
-func callEffectsFromBoundaryEvidence(evidence canonicalcall.BoundaryEvidence, elementUnions []effect.ContainerElementUnion) transfer.CallEffects {
-	return transfer.CallEffects{
-		CellEffects:     evidence.CellEffects,
-		ReceiverEffects: evidence.ReceiverEffects,
-		BoundaryFacts:   evidence.BoundaryFacts,
-		ElementUnions:   elementUnions,
+func (p callBoundaryFrame) callbackSpec() *contract.Spec {
+	return (canonicalcall.CallbackSpecProjection{
+		Call: p.site.call,
+		SummarySignature: func(call *ast.FuncCallExpr) typ.Type {
+			if ref, ok := p.typer.resolveCalleeRef(call, p.typer.d.activeProgram); ok {
+				return p.typer.d.signatureForRef(p.typer.d.activeProgram, ref)
+			}
+			return nil
+		},
+		Resolver: p.typer.callTypeResolver(p.site.exprType),
+	}).Spec()
+}
+
+func (p callBoundaryFrame) effectsForRef(
+	ref summary.FuncRef,
+	entryValues summary.EntryValues,
+	entryFacts flow.BoundaryFacts,
+) flow.CaptureEffects {
+	reader := p.typer.d.summaryReader()
+	entry := canonicalcall.NewEntryContext(
+		ref,
+		flow.ReferenceContextOf(flow.CaptureCellsDomain.Bottom(), flow.FunctionRefsDomain.Bottom(), flow.ClosureRefsDomain.Bottom()),
+		entryValues,
+		entryFacts,
+	)
+	if reader.Live() {
+		entry = p.typer.d.activeProgram.CallEntryContextWithFacts(ref, p.site.references, entryValues, entryFacts)
 	}
+	return reader.SummarizeWithKey(entry.Key()).CellEffects
 }
