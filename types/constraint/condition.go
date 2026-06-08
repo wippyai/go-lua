@@ -301,7 +301,10 @@ func Or(a, b Condition) Condition {
 	out = append(out, a.Disjuncts...)
 	out = append(out, b.Disjuncts...)
 
-	return normalizeCondition(Condition{Disjuncts: out})
+	// Or only combines already-constructed conditions; it cannot introduce a
+	// new contradictory conjunction. Keep arbitrary-literal checks in the
+	// constructors that create conjunctions.
+	return normalizeConditionChecked(Condition{Disjuncts: out})
 }
 
 // Not negates a condition using De Morgan's laws.
