@@ -167,13 +167,11 @@ func (f *assignmentSelectionFactsStub) ConstValueAtSym(_ cfg.Point, sym cfg.Symb
 
 type indexWriteFactsStub struct {
 	factsStub
-	value typ.Type
-	query flow.IndexWriteReadQuery
+	pointFacts flow.PointFacts
 }
 
-func (f *indexWriteFactsStub) IndexWriteAdmission(q flow.IndexWriteReadQuery) (typ.Type, bool) {
-	f.query = q
-	return f.value, f.value != nil
+func (f *indexWriteFactsStub) IndexReadPointFacts(cfg.Point, flow.PathReadView) flow.PointFacts {
+	return f.pointFacts
 }
 
 type conditionProofFactsStub struct {
@@ -250,8 +248,8 @@ func (f flowOpsStub) HasKeyOf(cfg.Point, constraint.Path, constraint.Path) bool 
 	return false
 }
 
-func (f flowOpsStub) IndexReadback(flow.IndexWriteReadQuery) (typ.Type, bool) {
-	return nil, false
+func (f flowOpsStub) IndexReadPointFacts(cfg.Point, flow.PathReadView) flow.PointFacts {
+	return flow.PointFactsOf(flow.PointState{})
 }
 
 type pathObservationFactsStub struct {
@@ -799,7 +797,7 @@ func TestProjector_AssignmentSourceSelfReadUsesStrictPreState(t *testing.T) {
 	}
 }
 
-func TestProjector_AssignmentTargetWriteTypeUsesIndexWriteFactsWithoutSolution(t *testing.T) {
+func TestProjector_AssignmentTargetWriteTypeUsesPointFactsWithoutSolution(t *testing.T) {
 	base := &ast.IdentExpr{Value: "m"}
 	key := &ast.IdentExpr{Value: "k"}
 	source := &ast.IdentExpr{Value: "v"}
@@ -812,7 +810,19 @@ func TestProjector_AssignmentTargetWriteTypeUsesIndexWriteFactsWithoutSolution(t
 	bindings.Bind(base, baseSym)
 	bindings.Bind(key, keySym)
 	bindings.Bind(source, valSym)
-	facts := &indexWriteFactsStub{value: typ.String}
+	targetAddr := testFlowPathAddress(t, constraint.NewPath(baseSym, "m"))
+	keyAddr := testFlowPathAddress(t, constraint.NewPath(keySym, "k"))
+	facts := &indexWriteFactsStub{
+		pointFacts: flow.PointFactsOf(flow.PointState{
+			IndexWrites: flow.IndexWriteAdmissionFacts{}.WithAddress(flow.IndexWriteAdmissionAddressFact{
+				Target:     targetAddr,
+				KeyPath:    keyAddr,
+				HasKeyPath: true,
+				Key:        product.FromType(typ.String),
+				Value:      product.FromType(typ.String),
+			}),
+		}),
+	}
 
 	got := New(Config{
 		Bindings: bindings,
@@ -826,25 +836,7 @@ func TestProjector_AssignmentTargetWriteTypeUsesIndexWriteFactsWithoutSolution(t
 	}, source, 9)
 
 	if !typ.TypeEquals(got, typ.String) {
-		t.Fatalf("AssignmentTargetWriteType via IndexWriteFacts = %v, want string", got)
-	}
-	valueAddr, ok := flow.StableAddressOfPath(constraint.NewPath(valSym, "v"))
-	if !ok {
-		t.Fatal("value address")
-	}
-	targetAddr, ok := flow.StableAddressOfPath(constraint.NewPath(baseSym, "m"))
-	if !ok {
-		t.Fatal("target address")
-	}
-	keyAddr, ok := flow.StableAddressOfPath(constraint.NewPath(keySym, "k"))
-	if !ok {
-		t.Fatal("key address")
-	}
-	if facts.query.Point != 9 ||
-		!facts.query.Admission.Target.Equal(targetAddr) ||
-		!facts.query.Admission.HasKeyPath || !facts.query.Admission.KeyPath.Equal(keyAddr) ||
-		!facts.query.Admission.HasValuePath || !facts.query.Admission.ValuePath.Equal(valueAddr) {
-		t.Fatalf("IndexWriteAdmission query = %#v", facts.query)
+		t.Fatalf("AssignmentTargetWriteType via point facts = %v, want string", got)
 	}
 }
 
@@ -860,7 +852,17 @@ func TestProjector_AssignmentTargetFlowWriteTypeIgnoresAnyAdmission(t *testing.T
 
 	got := New(Config{
 		Bindings: bindings,
-		Facts:    &indexWriteFactsStub{value: typ.Any},
+		Facts: &indexWriteFactsStub{
+			pointFacts: flow.PointFactsOf(flow.PointState{
+				IndexWrites: flow.IndexWriteAdmissionFacts{}.WithAddress(flow.IndexWriteAdmissionAddressFact{
+					Target:     testFlowPathAddress(t, constraint.NewPath(baseSym, "m")),
+					KeyPath:    testFlowPathAddress(t, constraint.NewPath(cfg.SymbolID(42), "k")),
+					HasKeyPath: true,
+					Key:        product.FromType(typ.String),
+					Value:      product.FromType(typ.Any),
+				}),
+			}),
+		},
 	}).assignmentTargetFlowWriteType(cfg.AssignTarget{
 		Kind:       cfg.TargetIndex,
 		Base:       base,

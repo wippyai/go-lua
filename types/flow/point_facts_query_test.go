@@ -137,6 +137,46 @@ func TestPointFactsIndexWriteAdmissionPathQuery(t *testing.T) {
 	}
 }
 
+func TestPointFactsIndexWriteAdmissionPathQueryUsesValuePath(t *testing.T) {
+	target := constraint.NewPath(cfg.SymbolID(133), "target")
+	key := constraint.NewPath(cfg.SymbolID(134), "key")
+	source := constraint.NewPath(cfg.SymbolID(135), "source")
+	otherSource := constraint.NewPath(cfg.SymbolID(136), "other")
+	value := product.FromType(typ.String)
+	state := PointState{
+		IndexWrites: IndexWriteAdmissionFacts{}.WithAddress(IndexWriteAdmissionAddressFact{
+			Target:       testStableAddressPath(t, target),
+			KeyPath:      testStableAddressPath(t, key),
+			HasKeyPath:   true,
+			Key:          product.FromType(typ.String),
+			ValuePath:    testStableAddressPath(t, source),
+			HasValuePath: true,
+			Value:        value,
+		}),
+	}
+	facts := PointFactsOf(state)
+
+	got, ok := facts.IndexWriteAdmission(IndexWritePathQuery{
+		Target:       target,
+		KeyPath:      key,
+		HasKeyPath:   true,
+		ValuePath:    source,
+		HasValuePath: true,
+	})
+	if !ok || !product.Domain.Equal(got, value) {
+		t.Fatalf("IndexWriteAdmission value path = %v/%v, want string", got, ok)
+	}
+	if got, ok := facts.IndexWriteAdmission(IndexWritePathQuery{
+		Target:       target,
+		KeyPath:      key,
+		HasKeyPath:   true,
+		ValuePath:    otherSource,
+		HasValuePath: true,
+	}); ok {
+		t.Fatalf("IndexWriteAdmission other value path = %v/true, want false", got)
+	}
+}
+
 func TestPointFactsDynamicIndexReadbackUsesStableKeyPath(t *testing.T) {
 	target := constraint.NewPath(cfg.SymbolID(113), "target")
 	key := constraint.NewPath(cfg.SymbolID(114), "key")
@@ -159,6 +199,29 @@ func TestPointFactsDynamicIndexReadbackUsesStableKeyPath(t *testing.T) {
 	})
 	if !ok || !product.Domain.Equal(got, value) {
 		t.Fatalf("DynamicIndexReadback path = %v/%v, want number", got, ok)
+	}
+}
+
+func TestPointFactsDynamicIndexReadbackUsesIndexedIteratorKeyArrayFacts(t *testing.T) {
+	arrayPath := constraint.NewPath(cfg.SymbolID(130), "node_order")
+	tablePath := constraint.NewPath(cfg.SymbolID(131), "nodes")
+	keyPath := constraint.NewPath(cfg.SymbolID(132), "current_node_id")
+	value := product.FromType(typ.String)
+	state := PointState{
+		KeyPresence: KeyPresenceFacts{}.
+			WithKeyArrayValueAddresses(testStableAddressPath(t, arrayPath), testStableAddressPath(t, tablePath), value),
+		ValueOrigins: ValueOriginFacts{}.
+			WithAddresses(testStableAddressPath(t, keyPath), testStableAddressPath(t, arrayPath), ValueOriginIndexedIterator, 1),
+	}
+	facts := PointFactsOf(state)
+
+	got, ok := facts.DynamicIndexReadback(DynamicIndexReadbackQuery{
+		Target:   tablePath,
+		KeyPath:  keyPath,
+		KeyValue: product.FromType(typ.String),
+	})
+	if !ok || !product.Domain.Equal(got, value) {
+		t.Fatalf("DynamicIndexReadback key-array = %v/%v, want string", got, ok)
 	}
 }
 

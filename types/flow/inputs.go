@@ -3,7 +3,6 @@ package flow
 import (
 	"github.com/wippyai/go-lua/types/cfg"
 	"github.com/wippyai/go-lua/types/constraint"
-	"github.com/wippyai/go-lua/types/domain/value/product"
 	"github.com/wippyai/go-lua/types/effect"
 	"github.com/wippyai/go-lua/types/typ"
 )
@@ -396,58 +395,6 @@ type VariantCaseFieldProjection struct {
 	SourceSteps  []effect.TypeProjectionStep
 	OriginFamily uint64
 	CaseIndex    int
-}
-
-// IndexWriteReadQuery identifies a solved dynamic-index readback proof with
-// explicit solver context and normalized address-domain admission evidence.
-type IndexWriteReadQuery struct {
-	Point     cfg.Point
-	View      PathReadView
-	Admission IndexWriteAddressQuery
-}
-
-// IndexReadbackPathQuery is the path-domain readback query before address
-// normalization. AST-facing producers build this once; flow owns lowering it to
-// the address-domain query consumed by solved index-write facts.
-type IndexReadbackPathQuery struct {
-	Point     cfg.Point
-	View      PathReadView
-	Target    constraint.Path
-	KeyPath   constraint.Path
-	KeyType   typ.Type
-	ValuePath constraint.Path
-}
-
-// ReadbackQuery normalizes source paths into the address-domain query consumed
-// by solved index-write facts.
-func (q IndexReadbackPathQuery) ReadbackQuery() (IndexWriteReadQuery, bool) {
-	targetAddr, ok := StableAddressOfPath(q.Target)
-	if !ok {
-		return IndexWriteReadQuery{}, false
-	}
-	query := IndexWriteReadQuery{
-		Point:     q.Point,
-		View:      q.View,
-		Admission: IndexWriteAddressQuery{Target: targetAddr},
-	}
-	if !q.KeyPath.IsEmpty() {
-		keyAddr, ok := StableAddressOfPath(q.KeyPath)
-		if ok {
-			query.Admission.KeyPath = keyAddr
-			query.Admission.HasKeyPath = true
-		}
-	}
-	if !q.ValuePath.IsEmpty() {
-		valueAddr, ok := StableAddressOfPath(q.ValuePath)
-		if ok {
-			query.Admission.ValuePath = valueAddr
-			query.Admission.HasValuePath = true
-		}
-	}
-	if !typ.IsAbsentOrUnknown(q.KeyType) {
-		query.Admission.KeyValue = product.FromType(q.KeyType)
-	}
-	return query, true
 }
 
 // ArrayLiteralLength records a sequence constructor's proven length lower bound.

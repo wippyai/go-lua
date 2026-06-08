@@ -6,6 +6,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/types/cfg"
 	"github.com/wippyai/go-lua/types/constraint"
+	"github.com/wippyai/go-lua/types/domain/value/product"
 	"github.com/wippyai/go-lua/types/flow"
 	"github.com/wippyai/go-lua/types/typ"
 )
@@ -17,6 +18,8 @@ type fakeFlow struct {
 	keyOf      bool
 	readback   typ.Type
 	readbackOK bool
+	readTarget constraint.Path
+	readKey    constraint.Path
 }
 
 type lenRef struct {
@@ -52,8 +55,24 @@ func (f fakeFlow) HasKeyOf(_ cfg.Point, tablePath, keyPath constraint.Path) bool
 	return f.keyOf && !tablePath.IsEmpty() && !keyPath.IsEmpty()
 }
 
-func (f fakeFlow) IndexReadback(_ flow.IndexWriteReadQuery) (typ.Type, bool) {
-	return f.readback, f.readbackOK
+func (f fakeFlow) IndexReadPointFacts(cfg.Point, flow.PathReadView) flow.PointFacts {
+	if !f.readbackOK || typ.IsAbsentOrUnknown(f.readback) || f.readTarget.IsEmpty() || f.readKey.IsEmpty() {
+		return flow.PointFactsOf(flow.PointState{})
+	}
+	target, targetOK := flow.StableAddressOfPath(f.readTarget)
+	key, keyOK := flow.StableAddressOfPath(f.readKey)
+	if !targetOK || !keyOK {
+		return flow.PointFactsOf(flow.PointState{})
+	}
+	return flow.PointFactsOf(flow.PointState{
+		IndexWrites: flow.IndexWriteAdmissionFacts{}.WithAddress(flow.IndexWriteAdmissionAddressFact{
+			Target:     target,
+			KeyPath:    key,
+			HasKeyPath: true,
+			Key:        product.FromType(typ.String),
+			Value:      product.FromType(f.readback),
+		}),
+	})
 }
 
 func TestRefine_TupleIndexBoundedByNumericForRemovesNil(t *testing.T) {
@@ -223,10 +242,13 @@ func TestRefine_IndexReadbackComposesKeyPresence(t *testing.T) {
 		Result:    typ.NewOptional(typ.Number),
 		Object:    obj,
 		Key:       key,
+		KeyType:   typ.String,
 		Flow: fakeFlow{
 			keyOf:      true,
 			readback:   typ.NewOptional(typ.Number),
 			readbackOK: true,
+			readTarget: objPath,
+			readKey:    keyPath,
 		},
 		PathOf: func(expr ast.Expr) constraint.Path {
 			switch expr {

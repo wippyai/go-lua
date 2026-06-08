@@ -762,43 +762,10 @@ func (f *canonicalFacts) MutatorKeyTypeAt(p cfg.Point, keyPath constraint.Path, 
 	return flow.NormalizeDynamicKeyType(keyType)
 }
 
-// IndexWriteAdmission reads the post-transfer point-state proof that a dynamic
-// indexed replacement write was admitted by the canonical product transfer.
-func (f *canonicalFacts) IndexWriteAdmission(q flow.IndexWriteReadQuery) (typ.Type, bool) {
-	ps := f.indexReadState(q.Point, q.View)
-	got, ok := flow.PointFactsOf(ps).IndexWriteAdmissionAtAddress(q.Admission)
-	return got, ok
-}
-
-// IndexReadback returns the normalized proof value for table[key] reads. It
-// composes direct dynamic-write admission with stable key-array/value-origin
-// evidence so consumers do not need to know which proof lane produced it.
-func (f *canonicalFacts) IndexReadback(q flow.IndexWriteReadQuery) (typ.Type, bool) {
-	if got, ok := f.IndexWriteAdmission(q); ok {
-		return got, true
-	}
-	if !q.Admission.HasKeyPath {
-		return nil, false
-	}
-	ps := f.indexReadState(q.Point, q.View)
-	value, ok := flow.IndexedIteratorKeyArrayReadback(
-		ps.KeyPresence,
-		ps.ValueOrigins,
-		q.Admission.Target,
-		q.Admission.KeyPath,
-	)
-	if !ok || value.IsZero() {
-		return nil, false
-	}
-	t := product.ProjectValueOrUnknown(value)
-	if typ.IsAbsentOrUnknown(t) || typ.IsAny(t) {
-		return nil, false
-	}
-	return t, true
-}
-
-func (f *canonicalFacts) IndexWriteKeyAliasesAt(p cfg.Point, key flow.StableAddress) []flow.StableAddress {
-	return flow.PointFactsOf(f.pointState(p, true)).IdentityAliasClosureAddresses(key)
+// IndexReadPointFacts selects the solved point-state slice for indexed-read
+// reducers. Flow owns the readback algebra after this boundary.
+func (f *canonicalFacts) IndexReadPointFacts(p cfg.Point, view flow.PathReadView) flow.PointFacts {
+	return flow.PointFactsOf(f.indexReadState(p, view))
 }
 
 func (f *canonicalFacts) indexReadState(p cfg.Point, view flow.PathReadView) flow.PointState {

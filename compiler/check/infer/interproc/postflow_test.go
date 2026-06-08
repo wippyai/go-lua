@@ -177,6 +177,6 @@ func (noopFlowOps) HasKeyOf(cfg.Point, constraint.Path, constraint.Path) bool {
 	return false
 }
 
-func (noopFlowOps) IndexReadback(flow.IndexWriteReadQuery) (typ.Type, bool) {
-	return nil, false
+func (noopFlowOps) IndexReadPointFacts(cfg.Point, flow.PathReadView) flow.PointFacts {
+	return flow.PointFactsOf(flow.PointState{})
 }

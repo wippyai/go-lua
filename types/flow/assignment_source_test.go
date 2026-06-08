@@ -40,8 +40,8 @@ func (f fakeAssignmentSourceFlow) HasKeyOf(_ cfg.Point, tablePath, keyPath const
 	return f.keyOf[string(tablePath.Key())+"->"+string(keyPath.Key())]
 }
 
-func (f fakeAssignmentSourceFlow) IndexReadback(IndexWriteReadQuery) (typ.Type, bool) {
-	return nil, false
+func (f fakeAssignmentSourceFlow) IndexReadPointFacts(cfg.Point, PathReadView) PointFacts {
+	return PointFactsOf(PointState{})
 }
 
 func TestAssignmentSourceValuePathSourceUsesPreStateForSelfRelatedAssignment(t *testing.T) {

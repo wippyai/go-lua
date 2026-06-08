@@ -158,17 +158,11 @@ type TransferValueFacts interface {
 	MutatorKeyTypeAt(p cfg.Point, keyPath constraint.Path, staticType typ.Type) typ.Type
 }
 
-// IndexWriteFacts exposes the solved transfer proof that a dynamic indexed
-// replacement write was admitted by the abstract store law at a point.
-type IndexWriteFacts interface {
-	IndexWriteAdmission(q IndexWriteReadQuery) (typ.Type, bool)
-}
-
-// IndexReadbackFacts exposes the solved proof value for an indexed read. It is
-// wider than IndexWriteFacts: providers may compose direct index-write
-// admission with other readback proofs such as key-array/value-origin evidence.
-type IndexReadbackFacts interface {
-	IndexReadback(q IndexWriteReadQuery) (typ.Type, bool)
+// IndexReadPointFacts exposes the selected point-state proof domain for indexed
+// reads. Consumers select a point/view once, then PointFacts owns readback,
+// key-presence, and sequence-proof reduction inside the flow domain.
+type IndexReadPointFacts interface {
+	IndexReadPointFacts(p cfg.Point, view PathReadView) PointFacts
 }
 
 // ConditionProofFacts exposes condition-only proof queries over the converged

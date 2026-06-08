@@ -5,6 +5,7 @@ import (
 
 	"github.com/wippyai/go-lua/types/cfg"
 	"github.com/wippyai/go-lua/types/constraint"
+	"github.com/wippyai/go-lua/types/domain/value/product"
 	"github.com/wippyai/go-lua/types/typ"
 )
 
@@ -25,7 +26,7 @@ func TestSelectPathObservationResult_StrictPreFallsBackToDeclared(t *testing.T) 
 	}
 }
 
-func TestPathObservationIndexReadBuildsReadbackQuery(t *testing.T) {
+func TestPathObservationIndexReadBuildsDynamicReadbackQuery(t *testing.T) {
 	table := constraint.NewPath(cfg.SymbolID(41), "rows")
 	key := constraint.NewPath(cfg.SymbolID(42), "id")
 	index := PathObservationIndexRead{
@@ -34,48 +35,12 @@ func TestPathObservationIndexReadBuildsReadbackQuery(t *testing.T) {
 		KeyType:   typ.String,
 	}
 
-	got, ok := index.ReadbackQuery(cfg.Point(7), PathReadPost)
-	if !ok {
-		t.Fatal("ReadbackQuery returned false")
+	got := index.DynamicReadbackQuery()
+	if !got.Target.Equal(table) || !got.KeyPath.Equal(key) || !got.FollowKeyAliases {
+		t.Fatalf("dynamic readback query = %#v, want table/key with aliases", got)
 	}
-	if got.Point != cfg.Point(7) || got.View != PathReadPost {
-		t.Fatalf("query point/view = %v/%v, want 7/post", got.Point, got.View)
-	}
-	target, ok := StableAddressOfPath(table)
-	if !ok {
-		t.Fatal("table address")
-	}
-	keyAddr, ok := StableAddressOfPath(key)
-	if !ok {
-		t.Fatal("key address")
-	}
-	if !got.Admission.Target.Equal(target) || !got.Admission.HasKeyPath || !got.Admission.KeyPath.Equal(keyAddr) {
-		t.Fatalf("query admission = %#v, want table/key addresses", got.Admission)
-	}
-}
-
-func TestIndexReadbackPathQueryBuildsValuePathAdmission(t *testing.T) {
-	table := constraint.NewPath(cfg.SymbolID(51), "rows")
-	key := constraint.NewPath(cfg.SymbolID(52), "id")
-	value := constraint.NewPath(cfg.SymbolID(53), "source")
-
-	got, ok := (IndexReadbackPathQuery{
-		Point:     cfg.Point(9),
-		View:      PathReadPost,
-		Target:    table,
-		KeyPath:   key,
-		KeyType:   typ.String,
-		ValuePath: value,
-	}).ReadbackQuery()
-	if !ok {
-		t.Fatal("ReadbackQuery returned false")
-	}
-	valueAddr, ok := StableAddressOfPath(value)
-	if !ok {
-		t.Fatal("value address")
-	}
-	if !got.Admission.HasValuePath || !got.Admission.ValuePath.Equal(valueAddr) {
-		t.Fatalf("query admission = %#v, want value-path address", got.Admission)
+	if !typ.TypeEquals(product.ProjectValueOrUnknown(got.KeyValue), typ.String) {
+		t.Fatalf("dynamic readback key = %v, want string", product.ProjectValueOrUnknown(got.KeyValue))
 	}
 }
 

@@ -7,6 +7,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/domain/paramevidence"
 	"github.com/wippyai/go-lua/types/constraint"
+	"github.com/wippyai/go-lua/types/domain/value/product"
 	"github.com/wippyai/go-lua/types/flow"
 	"github.com/wippyai/go-lua/types/typ"
 )
@@ -39,11 +40,12 @@ func TestIndexReadFlowAdaptsPointFacts(t *testing.T) {
 	key := constraint.NewPath(cfg.SymbolID(12), "id")
 	member := table.Field("items")
 	facts := evidenceFacts{
-		hasKeyOf:       true,
-		lengthPath:     member,
-		lengthLower:    3,
-		readback:       typ.String,
-		indexAdmission: typ.Number,
+		hasKeyOf:    true,
+		lengthPath:  member,
+		lengthLower: 3,
+		readback:    typ.String,
+		readTarget:  table,
+		readKey:     key,
 	}
 	flowProof := New(Config{Facts: facts}).IndexReadFlow()
 	if flowProof == nil {
@@ -55,15 +57,17 @@ func TestIndexReadFlowAdaptsPointFacts(t *testing.T) {
 	if lower, _, ok := flowProof.LengthBoundsAt(cfg.Point(20), member); !ok || lower != 3 {
 		t.Fatalf("LengthBoundsAt = %d/%v, want 3/true", lower, ok)
 	}
-	readback, ok := flowProof.(interface {
-		IndexReadback(flow.IndexWriteReadQuery) (typ.Type, bool)
+	readback, ok := flowProof.IndexReadPointFacts(cfg.Point(20), flow.PathReadPost).DynamicIndexReadback(flow.DynamicIndexReadbackQuery{
+		Target:   table,
+		KeyPath:  key,
+		KeyValue: product.FromType(typ.String),
 	})
 	if !ok {
-		t.Fatal("IndexReadFlow did not expose index readback")
+		t.Fatal("IndexReadFlow did not expose point-facts readback")
 	}
-	got, ok := readback.IndexReadback(flow.IndexWriteReadQuery{Point: cfg.Point(20)})
-	if !ok || !typ.TypeEquals(got, typ.String) {
-		t.Fatalf("IndexReadback = %v/%v, want string/true", got, ok)
+	got := product.ProjectValueOrUnknown(readback)
+	if !typ.TypeEquals(got, typ.String) {
+		t.Fatalf("IndexReadPointFacts readback = %v, want string", got)
 	}
 }
 
@@ -132,24 +136,25 @@ func TestProjectedPathTypeAppliesRootConditionProjection(t *testing.T) {
 }
 
 type evidenceFacts struct {
-	current        map[constraint.PathKey]flow.TypedValue
-	post           map[constraint.PathKey]flow.TypedValue
-	refined        map[cfg.SymbolID]flow.TypedValue
-	declared       map[cfg.SymbolID]flow.TypedValue
-	annotated      map[cfg.SymbolID]bool
-	cond           constraint.Condition
-	effective      flow.TypedValue
-	postSymbol     flow.TypedValue
-	contracts      paramevidence.Contracts
-	routePath      constraint.Path
-	routes         []flow.ProvenanceRoute
-	appendRoutes   []flow.ProvenanceRoute
-	callReturns    []typ.Type
-	hasKeyOf       bool
-	lengthPath     constraint.Path
-	lengthLower    int64
-	readback       typ.Type
-	indexAdmission typ.Type
+	current      map[constraint.PathKey]flow.TypedValue
+	post         map[constraint.PathKey]flow.TypedValue
+	refined      map[cfg.SymbolID]flow.TypedValue
+	declared     map[cfg.SymbolID]flow.TypedValue
+	annotated    map[cfg.SymbolID]bool
+	cond         constraint.Condition
+	effective    flow.TypedValue
+	postSymbol   flow.TypedValue
+	contracts    paramevidence.Contracts
+	routePath    constraint.Path
+	routes       []flow.ProvenanceRoute
+	appendRoutes []flow.ProvenanceRoute
+	callReturns  []typ.Type
+	hasKeyOf     bool
+	lengthPath   constraint.Path
+	lengthLower  int64
+	readback     typ.Type
+	readTarget   constraint.Path
+	readKey      constraint.Path
 }
 
 func (f evidenceFacts) DeclaredAt(_ cfg.Point, sym cfg.SymbolID) flow.TypedValue {
@@ -239,10 +244,22 @@ func (f evidenceFacts) LengthLowerBoundForPathAt(_ cfg.Point, path constraint.Pa
 	return 0, false
 }
 
-func (f evidenceFacts) IndexWriteAdmission(flow.IndexWriteReadQuery) (typ.Type, bool) {
-	return f.indexAdmission, f.indexAdmission != nil
-}
-
-func (f evidenceFacts) IndexReadback(flow.IndexWriteReadQuery) (typ.Type, bool) {
-	return f.readback, f.readback != nil
+func (f evidenceFacts) IndexReadPointFacts(cfg.Point, flow.PathReadView) flow.PointFacts {
+	if typ.IsAbsentOrUnknown(f.readback) || f.readTarget.IsEmpty() || f.readKey.IsEmpty() {
+		return flow.PointFactsOf(flow.PointState{})
+	}
+	target, targetOK := flow.StableAddressOfPath(f.readTarget)
+	key, keyOK := flow.StableAddressOfPath(f.readKey)
+	if !targetOK || !keyOK {
+		return flow.PointFactsOf(flow.PointState{})
+	}
+	return flow.PointFactsOf(flow.PointState{
+		IndexWrites: flow.IndexWriteAdmissionFacts{}.WithAddress(flow.IndexWriteAdmissionAddressFact{
+			Target:     target,
+			KeyPath:    key,
+			HasKeyPath: true,
+			Key:        product.FromType(typ.String),
+			Value:      product.FromType(f.readback),
+		}),
+	})
 }

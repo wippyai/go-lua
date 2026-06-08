@@ -289,7 +289,9 @@ func (mockSolvedFlow) IsPointDead(cfg.Point) bool { return false }
 
 func (mockSolvedFlow) HasKeyOf(cfg.Point, constraint.Path, constraint.Path) bool { return false }
 
-func (mockSolvedFlow) IndexReadback(flow.IndexWriteReadQuery) (typ.Type, bool) { return nil, false }
+func (mockSolvedFlow) IndexReadPointFacts(cfg.Point, flow.PathReadView) flow.PointFacts {
+	return flow.PointFactsOf(flow.PointState{})
+}
 
 func (mockSolvedFlow) ObserveChildPaths(q flow.PathChildQuery) []flow.PathFact {
 	return []flow.PathFact{{Path: q.Path.Field("child"), Type: typ.Boolean}}

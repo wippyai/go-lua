@@ -7,6 +7,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/check/domain/provenance"
 	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/domain/value"
+	"github.com/wippyai/go-lua/types/domain/value/product"
 	"github.com/wippyai/go-lua/types/flow"
 	querycore "github.com/wippyai/go-lua/types/query/core"
 	"github.com/wippyai/go-lua/types/typ"
@@ -276,27 +277,21 @@ func (p Projector) indexTargetSealed(target cfg.AssignTarget, point cfg.Point) b
 }
 
 func (p Projector) assignmentTargetFlowWriteType(target cfg.AssignTarget, source ast.Expr, point cfg.Point) typ.Type {
-	facts := p.proofs.IndexWriteFacts()
-	if facts == nil {
-		return nil
-	}
 	targetPath := p.indexTargetBasePath(target, point)
 	if targetPath.IsEmpty() {
 		return nil
 	}
 	keyPath := p.pathOfExpr(target.Key, point)
-	query, ok := flow.IndexReadbackPathQuery{
-		Point:     point,
-		View:      flow.PathReadPost,
-		Target:    targetPath,
-		KeyPath:   keyPath,
-		KeyType:   p.TypeOf(target.Key, point),
-		ValuePath: p.pathOfExpr(source, point),
-	}.ReadbackQuery()
-	if !ok {
-		return nil
-	}
-	value, ok := facts.IndexWriteAdmission(query)
+	valuePath := p.pathOfExpr(source, point)
+	admitted, ok := p.proofs.IndexReadPointFacts(point, flow.PathReadPost).IndexWriteAdmission(flow.IndexWritePathQuery{
+		Target:       targetPath,
+		KeyPath:      keyPath,
+		HasKeyPath:   !keyPath.IsEmpty(),
+		KeyValue:     product.FromType(p.TypeOf(target.Key, point)),
+		ValuePath:    valuePath,
+		HasValuePath: !valuePath.IsEmpty(),
+	})
+	value := product.ProjectValueOrUnknown(admitted)
 	if !ok || typ.IsAbsentOrUnknown(value) || typ.IsAny(value) {
 		return nil
 	}

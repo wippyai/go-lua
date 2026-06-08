@@ -167,12 +167,13 @@ func (p Projection) AssignmentSourceFacts() flow.AssignmentSourceFacts {
 	return nil
 }
 
-// IndexWriteFacts returns the solved dynamic-index write proof surface.
-func (p Projection) IndexWriteFacts() flow.IndexWriteFacts {
-	if facts, ok := firstProvider[flow.IndexWriteFacts](p.cfg.Facts, p.cfg.Flow); ok {
-		return facts
+// IndexReadPointFacts selects the solved point-state proof surface for indexed
+// reads. The selected PointFacts owns readback and key-presence reduction.
+func (p Projection) IndexReadPointFacts(point cfg.Point, view flow.PathReadView) flow.PointFacts {
+	if facts, ok := firstProvider[flow.IndexReadPointFacts](p.cfg.Facts, p.cfg.Flow); ok {
+		return facts.IndexReadPointFacts(point, view)
 	}
-	return nil
+	return flow.PointFactsOf(flow.PointState{})
 }
 
 // ConditionProofFacts returns condition-only type proof evidence.
@@ -237,20 +238,16 @@ func (p Projection) IndexReadFlow() indexread.Flow {
 	kf, hasKeyOf := p.cfg.Facts.(keyOfFacts)
 	nf, hasNum := p.cfg.Facts.(flow.NumericFacts)
 	lf, hasLen := p.cfg.Facts.(flow.LengthFacts)
-	iw, hasIndexWrites := p.cfg.Facts.(flow.IndexWriteFacts)
-	ir, _ := p.cfg.Facts.(flow.IndexReadbackFacts)
-	aliases, _ := p.cfg.Facts.(indexWriteKeyAliasFacts)
-	if !hasKeyOf && !hasNum && !hasLen && !hasIndexWrites && ir == nil {
+	pf, hasPointFacts := p.cfg.Facts.(flow.IndexReadPointFacts)
+	if !hasKeyOf && !hasNum && !hasLen && !hasPointFacts {
 		return nil
 	}
 	return factsIndexReadFlow{
-		keyOf:       kf,
-		numeric:     nf,
-		length:      lf,
-		indexWrites: iw,
-		readback:    ir,
-		keyAliases:  aliases,
-		graph:       p.cfg.Graph,
+		keyOf:      kf,
+		numeric:    nf,
+		length:     lf,
+		pointFacts: pf,
+		graph:      p.cfg.Graph,
 	}
 }
 
@@ -286,18 +283,12 @@ type keyOfFacts interface {
 	HasKeyOf(p cfg.Point, tablePath, keyPath constraint.Path) bool
 }
 
-type indexWriteKeyAliasFacts interface {
-	IndexWriteKeyAliasesAt(p cfg.Point, key flow.StableAddress) []flow.StableAddress
-}
-
 type factsIndexReadFlow struct {
-	keyOf       keyOfFacts
-	numeric     flow.NumericFacts
-	length      flow.LengthFacts
-	indexWrites flow.IndexWriteFacts
-	readback    flow.IndexReadbackFacts
-	keyAliases  indexWriteKeyAliasFacts
-	graph       *cfg.Graph
+	keyOf      keyOfFacts
+	numeric    flow.NumericFacts
+	length     flow.LengthFacts
+	pointFacts flow.IndexReadPointFacts
+	graph      *cfg.Graph
 }
 
 func (f factsIndexReadFlow) HasKeyOf(p cfg.Point, tablePath, keyPath constraint.Path) bool {
@@ -307,28 +298,11 @@ func (f factsIndexReadFlow) HasKeyOf(p cfg.Point, tablePath, keyPath constraint.
 	return f.keyOf.HasKeyOf(p, tablePath, keyPath)
 }
 
-func (f factsIndexReadFlow) IndexReadback(q flow.IndexWriteReadQuery) (typ.Type, bool) {
-	if f.readback != nil {
-		if got, ok := f.readback.IndexReadback(q); ok {
-			return got, true
-		}
+func (f factsIndexReadFlow) IndexReadPointFacts(p cfg.Point, view flow.PathReadView) flow.PointFacts {
+	if f.pointFacts == nil {
+		return flow.PointFactsOf(flow.PointState{})
 	}
-	return f.IndexWriteAdmission(q)
-}
-
-func (f factsIndexReadFlow) IndexWriteAdmission(q flow.IndexWriteReadQuery) (typ.Type, bool) {
-	if f.indexWrites == nil {
-		return nil, false
-	}
-	var aliases flow.IndexWriteKeyAliases
-	if f.keyAliases != nil {
-		aliases = f.keyAliases.IndexWriteKeyAliasesAt
-	}
-	return flow.IndexWriteAdmissionWithKeyAliases(
-		q,
-		f.indexWrites.IndexWriteAdmission,
-		aliases,
-	)
+	return f.pointFacts.IndexReadPointFacts(p, view)
 }
 
 func (f factsIndexReadFlow) NumericBoundsAt(p cfg.Point, sym cfg.SymbolID) (int64, int64, bool) {

@@ -207,8 +207,8 @@ type FlowOps interface {
 	// Used for key-existence narrowing after table access patterns.
 	HasKeyOf(p cfg.Point, tablePath, keyPath constraint.Path) bool
 
-	// IndexReadback returns the solved proof value for table[key] reads.
-	IndexReadback(q flow.IndexWriteReadQuery) (typ.Type, bool)
+	// IndexReadPointFacts returns the selected point-state proofs for indexed reads.
+	IndexReadPointFacts(p cfg.Point, view flow.PathReadView) flow.PointFacts
 }
 
 // LiteralSynth provides synthesis capabilities for function literals.

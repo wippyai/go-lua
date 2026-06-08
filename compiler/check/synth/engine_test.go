@@ -130,8 +130,8 @@ func (m mockFlowOps) HasKeyOf(p cfg.Point, tablePath, keyPath constraint.Path) b
 	return false
 }
 
-func (m mockFlowOps) IndexReadback(flow.IndexWriteReadQuery) (typ.Type, bool) {
-	return nil, false
+func (m mockFlowOps) IndexReadPointFacts(cfg.Point, flow.PathReadView) flow.PointFacts {
+	return flow.PointFactsOf(flow.PointState{})
 }
 
 type mockGraph struct {

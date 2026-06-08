@@ -73,8 +73,8 @@ func (p preStateFlowOps) HasKeyOf(point cfg.Point, tablePath, keyPath constraint
 	return p.inner.HasKeyOf(point, tablePath, keyPath)
 }
 
-func (p preStateFlowOps) IndexReadback(q flow.IndexWriteReadQuery) (typ.Type, bool) {
-	return p.inner.IndexReadback(q)
+func (p preStateFlowOps) IndexReadPointFacts(point cfg.Point, _ flow.PathReadView) flow.PointFacts {
+	return p.inner.IndexReadPointFacts(point, flow.PathReadPre)
 }
 
 type conditionFlowOps struct {
@@ -149,9 +149,9 @@ func (o conditionFlowOps) HasKeyOf(point cfg.Point, tablePath, keyPath constrain
 	return false
 }
 
-func (o conditionFlowOps) IndexReadback(q flow.IndexWriteReadQuery) (typ.Type, bool) {
+func (o conditionFlowOps) IndexReadPointFacts(point cfg.Point, view flow.PathReadView) flow.PointFacts {
 	if o.inner != nil {
-		return o.inner.IndexReadback(q)
+		return o.inner.IndexReadPointFacts(point, view)
 	}
-	return nil, false
+	return flow.PointFactsOf(flow.PointState{})
 }

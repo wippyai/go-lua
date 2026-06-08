@@ -4,6 +4,7 @@ import (
 	"github.com/wippyai/go-lua/types/cfg"
 	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/domain/value"
+	"github.com/wippyai/go-lua/types/domain/value/product"
 	"github.com/wippyai/go-lua/types/subtype"
 	"github.com/wippyai/go-lua/types/typ"
 )
@@ -77,16 +78,16 @@ type PathObservationIndexRead struct {
 	HasLiteralIndex bool
 }
 
-// ReadbackQuery projects this indexed-read context to the address-domain query
-// consumed by dynamic-index readback proofs.
-func (r PathObservationIndexRead) ReadbackQuery(point cfg.Point, view PathReadView) (IndexWriteReadQuery, bool) {
-	return IndexReadbackPathQuery{
-		Point:   point,
-		View:    view,
-		Target:  r.TablePath,
-		KeyPath: r.KeyPath,
-		KeyType: r.KeyType,
-	}.ReadbackQuery()
+// DynamicReadbackQuery projects this indexed-read context to the semantic
+// readback request consumed by PointFacts. Solver point/view selection stays at
+// the producer boundary; readback reduction only needs table/key evidence.
+func (r PathObservationIndexRead) DynamicReadbackQuery() DynamicIndexReadbackQuery {
+	return DynamicIndexReadbackQuery{
+		Target:           r.TablePath,
+		KeyPath:          r.KeyPath,
+		KeyValue:         product.FromType(r.KeyType),
+		FollowKeyAliases: true,
+	}
 }
 
 // PathObservation is the high-level result of observing one path through the

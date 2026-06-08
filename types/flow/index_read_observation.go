@@ -3,6 +3,7 @@ package flow
 import (
 	"github.com/wippyai/go-lua/types/cfg"
 	"github.com/wippyai/go-lua/types/constraint"
+	"github.com/wippyai/go-lua/types/domain/value/product"
 	"github.com/wippyai/go-lua/types/narrow"
 	"github.com/wippyai/go-lua/types/typ"
 )
@@ -14,7 +15,7 @@ type IndexReadObservationProofs interface {
 	ArrayLenRefPathAt(p cfg.Point, sym cfg.SymbolID) (array constraint.Path, offset int64, ok bool)
 	LengthBoundsAt(p cfg.Point, path constraint.Path) (lower, upper int64, ok bool)
 	HasKeyOf(p cfg.Point, tablePath, keyPath constraint.Path) bool
-	IndexReadback(q IndexWriteReadQuery) (typ.Type, bool)
+	IndexReadPointFacts(p cfg.Point, view PathReadView) PointFacts
 }
 
 // IndexReadObservationQuery describes one AST-free indexed read observation.
@@ -62,12 +63,12 @@ func refineObservationByIndexReadback(q IndexReadObservationQuery) (typ.Type, bo
 	if q.Index.KeyPath.IsEmpty() && !IndexWriteReadCanUseKeyValueOnly(q.Index.KeyType) {
 		return nil, false
 	}
-	query, ok := q.Index.ReadbackQuery(q.Point, q.View)
-	if !ok {
-		return nil, false
-	}
-	if admitted, ok := q.Proofs.IndexReadback(query); indexReadbackIsInformative(admitted, ok) {
-		return refineReadbackPresence(q, admitted), true
+	facts := q.Proofs.IndexReadPointFacts(q.Point, q.View)
+	if admitted, ok := facts.DynamicIndexReadback(q.Index.DynamicReadbackQuery()); ok {
+		readback := product.ProjectValueOrUnknown(admitted)
+		if indexReadbackIsInformative(readback, true) {
+			return refineReadbackPresence(q, readback), true
+		}
 	}
 	return nil, false
 }

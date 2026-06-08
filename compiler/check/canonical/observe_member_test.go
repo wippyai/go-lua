@@ -138,30 +138,20 @@ func TestCanonicalFactsIndexWriteAdmissionReadsPostState(t *testing.T) {
 	}
 	facts := &canonicalFacts{state: fs}
 
-	query, ok := flow.IndexReadbackPathQuery{
-		Point:   point,
-		View:    flow.PathReadPost,
-		Target:  target,
-		KeyType: typ.String,
-	}.ReadbackQuery()
-	if !ok {
-		t.Fatal("index-write query")
-	}
-	got, ok := facts.IndexWriteAdmission(query)
+	admitted, ok := facts.IndexReadPointFacts(point, flow.PathReadPost).IndexWriteAdmission(flow.IndexWritePathQuery{
+		Target:   target,
+		KeyValue: product.FromType(typ.String),
+	})
+	got := product.ProjectValueOrUnknown(admitted)
 	if !ok || !typ.TypeEquals(got, typ.Boolean) {
 		t.Fatalf("IndexWriteAdmission = %v/%v, want post-state boolean/true", got, ok)
 	}
 
-	query, ok = flow.IndexReadbackPathQuery{
-		Point:   point,
-		View:    flow.PathReadPre,
-		Target:  target,
-		KeyType: typ.String,
-	}.ReadbackQuery()
-	if !ok {
-		t.Fatal("pre-state index-write query")
-	}
-	got, ok = facts.IndexWriteAdmission(query)
+	admitted, ok = facts.IndexReadPointFacts(point, flow.PathReadPre).IndexWriteAdmission(flow.IndexWritePathQuery{
+		Target:   target,
+		KeyValue: product.FromType(typ.String),
+	})
+	got = product.ProjectValueOrUnknown(admitted)
 	if !ok || !typ.TypeEquals(got, typ.Number) {
 		t.Fatalf("pre-state IndexWriteAdmission = %v/%v, want number/true", got, ok)
 	}
