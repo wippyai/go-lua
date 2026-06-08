@@ -4,6 +4,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/canonical/state"
+	"github.com/wippyai/go-lua/compiler/check/domain/functionsymbols"
 	"github.com/wippyai/go-lua/compiler/check/domain/paramevidence"
 	domainpath "github.com/wippyai/go-lua/compiler/check/domain/path"
 	"github.com/wippyai/go-lua/compiler/check/domain/predicate"
@@ -142,22 +143,13 @@ func projectPrototypeSelf(fs state.FunctionState, g *cfg.Graph) flow.PrototypeSe
 }
 
 func captureExportSymbols(g *cfg.Graph) map[cfg.SymbolID]bool {
-	if g == nil || g.Bindings() == nil {
+	syms := functionsymbols.OwnedCapturedByNested(g).Slice()
+	if len(syms) == 0 {
 		return nil
 	}
-	out := make(map[cfg.SymbolID]bool)
-	for _, nested := range g.NestedFunctions() {
-		if nested.Func == nil {
-			continue
-		}
-		for _, sym := range g.Bindings().CapturedSymbols(nested.Func) {
-			if g.OwnsSymbol(sym) {
-				out[sym] = true
-			}
-		}
-	}
-	if len(out) == 0 {
-		return nil
+	out := make(map[cfg.SymbolID]bool, len(syms))
+	for _, sym := range syms {
+		out[sym] = true
 	}
 	return out
 }

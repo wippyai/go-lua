@@ -6,6 +6,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/callsite"
+	"github.com/wippyai/go-lua/compiler/check/domain/functionsymbols"
 	flowpath "github.com/wippyai/go-lua/compiler/check/domain/path"
 	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/flow"
@@ -21,7 +22,7 @@ func ReferencePathProjectionForGraph(g *cfg.Graph) flow.ReferencePathProjection 
 	}
 	c := referencePathCollector{
 		graph:    g,
-		captured: capturedSymbolSet(g),
+		captured: functionsymbols.CapturedFree(g, g.Func()),
 	}
 	for _, stmt := range g.Func().Stmts {
 		c.stmt(stmt)
@@ -34,26 +35,9 @@ func ReferencePathProjectionForGraph(g *cfg.Graph) flow.ReferencePathProjection 
 
 type referencePathCollector struct {
 	graph    *cfg.Graph
-	captured map[cfg.SymbolID]struct{}
+	captured functionsymbols.Set
 	exact    map[constraint.PathKey]constraint.Path
 	subtrees map[constraint.PathKey]constraint.Path
-}
-
-func capturedSymbolSet(g *cfg.Graph) map[cfg.SymbolID]struct{} {
-	if g == nil || g.Bindings() == nil || g.Func() == nil {
-		return nil
-	}
-	symbols := g.Bindings().CapturedSymbols(g.Func())
-	if len(symbols) == 0 {
-		return nil
-	}
-	out := make(map[cfg.SymbolID]struct{}, len(symbols))
-	for _, sym := range symbols {
-		if sym != 0 && g.IsFreeSymbol(sym) {
-			out[sym] = struct{}{}
-		}
-	}
-	return out
 }
 
 func (c *referencePathCollector) stmt(stmt ast.Stmt) {
@@ -278,7 +262,7 @@ func (c *referencePathCollector) add(dst *map[constraint.PathKey]constraint.Path
 		return
 	}
 	if c.graph == nil || c.graph.IsFreeSymbol(path.Symbol) {
-		if _, ok := c.captured[path.Symbol]; !ok {
+		if !c.captured.Contains(path.Symbol) {
 			return
 		}
 	}

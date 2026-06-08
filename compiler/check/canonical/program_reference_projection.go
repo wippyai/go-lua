@@ -1,11 +1,10 @@
 package canonical
 
 import (
-	"slices"
-
 	"github.com/wippyai/go-lua/compiler/cfg"
 	canonicalcall "github.com/wippyai/go-lua/compiler/check/canonical/call"
 	"github.com/wippyai/go-lua/compiler/check/canonical/summary"
+	"github.com/wippyai/go-lua/compiler/check/domain/functionsymbols"
 	"github.com/wippyai/go-lua/types/domain/value/product"
 	"github.com/wippyai/go-lua/types/flow"
 	"github.com/wippyai/go-lua/types/typ"
@@ -50,20 +49,10 @@ func (p *program) CaptureEntryReferences(ref summary.FuncRef, captureReferencesO
 
 func (p *program) capturedSymbols(ref summary.FuncRef) []cfg.SymbolID {
 	g := p.Graph(ref)
-	if g == nil || g.Bindings() == nil || g.Func() == nil {
+	if g == nil {
 		return nil
 	}
-	var out []cfg.SymbolID
-	for _, sym := range g.Bindings().CapturedSymbols(g.Func()) {
-		if g.IsFreeSymbol(sym) {
-			out = append(out, sym)
-		}
-	}
-	if len(out) == 0 {
-		return nil
-	}
-	slices.Sort(out)
-	return slices.Compact(out)
+	return functionsymbols.CapturedFree(g, g.Func()).Slice()
 }
 
 func (p *program) captureEntryValue(

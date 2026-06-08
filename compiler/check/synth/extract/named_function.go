@@ -8,6 +8,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/check/api"
 	"github.com/wippyai/go-lua/compiler/check/callsite"
 	"github.com/wippyai/go-lua/compiler/check/domain/functionfact"
+	"github.com/wippyai/go-lua/compiler/check/domain/functionsymbols"
 	"github.com/wippyai/go-lua/compiler/check/scope"
 	"github.com/wippyai/go-lua/types/cfg"
 	"github.com/wippyai/go-lua/types/flow"
@@ -126,25 +127,7 @@ func (s *Synthesizer) graphLocalFunctionForExpr(expr ast.Expr) (compcfg.SymbolID
 }
 
 func hasNonGlobalFunctionCaptures(bindings *bind.BindingTable, fn *ast.FunctionExpr) bool {
-	return len(nonGlobalFunctionCaptures(bindings, fn)) > 0
-}
-
-func nonGlobalFunctionCaptures(bindings *bind.BindingTable, fn *ast.FunctionExpr) map[cfg.SymbolID]struct{} {
-	captures := make(map[cfg.SymbolID]struct{})
-	if bindings == nil || fn == nil {
-		return captures
-	}
-	for _, sym := range bindings.CapturedSymbols(fn) {
-		if sym == 0 {
-			continue
-		}
-		kind, ok := bindings.Kind(sym)
-		if ok && kind == cfg.SymbolGlobal {
-			continue
-		}
-		captures[sym] = struct{}{}
-	}
-	return captures
+	return !functionsymbols.NonGlobalCaptures(bindings, fn).IsEmpty()
 }
 
 func (s *Synthesizer) graphLocalFunctionLiteralForExpr(expr ast.Expr) *ast.FunctionExpr {
@@ -300,8 +283,8 @@ func (s *Synthesizer) hasDominatingCapturedMutation(fn *ast.FunctionExpr, p cfg.
 	if !ok {
 		return false
 	}
-	captures := nonGlobalFunctionCaptures(bindings, fn)
-	if len(captures) == 0 {
+	captures := functionsymbols.NonGlobalCaptures(bindings, fn)
+	if captures.IsEmpty() {
 		return false
 	}
 
@@ -381,8 +364,8 @@ func assignmentBetweenDefinitionAndCall(assign api.AssignmentEvidence, defPoint 
 		dom.StrictlyDominates(assign.Point, callPoint)
 }
 
-func assignmentMutatesCapturedSymbol(info *compcfg.AssignInfo, captures map[cfg.SymbolID]struct{}) bool {
-	if info == nil || len(captures) == 0 {
+func assignmentMutatesCapturedSymbol(info *compcfg.AssignInfo, captures functionsymbols.Set) bool {
+	if info == nil || captures.IsEmpty() {
 		return false
 	}
 	mutated := false
@@ -395,16 +378,6 @@ func assignmentMutatesCapturedSymbol(info *compcfg.AssignInfo, captures map[cfg.
 	return mutated
 }
 
-func targetTouchesCapture(target compcfg.AssignTarget, captures map[cfg.SymbolID]struct{}) bool {
-	if target.Symbol != 0 {
-		if _, ok := captures[target.Symbol]; ok {
-			return true
-		}
-	}
-	if target.BaseSymbol != 0 {
-		if _, ok := captures[target.BaseSymbol]; ok {
-			return true
-		}
-	}
-	return false
+func targetTouchesCapture(target compcfg.AssignTarget, captures functionsymbols.Set) bool {
+	return captures.Contains(target.Symbol) || captures.Contains(target.BaseSymbol)
 }

@@ -1,8 +1,8 @@
 package summary
 
 import (
-	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/cfg"
+	"github.com/wippyai/go-lua/compiler/check/domain/functionsymbols"
 	"github.com/wippyai/go-lua/types/typ"
 )
 
@@ -92,8 +92,8 @@ func returnsNestedCapturedSymbol(in PostWidenObservationInput, ref FuncRef) bool
 	if g == nil || g.Bindings() == nil {
 		return false
 	}
-	returned := returnedSymbols(g)
-	if len(returned) == 0 {
+	returned := functionsymbols.Returned(g)
+	if returned.IsEmpty() {
 		return false
 	}
 	for _, child := range in.Nested(ref) {
@@ -101,8 +101,8 @@ func returnsNestedCapturedSymbol(in PostWidenObservationInput, ref FuncRef) bool
 		if childGraph == nil || childGraph.Bindings() == nil || childGraph.Func() == nil {
 			continue
 		}
-		for _, sym := range childGraph.Bindings().CapturedSymbols(childGraph.Func()) {
-			if _, ok := returned[sym]; ok {
+		for _, sym := range functionsymbols.CapturedFree(childGraph, childGraph.Func()).Slice() {
+			if returned.Contains(sym) {
 				return true
 			}
 		}
@@ -119,35 +119,4 @@ func isDirectChildOfReturnCapturedFunction(in PostWidenObservationInput, ref Fun
 		return false
 	}
 	return returnsNestedCapturedSymbol(in, parent)
-}
-
-func returnedSymbols(g *cfg.Graph) map[cfg.SymbolID]struct{} {
-	if g == nil || g.Bindings() == nil {
-		return nil
-	}
-	returned := make(map[cfg.SymbolID]struct{})
-	g.EachReturn(func(_ cfg.Point, info *cfg.ReturnInfo) {
-		if info == nil {
-			return
-		}
-		n := len(info.Exprs)
-		if len(info.Symbols) > n {
-			n = len(info.Symbols)
-		}
-		for i := 0; i < n; i++ {
-			var sym cfg.SymbolID
-			if i < len(info.Symbols) {
-				sym = info.Symbols[i]
-			}
-			if sym == 0 && i < len(info.Exprs) {
-				if ident, ok := info.Exprs[i].(*ast.IdentExpr); ok {
-					sym, _ = g.Bindings().SymbolOf(ident)
-				}
-			}
-			if sym != 0 {
-				returned[sym] = struct{}{}
-			}
-		}
-	})
-	return returned
 }
