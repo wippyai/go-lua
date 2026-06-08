@@ -355,7 +355,7 @@ func (d *Driver) Run(sess api.AnalysisSession, chunk []ast.Stmt) {
 	}()
 	d.solvePass(sess, prog, queries)
 	d.withSnapshotSummaryReads(func() {
-		d.publishFunctionFacts(sess, prog)
+		d.installFunctionFactProjection(sess, prog)
 		d.bridgeResults(sess, prog, queries)
 	})
 }
@@ -435,7 +435,7 @@ func (d *Driver) registerStoreGraphParents(sess api.AnalysisSession, prog *progr
 	}
 }
 
-func (d *Driver) publishFunctionFacts(sess api.AnalysisSession, prog *program) {
+func (d *Driver) installFunctionFactProjection(sess api.AnalysisSession, prog *program) {
 	if d == nil || sess == nil || prog == nil {
 		return
 	}
@@ -443,20 +443,16 @@ func (d *Driver) publishFunctionFacts(sess api.AnalysisSession, prog *program) {
 	if store == nil {
 		return
 	}
-	projection := d.canonicalFunctionFacts(prog, store)
-	store.SetCanonicalFactsProjection(projection)
+	projection := d.canonicalFunctionFactProjection(prog, store)
+	store.SetCanonicalFunctionFactsProjection(projection)
 }
 
-type functionFactProjectionStore interface {
-	ParentGraphKeyForSymbol(cfg.SymbolID) (api.GraphKey, bool)
-}
-
-func (d *Driver) canonicalFunctionFacts(prog *program, store functionFactProjectionStore) map[api.GraphKey]api.Facts {
+func (d *Driver) canonicalFunctionFactProjection(prog *program, store api.CanonicalStore) map[api.GraphKey]api.FunctionFacts {
 	if d == nil || prog == nil || store == nil {
 		return nil
 	}
 	reader := d.summaryReader()
-	out := make(map[api.GraphKey]api.Facts)
+	out := make(map[api.GraphKey]api.FunctionFacts)
 	for _, ref := range prog.refs {
 		symbols := prog.symbolsForRef(ref)
 		if len(symbols) == 0 {
@@ -484,9 +480,7 @@ func (d *Driver) canonicalFunctionFacts(prog *program, store functionFactProject
 			builder.AddPublicParams(sym, publicParams)
 			builder.AddRefinement(sym, refinement)
 			if facts := builder.Build(); len(facts) > 0 {
-				current := out[key]
-				current.FunctionFacts = mergeFunctionFacts(current.FunctionFacts, facts)
-				out[key] = current
+				out[key] = mergeFunctionFacts(out[key], facts)
 			}
 		}
 	}

@@ -530,9 +530,10 @@ func (s *SessionStore) syncProjectedFactInputs(batch *db.InputBatch, key api.Gra
 	s.factInputs.setProjectedFacts(batch, key, s.visibleProjectedInterprocFacts(key))
 }
 
-// SetCanonicalFactsProjection publishes final canonical fact projections without
-// mutating InterprocPrev/InterprocNext or advancing the legacy fixpoint product.
-func (s *SessionStore) SetCanonicalFactsProjection(facts map[api.GraphKey]api.Facts) {
+// SetCanonicalFunctionFactsProjection publishes final canonical FunctionFacts
+// without mutating InterprocPrev/InterprocNext or advancing the legacy fixpoint
+// product.
+func (s *SessionStore) SetCanonicalFunctionFactsProjection(facts map[api.GraphKey]api.FunctionFacts) {
 	if s == nil || s.factInputs == nil {
 		return
 	}
@@ -546,21 +547,11 @@ func (s *SessionStore) SetCanonicalFactsProjection(facts map[api.GraphKey]api.Fa
 	for key := range s.factInputs.functionFactValues {
 		keys[key.GraphKey] = struct{}{}
 	}
-	for key := range s.factInputs.literalSigValues {
-		keys[key.GraphKey] = struct{}{}
-	}
-	for key := range s.factInputs.capturedTypeValues {
-		keys[key.GraphKey] = struct{}{}
-	}
-	for key := range s.factInputs.capturedFieldValues {
-		keys[key] = struct{}{}
-	}
-	for key := range s.factInputs.constructorValues {
-		keys[key.GraphKey] = struct{}{}
-	}
 	batch := s.factInputs.database.NewInputBatch()
 	for key := range keys {
-		s.factInputs.setProjectedFacts(batch, key, facts[key])
+		functionFacts := facts[key]
+		s.factInputs.setProjectedFunctionFactMap(batch, key, functionFacts)
+		s.factInputs.setProjectedFunctionFacts(batch, key, functionFacts)
 	}
 }
 

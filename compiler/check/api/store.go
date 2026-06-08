@@ -119,10 +119,10 @@ type InterprocFactSink interface {
 	MergeInterprocFactsNext(key GraphKey, delta Facts)
 }
 
-// CanonicalFactProjectionSink installs final canonical fact projections without
-// participating in the legacy interproc iteration product.
-type CanonicalFactProjectionSink interface {
-	SetCanonicalFactsProjection(facts map[GraphKey]Facts)
+// CanonicalFunctionFactProjectionSink installs final canonical FunctionFacts
+// without participating in the legacy interproc iteration product.
+type CanonicalFunctionFactProjectionSink interface {
+	SetCanonicalFunctionFactsProjection(facts map[GraphKey]FunctionFacts)
 }
 
 // CanonicalStore is the store surface the canonical summary engine is allowed to
@@ -130,7 +130,7 @@ type CanonicalFactProjectionSink interface {
 // fact projection. It intentionally excludes legacy interproc iteration methods.
 type CanonicalStore interface {
 	StoreReader
-	CanonicalFactProjectionSink
+	CanonicalFunctionFactProjectionSink
 
 	SetModuleBindings(bindings *bind.BindingTable)
 	SetModuleAliases(aliases map[cfg.SymbolID]string)
