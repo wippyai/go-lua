@@ -3,7 +3,6 @@ package propagate
 import (
 	"github.com/wippyai/go-lua/types/cfg"
 	"github.com/wippyai/go-lua/types/constraint"
-	"github.com/wippyai/go-lua/types/flow/pathkey"
 )
 
 // Demand seeds the backward SSA-version liveness solve. The caller (which can
@@ -26,17 +25,12 @@ type Demand struct {
 }
 
 // pathDemandKey is the access-path identity a use records: the root
-// symbol/version plus its leading segment chain. The sym/ver fields let a
-// whole-variable redefinition kill all downward demand for that exact version
-// (both the root and any of its field/index access paths).
+// symbol/version plus its leading segment chain with the SSA version stored
+// outside the stripped path key. A whole-variable redefinition kills all
+// downward demand for that exact version, both the root and its field/index
+// prefixes. This is also the lookup key for projection; no secondary path index
+// is needed.
 type pathDemandKey struct {
-	sym      cfg.SymbolID
-	ver      int
-	key      constraint.PathKey
-	stripped constraint.PathKey
-}
-
-type livePathKey struct {
 	sym      cfg.SymbolID
 	ver      int
 	stripped constraint.PathKey
@@ -59,10 +53,8 @@ type phiProvider interface {
 // liveSets holds the per-point access-path demand computed by the backward
 // SSA-version liveness solve.
 type liveSets struct {
-	liveIn       map[cfg.Point]map[pathDemandKey]struct{}
-	liveOut      map[cfg.Point]map[pathDemandKey]struct{}
-	livePaths    map[cfg.Point]map[livePathKey]struct{}
-	liveOutPaths map[cfg.Point]map[livePathKey]struct{}
+	liveIn  map[cfg.Point]map[pathDemandKey]struct{}
+	liveOut map[cfg.Point]map[pathDemandKey]struct{}
 }
 
 // ConditionProjector applies the SSA-version relevance abstraction to a
@@ -157,33 +149,22 @@ func (l *liveSets) fieldPathLive(p cfg.Point, path constraint.Path, out bool) bo
 		return true
 	}
 	set := l.liveIn[p]
-	livePaths := l.livePaths[p]
 	if out {
 		set = l.liveOut[p]
-		livePaths = l.liveOutPaths[p]
 	}
 	if set == nil {
 		return false
 	}
-	want := strippedKey(path)
-	if livePaths != nil {
-		_, ok := livePaths[livePathKey{sym: path.Symbol, ver: path.Version, stripped: want}]
-		return ok
-	}
-	for k := range set {
-		if k.sym == path.Symbol && k.ver == path.Version && k.stripped == want {
-			return true
-		}
-	}
-	return false
+	_, ok := set[pathDemandKey{sym: path.Symbol, ver: path.Version, stripped: strippedKey(path)}]
+	return ok
 }
 
 func demandKeyOf(path constraint.Path) pathDemandKey {
-	return pathDemandKey{sym: path.Symbol, ver: path.Version, key: path.Key(), stripped: strippedKey(path)}
+	return pathDemandKey{sym: path.Symbol, ver: path.Version, stripped: strippedKey(path)}
 }
 
 // strippedKey is the access-path suffix identity: symbol plus segment suffix,
-// with the SSA version stored separately in pathDemandKey/livePathKey.
+// with the SSA version stored separately in pathDemandKey.
 func strippedKey(path constraint.Path) constraint.PathKey {
 	bare := constraint.Path{Root: path.Root, Symbol: path.Symbol, Segments: path.Segments}
 	return bare.Key()
@@ -322,10 +303,8 @@ func computeLiveSets(inputs *Inputs) *liveSets {
 	}
 
 	return &liveSets{
-		liveIn:       liveIn,
-		liveOut:      liveOut,
-		livePaths:    indexLivePaths(liveIn),
-		liveOutPaths: indexLivePaths(liveOut),
+		liveIn:  liveIn,
+		liveOut: liveOut,
 	}
 }
 
@@ -371,26 +350,7 @@ func renamePhiDemand(k pathDemandKey, renames map[symVer]int) pathDemandKey {
 		return k
 	}
 	k.ver = operandVer
-	k.key = versionedDemandKey(k.stripped, k.sym, operandVer)
 	return k
-}
-
-func versionedDemandKey(stripped constraint.PathKey, sym cfg.SymbolID, ver int) constraint.PathKey {
-	if sym == 0 || ver == 0 {
-		return stripped
-	}
-	parsedSym, _, suffix, ok := pathkey.ParseKey(stripped)
-	if !ok || parsedSym != sym {
-		return stripped
-	}
-	segments := pathkey.ParseSuffix(suffix)
-	if suffix != "" && segments == nil {
-		return stripped
-	}
-	if key := pathkey.SymbolVersionKey(sym, ver, segments); key != "" {
-		return key
-	}
-	return stripped
 }
 
 // literalLive reports whether a condition literal must be retained by
@@ -443,19 +403,4 @@ func sameDemandSet(a, b map[pathDemandKey]struct{}) bool {
 		}
 	}
 	return true
-}
-
-func indexLivePaths(liveIn map[cfg.Point]map[pathDemandKey]struct{}) map[cfg.Point]map[livePathKey]struct{} {
-	if len(liveIn) == 0 {
-		return nil
-	}
-	out := make(map[cfg.Point]map[livePathKey]struct{}, len(liveIn))
-	for p, set := range liveIn {
-		paths := make(map[livePathKey]struct{}, len(set))
-		for k := range set {
-			paths[livePathKey{sym: k.sym, ver: k.ver, stripped: k.stripped}] = struct{}{}
-		}
-		out[p] = paths
-	}
-	return out
 }

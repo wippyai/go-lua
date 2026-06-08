@@ -168,15 +168,6 @@ func TestConditionProjectorProjectOutRebasesPhiTargetDemandToOperand(t *testing.
 	}
 }
 
-func TestVersionedDemandKeyUsesCanonicalSuffixParser(t *testing.T) {
-	stripped := constraint.PathKey(`sym401["a\"b"].value`)
-	got := versionedDemandKey(stripped, cfg.SymbolID(401), 7)
-	want := constraint.PathKey(`sym401@7["a\"b"].value`)
-	if got != want {
-		t.Fatalf("versionedDemandKey = %q, want %q", got, want)
-	}
-}
-
 func singlePointGraph(p cfg.Point) *mockGraph {
 	return &mockGraph{
 		entry: p,
