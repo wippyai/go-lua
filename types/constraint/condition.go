@@ -125,6 +125,22 @@ func FromDisjuncts(conjunctions [][]Constraint) Condition {
 	return normalizeConditionChecked(Condition{Disjuncts: canonicalized})
 }
 
+// fromKnownConsistentCanonicalDisjuncts builds a condition from disjuncts that
+// are already canonical and known non-contradictory by construction. It is for
+// monotone projections such as Forget that only remove literals from an
+// existing Condition; arbitrary producers must use FromDisjuncts.
+func fromKnownConsistentCanonicalDisjuncts(disjuncts [][]Constraint) Condition {
+	if len(disjuncts) == 0 {
+		return FalseCondition()
+	}
+	for _, disjunct := range disjuncts {
+		if len(disjunct) == 0 {
+			return TrueCondition()
+		}
+	}
+	return normalizeConditionChecked(Condition{Disjuncts: disjuncts})
+}
+
 // IsFalse reports whether the condition is unsatisfiable (no disjuncts).
 func (c Condition) IsFalse() bool {
 	return len(c.Disjuncts) == 0

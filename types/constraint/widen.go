@@ -126,7 +126,7 @@ func (c Condition) Project(keep func(Constraint) bool) Condition {
 		retained = append(retained, kept)
 	}
 
-	return FromDisjuncts(retained)
+	return fromKnownConsistentCanonicalDisjuncts(retained)
 }
 
 // Forget drops literals selected by drop from every disjunct, including common
@@ -164,7 +164,7 @@ func (c Condition) Forget(drop func(Constraint) bool) Condition {
 		}
 		retained = append(retained, kept)
 	}
-	return FromDisjuncts(retained)
+	return fromKnownConsistentCanonicalDisjuncts(retained)
 }
 
 // commonLiterals returns the set of literals that appear in EVERY disjunct of c
@@ -246,9 +246,10 @@ func projectOntoVocabulary(c Condition, vocab vocabularySet) Condition {
 		retained = append(retained, kept)
 	}
 
-	// Every disjunct survived with at least one literal. Build via
-	// FromDisjuncts (canonicalizes each conjunction and normalizes the DNF).
-	return FromDisjuncts(retained)
+	// Every disjunct survived with at least one literal. Projection only drops
+	// literals from existing canonical disjuncts, so contradiction checks do not
+	// need to be rebuilt here.
+	return fromKnownConsistentCanonicalDisjuncts(retained)
 }
 
 // vocabularySet is a small, allocation-conscious set of constraint literals
