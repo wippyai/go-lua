@@ -83,6 +83,7 @@ type diagnosticContextBuilder struct {
 
 	overlayDeps  map[Key]map[Key]struct{}
 	overlayUsers map[Key]map[Key]struct{}
+	refreshed    map[Key]struct{}
 
 	primaryRefs      map[FuncRef]bool
 	closureFallbacks map[FuncRef][]Key
@@ -92,6 +93,7 @@ func (b *diagnosticContextBuilder) build() {
 	b.seen = make(map[Key]struct{})
 	b.overlayDeps = make(map[Key]map[Key]struct{})
 	b.overlayUsers = make(map[Key]map[Key]struct{})
+	b.refreshed = make(map[Key]struct{})
 	b.discoverReachable()
 	for {
 		b.refine()
@@ -235,6 +237,7 @@ func (b *diagnosticContextBuilder) solveFresh(key Key) (state.FunctionState, []K
 
 func (b *diagnosticContextBuilder) refreshSolve(key Key) (state.FunctionState, bool, bool) {
 	next, deps := b.solveFresh(key)
+	b.refreshed[key] = struct{}{}
 	b.setOverlayDependencies(key, deps)
 	summaryChanged := b.updateSummary(key, next)
 	prev, ok := b.result.State(key)
@@ -277,7 +280,23 @@ func (b *diagnosticContextBuilder) refine() {
 			enqueue(key)
 		}
 	}
-	enqueueAll()
+	enqueueRefreshFrontier := func() {
+		if b.frontier.SolveWithDependencies == nil {
+			enqueueAll()
+			return
+		}
+		for _, key := range b.known {
+			if _, ok := b.refreshed[key]; ok {
+				continue
+			}
+			enqueue(key)
+		}
+	}
+	// Every exact observer key gets one post-discovery refresh so derived
+	// contexts can surface after the local solver observes converged summaries.
+	// Later passes rely on recorded overlay dependencies instead of replaying
+	// every context after unrelated exact summaries move.
+	enqueueRefreshFrontier()
 	for len(work) > 0 {
 		key := work[0]
 		work = work[1:]
@@ -293,7 +312,7 @@ func (b *diagnosticContextBuilder) refine() {
 		if summaryChanged {
 			b.enqueueOverlayUsers(key, enqueue)
 		}
-		if contextChanged || (summaryChanged && b.frontier.SolveWithDependencies == nil) {
+		if b.frontier.SolveWithDependencies == nil && (contextChanged || summaryChanged) {
 			enqueueAll()
 		}
 	}

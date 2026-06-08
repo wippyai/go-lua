@@ -9,6 +9,8 @@ import (
 	"github.com/wippyai/go-lua/compiler/check/canonical/summary"
 	"github.com/wippyai/go-lua/compiler/check/domain/observation"
 	"github.com/wippyai/go-lua/compiler/check/domain/paramevidence"
+	"github.com/wippyai/go-lua/compiler/check/scope"
+	"github.com/wippyai/go-lua/compiler/check/synth/resolve"
 	"github.com/wippyai/go-lua/types/typ"
 )
 
@@ -72,6 +74,7 @@ func (p funcResultProjection) build() *api.FuncResult {
 		DepthLimitExceeded:       p.driver.scopeDepthExceededFor(p.graph),
 	}
 	obs := observation.FromFuncResult(result, nil).WithProofValues()
+	result.ResolvedTypeDefs = p.resolvedTypeDefs(pointScopes, obs.TypeOf)
 	result.CallExpectedArgs = callEdges.ExpectedArgs
 	result.CallContracts = callEdges.Contracts
 	result.NarrowSynth = &returnSynth{
@@ -84,6 +87,43 @@ func (p funcResultProjection) build() *api.FuncResult {
 		p.program.facts.HasNoReturn(p.ref),
 	)
 	return result
+}
+
+func (p funcResultProjection) resolvedTypeDefs(pointScopes map[cfg.Point]*scope.State, typeOf api.ExprSynth) map[string]typ.Type {
+	if p.driver == nil || p.graph == nil || typeOf == nil {
+		return nil
+	}
+	var out map[string]typ.Type
+	p.graph.EachTypeDef(func(point cfg.Point, info *cfg.TypeDefInfo) {
+		if info == nil || info.Name == "" || info.TypeExpr == nil {
+			return
+		}
+		sc := pointScopes[point]
+		if sc == nil {
+			sc = p.driver.returnScope(p.graph)
+		}
+		typePoint := point
+		resolver := resolve.New(resolve.Config{
+			Manifests:      p.driver.cfg.Manifests,
+			ModuleBindings: p.driver.moduleBindings,
+			ModuleAliases:  p.driver.moduleAliases,
+			ExprSynth: func(expr ast.Expr, _ cfg.Point) typ.Type {
+				return typeOf(expr, typePoint)
+			},
+		})
+		resolved := resolver.ResolveTypeDef(info.Name, info.TypeExpr, scope.ToTypeParamExprs(info.TypeParams), sc)
+		if resolved == nil {
+			return
+		}
+		if _, isGeneric := resolved.(*typ.Generic); !isGeneric {
+			resolved = typ.NewAlias(info.Name, resolved)
+		}
+		if out == nil {
+			out = make(map[string]typ.Type)
+		}
+		out[info.Name] = resolved
+	})
+	return out
 }
 
 func (p funcResultProjection) callEdgeEvidence(evidence api.FlowEvidence) solvedCallEdgeEvidence {

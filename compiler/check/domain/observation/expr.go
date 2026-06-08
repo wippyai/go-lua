@@ -500,6 +500,20 @@ func (p Projector) identType(expr *ast.IdentExpr, point cfg.Point) typ.Type {
 			}
 		}
 	}
+	// typeof(...) type expressions contain expression-shaped AST nodes that are
+	// not the original bound source-use nodes. Resolve them by the lexical symbol
+	// active at the typedef point so export/runtime type projection observes the
+	// same canonical symbol facts as normal expression observation.
+	if p.cfg.Graph != nil && expr.Value != "" {
+		if sym, ok := p.cfg.Graph.SymbolAt(point, expr.Value); ok && sym != 0 {
+			if t := p.symbolType(point, sym); t != nil {
+				if p.cfg.GradualParamReads && typ.IsUnknown(t) && p.isUnannotatedParamSymbol(sym) {
+					return typ.Any
+				}
+				return t
+			}
+		}
+	}
 	if t := p.globalNameType(point, expr.Value); t != nil {
 		return t
 	}

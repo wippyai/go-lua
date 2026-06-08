@@ -516,6 +516,7 @@ func IndexedIteratorKeyArrayReadback(
 		return product.AbstractValue{}, false
 	}
 	var out product.AbstractValue
+	relations := relationIndexForOrigins(origins)
 	var seen stableAddressSet
 	queue := []StableAddress{key}
 	for len(queue) > 0 {
@@ -524,7 +525,11 @@ func IndexedIteratorKeyArrayReadback(
 		if !seen.Add(cur) {
 			continue
 		}
-		for _, route := range origins.exactIndexedIteratorSourceRoutesCoveringAddress(cur, 1) {
+		for _, route := range relations.SourceRoutes(relationSourceQuery{
+			Target:   cur,
+			Kind:     relationSourceExactIndexedIteratorValue,
+			VarIndex: 1,
+		}) {
 			for _, value := range keyPresence.KeyArrayValuesAddresses(route.source, table) {
 				if value.IsZero() {
 					continue
@@ -536,7 +541,10 @@ func IndexedIteratorKeyArrayReadback(
 				}
 			}
 		}
-		for _, alias := range origins.assignmentAliasSourceRoutesCoveringAddress(cur) {
+		for _, alias := range relations.SourceRoutes(relationSourceQuery{
+			Target: cur,
+			Kind:   relationSourceAssignmentAlias,
+		}) {
 			source, ok := alias.source.Append(alias.remainder)
 			if ok {
 				queue = append(queue, source)

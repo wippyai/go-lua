@@ -107,14 +107,27 @@ func TestValueOriginIndexedIteratorSourceRoutesDistinguishExactAndDescendant(t *
 	itemsAddr := testStableAddressPath(t, items)
 	facts := ValueOriginFacts{}.WithAddresses(entryAddr, itemsAddr, ValueOriginIndexedIterator, 1)
 
-	exact := facts.exactIndexedIteratorSourceRoutesCoveringAddress(entryAddr, 1)
+	relations := relationIndexForOrigins(facts)
+	exact := relations.SourceRoutes(relationSourceQuery{
+		Target:   entryAddr,
+		Kind:     relationSourceExactIndexedIteratorValue,
+		VarIndex: 1,
+	})
 	if len(exact) != 1 || !exact[0].source.Equal(itemsAddr) || len(exact[0].remainder) != 0 {
 		t.Fatalf("exact indexed route = %#v, want items with no remainder", exact)
 	}
-	if got := facts.exactIndexedIteratorSourceRoutesCoveringAddress(entryIDAddr, 1); len(got) != 0 {
+	if got := relations.SourceRoutes(relationSourceQuery{
+		Target:   entryIDAddr,
+		Kind:     relationSourceExactIndexedIteratorValue,
+		VarIndex: 1,
+	}); len(got) != 0 {
 		t.Fatalf("exact indexed route accepted descendant read: %#v", got)
 	}
-	descendant := facts.indexedIteratorValueSourceRoutesCoveringAddress(entryIDAddr)
+	descendant := relations.SourceRoutes(relationSourceQuery{
+		Target:    entryIDAddr,
+		Kind:      relationSourceIndexedIteratorValue,
+		Remainder: valueOriginRouteRequireRemainder,
+	})
 	if len(descendant) != 1 || !descendant[0].source.Equal(itemsAddr) ||
 		len(descendant[0].remainder) != 1 || descendant[0].remainder[0].Name != "id" {
 		t.Fatalf("descendant indexed route = %#v, want items with [.id]", descendant)
@@ -135,7 +148,10 @@ func TestValueOriginAssignmentAliasSourceAddressesIgnoreLegacyStoredSource(t *te
 		t.Fatalf("test setup did not keep legacy stored source key: %s", facts.Format())
 	}
 
-	if got := facts.assignmentAliasSourceRoutesCoveringAddress(value); len(got) != 0 {
+	if got := relationIndexForOrigins(facts).SourceRoutes(relationSourceQuery{
+		Target: value,
+		Kind:   relationSourceAssignmentAlias,
+	}); len(got) != 0 {
 		t.Fatalf("canonical assignment-alias view accepted legacy source key: %#v", got)
 	}
 }

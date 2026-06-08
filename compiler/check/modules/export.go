@@ -324,6 +324,15 @@ func ExportTypes(result *api.FuncResult) map[string]typ.Type {
 	if result == nil || result.Graph == nil {
 		return nil
 	}
+	if len(result.ResolvedTypeDefs) > 0 {
+		types := make(map[string]typ.Type, len(result.ResolvedTypeDefs))
+		for name, t := range result.ResolvedTypeDefs {
+			if name != "" && t != nil {
+				types[name] = t
+			}
+		}
+		return types
+	}
 
 	types := make(map[string]typ.Type)
 	result.Graph.EachTypeDef(func(p cfg.Point, info *cfg.TypeDefInfo) {

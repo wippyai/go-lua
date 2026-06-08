@@ -77,7 +77,13 @@ func TestPathAliasSourceRoutesIgnoreLegacyStoredSource(t *testing.T) {
 		t.Fatalf("test setup did not keep legacy stored source key: %s", facts.Format())
 	}
 
-	if got := facts.sourceRoutesCoveringAddress(alias); len(got) != 0 {
+	if got := (pointRelationIndex{aliases: facts}).SourceRoutes(relationSourceQuery{
+		Target: alias,
+		Kind:   relationSourceIdentityAlias,
+		IdentityPolicy: IdentityAliasRoutePolicy{
+			PathAliases: true,
+		},
+	}); len(got) != 0 {
 		t.Fatalf("canonical path-alias route accepted legacy source key: %#v", got)
 	}
 }

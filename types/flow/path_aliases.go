@@ -54,7 +54,7 @@ func (u PathAliasUse) SourceRoute() (sourceRoute, bool) {
 	if !ok {
 		return sourceRoute{}, false
 	}
-	return sourceRouteOf(source, u.Remainder)
+	return sourceRouteOfKind(ProvenanceRouteIdentityAlias, source, u.Remainder, 0)
 }
 
 // PathAliasFacts is a finite must-set lattice over assignment identity facts.
@@ -132,22 +132,6 @@ func (f PathAliasFacts) AliasesCoveringAddress(value StableAddress) []PathAliasU
 		}
 		return pathAliasLess(out[i].Alias, out[j].Alias)
 	})
-	return out
-}
-
-func (f PathAliasFacts) sourceRoutesCoveringAddress(value StableAddress) []sourceRoute {
-	uses := f.AliasesCoveringAddress(value)
-	if len(uses) == 0 {
-		return nil
-	}
-	var out []sourceRoute
-	for _, use := range uses {
-		route, ok := use.SourceRoute()
-		if !ok {
-			continue
-		}
-		out = append(out, route)
-	}
 	return out
 }
 

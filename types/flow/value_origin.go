@@ -92,7 +92,7 @@ func (u ValueOriginUse) SourceRoute() (sourceRoute, bool) {
 	if !ok {
 		return sourceRoute{}, false
 	}
-	return sourceRouteOf(source, u.Remainder)
+	return sourceRouteOfKind(provenanceRouteKindForValueOrigin(u.Origin.Kind), source, u.Remainder, u.Origin.VarIndex)
 }
 
 // ValueOriginFacts is a finite must-set lattice over value-origin provenance.
@@ -172,33 +172,6 @@ func (f ValueOriginFacts) OriginsCoveringAddress(value StableAddress) []ValueOri
 		return valueOriginLess(out[i].Origin, out[j].Origin)
 	})
 	return out
-}
-
-func (f ValueOriginFacts) assignmentAliasSourceRoutesCoveringAddress(value StableAddress) []sourceRoute {
-	return f.sourceRoutes(valueOriginRouteQuery{
-		value: value,
-		kind:  ValueOriginAssignmentAlias,
-	})
-}
-
-func (f ValueOriginFacts) indexedIteratorValueSourceRoutesCoveringAddress(value StableAddress) []sourceRoute {
-	return f.sourceRoutes(valueOriginRouteQuery{
-		value:     value,
-		kind:      ValueOriginIndexedIterator,
-		varIndex:  1,
-		hasVar:    true,
-		remainder: valueOriginRouteRequireRemainder,
-	})
-}
-
-func (f ValueOriginFacts) exactIndexedIteratorSourceRoutesCoveringAddress(value StableAddress, varIndex int) []sourceRoute {
-	return f.sourceRoutes(valueOriginRouteQuery{
-		value:     value,
-		kind:      ValueOriginIndexedIterator,
-		varIndex:  varIndex,
-		hasVar:    true,
-		remainder: valueOriginRouteForbidRemainder,
-	})
 }
 
 func (f ValueOriginFacts) sourceRoutes(q valueOriginRouteQuery) []sourceRoute {

@@ -39,13 +39,18 @@ func (f PointFacts) ProvenanceRoutesFor(q ProvenanceRouteQuery) []ProvenanceRout
 	if !ok {
 		return nil
 	}
+	relations := relationIndexOf(f.state)
 	var out []ProvenanceRoute
 	if q.IdentityAliases {
-		policy := q.IdentityAliasPolicy
-		if !policy.PathAliases && !policy.AssignmentOrigins {
-			policy = IdentityAliasReadPolicy
-		}
-		for _, source := range IdentityAliasSourcesWithPolicy(f.state, target, policy) {
+		for _, route := range relations.SourceRoutes(relationSourceQuery{
+			Target:         target,
+			Kind:           relationSourceIdentityAlias,
+			IdentityPolicy: q.IdentityAliasPolicy,
+		}) {
+			source, ok := route.appendedSource()
+			if !ok {
+				continue
+			}
 			sourcePath, ok := source.Path()
 			if !ok || sourcePath.IsEmpty() || sourcePath.Symbol == 0 {
 				continue
@@ -57,49 +62,50 @@ func (f PointFacts) ProvenanceRoutesFor(q ProvenanceRouteQuery) []ProvenanceRout
 		}
 	}
 	if q.ValueOrigins || q.AppendElementFieldOrigins {
-		for _, use := range f.state.ValueOrigins.OriginsCoveringAddress(target) {
-			switch use.Origin.Kind {
-			case ValueOriginIndexedIterator:
-				if q.AppendElementFieldOrigins {
-					out = appendAppendFieldProvenanceRoutes(out, f.state, use)
-				}
-				if q.ValueOrigins {
-					out = appendValueOriginProvenanceRoute(out, use, ProvenanceRouteIndexedIterator)
-				}
-			case ValueOriginKeyedIterator:
-				if q.ValueOrigins {
-					out = appendValueOriginProvenanceRoute(out, use, ProvenanceRouteKeyedIterator)
-				}
+		for _, route := range relations.SourceRoutes(relationSourceQuery{
+			Target:    target,
+			Kind:      relationSourceIndexedIteratorValue,
+			Remainder: valueOriginRouteAnyRemainder,
+		}) {
+			if q.AppendElementFieldOrigins {
+				out = appendAppendFieldProvenanceRoutes(out, f.state, route)
+			}
+			if q.ValueOrigins {
+				out = appendValueOriginProvenanceRoute(out, route)
+			}
+		}
+		if q.ValueOrigins {
+			for _, route := range relations.SourceRoutes(relationSourceQuery{
+				Target: target,
+				Kind:   relationSourceKeyedIterator,
+			}) {
+				out = appendValueOriginProvenanceRoute(out, route)
 			}
 		}
 	}
 	return out
 }
 
-func appendValueOriginProvenanceRoute(out []ProvenanceRoute, use ValueOriginUse, kind ProvenanceRouteKind) []ProvenanceRoute {
-	source, ok := use.SourcePath()
+func appendValueOriginProvenanceRoute(out []ProvenanceRoute, route sourceRoute) []ProvenanceRoute {
+	source, ok := route.source.Path()
 	if !ok || source.IsEmpty() || source.Symbol == 0 {
 		return out
 	}
 	return append(out, ProvenanceRoute{
-		Kind:      kind,
+		Kind:      route.kind,
 		Source:    source,
-		Remainder: cloneAddressSegments(use.Remainder),
-		VarIndex:  use.Origin.VarIndex,
+		Remainder: cloneAddressSegments(route.remainder),
+		VarIndex:  route.varIndex,
 	})
 }
 
-func appendAppendFieldProvenanceRoutes(out []ProvenanceRoute, state PointState, use ValueOriginUse) []ProvenanceRoute {
-	if len(use.Remainder) == 0 {
-		return out
-	}
-	source, ok := use.SourceAddress()
-	if !ok {
+func appendAppendFieldProvenanceRoutes(out []ProvenanceRoute, state PointState, route sourceRoute) []ProvenanceRoute {
+	if len(route.remainder) == 0 || route.source.Key() == "" {
 		return out
 	}
 	return appendAppendFieldSourceRoutes(out, state.KeyPresence.AppendElementFieldSourceAddresses(AppendElementFieldSourceQuery{
-		Array: source,
-		Field: use.Remainder,
+		Array: route.source,
+		Field: route.remainder,
 	}))
 }
 

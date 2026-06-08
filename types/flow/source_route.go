@@ -26,8 +26,10 @@ type ProvenanceRoute struct {
 // sourceRoute is the canonical address view of a provenance source plus the
 // suffix consumed below the originating value.
 type sourceRoute struct {
+	kind      ProvenanceRouteKind
 	source    StableAddress
 	remainder []constraint.Segment
+	varIndex  int
 }
 
 // addressSuffixKey is the comparable identity for one address plus a structured
@@ -38,13 +40,15 @@ type addressSuffixKey struct {
 	suffix  constraint.PathKey
 }
 
-func sourceRouteOf(source StableAddress, remainder []constraint.Segment) (sourceRoute, bool) {
-	if source.Key() == "" {
+func sourceRouteOfKind(kind ProvenanceRouteKind, source StableAddress, remainder []constraint.Segment, varIndex int) (sourceRoute, bool) {
+	if kind == 0 || source.Key() == "" {
 		return sourceRoute{}, false
 	}
 	return sourceRoute{
+		kind:      kind,
 		source:    source,
 		remainder: cloneAddressSegments(remainder),
+		varIndex:  varIndex,
 	}, true
 }
 

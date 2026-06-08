@@ -38,38 +38,17 @@ func IdentityAliasSources(state PointState, target StableAddress) []StableAddres
 // IdentityAliasSourcesWithPolicy returns source addresses selected by policy.
 func IdentityAliasSourcesWithPolicy(state PointState, target StableAddress, policy IdentityAliasRoutePolicy) []StableAddress {
 	var out stableAddressList
-	for _, route := range identityAliasRoutesWithPolicy(state, target, policy) {
+	for _, route := range relationIndexOf(state).SourceRoutes(relationSourceQuery{
+		Target:         target,
+		Kind:           relationSourceIdentityAlias,
+		IdentityPolicy: policy,
+	}) {
 		source, ok := route.appendedSource()
 		if ok {
 			out.Add(source)
 		}
 	}
 	return out.Values()
-}
-
-// identityAliasRoutesWithPolicy returns normalized source routes selected by
-// policy. Consumers that need route remainders should use this boundary rather
-// than re-reading PathAliases and ValueOriginAssignmentAlias independently.
-func identityAliasRoutesWithPolicy(state PointState, target StableAddress, policy IdentityAliasRoutePolicy) []sourceRoute {
-	if target.Key() == "" {
-		return nil
-	}
-	var out []sourceRoute
-	appendRoutes := func(routes []sourceRoute) {
-		for _, route := range routes {
-			if policy.RequireRemainder && len(route.remainder) == 0 {
-				continue
-			}
-			out = append(out, route)
-		}
-	}
-	if policy.PathAliases {
-		appendRoutes(state.PathAliases.sourceRoutesCoveringAddress(target))
-	}
-	if policy.AssignmentOrigins {
-		appendRoutes(state.ValueOrigins.assignmentAliasSourceRoutesCoveringAddress(target))
-	}
-	return out
 }
 
 // IdentityAliasClosure returns root plus every assignment-alias source reachable

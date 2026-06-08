@@ -165,6 +165,12 @@ type Driver struct {
 	// optional checker diagnostics without creating a concrete solver carrier.
 	scopeDepthExceeded map[uint64]bool
 
+	// moduleAliases is the current run's normalized require-alias map. Annotation
+	// resolution and solved export typedef projection share it so a qualified
+	// typedef and a typeof-backed typedef see the same module namespace.
+	moduleAliases  map[cfg.SymbolID]string
+	moduleBindings *bind.BindingTable
+
 	// activeProgram and activeCtx are the in-flight Run's program and db query
 	// context. The per-node transfer's call typing (callTyper) reads them while the
 	// intraprocedural fixpoint solves: the callee resolution needs the module-wide
@@ -270,6 +276,7 @@ func (d *Driver) Run(sess api.AnalysisSession, chunk []ast.Stmt) {
 
 	globals := d.globalTypes.Names()
 	moduleBindings := bind.Bind(root, globals)
+	d.moduleBindings = moduleBindings
 	if store := sess.StoreHandle(); store != nil {
 		store.SetModuleBindings(moduleBindings)
 	}
@@ -294,6 +301,7 @@ func (d *Driver) Run(sess api.AnalysisSession, chunk []ast.Stmt) {
 			return modules.AliasesFromAssignments(evidence.Assignments, g)
 		},
 	})
+	d.moduleAliases = moduleAliases
 	d.resolver = resolve.New(resolve.Config{
 		Manifests:      d.cfg.Manifests,
 		ModuleBindings: moduleBindings,
@@ -341,7 +349,13 @@ func (d *Driver) Run(sess api.AnalysisSession, chunk []ast.Stmt) {
 	d.diagnosticContexts = make(map[summary.FuncRef][]summary.Key)
 	d.diagnosticStates = make(map[summary.Key]state.FunctionState)
 	d.diagnosticSummaries = make(map[summary.Key]summary.Summary)
-	defer func() { d.activeProgram = nil; d.activeCtx = nil; d.activeQueries = nil }()
+	defer func() {
+		d.activeProgram = nil
+		d.activeCtx = nil
+		d.activeQueries = nil
+		d.moduleAliases = nil
+		d.moduleBindings = nil
+	}()
 	d.solvePass(sess, prog, queries)
 	d.withSnapshotSummaryReads(func() {
 		d.publishFunctionFacts(sess, prog)

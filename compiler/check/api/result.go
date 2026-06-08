@@ -81,6 +81,12 @@ type FuncResult struct {
 	// analysis.
 	SourceSignature *typ.Function
 
+	// ResolvedTypeDefs are module-local type definitions resolved against this
+	// function's canonical observation surface. Module export reads these instead
+	// of rebuilding typedefs from early scopes, so typeof(...) aliases see the same
+	// declared and solved facts diagnostics use.
+	ResolvedTypeDefs map[string]typ.Type
+
 	// PublicSeedSignature is the source-declared public seed used when
 	// canonicalizing post-flow FunctionFact signatures.
 	PublicSeedSignature *typ.Function

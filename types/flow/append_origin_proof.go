@@ -157,6 +157,7 @@ func AppendOriginDestinations(state PointState, array StableAddress, fieldPrefix
 	if array.Key() == "" {
 		return nil
 	}
+	relations := relationIndexOf(state)
 	seen := map[addressSuffixKey]struct{}{}
 	var destinations []AppendOriginDestination
 	var add func(StableAddress, []constraint.Segment)
@@ -173,12 +174,22 @@ func AppendOriginDestinations(state PointState, array StableAddress, fieldPrefix
 			Array:       array,
 			FieldPrefix: cloneAddressSegments(prefix),
 		})
-		for _, route := range state.ValueOrigins.indexedIteratorValueSourceRoutesCoveringAddress(array) {
+		for _, route := range relations.SourceRoutes(relationSourceQuery{
+			Target:    array,
+			Kind:      relationSourceIndexedIteratorValue,
+			Remainder: valueOriginRouteRequireRemainder,
+		}) {
 			nextPrefix := cloneAddressSegments(route.remainder)
 			nextPrefix = append(nextPrefix, prefix...)
 			add(route.source, nextPrefix)
 		}
-		for _, route := range state.PathAliases.sourceRoutesCoveringAddress(array) {
+		for _, route := range relations.SourceRoutes(relationSourceQuery{
+			Target: array,
+			Kind:   relationSourceIdentityAlias,
+			IdentityPolicy: IdentityAliasRoutePolicy{
+				PathAliases: true,
+			},
+		}) {
 			source, ok := route.appendedSource()
 			if ok {
 				add(source, prefix)
@@ -672,6 +683,7 @@ func AppendOriginSources(state PointState, source StableAddress) []AppendOriginS
 	if source.Key() == "" {
 		return nil
 	}
+	relations := relationIndexOf(state)
 	seen := map[addressSuffixKey]struct{}{}
 	var sources []AppendOriginSource
 	add := func(source StableAddress, sourceField []constraint.Segment) {
@@ -689,10 +701,18 @@ func AppendOriginSources(state PointState, source StableAddress) []AppendOriginS
 		})
 	}
 	add(source, nil)
-	for _, route := range state.ValueOrigins.indexedIteratorValueSourceRoutesCoveringAddress(source) {
+	for _, route := range relations.SourceRoutes(relationSourceQuery{
+		Target:    source,
+		Kind:      relationSourceIndexedIteratorValue,
+		Remainder: valueOriginRouteRequireRemainder,
+	}) {
 		add(route.source, route.remainder)
 	}
-	for _, route := range identityAliasRoutesWithPolicy(state, source, IdentityAliasReadPolicy) {
+	for _, route := range relations.SourceRoutes(relationSourceQuery{
+		Target:         source,
+		Kind:           relationSourceIdentityAlias,
+		IdentityPolicy: IdentityAliasReadPolicy,
+	}) {
 		routed, ok := route.appendedSource()
 		if ok {
 			add(routed, nil)
@@ -727,7 +747,13 @@ func AppendElementFieldOriginUses(state PointState, field StableAddress) []Value
 		return nil
 	}
 	uses := append([]ValueOriginUse(nil), state.ValueOrigins.OriginsCoveringAddress(field)...)
-	for _, route := range state.PathAliases.sourceRoutesCoveringAddress(field) {
+	for _, route := range relationIndexOf(state).SourceRoutes(relationSourceQuery{
+		Target: field,
+		Kind:   relationSourceIdentityAlias,
+		IdentityPolicy: IdentityAliasRoutePolicy{
+			PathAliases: true,
+		},
+	}) {
 		source, ok := route.appendedSource()
 		if !ok {
 			continue
