@@ -14,7 +14,7 @@ type ValueKey string
 
 // SymbolValueKey identifies the current point-local value of a CFG symbol.
 func SymbolValueKey(sym cfg.SymbolID) ValueKey {
-	return prefixedValueKey('s', uint64(sym))
+	return ValueKey(prefixedKey('s', uint64(sym), ""))
 }
 
 // SymbolPathKey identifies a path rooted at a CFG symbol for components, such as
@@ -23,11 +23,10 @@ func SymbolValueKey(sym cfg.SymbolID) ValueKey {
 // canonical structured segment suffix. Callers pass structured segments so the
 // string form stays an internal deterministic cache key, not a semantic API.
 func SymbolPathKey(sym cfg.SymbolID, segments []constraint.Segment) constraint.PathKey {
-	key := string(SymbolValueKey(sym))
-	if len(segments) > 0 {
-		key += constraint.FormatSegments(segments)
+	if len(segments) == 0 {
+		return constraint.PathKey(prefixedKey('s', uint64(sym), ""))
 	}
-	return constraint.PathKey(key)
+	return constraint.PathKey(prefixedKey('s', uint64(sym), constraint.FormatSegments(segments)))
 }
 
 // SymbolPathKeyOf lowers a resolved constraint path to the canonical symbol-path
@@ -77,7 +76,7 @@ func parseInternedSymbolPathKey(key constraint.PathKey) (cfg.SymbolID, []constra
 // ReturnSlotValueKey identifies the value stashed for a non-identifier return
 // expression at a return point.
 func ReturnSlotValueKey(i int) ValueKey {
-	return prefixedValueKey('r', uint64(i))
+	return ValueKey(prefixedKey('r', uint64(i), ""))
 }
 
 // ParseReturnSlotValueKey inverts ReturnSlotValueKey. Non-return-slot keys or
@@ -121,7 +120,7 @@ func ParseSymbolValueKey(key ValueKey) (cfg.SymbolID, bool) {
 	return cfg.SymbolID(n), true
 }
 
-func prefixedValueKey(prefix byte, v uint64) ValueKey {
+func prefixedKey(prefix byte, v uint64, suffix string) string {
 	var buf [21]byte
 	i := len(buf)
 	for {
@@ -134,5 +133,11 @@ func prefixedValueKey(prefix byte, v uint64) ValueKey {
 	}
 	i--
 	buf[i] = prefix
-	return ValueKey(string(buf[i:]))
+	if suffix == "" {
+		return string(buf[i:])
+	}
+	out := make([]byte, len(buf)-i+len(suffix))
+	copy(out, buf[i:])
+	copy(out[len(buf)-i:], suffix)
+	return string(out)
 }

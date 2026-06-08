@@ -11,6 +11,12 @@ func TestValueKey_ConstructorsAreStableAndTyped(t *testing.T) {
 	if got := SymbolValueKey(cfg.SymbolID(42)); got != ValueKey("s42") {
 		t.Fatalf("SymbolValueKey(42) = %q, want s42", got)
 	}
+	if got := SymbolPathKey(cfg.SymbolID(42), nil); got != constraint.PathKey("s42") {
+		t.Fatalf("SymbolPathKey(42, nil) = %q, want s42", got)
+	}
+	if got := SymbolPathKey(cfg.SymbolID(42), []constraint.Segment{{Kind: constraint.SegmentField, Name: "users"}}); got != constraint.PathKey("s42.users") {
+		t.Fatalf("SymbolPathKey(42, .users) = %q, want s42.users", got)
+	}
 	if got := ReturnSlotValueKey(3); got != ValueKey("r3") {
 		t.Fatalf("ReturnSlotValueKey(3) = %q, want r3", got)
 	}
