@@ -8,14 +8,28 @@ import "github.com/wippyai/go-lua/types/kind"
 type conjunctionContradictionIndex struct {
 	hasContradiction bool
 	exact            map[uint64][]contradictionClass
-	hasType          map[PathKey]hasTypeBuiltinClass
-	truthy           map[PathKey]Path
-	isNil            map[PathKey]Path
+	exactPath        map[uint64][]pathContradictionClass
+	hasType          map[uint64][]hasTypeBuiltinClass
+	truthy           map[uint64][]Path
+	isNil            map[uint64][]Path
 }
 
 type contradictionClass struct {
 	constraint Constraint
 	positive   bool
+}
+
+type pathContradictionKind uint8
+
+const (
+	pathContradictionTruthy pathContradictionKind = iota + 1
+	pathContradictionIsNil
+)
+
+type pathContradictionClass struct {
+	kind     pathContradictionKind
+	path     Path
+	positive bool
 }
 
 type hasTypeBuiltinClass struct {
@@ -50,6 +64,9 @@ func (idx *conjunctionContradictionIndex) Observe(ct Constraint) bool {
 }
 
 func (idx *conjunctionContradictionIndex) observeExactComplement(ct Constraint) bool {
+	if canon, ok := exactPathContradictionClassOf(ct); ok {
+		return idx.observeExactPathComplement(canon)
+	}
 	canon, positive, ok := exactContradictionClassOf(ct)
 	if !ok {
 		return false
@@ -73,6 +90,23 @@ func (idx *conjunctionContradictionIndex) observeExactComplement(ct Constraint) 
 	return false
 }
 
+func (idx *conjunctionContradictionIndex) observeExactPathComplement(canon pathContradictionClass) bool {
+	h := pathContradictionClassHash(canon)
+	for _, seen := range idx.exactPath[h] {
+		if seen.positive == canon.positive || seen.kind != canon.kind {
+			continue
+		}
+		if seen.path.Equal(canon.path) {
+			return true
+		}
+	}
+	if idx.exactPath == nil {
+		idx.exactPath = make(map[uint64][]pathContradictionClass)
+	}
+	idx.exactPath[h] = append(idx.exactPath[h], canon)
+	return false
+}
+
 func (idx *conjunctionContradictionIndex) observeBuiltinHasType(ct Constraint) bool {
 	hasType, ok := ct.(HasType)
 	if !ok || !constraintCanContradict(ct) {
@@ -82,14 +116,16 @@ func (idx *conjunctionContradictionIndex) observeBuiltinHasType(ct Constraint) b
 	if !ok {
 		return false
 	}
-	key := hasType.Path.Key()
-	if seen, ok := idx.hasType[key]; ok {
-		return seen.path.Equal(hasType.Path) && seen.kind != builtinKind
+	key := hasType.Path.Hash()
+	for _, seen := range idx.hasType[key] {
+		if seen.path.Equal(hasType.Path) && seen.kind != builtinKind {
+			return true
+		}
 	}
 	if idx.hasType == nil {
-		idx.hasType = make(map[PathKey]hasTypeBuiltinClass)
+		idx.hasType = make(map[uint64][]hasTypeBuiltinClass)
 	}
-	idx.hasType[key] = hasTypeBuiltinClass{path: hasType.Path, kind: builtinKind}
+	idx.hasType[key] = append(idx.hasType[key], hasTypeBuiltinClass{path: hasType.Path, kind: builtinKind})
 	return false
 }
 
@@ -99,28 +135,67 @@ func (idx *conjunctionContradictionIndex) observeTruthyNil(ct Constraint) bool {
 		if !rootStablePath(v.Path) {
 			return false
 		}
-		key := v.Path.Key()
-		if nilPath, ok := idx.isNil[key]; ok && nilPath.Equal(v.Path) {
+		key := v.Path.Hash()
+		if pathSetContains(idx.isNil[key], v.Path) {
 			return true
 		}
 		if idx.truthy == nil {
-			idx.truthy = make(map[PathKey]Path)
+			idx.truthy = make(map[uint64][]Path)
 		}
-		idx.truthy[key] = v.Path
+		idx.truthy[key] = appendPathSet(idx.truthy[key], v.Path)
 	case IsNil:
 		if !rootStablePath(v.Path) {
 			return false
 		}
-		key := v.Path.Key()
-		if truthyPath, ok := idx.truthy[key]; ok && truthyPath.Equal(v.Path) {
+		key := v.Path.Hash()
+		if pathSetContains(idx.truthy[key], v.Path) {
 			return true
 		}
 		if idx.isNil == nil {
-			idx.isNil = make(map[PathKey]Path)
+			idx.isNil = make(map[uint64][]Path)
 		}
-		idx.isNil[key] = v.Path
+		idx.isNil[key] = appendPathSet(idx.isNil[key], v.Path)
 	}
 	return false
+}
+
+func pathSetContains(paths []Path, want Path) bool {
+	for _, path := range paths {
+		if path.Equal(want) {
+			return true
+		}
+	}
+	return false
+}
+
+func appendPathSet(paths []Path, path Path) []Path {
+	if pathSetContains(paths, path) {
+		return paths
+	}
+	return append(paths, path)
+}
+
+func exactPathContradictionClassOf(ct Constraint) (pathContradictionClass, bool) {
+	if !constraintCanContradict(ct) {
+		return pathContradictionClass{}, false
+	}
+	switch v := ct.(type) {
+	case Truthy:
+		return pathContradictionClass{kind: pathContradictionTruthy, path: v.Path, positive: true}, true
+	case Falsy:
+		return pathContradictionClass{kind: pathContradictionTruthy, path: v.Path, positive: false}, true
+	case IsNil:
+		return pathContradictionClass{kind: pathContradictionIsNil, path: v.Path, positive: true}, true
+	case NotNil:
+		return pathContradictionClass{kind: pathContradictionIsNil, path: v.Path, positive: false}, true
+	default:
+		return pathContradictionClass{}, false
+	}
+}
+
+func pathContradictionClassHash(c pathContradictionClass) uint64 {
+	h := uint64(c.kind)
+	return (h << 1) ^ c.path.Hash()
 }
 
 func exactContradictionClassOf(ct Constraint) (Constraint, bool, bool) {
