@@ -8,7 +8,6 @@ import (
 	canonicalsig "github.com/wippyai/go-lua/compiler/check/canonical/signature"
 	"github.com/wippyai/go-lua/compiler/check/canonical/summary"
 	"github.com/wippyai/go-lua/compiler/check/domain/observation"
-	"github.com/wippyai/go-lua/compiler/check/domain/paramevidence"
 	"github.com/wippyai/go-lua/compiler/check/scope"
 	"github.com/wippyai/go-lua/compiler/check/synth/resolve"
 	"github.com/wippyai/go-lua/types/typ"
@@ -82,8 +81,7 @@ func (p funcResultProjection) build() *api.FuncResult {
 		obs:    obs.TypeOf,
 		ctx:    result.QueryContext,
 	}
-	result.FnRefinement = paramevidence.FunctionRefinementFromParamNarrows(
-		p.driver.summaryReader().ParamNarrows(p.ref),
+	result.FnRefinement = p.driver.summaryReader().ReturnPostconditions(p.ref).FunctionRefinement(
 		p.program.facts.HasNoReturn(p.ref),
 	)
 	return result

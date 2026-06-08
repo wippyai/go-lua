@@ -179,6 +179,11 @@ type Queries struct {
 	// not vary with entry values/captures; transfer reads this cell directly instead
 	// of forcing a full bottom-context Summary dependency.
 	ParamNarrowQ *db.Query[FuncRef, []paramevidence.ParamNarrow]
+
+	// ReturnPostconditionQ is the portable caller-visible normal-return proof
+	// cell. ParamNarrowQ remains as the local-effect compatibility projection; this
+	// condition carrier is the summary/export/call-boundary authority.
+	ReturnPostconditionQ *db.Query[FuncRef, paramevidence.ReturnPostconditions]
 }
 
 type solveResult struct {
@@ -224,6 +229,20 @@ func New(prog Program) *Queries {
 		},
 		func(prev, next []paramevidence.ParamNarrow) []paramevidence.ParamNarrow {
 			return paramNarrowsDomain.Widen(prev, next)
+		},
+	)
+
+	q.ReturnPostconditionQ = db.NewQueryWithSeedAndWiden(
+		"CanonicalReturnPostconditions",
+		q.computeReturnPostconditions,
+		func(a, b paramevidence.ReturnPostconditions) bool {
+			return paramevidence.ReturnPostconditionsDomain.Equal(a, b)
+		},
+		func(*db.QueryContext, FuncRef) paramevidence.ReturnPostconditions {
+			return paramevidence.ReturnPostconditionsDomain.Bottom()
+		},
+		func(prev, next paramevidence.ReturnPostconditions) paramevidence.ReturnPostconditions {
+			return paramevidence.ReturnPostconditionsDomain.Widen(prev, next)
 		},
 	)
 
@@ -294,16 +313,33 @@ func (r Reader) SummarizeWithKey(key Key) Summary {
 	return SummaryDomain.Bottom()
 }
 
-// ParamNarrows reads ref's portable parameter-refinement summary cell through
-// the same live-or-converged observation boundary.
+// ParamNarrows reads ref's compatibility parameter-effect projection through the
+// same live-or-converged observation boundary.
 func (r Reader) ParamNarrows(ref FuncRef) []paramevidence.ParamNarrow {
 	if r.queries != nil && r.ctx != nil {
 		return r.queries.ParamNarrows(r.ctx, ref)
 	}
 	if sum, ok := r.converged[ref]; ok {
-		return paramevidence.SortParamNarrows(sum.ParamNarrows)
+		if len(sum.ParamNarrows) > 0 {
+			return paramevidence.SortParamNarrows(sum.ParamNarrows)
+		}
+		return paramevidence.ParamNarrowsFromReturnPostconditions(sum.Postconditions)
 	}
 	return nil
+}
+
+// ReturnPostconditions reads ref's portable normal-return proof cell.
+func (r Reader) ReturnPostconditions(ref FuncRef) paramevidence.ReturnPostconditions {
+	if r.queries != nil && r.ctx != nil {
+		return paramevidence.CloneReturnPostconditions(r.queries.ReturnPostconditions(r.ctx, ref))
+	}
+	if sum, ok := r.converged[ref]; ok {
+		if sum.Postconditions.HasConstraints() {
+			return paramevidence.CloneReturnPostconditions(sum.Postconditions)
+		}
+		return paramevidence.ReturnPostconditionsFromParamNarrows(sum.ParamNarrows)
+	}
+	return paramevidence.ReturnPostconditionsDomain.Bottom()
 }
 
 func (q *Queries) intra(ctx *db.QueryContext, key Key) state.FunctionState {
@@ -315,10 +351,15 @@ func (q *Queries) intra(ctx *db.QueryContext, key Key) state.FunctionState {
 	return q.solveIntra(ctx, key.Ref, q.entryReferences(ctx, key), q.entryValues(ctx, key), key.Facts.Facts(), q.entrySymbolValues(key.Ref))
 }
 
-// ParamNarrows returns ref's context-free parameter-refinement cell: portable
-// facts proved about source parameters on every normal return.
+// ParamNarrows returns ref's context-free compatibility parameter-effect cell.
 func (q *Queries) ParamNarrows(ctx *db.QueryContext, ref FuncRef) []paramevidence.ParamNarrow {
 	return q.ParamNarrowQ.Get(ctx, ref)
+}
+
+// ReturnPostconditions returns ref's context-free portable normal-return proof
+// cell. This is the summary-owned carrier callers/exporters should consume.
+func (q *Queries) ReturnPostconditions(ctx *db.QueryContext, ref FuncRef) paramevidence.ReturnPostconditions {
+	return q.ReturnPostconditionQ.Get(ctx, ref)
 }
 
 // computeSolve is solveQ's compute for one product cell.
@@ -344,10 +385,15 @@ func (q *Queries) ProjectStateSummary(ctx *db.QueryContext, ref FuncRef, fs stat
 		ReturnCallHasFiniteTarget: q.returnCallHasFiniteTarget(ref),
 	})
 	sum.ParamNarrows = q.ParamNarrows(ctx, ref)
+	sum.Postconditions = q.ReturnPostconditions(ctx, ref)
 	if projector, ok := q.prog.(callEntryValueProjector); ok && projector != nil {
 		sum.CallEntryValues = projector.ProjectCallEntryValues(ref, fs)
 	}
 	return sum
+}
+
+func (q *Queries) computeReturnPostconditions(ctx *db.QueryContext, ref FuncRef) paramevidence.ReturnPostconditions {
+	return paramevidence.ReturnPostconditionsFromParamNarrows(q.ParamNarrows(ctx, ref))
 }
 
 func (q *Queries) computeParamNarrows(ctx *db.QueryContext, ref FuncRef) []paramevidence.ParamNarrow {

@@ -6,6 +6,7 @@ import (
 
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/types/constraint"
+	"github.com/wippyai/go-lua/types/lattice"
 	"github.com/wippyai/go-lua/types/narrow"
 	"github.com/wippyai/go-lua/types/typ"
 	"github.com/wippyai/go-lua/types/typ/unwrap"
@@ -111,6 +112,28 @@ func SortParamNarrows(in []ParamNarrow) []ParamNarrow {
 // casts stay in ParamNarrow; exported/imported evidence travels as constraints.
 type ReturnPostconditions struct {
 	condition constraint.Condition
+	has       bool
+}
+
+// ReturnPostconditionsDomain is the proof lattice for facts guaranteed on every
+// normal return. Its bottom is "no published facts" (true). Join adds facts by
+// conjunction, unlike the path-condition lattice where join is disjunction.
+var ReturnPostconditionsDomain = lattice.Lattice[ReturnPostconditions]{
+	Bottom: func() ReturnPostconditions { return ReturnPostconditions{} },
+	Top:    func() ReturnPostconditions { return ReturnPostconditionsFromCondition(constraint.FalseCondition()) },
+	Equal: func(a, b ReturnPostconditions) bool {
+		return a.Condition().Equals(b.Condition())
+	},
+	LessOrEq: func(a, b ReturnPostconditions) bool {
+		return a.Condition().Subsumes(b.Condition())
+	},
+	Join: func(a, b ReturnPostconditions) ReturnPostconditions {
+		return ReturnPostconditionsFromCondition(constraint.And(a.Condition(), b.Condition()))
+	},
+	Meet: nil,
+	Widen: func(prev, next ReturnPostconditions) ReturnPostconditions {
+		return ReturnPostconditionsFromCondition(constraint.And(prev.Condition(), next.Condition()))
+	},
 }
 
 // ReturnPostconditionsFromParamNarrows projects solved local parameter effects to
@@ -130,21 +153,36 @@ func ReturnPostconditionsFromParamNarrows(narrows []ParamNarrow) ReturnPostcondi
 	if len(onReturn) == 0 {
 		return ReturnPostconditions{}
 	}
-	return ReturnPostconditions{condition: constraint.FromConstraints(onReturn...)}
+	return ReturnPostconditionsFromCondition(constraint.FromConstraints(onReturn...))
 }
 
 // ReturnPostconditionsFromCondition imports a portable normal-return condition.
 // Only constraints present in every disjunct can be recovered as ParamNarrow facts;
 // the full DNF remains available for direct call-site instantiation.
 func ReturnPostconditionsFromCondition(cond constraint.Condition) ReturnPostconditions {
-	if !cond.HasConstraints() {
+	if cond.IsTrue() || (!cond.IsFalse() && !cond.HasConstraints()) {
 		return ReturnPostconditions{}
 	}
-	return ReturnPostconditions{condition: cond}
+	return ReturnPostconditions{condition: cond, has: true}
+}
+
+func CloneReturnPostconditions(p ReturnPostconditions) ReturnPostconditions {
+	if !p.HasConstraints() {
+		return ReturnPostconditions{}
+	}
+	cond := p.Condition()
+	if cond.IsFalse() {
+		return ReturnPostconditionsFromCondition(constraint.FalseCondition())
+	}
+	disjuncts := make([][]constraint.Constraint, len(cond.Disjuncts))
+	for i, disjunct := range cond.Disjuncts {
+		disjuncts[i] = append([]constraint.Constraint(nil), disjunct...)
+	}
+	return ReturnPostconditionsFromCondition(constraint.FromDisjuncts(disjuncts))
 }
 
 func (p ReturnPostconditions) HasConstraints() bool {
-	return p.condition.HasConstraints()
+	return p.has && !p.condition.IsTrue()
 }
 
 func (p ReturnPostconditions) Condition() constraint.Condition {
@@ -170,13 +208,6 @@ func (p ReturnPostconditions) FunctionRefinement(terminates bool) *constraint.Fu
 		refinement.OnReturn = p.condition
 	}
 	return refinement
-}
-
-// FunctionRefinementFromParamNarrows projects solved parameter-narrowing effects
-// to the portable placeholder-rooted FunctionRefinement vocabulary used at module
-// export/import boundaries.
-func FunctionRefinementFromParamNarrows(narrows []ParamNarrow, terminates bool) *constraint.FunctionRefinement {
-	return ReturnPostconditionsFromParamNarrows(narrows).FunctionRefinement(terminates)
 }
 
 // ParamNarrowConstraint maps one body-proven parameter check to the portable
@@ -235,6 +266,20 @@ func ParamNarrowsFromFunctionType(sig typ.Type) []ParamNarrow {
 		return nil
 	}
 	return ParamNarrowsFromReturnPostconditions(ReturnPostconditionsFromCondition(refinement.OnReturn))
+}
+
+// ReturnPostconditionsFromFunctionType imports a function signature's portable
+// normal-return proof without projecting it through the finite ParamNarrow view.
+func ReturnPostconditionsFromFunctionType(sig typ.Type) ReturnPostconditions {
+	fn := unwrap.Function(sig)
+	if fn == nil || fn.Refinement == nil {
+		return ReturnPostconditionsDomain.Bottom()
+	}
+	refinement, ok := fn.Refinement.(*constraint.FunctionRefinement)
+	if !ok || refinement == nil || !refinement.OnReturn.HasConstraints() {
+		return ReturnPostconditionsDomain.Bottom()
+	}
+	return ReturnPostconditionsFromCondition(refinement.OnReturn)
 }
 
 // ParamNarrowsFromReturnPostconditions recovers the finite ParamNarrow projection

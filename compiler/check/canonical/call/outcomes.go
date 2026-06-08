@@ -100,14 +100,20 @@ func (o CallOutcome) BoundaryFacts() flow.BoundaryFacts {
 	return o.Projection.BoundaryFacts()
 }
 
+// Postconditions projects portable normal-return proofs from selected summaries.
+func (o CallOutcome) Postconditions() paramevidence.ReturnPostconditions {
+	return o.Projection.Postconditions()
+}
+
 // NeverReturns reports whether every selected target is proven no-return.
 func (o CallOutcome) NeverReturns(hasNoReturn func(summary.FuncRef) bool) bool {
 	return selectionNeverReturns(o.Selection, hasNoReturn)
 }
 
-// ParamNarrowProjection is the canonical call-site policy for argument refinements
-// proven by a callee. Module summary facts win; static signature refinements
-// are the fallback for external callees and global/static helper functions.
+// ParamNarrowProjection is the compatibility call-site policy for local value-axis
+// replay of callee-proven argument refinements. Portable normal-return proofs use
+// PostconditionProjection; this view remains while transfer still needs casts,
+// condition-argument replay, equality value refinement, and sibling nil repair.
 type ParamNarrowProjection struct {
 	Call *ast.FuncCallExpr
 
@@ -115,7 +121,7 @@ type ParamNarrowProjection struct {
 	Resolver       TypeResolver
 }
 
-// Narrows resolves caller-visible parameter refinements.
+// Narrows resolves caller-visible compatibility parameter refinements.
 func (p ParamNarrowProjection) Narrows() []paramevidence.ParamNarrow {
 	if p.Call == nil {
 		return nil
@@ -126,6 +132,28 @@ func (p ParamNarrowProjection) Narrows() []paramevidence.ParamNarrow {
 		}
 	}
 	return paramevidence.ParamNarrowsFromFunctionType(p.Resolver.ResolveStaticCallee(p.Call.Func))
+}
+
+// PostconditionProjection resolves portable normal-return postconditions without
+// collapsing imported FunctionRefinement conditions into the finite ParamNarrow
+// compatibility view.
+type PostconditionProjection struct {
+	Call *ast.FuncCallExpr
+
+	SummaryPostconditions func(*ast.FuncCallExpr) (paramevidence.ReturnPostconditions, bool)
+	Resolver              TypeResolver
+}
+
+func (p PostconditionProjection) Postconditions() paramevidence.ReturnPostconditions {
+	if p.Call == nil {
+		return paramevidence.ReturnPostconditionsDomain.Bottom()
+	}
+	if p.SummaryPostconditions != nil {
+		if post, ok := p.SummaryPostconditions(p.Call); ok {
+			return paramevidence.CloneReturnPostconditions(post)
+		}
+	}
+	return paramevidence.ReturnPostconditionsFromFunctionType(p.Resolver.ResolveStaticCallee(p.Call.Func))
 }
 
 // CallbackSpecProjection is the canonical policy for finding a call's callback

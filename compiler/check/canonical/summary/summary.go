@@ -72,11 +72,10 @@ import (
 //     call-site PointState. It is entry value state, not a public contract: the
 //     summary solve query folds it into the callee's EntryValues so unannotated
 //     parameters see the actual value product in the single fixed point.
-//   - ParamNarrows is the finite set of parameter refinements the function proves
-//     on every normal return, including wrapper effects inherited through the
-//     context-free ParamNarrowQ product cell. Summary carries the cell so callers
-//     observe one caller-visible function abstraction without forcing
-//     bottom-context Summary dependencies.
+//   - Postconditions is the portable placeholder-rooted proof the function
+//     publishes on every normal return. ParamNarrows is the compatibility/local
+//     effect projection used while condition-argument and cast replay still need
+//     the older finite carrier.
 //
 // A Summary is the caller-facing half of the summary solve product; SummaryDomain
 // gives it the lattice structure (order, join, widen) the db cycle needs to
@@ -96,6 +95,7 @@ type Summary struct {
 	CaptureReferences flow.ReferenceContext
 	PrototypeSelf     flow.PrototypeSelf
 	CallEntryValues   CallEntryValues
+	Postconditions    paramevidence.ReturnPostconditions
 	ParamNarrows      []paramevidence.ParamNarrow
 }
 
@@ -111,6 +111,7 @@ var returnsDomain = returnTupleLattice{}
 var entryValuesDomain = latticeproduct.MapLattice[int](product.Domain)
 var callEntryValuesDomain = latticeproduct.MapLattice[FuncRef](entryValuesDomain)
 var paramNarrowsDomain = paramNarrowSetLattice{}
+var returnPostconditionsDomain = paramevidence.ReturnPostconditionsDomain
 
 // SummaryDomain is the abstract domain of Summary: the componentwise reduced
 // product of returnsDomain and paramevidence.ContractDomain.
@@ -133,6 +134,7 @@ var SummaryDomain = lattice.Lattice[Summary]{
 			CaptureReferences: flow.ReferenceContextDomain.Bottom(),
 			PrototypeSelf:     flow.PrototypeSelfDomain.Bottom(),
 			CallEntryValues:   callEntryValuesDomain.Bottom(),
+			Postconditions:    returnPostconditionsDomain.Bottom(),
 			ParamNarrows:      paramNarrowsDomain.Bottom(),
 		}
 	},
@@ -151,6 +153,7 @@ var SummaryDomain = lattice.Lattice[Summary]{
 			flow.ReferenceContextDomain.Equal(a.CaptureReferences, b.CaptureReferences) &&
 			flow.PrototypeSelfDomain.Equal(a.PrototypeSelf, b.PrototypeSelf) &&
 			callEntryValuesDomain.Equal(a.CallEntryValues, b.CallEntryValues) &&
+			returnPostconditionsDomain.Equal(a.Postconditions, b.Postconditions) &&
 			paramNarrowsDomain.Equal(a.ParamNarrows, b.ParamNarrows)
 	},
 	LessOrEq: func(a, b Summary) bool {
@@ -170,6 +173,7 @@ var SummaryDomain = lattice.Lattice[Summary]{
 			flow.ReferenceContextDomain.LessOrEq(a.CaptureReferences, b.CaptureReferences) &&
 			flow.PrototypeSelfDomain.LessOrEq(a.PrototypeSelf, b.PrototypeSelf) &&
 			callEntryValuesDomain.LessOrEq(a.CallEntryValues, b.CallEntryValues) &&
+			returnPostconditionsDomain.LessOrEq(a.Postconditions, b.Postconditions) &&
 			paramNarrowsDomain.LessOrEq(a.ParamNarrows, b.ParamNarrows)
 	},
 	Join: func(a, b Summary) Summary {
@@ -187,6 +191,7 @@ var SummaryDomain = lattice.Lattice[Summary]{
 			CaptureReferences: flow.ReferenceContextDomain.Join(a.CaptureReferences, b.CaptureReferences),
 			PrototypeSelf:     flow.PrototypeSelfDomain.Join(a.PrototypeSelf, b.PrototypeSelf),
 			CallEntryValues:   callEntryValuesDomain.Join(a.CallEntryValues, b.CallEntryValues),
+			Postconditions:    returnPostconditionsDomain.Join(a.Postconditions, b.Postconditions),
 			ParamNarrows:      paramNarrowsDomain.Join(a.ParamNarrows, b.ParamNarrows),
 		}
 	},
@@ -206,6 +211,7 @@ var SummaryDomain = lattice.Lattice[Summary]{
 			CaptureReferences: flow.ReferenceContextDomain.Widen(prev.CaptureReferences, next.CaptureReferences),
 			PrototypeSelf:     flow.PrototypeSelfDomain.Widen(prev.PrototypeSelf, next.PrototypeSelf),
 			CallEntryValues:   callEntryValuesDomain.Widen(prev.CallEntryValues, next.CallEntryValues),
+			Postconditions:    returnPostconditionsDomain.Widen(prev.Postconditions, next.Postconditions),
 			ParamNarrows:      paramNarrowsDomain.Widen(prev.ParamNarrows, next.ParamNarrows),
 		}
 	},
@@ -224,6 +230,7 @@ func summaryTop() Summary {
 		CaptureReferences: flow.ReferenceContextDomain.Top(),
 		PrototypeSelf:     flow.PrototypeSelfDomain.Top(),
 		CallEntryValues:   callEntryValuesDomain.Top(),
+		Postconditions:    returnPostconditionsDomain.Top(),
 		ParamNarrows:      paramNarrowsDomain.Top(),
 	}
 }
@@ -244,6 +251,7 @@ func mergeExactOverlaySummary(prev, next Summary) Summary {
 	out.ReceiverEffects = next.ReceiverEffects
 	out.Relations = next.Relations
 	out.BoundaryFacts = next.BoundaryFacts
+	out.Postconditions = next.Postconditions
 	return out
 }
 

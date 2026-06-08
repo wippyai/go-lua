@@ -117,6 +117,20 @@ func (p productCallFrame) paramNarrows() []transfer.ParamNarrow {
 	}).Narrows()
 }
 
+func (p productCallFrame) returnPostconditions() paramevidence.ReturnPostconditions {
+	d := p.typer.d
+	if d == nil || d.activeProgram == nil || p.site.call == nil {
+		return paramevidence.ReturnPostconditionsDomain.Bottom()
+	}
+	if p.outcome.HasTargets() {
+		return p.outcome.Postconditions()
+	}
+	return (canonicalcall.PostconditionProjection{
+		Call:     p.site.call,
+		Resolver: p.typer.callTypeResolver(nil),
+	}).Postconditions()
+}
+
 func (p productCallFrame) argDemands() ([]callobligation.Obligation, bool) {
 	targets := p.demandTargets()
 	if len(targets) == 0 {
@@ -172,6 +186,7 @@ func (p productCallFrame) boundaryEvidence(cellEffects summary.CellEffectAggrega
 		UseResolvedSignature: p.ctx.ExprValue != nil,
 		CellEffects:          cellEffects,
 		ArgDemands:           p.callArgDemands(),
+		Postconditions:       p.returnPostconditions(),
 		ParamNarrows:         p.paramNarrows(),
 		HasNoReturn: func(ref summary.FuncRef) bool {
 			return p.typer.d.activeProgram.facts.HasNoReturn(ref)

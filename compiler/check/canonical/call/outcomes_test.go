@@ -242,6 +242,9 @@ func TestCallOutcomeBoundaryEvidenceCarriesSelectedBoundaryAxes(t *testing.T) {
 	boundaryFacts := flow.BoundaryFactsOf([]flow.BoundaryKeyPresenceFact{{Table: table, Key: key}}, nil, nil, nil, nil, nil)
 	demands := []callobligation.Obligation{callobligation.Body(typ.String)}
 	narrows := []paramevidence.ParamNarrow{{Param: 0, Check: compilecfg.CheckTruthy, EqParam: -1}}
+	post := paramevidence.ReturnPostconditionsFromParamNarrows([]paramevidence.ParamNarrow{
+		{Param: 1, Check: compilecfg.CheckNotNil, EqParam: -1},
+	})
 
 	got := (CallOutcome{
 		Projection: summary.CallSummaryProjection{
@@ -260,6 +263,7 @@ func TestCallOutcomeBoundaryEvidenceCarriesSelectedBoundaryAxes(t *testing.T) {
 		Call:                 call,
 		CellEffects:          summary.CellEffectAggregation{},
 		ArgDemands:           demands,
+		Postconditions:       post,
 		ParamNarrows:         narrows,
 		UseResolvedSignature: true,
 		HasNoReturn: func(got summary.FuncRef) bool {
@@ -290,6 +294,9 @@ func TestCallOutcomeBoundaryEvidenceCarriesSelectedBoundaryAxes(t *testing.T) {
 	}
 	if !got.Postconditions.HasConstraints() {
 		t.Fatal("Postconditions missing portable param narrow evidence")
+	}
+	if !containsConstraint(got.Postconditions.Condition().MustConstraints(), constraint.NotNil{Path: constraint.ParamPath(1)}) {
+		t.Fatalf("Postconditions = %v, want primary param 1 not-nil proof", got.Postconditions.Condition())
 	}
 	if !got.NeverReturns {
 		t.Fatal("NeverReturns = false, want true")
@@ -374,6 +381,44 @@ func TestParamNarrowProjectionImportedSignatureFallback(t *testing.T) {
 
 	if len(got) != 1 || got[0].Param != 1 || got[0].Check != compilecfg.CheckNotNil {
 		t.Fatalf("param narrows = %#v, want imported signature narrow", got)
+	}
+}
+
+func TestPostconditionProjectionPreservesImportedDNF(t *testing.T) {
+	t.Parallel()
+
+	call := &ast.FuncCallExpr{Func: &ast.IdentExpr{Value: "check"}}
+	common := constraint.NotNil{Path: constraint.ParamPath(0)}
+	left := constraint.Truthy{Path: constraint.ParamPath(1)}
+	right := constraint.Falsy{Path: constraint.ParamPath(1)}
+
+	got := (PostconditionProjection{
+		Call: call,
+		Resolver: TypeResolver{
+			Static: StaticTypeLookup{
+				GlobalByName: func(name string) (typ.Type, bool) {
+					if name != "check" {
+						return nil, false
+					}
+					return typ.Func().
+						WithRefinement(&constraint.FunctionRefinement{
+							OnReturn: constraint.FromDisjuncts([][]constraint.Constraint{
+								{common, left},
+								{common, right},
+							}),
+						}).
+						Build(), true
+				},
+			},
+		},
+	}).Postconditions()
+
+	if got.Condition().NumDisjuncts() != 2 {
+		t.Fatalf("Postconditions disjuncts = %d, want full imported DNF", got.Condition().NumDisjuncts())
+	}
+	narrows := paramevidence.ParamNarrowsFromReturnPostconditions(got)
+	if len(narrows) != 1 || narrows[0].Param != 0 || narrows[0].Check != compilecfg.CheckNotNil {
+		t.Fatalf("compatibility ParamNarrows = %#v, want only common not-nil fact", narrows)
 	}
 }
 
@@ -650,6 +695,15 @@ func signatureWithRelation(rels flow.ReturnRelations) typ.Type {
 		})
 	}
 	return typ.Func().Returns(typ.String, typ.Nil).Spec(spec).Build()
+}
+
+func containsConstraint(haystack []constraint.Constraint, needle constraint.Constraint) bool {
+	for _, c := range haystack {
+		if c.Equals(needle) {
+			return true
+		}
+	}
+	return false
 }
 
 func signatureWithParamNarrow(param int, check compilecfg.CondCheckKind) typ.Type {

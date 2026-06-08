@@ -72,8 +72,15 @@ func TestReaderSnapshotOverlayOverridesExactContext(t *testing.T) {
 
 func TestReaderParamNarrowsDefensiveCopy(t *testing.T) {
 	ref := FuncRef{GraphID: 8}
+	post := paramevidence.ReturnPostconditionsFromParamNarrows([]paramevidence.ParamNarrow{{
+		Param:    0,
+		Segments: []constraint.Segment{{Kind: constraint.SegmentField, Name: "kind"}},
+		Check:    cfg.CheckNotNil,
+		EqParam:  -1,
+	}})
 	reader := NewReader(nil, nil, map[FuncRef]Summary{
 		ref: {
+			Postconditions: post,
 			ParamNarrows: []paramevidence.ParamNarrow{{
 				Param:    0,
 				Segments: []constraint.Segment{{Kind: constraint.SegmentField, Name: "kind"}},
@@ -90,6 +97,17 @@ func TestReaderParamNarrowsDefensiveCopy(t *testing.T) {
 	again := reader.ParamNarrows(ref)
 	if again[0].Segments[0].Name != "kind" {
 		t.Fatalf("ParamNarrows exposed mutable backing: %#v", again)
+	}
+
+	postCopy := reader.ReturnPostconditions(ref)
+	if !postCopy.HasConstraints() {
+		t.Fatal("ReturnPostconditions missing snapshot proof")
+	}
+	mutated := postCopy.Condition()
+	mutated.Disjuncts[0][0] = constraint.Truthy{Path: constraint.ParamPath(9)}
+	againPost := reader.ReturnPostconditions(ref)
+	if !containsConstraint(againPost.Condition().MustConstraints(), constraint.NotNil{Path: constraint.ParamPath(0).Field("kind")}) {
+		t.Fatalf("ReturnPostconditions exposed mutable backing: %v", againPost.Condition())
 	}
 }
 
@@ -122,4 +140,13 @@ func TestReaderEntryValueDependenciesUseSnapshotSummary(t *testing.T) {
 	if !ok || !typ.TypeEquals(self.ProjectValue(), typ.Boolean) {
 		t.Fatalf("PrototypeSelf = %#v, want prototype 99 boolean", reader.PrototypeSelf(dep).Entries())
 	}
+}
+
+func containsConstraint(haystack []constraint.Constraint, needle constraint.Constraint) bool {
+	for _, c := range haystack {
+		if c.Equals(needle) {
+			return true
+		}
+	}
+	return false
 }

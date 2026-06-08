@@ -32,6 +32,7 @@ type BoundaryEvidenceInput struct {
 	UseResolvedSignature bool
 	CellEffects          summary.CellEffectAggregation
 	ArgDemands           []callobligation.Obligation
+	Postconditions       paramevidence.ReturnPostconditions
 	ParamNarrows         []paramevidence.ParamNarrow
 	HasNoReturn          func(summary.FuncRef) bool
 }
@@ -46,10 +47,17 @@ func (o CallOutcome) BoundaryEvidence(in BoundaryEvidenceInput) BoundaryEvidence
 		ReceiverEffects: o.ReceiverEffects(),
 		BoundaryFacts:   o.BoundaryFacts(),
 		ArgDemands:      cloneArgDemands(in.ArgDemands),
-		Postconditions:  paramevidence.ReturnPostconditionsFromParamNarrows(in.ParamNarrows),
+		Postconditions:  postconditionsOrCompatibility(in.Postconditions, in.ParamNarrows),
 		ParamNarrows:    paramevidence.SortParamNarrows(in.ParamNarrows),
 		NeverReturns:    o.NeverReturns(in.HasNoReturn),
 	}
+}
+
+func postconditionsOrCompatibility(post paramevidence.ReturnPostconditions, narrows []paramevidence.ParamNarrow) paramevidence.ReturnPostconditions {
+	if post.HasConstraints() {
+		return paramevidence.CloneReturnPostconditions(post)
+	}
+	return paramevidence.ReturnPostconditionsFromParamNarrows(narrows)
 }
 
 func cloneArgDemands(in []callobligation.Obligation) []callobligation.Obligation {

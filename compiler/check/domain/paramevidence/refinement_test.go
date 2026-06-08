@@ -9,13 +9,13 @@ import (
 	"github.com/wippyai/go-lua/types/typ"
 )
 
-func TestFunctionRefinementFromParamNarrowsProjectsPortableConstraints(t *testing.T) {
+func TestReturnPostconditionsFunctionRefinementProjectsPortableConstraints(t *testing.T) {
 	seg := constraint.Segment{Kind: constraint.SegmentField, Name: "value"}
-	refinement := FunctionRefinementFromParamNarrows([]ParamNarrow{
+	refinement := ReturnPostconditionsFromParamNarrows([]ParamNarrow{
 		{Param: 1, Segments: []constraint.Segment{seg}, Check: cfg.CheckNotNil, EqParam: -1},
-	}, true)
+	}).FunctionRefinement(true)
 	if refinement == nil {
-		t.Fatal("FunctionRefinementFromParamNarrows returned nil")
+		t.Fatal("FunctionRefinement returned nil")
 	}
 	if !refinement.Terminates {
 		t.Fatal("Terminates was not preserved")
@@ -26,12 +26,12 @@ func TestFunctionRefinementFromParamNarrowsProjectsPortableConstraints(t *testin
 	}
 }
 
-func TestFunctionRefinementFromParamNarrowsProjectsParamEquality(t *testing.T) {
-	refinement := FunctionRefinementFromParamNarrows([]ParamNarrow{
+func TestReturnPostconditionsFunctionRefinementProjectsParamEquality(t *testing.T) {
+	refinement := ReturnPostconditionsFromParamNarrows([]ParamNarrow{
 		{Param: 0, EqParam: 1},
-	}, false)
+	}).FunctionRefinement(false)
 	if refinement == nil {
-		t.Fatal("FunctionRefinementFromParamNarrows returned nil")
+		t.Fatal("FunctionRefinement returned nil")
 	}
 	want := constraint.NewEqPath(constraint.ParamPath(0), constraint.ParamPath(1))
 	if !containsConstraint(refinement.OnReturn.MustConstraints(), want) {
@@ -39,12 +39,12 @@ func TestFunctionRefinementFromParamNarrowsProjectsParamEquality(t *testing.T) {
 	}
 }
 
-func TestFunctionRefinementFromParamNarrowsProjectsParamInequality(t *testing.T) {
-	refinement := FunctionRefinementFromParamNarrows([]ParamNarrow{
+func TestReturnPostconditionsFunctionRefinementProjectsParamInequality(t *testing.T) {
+	refinement := ReturnPostconditionsFromParamNarrows([]ParamNarrow{
 		{Param: 0, EqParam: 1, NotEqual: true},
-	}, false)
+	}).FunctionRefinement(false)
 	if refinement == nil {
-		t.Fatal("FunctionRefinementFromParamNarrows returned nil")
+		t.Fatal("FunctionRefinement returned nil")
 	}
 	want := constraint.NewNotEqPath(constraint.ParamPath(0), constraint.ParamPath(1))
 	if !containsConstraint(refinement.OnReturn.MustConstraints(), want) {
@@ -52,13 +52,13 @@ func TestFunctionRefinementFromParamNarrowsProjectsParamInequality(t *testing.T)
 	}
 }
 
-func TestFunctionRefinementFromParamNarrowsProjectsTypeKey(t *testing.T) {
+func TestReturnPostconditionsFunctionRefinementProjectsTypeKey(t *testing.T) {
 	key := narrow.BuiltinTypeKey("string")
-	refinement := FunctionRefinementFromParamNarrows([]ParamNarrow{
+	refinement := ReturnPostconditionsFromParamNarrows([]ParamNarrow{
 		{Param: 0, Check: cfg.CheckTypeEqual, TypeKey: key, EqParam: -1},
-	}, false)
+	}).FunctionRefinement(false)
 	if refinement == nil {
-		t.Fatal("FunctionRefinementFromParamNarrows returned nil")
+		t.Fatal("FunctionRefinement returned nil")
 	}
 	want := constraint.HasType{Path: constraint.ParamPath(0), Type: key}
 	if !containsConstraint(refinement.OnReturn.MustConstraints(), want) {
@@ -103,15 +103,33 @@ func TestParamNarrowsFromReturnPostconditionsRecoversOnlyMustFacts(t *testing.T)
 	}
 }
 
-func TestFunctionRefinementFromParamNarrowsSkipsNonPortableEffects(t *testing.T) {
-	if got := FunctionRefinementFromParamNarrows(nil, false); got != nil {
+func TestReturnPostconditionsDomainJoinsByConjunction(t *testing.T) {
+	a := ReturnPostconditionsFromCondition(constraint.FromConstraints(
+		constraint.NotNil{Path: constraint.ParamPath(0)},
+	))
+	b := ReturnPostconditionsFromCondition(constraint.FromConstraints(
+		constraint.Truthy{Path: constraint.ParamPath(1)},
+	))
+	got := ReturnPostconditionsDomain.Join(a, b)
+	must := got.Condition().MustConstraints()
+	if !containsConstraint(must, constraint.NotNil{Path: constraint.ParamPath(0)}) ||
+		!containsConstraint(must, constraint.Truthy{Path: constraint.ParamPath(1)}) {
+		t.Fatalf("Join = %v, want both return proofs", got.Condition())
+	}
+	if !ReturnPostconditionsDomain.LessOrEq(ReturnPostconditionsDomain.Bottom(), got) {
+		t.Fatal("bottom/no-proof should be below a stronger proof")
+	}
+}
+
+func TestReturnPostconditionsFunctionRefinementSkipsNonPortableEffects(t *testing.T) {
+	if got := ReturnPostconditionsFromParamNarrows(nil).FunctionRefinement(false); got != nil {
 		t.Fatalf("empty nonterminating refinement = %#v, want nil", got)
 	}
-	refinement := FunctionRefinementFromParamNarrows(nil, true)
+	refinement := ReturnPostconditionsFromParamNarrows(nil).FunctionRefinement(true)
 	if refinement == nil || !refinement.Terminates || refinement.OnReturn.HasConstraints() {
 		t.Fatalf("terminating-only refinement = %#v, want terminates without constraints", refinement)
 	}
-	refinement = FunctionRefinementFromParamNarrows([]ParamNarrow{
+	refinement = ReturnPostconditionsFromParamNarrows([]ParamNarrow{
 		{Param: 0, EqParam: 0},
 		{Param: 0, EqParam: 1, Check: cfg.CheckNotNil},
 		{Param: 0, EqParam: 1, Segments: []constraint.Segment{{Kind: constraint.SegmentField, Name: "value"}}},
@@ -119,7 +137,7 @@ func TestFunctionRefinementFromParamNarrowsSkipsNonPortableEffects(t *testing.T)
 		{Param: 0, CastType: typ.String, Check: cfg.CheckNotNil, EqParam: -1},
 		{Param: -1, Check: cfg.CheckNotNil, EqParam: -1},
 		{Param: 0, Check: cfg.CheckNone, EqParam: -1},
-	}, false)
+	}).FunctionRefinement(false)
 	if refinement != nil {
 		t.Fatalf("non-portable effects produced refinement %#v", refinement)
 	}

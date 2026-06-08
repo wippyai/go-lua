@@ -463,7 +463,7 @@ func (d *Driver) publishFunctionFacts(sess api.AnalysisSession, prog *program) {
 		params := contractTypeVector(sum.Params, prog.NumParams(ref))
 		publicParams := prog.publicPredicateParamVector(ref, params)
 		sig := d.signatureForRef(prog, ref)
-		refinement := paramevidence.FunctionRefinementFromParamNarrows(reader.ParamNarrows(ref), prog.facts.HasNoReturn(ref))
+		refinement := reader.ReturnPostconditions(ref).FunctionRefinement(prog.facts.HasNoReturn(ref))
 		for _, sym := range symbols {
 			key, ok := store.ParentGraphKeyForSymbol(sym)
 			if !ok {

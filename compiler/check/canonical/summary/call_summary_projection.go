@@ -1,6 +1,7 @@
 package summary
 
 import (
+	"github.com/wippyai/go-lua/compiler/check/domain/paramevidence"
 	returndomain "github.com/wippyai/go-lua/compiler/check/domain/returns"
 	"github.com/wippyai/go-lua/types/domain/value/product"
 	"github.com/wippyai/go-lua/types/flow"
@@ -183,6 +184,19 @@ func (p CallSummaryProjection) BoundaryFacts() flow.BoundaryFacts {
 	}
 	if flow.BoundaryFactsDomain.Equal(out, flow.BoundaryFactsDomain.Bottom()) {
 		return flow.BoundaryFactsDomain.Top()
+	}
+	return out
+}
+
+// Postconditions folds normal-return must-proofs across candidate callees.
+func (p CallSummaryProjection) Postconditions() paramevidence.ReturnPostconditions {
+	out := paramevidence.ReturnPostconditionsDomain.Bottom()
+	for _, target := range p.Targets {
+		post := target.Summary.Postconditions
+		if !post.HasConstraints() {
+			post = paramevidence.ReturnPostconditionsFromParamNarrows(target.Summary.ParamNarrows)
+		}
+		out = paramevidence.ReturnPostconditionsDomain.Join(out, post)
 	}
 	return out
 }

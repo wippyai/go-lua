@@ -257,6 +257,9 @@ func TestParamNarrowQ_InheritsDelegatedEffectsWithoutSummaryContext(t *testing.T
 	if len(sum.ParamNarrows) != 1 || sum.ParamNarrows[0].Param != 1 {
 		t.Fatalf("Summary.ParamNarrows = %#v, want same context-free cell", sum.ParamNarrows)
 	}
+	if !sum.Postconditions.HasConstraints() {
+		t.Fatal("Summary.Postconditions missing delegated not-nil proof")
+	}
 }
 
 func TestParamNarrowQ_InheritsDelegatedEqualityEffects(t *testing.T) {
@@ -286,6 +289,9 @@ func TestParamNarrowQ_InheritsDelegatedEqualityEffects(t *testing.T) {
 	sum := q.Summarize(ctx, outer)
 	if len(sum.ParamNarrows) != 1 || !sum.ParamNarrows[0].IsParamEquality() {
 		t.Fatalf("Summary.ParamNarrows = %#v, want delegated equality", sum.ParamNarrows)
+	}
+	if !sum.Postconditions.HasConstraints() {
+		t.Fatal("Summary.Postconditions missing delegated equality proof")
 	}
 }
 
