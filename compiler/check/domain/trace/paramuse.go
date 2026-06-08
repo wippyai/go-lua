@@ -1,21 +1,15 @@
 package trace
 
 import (
-	"sort"
-
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/bind"
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/api"
 	"github.com/wippyai/go-lua/compiler/check/domain/fieldkey"
+	"github.com/wippyai/go-lua/compiler/check/domain/paramuse"
 	flowpath "github.com/wippyai/go-lua/compiler/check/domain/path"
 	"github.com/wippyai/go-lua/types/constraint"
 )
-
-type parameterUse struct {
-	whole  bool
-	fields map[fieldkey.Key]struct{}
-}
 
 // ParameterUses records the parameter surface demanded by fn's body.
 func ParameterUses(graph *cfg.Graph, fn *ast.FunctionExpr) []api.ParameterUseEvidence {
@@ -36,38 +30,18 @@ func ParameterUses(graph *cfg.Graph, fn *ast.FunctionExpr) []api.ParameterUseEvi
 		bindings:               graph.Bindings(),
 		paramSymbols:           paramSymbols,
 		currentFunctionSymbols: currentFunctionSymbols(graph, fn),
-		uses:                   make(map[cfg.SymbolID]parameterUse),
 	}
 	for _, stmt := range fn.Stmts {
 		collector.stmt(stmt)
 	}
-	if len(collector.uses) == 0 {
-		return nil
-	}
-
-	syms := make([]int, 0, len(collector.uses))
-	for sym := range collector.uses {
-		syms = append(syms, int(sym))
-	}
-	sort.Ints(syms)
-	out := make([]api.ParameterUseEvidence, 0, len(syms))
-	for _, raw := range syms {
-		sym := cfg.SymbolID(raw)
-		use := collector.uses[sym]
-		ev := api.ParameterUseEvidence{Symbol: sym, Whole: use.whole}
-		if len(use.fields) > 0 {
-			ev.Fields = append(ev.Fields, fieldkey.Sorted(use.fields)...)
-		}
-		out = append(out, ev)
-	}
-	return out
+	return collector.uses.Evidence()
 }
 
 type parameterUseCollector struct {
 	bindings               *bind.BindingTable
 	paramSymbols           map[cfg.SymbolID]struct{}
 	currentFunctionSymbols map[cfg.SymbolID]struct{}
-	uses                   map[cfg.SymbolID]parameterUse
+	uses                   paramuse.Set
 }
 
 func (c *parameterUseCollector) stmt(stmt ast.Stmt) {
@@ -405,9 +379,7 @@ func (c *parameterUseCollector) isParamPath(p constraint.Path) bool {
 }
 
 func (c *parameterUseCollector) markWhole(sym cfg.SymbolID) {
-	use := c.uses[sym]
-	use.whole = true
-	c.uses[sym] = use
+	c.uses.MarkWhole(sym)
 }
 
 func (c *parameterUseCollector) fieldName(sym cfg.SymbolID, name string) {
@@ -429,12 +401,7 @@ func (c *parameterUseCollector) fieldSegment(sym cfg.SymbolID, seg constraint.Se
 }
 
 func (c *parameterUseCollector) field(sym cfg.SymbolID, key fieldkey.Key) {
-	use := c.uses[sym]
-	if use.fields == nil {
-		use.fields = make(map[fieldkey.Key]struct{}, 1)
-	}
-	use.fields[key] = struct{}{}
-	c.uses[sym] = use
+	c.uses.Field(sym, key)
 }
 
 func currentFunctionSymbols(graph *cfg.Graph, fn *ast.FunctionExpr) map[cfg.SymbolID]struct{} {

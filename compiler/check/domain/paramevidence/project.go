@@ -4,14 +4,10 @@ import (
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/api"
 	"github.com/wippyai/go-lua/compiler/check/domain/fieldkey"
+	"github.com/wippyai/go-lua/compiler/check/domain/paramuse"
 	"github.com/wippyai/go-lua/types/subtype"
 	"github.com/wippyai/go-lua/types/typ"
 )
-
-type paramUse struct {
-	whole  bool
-	fields map[fieldkey.Key]struct{}
-}
 
 // ProjectToParameterUse trims structured call-site evidence to the surface the
 // function body actually reads from each unannotated parameter. It is evidence
@@ -22,8 +18,8 @@ func ProjectToParameterUse(slots []cfg.ParamSlot, evidence []api.ParameterUseEvi
 		return vec
 	}
 
-	uses := parameterUseMap(evidence)
-	if len(uses) == 0 {
+	uses := paramuse.FromEvidence(evidence)
+	if uses.IsEmpty() {
 		return vec
 	}
 
@@ -36,7 +32,8 @@ func ProjectToParameterUse(slots []cfg.ParamSlot, evidence []api.ParameterUseEvi
 		if observed == nil {
 			continue
 		}
-		projected := projectEvidenceToUse(observed, uses[slot.Symbol])
+		use, _ := uses.Get(slot.Symbol)
+		projected := projectEvidenceToUse(observed, use)
 		if typ.TypeEquals(observed, projected) {
 			continue
 		}
@@ -62,8 +59,8 @@ func ProjectSignatureToParamUse(slots []cfg.ParamSlot, evidence []api.ParameterU
 	if sig == nil || len(sig.Params) == 0 {
 		return sig
 	}
-	uses := parameterUseMap(evidence)
-	if len(uses) == 0 {
+	uses := paramuse.FromEvidence(evidence)
+	if uses.IsEmpty() {
 		return sig
 	}
 	projected := make([]typ.Type, len(sig.Params))
@@ -72,11 +69,11 @@ func ProjectSignatureToParamUse(slots []cfg.ParamSlot, evidence []api.ParameterU
 		if idx < 0 || idx >= len(sig.Params) || slot.Symbol == 0 {
 			continue
 		}
-		use := uses[slot.Symbol]
-		if len(use.fields) == 0 {
+		use, _ := uses.Get(slot.Symbol)
+		if !use.HasFields() {
 			continue
 		}
-		completed, ok := completeTypeWithFields(sig.Params[idx].Type, use.fields)
+		completed, ok := completeTypeWithFields(sig.Params[idx].Type, use.Fields())
 		if !ok || completed == nil {
 			continue
 		}
@@ -214,14 +211,14 @@ func UnobservedParameterMask(slots []cfg.ParamSlot, evidence []api.ParameterUseE
 	if len(slots) == 0 {
 		return nil
 	}
-	uses := parameterUseMap(evidence)
+	uses := paramuse.FromEvidence(evidence)
 	var mask []bool
 	for i, slot := range slots {
 		if slot.Symbol == 0 {
 			continue
 		}
-		use, observed := uses[slot.Symbol]
-		if observed && (use.whole || len(use.fields) > 0) {
+		use, observed := uses.Get(slot.Symbol)
+		if observed && use.Observed() {
 			continue
 		}
 		if mask == nil {
@@ -232,55 +229,24 @@ func UnobservedParameterMask(slots []cfg.ParamSlot, evidence []api.ParameterUseE
 	return mask
 }
 
-func parameterUseMap(evidence []api.ParameterUseEvidence) map[cfg.SymbolID]paramUse {
-	if len(evidence) == 0 {
-		return nil
-	}
-	out := make(map[cfg.SymbolID]paramUse, len(evidence))
-	for _, ev := range evidence {
-		if ev.Symbol == 0 {
-			continue
-		}
-		use := out[ev.Symbol]
-		if ev.Whole {
-			use.whole = true
-		}
-		if len(ev.Fields) > 0 {
-			if use.fields == nil {
-				use.fields = make(map[fieldkey.Key]struct{}, len(ev.Fields))
-			}
-			for _, field := range ev.Fields {
-				if key, ok := fieldkey.FromSegment(field); ok {
-					use.fields[key] = struct{}{}
-				}
-			}
-		}
-		out[ev.Symbol] = use
-	}
-	if len(out) == 0 {
-		return nil
-	}
-	return out
-}
-
-func projectEvidenceToUse(observed typ.Type, use paramUse) typ.Type {
+func projectEvidenceToUse(observed typ.Type, use paramuse.Use) typ.Type {
 	if observed == nil {
 		return observed
 	}
-	if len(use.fields) == 0 {
-		if use.whole {
+	if !use.HasFields() {
+		if use.Whole() {
 			return observed
 		}
 		return nil
 	}
-	if use.whole {
-		completed, ok := completeTypeWithFields(observed, use.fields)
+	if use.Whole() {
+		completed, ok := completeTypeWithFields(observed, use.Fields())
 		if !ok {
 			return observed
 		}
 		return completed
 	}
-	projected, ok := projectTypeToFields(observed, use.fields)
+	projected, ok := projectTypeToFields(observed, use.Fields())
 	if !ok {
 		return observed
 	}
