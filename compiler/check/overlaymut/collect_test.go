@@ -7,6 +7,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/bind"
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/api"
+	"github.com/wippyai/go-lua/compiler/check/domain/functionsymbols"
 	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/typ"
 )
@@ -86,8 +87,7 @@ func TestCollectFieldAssignments_WithSynth(t *testing.T) {
 
 func TestCollectFieldAssignments_WithFilter(t *testing.T) {
 	graph := buildEmptyGraph()
-	filter := make(map[cfg.SymbolID]bool)
-	filter[1] = true
+	filter := functionsymbols.FromSymbols(1)
 	result := CollectFieldAssignments(assignmentsFromGraph(graph), nil, filter)
 	if result == nil {
 		t.Error("expected non-nil result")
@@ -161,8 +161,7 @@ func TestCollectMapWriteAssignments_WithBindings(t *testing.T) {
 
 func TestCollectMapWriteAssignments_WithFilter(t *testing.T) {
 	graph := buildEmptyGraph()
-	filter := make(map[cfg.SymbolID]bool)
-	filter[1] = true
+	filter := functionsymbols.FromSymbols(1)
 	result := CollectMapWriteAssignments(assignmentsFromGraph(graph), nil, nil, filter)
 	if result == nil {
 		t.Error("expected non-nil result")
@@ -175,8 +174,7 @@ func TestCollectMapWriteAssignments_AllParams(t *testing.T) {
 		return typ.String
 	}
 	bindings := &bind.BindingTable{}
-	filter := make(map[cfg.SymbolID]bool)
-	filter[1] = true
+	filter := functionsymbols.FromSymbols(1)
 	result := CollectMapWriteAssignments(assignmentsFromGraph(graph), synth, bindings, filter)
 	if result == nil {
 		t.Error("expected non-nil result")

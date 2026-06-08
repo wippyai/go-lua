@@ -16,14 +16,20 @@ type MapWriteInfo struct {
 	ValueType typ.Type
 }
 
+// SymbolFilter is the minimal root-symbol membership query for filtered
+// overlay mutation collection.
+type SymbolFilter interface {
+	Contains(cfg.SymbolID) bool
+}
+
 // CollectFieldAssignments reduces transfer assignment evidence into typed field
 // assignments grouped by base symbol.
 // The synth function is used to synthesize field value types.
-// If filterSyms is non-nil, only symbols in the filter are collected.
+// If filter is non-nil, only symbols in the filter are collected.
 func CollectFieldAssignments(
 	assignments []api.AssignmentEvidence,
 	synth func(ast.Expr, cfg.Point) typ.Type,
-	filterSyms map[cfg.SymbolID]bool,
+	filter SymbolFilter,
 ) FieldAssignments {
 	result := make(FieldAssignments)
 	if len(assignments) == 0 {
@@ -63,7 +69,7 @@ func CollectFieldAssignments(
 			if sym == 0 || fieldName == "" {
 				continue
 			}
-			if filterSyms != nil && !filterSyms[sym] {
+			if filter != nil && !filter.Contains(sym) {
 				continue
 			}
 			fieldKey, ok := interprocdomain.FieldKeyFromName(fieldName)
@@ -105,7 +111,7 @@ func CollectFieldAssignments(
 func CollectFunctionFieldAssignments(
 	functions []api.FunctionDefinitionEvidence,
 	synth func(ast.Expr, cfg.Point) typ.Type,
-	filterSyms map[cfg.SymbolID]bool,
+	filter SymbolFilter,
 ) FieldAssignments {
 	result := make(FieldAssignments)
 	if len(functions) == 0 {
@@ -127,7 +133,7 @@ func CollectFunctionFieldAssignments(
 		if seg.Name == "" {
 			continue
 		}
-		if filterSyms != nil && !filterSyms[target.Symbol] {
+		if filter != nil && !filter.Contains(target.Symbol) {
 			continue
 		}
 		fieldKey, ok := interprocdomain.FieldKeyFromName(seg.Name)
@@ -160,7 +166,7 @@ func CollectMapWriteAssignments(
 	assignments []api.AssignmentEvidence,
 	synth func(ast.Expr, cfg.Point) typ.Type,
 	bindings *bind.BindingTable,
-	filterSyms map[cfg.SymbolID]bool,
+	filter SymbolFilter,
 ) map[cfg.SymbolID][]MapWriteInfo {
 	result := make(map[cfg.SymbolID][]MapWriteInfo)
 	if len(assignments) == 0 {
@@ -186,7 +192,7 @@ func CollectMapWriteAssignments(
 			if sym == 0 {
 				continue
 			}
-			if filterSyms != nil && !filterSyms[sym] {
+			if filter != nil && !filter.Contains(sym) {
 				continue
 			}
 

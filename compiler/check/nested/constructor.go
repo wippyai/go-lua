@@ -6,6 +6,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/api"
 	"github.com/wippyai/go-lua/compiler/check/domain/fieldkey"
+	"github.com/wippyai/go-lua/compiler/check/domain/functionsymbols"
 	interprocdomain "github.com/wippyai/go-lua/compiler/check/domain/interproc"
 	"github.com/wippyai/go-lua/compiler/check/overlaymut"
 	"github.com/wippyai/go-lua/types/constraint"
@@ -531,8 +532,7 @@ func CollectConstructorFields(
 		return nil
 	}
 
-	filterSyms := map[cfg.SymbolID]bool{selfSym: true}
-	fields := overlaymut.CollectFieldAssignments(assignments, synth, filterSyms)
+	fields := overlaymut.CollectFieldAssignments(assignments, synth, functionsymbols.FromSymbols(selfSym))
 
 	if selfFields, ok := fields[selfSym]; ok && len(selfFields) > 0 {
 		out := make(interprocdomain.FieldValues, len(selfFields))
