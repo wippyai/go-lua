@@ -548,7 +548,7 @@ func (t *Transfer) aliasReplayWriteEffects(out *flow.PointState, effect WriteEff
 		return nil
 	}
 	var outEffects []WriteEffect
-	for _, route := range flow.PointFactsOf(*out).ProvenanceRoutesFor(flow.ProvenanceRouteQuery{
+	for _, route := range flow.PointFactsOfBorrowed(out).ProvenanceRoutesFor(flow.ProvenanceRouteQuery{
 		Path:                path,
 		IdentityAliases:     true,
 		IdentityAliasPolicy: flow.IdentityAliasDescendantOriginPolicy,

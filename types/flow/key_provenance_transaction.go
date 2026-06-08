@@ -154,7 +154,7 @@ func ApplyKeyProvenanceTransaction(out *PointState, tx KeyProvenanceTransaction)
 		if tx.Array.Key() == "" || tx.Key.Key() == "" {
 			return KeyProvenanceTransactionResult{}, false
 		}
-		keyValue, _ := PointFactsOf(*out).AddressValue(tx.Key)
+		keyValue, _ := PointFactsOfBorrowed(out).AddressValue(tx.Key)
 		iteration, changed := ApplyIndexedKeyArrayIterationProof(out, IndexedKeyArrayIterationProof{
 			Array:    tx.Array,
 			Key:      tx.Key,
@@ -175,7 +175,7 @@ func keyDomainFromIterationTables(out *PointState, tables []StableAddress) produ
 	}
 	var keyDomain product.AbstractValue
 	for _, tableAddr := range tables {
-		if keyType, ok := PointFactsOf(*out).KeyDomainAtAddress(tableAddr); ok && !typ.IsAbsentOrUnknown(keyType) {
+		if keyType, ok := PointFactsOfBorrowed(out).KeyDomainAtAddress(tableAddr); ok && !typ.IsAbsentOrUnknown(keyType) {
 			av := product.FromType(keyType)
 			if keyDomain.IsZero() {
 				keyDomain = av

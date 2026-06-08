@@ -111,7 +111,7 @@ func (t *Transfer) demandLocalPathContract(
 	}
 	var routes provenance.RouteResolver
 	if out != nil {
-		facts := flow.PointFactsOf(*out)
+		facts := flow.PointFactsOfBorrowed(out)
 		routes = facts.ProvenanceRoutes
 	}
 	for _, target := range paramevidence.ProvenanceRouteContractClosure(path, contract, routes) {

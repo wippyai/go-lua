@@ -40,7 +40,7 @@ func (t *Transfer) readIdentValue(out *flow.PointState, q identValueReadQuery) (
 	path := constraint.NewPath(sym, "")
 	if !ok || av.IsZero() {
 		if out != nil {
-			if cv := flow.PointFactsOf(*out).ReadCallablePathValue(path, t.pointReadPolicy(out)); cv.State == flow.StateResolved {
+			if cv := flow.PointFactsOfBorrowed(out).ReadCallablePathValue(path, t.pointReadPolicy(out)); cv.State == flow.StateResolved {
 				return cv.Value, true
 			}
 		}
@@ -54,7 +54,7 @@ func (t *Transfer) readIdentValue(out *flow.PointState, q identValueReadQuery) (
 	}
 	if pt := av.ProjectValue(); pt != nil && pt.Kind() == kind.Function {
 		if out != nil {
-			if cv := flow.PointFactsOf(*out).ReadCallablePath(path, av, t.pointReadPolicy(out)); cv.State == flow.StateResolved {
+			if cv := flow.PointFactsOfBorrowed(out).ReadCallablePath(path, av, t.pointReadPolicy(out)); cv.State == flow.StateResolved {
 				return cv.Value, true
 			}
 		}
@@ -72,7 +72,7 @@ func (t *Transfer) readAccessValue(out *flow.PointState, q accessValueReadQuery)
 	}
 	facts := flow.PointFactsOf(flow.PointState{})
 	if out != nil {
-		facts = flow.PointFactsOf(*out)
+		facts = flow.PointFactsOfBorrowed(out)
 	}
 	staticPath := q.StaticPath
 	if staticPath == nil {

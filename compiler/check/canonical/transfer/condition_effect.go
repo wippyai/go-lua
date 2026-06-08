@@ -41,7 +41,7 @@ func (t *Transfer) applyConditionEffectWithOwnership(
 		return true
 	}
 	reductions := flow.ConditionReducer{
-		State:                       *out,
+		State:                       out,
 		Fact:                        effect.Fact,
 		VariantCaseFieldProjections: t.in.VariantCaseFieldProjections,
 		SymbolValue: func(sym cfg.SymbolID) (product.AbstractValue, bool) {

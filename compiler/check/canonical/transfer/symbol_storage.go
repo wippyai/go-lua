@@ -66,7 +66,7 @@ func (p symbolStoragePolicy) read(out *flow.PointState, sym cfg.SymbolID) (produ
 	if out == nil || sym == 0 {
 		return product.AbstractValue{}, false
 	}
-	facts := flow.PointFactsOf(*out)
+	facts := flow.PointFactsOfBorrowed(out)
 	switch p.class(sym) {
 	case symbolStorageOwnerCell, symbolStorageCapturedCell:
 		if av, ok := facts.CellValue(sym); ok && !valueIsBottom(av) {

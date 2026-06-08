@@ -168,7 +168,7 @@ func (t *Transfer) refineStaticMemberFactForLengthLower(out *flow.PointState, pa
 	if out == nil || path.Symbol == 0 || len(path.Segments) == 0 || lower <= 0 {
 		return false
 	}
-	source := flow.PointFactsOf(*out).StaticMemberRefinementReads(path, base, !base.IsZero()).Preferred()
+	source := flow.PointFactsOfBorrowed(out).StaticMemberRefinementReads(path, base, !base.IsZero()).Preferred()
 	if source.State != flow.StateResolved {
 		return false
 	}
@@ -190,7 +190,7 @@ func (t *Transfer) applyStaticMemberRefinementEffect(out *flow.PointState, effec
 	if !ok || path.Symbol == 0 || len(path.Segments) == 0 {
 		return false
 	}
-	sources := flow.PointFactsOf(*out).StaticMemberRefinementReads(path, effect.Base, effect.HasBase)
+	sources := flow.PointFactsOfBorrowed(out).StaticMemberRefinementReads(path, effect.Base, effect.HasBase)
 	if sources.Existing.State == flow.StateResolved {
 		refined, ok := refinedStaticMemberValue(sources, effect.Check, effect.TypeName)
 		if !ok || refined.IsZero() || !refined.DefinitelyPresent() {

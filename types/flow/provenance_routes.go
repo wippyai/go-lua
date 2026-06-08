@@ -39,7 +39,7 @@ func (f PointFacts) ProvenanceRoutesFor(q ProvenanceRouteQuery) []ProvenanceRout
 	if !ok {
 		return nil
 	}
-	relations := relationIndexOf(f.state)
+	relations := relationIndexOf(*f.state)
 	var out []ProvenanceRoute
 	if q.IdentityAliases {
 		for _, route := range relations.SourceRoutes(relationSourceQuery{
@@ -68,7 +68,7 @@ func (f PointFacts) ProvenanceRoutesFor(q ProvenanceRouteQuery) []ProvenanceRout
 			Remainder: valueOriginRouteAnyRemainder,
 		}) {
 			if q.AppendElementFieldOrigins {
-				out = appendAppendFieldProvenanceRoutes(out, f.state, route)
+				out = appendAppendFieldProvenanceRoutes(out, *f.state, route)
 			}
 			if q.ValueOrigins {
 				out = appendValueOriginProvenanceRoute(out, route)

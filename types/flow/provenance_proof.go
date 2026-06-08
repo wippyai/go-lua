@@ -119,7 +119,7 @@ func ApplyAssignmentAliasPathTransaction(out *PointState, tx AssignmentAliasPath
 	}
 	sourceValue := tx.SourceValue
 	if sourceValue.IsZero() {
-		if value, ok := PointFactsOf(*out).AddressValue(source); ok && !value.IsZero() {
+		if value, ok := PointFactsOfBorrowed(out).AddressValue(source); ok && !value.IsZero() {
 			sourceValue = value
 		}
 	}

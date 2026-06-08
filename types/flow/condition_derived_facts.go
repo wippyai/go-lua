@@ -16,7 +16,7 @@ type StaticMemberReduction struct {
 // condition fact. Transfer supplies only policy boundaries that flow cannot own:
 // lexical symbol storage, declared-type bases, and callable field resolution.
 type ConditionReducer struct {
-	State                       PointState
+	State                       *PointState
 	Fact                        constraint.Condition
 	VariantCaseFieldProjections []VariantCaseFieldProjection
 	SymbolValue                 SymbolProductReader
@@ -35,6 +35,9 @@ type ConditionReductions struct {
 // Reductions interprets condition-derived facts and product-domain narrowings
 // through one canonical flow-domain route.
 func (q ConditionReducer) Reductions() ConditionReductions {
+	if q.State == nil {
+		return ConditionReductions{}
+	}
 	out := ConditionReductions{
 		StaticMembers: VariantCaseFieldProjectionReductions(q.State, q.Fact, q.VariantCaseFieldProjections),
 	}
@@ -43,7 +46,7 @@ func (q ConditionReducer) Reductions() ConditionReductions {
 	}.Reductions(q.Fact)...)
 	out.SymbolValues = append(out.SymbolValues, ProductConditionReducer{
 		Fact:     q.Fact,
-		Facts:    PointFactsOf(q.State),
+		Facts:    PointFactsOfBorrowed(q.State),
 		Resolver: q.Resolver,
 		Base:     q.ProductBase,
 	}.Reductions()...)

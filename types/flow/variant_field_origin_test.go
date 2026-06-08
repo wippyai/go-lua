@@ -225,7 +225,7 @@ func TestVariantCaseFieldProjectionValuesJoinSelectedPayloads(t *testing.T) {
 		constraint.FromConstraints(constraint.VariantCaseEquals{Target: result, OriginFamily: family, CaseIndex: 1}),
 	)
 
-	values := VariantCaseFieldProjectionValues(state, fact, projections)
+	values := VariantCaseFieldProjectionValues(&state, fact, projections)
 	if len(values) != 1 {
 		t.Fatalf("projection values = %#v, want one joined selected.value proof", values)
 	}
@@ -405,7 +405,7 @@ func TestConditionReducerBatchesSymbolAndStaticMemberReductions(t *testing.T) {
 	})
 
 	reductions := ConditionReducer{
-		State: state,
+		State: &state,
 		Fact:  fact,
 		VariantCaseFieldProjections: []VariantCaseFieldProjection{{
 			Target:       result,

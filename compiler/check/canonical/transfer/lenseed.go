@@ -622,7 +622,7 @@ func (t *Transfer) dynamicWriteKey(
 		return product.AbstractValue{}
 	}
 	keyPath := constraint.NewPath(keySym, keyIdent.Value)
-	keyValue := flow.PointFactsOf(*out).ReadPresentRecordKeyValue(basePath, keyPath, base)
+	keyValue := flow.PointFactsOfBorrowed(out).ReadPresentRecordKeyValue(basePath, keyPath, base)
 	if keyValue.State != flow.StateResolved {
 		return product.AbstractValue{}
 	}
@@ -685,7 +685,7 @@ func (t *Transfer) writeIsSelfDerived(out *flow.PointState, target cfg.AssignTar
 	}
 	keyPath := constraint.NewPath(keySym, keyIdent.Value)
 	valuePath := constraint.NewPath(valueSym, srcIdent.Value)
-	return out != nil && flow.PointFactsOf(*out).HasKeyValueReadbackSource(flow.KeyValueReadbackSourceQuery{
+	return out != nil && flow.PointFactsOfBorrowed(out).HasKeyValueReadbackSource(flow.KeyValueReadbackSourceQuery{
 		TablePath: basePath,
 		KeyPath:   keyPath,
 		ValuePath: valuePath,
@@ -712,7 +712,7 @@ func (t *Transfer) refineIndexRead(
 	if out == nil {
 		return ev
 	}
-	refined := flow.PointFactsOf(*out).RefineIndexRead(t.indexReadRefinementQuery(out, e, base, ev, keyValue))
+	refined := flow.PointFactsOfBorrowed(out).RefineIndexRead(t.indexReadRefinementQuery(out, e, base, ev, keyValue))
 	if refined.State == flow.StateResolved {
 		return refined.Value
 	}

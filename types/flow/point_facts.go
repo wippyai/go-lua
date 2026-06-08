@@ -17,7 +17,7 @@ import (
 // Cells, StaticMembers, and numeric length facts. It does not resolve syntax,
 // summaries, callees, or declared types.
 type PointFacts struct {
-	state PointState
+	state *PointState
 }
 
 // CaptureCellExportRoots is the finite set of Env-backed symbols a boundary may
@@ -41,6 +41,16 @@ type CallableSignatureResolver func(CallableSignatureQuery) (typ.Type, bool)
 
 // PointFactsOf returns the read-only facts view for state.
 func PointFactsOf(state PointState) PointFacts {
+	return PointFacts{state: &state}
+}
+
+// PointFactsOfBorrowed returns a read-only facts view over state without
+// copying the full point-state carrier. Callers must not mutate state while the
+// view is in use.
+func PointFactsOfBorrowed(state *PointState) PointFacts {
+	if state == nil {
+		return PointFactsOf(PointState{})
+	}
 	return PointFacts{state: state}
 }
 
@@ -106,7 +116,7 @@ func SingleChangedValueKey(before, after PointState) (ValueKey, bool) {
 // that knows whether a symbol is Env-backed or cell-backed should use its
 // symbol-storage boundary instead.
 func (f PointFacts) SymbolValue(sym cfg.SymbolID) (product.AbstractValue, bool) {
-	return SymbolValue(f.state, sym)
+	return SymbolValue(*f.state, sym)
 }
 
 // EnvValue returns the abstract value stored directly in Env under key.
@@ -442,7 +452,7 @@ func (f PointFacts) IdentityAliasClosurePaths(root constraint.Path) []constraint
 // IdentityAliasClosureAddresses returns root plus every assignment/path alias
 // reachable through the identity-alias relation.
 func (f PointFacts) IdentityAliasClosureAddresses(root StableAddress) []StableAddress {
-	return IdentityAliasClosure(f.state, root)
+	return IdentityAliasClosure(*f.state, root)
 }
 
 // IndexWritePathQuery is the structured-path query form for admitted dynamic

@@ -1909,7 +1909,7 @@ func (t *Transfer) refineStaticMemberFactForLiteralComparison(
 	}
 	path := constraint.NewPath(sym, "")
 	path.Segments = append([]constraint.Segment(nil), segments...)
-	source := flow.PointFactsOf(*out).StaticMemberRefinementReads(path, product.AbstractValue{}, false).Existing
+	source := flow.PointFactsOfBorrowed(out).StaticMemberRefinementReads(path, product.AbstractValue{}, false).Existing
 	if source.State != flow.StateResolved {
 		return false
 	}
@@ -2722,7 +2722,7 @@ func (t *Transfer) conditionRefinedCaptureValue(out *flow.PointState, sym cfg.Sy
 		Base:     base,
 		HasBase:  hasBase,
 		Fact:     out.Cond,
-		Facts:    flow.PointFactsOf(*out),
+		Facts:    flow.PointFactsOfBorrowed(out),
 		Resolver: fieldResolver,
 	})
 	if !ok || next.IsZero() {

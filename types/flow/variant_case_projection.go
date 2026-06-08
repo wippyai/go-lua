@@ -18,11 +18,11 @@ type VariantCaseFieldProjectionValue struct {
 
 // VariantCaseFieldProjectionValues selects field projections justified by fact.
 func VariantCaseFieldProjectionValues(
-	state PointState,
+	state *PointState,
 	fact constraint.Condition,
 	projections []VariantCaseFieldProjection,
 ) []VariantCaseFieldProjectionValue {
-	if len(projections) == 0 || fact.NumDisjuncts() == 0 {
+	if state == nil || len(projections) == 0 || fact.NumDisjuncts() == 0 {
 		return nil
 	}
 	var joined map[constraint.PathKey]VariantCaseFieldProjectionValue
@@ -63,13 +63,13 @@ func ApplyVariantCaseFieldProjections(out *PointState, fact constraint.Condition
 	if out == nil {
 		return false
 	}
-	return ApplyStaticMemberReductions(out, VariantCaseFieldProjectionReductions(*out, fact, projections))
+	return ApplyStaticMemberReductions(out, VariantCaseFieldProjectionReductions(out, fact, projections))
 }
 
 // VariantCaseFieldProjectionReductions selects static-member reductions
 // justified by variant-origin condition facts.
 func VariantCaseFieldProjectionReductions(
-	state PointState,
+	state *PointState,
 	fact constraint.Condition,
 	projections []VariantCaseFieldProjection,
 ) []StaticMemberReduction {
@@ -85,7 +85,7 @@ func VariantCaseFieldProjectionReductions(
 }
 
 func variantCaseFieldProjectionValuesForDisjunct(
-	state PointState,
+	state *PointState,
 	constraints []constraint.Constraint,
 	projections []VariantCaseFieldProjection,
 ) map[constraint.PathKey]VariantCaseFieldProjectionValue {
@@ -123,11 +123,11 @@ func variantCaseFieldProjectionValuesForDisjunct(
 	return values
 }
 
-func variantCaseFieldProjectionValue(state PointState, projection VariantCaseFieldProjection) (product.AbstractValue, bool) {
+func variantCaseFieldProjectionValue(state *PointState, projection VariantCaseFieldProjection) (product.AbstractValue, bool) {
 	if projection.Source.IsEmpty() {
 		return product.AbstractValue{}, false
 	}
-	sourceType, ok := PointFactsOf(state).PathType(projection.Source)
+	sourceType, ok := PointFactsOfBorrowed(state).PathType(projection.Source)
 	if !ok || typ.IsAbsentOrUnknown(sourceType) || typ.ContainsAny(sourceType) {
 		return product.AbstractValue{}, false
 	}
