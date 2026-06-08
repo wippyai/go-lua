@@ -29,6 +29,11 @@ func entryValuePrototypeReceivers(receivers []metatable.MethodReceiver) []summar
 	return out
 }
 
+type prototypeSurfaceMethod struct {
+	FieldName string
+	Ref       summary.FuncRef
+}
+
 func (p *program) withPrototypeReceiverBaselines(
 	ref summary.FuncRef,
 	values summary.EntryValues,
@@ -151,6 +156,55 @@ func (p *program) prototypeMetatableValue(proto cfg.SymbolID) (product.AbstractV
 	if p == nil || p.driver == nil || proto == 0 {
 		return product.AbstractValue{}, false
 	}
+	if p.prototypeMetatablesBySym != nil {
+		meta, ok := p.prototypeMetatablesBySym[proto]
+		return meta, ok && !meta.IsZero()
+	}
+	return p.buildPrototypeMetatableValue(proto)
+}
+
+func (p *program) buildPrototypeSurfaceCaches() {
+	if p == nil || p.driver == nil {
+		return
+	}
+	methods := p.facts.PrototypeMethods()
+	if len(methods) == 0 {
+		return
+	}
+	surfaceMethods := make(map[cfg.SymbolID][]prototypeSurfaceMethod)
+	for _, method := range methods {
+		if method.PrototypeSym == 0 || method.FuncRef == (flow.FunctionRef{}) {
+			continue
+		}
+		switch method.Field.Kind {
+		case constraint.SegmentField, constraint.SegmentIndexString:
+			if method.Field.Name == "" {
+				continue
+			}
+			surfaceMethods[method.PrototypeSym] = append(surfaceMethods[method.PrototypeSym], prototypeSurfaceMethod{
+				FieldName: method.Field.Name,
+				Ref:       canonref.FromFlow(method.FuncRef),
+			})
+		}
+	}
+	if len(surfaceMethods) == 0 {
+		return
+	}
+	metatables := make(map[cfg.SymbolID]product.AbstractValue, len(surfaceMethods))
+	base := typ.NewRecord().Build()
+	for proto, methods := range surfaceMethods {
+		protoType, ok := p.prototypeSurfaceTypeFromMethods(base, methods)
+		if !ok || typ.IsAbsentOrUnknown(protoType) {
+			continue
+		}
+		meta := typ.NewRecord().Field("__index", protoType).Build()
+		metatables[proto] = product.FromType(meta)
+	}
+	p.prototypeSurfaceMethodsBySym = surfaceMethods
+	p.prototypeMetatablesBySym = metatables
+}
+
+func (p *program) buildPrototypeMetatableValue(proto cfg.SymbolID) (product.AbstractValue, bool) {
 	protoType, ok := p.prototypeSurfaceType(proto, typ.NewRecord().Build())
 	if !ok || typ.IsAbsentOrUnknown(protoType) {
 		return product.AbstractValue{}, false
@@ -163,21 +217,41 @@ func (p *program) prototypeSurfaceType(proto cfg.SymbolID, base typ.Type) (typ.T
 	if p == nil || p.driver == nil || proto == 0 {
 		return base, false
 	}
-	surface := base
-	hasMethodSurface := false
+	if p.prototypeSurfaceMethodsBySym != nil {
+		return p.prototypeSurfaceTypeFromMethods(base, p.prototypeSurfaceMethodsBySym[proto])
+	}
+	var methods []prototypeSurfaceMethod
 	for _, method := range p.facts.PrototypeMethods() {
 		if method.PrototypeSym != proto || method.FuncRef == (flow.FunctionRef{}) || method.Field == (constraint.Segment{}) {
 			continue
 		}
-		sig := p.driver.declaredSignatureForRef(p, canonref.FromFlow(method.FuncRef))
+		switch method.Field.Kind {
+		case constraint.SegmentField, constraint.SegmentIndexString:
+			methods = append(methods, prototypeSurfaceMethod{
+				FieldName: method.Field.Name,
+				Ref:       canonref.FromFlow(method.FuncRef),
+			})
+		}
+	}
+	return p.prototypeSurfaceTypeFromMethods(base, methods)
+}
+
+func (p *program) prototypeSurfaceTypeFromMethods(base typ.Type, methods []prototypeSurfaceMethod) (typ.Type, bool) {
+	if p == nil || p.driver == nil || len(methods) == 0 {
+		return base, false
+	}
+	surface := base
+	hasMethodSurface := false
+	for _, method := range methods {
+		if method.FieldName == "" || method.Ref == (summary.FuncRef{}) {
+			continue
+		}
+		sig := p.driver.declaredSignatureForRef(p, method.Ref)
 		if typ.IsAbsentOrUnknown(sig) {
 			continue
 		}
-		switch method.Field.Kind {
-		case constraint.SegmentField, constraint.SegmentIndexString:
-			surface = typ.ExtendRecordWithField(surface, method.Field.Name, sig)
-			hasMethodSurface = true
-		}
+		surface = typ.ExtendRecordWithField(surface, method.FieldName, sig)
+		hasMethodSurface = true
 	}
 	if surface == nil {
 		return typ.Unknown, hasMethodSurface
@@ -272,15 +346,24 @@ func (p *program) receiverTypeCarriesPrototypeSurface(proto cfg.SymbolID, t typ.
 	if p == nil || proto == 0 || !receiverTypeHasConcreteMetatable(t, 0) {
 		return false
 	}
-	for _, method := range p.facts.PrototypeMethods() {
-		if method.PrototypeSym != proto || method.FuncRef == (flow.FunctionRef{}) {
+	methods := p.prototypeSurfaceMethodsBySym[proto]
+	if p.prototypeSurfaceMethodsBySym == nil {
+		for _, method := range p.facts.PrototypeMethods() {
+			if method.PrototypeSym != proto || method.FuncRef == (flow.FunctionRef{}) {
+				continue
+			}
+			switch method.Field.Kind {
+			case constraint.SegmentField, constraint.SegmentIndexString:
+				methods = append(methods, prototypeSurfaceMethod{FieldName: method.Field.Name})
+			}
+		}
+	}
+	for _, method := range methods {
+		if method.FieldName == "" {
 			continue
 		}
-		switch method.Field.Kind {
-		case constraint.SegmentField, constraint.SegmentIndexString:
-			if _, ok := core.Method(t, method.Field.Name); ok {
-				return true
-			}
+		if _, ok := core.Method(t, method.FieldName); ok {
+			return true
 		}
 	}
 	return false

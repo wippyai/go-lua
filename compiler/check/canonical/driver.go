@@ -60,6 +60,7 @@ import (
 	"github.com/wippyai/go-lua/types/contract"
 	"github.com/wippyai/go-lua/types/db"
 	"github.com/wippyai/go-lua/types/diag"
+	"github.com/wippyai/go-lua/types/domain/value/product"
 	"github.com/wippyai/go-lua/types/effect"
 	"github.com/wippyai/go-lua/types/flow"
 	"github.com/wippyai/go-lua/types/io"
@@ -587,9 +588,12 @@ func (d *Driver) observeDiagnosticIntraWithOverlayDeps(sess api.AnalysisSession,
 	if d == nil {
 		return state.FunctionStateDomain.Bottom(), nil
 	}
-	reads := make(map[summary.Key]struct{})
+	var reads map[summary.Key]struct{}
 	prev := d.diagnosticOverlayRead
 	d.diagnosticOverlayRead = func(read summary.Key) {
+		if reads == nil {
+			reads = make(map[summary.Key]struct{})
+		}
 		reads[read] = struct{}{}
 	}
 	defer func() {
@@ -774,6 +778,13 @@ type program struct {
 	// reads only publishers for its prototype, not every summary with any prototype
 	// publication.
 	prototypePublishersBySym map[cfg.SymbolID][]summary.FuncRef
+
+	// prototypeSurfaceMethodsBySym and prototypeMetatablesBySym are immutable
+	// program-level method-surface facts. Diagnostic entry projection uses declared
+	// method signatures, so it can read these cached surfaces instead of rebuilding
+	// the same prototype record/metatable during every observed context.
+	prototypeSurfaceMethodsBySym map[cfg.SymbolID][]prototypeSurfaceMethod
+	prototypeMetatablesBySym     map[cfg.SymbolID]product.AbstractValue
 
 	// referencePaths is the graph-derived vocabulary of function/closure identity
 	// paths each callee can observe at entry.
@@ -1047,6 +1058,7 @@ func (p *program) buildDependencyIndexes() {
 	}
 	p.callerRefsByCallee = callers
 	p.prototypePublishersBySym = prototypePublishers
+	p.buildPrototypeSurfaceCaches()
 }
 
 // addFunction registers one function's parameter count, canonical inputs, and
