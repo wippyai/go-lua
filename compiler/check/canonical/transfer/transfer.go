@@ -140,14 +140,11 @@ type closureReferenceProjectionProvider interface {
 // value-domain unknown for an expression the transfer does not determine, so the
 // driver falls back to its module-wide signatures/globals.
 type CallTyper interface {
-	// IterVars types a generic-for loop's iteration variables from the loop's
-	// iterator expression (`for i, v in ipairs(arr)`): it resolves the iterator
-	// function's iteration effect (indexed/keyed) and the iterated container's
-	// element/key/value types, returning one type per loop variable. count is the
-	// loop-variable count. exprType resolves an argument/source expression against the
-	// live Env. It returns false when the iterator is not a recognized iteration form,
-	// so the transfer leaves the loop variables untyped (the sound carry-forward).
-	IterVars(iter *ast.FuncCallExpr, count int, exprType func(ast.Expr) typ.Type) ([]typ.Type, bool)
+	// IterVarProjection types a generic-for loop's iteration variables from the
+	// loop's iterator expression (`for i, v in ipairs(arr)`). The projection also
+	// reports recognized empty iteration, so transfer can distinguish "known empty"
+	// from "unknown iterator" without a parallel []typ.Type route.
+	IterVarProjection(iter *ast.FuncCallExpr, count int, exprType func(ast.Expr) typ.Type) (flow.IteratorVarProjection, bool)
 	// KeyedIterSource reports whether iter is a keyed (pairs-style) iteration and,
 	// if so, returns the iterated source-argument expression. It resolves the
 	// iterator function's declared iteration effect (the same contract-spec / builtin
@@ -173,10 +170,6 @@ type CallTyper interface {
 	// transfer narrows the argument value to T. A call that is not a type cast yields
 	// false.
 	TypeCastTarget(call *ast.FuncCallExpr, exprType func(ast.Expr) typ.Type) (typ.Type, bool)
-}
-
-type IterVarProjector interface {
-	IterVarProjection(iter *ast.FuncCallExpr, count int, exprType func(ast.Expr) typ.Type) (flow.IteratorVarProjection, bool)
 }
 
 // ProductCallResult is the product-carrier result of evaluating one concrete
@@ -1992,14 +1985,7 @@ func (t *Transfer) iterVarProjection(
 	count int,
 	exprType func(ast.Expr) typ.Type,
 ) (flow.IteratorVarProjection, bool) {
-	if projector, ok := t.callTyper.(IterVarProjector); ok {
-		return projector.IterVarProjection(iterCall, count, exprType)
-	}
-	varTypes, ok := t.callTyper.IterVars(iterCall, count, exprType)
-	if !ok {
-		return flow.IteratorVarProjection{}, false
-	}
-	return flow.IteratorVarProjection{Types: varTypes}, true
+	return t.callTyper.IterVarProjection(iterCall, count, exprType)
 }
 
 func (t *Transfer) assignGenericForEmpty(out *flow.PointState, targets []cfg.AssignTarget) {

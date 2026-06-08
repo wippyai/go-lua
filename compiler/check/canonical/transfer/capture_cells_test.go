@@ -403,8 +403,8 @@ func (numberReturnTyper) ProductCallFromValues(*ast.FuncCallExpr, ProductCallCon
 
 var _ ProductCallProvider = numberReturnTyper{}
 
-func (c captureEffectTyper) IterVars(*ast.FuncCallExpr, int, func(ast.Expr) typ.Type) ([]typ.Type, bool) {
-	return nil, false
+func (c captureEffectTyper) IterVarProjection(*ast.FuncCallExpr, int, func(ast.Expr) typ.Type) (flow.IteratorVarProjection, bool) {
+	return flow.IteratorVarProjection{}, false
 }
 
 func (c captureEffectTyper) KeyedIterSource(*ast.FuncCallExpr) (ast.Expr, bool) {

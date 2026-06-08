@@ -433,8 +433,8 @@ type staticDemandTyper struct {
 	demand typ.Type
 }
 
-func (s staticDemandTyper) IterVars(*ast.FuncCallExpr, int, func(ast.Expr) typ.Type) ([]typ.Type, bool) {
-	return nil, false
+func (s staticDemandTyper) IterVarProjection(*ast.FuncCallExpr, int, func(ast.Expr) typ.Type) (flow.IteratorVarProjection, bool) {
+	return flow.IteratorVarProjection{}, false
 }
 
 func (s staticDemandTyper) KeyedIterSource(*ast.FuncCallExpr) (ast.Expr, bool) {

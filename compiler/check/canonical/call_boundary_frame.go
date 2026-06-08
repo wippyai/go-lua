@@ -279,7 +279,7 @@ func (p callBoundaryFrame) cellEffectAggregation() (summary.CellEffectAggregatio
 			return refs, ok
 		},
 		EffectOf: func(ref summary.FuncRef, entryValues summary.EntryValues) flow.CaptureEffects {
-			evidence := callEntry.access().productEvidence(ref, p.site.call, p.ctx)
+			evidence := callEntry.productEvidence(ref, p.site.call, p.ctx)
 			return p.effectsForRef(ref, entryValues, evidence.Facts)
 		},
 	}, true

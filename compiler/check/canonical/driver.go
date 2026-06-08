@@ -1530,19 +1530,6 @@ func (ct callTyper) ProductCallFromValues(call *ast.FuncCallExpr, ctx transfer.P
 	return frame.result(evidence, effects)
 }
 
-// IterVars types a generic-for loop's iteration variables from its iterator
-// expression. The driver resolves the callee and source expression; the
-// iteration domain owns Iterator-effect classification and variable projection.
-// An iterator with no iteration effect (and not the ipairs/pairs builtin) yields
-// no types, so the transfer leaves the variables untyped.
-func (ct callTyper) IterVars(iter *ast.FuncCallExpr, count int, exprType func(ast.Expr) typ.Type) ([]typ.Type, bool) {
-	proj, ok := ct.IterVarProjection(iter, count, exprType)
-	if !ok || proj.Empty {
-		return nil, false
-	}
-	return proj.Types, true
-}
-
 func (ct callTyper) IterVarProjection(iter *ast.FuncCallExpr, count int, exprType func(ast.Expr) typ.Type) (flow.IteratorVarProjection, bool) {
 	if iter == nil || count <= 0 || iter.Method != "" || exprType == nil {
 		return flow.IteratorVarProjection{}, false
