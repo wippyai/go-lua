@@ -31,6 +31,41 @@ func TestConditionSymbolEvidenceSeparatesValueAndVariantOriginSymbols(t *testing
 	}
 }
 
+func TestConditionSymbolEvidenceProjectsValueConditionForSymbol(t *testing.T) {
+	first := constraint.NewPath(cfg.SymbolID(31), "first")
+	second := constraint.NewPath(cfg.SymbolID(32), "second")
+	evidence := newConditionSymbolEvidence(constraint.FromConstraints(
+		constraint.Truthy{Path: first.Field("id")},
+		constraint.FieldEqualsPath{Target: first, Field: "owner", Value: second},
+		constraint.NotNil{Path: second.Field("name")},
+	))
+
+	got := evidence.ValueConditionForSymbol(31)
+	if got.IsTrue() || got.IsFalse() || got.NumDisjuncts() != 1 {
+		t.Fatalf("projected first condition = %v, want one constrained disjunct", got)
+	}
+	constraints := got.DisjunctConstraints(0)
+	if len(constraints) != 1 {
+		t.Fatalf("projected first constraints = %#v, want only local truthy constraint", constraints)
+	}
+	if _, ok := constraints[0].(constraint.Truthy); !ok {
+		t.Fatalf("projected first constraint = %T, want Truthy", constraints[0])
+	}
+}
+
+func TestConditionSymbolEvidenceProjectionKeepsDNFUnconstrainedBranchSound(t *testing.T) {
+	first := constraint.NewPath(cfg.SymbolID(31), "first")
+	second := constraint.NewPath(cfg.SymbolID(32), "second")
+	evidence := newConditionSymbolEvidence(constraint.FromDisjuncts([][]constraint.Constraint{
+		{constraint.Truthy{Path: first.Field("id")}},
+		{constraint.Truthy{Path: second.Field("name")}},
+	}))
+
+	if got := evidence.ValueConditionForSymbol(31); !got.IsTrue() {
+		t.Fatalf("projected first condition = %v, want true because another DNF arm does not constrain first", got)
+	}
+}
+
 func TestConditionSymbolMaskMatchesSemanticAffectedPaths(t *testing.T) {
 	root := constraint.NewPath(cfg.SymbolID(41), "root")
 	other := constraint.NewPath(cfg.SymbolID(42), "other")

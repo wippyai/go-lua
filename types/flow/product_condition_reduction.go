@@ -69,11 +69,12 @@ func (r ProductConditionReducer) Reductions() []SymbolValueReduction {
 			reductionBase = base.Current
 			hasReductionBase = base.HasCurrent
 		}
+		fact := evidence.ValueConditionForSymbol(sym)
 		next, narrowed := ProductConditionReductionValue(ProductConditionReduction{
 			Symbol:   sym,
 			Base:     reductionBase,
 			HasBase:  hasReductionBase,
-			Fact:     r.Fact,
+			Fact:     fact,
 			Facts:    r.Facts,
 			Resolver: r.Resolver,
 		})
