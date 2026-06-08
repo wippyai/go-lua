@@ -563,6 +563,16 @@ func (t *Transfer) Transfer(
 	if g != nil && p != g.Entry() && flow.PointStateDomain.Equal(incoming, flow.PointStateDomain.Bottom()) {
 		return flow.PointStateDomain.Bottom()
 	}
+	entry := g.Entry()
+	loopFacts := t.loopAppendLengthsByPoint[p]
+	info := g.Info(p)
+	if p != entry && len(loopFacts) == 0 {
+		switch info.(type) {
+		case *cfg.AssignInfo, *cfg.BranchInfo, *cfg.ReturnInfo, *cfg.CallInfo, *cfg.FuncDefInfo:
+		default:
+			return incoming
+		}
+	}
 	out := flow.ClonePointState(incoming)
 
 	// At the entry point the assumed contracts ARE the parameter values a caller
@@ -576,13 +586,13 @@ func (t *Transfer) Transfer(
 	// reachable with no numeric constraints, so it lifts the component to the
 	// satisfiable empty state — the initial reachable numeric environment that
 	// the forward join propagates and the per-node numeric transfer refines.
-	if p == g.Entry() {
+	if p == entry {
 		flow.LiftEntryReachability(&out)
 		t.seedEntry(&out, entryContracts)
 	}
-	t.applyLoopAppendLengthFacts(&out, t.loopAppendLengthsByPoint[p])
+	t.applyLoopAppendLengthFacts(&out, loopFacts)
 
-	switch info := g.Info(p).(type) {
+	switch info := info.(type) {
 	case *cfg.AssignInfo:
 		t.applyAssign(&out, p, info, demand)
 	case *cfg.BranchInfo:
