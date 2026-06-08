@@ -122,7 +122,7 @@ func FromDisjuncts(conjunctions [][]Constraint) Condition {
 	if len(canonicalized) == 0 {
 		return FalseCondition()
 	}
-	return normalizeCondition(Condition{Disjuncts: canonicalized})
+	return normalizeConditionChecked(Condition{Disjuncts: canonicalized})
 }
 
 // IsFalse reports whether the condition is unsatisfiable (no disjuncts).
@@ -263,7 +263,7 @@ func And(a, b Condition) Condition {
 	if len(out) == 0 {
 		return FalseCondition()
 	}
-	return normalizeCondition(Condition{Disjuncts: out})
+	return normalizeConditionChecked(Condition{Disjuncts: out})
 }
 
 // Or returns the disjunction of two conditions.
@@ -305,7 +305,7 @@ func Not(c Condition) Condition {
 			return result
 		}
 	}
-	return normalizeCondition(result)
+	return result
 }
 
 // Substitute replaces placeholder paths using argument paths.
@@ -1296,6 +1296,18 @@ func conjunctionSubsumesWithHashes(a []Constraint, aHashes []uint64, b []Constra
 }
 
 func normalizeCondition(c Condition) Condition {
+	return normalizeConditionWithContradictionCheck(c, true)
+}
+
+// normalizeConditionChecked canonicalizes DNF shape after the caller has
+// already rejected contradictory conjunctions. This keeps contradiction
+// projection owned by the condition domain without rebuilding the same index
+// during constructors such as FromDisjuncts and And.
+func normalizeConditionChecked(c Condition) Condition {
+	return normalizeConditionWithContradictionCheck(c, false)
+}
+
+func normalizeConditionWithContradictionCheck(c Condition, checkContradictions bool) Condition {
 	n := len(c.Disjuncts)
 	if n == 0 {
 		return c
@@ -1307,18 +1319,20 @@ func normalizeCondition(c Condition) Condition {
 		}
 	}
 
-	filtered := c.Disjuncts[:0]
-	for _, d := range c.Disjuncts {
-		if conjunctionContradicts(d) {
-			continue
+	if checkContradictions {
+		filtered := c.Disjuncts[:0]
+		for _, d := range c.Disjuncts {
+			if conjunctionContradicts(d) {
+				continue
+			}
+			filtered = append(filtered, d)
 		}
-		filtered = append(filtered, d)
+		if len(filtered) == 0 {
+			return FalseCondition()
+		}
+		c.Disjuncts = filtered
+		n = len(c.Disjuncts)
 	}
-	if len(filtered) == 0 {
-		return FalseCondition()
-	}
-	c.Disjuncts = filtered
-	n = len(c.Disjuncts)
 
 	// Fast path: single disjunct
 	if n == 1 {
