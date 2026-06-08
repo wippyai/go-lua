@@ -6,9 +6,31 @@ import (
 	"github.com/wippyai/go-lua/types/typ"
 )
 
-// BoundaryPathRebaser maps a boundary-relative fact path to the caller or entry
-// point path where the fact is materialized.
-type BoundaryPathRebaser func(BoundaryPath) (constraint.Path, bool)
+// BoundaryLocalPath is the caller- or entry-local identity of a boundary path.
+// Boundary application needs both the source path for path-shaped transfer
+// transactions and the stable address for address-indexed proof lanes; callers
+// normalize that pair once at the boundary.
+type BoundaryLocalPath struct {
+	path    constraint.Path
+	address StableAddress
+}
+
+// BoundaryLocalPathOfPath normalizes a concrete local path into the address
+// view used by point-state fact domains.
+func BoundaryLocalPathOfPath(path constraint.Path) (BoundaryLocalPath, bool) {
+	addr, ok := StableAddressOfPath(path)
+	if !ok {
+		return BoundaryLocalPath{}, false
+	}
+	return BoundaryLocalPath{
+		path:    cloneAddressPath(path),
+		address: addr,
+	}, true
+}
+
+// BoundaryPathRebaser maps a boundary-relative fact path to the normalized
+// caller or entry point identity where the fact is materialized.
+type BoundaryPathRebaser func(BoundaryPath) (BoundaryLocalPath, bool)
 
 // BoundaryAppendKeyPlan captures append-key replay decisions that must be made
 // from the pre-mutation point state and applied after other call side effects.
@@ -43,29 +65,29 @@ func BoundaryAppendKeyPlans(state PointState, facts BoundaryFacts, rebase Bounda
 	var plans []BoundaryAppendKeyPlan
 	for _, fact := range appendKeys {
 		array, ok := rebase(fact.Array)
-		if !ok || array.IsEmpty() {
+		if !ok || array.path.IsEmpty() {
 			continue
 		}
 		key, ok := rebase(fact.Key)
-		if !ok || key.IsEmpty() {
+		if !ok || key.path.IsEmpty() {
 			continue
 		}
 		factsView := PointFactsOf(state)
 		plan := BoundaryAppendKeyPlan{
-			array:               array,
-			key:                 key,
-			freshEmpty:          AppendFreshEmptySeedPath(state, array),
-			preserveHistoryBase: factsView.HasAppendHistoryBase(array),
+			array:               array.path,
+			key:                 key.path,
+			freshEmpty:          AppendFreshEmptySeedPath(state, array.path),
+			preserveHistoryBase: factsView.HasAppendHistoryBase(array.path),
 		}
 		if fact.HasTable {
 			table, ok := rebase(fact.Table)
-			if !ok || table.IsEmpty() {
+			if !ok || table.path.IsEmpty() {
 				continue
 			}
-			plan.table = table
+			plan.table = table.path
 			plan.hasTable = true
 		}
-		plan.writtenTables = boundaryIndexWriteTablesForAppendedKey(facts.IndexWrites(), rebase, key, plan.table, plan.hasTable)
+		plan.writtenTables = boundaryIndexWriteTablesForAppendedKey(facts.IndexWrites(), rebase, key.address, plan.table, plan.hasTable)
 		plans = append(plans, plan)
 	}
 	return plans
@@ -74,27 +96,27 @@ func BoundaryAppendKeyPlans(state PointState, facts BoundaryFacts, rebase Bounda
 func boundaryIndexWriteTablesForAppendedKey(
 	indexWrites []BoundaryIndexWriteFact,
 	rebase BoundaryPathRebaser,
-	key constraint.Path,
+	key StableAddress,
 	explicitTable constraint.Path,
 	hasExplicitTable bool,
 ) []constraint.Path {
-	if rebase == nil || key.IsEmpty() || len(indexWrites) == 0 {
+	if rebase == nil || key.Key() == "" || len(indexWrites) == 0 {
 		return nil
 	}
 	var tables []constraint.Path
 	for _, fact := range indexWrites {
 		writeKey, ok := rebase(fact.Key)
-		if !ok || !writeKey.Equal(key) {
+		if !ok || !writeKey.address.Equal(key) {
 			continue
 		}
 		table, ok := rebase(fact.Table)
-		if !ok || table.IsEmpty() {
+		if !ok || table.path.IsEmpty() {
 			continue
 		}
-		if hasExplicitTable && !table.Equal(explicitTable) {
+		if hasExplicitTable && !table.path.Equal(explicitTable) {
 			continue
 		}
-		tables = append(tables, table)
+		tables = append(tables, table.path)
 	}
 	return tables
 }
@@ -122,8 +144,8 @@ func ApplyBoundaryFacts(
 			continue
 		}
 		changed = ApplyMapWritePathTransaction(out, MapWritePathTransaction{
-			TablePath:              table,
-			KeyPath:                key,
+			TablePath:              table.path,
+			KeyPath:                key.path,
 			KeyValue:               product.FromType(typ.Unknown),
 			Value:                  fact.Value,
 			AllowOpaqueKeyReadback: true,
@@ -140,8 +162,8 @@ func ApplyBoundaryFacts(
 		}
 		txResult, txChanged := ApplyKeyProvenancePathTransaction(out, KeyProvenancePathTransaction{
 			Kind:      KeyProvenanceDynamicIndexWrite,
-			TablePath: table,
-			KeyPath:   key,
+			TablePath: table.path,
+			KeyPath:   key.path,
 		})
 		result = appendBoundaryKeyProvenanceResult(result, txResult)
 		changed = txChanged || changed
@@ -157,8 +179,8 @@ func ApplyBoundaryFacts(
 		}
 		txResult, txChanged := ApplyKeyProvenancePathTransaction(out, KeyProvenancePathTransaction{
 			Kind:      KeyProvenanceKeyArrayAssignment,
-			ArrayPath: array,
-			TablePath: table,
+			ArrayPath: array.path,
+			TablePath: table.path,
 		})
 		result = appendBoundaryKeyProvenanceResult(result, txResult)
 		changed = txChanged || changed
@@ -172,14 +194,9 @@ func ApplyBoundaryFacts(
 		if !ok {
 			continue
 		}
-		arrayAddr, arrayOK := StableAddressOfPath(array)
-		tableAddr, tableOK := StableAddressOfPath(table)
-		if !arrayOK || !tableOK {
-			continue
-		}
 		changed = ApplyKeyArrayValueProof(out, KeyArrayValueProof{
-			Array: arrayAddr,
-			Table: tableAddr,
+			Array: array.address,
+			Table: table.address,
 			Value: fact.Value,
 		}) || changed
 	}
@@ -193,15 +210,10 @@ func ApplyBoundaryFacts(
 		if !ok {
 			continue
 		}
-		arrayAddr, arrayOK := StableAddressOfPath(array)
-		sourceAddr, sourceOK := StableAddressOfPath(source)
-		if !arrayOK || !sourceOK {
-			continue
-		}
 		changed = ApplyAppendElementFieldOriginProof(out, AppendElementFieldOriginProof{
-			Array:       arrayAddr,
+			Array:       array.address,
 			Field:       fact.Field,
-			Source:      sourceAddr,
+			Source:      source.address,
 			SourceField: fact.SourceField,
 		}) || changed
 	}
@@ -211,7 +223,7 @@ func ApplyBoundaryFacts(
 		if !ok {
 			continue
 		}
-		if op, ok := NumericLenGeConstPathOp(target, fact.Lower); ok {
+		if op, ok := NumericLenGeConstPathOp(target.path, fact.Lower); ok {
 			ops = append(ops, op)
 		}
 	}

@@ -30,9 +30,9 @@ func TestApplyBoundaryFactsAppliesCollectionProvenanceTransaction(t *testing.T) 
 			Segments: append([]constraint.Segment(nil), path.Segments...),
 		}
 	}
-	rebase := func(path BoundaryPath) (constraint.Path, bool) {
+	rebase := func(path BoundaryPath) (BoundaryLocalPath, bool) {
 		if path.Kind != BoundaryPathParam {
-			return constraint.Path{}, false
+			return BoundaryLocalPath{}, false
 		}
 		var root constraint.Path
 		switch path.Index {
@@ -45,12 +45,12 @@ func TestApplyBoundaryFactsAppliesCollectionProvenanceTransaction(t *testing.T) 
 		case 3:
 			root = constraint.NewPath(sourcePath.Symbol, sourcePath.Root)
 		default:
-			return constraint.Path{}, false
+			return BoundaryLocalPath{}, false
 		}
 		for _, seg := range path.Segments {
 			root = root.Append(seg)
 		}
-		return root, true
+		return BoundaryLocalPathOfPath(root)
 	}
 	facts := BoundaryFactsOf(
 		nil,

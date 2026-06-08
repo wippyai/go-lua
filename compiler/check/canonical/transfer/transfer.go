@@ -691,18 +691,18 @@ func (t *Transfer) SeedEntryFacts(out *flow.PointState, facts flow.BoundaryFacts
 	t.applyBoundaryFactApplication(out, app)
 }
 
-func (t *Transfer) rebaseEntryBoundaryPath(path flow.BoundaryPath) (constraint.Path, bool) {
+func (t *Transfer) rebaseEntryBoundaryPath(path flow.BoundaryPath) (flow.BoundaryLocalPath, bool) {
 	if t == nil || path.Kind != flow.BoundaryPathParam || path.Index < 0 || path.Index >= len(t.in.Scope.ParamSymbols) {
-		return constraint.Path{}, false
+		return flow.BoundaryLocalPath{}, false
 	}
 	sym := t.in.Scope.ParamSymbols[path.Index]
 	if sym == 0 {
-		return constraint.Path{}, false
+		return flow.BoundaryLocalPath{}, false
 	}
-	return constraint.Path{
+	return flow.BoundaryLocalPathOfPath(constraint.Path{
 		Symbol:   sym,
 		Segments: append([]constraint.Segment(nil), path.Segments...),
-	}, true
+	})
 }
 
 // SeedEntrySymbolValues writes immutable entry values keyed directly by graph
@@ -2474,8 +2474,12 @@ func (t *Transfer) applyBoundaryFactApplication(out *flow.PointState, app flow.B
 }
 
 func (t *Transfer) callBoundaryPathRebaser(call *ast.FuncCallExpr, returns map[int]constraint.Path) flow.BoundaryPathRebaser {
-	return func(path flow.BoundaryPath) (constraint.Path, bool) {
-		return t.rebaseBoundaryPath(call, returns, path)
+	return func(path flow.BoundaryPath) (flow.BoundaryLocalPath, bool) {
+		local, ok := t.rebaseBoundaryPath(call, returns, path)
+		if !ok {
+			return flow.BoundaryLocalPath{}, false
+		}
+		return flow.BoundaryLocalPathOfPath(local)
 	}
 }
 
