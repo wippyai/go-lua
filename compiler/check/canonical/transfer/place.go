@@ -50,8 +50,10 @@ func (a staticAccess) place(sym cfg.SymbolID) (Place, bool) {
 	if a.Root == nil || sym == 0 {
 		return Place{}, false
 	}
-	steps := append([]PlaceStep(nil), a.Steps...)
-	return Place{Root: sym, RootName: a.Root.Value, Steps: steps}, true
+	// staticAccess owns the step slice built during AST lowering; converting to
+	// Place transfers that slice into the canonical location instead of cloning
+	// the same representation twice.
+	return Place{Root: sym, RootName: a.Root.Value, Steps: a.Steps}, true
 }
 
 func (a staticAccess) segments() ([]constraint.Segment, bool) {
