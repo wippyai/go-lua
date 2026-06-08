@@ -567,8 +567,13 @@ func (t *Transfer) Transfer(
 	loopFacts := t.loopAppendLengthsByPoint[p]
 	info := g.Info(p)
 	if p != entry && len(loopFacts) == 0 {
-		switch info.(type) {
-		case *cfg.AssignInfo, *cfg.BranchInfo, *cfg.ReturnInfo, *cfg.CallInfo, *cfg.FuncDefInfo:
+		switch info := info.(type) {
+		case *cfg.BranchInfo:
+			// Branch nodes have no unconditional state write: the selected guard fact
+			// belongs to NarrowEdge, and the shared node state only records read demand.
+			t.applyBranch(&incoming, info, demand)
+			return incoming
+		case *cfg.AssignInfo, *cfg.ReturnInfo, *cfg.CallInfo, *cfg.FuncDefInfo:
 		default:
 			return incoming
 		}
