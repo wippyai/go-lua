@@ -679,31 +679,36 @@ func mergeConjunctions(a, b []Constraint) []Constraint {
 		return a
 	}
 
-	aHashes := make([]uint64, len(a))
-	for i := range a {
-		aHashes[i] = a[i].Hash()
-	}
-	bHashes := make([]uint64, len(b))
-	for i := range b {
-		bHashes[i] = b[i].Hash()
-	}
-
 	out := make([]Constraint, 0, len(a)+len(b))
 	i, j := 0, 0
+	var aHash, bHash uint64
+	var aHashReady, bHashReady bool
 	for i < len(a) && j < len(b) {
-		cmp := compareConstraints(a[i], aHashes[i], b[j], bHashes[j])
+		if !aHashReady {
+			aHash = a[i].Hash()
+			aHashReady = true
+		}
+		if !bHashReady {
+			bHash = b[j].Hash()
+			bHashReady = true
+		}
+		cmp := compareConstraints(a[i], aHash, b[j], bHash)
 		switch {
 		case cmp < 0:
 			out = append(out, a[i])
 			i++
+			aHashReady = false
 		case cmp > 0:
 			out = append(out, b[j])
 			j++
+			bHashReady = false
 		default:
 			if a[i].Equals(b[j]) {
 				out = append(out, a[i])
 				i++
 				j++
+				aHashReady = false
+				bHashReady = false
 				continue
 			}
 			// Tie on ordering keys but non-equal constraints (typically hash collision):
