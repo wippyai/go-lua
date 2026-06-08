@@ -177,6 +177,17 @@ func ClonePointStateForEdgeFactEffect(ps PointState) PointState {
 	return out
 }
 
+// DetachPointStateEnv makes ps.Env safe to mutate after ps was produced by a
+// shallow PointState copy. Persistent axes may be copied by value, but Env is a
+// mutable map; borrowed-edge reducers call this only when they actually
+// materialize a value refinement.
+func DetachPointStateEnv(ps *PointState) {
+	if ps == nil {
+		return
+	}
+	ps.Env = cloneEnv(ps.Env)
+}
+
 func cloneEnv(env map[ValueKey]product.AbstractValue) map[ValueKey]product.AbstractValue {
 	if envDomain.Equal(env, envDomain.Top()) {
 		return envDomain.Top()

@@ -98,6 +98,29 @@ func TestClonePointStateForEdgeFactEffectCopiesOnlyEdgeFactMutableAxes(t *testin
 	}
 }
 
+func TestDetachPointStateEnvCopiesBorrowedEnvOnly(t *testing.T) {
+	const sym = cfg.SymbolID(1)
+	const other = cfg.SymbolID(2)
+	original := PointState{
+		Env: map[ValueKey]product.AbstractValue{
+			SymbolValueKey(sym): product.FromType(typ.String),
+		},
+	}
+	borrowed := original
+
+	DetachPointStateEnv(&borrowed)
+	borrowed.Env[SymbolValueKey(sym)] = product.FromType(typ.Number)
+	borrowed.Env[SymbolValueKey(other)] = product.FromType(typ.Boolean)
+
+	got, ok := original.Env[SymbolValueKey(sym)]
+	if !ok || !typ.TypeEquals(got.ProjectValue(), typ.String) {
+		t.Fatalf("original Env[%s] = %v/%v, want string/true", SymbolValueKey(sym), got.ProjectValue(), ok)
+	}
+	if _, ok := original.Env[SymbolValueKey(other)]; ok {
+		t.Fatalf("borrowed Env mutation leaked into original Env[%s]", SymbolValueKey(other))
+	}
+}
+
 func TestClonePointStateCanonicalizesMutableFiniteMaps(t *testing.T) {
 	const sym = cfg.SymbolID(1)
 	path := SymbolPathKey(sym, nil)

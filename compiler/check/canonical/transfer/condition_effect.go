@@ -15,6 +15,18 @@ type ConditionEffect struct {
 }
 
 func (t *Transfer) applyConditionEffect(out *flow.PointState, effect ConditionEffect) bool {
+	return t.applyConditionEffectWithOwnership(out, effect, false)
+}
+
+func (t *Transfer) applyBorrowedEdgeConditionEffect(out *flow.PointState, effect ConditionEffect) bool {
+	return t.applyConditionEffectWithOwnership(out, effect, true)
+}
+
+func (t *Transfer) applyConditionEffectWithOwnership(
+	out *flow.PointState,
+	effect ConditionEffect,
+	detachEnvForSymbolReductions bool,
+) bool {
 	if out == nil {
 		return false
 	}
@@ -54,6 +66,10 @@ func (t *Transfer) applyConditionEffect(out *flow.PointState, effect ConditionEf
 		},
 	}.Reductions()
 	for _, reduction := range reductions.SymbolValues {
+		if detachEnvForSymbolReductions {
+			flow.DetachPointStateEnv(out)
+			detachEnvForSymbolReductions = false
+		}
 		t.applyRefinementEffect(out, RefinementEffect{
 			Place: Place{Root: reduction.Symbol},
 			Kind:  RefinementSetValue,

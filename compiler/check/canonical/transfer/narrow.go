@@ -438,8 +438,11 @@ func (t *Transfer) narrowByBranchConditionEffect(point cfg.Point, out flow.Point
 	if !ok {
 		return out
 	}
-	res := flow.ClonePointStateForEdgeFactEffect(out)
-	t.applyConditionEffect(&res, effect)
+	// Most condition facts only update persistent proof axes. Start with a
+	// shallow edge state and detach Env only if reductions materialize a symbol
+	// value refinement.
+	res := out
+	t.applyBorrowedEdgeConditionEffect(&res, effect)
 	return res
 }
 
@@ -1400,7 +1403,8 @@ func (t *Transfer) narrowGuardedIndexPresence(out flow.PointState, info *cfg.Bra
 	if !ok {
 		return out
 	}
-	res := flow.ClonePointStateForEdgeFactEffect(out)
+	// Guarded-index presence publishes only finite key-provenance proof axes.
+	res := out
 	t.applyKeyProvenancePathTransaction(&res, effect)
 	return res
 }
