@@ -7,6 +7,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/bind"
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/api"
+	"github.com/wippyai/go-lua/compiler/check/domain/paramboundary"
 	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/flow"
 	"github.com/wippyai/go-lua/types/typ"
@@ -72,6 +73,14 @@ func (f bodyPreconditionFacts) ObservePath(q flow.PathObservationQuery) flow.Pat
 	}
 }
 
+func bodyPreconditionParams(symbols ...cfg.SymbolID) paramboundary.ParameterSlots {
+	slots := make([]cfg.ParamSlot, len(symbols))
+	for i, sym := range symbols {
+		slots[i] = cfg.ParamSlot{Symbol: sym}
+	}
+	return paramboundary.ParameterSlotsFromSlots(slots)
+}
+
 func TestBodyPreconditionContext_DerivedLocalPathReachesParameter(t *testing.T) {
 	paramSym := cfg.SymbolID(1)
 	localSym := cfg.SymbolID(2)
@@ -88,7 +97,7 @@ func TestBodyPreconditionContext_DerivedLocalPathReachesParameter(t *testing.T) 
 				}},
 			},
 		},
-		paramIndexBySym: map[cfg.SymbolID]int{paramSym: 0},
+		params: bodyPreconditionParams(paramSym),
 		dominates: func(a, b cfg.Point) bool {
 			return a == b || (a == 1 && b == 2)
 		},
@@ -136,7 +145,7 @@ func TestBodyPreconditionContext_FieldWriteDoesNotBackPropagateWholeRootEvidence
 				},
 			},
 		},
-		paramIndexBySym: map[cfg.SymbolID]int{paramSym: 0},
+		params: bodyPreconditionParams(paramSym),
 		dominates: func(a, b cfg.Point) bool {
 			return a == b || (a == 1 && b == 2)
 		},
@@ -172,7 +181,7 @@ func TestBodyPreconditionContext_FieldWriteBackPropagatesOnlyLeafEvidence(t *tes
 				},
 			},
 		},
-		paramIndexBySym: map[cfg.SymbolID]int{paramSym: 0},
+		params: bodyPreconditionParams(paramSym),
 		dominates: func(a, b cfg.Point) bool {
 			return a == b || (a == 1 && b == 2)
 		},
@@ -214,7 +223,7 @@ func TestBodyPreconditionContext_AmbiguousDominatingAssignmentsRejected(t *testi
 				},
 			},
 		},
-		paramIndexBySym: map[cfg.SymbolID]int{paramSym: 0, otherSym: 1},
+		params: bodyPreconditionParams(paramSym, otherSym),
 		dominates: func(a, b cfg.Point) bool {
 			if a == b {
 				return true
@@ -286,8 +295,8 @@ func TestBodyPreconditionContext_LocalProofUsesConditionProofFactsWithoutConcret
 		result: &api.FuncResult{
 			Facts: bodyPreconditionFacts{proves: true},
 		},
-		bindings:        bindings,
-		paramIndexBySym: map[cfg.SymbolID]int{paramSym: 0},
+		bindings: bindings,
+		params:   bodyPreconditionParams(paramSym),
 	}
 
 	preconditions := ctx.PreconditionsFromCall(4, api.CallEvidence{
@@ -323,7 +332,7 @@ func TestBodyPreconditionContext_ConditionedEvidenceUsesProofAndPathObservationF
 				},
 			},
 		},
-		paramIndexBySym: map[cfg.SymbolID]int{paramSym: 0},
+		params: bodyPreconditionParams(paramSym),
 	}
 
 	idx, evidence, conditional, ok := ctx.paramEvidenceFromPath(msg.Field("function_call").Field("id"), typ.String, 7, nil)
@@ -349,10 +358,10 @@ func TestBodyPreconditionContext_RecursiveSelfCallEvidenceStaysBodyLocal(t *test
 	bindings := bind.NewBindingTable()
 	bindings.Bind(arg, paramSym)
 	ctx := BodyPreconditionContext{
-		result:          &api.FuncResult{},
-		bindings:        bindings,
-		currentSym:      currentSym,
-		paramIndexBySym: map[cfg.SymbolID]int{paramSym: 0},
+		result:     &api.FuncResult{},
+		bindings:   bindings,
+		currentSym: currentSym,
+		params:     bodyPreconditionParams(paramSym),
 	}
 	expected := typ.NewMap(typ.Any, typ.Any)
 
@@ -378,10 +387,10 @@ func TestBodyPreconditionContext_NonRecursiveHardUseCanPublishPublic(t *testing.
 	bindings := bind.NewBindingTable()
 	bindings.Bind(arg, paramSym)
 	ctx := BodyPreconditionContext{
-		result:          &api.FuncResult{},
-		bindings:        bindings,
-		currentSym:      currentSym,
-		paramIndexBySym: map[cfg.SymbolID]int{paramSym: 0},
+		result:     &api.FuncResult{},
+		bindings:   bindings,
+		currentSym: currentSym,
+		params:     bodyPreconditionParams(paramSym),
 	}
 	expected := typ.NewMap(typ.Any, typ.Any)
 

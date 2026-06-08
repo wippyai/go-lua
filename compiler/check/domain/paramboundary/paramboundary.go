@@ -12,6 +12,60 @@ import (
 	"github.com/wippyai/go-lua/types/typ"
 )
 
+// ParameterSlot is the parameter-boundary identity exported to consumers that
+// need both slot index and declaration point for one root symbol.
+type ParameterSlot struct {
+	Index     int
+	DeclPoint cfg.Point
+}
+
+// ParameterSlots is the normalized symbol -> parameter-boundary lookup for one
+// function. It preserves canonical slot indexes, including implicit receivers.
+type ParameterSlots struct {
+	bySymbol map[cfg.SymbolID]ParameterSlot
+}
+
+// ParameterSlotsFromGraph returns the normalized parameter-boundary lookup for g.
+func ParameterSlotsFromGraph(g *cfg.Graph) ParameterSlots {
+	if g == nil {
+		return ParameterSlots{}
+	}
+	return ParameterSlotsFromSlots(g.ParamSlotsReadOnly())
+}
+
+// ParameterSlotsFromSlots normalizes a canonical parameter-slot slice into a
+// symbol-keyed boundary lookup.
+func ParameterSlotsFromSlots(slots []cfg.ParamSlot) ParameterSlots {
+	if len(slots) == 0 {
+		return ParameterSlots{}
+	}
+	out := ParameterSlots{bySymbol: make(map[cfg.SymbolID]ParameterSlot, len(slots))}
+	for idx, slot := range slots {
+		if slot.Symbol == 0 {
+			continue
+		}
+		out.bySymbol[slot.Symbol] = ParameterSlot{
+			Index:     idx,
+			DeclPoint: slot.DeclPoint,
+		}
+	}
+	return out
+}
+
+// Lookup returns the canonical parameter slot for sym, if sym is a parameter.
+func (s ParameterSlots) Lookup(sym cfg.SymbolID) (ParameterSlot, bool) {
+	if sym == 0 || s.bySymbol == nil {
+		return ParameterSlot{}, false
+	}
+	slot, ok := s.bySymbol[sym]
+	return slot, ok
+}
+
+// IsEmpty reports whether the lookup has no valid parameter roots.
+func (s ParameterSlots) IsEmpty() bool {
+	return len(s.bySymbol) == 0
+}
+
 // UnannotatedRootsFromFacts returns parameter roots that have no explicit
 // annotation and no resolved declared type.
 func UnannotatedRootsFromFacts(

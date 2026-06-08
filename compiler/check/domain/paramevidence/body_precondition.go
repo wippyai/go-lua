@@ -7,6 +7,7 @@ import (
 	cfganalysis "github.com/wippyai/go-lua/compiler/cfg/analysis"
 	"github.com/wippyai/go-lua/compiler/check/api"
 	"github.com/wippyai/go-lua/compiler/check/domain/fieldkey"
+	"github.com/wippyai/go-lua/compiler/check/domain/paramboundary"
 	flowpath "github.com/wippyai/go-lua/compiler/check/domain/path"
 	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/flow"
@@ -30,12 +31,11 @@ func (p BodyPreconditions) IsZero() bool {
 // BodyPreconditionContext owns the derivation from solved flow/path evidence to
 // current-function BodyParams/PublicParams.
 type BodyPreconditionContext struct {
-	result              *api.FuncResult
-	bindings            *bind.BindingTable
-	currentSym          cfg.SymbolID
-	paramIndexBySym     map[cfg.SymbolID]int
-	paramDeclPointBySym map[cfg.SymbolID]cfg.Point
-	dominates           func(cfg.Point, cfg.Point) bool
+	result     *api.FuncResult
+	bindings   *bind.BindingTable
+	currentSym cfg.SymbolID
+	params     paramboundary.ParameterSlots
+	dominates  func(cfg.Point, cfg.Point) bool
 }
 
 // NewBodyPreconditionContext constructs the solved-flow projection used to
@@ -44,13 +44,11 @@ func NewBodyPreconditionContext(graph *cfg.Graph, result *api.FuncResult, bindin
 	if graph == nil && result != nil {
 		graph = result.Graph
 	}
-	paramIndexBySym, paramDeclPointBySym := functionParameterIndexes(graph)
 	return BodyPreconditionContext{
-		result:              result,
-		bindings:            bindings,
-		paramIndexBySym:     paramIndexBySym,
-		paramDeclPointBySym: paramDeclPointBySym,
-		dominates:           pointDominates(graph),
+		result:    result,
+		bindings:  bindings,
+		params:    paramboundary.ParameterSlotsFromGraph(graph),
+		dominates: pointDominates(graph),
 	}
 }
 
@@ -70,7 +68,7 @@ func (c BodyPreconditionContext) WithCurrentFunctionSymbol(sym cfg.SymbolID) Bod
 // enforces the callee's concrete contract after the interprocedural fixpoint.
 func (c BodyPreconditionContext) PreconditionsFromCall(p cfg.Point, evidence api.CallEvidence, expectedReceiver typ.Type, calleeParamInferred func(argIdx int) bool) BodyPreconditions {
 	info := evidence.Info
-	if c.result == nil || info == nil || len(c.paramIndexBySym) == 0 {
+	if c.result == nil || info == nil || c.params.IsEmpty() {
 		return BodyPreconditions{}
 	}
 	var out BodyPreconditions
@@ -131,11 +129,11 @@ func (c BodyPreconditionContext) paramEvidenceFromPath(path constraint.Path, exp
 	if c.conditionProofFacts() != nil {
 		evidence, conditional = c.conditionedPathEvidence(path, evidence, p)
 	}
-	if paramIdx, found := c.paramIndexBySym[path.Symbol]; found {
+	if param, found := c.params.Lookup(path.Symbol); found {
 		if c.symbolLocallyReboundBefore(path.Symbol, p) {
 			return 0, nil, false, false
 		}
-		return paramIdx, evidence, conditional, true
+		return param.Index, evidence, conditional, true
 	}
 	if seen == nil {
 		seen = make(map[cfg.SymbolID]bool, 1)
@@ -520,7 +518,7 @@ func (c BodyPreconditionContext) symbolLocallyReboundBefore(sym cfg.SymbolID, p 
 			continue
 		}
 		for _, target := range ev.Info.Targets {
-			if ev.Point == c.paramDeclPointBySym[sym] {
+			if param, ok := c.params.Lookup(sym); ok && ev.Point == param.DeclPoint {
 				continue
 			}
 			if target.Kind == cfg.TargetIdent && target.Symbol == sym {
@@ -659,21 +657,6 @@ func (c BodyPreconditionContext) pathTypeAt(p cfg.Point, path constraint.Path) t
 		}
 	}
 	return nil
-}
-
-func functionParameterIndexes(graph *cfg.Graph) (map[cfg.SymbolID]int, map[cfg.SymbolID]cfg.Point) {
-	paramIndexBySym := make(map[cfg.SymbolID]int)
-	paramDeclPointBySym := make(map[cfg.SymbolID]cfg.Point)
-	if graph == nil {
-		return paramIndexBySym, paramDeclPointBySym
-	}
-	for idx, slot := range graph.ParamSlotsReadOnly() {
-		if slot.Symbol != 0 {
-			paramIndexBySym[slot.Symbol] = idx
-			paramDeclPointBySym[slot.Symbol] = slot.DeclPoint
-		}
-	}
-	return paramIndexBySym, paramDeclPointBySym
 }
 
 func pointDominates(graph *cfg.Graph) func(cfg.Point, cfg.Point) bool {

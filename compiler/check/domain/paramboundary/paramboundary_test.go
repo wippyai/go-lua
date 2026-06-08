@@ -9,6 +9,28 @@ import (
 	"github.com/wippyai/go-lua/types/typ"
 )
 
+func TestParameterSlotsFromSlotsNormalizesLookup(t *testing.T) {
+	first := cfg.SymbolID(7)
+	second := cfg.SymbolID(3)
+
+	got := ParameterSlotsFromSlots([]cfg.ParamSlot{
+		{Symbol: 0},
+		{Symbol: first, DeclPoint: 11},
+		{Symbol: second, DeclPoint: 13},
+	})
+
+	if got.IsEmpty() {
+		t.Fatal("parameter slot lookup should not be empty")
+	}
+	slot, ok := got.Lookup(second)
+	if !ok || slot.Index != 2 || slot.DeclPoint != 13 {
+		t.Fatalf("Lookup(%d) = %#v/%v, want index 2 decl 13", second, slot, ok)
+	}
+	if _, ok := got.Lookup(0); ok {
+		t.Fatal("Lookup(0) unexpectedly succeeded")
+	}
+}
+
 func TestUnannotatedRootsFromFactsExcludesExplicitAny(t *testing.T) {
 	untyped := cfg.SymbolID(1)
 	explicitAny := cfg.SymbolID(2)
