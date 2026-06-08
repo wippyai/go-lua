@@ -348,10 +348,9 @@ func (set keyPresenceFactSet) intersect(other keyPresenceFactSet, widenPayload b
 
 	events := append(append([]AppendHistoryEventFact(nil), set.appendEvents...), other.appendEvents...)
 	coverage := append(append([]AppendHistoryCoverageFact(nil), set.appendCoverage...), other.appendCoverage...)
-	origins := append(append([]AppendElementFieldOriginFact(nil), set.appendOrigins...), other.appendOrigins...)
 	appendEvents := appendHistoryEventsForBases(events, appendBases)
 	appendCoverage := appendHistoryCoverageForBases(coverage, appendBases, appendEvents, widenPayload)
-	appendOrigins := appendElementFieldOriginsForBases(origins, appendBases)
+	appendOrigins := appendElementFieldOriginsForBaseSets(set.appendOrigins, other.appendOrigins, appendBases)
 
 	arrays := keyArrayRowIdentity.Intersect(set.arrays, other.arrays)
 	arrays = append(arrays, keyArrayFactsSpecializedByEmpty(set.emptyArrays, other.arrays)...)
@@ -2466,34 +2465,28 @@ func appendHistoryCoverageForBases(
 	return append([]AppendHistoryCoverageFact(nil), out...)
 }
 
-func appendElementFieldOriginsForBases(
-	origins []AppendElementFieldOriginFact,
+func appendElementFieldOriginsForBaseSets(
+	left, right []AppendElementFieldOriginFact,
 	bases []AppendHistoryBaseFact,
 ) []AppendElementFieldOriginFact {
-	if len(origins) == 0 || len(bases) == 0 {
+	if (len(left) == 0 && len(right) == 0) || len(bases) == 0 {
 		return nil
 	}
-	sortAppendElementFieldOriginFacts(origins)
-	var out []AppendElementFieldOriginFact
-	for _, origin := range origins {
+	return appendElementFieldOriginRowIdentity.Union(left, right, func(origin AppendElementFieldOriginFact) (AppendElementFieldOriginFact, bool) {
 		if origin.Array == "" || origin.Field == "" || origin.Source == "" {
-			continue
+			return AppendElementFieldOriginFact{}, false
 		}
 		if origin.SourceField != "" && !appendElementFieldPathKeyHasSegments(origin.SourceField) {
-			continue
+			return AppendElementFieldOriginFact{}, false
 		}
 		if _, ok := findAppendHistoryBaseFact(bases, AppendHistoryBaseFact{Array: origin.Array}); !ok {
-			continue
+			return AppendElementFieldOriginFact{}, false
 		}
 		if !appendElementFieldPathKeyHasSegments(origin.Field) {
-			continue
+			return AppendElementFieldOriginFact{}, false
 		}
-		if len(out) > 0 && out[len(out)-1] == origin {
-			continue
-		}
-		out = append(out, origin)
-	}
-	return append([]AppendElementFieldOriginFact(nil), out...)
+		return origin, true
+	})
 }
 
 func appendElementFieldOriginOverlapsMember(fact AppendElementFieldOriginFact, member []constraint.Segment) bool {
