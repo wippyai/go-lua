@@ -99,7 +99,7 @@ func (c CaptureCells) Project(symbols []cfg.SymbolID) CaptureCells {
 			for _, sym := range sortedUniqueSymbols(symbols) {
 				entries = append(entries, CaptureCell{Symbol: sym, Value: product.Domain.Top()})
 			}
-			return CaptureCellsOf(entries)
+			return canonicalCaptureCellsOwned(entries, product.Domain.Join)
 		}
 		return CaptureCells{}
 	}
@@ -118,7 +118,7 @@ func (c CaptureCells) Project(symbols []cfg.SymbolID) CaptureCells {
 			j++
 		}
 	}
-	return CaptureCellsOf(out)
+	return canonicalCaptureCellsOwned(out, product.Domain.Join)
 }
 
 // ProjectPaths keeps the captured cells and product members named by projection.
@@ -135,7 +135,7 @@ func (c CaptureCells) ProjectPaths(projection ReferencePathProjection) CaptureCe
 		for _, req := range requests {
 			entries = append(entries, CaptureCell{Symbol: req.symbol, Value: product.Domain.Top()})
 		}
-		return CaptureCellsOf(entries)
+		return canonicalCaptureCellsOwned(entries, product.Domain.Join)
 	}
 	if len(c.entries) == 0 {
 		return CaptureCells{}
@@ -172,7 +172,7 @@ func (c CaptureCells) ProjectPaths(projection ReferencePathProjection) CaptureCe
 		i++
 		j++
 	}
-	return CaptureCellsOf(out)
+	return canonicalCaptureCellsOwned(out, product.Domain.Join)
 }
 
 // WithStaticMembers overlays point-local static-member facts onto captured cell
@@ -253,7 +253,7 @@ func (c CaptureCells) With(sym cfg.SymbolID, v product.AbstractValue) CaptureCel
 	default:
 		next = append(next, CaptureCell{Symbol: sym, Value: v})
 	}
-	return canonicalCaptureCells(next, product.Domain.Join)
+	return canonicalCaptureCellsOwned(next, product.Domain.Join)
 }
 
 // Format renders c deterministically for law-test diagnostics and journal notes.
@@ -449,6 +449,15 @@ func canonicalCaptureCells(entries []CaptureCell, merge func(product.AbstractVal
 		return CaptureCells{}
 	}
 	out := append([]CaptureCell(nil), entries...)
+	return canonicalCaptureCellsOwned(out, merge)
+}
+
+// canonicalCaptureCellsOwned consumes a caller-owned slice and returns it as the
+// immutable carrier backing store after sorting, merging, and bottom filtering.
+func canonicalCaptureCellsOwned(out []CaptureCell, merge func(product.AbstractValue, product.AbstractValue) product.AbstractValue) CaptureCells {
+	if len(out) == 0 {
+		return CaptureCells{}
+	}
 	sortCaptureCells(out)
 	dst := out[:0]
 	for _, e := range out {
@@ -464,7 +473,10 @@ func canonicalCaptureCells(entries []CaptureCell, merge func(product.AbstractVal
 		}
 		dst = append(dst, e)
 	}
-	return CaptureCells{entries: append([]CaptureCell(nil), dst...)}
+	if len(dst) == 0 {
+		return CaptureCells{}
+	}
+	return CaptureCells{entries: dst}
 }
 
 func canonicalCaptureCellsValue(c CaptureCells) CaptureCells {
@@ -534,7 +546,7 @@ func combineCaptureCells(a, b CaptureCells, op func(product.AbstractValue, produ
 			j++
 		}
 	}
-	return canonicalCaptureCells(out, product.Domain.Join)
+	return canonicalCaptureCellsOwned(out, product.Domain.Join)
 }
 
 func captureCellsPointwise(a, b CaptureCells, pred func(product.AbstractValue, product.AbstractValue) bool) bool {
@@ -568,7 +580,7 @@ func valueIsBottom(v product.AbstractValue) bool {
 }
 
 func internCaptureCellsKey(c CaptureCells) CaptureCellsKey {
-	cells := canonicalCaptureCells(c.Entries(), product.Domain.Join)
+	cells := canonicalCaptureCellsOwned(c.Entries(), product.Domain.Join)
 	if c.top {
 		cells = CaptureCellsTop()
 	}
