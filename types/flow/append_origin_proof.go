@@ -692,13 +692,7 @@ func AppendOriginSources(state PointState, source StableAddress) []AppendOriginS
 	for _, route := range state.ValueOrigins.indexedIteratorValueSourceRoutesCoveringAddress(source) {
 		add(route.source, route.remainder)
 	}
-	for _, route := range state.ValueOrigins.assignmentAliasSourceRoutesCoveringAddress(source) {
-		routed, ok := route.appendedSource()
-		if ok {
-			add(routed, nil)
-		}
-	}
-	for _, route := range state.PathAliases.sourceRoutesCoveringAddress(source) {
+	for _, route := range identityAliasRoutesWithPolicy(state, source, IdentityAliasReadPolicy) {
 		routed, ok := route.appendedSource()
 		if ok {
 			add(routed, nil)
