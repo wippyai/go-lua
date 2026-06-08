@@ -54,15 +54,16 @@ func projectWithDeclaredReturns(fs state.FunctionState, g *cfg.Graph, declaredRe
 func projectWithOptions(fs state.FunctionState, g *cfg.Graph, opts projectOptions) Summary {
 	returns := projectReturns(fs, g, opts)
 	return Summary{
-		Returns:           returns,
-		ReturnRefs:        projectReturnRefs(fs, g),
-		Params:            cloneContracts(fs.Contracts),
-		Relations:         projectReturnRelations(fs, g, returns, opts.DeclaredReturns),
-		CellEffects:       projectCellEffects(fs, g),
-		ReceiverEffects:   projectReceiverEffects(fs, g),
-		BoundaryFacts:     projectBoundaryFacts(fs, g),
-		CaptureReferences: projectCaptureReferences(fs, g),
-		PrototypeSelf:     projectPrototypeSelf(fs, g),
+		Returns:             returns,
+		ReturnRefs:          projectReturnRefs(fs, g),
+		ReturnStaticMembers: projectReturnStaticMembers(fs, g),
+		Params:              cloneContracts(fs.Contracts),
+		Relations:           projectReturnRelations(fs, g, returns, opts.DeclaredReturns),
+		CellEffects:         projectCellEffects(fs, g),
+		ReceiverEffects:     projectReceiverEffects(fs, g),
+		BoundaryFacts:       projectBoundaryFacts(fs, g),
+		CaptureReferences:   projectCaptureReferences(fs, g),
+		PrototypeSelf:       projectPrototypeSelf(fs, g),
 	}
 }
 
@@ -212,6 +213,109 @@ func returnRefsTupleAt(ps flow.PointState, info *cfg.ReturnInfo) flow.ReturnRefs
 	return flow.ReturnRefsOfSlots(out)
 }
 
+func projectReturnStaticMembers(fs state.FunctionState, g *cfg.Graph) []flow.StaticMemberFacts {
+	if g == nil {
+		return nil
+	}
+	var tuple []flow.StaticMemberFacts
+	saw := false
+	g.EachReturn(func(p cfg.Point, info *cfg.ReturnInfo) {
+		if info == nil || len(info.Exprs) == 0 {
+			return
+		}
+		ps, ok := fs.Points[p]
+		if !ok {
+			return
+		}
+		row := returnStaticMembersTupleAt(ps, g, p, info)
+		if !saw {
+			tuple = row
+			saw = true
+			return
+		}
+		tuple = returnStaticMembersDomain.Join(tuple, row)
+	})
+	if !saw {
+		return nil
+	}
+	return tuple
+}
+
+func returnStaticMembersTupleAt(ps flow.PointState, g *cfg.Graph, p cfg.Point, info *cfg.ReturnInfo) []flow.StaticMemberFacts {
+	out := make([]flow.StaticMemberFacts, len(info.Exprs))
+	for i := range info.Exprs {
+		out[i] = returnStaticMembersSlotAt(ps, g, p, info, i)
+	}
+	return out
+}
+
+func returnStaticMembersSlotAt(ps flow.PointState, g *cfg.Graph, p cfg.Point, info *cfg.ReturnInfo, i int) flow.StaticMemberFacts {
+	source, ok := returnExprLocalAddress(g, p, info, i)
+	if !ok {
+		return flow.StaticMemberFactsDomain.Top()
+	}
+	sourceAddr, ok := source.Stable()
+	if !ok {
+		return flow.StaticMemberFactsDomain.Top()
+	}
+	slotAddr, ok := flow.StableAddressOfPath(constraint.NewPlaceholder(i))
+	if !ok {
+		return flow.StaticMemberFactsDomain.Top()
+	}
+	facts := flow.RebaseStaticMemberFactsUnder(ps.StaticMembers, sourceAddr, slotAddr)
+	return returnProductDirectStaticMembers(facts, constraint.NewPlaceholder(i), returnSlotBaseValue(ps, info, i, projectOptions{}))
+}
+
+func returnProductDirectStaticMembers(facts flow.StaticMemberFacts, slotPath constraint.Path, av product.AbstractValue) flow.StaticMemberFacts {
+	if av.IsZero() || !av.DefinitelyPresent() {
+		return facts
+	}
+	rec := unwrap.Record(av.ProjectValue())
+	if rec == nil {
+		return facts
+	}
+	for _, field := range rec.Fields {
+		if field.Optional || field.Type == nil {
+			continue
+		}
+		addr, ok := flow.StableAddressOfPath(slotPath.Field(field.Name))
+		if !ok {
+			continue
+		}
+		facts = facts.WithAddress(addr, product.FromType(field.Type))
+	}
+	for _, member := range rec.StaticMembers {
+		if member.Optional || member.Type == nil {
+			continue
+		}
+		path, ok := staticMemberSlotPath(slotPath, member)
+		if !ok {
+			continue
+		}
+		addr, ok := flow.StableAddressOfPath(path)
+		if !ok {
+			continue
+		}
+		facts = facts.WithAddress(addr, product.FromType(member.Type))
+	}
+	return facts
+}
+
+func staticMemberSlotPath(root constraint.Path, member typ.StaticMember) (constraint.Path, bool) {
+	switch member.Kind {
+	case typ.StaticMemberStringIndex:
+		return root.IndexStr(member.Name), true
+	case typ.StaticMemberIntIndex:
+		index := int(member.Index)
+		if int64(index) != member.Index {
+			return constraint.Path{}, false
+		}
+		return root.IndexInt(index), true
+	default:
+		return constraint.Path{}, false
+	}
+}
+
 // returnTupleAt reads the values of one return statement's expressions from the
 // converged point state ps. A returned identifier (ReturnInfo.Symbols[i] != 0)
 // projects its Env value; otherwise or when identifier fallback is unavailable,
@@ -252,7 +356,7 @@ func materializeImplicitNilReturnSlots(info *cfg.ReturnInfo, tuple []product.Abs
 func returnSlotValue(ps flow.PointState, info *cfg.ReturnInfo, i int, opts projectOptions) product.AbstractValue {
 	if i < len(info.Symbols) && info.Symbols[i] != 0 {
 		if av, ok := flow.PointFactsOf(ps).SymbolValue(info.Symbols[i]); ok && !av.IsZero() {
-			return av
+			return flow.ProductWithStaticMembersForSymbol(info.Symbols[i], av, ps.StaticMembers)
 		}
 	}
 	// A non-identifier return (a literal, an arithmetic result, a call) carries
@@ -266,6 +370,18 @@ func returnSlotValue(ps flow.PointState, info *cfg.ReturnInfo, i int, opts proje
 		return product.Bottom()
 	}
 	return product.Domain.Top()
+}
+
+func returnSlotBaseValue(ps flow.PointState, info *cfg.ReturnInfo, i int, opts projectOptions) product.AbstractValue {
+	if i < len(info.Symbols) && info.Symbols[i] != 0 {
+		if av, ok := flow.PointFactsOf(ps).SymbolValue(info.Symbols[i]); ok && !av.IsZero() {
+			// ReturnStaticMembers rebases the StaticMembers axis separately. Direct
+			// product children must be read from the raw returned value so stale child
+			// overlays cannot mask newer product evidence before the summary fold.
+			return av
+		}
+	}
+	return returnSlotValue(ps, info, i, opts)
 }
 
 func returnSlotHasFiniteCallTarget(ps flow.PointState, info *cfg.ReturnInfo, i int, opts projectOptions) bool {
@@ -570,9 +686,10 @@ func appendBoundaryIndexKey(out []byte, idx int) []byte {
 func projectPointBoundaryFacts(ps flow.PointState, mapper flow.BoundaryPathProjection) flow.BoundaryFacts {
 	return flow.ProjectBoundaryFacts(
 		flow.BoundaryFactProjectionInput{
-			KeyPresence: ps.KeyPresence,
-			Num:         ps.Num,
-			IndexWrites: ps.IndexWrites,
+			KeyPresence:   ps.KeyPresence,
+			StaticMembers: ps.StaticMembers,
+			Num:           ps.Num,
+			IndexWrites:   ps.IndexWrites,
 		},
 		mapper,
 		flow.BoundaryFactProjectionPolicy{

@@ -542,11 +542,34 @@ func TestAppendElementMatchesValueDomain(t *testing.T) {
 	}{
 		{"widen array element", typ.NewArray(typ.Number), typ.String},
 		{"empty record to array", recordWith(), typ.Number},
+		{
+			"fresh array to structured element",
+			typ.NewFreshArray(),
+			typ.NewRecord().Field("routes", typ.NewFreshArray()).Build(),
+		},
 	}
 	for _, c := range cases {
 		want := value.MergeForConvergence(c.array, value.AdmitArrayElementMutation(c.array, c.elem, value.JoinContainerValueTypes))
 		got := AppendElement(FromType(c.array), FromType(c.elem))
 		assertProjects(t, c.name, got, want)
+	}
+}
+
+func TestJoinConditionalAppendKeepsFreshArrayElementShape(t *testing.T) {
+	elem := typ.NewRecord().
+		Field("routes", typ.NewFreshArray()).
+		Build()
+	empty := FromType(typ.NewFreshArray())
+	appended := AppendElement(empty, FromType(elem))
+
+	got := Join(empty, appended).ProjectValue()
+	arr, ok := unwrap.Alias(got).(*typ.Array)
+	if !ok {
+		t.Fatalf("Join(empty, appended) = %T %[1]v, want array", got)
+	}
+	rec, ok := unwrap.Alias(arr.Element).(*typ.Record)
+	if !ok || rec.GetField("routes") == nil {
+		t.Fatalf("joined element = %T %[1]v, want record with routes", arr.Element)
 	}
 }
 

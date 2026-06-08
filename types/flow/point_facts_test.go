@@ -174,14 +174,12 @@ func TestSingleChangedValueKeyRejectsMultipleChanges(t *testing.T) {
 	}
 }
 
-func TestPointFactsPathValueUsesStaticMemberFactsBeforeRootTraversal(t *testing.T) {
+func TestPointFactsPathValueUsesStaticMemberFactsForMissingRootMember(t *testing.T) {
 	const sym = cfg.SymbolID(11)
 	path := constraint.NewPath(sym, "entry").Field("meta").Field("id")
 	state := PointState{
 		Env: map[ValueKey]product.AbstractValue{
-			SymbolValueKey(sym): product.FromType(typ.NewRecord().
-				Field("meta", typ.NewRecord().Field("id", typ.String).Build()).
-				Build()),
+			SymbolValueKey(sym): product.FromType(typ.NewRecord().Build()),
 		},
 		StaticMembers: StaticMemberFactsDomain.Top().
 			WithAddress(testStableAddressKey(t, SymbolPathKey(sym, path.Segments)), product.FromType(typ.Number)),
@@ -189,7 +187,52 @@ func TestPointFactsPathValueUsesStaticMemberFactsBeforeRootTraversal(t *testing.
 
 	got, ok := PointFactsOf(state).PathType(path)
 	if !ok || !typ.TypeEquals(got, typ.Number) {
-		t.Fatalf("PathType(static fact override) = %v/%v, want number/true", got, ok)
+		t.Fatalf("PathType(static fact fill) = %v/%v, want number/true", got, ok)
+	}
+}
+
+func TestPointFactsPathValuePreservesRootProductEvidenceWithStaticMember(t *testing.T) {
+	const sym = cfg.SymbolID(12)
+	path := constraint.NewPath(sym, "graph").Field("edges")
+	live := typ.NewMap(typ.String, typ.NewRecord().Field("targets", typ.NewFreshArray()).Build())
+	state := PointState{
+		Env: map[ValueKey]product.AbstractValue{
+			SymbolValueKey(sym): product.FromType(typ.NewRecord().Field("edges", live).Build()),
+		},
+		StaticMembers: StaticMemberFactsDomain.Top().
+			WithAddress(testStableAddressKey(t, SymbolPathKey(sym, path.Segments)), product.FromType(typ.NewRecord().Build())),
+	}
+
+	got, ok := PointFactsOf(state).PathValue(path)
+	if !ok {
+		t.Fatal("PathValue(graph.edges) did not resolve")
+	}
+	if field, ok := product.IndexOf(got, product.FromType(typ.String)); !ok || typ.IsAbsentOrUnknown(field.ProjectValue()) {
+		t.Fatalf("PathValue(graph.edges) = %v, want map evidence preserved", got.ProjectValue())
+	}
+	if gotType, ok := PointFactsOf(state).PathType(path); !ok || !typ.TypeEquals(gotType, live) {
+		t.Fatalf("PathType(graph.edges) = %v/%v, want %v", gotType, ok, live)
+	}
+}
+
+func TestPointFactsReadPathTypeUsesRootProductTraversal(t *testing.T) {
+	const sym = cfg.SymbolID(11)
+	path := constraint.NewPath(sym, "graph").Field("static_data_sources")
+	state := PointState{
+		Env: map[ValueKey]product.AbstractValue{
+			SymbolValueKey(sym): product.FromType(typ.NewRecord().
+				Field("static_data_sources", typ.NewArray(typ.NewRecord().
+					Field("routes", typ.NewFreshArray()).
+					Build())).
+				Build()),
+		},
+	}
+
+	got := PointFactsOf(state).ReadPathType(path, PointReadPolicy{})
+	if got.State != StateResolved || !typ.TypeEquals(got.Type, typ.NewArray(typ.NewRecord().
+		Field("routes", typ.NewFreshArray()).
+		Build())) {
+		t.Fatalf("ReadPathType(root product member) = %#v, want structured array", got)
 	}
 }
 
@@ -205,6 +248,42 @@ func TestPointFactsAddressValueUsesPathReadLaw(t *testing.T) {
 	got, ok := PointFactsOf(state).AddressValue(addr)
 	if !ok || !product.Domain.Equal(got, want) {
 		t.Fatalf("AddressValue(static fact) = %v/%v, want string/true", got, ok)
+	}
+}
+
+func TestPointFactsPathValueStaticFactRefinesMapFallback(t *testing.T) {
+	const sym = cfg.SymbolID(14)
+	message := typ.NewRecord().Field("_topic", typ.String).Build()
+	path := constraint.NewPath(sym, "messages").IndexStr("root")
+	state := PointState{
+		Env: map[ValueKey]product.AbstractValue{
+			SymbolValueKey(sym): product.FromType(typ.NewMap(typ.String, message)),
+		},
+		StaticMembers: StaticMemberFactsDomain.Top().
+			WithAddress(testStableAddressKey(t, SymbolPathKey(sym, path.Segments)), product.FromType(message)),
+	}
+
+	got, ok := PointFactsOf(state).PathValue(path)
+	if !ok || !got.DefinitelyPresent() || !typ.TypeEquals(got.ProjectValue(), message) {
+		t.Fatalf("PathValue(static fact over map fallback) = %v/%v present=%v, want %v present", got.ProjectValue(), ok, got.DefinitelyPresent(), message)
+	}
+}
+
+func TestPointFactsPathValuePresenceFactRefinesMapFallback(t *testing.T) {
+	const sym = cfg.SymbolID(15)
+	message := typ.NewRecord().Field("_topic", typ.String).Build()
+	path := constraint.NewPath(sym, "messages").IndexStr("root")
+	state := PointState{
+		Env: map[ValueKey]product.AbstractValue{
+			SymbolValueKey(sym): product.FromType(typ.NewMap(typ.String, message)),
+		},
+		StaticMembers: StaticMemberFactsDomain.Top().
+			WithAddress(testStableAddressKey(t, SymbolPathKey(sym, path.Segments)), product.PresentDynamic()),
+	}
+
+	got, ok := PointFactsOf(state).PathValue(path)
+	if !ok || !got.DefinitelyPresent() || !typ.TypeEquals(got.ProjectValue(), message) {
+		t.Fatalf("PathValue(presence fact over map fallback) = %v/%v present=%v, want %v present", got.ProjectValue(), ok, got.DefinitelyPresent(), message)
 	}
 }
 
@@ -233,8 +312,8 @@ func TestPointFactsChildPathFactsEnumeratesDirectMaterializedChildren(t *testing
 	}
 
 	metaChildren := PointFactsOf(state).ChildPathFacts(meta)
-	if len(metaChildren) != 1 || !metaChildren[0].Path.Equal(id) || !typ.TypeEquals(metaChildren[0].Type, typ.Number) {
-		t.Fatalf("meta child facts = %#v, want id:number", metaChildren)
+	if len(metaChildren) != 1 || !metaChildren[0].Path.Equal(id) || !typ.TypeEquals(metaChildren[0].Type, typ.String) {
+		t.Fatalf("meta child facts = %#v, want id:string from root product", metaChildren)
 	}
 }
 

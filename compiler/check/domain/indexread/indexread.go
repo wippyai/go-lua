@@ -66,6 +66,9 @@ func Context(q ContextQuery) (flowfacts.PathObservationIndexRead, bool) {
 	var out flowfacts.PathObservationIndexRead
 	out.Container = q.Container
 	out.KeyType = q.KeyType
+	if literal, ok := literalKeyType(q.Key); ok {
+		out.KeyType = literal
+	}
 	if q.PathOf != nil {
 		out.TablePath = q.PathOf(q.Object)
 		out.KeyPath = q.PathOf(q.Key)
@@ -85,6 +88,19 @@ func Context(q ContextQuery) (flowfacts.PathObservationIndexRead, bool) {
 		out.HasLiteralIndex = true
 	}
 	return out, !out.TablePath.IsEmpty() || !out.KeyPath.IsEmpty() || out.HasIndexVar || out.HasLength || out.HasLiteralIndex
+}
+
+func literalKeyType(expr ast.Expr) (typ.Type, bool) {
+	switch e := expr.(type) {
+	case *ast.StringExpr:
+		return typ.LiteralString(e.Value), true
+	case *ast.NumberExpr:
+		n, ok := numparse.ParseIntegerLiteral(e.Value)
+		if ok {
+			return typ.LiteralInt(n), true
+		}
+	}
+	return nil, false
 }
 
 func integerLiteralIndex(expr ast.Expr) (int64, bool) {

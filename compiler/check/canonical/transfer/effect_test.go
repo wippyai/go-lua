@@ -17,6 +17,7 @@ import (
 	querycore "github.com/wippyai/go-lua/types/query/core"
 	"github.com/wippyai/go-lua/types/subtype"
 	"github.com/wippyai/go-lua/types/typ"
+	"github.com/wippyai/go-lua/types/typ/unwrap"
 )
 
 func TestSymbolWriteEffectClearsStaleProductAxes(t *testing.T) {
@@ -1626,6 +1627,47 @@ func TestMutatorEffectRecordsPrototypeSelfThroughReducer(t *testing.T) {
 		!effects[0].MustWrite ||
 		!product.Domain.Equal(effects[0].Value, got) {
 		t.Fatalf("receiver effects = %s, want must-write slot 0 to published mutator self", out.ReceiverEffects.Format())
+	}
+}
+
+func TestMutatorEffectPublishesUpdatedStaticMemberFact(t *testing.T) {
+	const graphSym = cfg.SymbolID(901)
+	tr := New(input.Inputs{}, Config{})
+	out := flow.PointState{
+		Env: map[flow.ValueKey]product.AbstractValue{
+			flow.SymbolValueKey(graphSym): product.FromType(typ.NewRecord().
+				Field("static_data_sources", typ.NewFreshArray()).
+				Build()),
+		},
+	}
+	elem := product.FromType(typ.NewRecord().
+		Field("routes", typ.NewFreshArray()).
+		Build())
+
+	tr.applyMutatorEffect(&out, MutatorEffect{
+		Place: Place{
+			Root: graphSym,
+			Steps: []PlaceStep{{
+				Kind:   PlaceStepStaticMember,
+				Member: value.MemberField("static_data_sources"),
+			}},
+		},
+		Kind:    MutatorAppendElement,
+		Element: elem,
+	})
+
+	path := constraint.NewPath(graphSym, "graph").Field("static_data_sources")
+	got, ok := testStaticMemberValue(t, out.StaticMembers, graphSym, path.Segments)
+	if !ok {
+		t.Fatalf("mutator did not publish static member fact: %s", out.StaticMembers.Format())
+	}
+	arr, ok := unwrap.Alias(got.ProjectValue()).(*typ.Array)
+	if !ok {
+		t.Fatalf("static_data_sources fact = %T %[1]v, want array", got.ProjectValue())
+	}
+	rec, ok := unwrap.Alias(arr.Element).(*typ.Record)
+	if !ok || rec.GetField("routes") == nil {
+		t.Fatalf("static_data_sources element = %T %[1]v, want record with routes", arr.Element)
 	}
 }
 

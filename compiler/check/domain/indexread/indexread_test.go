@@ -75,6 +75,26 @@ func (f fakeFlow) IndexReadPointFacts(cfg.Point, flow.PathReadView) flow.PointFa
 	})
 }
 
+func TestContextUsesLiteralStringKeyType(t *testing.T) {
+	index, ok := Context(ContextQuery{
+		Object:  &ast.IdentExpr{Value: "t"},
+		Key:     &ast.StringExpr{Value: "foo"},
+		KeyType: typ.String,
+		PathOf: func(expr ast.Expr) constraint.Path {
+			if _, ok := expr.(*ast.IdentExpr); ok {
+				return constraint.Path{Root: "t", Symbol: 10}
+			}
+			return constraint.Path{}
+		},
+	})
+	if !ok {
+		t.Fatal("Context did not recognize literal string index")
+	}
+	if !typ.TypeEquals(index.KeyType, typ.LiteralString("foo")) {
+		t.Fatalf("Context KeyType = %v, want literal foo", index.KeyType)
+	}
+}
+
 func TestRefine_TupleIndexBoundedByNumericForRemovesNil(t *testing.T) {
 	obj := &ast.IdentExpr{Value: "values"}
 	key := &ast.IdentExpr{Value: "i"}

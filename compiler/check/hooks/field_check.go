@@ -40,7 +40,7 @@ func CheckFields(graph *cfg.Graph, evidence api.FlowEvidence, observer observati
 
 	bindings := graph.Bindings()
 	observer = observer.WithGradualParamReads()
-	resolver := fieldResolverImpl{observer: observer, bindings: bindings, graph: graph}
+	resolver := fieldResolverImpl{observer: observer, bindings: bindings, graph: graph, flowOps: flowOps}
 	preStateResolver := resolver
 	if flowOps != nil {
 		preStateResolver.observer = observer.WithPreStateReads()
@@ -156,6 +156,7 @@ type fieldResolverImpl struct {
 	observer observation.Projector
 	bindings *bind.BindingTable
 	graph    *cfg.Graph
+	flowOps  api.FlowOps
 }
 
 func (r fieldResolverImpl) TypeOf(expr ast.Expr, p cfg.Point) typ.Type {
@@ -183,6 +184,20 @@ func (r fieldResolverImpl) IndexedReadProofType(expr *ast.AttrGetExpr, p cfg.Poi
 
 func (r fieldResolverImpl) PathOf(expr ast.Expr, p cfg.Point) constraint.Path {
 	return path.FromExprWithBindingsAt(expr, nil, r.bindings, r.graph, p)
+}
+
+func (r fieldResolverImpl) ExprHasLengthProof(expr ast.Expr, p cfg.Point) bool {
+	if r.flowOps == nil {
+		return false
+	}
+	path := r.PathOf(expr, p)
+	if path.IsEmpty() {
+		return false
+	}
+	if _, _, ok := r.flowOps.LengthBoundsAt(p, path); ok {
+		return true
+	}
+	return ops.MayHaveLength(r.flowOps.NarrowedTypeAt(p, path))
 }
 
 func (r fieldResolverImpl) FieldAccessHasPresentValue(expr *ast.AttrGetExpr, p cfg.Point) bool {
@@ -447,6 +462,9 @@ func checkUnaryMinus(e *ast.UnaryMinusOpExpr, p cfg.Point, resolver fieldResolve
 }
 
 func checkUnaryLength(e *ast.UnaryLenOpExpr, p cfg.Point, resolver fieldResolverImpl, sourceName string) []diag.Diagnostic {
+	if resolver.ExprHasLengthProof(e.Expr, p) {
+		return nil
+	}
 	t := resolver.TypeOf(e.Expr, p)
 	if t == nil || ops.MayHaveLength(t) || typ.IsNever(t) || t.Kind() == kind.Nil {
 		return nil

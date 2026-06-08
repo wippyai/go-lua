@@ -59,6 +59,14 @@ func (o CallOutcome) ReturnRefs() flow.ReturnRefs {
 	return o.Projection.ReturnRefs()
 }
 
+// ReturnStaticMembers projects returned child path facts from selected summaries.
+func (o CallOutcome) ReturnStaticMembers() []flow.StaticMemberFacts {
+	if !o.HasTargets() {
+		return nil
+	}
+	return o.Projection.ReturnStaticMembers()
+}
+
 // ReturnRelations projects return-slot relations through the canonical fallback
 // policy owned by this package.
 func (o CallOutcome) ReturnRelations(call *ast.FuncCallExpr, resolver TypeResolver, useResolvedSignature bool) flow.ReturnRelations {

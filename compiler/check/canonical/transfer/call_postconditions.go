@@ -9,9 +9,10 @@ import (
 )
 
 type assignCallPostconditionEffects struct {
-	relations     []flow.RelationEffect
-	boundaryFacts []boundaryFactPostcondition
-	numericOps    []flow.NumericOp
+	relations           []flow.RelationEffect
+	boundaryFacts       []boundaryFactPostcondition
+	returnStaticMembers []returnStaticMemberPostcondition
+	numericOps          []flow.NumericOp
 }
 
 type boundaryFactPostcondition struct {
@@ -20,6 +21,11 @@ type boundaryFactPostcondition struct {
 	facts   flow.BoundaryFacts
 	returns map[int]constraint.Path
 	plan    flow.BoundaryFactReplayPlan
+}
+
+type returnStaticMemberPostcondition struct {
+	target constraint.Path
+	facts  flow.StaticMemberFacts
 }
 
 // buildAssignCallPostconditions rebases callee return-relation predicates into
@@ -54,6 +60,7 @@ func (t *Transfer) buildAssignCallPostconditions(
 		t.appendSiblingNilPostconditions(info, callInfo, rels, &effects)
 		t.appendGuardedTypePostconditions(info, callInfo, rels, &effects)
 		t.appendBoundaryFactPostconditions(out, p, info, callInfo, demand, &effects)
+		t.appendReturnStaticMemberPostconditions(out, info, callInfo, demand, &effects)
 	})
 	return effects
 }
@@ -67,6 +74,9 @@ func (t *Transfer) applyAssignCallPostconditions(out *flow.PointState, effects a
 	}
 	for _, effect := range effects.boundaryFacts {
 		t.applyBoundaryFactsWithPlan(out, effect.point, effect.call, effect.facts, effect.returns, effect.plan)
+	}
+	for _, effect := range effects.returnStaticMembers {
+		flow.ApplyStaticMemberFacts(out, effect.facts)
 	}
 	if len(effects.numericOps) > 0 {
 		flow.ApplyNumericEffect(out, flow.NumericEffect{Ops: effects.numericOps})
@@ -147,6 +157,51 @@ func (t *Transfer) appendBoundaryFactPostconditions(
 	})
 }
 
+func (t *Transfer) appendReturnStaticMemberPostconditions(
+	out *flow.PointState,
+	info *cfg.AssignInfo,
+	callInfo *cfg.CallInfo,
+	demand func(int, paramevidence.ParamContract),
+	effects *assignCallPostconditionEffects,
+) {
+	if out == nil || callInfo == nil || callInfo.Call == nil || effects == nil {
+		return
+	}
+	members := t.callReturnStaticMembers(out, callInfo.Call, demand)
+	if len(members) == 0 {
+		return
+	}
+	for i, facts := range members {
+		if !facts.HasProof() {
+			continue
+		}
+		target, ok := assignmentTargetForReturn(info, callInfo, i)
+		if !ok {
+			continue
+		}
+		targetPath, ok := t.staticPathOfAssignTarget(target)
+		if !ok || targetPath.IsEmpty() {
+			continue
+		}
+		targetAddr, ok := flow.StableAddressOfPath(targetPath)
+		if !ok {
+			continue
+		}
+		slotAddr, ok := flow.StableAddressOfPath(constraint.NewPlaceholder(i))
+		if !ok {
+			continue
+		}
+		rebased := flow.RebaseStaticMemberFactsUnder(facts, slotAddr, targetAddr)
+		if !rebased.HasProof() {
+			continue
+		}
+		effects.returnStaticMembers = append(effects.returnStaticMembers, returnStaticMemberPostcondition{
+			target: targetPath,
+			facts:  rebased,
+		})
+	}
+}
+
 func (t *Transfer) boundaryReturnPaths(
 	info *cfg.AssignInfo,
 	callInfo *cfg.CallInfo,
@@ -197,6 +252,17 @@ func (t *Transfer) callBoundaryFacts(
 		return flow.BoundaryFactsDomain.Top()
 	}
 	return t.productCallResult(call, t.productCallContext(out, call, demand)).Effects.BoundaryFacts
+}
+
+func (t *Transfer) callReturnStaticMembers(
+	out *flow.PointState,
+	call *ast.FuncCallExpr,
+	demand func(int, paramevidence.ParamContract),
+) []flow.StaticMemberFacts {
+	if out == nil || call == nil {
+		return nil
+	}
+	return t.productCallResult(call, t.productCallContext(out, call, demand)).ReturnStaticMembers
 }
 
 func assignmentTargetForReturn(info *cfg.AssignInfo, callInfo *cfg.CallInfo, retIndex int) (cfg.AssignTarget, bool) {

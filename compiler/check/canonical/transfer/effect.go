@@ -359,23 +359,33 @@ func (t *Transfer) applyMutatorEffect(out *flow.PointState, effect MutatorEffect
 	if effect.Place.Root == 0 || effect.Element.IsZero() {
 		return changed
 	}
+	var updatedPlace product.AbstractValue
 	updated, ok := t.placeWriter().Update(out, effect.Place, func(base product.AbstractValue) (product.AbstractValue, bool) {
+		var next product.AbstractValue
+		var ok bool
 		switch effect.Kind {
 		case MutatorAppendElement:
-			return product.AppendElement(base, effect.Element), true
+			next, ok = product.AppendElement(base, effect.Element), true
 		case MutatorAppendMapElement:
 			if effect.Key.IsZero() {
 				return product.AbstractValue{}, false
 			}
-			return product.AppendMapElement(base, effect.Key, effect.Element), true
+			next, ok = product.AppendMapElement(base, effect.Key, effect.Element), true
 		case MutatorContainerElementUnion:
-			return product.ContainerElementUnion(base, effect.Element), true
+			next, ok = product.ContainerElementUnion(base, effect.Element), true
 		default:
 			return product.AbstractValue{}, false
 		}
+		if ok {
+			updatedPlace = next
+		}
+		return next, ok
 	})
 	if !ok {
 		return changed
+	}
+	if path, pathOK := effect.Place.StaticPath(); pathOK && len(path.Segments) > 0 && !updatedPlace.IsZero() {
+		changed = flow.SetStaticMemberPath(out, path, updatedPlace) || changed
 	}
 	if mutationOK {
 		changed = t.recordPrototypeSelfWrite(out, effect.Place.Root, updated, true, mutation) || changed
@@ -499,6 +509,7 @@ func (t *Transfer) applyWriteEffectWithAliasReplay(out *flow.PointState, effect 
 	if !sealedIndexTarget && effect.IndexTarget.Kind == cfg.TargetIndex {
 		if targetPath, ok := effect.Place.FinalDynamicIndexTargetPath(); ok {
 			if tx, ok := t.dynamicIndexWritePathTransaction(
+				out,
 				effect.IndexTarget,
 				effect.Source,
 				targetPath,
@@ -539,6 +550,7 @@ func (t *Transfer) applyWriteEffectWithAliasReplay(out *flow.PointState, effect 
 	if sealedIndexTarget && effect.IndexTarget.Kind == cfg.TargetIndex {
 		if targetPath, ok := effect.Place.FinalDynamicIndexTargetPath(); ok {
 			if tx, ok := t.dynamicIndexWritePathTransaction(
+				out,
 				effect.IndexTarget,
 				effect.Source,
 				targetPath,
@@ -552,6 +564,7 @@ func (t *Transfer) applyWriteEffectWithAliasReplay(out *flow.PointState, effect 
 	}
 	if targetPath, ok := effect.Place.FinalDynamicIndexTargetPath(); ok {
 		if tx, ok := t.dynamicIndexWritePathTransaction(
+			out,
 			effect.IndexTarget,
 			effect.Source,
 			targetPath,

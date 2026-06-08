@@ -189,12 +189,16 @@ type Driver struct {
 	// after it.
 	activeQueries *summary.Queries
 
-	// snapshotSummaryReads is set only while diagnostic exact observation is
-	// running. The local observer still uses exact entry axes, but nested call
-	// summaries are read from d.summaries instead of creating new exact Summary
-	// cells after the fixed point has converged.
-	snapshotSummaryReads  bool
-	diagnosticOverlayRead func(summary.Key)
+	// snapshotSummaryReads is set only for post-solve phases that must not demand
+	// additional summary keys, such as compatibility fact publication. Diagnostic
+	// bridge observation uses the same snapshot, including canonical exact keys the
+	// recursive query already solved; it must not demand new Summary cells.
+	snapshotSummaryReads bool
+
+	// canonicalSummarySnapshot is the read-only post-solve view of Summary facts
+	// produced by the canonical query. It is not a diagnostic overlay: diagnostics
+	// may read it for explanations/observations, but cannot publish or merge it.
+	canonicalSummarySnapshot summary.CanonicalSummarySnapshot
 
 	// diagnosticContexts records summary contexts observed by the summary-owned
 	// DiagnosticContextFrontier. The bridge uses these contexts, not an artificial
@@ -205,13 +209,6 @@ type Driver struct {
 	// diagnosticContexts so bridge materialization does not replay identical local
 	// equation solves for the same summary.Key.
 	diagnosticStates map[summary.Key]state.FunctionState
-
-	// diagnosticSummaries is the exact-key summary overlay projected from
-	// diagnostic observer states. Snapshot summary reads consult it before the
-	// coarser per-function converged summary map, so exact diagnostic solves can
-	// consume exact callee postconditions without creating new recursive summary
-	// query cells after the main fixed point.
-	diagnosticSummaries map[summary.Key]summary.Summary
 }
 
 // NewDriver constructs a canonical driver with the given configuration.
@@ -241,7 +238,7 @@ func (d *Driver) summaryReader() summary.Reader {
 		return summary.NewReader(nil, nil, nil)
 	}
 	if d.snapshotSummaryReads {
-		return summary.NewReaderWithOverlayReads(nil, nil, d.summaries, d.diagnosticSummaries, d.diagnosticOverlayRead)
+		return summary.NewSnapshotReader(d.canonicalSummarySnapshot)
 	}
 	return summary.NewReader(d.activeQueries, d.activeCtx, d.summaries)
 }
@@ -349,7 +346,7 @@ func (d *Driver) Run(sess api.AnalysisSession, chunk []ast.Stmt) {
 	d.activeQueries = queries
 	d.diagnosticContexts = make(map[summary.FuncRef][]summary.Key)
 	d.diagnosticStates = make(map[summary.Key]state.FunctionState)
-	d.diagnosticSummaries = make(map[summary.Key]summary.Summary)
+	d.canonicalSummarySnapshot = summary.CanonicalSummarySnapshot{}
 	defer func() {
 		d.activeProgram = nil
 		d.activeCtx = nil
@@ -376,30 +373,29 @@ func (d *Driver) solvePass(sess api.AnalysisSession, prog *program, queries *sum
 		d.summaries[ref] = queries.Summarize(sess.Context(), ref)
 	}
 	rootRef, _ := prog.refByFunc(sess.RootFuncNode())
-	d.withSnapshotSummaryReads(func() {
-		observed := summary.SelectPostWidenObservationRefs(summary.PostWidenObservationInput{
-			Refs: prog.refs,
-			Root: rootRef,
-			Summary: func(ref summary.FuncRef) summary.Summary {
-				return d.summaries[ref]
-			},
-			Graph: func(ref summary.FuncRef) *cfg.Graph {
-				return prog.Graph(ref)
-			},
-			IsMethod: func(ref summary.FuncRef) bool {
-				return prog.methodDef(ref) != nil
-			},
-			Nested: func(ref summary.FuncRef) []summary.FuncRef {
-				return prog.funcTopology.NestedRefs(ref)
-			},
-			Parent: func(ref summary.FuncRef) (summary.FuncRef, bool) {
-				return prog.funcTopology.ParentRef(ref)
-			},
-		})
-		for _, ref := range observed {
-			d.summaries[ref] = queries.ObservedSummary(sess.Context(), ref)
-		}
+	observed := summary.SelectPostWidenObservationRefs(summary.PostWidenObservationInput{
+		Refs: prog.refs,
+		Root: rootRef,
+		Summary: func(ref summary.FuncRef) summary.Summary {
+			return d.summaries[ref]
+		},
+		Graph: func(ref summary.FuncRef) *cfg.Graph {
+			return prog.Graph(ref)
+		},
+		IsMethod: func(ref summary.FuncRef) bool {
+			return prog.methodDef(ref) != nil
+		},
+		Nested: func(ref summary.FuncRef) []summary.FuncRef {
+			return prog.funcTopology.NestedRefs(ref)
+		},
+		Parent: func(ref summary.FuncRef) (summary.FuncRef, bool) {
+			return prog.funcTopology.ParentRef(ref)
+		},
 	})
+	for _, ref := range observed {
+		d.summaries[ref] = queries.ObservedSummary(sess.Context(), ref)
+	}
+	d.canonicalSummarySnapshot = queries.CanonicalSummarySnapshot(sess.Context(), d.summaries)
 	if rootRef, ok := prog.refByFunc(sess.RootFuncNode()); ok {
 		d.withSnapshotSummaryReads(func() {
 			d.buildDiagnosticContexts(sess, prog, queries, rootRef)
@@ -529,24 +525,23 @@ func (d *Driver) diagnosticState(sess api.AnalysisSession, prog *program, querie
 	}
 	contexts := d.diagnosticContexts[ref]
 	if len(contexts) == 0 {
-		reader := summary.NewReader(nil, nil, d.summaries)
+		reader := summary.NewSnapshotReader(d.canonicalSummarySnapshot)
 		values := prog.EntryValues(ref, reader)
 		if len(values) != 0 {
-			key := summary.NewDefaultKey(ref, values)
-			return queries.IntraWithKey(sess.Context(), key)
+			return d.observeDiagnosticIntra(sess, queries, summary.NewDefaultKey(ref, values))
 		}
-		return queries.Intra(sess.Context(), ref)
+		return d.observeDiagnosticIntra(sess, queries, summary.NewDefaultKey(ref, nil))
 	}
 	out := state.FunctionStateDomain.Bottom()
 	for _, key := range contexts {
-		fs, ok := d.diagnosticStates[key]
-		if !ok {
-			fs = queries.IntraWithKey(sess.Context(), key)
-			if d.diagnosticStates == nil {
-				d.diagnosticStates = make(map[summary.Key]state.FunctionState)
-			}
-			d.diagnosticStates[key] = fs
+		// Context discovery and final observation both read the converged canonical
+		// snapshot, including exact keys the Summary query actually demanded. This
+		// keeps diagnostics precise without creating or publishing a second Summary.
+		fs := d.observeDiagnosticIntra(sess, queries, key)
+		if d.diagnosticStates == nil {
+			d.diagnosticStates = make(map[summary.Key]state.FunctionState)
 		}
+		d.diagnosticStates[key] = fs
 		out = joinDiagnosticFunctionState(out, fs)
 	}
 	return out
@@ -557,20 +552,16 @@ func (d *Driver) buildDiagnosticContexts(sess api.AnalysisSession, prog *program
 		return
 	}
 	result := summary.DiagnosticContextFrontier{
-		Root:           root,
-		Refs:           prog.refs,
-		SummaryOverlay: d.diagnosticSummaries,
+		Root: root,
+		Refs: prog.refs,
 		ValidKey: func(key summary.Key) bool {
 			return d.validDiagnosticContext(prog, key)
 		},
 		DefaultKey: func(ref summary.FuncRef) summary.Key {
 			return d.defaultDiagnosticKey(prog, ref)
 		},
-		SolveWithDependencies: func(key summary.Key) (state.FunctionState, []summary.Key) {
-			return d.observeDiagnosticIntraWithOverlayDeps(sess, queries, key)
-		},
-		ProjectSummary: func(key summary.Key, fs state.FunctionState) summary.Summary {
-			return queries.ProjectStateSummary(sess.Context(), key.Ref, fs)
+		Solve: func(key summary.Key) state.FunctionState {
+			return d.observeDiagnosticIntra(sess, queries, key)
 		},
 		ProjectCalls: func(ref summary.FuncRef, fs state.FunctionState) []summary.Key {
 			return d.projectDiagnosticCallContexts(prog, ref, fs)
@@ -581,33 +572,6 @@ func (d *Driver) buildDiagnosticContexts(sess api.AnalysisSession, prog *program
 	}.Build()
 	d.diagnosticContexts = result.Contexts
 	d.diagnosticStates = result.States
-	d.diagnosticSummaries = result.Summaries
-}
-
-func (d *Driver) observeDiagnosticIntraWithOverlayDeps(sess api.AnalysisSession, queries *summary.Queries, key summary.Key) (state.FunctionState, []summary.Key) {
-	if d == nil {
-		return state.FunctionStateDomain.Bottom(), nil
-	}
-	var reads map[summary.Key]struct{}
-	prev := d.diagnosticOverlayRead
-	d.diagnosticOverlayRead = func(read summary.Key) {
-		if reads == nil {
-			reads = make(map[summary.Key]struct{})
-		}
-		reads[read] = struct{}{}
-	}
-	defer func() {
-		d.diagnosticOverlayRead = prev
-	}()
-	fs := d.observeDiagnosticIntra(sess, queries, key)
-	if len(reads) == 0 {
-		return fs, nil
-	}
-	deps := make([]summary.Key, 0, len(reads))
-	for dep := range reads {
-		deps = append(deps, dep)
-	}
-	return fs, deps
 }
 
 func (d *Driver) observeDiagnosticIntra(sess api.AnalysisSession, queries *summary.Queries, key summary.Key) state.FunctionState {
@@ -625,28 +589,58 @@ func (d *Driver) defaultDiagnosticKey(prog *program, ref summary.FuncRef) summar
 	if d == nil || prog == nil {
 		return summary.NewDefaultKey(ref, nil)
 	}
-	reader := summary.NewReader(nil, nil, d.summaries)
+	reader := summary.NewSnapshotReader(d.canonicalSummarySnapshot)
 	values := prog.EntryValues(ref, reader)
-	return summary.NewDefaultKey(ref, values)
+	if len(values) != 0 {
+		return summary.NewDefaultKey(ref, values)
+	}
+	return summary.NewDefaultKey(ref, nil)
 }
 
 func (d *Driver) projectDiagnosticCallContexts(prog *program, ref summary.FuncRef, fs state.FunctionState) []summary.Key {
 	if d == nil || prog == nil {
 		return nil
 	}
-	return prog.ProjectCallEntryContextKeys(ref, fs)
+	return d.normalizeDiagnosticKeys(prog.ProjectCallEntryContextKeys(ref, fs))
 }
 
 func (d *Driver) projectDiagnosticClosureContexts(prog *program, ref summary.FuncRef, fs state.FunctionState) []summary.Key {
 	if d == nil || prog == nil {
 		return nil
 	}
-	return summary.ClosureEntryContextProjection{
+	return d.normalizeDiagnosticKeys(summary.ClosureEntryContextProjection{
 		State: fs,
 		ReferencePaths: func(callee summary.FuncRef) flow.ReferencePathProjection {
 			return prog.referenceProjection(callee)
 		},
-	}.ProjectKeys()
+	}.ProjectKeys())
+}
+
+func (d *Driver) normalizeDiagnosticKeys(keys []summary.Key) []summary.Key {
+	if len(keys) == 0 {
+		return nil
+	}
+	out := keys[:0]
+	for _, key := range keys {
+		out = append(out, d.normalizeSnapshotSummaryKey(key))
+	}
+	return out
+}
+
+func (d *Driver) normalizeSnapshotSummaryKey(key summary.Key) summary.Key {
+	if d == nil || d.activeProgram == nil || len(key.Values.Values()) != 0 || key.Facts.Facts().HasProof() {
+		return key
+	}
+	lexical := d.activeProgram.CaptureEntryReferences(key.Ref, func(dep summary.FuncRef) flow.ReferenceContext {
+		if sum, ok := d.canonicalSummarySnapshot.SummaryForRef(dep); ok {
+			return sum.CaptureReferences
+		}
+		return flow.ReferenceContextBottom()
+	})
+	if flow.ReferenceContextDomain.Equal(key.References.Context(), lexical) {
+		return summary.NewDefaultKey(key.Ref, nil)
+	}
+	return key
 }
 
 func joinDiagnosticFunctionState(a, b state.FunctionState) state.FunctionState {
@@ -1514,7 +1508,11 @@ func (ct callTyper) summaryForCallEntryContext(entry canonicalcall.EntryContext)
 	if d == nil {
 		return summary.SummaryDomain.Bottom()
 	}
-	return d.summaryReader().SummarizeWithKey(entry.Key())
+	key := entry.Key()
+	if d.snapshotSummaryReads {
+		key = d.normalizeSnapshotSummaryKey(key)
+	}
+	return d.summaryReader().SummarizeWithKey(key)
 }
 
 // ProductCallFromValues is the product-carrier call path. It preserves product

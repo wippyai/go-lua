@@ -8,6 +8,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/check/canonical/state"
 	"github.com/wippyai/go-lua/compiler/parse"
 	"github.com/wippyai/go-lua/types/constraint"
+	"github.com/wippyai/go-lua/types/domain/value"
 	"github.com/wippyai/go-lua/types/domain/value/product"
 	"github.com/wippyai/go-lua/types/flow"
 	"github.com/wippyai/go-lua/types/typ"
@@ -54,6 +55,164 @@ func TestProject_ReturnProjectionPrefersIdentifierValue(t *testing.T) {
 
 	if len(sum.Returns) != 1 || !product.Domain.Equal(sum.Returns[0], idValue) {
 		t.Fatalf("summary return value = %v, want identifier-backed %v", ReturnValues(sum), idValue)
+	}
+}
+
+func TestProject_ReturnProjectionOverlaysIdentifierStaticMembers(t *testing.T) {
+	g := returnFunctionGraph(t, "return graph")
+	ret, info := returnPointAndInfo(t, g)
+	if len(info.Symbols) != 1 || info.Symbols[0] == 0 {
+		t.Fatalf("identifier return info not found: %#v", info.Symbols)
+	}
+	graphSym := info.Symbols[0]
+	fieldPath := constraint.NewPath(graphSym, "graph").Field("static_data_sources")
+	fieldValue := product.FromType(typ.NewArray(typ.NewRecord().
+		Field("routes", typ.NewFreshArray()).
+		Build()))
+
+	sum := Project(state.FunctionState{
+		Points: map[cfg.Point]flow.PointState{
+			ret: {
+				Env: map[flow.ValueKey]product.AbstractValue{
+					flow.SymbolValueKey(graphSym): product.FromType(typ.NewRecord().Build()),
+				},
+				StaticMembers: flow.StaticMemberFactsDomain.Top().
+					WithAddress(testSummaryStableAddress(t, fieldPath), fieldValue),
+			},
+		},
+	}, g)
+
+	if len(sum.Returns) != 1 {
+		t.Fatalf("summary returns = %d, want 1", len(sum.Returns))
+	}
+	got, ok := product.MemberOf(sum.Returns[0], value.MemberField("static_data_sources"))
+	if !ok || !product.Domain.Equal(got, fieldValue) {
+		t.Fatalf("returned graph.static_data_sources = %v/%v, want %v", got.ProjectValue(), ok, fieldValue.ProjectValue())
+	}
+	if len(sum.ReturnStaticMembers) != 1 || !sum.ReturnStaticMembers[0].HasProof() {
+		t.Fatalf("return static members = %#v, want slot proof", sum.ReturnStaticMembers)
+	}
+	slotField := constraint.NewPlaceholder(0).Field("static_data_sources")
+	if got, ok := sum.ReturnStaticMembers[0].ValueAtAddress(testSummaryStableAddress(t, slotField)); !ok || !product.Domain.Equal(got, fieldValue) {
+		t.Fatalf("return static member $0.static_data_sources = %v/%v, want %v", got.ProjectValue(), ok, fieldValue.ProjectValue())
+	}
+}
+
+func TestProject_ReturnStaticMembersIncludesDirectProductFields(t *testing.T) {
+	g := returnFunctionGraph(t, "return graph")
+	ret, info := returnPointAndInfo(t, g)
+	if len(info.Symbols) != 1 || info.Symbols[0] == 0 {
+		t.Fatalf("identifier return info not found: %#v", info.Symbols)
+	}
+	graphSym := info.Symbols[0]
+	edgesValue := typ.NewMap(typ.String, typ.NewRecord().
+		Field("targets", typ.NewFreshArray()).
+		Field("error_targets", typ.NewFreshArray()).
+		Build())
+
+	sum := Project(state.FunctionState{
+		Points: map[cfg.Point]flow.PointState{
+			ret: {
+				Env: map[flow.ValueKey]product.AbstractValue{
+					flow.SymbolValueKey(graphSym): product.FromType(typ.NewRecord().
+						Field("edges", edgesValue).
+						Build()),
+				},
+				StaticMembers: flow.StaticMemberFactsDomain.Top(),
+			},
+		},
+	}, g)
+
+	slotField := constraint.NewPlaceholder(0).Field("edges")
+	got, ok := sum.ReturnStaticMembers[0].ValueAtAddress(testSummaryStableAddress(t, slotField))
+	if !ok || !typ.TypeEquals(got.ProjectValue(), edgesValue) {
+		t.Fatalf("return static member $0.edges = %v/%v, want %v", got.ProjectValue(), ok, edgesValue)
+	}
+}
+
+func TestProject_ReturnStaticMembersDirectFieldsUseRawReturnedProduct(t *testing.T) {
+	g := returnFunctionGraph(t, "return graph")
+	ret, info := returnPointAndInfo(t, g)
+	if len(info.Symbols) != 1 || info.Symbols[0] == 0 {
+		t.Fatalf("identifier return info not found: %#v", info.Symbols)
+	}
+	graphSym := info.Symbols[0]
+	edgesValue := typ.NewMap(typ.String, typ.NewRecord().
+		Field("targets", typ.NewFreshArray()).
+		Field("error_targets", typ.NewFreshArray()).
+		Build())
+	staleEdgesPath := constraint.NewPath(graphSym, "graph").Field("edges")
+
+	sum := Project(state.FunctionState{
+		Points: map[cfg.Point]flow.PointState{
+			ret: {
+				Env: map[flow.ValueKey]product.AbstractValue{
+					flow.SymbolValueKey(graphSym): product.FromType(typ.NewRecord().
+						Field("edges", edgesValue).
+						Build()),
+				},
+				StaticMembers: flow.StaticMemberFactsDomain.Top().
+					WithAddress(testSummaryStableAddress(t, staleEdgesPath), product.FromType(typ.NewRecord().Build())),
+			},
+		},
+	}, g)
+
+	slotField := constraint.NewPlaceholder(0).Field("edges")
+	got, ok := sum.ReturnStaticMembers[0].ValueAtAddress(testSummaryStableAddress(t, slotField))
+	if !ok || !typ.TypeEquals(got.ProjectValue(), edgesValue) {
+		t.Fatalf("return static member $0.edges = %v/%v, want raw product field %v", got.ProjectValue(), ok, edgesValue)
+	}
+}
+
+func TestProject_ReturnStaticMembersRequireEveryReturnPath(t *testing.T) {
+	g := returnFunctionGraphWithParams(t, []string{"flag"}, "local rich = {}\nlocal plain = {}\nif flag then return rich end\nreturn plain")
+
+	var richRet cfg.Point
+	var plainRet cfg.Point
+	var richSym cfg.SymbolID
+	var plainSym cfg.SymbolID
+	g.EachReturn(func(p cfg.Point, info *cfg.ReturnInfo) {
+		if info == nil || len(info.Symbols) != 1 {
+			return
+		}
+		ident, _ := info.Exprs[0].(*ast.IdentExpr)
+		if ident == nil {
+			return
+		}
+		switch ident.Value {
+		case "rich":
+			richRet = p
+			richSym = info.Symbols[0]
+		case "plain":
+			plainRet = p
+			plainSym = info.Symbols[0]
+		}
+	})
+	if richRet == 0 || plainRet == 0 || richSym == 0 || plainSym == 0 {
+		t.Fatalf("expected rich/plain returns, got rich=%v/%v plain=%v/%v", richRet, richSym, plainRet, plainSym)
+	}
+	richField := constraint.NewPath(richSym, "rich").Field("id")
+
+	sum := Project(state.FunctionState{
+		Points: map[cfg.Point]flow.PointState{
+			richRet: {
+				Env: map[flow.ValueKey]product.AbstractValue{
+					flow.SymbolValueKey(richSym): product.FromType(typ.NewRecord().Build()),
+				},
+				StaticMembers: flow.StaticMemberFactsDomain.Top().
+					WithAddress(testSummaryStableAddress(t, richField), product.FromType(typ.String)),
+			},
+			plainRet: {
+				Env: map[flow.ValueKey]product.AbstractValue{
+					flow.SymbolValueKey(plainSym): product.FromType(typ.NewRecord().Build()),
+				},
+				StaticMembers: flow.StaticMemberFactsDomain.Top(),
+			},
+		},
+	}, g)
+
+	if len(sum.ReturnStaticMembers) != 1 || sum.ReturnStaticMembers[0].HasProof() {
+		t.Fatalf("one-branch return static members = %#v, want no definite proof", sum.ReturnStaticMembers)
 	}
 }
 

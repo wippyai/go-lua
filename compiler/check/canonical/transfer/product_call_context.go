@@ -23,6 +23,7 @@ type ProductCallContext struct {
 	ExprValue        func(ast.Expr) (product.AbstractValue, bool)
 	References       flow.ReferenceContext
 	KeyPresence      flow.KeyPresenceFacts
+	StaticMembers    flow.StaticMemberFacts
 	Num              *numeric.State
 	IndexWrites      flow.IndexWriteAdmissionFacts
 }
@@ -47,6 +48,7 @@ func (t *Transfer) productCallContext(
 	if out != nil {
 		ctx.References = flow.ReferenceContextFromPoint(out)
 		ctx.KeyPresence = out.KeyPresence
+		ctx.StaticMembers = out.StaticMembers
 		ctx.Num = out.Num
 		ctx.IndexWrites = out.IndexWrites
 	}

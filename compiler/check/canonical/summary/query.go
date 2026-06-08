@@ -96,8 +96,18 @@ type EntryValueDependencies interface {
 	PrototypeSelf(dep FuncRef) flow.PrototypeSelf
 }
 
+// EntryFactDependencies exposes summary-published caller entry facts for one
+// callee. Aggregate facts are must proofs; Top means no finite proof.
+type EntryFactDependencies interface {
+	CallEntryFacts(dep FuncRef, callee FuncRef) flow.BoundaryFacts
+}
+
 type entryValueProvider interface {
 	EntryValues(ref FuncRef, deps EntryValueDependencies) map[int]product.AbstractValue
+}
+
+type entryFactProvider interface {
+	EntryFacts(ref FuncRef, deps EntryFactDependencies) flow.BoundaryFacts
 }
 
 type entryValueMerger interface {
@@ -106,6 +116,10 @@ type entryValueMerger interface {
 
 type callEntryValueProjector interface {
 	ProjectCallEntryValues(ref FuncRef, fs state.FunctionState) CallEntryValues
+}
+
+type callEntryFactProjector interface {
+	ProjectCallEntryFacts(ref FuncRef, fs state.FunctionState) CallEntryFacts
 }
 
 type solveContextRunner interface {
@@ -128,31 +142,70 @@ type paramNarrowProvider interface {
 // dependency in the db cycle. After convergence it reads the immutable summary
 // snapshot. Callers should not duplicate this live-vs-snapshot choice.
 type Reader struct {
-	queries     *Queries
-	ctx         *db.QueryContext
-	converged   map[FuncRef]Summary
-	overlay     map[Key]Summary
-	overlayRead func(Key)
+	queries  *Queries
+	ctx      *db.QueryContext
+	snapshot CanonicalSummarySnapshot
 }
 
 // NewReader constructs a summary observer for live query reads plus a converged
 // fallback snapshot. A nil query/context makes the reader snapshot-only.
 func NewReader(queries *Queries, ctx *db.QueryContext, converged map[FuncRef]Summary) Reader {
-	return Reader{queries: queries, ctx: ctx, converged: converged}
+	return Reader{queries: queries, ctx: ctx, snapshot: BorrowCanonicalSummarySnapshot(converged, nil)}
 }
 
-// NewReaderWithOverlay constructs a summary observer with exact-key snapshot
-// overrides. The overlay is used only when the reader is snapshot-backed; live
-// readers still record semantic dependencies through the recursive summary query.
-func NewReaderWithOverlay(queries *Queries, ctx *db.QueryContext, converged map[FuncRef]Summary, overlay map[Key]Summary) Reader {
-	return Reader{queries: queries, ctx: ctx, converged: converged, overlay: overlay}
+// NewSnapshotReader constructs a post-solve reader over a canonical summary
+// snapshot. It never computes or records new Summary keys.
+func NewSnapshotReader(snapshot CanonicalSummarySnapshot) Reader {
+	return Reader{snapshot: snapshot}
 }
 
-// NewReaderWithOverlayReads constructs a snapshot observer that reports every
-// exact-overlay key it attempts to read. Diagnostic context discovery uses those
-// read edges to refresh only observers whose exact callee overlay changed.
-func NewReaderWithOverlayReads(queries *Queries, ctx *db.QueryContext, converged map[FuncRef]Summary, overlay map[Key]Summary, overlayRead func(Key)) Reader {
-	return Reader{queries: queries, ctx: ctx, converged: converged, overlay: overlay, overlayRead: overlayRead}
+// CanonicalSummarySnapshot is the immutable post-solve view of Summary facts
+// already produced by the canonical query. By-key entries are exact Summary keys
+// the engine demanded during the real solve; by-ref entries are the aggregate
+// compatibility/export summaries.
+type CanonicalSummarySnapshot struct {
+	byRef map[FuncRef]Summary
+	byKey map[Key]Summary
+}
+
+// BorrowCanonicalSummarySnapshot wraps existing maps without copying. It is for
+// live readers and driver-owned post-solve storage where the driver controls
+// mutation order.
+func BorrowCanonicalSummarySnapshot(byRef map[FuncRef]Summary, byKey map[Key]Summary) CanonicalSummarySnapshot {
+	return CanonicalSummarySnapshot{byRef: byRef, byKey: byKey}
+}
+
+// NewCanonicalSummarySnapshot copies maps into an immutable diagnostic/export
+// snapshot.
+func NewCanonicalSummarySnapshot(byRef map[FuncRef]Summary, byKey map[Key]Summary) CanonicalSummarySnapshot {
+	return CanonicalSummarySnapshot{
+		byRef: cloneSummaryByRef(byRef),
+		byKey: cloneSummaryByKey(byKey),
+	}
+}
+
+func (s CanonicalSummarySnapshot) ExactSummaryForKey(key Key) (Summary, bool) {
+	sum, ok := s.byKey[key]
+	if ok {
+		return sum, true
+	}
+	if key == NewDefaultKey(key.Ref, nil) {
+		return s.SummaryForRef(key.Ref)
+	}
+	return Summary{}, false
+}
+
+func (s CanonicalSummarySnapshot) SummaryForRef(ref FuncRef) (Summary, bool) {
+	sum, ok := s.byRef[ref]
+	return sum, ok
+}
+
+func (s CanonicalSummarySnapshot) HasExactKey(key Key) bool {
+	if _, ok := s.byKey[key]; ok {
+		return true
+	}
+	_, ok := s.byRef[key.Ref]
+	return key == NewDefaultKey(key.Ref, nil) && ok
 }
 
 // Live reports whether this reader is observing the active summary query cycle.
@@ -184,6 +237,11 @@ type Queries struct {
 	// cell. ParamNarrowQ remains as the local-effect compatibility projection; this
 	// condition carrier is the summary/export/call-boundary authority.
 	ReturnPostconditionQ *db.Query[FuncRef, paramevidence.ReturnPostconditions]
+
+	// demanded records Summary keys the canonical query was asked to solve. A
+	// post-solve snapshot may expose these exact keys to diagnostics, but
+	// diagnostics do not add to the set and do not publish summaries.
+	demanded map[Key]struct{}
 }
 
 type solveResult struct {
@@ -264,7 +322,7 @@ func (q *Queries) IntraWithKey(ctx *db.QueryContext, key Key) state.FunctionStat
 // normalized exact entry key, without demanding a corresponding recursive
 // Summary cell first.
 func (q *Queries) ObserveIntraWithKey(ctx *db.QueryContext, key Key) state.FunctionState {
-	return q.solveIntra(ctx, key.Ref, q.entryReferences(ctx, key), q.entryValues(ctx, key), key.Facts.Facts(), q.entrySymbolValues(key.Ref))
+	return q.solveIntra(ctx, key.Ref, q.entryReferences(ctx, key), q.entryValues(ctx, key), q.entryFacts(ctx, key), q.entrySymbolValues(key.Ref))
 }
 
 // Summarize returns ref's interprocedural Summary, driving the call-graph
@@ -286,12 +344,18 @@ func (q *Queries) ObservedSummary(ctx *db.QueryContext, ref FuncRef) Summary {
 
 // SummarizeWithKey returns the summary for an already normalized entry key.
 func (q *Queries) SummarizeWithKey(ctx *db.QueryContext, key Key) Summary {
-	return q.solveQ.Get(ctx, key).Summary
+	return q.canonicalSummary(ctx, key)
 }
 
 // Summarize returns ref's caller-visible summary through this reader.
 func (r Reader) Summarize(ref FuncRef) Summary {
-	return r.SummarizeWithKey(NewDefaultKey(ref, nil))
+	if r.queries != nil && r.ctx != nil {
+		return r.queries.Summarize(r.ctx, ref)
+	}
+	if sum, ok := r.snapshot.SummaryForRef(ref); ok {
+		return sum
+	}
+	return SummaryDomain.Bottom()
 }
 
 // SummarizeWithKey reads a summary through an already normalized entry key.
@@ -299,18 +363,72 @@ func (r Reader) SummarizeWithKey(key Key) Summary {
 	if r.queries != nil && r.ctx != nil {
 		return r.queries.SummarizeWithKey(r.ctx, key)
 	}
-	if r.overlay != nil {
-		if r.overlayRead != nil {
-			r.overlayRead(key)
-		}
-		if sum, ok := r.overlay[key]; ok {
-			return sum
-		}
-	}
-	if sum, ok := r.converged[key.Ref]; ok {
+	if sum, ok := r.snapshot.ExactSummaryForKey(key); ok {
 		return sum
 	}
 	return SummaryDomain.Bottom()
+}
+
+// CanonicalSummarySnapshot returns a keyed snapshot for canonical Summary cells
+// already demanded by the engine. It intentionally does not discover additional
+// keys; callers may use it as a read-only post-solve diagnostic surface.
+func (q *Queries) CanonicalSummarySnapshot(ctx *db.QueryContext, byRef map[FuncRef]Summary) CanonicalSummarySnapshot {
+	if q == nil || ctx == nil || len(q.demanded) == 0 {
+		return NewCanonicalSummarySnapshot(byRef, nil)
+	}
+	out := make(map[Key]Summary, len(q.demanded))
+	for {
+		var pending []Key
+		for key := range q.demanded {
+			if _, ok := out[key]; !ok {
+				pending = append(pending, key)
+			}
+		}
+		if len(pending) == 0 {
+			break
+		}
+		for _, key := range pending {
+			out[key] = q.solveQ.Get(ctx, key).Summary
+		}
+	}
+	return NewCanonicalSummarySnapshot(byRef, out)
+}
+
+func (q *Queries) canonicalSummary(ctx *db.QueryContext, key Key) Summary {
+	q.recordDemandedKey(key)
+	return q.solveQ.Get(ctx, key).Summary
+}
+
+func (q *Queries) recordDemandedKey(key Key) {
+	if q == nil {
+		return
+	}
+	if q.demanded == nil {
+		q.demanded = make(map[Key]struct{})
+	}
+	q.demanded[key] = struct{}{}
+}
+
+func cloneSummaryByRef(in map[FuncRef]Summary) map[FuncRef]Summary {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make(map[FuncRef]Summary, len(in))
+	for ref, sum := range in {
+		out[ref] = sum
+	}
+	return out
+}
+
+func cloneSummaryByKey(in map[Key]Summary) map[Key]Summary {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make(map[Key]Summary, len(in))
+	for key, sum := range in {
+		out[key] = sum
+	}
+	return out
 }
 
 // ParamNarrows reads ref's compatibility parameter-effect projection through the
@@ -319,7 +437,7 @@ func (r Reader) ParamNarrows(ref FuncRef) []paramevidence.ParamNarrow {
 	if r.queries != nil && r.ctx != nil {
 		return r.queries.ParamNarrows(r.ctx, ref)
 	}
-	if sum, ok := r.converged[ref]; ok {
+	if sum, ok := r.snapshot.SummaryForRef(ref); ok {
 		if len(sum.ParamNarrows) > 0 {
 			return paramevidence.SortParamNarrows(sum.ParamNarrows)
 		}
@@ -333,7 +451,7 @@ func (r Reader) ReturnPostconditions(ref FuncRef) paramevidence.ReturnPostcondit
 	if r.queries != nil && r.ctx != nil {
 		return paramevidence.CloneReturnPostconditions(r.queries.ReturnPostconditions(r.ctx, ref))
 	}
-	if sum, ok := r.converged[ref]; ok {
+	if sum, ok := r.snapshot.SummaryForRef(ref); ok {
 		if sum.Postconditions.HasConstraints() {
 			return paramevidence.CloneReturnPostconditions(sum.Postconditions)
 		}
@@ -347,8 +465,8 @@ func (q *Queries) intra(ctx *db.QueryContext, key Key) state.FunctionState {
 	// are at their converged approximation. The local state solve below is an exact
 	// observer over those dependencies; it is intentionally not memoized as a
 	// separate db fixed point.
-	_ = q.solveQ.Get(ctx, key).Summary
-	return q.solveIntra(ctx, key.Ref, q.entryReferences(ctx, key), q.entryValues(ctx, key), key.Facts.Facts(), q.entrySymbolValues(key.Ref))
+	_ = q.canonicalSummary(ctx, key)
+	return q.solveIntra(ctx, key.Ref, q.entryReferences(ctx, key), q.entryValues(ctx, key), q.entryFacts(ctx, key), q.entrySymbolValues(key.Ref))
 }
 
 // ParamNarrows returns ref's context-free compatibility parameter-effect cell.
@@ -370,7 +488,7 @@ func (q *Queries) ReturnPostconditions(ctx *db.QueryContext, ref FuncRef) parame
 // cycle records the real semantic dependency rather than an eager bottom-context
 // call-graph edge.
 func (q *Queries) computeSolve(ctx *db.QueryContext, key Key) solveResult {
-	fs := q.solveIntra(ctx, key.Ref, q.entryReferences(ctx, key), q.entryValues(ctx, key), key.Facts.Facts(), q.entrySymbolValues(key.Ref))
+	fs := q.solveIntra(ctx, key.Ref, q.entryReferences(ctx, key), q.entryValues(ctx, key), q.entryFacts(ctx, key), q.entrySymbolValues(key.Ref))
 	sum := q.ProjectStateSummary(ctx, key.Ref, fs)
 	return solveResult{State: fs, Summary: sum}
 }
@@ -388,6 +506,9 @@ func (q *Queries) ProjectStateSummary(ctx *db.QueryContext, ref FuncRef, fs stat
 	sum.Postconditions = q.ReturnPostconditions(ctx, ref)
 	if projector, ok := q.prog.(callEntryValueProjector); ok && projector != nil {
 		sum.CallEntryValues = projector.ProjectCallEntryValues(ref, fs)
+	}
+	if projector, ok := q.prog.(callEntryFactProjector); ok && projector != nil {
+		sum.CallEntryFacts = projector.ProjectCallEntryFacts(ref, fs)
 	}
 	return sum
 }
@@ -500,7 +621,7 @@ func (q *Queries) entryReferences(ctx *db.QueryContext, key Key) flow.ReferenceC
 	references := key.References.Context()
 	if provider, ok := q.prog.(captureEntryReferencesProvider); ok {
 		lexical := provider.CaptureEntryReferences(key.Ref, func(dep FuncRef) flow.ReferenceContext {
-			sum := q.solveQ.Get(ctx, NewDefaultKey(dep, nil)).Summary
+			sum := q.canonicalSummary(ctx, NewDefaultKey(dep, nil))
 			return sum.CaptureReferences
 		})
 		references = flow.MergeReferenceContextWithFixed(references, lexical)
@@ -522,6 +643,15 @@ func (q *Queries) entryValues(ctx *db.QueryContext, key Key) map[int]product.Abs
 		Fixed:    values,
 		Fallback: provided,
 	}).Values()
+}
+
+func (q *Queries) entryFacts(ctx *db.QueryContext, key Key) flow.BoundaryFacts {
+	facts := key.Facts.Facts()
+	provider, ok := q.prog.(entryFactProvider)
+	if !ok || provider == nil {
+		return facts
+	}
+	return mergeEntryFacts(facts, provider.EntryFacts(key.Ref, NewReader(q, ctx, nil)))
 }
 
 func (q *Queries) entrySymbolValues(ref FuncRef) map[cfg.SymbolID]product.AbstractValue {

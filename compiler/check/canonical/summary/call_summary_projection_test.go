@@ -32,6 +32,37 @@ func TestCallSummaryProjection_ReturnValuesSlotwiseJoin(t *testing.T) {
 	}
 }
 
+func TestCallSummaryProjection_ReturnStaticMembersRequireAllTargets(t *testing.T) {
+	slotField := constraint.NewPlaceholder(0).Field("id")
+	addr, ok := flow.StableAddressOfPath(slotField)
+	if !ok {
+		t.Fatalf("stable address for %s", slotField.Key())
+	}
+	left := flow.StaticMemberFactsDomain.Top().WithAddress(addr, product.FromType(typ.String))
+	right := flow.StaticMemberFactsDomain.Top().WithAddress(addr, product.FromType(typ.LiteralString("id")))
+
+	both := summary.CallSummaryProjection{Targets: []summary.CallSummaryTarget{
+		{Summary: summary.Summary{ReturnStaticMembers: []flow.StaticMemberFacts{left}}},
+		{Summary: summary.Summary{ReturnStaticMembers: []flow.StaticMemberFacts{right}}},
+	}}
+	got := both.ReturnStaticMembers()
+	if len(got) != 1 || !got[0].HasProof() {
+		t.Fatalf("both targets ReturnStaticMembers = %#v, want proof", got)
+	}
+	if value, ok := got[0].ValueAtAddress(addr); !ok || !typ.TypeEquals(value.ProjectValue(), typ.String) {
+		t.Fatalf("joined static member = %v/%v, want string", value.ProjectValue(), ok)
+	}
+
+	oneMissing := summary.CallSummaryProjection{Targets: []summary.CallSummaryTarget{
+		{Summary: summary.Summary{ReturnStaticMembers: []flow.StaticMemberFacts{left}}},
+		{Summary: summary.Summary{ReturnStaticMembers: []flow.StaticMemberFacts{flow.StaticMemberFactsDomain.Top()}}},
+	}}
+	got = oneMissing.ReturnStaticMembers()
+	if len(got) != 1 || got[0].HasProof() {
+		t.Fatalf("missing target ReturnStaticMembers = %#v, want no definite proof", got)
+	}
+}
+
 func TestCallSummaryProjection_ReturnValuesUseDeclaredSignatureReturns(t *testing.T) {
 	projection := summary.CallSummaryProjection{
 		Targets: []summary.CallSummaryTarget{

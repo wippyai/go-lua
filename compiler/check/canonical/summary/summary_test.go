@@ -207,6 +207,15 @@ func TestSummaryDomain_Laws(t *testing.T) {
 	entryValues := summary.CallEntryValues{
 		summary.FuncRef{GraphID: 99}: summary.EntryValues{0: n},
 	}
+	entryFacts := summary.CallEntryFacts{
+		summary.FuncRef{GraphID: 99}: flow.BoundaryFactsOf(
+			[]flow.BoundaryKeyPresenceFact{{
+				Table: flow.BoundaryPath{Kind: flow.BoundaryPathParam, Index: 0, Segments: []constraint.Segment{{Kind: constraint.SegmentField, Name: "nodes"}}},
+				Key:   flow.BoundaryPath{Kind: flow.BoundaryPathParam, Index: 0, Segments: []constraint.Segment{{Kind: constraint.SegmentField, Name: "last_node_id"}}},
+			}},
+			nil, nil, nil, nil, nil,
+		),
+	}
 	rels := flow.ReturnRelationsOfErrorReturns([]flow.ReturnCorrelation{{ValueIndex: 0, ErrorIndex: 1}})
 
 	lattice.LawSuite[summary.Summary]{
@@ -224,7 +233,8 @@ func TestSummaryDomain_Laws(t *testing.T) {
 			{CaptureReferences: flow.ReferenceContextOf(flow.CaptureCellsDomain.Bottom(), flow.FunctionRefsDomain.Bottom(), exportClosures)},
 			{PrototypeSelf: protos},
 			{CallEntryValues: entryValues},
-			{Returns: []product.AbstractValue{n, s}, ReturnRefs: flow.ReturnRefsOfSlots([]flow.ReturnRefSlot{flow.ReturnRefSlotOf(flow.FunctionRefsDomain.Bottom(), exportClosures)}), Relations: rels, CellEffects: effects, CaptureReferences: flow.ReferenceContextOf(exports, exportRefs, exportClosures), PrototypeSelf: protos, CallEntryValues: entryValues},
+			{CallEntryFacts: entryFacts},
+			{Returns: []product.AbstractValue{n, s}, ReturnRefs: flow.ReturnRefsOfSlots([]flow.ReturnRefSlot{flow.ReturnRefSlotOf(flow.FunctionRefsDomain.Bottom(), exportClosures)}), Relations: rels, CellEffects: effects, CaptureReferences: flow.ReferenceContextOf(exports, exportRefs, exportClosures), PrototypeSelf: protos, CallEntryValues: entryValues, CallEntryFacts: entryFacts},
 		},
 	}.Run(t)
 }
@@ -365,12 +375,7 @@ func TestReader_UsesConvergedSnapshotWhenNotLive(t *testing.T) {
 		t.Fatal("snapshot-only reader reported live")
 	}
 
-	got := reader.SummarizeWithKey(summary.NewKeyWithReferenceContext(
-		ref,
-		flow.ReferenceContextOf(flow.CaptureCellsDomain.Top(), flow.FunctionRefsDomain.Top(), flow.ClosureRefsDomain.Top()),
-		summary.EntryValues{0: product.FromType(typ.Number)},
-		flow.BoundaryFactsDomain.Top(),
-	))
+	got := reader.Summarize(ref)
 	if !summary.SummaryDomain.Equal(got, want) {
 		t.Fatalf("reader summary = %#v, want snapshot %#v", got, want)
 	}

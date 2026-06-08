@@ -5,9 +5,10 @@ import "github.com/wippyai/go-lua/types/flow/numeric"
 // BoundaryFactProjectionInput is the point-local proof state that can be
 // published across a function boundary once its stable addresses are rebased.
 type BoundaryFactProjectionInput struct {
-	KeyPresence KeyPresenceFacts
-	Num         *numeric.State
-	IndexWrites IndexWriteAdmissionFacts
+	KeyPresence   KeyPresenceFacts
+	StaticMembers StaticMemberFacts
+	Num           *numeric.State
+	IndexWrites   IndexWriteAdmissionFacts
 }
 
 // BoundaryFactProjectionPolicy configures cross-boundary fact projection. The
@@ -29,6 +30,20 @@ func ProjectBoundaryFacts(
 	}
 	paths := newBoundaryAddressPathCache(projector)
 	keyFacts := projectKeyPresenceBoundaryFactsWithPaths(in.KeyPresence, paths, policy.KeyPresence)
+
+	var staticMembers []BoundaryStaticMemberFact
+	for _, fact := range in.StaticMembers.Entries() {
+		addr, ok := StableAddressFromCanonicalKey(fact.Path)
+		if !ok || fact.Value.IsZero() {
+			continue
+		}
+		for _, target := range paths.fromAddress(addr) {
+			staticMembers = append(staticMembers, BoundaryStaticMemberFact{
+				Target: target,
+				Value:  fact.Value,
+			})
+		}
+	}
 
 	var lenLower []BoundaryLengthLowerBound
 	ForEachNumericLenBoundAddress(in.Num, func(targetAddr StableAddress, lower, _ int64) bool {
@@ -73,5 +88,6 @@ func ProjectBoundaryFacts(
 		keyFacts.AppendKeys(),
 		lenLower,
 		indexWrites,
-	).WithAppendElementFieldOrigins(keyFacts.AppendElementFieldOrigins())
+	).WithAppendElementFieldOrigins(keyFacts.AppendElementFieldOrigins()).
+		WithStaticMembers(staticMembers)
 }

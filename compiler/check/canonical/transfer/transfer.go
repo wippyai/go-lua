@@ -177,15 +177,16 @@ type CallTyper interface {
 // effects, pre-call obligations, and control facts travel together so transfer
 // does not rebuild selected call outcomes through parallel provider routes.
 type ProductCallResult struct {
-	ReturnValues    []product.AbstractValue
-	HasReturnValues bool
-	ReturnRefs      flow.ReturnRefs
-	ReturnRelations flow.ReturnRelations
-	Effects         callboundary.Effects
-	ArgDemands      []callobligation.Obligation
-	NeverReturns    bool
-	Postconditions  paramevidence.ReturnPostconditions
-	ParamNarrows    []ParamNarrow
+	ReturnValues        []product.AbstractValue
+	HasReturnValues     bool
+	ReturnStaticMembers []flow.StaticMemberFacts
+	ReturnRefs          flow.ReturnRefs
+	ReturnRelations     flow.ReturnRelations
+	Effects             callboundary.Effects
+	ArgDemands          []callobligation.Obligation
+	NeverReturns        bool
+	Postconditions      paramevidence.ReturnPostconditions
+	ParamNarrows        []ParamNarrow
 }
 
 func EmptyProductCallResult() ProductCallResult {
@@ -1282,6 +1283,7 @@ func (t *Transfer) applyContainerWriteWithRefResolver(
 		}
 		if tablePath, tableOK := t.staticContainerPathOfAssignTarget(target); tableOK {
 			if tx, ok := t.dynamicIndexWritePathTransaction(
+				out,
 				target,
 				src,
 				tablePath,

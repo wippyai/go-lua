@@ -153,6 +153,17 @@ func (p CallSummaryProjection) ReturnRefs() flow.ReturnRefs {
 	return out
 }
 
+// ReturnStaticMembers joins caller-visible returned child-path facts across
+// selected targets. The slot lattice drops facts not proven by every possible
+// callee, so transfer may replay the result as definite PointState facts.
+func (p CallSummaryProjection) ReturnStaticMembers() []flow.StaticMemberFacts {
+	var out []flow.StaticMemberFacts
+	for _, target := range p.Targets {
+		out = returnStaticMembersDomain.Join(out, target.Summary.ReturnStaticMembers)
+	}
+	return out
+}
+
 // CellEffects folds caller-visible capture-cell effects across candidate callees.
 // The summaries execute at the same fixed point as returns/relations, so unknown
 // callee ordering is modeled with flow.CooccurringCaptureEffects.

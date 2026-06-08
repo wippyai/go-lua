@@ -79,6 +79,7 @@ func (c callEntryProjector) productEvidence(ref summary.FuncRef, call *ast.FuncC
 		References:    ctx.References,
 		ArgSources:    c.productReferenceArgSources(ctx),
 		KeyPresence:   ctx.KeyPresence,
+		StaticMembers: ctx.StaticMembers,
 		Num:           ctx.Num,
 		IndexWrites:   ctx.IndexWrites,
 	})
@@ -89,11 +90,12 @@ func (c callEntryProjector) pointFacts(ref summary.FuncRef, call *ast.FuncCallEx
 		return flow.BoundaryFactsDomain.Top()
 	}
 	return c.entryEvidenceProjection().DirectEvidence(summary.DirectEntryEvidenceInput{
-		Callee:      ref,
-		Call:        call,
-		KeyPresence: in.KeyPresence,
-		Num:         in.Num,
-		IndexWrites: in.IndexWrites,
+		Callee:        ref,
+		Call:          call,
+		KeyPresence:   in.KeyPresence,
+		StaticMembers: in.StaticMembers,
+		Num:           in.Num,
+		IndexWrites:   in.IndexWrites,
 	}).Facts
 }
 
@@ -125,6 +127,14 @@ func (p *program) ProjectCallEntryValues(ref summary.FuncRef, fs state.FunctionS
 	return projector.valueProjection(fs).Project()
 }
 
+func (p *program) ProjectCallEntryFacts(ref summary.FuncRef, fs state.FunctionState) summary.CallEntryFacts {
+	projector, ok := p.callEntryProjector(ref)
+	if !ok {
+		return nil
+	}
+	return projector.factProjection(fs).Project()
+}
+
 func (p *program) ProjectCallEntryContextKeys(ref summary.FuncRef, fs state.FunctionState) []summary.Key {
 	projector, ok := p.callEntryProjector(ref)
 	if !ok {
@@ -153,6 +163,26 @@ func (c callEntryProjector) valueProjection(fs state.FunctionState) summary.Call
 				return false
 			}
 			return c.program.paramSlotFixed(callee, slot)
+		},
+		EvalArg: c.transfer.EvalExprValue,
+	}
+}
+
+func (c callEntryProjector) factProjection(fs state.FunctionState) summary.CallEntryFactProjection {
+	return summary.CallEntryFactProjection{
+		Graph:          c.graph,
+		State:          fs,
+		ResolveTargets: c.resolveTargets,
+		ParamSlot:      c.paramSlot,
+		ParamSlotCount: func(callee summary.FuncRef, _ *ast.FuncCallExpr) int {
+			return c.program.paramSlotCount(callee)
+		},
+		ParamPath: func(callee summary.FuncRef, slot int) (constraint.Path, bool) {
+			return c.program.paramPath(callee, slot)
+		},
+		ArgPath: c.argPath,
+		ReferencePaths: func(callee summary.FuncRef) flow.ReferencePathProjection {
+			return c.program.referenceProjection(callee)
 		},
 		EvalArg: c.transfer.EvalExprValue,
 	}

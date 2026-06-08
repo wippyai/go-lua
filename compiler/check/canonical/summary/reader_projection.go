@@ -38,6 +38,15 @@ func (r Reader) CallEntryValues(dep FuncRef, callee FuncRef) EntryValues {
 	return cloneEntryValues(r.Summarize(dep).CallEntryValues[callee])
 }
 
+// CallEntryFacts reads caller-to-callee parameter-relative path proof published
+// by dep. Missing entries deliberately mean no finite aggregate proof.
+func (r Reader) CallEntryFacts(dep FuncRef, callee FuncRef) flow.BoundaryFacts {
+	if facts, ok := r.Summarize(dep).CallEntryFacts[callee]; ok {
+		return facts.Clone()
+	}
+	return flow.BoundaryFactsDomain.Top()
+}
+
 // PrototypeSelf reads dep's published prototype-self relation through the
 // Reader boundary.
 func (r Reader) PrototypeSelf(dep FuncRef) flow.PrototypeSelf {

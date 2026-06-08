@@ -72,15 +72,16 @@ func (p callBoundaryFrame) callReturnValues() ([]product.AbstractValue, bool) {
 func (p callBoundaryFrame) result(evidence canonicalcall.BoundaryEvidence, effects callboundary.Effects) transfer.ProductCallResult {
 	values, ok := p.callReturnValues()
 	return transfer.ProductCallResult{
-		ReturnValues:    values,
-		HasReturnValues: ok,
-		ReturnRefs:      evidence.ReturnRefs,
-		ReturnRelations: evidence.ReturnRelations,
-		Effects:         effects,
-		ArgDemands:      evidence.ArgDemands,
-		NeverReturns:    evidence.NeverReturns,
-		Postconditions:  evidence.Postconditions,
-		ParamNarrows:    evidence.ParamNarrows,
+		ReturnValues:        values,
+		HasReturnValues:     ok,
+		ReturnStaticMembers: p.outcome.ReturnStaticMembers(),
+		ReturnRefs:          evidence.ReturnRefs,
+		ReturnRelations:     evidence.ReturnRelations,
+		Effects:             effects,
+		ArgDemands:          evidence.ArgDemands,
+		NeverReturns:        evidence.NeverReturns,
+		Postconditions:      evidence.Postconditions,
+		ParamNarrows:        evidence.ParamNarrows,
 	}
 }
 
@@ -169,7 +170,7 @@ func (p callBoundaryFrame) demandTargets() []paramevidence.CallArgDemandTarget {
 		out = append(out, paramevidence.CallArgDemandTarget{
 			Graph:     prog.Graph(ref),
 			Function:  fn,
-			Contracts: prog.publicPredicateContracts(ref, target.Summary.Params),
+			Contracts: p.callerVisibleContracts(prog, ref, target.Summary.Params),
 			DeclaredSlotType: func(slot int) typ.Type {
 				return prog.paramSlotDeclaredType(ref, slot)
 			},
@@ -182,6 +183,25 @@ func (p callBoundaryFrame) demandTargets() []paramevidence.CallArgDemandTarget {
 		})
 	}
 	return out
+}
+
+func (p callBoundaryFrame) callerVisibleContracts(prog *program, ref summary.FuncRef, exact paramevidence.Contracts) paramevidence.Contracts {
+	if prog == nil || p.typer.d == nil {
+		return exact
+	}
+	exact = prog.publicPredicateContracts(ref, exact)
+	reader := p.typer.d.summaryReader()
+	aggregate := prog.publicPredicateContracts(ref, reader.Summarize(ref).Params)
+	if len(aggregate) == 0 {
+		return exact
+	}
+	if len(exact) == 0 {
+		return aggregate
+	}
+	// Exact entry summaries carry return/effect precision for this call context,
+	// but they must not erase body obligations that the canonical aggregate
+	// summary proved for callers of the callee.
+	return paramevidence.ContractDomain.Join(aggregate, exact)
 }
 
 func (p callBoundaryFrame) expectedArgEvidence(info *cfg.CallInfo, forceMethodReceiver bool) (api.CallExpectedArgEvidence, bool) {
@@ -250,7 +270,7 @@ func (p callBoundaryFrame) boundaryEvidenceAndEffects() (canonicalcall.BoundaryE
 }
 
 func (p callBoundaryFrame) boundaryEvidence(cellEffects summary.CellEffectAggregation) canonicalcall.BoundaryEvidence {
-	return p.outcome.BoundaryEvidence(canonicalcall.BoundaryEvidenceInput{
+	evidence := p.outcome.BoundaryEvidence(canonicalcall.BoundaryEvidenceInput{
 		Call:                 p.site.call,
 		Resolver:             p.typer.callTypeResolver(p.site.exprType),
 		UseResolvedSignature: p.ctx.ExprValue != nil,
@@ -262,6 +282,29 @@ func (p callBoundaryFrame) boundaryEvidence(cellEffects summary.CellEffectAggreg
 			return p.typer.d.activeProgram.facts.HasNoReturn(ref)
 		},
 	})
+	evidence.ReturnRelations = p.callerVisibleReturnRelations(evidence.ReturnRelations)
+	return evidence
+}
+
+func (p callBoundaryFrame) callerVisibleReturnRelations(exact flow.ReturnRelations) flow.ReturnRelations {
+	if !p.outcome.HasTargets() || p.typer.d == nil {
+		return exact
+	}
+	reader := p.typer.d.summaryReader()
+	aggregate := flow.ReturnRelationsDomain.Bottom()
+	for _, target := range p.outcome.Targets() {
+		rels := reader.Summarize(target.Ref).Relations
+		if !rels.HasProof() {
+			rels = flow.ReturnRelationsDomain.Top()
+		}
+		aggregate = flow.ReturnRelationsDomain.Join(aggregate, rels)
+	}
+	if !aggregate.HasProof() {
+		return exact
+	}
+	// Exact entry summaries specialize a call context, but caller-visible
+	// return relations proved by the aggregate summary remain valid body facts.
+	return flow.MergeReturnRelationProofs(aggregate, exact)
 }
 
 func (p callBoundaryFrame) cellEffectAggregation() (summary.CellEffectAggregation, bool) {

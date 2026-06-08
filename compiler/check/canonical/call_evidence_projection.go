@@ -59,14 +59,17 @@ func (p solvedCallEvidenceProjection) project() solvedCallEdgeEvidence {
 			continue
 		}
 		if ps, ok := callEventPointState(p.state, ev.Point); ok {
-			_, hasPostState := p.state.Points[ev.Point]
-			expected, hasExpected, contracts, hasContracts := p.edgeEvidenceForCall(ct, ev.Point, info, &ps)
+			expected, hasExpected := p.expectedEvidenceForCall(ct, ev.Point, info, &ps)
 			if hasExpected {
 				if out.ExpectedArgs == nil {
 					out.ExpectedArgs = make([]api.CallExpectedArgEvidence, len(p.evidence.Calls))
 				}
 				out.ExpectedArgs[i] = expected
 			}
+		}
+		if ps, ok := callEventPointState(p.state, ev.Point); ok {
+			_, hasPostState := p.state.Points[ev.Point]
+			contracts, hasContracts := p.contractEvidenceForCall(ct, ev.Point, info, &ps)
 			if hasPostState && hasContracts {
 				if out.Contracts == nil {
 					out.Contracts = make([]api.CallContractEvidence, len(p.evidence.Calls))
@@ -78,23 +81,38 @@ func (p solvedCallEvidenceProjection) project() solvedCallEdgeEvidence {
 	return out
 }
 
-func (p solvedCallEvidenceProjection) edgeEvidenceForCall(
+func (p solvedCallEvidenceProjection) expectedEvidenceForCall(
 	ct callTyper,
 	point cfg.Point,
 	info *cfg.CallInfo,
 	ps *flow.PointState,
-) (api.CallExpectedArgEvidence, bool, api.CallContractEvidence, bool) {
+) (api.CallExpectedArgEvidence, bool) {
 	if info == nil || info.Call == nil || ps == nil {
-		return api.CallExpectedArgEvidence{}, false, api.CallContractEvidence{}, false
+		return api.CallExpectedArgEvidence{}, false
 	}
 	ctx := p.transfer.ProductCallContext(ps, info.Call)
 	frame, ok := ct.callBoundaryFrame(info.Call, ctx, productCallOutcomeOptions{})
 	if !ok {
-		return api.CallExpectedArgEvidence{}, false, api.CallContractEvidence{}, false
+		return api.CallExpectedArgEvidence{}, false
 	}
-	expected, hasExpected := frame.expectedArgEvidence(info, p.forceMethodReceiver(point, info))
-	contracts, hasContracts := frame.contractEvidence()
-	return expected, hasExpected, contracts, hasContracts
+	return frame.expectedArgEvidence(info, p.forceMethodReceiver(point, info))
+}
+
+func (p solvedCallEvidenceProjection) contractEvidenceForCall(
+	ct callTyper,
+	_ cfg.Point,
+	info *cfg.CallInfo,
+	ps *flow.PointState,
+) (api.CallContractEvidence, bool) {
+	if info == nil || info.Call == nil || ps == nil {
+		return api.CallContractEvidence{}, false
+	}
+	ctx := p.transfer.ProductCallContext(ps, info.Call)
+	frame, ok := ct.callBoundaryFrame(info.Call, ctx, productCallOutcomeOptions{})
+	if !ok {
+		return api.CallContractEvidence{}, false
+	}
+	return frame.contractEvidence()
 }
 
 func (p solvedCallEvidenceProjection) forceMethodReceiver(point cfg.Point, info *cfg.CallInfo) bool {

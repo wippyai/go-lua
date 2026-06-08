@@ -237,8 +237,10 @@ func (f PointFacts) AddressValue(addr StableAddress) (product.AbstractValue, boo
 	return f.PathValue(path)
 }
 
-// PathValue returns a product value for path by applying point-local static
-// member facts and structural product-member traversal from the root value.
+// PathValue returns a product value for path by composing structural root
+// traversal with point-local static member facts. The current root product owns
+// child values it can already project; static facts fill sparse path evidence
+// that is not present in the root product.
 func (f PointFacts) PathValue(path constraint.Path) (product.AbstractValue, bool) {
 	if path.Symbol == 0 {
 		return product.AbstractValue{}, false
@@ -246,11 +248,12 @@ func (f PointFacts) PathValue(path constraint.Path) (product.AbstractValue, bool
 	if len(path.Segments) == 0 {
 		return f.SymbolValue(path.Symbol)
 	}
-	if fact, ok := f.StaticMemberValue(path); ok {
-		return fact, true
-	}
+	fullFact, hasFullFact := f.StaticMemberValue(path)
 	cur, ok := f.SymbolValue(path.Symbol)
 	if !ok || cur.IsZero() {
+		if hasFullFact {
+			return fullFact, true
+		}
 		return product.AbstractValue{}, false
 	}
 	for i, seg := range path.Segments {
@@ -260,21 +263,57 @@ func (f PointFacts) PathValue(path constraint.Path) (product.AbstractValue, bool
 			Version:  path.Version,
 			Segments: path.Segments[:i+1],
 		}
+		member := product.AbstractValue{}
+		hasMember := false
+		if m, ok := value.MemberFromSegment(seg); ok {
+			member, hasMember = product.MemberOf(cur, m)
+		}
 		if fact, ok := f.StaticMemberValue(prefix); ok {
-			cur = fact
+			if hasMember && !member.IsZero() {
+				cur = refinePathMemberValue(member, fact)
+			} else {
+				cur = fact
+			}
 			continue
 		}
-		member, ok := value.MemberFromSegment(seg)
-		if !ok {
+		if !hasMember || member.IsZero() {
+			if hasFullFact {
+				return fullFact, true
+			}
 			return product.AbstractValue{}, false
 		}
-		next, ok := product.MemberOf(cur, member)
-		if !ok || next.IsZero() {
-			return product.AbstractValue{}, false
-		}
-		cur = next
+		cur = member
 	}
 	return cur, true
+}
+
+func refinePathMemberValue(member, fact product.AbstractValue) product.AbstractValue {
+	if fact.IsZero() {
+		return member
+	}
+	if member.IsZero() {
+		return fact
+	}
+	memberType := member.ProjectValue()
+	factType := fact.ProjectValue()
+	if member.Covers(fact) && typ.MorePrecise(factType, memberType) {
+		return fact
+	}
+	if fact.DefinitelyPresent() && !member.DefinitelyPresent() {
+		present := product.NarrowPresent(member)
+		if !present.IsZero() && !present.IsBottom() {
+			if fact.Covers(present) || typ.MorePrecise(present.ProjectValue(), memberType) {
+				return present
+			}
+			if present.Covers(fact) {
+				return fact
+			}
+		}
+	}
+	if fact.Covers(member) {
+		return member
+	}
+	return member
 }
 
 // CallablePathValue is the canonical product read for a runtime path that may

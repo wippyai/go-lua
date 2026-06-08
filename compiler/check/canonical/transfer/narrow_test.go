@@ -78,6 +78,103 @@ func TestNarrowByCondCheckTruthyAnyMarksPresentDynamic(t *testing.T) {
 	}
 }
 
+func TestNarrowByCondCheckFalsyStaticIndexFalseEdgeRefinesMemberFact(t *testing.T) {
+	messages := &ast.IdentExpr{Value: "messages"}
+	access := &ast.AttrGetExpr{
+		Object:    messages,
+		Key:       &ast.StringExpr{Value: "root"},
+		KeySyntax: ast.AttrKeyIndex,
+	}
+	sym := cfg.SymbolID(211)
+	tr := New(keyPresenceInput(t, map[*ast.IdentExpr]cfg.SymbolID{
+		messages: sym,
+	}), Config{})
+	message := typ.NewRecord().Field("_topic", typ.String).Build()
+	path := constraint.NewPath(sym, "messages").IndexStr("root")
+	out := flow.PointState{
+		Env: map[flow.ValueKey]product.AbstractValue{
+			flow.SymbolValueKey(sym): product.FromType(typ.NewMap(typ.String, message)),
+		},
+		StaticMembers: flow.StaticMemberFacts{}.WithAddress(testFlowPathAddress(t, path), product.FromType(typ.NewOptional(message))),
+	}
+	info := &cfg.BranchInfo{
+		CondCheck: cfg.CondCheck{Kind: cfg.CheckFalsy},
+		Condition: &ast.UnaryNotOpExpr{
+			Expr: access,
+		},
+	}
+
+	got := tr.narrowByCondCheck(out, info, false, false)
+	value, ok := got.StaticMembers.ValueAtAddress(testFlowPathAddress(t, path))
+	if !ok {
+		t.Fatalf("static index guard did not preserve member fact: %s", got.StaticMembers.Format())
+	}
+	if projected := value.ProjectValue(); !typ.TypeEquals(projected, message) || !value.DefinitelyPresent() {
+		t.Fatalf("messages[\"root\"] false edge = %v present=%v, want %v present", projected, value.DefinitelyPresent(), message)
+	}
+}
+
+func TestNarrowEdgeNotStaticIndexFalseSuccessorRefinesMemberFact(t *testing.T) {
+	condMessages := &ast.IdentExpr{Value: "messages"}
+	access := &ast.AttrGetExpr{
+		Object:    condMessages,
+		Key:       &ast.StringExpr{Value: "root"},
+		KeySyntax: ast.AttrKeyIndex,
+	}
+	fn := &ast.FunctionExpr{
+		ParList: &ast.ParList{Names: []string{"messages"}},
+		Stmts: []ast.Stmt{
+			&ast.IfStmt{
+				Condition: &ast.UnaryNotOpExpr{Expr: access},
+				Then: []ast.Stmt{
+					&ast.LocalAssignStmt{Names: []string{"installed"}, Exprs: []ast.Expr{&ast.TrueExpr{}}},
+				},
+			},
+		},
+	}
+	in := input.BuildFromFunction(fn, nil, nil)
+	if in.Graph == nil {
+		t.Fatal("test graph not built")
+	}
+	sym := in.Scope.ParamSymbols[0]
+	var branch cfg.Point
+	var falseSucc cfg.Point
+	in.Graph.EachBranch(func(p cfg.Point, _ *cfg.BranchInfo) {
+		if branch != 0 {
+			return
+		}
+		branch = p
+		for _, succ := range in.Graph.Successors(p) {
+			taken, known := in.Graph.EdgeCond(p, succ)
+			if known && !taken {
+				falseSucc = succ
+				break
+			}
+		}
+	})
+	if falseSucc == 0 {
+		t.Fatal("test CFG has no false branch edge")
+	}
+	message := typ.NewRecord().Field("_topic", typ.String).Build()
+	path := constraint.NewPath(sym, "messages").IndexStr("root")
+	tr := New(in, Config{})
+	out := flow.PointState{
+		Env: map[flow.ValueKey]product.AbstractValue{
+			flow.SymbolValueKey(sym): product.FromType(typ.NewMap(typ.String, message)),
+		},
+		StaticMembers: flow.StaticMemberFacts{}.WithAddress(testFlowPathAddress(t, path), product.FromType(typ.NewOptional(message))),
+	}
+
+	got := tr.NarrowEdge(in.Graph, branch, falseSucc, out)
+	value, ok := got.StaticMembers.ValueAtAddress(testFlowPathAddress(t, path))
+	if !ok {
+		t.Fatalf("real false edge did not preserve member fact: %s", got.StaticMembers.Format())
+	}
+	if projected := value.ProjectValue(); !typ.TypeEquals(projected, message) || !value.DefinitelyPresent() {
+		t.Fatalf("messages[\"root\"] real false edge = %v present=%v, want %v present", projected, value.DefinitelyPresent(), message)
+	}
+}
+
 func TestNarrowByCondCheckTypeEqualAnyNarrowsToKind(t *testing.T) {
 	ident := &ast.IdentExpr{Value: "x"}
 	sym := cfg.SymbolID(22)

@@ -70,7 +70,7 @@ func TestSymbolicDynamicIndexWriteSeedsKeyPresenceAndReadback(t *testing.T) {
 		Build()
 	out := flow.PointState{}
 
-	tx, ok := tr.dynamicIndexWritePathTransaction(cfg.AssignTarget{
+	tx, ok := tr.dynamicIndexWritePathTransaction(nil, cfg.AssignTarget{
 		Kind:       cfg.TargetIndex,
 		BaseName:   "nodes",
 		BaseSymbol: nodesSym,
@@ -93,6 +93,39 @@ func TestSymbolicDynamicIndexWriteSeedsKeyPresenceAndReadback(t *testing.T) {
 	}
 }
 
+func TestDynamicIndexWriteTransactionRefinesStableKeyPathValue(t *testing.T) {
+	nodesSym := cfg.SymbolID(515)
+	id := &ast.IdentExpr{Value: "id"}
+	idSym := cfg.SymbolID(516)
+	in := valueOriginInput(t, map[*ast.IdentExpr]cfg.SymbolID{
+		id: idSym,
+	})
+	tr := New(in, Config{})
+	nodesPath := constraint.NewPath(nodesSym, "nodes")
+	payload := product.FromType(typ.Number)
+	out := flow.PointState{
+		Env: map[flow.ValueKey]product.AbstractValue{
+			flow.SymbolValueKey(idSym): product.FromType(typ.LiteralString("foo")),
+		},
+	}
+
+	tx, ok := tr.dynamicIndexWritePathTransaction(&out, cfg.AssignTarget{
+		Kind:       cfg.TargetIndex,
+		BaseName:   "nodes",
+		BaseSymbol: nodesSym,
+		Key:        id,
+	}, nil, nodesPath, product.FromType(typ.String), payload, payload)
+	if !ok {
+		t.Fatal("dynamic index write transaction was not constructed")
+	}
+	flow.ApplyDynamicIndexWritePathTransaction(&out, tx)
+
+	got, ok := testIndexWriteAdmission(t, out.IndexWrites, nodesPath, constraint.Path{}, typ.LiteralString("foo"))
+	if !ok || !product.Domain.Equal(got, payload) {
+		t.Fatalf("literal-refined readback = %v/%v, want number/true", got.ProjectValue(), ok)
+	}
+}
+
 func TestDynamicIndexWriteTransactionAllowsOpaqueExactKeyPathReadback(t *testing.T) {
 	nodesSym := cfg.SymbolID(521)
 	id := &ast.IdentExpr{Value: "id"}
@@ -106,7 +139,7 @@ func TestDynamicIndexWriteTransactionAllowsOpaqueExactKeyPathReadback(t *testing
 	out := flow.PointState{}
 	payload := product.FromType(typ.NewRecord().Field("kind", typ.String).Build())
 
-	tx, ok := tr.dynamicIndexWritePathTransaction(cfg.AssignTarget{
+	tx, ok := tr.dynamicIndexWritePathTransaction(nil, cfg.AssignTarget{
 		Kind:       cfg.TargetIndex,
 		BaseName:   "nodes",
 		BaseSymbol: nodesSym,

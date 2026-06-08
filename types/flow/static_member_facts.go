@@ -47,6 +47,12 @@ func StaticMemberFactsOf(entries []StaticMemberFact) StaticMemberFacts {
 // IsBottom reports the unreachable fact sentinel.
 func (f StaticMemberFacts) IsBottom() bool { return f.bottom }
 
+// HasProof reports whether f carries any finite static-member fact in a
+// reachable state. Top/empty means no definite member proof.
+func (f StaticMemberFacts) HasProof() bool {
+	return !f.bottom && len(f.entries) > 0
+}
+
 // Entries returns a defensive copy of finite entries. Bottom has no consumable
 // finite entries.
 func (f StaticMemberFacts) Entries() []StaticMemberFact {
@@ -128,6 +134,50 @@ func (f StaticMemberFacts) AddressEntriesUnder(root StableAddress) []StaticMembe
 		})
 	}
 	return out
+}
+
+// RebaseStaticMemberFactsUnder moves facts proven below source onto target,
+// preserving the member/index suffix below source. The source root itself is not
+// replayed: root values travel through the product value carrier, while this
+// domain owns child path facts.
+func RebaseStaticMemberFactsUnder(facts StaticMemberFacts, source, target StableAddress) StaticMemberFacts {
+	if facts.bottom {
+		return StaticMemberFactsDomain.Bottom()
+	}
+	if source.Key() == "" || target.Key() == "" {
+		return StaticMemberFactsDomain.Top()
+	}
+	out := StaticMemberFactsDomain.Top()
+	for _, fact := range facts.AddressEntriesUnder(source) {
+		remainder, ok := fact.Address.RemainderAfterPrefix(source)
+		if !ok || len(remainder) == 0 || fact.Value.IsZero() {
+			continue
+		}
+		rebased, ok := target.Append(remainder)
+		if !ok {
+			continue
+		}
+		out = out.WithAddress(rebased, fact.Value)
+	}
+	return out
+}
+
+// ApplyStaticMemberFacts materializes a finite static-member fact set into a
+// point state. It is the caller-side counterpart of summary return static-member
+// replay after slot-relative facts have been rebased to concrete local targets.
+func ApplyStaticMemberFacts(out *PointState, facts StaticMemberFacts) bool {
+	if out == nil || facts.bottom {
+		return false
+	}
+	changed := false
+	for _, fact := range facts.Entries() {
+		addr, ok := StableAddressFromCanonicalKey(fact.Path)
+		if !ok || fact.Value.IsZero() {
+			continue
+		}
+		changed = SetStaticMemberFact(out, addr, fact.Value) || changed
+	}
+	return changed
 }
 
 // DirectChildAddressesUnder returns the direct child addresses that have any

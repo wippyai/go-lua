@@ -381,7 +381,7 @@ func (d *Driver) newCanonicalFacts(g *cfg.Graph, fs state.FunctionState, facts f
 		paths:             newPathProjector(fs, unannotated, callables),
 		driver:            d,
 		program:           prog,
-		reader:            summary.NewReader(queries, ctx, d.summaries),
+		reader:            d.summaryReader(),
 	}
 }
 
@@ -411,7 +411,7 @@ func (f *canonicalFacts) CallReturnTypesAt(point cfg.Point, call *ast.FuncCallEx
 		callCtx,
 		productCallOutcomeOptions{},
 		func(ctx canonicalcall.EntryContext) summary.Summary {
-			return f.reader.SummarizeWithKey(ctx.Key())
+			return ct.summaryForCallEntryContext(ctx)
 		},
 	).outcome()
 	values := outcome.InferredReturnValues()

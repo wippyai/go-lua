@@ -46,7 +46,7 @@ func TestReaderProjectsSnapshotSummaryCells(t *testing.T) {
 	}
 }
 
-func TestReaderSnapshotOverlayOverridesExactContext(t *testing.T) {
+func TestReaderSnapshotRequiresExactContextSummary(t *testing.T) {
 	ref := FuncRef{GraphID: 17}
 	values := EntryValues{0: product.FromType(typ.Boolean)}
 	key := NewKeyWithReferenceContext(
@@ -55,15 +55,13 @@ func TestReaderSnapshotOverlayOverridesExactContext(t *testing.T) {
 		values,
 		flow.BoundaryFactsDomain.Top(),
 	)
-	reader := NewReaderWithOverlay(nil, nil, map[FuncRef]Summary{
+	reader := NewReader(nil, nil, map[FuncRef]Summary{
 		ref: {Returns: []product.AbstractValue{product.FromType(typ.String)}},
-	}, map[Key]Summary{
-		key: {Returns: []product.AbstractValue{product.FromType(typ.Number)}},
 	})
 
 	got := ReturnTypes(reader.SummarizeWithKey(key))
-	if len(got) != 1 || !typ.TypeEquals(got[0], typ.Number) {
-		t.Fatalf("exact ReturnTypes = %#v, want number from overlay", got)
+	if len(got) != 0 {
+		t.Fatalf("exact ReturnTypes = %#v, want no implicit aggregate fallback", got)
 	}
 	if fallback := reader.ReturnTypes(ref); len(fallback) != 1 || !typ.TypeEquals(fallback[0], typ.String) {
 		t.Fatalf("fallback ReturnTypes = %#v, want string snapshot", fallback)
@@ -119,6 +117,15 @@ func TestReaderEntryValueDependenciesUseSnapshotSummary(t *testing.T) {
 			CallEntryValues: CallEntryValues{
 				callee: EntryValues{2: product.FromType(typ.String)},
 			},
+			CallEntryFacts: CallEntryFacts{
+				callee: flow.BoundaryFactsOf(
+					[]flow.BoundaryKeyPresenceFact{{
+						Table: flow.BoundaryPath{Kind: flow.BoundaryPathParam, Index: 2},
+						Key:   flow.BoundaryPath{Kind: flow.BoundaryPathParam, Index: 2, Segments: []constraint.Segment{{Kind: constraint.SegmentField, Name: "id"}}},
+					}},
+					nil, nil, nil, nil, nil,
+				),
+			},
 			PrototypeSelf: flow.PrototypeSelfOf([]flow.PrototypeSelfEntry{{
 				Prototype: 99,
 				Value:     product.FromType(typ.Boolean),
@@ -129,6 +136,16 @@ func TestReaderEntryValueDependenciesUseSnapshotSummary(t *testing.T) {
 	values := reader.CallEntryValues(dep, callee)
 	if len(values) != 1 || !typ.TypeEquals(values[2].ProjectValue(), typ.String) {
 		t.Fatalf("CallEntryValues = %#v, want slot 2 string", values)
+	}
+	facts := reader.CallEntryFacts(dep, callee)
+	if !facts.HasKeyPresence(flow.BoundaryKeyPresenceFact{
+		Table: flow.BoundaryPath{Kind: flow.BoundaryPathParam, Index: 2},
+		Key:   flow.BoundaryPath{Kind: flow.BoundaryPathParam, Index: 2, Segments: []constraint.Segment{{Kind: constraint.SegmentField, Name: "id"}}},
+	}) {
+		t.Fatalf("CallEntryFacts = %#v, want param key proof", facts.KeyPresence())
+	}
+	if missing := reader.CallEntryFacts(dep, FuncRef{GraphID: 99}); missing.HasProof() {
+		t.Fatalf("missing CallEntryFacts = %#v, want no finite proof", missing)
 	}
 	values[2] = product.FromType(typ.Number)
 	again := reader.CallEntryValues(dep, callee)

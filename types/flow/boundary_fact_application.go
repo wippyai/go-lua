@@ -262,6 +262,13 @@ func ApplyBoundaryFacts(
 			ReadbackValue: fact.Value,
 		}) || changed
 	}
+	for _, fact := range facts.StaticMembers() {
+		target, ok := rebase(fact.Target)
+		if !ok || fact.Value.IsZero() {
+			continue
+		}
+		changed = SetStaticMemberFact(out, target.address, fact.Value) || changed
+	}
 	for _, fact := range facts.KeyPresence() {
 		table, ok := rebase(fact.Table)
 		if !ok {

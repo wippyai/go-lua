@@ -93,6 +93,14 @@ type BoundaryIndexWriteFact struct {
 	Value product.AbstractValue
 }
 
+// BoundaryStaticMemberFact proves Target has Value after boundary rebasing. It
+// carries exact static-member PointState facts across function entry/return
+// boundaries without forcing those facts into product type structure.
+type BoundaryStaticMemberFact struct {
+	Target BoundaryPath
+	Value  product.AbstractValue
+}
+
 // BoundaryFacts is the finite caller-visible postcondition component for facts
 // that already exist point-locally but must cross a function boundary. It is a
 // must-fact lattice: join keeps only facts proved by every normal return path.
@@ -106,6 +114,7 @@ type BoundaryFacts struct {
 	lenLower       []BoundaryLengthLowerBound
 	lenRelations   []BoundaryLengthRelationFact
 	indexWrites    []BoundaryIndexWriteFact
+	staticMembers  []BoundaryStaticMemberFact
 }
 
 // BoundaryFactsOf builds a canonical finite boundary-fact value.
@@ -117,7 +126,7 @@ func BoundaryFactsOf(
 	lenLower []BoundaryLengthLowerBound,
 	indexWrites []BoundaryIndexWriteFact,
 ) BoundaryFacts {
-	return boundaryFactsOfFull(keyPresence, keyArrays, keyArrayValues, appendKeys, nil, lenLower, nil, indexWrites)
+	return boundaryFactsOfFull(keyPresence, keyArrays, keyArrayValues, appendKeys, nil, lenLower, nil, indexWrites, nil)
 }
 
 func boundaryFactsOfFull(
@@ -129,6 +138,7 @@ func boundaryFactsOfFull(
 	lenLower []BoundaryLengthLowerBound,
 	lenRelations []BoundaryLengthRelationFact,
 	indexWrites []BoundaryIndexWriteFact,
+	staticMembers []BoundaryStaticMemberFact,
 ) BoundaryFacts {
 	return BoundaryFacts{
 		keyPresence:    compactBoundaryKeyPresence(keyPresence),
@@ -139,6 +149,7 @@ func boundaryFactsOfFull(
 		lenLower:       compactBoundaryLengthLower(lenLower),
 		lenRelations:   compactBoundaryLengthRelations(lenRelations),
 		indexWrites:    compactBoundaryIndexWrites(indexWrites),
+		staticMembers:  compactBoundaryStaticMembers(staticMembers),
 	}
 }
 
@@ -158,6 +169,7 @@ func (f BoundaryFacts) Clone() BoundaryFacts {
 		f.lenLower,
 		f.lenRelations,
 		f.indexWrites,
+		f.staticMembers,
 	)
 }
 
@@ -219,6 +231,11 @@ func (f BoundaryFacts) IdentityHash(seed string) uint64 {
 		h = hashBoundaryPath(h, fact.Key)
 		h = internal.HashCombine(h, fact.Value.Hash())
 	}
+	for _, fact := range f.StaticMembers() {
+		h = internal.HashCombine(h, internal.FnvString("sm"))
+		h = hashBoundaryPath(h, fact.Target)
+		h = internal.HashCombine(h, fact.Value.Hash())
+	}
 	return h
 }
 
@@ -239,6 +256,7 @@ func (f BoundaryFacts) WithAppendElementFieldOrigins(origins []BoundaryAppendEle
 		f.lenLower,
 		f.lenRelations,
 		f.indexWrites,
+		f.staticMembers,
 	)
 }
 
@@ -257,6 +275,25 @@ func (f BoundaryFacts) WithLengthRelations(relations []BoundaryLengthRelationFac
 		f.lenLower,
 		append(f.LengthRelations(), relations...),
 		f.indexWrites,
+		f.staticMembers,
+	)
+}
+
+// WithStaticMembers returns f plus boundary-relative static-member value facts.
+func (f BoundaryFacts) WithStaticMembers(facts []BoundaryStaticMemberFact) BoundaryFacts {
+	if f.bottom || len(facts) == 0 {
+		return f
+	}
+	return boundaryFactsOfFull(
+		f.keyPresence,
+		f.keyArrays,
+		f.keyArrayValues,
+		f.appendKeys,
+		f.appendOrigins,
+		f.lenLower,
+		f.lenRelations,
+		f.indexWrites,
+		append(f.StaticMembers(), facts...),
 	)
 }
 
@@ -298,6 +335,7 @@ func MergeBoundaryFactProofs(a, b BoundaryFacts) BoundaryFacts {
 		append(a.LengthLowerBounds(), b.LengthLowerBounds()...),
 		append(a.LengthRelations(), b.LengthRelations()...),
 		append(a.IndexWrites(), b.IndexWrites()...),
+		append(a.StaticMembers(), b.StaticMembers()...),
 	)
 }
 
@@ -320,6 +358,9 @@ var BoundaryFactsDomain = lattice.Lattice[BoundaryFacts]{
 			boundaryLengthRelationRowIdentity.Equal(a.lenRelations, b.lenRelations) &&
 			boundaryIndexWriteRowIdentity.EqualBy(a.indexWrites, b.indexWrites, func(x, y BoundaryIndexWriteFact) bool {
 				return compareBoundaryIndexWrite(x, y) == 0 && product.Domain.Equal(x.Value, y.Value)
+			}) &&
+			boundaryStaticMemberRowIdentity.EqualBy(a.staticMembers, b.staticMembers, func(x, y BoundaryStaticMemberFact) bool {
+				return compareBoundaryStaticMember(x, y) == 0 && product.Domain.Equal(x.Value, y.Value)
 			})
 	},
 	LessOrEq: func(a, b BoundaryFacts) bool {
@@ -336,7 +377,8 @@ var BoundaryFactsDomain = lattice.Lattice[BoundaryFacts]{
 			boundaryAppendElementFieldOriginsContainAll(a.appendOrigins, b.appendOrigins) &&
 			boundaryLengthLowerContainAll(a.lenLower, b.lenLower) &&
 			boundaryLengthRelationContainAll(a.lenRelations, b.lenRelations) &&
-			boundaryIndexWritesContainAll(a.indexWrites, b.indexWrites)
+			boundaryIndexWritesContainAll(a.indexWrites, b.indexWrites) &&
+			boundaryStaticMembersContainAll(a.staticMembers, b.staticMembers)
 	},
 	Join:  joinBoundaryFacts,
 	Meet:  nil,
@@ -346,7 +388,7 @@ var BoundaryFactsDomain = lattice.Lattice[BoundaryFacts]{
 func (f BoundaryFacts) IsBottom() bool { return f.bottom }
 
 func (f BoundaryFacts) HasProof() bool {
-	return !f.bottom && (len(f.keyPresence) > 0 || len(f.keyArrays) > 0 || len(f.keyArrayValues) > 0 || len(f.appendKeys) > 0 || len(f.appendOrigins) > 0 || len(f.lenLower) > 0 || len(f.lenRelations) > 0 || len(f.indexWrites) > 0)
+	return !f.bottom && (len(f.keyPresence) > 0 || len(f.keyArrays) > 0 || len(f.keyArrayValues) > 0 || len(f.appendKeys) > 0 || len(f.appendOrigins) > 0 || len(f.lenLower) > 0 || len(f.lenRelations) > 0 || len(f.indexWrites) > 0 || len(f.staticMembers) > 0)
 }
 
 // PartitionByReturnIndices separates parameter-only facts from facts whose
@@ -454,6 +496,16 @@ func (f BoundaryFacts) PartitionByReturnIndices() (BoundaryFacts, []BoundaryRetu
 			parts.indexWrites = append(parts.indexWrites, fact)
 		})
 	}
+	for _, fact := range f.StaticMembers() {
+		indices := boundaryPathReturnIndices(fact.Target)
+		if len(indices) == 0 {
+			params.staticMembers = append(params.staticMembers, fact)
+			continue
+		}
+		addReturnFact(indices, func(parts *boundaryFactParts) {
+			parts.staticMembers = append(parts.staticMembers, fact)
+		})
+	}
 	keys := make([]string, 0, len(buckets))
 	for key := range buckets {
 		keys = append(keys, key)
@@ -557,6 +609,17 @@ func (f BoundaryFacts) IndexWrites() []BoundaryIndexWriteFact {
 	return out
 }
 
+func (f BoundaryFacts) StaticMembers() []BoundaryStaticMemberFact {
+	if f.bottom || len(f.staticMembers) == 0 {
+		return nil
+	}
+	out := make([]BoundaryStaticMemberFact, 0, len(f.staticMembers))
+	for _, fact := range f.staticMembers {
+		out = append(out, cloneBoundaryStaticMember(fact))
+	}
+	return out
+}
+
 func (f BoundaryFacts) HasKeyPresence(fact BoundaryKeyPresenceFact) bool {
 	if f.bottom {
 		return false
@@ -597,6 +660,14 @@ func (f BoundaryFacts) HasIndexWrite(fact BoundaryIndexWriteFact) bool {
 	return ok && product.Domain.Equal(f.indexWrites[idx].Value, fact.Value)
 }
 
+func (f BoundaryFacts) HasStaticMember(fact BoundaryStaticMemberFact) bool {
+	if f.bottom {
+		return false
+	}
+	idx, ok := boundaryStaticMemberRowIdentity.Find(f.staticMembers, fact)
+	return ok && product.Domain.Equal(f.staticMembers[idx].Value, fact.Value)
+}
+
 func joinBoundaryFacts(a, b BoundaryFacts) BoundaryFacts {
 	return mergeBoundaryFacts(a, b, false)
 }
@@ -621,6 +692,7 @@ func mergeBoundaryFacts(a, b BoundaryFacts, widenPayload bool) BoundaryFacts {
 		lenLower:       intersectBoundaryLengthLower(a.lenLower, b.lenLower),
 		lenRelations:   intersectBoundaryLengthRelations(a.lenRelations, b.lenRelations),
 		indexWrites:    intersectBoundaryIndexWrites(a.indexWrites, b.indexWrites, widenPayload),
+		staticMembers:  intersectBoundaryStaticMembers(a.staticMembers, b.staticMembers, widenPayload),
 	}
 }
 
@@ -633,10 +705,11 @@ type boundaryFactParts struct {
 	lenLower       []BoundaryLengthLowerBound
 	lenRelations   []BoundaryLengthRelationFact
 	indexWrites    []BoundaryIndexWriteFact
+	staticMembers  []BoundaryStaticMemberFact
 }
 
 func (p boundaryFactParts) facts() BoundaryFacts {
-	return boundaryFactsOfFull(p.keyPresence, p.keyArrays, p.keyArrayValues, p.appendKeys, p.appendOrigins, p.lenLower, p.lenRelations, p.indexWrites)
+	return boundaryFactsOfFull(p.keyPresence, p.keyArrays, p.keyArrayValues, p.appendKeys, p.appendOrigins, p.lenLower, p.lenRelations, p.indexWrites, p.staticMembers)
 }
 
 func boundaryPathReturnIndices(paths ...BoundaryPath) []int {
@@ -853,6 +926,32 @@ func compactBoundaryIndexWrites(xs []BoundaryIndexWriteFact) []BoundaryIndexWrit
 	return append([]BoundaryIndexWriteFact(nil), dst...)
 }
 
+func compactBoundaryStaticMembers(xs []BoundaryStaticMemberFact) []BoundaryStaticMemberFact {
+	if len(xs) == 0 {
+		return nil
+	}
+	out := make([]BoundaryStaticMemberFact, 0, len(xs))
+	for _, fact := range xs {
+		if !validBoundaryPath(fact.Target) || fact.Value.IsZero() {
+			continue
+		}
+		out = append(out, cloneBoundaryStaticMember(fact))
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	slices.SortFunc(out, compareBoundaryStaticMember)
+	dst := out[:0]
+	for _, fact := range out {
+		if len(dst) > 0 && compareBoundaryStaticMember(dst[len(dst)-1], fact) == 0 {
+			dst[len(dst)-1].Value = product.Domain.Join(dst[len(dst)-1].Value, fact.Value)
+			continue
+		}
+		dst = append(dst, fact)
+	}
+	return append([]BoundaryStaticMemberFact(nil), dst...)
+}
+
 func validBoundaryPath(p BoundaryPath) bool {
 	return (p.Kind == BoundaryPathParam || p.Kind == BoundaryPathReturn) && p.Index >= 0
 }
@@ -935,6 +1034,13 @@ func cloneBoundaryIndexWrite(f BoundaryIndexWriteFact) BoundaryIndexWriteFact {
 	}
 }
 
+func cloneBoundaryStaticMember(f BoundaryStaticMemberFact) BoundaryStaticMemberFact {
+	return BoundaryStaticMemberFact{
+		Target: cloneBoundaryPath(f.Target),
+		Value:  f.Value,
+	}
+}
+
 func compareBoundaryKeyPresence(a, b BoundaryKeyPresenceFact) int {
 	if c := compareBoundaryPath(a.Table, b.Table); c != 0 {
 		return c
@@ -1009,6 +1115,10 @@ func compareBoundaryIndexWrite(a, b BoundaryIndexWriteFact) int {
 	return compareBoundaryPath(a.Key, b.Key)
 }
 
+func compareBoundaryStaticMember(a, b BoundaryStaticMemberFact) int {
+	return compareBoundaryPath(a.Target, b.Target)
+}
+
 func compareBoundaryPath(a, b BoundaryPath) int {
 	if c := cmp.Compare(a.Kind, b.Kind); c != 0 {
 		return c
@@ -1058,6 +1168,10 @@ var (
 		less: func(a, b BoundaryIndexWriteFact) bool { return compareBoundaryIndexWrite(a, b) < 0 },
 		same: func(a, b BoundaryIndexWriteFact) bool { return compareBoundaryIndexWrite(a, b) == 0 },
 	}
+	boundaryStaticMemberRowIdentity = orderedRowIdentity[BoundaryStaticMemberFact]{
+		less: func(a, b BoundaryStaticMemberFact) bool { return compareBoundaryStaticMember(a, b) < 0 },
+		same: func(a, b BoundaryStaticMemberFact) bool { return compareBoundaryStaticMember(a, b) == 0 },
+	}
 )
 
 func boundaryKeyPresenceContainAll(have, want []BoundaryKeyPresenceFact) bool {
@@ -1094,6 +1208,13 @@ func boundaryLengthRelationContainAll(have, want []BoundaryLengthRelationFact) b
 func boundaryIndexWritesContainAll(have, want []BoundaryIndexWriteFact) bool {
 	return boundaryIndexWriteRowIdentity.ContainsAllBy(have, want, func(have, want BoundaryIndexWriteFact) bool {
 		return compareBoundaryIndexWrite(have, want) == 0 &&
+			product.Domain.LessOrEq(have.Value, want.Value)
+	})
+}
+
+func boundaryStaticMembersContainAll(have, want []BoundaryStaticMemberFact) bool {
+	return boundaryStaticMemberRowIdentity.ContainsAllBy(have, want, func(have, want BoundaryStaticMemberFact) bool {
+		return compareBoundaryStaticMember(have, want) == 0 &&
 			product.Domain.LessOrEq(have.Value, want.Value)
 	})
 }
@@ -1158,4 +1279,17 @@ func intersectBoundaryIndexWrites(a, b []BoundaryIndexWriteFact, widenPayload bo
 		return fact, true
 	})
 	return compactBoundaryIndexWrites(out)
+}
+
+func intersectBoundaryStaticMembers(a, b []BoundaryStaticMemberFact, widenPayload bool) []BoundaryStaticMemberFact {
+	out := boundaryStaticMemberRowIdentity.MergeIntersect(a, b, func(left, right BoundaryStaticMemberFact) (BoundaryStaticMemberFact, bool) {
+		fact := cloneBoundaryStaticMember(left)
+		if widenPayload {
+			fact.Value = product.Domain.Widen(fact.Value, right.Value)
+		} else {
+			fact.Value = product.Domain.Join(fact.Value, right.Value)
+		}
+		return fact, true
+	})
+	return compactBoundaryStaticMembers(out)
 }

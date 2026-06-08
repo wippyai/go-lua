@@ -52,6 +52,9 @@ func (f PointFacts) ReadPathValue(path constraint.Path, policy PointReadPolicy) 
 	if pv := f.ReadCallablePathValue(path, policy); pv.State == StateResolved {
 		return pv
 	}
+	if av, ok := f.PathValue(path); ok && !av.IsZero() {
+		return ProductValue{Value: av, State: StateResolved}
+	}
 	if policy.UnannotatedSymbol != nil && policy.UnannotatedSymbol(path.Symbol) {
 		root := f.ReadSymbolValue(path.Symbol, policy)
 		if root.State == StateResolved && !root.Value.IsZero() {

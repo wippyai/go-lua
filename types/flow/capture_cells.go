@@ -195,6 +195,13 @@ func (c CaptureCells) WithStaticMembers(facts StaticMemberFacts) CaptureCells {
 }
 
 func captureCellWithStaticMembers(sym cfg.SymbolID, av product.AbstractValue, facts StaticMemberFacts) product.AbstractValue {
+	return ProductWithStaticMembersForSymbol(sym, av, facts)
+}
+
+// ProductWithStaticMembersForSymbol overlays point-local exact static-member
+// facts below sym onto a root product value. It is the canonical bridge from the
+// finite StaticMembers axis back into a returned/captured product snapshot.
+func ProductWithStaticMembersForSymbol(sym cfg.SymbolID, av product.AbstractValue, facts StaticMemberFacts) product.AbstractValue {
 	if sym == 0 || av.IsZero() {
 		return av
 	}

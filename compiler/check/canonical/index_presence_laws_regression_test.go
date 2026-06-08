@@ -155,7 +155,7 @@ func logIndexPresenceFacts(t *testing.T, res *testutil.Result) {
 			post = postFacts.PostRefinedPathAt(p, path)
 		}
 		if (tv.State == flow.StateResolved && tv.Type != nil) || (post.State == flow.StateResolved && post.Type != nil) {
-			t.Logf("messages[\"root\"] at point %v (%s/%T): in=%v post=%v preds=%s", p, describeNodeKind(root.Graph.Node(p)), info, tv.Type, post.Type, describePointPredecessors(root.Graph, p))
+			t.Logf("messages[\"root\"] at point %v (%s/%s): in=%v post=%v preds=%s succs=%s", p, describeNodeKind(root.Graph.Node(p)), describeNodeInfo(info), tv.Type, post.Type, describePointPredecessors(root.Graph, p), describePointSuccessors(root.Graph, p))
 		}
 	})
 }

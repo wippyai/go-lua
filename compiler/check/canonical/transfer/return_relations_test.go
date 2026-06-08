@@ -149,6 +149,67 @@ func TestAssignCallPostconditionsMaterializeReturnKeyBoundaryFact(t *testing.T) 
 	}
 }
 
+func TestAssignCallPostconditionsReplayReturnKeyArrayValueForIndexedReadback(t *testing.T) {
+	fn := &ast.FunctionExpr{}
+	in := input.BuildFromFunction(fn, nil, nil)
+	if in.Graph == nil {
+		t.Fatal("test graph did not build")
+	}
+	graphSym := cfg.SymbolID(7010)
+	nodeSym := cfg.SymbolID(7011)
+	graphPath := constraint.NewPath(graphSym, "graph")
+	nodePath := constraint.NewPath(nodeSym, "node_id")
+
+	call := &ast.FuncCallExpr{Func: &ast.IdentExpr{Value: "build_graph"}}
+	callInfo := &cfg.CallInfo{Call: call, Callee: call.Func}
+	edgeValue := product.FromType(typ.NewRecord().
+		Field("targets", typ.NewArray(typ.String)).
+		Field("error_targets", typ.NewArray(typ.String)).
+		Build())
+	typer := &productReturnRelationsTestTyper{
+		facts: flow.BoundaryFactsOf(nil, nil, []flow.BoundaryKeyArrayValueFact{{
+			Array: flow.BoundaryPath{
+				Kind:     flow.BoundaryPathReturn,
+				Index:    0,
+				Segments: []constraint.Segment{{Kind: constraint.SegmentField, Name: "node_order"}},
+			},
+			Table: flow.BoundaryPath{
+				Kind:     flow.BoundaryPathReturn,
+				Index:    0,
+				Segments: []constraint.Segment{{Kind: constraint.SegmentField, Name: "edges"}},
+			},
+			Value: edgeValue,
+		}}, nil, nil, nil),
+	}
+	tr := New(in, Config{CallTyper: typer})
+	out := flow.PointState{
+		KeyPresence: flow.KeyPresenceFactsDomain.Top(),
+		ValueOrigins: flow.ValueOriginFacts{}.
+			WithAddresses(testFlowPathAddress(t, nodePath), testFlowPathAddress(t, graphPath.Field("node_order")), flow.ValueOriginIndexedIterator, 1),
+	}
+	info := &cfg.AssignInfo{
+		Targets: []cfg.AssignTarget{{
+			Kind:   cfg.TargetIdent,
+			Name:   "graph",
+			Symbol: graphSym,
+		}},
+		Sources:     []ast.Expr{call},
+		SourceCalls: []*cfg.CallInfo{callInfo},
+	}
+
+	effects := tr.buildAssignCallPostconditions(&out, in.Graph.Entry(), info, nil)
+	tr.applyAssignCallPostconditions(&out, effects)
+
+	got, ok := flow.PointFactsOf(out).DynamicIndexReadback(flow.DynamicIndexReadbackQuery{
+		Target:   graphPath.Field("edges"),
+		KeyPath:  nodePath,
+		KeyValue: product.FromType(typ.String),
+	})
+	if !ok || !product.Domain.Equal(got, edgeValue) {
+		t.Fatalf("return key-array readback = %v/%v, want edge record; key facts: %s", got, ok, out.KeyPresence.Format())
+	}
+}
+
 func TestAssignCallPostconditionsUsePreWriteArgumentLength(t *testing.T) {
 	fn := &ast.FunctionExpr{ParList: &ast.ParList{Names: []string{"arg"}}}
 	in := input.BuildFromFunction(fn, nil, nil)

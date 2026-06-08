@@ -1266,6 +1266,15 @@ func (t *Transfer) narrowByCondCheckAtPoint(point cfg.Point, out flow.PointState
 	}
 	out = t.narrowGuardedIndexPresence(out, info, check)
 	sym := t.condTestSymbol(info)
+	segments := t.condTestSegments(info)
+	if pathSym, pathSegments, ok := t.condTestPathInState(&out, info); ok {
+		if sym == 0 {
+			sym = pathSym
+		}
+		if len(pathSegments) > 0 {
+			segments = pathSegments
+		}
+	}
 	if sym == 0 {
 		return out
 	}
@@ -1281,7 +1290,6 @@ func (t *Transfer) narrowByCondCheckAtPoint(point cfg.Point, out flow.PointState
 	if comparisonTruthyOnOperand(info.Condition, check) {
 		return out
 	}
-	segments := t.condTestSegments(info)
 	currentAV, hasCurrent := t.symbolValue(&out, sym)
 	seed := t.narrowSeed(sym, currentAV, atExit)
 	baseAV, has := seed.value, seed.hasValue()
@@ -1351,6 +1359,39 @@ func (t *Transfer) narrowByCondCheckAtPoint(point cfg.Point, out flow.PointState
 	}
 	t.setNarrowedSymbol(&res, sym, narrowed)
 	return res
+}
+
+func (t *Transfer) condTestPathInState(out *flow.PointState, info *cfg.BranchInfo) (cfg.SymbolID, []constraint.Segment, bool) {
+	expr := condCheckedExpr(info)
+	if expr == nil {
+		return 0, nil, false
+	}
+	return t.pathSymbolInState(out, expr, nil)
+}
+
+func condCheckedExpr(info *cfg.BranchInfo) ast.Expr {
+	if info == nil {
+		return nil
+	}
+	switch info.CondCheck.Kind {
+	case cfg.CheckTruthy:
+		return info.Condition
+	case cfg.CheckFalsy:
+		if not, ok := info.Condition.(*ast.UnaryNotOpExpr); ok {
+			return not.Expr
+		}
+		return info.Condition
+	case cfg.CheckNil, cfg.CheckNotNil:
+		if rel, ok := info.Condition.(*ast.RelationalOpExpr); ok {
+			if _, ok := rel.Lhs.(*ast.NilExpr); ok {
+				return rel.Rhs
+			}
+			if _, ok := rel.Rhs.(*ast.NilExpr); ok {
+				return rel.Lhs
+			}
+		}
+	}
+	return nil
 }
 
 // conditionAuthorizesCurrentSeed is the authority boundary for declared-base

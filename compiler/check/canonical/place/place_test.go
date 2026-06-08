@@ -9,6 +9,7 @@ import (
 	"github.com/wippyai/go-lua/types/domain/value"
 	"github.com/wippyai/go-lua/types/domain/value/product"
 	"github.com/wippyai/go-lua/types/typ"
+	"github.com/wippyai/go-lua/types/typ/unwrap"
 )
 
 func TestPlaceFromStaticPathRoundTrip(t *testing.T) {
@@ -204,5 +205,46 @@ func TestPlaceUpdateRootValueCreatesMissingIntermediateRecord(t *testing.T) {
 	}
 	if !product.Domain.Equal(got, want) {
 		t.Fatalf("child.count = %v, want %v", got.ProjectValue(), want.ProjectValue())
+	}
+}
+
+func TestPlaceUpdateRootValueAppendsStructuredElementIntoNestedFreshArray(t *testing.T) {
+	t.Parallel()
+
+	p := Place{
+		Root:     9,
+		RootName: "graph",
+		Steps: []Step{
+			{Kind: StepStaticMember, Member: value.MemberField("static_data_sources")},
+		},
+	}
+	root := product.FromType(typ.NewRecord().
+		Field("static_data_sources", typ.NewFreshArray()).
+		Build())
+	elem := product.FromType(typ.NewRecord().
+		Field("routes", typ.NewFreshArray()).
+		Build())
+
+	updated, ok := p.UpdateRootValue(root, func(base product.AbstractValue) (product.AbstractValue, bool) {
+		return product.AppendElement(base, elem), true
+	})
+	if !ok {
+		t.Fatal("UpdateRootValue() unexpectedly false")
+	}
+	arr, ok := product.MemberOf(updated, value.MemberField("static_data_sources"))
+	if !ok {
+		t.Fatal("static_data_sources member missing")
+	}
+	elemValue, ok := product.IndexOf(arr, product.FromType(typ.Integer))
+	if !ok {
+		t.Fatalf("static_data_sources element missing from %v", arr.ProjectValue())
+	}
+	elemType := unwrap.Alias(elemValue.ProjectValue())
+	if opt, ok := elemType.(*typ.Optional); ok {
+		elemType = unwrap.Alias(opt.Inner)
+	}
+	rec, ok := elemType.(*typ.Record)
+	if !ok || rec.GetField("routes") == nil {
+		t.Fatalf("static_data_sources element = %T %[1]v, want record with routes", elemValue.ProjectValue())
 	}
 }

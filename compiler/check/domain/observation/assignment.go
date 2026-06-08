@@ -181,6 +181,7 @@ func (p Projector) assignmentPathSourceType(source ast.Expr, point cfg.Point, ta
 		StrictView:          selfReference,
 		AllowConditionProof: true,
 		PreserveProof:       p.cfg.PreserveProof,
+		IndexRead:           p.pathObservationIndexRead(source, point),
 	})
 	return obs.Type, obs.Resolved()
 }

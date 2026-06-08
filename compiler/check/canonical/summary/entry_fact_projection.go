@@ -2,6 +2,8 @@ package summary
 
 import (
 	"github.com/wippyai/go-lua/compiler/ast"
+	"github.com/wippyai/go-lua/types/constraint"
+	"github.com/wippyai/go-lua/types/domain/value/product"
 	"github.com/wippyai/go-lua/types/flow"
 	"github.com/wippyai/go-lua/types/flow/numeric"
 )
@@ -15,10 +17,12 @@ type directCallEntryFactInput struct {
 
 	ParamSlot EntryValueParamSlot
 	ArgPath   EntryReferenceArgPath
+	ArgValues []product.AbstractValue
 
-	KeyPresence flow.KeyPresenceFacts
-	Num         *numeric.State
-	IndexWrites flow.IndexWriteAdmissionFacts
+	KeyPresence   flow.KeyPresenceFacts
+	StaticMembers flow.StaticMemberFacts
+	Num           *numeric.State
+	IndexWrites   flow.IndexWriteAdmissionFacts
 }
 
 // directCallEntryFacts projects caller point-local path facts into callee
@@ -30,13 +34,56 @@ func directCallEntryFacts(in directCallEntryFactInput) flow.BoundaryFacts {
 	}
 	return flow.ProjectBoundaryFacts(
 		flow.BoundaryFactProjectionInput{
-			KeyPresence: in.KeyPresence,
-			Num:         in.Num,
-			IndexWrites: in.IndexWrites,
+			KeyPresence:   in.KeyPresence,
+			StaticMembers: callEntryStaticMembers(in),
+			Num:           in.Num,
+			IndexWrites:   in.IndexWrites,
 		},
 		entryBoundaryProjector{in: in},
 		flow.BoundaryFactProjectionPolicy{},
 	)
+}
+
+func callEntryStaticMembers(in directCallEntryFactInput) flow.StaticMemberFacts {
+	if len(in.ArgValues) == 0 || !in.StaticMembers.HasProof() {
+		return in.StaticMembers
+	}
+	out := in.StaticMembers
+	for _, arg := range entryRuntimeArgs(in.Callee, in.Call, in.ParamSlot) {
+		if arg.RuntimeIdx < 0 || arg.RuntimeIdx >= len(in.ArgValues) {
+			continue
+		}
+		source, ok := in.ArgPath(arg.RuntimeIdx, arg.Expr)
+		if !ok || source.IsEmpty() {
+			continue
+		}
+		sourceAddr, ok := flow.StableAddressOfPath(source)
+		if !ok {
+			continue
+		}
+		for _, fact := range in.StaticMembers.AddressEntriesUnder(sourceAddr) {
+			suffix, ok := suffixAfterAddressPrefix(fact.Address, sourceAddr)
+			if !ok || len(suffix) == 0 {
+				continue
+			}
+			if value, ok := flow.ProductMemberPathValue(in.ArgValues[arg.RuntimeIdx], suffix); ok && !value.IsZero() {
+				out = out.WithAddress(fact.Address, value)
+			}
+		}
+	}
+	return out
+}
+
+func suffixAfterAddressPrefix(addr, prefix flow.StableAddress) ([]constraint.Segment, bool) {
+	if !addr.HasPrefix(prefix) {
+		return nil, false
+	}
+	segs := addr.Segments()
+	prefixLen := len(prefix.Segments())
+	if prefixLen > len(segs) {
+		return nil, false
+	}
+	return append([]constraint.Segment(nil), segs[prefixLen:]...), true
 }
 
 type entryBoundaryProjector struct {

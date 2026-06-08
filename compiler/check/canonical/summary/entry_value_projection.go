@@ -213,6 +213,28 @@ func joinCallEntryValue(out CallEntryValues, callee FuncRef, slot int, av produc
 	return out
 }
 
+// AggregateEntryFacts folds caller-projected path proofs for one callee. Facts
+// are must evidence: every possible caller contributes a BoundaryFacts value,
+// with Top meaning "this caller proves nothing finite".
+func AggregateEntryFacts(eachCallerFacts func(yield func(flow.BoundaryFacts))) flow.BoundaryFacts {
+	if eachCallerFacts == nil {
+		return flow.BoundaryFactsDomain.Top()
+	}
+	out := flow.BoundaryFactsDomain.Bottom()
+	seen := false
+	eachCallerFacts(func(facts flow.BoundaryFacts) {
+		if !facts.HasProof() {
+			facts = flow.BoundaryFactsDomain.Top()
+		}
+		out = flow.BoundaryFactsDomain.Join(out, facts)
+		seen = true
+	})
+	if !seen || flow.BoundaryFactsDomain.Equal(out, flow.BoundaryFactsDomain.Bottom()) {
+		return flow.BoundaryFactsDomain.Top()
+	}
+	return out
+}
+
 // AggregateEntryValues folds all summary-visible entry evidence for one callee.
 // SlotDeclared denotes fixed, non-refinable declarations. Refinable structural
 // annotations such as {any} are intentionally not fixed: EntrySeedEffect composes
@@ -389,9 +411,10 @@ type DirectEntryEvidenceInput struct {
 	References flow.ReferenceContext
 	ArgSources EntryReferenceArgSources
 
-	KeyPresence flow.KeyPresenceFacts
-	Num         *numeric.State
-	IndexWrites flow.IndexWriteAdmissionFacts
+	KeyPresence   flow.KeyPresenceFacts
+	StaticMembers flow.StaticMemberFacts
+	Num           *numeric.State
+	IndexWrites   flow.IndexWriteAdmissionFacts
 }
 
 // DirectEntryEvidence is the callee-entry evidence produced by one direct call.
@@ -426,13 +449,15 @@ func (p CallEntryContextProjection) DirectEvidence(in DirectEntryEvidenceInput) 
 			ArgSources:          in.ArgSources,
 		}),
 		Facts: directCallEntryFacts(directCallEntryFactInput{
-			Call:        in.Call,
-			Callee:      in.Callee,
-			ParamSlot:   p.ParamSlot,
-			ArgPath:     p.ArgPath,
-			KeyPresence: in.KeyPresence,
-			Num:         in.Num,
-			IndexWrites: in.IndexWrites,
+			Call:          in.Call,
+			Callee:        in.Callee,
+			ParamSlot:     p.ParamSlot,
+			ArgPath:       p.ArgPath,
+			ArgValues:     in.RuntimeValues,
+			KeyPresence:   in.KeyPresence,
+			StaticMembers: in.StaticMembers,
+			Num:           in.Num,
+			IndexWrites:   in.IndexWrites,
 		}),
 	}
 }
@@ -452,6 +477,7 @@ func (p CallEntryContextProjection) directEvidenceFromPoint(callee FuncRef, call
 		References:    flow.ReferenceContextFromPoint(in),
 		ArgSources:    p.ReferenceArgSources,
 		KeyPresence:   in.KeyPresence,
+		StaticMembers: in.StaticMembers,
 		Num:           in.Num,
 		IndexWrites:   in.IndexWrites,
 	})
@@ -646,6 +672,20 @@ type CallEntryValueProjection struct {
 	EvalArg         EntryValueEvaluator
 }
 
+// CallEntryFactProjection projects call-entry path facts from one solved caller
+// function state into its caller-visible Summary.CallEntryFacts component.
+type CallEntryFactProjection struct {
+	Graph          *cfg.Graph
+	State          state.FunctionState
+	ResolveTargets CallEntryTargetResolver
+	ParamSlot      EntryValueParamSlot
+	ParamSlotCount EntryValueParamSlotCount
+	ParamPath      EntryReferenceParamPath
+	ArgPath        EntryReferenceArgPath
+	ReferencePaths EntryReferenceProjection
+	EvalArg        EntryValueEvaluator
+}
+
 // Project returns the finite caller-to-callee entry-value summary component.
 func (p CallEntryValueProjection) Project() CallEntryValues {
 	if p.Graph == nil || p.ResolveTargets == nil || p.ParamSlot == nil || p.EvalArg == nil {
@@ -674,6 +714,56 @@ func (p CallEntryValueProjection) Project() CallEntryValues {
 	if len(out) == 0 {
 		return nil
 	}
+	return out
+}
+
+// Project returns finite must-facts per callee. A call to the same callee that
+// proves no finite fact is still represented internally as Top, weakening other
+// call sites during the fold.
+func (p CallEntryFactProjection) Project() CallEntryFacts {
+	if p.Graph == nil || p.ResolveTargets == nil || p.ParamSlot == nil {
+		return nil
+	}
+	projection := CallEntryContextProjection{
+		ParamSlot:      p.ParamSlot,
+		ParamSlotCount: p.ParamSlotCount,
+		ParamPath:      p.ParamPath,
+		ArgPath:        p.ArgPath,
+		ReferencePaths: p.ReferencePaths,
+		EvalArg:        p.EvalArg,
+	}
+	blocked := make(map[FuncRef]struct{})
+	var out CallEntryFacts
+	p.Graph.EachCallSite(func(point cfg.Point, info *cfg.CallInfo) {
+		site, ok := newCallEntrySite(p.State, point, info)
+		if !ok {
+			return
+		}
+		for _, target := range site.targets(p.ResolveTargets) {
+			evidence := projection.directEvidenceFromPoint(target.Ref, site.Call, &site.ArgState)
+			facts := flow.MergeBoundaryFactProofs(target.EntryFacts, evidence.Facts)
+			if _, weak := blocked[target.Ref]; weak {
+				continue
+			}
+			if !facts.HasProof() {
+				delete(out, target.Ref)
+				blocked[target.Ref] = struct{}{}
+				continue
+			}
+			if out == nil {
+				out = make(CallEntryFacts)
+			}
+			if prev, had := out[target.Ref]; had {
+				facts = flow.BoundaryFactsDomain.Join(prev, facts)
+				if !facts.HasProof() {
+					delete(out, target.Ref)
+					blocked[target.Ref] = struct{}{}
+					continue
+				}
+			}
+			out[target.Ref] = facts.Clone()
+		}
+	})
 	return out
 }
 

@@ -14,6 +14,7 @@ import (
 // flow-domain transaction. Flow owns publication; transfer only supplies stable
 // table/key/value paths and the already-proven product values.
 func (t *Transfer) dynamicIndexWritePathTransaction(
+	out *flow.PointState,
 	target cfg.AssignTarget,
 	source ast.Expr,
 	tablePath constraint.Path,
@@ -27,6 +28,11 @@ func (t *Transfer) dynamicIndexWritePathTransaction(
 	keyPath := constraint.Path{}
 	if path, ok := t.staticPathOfExpr(target.Key); ok {
 		keyPath = path
+		if out != nil {
+			if observed, ok := flow.PointFactsOfBorrowed(out).PathValue(path); ok {
+				keyValue = refineDynamicIndexWriteKeyValue(keyValue, observed)
+			}
+		}
 	}
 	valuePath := constraint.Path{}
 	if path, ok := t.staticPathOfExpr(source); ok {
@@ -40,6 +46,24 @@ func (t *Transfer) dynamicIndexWritePathTransaction(
 		WrittenValue:  writtenValue,
 		ReadbackValue: readbackValue,
 	}, true
+}
+
+func refineDynamicIndexWriteKeyValue(current, observed product.AbstractValue) product.AbstractValue {
+	if observed.IsZero() {
+		return current
+	}
+	if current.IsZero() {
+		return observed
+	}
+	currentType := product.ProjectValueOrUnknown(current)
+	observedType := product.ProjectValueOrUnknown(observed)
+	if typ.IsAbsentOrUnknown(observedType) {
+		return current
+	}
+	if typ.IsAbsentOrUnknown(currentType) || typ.MorePrecise(observedType, currentType) {
+		return observed
+	}
+	return current
 }
 
 func (t *Transfer) indexWriteTargetSealed(path constraint.Path) bool {

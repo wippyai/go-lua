@@ -26,8 +26,6 @@ import (
 	"github.com/wippyai/go-lua/types/flow"
 	"github.com/wippyai/go-lua/types/lattice"
 	latticeproduct "github.com/wippyai/go-lua/types/lattice/product"
-	"github.com/wippyai/go-lua/types/subtype"
-	"github.com/wippyai/go-lua/types/typ"
 )
 
 // Summary is the interprocedural abstraction of one function: everything a
@@ -48,6 +46,10 @@ import (
 //     ($0, $1, ...); the caller rebases those identities onto its assignment
 //     target. Function and closure identity axes stay together because call
 //     outcomes and assignments consume them as one slot-relative fact.
+//   - ReturnStaticMembers is the finite caller-visible static-member fact tuple
+//     for returned values. Each slot contains child path facts rooted at the
+//     corresponding return placeholder. The caller rebases those facts onto its
+//     assignment target; product Returns still own the root value.
 //   - CellEffects is the finite caller-visible capture-cell transformer. It is
 //     separate from the cell store so unchanged entry cells are not mistaken for
 //     writes.
@@ -72,6 +74,11 @@ import (
 //     call-site PointState. It is entry value state, not a public contract: the
 //     summary solve query folds it into the callee's EntryValues so unannotated
 //     parameters see the actual value product in the single fixed point.
+//   - CallEntryFacts is caller-to-callee parameter-relative path proof projected
+//     from solved call-site PointState. It is the fact-side companion to
+//     CallEntryValues: exact EntryFactsKey contexts stay exact, while aggregate
+//     caller facts seed default contexts only when every possible caller proves
+//     them.
 //   - Postconditions is the portable placeholder-rooted proof the function
 //     publishes on every normal return. ParamNarrows is the compatibility/local
 //     effect projection used while condition-argument and cast replay still need
@@ -84,23 +91,26 @@ type Summary struct {
 	// top is the SummaryDomain top sentinel. Return tuples have no finite in-band
 	// top for unknown arity, so the domain needs an explicit marker just like the
 	// finite map domains do. Normal projected summaries never set it.
-	top               bool
-	Returns           []product.AbstractValue
-	ReturnRefs        flow.ReturnRefs
-	Params            paramevidence.Contracts
-	Relations         flow.ReturnRelations
-	CellEffects       flow.CaptureEffects
-	ReceiverEffects   flow.ReceiverEffects
-	BoundaryFacts     flow.BoundaryFacts
-	CaptureReferences flow.ReferenceContext
-	PrototypeSelf     flow.PrototypeSelf
-	CallEntryValues   CallEntryValues
-	Postconditions    paramevidence.ReturnPostconditions
-	ParamNarrows      []paramevidence.ParamNarrow
+	top                 bool
+	Returns             []product.AbstractValue
+	ReturnRefs          flow.ReturnRefs
+	ReturnStaticMembers []flow.StaticMemberFacts
+	Params              paramevidence.Contracts
+	Relations           flow.ReturnRelations
+	CellEffects         flow.CaptureEffects
+	ReceiverEffects     flow.ReceiverEffects
+	BoundaryFacts       flow.BoundaryFacts
+	CaptureReferences   flow.ReferenceContext
+	PrototypeSelf       flow.PrototypeSelf
+	CallEntryValues     CallEntryValues
+	CallEntryFacts      CallEntryFacts
+	Postconditions      paramevidence.ReturnPostconditions
+	ParamNarrows        []paramevidence.ParamNarrow
 }
 
 type EntryValues = map[int]product.AbstractValue
 type CallEntryValues = map[FuncRef]EntryValues
+type CallEntryFacts = map[FuncRef]flow.BoundaryFacts
 
 // returnsDomain lifts the value-domain product over return-tuple slots: slot i
 // is product.Domain, an absent (out-of-range) slot is product.Domain.Bottom(),
@@ -108,8 +118,10 @@ type CallEntryValues = map[FuncRef]EntryValues
 // MapLattice-style pointwise lift the Env and Contracts components use, expressed
 // over a positional tuple rather than a keyed map.
 var returnsDomain = returnTupleLattice{}
+var returnStaticMembersDomain = returnStaticMemberTupleLattice{}
 var entryValuesDomain = latticeproduct.MapLattice[int](product.Domain)
 var callEntryValuesDomain = latticeproduct.MapLattice[FuncRef](entryValuesDomain)
+var callEntryFactsDomain = latticeproduct.MapLattice[FuncRef](flow.BoundaryFactsDomain)
 var paramNarrowsDomain = paramNarrowSetLattice{}
 var returnPostconditionsDomain = paramevidence.ReturnPostconditionsDomain
 
@@ -124,18 +136,20 @@ var returnPostconditionsDomain = paramevidence.ReturnPostconditionsDomain
 var SummaryDomain = lattice.Lattice[Summary]{
 	Bottom: func() Summary {
 		return Summary{
-			Returns:           nil,
-			ReturnRefs:        flow.ReturnRefsDomain.Bottom(),
-			Params:            paramevidence.ContractDomain.Bottom(),
-			Relations:         flow.ReturnRelationsDomain.Bottom(),
-			CellEffects:       flow.CaptureEffectsDomain.Bottom(),
-			ReceiverEffects:   flow.ReceiverEffectsDomain.Bottom(),
-			BoundaryFacts:     flow.BoundaryFactsDomain.Bottom(),
-			CaptureReferences: flow.ReferenceContextDomain.Bottom(),
-			PrototypeSelf:     flow.PrototypeSelfDomain.Bottom(),
-			CallEntryValues:   callEntryValuesDomain.Bottom(),
-			Postconditions:    returnPostconditionsDomain.Bottom(),
-			ParamNarrows:      paramNarrowsDomain.Bottom(),
+			Returns:             nil,
+			ReturnRefs:          flow.ReturnRefsDomain.Bottom(),
+			ReturnStaticMembers: nil,
+			Params:              paramevidence.ContractDomain.Bottom(),
+			Relations:           flow.ReturnRelationsDomain.Bottom(),
+			CellEffects:         flow.CaptureEffectsDomain.Bottom(),
+			ReceiverEffects:     flow.ReceiverEffectsDomain.Bottom(),
+			BoundaryFacts:       flow.BoundaryFactsDomain.Bottom(),
+			CaptureReferences:   flow.ReferenceContextDomain.Bottom(),
+			PrototypeSelf:       flow.PrototypeSelfDomain.Bottom(),
+			CallEntryValues:     callEntryValuesDomain.Bottom(),
+			CallEntryFacts:      callEntryFactsDomain.Bottom(),
+			Postconditions:      returnPostconditionsDomain.Bottom(),
+			ParamNarrows:        paramNarrowsDomain.Bottom(),
 		}
 	},
 	Top: summaryTop,
@@ -145,6 +159,7 @@ var SummaryDomain = lattice.Lattice[Summary]{
 		}
 		return returnsDomain.Equal(a.Returns, b.Returns) &&
 			flow.ReturnRefsDomain.Equal(a.ReturnRefs, b.ReturnRefs) &&
+			returnStaticMembersDomain.Equal(a.ReturnStaticMembers, b.ReturnStaticMembers) &&
 			paramevidence.ContractDomain.Equal(a.Params, b.Params) &&
 			flow.ReturnRelationsDomain.Equal(a.Relations, b.Relations) &&
 			flow.CaptureEffectsDomain.Equal(a.CellEffects, b.CellEffects) &&
@@ -153,6 +168,7 @@ var SummaryDomain = lattice.Lattice[Summary]{
 			flow.ReferenceContextDomain.Equal(a.CaptureReferences, b.CaptureReferences) &&
 			flow.PrototypeSelfDomain.Equal(a.PrototypeSelf, b.PrototypeSelf) &&
 			callEntryValuesDomain.Equal(a.CallEntryValues, b.CallEntryValues) &&
+			callEntryFactsDomain.Equal(a.CallEntryFacts, b.CallEntryFacts) &&
 			returnPostconditionsDomain.Equal(a.Postconditions, b.Postconditions) &&
 			paramNarrowsDomain.Equal(a.ParamNarrows, b.ParamNarrows)
 	},
@@ -165,6 +181,7 @@ var SummaryDomain = lattice.Lattice[Summary]{
 		}
 		return returnsDomain.LessOrEq(a.Returns, b.Returns) &&
 			flow.ReturnRefsDomain.LessOrEq(a.ReturnRefs, b.ReturnRefs) &&
+			returnStaticMembersDomain.LessOrEq(a.ReturnStaticMembers, b.ReturnStaticMembers) &&
 			paramevidence.ContractDomain.LessOrEq(a.Params, b.Params) &&
 			flow.ReturnRelationsDomain.LessOrEq(a.Relations, b.Relations) &&
 			flow.CaptureEffectsDomain.LessOrEq(a.CellEffects, b.CellEffects) &&
@@ -173,6 +190,7 @@ var SummaryDomain = lattice.Lattice[Summary]{
 			flow.ReferenceContextDomain.LessOrEq(a.CaptureReferences, b.CaptureReferences) &&
 			flow.PrototypeSelfDomain.LessOrEq(a.PrototypeSelf, b.PrototypeSelf) &&
 			callEntryValuesDomain.LessOrEq(a.CallEntryValues, b.CallEntryValues) &&
+			callEntryFactsDomain.LessOrEq(a.CallEntryFacts, b.CallEntryFacts) &&
 			returnPostconditionsDomain.LessOrEq(a.Postconditions, b.Postconditions) &&
 			paramNarrowsDomain.LessOrEq(a.ParamNarrows, b.ParamNarrows)
 	},
@@ -181,18 +199,20 @@ var SummaryDomain = lattice.Lattice[Summary]{
 			return summaryTop()
 		}
 		return Summary{
-			Returns:           returnsDomain.Join(a.Returns, b.Returns),
-			ReturnRefs:        flow.ReturnRefsDomain.Join(a.ReturnRefs, b.ReturnRefs),
-			Params:            paramevidence.ContractDomain.Join(a.Params, b.Params),
-			Relations:         flow.ReturnRelationsDomain.Join(a.Relations, b.Relations),
-			CellEffects:       flow.CaptureEffectsDomain.Join(a.CellEffects, b.CellEffects),
-			ReceiverEffects:   flow.ReceiverEffectsDomain.Join(a.ReceiverEffects, b.ReceiverEffects),
-			BoundaryFacts:     flow.BoundaryFactsDomain.Join(a.BoundaryFacts, b.BoundaryFacts),
-			CaptureReferences: flow.ReferenceContextDomain.Join(a.CaptureReferences, b.CaptureReferences),
-			PrototypeSelf:     flow.PrototypeSelfDomain.Join(a.PrototypeSelf, b.PrototypeSelf),
-			CallEntryValues:   callEntryValuesDomain.Join(a.CallEntryValues, b.CallEntryValues),
-			Postconditions:    returnPostconditionsDomain.Join(a.Postconditions, b.Postconditions),
-			ParamNarrows:      paramNarrowsDomain.Join(a.ParamNarrows, b.ParamNarrows),
+			Returns:             returnsDomain.Join(a.Returns, b.Returns),
+			ReturnRefs:          flow.ReturnRefsDomain.Join(a.ReturnRefs, b.ReturnRefs),
+			ReturnStaticMembers: returnStaticMembersDomain.Join(a.ReturnStaticMembers, b.ReturnStaticMembers),
+			Params:              paramevidence.ContractDomain.Join(a.Params, b.Params),
+			Relations:           flow.ReturnRelationsDomain.Join(a.Relations, b.Relations),
+			CellEffects:         flow.CaptureEffectsDomain.Join(a.CellEffects, b.CellEffects),
+			ReceiverEffects:     flow.ReceiverEffectsDomain.Join(a.ReceiverEffects, b.ReceiverEffects),
+			BoundaryFacts:       flow.BoundaryFactsDomain.Join(a.BoundaryFacts, b.BoundaryFacts),
+			CaptureReferences:   flow.ReferenceContextDomain.Join(a.CaptureReferences, b.CaptureReferences),
+			PrototypeSelf:       flow.PrototypeSelfDomain.Join(a.PrototypeSelf, b.PrototypeSelf),
+			CallEntryValues:     callEntryValuesDomain.Join(a.CallEntryValues, b.CallEntryValues),
+			CallEntryFacts:      callEntryFactsDomain.Join(a.CallEntryFacts, b.CallEntryFacts),
+			Postconditions:      returnPostconditionsDomain.Join(a.Postconditions, b.Postconditions),
+			ParamNarrows:        paramNarrowsDomain.Join(a.ParamNarrows, b.ParamNarrows),
 		}
 	},
 	Meet: nil,
@@ -201,125 +221,42 @@ var SummaryDomain = lattice.Lattice[Summary]{
 			return summaryTop()
 		}
 		return Summary{
-			Returns:           returnsDomain.Widen(prev.Returns, next.Returns),
-			ReturnRefs:        flow.ReturnRefsDomain.Widen(prev.ReturnRefs, next.ReturnRefs),
-			Params:            paramevidence.ContractDomain.Widen(prev.Params, next.Params),
-			Relations:         flow.ReturnRelationsDomain.Widen(prev.Relations, next.Relations),
-			CellEffects:       flow.CaptureEffectsDomain.Widen(prev.CellEffects, next.CellEffects),
-			ReceiverEffects:   flow.ReceiverEffectsDomain.Widen(prev.ReceiverEffects, next.ReceiverEffects),
-			BoundaryFacts:     flow.BoundaryFactsDomain.Widen(prev.BoundaryFacts, next.BoundaryFacts),
-			CaptureReferences: flow.ReferenceContextDomain.Widen(prev.CaptureReferences, next.CaptureReferences),
-			PrototypeSelf:     flow.PrototypeSelfDomain.Widen(prev.PrototypeSelf, next.PrototypeSelf),
-			CallEntryValues:   callEntryValuesDomain.Widen(prev.CallEntryValues, next.CallEntryValues),
-			Postconditions:    returnPostconditionsDomain.Widen(prev.Postconditions, next.Postconditions),
-			ParamNarrows:      paramNarrowsDomain.Widen(prev.ParamNarrows, next.ParamNarrows),
+			Returns:             returnsDomain.Widen(prev.Returns, next.Returns),
+			ReturnRefs:          flow.ReturnRefsDomain.Widen(prev.ReturnRefs, next.ReturnRefs),
+			ReturnStaticMembers: returnStaticMembersDomain.Widen(prev.ReturnStaticMembers, next.ReturnStaticMembers),
+			Params:              paramevidence.ContractDomain.Widen(prev.Params, next.Params),
+			Relations:           flow.ReturnRelationsDomain.Widen(prev.Relations, next.Relations),
+			CellEffects:         flow.CaptureEffectsDomain.Widen(prev.CellEffects, next.CellEffects),
+			ReceiverEffects:     flow.ReceiverEffectsDomain.Widen(prev.ReceiverEffects, next.ReceiverEffects),
+			BoundaryFacts:       flow.BoundaryFactsDomain.Widen(prev.BoundaryFacts, next.BoundaryFacts),
+			CaptureReferences:   flow.ReferenceContextDomain.Widen(prev.CaptureReferences, next.CaptureReferences),
+			PrototypeSelf:       flow.PrototypeSelfDomain.Widen(prev.PrototypeSelf, next.PrototypeSelf),
+			CallEntryValues:     callEntryValuesDomain.Widen(prev.CallEntryValues, next.CallEntryValues),
+			CallEntryFacts:      callEntryFactsDomain.Widen(prev.CallEntryFacts, next.CallEntryFacts),
+			Postconditions:      returnPostconditionsDomain.Widen(prev.Postconditions, next.Postconditions),
+			ParamNarrows:        paramNarrowsDomain.Widen(prev.ParamNarrows, next.ParamNarrows),
 		}
 	},
 }
 
 func summaryTop() Summary {
 	return Summary{
-		top:               true,
-		Returns:           nil,
-		ReturnRefs:        flow.ReturnRefsDomain.Top(),
-		Params:            paramevidence.ContractDomain.Top(),
-		Relations:         flow.ReturnRelationsDomain.Top(),
-		CellEffects:       flow.CaptureEffectsDomain.Top(),
-		ReceiverEffects:   flow.ReceiverEffectsDomain.Top(),
-		BoundaryFacts:     flow.BoundaryFactsDomain.Top(),
-		CaptureReferences: flow.ReferenceContextDomain.Top(),
-		PrototypeSelf:     flow.PrototypeSelfDomain.Top(),
-		CallEntryValues:   callEntryValuesDomain.Top(),
-		Postconditions:    returnPostconditionsDomain.Top(),
-		ParamNarrows:      paramNarrowsDomain.Top(),
+		top:                 true,
+		Returns:             nil,
+		ReturnRefs:          flow.ReturnRefsDomain.Top(),
+		ReturnStaticMembers: nil,
+		Params:              paramevidence.ContractDomain.Top(),
+		Relations:           flow.ReturnRelationsDomain.Top(),
+		CellEffects:         flow.CaptureEffectsDomain.Top(),
+		ReceiverEffects:     flow.ReceiverEffectsDomain.Top(),
+		BoundaryFacts:       flow.BoundaryFactsDomain.Top(),
+		CaptureReferences:   flow.ReferenceContextDomain.Top(),
+		PrototypeSelf:       flow.PrototypeSelfDomain.Top(),
+		CallEntryValues:     callEntryValuesDomain.Top(),
+		CallEntryFacts:      callEntryFactsDomain.Top(),
+		Postconditions:      returnPostconditionsDomain.Top(),
+		ParamNarrows:        paramNarrowsDomain.Top(),
 	}
-}
-
-// mergeExactOverlaySummary is the reducer for diagnostic exact-context summary
-// overlays. It is deliberately not just SummaryDomain.Widen: the recursive
-// Summary cell is a monotone fixed-point carrier, while the diagnostic overlay
-// is a snapshot of an exact observer that may initially run before exact callees
-// have published their own overlay postconditions. Value axes still use widening
-// to terminate recursive exact observations. Effect and must-proof axes are
-// latest snapshots: an earlier identity/no-proof observation is not a runtime
-// path and must not survive after the exact callee overlay proves a write or
-// boundary fact.
-func mergeExactOverlaySummary(prev, next Summary) Summary {
-	out := SummaryDomain.Widen(prev, next)
-	out.Returns = mergeExactOverlayReturns(prev.Returns, next.Returns, out.Returns)
-	out.CellEffects = mergeExactOverlayCellEffects(prev.CellEffects, next.CellEffects)
-	out.ReceiverEffects = next.ReceiverEffects
-	out.Relations = next.Relations
-	out.BoundaryFacts = next.BoundaryFacts
-	out.Postconditions = next.Postconditions
-	return out
-}
-
-func mergeExactOverlayCellEffects(prev, next flow.CaptureEffects) flow.CaptureEffects {
-	if !next.IsTop() && !next.IsBottom() && !next.HasFiniteEntries() && prev.HasFiniteEntries() {
-		return prev
-	}
-	return next
-}
-
-func mergeExactOverlayReturns(prev, next, widened []product.AbstractValue) []product.AbstractValue {
-	if len(next) == 0 || len(prev) == 0 {
-		return widened
-	}
-	out := append([]product.AbstractValue(nil), widened...)
-	for i, candidate := range next {
-		if i >= len(prev) || i >= len(out) || candidate.IsZero() {
-			continue
-		}
-		baseline := prev[i]
-		if baseline.IsZero() {
-			continue
-		}
-		if product.Domain.Equal(baseline, candidate) &&
-			typ.TypeEquals(product.ProjectValueOrUnknown(baseline), product.ProjectValueOrUnknown(candidate)) {
-			continue
-		}
-		if exactReturnValueRefines(candidate, baseline) &&
-			!exactReturnValueFiniteOverWidened(baseline, candidate) &&
-			((baseline.Covers(candidate) && !candidate.Covers(baseline)) ||
-				exactReturnValueFiniteOverWidened(candidate, baseline)) {
-			out[i] = candidate
-			continue
-		}
-		if exactReturnValueRefines(baseline, candidate) &&
-			((candidate.Covers(baseline) && !baseline.Covers(candidate)) ||
-				exactReturnValueFiniteOverWidened(baseline, candidate)) {
-			out[i] = baseline
-		}
-	}
-	return out
-}
-
-func exactReturnValueFiniteOverWidened(candidate, baseline product.AbstractValue) bool {
-	candidateType := candidate.ProjectValue()
-	baselineType := baseline.ProjectValue()
-	return candidateType != nil &&
-		baselineType != nil &&
-		((!typ.ContainsRecursive(candidateType) && typ.ContainsRecursive(baselineType)) ||
-			(!typ.ContainsNever(candidateType) && typ.ContainsNever(baselineType)))
-}
-
-func exactReturnValueRefines(candidate, baseline product.AbstractValue) bool {
-	candidateType := candidate.ProjectValue()
-	baselineType := baseline.ProjectValue()
-	if _, candidateLiteral := candidateType.(*typ.Literal); candidateLiteral {
-		return false
-	}
-	if _, baselineLiteral := baselineType.(*typ.Literal); baselineLiteral {
-		return false
-	}
-	if exactReturnValueFiniteOverWidened(candidate, baseline) {
-		return true
-	}
-	return candidateType != nil &&
-		baselineType != nil &&
-		subtype.IsSubtype(candidateType, baselineType) &&
-		!subtype.IsSubtype(baselineType, candidateType)
 }
 
 type paramNarrowSetLattice struct{}
@@ -446,6 +383,69 @@ func slot(t []product.AbstractValue, i int) product.AbstractValue {
 	}
 	if t[i].IsZero() {
 		return product.Domain.Bottom()
+	}
+	return t[i]
+}
+
+// returnStaticMemberTupleLattice lifts StaticMemberFacts over return slots.
+// Absence is Bottom so SummaryDomain.Bottom stays neutral under Join. Projection
+// emits an explicit Top slot for a returned value with no child-path proof; that
+// Top then drops facts not proven on every possible return path or target.
+type returnStaticMemberTupleLattice struct{}
+
+func (returnStaticMemberTupleLattice) Equal(a, b []flow.StaticMemberFacts) bool {
+	n := max(len(a), len(b))
+	for i := 0; i < n; i++ {
+		if !flow.StaticMemberFactsDomain.Equal(staticMemberSlot(a, i), staticMemberSlot(b, i)) {
+			return false
+		}
+	}
+	return true
+}
+
+func (returnStaticMemberTupleLattice) LessOrEq(a, b []flow.StaticMemberFacts) bool {
+	n := max(len(a), len(b))
+	for i := 0; i < n; i++ {
+		if !flow.StaticMemberFactsDomain.LessOrEq(staticMemberSlot(a, i), staticMemberSlot(b, i)) {
+			return false
+		}
+	}
+	return true
+}
+
+func (returnStaticMemberTupleLattice) Join(a, b []flow.StaticMemberFacts) []flow.StaticMemberFacts {
+	return combineReturnStaticMembers(a, b, flow.StaticMemberFactsDomain.Join)
+}
+
+func (returnStaticMemberTupleLattice) Widen(prev, next []flow.StaticMemberFacts) []flow.StaticMemberFacts {
+	return combineReturnStaticMembers(prev, next, flow.StaticMemberFactsDomain.Widen)
+}
+
+func combineReturnStaticMembers(
+	a, b []flow.StaticMemberFacts,
+	op func(flow.StaticMemberFacts, flow.StaticMemberFacts) flow.StaticMemberFacts,
+) []flow.StaticMemberFacts {
+	n := max(len(a), len(b))
+	if n == 0 {
+		return nil
+	}
+	out := make([]flow.StaticMemberFacts, n)
+	last := -1
+	for i := 0; i < n; i++ {
+		out[i] = op(staticMemberSlot(a, i), staticMemberSlot(b, i))
+		if !flow.StaticMemberFactsDomain.Equal(out[i], flow.StaticMemberFactsDomain.Bottom()) {
+			last = i
+		}
+	}
+	if last < 0 {
+		return nil
+	}
+	return out[:last+1]
+}
+
+func staticMemberSlot(t []flow.StaticMemberFacts, i int) flow.StaticMemberFacts {
+	if i < 0 || i >= len(t) {
+		return flow.StaticMemberFactsDomain.Bottom()
 	}
 	return t[i]
 }

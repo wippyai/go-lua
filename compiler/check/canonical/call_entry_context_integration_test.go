@@ -1,6 +1,7 @@
 package canonical
 
 import (
+	"slices"
 	"testing"
 
 	"github.com/wippyai/go-lua/compiler/ast"
@@ -68,6 +69,68 @@ func TestProductCallEntryContextProjectsDirectCallerAxes(t *testing.T) {
 	if _, ok := flow.ClosureRefAtPath(entry.ClosureRefs(), otherPath); ok {
 		t.Fatal("non-captured closure ref leaked into entry context")
 	}
+}
+
+func TestProductCallEntryContextCarriesProjectedBoundaryFacts(t *testing.T) {
+	ref := summary.FuncRef{GraphID: 12}
+	param := &ast.IdentExpr{Value: "graph"}
+	call := &ast.FuncCallExpr{Args: []ast.Expr{param}}
+	graphSym := cfg.SymbolID(303)
+	graphPath := constraint.NewPath(graphSym, "graph")
+	nodeOrder := graphPath.Field("node_order")
+	edges := graphPath.Field("edges")
+	edgeValue := product.FromType(typ.NewRecord().
+		Field("targets", typ.NewArray(typ.String)).
+		Field("error_targets", typ.NewArray(typ.String)).
+		Build())
+
+	callerBindings := bind.NewBindingTable()
+	callerBindings.Bind(param, graphSym)
+	callerBindings.SetName(graphSym, "graph")
+	callerGraph := cfg.BuildWithBindings(&ast.FunctionExpr{}, callerBindings)
+	calleeFn := &ast.FunctionExpr{ParList: &ast.ParList{Names: []string{"graph"}}}
+	calleeGraph := cfg.Build(calleeFn)
+	prog := &program{
+		funcTopology: topology.NewFunctionTopology([]topology.FunctionEntry{
+			{Ref: ref, Graph: calleeGraph, Function: calleeFn},
+		}),
+	}
+	ct := callTyper{d: &Driver{activeProgram: prog}, g: callerGraph}
+	projector := callEntryProjector{program: prog, graph: callerGraph, typer: ct}
+	entry := projector.productEntryContext(ref, call, transfer.ProductCallContext{
+		RuntimeArgValues: []product.AbstractValue{product.FromType(typ.NewRecord().Build())},
+		KeyPresence: flow.KeyPresenceFacts{}.
+			WithKeyArrayValueAddresses(
+				testCallEntryStableAddress(t, nodeOrder),
+				testCallEntryStableAddress(t, edges),
+				edgeValue,
+			),
+	})
+
+	facts := entry.EntryFacts().KeyArrayValues()
+	if len(facts) != 1 {
+		t.Fatalf("entry facts = %#v, want one key-array-value proof", entry.EntryFacts())
+	}
+	wantArray := flow.BoundaryPath{Kind: flow.BoundaryPathParam, Index: 0, Segments: nodeOrder.Segments}
+	wantTable := flow.BoundaryPath{Kind: flow.BoundaryPathParam, Index: 0, Segments: edges.Segments}
+	if facts[0].Array.Kind != wantArray.Kind ||
+		facts[0].Array.Index != wantArray.Index ||
+		!slices.Equal(facts[0].Array.Segments, wantArray.Segments) ||
+		facts[0].Table.Kind != wantTable.Kind ||
+		facts[0].Table.Index != wantTable.Index ||
+		!slices.Equal(facts[0].Table.Segments, wantTable.Segments) ||
+		!product.Domain.Equal(facts[0].Value, edgeValue) {
+		t.Fatalf("entry fact = %#v, want array %#v table %#v value %s", facts[0], wantArray, wantTable, edgeValue.ProjectValue())
+	}
+}
+
+func testCallEntryStableAddress(t *testing.T, path constraint.Path) flow.StableAddress {
+	t.Helper()
+	addr, ok := flow.StableAddressOfPath(path)
+	if !ok {
+		t.Fatalf("stable address for path %s", path.Key())
+	}
+	return addr
 }
 
 func graphWithCapturedSymbol(t *testing.T, sym cfg.SymbolID, name string) *cfg.Graph {

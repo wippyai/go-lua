@@ -412,6 +412,9 @@ func (p Projector) typeOf(expr ast.Expr, point cfg.Point, expected typ.Type) typ
 	case *ast.UnaryBNotOpExpr:
 		return p.unaryType("~", p.TypeOf(e.Expr, point), typ.Integer)
 	case *ast.UnaryLenOpExpr:
+		if p.exprHasLengthProof(e.Expr, point) {
+			return typ.Integer
+		}
 		return p.unaryType("#", p.TypeOf(e.Expr, point), typ.Integer)
 	case *ast.UnaryNotOpExpr:
 		return typ.Boolean
@@ -474,6 +477,20 @@ func (p Projector) unaryType(op string, operand typ.Type, fallback typ.Type) typ
 		return t
 	}
 	return fallback
+}
+
+func (p Projector) exprHasLengthProof(expr ast.Expr, point cfg.Point) bool {
+	if p.cfg.Flow == nil {
+		return false
+	}
+	path := flowpath.FromExprWithBindingsAt(expr, nil, p.cfg.Bindings, p.cfg.Graph, point)
+	if path.IsEmpty() {
+		return false
+	}
+	if _, _, ok := p.cfg.Flow.LengthBoundsAt(point, path); ok {
+		return true
+	}
+	return ops.MayHaveLength(p.cfg.Flow.NarrowedTypeAt(point, path))
 }
 
 func (p Projector) contextualLiteral(lit typ.Type, expected typ.Type) typ.Type {
