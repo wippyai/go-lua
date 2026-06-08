@@ -47,7 +47,7 @@ func (t *Transfer) readIdentValue(out *flow.PointState, q identValueReadQuery) (
 		if meta, ok := t.typeValueOf(q.Expr); ok {
 			return meta, true
 		}
-		if q.AllowGradualFallback && t.unannotatedParam[sym] {
+		if q.AllowGradualFallback && t.unannotatedParam.Contains(sym) {
 			return product.GradualAny(), true
 		}
 		return product.AbstractValue{}, false

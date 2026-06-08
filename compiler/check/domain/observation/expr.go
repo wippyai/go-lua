@@ -15,6 +15,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/check/domain/globalenv"
 	"github.com/wippyai/go-lua/compiler/check/domain/indexread"
 	"github.com/wippyai/go-lua/compiler/check/domain/metatable"
+	"github.com/wippyai/go-lua/compiler/check/domain/paramboundary"
 	"github.com/wippyai/go-lua/compiler/check/domain/paramevidence"
 	flowpath "github.com/wippyai/go-lua/compiler/check/domain/path"
 	"github.com/wippyai/go-lua/compiler/check/domain/provenance"
@@ -525,39 +526,12 @@ func (p Projector) globalNameType(point cfg.Point, name string) typ.Type {
 // the unrefined `unknown` seed, is the gradual `any?` the public contract
 // already exposes.
 func (p Projector) isUnannotatedParamSymbol(sym cfg.SymbolID) bool {
-	if sym == 0 || p.cfg.Graph == nil {
-		return false
-	}
-	if p.cfg.Inputs != nil && p.cfg.Inputs.AnnotatedVars[sym] {
-		return false
-	}
-	if p.cfg.Facts != nil && p.cfg.Facts.IsAnnotated(sym) {
-		return false
-	}
-	fn := p.cfg.Graph.Func()
-	if fn == nil || fn.ParList == nil {
-		return false
-	}
-	for _, slot := range p.cfg.Graph.ParamSlotsReadOnly() {
-		if slot.Symbol != sym {
-			continue
-		}
-		if slot.IsImplicitSelf {
+	return paramboundary.SourceUnannotated(p.cfg.Graph, sym, func(sym cfg.SymbolID) bool {
+		if p.cfg.Inputs != nil && p.cfg.Inputs.AnnotatedVars[sym] {
 			return true
 		}
-		sourceIdx, hasSource := slot.SourceParamIndex()
-		if !hasSource {
-			return false
-		}
-		if sourceIdx < 0 || sourceIdx >= len(fn.ParList.Names) {
-			return false
-		}
-		if sourceIdx >= len(fn.ParList.Types) {
-			return true
-		}
-		return fn.ParList.Types[sourceIdx] == nil
-	}
-	return false
+		return p.cfg.Facts != nil && p.cfg.Facts.IsAnnotated(sym)
+	})
 }
 
 func (p Projector) identTypeWithExpected(expr *ast.IdentExpr, point cfg.Point, expected typ.Type) typ.Type {

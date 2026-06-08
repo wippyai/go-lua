@@ -46,9 +46,11 @@ import (
 	"github.com/wippyai/go-lua/compiler/check/domain/callobligation"
 	abstractcond "github.com/wippyai/go-lua/compiler/check/domain/cond"
 	"github.com/wippyai/go-lua/compiler/check/domain/fieldkey"
+	"github.com/wippyai/go-lua/compiler/check/domain/functionsymbols"
 	"github.com/wippyai/go-lua/compiler/check/domain/guard"
 	"github.com/wippyai/go-lua/compiler/check/domain/literal"
 	"github.com/wippyai/go-lua/compiler/check/domain/metatable"
+	"github.com/wippyai/go-lua/compiler/check/domain/paramboundary"
 	"github.com/wippyai/go-lua/compiler/check/domain/paramevidence"
 	domainpath "github.com/wippyai/go-lua/compiler/check/domain/path"
 	"github.com/wippyai/go-lua/compiler/check/synth/ops"
@@ -306,7 +308,7 @@ type Transfer struct {
 	// observation surface applies. The transfer reads it when typing an operator over
 	// such a parameter (`prefix or "["`) so the result is the gradual join rather than
 	// undetermined.
-	unannotatedParam map[cfg.SymbolID]bool
+	unannotatedParam functionsymbols.Set
 	// declaredTypes maps an annotated symbol (a parameter or a `local r: A|B = ...`
 	// declaration) to its declared type. Discriminant / typeof / equality narrowing
 	// reads it to narrow over the DECLARED type rather than the precise constructor
@@ -394,13 +396,8 @@ func New(in input.Inputs, config Config) *Transfer {
 			continue
 		}
 		t.paramBySym[sym] = i
-		if _, declared := t.declaredParamBySlot[i]; !declared {
-			if t.unannotatedParam == nil {
-				t.unannotatedParam = make(map[cfg.SymbolID]bool)
-			}
-			t.unannotatedParam[sym] = true
-		}
 	}
+	t.unannotatedParam = paramboundary.UnannotatedRootsBySlot(in.Scope.ParamSymbols, t.declaredParamBySlot)
 	t.symbolStorage = newSymbolStoragePolicy(in.Graph, t.paramBySym, in.Scope.CellSymbols)
 	for _, b := range config.TypeChecks {
 		if b.ErrSym == 0 || b.Type == nil || len(b.NarrowSyms) == 0 {
@@ -1089,7 +1086,7 @@ func (t *Transfer) exprUsesPendingUnannotatedParam(out *flow.PointState, expr as
 		return false
 	case *ast.IdentExpr:
 		sym := t.symbolOf(e)
-		if sym == 0 || !t.unannotatedParam[sym] {
+		if sym == 0 || !t.unannotatedParam.Contains(sym) {
 			return false
 		}
 		_, ok := t.symbolValue(out, sym)
@@ -2922,7 +2919,7 @@ func (t *Transfer) callableSignatureResolver(out *flow.PointState) flow.Callable
 func (t *Transfer) pointReadPolicy(out *flow.PointState) flow.PointReadPolicy {
 	return flow.PointReadPolicy{
 		UnannotatedSymbol: func(sym cfg.SymbolID) bool {
-			return t.unannotatedParam[sym]
+			return t.unannotatedParam.Contains(sym)
 		},
 		CallableSignature: t.callableSignatureResolver(out),
 	}
@@ -3343,7 +3340,7 @@ func (t *Transfer) gradualAnySource(out *flow.PointState, expr ast.Expr) bool {
 		if sym == 0 {
 			return false
 		}
-		if t.unannotatedParam[sym] {
+		if t.unannotatedParam.Contains(sym) {
 			return true
 		}
 		// A symbol whose tracked product value carries gradual-top evidence is itself
@@ -3402,7 +3399,7 @@ func (t *Transfer) resolveExprValue(
 		return av, true
 	}
 	if ident, ok := e.(*ast.IdentExpr); ok {
-		if sym := t.symbolOf(ident); sym != 0 && t.unannotatedParam[sym] {
+		if sym := t.symbolOf(ident); sym != 0 && t.unannotatedParam.Contains(sym) {
 			return product.GradualAny(), true
 		}
 	}

@@ -3,6 +3,7 @@ package canonical
 import (
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/canonical/state"
+	"github.com/wippyai/go-lua/compiler/check/domain/functionsymbols"
 	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/domain/value/product"
 	"github.com/wippyai/go-lua/types/flow"
@@ -15,12 +16,12 @@ import (
 // proofs, gradual-top provenance, and callable projection.
 type pathProjector struct {
 	state             state.FunctionState
-	unannotatedParams map[cfg.SymbolID]bool
+	unannotatedParams functionsymbols.Set
 	callables         callableProjector
 	preferPostState   bool
 }
 
-func newPathProjector(fs state.FunctionState, unannotated map[cfg.SymbolID]bool, callables callableProjector) pathProjector {
+func newPathProjector(fs state.FunctionState, unannotated functionsymbols.Set, callables callableProjector) pathProjector {
 	return pathProjector{
 		state:             fs,
 		unannotatedParams: unannotated,
@@ -48,7 +49,7 @@ func (p pathProjector) RefinedPathValueAt(point cfg.Point, path constraint.Path)
 func (p pathProjector) readPolicy() flow.PointReadPolicy {
 	return flow.PointReadPolicy{
 		UnannotatedSymbol: func(sym cfg.SymbolID) bool {
-			return p.unannotatedParams[sym]
+			return p.unannotatedParams.Contains(sym)
 		},
 		CallableSignature: p.callableSignatureResolver(),
 	}

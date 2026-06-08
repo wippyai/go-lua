@@ -9,6 +9,8 @@ import (
 	"github.com/wippyai/go-lua/compiler/check/canonical/summary"
 	"github.com/wippyai/go-lua/compiler/check/canonical/transfer"
 	"github.com/wippyai/go-lua/compiler/check/domain/callbackenv"
+	"github.com/wippyai/go-lua/compiler/check/domain/functionsymbols"
+	"github.com/wippyai/go-lua/compiler/check/domain/paramboundary"
 	"github.com/wippyai/go-lua/compiler/check/domain/paramevidence"
 	flowpath "github.com/wippyai/go-lua/compiler/check/domain/path"
 	"github.com/wippyai/go-lua/compiler/check/scope"
@@ -355,7 +357,7 @@ type canonicalFacts struct {
 	// gradual `any` (a Lua parameter without an annotation is dynamic, usable in
 	// every operation). A parameter the body constrains carries its inferred value
 	// and is not defaulted.
-	unannotatedParams map[cfg.SymbolID]bool
+	unannotatedParams functionsymbols.Set
 
 	paths   pathProjector
 	driver  *Driver
@@ -368,19 +370,7 @@ type canonicalFacts struct {
 // state.FunctionState.InPoints, so the graph the solve ran over is not
 // re-consulted here (the in-state is read, never re-derived).
 func (d *Driver) newCanonicalFacts(g *cfg.Graph, fs state.FunctionState, facts functionFacts, prog *program, queries *summary.Queries, ctx *db.QueryContext, _ api.FlowEvidence) *canonicalFacts {
-	var unannotated map[cfg.SymbolID]bool
-	for _, sym := range facts.paramSyms {
-		if sym == 0 || facts.annotated[sym] {
-			continue
-		}
-		if t, ok := facts.declared[sym]; ok && t != nil && !typ.IsAbsentOrUnknown(t) {
-			continue
-		}
-		if unannotated == nil {
-			unannotated = make(map[cfg.SymbolID]bool, len(facts.paramSyms))
-		}
-		unannotated[sym] = true
-	}
+	unannotated := paramboundary.UnannotatedRootsFromFacts(facts.paramSyms, facts.declared, facts.annotated)
 	var consts map[cfg.SymbolID]map[cfg.Point]*flow.ConstValue
 	if prog != nil && g != nil {
 		if ref, ok := prog.refByGraph(g); ok {
@@ -627,7 +617,7 @@ func (f *canonicalFacts) refinedAt(p cfg.Point, sym cfg.SymbolID, post bool) flo
 		// a module-wide side map; that would mask a missing capture seed.
 		// An unannotated parameter the body imposes no obligation on is gradual
 		// `any` (dynamic, usable in every operation), not opaque unknown.
-		if f.unannotatedParams[sym] {
+		if f.unannotatedParams.Contains(sym) {
 			return flow.TypedValue{Type: typ.Any, State: flow.StateResolved}
 		}
 		return flow.TypedValue{Type: nil, State: flow.StateUnknown}
@@ -636,7 +626,7 @@ func (f *canonicalFacts) refinedAt(p cfg.Point, sym cfg.SymbolID, post bool) flo
 	if t == nil || typ.IsUnknown(t) {
 		// A converged-but-unknown value for an unannotated parameter is the gradual
 		// default: the body did not pin it to a concrete type, so it stays `any`.
-		if f.unannotatedParams[sym] {
+		if f.unannotatedParams.Contains(sym) {
 			return flow.TypedValue{Type: typ.Any, State: flow.StateResolved}
 		}
 		return flow.TypedValue{Type: nil, State: flow.StateUnknown}

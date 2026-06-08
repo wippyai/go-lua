@@ -7,6 +7,7 @@ import (
 	canonref "github.com/wippyai/go-lua/compiler/check/canonical/ref"
 	"github.com/wippyai/go-lua/compiler/check/canonical/state"
 	"github.com/wippyai/go-lua/compiler/check/canonical/summary"
+	"github.com/wippyai/go-lua/compiler/check/domain/functionsymbols"
 	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/domain/value/product"
 	"github.com/wippyai/go-lua/types/flow"
@@ -109,7 +110,7 @@ func TestObservePathCallableRefPreservesDeclaredMapReadOptionalityWithoutProduct
 		state:    fs,
 		declared: map[cfg.SymbolID]typ.Type{sym: rootType},
 		annotate: map[cfg.SymbolID]bool{sym: true},
-		paths:    newPathProjector(fs, nil, testCallableProjector(ref, handlerSig)),
+		paths:    newPathProjector(fs, canonicalTestSymbolSet(), testCallableProjector(ref, handlerSig)),
 	}
 
 	got := facts.ObservePath(flow.PathObservationQuery{Point: point, Path: path})
@@ -137,7 +138,7 @@ func TestPathProjectorUnannotatedParamPreciseRootDoesNotFabricateGradualDescenda
 				},
 			},
 		},
-		unannotatedParams: map[cfg.SymbolID]bool{sym: true},
+		unannotatedParams: canonicalTestSymbolSet(sym),
 	}
 
 	present := projector.RefinedPathAt(point, constraint.NewPath(sym, "self").Field("session_id"))
@@ -179,7 +180,7 @@ func TestObservePathCallableRefKeepsMustPresentProductValueDefinite(t *testing.T
 		state:    fs,
 		declared: map[cfg.SymbolID]typ.Type{sym: rootType},
 		annotate: map[cfg.SymbolID]bool{sym: true},
-		paths:    newPathProjector(fs, nil, testCallableProjector(ref, solvedSig)),
+		paths:    newPathProjector(fs, canonicalTestSymbolSet(), testCallableProjector(ref, solvedSig)),
 	}
 
 	got := facts.ObservePath(flow.PathObservationQuery{Point: point, Path: path})
@@ -208,4 +209,12 @@ func testCallableProjector(ref summary.FuncRef, sig *typ.Function) callableProje
 			return sig
 		},
 	}
+}
+
+func canonicalTestSymbolSet(syms ...cfg.SymbolID) functionsymbols.Set {
+	var set functionsymbols.Set
+	for _, sym := range syms {
+		set.Add(sym)
+	}
+	return set
 }

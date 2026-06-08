@@ -41,7 +41,7 @@ func TestCanonicalFactsPathValueAtUsesStructuralMemberKeys(t *testing.T) {
 	}
 	facts := &canonicalFacts{
 		state: fs,
-		paths: newPathProjector(fs, nil, callableProjector{}),
+		paths: newPathProjector(fs, canonicalTestSymbolSet(), callableProjector{}),
 	}
 
 	cases := []struct {
@@ -96,7 +96,7 @@ func TestCanonicalFactsRefinedPathAtAppliesLengthProofForStaticIndex(t *testing.
 	}
 	facts := &canonicalFacts{
 		state: fs,
-		paths: newPathProjector(fs, nil, callableProjector{}),
+		paths: newPathProjector(fs, canonicalTestSymbolSet(), callableProjector{}),
 	}
 
 	path := constraint.NewPath(sym, "arr").IndexInt(1)
@@ -197,7 +197,7 @@ func TestCanonicalFactsConditionTypeAtProjectsDiscriminatedChildWithoutSolution(
 		state:    fs,
 		declared: map[cfg.SymbolID]typ.Type{sym: declared},
 		annotate: map[cfg.SymbolID]bool{sym: true},
-		paths:    newPathProjector(fs, nil, callableProjector{}),
+		paths:    newPathProjector(fs, canonicalTestSymbolSet(), callableProjector{}),
 	}
 
 	got := facts.ConditionTypeAt(point, root.Field("value"))
@@ -317,7 +317,7 @@ func TestCanonicalFactsObservePathUsesDirectPathProjection(t *testing.T) {
 	}
 	facts := &canonicalFacts{
 		state: fs,
-		paths: newPathProjector(fs, nil, callableProjector{}),
+		paths: newPathProjector(fs, canonicalTestSymbolSet(), callableProjector{}),
 	}
 
 	obs := facts.ObservePath(flow.PathObservationQuery{
@@ -351,7 +351,7 @@ func TestCanonicalFactsObservePathHonorsStrictPrePhase(t *testing.T) {
 	}
 	facts := &canonicalFacts{
 		state: fs,
-		paths: newPathProjector(fs, nil, callableProjector{}),
+		paths: newPathProjector(fs, canonicalTestSymbolSet(), callableProjector{}),
 	}
 	path := constraint.NewPath(sym, "value")
 
@@ -392,7 +392,7 @@ func TestCanonicalFactsObservePathKeepsNilRefinementOfOptionalDeclaredRead(t *te
 		state:    fs,
 		declared: map[cfg.SymbolID]typ.Type{sym: typ.NewOptional(typ.String)},
 		annotate: map[cfg.SymbolID]bool{sym: true},
-		paths:    newPathProjector(fs, nil, callableProjector{}),
+		paths:    newPathProjector(fs, canonicalTestSymbolSet(), callableProjector{}),
 	}
 
 	obs := facts.ObservePath(flow.PathObservationQuery{

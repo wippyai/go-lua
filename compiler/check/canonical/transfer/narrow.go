@@ -1315,7 +1315,7 @@ func (t *Transfer) narrowByCondCheckAtPoint(point cfg.Point, out flow.PointState
 		if len(segments) == 0 {
 			switch check {
 			case cfg.CheckTruthy, cfg.CheckNotNil:
-				if t.unannotatedParam[sym] {
+				if t.unannotatedParam.Contains(sym) {
 					return res
 				}
 				t.setNarrowedSymbol(&res, sym, product.PresentDynamic())

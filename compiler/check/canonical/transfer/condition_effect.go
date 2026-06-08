@@ -39,7 +39,7 @@ func (t *Transfer) applyConditionEffect(out *flow.PointState, effect ConditionEf
 		ProductBase: func(sym cfg.SymbolID) flow.ProductConditionBase {
 			av, hasValue := t.symbolValue(out, sym)
 			base, hasBase := t.narrowBase(sym, av, false)
-			if !hasBase && t.unannotatedParam[sym] && (!hasValue || av.IsZero()) {
+			if !hasBase && t.unannotatedParam.Contains(sym) && (!hasValue || av.IsZero()) {
 				// Parameter contracts are co-solved with the body. Until an unannotated
 				// parameter has a declared or entry-projected value to reduce, keep the
 				// proof in Cond rather than materializing a broad value fact into Env.
