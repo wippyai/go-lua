@@ -28,6 +28,9 @@ return owned
 	if got := CapturedFree(childGraph, nested); !got.Contains(captured) {
 		t.Fatalf("CapturedFree() = %#v, want captured symbol %d", got.Slice(), captured)
 	}
+	if got := Captured(graph.Bindings(), nested); !got.Contains(captured) {
+		t.Fatalf("Captured() = %#v, want captured symbol %d", got.Slice(), captured)
+	}
 	if got := NonGlobalCaptures(graph.Bindings(), nested); !got.Contains(captured) {
 		t.Fatalf("NonGlobalCaptures() = %#v, want captured symbol %d", got.Slice(), captured)
 	}

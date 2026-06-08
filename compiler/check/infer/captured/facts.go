@@ -3,6 +3,7 @@ package captured
 import (
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/api"
+	"github.com/wippyai/go-lua/compiler/check/domain/functionsymbols"
 	interprocdomain "github.com/wippyai/go-lua/compiler/check/domain/interproc"
 	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/domain/value"
@@ -70,8 +71,8 @@ func FieldFactsFromEvidence(evidence []api.CapturedFieldEvidence, observe Assign
 // visible at observedPoint into captured field facts. Root rebindings are
 // excluded; only paths below a captured root are admitted as mutable
 // capture-surface evidence.
-func FieldFactsFromAssignmentsAtPoint(inputs *flow.Inputs, capturedSyms map[cfg.SymbolID]bool, observedPoint cfg.Point) map[cfg.SymbolID]interprocdomain.FieldValues {
-	if inputs == nil || len(inputs.Assignments) == 0 || len(capturedSyms) == 0 {
+func FieldFactsFromAssignmentsAtPoint(inputs *flow.Inputs, capturedSyms functionsymbols.Set, observedPoint cfg.Point) map[cfg.SymbolID]interprocdomain.FieldValues {
+	if inputs == nil || len(inputs.Assignments) == 0 || capturedSyms.IsEmpty() {
 		return nil
 	}
 	facts := make(map[cfg.SymbolID]interprocdomain.FieldValues)
@@ -79,7 +80,7 @@ func FieldFactsFromAssignmentsAtPoint(inputs *flow.Inputs, capturedSyms map[cfg.
 		if observedPoint != 0 && assignment.Point > observedPoint {
 			continue
 		}
-		if assignment.TargetPath.Symbol == 0 || len(assignment.TargetPath.Segments) == 0 || !capturedSyms[assignment.TargetPath.Symbol] {
+		if assignment.TargetPath.Symbol == 0 || len(assignment.TargetPath.Segments) == 0 || !capturedSyms.Contains(assignment.TargetPath.Symbol) {
 			continue
 		}
 		ev := api.CapturedFieldEvidence{
@@ -112,17 +113,17 @@ func FieldFactsFromAssignmentsAtPoint(inputs *flow.Inputs, capturedSyms map[cfg.
 // not establish that s.f itself is present and are excluded.
 func PromotedFieldsAtPoint(
 	inputs *flow.Inputs,
-	capturedSyms map[cfg.SymbolID]bool,
+	capturedSyms functionsymbols.Set,
 	observedPoint cfg.Point,
 	dominates func(assignPoint, observedPoint cfg.Point) bool,
 ) PromotedFields {
-	if inputs == nil || len(inputs.Assignments) == 0 || len(capturedSyms) == 0 || dominates == nil {
+	if inputs == nil || len(inputs.Assignments) == 0 || capturedSyms.IsEmpty() || dominates == nil {
 		return nil
 	}
 	promoted := make(PromotedFields)
 	for _, assignment := range inputs.Assignments {
 		path := assignment.TargetPath
-		if path.Symbol == 0 || len(path.Segments) != 1 || !capturedSyms[path.Symbol] {
+		if path.Symbol == 0 || len(path.Segments) != 1 || !capturedSyms.Contains(path.Symbol) {
 			continue
 		}
 		fieldKey, ok := capturedFieldSegmentKey(path.Segments[0])

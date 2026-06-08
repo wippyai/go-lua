@@ -27,6 +27,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/check/api"
 	"github.com/wippyai/go-lua/compiler/check/callsite"
 	"github.com/wippyai/go-lua/compiler/check/domain/functionfact"
+	"github.com/wippyai/go-lua/compiler/check/domain/functionsymbols"
 	interprocdomain "github.com/wippyai/go-lua/compiler/check/domain/interproc"
 	"github.com/wippyai/go-lua/compiler/check/domain/metatable"
 	"github.com/wippyai/go-lua/compiler/check/domain/observation"
@@ -512,28 +513,20 @@ func (p *Processor) processNestedFunction(
 		capturedTypes = mergeSiblingSurfaceIntoCapturedTypes(capturedTypes, nestedGraph, info.NF.Func, siblingFunctionTypes)
 		bindings := nestedGraph.Bindings()
 		if bindings != nil {
-			capturedSyms := bindings.CapturedSymbols(info.NF.Func)
-			if len(capturedSyms) > 0 {
-				capturedSet := make(map[cfg.SymbolID]bool, len(capturedSyms))
-				for _, sym := range capturedSyms {
-					if sym != 0 {
-						capturedSet[sym] = true
+			capturedSet := functionsymbols.Captured(bindings, info.NF.Func)
+			if !capturedSet.IsEmpty() {
+				fields := captured.FieldFactsFromAssignmentsAtPoint(parentResult.FlowInputs, capturedSet, info.NF.Point)
+				if len(fields) > 0 {
+					if capturedTypes == nil {
+						capturedTypes = make(map[cfg.SymbolID]typ.Type, len(fields))
 					}
-				}
-				if len(capturedSet) > 0 {
-					fields := captured.FieldFactsFromAssignmentsAtPoint(parentResult.FlowInputs, capturedSet, info.NF.Point)
-					if len(fields) > 0 {
-						if capturedTypes == nil {
-							capturedTypes = make(map[cfg.SymbolID]typ.Type, len(fields))
+					promoted := p.promotedCapturedFields(graph, parentResult, capturedSet, info.NF.Point)
+					for _, sym := range cfg.SortedSymbolIDs(fields) {
+						fieldMap := fields[sym]
+						if sym == 0 {
+							continue
 						}
-						promoted := p.promotedCapturedFields(graph, parentResult, capturedSet, info.NF.Point)
-						for _, sym := range cfg.SortedSymbolIDs(fields) {
-							fieldMap := fields[sym]
-							if sym == 0 {
-								continue
-							}
-							capturedTypes[sym] = mergeCapturedFieldFacts(capturedTypes[sym], fieldMap, promoted[sym])
-						}
+						capturedTypes[sym] = mergeCapturedFieldFacts(capturedTypes[sym], fieldMap, promoted[sym])
 					}
 				}
 			}
@@ -642,7 +635,7 @@ func (p *Processor) sealConstructorReturn(fnType *typ.Function, graph *cfg.Graph
 func (p *Processor) promotedCapturedFields(
 	parentGraph *cfg.Graph,
 	parentResult *api.FuncAnalysisView,
-	capturedSet map[cfg.SymbolID]bool,
+	capturedSet functionsymbols.Set,
 	defPoint cfg.Point,
 ) captured.PromotedFields {
 	if parentGraph == nil || parentResult == nil || parentResult.FlowInputs == nil {
@@ -1079,10 +1072,7 @@ func mergeSiblingSurfaceIntoCapturedTypes(
 	if capturedTypes == nil {
 		capturedTypes = make(map[cfg.SymbolID]typ.Type)
 	}
-	for _, sym := range bindings.CapturedSymbols(fn) {
-		if sym == 0 {
-			continue
-		}
+	for _, sym := range functionsymbols.Captured(bindings, fn).Slice() {
 		if t := siblingSurface[sym]; t != nil {
 			capturedTypes[sym] = t
 		}

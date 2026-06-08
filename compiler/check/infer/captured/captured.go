@@ -3,6 +3,7 @@ package captured
 import (
 	"github.com/wippyai/go-lua/compiler/bind"
 	"github.com/wippyai/go-lua/compiler/cfg"
+	"github.com/wippyai/go-lua/compiler/check/domain/functionsymbols"
 	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/domain/value"
 	"github.com/wippyai/go-lua/types/flow"
@@ -37,7 +38,7 @@ func FromParentFactsAtPoint(
 	if fn == nil {
 		return nil
 	}
-	capturedSyms := bindings.CapturedSymbols(fn)
+	capturedSyms := functionsymbols.Captured(bindings, fn).Slice()
 	if len(capturedSyms) == 0 {
 		return nil
 	}

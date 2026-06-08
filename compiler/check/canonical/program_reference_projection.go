@@ -18,21 +18,18 @@ func (p *program) CaptureEntryReferences(ref summary.FuncRef, captureReferencesO
 	if g == nil || captureReferencesOf == nil {
 		return flow.ReferenceContextBottom()
 	}
-	bindings := g.Bindings()
 	fn := g.Func()
-	if bindings == nil || fn == nil {
+	if fn == nil {
 		return flow.ReferenceContextBottom()
 	}
-	captured := bindings.CapturedSymbols(fn)
-	if len(captured) == 0 {
+	captured := functionsymbols.CapturedFree(g, fn)
+	if captured.IsEmpty() {
 		return flow.ReferenceContextBottom()
 	}
 	deps := p.captureDependencyChain(ref)
-	entries := make([]flow.CaptureCell, 0, len(captured))
-	for _, sym := range captured {
-		if !g.IsFreeSymbol(sym) {
-			continue
-		}
+	capturedSyms := captured.Slice()
+	entries := make([]flow.CaptureCell, 0, len(capturedSyms))
+	for _, sym := range capturedSyms {
 		if av, ok := p.captureEntryValue(ref, sym, deps, func(dep summary.FuncRef) flow.CaptureCells {
 			return captureReferencesOf(dep).CaptureCells()
 		}); ok {

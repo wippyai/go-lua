@@ -72,6 +72,18 @@ func CapturedFree(g *cfg.Graph, fn *ast.FunctionExpr) Set {
 	return set
 }
 
+// Captured returns every symbol captured by fn according to bindings.
+func Captured(bindings *bind.BindingTable, fn *ast.FunctionExpr) Set {
+	var set Set
+	if bindings == nil || fn == nil {
+		return set
+	}
+	for _, sym := range bindings.CapturedSymbols(fn) {
+		set.Add(sym)
+	}
+	return set
+}
+
 // NonGlobalCaptures returns captured symbols excluding globals.
 func NonGlobalCaptures(bindings *bind.BindingTable, fn *ast.FunctionExpr) Set {
 	var set Set
