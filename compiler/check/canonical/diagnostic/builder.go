@@ -7,7 +7,6 @@ import (
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/domain/callobligation"
 	"github.com/wippyai/go-lua/compiler/check/domain/observation"
-	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/domain/value/product"
 	"github.com/wippyai/go-lua/types/flow"
 	"github.com/wippyai/go-lua/types/typ"
@@ -136,10 +135,12 @@ func (b Builder) addPathEvidence(g *ExplanationGraph, point cfg.Point, expr ast.
 	}
 	routes := b.observer.ProvenanceRoutesAt(point, path)
 	if len(routes) == 0 {
-		if appendRoutes := b.appendElementFieldRoutes(point, path); len(appendRoutes) > 0 {
-			route := g.AddNode(ExplanationNode{Kind: NodeProvenanceRoute, Label: describeRoute(appendRoutes[0], path)})
-			g.AddEdge(route, observed, EdgeDerivedByTransferRule)
-			return
+		if query, ok := flow.AppendElementFieldRouteQueryForPath(path); ok {
+			if appendRoutes := b.observer.AppendElementFieldSourceRoutesAt(point, query); len(appendRoutes) > 0 {
+				route := g.AddNode(ExplanationNode{Kind: NodeProvenanceRoute, Label: appendRoutes[0].EvidenceLabel(path)})
+				g.AddEdge(route, observed, EdgeDerivedByTransferRule)
+				return
+			}
 		}
 		pv := b.observer.ProductValueAtPath(point, path)
 		if pv.State == flow.StateResolved && !pv.Value.IsZero() {
@@ -151,7 +152,7 @@ func (b Builder) addPathEvidence(g *ExplanationGraph, point cfg.Point, expr ast.
 		g.AddEdge(observed, missing, EdgeRejectedBecauseUnproved)
 		return
 	}
-	route := g.AddNode(ExplanationNode{Kind: NodeProvenanceRoute, Label: describeRoute(routes[0], path)})
+	route := g.AddNode(ExplanationNode{Kind: NodeProvenanceRoute, Label: routes[0].EvidenceLabel(path)})
 	g.AddEdge(route, observed, EdgeDerivedByTransferRule)
 }
 
@@ -162,38 +163,6 @@ func (b Builder) addUnknownBoundary(g *ExplanationGraph, fact ExplanationNodeID,
 	label := "observed fact is " + formatType(t) + ", so stronger precision was not available from canonical evidence"
 	node := g.AddNode(ExplanationNode{Kind: NodeWideningUnknownBoundary, Label: label})
 	g.AddEdge(fact, node, EdgeLostBecauseTop)
-}
-
-func (b Builder) appendElementFieldRoutes(point cfg.Point, path constraint.Path) []flow.ProvenanceRoute {
-	if len(path.Segments) == 0 {
-		return nil
-	}
-	array := path
-	array.Segments = append([]constraint.Segment(nil), path.Segments[:len(path.Segments)-1]...)
-	field := append([]constraint.Segment(nil), path.Segments[len(path.Segments)-1:]...)
-	return b.observer.AppendElementFieldSourceRoutesAt(point, flow.AppendElementFieldRouteQuery{
-		ArrayPath: array,
-		Field:     field,
-	})
-}
-
-func describeRoute(route flow.ProvenanceRoute, target constraint.Path) string {
-	source := route.Source.String()
-	if source == "" {
-		source = "unknown source"
-	}
-	switch route.Kind {
-	case flow.ProvenanceRouteIdentityAlias:
-		return target.String() + " aliases " + source
-	case flow.ProvenanceRouteIndexedIterator:
-		return target.String() + " comes from indexed iterator source " + source
-	case flow.ProvenanceRouteKeyedIterator:
-		return target.String() + " comes from keyed iterator source " + source
-	case flow.ProvenanceRouteAppendElementField:
-		return target.String() + " comes from appended element source " + source
-	default:
-		return target.String() + " comes from " + source
-	}
 }
 
 func renderLines(lines []string) string {

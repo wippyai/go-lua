@@ -23,6 +23,42 @@ type ProvenanceRoute struct {
 	FieldRemainder []constraint.Segment
 }
 
+// EvidenceLabel describes the route as read-only diagnostic evidence. Flow owns
+// the route vocabulary, so callers do not need to switch on provenance kinds.
+func (r ProvenanceRoute) EvidenceLabel(target constraint.Path) string {
+	source := r.Source.String()
+	if source == "" {
+		source = "unknown source"
+	}
+	switch r.Kind {
+	case ProvenanceRouteIdentityAlias:
+		return target.String() + " aliases " + source
+	case ProvenanceRouteIndexedIterator:
+		return target.String() + " comes from indexed iterator source " + source
+	case ProvenanceRouteKeyedIterator:
+		return target.String() + " comes from keyed iterator source " + source
+	case ProvenanceRouteAppendElementField:
+		return target.String() + " comes from appended element source " + source
+	default:
+		return target.String() + " comes from " + source
+	}
+}
+
+// AppendElementFieldRouteQueryForPath converts a field path into the query used
+// to explain append-element field provenance.
+func AppendElementFieldRouteQueryForPath(path constraint.Path) (AppendElementFieldRouteQuery, bool) {
+	if path.IsEmpty() || path.Symbol == 0 || len(path.Segments) == 0 {
+		return AppendElementFieldRouteQuery{}, false
+	}
+	array := path
+	array.Segments = append([]constraint.Segment(nil), path.Segments[:len(path.Segments)-1]...)
+	field := append([]constraint.Segment(nil), path.Segments[len(path.Segments)-1:]...)
+	return AppendElementFieldRouteQuery{
+		ArrayPath: array,
+		Field:     field,
+	}, true
+}
+
 // sourceRoute is the canonical address view of a provenance source plus the
 // suffix consumed below the originating value.
 type sourceRoute struct {
