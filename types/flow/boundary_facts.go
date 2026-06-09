@@ -1075,44 +1075,27 @@ func mergeBoundaryFacts(a, b BoundaryFacts, widenPayload bool) BoundaryFacts {
 	if b.bottom {
 		return a
 	}
-	return BoundaryFacts{
-		keyPresence:    intersectBoundaryKeyPresence(a.keyPresence, b.keyPresence),
-		keyArrays:      intersectBoundaryKeyArrays(a.keyArrays, b.keyArrays),
-		keyArrayValues: intersectBoundaryKeyArrayValues(a.keyArrayValues, b.keyArrayValues, widenPayload),
-		appendKeys:     intersectBoundaryAppendKeys(a.appendKeys, b.appendKeys),
-		appendBases:    intersectBoundaryAppendHistoryBases(a.appendBases, b.appendBases),
-		appendEvents: intersectBoundaryAppendHistoryEventsWithBases(
-			a.appendEvents,
-			b.appendEvents,
-			intersectBoundaryAppendHistoryBases(a.appendBases, b.appendBases),
-		),
-		appendCoverage: intersectBoundaryAppendHistoryCoverageWithBases(
-			a.appendCoverage,
-			b.appendCoverage,
-			intersectBoundaryAppendHistoryBases(a.appendBases, b.appendBases),
-			intersectBoundaryAppendHistoryEventsWithBases(
-				a.appendEvents,
-				b.appendEvents,
-				intersectBoundaryAppendHistoryBases(a.appendBases, b.appendBases),
-			),
-			widenPayload,
-		),
-		appendTableCoverage: intersectBoundaryAppendHistoryTableCoverageWithBases(
-			a.appendTableCoverage,
-			b.appendTableCoverage,
-			intersectBoundaryAppendHistoryBases(a.appendBases, b.appendBases),
-			widenPayload,
-		),
-		appendOrigins: intersectBoundaryAppendElementFieldOriginsWithBases(
-			a.appendOrigins,
-			b.appendOrigins,
-			intersectBoundaryAppendHistoryBases(a.appendBases, b.appendBases),
-		),
-		lenLower:      intersectBoundaryLengthLower(a.lenLower, b.lenLower),
-		lenUpper:      intersectBoundaryLengthUpper(a.lenUpper, b.lenUpper),
-		lenRelations:  intersectBoundaryLengthRelations(a.lenRelations, b.lenRelations),
-		indexWrites:   intersectBoundaryIndexWrites(a.indexWrites, b.indexWrites, widenPayload),
-		staticMembers: intersectBoundaryStaticMembers(a.staticMembers, b.staticMembers, widenPayload),
+	return BoundaryFactsFromParts(intersectBoundaryFactParts(a, b, widenPayload))
+}
+
+func intersectBoundaryFactParts(a, b BoundaryFacts, widenPayload bool) BoundaryFactParts {
+	appendBases := intersectBoundaryAppendHistoryBases(a.appendBases, b.appendBases)
+	appendEvents := intersectBoundaryAppendHistoryEventsWithBases(a.appendEvents, b.appendEvents, appendBases)
+	return BoundaryFactParts{
+		KeyPresence:         intersectBoundaryKeyPresence(a.keyPresence, b.keyPresence),
+		KeyArrays:           intersectBoundaryKeyArrays(a.keyArrays, b.keyArrays),
+		KeyArrayValues:      intersectBoundaryKeyArrayValues(a.keyArrayValues, b.keyArrayValues, widenPayload),
+		AppendKeys:          intersectBoundaryAppendKeys(a.appendKeys, b.appendKeys),
+		AppendBases:         appendBases,
+		AppendEvents:        appendEvents,
+		AppendCoverage:      intersectBoundaryAppendHistoryCoverageWithBases(a.appendCoverage, b.appendCoverage, appendBases, appendEvents, widenPayload),
+		AppendTableCoverage: intersectBoundaryAppendHistoryTableCoverageWithBases(a.appendTableCoverage, b.appendTableCoverage, appendBases, widenPayload),
+		AppendOrigins:       intersectBoundaryAppendElementFieldOriginsWithBases(a.appendOrigins, b.appendOrigins, appendBases),
+		LengthLower:         intersectBoundaryLengthLower(a.lenLower, b.lenLower),
+		LengthUpper:         intersectBoundaryLengthUpper(a.lenUpper, b.lenUpper),
+		LengthRelations:     intersectBoundaryLengthRelations(a.lenRelations, b.lenRelations),
+		IndexWrites:         intersectBoundaryIndexWrites(a.indexWrites, b.indexWrites, widenPayload),
+		StaticMembers:       intersectBoundaryStaticMembers(a.staticMembers, b.staticMembers, widenPayload),
 	}
 }
 
