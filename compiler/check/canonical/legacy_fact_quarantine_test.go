@@ -115,6 +115,49 @@ func TestCheckerProductionLegacyFactsStayInLegacyBoundaries(t *testing.T) {
 	}
 }
 
+func TestCheckerProductionDoesNotPeekLegacyInterprocState(t *testing.T) {
+	_, file, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("runtime.Caller failed")
+	}
+	checkRoot := filepath.Clean(filepath.Join(filepath.Dir(file), ".."))
+	storeDir := filepath.Join(checkRoot, "store") + string(filepath.Separator)
+	banned := []string{
+		".LegacyInterprocPrev",
+		".LegacyInterprocNext",
+		"NewLegacyInterprocState(",
+	}
+
+	err := filepath.WalkDir(checkRoot, func(path string, entry fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if entry.IsDir() {
+			return nil
+		}
+		if filepath.Ext(path) != ".go" || strings.HasSuffix(path, "_test.go") || strings.HasPrefix(path, storeDir) {
+			return nil
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		text := string(data)
+		for _, token := range banned {
+			if strings.Contains(text, token) {
+				t.Errorf("%s peeks legacy interproc state through %q", path, token)
+			}
+		}
+		if strings.Contains(text, "LegacyInterproc") && strings.Contains(text, ".Facts[") {
+			t.Errorf("%s peeks legacy interproc Facts map", path)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("walk checker sources: %v", err)
+	}
+}
+
 func TestCanonicalProductionTreatsFuncResultAsPublicProjection(t *testing.T) {
 	_, file, _, ok := runtime.Caller(0)
 	if !ok {

@@ -59,6 +59,7 @@ func TestCollectParameterEvidenceFromResult_UsesSolvedObservationWithoutNarrowSy
 	st.RegisterGraph(graph, caller)
 	st.RegisterGraph(calleeGraph, callee)
 	st.SetParentScope(parent.Hash(), parent)
+	st.SetGraphParentHash(graph.ID(), parent.Hash())
 	st.SetGraphParentHash(calleeGraph.ID(), parent.Hash())
 	st.RegisterFunctionRef(callInfo.CalleeSymbol, callee, calleeGraph, graph.ID(), callPoint)
 
@@ -69,9 +70,9 @@ func TestCollectParameterEvidenceFromResult_UsesSolvedObservationWithoutNarrowSy
 		},
 	}
 	CollectParameterEvidenceFromResult(st, result, parent, 0)
+	st.LegacyFixpointSwap()
 
-	key := api.KeyForGraph(graph, parent.Hash())
-	facts := st.LegacyInterprocNext.Facts[key].FunctionFacts
+	facts := st.FunctionFactsProjection(graph, parent)
 	got := facts[callInfo.CalleeSymbol].EntryParams
 	if len(got) != 1 || got[0].IsZero() {
 		t.Fatalf("expected call-entry parameter evidence without NarrowSynth, got %#v", got)
@@ -124,12 +125,9 @@ func TestCollectParameterEvidenceFromResult_CanonicalProjectionSkipsLegacyBodyPr
 		},
 	}
 	CollectParameterEvidenceFromResult(st, result, parent, currentSym)
+	st.LegacyFixpointSwap()
 
-	key, ok := st.ParentGraphKeyForSymbol(currentSym)
-	if !ok {
-		t.Fatal("expected current function graph key")
-	}
-	ff := st.LegacyInterprocNext.Facts[key].FunctionFacts[currentSym]
+	ff := st.FunctionFactsProjection(graph, parent)[currentSym]
 	if len(ff.Params) != 0 || len(ff.BodyParams) != 0 {
 		t.Fatalf("flow result must not write retired body/public params, got public=%v body=%v", ff.Params, ff.BodyParams)
 	}

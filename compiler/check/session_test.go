@@ -396,11 +396,8 @@ func TestAttachStore_NilStore(t *testing.T) {
 func TestSessionStore_ProductMaps(t *testing.T) {
 	store := store.NewSessionStore()
 
-	if store.LegacyInterprocPrev == nil || store.LegacyInterprocPrev.Facts == nil {
-		t.Error("LegacyInterprocPrev facts not initialized")
-	}
-	if store.LegacyInterprocNext == nil || store.LegacyInterprocNext.Facts == nil {
-		t.Error("LegacyInterprocNext facts not initialized")
+	if !store.LegacyInterprocStateInitialized() {
+		t.Error("legacy interproc product owner should be initialized")
 	}
 }
 
@@ -452,18 +449,20 @@ func TestSessionStore_ClearLegacyInterprocState(t *testing.T) {
 			cfg.SymbolID(2): interprocdomain.LiftTypeFieldMap(map[string]typ.Type{"name": typ.String}),
 		},
 	})
-	store.LegacyInterprocPrev.Facts[api.GraphKey{GraphID: 1, ParentHash: 1}] = api.Facts{
+	store.MergeLegacyFactsNext(api.GraphKey{GraphID: 1, ParentHash: 1}, api.Facts{
 		FunctionFacts: api.FunctionFacts{
 			cfg.SymbolID(4): {Refinement: &constraint.FunctionRefinement{Terminates: true}},
 		},
-	}
+	})
+	store.LegacyFixpointSwap()
 
 	store.ClearLegacyInterprocState()
 
-	if store.LegacyInterprocPrev == nil || len(store.LegacyInterprocPrev.Facts) != 0 {
+	prev, next := store.LegacyInterprocFactCounts()
+	if prev != 0 {
 		t.Fatal("expected previous product facts to be cleared")
 	}
-	if store.LegacyInterprocNext == nil || len(store.LegacyInterprocNext.Facts) != 0 {
+	if next != 0 {
 		t.Fatal("expected next product facts to be cleared")
 	}
 }
@@ -533,7 +532,8 @@ func TestSession_Release_Nil(t *testing.T) {
 func TestModuleConstructorFacts_EmptyDelta(t *testing.T) {
 	store := store.NewSessionStore()
 	store.MergeLegacyFactsNext(api.ModuleFactsKey(), api.Facts{})
-	if store.LegacyInterprocNext == nil || len(store.LegacyInterprocNext.Facts) != 0 {
+	_, next := store.LegacyInterprocFactCounts()
+	if next != 0 {
 		t.Error("empty product delta should not store facts")
 	}
 }
@@ -556,11 +556,7 @@ func TestModuleConstructorFacts_Basic(t *testing.T) {
 		ConstructorFields: api.ConstructorFields{1: fields},
 	})
 
-	next := store.LegacyInterprocNext
-	if next == nil || next.Facts == nil {
-		t.Fatal("next product facts should be initialized")
-	}
-	gotFields := next.Facts[api.ModuleFactsKey()].ConstructorFields[1]
+	gotFields, _ := store.ModuleFacts().ConstructorFields(1)
 	if len(gotFields) != 2 {
 		t.Errorf("expected 2 fields, got %d", len(gotFields))
 	}
@@ -575,11 +571,7 @@ func TestModuleConstructorFacts_Join(t *testing.T) {
 		ConstructorFields: api.ConstructorFields{1: interprocdomain.LiftTypeFieldMap(map[string]typ.Type{"x": typ.String})},
 	})
 
-	next := store.LegacyInterprocNext
-	if next == nil {
-		t.Fatal("next product facts should be initialized")
-	}
-	fields := next.Facts[api.ModuleFactsKey()].ConstructorFields[1]
+	fields, _ := store.ModuleFacts().ConstructorFields(1)
 	xKey, ok := interprocdomain.FieldKeyFromName("x")
 	if !ok || fields == nil || product.Equal(fields[xKey], product.FromType(typ.Number)) {
 		t.Error("field should be joined")

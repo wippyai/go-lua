@@ -360,11 +360,7 @@ func (s *Session) ExportType() typ.Type {
 	if s == nil {
 		return typ.Nil
 	}
-	var refinements map[cfg.SymbolID]*constraint.FunctionRefinement
-	if s.Store != nil && s.Store.LegacyInterprocPrev != nil {
-		refinements = s.RefinementsForExport()
-	}
-	export := modules.ExportType(s.RootResult, refinements)
+	export := modules.ExportType(s.RootResult, s.RefinementsForExport())
 	if facts := s.rootFunctionFactsForExport(); len(facts) > 0 {
 		export = functionfact.ProjectExportType(export, "", facts, s.RootGraph())
 	}
@@ -433,14 +429,7 @@ func (s *Session) Release() {
 			clear(s.Store.Module.ModuleAliases)
 		}
 
-		// Clear legacy products.
-		if s.Store.LegacyInterprocPrev != nil {
-			clear(s.Store.LegacyInterprocPrev.Facts)
-		}
-		if s.Store.LegacyInterprocNext != nil {
-			clear(s.Store.LegacyInterprocNext.Facts)
-		}
-
+		s.Store.ClearLegacyInterprocState()
 	}
 
 	// Clear per-function results
@@ -532,14 +521,9 @@ func (s *Session) RefinementsForExport() map[cfg.SymbolID]*constraint.FunctionRe
 		return nil
 	}
 	refinements := make(map[cfg.SymbolID]*constraint.FunctionRefinement)
-	if s.Store != nil && s.Store.LegacyInterprocPrev != nil {
-		for _, key := range api.SortedGraphKeys(s.Store.LegacyInterprocPrev.Facts) {
-			facts := s.Store.LegacyInterprocPrev.Facts[key]
-			for _, sym := range cfg.SortedSymbolIDs(facts.FunctionFacts) {
-				if refinement := functionfact.FactsProjection(facts.FunctionFacts).Refinement(sym); refinement != nil {
-					refinements[sym] = refinement
-				}
-			}
+	if s.Store != nil {
+		for sym, refinement := range s.Store.LegacyFunctionRefinementsForExport() {
+			refinements[sym] = refinement
 		}
 	}
 	for sym, refinement := range s.canonicalRefinementsForExport() {

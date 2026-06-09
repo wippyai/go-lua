@@ -14,12 +14,12 @@ import (
 	"github.com/wippyai/go-lua/types/typ"
 )
 
-func TestNewLegacyInterprocState(t *testing.T) {
-	state := NewLegacyInterprocState()
+func TestLegacyInterprocStateInitialization(t *testing.T) {
+	state := newLegacyInterprocState()
 	if state == nil {
 		t.Fatal("expected non-nil state")
 	}
-	if state.Facts == nil {
+	if state.facts == nil {
 		t.Error("Facts map should be initialized")
 	}
 }
@@ -83,7 +83,7 @@ func TestLegacyFacts_UsesStoredGraphParentHash(t *testing.T) {
 	s.SetGraphParentHash(graph.ID(), storedParent.Hash())
 	s.SetParentScope(storedParent.Hash(), storedParent)
 	key := api.KeyForGraph(graph, storedParent.Hash())
-	s.LegacyInterprocPrev.Facts[key] = api.Facts{
+	s.legacyInterprocPrev.facts[key] = api.Facts{
 		FunctionFacts: api.FunctionFacts{
 			cfg.SymbolID(1): {Summary: product.LiftVector([]typ.Type{typ.String})},
 		},
@@ -107,12 +107,12 @@ func TestLegacyFacts_OverlaysCurrentIterationFacts(t *testing.T) {
 	s.SetGraphParentHash(graph.ID(), parent.Hash())
 	s.SetParentScope(parent.Hash(), parent)
 	key := api.KeyForGraph(graph, parent.Hash())
-	s.LegacyInterprocPrev.Facts[key] = api.Facts{
+	s.legacyInterprocPrev.facts[key] = api.Facts{
 		FunctionFacts: api.FunctionFacts{
 			cfg.SymbolID(1): {Summary: product.LiftVector([]typ.Type{typ.String})},
 		},
 	}
-	s.LegacyInterprocNext.Facts[key] = api.Facts{
+	s.legacyInterprocNext.facts[key] = api.Facts{
 		FunctionFacts: api.FunctionFacts{
 			cfg.SymbolID(1): {Summary: product.LiftVector([]typ.Type{typ.Number})},
 		},
@@ -138,7 +138,7 @@ func TestLegacyFacts_ReturnsImmutableFactContainers(t *testing.T) {
 	s.SetParentScope(parent.Hash(), parent)
 	key := api.KeyForGraph(graph, parent.Hash())
 	sym := cfg.SymbolID(7)
-	s.LegacyInterprocPrev.Facts[key] = api.Facts{
+	s.legacyInterprocPrev.facts[key] = api.Facts{
 		FunctionFacts: api.FunctionFacts{
 			sym: {
 				Params:  product.LiftVector([]typ.Type{typ.String, typ.NewMap(typ.String, typ.Any)}),
@@ -176,7 +176,7 @@ func TestMergeLegacyFactsNext_ReconcilesDeltasWithinIteration(t *testing.T) {
 		},
 	})
 
-	got := functionfact.FactsProjection(s.LegacyInterprocNext.Facts[key].FunctionFacts).Type(sym, functionfact.ProjectionSibling, api.SynthModeDeclared)
+	got := functionfact.FactsProjection(s.legacyInterprocNext.facts[key].FunctionFacts).Type(sym, functionfact.ProjectionSibling, api.SynthModeDeclared)
 	if !typ.TypeEquals(got, refined) {
 		t.Fatalf("expected update boundary to keep canonical refined function fact, got %v", got)
 	}
@@ -427,7 +427,7 @@ func TestLegacyFixpointSwap_TracksChannelDiffsAndResetsNext(t *testing.T) {
 	s := NewSessionStore()
 
 	key := api.GraphKey{GraphID: 7, ParentHash: 11}
-	s.LegacyInterprocNext.Facts[key] = api.Facts{
+	s.legacyInterprocNext.facts[key] = api.Facts{
 		FunctionFacts: api.FunctionFacts{
 			1: {
 				Summary:    product.LiftVector([]typ.Type{typ.String}),
@@ -435,7 +435,7 @@ func TestLegacyFixpointSwap_TracksChannelDiffsAndResetsNext(t *testing.T) {
 			},
 		},
 	}
-	s.LegacyInterprocNext.Facts[api.ModuleFactsKey()] = api.Facts{
+	s.legacyInterprocNext.facts[api.ModuleFactsKey()] = api.Facts{
 		ConstructorFields: api.ConstructorFields{
 			3: {constraint.Segment{Kind: constraint.SegmentField, Name: "v"}: product.FromType(typ.Number)},
 		},
@@ -453,17 +453,17 @@ func TestLegacyFixpointSwap_TracksChannelDiffsAndResetsNext(t *testing.T) {
 		t.Fatalf("unexpected diff order/content: %v", diffs)
 	}
 
-	if len(s.LegacyInterprocPrev.Facts) != 2 {
-		t.Fatalf("expected prev facts populated, got %#v", s.LegacyInterprocPrev.Facts)
+	if len(s.legacyInterprocPrev.facts) != 2 {
+		t.Fatalf("expected prev facts populated, got %#v", s.legacyInterprocPrev.facts)
 	}
-	if len(s.LegacyInterprocNext.Facts) != 0 {
-		t.Fatalf("expected next facts reset, got %#v", s.LegacyInterprocNext.Facts)
+	if len(s.legacyInterprocNext.facts) != 0 {
+		t.Fatalf("expected next facts reset, got %#v", s.legacyInterprocNext.facts)
 	}
-	if functionfact.FactsProjection(s.LegacyInterprocPrev.Facts[key].FunctionFacts).Refinement(1) == nil {
-		t.Fatalf("expected function refinement in product fact, got %#v", s.LegacyInterprocPrev.Facts[key])
+	if functionfact.FactsProjection(s.legacyInterprocPrev.facts[key].FunctionFacts).Refinement(1) == nil {
+		t.Fatalf("expected function refinement in product fact, got %#v", s.legacyInterprocPrev.facts[key])
 	}
-	if len(s.LegacyInterprocPrev.Facts[api.ModuleFactsKey()].ConstructorFields[3]) != 1 {
-		t.Fatalf("expected constructor fields in module product fact, got %#v", s.LegacyInterprocPrev.Facts[api.ModuleFactsKey()])
+	if len(s.legacyInterprocPrev.facts[api.ModuleFactsKey()].ConstructorFields[3]) != 1 {
+		t.Fatalf("expected constructor fields in module product fact, got %#v", s.legacyInterprocPrev.facts[api.ModuleFactsKey()])
 	}
 }
 
@@ -471,7 +471,7 @@ func TestClearLegacyInterprocState_InitializesMissingState(t *testing.T) {
 	s := &SessionStore{}
 	s.ClearLegacyInterprocState()
 
-	if s.LegacyInterprocPrev == nil || s.LegacyInterprocNext == nil {
+	if s.legacyInterprocPrev == nil || s.legacyInterprocNext == nil {
 		t.Fatal("expected interproc states to be initialized")
 	}
 }

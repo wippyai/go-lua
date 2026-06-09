@@ -7,9 +7,11 @@ import (
 	"github.com/wippyai/go-lua/compiler/bind"
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/api"
+	"github.com/wippyai/go-lua/compiler/check/domain/functionfact"
 	"github.com/wippyai/go-lua/compiler/check/domain/interproc"
 	"github.com/wippyai/go-lua/compiler/check/domain/trace"
 	"github.com/wippyai/go-lua/compiler/check/scope"
+	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/db"
 	"github.com/wippyai/go-lua/types/typ"
 )
@@ -19,10 +21,10 @@ type SessionStore struct {
 	// Created once at the start of checking and shared by all CFG builds.
 	Module *ModuleStore
 
-	// LegacyInterprocPrev holds the stable legacy product from completed iterations.
-	LegacyInterprocPrev *LegacyInterprocState
-	// LegacyInterprocNext accumulates legacy facts/effects during the current iteration.
-	LegacyInterprocNext *LegacyInterprocState
+	// legacyInterprocPrev holds the stable legacy product from completed iterations.
+	legacyInterprocPrev *legacyInterprocState
+	// legacyInterprocNext accumulates legacy facts/effects during the current iteration.
+	legacyInterprocNext *legacyInterprocState
 
 	// GraphParentHash records the parent scope hash for each graph ID.
 	GraphParentHash map[uint64]uint64
@@ -39,15 +41,14 @@ type SessionStore struct {
 	synthMode api.SynthMode
 }
 
-// LegacyInterprocState holds the graph-keyed legacy fact product for one iteration side.
-type LegacyInterprocState struct {
-	Facts map[api.GraphKey]api.Facts
+// legacyInterprocState holds one side of the old graph-keyed fact product.
+type legacyInterprocState struct {
+	facts map[api.GraphKey]api.Facts
 }
 
-// NewLegacyInterprocState creates an initialized legacy product side.
-func NewLegacyInterprocState() *LegacyInterprocState {
-	return &LegacyInterprocState{
-		Facts: make(map[api.GraphKey]api.Facts),
+func newLegacyInterprocState() *legacyInterprocState {
+	return &legacyInterprocState{
+		facts: make(map[api.GraphKey]api.Facts),
 	}
 }
 
@@ -102,8 +103,8 @@ func NewSessionStore() *SessionStore {
 func NewSessionStoreWithDB(database *db.DB) *SessionStore {
 	return &SessionStore{
 		Module:              NewModuleStore(),
-		LegacyInterprocPrev: NewLegacyInterprocState(),
-		LegacyInterprocNext: NewLegacyInterprocState(),
+		legacyInterprocPrev: newLegacyInterprocState(),
+		legacyInterprocNext: newLegacyInterprocState(),
 		GraphParentHash:     make(map[uint64]uint64),
 		analysisContexts:    make(map[api.GraphKey]api.AnalysisContext),
 		factInputs:          newFactInputs(database),
@@ -164,11 +165,11 @@ func (s *SessionStore) ensureLegacyInterprocStates() {
 	if s == nil {
 		return
 	}
-	if s.LegacyInterprocPrev == nil {
-		s.LegacyInterprocPrev = NewLegacyInterprocState()
+	if s.legacyInterprocPrev == nil {
+		s.legacyInterprocPrev = newLegacyInterprocState()
 	}
-	if s.LegacyInterprocNext == nil {
-		s.LegacyInterprocNext = NewLegacyInterprocState()
+	if s.legacyInterprocNext == nil {
+		s.legacyInterprocNext = newLegacyInterprocState()
 	}
 }
 
@@ -200,8 +201,8 @@ func (s *SessionStore) swapLegacyFacts() []string {
 			name: "LegacyFacts",
 			swap: func() bool {
 				return swapProductMap(
-					&s.LegacyInterprocPrev.Facts,
-					&s.LegacyInterprocNext.Facts,
+					&s.legacyInterprocPrev.facts,
+					&s.legacyInterprocNext.facts,
 					interproc.WidenFactMap,
 					interproc.FactMapEqual,
 					func() map[api.GraphKey]api.Facts {
@@ -261,13 +262,58 @@ func (s *SessionStore) ClearLegacyInterprocState() {
 	if s == nil {
 		return
 	}
-	s.LegacyInterprocPrev = NewLegacyInterprocState()
-	s.LegacyInterprocNext = NewLegacyInterprocState()
+	s.legacyInterprocPrev = newLegacyInterprocState()
+	s.legacyInterprocNext = newLegacyInterprocState()
 	s.lastSwapDiffs = nil
 	if s.factInputs != nil {
 		s.factInputs.reset()
 	}
 	clear(s.analysisContexts)
+}
+
+// LegacyInterprocStateInitialized reports whether the old fact-product owner is
+// initialized. It exposes only store ownership health, not the product maps.
+func (s *SessionStore) LegacyInterprocStateInitialized() bool {
+	return s != nil &&
+		s.legacyInterprocPrev != nil && s.legacyInterprocPrev.facts != nil &&
+		s.legacyInterprocNext != nil && s.legacyInterprocNext.facts != nil
+}
+
+// LegacyInterprocFactCounts reports old fact-product occupancy for tests and
+// compatibility assertions without exposing the product maps.
+func (s *SessionStore) LegacyInterprocFactCounts() (prev int, next int) {
+	if s == nil {
+		return 0, 0
+	}
+	if s.legacyInterprocPrev != nil {
+		prev = len(s.legacyInterprocPrev.facts)
+	}
+	if s.legacyInterprocNext != nil {
+		next = len(s.legacyInterprocNext.facts)
+	}
+	return prev, next
+}
+
+// LegacyFunctionRefinementsForExport returns the final refinement projection
+// from the converged old product. Export code reads this projection instead of
+// peeking into legacy state.
+func (s *SessionStore) LegacyFunctionRefinementsForExport() map[cfg.SymbolID]*constraint.FunctionRefinement {
+	if s == nil || s.legacyInterprocPrev == nil || len(s.legacyInterprocPrev.facts) == 0 {
+		return nil
+	}
+	refinements := make(map[cfg.SymbolID]*constraint.FunctionRefinement)
+	for _, key := range api.SortedGraphKeys(s.legacyInterprocPrev.facts) {
+		facts := s.legacyInterprocPrev.facts[key]
+		for _, sym := range cfg.SortedSymbolIDs(facts.FunctionFacts) {
+			if refinement := functionfact.FactsProjection(facts.FunctionFacts).Refinement(sym); refinement != nil {
+				refinements[sym] = refinement
+			}
+		}
+	}
+	if len(refinements) == 0 {
+		return nil
+	}
+	return refinements
 }
 
 // ModuleBindings returns the module binding table.
@@ -366,19 +412,19 @@ func (s *SessionStore) MergeLegacyFactsNext(key api.GraphKey, delta api.Facts) {
 		return
 	}
 	s.ensureLegacyInterprocStates()
-	existing := s.LegacyInterprocNext.Facts[key]
+	existing := s.legacyInterprocNext.facts[key]
 	facts := interproc.JoinFacts(existing, delta)
 	if interproc.Empty(facts) {
 		if interproc.Empty(existing) {
 			return
 		}
-		delete(s.LegacyInterprocNext.Facts, key)
+		delete(s.legacyInterprocNext.facts, key)
 		return
 	}
 	if interproc.FactsEqual(existing, facts) {
 		return
 	}
-	s.LegacyInterprocNext.Facts[key] = facts
+	s.legacyInterprocNext.facts[key] = facts
 }
 
 // Funcs returns the function map.
