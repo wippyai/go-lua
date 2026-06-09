@@ -193,7 +193,7 @@ func TestManifest_SoftLocalAnnotations(t *testing.T) {
 	root := result.Session.RootResult.Graph
 	parentHash := result.Session.Store.GraphParentHashOf(root.ID())
 	parent := result.Session.Store.Parents()[parentHash]
-	functionFacts := result.Session.Store.ProjectionFacts(root, parent).FunctionFacts()
+	functionFacts := result.Session.Store.FunctionFactsProjectionForExport(root, parent)
 
 	groupSym := localFunctionSymbolByName(t, root, functionFacts, "group_by_suite")
 	runSuiteSym := localFunctionSymbolByName(t, root, functionFacts, "run_suite")

@@ -1,7 +1,7 @@
 // Store interfaces define the contract between the type checker and its
 // backing storage. Canonical checking uses Summary as its interprocedural
-// authority; the postflow projection product surfaces below are compatibility/export
-// carriers for noncanonical paths and final projections.
+// authority; the postflow projection surfaces below are typed compatibility/export
+// lanes for noncanonical paths and final projections.
 //
 // The interfaces form a hierarchy with increasing capability:
 //
@@ -13,7 +13,7 @@
 //	StoreReader     - Read-only combination of above
 //	CanonicalStore  - Canonical-owned metadata plus final fact projection
 //	NestedStore     - StoreReader required by nested metadata consumers
-//	PostflowProjectionStore - Explicit noncanonical postflow fact-product boundary
+//	PostflowProjectionStore - Explicit noncanonical postflow projection boundary
 //	IterationStore  - Full mutation capability for projection-product fixpoint paths
 package api
 
@@ -22,6 +22,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/bind"
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/scope"
+	"github.com/wippyai/go-lua/types/domain/value/product"
 	"github.com/wippyai/go-lua/types/typ"
 )
 
@@ -73,26 +74,6 @@ type NestedMetaStore interface {
 	NestedMetaFor(graphID uint64) (NestedMeta, bool)
 }
 
-// ProjectionFactProduct is the typed view over one visible postflow projection product.
-// It is not a canonical Summary read surface.
-type ProjectionFactProduct interface {
-	// FunctionFacts returns the visible projection function-fact slot. Canonical
-	// final/public output should prefer FunctionFactsProjection.
-	FunctionFacts() FunctionFacts
-	FunctionFact(sym cfg.SymbolID) (FunctionFact, bool)
-	LiteralSig(fn *ast.FunctionExpr) (*typ.Function, bool)
-	CapturedType(sym cfg.SymbolID) (typ.Type, bool)
-	CapturedFieldAssigns() CapturedFieldAssigns
-	ConstructorFields(classSym cfg.SymbolID) (FieldValues, bool)
-}
-
-// ProjectionFactProductReader exposes visible postflow projection products for
-// noncanonical postflow/export compatibility paths.
-type ProjectionFactProductReader interface {
-	ModuleFacts() ProjectionFactProduct
-	ProjectionFacts(graph *cfg.Graph, parent *scope.State) ProjectionFactProduct
-}
-
 // FunctionRefs provides symbol/function lookup for function graphs.
 type FunctionRefs interface {
 	RegisterFunctionRef(sym cfg.SymbolID, fn *ast.FunctionExpr, graph *cfg.Graph, parentGraphID uint64, defPoint cfg.Point)
@@ -116,9 +97,23 @@ type StoreReader interface {
 	FunctionRefs
 }
 
-// ProjectionFactProductSink provides write access to per-iteration projection facts.
-type ProjectionFactProductSink interface {
-	MergeProjectionFactsNext(key GraphKey, delta Facts)
+// PostflowProjectionReader exposes typed reads from the noncanonical postflow
+// projection product. It is not a canonical Summary read surface.
+type PostflowProjectionReader interface {
+	LiteralSignatureProjection(graph *cfg.Graph, parent *scope.State, fn *ast.FunctionExpr) (*typ.Function, bool)
+	CapturedTypeProjection(graph *cfg.Graph, parent *scope.State, sym cfg.SymbolID) (typ.Type, bool)
+	CapturedFieldAssignsProjection(graph *cfg.Graph, parent *scope.State) CapturedFieldAssigns
+	ConstructorFieldsProjection(classSym cfg.SymbolID) (FieldValues, bool)
+}
+
+// PostflowProjectionSink provides typed write access to per-iteration projection
+// lanes. The store owns lowering these lanes into the internal product lattice.
+type PostflowProjectionSink interface {
+	MergeFunctionFactProjection(key GraphKey, sym cfg.SymbolID, fact FunctionFact)
+	MergeLiteralSignatureProjection(key GraphKey, fn *ast.FunctionExpr, sig *typ.Function)
+	MergeCapturedTypeProjection(key GraphKey, sym cfg.SymbolID, value product.AbstractValue)
+	MergeCapturedFieldProjection(key GraphKey, nestedSym cfg.SymbolID, capturedSym cfg.SymbolID, fields FieldValues)
+	MergeConstructorFieldProjection(classSym cfg.SymbolID, fields FieldValues)
 }
 
 // CanonicalFunctionFactProjectionSink installs final Summary-derived FunctionFacts
@@ -154,18 +149,18 @@ type NestedStore interface {
 }
 
 // PostflowProjectionStore is the explicitly named noncanonical postflow/compatibility
-// boundary for postflow projection products. Normal checker/synth/module/export code
-// must not request this interface.
+// boundary for typed postflow projection lanes. Normal checker/synth/module/export
+// code must not request this interface.
 type PostflowProjectionStore interface {
 	StoreReader
-	ProjectionFactProductReader
-	ProjectionFactProductSink
+	PostflowProjectionReader
+	PostflowProjectionSink
 
 	FunctionFactProjectionReader
 	ParentGraphKeyForSymbol(sym cfg.SymbolID) (GraphKey, bool)
 }
 
-// IterationStore provides mutation operations required by projection-product fixpoint paths.
+// IterationStore provides mutation operations required by postflow projection fixpoint paths.
 type IterationStore interface {
 	PostflowProjectionStore
 

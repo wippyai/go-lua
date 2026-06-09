@@ -8,7 +8,6 @@ import (
 	"github.com/wippyai/go-lua/compiler/check/api"
 	checkcallsite "github.com/wippyai/go-lua/compiler/check/callsite"
 	"github.com/wippyai/go-lua/compiler/check/domain/functionfact"
-	interprocdomain "github.com/wippyai/go-lua/compiler/check/domain/interproc"
 	"github.com/wippyai/go-lua/compiler/check/domain/metatable"
 	"github.com/wippyai/go-lua/compiler/check/domain/observation"
 	"github.com/wippyai/go-lua/compiler/check/domain/paramevidence"
@@ -88,8 +87,7 @@ func StoreFactsFromResult(
 	builder.AddNarrow(fnSym, narrowSummary)
 	builder.AddSignature(fnSym, signature)
 	builder.AddEnvReturns(fnSym, envReturns)
-	delta := interprocdomain.FunctionFactsDelta(builder.Build())
-	writer.mergeParentFactsForSymbol(fnSym, delta)
+	writer.mergeParentFunctionFacts(builder.Build())
 }
 
 // attachReturnLengthEnsures proves the constant arm of each return slot's length
@@ -467,7 +465,7 @@ func storeCapturedFactsFromResult(
 		return transferValues.AssignedValueTypeAt(point, target, static, source)
 	})
 	if len(fields) > 0 {
-		writer.mergeParentFactsForSymbol(fnSym, interprocdomain.CapturedFieldAssignsDelta(fnSym, fields))
+		writer.mergeParentCapturedFieldProjections(fnSym, fields)
 	}
 }
 
@@ -586,7 +584,9 @@ func (c *parameterEvidenceCollector) collectCallEvidence(evidence api.CallEviden
 	if len(facts) == 0 {
 		return
 	}
-	c.store.MergeProjectionFactsNext(calleeOwner.Key, interprocdomain.FunctionFactsDelta(facts))
+	for _, sym := range cfg.SortedSymbolIDs(facts) {
+		c.store.MergeFunctionFactProjection(calleeOwner.Key, sym, facts[sym])
+	}
 }
 
 func (c *parameterEvidenceCollector) recordCurrentBodyPreconditions(p cfg.Point, evidence api.CallEvidence) {
@@ -609,8 +609,8 @@ func (c *parameterEvidenceCollector) recordCurrentBodyPreconditions(p cfg.Point,
 	builder.AddBodyParams(c.currentSym, preconditions.Body)
 	builder.AddPublicParams(c.currentSym, preconditions.Public)
 	facts := builder.Build()
-	if len(facts) > 0 {
-		c.store.MergeProjectionFactsNext(c.currentKey, interprocdomain.FunctionFactsDelta(facts))
+	for _, sym := range cfg.SortedSymbolIDs(facts) {
+		c.store.MergeFunctionFactProjection(c.currentKey, sym, facts[sym])
 	}
 }
 

@@ -13,6 +13,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/check/scope"
 	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/db"
+	"github.com/wippyai/go-lua/types/domain/value/product"
 	"github.com/wippyai/go-lua/types/typ"
 )
 
@@ -405,9 +406,9 @@ func (s *SessionStore) ParentGraphKeyForSymbol(sym cfg.SymbolID) (api.GraphKey, 
 	return api.KeyForGraph(graph, parentHash), true
 }
 
-// MergeProjectionFactsNext merges a projection product delta into the next product side
-// for the current projection iteration.
-func (s *SessionStore) MergeProjectionFactsNext(key api.GraphKey, delta api.Facts) {
+// mergeProjectionFactsNext lowers one typed projection-lane delta into the
+// internal postflow product lattice.
+func (s *SessionStore) mergeProjectionFactsNext(key api.GraphKey, delta api.Facts) {
 	if s == nil {
 		return
 	}
@@ -425,6 +426,50 @@ func (s *SessionStore) MergeProjectionFactsNext(key api.GraphKey, delta api.Fact
 		return
 	}
 	s.projectionNext.facts[key] = facts
+}
+
+// MergeFunctionFactProjection merges one function-fact projection row.
+func (s *SessionStore) MergeFunctionFactProjection(key api.GraphKey, sym cfg.SymbolID, fact api.FunctionFact) {
+	if sym == 0 || functionfact.Empty(fact) {
+		return
+	}
+	s.mergeProjectionFactsNext(key, interproc.FunctionFactsDelta(api.FunctionFacts{sym: fact}))
+}
+
+// MergeLiteralSignatureProjection merges one function-literal signature row.
+func (s *SessionStore) MergeLiteralSignatureProjection(key api.GraphKey, fn *ast.FunctionExpr, sig *typ.Function) {
+	if fn == nil || sig == nil {
+		return
+	}
+	s.mergeProjectionFactsNext(key, interproc.LiteralSigsDelta(api.LiteralSigs{fn: sig}))
+}
+
+// MergeCapturedTypeProjection merges one captured-symbol type row.
+func (s *SessionStore) MergeCapturedTypeProjection(key api.GraphKey, sym cfg.SymbolID, value product.AbstractValue) {
+	if sym == 0 || value.IsZero() {
+		return
+	}
+	s.mergeProjectionFactsNext(key, interproc.CapturedTypesDelta(api.CapturedTypes{sym: value}))
+}
+
+// MergeCapturedFieldProjection merges field writes performed by one nested
+// function against one captured parent symbol.
+func (s *SessionStore) MergeCapturedFieldProjection(key api.GraphKey, nestedSym cfg.SymbolID, capturedSym cfg.SymbolID, fields api.FieldValues) {
+	if nestedSym == 0 || capturedSym == 0 || len(fields) == 0 {
+		return
+	}
+	s.mergeProjectionFactsNext(key, interproc.CapturedFieldAssignsDelta(nestedSym, map[cfg.SymbolID]api.FieldValues{
+		capturedSym: fields,
+	}))
+}
+
+// MergeConstructorFieldProjection merges constructor field evidence into the
+// module-wide projection lane.
+func (s *SessionStore) MergeConstructorFieldProjection(classSym cfg.SymbolID, fields api.FieldValues) {
+	if classSym == 0 || len(fields) == 0 {
+		return
+	}
+	s.mergeProjectionFactsNext(api.ModuleFactsKey(), interproc.ConstructorFieldsDelta(classSym, fields))
 }
 
 // Funcs returns the function map.
@@ -662,54 +707,6 @@ func (s *SessionStore) GraphAnalysisContext(key api.GraphKey) api.AnalysisContex
 	return api.MergeAnalysisContext(api.AnalysisContext{}, s.analysisContexts[key])
 }
 
-type interprocProductView struct {
-	store *SessionStore
-	key   api.GraphKey
-	ok    bool
-}
-
-func (v interprocProductView) FunctionFacts() api.FunctionFacts {
-	if v.store == nil || !v.ok {
-		return nil
-	}
-	return v.store.functionFactsByKey(v.key)
-}
-
-func (v interprocProductView) FunctionFact(sym cfg.SymbolID) (api.FunctionFact, bool) {
-	if v.store == nil || !v.ok || sym == 0 {
-		return api.FunctionFact{}, false
-	}
-	return v.store.functionFactByKey(api.FunctionFactKey{GraphKey: v.key, Symbol: sym})
-}
-
-func (v interprocProductView) LiteralSig(fn *ast.FunctionExpr) (*typ.Function, bool) {
-	if v.store == nil || !v.ok || fn == nil {
-		return nil, false
-	}
-	return v.store.literalSigByKey(api.LiteralSigKey{GraphKey: v.key, Func: fn})
-}
-
-func (v interprocProductView) CapturedType(sym cfg.SymbolID) (typ.Type, bool) {
-	if v.store == nil || !v.ok || sym == 0 {
-		return nil, false
-	}
-	return v.store.capturedTypeByKey(api.CapturedTypeKey{GraphKey: v.key, Symbol: sym})
-}
-
-func (v interprocProductView) CapturedFieldAssigns() api.CapturedFieldAssigns {
-	if v.store == nil || !v.ok {
-		return nil
-	}
-	return v.store.capturedFieldAssignsByKey(v.key)
-}
-
-func (v interprocProductView) ConstructorFields(classSym cfg.SymbolID) (api.FieldValues, bool) {
-	if v.store == nil || !v.ok || classSym == 0 {
-		return nil, false
-	}
-	return v.store.constructorFieldsByKey(api.ConstructorFieldKey{GraphKey: v.key, Symbol: classSym})
-}
-
 // ModuleAliases returns the module aliases map.
 func (s *SessionStore) ModuleAliases() map[cfg.SymbolID]string {
 	return s.Module.ModuleAliases
@@ -723,21 +720,52 @@ func (s *SessionStore) SetModuleAliases(aliases map[cfg.SymbolID]string) {
 	s.Module.ModuleAliases = aliases
 }
 
-// ModuleFacts returns the module-wide visible projection product view.
-func (s *SessionStore) ModuleFacts() api.ProjectionFactProduct {
-	if s == nil {
-		return interprocProductView{}
-	}
-	return interprocProductView{store: s, key: api.ModuleFactsKey(), ok: true}
-}
-
-// ProjectionFacts returns the visible projection product view for a graph.
-func (s *SessionStore) ProjectionFacts(graph *cfg.Graph, parent *scope.State) api.ProjectionFactProduct {
-	if s == nil || graph == nil {
-		return interprocProductView{}
+// LiteralSignatureProjection returns the visible function-literal signature
+// projection for a graph key.
+func (s *SessionStore) LiteralSignatureProjection(graph *cfg.Graph, parent *scope.State, fn *ast.FunctionExpr) (*typ.Function, bool) {
+	if s == nil || graph == nil || fn == nil {
+		return nil, false
 	}
 	key, ok := s.GraphKeyFor(graph, parent)
-	return interprocProductView{store: s, key: key, ok: ok}
+	if !ok {
+		return nil, false
+	}
+	return s.literalSigByKey(api.LiteralSigKey{GraphKey: key, Func: fn})
+}
+
+// CapturedTypeProjection returns the visible captured-symbol type projection for
+// a graph key.
+func (s *SessionStore) CapturedTypeProjection(graph *cfg.Graph, parent *scope.State, sym cfg.SymbolID) (typ.Type, bool) {
+	if s == nil || graph == nil || sym == 0 {
+		return nil, false
+	}
+	key, ok := s.GraphKeyFor(graph, parent)
+	if !ok {
+		return nil, false
+	}
+	return s.capturedTypeByKey(api.CapturedTypeKey{GraphKey: key, Symbol: sym})
+}
+
+// CapturedFieldAssignsProjection returns the visible captured-field projection
+// for a graph key.
+func (s *SessionStore) CapturedFieldAssignsProjection(graph *cfg.Graph, parent *scope.State) api.CapturedFieldAssigns {
+	if s == nil || graph == nil {
+		return nil
+	}
+	key, ok := s.GraphKeyFor(graph, parent)
+	if !ok {
+		return nil
+	}
+	return s.capturedFieldAssignsByKey(key)
+}
+
+// ConstructorFieldsProjection returns visible constructor field evidence for a
+// class symbol from the module-wide projection lane.
+func (s *SessionStore) ConstructorFieldsProjection(classSym cfg.SymbolID) (api.FieldValues, bool) {
+	if s == nil || classSym == 0 {
+		return nil, false
+	}
+	return s.constructorFieldsByKey(api.ConstructorFieldKey{GraphKey: api.ModuleFactsKey(), Symbol: classSym})
 }
 
 // FunctionFactProjection returns the final/public FunctionFact projection for

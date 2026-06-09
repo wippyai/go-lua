@@ -18,19 +18,43 @@ type factsWriteStoreStub struct {
 	graphKeyForOK       bool
 	parentKeyBySymbol   map[cfg.SymbolID]api.GraphKey
 	symbolByFunc        map[*ast.FunctionExpr]cfg.SymbolID
-	factsByGraphKeyNext map[api.GraphKey]api.Facts
+	functionFactsByKey  map[api.GraphKey]api.FunctionFacts
+	literalSigsByKey    map[api.GraphKey]api.LiteralSigs
+	capturedFieldsByKey map[api.GraphKey]api.CapturedFieldAssigns
 }
 
 func newFactsWriteStoreStub() *factsWriteStoreStub {
 	return &factsWriteStoreStub{
 		parentKeyBySymbol:   make(map[cfg.SymbolID]api.GraphKey),
 		symbolByFunc:        make(map[*ast.FunctionExpr]cfg.SymbolID),
-		factsByGraphKeyNext: make(map[api.GraphKey]api.Facts),
+		functionFactsByKey:  make(map[api.GraphKey]api.FunctionFacts),
+		literalSigsByKey:    make(map[api.GraphKey]api.LiteralSigs),
+		capturedFieldsByKey: make(map[api.GraphKey]api.CapturedFieldAssigns),
 	}
 }
 
-func (s *factsWriteStoreStub) MergeProjectionFactsNext(key api.GraphKey, delta api.Facts) {
-	s.factsByGraphKeyNext[key] = delta
+func (s *factsWriteStoreStub) MergeFunctionFactProjection(key api.GraphKey, sym cfg.SymbolID, fact api.FunctionFact) {
+	if s.functionFactsByKey[key] == nil {
+		s.functionFactsByKey[key] = make(api.FunctionFacts)
+	}
+	s.functionFactsByKey[key][sym] = fact
+}
+
+func (s *factsWriteStoreStub) MergeLiteralSignatureProjection(key api.GraphKey, fn *ast.FunctionExpr, sig *typ.Function) {
+	if s.literalSigsByKey[key] == nil {
+		s.literalSigsByKey[key] = make(api.LiteralSigs)
+	}
+	s.literalSigsByKey[key][fn] = sig
+}
+
+func (s *factsWriteStoreStub) MergeCapturedFieldProjection(key api.GraphKey, nestedSym cfg.SymbolID, capturedSym cfg.SymbolID, fields api.FieldValues) {
+	if s.capturedFieldsByKey[key] == nil {
+		s.capturedFieldsByKey[key] = make(api.CapturedFieldAssigns)
+	}
+	if s.capturedFieldsByKey[key][nestedSym] == nil {
+		s.capturedFieldsByKey[key][nestedSym] = make(map[cfg.SymbolID]api.FieldValues)
+	}
+	s.capturedFieldsByKey[key][nestedSym][capturedSym] = fields
 }
 
 func (s *factsWriteStoreStub) GraphKeyFor(_ *cfg.Graph, _ *scope.State) (api.GraphKey, bool) {
@@ -73,20 +97,18 @@ func TestProjectionFactWriter_MergeParentFactsForSymbol(t *testing.T) {
 	stub.parentKeyBySymbol[3] = key
 	writer := newProjectionFactWriter(stub)
 
-	ok := writer.mergeParentFactsForSymbol(3, api.Facts{
-		FunctionFacts: api.FunctionFacts{
-			3: {Call: api.FunctionCallProjection{Params: product.LiftVector([]typ.Type{typ.String})}},
-		},
+	ok := writer.mergeParentFunctionFacts(api.FunctionFacts{
+		3: {Call: api.FunctionCallProjection{Params: product.LiftVector([]typ.Type{typ.String})}},
 	})
 	if !ok {
 		t.Fatal("expected update to succeed")
 	}
-	got := stub.factsByGraphKeyNext[key]
-	if params := functionfact.FactsProjection(got.FunctionFacts).PublicParameterEvidence(3); len(params) != 1 || !typ.TypeEquals(params[0], typ.String) {
-		t.Fatalf("unexpected parent facts update: %#v", got.FunctionFacts)
+	got := stub.functionFactsByKey[key]
+	if params := functionfact.FactsProjection(got).PublicParameterEvidence(3); len(params) != 1 || !typ.TypeEquals(params[0], typ.String) {
+		t.Fatalf("unexpected parent facts update: %#v", got)
 	}
 
-	if writer.mergeParentFactsForSymbol(99, api.Facts{}) {
+	if writer.mergeParentFunctionFacts(api.FunctionFacts{99: {}}) {
 		t.Fatal("expected update to fail for unknown symbol")
 	}
 }
@@ -105,9 +127,9 @@ func TestProjectionFactWriter_WriteLiteralSignatures(t *testing.T) {
 
 	writer.writeLiteralSignatures(graph, scope.New(), sigs)
 
-	gotFacts := stub.factsByGraphKeyNext[key]
-	if gotFacts.LiteralSigs == nil || gotFacts.LiteralSigs[fn] != sig {
-		t.Fatalf("expected literal sig in facts update, got %#v", gotFacts.LiteralSigs)
+	got := stub.literalSigsByKey[key]
+	if got == nil || got[fn] != sig {
+		t.Fatalf("expected literal sig in facts update, got %#v", got)
 	}
 }
 
@@ -133,15 +155,15 @@ func TestProjectionFactWriter_WriteLiteralSignaturesSkipsCanonicalFunctions(t *t
 		anonymous:  anonymousSig,
 	})
 
-	gotFacts := stub.factsByGraphKeyNext[key]
-	if gotFacts.LiteralSigs == nil {
+	got := stub.literalSigsByKey[key]
+	if got == nil {
 		t.Fatalf("expected anonymous literal sig in facts update")
 	}
-	if gotFacts.LiteralSigs[registered] != nil {
-		t.Fatalf("registered function must be published through FunctionFact, got literal sig %#v", gotFacts.LiteralSigs[registered])
+	if got[registered] != nil {
+		t.Fatalf("registered function must be published through FunctionFact, got literal sig %#v", got[registered])
 	}
-	if gotFacts.LiteralSigs[anonymous] != anonymousSig {
-		t.Fatalf("expected anonymous literal sig to remain, got %#v", gotFacts.LiteralSigs[anonymous])
+	if got[anonymous] != anonymousSig {
+		t.Fatalf("expected anonymous literal sig to remain, got %#v", got[anonymous])
 	}
 }
 
@@ -155,7 +177,7 @@ func TestProjectionFactWriter_WriteLiteralSignatures_RequiresGraphKey(t *testing
 	sig := typ.Func().Returns(typ.Number).Build()
 	writer.writeLiteralSignatures(graph, scope.New(), api.LiteralSigsLookup{fn: sig})
 
-	if len(stub.factsByGraphKeyNext) != 0 {
-		t.Fatalf("expected no facts writes without graph key, got %#v", stub.factsByGraphKeyNext)
+	if len(stub.literalSigsByKey) != 0 {
+		t.Fatalf("expected no literal signature writes without graph key, got %#v", stub.literalSigsByKey)
 	}
 }

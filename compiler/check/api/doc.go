@@ -13,7 +13,7 @@
 //   - [ParentScopes]: Parent scope lookup for nested functions
 //   - [StoreReader]: Read contract combining the immutable stores above
 //   - [CanonicalStore]: Canonical-owned metadata and final fact projection
-//   - [PostflowProjectionStore]: Explicit noncanonical postflow fact-product boundary
+//   - [PostflowProjectionStore]: Explicit noncanonical postflow projection boundary
 //   - [IterationStore]: Adds swap/reset mutation for projection-product fixpoint paths
 //
 // These interfaces allow different phases to declare their dependencies and
@@ -26,11 +26,12 @@
 // and diagnostic collection. The concrete implementation lives in the
 // check package.
 //
-// # Postflow Projection Products And Final Projections
+// # Postflow Projection Lanes And Final Projections
 //
-// Canonical checking uses Summary as its interprocedural authority. The [Facts]
-// type below is the postflow/export projection product used by noncanonical inference
-// and export/public projection plumbing:
+// Canonical checking uses Summary as its interprocedural authority. Postflow
+// compatibility code reads and writes typed projection lanes through
+// [PostflowProjectionStore]. The internal [Facts] product remains the store/domain
+// convergence carrier for those lanes:
 //
 //   - [FunctionFacts]: final/public per-function projection facts
 //   - [LiteralSigs]: Signatures for anonymous function literals

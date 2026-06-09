@@ -12,9 +12,9 @@
 //   - Propagating captured field assignments back to parent scopes
 //   - Recursively processing nested functions within nested functions
 //
-// The processor integrates with the fixpoint loop by storing interprocedural
-// facts (literal signatures, captured assignments) that may affect other
-// functions in subsequent iterations.
+// The processor integrates with the old postflow fixpoint through typed
+// projection lanes for constructor fields, captured types, and sibling
+// signatures that may affect subsequent iterations.
 package nestedinfer
 
 import (
@@ -705,9 +705,9 @@ func (p *Processor) persistConstructorFields(pattern nested.ConstructorPattern, 
 	if len(fields) == 0 {
 		return
 	}
-	p.store.MergeProjectionFactsNext(api.ModuleFactsKey(), interprocdomain.ConstructorFieldsDelta(pattern.ClassSymbol, fields))
+	p.store.MergeConstructorFieldProjection(pattern.ClassSymbol, fields)
 	if pattern.PrototypeSymbol != 0 && pattern.PrototypeSymbol != pattern.ClassSymbol {
-		p.store.MergeProjectionFactsNext(api.ModuleFactsKey(), interprocdomain.ConstructorFieldsDelta(pattern.PrototypeSymbol, fields))
+		p.store.MergeConstructorFieldProjection(pattern.PrototypeSymbol, fields)
 	}
 }
 
@@ -828,18 +828,13 @@ func (p *Processor) persistCapturedTypesForNestedGraph(
 		setter.SetParentScope(parentHash, parentScope)
 	}
 	key := api.KeyForGraph(nestedGraph, parentHash)
-	nextCaptured := make(api.CapturedTypes, len(capturedTypes))
 	for _, sym := range cfg.SortedSymbolIDs(capturedTypes) {
 		t := capturedTypes[sym]
 		if sym == 0 || t == nil {
 			continue
 		}
-		nextCaptured[sym] = product.FromType(t)
+		p.store.MergeCapturedTypeProjection(key, sym, product.FromType(t))
 	}
-	if len(nextCaptured) == 0 {
-		return
-	}
-	p.store.MergeProjectionFactsNext(key, interprocdomain.CapturedTypesDelta(nextCaptured))
 }
 
 // resolveSelfTypeForImplicitSelf resolves the self-type for methods with implicit self parameter.
@@ -946,7 +941,7 @@ func (p *Processor) constructorFieldsForClass(classSym cfg.SymbolID) interprocdo
 	if p == nil || p.store == nil || classSym == 0 {
 		return nil
 	}
-	fields, _ := p.store.ModuleFacts().ConstructorFields(classSym)
+	fields, _ := p.store.ConstructorFieldsProjection(classSym)
 	return fields
 }
 
@@ -1039,13 +1034,12 @@ func (p *Processor) projectedSiblingFunctionFacts(
 	if p == nil || p.store == nil || graph == nil || len(funcs) == 0 {
 		return nil
 	}
-	product := p.store.ProjectionFacts(graph, parentScope)
 	out := make(api.FunctionFacts, len(funcs))
 	for _, info := range funcs {
 		if info == nil || info.FuncSym == 0 {
 			continue
 		}
-		ff, ok := product.FunctionFact(info.FuncSym)
+		ff, ok := p.store.FunctionFactProjection(graph, parentScope, info.FuncSym)
 		if !ok {
 			continue
 		}

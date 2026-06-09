@@ -407,16 +407,9 @@ func TestProjectionFactDiffs_IsolatedBetweenStores(t *testing.T) {
 
 	keyA := registerSessionFunctionForRefinementTest(t, storeA, cfg.SymbolID(42))
 	keyB := registerSessionFunctionForRefinementTest(t, storeB, cfg.SymbolID(42))
-	storeA.MergeProjectionFactsNext(keyA, api.Facts{
-		FunctionFacts: api.FunctionFacts{
-			cfg.SymbolID(42): {Effects: api.FunctionEffectProjection{Refinement: &constraint.FunctionRefinement{Terminates: true}}},
-		},
-	})
-	storeB.MergeProjectionFactsNext(keyB, api.Facts{
-		FunctionFacts: api.FunctionFacts{
-			cfg.SymbolID(42): {Effects: api.FunctionEffectProjection{Refinement: &constraint.FunctionRefinement{Terminates: true}}},
-		},
-	})
+	fact := api.FunctionFact{Effects: api.FunctionEffectProjection{Refinement: &constraint.FunctionRefinement{Terminates: true}}}
+	storeA.MergeFunctionFactProjection(keyA, cfg.SymbolID(42), fact)
+	storeB.MergeFunctionFactProjection(keyB, cfg.SymbolID(42), fact)
 
 	if !storeA.AdvanceProjectionFacts() {
 		t.Fatal("expected storeA AdvanceProjectionFacts to report change")
@@ -448,16 +441,12 @@ func registerSessionFunctionForRefinementTest(t *testing.T, st *store.SessionSto
 func TestSessionStore_ClearProjectionFactState(t *testing.T) {
 	store := store.NewSessionStore()
 
-	store.MergeProjectionFactsNext(api.ModuleFactsKey(), api.Facts{
-		ConstructorFields: api.ConstructorFields{
-			cfg.SymbolID(2): interprocdomain.LiftTypeFieldMap(map[string]typ.Type{"name": typ.String}),
-		},
-	})
-	store.MergeProjectionFactsNext(api.GraphKey{GraphID: 1, ParentHash: 1}, api.Facts{
-		FunctionFacts: api.FunctionFacts{
-			cfg.SymbolID(4): {Effects: api.FunctionEffectProjection{Refinement: &constraint.FunctionRefinement{Terminates: true}}},
-		},
-	})
+	store.MergeConstructorFieldProjection(cfg.SymbolID(2), interprocdomain.LiftTypeFieldMap(map[string]typ.Type{"name": typ.String}))
+	store.MergeFunctionFactProjection(
+		api.GraphKey{GraphID: 1, ParentHash: 1},
+		cfg.SymbolID(4),
+		api.FunctionFact{Effects: api.FunctionEffectProjection{Refinement: &constraint.FunctionRefinement{Terminates: true}}},
+	)
 	store.AdvanceProjectionFacts()
 
 	store.ClearProjectionFactState()
@@ -535,7 +524,7 @@ func TestSession_Release_Nil(t *testing.T) {
 
 func TestModuleConstructorFacts_EmptyDelta(t *testing.T) {
 	store := store.NewSessionStore()
-	store.MergeProjectionFactsNext(api.ModuleFactsKey(), api.Facts{})
+	store.MergeConstructorFieldProjection(0, nil)
 	_, next := store.ProjectionFactCounts()
 	if next != 0 {
 		t.Error("empty product delta should not store facts")
@@ -544,10 +533,8 @@ func TestModuleConstructorFacts_EmptyDelta(t *testing.T) {
 
 func TestModuleConstructorFacts_EmptyFields(t *testing.T) {
 	store := store.NewSessionStore()
-	store.MergeProjectionFactsNext(api.ModuleFactsKey(), api.Facts{
-		ConstructorFields: api.ConstructorFields{1: nil},
-	})
-	got, _ := store.ModuleFacts().ConstructorFields(1)
+	store.MergeConstructorFieldProjection(1, nil)
+	got, _ := store.ConstructorFieldsProjection(1)
 	if len(got) != 0 {
 		t.Fatalf("empty constructor field map should stay empty, got %#v", got)
 	}
@@ -556,11 +543,9 @@ func TestModuleConstructorFacts_EmptyFields(t *testing.T) {
 func TestModuleConstructorFacts_Basic(t *testing.T) {
 	store := store.NewSessionStore()
 	fields := interprocdomain.LiftTypeFieldMap(map[string]typ.Type{"x": typ.Number, "y": typ.String})
-	store.MergeProjectionFactsNext(api.ModuleFactsKey(), api.Facts{
-		ConstructorFields: api.ConstructorFields{1: fields},
-	})
+	store.MergeConstructorFieldProjection(1, fields)
 
-	gotFields, _ := store.ModuleFacts().ConstructorFields(1)
+	gotFields, _ := store.ConstructorFieldsProjection(1)
 	if len(gotFields) != 2 {
 		t.Errorf("expected 2 fields, got %d", len(gotFields))
 	}
@@ -568,14 +553,10 @@ func TestModuleConstructorFacts_Basic(t *testing.T) {
 
 func TestModuleConstructorFacts_Join(t *testing.T) {
 	store := store.NewSessionStore()
-	store.MergeProjectionFactsNext(api.ModuleFactsKey(), api.Facts{
-		ConstructorFields: api.ConstructorFields{1: interprocdomain.LiftTypeFieldMap(map[string]typ.Type{"x": typ.Number})},
-	})
-	store.MergeProjectionFactsNext(api.ModuleFactsKey(), api.Facts{
-		ConstructorFields: api.ConstructorFields{1: interprocdomain.LiftTypeFieldMap(map[string]typ.Type{"x": typ.String})},
-	})
+	store.MergeConstructorFieldProjection(1, interprocdomain.LiftTypeFieldMap(map[string]typ.Type{"x": typ.Number}))
+	store.MergeConstructorFieldProjection(1, interprocdomain.LiftTypeFieldMap(map[string]typ.Type{"x": typ.String}))
 
-	fields, _ := store.ModuleFacts().ConstructorFields(1)
+	fields, _ := store.ConstructorFieldsProjection(1)
 	xKey, ok := interprocdomain.FieldKeyFromName("x")
 	if !ok || fields == nil || product.Equal(fields[xKey], product.FromType(typ.Number)) {
 		t.Error("field should be joined")
@@ -584,7 +565,7 @@ func TestModuleConstructorFacts_Join(t *testing.T) {
 
 func TestModuleFacts_AbsentConstructorClass(t *testing.T) {
 	store := store.NewSessionStore()
-	result, _ := store.ModuleFacts().ConstructorFields(0)
+	result, _ := store.ConstructorFieldsProjection(0)
 	if result != nil {
 		t.Error("absent constructor class should return nil")
 	}
@@ -595,7 +576,7 @@ func TestModuleFacts_ConstructorFieldsFromNext(t *testing.T) {
 	setConstructorFieldsNextForTest(store, map[cfg.SymbolID]map[string]typ.Type{
 		1: {"x": typ.Number},
 	})
-	result, _ := store.ModuleFacts().ConstructorFields(1)
+	result, _ := store.ConstructorFieldsProjection(1)
 	if result == nil {
 		t.Fatal("should find same-iteration constructor fields from product overlay")
 	}
@@ -606,7 +587,7 @@ func TestModuleFacts_ConstructorFieldsFromPrev(t *testing.T) {
 	setConstructorFieldsPrevForTest(store, map[cfg.SymbolID]map[string]typ.Type{
 		1: {"y": typ.String},
 	})
-	result, _ := store.ModuleFacts().ConstructorFields(1)
+	result, _ := store.ConstructorFieldsProjection(1)
 	if result == nil {
 		t.Fatal("should find fields from stable product")
 	}

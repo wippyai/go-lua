@@ -639,6 +639,8 @@ func writeFunctionFactType(st *store.SessionStore, graph *cfg.Graph, parent *sco
 func writeFunctionFacts(st *store.SessionStore, graph *cfg.Graph, parent *scope.State, facts api.FunctionFacts) {
 	st.ClearProjectionFactState()
 	key := api.KeyForGraph(graph, parent.Hash())
-	st.MergeProjectionFactsNext(key, api.Facts{FunctionFacts: facts})
+	for _, sym := range cfg.SortedSymbolIDs(facts) {
+		st.MergeFunctionFactProjection(key, sym, facts[sym])
+	}
 	st.AdvanceProjectionFacts()
 }
