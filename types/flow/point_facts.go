@@ -223,7 +223,7 @@ func (f PointFacts) StaticMemberValue(path constraint.Path) (product.AbstractVal
 	if !ok {
 		return product.AbstractValue{}, false
 	}
-	return f.state.StaticMembers.ValueAtAddress(addr)
+	return StaticMembersOfPoint(f.state).ValueAtAddress(addr)
 }
 
 // AddressValue returns a product value for a stable symbol-rooted address. It
@@ -400,7 +400,7 @@ func (f PointFacts) ChildPathFacts(parent constraint.Path) []PathFact {
 		return nil
 	}
 	children := make(map[string]PathFact)
-	for _, childAddr := range f.state.StaticMembers.DirectChildAddressesUnder(parentAddr) {
+	for _, childAddr := range StaticMembersOfPoint(f.state).DirectChildAddressesUnder(parentAddr) {
 		childPath, ok := childAddr.Path()
 		if !ok || childPath.Symbol != parent.Symbol {
 			continue

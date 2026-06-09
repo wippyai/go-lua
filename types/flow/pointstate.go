@@ -374,43 +374,6 @@ var PointStateDomain = lattice.Lattice[PointState]{
 	},
 }
 
-func pointStaticMembersLessOrEq(a, b PointState) bool {
-	return a.StaticMembers.coversWithPresentValues(
-		b.StaticMembers,
-		func(addr StableAddress) (product.AbstractValue, bool) { return pointAddressPresentValue(a, addr) },
-		product.Domain.LessOrEq,
-	)
-}
-
-func pointStaticMembersJoin(
-	a, b PointState,
-	op func(product.AbstractValue, product.AbstractValue) product.AbstractValue,
-) StaticMemberFacts {
-	if a.StaticMembers.bottom {
-		return b.StaticMembers
-	}
-	if b.StaticMembers.bottom {
-		return a.StaticMembers
-	}
-	joined := intersectStaticMemberFacts(a.StaticMembers, b.StaticMembers, op)
-	joined = pointStaticMembersJoinOneSided(joined, a.StaticMembers, b, op)
-	joined = pointStaticMembersJoinOneSided(joined, b.StaticMembers, a, op)
-	return joined
-}
-
-func pointStaticMembersJoinOneSided(
-	out StaticMemberFacts,
-	facts StaticMemberFacts,
-	other PointState,
-	op func(product.AbstractValue, product.AbstractValue) product.AbstractValue,
-) StaticMemberFacts {
-	return out.withFactsMergedFromPresentValues(
-		facts,
-		func(addr StableAddress) (product.AbstractValue, bool) { return pointAddressPresentValue(other, addr) },
-		op,
-	)
-}
-
 func pointKeyPresenceLessOrEq(a, b PointState) bool {
 	return a.KeyPresence.coversWithAbsentKeys(b.KeyPresence, func(addr StableAddress) bool {
 		return pointAddressDefinitelyAbsent(a, addr)

@@ -214,6 +214,35 @@ func (f StaticMemberFacts) DirectChildAddressesUnder(parent StableAddress) []Sta
 	return out
 }
 
+// StaticMembersOf returns the static-member axis carried by state.
+func StaticMembersOf(state PointState) StaticMemberFacts {
+	return state.StaticMembers
+}
+
+// StaticMembersOfPoint returns the static-member axis carried by state.
+func StaticMembersOfPoint(state *PointState) StaticMemberFacts {
+	if state == nil {
+		return StaticMemberFactsDomain.Top()
+	}
+	return state.StaticMembers
+}
+
+// StaticMemberAxisIsBottom reports whether the static-member axis is
+// unreachable.
+func StaticMemberAxisIsBottom(state *PointState) bool {
+	return state == nil || state.StaticMembers.IsBottom()
+}
+
+// LiftStaticMembersEntry turns the unreachable entry seed into the reachable
+// identity element for the static-member axis.
+func LiftStaticMembersEntry(state *PointState) bool {
+	if state == nil || !state.StaticMembers.IsBottom() {
+		return false
+	}
+	state.StaticMembers = StaticMemberFactsDomain.Top()
+	return true
+}
+
 func (f StaticMemberFacts) coversWithPresentValues(
 	want StaticMemberFacts,
 	present addressPresentValueProof,
@@ -410,4 +439,41 @@ func staticMemberFactLess(a, b StaticMemberFact) bool {
 var staticMemberRowIdentity = orderedRowIdentity[StaticMemberFact]{
 	less: staticMemberFactLess,
 	same: staticMemberFactSamePath,
+}
+
+func pointStaticMembersLessOrEq(a, b PointState) bool {
+	return a.StaticMembers.coversWithPresentValues(
+		b.StaticMembers,
+		func(addr StableAddress) (product.AbstractValue, bool) { return pointAddressPresentValue(a, addr) },
+		product.Domain.LessOrEq,
+	)
+}
+
+func pointStaticMembersJoin(
+	a, b PointState,
+	op func(product.AbstractValue, product.AbstractValue) product.AbstractValue,
+) StaticMemberFacts {
+	if a.StaticMembers.bottom {
+		return b.StaticMembers
+	}
+	if b.StaticMembers.bottom {
+		return a.StaticMembers
+	}
+	joined := intersectStaticMemberFacts(a.StaticMembers, b.StaticMembers, op)
+	joined = pointStaticMembersJoinOneSided(joined, a.StaticMembers, b, op)
+	joined = pointStaticMembersJoinOneSided(joined, b.StaticMembers, a, op)
+	return joined
+}
+
+func pointStaticMembersJoinOneSided(
+	out StaticMemberFacts,
+	facts StaticMemberFacts,
+	other PointState,
+	op func(product.AbstractValue, product.AbstractValue) product.AbstractValue,
+) StaticMemberFacts {
+	return out.withFactsMergedFromPresentValues(
+		facts,
+		func(addr StableAddress) (product.AbstractValue, bool) { return pointAddressPresentValue(other, addr) },
+		op,
+	)
 }

@@ -38,10 +38,7 @@ func LiftEntryReachability(ps *PointState) bool {
 		ps.ReceiverEffects = ReceiverEffectsIdentity()
 		changed = true
 	}
-	if ps.StaticMembers.IsBottom() {
-		ps.StaticMembers = StaticMemberFactsDomain.Top()
-		changed = true
-	}
+	changed = LiftStaticMembersEntry(ps) || changed
 	if ps.KeyPresence.IsBottom() {
 		ps.KeyPresence = KeyPresenceFactsDomain.Top()
 		changed = true

@@ -519,7 +519,7 @@ func appendElementDestinationValueUpdatePlans(
 		baseSynthetic := false
 		base, ok := facts.AddressValue(dst.Array)
 		if !ok || base.IsZero() {
-			base, ok = state.StaticMembers.ValueAtAddress(dst.Array)
+			base, ok = StaticMembersOf(state).ValueAtAddress(dst.Array)
 			if !ok || base.IsZero() {
 				base = product.FromType(typ.NewFreshArray())
 				baseSynthetic = true

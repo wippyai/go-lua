@@ -119,7 +119,7 @@ func projectCaptureReferences(fs state.FunctionState, g *cfg.Graph) flow.Referen
 			return
 		}
 		cells := flow.CaptureCellsDomain.Join(ps.Cells, flow.PointFactsOf(ps).EnvCaptureCells(envExports))
-		cells = cells.WithStaticMembers(ps.StaticMembers)
+		cells = cells.WithStaticMembers(flow.StaticMembersOf(ps))
 		out = flow.ReferenceContextDomain.Join(out, flow.ReferenceContextOf(cells, ps.FunctionRefs, ps.ClosureRefs))
 	})
 	return out
@@ -262,7 +262,7 @@ func returnStaticMembersSlotAt(ps flow.PointState, g *cfg.Graph, p cfg.Point, in
 	if !ok {
 		return flow.StaticMemberFactsDomain.Top()
 	}
-	facts := flow.RebaseStaticMemberFactsUnder(ps.StaticMembers, sourceAddr, slotAddr)
+	facts := flow.RebaseStaticMemberFactsUnder(flow.StaticMembersOf(ps), sourceAddr, slotAddr)
 	return returnProductDirectStaticMembers(facts, constraint.NewPlaceholder(i), returnSlotBaseValue(ps, info, i, projectOptions{}))
 }
 
@@ -359,7 +359,7 @@ func returnSlotValue(ps flow.PointState, g *cfg.Graph, info *cfg.ReturnInfo, i i
 			return product.FromType(typ.Self)
 		}
 		if av, ok := flow.PointFactsOf(ps).SymbolValue(info.Symbols[i]); ok && !av.IsZero() {
-			return flow.ProductWithStaticMembersForSymbol(info.Symbols[i], av, ps.StaticMembers)
+			return flow.ProductWithStaticMembersForSymbol(info.Symbols[i], av, flow.StaticMembersOf(ps))
 		}
 	}
 	// A non-identifier return (a literal, an arithmetic result, a call) carries
