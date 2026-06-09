@@ -472,25 +472,25 @@ func TestCallOutcomeTypeFallbackCannotInventSummaryAuthority(t *testing.T) {
 	}
 }
 
-func TestCallbackSpecProjectionSummarySignatureWins(t *testing.T) {
+func TestTypeFallbackOutcomeCallbackSpecSummarySignatureWins(t *testing.T) {
 	t.Parallel()
 
 	call := &ast.FuncCallExpr{Func: &ast.IdentExpr{Value: "f"}}
 	summarySpec := contract.NewSpec().WithCallback(0, &contract.CallbackSpec{Cardinality: contract.CardExactlyOnce})
 	fallbackUsed := false
 
-	got := (CallbackSpecProjection{
-		Call: call,
-		SummarySignature: func(*ast.FuncCallExpr) typ.Type {
-			return typ.Func().Spec(summarySpec).Build()
-		},
-		Resolver: TypeResolver{
-			ExprType: func(ast.Expr) typ.Type {
-				fallbackUsed = true
-				return typ.Func().Spec(contract.NewSpec().WithCallback(1, &contract.CallbackSpec{})).Build()
+	got := NewTypeFallbackOutcome(TypeFallbackInput{
+		Return: ReturnInput{
+			Call: call,
+			Resolver: TypeResolver{
+				ExprType: func(ast.Expr) typ.Type {
+					fallbackUsed = true
+					return typ.Func().Spec(contract.NewSpec().WithCallback(1, &contract.CallbackSpec{})).Build()
+				},
 			},
 		},
-	}).Spec()
+		SummarySignature: typ.Func().Spec(summarySpec).Build(),
+	}).CallbackSpec()
 
 	if got == nil || got.Callbacks[0] == nil {
 		t.Fatalf("callback spec = %#v, want summary callback on param 0", got)
@@ -500,7 +500,7 @@ func TestCallbackSpecProjectionSummarySignatureWins(t *testing.T) {
 	}
 }
 
-func TestCallbackSpecProjectionMethodReceiverFallback(t *testing.T) {
+func TestTypeFallbackOutcomeCallbackSpecMethodReceiverFallback(t *testing.T) {
 	t.Parallel()
 
 	receiver := &ast.IdentExpr{Value: "obj"}
@@ -510,24 +510,27 @@ func TestCallbackSpecProjectionMethodReceiverFallback(t *testing.T) {
 		Field("run", typ.Func().Spec(methodSpec).Build()).
 		Build()
 
-	got := (CallbackSpecProjection{
-		Call: call,
-		Resolver: TypeResolver{
-			ExprType: func(expr ast.Expr) typ.Type {
-				if expr != receiver {
-					t.Fatalf("ExprType got %#v, want receiver", expr)
-				}
-				return receiverType
+	got := NewTypeFallbackOutcome(TypeFallbackInput{
+		Return: ReturnInput{
+			Call: call,
+			Resolver: TypeResolver{
+				ExprType: func(expr ast.Expr) typ.Type {
+					if expr != receiver {
+						t.Fatalf("ExprType got %#v, want receiver", expr)
+					}
+					return receiverType
+				},
 			},
 		},
-	}).Spec()
+		UseResolvedSignature: true,
+	}).CallbackSpec()
 
 	if got == nil || got.Callbacks[1] == nil {
 		t.Fatalf("callback spec = %#v, want method callback on param 1", got)
 	}
 }
 
-func TestContainerElementUnionProjectionExtractsMutateLabels(t *testing.T) {
+func TestTypeFallbackOutcomeExtractsContainerElementUnionLabels(t *testing.T) {
 	t.Parallel()
 
 	call := &ast.FuncCallExpr{Func: &ast.IdentExpr{Value: "send"}}
@@ -538,13 +541,12 @@ func TestContainerElementUnionProjectionExtractsMutateLabels(t *testing.T) {
 		},
 	})
 
-	got := (ContainerElementUnionProjection{
-		Call: call,
-		SummarySignature: func(*ast.FuncCallExpr) typ.Type {
-			return typ.Func().Spec(spec).Build()
+	got := NewTypeFallbackOutcome(TypeFallbackInput{
+		Return: ReturnInput{
+			Call: call,
 		},
-		Resolver: TypeResolver{},
-	}).Effects()
+		SummarySignature: typ.Func().Spec(spec).Build(),
+	}).ContainerElementUnions()
 
 	if len(got) != 1 || got[0].Container.Index != 0 || got[0].Value.Index != 1 {
 		t.Fatalf("container element unions = %#v, want one 0<-1 effect", got)

@@ -140,35 +140,31 @@ func (o CallOutcome) Postconditions() paramevidence.ReturnPostconditions {
 	return o.fallback.Postconditions()
 }
 
+// CallbackSpec returns the type-contract callback specification attached to the
+// explicit fallback source. The spec is used only to route canonical callback
+// summaries; it is not itself a capture-effect proof.
+func (o CallOutcome) CallbackSpec() *contract.Spec {
+	return o.fallback.CallbackSpec()
+}
+
+// ContainerElementUnions returns type-contract container mutation labels from
+// the explicit fallback source. Transfer owns lowering these labels onto runtime
+// argument places.
+func (o CallOutcome) ContainerElementUnions() []effect.ContainerElementUnion {
+	return o.fallback.ContainerElementUnions()
+}
+
 // NeverReturns reports whether every selected target is proven no-return.
 func (o CallOutcome) NeverReturns(hasNoReturn func(summary.FuncRef) bool) bool {
 	return selectionNeverReturns(o.Selection, hasNoReturn)
 }
 
-// CallbackSpecProjection is the canonical policy for finding a call's callback
-// contract. Summary-known module signatures win; unresolved calls fall back to
-// caller-visible callee/receiver type resolution.
-type CallbackSpecProjection struct {
-	Call *ast.FuncCallExpr
-
-	SummarySignature func(*ast.FuncCallExpr) typ.Type
-	Resolver         TypeResolver
-}
-
-// Spec extracts the callback contract used by call-site cell effect projection.
-func (p CallbackSpecProjection) Spec() *contract.Spec {
-	return specForCall(specInput{
-		Call:             p.Call,
-		SummarySignature: p.SummarySignature,
-		Resolver:         p.Resolver,
-	})
-}
-
 type specInput struct {
 	Call *ast.FuncCallExpr
 
-	SummarySignature func(*ast.FuncCallExpr) typ.Type
-	Resolver         TypeResolver
+	SummarySignature     typ.Type
+	Resolver             TypeResolver
+	UseResolvedSignature bool
 }
 
 func specForCall(in specInput) *contract.Spec {
@@ -176,9 +172,7 @@ func specForCall(in specInput) *contract.Spec {
 		return nil
 	}
 	callee := typ.Type(nil)
-	if in.SummarySignature != nil {
-		callee = in.SummarySignature(in.Call)
-	}
+	callee = in.SummarySignature
 	if callee == nil || typ.IsAbsentOrUnknown(callee) {
 		if in.Call.Method != "" {
 			receiver := in.Resolver.ResolveReceiver(in.Call.Receiver)
@@ -187,31 +181,16 @@ func specForCall(in specInput) *contract.Spec {
 					callee = member
 				}
 			}
-		} else {
+		} else if in.UseResolvedSignature {
 			callee = in.Resolver.ResolveCallee(in.Call.Func)
+		} else {
+			callee = in.Resolver.ResolveStaticCallee(in.Call.Func)
 		}
 	}
 	return contract.ExtractSpec(callee)
 }
 
-// ContainerElementUnionProjection is the canonical call-site policy for mutator
-// specs that widen a container's element slot.
-type ContainerElementUnionProjection struct {
-	Call *ast.FuncCallExpr
-
-	SummarySignature func(*ast.FuncCallExpr) typ.Type
-	Resolver         TypeResolver
-}
-
-// Effects extracts ContainerElementUnion labels from a call's resolved spec. It
-// returns labels only; transfer owns lowering parameter refs to runtime argument
-// places/values and applying the product mutation.
-func (p ContainerElementUnionProjection) Effects() []effect.ContainerElementUnion {
-	spec := specForCall(specInput{
-		Call:             p.Call,
-		SummarySignature: p.SummarySignature,
-		Resolver:         p.Resolver,
-	})
+func containerElementUnionsFromSpec(spec *contract.Spec) []effect.ContainerElementUnion {
 	if spec == nil || len(spec.Effects.Labels) == 0 {
 		return nil
 	}

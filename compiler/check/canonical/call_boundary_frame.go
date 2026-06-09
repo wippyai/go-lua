@@ -287,19 +287,11 @@ func (p callBoundaryFrame) cellEffectAggregation() (summary.CellEffectAggregatio
 }
 
 func (p callBoundaryFrame) callbackSpec() *contract.Spec {
-	return (canonicalcall.CallbackSpecProjection{
-		Call:             p.site.call,
-		SummarySignature: p.site.summarySignature,
-		Resolver:         p.typer.callTypeResolver(p.site.exprType),
-	}).Spec()
+	return p.outcome.CallbackSpec()
 }
 
 func (p callBoundaryFrame) containerElementUnions() []effect.ContainerElementUnion {
-	return (canonicalcall.ContainerElementUnionProjection{
-		Call:             p.site.call,
-		SummarySignature: p.site.summarySignature,
-		Resolver:         p.typer.callTypeResolver(p.site.exprType),
-	}).Effects()
+	return p.outcome.ContainerElementUnions()
 }
 
 func (p callBoundaryFrame) effectsForRef(

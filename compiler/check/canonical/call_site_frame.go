@@ -125,13 +125,10 @@ func (f callSiteFrame) returnInput(summaryReturns func(*ast.FuncCallExpr, func(a
 	}
 }
 
-func (f callSiteFrame) returnTypes(summaryReturns func(*ast.FuncCallExpr, func(ast.Expr) typ.Type) []typ.Type) ([]typ.Type, bool) {
-	return f.returnInput(summaryReturns).Types()
-}
-
 func (f callSiteFrame) typeFallbackOutcome(useResolvedSignature bool) canonicalcall.TypeFallbackOutcome {
 	return canonicalcall.NewTypeFallbackOutcome(canonicalcall.TypeFallbackInput{
 		Return:               f.returnInput(nil),
+		SummarySignature:     f.summarySignature(f.call),
 		UseResolvedSignature: useResolvedSignature,
 	})
 }

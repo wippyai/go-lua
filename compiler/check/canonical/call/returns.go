@@ -12,8 +12,10 @@ import (
 	"github.com/wippyai/go-lua/compiler/check/synth/intercept"
 	"github.com/wippyai/go-lua/compiler/check/synth/ops"
 	"github.com/wippyai/go-lua/compiler/check/synth/transform"
+	"github.com/wippyai/go-lua/types/contract"
 	"github.com/wippyai/go-lua/types/db"
 	"github.com/wippyai/go-lua/types/domain/value/product"
+	"github.com/wippyai/go-lua/types/effect"
 	"github.com/wippyai/go-lua/types/flow"
 	"github.com/wippyai/go-lua/types/io"
 	"github.com/wippyai/go-lua/types/kind"
@@ -80,6 +82,7 @@ type ReturnValueInput struct {
 // not act as hidden late result engines.
 type TypeFallbackInput struct {
 	Return               ReturnInput
+	SummarySignature     typ.Type
 	UseResolvedSignature bool
 }
 
@@ -95,6 +98,8 @@ type TypeFallbackOutcome struct {
 	returnRelations        flow.ReturnRelations
 	boundaryFacts          flow.BoundaryFacts
 	postconditions         paramevidence.ReturnPostconditions
+	callbackSpec           *contract.Spec
+	containerUnions        []effect.ContainerElementUnion
 }
 
 // NewTypeFallbackOutcome materializes all type-only fallback facts once.
@@ -125,6 +130,14 @@ func NewTypeFallbackOutcome(in TypeFallbackInput) TypeFallbackOutcome {
 	out.returnRelations = fallbackReturnRelations(resolved, static)
 	out.boundaryFacts = fallbackBoundaryFacts(resolved, static)
 	out.postconditions = paramevidence.ReturnPostconditionsFromFunctionType(static)
+	spec := specForCall(specInput{
+		Call:                 in.Return.Call,
+		SummarySignature:     in.SummarySignature,
+		Resolver:             in.Return.Resolver,
+		UseResolvedSignature: in.UseResolvedSignature,
+	})
+	out.callbackSpec = spec
+	out.containerUnions = containerElementUnionsFromSpec(spec)
 	return out
 }
 
@@ -152,6 +165,19 @@ func (o TypeFallbackOutcome) BoundaryFacts() flow.BoundaryFacts {
 
 func (o TypeFallbackOutcome) Postconditions() paramevidence.ReturnPostconditions {
 	return paramevidence.CloneReturnPostconditions(o.postconditions)
+}
+
+func (o TypeFallbackOutcome) CallbackSpec() *contract.Spec {
+	return o.callbackSpec
+}
+
+func (o TypeFallbackOutcome) ContainerElementUnions() []effect.ContainerElementUnion {
+	if len(o.containerUnions) == 0 {
+		return nil
+	}
+	out := make([]effect.ContainerElementUnion, len(o.containerUnions))
+	copy(out, o.containerUnions)
+	return out
 }
 
 // Types applies the canonical type-level call-return policy.
