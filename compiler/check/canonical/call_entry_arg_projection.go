@@ -111,21 +111,6 @@ func (p callEntryArgProjection) callbackRefs(arg ast.Expr, rawSym cfg.SymbolID) 
 	return resolver.ResolveCallbackArgRefsOrSymbol(arg, p.evidence.references, rawSym, p.program.refByFunc)
 }
 
-func (p callEntryArgProjection) callbackRefsForCall(call *ast.FuncCallExpr) map[ast.Expr][]summary.FuncRef {
-	if call == nil || len(call.Args) == 0 {
-		return nil
-	}
-	out := make(map[ast.Expr][]summary.FuncRef)
-	for _, arg := range call.Args {
-		refs, ok := p.callbackRefs(arg, 0)
-		if !ok || len(refs) == 0 {
-			continue
-		}
-		out[arg] = refs
-	}
-	return out
-}
-
 func (p callEntryArgProjection) functionArgRefs(arg ast.Expr) (flow.FunctionRefSet, bool) {
 	got, ok := p.callbackRefs(arg, 0)
 	return functionRefSetFromSummaryRefs(got, ok)

@@ -85,6 +85,35 @@ func (c callEntryProjector) productEvidence(ref summary.FuncRef, call *ast.FuncC
 	})
 }
 
+func (c callEntryProjector) productCallbackRefs(call *ast.FuncCallExpr, ctx transfer.ProductCallContext) map[ast.Expr][]summary.FuncRef {
+	projection := c.productArgProjection(ctx)
+	return callbackRefsForCall(call, func(arg ast.Expr) ([]summary.FuncRef, bool) {
+		return projection.callbackRefs(arg, 0)
+	})
+}
+
+func (c callEntryProjector) referenceCallbackRefs(call *ast.FuncCallExpr, references flow.ReferenceContext) map[ast.Expr][]summary.FuncRef {
+	projection := c.referenceArgProjection(references)
+	return callbackRefsForCall(call, func(arg ast.Expr) ([]summary.FuncRef, bool) {
+		return projection.callbackRefs(arg, 0)
+	})
+}
+
+func callbackRefsForCall(call *ast.FuncCallExpr, resolve func(ast.Expr) ([]summary.FuncRef, bool)) map[ast.Expr][]summary.FuncRef {
+	if call == nil || len(call.Args) == 0 || resolve == nil {
+		return nil
+	}
+	out := make(map[ast.Expr][]summary.FuncRef)
+	for _, arg := range call.Args {
+		refs, ok := resolve(arg)
+		if !ok || len(refs) == 0 {
+			continue
+		}
+		out[arg] = refs
+	}
+	return out
+}
+
 func (c callEntryProjector) pointFacts(ref summary.FuncRef, call *ast.FuncCallExpr, in *flow.PointState) flow.BoundaryFacts {
 	if in == nil {
 		return flow.BoundaryFactsDomain.Top()

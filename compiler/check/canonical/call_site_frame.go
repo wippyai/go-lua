@@ -152,7 +152,7 @@ func (f callSiteFrame) callbackRefs() map[ast.Expr][]summary.FuncRef {
 	if !ok {
 		return nil
 	}
-	return entryProjector.referenceArgProjection(f.references).callbackRefsForCall(f.call)
+	return entryProjector.referenceCallbackRefs(f.call, f.references)
 }
 
 func (f callSiteFrame) contextualFunction(projector callableProjector, ref summary.FuncRef, values summary.EntryValues) typ.Type {

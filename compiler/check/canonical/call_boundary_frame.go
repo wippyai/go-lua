@@ -293,7 +293,7 @@ func (p callBoundaryFrame) cellEffectAggregation() (summary.CellEffectAggregatio
 	if !ok {
 		return summary.CellEffectAggregation{}, false
 	}
-	callbackRefs := callEntry.productArgProjection(p.ctx).callbackRefsForCall(p.site.call)
+	callbackRefs := callEntry.productCallbackRefs(p.site.call, p.ctx)
 	return summary.CellEffectAggregation{
 		CallbackSpec: p.callbackSpec(),
 		CallbackArgs: p.site.call.Args,
