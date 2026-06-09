@@ -236,7 +236,7 @@ func ApplyAppendKeyArrayConsequences(out *PointState, proof AppendKeyArrayConseq
 		if keyType == nil {
 			keyType = typ.Unknown
 		}
-		value, ok := out.IndexWrites.AdmissionAtAddress(IndexWriteAddressQuery{
+		value, ok := IndexWriteAdmissionAtPoint(out, IndexWriteAddressQuery{
 			Target:     table,
 			KeyPath:    proof.Key,
 			HasKeyPath: true,

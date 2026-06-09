@@ -374,42 +374,6 @@ var PointStateDomain = lattice.Lattice[PointState]{
 	},
 }
 
-func pointIndexWritesLessOrEq(a, b PointState) bool {
-	return a.IndexWrites.coversWithAbsentKeyPaths(
-		b.IndexWrites,
-		product.Domain.LessOrEq,
-		func(addr StableAddress) bool {
-			return pointAddressDefinitelyAbsent(a, addr)
-		},
-	)
-}
-
-func pointIndexWritesJoin(
-	a, b PointState,
-	op func(product.AbstractValue, product.AbstractValue) product.AbstractValue,
-) IndexWriteAdmissionFacts {
-	if a.IndexWrites.bottom {
-		return b.IndexWrites
-	}
-	if b.IndexWrites.bottom {
-		return a.IndexWrites
-	}
-	joined := intersectIndexWriteAdmissionFacts(a.IndexWrites, b.IndexWrites, op)
-	joined = pointIndexWritesJoinOneSided(joined, a.IndexWrites, b)
-	joined = pointIndexWritesJoinOneSided(joined, b.IndexWrites, a)
-	return joined
-}
-
-func pointIndexWritesJoinOneSided(
-	out IndexWriteAdmissionFacts,
-	facts IndexWriteAdmissionFacts,
-	other PointState,
-) IndexWriteAdmissionFacts {
-	return out.withFactsProvedByAbsentKeyPaths(facts, func(addr StableAddress) bool {
-		return pointAddressDefinitelyAbsent(other, addr)
-	})
-}
-
 func pointAddressDefinitelyAbsent(ps PointState, addr StableAddress) bool {
 	av, ok := pointAddressValue(ps, addr)
 	return ok && av.DefinitelyAbsent()

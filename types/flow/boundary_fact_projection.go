@@ -23,7 +23,7 @@ func BoundaryFactProjectionInputOf(state PointState) BoundaryFactProjectionInput
 		KeyPresence:     KeyPresenceOf(state),
 		StaticMembers:   StaticMembersOf(state),
 		Num:             state.Num,
-		IndexWrites:     state.IndexWrites,
+		IndexWrites:     IndexWritesOf(state),
 		IdentityAliases: PathAliasesOf(state),
 	}
 }

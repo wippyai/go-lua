@@ -152,7 +152,6 @@ func ApplyKeyArrayElementKeyProof(out *PointState, proof KeyArrayElementKeyProof
 	if keyValue.IsZero() {
 		keyValue = product.FromType(typ.Unknown)
 	}
-	beforeIndexWrites := out.IndexWrites
 	changed := false
 	facts := KeyPresenceOfPoint(out)
 	for _, tableUse := range facts.KeyArrayTableAddresses(proof.Array) {
@@ -163,16 +162,15 @@ func ApplyKeyArrayElementKeyProof(out *PointState, proof KeyArrayElementKeyProof
 			if value.IsZero() {
 				continue
 			}
-			out.IndexWrites = out.IndexWrites.WithAddress(IndexWriteAdmissionAddressFact{
+			changed = RecordIndexWriteAdmission(out, IndexWriteAdmissionAddressFact{
 				Target:     table,
 				KeyPath:    proof.TargetKey,
 				HasKeyPath: true,
 				Key:        keyValue,
 				Value:      value,
-			})
+			}) || changed
 		}
 	}
-	changed = !IndexWriteAdmissionFactsDomain.Equal(beforeIndexWrites, out.IndexWrites) || changed
 	return result, changed
 }
 
@@ -282,7 +280,6 @@ func ApplyIndexedKeyArrayIterationProof(out *PointState, proof IndexedKeyArrayIt
 		return IndexedKeyArrayIterationResult{}, false
 	}
 	result := IndexedKeyArrayIterationResult{}
-	beforeIndexWrites := out.IndexWrites
 	changed := false
 	keyValue := proof.KeyValue
 	if keyValue.IsZero() {
@@ -297,16 +294,15 @@ func ApplyIndexedKeyArrayIterationProof(out *PointState, proof IndexedKeyArrayIt
 			if value.IsZero() {
 				continue
 			}
-			out.IndexWrites = out.IndexWrites.WithAddress(IndexWriteAdmissionAddressFact{
+			changed = RecordIndexWriteAdmission(out, IndexWriteAdmissionAddressFact{
 				Target:     table,
 				KeyPath:    proof.Key,
 				HasKeyPath: true,
 				Key:        keyValue,
 				Value:      value,
-			})
+			}) || changed
 		}
 	}
-	changed = !IndexWriteAdmissionFactsDomain.Equal(beforeIndexWrites, out.IndexWrites) || changed
 	return result, changed
 }
 
@@ -396,9 +392,7 @@ func ApplyDynamicIndexWriteProof(out *PointState, proof DynamicIndexWriteProof) 
 		changed = ApplyAppendHistoryCoverageProof(out, proof.Table, proof.Key, proof.WrittenValue) || changed
 	}
 	if fact, ok := proof.IndexWriteAdmissionAddressFact(); ok {
-		before := out.IndexWrites
-		out.IndexWrites = out.IndexWrites.WithAddress(fact)
-		changed = !IndexWriteAdmissionFactsDomain.Equal(before, out.IndexWrites) || changed
+		changed = RecordIndexWriteAdmission(out, fact) || changed
 	}
 	return changed
 }

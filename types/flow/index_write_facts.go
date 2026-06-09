@@ -97,6 +97,44 @@ func IndexWriteAdmissionFactsOf(entries []IndexWriteAdmissionFact) IndexWriteAdm
 
 func (f IndexWriteAdmissionFacts) IsBottom() bool { return f.bottom }
 
+// IndexWritesOf returns the index-write admission axis carried by state.
+func IndexWritesOf(state PointState) IndexWriteAdmissionFacts {
+	return state.IndexWrites
+}
+
+// IndexWritesOfPoint returns the index-write admission axis carried by state.
+func IndexWritesOfPoint(state *PointState) IndexWriteAdmissionFacts {
+	if state == nil {
+		return IndexWriteAdmissionFactsDomain.Top()
+	}
+	return state.IndexWrites
+}
+
+// IndexWriteAxisIsBottom reports whether the index-write admission axis is
+// unreachable.
+func IndexWriteAxisIsBottom(state *PointState) bool {
+	return state == nil || state.IndexWrites.IsBottom()
+}
+
+// LiftIndexWritesEntry turns the unreachable entry seed into the reachable
+// identity element for the index-write admission axis.
+func LiftIndexWritesEntry(state *PointState) bool {
+	if state == nil || !state.IndexWrites.IsBottom() {
+		return false
+	}
+	state.IndexWrites = IndexWriteAdmissionFactsDomain.Top()
+	return true
+}
+
+func updateIndexWrites(state *PointState, update func(IndexWriteAdmissionFacts) IndexWriteAdmissionFacts) bool {
+	if state == nil || update == nil {
+		return false
+	}
+	before := state.IndexWrites
+	state.IndexWrites = update(state.IndexWrites)
+	return !IndexWriteAdmissionFactsDomain.Equal(before, state.IndexWrites)
+}
+
 // Entries returns a defensive copy of the finite entries. Bottom has no
 // consumable finite entries.
 func (f IndexWriteAdmissionFacts) Entries() []IndexWriteAdmissionFact {
@@ -126,6 +164,14 @@ func (f IndexWriteAdmissionFacts) WithAddress(fact IndexWriteAdmissionAddressFac
 		return f
 	}
 	return f.With(keyed)
+}
+
+// RecordIndexWriteAdmission records one normalized dynamic-index write
+// admission on state.
+func RecordIndexWriteAdmission(state *PointState, fact IndexWriteAdmissionAddressFact) bool {
+	return updateIndexWrites(state, func(facts IndexWriteAdmissionFacts) IndexWriteAdmissionFacts {
+		return facts.WithAddress(fact)
+	})
 }
 
 // ForEachAddress visits each admission fact through its normalized address view.
@@ -168,6 +214,17 @@ func (f IndexWriteAdmissionFacts) WithAliasedKeyPathAddress(
 	return out
 }
 
+// ReplayIndexWriteKeyAlias copies index-write admissions from source key path
+// to target key path.
+func ReplayIndexWriteKeyAlias(state *PointState, source, target StableAddress) bool {
+	if source.Key() == "" || target.Key() == "" {
+		return false
+	}
+	return updateIndexWrites(state, func(facts IndexWriteAdmissionFacts) IndexWriteAdmissionFacts {
+		return facts.WithAliasedKeyPathAddress(source, target)
+	})
+}
+
 // AdmissionAtAddress returns the admitted value proof matching q.
 func (f IndexWriteAdmissionFacts) AdmissionAtAddress(q IndexWriteAddressQuery) (product.AbstractValue, bool) {
 	if f.bottom || len(f.entries) == 0 {
@@ -203,6 +260,12 @@ func (f IndexWriteAdmissionFacts) AdmissionAtAddress(q IndexWriteAddressQuery) (
 	return product.AbstractValue{}, false
 }
 
+// IndexWriteAdmissionAtPoint returns the admitted value proof matching q from
+// a borrowed point state.
+func IndexWriteAdmissionAtPoint(state *PointState, q IndexWriteAddressQuery) (product.AbstractValue, bool) {
+	return IndexWritesOfPoint(state).AdmissionAtAddress(q)
+}
+
 // KillAffectedByWriteAddress removes admission facts that are no longer valid
 // after a write to write.
 func (f IndexWriteAdmissionFacts) KillAffectedByWriteAddress(write StableAddress) IndexWriteAdmissionFacts {
@@ -219,6 +282,17 @@ func (f IndexWriteAdmissionFacts) KillAffectedByWriteAddress(write StableAddress
 		entries = append(entries, entry)
 	}
 	return canonicalIndexWriteAdmissionFacts(entries, product.Domain.Join)
+}
+
+// KillIndexWritesAffectedByWrite applies the index-write admission write-kill
+// law.
+func KillIndexWritesAffectedByWrite(state *PointState, write StableAddress) bool {
+	if write.Key() == "" {
+		return false
+	}
+	return updateIndexWrites(state, func(facts IndexWriteAdmissionFacts) IndexWriteAdmissionFacts {
+		return facts.KillAffectedByWriteAddress(write)
+	})
 }
 
 // PreservePresentElementWriteAddress applies the invalidation law for a
@@ -253,6 +327,21 @@ func (f IndexWriteAdmissionFacts) PreservePresentElementWriteAddress(
 		}
 	}
 	return canonicalIndexWriteAdmissionFacts(entries, product.Domain.Join)
+}
+
+// PreserveIndexWritesForPresentElementWrite applies the index-write admission
+// preservation law for a definitely-present dynamic element write.
+func PreserveIndexWritesForPresentElementWrite(
+	state *PointState,
+	write StableAddress,
+	written product.AbstractValue,
+) bool {
+	if write.Key() == "" {
+		return false
+	}
+	return updateIndexWrites(state, func(facts IndexWriteAdmissionFacts) IndexWriteAdmissionFacts {
+		return facts.PreservePresentElementWriteAddress(write, written)
+	})
 }
 
 func indexWriteKeyValueExactlyMatches(fact, query product.AbstractValue) bool {
@@ -509,6 +598,42 @@ func findIndexWriteAdmissionFact(entries []IndexWriteAdmissionFact, fact IndexWr
 var indexWriteAdmissionRowIdentity = orderedRowIdentity[IndexWriteAdmissionFact]{
 	less: indexWriteAdmissionFactLess,
 	same: indexWriteAdmissionSameIdentity,
+}
+
+func pointIndexWritesLessOrEq(a, b PointState) bool {
+	return a.IndexWrites.coversWithAbsentKeyPaths(
+		b.IndexWrites,
+		product.Domain.LessOrEq,
+		func(addr StableAddress) bool {
+			return pointAddressDefinitelyAbsent(a, addr)
+		},
+	)
+}
+
+func pointIndexWritesJoin(
+	a, b PointState,
+	op func(product.AbstractValue, product.AbstractValue) product.AbstractValue,
+) IndexWriteAdmissionFacts {
+	if a.IndexWrites.bottom {
+		return b.IndexWrites
+	}
+	if b.IndexWrites.bottom {
+		return a.IndexWrites
+	}
+	joined := intersectIndexWriteAdmissionFacts(a.IndexWrites, b.IndexWrites, op)
+	joined = pointIndexWritesJoinOneSided(joined, a.IndexWrites, b)
+	joined = pointIndexWritesJoinOneSided(joined, b.IndexWrites, a)
+	return joined
+}
+
+func pointIndexWritesJoinOneSided(
+	out IndexWriteAdmissionFacts,
+	facts IndexWriteAdmissionFacts,
+	other PointState,
+) IndexWriteAdmissionFacts {
+	return out.withFactsProvedByAbsentKeyPaths(facts, func(addr StableAddress) bool {
+		return pointAddressDefinitelyAbsent(other, addr)
+	})
 }
 
 func productFormat(av product.AbstractValue) string {

@@ -525,7 +525,7 @@ type DynamicIndexReadbackQuery struct {
 // IndexWriteAdmissionAtAddress returns the value admitted by a dynamic index
 // write proven in this point state using normalized address-domain evidence.
 func (f PointFacts) IndexWriteAdmissionAtAddress(q IndexWriteAddressQuery) (typ.Type, bool) {
-	av, ok := f.state.IndexWrites.AdmissionAtAddress(q)
+	av, ok := IndexWriteAdmissionAtPoint(f.state, q)
 	if !ok || av.IsZero() {
 		return nil, false
 	}
@@ -572,7 +572,7 @@ func (f PointFacts) IndexWriteAdmission(q IndexWritePathQuery) (product.Abstract
 			}
 			addressQuery.KeyPath = key
 		}
-		if admitted, ok := f.state.IndexWrites.AdmissionAtAddress(addressQuery); ok && !admitted.IsZero() {
+		if admitted, ok := IndexWriteAdmissionAtPoint(f.state, addressQuery); ok && !admitted.IsZero() {
 			return admitted, true
 		}
 	}
