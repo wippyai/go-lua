@@ -516,7 +516,9 @@ func TestCallSummaryProjection_BoundaryFactsTreatsLengthRelationAsProof(t *testi
 		Targets: []summary.CallSummaryTarget{
 			{
 				Summary: summary.Summary{
-					BoundaryFacts: flow.BoundaryFactsDomain.Top().WithLengthRelations([]flow.BoundaryLengthRelationFact{lengthRel}),
+					BoundaryFacts: flow.BoundaryFactsFromParts(flow.BoundaryFactParts{
+						LengthRelations: []flow.BoundaryLengthRelationFact{lengthRel},
+					}),
 				},
 			},
 		},

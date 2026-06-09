@@ -66,10 +66,12 @@ func TestAssignCallPostconditionsMaterializeLengthParamLowerBound(t *testing.T) 
 	}
 	callInfo := &cfg.CallInfo{Call: call, Callee: call.Func, Args: call.Args}
 	typer := &productReturnRelationsTestTyper{
-		facts: flow.BoundaryFactsDomain.Top().WithLengthRelations([]flow.BoundaryLengthRelationFact{{
-			Target: flow.BoundaryPath{Kind: flow.BoundaryPathReturn, Index: 0},
-			Source: flow.BoundaryPath{Kind: flow.BoundaryPathParam, Index: 0},
-		}}),
+		facts: flow.BoundaryFactsFromParts(flow.BoundaryFactParts{
+			LengthRelations: []flow.BoundaryLengthRelationFact{{
+				Target: flow.BoundaryPath{Kind: flow.BoundaryPathReturn, Index: 0},
+				Source: flow.BoundaryPath{Kind: flow.BoundaryPathParam, Index: 0},
+			}},
+		}),
 	}
 	tr := New(in, Config{CallTyper: typer})
 	out := flow.PointState{
@@ -238,10 +240,12 @@ func TestAssignCallPostconditionsUsePreWriteArgumentLength(t *testing.T) {
 	}
 	callInfo := &cfg.CallInfo{Call: call, Callee: call.Func, Args: call.Args}
 	typer := &postconditionAssignTestTyper{
-		facts: flow.BoundaryFactsDomain.Top().WithLengthRelations([]flow.BoundaryLengthRelationFact{{
-			Target: flow.BoundaryPath{Kind: flow.BoundaryPathReturn, Index: 0},
-			Source: flow.BoundaryPath{Kind: flow.BoundaryPathParam, Index: 0},
-		}}),
+		facts: flow.BoundaryFactsFromParts(flow.BoundaryFactParts{
+			LengthRelations: []flow.BoundaryLengthRelationFact{{
+				Target: flow.BoundaryPath{Kind: flow.BoundaryPathReturn, Index: 0},
+				Source: flow.BoundaryPath{Kind: flow.BoundaryPathParam, Index: 0},
+			}},
+		}),
 		returns: []product.AbstractValue{product.FromType(typ.NewArray(typ.String))},
 	}
 	tr := New(in, Config{CallTyper: typer})
@@ -296,10 +300,12 @@ func TestAssignCallPostconditionsMaterializeBoundaryLengthRelation(t *testing.T)
 	}
 	callInfo := &cfg.CallInfo{Call: call, Callee: call.Func, Args: call.Args}
 	typer := &productReturnRelationsTestTyper{
-		facts: flow.BoundaryFactsDomain.Top().WithLengthRelations([]flow.BoundaryLengthRelationFact{{
-			Target: flow.BoundaryPath{Kind: flow.BoundaryPathReturn, Index: 0},
-			Source: flow.BoundaryPath{Kind: flow.BoundaryPathParam, Index: 0},
-		}}),
+		facts: flow.BoundaryFactsFromParts(flow.BoundaryFactParts{
+			LengthRelations: []flow.BoundaryLengthRelationFact{{
+				Target: flow.BoundaryPath{Kind: flow.BoundaryPathReturn, Index: 0},
+				Source: flow.BoundaryPath{Kind: flow.BoundaryPathParam, Index: 0},
+			}},
+		}),
 	}
 	tr := New(in, Config{CallTyper: typer})
 	out := flow.PointState{

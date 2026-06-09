@@ -69,7 +69,7 @@ func BoundaryFactsFromSpec(spec *contract.Spec) BoundaryFacts {
 			lengthRelations = append(lengthRelations, rel)
 		}
 	}
-	return BoundaryFactsDomain.Top().WithLengthRelations(lengthRelations)
+	return BoundaryFactsFromParts(BoundaryFactParts{LengthRelations: lengthRelations})
 }
 
 func boundaryLengthRelationFromExprCompare(c constraint.ExprCompare) (BoundaryLengthRelationFact, bool) {

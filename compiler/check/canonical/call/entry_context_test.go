@@ -172,7 +172,9 @@ func TestEntryContextEntryFactsPreserveLengthRelations(t *testing.T) {
 		Target: flow.BoundaryPath{Kind: flow.BoundaryPathParam, Index: 0},
 		Source: flow.BoundaryPath{Kind: flow.BoundaryPathParam, Index: 1},
 	}
-	facts := flow.BoundaryFactsDomain.Top().WithLengthRelations([]flow.BoundaryLengthRelationFact{rel})
+	facts := flow.BoundaryFactsFromParts(flow.BoundaryFactParts{
+		LengthRelations: []flow.BoundaryLengthRelationFact{rel},
+	})
 
 	ctx := NewEntryContext(ref, flow.ReferenceContextOf(flow.CaptureCellsDomain.Bottom(), nil, nil), nil, facts)
 	if got := ctx.EntryFacts(); !got.HasLengthRelation(rel) {

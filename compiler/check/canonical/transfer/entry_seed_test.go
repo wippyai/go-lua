@@ -192,14 +192,16 @@ func TestEntryBoundaryFactsReplayAfterParamValueSeed(t *testing.T) {
 	}, Config{})
 	selfPath := constraint.NewPath(self, "self")
 	entryValue := product.FromType(typ.NewRecord().Field("last_node_id", typ.Nil).Build())
-	entryFacts := flow.BoundaryFactsDomain.Top().WithStaticMembers([]flow.BoundaryStaticMemberFact{{
-		Target: flow.BoundaryPath{
-			Kind:     flow.BoundaryPathParam,
-			Index:    0,
-			Segments: selfPath.Field("last_node_id").Segments,
-		},
-		Value: product.FromType(typ.String),
-	}})
+	entryFacts := flow.BoundaryFactsFromParts(flow.BoundaryFactParts{
+		StaticMembers: []flow.BoundaryStaticMemberFact{{
+			Target: flow.BoundaryPath{
+				Kind:     flow.BoundaryPathParam,
+				Index:    0,
+				Segments: selfPath.Field("last_node_id").Segments,
+			},
+			Value: product.FromType(typ.String),
+		}},
+	})
 
 	incoming := flow.PointStateDomain.Bottom()
 	tr.setSymbolValue(&incoming, self, entryValue, false)

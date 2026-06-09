@@ -51,11 +51,12 @@ func TestApplyBoundaryFactsAppliesCollectionProvenanceTransaction(t *testing.T) 
 			KeyValue:   product.FromType(typ.String),
 			Value:      product.FromType(nodeType),
 		}},
-	}).WithAppendElementFieldOrigins([]BoundaryAppendElementFieldOriginFact{{
-		Array:  param(0, arrayPath),
-		Field:  []constraint.Segment{{Kind: constraint.SegmentField, Name: "status"}},
-		Source: param(3, sourcePath),
-	}})
+		AppendOrigins: []BoundaryAppendElementFieldOriginFact{{
+			Array:  param(0, arrayPath),
+			Field:  []constraint.Segment{{Kind: constraint.SegmentField, Name: "status"}},
+			Source: param(3, sourcePath),
+		}},
+	})
 
 	plans := BoundaryAppendKeyPlans(state, facts, roots.Rebase)
 	if len(plans) != 1 {
@@ -119,15 +120,16 @@ func TestApplyBoundaryFactsReplaysUnnamedAppendTableCoverageFromEmptyPrestate(t 
 			WithAppendHistoryBaseAddress(testStableAddressPath(t, arrayPath)),
 	}
 	roots := NewBoundaryLocalRoots(map[int]constraint.Path{0: constraint.NewPath(arrayPath.Symbol, arrayPath.Root)}, nil)
-	facts := BoundaryFactsDomain.Top().
-		WithAppendHistoryBases([]BoundaryAppendHistoryBaseFact{{
+	facts := BoundaryFactsFromParts(BoundaryFactParts{
+		AppendBases: []BoundaryAppendHistoryBaseFact{{
 			Array: BoundaryPath{Kind: BoundaryPathParam, Index: 0, Segments: arrayPath.Segments},
-		}}).
-		WithAppendHistoryTableCoverage([]BoundaryAppendHistoryTableCoverageFact{{
+		}},
+		AppendTableCoverage: []BoundaryAppendHistoryTableCoverageFact{{
 			Array: BoundaryPath{Kind: BoundaryPathParam, Index: 0, Segments: arrayPath.Segments},
 			Table: BoundaryPath{Kind: BoundaryPathParam, Index: 0, Segments: tablePath.Segments},
 			Value: value,
-		}})
+		}},
+	})
 
 	plan := PrepareBoundaryFactReplay(state, facts, roots)
 	state.KeyPresence = KeyPresenceFacts{}
@@ -148,14 +150,16 @@ func TestApplyBoundaryFactsStaticMemberReplacesStaleValue(t *testing.T) {
 		StaticMembers: StaticMemberFactsDomain.Top().WithAddress(addr, product.FromType(typ.Nil)),
 	}
 	roots := NewBoundaryLocalRoots(map[int]constraint.Path{0: graphPath}, nil)
-	facts := BoundaryFactsDomain.Top().WithStaticMembers([]BoundaryStaticMemberFact{{
-		Target: BoundaryPath{
-			Kind:     BoundaryPathParam,
-			Index:    0,
-			Segments: fieldPath.Segments,
-		},
-		Value: product.FromType(typ.String),
-	}})
+	facts := BoundaryFactsFromParts(BoundaryFactParts{
+		StaticMembers: []BoundaryStaticMemberFact{{
+			Target: BoundaryPath{
+				Kind:     BoundaryPathParam,
+				Index:    0,
+				Segments: fieldPath.Segments,
+			},
+			Value: product.FromType(typ.String),
+		}},
+	})
 
 	if _, changed := ApplyBoundaryFacts(&state, facts, roots.Rebase, nil); !changed {
 		t.Fatal("ApplyBoundaryFacts reported no change")
@@ -175,10 +179,12 @@ func TestApplyBoundaryFactsAppliesLengthRelation(t *testing.T) {
 		map[int]constraint.Path{0: sourcePath},
 		map[int]constraint.Path{0: targetPath},
 	)
-	facts := BoundaryFactsDomain.Top().WithLengthRelations([]BoundaryLengthRelationFact{{
-		Target: BoundaryPath{Kind: BoundaryPathReturn, Index: 0},
-		Source: BoundaryPath{Kind: BoundaryPathParam, Index: 0},
-	}})
+	facts := BoundaryFactsFromParts(BoundaryFactParts{
+		LengthRelations: []BoundaryLengthRelationFact{{
+			Target: BoundaryPath{Kind: BoundaryPathReturn, Index: 0},
+			Source: BoundaryPath{Kind: BoundaryPathParam, Index: 0},
+		}},
+	})
 
 	app, changed := ApplyBoundaryFacts(&state, facts, roots.Rebase, nil)
 	if !changed {
@@ -199,10 +205,12 @@ func TestApplyBoundaryFactsAppliesLengthUpperBound(t *testing.T) {
 		nil,
 		map[int]constraint.Path{0: targetPath},
 	)
-	facts := BoundaryFactsDomain.Top().WithLengthUpperBounds([]BoundaryLengthUpperBound{{
-		Target: BoundaryPath{Kind: BoundaryPathReturn, Index: 0},
-		Upper:  0,
-	}})
+	facts := BoundaryFactsFromParts(BoundaryFactParts{
+		LengthUpper: []BoundaryLengthUpperBound{{
+			Target: BoundaryPath{Kind: BoundaryPathReturn, Index: 0},
+			Upper:  0,
+		}},
+	})
 
 	_, changed := ApplyBoundaryFacts(&state, facts, roots.Rebase, nil)
 	if !changed {
@@ -222,10 +230,12 @@ func TestApplyBoundaryFactsWithReplayAppliesPrestateLengthLowerReplay(t *testing
 		map[int]constraint.Path{0: sourcePath},
 		map[int]constraint.Path{0: targetPath},
 	)
-	facts := BoundaryFactsDomain.Top().WithLengthRelations([]BoundaryLengthRelationFact{{
-		Target: BoundaryPath{Kind: BoundaryPathReturn, Index: 0},
-		Source: BoundaryPath{Kind: BoundaryPathParam, Index: 0},
-	}})
+	facts := BoundaryFactsFromParts(BoundaryFactParts{
+		LengthRelations: []BoundaryLengthRelationFact{{
+			Target: BoundaryPath{Kind: BoundaryPathReturn, Index: 0},
+			Source: BoundaryPath{Kind: BoundaryPathParam, Index: 0},
+		}},
+	})
 
 	plan := PrepareBoundaryFactReplay(state, facts, roots)
 	state.Num = numeric.NewState()

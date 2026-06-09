@@ -18,8 +18,12 @@ func TestEntryFactsKeyDistinguishesLengthRelations(t *testing.T) {
 		Source: flow.BoundaryPath{Kind: flow.BoundaryPathParam, Index: 2},
 	}
 
-	keyA := entryFactsKeyOf(flow.BoundaryFactsDomain.Top().WithLengthRelations([]flow.BoundaryLengthRelationFact{relA}))
-	keyB := entryFactsKeyOf(flow.BoundaryFactsDomain.Top().WithLengthRelations([]flow.BoundaryLengthRelationFact{relB}))
+	keyA := entryFactsKeyOf(flow.BoundaryFactsFromParts(flow.BoundaryFactParts{
+		LengthRelations: []flow.BoundaryLengthRelationFact{relA},
+	}))
+	keyB := entryFactsKeyOf(flow.BoundaryFactsFromParts(flow.BoundaryFactParts{
+		LengthRelations: []flow.BoundaryLengthRelationFact{relB},
+	}))
 	if keyA == keyB {
 		t.Fatalf("entry facts keys collapsed distinct length relations: %#v", keyA)
 	}

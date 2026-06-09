@@ -259,15 +259,6 @@ func (p BoundaryFactParts) Append(other BoundaryFactParts) BoundaryFactParts {
 	return p
 }
 
-func (f BoundaryFacts) withParts(update func(*BoundaryFactParts)) BoundaryFacts {
-	if f.bottom || update == nil {
-		return f
-	}
-	parts := f.Parts()
-	update(&parts)
-	return BoundaryFactsFromParts(parts)
-}
-
 // Clone returns a canonical, alias-free copy of f. BoundaryFacts owns its lane
 // set; external packages should not rebuild it field by field because that makes
 // every new fact lane a cross-package migration hazard.
@@ -375,93 +366,6 @@ func (f BoundaryFacts) IdentityHash(seed string) uint64 {
 		h = internal.HashCombine(h, fact.Value.Hash())
 	}
 	return h
-}
-
-// WithAppendElementFieldOrigins returns f plus canonical append-field origin
-// proofs.
-func (f BoundaryFacts) WithAppendElementFieldOrigins(origins []BoundaryAppendElementFieldOriginFact) BoundaryFacts {
-	if f.bottom || len(origins) == 0 {
-		return f
-	}
-	return f.withParts(func(parts *BoundaryFactParts) {
-		parts.AppendOrigins = append(parts.AppendOrigins, origins...)
-	})
-}
-
-// WithAppendHistoryBases returns f plus boundary-relative append-history base
-// proofs.
-func (f BoundaryFacts) WithAppendHistoryBases(bases []BoundaryAppendHistoryBaseFact) BoundaryFacts {
-	if f.bottom || len(bases) == 0 {
-		return f
-	}
-	return f.withParts(func(parts *BoundaryFactParts) {
-		parts.AppendBases = append(parts.AppendBases, bases...)
-	})
-}
-
-// WithAppendHistoryEvents returns f plus boundary-relative append-history
-// events.
-func (f BoundaryFacts) WithAppendHistoryEvents(events []BoundaryAppendHistoryEventFact) BoundaryFacts {
-	if f.bottom || len(events) == 0 {
-		return f
-	}
-	return f.withParts(func(parts *BoundaryFactParts) {
-		parts.AppendEvents = append(parts.AppendEvents, events...)
-	})
-}
-
-// WithAppendHistoryCoverage returns f plus boundary-relative append-history
-// coverage proofs.
-func (f BoundaryFacts) WithAppendHistoryCoverage(coverage []BoundaryAppendHistoryCoverageFact) BoundaryFacts {
-	if f.bottom || len(coverage) == 0 {
-		return f
-	}
-	return f.withParts(func(parts *BoundaryFactParts) {
-		parts.AppendCoverage = append(parts.AppendCoverage, coverage...)
-	})
-}
-
-// WithAppendHistoryTableCoverage returns f plus boundary-relative table
-// coverage proofs for unnamed append-history events.
-func (f BoundaryFacts) WithAppendHistoryTableCoverage(coverage []BoundaryAppendHistoryTableCoverageFact) BoundaryFacts {
-	if f.bottom || len(coverage) == 0 {
-		return f
-	}
-	return f.withParts(func(parts *BoundaryFactParts) {
-		parts.AppendTableCoverage = append(parts.AppendTableCoverage, coverage...)
-	})
-}
-
-// WithLengthUpperBounds returns f plus boundary-relative length upper-bound
-// proofs.
-func (f BoundaryFacts) WithLengthUpperBounds(bounds []BoundaryLengthUpperBound) BoundaryFacts {
-	if f.bottom || len(bounds) == 0 {
-		return f
-	}
-	return f.withParts(func(parts *BoundaryFactParts) {
-		parts.LengthUpper = append(parts.LengthUpper, bounds...)
-	})
-}
-
-// WithLengthRelations returns f plus boundary-relative length/cardinality
-// relation proofs.
-func (f BoundaryFacts) WithLengthRelations(relations []BoundaryLengthRelationFact) BoundaryFacts {
-	if f.bottom || len(relations) == 0 {
-		return f
-	}
-	return f.withParts(func(parts *BoundaryFactParts) {
-		parts.LengthRelations = append(parts.LengthRelations, relations...)
-	})
-}
-
-// WithStaticMembers returns f plus boundary-relative static-member value facts.
-func (f BoundaryFacts) WithStaticMembers(facts []BoundaryStaticMemberFact) BoundaryFacts {
-	if f.bottom || len(facts) == 0 {
-		return f
-	}
-	return f.withParts(func(parts *BoundaryFactParts) {
-		parts.StaticMembers = append(parts.StaticMembers, facts...)
-	})
 }
 
 // BoundaryReturnFactBucket groups finite boundary facts by the return slots

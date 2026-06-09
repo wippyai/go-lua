@@ -737,9 +737,10 @@ func projectReturnLengthBoundaryFacts(ps flow.PointState, g *cfg.Graph, p cfg.Po
 		}
 		upperBounds = append(upperBounds, returnStaticMemberLengthUpperBounds(ps, g, p, info, i)...)
 	}
-	return flow.BoundaryFactsDomain.Top().
-		WithLengthRelations(relations).
-		WithLengthUpperBounds(upperBounds)
+	return flow.BoundaryFactsFromParts(flow.BoundaryFactParts{
+		LengthRelations: relations,
+		LengthUpper:     upperBounds,
+	})
 }
 
 func returnStaticMemberLengthUpperBounds(ps flow.PointState, g *cfg.Graph, p cfg.Point, info *cfg.ReturnInfo, i int) []flow.BoundaryLengthUpperBound {

@@ -48,14 +48,17 @@ func TestBoundaryFactsPartitionByReturnIndices(t *testing.T) {
 			KeyValue:   product.FromType(typ.String),
 			Value:      product.FromType(typ.Number),
 		}},
-	}).WithAppendElementFieldOrigins([]BoundaryAppendElementFieldOriginFact{{
-		Array:  ret0Array,
-		Field:  []constraint.Segment{{Kind: constraint.SegmentField, Name: "child"}},
-		Source: ret1Key,
-	}}).WithLengthRelations([]BoundaryLengthRelationFact{{
-		Target: ret0Array,
-		Source: paramTable,
-	}}).WithLengthUpperBounds([]BoundaryLengthUpperBound{{Target: ret1Key, Upper: 0}})
+		AppendOrigins: []BoundaryAppendElementFieldOriginFact{{
+			Array:  ret0Array,
+			Field:  []constraint.Segment{{Kind: constraint.SegmentField, Name: "child"}},
+			Source: ret1Key,
+		}},
+		LengthRelations: []BoundaryLengthRelationFact{{
+			Target: ret0Array,
+			Source: paramTable,
+		}},
+		LengthUpper: []BoundaryLengthUpperBound{{Target: ret1Key, Upper: 0}},
+	})
 
 	params, buckets := facts.PartitionByReturnIndices()
 	if len(params.KeyPresence()) != 1 {
@@ -164,11 +167,13 @@ func TestBoundaryFactsJoinKeepsAppendFieldOriginWhenBaseSurvives(t *testing.T) {
 	}
 	base := BoundaryAppendHistoryBaseFact{Array: array}
 
-	appended := BoundaryFactsDomain.Top().
-		WithAppendHistoryBases([]BoundaryAppendHistoryBaseFact{base}).
-		WithAppendElementFieldOrigins([]BoundaryAppendElementFieldOriginFact{origin})
-	notAppended := BoundaryFactsDomain.Top().
-		WithAppendHistoryBases([]BoundaryAppendHistoryBaseFact{base})
+	appended := BoundaryFactsFromParts(BoundaryFactParts{
+		AppendBases:   []BoundaryAppendHistoryBaseFact{base},
+		AppendOrigins: []BoundaryAppendElementFieldOriginFact{origin},
+	})
+	notAppended := BoundaryFactsFromParts(BoundaryFactParts{
+		AppendBases: []BoundaryAppendHistoryBaseFact{base},
+	})
 
 	got := BoundaryFactsDomain.Join(appended, notAppended)
 	if bases := got.AppendHistoryBases(); len(bases) != 1 || compareBoundaryAppendHistoryBase(bases[0], base) != 0 {
@@ -194,10 +199,10 @@ func TestBoundaryFactsIdentityHashTracksCanonicalLanes(t *testing.T) {
 		Target: target,
 		Source: BoundaryPath{Kind: BoundaryPathParam, Index: 2},
 	}
-	factsA := BoundaryFactsDomain.Top().WithLengthRelations([]BoundaryLengthRelationFact{relA})
-	factsACopy := BoundaryFactsDomain.Top().WithLengthRelations([]BoundaryLengthRelationFact{relA})
-	factsB := BoundaryFactsDomain.Top().WithLengthRelations([]BoundaryLengthRelationFact{relB})
-	factsUpper := BoundaryFactsDomain.Top().WithLengthUpperBounds([]BoundaryLengthUpperBound{{Target: target, Upper: 0}})
+	factsA := BoundaryFactsFromParts(BoundaryFactParts{LengthRelations: []BoundaryLengthRelationFact{relA}})
+	factsACopy := BoundaryFactsFromParts(BoundaryFactParts{LengthRelations: []BoundaryLengthRelationFact{relA}})
+	factsB := BoundaryFactsFromParts(BoundaryFactParts{LengthRelations: []BoundaryLengthRelationFact{relB}})
+	factsUpper := BoundaryFactsFromParts(BoundaryFactParts{LengthUpper: []BoundaryLengthUpperBound{{Target: target, Upper: 0}}})
 
 	if got, want := factsA.IdentityHash("test"), factsACopy.IdentityHash("test"); got != want {
 		t.Fatalf("same boundary facts hash = %d, want %d", got, want)
