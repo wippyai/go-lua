@@ -9,11 +9,11 @@
 //	GraphStore      - CFG graph lookup by ID
 //	ParentScopes    - Parent scope lookup for nested functions
 //	NestedMetaStore - Nested function metadata
-//	LegacyFactProductReader   - Visible legacy fact products
 //	FunctionRefs    - Symbol/function bidirectional lookup
 //	StoreReader     - Read-only combination of above
 //	CanonicalStore  - Canonical-owned metadata plus final fact projection
-//	NestedStore     - StoreReader + legacy fact product writes
+//	NestedStore     - StoreReader required by nested metadata consumers
+//	LegacyInferenceStore - Explicit old-inference fact-product boundary
 //	IterationStore  - Full mutation capability for legacy fixpoint paths
 package api
 
@@ -103,14 +103,16 @@ type FunctionRefs interface {
 	FunctionRefsByParentGraph(parentGraphID uint64) []FunctionRef
 }
 
-// StoreReader is the read contract shared by checker phases.
+// StoreReader is the read contract shared by normal checker phases. It
+// intentionally excludes legacy fact-product reads; callers that need final
+// function facts should request FunctionFactProjectionReader, and old inference
+// code should request LegacyInferenceStore explicitly.
 type StoreReader interface {
 	ModuleStore
 	GraphStore
 	EvidenceForGraph(graph *cfg.Graph) FlowEvidence
 	ParentScopes
 	NestedMetaStore
-	LegacyFactProductReader
 	FunctionRefs
 }
 
@@ -144,15 +146,27 @@ type CanonicalStore interface {
 	ParentGraphKeyForSymbol(sym cfg.SymbolID) (GraphKey, bool)
 }
 
-// NestedStore is the store interface required by nested processing.
+// NestedStore is the read-only store interface required by nested metadata
+// consumers. Legacy nested inference uses LegacyInferenceStore instead.
 type NestedStore interface {
 	StoreReader
+}
+
+// LegacyInferenceStore is the explicitly named old-inference/compatibility
+// boundary for legacy fact products. Normal checker/synth/module/export code
+// must not request this interface.
+type LegacyInferenceStore interface {
+	StoreReader
+	LegacyFactProductReader
 	LegacyFactProductSink
+
+	FunctionFactProjectionReader
+	ParentGraphKeyForSymbol(sym cfg.SymbolID) (GraphKey, bool)
 }
 
 // IterationStore provides mutation operations required by legacy fixpoint paths.
 type IterationStore interface {
-	NestedStore
+	LegacyInferenceStore
 
 	ClearLegacyInterprocState()
 	LegacyFixpointSwap() bool
@@ -162,7 +176,4 @@ type IterationStore interface {
 	SetModuleAliases(aliases map[cfg.SymbolID]string)
 	SetParentScope(parentHash uint64, parent *scope.State)
 	SetGraphParentHash(graphID, parentHash uint64)
-
-	MergeLegacyFactsNext(key GraphKey, delta Facts)
-	ParentGraphKeyForSymbol(sym cfg.SymbolID) (GraphKey, bool)
 }

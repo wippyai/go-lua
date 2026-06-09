@@ -31,16 +31,16 @@ func ParameterEvidenceSignatures(
 	}
 
 	if parent != nil {
-		product := store.LegacyFacts(graph, parent)
+		facts := projectedFunctionFactsForGraph(store, graph, parent)
 		if fn := graphFunction(store, graph); fn != nil {
 			if sym, ok := store.SymbolForFunc(fn); ok {
-				if ff, found := product.FunctionFact(sym); found {
+				if ff, found := lookupStored(facts, sym); found {
 					add(fn, BodyEntryEvidence(ff))
 				}
 			}
 		}
 		for _, ref := range store.FunctionRefsByParentGraph(graph.ID()) {
-			if ff, ok := product.FunctionFact(ref.Sym); ok {
+			if ff, ok := lookupStored(facts, ref.Sym); ok {
 				add(store.FuncForSymbol(ref.Sym), BodyEntryEvidence(ff))
 			}
 		}
@@ -57,7 +57,7 @@ func ParameterEvidenceSignatures(
 			if parentScope != nil {
 				if fn := graphFunction(store, graph); fn != nil {
 					if sym, ok := store.SymbolForFunc(fn); ok {
-						if ff, ok := store.LegacyFacts(parentGraph, parentScope).FunctionFact(sym); ok {
+						if ff, ok := lookupStored(projectedFunctionFactsForGraph(store, parentGraph, parentScope), sym); ok {
 							add(fn, BodyEntryEvidence(ff))
 						}
 					}
@@ -97,16 +97,16 @@ func VisibleFactsForGraph(
 		out[sym] = ff
 	}
 
-	current := store.LegacyFacts(graph, parent)
+	current := projectedFunctionFactsForGraph(store, graph, parent)
 	if fn := graphFunction(store, graph); fn != nil {
 		if sym, ok := store.SymbolForFunc(fn); ok {
-			if ff, found := current.FunctionFact(sym); found {
+			if ff, found := lookupStored(current, sym); found {
 				add(sym, ff)
 			}
 		}
 	}
 	for _, ref := range store.FunctionRefsByParentGraph(graph.ID()) {
-		if ff, ok := current.FunctionFact(ref.Sym); ok {
+		if ff, ok := lookupStored(current, ref.Sym); ok {
 			add(ref.Sym, ff)
 		}
 	}
@@ -120,9 +120,9 @@ func VisibleFactsForGraph(
 			}
 			parentScope := api.ParentScopeForGraph(store, parentGraph.ID(), defaultScope)
 			if parentScope != nil {
-				parentProduct := store.LegacyFacts(parentGraph, parentScope)
+				parentFacts := projectedFunctionFactsForGraph(store, parentGraph, parentScope)
 				for _, ref := range store.FunctionRefsByParentGraph(parentGraph.ID()) {
-					if ff, ok := parentProduct.FunctionFact(ref.Sym); ok {
+					if ff, ok := lookupStored(parentFacts, ref.Sym); ok {
 						add(ref.Sym, ff)
 					}
 				}
@@ -134,6 +134,14 @@ func VisibleFactsForGraph(
 		return nil
 	}
 	return out
+}
+
+func projectedFunctionFactsForGraph(store api.StoreReader, graph *cfg.Graph, parent *scope.State) api.FunctionFacts {
+	projection, ok := store.(api.FunctionFactProjectionReader)
+	if !ok || projection == nil || graph == nil {
+		return nil
+	}
+	return projection.FunctionFactsProjection(graph, parent)
 }
 
 func graphFunction(store api.StoreReader, graph *cfg.Graph) *ast.FunctionExpr {

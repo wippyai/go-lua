@@ -67,6 +67,54 @@ func TestCanonicalProductionDoesNotUseLegacyFactProducts(t *testing.T) {
 	}
 }
 
+func TestCheckerProductionLegacyFactsStayInLegacyBoundaries(t *testing.T) {
+	_, file, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("runtime.Caller failed")
+	}
+	checkRoot := filepath.Clean(filepath.Join(filepath.Dir(file), ".."))
+	allowedFile := filepath.Join(checkRoot, "api", "store.go")
+	allowedDirs := []string{
+		filepath.Join(checkRoot, "store") + string(filepath.Separator),
+		filepath.Join(checkRoot, "infer", "interproc") + string(filepath.Separator),
+		filepath.Join(checkRoot, "infer", "nested") + string(filepath.Separator),
+	}
+	allowed := func(path string) bool {
+		if path == allowedFile {
+			return true
+		}
+		for _, dir := range allowedDirs {
+			if strings.HasPrefix(path, dir) {
+				return true
+			}
+		}
+		return false
+	}
+
+	err := filepath.WalkDir(checkRoot, func(path string, entry fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if entry.IsDir() {
+			return nil
+		}
+		if filepath.Ext(path) != ".go" || strings.HasSuffix(path, "_test.go") {
+			return nil
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		if strings.Contains(string(data), "LegacyFacts(") && !allowed(path) {
+			t.Errorf("%s reads legacy fact products outside the explicit legacy boundary", path)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("walk checker sources: %v", err)
+	}
+}
+
 func TestCanonicalProductionTreatsFuncResultAsPublicProjection(t *testing.T) {
 	_, file, _, ok := runtime.Caller(0)
 	if !ok {

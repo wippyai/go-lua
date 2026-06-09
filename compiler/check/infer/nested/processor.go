@@ -56,7 +56,7 @@ type ResultFunc func(fn *ast.FunctionExpr) *api.FuncAnalysisView
 // Config holds dependencies for nested processing.
 type Config struct {
 	Stdlib        *scope.State
-	Store         api.NestedStore
+	Store         api.LegacyInferenceStore
 	Graphs        api.GraphProvider
 	Check         CheckFunc
 	ResultForFunc ResultFunc
@@ -66,7 +66,7 @@ type Config struct {
 // Processor analyzes nested functions for a parent graph.
 type Processor struct {
 	stdlib        *scope.State
-	store         api.NestedStore
+	store         api.LegacyInferenceStore
 	graphs        api.GraphProvider
 	check         CheckFunc
 	resultForFunc ResultFunc

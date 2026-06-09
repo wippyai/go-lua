@@ -40,12 +40,14 @@ const (
 // projection in one place so callers do not rebuild partial views.
 type StoreView struct {
 	store         api.StoreReader
+	projection    api.FunctionFactProjectionReader
 	defaultParent *scope.State
 }
 
 // StoreProjection returns a normalized view over store-backed function facts.
 func StoreProjection(store api.StoreReader, defaultParent *scope.State) StoreView {
-	return StoreView{store: store, defaultParent: defaultParent}
+	projection, _ := store.(api.FunctionFactProjectionReader)
+	return StoreView{store: store, projection: projection, defaultParent: defaultParent}
 }
 
 // StoreSymbolView is one resolved function-fact product plus its owning key.
@@ -93,7 +95,7 @@ func (v StoreView) Symbol(sym cfg.SymbolID, mode api.SynthMode) (StoreSymbolView
 
 // GraphSymbol resolves sym in graph's parent-key function-fact product.
 func (v StoreView) GraphSymbol(graph *cfg.Graph, sym cfg.SymbolID, mode api.SynthMode) (StoreSymbolView, bool) {
-	ff, owner, ok := storeFactForGraphInMode(v.store, graph, sym, v.defaultParent, mode)
+	ff, owner, ok := storeFactForGraphInMode(v.store, v.projection, graph, sym, v.defaultParent, mode)
 	if !ok {
 		return StoreSymbolView{}, false
 	}
@@ -484,18 +486,25 @@ func lookupStored(facts api.FunctionFacts, sym cfg.SymbolID) (api.FunctionFact, 
 	return ff, !Empty(ff)
 }
 
-func storeFactForGraphInMode(store api.StoreReader, graph *cfg.Graph, sym cfg.SymbolID, defaultParent *scope.State, mode api.SynthMode) (api.FunctionFact, StoreSymbolOwner, bool) {
+func storeFactForGraphInMode(
+	store api.StoreReader,
+	projection api.FunctionFactProjectionReader,
+	graph *cfg.Graph,
+	sym cfg.SymbolID,
+	defaultParent *scope.State,
+	mode api.SynthMode,
+) (api.FunctionFact, StoreSymbolOwner, bool) {
 	if store == nil || graph == nil || sym == 0 {
 		return api.FunctionFact{}, StoreSymbolOwner{}, false
 	}
 	owner, ok := storeOwnerForGraph(store, graph, defaultParent)
-	if !ok {
+	if !ok || projection == nil {
 		return api.FunctionFact{}, StoreSymbolOwner{}, false
 	}
 	var ff api.FunctionFact
 	var found bool
 	load := func() {
-		ff, found = store.LegacyFacts(owner.Graph, owner.Parent).FunctionFact(sym)
+		ff, found = lookupStored(projection.FunctionFactsProjection(owner.Graph, owner.Parent), sym)
 	}
 	if switcher, ok := store.(interface{ WithSynthMode(api.SynthMode, func()) }); ok {
 		switcher.WithSynthMode(mode, load)

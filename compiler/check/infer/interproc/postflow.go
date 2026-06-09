@@ -23,12 +23,11 @@ import (
 	typjoin "github.com/wippyai/go-lua/types/typ/join"
 )
 
-// Store is the minimal store interface required to record post-flow interproc facts.
+// Store is the explicit legacy boundary required to record old post-flow
+// interproc facts. Canonical checking publishes FunctionFacts from Summary
+// without this iteration product.
 type Store interface {
-	api.StoreReader
-
-	MergeLegacyFactsNext(key api.GraphKey, delta api.Facts)
-	ParentGraphKeyForSymbol(sym cfg.SymbolID) (api.GraphKey, bool)
+	api.LegacyInferenceStore
 }
 
 // StoreFactsFromResult records post-flow interproc facts for the current iteration.

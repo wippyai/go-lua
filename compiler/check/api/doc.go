@@ -11,10 +11,10 @@
 //   - [ModuleStore]: Module-level bindings and alias maps
 //   - [GraphStore]: Access to built CFGs by ID
 //   - [ParentScopes]: Parent scope lookup for nested functions
-//   - [LegacyFactProductReader]: Visible legacy compatibility fact products
 //   - [StoreReader]: Read contract combining the immutable stores above
 //   - [CanonicalStore]: Canonical-owned metadata and final fact projection
-//   - [IterationStore]: Adds mutation for legacy fixpoint paths
+//   - [LegacyInferenceStore]: Explicit old-inference fact-product boundary
+//   - [IterationStore]: Adds swap/reset mutation for legacy fixpoint paths
 //
 // These interfaces allow different phases to declare their dependencies and
 // enable testing with mock implementations.
