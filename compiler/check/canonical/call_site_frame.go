@@ -79,23 +79,6 @@ func (f callSiteFrame) expectedArgProjection() canonicalcall.ExpectedArgProjecti
 	return in
 }
 
-func (f callSiteFrame) functionShape() *typ.Function {
-	return (canonicalcall.DemandFunctionProjection{
-		Call:            f.call,
-		SummaryFunction: f.summaryFunction,
-		Resolver:        f.typer.callTypeResolver(f.exprType),
-	}).Function()
-}
-
-func (f callSiteFrame) summaryFunction(call *ast.FuncCallExpr) *typ.Function {
-	d := f.typer.d
-	if d == nil || d.activeQueries == nil || d.activeCtx == nil {
-		return nil
-	}
-	fn, _ := f.summarySignature(call).(*typ.Function)
-	return fn
-}
-
 func (f callSiteFrame) summarySignature(call *ast.FuncCallExpr) typ.Type {
 	d := f.typer.d
 	if d == nil || d.activeProgram == nil {
@@ -203,7 +186,7 @@ func (f callSiteFrame) expectedCalleeType(expr ast.Expr) typ.Type {
 			}
 		}
 	}
-	if fn := f.functionShape(); fn != nil {
+	if fn := f.typeFallbackOutcome(true).FunctionShape(); fn != nil {
 		return fn
 	}
 	if expr != nil && f.exprType != nil {

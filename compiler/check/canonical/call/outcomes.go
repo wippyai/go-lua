@@ -154,6 +154,12 @@ func (o CallOutcome) ContainerElementUnions() []effect.ContainerElementUnion {
 	return o.fallback.ContainerElementUnions()
 }
 
+// FunctionShape returns the fallback callable shape used only for
+// signature-owned argument obligations when no selected summary demands apply.
+func (o CallOutcome) FunctionShape() *typ.Function {
+	return o.fallback.FunctionShape()
+}
+
 // NeverReturns reports whether every selected target is proven no-return.
 func (o CallOutcome) NeverReturns(hasNoReturn func(summary.FuncRef) bool) bool {
 	return selectionNeverReturns(o.Selection, hasNoReturn)

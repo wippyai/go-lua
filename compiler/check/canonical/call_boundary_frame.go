@@ -79,16 +79,12 @@ func (p callBoundaryFrame) callArgDemands() []callobligation.Obligation {
 			return p.argDemands()
 		},
 		FunctionShape: func(*ast.FuncCallExpr) *typ.Function {
-			return p.callFunctionShape()
+			return p.outcome.FunctionShape()
 		},
 		SelfType: func(*ast.FuncCallExpr) typ.Type {
 			return p.ctx.SelfType
 		},
 	}).Demands()
-}
-
-func (p callBoundaryFrame) callFunctionShape() *typ.Function {
-	return p.site.functionShape()
 }
 
 func (p callBoundaryFrame) returnPostconditions() paramevidence.ReturnPostconditions {

@@ -100,6 +100,7 @@ type TypeFallbackOutcome struct {
 	postconditions         paramevidence.ReturnPostconditions
 	callbackSpec           *contract.Spec
 	containerUnions        []effect.ContainerElementUnion
+	functionShape          *typ.Function
 }
 
 // NewTypeFallbackOutcome materializes all type-only fallback facts once.
@@ -130,6 +131,12 @@ func NewTypeFallbackOutcome(in TypeFallbackInput) TypeFallbackOutcome {
 	out.returnRelations = fallbackReturnRelations(resolved, static)
 	out.boundaryFacts = fallbackBoundaryFacts(resolved, static)
 	out.postconditions = paramevidence.ReturnPostconditionsFromFunctionType(static)
+	out.functionShape = fallbackFunctionShape(fallbackFunctionShapeInput{
+		Call:                 in.Return.Call,
+		SummarySignature:     in.SummarySignature,
+		Resolver:             in.Return.Resolver,
+		UseResolvedSignature: in.UseResolvedSignature,
+	})
 	spec := specForCall(specInput{
 		Call:                 in.Return.Call,
 		SummarySignature:     in.SummarySignature,
@@ -178,6 +185,10 @@ func (o TypeFallbackOutcome) ContainerElementUnions() []effect.ContainerElementU
 	out := make([]effect.ContainerElementUnion, len(o.containerUnions))
 	copy(out, o.containerUnions)
 	return out
+}
+
+func (o TypeFallbackOutcome) FunctionShape() *typ.Function {
+	return o.functionShape
 }
 
 // Types applies the canonical type-level call-return policy.

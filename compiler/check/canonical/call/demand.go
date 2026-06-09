@@ -7,43 +7,39 @@ import (
 	"github.com/wippyai/go-lua/types/typ/unwrap"
 )
 
-// DemandFunctionProjection supplies the call-boundary context for resolving the
-// callable shape used by signature-owned argument obligations.
-type DemandFunctionProjection struct {
-	Call            *ast.FuncCallExpr
-	SummaryFunction func(*ast.FuncCallExpr) *typ.Function
-	Resolver        TypeResolver
+type fallbackFunctionShapeInput struct {
+	Call *ast.FuncCallExpr
+
+	SummarySignature     typ.Type
+	Resolver             TypeResolver
+	UseResolvedSignature bool
 }
 
-// Function resolves the callable shape used for argument demand projection.
-// Summary-known module targets win; otherwise the resolved caller-visible
-// callee/receiver type is unwrapped to a function shape.
-func (p DemandFunctionProjection) Function() *typ.Function {
-	call := p.Call
-	if call == nil {
+func fallbackFunctionShape(in fallbackFunctionShapeInput) *typ.Function {
+	if in.Call == nil {
 		return nil
 	}
-	if p.SummaryFunction != nil {
-		if fn := p.SummaryFunction(call); fn != nil {
-			return fn
-		}
+	if fn := functionShape(in.SummarySignature); fn != nil {
+		return fn
 	}
 	var callee typ.Type
-	if call.Method != "" {
-		receiver := p.Resolver.ResolveReceiver(call.Receiver)
+	if in.Call.Method != "" {
+		receiver := in.Resolver.ResolveReceiver(in.Call.Receiver)
 		if receiver == nil || typ.IsAbsentOrUnknown(receiver) {
 			return nil
 		}
-		member, ok := p.Resolver.method(receiver, call.Method)
+		member, ok := in.Resolver.method(receiver, in.Call.Method)
 		if !ok {
 			return nil
 		}
 		callee = member
-	} else {
-		callee = p.Resolver.ResolveCallee(call.Func)
+	} else if in.UseResolvedSignature {
+		callee = in.Resolver.ResolveCallee(in.Call.Func)
 		if functionShape(callee) == nil {
-			callee = p.Resolver.ResolveStaticCallee(call.Func)
+			callee = in.Resolver.ResolveStaticCallee(in.Call.Func)
 		}
+	} else {
+		callee = in.Resolver.ResolveStaticCallee(in.Call.Func)
 	}
 	return functionShape(callee)
 }
