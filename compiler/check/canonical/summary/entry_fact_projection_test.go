@@ -31,11 +31,13 @@ func TestDirectCallEntryFactsProjectsLengthBoundsToParamPaths(t *testing.T) {
 		},
 	}
 	got := projection.DirectEvidence(summary.DirectEntryEvidenceInput{
-		Callee:      callee,
-		Call:        call,
-		KeyPresence: flow.KeyPresenceFacts{},
-		Num:         num,
-		IndexWrites: flow.IndexWriteAdmissionFacts{},
+		Callee: callee,
+		Call:   call,
+		BoundaryFacts: flow.BoundaryFactProjectionInput{
+			KeyPresence: flow.KeyPresenceFacts{},
+			Num:         num,
+			IndexWrites: flow.IndexWriteAdmissionFacts{},
+		},
 	}).Facts
 
 	bounds := got.LengthLowerBounds()
@@ -75,10 +77,12 @@ func TestDirectCallEntryFactsProjectsIndexWritesToParamPaths(t *testing.T) {
 		Value:   value,
 	})
 	got := projection.DirectEvidence(summary.DirectEntryEvidenceInput{
-		Callee:      callee,
-		Call:        call,
-		KeyPresence: flow.KeyPresenceFacts{},
-		IndexWrites: indexWrites,
+		Callee: callee,
+		Call:   call,
+		BoundaryFacts: flow.BoundaryFactProjectionInput{
+			KeyPresence: flow.KeyPresenceFacts{},
+			IndexWrites: indexWrites,
+		},
 	}).Facts
 
 	writes := got.IndexWrites()
@@ -120,10 +124,12 @@ func TestDirectCallEntryFactsProjectsIndexWritesWithValueKeyOnly(t *testing.T) {
 		Value:   value,
 	})
 	got := projection.DirectEvidence(summary.DirectEntryEvidenceInput{
-		Callee:      callee,
-		Call:        call,
-		KeyPresence: flow.KeyPresenceFacts{},
-		IndexWrites: indexWrites,
+		Callee: callee,
+		Call:   call,
+		BoundaryFacts: flow.BoundaryFactProjectionInput{
+			KeyPresence: flow.KeyPresenceFacts{},
+			IndexWrites: indexWrites,
+		},
 	}).Facts
 
 	writes := got.IndexWrites()
@@ -159,12 +165,14 @@ func TestDirectCallEntryFactsProjectsKeyArrayValuesToParamPaths(t *testing.T) {
 	got := projection.DirectEvidence(summary.DirectEntryEvidenceInput{
 		Callee: callee,
 		Call:   call,
-		KeyPresence: flow.KeyPresenceFacts{}.
-			WithKeyArrayValueAddresses(
-				entryFactStableAddress(t, array),
-				entryFactStableAddress(t, table),
-				value,
-			),
+		BoundaryFacts: flow.BoundaryFactProjectionInput{
+			KeyPresence: flow.KeyPresenceFacts{}.
+				WithKeyArrayValueAddresses(
+					entryFactStableAddress(t, array),
+					entryFactStableAddress(t, table),
+					value,
+				),
+		},
 	}).Facts
 
 	facts := got.KeyArrayValues()
@@ -209,9 +217,11 @@ func TestDirectCallEntryFactsProjectsStaticMembersToParamPaths(t *testing.T) {
 		},
 	}
 	got := projection.DirectEvidence(summary.DirectEntryEvidenceInput{
-		Callee:        callee,
-		Call:          call,
-		StaticMembers: flow.StaticMemberFactsDomain.Top().WithAddress(addr, value),
+		Callee: callee,
+		Call:   call,
+		BoundaryFacts: flow.BoundaryFactProjectionInput{
+			StaticMembers: flow.StaticMemberFactsDomain.Top().WithAddress(addr, value),
+		},
 	}).Facts
 
 	members := got.StaticMembers()
@@ -252,7 +262,9 @@ func TestDirectCallEntryFactsNormalizesStaticMembersAgainstRuntimeArgValue(t *te
 		Callee:        callee,
 		Call:          call,
 		RuntimeValues: []product.AbstractValue{liveRoot},
-		StaticMembers: flow.StaticMemberFactsDomain.Top().WithAddress(addr, stale),
+		BoundaryFacts: flow.BoundaryFactProjectionInput{
+			StaticMembers: flow.StaticMemberFactsDomain.Top().WithAddress(addr, stale),
+		},
 	}).Facts
 
 	members := got.StaticMembers()
