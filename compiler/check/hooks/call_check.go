@@ -25,6 +25,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/api"
 	"github.com/wippyai/go-lua/compiler/check/callsite"
+	canonicaldiag "github.com/wippyai/go-lua/compiler/check/canonical/diagnostic"
 	"github.com/wippyai/go-lua/compiler/check/domain/functionfact"
 	"github.com/wippyai/go-lua/compiler/check/domain/observation"
 	"github.com/wippyai/go-lua/compiler/check/domain/paramevidence"
@@ -155,7 +156,7 @@ func checkSingleCall(
 	pipeline.ReSynthAndReInfer()
 	result := pipeline.Finish()
 	errors := appendCallContractErrors(result.Errors, contract, info, p, callObserver, ctx, query, pipeline)
-	return callErrorsToDiags(errors, info, sourceName)
+	return callErrorsToDiags(errors, contract, info, p, canonicaldiag.NewBuilder(callObserver), sourceName)
 }
 
 func appendCallContractErrors(
@@ -245,7 +246,7 @@ func getCallPosition(info *cfg.CallInfo, sourceName string) diag.Position {
 	return pos
 }
 
-func callErrorsToDiags(errors []ops.CallError, info *cfg.CallInfo, sourceName string) []diag.Diagnostic {
+func callErrorsToDiags(errors []ops.CallError, contract api.CallContractEvidence, info *cfg.CallInfo, p cfg.Point, explainer canonicaldiag.Builder, sourceName string) []diag.Diagnostic {
 	if len(errors) == 0 || info == nil {
 		return nil
 	}
@@ -284,13 +285,18 @@ func callErrorsToDiags(errors []ops.CallError, info *cfg.CallInfo, sourceName st
 		}
 
 		_, help := diag.ContextualHelp(code, message, "")
+		var explanation string
+		if err.Kind == ops.ErrTypeMismatch && err.ArgIdx > 0 {
+			explanation = explainer.ExplainCallArgumentMismatch(info, err.ArgIdx, p, err.Got, err.Expected, contract.ArgObligation(err.ArgIdx-1))
+		}
 		diags = append(diags, diag.Diagnostic{
-			Severity: diag.SeverityError,
-			Code:     code,
-			Position: pos,
-			Span:     span,
-			Message:  message,
-			Help:     help,
+			Severity:    diag.SeverityError,
+			Code:        code,
+			Position:    pos,
+			Span:        span,
+			Message:     message,
+			Explanation: explanation,
+			Help:        help,
 		})
 	}
 

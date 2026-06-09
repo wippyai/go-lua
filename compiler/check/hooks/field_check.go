@@ -19,6 +19,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/bind"
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/api"
+	canonicaldiag "github.com/wippyai/go-lua/compiler/check/canonical/diagnostic"
 	"github.com/wippyai/go-lua/compiler/check/domain/guard"
 	"github.com/wippyai/go-lua/compiler/check/domain/observation"
 	"github.com/wippyai/go-lua/compiler/check/domain/path"
@@ -538,7 +539,7 @@ func checkAttrGet(e *ast.AttrGetExpr, p cfg.Point, resolver fieldResolverImpl, s
 		return diags
 	}
 
-	if d, ok := optionalIndexError(objType, e, sourceName); ok {
+	if d, ok := optionalIndexError(objType, e, p, resolver, sourceName); ok {
 		diags = append(diags, d)
 		return diags
 	}
@@ -665,7 +666,7 @@ func checkIndexAccess(e *ast.AttrGetExpr, p cfg.Point, resolver fieldResolverImp
 		return nil
 	}
 
-	return []diag.Diagnostic{indexError(objType, e, sourceName)}
+	return []diag.Diagnostic{indexError(objType, keyType, e, p, resolver, sourceName)}
 }
 
 // optionalIndexError rejects an index read on an optional container. Indexing a
@@ -675,7 +676,7 @@ func checkIndexAccess(e *ast.AttrGetExpr, p cfg.Point, resolver fieldResolverImp
 // optional-call rule (ErrOptionalCall) for the call site. It fires only when the
 // non-nil inner is a keyed container (map, array, or tuple); record field access
 // on an optional is reported through field resolution.
-func optionalIndexError(objType typ.Type, e *ast.AttrGetExpr, sourceName string) (diag.Diagnostic, bool) {
+func optionalIndexError(objType typ.Type, e *ast.AttrGetExpr, p cfg.Point, resolver fieldResolverImpl, sourceName string) (diag.Diagnostic, bool) {
 	if e == nil || objType == nil {
 		return diag.Diagnostic{}, false
 	}
@@ -696,12 +697,13 @@ func optionalIndexError(objType typ.Type, e *ast.AttrGetExpr, sourceName string)
 	msg := "cannot index optional value " + typ.FormatShort(objType) + " without nil check"
 	_, help := diag.ContextualHelp(diag.ErrOptionalIndex, msg, "")
 	return diag.Diagnostic{
-		Severity: diag.SeverityError,
-		Code:     diag.ErrOptionalIndex,
-		Position: pos,
-		Span:     span,
-		Message:  msg,
-		Help:     help,
+		Severity:    diag.SeverityError,
+		Code:        diag.ErrOptionalIndex,
+		Position:    pos,
+		Span:        span,
+		Message:     msg,
+		Explanation: canonicaldiag.NewBuilder(resolver.observer).ExplainOptionalIndex(e, p, objType),
+		Help:        help,
 	}, true
 }
 
@@ -754,7 +756,7 @@ func indexesKeyedContainer(t typ.Type) bool {
 	return false
 }
 
-func indexError(objType typ.Type, e *ast.AttrGetExpr, sourceName string) diag.Diagnostic {
+func indexError(objType typ.Type, keyType typ.Type, e *ast.AttrGetExpr, p cfg.Point, resolver fieldResolverImpl, sourceName string) diag.Diagnostic {
 	pos := diag.Position{File: sourceName, Line: e.Line(), Column: e.Column()}
 	span := ast.SpanOf(e)
 	if e.Object != nil && e.Object.Line() > 0 {
@@ -765,12 +767,13 @@ func indexError(objType typ.Type, e *ast.AttrGetExpr, sourceName string) diag.Di
 	msg := "cannot index type " + typ.FormatShort(objType)
 	_, help := diag.ContextualHelp(diag.ErrTypeMismatch, msg, "")
 	return diag.Diagnostic{
-		Severity: diag.SeverityError,
-		Code:     diag.ErrTypeMismatch,
-		Position: pos,
-		Span:     span,
-		Message:  msg,
-		Help:     help,
+		Severity:    diag.SeverityError,
+		Code:        diag.ErrTypeMismatch,
+		Position:    pos,
+		Span:        span,
+		Message:     msg,
+		Explanation: canonicaldiag.NewBuilder(resolver.observer).ExplainIndexFailure(e, p, objType, keyType),
+		Help:        help,
 	}
 }
 

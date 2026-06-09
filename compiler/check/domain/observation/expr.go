@@ -786,6 +786,26 @@ func (p Projector) provenanceRoutesAt(point cfg.Point, path constraint.Path) []f
 	return p.proofs.ProvenanceRoutesAt(point, path)
 }
 
+// PathOfExpr returns the normalized source path observation would use for expr
+// at point. It is a read-only diagnostic/projection surface: callers may explain
+// solved facts with it, but must not treat it as a new fact producer.
+func (p Projector) PathOfExpr(expr ast.Expr, point cfg.Point) constraint.Path {
+	return p.pathOfExpr(expr, point)
+}
+
+// ProvenanceRoutesAt exposes solved point-state provenance routes for
+// diagnostics. The routes are read from the same frozen observation facts as
+// TypeOf; this method does not synthesize, promote, or repair semantic facts.
+func (p Projector) ProvenanceRoutesAt(point cfg.Point, path constraint.Path) []flow.ProvenanceRoute {
+	return p.provenanceRoutesAt(point, path)
+}
+
+// AppendElementFieldSourceRoutesAt exposes solved append-element source routes
+// for diagnostics. It is a read-only projection over canonical point facts.
+func (p Projector) AppendElementFieldSourceRoutesAt(point cfg.Point, q flow.AppendElementFieldRouteQuery) []flow.ProvenanceRoute {
+	return p.proofs.AppendElementFieldSourceRoutesAt(point, q)
+}
+
 func (p Projector) paramSlotForSymbol(sym cfg.SymbolID) (int, bool) {
 	if sym == 0 || p.cfg.Graph == nil {
 		return 0, false

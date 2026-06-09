@@ -33,6 +33,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/api"
+	canonicaldiag "github.com/wippyai/go-lua/compiler/check/canonical/diagnostic"
 	"github.com/wippyai/go-lua/compiler/check/domain/observation"
 	"github.com/wippyai/go-lua/compiler/check/domain/provenance"
 	"github.com/wippyai/go-lua/types/diag"
@@ -94,6 +95,7 @@ func CheckAssignments(graph *cfg.Graph, evidence api.FlowEvidence, declared flow
 	}
 
 	var diags []diag.Diagnostic
+	explainer := canonicaldiag.NewBuilder(observer)
 
 	for _, assign := range evidence.Assignments {
 		p := assign.Point
@@ -150,12 +152,13 @@ func CheckAssignments(graph *cfg.Graph, evidence api.FlowEvidence, declared flow
 						msg := formatAssignMismatch(typ.Nil, declaredType)
 						_, help := diag.ContextualHelp(diag.ErrTypeMismatch, msg, "")
 						diags = append(diags, diag.Diagnostic{
-							Severity: diag.SeverityError,
-							Code:     diag.ErrTypeMismatch,
-							Position: pos,
-							Span:     span,
-							Message:  msg,
-							Help:     help,
+							Severity:    diag.SeverityError,
+							Code:        diag.ErrTypeMismatch,
+							Position:    pos,
+							Span:        span,
+							Message:     msg,
+							Explanation: explainer.ExplainAssignmentMismatch(nil, p, typ.Nil, declaredType),
+							Help:        help,
 						})
 					}
 				}
@@ -190,12 +193,13 @@ func CheckAssignments(graph *cfg.Graph, evidence api.FlowEvidence, declared flow
 					msg := formatAssignMismatchDetailed(valueType, declaredType, result.Reason)
 					_, help := diag.ContextualHelp(diag.ErrTypeMismatch, msg, "")
 					diags = append(diags, diag.Diagnostic{
-						Severity: diag.SeverityError,
-						Code:     diag.ErrTypeMismatch,
-						Position: pos,
-						Span:     span,
-						Message:  msg,
-						Help:     help,
+						Severity:    diag.SeverityError,
+						Code:        diag.ErrTypeMismatch,
+						Position:    pos,
+						Span:        span,
+						Message:     msg,
+						Explanation: explainer.ExplainAssignmentMismatch(source, p, valueType, declaredType),
+						Help:        help,
 					})
 					return
 				}
@@ -207,12 +211,13 @@ func CheckAssignments(graph *cfg.Graph, evidence api.FlowEvidence, declared flow
 				msg := formatExcluded(valueType, declaredType)
 				_, help := diag.ContextualHelp(diag.ErrTypeMismatch, msg, "")
 				diags = append(diags, diag.Diagnostic{
-					Severity: diag.SeverityError,
-					Code:     diag.ErrTypeMismatch,
-					Position: pos,
-					Span:     span,
-					Message:  msg,
-					Help:     help,
+					Severity:    diag.SeverityError,
+					Code:        diag.ErrTypeMismatch,
+					Position:    pos,
+					Span:        span,
+					Message:     msg,
+					Explanation: explainer.ExplainAssignmentMismatch(source, p, valueType, declaredType),
+					Help:        help,
 				})
 				return
 			}
@@ -223,12 +228,13 @@ func CheckAssignments(graph *cfg.Graph, evidence api.FlowEvidence, declared flow
 				msg := formatAssignMismatch(valueType, declaredType)
 				_, help := diag.ContextualHelp(diag.ErrTypeMismatch, msg, "")
 				diags = append(diags, diag.Diagnostic{
-					Severity: diag.SeverityError,
-					Code:     diag.ErrTypeMismatch,
-					Position: pos,
-					Span:     span,
-					Message:  msg,
-					Help:     help,
+					Severity:    diag.SeverityError,
+					Code:        diag.ErrTypeMismatch,
+					Position:    pos,
+					Span:        span,
+					Message:     msg,
+					Explanation: explainer.ExplainAssignmentMismatch(source, p, valueType, declaredType),
+					Help:        help,
 				})
 			}
 		})
@@ -269,12 +275,13 @@ func checkStructuredAssignmentTarget(target cfg.AssignTarget, source ast.Expr, p
 			msg := formatAssignMismatchDetailed(valueType, expected, result.Reason)
 			_, help := diag.ContextualHelp(diag.ErrTypeMismatch, msg, "")
 			return diag.Diagnostic{
-				Severity: diag.SeverityError,
-				Code:     diag.ErrTypeMismatch,
-				Position: pos,
-				Span:     span,
-				Message:  msg,
-				Help:     help,
+				Severity:    diag.SeverityError,
+				Code:        diag.ErrTypeMismatch,
+				Position:    pos,
+				Span:        span,
+				Message:     msg,
+				Explanation: canonicaldiag.NewBuilder(observer).ExplainAssignmentMismatch(source, p, valueType, expected),
+				Help:        help,
 			}, true
 		}
 	}
@@ -296,12 +303,13 @@ func checkStructuredAssignmentTarget(target cfg.AssignTarget, source ast.Expr, p
 	msg := formatAssignMismatch(valueType, expected)
 	_, help := diag.ContextualHelp(diag.ErrTypeMismatch, msg, "")
 	return diag.Diagnostic{
-		Severity: diag.SeverityError,
-		Code:     diag.ErrTypeMismatch,
-		Position: pos,
-		Span:     span,
-		Message:  msg,
-		Help:     help,
+		Severity:    diag.SeverityError,
+		Code:        diag.ErrTypeMismatch,
+		Position:    pos,
+		Span:        span,
+		Message:     msg,
+		Explanation: canonicaldiag.NewBuilder(observer).ExplainAssignmentMismatch(source, p, valueType, expected),
+		Help:        help,
 	}, true
 }
 

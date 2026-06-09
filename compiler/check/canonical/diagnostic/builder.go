@@ -1,0 +1,215 @@
+package diagnostic
+
+import (
+	"strings"
+
+	"github.com/wippyai/go-lua/compiler/ast"
+	"github.com/wippyai/go-lua/compiler/cfg"
+	"github.com/wippyai/go-lua/compiler/check/domain/callobligation"
+	"github.com/wippyai/go-lua/compiler/check/domain/observation"
+	"github.com/wippyai/go-lua/types/constraint"
+	"github.com/wippyai/go-lua/types/domain/value/product"
+	"github.com/wippyai/go-lua/types/flow"
+	"github.com/wippyai/go-lua/types/typ"
+)
+
+// Builder renders diagnostic-only explanations from frozen canonical
+// observation surfaces. It records why an existing diagnostic was emitted; it
+// never asks the solver for new summaries or creates substitute facts.
+type Builder struct {
+	observer observation.Projector
+}
+
+func NewBuilder(observer observation.Projector) Builder {
+	return Builder{observer: observer}
+}
+
+func (b Builder) ExplainAssignmentMismatch(source ast.Expr, point cfg.Point, actual, expected typ.Type) string {
+	var g ExplanationGraph
+	expr := g.AddNode(ExplanationNode{Kind: NodeSourceExpression, Label: "assignment source"})
+	fact := g.AddNode(ValueFactNode(product.FromType(actual), "observed source type "+formatType(actual)))
+	missing := g.AddNode(ExplanationNode{Kind: NodeMissingProof, Label: "required assignment proof for " + formatType(expected)})
+	g.AddEdge(expr, fact, EdgeDerivedByTransferRule)
+	g.AddEdge(fact, missing, EdgeRejectedBecauseUnproved)
+	return b.render(g, point, source, []string{
+		"source expression was observed as " + formatType(actual),
+		"assignment target requires " + formatType(expected),
+		b.pathEvidence(point, source),
+		"no canonical assignment-source proof made the observed value satisfy the target type",
+	})
+}
+
+func (b Builder) ExplainCallArgumentMismatch(info *cfg.CallInfo, argIdx int, point cfg.Point, actual, expected typ.Type, obligation callobligation.Obligation) string {
+	var arg ast.Expr
+	if info != nil && argIdx > 0 && argIdx <= len(info.Args) {
+		arg = info.Args[argIdx-1]
+	}
+	var g ExplanationGraph
+	call := g.AddNode(ExplanationNode{Kind: NodeCallTarget, Label: "selected call contract"})
+	argNode := g.AddNode(ExplanationNode{Kind: NodeSourceExpression, Label: "argument " + intString(argIdx)})
+	fact := g.AddNode(ValueFactNode(product.FromType(actual), "observed argument type "+formatType(actual)))
+	missing := g.AddNode(ExplanationNode{Kind: NodeParameterObligation, Label: "required argument type " + formatType(expected)})
+	g.AddEdge(call, missing, EdgeProjectedFromSummary)
+	g.AddEdge(argNode, fact, EdgeDerivedByTransferRule)
+	g.AddEdge(fact, missing, EdgeRejectedBecauseUnproved)
+
+	lines := []string{
+		"argument " + intString(argIdx) + " was observed as " + formatType(actual),
+		"the solved call contract requires " + formatType(expected),
+	}
+	if obligation.Informative() {
+		lines = append(lines, "the obligation came from the canonical call boundary")
+	}
+	lines = append(lines,
+		b.pathEvidence(point, arg),
+		"no canonical argument proof or postcondition satisfied the selected obligation",
+	)
+	return b.render(g, point, arg, lines)
+}
+
+func (b Builder) ExplainOptionalIndex(expr *ast.AttrGetExpr, point cfg.Point, objType typ.Type) string {
+	var g ExplanationGraph
+	receiver := g.AddNode(ExplanationNode{Kind: NodeSourceExpression, Label: "indexed receiver"})
+	fact := g.AddNode(ValueFactNode(product.FromType(objType), "receiver type "+formatType(objType)))
+	missing := g.AddNode(ExplanationNode{Kind: NodeMissingProof, Label: "non-nil receiver proof"})
+	g.AddEdge(receiver, fact, EdgeDerivedByTransferRule)
+	g.AddEdge(fact, missing, EdgeRejectedBecauseUnproved)
+
+	var obj ast.Expr
+	if expr != nil {
+		obj = expr.Object
+	}
+	return b.render(g, point, obj, []string{
+		"receiver was observed as " + formatType(objType),
+		"indexing requires a non-nil container at this point",
+		b.pathEvidence(point, obj),
+		"no canonical branch or product proof made the receiver definitely present",
+	})
+}
+
+func (b Builder) ExplainIndexFailure(expr *ast.AttrGetExpr, point cfg.Point, objType, keyType typ.Type) string {
+	var g ExplanationGraph
+	receiver := g.AddNode(ExplanationNode{Kind: NodeSourceExpression, Label: "indexed receiver"})
+	fact := g.AddNode(ValueFactNode(product.FromType(objType), "receiver type "+formatType(objType)))
+	missing := g.AddNode(ExplanationNode{Kind: NodeMissingProof, Label: "runtime index proof"})
+	g.AddEdge(receiver, fact, EdgeDerivedByTransferRule)
+	g.AddEdge(fact, missing, EdgeRejectedBecauseUnproved)
+
+	var obj ast.Expr
+	if expr != nil {
+		obj = expr.Object
+	}
+	lines := []string{
+		"receiver was observed as " + formatType(objType),
+		"index key was observed as " + formatType(keyType),
+		b.pathEvidence(point, obj),
+		"no canonical indexed-read proof or runtime index projection proved a readable value",
+	}
+	return b.render(g, point, obj, lines)
+}
+
+func (b Builder) render(g ExplanationGraph, point cfg.Point, expr ast.Expr, lines []string) string {
+	if point != 0 {
+		p := g.AddNode(PointNode(point, "diagnostic point "+intString(int(point))))
+		if len(g.nodes) > 0 {
+			g.AddEdge(p, g.nodes[0].ID, EdgeJoinedFromPredecessor)
+		}
+	}
+	if expr != nil && expr.Line() > 0 {
+		lines = append([]string{"at line " + intString(expr.Line()) + ", column " + intString(expr.Column())}, lines...)
+	}
+	return renderLines(lines)
+}
+
+func (b Builder) pathEvidence(point cfg.Point, expr ast.Expr) string {
+	path := b.observer.PathOfExpr(expr, point)
+	if path.IsEmpty() || path.Symbol == 0 {
+		return "the expression has no normalized path-backed provenance route"
+	}
+	routes := b.observer.ProvenanceRoutesAt(point, path)
+	if len(routes) == 0 {
+		if appendRoutes := b.appendElementFieldRoutes(point, path); len(appendRoutes) > 0 {
+			return "append-element provenance route: " + describeRoute(appendRoutes[0], path)
+		}
+		pv := b.observer.ProductValueAtPath(point, path)
+		if pv.State == flow.StateResolved && !pv.Value.IsZero() {
+			return "canonical point state has product evidence for " + path.String()
+		}
+		return "no provenance route was recorded for " + path.String()
+	}
+	return "provenance route: " + describeRoute(routes[0], path)
+}
+
+func (b Builder) appendElementFieldRoutes(point cfg.Point, path constraint.Path) []flow.ProvenanceRoute {
+	if len(path.Segments) == 0 {
+		return nil
+	}
+	array := path
+	array.Segments = append([]constraint.Segment(nil), path.Segments[:len(path.Segments)-1]...)
+	field := append([]constraint.Segment(nil), path.Segments[len(path.Segments)-1:]...)
+	return b.observer.AppendElementFieldSourceRoutesAt(point, flow.AppendElementFieldRouteQuery{
+		ArrayPath: array,
+		Field:     field,
+	})
+}
+
+func describeRoute(route flow.ProvenanceRoute, target constraint.Path) string {
+	source := route.Source.String()
+	if source == "" {
+		source = "unknown source"
+	}
+	switch route.Kind {
+	case flow.ProvenanceRouteIdentityAlias:
+		return target.String() + " aliases " + source
+	case flow.ProvenanceRouteIndexedIterator:
+		return target.String() + " comes from indexed iterator source " + source
+	case flow.ProvenanceRouteKeyedIterator:
+		return target.String() + " comes from keyed iterator source " + source
+	case flow.ProvenanceRouteAppendElementField:
+		return target.String() + " comes from appended element source " + source
+	default:
+		return target.String() + " comes from " + source
+	}
+}
+
+func renderLines(lines []string) string {
+	var out []string
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		out = append(out, line)
+	}
+	return strings.Join(out, "\n")
+}
+
+func formatType(t typ.Type) string {
+	if t == nil {
+		return "unknown"
+	}
+	return typ.FormatShort(t)
+}
+
+func intString(n int) string {
+	if n == 0 {
+		return "0"
+	}
+	const digits = "0123456789"
+	neg := n < 0
+	if neg {
+		n = -n
+	}
+	var buf [20]byte
+	i := len(buf)
+	for n > 0 {
+		i--
+		buf[i] = digits[n%10]
+		n /= 10
+	}
+	if neg {
+		i--
+		buf[i] = '-'
+	}
+	return string(buf[i:])
+}
