@@ -300,47 +300,54 @@ func mergeEntryValuesWithFixed(fixed, fallback EntryValues) EntryValues {
 	return entryValuesDomain.Join(out, nil)
 }
 
-// directCallEntryProductValuesWithParamCount projects already-solved runtime
-// argument product values, including exact nil for omitted fixed parameters when
-// supplied with a finite callee parameter layout.
-func directCallEntryProductValuesWithParamCount(
-	call *ast.FuncCallExpr,
-	callee FuncRef,
-	runtimeValues []product.AbstractValue,
-	slotOf EntryValueParamSlot,
-	slotCount EntryValueParamSlotCount,
-) EntryValues {
-	if call == nil || slotOf == nil {
+type directCallEntryProductValueInput struct {
+	Call           *ast.FuncCallExpr
+	Callee         FuncRef
+	RuntimeValues  []product.AbstractValue
+	ParamSlot      EntryValueParamSlot
+	ParamSlotCount EntryValueParamSlotCount
+	ParamAnnotated EntryValueParamAnnotated
+}
+
+// directCallEntryProductValues projects already-solved runtime argument product
+// values, including exact nil for omitted fixed parameters when supplied with a
+// finite callee parameter layout.
+func directCallEntryProductValues(in directCallEntryProductValueInput) EntryValues {
+	if in.Call == nil || in.ParamSlot == nil {
 		return nil
 	}
 	var out EntryValues
-	for runtimeIdx, av := range runtimeValues {
+	for runtimeIdx, av := range in.RuntimeValues {
 		if av.IsZero() || product.Domain.Equal(av, product.Domain.Top()) {
 			continue
 		}
-		slot, ok := entryRuntimeSlot(callee, call, runtimeIdx, slotOf)
+		sourceParam, slot, ok := in.ParamSlot(in.Callee, in.Call, runtimeIdx)
 		if !ok {
+			continue
+		}
+		if in.ParamAnnotated != nil && in.ParamAnnotated(in.Callee, sourceParam) {
 			continue
 		}
 		out = joinObservedEntryValue(out, slot, av)
 	}
-	out = joinOmittedFixedArgNil(out, len(runtimeValues), callee, call, slotOf, slotCount)
+	out = joinOmittedFixedArgNil(out, in)
 	if len(out) == 0 {
 		return nil
 	}
 	return out
 }
 
-func joinOmittedFixedArgNil(out EntryValues, supplied int, callee FuncRef, call *ast.FuncCallExpr, slotOf EntryValueParamSlot, slotCount EntryValueParamSlotCount) EntryValues {
-	if slotOf == nil || slotCount == nil || supplied < 0 {
+func joinOmittedFixedArgNil(out EntryValues, in directCallEntryProductValueInput) EntryValues {
+	supplied := len(in.RuntimeValues)
+	if in.ParamSlot == nil || in.ParamSlotCount == nil || supplied < 0 {
 		return out
 	}
-	limit := slotCount(callee, call)
+	limit := in.ParamSlotCount(in.Callee, in.Call)
 	if limit <= supplied {
 		return out
 	}
 	seenSlots := make(map[int]struct{}, supplied)
-	for _, arg := range entryRuntimeArgs(callee, call, slotOf) {
+	for _, arg := range entryRuntimeArgs(in.Callee, in.Call, in.ParamSlot) {
 		if arg.RuntimeIdx >= supplied {
 			continue
 		}
@@ -350,11 +357,14 @@ func joinOmittedFixedArgNil(out EntryValues, supplied int, callee FuncRef, call 
 	}
 	nilValue := product.FromType(typ.Nil)
 	for runtimeIdx := supplied; runtimeIdx < limit; runtimeIdx++ {
-		slot, ok := entryRuntimeSlot(callee, call, runtimeIdx, slotOf)
+		sourceParam, slot, ok := in.ParamSlot(in.Callee, in.Call, runtimeIdx)
 		if !ok {
 			continue
 		}
 		if slot < 0 {
+			continue
+		}
+		if in.ParamAnnotated != nil && in.ParamAnnotated(in.Callee, sourceParam) {
 			continue
 		}
 		if _, seen := seenSlots[slot]; seen {
@@ -396,8 +406,9 @@ type DirectEntryEvidenceInput struct {
 	State         *flow.PointState
 	RuntimeValues []product.AbstractValue
 
-	References flow.ReferenceContext
-	ArgSources EntryReferenceArgSources
+	ParamAnnotated EntryValueParamAnnotated
+	References     flow.ReferenceContext
+	ArgSources     EntryReferenceArgSources
 
 	KeyPresence   flow.KeyPresenceFacts
 	StaticMembers flow.StaticMemberFacts
@@ -417,13 +428,14 @@ type DirectEntryEvidence struct {
 // rebuilding value, reference, and fact routes from the same call arguments.
 func (p CallEntryContextProjection) DirectEvidence(in DirectEntryEvidenceInput) DirectEntryEvidence {
 	return DirectEntryEvidence{
-		Values: directCallEntryProductValuesWithParamCount(
-			in.Call,
-			in.Callee,
-			in.RuntimeValues,
-			p.ParamSlot,
-			p.ParamSlotCount,
-		),
+		Values: directCallEntryProductValues(directCallEntryProductValueInput{
+			Call:           in.Call,
+			Callee:         in.Callee,
+			RuntimeValues:  in.RuntimeValues,
+			ParamSlot:      p.ParamSlot,
+			ParamSlotCount: p.ParamSlotCount,
+			ParamAnnotated: in.ParamAnnotated,
+		}),
 		References: directCallEntryReferences(directCallEntryReferenceInput{
 			Call:                in.Call,
 			Callee:              in.Callee,
@@ -450,7 +462,7 @@ func (p CallEntryContextProjection) DirectEvidence(in DirectEntryEvidenceInput) 
 	}
 }
 
-func (p CallEntryContextProjection) directEvidenceFromPoint(callee FuncRef, call *ast.FuncCallExpr, in *flow.PointState) DirectEntryEvidence {
+func (p CallEntryContextProjection) directEvidenceFromPoint(callee FuncRef, call *ast.FuncCallExpr, in *flow.PointState, annotated EntryValueParamAnnotated) DirectEntryEvidence {
 	if in == nil {
 		return DirectEntryEvidence{
 			References: flow.ReferenceContextBottom(),
@@ -458,16 +470,17 @@ func (p CallEntryContextProjection) directEvidenceFromPoint(callee FuncRef, call
 		}
 	}
 	return p.DirectEvidence(DirectEntryEvidenceInput{
-		Callee:        callee,
-		Call:          call,
-		State:         in,
-		RuntimeValues: p.runtimeArgValues(call, in),
-		References:    flow.ReferenceContextFromPoint(in),
-		ArgSources:    p.ReferenceArgSources,
-		KeyPresence:   in.KeyPresence,
-		StaticMembers: in.StaticMembers,
-		Num:           in.Num,
-		IndexWrites:   in.IndexWrites,
+		Callee:         callee,
+		Call:           call,
+		State:          in,
+		RuntimeValues:  p.runtimeArgValues(call, in),
+		ParamAnnotated: annotated,
+		References:     flow.ReferenceContextFromPoint(in),
+		ArgSources:     p.ReferenceArgSources,
+		KeyPresence:    in.KeyPresence,
+		StaticMembers:  in.StaticMembers,
+		Num:            in.Num,
+		IndexWrites:    in.IndexWrites,
 	})
 }
 
@@ -504,7 +517,7 @@ func (p CallEntryContextProjection) ProjectKeys() []Key {
 			return
 		}
 		for _, target := range site.targets(p.ResolveTargets) {
-			evidence := p.directEvidenceFromPoint(target.Ref, site.Call, &site.ArgState)
+			evidence := p.directEvidenceFromPoint(target.Ref, site.Call, &site.ArgState, nil)
 			values := evidence.Values
 			if p.NormalizeValues != nil {
 				values = p.NormalizeValues(target.Ref, site.Call, values)
@@ -687,8 +700,11 @@ func (p CallEntryPublicationProjection) Project() CallEntryPublications {
 			return
 		}
 		for _, target := range site.targets(p.ResolveTargets) {
-			out = p.projectTargetEntryValues(out, site, target.Ref)
-			evidence := evidenceProjection.directEvidenceFromPoint(target.Ref, site.Call, &site.ArgState)
+			// Publication is aggregate entry evidence. Fixed source annotations
+			// remain fixed at their declaration site; exact call-entry contexts
+			// still retain the full DirectEvidence payload.
+			evidence := evidenceProjection.directEvidenceFromPoint(target.Ref, site.Call, &site.ArgState, p.ParamAnnotated)
+			out = joinCallEntryPublicationValues(out, target.Ref, evidence.Values)
 			facts := flow.MergeBoundaryFactProofs(target.EntryFacts, evidence.Facts)
 			out = joinCallEntryPublicationFacts(out, blockedFacts, target.Ref, facts)
 		}
@@ -697,16 +713,9 @@ func (p CallEntryPublicationProjection) Project() CallEntryPublications {
 	return out
 }
 
-func (p CallEntryPublicationProjection) projectTargetEntryValues(out CallEntryPublications, site callEntrySite, ref FuncRef) CallEntryPublications {
-	for _, arg := range entryRuntimeArgs(ref, site.Call, p.ParamSlot) {
-		if arg.Expr == nil || (p.ParamAnnotated != nil && p.ParamAnnotated(ref, arg.SourceParam)) {
-			continue
-		}
-		av, ok := p.EvalArg(&site.ArgState, arg.Expr)
-		if !ok {
-			continue
-		}
-		out = joinCallEntryPublicationValue(out, ref, arg.Slot, av)
+func joinCallEntryPublicationValues(out CallEntryPublications, ref FuncRef, values EntryValues) CallEntryPublications {
+	for slot, av := range values {
+		out = joinCallEntryPublicationValue(out, ref, slot, av)
 	}
 	return out
 }

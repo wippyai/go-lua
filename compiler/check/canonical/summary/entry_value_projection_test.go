@@ -807,6 +807,60 @@ func TestCallEntryPublicationProjection_UsesResolvedTargetsForRefAndDedupesSlots
 	}
 }
 
+func TestCallEntryPublicationProjection_FiltersAnnotatedParamBeforeSlotJoin(t *testing.T) {
+	arg0 := &ast.IdentExpr{Value: "arg0"}
+	arg1 := &ast.IdentExpr{Value: "arg1"}
+	call := &ast.FuncCallExpr{
+		Func: &ast.IdentExpr{Value: "callee"},
+		Args: []ast.Expr{arg0, arg1},
+	}
+	fn := &ast.FunctionExpr{Stmts: []ast.Stmt{&ast.FuncCallStmt{Expr: call}}}
+	graph := cfg.Build(fn, "caller")
+	var point cfg.Point
+	graph.EachCallSite(func(p cfg.Point, _ *cfg.CallInfo) {
+		point = p
+	})
+	if point == 0 {
+		t.Fatal("test graph did not expose a call site")
+	}
+
+	callee := summary.FuncRef{GraphID: 31}
+	got := summary.CallEntryPublicationProjection{
+		Graph: graph,
+		State: state.FunctionState{
+			Points: map[cfg.Point]flow.PointState{
+				point: {},
+			},
+		},
+		ResolveTargets: func(_ *ast.FuncCallExpr, _ *flow.PointState) []summary.CallEntryTarget {
+			return []summary.CallEntryTarget{{Ref: callee}}
+		},
+		ParamSlot: func(_ summary.FuncRef, _ *ast.FuncCallExpr, runtimeIdx int) (int, int, bool) {
+			return runtimeIdx, 0, true
+		},
+		ParamAnnotated: func(_ summary.FuncRef, sourceParam int) bool {
+			return sourceParam == 1
+		},
+		EvalArg: func(_ *flow.PointState, expr ast.Expr) (product.AbstractValue, bool) {
+			switch expr {
+			case arg0:
+				return product.FromType(typ.String), true
+			case arg1:
+				return product.FromType(typ.Number), true
+			default:
+				return product.AbstractValue{}, false
+			}
+		},
+	}.Project()
+
+	if len(got) != 1 {
+		t.Fatalf("projected call-entry publication = %#v, want one callee", got)
+	}
+	if value, ok := got[callee].Values[0]; !ok || !product.Equal(value, product.FromType(typ.String)) {
+		t.Fatalf("slot 0 = %#v/%v, want only unannotated string evidence", value, ok)
+	}
+}
+
 func TestCallEntryPublicationProjection_PublishesValuesAndFactsTogether(t *testing.T) {
 	arg := &ast.IdentExpr{Value: "payload"}
 	call := &ast.FuncCallExpr{
