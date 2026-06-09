@@ -1,5 +1,5 @@
-// Package summary evaluates the interprocedural summary cells of the canonical
-// type-flow engine: DAG component 10.
+// Package summary evaluates the only interprocedural semantic authority of the
+// canonical type-flow engine: DAG component 10.
 //
 // The design target is one product equation system, not separate inner and outer
 // semantic fixed points. The equation.Builder evaluates the point/demand cell
@@ -8,8 +8,9 @@
 // therefore a db query cycle over the same summary equations, seeded with bottom
 // and accelerated by Summary widening. Diagnostic Intra reads re-run the local
 // Kildall solve exactly over the converged Summary dependencies; that observer is
-// not a separate memoized fixed point. Termination is by domain widening plus the
-// bottom seed, never a recursion cap or driver pass count.
+// not a separate memoized fixed point and cannot publish caller-visible facts.
+// Termination is by domain widening plus the bottom seed, never a recursion cap
+// or driver pass count.
 //
 // Per the locked design (journal #353 / Codex C4), a summary cell must observe
 // point/demand changes in the SAME db revision. The db dependency stamp is

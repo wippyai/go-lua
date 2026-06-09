@@ -15,7 +15,8 @@ import (
 
 // Builder renders diagnostic-only explanations from frozen canonical
 // observation surfaces. It records why an existing diagnostic was emitted; it
-// never asks the solver for new summaries or creates substitute facts.
+// never asks the solver for new summaries, replays boundary facts, or creates
+// substitute facts.
 type Builder struct {
 	observer observation.Projector
 }

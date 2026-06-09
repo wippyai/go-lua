@@ -189,6 +189,20 @@ func TestBoundaryFactsJoinKeepsAppendFieldOriginWhenBaseSurvives(t *testing.T) {
 	}
 }
 
+func TestBoundaryFactsJoinDropsProofMissingFromOneBranch(t *testing.T) {
+	table := BoundaryPath{Kind: BoundaryPathParam, Index: 0}
+	key := BoundaryPath{Kind: BoundaryPathParam, Index: 1}
+	fact := BoundaryKeyPresenceFact{Table: table, Key: key}
+	proved := BoundaryFactsFromParts(BoundaryFactParts{
+		KeyPresence: []BoundaryKeyPresenceFact{fact},
+	})
+
+	got := BoundaryFactsDomain.Join(proved, BoundaryFactsDomain.Top())
+	if proofs := got.KeyPresence(); len(proofs) != 0 {
+		t.Fatalf("boundary must-fact join kept branch-local key proof: %#v", proofs)
+	}
+}
+
 func TestBoundaryFactsIdentityHashTracksCanonicalLanes(t *testing.T) {
 	target := BoundaryPath{Kind: BoundaryPathParam, Index: 0}
 	relA := BoundaryLengthRelationFact{

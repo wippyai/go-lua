@@ -140,3 +140,47 @@ func TestCanonicalObservationDoesNotUseLiveSummaryAuthority(t *testing.T) {
 		}
 	}
 }
+
+func TestCanonicalDiagnosticsDoNotUseSemanticAuthority(t *testing.T) {
+	_, file, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("runtime.Caller failed")
+	}
+	root := filepath.Join(filepath.Dir(file), "diagnostic")
+	banned := []string{
+		"summary.Summary",
+		"summary.Reader",
+		"Summarize(",
+		"SummarizeWithKey(",
+		"ObserveIntra",
+		"BoundaryFacts",
+		"ApplyBoundaryFacts",
+		"PointState",
+	}
+
+	err := filepath.WalkDir(root, func(path string, entry fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if entry.IsDir() {
+			return nil
+		}
+		if filepath.Ext(path) != ".go" || strings.HasSuffix(path, "_test.go") {
+			return nil
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		text := string(data)
+		for _, token := range banned {
+			if strings.Contains(text, token) {
+				t.Errorf("%s uses semantic-authority token %q", path, token)
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("walk diagnostic sources: %v", err)
+	}
+}

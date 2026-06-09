@@ -9,7 +9,8 @@ import (
 // ExplanationGraph is a diagnostic-only provenance graph. It may describe which
 // canonical facts were observed and why an explanation chose a message, but it
 // deliberately carries no Summary value and has no mutation path back into the
-// canonical solver.
+// canonical solver. Stronger precision belongs in the canonical semantic
+// carriers first; diagnostics only explain the frozen result.
 type ExplanationGraph struct {
 	nodes []ExplanationNode
 	edges []ExplanationEdge

@@ -154,6 +154,10 @@ type BoundaryStaticMemberFact struct {
 // BoundaryFacts is the finite caller-visible postcondition component for facts
 // that already exist point-locally but must cross a function boundary. It is a
 // must-fact lattice: join keeps only facts proved by every normal return path.
+// Projection creates boundary-relative facts from PointState; call transfer
+// replays them by rebasing boundary roots onto concrete caller places. This
+// carrier does not infer product shape, repair diagnostics, or own mutation
+// footprints.
 type BoundaryFacts struct {
 	bottom              bool
 	keyPresence         []BoundaryKeyPresenceFact
@@ -595,7 +599,9 @@ func RebaseBoundaryReturnFactsToParam(facts BoundaryFacts, returnIndex, paramSlo
 	})
 }
 
-// BoundaryFactsDomain is the lattice over boundary postconditions.
+// BoundaryFactsDomain is the lattice over boundary postconditions. Its Join is
+// conjunction over possible returns/targets: a fact missing from one branch is
+// not caller-visible proof.
 var BoundaryFactsDomain = lattice.Lattice[BoundaryFacts]{
 	Bottom: func() BoundaryFacts { return BoundaryFacts{bottom: true} },
 	Top:    func() BoundaryFacts { return BoundaryFacts{} },
