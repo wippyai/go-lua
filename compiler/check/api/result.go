@@ -58,7 +58,7 @@ type FuncResult struct {
 	CallExpectedArgs []CallExpectedArgEvidence
 
 	// CallContracts stores solved call-edge argument obligations, index-aligned with
-	// Evidence.Calls. These are fixed-point projections (for example callee
+	// Evidence.Calls. These are Summary-derived projections (for example callee
 	// Summary.Params), not extraction evidence; keeping them separate preserves the
 	// immutable FlowEvidence carrier.
 	CallContracts []CallContractEvidence

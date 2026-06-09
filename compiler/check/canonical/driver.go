@@ -95,7 +95,7 @@ type Config struct {
 	EmitScopeDiag bool
 
 	// ArtifactProjections are external post-solve public artifact producers over
-	// canonical graph/scopes projection. They do not participate in the fixed point.
+	// canonical graph/scopes projection. They are not solver inputs.
 	ArtifactProjections []api.ArtifactProjection
 }
 

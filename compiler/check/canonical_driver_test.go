@@ -155,25 +155,25 @@ end
 	t.Fatalf("outerAssert Postconditions = %v, want truthy narrow on parameter 0", sum.Postconditions.Condition())
 }
 
-// TestCanonicalDriver_BridgePopulatesSessionResults verifies the diagnostic bridge:
+// TestCanonicalDriver_ProjectsSessionResults verifies the diagnostic result projection:
 // after Run, every module function has an api.FuncResult in the session keyed by
-// its *ast.FunctionExpr, carrying the bridged sound inputs (the CFG), so
+// its *ast.FunctionExpr, carrying the projected sound inputs (the CFG), so
 // Checker.runPasses can range over the same result map. It also confirms the
 // computed return facts are exposed.
-func TestCanonicalDriver_BridgePopulatesSessionResults(t *testing.T) {
+func TestCanonicalDriver_ProjectsSessionResults(t *testing.T) {
 	const src = `
 local function pick(): number
 	return 7
 end
 return pick()
 `
-	chunk, err := parse.ParseString(src, "bridge.lua")
+	chunk, err := parse.ParseString(src, "projection.lua")
 	if err != nil {
 		t.Fatalf("parse failed: %v", err)
 	}
 
 	ctx := db.NewQueryContext(db.New())
-	sess := check.New(ctx, "bridge.lua")
+	sess := check.New(ctx, "projection.lua")
 
 	driver := canonical.NewDriver(canonical.Config{})
 	driver.Run(sess, chunk)
@@ -183,7 +183,7 @@ return pick()
 		t.Fatalf("expected module body + pick; got %d functions", len(refs))
 	}
 
-	// Every analyzed function is bridged into the session results under its own
+	// Every analyzed function is projected into the session results under its own
 	// function node, with the CFG populated (the sound input the passes read).
 	for _, ref := range refs {
 		fn, ok := sessionFuncByRef(sess, ref)
@@ -192,16 +192,16 @@ return pick()
 		}
 		result, ok := sess.Results[fn]
 		if !ok || result == nil {
-			t.Fatalf("ref %v not bridged into session results", ref)
+			t.Fatalf("ref %v not projected into session results", ref)
 		}
 		if result.Graph == nil {
-			t.Fatalf("ref %v bridged result has no graph", ref)
+			t.Fatalf("ref %v projected result has no graph", ref)
 		}
 	}
 
 	// The root chunk's result is also reachable as the session root result.
 	if sess.RootResult == nil {
-		t.Fatal("bridge did not set the session root result")
+		t.Fatal("session projection did not set the root result")
 	}
 
 	// pick returns a single number; the computed return fact is exposed for the

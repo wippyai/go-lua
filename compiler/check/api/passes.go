@@ -8,8 +8,8 @@ import (
 // ArtifactProjection projects post-solve public artifacts into FuncResult.Extras.
 //
 // It runs after canonical convergence while the public FuncResult read model is
-// being built. It must not participate in the fixed point or publish semantic
-// facts; analyses that need convergence must live in canonical transfer/summary
+// being built. It must not feed the canonical solve or publish semantic facts;
+// analyses that need convergence must live in canonical transfer/summary
 // carriers instead.
 type ArtifactProjection interface {
 	Name() string

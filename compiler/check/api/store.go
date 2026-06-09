@@ -12,7 +12,6 @@
 //	FunctionRefs    - Symbol/function bidirectional lookup
 //	StoreReader     - Read-only combination of above
 //	CanonicalStore  - Canonical-owned metadata plus final fact projection
-//	NestedStore     - StoreReader required by nested metadata consumers
 package api
 
 import (
@@ -116,10 +115,4 @@ type CanonicalStore interface {
 	SetParentScope(parentHash uint64, parent *scope.State)
 	SetGraphParentHash(graphID, parentHash uint64)
 	ParentGraphKeyForSymbol(sym cfg.SymbolID) (GraphKey, bool)
-}
-
-// NestedStore is the read-only store interface required by nested metadata
-// consumers.
-type NestedStore interface {
-	StoreReader
 }

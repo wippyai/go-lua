@@ -186,7 +186,7 @@ func informativeIteratorLocal(t typ.Type) bool {
 
 // ContractTypes projects the solved Contracts carrier to caller-visible concrete
 // types keyed by parameter index. It is a projection boundary only: the abstract
-// interpreter keeps Contracts as product-domain values, while external bridges
+// interpreter keeps Contracts as product-domain values, while external consumers
 // that need concrete types read them through this function.
 func ContractTypes(contracts Contracts) map[int]typ.Type {
 	if len(contracts) == 0 {
