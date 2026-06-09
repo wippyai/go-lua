@@ -13,9 +13,6 @@ func ProjectionProductEqual(a, b ProjectionProduct) bool {
 	if !FunctionFactsEqual(a.FunctionFacts, b.FunctionFacts) {
 		return false
 	}
-	if !LiteralSigsEqual(a.LiteralSigs, b.LiteralSigs) {
-		return false
-	}
 	if !symbolTypeMapEqual(a.CapturedTypes, b.CapturedTypes) {
 		return false
 	}
@@ -74,20 +71,6 @@ func FunctionFactEqual(a, b api.FunctionFact) bool {
 	}
 	if !functionfact.EnvReturnsEqual(a.Export.EnvReturns, b.Export.EnvReturns) {
 		return false
-	}
-	return true
-}
-
-// LiteralSigsEqual checks if two literal signature maps are equal.
-func LiteralSigsEqual(a, b api.LiteralSigs) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	for fn, sig := range a {
-		other, ok := b[fn]
-		if !ok || !value.FactTypeEqual(sig, other) {
-			return false
-		}
 	}
 	return true
 }

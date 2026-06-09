@@ -1,23 +1,14 @@
 package interproc
 
 import (
-	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/api"
-	"github.com/wippyai/go-lua/compiler/check/scope"
-	"github.com/wippyai/go-lua/types/typ"
 )
 
 type factsWriteStore interface {
 	MergeFunctionFactProjection(key api.GraphKey, sym cfg.SymbolID, fact api.FunctionFact)
-	MergeLiteralSignatureProjection(key api.GraphKey, fn *ast.FunctionExpr, sig *typ.Function)
 	MergeCapturedFieldProjection(key api.GraphKey, nestedSym cfg.SymbolID, capturedSym cfg.SymbolID, fields api.FieldValues)
-	GraphKeyFor(graph *cfg.Graph, parent *scope.State) (api.GraphKey, bool)
 	ParentGraphKeyForSymbol(sym cfg.SymbolID) (api.GraphKey, bool)
-}
-
-type functionSymbolLookup interface {
-	SymbolForFunc(fn *ast.FunctionExpr) (cfg.SymbolID, bool)
 }
 
 type projectionFactWriter struct {
@@ -62,34 +53,4 @@ func (w projectionFactWriter) mergeParentCapturedFieldProjections(nestedSym cfg.
 		updated = true
 	}
 	return updated
-}
-
-func (w projectionFactWriter) writeLiteralSignatures(
-	graph *cfg.Graph,
-	parent *scope.State,
-	sigs api.LiteralSignatureLookup,
-) {
-	if w.store == nil || graph == nil || sigs == nil {
-		return
-	}
-	key, ok := w.store.GraphKeyFor(graph, parent)
-	if !ok {
-		return
-	}
-	for _, nested := range graph.NestedFunctions() {
-		fnExpr := nested.Func
-		sig := sigs.Lookup(fnExpr)
-		if fnExpr != nil && sig != nil && !w.isCanonicalFunction(fnExpr) {
-			w.store.MergeLiteralSignatureProjection(key, fnExpr, sig)
-		}
-	}
-}
-
-func (w projectionFactWriter) isCanonicalFunction(fn *ast.FunctionExpr) bool {
-	lookup, ok := w.store.(functionSymbolLookup)
-	if !ok || lookup == nil || fn == nil {
-		return false
-	}
-	sym, ok := lookup.SymbolForFunc(fn)
-	return ok && sym != 0
 }

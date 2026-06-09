@@ -34,7 +34,6 @@
 // is owned by compiler/check/domain/interproc:
 //
 //   - [FunctionFacts]: final/public per-function projection facts
-//   - [LiteralSigs]: Signatures for anonymous function literals
 //   - [CapturedTypes]: Flow-derived types for captured variables
 //   - [CapturedFieldAssigns]: Field assignments to captured variables
 //   - [ConstructorFields]: Instance fields collected from constructors

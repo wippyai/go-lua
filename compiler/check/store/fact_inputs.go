@@ -1,13 +1,11 @@
 package store
 
 import (
-	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/api"
 	"github.com/wippyai/go-lua/compiler/check/domain/functionfact"
 	"github.com/wippyai/go-lua/compiler/check/domain/interproc"
 	"github.com/wippyai/go-lua/types/db"
-	"github.com/wippyai/go-lua/types/domain/value"
 	"github.com/wippyai/go-lua/types/domain/value/product"
 	"github.com/wippyai/go-lua/types/typ"
 )
@@ -21,13 +19,11 @@ type factInputs struct {
 
 	functionFactMaps    *db.Input[api.GraphKey, api.FunctionFacts]
 	functionFacts       *db.Input[api.FunctionFactKey, api.FunctionFact]
-	literalSigs         *db.Input[api.LiteralSigKey, *typ.Function]
 	capturedTypes       *db.Input[api.CapturedTypeKey, product.AbstractValue]
 	capturedFields      *db.Input[api.GraphKey, api.CapturedFieldAssigns]
 	constructorFields   *db.Input[api.ConstructorFieldKey, api.FieldValues]
 	functionMapValues   map[api.GraphKey]api.FunctionFacts
 	functionFactValues  map[api.FunctionFactKey]api.FunctionFact
-	literalSigValues    map[api.LiteralSigKey]*typ.Function
 	capturedTypeValues  map[api.CapturedTypeKey]product.AbstractValue
 	capturedFieldValues map[api.GraphKey]api.CapturedFieldAssigns
 	constructorValues   map[api.ConstructorFieldKey]api.FieldValues
@@ -41,13 +37,11 @@ func newFactInputs(database *db.DB) *factInputs {
 		database:            database,
 		functionFactMaps:    db.NewInput[api.GraphKey, api.FunctionFacts](database),
 		functionFacts:       db.NewInput[api.FunctionFactKey, api.FunctionFact](database),
-		literalSigs:         db.NewInput[api.LiteralSigKey, *typ.Function](database),
 		capturedTypes:       db.NewInput[api.CapturedTypeKey, product.AbstractValue](database),
 		capturedFields:      db.NewInput[api.GraphKey, api.CapturedFieldAssigns](database),
 		constructorFields:   db.NewInput[api.ConstructorFieldKey, api.FieldValues](database),
 		functionMapValues:   make(map[api.GraphKey]api.FunctionFacts),
 		functionFactValues:  make(map[api.FunctionFactKey]api.FunctionFact),
-		literalSigValues:    make(map[api.LiteralSigKey]*typ.Function),
 		capturedTypeValues:  make(map[api.CapturedTypeKey]product.AbstractValue),
 		capturedFieldValues: make(map[api.GraphKey]api.CapturedFieldAssigns),
 		constructorValues:   make(map[api.ConstructorFieldKey]api.FieldValues),
@@ -65,9 +59,6 @@ func (in *factInputs) reset() {
 	for key := range in.functionFactValues {
 		in.functionFacts.SetInBatch(batch, key, api.FunctionFact{})
 	}
-	for key := range in.literalSigValues {
-		in.literalSigs.SetInBatch(batch, key, nil)
-	}
 	for key := range in.capturedTypeValues {
 		in.capturedTypes.SetInBatch(batch, key, product.AbstractValue{})
 	}
@@ -79,7 +70,6 @@ func (in *factInputs) reset() {
 	}
 	clear(in.functionMapValues)
 	clear(in.functionFactValues)
-	clear(in.literalSigValues)
 	clear(in.capturedTypeValues)
 	clear(in.capturedFieldValues)
 	clear(in.constructorValues)
@@ -105,17 +95,6 @@ func (in *factInputs) functionFactFor(ctx *db.QueryContext, key api.FunctionFact
 		return api.FunctionFact{}, false
 	}
 	return cloneFunctionFact(ff), true
-}
-
-func (in *factInputs) literalSigFor(ctx *db.QueryContext, key api.LiteralSigKey) (*typ.Function, bool) {
-	if in == nil || in.literalSigs == nil {
-		return nil, false
-	}
-	sig, ok := in.literalSigs.Get(ctx, key)
-	if !ok || sig == nil {
-		return nil, false
-	}
-	return sig, true
 }
 
 func (in *factInputs) capturedTypeFor(ctx *db.QueryContext, key api.CapturedTypeKey) (typ.Type, bool) {
@@ -154,7 +133,6 @@ func (in *factInputs) constructorFieldsFor(ctx *db.QueryContext, key api.Constru
 func (in *factInputs) setPostflowProjectionProduct(batch *db.InputBatch, key api.GraphKey, facts interproc.ProjectionProduct) {
 	in.setProjectedFunctionFactMap(batch, key, facts.FunctionFacts)
 	in.setProjectedFunctionFacts(batch, key, facts.FunctionFacts)
-	in.setProjectedLiteralSigs(batch, key, facts.LiteralSigs)
 	in.setProjectedCapturedTypes(batch, key, facts.CapturedTypes)
 	in.setProjectedCapturedFields(batch, key, facts.CapturedFields)
 	in.setProjectedConstructorFields(batch, key, facts.ConstructorFields)
@@ -201,29 +179,6 @@ func (in *factInputs) setProjectedFunctionFacts(batch *db.InputBatch, key api.Gr
 		}
 		delete(in.functionFactValues, inputKey)
 		in.functionFacts.SetInBatch(batch, inputKey, api.FunctionFact{})
-	}
-}
-
-func (in *factInputs) setProjectedLiteralSigs(batch *db.InputBatch, key api.GraphKey, sigs api.LiteralSigs) {
-	if in == nil || in.literalSigs == nil {
-		return
-	}
-	seen := make(map[api.LiteralSigKey]bool, len(sigs))
-	for fn, sig := range sigs {
-		inputKey := api.LiteralSigKey{GraphKey: key, Func: fn}
-		seen[inputKey] = true
-		if prev, ok := in.literalSigValues[inputKey]; ok && value.FactTypeEqual(prev, sig) {
-			continue
-		}
-		in.literalSigValues[inputKey] = sig
-		in.literalSigs.SetInBatch(batch, inputKey, sig)
-	}
-	for inputKey := range in.literalSigValues {
-		if inputKey.GraphKey != key || seen[inputKey] {
-			continue
-		}
-		delete(in.literalSigValues, inputKey)
-		in.literalSigs.SetInBatch(batch, inputKey, nil)
 	}
 }
 
@@ -353,23 +308,6 @@ func (s *SessionStore) visibleFunctionFacts(key api.GraphKey) api.FunctionFacts 
 	return cloneFunctionFacts(interproc.OverlayProjectionProduct(prev, next).FunctionFacts)
 }
 
-func (s *SessionStore) visibleLiteralSig(key api.GraphKey, fn *ast.FunctionExpr) (*typ.Function, bool) {
-	if s == nil || fn == nil {
-		return nil, false
-	}
-	if s.postflowNext != nil {
-		if sig := s.postflowNext.facts[key].LiteralSigs[fn]; sig != nil {
-			return sig, true
-		}
-	}
-	if s.postflowPrev != nil {
-		if sig := s.postflowPrev.facts[key].LiteralSigs[fn]; sig != nil {
-			return sig, true
-		}
-	}
-	return nil, false
-}
-
 func (s *SessionStore) visibleCapturedType(key api.GraphKey, sym cfg.SymbolID) (typ.Type, bool) {
 	if s == nil || sym == 0 {
 		return nil, false
@@ -480,16 +418,6 @@ func (s *SessionStore) functionFactByKey(key api.FunctionFactKey) (api.FunctionF
 	return s.visibleFunctionFact(key.GraphKey, key.Symbol)
 }
 
-func (s *SessionStore) literalSigByKey(key api.LiteralSigKey) (*typ.Function, bool) {
-	if s == nil || key.Func == nil {
-		return nil, false
-	}
-	if s.factInputs != nil {
-		return s.factInputs.literalSigFor(s.factCtx, key)
-	}
-	return s.visibleLiteralSig(key.GraphKey, key.Func)
-}
-
 func (s *SessionStore) capturedTypeByKey(key api.CapturedTypeKey) (typ.Type, bool) {
 	if s == nil || key.Symbol == 0 {
 		return nil, false
@@ -564,7 +492,6 @@ func (s *SessionStore) visiblePostflowProjectionProduct(key api.GraphKey) interp
 		facts := s.postflowPrev.facts[key]
 		prev = interproc.ProjectionProduct{
 			FunctionFacts:     facts.FunctionFacts,
-			LiteralSigs:       facts.LiteralSigs,
 			CapturedTypes:     facts.CapturedTypes,
 			CapturedFields:    facts.CapturedFields,
 			ConstructorFields: facts.ConstructorFields,
@@ -575,7 +502,6 @@ func (s *SessionStore) visiblePostflowProjectionProduct(key api.GraphKey) interp
 		facts := s.postflowNext.facts[key]
 		next = interproc.ProjectionProduct{
 			FunctionFacts:     facts.FunctionFacts,
-			LiteralSigs:       facts.LiteralSigs,
 			CapturedTypes:     facts.CapturedTypes,
 			CapturedFields:    facts.CapturedFields,
 			ConstructorFields: facts.ConstructorFields,
@@ -594,9 +520,6 @@ func (s *SessionStore) syncFactInputs() {
 		factKeys[key] = struct{}{}
 	}
 	for key := range s.factInputs.functionFactValues {
-		factKeys[key.GraphKey] = struct{}{}
-	}
-	for key := range s.factInputs.literalSigValues {
 		factKeys[key.GraphKey] = struct{}{}
 	}
 	for key := range s.factInputs.capturedTypeValues {

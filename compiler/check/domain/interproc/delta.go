@@ -13,14 +13,6 @@ func FunctionFactProjectionDelta(facts api.FunctionFacts) ProjectionProduct {
 	return JoinProjectionProduct(ProjectionProduct{}, ProjectionProduct{FunctionFacts: facts})
 }
 
-// LiteralSignatureProjectionDelta returns a canonical product delta for literal signatures.
-func LiteralSignatureProjectionDelta(sigs api.LiteralSigs) ProjectionProduct {
-	if len(sigs) == 0 {
-		return ProjectionProduct{}
-	}
-	return JoinProjectionProduct(ProjectionProduct{}, ProjectionProduct{LiteralSigs: sigs})
-}
-
 // CapturedTypeProjectionDelta returns a canonical product delta for captured symbol types.
 func CapturedTypeProjectionDelta(types api.CapturedTypes) ProjectionProduct {
 	if len(types) == 0 {

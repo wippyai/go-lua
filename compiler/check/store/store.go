@@ -436,14 +436,6 @@ func (s *SessionStore) MergeFunctionFactProjection(key api.GraphKey, sym cfg.Sym
 	s.mergePostflowProjectionProductNext(key, interproc.FunctionFactProjectionDelta(api.FunctionFacts{sym: fact}))
 }
 
-// MergeLiteralSignatureProjection merges one function-literal signature row.
-func (s *SessionStore) MergeLiteralSignatureProjection(key api.GraphKey, fn *ast.FunctionExpr, sig *typ.Function) {
-	if fn == nil || sig == nil {
-		return
-	}
-	s.mergePostflowProjectionProductNext(key, interproc.LiteralSignatureProjectionDelta(api.LiteralSigs{fn: sig}))
-}
-
 // MergeCapturedTypeProjection merges one captured-symbol type row.
 func (s *SessionStore) MergeCapturedTypeProjection(key api.GraphKey, sym cfg.SymbolID, value product.AbstractValue) {
 	if sym == 0 || value.IsZero() {
@@ -718,19 +710,6 @@ func (s *SessionStore) SetModuleAliases(aliases map[cfg.SymbolID]string) {
 		return
 	}
 	s.Module.ModuleAliases = aliases
-}
-
-// LiteralSignatureProjection returns the visible function-literal signature
-// projection for a graph key.
-func (s *SessionStore) LiteralSignatureProjection(graph *cfg.Graph, parent *scope.State, fn *ast.FunctionExpr) (*typ.Function, bool) {
-	if s == nil || graph == nil || fn == nil {
-		return nil, false
-	}
-	key, ok := s.GraphKeyFor(graph, parent)
-	if !ok {
-		return nil, false
-	}
-	return s.literalSigByKey(api.LiteralSigKey{GraphKey: key, Func: fn})
 }
 
 // CapturedTypeProjection returns the visible captured-symbol type projection for

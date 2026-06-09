@@ -5,7 +5,6 @@ import (
 	"github.com/wippyai/go-lua/compiler/check/api"
 	"github.com/wippyai/go-lua/compiler/check/domain/functionfact"
 	"github.com/wippyai/go-lua/types/domain/value"
-	"github.com/wippyai/go-lua/types/subtype"
 	"github.com/wippyai/go-lua/types/typ"
 	"github.com/wippyai/go-lua/types/typ/unwrap"
 )
@@ -18,7 +17,6 @@ func WidenProjectionProduct(prev, next ProjectionProduct) ProjectionProduct {
 	}
 	widening := value.NewConvergenceWidening()
 	out := ProjectionProduct{
-		LiteralSigs:       widenLiteralSigsWith(widening, prev.LiteralSigs, next.LiteralSigs),
 		CapturedTypes:     widenCapturedTypesWith(widening, prev.CapturedTypes, next.CapturedTypes),
 		CapturedFields:    widenCapturedFieldAssignsWith(widening, prev.CapturedFields, next.CapturedFields),
 		ConstructorFields: widenConstructorFieldsWith(widening, prev.ConstructorFields, next.ConstructorFields),
@@ -46,9 +44,7 @@ func WidenProjectionProduct(prev, next ProjectionProduct) ProjectionProduct {
 // Unlike WidenProjectionProduct, this may keep directional refinements that are useful
 // inside one analysis round. Recursive fixpoint boundaries must use WidenProjectionProduct.
 func JoinProjectionProduct(prev, next ProjectionProduct) ProjectionProduct {
-	widening := value.NewConvergenceWidening()
 	out := ProjectionProduct{
-		LiteralSigs:       joinLiteralSigsWith(widening, prev.LiteralSigs, next.LiteralSigs),
 		CapturedTypes:     JoinCapturedTypes(prev.CapturedTypes, next.CapturedTypes),
 		CapturedFields:    JoinCapturedFieldAssigns(prev.CapturedFields, next.CapturedFields),
 		ConstructorFields: JoinConstructorFields(prev.ConstructorFields, next.ConstructorFields),
@@ -108,111 +104,6 @@ func joinInterprocValueType(existing, candidate typ.Type) typ.Type {
 		return functionfact.MergeType(existing, candidate)
 	}
 	return value.JoinPrecise(existing, candidate)
-}
-
-// WidenLiteralSigs merges two literal signature maps.
-func WidenLiteralSigs(prev, next api.LiteralSigs) api.LiteralSigs {
-	return widenLiteralSigsWith(value.NewConvergenceWidening(), prev, next)
-}
-
-func widenLiteralSigsWith(widening *value.ConvergenceWidening, prev, next api.LiteralSigs) api.LiteralSigs {
-	if prev == nil && next == nil {
-		return nil
-	}
-	if prev == nil {
-		return normalizeLiteralSigsWith(widening, next)
-	}
-	if next == nil {
-		return normalizeLiteralSigsWith(widening, prev)
-	}
-	merged := make(api.LiteralSigs, len(prev)+len(next))
-	for fn, sig := range prev {
-		merged[fn] = sig
-	}
-	for fn, sig := range next {
-		if existing := merged[fn]; existing != nil {
-			mergedSig := mergeLiteralSigForConvergence(existing, sig)
-			if typ.TypeEquals(existing, mergedSig) {
-				merged[fn] = existing
-			} else {
-				merged[fn] = widening.Function(mergedSig)
-			}
-		} else {
-			merged[fn] = widening.Function(sig)
-		}
-	}
-	return merged
-}
-
-func normalizeLiteralSigsWith(widening *value.ConvergenceWidening, sigs api.LiteralSigs) api.LiteralSigs {
-	if sigs == nil {
-		return nil
-	}
-	out := make(api.LiteralSigs, len(sigs))
-	for fn, sig := range sigs {
-		out[fn] = widening.Function(sig)
-	}
-	return out
-}
-
-func joinLiteralSigsWith(widening *value.ConvergenceWidening, prev, next api.LiteralSigs) api.LiteralSigs {
-	if prev == nil && next == nil {
-		return nil
-	}
-	if prev == nil {
-		return normalizeLiteralSigsWith(widening, next)
-	}
-	if next == nil {
-		return normalizeLiteralSigsWith(widening, prev)
-	}
-	merged := make(api.LiteralSigs, len(prev)+len(next))
-	for fn, sig := range prev {
-		merged[fn] = sig
-	}
-	for fn, sig := range next {
-		if existing := merged[fn]; existing != nil {
-			mergedSig := mergeLiteralSig(existing, sig)
-			if typ.TypeEquals(existing, mergedSig) {
-				merged[fn] = existing
-			} else {
-				merged[fn] = widening.Function(mergedSig)
-			}
-		} else {
-			merged[fn] = widening.Function(sig)
-		}
-	}
-	return merged
-}
-
-func mergeLiteralSig(prev, next *typ.Function) *typ.Function {
-	if prev == nil {
-		return next
-	}
-	if next == nil {
-		return prev
-	}
-	if merged, ok := functionfact.MergeReturnsForSameSignature(prev, next); ok {
-		if fn, ok := merged.(*typ.Function); ok {
-			return fn
-		}
-	}
-	if subtype.IsSubtype(prev, next) {
-		return next
-	}
-	if subtype.IsSubtype(next, prev) {
-		return prev
-	}
-	// Literal signatures are constrained to *typ.Function. For incomparable
-	// function shapes, keep the prior stable signature instead of narrowing.
-	return prev
-}
-
-func mergeLiteralSigForConvergence(prev, next *typ.Function) *typ.Function {
-	merged := functionfact.WidenTypeForConvergence(prev, next)
-	if fn := unwrap.Function(merged); fn != nil {
-		return fn
-	}
-	return mergeLiteralSig(prev, next)
 }
 
 // WidenCapturedTypes merges two captured type maps using monotone join.

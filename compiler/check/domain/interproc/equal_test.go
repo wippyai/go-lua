@@ -199,12 +199,6 @@ func TestSymbolTypeMapEqual_Same(t *testing.T) {
 	}
 }
 
-func TestLiteralSigsEqual_Empty(t *testing.T) {
-	if !LiteralSigsEqual(nil, nil) {
-		t.Error("nil literal sigs should be equal")
-	}
-}
-
 func TestCapturedTypesEqual_Empty(t *testing.T) {
 	if !symbolTypeMapEqual(nil, nil) {
 		t.Error("nil captured types should be equal")

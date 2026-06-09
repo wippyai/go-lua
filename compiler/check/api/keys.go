@@ -4,7 +4,6 @@ package api
 import (
 	"sort"
 
-	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/cfg"
 )
 
@@ -21,13 +20,6 @@ type GraphKey struct {
 type FunctionFactKey struct {
 	GraphKey GraphKey
 	Symbol   cfg.SymbolID
-}
-
-// LiteralSigKey identifies one function literal signature inside one graph
-// product.
-type LiteralSigKey struct {
-	GraphKey GraphKey
-	Func     *ast.FunctionExpr
 }
 
 // CapturedTypeKey identifies one captured symbol type inside one graph product.

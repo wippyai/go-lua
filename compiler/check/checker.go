@@ -11,8 +11,7 @@
 // Postflow/export projection paths use one explicit product:
 //
 //   - FunctionFacts: final/public parameter/return/narrow/signature projection
-//   - LiteralSigs: Synthesized signatures for function literals
-//   - Function refinements, captured writes, and constructor fields as product lanes
+//   - Captured types/writes and constructor fields as product lanes
 //
 // # DETERMINISTIC ORDERING
 //

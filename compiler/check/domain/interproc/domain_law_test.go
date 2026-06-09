@@ -3,7 +3,6 @@ package interproc
 import (
 	"testing"
 
-	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/api"
 	"github.com/wippyai/go-lua/compiler/check/domain/functionfact"
@@ -16,7 +15,6 @@ func TestFactsDomain_ProductOperatorsAreIdempotentAcrossAllDomains(t *testing.T)
 	fnSym := cfg.SymbolID(1)
 	capturedSym := cfg.SymbolID(2)
 	classSym := cfg.SymbolID(3)
-	lit := &ast.FunctionExpr{}
 	callback := typ.Func().Param("self", typ.Unknown).Returns(typ.Boolean).Build()
 	fn := typ.Func().Param("name", typ.String).Returns(typ.String).Build()
 	raw := ProjectionProduct{
@@ -26,9 +24,6 @@ func TestFactsDomain_ProductOperatorsAreIdempotentAcrossAllDomains(t *testing.T)
 				Returns: api.FunctionReturnProjection{Preflow: product.LiftVector([]typ.Type{typ.String}), Postflow: product.LiftVector([]typ.Type{typ.String})},
 				Public:  api.FunctionPublicProjection{Signature: fn},
 			},
-		},
-		LiteralSigs: api.LiteralSigs{
-			lit: typ.Func().Param("name", typ.String).Returns(typ.String).Build(),
 		},
 		CapturedTypes: api.CapturedTypes{
 			capturedSym: product.FromType(typ.NewRecord().Field("name", typ.String).Build()),
@@ -64,38 +59,6 @@ func TestFactsDomain_ProductOperatorsAreIdempotentAcrossAllDomains(t *testing.T)
 	}
 	if got := view.Type(fnSym, functionfact.ProjectionSibling, api.SynthModeDeclared); got == nil {
 		t.Fatalf("function type must come from FunctionFacts projection")
-	}
-}
-
-func TestFactsDomain_WidenIdempotentForLiteralUnknownVsConcreteReturn(t *testing.T) {
-	lit := &ast.FunctionExpr{}
-	prev := ProjectionProduct{
-		LiteralSigs: api.LiteralSigs{
-			lit: typ.Func().Param("name", typ.Unknown).Returns(typ.Unknown, typ.NewOptional(typ.String)).Build(),
-		},
-	}
-	next := ProjectionProduct{
-		LiteralSigs: api.LiteralSigs{
-			lit: typ.Func().Param("name", typ.Unknown).Returns(
-				typ.NewOptional(typ.NewRecord().
-					Field("id", typ.String).
-					Field("priority", typ.Integer).
-					SetOpen(true).
-					Build()),
-				typ.NewOptional(typ.String),
-			).Build(),
-		},
-	}
-
-	widened := WidenProjectionProduct(prev, next)
-	widenedAgain := WidenProjectionProduct(widened, next)
-	if !ProjectionProductEqual(widened, widenedAgain) {
-		t.Fatalf("Widen must be idempotent for literal signatures:\nfirst=%#v\nsecond=%#v", widened, widenedAgain)
-	}
-
-	got := widened.LiteralSigs[lit]
-	if got == nil || len(got.Returns) != 2 || !typ.TypeEquals(got.Returns[0], typ.Unknown) {
-		t.Fatalf("expected unresolved literal return to remain the stable upper bound, got %v", got)
 	}
 }
 

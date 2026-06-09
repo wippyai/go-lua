@@ -3,14 +3,11 @@ package interproc
 import (
 	"testing"
 
-	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/check/api"
 	"github.com/wippyai/go-lua/compiler/check/domain/functionfact"
 	"github.com/wippyai/go-lua/compiler/check/domain/returnsummary"
-	"github.com/wippyai/go-lua/types/domain/value"
 	"github.com/wippyai/go-lua/types/domain/value/product"
 	querycore "github.com/wippyai/go-lua/types/query/core"
-	"github.com/wippyai/go-lua/types/subtype"
 	"github.com/wippyai/go-lua/types/typ"
 )
 
@@ -344,72 +341,5 @@ func TestJoinCapturedFieldAssigns_UsesCanonicalRecursiveProductJoin(t *testing.T
 	proc := body.GetField("proc")
 	if proc == nil || !proc.Optional {
 		t.Fatalf("merged recursive body should retain optional proc field, got %v", body)
-	}
-}
-
-func TestWidenLiteralSigs_DoesNotNarrowComparableSignature(t *testing.T) {
-	lit := &ast.FunctionExpr{}
-
-	prev := api.LiteralSigs{
-		lit: typ.Func().Returns(typ.Number).Build(),
-	}
-	next := api.LiteralSigs{
-		lit: typ.Func().Returns(typ.Integer).Build(),
-	}
-
-	merged := WidenLiteralSigs(prev, next)
-	got := merged[lit]
-	if got == nil {
-		t.Fatal("expected merged literal signature")
-	}
-	if len(got.Returns) != 1 {
-		t.Fatalf("expected one return, got %d", len(got.Returns))
-	}
-	if !subtype.IsSubtype(prev[lit].Returns[0], got.Returns[0]) {
-		t.Fatalf("expected merged return to be supertype of prev (%v), got %v", prev[lit].Returns[0], got.Returns[0])
-	}
-	if !subtype.IsSubtype(next[lit].Returns[0], got.Returns[0]) {
-		t.Fatalf("expected merged return to be supertype of next (%v), got %v", next[lit].Returns[0], got.Returns[0])
-	}
-	if typ.TypeEquals(got.Returns[0], next[lit].Returns[0]) {
-		t.Fatalf("expected merged return not to regress to narrower next-only type %v", got.Returns[0])
-	}
-}
-
-func TestWidenLiteralSigs_PrefersMergedSameShapeSignature(t *testing.T) {
-	lit := &ast.FunctionExpr{}
-
-	prev := api.LiteralSigs{
-		lit: typ.Func().Returns(typ.String).Build(),
-	}
-	next := api.LiteralSigs{
-		lit: typ.Func().Returns(typ.Integer).Build(),
-	}
-
-	merged := WidenLiteralSigs(prev, next)
-	got := merged[lit]
-	if got == nil {
-		t.Fatal("expected merged literal signature")
-	}
-	if len(got.Returns) != 1 {
-		t.Fatalf("expected one return, got %d", len(got.Returns))
-	}
-	want := typ.NewUnion(typ.String, typ.Integer)
-	if !typ.TypeEquals(got.Returns[0], want) {
-		t.Fatalf("expected merged return %v, got %v", want, got.Returns[0])
-	}
-}
-
-func TestWidenLiteralSigs_NormalizesNilBranch(t *testing.T) {
-	lit := &ast.FunctionExpr{}
-	sig := typ.Func().
-		Returns(typ.NewUnion(typ.NewRecord().Build(), typ.String)).
-		Build()
-
-	merged := WidenLiteralSigs(nil, api.LiteralSigs{lit: sig})
-	got := merged[lit]
-	want := value.WidenFunctionForConvergence(sig)
-	if got == nil || !typ.TypeEquals(got, want) {
-		t.Fatalf("expected nil-branch literal signature %v to be normalized to %v, got %v", sig, want, got)
 	}
 }

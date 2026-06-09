@@ -10,7 +10,6 @@ import (
 // evidence.
 func ProjectionProductEmpty(f ProjectionProduct) bool {
 	return len(f.FunctionFacts) == 0 &&
-		len(f.LiteralSigs) == 0 &&
 		len(f.CapturedTypes) == 0 &&
 		len(f.CapturedFields) == 0 &&
 		len(f.ConstructorFields) == 0

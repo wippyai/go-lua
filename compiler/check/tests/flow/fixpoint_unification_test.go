@@ -80,9 +80,9 @@ local y: number = b(5)
 	}
 }
 
-// TestFixpointUnification_LiteralSignatureVisibility verifies that a function
-// literal's signature computed in one iteration becomes visible to dependent
-// functions in the next iteration via the double-buffered LiteralSigs channel.
+// TestFixpointUnification_LiteralSignatureVisibility verifies that function
+// literal signatures remain visible through the result/view pipeline without a
+// postflow projection lane.
 func TestFixpointUnification_LiteralSignatureVisibility(t *testing.T) {
 	source := `
 local tbl = {
@@ -104,8 +104,6 @@ local result: string = tbl:process(42)
 		t.Fatal("missing session or store")
 	}
 
-	// Verify literal signatures were produced.
-	// Literal signatures channel removed in canonical query architecture.
 }
 
 // TestFixpointUnification_ParameterEvidencePropagation verifies that parameter evidence

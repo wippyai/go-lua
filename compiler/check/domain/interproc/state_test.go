@@ -3,7 +3,6 @@ package interproc
 import (
 	"testing"
 
-	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/api"
 	"github.com/wippyai/go-lua/types/constraint"
@@ -116,31 +115,5 @@ func TestWidenProjectionProductMap_Merge(t *testing.T) {
 	result := WidenProjectionProductMap(prev, next)
 	if len(result) != 2 {
 		t.Fatalf("expected 2 entries, got %d", len(result))
-	}
-}
-
-func TestOverlayProjectionProduct_UsesConvergenceLawForVisibleProduct(t *testing.T) {
-	lit := &ast.FunctionExpr{}
-	prevReturn := typ.NewRecord().
-		Field("next", typ.Func().Returns(typ.Unknown).Build()).
-		Build()
-	nextReturn := typ.NewRecord().
-		Field("next", typ.Func().Returns(typ.String).Build()).
-		Build()
-	prev := ProjectionProduct{
-		LiteralSigs: api.LiteralSigs{
-			lit: typ.Func().Returns(prevReturn).Build(),
-		},
-	}
-	next := ProjectionProduct{
-		LiteralSigs: api.LiteralSigs{
-			lit: typ.Func().Returns(nextReturn).Build(),
-		},
-	}
-
-	got := OverlayProjectionProduct(prev, next)
-	want := WidenProjectionProduct(prev, next)
-	if !ProjectionProductEqual(got, want) {
-		t.Fatalf("visible overlay must use convergence product law:\ngot=%#v\nwant=%#v", got, want)
 	}
 }

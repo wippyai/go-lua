@@ -100,7 +100,6 @@ type StoreReader interface {
 // PostflowProjectionReader exposes typed reads from the noncanonical postflow
 // projection product. It is not a canonical Summary read surface.
 type PostflowProjectionReader interface {
-	LiteralSignatureProjection(graph *cfg.Graph, parent *scope.State, fn *ast.FunctionExpr) (*typ.Function, bool)
 	CapturedTypeProjection(graph *cfg.Graph, parent *scope.State, sym cfg.SymbolID) (typ.Type, bool)
 	CapturedFieldAssignsProjection(graph *cfg.Graph, parent *scope.State) CapturedFieldAssigns
 	ConstructorFieldsProjection(classSym cfg.SymbolID) (FieldValues, bool)
@@ -110,7 +109,6 @@ type PostflowProjectionReader interface {
 // lanes. The store owns lowering these lanes into the internal product lattice.
 type PostflowProjectionSink interface {
 	MergeFunctionFactProjection(key GraphKey, sym cfg.SymbolID, fact FunctionFact)
-	MergeLiteralSignatureProjection(key GraphKey, fn *ast.FunctionExpr, sig *typ.Function)
 	MergeCapturedTypeProjection(key GraphKey, sym cfg.SymbolID, value product.AbstractValue)
 	MergeCapturedFieldProjection(key GraphKey, nestedSym cfg.SymbolID, capturedSym cfg.SymbolID, fields FieldValues)
 	MergeConstructorFieldProjection(classSym cfg.SymbolID, fields FieldValues)

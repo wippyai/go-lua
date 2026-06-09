@@ -47,7 +47,6 @@ func StoreFactsFromResult(
 		return
 	}
 	writer := newPostflowProjectionWriter(store)
-	writer.writeLiteralSignatures(result.Graph, parent, result.LiteralSignatureLookup())
 
 	fnSym := cfg.SymbolID(0)
 	if fn != nil {
