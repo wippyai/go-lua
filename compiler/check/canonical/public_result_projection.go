@@ -66,9 +66,6 @@ func (p publicResultProjection) build() *api.FuncResult {
 		GlobalTypeBindings:       p.driver.globalTypes,
 		BaseScope:                p.driver.returnScope(p.graph),
 		Scopes:                   pointScopes,
-		FlowInputs:               buildObservationInputs(p.graph, facts),
-		Facts:                    flowProjection,
-		FlowProjection:           flowProjection,
 		ReturnRelations:          sum.Relations,
 		LiteralSignatures:        literalSignatures,
 		LiteralSignatureProvider: api.LiteralSignatureLookupFromMap(literalSignatures),
@@ -79,15 +76,20 @@ func (p publicResultProjection) build() *api.FuncResult {
 		Extras:                   p.driver.runComputePasses(p.graph, pointScopes),
 		DepthLimitExceeded:       p.driver.scopeDepthExceededFor(p.graph),
 	}
+	result.InstallAnalysisArtifacts(api.FuncAnalysisArtifacts{
+		TypeFacts:      flowProjection,
+		FlowInputs:     buildObservationInputs(p.graph, facts),
+		FlowProjection: flowProjection,
+	})
 	obs := observation.FromSolvedObservationState(result.ObservationState(), nil).WithProofValues()
 	result.ResolvedTypeDefs = p.resolvedTypeDefs(pointScopes, obs.TypeOf)
 	result.CallExpectedArgs = callEdges.ExpectedArgs
 	result.CallContracts = callEdges.Contracts
-	result.NarrowSynth = &returnSynth{
+	result.InstallSolvedSynth(&returnSynth{
 		driver: p.driver,
 		obs:    obs.TypeOf,
 		ctx:    result.QueryContext,
-	}
+	})
 	result.FnRefinement = sum.Postconditions.FunctionRefinement(p.program.facts.HasNoReturn(p.ref))
 	return result
 }

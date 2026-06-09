@@ -63,10 +63,12 @@ func TestEnvReturnConditionUsesConditionProofFactsWithoutConcreteSolver(t *testi
 	paramPath := constraint.Path{Root: "args", Symbol: params[0].Symbol}.Field("bad")
 	result := &api.FuncResult{
 		Graph: graph,
-		Facts: envReturnProofFacts{
+	}
+	result.InstallAnalysisArtifacts(api.FuncAnalysisArtifacts{
+		TypeFacts: envReturnProofFacts{
 			condition: constraint.FromConstraints(constraint.Truthy{Path: paramPath}),
 		},
-	}
+	})
 
 	got := envReturnCondition(result, graph.Entry())
 	want := constraint.FromConstraints(constraint.Truthy{Path: constraint.ParamPath(0).Field("bad")})

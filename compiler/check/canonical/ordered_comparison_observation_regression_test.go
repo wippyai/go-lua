@@ -34,12 +34,12 @@ end
 
 	for _, name := range []string{"s"} {
 		point, targetSym, source := assignmentSourceForTarget(t, fn.Graph, name)
-		if got := conditionTypeAt(t, fn.Facts, point, valuePath); !typ.TypeEquals(got, typ.String) {
-			cond := conditionAt(t, fn.Facts, point)
+		if got := conditionTypeAt(t, fn.TypeFacts(), point, valuePath); !typ.TypeEquals(got, typ.String) {
+			cond := conditionAt(t, fn.TypeFacts(), point)
 			t.Fatalf("ConditionTypeAt(value at %s assignment) = %v, want string; cond=%v; diagnostics=%v", name, got, cond, testutil.ErrorMessages(res.Diagnostics))
 		}
 		if got := obs.AssignmentSourceType(source, point, typ.String, targetSym); !typ.TypeEquals(got, typ.String) {
-			cond := conditionAt(t, fn.Facts, point)
+			cond := conditionAt(t, fn.TypeFacts(), point)
 			t.Fatalf("AssignmentSourceType(value at %s assignment) = %v, want string; cond=%v; diagnostics=%v", name, got, cond, testutil.ErrorMessages(res.Diagnostics))
 		}
 	}
@@ -79,13 +79,13 @@ end
 		t.Fatal("no table literal assignment source")
 	}
 	obs := observation.FromFuncResult(fn, nil).WithProofValues()
-	expected := fn.Facts.DeclaredAt(point, targetSym).Type
+	expected := fn.TypeFacts().DeclaredAt(point, targetSym).Type
 	if typ.IsAbsentOrUnknown(expected) {
 		t.Fatal("entry assignment has no declared target type")
 	}
 	if result := obs.AssignmentSourceTableCheck(table, point, expected, targetSym); !result.Handled || !result.Compatible {
-		cond := conditionAt(t, fn.Facts, point)
-		refined := fn.Facts.RefinedAt(point, targetSym)
+		cond := conditionAt(t, fn.TypeFacts(), point)
+		refined := fn.TypeFacts().RefinedAt(point, targetSym)
 		var elemType typ.Type
 		if len(table.Fields) > 0 && table.Fields[0] != nil {
 			elemType = obs.AssignmentSourceType(table.Fields[0].Value, point, nil, targetSym)
@@ -96,20 +96,20 @@ end
 }
 
 func predecessorStateSummary(fn *api.FuncResult, point cfg.Point, sym cfg.SymbolID) string {
-	if fn == nil || fn.Graph == nil || fn.Facts == nil {
+	if fn == nil || fn.Graph == nil || fn.TypeFacts() == nil {
 		return ""
 	}
 	var parts []string
-	postFacts, _ := fn.Facts.(interface {
+	postFacts, _ := fn.TypeFacts().(interface {
 		PostEffectiveTypeAt(cfg.Point, cfg.SymbolID) flow.TypedValue
 	})
 	for _, pred := range fn.Graph.Predecessors(point) {
-		tv := fn.Facts.RefinedAt(pred, sym)
+		tv := fn.TypeFacts().RefinedAt(pred, sym)
 		var post flow.TypedValue
 		if postFacts != nil {
 			post = postFacts.PostEffectiveTypeAt(pred, sym)
 		}
-		parts = append(parts, fmt.Sprintf("%d:in=%v out=%v cond=%v ppreds=%v", pred, tv.Type, post.Type, conditionAtNoFatal(fn.Facts, pred), fn.Graph.Predecessors(pred)))
+		parts = append(parts, fmt.Sprintf("%d:in=%v out=%v cond=%v ppreds=%v", pred, tv.Type, post.Type, conditionAtNoFatal(fn.TypeFacts(), pred), fn.Graph.Predecessors(pred)))
 	}
 	return strings.Join(parts, "; ")
 }
@@ -125,12 +125,12 @@ func branchSummary(fn *api.FuncResult) string {
 			break
 		}
 	}
-	postFacts, _ := fn.Facts.(interface {
+	postFacts, _ := fn.TypeFacts().(interface {
 		PostEffectiveTypeAt(cfg.Point, cfg.SymbolID) flow.TypedValue
 	})
 	var parts []string
 	fn.Graph.EachBranch(func(p cfg.Point, info *cfg.BranchInfo) {
-		in := fn.Facts.RefinedAt(p, target)
+		in := fn.TypeFacts().RefinedAt(p, target)
 		var post flow.TypedValue
 		if postFacts != nil {
 			post = postFacts.PostEffectiveTypeAt(p, target)

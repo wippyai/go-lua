@@ -70,7 +70,7 @@ func assertCallbackDBEntryType(t *testing.T, result *testutil.Result, want typ.T
 		for _, sym := range graph.Bindings().SymbolsByName("db") {
 			got := fnResult.NarrowedTypeAt(graph.Entry(), constraint.NewPath(sym, "db"))
 			if typ.TypeEquals(got, want) {
-				productFacts, ok := fnResult.Facts.(flow.ProductFacts)
+				productFacts, ok := fnResult.TypeFacts().(flow.ProductFacts)
 				if !ok {
 					t.Fatal("db callback facts do not expose ProductFacts")
 				}
@@ -139,7 +139,7 @@ func assertCallbackExecuteResultFieldType(t *testing.T, result *testutil.Result)
 				if _, ok := src.(*ast.FuncCallExpr); !ok {
 					continue
 				}
-				productFacts, ok := fnResult.Facts.(flow.ProductFacts)
+				productFacts, ok := fnResult.TypeFacts().(flow.ProductFacts)
 				if !ok {
 					t.Fatal("db callback facts do not expose ProductFacts")
 				}
@@ -156,7 +156,7 @@ func assertCallbackExecuteResultFieldType(t *testing.T, result *testutil.Result)
 					t.Fatalf("observer db:execute return[0].rows_affected at point %d = %v/%v, want integer; return[0]=%v", assign.Point, field, ok, returns[0])
 				}
 				executePoint = assign.Point
-				if postFacts, ok := fnResult.Facts.(interface {
+				if postFacts, ok := fnResult.TypeFacts().(interface {
 					PostRefinedPathAt(cfg.Point, constraint.Path) flow.TypedValue
 				}); ok {
 					executePostRoot = postFacts.PostRefinedPathAt(assign.Point, constraint.NewPath(resultSym, "result")).Type
@@ -174,7 +174,7 @@ func assertCallbackExecuteResultFieldType(t *testing.T, result *testutil.Result)
 				}
 				got := fnResult.NarrowedTypeAt(assign.Point, path)
 				if !typ.TypeEquals(got, typ.Integer) {
-					productFacts, _ := fnResult.Facts.(flow.ProductFacts)
+					productFacts, _ := fnResult.TypeFacts().(flow.ProductFacts)
 					var rootProduct string
 					if productFacts != nil {
 						pv := productFacts.RefinedValueAt(assign.Point, resultSym)

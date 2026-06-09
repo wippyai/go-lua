@@ -81,22 +81,32 @@ func bodyPreconditionParams(symbols ...cfg.SymbolID) paramboundary.ParameterSlot
 	return paramboundary.ParameterSlotsFromSlots(slots)
 }
 
+func bodyPreconditionResultWithInputs(inputs *flow.Inputs) *api.FuncResult {
+	result := &api.FuncResult{}
+	result.InstallAnalysisArtifacts(api.FuncAnalysisArtifacts{FlowInputs: inputs})
+	return result
+}
+
+func bodyPreconditionResultWithFacts(facts flow.TypeFacts) *api.FuncResult {
+	result := &api.FuncResult{}
+	result.InstallAnalysisArtifacts(api.FuncAnalysisArtifacts{TypeFacts: facts})
+	return result
+}
+
 func TestBodyPreconditionContext_DerivedLocalPathReachesParameter(t *testing.T) {
 	paramSym := cfg.SymbolID(1)
 	localSym := cfg.SymbolID(2)
 	ctx := BodyPreconditionContext{
-		result: &api.FuncResult{
-			FlowInputs: &flow.Inputs{
-				Assignments: []flow.UnifiedAssignment{{
-					Point:      1,
-					TargetPath: constraint.NewPath(localSym, "local_user"),
-					Source: flow.AssignmentSource{
-						Kind: flow.AssignmentSourcePath,
-						Path: constraint.NewPath(paramSym, "user"),
-					},
-				}},
-			},
-		},
+		result: bodyPreconditionResultWithInputs(&flow.Inputs{
+			Assignments: []flow.UnifiedAssignment{{
+				Point:      1,
+				TargetPath: constraint.NewPath(localSym, "local_user"),
+				Source: flow.AssignmentSource{
+					Kind: flow.AssignmentSourcePath,
+					Path: constraint.NewPath(paramSym, "user"),
+				},
+			}},
+		}),
 		params: bodyPreconditionParams(paramSym),
 		dominates: func(a, b cfg.Point) bool {
 			return a == b || (a == 1 && b == 2)
@@ -127,24 +137,22 @@ func TestBodyPreconditionContext_FieldWriteDoesNotBackPropagateWholeRootEvidence
 	localRoot := constraint.NewPath(localSym, "instance")
 	paramRoot := constraint.NewPath(paramSym, "dataflow_id")
 	ctx := BodyPreconditionContext{
-		result: &api.FuncResult{
-			FlowInputs: &flow.Inputs{
-				Assignments: []flow.UnifiedAssignment{
-					{
-						Point:      1,
-						TargetPath: localRoot,
-					},
-					{
-						Point:      1,
-						TargetPath: localRoot.Field("dataflow_id"),
-						Source: flow.AssignmentSource{
-							Kind: flow.AssignmentSourcePath,
-							Path: paramRoot,
-						},
+		result: bodyPreconditionResultWithInputs(&flow.Inputs{
+			Assignments: []flow.UnifiedAssignment{
+				{
+					Point:      1,
+					TargetPath: localRoot,
+				},
+				{
+					Point:      1,
+					TargetPath: localRoot.Field("dataflow_id"),
+					Source: flow.AssignmentSource{
+						Kind: flow.AssignmentSourcePath,
+						Path: paramRoot,
 					},
 				},
 			},
-		},
+		}),
 		params: bodyPreconditionParams(paramSym),
 		dominates: func(a, b cfg.Point) bool {
 			return a == b || (a == 1 && b == 2)
@@ -163,24 +171,22 @@ func TestBodyPreconditionContext_FieldWriteBackPropagatesOnlyLeafEvidence(t *tes
 	localRoot := constraint.NewPath(localSym, "instance")
 	paramRoot := constraint.NewPath(paramSym, "dataflow_id")
 	ctx := BodyPreconditionContext{
-		result: &api.FuncResult{
-			FlowInputs: &flow.Inputs{
-				Assignments: []flow.UnifiedAssignment{
-					{
-						Point:      1,
-						TargetPath: localRoot,
-					},
-					{
-						Point:      1,
-						TargetPath: localRoot.Field("dataflow_id"),
-						Source: flow.AssignmentSource{
-							Kind: flow.AssignmentSourcePath,
-							Path: paramRoot,
-						},
+		result: bodyPreconditionResultWithInputs(&flow.Inputs{
+			Assignments: []flow.UnifiedAssignment{
+				{
+					Point:      1,
+					TargetPath: localRoot,
+				},
+				{
+					Point:      1,
+					TargetPath: localRoot.Field("dataflow_id"),
+					Source: flow.AssignmentSource{
+						Kind: flow.AssignmentSourcePath,
+						Path: paramRoot,
 					},
 				},
 			},
-		},
+		}),
 		params: bodyPreconditionParams(paramSym),
 		dominates: func(a, b cfg.Point) bool {
 			return a == b || (a == 1 && b == 2)
@@ -201,28 +207,26 @@ func TestBodyPreconditionContext_AmbiguousDominatingAssignmentsRejected(t *testi
 	localSym := cfg.SymbolID(2)
 	otherSym := cfg.SymbolID(3)
 	ctx := BodyPreconditionContext{
-		result: &api.FuncResult{
-			FlowInputs: &flow.Inputs{
-				Assignments: []flow.UnifiedAssignment{
-					{
-						Point:      2,
-						TargetPath: constraint.NewPath(localSym, "x"),
-						Source: flow.AssignmentSource{
-							Kind: flow.AssignmentSourcePath,
-							Path: constraint.NewPath(paramSym, "a"),
-						},
+		result: bodyPreconditionResultWithInputs(&flow.Inputs{
+			Assignments: []flow.UnifiedAssignment{
+				{
+					Point:      2,
+					TargetPath: constraint.NewPath(localSym, "x"),
+					Source: flow.AssignmentSource{
+						Kind: flow.AssignmentSourcePath,
+						Path: constraint.NewPath(paramSym, "a"),
 					},
-					{
-						Point:      3,
-						TargetPath: constraint.NewPath(localSym, "x"),
-						Source: flow.AssignmentSource{
-							Kind: flow.AssignmentSourcePath,
-							Path: constraint.NewPath(otherSym, "b"),
-						},
+				},
+				{
+					Point:      3,
+					TargetPath: constraint.NewPath(localSym, "x"),
+					Source: flow.AssignmentSource{
+						Kind: flow.AssignmentSourcePath,
+						Path: constraint.NewPath(otherSym, "b"),
 					},
 				},
 			},
-		},
+		}),
 		params: bodyPreconditionParams(paramSym, otherSym),
 		dominates: func(a, b cfg.Point) bool {
 			if a == b {
@@ -262,13 +266,11 @@ func TestBodyPreconditionContext_MapElementEvidenceUsesPathObservationFactsWitho
 	keySym := cfg.SymbolID(2)
 	keyPath := constraint.NewPath(keySym, "kind")
 	ctx := BodyPreconditionContext{
-		result: &api.FuncResult{
-			Facts: bodyPreconditionFacts{
-				observed: map[constraint.PathKey]typ.Type{
-					keyPath.Key(): typ.String,
-				},
+		result: bodyPreconditionResultWithFacts(bodyPreconditionFacts{
+			observed: map[constraint.PathKey]typ.Type{
+				keyPath.Key(): typ.String,
 			},
-		},
+		}),
 	}
 
 	_, evidence, ok := ctx.sourceEvidenceForDerivedLocal(flow.AssignmentSource{
@@ -292,9 +294,7 @@ func TestBodyPreconditionContext_LocalProofUsesConditionProofFactsWithoutConcret
 	bindings := bind.NewBindingTable()
 	bindings.Bind(arg, paramSym)
 	ctx := BodyPreconditionContext{
-		result: &api.FuncResult{
-			Facts: bodyPreconditionFacts{proves: true},
-		},
+		result:   bodyPreconditionResultWithFacts(bodyPreconditionFacts{proves: true}),
 		bindings: bindings,
 		params:   bodyPreconditionParams(paramSym),
 	}
@@ -324,14 +324,12 @@ func TestBodyPreconditionContext_ConditionedEvidenceUsesProofAndPathObservationF
 		Value:  roleConst,
 	})
 	ctx := BodyPreconditionContext{
-		result: &api.FuncResult{
-			Facts: bodyPreconditionFacts{
-				condition: cond,
-				observed: map[constraint.PathKey]typ.Type{
-					roleConst.Key(): typ.LiteralString("function_call"),
-				},
+		result: bodyPreconditionResultWithFacts(bodyPreconditionFacts{
+			condition: cond,
+			observed: map[constraint.PathKey]typ.Type{
+				roleConst.Key(): typ.LiteralString("function_call"),
 			},
-		},
+		}),
 		params: bodyPreconditionParams(paramSym),
 	}
 

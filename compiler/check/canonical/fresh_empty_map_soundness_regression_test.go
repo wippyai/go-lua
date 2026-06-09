@@ -77,8 +77,8 @@ return 0
 			if !ok || sym == 0 {
 				t.Fatalf("sub argument %q has no symbol", ident.Value)
 			}
-			if facts, ok := root.Facts.(flow.ProductFacts); ok {
-				if pathFacts, ok := root.Facts.(flow.ProductPathFacts); ok {
+			if facts, ok := root.TypeFacts().(flow.ProductFacts); ok {
+				if pathFacts, ok := root.TypeFacts().(flow.ProductPathFacts); ok {
 					stateSyms := root.Graph.Bindings().SymbolsByName("state")
 					if len(stateSyms) != 1 {
 						t.Fatalf("state symbols = %v, want one", stateSyms)
@@ -115,7 +115,7 @@ return 0
 			} else {
 				t.Fatal("root facts do not expose product facts")
 			}
-			if facts, ok := root.Facts.(flow.PathObservationFacts); ok {
+			if facts, ok := root.TypeFacts().(flow.PathObservationFacts); ok {
 				path := constraint.NewPath(sym, ident.Value)
 				pathObs := facts.ObservePath(flow.PathObservationQuery{
 					Point:         p,

@@ -39,18 +39,18 @@ func TestPathBindingAudit_UnversionedConstraints(t *testing.T) {
 	knownRoots := make(map[string]bool)
 
 	for _, funcResult := range sess.Results {
-		if funcResult.FlowInputs == nil {
+		if !funcResult.FlowInputView().Present() {
 			continue
 		}
 
-		inputs := funcResult.FlowInputs
+		inputs := funcResult.FlowInputView()
 
 		// Collect declared types (function params, locals with type annotations)
 		// DeclaredTypes is keyed by SymbolID, but assignments still have string roots
 		// We skip DeclaredTypes iteration since assignment targets capture the roots
 
 		// Collect assignment targets
-		for _, assign := range inputs.Assignments {
+		for _, assign := range inputs.Assignments() {
 			if assign.TargetPath.Root != "" {
 				knownRoots[assign.TargetPath.Root] = true
 			}
@@ -66,13 +66,13 @@ func TestPathBindingAudit_UnversionedConstraints(t *testing.T) {
 	var versionedPaths []string
 
 	for _, funcResult := range sess.Results {
-		if funcResult.FlowInputs == nil {
+		if !funcResult.FlowInputView().Present() {
 			continue
 		}
 
-		inputs := funcResult.FlowInputs
+		inputs := funcResult.FlowInputView()
 
-		for _, ec := range inputs.EdgeConditions {
+		for _, ec := range inputs.EdgeConditions() {
 			for _, disjunct := range ec.Condition.Disjuncts {
 				for _, c := range disjunct {
 					paths := c.Paths()
@@ -116,8 +116,8 @@ func TestPathBindingAudit_UnversionedConstraints(t *testing.T) {
 	// Log constraint summary
 	constraintCount := 0
 	for _, funcResult := range sess.Results {
-		if funcResult.FlowInputs != nil {
-			constraintCount += len(funcResult.FlowInputs.EdgeConditions)
+		if funcResult.FlowInputView().Present() {
+			constraintCount += len(funcResult.FlowInputView().EdgeConditions())
 		}
 	}
 	t.Logf("Audited %d edge constraints across %d functions", constraintCount, len(sess.Results))
@@ -179,11 +179,11 @@ func TestPathBindingAudit_AssignmentPathsAreUnversioned(t *testing.T) {
 
 	assignmentCount := 0
 	for _, funcResult := range sess.Results {
-		if funcResult.FlowInputs == nil {
+		if !funcResult.FlowInputView().Present() {
 			continue
 		}
 
-		for _, assign := range funcResult.FlowInputs.Assignments {
+		for _, assign := range funcResult.FlowInputView().Assignments() {
 			assignmentCount++
 
 			// Path assignment sources should be unversioned (no DefPoint in the path key).
@@ -229,14 +229,14 @@ func TestPathBindingAudit_MinimalChannel(t *testing.T) {
 	sess := result.Session
 
 	for _, funcResult := range sess.Results {
-		if funcResult.FlowInputs == nil {
+		if !funcResult.FlowInputView().Present() {
 			continue
 		}
 
-		inputs := funcResult.FlowInputs
-		t.Logf("Function has %d edge constraints", len(inputs.EdgeConditions))
+		inputs := funcResult.FlowInputView()
+		t.Logf("Function has %d edge constraints", len(inputs.EdgeConditions()))
 
-		for i, ec := range inputs.EdgeConditions {
+		for i, ec := range inputs.EdgeConditions() {
 			t.Logf("  EdgeCondition[%d]: from=%d to=%d", i, ec.From, ec.To)
 			for _, disjunct := range ec.Condition.Disjuncts {
 				for _, c := range disjunct {

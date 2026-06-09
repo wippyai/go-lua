@@ -28,7 +28,7 @@ end
 	pointType := typ.NewRecord().Field("x", typ.Number).Field("y", typ.Number).Build()
 	path := constraint.NewPath(objSym, "obj").IndexStr("p-q")
 
-	pathFacts, ok := fn.Facts.(flow.PathFacts)
+	pathFacts, ok := fn.TypeFacts().(flow.PathFacts)
 	if !ok {
 		t.Fatal("canonical facts do not expose path facts")
 	}

@@ -292,21 +292,21 @@ end
 		t.Logf("Function (isRoot=%v):", isRoot)
 
 		// Log flow inputs
-		if funcResult.FlowInputs != nil {
-			t.Logf("  Assignments: %d", len(funcResult.FlowInputs.Assignments))
-			for i, a := range funcResult.FlowInputs.Assignments {
+		if funcResult.FlowInputView().Present() {
+			t.Logf("  Assignments: %d", len(funcResult.FlowInputView().Assignments()))
+			for i, a := range funcResult.FlowInputView().Assignments() {
 				t.Logf("    [%d] Point=%v Target=%s Symbol=%v Type=%v", i, a.Point, a.TargetPath.Root, a.TargetPath.Symbol, a.Type)
 			}
 
-			t.Logf("  EdgeConditions: %d", len(funcResult.FlowInputs.EdgeConditions))
-			for i, ec := range funcResult.FlowInputs.EdgeConditions {
+			t.Logf("  EdgeConditions: %d", len(funcResult.FlowInputView().EdgeConditions()))
+			for i, ec := range funcResult.FlowInputView().EdgeConditions() {
 				t.Logf("    Edge %d: from=%v to=%v condition=%v", i, ec.From, ec.To, ec.Condition.Disjuncts)
 			}
 		}
 
 		// Log SSA graph data
-		if funcResult.FlowInputs != nil && funcResult.FlowInputs.Graph != nil {
-			ssaGraph := funcResult.FlowInputs.Graph
+		if funcResult.FlowInputView().Present() && funcResult.FlowInputView().Graph() != nil {
+			ssaGraph := funcResult.FlowInputView().Graph()
 			t.Log("  SSA PhiNodes:")
 			for _, phi := range ssaGraph.PhiNodes() {
 				t.Logf("    Point=%v Target=%v (Key=%q, Symbol=%d) Operands:", phi.Point, phi.Target, phi.Target.Key(), phi.Target.Symbol)

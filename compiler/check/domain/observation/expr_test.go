@@ -966,11 +966,12 @@ func TestObservedArgumentTypeUsesPathObservationFactsWithoutConcreteSolver(t *te
 		},
 	}
 
-	got := ObservedArgumentType(&api.FuncResult{
+	result := &api.FuncResult{
 		Graph:          g,
 		ModuleBindings: bindings,
-		Facts:          facts,
-	}, g.Entry(), arg, nil, bindings)
+	}
+	result.InstallAnalysisArtifacts(api.FuncAnalysisArtifacts{TypeFacts: facts})
+	got := ObservedArgumentType(result, g.Entry(), arg, nil, bindings)
 
 	if !typ.TypeEquals(got, typ.String) {
 		t.Fatalf("ObservedArgumentType via PathObservationFacts = %v, want string", got)
@@ -1007,11 +1008,12 @@ func TestObservedArgumentTypeIgnoresDeclaredOnlyPathObservation(t *testing.T) {
 		},
 	}
 
-	got := ObservedArgumentType(&api.FuncResult{
+	result := &api.FuncResult{
 		Graph:          g,
 		ModuleBindings: bindings,
-		Facts:          facts,
-	}, g.Entry(), arg, typ.Number, bindings)
+	}
+	result.InstallAnalysisArtifacts(api.FuncAnalysisArtifacts{TypeFacts: facts})
+	got := ObservedArgumentType(result, g.Entry(), arg, typ.Number, bindings)
 
 	if !typ.TypeEquals(got, typ.Number) {
 		t.Fatalf("ObservedArgumentType declared-only fallback = %v, want current number", got)

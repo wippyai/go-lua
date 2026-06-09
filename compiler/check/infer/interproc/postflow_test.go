@@ -117,8 +117,7 @@ func TestCollectParameterEvidenceFromResult_CanonicalProjectionSkipsProjectionBo
 	st.RegisterFunctionRef(currentSym, caller, graph, 0, 0)
 
 	result := &api.FuncResult{
-		Graph:          graph,
-		FlowProjection: noopFlowOps{},
+		Graph: graph,
 		Evidence: api.FlowEvidence{
 			Calls: []api.CallEvidence{{
 				Point:        callPoint,
@@ -127,6 +126,7 @@ func TestCollectParameterEvidenceFromResult_CanonicalProjectionSkipsProjectionBo
 			}},
 		},
 	}
+	result.InstallAnalysisArtifacts(api.FuncAnalysisArtifacts{FlowProjection: noopFlowOps{}})
 	CollectParameterEvidenceFromResult(st, result, parent, currentSym)
 	st.AdvancePostflowProjections()
 

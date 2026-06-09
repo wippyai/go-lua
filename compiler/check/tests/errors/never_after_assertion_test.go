@@ -360,9 +360,9 @@ end
 		})
 
 		// Log flow inputs
-		if funcResult.FlowInputs != nil {
-			t.Logf("  EdgeConditions: %d", len(funcResult.FlowInputs.EdgeConditions))
-			for i, ec := range funcResult.FlowInputs.EdgeConditions {
+		if funcResult.FlowInputView().Present() {
+			t.Logf("  EdgeConditions: %d", len(funcResult.FlowInputView().EdgeConditions()))
+			for i, ec := range funcResult.FlowInputView().EdgeConditions() {
 				t.Logf("    Edge %d: from=%v to=%v condition=%v", i, ec.From, ec.To, ec.Condition.Disjuncts)
 			}
 		}

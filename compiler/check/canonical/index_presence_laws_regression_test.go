@@ -75,7 +75,7 @@ local topic: string = messages["root"]:topic()
 	if len(syms) == 0 {
 		t.Fatal("missing messages symbol")
 	}
-	pathFacts, ok := root.Facts.(flow.PathFacts)
+	pathFacts, ok := root.TypeFacts().(flow.PathFacts)
 	if !ok {
 		t.Fatal("canonical facts do not expose path facts")
 	}
@@ -111,11 +111,11 @@ func logIndexPresencePoint(t *testing.T, root *api.FuncResult, p cfg.Point, path
 	if root == nil || root.Graph == nil {
 		return
 	}
-	pathFacts, ok := root.Facts.(flow.PathFacts)
+	pathFacts, ok := root.TypeFacts().(flow.PathFacts)
 	if !ok {
 		return
 	}
-	postFacts, _ := root.Facts.(interface {
+	postFacts, _ := root.TypeFacts().(interface {
 		PostRefinedPathAt(cfg.Point, constraint.Path) flow.TypedValue
 	})
 	tv := pathFacts.RefinedPathAt(p, path)
@@ -141,11 +141,11 @@ func logIndexPresenceFacts(t *testing.T, res *testutil.Result) {
 		return
 	}
 	path := constraint.NewPath(syms[0], "messages").IndexStr("root")
-	pathFacts, ok := root.Facts.(flow.PathFacts)
+	pathFacts, ok := root.TypeFacts().(flow.PathFacts)
 	if !ok {
 		return
 	}
-	postFacts, _ := root.Facts.(interface {
+	postFacts, _ := root.TypeFacts().(interface {
 		PostRefinedPathAt(cfg.Point, constraint.Path) flow.TypedValue
 	})
 	root.Graph.EachNode(func(p cfg.Point, info cfg.NodeInfo) {

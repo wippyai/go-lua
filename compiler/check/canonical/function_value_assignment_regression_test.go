@@ -47,7 +47,7 @@ return answer
 	assignPoint, targetSym, source := assignmentSourceForTarget(t, root.Graph, "f")
 	path := constraint.NewPath(mSym, "M").Field("run")
 
-	pathFacts, ok := root.Facts.(flow.PathFacts)
+	pathFacts, ok := root.TypeFacts().(flow.PathFacts)
 	if !ok {
 		t.Fatal("canonical facts do not expose path facts")
 	}

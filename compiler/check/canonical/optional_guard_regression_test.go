@@ -232,7 +232,7 @@ return run
 			t.Fatalf("method receiver = %T, want identifier", info.Call.Receiver)
 		}
 		flowType := fn.NarrowedTypeAt(p, constraint.NewPath(storeSym, "store"))
-		synthType := fn.NarrowSynth.Narrow().TypeOf(receiver, p)
+		synthType := fn.SolvedSynth().Narrow().TypeOf(receiver, p)
 		if _, optional := typ.SplitNilableFieldType(flowType); optional {
 			t.Fatalf("flow receiver type at call = %v, want non-optional", flowType)
 		}

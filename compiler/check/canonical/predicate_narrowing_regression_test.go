@@ -36,11 +36,11 @@ return run
 	valuePath := constraint.NewPath(valueSym, "value")
 
 	if got := fn.NarrowedTypeAt(point, valuePath); !typ.TypeEquals(got, typ.Number) {
-		cond := conditionAt(t, fn.Facts, point)
+		cond := conditionAt(t, fn.TypeFacts(), point)
 		t.Fatalf("NarrowedTypeAt(value at narrowed assignment) = %v, want number; cond=%v; diagnostics=%v", got, cond, testutil.ErrorMessages(res.Diagnostics))
 	}
 	if got := observation.FromFuncResult(fn, nil).WithProofValues().AssignmentSourceType(source, point, typ.Number, targetSym); !typ.TypeEquals(got, typ.Number) {
-		cond := conditionAt(t, fn.Facts, point)
+		cond := conditionAt(t, fn.TypeFacts(), point)
 		t.Fatalf("AssignmentSourceType(value at narrowed assignment) = %v, want number; cond=%v; diagnostics=%v", got, cond, testutil.ErrorMessages(res.Diagnostics))
 	}
 	if msgs := testutil.ErrorMessages(res.Diagnostics); len(msgs) != 0 {

@@ -43,8 +43,14 @@ func TestCallContractEvidenceIsSolvedResultCarrier(t *testing.T) {
 	}
 }
 
+func resultWithAnalysis(artifacts FuncAnalysisArtifacts) *FuncResult {
+	result := &FuncResult{}
+	result.InstallAnalysisArtifacts(artifacts)
+	return result
+}
+
 func TestFuncResultSolvedFlowUsesProjectionCarrier(t *testing.T) {
-	result := &FuncResult{FlowProjection: mockSolvedFlow{excludes: true}}
+	result := resultWithAnalysis(FuncAnalysisArtifacts{FlowProjection: mockSolvedFlow{excludes: true}})
 	path := constraint.NewPath(cfg.SymbolID(7), "x")
 	if got := result.NarrowedTypeAt(cfg.Point(1), path); !typ.TypeEquals(got, typ.String) {
 		t.Fatalf("NarrowedTypeAt via FlowProjection = %v, want string", got)
@@ -62,14 +68,14 @@ func TestFuncResultSolvedFlowUsesProjectionCarrier(t *testing.T) {
 
 func TestFuncResultFactSurfaceAccessorsPreferFactsAndUseProjectionSources(t *testing.T) {
 	const sym = cfg.SymbolID(7)
-	result := &FuncResult{
-		Facts: resultSurfaceFacts{},
+	result := resultWithAnalysis(FuncAnalysisArtifacts{
+		TypeFacts: resultSurfaceFacts{},
 		FlowInputs: &flow.Inputs{
 			ConstValues: map[cfg.SymbolID]map[cfg.Point]*flow.ConstValue{
 				sym: {cfg.Point(3): {Kind: flow.ConstString, Str: "input"}},
 			},
 		},
-	}
+	})
 
 	if cond := result.ConditionProofFacts().ConditionAt(cfg.Point(1)); !cond.IsFalse() {
 		t.Fatalf("ConditionProofFacts did not come from Facts: %v", cond)
@@ -95,22 +101,28 @@ func TestFuncResultFactSurfaceAccessorsPreferFactsAndUseProjectionSources(t *tes
 		t.Fatalf("TransferValueFacts did not come from Facts: %v", got)
 	}
 
-	inputProjection := (&FuncResult{FlowInputs: result.FlowInputs}).ConstFacts()
+	inputProjection := resultWithAnalysis(FuncAnalysisArtifacts{
+		FlowInputs: &flow.Inputs{
+			ConstValues: map[cfg.SymbolID]map[cfg.Point]*flow.ConstValue{
+				sym: {cfg.Point(3): {Kind: flow.ConstString, Str: "input"}},
+			},
+		},
+	}).ConstFacts()
 	if got := inputProjection.ConstValueAtSym(cfg.Point(3), sym); got == nil || got.Str != "input" {
 		t.Fatalf("ConstFacts did not read FlowInputs projection: %#v", got)
 	}
 
-	flowProjection := (&FuncResult{FlowProjection: mockSolvedFlow{}}).PathChildFacts()
+	flowProjection := resultWithAnalysis(FuncAnalysisArtifacts{FlowProjection: mockSolvedFlow{}}).PathChildFacts()
 	if got := flowProjection.ObserveChildPaths(flow.PathChildQuery{Point: cfg.Point(2), Path: constraint.NewPath(sym, "value")}); len(got) != 1 || !typ.TypeEquals(got[0].Type, typ.Boolean) {
 		t.Fatalf("PathChildFacts did not read solved flow projection: %#v", got)
 	}
-	if got := (&FuncResult{FlowProjection: mockSolvedFlow{}}).TransferValueFacts().AssignedValueTypeAt(cfg.Point(2), constraint.NewPath(sym, "value"), typ.String, flow.AssignmentSource{}); !typ.TypeEquals(got, typ.Boolean) {
+	if got := resultWithAnalysis(FuncAnalysisArtifacts{FlowProjection: mockSolvedFlow{}}).TransferValueFacts().AssignedValueTypeAt(cfg.Point(2), constraint.NewPath(sym, "value"), typ.String, flow.AssignmentSource{}); !typ.TypeEquals(got, typ.Boolean) {
 		t.Fatalf("TransferValueFacts did not read solved flow projection: %v", got)
 	}
 }
 
 func TestFuncAnalysisViewFactSurfaceAccessorsMirrorResult(t *testing.T) {
-	view := ViewFromResult(&FuncResult{Facts: resultSurfaceFacts{}})
+	view := ViewFromResult(resultWithAnalysis(FuncAnalysisArtifacts{TypeFacts: resultSurfaceFacts{}}))
 
 	if cond := view.ConditionProofFacts().ConditionAt(cfg.Point(1)); !cond.IsFalse() {
 		t.Fatalf("view ConditionProofFacts did not come from Facts: %v", cond)
@@ -205,20 +217,22 @@ func TestObservationStateNormalizesSolvedResultSurfaces(t *testing.T) {
 	flowProjection := mockSolvedFlow{}
 	resolve := func(ast.TypeExpr, *scope.State) typ.Type { return typ.Boolean }
 	result := &FuncResult{
-		Facts:          resultSurfaceFacts{},
-		FlowProjection: flowProjection,
-		NarrowSynth:    observationStateSynth{mockSynth: &mockSynth{}, resolve: resolve},
 		GlobalTypeBindings: globalenv.TypeOverlay{
 			{Name: globalenv.Name("decode"), Type: typ.Number},
 		},
 		LiteralSignatureProvider: LiteralSigsLookup{fn: literal},
 	}
+	result.InstallAnalysisArtifacts(FuncAnalysisArtifacts{
+		TypeFacts:      resultSurfaceFacts{},
+		FlowProjection: flowProjection,
+		SolvedSynth:    observationStateSynth{mockSynth: &mockSynth{}, resolve: resolve},
+	})
 
 	state := result.ObservationState()
 	if state.Flow != flowProjection {
 		t.Fatalf("ObservationState.Flow = %#v, want solved flow projection", state.Flow)
 	}
-	if state.Facts != result.Facts {
+	if state.Facts != result.TypeFacts() {
 		t.Fatal("ObservationState.Facts did not preserve result facts")
 	}
 	if got := state.LiteralSignatureProvider.Lookup(fn); got != literal {

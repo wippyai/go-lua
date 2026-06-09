@@ -119,11 +119,12 @@ func TestSSAVisibility_NestedFuncScopeInspection(t *testing.T) {
 		t.Fatal("x symbol not found at nested function definition point")
 	}
 
-	if rootResult.Facts == nil {
+	facts := rootResult.TypeFacts()
+	if facts == nil {
 		t.Fatal("no type facts")
 	}
 
-	tv := rootResult.Facts.EffectiveTypeAt(defPoint, sym)
+	tv := facts.EffectiveTypeAt(defPoint, sym)
 
 	// x should be unknown at the nested function definition point (before assignment)
 	if tv.Type != nil && tv.Type.Kind() != kind.Unknown && tv.Type.Kind() != kind.Any {

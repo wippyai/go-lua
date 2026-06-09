@@ -7,6 +7,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/check/domain/callobligation"
 	"github.com/wippyai/go-lua/compiler/check/domain/globalenv"
 	"github.com/wippyai/go-lua/compiler/check/scope"
+	flowcfg "github.com/wippyai/go-lua/types/cfg"
 	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/db"
 	"github.com/wippyai/go-lua/types/flow"
@@ -43,17 +44,9 @@ type FuncResult struct {
 	// Includes declared types, narrowed types, and lexical bindings.
 	Scopes map[cfg.Point]*scope.State
 
-	// Facts provides effective type information for symbols at each CFG point.
-	// This is the primary interface for querying narrowed types during synthesis.
-	Facts flow.TypeFacts
-
-	// FlowInputs contains the extracted flow constraints.
-	// Includes assignments, conditions, type guards, and dead point markers.
-	FlowInputs *flow.Inputs
-
-	// FlowProjection is the producer-neutral solved-flow read surface. Product-state
-	// producers set this to their projection.
-	FlowProjection FlowOps
+	// analysis holds construction-only solver artifacts. Consumers must use the
+	// named read methods below instead of treating FuncResult as an engine handle.
+	analysis FuncAnalysisArtifacts
 
 	// Evidence records events discovered during abstract interpretation.
 	Evidence FlowEvidence
@@ -91,10 +84,6 @@ type FuncResult struct {
 	// PublicSeedSignature is the source-declared public seed used when
 	// canonicalizing post-flow FunctionFact signatures.
 	PublicSeedSignature *typ.Function
-
-	// NarrowSynth is the flow-refined synthesis engine for this function.
-	// Use TypeOf to query expression types with flow-based narrowing applied.
-	NarrowSynth Synth
 
 	// QueryContext is the immutable query context used by pure type operations.
 	QueryContext *db.QueryContext
@@ -193,6 +182,35 @@ func (e CallContractEvidence) ArgType(idx int) typ.Type {
 	return e.ArgObligation(idx).Type
 }
 
+// FuncAnalysisArtifacts is the construction-only solved-analysis payload for a
+// FuncResult. It is installed by result projectors and exposed to consumers only
+// through named read/view methods on FuncResult.
+type FuncAnalysisArtifacts struct {
+	TypeFacts      flow.TypeFacts
+	FlowInputs     *flow.Inputs
+	FlowProjection FlowOps
+	SolvedSynth    Synth
+}
+
+// InstallAnalysisArtifacts installs solved-analysis artifacts while constructing
+// a FuncResult. Normal consumers should use TypeFacts, SolvedFlow,
+// FlowInputView, SolvedSynth, or ObservationState.
+func (r *FuncResult) InstallAnalysisArtifacts(artifacts FuncAnalysisArtifacts) {
+	if r == nil {
+		return
+	}
+	r.analysis = artifacts
+}
+
+// InstallSolvedSynth installs the solved synthesis view during result
+// construction after observation context initialization.
+func (r *FuncResult) InstallSolvedSynth(synth Synth) {
+	if r == nil {
+		return
+	}
+	r.analysis.SolvedSynth = synth
+}
+
 // EffectiveTypeAt returns the narrowed type for a symbol at a specific CFG point.
 // The effective type reflects flow-based narrowing (type guards, nil checks, etc.)
 // applied to the symbol's declared type based on control flow leading to point p.
@@ -201,20 +219,28 @@ func (e CallContractEvidence) ArgType(idx int) typ.Type {
 //   - Type: The narrowed type at point p
 //   - State: StateResolved if type is known, StateUnknown otherwise
 //
-// Delegates to Facts.EffectiveTypeAt when available, otherwise returns unknown.
+// Delegates to TypeFacts().EffectiveTypeAt when available, otherwise returns unknown.
 func (r *FuncResult) EffectiveTypeAt(p cfg.Point, sym cfg.SymbolID) flow.TypedValue {
-	if r == nil || r.Facts == nil {
+	if r == nil || r.analysis.TypeFacts == nil {
 		return flow.TypedValue{Type: typ.Unknown, State: flow.StateUnknown}
 	}
-	return r.Facts.EffectiveTypeAt(p, sym)
+	return r.analysis.TypeFacts.EffectiveTypeAt(p, sym)
 }
 
 // DeclaredTypeAt returns source/static declaration facts for a symbol.
 func (r *FuncResult) DeclaredTypeAt(p cfg.Point, sym cfg.SymbolID) flow.TypedValue {
-	if r == nil || r.Facts == nil {
+	if r == nil || r.analysis.TypeFacts == nil {
 		return flow.TypedValue{Type: typ.Unknown, State: flow.StateUnknown}
 	}
-	return r.Facts.DeclaredAt(p, sym)
+	return r.analysis.TypeFacts.DeclaredAt(p, sym)
+}
+
+// TypeFacts returns the producer-neutral solved type facts for this result.
+func (r *FuncResult) TypeFacts() flow.TypeFacts {
+	if r == nil {
+		return nil
+	}
+	return r.analysis.TypeFacts
 }
 
 // SolvedSynth returns the flow-refined synthesis view for this result.
@@ -222,7 +248,7 @@ func (r *FuncResult) SolvedSynth() Synth {
 	if r == nil {
 		return nil
 	}
-	return r.NarrowSynth
+	return r.analysis.SolvedSynth
 }
 
 // SolvedTypeOf observes an expression through the solved synthesis view.
@@ -239,8 +265,8 @@ func (r *FuncResult) SolvedFlow() FlowOps {
 	if r == nil {
 		return nil
 	}
-	if r.FlowProjection != nil {
-		return r.FlowProjection
+	if r.analysis.FlowProjection != nil {
+		return r.analysis.FlowProjection
 	}
 	return nil
 }
@@ -248,7 +274,7 @@ func (r *FuncResult) SolvedFlow() FlowOps {
 // HasSolvedFlowProjection reports whether the result carries a concrete
 // producer-neutral flow projection.
 func (r *FuncResult) HasSolvedFlowProjection() bool {
-	return r != nil && r.FlowProjection != nil
+	return r != nil && r.analysis.FlowProjection != nil
 }
 
 // FlowInputView is a read-only facade over extracted flow inputs. It keeps
@@ -294,6 +320,22 @@ func (v FlowInputView) LoopInsertLengths() []flow.LoopInsertLength {
 	return v.inputs.LoopInsertLengths
 }
 
+// EdgeConditions returns flow-extracted edge condition evidence.
+func (v FlowInputView) EdgeConditions() []flow.EdgeCondition {
+	if v.inputs == nil {
+		return nil
+	}
+	return v.inputs.EdgeConditions
+}
+
+// Graph returns the versioned graph carried by extracted flow inputs.
+func (v FlowInputView) Graph() flowcfg.VersionedGraph {
+	if v.inputs == nil {
+		return nil
+	}
+	return v.inputs.Graph
+}
+
 // IsPointDead reports whether flow extraction marked point unreachable.
 func (v FlowInputView) IsPointDead(p cfg.Point) bool {
 	return v.inputs != nil && v.inputs.DeadPoints[p]
@@ -304,7 +346,7 @@ func (r *FuncResult) FlowInputView() FlowInputView {
 	if r == nil {
 		return FlowInputView{}
 	}
-	return FlowInputView{inputs: r.FlowInputs}
+	return FlowInputView{inputs: r.analysis.FlowInputs}
 }
 
 // ConditionProofFacts returns the producer-neutral condition-proof surface for
@@ -313,7 +355,7 @@ func (r *FuncResult) ConditionProofFacts() flow.ConditionProofFacts {
 	if r == nil {
 		return nil
 	}
-	if facts, ok := r.Facts.(flow.ConditionProofFacts); ok {
+	if facts, ok := r.analysis.TypeFacts.(flow.ConditionProofFacts); ok {
 		return facts
 	}
 	if facts, ok := r.SolvedFlow().(flow.ConditionProofFacts); ok {
@@ -327,14 +369,14 @@ func (r *FuncResult) ConstFacts() flow.ConstFacts {
 	if r == nil {
 		return nil
 	}
-	if facts, ok := r.Facts.(flow.ConstFacts); ok {
+	if facts, ok := r.analysis.TypeFacts.(flow.ConstFacts); ok {
 		return facts
 	}
 	if facts, ok := r.SolvedFlow().(flow.ConstFacts); ok {
 		return facts
 	}
-	if r.FlowInputs != nil {
-		return r.FlowInputs
+	if r.analysis.FlowInputs != nil {
+		return r.analysis.FlowInputs
 	}
 	return nil
 }
@@ -345,7 +387,7 @@ func (r *FuncResult) PathObservationFacts() flow.PathObservationFacts {
 	if r == nil {
 		return nil
 	}
-	if facts, ok := r.Facts.(flow.PathObservationFacts); ok {
+	if facts, ok := r.analysis.TypeFacts.(flow.PathObservationFacts); ok {
 		return facts
 	}
 	if facts, ok := r.SolvedFlow().(flow.PathObservationFacts); ok {
@@ -360,7 +402,7 @@ func (r *FuncResult) PathChildFacts() flow.PathChildFacts {
 	if r == nil {
 		return nil
 	}
-	if facts, ok := r.Facts.(flow.PathChildFacts); ok {
+	if facts, ok := r.analysis.TypeFacts.(flow.PathChildFacts); ok {
 		return facts
 	}
 	if facts, ok := r.SolvedFlow().(flow.PathChildFacts); ok {
@@ -375,7 +417,7 @@ func (r *FuncResult) TransferValueFacts() flow.TransferValueFacts {
 	if r == nil {
 		return nil
 	}
-	if facts, ok := r.Facts.(flow.TransferValueFacts); ok {
+	if facts, ok := r.analysis.TypeFacts.(flow.TransferValueFacts); ok {
 		return facts
 	}
 	if facts, ok := r.SolvedFlow().(flow.TransferValueFacts); ok {
@@ -510,8 +552,8 @@ func (r *FuncResult) ObservationState() SolvedObservationState {
 		Bindings:                 bindings,
 		Scopes:                   r.Scopes,
 		DefaultScope:             r.BaseScope,
-		Facts:                    r.Facts,
-		Inputs:                   r.FlowInputs,
+		Facts:                    r.analysis.TypeFacts,
+		Inputs:                   r.analysis.FlowInputs,
 		Flow:                     r.SolvedFlow(),
 		Ctx:                      r.QueryContext,
 		TypeOps:                  r.TypeOps,
@@ -520,8 +562,8 @@ func (r *FuncResult) ObservationState() SolvedObservationState {
 		RecursiveFamilies:        r.RecursiveFamilies,
 		ClassFamilyJoin:          r.ClassFamilyJoin,
 	}
-	if r.NarrowSynth != nil {
-		state.ResolveType = r.NarrowSynth.ResolveType
+	if r.analysis.SolvedSynth != nil {
+		state.ResolveType = r.analysis.SolvedSynth.ResolveType
 	}
 	return state
 }
@@ -560,13 +602,13 @@ func ViewFromResult(r *FuncResult) *FuncAnalysisView {
 		Graph:                    r.Graph,
 		AnalysisContext:          r.AnalysisContext,
 		Scopes:                   r.Scopes,
-		Facts:                    r.Facts,
-		FlowInputs:               r.FlowInputs,
-		FlowProjection:           r.FlowProjection,
+		Facts:                    r.analysis.TypeFacts,
+		FlowInputs:               r.analysis.FlowInputs,
+		FlowProjection:           r.analysis.FlowProjection,
 		Evidence:                 r.Evidence,
 		CallExpectedArgs:         r.CallExpectedArgs,
 		CallContracts:            r.CallContracts,
-		NarrowSynth:              r.NarrowSynth,
+		NarrowSynth:              r.analysis.SolvedSynth,
 		SourceSignature:          r.SourceSignature,
 		PublicSeedSignature:      r.PublicSeedSignature,
 		LiteralSignatures:        r.LiteralSignatures,
@@ -586,10 +628,10 @@ func (r *FuncResult) ReleaseAnalysisArtifacts() {
 	if r == nil {
 		return
 	}
-	r.Facts = nil
-	r.FlowInputs = nil
-	r.FlowProjection = nil
-	r.NarrowSynth = nil
+	r.analysis.TypeFacts = nil
+	r.analysis.FlowInputs = nil
+	r.analysis.FlowProjection = nil
+	r.analysis.SolvedSynth = nil
 }
 
 // EffectiveTypeAt returns the narrowed type for a symbol at a specific CFG point.

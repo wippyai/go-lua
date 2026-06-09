@@ -34,12 +34,12 @@ end
 
 	for name, want := range map[string]typ.Type{"x": aType, "y": bType} {
 		point, targetSym, source := assignmentSourceForTarget(t, fn.Graph, name)
-		if got := conditionTypeAt(t, fn.Facts, point, tPath); !typ.TypeEquals(got, want) {
-			cond := conditionAt(t, fn.Facts, point)
+		if got := conditionTypeAt(t, fn.TypeFacts(), point, tPath); !typ.TypeEquals(got, want) {
+			cond := conditionAt(t, fn.TypeFacts(), point)
 			t.Fatalf("ConditionTypeAt(t at %s assignment) = %v, want %v; cond=%v; diagnostics=%v", name, got, want, cond, testutil.ErrorMessages(res.Diagnostics))
 		}
 		if got := obs.AssignmentSourceType(source, point, want, targetSym); !typ.TypeEquals(got, want) {
-			cond := conditionAt(t, fn.Facts, point)
+			cond := conditionAt(t, fn.TypeFacts(), point)
 			t.Fatalf("AssignmentSourceType(t at %s assignment) = %v, want %v; cond=%v; diagnostics=%v", name, got, want, cond, testutil.ErrorMessages(res.Diagnostics))
 		}
 	}
@@ -68,13 +68,13 @@ end
 	eventSym := singleSymbolNamed(t, fn.Graph, "event")
 	returnPoint := lastReturnPoint(t, fn.Graph)
 	codePath := constraint.NewPath(eventSym, "event").Field("code")
-	if got := conditionTypeAt(t, fn.Facts, returnPoint, codePath); !typ.TypeEquals(got, typ.Number) {
-		cond := conditionAt(t, fn.Facts, returnPoint)
+	if got := conditionTypeAt(t, fn.TypeFacts(), returnPoint, codePath); !typ.TypeEquals(got, typ.Number) {
+		cond := conditionAt(t, fn.TypeFacts(), returnPoint)
 		t.Fatalf("ConditionTypeAt(event.code at final return) = %v, want number; cond=%v; diagnostics=%v", got, cond, testutil.ErrorMessages(res.Diagnostics))
 	}
 	returnExpr := lastReturnExpr(t, fn.Graph)
 	if got := observation.FromFuncResult(fn, nil).WithProofValues().ReturnSourceType(returnExpr, returnPoint, typ.Number); !typ.TypeEquals(got, typ.Number) {
-		cond := conditionAt(t, fn.Facts, returnPoint)
+		cond := conditionAt(t, fn.TypeFacts(), returnPoint)
 		t.Fatalf("ReturnSourceType(event.code at final return) = %v, want number; cond=%v; diagnostics=%v", got, cond, testutil.ErrorMessages(res.Diagnostics))
 	}
 	if msgs := testutil.ErrorMessages(res.Diagnostics); len(msgs) != 0 {

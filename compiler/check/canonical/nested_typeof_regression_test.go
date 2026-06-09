@@ -35,7 +35,7 @@ end
 		got := obs.AssignmentSourceType(source, point, want, targetSym)
 		if !typ.TypeEquals(got, want) {
 			var cond constraint.Condition
-			if facts, ok := fn.Facts.(interface {
+			if facts, ok := fn.TypeFacts().(interface {
 				ConditionAt(cfg.Point) constraint.Condition
 			}); ok {
 				cond = facts.ConditionAt(point)

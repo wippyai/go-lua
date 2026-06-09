@@ -159,8 +159,8 @@ db:release()
 			if fn.Line() != 4 {
 				continue
 			}
-			if res.NarrowSynth != nil {
-				if fnType := res.NarrowSynth.FunctionType(fn, res.BaseScope); fnType != nil {
+			if synth := res.SolvedSynth(); synth != nil {
+				if fnType := synth.FunctionType(fn, res.BaseScope); fnType != nil {
 					t.Logf("NarrowSynth.FunctionType(get_db) returns %v", fnType.Returns)
 				}
 			}

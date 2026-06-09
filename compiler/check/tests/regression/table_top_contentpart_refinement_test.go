@@ -48,8 +48,9 @@ func TestTableTopContentPartRefinement(t *testing.T) {
 
 	result := testutil.Check(source, testutil.WithStdlib())
 	if result.HasError() {
-		if result.Session != nil && result.Session.RootResult != nil && result.Session.RootResult.FlowInputs != nil {
-			for _, ec := range result.Session.RootResult.FlowInputs.EdgeConditions {
+		if result.Session != nil && result.Session.RootResult != nil {
+			inputs := result.Session.RootResult.FlowInputView()
+			for _, ec := range inputs.EdgeConditions() {
 				cs := ec.Condition.AllConstraints()
 				if len(cs) == 0 {
 					continue
