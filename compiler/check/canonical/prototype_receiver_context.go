@@ -678,7 +678,7 @@ func (p *program) normalizeCapturedMethodReceiverCells(
 		if !ok || exact.IsZero() {
 			continue
 		}
-		baseline, ok := in.PrototypeSelf.Value(receiver.PrototypeSym)
+		baseline, ok := flow.ReceiverSelfValueOfPoint(in, receiver.PrototypeSym)
 		if !ok || baseline.IsZero() {
 			baseline = exact
 		}

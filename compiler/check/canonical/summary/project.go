@@ -138,7 +138,7 @@ func projectPrototypeSelf(fs state.FunctionState, g *cfg.Graph) flow.PrototypeSe
 		if !ok {
 			return
 		}
-		out = flow.PrototypeSelfDomain.Join(out, ps.PrototypeSelf)
+		out = flow.PrototypeSelfDomain.Join(out, flow.PrototypeSelfAxisOf(ps))
 	})
 	return out
 }

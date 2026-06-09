@@ -3388,7 +3388,7 @@ func (t *Transfer) publishReturnedPrototypeSelf(out *flow.PointState, expr ast.E
 	if sym == 0 {
 		return
 	}
-	protos, ok := out.PrototypeInstances.Prototypes(sym)
+	protos, ok := flow.PrototypeInstancePrototypesOfPoint(out, sym)
 	if !ok || len(protos) == 0 {
 		return
 	}
