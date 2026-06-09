@@ -40,7 +40,7 @@ func ProjectCall(input CallProjectionInput) (CallProjection, bool) {
 		return CallProjection{}, false
 	}
 	moduleBindings := input.Store.ModuleBindings()
-	storeView := StoreProjection(input.Store, nil)
+	storeView := CanonicalStoreProjection(input.Store, nil)
 	for _, sym := range callsite.CallableCalleeSymbolCandidates(input.Info, input.Graph, input.Bindings, moduleBindings) {
 		sv, ok := storeView.Symbol(sym, api.SynthModeDeclared)
 		ff := sv.Fact

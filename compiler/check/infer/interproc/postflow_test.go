@@ -72,7 +72,7 @@ func TestCollectParameterEvidenceFromResult_UsesSolvedObservationWithoutNarrowSy
 	CollectParameterEvidenceFromResult(st, result, parent, 0)
 	st.AdvancePostflowProjections()
 
-	ff, ok := st.FunctionFactProjection(graph, parent, callInfo.CalleeSymbol)
+	ff, ok := st.PostflowFunctionFactProjection(graph, parent, callInfo.CalleeSymbol)
 	if !ok {
 		t.Fatal("expected call-entry function fact")
 	}
@@ -130,7 +130,7 @@ func TestCollectParameterEvidenceFromResult_CanonicalProjectionSkipsProjectionBo
 	CollectParameterEvidenceFromResult(st, result, parent, currentSym)
 	st.AdvancePostflowProjections()
 
-	ff, _ := st.FunctionFactProjection(graph, parent, currentSym)
+	ff, _ := st.PostflowFunctionFactProjection(graph, parent, currentSym)
 	if len(ff.Call.Params) != 0 || len(ff.Body.Params) != 0 {
 		t.Fatalf("flow result must not write retired body/public params, got public=%v body=%v", ff.Call.Params, ff.Body.Params)
 	}

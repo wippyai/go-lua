@@ -85,7 +85,7 @@ end
 	root := result.Session.RootResult.Graph
 	parentHash := result.Session.Store.GraphParentHashOf(root.ID())
 	parent := result.Session.Store.Parents()[parentHash]
-	functionFacts := result.Session.Store.FunctionFactsProjectionForExport(root, parent)
+	functionFacts := result.Session.Store.CanonicalFunctionFactsProjectionForExport(root, parent)
 
 	sym, ok := root.SymbolAt(root.Exit(), "get_tracker")
 	if !ok || sym == 0 {

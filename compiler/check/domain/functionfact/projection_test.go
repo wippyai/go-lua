@@ -9,6 +9,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/check/domain/functionfact"
 	"github.com/wippyai/go-lua/compiler/check/scope"
 	"github.com/wippyai/go-lua/compiler/check/store"
+	"github.com/wippyai/go-lua/types/db"
 	"github.com/wippyai/go-lua/types/domain/value/product"
 	"github.com/wippyai/go-lua/types/typ"
 )
@@ -55,7 +56,7 @@ func projectionFactReturns(preflow, postflow []typ.Type) func(*api.FunctionFact)
 }
 
 func TestStoreProjectionGraphSymbol_UsesCanonicalParent(t *testing.T) {
-	st := store.NewSessionStore()
+	st := newFunctionFactProjectionStore()
 	fn := &ast.FunctionExpr{}
 	graph := cfg.Build(fn)
 	st.RegisterGraph(graph, fn)
@@ -69,7 +70,7 @@ func TestStoreProjectionGraphSymbol_UsesCanonicalParent(t *testing.T) {
 	second := typ.Func().Returns(typ.Number).Build()
 	writeFunctionFactType(st, graph, storedParent, sym, first)
 
-	view := functionfact.StoreProjection(st, defaultParent)
+	view := functionfact.CanonicalStoreProjection(st, defaultParent)
 	sv, ok := view.GraphSymbol(graph, sym, api.SynthModeDeclared)
 	if !ok {
 		t.Fatal("GraphSymbol() did not resolve")
@@ -89,7 +90,7 @@ func TestStoreProjectionGraphSymbol_UsesCanonicalParent(t *testing.T) {
 }
 
 func TestStoreProjectionSymbol_ResolvesOwningParentGraph(t *testing.T) {
-	st := store.NewSessionStore()
+	st := newFunctionFactProjectionStore()
 	parentFn := &ast.FunctionExpr{}
 	childFn := &ast.FunctionExpr{}
 	parentGraph := cfg.Build(parentFn)
@@ -105,7 +106,7 @@ func TestStoreProjectionSymbol_ResolvesOwningParentGraph(t *testing.T) {
 	st.RegisterFunctionRef(sym, childFn, childGraph, parentGraph.ID(), 0)
 	writeFunctionFactType(st, parentGraph, parent, sym, fnType)
 
-	sv, ok := functionfact.StoreProjection(st, nil).Symbol(sym, api.SynthModeDeclared)
+	sv, ok := functionfact.CanonicalStoreProjection(st, nil).Symbol(sym, api.SynthModeDeclared)
 	if !ok {
 		t.Fatal("Symbol() did not resolve")
 	}
@@ -118,7 +119,7 @@ func TestStoreProjectionSymbol_ResolvesOwningParentGraph(t *testing.T) {
 }
 
 func TestStoreProjectionOwner_ResolvesBeforeFactsExist(t *testing.T) {
-	st := store.NewSessionStore()
+	st := newFunctionFactProjectionStore()
 	parentFn := &ast.FunctionExpr{}
 	childFn := &ast.FunctionExpr{}
 	parentGraph := cfg.Build(parentFn)
@@ -132,14 +133,14 @@ func TestStoreProjectionOwner_ResolvesBeforeFactsExist(t *testing.T) {
 	sym := cfg.SymbolID(12)
 	st.RegisterFunctionRef(sym, childFn, childGraph, parentGraph.ID(), 0)
 
-	owner, ok := functionfact.StoreProjection(st, nil).Owner(sym)
+	owner, ok := functionfact.CanonicalStoreProjection(st, nil).Owner(sym)
 	if !ok {
 		t.Fatal("Owner() did not resolve empty product owner")
 	}
 	if owner.Key.GraphID != parentGraph.ID() || owner.Key.ParentHash != parent.Hash() {
 		t.Fatalf("Owner().Key = %#v, want graph %d parent %d", owner.Key, parentGraph.ID(), parent.Hash())
 	}
-	if sv, ok := functionfact.StoreProjection(st, nil).Symbol(sym, api.SynthModeDeclared); ok {
+	if sv, ok := functionfact.CanonicalStoreProjection(st, nil).Symbol(sym, api.SynthModeDeclared); ok {
 		t.Fatalf("Symbol() resolved empty fact product: %#v", sv)
 	}
 }
@@ -201,7 +202,7 @@ func TestFactsProjectionTypeLookup_ProjectsCanonicalFunctionTypes(t *testing.T) 
 }
 
 func TestStoreProjectionTypeLookup_UsesOwningFunctionFactProduct(t *testing.T) {
-	st := store.NewSessionStore()
+	st := newFunctionFactProjectionStore()
 	parentFn := &ast.FunctionExpr{}
 	childFn := &ast.FunctionExpr{}
 	parentGraph := cfg.Build(parentFn)
@@ -217,7 +218,7 @@ func TestStoreProjectionTypeLookup_UsesOwningFunctionFactProduct(t *testing.T) {
 	st.RegisterFunctionRef(sym, childFn, childGraph, parentGraph.ID(), 0)
 	writeFunctionFactType(st, parentGraph, parent, sym, fnType)
 
-	lookup := functionfact.StoreProjection(st, nil).TypeLookup(functionfact.ProjectionSibling, api.SynthModeDeclared)
+	lookup := functionfact.CanonicalStoreProjection(st, nil).TypeLookup(functionfact.ProjectionSibling, api.SynthModeDeclared)
 	if lookup == nil {
 		t.Fatal("TypeLookup() returned nil")
 	}
@@ -528,7 +529,7 @@ func TestParameterEvidenceSignatures_NilInputs(t *testing.T) {
 }
 
 func TestParameterEvidenceSignatures_ProjectsCurrentGraphFacts(t *testing.T) {
-	st := store.NewSessionStore()
+	st := newFunctionFactProjectionStore()
 	fn := &ast.FunctionExpr{}
 	graph := cfg.Build(fn)
 	st.RegisterGraph(graph, fn)
@@ -549,7 +550,7 @@ func TestParameterEvidenceSignatures_ProjectsCurrentGraphFacts(t *testing.T) {
 }
 
 func TestParameterEvidenceSignatures_UsesEntryParamsNotPublicOrBodyContracts(t *testing.T) {
-	st := store.NewSessionStore()
+	st := newFunctionFactProjectionStore()
 	fn := &ast.FunctionExpr{}
 	graph := cfg.Build(fn)
 	st.RegisterGraph(graph, fn)
@@ -572,7 +573,7 @@ func TestParameterEvidenceSignatures_UsesEntryParamsNotPublicOrBodyContracts(t *
 	if len(evidence) != 1 || !typ.TypeEquals(evidence[0], entryParam) {
 		t.Fatalf("signature evidence = %v, want entry param %v", evidence, entryParam)
 	}
-	ff, ok := st.FunctionFactProjection(graph, parent, sym)
+	ff, ok := st.CanonicalFunctionFactProjection(graph, parent, sym)
 	if !ok {
 		t.Fatal("missing function fact projection")
 	}
@@ -582,7 +583,7 @@ func TestParameterEvidenceSignatures_UsesEntryParamsNotPublicOrBodyContracts(t *
 }
 
 func TestVisibleFactsForGraph_ProjectsParentScopeFunctionFacts(t *testing.T) {
-	st := store.NewSessionStore()
+	st := newFunctionFactProjectionStore()
 	parentFn := &ast.FunctionExpr{}
 	childFn := &ast.FunctionExpr{}
 	siblingFn := &ast.FunctionExpr{}
@@ -637,10 +638,10 @@ func writeFunctionFactType(st *store.SessionStore, graph *cfg.Graph, parent *sco
 }
 
 func writeFunctionFacts(st *store.SessionStore, graph *cfg.Graph, parent *scope.State, facts api.FunctionFacts) {
-	st.ClearPostflowProjectionState()
 	key := api.KeyForGraph(graph, parent.Hash())
-	for _, sym := range cfg.SortedSymbolIDs(facts) {
-		st.MergeFunctionFactProjection(key, sym, facts[sym])
-	}
-	st.AdvancePostflowProjections()
+	st.SetCanonicalFunctionFactsProjection(map[api.GraphKey]api.FunctionFacts{key: facts})
+}
+
+func newFunctionFactProjectionStore() *store.SessionStore {
+	return store.NewSessionStoreWithDB(db.New())
 }

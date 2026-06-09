@@ -232,7 +232,7 @@ func (s *SessionStore) swapPostflowProjections() []string {
 		swap func() bool
 	}{
 		{
-			name: "FunctionFactProjection",
+			name: "PostflowFunctionFactProjection",
 			swap: func() bool {
 				return swapProductMap(
 					&s.postflowPrev.functionFacts,
@@ -499,8 +499,9 @@ func (s *SessionStore) ParentGraphKeyForSymbol(sym cfg.SymbolID) (api.GraphKey, 
 	return api.KeyForGraph(graph, parentHash), true
 }
 
-// MergeFunctionFactProjection merges one function-fact projection row.
-func (s *SessionStore) MergeFunctionFactProjection(key api.GraphKey, sym cfg.SymbolID, fact api.FunctionFact) {
+// MergePostflowFunctionFactProjection merges one noncanonical postflow
+// function-fact projection row.
+func (s *SessionStore) MergePostflowFunctionFactProjection(key api.GraphKey, sym cfg.SymbolID, fact api.FunctionFact) {
 	if sym == 0 || functionfact.Empty(fact) {
 		return
 	}
@@ -871,10 +872,10 @@ func (s *SessionStore) ConstructorFieldsProjection(classSym cfg.SymbolID) (postf
 	return s.constructorFieldsByKey(api.ConstructorFieldKey{GraphKey: api.ModuleFactsKey(), Symbol: classSym})
 }
 
-// FunctionFactProjection returns the final/public FunctionFact projection for
-// one symbol. This uses the keyed projection cell so normal checker paths do
-// not clone or scan the graph's whole FunctionFacts map.
-func (s *SessionStore) FunctionFactProjection(graph *cfg.Graph, parent *scope.State, sym cfg.SymbolID) (api.FunctionFact, bool) {
+// CanonicalFunctionFactProjection returns the final Summary-derived FunctionFact
+// projection for one symbol. This uses the keyed projection cell so normal
+// checker paths do not clone or scan the graph's whole FunctionFacts map.
+func (s *SessionStore) CanonicalFunctionFactProjection(graph *cfg.Graph, parent *scope.State, sym cfg.SymbolID) (api.FunctionFact, bool) {
 	if s == nil || graph == nil || sym == 0 {
 		return api.FunctionFact{}, false
 	}
@@ -882,13 +883,14 @@ func (s *SessionStore) FunctionFactProjection(graph *cfg.Graph, parent *scope.St
 	if !ok {
 		return api.FunctionFact{}, false
 	}
-	return s.functionFactByKey(api.FunctionFactKey{GraphKey: key, Symbol: sym})
+	return s.canonicalFunctionFactByKey(api.FunctionFactKey{GraphKey: key, Symbol: sym})
 }
 
-// FunctionFactsProjectionForExport returns final/public FunctionFacts for a
-// graph as a whole map. This bulk projection is for export/debug surfaces; hot
-// symbol lookups should use FunctionFactProjection.
-func (s *SessionStore) FunctionFactsProjectionForExport(graph *cfg.Graph, parent *scope.State) api.FunctionFacts {
+// CanonicalFunctionFactsProjectionForExport returns final Summary-derived
+// FunctionFacts for a graph as a whole map. This bulk projection is for
+// export/debug surfaces; hot symbol lookups should use
+// CanonicalFunctionFactProjection.
+func (s *SessionStore) CanonicalFunctionFactsProjectionForExport(graph *cfg.Graph, parent *scope.State) api.FunctionFacts {
 	if s == nil || graph == nil {
 		return nil
 	}
@@ -896,5 +898,33 @@ func (s *SessionStore) FunctionFactsProjectionForExport(graph *cfg.Graph, parent
 	if !ok {
 		return nil
 	}
-	return s.functionFactsByKey(key)
+	return s.canonicalFunctionFactsByKey(key)
+}
+
+// PostflowFunctionFactProjection returns the noncanonical postflow-visible
+// FunctionFact projection for one symbol. Old postflow/nested inference uses
+// this lane explicitly; canonical code must not call it.
+func (s *SessionStore) PostflowFunctionFactProjection(graph *cfg.Graph, parent *scope.State, sym cfg.SymbolID) (api.FunctionFact, bool) {
+	if s == nil || graph == nil || sym == 0 {
+		return api.FunctionFact{}, false
+	}
+	key, ok := s.GraphKeyFor(graph, parent)
+	if !ok {
+		return api.FunctionFact{}, false
+	}
+	return s.postflowFunctionFactByKey(api.FunctionFactKey{GraphKey: key, Symbol: sym})
+}
+
+// PostflowFunctionFactsProjectionForExport returns the noncanonical postflow
+// function-fact projection as a whole map for compatibility/export tests that
+// still inspect the old postflow lane.
+func (s *SessionStore) PostflowFunctionFactsProjectionForExport(graph *cfg.Graph, parent *scope.State) api.FunctionFacts {
+	if s == nil || graph == nil {
+		return nil
+	}
+	key, ok := s.GraphKeyFor(graph, parent)
+	if !ok {
+		return nil
+	}
+	return s.postflowFunctionFactsByKey(key)
 }

@@ -25,7 +25,7 @@ func newFactsWriteStoreStub() *factsWriteStoreStub {
 	}
 }
 
-func (s *factsWriteStoreStub) MergeFunctionFactProjection(key api.GraphKey, sym cfg.SymbolID, fact api.FunctionFact) {
+func (s *factsWriteStoreStub) MergePostflowFunctionFactProjection(key api.GraphKey, sym cfg.SymbolID, fact api.FunctionFact) {
 	if s.functionFactsByKey[key] == nil {
 		s.functionFactsByKey[key] = make(api.FunctionFacts)
 	}

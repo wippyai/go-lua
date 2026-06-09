@@ -82,8 +82,9 @@ type FunctionRefs interface {
 
 // StoreReader is the read contract shared by normal checker phases. It
 // intentionally excludes postflow projection lane reads; callers that need final
-// function facts should request FunctionFactProjectionReader, and noncanonical
-// postflow code should request owner-specific package-local lane interfaces.
+// function facts should request CanonicalFunctionFactProjectionReader, and
+// noncanonical postflow code should request owner-specific package-local lane
+// interfaces.
 type StoreReader interface {
 	ModuleStore
 	GraphStore
@@ -99,11 +100,12 @@ type CanonicalFunctionFactProjectionSink interface {
 	SetCanonicalFunctionFactsProjection(facts map[GraphKey]FunctionFacts)
 }
 
-// FunctionFactProjectionReader exposes final/public FunctionFact projection.
-// It is a read-only output surface; it is not a canonical semantic input.
-type FunctionFactProjectionReader interface {
-	FunctionFactProjection(graph *cfg.Graph, parent *scope.State, sym cfg.SymbolID) (FunctionFact, bool)
-	FunctionFactsProjectionForExport(graph *cfg.Graph, parent *scope.State) FunctionFacts
+// CanonicalFunctionFactProjectionReader exposes final Summary-derived
+// FunctionFact projection. It is a read-only output surface; it is not a
+// canonical semantic input.
+type CanonicalFunctionFactProjectionReader interface {
+	CanonicalFunctionFactProjection(graph *cfg.Graph, parent *scope.State, sym cfg.SymbolID) (FunctionFact, bool)
+	CanonicalFunctionFactsProjectionForExport(graph *cfg.Graph, parent *scope.State) FunctionFacts
 }
 
 // CanonicalStore is the store surface the canonical summary engine is allowed to

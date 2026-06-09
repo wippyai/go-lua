@@ -408,8 +408,8 @@ func TestPostflowProjectionDiffs_IsolatedBetweenStores(t *testing.T) {
 	keyA := registerSessionFunctionForRefinementTest(t, storeA, cfg.SymbolID(42))
 	keyB := registerSessionFunctionForRefinementTest(t, storeB, cfg.SymbolID(42))
 	fact := api.FunctionFact{Effects: api.FunctionEffectProjection{Refinement: &constraint.FunctionRefinement{Terminates: true}}}
-	storeA.MergeFunctionFactProjection(keyA, cfg.SymbolID(42), fact)
-	storeB.MergeFunctionFactProjection(keyB, cfg.SymbolID(42), fact)
+	storeA.MergePostflowFunctionFactProjection(keyA, cfg.SymbolID(42), fact)
+	storeB.MergePostflowFunctionFactProjection(keyB, cfg.SymbolID(42), fact)
 
 	if !storeA.AdvancePostflowProjections() {
 		t.Fatal("expected storeA AdvancePostflowProjections to report change")
@@ -442,7 +442,7 @@ func TestSessionStore_ClearPostflowProjectionState(t *testing.T) {
 	store := store.NewSessionStore()
 
 	store.MergeConstructorFieldProjection(cfg.SymbolID(2), interprocdomain.LiftTypeFieldMap(map[string]typ.Type{"name": typ.String}))
-	store.MergeFunctionFactProjection(
+	store.MergePostflowFunctionFactProjection(
 		api.GraphKey{GraphID: 1, ParentHash: 1},
 		cfg.SymbolID(4),
 		api.FunctionFact{Effects: api.FunctionEffectProjection{Refinement: &constraint.FunctionRefinement{Terminates: true}}},

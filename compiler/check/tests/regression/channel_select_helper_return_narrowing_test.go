@@ -89,7 +89,7 @@ end
 	root := sess.RootResult.Graph
 	parentHash := sess.Store.GraphParentHashOf(root.ID())
 	parent := sess.Store.Parents()[parentHash]
-	functionFacts := sess.Store.FunctionFactsProjectionForExport(root, parent)
+	functionFacts := sess.Store.CanonicalFunctionFactsProjectionForExport(root, parent)
 
 	var helperFn *typ.Function
 	for sym := range functionFacts {

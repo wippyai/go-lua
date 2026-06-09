@@ -18,16 +18,21 @@ import (
 type factInputs struct {
 	database *db.DB
 
-	functionFactMaps    *db.Input[api.GraphKey, api.FunctionFacts]
-	functionFacts       *db.Input[api.FunctionFactKey, api.FunctionFact]
-	capturedTypes       *db.Input[api.CapturedTypeKey, product.AbstractValue]
-	capturedFields      *db.Input[api.GraphKey, postflow.CapturedFieldAssigns]
-	constructorFields   *db.Input[api.ConstructorFieldKey, postflow.FieldValues]
-	functionMapValues   map[api.GraphKey]api.FunctionFacts
-	functionFactValues  map[api.FunctionFactKey]api.FunctionFact
-	capturedTypeValues  map[api.CapturedTypeKey]product.AbstractValue
-	capturedFieldValues map[api.GraphKey]postflow.CapturedFieldAssigns
-	constructorValues   map[api.ConstructorFieldKey]postflow.FieldValues
+	canonicalFunctionFactMaps *db.Input[api.GraphKey, api.FunctionFacts]
+	canonicalFunctionFacts    *db.Input[api.FunctionFactKey, api.FunctionFact]
+	postflowFunctionFactMaps  *db.Input[api.GraphKey, api.FunctionFacts]
+	postflowFunctionFacts     *db.Input[api.FunctionFactKey, api.FunctionFact]
+	capturedTypes             *db.Input[api.CapturedTypeKey, product.AbstractValue]
+	capturedFields            *db.Input[api.GraphKey, postflow.CapturedFieldAssigns]
+	constructorFields         *db.Input[api.ConstructorFieldKey, postflow.FieldValues]
+
+	canonicalFunctionMapValues  map[api.GraphKey]api.FunctionFacts
+	canonicalFunctionFactValues map[api.FunctionFactKey]api.FunctionFact
+	postflowFunctionMapValues   map[api.GraphKey]api.FunctionFacts
+	postflowFunctionFactValues  map[api.FunctionFactKey]api.FunctionFact
+	capturedTypeValues          map[api.CapturedTypeKey]product.AbstractValue
+	capturedFieldValues         map[api.GraphKey]postflow.CapturedFieldAssigns
+	constructorValues           map[api.ConstructorFieldKey]postflow.FieldValues
 }
 
 func newFactInputs(database *db.DB) *factInputs {
@@ -35,17 +40,21 @@ func newFactInputs(database *db.DB) *factInputs {
 		return nil
 	}
 	return &factInputs{
-		database:            database,
-		functionFactMaps:    db.NewInput[api.GraphKey, api.FunctionFacts](database),
-		functionFacts:       db.NewInput[api.FunctionFactKey, api.FunctionFact](database),
-		capturedTypes:       db.NewInput[api.CapturedTypeKey, product.AbstractValue](database),
-		capturedFields:      db.NewInput[api.GraphKey, postflow.CapturedFieldAssigns](database),
-		constructorFields:   db.NewInput[api.ConstructorFieldKey, postflow.FieldValues](database),
-		functionMapValues:   make(map[api.GraphKey]api.FunctionFacts),
-		functionFactValues:  make(map[api.FunctionFactKey]api.FunctionFact),
-		capturedTypeValues:  make(map[api.CapturedTypeKey]product.AbstractValue),
-		capturedFieldValues: make(map[api.GraphKey]postflow.CapturedFieldAssigns),
-		constructorValues:   make(map[api.ConstructorFieldKey]postflow.FieldValues),
+		database:                    database,
+		canonicalFunctionFactMaps:   db.NewInput[api.GraphKey, api.FunctionFacts](database),
+		canonicalFunctionFacts:      db.NewInput[api.FunctionFactKey, api.FunctionFact](database),
+		postflowFunctionFactMaps:    db.NewInput[api.GraphKey, api.FunctionFacts](database),
+		postflowFunctionFacts:       db.NewInput[api.FunctionFactKey, api.FunctionFact](database),
+		capturedTypes:               db.NewInput[api.CapturedTypeKey, product.AbstractValue](database),
+		capturedFields:              db.NewInput[api.GraphKey, postflow.CapturedFieldAssigns](database),
+		constructorFields:           db.NewInput[api.ConstructorFieldKey, postflow.FieldValues](database),
+		canonicalFunctionMapValues:  make(map[api.GraphKey]api.FunctionFacts),
+		canonicalFunctionFactValues: make(map[api.FunctionFactKey]api.FunctionFact),
+		postflowFunctionMapValues:   make(map[api.GraphKey]api.FunctionFacts),
+		postflowFunctionFactValues:  make(map[api.FunctionFactKey]api.FunctionFact),
+		capturedTypeValues:          make(map[api.CapturedTypeKey]product.AbstractValue),
+		capturedFieldValues:         make(map[api.GraphKey]postflow.CapturedFieldAssigns),
+		constructorValues:           make(map[api.ConstructorFieldKey]postflow.FieldValues),
 	}
 }
 
@@ -54,11 +63,17 @@ func (in *factInputs) reset() {
 		return
 	}
 	batch := in.database.NewInputBatch()
-	for key := range in.functionMapValues {
-		in.functionFactMaps.SetInBatch(batch, key, nil)
+	for key := range in.canonicalFunctionMapValues {
+		in.canonicalFunctionFactMaps.SetInBatch(batch, key, nil)
 	}
-	for key := range in.functionFactValues {
-		in.functionFacts.SetInBatch(batch, key, api.FunctionFact{})
+	for key := range in.canonicalFunctionFactValues {
+		in.canonicalFunctionFacts.SetInBatch(batch, key, api.FunctionFact{})
+	}
+	for key := range in.postflowFunctionMapValues {
+		in.postflowFunctionFactMaps.SetInBatch(batch, key, nil)
+	}
+	for key := range in.postflowFunctionFactValues {
+		in.postflowFunctionFacts.SetInBatch(batch, key, api.FunctionFact{})
 	}
 	for key := range in.capturedTypeValues {
 		in.capturedTypes.SetInBatch(batch, key, product.AbstractValue{})
@@ -69,29 +84,59 @@ func (in *factInputs) reset() {
 	for key := range in.constructorValues {
 		in.constructorFields.SetInBatch(batch, key, nil)
 	}
-	clear(in.functionMapValues)
-	clear(in.functionFactValues)
+	clear(in.canonicalFunctionMapValues)
+	clear(in.canonicalFunctionFactValues)
+	clear(in.postflowFunctionMapValues)
+	clear(in.postflowFunctionFactValues)
 	clear(in.capturedTypeValues)
 	clear(in.capturedFieldValues)
 	clear(in.constructorValues)
 }
 
-func (in *factInputs) functionFactsFor(ctx *db.QueryContext, key api.GraphKey) (api.FunctionFacts, bool) {
-	if in == nil || in.functionFactMaps == nil {
+func (in *factInputs) canonicalFunctionFactsFor(ctx *db.QueryContext, key api.GraphKey) (api.FunctionFacts, bool) {
+	if in == nil {
 		return nil, false
 	}
-	facts, ok := in.functionFactMaps.Get(ctx, key)
+	return functionFactsFromInput(ctx, in.canonicalFunctionFactMaps, key)
+}
+
+func (in *factInputs) canonicalFunctionFactFor(ctx *db.QueryContext, key api.FunctionFactKey) (api.FunctionFact, bool) {
+	if in == nil {
+		return api.FunctionFact{}, false
+	}
+	return functionFactFromInput(ctx, in.canonicalFunctionFacts, key)
+}
+
+func (in *factInputs) postflowFunctionFactsFor(ctx *db.QueryContext, key api.GraphKey) (api.FunctionFacts, bool) {
+	if in == nil {
+		return nil, false
+	}
+	return functionFactsFromInput(ctx, in.postflowFunctionFactMaps, key)
+}
+
+func (in *factInputs) postflowFunctionFactFor(ctx *db.QueryContext, key api.FunctionFactKey) (api.FunctionFact, bool) {
+	if in == nil {
+		return api.FunctionFact{}, false
+	}
+	return functionFactFromInput(ctx, in.postflowFunctionFacts, key)
+}
+
+func functionFactsFromInput(ctx *db.QueryContext, input *db.Input[api.GraphKey, api.FunctionFacts], key api.GraphKey) (api.FunctionFacts, bool) {
+	if input == nil {
+		return nil, false
+	}
+	facts, ok := input.Get(ctx, key)
 	if !ok || len(facts) == 0 {
 		return nil, false
 	}
 	return cloneFunctionFacts(facts), true
 }
 
-func (in *factInputs) functionFactFor(ctx *db.QueryContext, key api.FunctionFactKey) (api.FunctionFact, bool) {
-	if in == nil || in.functionFacts == nil {
+func functionFactFromInput(ctx *db.QueryContext, input *db.Input[api.FunctionFactKey, api.FunctionFact], key api.FunctionFactKey) (api.FunctionFact, bool) {
+	if input == nil {
 		return api.FunctionFact{}, false
 	}
-	ff, ok := in.functionFacts.Get(ctx, key)
+	ff, ok := input.Get(ctx, key)
 	if !ok || functionfact.Empty(ff) {
 		return api.FunctionFact{}, false
 	}
@@ -139,35 +184,47 @@ func (in *factInputs) setPostflowProjectionLanes(
 	capturedFields postflow.CapturedFieldAssigns,
 	constructorFields postflow.ConstructorFields,
 ) {
-	in.setProjectedFunctionFactMap(batch, key, functionFacts)
-	in.setProjectedFunctionFacts(batch, key, functionFacts)
+	setFunctionFactMap(batch, in.postflowFunctionFactMaps, in.postflowFunctionMapValues, key, functionFacts)
+	setFunctionFacts(batch, in.postflowFunctionFacts, in.postflowFunctionFactValues, key, functionFacts)
 	in.setProjectedCapturedTypes(batch, key, capturedTypes)
 	in.setProjectedCapturedFields(batch, key, capturedFields)
 	in.setProjectedConstructorFields(batch, key, constructorFields)
 }
 
-func (in *factInputs) setProjectedFunctionFactMap(batch *db.InputBatch, key api.GraphKey, facts api.FunctionFacts) {
-	if in == nil || in.functionFactMaps == nil {
+func setFunctionFactMap(
+	batch *db.InputBatch,
+	input *db.Input[api.GraphKey, api.FunctionFacts],
+	values map[api.GraphKey]api.FunctionFacts,
+	key api.GraphKey,
+	facts api.FunctionFacts,
+) {
+	if input == nil || values == nil {
 		return
 	}
 	if len(facts) == 0 {
-		if _, ok := in.functionMapValues[key]; !ok {
+		if _, ok := values[key]; !ok {
 			return
 		}
-		delete(in.functionMapValues, key)
-		in.functionFactMaps.SetInBatch(batch, key, nil)
+		delete(values, key)
+		input.SetInBatch(batch, key, nil)
 		return
 	}
 	next := cloneFunctionFacts(facts)
-	if prev, ok := in.functionMapValues[key]; ok && interproc.FunctionFactsEqual(prev, next) {
+	if prev, ok := values[key]; ok && interproc.FunctionFactsEqual(prev, next) {
 		return
 	}
-	in.functionMapValues[key] = next
-	in.functionFactMaps.SetInBatch(batch, key, next)
+	values[key] = next
+	input.SetInBatch(batch, key, next)
 }
 
-func (in *factInputs) setProjectedFunctionFacts(batch *db.InputBatch, key api.GraphKey, facts api.FunctionFacts) {
-	if in == nil || in.functionFacts == nil {
+func setFunctionFacts(
+	batch *db.InputBatch,
+	input *db.Input[api.FunctionFactKey, api.FunctionFact],
+	values map[api.FunctionFactKey]api.FunctionFact,
+	key api.GraphKey,
+	facts api.FunctionFacts,
+) {
+	if input == nil || values == nil {
 		return
 	}
 	seen := make(map[api.FunctionFactKey]bool, len(facts))
@@ -175,18 +232,18 @@ func (in *factInputs) setProjectedFunctionFacts(batch *db.InputBatch, key api.Gr
 		inputKey := api.FunctionFactKey{GraphKey: key, Symbol: sym}
 		seen[inputKey] = true
 		next := cloneFunctionFact(ff)
-		if prev, ok := in.functionFactValues[inputKey]; ok && interproc.FunctionFactEqual(prev, next) {
+		if prev, ok := values[inputKey]; ok && interproc.FunctionFactEqual(prev, next) {
 			continue
 		}
-		in.functionFactValues[inputKey] = next
-		in.functionFacts.SetInBatch(batch, inputKey, next)
+		values[inputKey] = next
+		input.SetInBatch(batch, inputKey, next)
 	}
-	for inputKey := range in.functionFactValues {
+	for inputKey := range values {
 		if inputKey.GraphKey != key || seen[inputKey] {
 			continue
 		}
-		delete(in.functionFactValues, inputKey)
-		in.functionFacts.SetInBatch(batch, inputKey, api.FunctionFact{})
+		delete(values, inputKey)
+		input.SetInBatch(batch, inputKey, api.FunctionFact{})
 	}
 }
 
@@ -400,12 +457,38 @@ func constructorFieldsFromMap(fields postflow.ConstructorFields, sym cfg.SymbolI
 	return fields[sym]
 }
 
-func (s *SessionStore) functionFactsByKey(key api.GraphKey) api.FunctionFacts {
+func (s *SessionStore) canonicalFunctionFactsByKey(key api.GraphKey) api.FunctionFacts {
 	if s == nil {
 		return nil
 	}
 	if s.factInputs != nil {
-		if facts, ok := s.factInputs.functionFactsFor(s.factCtx, key); ok {
+		if facts, ok := s.factInputs.canonicalFunctionFactsFor(s.factCtx, key); ok {
+			return facts
+		}
+		return nil
+	}
+	return nil
+}
+
+func (s *SessionStore) canonicalFunctionFactByKey(key api.FunctionFactKey) (api.FunctionFact, bool) {
+	if s == nil || key.Symbol == 0 {
+		return api.FunctionFact{}, false
+	}
+	if s.factInputs != nil {
+		if ff, ok := s.factInputs.canonicalFunctionFactFor(s.factCtx, key); ok {
+			return ff, true
+		}
+		return api.FunctionFact{}, false
+	}
+	return api.FunctionFact{}, false
+}
+
+func (s *SessionStore) postflowFunctionFactsByKey(key api.GraphKey) api.FunctionFacts {
+	if s == nil {
+		return nil
+	}
+	if s.factInputs != nil {
+		if facts, ok := s.factInputs.postflowFunctionFactsFor(s.factCtx, key); ok {
 			return facts
 		}
 		return nil
@@ -413,12 +496,12 @@ func (s *SessionStore) functionFactsByKey(key api.GraphKey) api.FunctionFacts {
 	return s.visibleFunctionFacts(key)
 }
 
-func (s *SessionStore) functionFactByKey(key api.FunctionFactKey) (api.FunctionFact, bool) {
+func (s *SessionStore) postflowFunctionFactByKey(key api.FunctionFactKey) (api.FunctionFact, bool) {
 	if s == nil || key.Symbol == 0 {
 		return api.FunctionFact{}, false
 	}
 	if s.factInputs != nil {
-		if ff, ok := s.factInputs.functionFactFor(s.factCtx, key); ok {
+		if ff, ok := s.factInputs.postflowFunctionFactFor(s.factCtx, key); ok {
 			return ff, true
 		}
 		return api.FunctionFact{}, false
@@ -480,21 +563,21 @@ func (s *SessionStore) SetCanonicalFunctionFactsProjection(facts map[api.GraphKe
 	if s == nil || s.factInputs == nil {
 		return
 	}
-	keys := make(map[api.GraphKey]struct{}, len(facts)+len(s.factInputs.functionMapValues))
+	keys := make(map[api.GraphKey]struct{}, len(facts)+len(s.factInputs.canonicalFunctionMapValues))
 	for key := range facts {
 		keys[key] = struct{}{}
 	}
-	for key := range s.factInputs.functionMapValues {
+	for key := range s.factInputs.canonicalFunctionMapValues {
 		keys[key] = struct{}{}
 	}
-	for key := range s.factInputs.functionFactValues {
+	for key := range s.factInputs.canonicalFunctionFactValues {
 		keys[key.GraphKey] = struct{}{}
 	}
 	batch := s.factInputs.database.NewInputBatch()
 	for key := range keys {
 		functionFacts := facts[key]
-		s.factInputs.setProjectedFunctionFactMap(batch, key, functionFacts)
-		s.factInputs.setProjectedFunctionFacts(batch, key, functionFacts)
+		setFunctionFactMap(batch, s.factInputs.canonicalFunctionFactMaps, s.factInputs.canonicalFunctionMapValues, key, functionFacts)
+		setFunctionFacts(batch, s.factInputs.canonicalFunctionFacts, s.factInputs.canonicalFunctionFactValues, key, functionFacts)
 	}
 }
 
@@ -533,11 +616,11 @@ func (s *SessionStore) syncFactInputs() {
 		return
 	}
 
-	factKeys := make(map[api.GraphKey]struct{}, len(s.factInputs.functionMapValues))
-	for key := range s.factInputs.functionMapValues {
+	factKeys := make(map[api.GraphKey]struct{}, len(s.factInputs.postflowFunctionMapValues))
+	for key := range s.factInputs.postflowFunctionMapValues {
 		factKeys[key] = struct{}{}
 	}
-	for key := range s.factInputs.functionFactValues {
+	for key := range s.factInputs.postflowFunctionFactValues {
 		factKeys[key.GraphKey] = struct{}{}
 	}
 	for key := range s.factInputs.capturedTypeValues {

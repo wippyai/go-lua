@@ -35,18 +35,34 @@ const (
 	ProjectionSibling
 )
 
-// StoreView is the canonical store-backed read surface for function facts. It
+// StoreView is the store-backed read surface for function facts. It
 // keeps symbol ownership, parent graph-key resolution, synth mode, and type
 // projection in one place so callers do not rebuild partial views.
 type StoreView struct {
 	store         api.StoreReader
-	projection    api.FunctionFactProjectionReader
+	projection    func(*cfg.Graph, *scope.State, cfg.SymbolID) (api.FunctionFact, bool)
 	defaultParent *scope.State
 }
 
-// StoreProjection returns a normalized view over store-backed function facts.
-func StoreProjection(store api.StoreReader, defaultParent *scope.State) StoreView {
-	projection, _ := store.(api.FunctionFactProjectionReader)
+// CanonicalStoreProjection returns a normalized view over final Summary-derived
+// function facts.
+func CanonicalStoreProjection(store api.StoreReader, defaultParent *scope.State) StoreView {
+	var projection func(*cfg.Graph, *scope.State, cfg.SymbolID) (api.FunctionFact, bool)
+	if reader, ok := store.(api.CanonicalFunctionFactProjectionReader); ok {
+		projection = reader.CanonicalFunctionFactProjection
+	}
+	return StoreView{store: store, projection: projection, defaultParent: defaultParent}
+}
+
+// PostflowStoreProjection returns a normalized view over the noncanonical
+// postflow function-fact lane.
+func PostflowStoreProjection(store api.StoreReader, defaultParent *scope.State) StoreView {
+	var projection func(*cfg.Graph, *scope.State, cfg.SymbolID) (api.FunctionFact, bool)
+	if reader, ok := store.(interface {
+		PostflowFunctionFactProjection(*cfg.Graph, *scope.State, cfg.SymbolID) (api.FunctionFact, bool)
+	}); ok {
+		projection = reader.PostflowFunctionFactProjection
+	}
 	return StoreView{store: store, projection: projection, defaultParent: defaultParent}
 }
 
@@ -488,7 +504,7 @@ func lookupStored(facts api.FunctionFacts, sym cfg.SymbolID) (api.FunctionFact, 
 
 func storeFactForGraphInMode(
 	store api.StoreReader,
-	projection api.FunctionFactProjectionReader,
+	projection func(*cfg.Graph, *scope.State, cfg.SymbolID) (api.FunctionFact, bool),
 	graph *cfg.Graph,
 	sym cfg.SymbolID,
 	defaultParent *scope.State,
@@ -504,7 +520,7 @@ func storeFactForGraphInMode(
 	var ff api.FunctionFact
 	var found bool
 	load := func() {
-		ff, found = projection.FunctionFactProjection(owner.Graph, owner.Parent, sym)
+		ff, found = projection(owner.Graph, owner.Parent, sym)
 	}
 	if switcher, ok := store.(interface{ WithSynthMode(api.SynthMode, func()) }); ok {
 		switcher.WithSynthMode(mode, load)
@@ -537,7 +553,7 @@ func RefinementsFromStore(store api.StoreReader, defaultParent *scope.State) api
 	if store == nil {
 		return nil
 	}
-	view := StoreProjection(store, defaultParent)
+	view := CanonicalStoreProjection(store, defaultParent)
 	return api.NewRefinementFacts(func(sym cfg.SymbolID) *constraint.FunctionRefinement {
 		sv, ok := view.Symbol(sym, api.SynthModeDeclared)
 		if !ok {

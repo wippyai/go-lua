@@ -7,7 +7,7 @@ import (
 )
 
 type factsWriteStore interface {
-	MergeFunctionFactProjection(key api.GraphKey, sym cfg.SymbolID, fact api.FunctionFact)
+	MergePostflowFunctionFactProjection(key api.GraphKey, sym cfg.SymbolID, fact api.FunctionFact)
 	MergeCapturedFieldProjection(key api.GraphKey, nestedSym cfg.SymbolID, capturedSym cfg.SymbolID, fields postflow.FieldValues)
 	ParentGraphKeyForSymbol(sym cfg.SymbolID) (api.GraphKey, bool)
 }
@@ -30,7 +30,7 @@ func (w projectionFactWriter) mergeParentFunctionFacts(facts api.FunctionFacts) 
 		if !ok {
 			continue
 		}
-		w.store.MergeFunctionFactProjection(parentKey, sym, facts[sym])
+		w.store.MergePostflowFunctionFactProjection(parentKey, sym, facts[sym])
 		updated = true
 	}
 	return updated

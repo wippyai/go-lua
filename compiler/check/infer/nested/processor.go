@@ -59,9 +59,13 @@ type ResultFunc func(fn *ast.FunctionExpr) *api.FuncAnalysisView
 // constructor-field postflow lanes.
 type Store interface {
 	api.StoreReader
-	api.FunctionFactProjectionReader
+	postflowFunctionFactProjectionReader
 	capturedTypeProjectionWriter
 	constructorProjectionStore
+}
+
+type postflowFunctionFactProjectionReader interface {
+	PostflowFunctionFactProjection(graph *cfg.Graph, parent *scope.State, sym cfg.SymbolID) (api.FunctionFact, bool)
 }
 
 type capturedTypeProjectionWriter interface {
@@ -1067,7 +1071,7 @@ func (p *Processor) projectedSiblingFunctionFacts(
 		if info == nil || info.FuncSym == 0 {
 			continue
 		}
-		ff, ok := p.store.FunctionFactProjection(graph, parentScope, info.FuncSym)
+		ff, ok := p.store.PostflowFunctionFactProjection(graph, parentScope, info.FuncSym)
 		if !ok {
 			continue
 		}

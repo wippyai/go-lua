@@ -138,7 +138,7 @@ local result: number = a()
 
 	parentHash := sess.Store.GraphParentHashOf(sess.RootResult.Graph.ID())
 	parent := sess.Store.Parents()[parentHash]
-	functionFacts := sess.Store.FunctionFactsProjectionForExport(sess.RootResult.Graph, parent)
+	functionFacts := sess.Store.CanonicalFunctionFactsProjectionForExport(sess.RootResult.Graph, parent)
 	if len(functionFacts) == 0 {
 		t.Error("expected non-empty return summaries for the call chain")
 	}
@@ -444,7 +444,7 @@ local result: number = d()
 	checkedFunctions := make(map[string]bool)
 	parentHash := sess.Store.GraphParentHashOf(sess.RootResult.Graph.ID())
 	parent := sess.Store.Parents()[parentHash]
-	functionFacts := sess.Store.FunctionFactsProjectionForExport(sess.RootResult.Graph, parent)
+	functionFacts := sess.Store.CanonicalFunctionFactsProjectionForExport(sess.RootResult.Graph, parent)
 	for sym, fact := range functionFacts {
 		name := graph.NameOf(sym)
 		if name == "b" || name == "c" || name == "d" {

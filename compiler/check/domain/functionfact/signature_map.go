@@ -134,11 +134,11 @@ func VisibleFactsForGraph(
 }
 
 func projectedFunctionFactForGraph(store api.StoreReader, graph *cfg.Graph, parent *scope.State, sym cfg.SymbolID) (api.FunctionFact, bool) {
-	projection, ok := store.(api.FunctionFactProjectionReader)
+	projection, ok := store.(api.CanonicalFunctionFactProjectionReader)
 	if !ok || projection == nil || graph == nil || sym == 0 {
 		return api.FunctionFact{}, false
 	}
-	return projection.FunctionFactProjection(graph, parent, sym)
+	return projection.CanonicalFunctionFactProjection(graph, parent, sym)
 }
 
 func graphFunction(store api.StoreReader, graph *cfg.Graph) *ast.FunctionExpr {

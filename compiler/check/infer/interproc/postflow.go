@@ -28,14 +28,18 @@ import (
 // without this iteration product.
 type Store interface {
 	api.StoreReader
-	api.FunctionFactProjectionReader
+	postflowFunctionFactProjectionReader
 	functionFactProjectionWriter
 	capturedFieldProjectionWriter
 	ParentGraphKeyForSymbol(sym cfg.SymbolID) (api.GraphKey, bool)
 }
 
+type postflowFunctionFactProjectionReader interface {
+	PostflowFunctionFactProjection(graph *cfg.Graph, parent *scope.State, sym cfg.SymbolID) (api.FunctionFact, bool)
+}
+
 type functionFactProjectionWriter interface {
-	MergeFunctionFactProjection(key api.GraphKey, sym cfg.SymbolID, fact api.FunctionFact)
+	MergePostflowFunctionFactProjection(key api.GraphKey, sym cfg.SymbolID, fact api.FunctionFact)
 }
 
 type capturedFieldProjectionWriter interface {
@@ -527,7 +531,7 @@ func CollectParameterEvidenceFromResult(store Store, result *api.FuncResult, par
 			EvidenceAllowed: func(sym cfg.SymbolID, idx int) bool {
 				return callArgumentEvidenceAllowedForSymbol(store, sym, idx)
 			},
-			Observer: observation.FromSolvedObservationState(result.ObservationState(), functionfact.StoreProjection(store, parent).TypeLookup(functionfact.ProjectionSibling, api.SynthModeDeclared)),
+			Observer: observation.FromSolvedObservationState(result.ObservationState(), functionfact.PostflowStoreProjection(store, parent).TypeLookup(functionfact.ProjectionSibling, api.SynthModeDeclared)),
 			ArgumentObservation: func(point cfg.Point, arg ast.Expr, current typ.Type) typ.Type {
 				return observation.ObservedArgumentType(result, point, arg, current, bindings)
 			},
@@ -588,7 +592,7 @@ func (c *parameterEvidenceCollector) collectCallEvidence(evidence api.CallEviden
 	if calleeSym == 0 {
 		return
 	}
-	calleeOwner, ok := functionfact.StoreProjection(c.store, c.parent).Owner(calleeSym)
+	calleeOwner, ok := functionfact.PostflowStoreProjection(c.store, c.parent).Owner(calleeSym)
 	if !ok {
 		return
 	}
@@ -597,7 +601,7 @@ func (c *parameterEvidenceCollector) collectCallEvidence(evidence api.CallEviden
 		return
 	}
 	for _, sym := range cfg.SortedSymbolIDs(facts) {
-		c.store.MergeFunctionFactProjection(calleeOwner.Key, sym, facts[sym])
+		c.store.MergePostflowFunctionFactProjection(calleeOwner.Key, sym, facts[sym])
 	}
 }
 
@@ -622,7 +626,7 @@ func (c *parameterEvidenceCollector) recordCurrentBodyPreconditions(p cfg.Point,
 	builder.AddPublicParams(c.currentSym, preconditions.Public)
 	facts := builder.Build()
 	for _, sym := range cfg.SortedSymbolIDs(facts) {
-		c.store.MergeFunctionFactProjection(c.currentKey, sym, facts[sym])
+		c.store.MergePostflowFunctionFactProjection(c.currentKey, sym, facts[sym])
 	}
 }
 
