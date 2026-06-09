@@ -34,9 +34,9 @@ local value, label = get_db()
 	}
 	parentHash := sess.store.GraphParentHashOf(root.ID())
 	parent := sess.store.Parents()[parentHash]
-	facts := sess.store.FunctionFactsProjection(root, parent)
-	fact, ok := facts[sym]
+	fact, ok := sess.store.FunctionFactProjection(root, parent, sym)
 	if !ok {
+		facts := sess.store.FunctionFactsProjectionForExport(root, parent)
 		t.Fatalf("missing get_db fact; refs=%v summaries=%v facts=%d", driver.artifact.Refs, driver.artifact.Summaries, len(facts))
 	}
 	returns := product.ProjectVector(fact.Returns.Preflow)
@@ -77,9 +77,9 @@ local value = ensure_payload({ id = "db" })
 	}
 	parentHash := sess.store.GraphParentHashOf(root.ID())
 	parent := sess.store.Parents()[parentHash]
-	facts := sess.store.FunctionFactsProjection(root, parent)
-	fact, ok := facts[sym]
+	fact, ok := sess.store.FunctionFactProjection(root, parent, sym)
 	if !ok {
+		facts := sess.store.FunctionFactsProjectionForExport(root, parent)
 		t.Fatalf("missing ensure_payload fact; facts=%#v", facts)
 	}
 	returns := product.ProjectVector(fact.Returns.Preflow)
@@ -90,8 +90,9 @@ local value = ensure_payload({ id = "db" })
 	if !ok || consumeSym == 0 {
 		t.Fatal("missing consume symbol")
 	}
-	consumeFact, ok := facts[consumeSym]
+	consumeFact, ok := sess.store.FunctionFactProjection(root, parent, consumeSym)
 	if !ok {
+		facts := sess.store.FunctionFactsProjectionForExport(root, parent)
 		t.Fatalf("missing consume fact; facts=%#v", facts)
 	}
 	if consumeFact.Public.Signature == nil || len(consumeFact.Public.Signature.Params) != 1 || len(consumeFact.Public.Signature.Returns) != 1 {

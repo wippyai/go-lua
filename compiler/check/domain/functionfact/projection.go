@@ -504,7 +504,7 @@ func storeFactForGraphInMode(
 	var ff api.FunctionFact
 	var found bool
 	load := func() {
-		ff, found = lookupStored(projection.FunctionFactsProjection(owner.Graph, owner.Parent), sym)
+		ff, found = projection.FunctionFactProjection(owner.Graph, owner.Parent, sym)
 	}
 	if switcher, ok := store.(interface{ WithSynthMode(api.SynthMode, func()) }); ok {
 		switcher.WithSynthMode(mode, load)

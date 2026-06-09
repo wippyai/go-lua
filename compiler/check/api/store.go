@@ -127,10 +127,11 @@ type CanonicalFunctionFactProjectionSink interface {
 	SetCanonicalFunctionFactsProjection(facts map[GraphKey]FunctionFacts)
 }
 
-// FunctionFactProjectionReader exposes final/public FunctionFacts projection.
+// FunctionFactProjectionReader exposes final/public FunctionFact projection.
 // It is a read-only output surface; it is not a canonical semantic input.
 type FunctionFactProjectionReader interface {
-	FunctionFactsProjection(graph *cfg.Graph, parent *scope.State) FunctionFacts
+	FunctionFactProjection(graph *cfg.Graph, parent *scope.State, sym cfg.SymbolID) (FunctionFact, bool)
+	FunctionFactsProjectionForExport(graph *cfg.Graph, parent *scope.State) FunctionFacts
 }
 
 // CanonicalStore is the store surface the canonical summary engine is allowed to

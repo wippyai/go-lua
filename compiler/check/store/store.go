@@ -740,10 +740,24 @@ func (s *SessionStore) ProjectionFacts(graph *cfg.Graph, parent *scope.State) ap
 	return interprocProductView{store: s, key: key, ok: ok}
 }
 
-// FunctionFactsProjection returns final/public FunctionFacts for a graph. This
-// is a projection surface: canonical analysis must derive these facts from
-// Summary and must not read them back as semantic input.
-func (s *SessionStore) FunctionFactsProjection(graph *cfg.Graph, parent *scope.State) api.FunctionFacts {
+// FunctionFactProjection returns the final/public FunctionFact projection for
+// one symbol. This uses the keyed projection cell so normal checker paths do
+// not clone or scan the graph's whole FunctionFacts map.
+func (s *SessionStore) FunctionFactProjection(graph *cfg.Graph, parent *scope.State, sym cfg.SymbolID) (api.FunctionFact, bool) {
+	if s == nil || graph == nil || sym == 0 {
+		return api.FunctionFact{}, false
+	}
+	key, ok := s.GraphKeyFor(graph, parent)
+	if !ok {
+		return api.FunctionFact{}, false
+	}
+	return s.functionFactByKey(api.FunctionFactKey{GraphKey: key, Symbol: sym})
+}
+
+// FunctionFactsProjectionForExport returns final/public FunctionFacts for a
+// graph as a whole map. This bulk projection is for export/debug surfaces; hot
+// symbol lookups should use FunctionFactProjection.
+func (s *SessionStore) FunctionFactsProjectionForExport(graph *cfg.Graph, parent *scope.State) api.FunctionFacts {
 	if s == nil || graph == nil {
 		return nil
 	}

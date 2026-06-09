@@ -572,7 +572,11 @@ func TestParameterEvidenceSignatures_UsesEntryParamsNotPublicOrBodyContracts(t *
 	if len(evidence) != 1 || !typ.TypeEquals(evidence[0], entryParam) {
 		t.Fatalf("signature evidence = %v, want entry param %v", evidence, entryParam)
 	}
-	if public := functionfact.FactsProjection(st.FunctionFactsProjection(graph, parent)).PublicParameterEvidence(sym); len(public) != 1 || !typ.TypeEquals(public[0], typ.Any) {
+	ff, ok := st.FunctionFactProjection(graph, parent, sym)
+	if !ok {
+		t.Fatal("missing function fact projection")
+	}
+	if public := (functionfact.FactSymbolView{Fact: ff}).PublicParameterEvidence(); len(public) != 1 || !typ.TypeEquals(public[0], typ.Any) {
 		t.Fatalf("public evidence = %v, want any", public)
 	}
 }

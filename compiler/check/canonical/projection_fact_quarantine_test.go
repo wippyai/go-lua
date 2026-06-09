@@ -115,6 +115,46 @@ func TestCheckerProductionProjectionFactsStayInProjectionBoundaries(t *testing.T
 	}
 }
 
+func TestCheckerProductionUsesNarrowFunctionFactProjectionReads(t *testing.T) {
+	_, file, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("runtime.Caller failed")
+	}
+	checkRoot := filepath.Clean(filepath.Join(filepath.Dir(file), ".."))
+	bulkAllowed := map[string]bool{
+		filepath.Join(checkRoot, "api", "store.go"):   true,
+		filepath.Join(checkRoot, "session.go"):        true,
+		filepath.Join(checkRoot, "store", "store.go"): true,
+	}
+
+	err := filepath.WalkDir(checkRoot, func(path string, entry fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if entry.IsDir() {
+			return nil
+		}
+		if filepath.Ext(path) != ".go" || strings.HasSuffix(path, "_test.go") {
+			return nil
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		text := string(data)
+		if strings.Contains(text, ".FunctionFactsProjection(") || strings.Contains(text, " FunctionFactsProjection(") {
+			t.Errorf("%s uses removed default whole-map FunctionFacts projection", path)
+		}
+		if strings.Contains(text, "FunctionFactsProjectionForExport(") && !bulkAllowed[path] {
+			t.Errorf("%s uses bulk FunctionFacts export projection outside export/store boundary", path)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("walk checker sources: %v", err)
+	}
+}
+
 func TestCheckerProductionDoesNotPeekProjectionFactState(t *testing.T) {
 	_, file, _, ok := runtime.Caller(0)
 	if !ok {

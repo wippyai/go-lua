@@ -502,7 +502,7 @@ func (s *Session) rootFunctionFactsForExport() api.FunctionFacts {
 	if s == nil || s.Store == nil || s.RootResult == nil || s.RootResult.Graph == nil || s.RootResult.BaseScope == nil {
 		return nil
 	}
-	return s.Store.FunctionFactsProjection(s.RootResult.Graph, s.RootResult.BaseScope)
+	return s.Store.FunctionFactsProjectionForExport(s.RootResult.Graph, s.RootResult.BaseScope)
 }
 
 // RefinementsForExport extracts computed function refinements for manifest generation.
