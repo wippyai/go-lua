@@ -76,8 +76,8 @@ import (
 // Implemented (no longer deferred): field/index writes (t.f = v, t[k] = v) and the
 // read-back (product.WithField/WriteIndex/FieldOf/IndexOf over the Env);
 // container-targeted function definitions (function M.f); table-constructor field
-// typing; call-return typing through the bridged signatures (predeclared globals,
-// recursive/forward function references); path-sensitive condition narrowing
+// typing; call-return typing through declared/type-shape signatures (predeclared
+// globals, recursive/forward function references); path-sensitive condition narrowing
 // (x ~= nil, type(x) == k, x.kind == "tag") per branch edge via NarrowEdge
 // (narrow.go).
 var DeferredNodeKinds = []string{
@@ -1996,7 +1996,7 @@ func (t *Transfer) assignGenericForEmpty(out *flow.PointState, targets []cfg.Ass
 // `for k in pairs(container)` is provably a key of `container`, so
 // `container[k]` inside the loop body returns a present value. KeyPresence is the
 // canonical product-state axis for that runtime provenance; Cond is not used as
-// compatibility storage for this fact.
+// alternate storage for this fact.
 func (t *Transfer) seedKeyedIterKeyOf(out *flow.PointState, info *cfg.AssignInfo, iterCall *ast.FuncCallExpr) {
 	if len(info.Targets) == 0 || t.callTyper == nil {
 		return
@@ -2895,8 +2895,8 @@ func concreteOrderFamily(t typ.Type) typ.Type {
 
 // evalBinary resolves an arithmetic operator over its operand values. With an
 // operator resolver it uses the resolved result; otherwise it uses the shared
-// pure query-core operator reducer. The final numeric fallback is only for
-// cases the shared reducer cannot classify.
+// pure query-core operator reducer. The final numeric boundary handles cases the
+// shared reducer cannot classify.
 func (t *Transfer) evalBinary(
 	out *flow.PointState,
 	op string,

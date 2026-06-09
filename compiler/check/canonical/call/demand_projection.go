@@ -21,7 +21,7 @@ type CallArgDemandProjection struct {
 // Demands resolves caller-visible argument obligations in
 // canonical precision order: selected summary targets first, then callable
 // signature contracts. A summary hit with no demands is still authoritative and
-// suppresses the signature fallback.
+// suppresses declared-signature projection.
 func (p CallArgDemandProjection) Demands() []callobligation.Obligation {
 	if p.Call == nil || len(p.Call.Args) == 0 {
 		return nil

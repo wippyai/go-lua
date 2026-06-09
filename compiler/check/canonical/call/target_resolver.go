@@ -12,8 +12,8 @@ import (
 	"github.com/wippyai/go-lua/types/flow"
 )
 
-// StaticTargetLookup is the immutable topology fallback used after solved
-// FunctionRefs/ClosureRefs fail to provide an authoritative call target.
+// StaticTargetLookup is the immutable topology projection used when solved
+// FunctionRefs/ClosureRefs do not provide an authoritative call target.
 type StaticTargetLookup struct {
 	FuncBySymbol  func(cfg.SymbolID) (summary.FuncRef, bool)
 	FieldFunc     func(cfg.SymbolID, fieldkey.Key) (summary.FuncRef, bool)
@@ -130,7 +130,7 @@ func (r TargetResolver) ResolveStaticExprOrSymbol(expr ast.Expr, rawSym cfg.Symb
 // ResolveFunctionRefsAtExpr resolves the live product FunctionRefs axis for a
 // function-valued expression. The bool reports whether the axis was present and
 // therefore authoritative; a present Top set returns (nil, true) and must block
-// static fallback.
+// immutable topology projection.
 func (r TargetResolver) ResolveFunctionRefsAtExpr(expr ast.Expr, refs flow.FunctionRefs) ([]summary.FuncRef, bool) {
 	return r.directExprRefsFromState(expr, refs)
 }
@@ -165,7 +165,7 @@ func (r TargetResolver) ResolveClosureRefSetAtExpr(expr ast.Expr, refs flow.Clos
 
 // ResolveCallbackArgRefs resolves a callback argument using the same precedence
 // as call target resolution: direct function literal, live FunctionRefs axis,
-// then immutable static expression fallback.
+// then immutable topology projection.
 func (r TargetResolver) ResolveCallbackArgRefs(
 	arg ast.Expr,
 	references flow.ReferenceContext,
@@ -177,8 +177,8 @@ func (r TargetResolver) ResolveCallbackArgRefs(
 // ResolveCallbackArgRefsOrSymbol resolves a callback argument through the same
 // callback policy as ResolveCallbackArgRefs, additionally honoring a CFG raw
 // symbol when the call-site already captured one. The raw symbol is only a
-// lookup candidate: live FunctionRefs remain authoritative and block static
-// fallback when present but unknown.
+// lookup candidate: live FunctionRefs remain authoritative and block immutable
+// topology projection when present but unknown.
 func (r TargetResolver) ResolveCallbackArgRefsOrSymbol(
 	arg ast.Expr,
 	references flow.ReferenceContext,

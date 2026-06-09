@@ -7,8 +7,8 @@ import (
 
 // exitGuard synthesizes the branch guard a then-exit / else-exit ScopeExit node
 // carries for unsplit conditions. Modern CFGs carry CondOrigin, which is the
-// authoritative link back to the branch; the backward walk is a legacy/degenerate
-// fallback for graphs that only copied CondVar/CondCheck.
+// authoritative link back to the branch; the backward walk handles graphs that
+// only copied CondVar/CondCheck.
 func exitGuard(g *cfg.Graph, pred cfg.Point) (*cfg.BranchInfo, cfg.Point, bool) {
 	node := g.Node(pred)
 	if node == nil || node.Kind != cfg.NodeScopeExit {

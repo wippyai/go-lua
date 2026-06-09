@@ -11,10 +11,9 @@ import (
 	"github.com/wippyai/go-lua/types/flow"
 )
 
-// solvedCallEvidenceProjection is the diagnostic bridge from abstract
-// interpreter call events to solved call-edge evidence. It does not infer new
-// facts; it reprojects already-solved transfer state into the API carriers used
-// by later checks.
+// solvedCallEvidenceProjection projects abstract-interpreter call events to
+// solved call-edge evidence. It does not infer new facts; it reprojects
+// already-solved transfer state into the API carriers used by later checks.
 type solvedCallEvidenceProjection struct {
 	driver   *Driver
 	program  *program

@@ -7,11 +7,11 @@ import (
 	"github.com/wippyai/go-lua/types/typ"
 )
 
-// DiagnosticContextFrontier owns the diagnostic bridge's context discovery over
+// DiagnosticContextFrontier owns diagnostic context discovery over
 // already-converged summary dependencies. The driver supplies topology and
-// projection callbacks; summary owns the key traversal, fallback ordering, and
-// exact observer state cache because those are summary-context semantics rather
-// than module-driver policy.
+// projection callbacks; summary owns key traversal, uncalled-context ordering,
+// and exact observer state cache because those are summary-context semantics
+// rather than module-driver policy.
 type DiagnosticContextFrontier struct {
 	Root FuncRef
 	Refs []FuncRef
@@ -41,9 +41,9 @@ func (r DiagnosticContextResult) State(key Key) (state.FunctionState, bool) {
 }
 
 // Build discovers the finite diagnostic context frontier. Primary contexts are
-// actual call-site contexts reachable from the root. Closure/default contexts are
-// fallbacks for functions with no primary context; they are never joined into a
-// function that already has an actual call context.
+// actual call-site contexts reachable from the root. Closure/default contexts
+// cover functions with no primary context; they are never joined into a function
+// that already has an actual call context.
 func (f DiagnosticContextFrontier) Build() DiagnosticContextResult {
 	b := diagnosticContextBuilder{
 		frontier: f,
@@ -63,8 +63,8 @@ type diagnosticContextBuilder struct {
 	contextSet map[FuncRef]map[Key]struct{}
 	seen       map[Key]struct{}
 
-	primaryRefs      map[FuncRef]bool
-	closureFallbacks map[FuncRef][]Key
+	primaryRefs             map[FuncRef]bool
+	uncalledClosureContexts map[FuncRef][]Key
 }
 
 func (b *diagnosticContextBuilder) build() {
@@ -78,7 +78,7 @@ func (b *diagnosticContextBuilder) discoverReachable() {
 	b.result.Contexts = make(map[FuncRef][]Key)
 	b.contextSet = make(map[FuncRef]map[Key]struct{})
 	b.primaryRefs = make(map[FuncRef]bool)
-	b.closureFallbacks = make(map[FuncRef][]Key)
+	b.uncalledClosureContexts = make(map[FuncRef][]Key)
 	if !b.valid(rootKey) {
 		return
 	}
@@ -103,7 +103,7 @@ func (b *diagnosticContextBuilder) discoverReachable() {
 			if !b.valid(next) {
 				continue
 			}
-			b.closureFallbacks[next.Ref] = append(b.closureFallbacks[next.Ref], next)
+			b.uncalledClosureContexts[next.Ref] = append(b.uncalledClosureContexts[next.Ref], next)
 		}
 		for _, next := range b.projectCalls(key.Ref, fs) {
 			if !b.valid(next) {
@@ -115,19 +115,19 @@ func (b *diagnosticContextBuilder) discoverReachable() {
 		}
 	}
 
-	var fallbackWork []Key
+	var uncalledWork []Key
 	for _, ref := range b.frontier.Refs {
 		if ref == root || b.primaryRefs[ref] || len(b.result.Contexts[ref]) != 0 {
 			continue
 		}
-		for _, key := range b.closureFallbacks[ref] {
+		for _, key := range b.uncalledClosureContexts[ref] {
 			b.addContext(key)
-			enqueue(&fallbackWork, key)
+			enqueue(&uncalledWork, key)
 		}
 	}
-	for len(fallbackWork) > 0 {
-		key := fallbackWork[0]
-		fallbackWork = fallbackWork[1:]
+	for len(uncalledWork) > 0 {
+		key := uncalledWork[0]
+		uncalledWork = uncalledWork[1:]
 		fs := b.solve(key)
 		for _, next := range b.projectCalls(key.Ref, fs) {
 			if !b.valid(next) {
@@ -135,14 +135,14 @@ func (b *diagnosticContextBuilder) discoverReachable() {
 			}
 			b.promotePrimary(next.Ref)
 			b.addContext(next)
-			enqueue(&fallbackWork, next)
+			enqueue(&uncalledWork, next)
 		}
 		for _, next := range b.projectClosures(key.Ref, fs) {
 			if !b.valid(next) || b.primaryRefs[next.Ref] {
 				continue
 			}
 			b.addContext(next)
-			enqueue(&fallbackWork, next)
+			enqueue(&uncalledWork, next)
 		}
 	}
 	for _, ref := range b.frontier.Refs {
@@ -154,11 +154,11 @@ func (b *diagnosticContextBuilder) discoverReachable() {
 			continue
 		}
 		b.addContext(key)
-		enqueue(&fallbackWork, key)
+		enqueue(&uncalledWork, key)
 	}
-	for len(fallbackWork) > 0 {
-		key := fallbackWork[0]
-		fallbackWork = fallbackWork[1:]
+	for len(uncalledWork) > 0 {
+		key := uncalledWork[0]
+		uncalledWork = uncalledWork[1:]
 		fs := b.solve(key)
 		for _, next := range b.projectCalls(key.Ref, fs) {
 			if !b.valid(next) {
@@ -166,14 +166,14 @@ func (b *diagnosticContextBuilder) discoverReachable() {
 			}
 			b.promotePrimary(next.Ref)
 			b.addContext(next)
-			enqueue(&fallbackWork, next)
+			enqueue(&uncalledWork, next)
 		}
 		for _, next := range b.projectClosures(key.Ref, fs) {
 			if !b.valid(next) || b.primaryRefs[next.Ref] {
 				continue
 			}
 			b.addContext(next)
-			enqueue(&fallbackWork, next)
+			enqueue(&uncalledWork, next)
 		}
 	}
 }

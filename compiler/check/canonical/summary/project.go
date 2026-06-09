@@ -318,7 +318,7 @@ func staticMemberSlotPath(root constraint.Path, member typ.StaticMember) (constr
 
 // returnTupleAt reads the values of one return statement's expressions from the
 // converged point state ps. A returned identifier (ReturnInfo.Symbols[i] != 0)
-// projects its Env value; otherwise or when identifier fallback is unavailable,
+// projects its Env value; otherwise or when identifier Env projection is unavailable,
 // the function falls back to the transfer-owned return-slot Env key. When both
 // lookups miss, it projects value-domain Top, and later transfer-fidelity passes
 // (call-return typing) can still refine.

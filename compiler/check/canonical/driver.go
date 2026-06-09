@@ -94,7 +94,7 @@ type Config struct {
 	// EmitScopeDiag emits a warning when MaxScopeDepth truncates scope precision.
 	EmitScopeDiag bool
 
-	// ComputePasses are compatibility artifact producers over canonical
+	// ComputePasses are external artifact producers over canonical
 	// graph/scopes projection. They do not participate in the canonical fixed point.
 	ComputePasses []api.ComputePass
 }
@@ -470,7 +470,7 @@ type program struct {
 	params       map[summary.FuncRef]int
 
 	// observationContexts are immutable source/annotation contexts retained for
-	// transfer, entry seeding, capture fallback, and diagnostics. All phases read
+	// transfer, entry seeding, capture seeding, and diagnostics. All phases read
 	// this single carrier instead of parallel declared-type maps.
 	observationContexts map[summary.FuncRef]functionObservationContext
 
@@ -494,9 +494,9 @@ type program struct {
 	callerRefsByCallee map[summary.FuncRef][]summary.FuncRef
 
 	// prototypePublishersBySym indexes solved summaries that publish a runtime self
-	// value for a specific prototype symbol. A method receiver's fallback entry value
-	// reads only publishers for its prototype, not every summary with any prototype
-	// publication.
+	// value for a specific prototype symbol. A method receiver's aggregate entry
+	// value reads only publishers for its prototype, not every summary with any
+	// prototype publication.
 	prototypePublishersBySym map[cfg.SymbolID][]summary.FuncRef
 
 	// prototypeSurfaceMethodsBySym and prototypeMetatablesBySym are immutable
@@ -620,8 +620,8 @@ func (p *program) paramSlotFixed(ref summary.FuncRef, slot int) bool {
 // declaredTupleClosed reports whether source return annotations are closed
 // enough to own the caller-visible return tuple. Generic binder returns are not
 // closed facts; selected-target summary projection must prefer solved product
-// returns for `apply<T,U>(...): U`-style calls and use signature returns only as
-// fallback.
+// returns for `apply<T,U>(...): U`-style calls and use declared signature returns
+// only as signature-owned projection.
 func declaredTupleClosed(returns []typ.Type) bool {
 	if len(returns) == 0 {
 		return false
@@ -1212,7 +1212,7 @@ func (ct callTyper) summaryForCallEntryContext(entry canonicalcall.EntryContext)
 		return sum
 	}
 	// Snapshot exact-key absence is an explicit precision downgrade, not an
-	// exact-context fallback. The aggregate ref summary is still canonical
+	// exact-context read. The aggregate ref summary is still canonical
 	// post-solve evidence and carries context-free facts such as postconditions.
 	return reader.Summarize(key.Ref)
 }
@@ -1220,7 +1220,8 @@ func (ct callTyper) summaryForCallEntryContext(entry canonicalcall.EntryContext)
 // ProductCallFromValues is the product-carrier call path. It preserves product
 // axes owned by the canonical fixed point (for example gradual-top evidence and
 // callee summary return values), projects caller-visible effects from the same
-// selected outcome, and keeps type-only signature fallback inside this boundary.
+// selected outcome, and keeps declared/type-shape signature projection inside
+// this boundary.
 func (ct callTyper) ProductCallFromValues(call *ast.FuncCallExpr, ctx transfer.ProductCallContext) transfer.ProductCallResult {
 	frame, ok := ct.callBoundaryFrame(call, ctx, productCallOutcomeOptions{})
 	if !ok {

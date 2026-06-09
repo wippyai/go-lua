@@ -23,7 +23,7 @@ type StaticTypeLookup struct {
 }
 
 // TypeResolver resolves caller-visible callable types. Solved product-state
-// expression types win; immutable facts are fallbacks.
+// expression types win; immutable facts are static projections.
 type TypeResolver struct {
 	Bindings *bind.BindingTable
 	ExprType func(ast.Expr) typ.Type
@@ -74,7 +74,7 @@ func (r TypeResolver) ResolveReceiver(expr ast.Expr) typ.Type {
 	return nil
 }
 
-// ResolveStaticCallee resolves only immutable non-product fallback signatures.
+// ResolveStaticCallee resolves only immutable non-product signatures.
 func (r TypeResolver) ResolveStaticCallee(expr ast.Expr) typ.Type {
 	if ident, ok := expr.(*ast.IdentExpr); ok && ident != nil {
 		if sig := r.funcByIdent(ident); sig != nil {

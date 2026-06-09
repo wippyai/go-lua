@@ -140,7 +140,7 @@ func productCallSelfTypeInformative(t typ.Type) bool {
 	return !typ.ContainsTypeParam(t) || !typ.ContainsFreeTypeParam(t)
 }
 
-// ExprType is the compatibility projection for provider code that still needs a
+// ExprType is the type-shaped projection for provider code that still needs a
 // typ.Type resolver. It is an egress from the product context, not a separate
 // source of call evidence.
 func (c ProductCallContext) ExprType(e ast.Expr) typ.Type {

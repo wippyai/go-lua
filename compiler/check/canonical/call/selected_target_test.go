@@ -128,8 +128,8 @@ func TestTargetSelectionFallbackClassification(t *testing.T) {
 			if got := selection.BlocksTypeShape(); got != tc.blocksTypeShape {
 				t.Fatalf("BlocksTypeShape = %v, want %v", got, tc.blocksTypeShape)
 			}
-			if got := selection.AllowsCallbackFallback(); got != tc.allowsCallbackFallback {
-				t.Fatalf("AllowsCallbackFallback = %v, want %v", got, tc.allowsCallbackFallback)
+			if got := selection.AllowsSyntacticCallbackProjection(); got != tc.allowsCallbackFallback {
+				t.Fatalf("AllowsSyntacticCallbackProjection = %v, want %v", got, tc.allowsCallbackFallback)
 			}
 		})
 	}

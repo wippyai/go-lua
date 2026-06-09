@@ -101,7 +101,7 @@ func (p callOutcomeProjection) signatureReturns(target canonicalcall.SelectedTar
 	if sig == nil || typ.IsAbsentOrUnknown(sig) {
 		return nil
 	}
-	argTypes := callArgTypesWithExprFallback(p.site.call, p.site.argTypes, p.site.exprType)
+	argTypes := callArgTypesWithExprProjection(p.site.call, p.site.argTypes, p.site.exprType)
 	forcedExprType := func(expr ast.Expr) typ.Type {
 		if expr == p.site.call.Func {
 			return sig
@@ -132,7 +132,7 @@ func (p callOutcomeProjection) signatureReturns(target canonicalcall.SelectedTar
 	return nil
 }
 
-func callArgTypesWithExprFallback(call *ast.FuncCallExpr, argTypes []typ.Type, exprType func(ast.Expr) typ.Type) []typ.Type {
+func callArgTypesWithExprProjection(call *ast.FuncCallExpr, argTypes []typ.Type, exprType func(ast.Expr) typ.Type) []typ.Type {
 	if call == nil {
 		return nil
 	}

@@ -94,9 +94,9 @@ func (o CallOutcome) ReturnRelations() flow.ReturnRelations {
 }
 
 // CellEffects projects caller-visible capture effects through the canonical
-// direct-summary plus callback-fallback policy.
+// direct-summary plus syntactic callback projection policy.
 func (o CallOutcome) CellEffects(aggregation summary.CellEffectAggregation) flow.CaptureEffects {
-	if !o.Selection.AllowsCallbackFallback() {
+	if !o.Selection.AllowsSyntacticCallbackProjection() {
 		return o.Projection.CellEffects()
 	}
 	aggregation.DirectEffects = o.Projection.CellEffects()

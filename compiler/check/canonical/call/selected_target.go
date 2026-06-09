@@ -31,8 +31,8 @@ func (t SelectedTarget) IsClosure() bool {
 	return t.isClosure
 }
 
-// TargetSelection is the canonical selected callee set plus the fallback policy
-// implied by the resolved target axes.
+// TargetSelection is the canonical selected callee set plus the syntactic
+// callback projection policy implied by the resolved target axes.
 type TargetSelection struct {
 	targets              []SelectedTarget
 	closureAuthoritative bool
@@ -76,10 +76,11 @@ func (s TargetSelection) BlocksTypeShape() bool {
 	return !s.HasTargets() && s.closureAuthoritative
 }
 
-// AllowsCallbackFallback reports whether syntactic callback/spec fallback can be
-// composed with the selected direct-call effects. Closure targets already carry
-// exact entry context; an authoritative empty closure axis blocks fallback too.
-func (s TargetSelection) AllowsCallbackFallback() bool {
+// AllowsSyntacticCallbackProjection reports whether syntactic callback/spec
+// projection can be composed with the selected direct-call effects. Closure
+// targets already carry exact entry context; an authoritative empty closure axis
+// blocks this projection too.
+func (s TargetSelection) AllowsSyntacticCallbackProjection() bool {
 	return !s.HasClosureTargets() && !s.BlocksTypeShape()
 }
 

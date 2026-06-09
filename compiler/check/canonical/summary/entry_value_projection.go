@@ -85,9 +85,10 @@ type CallEntryTargetResolver func(call *ast.FuncCallExpr, in *flow.PointState) [
 
 // CallEntryCallbackResolver resolves a function-valued callback argument to the
 // canonical function refs it should seed. rawSym is the CFG-normalized argument
-// symbol when the call site provides one; expression fallback is only secondary.
+// symbol when the call site provides one; expression projection is only secondary.
 // The bool reports whether resolution was authoritative; a present-but-unknown
-// product axis may return (nil, true), deliberately blocking static fallback.
+// product axis may return (nil, true), deliberately blocking immutable topology
+// projection.
 type CallEntryCallbackResolver func(arg ast.Expr, rawSym cfg.SymbolID, in *flow.PointState) ([]FuncRef, bool)
 
 // CallEntryExpectedArgTypes returns the contextual types expected at one call
@@ -131,7 +132,7 @@ type EntryValueSeed struct {
 }
 
 // EntryValuesWithSeeds joins declaration-context seed types into an existing
-// entry-value vector. Seeds are additional evidence, not fixed-slot fallback.
+// entry-value vector. Seeds are additional evidence, not fixed-slot substitutes.
 func EntryValuesWithSeeds(values EntryValues, seeds []EntryValueSeed) EntryValues {
 	out := values
 	for _, seed := range seeds {

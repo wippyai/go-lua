@@ -12,7 +12,7 @@ import (
 // projectExprValueResolver exposes only already-known point-state facts to
 // product call providers. It deliberately does not evaluate call expressions:
 // providers are part of the current call's transfer, so re-entering evalCall from
-// a fallback resolver creates a transfer-local recursion outside the Kildall/db
+// this resolver creates a transfer-local recursion outside the Kildall/db
 // summary fixed point.
 func (t *Transfer) projectExprValueResolver(
 	out *flow.PointState,

@@ -16,14 +16,14 @@ type CallSummaryTarget struct {
 	Summary         Summary
 	EntryValues     EntryValues
 	DeclaredReturns bool
-	// SignatureReturns is the selected-target declared-return fallback for
+	// SignatureReturns is the selected-target declared-return projection for
 	// functions whose source signature owns the caller-visible return tuple.
 	// It is computed at the call-outcome boundary so declared-return targets do
 	// not leave the normalized selected-target path and re-resolve through a
 	// less precise expression type.
 	SignatureReturns []typ.Type
-	// SignatureRelations, when non-empty, is a finite fallback used only when
-	// Summary.Relations has no finite proof.
+	// SignatureRelations, when non-empty, is finite declared-signature evidence
+	// used only when Summary.Relations has no finite proof.
 	SignatureRelations flow.ReturnRelations
 }
 
@@ -39,7 +39,7 @@ type CallSummaryProjection struct {
 // must not be marked DeclaredReturns here; they are binder relations, not closed
 // runtime facts. Those targets keep the exact-context Summary.Returns so calls
 // like `apply<T,U>(x, fn): U` can return the solved callback result instead of a
-// broad signature fallback.
+// broad signature projection.
 func (p CallSummaryProjection) ReturnValues() []product.AbstractValue {
 	var out []product.AbstractValue
 	for _, target := range p.Targets {
@@ -54,7 +54,8 @@ func (p CallSummaryProjection) ReturnValues() []product.AbstractValue {
 
 // InferredReturnValues is the selected-target return fold. Declared-return
 // targets contribute their signature-projected return tuple when the call
-// outcome supplied one; otherwise the projection yields to the outer fallback.
+// outcome supplied one; otherwise the projection yields to the outer type-shape
+// outcome.
 func (p CallSummaryProjection) InferredReturnValues() []product.AbstractValue {
 	return p.ReturnValues()
 }
@@ -81,9 +82,9 @@ func declaredReturnValuesWithSummary(summary []product.AbstractValue, signature 
 	if len(summary) == 0 || len(summary) != len(signature) {
 		return out
 	}
-	for i, fallbackType := range signature {
-		refined, ok := returndomain.RefineDeclaredReturnType(fallbackType, product.ProjectValueOrUnknown(summary[i]))
-		if !ok || typ.TypeEquals(refined, fallbackType) {
+	for i, typeShape := range signature {
+		refined, ok := returndomain.RefineDeclaredReturnType(typeShape, product.ProjectValueOrUnknown(summary[i]))
+		if !ok || typ.TypeEquals(refined, typeShape) {
 			continue
 		}
 		out[i] = product.FromType(refined)
@@ -91,11 +92,11 @@ func declaredReturnValuesWithSummary(summary []product.AbstractValue, signature 
 	return out
 }
 
-// RefineReturnValuesWithTypes repairs product return slots with a closed
-// same-expression type-shape repair. The summary keeps precise evidence it already
-// owns; the fallback closes top-like or free-symbol leaves such as an open `T`
-// that should not cross the call boundary. This is a precision merge, not a
-// join and not whole-slot replacement.
+// RefineReturnValuesWithTypes refines product return slots with closed
+// same-expression type-shape evidence. The summary keeps precise evidence it
+// already owns; the type-shape evidence closes top-like or free-symbol leaves
+// such as an open `T` that should not cross the call boundary. This is a
+// precision merge, not a join and not whole-slot replacement.
 func RefineReturnValuesWithTypes(values []product.AbstractValue, types []typ.Type) ([]product.AbstractValue, bool) {
 	if len(values) == 0 || len(values) != len(types) {
 		return nil, false
@@ -103,18 +104,18 @@ func RefineReturnValuesWithTypes(values []product.AbstractValue, types []typ.Typ
 	out := make([]product.AbstractValue, len(values))
 	copy(out, values)
 	changed := false
-	for i, fallbackType := range types {
-		if fallbackType == nil || typ.IsUnknown(fallbackType) {
+	for i, typeShape := range types {
+		if typeShape == nil || typ.IsUnknown(typeShape) {
 			continue
 		}
-		fallbackType = subst.ExpandInstantiated(fallbackType)
+		typeShape = subst.ExpandInstantiated(typeShape)
 		summaryType := product.ProjectValueOrUnknown(values[i])
-		if typ.IsClosedUnionAnnotation(fallbackType) && !subtype.IsSubtype(summaryType, fallbackType) {
-			out[i] = product.FromType(fallbackType)
+		if typ.IsClosedUnionAnnotation(typeShape) && !subtype.IsSubtype(summaryType, typeShape) {
+			out[i] = product.FromType(typeShape)
 			changed = true
 			continue
 		}
-		refinedType, refined := typ.RefineWithFallback(summaryType, fallbackType)
+		refinedType, refined := typ.RefineWithFallback(summaryType, typeShape)
 		if !refined {
 			continue
 		}
@@ -210,8 +211,8 @@ func (p CallSummaryProjection) Postconditions() paramevidence.ReturnPostconditio
 
 // ReturnRelations folds return-slot must-relations across possible callee targets.
 // Each target contributes its proven summary relation when finite; otherwise it
-// contributes a precomputed signature fallback when finite. If no finite proof is
-// available for any target, the result is Top.
+// contributes precomputed declared-signature relation evidence when finite. If no
+// finite proof is available for any target, the result is Top.
 func (p CallSummaryProjection) ReturnRelations() flow.ReturnRelations {
 	out := flow.ReturnRelationsDomain.Bottom()
 	for _, target := range p.Targets {

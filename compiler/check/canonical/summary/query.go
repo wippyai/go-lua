@@ -165,8 +165,8 @@ func NewSnapshotReaderWithStats(snapshot CanonicalSummarySnapshot, stats *Stats)
 
 // CanonicalSummarySnapshot is the immutable post-solve view of Summary facts
 // already produced by the canonical query. By-key entries are exact Summary keys
-// the engine demanded during the real solve; by-ref entries are the aggregate
-// compatibility/export summaries.
+// the engine demanded during the real solve; by-ref entries are aggregate
+// public/export summaries.
 type CanonicalSummarySnapshot struct {
 	byRef map[FuncRef]Summary
 	byKey map[Key]Summary

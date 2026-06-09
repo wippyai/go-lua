@@ -77,7 +77,7 @@ type EntryFactSeeder interface {
 // stable symbols rather than parameter slots. It is used for immutable
 // scope/fact-derived bindings such as callback-scoped globals that must enter the
 // product state before the local transfer runs. These values are forward facts,
-// not declarations injected into the diagnostic bridge after solving.
+// not declarations injected into diagnostic projection after solving.
 type EntrySymbolValueSeeder interface {
 	SeedEntrySymbolValues(out *flow.PointState, values map[cfg.SymbolID]product.AbstractValue)
 }

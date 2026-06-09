@@ -10,8 +10,8 @@ import (
 )
 
 // staticAccess is the call package's normalized view of a source-level access
-// path. Target and type resolution share this so direct static fallback, live
-// function refs, and closure refs do not re-lower AST paths independently.
+// path. Target and type resolution share this so immutable topology projection,
+// live function refs, and closure refs do not re-lower AST paths independently.
 type staticAccess struct {
 	Bindings *bind.BindingTable
 }

@@ -150,11 +150,11 @@ func (f *canonicalFacts) summaryForCallEntryContext(entry canonicalcall.EntryCon
 	return reader.Summarize(key.Ref)
 }
 
-func (f *canonicalFacts) callObservationPoint(fallback cfg.Point, call *ast.FuncCallExpr) cfg.Point {
+func (f *canonicalFacts) callObservationPoint(defaultPoint cfg.Point, call *ast.FuncCallExpr) cfg.Point {
 	if f == nil || f.graph == nil || call == nil {
-		return fallback
+		return defaultPoint
 	}
-	out := fallback
+	out := defaultPoint
 	f.graph.EachCallSite(func(point cfg.Point, info *cfg.CallInfo) {
 		if info != nil && info.Call == call {
 			out = point
@@ -548,7 +548,7 @@ func (f *canonicalFacts) pointState(p cfg.Point, post bool) flow.PointState {
 
 // LengthLowerBoundAt returns the proven lower bound on the length of the container
 // symbol sym entering point p. The path-shaped projector owns the flow container
-// identity; this symbol compatibility method delegates to that canonical route.
+// identity; this symbol-shaped API delegates to that canonical route.
 func (f *canonicalFacts) LengthLowerBoundAt(p cfg.Point, sym cfg.SymbolID) (int64, bool) {
 	if sym == 0 {
 		return 0, false

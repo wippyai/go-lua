@@ -20,7 +20,7 @@ func (r Reader) ReturnTypes(ref FuncRef) []typ.Type {
 }
 
 // ParamTypes reads ref's solved parameter-contract cell and projects it to the
-// concrete bridge shape keyed by parameter slot.
+// concrete projection shape keyed by parameter slot.
 func (r Reader) ParamTypes(ref FuncRef) map[int]typ.Type {
 	return paramevidence.ContractTypes(r.Summarize(ref).Params)
 }

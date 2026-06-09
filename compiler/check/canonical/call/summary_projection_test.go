@@ -103,8 +103,8 @@ func TestSummaryProjectionForTargetsPreservesSelectionFallbackState(t *testing.T
 	if selection.BlocksTypeShape() {
 		t.Fatal("closure-top with finite direct targets should not block type shape")
 	}
-	if !selection.AllowsCallbackFallback() {
-		t.Fatal("finite direct targets with no closure target should allow callback fallback")
+	if !selection.AllowsSyntacticCallbackProjection() {
+		t.Fatal("finite direct targets with no closure target should allow syntactic callback projection")
 	}
 	if len(projection.Targets) != 1 || projection.Targets[0].Ref != direct {
 		t.Fatalf("projection targets = %#v, want direct ref %#v", projection.Targets, direct)

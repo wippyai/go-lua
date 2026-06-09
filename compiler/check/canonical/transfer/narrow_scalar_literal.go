@@ -17,7 +17,7 @@ import (
 // narrowByScalarLiteralComparison refines a tested place by a scalar literal
 // equality/inequality guard (`x == "tag"`, `x ~= ""`, `obj.kind == true`). Field
 // discriminants have a stronger union-aware path and run before this helper; this
-// fallback covers ordinary scalar slots and locals. It is an edge transfer: the
+// scalar route covers ordinary scalar slots and locals. It is an edge transfer: the
 // taken flag decides whether the comparison as written holds or its negation holds.
 func (t *Transfer) narrowByScalarLiteralComparison(out flow.PointState, info *cfg.BranchInfo, taken, atExit bool) (flow.PointState, bool) {
 	if info == nil {

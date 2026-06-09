@@ -28,7 +28,7 @@ type SummaryTargetInfo struct {
 
 // summaryProjectionForTargets applies the canonical callable precedence rule,
 // converts each selected target to an entry-context summary read, and returns the
-// summary-owned projection carrier plus the selection fallback state.
+// summary-owned projection carrier plus the selected-target policy state.
 func summaryProjectionForTargets(
 	targets TargetSet,
 	entryContext SelectedEntryContext,

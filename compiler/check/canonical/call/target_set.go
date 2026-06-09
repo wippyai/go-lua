@@ -65,7 +65,7 @@ func (set TargetSet) ClosureAuthoritative() bool {
 
 // HasFiniteClosureTargets reports whether ClosureRefs resolved to concrete
 // closure callees. ClosureRefs top/unknown is authoritative but has no finite
-// targets, so it must not suppress direct-call fallback.
+// targets, so it must not suppress direct static targets.
 func (set TargetSet) HasFiniteClosureTargets() bool {
 	return set.closureAuthoritative && len(set.closureRefs) > 0
 }
