@@ -71,12 +71,7 @@ func ApplyPathAliasProof(out *PointState, proof PathAliasProof) bool {
 
 // ApplyValueOriginProof applies semantic value-origin provenance to point state.
 func ApplyValueOriginProof(out *PointState, proof ValueOriginProof) bool {
-	if out == nil || proof.Value.Key() == "" || proof.Source.Key() == "" || proof.Kind == 0 {
-		return false
-	}
-	before := out.ValueOrigins
-	out.ValueOrigins = out.ValueOrigins.WithAddresses(proof.Value, proof.Source, proof.Kind, proof.VarIndex)
-	return !ValueOriginFactsDomain.Equal(before, out.ValueOrigins)
+	return RecordValueOrigin(out, proof.Value, proof.Source, proof.Kind, proof.VarIndex)
 }
 
 // ApplyValueOriginPathTransaction lowers and applies a source-level value-origin

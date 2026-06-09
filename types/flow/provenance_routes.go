@@ -7,7 +7,7 @@ type ProvenanceRouteQuery struct {
 	Path                      constraint.Path
 	IdentityAliases           bool
 	IdentityAliasPolicy       IdentityAliasRoutePolicy
-	ValueOrigins              bool
+	ValueOriginRoutes         bool
 	AppendElementFieldOrigins bool
 }
 
@@ -26,7 +26,7 @@ func (f PointFacts) ProvenanceRoutes(path constraint.Path) []ProvenanceRoute {
 		Path:                      path,
 		IdentityAliases:           true,
 		IdentityAliasPolicy:       IdentityAliasReadPolicy,
-		ValueOrigins:              true,
+		ValueOriginRoutes:         true,
 		AppendElementFieldOrigins: true,
 	})
 }
@@ -61,7 +61,7 @@ func (f PointFacts) ProvenanceRoutesFor(q ProvenanceRouteQuery) []ProvenanceRout
 			})
 		}
 	}
-	if q.ValueOrigins || q.AppendElementFieldOrigins {
+	if q.ValueOriginRoutes || q.AppendElementFieldOrigins {
 		for _, route := range relations.SourceRoutes(relationSourceQuery{
 			Target:    target,
 			Kind:      relationSourceIndexedIteratorValue,
@@ -70,11 +70,11 @@ func (f PointFacts) ProvenanceRoutesFor(q ProvenanceRouteQuery) []ProvenanceRout
 			if q.AppendElementFieldOrigins {
 				out = appendAppendFieldProvenanceRoutes(out, *f.state, route)
 			}
-			if q.ValueOrigins {
+			if q.ValueOriginRoutes {
 				out = appendValueOriginProvenanceRoute(out, route)
 			}
 		}
-		if q.ValueOrigins {
+		if q.ValueOriginRoutes {
 			for _, route := range relations.SourceRoutes(relationSourceQuery{
 				Target: target,
 				Kind:   relationSourceKeyedIterator,

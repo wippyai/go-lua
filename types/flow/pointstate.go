@@ -304,7 +304,7 @@ var PointStateDomain = lattice.Lattice[PointState]{
 			ClosureRefsDomain.Equal(a.ClosureRefs, b.ClosureRefs) &&
 			StaticMemberFactsDomain.Equal(a.StaticMembers, b.StaticMembers) &&
 			KeyPresenceFactsDomain.Equal(a.KeyPresence, b.KeyPresence) &&
-			ValueOriginFactsDomain.Equal(a.ValueOrigins, b.ValueOrigins) &&
+			pointValueOriginsEqual(a, b) &&
 			PathAliasFactsDomain.Equal(a.PathAliases, b.PathAliases) &&
 			IndexWriteAdmissionFactsDomain.Equal(a.IndexWrites, b.IndexWrites)
 	},
@@ -323,7 +323,7 @@ var PointStateDomain = lattice.Lattice[PointState]{
 			ClosureRefsDomain.LessOrEq(a.ClosureRefs, b.ClosureRefs) &&
 			pointStaticMembersLessOrEq(a, b) &&
 			pointKeyPresenceLessOrEq(a, b) &&
-			ValueOriginFactsDomain.LessOrEq(a.ValueOrigins, b.ValueOrigins) &&
+			pointValueOriginsLessOrEq(a, b) &&
 			pointPathAliasesLessOrEq(a, b) &&
 			pointIndexWritesLessOrEq(a, b)
 	},
@@ -344,7 +344,7 @@ var PointStateDomain = lattice.Lattice[PointState]{
 			ClosureRefs:        ClosureRefsDomain.Join(a.ClosureRefs, b.ClosureRefs),
 			StaticMembers:      pointStaticMembersJoin(a, b, product.Domain.Join),
 			KeyPresence:        pointKeyPresenceJoin(a, b),
-			ValueOrigins:       ValueOriginFactsDomain.Join(a.ValueOrigins, b.ValueOrigins),
+			ValueOrigins:       pointValueOriginsJoin(a, b),
 			PathAliases:        pointPathAliasesJoin(a, b),
 			IndexWrites:        pointIndexWritesJoin(a, b, product.Domain.Join),
 		}
@@ -367,7 +367,7 @@ var PointStateDomain = lattice.Lattice[PointState]{
 			ClosureRefs:        ClosureRefsDomain.Widen(prev.ClosureRefs, next.ClosureRefs),
 			StaticMembers:      pointStaticMembersJoin(prev, next, product.Domain.Widen),
 			KeyPresence:        pointKeyPresenceJoin(prev, next),
-			ValueOrigins:       ValueOriginFactsDomain.Widen(prev.ValueOrigins, next.ValueOrigins),
+			ValueOrigins:       pointValueOriginsWiden(prev, next),
 			PathAliases:        pointPathAliasesJoin(prev, next),
 			IndexWrites:        pointIndexWritesJoin(prev, next, product.Domain.Widen),
 		}

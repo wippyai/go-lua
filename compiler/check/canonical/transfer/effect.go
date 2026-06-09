@@ -582,7 +582,7 @@ func (t *Transfer) applyWriteEffectWithAliasReplay(out *flow.PointState, effect 
 }
 
 func (t *Transfer) aliasReplayWriteEffects(out *flow.PointState, effect WriteEffect) []WriteEffect {
-	if out == nil || out.ValueOrigins.IsBottom() {
+	if flow.ValueOriginAxisIsBottom(out) {
 		return nil
 	}
 	path, ok := effect.Place.StaticPath()

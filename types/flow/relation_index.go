@@ -29,7 +29,7 @@ type relationSourceQuery struct {
 func relationIndexOf(state PointState) pointRelationIndex {
 	return pointRelationIndex{
 		aliases: PathAliasesOf(state),
-		origins: state.ValueOrigins,
+		origins: ValueOriginsOf(state),
 	}
 }
 

@@ -107,7 +107,6 @@ func ApplyAddressWriteInvalidation(out *PointState, effect AddressWriteInvalidat
 		return false
 	}
 	beforeKeyPresence := out.KeyPresence
-	beforeValueOrigins := out.ValueOrigins
 	beforeIndexWrites := out.IndexWrites
 	if effect.PresentElementWrite {
 		if len(effect.PresentElementMember) > 0 {
@@ -128,10 +127,10 @@ func ApplyAddressWriteInvalidation(out *PointState, effect AddressWriteInvalidat
 		out.KeyPresence = out.KeyPresence.KillAffectedByWriteAddress(effect.Write)
 		out.IndexWrites = out.IndexWrites.KillAffectedByWriteAddress(effect.Write)
 	}
-	out.ValueOrigins = out.ValueOrigins.KillAffectedByWriteAddress(effect.Write)
+	valueOriginsChanged := KillValueOriginsAffectedByWrite(out, effect.Write)
 	pathAliasesChanged := KillPathAliasesAffectedByWrite(out, effect.Write)
 	return !KeyPresenceFactsDomain.Equal(beforeKeyPresence, out.KeyPresence) ||
-		!ValueOriginFactsDomain.Equal(beforeValueOrigins, out.ValueOrigins) ||
+		valueOriginsChanged ||
 		pathAliasesChanged ||
 		!IndexWriteAdmissionFactsDomain.Equal(beforeIndexWrites, out.IndexWrites)
 }

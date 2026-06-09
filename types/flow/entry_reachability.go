@@ -46,10 +46,7 @@ func LiftEntryReachability(ps *PointState) bool {
 		ps.KeyPresence = KeyPresenceFactsDomain.Top()
 		changed = true
 	}
-	if ps.ValueOrigins.IsBottom() {
-		ps.ValueOrigins = ValueOriginFactsDomain.Top()
-		changed = true
-	}
+	changed = LiftValueOriginsEntry(ps) || changed
 	changed = LiftPathAliasesEntry(ps) || changed
 	if ps.IndexWrites.IsBottom() {
 		ps.IndexWrites = IndexWriteAdmissionFactsDomain.Top()

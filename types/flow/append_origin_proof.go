@@ -858,7 +858,8 @@ func AppendElementFieldOriginUses(state PointState, field StableAddress) []Value
 	if field.Key() == "" {
 		return nil
 	}
-	uses := append([]ValueOriginUse(nil), state.ValueOrigins.OriginsCoveringAddress(field)...)
+	origins := ValueOriginsOf(state)
+	uses := append([]ValueOriginUse(nil), origins.OriginsCoveringAddress(field)...)
 	for _, route := range relationIndexOf(state).SourceRoutes(relationSourceQuery{
 		Target: field,
 		Kind:   relationSourceIdentityAlias,
@@ -870,7 +871,7 @@ func AppendElementFieldOriginUses(state PointState, field StableAddress) []Value
 		if !ok {
 			continue
 		}
-		uses = append(uses, state.ValueOrigins.OriginsCoveringAddress(source)...)
+		uses = append(uses, origins.OriginsCoveringAddress(source)...)
 	}
 	return uses
 }

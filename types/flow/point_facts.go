@@ -608,7 +608,7 @@ func (f PointFacts) DynamicIndexReadback(q DynamicIndexReadbackQuery) (product.A
 			target, targetOK := StableAddressOfPath(q.Target)
 			key, keyOK := StableAddressOfPath(keyPath)
 			if targetOK && keyOK {
-				admitted, ok := IndexedIteratorKeyArrayReadback(f.state.KeyPresence, f.state.ValueOrigins, target, key)
+				admitted, ok := IndexedIteratorKeyArrayReadback(f.state.KeyPresence, ValueOriginsOfPoint(f.state), target, key)
 				if ok && !admitted.IsZero() {
 					t := product.ProjectValueOrUnknown(admitted)
 					if !typ.IsAbsentOrUnknown(t) && !typ.IsAny(t) {

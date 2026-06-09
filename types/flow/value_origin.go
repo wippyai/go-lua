@@ -226,6 +226,54 @@ func (f ValueOriginFacts) KillAffectedByWriteAddress(write StableAddress) ValueO
 	return canonicalValueOriginFacts(entries)
 }
 
+// ValueOriginsOf returns the value-origin axis carried by state.
+func ValueOriginsOf(state PointState) ValueOriginFacts {
+	return state.ValueOrigins
+}
+
+// ValueOriginsOfPoint returns the value-origin axis carried by state.
+func ValueOriginsOfPoint(state *PointState) ValueOriginFacts {
+	if state == nil {
+		return ValueOriginFactsDomain.Top()
+	}
+	return state.ValueOrigins
+}
+
+// ValueOriginAxisIsBottom reports whether the value-origin axis is unreachable.
+func ValueOriginAxisIsBottom(state *PointState) bool {
+	return state == nil || state.ValueOrigins.IsBottom()
+}
+
+// LiftValueOriginsEntry turns the unreachable entry seed into the reachable
+// identity element for the value-origin axis.
+func LiftValueOriginsEntry(state *PointState) bool {
+	if state == nil || !state.ValueOrigins.IsBottom() {
+		return false
+	}
+	state.ValueOrigins = ValueOriginFactsDomain.Top()
+	return true
+}
+
+// RecordValueOrigin records semantic value provenance on state.
+func RecordValueOrigin(state *PointState, value, source StableAddress, kind ValueOriginKind, varIndex int) bool {
+	if state == nil || value.Key() == "" || source.Key() == "" || kind == 0 {
+		return false
+	}
+	before := state.ValueOrigins
+	state.ValueOrigins = state.ValueOrigins.WithAddresses(value, source, kind, varIndex)
+	return !ValueOriginFactsDomain.Equal(before, state.ValueOrigins)
+}
+
+// KillValueOriginsAffectedByWrite applies the value-origin write-kill law.
+func KillValueOriginsAffectedByWrite(state *PointState, write StableAddress) bool {
+	if state == nil || write.Key() == "" {
+		return false
+	}
+	before := state.ValueOrigins
+	state.ValueOrigins = state.ValueOrigins.KillAffectedByWriteAddress(write)
+	return !ValueOriginFactsDomain.Equal(before, state.ValueOrigins)
+}
+
 func (f ValueOriginFacts) Format() string {
 	if f.bottom {
 		return "⊥"
@@ -331,4 +379,20 @@ func valueOriginFactsContainAll(have, want []ValueOriginFact) bool {
 func intersectValueOriginFacts(a, b ValueOriginFacts) ValueOriginFacts {
 	out := valueOriginRowIdentity.Intersect(a.entries, b.entries)
 	return canonicalValueOriginFacts(out)
+}
+
+func pointValueOriginsEqual(a, b PointState) bool {
+	return ValueOriginFactsDomain.Equal(a.ValueOrigins, b.ValueOrigins)
+}
+
+func pointValueOriginsLessOrEq(a, b PointState) bool {
+	return ValueOriginFactsDomain.LessOrEq(a.ValueOrigins, b.ValueOrigins)
+}
+
+func pointValueOriginsJoin(a, b PointState) ValueOriginFacts {
+	return ValueOriginFactsDomain.Join(a.ValueOrigins, b.ValueOrigins)
+}
+
+func pointValueOriginsWiden(prev, next PointState) ValueOriginFacts {
+	return ValueOriginFactsDomain.Widen(prev.ValueOrigins, next.ValueOrigins)
 }
