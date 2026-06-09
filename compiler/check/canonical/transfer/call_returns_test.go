@@ -110,6 +110,73 @@ func TestProductCallContextExprValueDoesNotEvaluateCalls(t *testing.T) {
 	}
 }
 
+func TestAssignCallUsesOnePreparedProductApplication(t *testing.T) {
+	tests := []struct {
+		name string
+		run  func(*Transfer, *flow.PointState, *ast.FuncCallExpr)
+	}{
+		{
+			name: "single target",
+			run: func(tr *Transfer, out *flow.PointState, call *ast.FuncCallExpr) {
+				tr.applyAssign(out, 0, &cfg.AssignInfo{
+					Targets: []cfg.AssignTarget{{
+						Kind:   cfg.TargetIdent,
+						Name:   "value",
+						Symbol: cfg.SymbolID(101),
+					}},
+					Sources: []ast.Expr{call},
+				}, nil)
+			},
+		},
+		{
+			name: "expanded returns",
+			run: func(tr *Transfer, out *flow.PointState, call *ast.FuncCallExpr) {
+				tr.applyAssign(out, 0, &cfg.AssignInfo{
+					Targets: []cfg.AssignTarget{
+						{Kind: cfg.TargetIdent, Name: "first", Symbol: cfg.SymbolID(102)},
+						{Kind: cfg.TargetIdent, Name: "second", Symbol: cfg.SymbolID(103)},
+					},
+					Sources: []ast.Expr{call},
+				}, nil)
+			},
+		},
+		{
+			name: "container target",
+			run: func(tr *Transfer, out *flow.PointState, call *ast.FuncCallExpr) {
+				root := cfg.SymbolID(104)
+				out.Env = map[flow.ValueKey]product.AbstractValue{
+					flow.SymbolValueKey(root): product.FromType(typ.NewRecord().SetOpen(true).Build()),
+				}
+				tr.applyAssign(out, 0, &cfg.AssignInfo{
+					Targets: []cfg.AssignTarget{{
+						Kind:       cfg.TargetField,
+						BaseName:   "box",
+						BaseSymbol: root,
+						FieldPath:  []string{"value"},
+					}},
+					Sources: []ast.Expr{call},
+				}, nil)
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			typer := &countingProductReturnTyper{
+				returns: []product.AbstractValue{product.FromType(typ.String), product.FromType(typ.Number)},
+			}
+			tr := New(input.Inputs{}, Config{CallTyper: typer})
+			out := flow.PointState{Env: map[flow.ValueKey]product.AbstractValue{}}
+			call := &ast.FuncCallExpr{Func: &ast.IdentExpr{Value: "callee"}}
+
+			tt.run(tr, &out, call)
+
+			if typer.calls != 1 {
+				t.Fatalf("ProductCallFromValues calls = %d, want 1", typer.calls)
+			}
+		})
+	}
+}
+
 func TestProjectExprValueDynamicAnyMethodChain(t *testing.T) {
 	fn := &ast.FunctionExpr{ParList: &ast.ParList{Names: []string{"reader"}}}
 	in := input.BuildFromFunction(fn, nil, nil)
@@ -450,6 +517,22 @@ var _ CallTyper = strictAnyReturnTyper{}
 var _ ProductCallProvider = strictAnyReturnTyper{}
 var _ CallTyper = (*pendingBlocksTypeFallbackTyper)(nil)
 var _ ProductCallProvider = (*pendingBlocksTypeFallbackTyper)(nil)
+
+type countingProductReturnTyper struct {
+	captureEffectTyper
+	returns []product.AbstractValue
+	calls   int
+}
+
+func (p *countingProductReturnTyper) ProductCallFromValues(
+	*ast.FuncCallExpr,
+	ProductCallContext,
+) ProductCallResult {
+	p.calls++
+	return productReturnResultForTest(p.returns...)
+}
+
+var _ ProductCallProvider = (*countingProductReturnTyper)(nil)
 
 type constTypeCastTyper struct {
 	captureEffectTyper

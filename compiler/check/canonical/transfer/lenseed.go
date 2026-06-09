@@ -429,12 +429,20 @@ func isTableInsertCallee(info *cfg.CallInfo) bool {
 // product-domain allocation seed. Positive array capacity is a sequence seed;
 // zero/unknown array capacity stays a fresh record seed, which dynamic writes
 // and table.insert can still refine through the ordinary product transfer laws.
-func (t *Transfer) evalTableCreateCall(out *flow.PointState, call *ast.FuncCallExpr) (product.AbstractValue, bool) {
+func (t *Transfer) evalTableCreateCall(
+	out *flow.PointState,
+	call *ast.FuncCallExpr,
+	demand func(int, paramevidence.ParamContract),
+) (product.AbstractValue, bool) {
 	if !t.isTableCreateCall(call) {
 		return product.AbstractValue{}, false
 	}
 	if call == nil || len(call.Args) == 0 {
 		return product.AbstractValue{}, false
+	}
+	t.demandConditionReads(out, call.Func, demand)
+	for _, arg := range call.Args {
+		t.demandConditionReads(out, arg, demand)
 	}
 	narray, hasConstArray := t.constInt(call.Args[0])
 	if hasConstArray && narray > 0 {

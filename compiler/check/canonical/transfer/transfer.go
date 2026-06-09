@@ -215,6 +215,23 @@ func EmptyProductCallResult() ProductCallResult {
 	}
 }
 
+func (r ProductCallResult) ReturnValueAt(slot int, expandAbsent bool) (product.AbstractValue, bool) {
+	if slot < 0 || !r.HasReturnValues {
+		return product.AbstractValue{}, false
+	}
+	if slot >= len(r.ReturnValues) {
+		if expandAbsent {
+			return product.FromType(typ.Nil), true
+		}
+		return product.AbstractValue{}, false
+	}
+	av := r.ReturnValues[slot]
+	if av.IsZero() {
+		return product.AbstractValue{}, false
+	}
+	return av, true
+}
+
 type ProductCallProvider interface {
 	ProductCallFromValues(call *ast.FuncCallExpr, ctx ProductCallContext) ProductCallResult
 }
@@ -767,29 +784,25 @@ func (t *Transfer) applyAssign(
 			t.applyTypeCastNarrow(out, p, srcCall, demand)
 		}
 	}
-	callPostconditions := t.buildAssignCallPostconditions(out, p, info, demand)
-	// A call source feeding more targets than sources expands to a multi-return
-	// tuple: bind each target to the matching return slot (target i -> return i),
-	// the Lua multi-assignment semantics (`local a, b = f()`). Resolved once here so
-	// the per-target loop below reads the pre-typed return vector rather than
-	// re-typing the call for every fed target.
-	callReturns := t.callExpansionReturns(out, info, demand)
+	callApps := t.prepareAssignCallApplications(out, info, demand)
+	callPostconditions := t.buildAssignCallPostconditions(out, p, info, callApps)
+	t.applyAssignCallApplications(out, callApps, demand)
 	info.EachTargetSource(func(i int, target cfg.AssignTarget, src ast.Expr) {
 		if target.Kind == cfg.TargetField || target.Kind == cfg.TargetIndex {
-			t.applyContainerWriteForAssign(out, target, src, info, i, demand)
+			t.applyContainerWriteForAssign(out, target, src, info, i, callApps, demand)
 			return
 		}
 		if target.Kind != cfg.TargetIdent || target.Symbol == 0 {
 			return
 		}
 		keyArrayTable, _ := t.keyArrayTableForAssignment(info, i, target)
-		references := t.referenceWritesForAssignedPlace(out, Place{Root: target.Symbol}, info, i, src, demand)
+		references := t.referenceWritesForAssignedPlace(Place{Root: target.Symbol}, info, i, src, callApps)
 		applyAssignmentProvenance := func(value product.AbstractValue) {
 			if provenance, ok := t.assignmentProvenanceEffectWithSourceSymbol(target, src, assignSourceSymbol(info, i), value); ok {
 				t.applyAssignmentProvenanceEffect(out, provenance)
 			}
 		}
-		val, ok := t.targetValue(out, p, info, i, src, callReturns, demand)
+		val, ok := t.targetValue(out, p, info, i, src, callApps, demand)
 		constructorCardinalityLower := int64(0)
 		if tbl, isTable := src.(*ast.TableExpr); isTable {
 			constructorCardinalityLower = t.tableLiteralCardinalityLowerBound(out, tbl)
@@ -956,28 +969,6 @@ func (t *Transfer) declaredObjectInitializerType(info *cfg.AssignInfo, targetInd
 	}
 }
 
-// callExpansionReturns types the return vector of an assignment's single source
-// call that expands across multiple targets (`local a, b = f()`), so each target
-// binds to the matching return slot. It returns nil when the assignment is not a
-// multi-target call expansion (the ordinary per-source typing then applies). The
-// aligned single-target call (`local x = f()`) is typed through the per-target
-// source path, not here.
-func (t *Transfer) callExpansionReturns(
-	out *flow.PointState,
-	info *cfg.AssignInfo,
-	demand func(int, paramevidence.ParamContract),
-) []product.AbstractValue {
-	call, first := info.ExpandingSourceCall()
-	if call == nil || call.Call == nil || first != len(info.Sources)-1 {
-		return nil
-	}
-	returns, ok := t.evalCall(out, call.Call, demand)
-	if !ok {
-		return nil
-	}
-	return returns
-}
-
 func (t *Transfer) attachVariantOriginToAssignedValue(p cfg.Point, target cfg.AssignTarget, val product.AbstractValue) (product.AbstractValue, bool) {
 	if val.IsZero() || len(t.in.VariantFieldOrigins) == 0 {
 		return product.AbstractValue{}, false
@@ -1017,34 +1008,15 @@ func (t *Transfer) targetValue(
 	info *cfg.AssignInfo,
 	i int,
 	src ast.Expr,
-	callReturns []product.AbstractValue,
+	callApps assignCallApplications,
 	demand func(int, paramevidence.ParamContract),
 ) (product.AbstractValue, bool) {
 	// A target fed by the expanding call (at or past the call's source index) reads
 	// the pre-typed return vector: slot i maps to return (i - first), binding target
 	// i to return i per the Lua multi-assignment rule. Targets before the expanding
 	// call keep their own aligned source.
-	if callReturns != nil {
-		if _, first := info.ExpandingSourceCall(); i >= first {
-			idx := i - first
-			if idx < 0 {
-				return product.AbstractValue{}, false
-			}
-			// A target past the expanding call's return arity binds to nil: Lua fills a
-			// multi-assignment slot with no corresponding return value with nil (`local
-			// k, v = f()` where f returns one value makes v nil). The call resolved (the
-			// vector is present), so the absent slot is provably nil, not unknown.
-			if idx >= len(callReturns) {
-				return product.FromType(typ.Nil), true
-			}
-			av := callReturns[idx]
-			if av.IsZero() {
-				// A slot the pipeline could not type (within arity) is unknown, not
-				// provably nil; leave it to drop to the value-domain Top.
-				return product.AbstractValue{}, false
-			}
-			return av, true
-		}
+	if app, slot, expandAbsent, ok := callApps.applicationForTarget(info, i, src); ok {
+		return app.Result.ReturnValueAt(slot, expandAbsent)
 	}
 	if src != nil {
 		return t.evalExprAt(out, p, src, demand)
@@ -1240,11 +1212,22 @@ func (t *Transfer) applyContainerWriteForAssign(
 	src ast.Expr,
 	info *cfg.AssignInfo,
 	targetIndex int,
+	callApps assignCallApplications,
 	demand func(int, paramevidence.ParamContract),
 ) {
+	preparedValue := product.AbstractValue{}
+	hasPreparedValue := false
+	if app, slot, expandAbsent, ok := callApps.applicationForTarget(info, targetIndex, src); ok {
+		if value, valueOK := app.Result.ReturnValueAt(slot, expandAbsent); valueOK {
+			preparedValue = value
+		} else if !app.Context.PendingInput {
+			preparedValue = product.Domain.Top()
+		}
+		hasPreparedValue = true
+	}
 	t.applyContainerWriteWithRefResolver(out, target, src, demand, func(place Place) referenceWrite {
-		return t.referenceWritesForAssignedPlace(out, place, info, targetIndex, src, demand)
-	})
+		return t.referenceWritesForAssignedPlace(place, info, targetIndex, src, callApps)
+	}, preparedValue, hasPreparedValue)
 }
 
 func (t *Transfer) applyContainerWriteWithRefs(
@@ -1256,7 +1239,7 @@ func (t *Transfer) applyContainerWriteWithRefs(
 ) {
 	t.applyContainerWriteWithRefResolver(out, target, src, demand, func(Place) referenceWrite {
 		return references
-	})
+	}, product.AbstractValue{}, false)
 }
 
 func (t *Transfer) applyContainerWriteWithRefResolver(
@@ -1265,6 +1248,8 @@ func (t *Transfer) applyContainerWriteWithRefResolver(
 	src ast.Expr,
 	demand func(int, paramevidence.ParamContract),
 	refWrites func(Place) referenceWrite,
+	preparedValue product.AbstractValue,
+	hasPreparedValue bool,
 ) {
 	var base product.AbstractValue
 	if target.BaseSymbol != 0 {
@@ -1281,7 +1266,10 @@ func (t *Transfer) applyContainerWriteWithRefResolver(
 	}
 	place, ok := t.placeOfAssignTarget(out, target, base, demand)
 	if !ok || place.Root == 0 || len(place.Steps) == 0 {
-		symbolicValue := t.symbolicDynamicIndexWriteValue(out, target, src, demand)
+		symbolicValue := preparedValue
+		if !hasPreparedValue {
+			symbolicValue = t.symbolicDynamicIndexWriteValue(out, target, src, demand)
+		}
 		// A write through an unresolved dynamic key may still have a tracked static
 		// container prefix (`items.byName[k] = v`). Emit an invalidation-only effect
 		// for that footprint; do not pretend we know the exact key or root value.
@@ -1320,7 +1308,9 @@ func (t *Transfer) applyContainerWriteWithRefResolver(
 		references = refWrites(place)
 	}
 	val := product.AbstractValue{}
-	if src != nil {
+	if hasPreparedValue {
+		val = preparedValue
+	} else if src != nil {
 		expected := t.expectedContainerWriteValueType(place)
 		if resolved, ok := t.evalExprWithExpected(out, src, expected, demand); ok && !resolved.IsZero() {
 			val = resolved
@@ -1428,52 +1418,43 @@ func (t *Transfer) installStaticMemberWriteFact(out *flow.PointState, sym cfg.Sy
 }
 
 func (t *Transfer) referenceWritesForAssignedPlace(
-	out *flow.PointState,
 	place Place,
 	info *cfg.AssignInfo,
 	targetIndex int,
 	src ast.Expr,
-	demand func(int, paramevidence.ParamContract),
+	callApps assignCallApplications,
 ) referenceWrite {
-	if references, ok := t.callReturnReferenceWritesForAssignedPlace(out, place, info, targetIndex, src, demand); ok {
+	if references, ok := t.callReturnReferenceWritesForAssignedPlace(place, info, targetIndex, src, callApps); ok {
 		return references
 	}
 	return sourceReferenceWrite()
 }
 
 func (t *Transfer) callReturnReferenceWritesForAssignedPlace(
-	out *flow.PointState,
 	place Place,
 	info *cfg.AssignInfo,
 	targetIndex int,
 	src ast.Expr,
-	demand func(int, paramevidence.ParamContract),
+	callApps assignCallApplications,
 ) (referenceWrite, bool) {
-	if info != nil {
-		if call, retIndex := info.CallForTarget(targetIndex); call != nil && call.Call != nil {
-			return t.callReturnReferenceWritesForPlace(out, place, call.Call, retIndex, demand)
-		}
+	app, retIndex, _, ok := callApps.applicationForTarget(info, targetIndex, src)
+	if !ok {
+		return referenceWrite{}, false
 	}
-	if call, ok := src.(*ast.FuncCallExpr); ok {
-		return t.callReturnReferenceWritesForPlace(out, place, call, 0, demand)
-	}
-	return referenceWrite{}, false
+	return t.callReturnReferenceWritesForPlace(place, retIndex, app.Result.Boundary.ReturnRefs)
 }
 
 func (t *Transfer) callReturnReferenceWritesForPlace(
-	out *flow.PointState,
 	place Place,
-	call *ast.FuncCallExpr,
 	retIndex int,
-	demand func(int, paramevidence.ParamContract),
+	returns flow.ReturnRefs,
 ) (referenceWrite, bool) {
-	if out == nil || call == nil || retIndex < 0 {
+	if retIndex < 0 {
 		return referenceWrite{}, false
 	}
 	if path, ok := place.StaticPath(); !ok || path.IsEmpty() {
 		return referenceWrite{}, false
 	}
-	returns := t.callBoundaryOutcome(out, call, demand).ReturnRefs
 	writes := sourceReferenceWrite()
 	got := false
 	if tree, ok := returns.FunctionRefTree(retIndex); ok {
@@ -2290,7 +2271,7 @@ func (t *Transfer) evalCall(
 	if set, ok := t.evalSetMetatableCall(out, call, demand); ok {
 		return []product.AbstractValue{set}, true
 	}
-	if created, ok := t.evalTableCreateCall(out, call); ok {
+	if created, ok := t.evalTableCreateCall(out, call, demand); ok {
 		return []product.AbstractValue{created}, true
 	}
 	if t.callTyper == nil {
@@ -2298,9 +2279,10 @@ func (t *Transfer) evalCall(
 	}
 	// Emit parameter demand for argument and receiver reads, and resolve each
 	// argument's product value for the call pipeline's generic inference and arity.
-	ctx := t.productCallContext(out, call, demand)
-	result := t.productCallResult(call, ctx)
-	t.applyProductCallBoundary(out, call, ctx, result, demand, ProductCallBoundaryApplication{})
+	ctx, result, _, ok := t.productCallApplication(out, call, demand, ProductCallBoundaryApplication{})
+	if !ok {
+		return nil, false
+	}
 	if result.HasReturnValues && len(result.ReturnValues) > 0 {
 		out2 := make([]product.AbstractValue, len(result.ReturnValues))
 		copy(out2, result.ReturnValues)
@@ -2325,7 +2307,7 @@ func (t *Transfer) IntrinsicCallReturnValues(
 	if call == nil {
 		return nil, false
 	}
-	if created, ok := t.evalTableCreateCall(out, call); ok {
+	if created, ok := t.evalTableCreateCall(out, call, demand); ok {
 		return []product.AbstractValue{created}, true
 	}
 	return nil, false
@@ -3584,8 +3566,32 @@ func (t *Transfer) applyReturn(
 	}
 	if len(info.Exprs) == 1 {
 		if call := info.SourceCallAt(0); call != nil && call.Call != nil {
-			effect.Relations = t.callBoundaryOutcome(out, call.Call, demand).ReturnRelations
 			t.applySetMetatablePrototypeSelf(out, p, call.Call, demand)
+			if !t.transferOwnsCallValue(call.Call) {
+				if _, result, _, ok := t.productCallApplication(out, call.Call, demand, ProductCallBoundaryApplication{}); ok {
+					effect.Relations = result.Boundary.ReturnRelations
+					if result.HasReturnValues && len(result.ReturnValues) > 0 {
+						for i, val := range result.ReturnValues {
+							if val.IsZero() {
+								continue
+							}
+							slot := ReturnSlotEffect{Index: i, Value: val}
+							if i == 0 {
+								slot.Source = call.Call
+							}
+							if tree, ok := t.returnSetMetatableFunctionRefTree(p, call.Call); ok {
+								slot.FunctionRefTree = tree
+								slot.HasFunctionRefTree = true
+							}
+							effect.Slots = append(effect.Slots, slot)
+						}
+					} else {
+						effect.Slots = append(effect.Slots, ReturnSlotEffect{Index: 0, Source: call.Call})
+					}
+					t.applyReturnEffect(out, effect)
+					return
+				}
+			}
 			if returns, ok := t.evalCall(out, call.Call, demand); ok && len(returns) > 0 {
 				for i, val := range returns {
 					slot := ReturnSlotEffect{Index: i, Value: val}
@@ -3746,13 +3752,12 @@ func (t *Transfer) applyCallArgs(
 	// successor. The post-state is the lattice Bottom, so the branch arm holding
 	// this call drops out of the post-guard merge.
 	if t.callTyper != nil {
-		ctx := t.productCallContext(out, info.Call, demand)
-		result := t.productCallResult(info.Call, ctx)
-		if t.applyProductCallBoundary(out, info.Call, ctx, result, demand, ProductCallBoundaryApplication{
+		_, _, dead, ok := t.productCallApplication(out, info.Call, demand, ProductCallBoundaryApplication{
 			Point:               p,
 			PruneNoReturn:       true,
 			ApplyPostconditions: true,
-		}) {
+		})
+		if ok && dead {
 			return true
 		}
 	}

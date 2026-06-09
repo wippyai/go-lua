@@ -3,7 +3,6 @@ package transfer
 import (
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/cfg"
-	"github.com/wippyai/go-lua/compiler/check/domain/paramevidence"
 	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/flow"
 )
@@ -46,7 +45,7 @@ func (t *Transfer) buildAssignCallPostconditions(
 	out *flow.PointState,
 	p cfg.Point,
 	info *cfg.AssignInfo,
-	demand func(int, paramevidence.ParamContract),
+	callApps assignCallApplications,
 ) assignCallPostconditionEffects {
 	var effects assignCallPostconditionEffects
 	if out == nil || info == nil {
@@ -56,7 +55,11 @@ func (t *Transfer) buildAssignCallPostconditions(
 		if callInfo == nil || callInfo.Call == nil {
 			return
 		}
-		boundary := t.callBoundaryOutcome(out, callInfo.Call, demand)
+		app, ok := callApps.byCall[callInfo.Call]
+		if !ok {
+			return
+		}
+		boundary := app.Result.Boundary
 		t.appendSiblingNilPostconditions(info, callInfo, boundary.ReturnRelations, &effects)
 		t.appendGuardedTypePostconditions(info, callInfo, boundary.ReturnRelations, &effects)
 		t.appendBoundaryFactPostconditions(out, p, info, callInfo, boundary.BoundaryFacts, &effects)

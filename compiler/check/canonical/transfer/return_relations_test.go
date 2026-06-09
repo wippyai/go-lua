@@ -30,10 +30,15 @@ func TestCallReturnRelationsUsesProductArgEvidence(t *testing.T) {
 	tr := New(in, Config{CallTyper: typer})
 	out := flow.PointState{Env: map[flow.ValueKey]product.AbstractValue{}}
 
-	got := tr.callBoundaryOutcome(&out, &ast.FuncCallExpr{
+	call := &ast.FuncCallExpr{
 		Func: &ast.IdentExpr{Value: "callee"},
 		Args: []ast.Expr{arg},
-	}, nil).ReturnRelations
+	}
+	_, result, _, ok := tr.productCallApplication(&out, call, nil, ProductCallBoundaryApplication{})
+	if !ok {
+		t.Fatal("product call application did not resolve")
+	}
+	got := result.Boundary.ReturnRelations
 
 	if !got.HasErrorReturn(rel) {
 		t.Fatalf("return relations = %#v, want %#v", got.ErrorReturns(), rel)
@@ -82,7 +87,8 @@ func TestAssignCallPostconditionsMaterializeLengthParamLowerBound(t *testing.T) 
 		SourceCalls: []*cfg.CallInfo{callInfo},
 	}
 
-	effects := tr.buildAssignCallPostconditions(&out, in.Graph.Entry(), info, nil)
+	apps := tr.prepareAssignCallApplications(&out, info, nil)
+	effects := tr.buildAssignCallPostconditions(&out, in.Graph.Entry(), info, apps)
 	tr.applyAssignCallPostconditions(&out, effects)
 
 	targetLocal, ok := flow.LocalAddressOfPath(constraint.NewPath(targetSym, "ks"))
@@ -138,7 +144,8 @@ func TestAssignCallPostconditionsMaterializeReturnKeyBoundaryFact(t *testing.T) 
 		SourceCalls: []*cfg.CallInfo{callInfo},
 	}
 
-	effects := tr.buildAssignCallPostconditions(&out, 0, info, nil)
+	apps := tr.prepareAssignCallApplications(&out, info, nil)
+	effects := tr.buildAssignCallPostconditions(&out, 0, info, apps)
 	tr.applyAssignCallPostconditions(&out, effects)
 
 	tablePath := constraint.NewPath(selfSym, "self").Field("nodes")
@@ -196,7 +203,8 @@ func TestAssignCallPostconditionsReplayReturnKeyArrayValueForIndexedReadback(t *
 		SourceCalls: []*cfg.CallInfo{callInfo},
 	}
 
-	effects := tr.buildAssignCallPostconditions(&out, in.Graph.Entry(), info, nil)
+	apps := tr.prepareAssignCallApplications(&out, info, nil)
+	effects := tr.buildAssignCallPostconditions(&out, in.Graph.Entry(), info, apps)
 	tr.applyAssignCallPostconditions(&out, effects)
 
 	got, ok := flow.PointFactsOf(out).DynamicIndexReadback(flow.DynamicIndexReadbackQuery{
@@ -305,7 +313,8 @@ func TestAssignCallPostconditionsMaterializeBoundaryLengthRelation(t *testing.T)
 		SourceCalls: []*cfg.CallInfo{callInfo},
 	}
 
-	effects := tr.buildAssignCallPostconditions(&out, in.Graph.Entry(), info, nil)
+	apps := tr.prepareAssignCallApplications(&out, info, nil)
+	effects := tr.buildAssignCallPostconditions(&out, in.Graph.Entry(), info, apps)
 	tr.applyAssignCallPostconditions(&out, effects)
 
 	targetLocal, ok := flow.LocalAddressOfPath(constraint.NewPath(targetSym, "ks"))

@@ -5,12 +5,23 @@ import (
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/callsite"
 	canonicalplace "github.com/wippyai/go-lua/compiler/check/canonical/place"
+	"github.com/wippyai/go-lua/compiler/check/domain/metatable"
 	"github.com/wippyai/go-lua/compiler/check/domain/paramevidence"
 	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/domain/value/product"
 	"github.com/wippyai/go-lua/types/effect"
 	"github.com/wippyai/go-lua/types/flow"
 )
+
+type assignCallApplications struct {
+	byCall map[*ast.FuncCallExpr]assignCallApplication
+	calls  []*ast.FuncCallExpr
+}
+
+type assignCallApplication struct {
+	Context ProductCallContext
+	Result  ProductCallResult
+}
 
 // ProductCallBoundaryApplication selects which continuation-only call-boundary
 // facts are admissible at this transfer site. Expression calls apply obligations
@@ -41,6 +52,138 @@ func (t *Transfer) applyProductCallBoundary(
 		return t.ApplyReturnPostconditionsAtPoint(out, app.Point, call, boundary.Postconditions)
 	}
 	return false
+}
+
+func (t *Transfer) prepareAssignCallApplications(
+	out *flow.PointState,
+	info *cfg.AssignInfo,
+	demand func(int, paramevidence.ParamContract),
+) assignCallApplications {
+	apps := assignCallApplications{}
+	if out == nil || info == nil || t.callTyper == nil {
+		return apps
+	}
+	addCall := func(call *ast.FuncCallExpr) {
+		if call == nil || t.transferOwnsCallValue(call) {
+			return
+		}
+		if apps.byCall != nil {
+			if _, exists := apps.byCall[call]; exists {
+				return
+			}
+		}
+		ctx, result, ok := t.selectProductCall(out, call, demand)
+		if !ok {
+			return
+		}
+		if apps.byCall == nil {
+			apps.byCall = make(map[*ast.FuncCallExpr]assignCallApplication)
+		}
+		apps.calls = append(apps.calls, call)
+		apps.byCall[call] = assignCallApplication{
+			Context: ctx,
+			Result:  result,
+		}
+	}
+	info.EachSourceCall(func(_ int, callInfo *cfg.CallInfo) {
+		if callInfo == nil {
+			return
+		}
+		addCall(callInfo.Call)
+	})
+	info.EachSource(func(_ int, src ast.Expr) {
+		if call, ok := src.(*ast.FuncCallExpr); ok {
+			addCall(call)
+		}
+	})
+	return apps
+}
+
+func (t *Transfer) applyAssignCallApplications(
+	out *flow.PointState,
+	apps assignCallApplications,
+	demand func(int, paramevidence.ParamContract),
+) {
+	for _, call := range apps.calls {
+		app, ok := apps.byCall[call]
+		if !ok {
+			continue
+		}
+		t.applyProductCallBoundary(out, call, app.Context, app.Result, demand, ProductCallBoundaryApplication{})
+	}
+}
+
+func (apps assignCallApplications) applicationForTarget(
+	info *cfg.AssignInfo,
+	targetIndex int,
+	src ast.Expr,
+) (assignCallApplication, int, bool, bool) {
+	if len(apps.byCall) == 0 {
+		return assignCallApplication{}, 0, false, false
+	}
+	if info != nil {
+		if call, retIndex := info.CallForTarget(targetIndex); call != nil && call.Call != nil {
+			app, ok := apps.byCall[call.Call]
+			expanding, first := info.ExpandingSourceCall()
+			return app, retIndex, expanding != nil && targetIndex >= first, ok
+		}
+		if targetIndex >= 0 && targetIndex < len(info.Sources) {
+			if call, ok := info.Sources[targetIndex].(*ast.FuncCallExpr); ok && call != nil {
+				app, ok := apps.byCall[call]
+				return app, 0, false, ok
+			}
+		}
+		lastSource := len(info.Sources) - 1
+		if lastSource >= 0 && targetIndex >= lastSource && len(info.Targets)-lastSource >= 2 {
+			if call, ok := info.Sources[lastSource].(*ast.FuncCallExpr); ok && call != nil {
+				app, ok := apps.byCall[call]
+				return app, targetIndex - lastSource, true, ok
+			}
+		}
+	}
+	call, ok := src.(*ast.FuncCallExpr)
+	if !ok || call == nil {
+		return assignCallApplication{}, 0, false, false
+	}
+	app, ok := apps.byCall[call]
+	return app, 0, false, ok
+}
+
+func (t *Transfer) productCallApplication(
+	out *flow.PointState,
+	call *ast.FuncCallExpr,
+	demand func(int, paramevidence.ParamContract),
+	app ProductCallBoundaryApplication,
+) (ProductCallContext, ProductCallResult, bool, bool) {
+	ctx, result, ok := t.selectProductCall(out, call, demand)
+	if !ok {
+		return ProductCallContext{}, EmptyProductCallResult(), false, false
+	}
+	dead := t.applyProductCallBoundary(out, call, ctx, result, demand, app)
+	return ctx, result, dead, true
+}
+
+func (t *Transfer) selectProductCall(
+	out *flow.PointState,
+	call *ast.FuncCallExpr,
+	demand func(int, paramevidence.ParamContract),
+) (ProductCallContext, ProductCallResult, bool) {
+	if call == nil || t.callTyper == nil {
+		return ProductCallContext{}, EmptyProductCallResult(), false
+	}
+	ctx := t.productCallContext(out, call, demand)
+	result := t.productCallResult(call, ctx)
+	return ctx, result, true
+}
+
+func (t *Transfer) transferOwnsCallValue(call *ast.FuncCallExpr) bool {
+	if call == nil {
+		return false
+	}
+	if t.in.Graph != nil && metatable.IsSetMetatableCall(call, t.in.Graph.Bindings()) {
+		return true
+	}
+	return t.isTableCreateCall(call)
 }
 
 func (t *Transfer) applyCallBoundaryOutcome(
@@ -74,17 +217,6 @@ func (t *Transfer) productCallResult(call *ast.FuncCallExpr, ctx ProductCallCont
 		return EmptyProductCallResult()
 	}
 	return provider.ProductCallFromValues(call, ctx)
-}
-
-func (t *Transfer) callBoundaryOutcome(
-	out *flow.PointState,
-	call *ast.FuncCallExpr,
-	demand func(int, paramevidence.ParamContract),
-) BoundaryOutcome {
-	if out == nil || call == nil {
-		return EmptyBoundaryOutcome()
-	}
-	return t.productCallResult(call, t.productCallContext(out, call, demand)).Boundary
 }
 
 func (t *Transfer) applyCallCellEffects(
