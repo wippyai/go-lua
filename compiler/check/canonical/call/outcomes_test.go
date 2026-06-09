@@ -18,7 +18,7 @@ import (
 	"github.com/wippyai/go-lua/types/typ"
 )
 
-func TestCallOutcomeReturnRelationsSummaryBeatsTypeFallback(t *testing.T) {
+func TestCallOutcomeReturnRelationsSummaryBeatsTypeShape(t *testing.T) {
 	t.Parallel()
 
 	summaryRel := flow.ReturnRelationsOfErrorReturns([]flow.ReturnCorrelation{{ValueIndex: 0, ErrorIndex: 2}})
@@ -30,14 +30,14 @@ func TestCallOutcomeReturnRelationsSummaryBeatsTypeFallback(t *testing.T) {
 				{Summary: summary.Summary{Relations: summaryRel}},
 			},
 		},
-	}).WithTypeFallbackOutcome(TypeFallbackOutcome{returnRelations: typeRel}).ReturnRelations()
+	}).WithTypeShapeOutcome(TypeShapeOutcome{returnRelations: typeRel}).ReturnRelations()
 
 	if !flow.ReturnRelationsDomain.Equal(got, summaryRel) {
 		t.Fatalf("relations = %#v, want summary relation %#v", got.ErrorReturns(), summaryRel.ErrorReturns())
 	}
 }
 
-func TestCallOutcomeReturnRelationsClosureAuthoritativeMissBlocksTypeFallback(t *testing.T) {
+func TestCallOutcomeReturnRelationsClosureAuthoritativeMissBlocksTypeShape(t *testing.T) {
 	t.Parallel()
 
 	typeRel := flow.ReturnRelationsOfErrorReturns([]flow.ReturnCorrelation{{ValueIndex: 0, ErrorIndex: 1}})
@@ -45,14 +45,14 @@ func TestCallOutcomeReturnRelationsClosureAuthoritativeMissBlocksTypeFallback(t 
 
 	got := (CallOutcome{
 		Selection: selection,
-	}).WithTypeFallbackOutcome(TypeFallbackOutcome{returnRelations: typeRel}).ReturnRelations()
+	}).WithTypeShapeOutcome(TypeShapeOutcome{returnRelations: typeRel}).ReturnRelations()
 
 	if !flow.ReturnRelationsDomain.Equal(got, flow.ReturnRelationsDomain.Top()) {
 		t.Fatalf("relations = %#v, want Top", got.ErrorReturns())
 	}
 }
 
-func TestTypeFallbackOutcomeReturnRelationsUsesTypeThenStaticFallback(t *testing.T) {
+func TestTypeShapeOutcomeReturnRelationsUsesTypeThenStaticFallback(t *testing.T) {
 	t.Parallel()
 
 	ident := &ast.IdentExpr{Value: "f"}
@@ -75,7 +75,7 @@ func TestTypeFallbackOutcomeReturnRelationsUsesTypeThenStaticFallback(t *testing
 		},
 	}
 
-	got := NewTypeFallbackOutcome(TypeFallbackInput{
+	got := NewTypeShapeOutcome(TypeShapeInput{
 		Return: ReturnInput{
 			Call:     call,
 			Resolver: TypeResolver{Bindings: bindings, ExprType: func(ast.Expr) typ.Type { return signatureWithRelation(typeRel) }, Static: staticLookup},
@@ -83,10 +83,10 @@ func TestTypeFallbackOutcomeReturnRelationsUsesTypeThenStaticFallback(t *testing
 		UseResolvedSignature: true,
 	}).ReturnRelations()
 	if !flow.ReturnRelationsDomain.Equal(got, typeRel) {
-		t.Fatalf("relations = %#v, want type fallback %#v", got.ErrorReturns(), typeRel.ErrorReturns())
+		t.Fatalf("relations = %#v, want type shape %#v", got.ErrorReturns(), typeRel.ErrorReturns())
 	}
 
-	got = NewTypeFallbackOutcome(TypeFallbackInput{
+	got = NewTypeShapeOutcome(TypeShapeInput{
 		Return: ReturnInput{
 			Call:     call,
 			Resolver: TypeResolver{Bindings: bindings, ExprType: func(ast.Expr) typ.Type { return typ.Func().Returns(typ.String, typ.Nil).Build() }, Static: staticLookup},
@@ -98,7 +98,7 @@ func TestTypeFallbackOutcomeReturnRelationsUsesTypeThenStaticFallback(t *testing
 	}
 
 	resolvedUsed := false
-	got = NewTypeFallbackOutcome(TypeFallbackInput{
+	got = NewTypeShapeOutcome(TypeShapeInput{
 		Return: ReturnInput{
 			Call: call,
 			Resolver: TypeResolver{
@@ -119,14 +119,14 @@ func TestTypeFallbackOutcomeReturnRelationsUsesTypeThenStaticFallback(t *testing
 	}
 }
 
-func TestTypeFallbackOutcomeBoundaryFactsUsesLengthTypeFallback(t *testing.T) {
+func TestTypeShapeOutcomeBoundaryFactsUsesLengthTypeShape(t *testing.T) {
 	t.Parallel()
 
 	ident := &ast.IdentExpr{Value: "keys"}
 	call := &ast.FuncCallExpr{Func: ident}
 	spec := contract.NewSpec().WithEffects(effect.ReturnLength{ReturnIndex: 0, Length: constraint.ParamLen{Index: 0}})
 
-	got := NewTypeFallbackOutcome(TypeFallbackInput{
+	got := NewTypeShapeOutcome(TypeShapeInput{
 		Return: ReturnInput{
 			Call:     call,
 			Resolver: TypeResolver{ExprType: func(ast.Expr) typ.Type { return typ.Func().Returns(typ.String).Spec(spec).Build() }},
@@ -139,7 +139,7 @@ func TestTypeFallbackOutcomeBoundaryFactsUsesLengthTypeFallback(t *testing.T) {
 		Source: flow.BoundaryPath{Kind: flow.BoundaryPathParam, Index: 0},
 	}
 	if !got.HasLengthRelation(want) {
-		t.Fatalf("boundary facts = %#v, want length type fallback %#v", got.LengthRelations(), want)
+		t.Fatalf("boundary facts = %#v, want length type shape %#v", got.LengthRelations(), want)
 	}
 }
 
@@ -267,7 +267,7 @@ func TestCallOutcomeProjectsSelectedBoundaryAxes(t *testing.T) {
 	}
 }
 
-func TestCallOutcomePostconditionsSummaryBeatsTypeFallback(t *testing.T) {
+func TestCallOutcomePostconditionsSummaryBeatsTypeShape(t *testing.T) {
 	t.Parallel()
 
 	ref := summary.FuncRef{GraphID: 77}
@@ -279,14 +279,14 @@ func TestCallOutcomePostconditionsSummaryBeatsTypeFallback(t *testing.T) {
 			Targets: []summary.CallSummaryTarget{{Ref: ref, Summary: summary.Summary{Postconditions: summaryPost}}},
 		},
 		Selection: NewTargetSet([]summary.FuncRef{ref}, true, nil, false).Select(),
-	}).WithTypeFallbackOutcome(TypeFallbackOutcome{postconditions: fallbackPost}).Postconditions()
+	}).WithTypeShapeOutcome(TypeShapeOutcome{postconditions: fallbackPost}).Postconditions()
 
 	if !containsConstraint(got.Condition().MustConstraints(), constraint.Truthy{Path: constraint.ParamPath(0)}) {
 		t.Fatalf("postconditions = %v, want summary truthy proof", got.Condition())
 	}
 }
 
-func TestTypeFallbackOutcomeImportedSignaturePostconditions(t *testing.T) {
+func TestTypeShapeOutcomeImportedSignaturePostconditions(t *testing.T) {
 	t.Parallel()
 
 	base := &ast.IdentExpr{Value: "svc"}
@@ -295,7 +295,7 @@ func TestTypeFallbackOutcomeImportedSignaturePostconditions(t *testing.T) {
 	bindings := bind.NewBindingTable()
 	bindings.Bind(base, 100)
 	bindings.SetName(100, "svc")
-	got := NewTypeFallbackOutcome(TypeFallbackInput{
+	got := NewTypeShapeOutcome(TypeShapeInput{
 		Return: ReturnInput{
 			Call: call,
 			Resolver: TypeResolver{
@@ -319,7 +319,7 @@ func TestTypeFallbackOutcomeImportedSignaturePostconditions(t *testing.T) {
 	}
 }
 
-func TestTypeFallbackOutcomePreservesImportedDNF(t *testing.T) {
+func TestTypeShapeOutcomePreservesImportedDNF(t *testing.T) {
 	t.Parallel()
 
 	call := &ast.FuncCallExpr{Func: &ast.IdentExpr{Value: "check"}}
@@ -327,7 +327,7 @@ func TestTypeFallbackOutcomePreservesImportedDNF(t *testing.T) {
 	left := constraint.Truthy{Path: constraint.ParamPath(1)}
 	right := constraint.Falsy{Path: constraint.ParamPath(1)}
 
-	got := NewTypeFallbackOutcome(TypeFallbackInput{
+	got := NewTypeShapeOutcome(TypeShapeInput{
 		Return: ReturnInput{
 			Call: call,
 			Resolver: TypeResolver{
@@ -359,7 +359,7 @@ func TestTypeFallbackOutcomePreservesImportedDNF(t *testing.T) {
 	}
 }
 
-func TestTypeFallbackOutcomeStaticGlobalFieldPostconditions(t *testing.T) {
+func TestTypeShapeOutcomeStaticGlobalFieldPostconditions(t *testing.T) {
 	t.Parallel()
 
 	base := &ast.IdentExpr{Value: "assert"}
@@ -369,7 +369,7 @@ func TestTypeFallbackOutcomeStaticGlobalFieldPostconditions(t *testing.T) {
 	bindings.Bind(base, 101)
 	bindings.SetName(101, "assert")
 
-	got := NewTypeFallbackOutcome(TypeFallbackInput{
+	got := NewTypeShapeOutcome(TypeShapeInput{
 		Return: ReturnInput{
 			Call: call,
 			Resolver: TypeResolver{
@@ -393,7 +393,7 @@ func TestTypeFallbackOutcomeStaticGlobalFieldPostconditions(t *testing.T) {
 	}
 }
 
-func TestTypeFallbackOutcomeStaticIdentPostconditions(t *testing.T) {
+func TestTypeShapeOutcomeStaticIdentPostconditions(t *testing.T) {
 	t.Parallel()
 
 	callee := &ast.IdentExpr{Value: "expect_present"}
@@ -402,7 +402,7 @@ func TestTypeFallbackOutcomeStaticIdentPostconditions(t *testing.T) {
 	bindings.Bind(callee, 102)
 	bindings.SetName(102, "expect_present")
 
-	got := NewTypeFallbackOutcome(TypeFallbackInput{
+	got := NewTypeShapeOutcome(TypeShapeInput{
 		Return: ReturnInput{
 			Call: call,
 			Resolver: TypeResolver{
@@ -424,38 +424,38 @@ func TestTypeFallbackOutcomeStaticIdentPostconditions(t *testing.T) {
 	}
 }
 
-func TestCallOutcomeTypeFallbackCannotInventSummaryAuthority(t *testing.T) {
+func TestCallOutcomeTypeShapeCannotInventSummaryAuthority(t *testing.T) {
 	t.Parallel()
 
 	effectValue := flow.CaptureMustWrite(valuecfg.SymbolID(22), product.FromType(typ.String))
 	fallbackPost := paramevidence.ReturnPostconditionsFromParamNarrows([]paramevidence.ParamNarrow{{Param: 0, Check: compilecfg.CheckTruthy, EqParam: -1}})
-	outcome := CallOutcome{}.WithTypeFallbackOutcome(TypeFallbackOutcome{postconditions: fallbackPost})
+	outcome := CallOutcome{}.WithTypeShapeOutcome(TypeShapeOutcome{postconditions: fallbackPost})
 
 	if !flow.CaptureEffectsDomain.Equal(outcome.CellEffects(summary.CellEffectAggregation{DirectEffects: effectValue}), flow.CaptureEffectsDomain.Bottom()) {
-		t.Fatal("type fallback outcome invented summary capture effects")
+		t.Fatal("type shape outcome invented summary capture effects")
 	}
 	if outcome.ReturnRefs().Len() != 0 {
-		t.Fatalf("type fallback ReturnRefs len = %d, want 0", outcome.ReturnRefs().Len())
+		t.Fatalf("type shape ReturnRefs len = %d, want 0", outcome.ReturnRefs().Len())
 	}
 	if members := outcome.ReturnStaticMembers(); len(members) != 0 {
-		t.Fatalf("type fallback ReturnStaticMembers = %#v, want none", members)
+		t.Fatalf("type shape ReturnStaticMembers = %#v, want none", members)
 	}
 	if outcome.NeverReturns(func(summary.FuncRef) bool { return true }) {
-		t.Fatal("type fallback outcome invented no-return proof")
+		t.Fatal("type shape outcome invented no-return proof")
 	}
 	if !outcome.Postconditions().HasConstraints() {
-		t.Fatal("type fallback should still expose imported/static postconditions")
+		t.Fatal("type shape should still expose imported/static postconditions")
 	}
 }
 
-func TestTypeFallbackOutcomeCallbackSpecSummarySignatureWins(t *testing.T) {
+func TestTypeShapeOutcomeCallbackSpecSummarySignatureWins(t *testing.T) {
 	t.Parallel()
 
 	call := &ast.FuncCallExpr{Func: &ast.IdentExpr{Value: "f"}}
 	summarySpec := contract.NewSpec().WithCallback(0, &contract.CallbackSpec{Cardinality: contract.CardExactlyOnce})
 	fallbackUsed := false
 
-	got := NewTypeFallbackOutcome(TypeFallbackInput{
+	got := NewTypeShapeOutcome(TypeShapeInput{
 		Return: ReturnInput{
 			Call: call,
 			Resolver: TypeResolver{
@@ -476,7 +476,7 @@ func TestTypeFallbackOutcomeCallbackSpecSummarySignatureWins(t *testing.T) {
 	}
 }
 
-func TestTypeFallbackOutcomeCallbackSpecMethodReceiverFallback(t *testing.T) {
+func TestTypeShapeOutcomeCallbackSpecMethodReceiverFallback(t *testing.T) {
 	t.Parallel()
 
 	receiver := &ast.IdentExpr{Value: "obj"}
@@ -486,7 +486,7 @@ func TestTypeFallbackOutcomeCallbackSpecMethodReceiverFallback(t *testing.T) {
 		Field("run", typ.Func().Spec(methodSpec).Build()).
 		Build()
 
-	got := NewTypeFallbackOutcome(TypeFallbackInput{
+	got := NewTypeShapeOutcome(TypeShapeInput{
 		Return: ReturnInput{
 			Call: call,
 			Resolver: TypeResolver{
@@ -506,7 +506,7 @@ func TestTypeFallbackOutcomeCallbackSpecMethodReceiverFallback(t *testing.T) {
 	}
 }
 
-func TestTypeFallbackOutcomeExtractsContainerElementUnionLabels(t *testing.T) {
+func TestTypeShapeOutcomeExtractsContainerElementUnionLabels(t *testing.T) {
 	t.Parallel()
 
 	call := &ast.FuncCallExpr{Func: &ast.IdentExpr{Value: "send"}}
@@ -517,7 +517,7 @@ func TestTypeFallbackOutcomeExtractsContainerElementUnionLabels(t *testing.T) {
 		},
 	})
 
-	got := NewTypeFallbackOutcome(TypeFallbackInput{
+	got := NewTypeShapeOutcome(TypeShapeInput{
 		Return: ReturnInput{
 			Call: call,
 		},

@@ -7,7 +7,7 @@ import (
 	"github.com/wippyai/go-lua/types/typ/unwrap"
 )
 
-type fallbackFunctionShapeInput struct {
+type typeShapeFunctionShapeInput struct {
 	Call *ast.FuncCallExpr
 
 	SummarySignature     typ.Type
@@ -15,7 +15,7 @@ type fallbackFunctionShapeInput struct {
 	UseResolvedSignature bool
 }
 
-func fallbackFunctionShape(in fallbackFunctionShapeInput) *typ.Function {
+func typeShapeFunctionShape(in typeShapeFunctionShapeInput) *typ.Function {
 	if in.Call == nil {
 		return nil
 	}

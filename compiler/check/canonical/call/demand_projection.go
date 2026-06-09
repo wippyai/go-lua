@@ -9,7 +9,7 @@ import (
 
 // CallArgDemandProjection is the canonical call-site policy for argument
 // demand projection. Summary targets are the product fixed-point proof path; a
-// callable signature is only the external/type fallback.
+// callable signature is only the external/type-shape source.
 type CallArgDemandProjection struct {
 	Call *ast.FuncCallExpr
 

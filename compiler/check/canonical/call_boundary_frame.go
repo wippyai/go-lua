@@ -33,7 +33,7 @@ func (ct callTyper) callBoundaryFrame(call *ast.FuncCallExpr, ctx transfer.Produ
 		return callBoundaryFrame{}, false
 	}
 	outcome := ct.productCallOutcomeProjection(site, ctx, opts, nil).outcome().
-		WithTypeFallbackOutcome(site.typeFallbackOutcome(ctx.ExprValue != nil))
+		WithTypeShapeOutcome(site.typeShapeOutcome(ctx.ExprValue != nil))
 	return callBoundaryFrame{
 		typer:   ct,
 		ctx:     ctx,
@@ -44,11 +44,11 @@ func (ct callTyper) callBoundaryFrame(call *ast.FuncCallExpr, ctx transfer.Produ
 
 func (p callBoundaryFrame) productResult() transfer.ProductCallResult {
 	values, ok := p.outcome.ReturnValues(canonicalcall.ReturnValueInput{
-		Call:                 p.site.call,
-		TypePolicyAvailable:  p.typer.d.cfg.Types != nil,
-		PendingInput:         p.ctx.PendingInput,
-		BlockDynamicFallback: p.outcome.HasTargets() && !p.outcome.HasInformativeReturnValues(),
-		ExprValue:            p.ctx.ExprValue,
+		Call:                       p.site.call,
+		TypePolicyAvailable:        p.typer.d.cfg.Types != nil,
+		PendingInput:               p.ctx.PendingInput,
+		BlockDynamicReturnEvidence: p.outcome.HasTargets() && !p.outcome.HasInformativeReturnValues(),
+		ExprValue:                  p.ctx.ExprValue,
 	})
 	return transfer.ProductCallResult{
 		ReturnValues:    values,

@@ -259,12 +259,12 @@ func (p *program) prototypeSurfaceTypeFromMethods(base typ.Type, methods []proto
 	return surface, hasMethodSurface
 }
 
-func (p *program) MergeEntryValues(ref summary.FuncRef, fixed, fallback summary.EntryValues) summary.EntryValues {
+func (p *program) MergeEntryValues(ref summary.FuncRef, fixed, aggregate summary.EntryValues) summary.EntryValues {
 	merged := (summary.EntryValueContextMerge{
-		Fixed:    fixed,
-		Fallback: fallback,
+		Fixed:     fixed,
+		Aggregate: aggregate,
 	}).Values()
-	if p == nil || len(fixed) == 0 || len(fallback) == 0 || len(merged) == 0 {
+	if p == nil || len(fixed) == 0 || len(aggregate) == 0 || len(merged) == 0 {
 		return merged
 	}
 	receivers := p.facts.MethodReceivers(ref)
@@ -274,7 +274,7 @@ func (p *program) MergeEntryValues(ref summary.FuncRef, fixed, fallback summary.
 	var out summary.EntryValues
 	for _, receiver := range receivers {
 		exact, hasExact := fixed[receiver.SelfSlot]
-		baseline, hasBaseline := fallback[receiver.SelfSlot]
+		baseline, hasBaseline := aggregate[receiver.SelfSlot]
 		if !hasExact || !hasBaseline || exact.IsZero() || baseline.IsZero() {
 			continue
 		}

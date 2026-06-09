@@ -100,8 +100,8 @@ func TestSummaryProjectionForTargetsPreservesSelectionFallbackState(t *testing.T
 		SummaryTargetInfo{},
 	)
 
-	if selection.BlocksTypeFallback() {
-		t.Fatal("closure-top with finite direct targets should not block type fallback")
+	if selection.BlocksTypeShape() {
+		t.Fatal("closure-top with finite direct targets should not block type shape")
 	}
 	if !selection.AllowsCallbackFallback() {
 		t.Fatal("finite direct targets with no closure target should allow callback fallback")

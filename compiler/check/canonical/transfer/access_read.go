@@ -11,16 +11,16 @@ import (
 )
 
 type identValueReadQuery struct {
-	Expr                 *ast.IdentExpr
-	AllowGradualFallback bool
+	Expr                     *ast.IdentExpr
+	AllowGradualTopAdmission bool
 }
 
 type accessValueReadQuery struct {
-	Expr                 *ast.AttrGetExpr
-	ReadExpr             func(ast.Expr) (product.AbstractValue, bool)
-	StaticPath           func(ast.Expr) (constraint.Path, bool)
-	StaticMember         func(*ast.AttrGetExpr) (value.MemberKey, bool)
-	AllowGradualFallback bool
+	Expr                     *ast.AttrGetExpr
+	ReadExpr                 func(ast.Expr) (product.AbstractValue, bool)
+	StaticPath               func(ast.Expr) (constraint.Path, bool)
+	StaticMember             func(*ast.AttrGetExpr) (value.MemberKey, bool)
+	AllowGradualTopAdmission bool
 }
 
 // readIdentValue is the canonical transfer read for a root identifier. It keeps
@@ -48,7 +48,7 @@ func (t *Transfer) readIdentValue(out *flow.PointState, q identValueReadQuery) (
 		if meta, ok := t.typeValueOf(q.Expr); ok {
 			return meta, true
 		}
-		if q.AllowGradualFallback && t.unannotatedParam.Contains(sym) {
+		if q.AllowGradualTopAdmission && t.unannotatedParam.Contains(sym) {
 			return product.GradualAny(), true
 		}
 		return product.AbstractValue{}, false
@@ -110,7 +110,7 @@ func (t *Transfer) readAccessValue(out *flow.PointState, q accessValueReadQuery)
 				return read.Value, true
 			}
 		}
-		if q.AllowGradualFallback && t.gradualAnySource(out, q.Expr) {
+		if q.AllowGradualTopAdmission && t.gradualAnySource(out, q.Expr) {
 			return product.GradualAny(), true
 		}
 		return product.AbstractValue{}, false
@@ -126,12 +126,12 @@ func (t *Transfer) readAccessValue(out *flow.PointState, q accessValueReadQuery)
 			Policy:  t.pointReadPolicy(out),
 		})
 		if read.State != flow.StateResolved || read.Value.IsZero() {
-			if q.AllowGradualFallback && t.gradualAnySource(out, q.Expr) {
+			if q.AllowGradualTopAdmission && t.gradualAnySource(out, q.Expr) {
 				return product.GradualAny(), true
 			}
 			return product.AbstractValue{}, false
 		}
-		if q.AllowGradualFallback && t.gradualAnySource(out, q.Expr) &&
+		if q.AllowGradualTopAdmission && t.gradualAnySource(out, q.Expr) &&
 			!read.Value.IsGradualTop() && typ.IsAny(read.Value.ProjectValue()) {
 			return product.GradualAny(), true
 		}
@@ -156,7 +156,7 @@ func (t *Transfer) readAccessValue(out *flow.PointState, q accessValueReadQuery)
 		}
 		return product.AbstractValue{}, false
 	}
-	if q.AllowGradualFallback && t.gradualAnySource(out, q.Expr) &&
+	if q.AllowGradualTopAdmission && t.gradualAnySource(out, q.Expr) &&
 		!read.Value.IsGradualTop() && typ.IsAny(read.Value.ProjectValue()) {
 		return product.GradualAny(), true
 	}

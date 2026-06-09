@@ -128,8 +128,8 @@ func (t *Transfer) projectDynamicCallValue(out *flow.PointState, call *ast.FuncC
 
 func (t *Transfer) projectIdentValue(out *flow.PointState, e *ast.IdentExpr) (product.AbstractValue, bool) {
 	return t.readIdentValue(out, identValueReadQuery{
-		Expr:                 e,
-		AllowGradualFallback: true,
+		Expr:                     e,
+		AllowGradualTopAdmission: true,
 	})
 }
 
@@ -139,6 +139,6 @@ func (t *Transfer) projectAttrGetValue(out *flow.PointState, e *ast.AttrGetExpr)
 		ReadExpr: func(expr ast.Expr) (product.AbstractValue, bool) {
 			return t.projectExprValue(out, expr)
 		},
-		AllowGradualFallback: true,
+		AllowGradualTopAdmission: true,
 	})
 }

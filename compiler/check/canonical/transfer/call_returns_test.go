@@ -427,7 +427,7 @@ func TestEvalCallPendingProductInputWithoutReturnEvidenceStaysUnknown(t *testing
 	in.Graph.Bindings().Bind(db, sym)
 	in.Graph.Bindings().SetName(sym, "db")
 
-	typer := &pendingBlocksTypeFallbackTyper{}
+	typer := &pendingBlocksTypeShapeTyper{}
 	tr := New(in, Config{CallTyper: typer})
 	call := &ast.FuncCallExpr{Receiver: db, Method: "execute"}
 	out := flow.PointState{Env: map[flow.ValueKey]product.AbstractValue{}}
@@ -501,12 +501,12 @@ func (strictAnyReturnTyper) ProductCallFromValues(*ast.FuncCallExpr, ProductCall
 	return productReturnResultForTest(product.FromType(typ.Any))
 }
 
-type pendingBlocksTypeFallbackTyper struct {
+type pendingBlocksTypeShapeTyper struct {
 	captureEffectTyper
 	productCalls int
 }
 
-func (p *pendingBlocksTypeFallbackTyper) ProductCallFromValues(*ast.FuncCallExpr, ProductCallContext) ProductCallResult {
+func (p *pendingBlocksTypeShapeTyper) ProductCallFromValues(*ast.FuncCallExpr, ProductCallContext) ProductCallResult {
 	p.productCalls++
 	return EmptyProductCallResult()
 }
@@ -515,8 +515,8 @@ var _ CallTyper = (*productReturnTestTyper)(nil)
 var _ ProductCallProvider = (*productReturnTestTyper)(nil)
 var _ CallTyper = strictAnyReturnTyper{}
 var _ ProductCallProvider = strictAnyReturnTyper{}
-var _ CallTyper = (*pendingBlocksTypeFallbackTyper)(nil)
-var _ ProductCallProvider = (*pendingBlocksTypeFallbackTyper)(nil)
+var _ CallTyper = (*pendingBlocksTypeShapeTyper)(nil)
+var _ ProductCallProvider = (*pendingBlocksTypeShapeTyper)(nil)
 
 type countingProductReturnTyper struct {
 	captureEffectTyper

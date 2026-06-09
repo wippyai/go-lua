@@ -9,14 +9,14 @@ import (
 	"github.com/wippyai/go-lua/types/typ"
 )
 
-func TestTypeFallbackOutcomeFunctionShapeSummaryWins(t *testing.T) {
+func TestTypeShapeOutcomeFunctionShapeSummaryWins(t *testing.T) {
 	t.Parallel()
 
 	call := &ast.FuncCallExpr{Func: &ast.IdentExpr{Value: "f"}}
 	summaryFn := typ.Func().Param("x", typ.String).Build()
 	resolved := false
 
-	got := NewTypeFallbackOutcome(TypeFallbackInput{
+	got := NewTypeShapeOutcome(TypeShapeInput{
 		Return: ReturnInput{
 			Call: call,
 			Resolver: TypeResolver{
@@ -36,13 +36,13 @@ func TestTypeFallbackOutcomeFunctionShapeSummaryWins(t *testing.T) {
 	}
 }
 
-func TestTypeFallbackOutcomeFunctionShapeResolvesPlainCallee(t *testing.T) {
+func TestTypeShapeOutcomeFunctionShapeResolvesPlainCallee(t *testing.T) {
 	t.Parallel()
 
 	call := &ast.FuncCallExpr{Func: &ast.IdentExpr{Value: "f"}}
 	fn := typ.Func().Param("x", typ.String).Build()
 
-	got := NewTypeFallbackOutcome(TypeFallbackInput{
+	got := NewTypeShapeOutcome(TypeShapeInput{
 		Return: ReturnInput{
 			Call: call,
 			Resolver: TypeResolver{
@@ -61,7 +61,7 @@ func TestTypeFallbackOutcomeFunctionShapeResolvesPlainCallee(t *testing.T) {
 	}
 }
 
-func TestTypeFallbackOutcomeFunctionShapeUsesStaticGlobalWhenLiveCalleeIsAny(t *testing.T) {
+func TestTypeShapeOutcomeFunctionShapeUsesStaticGlobalWhenLiveCalleeIsAny(t *testing.T) {
 	t.Parallel()
 
 	ident := &ast.IdentExpr{Value: "up"}
@@ -73,7 +73,7 @@ func TestTypeFallbackOutcomeFunctionShapeUsesStaticGlobalWhenLiveCalleeIsAny(t *
 	bindings.SetName(sym, "up")
 	fn := typ.Func().Param("callback", typ.Func().Build()).Build()
 
-	got := NewTypeFallbackOutcome(TypeFallbackInput{
+	got := NewTypeShapeOutcome(TypeShapeInput{
 		Return: ReturnInput{
 			Call: call,
 			Resolver: TypeResolver{
@@ -101,7 +101,7 @@ func TestTypeFallbackOutcomeFunctionShapeUsesStaticGlobalWhenLiveCalleeIsAny(t *
 	}
 }
 
-func TestTypeFallbackOutcomeFunctionShapeResolvesMethodMember(t *testing.T) {
+func TestTypeShapeOutcomeFunctionShapeResolvesMethodMember(t *testing.T) {
 	t.Parallel()
 
 	receiver := &ast.IdentExpr{Value: "obj"}
@@ -109,7 +109,7 @@ func TestTypeFallbackOutcomeFunctionShapeResolvesMethodMember(t *testing.T) {
 	fn := typ.Func().Param("x", typ.String).Build()
 	rec := typ.NewRecord().Field("run", fn).Build()
 
-	got := NewTypeFallbackOutcome(TypeFallbackInput{
+	got := NewTypeShapeOutcome(TypeShapeInput{
 		Return: ReturnInput{
 			Call: call,
 			Resolver: TypeResolver{
@@ -128,7 +128,7 @@ func TestTypeFallbackOutcomeFunctionShapeResolvesMethodMember(t *testing.T) {
 	}
 }
 
-func TestTypeFallbackOutcomeFunctionShapeResolvesInterfaceMethod(t *testing.T) {
+func TestTypeShapeOutcomeFunctionShapeResolvesInterfaceMethod(t *testing.T) {
 	t.Parallel()
 
 	receiver := &ast.IdentExpr{Value: "now"}
@@ -136,7 +136,7 @@ func TestTypeFallbackOutcomeFunctionShapeResolvesInterfaceMethod(t *testing.T) {
 	fn := typ.Func().Param("self", typ.Self).Param("other", typ.Self).Build()
 	timeType := typ.NewInterface("time.Time", []typ.Method{{Name: "sub", Type: fn}})
 
-	got := NewTypeFallbackOutcome(TypeFallbackInput{
+	got := NewTypeShapeOutcome(TypeShapeInput{
 		Return: ReturnInput{
 			Call: call,
 			Resolver: TypeResolver{
@@ -155,7 +155,7 @@ func TestTypeFallbackOutcomeFunctionShapeResolvesInterfaceMethod(t *testing.T) {
 	}
 }
 
-func TestTypeFallbackOutcomeFunctionShapeRejectsDynamicAndNonFunction(t *testing.T) {
+func TestTypeShapeOutcomeFunctionShapeRejectsDynamicAndNonFunction(t *testing.T) {
 	t.Parallel()
 
 	call := &ast.FuncCallExpr{Func: &ast.IdentExpr{Value: "f"}}
@@ -165,7 +165,7 @@ func TestTypeFallbackOutcomeFunctionShapeRejectsDynamicAndNonFunction(t *testing
 		"nil":    nil,
 	} {
 		t.Run(name, func(t *testing.T) {
-			got := NewTypeFallbackOutcome(TypeFallbackInput{
+			got := NewTypeShapeOutcome(TypeShapeInput{
 				Return: ReturnInput{
 					Call: call,
 					Resolver: TypeResolver{

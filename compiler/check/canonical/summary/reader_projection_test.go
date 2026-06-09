@@ -61,10 +61,10 @@ func TestReaderSnapshotRequiresExactContextSummary(t *testing.T) {
 
 	got := ReturnTypes(reader.SummarizeWithKey(key))
 	if len(got) != 0 {
-		t.Fatalf("exact ReturnTypes = %#v, want no implicit aggregate fallback", got)
+		t.Fatalf("exact ReturnTypes = %#v, want no implicit aggregate projection", got)
 	}
-	if fallback := reader.ReturnTypes(ref); len(fallback) != 1 || !typ.TypeEquals(fallback[0], typ.String) {
-		t.Fatalf("fallback ReturnTypes = %#v, want string snapshot", fallback)
+	if aggregate := reader.ReturnTypes(ref); len(aggregate) != 1 || !typ.TypeEquals(aggregate[0], typ.String) {
+		t.Fatalf("aggregate ReturnTypes = %#v, want string snapshot", aggregate)
 	}
 }
 

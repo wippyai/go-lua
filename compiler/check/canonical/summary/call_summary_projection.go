@@ -92,7 +92,7 @@ func declaredReturnValuesWithSummary(summary []product.AbstractValue, signature 
 }
 
 // RefineReturnValuesWithTypes repairs product return slots with a closed
-// same-expression type fallback. The summary keeps precise evidence it already
+// same-expression type-shape repair. The summary keeps precise evidence it already
 // owns; the fallback closes top-like or free-symbol leaves such as an open `T`
 // that should not cross the call boundary. This is a precision merge, not a
 // join and not whole-slot replacement.

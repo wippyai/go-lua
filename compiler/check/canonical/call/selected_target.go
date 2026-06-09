@@ -69,10 +69,10 @@ func (s TargetSelection) HasClosureTargets() bool {
 	return false
 }
 
-// BlocksTypeFallback reports whether the closure axis was authoritative but
-// yielded no selected concrete target. In that state a type-based fallback would
+// BlocksTypeShape reports whether the closure axis was authoritative but
+// yielded no selected concrete target. In that state a type-shape outcome would
 // ignore the more precise closure-value evidence.
-func (s TargetSelection) BlocksTypeFallback() bool {
+func (s TargetSelection) BlocksTypeShape() bool {
 	return !s.HasTargets() && s.closureAuthoritative
 }
 
@@ -80,7 +80,7 @@ func (s TargetSelection) BlocksTypeFallback() bool {
 // composed with the selected direct-call effects. Closure targets already carry
 // exact entry context; an authoritative empty closure axis blocks fallback too.
 func (s TargetSelection) AllowsCallbackFallback() bool {
-	return !s.HasClosureTargets() && !s.BlocksTypeFallback()
+	return !s.HasClosureTargets() && !s.BlocksTypeShape()
 }
 
 func selectionNeverReturns(selection TargetSelection, hasNoReturn func(summary.FuncRef) bool) bool {

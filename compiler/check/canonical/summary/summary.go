@@ -55,7 +55,7 @@ import (
 //     writes.
 //   - ReceiverEffects is the finite caller-visible runtime-argument transformer.
 //     It models method/self table mutation as a summary effect applied to the
-//     concrete caller argument place, instead of using prototype entry fallback as
+//     concrete caller argument place, instead of using prototype entry projection as
 //     a post-call store update.
 //   - BoundaryFacts is the finite caller-visible postcondition carrier for
 //     point-local facts that are meaningful at the function boundary, such as

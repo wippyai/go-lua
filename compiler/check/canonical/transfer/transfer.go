@@ -2667,8 +2667,8 @@ func (t *Transfer) evalAttrGet(
 	demand func(int, paramevidence.ParamContract),
 ) (product.AbstractValue, bool) {
 	return t.readAccessValue(out, accessValueReadQuery{
-		Expr:                 e,
-		AllowGradualFallback: true,
+		Expr:                     e,
+		AllowGradualTopAdmission: true,
 		ReadExpr: func(expr ast.Expr) (product.AbstractValue, bool) {
 			return t.evalExpr(out, expr, demand)
 		},
@@ -2682,8 +2682,8 @@ func (t *Transfer) evalAttrGetAt(
 	demand func(int, paramevidence.ParamContract),
 ) (product.AbstractValue, bool) {
 	return t.readAccessValue(out, accessValueReadQuery{
-		Expr:                 e,
-		AllowGradualFallback: true,
+		Expr:                     e,
+		AllowGradualTopAdmission: true,
 		ReadExpr: func(expr ast.Expr) (product.AbstractValue, bool) {
 			return t.evalExprAt(out, p, expr, demand)
 		},

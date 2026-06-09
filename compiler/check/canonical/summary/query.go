@@ -105,7 +105,7 @@ type entryFactProvider interface {
 }
 
 type entryValueMerger interface {
-	MergeEntryValues(ref FuncRef, fixed, fallback EntryValues) EntryValues
+	MergeEntryValues(ref FuncRef, fixed, aggregate EntryValues) EntryValues
 }
 
 type callEntryPublicationProjector interface {
@@ -139,7 +139,7 @@ type Reader struct {
 }
 
 // NewReader constructs a summary observer for live query reads plus a converged
-// fallback snapshot. A nil query/context makes the reader snapshot-only.
+// snapshot. A nil query/context makes the reader snapshot-only.
 func NewReader(queries *Queries, ctx *db.QueryContext, converged map[FuncRef]Summary) Reader {
 	return Reader{queries: queries, ctx: ctx, snapshot: BorrowCanonicalSummarySnapshot(converged, nil)}
 }
@@ -584,12 +584,12 @@ func (q *Queries) entryValues(ctx *db.QueryContext, key Key) map[int]product.Abs
 		return merger.MergeEntryValues(key.Ref, values, provided)
 	}
 	return (EntryValueContextMerge{
-		Fixed:    values,
-		Fallback: provided,
+		Fixed:     values,
+		Aggregate: provided,
 	}).Values()
 }
 
-func keyUsesAggregateEntryFallback(key Key) bool {
+func keyUsesAggregateEntryProjection(key Key) bool {
 	return len(key.Values.Values()) == 0 &&
 		flow.ReferenceContextDomain.Equal(key.References.Context(), flow.ReferenceContextBottom()) &&
 		flow.BoundaryFactsDomain.Equal(key.Facts.Facts(), flow.BoundaryFactsDomain.Top())
@@ -597,7 +597,7 @@ func keyUsesAggregateEntryFallback(key Key) bool {
 
 func (q *Queries) entryFacts(ctx *db.QueryContext, key Key) flow.BoundaryFacts {
 	facts := key.Facts.Facts()
-	if !keyUsesAggregateEntryFallback(key) {
+	if !keyUsesAggregateEntryProjection(key) {
 		return facts
 	}
 	provider, ok := q.prog.(entryFactProvider)

@@ -802,7 +802,7 @@ type program struct {
 	facts facts.Module
 
 	// callerRefsByCallee is the deterministic static reverse call graph. Aggregate
-	// entry fallback uses it as a dependency index instead of scanning every module
+	// entry projection uses it as a dependency index instead of scanning every module
 	// summary while the summary solve is running.
 	callerRefsByCallee map[summary.FuncRef][]summary.FuncRef
 
