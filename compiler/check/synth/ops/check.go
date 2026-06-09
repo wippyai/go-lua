@@ -142,10 +142,6 @@ func CheckTableEntries(entries []EntryDef, arrayElems []typ.Type, expected typ.T
 	}
 }
 
-func checkTableAsRecordAllowExtra(fields []FieldDef, elems []typ.Type, expected *typ.Record) CheckResult {
-	return checkTableEntriesAsRecordAllowExtra(fieldDefEntries(fields), elems, expected)
-}
-
 func checkTableEntriesAsRecordAllowExtra(entries []EntryDef, elems []typ.Type, expected *typ.Record) CheckResult {
 	result := checkTableEntriesAsRecord(entries, elems, expected)
 	if len(result.Errors) == 0 {
@@ -165,11 +161,6 @@ func checkTableEntriesAsRecordAllowExtra(entries []EntryDef, elems []typ.Type, e
 	result.Errors = filtered
 
 	return result
-}
-
-// checkTableAsArray checks table against array type.
-func checkTableAsArray(fields []FieldDef, elems []typ.Type, expected *typ.Array) CheckResult {
-	return checkTableEntriesAsArray(fieldDefEntries(fields), elems, expected)
 }
 
 func checkTableEntriesAsArray(entries []EntryDef, elems []typ.Type, expected *typ.Array) CheckResult {
@@ -210,28 +201,12 @@ func checkTableEntriesAsArray(entries []EntryDef, elems []typ.Type, expected *ty
 	return CheckResult{Type: expected, Errors: errors}
 }
 
-// checkTableAsMap checks table against map type.
-func checkTableAsMap(fields []FieldDef, elems []typ.Type, expected *typ.Map) CheckResult {
-	return checkTableEntriesAsMap(fieldDefEntries(fields), elems, expected)
-}
-
 func checkTableEntriesAsMap(entries []EntryDef, elems []typ.Type, expected *typ.Map) CheckResult {
 	return checkTableEntriesAsKeyedView(entries, elems, expected, "map")
 }
 
-// checkTableAsReadonlyMap checks table against a read-only map view type. A
-// fresh literal can satisfy the read-view contract, but this path does not
-// expose write-side slots through the ReadonlyMap type itself.
-func checkTableAsReadonlyMap(fields []FieldDef, elems []typ.Type, expected *typ.ReadonlyMap) CheckResult {
-	return checkTableEntriesAsReadonlyMap(fieldDefEntries(fields), elems, expected)
-}
-
 func checkTableEntriesAsReadonlyMap(entries []EntryDef, elems []typ.Type, expected *typ.ReadonlyMap) CheckResult {
 	return checkTableEntriesAsKeyedView(entries, elems, expected, "readonly map")
-}
-
-func checkTableAsKeyedView(fields []FieldDef, elems []typ.Type, expected typ.Type, context string) CheckResult {
-	return checkTableEntriesAsKeyedView(fieldDefEntries(fields), elems, expected, context)
 }
 
 func checkTableEntriesAsKeyedView(entries []EntryDef, elems []typ.Type, expected typ.Type, context string) CheckResult {
@@ -280,11 +255,6 @@ func checkTableEntriesAsKeyedView(entries []EntryDef, elems []typ.Type, expected
 	return CheckResult{Type: expected, Errors: errors}
 }
 
-// checkTableAsUnion checks table against union type by finding the best-matching member.
-func checkTableAsUnion(fields []FieldDef, arrayElems []typ.Type, expected *typ.Union) CheckResult {
-	return checkTableEntriesAsUnion(fieldDefEntries(fields), arrayElems, expected)
-}
-
 func checkTableEntriesAsUnion(entries []EntryDef, arrayElems []typ.Type, expected *typ.Union) CheckResult {
 	if len(expected.Members) == 0 {
 		return CheckResult{
@@ -321,11 +291,6 @@ func checkTableEntriesAsUnion(entries []EntryDef, arrayElems []typ.Type, expecte
 			Got:      synthesized,
 		}},
 	}
-}
-
-// findBestUnionMember finds the union member whose record fields best match the provided fields.
-func findBestUnionMember(fields []FieldDef, members []typ.Type) typ.Type {
-	return findBestUnionMemberEntries(fieldDefEntries(fields), members)
 }
 
 func findBestUnionMemberEntries(entries []EntryDef, members []typ.Type) typ.Type {
@@ -369,11 +334,6 @@ func findBestUnionMemberEntries(entries []EntryDef, members []typ.Type) typ.Type
 	}
 
 	return bestMember
-}
-
-// checkTableAsRecord checks table against record type.
-func checkTableAsRecord(fields []FieldDef, elems []typ.Type, expected *typ.Record) CheckResult {
-	return checkTableEntriesAsRecord(fieldDefEntries(fields), elems, expected)
 }
 
 func checkTableEntriesAsRecord(entries []EntryDef, elems []typ.Type, expected *typ.Record) CheckResult {

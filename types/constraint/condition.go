@@ -1435,46 +1435,6 @@ func conjunctionContradicts(conj []Constraint) bool {
 	return conjunctionContradictionIndexOf(conj).HasContradiction()
 }
 
-func constraintsContradict(a, b Constraint) bool {
-	if neg, ok := NegateConstraint(a); ok && neg.Equals(b) {
-		return rootStableConstraint(a) && rootStableConstraint(b) ||
-			versionScopedMutableConstraint(a) && versionScopedMutableConstraint(b)
-	}
-
-	if hasTypeBuiltinContradiction(a, b) {
-		return rootStableConstraint(a) && rootStableConstraint(b) ||
-			versionScopedMutableConstraint(a) && versionScopedMutableConstraint(b)
-	}
-
-	if !rootStableConstraint(a) || !rootStableConstraint(b) {
-		return false
-	}
-	return truthyNilContradiction(a, b) || truthyNilContradiction(b, a)
-}
-
-func hasTypeBuiltinContradiction(a, b Constraint) bool {
-	ha, ok := a.(HasType)
-	if !ok {
-		return false
-	}
-	hb, ok := b.(HasType)
-	if !ok {
-		return false
-	}
-	if !ha.Path.Equal(hb.Path) {
-		return false
-	}
-	ka, ok := ha.Type.BuiltinKind()
-	if !ok {
-		return false
-	}
-	kb, ok := hb.Type.BuiltinKind()
-	if !ok {
-		return false
-	}
-	return ka != kb
-}
-
 func rootStableConstraint(c Constraint) bool {
 	switch v := c.(type) {
 	case Truthy:
@@ -1622,18 +1582,6 @@ func (s *versionScopedMutableScan) observeDescendantOf(p Path) {
 
 func (s versionScopedMutableScan) valid() bool {
 	return s.hasPath && s.hasMutable && !s.invalidPath
-}
-
-func truthyNilContradiction(a, b Constraint) bool {
-	truthy, ok := a.(Truthy)
-	if !ok {
-		return false
-	}
-	if !rootStablePath(truthy.Path) {
-		return false
-	}
-	nilCheck, ok := b.(IsNil)
-	return ok && truthy.Path.Equal(nilCheck.Path)
 }
 
 // NegateConstraint negates a single constraint when possible.
