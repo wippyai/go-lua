@@ -8,10 +8,24 @@ import (
 	"github.com/wippyai/go-lua/types/typ"
 )
 
+// SignatureProjectionReader is the minimal store surface needed to expose
+// function-fact projections visible to graph analysis.
+type SignatureProjectionReader interface {
+	Graphs() map[uint64]*cfg.Graph
+	FuncForGraph(graph *cfg.Graph) *ast.FunctionExpr
+	FuncForSymbol(sym cfg.SymbolID) *ast.FunctionExpr
+	SymbolForFunc(fn *ast.FunctionExpr) (cfg.SymbolID, bool)
+	FunctionRefsByParentGraph(parentGraphID uint64) []api.FunctionRef
+	NestedMetaFor(graphID uint64) (api.NestedMeta, bool)
+	Parents() map[uint64]*scope.State
+	GraphParentHashOf(graphID uint64) uint64
+	CanonicalFunctionFactProjection(graph *cfg.Graph, parent *scope.State, sym cfg.SymbolID) (api.FunctionFact, bool)
+}
+
 // ParameterEvidenceSignatures builds a function-expression keyed parameter
 // evidence map for graph from FunctionFacts projection.
 func ParameterEvidenceSignatures(
-	store api.StoreReader,
+	store SignatureProjectionReader,
 	graph *cfg.Graph,
 	parent *scope.State,
 	stdlib *scope.State,
@@ -52,7 +66,7 @@ func ParameterEvidenceSignatures(
 			if _, isNestedParent := store.NestedMetaFor(parentGraph.ID()); !isNestedParent {
 				defaultScope = stdlib
 			}
-			parentScope := api.ParentScopeForGraph(store, parentGraph.ID(), defaultScope)
+			parentScope := parentScopeForGraph(store, parentGraph.ID(), defaultScope)
 			if parentScope != nil {
 				if fn := graphFunction(store, graph); fn != nil {
 					if sym, ok := store.SymbolForFunc(fn); ok {
@@ -76,7 +90,7 @@ func ParameterEvidenceSignatures(
 // the lexical parent graph product; this projection makes those facts available
 // to body analysis without duplicating storage.
 func VisibleFactsForGraph(
-	store api.StoreReader,
+	store SignatureProjectionReader,
 	graph *cfg.Graph,
 	parent *scope.State,
 	stdlib *scope.State,
@@ -116,7 +130,7 @@ func VisibleFactsForGraph(
 			if _, isNestedParent := store.NestedMetaFor(parentGraph.ID()); !isNestedParent {
 				defaultScope = stdlib
 			}
-			parentScope := api.ParentScopeForGraph(store, parentGraph.ID(), defaultScope)
+			parentScope := parentScopeForGraph(store, parentGraph.ID(), defaultScope)
 			if parentScope != nil {
 				for _, ref := range store.FunctionRefsByParentGraph(parentGraph.ID()) {
 					if ff, ok := projectedFunctionFactForGraph(store, parentGraph, parentScope, ref.Sym); ok {
@@ -133,15 +147,16 @@ func VisibleFactsForGraph(
 	return out
 }
 
-func projectedFunctionFactForGraph(store api.StoreReader, graph *cfg.Graph, parent *scope.State, sym cfg.SymbolID) (api.FunctionFact, bool) {
-	projection, ok := store.(api.CanonicalFunctionFactProjectionReader)
-	if !ok || projection == nil || graph == nil || sym == 0 {
+func projectedFunctionFactForGraph(store canonicalFunctionFactProjector, graph *cfg.Graph, parent *scope.State, sym cfg.SymbolID) (api.FunctionFact, bool) {
+	if store == nil || graph == nil || sym == 0 {
 		return api.FunctionFact{}, false
 	}
-	return projection.CanonicalFunctionFactProjection(graph, parent, sym)
+	return store.CanonicalFunctionFactProjection(graph, parent, sym)
 }
 
-func graphFunction(store api.StoreReader, graph *cfg.Graph) *ast.FunctionExpr {
+func graphFunction(store interface {
+	FuncForGraph(graph *cfg.Graph) *ast.FunctionExpr
+}, graph *cfg.Graph) *ast.FunctionExpr {
 	if store == nil || graph == nil {
 		return nil
 	}

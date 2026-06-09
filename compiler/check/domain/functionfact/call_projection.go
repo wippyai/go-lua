@@ -14,10 +14,17 @@ import (
 	"github.com/wippyai/go-lua/types/typ/unwrap"
 )
 
+// CallProjectionStore is the minimal store surface needed to apply canonical
+// function facts at a call site.
+type CallProjectionStore interface {
+	StoreProjectionReader
+	ModuleBindings() *bind.BindingTable
+}
+
 // CallProjectionInput describes the local evidence needed to project a stable
 // function fact into the effective call signature at one call site.
 type CallProjectionInput struct {
-	Store    api.StoreReader
+	Store    CallProjectionStore
 	Info     *cfg.CallInfo
 	Graph    *cfg.Graph
 	Evidence api.FlowEvidence
@@ -187,7 +194,7 @@ func refinementFromFact(ff api.FunctionFact) *constraint.FunctionRefinement {
 	return refinement
 }
 
-func sourceFunctionForSymbol(store api.StoreReader, sym cfg.SymbolID) *ast.FunctionExpr {
+func sourceFunctionForSymbol(store symbolGraphReader, sym cfg.SymbolID) *ast.FunctionExpr {
 	if store == nil || sym == 0 {
 		return nil
 	}
@@ -203,7 +210,7 @@ func sourceFunctionForSymbol(store api.StoreReader, sym cfg.SymbolID) *ast.Funct
 }
 
 func unobservedLocalParamMask(
-	store api.StoreReader,
+	store symbolGraphReader,
 	sym cfg.SymbolID,
 	fn *ast.FunctionExpr,
 	results map[*ast.FunctionExpr]*api.FuncResult,
@@ -224,6 +231,11 @@ func unobservedLocalParamMask(
 		return nil
 	}
 	return paramevidence.UnobservedParameterMask(graph.ParamSlotsReadOnly(), result.Evidence.ParameterUses)
+}
+
+type symbolGraphReader interface {
+	FunctionRefBySym(sym cfg.SymbolID) *api.FunctionRef
+	Graphs() map[uint64]*cfg.Graph
 }
 
 func sourceParamExplicitAny(fn *ast.FunctionExpr, idx int) bool {

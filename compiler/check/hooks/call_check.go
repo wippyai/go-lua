@@ -120,8 +120,9 @@ func checkSingleCall(
 		def.ForceMethodReceiver = callsite.ForceMethodReceiver(bindings, graph, evidence, info)
 	} else if info.Callee != nil {
 		def.Callee = callObserver.TypeOf(info.Callee, p)
+		store, _ := api.StoreFrom(ctx).(functionfact.CallProjectionStore)
 		if projection, ok := functionfact.ProjectCall(functionfact.CallProjectionInput{
-			Store:    api.StoreFrom(ctx),
+			Store:    store,
 			Info:     info,
 			Graph:    graph,
 			Evidence: evidence,

@@ -140,7 +140,7 @@ func solvedObservation(result *api.FuncResult) observation.Projector {
 	if result == nil {
 		return observation.New(observation.Config{})
 	}
-	store := api.StoreFrom(result.QueryContext)
+	store, _ := api.StoreFrom(result.QueryContext).(functionfact.StoreProjectionReader)
 	lookup := functionfact.CanonicalStoreProjection(store, result.BaseScope).TypeLookup(functionfact.ProjectionSibling, api.SynthModeDeclared)
 	return observation.FromSolvedObservationState(result.ObservationState(), lookup).WithProofValues()
 }

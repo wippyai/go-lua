@@ -39,19 +39,69 @@ const (
 // keeps symbol ownership, parent graph-key resolution, synth mode, and type
 // projection in one place so callers do not rebuild partial views.
 type StoreView struct {
-	store         api.StoreReader
-	projection    func(*cfg.Graph, *scope.State, cfg.SymbolID) (api.FunctionFact, bool)
+	refs          functionRefReader
+	graphs        graphReader
+	parents       graphParentReader
+	keys          graphKeyReader
+	facts         canonicalFunctionFactProjector
+	synth         synthModeSwitcher
 	defaultParent *scope.State
+}
+
+// StoreProjectionReader is the minimal store surface needed to resolve
+// canonical function-fact projections by symbol or graph owner.
+type StoreProjectionReader interface {
+	FunctionRefBySym(sym cfg.SymbolID) *api.FunctionRef
+	Graphs() map[uint64]*cfg.Graph
+	Parents() map[uint64]*scope.State
+	GraphParentHashOf(graphID uint64) uint64
+	GraphKeyFor(graph *cfg.Graph, parent *scope.State) (api.GraphKey, bool)
+	CanonicalFunctionFactProjection(graph *cfg.Graph, parent *scope.State, sym cfg.SymbolID) (api.FunctionFact, bool)
+}
+
+type functionRefReader interface {
+	FunctionRefBySym(sym cfg.SymbolID) *api.FunctionRef
+}
+
+type graphReader interface {
+	Graphs() map[uint64]*cfg.Graph
+}
+
+type graphParentReader interface {
+	Parents() map[uint64]*scope.State
+	GraphParentHashOf(graphID uint64) uint64
+}
+
+type graphKeyReader interface {
+	GraphKeyFor(graph *cfg.Graph, parent *scope.State) (api.GraphKey, bool)
+}
+
+type canonicalFunctionFactProjector interface {
+	CanonicalFunctionFactProjection(graph *cfg.Graph, parent *scope.State, sym cfg.SymbolID) (api.FunctionFact, bool)
+}
+
+type synthModeSwitcher interface {
+	WithSynthMode(api.SynthMode, func())
 }
 
 // CanonicalStoreProjection returns a normalized view over final Summary-derived
 // function facts.
-func CanonicalStoreProjection(store api.StoreReader, defaultParent *scope.State) StoreView {
-	var projection func(*cfg.Graph, *scope.State, cfg.SymbolID) (api.FunctionFact, bool)
-	if reader, ok := store.(api.CanonicalFunctionFactProjectionReader); ok {
-		projection = reader.CanonicalFunctionFactProjection
+func CanonicalStoreProjection(store StoreProjectionReader, defaultParent *scope.State) StoreView {
+	if store == nil {
+		return StoreView{defaultParent: defaultParent}
 	}
-	return StoreView{store: store, projection: projection, defaultParent: defaultParent}
+	view := StoreView{
+		refs:          store,
+		graphs:        store,
+		parents:       store,
+		keys:          store,
+		facts:         store,
+		defaultParent: defaultParent,
+	}
+	if switcher, ok := store.(synthModeSwitcher); ok {
+		view.synth = switcher
+	}
+	return view
 }
 
 // StoreSymbolView is one resolved function-fact product plus its owning key.
@@ -70,36 +120,36 @@ type StoreSymbolOwner struct {
 
 // Owner resolves sym to the parent graph-key product that owns its facts.
 func (v StoreView) Owner(sym cfg.SymbolID) (StoreSymbolOwner, bool) {
-	if v.store == nil || sym == 0 {
+	if v.refs == nil || sym == 0 {
 		return StoreSymbolOwner{}, false
 	}
-	ref := v.store.FunctionRefBySym(sym)
+	ref := v.refs.FunctionRefBySym(sym)
 	if ref == nil {
 		return StoreSymbolOwner{}, false
 	}
-	return v.GraphOwner(graphForRef(v.store, ref))
+	return v.GraphOwner(graphForRef(v.graphs, ref))
 }
 
 // GraphOwner resolves graph's parent-key function-fact product.
 func (v StoreView) GraphOwner(graph *cfg.Graph) (StoreSymbolOwner, bool) {
-	return storeOwnerForGraph(v.store, graph, v.defaultParent)
+	return storeOwnerForGraph(v.parents, v.keys, graph, v.defaultParent)
 }
 
 // Symbol resolves sym to the function-fact product owned by its parent graph.
 func (v StoreView) Symbol(sym cfg.SymbolID, mode api.SynthMode) (StoreSymbolView, bool) {
-	if v.store == nil || sym == 0 {
+	if v.refs == nil || sym == 0 {
 		return StoreSymbolView{}, false
 	}
-	ref := v.store.FunctionRefBySym(sym)
+	ref := v.refs.FunctionRefBySym(sym)
 	if ref == nil {
 		return StoreSymbolView{}, false
 	}
-	return v.GraphSymbol(graphForRef(v.store, ref), sym, mode)
+	return v.GraphSymbol(graphForRef(v.graphs, ref), sym, mode)
 }
 
 // GraphSymbol resolves sym in graph's parent-key function-fact product.
 func (v StoreView) GraphSymbol(graph *cfg.Graph, sym cfg.SymbolID, mode api.SynthMode) (StoreSymbolView, bool) {
-	ff, owner, ok := storeFactForGraphInMode(v.store, v.projection, graph, sym, v.defaultParent, mode)
+	ff, owner, ok := storeFactForGraphInMode(v.parents, v.keys, v.facts, v.synth, graph, sym, v.defaultParent, mode)
 	if !ok {
 		return StoreSymbolView{}, false
 	}
@@ -119,7 +169,7 @@ func (v StoreSymbolView) Returns(mode api.SynthMode) []typ.Type {
 // TypeLookup returns a store-backed function projection lookup for solved-state
 // observers.
 func (v StoreView) TypeLookup(projection Projection, mode api.SynthMode) func(cfg.SymbolID) typ.Type {
-	if v.store == nil {
+	if v.refs == nil {
 		return nil
 	}
 	return func(sym cfg.SymbolID) typ.Type {
@@ -491,27 +541,29 @@ func lookupStored(facts api.FunctionFacts, sym cfg.SymbolID) (api.FunctionFact, 
 }
 
 func storeFactForGraphInMode(
-	store api.StoreReader,
-	projection func(*cfg.Graph, *scope.State, cfg.SymbolID) (api.FunctionFact, bool),
+	parents graphParentReader,
+	keys graphKeyReader,
+	projection canonicalFunctionFactProjector,
+	synth synthModeSwitcher,
 	graph *cfg.Graph,
 	sym cfg.SymbolID,
 	defaultParent *scope.State,
 	mode api.SynthMode,
 ) (api.FunctionFact, StoreSymbolOwner, bool) {
-	if store == nil || graph == nil || sym == 0 {
+	if parents == nil || keys == nil || projection == nil || graph == nil || sym == 0 {
 		return api.FunctionFact{}, StoreSymbolOwner{}, false
 	}
-	owner, ok := storeOwnerForGraph(store, graph, defaultParent)
-	if !ok || projection == nil {
+	owner, ok := storeOwnerForGraph(parents, keys, graph, defaultParent)
+	if !ok {
 		return api.FunctionFact{}, StoreSymbolOwner{}, false
 	}
 	var ff api.FunctionFact
 	var found bool
 	load := func() {
-		ff, found = projection(owner.Graph, owner.Parent, sym)
+		ff, found = projection.CanonicalFunctionFactProjection(owner.Graph, owner.Parent, sym)
 	}
-	if switcher, ok := store.(interface{ WithSynthMode(api.SynthMode, func()) }); ok {
-		switcher.WithSynthMode(mode, load)
+	if synth != nil {
+		synth.WithSynthMode(mode, load)
 	} else {
 		load()
 	}
@@ -521,23 +573,37 @@ func storeFactForGraphInMode(
 	return ff, owner, true
 }
 
-func storeOwnerForGraph(store api.StoreReader, graph *cfg.Graph, defaultParent *scope.State) (StoreSymbolOwner, bool) {
-	if store == nil || graph == nil {
+func storeOwnerForGraph(parents graphParentReader, keys graphKeyReader, graph *cfg.Graph, defaultParent *scope.State) (StoreSymbolOwner, bool) {
+	if parents == nil || keys == nil || graph == nil {
 		return StoreSymbolOwner{}, false
 	}
-	parent := api.ParentScopeForGraph(store, graph.ID(), defaultParent)
+	parent := parentScopeForGraph(parents, graph.ID(), defaultParent)
 	if parent == nil {
 		return StoreSymbolOwner{}, false
 	}
-	key, ok := store.GraphKeyFor(graph, parent)
+	key, ok := keys.GraphKeyFor(graph, parent)
 	if !ok {
 		return StoreSymbolOwner{}, false
 	}
 	return StoreSymbolOwner{Graph: graph, Parent: parent, Key: key}, true
 }
 
+func parentScopeForGraph(store graphParentReader, graphID uint64, defaultScope *scope.State) *scope.State {
+	if store == nil || graphID == 0 {
+		return defaultScope
+	}
+	parentHash := store.GraphParentHashOf(graphID)
+	if parentHash == 0 {
+		return defaultScope
+	}
+	if parent := store.Parents()[parentHash]; parent != nil {
+		return parent
+	}
+	return defaultScope
+}
+
 // RefinementsFromStore projects FunctionFacts projection as refinement facts.
-func RefinementsFromStore(store api.StoreReader, defaultParent *scope.State) api.RefinementFacts {
+func RefinementsFromStore(store StoreProjectionReader, defaultParent *scope.State) api.RefinementFacts {
 	if store == nil {
 		return nil
 	}
@@ -731,7 +797,7 @@ func rebuildFunctionWithSpec(fn *typ.Function, spec *contract.Spec) *typ.Functio
 	return builder.Build()
 }
 
-func graphForRef(store api.StoreReader, ref *api.FunctionRef) *cfg.Graph {
+func graphForRef(store graphReader, ref *api.FunctionRef) *cfg.Graph {
 	if store == nil || ref == nil {
 		return nil
 	}
