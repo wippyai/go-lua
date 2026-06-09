@@ -498,13 +498,9 @@ type FuncAnalysisView struct {
 	Graph                    *cfg.Graph
 	AnalysisContext          AnalysisContext
 	Scopes                   map[cfg.Point]*scope.State
-	Facts                    flow.TypeFacts
-	FlowInputs               *flow.Inputs
-	FlowProjection           FlowOps
 	Evidence                 FlowEvidence
 	CallExpectedArgs         []CallExpectedArgEvidence
 	CallContracts            []CallContractEvidence
-	NarrowSynth              Synth
 	SourceSignature          *typ.Function
 	PublicSeedSignature      *typ.Function
 	LiteralSignatures        map[*ast.FunctionExpr]*typ.Function
@@ -515,6 +511,11 @@ type FuncAnalysisView struct {
 	GlobalTypeBindings       globalenv.TypeOverlay
 	RecursiveFamilies        *typ.RecursiveFamilyInterner
 	ClassFamilyJoin          func(existing, candidate typ.Type) typ.Type
+
+	facts          flow.TypeFacts
+	flowInputs     *flow.Inputs
+	flowProjection FlowOps
+	narrowSynth    Synth
 }
 
 // SolvedObservationState is the producer-neutral solved-state bundle consumed
@@ -577,8 +578,8 @@ func (r *FuncAnalysisView) ObservationState() SolvedObservationState {
 	state := SolvedObservationState{
 		Graph:                    r.Graph,
 		Scopes:                   r.Scopes,
-		Facts:                    r.Facts,
-		Inputs:                   r.FlowInputs,
+		Facts:                    r.facts,
+		Inputs:                   r.flowInputs,
 		Flow:                     r.SolvedFlow(),
 		Ctx:                      r.QueryContext,
 		TypeOps:                  r.TypeOps,
@@ -587,8 +588,8 @@ func (r *FuncAnalysisView) ObservationState() SolvedObservationState {
 		RecursiveFamilies:        r.RecursiveFamilies,
 		ClassFamilyJoin:          r.ClassFamilyJoin,
 	}
-	if r.NarrowSynth != nil {
-		state.ResolveType = r.NarrowSynth.ResolveType
+	if r.narrowSynth != nil {
+		state.ResolveType = r.narrowSynth.ResolveType
 	}
 	return state
 }
@@ -602,13 +603,9 @@ func ViewFromResult(r *FuncResult) *FuncAnalysisView {
 		Graph:                    r.Graph,
 		AnalysisContext:          r.AnalysisContext,
 		Scopes:                   r.Scopes,
-		Facts:                    r.analysis.TypeFacts,
-		FlowInputs:               r.analysis.FlowInputs,
-		FlowProjection:           r.analysis.FlowProjection,
 		Evidence:                 r.Evidence,
 		CallExpectedArgs:         r.CallExpectedArgs,
 		CallContracts:            r.CallContracts,
-		NarrowSynth:              r.analysis.SolvedSynth,
 		SourceSignature:          r.SourceSignature,
 		PublicSeedSignature:      r.PublicSeedSignature,
 		LiteralSignatures:        r.LiteralSignatures,
@@ -619,6 +616,10 @@ func ViewFromResult(r *FuncResult) *FuncAnalysisView {
 		GlobalTypeBindings:       r.GlobalTypeOverlay(),
 		RecursiveFamilies:        r.RecursiveFamilies,
 		ClassFamilyJoin:          r.ClassFamilyJoin,
+		facts:                    r.analysis.TypeFacts,
+		flowInputs:               r.analysis.FlowInputs,
+		flowProjection:           r.analysis.FlowProjection,
+		narrowSynth:              r.analysis.SolvedSynth,
 	}
 }
 
@@ -636,26 +637,26 @@ func (r *FuncResult) ReleaseAnalysisArtifacts() {
 
 // EffectiveTypeAt returns the narrowed type for a symbol at a specific CFG point.
 func (r *FuncAnalysisView) EffectiveTypeAt(p cfg.Point, sym cfg.SymbolID) flow.TypedValue {
-	if r == nil || r.Facts == nil {
+	if r == nil || r.facts == nil {
 		return flow.TypedValue{Type: typ.Unknown, State: flow.StateUnknown}
 	}
-	return r.Facts.EffectiveTypeAt(p, sym)
+	return r.facts.EffectiveTypeAt(p, sym)
 }
 
 // DeclaredTypeAt returns source/static declaration facts for a symbol.
 func (r *FuncAnalysisView) DeclaredTypeAt(p cfg.Point, sym cfg.SymbolID) flow.TypedValue {
-	if r == nil || r.Facts == nil {
+	if r == nil || r.facts == nil {
 		return flow.TypedValue{Type: typ.Unknown, State: flow.StateUnknown}
 	}
-	return r.Facts.DeclaredAt(p, sym)
+	return r.facts.DeclaredAt(p, sym)
 }
 
 // RefinedTypeAt returns flow-refined type facts for a symbol.
 func (r *FuncAnalysisView) RefinedTypeAt(p cfg.Point, sym cfg.SymbolID) flow.TypedValue {
-	if r == nil || r.Facts == nil {
+	if r == nil || r.facts == nil {
 		return flow.TypedValue{Type: nil, State: flow.StateUnknown}
 	}
-	return r.Facts.RefinedAt(p, sym)
+	return r.facts.RefinedAt(p, sym)
 }
 
 // TypeFacts returns the mode-safe solved type-fact view for this analysis view.
@@ -663,7 +664,7 @@ func (r *FuncAnalysisView) TypeFacts() flow.TypeFacts {
 	if r == nil {
 		return nil
 	}
-	return r.Facts
+	return r.facts
 }
 
 // SolvedSynth returns the flow-refined synthesis view for this analysis view.
@@ -671,7 +672,7 @@ func (r *FuncAnalysisView) SolvedSynth() Synth {
 	if r == nil {
 		return nil
 	}
-	return r.NarrowSynth
+	return r.narrowSynth
 }
 
 // FlowInputView returns the read-only extracted-input view for this analysis view.
@@ -679,7 +680,7 @@ func (r *FuncAnalysisView) FlowInputView() FlowInputView {
 	if r == nil {
 		return FlowInputView{}
 	}
-	return FlowInputView{inputs: r.FlowInputs}
+	return FlowInputView{inputs: r.flowInputs}
 }
 
 // SolvedFlow returns the normalized solved-flow projection for this view.
@@ -687,8 +688,8 @@ func (r *FuncAnalysisView) SolvedFlow() FlowOps {
 	if r == nil {
 		return nil
 	}
-	if r.FlowProjection != nil {
-		return r.FlowProjection
+	if r.flowProjection != nil {
+		return r.flowProjection
 	}
 	return nil
 }
@@ -699,7 +700,7 @@ func (r *FuncAnalysisView) ConditionProofFacts() flow.ConditionProofFacts {
 	if r == nil {
 		return nil
 	}
-	if facts, ok := r.Facts.(flow.ConditionProofFacts); ok {
+	if facts, ok := r.facts.(flow.ConditionProofFacts); ok {
 		return facts
 	}
 	if facts, ok := r.SolvedFlow().(flow.ConditionProofFacts); ok {
@@ -713,14 +714,14 @@ func (r *FuncAnalysisView) ConstFacts() flow.ConstFacts {
 	if r == nil {
 		return nil
 	}
-	if facts, ok := r.Facts.(flow.ConstFacts); ok {
+	if facts, ok := r.facts.(flow.ConstFacts); ok {
 		return facts
 	}
 	if facts, ok := r.SolvedFlow().(flow.ConstFacts); ok {
 		return facts
 	}
-	if r.FlowInputs != nil {
-		return r.FlowInputs
+	if r.flowInputs != nil {
+		return r.flowInputs
 	}
 	return nil
 }
@@ -731,7 +732,7 @@ func (r *FuncAnalysisView) PathObservationFacts() flow.PathObservationFacts {
 	if r == nil {
 		return nil
 	}
-	if facts, ok := r.Facts.(flow.PathObservationFacts); ok {
+	if facts, ok := r.facts.(flow.PathObservationFacts); ok {
 		return facts
 	}
 	if facts, ok := r.SolvedFlow().(flow.PathObservationFacts); ok {
@@ -746,7 +747,7 @@ func (r *FuncAnalysisView) PathChildFacts() flow.PathChildFacts {
 	if r == nil {
 		return nil
 	}
-	if facts, ok := r.Facts.(flow.PathChildFacts); ok {
+	if facts, ok := r.facts.(flow.PathChildFacts); ok {
 		return facts
 	}
 	if facts, ok := r.SolvedFlow().(flow.PathChildFacts); ok {
@@ -761,7 +762,7 @@ func (r *FuncAnalysisView) TransferValueFacts() flow.TransferValueFacts {
 	if r == nil {
 		return nil
 	}
-	if facts, ok := r.Facts.(flow.TransferValueFacts); ok {
+	if facts, ok := r.facts.(flow.TransferValueFacts); ok {
 		return facts
 	}
 	if facts, ok := r.SolvedFlow().(flow.TransferValueFacts); ok {
