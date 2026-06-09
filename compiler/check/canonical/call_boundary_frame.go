@@ -169,7 +169,7 @@ func (p callBoundaryFrame) expectedArgEvidence(info *cfg.CallInfo, forceMethodRe
 	expectedArgs := p.site.expectedArgProjection()
 	expectedArgs.ShallowFuncLiterals = true
 	if !callsite.IsMethodCallInfo(info) {
-		expectedArgs.Callee = p.site.expectedCalleeType(info.Callee)
+		expectedArgs.Callee = p.expectedCalleeType(info.Callee)
 	}
 	expectedArgs.IsMethod = callsite.IsMethodCallInfo(info)
 	expectedArgs.MethodName = info.Method
@@ -192,6 +192,33 @@ func (p callBoundaryFrame) expectedArgEvidence(info *cfg.CallInfo, forceMethodRe
 		return api.CallExpectedArgEvidence{}, false
 	}
 	return api.NewCallExpectedArgEvidence(args), true
+}
+
+func (p callBoundaryFrame) expectedCalleeType(expr ast.Expr) typ.Type {
+	if p.typer.d != nil && p.typer.d.activeProgram != nil {
+		if ref, ok := p.typer.targetResolver(p.typer.d.activeProgram).ResolveStaticCall(p.site.call); ok {
+			if sig := p.typer.d.signatureForRef(p.typer.d.activeProgram, ref); sig != nil {
+				return sig
+			}
+		}
+	}
+	if nested, ok := expr.(*ast.FuncCallExpr); ok && nested != nil && p.site.nestedCall != nil {
+		result := p.typer.ProductCallFromValues(nested, p.site.nestedCall(nested))
+		if result.HasReturnValues && len(result.ReturnValues) > 0 {
+			if t := product.ProjectValueOrUnknown(result.ReturnValues[0]); t != nil && !typ.IsAbsentOrUnknown(t) {
+				return t
+			}
+		}
+	}
+	if fn := p.outcome.FunctionShape(); fn != nil {
+		return fn
+	}
+	if expr != nil && p.site.exprType != nil {
+		if t := p.site.exprType(expr); t != nil && !typ.IsAbsentOrUnknown(t) {
+			return t
+		}
+	}
+	return nil
 }
 
 func (p callBoundaryFrame) expectedArgType(info *cfg.CallInfo, forceMethodReceiver bool, argIdx int) typ.Type {

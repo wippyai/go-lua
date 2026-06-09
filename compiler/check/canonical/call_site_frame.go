@@ -6,7 +6,6 @@ import (
 	canonref "github.com/wippyai/go-lua/compiler/check/canonical/ref"
 	"github.com/wippyai/go-lua/compiler/check/canonical/summary"
 	"github.com/wippyai/go-lua/compiler/check/canonical/transfer"
-	"github.com/wippyai/go-lua/types/domain/value/product"
 	"github.com/wippyai/go-lua/types/flow"
 	"github.com/wippyai/go-lua/types/typ"
 )
@@ -168,31 +167,4 @@ func (f callSiteFrame) contextualFunction(projector callableProjector, ref summa
 	entry := d.activeProgram.CallEntryContext(ref, f.references, values)
 	sum := projector.reader.SummarizeWithKey(entry.Key())
 	return summary.FunctionSignatureWithEntryParamsAndProjectedReturns(sig, d.refHasDeclaredReturns(d.activeProgram, ref), sum, values)
-}
-
-func (f callSiteFrame) expectedCalleeType(expr ast.Expr) typ.Type {
-	if f.typer.d != nil && f.typer.d.activeProgram != nil {
-		if ref, ok := f.typer.targetResolver(f.typer.d.activeProgram).ResolveStaticCall(f.call); ok {
-			if sig := f.typer.d.signatureForRef(f.typer.d.activeProgram, ref); sig != nil {
-				return sig
-			}
-		}
-	}
-	if nested, ok := expr.(*ast.FuncCallExpr); ok && nested != nil && f.nestedCall != nil {
-		result := f.typer.ProductCallFromValues(nested, f.nestedCall(nested))
-		if result.HasReturnValues && len(result.ReturnValues) > 0 {
-			if t := product.ProjectValueOrUnknown(result.ReturnValues[0]); t != nil && !typ.IsAbsentOrUnknown(t) {
-				return t
-			}
-		}
-	}
-	if fn := f.typeFallbackOutcome(true).FunctionShape(); fn != nil {
-		return fn
-	}
-	if expr != nil && f.exprType != nil {
-		if t := f.exprType(expr); t != nil && !typ.IsAbsentOrUnknown(t) {
-			return t
-		}
-	}
-	return nil
 }
