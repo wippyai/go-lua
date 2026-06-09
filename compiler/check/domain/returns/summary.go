@@ -121,9 +121,9 @@ func ReturnVector(graph *cfg.Graph, exprs []ast.Expr, p cfg.Point, synth ExprSyn
 	return out
 }
 
-// IsImplicitSelfReturn reports whether expr is the implicit receiver parameter
-// of a colon-defined method. Such returns remain polymorphic as Self until the
-// call projection substitutes the actual receiver.
+// IsImplicitSelfReturn reports whether expr is the receiver parameter of a
+// method-like function. Such returns remain polymorphic as Self until the call
+// projection substitutes the actual receiver.
 func IsImplicitSelfReturn(graph *cfg.Graph, expr ast.Expr) bool {
 	if graph == nil || expr == nil {
 		return false
@@ -141,7 +141,10 @@ func IsImplicitSelfReturn(graph *cfg.Graph, expr ast.Expr) bool {
 		return false
 	}
 	for _, slot := range graph.ParamSlotsReadOnly() {
-		if slot.IsImplicitSelf && slot.Symbol == sym {
+		if slot.Symbol != sym {
+			continue
+		}
+		if slot.IsImplicitSelf || (slot.SourceIndex == 0 && slot.Name == "self" && slot.TypeAnnotation == nil) {
 			return true
 		}
 	}

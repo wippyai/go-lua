@@ -190,6 +190,9 @@ func (r fieldResolverImpl) ExprHasLengthProof(expr ast.Expr, p cfg.Point) bool {
 	if r.flowOps == nil {
 		return false
 	}
+	if r.observer.ExprHasLengthProof(expr, p) {
+		return true
+	}
 	path := r.PathOf(expr, p)
 	if path.IsEmpty() {
 		return false

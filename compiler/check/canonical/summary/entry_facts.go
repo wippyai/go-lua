@@ -34,7 +34,10 @@ func resetEntryFactsKeyInterner() {
 	canonicalEntryFactsKeys.buckets = make(map[uint64][]*entryFactsKeyNode)
 }
 
-// entryFactsKeyOf returns an exact comparable key for facts.
+// entryFactsKeyOf returns a comparable key for caller-projected function-entry
+// facts. Recursive self calls normalize their facts before key construction; for
+// ordinary exact contexts the full boundary-fact payload remains part of the key
+// because it is also the callee entry seed.
 func entryFactsKeyOf(facts flow.BoundaryFacts) EntryFactsKey {
 	return internEntryFactsKey(facts)
 }

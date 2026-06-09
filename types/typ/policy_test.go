@@ -24,6 +24,18 @@ func TestJoinReturnSlot_PreservesUnknownOverConcrete(t *testing.T) {
 	}
 }
 
+func TestIsClosedUnionAnnotationRecognizesInstantiatedGenericUnion(t *testing.T) {
+	tp := NewTypeParam("T", nil)
+	result := NewGeneric("Result", []*TypeParam{tp}, NewUnion(
+		NewRecord().Field("ok", LiteralBool(true)).Field("value", tp).Build(),
+		NewRecord().Field("ok", LiteralBool(false)).Field("error", String).Build(),
+	))
+
+	if !IsClosedUnionAnnotation(Instantiate(result, NewRecord().Field("id", String).Build())) {
+		t.Fatal("IsClosedUnionAnnotation(Result<User>) = false, want true")
+	}
+}
+
 // TestJoinReturnSlot_PrefersConcreteScalarOverUnknown locks the evidence-lattice
 // semantics for a converged slot: a bare unknown is unresolved evidence ("no
 // value yet"), not the dynamic top, so its least upper bound with a concrete

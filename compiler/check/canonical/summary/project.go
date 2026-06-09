@@ -165,7 +165,7 @@ func projectReturns(fs state.FunctionState, g *cfg.Graph, opts projectOptions) [
 			// its slots stay Bottom until the point becomes reachable.
 			return
 		}
-		stmt := returnTupleAt(ps, info, opts)
+		stmt := returnTupleAt(ps, g, info, opts)
 		rows = append(rows, returnTupleRow{info: info, tuple: stmt})
 		if len(stmt) > maxArity {
 			maxArity = len(stmt)
@@ -322,7 +322,7 @@ func staticMemberSlotPath(root constraint.Path, member typ.StaticMember) (constr
 // the function falls back to the transfer-owned return-slot Env key. When both
 // lookups miss, it projects value-domain Top, and later transfer-fidelity passes
 // (call-return typing) can still refine.
-func returnTupleAt(ps flow.PointState, info *cfg.ReturnInfo, opts projectOptions) []product.AbstractValue {
+func returnTupleAt(ps flow.PointState, g *cfg.Graph, info *cfg.ReturnInfo, opts projectOptions) []product.AbstractValue {
 	arity := len(info.Exprs)
 	if len(info.Exprs) == 1 && info.SourceCallAt(0) != nil {
 		if stored := flow.PointFactsOf(ps).ReturnSlotStoredArity(); stored > arity {
@@ -331,10 +331,10 @@ func returnTupleAt(ps flow.PointState, info *cfg.ReturnInfo, opts projectOptions
 	}
 	out := make([]product.AbstractValue, arity)
 	for i := range info.Exprs {
-		out[i] = returnSlotValue(ps, info, i, opts)
+		out[i] = returnSlotValue(ps, g, info, i, opts)
 	}
 	for i := len(info.Exprs); i < arity; i++ {
-		out[i] = returnSlotValue(ps, info, i, opts)
+		out[i] = returnSlotValue(ps, g, info, i, opts)
 	}
 	return out
 }
@@ -353,8 +353,11 @@ func materializeImplicitNilReturnSlots(info *cfg.ReturnInfo, tuple []product.Abs
 	return out
 }
 
-func returnSlotValue(ps flow.PointState, info *cfg.ReturnInfo, i int, opts projectOptions) product.AbstractValue {
+func returnSlotValue(ps flow.PointState, g *cfg.Graph, info *cfg.ReturnInfo, i int, opts projectOptions) product.AbstractValue {
 	if i < len(info.Symbols) && info.Symbols[i] != 0 {
+		if returnSymbolIsSelfParam(g, info.Symbols[i]) {
+			return product.FromType(typ.Self)
+		}
 		if av, ok := flow.PointFactsOf(ps).SymbolValue(info.Symbols[i]); ok && !av.IsZero() {
 			return flow.ProductWithStaticMembersForSymbol(info.Symbols[i], av, ps.StaticMembers)
 		}
@@ -372,6 +375,19 @@ func returnSlotValue(ps flow.PointState, info *cfg.ReturnInfo, i int, opts proje
 	return product.Domain.Top()
 }
 
+func returnSymbolIsSelfParam(g *cfg.Graph, sym cfg.SymbolID) bool {
+	if g == nil || sym == 0 {
+		return false
+	}
+	for _, slot := range g.ParamSlotsReadOnly() {
+		if slot.Symbol != sym {
+			continue
+		}
+		return slot.IsImplicitSelf || (slot.SourceIndex == 0 && slot.Name == "self" && slot.TypeAnnotation == nil)
+	}
+	return false
+}
+
 func returnSlotBaseValue(ps flow.PointState, info *cfg.ReturnInfo, i int, opts projectOptions) product.AbstractValue {
 	if i < len(info.Symbols) && info.Symbols[i] != 0 {
 		if av, ok := flow.PointFactsOf(ps).SymbolValue(info.Symbols[i]); ok && !av.IsZero() {
@@ -381,7 +397,7 @@ func returnSlotBaseValue(ps flow.PointState, info *cfg.ReturnInfo, i int, opts p
 			return av
 		}
 	}
-	return returnSlotValue(ps, info, i, opts)
+	return returnSlotValue(ps, nil, info, i, opts)
 }
 
 func returnSlotHasFiniteCallTarget(ps flow.PointState, info *cfg.ReturnInfo, i int, opts projectOptions) bool {
@@ -501,7 +517,7 @@ func projectGuardedReturnRelations(fs state.FunctionState, g *cfg.Graph) flow.Re
 			return
 		}
 		sawGuard = true
-		targetValue := returnSlotValue(ps, info, targetIdx, projectOptions{})
+		targetValue := returnSlotValue(ps, nil, info, targetIdx, projectOptions{})
 		if targetValue.IsZero() {
 			return
 		}
@@ -527,7 +543,7 @@ func projectGuardedReturnRelations(fs state.FunctionState, g *cfg.Graph) flow.Re
 }
 
 func classifyReturnTruthiness(ps flow.PointState, info *cfg.ReturnInfo, idx int) (bool, bool) {
-	av := returnSlotValue(ps, info, idx, projectOptions{})
+	av := returnSlotValue(ps, nil, info, idx, projectOptions{})
 	if av.IsZero() {
 		return false, false
 	}
@@ -690,6 +706,7 @@ func projectPointBoundaryFacts(ps flow.PointState, mapper flow.BoundaryPathProje
 			StaticMembers: ps.StaticMembers,
 			Num:           ps.Num,
 			IndexWrites:   ps.IndexWrites,
+			PathAliases:   ps.PathAliases,
 		},
 		mapper,
 		flow.BoundaryFactProjectionPolicy{
@@ -699,31 +716,91 @@ func projectPointBoundaryFacts(ps flow.PointState, mapper flow.BoundaryPathProje
 }
 
 func projectReturnLengthBoundaryFacts(ps flow.PointState, g *cfg.Graph, p cfg.Point, info *cfg.ReturnInfo, mapper flow.BoundaryPathProjection) flow.BoundaryFacts {
-	var facts []flow.BoundaryLengthRelationFact
+	var relations []flow.BoundaryLengthRelationFact
+	var upperBounds []flow.BoundaryLengthUpperBound
 	for i := range info.Exprs {
 		target, ok := returnExprLocalAddress(g, p, info, i)
 		if !ok {
 			continue
 		}
-		targetAddr, ok := target.Stable()
-		if !ok {
-			continue
-		}
-		targets := mapper.PathsFromAddress(targetAddr)
-		if len(targets) == 0 {
-			continue
-		}
-		for _, rel := range ps.Rel.LengthParamsForTargetLocal(target) {
-			source := flow.BoundaryPath{Kind: flow.BoundaryPathParam, Index: rel.ParamIndex}
-			for _, boundaryTarget := range targets {
-				facts = append(facts, flow.BoundaryLengthRelationFact{
-					Target: boundaryTarget,
-					Source: source,
-				})
+		if targetAddr, ok := target.Stable(); ok {
+			targets := mapper.PathsFromAddress(targetAddr)
+			for _, rel := range ps.Rel.LengthParamsForTargetLocal(target) {
+				source := flow.BoundaryPath{Kind: flow.BoundaryPathParam, Index: rel.ParamIndex}
+				for _, boundaryTarget := range targets {
+					relations = append(relations, flow.BoundaryLengthRelationFact{
+						Target: boundaryTarget,
+						Source: source,
+					})
+				}
 			}
 		}
+		upperBounds = append(upperBounds, returnStaticMemberLengthUpperBounds(ps, g, p, info, i)...)
 	}
-	return flow.BoundaryFactsDomain.Top().WithLengthRelations(facts)
+	return flow.BoundaryFactsDomain.Top().
+		WithLengthRelations(relations).
+		WithLengthUpperBounds(upperBounds)
+}
+
+func returnStaticMemberLengthUpperBounds(ps flow.PointState, g *cfg.Graph, p cfg.Point, info *cfg.ReturnInfo, i int) []flow.BoundaryLengthUpperBound {
+	slotPath := constraint.NewPlaceholder(i)
+	slotAddr, ok := flow.StableAddressOfPath(slotPath)
+	if !ok {
+		return nil
+	}
+	var out []flow.BoundaryLengthUpperBound
+	if summaryProductValueIsFreshEmptyArray(returnSlotBaseValue(ps, info, i, projectOptions{})) {
+		out = append(out, flow.BoundaryLengthUpperBound{
+			Target: flow.BoundaryPath{Kind: flow.BoundaryPathReturn, Index: i},
+			Upper:  0,
+		})
+	}
+	members := returnStaticMembersSlotAt(ps, g, p, info, i)
+	for _, fact := range members.AddressEntriesUnder(slotAddr) {
+		if !summaryProductValueIsFreshEmptyArray(fact.Value) {
+			continue
+		}
+		out = append(out, flow.BoundaryLengthUpperBound{
+			Target: flow.BoundaryPath{
+				Kind:     flow.BoundaryPathReturn,
+				Index:    i,
+				Segments: fact.Address.Segments(),
+			},
+			Upper: 0,
+		})
+	}
+	return out
+}
+
+func summaryProductValueIsFreshEmptyArray(av product.AbstractValue) bool {
+	if av.IsZero() || !av.DefinitelyPresent() {
+		return false
+	}
+	return summaryProductTypeIsFreshEmptyArray(av.ProjectValue())
+}
+
+func summaryProductTypeIsFreshEmptyArray(t typ.Type) bool {
+	switch v := unwrap.Alias(t).(type) {
+	case *typ.Array:
+		return v.Fresh || typ.IsNever(v.Element)
+	case *typ.Recursive:
+		if v.Body == nil || v.Body == t {
+			return false
+		}
+		return summaryProductTypeIsFreshEmptyArray(v.Body)
+	case *typ.Union:
+		if len(v.Members) == 0 {
+			return false
+		}
+		for _, member := range v.Members {
+			if !summaryProductTypeIsFreshEmptyArray(member) {
+				return false
+			}
+		}
+		return true
+	default:
+		return false
+	}
 }
 
 func returnBoundarySymbolMap(g *cfg.Graph, p cfg.Point, info *cfg.ReturnInfo) map[cfg.SymbolID][]flow.BoundaryPath {
@@ -814,7 +891,7 @@ func classifyReturnSlot(ps flow.PointState, info *cfg.ReturnInfo, idx int) (retu
 		}
 		return 0, false
 	}
-	return classifyReturnValue(returnSlotValue(ps, info, idx, projectOptions{}))
+	return classifyReturnValue(returnSlotValue(ps, nil, info, idx, projectOptions{}))
 }
 
 func classifyReturnValue(av product.AbstractValue) (returnNilState, bool) {

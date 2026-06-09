@@ -123,7 +123,7 @@ func (f callSiteFrame) refinedArgTypes() []typ.Type {
 	if len(callbackRefs) == 0 {
 		return f.argTypes
 	}
-	projector := newCallableProjector(f.typer.d, f.typer.d.activeProgram, f.typer.d.activeQueries, f.typer.d.activeCtx)
+	projector := newCallableProjector(f.typer.d, f.typer.d.activeProgram, f.typer.d.activeReader())
 	expectedInput := f.expectedArgProjection()
 	expectedInput.CallbackArg = func(arg ast.Expr) bool {
 		_, ok := callbackRefs[arg]
@@ -165,6 +165,16 @@ func (f callSiteFrame) contextualFunction(projector callableProjector, ref summa
 		return nil
 	}
 	entry := d.activeProgram.CallEntryContext(ref, f.references, values)
-	sum := projector.reader.SummarizeWithKey(entry.Key())
+	key := entry.Key()
+	var sum summary.Summary
+	if projector.reader.Live() {
+		sum = projector.reader.SummarizeWithKey(key)
+	} else {
+		var ok bool
+		sum, ok = projector.reader.ExactSummaryForKey(key)
+		if !ok {
+			sum = projector.reader.Summarize(ref)
+		}
+	}
 	return summary.FunctionSignatureWithEntryParamsAndProjectedReturns(sig, d.refHasDeclaredReturns(d.activeProgram, ref), sum, values)
 }

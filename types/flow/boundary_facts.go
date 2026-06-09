@@ -59,6 +59,43 @@ type BoundaryAppendKeyFact struct {
 	HasTable bool
 }
 
+// BoundaryAppendHistoryBaseFact proves Array's append history remains tracked
+// after the call. It mirrors AppendHistoryBaseFact so conditional append field
+// origins can survive function-boundary joins under the same local law.
+type BoundaryAppendHistoryBaseFact struct {
+	Array BoundaryPath
+}
+
+// BoundaryAppendHistoryEventFact records one possible key appended to Array
+// during the call. It mirrors AppendHistoryEventFact and is intentionally
+// weaker than BoundaryAppendKeyFact: branch joins may preserve possible events
+// without claiming a single definite append key.
+type BoundaryAppendHistoryEventFact struct {
+	Array BoundaryPath
+	Key   BoundaryPath
+}
+
+// BoundaryAppendHistoryCoverageFact proves that a tracked append event is
+// covered by Table[Key] with Value after the call. Together with append bases
+// and events, this carries branch-sensitive key-array readback across function
+// boundaries.
+type BoundaryAppendHistoryCoverageFact struct {
+	Array BoundaryPath
+	Key   BoundaryPath
+	Table BoundaryPath
+	Value product.AbstractValue
+}
+
+// BoundaryAppendHistoryTableCoverageFact proves that append-history events for
+// Array are covered by Table with Value, without naming the event keys. It is
+// the portable boundary form for branch-local append keys that cannot be
+// rebased into the caller.
+type BoundaryAppendHistoryTableCoverageFact struct {
+	Array BoundaryPath
+	Table BoundaryPath
+	Value product.AbstractValue
+}
+
 // BoundaryAppendElementFieldOriginFact records that a tracked append to Array
 // may have sourced the appended element-relative Field from Source. It is a
 // boundary-relative counterpart of AppendElementFieldOriginFact, used to carry
@@ -76,6 +113,14 @@ type BoundaryLengthLowerBound struct {
 	Lower  int64
 }
 
+// BoundaryLengthUpperBound proves len(Target) <= Upper after the call returns.
+// It carries exact-empty sequence facts such as table.create capacity
+// allocations across constructor/method boundaries.
+type BoundaryLengthUpperBound struct {
+	Target BoundaryPath
+	Upper  int64
+}
+
 // BoundaryLengthRelationFact proves len(Target) >= len(Source) after the call
 // returns. Both sides are boundary-relative paths so callers can replay the
 // relation against concrete call arguments and assignment targets.
@@ -84,13 +129,18 @@ type BoundaryLengthRelationFact struct {
 	Source BoundaryPath
 }
 
-// BoundaryIndexWriteFact proves Table[Key] has Value after the call returns.
-// Table and Key are boundary-relative paths; Value is a product value because the
-// fact is symbolic readback, not just key presence.
+// BoundaryIndexWriteFact is the boundary-relative form of
+// IndexWriteAdmissionAddressFact. KeyPath/ValuePath carry identities only when
+// they cross the boundary; KeyValue/Value carry the product-domain admission
+// proof needed for dynamic readback.
 type BoundaryIndexWriteFact struct {
-	Table BoundaryPath
-	Key   BoundaryPath
-	Value product.AbstractValue
+	Table        BoundaryPath
+	KeyPath      BoundaryPath
+	HasKeyPath   bool
+	KeyValue     product.AbstractValue
+	ValuePath    BoundaryPath
+	HasValuePath bool
+	Value        product.AbstractValue
 }
 
 // BoundaryStaticMemberFact proves Target has Value after boundary rebasing. It
@@ -105,16 +155,21 @@ type BoundaryStaticMemberFact struct {
 // that already exist point-locally but must cross a function boundary. It is a
 // must-fact lattice: join keeps only facts proved by every normal return path.
 type BoundaryFacts struct {
-	bottom         bool
-	keyPresence    []BoundaryKeyPresenceFact
-	keyArrays      []BoundaryKeyArrayFact
-	keyArrayValues []BoundaryKeyArrayValueFact
-	appendKeys     []BoundaryAppendKeyFact
-	appendOrigins  []BoundaryAppendElementFieldOriginFact
-	lenLower       []BoundaryLengthLowerBound
-	lenRelations   []BoundaryLengthRelationFact
-	indexWrites    []BoundaryIndexWriteFact
-	staticMembers  []BoundaryStaticMemberFact
+	bottom              bool
+	keyPresence         []BoundaryKeyPresenceFact
+	keyArrays           []BoundaryKeyArrayFact
+	keyArrayValues      []BoundaryKeyArrayValueFact
+	appendKeys          []BoundaryAppendKeyFact
+	appendBases         []BoundaryAppendHistoryBaseFact
+	appendEvents        []BoundaryAppendHistoryEventFact
+	appendCoverage      []BoundaryAppendHistoryCoverageFact
+	appendTableCoverage []BoundaryAppendHistoryTableCoverageFact
+	appendOrigins       []BoundaryAppendElementFieldOriginFact
+	lenLower            []BoundaryLengthLowerBound
+	lenUpper            []BoundaryLengthUpperBound
+	lenRelations        []BoundaryLengthRelationFact
+	indexWrites         []BoundaryIndexWriteFact
+	staticMembers       []BoundaryStaticMemberFact
 }
 
 // BoundaryFactsOf builds a canonical finite boundary-fact value.
@@ -126,7 +181,7 @@ func BoundaryFactsOf(
 	lenLower []BoundaryLengthLowerBound,
 	indexWrites []BoundaryIndexWriteFact,
 ) BoundaryFacts {
-	return boundaryFactsOfFull(keyPresence, keyArrays, keyArrayValues, appendKeys, nil, lenLower, nil, indexWrites, nil)
+	return boundaryFactsOfFull(keyPresence, keyArrays, keyArrayValues, appendKeys, nil, nil, nil, nil, nil, lenLower, nil, nil, indexWrites, nil)
 }
 
 func boundaryFactsOfFull(
@@ -134,22 +189,32 @@ func boundaryFactsOfFull(
 	keyArrays []BoundaryKeyArrayFact,
 	keyArrayValues []BoundaryKeyArrayValueFact,
 	appendKeys []BoundaryAppendKeyFact,
+	appendBases []BoundaryAppendHistoryBaseFact,
+	appendEvents []BoundaryAppendHistoryEventFact,
+	appendCoverage []BoundaryAppendHistoryCoverageFact,
+	appendTableCoverage []BoundaryAppendHistoryTableCoverageFact,
 	appendOrigins []BoundaryAppendElementFieldOriginFact,
 	lenLower []BoundaryLengthLowerBound,
+	lenUpper []BoundaryLengthUpperBound,
 	lenRelations []BoundaryLengthRelationFact,
 	indexWrites []BoundaryIndexWriteFact,
 	staticMembers []BoundaryStaticMemberFact,
 ) BoundaryFacts {
 	return BoundaryFacts{
-		keyPresence:    compactBoundaryKeyPresence(keyPresence),
-		keyArrays:      compactBoundaryKeyArrays(keyArrays),
-		keyArrayValues: compactBoundaryKeyArrayValues(keyArrayValues),
-		appendKeys:     compactBoundaryAppendKeys(appendKeys),
-		appendOrigins:  compactBoundaryAppendElementFieldOrigins(appendOrigins),
-		lenLower:       compactBoundaryLengthLower(lenLower),
-		lenRelations:   compactBoundaryLengthRelations(lenRelations),
-		indexWrites:    compactBoundaryIndexWrites(indexWrites),
-		staticMembers:  compactBoundaryStaticMembers(staticMembers),
+		keyPresence:         compactBoundaryKeyPresence(keyPresence),
+		keyArrays:           compactBoundaryKeyArrays(keyArrays),
+		keyArrayValues:      compactBoundaryKeyArrayValues(keyArrayValues),
+		appendKeys:          compactBoundaryAppendKeys(appendKeys),
+		appendBases:         compactBoundaryAppendHistoryBases(appendBases),
+		appendEvents:        compactBoundaryAppendHistoryEvents(appendEvents),
+		appendCoverage:      compactBoundaryAppendHistoryCoverage(appendCoverage),
+		appendTableCoverage: compactBoundaryAppendHistoryTableCoverage(appendTableCoverage),
+		appendOrigins:       compactBoundaryAppendElementFieldOrigins(appendOrigins),
+		lenLower:            compactBoundaryLengthLower(lenLower),
+		lenUpper:            compactBoundaryLengthUpper(lenUpper),
+		lenRelations:        compactBoundaryLengthRelations(lenRelations),
+		indexWrites:         compactBoundaryIndexWrites(indexWrites),
+		staticMembers:       compactBoundaryStaticMembers(staticMembers),
 	}
 }
 
@@ -165,8 +230,13 @@ func (f BoundaryFacts) Clone() BoundaryFacts {
 		f.keyArrays,
 		f.keyArrayValues,
 		f.appendKeys,
+		f.appendBases,
+		f.appendEvents,
+		f.appendCoverage,
+		f.appendTableCoverage,
 		f.appendOrigins,
 		f.lenLower,
+		f.lenUpper,
 		f.lenRelations,
 		f.indexWrites,
 		f.staticMembers,
@@ -208,6 +278,28 @@ func (f BoundaryFacts) IdentityHash(seed string) uint64 {
 			h = internal.HashCombine(h, 0)
 		}
 	}
+	for _, fact := range f.AppendHistoryBases() {
+		h = internal.HashCombine(h, internal.FnvString("ahb"))
+		h = hashBoundaryPath(h, fact.Array)
+	}
+	for _, fact := range f.AppendHistoryEvents() {
+		h = internal.HashCombine(h, internal.FnvString("ahe"))
+		h = hashBoundaryPath(h, fact.Array)
+		h = hashBoundaryPath(h, fact.Key)
+	}
+	for _, fact := range f.AppendHistoryCoverage() {
+		h = internal.HashCombine(h, internal.FnvString("ahc"))
+		h = hashBoundaryPath(h, fact.Array)
+		h = hashBoundaryPath(h, fact.Key)
+		h = hashBoundaryPath(h, fact.Table)
+		h = internal.HashCombine(h, fact.Value.Hash())
+	}
+	for _, fact := range f.AppendHistoryTableCoverage() {
+		h = internal.HashCombine(h, internal.FnvString("ahtc"))
+		h = hashBoundaryPath(h, fact.Array)
+		h = hashBoundaryPath(h, fact.Table)
+		h = internal.HashCombine(h, fact.Value.Hash())
+	}
 	for _, fact := range f.AppendElementFieldOrigins() {
 		h = internal.HashCombine(h, internal.FnvString("aefo"))
 		h = hashBoundaryPath(h, fact.Array)
@@ -220,6 +312,11 @@ func (f BoundaryFacts) IdentityHash(seed string) uint64 {
 		h = hashBoundaryPath(h, fact.Target)
 		h = internal.HashCombine(h, uint64(fact.Lower))
 	}
+	for _, fact := range f.LengthUpperBounds() {
+		h = internal.HashCombine(h, internal.FnvString("lenu"))
+		h = hashBoundaryPath(h, fact.Target)
+		h = internal.HashCombine(h, uint64(fact.Upper))
+	}
 	for _, fact := range f.LengthRelations() {
 		h = internal.HashCombine(h, internal.FnvString("lenrel"))
 		h = hashBoundaryPath(h, fact.Target)
@@ -228,7 +325,13 @@ func (f BoundaryFacts) IdentityHash(seed string) uint64 {
 	for _, fact := range f.IndexWrites() {
 		h = internal.HashCombine(h, internal.FnvString("iw"))
 		h = hashBoundaryPath(h, fact.Table)
-		h = hashBoundaryPath(h, fact.Key)
+		h = hashBoundaryIndexKey(h, fact)
+		if fact.HasValuePath {
+			h = internal.HashCombine(h, 1)
+			h = hashBoundaryPath(h, fact.ValuePath)
+		} else {
+			h = internal.HashCombine(h, 0)
+		}
 		h = internal.HashCombine(h, fact.Value.Hash())
 	}
 	for _, fact := range f.StaticMembers() {
@@ -252,8 +355,133 @@ func (f BoundaryFacts) WithAppendElementFieldOrigins(origins []BoundaryAppendEle
 		f.keyArrays,
 		f.keyArrayValues,
 		f.appendKeys,
+		f.appendBases,
+		f.appendEvents,
+		f.appendCoverage,
+		f.appendTableCoverage,
 		append(f.AppendElementFieldOrigins(), origins...),
 		f.lenLower,
+		f.lenUpper,
+		f.lenRelations,
+		f.indexWrites,
+		f.staticMembers,
+	)
+}
+
+// WithAppendHistoryBases returns f plus boundary-relative append-history base
+// proofs.
+func (f BoundaryFacts) WithAppendHistoryBases(bases []BoundaryAppendHistoryBaseFact) BoundaryFacts {
+	if f.bottom || len(bases) == 0 {
+		return f
+	}
+	return boundaryFactsOfFull(
+		f.keyPresence,
+		f.keyArrays,
+		f.keyArrayValues,
+		f.appendKeys,
+		append(f.AppendHistoryBases(), bases...),
+		f.appendEvents,
+		f.appendCoverage,
+		f.appendTableCoverage,
+		f.appendOrigins,
+		f.lenLower,
+		f.lenUpper,
+		f.lenRelations,
+		f.indexWrites,
+		f.staticMembers,
+	)
+}
+
+// WithAppendHistoryEvents returns f plus boundary-relative append-history
+// events.
+func (f BoundaryFacts) WithAppendHistoryEvents(events []BoundaryAppendHistoryEventFact) BoundaryFacts {
+	if f.bottom || len(events) == 0 {
+		return f
+	}
+	return boundaryFactsOfFull(
+		f.keyPresence,
+		f.keyArrays,
+		f.keyArrayValues,
+		f.appendKeys,
+		f.appendBases,
+		append(f.AppendHistoryEvents(), events...),
+		f.appendCoverage,
+		f.appendTableCoverage,
+		f.appendOrigins,
+		f.lenLower,
+		f.lenUpper,
+		f.lenRelations,
+		f.indexWrites,
+		f.staticMembers,
+	)
+}
+
+// WithAppendHistoryCoverage returns f plus boundary-relative append-history
+// coverage proofs.
+func (f BoundaryFacts) WithAppendHistoryCoverage(coverage []BoundaryAppendHistoryCoverageFact) BoundaryFacts {
+	if f.bottom || len(coverage) == 0 {
+		return f
+	}
+	return boundaryFactsOfFull(
+		f.keyPresence,
+		f.keyArrays,
+		f.keyArrayValues,
+		f.appendKeys,
+		f.appendBases,
+		f.appendEvents,
+		append(f.AppendHistoryCoverage(), coverage...),
+		f.appendTableCoverage,
+		f.appendOrigins,
+		f.lenLower,
+		f.lenUpper,
+		f.lenRelations,
+		f.indexWrites,
+		f.staticMembers,
+	)
+}
+
+// WithAppendHistoryTableCoverage returns f plus boundary-relative table
+// coverage proofs for unnamed append-history events.
+func (f BoundaryFacts) WithAppendHistoryTableCoverage(coverage []BoundaryAppendHistoryTableCoverageFact) BoundaryFacts {
+	if f.bottom || len(coverage) == 0 {
+		return f
+	}
+	return boundaryFactsOfFull(
+		f.keyPresence,
+		f.keyArrays,
+		f.keyArrayValues,
+		f.appendKeys,
+		f.appendBases,
+		f.appendEvents,
+		f.appendCoverage,
+		append(f.AppendHistoryTableCoverage(), coverage...),
+		f.appendOrigins,
+		f.lenLower,
+		f.lenUpper,
+		f.lenRelations,
+		f.indexWrites,
+		f.staticMembers,
+	)
+}
+
+// WithLengthUpperBounds returns f plus boundary-relative length upper-bound
+// proofs.
+func (f BoundaryFacts) WithLengthUpperBounds(bounds []BoundaryLengthUpperBound) BoundaryFacts {
+	if f.bottom || len(bounds) == 0 {
+		return f
+	}
+	return boundaryFactsOfFull(
+		f.keyPresence,
+		f.keyArrays,
+		f.keyArrayValues,
+		f.appendKeys,
+		f.appendBases,
+		f.appendEvents,
+		f.appendCoverage,
+		f.appendTableCoverage,
+		f.appendOrigins,
+		f.lenLower,
+		append(f.LengthUpperBounds(), bounds...),
 		f.lenRelations,
 		f.indexWrites,
 		f.staticMembers,
@@ -271,8 +499,13 @@ func (f BoundaryFacts) WithLengthRelations(relations []BoundaryLengthRelationFac
 		f.keyArrays,
 		f.keyArrayValues,
 		f.appendKeys,
+		f.appendBases,
+		f.appendEvents,
+		f.appendCoverage,
+		f.appendTableCoverage,
 		f.appendOrigins,
 		f.lenLower,
+		f.lenUpper,
 		append(f.LengthRelations(), relations...),
 		f.indexWrites,
 		f.staticMembers,
@@ -289,8 +522,13 @@ func (f BoundaryFacts) WithStaticMembers(facts []BoundaryStaticMemberFact) Bound
 		f.keyArrays,
 		f.keyArrayValues,
 		f.appendKeys,
+		f.appendBases,
+		f.appendEvents,
+		f.appendCoverage,
+		f.appendTableCoverage,
 		f.appendOrigins,
 		f.lenLower,
+		f.lenUpper,
 		f.lenRelations,
 		f.indexWrites,
 		append(f.StaticMembers(), facts...),
@@ -331,12 +569,197 @@ func MergeBoundaryFactProofs(a, b BoundaryFacts) BoundaryFacts {
 		append(a.KeyArrays(), b.KeyArrays()...),
 		append(a.KeyArrayValues(), b.KeyArrayValues()...),
 		append(a.AppendKeys(), b.AppendKeys()...),
+		append(a.AppendHistoryBases(), b.AppendHistoryBases()...),
+		append(a.AppendHistoryEvents(), b.AppendHistoryEvents()...),
+		append(a.AppendHistoryCoverage(), b.AppendHistoryCoverage()...),
+		append(a.AppendHistoryTableCoverage(), b.AppendHistoryTableCoverage()...),
 		append(a.AppendElementFieldOrigins(), b.AppendElementFieldOrigins()...),
 		append(a.LengthLowerBounds(), b.LengthLowerBounds()...),
+		append(a.LengthUpperBounds(), b.LengthUpperBounds()...),
 		append(a.LengthRelations(), b.LengthRelations()...),
 		append(a.IndexWrites(), b.IndexWrites()...),
 		append(a.StaticMembers(), b.StaticMembers()...),
 	)
+}
+
+// RebaseBoundaryReturnFactsToParam maps facts proven about one returned value
+// into facts proven about the callee parameter receiving that value. It is used
+// for call-result arguments such as `make():use()`, where no caller-local path
+// exists but the selected call outcome already proved return-relative facts.
+// Facts mentioning any other boundary root are intentionally dropped; composing
+// those requires a full call-boundary map, not a partial guess.
+func RebaseBoundaryReturnFactsToParam(facts BoundaryFacts, returnIndex, paramSlot int) BoundaryFacts {
+	if facts.bottom {
+		return facts
+	}
+	if !facts.HasProof() || returnIndex < 0 || paramSlot < 0 {
+		return BoundaryFactsDomain.Top()
+	}
+	mapPath := func(path BoundaryPath) (BoundaryPath, bool) {
+		if path.Kind != BoundaryPathReturn || path.Index != returnIndex {
+			return BoundaryPath{}, false
+		}
+		return BoundaryPath{
+			Kind:     BoundaryPathParam,
+			Index:    paramSlot,
+			Segments: append([]constraint.Segment(nil), path.Segments...),
+		}, true
+	}
+	var keyPresence []BoundaryKeyPresenceFact
+	for _, fact := range facts.KeyPresence() {
+		table, tableOK := mapPath(fact.Table)
+		key, keyOK := mapPath(fact.Key)
+		if tableOK && keyOK {
+			keyPresence = append(keyPresence, BoundaryKeyPresenceFact{Table: table, Key: key})
+		}
+	}
+	var keyArrays []BoundaryKeyArrayFact
+	for _, fact := range facts.KeyArrays() {
+		array, arrayOK := mapPath(fact.Array)
+		table, tableOK := mapPath(fact.Table)
+		if arrayOK && tableOK {
+			keyArrays = append(keyArrays, BoundaryKeyArrayFact{Array: array, Table: table})
+		}
+	}
+	var keyArrayValues []BoundaryKeyArrayValueFact
+	for _, fact := range facts.KeyArrayValues() {
+		array, arrayOK := mapPath(fact.Array)
+		table, tableOK := mapPath(fact.Table)
+		if arrayOK && tableOK {
+			keyArrayValues = append(keyArrayValues, BoundaryKeyArrayValueFact{Array: array, Table: table, Value: fact.Value})
+		}
+	}
+	var appendKeys []BoundaryAppendKeyFact
+	for _, fact := range facts.AppendKeys() {
+		array, arrayOK := mapPath(fact.Array)
+		key, keyOK := mapPath(fact.Key)
+		if !arrayOK || !keyOK {
+			continue
+		}
+		next := BoundaryAppendKeyFact{Array: array, Key: key}
+		if fact.HasTable {
+			table, tableOK := mapPath(fact.Table)
+			if !tableOK {
+				continue
+			}
+			next.Table = table
+			next.HasTable = true
+		}
+		appendKeys = append(appendKeys, next)
+	}
+	var appendBases []BoundaryAppendHistoryBaseFact
+	for _, fact := range facts.AppendHistoryBases() {
+		array, ok := mapPath(fact.Array)
+		if ok {
+			appendBases = append(appendBases, BoundaryAppendHistoryBaseFact{Array: array})
+		}
+	}
+	var appendEvents []BoundaryAppendHistoryEventFact
+	for _, fact := range facts.AppendHistoryEvents() {
+		array, arrayOK := mapPath(fact.Array)
+		key, keyOK := mapPath(fact.Key)
+		if arrayOK && keyOK {
+			appendEvents = append(appendEvents, BoundaryAppendHistoryEventFact{Array: array, Key: key})
+		}
+	}
+	var appendCoverage []BoundaryAppendHistoryCoverageFact
+	for _, fact := range facts.AppendHistoryCoverage() {
+		array, arrayOK := mapPath(fact.Array)
+		key, keyOK := mapPath(fact.Key)
+		table, tableOK := mapPath(fact.Table)
+		if arrayOK && keyOK && tableOK {
+			appendCoverage = append(appendCoverage, BoundaryAppendHistoryCoverageFact{
+				Array: array,
+				Key:   key,
+				Table: table,
+				Value: fact.Value,
+			})
+		}
+	}
+	var appendTableCoverage []BoundaryAppendHistoryTableCoverageFact
+	for _, fact := range facts.AppendHistoryTableCoverage() {
+		array, arrayOK := mapPath(fact.Array)
+		table, tableOK := mapPath(fact.Table)
+		if arrayOK && tableOK {
+			appendTableCoverage = append(appendTableCoverage, BoundaryAppendHistoryTableCoverageFact{
+				Array: array,
+				Table: table,
+				Value: fact.Value,
+			})
+		}
+	}
+	var appendOrigins []BoundaryAppendElementFieldOriginFact
+	for _, fact := range facts.AppendElementFieldOrigins() {
+		array, arrayOK := mapPath(fact.Array)
+		source, sourceOK := mapPath(fact.Source)
+		if arrayOK && sourceOK {
+			appendOrigins = append(appendOrigins, BoundaryAppendElementFieldOriginFact{
+				Array:       array,
+				Field:       append([]constraint.Segment(nil), fact.Field...),
+				Source:      source,
+				SourceField: append([]constraint.Segment(nil), fact.SourceField...),
+			})
+		}
+	}
+	var lenLower []BoundaryLengthLowerBound
+	for _, fact := range facts.LengthLowerBounds() {
+		target, ok := mapPath(fact.Target)
+		if ok {
+			lenLower = append(lenLower, BoundaryLengthLowerBound{Target: target, Lower: fact.Lower})
+		}
+	}
+	var lenUpper []BoundaryLengthUpperBound
+	for _, fact := range facts.LengthUpperBounds() {
+		target, ok := mapPath(fact.Target)
+		if ok {
+			lenUpper = append(lenUpper, BoundaryLengthUpperBound{Target: target, Upper: fact.Upper})
+		}
+	}
+	var lenRelations []BoundaryLengthRelationFact
+	for _, fact := range facts.LengthRelations() {
+		target, targetOK := mapPath(fact.Target)
+		source, sourceOK := mapPath(fact.Source)
+		if targetOK && sourceOK {
+			lenRelations = append(lenRelations, BoundaryLengthRelationFact{Target: target, Source: source})
+		}
+	}
+	var indexWrites []BoundaryIndexWriteFact
+	for _, fact := range facts.IndexWrites() {
+		table, tableOK := mapPath(fact.Table)
+		if !tableOK {
+			continue
+		}
+		next := BoundaryIndexWriteFact{
+			Table:    table,
+			KeyValue: fact.KeyValue,
+			Value:    fact.Value,
+		}
+		if fact.HasKeyPath {
+			key, keyOK := mapPath(fact.KeyPath)
+			if !keyOK {
+				continue
+			}
+			next.KeyPath = key
+			next.HasKeyPath = true
+		}
+		if fact.HasValuePath {
+			value, valueOK := mapPath(fact.ValuePath)
+			if !valueOK {
+				continue
+			}
+			next.ValuePath = value
+			next.HasValuePath = true
+		}
+		indexWrites = append(indexWrites, next)
+	}
+	var staticMembers []BoundaryStaticMemberFact
+	for _, fact := range facts.StaticMembers() {
+		target, ok := mapPath(fact.Target)
+		if ok {
+			staticMembers = append(staticMembers, BoundaryStaticMemberFact{Target: target, Value: fact.Value})
+		}
+	}
+	return boundaryFactsOfFull(keyPresence, keyArrays, keyArrayValues, appendKeys, appendBases, appendEvents, appendCoverage, appendTableCoverage, appendOrigins, lenLower, lenUpper, lenRelations, indexWrites, staticMembers)
 }
 
 // BoundaryFactsDomain is the lattice over boundary postconditions.
@@ -353,11 +776,22 @@ var BoundaryFactsDomain = lattice.Lattice[BoundaryFacts]{
 				return compareBoundaryKeyArrayValue(x, y) == 0 && product.Domain.Equal(x.Value, y.Value)
 			}) &&
 			boundaryAppendKeyRowIdentity.Equal(a.appendKeys, b.appendKeys) &&
+			boundaryAppendHistoryBaseRowIdentity.Equal(a.appendBases, b.appendBases) &&
+			boundaryAppendHistoryEventRowIdentity.Equal(a.appendEvents, b.appendEvents) &&
+			boundaryAppendHistoryCoverageRowIdentity.EqualBy(a.appendCoverage, b.appendCoverage, func(x, y BoundaryAppendHistoryCoverageFact) bool {
+				return compareBoundaryAppendHistoryCoverage(x, y) == 0 && product.Domain.Equal(x.Value, y.Value)
+			}) &&
+			boundaryAppendHistoryTableCoverageRowIdentity.EqualBy(a.appendTableCoverage, b.appendTableCoverage, func(x, y BoundaryAppendHistoryTableCoverageFact) bool {
+				return compareBoundaryAppendHistoryTableCoverage(x, y) == 0 && product.Domain.Equal(x.Value, y.Value)
+			}) &&
 			boundaryAppendElementFieldOriginRowIdentity.Equal(a.appendOrigins, b.appendOrigins) &&
 			boundaryLengthLowerRowIdentity.Equal(a.lenLower, b.lenLower) &&
+			boundaryLengthUpperRowIdentity.Equal(a.lenUpper, b.lenUpper) &&
 			boundaryLengthRelationRowIdentity.Equal(a.lenRelations, b.lenRelations) &&
 			boundaryIndexWriteRowIdentity.EqualBy(a.indexWrites, b.indexWrites, func(x, y BoundaryIndexWriteFact) bool {
-				return compareBoundaryIndexWrite(x, y) == 0 && product.Domain.Equal(x.Value, y.Value)
+				return compareBoundaryIndexWrite(x, y) == 0 &&
+					product.Domain.Equal(x.KeyValue, y.KeyValue) &&
+					product.Domain.Equal(x.Value, y.Value)
 			}) &&
 			boundaryStaticMemberRowIdentity.EqualBy(a.staticMembers, b.staticMembers, func(x, y BoundaryStaticMemberFact) bool {
 				return compareBoundaryStaticMember(x, y) == 0 && product.Domain.Equal(x.Value, y.Value)
@@ -374,8 +808,13 @@ var BoundaryFactsDomain = lattice.Lattice[BoundaryFacts]{
 			boundaryKeyArraysContainAll(a.keyArrays, b.keyArrays) &&
 			boundaryKeyArrayValuesContainAll(a.keyArrayValues, b.keyArrayValues) &&
 			boundaryAppendKeysContainAll(a.appendKeys, b.appendKeys) &&
+			boundaryAppendHistoryBasesContainAll(a.appendBases, b.appendBases) &&
+			boundaryAppendHistoryEventsContainAll(a.appendEvents, b.appendEvents) &&
+			boundaryAppendHistoryCoverageContainAll(a.appendCoverage, b.appendCoverage) &&
+			boundaryAppendHistoryTableCoverageContainAll(a.appendTableCoverage, b.appendTableCoverage) &&
 			boundaryAppendElementFieldOriginsContainAll(a.appendOrigins, b.appendOrigins) &&
 			boundaryLengthLowerContainAll(a.lenLower, b.lenLower) &&
+			boundaryLengthUpperContainAll(a.lenUpper, b.lenUpper) &&
 			boundaryLengthRelationContainAll(a.lenRelations, b.lenRelations) &&
 			boundaryIndexWritesContainAll(a.indexWrites, b.indexWrites) &&
 			boundaryStaticMembersContainAll(a.staticMembers, b.staticMembers)
@@ -388,7 +827,7 @@ var BoundaryFactsDomain = lattice.Lattice[BoundaryFacts]{
 func (f BoundaryFacts) IsBottom() bool { return f.bottom }
 
 func (f BoundaryFacts) HasProof() bool {
-	return !f.bottom && (len(f.keyPresence) > 0 || len(f.keyArrays) > 0 || len(f.keyArrayValues) > 0 || len(f.appendKeys) > 0 || len(f.appendOrigins) > 0 || len(f.lenLower) > 0 || len(f.lenRelations) > 0 || len(f.indexWrites) > 0 || len(f.staticMembers) > 0)
+	return !f.bottom && (len(f.keyPresence) > 0 || len(f.keyArrays) > 0 || len(f.keyArrayValues) > 0 || len(f.appendKeys) > 0 || len(f.appendBases) > 0 || len(f.appendEvents) > 0 || len(f.appendCoverage) > 0 || len(f.appendTableCoverage) > 0 || len(f.appendOrigins) > 0 || len(f.lenLower) > 0 || len(f.lenUpper) > 0 || len(f.lenRelations) > 0 || len(f.indexWrites) > 0 || len(f.staticMembers) > 0)
 }
 
 // PartitionByReturnIndices separates parameter-only facts from facts whose
@@ -456,6 +895,46 @@ func (f BoundaryFacts) PartitionByReturnIndices() (BoundaryFacts, []BoundaryRetu
 			parts.appendKeys = append(parts.appendKeys, fact)
 		})
 	}
+	for _, fact := range f.AppendHistoryBases() {
+		indices := boundaryPathReturnIndices(fact.Array)
+		if len(indices) == 0 {
+			params.appendBases = append(params.appendBases, fact)
+			continue
+		}
+		addReturnFact(indices, func(parts *boundaryFactParts) {
+			parts.appendBases = append(parts.appendBases, fact)
+		})
+	}
+	for _, fact := range f.AppendHistoryEvents() {
+		indices := boundaryPathReturnIndices(fact.Array, fact.Key)
+		if len(indices) == 0 {
+			params.appendEvents = append(params.appendEvents, fact)
+			continue
+		}
+		addReturnFact(indices, func(parts *boundaryFactParts) {
+			parts.appendEvents = append(parts.appendEvents, fact)
+		})
+	}
+	for _, fact := range f.AppendHistoryCoverage() {
+		indices := boundaryPathReturnIndices(fact.Array, fact.Key, fact.Table)
+		if len(indices) == 0 {
+			params.appendCoverage = append(params.appendCoverage, fact)
+			continue
+		}
+		addReturnFact(indices, func(parts *boundaryFactParts) {
+			parts.appendCoverage = append(parts.appendCoverage, fact)
+		})
+	}
+	for _, fact := range f.AppendHistoryTableCoverage() {
+		indices := boundaryPathReturnIndices(fact.Array, fact.Table)
+		if len(indices) == 0 {
+			params.appendTableCoverage = append(params.appendTableCoverage, fact)
+			continue
+		}
+		addReturnFact(indices, func(parts *boundaryFactParts) {
+			parts.appendTableCoverage = append(parts.appendTableCoverage, fact)
+		})
+	}
 	for _, fact := range f.AppendElementFieldOrigins() {
 		indices := boundaryPathReturnIndices(fact.Array, fact.Source)
 		if len(indices) == 0 {
@@ -476,6 +955,16 @@ func (f BoundaryFacts) PartitionByReturnIndices() (BoundaryFacts, []BoundaryRetu
 			parts.lenLower = append(parts.lenLower, fact)
 		})
 	}
+	for _, fact := range f.LengthUpperBounds() {
+		indices := boundaryPathReturnIndices(fact.Target)
+		if len(indices) == 0 {
+			params.lenUpper = append(params.lenUpper, fact)
+			continue
+		}
+		addReturnFact(indices, func(parts *boundaryFactParts) {
+			parts.lenUpper = append(parts.lenUpper, fact)
+		})
+	}
 	for _, fact := range f.LengthRelations() {
 		indices := boundaryPathReturnIndices(fact.Target, fact.Source)
 		if len(indices) == 0 {
@@ -487,7 +976,14 @@ func (f BoundaryFacts) PartitionByReturnIndices() (BoundaryFacts, []BoundaryRetu
 		})
 	}
 	for _, fact := range f.IndexWrites() {
-		indices := boundaryPathReturnIndices(fact.Table, fact.Key)
+		paths := []BoundaryPath{fact.Table}
+		if fact.HasKeyPath {
+			paths = append(paths, fact.KeyPath)
+		}
+		if fact.HasValuePath {
+			paths = append(paths, fact.ValuePath)
+		}
+		indices := boundaryPathReturnIndices(paths...)
 		if len(indices) == 0 {
 			params.indexWrites = append(params.indexWrites, fact)
 			continue
@@ -565,6 +1061,50 @@ func (f BoundaryFacts) AppendKeys() []BoundaryAppendKeyFact {
 	return out
 }
 
+func (f BoundaryFacts) AppendHistoryBases() []BoundaryAppendHistoryBaseFact {
+	if f.bottom || len(f.appendBases) == 0 {
+		return nil
+	}
+	out := make([]BoundaryAppendHistoryBaseFact, 0, len(f.appendBases))
+	for _, fact := range f.appendBases {
+		out = append(out, cloneBoundaryAppendHistoryBase(fact))
+	}
+	return out
+}
+
+func (f BoundaryFacts) AppendHistoryEvents() []BoundaryAppendHistoryEventFact {
+	if f.bottom || len(f.appendEvents) == 0 {
+		return nil
+	}
+	out := make([]BoundaryAppendHistoryEventFact, 0, len(f.appendEvents))
+	for _, fact := range f.appendEvents {
+		out = append(out, cloneBoundaryAppendHistoryEvent(fact))
+	}
+	return out
+}
+
+func (f BoundaryFacts) AppendHistoryCoverage() []BoundaryAppendHistoryCoverageFact {
+	if f.bottom || len(f.appendCoverage) == 0 {
+		return nil
+	}
+	out := make([]BoundaryAppendHistoryCoverageFact, 0, len(f.appendCoverage))
+	for _, fact := range f.appendCoverage {
+		out = append(out, cloneBoundaryAppendHistoryCoverage(fact))
+	}
+	return out
+}
+
+func (f BoundaryFacts) AppendHistoryTableCoverage() []BoundaryAppendHistoryTableCoverageFact {
+	if f.bottom || len(f.appendTableCoverage) == 0 {
+		return nil
+	}
+	out := make([]BoundaryAppendHistoryTableCoverageFact, 0, len(f.appendTableCoverage))
+	for _, fact := range f.appendTableCoverage {
+		out = append(out, cloneBoundaryAppendHistoryTableCoverage(fact))
+	}
+	return out
+}
+
 func (f BoundaryFacts) AppendElementFieldOrigins() []BoundaryAppendElementFieldOriginFact {
 	if f.bottom || len(f.appendOrigins) == 0 {
 		return nil
@@ -583,6 +1123,17 @@ func (f BoundaryFacts) LengthLowerBounds() []BoundaryLengthLowerBound {
 	out := make([]BoundaryLengthLowerBound, 0, len(f.lenLower))
 	for _, fact := range f.lenLower {
 		out = append(out, cloneBoundaryLengthLower(fact))
+	}
+	return out
+}
+
+func (f BoundaryFacts) LengthUpperBounds() []BoundaryLengthUpperBound {
+	if f.bottom || len(f.lenUpper) == 0 {
+		return nil
+	}
+	out := make([]BoundaryLengthUpperBound, 0, len(f.lenUpper))
+	for _, fact := range f.lenUpper {
+		out = append(out, cloneBoundaryLengthUpper(fact))
 	}
 	return out
 }
@@ -644,6 +1195,14 @@ func (f BoundaryFacts) HasLengthLowerBound(fact BoundaryLengthLowerBound) bool {
 	return ok
 }
 
+func (f BoundaryFacts) HasLengthUpperBound(fact BoundaryLengthUpperBound) bool {
+	if f.bottom {
+		return false
+	}
+	_, ok := boundaryLengthUpperRowIdentity.Find(f.lenUpper, fact)
+	return ok
+}
+
 func (f BoundaryFacts) HasLengthRelation(fact BoundaryLengthRelationFact) bool {
 	if f.bottom {
 		return false
@@ -688,28 +1247,61 @@ func mergeBoundaryFacts(a, b BoundaryFacts, widenPayload bool) BoundaryFacts {
 		keyArrays:      intersectBoundaryKeyArrays(a.keyArrays, b.keyArrays),
 		keyArrayValues: intersectBoundaryKeyArrayValues(a.keyArrayValues, b.keyArrayValues, widenPayload),
 		appendKeys:     intersectBoundaryAppendKeys(a.appendKeys, b.appendKeys),
-		appendOrigins:  intersectBoundaryAppendElementFieldOrigins(a.appendOrigins, b.appendOrigins),
-		lenLower:       intersectBoundaryLengthLower(a.lenLower, b.lenLower),
-		lenRelations:   intersectBoundaryLengthRelations(a.lenRelations, b.lenRelations),
-		indexWrites:    intersectBoundaryIndexWrites(a.indexWrites, b.indexWrites, widenPayload),
-		staticMembers:  intersectBoundaryStaticMembers(a.staticMembers, b.staticMembers, widenPayload),
+		appendBases:    intersectBoundaryAppendHistoryBases(a.appendBases, b.appendBases),
+		appendEvents: intersectBoundaryAppendHistoryEventsWithBases(
+			a.appendEvents,
+			b.appendEvents,
+			intersectBoundaryAppendHistoryBases(a.appendBases, b.appendBases),
+		),
+		appendCoverage: intersectBoundaryAppendHistoryCoverageWithBases(
+			a.appendCoverage,
+			b.appendCoverage,
+			intersectBoundaryAppendHistoryBases(a.appendBases, b.appendBases),
+			intersectBoundaryAppendHistoryEventsWithBases(
+				a.appendEvents,
+				b.appendEvents,
+				intersectBoundaryAppendHistoryBases(a.appendBases, b.appendBases),
+			),
+			widenPayload,
+		),
+		appendTableCoverage: intersectBoundaryAppendHistoryTableCoverageWithBases(
+			a.appendTableCoverage,
+			b.appendTableCoverage,
+			intersectBoundaryAppendHistoryBases(a.appendBases, b.appendBases),
+			widenPayload,
+		),
+		appendOrigins: intersectBoundaryAppendElementFieldOriginsWithBases(
+			a.appendOrigins,
+			b.appendOrigins,
+			intersectBoundaryAppendHistoryBases(a.appendBases, b.appendBases),
+		),
+		lenLower:      intersectBoundaryLengthLower(a.lenLower, b.lenLower),
+		lenUpper:      intersectBoundaryLengthUpper(a.lenUpper, b.lenUpper),
+		lenRelations:  intersectBoundaryLengthRelations(a.lenRelations, b.lenRelations),
+		indexWrites:   intersectBoundaryIndexWrites(a.indexWrites, b.indexWrites, widenPayload),
+		staticMembers: intersectBoundaryStaticMembers(a.staticMembers, b.staticMembers, widenPayload),
 	}
 }
 
 type boundaryFactParts struct {
-	keyPresence    []BoundaryKeyPresenceFact
-	keyArrays      []BoundaryKeyArrayFact
-	keyArrayValues []BoundaryKeyArrayValueFact
-	appendKeys     []BoundaryAppendKeyFact
-	appendOrigins  []BoundaryAppendElementFieldOriginFact
-	lenLower       []BoundaryLengthLowerBound
-	lenRelations   []BoundaryLengthRelationFact
-	indexWrites    []BoundaryIndexWriteFact
-	staticMembers  []BoundaryStaticMemberFact
+	keyPresence         []BoundaryKeyPresenceFact
+	keyArrays           []BoundaryKeyArrayFact
+	keyArrayValues      []BoundaryKeyArrayValueFact
+	appendKeys          []BoundaryAppendKeyFact
+	appendBases         []BoundaryAppendHistoryBaseFact
+	appendEvents        []BoundaryAppendHistoryEventFact
+	appendCoverage      []BoundaryAppendHistoryCoverageFact
+	appendTableCoverage []BoundaryAppendHistoryTableCoverageFact
+	appendOrigins       []BoundaryAppendElementFieldOriginFact
+	lenLower            []BoundaryLengthLowerBound
+	lenUpper            []BoundaryLengthUpperBound
+	lenRelations        []BoundaryLengthRelationFact
+	indexWrites         []BoundaryIndexWriteFact
+	staticMembers       []BoundaryStaticMemberFact
 }
 
 func (p boundaryFactParts) facts() BoundaryFacts {
-	return boundaryFactsOfFull(p.keyPresence, p.keyArrays, p.keyArrayValues, p.appendKeys, p.appendOrigins, p.lenLower, p.lenRelations, p.indexWrites, p.staticMembers)
+	return boundaryFactsOfFull(p.keyPresence, p.keyArrays, p.keyArrayValues, p.appendKeys, p.appendBases, p.appendEvents, p.appendCoverage, p.appendTableCoverage, p.appendOrigins, p.lenLower, p.lenUpper, p.lenRelations, p.indexWrites, p.staticMembers)
 }
 
 func boundaryPathReturnIndices(paths ...BoundaryPath) []int {
@@ -840,6 +1432,98 @@ func compactBoundaryAppendKeys(xs []BoundaryAppendKeyFact) []BoundaryAppendKeyFa
 	})
 }
 
+func compactBoundaryAppendHistoryBases(xs []BoundaryAppendHistoryBaseFact) []BoundaryAppendHistoryBaseFact {
+	if len(xs) == 0 {
+		return nil
+	}
+	out := make([]BoundaryAppendHistoryBaseFact, 0, len(xs))
+	for _, fact := range xs {
+		if !validBoundaryPath(fact.Array) {
+			continue
+		}
+		out = append(out, cloneBoundaryAppendHistoryBase(fact))
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	slices.SortFunc(out, compareBoundaryAppendHistoryBase)
+	return slices.CompactFunc(out, func(a, b BoundaryAppendHistoryBaseFact) bool {
+		return compareBoundaryAppendHistoryBase(a, b) == 0
+	})
+}
+
+func compactBoundaryAppendHistoryEvents(xs []BoundaryAppendHistoryEventFact) []BoundaryAppendHistoryEventFact {
+	if len(xs) == 0 {
+		return nil
+	}
+	out := make([]BoundaryAppendHistoryEventFact, 0, len(xs))
+	for _, fact := range xs {
+		if !validBoundaryPath(fact.Array) || !validBoundaryPath(fact.Key) {
+			continue
+		}
+		out = append(out, cloneBoundaryAppendHistoryEvent(fact))
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	slices.SortFunc(out, compareBoundaryAppendHistoryEvent)
+	return slices.CompactFunc(out, func(a, b BoundaryAppendHistoryEventFact) bool {
+		return compareBoundaryAppendHistoryEvent(a, b) == 0
+	})
+}
+
+func compactBoundaryAppendHistoryCoverage(xs []BoundaryAppendHistoryCoverageFact) []BoundaryAppendHistoryCoverageFact {
+	if len(xs) == 0 {
+		return nil
+	}
+	out := make([]BoundaryAppendHistoryCoverageFact, 0, len(xs))
+	for _, fact := range xs {
+		if !validBoundaryPath(fact.Array) || !validBoundaryPath(fact.Key) || !validBoundaryPath(fact.Table) || fact.Value.IsZero() {
+			continue
+		}
+		out = append(out, cloneBoundaryAppendHistoryCoverage(fact))
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	slices.SortFunc(out, compareBoundaryAppendHistoryCoverage)
+	dst := out[:0]
+	for _, fact := range out {
+		if len(dst) > 0 && compareBoundaryAppendHistoryCoverage(dst[len(dst)-1], fact) == 0 {
+			dst[len(dst)-1].Value = product.Domain.Join(dst[len(dst)-1].Value, fact.Value)
+			continue
+		}
+		dst = append(dst, fact)
+	}
+	return append([]BoundaryAppendHistoryCoverageFact(nil), dst...)
+}
+
+func compactBoundaryAppendHistoryTableCoverage(xs []BoundaryAppendHistoryTableCoverageFact) []BoundaryAppendHistoryTableCoverageFact {
+	if len(xs) == 0 {
+		return nil
+	}
+	out := make([]BoundaryAppendHistoryTableCoverageFact, 0, len(xs))
+	for _, fact := range xs {
+		if !validBoundaryPath(fact.Array) || !validBoundaryPath(fact.Table) || fact.Value.IsZero() {
+			continue
+		}
+		out = append(out, cloneBoundaryAppendHistoryTableCoverage(fact))
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	slices.SortFunc(out, compareBoundaryAppendHistoryTableCoverage)
+	dst := out[:0]
+	for _, fact := range out {
+		if len(dst) > 0 && compareBoundaryAppendHistoryTableCoverage(dst[len(dst)-1], fact) == 0 {
+			dst[len(dst)-1].Value = product.Domain.Join(dst[len(dst)-1].Value, fact.Value)
+			continue
+		}
+		dst = append(dst, fact)
+	}
+	return append([]BoundaryAppendHistoryTableCoverageFact(nil), dst...)
+}
+
 func compactBoundaryAppendElementFieldOrigins(xs []BoundaryAppendElementFieldOriginFact) []BoundaryAppendElementFieldOriginFact {
 	if len(xs) == 0 {
 		return nil
@@ -880,6 +1564,26 @@ func compactBoundaryLengthLower(xs []BoundaryLengthLowerBound) []BoundaryLengthL
 	})
 }
 
+func compactBoundaryLengthUpper(xs []BoundaryLengthUpperBound) []BoundaryLengthUpperBound {
+	if len(xs) == 0 {
+		return nil
+	}
+	out := make([]BoundaryLengthUpperBound, 0, len(xs))
+	for _, fact := range xs {
+		if !validBoundaryPath(fact.Target) || fact.Upper < 0 {
+			continue
+		}
+		out = append(out, cloneBoundaryLengthUpper(fact))
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	slices.SortFunc(out, compareBoundaryLengthUpper)
+	return slices.CompactFunc(out, func(a, b BoundaryLengthUpperBound) bool {
+		return compareBoundaryLengthUpper(a, b) == 0
+	})
+}
+
 func compactBoundaryLengthRelations(xs []BoundaryLengthRelationFact) []BoundaryLengthRelationFact {
 	if len(xs) == 0 {
 		return nil
@@ -906,7 +1610,7 @@ func compactBoundaryIndexWrites(xs []BoundaryIndexWriteFact) []BoundaryIndexWrit
 	}
 	out := make([]BoundaryIndexWriteFact, 0, len(xs))
 	for _, fact := range xs {
-		if !validBoundaryPath(fact.Table) || !validBoundaryPath(fact.Key) || fact.Value.IsZero() {
+		if !validBoundaryIndexWrite(fact) {
 			continue
 		}
 		out = append(out, cloneBoundaryIndexWrite(fact))
@@ -918,6 +1622,7 @@ func compactBoundaryIndexWrites(xs []BoundaryIndexWriteFact) []BoundaryIndexWrit
 	dst := out[:0]
 	for _, fact := range out {
 		if len(dst) > 0 && compareBoundaryIndexWrite(dst[len(dst)-1], fact) == 0 {
+			dst[len(dst)-1].KeyValue = product.Domain.Join(dst[len(dst)-1].KeyValue, fact.KeyValue)
 			dst[len(dst)-1].Value = product.Domain.Join(dst[len(dst)-1].Value, fact.Value)
 			continue
 		}
@@ -1003,6 +1708,34 @@ func cloneBoundaryAppendKey(f BoundaryAppendKeyFact) BoundaryAppendKeyFact {
 	}
 }
 
+func cloneBoundaryAppendHistoryBase(f BoundaryAppendHistoryBaseFact) BoundaryAppendHistoryBaseFact {
+	return BoundaryAppendHistoryBaseFact{Array: cloneBoundaryPath(f.Array)}
+}
+
+func cloneBoundaryAppendHistoryEvent(f BoundaryAppendHistoryEventFact) BoundaryAppendHistoryEventFact {
+	return BoundaryAppendHistoryEventFact{
+		Array: cloneBoundaryPath(f.Array),
+		Key:   cloneBoundaryPath(f.Key),
+	}
+}
+
+func cloneBoundaryAppendHistoryCoverage(f BoundaryAppendHistoryCoverageFact) BoundaryAppendHistoryCoverageFact {
+	return BoundaryAppendHistoryCoverageFact{
+		Array: cloneBoundaryPath(f.Array),
+		Key:   cloneBoundaryPath(f.Key),
+		Table: cloneBoundaryPath(f.Table),
+		Value: f.Value,
+	}
+}
+
+func cloneBoundaryAppendHistoryTableCoverage(f BoundaryAppendHistoryTableCoverageFact) BoundaryAppendHistoryTableCoverageFact {
+	return BoundaryAppendHistoryTableCoverageFact{
+		Array: cloneBoundaryPath(f.Array),
+		Table: cloneBoundaryPath(f.Table),
+		Value: f.Value,
+	}
+}
+
 func cloneBoundaryAppendElementFieldOrigin(f BoundaryAppendElementFieldOriginFact) BoundaryAppendElementFieldOriginFact {
 	return BoundaryAppendElementFieldOriginFact{
 		Array:       cloneBoundaryPath(f.Array),
@@ -1019,6 +1752,13 @@ func cloneBoundaryLengthLower(f BoundaryLengthLowerBound) BoundaryLengthLowerBou
 	}
 }
 
+func cloneBoundaryLengthUpper(f BoundaryLengthUpperBound) BoundaryLengthUpperBound {
+	return BoundaryLengthUpperBound{
+		Target: cloneBoundaryPath(f.Target),
+		Upper:  f.Upper,
+	}
+}
+
 func cloneBoundaryLengthRelation(f BoundaryLengthRelationFact) BoundaryLengthRelationFact {
 	return BoundaryLengthRelationFact{
 		Target: cloneBoundaryPath(f.Target),
@@ -1028,9 +1768,13 @@ func cloneBoundaryLengthRelation(f BoundaryLengthRelationFact) BoundaryLengthRel
 
 func cloneBoundaryIndexWrite(f BoundaryIndexWriteFact) BoundaryIndexWriteFact {
 	return BoundaryIndexWriteFact{
-		Table: cloneBoundaryPath(f.Table),
-		Key:   cloneBoundaryPath(f.Key),
-		Value: f.Value,
+		Table:        cloneBoundaryPath(f.Table),
+		KeyPath:      cloneBoundaryPath(f.KeyPath),
+		HasKeyPath:   f.HasKeyPath,
+		KeyValue:     f.KeyValue,
+		ValuePath:    cloneBoundaryPath(f.ValuePath),
+		HasValuePath: f.HasValuePath,
+		Value:        f.Value,
 	}
 }
 
@@ -1081,6 +1825,34 @@ func compareBoundaryAppendKey(a, b BoundaryAppendKeyFact) int {
 	return compareBoundaryPath(a.Table, b.Table)
 }
 
+func compareBoundaryAppendHistoryBase(a, b BoundaryAppendHistoryBaseFact) int {
+	return compareBoundaryPath(a.Array, b.Array)
+}
+
+func compareBoundaryAppendHistoryEvent(a, b BoundaryAppendHistoryEventFact) int {
+	if c := compareBoundaryPath(a.Array, b.Array); c != 0 {
+		return c
+	}
+	return compareBoundaryPath(a.Key, b.Key)
+}
+
+func compareBoundaryAppendHistoryCoverage(a, b BoundaryAppendHistoryCoverageFact) int {
+	if c := compareBoundaryPath(a.Array, b.Array); c != 0 {
+		return c
+	}
+	if c := compareBoundaryPath(a.Key, b.Key); c != 0 {
+		return c
+	}
+	return compareBoundaryPath(a.Table, b.Table)
+}
+
+func compareBoundaryAppendHistoryTableCoverage(a, b BoundaryAppendHistoryTableCoverageFact) int {
+	if c := compareBoundaryPath(a.Array, b.Array); c != 0 {
+		return c
+	}
+	return compareBoundaryPath(a.Table, b.Table)
+}
+
 func compareBoundaryAppendElementFieldOrigin(a, b BoundaryAppendElementFieldOriginFact) int {
 	if c := compareBoundaryPath(a.Array, b.Array); c != 0 {
 		return c
@@ -1101,6 +1873,13 @@ func compareBoundaryLengthLower(a, b BoundaryLengthLowerBound) int {
 	return cmp.Compare(a.Lower, b.Lower)
 }
 
+func compareBoundaryLengthUpper(a, b BoundaryLengthUpperBound) int {
+	if c := compareBoundaryPath(a.Target, b.Target); c != 0 {
+		return c
+	}
+	return cmp.Compare(a.Upper, b.Upper)
+}
+
 func compareBoundaryLengthRelation(a, b BoundaryLengthRelationFact) int {
 	if c := compareBoundaryPath(a.Target, b.Target); c != 0 {
 		return c
@@ -1112,7 +1891,16 @@ func compareBoundaryIndexWrite(a, b BoundaryIndexWriteFact) int {
 	if c := compareBoundaryPath(a.Table, b.Table); c != 0 {
 		return c
 	}
-	return compareBoundaryPath(a.Key, b.Key)
+	if c := compareBoundaryIndexKey(a, b); c != 0 {
+		return c
+	}
+	if c := compareBoundaryBool(a.HasValuePath, b.HasValuePath); c != 0 {
+		return c
+	}
+	if a.HasValuePath {
+		return compareBoundaryPath(a.ValuePath, b.ValuePath)
+	}
+	return 0
 }
 
 func compareBoundaryStaticMember(a, b BoundaryStaticMemberFact) int {
@@ -1127,6 +1915,55 @@ func compareBoundaryPath(a, b BoundaryPath) int {
 		return c
 	}
 	return compareConstraintSegments(a.Segments, b.Segments)
+}
+
+func compareBoundaryIndexKey(a, b BoundaryIndexWriteFact) int {
+	if c := compareBoundaryBool(a.HasKeyPath, b.HasKeyPath); c != 0 {
+		return c
+	}
+	if a.HasKeyPath {
+		return compareBoundaryPath(a.KeyPath, b.KeyPath)
+	}
+	if c := cmp.Compare(a.KeyValue.Hash(), b.KeyValue.Hash()); c != 0 {
+		return c
+	}
+	if product.Domain.Equal(a.KeyValue, b.KeyValue) {
+		return 0
+	}
+	return cmp.Compare(product.ProjectValueOrUnknown(a.KeyValue).String(), product.ProjectValueOrUnknown(b.KeyValue).String())
+}
+
+func compareBoundaryBool(a, b bool) int {
+	switch {
+	case a == b:
+		return 0
+	case !a && b:
+		return -1
+	default:
+		return 1
+	}
+}
+
+func hashBoundaryIndexKey(h uint64, fact BoundaryIndexWriteFact) uint64 {
+	if fact.HasKeyPath {
+		h = internal.HashCombine(h, 1)
+		return hashBoundaryPath(h, fact.KeyPath)
+	}
+	h = internal.HashCombine(h, 0)
+	return internal.HashCombine(h, fact.KeyValue.Hash())
+}
+
+func validBoundaryIndexWrite(fact BoundaryIndexWriteFact) bool {
+	if !validBoundaryPath(fact.Table) || fact.KeyValue.IsZero() || fact.Value.IsZero() {
+		return false
+	}
+	if fact.HasKeyPath && !validBoundaryPath(fact.KeyPath) {
+		return false
+	}
+	if fact.HasValuePath && !validBoundaryPath(fact.ValuePath) {
+		return false
+	}
+	return true
 }
 
 var (
@@ -1148,6 +1985,38 @@ var (
 		less: func(a, b BoundaryAppendKeyFact) bool { return compareBoundaryAppendKey(a, b) < 0 },
 		same: func(a, b BoundaryAppendKeyFact) bool { return compareBoundaryAppendKey(a, b) == 0 },
 	}
+	boundaryAppendHistoryBaseRowIdentity = orderedRowIdentity[BoundaryAppendHistoryBaseFact]{
+		less: func(a, b BoundaryAppendHistoryBaseFact) bool {
+			return compareBoundaryAppendHistoryBase(a, b) < 0
+		},
+		same: func(a, b BoundaryAppendHistoryBaseFact) bool {
+			return compareBoundaryAppendHistoryBase(a, b) == 0
+		},
+	}
+	boundaryAppendHistoryEventRowIdentity = orderedRowIdentity[BoundaryAppendHistoryEventFact]{
+		less: func(a, b BoundaryAppendHistoryEventFact) bool {
+			return compareBoundaryAppendHistoryEvent(a, b) < 0
+		},
+		same: func(a, b BoundaryAppendHistoryEventFact) bool {
+			return compareBoundaryAppendHistoryEvent(a, b) == 0
+		},
+	}
+	boundaryAppendHistoryCoverageRowIdentity = orderedRowIdentity[BoundaryAppendHistoryCoverageFact]{
+		less: func(a, b BoundaryAppendHistoryCoverageFact) bool {
+			return compareBoundaryAppendHistoryCoverage(a, b) < 0
+		},
+		same: func(a, b BoundaryAppendHistoryCoverageFact) bool {
+			return compareBoundaryAppendHistoryCoverage(a, b) == 0
+		},
+	}
+	boundaryAppendHistoryTableCoverageRowIdentity = orderedRowIdentity[BoundaryAppendHistoryTableCoverageFact]{
+		less: func(a, b BoundaryAppendHistoryTableCoverageFact) bool {
+			return compareBoundaryAppendHistoryTableCoverage(a, b) < 0
+		},
+		same: func(a, b BoundaryAppendHistoryTableCoverageFact) bool {
+			return compareBoundaryAppendHistoryTableCoverage(a, b) == 0
+		},
+	}
 	boundaryAppendElementFieldOriginRowIdentity = orderedRowIdentity[BoundaryAppendElementFieldOriginFact]{
 		less: func(a, b BoundaryAppendElementFieldOriginFact) bool {
 			return compareBoundaryAppendElementFieldOrigin(a, b) < 0
@@ -1159,6 +2028,10 @@ var (
 	boundaryLengthLowerRowIdentity = orderedRowIdentity[BoundaryLengthLowerBound]{
 		less: func(a, b BoundaryLengthLowerBound) bool { return compareBoundaryLengthLower(a, b) < 0 },
 		same: func(a, b BoundaryLengthLowerBound) bool { return compareBoundaryLengthLower(a, b) == 0 },
+	}
+	boundaryLengthUpperRowIdentity = orderedRowIdentity[BoundaryLengthUpperBound]{
+		less: func(a, b BoundaryLengthUpperBound) bool { return compareBoundaryLengthUpper(a, b) < 0 },
+		same: func(a, b BoundaryLengthUpperBound) bool { return compareBoundaryLengthUpper(a, b) == 0 },
 	}
 	boundaryLengthRelationRowIdentity = orderedRowIdentity[BoundaryLengthRelationFact]{
 		less: func(a, b BoundaryLengthRelationFact) bool { return compareBoundaryLengthRelation(a, b) < 0 },
@@ -1193,12 +2066,38 @@ func boundaryAppendKeysContainAll(have, want []BoundaryAppendKeyFact) bool {
 	return boundaryAppendKeyRowIdentity.ContainsAll(have, want)
 }
 
+func boundaryAppendHistoryBasesContainAll(have, want []BoundaryAppendHistoryBaseFact) bool {
+	return boundaryAppendHistoryBaseRowIdentity.ContainsAll(have, want)
+}
+
+func boundaryAppendHistoryEventsContainAll(have, want []BoundaryAppendHistoryEventFact) bool {
+	return boundaryAppendHistoryEventRowIdentity.ContainsAll(have, want)
+}
+
+func boundaryAppendHistoryCoverageContainAll(have, want []BoundaryAppendHistoryCoverageFact) bool {
+	return boundaryAppendHistoryCoverageRowIdentity.ContainsAllBy(have, want, func(have, want BoundaryAppendHistoryCoverageFact) bool {
+		return compareBoundaryAppendHistoryCoverage(have, want) == 0 &&
+			product.Domain.LessOrEq(have.Value, want.Value)
+	})
+}
+
+func boundaryAppendHistoryTableCoverageContainAll(have, want []BoundaryAppendHistoryTableCoverageFact) bool {
+	return boundaryAppendHistoryTableCoverageRowIdentity.ContainsAllBy(have, want, func(have, want BoundaryAppendHistoryTableCoverageFact) bool {
+		return compareBoundaryAppendHistoryTableCoverage(have, want) == 0 &&
+			product.Domain.LessOrEq(have.Value, want.Value)
+	})
+}
+
 func boundaryAppendElementFieldOriginsContainAll(have, want []BoundaryAppendElementFieldOriginFact) bool {
 	return boundaryAppendElementFieldOriginRowIdentity.ContainsAll(have, want)
 }
 
 func boundaryLengthLowerContainAll(have, want []BoundaryLengthLowerBound) bool {
 	return boundaryLengthLowerRowIdentity.ContainsAll(have, want)
+}
+
+func boundaryLengthUpperContainAll(have, want []BoundaryLengthUpperBound) bool {
+	return boundaryLengthUpperRowIdentity.ContainsAll(have, want)
 }
 
 func boundaryLengthRelationContainAll(have, want []BoundaryLengthRelationFact) bool {
@@ -1208,6 +2107,7 @@ func boundaryLengthRelationContainAll(have, want []BoundaryLengthRelationFact) b
 func boundaryIndexWritesContainAll(have, want []BoundaryIndexWriteFact) bool {
 	return boundaryIndexWriteRowIdentity.ContainsAllBy(have, want, func(have, want BoundaryIndexWriteFact) bool {
 		return compareBoundaryIndexWrite(have, want) == 0 &&
+			product.Domain.LessOrEq(have.KeyValue, want.KeyValue) &&
 			product.Domain.LessOrEq(have.Value, want.Value)
 	})
 }
@@ -1250,15 +2150,180 @@ func intersectBoundaryAppendKeys(a, b []BoundaryAppendKeyFact) []BoundaryAppendK
 	})
 }
 
+func intersectBoundaryAppendHistoryBases(a, b []BoundaryAppendHistoryBaseFact) []BoundaryAppendHistoryBaseFact {
+	return boundaryAppendHistoryBaseRowIdentity.MergeIntersect(a, b, func(left, _ BoundaryAppendHistoryBaseFact) (BoundaryAppendHistoryBaseFact, bool) {
+		return cloneBoundaryAppendHistoryBase(left), true
+	})
+}
+
+func intersectBoundaryAppendHistoryEventsWithBases(
+	a, b []BoundaryAppendHistoryEventFact,
+	bases []BoundaryAppendHistoryBaseFact,
+) []BoundaryAppendHistoryEventFact {
+	out := intersectBoundaryAppendHistoryEvents(a, b)
+	out = append(out, boundaryAppendHistoryEventsCoveredByBases(a, bases)...)
+	out = append(out, boundaryAppendHistoryEventsCoveredByBases(b, bases)...)
+	return compactBoundaryAppendHistoryEvents(out)
+}
+
+func intersectBoundaryAppendHistoryEvents(a, b []BoundaryAppendHistoryEventFact) []BoundaryAppendHistoryEventFact {
+	return boundaryAppendHistoryEventRowIdentity.MergeIntersect(a, b, func(left, _ BoundaryAppendHistoryEventFact) (BoundaryAppendHistoryEventFact, bool) {
+		return cloneBoundaryAppendHistoryEvent(left), true
+	})
+}
+
+func boundaryAppendHistoryEventsCoveredByBases(
+	events []BoundaryAppendHistoryEventFact,
+	bases []BoundaryAppendHistoryBaseFact,
+) []BoundaryAppendHistoryEventFact {
+	if len(events) == 0 || len(bases) == 0 {
+		return nil
+	}
+	var out []BoundaryAppendHistoryEventFact
+	for _, event := range events {
+		if _, ok := boundaryAppendHistoryBaseRowIdentity.Find(bases, BoundaryAppendHistoryBaseFact{Array: event.Array}); !ok {
+			continue
+		}
+		out = append(out, cloneBoundaryAppendHistoryEvent(event))
+	}
+	return out
+}
+
+func intersectBoundaryAppendHistoryCoverageWithBases(
+	a, b []BoundaryAppendHistoryCoverageFact,
+	bases []BoundaryAppendHistoryBaseFact,
+	events []BoundaryAppendHistoryEventFact,
+	widenPayload bool,
+) []BoundaryAppendHistoryCoverageFact {
+	out := intersectBoundaryAppendHistoryCoverage(a, b, widenPayload)
+	out = append(out, boundaryAppendHistoryCoverageCoveredByBases(a, bases, events)...)
+	out = append(out, boundaryAppendHistoryCoverageCoveredByBases(b, bases, events)...)
+	return compactBoundaryAppendHistoryCoverage(out)
+}
+
+func intersectBoundaryAppendHistoryCoverage(
+	a, b []BoundaryAppendHistoryCoverageFact,
+	widenPayload bool,
+) []BoundaryAppendHistoryCoverageFact {
+	out := boundaryAppendHistoryCoverageRowIdentity.MergeIntersect(a, b, func(left, right BoundaryAppendHistoryCoverageFact) (BoundaryAppendHistoryCoverageFact, bool) {
+		fact := cloneBoundaryAppendHistoryCoverage(left)
+		if widenPayload {
+			fact.Value = product.Domain.Widen(fact.Value, right.Value)
+		} else {
+			fact.Value = product.Domain.Join(fact.Value, right.Value)
+		}
+		return fact, true
+	})
+	return compactBoundaryAppendHistoryCoverage(out)
+}
+
+func boundaryAppendHistoryCoverageCoveredByBases(
+	coverage []BoundaryAppendHistoryCoverageFact,
+	bases []BoundaryAppendHistoryBaseFact,
+	events []BoundaryAppendHistoryEventFact,
+) []BoundaryAppendHistoryCoverageFact {
+	if len(coverage) == 0 || len(bases) == 0 || len(events) == 0 {
+		return nil
+	}
+	var out []BoundaryAppendHistoryCoverageFact
+	for _, fact := range coverage {
+		if _, ok := boundaryAppendHistoryBaseRowIdentity.Find(bases, BoundaryAppendHistoryBaseFact{Array: fact.Array}); !ok {
+			continue
+		}
+		if _, ok := boundaryAppendHistoryEventRowIdentity.Find(events, BoundaryAppendHistoryEventFact{Array: fact.Array, Key: fact.Key}); !ok {
+			continue
+		}
+		out = append(out, cloneBoundaryAppendHistoryCoverage(fact))
+	}
+	return out
+}
+
+func intersectBoundaryAppendHistoryTableCoverageWithBases(
+	a, b []BoundaryAppendHistoryTableCoverageFact,
+	bases []BoundaryAppendHistoryBaseFact,
+	widenPayload bool,
+) []BoundaryAppendHistoryTableCoverageFact {
+	out := intersectBoundaryAppendHistoryTableCoverage(a, b, widenPayload)
+	out = append(out, boundaryAppendHistoryTableCoverageCoveredByBases(a, bases)...)
+	out = append(out, boundaryAppendHistoryTableCoverageCoveredByBases(b, bases)...)
+	return compactBoundaryAppendHistoryTableCoverage(out)
+}
+
+func intersectBoundaryAppendHistoryTableCoverage(
+	a, b []BoundaryAppendHistoryTableCoverageFact,
+	widenPayload bool,
+) []BoundaryAppendHistoryTableCoverageFact {
+	out := boundaryAppendHistoryTableCoverageRowIdentity.MergeIntersect(a, b, func(left, right BoundaryAppendHistoryTableCoverageFact) (BoundaryAppendHistoryTableCoverageFact, bool) {
+		fact := cloneBoundaryAppendHistoryTableCoverage(left)
+		if widenPayload {
+			fact.Value = product.Domain.Widen(fact.Value, right.Value)
+		} else {
+			fact.Value = product.Domain.Join(fact.Value, right.Value)
+		}
+		return fact, true
+	})
+	return compactBoundaryAppendHistoryTableCoverage(out)
+}
+
+func boundaryAppendHistoryTableCoverageCoveredByBases(
+	coverage []BoundaryAppendHistoryTableCoverageFact,
+	bases []BoundaryAppendHistoryBaseFact,
+) []BoundaryAppendHistoryTableCoverageFact {
+	if len(coverage) == 0 || len(bases) == 0 {
+		return nil
+	}
+	var out []BoundaryAppendHistoryTableCoverageFact
+	for _, fact := range coverage {
+		if _, ok := boundaryAppendHistoryBaseRowIdentity.Find(bases, BoundaryAppendHistoryBaseFact{Array: fact.Array}); !ok {
+			continue
+		}
+		out = append(out, cloneBoundaryAppendHistoryTableCoverage(fact))
+	}
+	return out
+}
+
+func intersectBoundaryAppendElementFieldOriginsWithBases(
+	a, b []BoundaryAppendElementFieldOriginFact,
+	bases []BoundaryAppendHistoryBaseFact,
+) []BoundaryAppendElementFieldOriginFact {
+	out := intersectBoundaryAppendElementFieldOrigins(a, b)
+	out = append(out, boundaryAppendElementFieldOriginsCoveredByBases(a, bases)...)
+	out = append(out, boundaryAppendElementFieldOriginsCoveredByBases(b, bases)...)
+	return compactBoundaryAppendElementFieldOrigins(out)
+}
+
 func intersectBoundaryAppendElementFieldOrigins(a, b []BoundaryAppendElementFieldOriginFact) []BoundaryAppendElementFieldOriginFact {
 	return boundaryAppendElementFieldOriginRowIdentity.MergeIntersect(a, b, func(left, _ BoundaryAppendElementFieldOriginFact) (BoundaryAppendElementFieldOriginFact, bool) {
 		return cloneBoundaryAppendElementFieldOrigin(left), true
 	})
 }
 
+func boundaryAppendElementFieldOriginsCoveredByBases(
+	origins []BoundaryAppendElementFieldOriginFact,
+	bases []BoundaryAppendHistoryBaseFact,
+) []BoundaryAppendElementFieldOriginFact {
+	if len(origins) == 0 || len(bases) == 0 {
+		return nil
+	}
+	var out []BoundaryAppendElementFieldOriginFact
+	for _, origin := range origins {
+		if _, ok := boundaryAppendHistoryBaseRowIdentity.Find(bases, BoundaryAppendHistoryBaseFact{Array: origin.Array}); !ok {
+			continue
+		}
+		out = append(out, cloneBoundaryAppendElementFieldOrigin(origin))
+	}
+	return out
+}
+
 func intersectBoundaryLengthLower(a, b []BoundaryLengthLowerBound) []BoundaryLengthLowerBound {
 	return boundaryLengthLowerRowIdentity.MergeIntersect(a, b, func(left, _ BoundaryLengthLowerBound) (BoundaryLengthLowerBound, bool) {
 		return cloneBoundaryLengthLower(left), true
+	})
+}
+
+func intersectBoundaryLengthUpper(a, b []BoundaryLengthUpperBound) []BoundaryLengthUpperBound {
+	return boundaryLengthUpperRowIdentity.MergeIntersect(a, b, func(left, _ BoundaryLengthUpperBound) (BoundaryLengthUpperBound, bool) {
+		return cloneBoundaryLengthUpper(left), true
 	})
 }
 
@@ -1272,8 +2337,10 @@ func intersectBoundaryIndexWrites(a, b []BoundaryIndexWriteFact, widenPayload bo
 	out := boundaryIndexWriteRowIdentity.MergeIntersect(a, b, func(left, right BoundaryIndexWriteFact) (BoundaryIndexWriteFact, bool) {
 		fact := cloneBoundaryIndexWrite(left)
 		if widenPayload {
+			fact.KeyValue = product.Domain.Widen(fact.KeyValue, right.KeyValue)
 			fact.Value = product.Domain.Widen(fact.Value, right.Value)
 		} else {
+			fact.KeyValue = product.Domain.Join(fact.KeyValue, right.KeyValue)
 			fact.Value = product.Domain.Join(fact.Value, right.Value)
 		}
 		return fact, true

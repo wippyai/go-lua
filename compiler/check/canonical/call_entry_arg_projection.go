@@ -133,6 +133,21 @@ func (p callEntryArgProjection) argRefTrees(arg ast.Expr) (flow.ReferenceContext
 	return references, true
 }
 
+func (p callEntryArgProjection) argBoundaryFacts(arg ast.Expr) (flow.BoundaryFacts, bool) {
+	if p.evidence.nestedCall == nil {
+		return flow.BoundaryFactsDomain.Top(), false
+	}
+	call, ok := valueCallExpr(arg)
+	if !ok {
+		return flow.BoundaryFactsDomain.Top(), false
+	}
+	facts := p.typer.ProductCallFromValues(call, p.evidence.nestedCall(call)).Boundary.BoundaryFacts
+	if !facts.HasProof() {
+		return flow.BoundaryFactsDomain.Top(), false
+	}
+	return facts, true
+}
+
 func (p callEntryArgProjection) closureArgRefs(arg ast.Expr) (flow.ClosureRefSet, bool) {
 	if p.program == nil || arg == nil {
 		return flow.ClosureRefSet{}, false

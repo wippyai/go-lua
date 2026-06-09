@@ -57,6 +57,18 @@ func TestNarrowAtPath_DynamicTableProofDoesNotPinConcreteSlot(t *testing.T) {
 	}
 }
 
+func TestNarrowAtPath_TruthyExplicitNilFieldIsImpossible(t *testing.T) {
+	segs := []constraint.Segment{{Kind: constraint.SegmentField, Name: "last_node_id"}}
+	base := product.FromType(typ.NewRecord().Field("last_node_id", typ.Nil).Build())
+	got, ok := narrowAtPath(base, segs, cfg.CheckTruthy, "")
+	if !ok || !valueIsBottom(got) {
+		t.Fatalf("truthy explicit nil field = %v/%v, want impossible edge", got.ProjectValue(), ok)
+	}
+	if missingStaticMemberGuardStaysDynamic(base, segs, cfg.CheckTruthy, "") {
+		t.Fatal("explicit nil field was treated as missing-field dynamic")
+	}
+}
+
 func TestNarrowByCondCheckTruthyAnyMarksPresentDynamic(t *testing.T) {
 	ident := &ast.IdentExpr{Value: "last_template_node_id"}
 	sym := cfg.SymbolID(21)
@@ -819,6 +831,50 @@ func TestNarrowLengthGuardRefinesContainerAndLiteralIndexRead(t *testing.T) {
 	}, nil)
 	if !ok || !typ.TypeEquals(elem.ProjectValue(), row) {
 		t.Fatalf("rows[1] after #rows>0 = %v/%v, want %v,true", elem.ProjectValue(), ok, row)
+	}
+}
+
+func TestNarrowLengthGuardRefinesNilableFieldContainerAndLiteralIndexRead(t *testing.T) {
+	sym := cfg.SymbolID(181)
+	src := &ast.IdentExpr{Value: "src"}
+	routes := &ast.AttrGetExpr{
+		Object:    src,
+		Key:       &ast.StringExpr{Value: "routes"},
+		KeySyntax: ast.AttrKeyDot,
+	}
+	tr := New(keyPresenceInput(t, map[*ast.IdentExpr]cfg.SymbolID{
+		src: sym,
+	}), Config{})
+	route := typ.NewRecord().Field("target_name", typ.String).Build()
+	routesArray := typ.NewArray(route)
+	out := flow.PointState{
+		Env: map[flow.ValueKey]product.AbstractValue{
+			flow.SymbolValueKey(sym): product.FromType(typ.NewRecord().
+				OptField("routes", routesArray).
+				Build()),
+		},
+	}
+	guard := &ast.RelationalOpExpr{
+		Lhs:      &ast.UnaryLenOpExpr{Expr: routes},
+		Operator: ">",
+		Rhs:      &ast.NumberExpr{Value: "0"},
+	}
+	info := &cfg.BranchInfo{
+		CondCheck: cfg.CondCheck{Kind: cfg.CheckTruthy},
+		Condition: guard,
+	}
+
+	got, applied := tr.narrowLengthGuard(out, guard, info, true)
+	if !applied {
+		t.Fatal("length guard did not apply")
+	}
+	first, ok := tr.evalAttrGet(&got, &ast.AttrGetExpr{
+		Object:    routes,
+		Key:       &ast.NumberExpr{Value: "1"},
+		KeySyntax: ast.AttrKeyIndex,
+	}, nil)
+	if !ok || !typ.TypeEquals(first.ProjectValue(), route) {
+		t.Fatalf("src.routes[1] after #src.routes>0 = %v/%v, want %v,true", first.ProjectValue(), ok, route)
 	}
 }
 

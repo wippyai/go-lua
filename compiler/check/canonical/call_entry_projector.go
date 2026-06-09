@@ -55,6 +55,24 @@ func (c callEntryProjector) productReferenceArgSources(ctx transfer.ProductCallC
 	}
 }
 
+func (c callEntryProjector) pointBoundaryArgSources(in *flow.PointState) summary.EntryBoundaryFactArgSources {
+	return summary.EntryBoundaryFactArgSources{
+		ReturnFacts: func(_ int, arg ast.Expr, state *flow.PointState) (flow.BoundaryFacts, bool) {
+			projection := c.pointArgProjection(state)
+			return projection.argBoundaryFacts(arg)
+		},
+	}
+}
+
+func (c callEntryProjector) productBoundaryArgSources(ctx transfer.ProductCallContext) summary.EntryBoundaryFactArgSources {
+	projection := c.productArgProjection(ctx)
+	return summary.EntryBoundaryFactArgSources{
+		ReturnFacts: func(_ int, arg ast.Expr, _ *flow.PointState) (flow.BoundaryFacts, bool) {
+			return projection.argBoundaryFacts(arg)
+		},
+	}
+}
+
 func (c callEntryProjector) entryEvidenceProjection() summary.CallEntryProjection {
 	return summary.CallEntryProjection{
 		ParamSlot: c.paramSlot,
@@ -78,10 +96,12 @@ func (c callEntryProjector) productEvidence(ref summary.FuncRef, call *ast.FuncC
 		RuntimeValues: ctx.RuntimeArgValues,
 		References:    ctx.References,
 		ArgSources:    c.productReferenceArgSources(ctx),
+		ArgFacts:      c.productBoundaryArgSources(ctx),
 		KeyPresence:   ctx.KeyPresence,
 		StaticMembers: ctx.StaticMembers,
 		Num:           ctx.Num,
 		IndexWrites:   ctx.IndexWrites,
+		PathAliases:   ctx.PathAliases,
 	})
 }
 
@@ -121,10 +141,13 @@ func (c callEntryProjector) pointFacts(ref summary.FuncRef, call *ast.FuncCallEx
 	return c.entryEvidenceProjection().DirectEvidence(summary.DirectEntryEvidenceInput{
 		Callee:        ref,
 		Call:          call,
+		State:         in,
+		ArgFacts:      c.pointBoundaryArgSources(in),
 		KeyPresence:   in.KeyPresence,
 		StaticMembers: in.StaticMembers,
 		Num:           in.Num,
 		IndexWrites:   in.IndexWrites,
+		PathAliases:   in.PathAliases,
 	}).Facts
 }
 
@@ -165,7 +188,14 @@ func (p *program) ProjectCallEntryContextKeys(ref summary.FuncRef, fs state.Func
 }
 
 func (c callEntryProjector) projection(fs state.FunctionState) summary.CallEntryProjection {
+	callerRef := c.typer.ref
+	if callerRef == (summary.FuncRef{}) {
+		if ref, ok := c.program.refByGraph(c.graph); ok {
+			callerRef = ref
+		}
+	}
 	return summary.CallEntryProjection{
+		CallerRef: callerRef,
 		Graph:     c.graph,
 		State:     fs,
 		ParamSlot: c.paramSlot,
@@ -175,6 +205,7 @@ func (c callEntryProjector) projection(fs state.FunctionState) summary.CallEntry
 		ParamPath:           c.program.paramPath,
 		ArgPath:             c.argPath,
 		ReferenceArgSources: c.pointReferenceArgSources(),
+		BoundaryArgSources:  c.pointBoundaryArgSources(nil),
 		EvalArg:             c.transfer.EvalExprValue,
 		ResolveTargets: func(call *ast.FuncCallExpr, in *flow.PointState) []summary.CallEntryTarget {
 			return c.resolveTargets(call, in)
@@ -203,10 +234,10 @@ func (c callEntryProjector) resolveTargets(call *ast.FuncCallExpr, in *flow.Poin
 	if c.program == nil || c.program.driver == nil || c.graph == nil || in == nil {
 		return nil
 	}
-	targets := c.typer.resolveCallTargets(call, c.program, flow.ReferenceContextFromPoint(in))
+	references := flow.ReferenceContextWithStaticMembersFromPoint(in)
+	targets := c.typer.resolveCallTargets(call, c.program, references)
 	selected := targets.Select().Targets()
 	out := make([]summary.CallEntryTarget, 0, len(selected))
-	references := flow.ReferenceContextFromPoint(in)
 	for _, target := range selected {
 		ref := target.Ref()
 		entryFacts := c.pointFacts(ref, call, in)
@@ -308,10 +339,49 @@ func (c callEntryProjector) productEntryContext(ref summary.FuncRef, call *ast.F
 	evidence := c.productEvidence(ref, call, ctx)
 	values := c.program.withPrototypeMethodSurfacesForMethodCall(ref, call, evidence.Values)
 	references := ctx.References.Join(evidence.References)
+	facts := evidence.Facts
+	if current, ok := c.typer.currentRef(); ok && current == ref {
+		// Recursive method self evidence is loop-carried proof state. It replays
+		// through the callee's entry transfer, but it must not specialize the
+		// recursive summary key or the DB never observes the cycle.
+		if c.methodReceiverEntryValueIsFresh(ref, call, values) {
+			values = c.withoutMethodReceiverEntryValue(ref, call, values)
+		}
+		facts = flow.BoundaryFactsDomain.Top()
+	}
 	return c.program.CallEntryContextWithFacts(
 		ref,
 		references,
 		values,
-		evidence.Facts,
+		facts,
 	)
+}
+
+func (c callEntryProjector) withoutMethodReceiverEntryValue(ref summary.FuncRef, call *ast.FuncCallExpr, values summary.EntryValues) summary.EntryValues {
+	if !c.methodReceiverEntryValueIsFresh(ref, call, values) {
+		return values
+	}
+	_, slot, _ := c.paramSlot(ref, call, 0)
+	out := make(summary.EntryValues, len(values)-1)
+	for k, v := range values {
+		if k != slot {
+			out[k] = v
+		}
+	}
+	return out
+}
+
+func (c callEntryProjector) methodReceiverEntryValueIsFresh(ref summary.FuncRef, call *ast.FuncCallExpr, values summary.EntryValues) bool {
+	if len(values) == 0 || call == nil || call.Method == "" {
+		return false
+	}
+	_, slot, ok := c.paramSlot(ref, call, 0)
+	if !ok {
+		return false
+	}
+	av, ok := values[slot]
+	if !ok || !av.IsFreshAllocation() {
+		return false
+	}
+	return true
 }

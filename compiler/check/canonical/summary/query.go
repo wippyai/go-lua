@@ -551,8 +551,17 @@ func (q *Queries) entryValues(ctx *db.QueryContext, key Key) map[int]product.Abs
 	}).Values()
 }
 
+func keyUsesAggregateEntryFallback(key Key) bool {
+	return len(key.Values.Values()) == 0 &&
+		flow.ReferenceContextDomain.Equal(key.References.Context(), flow.ReferenceContextBottom()) &&
+		flow.BoundaryFactsDomain.Equal(key.Facts.Facts(), flow.BoundaryFactsDomain.Top())
+}
+
 func (q *Queries) entryFacts(ctx *db.QueryContext, key Key) flow.BoundaryFacts {
 	facts := key.Facts.Facts()
+	if !keyUsesAggregateEntryFallback(key) {
+		return facts
+	}
 	provider, ok := q.prog.(entryFactProvider)
 	if !ok || provider == nil {
 		return facts

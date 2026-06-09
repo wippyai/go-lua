@@ -24,6 +24,11 @@ type AppendOriginSource struct {
 	SourceField []constraint.Segment
 }
 
+type appendOriginDestinationValueUpdate struct {
+	Array StableAddress
+	Value product.AbstractValue
+}
+
 // AppendElementFieldOriginPathSource is producer-facing syntax evidence for one
 // field carried by an appended element. Flow owns routing the source through
 // aliases/origins and projecting it to every live append destination.
@@ -466,6 +471,7 @@ func ApplyAppendElementMutationTransaction(out *PointState, tx AppendElementMuta
 	if out == nil || tx.Array.Key() == "" {
 		return false
 	}
+	valueUpdates := appendElementDestinationValueUpdatePlans(*out, tx.Destinations, tx.ElementValue)
 	changed := ApplyAccessMutation(out, AccessMutation{
 		Footprint:     tx.Footprint,
 		StaticMembers: true,
@@ -479,6 +485,7 @@ func ApplyAppendElementMutationTransaction(out *PointState, tx AppendElementMuta
 		changed = ApplyAppendKeyProof(out, AppendKeyProof{Array: tx.Array, Key: tx.Element}) || changed
 	}
 	changed = applyAppendElementFieldOriginSources(out, tx.Destinations, tx.FieldSources) || changed
+	changed = applyAppendElementDestinationValueUpdatePlans(out, valueUpdates) || changed
 	if tx.HasElement {
 		changed = replayAppendElementFieldOriginUses(out, tx.Destinations, tx.Element) || changed
 	}
@@ -493,6 +500,111 @@ func ApplyAppendElementMutationTransaction(out *PointState, tx AppendElementMuta
 		}) || changed
 	}
 	return changed
+}
+
+func appendElementDestinationValueUpdatePlans(
+	state PointState,
+	destinations []AppendOriginDestination,
+	element product.AbstractValue,
+) []appendOriginDestinationValueUpdate {
+	if element.IsZero() || len(destinations) == 0 {
+		return nil
+	}
+	facts := PointFactsOf(state)
+	var plans []appendOriginDestinationValueUpdate
+	for _, dst := range destinations {
+		if len(dst.FieldPrefix) == 0 || dst.Array.Key() == "" {
+			continue
+		}
+		baseSynthetic := false
+		base, ok := facts.AddressValue(dst.Array)
+		if !ok || base.IsZero() {
+			base, ok = state.StaticMembers.ValueAtAddress(dst.Array)
+			if !ok || base.IsZero() {
+				base = product.FromType(typ.NewFreshArray())
+				baseSynthetic = true
+			}
+		}
+		baseFreshEmpty := productValueIsFreshEmptySequence(base)
+		elemValue, elemOK := product.IndexOf(base, product.FromType(typ.Integer))
+		if !elemOK || elemValue.IsZero() {
+			elemValue = product.FromType(typ.NewRecord().Build())
+		}
+		if present := product.NarrowTruthy(elemValue); !present.IsZero() && !present.IsBottom() {
+			elemValue = present
+		}
+		fieldValue := appendDestinationFieldValue(elemValue, dst.FieldPrefix)
+		updatedField := product.AppendElement(fieldValue, element)
+		updatedElem := ProductWithMemberPath(elemValue, dst.FieldPrefix, updatedField)
+		if updatedElem.IsZero() {
+			continue
+		}
+		updatedBase := product.ContainerElementUnion(base, updatedElem)
+		if baseSynthetic || baseFreshEmpty {
+			updatedBase = product.AppendElement(base, updatedElem)
+		}
+		if updatedBase.IsZero() {
+			continue
+		}
+		plans = append(plans, appendOriginDestinationValueUpdate{
+			Array: dst.Array,
+			Value: updatedBase,
+		})
+	}
+	return plans
+}
+
+func applyAppendElementDestinationValueUpdatePlans(out *PointState, plans []appendOriginDestinationValueUpdate) bool {
+	if out == nil || len(plans) == 0 {
+		return false
+	}
+	changed := false
+	for _, plan := range plans {
+		if plan.Array.Key() == "" || plan.Value.IsZero() {
+			continue
+		}
+		if path, ok := plan.Array.Path(); ok && path.Symbol != 0 && len(path.Segments) == 0 {
+			if out.Env == nil {
+				out.Env = make(map[ValueKey]product.AbstractValue)
+			}
+			key := SymbolValueKey(path.Symbol)
+			prev := out.Env[key]
+			if prev.IsZero() {
+				out.Env[key] = plan.Value
+			} else {
+				out.Env[key] = product.Domain.Join(prev, plan.Value)
+			}
+			changed = !product.Domain.Equal(prev, out.Env[key]) || changed
+			continue
+		}
+		changed = KillStaticMemberSubtree(out, plan.Array) || changed
+		changed = SetStaticMemberFact(out, plan.Array, plan.Value) || changed
+	}
+	return changed
+}
+
+func appendDestinationFieldValue(elem product.AbstractValue, field []constraint.Segment) product.AbstractValue {
+	if current, ok := ProductMemberPathValue(elem, field); ok && !current.IsZero() {
+		if appendSeed, ok := appendableFreshEmptySequence(current); ok {
+			return appendSeed
+		}
+		return current
+	}
+	return product.FromType(typ.NewFreshArray())
+}
+
+func appendableFreshEmptySequence(av product.AbstractValue) (product.AbstractValue, bool) {
+	if av.IsZero() {
+		return product.AbstractValue{}, false
+	}
+	t := unwrap.Alias(av.ProjectValue())
+	if inner, optional := typ.SplitNilableFieldType(t); optional {
+		t = unwrap.Alias(inner)
+	}
+	if productTypeIsFreshEmptySequence(t) {
+		return product.FromType(typ.NewFreshArray()), true
+	}
+	return product.AbstractValue{}, false
 }
 
 func appendElementFieldOriginSourcesOfPath(state PointState, sources []AppendElementFieldOriginPathSource) []AppendElementFieldOriginSource {

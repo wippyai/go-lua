@@ -99,14 +99,14 @@ return count
 	var maxIncoming int64
 	observe := equation.NodeTransferFunc(func(
 		g *cfg.Graph, p cfg.Point, incoming flow.PointState,
-		entryContracts paramevidence.Contracts, demand func(int, paramevidence.ParamContract),
+		entryContracts paramevidence.Contracts, entryFacts flow.BoundaryFacts, demand func(int, paramevidence.ParamContract),
 	) flow.PointState {
 		if incoming.Num != nil {
 			if _, upper, bounded := incoming.Num.BoundsFor(countKey); bounded && upper > maxIncoming {
 				maxIncoming = upper
 			}
 		}
-		return real.Transfer(g, p, incoming, entryContracts, demand)
+		return real.Transfer(g, p, incoming, entryContracts, entryFacts, demand)
 	})
 
 	// Solve must terminate; the -timeout backstops a genuine non-termination

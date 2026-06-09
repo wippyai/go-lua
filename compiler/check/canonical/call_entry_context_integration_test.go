@@ -124,6 +124,52 @@ func TestProductCallEntryContextCarriesProjectedBoundaryFacts(t *testing.T) {
 	}
 }
 
+func TestPointCallEntryFactsCarryProjectedBoundaryFacts(t *testing.T) {
+	ref := summary.FuncRef{GraphID: 13}
+	param := &ast.IdentExpr{Value: "graph"}
+	call := &ast.FuncCallExpr{Args: []ast.Expr{param}}
+	graphSym := cfg.SymbolID(313)
+	graphPath := constraint.NewPath(graphSym, "graph")
+	refsPath := graphPath.Field("references")
+	keyPath := graphPath.Field("last_node_id")
+	value := product.FromType(typ.String)
+
+	callerBindings := bind.NewBindingTable()
+	callerBindings.Bind(param, graphSym)
+	callerBindings.SetName(graphSym, "graph")
+	callerGraph := cfg.BuildWithBindings(&ast.FunctionExpr{}, callerBindings)
+	calleeFn := &ast.FunctionExpr{ParList: &ast.ParList{Names: []string{"graph"}}}
+	calleeGraph := cfg.Build(calleeFn)
+	prog := &program{
+		funcTopology: topology.NewFunctionTopology([]topology.FunctionEntry{
+			{Ref: ref, Graph: calleeGraph, Function: calleeFn},
+		}),
+	}
+	ct := callTyper{d: &Driver{activeProgram: prog}, g: callerGraph}
+	projector := callEntryProjector{program: prog, graph: callerGraph, typer: ct}
+	state := flow.PointState{
+		IndexWrites: flow.IndexWriteAdmissionFacts{}.WithAddress(flow.IndexWriteAdmissionAddressFact{
+			Target:     testCallEntryStableAddress(t, refsPath),
+			KeyPath:    testCallEntryStableAddress(t, keyPath),
+			HasKeyPath: true,
+			Key:        product.FromType(typ.String),
+			Value:      value,
+		}),
+	}
+
+	facts := projector.pointFacts(ref, call, &state)
+	writes := facts.IndexWrites()
+	wantTable := flow.BoundaryPath{Kind: flow.BoundaryPathParam, Index: 0, Segments: refsPath.Segments}
+	wantKey := flow.BoundaryPath{Kind: flow.BoundaryPathParam, Index: 0, Segments: keyPath.Segments}
+	if len(writes) != 1 ||
+		!boundaryPathEqual(writes[0].Table, wantTable) ||
+		!writes[0].HasKeyPath ||
+		!boundaryPathEqual(writes[0].KeyPath, wantKey) ||
+		!product.Domain.Equal(writes[0].Value, value) {
+		t.Fatalf("point entry index writes = %#v, want table %#v key %#v", writes, wantTable, wantKey)
+	}
+}
+
 func testCallEntryStableAddress(t *testing.T, path constraint.Path) flow.StableAddress {
 	t.Helper()
 	addr, ok := flow.StableAddressOfPath(path)
@@ -131,6 +177,10 @@ func testCallEntryStableAddress(t *testing.T, path constraint.Path) flow.StableA
 		t.Fatalf("stable address for path %s", path.Key())
 	}
 	return addr
+}
+
+func boundaryPathEqual(a, b flow.BoundaryPath) bool {
+	return a.Kind == b.Kind && a.Index == b.Index && slices.Equal(a.Segments, b.Segments)
 }
 
 func graphWithCapturedSymbol(t *testing.T, sym cfg.SymbolID, name string) *cfg.Graph {

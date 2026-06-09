@@ -37,7 +37,7 @@ local value, label = get_db()
 	facts := sess.store.InterprocFacts(root, parent).FunctionFacts()
 	fact, ok := facts[sym]
 	if !ok {
-		t.Fatalf("missing get_db fact; refs=%v summaries=%v facts=%d", driver.refs, driver.summaries, len(facts))
+		t.Fatalf("missing get_db fact; refs=%v summaries=%v facts=%d", driver.artifact.Refs, driver.artifact.Summaries, len(facts))
 	}
 	returns := product.ProjectVector(fact.Summary)
 	if len(returns) != 2 {

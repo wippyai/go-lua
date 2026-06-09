@@ -608,7 +608,7 @@ func TestTransferPreservesIncomingIndexWriteAdmissionFacts(t *testing.T) {
 		}),
 	}
 
-	out := tr.Transfer(in.Graph, in.Graph.Entry(), incoming, nil, nil)
+	out := tr.Transfer(in.Graph, in.Graph.Entry(), incoming, nil, flow.BoundaryFacts{}, nil)
 	if got, ok := testIndexWriteAdmission(t, out.IndexWrites, constraint.NewPath(tableSym, "items"), constraint.Path{}, typ.String); !ok || !typ.TypeEquals(got.ProjectValue(), typ.Number) {
 		t.Fatalf("Transfer dropped durable index-write admission: %v/%v in %s", got.ProjectValue(), ok, out.IndexWrites.Format())
 	}
@@ -636,11 +636,13 @@ func TestBoundaryIndexWriteReplayAdmitsOpaqueStableKeyPath(t *testing.T) {
 				{Kind: constraint.SegmentField, Name: "nodes"},
 			},
 		},
-		Key: flow.BoundaryPath{
+		KeyPath: flow.BoundaryPath{
 			Kind:  flow.BoundaryPathParam,
 			Index: 1,
 		},
-		Value: product.FromType(nodeType),
+		HasKeyPath: true,
+		KeyValue:   product.FromType(typ.String),
+		Value:      product.FromType(nodeType),
 	}}), nil)
 
 	if !changed {
@@ -695,11 +697,13 @@ func TestBoundaryFactBatchPreservesFinalKeyArrayValueProofs(t *testing.T) {
 				{Kind: constraint.SegmentField, Name: "nodes"},
 			},
 		},
-		Key: flow.BoundaryPath{
+		KeyPath: flow.BoundaryPath{
 			Kind:  flow.BoundaryPathParam,
 			Index: 1,
 		},
-		Value: product.FromType(nodeType),
+		HasKeyPath: true,
+		KeyValue:   product.FromType(typ.String),
+		Value:      product.FromType(nodeType),
 	}}), nil)
 
 	if !changed {
@@ -743,11 +747,13 @@ func TestBoundaryAppendKeyBatchDerivesFreshEmptyTableFromSameBatchIndexWrite(t *
 				{Kind: constraint.SegmentField, Name: "nodes"},
 			},
 		},
-		Key: flow.BoundaryPath{
+		KeyPath: flow.BoundaryPath{
 			Kind:  flow.BoundaryPathParam,
 			Index: 1,
 		},
-		Value: product.FromType(nodeType),
+		HasKeyPath: true,
+		KeyValue:   product.FromType(typ.String),
+		Value:      product.FromType(nodeType),
 	}})
 	out := flow.PointState{
 		KeyPresence: testKeyPresenceWithEmptyKeyArray(t, flow.KeyPresenceFacts{}, arrayPath),
@@ -832,11 +838,13 @@ func TestBoundaryAppendKeyBatchRebasesReturnKeyForFreshEmptyTable(t *testing.T) 
 				{Kind: constraint.SegmentField, Name: "nodes"},
 			},
 		},
-		Key: flow.BoundaryPath{
+		KeyPath: flow.BoundaryPath{
 			Kind:  flow.BoundaryPathReturn,
 			Index: 0,
 		},
-		Value: product.FromType(nodeType),
+		HasKeyPath: true,
+		KeyValue:   product.FromType(typ.String),
+		Value:      product.FromType(nodeType),
 	}})
 	out := flow.PointState{
 		KeyPresence: testKeyPresenceWithEmptyKeyArray(t, flow.KeyPresenceFacts{}, arrayPath),
@@ -889,11 +897,13 @@ func TestAssignCallPostconditionDerivesFreshEmptyKeyArrayFromReturnAppend(t *tes
 				{Kind: constraint.SegmentField, Name: "nodes"},
 			},
 		},
-		Key: flow.BoundaryPath{
+		KeyPath: flow.BoundaryPath{
 			Kind:  flow.BoundaryPathReturn,
 			Index: 0,
 		},
-		Value: product.FromType(nodeType),
+		HasKeyPath: true,
+		KeyValue:   product.FromType(typ.String),
+		Value:      product.FromType(nodeType),
 	}})
 	tr := New(in, Config{CallTyper: boundaryAndContainerElementUnionTyper{facts: facts}})
 	arrayPath := constraint.NewPath(graphSym, "graph").Field("node_order")
@@ -957,11 +967,13 @@ func TestAssignCallPostconditionPreservesAppendHistoryAcrossReceiverMutation(t *
 				{Kind: constraint.SegmentField, Name: "nodes"},
 			},
 		},
-		Key: flow.BoundaryPath{
+		KeyPath: flow.BoundaryPath{
 			Kind:  flow.BoundaryPathReturn,
 			Index: 0,
 		},
-		Value: product.FromType(nodeType),
+		HasKeyPath: true,
+		KeyValue:   product.FromType(typ.String),
+		Value:      product.FromType(nodeType),
 	}})
 	updatedReceiver := product.FromType(typ.NewRecord().
 		Field("node_order", typ.NewArray(typ.Unknown)).
@@ -1508,9 +1520,10 @@ func TestNestedWriteEffectRecordsPrototypeSelfThroughReducer(t *testing.T) {
 	effects := out.ReceiverEffects.Entries()
 	if len(effects) != 1 ||
 		effects[0].Slot != 0 ||
-		!effects[0].MustWrite ||
-		!product.Domain.Equal(effects[0].Value, got) {
-		t.Fatalf("receiver effects = %s, want must-write slot 0 to published self", out.ReceiverEffects.Format())
+		effects[0].MustWrite ||
+		!effects[0].Value.IsZero() ||
+		len(effects[0].Mutations) != 1 {
+		t.Fatalf("receiver effects = %s, want mutation-only slot 0 for nested self write", out.ReceiverEffects.Format())
 	}
 }
 
@@ -1542,12 +1555,10 @@ func TestNestedWriteEffectRecordsParameterReceiverEffectWithoutPrototype(t *test
 	effects := out.ReceiverEffects.Entries()
 	if len(effects) != 1 ||
 		effects[0].Slot != 0 ||
-		!effects[0].MustWrite {
-		t.Fatalf("receiver effects = %s, want must-write slot 0", out.ReceiverEffects.Format())
-	}
-	member, ok := product.MemberOf(effects[0].Value, value.MemberField("name"))
-	if !ok || !typ.TypeEquals(member.ProjectValue(), typ.String) {
-		t.Fatalf("receiver effect self.name = %v/%v, want string", member.ProjectValue(), ok)
+		effects[0].MustWrite ||
+		!effects[0].Value.IsZero() ||
+		len(effects[0].Mutations) != 1 {
+		t.Fatalf("receiver effects = %s, want mutation-only slot 0", out.ReceiverEffects.Format())
 	}
 }
 
@@ -1623,9 +1634,10 @@ func TestMutatorEffectRecordsPrototypeSelfThroughReducer(t *testing.T) {
 	effects := out.ReceiverEffects.Entries()
 	if len(effects) != 1 ||
 		effects[0].Slot != 0 ||
-		!effects[0].MustWrite ||
-		!product.Domain.Equal(effects[0].Value, got) {
-		t.Fatalf("receiver effects = %s, want must-write slot 0 to published mutator self", out.ReceiverEffects.Format())
+		effects[0].MustWrite ||
+		!effects[0].Value.IsZero() ||
+		len(effects[0].Mutations) != 1 {
+		t.Fatalf("receiver effects = %s, want mutation-only slot 0 for nested mutator", out.ReceiverEffects.Format())
 	}
 }
 
@@ -1667,6 +1679,55 @@ func TestMutatorEffectPublishesUpdatedStaticMemberFact(t *testing.T) {
 	rec, ok := unwrap.Alias(arr.Element).(*typ.Record)
 	if !ok || rec.GetField("routes") == nil {
 		t.Fatalf("static_data_sources element = %T %[1]v, want record with routes", arr.Element)
+	}
+}
+
+func TestMutatorEffectReplaysIteratorOriginDestinationFieldValue(t *testing.T) {
+	const parentSym = cfg.SymbolID(951)
+	const sourceSym = cfg.SymbolID(952)
+	tr := New(input.Inputs{}, Config{})
+	parentPath := constraint.NewPath(parentSym, "static_data_sources")
+	sourcePath := constraint.NewPath(sourceSym, "source")
+	route := product.FromType(typ.NewRecord().Field("target_name", typ.String).Build())
+	out := flow.PointState{
+		ValueOrigins: flow.ValueOriginFacts{}.
+			WithAddresses(
+				testFlowPathAddress(t, sourcePath),
+				testFlowPathAddress(t, parentPath),
+				flow.ValueOriginIndexedIterator,
+				1,
+			),
+	}
+
+	tr.applyMutatorEffect(&out, MutatorEffect{
+		Place: Place{
+			Root:     sourceSym,
+			RootName: "source",
+			Steps: []PlaceStep{{
+				Kind:   PlaceStepStaticMember,
+				Member: value.MemberField("routes"),
+			}},
+		},
+		Kind:    MutatorAppendElement,
+		Element: route,
+	})
+
+	parent, ok := flow.PointFactsOf(out).PathValue(parentPath)
+	if !ok {
+		t.Fatalf("parent value missing after replay: env=%v static=%s", out.Env, out.StaticMembers.Format())
+	}
+	sourceElem, ok := product.IndexOf(parent, product.FromType(typ.Integer))
+	if !ok {
+		t.Fatalf("parent element missing from %v", parent.ProjectValue())
+	}
+	routes, ok := flow.ProductMemberPathValue(sourceElem, []constraint.Segment{{Kind: constraint.SegmentField, Name: "routes"}})
+	if !ok {
+		t.Fatalf("routes field missing from %v; parent=%v", sourceElem.ProjectValue(), parent.ProjectValue())
+	}
+	routeElem, ok := product.IndexOf(routes, product.FromType(typ.Integer))
+	routeElemType, _ := typ.SplitNilableFieldType(routeElem.ProjectValue())
+	if !ok || !typ.TypeEquals(routeElemType, route.ProjectValue()) {
+		t.Fatalf("routes element = %v/%v, want %v", routeElem.ProjectValue(), ok, route.ProjectValue())
 	}
 }
 

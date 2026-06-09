@@ -338,6 +338,35 @@ func directCallEntryProductValues(in directCallEntryProductValueInput) EntryValu
 	return out
 }
 
+func withoutMethodReceiverEntryValue(values EntryValues, paramSlot EntryValueParamSlot, callee FuncRef, call *ast.FuncCallExpr) EntryValues {
+	fresh, slot := methodReceiverEntryValueIsFresh(values, paramSlot, callee, call)
+	if !fresh {
+		return values
+	}
+	out := make(EntryValues, len(values)-1)
+	for k, v := range values {
+		if k != slot {
+			out[k] = v
+		}
+	}
+	return out
+}
+
+func methodReceiverEntryValueIsFresh(values EntryValues, paramSlot EntryValueParamSlot, callee FuncRef, call *ast.FuncCallExpr) (bool, int) {
+	if len(values) == 0 || paramSlot == nil || call == nil || call.Method == "" {
+		return false, 0
+	}
+	_, slot, ok := paramSlot(callee, call, 0)
+	if !ok {
+		return false, 0
+	}
+	av, ok := values[slot]
+	if !ok || !av.IsFreshAllocation() {
+		return false, 0
+	}
+	return true, slot
+}
+
 func joinOmittedFixedArgNil(out EntryValues, in directCallEntryProductValueInput) EntryValues {
 	supplied := len(in.RuntimeValues)
 	if in.ParamSlot == nil || in.ParamSlotCount == nil || supplied < 0 {
@@ -381,6 +410,7 @@ func joinOmittedFixedArgNil(out EntryValues, in directCallEntryProductValueInput
 // state. Exact summary keys and aggregate publication are two views of the same
 // direct call-entry evidence; they must not rebuild separate value/fact routes.
 type CallEntryProjection struct {
+	CallerRef           FuncRef
 	Graph               *cfg.Graph
 	State               state.FunctionState
 	ResolveTargets      CallEntryTargetResolver
@@ -392,6 +422,7 @@ type CallEntryProjection struct {
 	ParamPath           EntryReferenceParamPath
 	ArgPath             EntryReferenceArgPath
 	ReferenceArgSources EntryReferenceArgSources
+	BoundaryArgSources  EntryBoundaryFactArgSources
 	EvalArg             EntryValueEvaluator
 	NormalizeValues     EntryValuesNormalizer
 	ReferencePaths      EntryReferenceProjection
@@ -410,11 +441,13 @@ type DirectEntryEvidenceInput struct {
 	ParamAnnotated EntryValueParamAnnotated
 	References     flow.ReferenceContext
 	ArgSources     EntryReferenceArgSources
+	ArgFacts       EntryBoundaryFactArgSources
 
 	KeyPresence   flow.KeyPresenceFacts
 	StaticMembers flow.StaticMemberFacts
 	Num           *numeric.State
 	IndexWrites   flow.IndexWriteAdmissionFacts
+	PathAliases   flow.PathAliasFacts
 }
 
 // DirectEntryEvidence is the callee-entry evidence produced by one direct call.
@@ -455,10 +488,13 @@ func (p CallEntryProjection) DirectEvidence(in DirectEntryEvidenceInput) DirectE
 			ParamSlot:     p.ParamSlot,
 			ArgPath:       p.ArgPath,
 			ArgValues:     in.RuntimeValues,
+			State:         in.State,
+			ArgFacts:      in.ArgFacts,
 			KeyPresence:   in.KeyPresence,
 			StaticMembers: in.StaticMembers,
 			Num:           in.Num,
 			IndexWrites:   in.IndexWrites,
+			PathAliases:   in.PathAliases,
 		}),
 	}
 }
@@ -478,10 +514,12 @@ func (p CallEntryProjection) directEvidenceFromPoint(callee FuncRef, call *ast.F
 		ParamAnnotated: annotated,
 		References:     flow.ReferenceContextFromPoint(in),
 		ArgSources:     p.ReferenceArgSources,
+		ArgFacts:       p.BoundaryArgSources,
 		KeyPresence:    in.KeyPresence,
 		StaticMembers:  in.StaticMembers,
 		Num:            in.Num,
 		IndexWrites:    in.IndexWrites,
+		PathAliases:    in.PathAliases,
 	})
 }
 
@@ -525,6 +563,16 @@ func (p CallEntryProjection) ProjectKeys() []Key {
 			}
 			references := target.EntryReferences.Join(evidence.References)
 			facts := flow.MergeBoundaryFactProofs(target.EntryFacts, evidence.Facts)
+			if target.Ref == p.CallerRef {
+				// Self-recursive calls must close over the summary fixed point. Boundary
+				// facts and receiver products are replayed into the callee state, but
+				// using mutable self proof state as exact-key identity creates a fresh
+				// context on every lap.
+				if fresh, _ := methodReceiverEntryValueIsFresh(values, p.ParamSlot, target.Ref, site.Call); fresh {
+					values = withoutMethodReceiverEntryValue(values, p.ParamSlot, target.Ref, site.Call)
+				}
+				facts = flow.BoundaryFactsDomain.Top()
+			}
 			key := NewKeyWithReferenceContext(
 				target.Ref,
 				references,
@@ -613,11 +661,11 @@ func (p ClosureEntryContextProjection) projectClosureRefs(out []Key, seen map[Ke
 
 func (p ClosureEntryContextProjection) closureEntryContextKey(ref FuncRef, closure flow.ClosureRef, point flow.PointState) Key {
 	entry := closure.EntryReferenceContext()
-	live := flow.ReferenceContextFromPoint(&point).CallableIdentity().ProjectSymbols(entry.RootSymbols())
+	live := flow.ReferenceContextWithStaticMembersFromPoint(&point).ProjectSymbols(entry.RootSymbols())
 	if p.ReferencePaths != nil {
 		projection := p.ReferencePaths(ref)
 		entry = entry.ProjectPaths(projection)
-		live = flow.ReferenceContextFromPoint(&point).CallableIdentity().ProjectPaths(projection)
+		live = flow.ReferenceContextWithStaticMembersFromPoint(&point).ProjectPaths(projection)
 	}
 	return NewKeyWithReferenceContext(
 		ref,

@@ -115,6 +115,49 @@ func TestDiagnosticContextFrontierUsesFallbackOnlyForUncalledFunctions(t *testin
 	}
 }
 
+func TestDiagnosticContextFrontierDropsWeakerClosureContext(t *testing.T) {
+	root := FuncRef{GraphID: 1}
+	closure := FuncRef{GraphID: 2}
+	weak := NewKeyWithReferenceContext(
+		closure,
+		flow.ReferenceContextOf(
+			flow.CaptureCellsDomain.Bottom(),
+			flow.FunctionRefsDomain.Bottom(),
+			flow.ClosureRefsDomain.Bottom(),
+		),
+		nil,
+		flow.BoundaryFactsDomain.Top(),
+	)
+	strong := NewKeyWithReferenceContext(
+		closure,
+		flow.ReferenceContextOf(
+			flow.CaptureCellsOf([]flow.CaptureCell{{Symbol: 10, Value: product.FromType(typ.String)}}),
+			flow.FunctionRefsDomain.Bottom(),
+			flow.ClosureRefsDomain.Bottom(),
+		),
+		nil,
+		flow.BoundaryFactsDomain.Top(),
+	)
+
+	result := DiagnosticContextFrontier{
+		Root: root,
+		Refs: []FuncRef{root, closure},
+		Solve: func(Key) state.FunctionState {
+			return state.FunctionStateDomain.Bottom()
+		},
+		ProjectClosures: func(ref FuncRef, _ state.FunctionState) []Key {
+			if ref == root {
+				return []Key{weak, strong}
+			}
+			return nil
+		},
+	}.Build()
+
+	if got := result.Contexts[closure]; len(got) != 1 || got[0] != strong {
+		t.Fatalf("closure contexts = %+v, want only stronger context", got)
+	}
+}
+
 func TestDiagnosticContextFrontierPromotesFallbackDiscoveredCallContext(t *testing.T) {
 	root := FuncRef{GraphID: 1}
 	caller := FuncRef{GraphID: 2}

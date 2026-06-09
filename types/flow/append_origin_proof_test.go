@@ -158,6 +158,148 @@ func TestApplyAppendElementFieldOriginUseReplaysSourcesToDestinations(t *testing
 	}
 }
 
+func TestApplyAppendElementMutationUpdatesOriginDestinationElementFieldValue(t *testing.T) {
+	parentPath := constraint.NewPath(cfg.SymbolID(410), "static_data_sources")
+	sourceRoutesPath := constraint.NewPath(cfg.SymbolID(411), "source").Field("routes")
+	parent := testStableAddressPath(t, parentPath)
+	route := product.FromType(typ.NewRecord().Field("target_name", typ.String).Build())
+	sourceElement := product.FromType(typ.NewRecord().
+		Field("routes", typ.NewFreshArray()).
+		Build())
+	state := PointState{
+		Env: map[ValueKey]product.AbstractValue{
+			SymbolValueKey(parentPath.Symbol): product.AppendElement(product.FromType(typ.NewFreshArray()), sourceElement),
+		},
+	}
+	tx := AppendElementMutationTransaction{
+		Array:        testStableAddressPath(t, sourceRoutesPath),
+		ElementValue: route,
+		Destinations: []AppendOriginDestination{{
+			Array:       parent,
+			FieldPrefix: []constraint.Segment{{Kind: constraint.SegmentField, Name: "routes"}},
+		}},
+	}
+
+	if !ApplyAppendElementMutationTransaction(&state, tx) {
+		t.Fatal("ApplyAppendElementMutationTransaction reported no change")
+	}
+	updated, ok := PointFactsOf(state).AddressValue(parent)
+	if !ok {
+		t.Fatalf("parent array value missing: env=%v static=%s", state.Env, state.StaticMembers.Format())
+	}
+	elem, ok := product.IndexOf(updated, product.FromType(typ.Integer))
+	if !ok {
+		t.Fatalf("parent element missing from %v", updated.ProjectValue())
+	}
+	routes, ok := ProductMemberPathValue(elem, []constraint.Segment{{Kind: constraint.SegmentField, Name: "routes"}})
+	if !ok {
+		t.Fatalf("routes field missing from %v", elem.ProjectValue())
+	}
+	routeElem, ok := product.IndexOf(routes, product.FromType(typ.Integer))
+	routeElemType, _ := typ.SplitNilableFieldType(routeElem.ProjectValue())
+	if !ok || !typ.TypeEquals(routeElemType, route.ProjectValue()) {
+		t.Fatalf("routes = %v; routes element = %v/%v, want route record", routes.ProjectValue(), routeElem.ProjectValue(), ok)
+	}
+}
+
+func TestApplyAppendElementMutationPathUpdatesIteratorOriginDestinationFieldValue(t *testing.T) {
+	parentPath := constraint.NewPath(cfg.SymbolID(420), "static_data_sources")
+	sourcePath := constraint.NewPath(cfg.SymbolID(421), "source")
+	sourceRoutesPath := sourcePath.Field("routes")
+	parent := testStableAddressPath(t, parentPath)
+	source := testStableAddressPath(t, sourcePath)
+	route := product.FromType(typ.NewRecord().Field("target_name", typ.String).Build())
+	sourceElement := product.FromType(typ.NewRecord().
+		Field("routes", typ.NewFreshArray()).
+		Build())
+	state := PointState{
+		Env: map[ValueKey]product.AbstractValue{
+			SymbolValueKey(parentPath.Symbol): product.AppendElement(product.FromType(typ.NewFreshArray()), sourceElement),
+		},
+		ValueOrigins: ValueOriginFacts{}.
+			WithAddresses(source, parent, ValueOriginIndexedIterator, 1),
+	}
+
+	if !ApplyAppendElementMutationPathTransaction(&state, AppendElementMutationPathTransaction{
+		Footprint: access.WriteFootprint{
+			WritePath:         sourceRoutesPath,
+			ExactWritePath:    sourceRoutesPath,
+			HasExactWritePath: true,
+		},
+		ArrayPath:    sourceRoutesPath,
+		ElementValue: route,
+	}) {
+		t.Fatal("ApplyAppendElementMutationPathTransaction reported no change")
+	}
+	updated, ok := PointFactsOf(state).AddressValue(parent)
+	if !ok {
+		t.Fatalf("parent array value missing: env=%v static=%s", state.Env, state.StaticMembers.Format())
+	}
+	elem, ok := product.IndexOf(updated, product.FromType(typ.Integer))
+	if !ok {
+		t.Fatalf("parent element missing from %v", updated.ProjectValue())
+	}
+	routes, ok := ProductMemberPathValue(elem, []constraint.Segment{{Kind: constraint.SegmentField, Name: "routes"}})
+	if !ok {
+		t.Fatalf("routes field missing from %v", elem.ProjectValue())
+	}
+	routeElem, ok := product.IndexOf(routes, product.FromType(typ.Integer))
+	routeElemType, _ := typ.SplitNilableFieldType(routeElem.ProjectValue())
+	if !ok || !typ.TypeEquals(routeElemType, route.ProjectValue()) {
+		t.Fatalf("routes = %v; routes element = %v/%v, want route record", routes.ProjectValue(), routeElem.ProjectValue(), ok)
+	}
+}
+
+func TestApplyAppendElementMutationPathBuildsIteratorOriginDestinationWithoutBaseValue(t *testing.T) {
+	parentPath := constraint.NewPath(cfg.SymbolID(430), "static_data_sources")
+	sourcePath := constraint.NewPath(cfg.SymbolID(431), "source")
+	sourceRoutesPath := sourcePath.Field("routes")
+	parent := testStableAddressPath(t, parentPath)
+	source := testStableAddressPath(t, sourcePath)
+	route := product.FromType(typ.NewRecord().Field("target_name", typ.String).Build())
+	state := PointState{
+		ValueOrigins: ValueOriginFacts{}.
+			WithAddresses(source, parent, ValueOriginIndexedIterator, 1),
+	}
+	tx, ok := AppendElementMutationTransactionOfPath(state, AppendElementMutationPathTransaction{
+		Footprint: access.WriteFootprint{
+			WritePath:         sourceRoutesPath,
+			ExactWritePath:    sourceRoutesPath,
+			HasExactWritePath: true,
+		},
+		ArrayPath:    sourceRoutesPath,
+		ElementValue: route,
+	})
+	if !ok {
+		t.Fatal("AppendElementMutationTransactionOfPath failed")
+	}
+	plans := appendElementDestinationValueUpdatePlans(state, tx.Destinations, tx.ElementValue)
+	if len(plans) != 1 {
+		t.Fatalf("plans = %#v, want one parent replay plan", plans)
+	}
+
+	if !ApplyAppendElementMutationTransaction(&state, tx) {
+		t.Fatal("ApplyAppendElementMutationPathTransaction reported no change")
+	}
+	updated, ok := PointFactsOf(state).AddressValue(parent)
+	if !ok {
+		t.Fatalf("parent array value missing: env=%v static=%s", state.Env, state.StaticMembers.Format())
+	}
+	elem, ok := product.IndexOf(updated, product.FromType(typ.Integer))
+	if !ok {
+		t.Fatalf("parent element missing from %v", updated.ProjectValue())
+	}
+	routes, ok := ProductMemberPathValue(elem, []constraint.Segment{{Kind: constraint.SegmentField, Name: "routes"}})
+	if !ok {
+		t.Fatalf("routes field missing from %v; parent=%v", elem.ProjectValue(), updated.ProjectValue())
+	}
+	routeElem, ok := product.IndexOf(routes, product.FromType(typ.Integer))
+	routeElemType, _ := typ.SplitNilableFieldType(routeElem.ProjectValue())
+	if !ok || !typ.TypeEquals(routeElemType, route.ProjectValue()) {
+		t.Fatalf("routes = %v; routes element = %v/%v, want route record", routes.ProjectValue(), routeElem.ProjectValue(), ok)
+	}
+}
+
 func TestApplyAppendElementFieldOriginUseIgnoresLegacyStoredSource(t *testing.T) {
 	arrayPath := constraint.NewPath(cfg.SymbolID(211), "out")
 	sourcePath := constraint.NewPath(cfg.SymbolID(212), "source")

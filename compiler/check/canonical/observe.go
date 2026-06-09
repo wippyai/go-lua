@@ -361,7 +361,7 @@ type canonicalFacts struct {
 // FunctionState. The per-point in-state it reads is the solver-derived
 // state.FunctionState.InPoints, so the graph the solve ran over is not
 // re-consulted here (the in-state is read, never re-derived).
-func (d *Driver) newCanonicalFacts(g *cfg.Graph, fs state.FunctionState, obsCtx functionObservationContext, prog *program, queries *summary.Queries, ctx *db.QueryContext, _ api.FlowEvidence) *canonicalFacts {
+func (d *Driver) newCanonicalFacts(g *cfg.Graph, fs state.FunctionState, obsCtx functionObservationContext, prog *program, reader summary.Reader, _ api.FlowEvidence) *canonicalFacts {
 	unannotated := paramboundary.UnannotatedRootsFromFacts(obsCtx.paramSyms, obsCtx.declared, obsCtx.annotated)
 	var consts map[cfg.SymbolID]map[cfg.Point]*flow.ConstValue
 	if prog != nil && g != nil {
@@ -369,7 +369,7 @@ func (d *Driver) newCanonicalFacts(g *cfg.Graph, fs state.FunctionState, obsCtx 
 			consts = prog.inputs[ref].ConstValues
 		}
 	}
-	callables := newCallableProjector(d, prog, queries, ctx)
+	callables := newCallableProjector(d, prog, reader)
 	return &canonicalFacts{
 		graph:             g,
 		state:             fs,
@@ -381,7 +381,7 @@ func (d *Driver) newCanonicalFacts(g *cfg.Graph, fs state.FunctionState, obsCtx 
 		paths:             newPathProjector(fs, unannotated, callables),
 		driver:            d,
 		program:           prog,
-		reader:            d.summaryReader(),
+		reader:            reader,
 	}
 }
 
@@ -394,10 +394,11 @@ func (f *canonicalFacts) CallReturnTypesAt(point cfg.Point, call *ast.FuncCallEx
 	if f == nil || f.driver == nil || f.program == nil || call == nil {
 		return nil, false
 	}
-	if values, ok := f.intrinsicCallReturnTypesAt(point, call); ok {
+	callPoint := f.callObservationPoint(point, call)
+	if values, ok := f.intrinsicCallReturnTypesAt(callPoint, call); ok {
 		return values, true
 	}
-	callCtx, ok := f.productCallContextAt(point, call)
+	callCtx, ok := f.productCallContextAt(callPoint, call)
 	if !ok {
 		return nil, false
 	}
@@ -419,6 +420,19 @@ func (f *canonicalFacts) CallReturnTypesAt(point cfg.Point, call *ast.FuncCallEx
 		return nil, false
 	}
 	return product.ProjectValuesOrUnknown(values), true
+}
+
+func (f *canonicalFacts) callObservationPoint(fallback cfg.Point, call *ast.FuncCallExpr) cfg.Point {
+	if f == nil || f.graph == nil || call == nil {
+		return fallback
+	}
+	out := fallback
+	f.graph.EachCallSite(func(point cfg.Point, info *cfg.CallInfo) {
+		if info != nil && info.Call == call {
+			out = point
+		}
+	})
+	return out
 }
 
 func (f *canonicalFacts) intrinsicCallReturnTypesAt(point cfg.Point, call *ast.FuncCallExpr) ([]typ.Type, bool) {
@@ -691,10 +705,11 @@ func (f *canonicalFacts) ObserveProductPathValue(q flow.ProductPathObservationQu
 	if q.Path.IsEmpty() || q.Path.Symbol == 0 {
 		return flow.ProductValue{State: flow.StateUnknown}
 	}
-	if len(q.Path.Segments) == 0 {
-		return f.RefinedValueAt(q.Point, q.Path.Symbol)
+	paths := f.paths
+	if q.View == flow.PathReadPost {
+		paths = paths.WithPostState()
 	}
-	return f.RefinedPathValueAt(q.Point, q.Path)
+	return paths.RefinedPathValueAt(q.Point, q.Path)
 }
 
 // ObserveChildPaths exposes finite child path facts already materialized in the

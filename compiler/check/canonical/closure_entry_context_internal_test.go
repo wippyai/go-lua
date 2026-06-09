@@ -58,7 +58,7 @@ end
 		if !ok {
 			t.Fatalf("inner closure graph %d has no canonical ref", result.Graph.ID())
 		}
-		contexts := driver.diagnosticContexts[ref]
+		contexts := driver.diagnostics.Contexts[ref]
 		if len(contexts) == 0 {
 			t.Fatalf("inner closure has no diagnostic contexts; diagnostics=%v", sess.DiagnosticsSlice())
 		}
@@ -120,7 +120,7 @@ return M
 		if !ok {
 			t.Fatalf("returned closure graph %d has no canonical ref", result.Graph.ID())
 		}
-		contexts := driver.diagnosticContexts[ref]
+		contexts := driver.diagnostics.Contexts[ref]
 		if got := result.NarrowedTypeAt(result.Graph.Entry(), constraint.NewPath(tSym, "T")); typeHasField(got, "render") {
 			return
 		}
@@ -274,12 +274,12 @@ return client
 		if !ok {
 			t.Fatalf("parse_error_response graph %d has no canonical ref", result.Graph.ID())
 		}
-		contexts := driver.diagnosticContexts[ref]
+		contexts := driver.diagnostics.Contexts[ref]
 		if len(contexts) == 0 {
 			t.Fatalf("parse_error_response has no diagnostic contexts; diagnostics=%v", sess.DiagnosticsSlice())
 		}
 		for _, key := range contexts {
-			fs, ok := driver.diagnosticStates[key]
+			fs, ok := driver.diagnostics.States[key]
 			if !ok {
 				t.Fatalf("parse_error_response context has no solved diagnostic state; contexts=%v diagnostics=%v", contexts, sess.DiagnosticsSlice())
 			}
@@ -304,7 +304,7 @@ func testRefByGraphID(driver *Driver, graphID uint64) (summary.FuncRef, bool) {
 	if driver == nil || graphID == 0 {
 		return summary.FuncRef{}, false
 	}
-	for _, ref := range driver.refs {
+	for _, ref := range driver.artifact.Refs {
 		if ref.GraphID == graphID {
 			return ref, true
 		}
@@ -404,8 +404,8 @@ func describeSummaryCaptureReferences(driver *Driver) string {
 		return "[]"
 	}
 	var parts []string
-	for _, ref := range driver.refs {
-		sum, ok := driver.summaries[ref]
+	for _, ref := range driver.artifact.Refs {
+		sum, ok := driver.artifact.Summaries[ref]
 		if !ok {
 			continue
 		}

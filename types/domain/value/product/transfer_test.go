@@ -573,6 +573,212 @@ func TestJoinConditionalAppendKeepsFreshArrayElementShape(t *testing.T) {
 	}
 }
 
+func TestJoinLoopCarriedFieldAppendKeepsUpdatedNestedArrayElement(t *testing.T) {
+	initialElem := typ.NewRecord().
+		Field("data", typ.NewRecord().Field("value", typ.Integer).Build()).
+		Field("routes", typ.NewFreshArray()).
+		Build()
+	routeElem := typ.NewRecord().
+		Field("target_name", typ.String).
+		Field("input_key", typ.String).
+		Build()
+	updatedElem := typ.NewRecord().
+		Field("routes", typ.NewArray(routeElem)).
+		Build()
+
+	got := Join(
+		AppendElement(FromType(typ.NewFreshArray()), FromType(initialElem)),
+		AppendElement(FromType(typ.NewFreshArray()), FromType(updatedElem)),
+	).ProjectValue()
+	arr, ok := unwrap.Alias(got).(*typ.Array)
+	if !ok {
+		t.Fatalf("joined value = %T %[1]v, want array", got)
+	}
+	elem, ok := unwrap.Alias(arr.Element).(*typ.Record)
+	if !ok {
+		t.Fatalf("joined element = %T %[1]v, want record", arr.Element)
+	}
+	routesField := elem.GetField("routes")
+	if routesField == nil {
+		t.Fatalf("joined element missing routes: %v", elem)
+	}
+	routes, ok := unwrap.Alias(routesField.Type).(*typ.Array)
+	if !ok {
+		t.Fatalf("routes field = %T %[1]v, want array", routesField.Type)
+	}
+	if route, ok := unwrap.Alias(routes.Element).(*typ.Record); !ok || route.GetField("target_name") == nil {
+		t.Fatalf("routes element = %T %[1]v, want route record", routes.Element)
+	}
+}
+
+func TestJoinLoopCarriedFieldAppendKeepsUpdatedNestedArrayElementWithOpenReplay(t *testing.T) {
+	initialElem := typ.NewRecord().
+		Field("data", typ.NewRecord().Field("value", typ.Integer).Build()).
+		Field("routes", typ.NewFreshArray()).
+		Build()
+	routeElem := typ.NewRecord().
+		Field("target_name", typ.String).
+		Field("input_key", typ.String).
+		Build()
+	updatedElem := typ.NewRecord().
+		SetOpen(true).
+		Field("routes", typ.NewArray(routeElem)).
+		Build()
+
+	got := Join(
+		AppendElement(FromType(typ.NewFreshArray()), FromType(initialElem)),
+		AppendElement(FromType(typ.NewFreshArray()), FromType(updatedElem)),
+	).ProjectValue()
+	arr, ok := unwrap.Alias(got).(*typ.Array)
+	if !ok {
+		t.Fatalf("joined value = %T %[1]v, want array", got)
+	}
+	elem, ok := unwrap.Alias(arr.Element).(*typ.Record)
+	if !ok {
+		t.Fatalf("joined element = %T %[1]v, want record", arr.Element)
+	}
+	routesField := elem.GetField("routes")
+	if routesField == nil {
+		t.Fatalf("joined element missing routes: %v", elem)
+	}
+	routes, ok := unwrap.Alias(routesField.Type).(*typ.Array)
+	if !ok {
+		t.Fatalf("routes field = %T %[1]v, want array", routesField.Type)
+	}
+	if route, ok := unwrap.Alias(routes.Element).(*typ.Record); !ok || route.GetField("target_name") == nil {
+		t.Fatalf("routes element = %T %[1]v, want route record", routes.Element)
+	}
+}
+
+func TestJoinLoopCarriedArrayElementKeepsOpenReplayFieldRefinement(t *testing.T) {
+	initialElem := typ.NewRecord().
+		Field("data", typ.NewRecord().Field("value", typ.Integer).Build()).
+		Field("routes", typ.NewFreshArray()).
+		Build()
+	routeElem := typ.NewRecord().
+		Field("target_name", typ.String).
+		Field("input_key", typ.String).
+		Build()
+	replayedElem := typ.NewRecord().
+		SetOpen(true).
+		Field("routes", typ.NewArray(routeElem)).
+		Build()
+
+	got := Join(
+		FromType(typ.NewArray(initialElem)),
+		FromType(typ.NewArray(replayedElem)),
+	).ProjectValue()
+	reverse := Join(
+		FromType(typ.NewArray(replayedElem)),
+		FromType(typ.NewArray(initialElem)),
+	).ProjectValue()
+	if !value.SameConvergedFact(got, reverse) {
+		t.Fatalf("join is order-sensitive: forward=%v reverse=%v", got, reverse)
+	}
+	initial := FromType(typ.NewArray(initialElem))
+	replayed := FromType(typ.NewArray(replayedElem))
+	if Domain.LessOrEq(replayed, initial) {
+		t.Fatalf("replayed route evidence must not be below initial empty-routes evidence: replayed=%v initial=%v", replayed.ProjectValue(), initial.ProjectValue())
+	}
+	arr, ok := unwrap.Alias(got).(*typ.Array)
+	if !ok {
+		t.Fatalf("joined value = %T %[1]v, want array", got)
+	}
+	elem, ok := unwrap.Alias(arr.Element).(*typ.Record)
+	if !ok {
+		t.Fatalf("joined element = %T %[1]v, want record", arr.Element)
+	}
+	routesField := elem.GetField("routes")
+	if routesField == nil {
+		t.Fatalf("joined element missing routes: %v", elem)
+	}
+	routes, ok := unwrap.Alias(routesField.Type).(*typ.Array)
+	if !ok {
+		t.Fatalf("routes field = %T %[1]v, want array", routesField.Type)
+	}
+	if route, ok := unwrap.Alias(routes.Element).(*typ.Record); !ok || route.GetField("target_name") == nil {
+		t.Fatalf("routes element = %T %[1]v, want route record", routes.Element)
+	}
+}
+
+func TestWidenLoopCarriedArrayElementKeepsOpenReplayFieldRefinement(t *testing.T) {
+	initialElem := typ.NewRecord().
+		Field("data", typ.NewRecord().Field("value", typ.Integer).Build()).
+		Field("routes", typ.NewFreshArray()).
+		Build()
+	routeElem := typ.NewRecord().
+		Field("target_name", typ.String).
+		Field("input_key", typ.String).
+		Build()
+	replayedElem := typ.NewRecord().
+		SetOpen(true).
+		Field("routes", typ.NewArray(routeElem)).
+		Build()
+
+	got := Widen(
+		FromType(typ.NewArray(initialElem)),
+		FromType(typ.NewArray(replayedElem)),
+	).ProjectValue()
+	arr, ok := unwrap.Alias(got).(*typ.Array)
+	if !ok {
+		t.Fatalf("widened value = %T %[1]v, want array", got)
+	}
+	elem, ok := unwrap.Alias(arr.Element).(*typ.Record)
+	if !ok {
+		t.Fatalf("widened element = %T %[1]v, want record", arr.Element)
+	}
+	routesField := elem.GetField("routes")
+	if routesField == nil {
+		t.Fatalf("widened element missing routes: %v", elem)
+	}
+	routes, ok := unwrap.Alias(routesField.Type).(*typ.Array)
+	if !ok {
+		t.Fatalf("routes field = %T %[1]v, want array", routesField.Type)
+	}
+	if route, ok := unwrap.Alias(routes.Element).(*typ.Record); !ok || route.GetField("target_name") == nil {
+		t.Fatalf("routes element = %T %[1]v, want route record", routes.Element)
+	}
+}
+
+func TestWidenLoopCarriedFieldAppendKeepsUpdatedNestedArrayElementWithOpenReplay(t *testing.T) {
+	initialElem := typ.NewRecord().
+		Field("data", typ.NewRecord().Field("value", typ.Integer).Build()).
+		Field("routes", typ.NewFreshArray()).
+		Build()
+	routeElem := typ.NewRecord().
+		Field("target_name", typ.String).
+		Field("input_key", typ.String).
+		Build()
+	updatedElem := typ.NewRecord().
+		SetOpen(true).
+		Field("routes", typ.NewArray(routeElem)).
+		Build()
+
+	got := Widen(
+		AppendElement(FromType(typ.NewFreshArray()), FromType(initialElem)),
+		AppendElement(FromType(typ.NewFreshArray()), FromType(updatedElem)),
+	).ProjectValue()
+	arr, ok := unwrap.Alias(got).(*typ.Array)
+	if !ok {
+		t.Fatalf("widened value = %T %[1]v, want array", got)
+	}
+	elem, ok := unwrap.Alias(arr.Element).(*typ.Record)
+	if !ok {
+		t.Fatalf("widened element = %T %[1]v, want record", arr.Element)
+	}
+	routesField := elem.GetField("routes")
+	if routesField == nil {
+		t.Fatalf("widened element missing routes: %v", elem)
+	}
+	routes, ok := unwrap.Alias(routesField.Type).(*typ.Array)
+	if !ok {
+		t.Fatalf("routes field = %T %[1]v, want array", routesField.Type)
+	}
+	if route, ok := unwrap.Alias(routes.Element).(*typ.Record); !ok || route.GetField("target_name") == nil {
+		t.Fatalf("routes element = %T %[1]v, want route record", routes.Element)
+	}
+}
+
 func TestAppendElementCollapsesCompatibleCommandPayloads(t *testing.T) {
 	createData := typ.LiteralString("CREATE_DATA")
 	nodeInput := typ.LiteralString("NODE_INPUT")

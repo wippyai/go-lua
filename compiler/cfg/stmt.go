@@ -370,6 +370,8 @@ func (b *Builder) IfStmt(s *ast.IfStmt) {
 	if condNode := b.Cfg.Node(condEntry); condNode != nil && !conditionSplitsAcrossBranches(s.Condition) {
 		b.Cfg.Nodes[thenExit].CondVar = condNode.CondVar
 		b.Cfg.Nodes[thenExit].CondCheck = condNode.CondCheck
+		b.Cfg.Nodes[thenExit].CondOrigin = condEntry
+		b.Cfg.Nodes[thenExit].CondOriginSet = true
 	}
 
 	thenLive := b.CurrentLive
@@ -397,6 +399,8 @@ func (b *Builder) IfStmt(s *ast.IfStmt) {
 	if condNode := b.Cfg.Node(condEntry); condNode != nil && !conditionSplitsAcrossBranches(s.Condition) {
 		b.Cfg.Nodes[elseExit].CondVar = condNode.CondVar
 		b.Cfg.Nodes[elseExit].CondCheck = condNode.CondCheck
+		b.Cfg.Nodes[elseExit].CondOrigin = condEntry
+		b.Cfg.Nodes[elseExit].CondOriginSet = true
 	}
 
 	elseLive := b.CurrentLive

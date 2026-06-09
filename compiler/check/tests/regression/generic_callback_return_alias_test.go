@@ -152,6 +152,60 @@ end
 	}
 }
 
+func TestImportedGenericMapPreservesCallbackReturnAlias(t *testing.T) {
+	protocol := exportModule(t, "protocol", `
+type User = { id: string, retries: number }
+local M = {}
+M.User = User
+return M
+`)
+	resultMod := exportModule(t, "result", `
+type Result<T> = { ok: true, value: T } | { ok: false, error: string }
+local M = {}
+M.Result = Result
+function M.ok<T>(value: T): Result<T>
+	return { ok = true, value = value }
+end
+function M.err<T>(message: string): Result<T>
+	return { ok = false, error = message }
+end
+function M.map<T, U>(result: Result<T>, fn: (T) -> U): Result<U>
+	if result.ok then
+		return M.ok(fn(result.value))
+	end
+	return M.err(result.error)
+end
+return M
+`)
+
+	result := testutil.Check(`
+local protocol = require("protocol")
+local result = require("result")
+
+type UserResult = { ok: true, value: protocol.User } | { ok: false, error: string }
+
+local decoded: UserResult = {
+	ok = true,
+	value = {
+		id = "u1",
+		retries = 2,
+	},
+}
+
+local label = result.map(decoded, function(user: protocol.User)
+	return user.id .. ":" .. tostring(user.retries + 1)
+end)
+
+if label.ok then
+	local text: string = label.value
+end
+`, testutil.WithStdlib(), testutil.WithManifest("protocol", protocol), testutil.WithManifest("result", resultMod))
+
+	if result.HasError() {
+		t.Fatalf("imported generic map lost callback return alias: %v", testutil.ErrorMessages(result.Diagnostics))
+	}
+}
+
 const callbackArrayProtocolModule = `
 type Event = {
 	kind: "metric" | "log",

@@ -65,6 +65,7 @@ import (
 	"github.com/wippyai/go-lua/types/io"
 	"github.com/wippyai/go-lua/types/query/core"
 	"github.com/wippyai/go-lua/types/typ"
+	"github.com/wippyai/go-lua/types/typ/unwrap"
 )
 
 // Config supplies the canonical driver's dependencies.
@@ -112,16 +113,15 @@ type Driver struct {
 	// diagnostic bridge (declared returns and the per-function declared-type map).
 	resolver *resolve.Resolver
 
-	// refs and summaries are the result of the last Run: every module function in
-	// discovery order, and its converged interprocedural Summary. They are the
-	// seam to the diagnostic bridge (component 11b), which reads the converged
-	// per-function state rather than re-solving.
-	refs      []summary.FuncRef
-	summaries map[summary.FuncRef]summary.Summary
+	// artifact is the frozen result of the latest canonical solve. Post-solve
+	// bridge/export/diagnostic phases receive this value explicitly instead of
+	// consulting driver-owned phase flags.
+	artifact canonicalSolveArtifact
 
-	// states is the converged intraprocedural FunctionState per function, the
-	// per-point env the diagnostic bridge reads to derive point-local value types.
-	states map[summary.FuncRef]state.FunctionState
+	// diagnostics is the latest post-solve exact-observation artifact. It explains
+	// contexts and exact states discovered from the frozen Summary snapshot; it is
+	// not a semantic Summary producer.
+	diagnostics diagnosticObservationArtifact
 
 	// globalTypes is the normalized source-global value namespace admitted from
 	// Config.GlobalTypes. The raw string map is external configuration only.
@@ -188,26 +188,25 @@ type Driver struct {
 	// after it.
 	activeQueries *summary.Queries
 
-	// snapshotSummaryReads is set only for post-solve phases that must not demand
-	// additional summary keys, such as compatibility fact publication. Diagnostic
-	// bridge observation uses the same snapshot, including canonical exact keys the
-	// recursive query already solved; it must not demand new Summary cells.
-	snapshotSummaryReads bool
+	// activeSummaryReader is the explicit summary read capability for post-solve
+	// observers. Live solve readers are rebuilt from activeQueries and the current
+	// activeCtx because recursive query evaluation swaps activeCtx through
+	// program.WithSolveContext.
+	activeSummaryReader    summary.Reader
+	activeSummaryReaderSet bool
+}
 
-	// canonicalSummarySnapshot is the read-only post-solve view of Summary facts
-	// produced by the canonical query. It is not a diagnostic overlay: diagnostics
-	// may read it for explanations/observations, but cannot publish or merge it.
-	canonicalSummarySnapshot summary.CanonicalSummarySnapshot
+type canonicalSolveArtifact struct {
+	Refs      []summary.FuncRef
+	States    map[summary.FuncRef]state.FunctionState
+	Summaries map[summary.FuncRef]summary.Summary
+	Snapshot  summary.CanonicalSummarySnapshot
+}
 
-	// diagnosticContexts records summary contexts observed by the summary-owned
-	// DiagnosticContextFrontier. The bridge uses these contexts, not an artificial
-	// bottom/default context, when building per-function diagnostic state.
-	diagnosticContexts map[summary.FuncRef][]summary.Key
-
-	// diagnosticStates caches the exact observer states solved while discovering
-	// diagnosticContexts so bridge materialization does not replay identical local
-	// equation solves for the same summary.Key.
-	diagnosticStates map[summary.Key]state.FunctionState
+type diagnosticObservationArtifact struct {
+	Contexts       map[summary.FuncRef][]summary.Key
+	States         map[summary.Key]state.FunctionState
+	FunctionStates map[summary.FuncRef]state.FunctionState
 }
 
 // NewDriver constructs a canonical driver with the given configuration.
@@ -222,33 +221,41 @@ func NewDriver(cfg Config) *Driver {
 // FuncRefs returns the module functions analyzed by the last Run, in discovery
 // order (root first, then nested functions in CFG point order).
 func (d *Driver) FuncRefs() []summary.FuncRef {
-	return append([]summary.FuncRef(nil), d.refs...)
+	return append([]summary.FuncRef(nil), d.artifact.Refs...)
 }
 
 // SummaryFor returns the converged interprocedural Summary computed for ref by
 // the last Run, and whether ref was analyzed.
 func (d *Driver) SummaryFor(ref summary.FuncRef) (summary.Summary, bool) {
-	s, ok := d.summaries[ref]
+	s, ok := d.artifact.Summaries[ref]
 	return s, ok
 }
 
-func (d *Driver) summaryReader() summary.Reader {
+func (d *Driver) activeReader() summary.Reader {
 	if d == nil {
 		return summary.NewReader(nil, nil, nil)
 	}
-	if d.snapshotSummaryReads {
-		return summary.NewSnapshotReader(d.canonicalSummarySnapshot)
+	if d.activeSummaryReaderSet {
+		return d.activeSummaryReader
 	}
-	return summary.NewReader(d.activeQueries, d.activeCtx, d.summaries)
+	if d.activeQueries != nil && d.activeCtx != nil {
+		return summary.NewReader(d.activeQueries, d.activeCtx, d.artifact.Summaries)
+	}
+	return d.activeSummaryReader
 }
 
-func (d *Driver) withSnapshotSummaryReads(run func()) {
+func (d *Driver) withActiveSummaryReader(reader summary.Reader, run func()) {
 	if d == nil || run == nil {
 		return
 	}
-	prev := d.snapshotSummaryReads
-	d.snapshotSummaryReads = true
-	defer func() { d.snapshotSummaryReads = prev }()
+	prev := d.activeSummaryReader
+	prevSet := d.activeSummaryReaderSet
+	d.activeSummaryReader = reader
+	d.activeSummaryReaderSet = true
+	defer func() {
+		d.activeSummaryReader = prev
+		d.activeSummaryReaderSet = prevSet
+	}()
 	run()
 }
 
@@ -336,46 +343,59 @@ func (d *Driver) Run(sess api.AnalysisSession, chunk []ast.Stmt) {
 	// recursive or self-recursive cluster converges from the bottom seed via
 	// Summary widening. Per-point diagnostic state is observed afterward by an
 	// exact local solve over those converged dependencies.
-	d.refs = prog.refs
 	// The per-node transfer's call typing resolves callees against the fully built
 	// program and runs the call pipeline against this run's query context. Expose
 	// them for the solve below, then clear them when the run completes.
 	d.activeProgram = prog
 	d.activeCtx = sess.Context()
 	d.activeQueries = queries
-	d.diagnosticContexts = make(map[summary.FuncRef][]summary.Key)
-	d.diagnosticStates = make(map[summary.Key]state.FunctionState)
-	d.canonicalSummarySnapshot = summary.CanonicalSummarySnapshot{}
+	d.artifact = canonicalSolveArtifact{}
+	d.diagnostics = diagnosticObservationArtifact{}
 	defer func() {
 		d.activeProgram = nil
 		d.activeCtx = nil
 		d.activeQueries = nil
+		d.activeSummaryReader = summary.Reader{}
+		d.activeSummaryReaderSet = false
 		d.moduleAliases = nil
 		d.moduleBindings = nil
 	}()
-	d.solvePass(sess, prog, queries)
-	d.withSnapshotSummaryReads(func() {
-		d.installFunctionFactProjection(sess, prog)
-		d.bridgeResults(sess, prog, queries)
+	artifact := d.solvePass(sess, prog, queries)
+	d.artifact = artifact
+	snapshotReader := summary.NewSnapshotReader(artifact.Snapshot)
+	var diagnostics diagnosticObservationArtifact
+	d.withActiveSummaryReader(snapshotReader, func() {
+		diagnostics = d.buildDiagnosticObservationArtifact(sess, prog, queries, artifact)
+		diagnostics.FunctionStates = d.diagnosticFunctionStates(sess, prog, queries, artifact, &diagnostics)
+	})
+	d.artifact = artifact
+	d.diagnostics = diagnostics
+	d.withActiveSummaryReader(snapshotReader, func() {
+		d.installFunctionFactProjection(sess, prog, artifact)
+		d.bridgeResults(sess, prog, artifact, diagnostics)
 	})
 }
 
 // solvePass demands every module summary from the canonical product equation
-// system, filling d.summaries / d.states from the converged query evaluation.
+// system and returns a frozen summary snapshot for post-solve consumers.
 // The summary solve query is the implementation decomposition for the point,
 // demand, entry, and summary cells; it is not a post-solve precision pass.
-func (d *Driver) solvePass(sess api.AnalysisSession, prog *program, queries *summary.Queries) {
-	d.summaries = make(map[summary.FuncRef]summary.Summary, len(prog.refs))
-	d.states = make(map[summary.FuncRef]state.FunctionState, len(prog.refs))
+func (d *Driver) solvePass(sess api.AnalysisSession, prog *program, queries *summary.Queries) canonicalSolveArtifact {
+	artifact := canonicalSolveArtifact{
+		Refs:      append([]summary.FuncRef(nil), prog.refs...),
+		States:    make(map[summary.FuncRef]state.FunctionState, len(prog.refs)),
+		Summaries: make(map[summary.FuncRef]summary.Summary, len(prog.refs)),
+	}
 	for _, ref := range prog.refs {
-		d.summaries[ref] = queries.Summarize(sess.Context(), ref)
+		artifact.Summaries[ref] = queries.Summarize(sess.Context(), ref)
+		artifact.States[ref] = state.CloneFunctionState(queries.Intra(sess.Context(), ref))
 	}
 	rootRef, _ := prog.refByFunc(sess.RootFuncNode())
 	observed := summary.SelectPostWidenObservationRefs(summary.PostWidenObservationInput{
 		Refs: prog.refs,
 		Root: rootRef,
 		Summary: func(ref summary.FuncRef) summary.Summary {
-			return d.summaries[ref]
+			return artifact.Summaries[ref]
 		},
 		Graph: func(ref summary.FuncRef) *cfg.Graph {
 			return prog.Graph(ref)
@@ -391,22 +411,23 @@ func (d *Driver) solvePass(sess api.AnalysisSession, prog *program, queries *sum
 		},
 	})
 	for _, ref := range observed {
-		d.summaries[ref] = queries.ObservedSummary(sess.Context(), ref)
+		artifact.Summaries[ref] = queries.ObservedSummary(sess.Context(), ref)
 	}
-	d.canonicalSummarySnapshot = queries.CanonicalSummarySnapshot(sess.Context(), d.summaries)
-	if rootRef, ok := prog.refByFunc(sess.RootFuncNode()); ok {
-		d.withSnapshotSummaryReads(func() {
-			d.buildDiagnosticContexts(sess, prog, queries, rootRef)
-		})
-	}
+	artifact.Snapshot = queries.CanonicalSummarySnapshot(sess.Context(), artifact.Summaries)
+	return artifact
+}
+
+func (d *Driver) diagnosticFunctionStates(sess api.AnalysisSession, prog *program, queries *summary.Queries, artifact canonicalSolveArtifact, diagnostics *diagnosticObservationArtifact) map[summary.FuncRef]state.FunctionState {
+	states := make(map[summary.FuncRef]state.FunctionState, len(prog.refs))
 	for _, ref := range prog.refs {
 		// The converged per-point state is an exact observer over the already-solved
 		// Summary dependencies, not a second interprocedural fixed point. Diagnostics
 		// observe the same aggregate entry-value context that Summary.EntryValues uses,
 		// so local helpers are checked under their solved caller-provided entry facts
 		// instead of an artificial bottom/default call context.
-		d.states[ref] = d.diagnosticState(sess, prog, queries, ref)
+		states[ref] = d.diagnosticState(sess, prog, queries, artifact, diagnostics, ref)
 	}
+	return states
 }
 
 func (d *Driver) registerStoreGraphParents(sess api.AnalysisSession, prog *program) {
@@ -435,7 +456,7 @@ func (d *Driver) registerStoreGraphParents(sess api.AnalysisSession, prog *progr
 	}
 }
 
-func (d *Driver) installFunctionFactProjection(sess api.AnalysisSession, prog *program) {
+func (d *Driver) installFunctionFactProjection(sess api.AnalysisSession, prog *program, artifact canonicalSolveArtifact) {
 	if d == nil || sess == nil || prog == nil {
 		return
 	}
@@ -443,11 +464,11 @@ func (d *Driver) installFunctionFactProjection(sess api.AnalysisSession, prog *p
 	if store == nil {
 		return
 	}
-	projection := d.canonicalFunctionFactProjection(prog, store)
+	projection := d.canonicalFunctionFactProjection(prog, store, artifact)
 	store.SetCanonicalFunctionFactsProjection(projection)
 }
 
-func (d *Driver) canonicalFunctionFactProjection(prog *program, store api.CanonicalStore) map[api.GraphKey]api.FunctionFacts {
+func (d *Driver) canonicalFunctionFactProjection(prog *program, store api.CanonicalStore, artifact canonicalSolveArtifact) map[api.GraphKey]api.FunctionFacts {
 	if d == nil || prog == nil || store == nil {
 		return nil
 	}
@@ -457,7 +478,7 @@ func (d *Driver) canonicalFunctionFactProjection(prog *program, store api.Canoni
 		if len(symbols) == 0 {
 			continue
 		}
-		sum, ok := d.summaries[ref]
+		sum, ok := artifact.Summaries[ref]
 		if !ok {
 			continue
 		}
@@ -531,18 +552,21 @@ func contractTypeVector(contracts paramevidence.Contracts, minLen int) []typ.Typ
 	return out
 }
 
-func (d *Driver) diagnosticState(sess api.AnalysisSession, prog *program, queries *summary.Queries, ref summary.FuncRef) state.FunctionState {
+func (d *Driver) diagnosticState(sess api.AnalysisSession, prog *program, queries *summary.Queries, artifact canonicalSolveArtifact, diagnostics *diagnosticObservationArtifact, ref summary.FuncRef) state.FunctionState {
 	if sess == nil || prog == nil || queries == nil {
 		return state.FunctionStateDomain.Bottom()
 	}
-	contexts := d.diagnosticContexts[ref]
+	var contexts []summary.Key
+	if diagnostics != nil {
+		contexts = diagnostics.Contexts[ref]
+	}
 	if len(contexts) == 0 {
-		reader := summary.NewSnapshotReader(d.canonicalSummarySnapshot)
+		reader := summary.NewSnapshotReader(artifact.Snapshot)
 		values := prog.EntryValues(ref, reader)
 		if len(values) != 0 {
-			return d.observeDiagnosticIntra(sess, queries, summary.NewDefaultKey(ref, values))
+			return state.CloneFunctionState(d.observeDiagnosticIntra(sess, queries, summary.NewDefaultKey(ref, values)))
 		}
-		return d.observeDiagnosticIntra(sess, queries, summary.NewDefaultKey(ref, nil))
+		return state.CloneFunctionState(d.observeDiagnosticIntra(sess, queries, summary.NewDefaultKey(ref, nil)))
 	}
 	out := state.FunctionStateDomain.Bottom()
 	for _, key := range contexts {
@@ -550,18 +574,25 @@ func (d *Driver) diagnosticState(sess api.AnalysisSession, prog *program, querie
 		// snapshot, including exact keys the Summary query actually demanded. This
 		// keeps diagnostics precise without creating or publishing a second Summary.
 		fs := d.observeDiagnosticIntra(sess, queries, key)
-		if d.diagnosticStates == nil {
-			d.diagnosticStates = make(map[summary.Key]state.FunctionState)
+		frozen := state.CloneFunctionState(fs)
+		if diagnostics != nil {
+			if diagnostics.States == nil {
+				diagnostics.States = make(map[summary.Key]state.FunctionState)
+			}
+			diagnostics.States[key] = frozen
 		}
-		d.diagnosticStates[key] = fs
-		out = joinDiagnosticFunctionState(out, fs)
+		out = joinDiagnosticFunctionState(out, frozen)
 	}
-	return out
+	return state.CloneFunctionState(out)
 }
 
-func (d *Driver) buildDiagnosticContexts(sess api.AnalysisSession, prog *program, queries *summary.Queries, root summary.FuncRef) {
+func (d *Driver) buildDiagnosticObservationArtifact(sess api.AnalysisSession, prog *program, queries *summary.Queries, artifact canonicalSolveArtifact) diagnosticObservationArtifact {
 	if d == nil || sess == nil || prog == nil || queries == nil {
-		return
+		return diagnosticObservationArtifact{}
+	}
+	root, ok := prog.refByFunc(sess.RootFuncNode())
+	if !ok {
+		return diagnosticObservationArtifact{}
 	}
 	result := summary.DiagnosticContextFrontier{
 		Root: root,
@@ -570,7 +601,7 @@ func (d *Driver) buildDiagnosticContexts(sess api.AnalysisSession, prog *program
 			return d.validDiagnosticContext(prog, key)
 		},
 		DefaultKey: func(ref summary.FuncRef) summary.Key {
-			return d.defaultDiagnosticKey(prog, ref)
+			return d.defaultDiagnosticKey(prog, artifact, ref)
 		},
 		Solve: func(key summary.Key) state.FunctionState {
 			return d.observeDiagnosticIntra(sess, queries, key)
@@ -582,8 +613,21 @@ func (d *Driver) buildDiagnosticContexts(sess api.AnalysisSession, prog *program
 			return d.projectDiagnosticClosureContexts(prog, ref, fs)
 		},
 	}.Build()
-	d.diagnosticContexts = result.Contexts
-	d.diagnosticStates = result.States
+	return diagnosticObservationArtifact{
+		Contexts: result.Contexts,
+		States:   cloneDiagnosticStates(result.States),
+	}
+}
+
+func cloneDiagnosticStates(in map[summary.Key]state.FunctionState) map[summary.Key]state.FunctionState {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make(map[summary.Key]state.FunctionState, len(in))
+	for key, fs := range in {
+		out[key] = state.CloneFunctionState(fs)
+	}
+	return out
 }
 
 func (d *Driver) observeDiagnosticIntra(sess api.AnalysisSession, queries *summary.Queries, key summary.Key) state.FunctionState {
@@ -597,11 +641,11 @@ func (d *Driver) validDiagnosticContext(prog *program, key summary.Key) bool {
 	return d != nil && prog != nil && prog.Graph(key.Ref) != nil
 }
 
-func (d *Driver) defaultDiagnosticKey(prog *program, ref summary.FuncRef) summary.Key {
+func (d *Driver) defaultDiagnosticKey(prog *program, artifact canonicalSolveArtifact, ref summary.FuncRef) summary.Key {
 	if d == nil || prog == nil {
 		return summary.NewDefaultKey(ref, nil)
 	}
-	reader := summary.NewSnapshotReader(d.canonicalSummarySnapshot)
+	reader := summary.NewSnapshotReader(artifact.Snapshot)
 	values := prog.EntryValues(ref, reader)
 	if len(values) != 0 {
 		return summary.NewDefaultKey(ref, values)
@@ -613,46 +657,19 @@ func (d *Driver) projectDiagnosticCallContexts(prog *program, ref summary.FuncRe
 	if d == nil || prog == nil {
 		return nil
 	}
-	return d.normalizeDiagnosticKeys(prog.ProjectCallEntryContextKeys(ref, fs))
+	return prog.ProjectCallEntryContextKeys(ref, fs)
 }
 
 func (d *Driver) projectDiagnosticClosureContexts(prog *program, ref summary.FuncRef, fs state.FunctionState) []summary.Key {
 	if d == nil || prog == nil {
 		return nil
 	}
-	return d.normalizeDiagnosticKeys(summary.ClosureEntryContextProjection{
+	return summary.ClosureEntryContextProjection{
 		State: fs,
 		ReferencePaths: func(callee summary.FuncRef) flow.ReferencePathProjection {
 			return prog.referenceProjection(callee)
 		},
-	}.ProjectKeys())
-}
-
-func (d *Driver) normalizeDiagnosticKeys(keys []summary.Key) []summary.Key {
-	if len(keys) == 0 {
-		return nil
-	}
-	out := keys[:0]
-	for _, key := range keys {
-		out = append(out, d.normalizeSnapshotSummaryKey(key))
-	}
-	return out
-}
-
-func (d *Driver) normalizeSnapshotSummaryKey(key summary.Key) summary.Key {
-	if d == nil || d.activeProgram == nil || len(key.Values.Values()) != 0 || key.Facts.Facts().HasProof() {
-		return key
-	}
-	lexical := d.activeProgram.CaptureEntryReferences(key.Ref, func(dep summary.FuncRef) flow.ReferenceContext {
-		if sum, ok := d.canonicalSummarySnapshot.SummaryForRef(dep); ok {
-			return sum.CaptureReferences
-		}
-		return flow.ReferenceContextBottom()
-	})
-	if flow.ReferenceContextDomain.Equal(key.References.Context(), lexical) {
-		return summary.NewDefaultKey(key.Ref, nil)
-	}
-	return key
+	}.ProjectKeys()
 }
 
 func joinDiagnosticFunctionState(a, b state.FunctionState) state.FunctionState {
@@ -681,7 +698,7 @@ func cloneInPoints(in map[cfg.Point]flow.PointState) map[cfg.Point]flow.PointSta
 	}
 	out := make(map[cfg.Point]flow.PointState, len(in))
 	for p, ps := range in {
-		out[p] = ps
+		out[p] = flow.ClonePointState(ps)
 	}
 	return out
 }
@@ -697,17 +714,17 @@ func cloneInPoints(in map[cfg.Point]flow.PointState) map[cfg.Point]flow.PointSta
 // can no-op when the bridge defaults a fact it reads, or it can flag an unknown
 // when the observation surface has not yet received the per-point value fact it
 // needs.
-func (d *Driver) bridgeResults(sess api.AnalysisSession, prog *program, queries *summary.Queries) {
+func (d *Driver) bridgeResults(sess api.AnalysisSession, prog *program, artifact canonicalSolveArtifact, diagnostics diagnosticObservationArtifact) {
 	results := sess.ResultsMap()
 	if results == nil {
 		return
 	}
-	for _, ref := range d.refs {
+	for _, ref := range artifact.Refs {
 		fn := prog.funcExpr(ref)
 		if fn == nil {
 			continue
 		}
-		result := d.buildFuncResult(sess, prog, queries, ref)
+		result := d.buildFuncResult(sess, prog, artifact, diagnostics, ref)
 		results[fn] = result
 		if fn == sess.RootFuncNode() {
 			sess.SetRootResultValue(result)
@@ -741,8 +758,8 @@ func (d *Driver) bridgeResults(sess api.AnalysisSession, prog *program, queries 
 // CallContracts. They are not forced into NarrowSynth, callable signatures, or
 // FlowEvidence; those would fabricate solver-shaped structures or
 // mutate immutable extraction evidence.
-func (d *Driver) buildFuncResult(sess api.AnalysisSession, prog *program, queries *summary.Queries, ref summary.FuncRef) *api.FuncResult {
-	return d.funcResultProjection(sess, prog, queries, ref).build()
+func (d *Driver) buildFuncResult(sess api.AnalysisSession, prog *program, artifact canonicalSolveArtifact, diagnostics diagnosticObservationArtifact, ref summary.FuncRef) *api.FuncResult {
+	return d.funcResultProjection(sess, prog, artifact, diagnostics, ref).build()
 }
 
 // program is the canonical driver's summary.Program: the module's call graph,
@@ -1523,10 +1540,17 @@ func (ct callTyper) summaryForCallEntryContext(entry canonicalcall.EntryContext)
 		return summary.SummaryDomain.Bottom()
 	}
 	key := entry.Key()
-	if d.snapshotSummaryReads {
-		key = d.normalizeSnapshotSummaryKey(key)
+	reader := d.activeReader()
+	if reader.Live() {
+		return reader.SummarizeWithKey(key)
 	}
-	return d.summaryReader().SummarizeWithKey(key)
+	if sum, ok := reader.ExactSummaryForKey(key); ok {
+		return sum
+	}
+	// Snapshot exact-key absence is an explicit precision downgrade, not an
+	// exact-context fallback. The aggregate ref summary is still canonical
+	// post-solve evidence and carries context-free facts such as postconditions.
+	return reader.Summarize(key.Ref)
 }
 
 // ProductCallFromValues is the product-carrier call path. It preserves product
@@ -1549,7 +1573,28 @@ func (ct callTyper) IterVarProjection(iter *ast.FuncCallExpr, count int, exprTyp
 	if !ok || srcIdx < 0 || srcIdx >= len(iter.Args) {
 		return flow.IteratorVarProjection{}, false
 	}
-	return flow.ProjectIteratorVarTypes(kind, count, exprType(iter.Args[srcIdx]))
+	source := iter.Args[srcIdx]
+	sourceType := exprType(source)
+	if ct.rejectImplicitSelfDynamicIteratorSource(source, sourceType) {
+		return flow.IteratorVarProjection{}, false
+	}
+	return flow.ProjectIteratorVarTypes(kind, count, sourceType)
+}
+
+func (ct callTyper) rejectImplicitSelfDynamicIteratorSource(source ast.Expr, sourceType typ.Type) bool {
+	if !typ.IsAny(unwrap.Underlying(sourceType)) || ct.g == nil {
+		return false
+	}
+	path, ok := ct.exprPath(source)
+	if !ok || len(path.Segments) == 0 {
+		return false
+	}
+	for _, slot := range ct.g.ParamSlotsReadOnly() {
+		if slot.Symbol == path.Symbol {
+			return slot.IsImplicitSelf
+		}
+	}
+	return false
 }
 
 // iteratorKind resolves a generic-for iterator's iteration kind and iterated source
@@ -1850,9 +1895,10 @@ func (ft funcTyper) ReferenceProjection(ref flow.FunctionRef) flow.ReferencePath
 	return ft.d.activeProgram.referenceProjection(canonref.FromFlow(ref))
 }
 
-// FuncType builds fn's signature from its declared parameter and return
-// annotations, splicing the inferred summary return when fn declares none. The result
-// is the structural callable a function-valued table field carries.
+// FuncType builds fn's declared callable shape for transfer-owned function
+// values. It must not read inferred summary returns: transfer runs inside the
+// summary fixed point, and inferred returns are owned by Summary projection and
+// post-solve callable observation.
 func (ft funcTyper) FuncType(fn *ast.FunctionExpr) *typ.Function {
 	return ft.build(fn, nil)
 }
@@ -1864,19 +1910,17 @@ func (ft funcTyper) build(fn *ast.FunctionExpr, method *cfg.FuncDefInfo) *typ.Fu
 	base := ft.literalBaseScope(fn)
 	if method != nil {
 		return canonicalsig.Input{
-			Method:          method,
-			Base:            base,
-			ResolveType:     ft.d.resolveType,
-			InferredReturns: ft.d.inferredReturnsForFunction,
-			ReturnMode:      canonicalsig.ReturnDeclaredThenInferred,
+			Method:      method,
+			Base:        base,
+			ResolveType: ft.d.resolveType,
+			ReturnMode:  canonicalsig.ReturnDeclaredOnly,
 		}.Build()
 	}
 	return canonicalsig.Input{
-		Function:        fn,
-		Base:            base,
-		ResolveType:     ft.d.resolveType,
-		InferredReturns: ft.d.inferredReturnsForFunction,
-		ReturnMode:      canonicalsig.ReturnDeclaredThenInferred,
+		Function:    fn,
+		Base:        base,
+		ResolveType: ft.d.resolveType,
+		ReturnMode:  canonicalsig.ReturnDeclaredOnly,
 	}.Build()
 }
 
@@ -1918,7 +1962,7 @@ func (ft funcTyper) literalBaseScope(fn *ast.FunctionExpr) *scope.State {
 // its current return tuple from the in-flight summary query during the solve.
 // It is the inferred half supplied to canonical signature construction.
 func (d *Driver) inferredReturnTypes(ref summary.FuncRef) []typ.Type {
-	return d.summaryReader().ReturnTypes(ref)
+	return d.activeReader().ReturnTypes(ref)
 }
 
 // MethodFuncType builds a method definition's signature with the implicit leading
@@ -2024,7 +2068,7 @@ func (d *Driver) refHasDeclaredReturns(prog *program, ref summary.FuncRef) bool 
 // function the ref analyzes.
 func (d *Driver) signatureForRef(prog *program, ref summary.FuncRef) *typ.Function {
 	return d.signatureForRefWithMode(prog, ref, canonicalsig.ReturnDeclaredThenInferred, func(*ast.FunctionExpr) []typ.Type {
-		return d.summaryReader().ReturnTypes(ref)
+		return d.activeReader().ReturnTypes(ref)
 	})
 }
 

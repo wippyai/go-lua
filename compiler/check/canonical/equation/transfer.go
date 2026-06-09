@@ -44,6 +44,7 @@ type NodeTransfer interface {
 		p cfg.Point,
 		incoming flow.PointState,
 		entryContracts paramevidence.Contracts,
+		entryFacts flow.BoundaryFacts,
 		demand func(param int, c paramevidence.ParamContract),
 	) flow.PointState
 }
@@ -119,6 +120,7 @@ type NodeTransferFunc func(
 	p cfg.Point,
 	incoming flow.PointState,
 	entryContracts paramevidence.Contracts,
+	entryFacts flow.BoundaryFacts,
 	demand func(param int, c paramevidence.ParamContract),
 ) flow.PointState
 
@@ -128,7 +130,8 @@ func (f NodeTransferFunc) Transfer(
 	p cfg.Point,
 	incoming flow.PointState,
 	entryContracts paramevidence.Contracts,
+	entryFacts flow.BoundaryFacts,
 	demand func(param int, c paramevidence.ParamContract),
 ) flow.PointState {
-	return f(g, p, incoming, entryContracts, demand)
+	return f(g, p, incoming, entryContracts, entryFacts, demand)
 }

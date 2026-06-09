@@ -319,6 +319,9 @@ func (p contractPathProof) PathSatisfies(segments []constraint.Segment, _ parame
 		path = path.Append(seg)
 	}
 	observed := p.projector.pathTypeAtPath(path, p.point)
+	if typ.IsAbsentOrUnknown(observed) {
+		observed = p.projector.bodyContractPathTypeWithRoutes(p.point, path)
+	}
 	return !typ.IsAbsentOrUnknown(observed) && subtype.IsSubtype(observed, expected)
 }
 
@@ -483,14 +486,28 @@ func (p Projector) exprHasLengthProof(expr ast.Expr, point cfg.Point) bool {
 	if p.cfg.Flow == nil {
 		return false
 	}
+	if p.exprIsGradualTop(expr, point) {
+		return true
+	}
 	path := flowpath.FromExprWithBindingsAt(expr, nil, p.cfg.Bindings, p.cfg.Graph, point)
 	if path.IsEmpty() {
 		return false
+	}
+	if t := p.bodyContractPathTypeWithRoutes(point, path); ops.MayHaveLength(t) {
+		return true
 	}
 	if _, _, ok := p.cfg.Flow.LengthBoundsAt(point, path); ok {
 		return true
 	}
 	return ops.MayHaveLength(p.cfg.Flow.NarrowedTypeAt(point, path))
+}
+
+// ExprHasLengthProof reports whether solved flow/product/body-contract evidence
+// proves expr is valid for Lua's length operator at point. It is the canonical
+// diagnostic proof surface for `#expr`; callers should not separately interpret
+// parameter contracts or path provenance.
+func (p Projector) ExprHasLengthProof(expr ast.Expr, point cfg.Point) bool {
+	return p.exprHasLengthProof(expr, point)
 }
 
 func (p Projector) contextualLiteral(lit typ.Type, expected typ.Type) typ.Type {
@@ -709,6 +726,14 @@ func (p Projector) bodyContractTypeGraph(point cfg.Point) provenance.RouteSource
 	}
 }
 
+func (p Projector) bodyContractPathTypeWithRoutes(point cfg.Point, path constraint.Path) typ.Type {
+	graph := p.bodyContractTypeGraph(point)
+	graph.Routes = func(path constraint.Path) []flow.ProvenanceRoute {
+		return p.provenanceRoutesAt(point, path)
+	}
+	return graph.TypeAt(path)
+}
+
 func (p Projector) directBodyContractPathType(path constraint.Path) typ.Type {
 	if path.IsEmpty() || path.Symbol == 0 || p.cfg.Facts == nil {
 		return nil
@@ -775,13 +800,31 @@ func (p Projector) paramSlotForSymbol(sym cfg.SymbolID) (int, bool) {
 
 func (p Projector) exprIsGradualTop(expr ast.Expr, point cfg.Point) bool {
 	path := p.pathOfExpr(expr, point)
-	if path.IsEmpty() || path.Symbol == 0 {
-		return false
+	if !path.IsEmpty() && path.Symbol != 0 {
+		if gradual, ok := p.productGradualTopAt(point, path); ok {
+			if gradual {
+				return true
+			}
+			if pv := p.ProductValueAtPath(point, path); pv.State != flow.StateResolved ||
+				pv.Value.IsZero() || !typ.IsAny(pv.Value.ProjectValue()) {
+				return false
+			}
+		}
+		if p.isUnannotatedParamSymbol(path.Symbol) {
+			return true
+		}
 	}
-	if gradual, ok := p.productGradualTopAt(point, path); ok {
-		return gradual
+	if attr, ok := expr.(*ast.AttrGetExpr); ok && attr != nil {
+		return p.exprIsGradualTop(attr.Object, point)
 	}
-	return p.isUnannotatedParamSymbol(path.Symbol)
+	return false
+}
+
+// ExprIsGradualTop reports whether expr is backed by product gradual-top
+// evidence. It is intentionally proof-based: strict declared `any` projects to
+// typ.Any but does not satisfy this predicate.
+func (p Projector) ExprIsGradualTop(expr ast.Expr, point cfg.Point) bool {
+	return p.exprIsGradualTop(expr, point)
 }
 
 func (p Projector) productGradualTopAt(point cfg.Point, path constraint.Path) (bool, bool) {

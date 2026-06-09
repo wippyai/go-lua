@@ -194,15 +194,20 @@ func (g RouteSourceTypeGraph) typeAt(path constraint.Path, seen *routeIdentitySe
 		return nil
 	}
 	var types []typ.Type
+	var fallback typ.Type
 	resolve := g.resolver(seen)
 	for _, route := range g.Routes(path) {
 		if sourceType := RouteSourceType(route, nil, resolve, g.Project); sourceType != nil {
+			if typ.IsAny(sourceType) {
+				fallback = sourceType
+				continue
+			}
 			types = append(types, sourceType)
 		}
 	}
 	switch len(types) {
 	case 0:
-		return nil
+		return fallback
 	case 1:
 		return g.finalize(path, types[0])
 	default:
@@ -349,7 +354,7 @@ func RouteSourceQueries(route flow.ProvenanceRoute, extra []constraint.Segment) 
 		}
 		return []RouteSourceQuery{{
 			Path:       route.Source,
-			ReadOrder:  []SourceReadKind{SourceReadBodyContract},
+			ReadOrder:  []SourceReadKind{SourceReadBodyContract, SourceReadPointPath},
 			Segments:   joinedSegments(route.Remainder, extra),
 			Projection: RouteProjectionIndexedIteratorValue,
 		}}
@@ -362,7 +367,7 @@ func RouteSourceQueries(route flow.ProvenanceRoute, extra []constraint.Segment) 
 		}
 		return []RouteSourceQuery{{
 			Path:       route.Source,
-			ReadOrder:  []SourceReadKind{SourceReadBodyContract},
+			ReadOrder:  []SourceReadKind{SourceReadBodyContract, SourceReadPointPath},
 			Segments:   joinedSegments(route.Remainder, extra),
 			Projection: projection,
 		}}

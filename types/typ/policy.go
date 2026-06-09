@@ -1993,10 +1993,36 @@ func closedUnionOf(t Type) *Union {
 			t = v.Target
 		case *Optional:
 			t = v.Inner
+		case *Instantiated:
+			t = expandClosedUnionInstantiatedBody(v)
 		default:
 			return nil
 		}
 	}
+}
+
+func expandClosedUnionInstantiatedBody(inst *Instantiated) Type {
+	if inst == nil || inst.Generic == nil || inst.Generic.Body == nil ||
+		len(inst.Generic.TypeParams) != len(inst.TypeArgs) {
+		return inst
+	}
+	params := inst.Generic.TypeParams
+	args := inst.TypeArgs
+	return Rewrite(inst.Generic.Body, func(node Type) (Type, bool) {
+		tp, ok := node.(*TypeParam)
+		if !ok {
+			return nil, false
+		}
+		for i, param := range params {
+			if param == nil || args[i] == nil {
+				continue
+			}
+			if tp == param || tp.Equals(param) {
+				return args[i], true
+			}
+		}
+		return nil, false
+	})
 }
 
 func isRefinableStructuralAnnotation(t Type, guard internal.RecursionGuard) bool {

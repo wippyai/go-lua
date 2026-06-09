@@ -6,6 +6,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/check/api"
 	canonref "github.com/wippyai/go-lua/compiler/check/canonical/ref"
 	canonicalsig "github.com/wippyai/go-lua/compiler/check/canonical/signature"
+	"github.com/wippyai/go-lua/compiler/check/canonical/state"
 	"github.com/wippyai/go-lua/compiler/check/canonical/summary"
 	"github.com/wippyai/go-lua/compiler/check/domain/observation"
 	"github.com/wippyai/go-lua/compiler/check/scope"
@@ -17,22 +18,24 @@ import (
 // api.FuncResult consumed by diagnostics. It projects solved carriers into API
 // fields with matching semantics and keeps immutable extraction evidence intact.
 type funcResultProjection struct {
-	driver  *Driver
-	session api.AnalysisSession
-	program *program
-	queries *summary.Queries
-	ref     summary.FuncRef
-	graph   *cfg.Graph
+	driver      *Driver
+	session     api.AnalysisSession
+	program     *program
+	artifact    canonicalSolveArtifact
+	diagnostics diagnosticObservationArtifact
+	ref         summary.FuncRef
+	graph       *cfg.Graph
 }
 
-func (d *Driver) funcResultProjection(sess api.AnalysisSession, prog *program, queries *summary.Queries, ref summary.FuncRef) funcResultProjection {
+func (d *Driver) funcResultProjection(sess api.AnalysisSession, prog *program, artifact canonicalSolveArtifact, diagnostics diagnosticObservationArtifact, ref summary.FuncRef) funcResultProjection {
 	return funcResultProjection{
-		driver:  d,
-		session: sess,
-		program: prog,
-		queries: queries,
-		ref:     ref,
-		graph:   prog.Graph(ref),
+		driver:      d,
+		session:     sess,
+		program:     prog,
+		artifact:    artifact,
+		diagnostics: diagnostics,
+		ref:         ref,
+		graph:       prog.Graph(ref),
 	}
 }
 
@@ -41,16 +44,16 @@ func (p funcResultProjection) build() *api.FuncResult {
 	callEdges := p.callEdgeEvidence(evidence)
 	facts := p.observationContext()
 	sum := summary.SummaryDomain.Bottom()
-	if p.driver != nil && p.driver.summaries != nil {
-		sum = p.driver.summaries[p.ref]
+	if p.artifact.Summaries != nil {
+		sum = p.artifact.Summaries[p.ref]
 	}
+	reader := summary.NewSnapshotReader(p.artifact.Snapshot)
 	flowProjection := p.driver.newCanonicalFacts(
 		p.graph,
-		p.driver.states[p.ref],
+		p.observationState(),
 		facts,
 		p.program,
-		p.queries,
-		p.session.Context(),
+		reader,
 		evidence,
 	)
 	literalSignatures := p.literalSignatures()
@@ -87,6 +90,32 @@ func (p funcResultProjection) build() *api.FuncResult {
 	}
 	result.FnRefinement = sum.Postconditions.FunctionRefinement(p.program.facts.HasNoReturn(p.ref))
 	return result
+}
+
+func (p funcResultProjection) observationState() state.FunctionState {
+	if fs, ok := p.diagnostics.FunctionStates[p.ref]; ok {
+		return state.CloneFunctionState(fs)
+	}
+	if contexts := p.diagnostics.Contexts[p.ref]; len(contexts) != 0 {
+		out := state.FunctionStateDomain.Bottom()
+		found := false
+		for _, key := range contexts {
+			fs, ok := p.diagnostics.States[key]
+			if !ok {
+				continue
+			}
+			if !found {
+				out = state.CloneFunctionState(fs)
+				found = true
+				continue
+			}
+			out = state.FunctionStateDomain.Join(out, fs)
+		}
+		if found {
+			return state.CloneFunctionState(out)
+		}
+	}
+	return p.artifact.States[p.ref]
 }
 
 func (p funcResultProjection) resolvedTypeDefs(pointScopes map[cfg.Point]*scope.State, typeOf api.ExprSynth) map[string]typ.Type {
@@ -127,7 +156,7 @@ func (p funcResultProjection) resolvedTypeDefs(pointScopes map[cfg.Point]*scope.
 }
 
 func (p funcResultProjection) callEdgeEvidence(evidence api.FlowEvidence) solvedCallEdgeEvidence {
-	projection, ok := p.driver.solvedCallEvidenceProjection(p.program, p.ref, evidence)
+	projection, ok := p.driver.solvedCallEvidenceProjection(p.program, p.artifact, p.ref, evidence)
 	if !ok {
 		return solvedCallEdgeEvidence{}
 	}

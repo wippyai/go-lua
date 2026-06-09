@@ -3,7 +3,6 @@ package flow
 import (
 	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/domain/value/product"
-	"github.com/wippyai/go-lua/types/typ"
 )
 
 // BoundaryLocalPath is the caller- or entry-local identity of a boundary path.
@@ -96,13 +95,20 @@ type BoundaryFactApplication struct {
 // before a call mutates caller state. Flow owns these prestate facts because
 // they are part of the boundary algebra, not transfer-site control flow.
 type BoundaryFactReplayPlan struct {
-	appendKeys     []BoundaryAppendKeyPlan
-	prestateLowers []boundaryLengthLowerApplication
+	appendKeys          []BoundaryAppendKeyPlan
+	appendTableCoverage []boundaryAppendTableCoveragePlan
+	prestateLowers      []boundaryLengthLowerApplication
 }
 
 type boundaryLengthLowerApplication struct {
 	Target constraint.Path
 	Lower  int64
+}
+
+type boundaryAppendTableCoveragePlan struct {
+	array StableAddress
+	table StableAddress
+	value product.AbstractValue
 }
 
 // BoundaryLengthRelationApplication is the caller-local form of a boundary
@@ -157,9 +163,50 @@ func PrepareBoundaryFactReplay(state PointState, facts BoundaryFacts, roots Boun
 		return BoundaryFactReplayPlan{}
 	}
 	return BoundaryFactReplayPlan{
-		appendKeys:     BoundaryAppendKeyPlans(state, facts, roots.Rebase),
-		prestateLowers: boundaryFactPrestateLengthLowers(state, facts, roots.Rebase),
+		appendKeys:          BoundaryAppendKeyPlans(state, facts, roots.Rebase),
+		appendTableCoverage: boundaryAppendTableCoveragePlans(state, facts, roots.Rebase),
+		prestateLowers:      boundaryFactPrestateLengthLowers(state, facts, roots.Rebase),
 	}
+}
+
+func boundaryAppendTableCoveragePlans(
+	state PointState,
+	facts BoundaryFacts,
+	rebase BoundaryPathRebaser,
+) []boundaryAppendTableCoveragePlan {
+	if !facts.HasProof() || rebase == nil {
+		return nil
+	}
+	var plans []boundaryAppendTableCoveragePlan
+	for _, fact := range facts.AppendHistoryTableCoverage() {
+		if fact.Value.IsZero() {
+			continue
+		}
+		array, ok := rebase(fact.Array)
+		if !ok || array.path.IsEmpty() {
+			continue
+		}
+		table, ok := rebase(fact.Table)
+		if !ok || table.path.IsEmpty() {
+			continue
+		}
+		if !boundaryCanReplayAppendTableCoverage(state, array, table) {
+			continue
+		}
+		plans = append(plans, boundaryAppendTableCoveragePlan{
+			array: array.address,
+			table: table.address,
+			value: fact.Value,
+		})
+	}
+	return plans
+}
+
+func boundaryCanReplayAppendTableCoverage(state PointState, array, table BoundaryLocalPath) bool {
+	if AppendFreshEmptySeedPath(state, array.path) || AppendHistoryBaseWithoutEvents(state, array.address) {
+		return true
+	}
+	return len(state.KeyPresence.KeyArrayValuesAddresses(array.address, table.address)) > 0
 }
 
 // BoundaryAppendKeyPlans selects append-key replay plans from the current
@@ -216,7 +263,10 @@ func boundaryIndexWriteTablesForAppendedKey(
 	}
 	var tables []constraint.Path
 	for _, fact := range indexWrites {
-		writeKey, ok := rebase(fact.Key)
+		if !fact.HasKeyPath {
+			continue
+		}
+		writeKey, ok := rebase(fact.KeyPath)
 		if !ok || !writeKey.address.Equal(key) {
 			continue
 		}
@@ -250,23 +300,33 @@ func ApplyBoundaryFacts(
 		if !ok {
 			continue
 		}
-		key, ok := rebase(fact.Key)
-		if !ok {
-			continue
-		}
-		changed = ApplyDynamicIndexWritePathTransaction(out, DynamicIndexWritePathTransaction{
+		tx := DynamicIndexWritePathTransaction{
 			TablePath:     table.path,
-			KeyPath:       key.path,
-			KeyValue:      product.FromType(typ.Unknown),
+			KeyValue:      fact.KeyValue,
 			WrittenValue:  fact.Value,
 			ReadbackValue: fact.Value,
-		}) || changed
+		}
+		if fact.HasKeyPath {
+			key, ok := rebase(fact.KeyPath)
+			if !ok {
+				continue
+			}
+			tx.KeyPath = key.path
+		}
+		if fact.HasValuePath {
+			value, ok := rebase(fact.ValuePath)
+			if ok {
+				tx.ValuePath = value.path
+			}
+		}
+		changed = ApplyDynamicIndexWritePathTransaction(out, tx) || changed
 	}
 	for _, fact := range facts.StaticMembers() {
 		target, ok := rebase(fact.Target)
 		if !ok || fact.Value.IsZero() {
 			continue
 		}
+		changed = KillStaticMemberSubtree(out, target.address) || changed
 		changed = SetStaticMemberFact(out, target.address, fact.Value) || changed
 	}
 	for _, fact := range facts.KeyPresence() {
@@ -319,6 +379,47 @@ func ApplyBoundaryFacts(
 		}) || changed
 	}
 	changed = applyBoundaryAppendKeyPlans(out, appendPlans) || changed
+	for _, fact := range facts.AppendHistoryBases() {
+		array, ok := rebase(fact.Array)
+		if !ok {
+			continue
+		}
+		changed = ApplyAppendHistoryBaseProof(out, AppendHistoryBaseProof{Array: array.address}) || changed
+	}
+	for _, fact := range facts.AppendHistoryEvents() {
+		array, ok := rebase(fact.Array)
+		if !ok {
+			continue
+		}
+		key, ok := rebase(fact.Key)
+		if !ok {
+			continue
+		}
+		changed = ApplyAppendHistoryEventProof(out, AppendHistoryEventProof{
+			Array: array.address,
+			Key:   key.address,
+		}) || changed
+	}
+	for _, fact := range facts.AppendHistoryCoverage() {
+		array, ok := rebase(fact.Array)
+		if !ok {
+			continue
+		}
+		key, ok := rebase(fact.Key)
+		if !ok {
+			continue
+		}
+		table, ok := rebase(fact.Table)
+		if !ok {
+			continue
+		}
+		changed = ApplyAppendHistoryCoverageFactProof(out, AppendHistoryCoverageProof{
+			Array: array.address,
+			Key:   key.address,
+			Table: table.address,
+			Value: fact.Value,
+		}) || changed
+	}
 	for _, fact := range facts.AppendElementFieldOrigins() {
 		array, ok := rebase(fact.Array)
 		if !ok {
@@ -343,6 +444,15 @@ func ApplyBoundaryFacts(
 		}
 		if op, ok := NumericLenGeConstPathOp(target.path, fact.Lower); ok {
 			ops = append(ops, op)
+		}
+	}
+	for _, fact := range facts.LengthUpperBounds() {
+		target, ok := rebase(fact.Target)
+		if !ok || target.path.IsEmpty() {
+			continue
+		}
+		if container, ok := ContainerRefOfPath(target.path); ok {
+			ops = append(ops, NumericLengthBoundContainerOps(container, "<=", fact.Upper)...)
 		}
 	}
 	if len(ops) > 0 {
@@ -380,6 +490,7 @@ func ApplyBoundaryFactsWithReplay(
 	plan BoundaryFactReplayPlan,
 ) (BoundaryFactApplication, bool) {
 	app, changed := ApplyBoundaryFacts(out, facts, roots.Rebase, plan.appendKeys)
+	changed = applyBoundaryAppendTableCoveragePlans(out, plan.appendTableCoverage) || changed
 	changed = applyBoundaryLengthLowerApplications(out, plan.prestateLowers) || changed
 	return app, changed
 }
@@ -439,6 +550,21 @@ func applyBoundaryAppendKeyPlans(out *PointState, plans []BoundaryAppendKeyPlan)
 			WrittenTablePaths:   plan.writtenTables,
 			FreshEmpty:          plan.freshEmpty,
 			PreserveHistoryBase: plan.preserveHistoryBase,
+		}) || changed
+	}
+	return changed
+}
+
+func applyBoundaryAppendTableCoveragePlans(out *PointState, plans []boundaryAppendTableCoveragePlan) bool {
+	if out == nil || len(plans) == 0 {
+		return false
+	}
+	changed := false
+	for _, plan := range plans {
+		changed = ApplyKeyArrayValueProof(out, KeyArrayValueProof{
+			Array: plan.array,
+			Table: plan.table,
+			Value: plan.value,
 		}) || changed
 	}
 	return changed

@@ -191,8 +191,25 @@ func TestPointFactsPathValueUsesStaticMemberFactsForMissingRootMember(t *testing
 	}
 }
 
-func TestPointFactsPathValuePreservesRootProductEvidenceWithStaticMember(t *testing.T) {
+func TestPointFactsPathValueStaticMemberReplacesStaleAbsentProductField(t *testing.T) {
 	const sym = cfg.SymbolID(12)
+	path := constraint.NewPath(sym, "graph").Field("last_node_id")
+	state := PointState{
+		Env: map[ValueKey]product.AbstractValue{
+			SymbolValueKey(sym): product.FromType(typ.NewRecord().Field("last_node_id", typ.Nil).Build()),
+		},
+		StaticMembers: StaticMemberFactsDomain.Top().
+			WithAddress(testStableAddressKey(t, SymbolPathKey(sym, path.Segments)), product.FromType(typ.String)),
+	}
+
+	got, ok := PointFactsOf(state).PathType(path)
+	if !ok || !typ.TypeEquals(got, typ.String) {
+		t.Fatalf("PathType(static member over stale nil) = %v/%v, want string/true", got, ok)
+	}
+}
+
+func TestPointFactsPathValuePreservesRootProductEvidenceWithStaticMember(t *testing.T) {
+	const sym = cfg.SymbolID(13)
 	path := constraint.NewPath(sym, "graph").Field("edges")
 	live := typ.NewMap(typ.String, typ.NewRecord().Field("targets", typ.NewFreshArray()).Build())
 	state := PointState{

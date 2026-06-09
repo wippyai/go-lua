@@ -88,9 +88,52 @@ func TestDirectCallEntryFactsProjectsIndexWritesToParamPaths(t *testing.T) {
 	wantTable := flow.BoundaryPath{Kind: flow.BoundaryPathParam, Index: 0, Segments: table.Segments}
 	wantKey := flow.BoundaryPath{Kind: flow.BoundaryPathParam, Index: 0, Segments: key.Segments}
 	if !boundaryPathEqualForTest(writes[0].Table, wantTable) ||
-		!boundaryPathEqualForTest(writes[0].Key, wantKey) ||
+		!writes[0].HasKeyPath ||
+		!boundaryPathEqualForTest(writes[0].KeyPath, wantKey) ||
+		!product.Domain.Equal(writes[0].KeyValue, product.FromType(typ.String)) ||
 		!product.Domain.Equal(writes[0].Value, value) {
 		t.Fatalf("index write = %#v, want table %#v key %#v value %s", writes[0], wantTable, wantKey, value.ProjectValue())
+	}
+}
+
+func TestDirectCallEntryFactsProjectsIndexWritesWithValueKeyOnly(t *testing.T) {
+	source := constraint.NewPath(cfg.SymbolID(12), "graph")
+	table := source.Field("nodes")
+	localKey := constraint.NewPath(cfg.SymbolID(13), "node_id")
+	keyValue := product.FromType(typ.LiteralString("n1"))
+	value := product.FromType(typ.NewRecord().Field("id", typ.String).Build())
+
+	callee := summary.FuncRef{GraphID: 9}
+	call := &ast.FuncCallExpr{Args: []ast.Expr{&ast.IdentExpr{Value: "graph"}}}
+	projection := summary.CallEntryProjection{
+		ParamSlot: func(summary.FuncRef, *ast.FuncCallExpr, int) (int, int, bool) {
+			return 0, 0, true
+		},
+		ArgPath: func(int, ast.Expr) (constraint.Path, bool) {
+			return source, true
+		},
+	}
+	indexWrites := flow.IndexWriteAdmissionFacts{}.With(flow.IndexWriteAdmissionFact{
+		Target:  flow.StablePathKey(table),
+		KeyPath: flow.StablePathKey(localKey),
+		Key:     keyValue,
+		Value:   value,
+	})
+	got := projection.DirectEvidence(summary.DirectEntryEvidenceInput{
+		Callee:      callee,
+		Call:        call,
+		KeyPresence: flow.KeyPresenceFacts{},
+		IndexWrites: indexWrites,
+	}).Facts
+
+	writes := got.IndexWrites()
+	wantTable := flow.BoundaryPath{Kind: flow.BoundaryPathParam, Index: 0, Segments: table.Segments}
+	if len(writes) != 1 ||
+		!boundaryPathEqualForTest(writes[0].Table, wantTable) ||
+		writes[0].HasKeyPath ||
+		!product.Domain.Equal(writes[0].KeyValue, keyValue) ||
+		!product.Domain.Equal(writes[0].Value, value) {
+		t.Fatalf("index write = %#v, want table %#v value-key %s", writes, wantTable, keyValue.ProjectValue())
 	}
 }
 

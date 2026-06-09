@@ -23,6 +23,14 @@ func TestIteratorVarTypesIndexedArrayAndDynamicSource(t *testing.T) {
 	if !typ.TypeEquals(got[0], typ.Integer) || !typ.TypeEquals(got[1], typ.Any) {
 		t.Fatalf("indexed optional-any vars = %#v, want integer/any", got)
 	}
+
+	got, ok = IteratorVarTypes(IterateIndexed, 2, typ.Any)
+	if !ok {
+		t.Fatal("IteratorVarTypes indexed any did not resolve")
+	}
+	if !typ.TypeEquals(got[0], typ.Integer) || !typ.TypeEquals(got[1], typ.Any) {
+		t.Fatalf("indexed any vars = %#v, want integer/any", got)
+	}
 }
 
 func TestIteratorVarTypesKeyedUniformContainers(t *testing.T) {

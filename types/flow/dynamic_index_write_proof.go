@@ -95,6 +95,22 @@ type AppendHistoryBaseProof struct {
 	Array StableAddress
 }
 
+// AppendHistoryEventProof records one possible key appended to a tracked array
+// without asserting ordinary key-array membership by itself.
+type AppendHistoryEventProof struct {
+	Array StableAddress
+	Key   StableAddress
+}
+
+// AppendHistoryCoverageProof records value coverage for one tracked append
+// event. It is the address-native counterpart of AppendHistoryCoverageFact.
+type AppendHistoryCoverageProof struct {
+	Array StableAddress
+	Key   StableAddress
+	Table StableAddress
+	Value product.AbstractValue
+}
+
 // AppendElementFieldOriginProof records that appended elements in Array carry a
 // field from Source. Field and SourceField are structured suffixes, not encoded
 // fact keys.
@@ -265,6 +281,29 @@ func ApplyAppendHistoryBaseProof(out *PointState, proof AppendHistoryBaseProof) 
 	}
 	before := out.KeyPresence
 	out.KeyPresence = out.KeyPresence.WithAppendHistoryBaseAddress(proof.Array)
+	return !KeyPresenceFactsDomain.Equal(before, out.KeyPresence)
+}
+
+// ApplyAppendHistoryEventProof applies a possible append event without
+// materializing it as a definite key-array append fact.
+func ApplyAppendHistoryEventProof(out *PointState, proof AppendHistoryEventProof) bool {
+	if out == nil || proof.Array.Key() == "" || proof.Key.Key() == "" {
+		return false
+	}
+	before := out.KeyPresence
+	out.KeyPresence = out.KeyPresence.WithAppendHistoryEventAddresses(proof.Array, proof.Key)
+	return !KeyPresenceFactsDomain.Equal(before, out.KeyPresence)
+}
+
+// ApplyAppendHistoryCoverageFactProof applies coverage for one append-history
+// event. It intentionally does not publish ordinary key-array values; the local
+// append-history reducer decides when coverage is total enough to expose them.
+func ApplyAppendHistoryCoverageFactProof(out *PointState, proof AppendHistoryCoverageProof) bool {
+	if out == nil || proof.Array.Key() == "" || proof.Key.Key() == "" || proof.Table.Key() == "" || proof.Value.IsZero() {
+		return false
+	}
+	before := out.KeyPresence
+	out.KeyPresence = out.KeyPresence.WithAppendHistoryCoverageAddresses(proof.Array, proof.Key, proof.Table, proof.Value)
 	return !KeyPresenceFactsDomain.Equal(before, out.KeyPresence)
 }
 

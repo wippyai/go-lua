@@ -18,11 +18,23 @@ type directCallEntryFactInput struct {
 	ParamSlot EntryValueParamSlot
 	ArgPath   EntryReferenceArgPath
 	ArgValues []product.AbstractValue
+	State     *flow.PointState
+	ArgFacts  EntryBoundaryFactArgSources
 
 	KeyPresence   flow.KeyPresenceFacts
 	StaticMembers flow.StaticMemberFacts
 	Num           *numeric.State
 	IndexWrites   flow.IndexWriteAdmissionFacts
+	PathAliases   flow.PathAliasFacts
+}
+
+// EntryBoundaryFactArgResolver resolves boundary facts carried by an argument
+// expression whose value has no stable caller path, such as a nested call result.
+type EntryBoundaryFactArgResolver func(runtimeIdx int, arg ast.Expr, in *flow.PointState) (flow.BoundaryFacts, bool)
+
+// EntryBoundaryFactArgSources resolves non-path argument fact evidence.
+type EntryBoundaryFactArgSources struct {
+	ReturnFacts EntryBoundaryFactArgResolver
 }
 
 // directCallEntryFacts projects caller point-local path facts into callee
@@ -32,16 +44,33 @@ func directCallEntryFacts(in directCallEntryFactInput) flow.BoundaryFacts {
 	if in.Call == nil || in.ParamSlot == nil || in.ArgPath == nil {
 		return flow.BoundaryFactsDomain.Top()
 	}
-	return flow.ProjectBoundaryFacts(
+	facts := flow.ProjectBoundaryFacts(
 		flow.BoundaryFactProjectionInput{
 			KeyPresence:   in.KeyPresence,
 			StaticMembers: callEntryStaticMembers(in),
 			Num:           in.Num,
 			IndexWrites:   in.IndexWrites,
+			PathAliases:   in.PathAliases,
 		},
 		entryBoundaryProjector{in: in},
 		flow.BoundaryFactProjectionPolicy{},
 	)
+	return flow.MergeBoundaryFactProofs(facts, directCallEntryArgumentFacts(in))
+}
+
+func directCallEntryArgumentFacts(in directCallEntryFactInput) flow.BoundaryFacts {
+	if in.ArgFacts.ReturnFacts == nil {
+		return flow.BoundaryFactsDomain.Top()
+	}
+	out := flow.BoundaryFactsDomain.Top()
+	for _, arg := range entryRuntimeArgs(in.Callee, in.Call, in.ParamSlot) {
+		facts, ok := in.ArgFacts.ReturnFacts(arg.RuntimeIdx, arg.Expr, in.State)
+		if !ok || !facts.HasProof() {
+			continue
+		}
+		out = flow.MergeBoundaryFactProofs(out, flow.RebaseBoundaryReturnFactsToParam(facts, 0, arg.Slot))
+	}
+	return out
 }
 
 func callEntryStaticMembers(in directCallEntryFactInput) flow.StaticMemberFacts {

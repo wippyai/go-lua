@@ -202,6 +202,29 @@ func TestPointFactsDynamicIndexReadbackUsesStableKeyPath(t *testing.T) {
 	}
 }
 
+func TestPointFactsDynamicIndexReadbackUsesStableKeyPathWithoutKeyValue(t *testing.T) {
+	target := constraint.NewPath(cfg.SymbolID(213), "target")
+	key := constraint.NewPath(cfg.SymbolID(214), "key")
+	value := product.FromType(typ.Number)
+	facts := PointFactsOf(PointState{
+		IndexWrites: IndexWriteAdmissionFacts{}.WithAddress(IndexWriteAdmissionAddressFact{
+			Target:     testStableAddressPath(t, target),
+			KeyPath:    testStableAddressPath(t, key),
+			HasKeyPath: true,
+			Key:        product.FromType(typ.String),
+			Value:      value,
+		}),
+	})
+
+	got, ok := facts.DynamicIndexReadback(DynamicIndexReadbackQuery{
+		Target:  target,
+		KeyPath: key,
+	})
+	if !ok || !product.Domain.Equal(got, value) {
+		t.Fatalf("DynamicIndexReadback path without key value = %v/%v, want number", got, ok)
+	}
+}
+
 func TestPointFactsDynamicIndexReadbackUsesIndexedIteratorKeyArrayFacts(t *testing.T) {
 	arrayPath := constraint.NewPath(cfg.SymbolID(130), "node_order")
 	tablePath := constraint.NewPath(cfg.SymbolID(131), "nodes")
@@ -222,6 +245,51 @@ func TestPointFactsDynamicIndexReadbackUsesIndexedIteratorKeyArrayFacts(t *testi
 	})
 	if !ok || !product.Domain.Equal(got, value) {
 		t.Fatalf("DynamicIndexReadback key-array = %v/%v, want string", got, ok)
+	}
+}
+
+func TestPointFactsDynamicIndexReadbackUsesAppendElementFieldProvenance(t *testing.T) {
+	routesPath := constraint.NewPath(cfg.SymbolID(137), "pending_routes")
+	routeEntryPath := constraint.NewPath(cfg.SymbolID(138), "route_entry")
+	lastNodePath := constraint.NewPath(cfg.SymbolID(139), "graph").Field("last_node_id")
+	edgesPath := constraint.NewPath(cfg.SymbolID(140), "graph").Field("edges")
+	field := []constraint.Segment{{Kind: constraint.SegmentField, Name: "from_node_id"}}
+	edgeRecord := product.FromType(typ.NewRecord().
+		Field("targets", typ.NewArray(typ.Any)).
+		Field("error_targets", typ.NewArray(typ.Any)).
+		Build())
+	state := PointState{
+		ValueOrigins: ValueOriginFacts{}.WithAddresses(
+			testStableAddressPath(t, routeEntryPath),
+			testStableAddressPath(t, routesPath),
+			ValueOriginIndexedIterator,
+			1,
+		),
+		KeyPresence: KeyPresenceFacts{}.
+			WithAppendHistoryBaseAddress(testStableAddressPath(t, routesPath)).
+			WithAppendElementFieldOriginFromAddresses(
+				testStableAddressPath(t, routesPath),
+				field,
+				testStableAddressPath(t, lastNodePath),
+				nil,
+			),
+		IndexWrites: IndexWriteAdmissionFacts{}.WithAddress(IndexWriteAdmissionAddressFact{
+			Target:     testStableAddressPath(t, edgesPath),
+			KeyPath:    testStableAddressPath(t, lastNodePath),
+			HasKeyPath: true,
+			Key:        product.FromType(typ.String),
+			Value:      edgeRecord,
+		}),
+	}
+
+	got, ok := PointFactsOf(state).DynamicIndexReadback(DynamicIndexReadbackQuery{
+		Target:           edgesPath,
+		KeyPath:          routeEntryPath.Field("from_node_id"),
+		KeyValue:         product.FromType(typ.String),
+		FollowKeyAliases: true,
+	})
+	if !ok || !product.Domain.Equal(got, edgeRecord) {
+		t.Fatalf("DynamicIndexReadback append-field provenance = %v/%v, want edge record", got.ProjectValue(), ok)
 	}
 }
 

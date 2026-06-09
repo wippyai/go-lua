@@ -26,6 +26,7 @@ type ProductCallContext struct {
 	StaticMembers    flow.StaticMemberFacts
 	Num              *numeric.State
 	IndexWrites      flow.IndexWriteAdmissionFacts
+	PathAliases      flow.PathAliasFacts
 }
 
 func (t *Transfer) productCallContext(
@@ -51,6 +52,7 @@ func (t *Transfer) productCallContext(
 		ctx.StaticMembers = out.StaticMembers
 		ctx.Num = out.Num
 		ctx.IndexWrites = out.IndexWrites
+		ctx.PathAliases = out.PathAliases
 	}
 	return ctx
 }

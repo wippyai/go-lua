@@ -56,6 +56,40 @@ type FunctionState struct {
 	InPoints map[cfg.Point]flow.PointState
 }
 
+// CloneFunctionState returns a mutation-safe copy of solver output at an
+// artifact boundary. PointState carries copy-on-write and persistent axes, but
+// the point maps themselves are mutable; freezing a solve artifact requires new
+// maps so post-solve projections cannot accidentally rewrite diagnostic state.
+func CloneFunctionState(in FunctionState) FunctionState {
+	return FunctionState{
+		Points:    clonePointStates(in.Points),
+		Contracts: cloneContracts(in.Contracts),
+		InPoints:  clonePointStates(in.InPoints),
+	}
+}
+
+func clonePointStates(in map[cfg.Point]flow.PointState) map[cfg.Point]flow.PointState {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make(map[cfg.Point]flow.PointState, len(in))
+	for p, ps := range in {
+		out[p] = flow.ClonePointState(ps)
+	}
+	return out
+}
+
+func cloneContracts(in paramevidence.Contracts) paramevidence.Contracts {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make(paramevidence.Contracts, len(in))
+	for idx, contract := range in {
+		out[idx] = contract
+	}
+	return out
+}
+
 // pointsDomain lifts flow.PointStateDomain pointwise over CFG points: an absent
 // point is PointState Bottom, Join/Widen are pointwise, and a point whose state
 // is Bottom is canonicalized to absence.

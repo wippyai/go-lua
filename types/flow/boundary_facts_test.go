@@ -41,7 +41,13 @@ func TestBoundaryFactsPartitionByReturnIndices(t *testing.T) {
 		[]BoundaryKeyArrayValueFact{{Array: ret0Array, Table: ret0Table, Value: product.FromType(typ.String)}},
 		[]BoundaryAppendKeyFact{{Array: ret0Array, Key: ret1Key}},
 		[]BoundaryLengthLowerBound{{Target: ret1Key, Lower: 1}},
-		[]BoundaryIndexWriteFact{{Table: ret0Table, Key: ret1Key, Value: product.FromType(typ.Number)}},
+		[]BoundaryIndexWriteFact{{
+			Table:      ret0Table,
+			KeyPath:    ret1Key,
+			HasKeyPath: true,
+			KeyValue:   product.FromType(typ.String),
+			Value:      product.FromType(typ.Number),
+		}},
 	).WithAppendElementFieldOrigins([]BoundaryAppendElementFieldOriginFact{{
 		Array:  ret0Array,
 		Field:  []constraint.Segment{{Kind: constraint.SegmentField, Name: "child"}},
@@ -49,7 +55,7 @@ func TestBoundaryFactsPartitionByReturnIndices(t *testing.T) {
 	}}).WithLengthRelations([]BoundaryLengthRelationFact{{
 		Target: ret0Array,
 		Source: paramTable,
-	}})
+	}}).WithLengthUpperBounds([]BoundaryLengthUpperBound{{Target: ret1Key, Upper: 0}})
 
 	params, buckets := facts.PartitionByReturnIndices()
 	if len(params.KeyPresence()) != 1 {
@@ -66,6 +72,9 @@ func TestBoundaryFactsPartitionByReturnIndices(t *testing.T) {
 	}
 	if bucket := boundaryBucketForTest(t, buckets, []int{1}); len(bucket.Facts().LengthLowerBounds()) != 1 {
 		t.Fatalf("bucket [1] = %#v, want length lower bound", bucket.Facts())
+	}
+	if bucket := boundaryBucketForTest(t, buckets, []int{1}); len(bucket.Facts().LengthUpperBounds()) != 1 {
+		t.Fatalf("bucket [1] = %#v, want length upper bound", bucket.Facts())
 	}
 	if bucket := boundaryBucketForTest(t, buckets, []int{0, 1}); len(bucket.Facts().IndexWrites()) != 1 {
 		t.Fatalf("bucket [0,1] = %#v, want index write", bucket.Facts())
@@ -92,6 +101,36 @@ func TestMergeBoundaryFactProofsUnionsIndependentProofs(t *testing.T) {
 	}
 }
 
+func TestBoundaryFactsJoinKeepsAppendFieldOriginWhenBaseSurvives(t *testing.T) {
+	array := BoundaryPath{Kind: BoundaryPathParam, Index: 0, Segments: []constraint.Segment{{Kind: constraint.SegmentField, Name: "pending_routes"}}}
+	source := BoundaryPath{Kind: BoundaryPathParam, Index: 0, Segments: []constraint.Segment{{Kind: constraint.SegmentField, Name: "last_node_id"}}}
+	origin := BoundaryAppendElementFieldOriginFact{
+		Array:  array,
+		Field:  []constraint.Segment{{Kind: constraint.SegmentField, Name: "from_node_id"}},
+		Source: source,
+	}
+	base := BoundaryAppendHistoryBaseFact{Array: array}
+
+	appended := BoundaryFactsDomain.Top().
+		WithAppendHistoryBases([]BoundaryAppendHistoryBaseFact{base}).
+		WithAppendElementFieldOrigins([]BoundaryAppendElementFieldOriginFact{origin})
+	notAppended := BoundaryFactsDomain.Top().
+		WithAppendHistoryBases([]BoundaryAppendHistoryBaseFact{base})
+
+	got := BoundaryFactsDomain.Join(appended, notAppended)
+	if bases := got.AppendHistoryBases(); len(bases) != 1 || compareBoundaryAppendHistoryBase(bases[0], base) != 0 {
+		t.Fatalf("append bases = %#v, want %#v", bases, base)
+	}
+	if origins := got.AppendElementFieldOrigins(); len(origins) != 1 || compareBoundaryAppendElementFieldOrigin(origins[0], origin) != 0 {
+		t.Fatalf("append origins = %#v, want %#v", origins, origin)
+	}
+
+	withoutBase := BoundaryFactsDomain.Join(appended, BoundaryFactsDomain.Top())
+	if origins := withoutBase.AppendElementFieldOrigins(); len(origins) != 0 {
+		t.Fatalf("append origins without surviving base = %#v, want none", origins)
+	}
+}
+
 func TestBoundaryFactsIdentityHashTracksCanonicalLanes(t *testing.T) {
 	target := BoundaryPath{Kind: BoundaryPathParam, Index: 0}
 	relA := BoundaryLengthRelationFact{
@@ -105,12 +144,16 @@ func TestBoundaryFactsIdentityHashTracksCanonicalLanes(t *testing.T) {
 	factsA := BoundaryFactsDomain.Top().WithLengthRelations([]BoundaryLengthRelationFact{relA})
 	factsACopy := BoundaryFactsDomain.Top().WithLengthRelations([]BoundaryLengthRelationFact{relA})
 	factsB := BoundaryFactsDomain.Top().WithLengthRelations([]BoundaryLengthRelationFact{relB})
+	factsUpper := BoundaryFactsDomain.Top().WithLengthUpperBounds([]BoundaryLengthUpperBound{{Target: target, Upper: 0}})
 
 	if got, want := factsA.IdentityHash("test"), factsACopy.IdentityHash("test"); got != want {
 		t.Fatalf("same boundary facts hash = %d, want %d", got, want)
 	}
 	if got, other := factsA.IdentityHash("test"), factsB.IdentityHash("test"); got == other {
 		t.Fatalf("distinct boundary length relations collapsed to hash %d", got)
+	}
+	if got, other := factsA.IdentityHash("test"), factsUpper.IdentityHash("test"); got == other {
+		t.Fatalf("length relation and length upper facts collapsed to hash %d", got)
 	}
 }
 

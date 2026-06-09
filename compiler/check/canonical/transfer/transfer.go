@@ -556,6 +556,7 @@ func (t *Transfer) Transfer(
 	p cfg.Point,
 	incoming flow.PointState,
 	entryContracts paramevidence.Contracts,
+	entryFacts flow.BoundaryFacts,
 	demand func(param int, c paramevidence.ParamContract),
 ) flow.PointState {
 	// Kildall transfer functions must be strict: f(⊥)=⊥. The entry point is the
@@ -597,6 +598,7 @@ func (t *Transfer) Transfer(
 	if p == entry {
 		flow.LiftEntryReachability(&out)
 		t.seedEntry(&out, entryContracts)
+		t.SeedEntryFacts(&out, entryFacts)
 	}
 	t.applyLoopAppendLengthFacts(&out, loopFacts)
 
@@ -879,7 +881,7 @@ func (t *Transfer) applyAssign(
 		}
 		if src != nil {
 			t.applyNumeric(out, target.Symbol, src)
-			t.seedArrayLiteralLength(out, target.Symbol, src, constructorCardinalityLower)
+			t.seedAssignmentLengthFacts(out, target.Symbol, src, constructorCardinalityLower)
 		}
 	})
 	t.applyAssignCallPostconditions(out, callPostconditions)
@@ -1734,12 +1736,18 @@ func (t *Transfer) recordPrototypeSelfWrite(
 		changed = true
 	}
 	if publishParamEffect {
+		recordParamEffect := func(slot int) bool {
+			if len(mutations) > 0 {
+				return flow.RecordReceiverMutation(out, slot, mutations...)
+			}
+			return flow.RecordReceiverWrite(out, slot, updated)
+		}
 		if param, ok := t.params.Lookup(sym); ok {
-			if flow.RecordReceiverWrite(out, param.Index, updated, mutations...) {
+			if recordParamEffect(param.Index) {
 				changed = true
 			}
 		} else if t.prototypeSelfSymbol != 0 && sym == t.prototypeSelfSymbol && t.prototypeSelfSlot >= 0 &&
-			flow.RecordReceiverWrite(out, t.prototypeSelfSlot, updated, mutations...) {
+			recordParamEffect(t.prototypeSelfSlot) {
 			changed = true
 		}
 	}
@@ -1975,7 +1983,25 @@ func (t *Transfer) applyGenericForBinding(
 	}
 	t.seedKeyedIterKeyOf(out, info, iterCall)
 	t.seedIndexedIterKeyOf(out, info, iterCall)
+	t.seedIndexedIterSourceLengthProof(out, iterCall)
 	t.seedIteratorValueOrigins(out, info, iterCall)
+}
+
+func (t *Transfer) seedIndexedIterSourceLengthProof(out *flow.PointState, iterCall *ast.FuncCallExpr) bool {
+	if t.callTyper == nil || out == nil || iterCall == nil {
+		return false
+	}
+	source, ok := t.callTyper.IndexedIterSource(iterCall)
+	if !ok || source.IsEmpty() {
+		return false
+	}
+	container, ok := flow.ContainerRefOfPath(source)
+	if !ok {
+		return false
+	}
+	return flow.ApplyNumericEffect(out, flow.NumericEffect{
+		Ops: flow.NumericLengthBoundContainerOps(container, ">=", 0),
+	})
 }
 
 func (t *Transfer) seedIteratorValueOrigins(out *flow.PointState, info *cfg.AssignInfo, iterCall *ast.FuncCallExpr) {
@@ -2431,7 +2457,7 @@ func (t *Transfer) applyBoundaryFacts(
 	if out == nil {
 		return false
 	}
-	roots := t.callBoundaryLocalRoots(call, returns)
+	roots := t.callBoundaryLocalRootsForState(out, call, returns)
 	plan := flow.PrepareBoundaryFactReplay(*out, facts, roots)
 	return t.applyBoundaryFactsWithPlan(out, cfg.Point(0), call, facts, returns, plan)
 }
@@ -2447,7 +2473,7 @@ func (t *Transfer) applyBoundaryFactsWithPlan(
 	if out == nil || call == nil {
 		return false
 	}
-	roots := t.callBoundaryLocalRoots(call, returns)
+	roots := t.callBoundaryLocalRootsAt(out, p, call, returns)
 	app, changed := flow.ApplyBoundaryFactsWithReplay(out, facts, roots, plan)
 	t.applyBoundaryFactApplication(out, p, app)
 	return changed || boundaryFactApplicationHasEffects(app)
@@ -2478,6 +2504,14 @@ func boundaryFactApplicationHasEffects(app flow.BoundaryFactApplication) bool {
 }
 
 func (t *Transfer) callBoundaryLocalRoots(call *ast.FuncCallExpr, returns map[int]constraint.Path) flow.BoundaryLocalRoots {
+	return t.callBoundaryLocalRootsAt(nil, cfg.Point(0), call, returns)
+}
+
+func (t *Transfer) callBoundaryLocalRootsForState(out *flow.PointState, call *ast.FuncCallExpr, returns map[int]constraint.Path) flow.BoundaryLocalRoots {
+	return t.callBoundaryLocalRootsAt(out, cfg.Point(0), call, returns)
+}
+
+func (t *Transfer) callBoundaryLocalRootsAt(out *flow.PointState, p cfg.Point, call *ast.FuncCallExpr, returns map[int]constraint.Path) flow.BoundaryLocalRoots {
 	if t == nil || call == nil {
 		return flow.NewBoundaryLocalRoots(nil, returns)
 	}
@@ -2485,12 +2519,33 @@ func (t *Transfer) callBoundaryLocalRoots(call *ast.FuncCallExpr, returns map[in
 	params := make(map[int]constraint.Path, count)
 	for idx := 0; idx < count; idx++ {
 		arg := callsite.RuntimeArgExprAt(call, idx)
-		argPath, ok := t.staticPathOfExpr(arg)
+		argPath, ok := t.callBoundaryArgPath(out, p, arg)
 		if ok && !argPath.IsEmpty() {
 			params[idx] = argPath
 		}
 	}
 	return flow.NewBoundaryLocalRoots(params, returns)
+}
+
+func (t *Transfer) callBoundaryArgPath(out *flow.PointState, p cfg.Point, arg ast.Expr) (constraint.Path, bool) {
+	if t == nil || arg == nil {
+		return constraint.Path{}, false
+	}
+	if out != nil {
+		if place, ok := t.placeOfExprAt(out, p, arg, nil); ok {
+			if path, pathOK := place.StaticPath(); pathOK && !path.IsEmpty() {
+				return path, true
+			}
+		}
+	}
+	argPath, ok := t.staticPathOfExpr(arg)
+	if !ok || argPath.IsEmpty() {
+		return constraint.Path{}, false
+	}
+	if p != 0 && t.in.Graph != nil {
+		argPath = domainpath.WithVersion(argPath, t.in.Graph, p)
+	}
+	return argPath, true
 }
 
 func (t *Transfer) callClosurePath(call *ast.FuncCallExpr) (constraint.Path, bool) {
@@ -2856,7 +2911,8 @@ func (t *Transfer) evalAttrGet(
 	demand func(int, paramevidence.ParamContract),
 ) (product.AbstractValue, bool) {
 	return t.readAccessValue(out, accessValueReadQuery{
-		Expr: e,
+		Expr:                 e,
+		AllowGradualFallback: true,
 		ReadExpr: func(expr ast.Expr) (product.AbstractValue, bool) {
 			return t.evalExpr(out, expr, demand)
 		},
@@ -2870,7 +2926,8 @@ func (t *Transfer) evalAttrGetAt(
 	demand func(int, paramevidence.ParamContract),
 ) (product.AbstractValue, bool) {
 	return t.readAccessValue(out, accessValueReadQuery{
-		Expr: e,
+		Expr:                 e,
+		AllowGradualFallback: true,
 		ReadExpr: func(expr ast.Expr) (product.AbstractValue, bool) {
 			return t.evalExprAt(out, p, expr, demand)
 		},
@@ -3185,6 +3242,9 @@ func (t *Transfer) evalUnary(
 	}
 	if op == "-" && isNumeric(v, ok) {
 		return product.FromType(typ.Number), true
+	}
+	if op == "#" && t.gradualAnySource(out, operand) {
+		return product.FromType(typ.Integer), true
 	}
 	return product.AbstractValue{}, false
 }

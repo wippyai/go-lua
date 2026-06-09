@@ -124,7 +124,7 @@ func TestStraightLine(t *testing.T) {
 	// result at a point is therefore incoming joined with the point's own mark.
 	mock := NodeTransferFunc(func(
 		g *cfg.Graph, p cfg.Point, incoming flow.PointState,
-		_ paramevidence.Contracts, _ func(int, paramevidence.ParamContract),
+		_ paramevidence.Contracts, _ flow.BoundaryFacts, _ func(int, paramevidence.ParamContract),
 	) flow.PointState {
 		out := flow.PointStateDomain.Join(incoming, flow.PointStateDomain.Bottom())
 		mark := map[flow.ValueKey]product.AbstractValue{markKey(p): product.FromType(typ.String)}
@@ -178,7 +178,7 @@ func TestLoopTerminatesByWidening(t *testing.T) {
 	var maxIncoming int64
 	mock := NodeTransferFunc(func(
 		g *cfg.Graph, p cfg.Point, incoming flow.PointState,
-		_ paramevidence.Contracts, _ func(int, paramevidence.ParamContract),
+		_ paramevidence.Contracts, _ flow.BoundaryFacts, _ func(int, paramevidence.ParamContract),
 	) flow.PointState {
 		if u := upperOf(incoming); u > maxIncoming {
 			maxIncoming = u
@@ -234,7 +234,7 @@ func TestBidirectionalDemand(t *testing.T) {
 	exit := g.Exit()
 	mock := NodeTransferFunc(func(
 		g *cfg.Graph, p cfg.Point, incoming flow.PointState,
-		entryContracts paramevidence.Contracts, demand func(int, paramevidence.ParamContract),
+		entryContracts paramevidence.Contracts, _ flow.BoundaryFacts, demand func(int, paramevidence.ParamContract),
 	) flow.PointState {
 		if p == entry {
 			if c, ok := entryContracts[param]; ok &&
@@ -278,7 +278,7 @@ func TestContractsAreEntryOnlyContext(t *testing.T) {
 	var nonEntrySawContract bool
 	mock := NodeTransferFunc(func(
 		g *cfg.Graph, p cfg.Point, incoming flow.PointState,
-		entryContracts paramevidence.Contracts, demand func(int, paramevidence.ParamContract),
+		entryContracts paramevidence.Contracts, _ flow.BoundaryFacts, demand func(int, paramevidence.ParamContract),
 	) flow.PointState {
 		if c, ok := entryContracts[param]; ok &&
 			paramevidence.ParamContractDomain.Equal(c, want) {
@@ -321,6 +321,7 @@ func TestContractFeedbackWidensEntryPoint(t *testing.T) {
 		_ cfg.Point,
 		incoming flow.PointState,
 		_ paramevidence.Contracts,
+		_ flow.BoundaryFacts,
 		_ func(int, paramevidence.ParamContract),
 	) flow.PointState {
 		return incoming
@@ -343,6 +344,7 @@ func TestContractFeedbackWidensEntryPoint(t *testing.T) {
 		_ cfg.Point,
 		incoming flow.PointState,
 		_ paramevidence.Contracts,
+		_ flow.BoundaryFacts,
 		_ func(int, paramevidence.ParamContract),
 	) flow.PointState {
 		return incoming
@@ -364,7 +366,7 @@ func TestBuilderDoesNotProbeTransferOutsideSolver(t *testing.T) {
 
 	mock := NodeTransferFunc(func(
 		g *cfg.Graph, p cfg.Point, incoming flow.PointState,
-		_ paramevidence.Contracts, _ func(int, paramevidence.ParamContract),
+		_ paramevidence.Contracts, _ flow.BoundaryFacts, _ func(int, paramevidence.ParamContract),
 	) flow.PointState {
 		if p != entry {
 			if _, ok := incoming.Env[entryMark]; !ok {
@@ -471,6 +473,7 @@ func (m projectingTransfer) Transfer(
 	_ cfg.Point,
 	incoming flow.PointState,
 	_ paramevidence.Contracts,
+	_ flow.BoundaryFacts,
 	_ func(int, paramevidence.ParamContract),
 ) flow.PointState {
 	out := flow.PointStateDomain.Join(incoming, flow.PointStateDomain.Bottom())
@@ -493,6 +496,7 @@ func (m phiFactTransfer) Transfer(
 	p cfg.Point,
 	incoming flow.PointState,
 	_ paramevidence.Contracts,
+	_ flow.BoundaryFacts,
 	_ func(int, paramevidence.ParamContract),
 ) flow.PointState {
 	out := flow.PointStateDomain.Join(incoming, flow.PointStateDomain.Bottom())

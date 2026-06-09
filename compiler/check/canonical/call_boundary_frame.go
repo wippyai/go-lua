@@ -133,7 +133,7 @@ func (p callBoundaryFrame) callerVisibleContracts(prog *program, ref summary.Fun
 		return exact
 	}
 	exact = prog.publicPredicateContracts(ref, exact)
-	reader := p.typer.d.summaryReader()
+	reader := p.typer.d.activeReader()
 	aggregate := prog.publicPredicateContracts(ref, reader.Summarize(ref).Params)
 	if len(aggregate) == 0 {
 		return exact
@@ -232,7 +232,7 @@ func (p callBoundaryFrame) callerVisibleReturnRelations(exact flow.ReturnRelatio
 	if !p.outcome.HasTargets() || p.typer.d == nil {
 		return exact
 	}
-	reader := p.typer.d.summaryReader()
+	reader := p.typer.d.activeReader()
 	aggregate := flow.ReturnRelationsDomain.Bottom()
 	for _, target := range p.outcome.Targets() {
 		rels := reader.Summarize(target.Ref).Relations
@@ -275,15 +275,22 @@ func (p callBoundaryFrame) effectsForRef(
 	entryValues summary.EntryValues,
 	entryFacts flow.BoundaryFacts,
 ) flow.CaptureEffects {
-	reader := p.typer.d.summaryReader()
+	reader := p.typer.d.activeReader()
 	entry := canonicalcall.NewEntryContext(
 		ref,
 		flow.ReferenceContextOf(flow.CaptureCellsDomain.Bottom(), flow.FunctionRefsDomain.Bottom(), flow.ClosureRefsDomain.Bottom()),
 		entryValues,
 		entryFacts,
 	)
-	if reader.Live() {
+	if p.typer.d.activeProgram != nil {
 		entry = p.typer.d.activeProgram.CallEntryContextWithFacts(ref, p.site.references, entryValues, entryFacts)
 	}
-	return reader.SummarizeWithKey(entry.Key()).CellEffects
+	key := entry.Key()
+	if reader.Live() {
+		return reader.SummarizeWithKey(key).CellEffects
+	}
+	if sum, ok := reader.ExactSummaryForKey(key); ok {
+		return sum.CellEffects
+	}
+	return reader.Summarize(ref).CellEffects
 }

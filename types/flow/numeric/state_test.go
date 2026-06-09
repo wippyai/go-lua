@@ -153,6 +153,17 @@ func TestState_ContradictoryLenBounds(t *testing.T) {
 	}
 }
 
+func TestState_LengthReferenceContradictsContainerUpperBound(t *testing.T) {
+	s := NewState()
+	s.ApplyGeConst("i", 1)
+	s.ApplyLeLenOfWithOffset("i", "rows", -1)
+	s.ApplyLenLeConst("rows", 0)
+
+	if s.CheckSatisfiability() || !s.IsUnsat() {
+		t.Fatal("i >= 1 and i <= len(rows)-1 with len(rows) <= 0 should be unsat")
+	}
+}
+
 func TestState_ContradictoryBounds(t *testing.T) {
 	s := NewState()
 	s.ApplyGeConst("x", 10)

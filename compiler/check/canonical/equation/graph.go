@@ -229,7 +229,6 @@ func (b *Builder) makeTransfer() func(Cell, func(Cell) CellState, func(Cell, Cel
 		if p == entry {
 			b.seedEntrySymbolValues(&incoming)
 			b.seedEntryValues(&incoming)
-			b.seedEntryFacts(&incoming)
 		}
 		incoming = b.projectInPointState(p, incoming)
 
@@ -251,7 +250,11 @@ func (b *Builder) makeTransfer() func(Cell, func(Cell) CellState, func(Cell, Cel
 			emit(contractCellAt(param), contractState(c))
 		}
 
-		next := b.transfer.Transfer(b.graph, p, incoming, entryContracts, demand)
+		var entryFacts flow.BoundaryFacts
+		if p == entry {
+			entryFacts = b.entryFacts
+		}
+		next := b.transfer.Transfer(b.graph, p, incoming, entryContracts, entryFacts, demand)
 		next = b.projectOutPointState(p, next)
 
 		// Emit the post-transfer state into p's own cell; successors read it.

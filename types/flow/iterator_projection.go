@@ -31,10 +31,20 @@ func ProjectIteratorVarTypes(kind IteratorKind, count int, source typ.Type) (Ite
 	if count <= 0 {
 		return IteratorVarProjection{}, false
 	}
-	if typ.IsAny(source) && kind == IterateKeyed {
+	if typ.IsAny(source) {
 		out := make([]typ.Type, count)
-		for i := range out {
-			out[i] = typ.Any
+		switch kind {
+		case IterateIndexed:
+			out[0] = typ.Integer
+			for i := 1; i < count; i++ {
+				out[i] = typ.Any
+			}
+		case IterateKeyed:
+			for i := range out {
+				out[i] = typ.Any
+			}
+		default:
+			return IteratorVarProjection{}, false
 		}
 		return IteratorVarProjection{Types: out}, true
 	}

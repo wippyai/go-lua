@@ -185,6 +185,7 @@ func (t *Transfer) NarrowEdge(g *cfg.Graph, pred, succ cfg.Point, out flow.Point
 	}
 	if branchPred && taken {
 		out = t.genericForBodyEdgeState(g, pred, out)
+		out = t.numericForBodyEdgeState(g, pred, out)
 	}
 	// At an exit guard whose recovered branch is a discriminant on a union symbol, a
 	// single exclude over the (widened) out-state cannot see the prior dominating
@@ -203,6 +204,24 @@ func (t *Transfer) NarrowEdge(g *cfg.Graph, pred, succ cfg.Point, out flow.Point
 		}
 	}
 	return t.narrowEdgeInner(pred, out, info, taken, atExit)
+}
+
+func (t *Transfer) numericForBodyEdgeState(g *cfg.Graph, branch cfg.Point, out flow.PointState) flow.PointState {
+	node := g.Node(branch)
+	if node == nil || !node.LoopPreheaderSet {
+		return out
+	}
+	info := g.Assign(node.LoopPreheader)
+	if info == nil || info.NumericFor == nil || info.NumericFor.VarName == "" {
+		return out
+	}
+	target, ok := info.FirstTarget()
+	if !ok || target.Kind != cfg.TargetIdent || target.Symbol == 0 {
+		return out
+	}
+	res := flow.ClonePointState(out)
+	t.seedNumericForBodyBounds(&res, target.Symbol, info.NumericFor)
+	return res
 }
 
 func (t *Transfer) genericForBodyEdgeState(g *cfg.Graph, branch cfg.Point, out flow.PointState) flow.PointState {
@@ -1098,8 +1117,8 @@ func fieldDiscriminatesUnion(base typ.Type, field string) bool {
 // is recovered by a backward walk to the nearest matching NodeBranch, whose intact
 // BranchInfo (full Condition AST + field-path CondVar) drives the narrowing: the
 // field-path narrowing then refines the FIELD slot, leaving the root symbol intact.
-// The branch is always a backward ancestor of both its arm exits (condEntry ->
-// thenStart/elseStart -> ... -> thenExit/elseExit), so the walk finds it.
+// Modern CFGs also carry CondOrigin on the ScopeExit, which is the authoritative
+// link back to the branch. The backward walk is only a legacy/degenerate fallback.
 //
 // When no originating branch is recoverable (a degenerate graph), the lossy bare
 // reconstruction is returned only for a bare-symbol root path — a field-path guard
@@ -1111,7 +1130,21 @@ func exitGuard(g *cfg.Graph, pred cfg.Point) (*cfg.BranchInfo, cfg.Point, bool) 
 	if node == nil || node.Kind != cfg.NodeScopeExit {
 		return nil, 0, false
 	}
-	if node.CondVar == 0 && node.CondCheck.Kind == cfg.CheckNone {
+	if node.CondOriginSet {
+		info := g.Branch(node.CondOrigin)
+		if info == nil {
+			return nil, 0, false
+		}
+		return info, node.CondOrigin, true
+	}
+	// Scope-exit replays are only authoritative when the CFG copied the tested
+	// root symbol. Relational/complex guards often carry CondVar=0; matching them
+	// by check kind alone can recover the wrong elseif branch and collapse a live
+	// arm. The actual branch edge already applied those guards.
+	if node.CondVar == 0 {
+		return nil, 0, false
+	}
+	if node.CondCheck.Kind == cfg.CheckNone {
 		return nil, 0, false
 	}
 	if info, branch, ok := originatingBranch(g, pred, node.CondVar, node.CondCheck); ok {
@@ -1547,7 +1580,26 @@ func missingStaticMemberGuardStaysDynamic(base product.AbstractValue, segments [
 	if len(segments) == 0 || !staticMemberGuardImpliesPresence(check, typeName) || base.IsZero() {
 		return false
 	}
-	return querycore.MissingFieldReadsNil(base.ProjectValue())
+	baseType := base.ProjectValue()
+	return !fieldPathResolves(baseType, segments) && querycore.MissingFieldReadsNil(baseType)
+}
+
+func fieldPathResolves(t typ.Type, segments []constraint.Segment) bool {
+	if t == nil || len(segments) == 0 {
+		return false
+	}
+	current := t
+	for _, seg := range segments {
+		if seg.Kind != constraint.SegmentField && seg.Kind != constraint.SegmentIndexString {
+			return false
+		}
+		next, ok := fieldResolver.Field(current, seg.Name)
+		if !ok || next == nil {
+			return false
+		}
+		current = next
+	}
+	return true
 }
 
 // narrowByPredicate applies the value-narrowing a local type-predicate guard

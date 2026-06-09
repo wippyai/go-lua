@@ -22,7 +22,7 @@ type fixtureSuite struct {
 	Description string        `json:"description,omitempty"`
 	Files       []string      `json:"files,omitempty"`
 	Stdlib      *bool         `json:"stdlib,omitempty"`
-	Packages    []string      `json:"packages,omitempty"` // predefined system packages: "channel", "process", "time", "funcs"
+	Packages    []string      `json:"packages,omitempty"` // predefined system packages: "channel", "process", "time", "funcs", "uuid"
 	Check       *fixtureCheck `json:"check,omitempty"`
 	Run         *fixtureRun   `json:"run,omitempty"`
 	Bench       *fixtureBench `json:"bench,omitempty"`
@@ -396,6 +396,8 @@ func resolvePackageManifest(name string) *io.Manifest {
 		return testutil.FuncsManifest()
 	case "time":
 		return fixtureTimeManifest()
+	case "uuid":
+		return fixtureUuidManifest()
 	default:
 		return nil
 	}
@@ -422,6 +424,14 @@ func fixtureTimeManifest() *io.Manifest {
 	})
 	m.SetExport(moduleType)
 
+	return m
+}
+
+func fixtureUuidManifest() *io.Manifest {
+	m := io.NewManifest("uuid")
+	m.SetExport(typ.NewInterface("uuid", []typ.Method{
+		{Name: "v7", Type: typ.Func().Returns(typ.String).Build()},
+	}))
 	return m
 }
 

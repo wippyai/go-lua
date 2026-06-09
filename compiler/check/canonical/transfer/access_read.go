@@ -7,6 +7,7 @@ import (
 	"github.com/wippyai/go-lua/types/domain/value/product"
 	"github.com/wippyai/go-lua/types/flow"
 	"github.com/wippyai/go-lua/types/kind"
+	"github.com/wippyai/go-lua/types/typ"
 )
 
 type identValueReadQuery struct {
@@ -87,6 +88,18 @@ func (t *Transfer) readAccessValue(out *flow.PointState, q accessValueReadQuery)
 	base, ok := q.ReadExpr(q.Expr.Object)
 	if !ok || base.IsZero() {
 		if out != nil {
+			if _, isStatic := staticMember(q.Expr); !isStatic && q.Expr.Key != nil {
+				if key, keyOK := q.ReadExpr(q.Expr.Key); keyOK && !key.IsZero() {
+					// Dynamic-index readback is path/fact based; it must not require
+					// the container product to still be materialized in Env.
+					refined := facts.RefineIndexRead(t.indexReadRefinementQuery(out, q.Expr, product.AbstractValue{}, product.AbstractValue{}, key))
+					if refined.State == flow.StateResolved {
+						return refined.Value, true
+					}
+				}
+			}
+		}
+		if out != nil {
 			read := facts.ReadAccess(flow.AccessReadQuery{
 				Kind:    flow.AccessReadStaticMember,
 				Path:    path,
@@ -118,6 +131,10 @@ func (t *Transfer) readAccessValue(out *flow.PointState, q accessValueReadQuery)
 			}
 			return product.AbstractValue{}, false
 		}
+		if q.AllowGradualFallback && t.gradualAnySource(out, q.Expr) &&
+			!read.Value.IsGradualTop() && typ.IsAny(read.Value.ProjectValue()) {
+			return product.GradualAny(), true
+		}
 		return t.refineIndexRead(out, q.Expr, base, read.Value, product.AbstractValue{}), true
 	}
 
@@ -138,6 +155,10 @@ func (t *Transfer) readAccessValue(out *flow.PointState, q accessValueReadQuery)
 			}
 		}
 		return product.AbstractValue{}, false
+	}
+	if q.AllowGradualFallback && t.gradualAnySource(out, q.Expr) &&
+		!read.Value.IsGradualTop() && typ.IsAny(read.Value.ProjectValue()) {
+		return product.GradualAny(), true
 	}
 	return t.refineIndexRead(out, q.Expr, base, read.Value, key), true
 }

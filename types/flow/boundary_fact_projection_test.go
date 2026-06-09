@@ -20,7 +20,7 @@ func TestProjectBoundaryFactsProjectsPointFactLanesTogether(t *testing.T) {
 	key := boundaryProjectionTestAddress(t, keyPath)
 	value := product.FromType(typ.Number)
 
-	num := numericStateWithLenLower(t, tablePath, 2)
+	num := numericStateWithLenBounds(t, tablePath, 2, 5)
 	facts := ProjectBoundaryFacts(
 		BoundaryFactProjectionInput{
 			KeyPresence: KeyPresenceFacts{}.WithAddresses(table, key),
@@ -49,11 +49,126 @@ func TestProjectBoundaryFactsProjectsPointFactLanesTogether(t *testing.T) {
 		got[0].Lower != 2 {
 		t.Fatalf("length facts = %#v, want len(%#v) >= 2", got, wantTable)
 	}
+	if got := facts.LengthUpperBounds(); len(got) != 1 ||
+		!boundaryProjectionPathEqual(got[0].Target, wantTable) ||
+		got[0].Upper != 5 {
+		t.Fatalf("length upper facts = %#v, want len(%#v) <= 5", got, wantTable)
+	}
 	if got := facts.IndexWrites(); len(got) != 1 ||
 		!boundaryProjectionPathEqual(got[0].Table, wantTable) ||
-		!boundaryProjectionPathEqual(got[0].Key, wantKey) ||
+		!got[0].HasKeyPath ||
+		!boundaryProjectionPathEqual(got[0].KeyPath, wantKey) ||
+		!product.Domain.Equal(got[0].KeyValue, product.FromType(typ.String)) ||
 		!product.Domain.Equal(got[0].Value, value) {
 		t.Fatalf("index-write facts = %#v, want table %#v key %#v value %s", got, wantTable, wantKey, value.ProjectValue())
+	}
+}
+
+func TestProjectBoundaryFactsProjectsIndexWriteKeyValueWithoutBoundaryKeyPath(t *testing.T) {
+	paramSym := cfg.SymbolID(34)
+	localKeySym := cfg.SymbolID(35)
+	root := constraint.NewPath(paramSym, "graph")
+	tablePath := root.Field("nodes")
+	keyPath := constraint.NewPath(localKeySym, "node_id")
+	table := boundaryProjectionTestAddress(t, tablePath)
+	key := boundaryProjectionTestAddress(t, keyPath)
+	keyValue := product.FromType(typ.LiteralString("n1"))
+	value := product.FromType(typ.NewRecord().Field("id", typ.String).Build())
+
+	facts := ProjectBoundaryFacts(
+		BoundaryFactProjectionInput{
+			IndexWrites: IndexWriteAdmissionFacts{}.WithAddress(IndexWriteAdmissionAddressFact{
+				Target:     table,
+				KeyPath:    key,
+				HasKeyPath: true,
+				Key:        keyValue,
+				Value:      value,
+			}),
+		},
+		NewBoundaryPathProjection(map[cfg.SymbolID]int{paramSym: 0}, nil),
+		BoundaryFactProjectionPolicy{},
+	)
+
+	wantTable := BoundaryPath{Kind: BoundaryPathParam, Index: 0, Segments: tablePath.Segments}
+	writes := facts.IndexWrites()
+	if len(writes) != 1 ||
+		!boundaryProjectionPathEqual(writes[0].Table, wantTable) ||
+		writes[0].HasKeyPath ||
+		!product.Domain.Equal(writes[0].KeyValue, keyValue) ||
+		!product.Domain.Equal(writes[0].Value, value) {
+		t.Fatalf("index writes = %#v, want table %#v value-key %s", writes, wantTable, keyValue.ProjectValue())
+	}
+}
+
+func TestProjectBoundaryFactsProjectsUnnamedAppendHistoryTableCoverage(t *testing.T) {
+	paramSym := cfg.SymbolID(38)
+	localKeySym := cfg.SymbolID(39)
+	root := constraint.NewPath(paramSym, "graph")
+	arrayPath := root.Field("node_order")
+	tablePath := root.Field("edges")
+	keyPath := constraint.NewPath(localKeySym, "node_id")
+	array := boundaryProjectionTestAddress(t, arrayPath)
+	table := boundaryProjectionTestAddress(t, tablePath)
+	key := boundaryProjectionTestAddress(t, keyPath)
+	value := product.FromType(typ.NewRecord().Field("targets", typ.NewArray(typ.String)).Build())
+
+	facts := ProjectBoundaryFacts(
+		BoundaryFactProjectionInput{
+			KeyPresence: KeyPresenceFacts{}.
+				WithAppendHistoryBaseAddress(array).
+				WithAppendHistoryCoverageAddresses(array, key, table, value),
+		},
+		NewBoundaryPathProjection(map[cfg.SymbolID]int{paramSym: 0}, nil),
+		BoundaryFactProjectionPolicy{},
+	)
+
+	wantArray := BoundaryPath{Kind: BoundaryPathParam, Index: 0, Segments: arrayPath.Segments}
+	wantTable := BoundaryPath{Kind: BoundaryPathParam, Index: 0, Segments: tablePath.Segments}
+	coverage := facts.AppendHistoryTableCoverage()
+	if len(coverage) != 1 ||
+		!boundaryProjectionPathEqual(coverage[0].Array, wantArray) ||
+		!boundaryProjectionPathEqual(coverage[0].Table, wantTable) ||
+		!product.Domain.Equal(coverage[0].Value, value) {
+		t.Fatalf("append table coverage = %#v, want array %#v table %#v", coverage, wantArray, wantTable)
+	}
+}
+
+func TestProjectBoundaryFactsRebasesIndexWriteKeyPathThroughAlias(t *testing.T) {
+	paramSym := cfg.SymbolID(36)
+	localKeySym := cfg.SymbolID(37)
+	root := constraint.NewPath(paramSym, "graph")
+	tablePath := root.Field("edges")
+	receiverKeyPath := root.Field("last_node_id")
+	localKeyPath := constraint.NewPath(localKeySym, "node_id")
+	table := boundaryProjectionTestAddress(t, tablePath)
+	receiverKey := boundaryProjectionTestAddress(t, receiverKeyPath)
+	localKey := boundaryProjectionTestAddress(t, localKeyPath)
+	value := product.FromType(typ.NewRecord().Field("targets", typ.NewArray(typ.String)).Build())
+
+	facts := ProjectBoundaryFacts(
+		BoundaryFactProjectionInput{
+			IndexWrites: IndexWriteAdmissionFacts{}.WithAddress(IndexWriteAdmissionAddressFact{
+				Target:     table,
+				KeyPath:    localKey,
+				HasKeyPath: true,
+				Key:        product.FromType(typ.Any),
+				Value:      value,
+			}),
+			PathAliases: PathAliasFacts{}.WithAddresses(receiverKey, localKey),
+		},
+		NewBoundaryPathProjection(map[cfg.SymbolID]int{paramSym: 0}, nil),
+		BoundaryFactProjectionPolicy{},
+	)
+
+	wantTable := BoundaryPath{Kind: BoundaryPathParam, Index: 0, Segments: tablePath.Segments}
+	wantKey := BoundaryPath{Kind: BoundaryPathParam, Index: 0, Segments: receiverKeyPath.Segments}
+	writes := facts.IndexWrites()
+	if len(writes) != 1 ||
+		!boundaryProjectionPathEqual(writes[0].Table, wantTable) ||
+		!writes[0].HasKeyPath ||
+		!boundaryProjectionPathEqual(writes[0].KeyPath, wantKey) ||
+		!product.Domain.Equal(writes[0].Value, value) {
+		t.Fatalf("index writes = %#v, want table %#v key %#v", writes, wantTable, wantKey)
 	}
 }
 
@@ -202,17 +317,22 @@ func boundaryProjectionTestAddress(t *testing.T, path constraint.Path) StableAdd
 
 func numericStateWithLenLower(t *testing.T, path constraint.Path, lower int64) *numeric.State {
 	t.Helper()
+	return numericStateWithLenBounds(t, path, lower, -1)
+}
+
+func numericStateWithLenBounds(t *testing.T, path constraint.Path, lower, upper int64) *numeric.State {
+	t.Helper()
 	container, ok := ContainerRefOfPath(path)
 	if !ok {
 		t.Fatalf("ContainerRefOfPath(%v) failed", path)
 	}
-	op, ok := NumericLenGeConstContainerOp(container, lower)
-	if !ok {
-		t.Fatalf("NumericLenGeConstContainerOp(%#v, %d) failed", container, lower)
-	}
 	state := PointState{}
-	if !ApplyNumericEffect(&state, NumericEffect{Ops: []NumericOp{op}}) {
-		t.Fatalf("ApplyNumericEffect did not apply len lower %d for %v", lower, path)
+	ops := NumericLengthBoundContainerOps(container, ">=", lower)
+	if upper >= 0 {
+		ops = append(ops, NumericLengthBoundContainerOps(container, "<=", upper)...)
+	}
+	if !ApplyNumericEffect(&state, NumericEffect{Ops: ops}) {
+		t.Fatalf("ApplyNumericEffect did not apply len bounds lower=%d upper=%d for %v", lower, upper, path)
 	}
 	return state.Num
 }

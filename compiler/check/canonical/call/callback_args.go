@@ -203,8 +203,11 @@ func shouldUseRefinedFunctionArg(current, candidate typ.Type) bool {
 	if currentFn == nil || candidateFn == nil {
 		return false
 	}
-	if len(currentFn.Params) != len(candidateFn.Params) || len(currentFn.Returns) != len(candidateFn.Returns) {
+	if len(currentFn.Params) != len(candidateFn.Params) {
 		return false
+	}
+	if len(currentFn.Returns) != len(candidateFn.Returns) {
+		return len(currentFn.Returns) == 0 && len(candidateFn.Returns) > 0
 	}
 	for _, param := range currentFn.Params {
 		if typ.IsAbsentOrUnknown(param.Type) || typ.IsAny(param.Type) {

@@ -80,7 +80,7 @@ func TestTransferUnreachableCallDoesNotEmitArgumentDemand(t *testing.T) {
 	}
 
 	demands := paramevidence.Contracts{}
-	out := tr.Transfer(in.Graph, callPoint, flow.PointStateDomain.Bottom(), nil, func(idx int, c paramevidence.ParamContract) {
+	out := tr.Transfer(in.Graph, callPoint, flow.PointStateDomain.Bottom(), nil, flow.BoundaryFacts{}, func(idx int, c paramevidence.ParamContract) {
 		demands = paramevidence.JoinDemand(demands, idx, c)
 	})
 
@@ -301,7 +301,7 @@ func TestTransferTypeCastNarrowNormalizesConstKeyPath(t *testing.T) {
 		},
 	}
 
-	out := tr.Transfer(in.Graph, callPoint, incoming, nil, nil)
+	out := tr.Transfer(in.Graph, callPoint, incoming, nil, flow.BoundaryFacts{}, nil)
 
 	segs := []constraint.Segment{{Kind: constraint.SegmentIndexString, Name: "p-q"}}
 	fact, ok := testStaticMemberValue(t, out.StaticMembers, objSym, segs)

@@ -86,18 +86,25 @@ type CondCheck struct {
 //   - NodeAssign: Target holds the assigned variable's SymbolID
 //   - NodeCall: Callee holds the function name for global/external calls
 //   - NodeBranch: CondVar and CondCheck describe the condition for narrowing
+//   - NodeScopeExit: CondOrigin points at the branch whose guard was copied onto
+//     this exit when CondOriginSet is true
 //   - NodeJoin: LoopVars, LoopLocals, LoopPreheader describe loop structure
 //
 // The Point field is the node's index in the CFG's Nodes slice.
 type Node struct {
-	Point      Point
-	Kind       NodeKind
-	Target     SymbolID  // Variable for assignments (0 = none or unresolved)
-	Callee     string    // Function for calls (global/external name)
-	CondVar    SymbolID  // Variable being tested (0 = none or complex expression)
-	CondCheck  CondCheck // Condition check type and optional type name
-	LoopVars   []SymbolID
-	LoopLocals []SymbolID
+	Point     Point
+	Kind      NodeKind
+	Target    SymbolID  // Variable for assignments (0 = none or unresolved)
+	Callee    string    // Function for calls (global/external name)
+	CondVar   SymbolID  // Variable being tested (0 = none or complex expression)
+	CondCheck CondCheck // Condition check type and optional type name
+	// CondOrigin is the exact branch point that owns a copied scope-exit guard.
+	// It prevents post-branch narrowing from rediscovering guards by loose
+	// CondVar/CondCheck matching, which is ambiguous for relational conditions.
+	CondOrigin    Point
+	CondOriginSet bool
+	LoopVars      []SymbolID
+	LoopLocals    []SymbolID
 	// LoopPreheader is the unique predecessor that enters a loop from outside
 	// (i.e., not a back-edge). For loops with multiple entry points or complex
 	// goto patterns, this points to the primary loop entry.

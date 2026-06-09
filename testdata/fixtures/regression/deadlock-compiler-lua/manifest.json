@@ -1,5 +1,6 @@
 {
   "description": "Large dynamic compiler fixture must terminate; proven dynamic calls should not report stale false positives",
+  "packages": ["uuid"],
   "check": {
     "errors": 0
   }

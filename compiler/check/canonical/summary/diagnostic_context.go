@@ -2,7 +2,9 @@ package summary
 
 import (
 	"github.com/wippyai/go-lua/compiler/check/canonical/state"
+	"github.com/wippyai/go-lua/types/domain/value/product"
 	"github.com/wippyai/go-lua/types/flow"
+	"github.com/wippyai/go-lua/types/typ"
 )
 
 // DiagnosticContextFrontier owns the diagnostic bridge's context discovery over
@@ -288,14 +290,63 @@ func (b *diagnosticContextBuilder) addContext(key Key) bool {
 }
 
 func diagnosticContextSameBase(a, b Key) bool {
-	return a.Ref == b.Ref &&
-		a.References == b.References &&
-		a.Values == b.Values
+	return a.Ref == b.Ref && a.Values == b.Values
 }
 
 func diagnosticContextDominates(a, b Key) bool {
 	if !diagnosticContextSameBase(a, b) {
 		return false
 	}
+	if !diagnosticReferenceContextDominates(a.References.Context(), b.References.Context()) {
+		return false
+	}
 	return flow.BoundaryFactsDomain.LessOrEq(a.Facts.Facts(), b.Facts.Facts())
+}
+
+func diagnosticReferenceContextDominates(a, b flow.ReferenceContext) bool {
+	if flow.ReferenceContextDomain.LessOrEq(b, a) {
+		return true
+	}
+	return diagnosticCaptureCellsDominate(a.CaptureCells(), b.CaptureCells()) &&
+		diagnosticFunctionRefsDominate(a.FunctionRefs(), b.FunctionRefs()) &&
+		diagnosticClosureRefsDominate(a.ClosureRefs(), b.ClosureRefs())
+}
+
+func diagnosticCaptureCellsDominate(a, b flow.CaptureCells) bool {
+	if flow.CaptureCellsDomain.Equal(a, b) || flow.CaptureCellsDomain.LessOrEq(b, a) {
+		return true
+	}
+	if a.IsTop() {
+		return true
+	}
+	if b.IsTop() {
+		return false
+	}
+	for _, weak := range b.Entries() {
+		strong, ok := a.Value(weak.Symbol)
+		if !ok || !diagnosticProductDominates(strong, weak.Value) {
+			return false
+		}
+	}
+	return true
+}
+
+func diagnosticProductDominates(strong, weak product.AbstractValue) bool {
+	if product.Domain.Equal(strong, weak) || product.Domain.LessOrEq(weak, strong) {
+		return true
+	}
+	if weak.Covers(strong) {
+		return true
+	}
+	strongType := product.ProjectValueOrUnknown(strong)
+	weakType := product.ProjectValueOrUnknown(weak)
+	return typ.MorePrecise(strongType, weakType)
+}
+
+func diagnosticFunctionRefsDominate(a, b flow.FunctionRefs) bool {
+	return len(b) == 0 || flow.FunctionRefsDomain.LessOrEq(b, a)
+}
+
+func diagnosticClosureRefsDominate(a, b flow.ClosureRefs) bool {
+	return len(b) == 0 || flow.ClosureRefsDomain.LessOrEq(b, a)
 }

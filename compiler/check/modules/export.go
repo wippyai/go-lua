@@ -8,11 +8,13 @@ import (
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/api"
 	"github.com/wippyai/go-lua/compiler/check/domain/exportkey"
+	"github.com/wippyai/go-lua/compiler/check/domain/functionfact"
 	interprocfields "github.com/wippyai/go-lua/compiler/check/domain/interproc"
 	returns "github.com/wippyai/go-lua/compiler/check/domain/returns"
 	"github.com/wippyai/go-lua/compiler/check/effects"
 	"github.com/wippyai/go-lua/compiler/check/erreffect"
 	"github.com/wippyai/go-lua/types/constraint"
+	"github.com/wippyai/go-lua/types/domain/value"
 	"github.com/wippyai/go-lua/types/flow"
 	"github.com/wippyai/go-lua/types/subtype"
 	"github.com/wippyai/go-lua/types/typ"
@@ -531,7 +533,7 @@ func enrichExportFunctionType(base *typ.Function, result *api.FuncResult) *typ.F
 			deadPointFlow(result),
 			result.NarrowSynth,
 		)
-		if withReturns := join.WithReturnsOrUnknown(enriched, observed); withReturns != nil {
+		if withReturns := withObservedExportReturns(enriched, observed); withReturns != nil {
 			enriched = withReturns
 		}
 	}
@@ -550,6 +552,127 @@ func enrichExportFunctionType(base *typ.Function, result *api.FuncResult) *typ.F
 	return enriched
 }
 
+func withObservedExportReturns(fn *typ.Function, observed []typ.Type) *typ.Function {
+	if fn == nil {
+		return nil
+	}
+	if len(observed) == 0 || len(fn.Returns) == 0 || len(fn.Returns) != len(observed) {
+		return join.WithReturnsOrUnknown(fn, observed)
+	}
+	merged := make([]typ.Type, len(observed))
+	changed := false
+	for i, got := range observed {
+		current := fn.Returns[i]
+		next := mergeObservedExportReturn(current, got)
+		if next == nil {
+			next = got
+		}
+		merged[i] = next
+		if !typ.TypeEquals(current, next) {
+			changed = true
+		}
+	}
+	if !changed {
+		return fn
+	}
+	return join.WithReturns(fn, merged)
+}
+
+func mergeObservedExportReturn(current, observed typ.Type) typ.Type {
+	if current == nil {
+		return observed
+	}
+	if observed == nil {
+		return current
+	}
+	if current == observed {
+		return current
+	}
+	if typ.IsClosedUnionAnnotation(current) {
+		if typ.TypeEquals(current, observed) {
+			return current
+		}
+		if closedUnionReturnEvidenceProvesMember(current, observed) {
+			return observed
+		}
+		return current
+	}
+	if unwrap.IsOptionalLike(current) && subtype.IsSubtype(observed, current) {
+		return current
+	}
+	if currentFn, observedFn := unwrap.Function(current), unwrap.Function(observed); currentFn != nil && observedFn != nil {
+		if len(currentFn.Returns) == 0 && len(observedFn.Returns) > 0 {
+			return observedFn
+		}
+		return functionfact.MergeType(currentFn, observedFn)
+	}
+	currentRec, observedRec := unwrap.Record(current), unwrap.Record(observed)
+	if currentRec != nil && observedRec != nil {
+		merged := mergeObservedExportRecord(currentRec, observedRec)
+		if alias, ok := current.(*typ.Alias); ok {
+			return typ.NewAlias(alias.Name, merged)
+		}
+		return merged
+	}
+	return value.JoinPrecise(current, observed)
+}
+
+func mergeObservedExportRecord(current, observed *typ.Record) typ.Type {
+	if current == nil {
+		return observed
+	}
+	if observed == nil {
+		return current
+	}
+	builder := typ.NewRecord()
+	if current.Open || observed.Open {
+		builder.SetOpen(true)
+	}
+	if current.HasMapComponent() {
+		builder.MapComponent(current.MapKey, current.MapValue)
+	} else if observed.HasMapComponent() {
+		builder.MapComponent(observed.MapKey, observed.MapValue)
+	}
+	if current.Metatable != nil {
+		builder.Metatable(current.Metatable)
+	} else if observed.Metatable != nil {
+		builder.Metatable(observed.Metatable)
+	}
+	seen := make(map[string]struct{}, len(current.Fields))
+	for _, field := range current.Fields {
+		seen[field.Name] = struct{}{}
+		if observedField := observed.GetField(field.Name); observedField != nil {
+			field.Type = mergeObservedExportReturn(field.Type, observedField.Type)
+			field.Optional = field.Optional && observedField.Optional
+			field.Readonly = field.Readonly && observedField.Readonly
+		}
+		addObservedExportField(builder, field)
+	}
+	for _, field := range observed.Fields {
+		if _, ok := seen[field.Name]; ok {
+			continue
+		}
+		addObservedExportField(builder, field)
+	}
+	for _, member := range current.StaticMembers {
+		builder.AddStaticMember(member)
+	}
+	return builder.Build()
+}
+
+func addObservedExportField(builder *typ.RecordBuilder, field typ.Field) {
+	switch {
+	case field.Optional && field.Readonly:
+		builder.OptReadonlyField(field.Name, field.Type)
+	case field.Optional:
+		builder.OptField(field.Name, field.Type)
+	case field.Readonly:
+		builder.ReadonlyField(field.Name, field.Type)
+	default:
+		builder.Field(field.Name, field.Type)
+	}
+}
+
 func preserveClosedDeclaredExportReturns(base *typ.Function, source *typ.Function) *typ.Function {
 	if base == nil || source == nil || len(source.Returns) == 0 {
 		return base
@@ -559,7 +682,7 @@ func preserveClosedDeclaredExportReturns(base *typ.Function, source *typ.Functio
 		if !typ.IsClosedUnionAnnotation(declared) {
 			continue
 		}
-		if i >= len(base.Returns) || !subtype.IsSubtype(base.Returns[i], declared) {
+		if i >= len(base.Returns) || !closedUnionReturnEvidenceProvesMember(declared, base.Returns[i]) {
 			replace = true
 			break
 		}
@@ -568,6 +691,22 @@ func preserveClosedDeclaredExportReturns(base *typ.Function, source *typ.Functio
 		return base
 	}
 	return join.WithReturns(base, source.Returns)
+}
+
+func closedUnionReturnEvidenceProvesMember(declared, observed typ.Type) bool {
+	if typ.TypeEquals(declared, observed) {
+		return true
+	}
+	u := unwrap.Union(declared)
+	if u == nil || len(u.Members) == 0 {
+		return false
+	}
+	for _, member := range u.Members {
+		if subtype.IsSubtype(observed, member) {
+			return true
+		}
+	}
+	return false
 }
 
 func attachExportReturnRelations(fn *typ.Function, rels flow.ReturnRelations) *typ.Function {

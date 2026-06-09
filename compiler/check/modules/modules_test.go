@@ -315,6 +315,53 @@ func TestEnrichExportFunctionsPreservesClosedDeclaredUnionReturns(t *testing.T) 
 	}
 }
 
+func TestMergeObservedExportReturnKeepsClosedUnionWhenObservedOnlyCoalescesMembers(t *testing.T) {
+	accepted := typ.NewAlias("Accepted", typ.NewRecord().
+		Field("id", typ.String).
+		Field("attempt", typ.Number).
+		Build())
+	rejected := typ.NewAlias("Rejected", typ.NewRecord().
+		Field("id", typ.String).
+		Field("reason", typ.String).
+		Build())
+	decision := typ.NewAlias("Decision", typ.NewUnion(accepted, rejected))
+	coalesced := typ.NewRecord().
+		Field("id", typ.String).
+		OptField("attempt", typ.Number).
+		OptField("reason", typ.String).
+		Build()
+
+	got := mergeObservedExportReturn(decision, coalesced)
+	if !typ.TypeEquals(got, decision) {
+		t.Fatalf("mergeObservedExportReturn = %v, want closed union %v", got, decision)
+	}
+	if got := mergeObservedExportReturn(decision, accepted); !typ.TypeEquals(got, accepted) {
+		t.Fatalf("mergeObservedExportReturn single member = %v, want %v", got, accepted)
+	}
+}
+
+func TestMergeObservedExportReturnKeepsIdenticalRecursiveType(t *testing.T) {
+	node := typ.NewRecursivePlaceholder("Node")
+	node.SetBody(typ.NewRecord().
+		Field("id", typ.String).
+		OptField("next", node).
+		Build())
+
+	if got := mergeObservedExportReturn(node, node); got != node {
+		t.Fatalf("mergeObservedExportReturn identical recursive = %v, want original", got)
+	}
+}
+
+func TestMergeObservedExportReturnPreservesDeclaredOptionalReturn(t *testing.T) {
+	errRec := typ.NewRecord().Field("message", typ.String).Build()
+	declared := typ.NewOptional(errRec)
+
+	got := mergeObservedExportReturn(declared, errRec)
+	if !typ.TypeEquals(got, declared) {
+		t.Fatalf("mergeObservedExportReturn optional = %v, want declared %v", got, declared)
+	}
+}
+
 func mustExportMemberPath(t *testing.T, names ...string) exportkey.MemberPath {
 	t.Helper()
 	segments := make([]fieldkey.Key, 0, len(names))

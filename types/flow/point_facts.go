@@ -300,6 +300,9 @@ func refinePathMemberValue(member, fact product.AbstractValue) product.AbstractV
 		return fact
 	}
 	if fact.DefinitelyPresent() && !member.DefinitelyPresent() {
+		if member.DefinitelyAbsent() {
+			return fact
+		}
 		present := product.NarrowPresent(member)
 		if !present.IsZero() && !present.IsBottom() {
 			if fact.Covers(present) || typ.MorePrecise(present.ProjectValue(), memberType) {
@@ -580,34 +583,43 @@ func (f PointFacts) IndexWriteAdmission(q IndexWritePathQuery) (product.Abstract
 // table[key] read. It is the product-valued counterpart of IndexWriteAdmission:
 // callers provide a structural table path plus the evaluated key, and PointFacts
 // decides whether path identity or literal key value is sufficient to consume
-// the readback proof.
+// the readback proof. A stable key path can consume path-backed admissions even
+// when the key's Env value has been widened away.
 func (f PointFacts) DynamicIndexReadback(q DynamicIndexReadbackQuery) (product.AbstractValue, bool) {
-	if q.Target.IsEmpty() || q.KeyValue.IsZero() {
+	if q.Target.IsEmpty() {
 		return product.AbstractValue{}, false
 	}
-	keyType := NormalizeDynamicKeyType(product.ProjectValueOrUnknown(q.KeyValue))
-	keyValue := product.FromType(keyType)
+	keyType := typ.Unknown
+	keyValue := product.AbstractValue{}
+	if !q.KeyValue.IsZero() {
+		keyType = NormalizeDynamicKeyType(product.ProjectValueOrUnknown(q.KeyValue))
+		keyValue = product.FromType(keyType)
+	}
 	if q.KeyPath.HasSymbol() {
-		if admitted, ok := f.IndexWriteAdmission(IndexWritePathQuery{
-			Target:           q.Target,
-			KeyPath:          q.KeyPath,
-			HasKeyPath:       true,
-			FollowKeyAliases: q.FollowKeyAliases,
-			KeyValue:         keyValue,
-		}); ok && !admitted.IsZero() {
-			return admitted, true
-		}
-		target, targetOK := StableAddressOfPath(q.Target)
-		key, keyOK := StableAddressOfPath(q.KeyPath)
-		if targetOK && keyOK {
-			admitted, ok := IndexedIteratorKeyArrayReadback(f.state.KeyPresence, f.state.ValueOrigins, target, key)
-			if ok && !admitted.IsZero() {
-				t := product.ProjectValueOrUnknown(admitted)
-				if !typ.IsAbsentOrUnknown(t) && !typ.IsAny(t) {
-					return admitted, true
+		for _, keyPath := range f.dynamicIndexReadbackKeyPaths(q) {
+			if admitted, ok := f.IndexWriteAdmission(IndexWritePathQuery{
+				Target:     q.Target,
+				KeyPath:    keyPath,
+				HasKeyPath: true,
+				KeyValue:   keyValue,
+			}); ok && !admitted.IsZero() {
+				return admitted, true
+			}
+			target, targetOK := StableAddressOfPath(q.Target)
+			key, keyOK := StableAddressOfPath(keyPath)
+			if targetOK && keyOK {
+				admitted, ok := IndexedIteratorKeyArrayReadback(f.state.KeyPresence, f.state.ValueOrigins, target, key)
+				if ok && !admitted.IsZero() {
+					t := product.ProjectValueOrUnknown(admitted)
+					if !typ.IsAbsentOrUnknown(t) && !typ.IsAny(t) {
+						return admitted, true
+					}
 				}
 			}
 		}
+	}
+	if keyValue.IsZero() {
+		return product.AbstractValue{}, false
 	}
 	if !IndexWriteReadCanUseKeyValueOnly(keyType) {
 		return product.AbstractValue{}, false
@@ -620,6 +632,46 @@ func (f PointFacts) DynamicIndexReadback(q DynamicIndexReadbackQuery) (product.A
 		return product.AbstractValue{}, false
 	}
 	return admitted, true
+}
+
+func (f PointFacts) dynamicIndexReadbackKeyPaths(q DynamicIndexReadbackQuery) []constraint.Path {
+	seen := map[constraint.PathKey]struct{}{}
+	var out []constraint.Path
+	add := func(path constraint.Path) {
+		if path.IsEmpty() || !path.HasSymbol() {
+			return
+		}
+		key := path.Key()
+		if _, ok := seen[key]; ok {
+			return
+		}
+		seen[key] = struct{}{}
+		out = append(out, path)
+	}
+	add(q.KeyPath)
+	if !q.FollowKeyAliases {
+		return out
+	}
+	for _, path := range f.IdentityAliasClosurePaths(q.KeyPath) {
+		add(path)
+	}
+	for _, route := range f.ProvenanceRoutesFor(ProvenanceRouteQuery{
+		Path:                      q.KeyPath,
+		AppendElementFieldOrigins: true,
+	}) {
+		if route.Kind != ProvenanceRouteAppendElementField {
+			continue
+		}
+		source := route.Source
+		for _, seg := range route.SourceField {
+			source = source.Append(seg)
+		}
+		for _, seg := range route.FieldRemainder {
+			source = source.Append(seg)
+		}
+		add(source)
+	}
+	return out
 }
 
 func productType(av product.AbstractValue, ok bool) (typ.Type, bool) {

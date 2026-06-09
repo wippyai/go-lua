@@ -83,7 +83,7 @@ func TestCaptureEntrySeedsCellsAtFunctionEntry(t *testing.T) {
 
 	out := tr.Transfer(tr.in.Graph, tr.in.Graph.Entry(), flow.PointState{
 		Cells: flow.CaptureCellsOf([]flow.CaptureCell{{Symbol: sym, Value: product.FromType(typ.Number)}}),
-	}, nil, nil)
+	}, nil, flow.BoundaryFacts{}, nil)
 	got, ok := tr.evalExpr(&out, ident, nil)
 	if !ok {
 		t.Fatal("captured ident did not resolve after entry seed")
@@ -173,7 +173,7 @@ func TestOwnerCellBackedParamSeedsCellWithoutEffect(t *testing.T) {
 	tr, ident, sym := ownerCellParamTestTransfer(t)
 	out := tr.Transfer(tr.in.Graph, tr.in.Graph.Entry(), flow.PointState{}, paramevidence.Contracts{
 		0: paramevidence.DemandFromType(typ.String),
-	}, nil)
+	}, flow.BoundaryFacts{}, nil)
 
 	if _, ok := out.Env[flow.SymbolValueKey(sym)]; ok {
 		t.Fatalf("owner cell-backed param seeded Env[%s], want only Cells", flow.SymbolValueKey(sym))

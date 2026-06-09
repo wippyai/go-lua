@@ -97,6 +97,18 @@ func ReferenceContextFromPoint(point *PointState) ReferenceContext {
 	return ReferenceContextOf(point.Cells, point.FunctionRefs, point.ClosureRefs)
 }
 
+// ReferenceContextWithStaticMembersFromPoint extracts the live reference store
+// and folds point-local static-member facts into captured root products. Use
+// this when a reference context crosses a function/closure boundary; the
+// StaticMembers axis is point-local, but captured cell snapshots must carry the
+// proven child facts they expose to the callee.
+func ReferenceContextWithStaticMembersFromPoint(point *PointState) ReferenceContext {
+	if point == nil {
+		return ReferenceContextOf(CaptureCellsDomain.Bottom(), FunctionRefsDomain.Bottom(), ClosureRefsDomain.Bottom())
+	}
+	return ReferenceContextOf(point.Cells.WithStaticMembers(point.StaticMembers), point.FunctionRefs, point.ClosureRefs)
+}
+
 // MergeReferenceContextWithFixed combines caller-provided fixed reference
 // context with a fallback context discovered from the callee/call site. Fixed
 // entries dominate equal roots; missing roots inherit fallback evidence. Capture

@@ -121,6 +121,103 @@ compiler.compile({
 	}
 }
 
+func TestCanonicalPrototypeReceiverSurfaceSurvivesBranchFieldNarrowing(t *testing.T) {
+	src := `
+local FlowGraph = {}
+local flow_graph_mt = { __index = FlowGraph }
+
+function FlowGraph.new()
+	return setmetatable({
+		references = {},
+		input_data = nil,
+		input_name = nil,
+		last_node_id = nil,
+	}, flow_graph_mt)
+end
+
+function FlowGraph:add_reference(name, node_id)
+	self.references[name] = node_id
+	return true, nil
+end
+
+local graph = FlowGraph.new()
+graph.input_data = {}
+
+if graph.input_data and not graph.input_name and not graph.last_node_id then
+	local ok, err = graph:add_reference("root", "INPUT")
+	if err then
+		return nil, err
+	end
+end
+
+return graph
+`
+	res := testutil.Check(src, testutil.WithStdlib())
+	if msgs := testutil.ErrorMessages(res.Diagnostics); len(msgs) != 0 {
+		t.Fatalf("expected branch-narrowed receiver to keep prototype method surface, got: %v", msgs)
+	}
+}
+
+func TestCanonicalPrototypeReceiverSurfaceSurvivesOperationLoopBranch(t *testing.T) {
+	src := `
+local compiler = {
+	OP_TYPES = {
+		WITH_INPUT = "with_input",
+		FUNC = "func",
+		AS = "as",
+	},
+}
+local FlowGraph = {}
+local flow_graph_mt = { __index = FlowGraph }
+
+function FlowGraph.new()
+	return setmetatable({
+		references = {},
+		input_data = nil,
+		input_name = nil,
+		last_node_id = nil,
+	}, flow_graph_mt)
+end
+
+function FlowGraph:create_node(kind)
+	local node_id = "node:" .. kind
+	self.last_node_id = node_id
+	return node_id, nil
+end
+
+function FlowGraph:add_reference(name, node_id)
+	self.references[name] = node_id
+	return true, nil
+end
+
+function compiler.build_graph(operations)
+	local graph = FlowGraph.new()
+	for _, op in ipairs(operations) do
+		if op.type == compiler.OP_TYPES.WITH_INPUT then
+			graph.input_data = op.config.data
+		elseif op.type == compiler.OP_TYPES.FUNC then
+			local node_id, err = graph:create_node("noop")
+			if err then
+				return nil, err
+			end
+		elseif op.type == compiler.OP_TYPES.AS then
+			if graph.input_data and not graph.input_name and not graph.last_node_id then
+				graph.input_name = op.config.name
+				graph:add_reference(op.config.name, "INPUT")
+			end
+		end
+	end
+	return graph, nil
+end
+
+return compiler.build_graph
+`
+	res := testutil.Check(src, testutil.WithStdlib())
+	if msgs := testutil.ErrorMessages(res.Diagnostics); len(msgs) != 0 {
+		t.Fatalf("expected loop branch receiver to keep prototype method surface, got: %v", msgs)
+	}
+}
+
 func TestCanonicalPrototypeReceiverMutatorEffectSurvivesReturnedBuilder(t *testing.T) {
 	src := `
 local compiler = {}

@@ -330,6 +330,35 @@ func TestInferReturnValuesSummaryBeatsGradualAndTypeFallback(t *testing.T) {
 	}
 }
 
+func TestInferReturnValuesClosedUnionFallbackPreservesVariantCorrelation(t *testing.T) {
+	call := &ast.FuncCallExpr{Func: &ast.IdentExpr{Value: "decide"}}
+	accepted := typ.NewAlias("Accepted", typ.NewRecord().
+		Field("id", typ.String).
+		Field("attempt", typ.Number).
+		Build())
+	rejected := typ.NewAlias("Rejected", typ.NewRecord().
+		Field("id", typ.String).
+		Field("reason", typ.String).
+		Build())
+	decision := typ.NewAlias("Decision", typ.NewUnion(accepted, rejected))
+	coalesced := typ.NewRecord().
+		Field("id", typ.String).
+		OptField("attempt", typ.Number).
+		Field("reason", typ.Nil).
+		Build()
+
+	got, ok := (ReturnValueInput{
+		Call:                   call,
+		TypePolicyAvailable:    true,
+		SummaryReturnValues:    []product.AbstractValue{product.FromType(coalesced)},
+		FallbackReturnTypes:    []typ.Type{decision},
+		HasFallbackReturnTypes: true,
+	}).Values()
+	if !ok || len(got) != 1 || !typ.TypeEquals(got[0].ProjectValue(), decision) {
+		t.Fatalf("InferReturnValues closed union = %#v, %v; want %v, true", got, ok, decision)
+	}
+}
+
 func TestInferReturnValuesSkipsRecursiveFamilyFallbackScan(t *testing.T) {
 	call := &ast.FuncCallExpr{Func: &ast.IdentExpr{Value: "build_graph"}}
 	node := typ.NewRecursivePlaceholder("Node")

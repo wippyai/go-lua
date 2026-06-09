@@ -56,6 +56,35 @@ func TestRouteSourceTypeIndexedIteratorComposesRemainder(t *testing.T) {
 	}
 }
 
+func TestRouteSourceTypeIndexedIteratorFallsBackToPointPathEvidence(t *testing.T) {
+	sourcePath := constraint.NewPath(cfg.SymbolID(112), "items")
+	sourceType := typ.NewArray(typ.NewRecord().Field("payload", typ.String).Build())
+	var reads []SourceReadKind
+	got := RouteSourceType(flow.ProvenanceRoute{
+		Kind:     flow.ProvenanceRouteIndexedIterator,
+		Source:   sourcePath,
+		VarIndex: 1,
+		Remainder: []constraint.Segment{
+			{Kind: constraint.SegmentField, Name: "payload"},
+		},
+	}, nil, func(path constraint.Path, read SourceReadKind) typ.Type {
+		if !path.Equal(sourcePath) {
+			t.Fatalf("resolver path = %v, want %v", path, sourcePath)
+		}
+		reads = append(reads, read)
+		if read == SourceReadPointPath {
+			return sourceType
+		}
+		return nil
+	}, testProjectSegments)
+	if !typ.TypeEquals(got, typ.String) {
+		t.Fatalf("RouteSourceType(indexed point-path fallback) = %v, want string", got)
+	}
+	if !reflect.DeepEqual(reads, []SourceReadKind{SourceReadBodyContract, SourceReadPointPath}) {
+		t.Fatalf("reads = %v, want body-contract then point-path", reads)
+	}
+}
+
 func TestRouteSourceTypeKeyedIteratorKeyAndValue(t *testing.T) {
 	sourcePath := constraint.NewPath(cfg.SymbolID(13), "by_id")
 	sourceType := typ.NewMap(typ.String, typ.Number)
@@ -184,6 +213,38 @@ func TestRouteSourceTypeGraphFollowsBodyContractRoutes(t *testing.T) {
 	}
 	if !reflect.DeepEqual(finalized, []constraint.Path{source, local}) {
 		t.Fatalf("finalized paths = %v, want source then local", finalized)
+	}
+}
+
+func TestRouteSourceTypeGraphIgnoresAnyRouteWhenPreciseRouteExists(t *testing.T) {
+	local := constraint.NewPath(cfg.SymbolID(121), "local")
+	precise := constraint.NewPath(cfg.SymbolID(122), "precise")
+	dynamic := constraint.NewPath(cfg.SymbolID(123), "dynamic")
+	graph := RouteSourceTypeGraph{
+		Routes: func(path constraint.Path) []flow.ProvenanceRoute {
+			if path.Equal(local) {
+				return []flow.ProvenanceRoute{
+					{Kind: flow.ProvenanceRouteIdentityAlias, Source: precise},
+					{Kind: flow.ProvenanceRouteIdentityAlias, Source: dynamic},
+				}
+			}
+			return nil
+		},
+		BodyContractRead: func(path constraint.Path) typ.Type {
+			switch {
+			case path.Equal(precise):
+				return typ.String
+			case path.Equal(dynamic):
+				return typ.Any
+			default:
+				return nil
+			}
+		},
+		Project: testProjectSegments,
+	}
+
+	if got := graph.TypeAt(local); !typ.TypeEquals(got, typ.String) {
+		t.Fatalf("RouteSourceTypeGraph.TypeAt(local) = %v, want precise string route", got)
 	}
 }
 

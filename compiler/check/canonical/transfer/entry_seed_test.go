@@ -8,6 +8,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/check/canonical/input"
 	"github.com/wippyai/go-lua/compiler/check/domain/paramevidence"
 	"github.com/wippyai/go-lua/compiler/check/synth/ops"
+	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/domain/value/product"
 	"github.com/wippyai/go-lua/types/flow"
 	"github.com/wippyai/go-lua/types/typ"
@@ -175,6 +176,37 @@ func TestEntrySeedEffectWritesRefinedDeclaredContainer(t *testing.T) {
 	want := typ.NewArray(entry)
 	if !ok || !typ.TypeEquals(got.ProjectValue(), want) {
 		t.Fatalf("seeded symbol = %v/%v, want %v", got.ProjectValue(), ok, want)
+	}
+}
+
+func TestEntryBoundaryFactsReplayAfterParamValueSeed(t *testing.T) {
+	fn := &ast.FunctionExpr{ParList: &ast.ParList{Names: []string{"self"}}}
+	graph := cfg.Build(fn)
+	if graph == nil || len(graph.ParamSymbols()) != 1 {
+		t.Fatalf("test graph params = %v, want one self param", graph.ParamSymbols())
+	}
+	self := graph.ParamSymbols()[0]
+	tr := New(input.Inputs{
+		Graph: graph,
+		Scope: input.ScopeFacts{ParamSymbols: []cfg.SymbolID{self}},
+	}, Config{})
+	selfPath := constraint.NewPath(self, "self")
+	entryValue := product.FromType(typ.NewRecord().Field("last_node_id", typ.Nil).Build())
+	entryFacts := flow.BoundaryFactsDomain.Top().WithStaticMembers([]flow.BoundaryStaticMemberFact{{
+		Target: flow.BoundaryPath{
+			Kind:     flow.BoundaryPathParam,
+			Index:    0,
+			Segments: selfPath.Field("last_node_id").Segments,
+		},
+		Value: product.FromType(typ.String),
+	}})
+
+	incoming := flow.PointStateDomain.Bottom()
+	tr.setSymbolValue(&incoming, self, entryValue, false)
+	out := tr.Transfer(graph, graph.Entry(), incoming, nil, entryFacts, nil)
+	got, ok := flow.PointFactsOf(out).PathValue(selfPath.Field("last_node_id"))
+	if !ok || !typ.TypeEquals(got.ProjectValue(), typ.String) {
+		t.Fatalf("entry fact last_node_id = %v/%v, want string", got.ProjectValue(), ok)
 	}
 }
 

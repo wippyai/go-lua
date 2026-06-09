@@ -146,7 +146,7 @@ func (t *Transfer) appendBoundaryFactPostconditions(
 		return
 	}
 	returns := t.boundaryReturnPaths(info, callInfo, facts)
-	roots := t.callBoundaryLocalRoots(callInfo.Call, returns)
+	roots := t.callBoundaryLocalRootsAt(out, p, callInfo.Call, returns)
 	effects.boundaryFacts = append(effects.boundaryFacts, boundaryFactPostcondition{
 		call:    callInfo.Call,
 		point:   p,

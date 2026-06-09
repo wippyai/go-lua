@@ -962,6 +962,22 @@ func (s *State) CheckSatisfiability() bool {
 			return false
 		}
 	}
+	for _, key := range constraint.SortedPathKeys(s.lenRefs) {
+		ref := s.lenRefs[key]
+		varBound, hasVarBound := s.bounds[key]
+		lenBound, hasLenBound := s.lenBounds[ref.Array]
+		if !hasVarBound || !hasLenBound {
+			continue
+		}
+		upper, ok := addInt64Saturating(lenBound.Upper, ref.Offset)
+		if !ok {
+			continue
+		}
+		if varBound.Lower > upper {
+			s.unsat = true
+			return false
+		}
+	}
 
 	// Check relation consistency using Bellman-Ford on difference graph.
 	if len(s.relations) > 0 {
@@ -972,6 +988,16 @@ func (s *State) CheckSatisfiability() bool {
 	}
 
 	return true
+}
+
+func addInt64Saturating(a, b int64) (int64, bool) {
+	if b > 0 && a > math.MaxInt64-b {
+		return 0, false
+	}
+	if b < 0 && a < math.MinInt64-b {
+		return 0, false
+	}
+	return a + b, true
 }
 
 // checkDifferenceConstraints uses Bellman-Ford to detect negative cycles.

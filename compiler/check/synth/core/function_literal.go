@@ -28,7 +28,9 @@ func functionLiteralParamCount(fn *ast.FunctionExpr) int {
 }
 
 // ShallowFunctionLiteralSignature is the non-recursive probe type for a
-// function literal before a call site provides contextual parameter types.
+// function literal before a call site provides contextual parameter types. It
+// deliberately omits returns: a shallow body has not proved an output value, so
+// it must not bind a higher-order callee's output type parameter to any.
 func ShallowFunctionLiteralSignature(fn *ast.FunctionExpr) *typ.Function {
 	builder := typ.Func()
 	if fn != nil && fn.ParList != nil {
@@ -42,5 +44,5 @@ func ShallowFunctionLiteralSignature(fn *ast.FunctionExpr) *typ.Function {
 	} else {
 		builder.Variadic(typ.Any)
 	}
-	return builder.Returns(typ.Any).Build()
+	return builder.Build()
 }

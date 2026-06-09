@@ -139,6 +139,7 @@ func (t *captureSeedTransfer) Transfer(
 	_ cfg.Point,
 	incoming flow.PointState,
 	_ paramevidence.Contracts,
+	_ flow.BoundaryFacts,
 	_ func(int, paramevidence.ParamContract),
 ) flow.PointState {
 	out := incoming
@@ -164,13 +165,14 @@ func (t *countingTransfer) Transfer(
 	p cfg.Point,
 	incoming flow.PointState,
 	contracts paramevidence.Contracts,
+	facts flow.BoundaryFacts,
 	emitParamContract func(int, paramevidence.ParamContract),
 ) flow.PointState {
 	t.calls++
 	if t.delegate == nil {
 		return incoming
 	}
-	return t.delegate.Transfer(g, p, incoming, contracts, emitParamContract)
+	return t.delegate.Transfer(g, p, incoming, contracts, facts, emitParamContract)
 }
 
 type returnPostconditionCellProgram struct {

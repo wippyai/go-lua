@@ -49,9 +49,11 @@ func TestApplyBoundaryFactsAppliesCollectionProvenanceTransaction(t *testing.T) 
 		}},
 		nil,
 		[]BoundaryIndexWriteFact{{
-			Table: param(1, tablePath),
-			Key:   param(2, keyPath),
-			Value: product.FromType(nodeType),
+			Table:      param(1, tablePath),
+			KeyPath:    param(2, keyPath),
+			HasKeyPath: true,
+			KeyValue:   product.FromType(typ.String),
+			Value:      product.FromType(nodeType),
 		}},
 	).WithAppendElementFieldOrigins([]BoundaryAppendElementFieldOriginFact{{
 		Array:  param(0, arrayPath),
@@ -82,6 +84,97 @@ func TestApplyBoundaryFactsAppliesCollectionProvenanceTransaction(t *testing.T) 
 	}
 }
 
+func TestApplyBoundaryFactsAppliesIndexWriteWithKeyValueOnly(t *testing.T) {
+	tablePath := constraint.NewPath(cfg.SymbolID(511), "graph").Field("nodes")
+	state := PointState{}
+	roots := NewBoundaryLocalRoots(map[int]constraint.Path{0: constraint.NewPath(tablePath.Symbol, tablePath.Root)}, nil)
+	keyValue := product.FromType(typ.LiteralString("n1"))
+	value := product.FromType(typ.NewRecord().Field("id", typ.String).Build())
+	facts := BoundaryFactsOf(
+		nil,
+		nil,
+		nil,
+		nil,
+		nil,
+		[]BoundaryIndexWriteFact{{
+			Table:    BoundaryPath{Kind: BoundaryPathParam, Index: 0, Segments: tablePath.Segments},
+			KeyValue: keyValue,
+			Value:    value,
+		}},
+	)
+
+	if _, changed := ApplyBoundaryFacts(&state, facts, roots.Rebase, nil); !changed {
+		t.Fatal("ApplyBoundaryFacts reported no change")
+	}
+	got, ok := PointFactsOf(state).DynamicIndexReadback(DynamicIndexReadbackQuery{
+		Target:   tablePath,
+		KeyValue: keyValue,
+	})
+	if !ok || !product.Domain.Equal(got, value) {
+		t.Fatalf("dynamic readback = %v/%v, want %s", got.ProjectValue(), ok, value.ProjectValue())
+	}
+}
+
+func TestApplyBoundaryFactsReplaysUnnamedAppendTableCoverageFromEmptyPrestate(t *testing.T) {
+	arrayPath := constraint.NewPath(cfg.SymbolID(521), "graph").Field("node_order")
+	tablePath := constraint.NewPath(cfg.SymbolID(521), "graph").Field("edges")
+	value := product.FromType(typ.NewRecord().
+		Field("targets", typ.NewArray(typ.String)).
+		Field("error_targets", typ.NewArray(typ.String)).
+		Build())
+	state := PointState{
+		KeyPresence: KeyPresenceFacts{}.
+			WithEmptyKeyArrayAddress(testStableAddressPath(t, arrayPath)).
+			WithAppendHistoryBaseAddress(testStableAddressPath(t, arrayPath)),
+	}
+	roots := NewBoundaryLocalRoots(map[int]constraint.Path{0: constraint.NewPath(arrayPath.Symbol, arrayPath.Root)}, nil)
+	facts := BoundaryFactsDomain.Top().
+		WithAppendHistoryBases([]BoundaryAppendHistoryBaseFact{{
+			Array: BoundaryPath{Kind: BoundaryPathParam, Index: 0, Segments: arrayPath.Segments},
+		}}).
+		WithAppendHistoryTableCoverage([]BoundaryAppendHistoryTableCoverageFact{{
+			Array: BoundaryPath{Kind: BoundaryPathParam, Index: 0, Segments: arrayPath.Segments},
+			Table: BoundaryPath{Kind: BoundaryPathParam, Index: 0, Segments: tablePath.Segments},
+			Value: value,
+		}})
+
+	plan := PrepareBoundaryFactReplay(state, facts, roots)
+	state.KeyPresence = KeyPresenceFacts{}
+	if _, changed := ApplyBoundaryFactsWithReplay(&state, facts, roots, plan); !changed {
+		t.Fatal("ApplyBoundaryFactsWithReplay reported no change")
+	}
+	values := state.KeyPresence.KeyArrayValues(StablePathKey(arrayPath), StablePathKey(tablePath))
+	if len(values) != 1 || !product.Domain.Equal(values[0], value) {
+		t.Fatalf("unnamed append table coverage = %v, want edge record; facts=%s", values, state.KeyPresence.Format())
+	}
+}
+
+func TestApplyBoundaryFactsStaticMemberReplacesStaleValue(t *testing.T) {
+	graphPath := constraint.NewPath(cfg.SymbolID(512), "graph")
+	fieldPath := graphPath.Field("last_node_id")
+	addr := testStableAddressPath(t, fieldPath)
+	state := PointState{
+		StaticMembers: StaticMemberFactsDomain.Top().WithAddress(addr, product.FromType(typ.Nil)),
+	}
+	roots := NewBoundaryLocalRoots(map[int]constraint.Path{0: graphPath}, nil)
+	facts := BoundaryFactsDomain.Top().WithStaticMembers([]BoundaryStaticMemberFact{{
+		Target: BoundaryPath{
+			Kind:     BoundaryPathParam,
+			Index:    0,
+			Segments: fieldPath.Segments,
+		},
+		Value: product.FromType(typ.String),
+	}})
+
+	if _, changed := ApplyBoundaryFacts(&state, facts, roots.Rebase, nil); !changed {
+		t.Fatal("ApplyBoundaryFacts reported no change")
+	}
+	got, ok := state.StaticMembers.ValueAtAddress(addr)
+	if !ok || !typ.TypeEquals(got.ProjectValue(), typ.String) {
+		t.Fatalf("static member after boundary replay = %v/%v, want string; facts=%s", got.ProjectValue(), ok, state.StaticMembers.Format())
+	}
+}
+
 func TestApplyBoundaryFactsAppliesLengthRelation(t *testing.T) {
 	sourcePath := constraint.NewPath(cfg.SymbolID(411), "source")
 	targetPath := constraint.NewPath(cfg.SymbolID(412), "target")
@@ -105,6 +198,27 @@ func TestApplyBoundaryFactsAppliesLengthRelation(t *testing.T) {
 	}
 	if lower, _, ok := state.Num.LenBoundsFor(SymbolPathKey(targetPath.Symbol, nil)); !ok || lower != 3 {
 		t.Fatalf("target length lower = %d/%v, want 3", lower, ok)
+	}
+}
+
+func TestApplyBoundaryFactsAppliesLengthUpperBound(t *testing.T) {
+	targetPath := constraint.NewPath(cfg.SymbolID(421), "target")
+	state := PointState{}
+	roots := NewBoundaryLocalRoots(
+		nil,
+		map[int]constraint.Path{0: targetPath},
+	)
+	facts := BoundaryFactsDomain.Top().WithLengthUpperBounds([]BoundaryLengthUpperBound{{
+		Target: BoundaryPath{Kind: BoundaryPathReturn, Index: 0},
+		Upper:  0,
+	}})
+
+	_, changed := ApplyBoundaryFacts(&state, facts, roots.Rebase, nil)
+	if !changed {
+		t.Fatal("ApplyBoundaryFacts reported no change")
+	}
+	if _, upper, ok := state.Num.LenBoundsFor(SymbolPathKey(targetPath.Symbol, nil)); !ok || upper != 0 {
+		t.Fatalf("target length upper = %d/%v, want 0", upper, ok)
 	}
 }
 

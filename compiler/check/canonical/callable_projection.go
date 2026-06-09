@@ -6,7 +6,6 @@ import (
 	"github.com/wippyai/go-lua/compiler/check/canonical/summary"
 	"github.com/wippyai/go-lua/compiler/check/domain/fieldkey"
 	"github.com/wippyai/go-lua/types/constraint"
-	"github.com/wippyai/go-lua/types/db"
 	"github.com/wippyai/go-lua/types/domain/value/product"
 	"github.com/wippyai/go-lua/types/flow"
 	"github.com/wippyai/go-lua/types/typ"
@@ -25,13 +24,9 @@ type callableProjector struct {
 	hasDeclaredReturns func(summary.FuncRef) bool
 }
 
-func newCallableProjector(d *Driver, prog *program, queries *summary.Queries, ctx *db.QueryContext) callableProjector {
+func newCallableProjector(d *Driver, prog *program, reader summary.Reader) callableProjector {
 	if d == nil {
 		return callableProjector{prog: prog}
-	}
-	reader := summary.NewReader(queries, ctx, d.summaries)
-	if d.snapshotSummaryReads {
-		reader = d.summaryReader()
 	}
 	return callableProjector{
 		prog:   prog,
@@ -40,7 +35,7 @@ func newCallableProjector(d *Driver, prog *program, queries *summary.Queries, ct
 			if prog == nil {
 				return nil
 			}
-			if d.refHasDeclaredReturns(prog, ref) {
+			if d.refHasDeclaredReturns(prog, ref) || reader.Live() {
 				return d.declaredSignatureForRef(prog, ref)
 			}
 			return d.signatureForRef(prog, ref)
@@ -59,10 +54,11 @@ func (ct callTyper) FunctionValue(query flow.CallableSignatureQuery) (typ.Type, 
 	if d == nil || d.activeProgram == nil {
 		return nil, false
 	}
-	projector := newCallableProjector(d, d.activeProgram, d.activeQueries, d.activeCtx)
+	projector := newCallableProjector(d, d.activeProgram, d.activeReader())
+	references := flow.ReferenceContextWithStaticMembersFromPoint(&query.State)
 	var sig typ.Type
 	if query.Ref != (flow.FunctionRef{}) {
-		sig = projector.FunctionTypeByRef(query.Ref, flow.ReferenceContextFromPoint(&query.State))
+		sig = projector.FunctionTypeByRef(query.Ref, references)
 	} else if !query.Path.IsEmpty() {
 		sig = projector.TypeAt(query.State, query.Path)
 	}
@@ -84,10 +80,10 @@ func (p callableProjector) TypeAt(in flow.PointState, path constraint.Path) typ.
 	}
 	refs, ok := flow.FunctionRefAtPath(in.FunctionRefs, path)
 	if ok {
-		return p.functionRefsType(refs, flow.ReferenceContextFromPoint(&in))
+		return p.functionRefsType(refs, flow.ReferenceContextWithStaticMembersFromPoint(&in))
 	}
 	if ref, ok := p.staticRefAtPath(path); ok {
-		return p.signature(canonref.ToFlow(ref), flow.ReferenceContextFromPoint(&in))
+		return p.signature(canonref.ToFlow(ref), flow.ReferenceContextWithStaticMembersFromPoint(&in))
 	}
 	return nil
 }
@@ -129,7 +125,7 @@ func (p callableProjector) closureSignature(closure flow.ClosureRef, in flow.Poi
 	sref := canonref.FromFlow(closure.Ref)
 	entry := canonicalcall.EntryContextFromClosureWithLiveContext(
 		closure,
-		p.prog.CallEntryContext(sref, flow.ReferenceContextFromPoint(&in), nil),
+		p.prog.CallEntryContext(sref, flow.ReferenceContextWithStaticMembersFromPoint(&in), nil),
 	)
 	return p.signature(closure.Ref, entry.References())
 }
@@ -178,6 +174,9 @@ func (p callableProjector) signature(ref flow.FunctionRef, references flow.Refer
 	sig := p.baseSignature(sref)
 	if sig == nil {
 		return nil
+	}
+	if p.reader.Live() {
+		return sig
 	}
 	entry := p.prog.CallEntryContext(sref, references, nil)
 	hasDeclaredReturns := false

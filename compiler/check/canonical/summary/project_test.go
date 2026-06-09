@@ -130,6 +130,39 @@ func TestProject_ReturnStaticMembersIncludesDirectProductFields(t *testing.T) {
 	}
 }
 
+func TestProject_ReturnFreshArrayMemberPublishesLengthUpperBound(t *testing.T) {
+	g := returnFunctionGraph(t, "return graph")
+	ret, info := returnPointAndInfo(t, g)
+	if len(info.Symbols) != 1 || info.Symbols[0] == 0 {
+		t.Fatalf("identifier return info not found: %#v", info.Symbols)
+	}
+	graphSym := info.Symbols[0]
+
+	sum := Project(state.FunctionState{
+		Points: map[cfg.Point]flow.PointState{
+			ret: {
+				Env: map[flow.ValueKey]product.AbstractValue{
+					flow.SymbolValueKey(graphSym): product.FromType(typ.NewRecord().
+						Field("xs", typ.NewFreshArray()).
+						Build()),
+				},
+			},
+		},
+	}, g)
+
+	want := flow.BoundaryLengthUpperBound{
+		Target: flow.BoundaryPath{
+			Kind:     flow.BoundaryPathReturn,
+			Index:    0,
+			Segments: []constraint.Segment{{Kind: constraint.SegmentField, Name: "xs"}},
+		},
+		Upper: 0,
+	}
+	if !sum.BoundaryFacts.HasLengthUpperBound(want) {
+		t.Fatalf("summary boundary facts = %#v, want returned xs length upper %#v", sum.BoundaryFacts, want)
+	}
+}
+
 func TestProject_ReturnStaticMembersDirectFieldsUseRawReturnedProduct(t *testing.T) {
 	g := returnFunctionGraph(t, "return graph")
 	ret, info := returnPointAndInfo(t, g)

@@ -85,6 +85,73 @@ func projectKeyPresenceBoundaryFactsWithPaths(
 		return true
 	})
 
+	var appendBases []BoundaryAppendHistoryBaseFact
+	for _, fact := range f.AppendHistoryBaseEntries() {
+		arrayAddr, ok := StableAddressFromCanonicalKey(fact.Array)
+		if !ok {
+			continue
+		}
+		for _, array := range paths.fromAddress(arrayAddr) {
+			appendBases = append(appendBases, BoundaryAppendHistoryBaseFact{Array: array})
+		}
+	}
+
+	var appendEvents []BoundaryAppendHistoryEventFact
+	for _, fact := range f.AppendHistoryEventEntries() {
+		arrayAddr, arrayOK := StableAddressFromCanonicalKey(fact.Array)
+		keyAddr, keyOK := StableAddressFromCanonicalKey(fact.Key)
+		if !arrayOK || !keyOK {
+			continue
+		}
+		for _, array := range paths.fromAddress(arrayAddr) {
+			for _, key := range paths.fromAddress(keyAddr) {
+				appendEvents = append(appendEvents, BoundaryAppendHistoryEventFact{Array: array, Key: key})
+			}
+		}
+	}
+
+	var appendCoverage []BoundaryAppendHistoryCoverageFact
+	tableCoverageSeen := make(map[constraint.PathKey]struct{})
+	var appendTableCoverage []BoundaryAppendHistoryTableCoverageFact
+	for _, fact := range f.AppendHistoryCoverageEntries() {
+		arrayAddr, arrayOK := StableAddressFromCanonicalKey(fact.Array)
+		keyAddr, keyOK := StableAddressFromCanonicalKey(fact.Key)
+		tableAddr, tableOK := StableAddressFromCanonicalKey(fact.Table)
+		if !arrayOK || !tableOK {
+			continue
+		}
+		if value, ok := f.AppendHistoryCoverageValue(fact.Array, fact.Table); ok && !value.IsZero() {
+			coverageKey := fact.Array + "\x00" + fact.Table
+			if _, seen := tableCoverageSeen[coverageKey]; !seen {
+				tableCoverageSeen[coverageKey] = struct{}{}
+				for _, array := range paths.fromAddress(arrayAddr) {
+					for _, table := range paths.fromAddress(tableAddr) {
+						appendTableCoverage = append(appendTableCoverage, BoundaryAppendHistoryTableCoverageFact{
+							Array: array,
+							Table: table,
+							Value: value,
+						})
+					}
+				}
+			}
+		}
+		if !keyOK {
+			continue
+		}
+		for _, array := range paths.fromAddress(arrayAddr) {
+			for _, key := range paths.fromAddress(keyAddr) {
+				for _, table := range paths.fromAddress(tableAddr) {
+					appendCoverage = append(appendCoverage, BoundaryAppendHistoryCoverageFact{
+						Array: array,
+						Key:   key,
+						Table: table,
+						Value: fact.Value,
+					})
+				}
+			}
+		}
+	}
+
 	var appendOrigins []BoundaryAppendElementFieldOriginFact
 	f.ForEachAppendElementFieldOriginAddress(func(arrayAddr StableAddress, field []constraint.Segment, sourceAddr StableAddress, sourceField []constraint.Segment) bool {
 		for _, array := range paths.fromAddress(arrayAddr) {
@@ -105,6 +172,10 @@ func projectKeyPresenceBoundaryFactsWithPaths(
 	}
 
 	return BoundaryFactsOf(keyPresence, keyArrays, keyArrayValues, appendKeys, nil, nil).
+		WithAppendHistoryBases(appendBases).
+		WithAppendHistoryEvents(appendEvents).
+		WithAppendHistoryCoverage(appendCoverage).
+		WithAppendHistoryTableCoverage(appendTableCoverage).
 		WithAppendElementFieldOrigins(appendOrigins)
 }
 

@@ -99,6 +99,26 @@ func TestTableConstructorDynamicKeyDoesNotSeedCardinality(t *testing.T) {
 	}
 }
 
+func TestTableCreateAssignmentSeedsZeroLength(t *testing.T) {
+	const sym = cfg.SymbolID(8106)
+	tr, tableIdent := transferWithBoundTableGlobal()
+	out := flow.PointState{
+		Num: numeric.NewState(),
+		Rel: flow.PointRelationsDomain.Top(),
+	}
+
+	tr.applyAssign(&out, 0, &cfg.AssignInfo{
+		Targets: []cfg.AssignTarget{{Kind: cfg.TargetIdent, Name: "xs", Symbol: sym}},
+		Sources: []ast.Expr{tableCreateCall(tableIdent, "16", "0")},
+	}, nil)
+
+	key := flow.SymbolPathKey(sym, nil)
+	lower, upper, ok := out.Num.LenBoundsFor(key)
+	if !ok || lower != 0 || upper != 0 {
+		t.Fatalf("table.create length bounds = [%d,%d]/%v, want [0,0]/true", lower, upper, ok)
+	}
+}
+
 func TestTableConstructorCardinalityReadsPreWriteState(t *testing.T) {
 	const sym = cfg.SymbolID(8104)
 	x := &ast.IdentExpr{Value: "x"}

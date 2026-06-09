@@ -30,13 +30,13 @@ type solvedCallEdgeEvidence struct {
 	Contracts    []api.CallContractEvidence
 }
 
-func (d *Driver) solvedCallEvidenceProjection(prog *program, ref summary.FuncRef, evidence api.FlowEvidence) (solvedCallEvidenceProjection, bool) {
+func (d *Driver) solvedCallEvidenceProjection(prog *program, artifact canonicalSolveArtifact, ref summary.FuncRef, evidence api.FlowEvidence) (solvedCallEvidenceProjection, bool) {
 	if d == nil || prog == nil || len(evidence.Calls) == 0 {
 		return solvedCallEvidenceProjection{}, false
 	}
 	g := prog.Graph(ref)
 	tr, _ := prog.transfers[ref].(*transfer.Transfer)
-	fs, ok := d.states[ref]
+	fs, ok := artifact.States[ref]
 	if g == nil || tr == nil || !ok {
 		return solvedCallEvidenceProjection{}, false
 	}

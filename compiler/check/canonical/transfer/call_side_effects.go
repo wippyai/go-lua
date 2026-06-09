@@ -55,7 +55,7 @@ func (t *Transfer) applyCallBoundaryOutcome(
 		return
 	}
 	boundaryFacts := boundary.BoundaryFacts
-	boundaryRoots := t.callBoundaryLocalRoots(call, nil)
+	boundaryRoots := t.callBoundaryLocalRootsAt(out, p, call, nil)
 	boundaryPlan := flow.PrepareBoundaryFactReplay(*out, boundaryFacts, boundaryRoots)
 	t.applyCallCellEffects(out, call, boundary.CellEffects)
 	t.applyCallReceiverEffects(out, call, boundary.ReceiverEffects, len(ctx.RuntimeArgValues), demand)

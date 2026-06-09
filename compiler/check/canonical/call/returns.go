@@ -20,6 +20,7 @@ import (
 	"github.com/wippyai/go-lua/types/io"
 	"github.com/wippyai/go-lua/types/kind"
 	"github.com/wippyai/go-lua/types/query/core"
+	"github.com/wippyai/go-lua/types/subtype"
 	"github.com/wippyai/go-lua/types/typ"
 	"github.com/wippyai/go-lua/types/typ/subst"
 	"github.com/wippyai/go-lua/types/typ/unwrap"
@@ -284,6 +285,9 @@ func (in ReturnValueInput) Values() ([]product.AbstractValue, bool) {
 	if len(in.SummaryReturnValues) > 0 {
 		returns := in.SummaryReturnValues
 		deferredArity = len(returns)
+		if preserved, ok := preserveClosedUnionFallbackReturnValues(in, returns); ok {
+			return preserved, true
+		}
 		if refined, ok := refineSummaryReturnValuesWithTypeFallback(in, returns); ok && informativeReturnValues(refined) {
 			return refined, true
 		}
@@ -383,6 +387,47 @@ func typeFallbackReturnValues(in ReturnValueInput, requireInformative bool) ([]p
 	// stay zero here; summary projection totalizes only when it crosses into tuple
 	// lattice algebra.
 	return product.FromTypes(types), true
+}
+
+func preserveClosedUnionFallbackReturnValues(in ReturnValueInput, summary []product.AbstractValue) ([]product.AbstractValue, bool) {
+	if !in.TypePolicyAvailable || !in.HasFallbackReturnTypes || len(summary) != len(in.FallbackReturnTypes) {
+		return nil, false
+	}
+	var out []product.AbstractValue
+	for i, fallback := range in.FallbackReturnTypes {
+		if !closedUnionFallbackOwnsSlot(fallback, summary[i].ProjectValue()) {
+			continue
+		}
+		if out == nil {
+			out = append([]product.AbstractValue(nil), summary...)
+		}
+		out[i] = product.FromType(fallback)
+	}
+	if out == nil {
+		return nil, false
+	}
+	return out, true
+}
+
+func closedUnionFallbackOwnsSlot(fallback, evidence typ.Type) bool {
+	fallback = subst.ExpandInstantiated(fallback)
+	evidence = subst.ExpandInstantiated(evidence)
+	if !typ.IsClosedUnionAnnotation(fallback) {
+		return false
+	}
+	if typ.TypeEquals(fallback, evidence) {
+		return false
+	}
+	u := unwrap.Union(fallback)
+	if u == nil || len(u.Members) == 0 {
+		return false
+	}
+	for _, member := range u.Members {
+		if subtype.IsSubtype(evidence, member) {
+			return false
+		}
+	}
+	return true
 }
 
 func fallbackReturnRelations(resolved, static typ.Type) flow.ReturnRelations {

@@ -157,6 +157,43 @@ func (t *Transfer) seedArrayLiteralLength(out *flow.PointState, sym cfg.SymbolID
 	}
 }
 
+// seedAssignmentLengthFacts records sequence-size facts proven by allocation
+// syntax. Table literals and Luau's table.create both produce fresh containers;
+// only transfer can see that source expression and the target symbol together.
+func (t *Transfer) seedAssignmentLengthFacts(out *flow.PointState, sym cfg.SymbolID, src ast.Expr, cardinalityLower int64) {
+	if call, ok := src.(*ast.FuncCallExpr); ok {
+		if t.seedTableCreateLength(out, sym, call) {
+			return
+		}
+	}
+	t.seedArrayLiteralLength(out, sym, src, cardinalityLower)
+}
+
+func (t *Transfer) seedTableCreateLength(out *flow.PointState, sym cfg.SymbolID, call *ast.FuncCallExpr) bool {
+	if out == nil || sym == 0 || !t.isTableCreateCall(call) || len(call.Args) == 0 {
+		return false
+	}
+	_, hasConstArray := t.constInt(call.Args[0])
+	if !hasConstArray {
+		return false
+	}
+	dropOp, ok := flow.NumericDropLenBoundSymbolOp(sym)
+	if !ok {
+		return false
+	}
+	flow.ApplyRelationEffect(out, flow.RelationEffect{
+		Kind:    flow.RelationKillLengthTargets,
+		Symbols: []cfg.SymbolID{sym},
+	})
+	key := flow.SymbolPathKey(sym, nil)
+	ops := []flow.NumericOp{
+		dropOp,
+		{Kind: flow.NumericLenLeConst, Key: key, Const: 0},
+	}
+	flow.ApplyNumericEffect(out, flow.NumericEffect{Ops: ops, RequireExisting: true})
+	return true
+}
+
 // applyIndexWriteLength updates the length floor of an indexed write `base[k]=v`.
 // An append at the border (`arr[#arr + c]` on the SAME base, c >= 1) raises the
 // floor to the prior floor plus c: writing past the current length extends the
@@ -562,12 +599,105 @@ func (t *Transfer) seedNumericForBounds(out *flow.PointState, idxSym cfg.SymbolI
 		flow.ApplyNumericEffect(out, flow.NumericEffect{Ops: ops, RequireExisting: true})
 		return
 	}
+	t.seedLengthExprValueFacts(out, ceilEnd)
 	if container, ok := t.lenExprContainerRef(ceilEnd); ok {
 		if op, ok := flow.NumericVarLeLenOffsetContainerOp(idxSym, container, 0); ok {
 			ops = append(ops, op)
 		}
 	}
 	flow.ApplyNumericEffect(out, flow.NumericEffect{Ops: ops, RequireExisting: true})
+}
+
+func (t *Transfer) seedNumericForBodyBounds(out *flow.PointState, idxSym cfg.SymbolID, info *cfg.NumericForInfo) {
+	if out == nil || info == nil || idxSym == 0 {
+		return
+	}
+	ceilEnd, floorEnd := info.Limit, info.Init
+	if t.forStepIsNegative(info.Step) {
+		ceilEnd, floorEnd = info.Init, info.Limit
+	}
+	ops := make([]flow.NumericOp, 0, 2)
+	if c, ok := t.constInt(floorEnd); ok {
+		if op, ok := flow.NumericVarGeConstSymbolOp(idxSym, c); ok {
+			ops = append(ops, op)
+		}
+	}
+	if c, ok := t.constInt(ceilEnd); ok {
+		if op, ok := flow.NumericVarLeConstSymbolOp(idxSym, c); ok {
+			ops = append(ops, op)
+		}
+	} else if container, offset, ok := t.lengthBoundExprContainerOffset(ceilEnd); ok {
+		t.seedLengthExprValueFacts(out, ceilEnd)
+		if op, ok := flow.NumericVarLeLenOffsetContainerOp(idxSym, container, offset); ok {
+			ops = append(ops, op)
+		}
+	}
+	flow.ApplyNumericEffect(out, flow.NumericEffect{Ops: ops, RequireExisting: true})
+	if out.Num != nil && !out.Num.CheckSatisfiability() {
+		*out = flow.PointStateDomain.Bottom()
+	}
+}
+
+func (t *Transfer) lengthBoundExprContainerOffset(expr ast.Expr) (flow.ContainerRef, int64, bool) {
+	if ref, ok := t.lenExprContainerRef(expr); ok {
+		return ref, 0, true
+	}
+	arith, ok := expr.(*ast.ArithmeticOpExpr)
+	if !ok {
+		return flow.ContainerRef{}, 0, false
+	}
+	switch arith.Operator {
+	case "+":
+		if ref, ok := t.lenExprContainerRef(arith.Lhs); ok {
+			if c, ok := t.constInt(arith.Rhs); ok {
+				return ref, c, true
+			}
+		}
+		if ref, ok := t.lenExprContainerRef(arith.Rhs); ok {
+			if c, ok := t.constInt(arith.Lhs); ok {
+				return ref, c, true
+			}
+		}
+	case "-":
+		if ref, ok := t.lenExprContainerRef(arith.Lhs); ok {
+			if c, ok := t.constInt(arith.Rhs); ok {
+				return ref, -c, true
+			}
+		}
+	}
+	return flow.ContainerRef{}, 0, false
+}
+
+func (t *Transfer) seedLengthExprValueFacts(out *flow.PointState, expr ast.Expr) bool {
+	if out == nil || expr == nil {
+		return false
+	}
+	switch e := expr.(type) {
+	case *ast.UnaryLenOpExpr:
+		path, ok := t.staticPathOfExpr(e.Expr)
+		if !ok || path.IsEmpty() {
+			return false
+		}
+		value, ok := flow.PointFactsOfBorrowed(out).PathValue(path)
+		if !ok || !productValueIsFreshEmptyArray(value) {
+			return false
+		}
+		container, ok := flow.ContainerRefOfPath(path)
+		if !ok {
+			return false
+		}
+		return flow.ApplyNumericEffect(out, flow.NumericEffect{
+			Ops: flow.NumericLengthBoundContainerOps(container, "<=", 0),
+		})
+	case *ast.ArithmeticOpExpr:
+		left := t.seedLengthExprValueFacts(out, e.Lhs)
+		right := t.seedLengthExprValueFacts(out, e.Rhs)
+		return left || right
+	case *ast.CastExpr:
+		return t.seedLengthExprValueFacts(out, e.Expr)
+	default:
+		return false
+	}
 }
 
 // forStepIsNegative reports whether a numeric-for step expression is a negative

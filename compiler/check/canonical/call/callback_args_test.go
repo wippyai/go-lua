@@ -77,8 +77,8 @@ func TestExpectedArgProjectionKeepsDirectFunctionLiteralShallow(t *testing.T) {
 		t.Fatalf("shallow args = %v, want two args", got)
 	}
 	fn, ok := got[0].(*typ.Function)
-	if !ok || fn == nil || len(fn.Params) != 0 || len(fn.Returns) != 1 || !typ.TypeEquals(fn.Returns[0], typ.Any) {
-		t.Fatalf("callback arg = %v, want shallow function literal signature", got[0])
+	if !ok || fn == nil || len(fn.Params) != 0 || len(fn.Returns) != 0 {
+		t.Fatalf("callback arg = %v, want shallow function literal arity without return proof", got[0])
 	}
 	if !typ.TypeEquals(got[1], typ.Integer) {
 		t.Fatalf("non-callback arg = %v, want projected integer", got[1])
