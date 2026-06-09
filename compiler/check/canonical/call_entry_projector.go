@@ -96,11 +96,7 @@ func (c callEntryProjector) productEvidence(ref summary.FuncRef, call *ast.FuncC
 		References:    ctx.References,
 		ArgSources:    c.productReferenceArgSources(ctx),
 		ArgFacts:      c.productBoundaryArgSources(ctx),
-		KeyPresence:   ctx.KeyPresence,
-		StaticMembers: ctx.StaticMembers,
-		Num:           ctx.Num,
-		IndexWrites:   ctx.IndexWrites,
-		PathAliases:   ctx.PathAliases,
+		BoundaryFacts: ctx.BoundaryFacts,
 	})
 }
 
@@ -142,11 +138,7 @@ func (c callEntryProjector) pointFacts(ref summary.FuncRef, call *ast.FuncCallEx
 		Call:          call,
 		State:         in,
 		ArgFacts:      c.pointBoundaryArgSources(in),
-		KeyPresence:   in.KeyPresence,
-		StaticMembers: in.StaticMembers,
-		Num:           in.Num,
-		IndexWrites:   in.IndexWrites,
-		PathAliases:   in.PathAliases,
+		BoundaryFacts: flow.BoundaryFactProjectionInputOfPoint(in),
 	}).Facts
 }
 

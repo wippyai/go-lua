@@ -11,7 +11,6 @@ import (
 	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/domain/value/product"
 	"github.com/wippyai/go-lua/types/flow"
-	"github.com/wippyai/go-lua/types/flow/numeric"
 	"github.com/wippyai/go-lua/types/typ"
 	"github.com/wippyai/go-lua/types/typ/unwrap"
 )
@@ -436,11 +435,7 @@ type DirectEntryEvidenceInput struct {
 	ArgSources     EntryReferenceArgSources
 	ArgFacts       EntryBoundaryFactArgSources
 
-	KeyPresence   flow.KeyPresenceFacts
-	StaticMembers flow.StaticMemberFacts
-	Num           *numeric.State
-	IndexWrites   flow.IndexWriteAdmissionFacts
-	PathAliases   flow.PathAliasFacts
+	BoundaryFacts flow.BoundaryFactProjectionInput
 }
 
 // DirectEntryEvidence is the callee-entry evidence produced by one direct call.
@@ -483,11 +478,7 @@ func (p CallEntryProjection) DirectEvidence(in DirectEntryEvidenceInput) DirectE
 			ArgValues:     in.RuntimeValues,
 			State:         in.State,
 			ArgFacts:      in.ArgFacts,
-			KeyPresence:   in.KeyPresence,
-			StaticMembers: in.StaticMembers,
-			Num:           in.Num,
-			IndexWrites:   in.IndexWrites,
-			PathAliases:   in.PathAliases,
+			BoundaryFacts: in.BoundaryFacts,
 		}),
 	}
 }
@@ -508,11 +499,7 @@ func (p CallEntryProjection) directEvidenceFromPoint(callee FuncRef, call *ast.F
 		References:     flow.ReferenceContextFromPoint(in),
 		ArgSources:     p.ReferenceArgSources,
 		ArgFacts:       p.BoundaryArgSources,
-		KeyPresence:    in.KeyPresence,
-		StaticMembers:  in.StaticMembers,
-		Num:            in.Num,
-		IndexWrites:    in.IndexWrites,
-		PathAliases:    in.PathAliases,
+		BoundaryFacts:  flow.BoundaryFactProjectionInputOfPoint(in),
 	})
 }
 

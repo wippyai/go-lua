@@ -66,12 +66,7 @@ type ArrayElementKeyPathTransaction struct {
 
 // ApplyPathAliasProof applies identity alias provenance to point state.
 func ApplyPathAliasProof(out *PointState, proof PathAliasProof) bool {
-	if out == nil || proof.Value.Key() == "" || proof.Source.Key() == "" {
-		return false
-	}
-	before := out.PathAliases
-	out.PathAliases = out.PathAliases.WithAddresses(proof.Value, proof.Source)
-	return !PathAliasFactsDomain.Equal(before, out.PathAliases)
+	return RecordPathAlias(out, proof.Value, proof.Source)
 }
 
 // ApplyValueOriginProof applies semantic value-origin provenance to point state.

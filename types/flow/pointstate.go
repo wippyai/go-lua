@@ -430,25 +430,6 @@ func pointKeyPresenceJoinOneSided(out KeyPresenceFacts, facts KeyPresenceFacts, 
 	})
 }
 
-func pointPathAliasesLessOrEq(a, b PointState) bool {
-	return a.PathAliases.coversWithAbsentValues(b.PathAliases, func(addr StableAddress) bool {
-		return pointAddressDefinitelyAbsent(a, addr)
-	})
-}
-
-func pointPathAliasesJoin(a, b PointState) PathAliasFacts {
-	joined := PathAliasFactsDomain.Join(a.PathAliases, b.PathAliases)
-	joined = pointPathAliasesJoinOneSided(joined, a.PathAliases, b)
-	joined = pointPathAliasesJoinOneSided(joined, b.PathAliases, a)
-	return joined
-}
-
-func pointPathAliasesJoinOneSided(out PathAliasFacts, facts PathAliasFacts, other PointState) PathAliasFacts {
-	return out.withAliasesProvedByAbsentValues(facts, func(addr StableAddress) bool {
-		return pointAddressDefinitelyAbsent(other, addr)
-	})
-}
-
 func pointIndexWritesLessOrEq(a, b PointState) bool {
 	return a.IndexWrites.coversWithAbsentKeyPaths(
 		b.IndexWrites,

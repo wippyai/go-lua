@@ -154,7 +154,7 @@ func TestProjectBoundaryFactsRebasesIndexWriteKeyPathThroughAlias(t *testing.T) 
 				Key:        product.FromType(typ.Any),
 				Value:      value,
 			}),
-			PathAliases: PathAliasFacts{}.WithAddresses(receiverKey, localKey),
+			IdentityAliases: PathAliasFacts{}.WithAddresses(receiverKey, localKey),
 		},
 		NewBoundaryPathProjection(map[cfg.SymbolID]int{paramSym: 0}, nil),
 		BoundaryFactProjectionPolicy{},

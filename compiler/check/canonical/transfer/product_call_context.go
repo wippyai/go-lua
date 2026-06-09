@@ -5,7 +5,6 @@ import (
 	"github.com/wippyai/go-lua/compiler/check/domain/paramevidence"
 	"github.com/wippyai/go-lua/types/domain/value/product"
 	"github.com/wippyai/go-lua/types/flow"
-	"github.com/wippyai/go-lua/types/flow/numeric"
 	"github.com/wippyai/go-lua/types/kind"
 	"github.com/wippyai/go-lua/types/typ"
 )
@@ -22,11 +21,7 @@ type ProductCallContext struct {
 	SelfType         typ.Type
 	ExprValue        func(ast.Expr) (product.AbstractValue, bool)
 	References       flow.ReferenceContext
-	KeyPresence      flow.KeyPresenceFacts
-	StaticMembers    flow.StaticMemberFacts
-	Num              *numeric.State
-	IndexWrites      flow.IndexWriteAdmissionFacts
-	PathAliases      flow.PathAliasFacts
+	BoundaryFacts    flow.BoundaryFactProjectionInput
 }
 
 func (t *Transfer) productCallContext(
@@ -48,11 +43,7 @@ func (t *Transfer) productCallContext(
 	}
 	if out != nil {
 		ctx.References = flow.ReferenceContextFromPoint(out)
-		ctx.KeyPresence = out.KeyPresence
-		ctx.StaticMembers = out.StaticMembers
-		ctx.Num = out.Num
-		ctx.IndexWrites = out.IndexWrites
-		ctx.PathAliases = out.PathAliases
+		ctx.BoundaryFacts = flow.BoundaryFactProjectionInputOfPoint(out)
 	}
 	return ctx
 }

@@ -81,7 +81,7 @@ func TestPathAliasSourceRoutesIgnoreLegacyStoredSource(t *testing.T) {
 		Target: alias,
 		Kind:   relationSourceIdentityAlias,
 		IdentityPolicy: IdentityAliasRoutePolicy{
-			PathAliases: true,
+			PathAliasFacts: true,
 		},
 	}); len(got) != 0 {
 		t.Fatalf("canonical path-alias route accepted legacy source key: %#v", got)

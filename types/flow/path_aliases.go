@@ -151,6 +151,49 @@ func (f PathAliasFacts) KillAffectedByWriteAddress(write StableAddress) PathAlia
 	return canonicalPathAliasFacts(entries)
 }
 
+// PathAliasesOf returns the path-alias axis carried by state.
+func PathAliasesOf(state PointState) PathAliasFacts {
+	return state.PathAliases
+}
+
+// PathAliasesOfPoint returns the path-alias axis carried by state.
+func PathAliasesOfPoint(state *PointState) PathAliasFacts {
+	if state == nil {
+		return PathAliasFactsDomain.Top()
+	}
+	return state.PathAliases
+}
+
+// LiftPathAliasesEntry turns the unreachable entry seed into the reachable
+// identity element for the path-alias axis.
+func LiftPathAliasesEntry(state *PointState) bool {
+	if state == nil || !state.PathAliases.IsBottom() {
+		return false
+	}
+	state.PathAliases = PathAliasFactsDomain.Top()
+	return true
+}
+
+// RecordPathAlias records point-local identity provenance on state.
+func RecordPathAlias(state *PointState, value, source StableAddress) bool {
+	if state == nil || value.Key() == "" || source.Key() == "" {
+		return false
+	}
+	before := state.PathAliases
+	state.PathAliases = state.PathAliases.WithAddresses(value, source)
+	return !PathAliasFactsDomain.Equal(before, state.PathAliases)
+}
+
+// KillPathAliasesAffectedByWrite applies the path-alias write-kill law.
+func KillPathAliasesAffectedByWrite(state *PointState, write StableAddress) bool {
+	if state == nil || write.Key() == "" {
+		return false
+	}
+	before := state.PathAliases
+	state.PathAliases = state.PathAliases.KillAffectedByWriteAddress(write)
+	return !PathAliasFactsDomain.Equal(before, state.PathAliases)
+}
+
 func (f PathAliasFacts) coversWithAbsentValues(want PathAliasFacts, absent addressAbsentProof) bool {
 	if f.bottom {
 		return true
@@ -293,4 +336,23 @@ func pathAliasFactsContainAll(have, want []PathAliasFact) bool {
 func intersectPathAliasFacts(a, b PathAliasFacts) PathAliasFacts {
 	out := pathAliasRowIdentity.Intersect(a.entries, b.entries)
 	return canonicalPathAliasFacts(out)
+}
+
+func pointPathAliasesLessOrEq(a, b PointState) bool {
+	return a.PathAliases.coversWithAbsentValues(b.PathAliases, func(addr StableAddress) bool {
+		return pointAddressDefinitelyAbsent(a, addr)
+	})
+}
+
+func pointPathAliasesJoin(a, b PointState) PathAliasFacts {
+	joined := PathAliasFactsDomain.Join(a.PathAliases, b.PathAliases)
+	joined = pointPathAliasesJoinOneSided(joined, a.PathAliases, b)
+	joined = pointPathAliasesJoinOneSided(joined, b.PathAliases, a)
+	return joined
+}
+
+func pointPathAliasesJoinOneSided(out PathAliasFacts, facts PathAliasFacts, other PointState) PathAliasFacts {
+	return out.withAliasesProvedByAbsentValues(facts, func(addr StableAddress) bool {
+		return pointAddressDefinitelyAbsent(other, addr)
+	})
 }

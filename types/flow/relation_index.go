@@ -28,7 +28,7 @@ type relationSourceQuery struct {
 
 func relationIndexOf(state PointState) pointRelationIndex {
 	return pointRelationIndex{
-		aliases: state.PathAliases,
+		aliases: PathAliasesOf(state),
 		origins: state.ValueOrigins,
 	}
 }
@@ -44,7 +44,7 @@ func (idx pointRelationIndex) SourceRoutes(q relationSourceQuery) []sourceRoute 
 	switch q.Kind {
 	case relationSourceIdentityAlias:
 		policy := q.IdentityPolicy
-		if !policy.PathAliases && !policy.AssignmentOrigins {
+		if !policy.PathAliasFacts && !policy.AssignmentOrigins {
 			policy = IdentityAliasReadPolicy
 		}
 		return idx.identityRoutes(q.Target, policy)
@@ -89,7 +89,7 @@ func (idx pointRelationIndex) identityRoutes(target StableAddress, policy Identi
 			out = append(out, route)
 		}
 	}
-	if policy.PathAliases {
+	if policy.PathAliasFacts {
 		appendRoutes(idx.pathAliasRoutes(target))
 	}
 	if policy.AssignmentOrigins {

@@ -701,13 +701,7 @@ func appendBoundaryIndexKey(out []byte, idx int) []byte {
 
 func projectPointBoundaryFacts(ps flow.PointState, mapper flow.BoundaryPathProjection) flow.BoundaryFacts {
 	return flow.ProjectBoundaryFacts(
-		flow.BoundaryFactProjectionInput{
-			KeyPresence:   ps.KeyPresence,
-			StaticMembers: ps.StaticMembers,
-			Num:           ps.Num,
-			IndexWrites:   ps.IndexWrites,
-			PathAliases:   ps.PathAliases,
-		},
+		flow.BoundaryFactProjectionInputOf(ps),
 		mapper,
 		flow.BoundaryFactProjectionPolicy{
 			KeyPresence: flow.KeyPresenceBoundaryProjection{IncludePendingKeyArrays: true},

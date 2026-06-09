@@ -9,11 +9,32 @@ import (
 // BoundaryFactProjectionInput is the point-local proof state that can be
 // published across a function boundary once its stable addresses are rebased.
 type BoundaryFactProjectionInput struct {
-	KeyPresence   KeyPresenceFacts
-	StaticMembers StaticMemberFacts
-	Num           *numeric.State
-	IndexWrites   IndexWriteAdmissionFacts
-	PathAliases   PathAliasFacts
+	KeyPresence     KeyPresenceFacts
+	StaticMembers   StaticMemberFacts
+	Num             *numeric.State
+	IndexWrites     IndexWriteAdmissionFacts
+	IdentityAliases PathAliasFacts
+}
+
+// BoundaryFactProjectionInputOf extracts the replayable boundary fact axes from
+// point state.
+func BoundaryFactProjectionInputOf(state PointState) BoundaryFactProjectionInput {
+	return BoundaryFactProjectionInput{
+		KeyPresence:     state.KeyPresence,
+		StaticMembers:   state.StaticMembers,
+		Num:             state.Num,
+		IndexWrites:     state.IndexWrites,
+		IdentityAliases: PathAliasesOf(state),
+	}
+}
+
+// BoundaryFactProjectionInputOfPoint extracts the replayable boundary fact axes
+// from a borrowed point state.
+func BoundaryFactProjectionInputOfPoint(state *PointState) BoundaryFactProjectionInput {
+	if state == nil {
+		return BoundaryFactProjectionInput{}
+	}
+	return BoundaryFactProjectionInputOf(*state)
 }
 
 // BoundaryFactProjectionPolicy configures cross-boundary fact projection. The
@@ -79,7 +100,7 @@ func ProjectBoundaryFacts(
 		if len(tables) == 0 {
 			return true
 		}
-		keys := boundaryIndexWriteKeyPaths(fact, paths, in.PathAliases)
+		keys := boundaryIndexWriteKeyPaths(fact, paths, in.IdentityAliases)
 		var valuePaths []BoundaryPath
 		if fact.HasValuePath {
 			valuePaths = paths.fromAddress(fact.ValuePath)

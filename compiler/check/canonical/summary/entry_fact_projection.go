@@ -5,7 +5,6 @@ import (
 	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/domain/value/product"
 	"github.com/wippyai/go-lua/types/flow"
-	"github.com/wippyai/go-lua/types/flow/numeric"
 )
 
 // directCallEntryFactInput is the call-boundary projection for point-local path
@@ -21,11 +20,7 @@ type directCallEntryFactInput struct {
 	State     *flow.PointState
 	ArgFacts  EntryBoundaryFactArgSources
 
-	KeyPresence   flow.KeyPresenceFacts
-	StaticMembers flow.StaticMemberFacts
-	Num           *numeric.State
-	IndexWrites   flow.IndexWriteAdmissionFacts
-	PathAliases   flow.PathAliasFacts
+	BoundaryFacts flow.BoundaryFactProjectionInput
 }
 
 // EntryBoundaryFactArgResolver resolves boundary facts carried by an argument
@@ -44,17 +39,9 @@ func directCallEntryFacts(in directCallEntryFactInput) flow.BoundaryFacts {
 	if in.Call == nil || in.ParamSlot == nil || in.ArgPath == nil {
 		return flow.BoundaryFactsDomain.Top()
 	}
-	facts := flow.ProjectBoundaryFacts(
-		flow.BoundaryFactProjectionInput{
-			KeyPresence:   in.KeyPresence,
-			StaticMembers: callEntryStaticMembers(in),
-			Num:           in.Num,
-			IndexWrites:   in.IndexWrites,
-			PathAliases:   in.PathAliases,
-		},
-		entryBoundaryProjector{in: in},
-		flow.BoundaryFactProjectionPolicy{},
-	)
+	factInput := in.BoundaryFacts
+	factInput.StaticMembers = callEntryStaticMembers(in)
+	facts := flow.ProjectBoundaryFacts(factInput, entryBoundaryProjector{in: in}, flow.BoundaryFactProjectionPolicy{})
 	return flow.UnionBoundaryFactProofs(facts, directCallEntryArgumentFacts(in))
 }
 
@@ -74,10 +61,10 @@ func directCallEntryArgumentFacts(in directCallEntryFactInput) flow.BoundaryFact
 }
 
 func callEntryStaticMembers(in directCallEntryFactInput) flow.StaticMemberFacts {
-	if len(in.ArgValues) == 0 || !in.StaticMembers.HasProof() {
-		return in.StaticMembers
+	if len(in.ArgValues) == 0 || !in.BoundaryFacts.StaticMembers.HasProof() {
+		return in.BoundaryFacts.StaticMembers
 	}
-	out := in.StaticMembers
+	out := in.BoundaryFacts.StaticMembers
 	for _, arg := range entryRuntimeArgs(in.Callee, in.Call, in.ParamSlot) {
 		if arg.RuntimeIdx < 0 || arg.RuntimeIdx >= len(in.ArgValues) {
 			continue
@@ -90,7 +77,7 @@ func callEntryStaticMembers(in directCallEntryFactInput) flow.StaticMemberFacts 
 		if !ok {
 			continue
 		}
-		for _, fact := range in.StaticMembers.AddressEntriesUnder(sourceAddr) {
+		for _, fact := range in.BoundaryFacts.StaticMembers.AddressEntriesUnder(sourceAddr) {
 			suffix, ok := suffixAfterAddressPrefix(fact.Address, sourceAddr)
 			if !ok || len(suffix) == 0 {
 				continue

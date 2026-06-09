@@ -50,10 +50,7 @@ func LiftEntryReachability(ps *PointState) bool {
 		ps.ValueOrigins = ValueOriginFactsDomain.Top()
 		changed = true
 	}
-	if ps.PathAliases.IsBottom() {
-		ps.PathAliases = PathAliasFactsDomain.Top()
-		changed = true
-	}
+	changed = LiftPathAliasesEntry(ps) || changed
 	if ps.IndexWrites.IsBottom() {
 		ps.IndexWrites = IndexWriteAdmissionFactsDomain.Top()
 		changed = true

@@ -99,12 +99,14 @@ func TestProductCallEntryContextCarriesProjectedBoundaryFacts(t *testing.T) {
 	projector := callEntryProjector{program: prog, graph: callerGraph, typer: ct}
 	entry := projector.productEntryContext(ref, call, transfer.ProductCallContext{
 		RuntimeArgValues: []product.AbstractValue{product.FromType(typ.NewRecord().Build())},
-		KeyPresence: flow.KeyPresenceFacts{}.
-			WithKeyArrayValueAddresses(
-				testCallEntryStableAddress(t, nodeOrder),
-				testCallEntryStableAddress(t, edges),
-				edgeValue,
-			),
+		BoundaryFacts: flow.BoundaryFactProjectionInput{
+			KeyPresence: flow.KeyPresenceFacts{}.
+				WithKeyArrayValueAddresses(
+					testCallEntryStableAddress(t, nodeOrder),
+					testCallEntryStableAddress(t, edges),
+					edgeValue,
+				),
+		},
 	})
 
 	facts := entry.EntryFacts().KeyArrayValues()

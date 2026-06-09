@@ -192,7 +192,7 @@ func AppendOriginDestinations(state PointState, array StableAddress, fieldPrefix
 			Target: array,
 			Kind:   relationSourceIdentityAlias,
 			IdentityPolicy: IdentityAliasRoutePolicy{
-				PathAliases: true,
+				PathAliasFacts: true,
 			},
 		}) {
 			source, ok := route.appendedSource()
@@ -863,7 +863,7 @@ func AppendElementFieldOriginUses(state PointState, field StableAddress) []Value
 		Target: field,
 		Kind:   relationSourceIdentityAlias,
 		IdentityPolicy: IdentityAliasRoutePolicy{
-			PathAliases: true,
+			PathAliasFacts: true,
 		},
 	}) {
 		source, ok := route.appendedSource()

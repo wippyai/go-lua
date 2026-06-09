@@ -4,7 +4,7 @@ package flow
 // alias route query. RequireRemainder keeps exact aliases out of callers that
 // only want descendant replay.
 type IdentityAliasRoutePolicy struct {
-	PathAliases       bool
+	PathAliasFacts    bool
 	AssignmentOrigins bool
 	RequireRemainder  bool
 }
@@ -14,7 +14,7 @@ var (
 	// for read queries, where an exact alias and a descendant alias are both
 	// useful alternate keys.
 	IdentityAliasReadPolicy = IdentityAliasRoutePolicy{
-		PathAliases:       true,
+		PathAliasFacts:    true,
 		AssignmentOrigins: true,
 	}
 
@@ -29,7 +29,7 @@ var (
 
 // IdentityAliasSources returns source addresses that currently denote the same
 // runtime identity as target through assignment aliases. It follows both
-// PathAliases and ValueOriginAssignmentAlias facts and preserves consumed
+// PathAliasFacts and ValueOriginAssignmentAlias facts and preserves consumed
 // descendant suffixes structurally.
 func IdentityAliasSources(state PointState, target StableAddress) []StableAddress {
 	return IdentityAliasSourcesWithPolicy(state, target, IdentityAliasReadPolicy)
