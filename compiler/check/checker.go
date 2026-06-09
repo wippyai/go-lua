@@ -93,9 +93,9 @@ func WithPass(p Pass) Option {
 	return func(c *Checker) { c.passes = append(c.passes, p) }
 }
 
-// WithComputePass registers a compute pass for additional analysis.
-func WithComputePass(p api.ComputePass) Option {
-	return func(c *Checker) { c.computePasses = append(c.computePasses, p) }
+// WithArtifactProjection registers a post-solve public artifact projection.
+func WithArtifactProjection(p api.ArtifactProjection) Option {
+	return func(c *Checker) { c.artifactProjections = append(c.artifactProjections, p) }
 }
 
 // Checker orchestrates type analysis for Lua modules.
@@ -113,12 +113,12 @@ func WithComputePass(p api.ComputePass) Option {
 //
 // EXTENSION POINTS: Checker supports two extension mechanisms:
 //   - Pass: Diagnostic generators that run after fixpoint convergence
-//   - ComputePass: Analysis phases that run during iteration and store results in Extras
+//   - ArtifactProjection: Post-solve public artifact producers stored in Extras
 type Checker struct {
 	db                        *db.DB
 	deps                      Deps
 	passes                    []Pass
-	computePasses             []api.ComputePass
+	artifactProjections       []api.ArtifactProjection
 	maxScopeDepth             int
 	emitScopeDepthDiagnostics bool
 }
@@ -159,13 +159,13 @@ func NewChecker(database *db.DB, deps Deps, opts ...Option) *Checker {
 // newDriver returns the module driver.
 func (c *Checker) newDriver() moduleDriver {
 	return canonical.NewDriver(canonical.Config{
-		Types:         c.deps.Types,
-		GlobalTypes:   c.deps.GlobalTypes,
-		Stdlib:        c.deps.Stdlib,
-		Manifests:     c.db,
-		MaxScopeDepth: c.maxScopeDepth,
-		EmitScopeDiag: c.emitScopeDepthDiagnostics,
-		ComputePasses: c.computePasses,
+		Types:               c.deps.Types,
+		GlobalTypes:         c.deps.GlobalTypes,
+		Stdlib:              c.deps.Stdlib,
+		Manifests:           c.db,
+		MaxScopeDepth:       c.maxScopeDepth,
+		EmitScopeDiag:       c.emitScopeDepthDiagnostics,
+		ArtifactProjections: c.artifactProjections,
 	})
 }
 

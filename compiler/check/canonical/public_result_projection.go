@@ -73,7 +73,7 @@ func (p publicResultProjection) build() *api.FuncResult {
 		PublicSeedSignature:      sourceSignature,
 		TypeOps:                  p.driver.cfg.Types,
 		QueryContext:             p.session.Context(),
-		Extras:                   p.driver.runComputePasses(p.graph, pointScopes),
+		Extras:                   p.driver.runArtifactProjections(p.graph, pointScopes),
 		DepthLimitExceeded:       p.driver.scopeDepthExceededFor(p.graph),
 	}
 	result.InstallAnalysisArtifacts(api.FuncAnalysisArtifacts{

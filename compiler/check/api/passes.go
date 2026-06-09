@@ -5,14 +5,13 @@ import (
 	"github.com/wippyai/go-lua/compiler/check/scope"
 )
 
-// ComputePass computes additional analysis artifacts during function analysis.
-// Unlike Pass (which runs after convergence), ComputePass runs during each iteration
-// when a component needs extra artifacts. Results are memoized in FuncResult.Extras.
+// ArtifactProjection projects post-solve public artifacts into FuncResult.Extras.
 //
-// Use ComputePass for analysis that needs to participate in the fixpoint loop
-// or that computes data structures needed by later diagnostics. The Name()
-// method provides the key under which results are stored in Extras.
-type ComputePass interface {
+// It runs after canonical convergence while the public FuncResult read model is
+// being built. It must not participate in the fixed point or publish semantic
+// facts; analyses that need convergence must live in canonical transfer/summary
+// carriers instead.
+type ArtifactProjection interface {
 	Name() string
-	Run(graph *cfg.Graph, scopes map[cfg.Point]*scope.State) any
+	Project(graph *cfg.Graph, scopes map[cfg.Point]*scope.State) any
 }

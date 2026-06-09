@@ -108,8 +108,8 @@ type FuncResult struct {
 	// the map above remains the public external projection.
 	LiteralSignatureProvider LiteralSignatureLookup
 
-	// Extras stores results from registered ComputePass plugins.
-	// Keyed by ComputePass.Name().
+	// Extras stores results from registered ArtifactProjection plugins.
+	// Keyed by ArtifactProjection.Name().
 	Extras map[string]any
 
 	// DepthLimitExceeded indicates scope depth limit was hit while building scopes.

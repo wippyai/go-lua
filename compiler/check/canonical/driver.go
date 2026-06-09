@@ -94,9 +94,9 @@ type Config struct {
 	// EmitScopeDiag emits a warning when MaxScopeDepth truncates scope precision.
 	EmitScopeDiag bool
 
-	// ComputePasses are external artifact producers over canonical
-	// graph/scopes projection. They do not participate in the canonical fixed point.
-	ComputePasses []api.ComputePass
+	// ArtifactProjections are external post-solve public artifact producers over
+	// canonical graph/scopes projection. They do not participate in the fixed point.
+	ArtifactProjections []api.ArtifactProjection
 }
 
 // Driver runs the canonical type-flow engine over a module.
@@ -1050,16 +1050,16 @@ func (d *Driver) scopeDepthExceededFor(g *cfg.Graph) bool {
 	return d.scopeDepthExceeded[g.ID()]
 }
 
-func (d *Driver) runComputePasses(g *cfg.Graph, scopes map[cfg.Point]*scope.State) map[string]any {
-	if d == nil || g == nil || len(d.cfg.ComputePasses) == 0 {
+func (d *Driver) runArtifactProjections(g *cfg.Graph, scopes map[cfg.Point]*scope.State) map[string]any {
+	if d == nil || g == nil || len(d.cfg.ArtifactProjections) == 0 {
 		return nil
 	}
-	extras := make(map[string]any, len(d.cfg.ComputePasses))
-	for _, pass := range d.cfg.ComputePasses {
-		if pass == nil || pass.Name() == "" {
+	extras := make(map[string]any, len(d.cfg.ArtifactProjections))
+	for _, projection := range d.cfg.ArtifactProjections {
+		if projection == nil || projection.Name() == "" {
 			continue
 		}
-		extras[pass.Name()] = pass.Run(g, scopes)
+		extras[projection.Name()] = projection.Project(g, scopes)
 	}
 	if len(extras) == 0 {
 		return nil
