@@ -31,6 +31,7 @@ import (
 	interprocdomain "github.com/wippyai/go-lua/compiler/check/domain/interproc"
 	"github.com/wippyai/go-lua/compiler/check/domain/metatable"
 	"github.com/wippyai/go-lua/compiler/check/domain/observation"
+	"github.com/wippyai/go-lua/compiler/check/domain/postflow"
 	"github.com/wippyai/go-lua/compiler/check/infer/captured"
 	"github.com/wippyai/go-lua/compiler/check/nested"
 	"github.com/wippyai/go-lua/compiler/check/overlaymut"
@@ -59,8 +60,25 @@ type ResultFunc func(fn *ast.FunctionExpr) *api.FuncAnalysisView
 type Store interface {
 	api.StoreReader
 	api.FunctionFactProjectionReader
-	api.PostflowCapturedTypeProjectionWriter
-	api.PostflowConstructorProjectionStore
+	capturedTypeProjectionWriter
+	constructorProjectionStore
+}
+
+type capturedTypeProjectionWriter interface {
+	MergeCapturedTypeProjection(key api.GraphKey, sym cfg.SymbolID, value product.AbstractValue)
+}
+
+type constructorProjectionReader interface {
+	ConstructorFieldsProjection(classSym cfg.SymbolID) (postflow.FieldValues, bool)
+}
+
+type constructorProjectionWriter interface {
+	MergeConstructorFieldProjection(classSym cfg.SymbolID, fields postflow.FieldValues)
+}
+
+type constructorProjectionStore interface {
+	constructorProjectionReader
+	constructorProjectionWriter
 }
 
 // Config holds dependencies for nested processing.

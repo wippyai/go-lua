@@ -13,7 +13,7 @@
 //	StoreReader     - Read-only combination of above
 //	CanonicalStore  - Canonical-owned metadata plus final fact projection
 //	NestedStore     - StoreReader required by nested metadata consumers
-//	Postflow*Projection* - Explicit noncanonical postflow projection lane boundaries
+//	Postflow projection methods - Explicit noncanonical projection lane boundary
 //	IterationStore  - Full mutation capability for postflow projection lanes
 package api
 
@@ -98,61 +98,6 @@ type StoreReader interface {
 	FunctionRefs
 }
 
-// PostflowCapturedTypeProjectionReader exposes captured-symbol type projections
-// from the noncanonical postflow product. It is not a canonical Summary read surface.
-type PostflowCapturedTypeProjectionReader interface {
-	CapturedTypeProjection(graph *cfg.Graph, parent *scope.State, sym cfg.SymbolID) (typ.Type, bool)
-}
-
-// PostflowCapturedTypeProjectionWriter records one captured-symbol type projection.
-type PostflowCapturedTypeProjectionWriter interface {
-	MergeCapturedTypeProjection(key GraphKey, sym cfg.SymbolID, value product.AbstractValue)
-}
-
-// PostflowCapturedFieldProjectionReader exposes captured-field assignment projections
-// from the noncanonical postflow product.
-type PostflowCapturedFieldProjectionReader interface {
-	CapturedFieldAssignsProjection(graph *cfg.Graph, parent *scope.State) postflow.CapturedFieldAssigns
-}
-
-// PostflowCapturedFieldProjectionWriter records captured-field assignment projections.
-type PostflowCapturedFieldProjectionWriter interface {
-	MergeCapturedFieldProjection(key GraphKey, nestedSym cfg.SymbolID, capturedSym cfg.SymbolID, fields postflow.FieldValues)
-}
-
-// PostflowCapturedProjectionStore owns the captured-symbol and captured-field
-// postflow lanes. Components should depend on this only when they need both
-// captured reads and writes.
-type PostflowCapturedProjectionStore interface {
-	PostflowCapturedTypeProjectionReader
-	PostflowCapturedTypeProjectionWriter
-	PostflowCapturedFieldProjectionReader
-	PostflowCapturedFieldProjectionWriter
-}
-
-// PostflowConstructorProjectionReader exposes constructor field projections from
-// the noncanonical postflow product.
-type PostflowConstructorProjectionReader interface {
-	ConstructorFieldsProjection(classSym cfg.SymbolID) (postflow.FieldValues, bool)
-}
-
-// PostflowConstructorProjectionWriter records constructor field projections.
-type PostflowConstructorProjectionWriter interface {
-	MergeConstructorFieldProjection(classSym cfg.SymbolID, fields postflow.FieldValues)
-}
-
-// PostflowConstructorProjectionStore owns the constructor-field postflow lane.
-type PostflowConstructorProjectionStore interface {
-	PostflowConstructorProjectionReader
-	PostflowConstructorProjectionWriter
-}
-
-// PostflowFunctionFactWriter records final/public FunctionFact projection rows in
-// the noncanonical postflow product.
-type PostflowFunctionFactWriter interface {
-	MergeFunctionFactProjection(key GraphKey, sym cfg.SymbolID, fact FunctionFact)
-}
-
 // CanonicalFunctionFactProjectionSink installs final Summary-derived FunctionFacts
 // without participating in postflow projection iteration.
 type CanonicalFunctionFactProjectionSink interface {
@@ -189,10 +134,15 @@ type NestedStore interface {
 type IterationStore interface {
 	StoreReader
 	FunctionFactProjectionReader
-	PostflowFunctionFactWriter
-	PostflowCapturedProjectionStore
-	PostflowConstructorProjectionStore
 	ParentGraphKeyForSymbol(sym cfg.SymbolID) (GraphKey, bool)
+
+	MergeFunctionFactProjection(key GraphKey, sym cfg.SymbolID, fact FunctionFact)
+	CapturedTypeProjection(graph *cfg.Graph, parent *scope.State, sym cfg.SymbolID) (typ.Type, bool)
+	MergeCapturedTypeProjection(key GraphKey, sym cfg.SymbolID, value product.AbstractValue)
+	CapturedFieldAssignsProjection(graph *cfg.Graph, parent *scope.State) postflow.CapturedFieldAssigns
+	MergeCapturedFieldProjection(key GraphKey, nestedSym cfg.SymbolID, capturedSym cfg.SymbolID, fields postflow.FieldValues)
+	ConstructorFieldsProjection(classSym cfg.SymbolID) (postflow.FieldValues, bool)
+	MergeConstructorFieldProjection(classSym cfg.SymbolID, fields postflow.FieldValues)
 
 	ClearPostflowProjectionState()
 	AdvancePostflowProjections() bool

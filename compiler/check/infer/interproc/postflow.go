@@ -11,6 +11,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/check/domain/metatable"
 	"github.com/wippyai/go-lua/compiler/check/domain/observation"
 	"github.com/wippyai/go-lua/compiler/check/domain/paramevidence"
+	"github.com/wippyai/go-lua/compiler/check/domain/postflow"
 	"github.com/wippyai/go-lua/compiler/check/domain/returnsummary"
 	"github.com/wippyai/go-lua/compiler/check/infer/captured"
 	"github.com/wippyai/go-lua/compiler/check/returns"
@@ -28,9 +29,17 @@ import (
 type Store interface {
 	api.StoreReader
 	api.FunctionFactProjectionReader
-	api.PostflowFunctionFactWriter
-	api.PostflowCapturedFieldProjectionWriter
+	functionFactProjectionWriter
+	capturedFieldProjectionWriter
 	ParentGraphKeyForSymbol(sym cfg.SymbolID) (api.GraphKey, bool)
+}
+
+type functionFactProjectionWriter interface {
+	MergeFunctionFactProjection(key api.GraphKey, sym cfg.SymbolID, fact api.FunctionFact)
+}
+
+type capturedFieldProjectionWriter interface {
+	MergeCapturedFieldProjection(key api.GraphKey, nestedSym cfg.SymbolID, capturedSym cfg.SymbolID, fields postflow.FieldValues)
 }
 
 // StoreFactsFromResult records post-flow interproc facts for the current iteration.
