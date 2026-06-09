@@ -621,7 +621,7 @@ func (f KeyPresenceFacts) Entries() []KeyPresenceFact {
 }
 
 // ForEachAddress visits direct table/key-presence facts in normalized address
-// form. Invalid legacy stored keys are ignored at this domain boundary.
+// form. Invalid noncanonical stored keys are ignored at this domain boundary.
 func (f KeyPresenceFacts) ForEachAddress(fn func(table, key StableAddress) bool) {
 	if f.bottom || len(f.rows.entries) == 0 || fn == nil {
 		return

@@ -18,7 +18,7 @@ var (
 		AssignmentOrigins: true,
 	}
 
-	// IdentityAliasDescendantOriginPolicy preserves legacy write-replay
+	// IdentityAliasDescendantOriginPolicy preserves compatibility write-replay
 	// semantics: only descendant writes through assignment-origin aliases are
 	// replayed as writes to their source path.
 	IdentityAliasDescendantOriginPolicy = IdentityAliasRoutePolicy{
