@@ -206,7 +206,7 @@ func boundaryCanReplayAppendTableCoverage(state PointState, array, table Boundar
 	if AppendFreshEmptySeedPath(state, array.path) || AppendHistoryBaseWithoutEvents(state, array.address) {
 		return true
 	}
-	return len(state.KeyPresence.KeyArrayValuesAddresses(array.address, table.address)) > 0
+	return len(KeyPresenceOf(state).KeyArrayValuesAddresses(array.address, table.address)) > 0
 }
 
 // BoundaryAppendKeyPlans selects append-key replay plans from the current

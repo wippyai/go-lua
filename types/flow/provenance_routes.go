@@ -103,7 +103,7 @@ func appendAppendFieldProvenanceRoutes(out []ProvenanceRoute, state PointState, 
 	if len(route.remainder) == 0 || route.source.Key() == "" {
 		return out
 	}
-	return appendAppendFieldSourceRoutes(out, state.KeyPresence.AppendElementFieldSourceAddresses(AppendElementFieldSourceQuery{
+	return appendAppendFieldSourceRoutes(out, KeyPresenceOf(state).AppendElementFieldSourceAddresses(AppendElementFieldSourceQuery{
 		Array: route.source,
 		Field: route.remainder,
 	}))
@@ -116,7 +116,7 @@ func (f PointFacts) AppendElementFieldSourceRoutes(q AppendElementFieldRouteQuer
 	if !ok {
 		return nil
 	}
-	uses := f.state.KeyPresence.AppendElementFieldSourceAddresses(AppendElementFieldSourceQuery{
+	uses := KeyPresenceOfPoint(f.state).AppendElementFieldSourceAddresses(AppendElementFieldSourceQuery{
 		Array: array,
 		Field: q.Field,
 	})

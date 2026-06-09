@@ -20,7 +20,7 @@ type BoundaryFactProjectionInput struct {
 // point state.
 func BoundaryFactProjectionInputOf(state PointState) BoundaryFactProjectionInput {
 	return BoundaryFactProjectionInput{
-		KeyPresence:     state.KeyPresence,
+		KeyPresence:     KeyPresenceOf(state),
 		StaticMembers:   StaticMembersOf(state),
 		Num:             state.Num,
 		IndexWrites:     state.IndexWrites,

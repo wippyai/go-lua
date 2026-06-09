@@ -276,7 +276,7 @@ func ApplyAppendKeyArrayConsequences(out *PointState, proof AppendKeyArrayConseq
 // AppendHistoryBaseWithoutEvents reports whether Array still has a tracked
 // append-history base with no recorded append events.
 func AppendHistoryBaseWithoutEvents(state PointState, array StableAddress) bool {
-	return state.KeyPresence.HasAppendHistoryBaseWithoutEventsAddress(array)
+	return KeyPresenceOf(state).HasAppendHistoryBaseWithoutEventsAddress(array)
 }
 
 func AppendHistoryBaseWithoutEventsPath(state PointState, arrayPath constraint.Path) bool {
@@ -290,7 +290,7 @@ func AppendKeyArrayTables(state PointState, q AppendKeyArrayTableQuery) []Stable
 	if q.Array.Key() == "" || q.Key.Key() == "" {
 		return nil
 	}
-	existingTables := state.KeyPresence.KeyArrayTableAddresses(q.Array)
+	existingTables := KeyPresenceOf(state).KeyArrayTableAddresses(q.Array)
 	var existingSet stableAddressSet
 	for _, existing := range existingTables {
 		existingSet.Add(existing.Address)
@@ -312,7 +312,7 @@ func AppendKeyArrayTables(state PointState, q AppendKeyArrayTableQuery) []Stable
 		for _, table := range q.WrittenTables {
 			out.Add(table)
 		}
-		for _, tableUse := range state.KeyPresence.TablesWithKeyAddress(q.Key) {
+		for _, tableUse := range KeyPresenceOf(state).TablesWithKeyAddress(q.Key) {
 			out.Add(tableUse.Address)
 		}
 	}
@@ -760,7 +760,8 @@ func AppendKeyArrayPreservation(state PointState, q AppendKeyArrayPreservationQu
 		}
 		out.Pending = append(out.Pending, pending)
 	}
-	existingTables := state.KeyPresence.KeyArrayTableAddresses(q.Array)
+	facts := KeyPresenceOf(state)
+	existingTables := facts.KeyArrayTableAddresses(q.Array)
 	var existingSet stableAddressSet
 	for _, existing := range existingTables {
 		existingSet.Add(existing.Address)
@@ -770,7 +771,7 @@ func AppendKeyArrayPreservation(state PointState, q AppendKeyArrayPreservationQu
 		addPending(PendingKeyArrayDestination{})
 	}
 	for _, tableUse := range existingTables {
-		if state.KeyPresence.HasAddresses(tableUse.Address, q.Key) {
+		if facts.HasAddresses(tableUse.Address, q.Key) {
 			tables.Add(tableUse.Address)
 			continue
 		}
@@ -779,7 +780,7 @@ func AppendKeyArrayPreservation(state PointState, q AppendKeyArrayPreservationQu
 			HasTable: true,
 		})
 	}
-	for _, tableUse := range state.KeyPresence.TablesWithKeyAddress(q.Key) {
+	for _, tableUse := range facts.TablesWithKeyAddress(q.Key) {
 		if !existingSet.Contains(tableUse.Address) && !canSeedFromEmpty {
 			continue
 		}
@@ -890,7 +891,7 @@ func AppendElementFieldOriginUsesPath(state PointState, fieldPath constraint.Pat
 func AppendElementFieldOriginFields(state PointState) [][]constraint.Segment {
 	var seen pathKeySet
 	var out [][]constraint.Segment
-	for _, fact := range state.KeyPresence.AppendElementFieldOriginEntries() {
+	for _, fact := range KeyPresenceOf(state).AppendElementFieldOriginEntries() {
 		field, ok := AppendElementFieldSegments(fact.Field)
 		if !ok || len(field) == 0 {
 			continue
@@ -918,12 +919,12 @@ func ApplyAppendElementFieldOriginUse(
 	if originUse.Origin.Kind != ValueOriginIndexedIterator || originUse.Origin.VarIndex != 1 || len(originUse.Remainder) == 0 {
 		return false
 	}
-	before := out.KeyPresence
 	originSource, ok := originUse.SourceAddress()
 	if !ok {
 		return false
 	}
-	for _, sourceUse := range out.KeyPresence.AppendElementFieldSourceAddresses(AppendElementFieldSourceQuery{
+	changed := false
+	for _, sourceUse := range KeyPresenceOfPoint(out).AppendElementFieldSourceAddresses(AppendElementFieldSourceQuery{
 		Array: originSource,
 		Field: originUse.Remainder,
 	}) {
@@ -934,13 +935,13 @@ func ApplyAppendElementFieldOriginUse(
 		for _, dst := range destinations {
 			dstField := cloneAddressSegments(dst.FieldPrefix)
 			dstField = append(dstField, field...)
-			ApplyAppendElementFieldOriginProof(out, AppendElementFieldOriginProof{
+			changed = ApplyAppendElementFieldOriginProof(out, AppendElementFieldOriginProof{
 				Array:       dst.Array,
 				Field:       dstField,
 				Source:      source,
 				SourceField: sourceField,
-			})
+			}) || changed
 		}
 	}
-	return !KeyPresenceFactsDomain.Equal(before, out.KeyPresence)
+	return changed
 }

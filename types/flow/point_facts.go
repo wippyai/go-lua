@@ -437,14 +437,14 @@ func (f PointFacts) LengthLowerBound(path constraint.Path) (int64, bool) {
 func (f PointFacts) HasKeyPresence(table, key constraint.Path) bool {
 	tableAddr, tableOK := StableAddressOfPath(table)
 	keyAddr, keyOK := StableAddressOfPath(key)
-	return tableOK && keyOK && f.state.KeyPresence.HasAddresses(tableAddr, keyAddr)
+	return tableOK && keyOK && KeyPresenceOfPoint(f.state).HasAddresses(tableAddr, keyAddr)
 }
 
 func (f PointFacts) hasKeyValuePresence(table, key, value constraint.Path) bool {
 	tableAddr, tableOK := StableAddressOfPath(table)
 	keyAddr, keyOK := StableAddressOfPath(key)
 	valueAddr, valueOK := StableAddressOfPath(value)
-	return tableOK && keyOK && valueOK && f.state.KeyPresence.HasValueAddresses(tableAddr, keyAddr, valueAddr)
+	return tableOK && keyOK && valueOK && KeyPresenceOfPoint(f.state).HasValueAddresses(tableAddr, keyAddr, valueAddr)
 }
 
 // KeyValueReadbackSourceQuery asks whether ValuePath is proven to be the current
@@ -465,12 +465,12 @@ func (f PointFacts) HasKeyValueReadbackSource(q KeyValueReadbackSourceQuery) boo
 
 func (f PointFacts) HasEmptyKeyArray(array constraint.Path) bool {
 	arrayAddr, ok := StableAddressOfPath(array)
-	return ok && f.state.KeyPresence.HasEmptyKeyArrayAddress(arrayAddr)
+	return ok && KeyPresenceOfPoint(f.state).HasEmptyKeyArrayAddress(arrayAddr)
 }
 
 func (f PointFacts) HasAppendHistoryBase(array constraint.Path) bool {
 	arrayAddr, ok := StableAddressOfPath(array)
-	return ok && f.state.KeyPresence.HasAppendHistoryBaseAddress(arrayAddr)
+	return ok && KeyPresenceOfPoint(f.state).HasAppendHistoryBaseAddress(arrayAddr)
 }
 
 // IdentityAliasClosurePaths returns root plus every assignment/path alias
@@ -608,7 +608,7 @@ func (f PointFacts) DynamicIndexReadback(q DynamicIndexReadbackQuery) (product.A
 			target, targetOK := StableAddressOfPath(q.Target)
 			key, keyOK := StableAddressOfPath(keyPath)
 			if targetOK && keyOK {
-				admitted, ok := IndexedIteratorKeyArrayReadback(f.state.KeyPresence, ValueOriginsOfPoint(f.state), target, key)
+				admitted, ok := IndexedIteratorKeyArrayReadback(KeyPresenceOfPoint(f.state), ValueOriginsOfPoint(f.state), target, key)
 				if ok && !admitted.IsZero() {
 					t := product.ProjectValueOrUnknown(admitted)
 					if !typ.IsAbsentOrUnknown(t) && !typ.IsAny(t) {

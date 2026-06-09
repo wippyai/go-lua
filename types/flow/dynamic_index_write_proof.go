@@ -124,32 +124,20 @@ type AppendElementFieldOriginProof struct {
 // ApplyKeyPresenceProof applies a key-presence proof to point state. When Value
 // is non-zero it also records value-carrying key-array consequences.
 func ApplyKeyPresenceProof(out *PointState, proof KeyPresenceProof) bool {
-	if out == nil {
-		return false
-	}
-	if proof.Table.Key() == "" || proof.Key.Key() == "" {
-		return false
-	}
-	before := out.KeyPresence
-	out.KeyPresence = out.KeyPresence.WithProofAddress(
+	return RecordKeyPresenceProof(
+		out,
 		proof.Table,
 		proof.Key,
 		proof.Value,
 		proof.ValuePath,
 		proof.HasValuePath,
 	)
-	return !KeyPresenceFactsDomain.Equal(before, out.KeyPresence)
 }
 
 // ApplyKeyPresenceAliasProof applies key-presence facts proven for SourceKey to
 // TargetKey. Value-path facts are preserved with the same table/value path.
 func ApplyKeyPresenceAliasProof(out *PointState, proof KeyPresenceAliasProof) bool {
-	if out == nil || proof.SourceKey.Key() == "" || proof.TargetKey.Key() == "" {
-		return false
-	}
-	before := out.KeyPresence
-	out.KeyPresence = out.KeyPresence.WithKeyAliasAddress(proof.SourceKey, proof.TargetKey)
-	return !KeyPresenceFactsDomain.Equal(before, out.KeyPresence)
+	return RecordKeyPresenceAlias(out, proof.SourceKey, proof.TargetKey)
 }
 
 // ApplyKeyArrayElementKeyProof applies key-array membership to a target key. If
@@ -164,13 +152,14 @@ func ApplyKeyArrayElementKeyProof(out *PointState, proof KeyArrayElementKeyProof
 	if keyValue.IsZero() {
 		keyValue = product.FromType(typ.Unknown)
 	}
-	beforePresence := out.KeyPresence
 	beforeIndexWrites := out.IndexWrites
-	for _, tableUse := range out.KeyPresence.KeyArrayTableAddresses(proof.Array) {
+	changed := false
+	facts := KeyPresenceOfPoint(out)
+	for _, tableUse := range facts.KeyArrayTableAddresses(proof.Array) {
 		table := tableUse.Address
 		result.Tables = append(result.Tables, table)
-		out.KeyPresence = out.KeyPresence.WithAddresses(table, proof.TargetKey)
-		for _, value := range out.KeyPresence.KeyArrayValuesAddresses(proof.Array, table) {
+		changed = RecordKeyPresence(out, table, proof.TargetKey) || changed
+		for _, value := range facts.KeyArrayValuesAddresses(proof.Array, table) {
 			if value.IsZero() {
 				continue
 			}
@@ -183,29 +172,18 @@ func ApplyKeyArrayElementKeyProof(out *PointState, proof KeyArrayElementKeyProof
 			})
 		}
 	}
-	changed := !KeyPresenceFactsDomain.Equal(beforePresence, out.KeyPresence)
 	changed = !IndexWriteAdmissionFactsDomain.Equal(beforeIndexWrites, out.IndexWrites) || changed
 	return result, changed
 }
 
 // ApplyKeyArrayProof applies a key-array provenance proof to point state.
 func ApplyKeyArrayProof(out *PointState, proof KeyArrayProof) bool {
-	if out == nil || proof.Array.Key() == "" || proof.Table.Key() == "" {
-		return false
-	}
-	before := out.KeyPresence
-	out.KeyPresence = out.KeyPresence.WithKeyArrayAddresses(proof.Array, proof.Table)
-	return !KeyPresenceFactsDomain.Equal(before, out.KeyPresence)
+	return RecordKeyArray(out, proof.Array, proof.Table)
 }
 
 // ApplyEmptyKeyArrayProof applies empty key-array provenance to point state.
 func ApplyEmptyKeyArrayProof(out *PointState, proof EmptyKeyArrayProof) bool {
-	if out == nil || proof.Array.Key() == "" {
-		return false
-	}
-	before := out.KeyPresence
-	out.KeyPresence = out.KeyPresence.WithEmptyKeyArrayAddress(proof.Array)
-	return !KeyPresenceFactsDomain.Equal(before, out.KeyPresence)
+	return RecordEmptyKeyArray(out, proof.Array)
 }
 
 // ApplyKeyArraySeedPathTransaction normalizes and applies source-level
@@ -237,15 +215,7 @@ func ApplyKeyArraySeedPathTransaction(out *PointState, tx KeyArraySeedPathTransa
 
 // ApplyKeyArrayValueProof applies a value-carrying key-array proof to point state.
 func ApplyKeyArrayValueProof(out *PointState, proof KeyArrayValueProof) bool {
-	if out == nil || proof.Array.Key() == "" || proof.Table.Key() == "" || proof.Value.IsZero() {
-		return false
-	}
-	before := out.KeyPresence
-	out.KeyPresence = out.KeyPresence.WithKeyArrayValueAddresses(proof.Array, proof.Table, proof.Value)
-	if proof.HasAppendKey {
-		out.KeyPresence = out.KeyPresence.WithAppendHistoryCoverageAddresses(proof.Array, proof.AppendKey, proof.Table, proof.Value)
-	}
-	return !KeyPresenceFactsDomain.Equal(before, out.KeyPresence)
+	return RecordKeyArrayValue(out, proof.Array, proof.Table, proof.Value, proof.AppendKey, proof.HasAppendKey)
 }
 
 // ApplyPendingKeyArrayProof applies delayed key-array provenance to point state.
@@ -258,66 +228,36 @@ func ApplyPendingKeyArrayProof(out *PointState, proof PendingKeyArrayProof) bool
 			return false
 		}
 	}
-	before := out.KeyPresence
-	out.KeyPresence = out.KeyPresence.WithPendingKeyArrayAddresses(proof.Array, proof.Table, proof.HasTable, proof.Key)
-	return !KeyPresenceFactsDomain.Equal(before, out.KeyPresence)
+	return RecordPendingKeyArray(out, proof.Array, proof.Table, proof.HasTable, proof.Key)
 }
 
 // ApplyAppendKeyProof applies append-key provenance to point state.
 func ApplyAppendKeyProof(out *PointState, proof AppendKeyProof) bool {
-	if out == nil || proof.Array.Key() == "" || proof.Key.Key() == "" {
-		return false
-	}
-	before := out.KeyPresence
-	out.KeyPresence = out.KeyPresence.WithAppendedKeyAddresses(proof.Array, proof.Key)
-	out.KeyPresence = out.KeyPresence.WithAppendHistoryEventAddresses(proof.Array, proof.Key)
-	return !KeyPresenceFactsDomain.Equal(before, out.KeyPresence)
+	return RecordAppendKey(out, proof.Array, proof.Key)
 }
 
 // ApplyAppendHistoryBaseProof applies append-history base tracking to point state.
 func ApplyAppendHistoryBaseProof(out *PointState, proof AppendHistoryBaseProof) bool {
-	if out == nil || proof.Array.Key() == "" {
-		return false
-	}
-	before := out.KeyPresence
-	out.KeyPresence = out.KeyPresence.WithAppendHistoryBaseAddress(proof.Array)
-	return !KeyPresenceFactsDomain.Equal(before, out.KeyPresence)
+	return RecordAppendHistoryBase(out, proof.Array)
 }
 
 // ApplyAppendHistoryEventProof applies a possible append event without
 // materializing it as a definite key-array append fact.
 func ApplyAppendHistoryEventProof(out *PointState, proof AppendHistoryEventProof) bool {
-	if out == nil || proof.Array.Key() == "" || proof.Key.Key() == "" {
-		return false
-	}
-	before := out.KeyPresence
-	out.KeyPresence = out.KeyPresence.WithAppendHistoryEventAddresses(proof.Array, proof.Key)
-	return !KeyPresenceFactsDomain.Equal(before, out.KeyPresence)
+	return RecordAppendHistoryEvent(out, proof.Array, proof.Key)
 }
 
 // ApplyAppendHistoryCoverageFactProof applies coverage for one append-history
 // event. It intentionally does not publish ordinary key-array values; the local
 // append-history reducer decides when coverage is total enough to expose them.
 func ApplyAppendHistoryCoverageFactProof(out *PointState, proof AppendHistoryCoverageProof) bool {
-	if out == nil || proof.Array.Key() == "" || proof.Key.Key() == "" || proof.Table.Key() == "" || proof.Value.IsZero() {
-		return false
-	}
-	before := out.KeyPresence
-	out.KeyPresence = out.KeyPresence.WithAppendHistoryCoverageAddresses(proof.Array, proof.Key, proof.Table, proof.Value)
-	return !KeyPresenceFactsDomain.Equal(before, out.KeyPresence)
+	return RecordAppendHistoryCoverage(out, proof.Array, proof.Key, proof.Table, proof.Value)
 }
 
 // ApplyAppendElementFieldOriginProof applies an append element-field origin
 // proof to point state.
 func ApplyAppendElementFieldOriginProof(out *PointState, proof AppendElementFieldOriginProof) bool {
-	if out == nil || proof.Array.Key() == "" || proof.Source.Key() == "" || len(proof.Field) == 0 {
-		return false
-	}
-	before := out.KeyPresence
-	out.KeyPresence = out.KeyPresence.
-		WithAppendHistoryBaseAddress(proof.Array).
-		WithAppendElementFieldOriginFromAddresses(proof.Array, proof.Field, proof.Source, proof.SourceField)
-	return !KeyPresenceFactsDomain.Equal(before, out.KeyPresence)
+	return RecordAppendElementFieldOrigin(out, proof.Array, proof.Field, proof.Source, proof.SourceField)
 }
 
 // IndexedKeyArrayIterationProof consumes key-array provenance at an indexed
@@ -342,17 +282,18 @@ func ApplyIndexedKeyArrayIterationProof(out *PointState, proof IndexedKeyArrayIt
 		return IndexedKeyArrayIterationResult{}, false
 	}
 	result := IndexedKeyArrayIterationResult{}
-	beforePresence := out.KeyPresence
 	beforeIndexWrites := out.IndexWrites
+	changed := false
 	keyValue := proof.KeyValue
 	if keyValue.IsZero() {
 		keyValue = product.FromType(typ.Unknown)
 	}
-	for _, tableUse := range out.KeyPresence.KeyArrayTableAddresses(proof.Array) {
+	facts := KeyPresenceOfPoint(out)
+	for _, tableUse := range facts.KeyArrayTableAddresses(proof.Array) {
 		table := tableUse.Address
 		result.Tables = append(result.Tables, table)
-		out.KeyPresence = out.KeyPresence.WithAddresses(table, proof.Key)
-		for _, value := range out.KeyPresence.KeyArrayValuesAddresses(proof.Array, table) {
+		changed = RecordKeyPresence(out, table, proof.Key) || changed
+		for _, value := range facts.KeyArrayValuesAddresses(proof.Array, table) {
 			if value.IsZero() {
 				continue
 			}
@@ -365,7 +306,6 @@ func ApplyIndexedKeyArrayIterationProof(out *PointState, proof IndexedKeyArrayIt
 			})
 		}
 	}
-	changed := !KeyPresenceFactsDomain.Equal(beforePresence, out.KeyPresence)
 	changed = !IndexWriteAdmissionFactsDomain.Equal(beforeIndexWrites, out.IndexWrites) || changed
 	return result, changed
 }
@@ -468,12 +408,7 @@ func ApplyDynamicIndexWriteProof(out *PointState, proof DynamicIndexWriteProof) 
 // existing element of a proven key array, so the new table[element] payload is
 // the old universal payload joined with the written value.
 func ApplyTablePresentWriteValueProof(out *PointState, table StableAddress, written product.AbstractValue) bool {
-	if out == nil || table.Key() == "" || !written.DefinitelyPresent() {
-		return false
-	}
-	before := out.KeyPresence
-	out.KeyPresence = out.KeyPresence.WithTablePresentWriteValueAddress(table, written)
-	return !KeyPresenceFactsDomain.Equal(before, out.KeyPresence)
+	return ApplyTablePresentWriteKeyPresenceValue(out, table, written)
 }
 
 // ApplyAppendHistoryCoverageProof marks tracked append events with Key as
@@ -481,12 +416,7 @@ func ApplyTablePresentWriteValueProof(out *PointState, table StableAddress, writ
 // coverage reducer; write-before-append is handled when the append sees the
 // ordinary key-presence/readback facts.
 func ApplyAppendHistoryCoverageProof(out *PointState, table StableAddress, key StableAddress, value product.AbstractValue) bool {
-	if out == nil || table.Key() == "" || key.Key() == "" || value.IsZero() {
-		return false
-	}
-	before := out.KeyPresence
-	out.KeyPresence = out.KeyPresence.WithAppendHistoryCoverageForKeyAddress(table, key, value)
-	return !KeyPresenceFactsDomain.Equal(before, out.KeyPresence)
+	return ApplyAppendHistoryCoverageForKey(out, table, key, value)
 }
 
 // IndexWriteAdmissionAddressFact returns the optional heavy readback

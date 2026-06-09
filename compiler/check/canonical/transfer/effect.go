@@ -712,14 +712,14 @@ func (t *Transfer) seedEmptyContainerKeyArraysForWriteEffect(out *flow.PointStat
 	if len(arrays) == 0 {
 		return false
 	}
-	before := out.KeyPresence
+	before := flow.KeyPresenceOfPoint(out)
 	for _, array := range arrays {
 		flow.ApplyKeyArraySeedPathTransaction(out, flow.KeyArraySeedPathTransaction{
 			ArrayPath: rootPath.Field(array),
 			Empty:     true,
 		})
 	}
-	return !flow.KeyPresenceFactsDomain.Equal(before, out.KeyPresence)
+	return !flow.KeyPresenceFactsDomain.Equal(before, flow.KeyPresenceOfPoint(out))
 }
 
 func emptyContainerKeyArraySeedSource(src ast.Expr) bool {

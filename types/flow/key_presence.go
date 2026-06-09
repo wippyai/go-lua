@@ -576,6 +576,43 @@ func KeyPresenceFactsOf(entries []KeyPresenceFact) KeyPresenceFacts {
 
 func (f KeyPresenceFacts) IsBottom() bool { return f.bottom }
 
+// KeyPresenceOf returns the key-presence axis carried by state.
+func KeyPresenceOf(state PointState) KeyPresenceFacts {
+	return state.KeyPresence
+}
+
+// KeyPresenceOfPoint returns the key-presence axis carried by state.
+func KeyPresenceOfPoint(state *PointState) KeyPresenceFacts {
+	if state == nil {
+		return KeyPresenceFactsDomain.Top()
+	}
+	return state.KeyPresence
+}
+
+// KeyPresenceAxisIsBottom reports whether the key-presence axis is unreachable.
+func KeyPresenceAxisIsBottom(state *PointState) bool {
+	return state == nil || state.KeyPresence.IsBottom()
+}
+
+// LiftKeyPresenceEntry turns the unreachable entry seed into the reachable
+// identity element for the key-presence axis.
+func LiftKeyPresenceEntry(state *PointState) bool {
+	if state == nil || !state.KeyPresence.IsBottom() {
+		return false
+	}
+	state.KeyPresence = KeyPresenceFactsDomain.Top()
+	return true
+}
+
+func updateKeyPresence(state *PointState, update func(KeyPresenceFacts) KeyPresenceFacts) bool {
+	if state == nil || update == nil {
+		return false
+	}
+	before := state.KeyPresence
+	state.KeyPresence = update(state.KeyPresence)
+	return !KeyPresenceFactsDomain.Equal(before, state.KeyPresence)
+}
+
 func (f KeyPresenceFacts) Entries() []KeyPresenceFact {
 	if f.bottom || len(f.rows.entries) == 0 {
 		return nil
@@ -688,6 +725,44 @@ func (f KeyPresenceFacts) WithKeyAliasAddress(source StableAddress, target Stabl
 		out = out.WithValue(entry.Table, targetKey, entry.Value)
 	}
 	return out
+}
+
+// RecordKeyPresence records a direct table/key proof on state.
+func RecordKeyPresence(state *PointState, table, key StableAddress) bool {
+	if table.Key() == "" || key.Key() == "" {
+		return false
+	}
+	return updateKeyPresence(state, func(facts KeyPresenceFacts) KeyPresenceFacts {
+		return facts.WithAddresses(table, key)
+	})
+}
+
+// RecordKeyPresenceProof records a table/key proof and delayed key-array
+// consequences on state.
+func RecordKeyPresenceProof(
+	state *PointState,
+	table StableAddress,
+	key StableAddress,
+	value product.AbstractValue,
+	valuePath StableAddress,
+	hasValuePath bool,
+) bool {
+	if table.Key() == "" || key.Key() == "" {
+		return false
+	}
+	return updateKeyPresence(state, func(facts KeyPresenceFacts) KeyPresenceFacts {
+		return facts.WithProofAddress(table, key, value, valuePath, hasValuePath)
+	})
+}
+
+// RecordKeyPresenceAlias copies key-presence facts from source to target.
+func RecordKeyPresenceAlias(state *PointState, sourceKey, targetKey StableAddress) bool {
+	if sourceKey.Key() == "" || targetKey.Key() == "" {
+		return false
+	}
+	return updateKeyPresence(state, func(facts KeyPresenceFacts) KeyPresenceFacts {
+		return facts.WithKeyAliasAddress(sourceKey, targetKey)
+	})
 }
 
 func (f KeyPresenceFacts) HasValue(table, key, value constraint.PathKey) bool {
@@ -836,6 +911,16 @@ func (f KeyPresenceFacts) WithKeyArrayAddresses(array, table StableAddress) KeyP
 	return f.WithKeyArray(array.Key(), table.Key())
 }
 
+// RecordKeyArray records quantified key-array provenance on state.
+func RecordKeyArray(state *PointState, array, table StableAddress) bool {
+	if array.Key() == "" || table.Key() == "" {
+		return false
+	}
+	return updateKeyPresence(state, func(facts KeyPresenceFacts) KeyPresenceFacts {
+		return facts.WithKeyArrayAddresses(array, table)
+	})
+}
+
 func (f KeyPresenceFacts) KeyArrayTables(array constraint.PathKey) []constraint.PathKey {
 	if f.bottom || array == "" {
 		return nil
@@ -975,6 +1060,16 @@ func (f KeyPresenceFacts) WithEmptyKeyArrayAddress(array StableAddress) KeyPrese
 	return f.WithEmptyKeyArray(array.Key())
 }
 
+// RecordEmptyKeyArray records empty key-array provenance on state.
+func RecordEmptyKeyArray(state *PointState, array StableAddress) bool {
+	if array.Key() == "" {
+		return false
+	}
+	return updateKeyPresence(state, func(facts KeyPresenceFacts) KeyPresenceFacts {
+		return facts.WithEmptyKeyArrayAddress(array)
+	})
+}
+
 func (f KeyPresenceFacts) HasEmptyKeyArray(array constraint.PathKey) bool {
 	if f.bottom || array == "" || len(f.rows.emptyArrays) == 0 {
 		return false
@@ -1016,6 +1111,27 @@ func (f KeyPresenceFacts) WithKeyArrayValueAddresses(array, table StableAddress,
 	return f.WithKeyArrayValue(array.Key(), table.Key(), value)
 }
 
+// RecordKeyArrayValue records value-carrying key-array provenance on state.
+func RecordKeyArrayValue(
+	state *PointState,
+	array StableAddress,
+	table StableAddress,
+	value product.AbstractValue,
+	appendKey StableAddress,
+	hasAppendKey bool,
+) bool {
+	if array.Key() == "" || table.Key() == "" || value.IsZero() {
+		return false
+	}
+	return updateKeyPresence(state, func(facts KeyPresenceFacts) KeyPresenceFacts {
+		out := facts.WithKeyArrayValueAddresses(array, table, value)
+		if hasAppendKey {
+			out = out.WithAppendHistoryCoverageAddresses(array, appendKey, table, value)
+		}
+		return out
+	})
+}
+
 // KeyArrayValuesAddresses returns the joined value evidence carried by a
 // key-array/table pair in normalized address form.
 func (f KeyPresenceFacts) KeyArrayValuesAddresses(array, table StableAddress) []product.AbstractValue {
@@ -1046,6 +1162,17 @@ func (f KeyPresenceFacts) WithTablePresentWriteValueAddress(
 		out = out.WithAppendHistoryCoverage(fact.Array, fact.Key, tableKey, written)
 	}
 	return out
+}
+
+// ApplyTablePresentWriteKeyPresenceValue updates value-carrying key-presence
+// facts after a definitely-present table element write.
+func ApplyTablePresentWriteKeyPresenceValue(state *PointState, table StableAddress, written product.AbstractValue) bool {
+	if table.Key() == "" || !written.DefinitelyPresent() {
+		return false
+	}
+	return updateKeyPresence(state, func(facts KeyPresenceFacts) KeyPresenceFacts {
+		return facts.WithTablePresentWriteValueAddress(table, written)
+	})
 }
 
 func (f KeyPresenceFacts) KeyArrayValueEntries() []KeyArrayValueFact {
@@ -1126,6 +1253,18 @@ func (f KeyPresenceFacts) WithAppendedKeyAddresses(array, key StableAddress) Key
 	return f.WithAppendedKey(array.Key(), key.Key())
 }
 
+// RecordAppendKey records an append-key event and its append-history event.
+func RecordAppendKey(state *PointState, array, key StableAddress) bool {
+	if array.Key() == "" || key.Key() == "" {
+		return false
+	}
+	return updateKeyPresence(state, func(facts KeyPresenceFacts) KeyPresenceFacts {
+		return facts.
+			WithAppendedKeyAddresses(array, key).
+			WithAppendHistoryEventAddresses(array, key)
+	})
+}
+
 func (f KeyPresenceFacts) AppendedKeyEntries() []AppendedKeyFact {
 	if f.bottom || len(f.rows.appends) == 0 {
 		return nil
@@ -1179,6 +1318,19 @@ func (f KeyPresenceFacts) WithPendingKeyArrayAddresses(array StableAddress, tabl
 		}
 	}
 	return f.WithPendingKeyArray(array.Key(), tableKey, key.Key())
+}
+
+// RecordPendingKeyArray records delayed key-array provenance on state.
+func RecordPendingKeyArray(state *PointState, array StableAddress, table StableAddress, hasTable bool, key StableAddress) bool {
+	if array.Key() == "" || key.Key() == "" {
+		return false
+	}
+	if hasTable && table.Key() == "" {
+		return false
+	}
+	return updateKeyPresence(state, func(facts KeyPresenceFacts) KeyPresenceFacts {
+		return facts.WithPendingKeyArrayAddresses(array, table, hasTable, key)
+	})
 }
 
 func (f KeyPresenceFacts) PendingKeyArrayEntries() []PendingKeyArrayFact {
@@ -1254,6 +1406,16 @@ func (f KeyPresenceFacts) WithAppendHistoryBaseAddress(array StableAddress) KeyP
 	return f.WithAppendHistoryBase(array.Key())
 }
 
+// RecordAppendHistoryBase records append-history base tracking on state.
+func RecordAppendHistoryBase(state *PointState, array StableAddress) bool {
+	if array.Key() == "" {
+		return false
+	}
+	return updateKeyPresence(state, func(facts KeyPresenceFacts) KeyPresenceFacts {
+		return facts.WithAppendHistoryBaseAddress(array)
+	})
+}
+
 func (f KeyPresenceFacts) HasAppendHistoryBase(array constraint.PathKey) bool {
 	if f.bottom || array == "" || len(f.rows.appendBases) == 0 {
 		return false
@@ -1310,6 +1472,16 @@ func (f KeyPresenceFacts) WithAppendHistoryEventAddresses(array, key StableAddre
 	return f.WithAppendHistoryEvent(array.Key(), key.Key())
 }
 
+// RecordAppendHistoryEvent records one possible append-history event on state.
+func RecordAppendHistoryEvent(state *PointState, array, key StableAddress) bool {
+	if array.Key() == "" || key.Key() == "" {
+		return false
+	}
+	return updateKeyPresence(state, func(facts KeyPresenceFacts) KeyPresenceFacts {
+		return facts.WithAppendHistoryEventAddresses(array, key)
+	})
+}
+
 func (f KeyPresenceFacts) AppendHistoryEventEntries() []AppendHistoryEventFact {
 	if f.bottom || len(f.rows.appendEvents) == 0 {
 		return nil
@@ -1335,6 +1507,17 @@ func (f KeyPresenceFacts) WithAppendHistoryCoverageAddresses(array, key, table S
 	return f.WithAppendHistoryCoverage(array.Key(), key.Key(), table.Key(), value)
 }
 
+// RecordAppendHistoryCoverage records coverage for one append-history event on
+// state.
+func RecordAppendHistoryCoverage(state *PointState, array, key, table StableAddress, value product.AbstractValue) bool {
+	if array.Key() == "" || key.Key() == "" || table.Key() == "" || value.IsZero() {
+		return false
+	}
+	return updateKeyPresence(state, func(facts KeyPresenceFacts) KeyPresenceFacts {
+		return facts.WithAppendHistoryCoverageAddresses(array, key, table, value)
+	})
+}
+
 // WithAppendHistoryCoverageForKeyAddress covers every tracked append event that
 // appended key with the value now proven for table[key].
 func (f KeyPresenceFacts) WithAppendHistoryCoverageForKeyAddress(
@@ -1355,6 +1538,17 @@ func (f KeyPresenceFacts) WithAppendHistoryCoverageForKeyAddress(
 		out = out.WithAppendHistoryCoverage(event.Array, keyKey, tableKey, value)
 	}
 	return out
+}
+
+// ApplyAppendHistoryCoverageForKey records table/key value coverage for every
+// tracked append event with the same key.
+func ApplyAppendHistoryCoverageForKey(state *PointState, table StableAddress, key StableAddress, value product.AbstractValue) bool {
+	if table.Key() == "" || key.Key() == "" || value.IsZero() {
+		return false
+	}
+	return updateKeyPresence(state, func(facts KeyPresenceFacts) KeyPresenceFacts {
+		return facts.WithAppendHistoryCoverageForKeyAddress(table, key, value)
+	})
 }
 
 func (f KeyPresenceFacts) AppendHistoryCoverageEntries() []AppendHistoryCoverageFact {
@@ -1434,6 +1628,25 @@ func (f KeyPresenceFacts) WithAppendElementFieldOriginAddresses(array StableAddr
 
 func (f KeyPresenceFacts) WithAppendElementFieldOriginFromAddresses(array StableAddress, field []constraint.Segment, source StableAddress, sourceField []constraint.Segment) KeyPresenceFacts {
 	return f.WithAppendElementFieldOriginFromSource(array.Key(), AppendElementFieldPathKey(field), source.Key(), AppendElementFieldPathKey(sourceField))
+}
+
+// RecordAppendElementFieldOrigin records appended-element field provenance on
+// state.
+func RecordAppendElementFieldOrigin(
+	state *PointState,
+	array StableAddress,
+	field []constraint.Segment,
+	source StableAddress,
+	sourceField []constraint.Segment,
+) bool {
+	if array.Key() == "" || source.Key() == "" || len(field) == 0 {
+		return false
+	}
+	return updateKeyPresence(state, func(facts KeyPresenceFacts) KeyPresenceFacts {
+		return facts.
+			WithAppendHistoryBaseAddress(array).
+			WithAppendElementFieldOriginFromAddresses(array, field, source, sourceField)
+	})
 }
 
 func (f KeyPresenceFacts) AppendElementFieldOriginEntries() []AppendElementFieldOriginFact {
@@ -1672,6 +1885,16 @@ func (f KeyPresenceFacts) KillAffectedByWriteAddress(write StableAddress) KeyPre
 	return f.factSet().filter(keyPresenceFullAddressFilter(overlaps)).canonical()
 }
 
+// KillKeyPresenceAffectedByWrite applies the key-presence write-kill law.
+func KillKeyPresenceAffectedByWrite(state *PointState, write StableAddress) bool {
+	if write.Key() == "" {
+		return false
+	}
+	return updateKeyPresence(state, func(facts KeyPresenceFacts) KeyPresenceFacts {
+		return facts.KillAffectedByWriteAddress(write)
+	})
+}
+
 // KillAffectedByPresentElementWriteAddress removes facts invalidated by a write
 // of a definitely-present value to a table element or field.
 func (f KeyPresenceFacts) KillAffectedByPresentElementWriteAddress(write StableAddress) KeyPresenceFacts {
@@ -1680,6 +1903,17 @@ func (f KeyPresenceFacts) KillAffectedByPresentElementWriteAddress(write StableA
 	}
 	overlaps := func(addr StableAddress) bool { return addr.Overlaps(write) }
 	return f.factSet().filter(keyPresencePresentElementAddressFilter(overlaps)).canonical()
+}
+
+// KillKeyPresenceAffectedByPresentElementWrite applies the write-kill law for a
+// definitely-present element write.
+func KillKeyPresenceAffectedByPresentElementWrite(state *PointState, write StableAddress) bool {
+	if write.Key() == "" {
+		return false
+	}
+	return updateKeyPresence(state, func(facts KeyPresenceFacts) KeyPresenceFacts {
+		return facts.KillAffectedByPresentElementWriteAddress(write)
+	})
 }
 
 // KillAffectedByPresentElementMemberWriteAddress invalidates value-specific
@@ -1698,6 +1932,17 @@ func (f KeyPresenceFacts) KillAffectedByPresentElementMemberWriteAddress(array S
 func preservePresentElementMemberWriteFacts(killed, original KeyPresenceFacts, arrayKey constraint.PathKey, member []constraint.Segment) KeyPresenceFacts {
 	preserved := original.factSet().filter(keyPresencePresentElementMemberPreservationFilter(arrayKey, member))
 	return killed.factSet().append(preserved).canonical()
+}
+
+// KillKeyPresenceAffectedByPresentElementMemberWrite applies the write-kill law
+// for a write below an already-present array element.
+func KillKeyPresenceAffectedByPresentElementMemberWrite(state *PointState, array StableAddress, member []constraint.Segment) bool {
+	if array.Key() == "" {
+		return false
+	}
+	return updateKeyPresence(state, func(facts KeyPresenceFacts) KeyPresenceFacts {
+		return facts.KillAffectedByPresentElementMemberWriteAddress(array, member)
+	})
 }
 
 func (f KeyPresenceFacts) Format() string {
@@ -1798,6 +2043,25 @@ var KeyPresenceFactsDomain = lattice.Lattice[KeyPresenceFacts]{
 		}
 		return intersectKeyPresenceFactsWiden(prev, next)
 	},
+}
+
+func pointKeyPresenceLessOrEq(a, b PointState) bool {
+	return KeyPresenceOf(a).coversWithAbsentKeys(KeyPresenceOf(b), func(addr StableAddress) bool {
+		return pointAddressDefinitelyAbsent(a, addr)
+	})
+}
+
+func pointKeyPresenceJoin(a, b PointState) KeyPresenceFacts {
+	joined := KeyPresenceFactsDomain.Join(KeyPresenceOf(a), KeyPresenceOf(b))
+	joined = pointKeyPresenceJoinOneSided(joined, KeyPresenceOf(a), b)
+	joined = pointKeyPresenceJoinOneSided(joined, KeyPresenceOf(b), a)
+	return joined
+}
+
+func pointKeyPresenceJoinOneSided(out KeyPresenceFacts, facts KeyPresenceFacts, other PointState) KeyPresenceFacts {
+	return out.withFactsProvedByAbsentKeys(facts, func(addr StableAddress) bool {
+		return pointAddressDefinitelyAbsent(other, addr)
+	})
 }
 
 func canonicalKeyPresenceFacts(entries []KeyPresenceFact, values ...[]KeyValueFact) KeyPresenceFacts {

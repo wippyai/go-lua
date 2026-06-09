@@ -39,10 +39,7 @@ func LiftEntryReachability(ps *PointState) bool {
 		changed = true
 	}
 	changed = LiftStaticMembersEntry(ps) || changed
-	if ps.KeyPresence.IsBottom() {
-		ps.KeyPresence = KeyPresenceFactsDomain.Top()
-		changed = true
-	}
+	changed = LiftKeyPresenceEntry(ps) || changed
 	changed = LiftValueOriginsEntry(ps) || changed
 	changed = LiftPathAliasesEntry(ps) || changed
 	if ps.IndexWrites.IsBottom() {

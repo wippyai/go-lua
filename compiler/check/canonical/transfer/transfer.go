@@ -154,14 +154,14 @@ type CallTyper interface {
 	KeyedIterSource(iter *ast.FuncCallExpr) (ast.Expr, bool)
 	// IndexedIterSource reports the live source array path for an indexed
 	// (ipairs-style) iteration. Transfer uses it to read point-sensitive
-	// key-array provenance from PointState.KeyPresence; the proof itself is not
+	// key-array provenance from the KeyPresence axis; the proof itself is not
 	// recomputed here.
 	IndexedIterSource(iter *ast.FuncCallExpr) (constraint.Path, bool)
 	// KeysCollectorContainer reports whether call's return slot retIndex is the
 	// keys array returned by a structurally recognized keys-collector, and if so
 	// returns the runtime container whose keys it holds. Transfer seeds this as live
 	// product-state provenance on the assigned array; indexed iteration consumes
-	// only the live fact after intervening writes have had a chance to kill it.
+	// only the live KeyPresence-axis fact after intervening writes can kill it.
 	KeysCollectorContainer(call *cfg.CallInfo, retIndex int) (constraint.Path, bool)
 	// TypeCastTarget reports whether call is a type-cast/assertion call `T(arg)` (a
 	// type name used as a callable constructor, recognized by the same CallableType
@@ -2030,7 +2030,7 @@ func (t *Transfer) seedKeyedIterKeyOf(out *flow.PointState, info *cfg.AssignInfo
 
 // seedKeyArrayForAssignment records the live provenance established by
 // `array = keys(container)`: the assigned array's current elements are keys of
-// container. The fact lives in PointState.KeyPresence so subsequent writes to the
+// container. The fact lives in the KeyPresence axis so subsequent writes to the
 // array or table can kill it before indexed iteration consumes it.
 func (t *Transfer) seedKeyArrayForAssignment(out *flow.PointState, info *cfg.AssignInfo, targetIndex int, target cfg.AssignTarget) {
 	if out == nil {
