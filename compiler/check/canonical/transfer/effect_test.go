@@ -628,22 +628,24 @@ func TestBoundaryIndexWriteReplayAdmitsOpaqueStableKeyPath(t *testing.T) {
 		Build()
 	call := &ast.FuncCallExpr{Args: []ast.Expr{self, nodeID}}
 
-	changed := tr.applyBoundaryFacts(&out, call, flow.BoundaryFactsOf(nil, nil, nil, nil, nil, []flow.BoundaryIndexWriteFact{{
-		Table: flow.BoundaryPath{
-			Kind:  flow.BoundaryPathParam,
-			Index: 0,
-			Segments: []constraint.Segment{
-				{Kind: constraint.SegmentField, Name: "nodes"},
+	changed := tr.applyBoundaryFacts(&out, call, flow.BoundaryFactsFromParts(flow.BoundaryFactParts{
+		IndexWrites: []flow.BoundaryIndexWriteFact{{
+			Table: flow.BoundaryPath{
+				Kind:  flow.BoundaryPathParam,
+				Index: 0,
+				Segments: []constraint.Segment{
+					{Kind: constraint.SegmentField, Name: "nodes"},
+				},
 			},
-		},
-		KeyPath: flow.BoundaryPath{
-			Kind:  flow.BoundaryPathParam,
-			Index: 1,
-		},
-		HasKeyPath: true,
-		KeyValue:   product.FromType(typ.String),
-		Value:      product.FromType(nodeType),
-	}}), nil)
+			KeyPath: flow.BoundaryPath{
+				Kind:  flow.BoundaryPathParam,
+				Index: 1,
+			},
+			HasKeyPath: true,
+			KeyValue:   product.FromType(typ.String),
+			Value:      product.FromType(nodeType),
+		}},
+	}), nil)
 
 	if !changed {
 		t.Fatal("boundary index-write replay did not report a fact change")
@@ -673,38 +675,41 @@ func TestBoundaryFactBatchPreservesFinalKeyArrayValueProofs(t *testing.T) {
 	arrayPath := constraint.NewPath(cfg.SymbolID(444), "self").Field("node_order")
 	tablePath := constraint.NewPath(cfg.SymbolID(444), "self").Field("nodes")
 
-	changed := tr.applyBoundaryFacts(&out, call, flow.BoundaryFactsOf(nil, nil, []flow.BoundaryKeyArrayValueFact{{
-		Array: flow.BoundaryPath{
-			Kind:  flow.BoundaryPathParam,
-			Index: 0,
-			Segments: []constraint.Segment{
-				{Kind: constraint.SegmentField, Name: "node_order"},
+	changed := tr.applyBoundaryFacts(&out, call, flow.BoundaryFactsFromParts(flow.BoundaryFactParts{
+		KeyArrayValues: []flow.BoundaryKeyArrayValueFact{{
+			Array: flow.BoundaryPath{
+				Kind:  flow.BoundaryPathParam,
+				Index: 0,
+				Segments: []constraint.Segment{
+					{Kind: constraint.SegmentField, Name: "node_order"},
+				},
 			},
-		},
-		Table: flow.BoundaryPath{
-			Kind:  flow.BoundaryPathParam,
-			Index: 0,
-			Segments: []constraint.Segment{
-				{Kind: constraint.SegmentField, Name: "nodes"},
+			Table: flow.BoundaryPath{
+				Kind:  flow.BoundaryPathParam,
+				Index: 0,
+				Segments: []constraint.Segment{
+					{Kind: constraint.SegmentField, Name: "nodes"},
+				},
 			},
-		},
-		Value: product.FromType(nodeType),
-	}}, nil, nil, []flow.BoundaryIndexWriteFact{{
-		Table: flow.BoundaryPath{
-			Kind:  flow.BoundaryPathParam,
-			Index: 0,
-			Segments: []constraint.Segment{
-				{Kind: constraint.SegmentField, Name: "nodes"},
+			Value: product.FromType(nodeType),
+		}},
+		IndexWrites: []flow.BoundaryIndexWriteFact{{
+			Table: flow.BoundaryPath{
+				Kind:  flow.BoundaryPathParam,
+				Index: 0,
+				Segments: []constraint.Segment{
+					{Kind: constraint.SegmentField, Name: "nodes"},
+				},
 			},
-		},
-		KeyPath: flow.BoundaryPath{
-			Kind:  flow.BoundaryPathParam,
-			Index: 1,
-		},
-		HasKeyPath: true,
-		KeyValue:   product.FromType(typ.String),
-		Value:      product.FromType(nodeType),
-	}}), nil)
+			KeyPath: flow.BoundaryPath{
+				Kind:  flow.BoundaryPathParam,
+				Index: 1,
+			},
+			HasKeyPath: true,
+			KeyValue:   product.FromType(typ.String),
+			Value:      product.FromType(nodeType),
+		}},
+	}), nil)
 
 	if !changed {
 		t.Fatal("boundary fact batch did not report a change")
@@ -727,34 +732,37 @@ func TestBoundaryAppendKeyBatchDerivesFreshEmptyTableFromSameBatchIndexWrite(t *
 	call := &ast.FuncCallExpr{Args: []ast.Expr{self, nodeID}}
 	arrayPath := constraint.NewPath(cfg.SymbolID(446), "self").Field("node_order")
 	tablePath := constraint.NewPath(cfg.SymbolID(446), "self").Field("nodes")
-	facts := flow.BoundaryFactsOf(nil, nil, nil, []flow.BoundaryAppendKeyFact{{
-		Array: flow.BoundaryPath{
-			Kind:  flow.BoundaryPathParam,
-			Index: 0,
-			Segments: []constraint.Segment{
-				{Kind: constraint.SegmentField, Name: "node_order"},
+	facts := flow.BoundaryFactsFromParts(flow.BoundaryFactParts{
+		AppendKeys: []flow.BoundaryAppendKeyFact{{
+			Array: flow.BoundaryPath{
+				Kind:  flow.BoundaryPathParam,
+				Index: 0,
+				Segments: []constraint.Segment{
+					{Kind: constraint.SegmentField, Name: "node_order"},
+				},
 			},
-		},
-		Key: flow.BoundaryPath{
-			Kind:  flow.BoundaryPathParam,
-			Index: 1,
-		},
-	}}, nil, []flow.BoundaryIndexWriteFact{{
-		Table: flow.BoundaryPath{
-			Kind:  flow.BoundaryPathParam,
-			Index: 0,
-			Segments: []constraint.Segment{
-				{Kind: constraint.SegmentField, Name: "nodes"},
+			Key: flow.BoundaryPath{
+				Kind:  flow.BoundaryPathParam,
+				Index: 1,
 			},
-		},
-		KeyPath: flow.BoundaryPath{
-			Kind:  flow.BoundaryPathParam,
-			Index: 1,
-		},
-		HasKeyPath: true,
-		KeyValue:   product.FromType(typ.String),
-		Value:      product.FromType(nodeType),
-	}})
+		}},
+		IndexWrites: []flow.BoundaryIndexWriteFact{{
+			Table: flow.BoundaryPath{
+				Kind:  flow.BoundaryPathParam,
+				Index: 0,
+				Segments: []constraint.Segment{
+					{Kind: constraint.SegmentField, Name: "nodes"},
+				},
+			},
+			KeyPath: flow.BoundaryPath{
+				Kind:  flow.BoundaryPathParam,
+				Index: 1,
+			},
+			HasKeyPath: true,
+			KeyValue:   product.FromType(typ.String),
+			Value:      product.FromType(nodeType),
+		}},
+	})
 	out := flow.PointState{
 		KeyPresence: testKeyPresenceWithEmptyKeyArray(t, flow.KeyPresenceFacts{}, arrayPath),
 	}
@@ -818,34 +826,37 @@ func TestBoundaryAppendKeyBatchRebasesReturnKeyForFreshEmptyTable(t *testing.T) 
 	call := &ast.FuncCallExpr{Args: []ast.Expr{self}}
 	arrayPath := constraint.NewPath(cfg.SymbolID(448), "self").Field("node_order")
 	tablePath := constraint.NewPath(cfg.SymbolID(448), "self").Field("nodes")
-	facts := flow.BoundaryFactsOf(nil, nil, nil, []flow.BoundaryAppendKeyFact{{
-		Array: flow.BoundaryPath{
-			Kind:  flow.BoundaryPathParam,
-			Index: 0,
-			Segments: []constraint.Segment{
-				{Kind: constraint.SegmentField, Name: "node_order"},
+	facts := flow.BoundaryFactsFromParts(flow.BoundaryFactParts{
+		AppendKeys: []flow.BoundaryAppendKeyFact{{
+			Array: flow.BoundaryPath{
+				Kind:  flow.BoundaryPathParam,
+				Index: 0,
+				Segments: []constraint.Segment{
+					{Kind: constraint.SegmentField, Name: "node_order"},
+				},
 			},
-		},
-		Key: flow.BoundaryPath{
-			Kind:  flow.BoundaryPathReturn,
-			Index: 0,
-		},
-	}}, nil, []flow.BoundaryIndexWriteFact{{
-		Table: flow.BoundaryPath{
-			Kind:  flow.BoundaryPathParam,
-			Index: 0,
-			Segments: []constraint.Segment{
-				{Kind: constraint.SegmentField, Name: "nodes"},
+			Key: flow.BoundaryPath{
+				Kind:  flow.BoundaryPathReturn,
+				Index: 0,
 			},
-		},
-		KeyPath: flow.BoundaryPath{
-			Kind:  flow.BoundaryPathReturn,
-			Index: 0,
-		},
-		HasKeyPath: true,
-		KeyValue:   product.FromType(typ.String),
-		Value:      product.FromType(nodeType),
-	}})
+		}},
+		IndexWrites: []flow.BoundaryIndexWriteFact{{
+			Table: flow.BoundaryPath{
+				Kind:  flow.BoundaryPathParam,
+				Index: 0,
+				Segments: []constraint.Segment{
+					{Kind: constraint.SegmentField, Name: "nodes"},
+				},
+			},
+			KeyPath: flow.BoundaryPath{
+				Kind:  flow.BoundaryPathReturn,
+				Index: 0,
+			},
+			HasKeyPath: true,
+			KeyValue:   product.FromType(typ.String),
+			Value:      product.FromType(nodeType),
+		}},
+	})
 	out := flow.PointState{
 		KeyPresence: testKeyPresenceWithEmptyKeyArray(t, flow.KeyPresenceFacts{}, arrayPath),
 	}
@@ -877,34 +888,37 @@ func TestAssignCallPostconditionDerivesFreshEmptyKeyArrayFromReturnAppend(t *tes
 		Receiver: graph,
 	}
 	nodeType := typ.NewRecord().Field("node_id", typ.String).Build()
-	facts := flow.BoundaryFactsOf(nil, nil, nil, []flow.BoundaryAppendKeyFact{{
-		Array: flow.BoundaryPath{
-			Kind:  flow.BoundaryPathParam,
-			Index: 0,
-			Segments: []constraint.Segment{
-				{Kind: constraint.SegmentField, Name: "node_order"},
+	facts := flow.BoundaryFactsFromParts(flow.BoundaryFactParts{
+		AppendKeys: []flow.BoundaryAppendKeyFact{{
+			Array: flow.BoundaryPath{
+				Kind:  flow.BoundaryPathParam,
+				Index: 0,
+				Segments: []constraint.Segment{
+					{Kind: constraint.SegmentField, Name: "node_order"},
+				},
 			},
-		},
-		Key: flow.BoundaryPath{
-			Kind:  flow.BoundaryPathReturn,
-			Index: 0,
-		},
-	}}, nil, []flow.BoundaryIndexWriteFact{{
-		Table: flow.BoundaryPath{
-			Kind:  flow.BoundaryPathParam,
-			Index: 0,
-			Segments: []constraint.Segment{
-				{Kind: constraint.SegmentField, Name: "nodes"},
+			Key: flow.BoundaryPath{
+				Kind:  flow.BoundaryPathReturn,
+				Index: 0,
 			},
-		},
-		KeyPath: flow.BoundaryPath{
-			Kind:  flow.BoundaryPathReturn,
-			Index: 0,
-		},
-		HasKeyPath: true,
-		KeyValue:   product.FromType(typ.String),
-		Value:      product.FromType(nodeType),
-	}})
+		}},
+		IndexWrites: []flow.BoundaryIndexWriteFact{{
+			Table: flow.BoundaryPath{
+				Kind:  flow.BoundaryPathParam,
+				Index: 0,
+				Segments: []constraint.Segment{
+					{Kind: constraint.SegmentField, Name: "nodes"},
+				},
+			},
+			KeyPath: flow.BoundaryPath{
+				Kind:  flow.BoundaryPathReturn,
+				Index: 0,
+			},
+			HasKeyPath: true,
+			KeyValue:   product.FromType(typ.String),
+			Value:      product.FromType(nodeType),
+		}},
+	})
 	tr := New(in, Config{CallTyper: boundaryAndContainerElementUnionTyper{facts: facts}})
 	arrayPath := constraint.NewPath(graphSym, "graph").Field("node_order")
 	tablePath := constraint.NewPath(graphSym, "graph").Field("nodes")
@@ -947,34 +961,37 @@ func TestAssignCallPostconditionPreservesAppendHistoryAcrossReceiverMutation(t *
 		Receiver: graph,
 	}
 	nodeType := typ.NewRecord().Field("node_id", typ.String).Build()
-	facts := flow.BoundaryFactsOf(nil, nil, nil, []flow.BoundaryAppendKeyFact{{
-		Array: flow.BoundaryPath{
-			Kind:  flow.BoundaryPathParam,
-			Index: 0,
-			Segments: []constraint.Segment{
-				{Kind: constraint.SegmentField, Name: "node_order"},
+	facts := flow.BoundaryFactsFromParts(flow.BoundaryFactParts{
+		AppendKeys: []flow.BoundaryAppendKeyFact{{
+			Array: flow.BoundaryPath{
+				Kind:  flow.BoundaryPathParam,
+				Index: 0,
+				Segments: []constraint.Segment{
+					{Kind: constraint.SegmentField, Name: "node_order"},
+				},
 			},
-		},
-		Key: flow.BoundaryPath{
-			Kind:  flow.BoundaryPathReturn,
-			Index: 0,
-		},
-	}}, nil, []flow.BoundaryIndexWriteFact{{
-		Table: flow.BoundaryPath{
-			Kind:  flow.BoundaryPathParam,
-			Index: 0,
-			Segments: []constraint.Segment{
-				{Kind: constraint.SegmentField, Name: "nodes"},
+			Key: flow.BoundaryPath{
+				Kind:  flow.BoundaryPathReturn,
+				Index: 0,
 			},
-		},
-		KeyPath: flow.BoundaryPath{
-			Kind:  flow.BoundaryPathReturn,
-			Index: 0,
-		},
-		HasKeyPath: true,
-		KeyValue:   product.FromType(typ.String),
-		Value:      product.FromType(nodeType),
-	}})
+		}},
+		IndexWrites: []flow.BoundaryIndexWriteFact{{
+			Table: flow.BoundaryPath{
+				Kind:  flow.BoundaryPathParam,
+				Index: 0,
+				Segments: []constraint.Segment{
+					{Kind: constraint.SegmentField, Name: "nodes"},
+				},
+			},
+			KeyPath: flow.BoundaryPath{
+				Kind:  flow.BoundaryPathReturn,
+				Index: 0,
+			},
+			HasKeyPath: true,
+			KeyValue:   product.FromType(typ.String),
+			Value:      product.FromType(nodeType),
+		}},
+	})
 	updatedReceiver := product.FromType(typ.NewRecord().
 		Field("node_order", typ.NewArray(typ.Unknown)).
 		Field("nodes", typ.NewMap(typ.String, nodeType)).
@@ -2300,23 +2317,25 @@ func TestCallBoundaryFactsReplayAfterGenericMutatorEffects(t *testing.T) {
 	in.Graph.Bindings().SetName(graphSym, "graph")
 	in.Graph.Bindings().SetName(msgSym, "msg")
 
-	facts := flow.BoundaryFactsOf(nil, nil, []flow.BoundaryKeyArrayValueFact{{
-		Array: flow.BoundaryPath{
-			Kind:  flow.BoundaryPathParam,
-			Index: 0,
-			Segments: []constraint.Segment{
-				{Kind: constraint.SegmentField, Name: "node_order"},
+	facts := flow.BoundaryFactsFromParts(flow.BoundaryFactParts{
+		KeyArrayValues: []flow.BoundaryKeyArrayValueFact{{
+			Array: flow.BoundaryPath{
+				Kind:  flow.BoundaryPathParam,
+				Index: 0,
+				Segments: []constraint.Segment{
+					{Kind: constraint.SegmentField, Name: "node_order"},
+				},
 			},
-		},
-		Table: flow.BoundaryPath{
-			Kind:  flow.BoundaryPathParam,
-			Index: 0,
-			Segments: []constraint.Segment{
-				{Kind: constraint.SegmentField, Name: "nodes"},
+			Table: flow.BoundaryPath{
+				Kind:  flow.BoundaryPathParam,
+				Index: 0,
+				Segments: []constraint.Segment{
+					{Kind: constraint.SegmentField, Name: "nodes"},
+				},
 			},
-		},
-		Value: product.FromType(typ.String),
-	}}, nil, nil, nil)
+			Value: product.FromType(typ.String),
+		}},
+	})
 	typer := boundaryAndContainerElementUnionTyper{
 		facts: facts,
 		effects: []effect.ContainerElementUnion{{

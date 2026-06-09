@@ -35,20 +35,20 @@ func TestBoundaryFactsPartitionByReturnIndices(t *testing.T) {
 		Segments: []constraint.Segment{{Kind: constraint.SegmentField, Name: "id"}},
 	}
 
-	facts := BoundaryFactsOf(
-		[]BoundaryKeyPresenceFact{{Table: paramTable, Key: paramKey}},
-		[]BoundaryKeyArrayFact{{Array: ret0Array, Table: paramTable}},
-		[]BoundaryKeyArrayValueFact{{Array: ret0Array, Table: ret0Table, Value: product.FromType(typ.String)}},
-		[]BoundaryAppendKeyFact{{Array: ret0Array, Key: ret1Key}},
-		[]BoundaryLengthLowerBound{{Target: ret1Key, Lower: 1}},
-		[]BoundaryIndexWriteFact{{
+	facts := BoundaryFactsFromParts(BoundaryFactParts{
+		KeyPresence:    []BoundaryKeyPresenceFact{{Table: paramTable, Key: paramKey}},
+		KeyArrays:      []BoundaryKeyArrayFact{{Array: ret0Array, Table: paramTable}},
+		KeyArrayValues: []BoundaryKeyArrayValueFact{{Array: ret0Array, Table: ret0Table, Value: product.FromType(typ.String)}},
+		AppendKeys:     []BoundaryAppendKeyFact{{Array: ret0Array, Key: ret1Key}},
+		LengthLower:    []BoundaryLengthLowerBound{{Target: ret1Key, Lower: 1}},
+		IndexWrites: []BoundaryIndexWriteFact{{
 			Table:      ret0Table,
 			KeyPath:    ret1Key,
 			HasKeyPath: true,
 			KeyValue:   product.FromType(typ.String),
 			Value:      product.FromType(typ.Number),
 		}},
-	).WithAppendElementFieldOrigins([]BoundaryAppendElementFieldOriginFact{{
+	}).WithAppendElementFieldOrigins([]BoundaryAppendElementFieldOriginFact{{
 		Array:  ret0Array,
 		Field:  []constraint.Segment{{Kind: constraint.SegmentField, Name: "child"}},
 		Source: ret1Key,
@@ -93,8 +93,12 @@ func TestMergeBoundaryFactProofsUnionsIndependentProofs(t *testing.T) {
 	array := BoundaryPath{Kind: BoundaryPathReturn, Index: 0}
 
 	merged := MergeBoundaryFactProofs(
-		BoundaryFactsOf([]BoundaryKeyPresenceFact{{Table: table, Key: key}}, nil, nil, nil, nil, nil),
-		BoundaryFactsOf(nil, []BoundaryKeyArrayFact{{Array: array, Table: table}}, nil, nil, nil, nil),
+		BoundaryFactsFromParts(BoundaryFactParts{
+			KeyPresence: []BoundaryKeyPresenceFact{{Table: table, Key: key}},
+		}),
+		BoundaryFactsFromParts(BoundaryFactParts{
+			KeyArrays: []BoundaryKeyArrayFact{{Array: array, Table: table}},
+		}),
 	)
 	if len(merged.KeyPresence()) != 1 || len(merged.KeyArrays()) != 1 {
 		t.Fatalf("merged facts = %#v, want union of independent proofs", merged)

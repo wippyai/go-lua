@@ -102,13 +102,12 @@ func TestReaderEntryPublicationDependenciesUseSnapshotSummary(t *testing.T) {
 			CallEntryPublication: CallEntryPublications{
 				callee: {
 					Values: EntryValues{2: product.FromType(typ.String)},
-					Facts: flow.BoundaryFactsOf(
-						[]flow.BoundaryKeyPresenceFact{{
+					Facts: flow.BoundaryFactsFromParts(flow.BoundaryFactParts{
+						KeyPresence: []flow.BoundaryKeyPresenceFact{{
 							Table: flow.BoundaryPath{Kind: flow.BoundaryPathParam, Index: 2},
 							Key:   flow.BoundaryPath{Kind: flow.BoundaryPathParam, Index: 2, Segments: []constraint.Segment{{Kind: constraint.SegmentField, Name: "id"}}},
 						}},
-						nil, nil, nil, nil, nil,
-					),
+					}),
 				},
 			},
 			PrototypeSelf: flow.PrototypeSelfOf([]flow.PrototypeSelfEntry{{

@@ -216,13 +216,15 @@ func TestDiagnosticContextFrontierReducesDominatedEntryFactContexts(t *testing.T
 	root := FuncRef{GraphID: 1}
 	callee := FuncRef{GraphID: 2}
 	base := NewDefaultKey(callee, EntryValues{0: product.FromType(typ.String)})
-	facts := flow.BoundaryFactsOf(nil, []flow.BoundaryKeyArrayFact{{
-		Array: flow.BoundaryPath{Kind: flow.BoundaryPathParam, Index: 0},
-		Table: flow.BoundaryPath{Kind: flow.BoundaryPathParam, Index: 0, Segments: []constraint.Segment{{
-			Kind: constraint.SegmentField,
-			Name: "nodes",
-		}}},
-	}}, nil, nil, nil, nil)
+	facts := flow.BoundaryFactsFromParts(flow.BoundaryFactParts{
+		KeyArrays: []flow.BoundaryKeyArrayFact{{
+			Array: flow.BoundaryPath{Kind: flow.BoundaryPathParam, Index: 0},
+			Table: flow.BoundaryPath{Kind: flow.BoundaryPathParam, Index: 0, Segments: []constraint.Segment{{
+				Kind: constraint.SegmentField,
+				Name: "nodes",
+			}}},
+		}},
+	})
 	factful := NewKeyWithReferenceContext(
 		callee,
 		flow.ReferenceContextOf(flow.CaptureCellsDomain.Bottom(), flow.FunctionRefsDomain.Bottom(), flow.ClosureRefsDomain.Bottom()),

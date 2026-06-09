@@ -193,59 +193,6 @@ type BoundaryFactParts struct {
 	StaticMembers       []BoundaryStaticMemberFact
 }
 
-// BoundaryFactsOf builds a canonical finite boundary-fact value.
-func BoundaryFactsOf(
-	keyPresence []BoundaryKeyPresenceFact,
-	keyArrays []BoundaryKeyArrayFact,
-	keyArrayValues []BoundaryKeyArrayValueFact,
-	appendKeys []BoundaryAppendKeyFact,
-	lenLower []BoundaryLengthLowerBound,
-	indexWrites []BoundaryIndexWriteFact,
-) BoundaryFacts {
-	return BoundaryFactsFromParts(BoundaryFactParts{
-		KeyPresence:    keyPresence,
-		KeyArrays:      keyArrays,
-		KeyArrayValues: keyArrayValues,
-		AppendKeys:     appendKeys,
-		LengthLower:    lenLower,
-		IndexWrites:    indexWrites,
-	})
-}
-
-func boundaryFactsOfFull(
-	keyPresence []BoundaryKeyPresenceFact,
-	keyArrays []BoundaryKeyArrayFact,
-	keyArrayValues []BoundaryKeyArrayValueFact,
-	appendKeys []BoundaryAppendKeyFact,
-	appendBases []BoundaryAppendHistoryBaseFact,
-	appendEvents []BoundaryAppendHistoryEventFact,
-	appendCoverage []BoundaryAppendHistoryCoverageFact,
-	appendTableCoverage []BoundaryAppendHistoryTableCoverageFact,
-	appendOrigins []BoundaryAppendElementFieldOriginFact,
-	lenLower []BoundaryLengthLowerBound,
-	lenUpper []BoundaryLengthUpperBound,
-	lenRelations []BoundaryLengthRelationFact,
-	indexWrites []BoundaryIndexWriteFact,
-	staticMembers []BoundaryStaticMemberFact,
-) BoundaryFacts {
-	return BoundaryFactsFromParts(BoundaryFactParts{
-		KeyPresence:         keyPresence,
-		KeyArrays:           keyArrays,
-		KeyArrayValues:      keyArrayValues,
-		AppendKeys:          appendKeys,
-		AppendBases:         appendBases,
-		AppendEvents:        appendEvents,
-		AppendCoverage:      appendCoverage,
-		AppendTableCoverage: appendTableCoverage,
-		AppendOrigins:       appendOrigins,
-		LengthLower:         lenLower,
-		LengthUpper:         lenUpper,
-		LengthRelations:     lenRelations,
-		IndexWrites:         indexWrites,
-		StaticMembers:       staticMembers,
-	})
-}
-
 // BoundaryFactsFromParts builds a canonical finite boundary-fact value from all
 // currently-supported lanes. New lanes enter the carrier through this function
 // before callers receive public construction helpers.
@@ -726,7 +673,22 @@ func RebaseBoundaryReturnFactsToParam(facts BoundaryFacts, returnIndex, paramSlo
 			staticMembers = append(staticMembers, BoundaryStaticMemberFact{Target: target, Value: fact.Value})
 		}
 	}
-	return boundaryFactsOfFull(keyPresence, keyArrays, keyArrayValues, appendKeys, appendBases, appendEvents, appendCoverage, appendTableCoverage, appendOrigins, lenLower, lenUpper, lenRelations, indexWrites, staticMembers)
+	return BoundaryFactsFromParts(BoundaryFactParts{
+		KeyPresence:         keyPresence,
+		KeyArrays:           keyArrays,
+		KeyArrayValues:      keyArrayValues,
+		AppendKeys:          appendKeys,
+		AppendBases:         appendBases,
+		AppendEvents:        appendEvents,
+		AppendCoverage:      appendCoverage,
+		AppendTableCoverage: appendTableCoverage,
+		AppendOrigins:       appendOrigins,
+		LengthLower:         lenLower,
+		LengthUpper:         lenUpper,
+		LengthRelations:     lenRelations,
+		IndexWrites:         indexWrites,
+		StaticMembers:       staticMembers,
+	})
 }
 
 // BoundaryFactsDomain is the lattice over boundary postconditions.

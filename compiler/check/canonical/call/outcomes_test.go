@@ -228,7 +228,9 @@ func TestCallOutcomeProjectsSelectedBoundaryAxes(t *testing.T) {
 	receiverEffects := flow.ReceiverMustWrite(0, product.FromType(typ.Number))
 	table := flow.BoundaryPath{Kind: flow.BoundaryPathParam, Index: 0}
 	key := flow.BoundaryPath{Kind: flow.BoundaryPathParam, Index: 1}
-	boundaryFacts := flow.BoundaryFactsOf([]flow.BoundaryKeyPresenceFact{{Table: table, Key: key}}, nil, nil, nil, nil, nil)
+	boundaryFacts := flow.BoundaryFactsFromParts(flow.BoundaryFactParts{
+		KeyPresence: []flow.BoundaryKeyPresenceFact{{Table: table, Key: key}},
+	})
 
 	outcome := CallOutcome{
 		Projection: summary.CallSummaryProjection{

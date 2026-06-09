@@ -37,25 +37,21 @@ func TestApplyBoundaryFactsAppliesCollectionProvenanceTransaction(t *testing.T) 
 		2: constraint.NewPath(keyPath.Symbol, keyPath.Root),
 		3: constraint.NewPath(sourcePath.Symbol, sourcePath.Root),
 	}, nil)
-	facts := BoundaryFactsOf(
-		nil,
-		nil,
-		nil,
-		[]BoundaryAppendKeyFact{{
+	facts := BoundaryFactsFromParts(BoundaryFactParts{
+		AppendKeys: []BoundaryAppendKeyFact{{
 			Array:    param(0, arrayPath),
 			Key:      param(2, keyPath),
 			Table:    param(1, tablePath),
 			HasTable: true,
 		}},
-		nil,
-		[]BoundaryIndexWriteFact{{
+		IndexWrites: []BoundaryIndexWriteFact{{
 			Table:      param(1, tablePath),
 			KeyPath:    param(2, keyPath),
 			HasKeyPath: true,
 			KeyValue:   product.FromType(typ.String),
 			Value:      product.FromType(nodeType),
 		}},
-	).WithAppendElementFieldOrigins([]BoundaryAppendElementFieldOriginFact{{
+	}).WithAppendElementFieldOrigins([]BoundaryAppendElementFieldOriginFact{{
 		Array:  param(0, arrayPath),
 		Field:  []constraint.Segment{{Kind: constraint.SegmentField, Name: "status"}},
 		Source: param(3, sourcePath),
@@ -90,18 +86,13 @@ func TestApplyBoundaryFactsAppliesIndexWriteWithKeyValueOnly(t *testing.T) {
 	roots := NewBoundaryLocalRoots(map[int]constraint.Path{0: constraint.NewPath(tablePath.Symbol, tablePath.Root)}, nil)
 	keyValue := product.FromType(typ.LiteralString("n1"))
 	value := product.FromType(typ.NewRecord().Field("id", typ.String).Build())
-	facts := BoundaryFactsOf(
-		nil,
-		nil,
-		nil,
-		nil,
-		nil,
-		[]BoundaryIndexWriteFact{{
+	facts := BoundaryFactsFromParts(BoundaryFactParts{
+		IndexWrites: []BoundaryIndexWriteFact{{
 			Table:    BoundaryPath{Kind: BoundaryPathParam, Index: 0, Segments: tablePath.Segments},
 			KeyValue: keyValue,
 			Value:    value,
 		}},
-	)
+	})
 
 	if _, changed := ApplyBoundaryFacts(&state, facts, roots.Rebase, nil); !changed {
 		t.Fatal("ApplyBoundaryFacts reported no change")

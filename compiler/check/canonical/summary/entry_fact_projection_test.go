@@ -268,10 +268,9 @@ func TestDirectCallEntryFactsNormalizesStaticMembersAgainstRuntimeArgValue(t *te
 func TestAggregateEntryFactsKeepsOnlyFactsProvenByAllCallers(t *testing.T) {
 	table := flow.BoundaryPath{Kind: flow.BoundaryPathParam, Index: 0, Segments: []constraint.Segment{{Kind: constraint.SegmentField, Name: "nodes"}}}
 	key := flow.BoundaryPath{Kind: flow.BoundaryPathParam, Index: 0, Segments: []constraint.Segment{{Kind: constraint.SegmentField, Name: "last_node_id"}}}
-	proof := flow.BoundaryFactsOf(
-		[]flow.BoundaryKeyPresenceFact{{Table: table, Key: key}},
-		nil, nil, nil, nil, nil,
-	)
+	proof := flow.BoundaryFactsFromParts(flow.BoundaryFactParts{
+		KeyPresence: []flow.BoundaryKeyPresenceFact{{Table: table, Key: key}},
+	})
 
 	got := summary.AggregateEntryFacts(func(yield func(flow.BoundaryFacts)) {
 		yield(proof)

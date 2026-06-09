@@ -880,7 +880,9 @@ func TestCallEntryProjection_PublishesValuesAndFactsTogether(t *testing.T) {
 	callee := summary.FuncRef{GraphID: 41}
 	table := flow.BoundaryPath{Kind: flow.BoundaryPathParam, Index: 0}
 	key := flow.BoundaryPath{Kind: flow.BoundaryPathParam, Index: 0, Segments: []constraint.Segment{{Kind: constraint.SegmentField, Name: "id"}}}
-	facts := flow.BoundaryFactsOf([]flow.BoundaryKeyPresenceFact{{Table: table, Key: key}}, nil, nil, nil, nil, nil)
+	facts := flow.BoundaryFactsFromParts(flow.BoundaryFactParts{
+		KeyPresence: []flow.BoundaryKeyPresenceFact{{Table: table, Key: key}},
+	})
 
 	got := summary.CallEntryProjection{
 		Graph: graph,
@@ -932,7 +934,9 @@ func TestCallEntryProjection_WeakFactsDoNotEraseValuesOrReintroduceLater(t *test
 	callee := summary.FuncRef{GraphID: 42}
 	table := flow.BoundaryPath{Kind: flow.BoundaryPathParam, Index: 0}
 	key := flow.BoundaryPath{Kind: flow.BoundaryPathParam, Index: 0, Segments: []constraint.Segment{{Kind: constraint.SegmentField, Name: "id"}}}
-	proof := flow.BoundaryFactsOf([]flow.BoundaryKeyPresenceFact{{Table: table, Key: key}}, nil, nil, nil, nil, nil)
+	proof := flow.BoundaryFactsFromParts(flow.BoundaryFactParts{
+		KeyPresence: []flow.BoundaryKeyPresenceFact{{Table: table, Key: key}},
+	})
 	got := summary.CallEntryProjection{
 		Graph: graph,
 		State: state.FunctionState{Points: points},

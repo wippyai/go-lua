@@ -210,13 +210,12 @@ func TestSummaryDomain_Laws(t *testing.T) {
 	entryPublication := summary.CallEntryPublications{
 		summary.FuncRef{GraphID: 99}: {
 			Values: summary.EntryValues{0: n},
-			Facts: flow.BoundaryFactsOf(
-				[]flow.BoundaryKeyPresenceFact{{
+			Facts: flow.BoundaryFactsFromParts(flow.BoundaryFactParts{
+				KeyPresence: []flow.BoundaryKeyPresenceFact{{
 					Table: flow.BoundaryPath{Kind: flow.BoundaryPathParam, Index: 0, Segments: []constraint.Segment{{Kind: constraint.SegmentField, Name: "nodes"}}},
 					Key:   flow.BoundaryPath{Kind: flow.BoundaryPathParam, Index: 0, Segments: []constraint.Segment{{Kind: constraint.SegmentField, Name: "last_node_id"}}},
 				}},
-				nil, nil, nil, nil, nil,
-			),
+			}),
 		},
 	}
 	rels := flow.ReturnRelationsOfErrorReturns([]flow.ReturnCorrelation{{ValueIndex: 0, ErrorIndex: 1}})

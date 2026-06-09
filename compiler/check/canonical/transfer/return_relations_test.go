@@ -121,14 +121,16 @@ func TestAssignCallPostconditionsMaterializeReturnKeyBoundaryFact(t *testing.T) 
 		Method:   "create_node",
 	}
 	callInfo := &cfg.CallInfo{Call: call, Method: call.Method, Receiver: self}
-	boundaryFacts := flow.BoundaryFactsOf([]flow.BoundaryKeyPresenceFact{{
-		Table: flow.BoundaryPath{
-			Kind:     flow.BoundaryPathParam,
-			Index:    0,
-			Segments: []constraint.Segment{{Kind: constraint.SegmentField, Name: "nodes"}},
-		},
-		Key: flow.BoundaryPath{Kind: flow.BoundaryPathReturn, Index: 0},
-	}}, nil, nil, nil, nil, nil)
+	boundaryFacts := flow.BoundaryFactsFromParts(flow.BoundaryFactParts{
+		KeyPresence: []flow.BoundaryKeyPresenceFact{{
+			Table: flow.BoundaryPath{
+				Kind:     flow.BoundaryPathParam,
+				Index:    0,
+				Segments: []constraint.Segment{{Kind: constraint.SegmentField, Name: "nodes"}},
+			},
+			Key: flow.BoundaryPath{Kind: flow.BoundaryPathReturn, Index: 0},
+		}},
+	})
 	typer := &productReturnRelationsTestTyper{
 		facts: boundaryFacts,
 	}
@@ -173,19 +175,21 @@ func TestAssignCallPostconditionsReplayReturnKeyArrayValueForIndexedReadback(t *
 		Field("error_targets", typ.NewArray(typ.String)).
 		Build())
 	typer := &productReturnRelationsTestTyper{
-		facts: flow.BoundaryFactsOf(nil, nil, []flow.BoundaryKeyArrayValueFact{{
-			Array: flow.BoundaryPath{
-				Kind:     flow.BoundaryPathReturn,
-				Index:    0,
-				Segments: []constraint.Segment{{Kind: constraint.SegmentField, Name: "node_order"}},
-			},
-			Table: flow.BoundaryPath{
-				Kind:     flow.BoundaryPathReturn,
-				Index:    0,
-				Segments: []constraint.Segment{{Kind: constraint.SegmentField, Name: "edges"}},
-			},
-			Value: edgeValue,
-		}}, nil, nil, nil),
+		facts: flow.BoundaryFactsFromParts(flow.BoundaryFactParts{
+			KeyArrayValues: []flow.BoundaryKeyArrayValueFact{{
+				Array: flow.BoundaryPath{
+					Kind:     flow.BoundaryPathReturn,
+					Index:    0,
+					Segments: []constraint.Segment{{Kind: constraint.SegmentField, Name: "node_order"}},
+				},
+				Table: flow.BoundaryPath{
+					Kind:     flow.BoundaryPathReturn,
+					Index:    0,
+					Segments: []constraint.Segment{{Kind: constraint.SegmentField, Name: "edges"}},
+				},
+				Value: edgeValue,
+			}},
+		}),
 	}
 	tr := New(in, Config{CallTyper: typer})
 	out := flow.PointState{
