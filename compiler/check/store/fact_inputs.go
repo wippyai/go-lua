@@ -309,9 +309,9 @@ func (s *SessionStore) visibleFunctionFact(key api.GraphKey, sym cfg.SymbolID) (
 	if s == nil || sym == 0 {
 		return api.FunctionFact{}, false
 	}
-	if s.InterprocPrev != nil && s.InterprocNext != nil {
-		prev := functionFactFromFacts(s.InterprocPrev.Facts[key], sym)
-		next := functionFactFromFacts(s.InterprocNext.Facts[key], sym)
+	if s.LegacyInterprocPrev != nil && s.LegacyInterprocNext != nil {
+		prev := functionFactFromFacts(s.LegacyInterprocPrev.Facts[key], sym)
+		next := functionFactFromFacts(s.LegacyInterprocNext.Facts[key], sym)
 		switch {
 		case functionfact.Empty(prev) && functionfact.Empty(next):
 			return api.FunctionFact{}, false
@@ -343,12 +343,12 @@ func (s *SessionStore) visibleFunctionFacts(key api.GraphKey) api.FunctionFacts 
 		return nil
 	}
 	prev := api.Facts{}
-	if s.InterprocPrev != nil {
-		prev.FunctionFacts = s.InterprocPrev.Facts[key].FunctionFacts
+	if s.LegacyInterprocPrev != nil {
+		prev.FunctionFacts = s.LegacyInterprocPrev.Facts[key].FunctionFacts
 	}
 	next := api.Facts{}
-	if s.InterprocNext != nil {
-		next.FunctionFacts = s.InterprocNext.Facts[key].FunctionFacts
+	if s.LegacyInterprocNext != nil {
+		next.FunctionFacts = s.LegacyInterprocNext.Facts[key].FunctionFacts
 	}
 	return cloneFunctionFacts(interproc.OverlayFacts(prev, next).FunctionFacts)
 }
@@ -357,13 +357,13 @@ func (s *SessionStore) visibleLiteralSig(key api.GraphKey, fn *ast.FunctionExpr)
 	if s == nil || fn == nil {
 		return nil, false
 	}
-	if s.InterprocNext != nil {
-		if sig := s.InterprocNext.Facts[key].LiteralSigs[fn]; sig != nil {
+	if s.LegacyInterprocNext != nil {
+		if sig := s.LegacyInterprocNext.Facts[key].LiteralSigs[fn]; sig != nil {
 			return sig, true
 		}
 	}
-	if s.InterprocPrev != nil {
-		if sig := s.InterprocPrev.Facts[key].LiteralSigs[fn]; sig != nil {
+	if s.LegacyInterprocPrev != nil {
+		if sig := s.LegacyInterprocPrev.Facts[key].LiteralSigs[fn]; sig != nil {
 			return sig, true
 		}
 	}
@@ -374,9 +374,9 @@ func (s *SessionStore) visibleCapturedType(key api.GraphKey, sym cfg.SymbolID) (
 	if s == nil || sym == 0 {
 		return nil, false
 	}
-	if s.InterprocPrev != nil && s.InterprocNext != nil {
-		prev := capturedTypeFromFacts(s.InterprocPrev.Facts[key], sym)
-		next := capturedTypeFromFacts(s.InterprocNext.Facts[key], sym)
+	if s.LegacyInterprocPrev != nil && s.LegacyInterprocNext != nil {
+		prev := capturedTypeFromFacts(s.LegacyInterprocPrev.Facts[key], sym)
+		next := capturedTypeFromFacts(s.LegacyInterprocNext.Facts[key], sym)
 		switch {
 		case prev.IsZero() && next.IsZero():
 			return nil, false
@@ -411,12 +411,12 @@ func (s *SessionStore) visibleCapturedFieldAssigns(key api.GraphKey) api.Capture
 		return nil
 	}
 	prev := api.Facts{}
-	if s.InterprocPrev != nil {
-		prev.CapturedFields = s.InterprocPrev.Facts[key].CapturedFields
+	if s.LegacyInterprocPrev != nil {
+		prev.CapturedFields = s.LegacyInterprocPrev.Facts[key].CapturedFields
 	}
 	next := api.Facts{}
-	if s.InterprocNext != nil {
-		next.CapturedFields = s.InterprocNext.Facts[key].CapturedFields
+	if s.LegacyInterprocNext != nil {
+		next.CapturedFields = s.LegacyInterprocNext.Facts[key].CapturedFields
 	}
 	return cloneCapturedFieldAssigns(interproc.OverlayFacts(prev, next).CapturedFields)
 }
@@ -425,9 +425,9 @@ func (s *SessionStore) visibleConstructorFields(key api.GraphKey, sym cfg.Symbol
 	if s == nil || sym == 0 {
 		return nil, false
 	}
-	if s.InterprocPrev != nil && s.InterprocNext != nil {
-		prev := constructorFieldsFromFacts(s.InterprocPrev.Facts[key], sym)
-		next := constructorFieldsFromFacts(s.InterprocNext.Facts[key], sym)
+	if s.LegacyInterprocPrev != nil && s.LegacyInterprocNext != nil {
+		prev := constructorFieldsFromFacts(s.LegacyInterprocPrev.Facts[key], sym)
+		next := constructorFieldsFromFacts(s.LegacyInterprocNext.Facts[key], sym)
 		switch {
 		case len(prev) == 0 && len(next) == 0:
 			return nil, false
@@ -527,11 +527,11 @@ func (s *SessionStore) syncProjectedFactInputs(batch *db.InputBatch, key api.Gra
 	if s == nil || s.factInputs == nil {
 		return
 	}
-	s.factInputs.setProjectedFacts(batch, key, s.visibleProjectedInterprocFacts(key))
+	s.factInputs.setProjectedFacts(batch, key, s.visibleProjectedLegacyFacts(key))
 }
 
-// SetCanonicalFunctionFactsProjection publishes final canonical FunctionFacts
-// without mutating InterprocPrev/InterprocNext or advancing the legacy fixpoint
+// SetCanonicalFunctionFactsProjection publishes final Summary-derived FunctionFacts
+// without mutating LegacyInterprocPrev/LegacyInterprocNext or advancing the legacy fixpoint
 // product.
 func (s *SessionStore) SetCanonicalFunctionFactsProjection(facts map[api.GraphKey]api.FunctionFacts) {
 	if s == nil || s.factInputs == nil {
@@ -555,13 +555,13 @@ func (s *SessionStore) SetCanonicalFunctionFactsProjection(facts map[api.GraphKe
 	}
 }
 
-func (s *SessionStore) visibleProjectedInterprocFacts(key api.GraphKey) api.Facts {
+func (s *SessionStore) visibleProjectedLegacyFacts(key api.GraphKey) api.Facts {
 	if s == nil {
 		return api.Facts{}
 	}
 	prev := api.Facts{}
-	if s.InterprocPrev != nil {
-		facts := s.InterprocPrev.Facts[key]
+	if s.LegacyInterprocPrev != nil {
+		facts := s.LegacyInterprocPrev.Facts[key]
 		prev = api.Facts{
 			FunctionFacts:     facts.FunctionFacts,
 			LiteralSigs:       facts.LiteralSigs,
@@ -571,8 +571,8 @@ func (s *SessionStore) visibleProjectedInterprocFacts(key api.GraphKey) api.Fact
 		}
 	}
 	next := api.Facts{}
-	if s.InterprocNext != nil {
-		facts := s.InterprocNext.Facts[key]
+	if s.LegacyInterprocNext != nil {
+		facts := s.LegacyInterprocNext.Facts[key]
 		next = api.Facts{
 			FunctionFacts:     facts.FunctionFacts,
 			LiteralSigs:       facts.LiteralSigs,
@@ -608,13 +608,13 @@ func (s *SessionStore) syncFactInputs() {
 	for key := range s.factInputs.constructorValues {
 		factKeys[key.GraphKey] = struct{}{}
 	}
-	if s.InterprocPrev != nil {
-		for key := range s.InterprocPrev.Facts {
+	if s.LegacyInterprocPrev != nil {
+		for key := range s.LegacyInterprocPrev.Facts {
 			factKeys[key] = struct{}{}
 		}
 	}
-	if s.InterprocNext != nil {
-		for key := range s.InterprocNext.Facts {
+	if s.LegacyInterprocNext != nil {
+		for key := range s.LegacyInterprocNext.Facts {
 			factKeys[key] = struct{}{}
 		}
 	}

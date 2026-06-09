@@ -3,7 +3,6 @@ package canonical
 import (
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/cfg"
-	"github.com/wippyai/go-lua/compiler/check/callsite"
 	canonicalcall "github.com/wippyai/go-lua/compiler/check/canonical/call"
 	"github.com/wippyai/go-lua/compiler/check/canonical/state"
 	"github.com/wippyai/go-lua/compiler/check/canonical/summary"
@@ -297,14 +296,6 @@ func (ct callTyper) callEntryProjector() (callEntryProjector, bool) {
 	}, true
 }
 
-func (ct callTyper) callEntryValuesForRef(ref summary.FuncRef, call *ast.FuncCallExpr, exprType func(ast.Expr) typ.Type) summary.EntryValues {
-	projector, ok := ct.callEntryProjector()
-	if !ok {
-		return nil
-	}
-	return projector.valuesForRef(ref, call, exprType)
-}
-
 func (c callEntryProjector) slotType(ref summary.FuncRef, call *ast.FuncCallExpr, runtimeValues []product.AbstractValue, entryValues summary.EntryValues, slot int) typ.Type {
 	if slot < 0 {
 		return nil
@@ -323,29 +314,6 @@ func (c callEntryProjector) slotType(ref summary.FuncRef, call *ast.FuncCallExpr
 		return product.ProjectValueOrUnknown(av)
 	}
 	return nil
-}
-
-func (c callEntryProjector) valuesForRef(ref summary.FuncRef, call *ast.FuncCallExpr, exprType func(ast.Expr) typ.Type) summary.EntryValues {
-	if call == nil || exprType == nil {
-		return nil
-	}
-	runtimeValues := make([]product.AbstractValue, callsite.RuntimeArgExprCount(call))
-	for i := range runtimeValues {
-		arg := callsite.RuntimeArgExprAt(call, i)
-		if arg == nil {
-			continue
-		}
-		t := exprType(arg)
-		if t == nil || typ.IsAbsentOrUnknown(t) {
-			continue
-		}
-		runtimeValues[i] = product.FromType(t)
-	}
-	return c.entryEvidenceProjection().DirectEvidence(summary.DirectEntryEvidenceInput{
-		Callee:        ref,
-		Call:          call,
-		RuntimeValues: runtimeValues,
-	}).Values
 }
 
 func (c callEntryProjector) productEntryContext(ref summary.FuncRef, call *ast.FuncCallExpr, ctx transfer.ProductCallContext) canonicalcall.EntryContext {

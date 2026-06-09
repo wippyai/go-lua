@@ -27,12 +27,13 @@ import (
 type Store interface {
 	api.StoreReader
 
-	MergeInterprocFactsNext(key api.GraphKey, delta api.Facts)
+	MergeLegacyFactsNext(key api.GraphKey, delta api.Facts)
 	ParentGraphKeyForSymbol(sym cfg.SymbolID) (api.GraphKey, bool)
 }
 
 // StoreFactsFromResult records post-flow interproc facts for the current iteration.
-// Facts are written into InterprocFactsNext and become visible after FixpointSwap.
+// Facts are written into the legacy next product and become visible after
+// LegacyFixpointSwap.
 //
 // interner is the compilation-scoped recursive-family interner; inferred-return
 // sealing widens family bodies only through it, so one compilation can never
@@ -47,7 +48,7 @@ func StoreFactsFromResult(
 	if store == nil || result == nil || result.Graph == nil {
 		return
 	}
-	writer := newInterprocFactWriter(store)
+	writer := newLegacyFactWriter(store)
 	writer.writeLiteralSignatures(result.Graph, parent, result.LiteralSignatureLookup())
 
 	fnSym := cfg.SymbolID(0)
@@ -450,7 +451,7 @@ func sealClassInstances(returns []typ.Type) []typ.Type {
 
 func storeCapturedFactsFromResult(
 	store Store,
-	writer interprocFactWriter,
+	writer legacyFactWriter,
 	fn *ast.FunctionExpr,
 	fnSym cfg.SymbolID,
 	result *api.FuncResult,
@@ -586,7 +587,7 @@ func (c *parameterEvidenceCollector) collectCallEvidence(evidence api.CallEviden
 	if len(facts) == 0 {
 		return
 	}
-	c.store.MergeInterprocFactsNext(calleeOwner.Key, interprocdomain.FunctionFactsDelta(facts))
+	c.store.MergeLegacyFactsNext(calleeOwner.Key, interprocdomain.FunctionFactsDelta(facts))
 }
 
 func (c *parameterEvidenceCollector) recordCurrentBodyPreconditions(p cfg.Point, evidence api.CallEvidence) {
@@ -610,7 +611,7 @@ func (c *parameterEvidenceCollector) recordCurrentBodyPreconditions(p cfg.Point,
 	builder.AddPublicParams(c.currentSym, preconditions.Public)
 	facts := builder.Build()
 	if len(facts) > 0 {
-		c.store.MergeInterprocFactsNext(c.currentKey, interprocdomain.FunctionFactsDelta(facts))
+		c.store.MergeLegacyFactsNext(c.currentKey, interprocdomain.FunctionFactsDelta(facts))
 	}
 }
 

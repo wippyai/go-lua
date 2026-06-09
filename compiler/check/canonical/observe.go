@@ -53,7 +53,7 @@ import (
 // functionObservationContext is the per-function immutable source context the
 // canonical observer derives once from the graph: resolved annotations,
 // annotated-symbol membership, binding signatures, and parameter symbol layout.
-// It is not exported api.FunctionFacts; those are final Summary-derived output.
+// It is not the public function-fact projection; that is final Summary-derived output.
 type functionObservationContext struct {
 	declared  map[cfg.SymbolID]typ.Type
 	annotated flow.AnnotatedSymbols
@@ -473,25 +473,6 @@ func (f *canonicalFacts) transfer() (*transfer.Transfer, bool) {
 		return nil, false
 	}
 	return tr, true
-}
-
-func (f *canonicalFacts) observedExprTypeAt(point cfg.Point, expr ast.Expr, expected typ.Type) typ.Type {
-	if expr == nil {
-		return nil
-	}
-	path := flowpath.FromExprWithBindings(expr, nil, f.graph.Bindings())
-	if !path.IsEmpty() && path.Symbol != 0 {
-		if expected != nil && expr == nil {
-			return expected
-		}
-		if tv := f.RefinedPathAt(point, path); tv.Type != nil {
-			return tv.Type
-		}
-		if tv := f.DeclaredAt(point, path.Symbol); tv.Type != nil && !typ.IsAbsentOrUnknown(tv.Type) {
-			return tv.Type
-		}
-	}
-	return typ.Unknown
 }
 
 // compile-time assertion: canonicalFacts implements the observation surface.
@@ -1335,17 +1316,6 @@ func (f *canonicalFacts) IsPointDead(p cfg.Point) bool {
 		return false
 	}
 	return true
-}
-
-func (f *canonicalFacts) symbolAt(p cfg.Point, name string) (cfg.SymbolID, bool) {
-	if f == nil || f.graph == nil || name == "" {
-		return 0, false
-	}
-	sym, ok := f.graph.SymbolAt(p, name)
-	if !ok || sym == 0 {
-		return 0, false
-	}
-	return sym, true
 }
 
 func canonicalPathMatches(cpath constraint.Path, qpath constraint.Path) bool {

@@ -970,7 +970,7 @@ func (s returnVectorSynth) MultiTypeOf(expr ast.Expr, p cfg.Point) []typ.Type {
 }
 
 // buildLocalFunctionTypeFromFacts builds a local function type from annotations
-// and canonical function facts. It does not recursively infer returns.
+// and FunctionFacts projection. It does not recursively infer returns.
 func (s *Synthesizer) buildLocalFunctionTypeFromFacts(
 	fn *ast.FunctionExpr,
 	sc *scope.State,

@@ -19,15 +19,15 @@ type SessionStore struct {
 	// Created once at the start of checking and shared by all CFG builds.
 	Module *ModuleStore
 
-	// InterprocPrev holds the stable interproc product from completed iterations.
-	InterprocPrev *InterprocState
-	// InterprocNext accumulates facts/effects produced during the current iteration.
-	InterprocNext *InterprocState
+	// LegacyInterprocPrev holds the stable legacy product from completed iterations.
+	LegacyInterprocPrev *LegacyInterprocState
+	// LegacyInterprocNext accumulates legacy facts/effects during the current iteration.
+	LegacyInterprocNext *LegacyInterprocState
 
 	// GraphParentHash records the parent scope hash for each graph ID.
 	GraphParentHash map[uint64]uint64
 
-	// lastSwapDiffs records product components changed by the most recent FixpointSwap.
+	// lastSwapDiffs records product components changed by the most recent LegacyFixpointSwap.
 	// Stored per-session to avoid cross-session contamination.
 	lastSwapDiffs []string
 
@@ -39,14 +39,14 @@ type SessionStore struct {
 	synthMode api.SynthMode
 }
 
-// InterprocState holds the graph-keyed interprocedural fact product for one iteration side.
-type InterprocState struct {
+// LegacyInterprocState holds the graph-keyed legacy fact product for one iteration side.
+type LegacyInterprocState struct {
 	Facts map[api.GraphKey]api.Facts
 }
 
-// NewInterprocState creates an initialized interproc product side.
-func NewInterprocState() *InterprocState {
-	return &InterprocState{
+// NewLegacyInterprocState creates an initialized legacy product side.
+func NewLegacyInterprocState() *LegacyInterprocState {
+	return &LegacyInterprocState{
 		Facts: make(map[api.GraphKey]api.Facts),
 	}
 }
@@ -95,19 +95,19 @@ func NewSessionStore() *SessionStore {
 	return NewSessionStoreWithDB(nil)
 }
 
-// NewSessionStoreWithDB creates a store whose interproc fact products are
+// NewSessionStoreWithDB creates a store whose legacy fact products are
 // tracked as query inputs. The checker uses this form so function-result queries
 // are revalidated from the exact facts they read instead of from a coarse
 // iteration revision key.
 func NewSessionStoreWithDB(database *db.DB) *SessionStore {
 	return &SessionStore{
-		Module:           NewModuleStore(),
-		InterprocPrev:    NewInterprocState(),
-		InterprocNext:    NewInterprocState(),
-		GraphParentHash:  make(map[uint64]uint64),
-		analysisContexts: make(map[api.GraphKey]api.AnalysisContext),
-		factInputs:       newFactInputs(database),
-		synthMode:        api.SynthModeDeclared,
+		Module:              NewModuleStore(),
+		LegacyInterprocPrev: NewLegacyInterprocState(),
+		LegacyInterprocNext: NewLegacyInterprocState(),
+		GraphParentHash:     make(map[uint64]uint64),
+		analysisContexts:    make(map[api.GraphKey]api.AnalysisContext),
+		factInputs:          newFactInputs(database),
+		synthMode:           api.SynthModeDeclared,
 	}
 }
 
@@ -160,15 +160,15 @@ func NewModuleStore() *ModuleStore {
 	}
 }
 
-func (s *SessionStore) ensureInterprocStates() {
+func (s *SessionStore) ensureLegacyInterprocStates() {
 	if s == nil {
 		return
 	}
-	if s.InterprocPrev == nil {
-		s.InterprocPrev = NewInterprocState()
+	if s.LegacyInterprocPrev == nil {
+		s.LegacyInterprocPrev = NewLegacyInterprocState()
 	}
-	if s.InterprocNext == nil {
-		s.InterprocNext = NewInterprocState()
+	if s.LegacyInterprocNext == nil {
+		s.LegacyInterprocNext = NewLegacyInterprocState()
 	}
 }
 
@@ -189,19 +189,19 @@ func swapProductMap[T any](
 	return changed
 }
 
-func (s *SessionStore) swapInterprocFacts() []string {
-	s.ensureInterprocStates()
+func (s *SessionStore) swapLegacyFacts() []string {
+	s.ensureLegacyInterprocStates()
 
 	products := []struct {
 		name string
 		swap func() bool
 	}{
 		{
-			name: "InterprocFacts",
+			name: "LegacyFacts",
 			swap: func() bool {
 				return swapProductMap(
-					&s.InterprocPrev.Facts,
-					&s.InterprocNext.Facts,
+					&s.LegacyInterprocPrev.Facts,
+					&s.LegacyInterprocNext.Facts,
 					interproc.WidenFactMap,
 					interproc.FactMapEqual,
 					func() map[api.GraphKey]api.Facts {
@@ -221,7 +221,7 @@ func (s *SessionStore) swapInterprocFacts() []string {
 	return diffs
 }
 
-// FixpointSwap advances the interproc product at an iteration boundary.
+// LegacyFixpointSwap advances the legacy product at an iteration boundary.
 //
 // OPERATIONS PERFORMED:
 //  1. Compare the stable product with the accumulated product
@@ -233,8 +233,8 @@ func (s *SessionStore) swapInterprocFacts() []string {
 //
 // RETURN VALUE: Returns true if the product changed, signaling another iteration
 // is needed. Returns false when the product stabilizes.
-func (s *SessionStore) FixpointSwap() bool {
-	diffs := s.swapInterprocFacts()
+func (s *SessionStore) LegacyFixpointSwap() bool {
+	diffs := s.swapLegacyFacts()
 
 	s.syncFactInputs()
 
@@ -243,8 +243,8 @@ func (s *SessionStore) FixpointSwap() bool {
 	return len(diffs) > 0
 }
 
-// FixpointDiffs returns product components changed by the most recent swap.
-func (s *SessionStore) FixpointDiffs() []string {
+// LegacyFixpointDiffs returns product components changed by the most recent swap.
+func (s *SessionStore) LegacyFixpointDiffs() []string {
 	if s == nil {
 		return nil
 	}
@@ -256,13 +256,13 @@ func (s *SessionStore) FixpointDiffs() []string {
 	return out
 }
 
-// ClearInterprocState clears all interproc product state for a fresh run.
-func (s *SessionStore) ClearInterprocState() {
+// ClearLegacyInterprocState clears all legacy product state for a fresh run.
+func (s *SessionStore) ClearLegacyInterprocState() {
 	if s == nil {
 		return
 	}
-	s.InterprocPrev = NewInterprocState()
-	s.InterprocNext = NewInterprocState()
+	s.LegacyInterprocPrev = NewLegacyInterprocState()
+	s.LegacyInterprocNext = NewLegacyInterprocState()
 	s.lastSwapDiffs = nil
 	if s.factInputs != nil {
 		s.factInputs.reset()
@@ -359,26 +359,26 @@ func (s *SessionStore) ParentGraphKeyForSymbol(sym cfg.SymbolID) (api.GraphKey, 
 	return api.KeyForGraph(graph, parentHash), true
 }
 
-// MergeInterprocFactsNext merges a canonical fact delta into the next
-// interprocedural product for the current iteration.
-func (s *SessionStore) MergeInterprocFactsNext(key api.GraphKey, delta api.Facts) {
+// MergeLegacyFactsNext merges a legacy product delta into the next product side
+// for the current legacy iteration.
+func (s *SessionStore) MergeLegacyFactsNext(key api.GraphKey, delta api.Facts) {
 	if s == nil {
 		return
 	}
-	s.ensureInterprocStates()
-	existing := s.InterprocNext.Facts[key]
+	s.ensureLegacyInterprocStates()
+	existing := s.LegacyInterprocNext.Facts[key]
 	facts := interproc.JoinFacts(existing, delta)
 	if interproc.Empty(facts) {
 		if interproc.Empty(existing) {
 			return
 		}
-		delete(s.InterprocNext.Facts, key)
+		delete(s.LegacyInterprocNext.Facts, key)
 		return
 	}
 	if interproc.FactsEqual(existing, facts) {
 		return
 	}
-	s.InterprocNext.Facts[key] = facts
+	s.LegacyInterprocNext.Facts[key] = facts
 }
 
 // Funcs returns the function map.
@@ -677,19 +677,33 @@ func (s *SessionStore) SetModuleAliases(aliases map[cfg.SymbolID]string) {
 	s.Module.ModuleAliases = aliases
 }
 
-// ModuleFacts returns the module-wide visible interproc product view.
-func (s *SessionStore) ModuleFacts() api.InterprocFactProduct {
+// ModuleFacts returns the module-wide visible legacy product view.
+func (s *SessionStore) ModuleFacts() api.LegacyFactProduct {
 	if s == nil {
 		return interprocProductView{}
 	}
 	return interprocProductView{store: s, key: api.ModuleFactsKey(), ok: true}
 }
 
-// InterprocFacts returns the visible interproc product view for a graph.
-func (s *SessionStore) InterprocFacts(graph *cfg.Graph, parent *scope.State) api.InterprocFactProduct {
+// LegacyFacts returns the visible legacy product view for a graph.
+func (s *SessionStore) LegacyFacts(graph *cfg.Graph, parent *scope.State) api.LegacyFactProduct {
 	if s == nil || graph == nil {
 		return interprocProductView{}
 	}
 	key, ok := s.GraphKeyFor(graph, parent)
 	return interprocProductView{store: s, key: key, ok: ok}
+}
+
+// FunctionFactsProjection returns final/public FunctionFacts for a graph. This
+// is a projection surface: canonical analysis must derive these facts from
+// Summary and must not read them back as semantic input.
+func (s *SessionStore) FunctionFactsProjection(graph *cfg.Graph, parent *scope.State) api.FunctionFacts {
+	if s == nil || graph == nil {
+		return nil
+	}
+	key, ok := s.GraphKeyFor(graph, parent)
+	if !ok {
+		return nil
+	}
+	return s.functionFactsByKey(key)
 }

@@ -9,7 +9,7 @@ import (
 )
 
 type factsWriteStore interface {
-	MergeInterprocFactsNext(key api.GraphKey, delta api.Facts)
+	MergeLegacyFactsNext(key api.GraphKey, delta api.Facts)
 	GraphKeyFor(graph *cfg.Graph, parent *scope.State) (api.GraphKey, bool)
 	ParentGraphKeyForSymbol(sym cfg.SymbolID) (api.GraphKey, bool)
 }
@@ -18,15 +18,15 @@ type functionSymbolLookup interface {
 	SymbolForFunc(fn *ast.FunctionExpr) (cfg.SymbolID, bool)
 }
 
-type interprocFactWriter struct {
+type legacyFactWriter struct {
 	store factsWriteStore
 }
 
-func newInterprocFactWriter(store factsWriteStore) interprocFactWriter {
-	return interprocFactWriter{store: store}
+func newLegacyFactWriter(store factsWriteStore) legacyFactWriter {
+	return legacyFactWriter{store: store}
 }
 
-func (w interprocFactWriter) mergeParentFactsForSymbol(sym cfg.SymbolID, delta api.Facts) bool {
+func (w legacyFactWriter) mergeParentFactsForSymbol(sym cfg.SymbolID, delta api.Facts) bool {
 	if w.store == nil || sym == 0 {
 		return false
 	}
@@ -34,11 +34,11 @@ func (w interprocFactWriter) mergeParentFactsForSymbol(sym cfg.SymbolID, delta a
 	if !ok {
 		return false
 	}
-	w.store.MergeInterprocFactsNext(parentKey, delta)
+	w.store.MergeLegacyFactsNext(parentKey, delta)
 	return true
 }
 
-func (w interprocFactWriter) writeLiteralSignatures(
+func (w legacyFactWriter) writeLiteralSignatures(
 	graph *cfg.Graph,
 	parent *scope.State,
 	sigs api.LiteralSignatureLookup,
@@ -56,12 +56,12 @@ func (w interprocFactWriter) writeLiteralSignatures(
 			}
 		}
 		if len(delta) > 0 {
-			w.store.MergeInterprocFactsNext(key, interprocdomain.LiteralSigsDelta(delta))
+			w.store.MergeLegacyFactsNext(key, interprocdomain.LiteralSigsDelta(delta))
 		}
 	}
 }
 
-func (w interprocFactWriter) isCanonicalFunction(fn *ast.FunctionExpr) bool {
+func (w legacyFactWriter) isCanonicalFunction(fn *ast.FunctionExpr) bool {
 	lookup, ok := w.store.(functionSymbolLookup)
 	if !ok || lookup == nil || fn == nil {
 		return false

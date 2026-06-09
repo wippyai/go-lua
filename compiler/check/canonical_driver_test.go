@@ -24,9 +24,9 @@ type legacyFixpointSpyStore struct {
 	swaps int
 }
 
-func (s *legacyFixpointSpyStore) FixpointSwap() bool {
+func (s *legacyFixpointSpyStore) LegacyFixpointSwap() bool {
 	s.swaps++
-	return s.SessionStore.FixpointSwap()
+	return s.SessionStore.LegacyFixpointSwap()
 }
 
 type legacyFixpointSpySession struct {

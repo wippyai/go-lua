@@ -1,7 +1,8 @@
-// Package interproc handles interprocedural analysis after flow solving.
+// Package interproc handles the legacy post-flow fact product.
 //
-// This package processes analysis results after flow analysis converges,
-// extracting interprocedural facts that propagate between functions.
+// This package processes analysis results after old flow analysis converges,
+// extracting legacy facts for noncanonical compatibility/export paths. Canonical
+// checking uses Summary instead.
 //
 // # Post-Flow Processing
 //
@@ -11,15 +12,15 @@
 //   - Identifies captured variable assignments
 //   - Propagates effect information
 //
-// # Fact Propagation
+// # Legacy Fact Propagation
 //
-// Interprocedural facts enable:
+// Legacy facts enable old paths for:
 //   - Return type inference across call boundaries
 //   - Parameter type inference from argument types
 //   - Captured variable type tracking in nested functions
 //
 // # Integration
 //
-// This package connects per-function flow analysis with the global
-// fixpoint iteration that resolves cross-function dependencies.
+// This package connects per-function flow analysis with the legacy product
+// iteration that resolves old cross-function dependencies.
 package interproc

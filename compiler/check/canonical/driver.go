@@ -920,11 +920,6 @@ func (p *program) ResolveDelegatedCallee(ref summary.FuncRef, call *ast.FuncCall
 	return callTyper{d: p.driver, g: g}.resolveCalleeRef(call, p)
 }
 
-func (p *program) paramSlotDeclared(ref summary.FuncRef, slot int) bool {
-	t := p.paramSlotDeclaredType(ref, slot)
-	return t != nil && !typ.IsAbsentOrUnknown(t)
-}
-
 // paramSlotFixed reports whether a parameter declaration is a closed runtime
 // contract that should block caller-entry inference. An open generic binder
 // (`x: T`, `x: {T}`) is declared but not fixed: exact call-entry values must
@@ -1993,10 +1988,6 @@ func (ft funcTyper) MethodFuncType(info *cfg.FuncDefInfo) *typ.Function {
 // carry TypeParams, so the call pipeline infers the type arguments from the call's
 // argument types (identity(42) instantiates T=number). A non-generic function
 // resolves against the module base scope unchanged.
-func (d *Driver) genericScope(builder *typ.FunctionBuilder, fn *ast.FunctionExpr) *scope.State {
-	return d.genericScopeOver(builder, fn, d.baseScope())
-}
-
 // genericScopeOver is genericScope over an explicit base scope, so a nested
 // function literal resolves its annotations in the ENCLOSING generic function's
 // type-param scope: a table-field function `count = function(self: Collection<T>)`

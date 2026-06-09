@@ -59,7 +59,7 @@ return { f = f }
 
 	parentHash := sess.Store.GraphParentHashOf(sess.RootResult.Graph.ID())
 	parent := sess.Store.Parents()[parentHash]
-	functionFacts := sess.Store.InterprocFacts(sess.RootResult.Graph, parent).FunctionFacts()
+	functionFacts := sess.Store.LegacyFacts(sess.RootResult.Graph, parent).FunctionFacts()
 
 	view := functionfact.FactsProjection(functionFacts)
 	if got := view.ReturnSummary(sym); len(got) != 1 || containsNever(got[0]) {

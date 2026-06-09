@@ -53,14 +53,6 @@ func entryRuntimeArgs(callee FuncRef, call *ast.FuncCallExpr, slotOf EntryValueP
 	return out
 }
 
-func entryRuntimeSlot(callee FuncRef, call *ast.FuncCallExpr, runtimeIdx int, slotOf EntryValueParamSlot) (int, bool) {
-	if slotOf == nil {
-		return 0, false
-	}
-	_, slot, ok := slotOf(callee, call, runtimeIdx)
-	return slot, ok
-}
-
 // EntryValueParamAnnotated reports whether a callee source parameter is fixed
 // and therefore must not be inferred from aggregate entry evidence. Refinable
 // structural annotations should return false here.
@@ -960,8 +952,4 @@ func resolveCallEntryTargets(resolve CallEntryTargetResolver, call *ast.FuncCall
 		return targets
 	}
 	return resolve(call, &event)
-}
-
-func sortFuncRefs(refs []FuncRef) {
-	canonref.SortFuncRefs(refs)
 }

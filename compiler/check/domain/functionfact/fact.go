@@ -229,7 +229,7 @@ func normalizeFunctionParamDomainType(t typ.Type) typ.Type {
 }
 
 // ApplyPublicSignatureEvidence makes the stored public function type agree with
-// hard public parameter obligations from the canonical function-fact product.
+// hard public parameter obligations from the FunctionFacts projection product.
 // Explicit source annotations, including soft structural top annotations such
 // as {any}, stay public-authoritative; observed call shapes refine only the
 // body projection.
@@ -2096,7 +2096,7 @@ func widenByShapeForConvergence(existing, candidate *typ.Function) typ.Type {
 }
 
 // MergeParamType merges one function parameter type using the same evidence
-// policy as canonical function-fact merging.
+// policy as FunctionFacts projection merging.
 func MergeParamType(existing, candidate typ.Type) typ.Type {
 	return mergeParamType(existing, candidate)
 }

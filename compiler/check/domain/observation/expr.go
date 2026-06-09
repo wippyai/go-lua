@@ -37,7 +37,7 @@ import (
 	"github.com/wippyai/go-lua/types/typ/unwrap"
 )
 
-// SymbolTypeLookup projects canonical function facts or other product-owned
+// SymbolTypeLookup projects FunctionFacts projection or other product-owned
 // symbol types into the observation surface.
 type SymbolTypeLookup func(sym cfg.SymbolID) typ.Type
 

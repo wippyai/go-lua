@@ -2,7 +2,7 @@
 //
 // This package provides the contract between different phases of type analysis.
 // It defines store interfaces for accessing analysis results, session interfaces
-// for managing analysis state, and data types for interprocedural facts.
+// for managing analysis state, and data types for public/export projections.
 //
 // # Store Interfaces
 //
@@ -11,7 +11,7 @@
 //   - [ModuleStore]: Module-level bindings and alias maps
 //   - [GraphStore]: Access to built CFGs by ID
 //   - [ParentScopes]: Parent scope lookup for nested functions
-//   - [InterprocFactReader]: Visible interprocedural fact products
+//   - [LegacyFactProductReader]: Visible legacy compatibility fact products
 //   - [StoreReader]: Read contract combining the immutable stores above
 //   - [CanonicalStore]: Canonical-owned metadata and final fact projection
 //   - [IterationStore]: Adds mutation for legacy fixpoint paths
@@ -26,18 +26,20 @@
 // and diagnostic collection. The concrete implementation lives in the
 // check package.
 //
-// # Interprocedural Facts
+// # Legacy Fact Products And Final Projections
 //
-// The [Facts] type bundles one interprocedural product slice:
+// Canonical checking uses Summary as its interprocedural authority. The [Facts]
+// type below is the legacy compatibility product used by noncanonical inference
+// and export/public projection plumbing:
 //
-//   - [FunctionFacts]: Canonical per-function parameter/return/signature facts
+//   - [FunctionFacts]: final/public per-function projection facts
 //   - [LiteralSigs]: Signatures for anonymous function literals
 //   - [CapturedTypes]: Flow-derived types for captured variables
 //   - [CapturedFieldAssigns]: Field assignments to captured variables
 //   - [ConstructorFields]: Instance fields collected from constructors
 //
-// Facts are emitted as canonical deltas. Function-local products are keyed by a
-// (graph, parent-scope) [GraphKey]; module-wide products use [ModuleFactsKey].
+// Legacy products are keyed by a (graph, parent-scope) [GraphKey]; module-wide
+// products use [ModuleFactsKey].
 //
 // # Function References
 //

@@ -704,9 +704,9 @@ func (p *Processor) persistConstructorFields(pattern nested.ConstructorPattern, 
 	if len(fields) == 0 {
 		return
 	}
-	p.store.MergeInterprocFactsNext(api.ModuleFactsKey(), interprocdomain.ConstructorFieldsDelta(pattern.ClassSymbol, fields))
+	p.store.MergeLegacyFactsNext(api.ModuleFactsKey(), interprocdomain.ConstructorFieldsDelta(pattern.ClassSymbol, fields))
 	if pattern.PrototypeSymbol != 0 && pattern.PrototypeSymbol != pattern.ClassSymbol {
-		p.store.MergeInterprocFactsNext(api.ModuleFactsKey(), interprocdomain.ConstructorFieldsDelta(pattern.PrototypeSymbol, fields))
+		p.store.MergeLegacyFactsNext(api.ModuleFactsKey(), interprocdomain.ConstructorFieldsDelta(pattern.PrototypeSymbol, fields))
 	}
 }
 
@@ -838,7 +838,7 @@ func (p *Processor) persistCapturedTypesForNestedGraph(
 	if len(nextCaptured) == 0 {
 		return
 	}
-	p.store.MergeInterprocFactsNext(key, interprocdomain.CapturedTypesDelta(nextCaptured))
+	p.store.MergeLegacyFactsNext(key, interprocdomain.CapturedTypesDelta(nextCaptured))
 }
 
 // resolveSelfTypeForImplicitSelf resolves the self-type for methods with implicit self parameter.
@@ -1038,7 +1038,7 @@ func (p *Processor) projectedSiblingFunctionFacts(
 	if p == nil || p.store == nil || graph == nil || len(funcs) == 0 {
 		return nil
 	}
-	product := p.store.InterprocFacts(graph, parentScope)
+	product := p.store.LegacyFacts(graph, parentScope)
 	out := make(api.FunctionFacts, len(funcs))
 	for _, info := range funcs {
 		if info == nil || info.FuncSym == 0 {

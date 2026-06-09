@@ -152,14 +152,3 @@ func callArgTypesWithExprFallback(call *ast.FuncCallExpr, argTypes []typ.Type, e
 	}
 	return out
 }
-
-func argTypesFromCall(call *ast.FuncCallExpr, exprType func(ast.Expr) typ.Type) []typ.Type {
-	if call == nil || exprType == nil {
-		return nil
-	}
-	out := make([]typ.Type, len(call.Args))
-	for i, arg := range call.Args {
-		out[i] = exprType(arg)
-	}
-	return out
-}

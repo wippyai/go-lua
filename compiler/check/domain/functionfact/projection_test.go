@@ -502,7 +502,7 @@ func TestParameterEvidenceSignatures_ProjectsCurrentGraphFacts(t *testing.T) {
 	sym := cfg.SymbolID(21)
 	st.RegisterFunctionRef(sym, fn, graph, 0, 0)
 	key := api.KeyForGraph(graph, parent.Hash())
-	st.InterprocPrev.Facts[key] = api.Facts{
+	st.LegacyInterprocPrev.Facts[key] = api.Facts{
 		FunctionFacts: functionfact.BuildOne(sym, functionfact.Evidence{
 			EntryParams: []typ.Type{typ.String},
 		}),
@@ -528,7 +528,7 @@ func TestParameterEvidenceSignatures_UsesEntryParamsNotPublicOrBodyContracts(t *
 	key := api.KeyForGraph(graph, parent.Hash())
 	entryParam := typ.NewRecord().OptField("message", typ.String).Build()
 	bodyParam := typ.NewRecord().Field("message", typ.String).Build()
-	st.InterprocPrev.Facts[key] = api.Facts{
+	st.LegacyInterprocPrev.Facts[key] = api.Facts{
 		FunctionFacts: functionfact.BuildOne(sym, functionfact.Evidence{
 			Params:      []typ.Type{typ.Any},
 			BodyParams:  []typ.Type{bodyParam},
@@ -541,7 +541,7 @@ func TestParameterEvidenceSignatures_UsesEntryParamsNotPublicOrBodyContracts(t *
 	if len(evidence) != 1 || !typ.TypeEquals(evidence[0], entryParam) {
 		t.Fatalf("signature evidence = %v, want entry param %v", evidence, entryParam)
 	}
-	if public := functionfact.FactsProjection(st.InterprocPrev.Facts[key].FunctionFacts).PublicParameterEvidence(sym); len(public) != 1 || !typ.TypeEquals(public[0], typ.Any) {
+	if public := functionfact.FactsProjection(st.LegacyInterprocPrev.Facts[key].FunctionFacts).PublicParameterEvidence(sym); len(public) != 1 || !typ.TypeEquals(public[0], typ.Any) {
 		t.Fatalf("public evidence = %v, want any", public)
 	}
 }
@@ -564,7 +564,7 @@ func TestVisibleFactsForGraph_ProjectsParentScopeFunctionFacts(t *testing.T) {
 	st.RegisterFunctionRef(siblingSym, siblingFn, parentGraph, parentGraph.ID(), 2)
 	st.RegisterNestedMeta(childGraph.ID(), parentGraph.ID(), 1)
 	key := api.KeyForGraph(parentGraph, parent.Hash())
-	st.InterprocPrev.Facts[key] = api.Facts{
+	st.LegacyInterprocPrev.Facts[key] = api.Facts{
 		FunctionFacts: functionfact.Build(map[cfg.SymbolID]functionfact.Evidence{
 			sym: {
 				EntryParams: []typ.Type{typ.String},
@@ -600,7 +600,7 @@ func registerGraphParent(t *testing.T, st *store.SessionStore, graph *cfg.Graph,
 
 func writeFunctionFactType(st *store.SessionStore, graph *cfg.Graph, parent *scope.State, sym cfg.SymbolID, fnType *typ.Function) {
 	key := api.KeyForGraph(graph, parent.Hash())
-	st.InterprocPrev.Facts[key] = api.Facts{
+	st.LegacyInterprocPrev.Facts[key] = api.Facts{
 		FunctionFacts: api.FunctionFacts{
 			sym: {Signature: fnType},
 		},

@@ -947,20 +947,6 @@ func declaredReturnSlotOptional(returns []typ.Type, idx int) bool {
 	return unwrap.IsOptionalLike(returns[idx])
 }
 
-func itoa(v uint64) string {
-	if v == 0 {
-		return "0"
-	}
-	var buf [20]byte
-	i := len(buf)
-	for v > 0 {
-		i--
-		buf[i] = byte('0' + v%10)
-		v /= 10
-	}
-	return string(buf[i:])
-}
-
 // cloneContracts copies the Contracts map so the Summary does not alias the
 // FunctionState's mutable map.
 func cloneContracts(c paramevidence.Contracts) paramevidence.Contracts {

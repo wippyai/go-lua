@@ -21,7 +21,7 @@
 // The Build function constructs sibling types through three steps:
 //  1. Seed from previous iteration (monotonic accumulation across fixpoint iterations)
 //  2. Merge captured variable types from the parent scope
-//  3. Add sibling function types from canonical function facts
+//  3. Add sibling function types from FunctionFacts projection
 //
 // The result is a SymbolID -> Type map that can be injected into the type environment
 // when analyzing any function in the group.

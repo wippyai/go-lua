@@ -1,7 +1,7 @@
 // session.go defines the Session type that holds per-run state for type checking.
 // Session is the primary interface for accessing analysis results. SessionStore
-// lives in compiler/check/store and manages fixpoint iteration state and interproc
-// products.
+// lives in compiler/check/store and manages module state, final projections,
+// and legacy product state for compatibility paths.
 //
 // # LIFECYCLE SEPARATION
 //
@@ -11,12 +11,12 @@
 //     Contains binding tables, CFG graphs, and module aliases. Never modified
 //     during fixpoint iteration.
 //
-//   - Fact inputs: query-tracked interprocedural products used to revalidate
-//     cached function analysis when facts change.
+//   - Fact inputs: query-tracked legacy products used to revalidate
+//     cached compatibility-path analysis when facts change.
 //
-// # PRODUCT PROTOCOL
+// # LEGACY PRODUCT PROTOCOL
 //
-// Interproc facts follow a product protocol:
+// Legacy facts follow a product protocol:
 //
 //   - During iteration: functions read the visible product
 //   - At boundary: accumulated facts widen into the stable product
@@ -49,7 +49,8 @@ import (
 
 // Session holds all state and results for analyzing a single Lua module.
 // One Session is created per Check call and contains the complete analysis output
-// including per-function results, diagnostics, and interprocedural fact products.
+// including per-function results, diagnostics, and legacy fact product state for
+// compatibility paths.
 //
 // USAGE PATTERN:
 //
@@ -360,7 +361,7 @@ func (s *Session) ExportType() typ.Type {
 		return typ.Nil
 	}
 	var refinements map[cfg.SymbolID]*constraint.FunctionRefinement
-	if s.Store != nil && s.Store.InterprocPrev != nil {
+	if s.Store != nil && s.Store.LegacyInterprocPrev != nil {
 		refinements = s.RefinementsForExport()
 	}
 	export := modules.ExportType(s.RootResult, refinements)
@@ -432,12 +433,12 @@ func (s *Session) Release() {
 			clear(s.Store.Module.ModuleAliases)
 		}
 
-		// Clear interproc products
-		if s.Store.InterprocPrev != nil {
-			clear(s.Store.InterprocPrev.Facts)
+		// Clear legacy products.
+		if s.Store.LegacyInterprocPrev != nil {
+			clear(s.Store.LegacyInterprocPrev.Facts)
 		}
-		if s.Store.InterprocNext != nil {
-			clear(s.Store.InterprocNext.Facts)
+		if s.Store.LegacyInterprocNext != nil {
+			clear(s.Store.LegacyInterprocNext.Facts)
 		}
 
 	}
@@ -512,11 +513,11 @@ func (s *Session) rootFunctionFactsForExport() api.FunctionFacts {
 	if s == nil || s.Store == nil || s.RootResult == nil || s.RootResult.Graph == nil || s.RootResult.BaseScope == nil {
 		return nil
 	}
-	return s.Store.InterprocFacts(s.RootResult.Graph, s.RootResult.BaseScope).FunctionFacts()
+	return s.Store.FunctionFactsProjection(s.RootResult.Graph, s.RootResult.BaseScope)
 }
 
 // RefinementsForExport extracts computed function refinements for manifest generation.
-// Returns refinements from the final converged interproc product.
+// Returns refinements from the final projection data and the final converged legacy product.
 //
 // The returned map associates each function's SymbolID with its computed refinement,
 // including IO effects (row), termination status, and conditional effects.
@@ -524,16 +525,16 @@ func (s *Session) rootFunctionFactsForExport() api.FunctionFacts {
 //
 // FunctionFacts and per-function FuncResults can both carry a computed
 // refinement. Both sources are merged here; a symbol already present in the
-// converged interproc product keeps that product refinement, while otherwise the
+// converged legacy product keeps that product refinement, while otherwise the
 // per-function body-proven refinement contributes the export summary.
 func (s *Session) RefinementsForExport() map[cfg.SymbolID]*constraint.FunctionRefinement {
 	if s == nil {
 		return nil
 	}
 	refinements := make(map[cfg.SymbolID]*constraint.FunctionRefinement)
-	if s.Store != nil && s.Store.InterprocPrev != nil {
-		for _, key := range api.SortedGraphKeys(s.Store.InterprocPrev.Facts) {
-			facts := s.Store.InterprocPrev.Facts[key]
+	if s.Store != nil && s.Store.LegacyInterprocPrev != nil {
+		for _, key := range api.SortedGraphKeys(s.Store.LegacyInterprocPrev.Facts) {
+			facts := s.Store.LegacyInterprocPrev.Facts[key]
 			for _, sym := range cfg.SortedSymbolIDs(facts.FunctionFacts) {
 				if refinement := functionfact.FactsProjection(facts.FunctionFacts).Refinement(sym); refinement != nil {
 					refinements[sym] = refinement

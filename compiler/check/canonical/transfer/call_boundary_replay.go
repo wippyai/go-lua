@@ -64,10 +64,6 @@ func boundaryFactApplicationHasEffects(app flow.BoundaryFactApplication) bool {
 	return len(app.KeyProvenance) > 0 || len(app.LengthRelations) > 0
 }
 
-func (t *Transfer) callBoundaryLocalRoots(call *ast.FuncCallExpr, returns map[int]constraint.Path) flow.BoundaryLocalRoots {
-	return t.callBoundaryLocalRootsAt(nil, cfg.Point(0), call, returns)
-}
-
 func (t *Transfer) callBoundaryLocalRootsForState(out *flow.PointState, call *ast.FuncCallExpr, returns map[int]constraint.Path) flow.BoundaryLocalRoots {
 	return t.callBoundaryLocalRootsAt(out, cfg.Point(0), call, returns)
 }

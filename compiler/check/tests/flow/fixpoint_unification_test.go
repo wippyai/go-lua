@@ -140,7 +140,7 @@ local result: number = a()
 
 	parentHash := sess.Store.GraphParentHashOf(sess.RootResult.Graph.ID())
 	parent := sess.Store.Parents()[parentHash]
-	functionFacts := sess.Store.InterprocFacts(sess.RootResult.Graph, parent).FunctionFacts()
+	functionFacts := sess.Store.LegacyFacts(sess.RootResult.Graph, parent).FunctionFacts()
 	if len(functionFacts) == 0 {
 		t.Error("expected non-empty return summaries for the call chain")
 	}
@@ -446,7 +446,7 @@ local result: number = d()
 	checkedFunctions := make(map[string]bool)
 	parentHash := sess.Store.GraphParentHashOf(sess.RootResult.Graph.ID())
 	parent := sess.Store.Parents()[parentHash]
-	functionFacts := sess.Store.InterprocFacts(sess.RootResult.Graph, parent).FunctionFacts()
+	functionFacts := sess.Store.LegacyFacts(sess.RootResult.Graph, parent).FunctionFacts()
 	for sym, fact := range functionFacts {
 		name := graph.NameOf(sym)
 		if name == "b" || name == "c" || name == "d" {
@@ -470,7 +470,7 @@ local result: number = d()
 		}
 	}
 	if !parameterEvidenceFound {
-		t.Log("no parameter evidence found in canonical function facts (propagation may have converged)")
+		t.Log("no parameter evidence found in FunctionFacts projection (propagation may have converged)")
 	}
 }
 

@@ -33,7 +33,7 @@ type CallProjection struct {
 	AllowExtraArgs bool
 }
 
-// ProjectCall projects canonical function facts into the effective call
+// ProjectCall projects FunctionFacts projection into the effective call
 // signature for one call site.
 func ProjectCall(input CallProjectionInput) (CallProjection, bool) {
 	if input.Store == nil || input.Info == nil {

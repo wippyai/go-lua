@@ -24,7 +24,6 @@ import (
 	"github.com/wippyai/go-lua/compiler/check/domain/guard"
 	"github.com/wippyai/go-lua/compiler/check/domain/keyscoll"
 	"github.com/wippyai/go-lua/compiler/check/domain/metatable"
-	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/domain/value"
 	"github.com/wippyai/go-lua/types/typ"
 )
@@ -579,35 +578,6 @@ func compareSetMetatableSiteEntry(a, b setMetatableSiteEntry) int {
 
 func compareSetMetatableSiteEntryRefOnly(a, b setMetatableSiteEntry) int {
 	return compareFuncRef(a.FuncRef, b.FuncRef)
-}
-
-func compareSegments(a, b []constraint.Segment) int {
-	if c := cmp.Compare(len(a), len(b)); c != 0 {
-		return c
-	}
-	for i := range a {
-		if c := cmp.Compare(a[i].Kind, b[i].Kind); c != 0 {
-			return c
-		}
-		if c := cmp.Compare(a[i].Name, b[i].Name); c != 0 {
-			return c
-		}
-		if c := cmp.Compare(a[i].Index, b[i].Index); c != 0 {
-			return c
-		}
-	}
-	return 0
-}
-
-func compareBool(a, b bool) int {
-	switch {
-	case a == b:
-		return 0
-	case !a && b:
-		return -1
-	default:
-		return 1
-	}
 }
 
 func compareSymbolIDs(a, b []cfg.SymbolID) int {

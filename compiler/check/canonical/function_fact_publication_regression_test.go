@@ -31,7 +31,7 @@ local value, label = get_db()
 	}
 	parentHash := res.Session.Store.GraphParentHashOf(root.ID())
 	parent := res.Session.Store.Parents()[parentHash]
-	facts := res.Session.Store.InterprocFacts(root, parent).FunctionFacts()
+	facts := res.Session.Store.FunctionFactsProjection(root, parent)
 	fact, ok := facts[sym]
 	if !ok {
 		key, keyOK := res.Session.Store.ParentGraphKeyForSymbol(sym)
@@ -102,7 +102,7 @@ func publishedRootFunctionFact(t *testing.T, res *testutil.Result, name string) 
 	}
 	parentHash := res.Session.Store.GraphParentHashOf(root.ID())
 	parent := res.Session.Store.Parents()[parentHash]
-	facts := res.Session.Store.InterprocFacts(root, parent).FunctionFacts()
+	facts := res.Session.Store.FunctionFactsProjection(root, parent)
 	fact, ok := facts[sym]
 	if !ok {
 		t.Fatalf("missing %s function fact; root facts=%d", name, len(facts))

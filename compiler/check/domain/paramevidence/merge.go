@@ -9,7 +9,7 @@ import (
 )
 
 // WidenMap merges two parameter evidence maps with the same vector law used by
-// canonical FunctionFacts.
+// FunctionFacts projection.
 func WidenMap(prev, next map[cfg.SymbolID][]typ.Type) map[cfg.SymbolID][]typ.Type {
 	if prev == nil && next == nil {
 		return nil

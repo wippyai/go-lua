@@ -43,14 +43,14 @@ return f
 	end
 	return methods
 	`,
-			"method-self-field-concat-infers-contract": `
+		"method-self-field-concat-infers-contract": `
 		local methods = {}
 	function methods:g()
 	    return "node[" .. self.id .. "]"
 	end
 	return methods
 	`,
-			"unannotated-operation-config-branches": `
+		"unannotated-operation-config-branches": `
 	local compiler = {}
 	compiler.OP_TYPES = {
 	    FUNC = "func",
@@ -78,7 +78,7 @@ return f
 
 	return build_graph
 	`,
-			"operation-config-branches-after-method-storage": `
+		"operation-config-branches-after-method-storage": `
 	local compiler = {}
 	compiler.OP_TYPES = {
 	    FUNC = "func",
@@ -124,7 +124,7 @@ return f
 
 	return build_graph
 	`,
-			"operation-config-branches-through-compile-wrapper": `
+		"operation-config-branches-through-compile-wrapper": `
 	local compiler = {}
 	compiler.OP_TYPES = {
 	    FUNC = "func",
@@ -184,7 +184,7 @@ return f
 
 	return compiler
 	`,
-		}
+	}
 	for name, src := range clean {
 		t.Run(name, func(t *testing.T) {
 			requireCanonicalClean(t, src)

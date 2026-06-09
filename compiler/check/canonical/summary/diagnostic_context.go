@@ -222,12 +222,6 @@ func (b *diagnosticContextBuilder) projectClosures(ref FuncRef, fs state.Functio
 	return b.frontier.ProjectClosures(ref, fs)
 }
 
-func (b *diagnosticContextBuilder) projectContexts(ref FuncRef, fs state.FunctionState) []Key {
-	keys := b.projectCalls(ref, fs)
-	keys = append(keys, b.projectClosures(ref, fs)...)
-	return keys
-}
-
 func (b *diagnosticContextBuilder) promotePrimary(ref FuncRef) bool {
 	if b.primaryRefs[ref] {
 		return false
@@ -235,14 +229,6 @@ func (b *diagnosticContextBuilder) promotePrimary(ref FuncRef) bool {
 	b.primaryRefs[ref] = true
 	delete(b.contextSet, ref)
 	delete(b.result.Contexts, ref)
-	return true
-}
-
-func (b *diagnosticContextBuilder) enqueueIfNew(work *[]Key, key Key) bool {
-	if !b.markSeen(key) {
-		return false
-	}
-	*work = append(*work, key)
 	return true
 }
 

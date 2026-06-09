@@ -384,17 +384,6 @@ func (b *Builder) seedEntryValues(out *flow.PointState) {
 	seeder.SeedEntryValues(out, b.entryValues)
 }
 
-func (b *Builder) seedEntryFacts(out *flow.PointState) {
-	if !b.entryFacts.HasProof() {
-		return
-	}
-	seeder, ok := b.transfer.(EntryFactSeeder)
-	if !ok || seeder == nil {
-		return
-	}
-	seeder.SeedEntryFacts(out, b.entryFacts)
-}
-
 // readContracts reads every contract cell into a paramevidence.Contracts map.
 // It is called only by the entry point equation, recording the dependency so a
 // contract change re-queues entry. Bottom (no obligation) cells are omitted,

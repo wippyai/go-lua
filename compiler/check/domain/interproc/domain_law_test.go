@@ -53,13 +53,13 @@ func TestFactsDomain_ProductOperatorsAreIdempotentAcrossAllDomains(t *testing.T)
 
 	view := functionfact.FactsProjection(normalized.FunctionFacts)
 	if got := view.ReturnSummary(fnSym); !returnsummary.Equal(got, []typ.Type{typ.String}) {
-		t.Fatalf("summary must come from canonical FunctionFacts, got %v", got)
+		t.Fatalf("summary must come from FunctionFacts projection, got %v", got)
 	}
 	if got := view.NarrowSummary(fnSym); !returnsummary.Equal(got, []typ.Type{typ.String}) {
-		t.Fatalf("narrow summary must come from canonical FunctionFacts, got %v", got)
+		t.Fatalf("narrow summary must come from FunctionFacts projection, got %v", got)
 	}
 	if got := view.Type(fnSym, functionfact.ProjectionSibling, api.SynthModeDeclared); got == nil {
-		t.Fatalf("function type must come from canonical FunctionFacts")
+		t.Fatalf("function type must come from FunctionFacts projection")
 	}
 }
 

@@ -71,7 +71,7 @@ func TestCollectParameterEvidenceFromResult_UsesSolvedObservationWithoutNarrowSy
 	CollectParameterEvidenceFromResult(st, result, parent, 0)
 
 	key := api.KeyForGraph(graph, parent.Hash())
-	facts := st.InterprocNext.Facts[key].FunctionFacts
+	facts := st.LegacyInterprocNext.Facts[key].FunctionFacts
 	got := facts[callInfo.CalleeSymbol].EntryParams
 	if len(got) != 1 || got[0].IsZero() {
 		t.Fatalf("expected call-entry parameter evidence without NarrowSynth, got %#v", got)
@@ -129,7 +129,7 @@ func TestCollectParameterEvidenceFromResult_CanonicalProjectionSkipsLegacyBodyPr
 	if !ok {
 		t.Fatal("expected current function graph key")
 	}
-	ff := st.InterprocNext.Facts[key].FunctionFacts[currentSym]
+	ff := st.LegacyInterprocNext.Facts[key].FunctionFacts[currentSym]
 	if len(ff.Params) != 0 || len(ff.BodyParams) != 0 {
 		t.Fatalf("flow result must not write retired body/public params, got public=%v body=%v", ff.Params, ff.BodyParams)
 	}

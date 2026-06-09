@@ -74,7 +74,7 @@ func TestFactsEqual_UsesCanonicalFunctionFactsOnly(t *testing.T) {
 	}
 
 	if !FactsEqual(a, b) {
-		t.Fatal("expected facts to be equal by canonical function facts")
+		t.Fatal("expected facts to be equal by FunctionFacts projection")
 	}
 }
 
@@ -93,7 +93,7 @@ func TestFactsEqual_DifferentCanonicalFunctionFacts(t *testing.T) {
 	}
 
 	if FactsEqual(a, b) {
-		t.Fatal("different canonical function facts should not be equal")
+		t.Fatal("different FunctionFacts projection should not be equal")
 	}
 }
 

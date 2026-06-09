@@ -1,8 +1,7 @@
-// Interprocedural fact types for cross-function type analysis.
+// Legacy fact-product and final projection types.
 //
-// These types represent the results of analyzing one function that are
-// needed when analyzing other functions. They are keyed by GraphKey
-// (graph ID + parent scope hash) to support context-sensitive analysis.
+// Canonical checking uses Summary as its interprocedural authority. These types
+// remain for noncanonical compatibility paths and final/public projection.
 package api
 
 import (
@@ -14,8 +13,9 @@ import (
 	"github.com/wippyai/go-lua/types/typ"
 )
 
-// FunctionFact is the canonical function-related interproc fact for one symbol.
-// All return and local-function type evidence for a function converges here.
+// FunctionFact is the final/public function-fact projection for one symbol.
+// Canonical Summary owns semantic convergence; FunctionFact is output/export
+// shape and compatibility data, not canonical input.
 type FunctionFact struct {
 	// Params is the public call-boundary parameter evidence vector. For method
 	// calls, slot 0 is the receiver/self argument and the remaining slots are
@@ -53,7 +53,7 @@ type FunctionFact struct {
 	EnvReturns []contract.EnvReturnSpec
 }
 
-// FunctionFacts maps function symbols to their canonical function facts.
+// FunctionFacts maps function symbols to final/public function-fact projections.
 type FunctionFacts map[cfg.SymbolID]FunctionFact
 
 // LiteralSigs maps anonymous function literal expressions to their signatures.
@@ -97,7 +97,7 @@ type CapturedTypes = map[cfg.SymbolID]product.AbstractValue
 
 // FieldValues maps a typed field/path segment to its product-domain value.
 // Boundary collection/projection APIs may still speak in source field names;
-// Facts store typed keys so the interprocedural product has one identity
+// Facts store typed keys so the legacy product has one identity
 // language.
 type FieldValues = map[constraint.Segment]product.AbstractValue
 
@@ -116,7 +116,7 @@ type CapturedFieldAssigns = map[cfg.SymbolID]map[cfg.SymbolID]FieldValues
 // interned product.AbstractValue.
 type ConstructorFields = map[cfg.SymbolID]FieldValues
 
-// Facts bundles one canonical interprocedural product slice. Most slices are
+// Facts bundles one legacy compatibility product slice. Most slices are
 // stored per (graph, parent) pair; module-wide facts use ModuleFactsKey.
 type Facts struct {
 	FunctionFacts     FunctionFacts

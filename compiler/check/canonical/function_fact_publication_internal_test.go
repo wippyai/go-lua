@@ -34,7 +34,7 @@ local value, label = get_db()
 	}
 	parentHash := sess.store.GraphParentHashOf(root.ID())
 	parent := sess.store.Parents()[parentHash]
-	facts := sess.store.InterprocFacts(root, parent).FunctionFacts()
+	facts := sess.store.FunctionFactsProjection(root, parent)
 	fact, ok := facts[sym]
 	if !ok {
 		t.Fatalf("missing get_db fact; refs=%v summaries=%v facts=%d", driver.artifact.Refs, driver.artifact.Summaries, len(facts))
@@ -77,7 +77,7 @@ local value = ensure_payload({ id = "db" })
 	}
 	parentHash := sess.store.GraphParentHashOf(root.ID())
 	parent := sess.store.Parents()[parentHash]
-	facts := sess.store.InterprocFacts(root, parent).FunctionFacts()
+	facts := sess.store.FunctionFactsProjection(root, parent)
 	fact, ok := facts[sym]
 	if !ok {
 		t.Fatalf("missing ensure_payload fact; facts=%#v", facts)

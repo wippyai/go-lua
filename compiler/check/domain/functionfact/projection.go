@@ -495,7 +495,7 @@ func storeFactForGraphInMode(store api.StoreReader, graph *cfg.Graph, sym cfg.Sy
 	var ff api.FunctionFact
 	var found bool
 	load := func() {
-		ff, found = store.InterprocFacts(owner.Graph, owner.Parent).FunctionFact(sym)
+		ff, found = store.LegacyFacts(owner.Graph, owner.Parent).FunctionFact(sym)
 	}
 	if switcher, ok := store.(interface{ WithSynthMode(api.SynthMode, func()) }); ok {
 		switcher.WithSynthMode(mode, load)
@@ -523,7 +523,7 @@ func storeOwnerForGraph(store api.StoreReader, graph *cfg.Graph, defaultParent *
 	return StoreSymbolOwner{Graph: graph, Parent: parent, Key: key}, true
 }
 
-// RefinementsFromStore projects canonical function facts as refinement facts.
+// RefinementsFromStore projects FunctionFacts projection as refinement facts.
 func RefinementsFromStore(store api.StoreReader, defaultParent *scope.State) api.RefinementFacts {
 	if store == nil {
 		return nil

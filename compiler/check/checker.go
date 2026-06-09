@@ -1,17 +1,16 @@
-// Package check implements the fixpoint type checker for Lua.
+// Package check implements the type checker for Lua.
 //
 // # ARCHITECTURE OVERVIEW
 //
-// The checker performs interprocedural type analysis through a fixpoint iteration loop
-// that processes all functions until inter-function information stabilizes. Interproc
-// facts are produced during analysis and merged into one product at
-// iteration boundaries.
+// Canonical checking performs interprocedural type analysis through Summary
+// queries over PointState. Older inference/export paths still use a legacy fact
+// product, but that product is not the canonical semantic authority.
 //
 // # INTERPROCEDURAL ANALYSIS
 //
-// The checker supports interprocedural analysis through a unified interproc product:
+// Legacy compatibility paths use one explicit product:
 //
-//   - FunctionFacts: Canonical parameter/return/narrow/signature facts
+//   - FunctionFacts: final/public parameter/return/narrow/signature projection
 //   - LiteralSigs: Synthesized signatures for function literals
 //   - Function refinements, captured writes, and constructor fields as product lanes
 //
@@ -24,13 +23,13 @@
 //
 // # MEMOIZATION
 //
-// Function analysis results are memoized by (GraphID, ParentHash). Interprocedural
-// fact products are tracked as query inputs, so cached results are revalidated
-// precisely when the products they read change.
+// Function analysis results are memoized by (GraphID, ParentHash). Legacy fact
+// products are tracked as query inputs for old compatibility paths, while
+// canonical Summary queries carry canonical interprocedural dependencies.
 //
 // # CONVERGENCE
 //
-// The fixpoint loop terminates when the interproc product stabilizes.
+// The legacy fixpoint loop terminates when the legacy product stabilizes.
 package check
 
 import (
@@ -209,14 +208,14 @@ func WithScopeDepthDiagnostics(enabled bool) Option {
 // The returned Session contains:
 //   - Results: Per-function analysis results (types, flow facts, effects)
 //   - Diagnostics: Type errors, warnings, and suggestions
-//   - Store: Interprocedural fact products for advanced introspection
+//   - Store: Final projections plus legacy fact products for compatibility paths
 func (c *Checker) Check(source, name string) *Session {
 	ctx := db.NewQueryContext(c.db)
 	sess := New(ctx, name)
-	// Ensure each top-level Check starts from clean interprocedural fact state.
-	// These are iteration-stable caches and must not persist across separate runs.
+	// Ensure each top-level Check starts from clean legacy fact state. These
+	// iteration-stable caches must not persist across separate runs.
 	if sess.Store != nil {
-		sess.Store.ClearInterprocState()
+		sess.Store.ClearLegacyInterprocState()
 	}
 
 	chunk, err := parse.ParseString(source, name)
@@ -263,7 +262,7 @@ func (c *Checker) CheckChunk(chunk []ast.Stmt, name string) *Session {
 	sess := New(ctx, name)
 	// Attach store accessor and compute context for interproc queries
 	if sess.Store != nil {
-		sess.Store.ClearInterprocState()
+		sess.Store.ClearLegacyInterprocState()
 	}
 	c.checkChunk(sess, chunk)
 	return sess

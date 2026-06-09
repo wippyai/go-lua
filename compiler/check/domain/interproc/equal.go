@@ -28,7 +28,7 @@ func FactsEqual(a, b api.Facts) bool {
 	return true
 }
 
-// FunctionFactsEqual checks if two canonical function-fact maps are equal.
+// FunctionFactsEqual checks if two FunctionFacts projection maps are equal.
 func FunctionFactsEqual(a, b api.FunctionFacts) bool {
 	if len(a) != len(b) {
 		return false
@@ -46,7 +46,7 @@ func FunctionFactsEqual(a, b api.FunctionFacts) bool {
 	return true
 }
 
-// FunctionFactEqual checks one canonical function-fact product slot. The vector
+// FunctionFactEqual checks one FunctionFacts projection product slot. The vector
 // carriers are interned product.AbstractValue, so their convergence no-op
 // equality is the value-domain product.Equal per slot (pointer-fast through
 // interning), the same relation the flow store uses for its fixpoint.

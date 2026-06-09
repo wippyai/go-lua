@@ -396,35 +396,35 @@ func TestAttachStore_NilStore(t *testing.T) {
 func TestSessionStore_ProductMaps(t *testing.T) {
 	store := store.NewSessionStore()
 
-	if store.InterprocPrev == nil || store.InterprocPrev.Facts == nil {
-		t.Error("InterprocPrev facts not initialized")
+	if store.LegacyInterprocPrev == nil || store.LegacyInterprocPrev.Facts == nil {
+		t.Error("LegacyInterprocPrev facts not initialized")
 	}
-	if store.InterprocNext == nil || store.InterprocNext.Facts == nil {
-		t.Error("InterprocNext facts not initialized")
+	if store.LegacyInterprocNext == nil || store.LegacyInterprocNext.Facts == nil {
+		t.Error("LegacyInterprocNext facts not initialized")
 	}
 }
 
-func TestFixpointDiffs_IsolatedBetweenStores(t *testing.T) {
+func TestLegacyFixpointDiffs_IsolatedBetweenStores(t *testing.T) {
 	storeA := store.NewSessionStore()
 	storeB := store.NewSessionStore()
 
 	keyA := registerSessionFunctionForRefinementTest(t, storeA, cfg.SymbolID(42))
 	keyB := registerSessionFunctionForRefinementTest(t, storeB, cfg.SymbolID(42))
-	storeA.MergeInterprocFactsNext(keyA, api.Facts{
+	storeA.MergeLegacyFactsNext(keyA, api.Facts{
 		FunctionFacts: api.FunctionFacts{cfg.SymbolID(42): {Refinement: &constraint.FunctionRefinement{Terminates: true}}},
 	})
-	storeB.MergeInterprocFactsNext(keyB, api.Facts{
+	storeB.MergeLegacyFactsNext(keyB, api.Facts{
 		FunctionFacts: api.FunctionFacts{cfg.SymbolID(42): {Refinement: &constraint.FunctionRefinement{Terminates: true}}},
 	})
 
-	if !storeA.FixpointSwap() {
-		t.Fatal("expected storeA FixpointSwap to report change")
+	if !storeA.LegacyFixpointSwap() {
+		t.Fatal("expected storeA LegacyFixpointSwap to report change")
 	}
-	if diffs := storeA.FixpointDiffs(); len(diffs) == 0 {
+	if diffs := storeA.LegacyFixpointDiffs(); len(diffs) == 0 {
 		t.Fatal("expected storeA diffs to be non-empty")
 	}
 
-	if diffs := storeB.FixpointDiffs(); len(diffs) != 0 {
+	if diffs := storeB.LegacyFixpointDiffs(); len(diffs) != 0 {
 		t.Fatalf("expected storeB diffs to be empty, got %v", diffs)
 	}
 }
@@ -444,26 +444,26 @@ func registerSessionFunctionForRefinementTest(t *testing.T, st *store.SessionSto
 	return api.KeyForGraph(graph, parent.Hash())
 }
 
-func TestSessionStore_ClearInterprocState(t *testing.T) {
+func TestSessionStore_ClearLegacyInterprocState(t *testing.T) {
 	store := store.NewSessionStore()
 
-	store.MergeInterprocFactsNext(api.ModuleFactsKey(), api.Facts{
+	store.MergeLegacyFactsNext(api.ModuleFactsKey(), api.Facts{
 		ConstructorFields: api.ConstructorFields{
 			cfg.SymbolID(2): interprocdomain.LiftTypeFieldMap(map[string]typ.Type{"name": typ.String}),
 		},
 	})
-	store.InterprocPrev.Facts[api.GraphKey{GraphID: 1, ParentHash: 1}] = api.Facts{
+	store.LegacyInterprocPrev.Facts[api.GraphKey{GraphID: 1, ParentHash: 1}] = api.Facts{
 		FunctionFacts: api.FunctionFacts{
 			cfg.SymbolID(4): {Refinement: &constraint.FunctionRefinement{Terminates: true}},
 		},
 	}
 
-	store.ClearInterprocState()
+	store.ClearLegacyInterprocState()
 
-	if store.InterprocPrev == nil || len(store.InterprocPrev.Facts) != 0 {
+	if store.LegacyInterprocPrev == nil || len(store.LegacyInterprocPrev.Facts) != 0 {
 		t.Fatal("expected previous product facts to be cleared")
 	}
-	if store.InterprocNext == nil || len(store.InterprocNext.Facts) != 0 {
+	if store.LegacyInterprocNext == nil || len(store.LegacyInterprocNext.Facts) != 0 {
 		t.Fatal("expected next product facts to be cleared")
 	}
 }
@@ -532,15 +532,15 @@ func TestSession_Release_Nil(t *testing.T) {
 
 func TestModuleConstructorFacts_EmptyDelta(t *testing.T) {
 	store := store.NewSessionStore()
-	store.MergeInterprocFactsNext(api.ModuleFactsKey(), api.Facts{})
-	if store.InterprocNext == nil || len(store.InterprocNext.Facts) != 0 {
+	store.MergeLegacyFactsNext(api.ModuleFactsKey(), api.Facts{})
+	if store.LegacyInterprocNext == nil || len(store.LegacyInterprocNext.Facts) != 0 {
 		t.Error("empty product delta should not store facts")
 	}
 }
 
 func TestModuleConstructorFacts_EmptyFields(t *testing.T) {
 	store := store.NewSessionStore()
-	store.MergeInterprocFactsNext(api.ModuleFactsKey(), api.Facts{
+	store.MergeLegacyFactsNext(api.ModuleFactsKey(), api.Facts{
 		ConstructorFields: api.ConstructorFields{1: nil},
 	})
 	got, _ := store.ModuleFacts().ConstructorFields(1)
@@ -552,11 +552,11 @@ func TestModuleConstructorFacts_EmptyFields(t *testing.T) {
 func TestModuleConstructorFacts_Basic(t *testing.T) {
 	store := store.NewSessionStore()
 	fields := interprocdomain.LiftTypeFieldMap(map[string]typ.Type{"x": typ.Number, "y": typ.String})
-	store.MergeInterprocFactsNext(api.ModuleFactsKey(), api.Facts{
+	store.MergeLegacyFactsNext(api.ModuleFactsKey(), api.Facts{
 		ConstructorFields: api.ConstructorFields{1: fields},
 	})
 
-	next := store.InterprocNext
+	next := store.LegacyInterprocNext
 	if next == nil || next.Facts == nil {
 		t.Fatal("next product facts should be initialized")
 	}
@@ -568,14 +568,14 @@ func TestModuleConstructorFacts_Basic(t *testing.T) {
 
 func TestModuleConstructorFacts_Join(t *testing.T) {
 	store := store.NewSessionStore()
-	store.MergeInterprocFactsNext(api.ModuleFactsKey(), api.Facts{
+	store.MergeLegacyFactsNext(api.ModuleFactsKey(), api.Facts{
 		ConstructorFields: api.ConstructorFields{1: interprocdomain.LiftTypeFieldMap(map[string]typ.Type{"x": typ.Number})},
 	})
-	store.MergeInterprocFactsNext(api.ModuleFactsKey(), api.Facts{
+	store.MergeLegacyFactsNext(api.ModuleFactsKey(), api.Facts{
 		ConstructorFields: api.ConstructorFields{1: interprocdomain.LiftTypeFieldMap(map[string]typ.Type{"x": typ.String})},
 	})
 
-	next := store.InterprocNext
+	next := store.LegacyInterprocNext
 	if next == nil {
 		t.Fatal("next product facts should be initialized")
 	}

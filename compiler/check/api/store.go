@@ -1,7 +1,7 @@
 // Store interfaces define the contract between the type checker and its
-// backing storage for interprocedural analysis data. These interfaces
-// enable different storage implementations (in-memory, persistent) and
-// support testing with mock implementations.
+// backing storage. Canonical checking uses Summary as its interprocedural
+// authority; the legacy fact product surfaces below are compatibility/export
+// carriers for noncanonical paths and final projections.
 //
 // The interfaces form a hierarchy with increasing capability:
 //
@@ -9,7 +9,7 @@
 //	GraphStore      - CFG graph lookup by ID
 //	ParentScopes    - Parent scope lookup for nested functions
 //	NestedMetaStore - Nested function metadata
-//	InterprocFactReader   - Visible interproc fact products
+//	LegacyFactProductReader   - Visible legacy fact products
 //	FunctionRefs    - Symbol/function bidirectional lookup
 //	StoreReader     - Read-only combination of above
 //	CanonicalStore  - Canonical-owned metadata plus final fact projection
@@ -73,12 +73,11 @@ type NestedMetaStore interface {
 	NestedMetaFor(graphID uint64) (NestedMeta, bool)
 }
 
-// InterprocFactProduct is the typed view over one visible interprocedural fact
-// product. Consumers read the slot they own; there is no public whole-product
-// snapshot path.
-type InterprocFactProduct interface {
-	// FunctionFacts returns the visible function-fact slot for export and
-	// assertions. Hot symbol reads must use FunctionFact.
+// LegacyFactProduct is the typed view over one visible legacy fact product.
+// It is not a canonical Summary read surface.
+type LegacyFactProduct interface {
+	// FunctionFacts returns the visible legacy function-fact slot. Canonical
+	// final/public output should prefer FunctionFactsProjection.
 	FunctionFacts() FunctionFacts
 	FunctionFact(sym cfg.SymbolID) (FunctionFact, bool)
 	LiteralSig(fn *ast.FunctionExpr) (*typ.Function, bool)
@@ -87,10 +86,11 @@ type InterprocFactProduct interface {
 	ConstructorFields(classSym cfg.SymbolID) (FieldValues, bool)
 }
 
-// InterprocFactReader exposes visible interproc fact products.
-type InterprocFactReader interface {
-	ModuleFacts() InterprocFactProduct
-	InterprocFacts(graph *cfg.Graph, parent *scope.State) InterprocFactProduct
+// LegacyFactProductReader exposes visible legacy fact products for old
+// inference/export compatibility paths.
+type LegacyFactProductReader interface {
+	ModuleFacts() LegacyFactProduct
+	LegacyFacts(graph *cfg.Graph, parent *scope.State) LegacyFactProduct
 }
 
 // FunctionRefs provides symbol/function lookup for function graphs.
@@ -110,19 +110,25 @@ type StoreReader interface {
 	EvidenceForGraph(graph *cfg.Graph) FlowEvidence
 	ParentScopes
 	NestedMetaStore
-	InterprocFactReader
+	LegacyFactProductReader
 	FunctionRefs
 }
 
-// InterprocFactSink provides write access to per-iteration interproc facts.
-type InterprocFactSink interface {
-	MergeInterprocFactsNext(key GraphKey, delta Facts)
+// LegacyFactProductSink provides write access to per-iteration legacy facts.
+type LegacyFactProductSink interface {
+	MergeLegacyFactsNext(key GraphKey, delta Facts)
 }
 
-// CanonicalFunctionFactProjectionSink installs final canonical FunctionFacts
+// CanonicalFunctionFactProjectionSink installs final Summary-derived FunctionFacts
 // without participating in the legacy interproc iteration product.
 type CanonicalFunctionFactProjectionSink interface {
 	SetCanonicalFunctionFactsProjection(facts map[GraphKey]FunctionFacts)
+}
+
+// FunctionFactProjectionReader exposes final/public FunctionFacts projection.
+// It is a read-only output surface; it is not a canonical semantic input.
+type FunctionFactProjectionReader interface {
+	FunctionFactsProjection(graph *cfg.Graph, parent *scope.State) FunctionFacts
 }
 
 // CanonicalStore is the store surface the canonical summary engine is allowed to
@@ -141,22 +147,22 @@ type CanonicalStore interface {
 // NestedStore is the store interface required by nested processing.
 type NestedStore interface {
 	StoreReader
-	InterprocFactSink
+	LegacyFactProductSink
 }
 
 // IterationStore provides mutation operations required by legacy fixpoint paths.
 type IterationStore interface {
 	NestedStore
 
-	ClearInterprocState()
-	FixpointSwap() bool
-	FixpointDiffs() []string
+	ClearLegacyInterprocState()
+	LegacyFixpointSwap() bool
+	LegacyFixpointDiffs() []string
 
 	SetModuleBindings(bindings *bind.BindingTable)
 	SetModuleAliases(aliases map[cfg.SymbolID]string)
 	SetParentScope(parentHash uint64, parent *scope.State)
 	SetGraphParentHash(graphID, parentHash uint64)
 
-	MergeInterprocFactsNext(key GraphKey, delta Facts)
+	MergeLegacyFactsNext(key GraphKey, delta Facts)
 	ParentGraphKeyForSymbol(sym cfg.SymbolID) (GraphKey, bool)
 }

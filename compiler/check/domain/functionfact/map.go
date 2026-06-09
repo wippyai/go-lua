@@ -11,7 +11,7 @@ import (
 	"github.com/wippyai/go-lua/types/typ"
 )
 
-// Evidence is the per-symbol evidence admitted into canonical function facts.
+// Evidence is the per-symbol evidence admitted into FunctionFacts projection.
 type Evidence struct {
 	Params      []typ.Type
 	BodyParams  []typ.Type
@@ -23,7 +23,7 @@ type Evidence struct {
 	EnvReturns  []contract.EnvReturnSpec
 }
 
-// Builder admits per-symbol evidence into canonical function-fact products.
+// Builder admits per-symbol evidence into FunctionFacts projection products.
 type Builder struct {
 	evidence map[cfg.SymbolID]Evidence
 }
@@ -75,8 +75,8 @@ func (b *Builder) AddEntryParams(sym cfg.SymbolID, params []typ.Type) {
 	})
 }
 
-// EntryParamsFacts converts call-entry evidence vectors into canonical
-// FunctionFacts.
+// EntryParamsFacts converts call-entry evidence vectors into FunctionFacts
+// projection.
 func EntryParamsFacts(entries map[cfg.SymbolID][]typ.Type) api.FunctionFacts {
 	if len(entries) == 0 {
 		return nil
@@ -138,7 +138,7 @@ func (b *Builder) AddEnvReturns(sym cfg.SymbolID, envReturns []contract.EnvRetur
 	})
 }
 
-// Build returns the admitted canonical function facts.
+// Build returns the admitted FunctionFacts projection.
 func (b *Builder) Build() api.FunctionFacts {
 	if b == nil || len(b.evidence) == 0 {
 		return nil
@@ -157,12 +157,12 @@ func fromFact(sym cfg.SymbolID, fact api.FunctionFact) api.FunctionFacts {
 	return api.FunctionFacts{sym: ff}
 }
 
-// BuildOne builds canonical function facts from one per-symbol evidence value.
+// BuildOne builds FunctionFacts projection from one per-symbol evidence value.
 func BuildOne(sym cfg.SymbolID, evidence Evidence) api.FunctionFacts {
 	return fromFact(sym, factFromEvidence(evidence))
 }
 
-// Build builds canonical function facts from per-symbol evidence.
+// Build builds FunctionFacts projection from per-symbol evidence.
 func Build(parts map[cfg.SymbolID]Evidence) api.FunctionFacts {
 	if len(parts) == 0 {
 		return nil

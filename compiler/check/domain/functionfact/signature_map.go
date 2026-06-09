@@ -9,7 +9,7 @@ import (
 )
 
 // ParameterEvidenceSignatures builds a function-expression keyed parameter
-// evidence map for graph from canonical FunctionFacts.
+// evidence map for graph from FunctionFacts projection.
 func ParameterEvidenceSignatures(
 	store api.StoreReader,
 	graph *cfg.Graph,
@@ -31,7 +31,7 @@ func ParameterEvidenceSignatures(
 	}
 
 	if parent != nil {
-		product := store.InterprocFacts(graph, parent)
+		product := store.LegacyFacts(graph, parent)
 		if fn := graphFunction(store, graph); fn != nil {
 			if sym, ok := store.SymbolForFunc(fn); ok {
 				if ff, found := product.FunctionFact(sym); found {
@@ -57,7 +57,7 @@ func ParameterEvidenceSignatures(
 			if parentScope != nil {
 				if fn := graphFunction(store, graph); fn != nil {
 					if sym, ok := store.SymbolForFunc(fn); ok {
-						if ff, ok := store.InterprocFacts(parentGraph, parentScope).FunctionFact(sym); ok {
+						if ff, ok := store.LegacyFacts(parentGraph, parentScope).FunctionFact(sym); ok {
 							add(fn, BodyEntryEvidence(ff))
 						}
 					}
@@ -72,8 +72,8 @@ func ParameterEvidenceSignatures(
 	return out
 }
 
-// VisibleFactsForGraph returns the canonical function-fact product visible to
-// graph analysis. For nested function graphs, same-scope function facts live in
+// VisibleFactsForGraph returns the FunctionFacts projection visible to graph
+// analysis. For nested function graphs, same-scope function facts live in
 // the lexical parent graph product; this projection makes those facts available
 // to body analysis without duplicating storage.
 func VisibleFactsForGraph(
@@ -97,7 +97,7 @@ func VisibleFactsForGraph(
 		out[sym] = ff
 	}
 
-	current := store.InterprocFacts(graph, parent)
+	current := store.LegacyFacts(graph, parent)
 	if fn := graphFunction(store, graph); fn != nil {
 		if sym, ok := store.SymbolForFunc(fn); ok {
 			if ff, found := current.FunctionFact(sym); found {
@@ -120,7 +120,7 @@ func VisibleFactsForGraph(
 			}
 			parentScope := api.ParentScopeForGraph(store, parentGraph.ID(), defaultScope)
 			if parentScope != nil {
-				parentProduct := store.InterprocFacts(parentGraph, parentScope)
+				parentProduct := store.LegacyFacts(parentGraph, parentScope)
 				for _, ref := range store.FunctionRefsByParentGraph(parentGraph.ID()) {
 					if ff, ok := parentProduct.FunctionFact(ref.Sym); ok {
 						add(ref.Sym, ff)

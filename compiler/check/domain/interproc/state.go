@@ -6,8 +6,8 @@ import (
 	"github.com/wippyai/go-lua/types/constraint"
 )
 
-// Empty reports whether a canonical interprocedural fact product carries no
-// semantic evidence.
+// Empty reports whether a legacy fact product carries no compatibility
+// evidence.
 func Empty(f api.Facts) bool {
 	return len(f.FunctionFacts) == 0 &&
 		len(f.LiteralSigs) == 0 &&
@@ -16,7 +16,7 @@ func Empty(f api.Facts) bool {
 		len(f.ConstructorFields) == 0
 }
 
-// FactMapEqual compares graph-keyed interprocedural fact products.
+// FactMapEqual compares graph-keyed legacy fact products.
 func FactMapEqual(a, b map[api.GraphKey]api.Facts) bool {
 	if len(a) != len(b) {
 		return false
@@ -29,8 +29,8 @@ func FactMapEqual(a, b map[api.GraphKey]api.Facts) bool {
 	return true
 }
 
-// WidenFactMap merges a next iteration fact map into the stable product using
-// the interprocedural widening policy for each graph key.
+// WidenFactMap merges a next iteration fact map into the stable legacy product
+// using the product widening policy for each graph key.
 func WidenFactMap(prev, next map[api.GraphKey]api.Facts) map[api.GraphKey]api.Facts {
 	if len(prev) == 0 && len(next) == 0 {
 		return make(map[api.GraphKey]api.Facts)
@@ -49,10 +49,10 @@ func WidenFactMap(prev, next map[api.GraphKey]api.Facts) map[api.GraphKey]api.Fa
 	return out
 }
 
-// OverlayFacts returns the canonical facts visible during an iteration from a
-// stable previous product and same-iteration next facts. The visible product
-// crosses an SCC iteration boundary, so it uses the same finite-height
-// convergence law as the boundary swap rather than the precise delta join.
+// OverlayFacts returns legacy facts visible during an iteration from a stable
+// previous product and same-iteration next facts. The visible product crosses an
+// SCC iteration boundary, so it uses the same finite-height convergence law as
+// the boundary swap rather than the precise delta join.
 func OverlayFacts(prev, next api.Facts) api.Facts {
 	switch {
 	case Empty(prev):

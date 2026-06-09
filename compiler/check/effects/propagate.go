@@ -159,7 +159,7 @@ func callerParamForCalleeArg(
 	return idx, ok
 }
 
-// ResolveRefinementBySym resolves effects from canonical function facts or global
+// ResolveRefinementBySym resolves effects from FunctionFacts projection or global
 // type information.
 func ResolveRefinementBySym(
 	facts api.RefinementFacts,
