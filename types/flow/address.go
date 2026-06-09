@@ -273,7 +273,7 @@ func StableAddressFromCanonicalKey(key constraint.PathKey) (StableAddress, bool)
 	if sym, segments, ok := parseInternedSymbolPathKey(key); ok {
 		return stableAddressOfSymbolOwnedSegments(sym, segments)
 	}
-	if _, _, ok := parseLegacyConstraintSymbolPathKey(key); ok {
+	if _, _, ok := parseStaleConstraintSymbolPathKey(key); ok {
 		return StableAddress{}, false
 	}
 	root, suffix, ok := splitStableRootKey(string(key))
@@ -287,7 +287,7 @@ func StableAddressFromCanonicalKey(key constraint.PathKey) (StableAddress, bool)
 	return stableAddressOfRootOwnedSegments(root, segments)
 }
 
-func parseLegacyConstraintSymbolPathKey(key constraint.PathKey) (cfg.SymbolID, []constraint.Segment, bool) {
+func parseStaleConstraintSymbolPathKey(key constraint.PathKey) (cfg.SymbolID, []constraint.Segment, bool) {
 	s := string(key)
 	if len(s) < 4 || s[0] != 's' || s[1] != 'y' || s[2] != 'm' {
 		return 0, nil, false
@@ -362,7 +362,7 @@ func stableAddressKeyRootAndSuffix(key constraint.PathKey) (PathRoot, string, bo
 		root, rootOK := SymbolPathRoot(sym)
 		return root, suffix, rootOK
 	}
-	if _, _, ok := parseLegacyConstraintSymbolPathKey(key); ok {
+	if _, _, ok := parseStaleConstraintSymbolPathKey(key); ok {
 		return PathRoot{}, "", false
 	}
 	root, suffix, ok := splitStableRootKey(s)

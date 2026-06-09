@@ -118,16 +118,16 @@ func TestStableAddressFromCanonicalKeyRoundTripsSymbolAndRoot(t *testing.T) {
 	}
 }
 
-func TestStableAddressCanonicalKeyRejectsLegacyPathKey(t *testing.T) {
+func TestStableAddressCanonicalKeyRejectsStalePathKey(t *testing.T) {
 	path := constraint.NewPath(cfg.SymbolID(12), "node").Field("label")
 	path.Version = 7
-	legacyKey := path.Key()
+	staleKey := path.Key()
 	canonicalKey := StablePathKey(path)
-	if legacyKey == canonicalKey {
-		t.Fatalf("legacy key is already canonical: %s", legacyKey)
+	if staleKey == canonicalKey {
+		t.Fatalf("stale key is already canonical: %s", staleKey)
 	}
-	if _, ok := StableAddressFromCanonicalKey(legacyKey); ok {
-		t.Fatalf("canonical decoder accepted legacy key %s", legacyKey)
+	if _, ok := StableAddressFromCanonicalKey(staleKey); ok {
+		t.Fatalf("canonical decoder accepted stale key %s", staleKey)
 	}
 	if got, ok := StableAddressFromCanonicalKey(canonicalKey); !ok || got.Key() != canonicalKey {
 		t.Fatalf("canonical decoder = %s/%v, want %s/true", got.Key(), ok, canonicalKey)
@@ -281,10 +281,10 @@ func TestStableAddressKeyHasPrefixUsesStructuredBoundaries(t *testing.T) {
 		t.Fatalf("symbol prefix collision accepted: %s under %s", otherSymbol, root.Key())
 	}
 
-	legacy := constraint.NewPath(cfg.SymbolID(7), "root").Field("foo")
-	legacy.Version = 1
-	if StableAddressKeyHasPrefix(legacy.Key(), root) {
-		t.Fatalf("legacy path key accepted as stable key: %s", legacy.Key())
+	stale := constraint.NewPath(cfg.SymbolID(7), "root").Field("foo")
+	stale.Version = 1
+	if StableAddressKeyHasPrefix(stale.Key(), root) {
+		t.Fatalf("stale path key accepted as stable key: %s", stale.Key())
 	}
 }
 
