@@ -69,6 +69,24 @@ func (t *Transfer) narrowIndexPresenceLength(res flow.PointState, sym cfg.Symbol
 	return res
 }
 
+func (t *Transfer) numericForBodyEdgeState(g *cfg.Graph, branch cfg.Point, out flow.PointState) flow.PointState {
+	node := g.Node(branch)
+	if node == nil || !node.LoopPreheaderSet {
+		return out
+	}
+	info := g.Assign(node.LoopPreheader)
+	if info == nil || info.NumericFor == nil || info.NumericFor.VarName == "" {
+		return out
+	}
+	target, ok := info.FirstTarget()
+	if !ok || target.Kind != cfg.TargetIdent || target.Symbol == 0 {
+		return out
+	}
+	res := flow.ClonePointState(out)
+	t.seedNumericForBodyBounds(&res, target.Symbol, info.NumericFor)
+	return res
+}
+
 // narrowNumericComparison seeds the numeric component with the integer bound a
 // relational comparison guard proves on the edge it holds. It recognizes a guard
 // `var OP bound` where var is a tracked symbol and bound is an integer constant or
