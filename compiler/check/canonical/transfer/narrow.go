@@ -885,11 +885,19 @@ func (t *Transfer) narrowByCondCheckAtPoint(point cfg.Point, out flow.PointState
 	if comparisonTruthyOnOperand(info.Condition, check) {
 		return out
 	}
+	guard := conditionPathGuard{
+		point:    point,
+		sym:      sym,
+		segments: segments,
+		varPath:  info.CondVar,
+		check:    check,
+		typeName: info.CondCheck.TypeName,
+	}
 	currentAV, hasCurrent := t.symbolValue(&out, sym)
 	seed := t.narrowSeed(sym, currentAV, atExit)
 	baseAV, has := seed.value, seed.hasValue()
 
-	cond := t.condForCheck(point, sym, segments, info.CondVar, check, info.CondCheck.TypeName)
+	cond := guard.condition(t)
 	res := flow.ClonePointState(out)
 	if cond.HasConstraints() {
 		beforeAV, beforeOK := t.symbolValue(&res, sym)
@@ -910,49 +918,46 @@ func (t *Transfer) narrowByCondCheckAtPoint(point cfg.Point, out flow.PointState
 	// through the existing length proof, recovering the non-optional element exactly
 	// where the guard establishes presence. The merge-LUB rebuilds the unbounded
 	// length where both edges meet, so the floor never survives past the guard.
-	res = t.narrowIndexPresenceLength(res, sym, segments, check)
-	t.refineStaticMemberFactForCheck(&res, sym, segments, baseAV, has, check, info.CondCheck.TypeName)
+	res = t.narrowIndexPresenceLength(res, guard.sym, guard.segments, guard.check)
+	guard.refineStaticMemberFact(t, &res, baseAV, has)
 	if !has {
 		// No tracked value to refine; the per-edge path condition still records the
 		// guard for soundness. For a bare-symbol positive guard, also materialize the
 		// reduced product's presence component: the structure is still dynamic, but
 		// this edge has proven the symbol non-nil. Without this reduction a later
 		// return projection sees "no Env fact" instead of "present dynamic".
-		if len(segments) == 0 {
-			switch check {
-			case cfg.CheckTruthy, cfg.CheckNotNil:
-				if t.unannotatedParam.Contains(sym) {
-					return res
-				}
-				t.setNarrowedSymbol(&res, sym, product.PresentDynamic())
+		if guard.narrowsBareSymbolPresence() {
+			if t.unannotatedParam.Contains(guard.sym) {
+				return res
 			}
+			t.setNarrowedSymbol(&res, guard.sym, product.PresentDynamic())
 		}
 		return res
 	}
-	narrowed, ok := narrowAtPath(baseAV, segments, check, info.CondCheck.TypeName)
+	narrowed, ok := guard.narrowValue(baseAV)
 	if !ok {
 		return res
 	}
 	narrowedBase := baseAV
 	if seed.fromDeclared() && hasCurrent && !currentAV.IsZero() && !currentAV.Covers(narrowed) {
-		currentNarrowed, currentOK := narrowAtPath(currentAV, segments, check, info.CondCheck.TypeName)
+		currentNarrowed, currentOK := guard.narrowValue(currentAV)
 		if currentOK && !valueIsBottom(currentNarrowed) &&
-			t.conditionAuthorizesCurrentSeed(point, &res, sym, seed.value, currentAV) {
+			guard.authorizesCurrentSeed(t, &res, seed.value, currentAV) {
 			narrowed = currentNarrowed
 			narrowedBase = currentAV
 		}
 	} else if !seed.fromDeclared() && hasCurrent && !currentAV.IsZero() && !currentAV.Covers(narrowed) {
-		currentNarrowed, currentOK := narrowAtPath(currentAV, segments, check, info.CondCheck.TypeName)
+		currentNarrowed, currentOK := guard.narrowValue(currentAV)
 		if !currentOK || !flow.SemanticProductReduction(currentAV, currentNarrowed) {
 			return res
 		}
 		narrowed = currentNarrowed
 		narrowedBase = currentAV
 	}
-	if valueIsBottom(narrowed) && missingStaticMemberGuardStaysDynamic(narrowedBase, segments, check, info.CondCheck.TypeName) {
+	if valueIsBottom(narrowed) && missingStaticMemberGuardStaysDynamic(narrowedBase, guard.segments, guard.check, guard.typeName) {
 		return res
 	}
-	t.setNarrowedSymbol(&res, sym, narrowed)
+	t.setNarrowedSymbol(&res, guard.sym, narrowed)
 	return res
 }
 
@@ -987,36 +992,6 @@ func condCheckedExpr(info *cfg.BranchInfo) ast.Expr {
 		}
 	}
 	return nil
-}
-
-// conditionAuthorizesCurrentSeed is the authority boundary for declared-base
-// narrowing. A declaration supplies the branch universe; the current Env value may
-// specialize that universe only when the condition-proof projector can re-project
-// the declared seed to an envelope covering the current value. A precise
-// initializer singleton has no condition proof, so it cannot make another
-// declared-union edge unreachable.
-func (t *Transfer) conditionAuthorizesCurrentSeed(point cfg.Point, out *flow.PointState, sym cfg.SymbolID, declaredBase, live product.AbstractValue) bool {
-	if out == nil || sym == 0 || declaredBase.IsZero() || live.IsZero() || !out.Cond.HasConstraints() {
-		return false
-	}
-	seedType := product.ProjectValueOrUnknown(declaredBase)
-	if typ.IsAbsentOrUnknown(seedType) {
-		return false
-	}
-	seedPath := constraint.Path{Symbol: sym}
-	projectedType := flow.ConditionProofProjector{
-		Resolver:    fieldResolver,
-		ResolveType: t.resolveTypeKey,
-		ConditionAt: func(cfg.Point) constraint.Condition { return out.Cond },
-	}.ConditionedSeedTypeAt(point, seedPath, seedType, seedPath, constraint.TrueCondition())
-	if typ.IsAbsentOrUnknown(projectedType) || typ.IsNever(projectedType) {
-		return false
-	}
-	projected := product.FromRefinedType(declaredBase, projectedType)
-	if projected.IsZero() || valueIsBottom(projected) {
-		return false
-	}
-	return projected.Covers(live)
 }
 
 func (t *Transfer) resolveTypeKey(key narrow.TypeKey) typ.Type {
@@ -1109,20 +1084,6 @@ func nilComparisonAttrAccess(rel *ast.RelationalOpExpr) *ast.AttrGetExpr {
 		return attrAccess(rel.Rhs)
 	}
 	return nil
-}
-
-func (t *Transfer) refineStaticMemberFactForCheck(out *flow.PointState, sym cfg.SymbolID, segments []constraint.Segment, baseAV product.AbstractValue, hasBase bool, check cfg.CondCheckKind, typeName string) {
-	place, ok := staticPlace(sym, segments)
-	if !ok {
-		return
-	}
-	t.applyStaticMemberRefinementEffect(out, StaticMemberRefinementEffect{
-		Place:    place,
-		Base:     baseAV,
-		HasBase:  hasBase,
-		Check:    check,
-		TypeName: typeName,
-	})
 }
 
 func staticMemberGuardImpliesPresence(check cfg.CondCheckKind, typeName string) bool {
@@ -1737,36 +1698,6 @@ func (t *Transfer) conditionRefinedCaptureValue(out *flow.PointState, sym cfg.Sy
 		return product.AbstractValue{}, false
 	}
 	return next, true
-}
-
-// condForCheck builds the per-edge path condition for the resolved check on the
-// tested path. It is the canonical Cond half of the narrowing: the constraint that
-// holds on this edge, joined into the edge's PointState.Cond.
-func (t *Transfer) condForCheck(point cfg.Point, sym cfg.SymbolID, segments []constraint.Segment, varPath string, check cfg.CondCheckKind, typeName string) constraint.Condition {
-	path := t.versionedPath(point, constraint.Path{
-		Root:     extraction.ExtractRootName(varPath),
-		Symbol:   sym,
-		Segments: segments,
-	})
-	switch check {
-	case cfg.CheckTruthy:
-		return constraint.FromConstraints(constraint.Truthy{Path: path})
-	case cfg.CheckFalsy:
-		return constraint.FromConstraints(constraint.Falsy{Path: path})
-	case cfg.CheckNil:
-		return constraint.FromConstraints(constraint.IsNil{Path: path})
-	case cfg.CheckNotNil:
-		return constraint.FromConstraints(constraint.NotNil{Path: path})
-	case cfg.CheckTypeEqual:
-		if key := typeKeyFor(typeName); !key.IsZero() {
-			return constraint.FromConstraints(constraint.HasType{Path: path, Type: key})
-		}
-	case cfg.CheckTypeNot:
-		if key := typeKeyFor(typeName); !key.IsZero() {
-			return constraint.FromConstraints(constraint.NotHasType{Path: path, Type: key})
-		}
-	}
-	return constraint.TrueCondition()
 }
 
 func (t *Transfer) versionedPath(point cfg.Point, path constraint.Path) constraint.Path {

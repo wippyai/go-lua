@@ -977,7 +977,7 @@ func TestRefineStaticMemberFactForPositiveGuard(t *testing.T) {
 	base := product.FromType(typ.NewMap(typ.String, typ.String))
 	out := flow.PointState{}
 
-	tr.refineStaticMemberFactForCheck(&out, sym, segs, base, true, cfg.CheckNotNil, "")
+	conditionPathGuard{sym: sym, segments: segs, check: cfg.CheckNotNil}.refineStaticMemberFact(tr, &out, base, true)
 	got, ok := testStaticMemberValue(t, out.StaticMembers, sym, segs)
 	if !ok || !got.DefinitelyPresent() || !typ.TypeEquals(got.ProjectValue(), typ.String) {
 		t.Fatalf("guard fact = %v, %v; want present string", got.ProjectValue(), ok)
@@ -996,7 +996,7 @@ func TestRefineStaticMemberFactRebasesExistingSentinelOnCurrentBase(t *testing.T
 		StaticMembers: flow.StaticMemberFacts{}.WithAddress(testStaticMemberAddressKey(t, pathKey), product.FromType(typ.True)),
 	}
 
-	tr.refineStaticMemberFactForCheck(&out, sym, segs, base, true, cfg.CheckTruthy, "")
+	conditionPathGuard{sym: sym, segments: segs, check: cfg.CheckTruthy}.refineStaticMemberFact(tr, &out, base, true)
 	got, ok := out.StaticMembers.ValueAtAddress(testStaticMemberAddressKey(t, pathKey))
 	if !ok || !got.DefinitelyPresent() || !typ.TypeEquals(got.ProjectValue(), typ.String) {
 		t.Fatalf("rebased guard fact = %v, %v; want present string", got.ProjectValue(), ok)
@@ -1027,13 +1027,13 @@ func TestRefineStaticMemberFactKeepsFalsyOnlyFromExistingPresentFact(t *testing.
 	pathKey := flow.SymbolPathKey(sym, segs)
 	out := flow.PointState{}
 
-	tr.refineStaticMemberFactForCheck(&out, sym, segs, product.AbstractValue{}, false, cfg.CheckFalsy, "")
+	conditionPathGuard{sym: sym, segments: segs, check: cfg.CheckFalsy}.refineStaticMemberFact(tr, &out, product.AbstractValue{}, false)
 	if _, ok := out.StaticMembers.ValueAtAddress(testStaticMemberAddressKey(t, pathKey)); ok {
 		t.Fatal("falsy guard without prior present fact must not invent a member fact")
 	}
 
 	out.StaticMembers = out.StaticMembers.WithAddress(testStaticMemberAddressKey(t, pathKey), product.FromType(typ.Boolean))
-	tr.refineStaticMemberFactForCheck(&out, sym, segs, product.AbstractValue{}, false, cfg.CheckFalsy, "")
+	conditionPathGuard{sym: sym, segments: segs, check: cfg.CheckFalsy}.refineStaticMemberFact(tr, &out, product.AbstractValue{}, false)
 	got, ok := out.StaticMembers.ValueAtAddress(testStaticMemberAddressKey(t, pathKey))
 	if !ok || !got.DefinitelyPresent() || !typ.TypeEquals(got.ProjectValue(), typ.False) {
 		t.Fatalf("falsy existing fact = %v, %v; want present false", got.ProjectValue(), ok)
