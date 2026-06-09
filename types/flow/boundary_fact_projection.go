@@ -126,20 +126,12 @@ func ProjectBoundaryFacts(
 		return true
 	})
 
-	return BoundaryFactsOf(
-		keyFacts.KeyPresence(),
-		keyFacts.KeyArrays(),
-		keyFacts.KeyArrayValues(),
-		keyFacts.AppendKeys(),
-		lenLower,
-		indexWrites,
-	).WithAppendHistoryBases(keyFacts.AppendHistoryBases()).
-		WithAppendHistoryEvents(keyFacts.AppendHistoryEvents()).
-		WithAppendHistoryCoverage(keyFacts.AppendHistoryCoverage()).
-		WithAppendHistoryTableCoverage(keyFacts.AppendHistoryTableCoverage()).
-		WithAppendElementFieldOrigins(keyFacts.AppendElementFieldOrigins()).
-		WithLengthUpperBounds(lenUpper).
-		WithStaticMembers(staticMembers)
+	parts := keyFacts.Parts()
+	parts.LengthLower = append(parts.LengthLower, lenLower...)
+	parts.LengthUpper = append(parts.LengthUpper, lenUpper...)
+	parts.IndexWrites = append(parts.IndexWrites, indexWrites...)
+	parts.StaticMembers = append(parts.StaticMembers, staticMembers...)
+	return BoundaryFactsFromParts(parts)
 }
 
 func boundaryIndexWriteKeyPaths(

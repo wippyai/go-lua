@@ -171,12 +171,17 @@ func projectKeyPresenceBoundaryFactsWithPaths(
 		appendKeys = projectPendingKeyArraysToBoundary(f, paths, appendKeys)
 	}
 
-	return BoundaryFactsOf(keyPresence, keyArrays, keyArrayValues, appendKeys, nil, nil).
-		WithAppendHistoryBases(appendBases).
-		WithAppendHistoryEvents(appendEvents).
-		WithAppendHistoryCoverage(appendCoverage).
-		WithAppendHistoryTableCoverage(appendTableCoverage).
-		WithAppendElementFieldOrigins(appendOrigins)
+	return BoundaryFactsFromParts(BoundaryFactParts{
+		KeyPresence:         keyPresence,
+		KeyArrays:           keyArrays,
+		KeyArrayValues:      keyArrayValues,
+		AppendKeys:          appendKeys,
+		AppendBases:         appendBases,
+		AppendEvents:        appendEvents,
+		AppendCoverage:      appendCoverage,
+		AppendTableCoverage: appendTableCoverage,
+		AppendOrigins:       appendOrigins,
+	})
 }
 
 func projectPendingKeyArraysToBoundary(

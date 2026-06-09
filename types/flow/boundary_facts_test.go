@@ -101,6 +101,55 @@ func TestMergeBoundaryFactProofsUnionsIndependentProofs(t *testing.T) {
 	}
 }
 
+func TestBoundaryFactsPartsBuildsAndExportsAllLanesAliasFree(t *testing.T) {
+	table := BoundaryPath{Kind: BoundaryPathParam, Index: 0, Segments: []constraint.Segment{{Kind: constraint.SegmentField, Name: "nodes"}}}
+	key := BoundaryPath{Kind: BoundaryPathParam, Index: 1, Segments: []constraint.Segment{{Kind: constraint.SegmentField, Name: "id"}}}
+	array := BoundaryPath{Kind: BoundaryPathReturn, Index: 0, Segments: []constraint.Segment{{Kind: constraint.SegmentField, Name: "order"}}}
+	value := product.FromType(typ.String)
+	facts := BoundaryFactsFromParts(BoundaryFactParts{
+		KeyPresence:         []BoundaryKeyPresenceFact{{Table: table, Key: key}},
+		KeyArrays:           []BoundaryKeyArrayFact{{Array: array, Table: table}},
+		KeyArrayValues:      []BoundaryKeyArrayValueFact{{Array: array, Table: table, Value: value}},
+		AppendKeys:          []BoundaryAppendKeyFact{{Array: array, Key: key, Table: table, HasTable: true}},
+		AppendBases:         []BoundaryAppendHistoryBaseFact{{Array: array}},
+		AppendEvents:        []BoundaryAppendHistoryEventFact{{Array: array, Key: key}},
+		AppendCoverage:      []BoundaryAppendHistoryCoverageFact{{Array: array, Key: key, Table: table, Value: value}},
+		AppendTableCoverage: []BoundaryAppendHistoryTableCoverageFact{{Array: array, Table: table, Value: value}},
+		AppendOrigins: []BoundaryAppendElementFieldOriginFact{{
+			Array:       array,
+			Field:       []constraint.Segment{{Kind: constraint.SegmentField, Name: "id"}},
+			Source:      key,
+			SourceField: []constraint.Segment{{Kind: constraint.SegmentField, Name: "source"}},
+		}},
+		LengthLower:     []BoundaryLengthLowerBound{{Target: array, Lower: 1}},
+		LengthUpper:     []BoundaryLengthUpperBound{{Target: array, Upper: 4}},
+		LengthRelations: []BoundaryLengthRelationFact{{Target: array, Source: table}},
+		IndexWrites: []BoundaryIndexWriteFact{{
+			Table:        table,
+			KeyPath:      key,
+			HasKeyPath:   true,
+			KeyValue:     value,
+			ValuePath:    array,
+			HasValuePath: true,
+			Value:        product.FromType(typ.Number),
+		}},
+		StaticMembers: []BoundaryStaticMemberFact{{Target: table, Value: value}},
+	})
+	parts := facts.Parts()
+	if len(parts.KeyPresence) != 1 || len(parts.KeyArrays) != 1 || len(parts.KeyArrayValues) != 1 ||
+		len(parts.AppendKeys) != 1 || len(parts.AppendBases) != 1 || len(parts.AppendEvents) != 1 ||
+		len(parts.AppendCoverage) != 1 || len(parts.AppendTableCoverage) != 1 || len(parts.AppendOrigins) != 1 ||
+		len(parts.LengthLower) != 1 || len(parts.LengthUpper) != 1 || len(parts.LengthRelations) != 1 ||
+		len(parts.IndexWrites) != 1 || len(parts.StaticMembers) != 1 {
+		t.Fatalf("parts = %#v, want every boundary lane populated once", parts)
+	}
+
+	parts.AppendOrigins[0].Field[0].Name = "mutated"
+	if got := facts.AppendElementFieldOrigins()[0].Field[0].Name; got != "id" {
+		t.Fatalf("Parts leaked append-origin field slice alias: got %q", got)
+	}
+}
+
 func TestBoundaryFactsJoinKeepsAppendFieldOriginWhenBaseSurvives(t *testing.T) {
 	array := BoundaryPath{Kind: BoundaryPathParam, Index: 0, Segments: []constraint.Segment{{Kind: constraint.SegmentField, Name: "pending_routes"}}}
 	source := BoundaryPath{Kind: BoundaryPathParam, Index: 0, Segments: []constraint.Segment{{Kind: constraint.SegmentField, Name: "last_node_id"}}}
