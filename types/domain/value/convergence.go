@@ -1198,18 +1198,6 @@ func recursiveBinderIndex(t typ.Type, binders []*typ.Recursive) (int, bool) {
 	return 0, false
 }
 
-// binderIndexOf returns the de Bruijn depth of a recursive node already in scope,
-// so re-encountering a binder during the structural walk closes the cycle instead
-// of recursing into its body forever.
-func binderIndexOf(rec *typ.Recursive, binders []*typ.Recursive) (int, bool) {
-	for i := len(binders) - 1; i >= 0; i-- {
-		if binders[i] == rec {
-			return len(binders) - 1 - i, true
-		}
-	}
-	return 0, false
-}
-
 // closeConvergenceUnionGroups merges groups to a fixpoint. Each pass scans every
 // unordered pair; on a successful merge the merged representative replaces the
 // pair and the scan restarts so the new representative is re-tested against all

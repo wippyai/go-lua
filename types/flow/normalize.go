@@ -190,27 +190,6 @@ func typeLess(a, b typ.Type) bool {
 	return a.String() < b.String()
 }
 
-func valueTemplateLess(a, b ValueTemplate) bool {
-	if len(a.Slots) != len(b.Slots) {
-		return len(a.Slots) < len(b.Slots)
-	}
-	for i := range a.Slots {
-		if segmentsLess(a.Slots[i].Segments, b.Slots[i].Segments) {
-			return true
-		}
-		if segmentsLess(b.Slots[i].Segments, a.Slots[i].Segments) {
-			return false
-		}
-		if assignmentSourceLess(a.Slots[i].Source, b.Slots[i].Source) {
-			return true
-		}
-		if assignmentSourceLess(b.Slots[i].Source, a.Slots[i].Source) {
-			return false
-		}
-	}
-	return false
-}
-
 func assignmentSourceLess(a, b AssignmentSource) bool {
 	if a.Kind != b.Kind {
 		return a.Kind < b.Kind

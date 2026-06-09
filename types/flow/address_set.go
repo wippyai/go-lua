@@ -47,10 +47,6 @@ func (l *stableAddressList) Add(addr StableAddress) bool {
 	return true
 }
 
-func (l *stableAddressList) Contains(addr StableAddress) bool {
-	return l.set.Contains(addr)
-}
-
 func (l *stableAddressList) Values() []StableAddress {
 	if len(l.values) == 0 {
 		return nil

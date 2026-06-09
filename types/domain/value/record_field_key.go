@@ -212,11 +212,3 @@ func sortedRecordFieldKeys[T any](m map[recordFieldKey]T) []recordFieldKey {
 func sortRecordFieldKeys(keys []recordFieldKey) {
 	SortMemberKeys(keys)
 }
-
-func sortRecordFieldsByKey(fields []typ.Field) {
-	sort.Slice(fields, func(i, j int) bool {
-		left := recordFieldKeyFromName(fields[i].Name)
-		right := recordFieldKeyFromName(fields[j].Name)
-		return CompareMemberKey(left, right) < 0
-	})
-}

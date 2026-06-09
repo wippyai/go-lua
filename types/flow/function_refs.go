@@ -524,10 +524,6 @@ func functionRefPathInAddressSubtree(path constraint.PathKey, root StableAddress
 	return StableAddressKeyHasPrefix(path, root)
 }
 
-func referenceProjectionContainsPath(projection ReferencePathProjection, path constraint.PathKey) bool {
-	return projection.addressProjection().contains(path)
-}
-
 func internFunctionRefsKey(refs FunctionRefs) FunctionRefsKey {
 	canonical := FunctionRefsDomain.Join(refs, nil)
 	if len(canonical) == 0 {

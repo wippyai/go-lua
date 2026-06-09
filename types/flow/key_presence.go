@@ -1923,27 +1923,11 @@ func canonicalKeyPresenceFactSet(set keyPresenceFactSet) KeyPresenceFacts {
 	}
 }
 
-func sortKeyPresenceFacts(entries []KeyPresenceFact) {
-	for i := 1; i < len(entries); i++ {
-		for j := i; j > 0 && keyPresenceLess(entries[j], entries[j-1]); j-- {
-			entries[j], entries[j-1] = entries[j-1], entries[j]
-		}
-	}
-}
-
 func keyPresenceLess(a, b KeyPresenceFact) bool {
 	if a.Table != b.Table {
 		return a.Table < b.Table
 	}
 	return a.Key < b.Key
-}
-
-func sortKeyValueFacts(entries []KeyValueFact) {
-	for i := 1; i < len(entries); i++ {
-		for j := i; j > 0 && keyValueLess(entries[j], entries[j-1]); j-- {
-			entries[j], entries[j-1] = entries[j-1], entries[j]
-		}
-	}
 }
 
 func keyValueLess(a, b KeyValueFact) bool {
@@ -1971,14 +1955,6 @@ func keyArrayLess(a, b KeyArrayFact) bool {
 	return a.Table < b.Table
 }
 
-func sortEmptyKeyArrayFacts(entries []EmptyKeyArrayFact) {
-	for i := 1; i < len(entries); i++ {
-		for j := i; j > 0 && emptyKeyArrayLess(entries[j], entries[j-1]); j-- {
-			entries[j], entries[j-1] = entries[j-1], entries[j]
-		}
-	}
-}
-
 func emptyKeyArrayLess(a, b EmptyKeyArrayFact) bool {
 	return a.Array < b.Array
 }
@@ -1998,27 +1974,11 @@ func keyArrayValueLess(a, b KeyArrayValueFact) bool {
 	return a.Table < b.Table
 }
 
-func sortAppendedKeyFacts(entries []AppendedKeyFact) {
-	for i := 1; i < len(entries); i++ {
-		for j := i; j > 0 && appendedKeyLess(entries[j], entries[j-1]); j-- {
-			entries[j], entries[j-1] = entries[j-1], entries[j]
-		}
-	}
-}
-
 func appendedKeyLess(a, b AppendedKeyFact) bool {
 	if a.Array != b.Array {
 		return a.Array < b.Array
 	}
 	return a.Key < b.Key
-}
-
-func sortPendingKeyArrayFacts(entries []PendingKeyArrayFact) {
-	for i := 1; i < len(entries); i++ {
-		for j := i; j > 0 && pendingKeyArrayLess(entries[j], entries[j-1]); j-- {
-			entries[j], entries[j-1] = entries[j-1], entries[j]
-		}
-	}
 }
 
 func pendingKeyArrayLess(a, b PendingKeyArrayFact) bool {
@@ -2074,14 +2034,6 @@ func appendHistoryCoverageLess(a, b AppendHistoryCoverageFact) bool {
 		return a.Key < b.Key
 	}
 	return a.Table < b.Table
-}
-
-func sortAppendElementFieldOriginFacts(entries []AppendElementFieldOriginFact) {
-	for i := 1; i < len(entries); i++ {
-		for j := i; j > 0 && appendElementFieldOriginLess(entries[j], entries[j-1]); j-- {
-			entries[j], entries[j-1] = entries[j-1], entries[j]
-		}
-	}
 }
 
 func appendElementFieldOriginLess(a, b AppendElementFieldOriginFact) bool {
@@ -2188,10 +2140,6 @@ func findAppendHistoryEventFact(entries []AppendHistoryEventFact, fact AppendHis
 	return appendHistoryEventRowIdentity.Find(entries, fact)
 }
 
-func findAppendHistoryCoverageFact(entries []AppendHistoryCoverageFact, fact AppendHistoryCoverageFact) (int, bool) {
-	return appendHistoryCoverageRowIdentity.Find(entries, fact)
-}
-
 func findAppendElementFieldOriginFact(entries []AppendElementFieldOriginFact, fact AppendElementFieldOriginFact) (int, bool) {
 	return appendElementFieldOriginRowIdentity.Find(entries, fact)
 }
@@ -2202,10 +2150,6 @@ func keyPresenceFactsContainAll(have, want []KeyPresenceFact) bool {
 
 func keyValueFactsContainAll(have, want []KeyValueFact) bool {
 	return keyValueRowIdentity.ContainsAll(have, want)
-}
-
-func keyArrayFactsContainAll(have, want []KeyArrayFact) bool {
-	return keyArrayRowIdentity.ContainsAll(have, want)
 }
 
 func keyArrayFactsContainAllWithEmpty(have []KeyArrayFact, empty []EmptyKeyArrayFact, want []KeyArrayFact) bool {
@@ -2223,12 +2167,6 @@ func keyArrayFactsContainAllWithEmpty(have []KeyArrayFact, empty []EmptyKeyArray
 
 func emptyKeyArrayFactsContainAll(have, want []EmptyKeyArrayFact) bool {
 	return emptyKeyArrayRowIdentity.ContainsAll(have, want)
-}
-
-func keyArrayValueFactsContainAll(have, want []KeyArrayValueFact) bool {
-	return keyArrayValueRowIdentity.ContainsAllBy(have, want, func(have, want KeyArrayValueFact) bool {
-		return keyArrayValueSameIdentity(have, want) && product.Domain.LessOrEq(have.Value, want.Value)
-	})
 }
 
 func keyArrayValueFactsContainAllWithEmpty(have []KeyArrayValueFact, empty []EmptyKeyArrayFact, want []KeyArrayValueFact) bool {

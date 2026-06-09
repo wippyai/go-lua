@@ -56,17 +56,6 @@ func (env methodLookupEnv) depth(t typ.Type, name string, depth int) (typ.Type, 
 	return env.depthWithOwner(t, name, depth, nil)
 }
 
-// methodViaIndex walks the __index chain to find inherited methods.
-//
-// Lua's prototype inheritance uses __index to delegate lookups to parent tables.
-// This function follows the chain:
-//  1. Get __index field from current metatable
-//  2. If __index is a table, look up the method there and recurse
-//  3. If __index is a function, use its return type as the method type
-func methodViaIndex(meta typ.Type, name string, depth int, owners ...typ.Type) (typ.Type, bool) {
-	return methodLookupEnv{}.viaIndex(meta, name, depth, owners...)
-}
-
 func (env methodLookupEnv) viaIndex(meta typ.Type, name string, depth int, owners ...typ.Type) (typ.Type, bool) {
 	if stopDepth(meta, depth) {
 		return nil, false
@@ -143,10 +132,6 @@ func (env methodLookupEnv) viaIndex(meta typ.Type, name string, depth int, owner
 // Handles various type constructors and propagates through wrappers.
 func methodDepth(t typ.Type, name string, depth int) (typ.Type, bool) {
 	return methodLookupEnv{}.depth(t, name, depth)
-}
-
-func methodDepthWithOwner(t typ.Type, name string, depth int, owner typ.Type) (typ.Type, bool) {
-	return methodLookupEnv{}.depthWithOwner(t, name, depth, owner)
 }
 
 func (env methodLookupEnv) depthWithOwner(t typ.Type, name string, depth int, owner typ.Type) (typ.Type, bool) {

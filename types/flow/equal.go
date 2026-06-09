@@ -120,18 +120,6 @@ func pathEqual(a, b constraint.Path) bool {
 	return true
 }
 
-func pathsEqual(a, b []constraint.Segment) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	for i := range a {
-		if a[i] != b[i] {
-			return false
-		}
-	}
-	return true
-}
-
 func assignmentSourceEqual(a, b AssignmentSource) bool {
 	return a.Kind == b.Kind &&
 		a.ProjectionKind == b.ProjectionKind &&
@@ -405,19 +393,6 @@ func typeProjectionStepsEqual(a, b []effect.TypeProjectionStep) bool {
 			a[i].Field != b[i].Field ||
 			a[i].Index != b[i].Index ||
 			!typeEqual(a[i].Type, b[i].Type) {
-			return false
-		}
-	}
-	return true
-}
-
-func valueTemplateEqual(a, b ValueTemplate) bool {
-	if len(a.Slots) != len(b.Slots) {
-		return false
-	}
-	for i := range a.Slots {
-		if !pathsEqual(a.Slots[i].Segments, b.Slots[i].Segments) ||
-			!assignmentSourceEqual(a.Slots[i].Source, b.Slots[i].Source) {
 			return false
 		}
 	}
