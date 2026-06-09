@@ -110,3 +110,33 @@ func TestCanonicalProductionTreatsFuncResultAsPublicProjection(t *testing.T) {
 		t.Fatalf("walk canonical sources: %v", err)
 	}
 }
+
+func TestCanonicalObservationDoesNotUseLiveSummaryAuthority(t *testing.T) {
+	_, file, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("runtime.Caller failed")
+	}
+	root := filepath.Dir(file)
+	path := filepath.Join(root, "observe.go")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read observe.go: %v", err)
+	}
+	text := string(data)
+	banned := []string{
+		"activeReader(",
+		"activeSummaryReader",
+		"activeQueries",
+		"summary.NewReaderWithStats",
+		"summary.NewReader(",
+		"queries.Summarize",
+		"SummarizeWithKey(",
+		"ObserveIntraWithKey(",
+		"CanonicalSummarySnapshot(",
+	}
+	for _, token := range banned {
+		if strings.Contains(text, token) {
+			t.Errorf("observe.go uses live/producer summary token %q", token)
+		}
+	}
+}

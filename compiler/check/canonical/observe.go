@@ -8,15 +8,11 @@ import (
 	"github.com/wippyai/go-lua/compiler/check/canonical/state"
 	"github.com/wippyai/go-lua/compiler/check/canonical/summary"
 	"github.com/wippyai/go-lua/compiler/check/canonical/transfer"
-	"github.com/wippyai/go-lua/compiler/check/domain/callbackenv"
 	"github.com/wippyai/go-lua/compiler/check/domain/functionsymbols"
 	"github.com/wippyai/go-lua/compiler/check/domain/paramboundary"
 	"github.com/wippyai/go-lua/compiler/check/domain/paramevidence"
 	flowpath "github.com/wippyai/go-lua/compiler/check/domain/path"
-	"github.com/wippyai/go-lua/compiler/check/scope"
-	phasecore "github.com/wippyai/go-lua/compiler/check/synth/core"
 	"github.com/wippyai/go-lua/types/constraint"
-	"github.com/wippyai/go-lua/types/db"
 	"github.com/wippyai/go-lua/types/domain/value/product"
 	"github.com/wippyai/go-lua/types/flow"
 	"github.com/wippyai/go-lua/types/flow/numeric"
@@ -28,7 +24,7 @@ import (
 	"github.com/wippyai/go-lua/types/typ"
 )
 
-// observation.go is the diagnostic bridge's observation surface. The diagnostic
+// observe.go is the read-only diagnostic observation surface. The diagnostic
 // passes ask the observation.Projector for "the type of expression E at point P";
 // the Projector answers per-symbol/per-point reads through flow.TypeFacts and
 // resolves declared annotations through a Synth. This file projects those
@@ -50,288 +46,6 @@ import (
 //     it is the same resolver and the same projector the rest of the surface uses,
 //     not a parallel type checker.
 //
-// functionObservationContext is the per-function immutable source context the
-// canonical observer derives once from the graph: resolved annotations,
-// annotated-symbol membership, binding signatures, and parameter symbol layout.
-// It is not the public function-fact projection; that is final Summary-derived output.
-type functionObservationContext struct {
-	declared  map[cfg.SymbolID]typ.Type
-	annotated flow.AnnotatedSymbols
-	// bindings are immutable value-binding facts, not source declarations. They
-	// carry canonical signatures for named/local function bindings so effective
-	// reads and identifier-definedness can see the binding without polluting
-	// DeclaredAt or FlowInputs.DeclaredTypes.
-	bindings map[cfg.SymbolID]typ.Type
-	// paramSyms are the function's parameter symbols in declaration order. An
-	// unannotated parameter (not in annotated, with no declared type) is a gradual
-	// `any` when the body imposes no obligation on it: a Lua parameter with no
-	// annotation is dynamic and usable in every operation.
-	paramSyms []cfg.SymbolID
-}
-
-func cloneFunctionObservationContext(in functionObservationContext) functionObservationContext {
-	out := functionObservationContext{}
-	if len(in.declared) > 0 {
-		out.declared = make(map[cfg.SymbolID]typ.Type, len(in.declared))
-		for sym, t := range in.declared {
-			out.declared[sym] = t
-		}
-	} else {
-		out.declared = make(map[cfg.SymbolID]typ.Type)
-	}
-	out.annotated = in.annotated.Clone()
-	if len(in.bindings) > 0 {
-		out.bindings = make(map[cfg.SymbolID]typ.Type, len(in.bindings))
-		for sym, t := range in.bindings {
-			out.bindings[sym] = t
-		}
-	} else {
-		out.bindings = make(map[cfg.SymbolID]typ.Type)
-	}
-	if len(in.paramSyms) > 0 {
-		out.paramSyms = append([]cfg.SymbolID(nil), in.paramSyms...)
-	}
-	return out
-}
-
-// buildFunctionObservationContext resolves the static source context every part
-// of the observation surface reads. Annotations resolve against the module base
-// scope through the driver's resolver.
-func (d *Driver) buildFunctionObservationContext(g *cfg.Graph, evidence api.FlowEvidence) functionObservationContext {
-	obsCtx := functionObservationContext{
-		declared: make(map[cfg.SymbolID]typ.Type),
-	}
-	if g == nil {
-		return obsCtx
-	}
-
-	// Predeclared globals: a use of a predeclared name (print, pairs, require, ...)
-	// resolves to its global symbol; the declared-type map carries its value type so
-	// the ident pass sees it as defined and the observation surface types it as its
-	// function/value type rather than the value-domain unknown. The driver admits
-	// Config.GlobalTypes into a deterministic globalenv.TypeOverlay at construction;
-	// this bridge consumes that carrier rather than the raw external map.
-	if len(d.globalTypes) > 0 {
-		bindings := g.Bindings()
-		for _, binding := range d.globalTypes {
-			name := binding.Name.String()
-			t := binding.Type
-			sym, ok := g.GlobalSymbol(name)
-			if !ok {
-				continue
-			}
-			if _, exists := obsCtx.declared[sym]; exists {
-				continue
-			}
-			if bindings != nil {
-				if k, ok := bindings.Kind(sym); ok && k != cfg.SymbolGlobal {
-					continue
-				}
-			}
-			obsCtx.declared[sym] = t
-		}
-	}
-
-	// Parameters: a declared annotation pins the parameter symbol's declared type,
-	// resolved from the function's parameter list. The canonical ParamSlots layout
-	// maps each parameter slot to its source annotation, accounting for an implicit
-	// method receiver `self` at slot 0 (SourceIndex -1): a `function T:m(x: A)` binds
-	// self and x, so x's annotation `A` aligns with the second slot, not the first.
-	// Reading the raw ParList.Types in slot order would shift every method parameter's
-	// declared type by one. A generic function's annotations resolve in its type-param
-	// scope, so a parameter typed `T` carries the bounded type parameter rather than an
-	// unresolved typ.Ref; the body method/field check then reads the bound's members.
-	annScope := d.typeParamScope(g.Func())
-	params := g.ParamSymbols()
-	obsCtx.paramSyms = params
-	for _, slot := range g.ParamSlotsReadOnly() {
-		if slot.Symbol == 0 || slot.TypeAnnotation == nil {
-			continue
-		}
-		t := d.resolveType(slot.TypeAnnotation, annScope)
-		if t == nil {
-			continue
-		}
-		obsCtx.declared[slot.Symbol] = t
-		obsCtx.annotated.Add(slot.Symbol)
-	}
-
-	// Annotated local declarations: local x: T = ... pins x's declared type from
-	// its aligned annotation. The annotation resolves against the block-aware scope
-	// LEXICALLY VISIBLE at the declaration point, not the flat module scope: a
-	// reference to a block-local type used outside its block, or a forward reference
-	// to a type defined later, then resolves to nothing (the declaration mismatches
-	// the unresolved annotation), and a shadowed type name resolves to the binding
-	// active at the declaration rather than the innermost block's definition.
-	pointScopes := d.buildPointScopes(g)
-	for _, assign := range evidence.Assignments {
-		info := assign.Info
-		if info == nil || !info.IsLocal {
-			continue
-		}
-		declScope := annScope
-		if pointScopes != nil {
-			if sc, ok := pointScopes[assign.Point]; ok && sc != nil {
-				declScope = d.genericScopeOver(nil, g.Func(), sc)
-			}
-		}
-		for i := range info.TypeAnnotations {
-			ann := info.TypeAnnotationAt(i)
-			if ann == nil {
-				continue
-			}
-			target, ok := info.TargetAt(i)
-			if !ok || target.Kind != cfg.TargetIdent || target.Symbol == 0 {
-				continue
-			}
-			// A parameter symbol the param loop already resolved (in the function's
-			// type-param scope) is authoritative: an implicit param-binding assignment
-			// carries the same annotation, but re-resolving it here against the base
-			// scope would drop a generic parameter's bound (`x: T` -> unresolved Ref
-			// instead of the bounded type parameter). Leave the param's declared type
-			// intact; this loop pins only genuine local declarations.
-			if _, isParam := obsCtx.declared[target.Symbol]; isParam && obsCtx.annotated.Contains(target.Symbol) {
-				continue
-			}
-			// Resolve a local declaration against the scope lexically visible at its
-			// declaration point, extended with the function's type parameters (so a
-			// local typed by a type parameter — `local result: {U}` inside `map<T, U>` —
-			// still carries the same bounded type parameter the parameter and
-			// call-result types carry, and an element write `result[i] = f(v)` compares
-			// `U` against `U` consistently). A block-local, forward, or shadowed type
-			// name then resolves to the binding actually visible here.
-			t := d.resolveType(ann, declScope)
-			if t == nil {
-				continue
-			}
-			obsCtx.declared[target.Symbol] = t
-			obsCtx.annotated.Add(target.Symbol)
-		}
-	}
-	return obsCtx
-}
-
-// seedMethodSelf records only source-declared receiver facts for a method body's
-// implicit `self` parameter. A method defined on a named type (`function T:m()`
-// where T is a type binding) has a declared receiver contract, so the diagnostic
-// bridge may mark self annotated to T. A value receiver (`local methods = {};
-// function methods:m()`) has no source annotation: its runtime self is produced by
-// the PrototypeSelf product axis, and marking it declared from moduleCaptures would
-// leak the old driver scan back into the bridge.
-//
-// A self parameter the user annotated explicitly is left untouched. A value
-// receiver stays unannotated so EffectiveTypeAt observes the solved point-state
-// value seeded through EntryValues/PrototypeSelf.
-func (d *Driver) seedMethodSelf(obsCtx *functionObservationContext, prog *program, g *cfg.Graph) {
-	if obsCtx == nil || prog == nil || g == nil {
-		return
-	}
-	fn := g.Func()
-	if fn == nil {
-		return
-	}
-	ref, ok := prog.refByFunc(fn)
-	if !ok {
-		return
-	}
-	info := prog.methodDef(ref)
-	if info == nil || info.Receiver == nil {
-		return
-	}
-	bindings := g.Bindings()
-	if bindings == nil {
-		return
-	}
-	// Only an unannotated self (implicit method self, or an explicit unannotated
-	// `self`) is seeded; an explicit annotation is authoritative.
-	if !phasecore.HasUnannotatedSelfParam(fn, bindings) {
-		return
-	}
-	params := g.ParamSymbols()
-	if len(params) == 0 {
-		return
-	}
-	selfSym := params[0]
-	if selfSym == 0 || bindings.Name(selfSym) != "self" {
-		return
-	}
-	recv := d.namedReceiverType(info, d.baseScope())
-	if recv == nil || typ.IsAbsentOrUnknown(recv) {
-		return
-	}
-	obsCtx.declared[selfSym] = recv
-	obsCtx.annotated.Add(selfSym)
-}
-
-// namedReceiverType resolves only an explicit type-namespace receiver binding.
-// It intentionally does not fall back to moduleCaptures: value-receiver self
-// values are flow facts owned by the PrototypeSelf point-state axis.
-func (d *Driver) namedReceiverType(info *cfg.FuncDefInfo, sc *scope.State) typ.Type {
-	if info == nil {
-		return nil
-	}
-	if ident, ok := info.Receiver.(*ast.IdentExpr); ok && ident != nil {
-		if sc == nil {
-			sc = d.baseScope()
-		}
-		if sc != nil {
-			if named, ok := sc.LookupType(ident.Value); ok && named != nil && !typ.IsAbsentOrUnknown(named) {
-				return named
-			}
-		}
-	}
-	return nil
-}
-
-// recordFunctionBindingTypes records each function-binding symbol's canonical
-// signature as an immutable binding fact. These facts are definition/value facts:
-// they make named functions observable through EffectiveTypeAt and the identifier
-// pass without becoming source annotations. A source declaration remains
-// authoritative when both exist.
-func recordFunctionBindingTypes(obsCtx *functionObservationContext, funcSigs map[cfg.SymbolID]typ.Type, g *cfg.Graph) {
-	if obsCtx == nil {
-		return
-	}
-	if len(funcSigs) == 0 || g == nil {
-		return
-	}
-	if obsCtx.bindings == nil {
-		obsCtx.bindings = make(map[cfg.SymbolID]typ.Type, len(funcSigs))
-	}
-	for sym, sig := range funcSigs {
-		if sym == 0 || sig == nil {
-			continue
-		}
-		if _, exists := obsCtx.declared[sym]; exists {
-			continue
-		}
-		obsCtx.bindings[sym] = sig
-	}
-}
-
-// recordCallbackEnvBindingTypes records callback-scoped global overlay facts as
-// immutable value bindings. The facts package has already lowered overlay names
-// to this callback body's graph symbols, so the bridge only admits those
-// normalized facts into the same non-declaration surface used for function
-// bindings. Source declarations remain authoritative when both exist.
-func recordCallbackEnvBindingTypes(obsCtx *functionObservationContext, entries []callbackenv.GlobalBinding) {
-	if obsCtx == nil || len(entries) == 0 {
-		return
-	}
-	if obsCtx.bindings == nil {
-		obsCtx.bindings = make(map[cfg.SymbolID]typ.Type, len(entries))
-	}
-	for _, entry := range entries {
-		if entry.Symbol == 0 || entry.Type == nil || typ.IsAbsentOrUnknown(entry.Type) {
-			continue
-		}
-		if _, exists := obsCtx.declared[entry.Symbol]; exists {
-			continue
-		}
-		obsCtx.bindings[entry.Symbol] = entry.Type
-	}
-}
-
 // canonicalFacts is the flow.TypeFacts the diagnostic passes' observation
 // Projector reads, backed by the converged FunctionState. It answers a per-point
 // per-symbol type query from the converged env and a declared-type query from the
@@ -385,7 +99,7 @@ func (d *Driver) newCanonicalFacts(g *cfg.Graph, fs state.FunctionState, obsCtx 
 	}
 }
 
-// CallReturnTypesAt is the diagnostic observation bridge for call expressions.
+// CallReturnTypesAt is the diagnostic observation surface for call expressions.
 // It projects the call through the same selected-target CallOutcome carrier the
 // transfer path uses, instead of reinterpreting the callee from a possibly
 // polluted expression type. This keeps declared-return checks on the canonical
@@ -412,7 +126,7 @@ func (f *canonicalFacts) CallReturnTypesAt(point cfg.Point, call *ast.FuncCallEx
 		callCtx,
 		productCallOutcomeOptions{},
 		func(ctx canonicalcall.EntryContext) summary.Summary {
-			return ct.summaryForCallEntryContext(ctx)
+			return f.summaryForCallEntryContext(ctx)
 		},
 	).outcome()
 	values := outcome.InferredReturnValues()
@@ -420,6 +134,20 @@ func (f *canonicalFacts) CallReturnTypesAt(point cfg.Point, call *ast.FuncCallEx
 		return nil, false
 	}
 	return product.ProjectValuesOrUnknown(values), true
+}
+
+func (f *canonicalFacts) summaryForCallEntryContext(entry canonicalcall.EntryContext) summary.Summary {
+	if f == nil {
+		return summary.SummaryDomain.Bottom()
+	}
+	key := entry.Key()
+	reader := f.reader
+	if sum, ok := reader.ExactSummaryForKey(key); ok {
+		return sum
+	}
+	// Observation is read-only. Missing exact-key precision degrades explicitly to
+	// the frozen aggregate summary; it never demands a new summary key.
+	return reader.Summarize(key.Ref)
 }
 
 func (f *canonicalFacts) callObservationPoint(fallback cfg.Point, call *ast.FuncCallExpr) cfg.Point {
@@ -1355,144 +1083,4 @@ func canonicalTypeMatches(a, b typ.Type) bool {
 	default:
 		return false
 	}
-}
-
-// returnSynth is the api.Synth the WithReturn / WithExhaustiveness passes read. It
-// is a facade over the two real components of the observation surface: the
-// driver's annotation resolver (declared type/return resolution) and the canonical
-// observation Projector (expression typing). It introduces no independent type
-// logic; every method delegates to one of those two.
-type returnSynth struct {
-	driver *Driver
-	obs    api.ExprSynth
-	ctx    *db.QueryContext
-}
-
-// compile-time assertion: returnSynth satisfies api.Synth.
-var _ api.Synth = (*returnSynth)(nil)
-
-func (s *returnSynth) TypeOf(expr ast.Expr, p cfg.Point) typ.Type {
-	if s.obs == nil {
-		return typ.Unknown
-	}
-	return s.obs(expr, p)
-}
-
-func (s *returnSynth) TypeOfWithExpected(expr ast.Expr, p cfg.Point, _ typ.Type) typ.Type {
-	return s.TypeOf(expr, p)
-}
-
-func (s *returnSynth) MultiTypeOf(expr ast.Expr, p cfg.Point) []typ.Type {
-	return []typ.Type{s.TypeOf(expr, p)}
-}
-
-func (s *returnSynth) FunctionType(*ast.FunctionExpr, *scope.State) *typ.Function { return nil }
-
-func (s *returnSynth) ExpandValues(exprs []ast.Expr, needed int, p cfg.Point) []typ.Type {
-	out := make([]typ.Type, 0, needed)
-	for i := 0; i < needed; i++ {
-		if i < len(exprs) {
-			out = append(out, s.TypeOf(exprs[i], p))
-		} else {
-			out = append(out, typ.Nil)
-		}
-	}
-	return out
-}
-
-func (s *returnSynth) InferIterVars(_ []ast.Expr, count int, _ cfg.Point) []typ.Type {
-	out := make([]typ.Type, count)
-	for i := range out {
-		out[i] = typ.Unknown
-	}
-	return out
-}
-
-func (s *returnSynth) ResolveType(expr ast.TypeExpr, sc *scope.State) typ.Type {
-	if s.driver == nil || s.driver.resolver == nil {
-		return typ.Unknown
-	}
-	if sc == nil {
-		sc = s.driver.baseScope()
-	}
-	return s.driver.resolver.ResolveType(expr, sc)
-}
-
-func (s *returnSynth) ResolveReturnTypes(types []ast.TypeExpr, sc *scope.State) []typ.Type {
-	out := make([]typ.Type, 0, len(types))
-	for _, t := range types {
-		if t == nil {
-			out = append(out, nil)
-			continue
-		}
-		out = append(out, s.ResolveType(t, sc))
-	}
-	return out
-}
-
-func (s *returnSynth) ResolveFunctionSignature(*ast.FunctionExpr, *scope.State) *typ.Function {
-	return nil
-}
-
-func (s *returnSynth) ResolveTypeDef(name string, typeExpr ast.TypeExpr, typeParams []ast.TypeParamExpr, sc *scope.State) typ.Type {
-	if s.driver == nil || s.driver.resolver == nil {
-		return typ.Unknown
-	}
-	if sc == nil {
-		sc = s.driver.baseScope()
-	}
-	return s.driver.resolver.ResolveTypeDef(name, typeExpr, typeParams, sc)
-}
-
-// Narrow returns the same facade: the canonical observation Projector is already
-// the flow-refined view (it reads the converged flow-refined per-point types).
-func (s *returnSynth) Narrow() api.BaseSynth { return s }
-
-func (s *returnSynth) WithFlow(api.FlowOps) api.BaseSynth { return s }
-
-func (s *returnSynth) Method(t typ.Type, name string) (typ.Type, bool) {
-	if s != nil && s.driver != nil && s.driver.cfg.Types != nil && s.ctx != nil {
-		return s.driver.cfg.Types.Method(s.ctx, t, name)
-	}
-	return querycore.Method(t, name)
-}
-
-func (s *returnSynth) Field(t typ.Type, name string) (typ.Type, bool) {
-	if s != nil && s.driver != nil && s.driver.cfg.Types != nil && s.ctx != nil {
-		return s.driver.cfg.Types.Field(s.ctx, t, name)
-	}
-	return querycore.Field(t, name)
-}
-
-func (s *returnSynth) SynthWithExpected(expr ast.Expr, p cfg.Point, _ typ.Type) typ.Type {
-	return s.TypeOf(expr, p)
-}
-
-func (s *returnSynth) CallQuery() querycore.TypeOps { return s.driver.cfg.Types }
-
-func (s *returnSynth) AllowReturnTransforms() bool { return false }
-
-func (s *returnSynth) Context() *db.QueryContext { return s.ctx }
-
-// buildObservationInputs assembles the per-function flow.Inputs the diagnostic
-// passes read directly (DeclaredTypes / AnnotatedVars), backed by the resolved
-// declared-type context.
-func buildObservationInputs(g *cfg.Graph, obsCtx functionObservationContext) *flow.Inputs {
-	in := &flow.Inputs{
-		DeclaredTypes: make(map[cfg.SymbolID]typ.Type, len(obsCtx.declared)),
-		BindingTypes:  make(map[cfg.SymbolID]typ.Type, len(obsCtx.bindings)),
-	}
-	if g != nil {
-		in.Graph = g
-	}
-	for sym, t := range obsCtx.declared {
-		in.DeclaredTypes[sym] = t
-	}
-	for _, sym := range obsCtx.annotated.Symbols() {
-		in.AnnotatedVars.Add(sym)
-	}
-	for sym, t := range obsCtx.bindings {
-		in.BindingTypes[sym] = t
-	}
-	return in
 }
