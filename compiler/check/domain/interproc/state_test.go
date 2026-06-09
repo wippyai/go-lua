@@ -52,7 +52,7 @@ func TestWidenFactMap_OnlyPrev(t *testing.T) {
 	prev := map[api.GraphKey]api.Facts{
 		{GraphID: 1}: {
 			FunctionFacts: api.FunctionFacts{
-				1: {Summary: product.LiftVector([]typ.Type{typ.String})},
+				1: {Returns: api.FunctionReturnProjection{Preflow: product.LiftVector([]typ.Type{typ.String})}},
 			},
 		},
 	}
@@ -66,7 +66,7 @@ func TestWidenFactMap_OnlyNext(t *testing.T) {
 	next := map[api.GraphKey]api.Facts{
 		{GraphID: 1}: {
 			FunctionFacts: api.FunctionFacts{
-				1: {Summary: product.LiftVector([]typ.Type{typ.Number})},
+				1: {Returns: api.FunctionReturnProjection{Preflow: product.LiftVector([]typ.Type{typ.Number})}},
 			},
 		},
 	}
@@ -102,14 +102,14 @@ func TestWidenFactMap_Merge(t *testing.T) {
 	prev := map[api.GraphKey]api.Facts{
 		{GraphID: 1}: {
 			FunctionFacts: api.FunctionFacts{
-				1: {Summary: product.LiftVector([]typ.Type{typ.String})},
+				1: {Returns: api.FunctionReturnProjection{Preflow: product.LiftVector([]typ.Type{typ.String})}},
 			},
 		},
 	}
 	next := map[api.GraphKey]api.Facts{
 		{GraphID: 2}: {
 			FunctionFacts: api.FunctionFacts{
-				1: {Summary: product.LiftVector([]typ.Type{typ.Number})},
+				1: {Returns: api.FunctionReturnProjection{Preflow: product.LiftVector([]typ.Type{typ.Number})}},
 			},
 		},
 	}

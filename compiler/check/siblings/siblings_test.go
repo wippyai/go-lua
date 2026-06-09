@@ -26,7 +26,7 @@ func TestBuild_WithFuncs(t *testing.T) {
 		Funcs: []FuncEntry{
 			{Symbol: 1, IsLocal: true},
 		},
-		FunctionFacts: api.FunctionFacts{1: {Signature: fnType}},
+		FunctionFacts: api.FunctionFacts{1: {Public: api.FunctionPublicProjection{Signature: fnType}}},
 	}
 	result := Build(conf)
 	if result == nil {
@@ -42,7 +42,7 @@ func TestBuild_WithPrev(t *testing.T) {
 		Funcs: []FuncEntry{
 			{Symbol: 1, IsLocal: true},
 		},
-		FunctionFacts: api.FunctionFacts{1: {Signature: typ.Func().Build()}},
+		FunctionFacts: api.FunctionFacts{1: {Public: api.FunctionPublicProjection{Signature: typ.Func().Build()}}},
 		SiblingTypesPrev: map[cfg.SymbolID]typ.Type{
 			2: typ.String,
 		},
@@ -73,7 +73,7 @@ func TestBuild_FieldFunctionDefinitionsContributeToOwnerSurface(t *testing.T) {
 				},
 			},
 		},
-		FunctionFacts: api.FunctionFacts{fnSym: {Signature: methodType}},
+		FunctionFacts: api.FunctionFacts{fnSym: {Public: api.FunctionPublicProjection{Signature: methodType}}},
 		Services: BuildServicesFuncs{
 			TypeAtPointFn: func(point cfg.Point, sym cfg.SymbolID) typ.Type {
 				if sym == ownerSym {

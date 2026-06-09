@@ -21,7 +21,11 @@ func TestFactsDomain_ProductOperatorsAreIdempotentAcrossAllDomains(t *testing.T)
 	fn := typ.Func().Param("name", typ.String).Returns(typ.String).Build()
 	raw := api.Facts{
 		FunctionFacts: api.FunctionFacts{
-			fnSym: {Params: product.LiftVector([]typ.Type{typ.String}), Summary: product.LiftVector([]typ.Type{typ.String}), Narrow: product.LiftVector([]typ.Type{typ.String}), Signature: fn},
+			fnSym: {
+				Call:    api.FunctionCallProjection{Params: product.LiftVector([]typ.Type{typ.String})},
+				Returns: api.FunctionReturnProjection{Preflow: product.LiftVector([]typ.Type{typ.String}), Postflow: product.LiftVector([]typ.Type{typ.String})},
+				Public:  api.FunctionPublicProjection{Signature: fn},
+			},
 		},
 		LiteralSigs: api.LiteralSigs{
 			lit: typ.Func().Param("name", typ.String).Returns(typ.String).Build(),
@@ -99,12 +103,12 @@ func TestFactsDomain_WidenFunctionParamsIsVarianceAware(t *testing.T) {
 	sym := cfg.SymbolID(1)
 	prev := api.Facts{
 		FunctionFacts: api.FunctionFacts{
-			sym: {Signature: typ.Func().Param("path", typ.Any).Returns(typ.NewArray(typ.Unknown)).Build()},
+			sym: {Public: api.FunctionPublicProjection{Signature: typ.Func().Param("path", typ.Any).Returns(typ.NewArray(typ.Unknown)).Build()}},
 		},
 	}
 	next := api.Facts{
 		FunctionFacts: api.FunctionFacts{
-			sym: {Signature: typ.Func().Param("path", typ.String).Returns(typ.NewArray(typ.Unknown)).Build()},
+			sym: {Public: api.FunctionPublicProjection{Signature: typ.Func().Param("path", typ.String).Returns(typ.NewArray(typ.Unknown)).Build()}},
 		},
 	}
 
@@ -128,7 +132,7 @@ func TestFactsDomain_PreservesArityAndNilabilityAsSeparateParamAxes(t *testing.T
 		Build()
 	raw := api.Facts{
 		FunctionFacts: api.FunctionFacts{
-			sym: {Signature: typ.Func().OptParam("context", typ.NewOptional(context)).Build()},
+			sym: {Public: api.FunctionPublicProjection{Signature: typ.Func().OptParam("context", typ.NewOptional(context)).Build()}},
 		},
 	}
 

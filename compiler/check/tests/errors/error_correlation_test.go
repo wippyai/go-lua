@@ -142,7 +142,7 @@ db:release()
 			parent := result.Session.Store.Parents()[parentHash]
 			if facts := result.Session.Store.ProjectionFacts(root.Graph, parent).FunctionFacts(); facts != nil {
 				if fact, ok := facts[getDbSym]; ok {
-					t.Logf("FunctionFacts[%d][get_db].Summary=%v", parentHash, fact.Summary)
+					t.Logf("FunctionFacts[%d][get_db].Returns.Preflow=%v", parentHash, fact.Returns.Preflow)
 				}
 			}
 		}

@@ -25,17 +25,16 @@ import (
 func Normalize(ff api.FunctionFact) api.FunctionFact {
 	summary := returnsummary.NormalizeAndPrune(summaryTypes(ff))
 	narrow := returnsummary.NormalizeAndPrune(narrowTypes(ff))
-	signature := normalizeFunctionFactSignature(ff.Signature)
+	signature := normalizeFunctionFactSignature(ff.Public.Signature)
 	summary = repairInferredSummaryWithNarrow(signature, summary, narrow)
 	return api.FunctionFact{
-		Params:      product.LiftVector(paramevidence.FilterEmptyVector(paramsTypes(ff))),
-		BodyParams:  product.LiftVector(paramevidence.FilterEmptyBodyVector(bodyParamsTypes(ff))),
-		EntryParams: product.LiftVector(paramevidence.FilterEmptyBodyVector(entryParamsTypes(ff))),
-		Summary:     product.LiftVector(summary),
-		Narrow:      product.LiftVector(narrow),
-		Signature:   signature,
-		Refinement:  NormalizeRefinement(ff.Refinement),
-		EnvReturns:  NormalizeEnvReturns(ff.EnvReturns),
+		Call:    api.FunctionCallProjection{Params: product.LiftVector(paramevidence.FilterEmptyVector(paramsTypes(ff)))},
+		Body:    api.FunctionBodyProjection{Params: product.LiftVector(paramevidence.FilterEmptyBodyVector(bodyParamsTypes(ff)))},
+		Entry:   api.FunctionEntryProjection{Params: product.LiftVector(paramevidence.FilterEmptyBodyVector(entryParamsTypes(ff)))},
+		Returns: api.FunctionReturnProjection{Preflow: product.LiftVector(summary), Postflow: product.LiftVector(narrow)},
+		Public:  api.FunctionPublicProjection{Signature: signature},
+		Effects: api.FunctionEffectProjection{Refinement: NormalizeRefinement(ff.Effects.Refinement)},
+		Export:  api.FunctionExportProjection{EnvReturns: NormalizeEnvReturns(ff.Export.EnvReturns)},
 	}
 }
 
@@ -544,14 +543,14 @@ func applyBodyParamEvidence(param typ.Param, evidence typ.Type) typ.Type {
 
 // Empty reports whether a canonical function fact contains no information.
 func Empty(ff api.FunctionFact) bool {
-	return len(ff.Params) == 0 &&
-		len(ff.BodyParams) == 0 &&
-		len(ff.EntryParams) == 0 &&
-		len(ff.Summary) == 0 &&
-		len(ff.Narrow) == 0 &&
-		ff.Signature == nil &&
-		NormalizeRefinement(ff.Refinement) == nil &&
-		len(NormalizeEnvReturns(ff.EnvReturns)) == 0
+	return len(ff.Call.Params) == 0 &&
+		len(ff.Body.Params) == 0 &&
+		len(ff.Entry.Params) == 0 &&
+		len(ff.Returns.Preflow) == 0 &&
+		len(ff.Returns.Postflow) == 0 &&
+		ff.Public.Signature == nil &&
+		NormalizeRefinement(ff.Effects.Refinement) == nil &&
+		len(NormalizeEnvReturns(ff.Export.EnvReturns)) == 0
 }
 
 // Join precisely merges two observations for one local function during a single
@@ -573,26 +572,26 @@ func JoinCanonical(existing, candidate api.FunctionFact) api.FunctionFact {
 	summary := summaryTypes(existing)
 	narrow := narrowTypes(existing)
 
-	if len(candidate.Params) > 0 {
+	if len(candidate.Call.Params) > 0 {
 		params = paramevidence.JoinCallVectors(params, paramsTypes(candidate))
 	}
-	if len(candidate.BodyParams) > 0 {
+	if len(candidate.Body.Params) > 0 {
 		bodyParams = paramevidence.JoinBodyVectors(bodyParams, bodyParamsTypes(candidate))
 	}
-	if len(candidate.EntryParams) > 0 {
+	if len(candidate.Entry.Params) > 0 {
 		entryParams = paramevidence.JoinEntryVectors(entryParams, entryParamsTypes(candidate))
 	}
-	if len(candidate.Summary) > 0 {
+	if len(candidate.Returns.Preflow) > 0 {
 		summary = returnsummary.Merge(summary, summaryTypes(candidate))
 	}
-	if len(candidate.Narrow) > 0 {
+	if len(candidate.Returns.Postflow) > 0 {
 		narrow = returnsummary.Merge(narrow, narrowTypes(candidate))
 	}
-	if candidate.Signature != nil {
-		out.Signature = MergeSignature(out.Signature, candidate.Signature)
+	if candidate.Public.Signature != nil {
+		out.Public.Signature = MergeSignature(out.Public.Signature, candidate.Public.Signature)
 	}
-	out.Refinement = MergeRefinement(out.Refinement, candidate.Refinement)
-	out.EnvReturns = JoinEnvReturns(out.EnvReturns, candidate.EnvReturns)
+	out.Effects.Refinement = MergeRefinement(out.Effects.Refinement, candidate.Effects.Refinement)
+	out.Export.EnvReturns = JoinEnvReturns(out.Export.EnvReturns, candidate.Export.EnvReturns)
 	if len(narrow) > 0 {
 		if len(summary) == 0 {
 			summary = returnsummary.Canonical(narrow)
@@ -600,13 +599,13 @@ func JoinCanonical(existing, candidate api.FunctionFact) api.FunctionFact {
 			summary = returnsummary.Merge(summary, narrow)
 		}
 	}
-	summary = repairInferredSummaryWithNarrow(out.Signature, summary, narrow)
+	summary = repairInferredSummaryWithNarrow(out.Public.Signature, summary, narrow)
 
-	out.Params = product.LiftVector(params)
-	out.BodyParams = product.LiftVector(bodyParams)
-	out.EntryParams = product.LiftVector(entryParams)
-	out.Summary = product.LiftVector(summary)
-	out.Narrow = product.LiftVector(narrow)
+	out.Call.Params = product.LiftVector(params)
+	out.Body.Params = product.LiftVector(bodyParams)
+	out.Entry.Params = product.LiftVector(entryParams)
+	out.Returns.Preflow = product.LiftVector(summary)
+	out.Returns.Postflow = product.LiftVector(narrow)
 
 	return out
 }
@@ -979,9 +978,9 @@ func MergeType(existing, candidate typ.Type) typ.Type {
 // boundary.
 func WidenForConvergence(prev, next api.FunctionFact) api.FunctionFact {
 	out := api.FunctionFact{
-		Signature:  WidenSignatureForConvergence(prev.Signature, next.Signature),
-		Refinement: MergeRefinement(prev.Refinement, next.Refinement),
-		EnvReturns: WidenEnvReturns(prev.EnvReturns, next.EnvReturns),
+		Public:  api.FunctionPublicProjection{Signature: WidenSignatureForConvergence(prev.Public.Signature, next.Public.Signature)},
+		Effects: api.FunctionEffectProjection{Refinement: MergeRefinement(prev.Effects.Refinement, next.Effects.Refinement)},
+		Export:  api.FunctionExportProjection{EnvReturns: WidenEnvReturns(prev.Export.EnvReturns, next.Export.EnvReturns)},
 	}
 
 	params := paramevidence.JoinConvergeCallVectors(paramsTypes(prev), paramsTypes(next))
@@ -995,7 +994,7 @@ func WidenForConvergence(prev, next api.FunctionFact) api.FunctionFact {
 	if len(narrow) > 0 && !returnsummary.AllNil(narrow) {
 		nextNarrow := narrowTypes(next)
 		if len(nextNarrow) > 0 && !returnsummary.AllNil(nextNarrow) {
-			narrow = repairInferredSummaryWithNarrow(out.Signature, narrow, nextNarrow)
+			narrow = repairInferredSummaryWithNarrow(out.Public.Signature, narrow, nextNarrow)
 		}
 		if len(summary) == 0 {
 			summary = returnsummary.Canonical(narrow)
@@ -1003,13 +1002,13 @@ func WidenForConvergence(prev, next api.FunctionFact) api.FunctionFact {
 			summary = returnsummary.WidenForConvergence(summary, narrow)
 		}
 	}
-	summary = repairInferredSummaryWithNarrow(out.Signature, summary, narrow)
+	summary = repairInferredSummaryWithNarrow(out.Public.Signature, summary, narrow)
 
-	out.Params = product.LiftVector(params)
-	out.BodyParams = product.LiftVector(bodyParams)
-	out.EntryParams = product.LiftVector(entryParams)
-	out.Summary = product.LiftVector(summary)
-	out.Narrow = product.LiftVector(narrow)
+	out.Call.Params = product.LiftVector(params)
+	out.Body.Params = product.LiftVector(bodyParams)
+	out.Entry.Params = product.LiftVector(entryParams)
+	out.Returns.Preflow = product.LiftVector(summary)
+	out.Returns.Postflow = product.LiftVector(narrow)
 
 	return out
 }

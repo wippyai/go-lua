@@ -51,28 +51,28 @@ func FunctionFactsEqual(a, b api.FunctionFacts) bool {
 // equality is the value-domain product.Equal per slot (pointer-fast through
 // interning), the same relation the flow store uses for its fixpoint.
 func FunctionFactEqual(a, b api.FunctionFact) bool {
-	if !product.EqualVector(a.Params, b.Params) {
+	if !product.EqualVector(a.Call.Params, b.Call.Params) {
 		return false
 	}
-	if !product.EqualVector(a.BodyParams, b.BodyParams) {
+	if !product.EqualVector(a.Body.Params, b.Body.Params) {
 		return false
 	}
-	if !product.EqualVector(a.EntryParams, b.EntryParams) {
+	if !product.EqualVector(a.Entry.Params, b.Entry.Params) {
 		return false
 	}
-	if !product.EqualVector(a.Summary, b.Summary) {
+	if !product.EqualVector(a.Returns.Preflow, b.Returns.Preflow) {
 		return false
 	}
-	if !product.EqualVector(a.Narrow, b.Narrow) {
+	if !product.EqualVector(a.Returns.Postflow, b.Returns.Postflow) {
 		return false
 	}
-	if !value.FactTypeEqual(a.Signature, b.Signature) {
+	if !value.FactTypeEqual(a.Public.Signature, b.Public.Signature) {
 		return false
 	}
-	if !RefinementEqual(a.Refinement, b.Refinement) {
+	if !RefinementEqual(a.Effects.Refinement, b.Effects.Refinement) {
 		return false
 	}
-	if !functionfact.EnvReturnsEqual(a.EnvReturns, b.EnvReturns) {
+	if !functionfact.EnvReturnsEqual(a.Export.EnvReturns, b.Export.EnvReturns) {
 		return false
 	}
 	return true

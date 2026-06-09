@@ -39,7 +39,7 @@ local value, label = get_db()
 	if !ok {
 		t.Fatalf("missing get_db fact; refs=%v summaries=%v facts=%d", driver.artifact.Refs, driver.artifact.Summaries, len(facts))
 	}
-	returns := product.ProjectVector(fact.Summary)
+	returns := product.ProjectVector(fact.Returns.Preflow)
 	if len(returns) != 2 {
 		t.Fatalf("return summary arity = %d (%v), want 2", len(returns), returns)
 	}
@@ -82,7 +82,7 @@ local value = ensure_payload({ id = "db" })
 	if !ok {
 		t.Fatalf("missing ensure_payload fact; facts=%#v", facts)
 	}
-	returns := product.ProjectVector(fact.Summary)
+	returns := product.ProjectVector(fact.Returns.Preflow)
 	if len(returns) != 1 || !subtype.IsSubtype(returns[0], typ.Number) {
 		t.Fatalf("return summary = %v, want numeric", returns)
 	}
@@ -94,13 +94,13 @@ local value = ensure_payload({ id = "db" })
 	if !ok {
 		t.Fatalf("missing consume fact; facts=%#v", facts)
 	}
-	if consumeFact.Signature == nil || len(consumeFact.Signature.Params) != 1 || len(consumeFact.Signature.Returns) != 1 {
-		t.Fatalf("consume signature = %#v, want declared parameter and return", consumeFact.Signature)
+	if consumeFact.Public.Signature == nil || len(consumeFact.Public.Signature.Params) != 1 || len(consumeFact.Public.Signature.Returns) != 1 {
+		t.Fatalf("consume signature = %#v, want declared parameter and return", consumeFact.Public.Signature)
 	}
-	if !typ.TypeEquals(consumeFact.Signature.Returns[0], typ.Number) {
-		t.Fatalf("consume signature returns = %#v, want declared number", consumeFact.Signature.Returns)
+	if !typ.TypeEquals(consumeFact.Public.Signature.Returns[0], typ.Number) {
+		t.Fatalf("consume signature returns = %#v, want declared number", consumeFact.Public.Signature.Returns)
 	}
-	publicParams := product.ProjectVector(fact.Params)
+	publicParams := product.ProjectVector(fact.Call.Params)
 	if len(publicParams) != 1 {
 		t.Fatalf("public params = %v, want one payload contract", publicParams)
 	}
@@ -108,7 +108,7 @@ local value = ensure_payload({ id = "db" })
 	if !subtype.IsSubtype(publicParams[0], payload) {
 		t.Fatalf("public param = %v, want payload contract %v", publicParams[0], payload)
 	}
-	if fact.Refinement == nil {
+	if fact.Effects.Refinement == nil {
 		t.Fatal("missing postcondition refinement from assert(payload)")
 	}
 }

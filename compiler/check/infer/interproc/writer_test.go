@@ -75,7 +75,7 @@ func TestProjectionFactWriter_MergeParentFactsForSymbol(t *testing.T) {
 
 	ok := writer.mergeParentFactsForSymbol(3, api.Facts{
 		FunctionFacts: api.FunctionFacts{
-			3: {Params: product.LiftVector([]typ.Type{typ.String})},
+			3: {Call: api.FunctionCallProjection{Params: product.LiftVector([]typ.Type{typ.String})}},
 		},
 	})
 	if !ok {

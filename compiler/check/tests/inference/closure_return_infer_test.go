@@ -805,7 +805,7 @@ end
 	if facts := sess.Store.ProjectionFacts(sess.RootResult.Graph, parent).FunctionFacts(); facts != nil {
 		for sym, fact := range facts {
 			if sess.RootResult.Graph.NameOf(sym) == "get_db" {
-				summary = product.ProjectVector(fact.Summary)
+				summary = product.ProjectVector(fact.Returns.Preflow)
 				break
 			}
 		}
@@ -877,7 +877,7 @@ end
 	if facts := sess.Store.ProjectionFacts(sess.RootResult.Graph, parent).FunctionFacts(); facts != nil {
 		for sym, fact := range facts {
 			if sess.RootResult.Graph.NameOf(sym) == "get_db" {
-				summary = product.ProjectVector(fact.Summary)
+				summary = product.ProjectVector(fact.Returns.Preflow)
 				break
 			}
 		}
@@ -935,7 +935,7 @@ local y: string = b
 	if facts := sess.Store.ProjectionFacts(sess.RootResult.Graph, parent).FunctionFacts(); facts != nil {
 		for sym, fact := range facts {
 			name := sess.RootResult.Graph.NameOf(sym)
-			for i, slot := range fact.Summary {
+			for i, slot := range fact.Returns.Preflow {
 				if slot.IsZero() {
 					t.Errorf("nil slot at index %d in return summary for %q", i, name)
 				}
@@ -968,7 +968,7 @@ end
 	parent := sess.Store.Parents()[parentHash]
 	if facts := sess.Store.ProjectionFacts(sess.RootResult.Graph, parent).FunctionFacts(); facts != nil {
 		for sym, fact := range facts {
-			if len(fact.Summary) == 0 {
+			if len(fact.Returns.Preflow) == 0 {
 				name := ""
 				if sess.RootResult.Graph != nil {
 					name = sess.RootResult.Graph.NameOf(sym)

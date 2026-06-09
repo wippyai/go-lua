@@ -1309,8 +1309,9 @@ func allReturnSlotsKnown(types []typ.Type) bool {
 }
 
 func hasBodyEntryEvidence(facts api.FunctionFacts) bool {
-	for _, fact := range facts {
-		if len(fact.EntryParams) > 0 {
+	view := functionfact.FactsProjection(facts)
+	for sym := range facts {
+		if len(view.BodyEntryEvidence(sym)) > 0 {
 			return true
 		}
 	}

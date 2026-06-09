@@ -154,11 +154,11 @@ local result: number = a()
 	for sym, fact := range functionFacts {
 		name := graph.NameOf(sym)
 		if name == "a" || name == "b" || name == "c" {
-			if len(fact.Summary) == 0 {
+			if len(fact.Returns.Preflow) == 0 {
 				t.Errorf("empty return summary for %q", name)
 				continue
 			}
-			if typ.TypeEquals(fact.Summary[0].ProjectValue(), typ.Unknown) {
+			if typ.TypeEquals(fact.Returns.Preflow[0].ProjectValue(), typ.Unknown) {
 				t.Errorf("return type for %q is unknown, expected number", name)
 			}
 		}
@@ -451,11 +451,11 @@ local result: number = d()
 		name := graph.NameOf(sym)
 		if name == "b" || name == "c" || name == "d" {
 			checkedFunctions[name] = true
-			if len(fact.Summary) == 0 {
+			if len(fact.Returns.Preflow) == 0 {
 				t.Errorf("empty return summary for %q", name)
 				continue
 			}
-			if typ.TypeEquals(fact.Summary[0].ProjectValue(), typ.Unknown) {
+			if typ.TypeEquals(fact.Returns.Preflow[0].ProjectValue(), typ.Unknown) {
 				t.Errorf("return type for %q is unknown, expected number (evidence didn't propagate)", name)
 			}
 		}
@@ -464,7 +464,7 @@ local result: number = d()
 	// Verify that parameter evidence was propagated to inner functions.
 	parameterEvidenceFound := false
 	for _, fact := range functionFacts {
-		if len(fact.Params) > 0 {
+		if len(fact.Call.Params) > 0 {
 			parameterEvidenceFound = true
 			break
 		}

@@ -21,12 +21,12 @@ func cloneFunctionFacts(src api.FunctionFacts) api.FunctionFacts {
 }
 
 func cloneFunctionFact(fact api.FunctionFact) api.FunctionFact {
-	fact.Params = cloneAbstractValueSlice(fact.Params)
-	fact.BodyParams = cloneAbstractValueSlice(fact.BodyParams)
-	fact.EntryParams = cloneAbstractValueSlice(fact.EntryParams)
-	fact.Summary = cloneAbstractValueSlice(fact.Summary)
-	fact.Narrow = cloneAbstractValueSlice(fact.Narrow)
-	fact.EnvReturns = cloneEnvReturnSpecs(fact.EnvReturns)
+	fact.Call.Params = cloneAbstractValueSlice(fact.Call.Params)
+	fact.Body.Params = cloneAbstractValueSlice(fact.Body.Params)
+	fact.Entry.Params = cloneAbstractValueSlice(fact.Entry.Params)
+	fact.Returns.Preflow = cloneAbstractValueSlice(fact.Returns.Preflow)
+	fact.Returns.Postflow = cloneAbstractValueSlice(fact.Returns.Postflow)
+	fact.Export.EnvReturns = cloneEnvReturnSpecs(fact.Export.EnvReturns)
 	return fact
 }
 

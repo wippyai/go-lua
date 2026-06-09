@@ -33,20 +33,20 @@ func projectFunctionForModeForTest(t *testing.T, ff api.FunctionFact, mode api.S
 func TestJoin_InitialObservation(t *testing.T) {
 	fn := typ.Func().Returns(typ.String).Build()
 
-	got := Join(api.FunctionFact{}, api.FunctionFact{
-		Summary:   product.LiftVector([]typ.Type{typ.String}),
-		Narrow:    product.LiftVector([]typ.Type{typ.String}),
-		Signature: fn,
-	})
+	got := Join(api.FunctionFact{}, functionFactTest(
+		factPreflowReturns(typ.String),
+		factPostflowReturns(typ.String),
+		factSignature(fn),
+	))
 
-	if !returnsummary.Equal(product.ProjectVector(got.Summary), []typ.Type{typ.String}) {
-		t.Fatalf("summary mismatch: got %v", got.Summary)
+	if !returnsummary.Equal(factPreflowTypesTest(got), []typ.Type{typ.String}) {
+		t.Fatalf("summary mismatch: got %v", got.Returns.Preflow)
 	}
-	if !returnsummary.Equal(product.ProjectVector(got.Narrow), []typ.Type{typ.String}) {
-		t.Fatalf("narrow mismatch: got %v", got.Narrow)
+	if !returnsummary.Equal(factPostflowTypesTest(got), []typ.Type{typ.String}) {
+		t.Fatalf("narrow mismatch: got %v", got.Returns.Postflow)
 	}
-	if !typ.TypeEquals(got.Signature, fn) {
-		t.Fatalf("signature mismatch: got %v", got.Signature)
+	if !typ.TypeEquals(got.Public.Signature, fn) {
+		t.Fatalf("signature mismatch: got %v", got.Public.Signature)
 	}
 }
 
@@ -55,34 +55,34 @@ func TestJoin_BodyPreconditionRemainsPublicContractEvenWithRefinement(t *testing
 		constraint.HasType{Path: constraint.ParamPath(1), Type: narrow.BuiltinTypeKey("string")},
 	}, nil, nil)
 	out := Join(
-		api.FunctionFact{Params: product.LiftVector([]typ.Type{typ.String, typ.Any})},
-		api.FunctionFact{
-			Params:     product.LiftVector([]typ.Type{typ.String, typ.String}),
-			Refinement: refinement,
-			Signature: typ.Func().
+		functionFactTest(factCallParams(typ.String, typ.Any)),
+		functionFactTest(
+			factCallParams(typ.String, typ.String),
+			factRefinement(refinement),
+			factSignature(typ.Func().
 				Param("label", typ.String).
 				Param("msg", typ.String).
 				Returns(typ.Unknown).
-				Build(),
-		},
+				Build()),
+		),
 	)
 
-	if len(out.Params) != 2 || !typ.TypeEquals(out.Params[1].ProjectValue(), typ.String) {
-		t.Fatalf("expected hard body precondition to remain public, got %v", out.Params)
+	if len(out.Call.Params) != 2 || !typ.TypeEquals(out.Call.Params[1].ProjectValue(), typ.String) {
+		t.Fatalf("expected hard body precondition to remain public, got %v", out.Call.Params)
 	}
 }
 
 func TestJoin_PublicContractEvidenceDominatesDynamicSeed(t *testing.T) {
 	out := Join(
-		api.FunctionFact{Params: product.LiftVector([]typ.Type{typ.Any})},
-		api.FunctionFact{
-			Params:    product.LiftVector([]typ.Type{typ.String}),
-			Signature: typ.Func().Param("value", typ.String).Returns(typ.Unknown).Build(),
-		},
+		functionFactTest(factCallParams(typ.Any)),
+		functionFactTest(
+			factCallParams(typ.String),
+			factSignature(typ.Func().Param("value", typ.String).Returns(typ.Unknown).Build()),
+		),
 	)
 
-	if len(out.Params) != 1 || !typ.TypeEquals(out.Params[0].ProjectValue(), typ.String) {
-		t.Fatalf("expected public contract evidence to dominate dynamic seed, got %v", out.Params)
+	if len(out.Call.Params) != 1 || !typ.TypeEquals(out.Call.Params[0].ProjectValue(), typ.String) {
+		t.Fatalf("expected public contract evidence to dominate dynamic seed, got %v", out.Call.Params)
 	}
 }
 
@@ -193,31 +193,31 @@ func TestCanonicalPostflowSignature_PreservesDeclaredReturnsAndSourceVariadic(t 
 func TestJoin_BodyParamsDoNotRewritePublicParams(t *testing.T) {
 	bodyParam := typ.NewRecord().OptField("message", typ.String).Build()
 	out := Join(
-		api.FunctionFact{Params: product.LiftVector([]typ.Type{typ.Any})},
-		api.FunctionFact{
-			BodyParams: product.LiftVector([]typ.Type{bodyParam}),
-			Signature:  typ.Func().Param("info", bodyParam).Returns(typ.String).Build(),
-		},
+		functionFactTest(factCallParams(typ.Any)),
+		functionFactTest(
+			factBodyParams(bodyParam),
+			factSignature(typ.Func().Param("info", bodyParam).Returns(typ.String).Build()),
+		),
 	)
 
-	if len(out.Params) != 1 || !typ.TypeEquals(out.Params[0].ProjectValue(), typ.Any) {
-		t.Fatalf("public params = %v, want any", out.Params)
+	if len(out.Call.Params) != 1 || !typ.TypeEquals(out.Call.Params[0].ProjectValue(), typ.Any) {
+		t.Fatalf("public params = %v, want any", out.Call.Params)
 	}
-	if len(out.BodyParams) != 1 || !typ.TypeEquals(out.BodyParams[0].ProjectValue(), bodyParam) {
-		t.Fatalf("body params = %v, want %v", out.BodyParams, bodyParam)
+	if len(out.Body.Params) != 1 || !typ.TypeEquals(out.Body.Params[0].ProjectValue(), bodyParam) {
+		t.Fatalf("body params = %v, want %v", out.Body.Params, bodyParam)
 	}
 }
 
 func TestJoin_NarrowSummaryDoesNotEraseDynamicReturnSlot(t *testing.T) {
 	stream := typ.NewRecord().Field("candidates", typ.NewArray(typ.NewRecord().Build())).Build()
-	out := Join(api.FunctionFact{}, api.FunctionFact{
-		Summary: product.LiftVector([]typ.Type{typ.Unknown, typ.NewOptional(typ.NewRecord().Field("message", typ.String).Build())}),
-		Narrow:  product.LiftVector([]typ.Type{typ.NewOptional(stream), typ.Nil}),
-		Signature: typ.Func().
+	out := Join(api.FunctionFact{}, functionFactTest(
+		factPreflowReturns(typ.Unknown, typ.NewOptional(typ.NewRecord().Field("message", typ.String).Build())),
+		factPostflowReturns(typ.NewOptional(stream), typ.Nil),
+		factSignature(typ.Func().
 			Param("method", typ.Any).
 			Returns(typ.Unknown, typ.NewOptional(typ.NewRecord().Field("message", typ.String).Build())).
-			Build(),
-	})
+			Build()),
+	))
 
 	fn := projectFunctionForTest(t, out)
 	if !typ.TypeEquals(fn.Returns[0], typ.Unknown) {
@@ -226,53 +226,53 @@ func TestJoin_NarrowSummaryDoesNotEraseDynamicReturnSlot(t *testing.T) {
 }
 
 func TestNormalize_InferredPlaceholderAnyRepairsFromNarrowProof(t *testing.T) {
-	out := Normalize(api.FunctionFact{
-		Summary:   product.LiftVector([]typ.Type{typ.Any}),
-		Narrow:    product.LiftVector([]typ.Type{typ.Integer}),
-		Signature: typ.Func().Param("x", typ.Any).Build(),
-	})
+	out := Normalize(functionFactTest(
+		factPreflowReturns(typ.Any),
+		factPostflowReturns(typ.Integer),
+		factSignature(typ.Func().Param("x", typ.Any).Build()),
+	))
 
-	if !returnsummary.Equal(product.ProjectVector(out.Summary), []typ.Type{typ.Integer}) {
-		t.Fatalf("summary mismatch: got %v want integer", out.Summary)
+	if !returnsummary.Equal(factPreflowTypesTest(out), []typ.Type{typ.Integer}) {
+		t.Fatalf("summary mismatch: got %v want integer", out.Returns.Preflow)
 	}
 }
 
 func TestNormalize_DeclaredAnyReturnPreservesGradualContract(t *testing.T) {
-	out := Normalize(api.FunctionFact{
-		Summary:   product.LiftVector([]typ.Type{typ.Any}),
-		Narrow:    product.LiftVector([]typ.Type{typ.Integer}),
-		Signature: typ.Func().Param("x", typ.Any).Returns(typ.Any).Build(),
-	})
+	out := Normalize(functionFactTest(
+		factPreflowReturns(typ.Any),
+		factPostflowReturns(typ.Integer),
+		factSignature(typ.Func().Param("x", typ.Any).Returns(typ.Any).Build()),
+	))
 
-	if !returnsummary.Equal(product.ProjectVector(out.Summary), []typ.Type{typ.Any}) {
-		t.Fatalf("summary mismatch: got %v want any", out.Summary)
+	if !returnsummary.Equal(factPreflowTypesTest(out), []typ.Type{typ.Any}) {
+		t.Fatalf("summary mismatch: got %v want any", out.Returns.Preflow)
 	}
 }
 
 func TestNormalize_NilOnlyNarrowDoesNotCreateSummary(t *testing.T) {
-	out := Normalize(api.FunctionFact{Narrow: product.LiftVector([]typ.Type{typ.Nil})})
-	if len(out.Summary) != 0 {
-		t.Fatalf("summary mismatch: got %v want empty", out.Summary)
+	out := Normalize(functionFactTest(factPostflowReturns(typ.Nil)))
+	if len(out.Returns.Preflow) != 0 {
+		t.Fatalf("summary mismatch: got %v want empty", out.Returns.Preflow)
 	}
-	if !returnsummary.Equal(product.ProjectVector(out.Narrow), []typ.Type{typ.Nil}) {
-		t.Fatalf("narrow mismatch: got %v want nil", out.Narrow)
+	if !returnsummary.Equal(factPostflowTypesTest(out), []typ.Type{typ.Nil}) {
+		t.Fatalf("narrow mismatch: got %v want nil", out.Returns.Postflow)
 	}
 }
 
 func TestNormalize_MixedArityNarrowDoesNotTruncateSummaryProduct(t *testing.T) {
 	dbType := typ.NewRecord().Field("query", typ.Func().Returns(typ.Any).Build()).Build()
 	summary := []typ.Type{typ.NewOptional(dbType), typ.NewOptional(typ.LuaError)}
-	out := Normalize(api.FunctionFact{
-		Summary:   product.LiftVector(summary),
-		Narrow:    product.LiftVector([]typ.Type{dbType}),
-		Signature: typ.Func().Returns(typ.Unknown).Build(),
-	})
+	out := Normalize(functionFactTest(
+		factPreflowReturns(summary...),
+		factPostflowReturns(dbType),
+		factSignature(typ.Func().Returns(typ.Unknown).Build()),
+	))
 
-	if !returnsummary.Equal(product.ProjectVector(out.Summary), summary) {
-		t.Fatalf("summary mismatch: got %v want %v", out.Summary, summary)
+	if !returnsummary.Equal(factPreflowTypesTest(out), summary) {
+		t.Fatalf("summary mismatch: got %v want %v", out.Returns.Preflow, summary)
 	}
-	if !returnsummary.Equal(product.ProjectVector(out.Narrow), []typ.Type{dbType}) {
-		t.Fatalf("narrow mismatch: got %v want %v", out.Narrow, []typ.Type{dbType})
+	if !returnsummary.Equal(factPostflowTypesTest(out), []typ.Type{dbType}) {
+		t.Fatalf("narrow mismatch: got %v want %v", out.Returns.Postflow, []typ.Type{dbType})
 	}
 }
 
@@ -280,18 +280,18 @@ func TestWidenForConvergence_MixedArityNarrowDoesNotTruncateSummaryProduct(t *te
 	dbType := typ.NewRecord().Field("query", typ.Func().Returns(typ.Any).Build()).Build()
 	prevSummary := []typ.Type{typ.NewOptional(dbType), typ.NewOptional(typ.LuaError)}
 	out := WidenForConvergence(
-		api.FunctionFact{Summary: product.LiftVector(prevSummary), Narrow: product.LiftVector(prevSummary)},
-		api.FunctionFact{Summary: product.LiftVector([]typ.Type{dbType}), Narrow: product.LiftVector([]typ.Type{dbType})},
+		functionFactTest(factReturnProjection(prevSummary, prevSummary)),
+		functionFactTest(factPreflowReturns(dbType), factPostflowReturns(dbType)),
 	)
 
-	if len(out.Summary) != 2 {
-		t.Fatalf("summary arity mismatch: got %v want two slots", out.Summary)
+	if len(out.Returns.Preflow) != 2 {
+		t.Fatalf("summary arity mismatch: got %v want two slots", out.Returns.Preflow)
 	}
-	if !unwrap.IsOptionalLike(out.Summary[0].ProjectValue()) {
-		t.Fatalf("first slot should remain nilable across return paths, got %v", out.Summary[0].ProjectValue())
+	if !unwrap.IsOptionalLike(out.Returns.Preflow[0].ProjectValue()) {
+		t.Fatalf("first slot should remain nilable across return paths, got %v", out.Returns.Preflow[0].ProjectValue())
 	}
-	if !unwrap.IsOptionalLike(out.Summary[1].ProjectValue()) {
-		t.Fatalf("second slot should remain nil-padded, got %v", out.Summary[1].ProjectValue())
+	if !unwrap.IsOptionalLike(out.Returns.Preflow[1].ProjectValue()) {
+		t.Fatalf("second slot should remain nil-padded, got %v", out.Returns.Preflow[1].ProjectValue())
 	}
 }
 
@@ -301,22 +301,18 @@ func TestWidenForConvergence_ValueErrorProductAdmitsLaterSuccessBranch(t *testin
 	next := []typ.Type{typ.NewOptional(value), typ.NewOptional(err)}
 
 	out := WidenForConvergence(
-		api.FunctionFact{
-			Summary: product.LiftVector([]typ.Type{typ.Nil, err}),
-			Narrow:  product.LiftVector([]typ.Type{typ.Nil, err}),
-		},
-		api.FunctionFact{
-			Summary:   product.LiftVector(next),
-			Narrow:    product.LiftVector(next),
-			Signature: typ.Func().Param("name", typ.Any).Returns(next...).Build(),
-		},
+		functionFactTest(factPreflowReturns(typ.Nil, err), factPostflowReturns(typ.Nil, err)),
+		functionFactTest(
+			factReturnProjection(next, next),
+			factSignature(typ.Func().Param("name", typ.Any).Returns(next...).Build()),
+		),
 	)
 
-	if !returnsummary.Equal(product.ProjectVector(out.Summary), next) {
-		t.Fatalf("summary = %v, want %v", out.Summary, next)
+	if !returnsummary.Equal(factPreflowTypesTest(out), next) {
+		t.Fatalf("summary = %v, want %v", out.Returns.Preflow, next)
 	}
-	if !returnsummary.Equal(product.ProjectVector(out.Narrow), next) {
-		t.Fatalf("narrow = %v, want %v", out.Narrow, next)
+	if !returnsummary.Equal(factPostflowTypesTest(out), next) {
+		t.Fatalf("narrow = %v, want %v", out.Returns.Postflow, next)
 	}
 }
 
@@ -330,20 +326,20 @@ func TestWidenForConvergence_EquivalentAliasAndStructuralNarrowConverges(t *test
 	structReturn := typ.NewOptional(eventStruct)
 
 	out := WidenForConvergence(
-		api.FunctionFact{Summary: product.LiftVector([]typ.Type{aliasReturn}), Narrow: product.LiftVector([]typ.Type{structReturn})},
-		api.FunctionFact{Summary: product.LiftVector([]typ.Type{structReturn}), Narrow: product.LiftVector([]typ.Type{aliasReturn})},
+		functionFactTest(factPreflowReturns(aliasReturn), factPostflowReturns(structReturn)),
+		functionFactTest(factPreflowReturns(structReturn), factPostflowReturns(aliasReturn)),
 	)
 
-	if !returnsummary.Equal(product.ProjectVector(out.Summary), product.ProjectVector(out.Narrow)) {
-		t.Fatalf("summary/narrow equivalent representatives diverged:\nsummary=%v\nnarrow=%v", out.Summary, out.Narrow)
+	if !returnsummary.Equal(factPreflowTypesTest(out), factPostflowTypesTest(out)) {
+		t.Fatalf("summary/narrow equivalent representatives diverged:\nsummary=%v\nnarrow=%v", out.Returns.Preflow, out.Returns.Postflow)
 	}
-	if len(out.Summary) != 1 || !returnSlotHasAliasSurface(out.Summary[0].ProjectValue()) {
-		t.Fatalf("expected alias surface to be the canonical representative, got %v", out.Summary)
+	if len(out.Returns.Preflow) != 1 || !returnSlotHasAliasSurface(out.Returns.Preflow[0].ProjectValue()) {
+		t.Fatalf("expected alias surface to be the canonical representative, got %v", out.Returns.Preflow)
 	}
 
-	next := WidenForConvergence(out, api.FunctionFact{Summary: product.LiftVector([]typ.Type{structReturn}), Narrow: product.LiftVector([]typ.Type{aliasReturn})})
-	if !returnsummary.Equal(product.ProjectVector(next.Summary), product.ProjectVector(out.Summary)) || !returnsummary.Equal(product.ProjectVector(next.Narrow), product.ProjectVector(out.Narrow)) {
-		t.Fatalf("equivalent alias/struct repair must be idempotent:\nout=%v/%v\nnext=%v/%v", out.Summary, out.Narrow, next.Summary, next.Narrow)
+	next := WidenForConvergence(out, functionFactTest(factPreflowReturns(structReturn), factPostflowReturns(aliasReturn)))
+	if !returnsummary.Equal(factPreflowTypesTest(next), factPreflowTypesTest(out)) || !returnsummary.Equal(factPostflowTypesTest(next), factPostflowTypesTest(out)) {
+		t.Fatalf("equivalent alias/struct repair must be idempotent:\nout=%v/%v\nnext=%v/%v", out.Returns.Preflow, out.Returns.Postflow, next.Returns.Preflow, next.Returns.Postflow)
 	}
 }
 
@@ -366,15 +362,15 @@ func TestWidenForConvergence_RecursiveSummaryNarrowRepairIsCoinductive(t *testin
 	structReturn := typ.NewOptional(narrowNode)
 
 	out := WidenForConvergence(
-		api.FunctionFact{Summary: product.LiftVector([]typ.Type{aliasReturn}), Narrow: product.LiftVector([]typ.Type{structReturn})},
-		api.FunctionFact{Summary: product.LiftVector([]typ.Type{structReturn}), Narrow: product.LiftVector([]typ.Type{aliasReturn})},
+		functionFactTest(factPreflowReturns(aliasReturn), factPostflowReturns(structReturn)),
+		functionFactTest(factPreflowReturns(structReturn), factPostflowReturns(aliasReturn)),
 	)
 
-	if !returnsummary.Equal(product.ProjectVector(out.Summary), product.ProjectVector(out.Narrow)) {
-		t.Fatalf("recursive summary/narrow repair diverged:\nsummary=%v\nnarrow=%v", out.Summary, out.Narrow)
+	if !returnsummary.Equal(factPreflowTypesTest(out), factPostflowTypesTest(out)) {
+		t.Fatalf("recursive summary/narrow repair diverged:\nsummary=%v\nnarrow=%v", out.Returns.Preflow, out.Returns.Postflow)
 	}
-	if len(out.Summary) != 1 || !returnSlotHasAliasSurface(out.Summary[0].ProjectValue()) {
-		t.Fatalf("expected alias surface to remain canonical, got %v", out.Summary)
+	if len(out.Returns.Preflow) != 1 || !returnSlotHasAliasSurface(out.Returns.Preflow[0].ProjectValue()) {
+		t.Fatalf("expected alias surface to remain canonical, got %v", out.Returns.Preflow)
 	}
 }
 
@@ -426,12 +422,9 @@ func TestNormalize_NarrowRequiredFieldRepairsOptionalPresence(t *testing.T) {
 			Build(),
 	)
 
-	out := Normalize(api.FunctionFact{
-		Summary: product.LiftVector([]typ.Type{summary}),
-		Narrow:  product.LiftVector([]typ.Type{narrow}),
-	})
-	if !returnsummary.Equal(product.ProjectVector(out.Summary), []typ.Type{want}) {
-		t.Fatalf("summary mismatch: got %v want %v", out.Summary, []typ.Type{want})
+	out := Normalize(functionFactTest(factPreflowReturns(summary), factPostflowReturns(narrow)))
+	if !returnsummary.Equal(factPreflowTypesTest(out), []typ.Type{want}) {
+		t.Fatalf("summary mismatch: got %v want %v", out.Returns.Preflow, []typ.Type{want})
 	}
 }
 
@@ -472,34 +465,34 @@ func TestWidenForConvergence_PreservesBodyStructuralParamPrecision(t *testing.T)
 	ret := typ.NewArray(typ.NewRecord().Field("role", typ.LiteralString("user")).Build())
 
 	out := WidenForConvergence(
-		api.FunctionFact{
-			Params:    product.LiftVector([]typ.Type{publicParam}),
-			Summary:   product.LiftVector([]typ.Type{ret}),
-			Narrow:    product.LiftVector([]typ.Type{ret}),
-			Signature: typ.Func().Param("messages", publicParam).Returns(ret).Build(),
-		},
-		api.FunctionFact{
-			Params:      product.LiftVector([]typ.Type{publicParam}),
-			BodyParams:  product.LiftVector([]typ.Type{bodyContract}),
-			EntryParams: product.LiftVector([]typ.Type{entryParam}),
-			Summary:     product.LiftVector([]typ.Type{ret}),
-			Narrow:      product.LiftVector([]typ.Type{ret}),
-			Signature:   typ.Func().Param("messages", publicParam).Returns(ret).Build(),
-		},
+		functionFactTest(
+			factCallParams(publicParam),
+			factPreflowReturns(ret),
+			factPostflowReturns(ret),
+			factSignature(typ.Func().Param("messages", publicParam).Returns(ret).Build()),
+		),
+		functionFactTest(
+			factCallParams(publicParam),
+			factBodyParams(bodyContract),
+			factEntryParams(entryParam),
+			factPreflowReturns(ret),
+			factPostflowReturns(ret),
+			factSignature(typ.Func().Param("messages", publicParam).Returns(ret).Build()),
+		),
 	)
 
 	bodyFn := unwrap.Function(ProjectType(out, ProjectionBody, api.SynthModeDeclared))
 	if bodyFn == nil || !typ.TypeEquals(bodyFn.Params[0].Type, entryParam) {
 		t.Fatalf("expected body-effective function type to preserve entry %v, got %v", entryParam, bodyFn)
 	}
-	if len(out.Params) != 1 || !typ.TypeEquals(out.Params[0].ProjectValue(), publicParam) {
-		t.Fatalf("expected public call-boundary params to remain %v, got %v", publicParam, out.Params)
+	if len(out.Call.Params) != 1 || !typ.TypeEquals(out.Call.Params[0].ProjectValue(), publicParam) {
+		t.Fatalf("expected public call-boundary params to remain %v, got %v", publicParam, out.Call.Params)
 	}
-	if len(out.BodyParams) != 1 || !typ.TypeEquals(out.BodyParams[0].ProjectValue(), bodyContract) {
-		t.Fatalf("expected body contract to remain %v, got %v", bodyContract, out.BodyParams)
+	if len(out.Body.Params) != 1 || !typ.TypeEquals(out.Body.Params[0].ProjectValue(), bodyContract) {
+		t.Fatalf("expected body contract to remain %v, got %v", bodyContract, out.Body.Params)
 	}
-	if len(out.EntryParams) != 1 || !typ.TypeEquals(out.EntryParams[0].ProjectValue(), entryParam) {
-		t.Fatalf("expected entry params to remain %v, got %v", entryParam, out.EntryParams)
+	if len(out.Entry.Params) != 1 || !typ.TypeEquals(out.Entry.Params[0].ProjectValue(), entryParam) {
+		t.Fatalf("expected entry params to remain %v, got %v", entryParam, out.Entry.Params)
 	}
 }
 
@@ -509,12 +502,8 @@ func TestWidenForConvergence_SelfEmbeddingTupleParamTerminates(t *testing.T) {
 	nested := typ.NewTuple(tuple)
 
 	out := WidenForConvergence(
-		api.FunctionFact{
-			Signature: typ.Func().Param("specs", tuple).Returns(typ.Unknown).Build(),
-		},
-		api.FunctionFact{
-			Signature: typ.Func().Param("specs", nested).Returns(typ.Unknown).Build(),
-		},
+		functionFactTest(factSignature(typ.Func().Param("specs", tuple).Returns(typ.Unknown).Build())),
+		functionFactTest(factSignature(typ.Func().Param("specs", nested).Returns(typ.Unknown).Build())),
 	)
 
 	fn := projectFunctionForTest(t, out)
@@ -535,23 +524,15 @@ func TestWidenForConvergence_CurrentNarrowRepairsStaleInferredMapKey(t *testing.
 	solved := typ.NewMap(typ.String, typ.Any)
 
 	out := WidenForConvergence(
-		api.FunctionFact{
-			Summary:   product.LiftVector([]typ.Type{stale}),
-			Narrow:    product.LiftVector([]typ.Type{stale}),
-			Signature: typ.Func().Build(),
-		},
-		api.FunctionFact{
-			Summary:   product.LiftVector([]typ.Type{solved}),
-			Narrow:    product.LiftVector([]typ.Type{solved}),
-			Signature: typ.Func().Build(),
-		},
+		functionFactTest(factPreflowReturns(stale), factPostflowReturns(stale), factSignature(typ.Func().Build())),
+		functionFactTest(factPreflowReturns(solved), factPostflowReturns(solved), factSignature(typ.Func().Build())),
 	)
 
-	if !returnsummary.Equal(product.ProjectVector(out.Narrow), []typ.Type{solved}) {
-		t.Fatalf("narrow mismatch: got %v want %v", out.Narrow, []typ.Type{solved})
+	if !returnsummary.Equal(factPostflowTypesTest(out), []typ.Type{solved}) {
+		t.Fatalf("narrow mismatch: got %v want %v", out.Returns.Postflow, []typ.Type{solved})
 	}
-	if !returnsummary.Equal(product.ProjectVector(out.Summary), []typ.Type{solved}) {
-		t.Fatalf("summary mismatch: got %v want %v", out.Summary, []typ.Type{solved})
+	if !returnsummary.Equal(factPreflowTypesTest(out), []typ.Type{solved}) {
+		t.Fatalf("summary mismatch: got %v want %v", out.Returns.Preflow, []typ.Type{solved})
 	}
 }
 
@@ -560,20 +541,12 @@ func TestWidenForConvergence_DeclaredDynamicMapReturnPreserved(t *testing.T) {
 	solved := typ.NewMap(typ.String, typ.Any)
 
 	out := WidenForConvergence(
-		api.FunctionFact{
-			Summary:   product.LiftVector([]typ.Type{declared}),
-			Narrow:    product.LiftVector([]typ.Type{declared}),
-			Signature: typ.Func().Returns(declared).Build(),
-		},
-		api.FunctionFact{
-			Summary:   product.LiftVector([]typ.Type{solved}),
-			Narrow:    product.LiftVector([]typ.Type{solved}),
-			Signature: typ.Func().Returns(declared).Build(),
-		},
+		functionFactTest(factPreflowReturns(declared), factPostflowReturns(declared), factSignature(typ.Func().Returns(declared).Build())),
+		functionFactTest(factPreflowReturns(solved), factPostflowReturns(solved), factSignature(typ.Func().Returns(declared).Build())),
 	)
 
-	if !returnsummary.Equal(product.ProjectVector(out.Summary), []typ.Type{declared}) {
-		t.Fatalf("declared summary mismatch: got %v want %v", out.Summary, []typ.Type{declared})
+	if !returnsummary.Equal(factPreflowTypesTest(out), []typ.Type{declared}) {
+		t.Fatalf("declared summary mismatch: got %v want %v", out.Returns.Preflow, []typ.Type{declared})
 	}
 	fn := projectFunctionForModeForTest(t, out, api.SynthModeFlow)
 	if len(fn.Returns) != 1 || !typ.TypeEquals(fn.Returns[0], declared) {
@@ -593,16 +566,8 @@ func TestProjectionExport_UnannotatedDynamicAnyReturnFieldsBecomeUnknown(t *test
 		Build()
 
 	out := WidenForConvergence(
-		api.FunctionFact{
-			Summary:   product.LiftVector([]typ.Type{stale}),
-			Narrow:    product.LiftVector([]typ.Type{stale}),
-			Signature: typ.Func().Build(),
-		},
-		api.FunctionFact{
-			Summary:   product.LiftVector([]typ.Type{observed}),
-			Narrow:    product.LiftVector([]typ.Type{observed}),
-			Signature: typ.Func().Build(),
-		},
+		functionFactTest(factPreflowReturns(stale), factPostflowReturns(stale), factSignature(typ.Func().Build())),
+		functionFactTest(factPreflowReturns(observed), factPostflowReturns(observed), factSignature(typ.Func().Build())),
 	)
 
 	sibling := unwrap.Function(ProjectType(out, ProjectionSibling, api.SynthModeFlow))
@@ -641,12 +606,12 @@ func TestJoin_NarrowSummaryReplacesOpenTopPlaceholder(t *testing.T) {
 	narrow := []typ.Type{typ.NewArray(typ.Unknown)}
 
 	out := Join(
-		api.FunctionFact{Summary: product.LiftVector([]typ.Type{openTop}), Signature: existingFunc},
-		api.FunctionFact{Summary: product.LiftVector([]typ.Type{openTop}), Narrow: product.LiftVector(narrow), Signature: candidateFunc},
+		functionFactTest(factPreflowReturns(openTop), factSignature(existingFunc)),
+		functionFactTest(factPreflowReturns(openTop), factPostflowReturns(narrow...), factSignature(candidateFunc)),
 	)
 
-	if !returnsummary.Equal(returnsummary.NormalizeAndPrune(product.ProjectVector(out.Summary)), returnsummary.NormalizeAndPrune(narrow)) {
-		t.Fatalf("summary mismatch: got %v want %v", out.Summary, narrow)
+	if !returnsummary.Equal(returnsummary.NormalizeAndPrune(factPreflowTypesTest(out)), returnsummary.NormalizeAndPrune(narrow)) {
+		t.Fatalf("summary mismatch: got %v want %v", out.Returns.Preflow, narrow)
 	}
 	fn := projectFunctionForTest(t, out)
 	if !returnsummary.Equal(returnsummary.NormalizeAndPrune(fn.Returns), returnsummary.NormalizeAndPrune(narrow)) {
@@ -681,15 +646,15 @@ func TestJoin_NarrowSummaryRepairsNeverArtifact(t *testing.T) {
 	}
 
 	out := Join(
-		api.FunctionFact{Summary: product.LiftVector(bad), Signature: typ.Func().Build()},
-		api.FunctionFact{Narrow: product.LiftVector(good)},
+		functionFactTest(factPreflowReturns(bad...), factSignature(typ.Func().Build())),
+		functionFactTest(factPostflowReturns(good...)),
 	)
 
-	if !returnsummary.Equal(product.ProjectVector(out.Summary), good) {
-		t.Fatalf("summary mismatch: got %v want %v", out.Summary, good)
+	if !returnsummary.Equal(factPreflowTypesTest(out), good) {
+		t.Fatalf("summary mismatch: got %v want %v", out.Returns.Preflow, good)
 	}
-	if !returnsummary.Equal(product.ProjectVector(out.Narrow), good) {
-		t.Fatalf("narrow mismatch: got %v want %v", out.Narrow, good)
+	if !returnsummary.Equal(factPostflowTypesTest(out), good) {
+		t.Fatalf("narrow mismatch: got %v want %v", out.Returns.Postflow, good)
 	}
 	fn := projectFunctionForTest(t, out)
 	if !returnsummary.Equal(fn.Returns, good) {
@@ -700,25 +665,17 @@ func TestJoin_NarrowSummaryRepairsNeverArtifact(t *testing.T) {
 func TestJoin_MergesExistingAndCandidate(t *testing.T) {
 	existingFn := typ.Func().Returns(typ.Number).Build()
 	candidateFn := typ.Func().Returns(typ.String).Build()
-	existing := api.FunctionFact{
-		Summary:   product.LiftVector([]typ.Type{typ.Number}),
-		Narrow:    product.LiftVector([]typ.Type{typ.Number}),
-		Signature: existingFn,
-	}
-	candidate := api.FunctionFact{
-		Summary:   product.LiftVector([]typ.Type{typ.String}),
-		Narrow:    product.LiftVector([]typ.Type{typ.String}),
-		Signature: candidateFn,
-	}
+	existing := functionFactTest(factPreflowReturns(typ.Number), factPostflowReturns(typ.Number), factSignature(existingFn))
+	candidate := functionFactTest(factPreflowReturns(typ.String), factPostflowReturns(typ.String), factSignature(candidateFn))
 	got := Join(existing, candidate)
 
-	if !returnsummary.Equal(product.ProjectVector(got.Summary), []typ.Type{typ.NewUnion(typ.Number, typ.String)}) {
-		t.Fatalf("summary mismatch: got %v", got.Summary)
+	if !returnsummary.Equal(factPreflowTypesTest(got), []typ.Type{typ.NewUnion(typ.Number, typ.String)}) {
+		t.Fatalf("summary mismatch: got %v", got.Returns.Preflow)
 	}
-	if !returnsummary.Equal(product.ProjectVector(got.Narrow), []typ.Type{typ.NewUnion(typ.Number, typ.String)}) {
-		t.Fatalf("narrow mismatch: got %v", got.Narrow)
+	if !returnsummary.Equal(factPostflowTypesTest(got), []typ.Type{typ.NewUnion(typ.Number, typ.String)}) {
+		t.Fatalf("narrow mismatch: got %v", got.Returns.Postflow)
 	}
-	if got.Signature == nil {
+	if got.Public.Signature == nil {
 		t.Fatal("expected merged function signature")
 	}
 }
@@ -734,12 +691,12 @@ func TestJoin_DoesNotAlignFunctionToNarrowFieldRegression(t *testing.T) {
 	existingFunc := typ.Func().Build()
 
 	out := Join(
-		api.FunctionFact{Summary: product.LiftVector([]typ.Type{withCapturedMethod}), Narrow: product.LiftVector([]typ.Type{flowOnly}), Signature: existingFunc},
-		api.FunctionFact{Summary: product.LiftVector([]typ.Type{withCapturedMethod}), Narrow: product.LiftVector([]typ.Type{flowOnly}), Signature: existingFunc},
+		functionFactTest(factPreflowReturns(withCapturedMethod), factPostflowReturns(flowOnly), factSignature(existingFunc)),
+		functionFactTest(factPreflowReturns(withCapturedMethod), factPostflowReturns(flowOnly), factSignature(existingFunc)),
 	)
 
-	if !returnsummary.Equal(product.ProjectVector(out.Summary), []typ.Type{withCapturedMethod}) {
-		t.Fatalf("summary mismatch: got %v want %v", out.Summary, []typ.Type{withCapturedMethod})
+	if !returnsummary.Equal(factPreflowTypesTest(out), []typ.Type{withCapturedMethod}) {
+		t.Fatalf("summary mismatch: got %v want %v", out.Returns.Preflow, []typ.Type{withCapturedMethod})
 	}
 	fn := projectFunctionForTest(t, out)
 	if !returnsummary.Equal(fn.Returns, []typ.Type{withCapturedMethod}) {
@@ -847,15 +804,15 @@ func TestWidenForConvergence_ReplacesReturnFieldFunctionSeed(t *testing.T) {
 		Build()
 
 	got := WidenForConvergence(
-		api.FunctionFact{Summary: product.LiftVector([]typ.Type{weak}), Narrow: product.LiftVector([]typ.Type{weak})},
-		api.FunctionFact{Summary: product.LiftVector([]typ.Type{strong}), Narrow: product.LiftVector([]typ.Type{strong})},
+		functionFactTest(factPreflowReturns(weak), factPostflowReturns(weak)),
+		functionFactTest(factPreflowReturns(strong), factPostflowReturns(strong)),
 	)
 
-	if !returnsummary.Equal(product.ProjectVector(got.Summary), []typ.Type{strong}) {
-		t.Fatalf("summary mismatch: got %v want %v", got.Summary, []typ.Type{strong})
+	if !returnsummary.Equal(factPreflowTypesTest(got), []typ.Type{strong}) {
+		t.Fatalf("summary mismatch: got %v want %v", got.Returns.Preflow, []typ.Type{strong})
 	}
-	if !returnsummary.Equal(product.ProjectVector(got.Narrow), []typ.Type{strong}) {
-		t.Fatalf("narrow mismatch: got %v want %v", got.Narrow, []typ.Type{strong})
+	if !returnsummary.Equal(factPostflowTypesTest(got), []typ.Type{strong}) {
+		t.Fatalf("narrow mismatch: got %v want %v", got.Returns.Postflow, []typ.Type{strong})
 	}
 }
 
@@ -1078,14 +1035,14 @@ func TestWidenForConvergence_RefinesUnknownReturnMetatableEvidence(t *testing.T)
 	strong := typ.NewRecord().Metatable(metatable).Build()
 
 	got := WidenForConvergence(
-		api.FunctionFact{Summary: product.LiftVector([]typ.Type{weak}), Narrow: product.LiftVector([]typ.Type{weak})},
-		api.FunctionFact{Summary: product.LiftVector([]typ.Type{strong}), Narrow: product.LiftVector([]typ.Type{strong})},
+		functionFactTest(factPreflowReturns(weak), factPostflowReturns(weak)),
+		functionFactTest(factPreflowReturns(strong), factPostflowReturns(strong)),
 	)
-	if mt, ok := querycore.Method(got.Summary[0].ProjectValue(), "ready"); !ok {
-		t.Fatalf("widened summary metatable method ready = %v ok=%v, want inherited method on %v", mt, ok, got.Summary[0].ProjectValue())
+	if mt, ok := querycore.Method(got.Returns.Preflow[0].ProjectValue(), "ready"); !ok {
+		t.Fatalf("widened summary metatable method ready = %v ok=%v, want inherited method on %v", mt, ok, got.Returns.Preflow[0].ProjectValue())
 	}
-	if mt, ok := querycore.Method(got.Narrow[0].ProjectValue(), "ready"); !ok {
-		t.Fatalf("widened narrow metatable method ready = %v ok=%v, want inherited method on %v", mt, ok, got.Narrow[0].ProjectValue())
+	if mt, ok := querycore.Method(got.Returns.Postflow[0].ProjectValue(), "ready"); !ok {
+		t.Fatalf("widened narrow metatable method ready = %v ok=%v, want inherited method on %v", mt, ok, got.Returns.Postflow[0].ProjectValue())
 	}
 }
 
@@ -1434,20 +1391,20 @@ func TestMergeReturnsForSameSignature_NormalizesLeakedTypeParams(t *testing.T) {
 
 func TestNormalize_CanonicalizesStoredFunctionFact(t *testing.T) {
 	fn := typ.Func().Returns(typ.Number).Build()
-	got := Normalize(api.FunctionFact{
-		Summary:   product.LiftVector([]typ.Type{nil}),
-		Narrow:    product.LiftVector([]typ.Type{typ.Number}),
-		Signature: fn,
-	})
+	got := Normalize(functionFactTest(
+		factPreflowReturns(nil),
+		factPostflowReturns(typ.Number),
+		factSignature(fn),
+	))
 
-	if !returnsummary.Equal(product.ProjectVector(got.Summary), []typ.Type{typ.Nil}) {
-		t.Fatalf("summary mismatch: got %v", got.Summary)
+	if !returnsummary.Equal(factPreflowTypesTest(got), []typ.Type{typ.Nil}) {
+		t.Fatalf("summary mismatch: got %v", got.Returns.Preflow)
 	}
-	if !returnsummary.Equal(product.ProjectVector(got.Narrow), []typ.Type{typ.Number}) {
-		t.Fatalf("narrow mismatch: got %v", got.Narrow)
+	if !returnsummary.Equal(factPostflowTypesTest(got), []typ.Type{typ.Number}) {
+		t.Fatalf("narrow mismatch: got %v", got.Returns.Postflow)
 	}
-	if !typ.TypeEquals(got.Signature, fn) {
-		t.Fatalf("signature mismatch: got %v", got.Signature)
+	if !typ.TypeEquals(got.Public.Signature, fn) {
+		t.Fatalf("signature mismatch: got %v", got.Public.Signature)
 	}
 }
 

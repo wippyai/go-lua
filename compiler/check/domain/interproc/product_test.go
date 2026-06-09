@@ -17,12 +17,12 @@ import (
 func TestWidenFacts_DoesNotOverrideSummaryWithNilNarrow(t *testing.T) {
 	prev := api.Facts{
 		FunctionFacts: api.FunctionFacts{
-			1: {Summary: product.LiftVector([]typ.Type{typ.Integer})},
+			1: {Returns: api.FunctionReturnProjection{Preflow: product.LiftVector([]typ.Type{typ.Integer})}},
 		},
 	}
 	next := api.Facts{
 		FunctionFacts: api.FunctionFacts{
-			1: {Narrow: product.LiftVector([]typ.Type{typ.Nil})},
+			1: {Returns: api.FunctionReturnProjection{Postflow: product.LiftVector([]typ.Type{typ.Nil})}},
 		},
 	}
 
@@ -36,12 +36,12 @@ func TestWidenFacts_DoesNotOverrideSummaryWithNilNarrow(t *testing.T) {
 func TestWidenFacts_ElidesOptionalFromNarrowFunctionFact(t *testing.T) {
 	prev := api.Facts{
 		FunctionFacts: api.FunctionFacts{
-			1: {Summary: product.LiftVector([]typ.Type{typ.NewOptional(typ.Integer)})},
+			1: {Returns: api.FunctionReturnProjection{Preflow: product.LiftVector([]typ.Type{typ.NewOptional(typ.Integer)})}},
 		},
 	}
 	next := api.Facts{
 		FunctionFacts: api.FunctionFacts{
-			1: {Narrow: product.LiftVector([]typ.Type{typ.Integer})},
+			1: {Returns: api.FunctionReturnProjection{Postflow: product.LiftVector([]typ.Type{typ.Integer})}},
 		},
 	}
 
@@ -62,10 +62,10 @@ func TestWidenFacts_ReplacesEmptyReturnSeedWithMetatableEvidence(t *testing.T) {
 	observed := typ.NewRecord().Metatable(metatable).Build()
 
 	prev := api.Facts{FunctionFacts: api.FunctionFacts{
-		1: {Summary: product.LiftVector([]typ.Type{seed, typ.Nil}), Narrow: product.LiftVector([]typ.Type{seed, typ.Nil})},
+		1: {Returns: api.FunctionReturnProjection{Preflow: product.LiftVector([]typ.Type{seed, typ.Nil}), Postflow: product.LiftVector([]typ.Type{seed, typ.Nil})}},
 	}}
 	next := api.Facts{FunctionFacts: api.FunctionFacts{
-		1: {Summary: product.LiftVector([]typ.Type{observed, typ.Nil}), Narrow: product.LiftVector([]typ.Type{observed, typ.Nil})},
+		1: {Returns: api.FunctionReturnProjection{Preflow: product.LiftVector([]typ.Type{observed, typ.Nil}), Postflow: product.LiftVector([]typ.Type{observed, typ.Nil})}},
 	}}
 
 	merged := WidenFacts(prev, next)
@@ -76,7 +76,7 @@ func TestWidenFacts_ReplacesEmptyReturnSeedWithMetatableEvidence(t *testing.T) {
 	if mt, ok := querycore.Method(got[0], "ready"); !ok {
 		t.Fatalf("merged metatable method ready = %v ok=%v, want inherited method on %v", mt, ok, got[0])
 	}
-	narrow := merged.FunctionFacts[1].Narrow
+	narrow := merged.FunctionFacts[1].Returns.Postflow
 	if len(narrow) != 2 {
 		t.Fatalf("expected two narrow slots, got %v", narrow)
 	}
@@ -87,10 +87,10 @@ func TestWidenFacts_ReplacesEmptyReturnSeedWithMetatableEvidence(t *testing.T) {
 
 func TestWidenFacts_RefinesOptionalForFirstOrderFunctionSummary(t *testing.T) {
 	prev := api.Facts{FunctionFacts: api.FunctionFacts{
-		1: {Summary: product.LiftVector([]typ.Type{typ.NewOptional(typ.Integer)})},
+		1: {Returns: api.FunctionReturnProjection{Preflow: product.LiftVector([]typ.Type{typ.NewOptional(typ.Integer)})}},
 	}}
 	next := api.Facts{FunctionFacts: api.FunctionFacts{
-		1: {Summary: product.LiftVector([]typ.Type{typ.Integer})},
+		1: {Returns: api.FunctionReturnProjection{Preflow: product.LiftVector([]typ.Type{typ.Integer})}},
 	}}
 
 	merged := WidenFacts(prev, next)
@@ -116,10 +116,10 @@ func TestWidenFacts_UsesMonotoneJoinForHigherOrderFunctionSummary(t *testing.T) 
 		Build()
 
 	prev := api.Facts{FunctionFacts: api.FunctionFacts{
-		1: {Summary: product.LiftVector([]typ.Type{base})},
+		1: {Returns: api.FunctionReturnProjection{Preflow: product.LiftVector([]typ.Type{base})}},
 	}}
 	next := api.Facts{FunctionFacts: api.FunctionFacts{
-		1: {Summary: product.LiftVector([]typ.Type{refined})},
+		1: {Returns: api.FunctionReturnProjection{Preflow: product.LiftVector([]typ.Type{refined})}},
 	}}
 
 	merged := WidenFacts(prev, next)
@@ -141,10 +141,10 @@ func TestWidenFacts_InterfaceMethodsDoNotBlockOptionalElision(t *testing.T) {
 	})
 
 	prev := api.Facts{FunctionFacts: api.FunctionFacts{
-		1: {Summary: product.LiftVector([]typ.Type{typ.NewOptional(dbType)})},
+		1: {Returns: api.FunctionReturnProjection{Preflow: product.LiftVector([]typ.Type{typ.NewOptional(dbType)})}},
 	}}
 	next := api.Facts{FunctionFacts: api.FunctionFacts{
-		1: {Summary: product.LiftVector([]typ.Type{dbType})},
+		1: {Returns: api.FunctionReturnProjection{Preflow: product.LiftVector([]typ.Type{dbType})}},
 	}}
 
 	merged := WidenFacts(prev, next)

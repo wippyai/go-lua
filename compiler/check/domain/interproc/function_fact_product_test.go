@@ -20,13 +20,13 @@ func TestJoinFacts_BatchMergeFunctionFacts(t *testing.T) {
 	facts := JoinFacts(
 		api.Facts{
 			FunctionFacts: api.FunctionFacts{
-				symSummary: {Summary: product.LiftVector([]typ.Type{typ.String})},
-				symNarrow:  {Narrow: product.LiftVector([]typ.Type{typ.Number})},
+				symSummary: {Returns: api.FunctionReturnProjection{Preflow: product.LiftVector([]typ.Type{typ.String})}},
+				symNarrow:  {Returns: api.FunctionReturnProjection{Postflow: product.LiftVector([]typ.Type{typ.Number})}},
 			},
 		},
 		api.Facts{
 			FunctionFacts: api.FunctionFacts{
-				symFunc: {Signature: funcType},
+				symFunc: {Public: api.FunctionPublicProjection{Signature: funcType}},
 			},
 		},
 	)

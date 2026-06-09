@@ -45,7 +45,7 @@ local value, label = get_db()
 			root.NestedFunctions(),
 		)
 	}
-	returns := product.ProjectVector(fact.Summary)
+	returns := product.ProjectVector(fact.Returns.Preflow)
 	if len(returns) != 2 {
 		t.Fatalf("return summary arity = %d (%v), want 2", len(returns), returns)
 	}
@@ -80,7 +80,7 @@ local result = f(10)
 	}
 	for _, name := range []string{"f", "g"} {
 		fact := publishedRootFunctionFact(t, res, name)
-		returns := product.ProjectVector(fact.Summary)
+		returns := product.ProjectVector(fact.Returns.Preflow)
 		if len(returns) != 1 {
 			t.Fatalf("%s summary arity = %d (%v), want 1", name, len(returns), returns)
 		}

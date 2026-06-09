@@ -28,7 +28,7 @@ func TestFunctionFactsSummaryProjection(t *testing.T) {
 	facts := api.Facts{
 		FunctionFacts: api.FunctionFacts{
 			cfg.SymbolID(1): {
-				Summary: product.LiftVector([]typ.Type{typ.String}),
+				Returns: api.FunctionReturnProjection{Preflow: product.LiftVector([]typ.Type{typ.String})},
 			},
 		},
 	}
@@ -42,7 +42,7 @@ func TestFunctionFactsNarrowProjection(t *testing.T) {
 	facts := api.Facts{
 		FunctionFacts: api.FunctionFacts{
 			cfg.SymbolID(2): {
-				Narrow: product.LiftVector([]typ.Type{typ.Number}),
+				Returns: api.FunctionReturnProjection{Postflow: product.LiftVector([]typ.Type{typ.Number})},
 			},
 		},
 	}
@@ -57,7 +57,7 @@ func TestFunctionFactsSiblingProjection(t *testing.T) {
 	facts := api.Facts{
 		FunctionFacts: api.FunctionFacts{
 			cfg.SymbolID(3): {
-				Signature: fn,
+				Public: api.FunctionPublicProjection{Signature: fn},
 			},
 		},
 	}
@@ -85,7 +85,7 @@ func TestProjectionFacts_UsesStoredGraphParentHash(t *testing.T) {
 	key := api.KeyForGraph(graph, storedParent.Hash())
 	s.projectionPrev.facts[key] = api.Facts{
 		FunctionFacts: api.FunctionFacts{
-			cfg.SymbolID(1): {Summary: product.LiftVector([]typ.Type{typ.String})},
+			cfg.SymbolID(1): {Returns: api.FunctionReturnProjection{Preflow: product.LiftVector([]typ.Type{typ.String})}},
 		},
 	}
 
@@ -109,12 +109,12 @@ func TestProjectionFacts_OverlaysCurrentIterationFacts(t *testing.T) {
 	key := api.KeyForGraph(graph, parent.Hash())
 	s.projectionPrev.facts[key] = api.Facts{
 		FunctionFacts: api.FunctionFacts{
-			cfg.SymbolID(1): {Summary: product.LiftVector([]typ.Type{typ.String})},
+			cfg.SymbolID(1): {Returns: api.FunctionReturnProjection{Preflow: product.LiftVector([]typ.Type{typ.String})}},
 		},
 	}
 	s.projectionNext.facts[key] = api.Facts{
 		FunctionFacts: api.FunctionFacts{
-			cfg.SymbolID(1): {Summary: product.LiftVector([]typ.Type{typ.Number})},
+			cfg.SymbolID(1): {Returns: api.FunctionReturnProjection{Preflow: product.LiftVector([]typ.Type{typ.Number})}},
 		},
 	}
 
@@ -141,16 +141,16 @@ func TestProjectionFacts_ReturnsImmutableFactContainers(t *testing.T) {
 	s.projectionPrev.facts[key] = api.Facts{
 		FunctionFacts: api.FunctionFacts{
 			sym: {
-				Params:  product.LiftVector([]typ.Type{typ.String, typ.NewMap(typ.String, typ.Any)}),
-				Summary: product.LiftVector([]typ.Type{typ.String}),
+				Call:    api.FunctionCallProjection{Params: product.LiftVector([]typ.Type{typ.String, typ.NewMap(typ.String, typ.Any)})},
+				Returns: api.FunctionReturnProjection{Preflow: product.LiftVector([]typ.Type{typ.String})},
 			},
 		},
 	}
 
 	facts := s.ProjectionFacts(graph, parent).FunctionFacts()
 	fact := facts[sym]
-	fact.Params[1] = product.FromType(typ.Nil)
-	facts[sym] = api.FunctionFact{Summary: product.LiftVector([]typ.Type{typ.Number})}
+	fact.Call.Params[1] = product.FromType(typ.Nil)
+	facts[sym] = api.FunctionFact{Returns: api.FunctionReturnProjection{Preflow: product.LiftVector([]typ.Type{typ.Number})}}
 
 	again := s.ProjectionFacts(graph, parent).FunctionFacts()
 	if got := functionfact.FactsProjection(again).PublicParameterEvidence(sym)[1]; !typ.TypeEquals(got, typ.NewMap(typ.String, typ.Any)) {
@@ -168,11 +168,11 @@ func TestMergeProjectionFactsNext_ReconcilesDeltasWithinIteration(t *testing.T) 
 	broad := typ.Func().Param("path", typ.Any).Returns(typ.String).Build()
 
 	s := NewSessionStore()
-	first := api.Facts{FunctionFacts: api.FunctionFacts{sym: {Signature: refined}}}
+	first := api.Facts{FunctionFacts: api.FunctionFacts{sym: {Public: api.FunctionPublicProjection{Signature: refined}}}}
 	s.MergeProjectionFactsNext(key, first)
 	s.MergeProjectionFactsNext(key, api.Facts{
 		FunctionFacts: api.FunctionFacts{
-			sym: {Signature: broad},
+			sym: {Public: api.FunctionPublicProjection{Signature: broad}},
 		},
 	})
 
@@ -207,7 +207,7 @@ func TestFactInputs_RevalidateFactQueries(t *testing.T) {
 	}
 
 	delta := api.Facts{FunctionFacts: api.FunctionFacts{
-		sym: {Summary: product.LiftVector([]typ.Type{typ.String})},
+		sym: {Returns: api.FunctionReturnProjection{Preflow: product.LiftVector([]typ.Type{typ.String})}},
 	}}
 	s.MergeProjectionFactsNext(key, delta)
 	if got := q.Get(ctx, key); got != 0 || calls != 1 {
@@ -240,7 +240,7 @@ func TestFactInputs_FunctionFactProjectionTracksOneSymbol(t *testing.T) {
 		if !ok {
 			return 0
 		}
-		return len(ff.Summary)
+		return len(ff.Returns.Preflow)
 	}, func(a, b int) bool { return a == b })
 	queryKey := api.FunctionFactKey{GraphKey: key, Symbol: sym7}
 
@@ -249,8 +249,8 @@ func TestFactInputs_FunctionFactProjectionTracksOneSymbol(t *testing.T) {
 	}
 
 	s.MergeProjectionFactsNext(key, api.Facts{FunctionFacts: api.FunctionFacts{
-		sym7: {Summary: product.LiftVector([]typ.Type{typ.String})},
-		sym8: {Summary: product.LiftVector([]typ.Type{typ.Number})},
+		sym7: {Returns: api.FunctionReturnProjection{Preflow: product.LiftVector([]typ.Type{typ.String})}},
+		sym8: {Returns: api.FunctionReturnProjection{Preflow: product.LiftVector([]typ.Type{typ.Number})}},
 	}})
 	s.AdvanceProjectionFacts()
 	if got := q.Get(ctx, queryKey); got != 1 || calls != 2 {
@@ -258,7 +258,7 @@ func TestFactInputs_FunctionFactProjectionTracksOneSymbol(t *testing.T) {
 	}
 
 	s.MergeProjectionFactsNext(key, api.Facts{FunctionFacts: api.FunctionFacts{
-		sym8: {Summary: product.LiftVector([]typ.Type{typ.Number, typ.String})},
+		sym8: {Returns: api.FunctionReturnProjection{Preflow: product.LiftVector([]typ.Type{typ.Number, typ.String})}},
 	}})
 	s.AdvanceProjectionFacts()
 	if got := q.Get(ctx, queryKey); got != 1 || calls != 2 {
@@ -266,7 +266,7 @@ func TestFactInputs_FunctionFactProjectionTracksOneSymbol(t *testing.T) {
 	}
 
 	s.MergeProjectionFactsNext(key, api.Facts{FunctionFacts: api.FunctionFacts{
-		sym7: {Summary: product.LiftVector([]typ.Type{typ.String, typ.Number})},
+		sym7: {Returns: api.FunctionReturnProjection{Preflow: product.LiftVector([]typ.Type{typ.String, typ.Number})}},
 	}})
 	s.AdvanceProjectionFacts()
 	if got := q.Get(ctx, queryKey); got != 2 || calls != 3 {
@@ -336,10 +336,10 @@ func TestFactInputs_PublishOnlyAtFixpointBoundary(t *testing.T) {
 
 	beforeWrites := database.Revision()
 	s.MergeProjectionFactsNext(key, api.Facts{FunctionFacts: api.FunctionFacts{
-		cfg.SymbolID(7): {Summary: product.LiftVector([]typ.Type{typ.String})},
+		cfg.SymbolID(7): {Returns: api.FunctionReturnProjection{Preflow: product.LiftVector([]typ.Type{typ.String})}},
 	}})
 	s.MergeProjectionFactsNext(key, api.Facts{FunctionFacts: api.FunctionFacts{
-		cfg.SymbolID(8): {Summary: product.LiftVector([]typ.Type{typ.Number})},
+		cfg.SymbolID(8): {Returns: api.FunctionReturnProjection{Preflow: product.LiftVector([]typ.Type{typ.Number})}},
 	}})
 	if got := database.Revision(); got != beforeWrites {
 		t.Fatalf("next-product writes bumped query revision: got %d want %d", got, beforeWrites)
@@ -430,8 +430,8 @@ func TestAdvanceProjectionFacts_TracksChannelDiffsAndResetsNext(t *testing.T) {
 	s.projectionNext.facts[key] = api.Facts{
 		FunctionFacts: api.FunctionFacts{
 			1: {
-				Summary:    product.LiftVector([]typ.Type{typ.String}),
-				Refinement: &constraint.FunctionRefinement{Terminates: true},
+				Returns: api.FunctionReturnProjection{Preflow: product.LiftVector([]typ.Type{typ.String})},
+				Effects: api.FunctionEffectProjection{Refinement: &constraint.FunctionRefinement{Terminates: true}},
 			},
 		},
 	}
@@ -481,7 +481,7 @@ func TestProjectionFactDiffs_ReturnsCopy(t *testing.T) {
 	key := registerFunctionForRefinementTest(t, s, 1)
 	s.MergeProjectionFactsNext(key, api.Facts{
 		FunctionFacts: api.FunctionFacts{
-			1: {Refinement: &constraint.FunctionRefinement{Terminates: true}},
+			1: {Effects: api.FunctionEffectProjection{Refinement: &constraint.FunctionRefinement{Terminates: true}}},
 		},
 	})
 	if !s.AdvanceProjectionFacts() {

@@ -44,7 +44,7 @@ func ProjectCall(input CallProjectionInput) (CallProjection, bool) {
 	for _, sym := range callsite.CallableCalleeSymbolCandidates(input.Info, input.Graph, input.Bindings, moduleBindings) {
 		sv, ok := storeView.Symbol(sym, api.SynthModeDeclared)
 		ff := sv.Fact
-		if !ok || ff.Signature == nil {
+		if !ok || ff.Public.Signature == nil {
 			continue
 		}
 
@@ -151,11 +151,10 @@ func projectCallFactType(ff api.FunctionFact, sym cfg.SymbolID) typ.Type {
 
 func callShapeFact(ff api.FunctionFact) api.FunctionFact {
 	return api.FunctionFact{
-		Signature:  ff.Signature,
-		Summary:    ff.Summary,
-		Narrow:     ff.Narrow,
-		Refinement: ff.Refinement,
-		EnvReturns: ff.EnvReturns,
+		Public:  ff.Public,
+		Returns: ff.Returns,
+		Effects: ff.Effects,
+		Export:  ff.Export,
 	}
 }
 
@@ -177,10 +176,10 @@ func (input callContractInput) refinementAdmitsDynamicTop(idx int, param typ.Typ
 }
 
 func refinementFromFact(ff api.FunctionFact) *constraint.FunctionRefinement {
-	if ff.Refinement != nil {
-		return ff.Refinement
+	if ff.Effects.Refinement != nil {
+		return ff.Effects.Refinement
 	}
-	fn := ff.Signature
+	fn := ff.Public.Signature
 	if fn == nil {
 		return nil
 	}

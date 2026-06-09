@@ -6,7 +6,6 @@ import (
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/api"
 	"github.com/wippyai/go-lua/types/constraint"
-	"github.com/wippyai/go-lua/types/domain/value/product"
 	"github.com/wippyai/go-lua/types/query/core"
 	"github.com/wippyai/go-lua/types/typ"
 	"github.com/wippyai/go-lua/types/typ/unwrap"
@@ -55,16 +54,8 @@ func TestProjectExportType_DoesNotRewriteReturnedDataFieldsWithPrivateFunctionFa
 	privateFn := typ.Func().Param("self", typ.Any).Returns(typ.LiteralString("method")).Build()
 	export := typ.NewRecord().Field("parse_id", typ.Func().Param("_raw", typ.Any).Returns(typ.Unknown).Build()).Build()
 	facts := api.FunctionFacts{
-		parseSym: {
-			Signature: parseFn,
-			Summary:   product.LiftVector([]typ.Type{parseReturn}),
-			Narrow:    product.LiftVector([]typ.Type{parseReturn}),
-		},
-		privateSym: {
-			Signature: privateFn,
-			Summary:   product.LiftVector([]typ.Type{typ.LiteralString("method")}),
-			Narrow:    product.LiftVector([]typ.Type{typ.LiteralString("method")}),
-		},
+		parseSym:   functionFactTest(factSignature(parseFn), factReturnProjection([]typ.Type{parseReturn}, []typ.Type{parseReturn})),
+		privateSym: functionFactTest(factSignature(privateFn), factReturnProjection([]typ.Type{typ.LiteralString("method")}, []typ.Type{typ.LiteralString("method")})),
 	}
 
 	got := projectExportTypeForNames(export, "", facts, graph)
@@ -121,16 +112,8 @@ func TestProjectExportType_UsesExactStructuralExportPath(t *testing.T) {
 		Field("api", typ.NewRecord().Field("run", baseFn).Build()).
 		Build()
 	facts := api.FunctionFacts{
-		topSym: {
-			Signature: topFn,
-			Summary:   product.LiftVector([]typ.Type{typ.String}),
-			Narrow:    product.LiftVector([]typ.Type{typ.String}),
-		},
-		nestedSym: {
-			Signature: nestedFn,
-			Summary:   product.LiftVector([]typ.Type{typ.Number}),
-			Narrow:    product.LiftVector([]typ.Type{typ.Number}),
-		},
+		topSym:    functionFactTest(factSignature(topFn), factReturnProjection([]typ.Type{typ.String}, []typ.Type{typ.String})),
+		nestedSym: functionFactTest(factSignature(nestedFn), factReturnProjection([]typ.Type{typ.Number}, []typ.Type{typ.Number})),
 	}
 
 	got := projectExportTypeForNames(export, "", facts, graph)
@@ -165,11 +148,7 @@ func TestProjectExportType_DoesNotRewriteSameLeafElsewhere(t *testing.T) {
 		Field("api", typ.NewRecord().Field("run", baseFn).Build()).
 		Build()
 	facts := api.FunctionFacts{
-		topSym: {
-			Signature: topFn,
-			Summary:   product.LiftVector([]typ.Type{typ.String}),
-			Narrow:    product.LiftVector([]typ.Type{typ.String}),
-		},
+		topSym: functionFactTest(factSignature(topFn), factReturnProjection([]typ.Type{typ.String}, []typ.Type{typ.String})),
 	}
 
 	got := projectExportTypeForNames(export, "", facts, graph)

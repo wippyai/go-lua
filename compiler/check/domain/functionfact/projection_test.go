@@ -13,6 +13,47 @@ import (
 	"github.com/wippyai/go-lua/types/typ"
 )
 
+func projectionFunctionFact(opts ...func(*api.FunctionFact)) api.FunctionFact {
+	var ff api.FunctionFact
+	for _, opt := range opts {
+		if opt != nil {
+			opt(&ff)
+		}
+	}
+	return ff
+}
+
+func projectionFactSignature(sig *typ.Function) func(*api.FunctionFact) {
+	return func(ff *api.FunctionFact) {
+		ff.Public.Signature = sig
+	}
+}
+
+func projectionFactCallParams(params ...typ.Type) func(*api.FunctionFact) {
+	return func(ff *api.FunctionFact) {
+		ff.Call.Params = product.LiftVector(params)
+	}
+}
+
+func projectionFactBodyParams(params ...typ.Type) func(*api.FunctionFact) {
+	return func(ff *api.FunctionFact) {
+		ff.Body.Params = product.LiftVector(params)
+	}
+}
+
+func projectionFactEntryParams(params ...typ.Type) func(*api.FunctionFact) {
+	return func(ff *api.FunctionFact) {
+		ff.Entry.Params = product.LiftVector(params)
+	}
+}
+
+func projectionFactReturns(preflow, postflow []typ.Type) func(*api.FunctionFact) {
+	return func(ff *api.FunctionFact) {
+		ff.Returns.Preflow = product.LiftVector(preflow)
+		ff.Returns.Postflow = product.LiftVector(postflow)
+	}
+}
+
 func TestStoreProjectionGraphSymbol_UsesCanonicalParent(t *testing.T) {
 	st := store.NewSessionStore()
 	fn := &ast.FunctionExpr{}
@@ -105,10 +146,7 @@ func TestStoreProjectionOwner_ResolvesBeforeFactsExist(t *testing.T) {
 
 func TestFactsProjectionReturns_SelectsNarrowingProjection(t *testing.T) {
 	facts := api.FunctionFacts{
-		1: {
-			Summary: product.LiftVector([]typ.Type{typ.Nil}),
-			Narrow:  product.LiftVector([]typ.Type{typ.String}),
-		},
+		1: projectionFunctionFact(projectionFactReturns([]typ.Type{typ.Nil}, []typ.Type{typ.String})),
 	}
 	view := functionfact.FactsProjection(facts)
 
@@ -125,11 +163,10 @@ func TestFactsProjectionReturns_NarrowingRepairsWithoutDroppingSummaryTop(t *tes
 	dynamic := []typ.Type{typ.Any}
 	narrow := []typ.Type{typ.NewRecord().Field("data", typ.String).Build()}
 	facts := api.FunctionFacts{
-		sym: {
-			Signature: typ.Func().Returns(typ.Any).Build(),
-			Summary:   product.LiftVector(dynamic),
-			Narrow:    product.LiftVector(narrow),
-		},
+		sym: projectionFunctionFact(
+			projectionFactSignature(typ.Func().Returns(typ.Any).Build()),
+			projectionFactReturns(dynamic, narrow),
+		),
 	}
 
 	if got := functionfact.FactsProjection(facts).Returns(sym, api.SynthModeFlow); len(got) != 1 || !typ.TypeEquals(got[0], typ.Any) {
@@ -147,8 +184,8 @@ func TestFactsProjectionTypeLookup_ProjectsCanonicalFunctionTypes(t *testing.T) 
 	sym := cfg.SymbolID(3)
 	fnType := typ.Func().Returns(typ.String).Build()
 	facts := api.FunctionFacts{
-		sym: {Signature: fnType},
-		4:   {Params: product.LiftVector([]typ.Type{typ.String})},
+		sym: projectionFunctionFact(projectionFactSignature(fnType)),
+		4:   projectionFunctionFact(projectionFactCallParams(typ.String)),
 	}
 
 	lookup := functionfact.FactsProjection(facts).TypeLookup(functionfact.ProjectionSibling, api.SynthModeDeclared)
@@ -196,10 +233,10 @@ func TestRecursiveTypeProjection_ReadsCurrentReturnProduct(t *testing.T) {
 	sym := cfg.SymbolID(7)
 	sig := typ.Func().Param("x", typ.String).Build()
 	facts := api.FunctionFacts{
-		sym: {
-			Signature: sig,
-			Summary:   product.LiftVector([]typ.Type{typ.Integer}),
-		},
+		sym: projectionFunctionFact(
+			projectionFactSignature(sig),
+			projectionFactReturns([]typ.Type{typ.Integer}, nil),
+		),
 	}
 
 	got := functionfact.RecursiveTypeProjection(sig, nil, facts, sym, api.SynthModeDeclared)
@@ -222,10 +259,10 @@ func TestSignatureWithReturnSummary_AppliesProductReturnProjection(t *testing.T)
 	sym := cfg.SymbolID(9)
 	sig := typ.Func().Returns(typ.Unknown).Build()
 	facts := api.FunctionFacts{
-		sym: {
-			Signature: sig,
-			Summary:   product.LiftVector([]typ.Type{typ.String}),
-		},
+		sym: projectionFunctionFact(
+			projectionFactSignature(sig),
+			projectionFactReturns([]typ.Type{typ.String}, nil),
+		),
 	}
 
 	got := functionfact.SignatureWithReturnSummary(facts, sym, sig)
@@ -237,11 +274,10 @@ func TestSignatureWithReturnSummary_AppliesProductReturnProjection(t *testing.T)
 func TestProjectTypePreservesDeclaredReturnsOverBodySummary(t *testing.T) {
 	declared := typ.NewRecord().Field("ok", typ.LiteralBool(true)).Field("value", typ.String).Build()
 	body := typ.NewRecord().Field("ok", typ.LiteralBool(true)).Field("value", typ.Integer).Build()
-	ff := api.FunctionFact{
-		Signature: typ.Func().Returns(declared).Build(),
-		Summary:   product.LiftVector([]typ.Type{body}),
-		Narrow:    product.LiftVector([]typ.Type{body}),
-	}
+	ff := projectionFunctionFact(
+		projectionFactSignature(typ.Func().Returns(declared).Build()),
+		projectionFactReturns([]typ.Type{body}, []typ.Type{body}),
+	)
 
 	for _, mode := range []api.SynthMode{api.SynthModeDeclared, api.SynthModeFlow} {
 		projected := functionfact.ProjectType(ff, functionfact.ProjectionSibling, mode)
@@ -254,10 +290,10 @@ func TestProjectTypePreservesDeclaredReturnsOverBodySummary(t *testing.T) {
 
 func TestProjectionBodyDoesNotAssumeBodyContractAsEntryProof(t *testing.T) {
 	sig := typ.Func().Param("value", typ.Any).Returns(typ.Boolean).Build()
-	ff := api.FunctionFact{
-		Signature:  sig,
-		BodyParams: product.LiftVector([]typ.Type{typ.String}),
-	}
+	ff := projectionFunctionFact(
+		projectionFactSignature(sig),
+		projectionFactBodyParams(typ.String),
+	)
 
 	body := functionfact.ProjectType(ff, functionfact.ProjectionBody, api.SynthModeDeclared)
 	bodyFn, ok := body.(*typ.Function)
@@ -275,10 +311,10 @@ func TestProjectionBodyDoesNotAssumeBodyContractAsEntryProof(t *testing.T) {
 func TestProjectionSiblingUsesEntryEvidenceWithoutLeakingToPublic(t *testing.T) {
 	entry := typ.NewArray(typ.NewRecord().Field("id", typ.String).Build())
 	publicParam := typ.NewArray(typ.Any)
-	ff := api.FunctionFact{
-		Signature:   typ.Func().Param("tests", publicParam).Build(),
-		EntryParams: product.LiftVector([]typ.Type{entry}),
-	}
+	ff := projectionFunctionFact(
+		projectionFactSignature(typ.Func().Param("tests", publicParam).Build()),
+		projectionFactEntryParams(entry),
+	)
 
 	sibling := functionfact.ProjectType(ff, functionfact.ProjectionSibling, api.SynthModeDeclared)
 	siblingFn, ok := sibling.(*typ.Function)
@@ -303,13 +339,13 @@ func TestProjectionFlowInputExcludesEntryAndBodyEvidence(t *testing.T) {
 	entry := typ.NewArray(typ.NewRecord().Field("id", typ.String).Build())
 	body := typ.NewArray(typ.NewRecord().Field("id", typ.String).Field("name", typ.String).Build())
 	publicParam := typ.NewArray(typ.Any)
-	ff := api.FunctionFact{
-		Signature:   typ.Func().Param("tests", publicParam).Build(),
-		Params:      product.LiftVector([]typ.Type{publicParam}),
-		BodyParams:  product.LiftVector([]typ.Type{body}),
-		EntryParams: product.LiftVector([]typ.Type{entry}),
-		Summary:     product.LiftVector([]typ.Type{typ.Boolean}),
-	}
+	ff := projectionFunctionFact(
+		projectionFactSignature(typ.Func().Param("tests", publicParam).Build()),
+		projectionFactCallParams(publicParam),
+		projectionFactBodyParams(body),
+		projectionFactEntryParams(entry),
+		projectionFactReturns([]typ.Type{typ.Boolean}, nil),
+	)
 
 	projected := functionfact.ProjectType(ff, functionfact.ProjectionFlowInput, api.SynthModeDeclared)
 	fn, ok := projected.(*typ.Function)
@@ -329,10 +365,10 @@ func TestFactsProjectionSynthesisTypeUsesFlowInputBeforeNarrowing(t *testing.T) 
 	entry := typ.NewRecord().Field("id", typ.String).Build()
 	publicParam := typ.Any
 	facts := api.FunctionFacts{
-		sym: {
-			Signature:   typ.Func().Param("value", publicParam).Build(),
-			EntryParams: product.LiftVector([]typ.Type{entry}),
-		},
+		sym: projectionFunctionFact(
+			projectionFactSignature(typ.Func().Param("value", publicParam).Build()),
+			projectionFactEntryParams(entry),
+		),
 	}
 
 	scopeType := functionfact.FactsProjection(facts).SynthesisType(sym, api.SynthModeDeclared)
@@ -349,10 +385,10 @@ func TestFactsProjectionSynthesisTypeUsesFlowInputBeforeNarrowing(t *testing.T) 
 }
 
 func TestProjectionBodyPreservesNilEntryStateForUnannotatedParam(t *testing.T) {
-	ff := api.FunctionFact{
-		Signature:   typ.Func().Param("base", typ.Any).Build(),
-		EntryParams: product.LiftVector([]typ.Type{typ.Nil}),
-	}
+	ff := projectionFunctionFact(
+		projectionFactSignature(typ.Func().Param("base", typ.Any).Build()),
+		projectionFactEntryParams(typ.Nil),
+	)
 
 	body := functionfact.ProjectType(ff, functionfact.ProjectionBody, api.SynthModeDeclared)
 	bodyFn, ok := body.(*typ.Function)
@@ -373,10 +409,10 @@ func TestProjectionPublicKeepsExplicitSoftAnnotationBroad(t *testing.T) {
 		typ.NewRecord().Field("ok", typ.Boolean).Field("value", typ.String).Build(),
 		typ.NewRecord().Field("ok", typ.Boolean).Build(),
 	)
-	ff := api.FunctionFact{
-		Signature: typ.Func().Param("responses", publicParam).Returns(typ.Any).Build(),
-		Params:    product.LiftVector([]typ.Type{observed}),
-	}
+	ff := projectionFunctionFact(
+		projectionFactSignature(typ.Func().Param("responses", publicParam).Returns(typ.Any).Build()),
+		projectionFactCallParams(observed),
+	)
 
 	public := functionfact.ProjectType(ff, functionfact.ProjectionPublic, api.SynthModeDeclared)
 	publicFn, ok := public.(*typ.Function)
@@ -387,10 +423,10 @@ func TestProjectionPublicKeepsExplicitSoftAnnotationBroad(t *testing.T) {
 		t.Fatalf("public projection narrowed explicit {any}: got %v, want %v", publicFn.Params[0].Type, publicParam)
 	}
 
-	body := functionfact.ProjectType(api.FunctionFact{
-		Signature:   ff.Signature,
-		EntryParams: product.LiftVector([]typ.Type{observed}),
-	}, functionfact.ProjectionBody, api.SynthModeDeclared)
+	body := functionfact.ProjectType(projectionFunctionFact(
+		projectionFactSignature(ff.Public.Signature),
+		projectionFactEntryParams(observed),
+	), functionfact.ProjectionBody, api.SynthModeDeclared)
 	bodyFn, ok := body.(*typ.Function)
 	if !ok || len(bodyFn.Params) != 1 {
 		t.Fatalf("body projection = %v, want one-param function", body)
@@ -406,10 +442,10 @@ func TestProjectionBodyRefinesSoftArrayAnnotationWithEntryEvidence(t *testing.T)
 		Field("name", typ.String).
 		Build()
 	publicParam := typ.NewArray(typ.Any)
-	ff := api.FunctionFact{
-		Signature:   typ.Func().Param("tests", publicParam).Build(),
-		EntryParams: product.LiftVector([]typ.Type{typ.NewOptional(typ.NewArray(entry))}),
-	}
+	ff := projectionFunctionFact(
+		projectionFactSignature(typ.Func().Param("tests", publicParam).Build()),
+		projectionFactEntryParams(typ.NewOptional(typ.NewArray(entry))),
+	)
 
 	body := functionfact.ProjectType(ff, functionfact.ProjectionBody, api.SynthModeDeclared)
 	bodyFn, ok := body.(*typ.Function)
@@ -592,7 +628,7 @@ func registerGraphParent(t *testing.T, st *store.SessionStore, graph *cfg.Graph,
 
 func writeFunctionFactType(st *store.SessionStore, graph *cfg.Graph, parent *scope.State, sym cfg.SymbolID, fnType *typ.Function) {
 	writeFunctionFacts(st, graph, parent, api.FunctionFacts{
-		sym: {Signature: fnType},
+		sym: projectionFunctionFact(projectionFactSignature(fnType)),
 	})
 }
 

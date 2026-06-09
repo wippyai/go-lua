@@ -281,7 +281,7 @@ func (v FactSymbolView) NarrowSummary() []typ.Type {
 
 // Refinement returns the canonical refinement projection.
 func (v FactSymbolView) Refinement() *constraint.FunctionRefinement {
-	return v.Fact.Refinement
+	return v.Fact.Effects.Refinement
 }
 
 // SignatureWithReturnSummary applies the canonical pre-flow return projection
@@ -362,7 +362,7 @@ func ProjectType(ff api.FunctionFact, projection Projection, mode api.SynthMode)
 }
 
 func projectTypeNormalized(ff api.FunctionFact, projection Projection, mode api.SynthMode) typ.Type {
-	fn := ff.Signature
+	fn := ff.Public.Signature
 	if fn == nil {
 		return nil
 	}
@@ -406,11 +406,11 @@ func projectTypeNormalized(ff api.FunctionFact, projection Projection, mode api.
 			fn = withReturns
 		}
 	}
-	if projection != ProjectionBody && len(ff.EnvReturns) > 0 {
-		fn = withEnvReturns(fn, ff.EnvReturns)
+	if projection != ProjectionBody && len(ff.Export.EnvReturns) > 0 {
+		fn = withEnvReturns(fn, ff.Export.EnvReturns)
 	}
-	if ff.Refinement != nil {
-		fn = withRefinement(fn, ff.Refinement)
+	if ff.Effects.Refinement != nil {
+		fn = withRefinement(fn, ff.Effects.Refinement)
 	}
 	return fn
 }
@@ -543,12 +543,12 @@ func RefinementsFromStore(store api.StoreReader, defaultParent *scope.State) api
 		if !ok {
 			return nil
 		}
-		return sv.Fact.Refinement
+		return sv.Fact.Effects.Refinement
 	})
 }
 
 func returnsForMode(ff api.FunctionFact, mode api.SynthMode) []typ.Type {
-	if mode == api.SynthModeFlow && len(ff.Narrow) > 0 {
+	if mode == api.SynthModeFlow && len(ff.Returns.Postflow) > 0 {
 		return repairSummaryWithNarrow(summaryTypes(ff), narrowTypes(ff))
 	}
 	return summaryTypes(ff)

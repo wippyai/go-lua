@@ -201,11 +201,11 @@ func TestManifest_SoftLocalAnnotations(t *testing.T) {
 	suiteMap := typ.NewMap(typ.String, entryArray)
 
 	groupFact := functionFacts[groupSym]
-	if len(groupFact.Summary) != 2 || !typ.TypeEquals(groupFact.Summary[0].ProjectValue(), suiteMap) || !typ.TypeEquals(groupFact.Summary[1].ProjectValue(), entryArray) {
-		t.Fatalf("expected group_by_suite summary (%v, %v), got %v", suiteMap, entryArray, groupFact.Summary)
+	if len(groupFact.Returns.Preflow) != 2 || !typ.TypeEquals(groupFact.Returns.Preflow[0].ProjectValue(), suiteMap) || !typ.TypeEquals(groupFact.Returns.Preflow[1].ProjectValue(), entryArray) {
+		t.Fatalf("expected group_by_suite summary (%v, %v), got %v", suiteMap, entryArray, groupFact.Returns.Preflow)
 	}
-	if len(groupFact.Narrow) != 2 || !typ.TypeEquals(groupFact.Narrow[0].ProjectValue(), suiteMap) || !typ.TypeEquals(groupFact.Narrow[1].ProjectValue(), entryArray) {
-		t.Fatalf("expected group_by_suite narrow summary (%v, %v), got %v", suiteMap, entryArray, groupFact.Narrow)
+	if len(groupFact.Returns.Postflow) != 2 || !typ.TypeEquals(groupFact.Returns.Postflow[0].ProjectValue(), suiteMap) || !typ.TypeEquals(groupFact.Returns.Postflow[1].ProjectValue(), entryArray) {
+		t.Fatalf("expected group_by_suite narrow summary (%v, %v), got %v", suiteMap, entryArray, groupFact.Returns.Postflow)
 	}
 	view := functionfact.FactsProjection(functionFacts)
 	groupType := view.Type(groupSym, functionfact.ProjectionSibling, api.SynthModeDeclared)

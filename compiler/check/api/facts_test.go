@@ -73,10 +73,9 @@ func TestFacts_WithData(t *testing.T) {
 	f := Facts{
 		FunctionFacts: FunctionFacts{
 			4: {
-				Params:    product.LiftVector([]typ.Type{typ.Number}),
-				Summary:   product.LiftVector([]typ.Type{typ.Boolean}),
-				Narrow:    product.LiftVector([]typ.Type{typ.Boolean}),
-				Signature: typ.Func().Returns(typ.Boolean).Build(),
+				Call:    FunctionCallProjection{Params: product.LiftVector([]typ.Type{typ.Number})},
+				Returns: FunctionReturnProjection{Preflow: product.LiftVector([]typ.Type{typ.Boolean}), Postflow: product.LiftVector([]typ.Type{typ.Boolean})},
+				Public:  FunctionPublicProjection{Signature: typ.Func().Returns(typ.Boolean).Build()},
 			},
 		},
 	}

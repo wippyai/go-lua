@@ -21,12 +21,12 @@ func TestFactsEqual_Empty(t *testing.T) {
 func TestFactsEqual_FunctionFactSummary(t *testing.T) {
 	a := api.Facts{
 		FunctionFacts: api.FunctionFacts{
-			1: {Summary: product.LiftVector([]typ.Type{typ.String})},
+			1: {Returns: api.FunctionReturnProjection{Preflow: product.LiftVector([]typ.Type{typ.String})}},
 		},
 	}
 	b := api.Facts{
 		FunctionFacts: api.FunctionFacts{
-			1: {Summary: product.LiftVector([]typ.Type{typ.String})},
+			1: {Returns: api.FunctionReturnProjection{Preflow: product.LiftVector([]typ.Type{typ.String})}},
 		},
 	}
 	if !FactsEqual(a, b) {
@@ -37,12 +37,12 @@ func TestFactsEqual_FunctionFactSummary(t *testing.T) {
 func TestFactsEqual_DifferentFunctionFactSummary(t *testing.T) {
 	a := api.Facts{
 		FunctionFacts: api.FunctionFacts{
-			1: {Summary: product.LiftVector([]typ.Type{typ.String})},
+			1: {Returns: api.FunctionReturnProjection{Preflow: product.LiftVector([]typ.Type{typ.String})}},
 		},
 	}
 	b := api.Facts{
 		FunctionFacts: api.FunctionFacts{
-			1: {Summary: product.LiftVector([]typ.Type{typ.Number})},
+			1: {Returns: api.FunctionReturnProjection{Preflow: product.LiftVector([]typ.Type{typ.Number})}},
 		},
 	}
 	if FactsEqual(a, b) {
@@ -57,18 +57,16 @@ func TestFactsEqual_UsesCanonicalFunctionFactsOnly(t *testing.T) {
 	a := api.Facts{
 		FunctionFacts: api.FunctionFacts{
 			sym: {
-				Summary:   product.LiftVector([]typ.Type{typ.String}),
-				Narrow:    product.LiftVector([]typ.Type{typ.String}),
-				Signature: fn,
+				Returns: api.FunctionReturnProjection{Preflow: product.LiftVector([]typ.Type{typ.String}), Postflow: product.LiftVector([]typ.Type{typ.String})},
+				Public:  api.FunctionPublicProjection{Signature: fn},
 			},
 		},
 	}
 	b := api.Facts{
 		FunctionFacts: api.FunctionFacts{
 			sym: {
-				Summary:   product.LiftVector([]typ.Type{typ.String}),
-				Narrow:    product.LiftVector([]typ.Type{typ.String}),
-				Signature: fn,
+				Returns: api.FunctionReturnProjection{Preflow: product.LiftVector([]typ.Type{typ.String}), Postflow: product.LiftVector([]typ.Type{typ.String})},
+				Public:  api.FunctionPublicProjection{Signature: fn},
 			},
 		},
 	}
@@ -83,12 +81,18 @@ func TestFactsEqual_DifferentCanonicalFunctionFacts(t *testing.T) {
 
 	a := api.Facts{
 		FunctionFacts: api.FunctionFacts{
-			sym: {Summary: product.LiftVector([]typ.Type{typ.String}), Signature: typ.Func().Returns(typ.String).Build()},
+			sym: {
+				Returns: api.FunctionReturnProjection{Preflow: product.LiftVector([]typ.Type{typ.String})},
+				Public:  api.FunctionPublicProjection{Signature: typ.Func().Returns(typ.String).Build()},
+			},
 		},
 	}
 	b := api.Facts{
 		FunctionFacts: api.FunctionFacts{
-			sym: {Summary: product.LiftVector([]typ.Type{typ.Number}), Signature: typ.Func().Returns(typ.Number).Build()},
+			sym: {
+				Returns: api.FunctionReturnProjection{Preflow: product.LiftVector([]typ.Type{typ.Number})},
+				Public:  api.FunctionPublicProjection{Signature: typ.Func().Returns(typ.Number).Build()},
+			},
 		},
 	}
 
@@ -104,16 +108,16 @@ func TestSymbolTypeMapEqual_Empty(t *testing.T) {
 }
 
 func TestFunctionFactsEqual_Params(t *testing.T) {
-	a := api.FunctionFacts{1: {Params: product.LiftVector([]typ.Type{typ.String})}}
-	b := api.FunctionFacts{1: {Params: product.LiftVector([]typ.Type{typ.String})}}
+	a := api.FunctionFacts{1: {Call: api.FunctionCallProjection{Params: product.LiftVector([]typ.Type{typ.String})}}}
+	b := api.FunctionFacts{1: {Call: api.FunctionCallProjection{Params: product.LiftVector([]typ.Type{typ.String})}}}
 	if !FunctionFactsEqual(a, b) {
 		t.Error("same canonical parameter evidence should be equal")
 	}
 }
 
 func TestFunctionFactsEqual_DifferentParams(t *testing.T) {
-	a := api.FunctionFacts{1: {Params: product.LiftVector([]typ.Type{typ.String})}}
-	b := api.FunctionFacts{1: {Params: product.LiftVector([]typ.Type{typ.Number})}}
+	a := api.FunctionFacts{1: {Call: api.FunctionCallProjection{Params: product.LiftVector([]typ.Type{typ.String})}}}
+	b := api.FunctionFacts{1: {Call: api.FunctionCallProjection{Params: product.LiftVector([]typ.Type{typ.Number})}}}
 	if FunctionFactsEqual(a, b) {
 		t.Error("different canonical parameter evidence should not be equal")
 	}
@@ -131,8 +135,8 @@ func TestFunctionFactsEqual_FunctionSpecIsCanonicalFactState(t *testing.T) {
 		t.Fatal("ordinary type equality should ignore function specs")
 	}
 
-	a := api.FunctionFacts{1: {Signature: withoutSpec}}
-	b := api.FunctionFacts{1: {Signature: withSpec}}
+	a := api.FunctionFacts{1: {Public: api.FunctionPublicProjection{Signature: withoutSpec}}}
+	b := api.FunctionFacts{1: {Public: api.FunctionPublicProjection{Signature: withSpec}}}
 	if FunctionFactsEqual(a, b) {
 		t.Fatal("function fact equality must include function specs")
 	}
@@ -157,8 +161,8 @@ func TestFunctionFactsEqual_MetatableFactStateIsCanonical(t *testing.T) {
 		t.Fatal("ordinary type equality should ignore nested function specs in metatables")
 	}
 
-	a := api.FunctionFacts{1: {Signature: typ.Func().Returns(withoutMetaSpec).Build()}}
-	b := api.FunctionFacts{1: {Signature: typ.Func().Returns(withMetaSpec).Build()}}
+	a := api.FunctionFacts{1: {Public: api.FunctionPublicProjection{Signature: typ.Func().Returns(withoutMetaSpec).Build()}}}
+	b := api.FunctionFacts{1: {Public: api.FunctionPublicProjection{Signature: typ.Func().Returns(withMetaSpec).Build()}}}
 	if FunctionFactsEqual(a, b) {
 		t.Fatal("function fact equality must include metatable fact state")
 	}
@@ -172,11 +176,11 @@ func TestWidenFacts_PreservesFunctionSpecChange(t *testing.T) {
 	withoutSpec := typ.Func().Param("fn", callback).Build()
 	withSpec := typ.Func().Param("fn", callback).Spec(spec).Build()
 	sym := cfg.SymbolID(7)
-	prev := api.Facts{FunctionFacts: api.FunctionFacts{sym: {Signature: withoutSpec}}}
-	next := api.Facts{FunctionFacts: api.FunctionFacts{sym: {Signature: withSpec}}}
+	prev := api.Facts{FunctionFacts: api.FunctionFacts{sym: {Public: api.FunctionPublicProjection{Signature: withoutSpec}}}}
+	next := api.Facts{FunctionFacts: api.FunctionFacts{sym: {Public: api.FunctionPublicProjection{Signature: withSpec}}}}
 
 	widened := WidenFacts(prev, next)
-	got := widened.FunctionFacts[sym].Signature
+	got := widened.FunctionFacts[sym].Public.Signature
 	gotSpec := contract.ExtractSpec(got)
 	if gotSpec == nil || !gotSpec.Equals(spec) {
 		t.Fatalf("expected widened fact type to preserve callback spec, got %v", got)

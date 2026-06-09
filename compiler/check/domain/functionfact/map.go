@@ -186,13 +186,12 @@ func Build(parts map[cfg.SymbolID]Evidence) api.FunctionFacts {
 
 func factFromEvidence(part Evidence) api.FunctionFact {
 	return api.FunctionFact{
-		Params:      product.LiftVector(part.Params),
-		BodyParams:  product.LiftVector(part.BodyParams),
-		EntryParams: product.LiftVector(part.EntryParams),
-		Summary:     product.LiftVector(part.Summary),
-		Narrow:      product.LiftVector(part.Narrow),
-		Signature:   part.Signature,
-		Refinement:  part.Refinement,
-		EnvReturns:  part.EnvReturns,
+		Call:    api.FunctionCallProjection{Params: product.LiftVector(part.Params)},
+		Body:    api.FunctionBodyProjection{Params: product.LiftVector(part.BodyParams)},
+		Entry:   api.FunctionEntryProjection{Params: product.LiftVector(part.EntryParams)},
+		Returns: api.FunctionReturnProjection{Preflow: product.LiftVector(part.Summary), Postflow: product.LiftVector(part.Narrow)},
+		Public:  api.FunctionPublicProjection{Signature: part.Signature},
+		Effects: api.FunctionEffectProjection{Refinement: part.Refinement},
+		Export:  api.FunctionExportProjection{EnvReturns: part.EnvReturns},
 	}
 }

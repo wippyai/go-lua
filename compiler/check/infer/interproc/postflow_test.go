@@ -73,7 +73,7 @@ func TestCollectParameterEvidenceFromResult_UsesSolvedObservationWithoutNarrowSy
 	st.AdvanceProjectionFacts()
 
 	facts := st.FunctionFactsProjection(graph, parent)
-	got := facts[callInfo.CalleeSymbol].EntryParams
+	got := facts[callInfo.CalleeSymbol].Entry.Params
 	if len(got) != 1 || got[0].IsZero() {
 		t.Fatalf("expected call-entry parameter evidence without NarrowSynth, got %#v", got)
 	}
@@ -128,8 +128,8 @@ func TestCollectParameterEvidenceFromResult_CanonicalProjectionSkipsProjectionBo
 	st.AdvanceProjectionFacts()
 
 	ff := st.FunctionFactsProjection(graph, parent)[currentSym]
-	if len(ff.Params) != 0 || len(ff.BodyParams) != 0 {
-		t.Fatalf("flow result must not write retired body/public params, got public=%v body=%v", ff.Params, ff.BodyParams)
+	if len(ff.Call.Params) != 0 || len(ff.Body.Params) != 0 {
+		t.Fatalf("flow result must not write retired body/public params, got public=%v body=%v", ff.Call.Params, ff.Body.Params)
 	}
 }
 

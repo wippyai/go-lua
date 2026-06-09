@@ -408,10 +408,14 @@ func TestProjectionFactDiffs_IsolatedBetweenStores(t *testing.T) {
 	keyA := registerSessionFunctionForRefinementTest(t, storeA, cfg.SymbolID(42))
 	keyB := registerSessionFunctionForRefinementTest(t, storeB, cfg.SymbolID(42))
 	storeA.MergeProjectionFactsNext(keyA, api.Facts{
-		FunctionFacts: api.FunctionFacts{cfg.SymbolID(42): {Refinement: &constraint.FunctionRefinement{Terminates: true}}},
+		FunctionFacts: api.FunctionFacts{
+			cfg.SymbolID(42): {Effects: api.FunctionEffectProjection{Refinement: &constraint.FunctionRefinement{Terminates: true}}},
+		},
 	})
 	storeB.MergeProjectionFactsNext(keyB, api.Facts{
-		FunctionFacts: api.FunctionFacts{cfg.SymbolID(42): {Refinement: &constraint.FunctionRefinement{Terminates: true}}},
+		FunctionFacts: api.FunctionFacts{
+			cfg.SymbolID(42): {Effects: api.FunctionEffectProjection{Refinement: &constraint.FunctionRefinement{Terminates: true}}},
+		},
 	})
 
 	if !storeA.AdvanceProjectionFacts() {
@@ -451,7 +455,7 @@ func TestSessionStore_ClearProjectionFactState(t *testing.T) {
 	})
 	store.MergeProjectionFactsNext(api.GraphKey{GraphID: 1, ParentHash: 1}, api.Facts{
 		FunctionFacts: api.FunctionFacts{
-			cfg.SymbolID(4): {Refinement: &constraint.FunctionRefinement{Terminates: true}},
+			cfg.SymbolID(4): {Effects: api.FunctionEffectProjection{Refinement: &constraint.FunctionRefinement{Terminates: true}}},
 		},
 	})
 	store.AdvanceProjectionFacts()

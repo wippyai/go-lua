@@ -16,7 +16,7 @@ func TestProjectCallContract_DoesNotPromotePublicParamEvidenceIntoCallableShape(
 	source := &ast.FunctionExpr{ParList: &ast.ParList{Names: []string{"payload"}}}
 
 	got := projectCallContract(callContractInput{
-		Fact:   api.FunctionFact{Signature: callee, Params: product.LiftVector([]typ.Type{typ.Any})},
+		Fact:   functionFactCallProjectionTest(callee, []typ.Type{typ.Any}),
 		Sym:    cfg.SymbolID(1),
 		Source: source,
 		Args:   []typ.Type{payload},
@@ -39,7 +39,7 @@ func TestProjectCallContract_DoesNotUseBodyEvidenceAsPreciseCallContext(t *testi
 	source := &ast.FunctionExpr{ParList: &ast.ParList{Names: []string{"payload"}}}
 
 	got := projectCallContract(callContractInput{
-		Fact:   api.FunctionFact{Signature: callee, Params: product.LiftVector([]typ.Type{payload})},
+		Fact:   functionFactCallProjectionTest(callee, []typ.Type{payload}),
 		Sym:    cfg.SymbolID(1),
 		Source: source,
 		Args:   []typ.Type{payload},
@@ -62,7 +62,7 @@ func TestProjectObservedDynamicCallParams_DoesNotRewriteAnnotatedParam(t *testin
 	}}
 
 	got := projectCallContract(callContractInput{
-		Fact:   api.FunctionFact{Signature: callee, Params: product.LiftVector([]typ.Type{typ.Any})},
+		Fact:   functionFactCallProjectionTest(callee, []typ.Type{typ.Any}),
 		Sym:    cfg.SymbolID(1),
 		Source: source,
 		Args:   []typ.Type{typ.Any},
@@ -81,7 +81,7 @@ func TestProjectCallContract_KeepsSourceScalarSignature(t *testing.T) {
 	source := &ast.FunctionExpr{ParList: &ast.ParList{Names: []string{"name"}}}
 
 	got := projectCallContract(callContractInput{
-		Fact:   api.FunctionFact{Signature: callee, Params: product.LiftVector([]typ.Type{typ.Any})},
+		Fact:   functionFactCallProjectionTest(callee, []typ.Type{typ.Any}),
 		Sym:    cfg.SymbolID(1),
 		Source: source,
 		Args:   []typ.Type{typ.Any},
@@ -100,7 +100,7 @@ func TestProjectCallContract_PublicAnyEvidenceDoesNotWeakenSourceScalarSignature
 	source := &ast.FunctionExpr{ParList: &ast.ParList{Names: []string{"name"}}}
 
 	got := projectCallContract(callContractInput{
-		Fact:   api.FunctionFact{Signature: callee, Params: product.LiftVector([]typ.Type{typ.Any})},
+		Fact:   functionFactCallProjectionTest(callee, []typ.Type{typ.Any}),
 		Sym:    cfg.SymbolID(1),
 		Source: source,
 		Args:   []typ.Type{typ.Any},
@@ -122,7 +122,7 @@ func TestProjectCallContract_DoesNotWidenStructuralCallableShapeFromParamEvidenc
 	source := &ast.FunctionExpr{ParList: &ast.ParList{Names: []string{"nodes"}}}
 
 	got := projectCallContract(callContractInput{
-		Fact:   api.FunctionFact{Signature: callee, Params: product.LiftVector([]typ.Type{arrayParam})},
+		Fact:   functionFactCallProjectionTest(callee, []typ.Type{arrayParam}),
 		Sym:    cfg.SymbolID(1),
 		Source: source,
 		Args:   []typ.Type{arrayParam},
@@ -175,10 +175,8 @@ func TestProjectCallFactType_UsesPublicProjectionForSourceLocalCall(t *testing.T
 	entry := typ.NewRecord().Field("id", typ.String).Build()
 	sym := cfg.SymbolID(42)
 	ff := api.FunctionFact{
-		Signature: typ.Func().Param("tests", typ.NewArray(typ.Any)).Build(),
-		EntryParams: product.LiftVector([]typ.Type{
-			typ.NewArray(entry),
-		}),
+		Public: api.FunctionPublicProjection{Signature: typ.Func().Param("tests", typ.NewArray(typ.Any)).Build()},
+		Entry:  api.FunctionEntryProjection{Params: product.LiftVector([]typ.Type{typ.NewArray(entry)})},
 	}
 
 	local := unwrapFunctionForCallProjectionTest(t, projectCallFactType(ff, sym))
@@ -218,7 +216,7 @@ func TestProjectCallContract_PublicBoundaryDoesNotAdmitUnobservedDynamicAnnotate
 	}}
 
 	got := projectCallContract(callContractInput{
-		Fact:             api.FunctionFact{Signature: callee},
+		Fact:             functionFactSignatureTest(callee),
 		Sym:              cfg.SymbolID(1),
 		Source:           source,
 		Args:             []typ.Type{typ.Any},
@@ -238,7 +236,7 @@ func TestProjectCallContract_AdmitsDynamicTopForUnobservedLocalAnnotatedParam(t 
 	}}
 
 	got := projectCallContract(callContractInput{
-		Fact:             api.FunctionFact{Signature: callee},
+		Fact:             functionFactSignatureTest(callee),
 		Sym:              cfg.SymbolID(1),
 		Source:           source,
 		Args:             []typ.Type{typ.Any},
@@ -258,7 +256,7 @@ func TestProjectCallContract_AdmitsDynamicTopForUnobservedLocalUnannotatedParam(
 	}}
 
 	got := projectCallContract(callContractInput{
-		Fact:             api.FunctionFact{Signature: callee},
+		Fact:             functionFactSignatureTest(callee),
 		Sym:              cfg.SymbolID(1),
 		Source:           source,
 		Args:             []typ.Type{typ.Any},
@@ -298,4 +296,16 @@ func unwrapFunctionForCallProjectionTest(t *testing.T, got typ.Type) *typ.Functi
 		t.Fatalf("expected function projection, got %T", got)
 	}
 	return fn
+}
+
+func functionFactSignatureTest(sig *typ.Function) api.FunctionFact {
+	return api.FunctionFact{
+		Public: api.FunctionPublicProjection{Signature: sig},
+	}
+}
+
+func functionFactCallProjectionTest(sig *typ.Function, params []typ.Type) api.FunctionFact {
+	ff := functionFactSignatureTest(sig)
+	ff.Call.Params = product.LiftVector(params)
+	return ff
 }
