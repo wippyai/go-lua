@@ -23,16 +23,16 @@ import (
 	typjoin "github.com/wippyai/go-lua/types/typ/join"
 )
 
-// Store is the explicit legacy boundary required to record old post-flow
+// Store is the explicit projection boundary required to record noncanonical postflow
 // interproc facts. Canonical checking publishes FunctionFacts from Summary
 // without this iteration product.
 type Store interface {
-	api.LegacyInferenceStore
+	api.PostflowProjectionStore
 }
 
 // StoreFactsFromResult records post-flow interproc facts for the current iteration.
-// Facts are written into the legacy next product and become visible after
-// LegacyFixpointSwap.
+// Facts are written into the projection next product and become visible after
+// AdvanceProjectionFacts.
 //
 // interner is the compilation-scoped recursive-family interner; inferred-return
 // sealing widens family bodies only through it, so one compilation can never
@@ -47,7 +47,7 @@ func StoreFactsFromResult(
 	if store == nil || result == nil || result.Graph == nil {
 		return
 	}
-	writer := newLegacyFactWriter(store)
+	writer := newProjectionFactWriter(store)
 	writer.writeLiteralSignatures(result.Graph, parent, result.LiteralSignatureLookup())
 
 	fnSym := cfg.SymbolID(0)
@@ -277,7 +277,7 @@ func sealClassReturns(fnType *typ.Function) *typ.Function {
 // one keyed recursive family. A function whose return embeds its own prior return
 // (rec returns o where o.x is rec(o.child)) yields a structural tower that grows a
 // level deeper every inter-procedural iteration; the value-domain self-embedding
-// fold mints a fresh recursion variable each time, so the summary never reaches a
+// fnoncanonical mints a fresh recursion variable each time, so the summary never reaches a
 // fixed point.
 //
 // The owner key is the function symbol plus slot index, the stable producer
@@ -349,13 +349,13 @@ func sealRecursiveReturnSlot(slot typ.Type, fnSym cfg.SymbolID, index int, inter
 }
 
 // inferredRecursiveReturnName is the recursion-variable name the value-domain
-// self-embedding fold mints; a return slot carrying it is unstable inferred
+// self-embedding fnoncanonical mints; a return slot carrying it is unstable inferred
 // recursion (a fresh node each iteration) eligible for owner keying.
 const inferredRecursiveReturnName = "Inferred"
 
 // inferredRecursiveReturn reports whether slot is the value domain's unstable
 // inferred recursion rather than a declared nominal type. An already-keyed family,
-// an Inferred fold node, or a bare structural self-embedding tower (no declared
+// an Inferred fnoncanonical node, or a bare structural self-embedding tower (no declared
 // recursive or alias node) qualifies; a declared named mu (e.g. a source `type`
 // recursion) or an alias-wrapped family does not, so its nominal identity is kept.
 func inferredRecursiveReturn(slot typ.Type) bool {
@@ -409,7 +409,7 @@ func containsDeclaredRecursion(t typ.Type) bool {
 //     so the immediate structure with those references is the body.
 //   - The slot is an already-recursive node: its body is the equation, with the old
 //     recursion variable rebound to the family handle.
-//   - The slot is a bare self-embedding tower: the value-domain fold ties it into a
+//   - The slot is a bare self-embedding tower: the value-domain fnoncanonical ties it into a
 //     recursion variable, which is then rebound to the family handle.
 func recursiveReturnBody(slot typ.Type, family *typ.Recursive) (typ.Type, bool) {
 	if typ.ContainsRecursiveRef(slot, family) {
@@ -450,7 +450,7 @@ func sealClassInstances(returns []typ.Type) []typ.Type {
 
 func storeCapturedFactsFromResult(
 	store Store,
-	writer legacyFactWriter,
+	writer projectionFactWriter,
 	fn *ast.FunctionExpr,
 	fnSym cfg.SymbolID,
 	result *api.FuncResult,
@@ -586,7 +586,7 @@ func (c *parameterEvidenceCollector) collectCallEvidence(evidence api.CallEviden
 	if len(facts) == 0 {
 		return
 	}
-	c.store.MergeLegacyFactsNext(calleeOwner.Key, interprocdomain.FunctionFactsDelta(facts))
+	c.store.MergeProjectionFactsNext(calleeOwner.Key, interprocdomain.FunctionFactsDelta(facts))
 }
 
 func (c *parameterEvidenceCollector) recordCurrentBodyPreconditions(p cfg.Point, evidence api.CallEvidence) {
@@ -610,7 +610,7 @@ func (c *parameterEvidenceCollector) recordCurrentBodyPreconditions(p cfg.Point,
 	builder.AddPublicParams(c.currentSym, preconditions.Public)
 	facts := builder.Build()
 	if len(facts) > 0 {
-		c.store.MergeLegacyFactsNext(c.currentKey, interprocdomain.FunctionFactsDelta(facts))
+		c.store.MergeProjectionFactsNext(c.currentKey, interprocdomain.FunctionFactsDelta(facts))
 	}
 }
 

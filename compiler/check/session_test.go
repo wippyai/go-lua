@@ -396,32 +396,32 @@ func TestAttachStore_NilStore(t *testing.T) {
 func TestSessionStore_ProductMaps(t *testing.T) {
 	store := store.NewSessionStore()
 
-	if !store.LegacyInterprocStateInitialized() {
-		t.Error("legacy interproc product owner should be initialized")
+	if !store.ProjectionFactStateInitialized() {
+		t.Error("projection-product owner should be initialized")
 	}
 }
 
-func TestLegacyFixpointDiffs_IsolatedBetweenStores(t *testing.T) {
+func TestProjectionFactDiffs_IsolatedBetweenStores(t *testing.T) {
 	storeA := store.NewSessionStore()
 	storeB := store.NewSessionStore()
 
 	keyA := registerSessionFunctionForRefinementTest(t, storeA, cfg.SymbolID(42))
 	keyB := registerSessionFunctionForRefinementTest(t, storeB, cfg.SymbolID(42))
-	storeA.MergeLegacyFactsNext(keyA, api.Facts{
+	storeA.MergeProjectionFactsNext(keyA, api.Facts{
 		FunctionFacts: api.FunctionFacts{cfg.SymbolID(42): {Refinement: &constraint.FunctionRefinement{Terminates: true}}},
 	})
-	storeB.MergeLegacyFactsNext(keyB, api.Facts{
+	storeB.MergeProjectionFactsNext(keyB, api.Facts{
 		FunctionFacts: api.FunctionFacts{cfg.SymbolID(42): {Refinement: &constraint.FunctionRefinement{Terminates: true}}},
 	})
 
-	if !storeA.LegacyFixpointSwap() {
-		t.Fatal("expected storeA LegacyFixpointSwap to report change")
+	if !storeA.AdvanceProjectionFacts() {
+		t.Fatal("expected storeA AdvanceProjectionFacts to report change")
 	}
-	if diffs := storeA.LegacyFixpointDiffs(); len(diffs) == 0 {
+	if diffs := storeA.ProjectionFactDiffs(); len(diffs) == 0 {
 		t.Fatal("expected storeA diffs to be non-empty")
 	}
 
-	if diffs := storeB.LegacyFixpointDiffs(); len(diffs) != 0 {
+	if diffs := storeB.ProjectionFactDiffs(); len(diffs) != 0 {
 		t.Fatalf("expected storeB diffs to be empty, got %v", diffs)
 	}
 }
@@ -441,24 +441,24 @@ func registerSessionFunctionForRefinementTest(t *testing.T, st *store.SessionSto
 	return api.KeyForGraph(graph, parent.Hash())
 }
 
-func TestSessionStore_ClearLegacyInterprocState(t *testing.T) {
+func TestSessionStore_ClearProjectionFactState(t *testing.T) {
 	store := store.NewSessionStore()
 
-	store.MergeLegacyFactsNext(api.ModuleFactsKey(), api.Facts{
+	store.MergeProjectionFactsNext(api.ModuleFactsKey(), api.Facts{
 		ConstructorFields: api.ConstructorFields{
 			cfg.SymbolID(2): interprocdomain.LiftTypeFieldMap(map[string]typ.Type{"name": typ.String}),
 		},
 	})
-	store.MergeLegacyFactsNext(api.GraphKey{GraphID: 1, ParentHash: 1}, api.Facts{
+	store.MergeProjectionFactsNext(api.GraphKey{GraphID: 1, ParentHash: 1}, api.Facts{
 		FunctionFacts: api.FunctionFacts{
 			cfg.SymbolID(4): {Refinement: &constraint.FunctionRefinement{Terminates: true}},
 		},
 	})
-	store.LegacyFixpointSwap()
+	store.AdvanceProjectionFacts()
 
-	store.ClearLegacyInterprocState()
+	store.ClearProjectionFactState()
 
-	prev, next := store.LegacyInterprocFactCounts()
+	prev, next := store.ProjectionFactCounts()
 	if prev != 0 {
 		t.Fatal("expected previous product facts to be cleared")
 	}
@@ -531,8 +531,8 @@ func TestSession_Release_Nil(t *testing.T) {
 
 func TestModuleConstructorFacts_EmptyDelta(t *testing.T) {
 	store := store.NewSessionStore()
-	store.MergeLegacyFactsNext(api.ModuleFactsKey(), api.Facts{})
-	_, next := store.LegacyInterprocFactCounts()
+	store.MergeProjectionFactsNext(api.ModuleFactsKey(), api.Facts{})
+	_, next := store.ProjectionFactCounts()
 	if next != 0 {
 		t.Error("empty product delta should not store facts")
 	}
@@ -540,7 +540,7 @@ func TestModuleConstructorFacts_EmptyDelta(t *testing.T) {
 
 func TestModuleConstructorFacts_EmptyFields(t *testing.T) {
 	store := store.NewSessionStore()
-	store.MergeLegacyFactsNext(api.ModuleFactsKey(), api.Facts{
+	store.MergeProjectionFactsNext(api.ModuleFactsKey(), api.Facts{
 		ConstructorFields: api.ConstructorFields{1: nil},
 	})
 	got, _ := store.ModuleFacts().ConstructorFields(1)
@@ -552,7 +552,7 @@ func TestModuleConstructorFacts_EmptyFields(t *testing.T) {
 func TestModuleConstructorFacts_Basic(t *testing.T) {
 	store := store.NewSessionStore()
 	fields := interprocdomain.LiftTypeFieldMap(map[string]typ.Type{"x": typ.Number, "y": typ.String})
-	store.MergeLegacyFactsNext(api.ModuleFactsKey(), api.Facts{
+	store.MergeProjectionFactsNext(api.ModuleFactsKey(), api.Facts{
 		ConstructorFields: api.ConstructorFields{1: fields},
 	})
 
@@ -564,10 +564,10 @@ func TestModuleConstructorFacts_Basic(t *testing.T) {
 
 func TestModuleConstructorFacts_Join(t *testing.T) {
 	store := store.NewSessionStore()
-	store.MergeLegacyFactsNext(api.ModuleFactsKey(), api.Facts{
+	store.MergeProjectionFactsNext(api.ModuleFactsKey(), api.Facts{
 		ConstructorFields: api.ConstructorFields{1: interprocdomain.LiftTypeFieldMap(map[string]typ.Type{"x": typ.Number})},
 	})
-	store.MergeLegacyFactsNext(api.ModuleFactsKey(), api.Facts{
+	store.MergeProjectionFactsNext(api.ModuleFactsKey(), api.Facts{
 		ConstructorFields: api.ConstructorFields{1: interprocdomain.LiftTypeFieldMap(map[string]typ.Type{"x": typ.String})},
 	})
 

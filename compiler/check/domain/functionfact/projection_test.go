@@ -597,8 +597,8 @@ func writeFunctionFactType(st *store.SessionStore, graph *cfg.Graph, parent *sco
 }
 
 func writeFunctionFacts(st *store.SessionStore, graph *cfg.Graph, parent *scope.State, facts api.FunctionFacts) {
-	st.ClearLegacyInterprocState()
+	st.ClearProjectionFactState()
 	key := api.KeyForGraph(graph, parent.Hash())
-	st.MergeLegacyFactsNext(key, api.Facts{FunctionFacts: facts})
-	st.LegacyFixpointSwap()
+	st.MergeProjectionFactsNext(key, api.Facts{FunctionFacts: facts})
+	st.AdvanceProjectionFacts()
 }

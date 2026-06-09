@@ -6,7 +6,7 @@ import (
 	"github.com/wippyai/go-lua/types/constraint"
 )
 
-// Empty reports whether a legacy fact product carries no compatibility
+// Empty reports whether a postflow projection product carries no compatibility
 // evidence.
 func Empty(f api.Facts) bool {
 	return len(f.FunctionFacts) == 0 &&
@@ -16,7 +16,7 @@ func Empty(f api.Facts) bool {
 		len(f.ConstructorFields) == 0
 }
 
-// FactMapEqual compares graph-keyed legacy fact products.
+// FactMapEqual compares graph-keyed postflow projection products.
 func FactMapEqual(a, b map[api.GraphKey]api.Facts) bool {
 	if len(a) != len(b) {
 		return false
@@ -29,7 +29,7 @@ func FactMapEqual(a, b map[api.GraphKey]api.Facts) bool {
 	return true
 }
 
-// WidenFactMap merges a next iteration fact map into the stable legacy product
+// WidenFactMap merges a next iteration fact map into the stable projection product
 // using the product widening policy for each graph key.
 func WidenFactMap(prev, next map[api.GraphKey]api.Facts) map[api.GraphKey]api.Facts {
 	if len(prev) == 0 && len(next) == 0 {
@@ -49,7 +49,7 @@ func WidenFactMap(prev, next map[api.GraphKey]api.Facts) map[api.GraphKey]api.Fa
 	return out
 }
 
-// OverlayFacts returns legacy facts visible during an iteration from a stable
+// OverlayFacts returns projection facts visible during an iteration from a stable
 // previous product and same-iteration next facts. The visible product crosses an
 // SCC iteration boundary, so it uses the same finite-height convergence law as
 // the boundary swap rather than the precise delta join.

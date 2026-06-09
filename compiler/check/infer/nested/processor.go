@@ -56,7 +56,7 @@ type ResultFunc func(fn *ast.FunctionExpr) *api.FuncAnalysisView
 // Config holds dependencies for nested processing.
 type Config struct {
 	Stdlib        *scope.State
-	Store         api.LegacyInferenceStore
+	Store         api.PostflowProjectionStore
 	Graphs        api.GraphProvider
 	Check         CheckFunc
 	ResultForFunc ResultFunc
@@ -66,7 +66,7 @@ type Config struct {
 // Processor analyzes nested functions for a parent graph.
 type Processor struct {
 	stdlib        *scope.State
-	store         api.LegacyInferenceStore
+	store         api.PostflowProjectionStore
 	graphs        api.GraphProvider
 	check         CheckFunc
 	resultForFunc ResultFunc
@@ -704,9 +704,9 @@ func (p *Processor) persistConstructorFields(pattern nested.ConstructorPattern, 
 	if len(fields) == 0 {
 		return
 	}
-	p.store.MergeLegacyFactsNext(api.ModuleFactsKey(), interprocdomain.ConstructorFieldsDelta(pattern.ClassSymbol, fields))
+	p.store.MergeProjectionFactsNext(api.ModuleFactsKey(), interprocdomain.ConstructorFieldsDelta(pattern.ClassSymbol, fields))
 	if pattern.PrototypeSymbol != 0 && pattern.PrototypeSymbol != pattern.ClassSymbol {
-		p.store.MergeLegacyFactsNext(api.ModuleFactsKey(), interprocdomain.ConstructorFieldsDelta(pattern.PrototypeSymbol, fields))
+		p.store.MergeProjectionFactsNext(api.ModuleFactsKey(), interprocdomain.ConstructorFieldsDelta(pattern.PrototypeSymbol, fields))
 	}
 }
 
@@ -838,7 +838,7 @@ func (p *Processor) persistCapturedTypesForNestedGraph(
 	if len(nextCaptured) == 0 {
 		return
 	}
-	p.store.MergeLegacyFactsNext(key, interprocdomain.CapturedTypesDelta(nextCaptured))
+	p.store.MergeProjectionFactsNext(key, interprocdomain.CapturedTypesDelta(nextCaptured))
 }
 
 // resolveSelfTypeForImplicitSelf resolves the self-type for methods with implicit self parameter.
@@ -1038,7 +1038,7 @@ func (p *Processor) projectedSiblingFunctionFacts(
 	if p == nil || p.store == nil || graph == nil || len(funcs) == 0 {
 		return nil
 	}
-	product := p.store.LegacyFacts(graph, parentScope)
+	product := p.store.ProjectionFacts(graph, parentScope)
 	out := make(api.FunctionFacts, len(funcs))
 	for _, info := range funcs {
 		if info == nil || info.FuncSym == 0 {

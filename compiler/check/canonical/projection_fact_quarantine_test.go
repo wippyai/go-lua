@@ -9,7 +9,7 @@ import (
 	"testing"
 )
 
-func TestCanonicalProductionDoesNotUseLegacyFactProducts(t *testing.T) {
+func TestCanonicalProductionDoesNotUseProjectionFactProducts(t *testing.T) {
 	_, file, _, ok := runtime.Caller(0)
 	if !ok {
 		t.Fatal("runtime.Caller failed")
@@ -17,14 +17,14 @@ func TestCanonicalProductionDoesNotUseLegacyFactProducts(t *testing.T) {
 	root := filepath.Dir(file)
 	banned := []string{
 		"domain/interproc",
-		"LegacyFacts(",
-		"LegacyFactProduct",
-		"LegacyFactProductReader",
-		"LegacyFactProductSink",
-		"LegacyInterprocPrev",
-		"LegacyInterprocNext",
-		"MergeLegacyFactsNext",
-		"LegacyFixpointSwap",
+		"ProjectionFacts(",
+		"ProjectionFactProduct",
+		"ProjectionFactProductReader",
+		"ProjectionFactProductSink",
+		"ProjectionFactPrev",
+		"ProjectionFactNext",
+		"MergeProjectionFactsNext",
+		"AdvanceProjectionFacts",
 		"InterprocFacts(",
 		"InterprocFactReader",
 		"InterprocFactProduct",
@@ -54,7 +54,7 @@ func TestCanonicalProductionDoesNotUseLegacyFactProducts(t *testing.T) {
 		text := string(data)
 		for _, token := range banned {
 			if strings.Contains(text, token) {
-				t.Errorf("%s uses legacy fact-product token %q", path, token)
+				t.Errorf("%s uses postflow projection product token %q", path, token)
 			}
 		}
 		if strings.Contains(text, "FunctionFacts") && !functionFactsAllowed[path] {
@@ -67,7 +67,7 @@ func TestCanonicalProductionDoesNotUseLegacyFactProducts(t *testing.T) {
 	}
 }
 
-func TestCheckerProductionLegacyFactsStayInLegacyBoundaries(t *testing.T) {
+func TestCheckerProductionProjectionFactsStayInProjectionBoundaries(t *testing.T) {
 	_, file, _, ok := runtime.Caller(0)
 	if !ok {
 		t.Fatal("runtime.Caller failed")
@@ -105,8 +105,8 @@ func TestCheckerProductionLegacyFactsStayInLegacyBoundaries(t *testing.T) {
 		if err != nil {
 			return err
 		}
-		if strings.Contains(string(data), "LegacyFacts(") && !allowed(path) {
-			t.Errorf("%s reads legacy fact products outside the explicit legacy boundary", path)
+		if strings.Contains(string(data), "ProjectionFacts(") && !allowed(path) {
+			t.Errorf("%s reads postflow projection products outside the explicit projection boundary", path)
 		}
 		return nil
 	})
@@ -115,7 +115,7 @@ func TestCheckerProductionLegacyFactsStayInLegacyBoundaries(t *testing.T) {
 	}
 }
 
-func TestCheckerProductionDoesNotPeekLegacyInterprocState(t *testing.T) {
+func TestCheckerProductionDoesNotPeekProjectionFactState(t *testing.T) {
 	_, file, _, ok := runtime.Caller(0)
 	if !ok {
 		t.Fatal("runtime.Caller failed")
@@ -123,9 +123,9 @@ func TestCheckerProductionDoesNotPeekLegacyInterprocState(t *testing.T) {
 	checkRoot := filepath.Clean(filepath.Join(filepath.Dir(file), ".."))
 	storeDir := filepath.Join(checkRoot, "store") + string(filepath.Separator)
 	banned := []string{
-		".LegacyInterprocPrev",
-		".LegacyInterprocNext",
-		"NewLegacyInterprocState(",
+		".ProjectionFactPrev",
+		".ProjectionFactNext",
+		"NewProjectionFactState(",
 	}
 
 	err := filepath.WalkDir(checkRoot, func(path string, entry fs.DirEntry, err error) error {
@@ -145,11 +145,11 @@ func TestCheckerProductionDoesNotPeekLegacyInterprocState(t *testing.T) {
 		text := string(data)
 		for _, token := range banned {
 			if strings.Contains(text, token) {
-				t.Errorf("%s peeks legacy interproc state through %q", path, token)
+				t.Errorf("%s peeks projection-product state through %q", path, token)
 			}
 		}
-		if strings.Contains(text, "LegacyInterproc") && strings.Contains(text, ".Facts[") {
-			t.Errorf("%s peeks legacy interproc Facts map", path)
+		if strings.Contains(text, "ProjectionFact") && strings.Contains(text, ".Facts[") {
+			t.Errorf("%s peeks projection-product Facts map", path)
 		}
 		return nil
 	})

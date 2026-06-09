@@ -70,7 +70,7 @@ func TestCollectParameterEvidenceFromResult_UsesSolvedObservationWithoutNarrowSy
 		},
 	}
 	CollectParameterEvidenceFromResult(st, result, parent, 0)
-	st.LegacyFixpointSwap()
+	st.AdvanceProjectionFacts()
 
 	facts := st.FunctionFactsProjection(graph, parent)
 	got := facts[callInfo.CalleeSymbol].EntryParams
@@ -82,7 +82,7 @@ func TestCollectParameterEvidenceFromResult_UsesSolvedObservationWithoutNarrowSy
 	}
 }
 
-func TestCollectParameterEvidenceFromResult_CanonicalProjectionSkipsLegacyBodyPreconditions(t *testing.T) {
+func TestCollectParameterEvidenceFromResult_CanonicalProjectionSkipsProjectionBodyPreconditions(t *testing.T) {
 	stmts, err := parse.ParseString(`target(page.data_func)`, "postflow_canonical.lua")
 	if err != nil {
 		t.Fatalf("parse failed: %v", err)
@@ -125,7 +125,7 @@ func TestCollectParameterEvidenceFromResult_CanonicalProjectionSkipsLegacyBodyPr
 		},
 	}
 	CollectParameterEvidenceFromResult(st, result, parent, currentSym)
-	st.LegacyFixpointSwap()
+	st.AdvanceProjectionFacts()
 
 	ff := st.FunctionFactsProjection(graph, parent)[currentSym]
 	if len(ff.Params) != 0 || len(ff.BodyParams) != 0 {

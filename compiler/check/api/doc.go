@@ -13,8 +13,8 @@
 //   - [ParentScopes]: Parent scope lookup for nested functions
 //   - [StoreReader]: Read contract combining the immutable stores above
 //   - [CanonicalStore]: Canonical-owned metadata and final fact projection
-//   - [LegacyInferenceStore]: Explicit old-inference fact-product boundary
-//   - [IterationStore]: Adds swap/reset mutation for legacy fixpoint paths
+//   - [PostflowProjectionStore]: Explicit noncanonical postflow fact-product boundary
+//   - [IterationStore]: Adds swap/reset mutation for projection-product fixpoint paths
 //
 // These interfaces allow different phases to declare their dependencies and
 // enable testing with mock implementations.
@@ -26,10 +26,10 @@
 // and diagnostic collection. The concrete implementation lives in the
 // check package.
 //
-// # Legacy Fact Products And Final Projections
+// # Postflow Projection Products And Final Projections
 //
 // Canonical checking uses Summary as its interprocedural authority. The [Facts]
-// type below is the legacy compatibility product used by noncanonical inference
+// type below is the postflow/export projection product used by noncanonical inference
 // and export/public projection plumbing:
 //
 //   - [FunctionFacts]: final/public per-function projection facts
@@ -38,7 +38,7 @@
 //   - [CapturedFieldAssigns]: Field assignments to captured variables
 //   - [ConstructorFields]: Instance fields collected from constructors
 //
-// Legacy products are keyed by a (graph, parent-scope) [GraphKey]; module-wide
+// Projection products are keyed by a (graph, parent-scope) [GraphKey]; module-wide
 // products use [ModuleFactsKey].
 //
 // # Function References

@@ -20,13 +20,13 @@ func setConstructorFieldsNextForTest(s *store.SessionStore, fields map[cfg.Symbo
 	if s == nil {
 		return
 	}
-	s.MergeLegacyFactsNext(api.ModuleFactsKey(), api.Facts{ConstructorFields: liftConstructorFieldsForTest(fields)})
+	s.MergeProjectionFactsNext(api.ModuleFactsKey(), api.Facts{ConstructorFields: liftConstructorFieldsForTest(fields)})
 }
 
 func setConstructorFieldsPrevForTest(s *store.SessionStore, fields map[cfg.SymbolID]map[string]typ.Type) {
 	if s == nil {
 		return
 	}
-	s.MergeLegacyFactsNext(api.ModuleFactsKey(), api.Facts{ConstructorFields: liftConstructorFieldsForTest(fields)})
-	s.LegacyFixpointSwap()
+	s.MergeProjectionFactsNext(api.ModuleFactsKey(), api.Facts{ConstructorFields: liftConstructorFieldsForTest(fields)})
+	s.AdvanceProjectionFacts()
 }

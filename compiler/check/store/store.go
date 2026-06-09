@@ -21,15 +21,15 @@ type SessionStore struct {
 	// Created once at the start of checking and shared by all CFG builds.
 	Module *ModuleStore
 
-	// legacyInterprocPrev holds the stable legacy product from completed iterations.
-	legacyInterprocPrev *legacyInterprocState
-	// legacyInterprocNext accumulates legacy facts/effects during the current iteration.
-	legacyInterprocNext *legacyInterprocState
+	// projectionPrev holds the stable projection product from completed iterations.
+	projectionPrev *projectionFactState
+	// projectionNext accumulates projection facts/effects during the current iteration.
+	projectionNext *projectionFactState
 
 	// GraphParentHash records the parent scope hash for each graph ID.
 	GraphParentHash map[uint64]uint64
 
-	// lastSwapDiffs records product components changed by the most recent LegacyFixpointSwap.
+	// lastSwapDiffs records product components changed by the most recent AdvanceProjectionFacts.
 	// Stored per-session to avoid cross-session contamination.
 	lastSwapDiffs []string
 
@@ -41,13 +41,13 @@ type SessionStore struct {
 	synthMode api.SynthMode
 }
 
-// legacyInterprocState holds one side of the old graph-keyed fact product.
-type legacyInterprocState struct {
+// projectionFactState holds one side of the postflow graph-keyed fact product.
+type projectionFactState struct {
 	facts map[api.GraphKey]api.Facts
 }
 
-func newLegacyInterprocState() *legacyInterprocState {
-	return &legacyInterprocState{
+func newProjectionFactState() *projectionFactState {
+	return &projectionFactState{
 		facts: make(map[api.GraphKey]api.Facts),
 	}
 }
@@ -96,19 +96,19 @@ func NewSessionStore() *SessionStore {
 	return NewSessionStoreWithDB(nil)
 }
 
-// NewSessionStoreWithDB creates a store whose legacy fact products are
+// NewSessionStoreWithDB creates a store whose postflow projection products are
 // tracked as query inputs. The checker uses this form so function-result queries
 // are revalidated from the exact facts they read instead of from a coarse
 // iteration revision key.
 func NewSessionStoreWithDB(database *db.DB) *SessionStore {
 	return &SessionStore{
-		Module:              NewModuleStore(),
-		legacyInterprocPrev: newLegacyInterprocState(),
-		legacyInterprocNext: newLegacyInterprocState(),
-		GraphParentHash:     make(map[uint64]uint64),
-		analysisContexts:    make(map[api.GraphKey]api.AnalysisContext),
-		factInputs:          newFactInputs(database),
-		synthMode:           api.SynthModeDeclared,
+		Module:           NewModuleStore(),
+		projectionPrev:   newProjectionFactState(),
+		projectionNext:   newProjectionFactState(),
+		GraphParentHash:  make(map[uint64]uint64),
+		analysisContexts: make(map[api.GraphKey]api.AnalysisContext),
+		factInputs:       newFactInputs(database),
+		synthMode:        api.SynthModeDeclared,
 	}
 }
 
@@ -161,15 +161,15 @@ func NewModuleStore() *ModuleStore {
 	}
 }
 
-func (s *SessionStore) ensureLegacyInterprocStates() {
+func (s *SessionStore) ensureProjectionFactStates() {
 	if s == nil {
 		return
 	}
-	if s.legacyInterprocPrev == nil {
-		s.legacyInterprocPrev = newLegacyInterprocState()
+	if s.projectionPrev == nil {
+		s.projectionPrev = newProjectionFactState()
 	}
-	if s.legacyInterprocNext == nil {
-		s.legacyInterprocNext = newLegacyInterprocState()
+	if s.projectionNext == nil {
+		s.projectionNext = newProjectionFactState()
 	}
 }
 
@@ -190,19 +190,19 @@ func swapProductMap[T any](
 	return changed
 }
 
-func (s *SessionStore) swapLegacyFacts() []string {
-	s.ensureLegacyInterprocStates()
+func (s *SessionStore) swapProjectionFacts() []string {
+	s.ensureProjectionFactStates()
 
 	products := []struct {
 		name string
 		swap func() bool
 	}{
 		{
-			name: "LegacyFacts",
+			name: "ProjectionFacts",
 			swap: func() bool {
 				return swapProductMap(
-					&s.legacyInterprocPrev.facts,
-					&s.legacyInterprocNext.facts,
+					&s.projectionPrev.facts,
+					&s.projectionNext.facts,
 					interproc.WidenFactMap,
 					interproc.FactMapEqual,
 					func() map[api.GraphKey]api.Facts {
@@ -222,7 +222,7 @@ func (s *SessionStore) swapLegacyFacts() []string {
 	return diffs
 }
 
-// LegacyFixpointSwap advances the legacy product at an iteration boundary.
+// AdvanceProjectionFacts advances the projection product at an iteration boundary.
 //
 // OPERATIONS PERFORMED:
 //  1. Compare the stable product with the accumulated product
@@ -234,8 +234,8 @@ func (s *SessionStore) swapLegacyFacts() []string {
 //
 // RETURN VALUE: Returns true if the product changed, signaling another iteration
 // is needed. Returns false when the product stabilizes.
-func (s *SessionStore) LegacyFixpointSwap() bool {
-	diffs := s.swapLegacyFacts()
+func (s *SessionStore) AdvanceProjectionFacts() bool {
+	diffs := s.swapProjectionFacts()
 
 	s.syncFactInputs()
 
@@ -244,8 +244,8 @@ func (s *SessionStore) LegacyFixpointSwap() bool {
 	return len(diffs) > 0
 }
 
-// LegacyFixpointDiffs returns product components changed by the most recent swap.
-func (s *SessionStore) LegacyFixpointDiffs() []string {
+// ProjectionFactDiffs returns product components changed by the most recent swap.
+func (s *SessionStore) ProjectionFactDiffs() []string {
 	if s == nil {
 		return nil
 	}
@@ -257,13 +257,13 @@ func (s *SessionStore) LegacyFixpointDiffs() []string {
 	return out
 }
 
-// ClearLegacyInterprocState clears all legacy product state for a fresh run.
-func (s *SessionStore) ClearLegacyInterprocState() {
+// ClearProjectionFactState clears all projection product state for a fresh run.
+func (s *SessionStore) ClearProjectionFactState() {
 	if s == nil {
 		return
 	}
-	s.legacyInterprocPrev = newLegacyInterprocState()
-	s.legacyInterprocNext = newLegacyInterprocState()
+	s.projectionPrev = newProjectionFactState()
+	s.projectionNext = newProjectionFactState()
 	s.lastSwapDiffs = nil
 	if s.factInputs != nil {
 		s.factInputs.reset()
@@ -271,39 +271,39 @@ func (s *SessionStore) ClearLegacyInterprocState() {
 	clear(s.analysisContexts)
 }
 
-// LegacyInterprocStateInitialized reports whether the old fact-product owner is
+// ProjectionFactStateInitialized reports whether the postflow projection-product owner is
 // initialized. It exposes only store ownership health, not the product maps.
-func (s *SessionStore) LegacyInterprocStateInitialized() bool {
+func (s *SessionStore) ProjectionFactStateInitialized() bool {
 	return s != nil &&
-		s.legacyInterprocPrev != nil && s.legacyInterprocPrev.facts != nil &&
-		s.legacyInterprocNext != nil && s.legacyInterprocNext.facts != nil
+		s.projectionPrev != nil && s.projectionPrev.facts != nil &&
+		s.projectionNext != nil && s.projectionNext.facts != nil
 }
 
-// LegacyInterprocFactCounts reports old fact-product occupancy for tests and
+// ProjectionFactCounts reports postflow projection-product occupancy for tests and
 // compatibility assertions without exposing the product maps.
-func (s *SessionStore) LegacyInterprocFactCounts() (prev int, next int) {
+func (s *SessionStore) ProjectionFactCounts() (prev int, next int) {
 	if s == nil {
 		return 0, 0
 	}
-	if s.legacyInterprocPrev != nil {
-		prev = len(s.legacyInterprocPrev.facts)
+	if s.projectionPrev != nil {
+		prev = len(s.projectionPrev.facts)
 	}
-	if s.legacyInterprocNext != nil {
-		next = len(s.legacyInterprocNext.facts)
+	if s.projectionNext != nil {
+		next = len(s.projectionNext.facts)
 	}
 	return prev, next
 }
 
-// LegacyFunctionRefinementsForExport returns the final refinement projection
-// from the converged old product. Export code reads this projection instead of
-// peeking into legacy state.
-func (s *SessionStore) LegacyFunctionRefinementsForExport() map[cfg.SymbolID]*constraint.FunctionRefinement {
-	if s == nil || s.legacyInterprocPrev == nil || len(s.legacyInterprocPrev.facts) == 0 {
+// ProjectionFunctionRefinementsForExport returns the final refinement projection
+// from the converged projection product. Export code reads this projection instead of
+// peeking into projection state.
+func (s *SessionStore) ProjectionFunctionRefinementsForExport() map[cfg.SymbolID]*constraint.FunctionRefinement {
+	if s == nil || s.projectionPrev == nil || len(s.projectionPrev.facts) == 0 {
 		return nil
 	}
 	refinements := make(map[cfg.SymbolID]*constraint.FunctionRefinement)
-	for _, key := range api.SortedGraphKeys(s.legacyInterprocPrev.facts) {
-		facts := s.legacyInterprocPrev.facts[key]
+	for _, key := range api.SortedGraphKeys(s.projectionPrev.facts) {
+		facts := s.projectionPrev.facts[key]
 		for _, sym := range cfg.SortedSymbolIDs(facts.FunctionFacts) {
 			if refinement := functionfact.FactsProjection(facts.FunctionFacts).Refinement(sym); refinement != nil {
 				refinements[sym] = refinement
@@ -405,26 +405,26 @@ func (s *SessionStore) ParentGraphKeyForSymbol(sym cfg.SymbolID) (api.GraphKey, 
 	return api.KeyForGraph(graph, parentHash), true
 }
 
-// MergeLegacyFactsNext merges a legacy product delta into the next product side
-// for the current legacy iteration.
-func (s *SessionStore) MergeLegacyFactsNext(key api.GraphKey, delta api.Facts) {
+// MergeProjectionFactsNext merges a projection product delta into the next product side
+// for the current projection iteration.
+func (s *SessionStore) MergeProjectionFactsNext(key api.GraphKey, delta api.Facts) {
 	if s == nil {
 		return
 	}
-	s.ensureLegacyInterprocStates()
-	existing := s.legacyInterprocNext.facts[key]
+	s.ensureProjectionFactStates()
+	existing := s.projectionNext.facts[key]
 	facts := interproc.JoinFacts(existing, delta)
 	if interproc.Empty(facts) {
 		if interproc.Empty(existing) {
 			return
 		}
-		delete(s.legacyInterprocNext.facts, key)
+		delete(s.projectionNext.facts, key)
 		return
 	}
 	if interproc.FactsEqual(existing, facts) {
 		return
 	}
-	s.legacyInterprocNext.facts[key] = facts
+	s.projectionNext.facts[key] = facts
 }
 
 // Funcs returns the function map.
@@ -723,16 +723,16 @@ func (s *SessionStore) SetModuleAliases(aliases map[cfg.SymbolID]string) {
 	s.Module.ModuleAliases = aliases
 }
 
-// ModuleFacts returns the module-wide visible legacy product view.
-func (s *SessionStore) ModuleFacts() api.LegacyFactProduct {
+// ModuleFacts returns the module-wide visible projection product view.
+func (s *SessionStore) ModuleFacts() api.ProjectionFactProduct {
 	if s == nil {
 		return interprocProductView{}
 	}
 	return interprocProductView{store: s, key: api.ModuleFactsKey(), ok: true}
 }
 
-// LegacyFacts returns the visible legacy product view for a graph.
-func (s *SessionStore) LegacyFacts(graph *cfg.Graph, parent *scope.State) api.LegacyFactProduct {
+// ProjectionFacts returns the visible projection product view for a graph.
+func (s *SessionStore) ProjectionFacts(graph *cfg.Graph, parent *scope.State) api.ProjectionFactProduct {
 	if s == nil || graph == nil {
 		return interprocProductView{}
 	}

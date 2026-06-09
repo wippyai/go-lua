@@ -15,7 +15,7 @@ import (
 // factInputs are the Salsa-style source inputs for interprocedural reads. They
 // publish projected product slots so FuncResult queries depend on the exact
 // slots they read; canonical uses them only for final Summary-derived output
-// projection, while legacy paths may still refresh them at iteration boundaries.
+// projection, while projection paths may still refresh them at iteration boundaries.
 type factInputs struct {
 	database *db.DB
 
@@ -309,9 +309,9 @@ func (s *SessionStore) visibleFunctionFact(key api.GraphKey, sym cfg.SymbolID) (
 	if s == nil || sym == 0 {
 		return api.FunctionFact{}, false
 	}
-	if s.legacyInterprocPrev != nil && s.legacyInterprocNext != nil {
-		prev := functionFactFromFacts(s.legacyInterprocPrev.facts[key], sym)
-		next := functionFactFromFacts(s.legacyInterprocNext.facts[key], sym)
+	if s.projectionPrev != nil && s.projectionNext != nil {
+		prev := functionFactFromFacts(s.projectionPrev.facts[key], sym)
+		next := functionFactFromFacts(s.projectionNext.facts[key], sym)
 		switch {
 		case functionfact.Empty(prev) && functionfact.Empty(next):
 			return api.FunctionFact{}, false
@@ -343,12 +343,12 @@ func (s *SessionStore) visibleFunctionFacts(key api.GraphKey) api.FunctionFacts 
 		return nil
 	}
 	prev := api.Facts{}
-	if s.legacyInterprocPrev != nil {
-		prev.FunctionFacts = s.legacyInterprocPrev.facts[key].FunctionFacts
+	if s.projectionPrev != nil {
+		prev.FunctionFacts = s.projectionPrev.facts[key].FunctionFacts
 	}
 	next := api.Facts{}
-	if s.legacyInterprocNext != nil {
-		next.FunctionFacts = s.legacyInterprocNext.facts[key].FunctionFacts
+	if s.projectionNext != nil {
+		next.FunctionFacts = s.projectionNext.facts[key].FunctionFacts
 	}
 	return cloneFunctionFacts(interproc.OverlayFacts(prev, next).FunctionFacts)
 }
@@ -357,13 +357,13 @@ func (s *SessionStore) visibleLiteralSig(key api.GraphKey, fn *ast.FunctionExpr)
 	if s == nil || fn == nil {
 		return nil, false
 	}
-	if s.legacyInterprocNext != nil {
-		if sig := s.legacyInterprocNext.facts[key].LiteralSigs[fn]; sig != nil {
+	if s.projectionNext != nil {
+		if sig := s.projectionNext.facts[key].LiteralSigs[fn]; sig != nil {
 			return sig, true
 		}
 	}
-	if s.legacyInterprocPrev != nil {
-		if sig := s.legacyInterprocPrev.facts[key].LiteralSigs[fn]; sig != nil {
+	if s.projectionPrev != nil {
+		if sig := s.projectionPrev.facts[key].LiteralSigs[fn]; sig != nil {
 			return sig, true
 		}
 	}
@@ -374,9 +374,9 @@ func (s *SessionStore) visibleCapturedType(key api.GraphKey, sym cfg.SymbolID) (
 	if s == nil || sym == 0 {
 		return nil, false
 	}
-	if s.legacyInterprocPrev != nil && s.legacyInterprocNext != nil {
-		prev := capturedTypeFromFacts(s.legacyInterprocPrev.facts[key], sym)
-		next := capturedTypeFromFacts(s.legacyInterprocNext.facts[key], sym)
+	if s.projectionPrev != nil && s.projectionNext != nil {
+		prev := capturedTypeFromFacts(s.projectionPrev.facts[key], sym)
+		next := capturedTypeFromFacts(s.projectionNext.facts[key], sym)
 		switch {
 		case prev.IsZero() && next.IsZero():
 			return nil, false
@@ -411,12 +411,12 @@ func (s *SessionStore) visibleCapturedFieldAssigns(key api.GraphKey) api.Capture
 		return nil
 	}
 	prev := api.Facts{}
-	if s.legacyInterprocPrev != nil {
-		prev.CapturedFields = s.legacyInterprocPrev.facts[key].CapturedFields
+	if s.projectionPrev != nil {
+		prev.CapturedFields = s.projectionPrev.facts[key].CapturedFields
 	}
 	next := api.Facts{}
-	if s.legacyInterprocNext != nil {
-		next.CapturedFields = s.legacyInterprocNext.facts[key].CapturedFields
+	if s.projectionNext != nil {
+		next.CapturedFields = s.projectionNext.facts[key].CapturedFields
 	}
 	return cloneCapturedFieldAssigns(interproc.OverlayFacts(prev, next).CapturedFields)
 }
@@ -425,9 +425,9 @@ func (s *SessionStore) visibleConstructorFields(key api.GraphKey, sym cfg.Symbol
 	if s == nil || sym == 0 {
 		return nil, false
 	}
-	if s.legacyInterprocPrev != nil && s.legacyInterprocNext != nil {
-		prev := constructorFieldsFromFacts(s.legacyInterprocPrev.facts[key], sym)
-		next := constructorFieldsFromFacts(s.legacyInterprocNext.facts[key], sym)
+	if s.projectionPrev != nil && s.projectionNext != nil {
+		prev := constructorFieldsFromFacts(s.projectionPrev.facts[key], sym)
+		next := constructorFieldsFromFacts(s.projectionNext.facts[key], sym)
 		switch {
 		case len(prev) == 0 && len(next) == 0:
 			return nil, false
@@ -527,11 +527,11 @@ func (s *SessionStore) syncProjectedFactInputs(batch *db.InputBatch, key api.Gra
 	if s == nil || s.factInputs == nil {
 		return
 	}
-	s.factInputs.setProjectedFacts(batch, key, s.visibleProjectedLegacyFacts(key))
+	s.factInputs.setProjectedFacts(batch, key, s.visibleProjectedProjectionFacts(key))
 }
 
 // SetCanonicalFunctionFactsProjection publishes final Summary-derived FunctionFacts
-// without mutating the legacy prev/next product or advancing the legacy fixpoint
+// without mutating the projection prev/next product or advancing the projection-product fixpoint
 // product.
 func (s *SessionStore) SetCanonicalFunctionFactsProjection(facts map[api.GraphKey]api.FunctionFacts) {
 	if s == nil || s.factInputs == nil {
@@ -555,13 +555,13 @@ func (s *SessionStore) SetCanonicalFunctionFactsProjection(facts map[api.GraphKe
 	}
 }
 
-func (s *SessionStore) visibleProjectedLegacyFacts(key api.GraphKey) api.Facts {
+func (s *SessionStore) visibleProjectedProjectionFacts(key api.GraphKey) api.Facts {
 	if s == nil {
 		return api.Facts{}
 	}
 	prev := api.Facts{}
-	if s.legacyInterprocPrev != nil {
-		facts := s.legacyInterprocPrev.facts[key]
+	if s.projectionPrev != nil {
+		facts := s.projectionPrev.facts[key]
 		prev = api.Facts{
 			FunctionFacts:     facts.FunctionFacts,
 			LiteralSigs:       facts.LiteralSigs,
@@ -571,8 +571,8 @@ func (s *SessionStore) visibleProjectedLegacyFacts(key api.GraphKey) api.Facts {
 		}
 	}
 	next := api.Facts{}
-	if s.legacyInterprocNext != nil {
-		facts := s.legacyInterprocNext.facts[key]
+	if s.projectionNext != nil {
+		facts := s.projectionNext.facts[key]
 		next = api.Facts{
 			FunctionFacts:     facts.FunctionFacts,
 			LiteralSigs:       facts.LiteralSigs,
@@ -608,13 +608,13 @@ func (s *SessionStore) syncFactInputs() {
 	for key := range s.factInputs.constructorValues {
 		factKeys[key.GraphKey] = struct{}{}
 	}
-	if s.legacyInterprocPrev != nil {
-		for key := range s.legacyInterprocPrev.facts {
+	if s.projectionPrev != nil {
+		for key := range s.projectionPrev.facts {
 			factKeys[key] = struct{}{}
 		}
 	}
-	if s.legacyInterprocNext != nil {
-		for key := range s.legacyInterprocNext.facts {
+	if s.projectionNext != nil {
+		for key := range s.projectionNext.facts {
 			factKeys[key] = struct{}{}
 		}
 	}

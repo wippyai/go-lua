@@ -1,4 +1,4 @@
-// Legacy fact-product and final projection types.
+// Projection fact-product and final projection types.
 //
 // Canonical checking uses Summary as its interprocedural authority. These types
 // remain for noncanonical compatibility paths and final/public projection.
@@ -97,7 +97,7 @@ type CapturedTypes = map[cfg.SymbolID]product.AbstractValue
 
 // FieldValues maps a typed field/path segment to its product-domain value.
 // Boundary collection/projection APIs may still speak in source field names;
-// Facts store typed keys so the legacy product has one identity
+// Facts store typed keys so the projection product has one identity
 // language.
 type FieldValues = map[constraint.Segment]product.AbstractValue
 
@@ -116,7 +116,7 @@ type CapturedFieldAssigns = map[cfg.SymbolID]map[cfg.SymbolID]FieldValues
 // interned product.AbstractValue.
 type ConstructorFields = map[cfg.SymbolID]FieldValues
 
-// Facts bundles one legacy compatibility product slice. Most slices are
+// Facts bundles one postflow/export projection product slice. Most slices are
 // stored per (graph, parent) pair; module-wide facts use ModuleFactsKey.
 type Facts struct {
 	FunctionFacts     FunctionFacts

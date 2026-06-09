@@ -3,12 +3,12 @@
 // # ARCHITECTURE OVERVIEW
 //
 // Canonical checking performs interprocedural type analysis through Summary
-// queries over PointState. Older inference/export paths still use a legacy fact
+// queries over PointState. Older inference/export paths still use a projection fact
 // product, but that product is not the canonical semantic authority.
 //
 // # INTERPROCEDURAL ANALYSIS
 //
-// Legacy compatibility paths use one explicit product:
+// Postflow/export projection paths use one explicit product:
 //
 //   - FunctionFacts: final/public parameter/return/narrow/signature projection
 //   - LiteralSigs: Synthesized signatures for function literals
@@ -23,13 +23,13 @@
 //
 // # MEMOIZATION
 //
-// Function analysis results are memoized by (GraphID, ParentHash). Legacy fact
-// products are tracked as query inputs for old compatibility paths, while
+// Function analysis results are memoized by (GraphID, ParentHash). Projection fact
+// products are tracked as query inputs for noncanonical compatibility paths, while
 // canonical Summary queries carry canonical interprocedural dependencies.
 //
 // # CONVERGENCE
 //
-// The legacy fixpoint loop terminates when the legacy product stabilizes.
+// The projection-product fixpoint loop terminates when the projection product stabilizes.
 package check
 
 import (
@@ -208,14 +208,14 @@ func WithScopeDepthDiagnostics(enabled bool) Option {
 // The returned Session contains:
 //   - Results: Per-function analysis results (types, flow facts, effects)
 //   - Diagnostics: Type errors, warnings, and suggestions
-//   - Store: Final projections plus legacy fact products for compatibility paths
+//   - Store: Final projections plus postflow projection products for compatibility paths
 func (c *Checker) Check(source, name string) *Session {
 	ctx := db.NewQueryContext(c.db)
 	sess := New(ctx, name)
-	// Ensure each top-level Check starts from clean legacy fact state. These
+	// Ensure each top-level Check starts from clean projection fact state. These
 	// iteration-stable caches must not persist across separate runs.
 	if sess.Store != nil {
-		sess.Store.ClearLegacyInterprocState()
+		sess.Store.ClearProjectionFactState()
 	}
 
 	chunk, err := parse.ParseString(source, name)
@@ -262,7 +262,7 @@ func (c *Checker) CheckChunk(chunk []ast.Stmt, name string) *Session {
 	sess := New(ctx, name)
 	// Attach store accessor and compute context for interproc queries
 	if sess.Store != nil {
-		sess.Store.ClearLegacyInterprocState()
+		sess.Store.ClearProjectionFactState()
 	}
 	c.checkChunk(sess, chunk)
 	return sess

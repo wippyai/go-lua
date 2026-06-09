@@ -29,7 +29,7 @@ func newFactsWriteStoreStub() *factsWriteStoreStub {
 	}
 }
 
-func (s *factsWriteStoreStub) MergeLegacyFactsNext(key api.GraphKey, delta api.Facts) {
+func (s *factsWriteStoreStub) MergeProjectionFactsNext(key api.GraphKey, delta api.Facts) {
 	s.factsByGraphKeyNext[key] = delta
 }
 
@@ -67,11 +67,11 @@ func graphWithNestedFunctions(t *testing.T, src string) (*cfg.Graph, []*ast.Func
 	return graph, fns
 }
 
-func TestLegacyFactWriter_MergeParentFactsForSymbol(t *testing.T) {
+func TestProjectionFactWriter_MergeParentFactsForSymbol(t *testing.T) {
 	stub := newFactsWriteStoreStub()
 	key := api.GraphKey{GraphID: 7, ParentHash: 11}
 	stub.parentKeyBySymbol[3] = key
-	writer := newLegacyFactWriter(stub)
+	writer := newProjectionFactWriter(stub)
 
 	ok := writer.mergeParentFactsForSymbol(3, api.Facts{
 		FunctionFacts: api.FunctionFacts{
@@ -91,12 +91,12 @@ func TestLegacyFactWriter_MergeParentFactsForSymbol(t *testing.T) {
 	}
 }
 
-func TestLegacyFactWriter_WriteLiteralSignatures(t *testing.T) {
+func TestProjectionFactWriter_WriteLiteralSignatures(t *testing.T) {
 	stub := newFactsWriteStoreStub()
 	key := api.GraphKey{GraphID: 5, ParentHash: 9}
 	stub.graphKeyFor = key
 	stub.graphKeyForOK = true
-	writer := newLegacyFactWriter(stub)
+	writer := newProjectionFactWriter(stub)
 
 	graph, fns := graphWithNestedFunctions(t, `return function() end`)
 	fn := fns[0]
@@ -111,12 +111,12 @@ func TestLegacyFactWriter_WriteLiteralSignatures(t *testing.T) {
 	}
 }
 
-func TestLegacyFactWriter_WriteLiteralSignaturesSkipsCanonicalFunctions(t *testing.T) {
+func TestProjectionFactWriter_WriteLiteralSignaturesSkipsCanonicalFunctions(t *testing.T) {
 	stub := newFactsWriteStoreStub()
 	key := api.GraphKey{GraphID: 5, ParentHash: 9}
 	stub.graphKeyFor = key
 	stub.graphKeyForOK = true
-	writer := newLegacyFactWriter(stub)
+	writer := newProjectionFactWriter(stub)
 
 	graph, fns := graphWithNestedFunctions(t, `
 		local registered = function() end
@@ -145,10 +145,10 @@ func TestLegacyFactWriter_WriteLiteralSignaturesSkipsCanonicalFunctions(t *testi
 	}
 }
 
-func TestLegacyFactWriter_WriteLiteralSignatures_RequiresGraphKey(t *testing.T) {
+func TestProjectionFactWriter_WriteLiteralSignatures_RequiresGraphKey(t *testing.T) {
 	stub := newFactsWriteStoreStub()
 	stub.graphKeyForOK = false
-	writer := newLegacyFactWriter(stub)
+	writer := newProjectionFactWriter(stub)
 
 	graph, fns := graphWithNestedFunctions(t, `return function() end`)
 	fn := fns[0]

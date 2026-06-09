@@ -1,6 +1,6 @@
 // Store interfaces define the contract between the type checker and its
 // backing storage. Canonical checking uses Summary as its interprocedural
-// authority; the legacy fact product surfaces below are compatibility/export
+// authority; the postflow projection product surfaces below are compatibility/export
 // carriers for noncanonical paths and final projections.
 //
 // The interfaces form a hierarchy with increasing capability:
@@ -13,8 +13,8 @@
 //	StoreReader     - Read-only combination of above
 //	CanonicalStore  - Canonical-owned metadata plus final fact projection
 //	NestedStore     - StoreReader required by nested metadata consumers
-//	LegacyInferenceStore - Explicit old-inference fact-product boundary
-//	IterationStore  - Full mutation capability for legacy fixpoint paths
+//	PostflowProjectionStore - Explicit noncanonical postflow fact-product boundary
+//	IterationStore  - Full mutation capability for projection-product fixpoint paths
 package api
 
 import (
@@ -73,10 +73,10 @@ type NestedMetaStore interface {
 	NestedMetaFor(graphID uint64) (NestedMeta, bool)
 }
 
-// LegacyFactProduct is the typed view over one visible legacy fact product.
+// ProjectionFactProduct is the typed view over one visible postflow projection product.
 // It is not a canonical Summary read surface.
-type LegacyFactProduct interface {
-	// FunctionFacts returns the visible legacy function-fact slot. Canonical
+type ProjectionFactProduct interface {
+	// FunctionFacts returns the visible projection function-fact slot. Canonical
 	// final/public output should prefer FunctionFactsProjection.
 	FunctionFacts() FunctionFacts
 	FunctionFact(sym cfg.SymbolID) (FunctionFact, bool)
@@ -86,11 +86,11 @@ type LegacyFactProduct interface {
 	ConstructorFields(classSym cfg.SymbolID) (FieldValues, bool)
 }
 
-// LegacyFactProductReader exposes visible legacy fact products for old
-// inference/export compatibility paths.
-type LegacyFactProductReader interface {
-	ModuleFacts() LegacyFactProduct
-	LegacyFacts(graph *cfg.Graph, parent *scope.State) LegacyFactProduct
+// ProjectionFactProductReader exposes visible postflow projection products for
+// noncanonical postflow/export compatibility paths.
+type ProjectionFactProductReader interface {
+	ModuleFacts() ProjectionFactProduct
+	ProjectionFacts(graph *cfg.Graph, parent *scope.State) ProjectionFactProduct
 }
 
 // FunctionRefs provides symbol/function lookup for function graphs.
@@ -104,9 +104,9 @@ type FunctionRefs interface {
 }
 
 // StoreReader is the read contract shared by normal checker phases. It
-// intentionally excludes legacy fact-product reads; callers that need final
-// function facts should request FunctionFactProjectionReader, and old inference
-// code should request LegacyInferenceStore explicitly.
+// intentionally excludes postflow projection product reads; callers that need final
+// function facts should request FunctionFactProjectionReader, and noncanonical postflow
+// code should request PostflowProjectionStore explicitly.
 type StoreReader interface {
 	ModuleStore
 	GraphStore
@@ -116,13 +116,13 @@ type StoreReader interface {
 	FunctionRefs
 }
 
-// LegacyFactProductSink provides write access to per-iteration legacy facts.
-type LegacyFactProductSink interface {
-	MergeLegacyFactsNext(key GraphKey, delta Facts)
+// ProjectionFactProductSink provides write access to per-iteration projection facts.
+type ProjectionFactProductSink interface {
+	MergeProjectionFactsNext(key GraphKey, delta Facts)
 }
 
 // CanonicalFunctionFactProjectionSink installs final Summary-derived FunctionFacts
-// without participating in the legacy interproc iteration product.
+// without participating in the projection-product iteration product.
 type CanonicalFunctionFactProjectionSink interface {
 	SetCanonicalFunctionFactsProjection(facts map[GraphKey]FunctionFacts)
 }
@@ -136,7 +136,7 @@ type FunctionFactProjectionReader interface {
 // CanonicalStore is the store surface the canonical summary engine is allowed to
 // use: module binding publication, graph-parent publication, parent-key lookup,
 // and final Summary-derived FunctionFacts projection. It intentionally excludes
-// legacy interproc iteration and visible interproc fact-product reads.
+// projection-product iteration and visible postflow projection-product reads.
 type CanonicalStore interface {
 	CanonicalFunctionFactProjectionSink
 
@@ -147,30 +147,30 @@ type CanonicalStore interface {
 }
 
 // NestedStore is the read-only store interface required by nested metadata
-// consumers. Legacy nested inference uses LegacyInferenceStore instead.
+// consumers. Postflow projection nested inference uses PostflowProjectionStore instead.
 type NestedStore interface {
 	StoreReader
 }
 
-// LegacyInferenceStore is the explicitly named old-inference/compatibility
-// boundary for legacy fact products. Normal checker/synth/module/export code
+// PostflowProjectionStore is the explicitly named noncanonical postflow/compatibility
+// boundary for postflow projection products. Normal checker/synth/module/export code
 // must not request this interface.
-type LegacyInferenceStore interface {
+type PostflowProjectionStore interface {
 	StoreReader
-	LegacyFactProductReader
-	LegacyFactProductSink
+	ProjectionFactProductReader
+	ProjectionFactProductSink
 
 	FunctionFactProjectionReader
 	ParentGraphKeyForSymbol(sym cfg.SymbolID) (GraphKey, bool)
 }
 
-// IterationStore provides mutation operations required by legacy fixpoint paths.
+// IterationStore provides mutation operations required by projection-product fixpoint paths.
 type IterationStore interface {
-	LegacyInferenceStore
+	PostflowProjectionStore
 
-	ClearLegacyInterprocState()
-	LegacyFixpointSwap() bool
-	LegacyFixpointDiffs() []string
+	ClearProjectionFactState()
+	AdvanceProjectionFacts() bool
+	ProjectionFactDiffs() []string
 
 	SetModuleBindings(bindings *bind.BindingTable)
 	SetModuleAliases(aliases map[cfg.SymbolID]string)

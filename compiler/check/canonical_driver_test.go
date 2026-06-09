@@ -19,22 +19,22 @@ import (
 	"github.com/wippyai/go-lua/types/typ"
 )
 
-type legacyFixpointSpyStore struct {
+type projectionFixpointSpyStore struct {
 	*checkstore.SessionStore
 	swaps int
 }
 
-func (s *legacyFixpointSpyStore) LegacyFixpointSwap() bool {
+func (s *projectionFixpointSpyStore) AdvanceProjectionFacts() bool {
 	s.swaps++
-	return s.SessionStore.LegacyFixpointSwap()
+	return s.SessionStore.AdvanceProjectionFacts()
 }
 
-type legacyFixpointSpySession struct {
+type projectionFixpointSpySession struct {
 	*check.Session
-	spy *legacyFixpointSpyStore
+	spy *projectionFixpointSpyStore
 }
 
-func (s *legacyFixpointSpySession) CanonicalStoreHandle() api.CanonicalStore {
+func (s *projectionFixpointSpySession) CanonicalStoreHandle() api.CanonicalStore {
 	return s.spy
 }
 
@@ -89,7 +89,7 @@ return {
 	}
 }
 
-func TestCanonicalDriver_DoesNotAdvanceLegacyInterprocIteration(t *testing.T) {
+func TestCanonicalDriver_DoesNotAdvanceProjectionFactIteration(t *testing.T) {
 	const src = `
 local function get_db()
 	return 1
@@ -97,21 +97,21 @@ end
 
 return get_db()
 `
-	chunk, err := parse.ParseString(src, "no-legacy-iteration.lua")
+	chunk, err := parse.ParseString(src, "no-projection-iteration.lua")
 	if err != nil {
 		t.Fatalf("parse failed: %v", err)
 	}
 
-	base := check.New(db.NewQueryContext(db.New()), "no-legacy-iteration.lua")
-	sess := &legacyFixpointSpySession{
+	base := check.New(db.NewQueryContext(db.New()), "no-projection-iteration.lua")
+	sess := &projectionFixpointSpySession{
 		Session: base,
-		spy:     &legacyFixpointSpyStore{SessionStore: base.Store},
+		spy:     &projectionFixpointSpyStore{SessionStore: base.Store},
 	}
 	driver := canonical.NewDriver(canonical.Config{})
 	driver.Run(sess, chunk)
 
 	if sess.spy.swaps != 0 {
-		t.Fatalf("canonical driver advanced legacy interproc iteration %d times, want 0", sess.spy.swaps)
+		t.Fatalf("canonical driver advanced projection-product iteration %d times, want 0", sess.spy.swaps)
 	}
 }
 

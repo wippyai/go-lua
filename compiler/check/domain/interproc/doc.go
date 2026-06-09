@@ -1,4 +1,4 @@
-// Package interproc owns the legacy fact-product domain.
+// Package interproc owns the postflow projection product domain.
 //
 // It canonicalizes, joins, widens, and compares api.Facts bundles for
 // noncanonical compatibility/export paths. Lower-level domains own individual

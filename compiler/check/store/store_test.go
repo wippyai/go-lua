@@ -14,8 +14,8 @@ import (
 	"github.com/wippyai/go-lua/types/typ"
 )
 
-func TestLegacyInterprocStateInitialization(t *testing.T) {
-	state := newLegacyInterprocState()
+func TestProjectionFactStateInitialization(t *testing.T) {
+	state := newProjectionFactState()
 	if state == nil {
 		t.Fatal("expected non-nil state")
 	}
@@ -67,7 +67,7 @@ func TestFunctionFactsSiblingProjection(t *testing.T) {
 	}
 }
 
-func TestLegacyFacts_UsesStoredGraphParentHash(t *testing.T) {
+func TestProjectionFacts_UsesStoredGraphParentHash(t *testing.T) {
 	graph := cfg.Build(&ast.FunctionExpr{})
 	if graph == nil || graph.ID() == 0 {
 		t.Fatal("expected graph with stable ID")
@@ -83,20 +83,20 @@ func TestLegacyFacts_UsesStoredGraphParentHash(t *testing.T) {
 	s.SetGraphParentHash(graph.ID(), storedParent.Hash())
 	s.SetParentScope(storedParent.Hash(), storedParent)
 	key := api.KeyForGraph(graph, storedParent.Hash())
-	s.legacyInterprocPrev.facts[key] = api.Facts{
+	s.projectionPrev.facts[key] = api.Facts{
 		FunctionFacts: api.FunctionFacts{
 			cfg.SymbolID(1): {Summary: product.LiftVector([]typ.Type{typ.String})},
 		},
 	}
 
-	functionFacts := s.LegacyFacts(graph, currentParent).FunctionFacts()
+	functionFacts := s.ProjectionFacts(graph, currentParent).FunctionFacts()
 	summary := functionfact.FactsProjection(functionFacts).ReturnSummary(cfg.SymbolID(1))
 	if len(summary) != 1 || !typ.TypeEquals(summary[0], typ.String) {
 		t.Fatalf("expected facts from stored parent hash, got %#v", summary)
 	}
 }
 
-func TestLegacyFacts_OverlaysCurrentIterationFacts(t *testing.T) {
+func TestProjectionFacts_OverlaysCurrentIterationFacts(t *testing.T) {
 	graph := cfg.Build(&ast.FunctionExpr{})
 	if graph == nil || graph.ID() == 0 {
 		t.Fatal("expected graph with stable ID")
@@ -107,18 +107,18 @@ func TestLegacyFacts_OverlaysCurrentIterationFacts(t *testing.T) {
 	s.SetGraphParentHash(graph.ID(), parent.Hash())
 	s.SetParentScope(parent.Hash(), parent)
 	key := api.KeyForGraph(graph, parent.Hash())
-	s.legacyInterprocPrev.facts[key] = api.Facts{
+	s.projectionPrev.facts[key] = api.Facts{
 		FunctionFacts: api.FunctionFacts{
 			cfg.SymbolID(1): {Summary: product.LiftVector([]typ.Type{typ.String})},
 		},
 	}
-	s.legacyInterprocNext.facts[key] = api.Facts{
+	s.projectionNext.facts[key] = api.Facts{
 		FunctionFacts: api.FunctionFacts{
 			cfg.SymbolID(1): {Summary: product.LiftVector([]typ.Type{typ.Number})},
 		},
 	}
 
-	functionFacts := s.LegacyFacts(graph, parent).FunctionFacts()
+	functionFacts := s.ProjectionFacts(graph, parent).FunctionFacts()
 	summary := functionfact.FactsProjection(functionFacts).ReturnSummary(cfg.SymbolID(1))
 	want := typ.NewUnion(typ.String, typ.Number)
 	if len(summary) != 1 || !typ.TypeEquals(summary[0], want) {
@@ -126,7 +126,7 @@ func TestLegacyFacts_OverlaysCurrentIterationFacts(t *testing.T) {
 	}
 }
 
-func TestLegacyFacts_ReturnsImmutableFactContainers(t *testing.T) {
+func TestProjectionFacts_ReturnsImmutableFactContainers(t *testing.T) {
 	graph := cfg.Build(&ast.FunctionExpr{})
 	if graph == nil || graph.ID() == 0 {
 		t.Fatal("expected graph with stable ID")
@@ -138,7 +138,7 @@ func TestLegacyFacts_ReturnsImmutableFactContainers(t *testing.T) {
 	s.SetParentScope(parent.Hash(), parent)
 	key := api.KeyForGraph(graph, parent.Hash())
 	sym := cfg.SymbolID(7)
-	s.legacyInterprocPrev.facts[key] = api.Facts{
+	s.projectionPrev.facts[key] = api.Facts{
 		FunctionFacts: api.FunctionFacts{
 			sym: {
 				Params:  product.LiftVector([]typ.Type{typ.String, typ.NewMap(typ.String, typ.Any)}),
@@ -147,12 +147,12 @@ func TestLegacyFacts_ReturnsImmutableFactContainers(t *testing.T) {
 		},
 	}
 
-	facts := s.LegacyFacts(graph, parent).FunctionFacts()
+	facts := s.ProjectionFacts(graph, parent).FunctionFacts()
 	fact := facts[sym]
 	fact.Params[1] = product.FromType(typ.Nil)
 	facts[sym] = api.FunctionFact{Summary: product.LiftVector([]typ.Type{typ.Number})}
 
-	again := s.LegacyFacts(graph, parent).FunctionFacts()
+	again := s.ProjectionFacts(graph, parent).FunctionFacts()
 	if got := functionfact.FactsProjection(again).PublicParameterEvidence(sym)[1]; !typ.TypeEquals(got, typ.NewMap(typ.String, typ.Any)) {
 		t.Fatalf("fact parameter evidence mutation leaked into store: %v", got)
 	}
@@ -161,7 +161,7 @@ func TestLegacyFacts_ReturnsImmutableFactContainers(t *testing.T) {
 	}
 }
 
-func TestMergeLegacyFactsNext_ReconcilesDeltasWithinIteration(t *testing.T) {
+func TestMergeProjectionFactsNext_ReconcilesDeltasWithinIteration(t *testing.T) {
 	key := api.GraphKey{GraphID: 1, ParentHash: 2}
 	sym := cfg.SymbolID(7)
 	refined := typ.Func().Param("path", typ.String).Returns(typ.String).Build()
@@ -169,14 +169,14 @@ func TestMergeLegacyFactsNext_ReconcilesDeltasWithinIteration(t *testing.T) {
 
 	s := NewSessionStore()
 	first := api.Facts{FunctionFacts: api.FunctionFacts{sym: {Signature: refined}}}
-	s.MergeLegacyFactsNext(key, first)
-	s.MergeLegacyFactsNext(key, api.Facts{
+	s.MergeProjectionFactsNext(key, first)
+	s.MergeProjectionFactsNext(key, api.Facts{
 		FunctionFacts: api.FunctionFacts{
 			sym: {Signature: broad},
 		},
 	})
 
-	got := functionfact.FactsProjection(s.legacyInterprocNext.facts[key].FunctionFacts).Type(sym, functionfact.ProjectionSibling, api.SynthModeDeclared)
+	got := functionfact.FactsProjection(s.projectionNext.facts[key].FunctionFacts).Type(sym, functionfact.ProjectionSibling, api.SynthModeDeclared)
 	if !typ.TypeEquals(got, refined) {
 		t.Fatalf("expected update boundary to keep canonical refined function fact, got %v", got)
 	}
@@ -209,17 +209,17 @@ func TestFactInputs_RevalidateFactQueries(t *testing.T) {
 	delta := api.Facts{FunctionFacts: api.FunctionFacts{
 		sym: {Summary: product.LiftVector([]typ.Type{typ.String})},
 	}}
-	s.MergeLegacyFactsNext(key, delta)
+	s.MergeProjectionFactsNext(key, delta)
 	if got := q.Get(ctx, key); got != 0 || calls != 1 {
 		t.Fatalf("same-iteration write query = %d calls=%d, want stable 0/1 before swap", got, calls)
 	}
-	s.LegacyFixpointSwap()
+	s.AdvanceProjectionFacts()
 	if got := q.Get(ctx, key); got != 1 || calls != 2 {
 		t.Fatalf("changed query = %d calls=%d, want 1/2", got, calls)
 	}
 
-	s.MergeLegacyFactsNext(key, delta)
-	s.LegacyFixpointSwap()
+	s.MergeProjectionFactsNext(key, delta)
+	s.AdvanceProjectionFacts()
 	if got := q.Get(ctx, key); got != 1 || calls != 2 {
 		t.Fatalf("equal update query = %d calls=%d, want 1/2", got, calls)
 	}
@@ -248,27 +248,27 @@ func TestFactInputs_FunctionFactProjectionTracksOneSymbol(t *testing.T) {
 		t.Fatalf("initial projection = %d calls=%d, want 0/1", got, calls)
 	}
 
-	s.MergeLegacyFactsNext(key, api.Facts{FunctionFacts: api.FunctionFacts{
+	s.MergeProjectionFactsNext(key, api.Facts{FunctionFacts: api.FunctionFacts{
 		sym7: {Summary: product.LiftVector([]typ.Type{typ.String})},
 		sym8: {Summary: product.LiftVector([]typ.Type{typ.Number})},
 	}})
-	s.LegacyFixpointSwap()
+	s.AdvanceProjectionFacts()
 	if got := q.Get(ctx, queryKey); got != 1 || calls != 2 {
 		t.Fatalf("changed projection = %d calls=%d, want 1/2", got, calls)
 	}
 
-	s.MergeLegacyFactsNext(key, api.Facts{FunctionFacts: api.FunctionFacts{
+	s.MergeProjectionFactsNext(key, api.Facts{FunctionFacts: api.FunctionFacts{
 		sym8: {Summary: product.LiftVector([]typ.Type{typ.Number, typ.String})},
 	}})
-	s.LegacyFixpointSwap()
+	s.AdvanceProjectionFacts()
 	if got := q.Get(ctx, queryKey); got != 1 || calls != 2 {
 		t.Fatalf("unrelated symbol changed projection = %d calls=%d, want cached 1/2", got, calls)
 	}
 
-	s.MergeLegacyFactsNext(key, api.Facts{FunctionFacts: api.FunctionFacts{
+	s.MergeProjectionFactsNext(key, api.Facts{FunctionFacts: api.FunctionFacts{
 		sym7: {Summary: product.LiftVector([]typ.Type{typ.String, typ.Number})},
 	}})
-	s.LegacyFixpointSwap()
+	s.AdvanceProjectionFacts()
 	if got := q.Get(ctx, queryKey); got != 2 || calls != 3 {
 		t.Fatalf("tracked symbol changed projection = %d calls=%d, want 2/3", got, calls)
 	}
@@ -305,13 +305,13 @@ func TestFactInputs_CapturedTypesUseRecursiveFactEquality(t *testing.T) {
 	if got := q.Get(ctx, queryKey); got != 0 || calls != 1 {
 		t.Fatalf("initial projection = %d calls=%d, want 0/1", got, calls)
 	}
-	s.MergeLegacyFactsNext(key, api.Facts{CapturedTypes: api.CapturedTypes{sym: product.FromType(left)}})
-	s.LegacyFixpointSwap()
+	s.MergeProjectionFactsNext(key, api.Facts{CapturedTypes: api.CapturedTypes{sym: product.FromType(left)}})
+	s.AdvanceProjectionFacts()
 	if got := q.Get(ctx, queryKey); got == 0 || calls != 2 {
 		t.Fatalf("changed projection = %d calls=%d, want nonzero/2", got, calls)
 	}
-	s.MergeLegacyFactsNext(key, api.Facts{CapturedTypes: api.CapturedTypes{sym: product.FromType(right)}})
-	s.LegacyFixpointSwap()
+	s.MergeProjectionFactsNext(key, api.Facts{CapturedTypes: api.CapturedTypes{sym: product.FromType(right)}})
+	s.AdvanceProjectionFacts()
 	if got := q.Get(ctx, queryKey); got == 0 || calls != 2 {
 		t.Fatalf("equivalent recursive projection = %d calls=%d, want cached nonzero/2", got, calls)
 	}
@@ -335,10 +335,10 @@ func TestFactInputs_PublishOnlyAtFixpointBoundary(t *testing.T) {
 	}
 
 	beforeWrites := database.Revision()
-	s.MergeLegacyFactsNext(key, api.Facts{FunctionFacts: api.FunctionFacts{
+	s.MergeProjectionFactsNext(key, api.Facts{FunctionFacts: api.FunctionFacts{
 		cfg.SymbolID(7): {Summary: product.LiftVector([]typ.Type{typ.String})},
 	}})
-	s.MergeLegacyFactsNext(key, api.Facts{FunctionFacts: api.FunctionFacts{
+	s.MergeProjectionFactsNext(key, api.Facts{FunctionFacts: api.FunctionFacts{
 		cfg.SymbolID(8): {Summary: product.LiftVector([]typ.Type{typ.Number})},
 	}})
 	if got := database.Revision(); got != beforeWrites {
@@ -348,7 +348,7 @@ func TestFactInputs_PublishOnlyAtFixpointBoundary(t *testing.T) {
 		t.Fatalf("pre-swap query = %d calls=%d, want stable 0/1", got, calls)
 	}
 
-	s.LegacyFixpointSwap()
+	s.AdvanceProjectionFacts()
 	if got := database.Revision(); got != beforeWrites+1 {
 		t.Fatalf("fixpoint swap bumped revision %d times, got %d want %d", got-beforeWrites, got, beforeWrites+1)
 	}
@@ -357,7 +357,7 @@ func TestFactInputs_PublishOnlyAtFixpointBoundary(t *testing.T) {
 	}
 
 	afterSync := database.Revision()
-	s.LegacyFixpointSwap()
+	s.AdvanceProjectionFacts()
 	if got := database.Revision(); got != afterSync {
 		t.Fatalf("clean swap bumped revision: got %d want %d", got, afterSync)
 	}
@@ -423,11 +423,11 @@ func TestFunctionRegistry_Fields(t *testing.T) {
 	}
 }
 
-func TestLegacyFixpointSwap_TracksChannelDiffsAndResetsNext(t *testing.T) {
+func TestAdvanceProjectionFacts_TracksChannelDiffsAndResetsNext(t *testing.T) {
 	s := NewSessionStore()
 
 	key := api.GraphKey{GraphID: 7, ParentHash: 11}
-	s.legacyInterprocNext.facts[key] = api.Facts{
+	s.projectionNext.facts[key] = api.Facts{
 		FunctionFacts: api.FunctionFacts{
 			1: {
 				Summary:    product.LiftVector([]typ.Type{typ.String}),
@@ -435,66 +435,66 @@ func TestLegacyFixpointSwap_TracksChannelDiffsAndResetsNext(t *testing.T) {
 			},
 		},
 	}
-	s.legacyInterprocNext.facts[api.ModuleFactsKey()] = api.Facts{
+	s.projectionNext.facts[api.ModuleFactsKey()] = api.Facts{
 		ConstructorFields: api.ConstructorFields{
 			3: {constraint.Segment{Kind: constraint.SegmentField, Name: "v"}: product.FromType(typ.Number)},
 		},
 	}
 
-	if !s.LegacyFixpointSwap() {
+	if !s.AdvanceProjectionFacts() {
 		t.Fatal("expected fixpoint swap to report changes")
 	}
 
-	diffs := s.LegacyFixpointDiffs()
+	diffs := s.ProjectionFactDiffs()
 	if len(diffs) != 1 {
 		t.Fatalf("expected one product diff, got %v", diffs)
 	}
-	if diffs[0] != "LegacyFacts" {
+	if diffs[0] != "ProjectionFacts" {
 		t.Fatalf("unexpected diff order/content: %v", diffs)
 	}
 
-	if len(s.legacyInterprocPrev.facts) != 2 {
-		t.Fatalf("expected prev facts populated, got %#v", s.legacyInterprocPrev.facts)
+	if len(s.projectionPrev.facts) != 2 {
+		t.Fatalf("expected prev facts populated, got %#v", s.projectionPrev.facts)
 	}
-	if len(s.legacyInterprocNext.facts) != 0 {
-		t.Fatalf("expected next facts reset, got %#v", s.legacyInterprocNext.facts)
+	if len(s.projectionNext.facts) != 0 {
+		t.Fatalf("expected next facts reset, got %#v", s.projectionNext.facts)
 	}
-	if functionfact.FactsProjection(s.legacyInterprocPrev.facts[key].FunctionFacts).Refinement(1) == nil {
-		t.Fatalf("expected function refinement in product fact, got %#v", s.legacyInterprocPrev.facts[key])
+	if functionfact.FactsProjection(s.projectionPrev.facts[key].FunctionFacts).Refinement(1) == nil {
+		t.Fatalf("expected function refinement in product fact, got %#v", s.projectionPrev.facts[key])
 	}
-	if len(s.legacyInterprocPrev.facts[api.ModuleFactsKey()].ConstructorFields[3]) != 1 {
-		t.Fatalf("expected constructor fields in module product fact, got %#v", s.legacyInterprocPrev.facts[api.ModuleFactsKey()])
+	if len(s.projectionPrev.facts[api.ModuleFactsKey()].ConstructorFields[3]) != 1 {
+		t.Fatalf("expected constructor fields in module product fact, got %#v", s.projectionPrev.facts[api.ModuleFactsKey()])
 	}
 }
 
-func TestClearLegacyInterprocState_InitializesMissingState(t *testing.T) {
+func TestClearProjectionFactState_InitializesMissingState(t *testing.T) {
 	s := &SessionStore{}
-	s.ClearLegacyInterprocState()
+	s.ClearProjectionFactState()
 
-	if s.legacyInterprocPrev == nil || s.legacyInterprocNext == nil {
+	if s.projectionPrev == nil || s.projectionNext == nil {
 		t.Fatal("expected interproc states to be initialized")
 	}
 }
 
-func TestLegacyFixpointDiffs_ReturnsCopy(t *testing.T) {
+func TestProjectionFactDiffs_ReturnsCopy(t *testing.T) {
 	s := NewSessionStore()
 	key := registerFunctionForRefinementTest(t, s, 1)
-	s.MergeLegacyFactsNext(key, api.Facts{
+	s.MergeProjectionFactsNext(key, api.Facts{
 		FunctionFacts: api.FunctionFacts{
 			1: {Refinement: &constraint.FunctionRefinement{Terminates: true}},
 		},
 	})
-	if !s.LegacyFixpointSwap() {
+	if !s.AdvanceProjectionFacts() {
 		t.Fatal("expected change from effect swap")
 	}
 
-	diffs := s.LegacyFixpointDiffs()
+	diffs := s.ProjectionFactDiffs()
 	if len(diffs) == 0 {
 		t.Fatal("expected non-empty diffs")
 	}
 	diffs[0] = "MUTATED"
 
-	diffs2 := s.LegacyFixpointDiffs()
+	diffs2 := s.ProjectionFactDiffs()
 	if len(diffs2) == 0 || diffs2[0] == "MUTATED" {
 		t.Fatalf("expected defensive copy, got %v", diffs2)
 	}

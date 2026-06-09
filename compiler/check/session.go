@@ -1,7 +1,7 @@
 // session.go defines the Session type that holds per-run state for type checking.
 // Session is the primary interface for accessing analysis results. SessionStore
 // lives in compiler/check/store and manages module state, final projections,
-// and legacy product state for compatibility paths.
+// and projection product state for compatibility paths.
 //
 // # LIFECYCLE SEPARATION
 //
@@ -11,12 +11,12 @@
 //     Contains binding tables, CFG graphs, and module aliases. Never modified
 //     during fixpoint iteration.
 //
-//   - Fact inputs: query-tracked legacy products used to revalidate
+//   - Fact inputs: query-tracked projection products used to revalidate
 //     cached compatibility-path analysis when facts change.
 //
 // # LEGACY PRODUCT PROTOCOL
 //
-// Legacy facts follow a product protocol:
+// Projection facts follow a product protocol:
 //
 //   - During iteration: functions read the visible product
 //   - At boundary: accumulated facts widen into the stable product
@@ -49,7 +49,7 @@ import (
 
 // Session holds all state and results for analyzing a single Lua module.
 // One Session is created per Check call and contains the complete analysis output
-// including per-function results, diagnostics, and legacy fact product state for
+// including per-function results, diagnostics, and postflow projection product state for
 // compatibility paths.
 //
 // USAGE PATTERN:
@@ -139,7 +139,7 @@ func (s *Session) CanonicalStoreHandle() api.CanonicalStore {
 }
 
 // StoreHandle returns the session store as an iteration-capable interface for
-// legacy interproc paths.
+// projection-product paths.
 func (s *Session) StoreHandle() api.IterationStore {
 	if s == nil {
 		return nil
@@ -429,7 +429,7 @@ func (s *Session) Release() {
 			clear(s.Store.Module.ModuleAliases)
 		}
 
-		s.Store.ClearLegacyInterprocState()
+		s.Store.ClearProjectionFactState()
 	}
 
 	// Clear per-function results
@@ -506,7 +506,7 @@ func (s *Session) rootFunctionFactsForExport() api.FunctionFacts {
 }
 
 // RefinementsForExport extracts computed function refinements for manifest generation.
-// Returns refinements from the final projection data and the final converged legacy product.
+// Returns refinements from the final projection data and the final converged projection product.
 //
 // The returned map associates each function's SymbolID with its computed refinement,
 // including IO effects (row), termination status, and conditional effects.
@@ -514,7 +514,7 @@ func (s *Session) rootFunctionFactsForExport() api.FunctionFacts {
 //
 // FunctionFacts and per-function FuncResults can both carry a computed
 // refinement. Both sources are merged here; a symbol already present in the
-// converged legacy product keeps that product refinement, while otherwise the
+// converged projection product keeps that product refinement, while otherwise the
 // per-function body-proven refinement contributes the export summary.
 func (s *Session) RefinementsForExport() map[cfg.SymbolID]*constraint.FunctionRefinement {
 	if s == nil {
@@ -522,7 +522,7 @@ func (s *Session) RefinementsForExport() map[cfg.SymbolID]*constraint.FunctionRe
 	}
 	refinements := make(map[cfg.SymbolID]*constraint.FunctionRefinement)
 	if s.Store != nil {
-		for sym, refinement := range s.Store.LegacyFunctionRefinementsForExport() {
+		for sym, refinement := range s.Store.ProjectionFunctionRefinementsForExport() {
 			refinements[sym] = refinement
 		}
 	}
