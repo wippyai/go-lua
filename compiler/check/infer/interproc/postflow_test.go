@@ -70,7 +70,7 @@ func TestCollectParameterEvidenceFromResult_UsesSolvedObservationWithoutNarrowSy
 		},
 	}
 	CollectParameterEvidenceFromResult(st, result, parent, 0)
-	st.AdvanceProjectionFacts()
+	st.AdvancePostflowProjections()
 
 	ff, ok := st.FunctionFactProjection(graph, parent, callInfo.CalleeSymbol)
 	if !ok {
@@ -128,7 +128,7 @@ func TestCollectParameterEvidenceFromResult_CanonicalProjectionSkipsProjectionBo
 		},
 	}
 	CollectParameterEvidenceFromResult(st, result, parent, currentSym)
-	st.AdvanceProjectionFacts()
+	st.AdvancePostflowProjections()
 
 	ff, _ := st.FunctionFactProjection(graph, parent, currentSym)
 	if len(ff.Call.Params) != 0 || len(ff.Body.Params) != 0 {

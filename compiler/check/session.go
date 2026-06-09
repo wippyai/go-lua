@@ -429,7 +429,7 @@ func (s *Session) Release() {
 			clear(s.Store.Module.ModuleAliases)
 		}
 
-		s.Store.ClearProjectionFactState()
+		s.Store.ClearPostflowProjectionState()
 	}
 
 	// Clear per-function results

@@ -24,7 +24,7 @@ type projectionFactWriter struct {
 	store factsWriteStore
 }
 
-func newProjectionFactWriter(store factsWriteStore) projectionFactWriter {
+func newPostflowProjectionWriter(store factsWriteStore) projectionFactWriter {
 	return projectionFactWriter{store: store}
 }
 

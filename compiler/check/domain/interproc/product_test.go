@@ -14,45 +14,45 @@ import (
 	"github.com/wippyai/go-lua/types/typ"
 )
 
-func TestWidenFacts_DoesNotOverrideSummaryWithNilNarrow(t *testing.T) {
-	prev := api.Facts{
+func TestWidenProjectionProduct_DoesNotOverrideSummaryWithNilNarrow(t *testing.T) {
+	prev := ProjectionProduct{
 		FunctionFacts: api.FunctionFacts{
 			1: {Returns: api.FunctionReturnProjection{Preflow: product.LiftVector([]typ.Type{typ.Integer})}},
 		},
 	}
-	next := api.Facts{
+	next := ProjectionProduct{
 		FunctionFacts: api.FunctionFacts{
 			1: {Returns: api.FunctionReturnProjection{Postflow: product.LiftVector([]typ.Type{typ.Nil})}},
 		},
 	}
 
-	merged := WidenFacts(prev, next)
+	merged := WidenProjectionProduct(prev, next)
 	got := functionfact.FactsProjection(merged.FunctionFacts).ReturnSummary(1)
 	if len(got) != 1 || !typ.TypeEquals(got[0], typ.Integer) {
 		t.Fatalf("expected summary[1]=integer, got %v", got)
 	}
 }
 
-func TestWidenFacts_ElidesOptionalFromNarrowFunctionFact(t *testing.T) {
-	prev := api.Facts{
+func TestWidenProjectionProduct_ElidesOptionalFromNarrowFunctionFact(t *testing.T) {
+	prev := ProjectionProduct{
 		FunctionFacts: api.FunctionFacts{
 			1: {Returns: api.FunctionReturnProjection{Preflow: product.LiftVector([]typ.Type{typ.NewOptional(typ.Integer)})}},
 		},
 	}
-	next := api.Facts{
+	next := ProjectionProduct{
 		FunctionFacts: api.FunctionFacts{
 			1: {Returns: api.FunctionReturnProjection{Postflow: product.LiftVector([]typ.Type{typ.Integer})}},
 		},
 	}
 
-	merged := WidenFacts(prev, next)
+	merged := WidenProjectionProduct(prev, next)
 	got := functionfact.FactsProjection(merged.FunctionFacts).ReturnSummary(1)
 	if len(got) != 1 || !typ.TypeEquals(got[0], typ.Integer) {
 		t.Fatalf("expected summary[1]=integer, got %v", got)
 	}
 }
 
-func TestWidenFacts_ReplacesEmptyReturnSeedWithMetatableEvidence(t *testing.T) {
+func TestWidenProjectionProduct_ReplacesEmptyReturnSeedWithMetatableEvidence(t *testing.T) {
 	method := typ.Func().Param("self", typ.Any).Returns(typ.Boolean).Build()
 	prototype := typ.NewRecord().Field("ready", method).Build()
 	metatable := typ.NewRecord().Field("__index", prototype).Build()
@@ -61,14 +61,14 @@ func TestWidenFacts_ReplacesEmptyReturnSeedWithMetatableEvidence(t *testing.T) {
 	seed := typ.NewRecord().Metatable(typ.Unknown).Build()
 	observed := typ.NewRecord().Metatable(metatable).Build()
 
-	prev := api.Facts{FunctionFacts: api.FunctionFacts{
+	prev := ProjectionProduct{FunctionFacts: api.FunctionFacts{
 		1: {Returns: api.FunctionReturnProjection{Preflow: product.LiftVector([]typ.Type{seed, typ.Nil}), Postflow: product.LiftVector([]typ.Type{seed, typ.Nil})}},
 	}}
-	next := api.Facts{FunctionFacts: api.FunctionFacts{
+	next := ProjectionProduct{FunctionFacts: api.FunctionFacts{
 		1: {Returns: api.FunctionReturnProjection{Preflow: product.LiftVector([]typ.Type{observed, typ.Nil}), Postflow: product.LiftVector([]typ.Type{observed, typ.Nil})}},
 	}}
 
-	merged := WidenFacts(prev, next)
+	merged := WidenProjectionProduct(prev, next)
 	got := functionfact.FactsProjection(merged.FunctionFacts).ReturnSummary(1)
 	if len(got) != 2 {
 		t.Fatalf("expected two return slots, got %v", got)
@@ -85,22 +85,22 @@ func TestWidenFacts_ReplacesEmptyReturnSeedWithMetatableEvidence(t *testing.T) {
 	}
 }
 
-func TestWidenFacts_RefinesOptionalForFirstOrderFunctionSummary(t *testing.T) {
-	prev := api.Facts{FunctionFacts: api.FunctionFacts{
+func TestWidenProjectionProduct_RefinesOptionalForFirstOrderFunctionSummary(t *testing.T) {
+	prev := ProjectionProduct{FunctionFacts: api.FunctionFacts{
 		1: {Returns: api.FunctionReturnProjection{Preflow: product.LiftVector([]typ.Type{typ.NewOptional(typ.Integer)})}},
 	}}
-	next := api.Facts{FunctionFacts: api.FunctionFacts{
+	next := ProjectionProduct{FunctionFacts: api.FunctionFacts{
 		1: {Returns: api.FunctionReturnProjection{Preflow: product.LiftVector([]typ.Type{typ.Integer})}},
 	}}
 
-	merged := WidenFacts(prev, next)
+	merged := WidenProjectionProduct(prev, next)
 	got := functionfact.FactsProjection(merged.FunctionFacts).ReturnSummary(1)
 	if len(got) != 1 || !typ.TypeEquals(got[0], typ.Integer) {
 		t.Fatalf("expected integer after first-order refinement, got %v", got)
 	}
 }
 
-func TestWidenFacts_UsesMonotoneJoinForHigherOrderFunctionSummary(t *testing.T) {
+func TestWidenProjectionProduct_UsesMonotoneJoinForHigherOrderFunctionSummary(t *testing.T) {
 	nestedUnknown := typ.NewRecord().
 		Field("next", typ.Func().Returns(typ.Unknown).Build()).
 		Build()
@@ -115,21 +115,21 @@ func TestWidenFacts_UsesMonotoneJoinForHigherOrderFunctionSummary(t *testing.T) 
 		Field("build", typ.Func().Returns(nestedString).Build()).
 		Build()
 
-	prev := api.Facts{FunctionFacts: api.FunctionFacts{
+	prev := ProjectionProduct{FunctionFacts: api.FunctionFacts{
 		1: {Returns: api.FunctionReturnProjection{Preflow: product.LiftVector([]typ.Type{base})}},
 	}}
-	next := api.Facts{FunctionFacts: api.FunctionFacts{
+	next := ProjectionProduct{FunctionFacts: api.FunctionFacts{
 		1: {Returns: api.FunctionReturnProjection{Preflow: product.LiftVector([]typ.Type{refined})}},
 	}}
 
-	merged := WidenFacts(prev, next)
+	merged := WidenProjectionProduct(prev, next)
 	got := functionfact.FactsProjection(merged.FunctionFacts).ReturnSummary(1)
 	if len(got) != 1 || !typ.TypeEquals(got[0], base) {
 		t.Fatalf("expected stable upper bound for higher-order return, got %v", got)
 	}
 }
 
-func TestWidenFacts_InterfaceMethodsDoNotBlockOptionalElision(t *testing.T) {
+func TestWidenProjectionProduct_InterfaceMethodsDoNotBlockOptionalElision(t *testing.T) {
 	dbType := typ.NewInterface("sql.DB", []typ.Method{
 		{
 			Name: "release",
@@ -140,14 +140,14 @@ func TestWidenFacts_InterfaceMethodsDoNotBlockOptionalElision(t *testing.T) {
 		},
 	})
 
-	prev := api.Facts{FunctionFacts: api.FunctionFacts{
+	prev := ProjectionProduct{FunctionFacts: api.FunctionFacts{
 		1: {Returns: api.FunctionReturnProjection{Preflow: product.LiftVector([]typ.Type{typ.NewOptional(dbType)})}},
 	}}
-	next := api.Facts{FunctionFacts: api.FunctionFacts{
+	next := ProjectionProduct{FunctionFacts: api.FunctionFacts{
 		1: {Returns: api.FunctionReturnProjection{Preflow: product.LiftVector([]typ.Type{dbType})}},
 	}}
 
-	merged := WidenFacts(prev, next)
+	merged := WidenProjectionProduct(prev, next)
 	got := functionfact.FactsProjection(merged.FunctionFacts).ReturnSummary(1)
 	if len(got) != 1 || !typ.TypeEquals(got[0], dbType) {
 		t.Fatalf("expected optional elision for interface return, got %v", got)

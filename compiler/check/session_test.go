@@ -396,12 +396,12 @@ func TestAttachStore_NilStore(t *testing.T) {
 func TestSessionStore_ProductMaps(t *testing.T) {
 	store := store.NewSessionStore()
 
-	if !store.ProjectionFactStateInitialized() {
+	if !store.PostflowProjectionStateInitialized() {
 		t.Error("projection-product owner should be initialized")
 	}
 }
 
-func TestProjectionFactDiffs_IsolatedBetweenStores(t *testing.T) {
+func TestPostflowProjectionDiffs_IsolatedBetweenStores(t *testing.T) {
 	storeA := store.NewSessionStore()
 	storeB := store.NewSessionStore()
 
@@ -411,14 +411,14 @@ func TestProjectionFactDiffs_IsolatedBetweenStores(t *testing.T) {
 	storeA.MergeFunctionFactProjection(keyA, cfg.SymbolID(42), fact)
 	storeB.MergeFunctionFactProjection(keyB, cfg.SymbolID(42), fact)
 
-	if !storeA.AdvanceProjectionFacts() {
-		t.Fatal("expected storeA AdvanceProjectionFacts to report change")
+	if !storeA.AdvancePostflowProjections() {
+		t.Fatal("expected storeA AdvancePostflowProjections to report change")
 	}
-	if diffs := storeA.ProjectionFactDiffs(); len(diffs) == 0 {
+	if diffs := storeA.PostflowProjectionDiffs(); len(diffs) == 0 {
 		t.Fatal("expected storeA diffs to be non-empty")
 	}
 
-	if diffs := storeB.ProjectionFactDiffs(); len(diffs) != 0 {
+	if diffs := storeB.PostflowProjectionDiffs(); len(diffs) != 0 {
 		t.Fatalf("expected storeB diffs to be empty, got %v", diffs)
 	}
 }
@@ -438,7 +438,7 @@ func registerSessionFunctionForRefinementTest(t *testing.T, st *store.SessionSto
 	return api.KeyForGraph(graph, parent.Hash())
 }
 
-func TestSessionStore_ClearProjectionFactState(t *testing.T) {
+func TestSessionStore_ClearPostflowProjectionState(t *testing.T) {
 	store := store.NewSessionStore()
 
 	store.MergeConstructorFieldProjection(cfg.SymbolID(2), interprocdomain.LiftTypeFieldMap(map[string]typ.Type{"name": typ.String}))
@@ -447,11 +447,11 @@ func TestSessionStore_ClearProjectionFactState(t *testing.T) {
 		cfg.SymbolID(4),
 		api.FunctionFact{Effects: api.FunctionEffectProjection{Refinement: &constraint.FunctionRefinement{Terminates: true}}},
 	)
-	store.AdvanceProjectionFacts()
+	store.AdvancePostflowProjections()
 
-	store.ClearProjectionFactState()
+	store.ClearPostflowProjectionState()
 
-	prev, next := store.ProjectionFactCounts()
+	prev, next := store.PostflowProjectionCounts()
 	if prev != 0 {
 		t.Fatal("expected previous product facts to be cleared")
 	}
@@ -525,7 +525,7 @@ func TestSession_Release_Nil(t *testing.T) {
 func TestModuleConstructorFacts_EmptyDelta(t *testing.T) {
 	store := store.NewSessionStore()
 	store.MergeConstructorFieldProjection(0, nil)
-	_, next := store.ProjectionFactCounts()
+	_, next := store.PostflowProjectionCounts()
 	if next != 0 {
 		t.Error("empty product delta should not store facts")
 	}

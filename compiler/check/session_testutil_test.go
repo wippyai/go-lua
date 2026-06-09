@@ -32,5 +32,5 @@ func setConstructorFieldsPrevForTest(s *store.SessionStore, fields map[cfg.Symbo
 	for sym, byField := range liftConstructorFieldsForTest(fields) {
 		s.MergeConstructorFieldProjection(sym, byField)
 	}
-	s.AdvanceProjectionFacts()
+	s.AdvancePostflowProjections()
 }

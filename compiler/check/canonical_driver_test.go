@@ -24,9 +24,9 @@ type projectionFixpointSpyStore struct {
 	swaps int
 }
 
-func (s *projectionFixpointSpyStore) AdvanceProjectionFacts() bool {
+func (s *projectionFixpointSpyStore) AdvancePostflowProjections() bool {
 	s.swaps++
-	return s.SessionStore.AdvanceProjectionFacts()
+	return s.SessionStore.AdvancePostflowProjections()
 }
 
 type projectionFixpointSpySession struct {
@@ -89,7 +89,7 @@ return {
 	}
 }
 
-func TestCanonicalDriver_DoesNotAdvanceProjectionFactIteration(t *testing.T) {
+func TestCanonicalDriver_DoesNotAdvancePostflowProjectionIteration(t *testing.T) {
 	const src = `
 local function get_db()
 	return 1

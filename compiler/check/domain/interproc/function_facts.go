@@ -17,7 +17,7 @@ func collectCanonicalFunctionFactSymbols(factSets ...api.FunctionFacts) []cfg.Sy
 	return symbols.Slice()
 }
 
-func readFunctionFactFromFacts(facts *api.Facts, sym cfg.SymbolID) api.FunctionFact {
+func readFunctionFactFromProduct(facts *ProjectionProduct, sym cfg.SymbolID) api.FunctionFact {
 	if facts == nil || sym == 0 {
 		return api.FunctionFact{}
 	}
@@ -34,7 +34,7 @@ func readFunctionFactFromFacts(facts *api.Facts, sym cfg.SymbolID) api.FunctionF
 	return api.FunctionFact{}
 }
 
-func writeNormalizedFunctionFactToFacts(facts *api.Facts, sym cfg.SymbolID, ff api.FunctionFact) {
+func writeNormalizedFunctionFactToProduct(facts *ProjectionProduct, sym cfg.SymbolID, ff api.FunctionFact) {
 	if facts == nil || sym == 0 {
 		return
 	}

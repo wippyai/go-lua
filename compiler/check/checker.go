@@ -215,7 +215,7 @@ func (c *Checker) Check(source, name string) *Session {
 	// Ensure each top-level Check starts from clean projection fact state. These
 	// iteration-stable caches must not persist across separate runs.
 	if sess.Store != nil {
-		sess.Store.ClearProjectionFactState()
+		sess.Store.ClearPostflowProjectionState()
 	}
 
 	chunk, err := parse.ParseString(source, name)
@@ -262,7 +262,7 @@ func (c *Checker) CheckChunk(chunk []ast.Stmt, name string) *Session {
 	sess := New(ctx, name)
 	// Attach store accessor and compute context for interproc queries
 	if sess.Store != nil {
-		sess.Store.ClearProjectionFactState()
+		sess.Store.ClearPostflowProjectionState()
 	}
 	c.checkChunk(sess, chunk)
 	return sess

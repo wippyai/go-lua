@@ -151,7 +151,7 @@ func (in *factInputs) constructorFieldsFor(ctx *db.QueryContext, key api.Constru
 	return cloneConstructorFieldMap(fields), true
 }
 
-func (in *factInputs) setProjectedFacts(batch *db.InputBatch, key api.GraphKey, facts api.Facts) {
+func (in *factInputs) setPostflowProjectionProduct(batch *db.InputBatch, key api.GraphKey, facts interproc.ProjectionProduct) {
 	in.setProjectedFunctionFactMap(batch, key, facts.FunctionFacts)
 	in.setProjectedFunctionFacts(batch, key, facts.FunctionFacts)
 	in.setProjectedLiteralSigs(batch, key, facts.LiteralSigs)
@@ -309,9 +309,9 @@ func (s *SessionStore) visibleFunctionFact(key api.GraphKey, sym cfg.SymbolID) (
 	if s == nil || sym == 0 {
 		return api.FunctionFact{}, false
 	}
-	if s.projectionPrev != nil && s.projectionNext != nil {
-		prev := functionFactFromFacts(s.projectionPrev.facts[key], sym)
-		next := functionFactFromFacts(s.projectionNext.facts[key], sym)
+	if s.postflowPrev != nil && s.postflowNext != nil {
+		prev := functionFactFromProduct(s.postflowPrev.facts[key], sym)
+		next := functionFactFromProduct(s.postflowNext.facts[key], sym)
 		switch {
 		case functionfact.Empty(prev) && functionfact.Empty(next):
 			return api.FunctionFact{}, false
@@ -320,18 +320,18 @@ func (s *SessionStore) visibleFunctionFact(key api.GraphKey, sym cfg.SymbolID) (
 		case functionfact.Empty(next):
 			return cloneFunctionFact(prev), true
 		default:
-			merged := interproc.OverlayFacts(
-				api.Facts{FunctionFacts: api.FunctionFacts{sym: prev}},
-				api.Facts{FunctionFacts: api.FunctionFacts{sym: next}},
+			merged := interproc.OverlayProjectionProduct(
+				interproc.ProjectionProduct{FunctionFacts: api.FunctionFacts{sym: prev}},
+				interproc.ProjectionProduct{FunctionFacts: api.FunctionFacts{sym: next}},
 			)
-			ff := functionFactFromFacts(merged, sym)
+			ff := functionFactFromProduct(merged, sym)
 			return cloneFunctionFact(ff), !functionfact.Empty(ff)
 		}
 	}
 	return api.FunctionFact{}, false
 }
 
-func functionFactFromFacts(facts api.Facts, sym cfg.SymbolID) api.FunctionFact {
+func functionFactFromProduct(facts interproc.ProjectionProduct, sym cfg.SymbolID) api.FunctionFact {
 	if sym == 0 || len(facts.FunctionFacts) == 0 {
 		return api.FunctionFact{}
 	}
@@ -342,28 +342,28 @@ func (s *SessionStore) visibleFunctionFacts(key api.GraphKey) api.FunctionFacts 
 	if s == nil {
 		return nil
 	}
-	prev := api.Facts{}
-	if s.projectionPrev != nil {
-		prev.FunctionFacts = s.projectionPrev.facts[key].FunctionFacts
+	prev := interproc.ProjectionProduct{}
+	if s.postflowPrev != nil {
+		prev.FunctionFacts = s.postflowPrev.facts[key].FunctionFacts
 	}
-	next := api.Facts{}
-	if s.projectionNext != nil {
-		next.FunctionFacts = s.projectionNext.facts[key].FunctionFacts
+	next := interproc.ProjectionProduct{}
+	if s.postflowNext != nil {
+		next.FunctionFacts = s.postflowNext.facts[key].FunctionFacts
 	}
-	return cloneFunctionFacts(interproc.OverlayFacts(prev, next).FunctionFacts)
+	return cloneFunctionFacts(interproc.OverlayProjectionProduct(prev, next).FunctionFacts)
 }
 
 func (s *SessionStore) visibleLiteralSig(key api.GraphKey, fn *ast.FunctionExpr) (*typ.Function, bool) {
 	if s == nil || fn == nil {
 		return nil, false
 	}
-	if s.projectionNext != nil {
-		if sig := s.projectionNext.facts[key].LiteralSigs[fn]; sig != nil {
+	if s.postflowNext != nil {
+		if sig := s.postflowNext.facts[key].LiteralSigs[fn]; sig != nil {
 			return sig, true
 		}
 	}
-	if s.projectionPrev != nil {
-		if sig := s.projectionPrev.facts[key].LiteralSigs[fn]; sig != nil {
+	if s.postflowPrev != nil {
+		if sig := s.postflowPrev.facts[key].LiteralSigs[fn]; sig != nil {
 			return sig, true
 		}
 	}
@@ -374,9 +374,9 @@ func (s *SessionStore) visibleCapturedType(key api.GraphKey, sym cfg.SymbolID) (
 	if s == nil || sym == 0 {
 		return nil, false
 	}
-	if s.projectionPrev != nil && s.projectionNext != nil {
-		prev := capturedTypeFromFacts(s.projectionPrev.facts[key], sym)
-		next := capturedTypeFromFacts(s.projectionNext.facts[key], sym)
+	if s.postflowPrev != nil && s.postflowNext != nil {
+		prev := capturedTypeFromProduct(s.postflowPrev.facts[key], sym)
+		next := capturedTypeFromProduct(s.postflowNext.facts[key], sym)
 		switch {
 		case prev.IsZero() && next.IsZero():
 			return nil, false
@@ -399,7 +399,7 @@ func (s *SessionStore) visibleCapturedType(key api.GraphKey, sym cfg.SymbolID) (
 	return nil, false
 }
 
-func capturedTypeFromFacts(facts api.Facts, sym cfg.SymbolID) product.AbstractValue {
+func capturedTypeFromProduct(facts interproc.ProjectionProduct, sym cfg.SymbolID) product.AbstractValue {
 	if sym == 0 || len(facts.CapturedTypes) == 0 {
 		return product.AbstractValue{}
 	}
@@ -410,24 +410,24 @@ func (s *SessionStore) visibleCapturedFieldAssigns(key api.GraphKey) api.Capture
 	if s == nil {
 		return nil
 	}
-	prev := api.Facts{}
-	if s.projectionPrev != nil {
-		prev.CapturedFields = s.projectionPrev.facts[key].CapturedFields
+	prev := interproc.ProjectionProduct{}
+	if s.postflowPrev != nil {
+		prev.CapturedFields = s.postflowPrev.facts[key].CapturedFields
 	}
-	next := api.Facts{}
-	if s.projectionNext != nil {
-		next.CapturedFields = s.projectionNext.facts[key].CapturedFields
+	next := interproc.ProjectionProduct{}
+	if s.postflowNext != nil {
+		next.CapturedFields = s.postflowNext.facts[key].CapturedFields
 	}
-	return cloneCapturedFieldAssigns(interproc.OverlayFacts(prev, next).CapturedFields)
+	return cloneCapturedFieldAssigns(interproc.OverlayProjectionProduct(prev, next).CapturedFields)
 }
 
 func (s *SessionStore) visibleConstructorFields(key api.GraphKey, sym cfg.SymbolID) (api.FieldValues, bool) {
 	if s == nil || sym == 0 {
 		return nil, false
 	}
-	if s.projectionPrev != nil && s.projectionNext != nil {
-		prev := constructorFieldsFromFacts(s.projectionPrev.facts[key], sym)
-		next := constructorFieldsFromFacts(s.projectionNext.facts[key], sym)
+	if s.postflowPrev != nil && s.postflowNext != nil {
+		prev := constructorFieldsFromProduct(s.postflowPrev.facts[key], sym)
+		next := constructorFieldsFromProduct(s.postflowNext.facts[key], sym)
 		switch {
 		case len(prev) == 0 && len(next) == 0:
 			return nil, false
@@ -447,7 +447,7 @@ func (s *SessionStore) visibleConstructorFields(key api.GraphKey, sym cfg.Symbol
 	return nil, false
 }
 
-func constructorFieldsFromFacts(facts api.Facts, sym cfg.SymbolID) api.FieldValues {
+func constructorFieldsFromProduct(facts interproc.ProjectionProduct, sym cfg.SymbolID) api.FieldValues {
 	if sym == 0 || len(facts.ConstructorFields) == 0 {
 		return nil
 	}
@@ -523,11 +523,11 @@ func (s *SessionStore) constructorFieldsByKey(key api.ConstructorFieldKey) (api.
 	return s.visibleConstructorFields(key.GraphKey, key.Symbol)
 }
 
-func (s *SessionStore) syncProjectedFactInputs(batch *db.InputBatch, key api.GraphKey) {
+func (s *SessionStore) syncPostflowProjectionInputs(batch *db.InputBatch, key api.GraphKey) {
 	if s == nil || s.factInputs == nil {
 		return
 	}
-	s.factInputs.setProjectedFacts(batch, key, s.visibleProjectedProjectionFacts(key))
+	s.factInputs.setPostflowProjectionProduct(batch, key, s.visiblePostflowProjectionProduct(key))
 }
 
 // SetCanonicalFunctionFactsProjection publishes final Summary-derived FunctionFacts
@@ -555,14 +555,14 @@ func (s *SessionStore) SetCanonicalFunctionFactsProjection(facts map[api.GraphKe
 	}
 }
 
-func (s *SessionStore) visibleProjectedProjectionFacts(key api.GraphKey) api.Facts {
+func (s *SessionStore) visiblePostflowProjectionProduct(key api.GraphKey) interproc.ProjectionProduct {
 	if s == nil {
-		return api.Facts{}
+		return interproc.ProjectionProduct{}
 	}
-	prev := api.Facts{}
-	if s.projectionPrev != nil {
-		facts := s.projectionPrev.facts[key]
-		prev = api.Facts{
+	prev := interproc.ProjectionProduct{}
+	if s.postflowPrev != nil {
+		facts := s.postflowPrev.facts[key]
+		prev = interproc.ProjectionProduct{
 			FunctionFacts:     facts.FunctionFacts,
 			LiteralSigs:       facts.LiteralSigs,
 			CapturedTypes:     facts.CapturedTypes,
@@ -570,10 +570,10 @@ func (s *SessionStore) visibleProjectedProjectionFacts(key api.GraphKey) api.Fac
 			ConstructorFields: facts.ConstructorFields,
 		}
 	}
-	next := api.Facts{}
-	if s.projectionNext != nil {
-		facts := s.projectionNext.facts[key]
-		next = api.Facts{
+	next := interproc.ProjectionProduct{}
+	if s.postflowNext != nil {
+		facts := s.postflowNext.facts[key]
+		next = interproc.ProjectionProduct{
 			FunctionFacts:     facts.FunctionFacts,
 			LiteralSigs:       facts.LiteralSigs,
 			CapturedTypes:     facts.CapturedTypes,
@@ -581,7 +581,7 @@ func (s *SessionStore) visibleProjectedProjectionFacts(key api.GraphKey) api.Fac
 			ConstructorFields: facts.ConstructorFields,
 		}
 	}
-	return interproc.OverlayFacts(prev, next)
+	return interproc.OverlayProjectionProduct(prev, next)
 }
 
 func (s *SessionStore) syncFactInputs() {
@@ -608,18 +608,18 @@ func (s *SessionStore) syncFactInputs() {
 	for key := range s.factInputs.constructorValues {
 		factKeys[key.GraphKey] = struct{}{}
 	}
-	if s.projectionPrev != nil {
-		for key := range s.projectionPrev.facts {
+	if s.postflowPrev != nil {
+		for key := range s.postflowPrev.facts {
 			factKeys[key] = struct{}{}
 		}
 	}
-	if s.projectionNext != nil {
-		for key := range s.projectionNext.facts {
+	if s.postflowNext != nil {
+		for key := range s.postflowNext.facts {
 			factKeys[key] = struct{}{}
 		}
 	}
 	batch := s.factInputs.database.NewInputBatch()
 	for key := range factKeys {
-		s.syncProjectedFactInputs(batch, key)
+		s.syncPostflowProjectionInputs(batch, key)
 	}
 }

@@ -5,38 +5,38 @@ import (
 	"github.com/wippyai/go-lua/compiler/check/api"
 )
 
-// FunctionFactsDelta returns a canonical product delta for function facts.
-func FunctionFactsDelta(facts api.FunctionFacts) api.Facts {
+// FunctionFactProjectionDelta returns a canonical product delta for function facts.
+func FunctionFactProjectionDelta(facts api.FunctionFacts) ProjectionProduct {
 	if len(facts) == 0 {
-		return api.Facts{}
+		return ProjectionProduct{}
 	}
-	return JoinFacts(api.Facts{}, api.Facts{FunctionFacts: facts})
+	return JoinProjectionProduct(ProjectionProduct{}, ProjectionProduct{FunctionFacts: facts})
 }
 
-// LiteralSigsDelta returns a canonical product delta for literal signatures.
-func LiteralSigsDelta(sigs api.LiteralSigs) api.Facts {
+// LiteralSignatureProjectionDelta returns a canonical product delta for literal signatures.
+func LiteralSignatureProjectionDelta(sigs api.LiteralSigs) ProjectionProduct {
 	if len(sigs) == 0 {
-		return api.Facts{}
+		return ProjectionProduct{}
 	}
-	return JoinFacts(api.Facts{}, api.Facts{LiteralSigs: sigs})
+	return JoinProjectionProduct(ProjectionProduct{}, ProjectionProduct{LiteralSigs: sigs})
 }
 
-// CapturedTypesDelta returns a canonical product delta for captured symbol types.
-func CapturedTypesDelta(types api.CapturedTypes) api.Facts {
+// CapturedTypeProjectionDelta returns a canonical product delta for captured symbol types.
+func CapturedTypeProjectionDelta(types api.CapturedTypes) ProjectionProduct {
 	if len(types) == 0 {
-		return api.Facts{}
+		return ProjectionProduct{}
 	}
-	return JoinFacts(api.Facts{}, api.Facts{CapturedTypes: types})
+	return JoinProjectionProduct(ProjectionProduct{}, ProjectionProduct{CapturedTypes: types})
 }
 
-// CapturedFieldAssignsDelta returns a canonical product delta for field writes
+// CapturedFieldProjectionDelta returns a canonical product delta for field writes
 // performed by one nested function.
-func CapturedFieldAssignsDelta(
+func CapturedFieldProjectionDelta(
 	fnSym cfg.SymbolID,
 	fields map[cfg.SymbolID]FieldValues,
-) api.Facts {
+) ProjectionProduct {
 	if fnSym == 0 || len(fields) == 0 {
-		return api.Facts{}
+		return ProjectionProduct{}
 	}
 	normalized := make(map[cfg.SymbolID]FieldValues, len(fields))
 	for sym, byField := range fields {
@@ -45,19 +45,19 @@ func CapturedFieldAssignsDelta(
 		}
 	}
 	if len(normalized) == 0 {
-		return api.Facts{}
+		return ProjectionProduct{}
 	}
-	return JoinFacts(api.Facts{}, api.Facts{
+	return JoinProjectionProduct(ProjectionProduct{}, ProjectionProduct{
 		CapturedFields: api.CapturedFieldAssigns{fnSym: normalized},
 	})
 }
 
-// ConstructorFieldsDelta returns a canonical module product delta for one class.
-func ConstructorFieldsDelta(classSym cfg.SymbolID, fields FieldValues) api.Facts {
+// ConstructorFieldProjectionDelta returns a canonical module product delta for one class.
+func ConstructorFieldProjectionDelta(classSym cfg.SymbolID, fields FieldValues) ProjectionProduct {
 	if classSym == 0 || len(fields) == 0 {
-		return api.Facts{}
+		return ProjectionProduct{}
 	}
-	return JoinFacts(api.Facts{}, api.Facts{
+	return JoinProjectionProduct(ProjectionProduct{}, ProjectionProduct{
 		ConstructorFields: api.ConstructorFields{classSym: fields},
 	})
 }

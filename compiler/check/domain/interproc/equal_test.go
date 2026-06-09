@@ -10,51 +10,51 @@ import (
 	"github.com/wippyai/go-lua/types/typ"
 )
 
-func TestFactsEqual_Empty(t *testing.T) {
-	a := api.Facts{}
-	b := api.Facts{}
-	if !FactsEqual(a, b) {
+func TestProjectionProductEqual_Empty(t *testing.T) {
+	a := ProjectionProduct{}
+	b := ProjectionProduct{}
+	if !ProjectionProductEqual(a, b) {
 		t.Error("empty facts should be equal")
 	}
 }
 
-func TestFactsEqual_FunctionFactSummary(t *testing.T) {
-	a := api.Facts{
+func TestProjectionProductEqual_FunctionFactSummary(t *testing.T) {
+	a := ProjectionProduct{
 		FunctionFacts: api.FunctionFacts{
 			1: {Returns: api.FunctionReturnProjection{Preflow: product.LiftVector([]typ.Type{typ.String})}},
 		},
 	}
-	b := api.Facts{
+	b := ProjectionProduct{
 		FunctionFacts: api.FunctionFacts{
 			1: {Returns: api.FunctionReturnProjection{Preflow: product.LiftVector([]typ.Type{typ.String})}},
 		},
 	}
-	if !FactsEqual(a, b) {
+	if !ProjectionProductEqual(a, b) {
 		t.Error("facts with same return summaries should be equal")
 	}
 }
 
-func TestFactsEqual_DifferentFunctionFactSummary(t *testing.T) {
-	a := api.Facts{
+func TestProjectionProductEqual_DifferentFunctionFactSummary(t *testing.T) {
+	a := ProjectionProduct{
 		FunctionFacts: api.FunctionFacts{
 			1: {Returns: api.FunctionReturnProjection{Preflow: product.LiftVector([]typ.Type{typ.String})}},
 		},
 	}
-	b := api.Facts{
+	b := ProjectionProduct{
 		FunctionFacts: api.FunctionFacts{
 			1: {Returns: api.FunctionReturnProjection{Preflow: product.LiftVector([]typ.Type{typ.Number})}},
 		},
 	}
-	if FactsEqual(a, b) {
+	if ProjectionProductEqual(a, b) {
 		t.Error("facts with different return summaries should not be equal")
 	}
 }
 
-func TestFactsEqual_UsesCanonicalFunctionFactsOnly(t *testing.T) {
+func TestProjectionProductEqual_UsesCanonicalFunctionFactsOnly(t *testing.T) {
 	sym := cfg.SymbolID(77)
 	fn := typ.Func().Returns(typ.String).Build()
 
-	a := api.Facts{
+	a := ProjectionProduct{
 		FunctionFacts: api.FunctionFacts{
 			sym: {
 				Returns: api.FunctionReturnProjection{Preflow: product.LiftVector([]typ.Type{typ.String}), Postflow: product.LiftVector([]typ.Type{typ.String})},
@@ -62,7 +62,7 @@ func TestFactsEqual_UsesCanonicalFunctionFactsOnly(t *testing.T) {
 			},
 		},
 	}
-	b := api.Facts{
+	b := ProjectionProduct{
 		FunctionFacts: api.FunctionFacts{
 			sym: {
 				Returns: api.FunctionReturnProjection{Preflow: product.LiftVector([]typ.Type{typ.String}), Postflow: product.LiftVector([]typ.Type{typ.String})},
@@ -71,15 +71,15 @@ func TestFactsEqual_UsesCanonicalFunctionFactsOnly(t *testing.T) {
 		},
 	}
 
-	if !FactsEqual(a, b) {
+	if !ProjectionProductEqual(a, b) {
 		t.Fatal("expected facts to be equal by FunctionFacts projection")
 	}
 }
 
-func TestFactsEqual_DifferentCanonicalFunctionFacts(t *testing.T) {
+func TestProjectionProductEqual_DifferentCanonicalFunctionFacts(t *testing.T) {
 	sym := cfg.SymbolID(91)
 
-	a := api.Facts{
+	a := ProjectionProduct{
 		FunctionFacts: api.FunctionFacts{
 			sym: {
 				Returns: api.FunctionReturnProjection{Preflow: product.LiftVector([]typ.Type{typ.String})},
@@ -87,7 +87,7 @@ func TestFactsEqual_DifferentCanonicalFunctionFacts(t *testing.T) {
 			},
 		},
 	}
-	b := api.Facts{
+	b := ProjectionProduct{
 		FunctionFacts: api.FunctionFacts{
 			sym: {
 				Returns: api.FunctionReturnProjection{Preflow: product.LiftVector([]typ.Type{typ.Number})},
@@ -96,7 +96,7 @@ func TestFactsEqual_DifferentCanonicalFunctionFacts(t *testing.T) {
 		},
 	}
 
-	if FactsEqual(a, b) {
+	if ProjectionProductEqual(a, b) {
 		t.Fatal("different FunctionFacts projection should not be equal")
 	}
 }
@@ -168,7 +168,7 @@ func TestFunctionFactsEqual_MetatableFactStateIsCanonical(t *testing.T) {
 	}
 }
 
-func TestWidenFacts_PreservesFunctionSpecChange(t *testing.T) {
+func TestWidenProjectionProduct_PreservesFunctionSpecChange(t *testing.T) {
 	callback := typ.Func().Param("value", typ.String).Build()
 	spec := contract.NewSpec().WithCallback(0, (&contract.CallbackSpec{}).WithEnvOverlay(map[string]typ.Type{
 		"up": callback,
@@ -176,16 +176,16 @@ func TestWidenFacts_PreservesFunctionSpecChange(t *testing.T) {
 	withoutSpec := typ.Func().Param("fn", callback).Build()
 	withSpec := typ.Func().Param("fn", callback).Spec(spec).Build()
 	sym := cfg.SymbolID(7)
-	prev := api.Facts{FunctionFacts: api.FunctionFacts{sym: {Public: api.FunctionPublicProjection{Signature: withoutSpec}}}}
-	next := api.Facts{FunctionFacts: api.FunctionFacts{sym: {Public: api.FunctionPublicProjection{Signature: withSpec}}}}
+	prev := ProjectionProduct{FunctionFacts: api.FunctionFacts{sym: {Public: api.FunctionPublicProjection{Signature: withoutSpec}}}}
+	next := ProjectionProduct{FunctionFacts: api.FunctionFacts{sym: {Public: api.FunctionPublicProjection{Signature: withSpec}}}}
 
-	widened := WidenFacts(prev, next)
+	widened := WidenProjectionProduct(prev, next)
 	got := widened.FunctionFacts[sym].Public.Signature
 	gotSpec := contract.ExtractSpec(got)
 	if gotSpec == nil || !gotSpec.Equals(spec) {
 		t.Fatalf("expected widened fact type to preserve callback spec, got %v", got)
 	}
-	if FactsEqual(prev, widened) {
+	if ProjectionProductEqual(prev, widened) {
 		t.Fatal("fact equality must observe a newly inferred function spec")
 	}
 }

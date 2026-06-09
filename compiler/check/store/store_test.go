@@ -7,6 +7,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/api"
 	"github.com/wippyai/go-lua/compiler/check/domain/functionfact"
+	"github.com/wippyai/go-lua/compiler/check/domain/interproc"
 	"github.com/wippyai/go-lua/compiler/check/scope"
 	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/db"
@@ -15,7 +16,7 @@ import (
 )
 
 func TestPostflowProjectionStateInitialization(t *testing.T) {
-	state := newProjectionFactState()
+	state := newPostflowProjectionState()
 	if state == nil {
 		t.Fatal("expected non-nil state")
 	}
@@ -25,7 +26,7 @@ func TestPostflowProjectionStateInitialization(t *testing.T) {
 }
 
 func TestFunctionFactsSummaryProjection(t *testing.T) {
-	facts := api.Facts{
+	facts := interproc.ProjectionProduct{
 		FunctionFacts: api.FunctionFacts{
 			cfg.SymbolID(1): {
 				Returns: api.FunctionReturnProjection{Preflow: product.LiftVector([]typ.Type{typ.String})},
@@ -39,7 +40,7 @@ func TestFunctionFactsSummaryProjection(t *testing.T) {
 }
 
 func TestFunctionFactsNarrowProjection(t *testing.T) {
-	facts := api.Facts{
+	facts := interproc.ProjectionProduct{
 		FunctionFacts: api.FunctionFacts{
 			cfg.SymbolID(2): {
 				Returns: api.FunctionReturnProjection{Postflow: product.LiftVector([]typ.Type{typ.Number})},
@@ -54,7 +55,7 @@ func TestFunctionFactsNarrowProjection(t *testing.T) {
 
 func TestFunctionFactsSiblingProjection(t *testing.T) {
 	fn := typ.Func().Returns(typ.Boolean).Build()
-	facts := api.Facts{
+	facts := interproc.ProjectionProduct{
 		FunctionFacts: api.FunctionFacts{
 			cfg.SymbolID(3): {
 				Public: api.FunctionPublicProjection{Signature: fn},
@@ -83,7 +84,7 @@ func TestPostflowProjectionUsesStoredGraphParentHash(t *testing.T) {
 	s.SetGraphParentHash(graph.ID(), storedParent.Hash())
 	s.SetParentScope(storedParent.Hash(), storedParent)
 	key := api.KeyForGraph(graph, storedParent.Hash())
-	s.projectionPrev.facts[key] = api.Facts{
+	s.postflowPrev.facts[key] = interproc.ProjectionProduct{
 		FunctionFacts: api.FunctionFacts{
 			cfg.SymbolID(1): {Returns: api.FunctionReturnProjection{Preflow: product.LiftVector([]typ.Type{typ.String})}},
 		},
@@ -107,12 +108,12 @@ func TestPostflowProjectionOverlaysCurrentIterationFacts(t *testing.T) {
 	s.SetGraphParentHash(graph.ID(), parent.Hash())
 	s.SetParentScope(parent.Hash(), parent)
 	key := api.KeyForGraph(graph, parent.Hash())
-	s.projectionPrev.facts[key] = api.Facts{
+	s.postflowPrev.facts[key] = interproc.ProjectionProduct{
 		FunctionFacts: api.FunctionFacts{
 			cfg.SymbolID(1): {Returns: api.FunctionReturnProjection{Preflow: product.LiftVector([]typ.Type{typ.String})}},
 		},
 	}
-	s.projectionNext.facts[key] = api.Facts{
+	s.postflowNext.facts[key] = interproc.ProjectionProduct{
 		FunctionFacts: api.FunctionFacts{
 			cfg.SymbolID(1): {Returns: api.FunctionReturnProjection{Preflow: product.LiftVector([]typ.Type{typ.Number})}},
 		},
@@ -138,7 +139,7 @@ func TestPostflowProjectionReturnsImmutableFactContainers(t *testing.T) {
 	s.SetParentScope(parent.Hash(), parent)
 	key := api.KeyForGraph(graph, parent.Hash())
 	sym := cfg.SymbolID(7)
-	s.projectionPrev.facts[key] = api.Facts{
+	s.postflowPrev.facts[key] = interproc.ProjectionProduct{
 		FunctionFacts: api.FunctionFacts{
 			sym: {
 				Call:    api.FunctionCallProjection{Params: product.LiftVector([]typ.Type{typ.String, typ.NewMap(typ.String, typ.Any)})},
@@ -168,15 +169,15 @@ func TestPostflowProjectionDeltasReconcileWithinIteration(t *testing.T) {
 	broad := typ.Func().Param("path", typ.Any).Returns(typ.String).Build()
 
 	s := NewSessionStore()
-	first := api.Facts{FunctionFacts: api.FunctionFacts{sym: {Public: api.FunctionPublicProjection{Signature: refined}}}}
-	s.mergeProjectionFactsNext(key, first)
-	s.mergeProjectionFactsNext(key, api.Facts{
+	first := interproc.ProjectionProduct{FunctionFacts: api.FunctionFacts{sym: {Public: api.FunctionPublicProjection{Signature: refined}}}}
+	s.mergePostflowProjectionProductNext(key, first)
+	s.mergePostflowProjectionProductNext(key, interproc.ProjectionProduct{
 		FunctionFacts: api.FunctionFacts{
 			sym: {Public: api.FunctionPublicProjection{Signature: broad}},
 		},
 	})
 
-	got := functionfact.FactsProjection(s.projectionNext.facts[key].FunctionFacts).Type(sym, functionfact.ProjectionSibling, api.SynthModeDeclared)
+	got := functionfact.FactsProjection(s.postflowNext.facts[key].FunctionFacts).Type(sym, functionfact.ProjectionSibling, api.SynthModeDeclared)
 	if !typ.TypeEquals(got, refined) {
 		t.Fatalf("expected update boundary to keep canonical refined function fact, got %v", got)
 	}
@@ -206,20 +207,20 @@ func TestFactInputs_RevalidateFactQueries(t *testing.T) {
 		t.Fatalf("unchanged query = %d calls=%d, want 0/1", got, calls)
 	}
 
-	delta := api.Facts{FunctionFacts: api.FunctionFacts{
+	delta := interproc.ProjectionProduct{FunctionFacts: api.FunctionFacts{
 		sym: {Returns: api.FunctionReturnProjection{Preflow: product.LiftVector([]typ.Type{typ.String})}},
 	}}
-	s.mergeProjectionFactsNext(key, delta)
+	s.mergePostflowProjectionProductNext(key, delta)
 	if got := q.Get(ctx, key); got != 0 || calls != 1 {
 		t.Fatalf("same-iteration write query = %d calls=%d, want stable 0/1 before swap", got, calls)
 	}
-	s.AdvanceProjectionFacts()
+	s.AdvancePostflowProjections()
 	if got := q.Get(ctx, key); got != 1 || calls != 2 {
 		t.Fatalf("changed query = %d calls=%d, want 1/2", got, calls)
 	}
 
-	s.mergeProjectionFactsNext(key, delta)
-	s.AdvanceProjectionFacts()
+	s.mergePostflowProjectionProductNext(key, delta)
+	s.AdvancePostflowProjections()
 	if got := q.Get(ctx, key); got != 1 || calls != 2 {
 		t.Fatalf("equal update query = %d calls=%d, want 1/2", got, calls)
 	}
@@ -248,27 +249,27 @@ func TestFactInputs_FunctionFactProjectionTracksOneSymbol(t *testing.T) {
 		t.Fatalf("initial projection = %d calls=%d, want 0/1", got, calls)
 	}
 
-	s.mergeProjectionFactsNext(key, api.Facts{FunctionFacts: api.FunctionFacts{
+	s.mergePostflowProjectionProductNext(key, interproc.ProjectionProduct{FunctionFacts: api.FunctionFacts{
 		sym7: {Returns: api.FunctionReturnProjection{Preflow: product.LiftVector([]typ.Type{typ.String})}},
 		sym8: {Returns: api.FunctionReturnProjection{Preflow: product.LiftVector([]typ.Type{typ.Number})}},
 	}})
-	s.AdvanceProjectionFacts()
+	s.AdvancePostflowProjections()
 	if got := q.Get(ctx, queryKey); got != 1 || calls != 2 {
 		t.Fatalf("changed projection = %d calls=%d, want 1/2", got, calls)
 	}
 
-	s.mergeProjectionFactsNext(key, api.Facts{FunctionFacts: api.FunctionFacts{
+	s.mergePostflowProjectionProductNext(key, interproc.ProjectionProduct{FunctionFacts: api.FunctionFacts{
 		sym8: {Returns: api.FunctionReturnProjection{Preflow: product.LiftVector([]typ.Type{typ.Number, typ.String})}},
 	}})
-	s.AdvanceProjectionFacts()
+	s.AdvancePostflowProjections()
 	if got := q.Get(ctx, queryKey); got != 1 || calls != 2 {
 		t.Fatalf("unrelated symbol changed projection = %d calls=%d, want cached 1/2", got, calls)
 	}
 
-	s.mergeProjectionFactsNext(key, api.Facts{FunctionFacts: api.FunctionFacts{
+	s.mergePostflowProjectionProductNext(key, interproc.ProjectionProduct{FunctionFacts: api.FunctionFacts{
 		sym7: {Returns: api.FunctionReturnProjection{Preflow: product.LiftVector([]typ.Type{typ.String, typ.Number})}},
 	}})
-	s.AdvanceProjectionFacts()
+	s.AdvancePostflowProjections()
 	if got := q.Get(ctx, queryKey); got != 2 || calls != 3 {
 		t.Fatalf("tracked symbol changed projection = %d calls=%d, want 2/3", got, calls)
 	}
@@ -305,13 +306,13 @@ func TestFactInputs_CapturedTypesUseRecursiveFactEquality(t *testing.T) {
 	if got := q.Get(ctx, queryKey); got != 0 || calls != 1 {
 		t.Fatalf("initial projection = %d calls=%d, want 0/1", got, calls)
 	}
-	s.mergeProjectionFactsNext(key, api.Facts{CapturedTypes: api.CapturedTypes{sym: product.FromType(left)}})
-	s.AdvanceProjectionFacts()
+	s.mergePostflowProjectionProductNext(key, interproc.ProjectionProduct{CapturedTypes: api.CapturedTypes{sym: product.FromType(left)}})
+	s.AdvancePostflowProjections()
 	if got := q.Get(ctx, queryKey); got == 0 || calls != 2 {
 		t.Fatalf("changed projection = %d calls=%d, want nonzero/2", got, calls)
 	}
-	s.mergeProjectionFactsNext(key, api.Facts{CapturedTypes: api.CapturedTypes{sym: product.FromType(right)}})
-	s.AdvanceProjectionFacts()
+	s.mergePostflowProjectionProductNext(key, interproc.ProjectionProduct{CapturedTypes: api.CapturedTypes{sym: product.FromType(right)}})
+	s.AdvancePostflowProjections()
 	if got := q.Get(ctx, queryKey); got == 0 || calls != 2 {
 		t.Fatalf("equivalent recursive projection = %d calls=%d, want cached nonzero/2", got, calls)
 	}
@@ -335,10 +336,10 @@ func TestFactInputs_PublishOnlyAtFixpointBoundary(t *testing.T) {
 	}
 
 	beforeWrites := database.Revision()
-	s.mergeProjectionFactsNext(key, api.Facts{FunctionFacts: api.FunctionFacts{
+	s.mergePostflowProjectionProductNext(key, interproc.ProjectionProduct{FunctionFacts: api.FunctionFacts{
 		cfg.SymbolID(7): {Returns: api.FunctionReturnProjection{Preflow: product.LiftVector([]typ.Type{typ.String})}},
 	}})
-	s.mergeProjectionFactsNext(key, api.Facts{FunctionFacts: api.FunctionFacts{
+	s.mergePostflowProjectionProductNext(key, interproc.ProjectionProduct{FunctionFacts: api.FunctionFacts{
 		cfg.SymbolID(8): {Returns: api.FunctionReturnProjection{Preflow: product.LiftVector([]typ.Type{typ.Number})}},
 	}})
 	if got := database.Revision(); got != beforeWrites {
@@ -348,7 +349,7 @@ func TestFactInputs_PublishOnlyAtFixpointBoundary(t *testing.T) {
 		t.Fatalf("pre-swap query = %d calls=%d, want stable 0/1", got, calls)
 	}
 
-	s.AdvanceProjectionFacts()
+	s.AdvancePostflowProjections()
 	if got := database.Revision(); got != beforeWrites+1 {
 		t.Fatalf("fixpoint swap bumped revision %d times, got %d want %d", got-beforeWrites, got, beforeWrites+1)
 	}
@@ -357,7 +358,7 @@ func TestFactInputs_PublishOnlyAtFixpointBoundary(t *testing.T) {
 	}
 
 	afterSync := database.Revision()
-	s.AdvanceProjectionFacts()
+	s.AdvancePostflowProjections()
 	if got := database.Revision(); got != afterSync {
 		t.Fatalf("clean swap bumped revision: got %d want %d", got, afterSync)
 	}
@@ -423,11 +424,11 @@ func TestFunctionRegistry_Fields(t *testing.T) {
 	}
 }
 
-func TestAdvanceProjectionFacts_TracksChannelDiffsAndResetsNext(t *testing.T) {
+func TestAdvancePostflowProjections_TracksChannelDiffsAndResetsNext(t *testing.T) {
 	s := NewSessionStore()
 
 	key := api.GraphKey{GraphID: 7, ParentHash: 11}
-	s.projectionNext.facts[key] = api.Facts{
+	s.postflowNext.facts[key] = interproc.ProjectionProduct{
 		FunctionFacts: api.FunctionFacts{
 			1: {
 				Returns: api.FunctionReturnProjection{Preflow: product.LiftVector([]typ.Type{typ.String})},
@@ -435,43 +436,43 @@ func TestAdvanceProjectionFacts_TracksChannelDiffsAndResetsNext(t *testing.T) {
 			},
 		},
 	}
-	s.projectionNext.facts[api.ModuleFactsKey()] = api.Facts{
+	s.postflowNext.facts[api.ModuleFactsKey()] = interproc.ProjectionProduct{
 		ConstructorFields: api.ConstructorFields{
 			3: {constraint.Segment{Kind: constraint.SegmentField, Name: "v"}: product.FromType(typ.Number)},
 		},
 	}
 
-	if !s.AdvanceProjectionFacts() {
+	if !s.AdvancePostflowProjections() {
 		t.Fatal("expected fixpoint swap to report changes")
 	}
 
-	diffs := s.ProjectionFactDiffs()
+	diffs := s.PostflowProjectionDiffs()
 	if len(diffs) != 1 {
 		t.Fatalf("expected one product diff, got %v", diffs)
 	}
-	if diffs[0] != "ProjectionFacts" {
+	if diffs[0] != "PostflowProjection" {
 		t.Fatalf("unexpected diff order/content: %v", diffs)
 	}
 
-	if len(s.projectionPrev.facts) != 2 {
-		t.Fatalf("expected prev facts populated, got %#v", s.projectionPrev.facts)
+	if len(s.postflowPrev.facts) != 2 {
+		t.Fatalf("expected prev facts populated, got %#v", s.postflowPrev.facts)
 	}
-	if len(s.projectionNext.facts) != 0 {
-		t.Fatalf("expected next facts reset, got %#v", s.projectionNext.facts)
+	if len(s.postflowNext.facts) != 0 {
+		t.Fatalf("expected next facts reset, got %#v", s.postflowNext.facts)
 	}
-	if functionfact.FactsProjection(s.projectionPrev.facts[key].FunctionFacts).Refinement(1) == nil {
-		t.Fatalf("expected function refinement in product fact, got %#v", s.projectionPrev.facts[key])
+	if functionfact.FactsProjection(s.postflowPrev.facts[key].FunctionFacts).Refinement(1) == nil {
+		t.Fatalf("expected function refinement in product fact, got %#v", s.postflowPrev.facts[key])
 	}
-	if len(s.projectionPrev.facts[api.ModuleFactsKey()].ConstructorFields[3]) != 1 {
-		t.Fatalf("expected constructor fields in module product fact, got %#v", s.projectionPrev.facts[api.ModuleFactsKey()])
+	if len(s.postflowPrev.facts[api.ModuleFactsKey()].ConstructorFields[3]) != 1 {
+		t.Fatalf("expected constructor fields in module product fact, got %#v", s.postflowPrev.facts[api.ModuleFactsKey()])
 	}
 }
 
-func TestClearProjectionFactState_InitializesMissingState(t *testing.T) {
+func TestClearPostflowProjectionState_InitializesMissingState(t *testing.T) {
 	s := &SessionStore{}
-	s.ClearProjectionFactState()
+	s.ClearPostflowProjectionState()
 
-	if s.projectionPrev == nil || s.projectionNext == nil {
+	if s.postflowPrev == nil || s.postflowNext == nil {
 		t.Fatal("expected interproc states to be initialized")
 	}
 }
@@ -479,22 +480,22 @@ func TestClearProjectionFactState_InitializesMissingState(t *testing.T) {
 func TestPostflowProjectionDiffsReturnCopy(t *testing.T) {
 	s := NewSessionStore()
 	key := registerFunctionForRefinementTest(t, s, 1)
-	s.mergeProjectionFactsNext(key, api.Facts{
+	s.mergePostflowProjectionProductNext(key, interproc.ProjectionProduct{
 		FunctionFacts: api.FunctionFacts{
 			1: {Effects: api.FunctionEffectProjection{Refinement: &constraint.FunctionRefinement{Terminates: true}}},
 		},
 	})
-	if !s.AdvanceProjectionFacts() {
+	if !s.AdvancePostflowProjections() {
 		t.Fatal("expected change from effect swap")
 	}
 
-	diffs := s.ProjectionFactDiffs()
+	diffs := s.PostflowProjectionDiffs()
 	if len(diffs) == 0 {
 		t.Fatal("expected non-empty diffs")
 	}
 	diffs[0] = "MUTATED"
 
-	diffs2 := s.ProjectionFactDiffs()
+	diffs2 := s.PostflowProjectionDiffs()
 	if len(diffs2) == 0 || diffs2[0] == "MUTATED" {
 		t.Fatalf("expected defensive copy, got %v", diffs2)
 	}

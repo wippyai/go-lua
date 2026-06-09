@@ -10,13 +10,14 @@ import (
 	"github.com/wippyai/go-lua/types/typ/unwrap"
 )
 
-// WidenFacts merges two interproc fact bundles.
-func WidenFacts(prev, next api.Facts) api.Facts {
-	if FactsEqual(prev, next) {
+// WidenProjectionProduct merges two postflow projection products at an
+// iteration boundary.
+func WidenProjectionProduct(prev, next ProjectionProduct) ProjectionProduct {
+	if ProjectionProductEqual(prev, next) {
 		return prev
 	}
 	widening := value.NewConvergenceWidening()
-	out := api.Facts{
+	out := ProjectionProduct{
 		LiteralSigs:       widenLiteralSigsWith(widening, prev.LiteralSigs, next.LiteralSigs),
 		CapturedTypes:     widenCapturedTypesWith(widening, prev.CapturedTypes, next.CapturedTypes),
 		CapturedFields:    widenCapturedFieldAssignsWith(widening, prev.CapturedFields, next.CapturedFields),
@@ -30,9 +31,9 @@ func WidenFacts(prev, next api.Facts) api.Facts {
 
 	out.FunctionFacts = make(api.FunctionFacts, len(symbols))
 	for _, sym := range symbols {
-		prevFact := readFunctionFactFromFacts(&prev, sym)
-		nextFact := readFunctionFactFromFacts(&next, sym)
-		writeNormalizedFunctionFactToFacts(&out, sym, functionfact.WidenForConvergence(prevFact, nextFact))
+		prevFact := readFunctionFactFromProduct(&prev, sym)
+		nextFact := readFunctionFactFromProduct(&next, sym)
+		writeNormalizedFunctionFactToProduct(&out, sym, functionfact.WidenForConvergence(prevFact, nextFact))
 	}
 	if len(out.FunctionFacts) == 0 {
 		out.FunctionFacts = nil
@@ -40,12 +41,13 @@ func WidenFacts(prev, next api.Facts) api.Facts {
 	return out
 }
 
-// JoinFacts performs a precise same-iteration merge of interproc facts.
-// Unlike WidenFacts, this may keep directional refinements that are useful
-// inside one analysis round. Recursive fixpoint boundaries must use WidenFacts.
-func JoinFacts(prev, next api.Facts) api.Facts {
+// JoinProjectionProduct performs a precise same-iteration merge of postflow
+// projection products.
+// Unlike WidenProjectionProduct, this may keep directional refinements that are useful
+// inside one analysis round. Recursive fixpoint boundaries must use WidenProjectionProduct.
+func JoinProjectionProduct(prev, next ProjectionProduct) ProjectionProduct {
 	widening := value.NewConvergenceWidening()
-	out := api.Facts{
+	out := ProjectionProduct{
 		LiteralSigs:       joinLiteralSigsWith(widening, prev.LiteralSigs, next.LiteralSigs),
 		CapturedTypes:     JoinCapturedTypes(prev.CapturedTypes, next.CapturedTypes),
 		CapturedFields:    JoinCapturedFieldAssigns(prev.CapturedFields, next.CapturedFields),
@@ -57,9 +59,9 @@ func JoinFacts(prev, next api.Facts) api.Facts {
 		out.FunctionFacts = make(api.FunctionFacts, len(symbols))
 	}
 	for _, sym := range symbols {
-		prevFact := readFunctionFactFromFacts(&prev, sym)
-		nextFact := readFunctionFactFromFacts(&next, sym)
-		writeNormalizedFunctionFactToFacts(&out, sym, functionfact.JoinCanonical(prevFact, nextFact))
+		prevFact := readFunctionFactFromProduct(&prev, sym)
+		nextFact := readFunctionFactFromProduct(&next, sym)
+		writeNormalizedFunctionFactToProduct(&out, sym, functionfact.JoinCanonical(prevFact, nextFact))
 	}
 	return out
 }

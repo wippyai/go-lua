@@ -164,9 +164,9 @@ type PostflowProjectionStore interface {
 type IterationStore interface {
 	PostflowProjectionStore
 
-	ClearProjectionFactState()
-	AdvanceProjectionFacts() bool
-	ProjectionFactDiffs() []string
+	ClearPostflowProjectionState()
+	AdvancePostflowProjections() bool
+	PostflowProjectionDiffs() []string
 
 	SetModuleBindings(bindings *bind.BindingTable)
 	SetModuleAliases(aliases map[cfg.SymbolID]string)

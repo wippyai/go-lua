@@ -24,22 +24,22 @@ func TestRefinementEqual(t *testing.T) {
 	}
 }
 
-func TestFactMapEqual(t *testing.T) {
-	if !FactMapEqual(nil, nil) {
+func TestProjectionProductMapEqual(t *testing.T) {
+	if !ProjectionProductMapEqual(nil, nil) {
 		t.Fatal("two nil fact maps should be equal")
 	}
-	if !FactMapEqual(map[api.GraphKey]api.Facts{}, map[api.GraphKey]api.Facts{}) {
+	if !ProjectionProductMapEqual(map[api.GraphKey]ProjectionProduct{}, map[api.GraphKey]ProjectionProduct{}) {
 		t.Fatal("two empty fact maps should be equal")
 	}
-	a := map[api.GraphKey]api.Facts{{GraphID: 1}: {}}
-	b := map[api.GraphKey]api.Facts{}
-	if FactMapEqual(a, b) {
+	a := map[api.GraphKey]ProjectionProduct{{GraphID: 1}: {}}
+	b := map[api.GraphKey]ProjectionProduct{}
+	if ProjectionProductMapEqual(a, b) {
 		t.Fatal("maps of different length should differ")
 	}
 }
 
-func TestWidenFactMap_Empty(t *testing.T) {
-	result := WidenFactMap(nil, nil)
+func TestWidenProjectionProductMap_Empty(t *testing.T) {
+	result := WidenProjectionProductMap(nil, nil)
 	if result == nil {
 		t.Fatal("expected non-nil result")
 	}
@@ -48,38 +48,38 @@ func TestWidenFactMap_Empty(t *testing.T) {
 	}
 }
 
-func TestWidenFactMap_OnlyPrev(t *testing.T) {
-	prev := map[api.GraphKey]api.Facts{
+func TestWidenProjectionProductMap_OnlyPrev(t *testing.T) {
+	prev := map[api.GraphKey]ProjectionProduct{
 		{GraphID: 1}: {
 			FunctionFacts: api.FunctionFacts{
 				1: {Returns: api.FunctionReturnProjection{Preflow: product.LiftVector([]typ.Type{typ.String})}},
 			},
 		},
 	}
-	result := WidenFactMap(prev, nil)
+	result := WidenProjectionProductMap(prev, nil)
 	if len(result) != 1 {
 		t.Fatalf("expected 1 entry, got %d", len(result))
 	}
 }
 
-func TestWidenFactMap_OnlyNext(t *testing.T) {
-	next := map[api.GraphKey]api.Facts{
+func TestWidenProjectionProductMap_OnlyNext(t *testing.T) {
+	next := map[api.GraphKey]ProjectionProduct{
 		{GraphID: 1}: {
 			FunctionFacts: api.FunctionFacts{
 				1: {Returns: api.FunctionReturnProjection{Preflow: product.LiftVector([]typ.Type{typ.Number})}},
 			},
 		},
 	}
-	result := WidenFactMap(nil, next)
+	result := WidenProjectionProductMap(nil, next)
 	if len(result) != 1 {
 		t.Fatalf("expected 1 entry, got %d", len(result))
 	}
 }
 
-func TestWidenFactMap_NormalizesNewFacts(t *testing.T) {
+func TestWidenProjectionProductMap_NormalizesNewFacts(t *testing.T) {
 	fn := typ.Func().Param("value", typ.Unknown).Build()
 	key := api.GraphKey{GraphID: 1, ParentHash: 2}
-	next := map[api.GraphKey]api.Facts{
+	next := map[api.GraphKey]ProjectionProduct{
 		key: {
 			CapturedFields: api.CapturedFieldAssigns{
 				cfg.SymbolID(10): {
@@ -91,35 +91,35 @@ func TestWidenFactMap_NormalizesNewFacts(t *testing.T) {
 		},
 	}
 
-	result := WidenFactMap(nil, next)
+	result := WidenProjectionProductMap(nil, next)
 	got := result[key].CapturedFields[cfg.SymbolID(10)][cfg.SymbolID(20)][fieldKey("after_all")].ProjectValue()
 	if !typ.TypeEquals(got, fn) {
-		t.Fatalf("expected new facts to be normalized through WidenFacts, got %v", got)
+		t.Fatalf("expected new facts to be normalized through WidenProjectionProduct, got %v", got)
 	}
 }
 
-func TestWidenFactMap_Merge(t *testing.T) {
-	prev := map[api.GraphKey]api.Facts{
+func TestWidenProjectionProductMap_Merge(t *testing.T) {
+	prev := map[api.GraphKey]ProjectionProduct{
 		{GraphID: 1}: {
 			FunctionFacts: api.FunctionFacts{
 				1: {Returns: api.FunctionReturnProjection{Preflow: product.LiftVector([]typ.Type{typ.String})}},
 			},
 		},
 	}
-	next := map[api.GraphKey]api.Facts{
+	next := map[api.GraphKey]ProjectionProduct{
 		{GraphID: 2}: {
 			FunctionFacts: api.FunctionFacts{
 				1: {Returns: api.FunctionReturnProjection{Preflow: product.LiftVector([]typ.Type{typ.Number})}},
 			},
 		},
 	}
-	result := WidenFactMap(prev, next)
+	result := WidenProjectionProductMap(prev, next)
 	if len(result) != 2 {
 		t.Fatalf("expected 2 entries, got %d", len(result))
 	}
 }
 
-func TestOverlayFacts_UsesConvergenceLawForVisibleProduct(t *testing.T) {
+func TestOverlayProjectionProduct_UsesConvergenceLawForVisibleProduct(t *testing.T) {
 	lit := &ast.FunctionExpr{}
 	prevReturn := typ.NewRecord().
 		Field("next", typ.Func().Returns(typ.Unknown).Build()).
@@ -127,20 +127,20 @@ func TestOverlayFacts_UsesConvergenceLawForVisibleProduct(t *testing.T) {
 	nextReturn := typ.NewRecord().
 		Field("next", typ.Func().Returns(typ.String).Build()).
 		Build()
-	prev := api.Facts{
+	prev := ProjectionProduct{
 		LiteralSigs: api.LiteralSigs{
 			lit: typ.Func().Returns(prevReturn).Build(),
 		},
 	}
-	next := api.Facts{
+	next := ProjectionProduct{
 		LiteralSigs: api.LiteralSigs{
 			lit: typ.Func().Returns(nextReturn).Build(),
 		},
 	}
 
-	got := OverlayFacts(prev, next)
-	want := WidenFacts(prev, next)
-	if !FactsEqual(got, want) {
+	got := OverlayProjectionProduct(prev, next)
+	want := WidenProjectionProduct(prev, next)
+	if !ProjectionProductEqual(got, want) {
 		t.Fatalf("visible overlay must use convergence product law:\ngot=%#v\nwant=%#v", got, want)
 	}
 }

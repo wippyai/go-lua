@@ -11,20 +11,20 @@ import (
 	"github.com/wippyai/go-lua/types/typ"
 )
 
-func TestJoinFacts_BatchMergeFunctionFacts(t *testing.T) {
+func TestJoinProjectionProduct_BatchMergeFunctionFacts(t *testing.T) {
 	symSummary := cfg.SymbolID(21)
 	symNarrow := cfg.SymbolID(22)
 	symFunc := cfg.SymbolID(23)
 	funcType := typ.Func().Returns(typ.Boolean).Build()
 
-	facts := JoinFacts(
-		api.Facts{
+	facts := JoinProjectionProduct(
+		ProjectionProduct{
 			FunctionFacts: api.FunctionFacts{
 				symSummary: {Returns: api.FunctionReturnProjection{Preflow: product.LiftVector([]typ.Type{typ.String})}},
 				symNarrow:  {Returns: api.FunctionReturnProjection{Postflow: product.LiftVector([]typ.Type{typ.Number})}},
 			},
 		},
-		api.Facts{
+		ProjectionProduct{
 			FunctionFacts: api.FunctionFacts{
 				symFunc: {Public: api.FunctionPublicProjection{Signature: funcType}},
 			},

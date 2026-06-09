@@ -8,8 +8,8 @@ import (
 	"github.com/wippyai/go-lua/types/domain/value/product"
 )
 
-// FactsEqual checks if two canonical interproc fact bundles are equal.
-func FactsEqual(a, b api.Facts) bool {
+// ProjectionProductEqual checks whether two postflow projection products are equal.
+func ProjectionProductEqual(a, b ProjectionProduct) bool {
 	if !FunctionFactsEqual(a.FunctionFacts, b.FunctionFacts) {
 		return false
 	}

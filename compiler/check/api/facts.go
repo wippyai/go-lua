@@ -1,7 +1,9 @@
-// Projection fact-product and final projection types.
+// Postflow projection lane and final projection types.
 //
 // Canonical checking uses Summary as its interprocedural authority. These types
-// remain for noncanonical compatibility paths and final/public projection.
+// remain as typed lanes for noncanonical compatibility paths and final/public
+// projection. The convergence product that combines these lanes is owned by
+// compiler/check/domain/interproc.
 package api
 
 import (
@@ -150,13 +152,3 @@ type CapturedFieldAssigns = map[cfg.SymbolID]map[cfg.SymbolID]FieldValues
 // Structure: classSymbol -> fieldKey -> fieldType. The field type carrier holds
 // interned product.AbstractValue.
 type ConstructorFields = map[cfg.SymbolID]FieldValues
-
-// Facts bundles one postflow/export projection product slice. Most slices are
-// stored per (graph, parent) pair; module-wide facts use ModuleFactsKey.
-type Facts struct {
-	FunctionFacts     FunctionFacts
-	LiteralSigs       LiteralSigs
-	CapturedTypes     CapturedTypes
-	CapturedFields    CapturedFieldAssigns
-	ConstructorFields ConstructorFields
-}

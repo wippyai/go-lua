@@ -19,7 +19,7 @@ func TestFactsDomain_ProductOperatorsAreIdempotentAcrossAllDomains(t *testing.T)
 	lit := &ast.FunctionExpr{}
 	callback := typ.Func().Param("self", typ.Unknown).Returns(typ.Boolean).Build()
 	fn := typ.Func().Param("name", typ.String).Returns(typ.String).Build()
-	raw := api.Facts{
+	raw := ProjectionProduct{
 		FunctionFacts: api.FunctionFacts{
 			fnSym: {
 				Call:    api.FunctionCallProjection{Params: product.LiftVector([]typ.Type{typ.String})},
@@ -47,11 +47,11 @@ func TestFactsDomain_ProductOperatorsAreIdempotentAcrossAllDomains(t *testing.T)
 		},
 	}
 
-	normalized := WidenFacts(api.Facts{}, raw)
-	if !FactsEqual(normalized, WidenFacts(normalized, normalized)) {
+	normalized := WidenProjectionProduct(ProjectionProduct{}, raw)
+	if !ProjectionProductEqual(normalized, WidenProjectionProduct(normalized, normalized)) {
 		t.Fatalf("Widen must be idempotent across the product domain")
 	}
-	if !FactsEqual(normalized, JoinFacts(normalized, normalized)) {
+	if !ProjectionProductEqual(normalized, JoinProjectionProduct(normalized, normalized)) {
 		t.Fatalf("Join must be idempotent across the product domain")
 	}
 
@@ -69,12 +69,12 @@ func TestFactsDomain_ProductOperatorsAreIdempotentAcrossAllDomains(t *testing.T)
 
 func TestFactsDomain_WidenIdempotentForLiteralUnknownVsConcreteReturn(t *testing.T) {
 	lit := &ast.FunctionExpr{}
-	prev := api.Facts{
+	prev := ProjectionProduct{
 		LiteralSigs: api.LiteralSigs{
 			lit: typ.Func().Param("name", typ.Unknown).Returns(typ.Unknown, typ.NewOptional(typ.String)).Build(),
 		},
 	}
-	next := api.Facts{
+	next := ProjectionProduct{
 		LiteralSigs: api.LiteralSigs{
 			lit: typ.Func().Param("name", typ.Unknown).Returns(
 				typ.NewOptional(typ.NewRecord().
@@ -87,9 +87,9 @@ func TestFactsDomain_WidenIdempotentForLiteralUnknownVsConcreteReturn(t *testing
 		},
 	}
 
-	widened := WidenFacts(prev, next)
-	widenedAgain := WidenFacts(widened, next)
-	if !FactsEqual(widened, widenedAgain) {
+	widened := WidenProjectionProduct(prev, next)
+	widenedAgain := WidenProjectionProduct(widened, next)
+	if !ProjectionProductEqual(widened, widenedAgain) {
 		t.Fatalf("Widen must be idempotent for literal signatures:\nfirst=%#v\nsecond=%#v", widened, widenedAgain)
 	}
 
@@ -101,20 +101,20 @@ func TestFactsDomain_WidenIdempotentForLiteralUnknownVsConcreteReturn(t *testing
 
 func TestFactsDomain_WidenFunctionParamsIsVarianceAware(t *testing.T) {
 	sym := cfg.SymbolID(1)
-	prev := api.Facts{
+	prev := ProjectionProduct{
 		FunctionFacts: api.FunctionFacts{
 			sym: {Public: api.FunctionPublicProjection{Signature: typ.Func().Param("path", typ.Any).Returns(typ.NewArray(typ.Unknown)).Build()}},
 		},
 	}
-	next := api.Facts{
+	next := ProjectionProduct{
 		FunctionFacts: api.FunctionFacts{
 			sym: {Public: api.FunctionPublicProjection{Signature: typ.Func().Param("path", typ.String).Returns(typ.NewArray(typ.Unknown)).Build()}},
 		},
 	}
 
-	widened := WidenFacts(prev, next)
-	widenedAgain := WidenFacts(widened, next)
-	if !FactsEqual(widened, widenedAgain) {
+	widened := WidenProjectionProduct(prev, next)
+	widenedAgain := WidenProjectionProduct(widened, next)
+	if !ProjectionProductEqual(widened, widenedAgain) {
 		t.Fatalf("Widen must be idempotent for function param facts")
 	}
 
@@ -130,13 +130,13 @@ func TestFactsDomain_PreservesArityAndNilabilityAsSeparateParamAxes(t *testing.T
 		MapComponent(typ.String, typ.Any).
 		SetOpen(true).
 		Build()
-	raw := api.Facts{
+	raw := ProjectionProduct{
 		FunctionFacts: api.FunctionFacts{
 			sym: {Public: api.FunctionPublicProjection{Signature: typ.Func().OptParam("context", typ.NewOptional(context)).Build()}},
 		},
 	}
 
-	widened := WidenFacts(api.Facts{}, raw)
+	widened := WidenProjectionProduct(ProjectionProduct{}, raw)
 	fn := unwrapFunctionForDomainTest(t, functionfact.FactsProjection(widened.FunctionFacts).Type(sym, functionfact.ProjectionSibling, api.SynthModeDeclared))
 	if len(fn.Params) != 1 || !fn.Params[0].Optional {
 		t.Fatalf("expected optional parameter slot, got %v", fn)
@@ -145,7 +145,7 @@ func TestFactsDomain_PreservesArityAndNilabilityAsSeparateParamAxes(t *testing.T
 	if !typ.TypeEquals(fn.Params[0].Type, want) {
 		t.Fatalf("expected explicit nilability to remain in the value type, got %v", fn.Params[0].Type)
 	}
-	if !FactsEqual(widened, WidenFacts(widened, raw)) {
+	if !ProjectionProductEqual(widened, WidenProjectionProduct(widened, raw)) {
 		t.Fatalf("expected optional parameter product-domain representation to be idempotent")
 	}
 }
@@ -174,12 +174,12 @@ func TestFactsDomain_WidenPreservesCapturedCallbackUnionMembers(t *testing.T) {
 		Returns(typ.NewRecord().Field("status", withoutPending).Field("suite", typ.Unknown).Build()).
 		Build()
 
-	widened := WidenFacts(
-		api.Facts{CapturedTypes: api.CapturedTypes{sym: product.FromType(prevFn)}},
-		api.Facts{CapturedTypes: api.CapturedTypes{sym: product.FromType(nextFn)}},
+	widened := WidenProjectionProduct(
+		ProjectionProduct{CapturedTypes: api.CapturedTypes{sym: product.FromType(prevFn)}},
+		ProjectionProduct{CapturedTypes: api.CapturedTypes{sym: product.FromType(nextFn)}},
 	)
-	widenedAgain := WidenFacts(widened, api.Facts{CapturedTypes: api.CapturedTypes{sym: product.FromType(nextFn)}})
-	if !FactsEqual(widened, widenedAgain) {
+	widenedAgain := WidenProjectionProduct(widened, ProjectionProduct{CapturedTypes: api.CapturedTypes{sym: product.FromType(nextFn)}})
+	if !ProjectionProductEqual(widened, widenedAgain) {
 		t.Fatalf("Widen must be idempotent for captured callback union members")
 	}
 

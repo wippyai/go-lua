@@ -1,6 +1,6 @@
 // Package interproc owns the postflow projection product domain.
 //
-// It canonicalizes, joins, widens, and compares api.Facts bundles for
+// It canonicalizes, joins, widens, and compares ProjectionProduct bundles for
 // noncanonical compatibility/export paths. Lower-level domains own individual
 // slots: functionfact for one FunctionFact projection,
 // returnsummary for return vectors, paramevidence for parameter evidence, and

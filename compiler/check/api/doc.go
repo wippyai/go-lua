@@ -30,8 +30,8 @@
 //
 // Canonical checking uses Summary as its interprocedural authority. Postflow
 // compatibility code reads and writes typed projection lanes through
-// [PostflowProjectionStore]. The internal [Facts] product remains the store/domain
-// convergence carrier for those lanes:
+// [PostflowProjectionStore]. The convergence product that combines those lanes
+// is owned by compiler/check/domain/interproc:
 //
 //   - [FunctionFacts]: final/public per-function projection facts
 //   - [LiteralSigs]: Signatures for anonymous function literals

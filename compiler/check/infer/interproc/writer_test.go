@@ -91,11 +91,11 @@ func graphWithNestedFunctions(t *testing.T, src string) (*cfg.Graph, []*ast.Func
 	return graph, fns
 }
 
-func TestProjectionFactWriter_MergeParentFactsForSymbol(t *testing.T) {
+func TestPostflowProjectionWriter_MergeParentFactsForSymbol(t *testing.T) {
 	stub := newFactsWriteStoreStub()
 	key := api.GraphKey{GraphID: 7, ParentHash: 11}
 	stub.parentKeyBySymbol[3] = key
-	writer := newProjectionFactWriter(stub)
+	writer := newPostflowProjectionWriter(stub)
 
 	ok := writer.mergeParentFunctionFacts(api.FunctionFacts{
 		3: {Call: api.FunctionCallProjection{Params: product.LiftVector([]typ.Type{typ.String})}},
@@ -113,12 +113,12 @@ func TestProjectionFactWriter_MergeParentFactsForSymbol(t *testing.T) {
 	}
 }
 
-func TestProjectionFactWriter_WriteLiteralSignatures(t *testing.T) {
+func TestPostflowProjectionWriter_WriteLiteralSignatures(t *testing.T) {
 	stub := newFactsWriteStoreStub()
 	key := api.GraphKey{GraphID: 5, ParentHash: 9}
 	stub.graphKeyFor = key
 	stub.graphKeyForOK = true
-	writer := newProjectionFactWriter(stub)
+	writer := newPostflowProjectionWriter(stub)
 
 	graph, fns := graphWithNestedFunctions(t, `return function() end`)
 	fn := fns[0]
@@ -133,12 +133,12 @@ func TestProjectionFactWriter_WriteLiteralSignatures(t *testing.T) {
 	}
 }
 
-func TestProjectionFactWriter_WriteLiteralSignaturesSkipsCanonicalFunctions(t *testing.T) {
+func TestPostflowProjectionWriter_WriteLiteralSignaturesSkipsCanonicalFunctions(t *testing.T) {
 	stub := newFactsWriteStoreStub()
 	key := api.GraphKey{GraphID: 5, ParentHash: 9}
 	stub.graphKeyFor = key
 	stub.graphKeyForOK = true
-	writer := newProjectionFactWriter(stub)
+	writer := newPostflowProjectionWriter(stub)
 
 	graph, fns := graphWithNestedFunctions(t, `
 		local registered = function() end
@@ -167,10 +167,10 @@ func TestProjectionFactWriter_WriteLiteralSignaturesSkipsCanonicalFunctions(t *t
 	}
 }
 
-func TestProjectionFactWriter_WriteLiteralSignatures_RequiresGraphKey(t *testing.T) {
+func TestPostflowProjectionWriter_WriteLiteralSignatures_RequiresGraphKey(t *testing.T) {
 	stub := newFactsWriteStoreStub()
 	stub.graphKeyForOK = false
-	writer := newProjectionFactWriter(stub)
+	writer := newPostflowProjectionWriter(stub)
 
 	graph, fns := graphWithNestedFunctions(t, `return function() end`)
 	fn := fns[0]

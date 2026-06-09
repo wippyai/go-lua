@@ -31,7 +31,7 @@ type Store interface {
 
 // StoreFactsFromResult records post-flow interproc facts for the current iteration.
 // Facts are written into the projection next product and become visible after
-// AdvanceProjectionFacts.
+// AdvancePostflowProjections.
 //
 // interner is the compilation-scoped recursive-family interner; inferred-return
 // sealing widens family bodies only through it, so one compilation can never
@@ -46,7 +46,7 @@ func StoreFactsFromResult(
 	if store == nil || result == nil || result.Graph == nil {
 		return
 	}
-	writer := newProjectionFactWriter(store)
+	writer := newPostflowProjectionWriter(store)
 	writer.writeLiteralSignatures(result.Graph, parent, result.LiteralSignatureLookup())
 
 	fnSym := cfg.SymbolID(0)

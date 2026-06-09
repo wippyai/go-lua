@@ -9,22 +9,6 @@ import (
 	"github.com/wippyai/go-lua/types/typ"
 )
 
-func TestFacts_Zero(t *testing.T) {
-	f := Facts{}
-	if f.FunctionFacts != nil {
-		t.Error("zero Facts should have nil FunctionFacts")
-	}
-	if f.LiteralSigs != nil {
-		t.Error("zero Facts should have nil LiteralSigs")
-	}
-	if f.CapturedTypes != nil {
-		t.Error("zero Facts should have nil CapturedTypes")
-	}
-	if f.CapturedFields != nil {
-		t.Error("zero Facts should have nil CapturedFields")
-	}
-}
-
 func TestCapturedTypes_Basic(t *testing.T) {
 	captured := make(CapturedTypes)
 	sym := cfg.SymbolID(1)
@@ -66,21 +50,5 @@ func TestCapturedFieldAssigns_Basic(t *testing.T) {
 	}
 	if !product.Equal(fields[foo], product.FromType(typ.String)) {
 		t.Error("expected foo to be string")
-	}
-}
-
-func TestFacts_WithData(t *testing.T) {
-	f := Facts{
-		FunctionFacts: FunctionFacts{
-			4: {
-				Call:    FunctionCallProjection{Params: product.LiftVector([]typ.Type{typ.Number})},
-				Returns: FunctionReturnProjection{Preflow: product.LiftVector([]typ.Type{typ.Boolean}), Postflow: product.LiftVector([]typ.Type{typ.Boolean})},
-				Public:  FunctionPublicProjection{Signature: typ.Func().Returns(typ.Boolean).Build()},
-			},
-		},
-	}
-
-	if len(f.FunctionFacts) != 1 {
-		t.Error("expected 1 function fact")
 	}
 }

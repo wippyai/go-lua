@@ -17,9 +17,9 @@ func TestCanonicalProductionDoesNotUsePostflowProjectionState(t *testing.T) {
 	root := filepath.Dir(file)
 	banned := []string{
 		"domain/interproc",
-		"ProjectionFactPrev",
-		"ProjectionFactNext",
-		"AdvanceProjectionFacts",
+		"PostflowProjectionPrev",
+		"PostflowProjectionNext",
+		"AdvancePostflowProjections",
 		"InterprocFacts(",
 		"InterprocFactReader",
 		"InterprocFactProduct",
@@ -102,7 +102,7 @@ func TestCheckerProductionUsesNarrowFunctionFactProjectionReads(t *testing.T) {
 	}
 }
 
-func TestCheckerProductionDoesNotPeekProjectionFactState(t *testing.T) {
+func TestCheckerProductionDoesNotPeekPostflowProjectionState(t *testing.T) {
 	_, file, _, ok := runtime.Caller(0)
 	if !ok {
 		t.Fatal("runtime.Caller failed")
@@ -110,9 +110,9 @@ func TestCheckerProductionDoesNotPeekProjectionFactState(t *testing.T) {
 	checkRoot := filepath.Clean(filepath.Join(filepath.Dir(file), ".."))
 	storeDir := filepath.Join(checkRoot, "store") + string(filepath.Separator)
 	banned := []string{
-		".ProjectionFactPrev",
-		".ProjectionFactNext",
-		"NewProjectionFactState(",
+		".PostflowProjectionPrev",
+		".PostflowProjectionNext",
+		"NewPostflowProjectionState(",
 	}
 
 	err := filepath.WalkDir(checkRoot, func(path string, entry fs.DirEntry, err error) error {
@@ -135,7 +135,7 @@ func TestCheckerProductionDoesNotPeekProjectionFactState(t *testing.T) {
 				t.Errorf("%s peeks projection-product state through %q", path, token)
 			}
 		}
-		if strings.Contains(text, "ProjectionFact") && strings.Contains(text, ".Facts[") {
+		if strings.Contains(text, "PostflowProjection") && strings.Contains(text, ".Facts[") {
 			t.Errorf("%s peeks projection-product Facts map", path)
 		}
 		return nil
