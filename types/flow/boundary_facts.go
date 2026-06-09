@@ -239,9 +239,9 @@ func (f BoundaryFacts) Parts() BoundaryFactParts {
 	}
 }
 
-// Append returns p plus other without canonicalizing. BoundaryFactsFromParts is
-// the only canonicalization boundary.
-func (p BoundaryFactParts) Append(other BoundaryFactParts) BoundaryFactParts {
+// appendBoundaryFactParts returns p plus other without canonicalizing.
+// BoundaryFactsFromParts is the only canonicalization boundary.
+func appendBoundaryFactParts(p, other BoundaryFactParts) BoundaryFactParts {
 	p.KeyPresence = append(p.KeyPresence, other.KeyPresence...)
 	p.KeyArrays = append(p.KeyArrays, other.KeyArrays...)
 	p.KeyArrayValues = append(p.KeyArrayValues, other.KeyArrayValues...)
@@ -386,18 +386,18 @@ func (b BoundaryReturnFactBucket) Facts() BoundaryFacts {
 	return b.facts
 }
 
-// MergeBoundaryFactProofs combines independently-proven finite boundary facts.
+// UnionBoundaryFactProofs combines independently-proven finite boundary facts.
 // It is a proof builder, not the lattice Join: if two derivations both hold on
 // the same path, callers may consume the union of their facts. Top contributes
 // no finite proof; Bottom is treated as unreachable/no consumable proof here.
-func MergeBoundaryFactProofs(a, b BoundaryFacts) BoundaryFacts {
+func UnionBoundaryFactProofs(a, b BoundaryFacts) BoundaryFacts {
 	if a.bottom {
 		return b
 	}
 	if b.bottom {
 		return a
 	}
-	return BoundaryFactsFromParts(a.Parts().Append(b.Parts()))
+	return BoundaryFactsFromParts(appendBoundaryFactParts(a.Parts(), b.Parts()))
 }
 
 // RebaseBoundaryReturnFactsToParam maps facts proven about one returned value

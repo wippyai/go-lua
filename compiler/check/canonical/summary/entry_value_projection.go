@@ -562,7 +562,7 @@ func (p CallEntryProjection) ProjectKeys() []Key {
 				values = p.NormalizeValues(target.Ref, site.Call, values)
 			}
 			references := target.EntryReferences.Join(evidence.References)
-			facts := flow.MergeBoundaryFactProofs(target.EntryFacts, evidence.Facts)
+			facts := flow.UnionBoundaryFactProofs(target.EntryFacts, evidence.Facts)
 			if target.Ref == p.CallerRef {
 				// Self-recursive calls must close over the summary fixed point. Boundary
 				// facts and receiver products are replayed into the callee state, but
@@ -727,7 +727,7 @@ func (p CallEntryProjection) ProjectPublications() CallEntryPublications {
 			// still retain the full DirectEvidence payload.
 			evidence := p.directEvidenceFromPoint(target.Ref, site.Call, &site.ArgState, p.ParamAnnotated)
 			out = joinCallEntryPublicationValues(out, target.Ref, evidence.Values)
-			facts := flow.MergeBoundaryFactProofs(target.EntryFacts, evidence.Facts)
+			facts := flow.UnionBoundaryFactProofs(target.EntryFacts, evidence.Facts)
 			out = joinCallEntryPublicationFacts(out, blockedFacts, target.Ref, facts)
 		}
 		out = p.projectCallbackEntryValues(out, site)

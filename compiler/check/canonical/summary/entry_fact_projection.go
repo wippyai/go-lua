@@ -55,7 +55,7 @@ func directCallEntryFacts(in directCallEntryFactInput) flow.BoundaryFacts {
 		entryBoundaryProjector{in: in},
 		flow.BoundaryFactProjectionPolicy{},
 	)
-	return flow.MergeBoundaryFactProofs(facts, directCallEntryArgumentFacts(in))
+	return flow.UnionBoundaryFactProofs(facts, directCallEntryArgumentFacts(in))
 }
 
 func directCallEntryArgumentFacts(in directCallEntryFactInput) flow.BoundaryFacts {
@@ -68,7 +68,7 @@ func directCallEntryArgumentFacts(in directCallEntryFactInput) flow.BoundaryFact
 		if !ok || !facts.HasProof() {
 			continue
 		}
-		out = flow.MergeBoundaryFactProofs(out, flow.RebaseBoundaryReturnFactsToParam(facts, 0, arg.Slot))
+		out = flow.UnionBoundaryFactProofs(out, flow.RebaseBoundaryReturnFactsToParam(facts, 0, arg.Slot))
 	}
 	return out
 }

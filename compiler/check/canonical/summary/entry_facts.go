@@ -85,5 +85,5 @@ func lookupEntryFactsKey(bucket []*entryFactsKeyNode, facts flow.BoundaryFacts) 
 }
 
 func mergeEntryFacts(a, b flow.BoundaryFacts) flow.BoundaryFacts {
-	return flow.MergeBoundaryFactProofs(a.Clone(), b.Clone())
+	return flow.UnionBoundaryFactProofs(a.Clone(), b.Clone())
 }

@@ -90,12 +90,12 @@ func TestBoundaryFactsPartitionByReturnIndices(t *testing.T) {
 	}
 }
 
-func TestMergeBoundaryFactProofsUnionsIndependentProofs(t *testing.T) {
+func TestUnionBoundaryFactProofsUnionsIndependentProofs(t *testing.T) {
 	table := BoundaryPath{Kind: BoundaryPathParam, Index: 0}
 	key := BoundaryPath{Kind: BoundaryPathParam, Index: 1}
 	array := BoundaryPath{Kind: BoundaryPathReturn, Index: 0}
 
-	merged := MergeBoundaryFactProofs(
+	merged := UnionBoundaryFactProofs(
 		BoundaryFactsFromParts(BoundaryFactParts{
 			KeyPresence: []BoundaryKeyPresenceFact{{Table: table, Key: key}},
 		}),

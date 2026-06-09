@@ -608,7 +608,7 @@ func projectBoundaryFacts(fs state.FunctionState, g *cfg.Graph) flow.BoundaryFac
 			return
 		}
 		mapper := flow.NewBoundaryPathProjection(paramBySymbol, returnBoundarySymbolMap(g, p, info))
-		facts := flow.MergeBoundaryFactProofs(
+		facts := flow.UnionBoundaryFactProofs(
 			projectPointBoundaryFacts(ps, mapper),
 			projectReturnLengthBoundaryFacts(ps, g, p, info, mapper),
 		)
@@ -653,7 +653,7 @@ func projectBoundaryFacts(fs state.FunctionState, g *cfg.Graph) flow.BoundaryFac
 			sawEligible = true
 		}
 		if sawEligible {
-			out = flow.MergeBoundaryFactProofs(out, acc)
+			out = flow.UnionBoundaryFactProofs(out, acc)
 		}
 	}
 	return out
