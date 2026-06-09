@@ -22,7 +22,7 @@ func TestDirectCallEntryFactsProjectsLengthBoundsToParamPaths(t *testing.T) {
 
 	callee := summary.FuncRef{GraphID: 7}
 	call := &ast.FuncCallExpr{Args: []ast.Expr{&ast.IdentExpr{Value: "graph"}}}
-	projection := summary.CallEntryContextProjection{
+	projection := summary.CallEntryProjection{
 		ParamSlot: func(summary.FuncRef, *ast.FuncCallExpr, int) (int, int, bool) {
 			return 0, 0, true
 		},
@@ -60,7 +60,7 @@ func TestDirectCallEntryFactsProjectsIndexWritesToParamPaths(t *testing.T) {
 
 	callee := summary.FuncRef{GraphID: 8}
 	call := &ast.FuncCallExpr{Args: []ast.Expr{&ast.IdentExpr{Value: "graph"}}}
-	projection := summary.CallEntryContextProjection{
+	projection := summary.CallEntryProjection{
 		ParamSlot: func(summary.FuncRef, *ast.FuncCallExpr, int) (int, int, bool) {
 			return 0, 0, true
 		},
@@ -105,7 +105,7 @@ func TestDirectCallEntryFactsProjectsKeyArrayValuesToParamPaths(t *testing.T) {
 
 	callee := summary.FuncRef{GraphID: 11}
 	call := &ast.FuncCallExpr{Args: []ast.Expr{&ast.IdentExpr{Value: "graph"}}}
-	projection := summary.CallEntryContextProjection{
+	projection := summary.CallEntryProjection{
 		ParamSlot: func(summary.FuncRef, *ast.FuncCallExpr, int) (int, int, bool) {
 			return 0, 0, true
 		},
@@ -157,7 +157,7 @@ func TestDirectCallEntryFactsProjectsStaticMembersToParamPaths(t *testing.T) {
 
 	callee := summary.FuncRef{GraphID: 9}
 	call := &ast.FuncCallExpr{Args: []ast.Expr{&ast.IdentExpr{Value: "graph"}}}
-	projection := summary.CallEntryContextProjection{
+	projection := summary.CallEntryProjection{
 		ParamSlot: func(summary.FuncRef, *ast.FuncCallExpr, int) (int, int, bool) {
 			return 0, 0, true
 		},
@@ -197,7 +197,7 @@ func TestDirectCallEntryFactsNormalizesStaticMembersAgainstRuntimeArgValue(t *te
 
 	callee := summary.FuncRef{GraphID: 10}
 	call := &ast.FuncCallExpr{Args: []ast.Expr{&ast.IdentExpr{Value: "graph"}}}
-	projection := summary.CallEntryContextProjection{
+	projection := summary.CallEntryProjection{
 		ParamSlot: func(summary.FuncRef, *ast.FuncCallExpr, int) (int, int, bool) {
 			return 0, 0, true
 		},

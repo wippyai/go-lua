@@ -55,8 +55,8 @@ func (c callEntryProjector) productReferenceArgSources(ctx transfer.ProductCallC
 	}
 }
 
-func (c callEntryProjector) entryEvidenceProjection() summary.CallEntryContextProjection {
-	return summary.CallEntryContextProjection{
+func (c callEntryProjector) entryEvidenceProjection() summary.CallEntryProjection {
+	return summary.CallEntryProjection{
 		ParamSlot: c.paramSlot,
 		ParamSlotCount: func(callee summary.FuncRef, _ *ast.FuncCallExpr) int {
 			return c.program.paramSlotCount(callee)
@@ -153,7 +153,7 @@ func (p *program) ProjectCallEntryPublication(ref summary.FuncRef, fs state.Func
 	if !ok {
 		return nil
 	}
-	return projector.publicationProjection(fs).Project()
+	return projector.projection(fs).ProjectPublications()
 }
 
 func (p *program) ProjectCallEntryContextKeys(ref summary.FuncRef, fs state.FunctionState) []summary.Key {
@@ -161,13 +161,21 @@ func (p *program) ProjectCallEntryContextKeys(ref summary.FuncRef, fs state.Func
 	if !ok {
 		return nil
 	}
-	return projector.contextProjection(fs).ProjectKeys()
+	return projector.projection(fs).ProjectKeys()
 }
 
-func (c callEntryProjector) publicationProjection(fs state.FunctionState) summary.CallEntryPublicationProjection {
-	return summary.CallEntryPublicationProjection{
-		Graph: c.graph,
-		State: fs,
+func (c callEntryProjector) projection(fs state.FunctionState) summary.CallEntryProjection {
+	return summary.CallEntryProjection{
+		Graph:     c.graph,
+		State:     fs,
+		ParamSlot: c.paramSlot,
+		ParamSlotCount: func(callee summary.FuncRef, _ *ast.FuncCallExpr) int {
+			return c.program.paramSlotCount(callee)
+		},
+		ParamPath:           c.program.paramPath,
+		ArgPath:             c.argPath,
+		ReferenceArgSources: c.pointReferenceArgSources(),
+		EvalArg:             c.transfer.EvalExprValue,
 		ResolveTargets: func(call *ast.FuncCallExpr, in *flow.PointState) []summary.CallEntryTarget {
 			return c.resolveTargets(call, in)
 		},
@@ -177,7 +185,6 @@ func (c callEntryProjector) publicationProjection(fs state.FunctionState) summar
 		ExpectedArgTypes: func(point cfg.Point, info *cfg.CallInfo, in *flow.PointState) []typ.Type {
 			return c.expectationArgTypes(point, info, in)
 		},
-		ParamSlot: c.paramSlot,
 		ParamAnnotated: func(callee summary.FuncRef, sourceParam int) bool {
 			_, slot, ok := paramevidence.ParamSlotForSourceParam(c.program.Graph(callee), c.program.funcExpr(callee), sourceParam)
 			if !ok {
@@ -185,49 +192,10 @@ func (c callEntryProjector) publicationProjection(fs state.FunctionState) summar
 			}
 			return c.program.paramSlotFixed(callee, slot)
 		},
-		ParamSlotCount: func(callee summary.FuncRef, _ *ast.FuncCallExpr) int {
-			return c.program.paramSlotCount(callee)
-		},
-		ParamPath: func(callee summary.FuncRef, slot int) (constraint.Path, bool) {
-			return c.program.paramPath(callee, slot)
-		},
-		ArgPath: c.argPath,
-		ReferencePaths: func(callee summary.FuncRef) flow.ReferencePathProjection {
-			return c.program.referenceProjection(callee)
-		},
-		EvalArg: c.transfer.EvalExprValue,
-	}
-}
-
-func (c callEntryProjector) contextProjection(fs state.FunctionState) summary.CallEntryContextProjection {
-	return summary.CallEntryContextProjection{
-		Graph: c.graph,
-		State: fs,
-		ResolveTargets: func(call *ast.FuncCallExpr, in *flow.PointState) []summary.CallEntryTarget {
-			return c.resolveTargets(call, in)
-		},
-		ResolveCallback: func(arg ast.Expr, rawSym cfg.SymbolID, in *flow.PointState) ([]summary.FuncRef, bool) {
-			return c.resolveCallback(arg, rawSym, in)
-		},
-		ExpectedArgTypes: func(point cfg.Point, info *cfg.CallInfo, in *flow.PointState) []typ.Type {
-			return c.expectationArgTypes(point, info, in)
-		},
-		ParamSlot: c.paramSlot,
-		ParamSlotCount: func(callee summary.FuncRef, _ *ast.FuncCallExpr) int {
-			return c.program.paramSlotCount(callee)
-		},
-		ParamPath: func(callee summary.FuncRef, slot int) (constraint.Path, bool) {
-			return c.program.paramPath(callee, slot)
-		},
-		ArgPath:             c.argPath,
-		ReferenceArgSources: c.pointReferenceArgSources(),
-		EvalArg:             c.transfer.EvalExprValue,
 		NormalizeValues: func(callee summary.FuncRef, call *ast.FuncCallExpr, values summary.EntryValues) summary.EntryValues {
 			return c.program.withPrototypeMethodSurfacesForMethodCall(callee, call, values)
 		},
-		ReferencePaths: func(callee summary.FuncRef) flow.ReferencePathProjection {
-			return c.program.referenceProjection(callee)
-		},
+		ReferencePaths: c.program.referenceProjection,
 	}
 }
 

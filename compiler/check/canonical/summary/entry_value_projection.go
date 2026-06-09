@@ -377,17 +377,17 @@ func joinOmittedFixedArgNil(out EntryValues, in directCallEntryProductValueInput
 	return out
 }
 
-// CallEntryContextProjection projects exact call-site contexts from one solved
-// caller state. Unlike aggregate CallEntryPublication, this relation is not
-// joined by callee: diagnostics use it to replay every reachable callee under the
-// finite context that an actual call site produced.
-type CallEntryContextProjection struct {
+// CallEntryProjection projects call-site entry evidence from one solved caller
+// state. Exact summary keys and aggregate publication are two views of the same
+// direct call-entry evidence; they must not rebuild separate value/fact routes.
+type CallEntryProjection struct {
 	Graph               *cfg.Graph
 	State               state.FunctionState
 	ResolveTargets      CallEntryTargetResolver
 	ResolveCallback     CallEntryCallbackResolver
 	ExpectedArgTypes    CallEntryExpectedArgTypes
 	ParamSlot           EntryValueParamSlot
+	ParamAnnotated      EntryValueParamAnnotated
 	ParamSlotCount      EntryValueParamSlotCount
 	ParamPath           EntryReferenceParamPath
 	ArgPath             EntryReferenceArgPath
@@ -427,7 +427,7 @@ type DirectEntryEvidence struct {
 // DirectEvidence projects all direct call-entry axes for one resolved target.
 // Call-entry consumers should use this carrier instead of independently
 // rebuilding value, reference, and fact routes from the same call arguments.
-func (p CallEntryContextProjection) DirectEvidence(in DirectEntryEvidenceInput) DirectEntryEvidence {
+func (p CallEntryProjection) DirectEvidence(in DirectEntryEvidenceInput) DirectEntryEvidence {
 	return DirectEntryEvidence{
 		Values: directCallEntryProductValues(directCallEntryProductValueInput{
 			Call:           in.Call,
@@ -463,7 +463,7 @@ func (p CallEntryContextProjection) DirectEvidence(in DirectEntryEvidenceInput) 
 	}
 }
 
-func (p CallEntryContextProjection) directEvidenceFromPoint(callee FuncRef, call *ast.FuncCallExpr, in *flow.PointState, annotated EntryValueParamAnnotated) DirectEntryEvidence {
+func (p CallEntryProjection) directEvidenceFromPoint(callee FuncRef, call *ast.FuncCallExpr, in *flow.PointState, annotated EntryValueParamAnnotated) DirectEntryEvidence {
 	if in == nil {
 		return DirectEntryEvidence{
 			References: flow.ReferenceContextBottom(),
@@ -485,7 +485,7 @@ func (p CallEntryContextProjection) directEvidenceFromPoint(callee FuncRef, call
 	})
 }
 
-func (p CallEntryContextProjection) runtimeArgValues(call *ast.FuncCallExpr, in *flow.PointState) []product.AbstractValue {
+func (p CallEntryProjection) runtimeArgValues(call *ast.FuncCallExpr, in *flow.PointState) []product.AbstractValue {
 	if p.ParamSlot == nil || p.EvalArg == nil || call == nil || in == nil {
 		return nil
 	}
@@ -506,7 +506,7 @@ func (p CallEntryContextProjection) runtimeArgValues(call *ast.FuncCallExpr, in 
 
 // ProjectKeys returns deterministic, de-duplicated callee summary keys for every
 // module-local call site in Graph.
-func (p CallEntryContextProjection) ProjectKeys() []Key {
+func (p CallEntryProjection) ProjectKeys() []Key {
 	if p.Graph == nil || p.ResolveTargets == nil {
 		return nil
 	}
@@ -550,7 +550,7 @@ func (p CallEntryContextProjection) ProjectKeys() []Key {
 
 // ClosureEntryContextProjection projects declaration-time closure environments
 // from one solved function state. It is the diagnostic counterpart to
-// CallEntryContextProjection: calls provide callee contexts at invocation sites;
+// CallEntryProjection: calls provide callee contexts at invocation sites;
 // closure values provide nested-function contexts at allocation/definition
 // sites, including captured lexical narrows for closures that are not called in
 // the current module.
@@ -627,14 +627,14 @@ func (p ClosureEntryContextProjection) closureEntryContextKey(ref FuncRef, closu
 	)
 }
 
-func (p CallEntryContextProjection) referenceProjection(callee FuncRef) flow.ReferencePathProjection {
+func (p CallEntryProjection) referenceProjection(callee FuncRef) flow.ReferencePathProjection {
 	if p.ReferencePaths == nil {
 		return flow.ReferencePathProjection{}
 	}
 	return p.ReferencePaths(callee)
 }
 
-func (p CallEntryContextProjection) callbackEntryKeys(site callEntrySite) []Key {
+func (p CallEntryProjection) callbackEntryKeys(site callEntrySite) []Key {
 	var keys []Key
 	for _, callback := range callEntryCallbacks(site, p.ResolveCallback, p.ExpectedArgTypes, p.ReferenceArgSources.ClosureRefs) {
 		for _, ref := range callback.Refs {
@@ -661,37 +661,10 @@ func (p CallEntryContextProjection) callbackEntryKeys(site callEntrySite) []Key 
 	return keys
 }
 
-// CallEntryPublicationProjection projects caller-to-callee entry evidence from
-// one solved caller state. Values and boundary facts are emitted together because
-// both come from the same call-boundary frame; splitting them reintroduced two
-// vocabularies for one summary fact.
-type CallEntryPublicationProjection struct {
-	Graph            *cfg.Graph
-	State            state.FunctionState
-	ResolveTargets   CallEntryTargetResolver
-	ResolveCallback  CallEntryCallbackResolver
-	ExpectedArgTypes CallEntryExpectedArgTypes
-	ParamSlot        EntryValueParamSlot
-	ParamAnnotated   EntryValueParamAnnotated
-	EvalArg          EntryValueEvaluator
-	ParamSlotCount   EntryValueParamSlotCount
-	ParamPath        EntryReferenceParamPath
-	ArgPath          EntryReferenceArgPath
-	ReferencePaths   EntryReferenceProjection
-}
-
 // Project returns finite caller-to-callee entry-publication summary components.
-func (p CallEntryPublicationProjection) Project() CallEntryPublications {
+func (p CallEntryProjection) ProjectPublications() CallEntryPublications {
 	if p.Graph == nil || p.ResolveTargets == nil || p.ParamSlot == nil || p.EvalArg == nil {
 		return nil
-	}
-	evidenceProjection := CallEntryContextProjection{
-		ParamSlot:      p.ParamSlot,
-		ParamSlotCount: p.ParamSlotCount,
-		ParamPath:      p.ParamPath,
-		ArgPath:        p.ArgPath,
-		ReferencePaths: p.ReferencePaths,
-		EvalArg:        p.EvalArg,
 	}
 	blockedFacts := make(map[FuncRef]struct{})
 	var out CallEntryPublications
@@ -704,7 +677,7 @@ func (p CallEntryPublicationProjection) Project() CallEntryPublications {
 			// Publication is aggregate entry evidence. Fixed source annotations
 			// remain fixed at their declaration site; exact call-entry contexts
 			// still retain the full DirectEvidence payload.
-			evidence := evidenceProjection.directEvidenceFromPoint(target.Ref, site.Call, &site.ArgState, p.ParamAnnotated)
+			evidence := p.directEvidenceFromPoint(target.Ref, site.Call, &site.ArgState, p.ParamAnnotated)
 			out = joinCallEntryPublicationValues(out, target.Ref, evidence.Values)
 			facts := flow.MergeBoundaryFactProofs(target.EntryFacts, evidence.Facts)
 			out = joinCallEntryPublicationFacts(out, blockedFacts, target.Ref, facts)
@@ -773,7 +746,7 @@ func joinCallEntryPublicationFacts(out CallEntryPublications, blocked map[FuncRe
 	return out
 }
 
-func (p CallEntryPublicationProjection) projectCallbackEntryValues(out CallEntryPublications, site callEntrySite) CallEntryPublications {
+func (p CallEntryProjection) projectCallbackEntryValues(out CallEntryPublications, site callEntrySite) CallEntryPublications {
 	if p.ExpectedArgTypes == nil {
 		return out
 	}
