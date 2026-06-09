@@ -39,7 +39,7 @@ func (d *Driver) funcResultProjection(sess api.AnalysisSession, prog *program, q
 func (p funcResultProjection) build() *api.FuncResult {
 	evidence := p.evidence()
 	callEdges := p.callEdgeEvidence(evidence)
-	facts := p.functionFacts()
+	facts := p.observationContext()
 	flowProjection := p.driver.newCanonicalFacts(
 		p.graph,
 		p.driver.states[p.ref],
@@ -139,14 +139,14 @@ func (p funcResultProjection) evidence() api.FlowEvidence {
 	return api.FlowEvidence{}
 }
 
-func (p funcResultProjection) functionFacts() functionFacts {
-	facts := cloneFunctionFacts(p.program.functionFacts[p.ref])
+func (p funcResultProjection) observationContext() functionObservationContext {
+	obsCtx := cloneFunctionObservationContext(p.program.observationContexts[p.ref])
 	funcSigs := p.program.facts.FunctionBindingTypes(func(ref canonref.FuncRef) typ.Type {
 		return p.driver.signatureForRef(p.program, ref)
 	})
-	recordFunctionBindingTypes(&facts, funcSigs, p.graph)
-	recordCallbackEnvBindingTypes(&facts, p.program.facts.CallbackEnv(p.ref))
-	return facts
+	recordFunctionBindingTypes(&obsCtx, funcSigs, p.graph)
+	recordCallbackEnvBindingTypes(&obsCtx, p.program.facts.CallbackEnv(p.ref))
+	return obsCtx
 }
 
 func (p funcResultProjection) literalSignatures() map[*ast.FunctionExpr]*typ.Function {

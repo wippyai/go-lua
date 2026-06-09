@@ -50,10 +50,11 @@ import (
 //     it is the same resolver and the same projector the rest of the surface uses,
 //     not a parallel type checker.
 //
-// functionFacts is the per-function declared-type context the bridge derives once
-// from the graph: the resolved declared type of each annotated symbol (parameters
-// and annotated local declarations) and the annotated-symbol set.
-type functionFacts struct {
+// functionObservationContext is the per-function immutable source context the
+// canonical observer derives once from the graph: resolved annotations,
+// annotated-symbol membership, binding signatures, and parameter symbol layout.
+// It is not exported api.FunctionFacts; those are final Summary-derived output.
+type functionObservationContext struct {
 	declared  map[cfg.SymbolID]typ.Type
 	annotated flow.AnnotatedSymbols
 	// bindings are immutable value-binding facts, not source declarations. They
@@ -68,8 +69,8 @@ type functionFacts struct {
 	paramSyms []cfg.SymbolID
 }
 
-func cloneFunctionFacts(in functionFacts) functionFacts {
-	out := functionFacts{}
+func cloneFunctionObservationContext(in functionObservationContext) functionObservationContext {
+	out := functionObservationContext{}
 	if len(in.declared) > 0 {
 		out.declared = make(map[cfg.SymbolID]typ.Type, len(in.declared))
 		for sym, t := range in.declared {
@@ -93,16 +94,15 @@ func cloneFunctionFacts(in functionFacts) functionFacts {
 	return out
 }
 
-// buildFunctionFacts resolves the declared types of a function's annotated
-// parameters and annotated local declarations, the declared-type context every
-// part of the observation surface reads. Annotations resolve against the module
-// base scope through the driver's resolver.
-func (d *Driver) buildFunctionFacts(g *cfg.Graph, evidence api.FlowEvidence) functionFacts {
-	facts := functionFacts{
+// buildFunctionObservationContext resolves the static source context every part
+// of the observation surface reads. Annotations resolve against the module base
+// scope through the driver's resolver.
+func (d *Driver) buildFunctionObservationContext(g *cfg.Graph, evidence api.FlowEvidence) functionObservationContext {
+	obsCtx := functionObservationContext{
 		declared: make(map[cfg.SymbolID]typ.Type),
 	}
 	if g == nil {
-		return facts
+		return obsCtx
 	}
 
 	// Predeclared globals: a use of a predeclared name (print, pairs, require, ...)
@@ -120,7 +120,7 @@ func (d *Driver) buildFunctionFacts(g *cfg.Graph, evidence api.FlowEvidence) fun
 			if !ok {
 				continue
 			}
-			if _, exists := facts.declared[sym]; exists {
+			if _, exists := obsCtx.declared[sym]; exists {
 				continue
 			}
 			if bindings != nil {
@@ -128,7 +128,7 @@ func (d *Driver) buildFunctionFacts(g *cfg.Graph, evidence api.FlowEvidence) fun
 					continue
 				}
 			}
-			facts.declared[sym] = t
+			obsCtx.declared[sym] = t
 		}
 	}
 
@@ -143,7 +143,7 @@ func (d *Driver) buildFunctionFacts(g *cfg.Graph, evidence api.FlowEvidence) fun
 	// unresolved typ.Ref; the body method/field check then reads the bound's members.
 	annScope := d.typeParamScope(g.Func())
 	params := g.ParamSymbols()
-	facts.paramSyms = params
+	obsCtx.paramSyms = params
 	for _, slot := range g.ParamSlotsReadOnly() {
 		if slot.Symbol == 0 || slot.TypeAnnotation == nil {
 			continue
@@ -152,8 +152,8 @@ func (d *Driver) buildFunctionFacts(g *cfg.Graph, evidence api.FlowEvidence) fun
 		if t == nil {
 			continue
 		}
-		facts.declared[slot.Symbol] = t
-		facts.annotated.Add(slot.Symbol)
+		obsCtx.declared[slot.Symbol] = t
+		obsCtx.annotated.Add(slot.Symbol)
 	}
 
 	// Annotated local declarations: local x: T = ... pins x's declared type from
@@ -190,7 +190,7 @@ func (d *Driver) buildFunctionFacts(g *cfg.Graph, evidence api.FlowEvidence) fun
 			// scope would drop a generic parameter's bound (`x: T` -> unresolved Ref
 			// instead of the bounded type parameter). Leave the param's declared type
 			// intact; this loop pins only genuine local declarations.
-			if _, isParam := facts.declared[target.Symbol]; isParam && facts.annotated.Contains(target.Symbol) {
+			if _, isParam := obsCtx.declared[target.Symbol]; isParam && obsCtx.annotated.Contains(target.Symbol) {
 				continue
 			}
 			// Resolve a local declaration against the scope lexically visible at its
@@ -204,11 +204,11 @@ func (d *Driver) buildFunctionFacts(g *cfg.Graph, evidence api.FlowEvidence) fun
 			if t == nil {
 				continue
 			}
-			facts.declared[target.Symbol] = t
-			facts.annotated.Add(target.Symbol)
+			obsCtx.declared[target.Symbol] = t
+			obsCtx.annotated.Add(target.Symbol)
 		}
 	}
-	return facts
+	return obsCtx
 }
 
 // seedMethodSelf records only source-declared receiver facts for a method body's
@@ -222,8 +222,8 @@ func (d *Driver) buildFunctionFacts(g *cfg.Graph, evidence api.FlowEvidence) fun
 // A self parameter the user annotated explicitly is left untouched. A value
 // receiver stays unannotated so EffectiveTypeAt observes the solved point-state
 // value seeded through EntryValues/PrototypeSelf.
-func (d *Driver) seedMethodSelf(facts *functionFacts, prog *program, g *cfg.Graph) {
-	if facts == nil || prog == nil || g == nil {
+func (d *Driver) seedMethodSelf(obsCtx *functionObservationContext, prog *program, g *cfg.Graph) {
+	if obsCtx == nil || prog == nil || g == nil {
 		return
 	}
 	fn := g.Func()
@@ -259,8 +259,8 @@ func (d *Driver) seedMethodSelf(facts *functionFacts, prog *program, g *cfg.Grap
 	if recv == nil || typ.IsAbsentOrUnknown(recv) {
 		return
 	}
-	facts.declared[selfSym] = recv
-	facts.annotated.Add(selfSym)
+	obsCtx.declared[selfSym] = recv
+	obsCtx.annotated.Add(selfSym)
 }
 
 // namedReceiverType resolves only an explicit type-namespace receiver binding.
@@ -288,24 +288,24 @@ func (d *Driver) namedReceiverType(info *cfg.FuncDefInfo, sc *scope.State) typ.T
 // they make named functions observable through EffectiveTypeAt and the identifier
 // pass without becoming source annotations. A source declaration remains
 // authoritative when both exist.
-func recordFunctionBindingTypes(facts *functionFacts, funcSigs map[cfg.SymbolID]typ.Type, g *cfg.Graph) {
-	if facts == nil {
+func recordFunctionBindingTypes(obsCtx *functionObservationContext, funcSigs map[cfg.SymbolID]typ.Type, g *cfg.Graph) {
+	if obsCtx == nil {
 		return
 	}
 	if len(funcSigs) == 0 || g == nil {
 		return
 	}
-	if facts.bindings == nil {
-		facts.bindings = make(map[cfg.SymbolID]typ.Type, len(funcSigs))
+	if obsCtx.bindings == nil {
+		obsCtx.bindings = make(map[cfg.SymbolID]typ.Type, len(funcSigs))
 	}
 	for sym, sig := range funcSigs {
 		if sym == 0 || sig == nil {
 			continue
 		}
-		if _, exists := facts.declared[sym]; exists {
+		if _, exists := obsCtx.declared[sym]; exists {
 			continue
 		}
-		facts.bindings[sym] = sig
+		obsCtx.bindings[sym] = sig
 	}
 }
 
@@ -314,21 +314,21 @@ func recordFunctionBindingTypes(facts *functionFacts, funcSigs map[cfg.SymbolID]
 // to this callback body's graph symbols, so the bridge only admits those
 // normalized facts into the same non-declaration surface used for function
 // bindings. Source declarations remain authoritative when both exist.
-func recordCallbackEnvBindingTypes(facts *functionFacts, entries []callbackenv.GlobalBinding) {
-	if facts == nil || len(entries) == 0 {
+func recordCallbackEnvBindingTypes(obsCtx *functionObservationContext, entries []callbackenv.GlobalBinding) {
+	if obsCtx == nil || len(entries) == 0 {
 		return
 	}
-	if facts.bindings == nil {
-		facts.bindings = make(map[cfg.SymbolID]typ.Type, len(entries))
+	if obsCtx.bindings == nil {
+		obsCtx.bindings = make(map[cfg.SymbolID]typ.Type, len(entries))
 	}
 	for _, entry := range entries {
 		if entry.Symbol == 0 || entry.Type == nil || typ.IsAbsentOrUnknown(entry.Type) {
 			continue
 		}
-		if _, exists := facts.declared[entry.Symbol]; exists {
+		if _, exists := obsCtx.declared[entry.Symbol]; exists {
 			continue
 		}
-		facts.bindings[entry.Symbol] = entry.Type
+		obsCtx.bindings[entry.Symbol] = entry.Type
 	}
 }
 
@@ -361,8 +361,8 @@ type canonicalFacts struct {
 // FunctionState. The per-point in-state it reads is the solver-derived
 // state.FunctionState.InPoints, so the graph the solve ran over is not
 // re-consulted here (the in-state is read, never re-derived).
-func (d *Driver) newCanonicalFacts(g *cfg.Graph, fs state.FunctionState, facts functionFacts, prog *program, queries *summary.Queries, ctx *db.QueryContext, _ api.FlowEvidence) *canonicalFacts {
-	unannotated := paramboundary.UnannotatedRootsFromFacts(facts.paramSyms, facts.declared, facts.annotated)
+func (d *Driver) newCanonicalFacts(g *cfg.Graph, fs state.FunctionState, obsCtx functionObservationContext, prog *program, queries *summary.Queries, ctx *db.QueryContext, _ api.FlowEvidence) *canonicalFacts {
+	unannotated := paramboundary.UnannotatedRootsFromFacts(obsCtx.paramSyms, obsCtx.declared, obsCtx.annotated)
 	var consts map[cfg.SymbolID]map[cfg.Point]*flow.ConstValue
 	if prog != nil && g != nil {
 		if ref, ok := prog.refByGraph(g); ok {
@@ -373,9 +373,9 @@ func (d *Driver) newCanonicalFacts(g *cfg.Graph, fs state.FunctionState, facts f
 	return &canonicalFacts{
 		graph:             g,
 		state:             fs,
-		declared:          facts.declared,
-		annotate:          facts.annotated,
-		bindings:          facts.bindings,
+		declared:          obsCtx.declared,
+		annotate:          obsCtx.annotated,
+		bindings:          obsCtx.bindings,
 		consts:            consts,
 		unannotatedParams: unannotated,
 		paths:             newPathProjector(fs, unannotated, callables),
@@ -1492,21 +1492,21 @@ func (s *returnSynth) Context() *db.QueryContext { return s.ctx }
 // buildObservationInputs assembles the per-function flow.Inputs the diagnostic
 // passes read directly (DeclaredTypes / AnnotatedVars), backed by the resolved
 // declared-type context.
-func buildObservationInputs(g *cfg.Graph, facts functionFacts) *flow.Inputs {
+func buildObservationInputs(g *cfg.Graph, obsCtx functionObservationContext) *flow.Inputs {
 	in := &flow.Inputs{
-		DeclaredTypes: make(map[cfg.SymbolID]typ.Type, len(facts.declared)),
-		BindingTypes:  make(map[cfg.SymbolID]typ.Type, len(facts.bindings)),
+		DeclaredTypes: make(map[cfg.SymbolID]typ.Type, len(obsCtx.declared)),
+		BindingTypes:  make(map[cfg.SymbolID]typ.Type, len(obsCtx.bindings)),
 	}
 	if g != nil {
 		in.Graph = g
 	}
-	for sym, t := range facts.declared {
+	for sym, t := range obsCtx.declared {
 		in.DeclaredTypes[sym] = t
 	}
-	for _, sym := range facts.annotated.Symbols() {
+	for _, sym := range obsCtx.annotated.Symbols() {
 		in.AnnotatedVars.Add(sym)
 	}
-	for sym, t := range facts.bindings {
+	for sym, t := range obsCtx.bindings {
 		in.BindingTypes[sym] = t
 	}
 	return in

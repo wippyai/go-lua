@@ -756,10 +756,11 @@ type program struct {
 	transfers    map[summary.FuncRef]equation.NodeTransfer
 	params       map[summary.FuncRef]int
 
-	// functionFacts are immutable annotation/global facts retained in the richer
-	// bridge shape. Transfer, entry seeding, capture fallback, and diagnostics all
-	// read this single carrier instead of parallel declared-type maps.
-	functionFacts map[summary.FuncRef]functionFacts
+	// observationContexts are immutable source/annotation contexts retained in the
+	// richer bridge shape. Transfer, entry seeding, capture fallback, and
+	// diagnostics all read this single carrier instead of parallel declared-type
+	// maps.
+	observationContexts map[summary.FuncRef]functionObservationContext
 
 	// refs is every module function in deterministic discovery order (root first,
 	// then nested functions in CFG point order), so the driver summarizes them
@@ -950,11 +951,11 @@ func (p *program) declaredType(ref summary.FuncRef, sym cfg.SymbolID) typ.Type {
 	if p == nil || sym == 0 {
 		return nil
 	}
-	facts, ok := p.functionFacts[ref]
-	if !ok || facts.declared == nil {
+	obsCtx, ok := p.observationContexts[ref]
+	if !ok || obsCtx.declared == nil {
 		return nil
 	}
-	return facts.declared[sym]
+	return obsCtx.declared[sym]
 }
 
 func (p *program) paramPath(ref summary.FuncRef, slot int) (constraint.Path, bool) {
@@ -1007,15 +1008,15 @@ func (d *Driver) buildProgram(sess api.AnalysisSession, rootGraph *cfg.Graph, mo
 		GraphForFunc: sess.GetOrBuildCFG,
 	})
 	p := &program{
-		driver:          d,
-		funcTopology:    funcTopology,
-		inputs:          make(map[summary.FuncRef]input.Inputs),
-		transfers:       make(map[summary.FuncRef]equation.NodeTransfer),
-		params:          make(map[summary.FuncRef]int),
-		functionFacts:   make(map[summary.FuncRef]functionFacts),
-		declaredReturns: make(map[summary.FuncRef][]typ.Type),
-		referencePaths:  make(map[summary.FuncRef]flow.ReferencePathProjection),
-		refs:            funcTopology.Refs(),
+		driver:              d,
+		funcTopology:        funcTopology,
+		inputs:              make(map[summary.FuncRef]input.Inputs),
+		transfers:           make(map[summary.FuncRef]equation.NodeTransfer),
+		params:              make(map[summary.FuncRef]int),
+		observationContexts: make(map[summary.FuncRef]functionObservationContext),
+		declaredReturns:     make(map[summary.FuncRef][]typ.Type),
+		referencePaths:      make(map[summary.FuncRef]flow.ReferencePathProjection),
+		refs:                funcTopology.Refs(),
 	}
 	for _, ref := range p.refs {
 		if g := p.Graph(ref); g != nil {
@@ -1082,24 +1083,25 @@ func (d *Driver) addFunction(sess api.AnalysisSession, p *program, ref summary.F
 	// The declared types of annotated parameters and annotated locals are the
 	// narrowing base the transfer's edge narrowing widens to: a `local r: A|B = {...}`
 	// narrows the declared union per edge, not the precise constructor value seeded in
-	// the Env. The same resolution the diagnostic surface reads (buildFunctionFacts)
-	// supplies them; it is annotation-only and does not depend on the solve.
-	fnFacts := d.buildFunctionFacts(g, evidence)
+	// the Env. The same resolution the diagnostic surface reads
+	// (buildFunctionObservationContext) supplies them; it is annotation-only and
+	// does not depend on the solve.
+	obsCtx := d.buildFunctionObservationContext(g, evidence)
 	// A method/field-definition body's implicit `self` parameter has a declared type
 	// only when the receiver is a type-namespace binding (`function T:m()`). Value
 	// receivers remain runtime flow facts owned by PrototypeSelf.
-	d.seedMethodSelf(&fnFacts, p, g)
-	d.seedCapturedDeclaredTypes(&fnFacts, p, ref)
-	p.functionFacts[ref] = fnFacts
-	in.Scope.DeclaredTypes = fnFacts.declared
+	d.seedMethodSelf(&obsCtx, p, g)
+	d.seedCapturedDeclaredTypes(&obsCtx, p, ref)
+	p.observationContexts[ref] = obsCtx
+	in.Scope.DeclaredTypes = obsCtx.declared
 	p.inputs[ref] = in
 	if fn := p.funcExpr(ref); fn != nil {
 		p.declaredReturns[ref] = d.declaredReturnTypes(fn)
 	}
 }
 
-func (d *Driver) seedCapturedDeclaredTypes(facts *functionFacts, p *program, ref summary.FuncRef) {
-	if facts == nil || p == nil {
+func (d *Driver) seedCapturedDeclaredTypes(obsCtx *functionObservationContext, p *program, ref summary.FuncRef) {
+	if obsCtx == nil || p == nil {
 		return
 	}
 	captured := p.capturedSymbols(ref)
@@ -1110,24 +1112,24 @@ func (d *Driver) seedCapturedDeclaredTypes(facts *functionFacts, p *program, ref
 		if sym == 0 {
 			continue
 		}
-		if existing := facts.declared[sym]; existing != nil && !typ.IsAbsentOrUnknown(existing) {
+		if existing := obsCtx.declared[sym]; existing != nil && !typ.IsAbsentOrUnknown(existing) {
 			continue
 		}
 		for _, owner := range p.captureDependencyChain(ref) {
-			ownerFacts, ok := p.functionFacts[owner]
+			ownerCtx, ok := p.observationContexts[owner]
 			if !ok {
 				continue
 			}
-			t := ownerFacts.declared[sym]
+			t := ownerCtx.declared[sym]
 			if t == nil || typ.IsAbsentOrUnknown(t) {
 				continue
 			}
-			if facts.declared == nil {
-				facts.declared = make(map[cfg.SymbolID]typ.Type)
+			if obsCtx.declared == nil {
+				obsCtx.declared = make(map[cfg.SymbolID]typ.Type)
 			}
-			facts.declared[sym] = t
-			if ownerFacts.annotated.Contains(sym) {
-				facts.annotated.Add(sym)
+			obsCtx.declared[sym] = t
+			if ownerCtx.annotated.Contains(sym) {
+				obsCtx.annotated.Add(sym)
 			}
 			break
 		}
@@ -1447,8 +1449,8 @@ func (ct callTyper) globalSymbolType(sym cfg.SymbolID) typ.Type {
 	if !ok {
 		return nil
 	}
-	facts, ok := ct.d.activeProgram.functionFacts[ref]
-	if !ok || facts.declared == nil {
+	obsCtx, ok := ct.d.activeProgram.observationContexts[ref]
+	if !ok || obsCtx.declared == nil {
 		for _, entry := range ct.d.activeProgram.facts.CallbackEnv(ref) {
 			if entry.Symbol == sym {
 				return entry.Type
@@ -1456,7 +1458,7 @@ func (ct callTyper) globalSymbolType(sym cfg.SymbolID) typ.Type {
 		}
 		return nil
 	}
-	if t := facts.declared[sym]; t != nil {
+	if t := obsCtx.declared[sym]; t != nil {
 		return t
 	}
 	for _, entry := range ct.d.activeProgram.facts.CallbackEnv(ref) {

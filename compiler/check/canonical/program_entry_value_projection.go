@@ -63,14 +63,15 @@ func (p *program) EntrySymbolValues(ref summary.FuncRef) map[cfg.SymbolID]produc
 	}
 
 	if g := p.Graph(ref); g != nil {
-		if fnFacts, ok := p.functionFacts[ref]; ok && len(fnFacts.declared) > 0 {
+		if obsCtx, ok := p.observationContexts[ref]; ok && len(obsCtx.declared) > 0 {
 			bindings := g.Bindings()
 			if bindings != nil {
 				for _, sym := range bindings.ReferencedGlobals() {
-					if _, ok := fnFacts.declared[sym]; !ok {
+					t, ok := obsCtx.declared[sym]
+					if !ok {
 						continue
 					}
-					add(sym, fnFacts.declared[sym])
+					add(sym, t)
 				}
 			}
 		}

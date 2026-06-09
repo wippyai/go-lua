@@ -36,7 +36,7 @@ func TestProgramEntrySymbolValuesSeedsPredeclaredGlobals(t *testing.T) {
 		funcTopology: topology.NewFunctionTopology([]topology.FunctionEntry{
 			{Ref: ref, Graph: in.Graph},
 		}),
-		functionFacts: map[summary.FuncRef]functionFacts{
+		observationContexts: map[summary.FuncRef]functionObservationContext{
 			ref: {
 				declared: map[cfg.SymbolID]typ.Type{
 					sym:       typ.String,

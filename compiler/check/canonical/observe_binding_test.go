@@ -51,7 +51,7 @@ func TestBuildObservationInputsKeepsBindingTypesOutOfDeclaredTypes(t *testing.T)
 	const fnSym cfg.SymbolID = 13
 
 	sig := typ.Func().Returns(typ.String).Build()
-	inputs := buildObservationInputs(nil, functionFacts{
+	inputs := buildObservationInputs(nil, functionObservationContext{
 		declared: map[cfg.SymbolID]typ.Type{},
 		bindings: map[cfg.SymbolID]typ.Type{fnSym: sig},
 	})
@@ -68,15 +68,15 @@ func TestRecordCallbackEnvBindingTypesKeepsOverlayOutOfDeclaredTypes(t *testing.
 	const sym cfg.SymbolID = 14
 
 	overlayType := typ.Func().Returns(typ.Nil).Build()
-	facts := functionFacts{
+	obsCtx := functionObservationContext{
 		declared: map[cfg.SymbolID]typ.Type{},
 	}
 
-	recordCallbackEnvBindingTypes(&facts, []callbackenv.GlobalBinding{
+	recordCallbackEnvBindingTypes(&obsCtx, []callbackenv.GlobalBinding{
 		{Symbol: sym, Type: overlayType},
 	})
 
-	inputs := buildObservationInputs(nil, facts)
+	inputs := buildObservationInputs(nil, obsCtx)
 	if inputs.DeclaredTypes[sym] != nil {
 		t.Fatalf("DeclaredTypes[%d] = %v, want nil", sym, inputs.DeclaredTypes[sym])
 	}
@@ -90,16 +90,16 @@ func TestRecordCallbackEnvBindingTypesDoesNotOverrideDeclaredType(t *testing.T) 
 
 	declaredType := typ.Number
 	overlayType := typ.Func().Returns(typ.Nil).Build()
-	facts := functionFacts{
+	obsCtx := functionObservationContext{
 		declared:  map[cfg.SymbolID]typ.Type{sym: declaredType},
 		annotated: flow.AnnotatedSymbolsFromMap(map[cfg.SymbolID]bool{sym: true}),
 	}
 
-	recordCallbackEnvBindingTypes(&facts, []callbackenv.GlobalBinding{
+	recordCallbackEnvBindingTypes(&obsCtx, []callbackenv.GlobalBinding{
 		{Symbol: sym, Type: overlayType},
 	})
 
-	inputs := buildObservationInputs(nil, facts)
+	inputs := buildObservationInputs(nil, obsCtx)
 	if !typ.TypeEquals(inputs.DeclaredTypes[sym], declaredType) {
 		t.Fatalf("DeclaredTypes[%d] = %v, want %v", sym, inputs.DeclaredTypes[sym], declaredType)
 	}
