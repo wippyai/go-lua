@@ -68,7 +68,7 @@ func TestParseRootAndSuffix_InvalidPlaceholderAndReturnRoots(t *testing.T) {
 	}
 }
 
-func TestParseRootAndSuffix_LegacyFallbackRoot(t *testing.T) {
+func TestParseRootAndSuffix_FallbackRoot(t *testing.T) {
 	root, suffix, ok := ParseRootAndSuffix("#1.field")
 	if !ok {
 		t.Fatal("expected parse to succeed")

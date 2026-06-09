@@ -134,7 +134,7 @@ func TestValueOriginIndexedIteratorSourceRoutesDistinguishExactAndDescendant(t *
 	}
 }
 
-func TestValueOriginAssignmentAliasSourceAddressesIgnoreLegacyStoredSource(t *testing.T) {
+func TestValueOriginAssignmentAliasSourceAddressesIgnoreNonCanonicalStoredSource(t *testing.T) {
 	valuePath := constraint.NewPath(cfg.SymbolID(17), "alias")
 	sourcePath := constraint.NewPath(cfg.SymbolID(18), "source")
 	value := testStableAddressPath(t, valuePath)
@@ -145,18 +145,18 @@ func TestValueOriginAssignmentAliasSourceAddressesIgnoreLegacyStoredSource(t *te
 	})
 	raw := facts.OriginsCoveringAddress(value)
 	if len(raw) != 1 || raw[0].Origin.Source != sourcePath.Key() {
-		t.Fatalf("test setup did not keep legacy stored source key: %s", facts.Format())
+		t.Fatalf("test setup did not keep noncanonical stored source key: %s", facts.Format())
 	}
 
 	if got := relationIndexForOrigins(facts).SourceRoutes(relationSourceQuery{
 		Target: value,
 		Kind:   relationSourceAssignmentAlias,
 	}); len(got) != 0 {
-		t.Fatalf("canonical assignment-alias view accepted legacy source key: %#v", got)
+		t.Fatalf("canonical assignment-alias view accepted noncanonical source key: %#v", got)
 	}
 }
 
-func TestValueOriginFactsOriginsCoveringAddressIgnoresLegacyStoredValue(t *testing.T) {
+func TestValueOriginFactsOriginsCoveringAddressIgnoresNonCanonicalStoredValue(t *testing.T) {
 	valuePath := constraint.NewPath(cfg.SymbolID(19), "entry")
 	sourcePath := constraint.NewPath(cfg.SymbolID(20), "items")
 	value := testStableAddressPath(t, valuePath)
@@ -167,11 +167,11 @@ func TestValueOriginFactsOriginsCoveringAddressIgnoresLegacyStoredValue(t *testi
 		VarIndex: 1,
 	})
 	if entries := facts.Entries(); len(entries) != 1 || entries[0].Value != valuePath.Key() {
-		t.Fatalf("test setup did not keep legacy stored value key: %s", facts.Format())
+		t.Fatalf("test setup did not keep noncanonical stored value key: %s", facts.Format())
 	}
 
 	if got := facts.OriginsCoveringAddress(value); len(got) != 0 {
-		t.Fatalf("legacy stored value key produced origin uses: %#v", got)
+		t.Fatalf("noncanonical stored value key produced origin uses: %#v", got)
 	}
 }
 

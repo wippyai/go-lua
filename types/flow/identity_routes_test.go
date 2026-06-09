@@ -80,7 +80,7 @@ func TestIdentityAliasSourcesPolicyCanRequireAssignmentOriginRemainder(t *testin
 	assertStableAddressPath(t, descendant[0], source.Field("id"))
 }
 
-func TestIdentityAliasSourcesIgnoreLegacyStoredSources(t *testing.T) {
+func TestIdentityAliasSourcesIgnoreNonCanonicalStoredSources(t *testing.T) {
 	target := constraint.NewPath(cfg.SymbolID(31), "target")
 	pathSource := constraint.NewPath(cfg.SymbolID(32), "path_source")
 	valueSource := constraint.NewPath(cfg.SymbolID(33), "value_source")
@@ -98,12 +98,12 @@ func TestIdentityAliasSourcesIgnoreLegacyStoredSources(t *testing.T) {
 	}
 	if len(state.PathAliases.AliasesCoveringAddress(targetAddr)) != 1 ||
 		len(state.ValueOrigins.OriginsCoveringAddress(targetAddr)) != 1 {
-		t.Fatalf("test setup did not keep legacy stored source keys: aliases=%s origins=%s", state.PathAliases.Format(), state.ValueOrigins.Format())
+		t.Fatalf("test setup did not keep noncanonical stored source keys: aliases=%s origins=%s", state.PathAliases.Format(), state.ValueOrigins.Format())
 	}
 
 	got := IdentityAliasSources(state, targetAddr)
 	if len(got) != 0 {
-		t.Fatalf("legacy stored sources produced identity routes: %v", got)
+		t.Fatalf("noncanonical stored sources produced identity routes: %v", got)
 	}
 }
 

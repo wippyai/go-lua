@@ -282,7 +282,7 @@ func TestProjectBoundaryFactsIgnoresNonContainerNumericLengthKeys(t *testing.T) 
 	tablePath := root.Field("nodes")
 
 	num := numericStateWithLenLower(t, tablePath, 2)
-	num.ApplyLenGeConst(constraint.PathKey("legacy.nodes"), 9)
+	num.ApplyLenGeConst(constraint.PathKey("stale.nodes"), 9)
 	facts := ProjectBoundaryFacts(
 		BoundaryFactProjectionInput{Num: num},
 		NewBoundaryPathProjection(map[cfg.SymbolID]int{sym: 0}, nil),

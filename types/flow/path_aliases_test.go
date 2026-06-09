@@ -64,7 +64,7 @@ func TestPathAliasFactsAddressCoverageSupportsNamedRoots(t *testing.T) {
 	}
 }
 
-func TestPathAliasSourceRoutesIgnoreLegacyStoredSource(t *testing.T) {
+func TestPathAliasSourceRoutesIgnoreNonCanonicalStoredSource(t *testing.T) {
 	aliasPath := constraint.NewPath(cfg.SymbolID(17), "alias")
 	sourcePath := constraint.NewPath(cfg.SymbolID(18), "source")
 	alias := testStableAddressPath(t, aliasPath)
@@ -74,7 +74,7 @@ func TestPathAliasSourceRoutesIgnoreLegacyStoredSource(t *testing.T) {
 	})
 	raw := facts.AliasesCoveringAddress(alias)
 	if len(raw) != 1 || raw[0].Alias.Source != sourcePath.Key() {
-		t.Fatalf("test setup did not keep legacy stored source key: %s", facts.Format())
+		t.Fatalf("test setup did not keep noncanonical stored source key: %s", facts.Format())
 	}
 
 	if got := (pointRelationIndex{aliases: facts}).SourceRoutes(relationSourceQuery{
@@ -84,11 +84,11 @@ func TestPathAliasSourceRoutesIgnoreLegacyStoredSource(t *testing.T) {
 			PathAliasFacts: true,
 		},
 	}); len(got) != 0 {
-		t.Fatalf("canonical path-alias route accepted legacy source key: %#v", got)
+		t.Fatalf("canonical path-alias route accepted noncanonical source key: %#v", got)
 	}
 }
 
-func TestPathAliasFactsAliasesCoveringAddressIgnoresLegacyStoredValue(t *testing.T) {
+func TestPathAliasFactsAliasesCoveringAddressIgnoresNonCanonicalStoredValue(t *testing.T) {
 	aliasPath := constraint.NewPath(cfg.SymbolID(19), "alias")
 	sourcePath := constraint.NewPath(cfg.SymbolID(20), "source")
 	alias := testStableAddressPath(t, aliasPath)
@@ -97,11 +97,11 @@ func TestPathAliasFactsAliasesCoveringAddressIgnoresLegacyStoredValue(t *testing
 		Source: testStableAddressPath(t, sourcePath).Key(),
 	})
 	if entries := facts.Entries(); len(entries) != 1 || entries[0].Value != aliasPath.Key() {
-		t.Fatalf("test setup did not keep legacy stored value key: %s", facts.Format())
+		t.Fatalf("test setup did not keep noncanonical stored value key: %s", facts.Format())
 	}
 
 	if got := facts.AliasesCoveringAddress(alias); len(got) != 0 {
-		t.Fatalf("legacy stored value key produced alias uses: %#v", got)
+		t.Fatalf("noncanonical stored value key produced alias uses: %#v", got)
 	}
 }
 

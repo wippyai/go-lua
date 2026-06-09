@@ -93,22 +93,22 @@ func TestFunctionRefsPathAPINormalizesStructuredPath(t *testing.T) {
 	}
 }
 
-func TestFunctionRefAtAddressDoesNotReadLegacyPathKeyEntry(t *testing.T) {
+func TestFunctionRefAtAddressDoesNotReadNonCanonicalPathKeyEntry(t *testing.T) {
 	path := constraint.NewPath(cfg.SymbolID(41), "fn").Field("call")
 	addr, ok := StableAddressOfPath(path)
 	if !ok {
 		t.Fatal("stable address did not resolve")
 	}
-	legacyKey := path.Key()
-	if legacyKey == addr.Key() {
-		t.Fatalf("test key is already canonical: %s", legacyKey)
+	nonCanonicalKey := path.Key()
+	if nonCanonicalKey == addr.Key() {
+		t.Fatalf("test key is already canonical: %s", nonCanonicalKey)
 	}
 	refs := FunctionRefs{
-		legacyKey: FunctionRefSetOf(FunctionRef{GraphID: 41}),
+		nonCanonicalKey: FunctionRefSetOf(FunctionRef{GraphID: 41}),
 	}
 
 	if _, ok := FunctionRefAtAddress(refs, addr); ok {
-		t.Fatalf("legacy path key %s was accepted as canonical address storage %s", legacyKey, addr.Key())
+		t.Fatalf("noncanonical path key %s was accepted as canonical address storage %s", nonCanonicalKey, addr.Key())
 	}
 }
 
@@ -163,7 +163,7 @@ func TestProjectFunctionRefsByPathKeepsSubtree(t *testing.T) {
 	}
 }
 
-func TestProjectFunctionRefsByPathIgnoresLegacyStoredKey(t *testing.T) {
+func TestProjectFunctionRefsByPathIgnoresNonCanonicalStoredKey(t *testing.T) {
 	root := constraint.NewPath(45, "root")
 	child := root.Field("child")
 	refs := FunctionRefs{
@@ -172,11 +172,11 @@ func TestProjectFunctionRefsByPathIgnoresLegacyStoredKey(t *testing.T) {
 
 	projected := ProjectFunctionRefsByPath(refs, root)
 	if _, ok := FunctionRefAtPath(projected, child); ok {
-		t.Fatalf("projection accepted legacy stored key %s: %#v", child.Key(), projected)
+		t.Fatalf("projection accepted noncanonical stored key %s: %#v", child.Key(), projected)
 	}
 }
 
-func TestRebaseFunctionRefsPathIgnoresLegacyStoredKey(t *testing.T) {
+func TestRebaseFunctionRefsPathIgnoresNonCanonicalStoredKey(t *testing.T) {
 	source := constraint.NewPath(46, "source")
 	target := constraint.NewPath(47, "target")
 	child := source.Field("child")
@@ -186,7 +186,7 @@ func TestRebaseFunctionRefsPathIgnoresLegacyStoredKey(t *testing.T) {
 
 	rebased := RebaseFunctionRefsPath(refs, source, target)
 	if _, ok := FunctionRefAtPath(rebased, target.Field("child")); ok {
-		t.Fatalf("rebase accepted legacy stored key %s: %#v", child.Key(), rebased)
+		t.Fatalf("rebase accepted noncanonical stored key %s: %#v", child.Key(), rebased)
 	}
 }
 

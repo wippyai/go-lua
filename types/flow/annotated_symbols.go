@@ -14,7 +14,7 @@ type AnnotatedSymbols struct {
 	symbols cfgSymbolSet
 }
 
-// AnnotatedSymbolsFromMap normalizes a legacy symbol -> bool map into the
+// AnnotatedSymbolsFromMap normalizes a symbol -> bool map into the
 // annotation-authority carrier.
 func AnnotatedSymbolsFromMap(in map[cfg.SymbolID]bool) AnnotatedSymbols {
 	var out AnnotatedSymbols

@@ -287,22 +287,22 @@ func TestClosureRefRootSymbolsUsesAddressRoots(t *testing.T) {
 	}
 }
 
-func TestClosureRefAtAddressDoesNotReadLegacyPathKeyEntry(t *testing.T) {
+func TestClosureRefAtAddressDoesNotReadNonCanonicalPathKeyEntry(t *testing.T) {
 	path := constraint.NewPath(cfg.SymbolID(57), "closure").Field("call")
 	addr, ok := StableAddressOfPath(path)
 	if !ok {
 		t.Fatal("stable address did not resolve")
 	}
-	legacyKey := path.Key()
-	if legacyKey == addr.Key() {
-		t.Fatalf("test key is already canonical: %s", legacyKey)
+	nonCanonicalKey := path.Key()
+	if nonCanonicalKey == addr.Key() {
+		t.Fatalf("test key is already canonical: %s", nonCanonicalKey)
 	}
 	refs := ClosureRefs{
-		legacyKey: ClosureRefSetOf(ClosureRefOf(FunctionRef{GraphID: 57}, CaptureCellsDomain.Bottom(), nil)),
+		nonCanonicalKey: ClosureRefSetOf(ClosureRefOf(FunctionRef{GraphID: 57}, CaptureCellsDomain.Bottom(), nil)),
 	}
 
 	if _, ok := ClosureRefAtAddress(refs, addr); ok {
-		t.Fatalf("legacy path key %s was accepted as canonical address storage %s", legacyKey, addr.Key())
+		t.Fatalf("noncanonical path key %s was accepted as canonical address storage %s", nonCanonicalKey, addr.Key())
 	}
 }
 
@@ -467,7 +467,7 @@ func TestClosureRefTreeFromSubtreePathProjectsRelativeEntries(t *testing.T) {
 	}
 }
 
-func TestClosureRefTreeFromSubtreePathIgnoresLegacyStoredKey(t *testing.T) {
+func TestClosureRefTreeFromSubtreePathIgnoresNonCanonicalStoredKey(t *testing.T) {
 	source := constraint.NewPath(cfg.SymbolID(58), "source")
 	child := source.Field("child")
 	closure := ClosureRefOf(FunctionRef{GraphID: 23}, CaptureCellsDomain.Bottom(), nil)
@@ -476,7 +476,7 @@ func TestClosureRefTreeFromSubtreePathIgnoresLegacyStoredKey(t *testing.T) {
 	}
 
 	if tree, ok := ClosureRefTreeFromSubtreePath(refs, source); ok {
-		t.Fatalf("tree accepted legacy stored key %s: %#v", child.Key(), tree)
+		t.Fatalf("tree accepted noncanonical stored key %s: %#v", child.Key(), tree)
 	}
 }
 
