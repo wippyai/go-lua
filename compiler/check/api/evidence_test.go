@@ -60,7 +60,7 @@ func TestFuncResultSolvedFlowUsesProjectionCarrier(t *testing.T) {
 	}
 }
 
-func TestFuncResultFactSurfaceAccessorsPreferFactsAndFallbackToInputs(t *testing.T) {
+func TestFuncResultFactSurfaceAccessorsPreferFactsAndUseProjectionSources(t *testing.T) {
 	const sym = cfg.SymbolID(7)
 	result := &FuncResult{
 		Facts: resultSurfaceFacts{},
@@ -95,17 +95,17 @@ func TestFuncResultFactSurfaceAccessorsPreferFactsAndFallbackToInputs(t *testing
 		t.Fatalf("TransferValueFacts did not come from Facts: %v", got)
 	}
 
-	fallback := (&FuncResult{FlowInputs: result.FlowInputs}).ConstFacts()
-	if got := fallback.ConstValueAtSym(cfg.Point(3), sym); got == nil || got.Str != "input" {
-		t.Fatalf("ConstFacts did not fallback to FlowInputs: %#v", got)
+	inputProjection := (&FuncResult{FlowInputs: result.FlowInputs}).ConstFacts()
+	if got := inputProjection.ConstValueAtSym(cfg.Point(3), sym); got == nil || got.Str != "input" {
+		t.Fatalf("ConstFacts did not read FlowInputs projection: %#v", got)
 	}
 
-	flowFallback := (&FuncResult{FlowProjection: mockSolvedFlow{}}).PathChildFacts()
-	if got := flowFallback.ObserveChildPaths(flow.PathChildQuery{Point: cfg.Point(2), Path: constraint.NewPath(sym, "value")}); len(got) != 1 || !typ.TypeEquals(got[0].Type, typ.Boolean) {
-		t.Fatalf("PathChildFacts did not fallback to solved flow projection: %#v", got)
+	flowProjection := (&FuncResult{FlowProjection: mockSolvedFlow{}}).PathChildFacts()
+	if got := flowProjection.ObserveChildPaths(flow.PathChildQuery{Point: cfg.Point(2), Path: constraint.NewPath(sym, "value")}); len(got) != 1 || !typ.TypeEquals(got[0].Type, typ.Boolean) {
+		t.Fatalf("PathChildFacts did not read solved flow projection: %#v", got)
 	}
 	if got := (&FuncResult{FlowProjection: mockSolvedFlow{}}).TransferValueFacts().AssignedValueTypeAt(cfg.Point(2), constraint.NewPath(sym, "value"), typ.String, flow.AssignmentSource{}); !typ.TypeEquals(got, typ.Boolean) {
-		t.Fatalf("TransferValueFacts did not fallback to solved flow projection: %v", got)
+		t.Fatalf("TransferValueFacts did not read solved flow projection: %v", got)
 	}
 }
 

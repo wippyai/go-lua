@@ -14,9 +14,10 @@ import (
 	"github.com/wippyai/go-lua/types/typ"
 )
 
-// FuncResult holds the complete analysis output for a single function.
+// FuncResult is the public read model for one analyzed function.
 // It is pure data with no back-references to Session or other FuncResults,
-// enabling safe memoization and independent storage.
+// enabling safe memoization and independent storage. Canonical checking treats
+// it as output projection, not as a semantic input to the solve.
 //
 // The result captures the checker flow's analysis outputs: graph and scope
 // facts, immutable extraction evidence, product-state facts, and the solved-flow

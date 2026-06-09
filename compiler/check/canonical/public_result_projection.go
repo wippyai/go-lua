@@ -14,10 +14,10 @@ import (
 	"github.com/wippyai/go-lua/types/typ"
 )
 
-// funcResultProjection bridges converged canonical state to the public
-// api.FuncResult consumed by diagnostics. It projects solved carriers into API
-// fields with matching semantics and keeps immutable extraction evidence intact.
-type funcResultProjection struct {
+// publicResultProjection converts the frozen canonical artifact into the public
+// api.FuncResult read model consumed by diagnostics and external checker passes.
+// It does not feed facts back into the canonical solve.
+type publicResultProjection struct {
 	driver      *Driver
 	session     api.AnalysisSession
 	program     *program
@@ -27,8 +27,8 @@ type funcResultProjection struct {
 	graph       *cfg.Graph
 }
 
-func (d *Driver) funcResultProjection(sess api.AnalysisSession, prog *program, artifact canonicalSolveArtifact, diagnostics diagnosticObservationArtifact, ref summary.FuncRef) funcResultProjection {
-	return funcResultProjection{
+func (d *Driver) publicResultProjection(sess api.AnalysisSession, prog *program, artifact canonicalSolveArtifact, diagnostics diagnosticObservationArtifact, ref summary.FuncRef) publicResultProjection {
+	return publicResultProjection{
 		driver:      d,
 		session:     sess,
 		program:     prog,
@@ -39,7 +39,7 @@ func (d *Driver) funcResultProjection(sess api.AnalysisSession, prog *program, a
 	}
 }
 
-func (p funcResultProjection) build() *api.FuncResult {
+func (p publicResultProjection) build() *api.FuncResult {
 	evidence := p.evidence()
 	callEdges := p.callEdgeEvidence(evidence)
 	facts := p.observationContext()
@@ -92,7 +92,7 @@ func (p funcResultProjection) build() *api.FuncResult {
 	return result
 }
 
-func (p funcResultProjection) observationState() state.FunctionState {
+func (p publicResultProjection) observationState() state.FunctionState {
 	if fs, ok := p.diagnostics.FunctionStates[p.ref]; ok {
 		return state.CloneFunctionState(fs)
 	}
@@ -118,7 +118,7 @@ func (p funcResultProjection) observationState() state.FunctionState {
 	return p.artifact.States[p.ref]
 }
 
-func (p funcResultProjection) resolvedTypeDefs(pointScopes map[cfg.Point]*scope.State, typeOf api.ExprSynth) map[string]typ.Type {
+func (p publicResultProjection) resolvedTypeDefs(pointScopes map[cfg.Point]*scope.State, typeOf api.ExprSynth) map[string]typ.Type {
 	if p.driver == nil || p.graph == nil || typeOf == nil {
 		return nil
 	}
@@ -155,7 +155,7 @@ func (p funcResultProjection) resolvedTypeDefs(pointScopes map[cfg.Point]*scope.
 	return out
 }
 
-func (p funcResultProjection) callEdgeEvidence(evidence api.FlowEvidence) solvedCallEdgeEvidence {
+func (p publicResultProjection) callEdgeEvidence(evidence api.FlowEvidence) solvedCallEdgeEvidence {
 	projection, ok := p.driver.solvedCallEvidenceProjection(p.program, p.artifact, p.ref, evidence)
 	if !ok {
 		return solvedCallEdgeEvidence{}
@@ -163,14 +163,14 @@ func (p funcResultProjection) callEdgeEvidence(evidence api.FlowEvidence) solved
 	return projection.project()
 }
 
-func (p funcResultProjection) evidence() api.FlowEvidence {
+func (p publicResultProjection) evidence() api.FlowEvidence {
 	if p.session != nil && p.graph != nil {
 		return p.session.EvidenceForGraph(p.graph)
 	}
 	return api.FlowEvidence{}
 }
 
-func (p funcResultProjection) observationContext() functionObservationContext {
+func (p publicResultProjection) observationContext() functionObservationContext {
 	obsCtx := cloneFunctionObservationContext(p.program.observationContexts[p.ref])
 	funcSigs := p.program.facts.FunctionBindingTypes(func(ref canonref.FuncRef) typ.Type {
 		return p.driver.signatureForRef(p.program, ref)
@@ -180,7 +180,7 @@ func (p funcResultProjection) observationContext() functionObservationContext {
 	return obsCtx
 }
 
-func (p funcResultProjection) literalSignatures() map[*ast.FunctionExpr]*typ.Function {
+func (p publicResultProjection) literalSignatures() map[*ast.FunctionExpr]*typ.Function {
 	return canonicalsig.LiteralInput{
 		Graph:           p.graph,
 		Base:            p.driver.baseScope(),

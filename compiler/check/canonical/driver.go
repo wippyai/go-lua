@@ -378,7 +378,7 @@ func (d *Driver) Run(sess api.AnalysisSession, chunk []ast.Stmt) {
 	d.diagnostics = diagnostics
 	d.withActiveSummaryReader(snapshotReader, func() {
 		d.installFunctionFactProjection(sess, prog, artifact)
-		d.bridgeResults(sess, prog, artifact, diagnostics)
+		d.projectPublicResults(sess, prog, artifact, diagnostics)
 	})
 }
 
@@ -712,18 +712,14 @@ func cloneInPoints(in map[cfg.Point]flow.PointState) map[cfg.Point]flow.PointSta
 	return out
 }
 
-// bridgeResults populates the session's per-function results from converged flow
-// state so the existing diagnostic passes (Checker.runPasses) run on solved
-// facts.
+// projectPublicResults populates the session's per-function public results from
+// the frozen solve artifact so diagnostic passes run on solved facts.
 //
-// What it bridges from solved state vs. defaults is documented on the
-// field-population helper (buildFuncResult). The defaulted fields are recorded
-// transfer/bridge gaps, not fabricated facts. The bridge is scoped, so the diff a
-// caller measures comes from transfer-fidelity worklist items: a diagnostic pass
-// can no-op when the bridge defaults a fact it reads, or it can flag an unknown
-// when the observation surface has not yet received the per-point value fact it
-// needs.
-func (d *Driver) bridgeResults(sess api.AnalysisSession, prog *program, artifact canonicalSolveArtifact, diagnostics diagnosticObservationArtifact) {
+// buildPublicResult documents which fields are direct projections, immutable
+// inputs, or intentionally empty. Empty fields are not fabricated precision; a
+// diagnostic pass may no-op or report unknown when the public observation surface
+// lacks the fact it needs.
+func (d *Driver) projectPublicResults(sess api.AnalysisSession, prog *program, artifact canonicalSolveArtifact, diagnostics diagnosticObservationArtifact) {
 	results := sess.ResultsMap()
 	if results == nil {
 		return
@@ -733,7 +729,7 @@ func (d *Driver) bridgeResults(sess api.AnalysisSession, prog *program, artifact
 		if fn == nil {
 			continue
 		}
-		result := d.buildFuncResult(sess, prog, artifact, diagnostics, ref)
+		result := d.buildPublicResult(sess, prog, artifact, diagnostics, ref)
 		results[fn] = result
 		if fn == sess.RootFuncNode() {
 			sess.SetRootResultValue(result)
@@ -742,10 +738,10 @@ func (d *Driver) bridgeResults(sess api.AnalysisSession, prog *program, artifact
 	}
 }
 
-// buildFuncResult assembles one function's api.FuncResult from converged flow
-// state in the shape the diagnostic passes consume.
+// buildPublicResult assembles one function's api.FuncResult from the frozen solve
+// artifact in the shape the diagnostic passes consume.
 //
-// BRIDGED from the flow engine (sound inputs and computed facts):
+// Directly projected from canonical inputs and solved facts:
 //   - Graph: the function's CFG, the same graph the solve ranged over.
 //   - Evidence: the raw graph-event trace (assignments, calls, returns, branches,
 //     identifier uses). It is a sound INPUT the canonical input builder already
@@ -753,7 +749,7 @@ func (d *Driver) bridgeResults(sess api.AnalysisSession, prog *program, artifact
 //     nothing. It backs the syntactic checks (control flow, identifier presence).
 //   - GlobalTypes: the immutable value namespace of predeclared globals.
 //
-// SOLVER-SHAPED CARRIERS STILL NOT FABRICATED:
+// Solver-shaped carriers not fabricated:
 //   - Solved flow is exposed through FlowProjection (api.FlowOps), not by
 //     constructing a concrete solver result it did not actually compute.
 //   - FnRefinement is a summary projection, not a Solve/Narrow output.
@@ -767,8 +763,8 @@ func (d *Driver) bridgeResults(sess api.AnalysisSession, prog *program, artifact
 // CallContracts. They are not forced into NarrowSynth, callable signatures, or
 // FlowEvidence; those would fabricate solver-shaped structures or
 // mutate immutable extraction evidence.
-func (d *Driver) buildFuncResult(sess api.AnalysisSession, prog *program, artifact canonicalSolveArtifact, diagnostics diagnosticObservationArtifact, ref summary.FuncRef) *api.FuncResult {
-	return d.funcResultProjection(sess, prog, artifact, diagnostics, ref).build()
+func (d *Driver) buildPublicResult(sess api.AnalysisSession, prog *program, artifact canonicalSolveArtifact, diagnostics diagnosticObservationArtifact, ref summary.FuncRef) *api.FuncResult {
+	return d.publicResultProjection(sess, prog, artifact, diagnostics, ref).build()
 }
 
 // program is the canonical driver's summary.Program: the module's call graph,
@@ -781,10 +777,9 @@ type program struct {
 	transfers    map[summary.FuncRef]equation.NodeTransfer
 	params       map[summary.FuncRef]int
 
-	// observationContexts are immutable source/annotation contexts retained in the
-	// richer bridge shape. Transfer, entry seeding, capture fallback, and
-	// diagnostics all read this single carrier instead of parallel declared-type
-	// maps.
+	// observationContexts are immutable source/annotation contexts retained for
+	// transfer, entry seeding, capture fallback, and diagnostics. All phases read
+	// this single carrier instead of parallel declared-type maps.
 	observationContexts map[summary.FuncRef]functionObservationContext
 
 	// refs is every module function in deterministic discovery order (root first,
