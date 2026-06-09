@@ -34,7 +34,7 @@ func TestCanonicalProductionDoesNotUseLegacyFactProducts(t *testing.T) {
 		"FixpointSwap",
 	}
 	functionFactsAllowed := map[string]bool{
-		filepath.Join(root, "driver.go"): true,
+		filepath.Join(root, "function_fact_projection.go"): true,
 	}
 
 	err := filepath.WalkDir(root, func(path string, entry fs.DirEntry, err error) error {
@@ -74,6 +74,7 @@ func TestCanonicalProductionTreatsFuncResultAsPublicProjection(t *testing.T) {
 	}
 	root := filepath.Dir(file)
 	allowed := map[string]bool{
+		filepath.Join(root, "diagnostic_emitter.go"):       true,
 		filepath.Join(root, "driver.go"):                   true,
 		filepath.Join(root, "public_result_projection.go"): true,
 	}
