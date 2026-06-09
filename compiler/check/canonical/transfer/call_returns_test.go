@@ -8,7 +8,6 @@ import (
 	"github.com/wippyai/go-lua/compiler/check/canonical/input"
 	"github.com/wippyai/go-lua/compiler/check/domain/callobligation"
 	"github.com/wippyai/go-lua/compiler/check/domain/paramevidence"
-	"github.com/wippyai/go-lua/types/callboundary"
 	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/domain/value/product"
 	"github.com/wippyai/go-lua/types/flow"
@@ -394,8 +393,7 @@ func productReturnResultForTest(returns ...product.AbstractValue) ProductCallRes
 	return ProductCallResult{
 		ReturnValues:    append([]product.AbstractValue(nil), returns...),
 		HasReturnValues: true,
-		ReturnRelations: flow.ReturnRelationsDomain.Top(),
-		Effects:         callboundary.EmptyEffects(),
+		Boundary:        EmptyBoundaryOutcome(),
 	}
 }
 
@@ -424,7 +422,7 @@ func (d deadCallDemandTyper) ProductCallFromValues(call *ast.FuncCallExpr, _ Pro
 	for i := range out {
 		out[i] = callobligation.Body(d.demand)
 	}
-	result.ArgDemands = out
+	result.Boundary.ArgDemands = out
 	return result
 }
 

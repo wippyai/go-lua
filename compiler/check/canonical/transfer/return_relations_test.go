@@ -6,7 +6,6 @@ import (
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/canonical/input"
-	"github.com/wippyai/go-lua/types/callboundary"
 	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/domain/value/product"
 	"github.com/wippyai/go-lua/types/flow"
@@ -31,10 +30,10 @@ func TestCallReturnRelationsUsesProductArgEvidence(t *testing.T) {
 	tr := New(in, Config{CallTyper: typer})
 	out := flow.PointState{Env: map[flow.ValueKey]product.AbstractValue{}}
 
-	got := tr.callReturnRelations(&out, &ast.FuncCallExpr{
+	got := tr.callBoundaryOutcome(&out, &ast.FuncCallExpr{
 		Func: &ast.IdentExpr{Value: "callee"},
 		Args: []ast.Expr{arg},
-	}, nil)
+	}, nil).ReturnRelations
 
 	if !got.HasErrorReturn(rel) {
 		t.Fatalf("return relations = %#v, want %#v", got.ErrorReturns(), rel)
@@ -335,9 +334,9 @@ func (t *productReturnRelationsTestTyper) ProductCallFromValues(
 ) ProductCallResult {
 	t.args = append([]product.AbstractValue(nil), ctx.ArgValues...)
 	result := EmptyProductCallResult()
-	result.ReturnRelations = t.rels
+	result.Boundary.ReturnRelations = t.rels
 	if t.facts.HasProof() {
-		result.Effects.BoundaryFacts = t.facts
+		result.Boundary.BoundaryFacts = t.facts
 	}
 	return result
 }
@@ -354,13 +353,15 @@ func (t *postconditionAssignTestTyper) ProductCallFromValues(
 	_ *ast.FuncCallExpr,
 	_ ProductCallContext,
 ) ProductCallResult {
-	effects := callboundary.EmptyEffects()
-	effects.BoundaryFacts = t.facts
 	return ProductCallResult{
 		ReturnValues:    t.returns,
 		HasReturnValues: true,
-		ReturnRelations: flow.ReturnRelationsDomain.Top(),
-		Effects:         effects,
+		Boundary: BoundaryOutcome{
+			ReturnRelations: flow.ReturnRelationsDomain.Top(),
+			BoundaryFacts:   t.facts,
+			CellEffects:     flow.CaptureEffectsDomain.Bottom(),
+			ReceiverEffects: flow.ReceiverEffectsDomain.Bottom(),
+		},
 	}
 }
 

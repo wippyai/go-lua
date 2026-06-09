@@ -925,7 +925,7 @@ type returnFunctionRefsTestTyper struct {
 
 func (t returnFunctionRefsTestTyper) ProductCallFromValues(*ast.FuncCallExpr, ProductCallContext) ProductCallResult {
 	result := productReturnResultForTest(product.FromType(typ.NewRecord().Field("with_options", typ.Func().Build()).Build()))
-	result.ReturnRefs = flow.ReturnRefsOfSlots([]flow.ReturnRefSlot{
+	result.Boundary.ReturnRefs = flow.ReturnRefsOfSlots([]flow.ReturnRefSlot{
 		flow.ReturnRefSlotOf(
 			flow.WithFunctionRefPath(nil, constraint.NewPlaceholder(0).Field("with_options"), flow.FunctionRefSetOf(t.ref)),
 			flow.ClosureRefsDomain.Bottom(),
@@ -948,7 +948,7 @@ func (t *productReturnFunctionRefsTestTyper) ProductCallFromValues(
 ) ProductCallResult {
 	t.args = append([]product.AbstractValue(nil), ctx.ArgValues...)
 	result := EmptyProductCallResult()
-	result.ReturnRefs = flow.ReturnRefsOfSlots([]flow.ReturnRefSlot{
+	result.Boundary.ReturnRefs = flow.ReturnRefsOfSlots([]flow.ReturnRefSlot{
 		flow.ReturnRefSlotOf(
 			flow.WithFunctionRefPath(nil, constraint.NewPlaceholder(0).Field("with_options"), flow.FunctionRefSetOf(t.ref)),
 			flow.ClosureRefsDomain.Bottom(),
@@ -966,7 +966,7 @@ type returnClosureRefsTestTyper struct {
 
 func (t returnClosureRefsTestTyper) ProductCallFromValues(*ast.FuncCallExpr, ProductCallContext) ProductCallResult {
 	result := productReturnResultForTest(product.FromType(typ.NewRecord().Field("with_options", typ.Func().Build()).Build()))
-	result.ReturnRefs = flow.ReturnRefsOfSlots([]flow.ReturnRefSlot{
+	result.Boundary.ReturnRefs = flow.ReturnRefsOfSlots([]flow.ReturnRefSlot{
 		flow.ReturnRefSlotOf(
 			flow.FunctionRefsDomain.Bottom(),
 			flow.WithClosureRefPath(nil, constraint.NewPlaceholder(0).Field("with_options"), flow.ClosureRefSetOf(t.closure)),

@@ -6,7 +6,6 @@ import (
 	"github.com/wippyai/go-lua/compiler/check/callsite"
 	canonicalplace "github.com/wippyai/go-lua/compiler/check/canonical/place"
 	"github.com/wippyai/go-lua/compiler/check/domain/paramevidence"
-	"github.com/wippyai/go-lua/types/callboundary"
 	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/domain/value/product"
 	"github.com/wippyai/go-lua/types/effect"
@@ -32,34 +31,35 @@ func (t *Transfer) applyProductCallBoundary(
 	demand func(int, paramevidence.ParamContract),
 	app ProductCallBoundaryApplication,
 ) (dead bool) {
-	if app.PruneNoReturn && result.NeverReturns {
+	boundary := result.Boundary
+	if app.PruneNoReturn && boundary.NeverReturns {
 		return true
 	}
-	t.applyCallArgDemands(out, call, result.ArgDemands, demand)
-	t.applyCallResultEffects(out, app.Point, call, ctx, result.Effects, demand)
-	if app.ApplyPostconditions && result.Postconditions.HasConstraints() {
-		return t.ApplyReturnPostconditionsAtPoint(out, app.Point, call, result.Postconditions)
+	t.applyCallArgDemands(out, call, boundary.ArgDemands, demand)
+	t.applyCallBoundaryOutcome(out, app.Point, call, ctx, boundary, demand)
+	if app.ApplyPostconditions && boundary.Postconditions.HasConstraints() {
+		return t.ApplyReturnPostconditionsAtPoint(out, app.Point, call, boundary.Postconditions)
 	}
 	return false
 }
 
-func (t *Transfer) applyCallResultEffects(
+func (t *Transfer) applyCallBoundaryOutcome(
 	out *flow.PointState,
 	p cfg.Point,
 	call *ast.FuncCallExpr,
 	ctx ProductCallContext,
-	effects callboundary.Effects,
+	boundary BoundaryOutcome,
 	demand func(int, paramevidence.ParamContract),
 ) {
 	if out == nil {
 		return
 	}
-	boundaryFacts := effects.BoundaryFacts
+	boundaryFacts := boundary.BoundaryFacts
 	boundaryRoots := t.callBoundaryLocalRoots(call, nil)
 	boundaryPlan := flow.PrepareBoundaryFactReplay(*out, boundaryFacts, boundaryRoots)
-	t.applyCallCellEffects(out, call, effects.CellEffects)
-	t.applyCallReceiverEffects(out, call, effects.ReceiverEffects, len(ctx.RuntimeArgValues), demand)
-	t.applyCallMutatorEffects(out, call, ctx, effects.ElementUnions, demand)
+	t.applyCallCellEffects(out, call, boundary.CellEffects)
+	t.applyCallReceiverEffects(out, call, boundary.ReceiverEffects, len(ctx.RuntimeArgValues), demand)
+	t.applyCallMutatorEffects(out, call, ctx, boundary.ElementUnions, demand)
 	if boundaryFacts.HasProof() {
 		t.applyBoundaryFactsWithPlan(out, p, call, boundaryFacts, nil, boundaryPlan)
 	}
@@ -74,6 +74,17 @@ func (t *Transfer) productCallResult(call *ast.FuncCallExpr, ctx ProductCallCont
 		return EmptyProductCallResult()
 	}
 	return provider.ProductCallFromValues(call, ctx)
+}
+
+func (t *Transfer) callBoundaryOutcome(
+	out *flow.PointState,
+	call *ast.FuncCallExpr,
+	demand func(int, paramevidence.ParamContract),
+) BoundaryOutcome {
+	if out == nil || call == nil {
+		return EmptyBoundaryOutcome()
+	}
+	return t.productCallResult(call, t.productCallContext(out, call, demand)).Boundary
 }
 
 func (t *Transfer) applyCallCellEffects(

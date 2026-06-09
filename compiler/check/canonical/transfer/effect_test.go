@@ -7,7 +7,6 @@ import (
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/canonical/input"
 	"github.com/wippyai/go-lua/compiler/check/domain/paramevidence"
-	"github.com/wippyai/go-lua/types/callboundary"
 	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/domain/value"
 	"github.com/wippyai/go-lua/types/domain/value/product"
@@ -2463,12 +2462,8 @@ type containerElementUnionTyper struct {
 
 func (c containerElementUnionTyper) ProductCallFromValues(*ast.FuncCallExpr, ProductCallContext) ProductCallResult {
 	result := productReturnResultForTest(product.FromType(typ.Number))
-	result.Effects = callboundary.Effects{
-		CellEffects:     c.captureEffectTyper.effects,
-		ReceiverEffects: flow.ReceiverEffectsDomain.Bottom(),
-		BoundaryFacts:   flow.BoundaryFactsDomain.Top(),
-		ElementUnions:   append([]effect.ContainerElementUnion(nil), c.effects...),
-	}
+	result.Boundary.CellEffects = c.captureEffectTyper.effects
+	result.Boundary.ElementUnions = append([]effect.ContainerElementUnion(nil), c.effects...)
 	return result
 }
 
@@ -2480,12 +2475,9 @@ type boundaryAndContainerElementUnionTyper struct {
 
 func (c boundaryAndContainerElementUnionTyper) ProductCallFromValues(*ast.FuncCallExpr, ProductCallContext) ProductCallResult {
 	result := EmptyProductCallResult()
-	result.Effects = callboundary.Effects{
-		CellEffects:     c.captureEffectTyper.effects,
-		ReceiverEffects: flow.ReceiverEffectsDomain.Bottom(),
-		BoundaryFacts:   c.facts,
-		ElementUnions:   append([]effect.ContainerElementUnion(nil), c.effects...),
-	}
+	result.Boundary.CellEffects = c.captureEffectTyper.effects
+	result.Boundary.BoundaryFacts = c.facts
+	result.Boundary.ElementUnions = append([]effect.ContainerElementUnion(nil), c.effects...)
 	return result
 }
 
@@ -2497,11 +2489,9 @@ type boundaryAndReceiverEffectTyper struct {
 
 func (b boundaryAndReceiverEffectTyper) ProductCallFromValues(*ast.FuncCallExpr, ProductCallContext) ProductCallResult {
 	result := EmptyProductCallResult()
-	result.Effects = callboundary.Effects{
-		CellEffects:     b.captureEffectTyper.effects,
-		ReceiverEffects: b.effects,
-		BoundaryFacts:   b.facts,
-	}
+	result.Boundary.CellEffects = b.captureEffectTyper.effects
+	result.Boundary.ReceiverEffects = b.effects
+	result.Boundary.BoundaryFacts = b.facts
 	return result
 }
 
@@ -2513,10 +2503,7 @@ type receiverEffectTyper struct {
 
 func (r receiverEffectTyper) ProductCallFromValues(*ast.FuncCallExpr, ProductCallContext) ProductCallResult {
 	result := productReturnResultForTest(product.FromType(typ.Number))
-	result.Effects = callboundary.Effects{
-		CellEffects:     r.captureEffectTyper.effects,
-		ReceiverEffects: r.effects,
-		BoundaryFacts:   flow.BoundaryFactsDomain.Top(),
-	}
+	result.Boundary.CellEffects = r.captureEffectTyper.effects
+	result.Boundary.ReceiverEffects = r.effects
 	return result
 }

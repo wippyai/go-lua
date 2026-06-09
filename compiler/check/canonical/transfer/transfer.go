@@ -55,10 +55,10 @@ import (
 	domainpath "github.com/wippyai/go-lua/compiler/check/domain/path"
 	"github.com/wippyai/go-lua/compiler/check/synth/ops"
 	"github.com/wippyai/go-lua/compiler/pathseg"
-	"github.com/wippyai/go-lua/types/callboundary"
 	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/domain/value"
 	"github.com/wippyai/go-lua/types/domain/value/product"
+	"github.com/wippyai/go-lua/types/effect"
 	"github.com/wippyai/go-lua/types/flow"
 	"github.com/wippyai/go-lua/types/flow/pathkey"
 	"github.com/wippyai/go-lua/types/flow/propagate"
@@ -173,26 +173,45 @@ type CallTyper interface {
 	TypeCastTarget(call *ast.FuncCallExpr, exprType func(ast.Expr) typ.Type) (typ.Type, bool)
 }
 
-// ProductCallResult is the product-carrier result of evaluating one concrete
-// call site. Values, callable identities, return relations, and caller-visible
-// effects, pre-call obligations, and control facts travel together so transfer
-// does not rebuild selected call outcomes through parallel provider routes.
-type ProductCallResult struct {
-	ReturnValues        []product.AbstractValue
-	HasReturnValues     bool
-	ReturnStaticMembers []flow.StaticMemberFacts
+// BoundaryOutcome is the non-value call-boundary carrier selected for one call.
+// It groups caller-visible post-call facts, effects, obligations, and control
+// evidence so transfer applies one boundary object instead of reconstructing
+// parallel slices of the same selected call outcome.
+type BoundaryOutcome struct {
 	ReturnRefs          flow.ReturnRefs
 	ReturnRelations     flow.ReturnRelations
-	Effects             callboundary.Effects
+	ReturnStaticMembers []flow.StaticMemberFacts
+	CellEffects         flow.CaptureEffects
+	ReceiverEffects     flow.ReceiverEffects
+	BoundaryFacts       flow.BoundaryFacts
+	ElementUnions       []effect.ContainerElementUnion
 	ArgDemands          []callobligation.Obligation
 	NeverReturns        bool
 	Postconditions      paramevidence.ReturnPostconditions
 }
 
+func EmptyBoundaryOutcome() BoundaryOutcome {
+	return BoundaryOutcome{
+		ReturnRelations: flow.ReturnRelationsDomain.Top(),
+		BoundaryFacts:   flow.BoundaryFactsDomain.Top(),
+		CellEffects:     flow.CaptureEffectsDomain.Bottom(),
+		ReceiverEffects: flow.ReceiverEffectsDomain.Bottom(),
+	}
+}
+
+// ProductCallResult is the product-carrier result of evaluating one concrete
+// call site. ReturnValues are the expression result; Boundary carries all
+// continuation-only facts/effects/control evidence selected at the same call
+// boundary.
+type ProductCallResult struct {
+	ReturnValues    []product.AbstractValue
+	HasReturnValues bool
+	Boundary        BoundaryOutcome
+}
+
 func EmptyProductCallResult() ProductCallResult {
 	return ProductCallResult{
-		ReturnRelations: flow.ReturnRelationsDomain.Top(),
-		Effects:         callboundary.EmptyEffects(),
+		Boundary: EmptyBoundaryOutcome(),
 	}
 }
 
@@ -986,17 +1005,6 @@ func (t *Transfer) attachVariantOriginToAssignedValue(p cfg.Point, target cfg.As
 	return product.WithVariantOrigin(val, family, cases), true
 }
 
-func (t *Transfer) callReturnRelations(
-	out *flow.PointState,
-	call *ast.FuncCallExpr,
-	demand func(int, paramevidence.ParamContract),
-) flow.ReturnRelations {
-	if call == nil {
-		return flow.ReturnRelationsDomain.Top()
-	}
-	return t.productCallResult(call, t.productCallContext(out, call, demand)).ReturnRelations
-}
-
 // targetValue resolves the value bound to target index i. A target aligned with a
 // source expression is the source's value. A trailing target fed by an expanding
 // call (`local a, b = f()`, where b has no aligned source) is the call's return at
@@ -1463,7 +1471,7 @@ func (t *Transfer) callReturnReferenceWritesForPlace(
 	if path, ok := place.StaticPath(); !ok || path.IsEmpty() {
 		return referenceWrite{}, false
 	}
-	returns := t.productCallResult(call, t.productCallContext(out, call, demand)).ReturnRefs
+	returns := t.callBoundaryOutcome(out, call, demand).ReturnRefs
 	writes := sourceReferenceWrite()
 	got := false
 	if tree, ok := returns.FunctionRefTree(retIndex); ok {
@@ -3516,7 +3524,7 @@ func (t *Transfer) applyReturn(
 	}
 	if len(info.Exprs) == 1 {
 		if call := info.SourceCallAt(0); call != nil && call.Call != nil {
-			effect.Relations = t.callReturnRelations(out, call.Call, demand)
+			effect.Relations = t.callBoundaryOutcome(out, call.Call, demand).ReturnRelations
 			t.applySetMetatablePrototypeSelf(out, p, call.Call, demand)
 			if returns, ok := t.evalCall(out, call.Call, demand); ok && len(returns) > 0 {
 				for i, val := range returns {

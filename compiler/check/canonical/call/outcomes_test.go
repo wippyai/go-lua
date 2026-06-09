@@ -7,7 +7,6 @@ import (
 	"github.com/wippyai/go-lua/compiler/bind"
 	compilecfg "github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/canonical/summary"
-	"github.com/wippyai/go-lua/compiler/check/domain/callobligation"
 	"github.com/wippyai/go-lua/compiler/check/domain/fieldkey"
 	"github.com/wippyai/go-lua/compiler/check/domain/paramevidence"
 	valuecfg "github.com/wippyai/go-lua/types/cfg"
@@ -213,7 +212,7 @@ func TestCallOutcomeCellEffectsComposesCallbackFallbackWhenAllowed(t *testing.T)
 	}
 }
 
-func TestCallOutcomeBoundaryEvidenceCarriesSelectedBoundaryAxes(t *testing.T) {
+func TestCallOutcomeProjectsSelectedBoundaryAxes(t *testing.T) {
 	t.Parallel()
 
 	ref := summary.FuncRef{GraphID: 42}
@@ -230,12 +229,8 @@ func TestCallOutcomeBoundaryEvidenceCarriesSelectedBoundaryAxes(t *testing.T) {
 	table := flow.BoundaryPath{Kind: flow.BoundaryPathParam, Index: 0}
 	key := flow.BoundaryPath{Kind: flow.BoundaryPathParam, Index: 1}
 	boundaryFacts := flow.BoundaryFactsOf([]flow.BoundaryKeyPresenceFact{{Table: table, Key: key}}, nil, nil, nil, nil, nil)
-	demands := []callobligation.Obligation{callobligation.Body(typ.String)}
-	post := paramevidence.ReturnPostconditionsFromParamNarrows([]paramevidence.ParamNarrow{
-		{Param: 1, Check: compilecfg.CheckNotNil, EqParam: -1},
-	})
 
-	got := (CallOutcome{
+	outcome := CallOutcome{
 		Projection: summary.CallSummaryProjection{
 			Targets: []summary.CallSummaryTarget{
 				{Ref: ref, Summary: summary.Summary{
@@ -248,46 +243,25 @@ func TestCallOutcomeBoundaryEvidenceCarriesSelectedBoundaryAxes(t *testing.T) {
 			},
 		},
 		Selection: NewTargetSet([]summary.FuncRef{ref}, true, nil, false).Select(),
-	}).BoundaryEvidence(BoundaryEvidenceInput{
-		CellEffects:    summary.CellEffectAggregation{},
-		ArgDemands:     demands,
-		Postconditions: post,
-		HasNoReturn: func(got summary.FuncRef) bool {
-			return got == ref
-		},
-	})
+	}
 
-	if got.ReturnRefs.Len() != 1 {
-		t.Fatalf("ReturnRefs len = %d, want 1", got.ReturnRefs.Len())
+	if got := outcome.ReturnRefs(); got.Len() != 1 {
+		t.Fatalf("ReturnRefs len = %d, want 1", got.Len())
 	}
-	if !flow.ReturnRelationsDomain.Equal(got.ReturnRelations, relations) {
-		t.Fatalf("ReturnRelations = %#v, want %#v", got.ReturnRelations, relations)
+	if got := outcome.ReturnRelations(); !flow.ReturnRelationsDomain.Equal(got, relations) {
+		t.Fatalf("ReturnRelations = %#v, want %#v", got, relations)
 	}
-	if !flow.CaptureEffectsDomain.Equal(got.CellEffects, cellEffects) {
-		t.Fatalf("CellEffects = %s, want %s", got.CellEffects.Format(), cellEffects.Format())
+	if got := outcome.CellEffects(summary.CellEffectAggregation{}); !flow.CaptureEffectsDomain.Equal(got, cellEffects) {
+		t.Fatalf("CellEffects = %s, want %s", got.Format(), cellEffects.Format())
 	}
-	if !flow.ReceiverEffectsDomain.Equal(got.ReceiverEffects, receiverEffects) {
-		t.Fatalf("ReceiverEffects = %#v, want %#v", got.ReceiverEffects, receiverEffects)
+	if got := outcome.ReceiverEffects(); !flow.ReceiverEffectsDomain.Equal(got, receiverEffects) {
+		t.Fatalf("ReceiverEffects = %#v, want %#v", got, receiverEffects)
 	}
-	if !flow.BoundaryFactsDomain.Equal(got.BoundaryFacts, boundaryFacts) {
-		t.Fatalf("BoundaryFacts = %#v, want %#v", got.BoundaryFacts, boundaryFacts)
+	if got := outcome.BoundaryFacts(); !flow.BoundaryFactsDomain.Equal(got, boundaryFacts) {
+		t.Fatalf("BoundaryFacts = %#v, want %#v", got, boundaryFacts)
 	}
-	if len(got.ArgDemands) != 1 || got.ArgDemands[0].Source != callobligation.SourceBody {
-		t.Fatalf("ArgDemands = %#v, want one body demand", got.ArgDemands)
-	}
-	if !got.Postconditions.HasConstraints() {
-		t.Fatal("Postconditions missing portable param narrow evidence")
-	}
-	if !containsConstraint(got.Postconditions.Condition().MustConstraints(), constraint.NotNil{Path: constraint.ParamPath(1)}) {
-		t.Fatalf("Postconditions = %v, want primary param 1 not-nil proof", got.Postconditions.Condition())
-	}
-	if !got.NeverReturns {
+	if !outcome.NeverReturns(func(got summary.FuncRef) bool { return got == ref }) {
 		t.Fatal("NeverReturns = false, want true")
-	}
-
-	demands[0] = callobligation.Signature(typ.Number)
-	if got.ArgDemands[0].Source != callobligation.SourceBody {
-		t.Fatalf("ArgDemands aliased input: %#v", got.ArgDemands)
 	}
 }
 

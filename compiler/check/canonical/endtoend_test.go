@@ -462,7 +462,7 @@ func (s staticDemandTyper) ProductCallFromValues(call *ast.FuncCallExpr, _ trans
 	for i := range out {
 		out[i] = callobligation.Body(s.demand)
 	}
-	result.ArgDemands = out
+	result.Boundary.ArgDemands = out
 	return result
 }
 

@@ -56,11 +56,11 @@ func (t *Transfer) buildAssignCallPostconditions(
 		if callInfo == nil || callInfo.Call == nil {
 			return
 		}
-		rels := t.callReturnRelations(out, callInfo.Call, demand)
-		t.appendSiblingNilPostconditions(info, callInfo, rels, &effects)
-		t.appendGuardedTypePostconditions(info, callInfo, rels, &effects)
-		t.appendBoundaryFactPostconditions(out, p, info, callInfo, demand, &effects)
-		t.appendReturnStaticMemberPostconditions(out, info, callInfo, demand, &effects)
+		boundary := t.callBoundaryOutcome(out, callInfo.Call, demand)
+		t.appendSiblingNilPostconditions(info, callInfo, boundary.ReturnRelations, &effects)
+		t.appendGuardedTypePostconditions(info, callInfo, boundary.ReturnRelations, &effects)
+		t.appendBoundaryFactPostconditions(out, p, info, callInfo, boundary.BoundaryFacts, &effects)
+		t.appendReturnStaticMemberPostconditions(info, callInfo, boundary.ReturnStaticMembers, &effects)
 	})
 	return effects
 }
@@ -136,13 +136,12 @@ func (t *Transfer) appendBoundaryFactPostconditions(
 	p cfg.Point,
 	info *cfg.AssignInfo,
 	callInfo *cfg.CallInfo,
-	demand func(int, paramevidence.ParamContract),
+	facts flow.BoundaryFacts,
 	effects *assignCallPostconditionEffects,
 ) {
 	if callInfo == nil || callInfo.Call == nil {
 		return
 	}
-	facts := t.callBoundaryFacts(out, callInfo.Call, demand)
 	if !facts.HasProof() {
 		return
 	}
@@ -158,17 +157,12 @@ func (t *Transfer) appendBoundaryFactPostconditions(
 }
 
 func (t *Transfer) appendReturnStaticMemberPostconditions(
-	out *flow.PointState,
 	info *cfg.AssignInfo,
 	callInfo *cfg.CallInfo,
-	demand func(int, paramevidence.ParamContract),
+	members []flow.StaticMemberFacts,
 	effects *assignCallPostconditionEffects,
 ) {
-	if out == nil || callInfo == nil || callInfo.Call == nil || effects == nil {
-		return
-	}
-	members := t.callReturnStaticMembers(out, callInfo.Call, demand)
-	if len(members) == 0 {
+	if callInfo == nil || callInfo.Call == nil || effects == nil || len(members) == 0 {
 		return
 	}
 	for i, facts := range members {
@@ -241,28 +235,6 @@ func (t *Transfer) collectBoundaryReturnIndex(
 		return
 	}
 	out[index] = targetPath
-}
-
-func (t *Transfer) callBoundaryFacts(
-	out *flow.PointState,
-	call *ast.FuncCallExpr,
-	demand func(int, paramevidence.ParamContract),
-) flow.BoundaryFacts {
-	if out == nil || call == nil {
-		return flow.BoundaryFactsDomain.Top()
-	}
-	return t.productCallResult(call, t.productCallContext(out, call, demand)).Effects.BoundaryFacts
-}
-
-func (t *Transfer) callReturnStaticMembers(
-	out *flow.PointState,
-	call *ast.FuncCallExpr,
-	demand func(int, paramevidence.ParamContract),
-) []flow.StaticMemberFacts {
-	if out == nil || call == nil {
-		return nil
-	}
-	return t.productCallResult(call, t.productCallContext(out, call, demand)).ReturnStaticMembers
 }
 
 func assignmentTargetForReturn(info *cfg.AssignInfo, callInfo *cfg.CallInfo, retIndex int) (cfg.AssignTarget, bool) {

@@ -125,7 +125,7 @@ func (p callEntryArgProjection) argRefTrees(arg ast.Expr) (flow.ReferenceContext
 	if !ok {
 		return bottom, false
 	}
-	returns := p.typer.ProductCallFromValues(call, p.evidence.nestedCall(call)).ReturnRefs
+	returns := p.typer.ProductCallFromValues(call, p.evidence.nestedCall(call)).Boundary.ReturnRefs
 	references, ok := returns.SlotReferenceContext(0)
 	if !ok {
 		return bottom, false

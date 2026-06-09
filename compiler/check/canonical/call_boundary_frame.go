@@ -10,7 +10,6 @@ import (
 	"github.com/wippyai/go-lua/compiler/check/canonical/transfer"
 	"github.com/wippyai/go-lua/compiler/check/domain/callobligation"
 	"github.com/wippyai/go-lua/compiler/check/domain/paramevidence"
-	"github.com/wippyai/go-lua/types/callboundary"
 	"github.com/wippyai/go-lua/types/contract"
 	"github.com/wippyai/go-lua/types/domain/value/product"
 	"github.com/wippyai/go-lua/types/effect"
@@ -57,18 +56,12 @@ func (p callBoundaryFrame) callReturnValues() ([]product.AbstractValue, bool) {
 	})
 }
 
-func (p callBoundaryFrame) result(evidence canonicalcall.BoundaryEvidence, effects callboundary.Effects) transfer.ProductCallResult {
+func (p callBoundaryFrame) result(boundary transfer.BoundaryOutcome) transfer.ProductCallResult {
 	values, ok := p.callReturnValues()
 	return transfer.ProductCallResult{
-		ReturnValues:        values,
-		HasReturnValues:     ok,
-		ReturnStaticMembers: p.outcome.ReturnStaticMembers(),
-		ReturnRefs:          evidence.ReturnRefs,
-		ReturnRelations:     evidence.ReturnRelations,
-		Effects:             effects,
-		ArgDemands:          evidence.ArgDemands,
-		NeverReturns:        evidence.NeverReturns,
-		Postconditions:      evidence.Postconditions,
+		ReturnValues:    values,
+		HasReturnValues: ok,
+		Boundary:        boundary,
 	}
 }
 
@@ -240,31 +233,26 @@ func (p callBoundaryFrame) contractEvidence() (api.CallContractEvidence, bool) {
 	return api.NewCallContractEvidence(demands), true
 }
 
-func (p callBoundaryFrame) boundaryEvidenceAndEffects() (canonicalcall.BoundaryEvidence, callboundary.Effects) {
+func (p callBoundaryFrame) boundaryOutcome() transfer.BoundaryOutcome {
 	cellEffects, ok := p.cellEffectAggregation()
 	if !ok {
-		return p.boundaryEvidence(summary.CellEffectAggregation{}), callboundary.EmptyEffects()
+		cellEffects = summary.CellEffectAggregation{}
 	}
-	evidence := p.boundaryEvidence(cellEffects)
-	return evidence, callboundary.EffectsOf(
-		evidence.CellEffects,
-		evidence.ReceiverEffects,
-		evidence.BoundaryFacts,
-		p.containerElementUnions(),
-	)
-}
-
-func (p callBoundaryFrame) boundaryEvidence(cellEffects summary.CellEffectAggregation) canonicalcall.BoundaryEvidence {
-	evidence := p.outcome.BoundaryEvidence(canonicalcall.BoundaryEvidenceInput{
-		CellEffects:    cellEffects,
-		ArgDemands:     p.callArgDemands(),
-		Postconditions: p.returnPostconditions(),
-		HasNoReturn: func(ref summary.FuncRef) bool {
+	postconditions := p.returnPostconditions()
+	return transfer.BoundaryOutcome{
+		ReturnRefs:          p.outcome.ReturnRefs(),
+		ReturnRelations:     p.callerVisibleReturnRelations(p.outcome.ReturnRelations()),
+		ReturnStaticMembers: p.outcome.ReturnStaticMembers(),
+		CellEffects:         p.outcome.CellEffects(cellEffects),
+		ReceiverEffects:     p.outcome.ReceiverEffects(),
+		BoundaryFacts:       p.outcome.BoundaryFacts(),
+		ElementUnions:       p.containerElementUnions(),
+		ArgDemands:          cloneCallArgDemands(p.callArgDemands()),
+		NeverReturns: p.outcome.NeverReturns(func(ref summary.FuncRef) bool {
 			return p.typer.d.activeProgram.facts.HasNoReturn(ref)
-		},
-	})
-	evidence.ReturnRelations = p.callerVisibleReturnRelations(evidence.ReturnRelations)
-	return evidence
+		}),
+		Postconditions: paramevidence.CloneReturnPostconditions(postconditions),
+	}
 }
 
 func (p callBoundaryFrame) callerVisibleReturnRelations(exact flow.ReturnRelations) flow.ReturnRelations {
@@ -286,6 +274,15 @@ func (p callBoundaryFrame) callerVisibleReturnRelations(exact flow.ReturnRelatio
 	// Exact entry summaries specialize a call context, but caller-visible
 	// return relations proved by the aggregate summary remain valid body facts.
 	return flow.MergeReturnRelationProofs(aggregate, exact)
+}
+
+func cloneCallArgDemands(in []callobligation.Obligation) []callobligation.Obligation {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make([]callobligation.Obligation, len(in))
+	copy(out, in)
+	return out
 }
 
 func (p callBoundaryFrame) cellEffectAggregation() (summary.CellEffectAggregation, bool) {
