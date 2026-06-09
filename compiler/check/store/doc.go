@@ -18,9 +18,10 @@
 //
 // # Session Integration
 //
-// The store implements [api.StoreReader] and [api.IterationStore] interfaces.
-// Canonical checking receives only [api.CanonicalStore], which excludes postflow
-// projection reads and iteration writes.
+// The store implements [api.StoreReader] and [api.CanonicalStore]. Canonical
+// checking receives only [api.CanonicalStore], which excludes postflow projection
+// reads and iteration writes. Noncanonical postflow callers use package-local
+// owner interfaces instead of a public all-lane store bundle.
 //
 // # Projection Lane Visibility
 //

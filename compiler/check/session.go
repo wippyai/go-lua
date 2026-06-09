@@ -138,15 +138,6 @@ func (s *Session) CanonicalStoreHandle() api.CanonicalStore {
 	return s.Store
 }
 
-// StoreHandle returns the session store as an iteration-capable interface for
-// postflow projection paths.
-func (s *Session) StoreHandle() api.IterationStore {
-	if s == nil {
-		return nil
-	}
-	return s.Store
-}
-
 // ResultsMap returns the function result map.
 func (s *Session) ResultsMap() map[*ast.FunctionExpr]*api.FuncResult {
 	if s == nil {

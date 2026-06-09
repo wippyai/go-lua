@@ -13,8 +13,6 @@
 //   - [ParentScopes]: Parent scope lookup for nested functions
 //   - [StoreReader]: Read contract combining the immutable stores above
 //   - [CanonicalStore]: Canonical-owned metadata and final fact projection
-//   - Postflow projection lane interfaces: Explicit noncanonical projection boundaries
-//   - [IterationStore]: Adds swap/reset mutation for postflow projection lanes
 //
 // These interfaces allow different phases to declare their dependencies and
 // enable testing with mock implementations.
@@ -26,11 +24,11 @@
 // and diagnostic collection. The concrete implementation lives in the
 // check package.
 //
-// # Postflow Projection Lanes And Final Projections
+// # Final Projections
 //
-// Canonical checking uses Summary as its interprocedural authority. Postflow
-// compatibility code reads and writes typed projection lanes through owner-specific
-// postflow projection interfaces. Lane convergence is owned by
+// Canonical checking uses Summary as its interprocedural authority. This package
+// exposes final/public projection facts; noncanonical postflow lane carriers live
+// under compiler/check/domain/postflow and their convergence laws live under
 // compiler/check/domain/interproc:
 //
 //   - [FunctionFacts]: final/public per-function projection facts

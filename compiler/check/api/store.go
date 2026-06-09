@@ -1,7 +1,7 @@
 // Store interfaces define the contract between the type checker and its
 // backing storage. Canonical checking uses Summary as its interprocedural
-// authority; the postflow projection surfaces below are typed compatibility/export
-// lanes for noncanonical paths and final projections.
+// authority; this package exposes normal checker metadata, canonical store
+// capabilities, and final/public projections.
 //
 // The interfaces form a hierarchy with increasing capability:
 //
@@ -13,18 +13,13 @@
 //	StoreReader     - Read-only combination of above
 //	CanonicalStore  - Canonical-owned metadata plus final fact projection
 //	NestedStore     - StoreReader required by nested metadata consumers
-//	Postflow projection methods - Explicit noncanonical projection lane boundary
-//	IterationStore  - Full mutation capability for postflow projection lanes
 package api
 
 import (
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/bind"
 	"github.com/wippyai/go-lua/compiler/cfg"
-	"github.com/wippyai/go-lua/compiler/check/domain/postflow"
 	"github.com/wippyai/go-lua/compiler/check/scope"
-	"github.com/wippyai/go-lua/types/domain/value/product"
-	"github.com/wippyai/go-lua/types/typ"
 )
 
 // FunctionRef is the canonical mapping for a function symbol.
@@ -87,8 +82,8 @@ type FunctionRefs interface {
 
 // StoreReader is the read contract shared by normal checker phases. It
 // intentionally excludes postflow projection lane reads; callers that need final
-// function facts should request FunctionFactProjectionReader, and noncanonical postflow
-// code should request the specific postflow lane it owns.
+// function facts should request FunctionFactProjectionReader, and noncanonical
+// postflow code should request owner-specific package-local lane interfaces.
 type StoreReader interface {
 	ModuleStore
 	GraphStore
@@ -128,28 +123,4 @@ type CanonicalStore interface {
 // consumers. Postflow projection nested inference requests only the lanes it owns.
 type NestedStore interface {
 	StoreReader
-}
-
-// IterationStore provides mutation operations required by postflow projection fixpoint paths.
-type IterationStore interface {
-	StoreReader
-	FunctionFactProjectionReader
-	ParentGraphKeyForSymbol(sym cfg.SymbolID) (GraphKey, bool)
-
-	MergeFunctionFactProjection(key GraphKey, sym cfg.SymbolID, fact FunctionFact)
-	CapturedTypeProjection(graph *cfg.Graph, parent *scope.State, sym cfg.SymbolID) (typ.Type, bool)
-	MergeCapturedTypeProjection(key GraphKey, sym cfg.SymbolID, value product.AbstractValue)
-	CapturedFieldAssignsProjection(graph *cfg.Graph, parent *scope.State) postflow.CapturedFieldAssigns
-	MergeCapturedFieldProjection(key GraphKey, nestedSym cfg.SymbolID, capturedSym cfg.SymbolID, fields postflow.FieldValues)
-	ConstructorFieldsProjection(classSym cfg.SymbolID) (postflow.FieldValues, bool)
-	MergeConstructorFieldProjection(classSym cfg.SymbolID, fields postflow.FieldValues)
-
-	ClearPostflowProjectionState()
-	AdvancePostflowProjections() bool
-	PostflowProjectionDiffs() []string
-
-	SetModuleBindings(bindings *bind.BindingTable)
-	SetModuleAliases(aliases map[cfg.SymbolID]string)
-	SetParentScope(parentHash uint64, parent *scope.State)
-	SetGraphParentHash(graphID, parentHash uint64)
 }
