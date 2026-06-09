@@ -40,6 +40,10 @@ func (p funcResultProjection) build() *api.FuncResult {
 	evidence := p.evidence()
 	callEdges := p.callEdgeEvidence(evidence)
 	facts := p.observationContext()
+	sum := summary.SummaryDomain.Bottom()
+	if p.driver != nil && p.driver.summaries != nil {
+		sum = p.driver.summaries[p.ref]
+	}
 	flowProjection := p.driver.newCanonicalFacts(
 		p.graph,
 		p.driver.states[p.ref],
@@ -62,7 +66,7 @@ func (p funcResultProjection) build() *api.FuncResult {
 		FlowInputs:               buildObservationInputs(p.graph, facts),
 		Facts:                    flowProjection,
 		FlowProjection:           flowProjection,
-		ReturnRelations:          p.driver.summaryReader().ReturnRelations(p.ref),
+		ReturnRelations:          sum.Relations,
 		LiteralSignatures:        literalSignatures,
 		LiteralSignatureProvider: api.LiteralSignatureLookupFromMap(literalSignatures),
 		SourceSignature:          sourceSignature,
@@ -81,9 +85,7 @@ func (p funcResultProjection) build() *api.FuncResult {
 		obs:    obs.TypeOf,
 		ctx:    result.QueryContext,
 	}
-	result.FnRefinement = p.driver.summaryReader().ReturnPostconditions(p.ref).FunctionRefinement(
-		p.program.facts.HasNoReturn(p.ref),
-	)
+	result.FnRefinement = sum.Postconditions.FunctionRefinement(p.program.facts.HasNoReturn(p.ref))
 	return result
 }
 

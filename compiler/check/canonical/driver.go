@@ -451,7 +451,6 @@ func (d *Driver) canonicalFunctionFactProjection(prog *program, store api.Canoni
 	if d == nil || prog == nil || store == nil {
 		return nil
 	}
-	reader := d.summaryReader()
 	out := make(map[api.GraphKey]api.FunctionFacts)
 	for _, ref := range prog.refs {
 		symbols := prog.symbolsForRef(ref)
@@ -460,13 +459,13 @@ func (d *Driver) canonicalFunctionFactProjection(prog *program, store api.Canoni
 		}
 		sum, ok := d.summaries[ref]
 		if !ok {
-			sum = reader.Summarize(ref)
+			continue
 		}
 		returns := summary.ReturnTypes(sum)
 		params := contractTypeVector(sum.Params, prog.NumParams(ref))
 		publicParams := prog.publicPredicateParamVector(ref, params)
 		sig := d.signatureForRef(prog, ref)
-		refinement := reader.ReturnPostconditions(ref).FunctionRefinement(prog.facts.HasNoReturn(ref))
+		refinement := sum.Postconditions.FunctionRefinement(prog.facts.HasNoReturn(ref))
 		for _, sym := range symbols {
 			key, ok := store.ParentGraphKeyForSymbol(sym)
 			if !ok {
