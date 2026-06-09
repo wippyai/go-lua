@@ -1,7 +1,6 @@
 package flow
 
 import (
-	"github.com/wippyai/go-lua/types/cfg"
 	"github.com/wippyai/go-lua/types/domain/value/product"
 )
 
@@ -29,31 +28,4 @@ func RecordReceiverMutation(out *PointState, slot int, mutations ...ReceiverMuta
 	before := out.ReceiverEffects
 	out.ReceiverEffects = out.ReceiverEffects.Then(ReceiverMutations(slot, mutations))
 	return !ReceiverEffectsDomain.Equal(before, out.ReceiverEffects)
-}
-
-func RecordPrototypeSelf(out *PointState, proto cfg.SymbolID, value product.AbstractValue) bool {
-	if out == nil || proto == 0 || value.IsZero() {
-		return false
-	}
-	before := out.PrototypeSelf
-	out.PrototypeSelf = out.PrototypeSelf.JoinValue(proto, value)
-	return !PrototypeSelfDomain.Equal(before, out.PrototypeSelf)
-}
-
-func BindPrototypeInstance(out *PointState, sym cfg.SymbolID, proto cfg.SymbolID) bool {
-	if out == nil || sym == 0 || proto == 0 {
-		return false
-	}
-	before := out.PrototypeInstances
-	out.PrototypeInstances = out.PrototypeInstances.WithPrototype(sym, proto)
-	return !PrototypeInstancesDomain.Equal(before, out.PrototypeInstances)
-}
-
-func ClearPrototypeInstance(out *PointState, sym cfg.SymbolID) bool {
-	if out == nil || sym == 0 {
-		return false
-	}
-	before := out.PrototypeInstances
-	out.PrototypeInstances = out.PrototypeInstances.With(sym, nil)
-	return !PrototypeInstancesDomain.Equal(before, out.PrototypeInstances)
 }

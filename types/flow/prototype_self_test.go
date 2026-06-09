@@ -73,6 +73,56 @@ func TestPrototypeSelfWithAndJoinValue(t *testing.T) {
 	}
 }
 
+func TestPrototypePointHelpers(t *testing.T) {
+	proto := cfg.SymbolID(11)
+	otherProto := cfg.SymbolID(12)
+	instance := cfg.SymbolID(21)
+	otherInstance := cfg.SymbolID(22)
+	self := product.FromType(typ.NewRecord().Build())
+	otherSelf := product.FromType(typ.NewRecord().Field("label", typ.String).Build())
+
+	if _, ok := ReceiverSelfValueOfPoint(nil, proto); ok {
+		t.Fatal("nil point had receiver-self value")
+	}
+	if _, ok := PrototypeInstancePrototypesOfPoint(nil, instance); ok {
+		t.Fatal("nil point had prototype-instance binding")
+	}
+
+	var state PointState
+	if !RecordPrototypeSelf(&state, proto, self) {
+		t.Fatal("RecordPrototypeSelf reported no change")
+	}
+	if !JoinPrototypeSelf(&state, PrototypeSelfOf([]PrototypeSelfEntry{{Prototype: otherProto, Value: otherSelf}})) {
+		t.Fatal("JoinPrototypeSelf reported no change")
+	}
+	if got, ok := ReceiverSelfValueOfPoint(&state, proto); !ok || !product.Domain.Equal(got, self) {
+		t.Fatalf("receiver self = %v/%v, want %s", got.ProjectValue(), ok, self.ProjectValue())
+	}
+	if got := PrototypeSelfOfPoint(&state); !PrototypeSelfDomain.Equal(got, PrototypeSelfAxisOf(state)) {
+		t.Fatalf("prototype self point read = %s, axis read = %s", got.Format(), PrototypeSelfAxisOf(state).Format())
+	}
+
+	if !BindPrototypeInstance(&state, instance, proto) {
+		t.Fatal("BindPrototypeInstance reported no change")
+	}
+	if !JoinPrototypeInstances(&state, PrototypeInstancesOf([]PrototypeInstanceEntry{{Symbol: otherInstance, Prototypes: []cfg.SymbolID{otherProto}}})) {
+		t.Fatal("JoinPrototypeInstances reported no change")
+	}
+	protos, ok := PrototypeInstancePrototypesOfPoint(&state, instance)
+	if !ok || len(protos) != 1 || protos[0] != proto {
+		t.Fatalf("prototype instances = %v/%v, want [%d]", protos, ok, proto)
+	}
+	if got := PrototypeInstancesOfPoint(&state); !PrototypeInstancesDomain.Equal(got, PrototypeInstancesAxisOf(state)) {
+		t.Fatalf("prototype instances point read = %s, axis read = %s", got.Format(), PrototypeInstancesAxisOf(state).Format())
+	}
+	if !ClearPrototypeInstance(&state, instance) {
+		t.Fatal("ClearPrototypeInstance reported no change")
+	}
+	if _, ok := PrototypeInstancePrototypesOfPoint(&state, instance); ok {
+		t.Fatalf("prototype instance survived clear: %s", PrototypeInstancesOfPoint(&state).Format())
+	}
+}
+
 func TestPrototypeInstancesLatticeLaws(t *testing.T) {
 	lattice.LawSuite[PrototypeInstances]{
 		Name:   "PrototypeInstances",

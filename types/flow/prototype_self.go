@@ -41,6 +41,61 @@ func PrototypeSelfTop() PrototypeSelf {
 	return PrototypeSelf{top: true}
 }
 
+// PrototypeSelfAxisOf returns the receiver-self axis carried by state.
+func PrototypeSelfAxisOf(state PointState) PrototypeSelf {
+	return state.PrototypeSelf
+}
+
+// PrototypeSelfOfPoint returns the receiver-self axis carried by state. Nil
+// points represent an empty receiver-self relation.
+func PrototypeSelfOfPoint(state *PointState) PrototypeSelf {
+	if state == nil {
+		return PrototypeSelfDomain.Bottom()
+	}
+	return state.PrototypeSelf
+}
+
+// ReceiverSelfValueOfPoint returns proto's receiver-self value from state.
+func ReceiverSelfValueOfPoint(state *PointState, proto cfg.SymbolID) (product.AbstractValue, bool) {
+	if proto == 0 {
+		return product.AbstractValue{}, false
+	}
+	av, ok := PrototypeSelfOfPoint(state).Value(proto)
+	if !ok || av.IsZero() {
+		return product.AbstractValue{}, false
+	}
+	return av, true
+}
+
+func updatePrototypeSelf(state *PointState, update func(PrototypeSelf) PrototypeSelf) bool {
+	if state == nil || update == nil {
+		return false
+	}
+	before := state.PrototypeSelf
+	state.PrototypeSelf = update(state.PrototypeSelf)
+	return !PrototypeSelfDomain.Equal(before, state.PrototypeSelf)
+}
+
+// JoinPrototypeSelf joins self into state's receiver-self axis.
+func JoinPrototypeSelf(state *PointState, self PrototypeSelf) bool {
+	if PrototypeSelfDomain.Equal(self, PrototypeSelfDomain.Bottom()) {
+		return false
+	}
+	return updatePrototypeSelf(state, func(current PrototypeSelf) PrototypeSelf {
+		return PrototypeSelfDomain.Join(current, self)
+	})
+}
+
+// RecordPrototypeSelf joins value into proto's receiver-self value.
+func RecordPrototypeSelf(state *PointState, proto cfg.SymbolID, value product.AbstractValue) bool {
+	if state == nil || proto == 0 || value.IsZero() {
+		return false
+	}
+	return updatePrototypeSelf(state, func(current PrototypeSelf) PrototypeSelf {
+		return current.JoinValue(proto, value)
+	})
+}
+
 // Entries returns a copy of the sorted finite entries. Top has no finite entry
 // representation and returns nil.
 func (p PrototypeSelf) Entries() []PrototypeSelfEntry {
@@ -278,6 +333,67 @@ func PrototypeInstancesOf(entries []PrototypeInstanceEntry) PrototypeInstances {
 
 // PrototypeInstancesTop returns the greatest instance/prototype relation.
 func PrototypeInstancesTop() PrototypeInstances { return PrototypeInstances{top: true} }
+
+// PrototypeInstancesAxisOf returns the instance/prototype axis carried by state.
+func PrototypeInstancesAxisOf(state PointState) PrototypeInstances {
+	return state.PrototypeInstances
+}
+
+// PrototypeInstancesOfPoint returns the instance/prototype axis carried by
+// state. Nil points represent an empty instance/prototype relation.
+func PrototypeInstancesOfPoint(state *PointState) PrototypeInstances {
+	if state == nil {
+		return PrototypeInstancesDomain.Bottom()
+	}
+	return state.PrototypeInstances
+}
+
+// PrototypeInstancePrototypesOfPoint returns sym's prototype set from state.
+func PrototypeInstancePrototypesOfPoint(state *PointState, sym cfg.SymbolID) ([]cfg.SymbolID, bool) {
+	if sym == 0 {
+		return nil, false
+	}
+	return PrototypeInstancesOfPoint(state).Prototypes(sym)
+}
+
+func updatePrototypeInstances(state *PointState, update func(PrototypeInstances) PrototypeInstances) bool {
+	if state == nil || update == nil {
+		return false
+	}
+	before := state.PrototypeInstances
+	state.PrototypeInstances = update(state.PrototypeInstances)
+	return !PrototypeInstancesDomain.Equal(before, state.PrototypeInstances)
+}
+
+// JoinPrototypeInstances joins instances into state's instance/prototype axis.
+func JoinPrototypeInstances(state *PointState, instances PrototypeInstances) bool {
+	if PrototypeInstancesDomain.Equal(instances, PrototypeInstancesDomain.Bottom()) {
+		return false
+	}
+	return updatePrototypeInstances(state, func(current PrototypeInstances) PrototypeInstances {
+		return PrototypeInstancesDomain.Join(current, instances)
+	})
+}
+
+// BindPrototypeInstance strongly binds sym to proto in state's instance map.
+func BindPrototypeInstance(state *PointState, sym cfg.SymbolID, proto cfg.SymbolID) bool {
+	if state == nil || sym == 0 || proto == 0 {
+		return false
+	}
+	return updatePrototypeInstances(state, func(current PrototypeInstances) PrototypeInstances {
+		return current.WithPrototype(sym, proto)
+	})
+}
+
+// ClearPrototypeInstance removes sym from state's instance map.
+func ClearPrototypeInstance(state *PointState, sym cfg.SymbolID) bool {
+	if state == nil || sym == 0 {
+		return false
+	}
+	return updatePrototypeInstances(state, func(current PrototypeInstances) PrototypeInstances {
+		return current.With(sym, nil)
+	})
+}
 
 // Entries returns a copy of the sorted finite entries. Top has no finite entry
 // representation.
