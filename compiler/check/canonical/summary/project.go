@@ -80,7 +80,7 @@ func projectCellEffects(fs state.FunctionState, g *cfg.Graph) flow.CaptureEffect
 		if !ok {
 			return
 		}
-		out = flow.CaptureEffectsDomain.Join(out, ps.CellEffects)
+		out = flow.CaptureEffectsDomain.Join(out, flow.CellEffectsOfPoint(&ps))
 	})
 	return out
 }
@@ -118,9 +118,9 @@ func projectCaptureReferences(fs state.FunctionState, g *cfg.Graph) flow.Referen
 		if !ok {
 			return
 		}
-		cells := flow.CaptureCellsDomain.Join(ps.Cells, flow.PointFactsOf(ps).EnvCaptureCells(envExports))
+		cells := flow.CaptureCellsDomain.Join(flow.CaptureCellsOfPoint(&ps), flow.PointFactsOf(ps).EnvCaptureCells(envExports))
 		cells = cells.WithStaticMembers(flow.StaticMembersOf(ps))
-		out = flow.ReferenceContextDomain.Join(out, flow.ReferenceContextOf(cells, ps.FunctionRefs, ps.ClosureRefs))
+		out = flow.ReferenceContextDomain.Join(out, flow.ReferenceContextOf(cells, flow.FunctionRefsOf(ps), flow.ClosureRefsOf(ps)))
 	})
 	return out
 }

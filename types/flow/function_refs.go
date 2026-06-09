@@ -307,6 +307,16 @@ func updateFunctionRefs(state *PointState, update func(FunctionRefs) FunctionRef
 	return !FunctionRefsDomain.Equal(before, state.FunctionRefs)
 }
 
+// JoinFunctionRefs joins refs into state's function-reference axis.
+func JoinFunctionRefs(state *PointState, refs FunctionRefs) bool {
+	if FunctionRefsDomain.Equal(refs, FunctionRefsDomain.Bottom()) {
+		return false
+	}
+	return updateFunctionRefs(state, func(current FunctionRefs) FunctionRefs {
+		return FunctionRefsDomain.Join(current, refs)
+	})
+}
+
 // FunctionRefAtAddress returns the identity set for addr.
 func FunctionRefAtAddress(refs FunctionRefs, addr StableAddress) (FunctionRefSet, bool) {
 	if len(refs) == 0 || addr.Key() == "" {

@@ -110,7 +110,7 @@ func (p symbolStoragePolicy) hasCellEffectTarget(out *flow.PointState, sym cfg.S
 	if out == nil || sym == 0 {
 		return false
 	}
-	if _, ok := out.Cells.Value(sym); ok {
+	if _, ok := flow.CaptureCellValueOfPoint(out, sym); ok {
 		return true
 	}
 	return p.class(sym) == symbolStorageOwnerCell

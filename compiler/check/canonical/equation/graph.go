@@ -217,14 +217,10 @@ func (b *Builder) makeTransfer() func(Cell, func(Cell) CellState, func(Cell, Cel
 			// is immediately forgotten by the projector below.
 			incoming = b.projectInPointState(p, incoming)
 		}
-		if p == entry && !flow.CaptureCellsDomain.Equal(b.entry, flow.CaptureCellsDomain.Bottom()) {
-			incoming.Cells = flow.CaptureCellsDomain.Join(incoming.Cells, b.entry)
-		}
-		if p == entry && !flow.FunctionRefsDomain.Equal(b.entryRefs, flow.FunctionRefsDomain.Bottom()) {
-			incoming.FunctionRefs = flow.FunctionRefsDomain.Join(incoming.FunctionRefs, b.entryRefs)
-		}
-		if p == entry && !flow.ClosureRefsDomain.Equal(b.entryClosures, flow.ClosureRefsDomain.Bottom()) {
-			incoming.ClosureRefs = flow.ClosureRefsDomain.Join(incoming.ClosureRefs, b.entryClosures)
+		if p == entry {
+			flow.JoinCaptureCells(&incoming, b.entry)
+			flow.JoinFunctionRefs(&incoming, b.entryRefs)
+			flow.JoinClosureRefs(&incoming, b.entryClosures)
 		}
 		if p == entry {
 			b.seedEntrySymbolValues(&incoming)

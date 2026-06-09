@@ -113,6 +113,16 @@ func WriteCaptureCell(state *PointState, sym cfg.SymbolID, value product.Abstrac
 	})
 }
 
+// JoinCaptureCells joins cells into state's captured-cell store.
+func JoinCaptureCells(state *PointState, cells CaptureCells) bool {
+	if CaptureCellsDomain.Equal(cells, CaptureCellsDomain.Bottom()) {
+		return false
+	}
+	return updateCaptureCells(state, func(current CaptureCells) CaptureCells {
+		return CaptureCellsDomain.Join(current, cells)
+	})
+}
+
 // Entries returns a copy of the sorted finite entries. Top has no finite entry
 // representation and returns nil.
 func (c CaptureCells) Entries() []CaptureCell {

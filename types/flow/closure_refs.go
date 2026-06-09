@@ -217,6 +217,16 @@ func updateClosureRefs(state *PointState, update func(ClosureRefs) ClosureRefs) 
 	return !ClosureRefsDomain.Equal(before, state.ClosureRefs)
 }
 
+// JoinClosureRefs joins refs into state's closure-reference axis.
+func JoinClosureRefs(state *PointState, refs ClosureRefs) bool {
+	if ClosureRefsDomain.Equal(refs, ClosureRefsDomain.Bottom()) {
+		return false
+	}
+	return updateClosureRefs(state, func(current ClosureRefs) ClosureRefs {
+		return ClosureRefsDomain.Join(current, refs)
+	})
+}
+
 // ClosureRefsKeyOf returns an exact comparable key for refs.
 func ClosureRefsKeyOf(refs ClosureRefs) ClosureRefsKey {
 	return closureRefsKeyOfDepth(refs, closureContextDepth)

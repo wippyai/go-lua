@@ -130,7 +130,7 @@ func (t *Transfer) currentCellEffects(out *flow.PointState, effects flow.Capture
 		return flow.CaptureEffectsDomain.Bottom()
 	}
 	if effects.IsTop() {
-		if out.Cells.HasFiniteEntries() {
+		if flow.CaptureCellsOfPoint(out).HasFiniteEntries() {
 			return effects
 		}
 		return flow.CaptureEffectsDomain.Bottom()
@@ -246,9 +246,9 @@ func (t *Transfer) applyReferenceWrite(
 		if !exact {
 			changed = flow.ClearFunctionRefSubtreePath(out, path) || changed
 		} else {
-			before := out.FunctionRefs
+			before := flow.FunctionRefsOfPoint(out)
 			t.recordFunctionRefAt(out, path, src)
-			changed = !flow.FunctionRefsDomain.Equal(before, out.FunctionRefs) || changed
+			changed = !flow.FunctionRefsDomain.Equal(before, flow.FunctionRefsOfPoint(out)) || changed
 		}
 	case referenceWriteTree:
 		if !exact {
@@ -264,9 +264,9 @@ func (t *Transfer) applyReferenceWrite(
 		if !exact {
 			changed = flow.ClearClosureRefSubtreePath(out, path) || changed
 		} else {
-			before := out.ClosureRefs
+			before := flow.ClosureRefsOfPoint(out)
 			t.recordClosureRefAt(out, path, src)
-			changed = !flow.ClosureRefsDomain.Equal(before, out.ClosureRefs) || changed
+			changed = !flow.ClosureRefsDomain.Equal(before, flow.ClosureRefsOfPoint(out)) || changed
 		}
 	case referenceWriteTree:
 		if !exact {

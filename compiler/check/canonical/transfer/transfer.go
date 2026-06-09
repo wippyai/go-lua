@@ -1503,12 +1503,12 @@ func (t *Transfer) closureRefSetOfExpr(out *flow.PointState, expr ast.Expr) (flo
 			return flow.ClosureRefSet{}, false
 		}
 		captured := t.closureCapturedSymbols(ref)
-		entryRefs := flow.ProjectFunctionRefsBySymbols(out.FunctionRefs, captured)
-		entryClosures := flow.ProjectClosureRefsBySymbols(out.ClosureRefs, captured)
+		entryRefs := flow.ProjectFunctionRefsBySymbols(flow.FunctionRefsOfPoint(out), captured)
+		entryClosures := flow.ProjectClosureRefsBySymbols(flow.ClosureRefsOfPoint(out), captured)
 		entryCells := t.closureCaptureCells(out, captured)
 		if projection, ok := t.closureReferenceProjection(ref); ok {
-			entryRefs = flow.ProjectFunctionRefsByReferencePaths(out.FunctionRefs, projection)
-			entryClosures = flow.ProjectClosureRefsByReferencePaths(out.ClosureRefs, projection)
+			entryRefs = flow.ProjectFunctionRefsByReferencePaths(flow.FunctionRefsOfPoint(out), projection)
+			entryClosures = flow.ProjectClosureRefsByReferencePaths(flow.ClosureRefsOfPoint(out), projection)
 			entryCells = entryCells.ProjectPaths(projection)
 		}
 		return flow.ClosureRefSetOf(flow.ClosureRefOf(
@@ -1522,7 +1522,7 @@ func (t *Transfer) closureRefSetOfExpr(out *flow.PointState, expr ast.Expr) (flo
 	if !ok {
 		return flow.ClosureRefSet{}, false
 	}
-	return flow.ClosureRefAtPath(out.ClosureRefs, path)
+	return flow.ClosureRefAtPointPath(out, path)
 }
 
 func (t *Transfer) closureCapturedSymbols(ref flow.FunctionRef) []cfg.SymbolID {
@@ -1545,7 +1545,7 @@ func (t *Transfer) closureCaptureCells(out *flow.PointState, captured []cfg.Symb
 	if out == nil || len(captured) == 0 {
 		return flow.CaptureCellsDomain.Bottom()
 	}
-	cells := out.Cells.Project(captured)
+	cells := flow.CaptureCellsOfPoint(out).Project(captured)
 	for _, sym := range captured {
 		if sym == 0 {
 			continue
@@ -1619,7 +1619,7 @@ func (t *Transfer) functionRefSetOfExpr(out *flow.PointState, expr ast.Expr) (fl
 	if !ok {
 		return flow.FunctionRefSet{}, false
 	}
-	return flow.FunctionRefAtPath(out.FunctionRefs, path)
+	return flow.FunctionRefAtPointPath(out, path)
 }
 
 func (t *Transfer) nestedFunctionRefSetsOfExpr(out *flow.PointState, expr ast.Expr) []flow.FunctionRefTreeEntry {
@@ -2738,9 +2738,9 @@ func (t *Transfer) callableSignature(out *flow.PointState, query flow.CallableSi
 		return nil, false
 	}
 	query.State = flow.PointState{
-		Cells:        out.Cells,
-		FunctionRefs: out.FunctionRefs,
-		ClosureRefs:  out.ClosureRefs,
+		Cells:        flow.CaptureCellsOfPoint(out),
+		FunctionRefs: flow.FunctionRefsOfPoint(out),
+		ClosureRefs:  flow.ClosureRefsOfPoint(out),
 	}
 	ft, ok := provider.FunctionValue(query)
 	if !ok || typ.IsAbsentOrUnknown(ft) {
