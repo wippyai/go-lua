@@ -15,7 +15,10 @@ type callEntryArgEvidence struct {
 	references   flow.ReferenceContext
 	captureCells func([]cfg.SymbolID) flow.CaptureCells
 	nestedCall   func(*ast.FuncCallExpr) transfer.ProductCallContext
+	nestedResult func(*ast.FuncCallExpr) (transfer.ProductCallResult, bool)
 }
+
+type nestedCallResultProvider func(*ast.FuncCallExpr, transfer.ProductCallContext) transfer.ProductCallResult
 
 // callEntryArgProjection resolves callable identities carried by call arguments
 // from a normalized caller-evidence carrier.
@@ -43,6 +46,7 @@ func (c callEntryProjector) pointArgProjection(in *flow.PointState) callEntryArg
 			return c.transfer.ProductCallContext(in, call)
 		},
 	}
+	evidence.nestedResult = cachedNestedCallResult(c.typer.ProductCallFromValues, evidence.nestedCall)
 	if in != nil {
 		evidence.references = flow.ReferenceContextFromPoint(in)
 	}
@@ -74,21 +78,44 @@ func captureCellsFromPoint(in *flow.PointState, captured []cfg.SymbolID) flow.Ca
 }
 
 func (c callEntryProjector) productArgProjection(ctx transfer.ProductCallContext) callEntryArgProjection {
-	return callEntryArgProjection{
-		program: c.program,
-		graph:   c.graph,
-		typer:   c.typer,
-		evidence: callEntryArgEvidence{
-			references: ctx.References,
-			captureCells: func(captured []cfg.SymbolID) flow.CaptureCells {
-				if c.program == nil {
-					return flow.CaptureCellsDomain.Bottom()
-				}
-				cells := ctx.References.CaptureCells().Project(captured)
-				return c.program.normalizeCapturedMethodReceiverCellsFromCells(c.graph, cells, captured)
-			},
-			nestedCall: ctx.NestedCall,
+	evidence := callEntryArgEvidence{
+		references: ctx.References,
+		captureCells: func(captured []cfg.SymbolID) flow.CaptureCells {
+			if c.program == nil {
+				return flow.CaptureCellsDomain.Bottom()
+			}
+			cells := ctx.References.CaptureCells().Project(captured)
+			return c.program.normalizeCapturedMethodReceiverCellsFromCells(c.graph, cells, captured)
 		},
+		nestedCall: ctx.NestedCall,
+	}
+	evidence.nestedResult = cachedNestedCallResult(c.typer.ProductCallFromValues, evidence.nestedCall)
+	return callEntryArgProjection{
+		program:  c.program,
+		graph:    c.graph,
+		typer:    c.typer,
+		evidence: evidence,
+	}
+}
+
+func cachedNestedCallResult(
+	provider nestedCallResultProvider,
+	context func(*ast.FuncCallExpr) transfer.ProductCallContext,
+) func(*ast.FuncCallExpr) (transfer.ProductCallResult, bool) {
+	if provider == nil || context == nil {
+		return nil
+	}
+	results := map[*ast.FuncCallExpr]transfer.ProductCallResult{}
+	return func(call *ast.FuncCallExpr) (transfer.ProductCallResult, bool) {
+		if call == nil {
+			return transfer.EmptyProductCallResult(), false
+		}
+		if result, ok := results[call]; ok {
+			return result, true
+		}
+		result := provider(call, context(call))
+		results[call] = result
+		return result, true
 	}
 }
 
@@ -118,14 +145,18 @@ func (p callEntryArgProjection) functionArgRefs(arg ast.Expr) (flow.FunctionRefS
 
 func (p callEntryArgProjection) argRefTrees(arg ast.Expr) (flow.ReferenceContext, bool) {
 	bottom := flow.ReferenceContextOf(flow.CaptureCellsDomain.Bottom(), flow.FunctionRefsDomain.Bottom(), flow.ClosureRefsDomain.Bottom())
-	if p.evidence.nestedCall == nil {
+	if p.evidence.nestedResult == nil {
 		return bottom, false
 	}
 	call, ok := valueCallExpr(arg)
 	if !ok {
 		return bottom, false
 	}
-	returns := p.typer.ProductCallFromValues(call, p.evidence.nestedCall(call)).Boundary.ReturnRefs
+	result, ok := p.evidence.nestedResult(call)
+	if !ok {
+		return bottom, false
+	}
+	returns := result.Boundary.ReturnRefs
 	references, ok := returns.SlotReferenceContext(0)
 	if !ok {
 		return bottom, false
@@ -134,14 +165,18 @@ func (p callEntryArgProjection) argRefTrees(arg ast.Expr) (flow.ReferenceContext
 }
 
 func (p callEntryArgProjection) argBoundaryFacts(arg ast.Expr) (flow.BoundaryFacts, bool) {
-	if p.evidence.nestedCall == nil {
+	if p.evidence.nestedResult == nil {
 		return flow.BoundaryFactsDomain.Top(), false
 	}
 	call, ok := valueCallExpr(arg)
 	if !ok {
 		return flow.BoundaryFactsDomain.Top(), false
 	}
-	facts := p.typer.ProductCallFromValues(call, p.evidence.nestedCall(call)).Boundary.BoundaryFacts
+	result, ok := p.evidence.nestedResult(call)
+	if !ok {
+		return flow.BoundaryFactsDomain.Top(), false
+	}
+	facts := result.Boundary.BoundaryFacts
 	if !facts.HasProof() {
 		return flow.BoundaryFactsDomain.Top(), false
 	}
