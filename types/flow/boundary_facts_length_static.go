@@ -4,6 +4,7 @@ import (
 	"cmp"
 	"slices"
 
+	"github.com/wippyai/go-lua/internal"
 	"github.com/wippyai/go-lua/types/domain/value/product"
 )
 
@@ -146,6 +147,34 @@ func compareBoundaryStaticMember(a, b BoundaryStaticMemberFact) int {
 	return compareBoundaryPath(a.Target, b.Target)
 }
 
+func hashBoundaryLengthFacts(h uint64, f BoundaryFacts) uint64 {
+	for _, fact := range f.lenLower {
+		h = internal.HashCombine(h, internal.FnvString("len"))
+		h = hashBoundaryPath(h, fact.Target)
+		h = internal.HashCombine(h, uint64(fact.Lower))
+	}
+	for _, fact := range f.lenUpper {
+		h = internal.HashCombine(h, internal.FnvString("lenu"))
+		h = hashBoundaryPath(h, fact.Target)
+		h = internal.HashCombine(h, uint64(fact.Upper))
+	}
+	for _, fact := range f.lenRelations {
+		h = internal.HashCombine(h, internal.FnvString("lenrel"))
+		h = hashBoundaryPath(h, fact.Target)
+		h = hashBoundaryPath(h, fact.Source)
+	}
+	return h
+}
+
+func hashBoundaryStaticMemberFacts(h uint64, f BoundaryFacts) uint64 {
+	for _, fact := range f.staticMembers {
+		h = internal.HashCombine(h, internal.FnvString("sm"))
+		h = hashBoundaryPath(h, fact.Target)
+		h = internal.HashCombine(h, fact.Value.Hash())
+	}
+	return h
+}
+
 var (
 	boundaryLengthLowerRowIdentity = orderedRowIdentity[BoundaryLengthLowerBound]{
 		less: func(a, b BoundaryLengthLowerBound) bool { return compareBoundaryLengthLower(a, b) < 0 },
@@ -249,4 +278,85 @@ func intersectBoundaryStaticMembers(a, b []BoundaryStaticMemberFact, widenPayloa
 		return fact, true
 	})
 	return compactBoundaryStaticMembers(out)
+}
+
+func partitionBoundaryLengthFactsByReturnIndices(f BoundaryFacts, params *BoundaryFactParts, addReturnFact boundaryReturnFactAdder) {
+	for _, fact := range f.lenLower {
+		indices := boundaryPathReturnIndices(fact.Target)
+		if len(indices) == 0 {
+			params.LengthLower = append(params.LengthLower, fact)
+			continue
+		}
+		addReturnFact(indices, func(parts *BoundaryFactParts) {
+			parts.LengthLower = append(parts.LengthLower, fact)
+		})
+	}
+	for _, fact := range f.lenUpper {
+		indices := boundaryPathReturnIndices(fact.Target)
+		if len(indices) == 0 {
+			params.LengthUpper = append(params.LengthUpper, fact)
+			continue
+		}
+		addReturnFact(indices, func(parts *BoundaryFactParts) {
+			parts.LengthUpper = append(parts.LengthUpper, fact)
+		})
+	}
+	for _, fact := range f.lenRelations {
+		indices := boundaryPathReturnIndices(fact.Target, fact.Source)
+		if len(indices) == 0 {
+			params.LengthRelations = append(params.LengthRelations, fact)
+			continue
+		}
+		addReturnFact(indices, func(parts *BoundaryFactParts) {
+			parts.LengthRelations = append(parts.LengthRelations, fact)
+		})
+	}
+}
+
+func partitionBoundaryStaticMemberFactsByReturnIndices(f BoundaryFacts, params *BoundaryFactParts, addReturnFact boundaryReturnFactAdder) {
+	for _, fact := range f.staticMembers {
+		indices := boundaryPathReturnIndices(fact.Target)
+		if len(indices) == 0 {
+			params.StaticMembers = append(params.StaticMembers, fact)
+			continue
+		}
+		addReturnFact(indices, func(parts *BoundaryFactParts) {
+			parts.StaticMembers = append(parts.StaticMembers, fact)
+		})
+	}
+}
+
+func rebaseBoundaryLengthReturnFactsToParam(facts BoundaryFacts, mapPath boundaryPathMapper) BoundaryFactParts {
+	var parts BoundaryFactParts
+	for _, fact := range facts.lenLower {
+		target, ok := mapPath(fact.Target)
+		if ok {
+			parts.LengthLower = append(parts.LengthLower, BoundaryLengthLowerBound{Target: target, Lower: fact.Lower})
+		}
+	}
+	for _, fact := range facts.lenUpper {
+		target, ok := mapPath(fact.Target)
+		if ok {
+			parts.LengthUpper = append(parts.LengthUpper, BoundaryLengthUpperBound{Target: target, Upper: fact.Upper})
+		}
+	}
+	for _, fact := range facts.lenRelations {
+		target, targetOK := mapPath(fact.Target)
+		source, sourceOK := mapPath(fact.Source)
+		if targetOK && sourceOK {
+			parts.LengthRelations = append(parts.LengthRelations, BoundaryLengthRelationFact{Target: target, Source: source})
+		}
+	}
+	return parts
+}
+
+func rebaseBoundaryStaticMemberReturnFactsToParam(facts BoundaryFacts, mapPath boundaryPathMapper) BoundaryFactParts {
+	var parts BoundaryFactParts
+	for _, fact := range facts.staticMembers {
+		target, ok := mapPath(fact.Target)
+		if ok {
+			parts.StaticMembers = append(parts.StaticMembers, BoundaryStaticMemberFact{Target: target, Value: fact.Value})
+		}
+	}
+	return parts
 }

@@ -86,3 +86,119 @@ func TestBoundaryAppendHistoryFamilyLaws(t *testing.T) {
 		t.Fatalf("definite append key survived missing branch: %#v", keys)
 	}
 }
+
+func TestBoundaryFamilyIdentityHashIncludesFamilyLanes(t *testing.T) {
+	table := BoundaryPath{Kind: BoundaryPathParam, Index: 0, Segments: []constraint.Segment{{Kind: constraint.SegmentField, Name: "nodes"}}}
+	key := BoundaryPath{Kind: BoundaryPathParam, Index: 1, Segments: []constraint.Segment{{Kind: constraint.SegmentField, Name: "id"}}}
+	array := BoundaryPath{Kind: BoundaryPathParam, Index: 2, Segments: []constraint.Segment{{Kind: constraint.SegmentField, Name: "order"}}}
+	value := product.FromType(typ.String)
+	seed := "family-hash"
+	emptyHash := BoundaryFactsDomain.Top().IdentityHash(seed)
+	cases := []struct {
+		name  string
+		parts BoundaryFactParts
+	}{
+		{
+			name:  "key/index",
+			parts: BoundaryFactParts{KeyPresence: []BoundaryKeyPresenceFact{{Table: table, Key: key}}},
+		},
+		{
+			name:  "append",
+			parts: BoundaryFactParts{AppendBases: []BoundaryAppendHistoryBaseFact{{Array: array}}},
+		},
+		{
+			name:  "length",
+			parts: BoundaryFactParts{LengthLower: []BoundaryLengthLowerBound{{Target: array, Lower: 1}}},
+		},
+		{
+			name:  "static",
+			parts: BoundaryFactParts{StaticMembers: []BoundaryStaticMemberFact{{Target: table, Value: value}}},
+		},
+	}
+	for _, tc := range cases {
+		facts := BoundaryFactsFromParts(tc.parts)
+		if got := facts.IdentityHash(seed); got == emptyHash {
+			t.Fatalf("%s family hash = empty hash %d", tc.name, got)
+		}
+		if got, want := facts.IdentityHash(seed), BoundaryFactsFromParts(facts.Parts()).IdentityHash(seed); got != want {
+			t.Fatalf("%s family hash = %d, want canonical clone hash %d", tc.name, got, want)
+		}
+	}
+}
+
+func TestRebaseBoundaryReturnFactsToParamRebasesFamilyLanes(t *testing.T) {
+	retArray := BoundaryPath{Kind: BoundaryPathReturn, Index: 0, Segments: []constraint.Segment{{Kind: constraint.SegmentField, Name: "order"}}}
+	retTable := BoundaryPath{Kind: BoundaryPathReturn, Index: 0, Segments: []constraint.Segment{{Kind: constraint.SegmentField, Name: "nodes"}}}
+	retKey := BoundaryPath{Kind: BoundaryPathReturn, Index: 0, Segments: []constraint.Segment{{Kind: constraint.SegmentField, Name: "id"}}}
+	otherRetKey := BoundaryPath{Kind: BoundaryPathReturn, Index: 1, Segments: []constraint.Segment{{Kind: constraint.SegmentField, Name: "id"}}}
+	paramArray := BoundaryPath{Kind: BoundaryPathParam, Index: 2, Segments: []constraint.Segment{{Kind: constraint.SegmentField, Name: "order"}}}
+	paramTable := BoundaryPath{Kind: BoundaryPathParam, Index: 2, Segments: []constraint.Segment{{Kind: constraint.SegmentField, Name: "nodes"}}}
+	paramKey := BoundaryPath{Kind: BoundaryPathParam, Index: 2, Segments: []constraint.Segment{{Kind: constraint.SegmentField, Name: "id"}}}
+	value := product.FromType(typ.String)
+	facts := BoundaryFactsFromParts(BoundaryFactParts{
+		KeyPresence: []BoundaryKeyPresenceFact{
+			{Table: retTable, Key: retKey},
+			{Table: retTable, Key: otherRetKey},
+		},
+		KeyArrays:           []BoundaryKeyArrayFact{{Array: retArray, Table: retTable}},
+		KeyArrayValues:      []BoundaryKeyArrayValueFact{{Array: retArray, Table: retTable, Value: value}},
+		AppendKeys:          []BoundaryAppendKeyFact{{Array: retArray, Key: retKey, Table: retTable, HasTable: true}},
+		AppendBases:         []BoundaryAppendHistoryBaseFact{{Array: retArray}},
+		AppendEvents:        []BoundaryAppendHistoryEventFact{{Array: retArray, Key: retKey}},
+		AppendCoverage:      []BoundaryAppendHistoryCoverageFact{{Array: retArray, Key: retKey, Table: retTable, Value: value}},
+		AppendTableCoverage: []BoundaryAppendHistoryTableCoverageFact{{Array: retArray, Table: retTable, Value: value}},
+		AppendOrigins: []BoundaryAppendElementFieldOriginFact{{
+			Array:       retArray,
+			Field:       []constraint.Segment{{Kind: constraint.SegmentField, Name: "id"}},
+			Source:      retKey,
+			SourceField: []constraint.Segment{{Kind: constraint.SegmentField, Name: "raw"}},
+		}},
+		LengthLower:     []BoundaryLengthLowerBound{{Target: retArray, Lower: 1}},
+		LengthUpper:     []BoundaryLengthUpperBound{{Target: retArray, Upper: 4}},
+		LengthRelations: []BoundaryLengthRelationFact{{Target: retArray, Source: retTable}},
+		IndexWrites: []BoundaryIndexWriteFact{{
+			Table:        retTable,
+			KeyPath:      retKey,
+			HasKeyPath:   true,
+			KeyValue:     value,
+			ValuePath:    retArray,
+			HasValuePath: true,
+			Value:        product.FromType(typ.Number),
+		}},
+		StaticMembers: []BoundaryStaticMemberFact{{Target: retTable, Value: value}},
+	})
+	want := BoundaryFactsFromParts(BoundaryFactParts{
+		KeyPresence:         []BoundaryKeyPresenceFact{{Table: paramTable, Key: paramKey}},
+		KeyArrays:           []BoundaryKeyArrayFact{{Array: paramArray, Table: paramTable}},
+		KeyArrayValues:      []BoundaryKeyArrayValueFact{{Array: paramArray, Table: paramTable, Value: value}},
+		AppendKeys:          []BoundaryAppendKeyFact{{Array: paramArray, Key: paramKey, Table: paramTable, HasTable: true}},
+		AppendBases:         []BoundaryAppendHistoryBaseFact{{Array: paramArray}},
+		AppendEvents:        []BoundaryAppendHistoryEventFact{{Array: paramArray, Key: paramKey}},
+		AppendCoverage:      []BoundaryAppendHistoryCoverageFact{{Array: paramArray, Key: paramKey, Table: paramTable, Value: value}},
+		AppendTableCoverage: []BoundaryAppendHistoryTableCoverageFact{{Array: paramArray, Table: paramTable, Value: value}},
+		AppendOrigins: []BoundaryAppendElementFieldOriginFact{{
+			Array:       paramArray,
+			Field:       []constraint.Segment{{Kind: constraint.SegmentField, Name: "id"}},
+			Source:      paramKey,
+			SourceField: []constraint.Segment{{Kind: constraint.SegmentField, Name: "raw"}},
+		}},
+		LengthLower:     []BoundaryLengthLowerBound{{Target: paramArray, Lower: 1}},
+		LengthUpper:     []BoundaryLengthUpperBound{{Target: paramArray, Upper: 4}},
+		LengthRelations: []BoundaryLengthRelationFact{{Target: paramArray, Source: paramTable}},
+		IndexWrites: []BoundaryIndexWriteFact{{
+			Table:        paramTable,
+			KeyPath:      paramKey,
+			HasKeyPath:   true,
+			KeyValue:     value,
+			ValuePath:    paramArray,
+			HasValuePath: true,
+			Value:        product.FromType(typ.Number),
+		}},
+		StaticMembers: []BoundaryStaticMemberFact{{Target: paramTable, Value: value}},
+	})
+
+	got := RebaseBoundaryReturnFactsToParam(facts, 0, 2)
+	if !BoundaryFactsDomain.Equal(got, want) {
+		t.Fatalf("rebased facts = %#v, want %#v", got, want)
+	}
+}

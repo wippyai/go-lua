@@ -3,6 +3,7 @@ package flow
 import (
 	"slices"
 
+	"github.com/wippyai/go-lua/internal"
 	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/domain/value/product"
 )
@@ -246,6 +247,50 @@ func compareBoundaryAppendElementFieldOrigin(a, b BoundaryAppendElementFieldOrig
 		return c
 	}
 	return compareConstraintSegments(a.SourceField, b.SourceField)
+}
+
+func hashBoundaryAppendFacts(h uint64, f BoundaryFacts) uint64 {
+	for _, fact := range f.appendKeys {
+		h = internal.HashCombine(h, internal.FnvString("ak"))
+		h = hashBoundaryPath(h, fact.Array)
+		h = hashBoundaryPath(h, fact.Key)
+		if fact.HasTable {
+			h = internal.HashCombine(h, 1)
+			h = hashBoundaryPath(h, fact.Table)
+		} else {
+			h = internal.HashCombine(h, 0)
+		}
+	}
+	for _, fact := range f.appendBases {
+		h = internal.HashCombine(h, internal.FnvString("ahb"))
+		h = hashBoundaryPath(h, fact.Array)
+	}
+	for _, fact := range f.appendEvents {
+		h = internal.HashCombine(h, internal.FnvString("ahe"))
+		h = hashBoundaryPath(h, fact.Array)
+		h = hashBoundaryPath(h, fact.Key)
+	}
+	for _, fact := range f.appendCoverage {
+		h = internal.HashCombine(h, internal.FnvString("ahc"))
+		h = hashBoundaryPath(h, fact.Array)
+		h = hashBoundaryPath(h, fact.Key)
+		h = hashBoundaryPath(h, fact.Table)
+		h = internal.HashCombine(h, fact.Value.Hash())
+	}
+	for _, fact := range f.appendTableCoverage {
+		h = internal.HashCombine(h, internal.FnvString("ahtc"))
+		h = hashBoundaryPath(h, fact.Array)
+		h = hashBoundaryPath(h, fact.Table)
+		h = internal.HashCombine(h, fact.Value.Hash())
+	}
+	for _, fact := range f.appendOrigins {
+		h = internal.HashCombine(h, internal.FnvString("aefo"))
+		h = hashBoundaryPath(h, fact.Array)
+		h = internal.HashCombine(h, internal.FnvString(constraint.FormatSegments(fact.Field)))
+		h = hashBoundaryPath(h, fact.Source)
+		h = internal.HashCombine(h, internal.FnvString(constraint.FormatSegments(fact.SourceField)))
+	}
+	return h
 }
 
 var (
@@ -529,4 +574,142 @@ func boundaryAppendElementFieldOriginsCoveredByBases(
 		out = append(out, cloneBoundaryAppendElementFieldOrigin(origin))
 	}
 	return out
+}
+
+func partitionBoundaryAppendFactsByReturnIndices(f BoundaryFacts, params *BoundaryFactParts, addReturnFact boundaryReturnFactAdder) {
+	for _, fact := range f.appendKeys {
+		paths := []BoundaryPath{fact.Array, fact.Key}
+		if fact.HasTable {
+			paths = append(paths, fact.Table)
+		}
+		indices := boundaryPathReturnIndices(paths...)
+		if len(indices) == 0 {
+			params.AppendKeys = append(params.AppendKeys, fact)
+			continue
+		}
+		addReturnFact(indices, func(parts *BoundaryFactParts) {
+			parts.AppendKeys = append(parts.AppendKeys, fact)
+		})
+	}
+	for _, fact := range f.appendBases {
+		indices := boundaryPathReturnIndices(fact.Array)
+		if len(indices) == 0 {
+			params.AppendBases = append(params.AppendBases, fact)
+			continue
+		}
+		addReturnFact(indices, func(parts *BoundaryFactParts) {
+			parts.AppendBases = append(parts.AppendBases, fact)
+		})
+	}
+	for _, fact := range f.appendEvents {
+		indices := boundaryPathReturnIndices(fact.Array, fact.Key)
+		if len(indices) == 0 {
+			params.AppendEvents = append(params.AppendEvents, fact)
+			continue
+		}
+		addReturnFact(indices, func(parts *BoundaryFactParts) {
+			parts.AppendEvents = append(parts.AppendEvents, fact)
+		})
+	}
+	for _, fact := range f.appendCoverage {
+		indices := boundaryPathReturnIndices(fact.Array, fact.Key, fact.Table)
+		if len(indices) == 0 {
+			params.AppendCoverage = append(params.AppendCoverage, fact)
+			continue
+		}
+		addReturnFact(indices, func(parts *BoundaryFactParts) {
+			parts.AppendCoverage = append(parts.AppendCoverage, fact)
+		})
+	}
+	for _, fact := range f.appendTableCoverage {
+		indices := boundaryPathReturnIndices(fact.Array, fact.Table)
+		if len(indices) == 0 {
+			params.AppendTableCoverage = append(params.AppendTableCoverage, fact)
+			continue
+		}
+		addReturnFact(indices, func(parts *BoundaryFactParts) {
+			parts.AppendTableCoverage = append(parts.AppendTableCoverage, fact)
+		})
+	}
+	for _, fact := range f.appendOrigins {
+		indices := boundaryPathReturnIndices(fact.Array, fact.Source)
+		if len(indices) == 0 {
+			params.AppendOrigins = append(params.AppendOrigins, fact)
+			continue
+		}
+		addReturnFact(indices, func(parts *BoundaryFactParts) {
+			parts.AppendOrigins = append(parts.AppendOrigins, fact)
+		})
+	}
+}
+
+func rebaseBoundaryAppendReturnFactsToParam(facts BoundaryFacts, mapPath boundaryPathMapper) BoundaryFactParts {
+	var parts BoundaryFactParts
+	for _, fact := range facts.appendKeys {
+		array, arrayOK := mapPath(fact.Array)
+		key, keyOK := mapPath(fact.Key)
+		if !arrayOK || !keyOK {
+			continue
+		}
+		next := BoundaryAppendKeyFact{Array: array, Key: key}
+		if fact.HasTable {
+			table, tableOK := mapPath(fact.Table)
+			if !tableOK {
+				continue
+			}
+			next.Table = table
+			next.HasTable = true
+		}
+		parts.AppendKeys = append(parts.AppendKeys, next)
+	}
+	for _, fact := range facts.appendBases {
+		array, ok := mapPath(fact.Array)
+		if ok {
+			parts.AppendBases = append(parts.AppendBases, BoundaryAppendHistoryBaseFact{Array: array})
+		}
+	}
+	for _, fact := range facts.appendEvents {
+		array, arrayOK := mapPath(fact.Array)
+		key, keyOK := mapPath(fact.Key)
+		if arrayOK && keyOK {
+			parts.AppendEvents = append(parts.AppendEvents, BoundaryAppendHistoryEventFact{Array: array, Key: key})
+		}
+	}
+	for _, fact := range facts.appendCoverage {
+		array, arrayOK := mapPath(fact.Array)
+		key, keyOK := mapPath(fact.Key)
+		table, tableOK := mapPath(fact.Table)
+		if arrayOK && keyOK && tableOK {
+			parts.AppendCoverage = append(parts.AppendCoverage, BoundaryAppendHistoryCoverageFact{
+				Array: array,
+				Key:   key,
+				Table: table,
+				Value: fact.Value,
+			})
+		}
+	}
+	for _, fact := range facts.appendTableCoverage {
+		array, arrayOK := mapPath(fact.Array)
+		table, tableOK := mapPath(fact.Table)
+		if arrayOK && tableOK {
+			parts.AppendTableCoverage = append(parts.AppendTableCoverage, BoundaryAppendHistoryTableCoverageFact{
+				Array: array,
+				Table: table,
+				Value: fact.Value,
+			})
+		}
+	}
+	for _, fact := range facts.appendOrigins {
+		array, arrayOK := mapPath(fact.Array)
+		source, sourceOK := mapPath(fact.Source)
+		if arrayOK && sourceOK {
+			parts.AppendOrigins = append(parts.AppendOrigins, BoundaryAppendElementFieldOriginFact{
+				Array:       array,
+				Field:       append([]constraint.Segment(nil), fact.Field...),
+				Source:      source,
+				SourceField: append([]constraint.Segment(nil), fact.SourceField...),
+			})
+		}
+	}
+	return parts
 }

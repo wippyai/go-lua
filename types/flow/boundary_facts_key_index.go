@@ -197,6 +197,38 @@ func hashBoundaryIndexKey(h uint64, fact BoundaryIndexWriteFact) uint64 {
 	return internal.HashCombine(h, fact.KeyValue.Hash())
 }
 
+func hashBoundaryKeyIndexFacts(h uint64, f BoundaryFacts) uint64 {
+	for _, fact := range f.keyPresence {
+		h = internal.HashCombine(h, internal.FnvString("kp"))
+		h = hashBoundaryPath(h, fact.Table)
+		h = hashBoundaryPath(h, fact.Key)
+	}
+	for _, fact := range f.keyArrays {
+		h = internal.HashCombine(h, internal.FnvString("ka"))
+		h = hashBoundaryPath(h, fact.Array)
+		h = hashBoundaryPath(h, fact.Table)
+	}
+	for _, fact := range f.keyArrayValues {
+		h = internal.HashCombine(h, internal.FnvString("kav"))
+		h = hashBoundaryPath(h, fact.Array)
+		h = hashBoundaryPath(h, fact.Table)
+		h = internal.HashCombine(h, fact.Value.Hash())
+	}
+	for _, fact := range f.indexWrites {
+		h = internal.HashCombine(h, internal.FnvString("iw"))
+		h = hashBoundaryPath(h, fact.Table)
+		h = hashBoundaryIndexKey(h, fact)
+		if fact.HasValuePath {
+			h = internal.HashCombine(h, 1)
+			h = hashBoundaryPath(h, fact.ValuePath)
+		} else {
+			h = internal.HashCombine(h, 0)
+		}
+		h = internal.HashCombine(h, fact.Value.Hash())
+	}
+	return h
+}
+
 func validBoundaryIndexWrite(fact BoundaryIndexWriteFact) bool {
 	if !validBoundaryPath(fact.Table) || fact.KeyValue.IsZero() || fact.Value.IsZero() {
 		return false
@@ -321,4 +353,108 @@ func intersectBoundaryIndexWrites(a, b []BoundaryIndexWriteFact, widenPayload bo
 		return fact, true
 	})
 	return compactBoundaryIndexWrites(out)
+}
+
+func partitionBoundaryKeyIndexFactsByReturnIndices(f BoundaryFacts, params *BoundaryFactParts, addReturnFact boundaryReturnFactAdder) {
+	for _, fact := range f.keyPresence {
+		indices := boundaryPathReturnIndices(fact.Table, fact.Key)
+		if len(indices) == 0 {
+			params.KeyPresence = append(params.KeyPresence, fact)
+			continue
+		}
+		addReturnFact(indices, func(parts *BoundaryFactParts) {
+			parts.KeyPresence = append(parts.KeyPresence, fact)
+		})
+	}
+	for _, fact := range f.keyArrays {
+		indices := boundaryPathReturnIndices(fact.Array, fact.Table)
+		if len(indices) == 0 {
+			params.KeyArrays = append(params.KeyArrays, fact)
+			continue
+		}
+		addReturnFact(indices, func(parts *BoundaryFactParts) {
+			parts.KeyArrays = append(parts.KeyArrays, fact)
+		})
+	}
+	for _, fact := range f.keyArrayValues {
+		indices := boundaryPathReturnIndices(fact.Array, fact.Table)
+		if len(indices) == 0 {
+			params.KeyArrayValues = append(params.KeyArrayValues, fact)
+			continue
+		}
+		addReturnFact(indices, func(parts *BoundaryFactParts) {
+			parts.KeyArrayValues = append(parts.KeyArrayValues, fact)
+		})
+	}
+	for _, fact := range f.indexWrites {
+		paths := []BoundaryPath{fact.Table}
+		if fact.HasKeyPath {
+			paths = append(paths, fact.KeyPath)
+		}
+		if fact.HasValuePath {
+			paths = append(paths, fact.ValuePath)
+		}
+		indices := boundaryPathReturnIndices(paths...)
+		if len(indices) == 0 {
+			params.IndexWrites = append(params.IndexWrites, fact)
+			continue
+		}
+		addReturnFact(indices, func(parts *BoundaryFactParts) {
+			parts.IndexWrites = append(parts.IndexWrites, fact)
+		})
+	}
+}
+
+func rebaseBoundaryKeyIndexReturnFactsToParam(facts BoundaryFacts, mapPath boundaryPathMapper) BoundaryFactParts {
+	var parts BoundaryFactParts
+	for _, fact := range facts.keyPresence {
+		table, tableOK := mapPath(fact.Table)
+		key, keyOK := mapPath(fact.Key)
+		if tableOK && keyOK {
+			parts.KeyPresence = append(parts.KeyPresence, BoundaryKeyPresenceFact{Table: table, Key: key})
+		}
+	}
+	for _, fact := range facts.keyArrays {
+		array, arrayOK := mapPath(fact.Array)
+		table, tableOK := mapPath(fact.Table)
+		if arrayOK && tableOK {
+			parts.KeyArrays = append(parts.KeyArrays, BoundaryKeyArrayFact{Array: array, Table: table})
+		}
+	}
+	for _, fact := range facts.keyArrayValues {
+		array, arrayOK := mapPath(fact.Array)
+		table, tableOK := mapPath(fact.Table)
+		if arrayOK && tableOK {
+			parts.KeyArrayValues = append(parts.KeyArrayValues, BoundaryKeyArrayValueFact{Array: array, Table: table, Value: fact.Value})
+		}
+	}
+	for _, fact := range facts.indexWrites {
+		table, tableOK := mapPath(fact.Table)
+		if !tableOK {
+			continue
+		}
+		next := BoundaryIndexWriteFact{
+			Table:    table,
+			KeyValue: fact.KeyValue,
+			Value:    fact.Value,
+		}
+		if fact.HasKeyPath {
+			key, keyOK := mapPath(fact.KeyPath)
+			if !keyOK {
+				continue
+			}
+			next.KeyPath = key
+			next.HasKeyPath = true
+		}
+		if fact.HasValuePath {
+			value, valueOK := mapPath(fact.ValuePath)
+			if !valueOK {
+				continue
+			}
+			next.ValuePath = value
+			next.HasValuePath = true
+		}
+		parts.IndexWrites = append(parts.IndexWrites, next)
+	}
+	return parts
 }
