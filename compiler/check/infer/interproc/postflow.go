@@ -26,7 +26,11 @@ import (
 // interproc facts. Canonical checking publishes FunctionFacts from Summary
 // without this iteration product.
 type Store interface {
-	api.PostflowProjectionStore
+	api.StoreReader
+	api.FunctionFactProjectionReader
+	api.PostflowFunctionFactWriter
+	api.PostflowCapturedFieldProjectionWriter
+	ParentGraphKeyForSymbol(sym cfg.SymbolID) (api.GraphKey, bool)
 }
 
 // StoreFactsFromResult records post-flow interproc facts for the current iteration.

@@ -53,10 +53,20 @@ type CheckFunc func(fn *ast.FunctionExpr, parent *scope.State, ctx api.AnalysisC
 // ResultFunc returns the analysis result for a function literal.
 type ResultFunc func(fn *ast.FunctionExpr) *api.FuncAnalysisView
 
+// Store is the lane surface nested inference owns. It reads normal checker
+// metadata plus sibling function projections, and writes only captured-type and
+// constructor-field postflow lanes.
+type Store interface {
+	api.StoreReader
+	api.FunctionFactProjectionReader
+	api.PostflowCapturedTypeProjectionWriter
+	api.PostflowConstructorProjectionStore
+}
+
 // Config holds dependencies for nested processing.
 type Config struct {
 	Stdlib        *scope.State
-	Store         api.PostflowProjectionStore
+	Store         Store
 	Graphs        api.GraphProvider
 	Check         CheckFunc
 	ResultForFunc ResultFunc
@@ -66,7 +76,7 @@ type Config struct {
 // Processor analyzes nested functions for a parent graph.
 type Processor struct {
 	stdlib        *scope.State
-	store         api.PostflowProjectionStore
+	store         Store
 	graphs        api.GraphProvider
 	check         CheckFunc
 	resultForFunc ResultFunc

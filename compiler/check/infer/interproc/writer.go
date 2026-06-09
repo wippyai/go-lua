@@ -6,8 +6,8 @@ import (
 )
 
 type factsWriteStore interface {
-	MergeFunctionFactProjection(key api.GraphKey, sym cfg.SymbolID, fact api.FunctionFact)
-	MergeCapturedFieldProjection(key api.GraphKey, nestedSym cfg.SymbolID, capturedSym cfg.SymbolID, fields api.FieldValues)
+	api.PostflowFunctionFactWriter
+	api.PostflowCapturedFieldProjectionWriter
 	ParentGraphKeyForSymbol(sym cfg.SymbolID) (api.GraphKey, bool)
 }
 

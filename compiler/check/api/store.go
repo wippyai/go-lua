@@ -13,7 +13,7 @@
 //	StoreReader     - Read-only combination of above
 //	CanonicalStore  - Canonical-owned metadata plus final fact projection
 //	NestedStore     - StoreReader required by nested metadata consumers
-//	PostflowProjectionStore - Explicit noncanonical postflow projection boundary
+//	Postflow*Projection* - Explicit noncanonical postflow projection lane boundaries
 //	IterationStore  - Full mutation capability for postflow projection lanes
 package api
 
@@ -87,7 +87,7 @@ type FunctionRefs interface {
 // StoreReader is the read contract shared by normal checker phases. It
 // intentionally excludes postflow projection lane reads; callers that need final
 // function facts should request FunctionFactProjectionReader, and noncanonical postflow
-// code should request PostflowProjectionStore explicitly.
+// code should request the specific postflow lane it owns.
 type StoreReader interface {
 	ModuleStore
 	GraphStore
@@ -97,21 +97,59 @@ type StoreReader interface {
 	FunctionRefs
 }
 
-// PostflowProjectionReader exposes typed reads from the noncanonical postflow
-// projection lanes. It is not a canonical Summary read surface.
-type PostflowProjectionReader interface {
+// PostflowCapturedTypeProjectionReader exposes captured-symbol type projections
+// from the noncanonical postflow product. It is not a canonical Summary read surface.
+type PostflowCapturedTypeProjectionReader interface {
 	CapturedTypeProjection(graph *cfg.Graph, parent *scope.State, sym cfg.SymbolID) (typ.Type, bool)
+}
+
+// PostflowCapturedTypeProjectionWriter records one captured-symbol type projection.
+type PostflowCapturedTypeProjectionWriter interface {
+	MergeCapturedTypeProjection(key GraphKey, sym cfg.SymbolID, value product.AbstractValue)
+}
+
+// PostflowCapturedFieldProjectionReader exposes captured-field assignment projections
+// from the noncanonical postflow product.
+type PostflowCapturedFieldProjectionReader interface {
 	CapturedFieldAssignsProjection(graph *cfg.Graph, parent *scope.State) CapturedFieldAssigns
+}
+
+// PostflowCapturedFieldProjectionWriter records captured-field assignment projections.
+type PostflowCapturedFieldProjectionWriter interface {
+	MergeCapturedFieldProjection(key GraphKey, nestedSym cfg.SymbolID, capturedSym cfg.SymbolID, fields FieldValues)
+}
+
+// PostflowCapturedProjectionStore owns the captured-symbol and captured-field
+// postflow lanes. Components should depend on this only when they need both
+// captured reads and writes.
+type PostflowCapturedProjectionStore interface {
+	PostflowCapturedTypeProjectionReader
+	PostflowCapturedTypeProjectionWriter
+	PostflowCapturedFieldProjectionReader
+	PostflowCapturedFieldProjectionWriter
+}
+
+// PostflowConstructorProjectionReader exposes constructor field projections from
+// the noncanonical postflow product.
+type PostflowConstructorProjectionReader interface {
 	ConstructorFieldsProjection(classSym cfg.SymbolID) (FieldValues, bool)
 }
 
-// PostflowProjectionSink provides typed write access to per-iteration projection
-// lanes. The store owns same-iteration joins and fixpoint widening for each lane.
-type PostflowProjectionSink interface {
-	MergeFunctionFactProjection(key GraphKey, sym cfg.SymbolID, fact FunctionFact)
-	MergeCapturedTypeProjection(key GraphKey, sym cfg.SymbolID, value product.AbstractValue)
-	MergeCapturedFieldProjection(key GraphKey, nestedSym cfg.SymbolID, capturedSym cfg.SymbolID, fields FieldValues)
+// PostflowConstructorProjectionWriter records constructor field projections.
+type PostflowConstructorProjectionWriter interface {
 	MergeConstructorFieldProjection(classSym cfg.SymbolID, fields FieldValues)
+}
+
+// PostflowConstructorProjectionStore owns the constructor-field postflow lane.
+type PostflowConstructorProjectionStore interface {
+	PostflowConstructorProjectionReader
+	PostflowConstructorProjectionWriter
+}
+
+// PostflowFunctionFactWriter records final/public FunctionFact projection rows in
+// the noncanonical postflow product.
+type PostflowFunctionFactWriter interface {
+	MergeFunctionFactProjection(key GraphKey, sym cfg.SymbolID, fact FunctionFact)
 }
 
 // CanonicalFunctionFactProjectionSink installs final Summary-derived FunctionFacts
@@ -141,26 +179,19 @@ type CanonicalStore interface {
 }
 
 // NestedStore is the read-only store interface required by nested metadata
-// consumers. Postflow projection nested inference uses PostflowProjectionStore instead.
+// consumers. Postflow projection nested inference requests only the lanes it owns.
 type NestedStore interface {
 	StoreReader
 }
 
-// PostflowProjectionStore is the explicitly named noncanonical postflow/compatibility
-// boundary for typed postflow projection lanes. Normal checker/synth/module/export
-// code must not request this interface.
-type PostflowProjectionStore interface {
-	StoreReader
-	PostflowProjectionReader
-	PostflowProjectionSink
-
-	FunctionFactProjectionReader
-	ParentGraphKeyForSymbol(sym cfg.SymbolID) (GraphKey, bool)
-}
-
 // IterationStore provides mutation operations required by postflow projection fixpoint paths.
 type IterationStore interface {
-	PostflowProjectionStore
+	StoreReader
+	FunctionFactProjectionReader
+	PostflowFunctionFactWriter
+	PostflowCapturedProjectionStore
+	PostflowConstructorProjectionStore
+	ParentGraphKeyForSymbol(sym cfg.SymbolID) (GraphKey, bool)
 
 	ClearPostflowProjectionState()
 	AdvancePostflowProjections() bool
