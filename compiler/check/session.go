@@ -1,7 +1,7 @@
 // session.go defines the Session type that holds per-run state for type checking.
 // Session is the primary interface for accessing analysis results. SessionStore
 // lives in compiler/check/store and manages module state, final projections,
-// and projection product state for compatibility paths.
+// and postflow projection lane state for compatibility paths.
 //
 // # LIFECYCLE SEPARATION
 //
@@ -11,18 +11,18 @@
 //     Contains binding tables, CFG graphs, and module aliases. Never modified
 //     during fixpoint iteration.
 //
-//   - Fact inputs: query-tracked projection products used to revalidate
+//   - Fact inputs: query-tracked projection lanes used to revalidate
 //     cached compatibility-path analysis when facts change.
 //
-// # LEGACY PRODUCT PROTOCOL
+// # POSTFLOW PROJECTION PROTOCOL
 //
-// Projection facts follow a product protocol:
+// Projection facts follow a lane protocol:
 //
-//   - During iteration: functions read the visible product
-//   - At boundary: accumulated facts widen into the stable product
-//   - Convergence: iteration stops when the product is unchanged
+//   - During iteration: functions read visible lane values
+//   - At boundary: accumulated facts widen into stable lane values
+//   - Convergence: iteration stops when every lane is unchanged
 //
-// The visible product supports deterministic Gauss-Seidel propagation because
+// Visible lanes support deterministic Gauss-Seidel propagation because
 // function scheduling is deterministic.
 //
 // # PARALLELIZATION
@@ -49,7 +49,7 @@ import (
 
 // Session holds all state and results for analyzing a single Lua module.
 // One Session is created per Check call and contains the complete analysis output
-// including per-function results, diagnostics, and postflow projection product state for
+// including per-function results, diagnostics, and postflow projection lane state for
 // compatibility paths.
 //
 // USAGE PATTERN:
@@ -63,7 +63,7 @@ import (
 // CONCURRENCY: db.QueryContext is NOT safe for concurrent access. For parallel
 // analysis, create one Session per worker with independent QueryContexts, then
 // merge results. Functions within a single fixpoint iteration read from shared
-// products and write to independent per-iteration maps, enabling future parallelization.
+// visible lanes and write to independent per-iteration maps, enabling future parallelization.
 //
 // MEMORY MANAGEMENT: Call Release() after extracting Manifest data to free heavy
 // allocations (CFGs, scopes, flow data). The Session remains valid for Diagnostics
@@ -139,7 +139,7 @@ func (s *Session) CanonicalStoreHandle() api.CanonicalStore {
 }
 
 // StoreHandle returns the session store as an iteration-capable interface for
-// projection-product paths.
+// postflow projection paths.
 func (s *Session) StoreHandle() api.IterationStore {
 	if s == nil {
 		return nil
@@ -503,7 +503,8 @@ func (s *Session) rootFunctionFactsForExport() api.FunctionFacts {
 }
 
 // RefinementsForExport extracts computed function refinements for manifest generation.
-// Returns refinements from the final projection data and the final converged projection product.
+// Returns refinements from the final projection data and final converged
+// function-fact lane.
 //
 // The returned map associates each function's SymbolID with its computed refinement,
 // including IO effects (row), termination status, and conditional effects.
@@ -511,7 +512,7 @@ func (s *Session) rootFunctionFactsForExport() api.FunctionFacts {
 //
 // FunctionFacts and per-function FuncResults can both carry a computed
 // refinement. Both sources are merged here; a symbol already present in the
-// converged projection product keeps that product refinement, while otherwise the
+// converged function-fact lane keeps that lane refinement, while otherwise the
 // per-function body-proven refinement contributes the export summary.
 func (s *Session) RefinementsForExport() map[cfg.SymbolID]*constraint.FunctionRefinement {
 	if s == nil {

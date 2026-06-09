@@ -228,7 +228,7 @@ func normalizeFunctionParamDomainType(t typ.Type) typ.Type {
 }
 
 // ApplyPublicSignatureEvidence makes the stored public function type agree with
-// hard public parameter obligations from the FunctionFacts projection product.
+// hard public parameter obligations from the FunctionFacts projection lane.
 // Explicit source annotations, including soft structural top annotations such
 // as {any}, stay public-authoritative; observed call shapes refine only the
 // body projection.

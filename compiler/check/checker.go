@@ -3,15 +3,15 @@
 // # ARCHITECTURE OVERVIEW
 //
 // Canonical checking performs interprocedural type analysis through Summary
-// queries over PointState. Older inference/export paths still use a projection fact
-// product, but that product is not the canonical semantic authority.
+// queries over PointState. Older inference/export paths still use postflow
+// projection lanes, but those lanes are not the canonical semantic authority.
 //
 // # INTERPROCEDURAL ANALYSIS
 //
-// Postflow/export projection paths use one explicit product:
+// Postflow/export projection paths use explicit lanes:
 //
 //   - FunctionFacts: final/public parameter/return/narrow/signature projection
-//   - Captured types/writes and constructor fields as product lanes
+//   - Captured types/writes and constructor fields as independent lanes
 //
 // # DETERMINISTIC ORDERING
 //
@@ -22,13 +22,13 @@
 //
 // # MEMOIZATION
 //
-// Function analysis results are memoized by (GraphID, ParentHash). Projection fact
-// products are tracked as query inputs for noncanonical compatibility paths, while
+// Function analysis results are memoized by (GraphID, ParentHash). Projection
+// lanes are tracked as query inputs for noncanonical compatibility paths, while
 // canonical Summary queries carry canonical interprocedural dependencies.
 //
 // # CONVERGENCE
 //
-// The projection-product fixpoint loop terminates when the projection product stabilizes.
+// The postflow projection loop terminates when every projection lane stabilizes.
 package check
 
 import (
@@ -207,7 +207,7 @@ func WithScopeDepthDiagnostics(enabled bool) Option {
 // The returned Session contains:
 //   - Results: Per-function analysis results (types, flow facts, effects)
 //   - Diagnostics: Type errors, warnings, and suggestions
-//   - Store: Final projections plus postflow projection products for compatibility paths
+//   - Store: Final projections plus postflow projection lanes for compatibility paths
 func (c *Checker) Check(source, name string) *Session {
 	ctx := db.NewQueryContext(c.db)
 	sess := New(ctx, name)

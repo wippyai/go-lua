@@ -14,15 +14,15 @@ type GraphKey struct {
 	ParentHash uint64 // Parent scope hash from SessionStore.Parents()
 }
 
-// FunctionFactKey identifies one FunctionFact projection inside one graph
-// product. Query inputs use this key for fine-grained dependencies on a single
-// function symbol instead of the whole projection product.
+// FunctionFactKey identifies one FunctionFact projection inside one graph key.
+// Query inputs use this key for fine-grained dependencies on a single function
+// symbol instead of the whole function-fact map.
 type FunctionFactKey struct {
 	GraphKey GraphKey
 	Symbol   cfg.SymbolID
 }
 
-// CapturedTypeKey identifies one captured symbol type inside one graph product.
+// CapturedTypeKey identifies one captured symbol type inside one graph key.
 type CapturedTypeKey struct {
 	GraphKey GraphKey
 	Symbol   cfg.SymbolID

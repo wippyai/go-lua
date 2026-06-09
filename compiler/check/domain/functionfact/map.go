@@ -23,7 +23,7 @@ type Evidence struct {
 	EnvReturns  []contract.EnvReturnSpec
 }
 
-// Builder admits per-symbol evidence into FunctionFacts projection products.
+// Builder admits per-symbol evidence into FunctionFacts projection lanes.
 type Builder struct {
 	evidence map[cfg.SymbolID]Evidence
 }

@@ -134,8 +134,7 @@ type CapturedTypes = map[cfg.SymbolID]product.AbstractValue
 
 // FieldValues maps a typed field/path segment to its product-domain value.
 // Boundary collection/projection APIs may still speak in source field names;
-// Facts store typed keys so the projection product has one identity
-// language.
+// postflow projection lanes store typed keys so field identity has one language.
 type FieldValues = map[constraint.Segment]product.AbstractValue
 
 // CapturedFieldAssigns maps nested function symbols to field assignments

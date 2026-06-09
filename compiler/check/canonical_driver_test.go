@@ -111,7 +111,7 @@ return get_db()
 	driver.Run(sess, chunk)
 
 	if sess.spy.swaps != 0 {
-		t.Fatalf("canonical driver advanced projection-product iteration %d times, want 0", sess.spy.swaps)
+		t.Fatalf("canonical driver advanced postflow projection iteration %d times, want 0", sess.spy.swaps)
 	}
 }
 

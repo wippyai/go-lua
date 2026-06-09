@@ -14,7 +14,7 @@
 //   - [StoreReader]: Read contract combining the immutable stores above
 //   - [CanonicalStore]: Canonical-owned metadata and final fact projection
 //   - [PostflowProjectionStore]: Explicit noncanonical postflow projection boundary
-//   - [IterationStore]: Adds swap/reset mutation for projection-product fixpoint paths
+//   - [IterationStore]: Adds swap/reset mutation for postflow projection lanes
 //
 // These interfaces allow different phases to declare their dependencies and
 // enable testing with mock implementations.
@@ -30,16 +30,16 @@
 //
 // Canonical checking uses Summary as its interprocedural authority. Postflow
 // compatibility code reads and writes typed projection lanes through
-// [PostflowProjectionStore]. The convergence product that combines those lanes
-// is owned by compiler/check/domain/interproc:
+// [PostflowProjectionStore]. Lane convergence is owned by
+// compiler/check/domain/interproc:
 //
 //   - [FunctionFacts]: final/public per-function projection facts
 //   - [CapturedTypes]: Flow-derived types for captured variables
 //   - [CapturedFieldAssigns]: Field assignments to captured variables
 //   - [ConstructorFields]: Instance fields collected from constructors
 //
-// Projection products are keyed by a (graph, parent-scope) [GraphKey]; module-wide
-// products use [ModuleFactsKey].
+// Projection lanes are keyed by a (graph, parent-scope) [GraphKey]; module-wide
+// lanes use [ModuleFactsKey].
 //
 // # Function References
 //

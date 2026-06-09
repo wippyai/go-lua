@@ -23,22 +23,22 @@ func TestRefinementEqual(t *testing.T) {
 	}
 }
 
-func TestProjectionProductMapEqual(t *testing.T) {
-	if !ProjectionProductMapEqual(nil, nil) {
+func TestFunctionFactMapsEqual(t *testing.T) {
+	if !FunctionFactMapsEqual(nil, nil) {
 		t.Fatal("two nil fact maps should be equal")
 	}
-	if !ProjectionProductMapEqual(map[api.GraphKey]ProjectionProduct{}, map[api.GraphKey]ProjectionProduct{}) {
+	if !FunctionFactMapsEqual(map[api.GraphKey]api.FunctionFacts{}, map[api.GraphKey]api.FunctionFacts{}) {
 		t.Fatal("two empty fact maps should be equal")
 	}
-	a := map[api.GraphKey]ProjectionProduct{{GraphID: 1}: {}}
-	b := map[api.GraphKey]ProjectionProduct{}
-	if ProjectionProductMapEqual(a, b) {
+	a := map[api.GraphKey]api.FunctionFacts{{GraphID: 1}: {}}
+	b := map[api.GraphKey]api.FunctionFacts{}
+	if FunctionFactMapsEqual(a, b) {
 		t.Fatal("maps of different length should differ")
 	}
 }
 
-func TestWidenProjectionProductMap_Empty(t *testing.T) {
-	result := WidenProjectionProductMap(nil, nil)
+func TestWidenFunctionFactMaps_Empty(t *testing.T) {
+	result := WidenFunctionFactMaps(nil, nil)
 	if result == nil {
 		t.Fatal("expected non-nil result")
 	}
@@ -47,72 +47,62 @@ func TestWidenProjectionProductMap_Empty(t *testing.T) {
 	}
 }
 
-func TestWidenProjectionProductMap_OnlyPrev(t *testing.T) {
-	prev := map[api.GraphKey]ProjectionProduct{
+func TestWidenFunctionFactMaps_OnlyPrev(t *testing.T) {
+	prev := map[api.GraphKey]api.FunctionFacts{
 		{GraphID: 1}: {
-			FunctionFacts: api.FunctionFacts{
-				1: {Returns: api.FunctionReturnProjection{Preflow: product.LiftVector([]typ.Type{typ.String})}},
-			},
+			1: {Returns: api.FunctionReturnProjection{Preflow: product.LiftVector([]typ.Type{typ.String})}},
 		},
 	}
-	result := WidenProjectionProductMap(prev, nil)
+	result := WidenFunctionFactMaps(prev, nil)
 	if len(result) != 1 {
 		t.Fatalf("expected 1 entry, got %d", len(result))
 	}
 }
 
-func TestWidenProjectionProductMap_OnlyNext(t *testing.T) {
-	next := map[api.GraphKey]ProjectionProduct{
+func TestWidenFunctionFactMaps_OnlyNext(t *testing.T) {
+	next := map[api.GraphKey]api.FunctionFacts{
 		{GraphID: 1}: {
-			FunctionFacts: api.FunctionFacts{
-				1: {Returns: api.FunctionReturnProjection{Preflow: product.LiftVector([]typ.Type{typ.Number})}},
-			},
+			1: {Returns: api.FunctionReturnProjection{Preflow: product.LiftVector([]typ.Type{typ.Number})}},
 		},
 	}
-	result := WidenProjectionProductMap(nil, next)
+	result := WidenFunctionFactMaps(nil, next)
 	if len(result) != 1 {
 		t.Fatalf("expected 1 entry, got %d", len(result))
 	}
 }
 
-func TestWidenProjectionProductMap_NormalizesNewFacts(t *testing.T) {
+func TestWidenCapturedFieldAssignMaps_NormalizesNewFacts(t *testing.T) {
 	fn := typ.Func().Param("value", typ.Unknown).Build()
 	key := api.GraphKey{GraphID: 1, ParentHash: 2}
-	next := map[api.GraphKey]ProjectionProduct{
+	next := map[api.GraphKey]api.CapturedFieldAssigns{
 		key: {
-			CapturedFields: api.CapturedFieldAssigns{
-				cfg.SymbolID(10): {
-					cfg.SymbolID(20): {
-						fieldKey("after_all"): product.FromType(typ.NewOptional(fn)),
-					},
+			cfg.SymbolID(10): {
+				cfg.SymbolID(20): {
+					fieldKey("after_all"): product.FromType(typ.NewOptional(fn)),
 				},
 			},
 		},
 	}
 
-	result := WidenProjectionProductMap(nil, next)
-	got := result[key].CapturedFields[cfg.SymbolID(10)][cfg.SymbolID(20)][fieldKey("after_all")].ProjectValue()
+	result := WidenCapturedFieldAssignMaps(nil, next)
+	got := result[key][cfg.SymbolID(10)][cfg.SymbolID(20)][fieldKey("after_all")].ProjectValue()
 	if !typ.TypeEquals(got, fn) {
-		t.Fatalf("expected new facts to be normalized through WidenProjectionProduct, got %v", got)
+		t.Fatalf("expected new facts to be normalized through WidenCapturedFieldAssignMaps, got %v", got)
 	}
 }
 
-func TestWidenProjectionProductMap_Merge(t *testing.T) {
-	prev := map[api.GraphKey]ProjectionProduct{
+func TestWidenFunctionFactMaps_Merge(t *testing.T) {
+	prev := map[api.GraphKey]api.FunctionFacts{
 		{GraphID: 1}: {
-			FunctionFacts: api.FunctionFacts{
-				1: {Returns: api.FunctionReturnProjection{Preflow: product.LiftVector([]typ.Type{typ.String})}},
-			},
+			1: {Returns: api.FunctionReturnProjection{Preflow: product.LiftVector([]typ.Type{typ.String})}},
 		},
 	}
-	next := map[api.GraphKey]ProjectionProduct{
+	next := map[api.GraphKey]api.FunctionFacts{
 		{GraphID: 2}: {
-			FunctionFacts: api.FunctionFacts{
-				1: {Returns: api.FunctionReturnProjection{Preflow: product.LiftVector([]typ.Type{typ.Number})}},
-			},
+			1: {Returns: api.FunctionReturnProjection{Preflow: product.LiftVector([]typ.Type{typ.Number})}},
 		},
 	}
-	result := WidenProjectionProductMap(prev, next)
+	result := WidenFunctionFactMaps(prev, next)
 	if len(result) != 2 {
 		t.Fatalf("expected 2 entries, got %d", len(result))
 	}

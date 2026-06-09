@@ -17,14 +17,14 @@ func collectCanonicalFunctionFactSymbols(factSets ...api.FunctionFacts) []cfg.Sy
 	return symbols.Slice()
 }
 
-func readFunctionFactFromProduct(facts *ProjectionProduct, sym cfg.SymbolID) api.FunctionFact {
-	if facts == nil || sym == 0 {
+func readFunctionFact(facts api.FunctionFacts, sym cfg.SymbolID) api.FunctionFact {
+	if sym == 0 {
 		return api.FunctionFact{}
 	}
-	if facts.FunctionFacts == nil {
+	if facts == nil {
 		return api.FunctionFact{}
 	}
-	ff, ok := facts.FunctionFacts[sym]
+	ff, ok := facts[sym]
 	if !ok {
 		return api.FunctionFact{}
 	}
@@ -34,23 +34,15 @@ func readFunctionFactFromProduct(facts *ProjectionProduct, sym cfg.SymbolID) api
 	return api.FunctionFact{}
 }
 
-func writeNormalizedFunctionFactToProduct(facts *ProjectionProduct, sym cfg.SymbolID, ff api.FunctionFact) {
+func writeNormalizedFunctionFact(facts api.FunctionFacts, sym cfg.SymbolID, ff api.FunctionFact) {
 	if facts == nil || sym == 0 {
 		return
 	}
 	ff = functionfact.Normalize(ff)
 
 	if functionfact.Empty(ff) {
-		if facts.FunctionFacts != nil {
-			delete(facts.FunctionFacts, sym)
-			if len(facts.FunctionFacts) == 0 {
-				facts.FunctionFacts = nil
-			}
-		}
+		delete(facts, sym)
 	} else {
-		if facts.FunctionFacts == nil {
-			facts.FunctionFacts = make(api.FunctionFacts)
-		}
-		facts.FunctionFacts[sym] = ff
+		facts[sym] = ff
 	}
 }

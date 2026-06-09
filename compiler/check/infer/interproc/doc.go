@@ -1,4 +1,4 @@
-// Package interproc handles the postflow projection fact product.
+// Package interproc handles postflow projection lane extraction.
 //
 // This package processes analysis results after noncanonical flow analysis converges,
 // extracting projection facts for noncanonical compatibility/export paths. Canonical
@@ -21,6 +21,6 @@
 //
 // # Integration
 //
-// This package connects per-function flow analysis with the projection product
+// This package connects per-function flow analysis with postflow projection
 // iteration that resolves noncanonical cross-function dependencies.
 package interproc

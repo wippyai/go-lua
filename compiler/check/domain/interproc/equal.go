@@ -8,23 +8,6 @@ import (
 	"github.com/wippyai/go-lua/types/domain/value/product"
 )
 
-// ProjectionProductEqual checks whether two postflow projection products are equal.
-func ProjectionProductEqual(a, b ProjectionProduct) bool {
-	if !FunctionFactsEqual(a.FunctionFacts, b.FunctionFacts) {
-		return false
-	}
-	if !symbolTypeMapEqual(a.CapturedTypes, b.CapturedTypes) {
-		return false
-	}
-	if !CapturedFieldAssignsEqual(a.CapturedFields, b.CapturedFields) {
-		return false
-	}
-	if !ConstructorFieldsEqual(a.ConstructorFields, b.ConstructorFields) {
-		return false
-	}
-	return true
-}
-
 // FunctionFactsEqual checks if two FunctionFacts projection maps are equal.
 func FunctionFactsEqual(a, b api.FunctionFacts) bool {
 	if len(a) != len(b) {
@@ -43,7 +26,7 @@ func FunctionFactsEqual(a, b api.FunctionFacts) bool {
 	return true
 }
 
-// FunctionFactEqual checks one FunctionFacts projection product slot. The vector
+// FunctionFactEqual checks one FunctionFacts projection lane slot. The vector
 // carriers are interned product.AbstractValue, so their convergence no-op
 // equality is the value-domain product.Equal per slot (pointer-fast through
 // interning), the same relation the flow store uses for its fixpoint.
@@ -87,6 +70,11 @@ func symbolTypeMapEqual(a map[cfg.SymbolID]product.AbstractValue, b map[cfg.Symb
 		}
 	}
 	return true
+}
+
+// CapturedTypesEqual checks whether two captured-type lane maps are equal.
+func CapturedTypesEqual(a, b api.CapturedTypes) bool {
+	return symbolTypeMapEqual(a, b)
 }
 
 // CapturedFieldAssignsEqual checks if two captured field assignment maps are equal.

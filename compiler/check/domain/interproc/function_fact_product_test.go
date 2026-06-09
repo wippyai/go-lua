@@ -11,27 +11,23 @@ import (
 	"github.com/wippyai/go-lua/types/typ"
 )
 
-func TestJoinProjectionProduct_BatchMergeFunctionFacts(t *testing.T) {
+func TestJoinFunctionFacts_BatchMerge(t *testing.T) {
 	symSummary := cfg.SymbolID(21)
 	symNarrow := cfg.SymbolID(22)
 	symFunc := cfg.SymbolID(23)
 	funcType := typ.Func().Returns(typ.Boolean).Build()
 
-	facts := JoinProjectionProduct(
-		ProjectionProduct{
-			FunctionFacts: api.FunctionFacts{
-				symSummary: {Returns: api.FunctionReturnProjection{Preflow: product.LiftVector([]typ.Type{typ.String})}},
-				symNarrow:  {Returns: api.FunctionReturnProjection{Postflow: product.LiftVector([]typ.Type{typ.Number})}},
-			},
+	facts := JoinFunctionFacts(
+		api.FunctionFacts{
+			symSummary: {Returns: api.FunctionReturnProjection{Preflow: product.LiftVector([]typ.Type{typ.String})}},
+			symNarrow:  {Returns: api.FunctionReturnProjection{Postflow: product.LiftVector([]typ.Type{typ.Number})}},
 		},
-		ProjectionProduct{
-			FunctionFacts: api.FunctionFacts{
-				symFunc: {Public: api.FunctionPublicProjection{Signature: funcType}},
-			},
+		api.FunctionFacts{
+			symFunc: {Public: api.FunctionPublicProjection{Signature: funcType}},
 		},
 	)
 
-	view := functionfact.FactsProjection(facts.FunctionFacts)
+	view := functionfact.FactsProjection(facts)
 	if got := view.ReturnSummary(symSummary); !returnsummary.Equal(got, []typ.Type{typ.String}) {
 		t.Fatalf("summary mismatch: got %v", got)
 	}

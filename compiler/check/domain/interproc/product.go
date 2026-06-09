@@ -9,55 +9,43 @@ import (
 	"github.com/wippyai/go-lua/types/typ/unwrap"
 )
 
-// WidenProjectionProduct merges two postflow projection products at an
-// iteration boundary.
-func WidenProjectionProduct(prev, next ProjectionProduct) ProjectionProduct {
-	if ProjectionProductEqual(prev, next) {
+// WidenFunctionFacts merges projected function facts at an iteration boundary.
+func WidenFunctionFacts(prev, next api.FunctionFacts) api.FunctionFacts {
+	if FunctionFactsEqual(prev, next) {
 		return prev
 	}
-	widening := value.NewConvergenceWidening()
-	out := ProjectionProduct{
-		CapturedTypes:     widenCapturedTypesWith(widening, prev.CapturedTypes, next.CapturedTypes),
-		CapturedFields:    widenCapturedFieldAssignsWith(widening, prev.CapturedFields, next.CapturedFields),
-		ConstructorFields: widenConstructorFieldsWith(widening, prev.ConstructorFields, next.ConstructorFields),
-	}
-
-	symbols := collectCanonicalFunctionFactSymbols(prev.FunctionFacts, next.FunctionFacts)
+	symbols := collectCanonicalFunctionFactSymbols(prev, next)
 	if len(symbols) == 0 {
-		return out
+		return nil
 	}
 
-	out.FunctionFacts = make(api.FunctionFacts, len(symbols))
+	out := make(api.FunctionFacts, len(symbols))
 	for _, sym := range symbols {
-		prevFact := readFunctionFactFromProduct(&prev, sym)
-		nextFact := readFunctionFactFromProduct(&next, sym)
-		writeNormalizedFunctionFactToProduct(&out, sym, functionfact.WidenForConvergence(prevFact, nextFact))
+		prevFact := readFunctionFact(prev, sym)
+		nextFact := readFunctionFact(next, sym)
+		writeNormalizedFunctionFact(out, sym, functionfact.WidenForConvergence(prevFact, nextFact))
 	}
-	if len(out.FunctionFacts) == 0 {
-		out.FunctionFacts = nil
+	if len(out) == 0 {
+		return nil
 	}
 	return out
 }
 
-// JoinProjectionProduct performs a precise same-iteration merge of postflow
-// projection products.
-// Unlike WidenProjectionProduct, this may keep directional refinements that are useful
-// inside one analysis round. Recursive fixpoint boundaries must use WidenProjectionProduct.
-func JoinProjectionProduct(prev, next ProjectionProduct) ProjectionProduct {
-	out := ProjectionProduct{
-		CapturedTypes:     JoinCapturedTypes(prev.CapturedTypes, next.CapturedTypes),
-		CapturedFields:    JoinCapturedFieldAssigns(prev.CapturedFields, next.CapturedFields),
-		ConstructorFields: JoinConstructorFields(prev.ConstructorFields, next.ConstructorFields),
+// JoinFunctionFacts performs a precise same-iteration merge of projected
+// function facts. Recursive fixpoint boundaries must use WidenFunctionFacts.
+func JoinFunctionFacts(prev, next api.FunctionFacts) api.FunctionFacts {
+	symbols := collectCanonicalFunctionFactSymbols(prev, next)
+	if len(symbols) == 0 {
+		return nil
 	}
-
-	symbols := collectCanonicalFunctionFactSymbols(prev.FunctionFacts, next.FunctionFacts)
-	if len(symbols) > 0 {
-		out.FunctionFacts = make(api.FunctionFacts, len(symbols))
-	}
+	out := make(api.FunctionFacts, len(symbols))
 	for _, sym := range symbols {
-		prevFact := readFunctionFactFromProduct(&prev, sym)
-		nextFact := readFunctionFactFromProduct(&next, sym)
-		writeNormalizedFunctionFactToProduct(&out, sym, functionfact.JoinCanonical(prevFact, nextFact))
+		prevFact := readFunctionFact(prev, sym)
+		nextFact := readFunctionFact(next, sym)
+		writeNormalizedFunctionFact(out, sym, functionfact.JoinCanonical(prevFact, nextFact))
+	}
+	if len(out) == 0 {
+		return nil
 	}
 	return out
 }

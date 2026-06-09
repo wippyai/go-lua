@@ -49,7 +49,7 @@ func TestCanonicalProductionDoesNotUsePostflowProjectionState(t *testing.T) {
 		text := string(data)
 		for _, token := range banned {
 			if strings.Contains(text, token) {
-				t.Errorf("%s uses postflow projection product token %q", path, token)
+				t.Errorf("%s uses postflow projection lane token %q", path, token)
 			}
 		}
 		if strings.Contains(text, "FunctionFacts") && !functionFactsAllowed[path] {
@@ -132,11 +132,11 @@ func TestCheckerProductionDoesNotPeekPostflowProjectionState(t *testing.T) {
 		text := string(data)
 		for _, token := range banned {
 			if strings.Contains(text, token) {
-				t.Errorf("%s peeks projection-product state through %q", path, token)
+				t.Errorf("%s peeks postflow projection state through %q", path, token)
 			}
 		}
 		if strings.Contains(text, "PostflowProjection") && strings.Contains(text, ".Facts[") {
-			t.Errorf("%s peeks projection-product Facts map", path)
+			t.Errorf("%s peeks postflow projection lane map", path)
 		}
 		return nil
 	})

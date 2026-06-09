@@ -10,7 +10,7 @@
 // The store holds:
 //   - Built CFGs indexed by graph ID
 //   - Analysis results (types, flow facts, diagnostics) per function
-//   - Postflow/export projection fact products
+//   - Postflow/export projection lanes
 //   - Final Summary-derived FunctionFacts projections for export/public APIs
 //   - Module-level bindings and alias maps
 //   - Query-tracked projection fact inputs for precise function-result
@@ -19,12 +19,12 @@
 // # Session Integration
 //
 // The store implements [api.StoreReader] and [api.IterationStore] interfaces.
-// Canonical checking receives only [api.CanonicalStore], which excludes projection
-// product reads and projection iteration writes.
+// Canonical checking receives only [api.CanonicalStore], which excludes postflow
+// projection reads and iteration writes.
 //
-// # Projection Product Visibility
+// # Projection Lane Visibility
 //
-// During projection-product fixpoint iteration, the store exposes the visible product: the
-// stable product from completed iterations overlaid with facts already produced
-// in the current iteration. Query inputs track that visible product per graph key.
+// During postflow projection iteration, the store exposes visible lane values: the
+// stable lanes from completed iterations overlaid with facts already produced in
+// the current iteration. Query inputs track visible lane values per graph key.
 package store

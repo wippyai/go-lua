@@ -6,61 +6,150 @@ import (
 	"github.com/wippyai/go-lua/types/constraint"
 )
 
-// Empty reports whether a postflow projection product carries no compatibility
-// evidence.
-func ProjectionProductEmpty(f ProjectionProduct) bool {
-	return len(f.FunctionFacts) == 0 &&
-		len(f.CapturedTypes) == 0 &&
-		len(f.CapturedFields) == 0 &&
-		len(f.ConstructorFields) == 0
-}
-
-// ProjectionProductMapEqual compares graph-keyed postflow projection products.
-func ProjectionProductMapEqual(a, b map[api.GraphKey]ProjectionProduct) bool {
+// FunctionFactMapsEqual compares graph-keyed function-fact projection lanes.
+func FunctionFactMapsEqual(a, b map[api.GraphKey]api.FunctionFacts) bool {
 	if len(a) != len(b) {
 		return false
 	}
 	for _, key := range api.SortedGraphKeys(a) {
-		if !ProjectionProductEqual(a[key], b[key]) {
+		if !FunctionFactsEqual(a[key], b[key]) {
 			return false
 		}
 	}
 	return true
 }
 
-// WidenProjectionProductMap merges a next iteration fact map into the stable projection product
-// using the product widening policy for each graph key.
-func WidenProjectionProductMap(prev, next map[api.GraphKey]ProjectionProduct) map[api.GraphKey]ProjectionProduct {
+// WidenFunctionFactMaps merges next-iteration function-fact projections into
+// the stable lane.
+func WidenFunctionFactMaps(prev, next map[api.GraphKey]api.FunctionFacts) map[api.GraphKey]api.FunctionFacts {
 	if len(prev) == 0 && len(next) == 0 {
-		return make(map[api.GraphKey]ProjectionProduct)
+		return make(map[api.GraphKey]api.FunctionFacts)
 	}
-	out := make(map[api.GraphKey]ProjectionProduct, len(prev)+len(next))
+	out := make(map[api.GraphKey]api.FunctionFacts, len(prev)+len(next))
 	for _, key := range api.SortedGraphKeys(prev) {
 		out[key] = prev[key]
 	}
 	for _, key := range api.SortedGraphKeys(next) {
 		if existing, ok := out[key]; ok {
-			out[key] = WidenProjectionProduct(existing, next[key])
+			out[key] = WidenFunctionFacts(existing, next[key])
 		} else {
-			out[key] = WidenProjectionProduct(ProjectionProduct{}, next[key])
+			out[key] = WidenFunctionFacts(nil, next[key])
 		}
 	}
 	return out
 }
 
-// OverlayProjectionProduct returns projection facts visible during an iteration from a stable
-// previous product and same-iteration next facts. The visible product crosses an
-// SCC iteration boundary, so it uses the same finite-height convergence law as
-// the boundary swap rather than the precise delta join.
-func OverlayProjectionProduct(prev, next ProjectionProduct) ProjectionProduct {
+// OverlayFunctionFacts returns projection facts visible during an iteration.
+// The visible lane crosses an SCC iteration boundary, so it uses the same
+// finite-height convergence law as the boundary swap.
+func OverlayFunctionFacts(prev, next api.FunctionFacts) api.FunctionFacts {
 	switch {
-	case ProjectionProductEmpty(prev):
+	case len(prev) == 0:
 		return next
-	case ProjectionProductEmpty(next):
+	case len(next) == 0:
 		return prev
 	default:
-		return WidenProjectionProduct(prev, next)
+		return WidenFunctionFacts(prev, next)
 	}
+}
+
+// CapturedTypeMapsEqual compares graph-keyed captured-type projection lanes.
+func CapturedTypeMapsEqual(a, b map[api.GraphKey]api.CapturedTypes) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for _, key := range api.SortedGraphKeys(a) {
+		if !symbolTypeMapEqual(a[key], b[key]) {
+			return false
+		}
+	}
+	return true
+}
+
+// WidenCapturedTypeMaps merges next-iteration captured-type projections into
+// the stable lane.
+func WidenCapturedTypeMaps(prev, next map[api.GraphKey]api.CapturedTypes) map[api.GraphKey]api.CapturedTypes {
+	if len(prev) == 0 && len(next) == 0 {
+		return make(map[api.GraphKey]api.CapturedTypes)
+	}
+	out := make(map[api.GraphKey]api.CapturedTypes, len(prev)+len(next))
+	for _, key := range api.SortedGraphKeys(prev) {
+		out[key] = prev[key]
+	}
+	for _, key := range api.SortedGraphKeys(next) {
+		if existing, ok := out[key]; ok {
+			out[key] = WidenCapturedTypes(existing, next[key])
+		} else {
+			out[key] = WidenCapturedTypes(nil, next[key])
+		}
+	}
+	return out
+}
+
+// CapturedFieldAssignMapsEqual compares graph-keyed captured-field projection lanes.
+func CapturedFieldAssignMapsEqual(a, b map[api.GraphKey]api.CapturedFieldAssigns) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for _, key := range api.SortedGraphKeys(a) {
+		if !CapturedFieldAssignsEqual(a[key], b[key]) {
+			return false
+		}
+	}
+	return true
+}
+
+// WidenCapturedFieldAssignMaps merges next-iteration captured-field projections
+// into the stable lane.
+func WidenCapturedFieldAssignMaps(prev, next map[api.GraphKey]api.CapturedFieldAssigns) map[api.GraphKey]api.CapturedFieldAssigns {
+	if len(prev) == 0 && len(next) == 0 {
+		return make(map[api.GraphKey]api.CapturedFieldAssigns)
+	}
+	out := make(map[api.GraphKey]api.CapturedFieldAssigns, len(prev)+len(next))
+	for _, key := range api.SortedGraphKeys(prev) {
+		out[key] = prev[key]
+	}
+	for _, key := range api.SortedGraphKeys(next) {
+		if existing, ok := out[key]; ok {
+			out[key] = WidenCapturedFieldAssigns(existing, next[key])
+		} else {
+			out[key] = WidenCapturedFieldAssigns(nil, next[key])
+		}
+	}
+	return out
+}
+
+// ConstructorFieldMapsEqual compares graph-keyed constructor-field projection lanes.
+func ConstructorFieldMapsEqual(a, b map[api.GraphKey]api.ConstructorFields) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for _, key := range api.SortedGraphKeys(a) {
+		if !ConstructorFieldsEqual(a[key], b[key]) {
+			return false
+		}
+	}
+	return true
+}
+
+// WidenConstructorFieldMaps merges next-iteration constructor-field projections
+// into the stable lane.
+func WidenConstructorFieldMaps(prev, next map[api.GraphKey]api.ConstructorFields) map[api.GraphKey]api.ConstructorFields {
+	if len(prev) == 0 && len(next) == 0 {
+		return make(map[api.GraphKey]api.ConstructorFields)
+	}
+	out := make(map[api.GraphKey]api.ConstructorFields, len(prev)+len(next))
+	for _, key := range api.SortedGraphKeys(prev) {
+		out[key] = prev[key]
+	}
+	for _, key := range api.SortedGraphKeys(next) {
+		if existing, ok := out[key]; ok {
+			out[key] = WidenConstructorFields(existing, next[key])
+		} else {
+			out[key] = WidenConstructorFields(nil, next[key])
+		}
+	}
+	return out
 }
 
 // RefinementEqual compares two refinement summaries.

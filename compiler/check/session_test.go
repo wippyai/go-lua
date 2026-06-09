@@ -397,7 +397,7 @@ func TestSessionStore_ProductMaps(t *testing.T) {
 	store := store.NewSessionStore()
 
 	if !store.PostflowProjectionStateInitialized() {
-		t.Error("projection-product owner should be initialized")
+		t.Error("postflow projection owner should be initialized")
 	}
 }
 

@@ -14,7 +14,7 @@
 //	CanonicalStore  - Canonical-owned metadata plus final fact projection
 //	NestedStore     - StoreReader required by nested metadata consumers
 //	PostflowProjectionStore - Explicit noncanonical postflow projection boundary
-//	IterationStore  - Full mutation capability for projection-product fixpoint paths
+//	IterationStore  - Full mutation capability for postflow projection lanes
 package api
 
 import (
@@ -85,7 +85,7 @@ type FunctionRefs interface {
 }
 
 // StoreReader is the read contract shared by normal checker phases. It
-// intentionally excludes postflow projection product reads; callers that need final
+// intentionally excludes postflow projection lane reads; callers that need final
 // function facts should request FunctionFactProjectionReader, and noncanonical postflow
 // code should request PostflowProjectionStore explicitly.
 type StoreReader interface {
@@ -98,7 +98,7 @@ type StoreReader interface {
 }
 
 // PostflowProjectionReader exposes typed reads from the noncanonical postflow
-// projection product. It is not a canonical Summary read surface.
+// projection lanes. It is not a canonical Summary read surface.
 type PostflowProjectionReader interface {
 	CapturedTypeProjection(graph *cfg.Graph, parent *scope.State, sym cfg.SymbolID) (typ.Type, bool)
 	CapturedFieldAssignsProjection(graph *cfg.Graph, parent *scope.State) CapturedFieldAssigns
@@ -106,7 +106,7 @@ type PostflowProjectionReader interface {
 }
 
 // PostflowProjectionSink provides typed write access to per-iteration projection
-// lanes. The store owns lowering these lanes into the internal product lattice.
+// lanes. The store owns same-iteration joins and fixpoint widening for each lane.
 type PostflowProjectionSink interface {
 	MergeFunctionFactProjection(key GraphKey, sym cfg.SymbolID, fact FunctionFact)
 	MergeCapturedTypeProjection(key GraphKey, sym cfg.SymbolID, value product.AbstractValue)
@@ -115,7 +115,7 @@ type PostflowProjectionSink interface {
 }
 
 // CanonicalFunctionFactProjectionSink installs final Summary-derived FunctionFacts
-// without participating in the projection-product iteration product.
+// without participating in postflow projection iteration.
 type CanonicalFunctionFactProjectionSink interface {
 	SetCanonicalFunctionFactsProjection(facts map[GraphKey]FunctionFacts)
 }
@@ -130,7 +130,7 @@ type FunctionFactProjectionReader interface {
 // CanonicalStore is the store surface the canonical summary engine is allowed to
 // use: module binding publication, graph-parent publication, parent-key lookup,
 // and final Summary-derived FunctionFacts projection. It intentionally excludes
-// projection-product iteration and visible postflow projection-product reads.
+// postflow projection iteration and visible postflow projection lane reads.
 type CanonicalStore interface {
 	CanonicalFunctionFactProjectionSink
 
