@@ -339,7 +339,8 @@ func (t *Transfer) narrowLiteralEqualityPath(out *flow.PointState, access ast.Ex
 	if root == nil {
 		return false
 	}
-	target, ok := readFieldPath(root, basePath.Segments)
+	lens := structuralPath(basePath.Segments)
+	target, ok := lens.Read(root)
 	if !ok || target == nil {
 		return false
 	}
@@ -347,7 +348,7 @@ func (t *Transfer) narrowLiteralEqualityPath(out *flow.PointState, access ast.Ex
 	if !ok {
 		return false
 	}
-	rewritten := refineAtPath(root, basePath.Segments, func(typ.Type) typ.Type { return refined })
+	rewritten := lens.Refine(root, func(typ.Type) typ.Type { return refined })
 	if rewritten == nil || typ.TypeEquals(rewritten, root) {
 		return false
 	}

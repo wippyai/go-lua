@@ -2292,7 +2292,8 @@ func (t *Transfer) narrowByMemberDiscriminant(out flow.PointState, g discriminan
 	if root == nil {
 		return out, false
 	}
-	union, ok := readFieldPath(root, g.prefix)
+	lens := structuralPath(g.prefix)
+	union, ok := lens.Read(root)
 	if !ok || union == nil {
 		return out, false
 	}
@@ -2301,7 +2302,7 @@ func (t *Transfer) narrowByMemberDiscriminant(out flow.PointState, g discriminan
 	if !ok {
 		return out, false
 	}
-	rewritten := refineAtPath(root, g.prefix, func(typ.Type) typ.Type { return refined })
+	rewritten := lens.Refine(root, func(typ.Type) typ.Type { return refined })
 	if rewritten == nil || rewritten == root {
 		return out, false
 	}
@@ -2324,13 +2325,14 @@ func (t *Transfer) discriminantPathBase(sym cfg.SymbolID, av product.AbstractVal
 	if len(prefix) == 0 {
 		return t.discriminantBase(sym, av)
 	}
+	lens := structuralPath(prefix)
 	if !av.IsZero() {
-		if pathHasMultiUnion(av.ProjectValue(), prefix) {
+		if lens.HasMultiUnion(av.ProjectValue()) {
 			return av, true
 		}
 	}
 	if declared, ok := t.declaredTypes[sym]; ok && declared != nil && !typ.IsAbsentOrUnknown(declared) {
-		if pathHasMultiUnion(declared, prefix) {
+		if lens.HasMultiUnion(declared) {
 			return product.FromType(declared), true
 		}
 	}
@@ -2338,15 +2340,6 @@ func (t *Transfer) discriminantPathBase(sym cfg.SymbolID, av product.AbstractVal
 		return av, true
 	}
 	return t.narrowBase(sym, av, false)
-}
-
-func pathHasMultiUnion(root typ.Type, prefix []constraint.Segment) bool {
-	target, ok := readFieldPath(root, prefix)
-	if !ok || target == nil {
-		return false
-	}
-	u := unwrap.Union(target)
-	return u != nil && len(u.Members) > 1
 }
 
 // narrowDiscriminantUnion refines a discriminated union by a literal on its tag field:
@@ -2373,83 +2366,6 @@ func narrowDiscriminantUnion(base typ.Type, field string, lit *typ.Literal, incl
 		return nil, false
 	}
 	return refined, true
-}
-
-// readFieldPath resolves the type at a field path inside t, descending each static
-// field/string-index segment via the value-domain field resolver. An empty path returns
-// t. A segment that does not resolve (a non-record value, a missing field, an index
-// segment) reports ok=false so the caller declines.
-func readFieldPath(t typ.Type, segments []constraint.Segment) (typ.Type, bool) {
-	cur := t
-	for _, seg := range segments {
-		if cur == nil {
-			return nil, false
-		}
-		switch seg.Kind {
-		case constraint.SegmentField:
-			ft, ok := fieldResolver.Field(cur, seg.Name)
-			if !ok || ft == nil {
-				return nil, false
-			}
-			cur = ft
-		case constraint.SegmentIndexString:
-			it, ok := fieldResolver.Index(cur, typ.LiteralString(seg.Name))
-			if !ok || it == nil {
-				return nil, false
-			}
-			cur = it
-		case constraint.SegmentIndexInt:
-			it, ok := fieldResolver.Index(cur, typ.LiteralInt(int64(seg.Index)))
-			if !ok || it == nil {
-				return nil, false
-			}
-			cur = it
-		default:
-			return nil, false
-		}
-	}
-	return cur, true
-}
-
-// refineAtPath rebuilds t with the value at field path segments replaced by
-// refine(value), descending each static field/string-index segment and reusing the same
-// per-member record rebuild mapUnionField applies for the leaf-field narrowing. A
-// single-segment path applies refine to that field directly; a deeper path recurses into
-// the field's value. It is the write-back counterpart of readFieldPath, used to install a
-// member-path discriminant's narrowed union back into its enclosing record. An empty path
-// applies refine to t itself.
-func refineAtPath(t typ.Type, segments []constraint.Segment, refine func(typ.Type) typ.Type) typ.Type {
-	if len(segments) == 0 {
-		return refine(t)
-	}
-	seg := segments[0]
-	switch seg.Kind {
-	case constraint.SegmentField, constraint.SegmentIndexString:
-		if len(segments) == 1 {
-			return mapUnionField(t, seg.Name, refine, false)
-		}
-		return mapUnionField(t, seg.Name, func(ft typ.Type) typ.Type {
-			return refineAtPath(ft, segments[1:], refine)
-		}, false)
-	case constraint.SegmentIndexInt:
-		tuple, ok := unwrap.Alias(t).(*typ.Tuple)
-		if !ok {
-			return t
-		}
-		idx := seg.Index - 1
-		if idx < 0 || idx >= len(tuple.Elements) {
-			return t
-		}
-		next := refineAtPath(tuple.Elements[idx], segments[1:], refine)
-		if next == nil || typ.TypeEquals(next, tuple.Elements[idx]) {
-			return t
-		}
-		elems := append([]typ.Type(nil), tuple.Elements...)
-		elems[idx] = next
-		return typ.NewTuple(elems...)
-	default:
-		return t
-	}
 }
 
 // discriminantBase selects the value a discriminant guard refines for sym. The

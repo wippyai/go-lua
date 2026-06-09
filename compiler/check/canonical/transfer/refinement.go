@@ -101,7 +101,7 @@ func (t *Transfer) applyRefinementEffect(out *flow.PointState, effect Refinement
 		if !has {
 			return false
 		}
-		refined := refineAtPath(base.ProjectValue(), path.Segments, func(typ.Type) typ.Type {
+		refined := structuralPath(path.Segments).Refine(base.ProjectValue(), func(typ.Type) typ.Type {
 			return effect.Target
 		})
 		if refined == nil {
@@ -145,7 +145,7 @@ func (t *Transfer) applyLengthLowerBoundRefinement(out *flow.PointState, place P
 	if len(path.Segments) == 0 {
 		refined = product.NarrowLengthLowerBound(base, lower)
 	} else {
-		refinedType := refineAtPath(base.ProjectValue(), path.Segments, func(slot typ.Type) typ.Type {
+		refinedType := structuralPath(path.Segments).Refine(base.ProjectValue(), func(slot typ.Type) typ.Type {
 			return narrow.RefineByLengthLowerBound(slot, lower)
 		})
 		if refinedType == nil {

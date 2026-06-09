@@ -878,7 +878,7 @@ func TestNarrowLengthGuardRefinesNilableFieldContainerAndLiteralIndexRead(t *tes
 	}
 }
 
-func TestReadFieldPathDispatchesBySegmentKind(t *testing.T) {
+func TestStructuralPathLensReadDispatchesBySegmentKind(t *testing.T) {
 	oldResolver := fieldResolver
 	fieldResolver = &querycore.FuncResolver{
 		FieldFunc: func(_ typ.Type, name string) (typ.Type, bool) {
@@ -932,11 +932,41 @@ func TestReadFieldPathDispatchesBySegmentKind(t *testing.T) {
 
 	for _, tt := range cases {
 		t.Run(tt.name, func(t *testing.T) {
-			got, ok := readFieldPath(base, []constraint.Segment{tt.seg})
+			got, ok := structuralPath([]constraint.Segment{tt.seg}).Read(base)
 			if !ok || !typ.TypeEquals(got, tt.want) {
-				t.Fatalf("readFieldPath(%v) = %v, %v; want %v,true", tt.seg, got, ok, tt.want)
+				t.Fatalf("structuralPath(%v).Read = %v, %v; want %v,true", tt.seg, got, ok, tt.want)
 			}
 		})
+	}
+}
+
+func TestStructuralPathLensRefinesNestedFieldAndTupleIndex(t *testing.T) {
+	root := typ.NewRecord().
+		Field("payload", typ.NewRecord().
+			Field("items", typ.NewTuple(typ.String, typ.Number)).
+			Build()).
+		Build()
+	lens := structuralPath([]constraint.Segment{
+		{Kind: constraint.SegmentField, Name: "payload"},
+		{Kind: constraint.SegmentField, Name: "items"},
+		{Kind: constraint.SegmentIndexInt, Index: 2},
+	})
+
+	got := lens.Refine(root, func(typ.Type) typ.Type {
+		return typ.LiteralInt(7)
+	})
+	refined, ok := lens.Read(got)
+	if !ok || !typ.TypeEquals(refined, typ.LiteralInt(7)) {
+		t.Fatalf("refined slot = %v, %v; want 7,true", refined, ok)
+	}
+
+	unchanged, ok := structuralPath([]constraint.Segment{
+		{Kind: constraint.SegmentField, Name: "payload"},
+		{Kind: constraint.SegmentField, Name: "items"},
+		{Kind: constraint.SegmentIndexInt, Index: 1},
+	}).Read(got)
+	if !ok || !typ.TypeEquals(unchanged, typ.String) {
+		t.Fatalf("sibling slot = %v, %v; want string,true", unchanged, ok)
 	}
 }
 

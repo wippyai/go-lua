@@ -50,7 +50,7 @@ func (t *Transfer) narrowByScalarLiteralComparison(out flow.PointState, info *cf
 		refine := func(ft typ.Type) typ.Type {
 			return narrowByLiteralEquality(ft, lit, includeLiteral)
 		}
-		refined := refineAtPath(base, segments, refine)
+		refined := structuralPath(segments).Refine(base, refine)
 		res := flow.ClonePointStateForEdgeFactEffect(out)
 		applied := false
 		if refined != nil && !typ.TypeEquals(refined, base) {
@@ -215,7 +215,7 @@ func narrowLiteralAtStaticSegment(t typ.Type, seg constraint.Segment, rest []Pla
 			return narrowLiteralAtPlace(ft, rest, lit, include)
 		}, !include)
 	case constraint.SegmentIndexInt:
-		return refineAtPath(t, []constraint.Segment{seg}, func(ft typ.Type) typ.Type {
+		return structuralPath([]constraint.Segment{seg}).Refine(t, func(ft typ.Type) typ.Type {
 			return narrowLiteralAtPlace(ft, rest, lit, include)
 		})
 	default:
