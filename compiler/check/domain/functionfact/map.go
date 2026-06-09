@@ -189,7 +189,7 @@ func factFromEvidence(part Evidence) api.FunctionFact {
 		Call:    api.FunctionCallProjection{Params: product.LiftVector(part.Params)},
 		Body:    api.FunctionBodyProjection{Params: product.LiftVector(part.BodyParams)},
 		Entry:   api.FunctionEntryProjection{Params: product.LiftVector(part.EntryParams)},
-		Returns: api.FunctionReturnProjection{Preflow: product.LiftVector(part.Summary), Postflow: product.LiftVector(part.Narrow)},
+		Returns: api.FunctionReturnProjection{Preflow: product.LiftVector(part.Summary), Narrow: product.LiftVector(part.Narrow)},
 		Public:  api.FunctionPublicProjection{Signature: part.Signature},
 		Effects: api.FunctionEffectProjection{Refinement: part.Refinement},
 		Export:  api.FunctionExportProjection{EnvReturns: part.EnvReturns},

@@ -6,9 +6,9 @@ import (
 	"github.com/wippyai/go-lua/types/typ"
 )
 
-// PostflowReturnSummary canonicalizes the return summary stored in the
+// NarrowReturnSummary canonicalizes the return summary stored in the
 // FunctionFact product after abstract interpretation.
-func PostflowReturnSummary(fn *ast.FunctionExpr, returns []typ.Type) []typ.Type {
+func NarrowReturnSummary(fn *ast.FunctionExpr, returns []typ.Type) []typ.Type {
 	if len(returns) == 0 {
 		return nil
 	}

@@ -31,7 +31,7 @@ func Normalize(ff api.FunctionFact) api.FunctionFact {
 		Call:    api.FunctionCallProjection{Params: product.LiftVector(paramevidence.FilterEmptyVector(paramsTypes(ff)))},
 		Body:    api.FunctionBodyProjection{Params: product.LiftVector(paramevidence.FilterEmptyBodyVector(bodyParamsTypes(ff)))},
 		Entry:   api.FunctionEntryProjection{Params: product.LiftVector(paramevidence.FilterEmptyBodyVector(entryParamsTypes(ff)))},
-		Returns: api.FunctionReturnProjection{Preflow: product.LiftVector(summary), Postflow: product.LiftVector(narrow)},
+		Returns: api.FunctionReturnProjection{Preflow: product.LiftVector(summary), Narrow: product.LiftVector(narrow)},
 		Public:  api.FunctionPublicProjection{Signature: signature},
 		Effects: api.FunctionEffectProjection{Refinement: NormalizeRefinement(ff.Effects.Refinement)},
 		Export:  api.FunctionExportProjection{EnvReturns: NormalizeEnvReturns(ff.Export.EnvReturns)},
@@ -128,12 +128,12 @@ func CanonicalSourceSignature(fn *typ.Function, hasDeclaredReturns bool) *typ.Fu
 	return builder.Build()
 }
 
-// CanonicalPostflowSignature admits a synthesized postflow function shape into
+// CanonicalNarrowSignature admits a synthesized narrowed function shape into
 // the canonical source-signature channel. Public seed parameters preserve the
 // caller contract, inferred returns are kept only when source declarations make
 // returns part of the signature, and synthetic variadics are removed for
 // non-vararg source functions.
-func CanonicalPostflowSignature(
+func CanonicalNarrowSignature(
 	observed *typ.Function,
 	publicSeed *typ.Function,
 	returns []typ.Type,
@@ -547,7 +547,7 @@ func Empty(ff api.FunctionFact) bool {
 		len(ff.Body.Params) == 0 &&
 		len(ff.Entry.Params) == 0 &&
 		len(ff.Returns.Preflow) == 0 &&
-		len(ff.Returns.Postflow) == 0 &&
+		len(ff.Returns.Narrow) == 0 &&
 		ff.Public.Signature == nil &&
 		NormalizeRefinement(ff.Effects.Refinement) == nil &&
 		len(NormalizeEnvReturns(ff.Export.EnvReturns)) == 0
@@ -584,7 +584,7 @@ func JoinCanonical(existing, candidate api.FunctionFact) api.FunctionFact {
 	if len(candidate.Returns.Preflow) > 0 {
 		summary = returnsummary.Merge(summary, summaryTypes(candidate))
 	}
-	if len(candidate.Returns.Postflow) > 0 {
+	if len(candidate.Returns.Narrow) > 0 {
 		narrow = returnsummary.Merge(narrow, narrowTypes(candidate))
 	}
 	if candidate.Public.Signature != nil {
@@ -605,7 +605,7 @@ func JoinCanonical(existing, candidate api.FunctionFact) api.FunctionFact {
 	out.Body.Params = product.LiftVector(bodyParams)
 	out.Entry.Params = product.LiftVector(entryParams)
 	out.Returns.Preflow = product.LiftVector(summary)
-	out.Returns.Postflow = product.LiftVector(narrow)
+	out.Returns.Narrow = product.LiftVector(narrow)
 
 	return out
 }
@@ -1008,7 +1008,7 @@ func WidenForConvergence(prev, next api.FunctionFact) api.FunctionFact {
 	out.Body.Params = product.LiftVector(bodyParams)
 	out.Entry.Params = product.LiftVector(entryParams)
 	out.Returns.Preflow = product.LiftVector(summary)
-	out.Returns.Postflow = product.LiftVector(narrow)
+	out.Returns.Narrow = product.LiftVector(narrow)
 
 	return out
 }

@@ -48,10 +48,10 @@ func projectionFactEntryParams(params ...typ.Type) func(*api.FunctionFact) {
 	}
 }
 
-func projectionFactReturns(preflow, postflow []typ.Type) func(*api.FunctionFact) {
+func projectionFactReturns(preflow, narrow []typ.Type) func(*api.FunctionFact) {
 	return func(ff *api.FunctionFact) {
 		ff.Returns.Preflow = product.LiftVector(preflow)
-		ff.Returns.Postflow = product.LiftVector(postflow)
+		ff.Returns.Narrow = product.LiftVector(narrow)
 	}
 }
 

@@ -6,10 +6,8 @@ import (
 
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/check"
-	"github.com/wippyai/go-lua/compiler/check/api"
 	"github.com/wippyai/go-lua/compiler/check/canonical"
 	"github.com/wippyai/go-lua/compiler/check/canonical/summary"
-	checkstore "github.com/wippyai/go-lua/compiler/check/store"
 	"github.com/wippyai/go-lua/compiler/parse"
 	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/db"
@@ -18,25 +16,6 @@ import (
 	"github.com/wippyai/go-lua/types/kind"
 	"github.com/wippyai/go-lua/types/typ"
 )
-
-type projectionFixpointSpyStore struct {
-	*checkstore.SessionStore
-	swaps int
-}
-
-func (s *projectionFixpointSpyStore) AdvancePostflowProjections() bool {
-	s.swaps++
-	return s.SessionStore.AdvancePostflowProjections()
-}
-
-type projectionFixpointSpySession struct {
-	*check.Session
-	spy *projectionFixpointSpyStore
-}
-
-func (s *projectionFixpointSpySession) CanonicalStoreHandle() api.CanonicalStore {
-	return s.spy
-}
 
 // TestCanonicalDriver_MultiFunctionModuleSummarizesEachFunction verifies that the
 // module driver runs over a small multi-function module without panic and produces
@@ -86,32 +65,6 @@ return {
 		if _, ok := driver.SummaryFor(ref); !ok {
 			t.Fatalf("function %v has no converged summary", ref)
 		}
-	}
-}
-
-func TestCanonicalDriver_DoesNotAdvancePostflowProjectionIteration(t *testing.T) {
-	const src = `
-local function get_db()
-	return 1
-end
-
-return get_db()
-`
-	chunk, err := parse.ParseString(src, "no-projection-iteration.lua")
-	if err != nil {
-		t.Fatalf("parse failed: %v", err)
-	}
-
-	base := check.New(db.NewQueryContext(db.New()), "no-projection-iteration.lua")
-	sess := &projectionFixpointSpySession{
-		Session: base,
-		spy:     &projectionFixpointSpyStore{SessionStore: base.Store},
-	}
-	driver := canonical.NewDriver(canonical.Config{})
-	driver.Run(sess, chunk)
-
-	if sess.spy.swaps != 0 {
-		t.Fatalf("canonical driver advanced postflow projection iteration %d times, want 0", sess.spy.swaps)
 	}
 }
 

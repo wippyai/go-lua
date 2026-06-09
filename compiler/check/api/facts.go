@@ -48,8 +48,8 @@ type FunctionEntryProjection struct {
 type FunctionReturnProjection struct {
 	// Preflow is the declared/pre-flow return vector.
 	Preflow []product.AbstractValue
-	// Postflow is the post-flow return vector.
-	Postflow []product.AbstractValue
+	// Narrow is the solved/narrowed return vector observed by canonical flow.
+	Narrow []product.AbstractValue
 }
 
 // FunctionPublicProjection is the source/public function-shape lane.

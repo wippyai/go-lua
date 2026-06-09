@@ -54,18 +54,6 @@ func CanonicalStoreProjection(store api.StoreReader, defaultParent *scope.State)
 	return StoreView{store: store, projection: projection, defaultParent: defaultParent}
 }
 
-// PostflowStoreProjection returns a normalized view over the noncanonical
-// postflow function-fact lane.
-func PostflowStoreProjection(store api.StoreReader, defaultParent *scope.State) StoreView {
-	var projection func(*cfg.Graph, *scope.State, cfg.SymbolID) (api.FunctionFact, bool)
-	if reader, ok := store.(interface {
-		PostflowFunctionFactProjection(*cfg.Graph, *scope.State, cfg.SymbolID) (api.FunctionFact, bool)
-	}); ok {
-		projection = reader.PostflowFunctionFactProjection
-	}
-	return StoreView{store: store, projection: projection, defaultParent: defaultParent}
-}
-
 // StoreSymbolView is one resolved function-fact product plus its owning key.
 type StoreSymbolView struct {
 	Fact api.FunctionFact
@@ -564,7 +552,7 @@ func RefinementsFromStore(store api.StoreReader, defaultParent *scope.State) api
 }
 
 func returnsForMode(ff api.FunctionFact, mode api.SynthMode) []typ.Type {
-	if mode == api.SynthModeFlow && len(ff.Returns.Postflow) > 0 {
+	if mode == api.SynthModeFlow && len(ff.Returns.Narrow) > 0 {
 		return repairSummaryWithNarrow(summaryTypes(ff), narrowTypes(ff))
 	}
 	return summaryTypes(ff)

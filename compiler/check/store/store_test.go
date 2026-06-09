@@ -7,24 +7,11 @@ import (
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/api"
 	"github.com/wippyai/go-lua/compiler/check/domain/functionfact"
-	"github.com/wippyai/go-lua/compiler/check/domain/postflow"
 	"github.com/wippyai/go-lua/compiler/check/scope"
-	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/db"
 	"github.com/wippyai/go-lua/types/domain/value/product"
 	"github.com/wippyai/go-lua/types/typ"
 )
-
-func TestPostflowProjectionStateInitialization(t *testing.T) {
-	state := newPostflowProjectionState()
-	if state == nil {
-		t.Fatal("expected non-nil state")
-	}
-	if state.functionFacts == nil || state.capturedTypes == nil ||
-		state.capturedFields == nil || state.constructorFields == nil {
-		t.Error("projection lane maps should be initialized")
-	}
-}
 
 func TestFunctionFactsSummaryProjection(t *testing.T) {
 	facts := api.FunctionFacts{
@@ -41,7 +28,7 @@ func TestFunctionFactsSummaryProjection(t *testing.T) {
 func TestFunctionFactsNarrowProjection(t *testing.T) {
 	facts := api.FunctionFacts{
 		cfg.SymbolID(2): {
-			Returns: api.FunctionReturnProjection{Postflow: product.LiftVector([]typ.Type{typ.Number})},
+			Returns: api.FunctionReturnProjection{Narrow: product.LiftVector([]typ.Type{typ.Number})},
 		},
 	}
 	got := functionfact.FactsProjection(facts).NarrowSummary(cfg.SymbolID(2))
@@ -63,7 +50,9 @@ func TestFunctionFactsSiblingProjection(t *testing.T) {
 	}
 }
 
-func TestPostflowProjectionUsesStoredGraphParentHash(t *testing.T) {
+func TestCanonicalFunctionFactsProjectionUsesStoredGraphParentHash(t *testing.T) {
+	database := db.New()
+	ctx := db.NewQueryContext(database)
 	graph := cfg.Build(&ast.FunctionExpr{})
 	if graph == nil || graph.ID() == 0 {
 		t.Fatal("expected graph with stable ID")
@@ -75,72 +64,58 @@ func TestPostflowProjectionUsesStoredGraphParentHash(t *testing.T) {
 		t.Fatal("test requires different parent hashes")
 	}
 
-	s := NewSessionStore()
+	s := NewSessionStoreWithDB(database)
+	restore := s.PushFactReadContext(ctx)
+	defer restore()
+
 	s.SetGraphParentHash(graph.ID(), storedParent.Hash())
 	s.SetParentScope(storedParent.Hash(), storedParent)
 	key := api.KeyForGraph(graph, storedParent.Hash())
-	s.postflowPrev.functionFacts[key] = api.FunctionFacts{
-		cfg.SymbolID(1): {Returns: api.FunctionReturnProjection{Preflow: product.LiftVector([]typ.Type{typ.String})}},
-	}
+	s.SetCanonicalFunctionFactsProjection(map[api.GraphKey]api.FunctionFacts{
+		key: {
+			cfg.SymbolID(1): {Returns: api.FunctionReturnProjection{Preflow: product.LiftVector([]typ.Type{typ.String})}},
+		},
+	})
 
-	functionFacts := s.PostflowFunctionFactsProjectionForExport(graph, currentParent)
+	functionFacts := s.CanonicalFunctionFactsProjectionForExport(graph, currentParent)
 	summary := functionfact.FactsProjection(functionFacts).ReturnSummary(cfg.SymbolID(1))
 	if len(summary) != 1 || !typ.TypeEquals(summary[0], typ.String) {
 		t.Fatalf("expected facts from stored parent hash, got %#v", summary)
 	}
 }
 
-func TestPostflowProjectionOverlaysCurrentIterationFacts(t *testing.T) {
+func TestCanonicalFunctionFactsProjectionReturnsImmutableFactContainers(t *testing.T) {
+	database := db.New()
+	ctx := db.NewQueryContext(database)
 	graph := cfg.Build(&ast.FunctionExpr{})
 	if graph == nil || graph.ID() == 0 {
 		t.Fatal("expected graph with stable ID")
 	}
 
 	parent := scope.New().WithType("T", typ.String)
-	s := NewSessionStore()
-	s.SetGraphParentHash(graph.ID(), parent.Hash())
-	s.SetParentScope(parent.Hash(), parent)
-	key := api.KeyForGraph(graph, parent.Hash())
-	s.postflowPrev.functionFacts[key] = api.FunctionFacts{
-		cfg.SymbolID(1): {Returns: api.FunctionReturnProjection{Preflow: product.LiftVector([]typ.Type{typ.String})}},
-	}
-	s.postflowNext.functionFacts[key] = api.FunctionFacts{
-		cfg.SymbolID(1): {Returns: api.FunctionReturnProjection{Preflow: product.LiftVector([]typ.Type{typ.Number})}},
-	}
+	s := NewSessionStoreWithDB(database)
+	restore := s.PushFactReadContext(ctx)
+	defer restore()
 
-	functionFacts := s.PostflowFunctionFactsProjectionForExport(graph, parent)
-	summary := functionfact.FactsProjection(functionFacts).ReturnSummary(cfg.SymbolID(1))
-	want := typ.NewUnion(typ.String, typ.Number)
-	if len(summary) != 1 || !typ.TypeEquals(summary[0], want) {
-		t.Fatalf("expected widened visible facts %v, got %#v", want, summary)
-	}
-}
-
-func TestPostflowProjectionReturnsImmutableFactContainers(t *testing.T) {
-	graph := cfg.Build(&ast.FunctionExpr{})
-	if graph == nil || graph.ID() == 0 {
-		t.Fatal("expected graph with stable ID")
-	}
-
-	parent := scope.New().WithType("T", typ.String)
-	s := NewSessionStore()
 	s.SetGraphParentHash(graph.ID(), parent.Hash())
 	s.SetParentScope(parent.Hash(), parent)
 	key := api.KeyForGraph(graph, parent.Hash())
 	sym := cfg.SymbolID(7)
-	s.postflowPrev.functionFacts[key] = api.FunctionFacts{
-		sym: {
-			Call:    api.FunctionCallProjection{Params: product.LiftVector([]typ.Type{typ.String, typ.NewMap(typ.String, typ.Any)})},
-			Returns: api.FunctionReturnProjection{Preflow: product.LiftVector([]typ.Type{typ.String})},
+	s.SetCanonicalFunctionFactsProjection(map[api.GraphKey]api.FunctionFacts{
+		key: {
+			sym: {
+				Call:    api.FunctionCallProjection{Params: product.LiftVector([]typ.Type{typ.String, typ.NewMap(typ.String, typ.Any)})},
+				Returns: api.FunctionReturnProjection{Preflow: product.LiftVector([]typ.Type{typ.String})},
+			},
 		},
-	}
+	})
 
-	facts := s.PostflowFunctionFactsProjectionForExport(graph, parent)
+	facts := s.CanonicalFunctionFactsProjectionForExport(graph, parent)
 	fact := facts[sym]
 	fact.Call.Params[1] = product.FromType(typ.Nil)
 	facts[sym] = api.FunctionFact{Returns: api.FunctionReturnProjection{Preflow: product.LiftVector([]typ.Type{typ.Number})}}
 
-	again := s.PostflowFunctionFactsProjectionForExport(graph, parent)
+	again := s.CanonicalFunctionFactsProjectionForExport(graph, parent)
 	if got := functionfact.FactsProjection(again).PublicParameterEvidence(sym)[1]; !typ.TypeEquals(got, typ.NewMap(typ.String, typ.Any)) {
 		t.Fatalf("fact parameter evidence mutation leaked into store: %v", got)
 	}
@@ -149,23 +124,7 @@ func TestPostflowProjectionReturnsImmutableFactContainers(t *testing.T) {
 	}
 }
 
-func TestPostflowProjectionDeltasReconcileWithinIteration(t *testing.T) {
-	key := api.GraphKey{GraphID: 1, ParentHash: 2}
-	sym := cfg.SymbolID(7)
-	refined := typ.Func().Param("path", typ.String).Returns(typ.String).Build()
-	broad := typ.Func().Param("path", typ.Any).Returns(typ.String).Build()
-
-	s := NewSessionStore()
-	s.MergePostflowFunctionFactProjection(key, sym, api.FunctionFact{Public: api.FunctionPublicProjection{Signature: refined}})
-	s.MergePostflowFunctionFactProjection(key, sym, api.FunctionFact{Public: api.FunctionPublicProjection{Signature: broad}})
-
-	got := functionfact.FactsProjection(s.postflowNext.functionFacts[key]).Type(sym, functionfact.ProjectionSibling, api.SynthModeDeclared)
-	if !typ.TypeEquals(got, refined) {
-		t.Fatalf("expected update boundary to keep canonical refined function fact, got %v", got)
-	}
-}
-
-func TestFactInputs_RevalidateFactQueries(t *testing.T) {
+func TestFactInputs_RevalidateCanonicalProjectionQueries(t *testing.T) {
 	database := db.New()
 	ctx := db.NewQueryContext(database)
 	s := NewSessionStoreWithDB(database)
@@ -173,9 +132,9 @@ func TestFactInputs_RevalidateFactQueries(t *testing.T) {
 	sym := cfg.SymbolID(7)
 
 	calls := 0
-	q := db.NewQuery("trackedFactsTest", func(ctx *db.QueryContext, key api.GraphKey) int {
+	q := db.NewQuery("trackedCanonicalFactsTest", func(ctx *db.QueryContext, key api.GraphKey) int {
 		calls++
-		functionFacts, _ := s.factInputs.postflowFunctionFactsFor(ctx, key)
+		functionFacts, _ := s.factInputs.canonicalFunctionFactsFor(ctx, key)
 		if len(functionfact.FactsProjection(functionFacts).ReturnSummary(sym)) == 0 {
 			return 0
 		}
@@ -190,17 +149,12 @@ func TestFactInputs_RevalidateFactQueries(t *testing.T) {
 	}
 
 	fact := api.FunctionFact{Returns: api.FunctionReturnProjection{Preflow: product.LiftVector([]typ.Type{typ.String})}}
-	s.MergePostflowFunctionFactProjection(key, sym, fact)
-	if got := q.Get(ctx, key); got != 0 || calls != 1 {
-		t.Fatalf("same-iteration write query = %d calls=%d, want stable 0/1 before swap", got, calls)
-	}
-	s.AdvancePostflowProjections()
+	s.SetCanonicalFunctionFactsProjection(map[api.GraphKey]api.FunctionFacts{key: {sym: fact}})
 	if got := q.Get(ctx, key); got != 1 || calls != 2 {
 		t.Fatalf("changed query = %d calls=%d, want 1/2", got, calls)
 	}
 
-	s.MergePostflowFunctionFactProjection(key, sym, fact)
-	s.AdvancePostflowProjections()
+	s.SetCanonicalFunctionFactsProjection(map[api.GraphKey]api.FunctionFacts{key: {sym: fact}})
 	if got := q.Get(ctx, key); got != 1 || calls != 2 {
 		t.Fatalf("equal update query = %d calls=%d, want 1/2", got, calls)
 	}
@@ -215,9 +169,9 @@ func TestFactInputs_FunctionFactProjectionTracksOneSymbol(t *testing.T) {
 	sym8 := cfg.SymbolID(8)
 
 	calls := 0
-	q := db.NewQuery("trackedFunctionFactProjectionTest", func(ctx *db.QueryContext, key api.FunctionFactKey) int {
+	q := db.NewQuery("trackedCanonicalFunctionFactProjectionTest", func(ctx *db.QueryContext, key api.FunctionFactKey) int {
 		calls++
-		ff, ok := s.factInputs.postflowFunctionFactFor(ctx, key)
+		ff, ok := s.factInputs.canonicalFunctionFactFor(ctx, key)
 		if !ok {
 			return 0
 		}
@@ -229,111 +183,34 @@ func TestFactInputs_FunctionFactProjectionTracksOneSymbol(t *testing.T) {
 		t.Fatalf("initial projection = %d calls=%d, want 0/1", got, calls)
 	}
 
-	s.MergePostflowFunctionFactProjection(key, sym7, api.FunctionFact{Returns: api.FunctionReturnProjection{Preflow: product.LiftVector([]typ.Type{typ.String})}})
-	s.MergePostflowFunctionFactProjection(key, sym8, api.FunctionFact{Returns: api.FunctionReturnProjection{Preflow: product.LiftVector([]typ.Type{typ.Number})}})
-	s.AdvancePostflowProjections()
+	s.SetCanonicalFunctionFactsProjection(map[api.GraphKey]api.FunctionFacts{
+		key: {
+			sym7: {Returns: api.FunctionReturnProjection{Preflow: product.LiftVector([]typ.Type{typ.String})}},
+			sym8: {Returns: api.FunctionReturnProjection{Preflow: product.LiftVector([]typ.Type{typ.Number})}},
+		},
+	})
 	if got := q.Get(ctx, queryKey); got != 1 || calls != 2 {
 		t.Fatalf("changed projection = %d calls=%d, want 1/2", got, calls)
 	}
 
-	s.MergePostflowFunctionFactProjection(key, sym8, api.FunctionFact{Returns: api.FunctionReturnProjection{Preflow: product.LiftVector([]typ.Type{typ.Number, typ.String})}})
-	s.AdvancePostflowProjections()
+	s.SetCanonicalFunctionFactsProjection(map[api.GraphKey]api.FunctionFacts{
+		key: {
+			sym7: {Returns: api.FunctionReturnProjection{Preflow: product.LiftVector([]typ.Type{typ.String})}},
+			sym8: {Returns: api.FunctionReturnProjection{Preflow: product.LiftVector([]typ.Type{typ.Number, typ.String})}},
+		},
+	})
 	if got := q.Get(ctx, queryKey); got != 1 || calls != 2 {
 		t.Fatalf("unrelated symbol changed projection = %d calls=%d, want cached 1/2", got, calls)
 	}
 
-	s.MergePostflowFunctionFactProjection(key, sym7, api.FunctionFact{Returns: api.FunctionReturnProjection{Preflow: product.LiftVector([]typ.Type{typ.String, typ.Number})}})
-	s.AdvancePostflowProjections()
+	s.SetCanonicalFunctionFactsProjection(map[api.GraphKey]api.FunctionFacts{
+		key: {
+			sym7: {Returns: api.FunctionReturnProjection{Preflow: product.LiftVector([]typ.Type{typ.String, typ.Number})}},
+			sym8: {Returns: api.FunctionReturnProjection{Preflow: product.LiftVector([]typ.Type{typ.Number, typ.String})}},
+		},
+	})
 	if got := q.Get(ctx, queryKey); got != 2 || calls != 3 {
 		t.Fatalf("tracked symbol changed projection = %d calls=%d, want 2/3", got, calls)
-	}
-}
-
-func TestFactInputs_CapturedTypesUseRecursiveFactEquality(t *testing.T) {
-	database := db.New()
-	ctx := db.NewQueryContext(database)
-	s := NewSessionStoreWithDB(database)
-	key := api.GraphKey{GraphID: 1, ParentHash: 2}
-	sym := cfg.SymbolID(7)
-	left := typ.NewRecursive("Builder", func(self typ.Type) typ.Type {
-		return typ.NewRecord().
-			Field("add", typ.Func().Param("self", self).Returns(self).Build()).
-			Build()
-	})
-	right := typ.NewRecursive("Builder", func(self typ.Type) typ.Type {
-		return typ.NewRecord().
-			Field("add", typ.Func().Param("self", self).Returns(self).Build()).
-			Build()
-	})
-
-	calls := 0
-	q := db.NewQuery("trackedCapturedTypeProjectionTest", func(ctx *db.QueryContext, key api.CapturedTypeKey) int {
-		calls++
-		t, ok := s.factInputs.capturedTypeFor(ctx, key)
-		if !ok || t == nil {
-			return 0
-		}
-		return len(t.String())
-	}, func(a, b int) bool { return a == b })
-	queryKey := api.CapturedTypeKey{GraphKey: key, Symbol: sym}
-
-	if got := q.Get(ctx, queryKey); got != 0 || calls != 1 {
-		t.Fatalf("initial projection = %d calls=%d, want 0/1", got, calls)
-	}
-	s.MergeCapturedTypeProjection(key, sym, product.FromType(left))
-	s.AdvancePostflowProjections()
-	if got := q.Get(ctx, queryKey); got == 0 || calls != 2 {
-		t.Fatalf("changed projection = %d calls=%d, want nonzero/2", got, calls)
-	}
-	s.MergeCapturedTypeProjection(key, sym, product.FromType(right))
-	s.AdvancePostflowProjections()
-	if got := q.Get(ctx, queryKey); got == 0 || calls != 2 {
-		t.Fatalf("equivalent recursive projection = %d calls=%d, want cached nonzero/2", got, calls)
-	}
-}
-
-func TestFactInputs_PublishOnlyAtFixpointBoundary(t *testing.T) {
-	database := db.New()
-	ctx := db.NewQueryContext(database)
-	s := NewSessionStoreWithDB(database)
-	key := api.GraphKey{GraphID: 1, ParentHash: 2}
-
-	calls := 0
-	q := db.NewQuery("batchedTrackedFactsTest", func(ctx *db.QueryContext, key api.GraphKey) int {
-		calls++
-		functionFacts, _ := s.factInputs.postflowFunctionFactsFor(ctx, key)
-		return len(functionFacts)
-	}, func(a, b int) bool { return a == b })
-
-	if got := q.Get(ctx, key); got != 0 || calls != 1 {
-		t.Fatalf("initial query = %d calls=%d, want 0/1", got, calls)
-	}
-
-	beforeWrites := database.Revision()
-	s.MergePostflowFunctionFactProjection(key, cfg.SymbolID(7), api.FunctionFact{Returns: api.FunctionReturnProjection{Preflow: product.LiftVector([]typ.Type{typ.String})}})
-	s.MergePostflowFunctionFactProjection(key, cfg.SymbolID(8), api.FunctionFact{Returns: api.FunctionReturnProjection{Preflow: product.LiftVector([]typ.Type{typ.Number})}})
-	if got := database.Revision(); got != beforeWrites {
-		t.Fatalf("next-product writes bumped query revision: got %d want %d", got, beforeWrites)
-	}
-	if got := q.Get(ctx, key); got != 0 || calls != 1 {
-		t.Fatalf("pre-swap query = %d calls=%d, want stable 0/1", got, calls)
-	}
-
-	s.AdvancePostflowProjections()
-	if got := database.Revision(); got != beforeWrites+1 {
-		t.Fatalf("fixpoint swap bumped revision %d times, got %d want %d", got-beforeWrites, got, beforeWrites+1)
-	}
-	if got := q.Get(ctx, key); got != 2 || calls != 2 {
-		t.Fatalf("synced query = %d calls=%d, want 2/2", got, calls)
-	}
-
-	afterSync := database.Revision()
-	s.AdvancePostflowProjections()
-	if got := database.Revision(); got != afterSync {
-		t.Fatalf("clean swap bumped revision: got %d want %d", got, afterSync)
-	}
-	if got := q.Get(ctx, key); got != 2 || calls != 2 {
-		t.Fatalf("clean query = %d calls=%d, want 2/2", got, calls)
 	}
 }
 
@@ -392,85 +269,4 @@ func TestFunctionRegistry_Fields(t *testing.T) {
 	if r.BySym == nil {
 		t.Error("BySym should be initialized")
 	}
-}
-
-func TestAdvancePostflowProjections_TracksLaneDiffsAndResetsNext(t *testing.T) {
-	s := NewSessionStore()
-
-	key := api.GraphKey{GraphID: 7, ParentHash: 11}
-	s.postflowNext.functionFacts[key] = api.FunctionFacts{
-		1: {
-			Returns: api.FunctionReturnProjection{Preflow: product.LiftVector([]typ.Type{typ.String})},
-			Effects: api.FunctionEffectProjection{Refinement: &constraint.FunctionRefinement{Terminates: true}},
-		},
-	}
-	s.postflowNext.constructorFields[api.ModuleFactsKey()] = postflow.ConstructorFields{
-		3: {constraint.Segment{Kind: constraint.SegmentField, Name: "v"}: product.FromType(typ.Number)},
-	}
-
-	if !s.AdvancePostflowProjections() {
-		t.Fatal("expected fixpoint swap to report changes")
-	}
-
-	diffs := s.PostflowProjectionDiffs()
-	if len(diffs) == 0 {
-		t.Fatal("expected postflow projection diffs")
-	}
-
-	if len(s.postflowPrev.functionFacts) != 1 || len(s.postflowPrev.constructorFields) != 1 {
-		t.Fatalf("expected prev lanes populated, got functions=%#v constructors=%#v", s.postflowPrev.functionFacts, s.postflowPrev.constructorFields)
-	}
-	if len(s.postflowNext.functionFacts) != 0 || len(s.postflowNext.constructorFields) != 0 {
-		t.Fatalf("expected next lanes reset, got functions=%#v constructors=%#v", s.postflowNext.functionFacts, s.postflowNext.constructorFields)
-	}
-	if functionfact.FactsProjection(s.postflowPrev.functionFacts[key]).Refinement(1) == nil {
-		t.Fatalf("expected function refinement in function-fact lane, got %#v", s.postflowPrev.functionFacts[key])
-	}
-	if len(s.postflowPrev.constructorFields[api.ModuleFactsKey()][3]) != 1 {
-		t.Fatalf("expected constructor fields in module lane, got %#v", s.postflowPrev.constructorFields[api.ModuleFactsKey()])
-	}
-}
-
-func TestClearPostflowProjectionState_InitializesMissingState(t *testing.T) {
-	s := &SessionStore{}
-	s.ClearPostflowProjectionState()
-
-	if s.postflowPrev == nil || s.postflowNext == nil {
-		t.Fatal("expected interproc states to be initialized")
-	}
-}
-
-func TestPostflowProjectionDiffsReturnCopy(t *testing.T) {
-	s := NewSessionStore()
-	key := registerFunctionForRefinementTest(t, s, 1)
-	s.MergePostflowFunctionFactProjection(key, 1, api.FunctionFact{Effects: api.FunctionEffectProjection{Refinement: &constraint.FunctionRefinement{Terminates: true}}})
-	if !s.AdvancePostflowProjections() {
-		t.Fatal("expected change from effect swap")
-	}
-
-	diffs := s.PostflowProjectionDiffs()
-	if len(diffs) == 0 {
-		t.Fatal("expected non-empty diffs")
-	}
-	diffs[0] = "MUTATED"
-
-	diffs2 := s.PostflowProjectionDiffs()
-	if len(diffs2) == 0 || diffs2[0] == "MUTATED" {
-		t.Fatalf("expected defensive copy, got %v", diffs2)
-	}
-}
-
-func registerFunctionForRefinementTest(t *testing.T, s *SessionStore, sym cfg.SymbolID) api.GraphKey {
-	t.Helper()
-	fn := &ast.FunctionExpr{}
-	graph := cfg.Build(fn)
-	if graph == nil {
-		t.Fatal("expected graph")
-	}
-	parent := scope.New()
-	s.RegisterGraph(graph, fn)
-	s.RegisterFunctionRef(sym, fn, graph, graph.ID(), 1)
-	s.SetGraphParentHash(graph.ID(), parent.Hash())
-	s.SetParentScope(parent.Hash(), parent)
-	return api.KeyForGraph(graph, parent.Hash())
 }

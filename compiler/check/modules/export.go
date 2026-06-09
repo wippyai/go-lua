@@ -8,8 +8,8 @@ import (
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/api"
 	"github.com/wippyai/go-lua/compiler/check/domain/exportkey"
+	"github.com/wippyai/go-lua/compiler/check/domain/fieldkey"
 	"github.com/wippyai/go-lua/compiler/check/domain/functionfact"
-	interprocfields "github.com/wippyai/go-lua/compiler/check/domain/interproc"
 	returns "github.com/wippyai/go-lua/compiler/check/domain/returns"
 	"github.com/wippyai/go-lua/compiler/check/effects"
 	"github.com/wippyai/go-lua/compiler/check/erreffect"
@@ -22,8 +22,8 @@ import (
 	"github.com/wippyai/go-lua/types/typ/unwrap"
 )
 
-type exportFieldTypes map[interprocfields.FieldKey]typ.Type
-type exportFieldSymbols map[interprocfields.FieldKey]cfg.SymbolID
+type exportFieldTypes map[fieldkey.Key]typ.Type
+type exportFieldSymbols map[fieldkey.Key]cfg.SymbolID
 type exportFunctionOverlays map[exportkey.MemberPathKey]exportFunctionOverlay
 
 type exportFunctionOverlay struct {
@@ -129,8 +129,8 @@ func preservePopulatedMapKeys(export typ.Type, result *api.FuncResult) typ.Type 
 	}
 
 	overlays := make(exportFieldTypes)
-	for _, fieldKey := range interprocfields.SortedFieldKeys(fieldSources) {
-		fieldName, ok := interprocfields.FieldKeyStringKey(fieldKey)
+	for _, fieldKey := range fieldkey.Sorted(fieldSources) {
+		fieldName, ok := fieldkey.StringKeyFromSegment(fieldKey)
 		if !ok {
 			continue
 		}
@@ -174,7 +174,7 @@ func exportFieldSourceSymbols(result *api.FuncResult, rec *typ.Record) exportFie
 		if rec.GetField(fieldName) == nil {
 			continue
 		}
-		fieldKey, ok := interprocfields.FieldKeyFromName(fieldName)
+		fieldKey, ok := fieldkey.FromName(fieldName)
 		if !ok {
 			continue
 		}
@@ -228,7 +228,7 @@ func populatedStringKeyWrites(result *api.FuncResult, sourceSym cfg.SymbolID, de
 		if !subtype.IsSubtype(typ.LiteralString(key), declaredMap.Key) {
 			continue
 		}
-		fieldKey, ok := interprocfields.FieldKeyFromName(key)
+		fieldKey, ok := fieldkey.FromName(key)
 		if !ok {
 			continue
 		}
@@ -254,8 +254,8 @@ func populatedStringKeyWrites(result *api.FuncResult, sourceSym cfg.SymbolID, de
 // record is re-wrapped in the same alias so the importer still sees the named type.
 func buildPopulatedMapRecord(declared typ.Type, declaredMap *typ.Map, populated exportFieldTypes) typ.Type {
 	builder := typ.NewRecord().MapComponent(declaredMap.Key, declaredMap.Value)
-	for _, fieldKey := range interprocfields.SortedFieldKeys(populated) {
-		name, ok := interprocfields.FieldKeyStringKey(fieldKey)
+	for _, fieldKey := range fieldkey.Sorted(populated) {
+		name, ok := fieldkey.StringKeyFromSegment(fieldKey)
 		if !ok {
 			continue
 		}
@@ -276,7 +276,7 @@ func overlayExportFieldsRecord(export typ.Type, rec *typ.Record, overlays export
 	fields := make([]typ.Field, len(rec.Fields))
 	for i, field := range rec.Fields {
 		fields[i] = field
-		fieldKey, keyOK := interprocfields.FieldKeyFromName(field.Name)
+		fieldKey, keyOK := fieldkey.FromName(field.Name)
 		if !keyOK {
 			continue
 		}
@@ -432,11 +432,11 @@ func exportFunctionResultPath(fr ExportFunctionResult) (exportkey.MemberPath, bo
 	if fr.Name == "" || strings.Contains(fr.Name, ".") {
 		return exportkey.MemberPath{}, false
 	}
-	key, ok := interprocfields.FieldKeyFromName(fr.Name)
+	key, ok := fieldkey.FromName(fr.Name)
 	if !ok {
 		return exportkey.MemberPath{}, false
 	}
-	return exportkey.NewMemberPath([]interprocfields.FieldKey{key})
+	return exportkey.NewMemberPath([]fieldkey.Key{key})
 }
 
 func exportFunctionMemberType(t typ.Type, path exportkey.MemberPath) *typ.Function {
@@ -447,7 +447,7 @@ func exportFunctionMemberType(t typ.Type, path exportkey.MemberPath) *typ.Functi
 	return unwrap.Function(member)
 }
 
-func exportMemberTypeAtPath(t typ.Type, path []interprocfields.FieldKey, depth int) (typ.Type, bool) {
+func exportMemberTypeAtPath(t typ.Type, path []fieldkey.Key, depth int) (typ.Type, bool) {
 	if t == nil || len(path) == 0 || typ.DepthExceeded(depth) {
 		return nil, false
 	}
@@ -471,7 +471,7 @@ func exportMemberTypeAtPath(t typ.Type, path []interprocfields.FieldKey, depth i
 	return exportMemberTypeAtPath(member, path[1:], depth+1)
 }
 
-func exportRecordMemberType(rec *typ.Record, key interprocfields.FieldKey) (typ.Type, bool) {
+func exportRecordMemberType(rec *typ.Record, key fieldkey.Key) (typ.Type, bool) {
 	if rec == nil {
 		return nil, false
 	}
@@ -499,11 +499,11 @@ func exportRecordMemberType(rec *typ.Record, key interprocfields.FieldKey) (typ.
 	}
 }
 
-func exportInterfaceMemberType(iface *typ.Interface, key interprocfields.FieldKey) (typ.Type, bool) {
+func exportInterfaceMemberType(iface *typ.Interface, key fieldkey.Key) (typ.Type, bool) {
 	if iface == nil {
 		return nil, false
 	}
-	name, ok := interprocfields.FieldKeyStringKey(key)
+	name, ok := fieldkey.StringKeyFromSegment(key)
 	if !ok {
 		return nil, false
 	}
@@ -756,7 +756,7 @@ func sortedExportFunctionOverlays(overlays exportFunctionOverlays) []exportFunct
 	return out
 }
 
-func applyExportFunctionOverlay(t typ.Type, path []interprocfields.FieldKey, fn *typ.Function, depth int) typ.Type {
+func applyExportFunctionOverlay(t typ.Type, path []fieldkey.Key, fn *typ.Function, depth int) typ.Type {
 	if t == nil || len(path) == 0 || fn == nil || typ.DepthExceeded(depth) {
 		return t
 	}
@@ -779,7 +779,7 @@ func applyExportFunctionOverlay(t typ.Type, path []interprocfields.FieldKey, fn 
 	return out
 }
 
-func overlayExportRecordPath(rec *typ.Record, path []interprocfields.FieldKey, fn *typ.Function, depth int) typ.Type {
+func overlayExportRecordPath(rec *typ.Record, path []fieldkey.Key, fn *typ.Function, depth int) typ.Type {
 	if rec == nil || len(path) == 0 || fn == nil {
 		return rec
 	}
@@ -787,7 +787,7 @@ func overlayExportRecordPath(rec *typ.Record, path []interprocfields.FieldKey, f
 	fields := make([]typ.Field, len(rec.Fields))
 	for i, field := range rec.Fields {
 		fields[i] = field
-		fieldKey, keyOK := interprocfields.FieldKeyFromName(field.Name)
+		fieldKey, keyOK := fieldkey.FromName(field.Name)
 		if !keyOK || fieldKey != path[0] {
 			continue
 		}
@@ -853,7 +853,7 @@ func exportOverlayTypeUnchanged(next, current typ.Type) bool {
 	return typ.TypeEquals(next, current)
 }
 
-func overlayExportMemberType(current typ.Type, rest []interprocfields.FieldKey, fn *typ.Function, depth int) typ.Type {
+func overlayExportMemberType(current typ.Type, rest []fieldkey.Key, fn *typ.Function, depth int) typ.Type {
 	if len(rest) == 0 {
 		if unwrap.Function(current) == nil {
 			return current
@@ -863,22 +863,22 @@ func overlayExportMemberType(current typ.Type, rest []interprocfields.FieldKey, 
 	return applyExportFunctionOverlay(current, rest, fn, depth+1)
 }
 
-func exportStaticMemberKey(member typ.StaticMember) (interprocfields.FieldKey, bool) {
+func exportStaticMemberKey(member typ.StaticMember) (fieldkey.Key, bool) {
 	switch member.Kind {
 	case typ.StaticMemberStringIndex:
-		return interprocfields.FieldKey{Kind: constraint.SegmentIndexString, Name: member.Name}, true
+		return fieldkey.Key{Kind: constraint.SegmentIndexString, Name: member.Name}, true
 	case typ.StaticMemberIntIndex:
-		return interprocfields.FieldKey{Kind: constraint.SegmentIndexInt, Index: int(member.Index)}, true
+		return fieldkey.Key{Kind: constraint.SegmentIndexInt, Index: int(member.Index)}, true
 	default:
-		return interprocfields.FieldKey{}, false
+		return fieldkey.Key{}, false
 	}
 }
 
-func overlayExportInterfacePath(iface *typ.Interface, path []interprocfields.FieldKey, fn *typ.Function) typ.Type {
+func overlayExportInterfacePath(iface *typ.Interface, path []fieldkey.Key, fn *typ.Function) typ.Type {
 	if iface == nil || len(path) != 1 || fn == nil {
 		return iface
 	}
-	name, ok := interprocfields.FieldKeyStringKey(path[0])
+	name, ok := fieldkey.StringKeyFromSegment(path[0])
 	if !ok {
 		return iface
 	}

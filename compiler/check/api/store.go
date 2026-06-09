@@ -80,11 +80,9 @@ type FunctionRefs interface {
 	FunctionRefsByParentGraph(parentGraphID uint64) []FunctionRef
 }
 
-// StoreReader is the read contract shared by normal checker phases. It
-// intentionally excludes postflow projection lane reads; callers that need final
-// function facts should request CanonicalFunctionFactProjectionReader, and
-// noncanonical postflow code should request owner-specific package-local lane
-// interfaces.
+// StoreReader is the read contract shared by normal checker phases. Callers
+// that need final function facts should request
+// CanonicalFunctionFactProjectionReader explicitly.
 type StoreReader interface {
 	ModuleStore
 	GraphStore
@@ -95,7 +93,7 @@ type StoreReader interface {
 }
 
 // CanonicalFunctionFactProjectionSink installs final Summary-derived FunctionFacts
-// without participating in postflow projection iteration.
+// without creating analysis authority.
 type CanonicalFunctionFactProjectionSink interface {
 	SetCanonicalFunctionFactsProjection(facts map[GraphKey]FunctionFacts)
 }
@@ -110,8 +108,7 @@ type CanonicalFunctionFactProjectionReader interface {
 
 // CanonicalStore is the store surface the canonical summary engine is allowed to
 // use: module binding publication, graph-parent publication, parent-key lookup,
-// and final Summary-derived FunctionFacts projection. It intentionally excludes
-// postflow projection iteration and visible postflow projection lane reads.
+// and final Summary-derived FunctionFacts projection.
 type CanonicalStore interface {
 	CanonicalFunctionFactProjectionSink
 
@@ -122,7 +119,7 @@ type CanonicalStore interface {
 }
 
 // NestedStore is the read-only store interface required by nested metadata
-// consumers. Postflow projection nested inference requests only the lanes it owns.
+// consumers.
 type NestedStore interface {
 	StoreReader
 }

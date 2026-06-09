@@ -68,8 +68,8 @@ func TestBuildOne_CanonicalizesAllFunctionFactSlots(t *testing.T) {
 	if len(ff.Entry.Params) != 1 || !typ.TypeEquals(ff.Entry.Params[0].ProjectValue(), typ.String) {
 		t.Fatalf("entry params = %v, want string", ff.Entry.Params)
 	}
-	if !returnsummary.Equal(factPostflowTypesTest(ff), []typ.Type{typ.String}) {
-		t.Fatalf("narrow = %v, want string", ff.Returns.Postflow)
+	if !returnsummary.Equal(factNarrowTypesTest(ff), []typ.Type{typ.String}) {
+		t.Fatalf("narrow = %v, want string", ff.Returns.Narrow)
 	}
 	if !typ.TypeEquals(ff.Public.Signature, fn) {
 		t.Fatalf("signature = %v, want %v", ff.Public.Signature, fn)

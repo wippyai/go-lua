@@ -22,26 +22,6 @@ type FunctionFactKey struct {
 	Symbol   cfg.SymbolID
 }
 
-// CapturedTypeKey identifies one captured symbol type inside one graph key.
-type CapturedTypeKey struct {
-	GraphKey GraphKey
-	Symbol   cfg.SymbolID
-}
-
-// ConstructorFieldKey identifies one module-wide constructor field map by
-// class symbol. The GraphKey is always ModuleFactsKey.
-type ConstructorFieldKey struct {
-	GraphKey GraphKey
-	Symbol   cfg.SymbolID
-}
-
-// ModuleFactsKey identifies module-wide projection facts that are not tied
-// to one function graph, such as constructor field summaries keyed by class
-// symbol.
-func ModuleFactsKey() GraphKey {
-	return GraphKey{}
-}
-
 // SymbolKey uniquely identifies a symbol within a parent scope.
 type SymbolKey struct {
 	Symbol     cfg.SymbolID

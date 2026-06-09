@@ -6,14 +6,12 @@ import (
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/api"
-	interprocdomain "github.com/wippyai/go-lua/compiler/check/domain/interproc"
 	"github.com/wippyai/go-lua/compiler/check/scope"
 	"github.com/wippyai/go-lua/compiler/check/store"
 	"github.com/wippyai/go-lua/compiler/stdlib"
 	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/db"
 	"github.com/wippyai/go-lua/types/diag"
-	"github.com/wippyai/go-lua/types/domain/value/product"
 	"github.com/wippyai/go-lua/types/io"
 	"github.com/wippyai/go-lua/types/query/core"
 	"github.com/wippyai/go-lua/types/typ"
@@ -393,73 +391,6 @@ func TestAttachStore_NilStore(t *testing.T) {
 	}
 }
 
-func TestSessionStore_ProductMaps(t *testing.T) {
-	store := store.NewSessionStore()
-
-	if !store.PostflowProjectionStateInitialized() {
-		t.Error("postflow projection owner should be initialized")
-	}
-}
-
-func TestPostflowProjectionDiffs_IsolatedBetweenStores(t *testing.T) {
-	storeA := store.NewSessionStore()
-	storeB := store.NewSessionStore()
-
-	keyA := registerSessionFunctionForRefinementTest(t, storeA, cfg.SymbolID(42))
-	keyB := registerSessionFunctionForRefinementTest(t, storeB, cfg.SymbolID(42))
-	fact := api.FunctionFact{Effects: api.FunctionEffectProjection{Refinement: &constraint.FunctionRefinement{Terminates: true}}}
-	storeA.MergePostflowFunctionFactProjection(keyA, cfg.SymbolID(42), fact)
-	storeB.MergePostflowFunctionFactProjection(keyB, cfg.SymbolID(42), fact)
-
-	if !storeA.AdvancePostflowProjections() {
-		t.Fatal("expected storeA AdvancePostflowProjections to report change")
-	}
-	if diffs := storeA.PostflowProjectionDiffs(); len(diffs) == 0 {
-		t.Fatal("expected storeA diffs to be non-empty")
-	}
-
-	if diffs := storeB.PostflowProjectionDiffs(); len(diffs) != 0 {
-		t.Fatalf("expected storeB diffs to be empty, got %v", diffs)
-	}
-}
-
-func registerSessionFunctionForRefinementTest(t *testing.T, st *store.SessionStore, sym cfg.SymbolID) api.GraphKey {
-	t.Helper()
-	fn := &ast.FunctionExpr{}
-	graph := cfg.Build(fn)
-	if graph == nil {
-		t.Fatal("expected graph")
-	}
-	parent := scope.New()
-	st.RegisterGraph(graph, fn)
-	st.RegisterFunctionRef(sym, fn, graph, graph.ID(), 1)
-	st.SetGraphParentHash(graph.ID(), parent.Hash())
-	st.SetParentScope(parent.Hash(), parent)
-	return api.KeyForGraph(graph, parent.Hash())
-}
-
-func TestSessionStore_ClearPostflowProjectionState(t *testing.T) {
-	store := store.NewSessionStore()
-
-	store.MergeConstructorFieldProjection(cfg.SymbolID(2), interprocdomain.LiftTypeFieldMap(map[string]typ.Type{"name": typ.String}))
-	store.MergePostflowFunctionFactProjection(
-		api.GraphKey{GraphID: 1, ParentHash: 1},
-		cfg.SymbolID(4),
-		api.FunctionFact{Effects: api.FunctionEffectProjection{Refinement: &constraint.FunctionRefinement{Terminates: true}}},
-	)
-	store.AdvancePostflowProjections()
-
-	store.ClearPostflowProjectionState()
-
-	prev, next := store.PostflowProjectionCounts()
-	if prev != 0 {
-		t.Fatal("expected previous product facts to be cleared")
-	}
-	if next != 0 {
-		t.Fatal("expected next product facts to be cleared")
-	}
-}
-
 func TestSession_Release(t *testing.T) {
 	sess := New(db.NewQueryContext(db.New()), "test.lua")
 
@@ -520,79 +451,4 @@ func TestSession_Release(t *testing.T) {
 func TestSession_Release_Nil(t *testing.T) {
 	var sess *Session
 	sess.Release() // should not panic
-}
-
-func TestModuleConstructorFacts_EmptyDelta(t *testing.T) {
-	store := store.NewSessionStore()
-	store.MergeConstructorFieldProjection(0, nil)
-	_, next := store.PostflowProjectionCounts()
-	if next != 0 {
-		t.Error("empty product delta should not store facts")
-	}
-}
-
-func TestModuleConstructorFacts_EmptyFields(t *testing.T) {
-	store := store.NewSessionStore()
-	store.MergeConstructorFieldProjection(1, nil)
-	got, _ := store.ConstructorFieldsProjection(1)
-	if len(got) != 0 {
-		t.Fatalf("empty constructor field map should stay empty, got %#v", got)
-	}
-}
-
-func TestModuleConstructorFacts_Basic(t *testing.T) {
-	store := store.NewSessionStore()
-	fields := interprocdomain.LiftTypeFieldMap(map[string]typ.Type{"x": typ.Number, "y": typ.String})
-	store.MergeConstructorFieldProjection(1, fields)
-
-	gotFields, _ := store.ConstructorFieldsProjection(1)
-	if len(gotFields) != 2 {
-		t.Errorf("expected 2 fields, got %d", len(gotFields))
-	}
-}
-
-func TestModuleConstructorFacts_Join(t *testing.T) {
-	store := store.NewSessionStore()
-	store.MergeConstructorFieldProjection(1, interprocdomain.LiftTypeFieldMap(map[string]typ.Type{"x": typ.Number}))
-	store.MergeConstructorFieldProjection(1, interprocdomain.LiftTypeFieldMap(map[string]typ.Type{"x": typ.String}))
-
-	fields, _ := store.ConstructorFieldsProjection(1)
-	xKey, ok := interprocdomain.FieldKeyFromName("x")
-	if !ok || fields == nil || product.Equal(fields[xKey], product.FromType(typ.Number)) {
-		t.Error("field should be joined")
-	}
-}
-
-func TestModuleFacts_AbsentConstructorClass(t *testing.T) {
-	store := store.NewSessionStore()
-	result, _ := store.ConstructorFieldsProjection(0)
-	if result != nil {
-		t.Error("absent constructor class should return nil")
-	}
-}
-
-func TestModuleFacts_ConstructorFieldsFromNext(t *testing.T) {
-	store := store.NewSessionStore()
-	setConstructorFieldsNextForTest(store, map[cfg.SymbolID]map[string]typ.Type{
-		1: {"x": typ.Number},
-	})
-	result, _ := store.ConstructorFieldsProjection(1)
-	if result == nil {
-		t.Fatal("should find same-iteration constructor fields from product overlay")
-	}
-}
-
-func TestModuleFacts_ConstructorFieldsFromPrev(t *testing.T) {
-	store := store.NewSessionStore()
-	setConstructorFieldsPrevForTest(store, map[cfg.SymbolID]map[string]typ.Type{
-		1: {"y": typ.String},
-	})
-	result, _ := store.ConstructorFieldsProjection(1)
-	if result == nil {
-		t.Fatal("should find fields from stable product")
-	}
-	key, ok := interprocdomain.FieldKeyFromName("y")
-	if !ok || !typ.TypeEquals(result[key].ProjectValue(), typ.String) {
-		t.Error("wrong field type")
-	}
 }

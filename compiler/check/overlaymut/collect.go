@@ -5,7 +5,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/bind"
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/api"
-	interprocdomain "github.com/wippyai/go-lua/compiler/check/domain/interproc"
+	"github.com/wippyai/go-lua/compiler/check/domain/fieldkey"
 	"github.com/wippyai/go-lua/types/domain/value/product"
 	"github.com/wippyai/go-lua/types/typ"
 )
@@ -72,7 +72,7 @@ func CollectFieldAssignments(
 			if filter != nil && !filter.Contains(sym) {
 				continue
 			}
-			fieldKey, ok := interprocdomain.FieldKeyFromName(fieldName)
+			fieldKey, ok := fieldkey.FromName(fieldName)
 			if !ok {
 				continue
 			}
@@ -86,7 +86,7 @@ func CollectFieldAssignments(
 			}
 
 			if result[sym] == nil {
-				result[sym] = make(interprocdomain.FieldValues)
+				result[sym] = make(fieldkey.Values)
 			}
 			fieldValue := product.FromType(fieldType)
 			if existing := result[sym][fieldKey]; !existing.IsZero() {
@@ -136,7 +136,7 @@ func CollectFunctionFieldAssignments(
 		if filter != nil && !filter.Contains(target.Symbol) {
 			continue
 		}
-		fieldKey, ok := interprocdomain.FieldKeyFromName(seg.Name)
+		fieldKey, ok := fieldkey.FromName(seg.Name)
 		if !ok {
 			continue
 		}
@@ -148,7 +148,7 @@ func CollectFunctionFieldAssignments(
 			fieldType = typ.Unknown
 		}
 		if result[target.Symbol] == nil {
-			result[target.Symbol] = make(interprocdomain.FieldValues)
+			result[target.Symbol] = make(fieldkey.Values)
 		}
 		fieldValue := product.FromType(fieldType)
 		if existing := result[target.Symbol][fieldKey]; !existing.IsZero() {

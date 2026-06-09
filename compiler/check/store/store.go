@@ -7,15 +7,9 @@ import (
 	"github.com/wippyai/go-lua/compiler/bind"
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/api"
-	"github.com/wippyai/go-lua/compiler/check/domain/functionfact"
-	"github.com/wippyai/go-lua/compiler/check/domain/interproc"
-	"github.com/wippyai/go-lua/compiler/check/domain/postflow"
 	"github.com/wippyai/go-lua/compiler/check/domain/trace"
 	"github.com/wippyai/go-lua/compiler/check/scope"
-	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/db"
-	"github.com/wippyai/go-lua/types/domain/value/product"
-	"github.com/wippyai/go-lua/types/typ"
 )
 
 type SessionStore struct {
@@ -23,17 +17,8 @@ type SessionStore struct {
 	// Created once at the start of checking and shared by all CFG builds.
 	Module *ModuleStore
 
-	// postflowPrev holds stable postflow projection lanes from completed iterations.
-	postflowPrev *postflowProjectionState
-	// postflowNext accumulates postflow projection lanes during the current iteration.
-	postflowNext *postflowProjectionState
-
 	// GraphParentHash records the parent scope hash for each graph ID.
 	GraphParentHash map[uint64]uint64
-
-	// lastSwapDiffs records lanes changed by the most recent AdvancePostflowProjections.
-	// Stored per-session to avoid cross-session contamination.
-	lastSwapDiffs []string
 
 	factInputs *factInputs
 	factCtx    *db.QueryContext
@@ -41,25 +26,6 @@ type SessionStore struct {
 	analysisContexts map[api.GraphKey]api.AnalysisContext
 
 	synthMode api.SynthMode
-}
-
-// postflowProjectionState holds one side of the noncanonical postflow projection
-// loop. Each lane is stored independently so unrelated facts do not share a
-// mixed convergence product.
-type postflowProjectionState struct {
-	functionFacts     map[api.GraphKey]api.FunctionFacts
-	capturedTypes     map[api.GraphKey]postflow.CapturedTypes
-	capturedFields    map[api.GraphKey]postflow.CapturedFieldAssigns
-	constructorFields map[api.GraphKey]postflow.ConstructorFields
-}
-
-func newPostflowProjectionState() *postflowProjectionState {
-	return &postflowProjectionState{
-		functionFacts:     make(map[api.GraphKey]api.FunctionFacts),
-		capturedTypes:     make(map[api.GraphKey]postflow.CapturedTypes),
-		capturedFields:    make(map[api.GraphKey]postflow.CapturedFieldAssigns),
-		constructorFields: make(map[api.GraphKey]postflow.ConstructorFields),
-	}
 }
 
 // ModuleStore holds module-wide immutable state.
@@ -106,15 +72,11 @@ func NewSessionStore() *SessionStore {
 	return NewSessionStoreWithDB(nil)
 }
 
-// NewSessionStoreWithDB creates a store whose postflow projection lanes are
-// tracked as query inputs. The checker uses this form so function-result queries
-// are revalidated from the exact facts they read instead of from a coarse
-// iteration revision key.
+// NewSessionStoreWithDB creates a store whose canonical final projection rows
+// are tracked as query inputs.
 func NewSessionStoreWithDB(database *db.DB) *SessionStore {
 	return &SessionStore{
 		Module:           NewModuleStore(),
-		postflowPrev:     newPostflowProjectionState(),
-		postflowNext:     newPostflowProjectionState(),
 		GraphParentHash:  make(map[uint64]uint64),
 		analysisContexts: make(map[api.GraphKey]api.AnalysisContext),
 		factInputs:       newFactInputs(database),
@@ -169,245 +131,6 @@ func NewModuleStore() *ModuleStore {
 		ModuleAliases: make(map[cfg.SymbolID]string),
 		NestedMeta:    make(map[uint64]api.NestedMeta),
 	}
-}
-
-func (s *SessionStore) ensurePostflowProjectionStates() {
-	if s == nil {
-		return
-	}
-	if s.postflowPrev == nil {
-		s.postflowPrev = newPostflowProjectionState()
-	}
-	if s.postflowNext == nil {
-		s.postflowNext = newPostflowProjectionState()
-	}
-	if s.postflowPrev.functionFacts == nil {
-		s.postflowPrev.functionFacts = make(map[api.GraphKey]api.FunctionFacts)
-	}
-	if s.postflowPrev.capturedTypes == nil {
-		s.postflowPrev.capturedTypes = make(map[api.GraphKey]postflow.CapturedTypes)
-	}
-	if s.postflowPrev.capturedFields == nil {
-		s.postflowPrev.capturedFields = make(map[api.GraphKey]postflow.CapturedFieldAssigns)
-	}
-	if s.postflowPrev.constructorFields == nil {
-		s.postflowPrev.constructorFields = make(map[api.GraphKey]postflow.ConstructorFields)
-	}
-	if s.postflowNext.functionFacts == nil {
-		s.postflowNext.functionFacts = make(map[api.GraphKey]api.FunctionFacts)
-	}
-	if s.postflowNext.capturedTypes == nil {
-		s.postflowNext.capturedTypes = make(map[api.GraphKey]postflow.CapturedTypes)
-	}
-	if s.postflowNext.capturedFields == nil {
-		s.postflowNext.capturedFields = make(map[api.GraphKey]postflow.CapturedFieldAssigns)
-	}
-	if s.postflowNext.constructorFields == nil {
-		s.postflowNext.constructorFields = make(map[api.GraphKey]postflow.ConstructorFields)
-	}
-}
-
-func swapProductMap[T any](
-	prev *T,
-	next *T,
-	merge func(prev, next T) T,
-	equal func(a, b T) bool,
-	reset func() T,
-) bool {
-	if prev == nil || next == nil || merge == nil || equal == nil || reset == nil {
-		return false
-	}
-	merged := merge(*prev, *next)
-	changed := !equal(*prev, merged)
-	*prev = merged
-	*next = reset()
-	return changed
-}
-
-func (s *SessionStore) swapPostflowProjections() []string {
-	s.ensurePostflowProjectionStates()
-
-	products := []struct {
-		name string
-		swap func() bool
-	}{
-		{
-			name: "PostflowFunctionFactProjection",
-			swap: func() bool {
-				return swapProductMap(
-					&s.postflowPrev.functionFacts,
-					&s.postflowNext.functionFacts,
-					interproc.WidenFunctionFactMaps,
-					interproc.FunctionFactMapsEqual,
-					func() map[api.GraphKey]api.FunctionFacts {
-						return make(map[api.GraphKey]api.FunctionFacts)
-					},
-				)
-			},
-		},
-		{
-			name: "CapturedTypeProjection",
-			swap: func() bool {
-				return swapProductMap(
-					&s.postflowPrev.capturedTypes,
-					&s.postflowNext.capturedTypes,
-					interproc.WidenCapturedTypeMaps,
-					interproc.CapturedTypeMapsEqual,
-					func() map[api.GraphKey]postflow.CapturedTypes {
-						return make(map[api.GraphKey]postflow.CapturedTypes)
-					},
-				)
-			},
-		},
-		{
-			name: "CapturedFieldProjection",
-			swap: func() bool {
-				return swapProductMap(
-					&s.postflowPrev.capturedFields,
-					&s.postflowNext.capturedFields,
-					interproc.WidenCapturedFieldAssignMaps,
-					interproc.CapturedFieldAssignMapsEqual,
-					func() map[api.GraphKey]postflow.CapturedFieldAssigns {
-						return make(map[api.GraphKey]postflow.CapturedFieldAssigns)
-					},
-				)
-			},
-		},
-		{
-			name: "ConstructorFieldProjection",
-			swap: func() bool {
-				return swapProductMap(
-					&s.postflowPrev.constructorFields,
-					&s.postflowNext.constructorFields,
-					interproc.WidenConstructorFieldMaps,
-					interproc.ConstructorFieldMapsEqual,
-					func() map[api.GraphKey]postflow.ConstructorFields {
-						return make(map[api.GraphKey]postflow.ConstructorFields)
-					},
-				)
-			},
-		},
-	}
-
-	diffs := make([]string, 0, len(products))
-	for _, product := range products {
-		if product.swap() {
-			diffs = append(diffs, product.name)
-		}
-	}
-	return diffs
-}
-
-// AdvancePostflowProjections advances postflow projection lanes at an iteration boundary.
-//
-// OPERATIONS PERFORMED:
-//  1. Compare each stable lane with its accumulated lane
-//  2. Move next into prev (current results become baseline for next iteration)
-//  3. Allocate fresh next maps (empty for accumulating new results)
-//  4. Record which lanes changed for diagnostic reporting
-//
-// CHANGE DETECTION: Each lane uses domain-owned structural equality.
-//
-// RETURN VALUE: Returns true if the product changed, signaling another iteration
-// is needed. Returns false when the product stabilizes.
-func (s *SessionStore) AdvancePostflowProjections() bool {
-	diffs := s.swapPostflowProjections()
-
-	s.syncFactInputs()
-
-	s.lastSwapDiffs = diffs
-
-	return len(diffs) > 0
-}
-
-// PostflowProjectionDiffs returns lanes changed by the most recent swap.
-func (s *SessionStore) PostflowProjectionDiffs() []string {
-	if s == nil {
-		return nil
-	}
-	if len(s.lastSwapDiffs) == 0 {
-		return nil
-	}
-	out := make([]string, len(s.lastSwapDiffs))
-	copy(out, s.lastSwapDiffs)
-	return out
-}
-
-// ClearPostflowProjectionState clears all postflow projection lane state for a fresh run.
-func (s *SessionStore) ClearPostflowProjectionState() {
-	if s == nil {
-		return
-	}
-	s.postflowPrev = newPostflowProjectionState()
-	s.postflowNext = newPostflowProjectionState()
-	s.lastSwapDiffs = nil
-	if s.factInputs != nil {
-		s.factInputs.reset()
-	}
-	clear(s.analysisContexts)
-}
-
-// PostflowProjectionStateInitialized reports whether the postflow projection owner is
-// initialized. It exposes only store ownership health, not the lane maps.
-func (s *SessionStore) PostflowProjectionStateInitialized() bool {
-	return s != nil &&
-		postflowProjectionStateInitialized(s.postflowPrev) &&
-		postflowProjectionStateInitialized(s.postflowNext)
-}
-
-func postflowProjectionStateInitialized(state *postflowProjectionState) bool {
-	return state != nil &&
-		state.functionFacts != nil &&
-		state.capturedTypes != nil &&
-		state.capturedFields != nil &&
-		state.constructorFields != nil
-}
-
-// PostflowProjectionCounts reports postflow projection-lane occupancy for tests and
-// compatibility assertions without exposing the lane maps.
-func (s *SessionStore) PostflowProjectionCounts() (prev int, next int) {
-	if s == nil {
-		return 0, 0
-	}
-	if s.postflowPrev != nil {
-		prev = postflowProjectionStateCount(s.postflowPrev)
-	}
-	if s.postflowNext != nil {
-		next = postflowProjectionStateCount(s.postflowNext)
-	}
-	return prev, next
-}
-
-func postflowProjectionStateCount(state *postflowProjectionState) int {
-	if state == nil {
-		return 0
-	}
-	return len(state.functionFacts) +
-		len(state.capturedTypes) +
-		len(state.capturedFields) +
-		len(state.constructorFields)
-}
-
-// ProjectionFunctionRefinementsForExport returns the final refinement projection
-// from the converged function-fact lane. Export code reads this projection instead of
-// peeking into projection state.
-func (s *SessionStore) ProjectionFunctionRefinementsForExport() map[cfg.SymbolID]*constraint.FunctionRefinement {
-	if s == nil || s.postflowPrev == nil || len(s.postflowPrev.functionFacts) == 0 {
-		return nil
-	}
-	refinements := make(map[cfg.SymbolID]*constraint.FunctionRefinement)
-	for _, key := range api.SortedGraphKeys(s.postflowPrev.functionFacts) {
-		facts := s.postflowPrev.functionFacts[key]
-		for _, sym := range cfg.SortedSymbolIDs(facts) {
-			if refinement := functionfact.FactsProjection(facts).Refinement(sym); refinement != nil {
-				refinements[sym] = refinement
-			}
-		}
-	}
-	if len(refinements) == 0 {
-		return nil
-	}
-	return refinements
 }
 
 // ModuleBindings returns the module binding table.
@@ -497,96 +220,6 @@ func (s *SessionStore) ParentGraphKeyForSymbol(sym cfg.SymbolID) (api.GraphKey, 
 		return api.GraphKey{}, false
 	}
 	return api.KeyForGraph(graph, parentHash), true
-}
-
-// MergePostflowFunctionFactProjection merges one noncanonical postflow
-// function-fact projection row.
-func (s *SessionStore) MergePostflowFunctionFactProjection(key api.GraphKey, sym cfg.SymbolID, fact api.FunctionFact) {
-	if sym == 0 || functionfact.Empty(fact) {
-		return
-	}
-	s.ensurePostflowProjectionStates()
-	existing := s.postflowNext.functionFacts[key]
-	facts := interproc.JoinFunctionFacts(existing, api.FunctionFacts{sym: fact})
-	if len(facts) == 0 {
-		if len(existing) == 0 {
-			return
-		}
-		delete(s.postflowNext.functionFacts, key)
-		return
-	}
-	if interproc.FunctionFactsEqual(existing, facts) {
-		return
-	}
-	s.postflowNext.functionFacts[key] = facts
-}
-
-// MergeCapturedTypeProjection merges one captured-symbol type row.
-func (s *SessionStore) MergeCapturedTypeProjection(key api.GraphKey, sym cfg.SymbolID, value product.AbstractValue) {
-	if sym == 0 || value.IsZero() {
-		return
-	}
-	s.ensurePostflowProjectionStates()
-	existing := s.postflowNext.capturedTypes[key]
-	types := interproc.JoinCapturedTypes(existing, postflow.CapturedTypes{sym: value})
-	if len(types) == 0 {
-		if len(existing) == 0 {
-			return
-		}
-		delete(s.postflowNext.capturedTypes, key)
-		return
-	}
-	if interproc.CapturedTypesEqual(existing, types) {
-		return
-	}
-	s.postflowNext.capturedTypes[key] = types
-}
-
-// MergeCapturedFieldProjection merges field writes performed by one nested
-// function against one captured parent symbol.
-func (s *SessionStore) MergeCapturedFieldProjection(key api.GraphKey, nestedSym cfg.SymbolID, capturedSym cfg.SymbolID, fields postflow.FieldValues) {
-	if nestedSym == 0 || capturedSym == 0 || len(fields) == 0 {
-		return
-	}
-	s.ensurePostflowProjectionStates()
-	existing := s.postflowNext.capturedFields[key]
-	next := postflow.CapturedFieldAssigns{nestedSym: {capturedSym: fields}}
-	assigns := interproc.JoinCapturedFieldAssigns(existing, next)
-	if len(assigns) == 0 {
-		if len(existing) == 0 {
-			return
-		}
-		delete(s.postflowNext.capturedFields, key)
-		return
-	}
-	if interproc.CapturedFieldAssignsEqual(existing, assigns) {
-		return
-	}
-	s.postflowNext.capturedFields[key] = assigns
-}
-
-// MergeConstructorFieldProjection merges constructor field evidence into the
-// module-wide projection lane.
-func (s *SessionStore) MergeConstructorFieldProjection(classSym cfg.SymbolID, fields postflow.FieldValues) {
-	if classSym == 0 || len(fields) == 0 {
-		return
-	}
-	key := api.ModuleFactsKey()
-	s.ensurePostflowProjectionStates()
-	existing := s.postflowNext.constructorFields[key]
-	next := postflow.ConstructorFields{classSym: fields}
-	constructors := interproc.JoinConstructorFields(existing, next)
-	if len(constructors) == 0 {
-		if len(existing) == 0 {
-			return
-		}
-		delete(s.postflowNext.constructorFields, key)
-		return
-	}
-	if interproc.ConstructorFieldsEqual(existing, constructors) {
-		return
-	}
-	s.postflowNext.constructorFields[key] = constructors
 }
 
 // Funcs returns the function map.
@@ -837,41 +470,6 @@ func (s *SessionStore) SetModuleAliases(aliases map[cfg.SymbolID]string) {
 	s.Module.ModuleAliases = aliases
 }
 
-// CapturedTypeProjection returns the visible captured-symbol type projection for
-// a graph key.
-func (s *SessionStore) CapturedTypeProjection(graph *cfg.Graph, parent *scope.State, sym cfg.SymbolID) (typ.Type, bool) {
-	if s == nil || graph == nil || sym == 0 {
-		return nil, false
-	}
-	key, ok := s.GraphKeyFor(graph, parent)
-	if !ok {
-		return nil, false
-	}
-	return s.capturedTypeByKey(api.CapturedTypeKey{GraphKey: key, Symbol: sym})
-}
-
-// CapturedFieldAssignsProjection returns the visible captured-field projection
-// for a graph key.
-func (s *SessionStore) CapturedFieldAssignsProjection(graph *cfg.Graph, parent *scope.State) postflow.CapturedFieldAssigns {
-	if s == nil || graph == nil {
-		return nil
-	}
-	key, ok := s.GraphKeyFor(graph, parent)
-	if !ok {
-		return nil
-	}
-	return s.capturedFieldAssignsByKey(key)
-}
-
-// ConstructorFieldsProjection returns visible constructor field evidence for a
-// class symbol from the module-wide projection lane.
-func (s *SessionStore) ConstructorFieldsProjection(classSym cfg.SymbolID) (postflow.FieldValues, bool) {
-	if s == nil || classSym == 0 {
-		return nil, false
-	}
-	return s.constructorFieldsByKey(api.ConstructorFieldKey{GraphKey: api.ModuleFactsKey(), Symbol: classSym})
-}
-
 // CanonicalFunctionFactProjection returns the final Summary-derived FunctionFact
 // projection for one symbol. This uses the keyed projection cell so normal
 // checker paths do not clone or scan the graph's whole FunctionFacts map.
@@ -899,32 +497,4 @@ func (s *SessionStore) CanonicalFunctionFactsProjectionForExport(graph *cfg.Grap
 		return nil
 	}
 	return s.canonicalFunctionFactsByKey(key)
-}
-
-// PostflowFunctionFactProjection returns the noncanonical postflow-visible
-// FunctionFact projection for one symbol. Old postflow/nested inference uses
-// this lane explicitly; canonical code must not call it.
-func (s *SessionStore) PostflowFunctionFactProjection(graph *cfg.Graph, parent *scope.State, sym cfg.SymbolID) (api.FunctionFact, bool) {
-	if s == nil || graph == nil || sym == 0 {
-		return api.FunctionFact{}, false
-	}
-	key, ok := s.GraphKeyFor(graph, parent)
-	if !ok {
-		return api.FunctionFact{}, false
-	}
-	return s.postflowFunctionFactByKey(api.FunctionFactKey{GraphKey: key, Symbol: sym})
-}
-
-// PostflowFunctionFactsProjectionForExport returns the noncanonical postflow
-// function-fact projection as a whole map for compatibility/export tests that
-// still inspect the old postflow lane.
-func (s *SessionStore) PostflowFunctionFactsProjectionForExport(graph *cfg.Graph, parent *scope.State) api.FunctionFacts {
-	if s == nil || graph == nil {
-		return nil
-	}
-	key, ok := s.GraphKeyFor(graph, parent)
-	if !ok {
-		return nil
-	}
-	return s.postflowFunctionFactsByKey(key)
 }

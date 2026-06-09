@@ -21,4 +21,4 @@ func paramsTypes(ff api.FunctionFact) []typ.Type      { return product.ProjectVe
 func bodyParamsTypes(ff api.FunctionFact) []typ.Type  { return product.ProjectVector(ff.Body.Params) }
 func entryParamsTypes(ff api.FunctionFact) []typ.Type { return product.ProjectVector(ff.Entry.Params) }
 func summaryTypes(ff api.FunctionFact) []typ.Type     { return product.ProjectVector(ff.Returns.Preflow) }
-func narrowTypes(ff api.FunctionFact) []typ.Type      { return product.ProjectVector(ff.Returns.Postflow) }
+func narrowTypes(ff api.FunctionFact) []typ.Type      { return product.ProjectVector(ff.Returns.Narrow) }

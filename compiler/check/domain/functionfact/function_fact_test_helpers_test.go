@@ -42,9 +42,9 @@ func factPreflowReturns(returns ...typ.Type) func(*api.FunctionFact) {
 	}
 }
 
-func factPostflowReturns(returns ...typ.Type) func(*api.FunctionFact) {
+func factNarrowReturns(returns ...typ.Type) func(*api.FunctionFact) {
 	return func(ff *api.FunctionFact) {
-		ff.Returns.Postflow = product.LiftVector(returns)
+		ff.Returns.Narrow = product.LiftVector(returns)
 	}
 }
 
@@ -66,10 +66,10 @@ func factEnvReturns(envReturns ...contract.EnvReturnSpec) func(*api.FunctionFact
 	}
 }
 
-func factReturnProjection(preflow, postflow []typ.Type) func(*api.FunctionFact) {
+func factReturnProjection(preflow, narrow []typ.Type) func(*api.FunctionFact) {
 	return func(ff *api.FunctionFact) {
 		ff.Returns.Preflow = product.LiftVector(preflow)
-		ff.Returns.Postflow = product.LiftVector(postflow)
+		ff.Returns.Narrow = product.LiftVector(narrow)
 	}
 }
 
@@ -89,6 +89,6 @@ func factPreflowTypesTest(ff api.FunctionFact) []typ.Type {
 	return product.ProjectVector(ff.Returns.Preflow)
 }
 
-func factPostflowTypesTest(ff api.FunctionFact) []typ.Type {
-	return product.ProjectVector(ff.Returns.Postflow)
+func factNarrowTypesTest(ff api.FunctionFact) []typ.Type {
+	return product.ProjectVector(ff.Returns.Narrow)
 }

@@ -27,16 +27,11 @@
 // # Final Projections
 //
 // Canonical checking uses Summary as its interprocedural authority. This package
-// exposes final/public projection facts; noncanonical postflow lane carriers live
-// under compiler/check/domain/postflow and their convergence laws live under
-// compiler/check/domain/interproc:
+// exposes final/public projection facts:
 //
 //   - [FunctionFacts]: final/public per-function projection facts
-//   - compiler/check/domain/postflow captured/constructor lanes: noncanonical
-//     postflow compatibility projections
 //
-// Projection lanes are keyed by a (graph, parent-scope) [GraphKey]; module-wide
-// lanes use [ModuleFactsKey].
+// Final projections are keyed by a (graph, parent-scope) [GraphKey].
 //
 // # Function References
 //

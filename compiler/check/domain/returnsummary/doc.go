@@ -1,7 +1,8 @@
 // Package returnsummary owns the return-vector abstract domain.
 //
 // It canonicalizes, compares, joins, and widens return summaries produced by
-// local return inference and postflow projection propagation. Orchestration
-// packages decide when candidate summaries are produced; this package decides how
-// those summaries normalize, refine, merge, and align back to function types.
+// local return inference and final/narrow return projection. Orchestration
+// packages decide when candidate summaries are produced; this package decides
+// how those summaries normalize, refine, merge, and align back to function
+// types.
 package returnsummary

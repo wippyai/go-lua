@@ -4,14 +4,14 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/compiler/cfg"
-	interprocdomain "github.com/wippyai/go-lua/compiler/check/domain/interproc"
+	"github.com/wippyai/go-lua/compiler/check/domain/fieldkey"
 	"github.com/wippyai/go-lua/types/domain/value"
 	"github.com/wippyai/go-lua/types/typ"
 	"github.com/wippyai/go-lua/types/typ/unwrap"
 )
 
-func fieldValues(fields map[string]typ.Type) interprocdomain.FieldValues {
-	return interprocdomain.LiftTypeFieldMap(fields)
+func fieldValues(fields map[string]typ.Type) fieldkey.Values {
+	return fieldkey.LiftTypeMap(fields)
 }
 
 func liftFieldAssignments(fields map[cfg.SymbolID]map[string]typ.Type) FieldAssignments {
@@ -22,8 +22,8 @@ func liftFieldAssignments(fields map[cfg.SymbolID]map[string]typ.Type) FieldAssi
 	return out
 }
 
-func projectedField(fields interprocdomain.FieldValues, name string) typ.Type {
-	return interprocdomain.ProjectValueFieldMap(fields)[name]
+func projectedField(fields fieldkey.Values, name string) typ.Type {
+	return fieldkey.ProjectValueMap(fields)[name]
 }
 
 func TestMergeFieldAssignments(t *testing.T) {
@@ -68,7 +68,7 @@ func TestApplyFieldMergeToOverlay(t *testing.T) {
 	t.Run("empty fields are skipped", func(t *testing.T) {
 		overlay := make(map[cfg.SymbolID]typ.Type)
 		fieldAssignments := FieldAssignments{
-			1: interprocdomain.FieldValues{},
+			1: fieldkey.Values{},
 		}
 		ApplyFieldMergeToOverlay(overlay, fieldAssignments)
 		if _, ok := overlay[1]; ok {

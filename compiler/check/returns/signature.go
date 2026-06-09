@@ -13,9 +13,9 @@ type seedTypeResolver interface {
 	ResolveReturnTypes([]ast.TypeExpr, *scope.State) []typ.Type
 }
 
-// BuildPostflowSeedFunctionType builds the public source-declared signature
-// seed used when committing the canonical post-flow FunctionFact product.
-func BuildPostflowSeedFunctionType(result *api.FuncResult, fn *ast.FunctionExpr) *typ.Function {
+// BuildDeclaredSeedFunctionType returns the public source-declared signature
+// seed used by final FunctionFact projection.
+func BuildDeclaredSeedFunctionType(result *api.FuncResult, fn *ast.FunctionExpr) *typ.Function {
 	if result == nil || fn == nil {
 		return nil
 	}

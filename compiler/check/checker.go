@@ -3,15 +3,13 @@
 // # ARCHITECTURE OVERVIEW
 //
 // Canonical checking performs interprocedural type analysis through Summary
-// queries over PointState. Older inference/export paths still use postflow
-// projection lanes, but those lanes are not the canonical semantic authority.
+// queries over PointState. Public/export FunctionFacts are final projections
+// from the converged canonical summary artifact.
 //
 // # INTERPROCEDURAL ANALYSIS
 //
-// Postflow/export projection paths use explicit lanes:
-//
-//   - FunctionFacts: final/public parameter/return/narrow/signature projection
-//   - Captured types/writes and constructor fields as independent lanes
+// Final projections expose public parameter/return/narrow/signature facts for
+// export and compatibility read models. They are not solver inputs.
 //
 // # DETERMINISTIC ORDERING
 //
@@ -22,13 +20,13 @@
 //
 // # MEMOIZATION
 //
-// Function analysis results are memoized by (GraphID, ParentHash). Projection
-// lanes are tracked as query inputs for noncanonical compatibility paths, while
-// canonical Summary queries carry canonical interprocedural dependencies.
+// Function analysis results are memoized by (GraphID, ParentHash). Canonical
+// Summary queries carry interprocedural dependencies, and final projection rows
+// are tracked as query inputs for post-solve result reads.
 //
 // # CONVERGENCE
 //
-// The postflow projection loop terminates when every projection lane stabilizes.
+// The canonical summary query owns interprocedural convergence.
 package check
 
 import (
@@ -207,15 +205,10 @@ func WithScopeDepthDiagnostics(enabled bool) Option {
 // The returned Session contains:
 //   - Results: Per-function analysis results (types, flow facts, effects)
 //   - Diagnostics: Type errors, warnings, and suggestions
-//   - Store: Final projections plus postflow projection lanes for compatibility paths
+//   - Store: Module state plus final canonical projections
 func (c *Checker) Check(source, name string) *Session {
 	ctx := db.NewQueryContext(c.db)
 	sess := New(ctx, name)
-	// Ensure each top-level Check starts from clean projection fact state. These
-	// iteration-stable caches must not persist across separate runs.
-	if sess.Store != nil {
-		sess.Store.ClearPostflowProjectionState()
-	}
 
 	chunk, err := parse.ParseString(source, name)
 	if err != nil {
@@ -259,10 +252,6 @@ func (c *Checker) Check(source, name string) *Session {
 func (c *Checker) CheckChunk(chunk []ast.Stmt, name string) *Session {
 	ctx := db.NewQueryContext(c.db)
 	sess := New(ctx, name)
-	// Attach store accessor and compute context for interproc queries
-	if sess.Store != nil {
-		sess.Store.ClearPostflowProjectionState()
-	}
 	c.checkChunk(sess, chunk)
 	return sess
 }

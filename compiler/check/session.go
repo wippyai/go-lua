@@ -1,7 +1,7 @@
 // session.go defines the Session type that holds per-run state for type checking.
 // Session is the primary interface for accessing analysis results. SessionStore
-// lives in compiler/check/store and manages module state, final projections,
-// and postflow projection lane state for compatibility paths.
+// lives in compiler/check/store and manages module state plus final canonical
+// projections.
 //
 // # LIFECYCLE SEPARATION
 //
@@ -11,19 +11,8 @@
 //     Contains binding tables, CFG graphs, and module aliases. Never modified
 //     during fixpoint iteration.
 //
-//   - Fact inputs: query-tracked projection lanes used to revalidate
-//     cached compatibility-path analysis when facts change.
-//
-// # POSTFLOW PROJECTION PROTOCOL
-//
-// Projection facts follow a lane protocol:
-//
-//   - During iteration: functions read visible lane values
-//   - At boundary: accumulated facts widen into stable lane values
-//   - Convergence: iteration stops when every lane is unchanged
-//
-// Visible lanes support deterministic Gauss-Seidel propagation because
-// function scheduling is deterministic.
+//   - Fact inputs: query-tracked final projection rows used to revalidate
+//     post-solve result reads when canonical projections change.
 //
 // # PARALLELIZATION
 //
@@ -49,8 +38,7 @@ import (
 
 // Session holds all state and results for analyzing a single Lua module.
 // One Session is created per Check call and contains the complete analysis output
-// including per-function results, diagnostics, and postflow projection lane state for
-// compatibility paths.
+// including per-function results, diagnostics, and final projections.
 //
 // USAGE PATTERN:
 //
@@ -63,7 +51,7 @@ import (
 // CONCURRENCY: db.QueryContext is NOT safe for concurrent access. For parallel
 // analysis, create one Session per worker with independent QueryContexts, then
 // merge results. Functions within a single fixpoint iteration read from shared
-// visible lanes and write to independent per-iteration maps, enabling future parallelization.
+// canonical summaries and write independent local states, enabling future parallelization.
 //
 // MEMORY MANAGEMENT: Call Release() after extracting Manifest data to free heavy
 // allocations (CFGs, scopes, flow data). The Session remains valid for Diagnostics
@@ -394,7 +382,7 @@ func (s *Session) exportFunctionResults() []modules.ExportFunctionResult {
 // WHAT IS FREED:
 //   - CFG graphs and binding tables
 //   - Scope states and solved-flow projections
-//   - Interprocedural fact products
+//   - Function registry mappings
 //   - Synthesis engines
 //
 // WHAT REMAINS VALID:
@@ -420,7 +408,9 @@ func (s *Session) Release() {
 			clear(s.Store.Module.ModuleAliases)
 		}
 
-		s.Store.ClearPostflowProjectionState()
+		if s.Store.Module != nil && s.Store.Module.Functions != nil {
+			s.Store.Module.Functions = nil
+		}
 	}
 
 	// Clear per-function results
@@ -493,32 +483,14 @@ func (s *Session) rootFunctionFactsForExport() api.FunctionFacts {
 	return s.Store.CanonicalFunctionFactsProjectionForExport(s.RootResult.Graph, s.RootResult.BaseScope)
 }
 
-// RefinementsForExport extracts computed function refinements for manifest generation.
-// Returns refinements from the final projection data and final converged
-// function-fact lane.
-//
-// The returned map associates each function's SymbolID with its computed refinement,
-// including IO effects (row), termination status, and conditional effects.
-// This enables importers to see side effect information for exported functions.
-//
-// FunctionFacts and per-function FuncResults can both carry a computed
-// refinement. Both sources are merged here; a symbol already present in the
-// converged function-fact lane keeps that lane refinement, while otherwise the
-// per-function body-proven refinement contributes the export summary.
+// RefinementsForExport extracts canonical body-proven function refinements for
+// manifest generation.
 func (s *Session) RefinementsForExport() map[cfg.SymbolID]*constraint.FunctionRefinement {
 	if s == nil {
 		return nil
 	}
 	refinements := make(map[cfg.SymbolID]*constraint.FunctionRefinement)
-	if s.Store != nil {
-		for sym, refinement := range s.Store.ProjectionFunctionRefinementsForExport() {
-			refinements[sym] = refinement
-		}
-	}
 	for sym, refinement := range s.canonicalRefinementsForExport() {
-		if _, ok := refinements[sym]; ok {
-			continue
-		}
 		refinements[sym] = refinement
 	}
 	if len(refinements) == 0 {

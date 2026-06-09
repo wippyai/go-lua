@@ -204,8 +204,8 @@ func TestManifest_SoftLocalAnnotations(t *testing.T) {
 	if len(groupFact.Returns.Preflow) != 2 || !typ.TypeEquals(groupFact.Returns.Preflow[0].ProjectValue(), suiteMap) || !typ.TypeEquals(groupFact.Returns.Preflow[1].ProjectValue(), entryArray) {
 		t.Fatalf("expected group_by_suite summary (%v, %v), got %v", suiteMap, entryArray, groupFact.Returns.Preflow)
 	}
-	if len(groupFact.Returns.Postflow) != 2 || !typ.TypeEquals(groupFact.Returns.Postflow[0].ProjectValue(), suiteMap) || !typ.TypeEquals(groupFact.Returns.Postflow[1].ProjectValue(), entryArray) {
-		t.Fatalf("expected group_by_suite narrow summary (%v, %v), got %v", suiteMap, entryArray, groupFact.Returns.Postflow)
+	if len(groupFact.Returns.Narrow) != 2 || !typ.TypeEquals(groupFact.Returns.Narrow[0].ProjectValue(), suiteMap) || !typ.TypeEquals(groupFact.Returns.Narrow[1].ProjectValue(), entryArray) {
+		t.Fatalf("expected group_by_suite narrow summary (%v, %v), got %v", suiteMap, entryArray, groupFact.Returns.Narrow)
 	}
 	view := functionfact.FactsProjection(functionFacts)
 	groupType := view.Type(groupSym, functionfact.ProjectionSibling, api.SynthModeDeclared)

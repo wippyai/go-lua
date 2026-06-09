@@ -82,7 +82,7 @@ local y: number = b(5)
 
 // TestFixpointUnification_LiteralSignatureVisibility verifies that function
 // literal signatures remain visible through the result/view pipeline without a
-// postflow projection lane.
+// separate projection lane.
 func TestFixpointUnification_LiteralSignatureVisibility(t *testing.T) {
 	source := `
 local tbl = {

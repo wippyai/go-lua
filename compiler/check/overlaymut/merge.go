@@ -2,7 +2,7 @@ package overlaymut
 
 import (
 	"github.com/wippyai/go-lua/compiler/cfg"
-	interprocdomain "github.com/wippyai/go-lua/compiler/check/domain/interproc"
+	"github.com/wippyai/go-lua/compiler/check/domain/fieldkey"
 	"github.com/wippyai/go-lua/types/domain/value"
 	"github.com/wippyai/go-lua/types/domain/value/product"
 	querycore "github.com/wippyai/go-lua/types/query/core"
@@ -13,7 +13,7 @@ import (
 // FieldAssignments is the typed field-write product collected for each base
 // symbol. Field identity is a constraint segment; string field names are only an
 // AST/type-record boundary representation.
-type FieldAssignments map[cfg.SymbolID]interprocdomain.FieldValues
+type FieldAssignments map[cfg.SymbolID]fieldkey.Values
 
 // MergeFieldAssignments merges src into dst.
 func MergeFieldAssignments(
@@ -23,9 +23,9 @@ func MergeFieldAssignments(
 	for _, sym := range cfg.SortedSymbolIDs(src) {
 		fields := src[sym]
 		if dst[sym] == nil {
-			dst[sym] = make(interprocdomain.FieldValues)
+			dst[sym] = make(fieldkey.Values)
 		}
-		for _, key := range interprocdomain.SortedFieldKeys(fields) {
+		for _, key := range fieldkey.Sorted(fields) {
 			fieldValue := fields[key]
 			if fieldValue.IsZero() {
 				continue
@@ -58,24 +58,24 @@ func ApplyFieldMergeToOverlay(
 }
 
 // MergeFieldsIntoType merges a set of field types into a base type.
-func MergeFieldsIntoType(baseType typ.Type, fields interprocdomain.FieldValues) typ.Type {
+func MergeFieldsIntoType(baseType typ.Type, fields fieldkey.Values) typ.Type {
 	return mergeFieldsIntoType(baseType, fields, false)
 }
 
 // MergeRequiredFieldsIntoType merges declared field-surface types into a base
 // type and marks those fields present on the resulting record.
-func MergeRequiredFieldsIntoType(baseType typ.Type, fields interprocdomain.FieldValues) typ.Type {
+func MergeRequiredFieldsIntoType(baseType typ.Type, fields fieldkey.Values) typ.Type {
 	return mergeFieldsIntoType(baseType, fields, true)
 }
 
-func mergeFieldsIntoType(baseType typ.Type, fields interprocdomain.FieldValues, required bool) typ.Type {
+func mergeFieldsIntoType(baseType typ.Type, fields fieldkey.Values, required bool) typ.Type {
 	if len(fields) == 0 {
 		return baseType
 	}
 
 	if baseType == nil {
 		builder := typ.NewRecord().SetOpen(true)
-		for _, key := range interprocdomain.SortedFieldKeys(fields) {
+		for _, key := range fieldkey.Sorted(fields) {
 			name, fieldType, ok := projectedNamedField(key, fields[key])
 			if !ok {
 				continue
@@ -89,7 +89,7 @@ func mergeFieldsIntoType(baseType typ.Type, fields interprocdomain.FieldValues, 
 	case *typ.Map:
 		builder := typ.NewRecord().SetOpen(true)
 		builder.MapComponent(v.Key, v.Value)
-		for _, key := range interprocdomain.SortedFieldKeys(fields) {
+		for _, key := range fieldkey.Sorted(fields) {
 			name, fieldType, ok := projectedNamedField(key, fields[key])
 			if !ok {
 				continue
@@ -102,8 +102,8 @@ func mergeFieldsIntoType(baseType typ.Type, fields interprocdomain.FieldValues, 
 		if v.Open {
 			builder.SetOpen(true)
 		}
-		remaining := make(interprocdomain.FieldValues, len(fields))
-		for _, key := range interprocdomain.SortedFieldKeys(fields) {
+		remaining := make(fieldkey.Values, len(fields))
+		for _, key := range fieldkey.Sorted(fields) {
 			if _, _, ok := projectedNamedField(key, fields[key]); ok {
 				remaining[key] = fields[key]
 			}
@@ -111,7 +111,7 @@ func mergeFieldsIntoType(baseType typ.Type, fields interprocdomain.FieldValues, 
 		for _, f := range v.Fields {
 			fieldType := f.Type
 			injected := false
-			if key, ok := interprocdomain.FieldKeyFromName(f.Name); ok {
+			if key, ok := fieldkey.FromName(f.Name); ok {
 				if next, ok := remaining[key]; ok {
 					fieldType = value.JoinPrecise(fieldType, next.ProjectValue())
 					delete(remaining, key)
@@ -123,7 +123,7 @@ func mergeFieldsIntoType(baseType typ.Type, fields interprocdomain.FieldValues, 
 			// declared optional field is not silently downgraded to required.
 			addMergedRecordField(builder, f, fieldType, required && injected)
 		}
-		for _, key := range interprocdomain.SortedFieldKeys(remaining) {
+		for _, key := range fieldkey.Sorted(remaining) {
 			name, fieldType, ok := projectedNamedField(key, remaining[key])
 			if ok {
 				builder.Field(name, fieldType)
@@ -138,7 +138,7 @@ func mergeFieldsIntoType(baseType typ.Type, fields interprocdomain.FieldValues, 
 		return builder.Build()
 	default:
 		builder := typ.NewRecord().SetOpen(true)
-		for _, key := range interprocdomain.SortedFieldKeys(fields) {
+		for _, key := range fieldkey.Sorted(fields) {
 			name, fieldType, ok := projectedNamedField(key, fields[key])
 			if !ok {
 				continue
@@ -149,8 +149,8 @@ func mergeFieldsIntoType(baseType typ.Type, fields interprocdomain.FieldValues, 
 	}
 }
 
-func projectedNamedField(key interprocdomain.FieldKey, fieldValue product.AbstractValue) (string, typ.Type, bool) {
-	name, ok := interprocdomain.FieldKeyStringKey(key)
+func projectedNamedField(key fieldkey.Key, fieldValue product.AbstractValue) (string, typ.Type, bool) {
+	name, ok := fieldkey.StringKeyFromSegment(key)
 	if !ok {
 		return "", nil, false
 	}

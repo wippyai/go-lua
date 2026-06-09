@@ -35,15 +35,15 @@ func TestJoin_InitialObservation(t *testing.T) {
 
 	got := Join(api.FunctionFact{}, functionFactTest(
 		factPreflowReturns(typ.String),
-		factPostflowReturns(typ.String),
+		factNarrowReturns(typ.String),
 		factSignature(fn),
 	))
 
 	if !returnsummary.Equal(factPreflowTypesTest(got), []typ.Type{typ.String}) {
 		t.Fatalf("summary mismatch: got %v", got.Returns.Preflow)
 	}
-	if !returnsummary.Equal(factPostflowTypesTest(got), []typ.Type{typ.String}) {
-		t.Fatalf("narrow mismatch: got %v", got.Returns.Postflow)
+	if !returnsummary.Equal(factNarrowTypesTest(got), []typ.Type{typ.String}) {
+		t.Fatalf("narrow mismatch: got %v", got.Returns.Narrow)
 	}
 	if !typ.TypeEquals(got.Public.Signature, fn) {
 		t.Fatalf("signature mismatch: got %v", got.Public.Signature)
@@ -123,7 +123,7 @@ func TestMergeExpectedSignature_ReturnsUseValueConvergenceLaw(t *testing.T) {
 	}
 }
 
-func TestCanonicalPostflowSignature_UsesPublicParamsAndOmitsInferredReturns(t *testing.T) {
+func TestCanonicalNarrowSignature_UsesPublicParamsAndOmitsInferredReturns(t *testing.T) {
 	observed := typ.Func().
 		Param("value", typ.Any).
 		Variadic(typ.Any).
@@ -133,9 +133,9 @@ func TestCanonicalPostflowSignature_UsesPublicParamsAndOmitsInferredReturns(t *t
 		Param("value", typ.String).
 		Build()
 
-	got := CanonicalPostflowSignature(observed, publicSeed, []typ.Type{typ.Integer}, false, false)
+	got := CanonicalNarrowSignature(observed, publicSeed, []typ.Type{typ.Integer}, false, false)
 	if got == nil {
-		t.Fatal("CanonicalPostflowSignature() = nil")
+		t.Fatal("CanonicalNarrowSignature() = nil")
 	}
 	if len(got.Params) != 1 || !typ.TypeEquals(got.Params[0].Type, typ.String) {
 		t.Fatalf("params = %v, want public string param", got.Params)
@@ -157,30 +157,30 @@ func (panicHashType) Hash() uint64 {
 }
 func (panicHashType) Equals(typ.Type) bool { return false }
 
-func TestCanonicalPostflowSignature_DoesNotHashUndeclaredInferredReturns(t *testing.T) {
+func TestCanonicalNarrowSignature_DoesNotHashUndeclaredInferredReturns(t *testing.T) {
 	observed := typ.Func().
 		Param("value", typ.String).
 		Build()
 
-	got := CanonicalPostflowSignature(observed, nil, []typ.Type{panicHashType{}}, false, false)
+	got := CanonicalNarrowSignature(observed, nil, []typ.Type{panicHashType{}}, false, false)
 	if got == nil {
-		t.Fatal("CanonicalPostflowSignature() = nil")
+		t.Fatal("CanonicalNarrowSignature() = nil")
 	}
 	if len(got.Returns) != 0 {
 		t.Fatalf("returns = %v, want undeclared inferred returns outside signature authority", got.Returns)
 	}
 }
 
-func TestCanonicalPostflowSignature_PreservesDeclaredReturnsAndSourceVariadic(t *testing.T) {
+func TestCanonicalNarrowSignature_PreservesDeclaredReturnsAndSourceVariadic(t *testing.T) {
 	observed := typ.Func().
 		Param("value", typ.Any).
 		Variadic(typ.String).
 		Returns(typ.Integer).
 		Build()
 
-	got := CanonicalPostflowSignature(observed, nil, []typ.Type{typ.String}, true, true)
+	got := CanonicalNarrowSignature(observed, nil, []typ.Type{typ.String}, true, true)
 	if got == nil {
-		t.Fatal("CanonicalPostflowSignature() = nil")
+		t.Fatal("CanonicalNarrowSignature() = nil")
 	}
 	if got.Variadic == nil || !typ.TypeEquals(got.Variadic, typ.String) {
 		t.Fatalf("variadic = %v, want source string variadic", got.Variadic)
@@ -212,7 +212,7 @@ func TestJoin_NarrowSummaryDoesNotEraseDynamicReturnSlot(t *testing.T) {
 	stream := typ.NewRecord().Field("candidates", typ.NewArray(typ.NewRecord().Build())).Build()
 	out := Join(api.FunctionFact{}, functionFactTest(
 		factPreflowReturns(typ.Unknown, typ.NewOptional(typ.NewRecord().Field("message", typ.String).Build())),
-		factPostflowReturns(typ.NewOptional(stream), typ.Nil),
+		factNarrowReturns(typ.NewOptional(stream), typ.Nil),
 		factSignature(typ.Func().
 			Param("method", typ.Any).
 			Returns(typ.Unknown, typ.NewOptional(typ.NewRecord().Field("message", typ.String).Build())).
@@ -228,7 +228,7 @@ func TestJoin_NarrowSummaryDoesNotEraseDynamicReturnSlot(t *testing.T) {
 func TestNormalize_InferredPlaceholderAnyRepairsFromNarrowProof(t *testing.T) {
 	out := Normalize(functionFactTest(
 		factPreflowReturns(typ.Any),
-		factPostflowReturns(typ.Integer),
+		factNarrowReturns(typ.Integer),
 		factSignature(typ.Func().Param("x", typ.Any).Build()),
 	))
 
@@ -240,7 +240,7 @@ func TestNormalize_InferredPlaceholderAnyRepairsFromNarrowProof(t *testing.T) {
 func TestNormalize_DeclaredAnyReturnPreservesGradualContract(t *testing.T) {
 	out := Normalize(functionFactTest(
 		factPreflowReturns(typ.Any),
-		factPostflowReturns(typ.Integer),
+		factNarrowReturns(typ.Integer),
 		factSignature(typ.Func().Param("x", typ.Any).Returns(typ.Any).Build()),
 	))
 
@@ -250,12 +250,12 @@ func TestNormalize_DeclaredAnyReturnPreservesGradualContract(t *testing.T) {
 }
 
 func TestNormalize_NilOnlyNarrowDoesNotCreateSummary(t *testing.T) {
-	out := Normalize(functionFactTest(factPostflowReturns(typ.Nil)))
+	out := Normalize(functionFactTest(factNarrowReturns(typ.Nil)))
 	if len(out.Returns.Preflow) != 0 {
 		t.Fatalf("summary mismatch: got %v want empty", out.Returns.Preflow)
 	}
-	if !returnsummary.Equal(factPostflowTypesTest(out), []typ.Type{typ.Nil}) {
-		t.Fatalf("narrow mismatch: got %v want nil", out.Returns.Postflow)
+	if !returnsummary.Equal(factNarrowTypesTest(out), []typ.Type{typ.Nil}) {
+		t.Fatalf("narrow mismatch: got %v want nil", out.Returns.Narrow)
 	}
 }
 
@@ -264,15 +264,15 @@ func TestNormalize_MixedArityNarrowDoesNotTruncateSummaryProduct(t *testing.T) {
 	summary := []typ.Type{typ.NewOptional(dbType), typ.NewOptional(typ.LuaError)}
 	out := Normalize(functionFactTest(
 		factPreflowReturns(summary...),
-		factPostflowReturns(dbType),
+		factNarrowReturns(dbType),
 		factSignature(typ.Func().Returns(typ.Unknown).Build()),
 	))
 
 	if !returnsummary.Equal(factPreflowTypesTest(out), summary) {
 		t.Fatalf("summary mismatch: got %v want %v", out.Returns.Preflow, summary)
 	}
-	if !returnsummary.Equal(factPostflowTypesTest(out), []typ.Type{dbType}) {
-		t.Fatalf("narrow mismatch: got %v want %v", out.Returns.Postflow, []typ.Type{dbType})
+	if !returnsummary.Equal(factNarrowTypesTest(out), []typ.Type{dbType}) {
+		t.Fatalf("narrow mismatch: got %v want %v", out.Returns.Narrow, []typ.Type{dbType})
 	}
 }
 
@@ -281,7 +281,7 @@ func TestWidenForConvergence_MixedArityNarrowDoesNotTruncateSummaryProduct(t *te
 	prevSummary := []typ.Type{typ.NewOptional(dbType), typ.NewOptional(typ.LuaError)}
 	out := WidenForConvergence(
 		functionFactTest(factReturnProjection(prevSummary, prevSummary)),
-		functionFactTest(factPreflowReturns(dbType), factPostflowReturns(dbType)),
+		functionFactTest(factPreflowReturns(dbType), factNarrowReturns(dbType)),
 	)
 
 	if len(out.Returns.Preflow) != 2 {
@@ -301,7 +301,7 @@ func TestWidenForConvergence_ValueErrorProductAdmitsLaterSuccessBranch(t *testin
 	next := []typ.Type{typ.NewOptional(value), typ.NewOptional(err)}
 
 	out := WidenForConvergence(
-		functionFactTest(factPreflowReturns(typ.Nil, err), factPostflowReturns(typ.Nil, err)),
+		functionFactTest(factPreflowReturns(typ.Nil, err), factNarrowReturns(typ.Nil, err)),
 		functionFactTest(
 			factReturnProjection(next, next),
 			factSignature(typ.Func().Param("name", typ.Any).Returns(next...).Build()),
@@ -311,8 +311,8 @@ func TestWidenForConvergence_ValueErrorProductAdmitsLaterSuccessBranch(t *testin
 	if !returnsummary.Equal(factPreflowTypesTest(out), next) {
 		t.Fatalf("summary = %v, want %v", out.Returns.Preflow, next)
 	}
-	if !returnsummary.Equal(factPostflowTypesTest(out), next) {
-		t.Fatalf("narrow = %v, want %v", out.Returns.Postflow, next)
+	if !returnsummary.Equal(factNarrowTypesTest(out), next) {
+		t.Fatalf("narrow = %v, want %v", out.Returns.Narrow, next)
 	}
 }
 
@@ -326,20 +326,20 @@ func TestWidenForConvergence_EquivalentAliasAndStructuralNarrowConverges(t *test
 	structReturn := typ.NewOptional(eventStruct)
 
 	out := WidenForConvergence(
-		functionFactTest(factPreflowReturns(aliasReturn), factPostflowReturns(structReturn)),
-		functionFactTest(factPreflowReturns(structReturn), factPostflowReturns(aliasReturn)),
+		functionFactTest(factPreflowReturns(aliasReturn), factNarrowReturns(structReturn)),
+		functionFactTest(factPreflowReturns(structReturn), factNarrowReturns(aliasReturn)),
 	)
 
-	if !returnsummary.Equal(factPreflowTypesTest(out), factPostflowTypesTest(out)) {
-		t.Fatalf("summary/narrow equivalent representatives diverged:\nsummary=%v\nnarrow=%v", out.Returns.Preflow, out.Returns.Postflow)
+	if !returnsummary.Equal(factPreflowTypesTest(out), factNarrowTypesTest(out)) {
+		t.Fatalf("summary/narrow equivalent representatives diverged:\nsummary=%v\nnarrow=%v", out.Returns.Preflow, out.Returns.Narrow)
 	}
 	if len(out.Returns.Preflow) != 1 || !returnSlotHasAliasSurface(out.Returns.Preflow[0].ProjectValue()) {
 		t.Fatalf("expected alias surface to be the canonical representative, got %v", out.Returns.Preflow)
 	}
 
-	next := WidenForConvergence(out, functionFactTest(factPreflowReturns(structReturn), factPostflowReturns(aliasReturn)))
-	if !returnsummary.Equal(factPreflowTypesTest(next), factPreflowTypesTest(out)) || !returnsummary.Equal(factPostflowTypesTest(next), factPostflowTypesTest(out)) {
-		t.Fatalf("equivalent alias/struct repair must be idempotent:\nout=%v/%v\nnext=%v/%v", out.Returns.Preflow, out.Returns.Postflow, next.Returns.Preflow, next.Returns.Postflow)
+	next := WidenForConvergence(out, functionFactTest(factPreflowReturns(structReturn), factNarrowReturns(aliasReturn)))
+	if !returnsummary.Equal(factPreflowTypesTest(next), factPreflowTypesTest(out)) || !returnsummary.Equal(factNarrowTypesTest(next), factNarrowTypesTest(out)) {
+		t.Fatalf("equivalent alias/struct repair must be idempotent:\nout=%v/%v\nnext=%v/%v", out.Returns.Preflow, out.Returns.Narrow, next.Returns.Preflow, next.Returns.Narrow)
 	}
 }
 
@@ -362,12 +362,12 @@ func TestWidenForConvergence_RecursiveSummaryNarrowRepairIsCoinductive(t *testin
 	structReturn := typ.NewOptional(narrowNode)
 
 	out := WidenForConvergence(
-		functionFactTest(factPreflowReturns(aliasReturn), factPostflowReturns(structReturn)),
-		functionFactTest(factPreflowReturns(structReturn), factPostflowReturns(aliasReturn)),
+		functionFactTest(factPreflowReturns(aliasReturn), factNarrowReturns(structReturn)),
+		functionFactTest(factPreflowReturns(structReturn), factNarrowReturns(aliasReturn)),
 	)
 
-	if !returnsummary.Equal(factPreflowTypesTest(out), factPostflowTypesTest(out)) {
-		t.Fatalf("recursive summary/narrow repair diverged:\nsummary=%v\nnarrow=%v", out.Returns.Preflow, out.Returns.Postflow)
+	if !returnsummary.Equal(factPreflowTypesTest(out), factNarrowTypesTest(out)) {
+		t.Fatalf("recursive summary/narrow repair diverged:\nsummary=%v\nnarrow=%v", out.Returns.Preflow, out.Returns.Narrow)
 	}
 	if len(out.Returns.Preflow) != 1 || !returnSlotHasAliasSurface(out.Returns.Preflow[0].ProjectValue()) {
 		t.Fatalf("expected alias surface to remain canonical, got %v", out.Returns.Preflow)
@@ -422,7 +422,7 @@ func TestNormalize_NarrowRequiredFieldRepairsOptionalPresence(t *testing.T) {
 			Build(),
 	)
 
-	out := Normalize(functionFactTest(factPreflowReturns(summary), factPostflowReturns(narrow)))
+	out := Normalize(functionFactTest(factPreflowReturns(summary), factNarrowReturns(narrow)))
 	if !returnsummary.Equal(factPreflowTypesTest(out), []typ.Type{want}) {
 		t.Fatalf("summary mismatch: got %v want %v", out.Returns.Preflow, []typ.Type{want})
 	}
@@ -468,7 +468,7 @@ func TestWidenForConvergence_PreservesBodyStructuralParamPrecision(t *testing.T)
 		functionFactTest(
 			factCallParams(publicParam),
 			factPreflowReturns(ret),
-			factPostflowReturns(ret),
+			factNarrowReturns(ret),
 			factSignature(typ.Func().Param("messages", publicParam).Returns(ret).Build()),
 		),
 		functionFactTest(
@@ -476,7 +476,7 @@ func TestWidenForConvergence_PreservesBodyStructuralParamPrecision(t *testing.T)
 			factBodyParams(bodyContract),
 			factEntryParams(entryParam),
 			factPreflowReturns(ret),
-			factPostflowReturns(ret),
+			factNarrowReturns(ret),
 			factSignature(typ.Func().Param("messages", publicParam).Returns(ret).Build()),
 		),
 	)
@@ -524,12 +524,12 @@ func TestWidenForConvergence_CurrentNarrowRepairsStaleInferredMapKey(t *testing.
 	solved := typ.NewMap(typ.String, typ.Any)
 
 	out := WidenForConvergence(
-		functionFactTest(factPreflowReturns(stale), factPostflowReturns(stale), factSignature(typ.Func().Build())),
-		functionFactTest(factPreflowReturns(solved), factPostflowReturns(solved), factSignature(typ.Func().Build())),
+		functionFactTest(factPreflowReturns(stale), factNarrowReturns(stale), factSignature(typ.Func().Build())),
+		functionFactTest(factPreflowReturns(solved), factNarrowReturns(solved), factSignature(typ.Func().Build())),
 	)
 
-	if !returnsummary.Equal(factPostflowTypesTest(out), []typ.Type{solved}) {
-		t.Fatalf("narrow mismatch: got %v want %v", out.Returns.Postflow, []typ.Type{solved})
+	if !returnsummary.Equal(factNarrowTypesTest(out), []typ.Type{solved}) {
+		t.Fatalf("narrow mismatch: got %v want %v", out.Returns.Narrow, []typ.Type{solved})
 	}
 	if !returnsummary.Equal(factPreflowTypesTest(out), []typ.Type{solved}) {
 		t.Fatalf("summary mismatch: got %v want %v", out.Returns.Preflow, []typ.Type{solved})
@@ -541,8 +541,8 @@ func TestWidenForConvergence_DeclaredDynamicMapReturnPreserved(t *testing.T) {
 	solved := typ.NewMap(typ.String, typ.Any)
 
 	out := WidenForConvergence(
-		functionFactTest(factPreflowReturns(declared), factPostflowReturns(declared), factSignature(typ.Func().Returns(declared).Build())),
-		functionFactTest(factPreflowReturns(solved), factPostflowReturns(solved), factSignature(typ.Func().Returns(declared).Build())),
+		functionFactTest(factPreflowReturns(declared), factNarrowReturns(declared), factSignature(typ.Func().Returns(declared).Build())),
+		functionFactTest(factPreflowReturns(solved), factNarrowReturns(solved), factSignature(typ.Func().Returns(declared).Build())),
 	)
 
 	if !returnsummary.Equal(factPreflowTypesTest(out), []typ.Type{declared}) {
@@ -566,8 +566,8 @@ func TestProjectionExport_UnannotatedDynamicAnyReturnFieldsBecomeUnknown(t *test
 		Build()
 
 	out := WidenForConvergence(
-		functionFactTest(factPreflowReturns(stale), factPostflowReturns(stale), factSignature(typ.Func().Build())),
-		functionFactTest(factPreflowReturns(observed), factPostflowReturns(observed), factSignature(typ.Func().Build())),
+		functionFactTest(factPreflowReturns(stale), factNarrowReturns(stale), factSignature(typ.Func().Build())),
+		functionFactTest(factPreflowReturns(observed), factNarrowReturns(observed), factSignature(typ.Func().Build())),
 	)
 
 	sibling := unwrap.Function(ProjectType(out, ProjectionSibling, api.SynthModeFlow))
@@ -607,7 +607,7 @@ func TestJoin_NarrowSummaryReplacesOpenTopPlaceholder(t *testing.T) {
 
 	out := Join(
 		functionFactTest(factPreflowReturns(openTop), factSignature(existingFunc)),
-		functionFactTest(factPreflowReturns(openTop), factPostflowReturns(narrow...), factSignature(candidateFunc)),
+		functionFactTest(factPreflowReturns(openTop), factNarrowReturns(narrow...), factSignature(candidateFunc)),
 	)
 
 	if !returnsummary.Equal(returnsummary.NormalizeAndPrune(factPreflowTypesTest(out)), returnsummary.NormalizeAndPrune(narrow)) {
@@ -647,14 +647,14 @@ func TestJoin_NarrowSummaryRepairsNeverArtifact(t *testing.T) {
 
 	out := Join(
 		functionFactTest(factPreflowReturns(bad...), factSignature(typ.Func().Build())),
-		functionFactTest(factPostflowReturns(good...)),
+		functionFactTest(factNarrowReturns(good...)),
 	)
 
 	if !returnsummary.Equal(factPreflowTypesTest(out), good) {
 		t.Fatalf("summary mismatch: got %v want %v", out.Returns.Preflow, good)
 	}
-	if !returnsummary.Equal(factPostflowTypesTest(out), good) {
-		t.Fatalf("narrow mismatch: got %v want %v", out.Returns.Postflow, good)
+	if !returnsummary.Equal(factNarrowTypesTest(out), good) {
+		t.Fatalf("narrow mismatch: got %v want %v", out.Returns.Narrow, good)
 	}
 	fn := projectFunctionForTest(t, out)
 	if !returnsummary.Equal(fn.Returns, good) {
@@ -665,15 +665,15 @@ func TestJoin_NarrowSummaryRepairsNeverArtifact(t *testing.T) {
 func TestJoin_MergesExistingAndCandidate(t *testing.T) {
 	existingFn := typ.Func().Returns(typ.Number).Build()
 	candidateFn := typ.Func().Returns(typ.String).Build()
-	existing := functionFactTest(factPreflowReturns(typ.Number), factPostflowReturns(typ.Number), factSignature(existingFn))
-	candidate := functionFactTest(factPreflowReturns(typ.String), factPostflowReturns(typ.String), factSignature(candidateFn))
+	existing := functionFactTest(factPreflowReturns(typ.Number), factNarrowReturns(typ.Number), factSignature(existingFn))
+	candidate := functionFactTest(factPreflowReturns(typ.String), factNarrowReturns(typ.String), factSignature(candidateFn))
 	got := Join(existing, candidate)
 
 	if !returnsummary.Equal(factPreflowTypesTest(got), []typ.Type{typ.NewUnion(typ.Number, typ.String)}) {
 		t.Fatalf("summary mismatch: got %v", got.Returns.Preflow)
 	}
-	if !returnsummary.Equal(factPostflowTypesTest(got), []typ.Type{typ.NewUnion(typ.Number, typ.String)}) {
-		t.Fatalf("narrow mismatch: got %v", got.Returns.Postflow)
+	if !returnsummary.Equal(factNarrowTypesTest(got), []typ.Type{typ.NewUnion(typ.Number, typ.String)}) {
+		t.Fatalf("narrow mismatch: got %v", got.Returns.Narrow)
 	}
 	if got.Public.Signature == nil {
 		t.Fatal("expected merged function signature")
@@ -691,8 +691,8 @@ func TestJoin_DoesNotAlignFunctionToNarrowFieldRegression(t *testing.T) {
 	existingFunc := typ.Func().Build()
 
 	out := Join(
-		functionFactTest(factPreflowReturns(withCapturedMethod), factPostflowReturns(flowOnly), factSignature(existingFunc)),
-		functionFactTest(factPreflowReturns(withCapturedMethod), factPostflowReturns(flowOnly), factSignature(existingFunc)),
+		functionFactTest(factPreflowReturns(withCapturedMethod), factNarrowReturns(flowOnly), factSignature(existingFunc)),
+		functionFactTest(factPreflowReturns(withCapturedMethod), factNarrowReturns(flowOnly), factSignature(existingFunc)),
 	)
 
 	if !returnsummary.Equal(factPreflowTypesTest(out), []typ.Type{withCapturedMethod}) {
@@ -804,15 +804,15 @@ func TestWidenForConvergence_ReplacesReturnFieldFunctionSeed(t *testing.T) {
 		Build()
 
 	got := WidenForConvergence(
-		functionFactTest(factPreflowReturns(weak), factPostflowReturns(weak)),
-		functionFactTest(factPreflowReturns(strong), factPostflowReturns(strong)),
+		functionFactTest(factPreflowReturns(weak), factNarrowReturns(weak)),
+		functionFactTest(factPreflowReturns(strong), factNarrowReturns(strong)),
 	)
 
 	if !returnsummary.Equal(factPreflowTypesTest(got), []typ.Type{strong}) {
 		t.Fatalf("summary mismatch: got %v want %v", got.Returns.Preflow, []typ.Type{strong})
 	}
-	if !returnsummary.Equal(factPostflowTypesTest(got), []typ.Type{strong}) {
-		t.Fatalf("narrow mismatch: got %v want %v", got.Returns.Postflow, []typ.Type{strong})
+	if !returnsummary.Equal(factNarrowTypesTest(got), []typ.Type{strong}) {
+		t.Fatalf("narrow mismatch: got %v want %v", got.Returns.Narrow, []typ.Type{strong})
 	}
 }
 
@@ -1035,14 +1035,14 @@ func TestWidenForConvergence_RefinesUnknownReturnMetatableEvidence(t *testing.T)
 	strong := typ.NewRecord().Metatable(metatable).Build()
 
 	got := WidenForConvergence(
-		functionFactTest(factPreflowReturns(weak), factPostflowReturns(weak)),
-		functionFactTest(factPreflowReturns(strong), factPostflowReturns(strong)),
+		functionFactTest(factPreflowReturns(weak), factNarrowReturns(weak)),
+		functionFactTest(factPreflowReturns(strong), factNarrowReturns(strong)),
 	)
 	if mt, ok := querycore.Method(got.Returns.Preflow[0].ProjectValue(), "ready"); !ok {
 		t.Fatalf("widened summary metatable method ready = %v ok=%v, want inherited method on %v", mt, ok, got.Returns.Preflow[0].ProjectValue())
 	}
-	if mt, ok := querycore.Method(got.Returns.Postflow[0].ProjectValue(), "ready"); !ok {
-		t.Fatalf("widened narrow metatable method ready = %v ok=%v, want inherited method on %v", mt, ok, got.Returns.Postflow[0].ProjectValue())
+	if mt, ok := querycore.Method(got.Returns.Narrow[0].ProjectValue(), "ready"); !ok {
+		t.Fatalf("widened narrow metatable method ready = %v ok=%v, want inherited method on %v", mt, ok, got.Returns.Narrow[0].ProjectValue())
 	}
 }
 
@@ -1393,15 +1393,15 @@ func TestNormalize_CanonicalizesStoredFunctionFact(t *testing.T) {
 	fn := typ.Func().Returns(typ.Number).Build()
 	got := Normalize(functionFactTest(
 		factPreflowReturns(nil),
-		factPostflowReturns(typ.Number),
+		factNarrowReturns(typ.Number),
 		factSignature(fn),
 	))
 
 	if !returnsummary.Equal(factPreflowTypesTest(got), []typ.Type{typ.Nil}) {
 		t.Fatalf("summary mismatch: got %v", got.Returns.Preflow)
 	}
-	if !returnsummary.Equal(factPostflowTypesTest(got), []typ.Type{typ.Number}) {
-		t.Fatalf("narrow mismatch: got %v", got.Returns.Postflow)
+	if !returnsummary.Equal(factNarrowTypesTest(got), []typ.Type{typ.Number}) {
+		t.Fatalf("narrow mismatch: got %v", got.Returns.Narrow)
 	}
 	if !typ.TypeEquals(got.Public.Signature, fn) {
 		t.Fatalf("signature mismatch: got %v", got.Public.Signature)

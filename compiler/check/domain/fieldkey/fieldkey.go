@@ -7,7 +7,9 @@ import (
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/pathseg"
 	"github.com/wippyai/go-lua/types/constraint"
+	"github.com/wippyai/go-lua/types/domain/value/product"
 	"github.com/wippyai/go-lua/types/flow"
+	"github.com/wippyai/go-lua/types/typ"
 )
 
 // Key identifies a statically-known field/index slot. Boundary collectors may
@@ -15,6 +17,9 @@ import (
 // structural key so field and string-index segments do not collapse into an
 // ad-hoc string carrier.
 type Key = constraint.Segment
+
+// Values is the product carrier for field-indexed facts.
+type Values map[Key]product.AbstractValue
 
 // FromName lowers a source field name into a structural field key.
 func FromName(name string) (Key, bool) {
@@ -126,4 +131,43 @@ func Sorted[T any](m map[Key]T) []Key {
 		return left.Index < right.Index
 	})
 	return keys
+}
+
+// LiftTypeMap admits name-keyed field facts into the structural product carrier.
+func LiftTypeMap(fields map[string]typ.Type) Values {
+	if len(fields) == 0 {
+		return nil
+	}
+	out := make(Values, len(fields))
+	for name, fieldType := range fields {
+		key, ok := FromName(name)
+		if !ok {
+			continue
+		}
+		out[key] = product.FromType(fieldType)
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+// ProjectValueMap projects structural product field facts back to string-keyed
+// record-field facts for export/overlay consumers.
+func ProjectValueMap(fields Values) map[string]typ.Type {
+	if len(fields) == 0 {
+		return nil
+	}
+	out := make(map[string]typ.Type, len(fields))
+	for _, key := range Sorted(fields) {
+		name, ok := StringKeyFromSegment(key)
+		if !ok {
+			continue
+		}
+		out[name] = fields[key].ProjectValue()
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }

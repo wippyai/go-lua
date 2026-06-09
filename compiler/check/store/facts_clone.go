@@ -1,9 +1,7 @@
 package store
 
 import (
-	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/api"
-	"github.com/wippyai/go-lua/compiler/check/domain/postflow"
 	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/contract"
 	"github.com/wippyai/go-lua/types/domain/value/product"
@@ -26,7 +24,7 @@ func cloneFunctionFact(fact api.FunctionFact) api.FunctionFact {
 	fact.Body.Params = cloneAbstractValueSlice(fact.Body.Params)
 	fact.Entry.Params = cloneAbstractValueSlice(fact.Entry.Params)
 	fact.Returns.Preflow = cloneAbstractValueSlice(fact.Returns.Preflow)
-	fact.Returns.Postflow = cloneAbstractValueSlice(fact.Returns.Postflow)
+	fact.Returns.Narrow = cloneAbstractValueSlice(fact.Returns.Narrow)
 	fact.Export.EnvReturns = cloneEnvReturnSpecs(fact.Export.EnvReturns)
 	return fact
 }
@@ -60,47 +58,6 @@ func cloneSegments(src []constraint.Segment) []constraint.Segment {
 	out := make([]constraint.Segment, len(src))
 	copy(out, src)
 	return out
-}
-
-func cloneAbstractValueFieldMap(src postflow.FieldValues) postflow.FieldValues {
-	if len(src) == 0 {
-		return nil
-	}
-	out := make(postflow.FieldValues, len(src))
-	for key, v := range src {
-		out[key] = v
-	}
-	return out
-}
-
-func cloneCapturedFieldAssigns(src postflow.CapturedFieldAssigns) postflow.CapturedFieldAssigns {
-	if len(src) == 0 {
-		return nil
-	}
-	out := make(postflow.CapturedFieldAssigns, len(src))
-	for callee, bySym := range src {
-		if len(bySym) == 0 {
-			continue
-		}
-		bySymOut := make(map[cfg.SymbolID]postflow.FieldValues, len(bySym))
-		for sym, fields := range bySym {
-			if len(fields) == 0 {
-				continue
-			}
-			bySymOut[sym] = cloneAbstractValueFieldMap(fields)
-		}
-		if len(bySymOut) > 0 {
-			out[callee] = bySymOut
-		}
-	}
-	if len(out) == 0 {
-		return nil
-	}
-	return out
-}
-
-func cloneConstructorFieldMap(src postflow.FieldValues) postflow.FieldValues {
-	return cloneAbstractValueFieldMap(src)
 }
 
 func cloneTypeSlice(src []typ.Type) []typ.Type {
