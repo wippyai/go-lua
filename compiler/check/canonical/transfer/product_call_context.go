@@ -57,6 +57,63 @@ func (t *Transfer) productCallContext(
 	return ctx
 }
 
+// callArgumentValues is the call-site value projection used to build the
+// ProductCallContext. It is still ordinary transfer: every argument read can emit
+// parameter demand, and no call provider is re-entered while arguments are read.
+func (t *Transfer) callArgumentValues(
+	out *flow.PointState,
+	call *ast.FuncCallExpr,
+	demand func(int, paramevidence.ParamContract),
+) []product.AbstractValue {
+	if call == nil {
+		return nil
+	}
+	t.demandConditionReads(out, call.Receiver, demand)
+	outValues := make([]product.AbstractValue, len(call.Args))
+	for i, arg := range call.Args {
+		t.demandConditionReads(out, arg, demand)
+		if av, ok := t.resolveExprValue(out, arg, demand); ok && !av.IsZero() {
+			outValues[i] = av
+		}
+	}
+	return outValues
+}
+
+// runtimeArgumentValues aligns the projected call arguments to runtime parameter
+// slots. Method calls include receiver/self at slot 0; direct calls do not.
+func (t *Transfer) runtimeArgumentValues(
+	out *flow.PointState,
+	call *ast.FuncCallExpr,
+	argValues []product.AbstractValue,
+	demand func(int, paramevidence.ParamContract),
+) []product.AbstractValue {
+	if call == nil {
+		return nil
+	}
+	n := len(call.Args)
+	if call.Method != "" {
+		n++
+	}
+	if n == 0 {
+		return nil
+	}
+	outValues := make([]product.AbstractValue, n)
+	offset := 0
+	if call.Method != "" {
+		t.demandConditionReads(out, call.Receiver, demand)
+		if av, ok := t.resolveExprValue(out, call.Receiver, demand); ok && !av.IsZero() {
+			outValues[0] = av
+		}
+		offset = 1
+	}
+	for i := range call.Args {
+		if i < len(argValues) && !argValues[i].IsZero() {
+			outValues[i+offset] = argValues[i]
+		}
+	}
+	return outValues
+}
+
 func productCallSelfType(av product.AbstractValue) typ.Type {
 	if av.IsZero() {
 		return nil

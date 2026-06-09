@@ -3,6 +3,7 @@ package transfer
 import (
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/check/domain/literal"
+	"github.com/wippyai/go-lua/compiler/check/domain/paramevidence"
 	"github.com/wippyai/go-lua/types/domain/value/product"
 	"github.com/wippyai/go-lua/types/flow"
 	"github.com/wippyai/go-lua/types/typ"
@@ -29,6 +30,15 @@ func (t *Transfer) exprTypeResolver(exprValue func(ast.Expr) (product.AbstractVa
 			}
 		}
 		return typ.Unknown
+	}
+}
+
+func (t *Transfer) exprValueResolver(
+	out *flow.PointState,
+	demand func(int, paramevidence.ParamContract),
+) func(ast.Expr) (product.AbstractValue, bool) {
+	return func(e ast.Expr) (product.AbstractValue, bool) {
+		return t.resolveExprValue(out, e, demand)
 	}
 }
 
