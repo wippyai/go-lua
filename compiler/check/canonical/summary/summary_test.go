@@ -437,6 +437,40 @@ func TestSummaryStats_DedupesDemandedKeysAndRecordsSnapshotReads(t *testing.T) {
 	}
 }
 
+func TestSummaryStatsSnapshotFormatIncludesGrowthFamilies(t *testing.T) {
+	first := summary.FuncRef{GraphID: 1, ParentHash: 2}
+	second := summary.FuncRef{GraphID: 2, ParentHash: 1}
+	snap := summary.StatsSnapshot{
+		UniqueSummaryKeyDemands:      3,
+		SummarizeWithKeyCalls:        4,
+		IntraObserverCalls:           5,
+		ObserveIntraWithKeyCalls:     6,
+		SnapshotExactKeyHits:         7,
+		SnapshotExactKeyMisses:       8,
+		DiagnosticObservedStates:     9,
+		CallEntryProjectionRuns:      10,
+		NestedCallProductCacheHits:   11,
+		NestedCallProductCacheMisses: 12,
+		SummaryKeyDemandsByRef: map[summary.FuncRef]int{
+			second: 2,
+			first:  1,
+		},
+		SummaryKeyDemandFamiliesByRef: map[summary.FuncRef]summary.SummaryKeyFamilyCounts{
+			second: {WithValues: 1, WithReferences: 2, WithFacts: 3, WithMultipleAxes: 4},
+			first:  {Default: 1},
+		},
+	}
+	want := "stats{uniqueKeys=3 summarizeWithKey=4 intra=5 observeIntraWithKey=6 snapshotHit=7 snapshotMiss=8 diagnosticStates=9 callEntryProjectionRuns=10 nestedCacheHit=11 nestedCacheMiss=12}\n" +
+		"byRef={g1/h2:1, g2/h1:2}\n" +
+		"families={g1/h2:{default=1 values=0 refs=0 facts=0 multi=0}, g2/h1:{default=0 values=1 refs=2 facts=3 multi=4}}"
+	if got := snap.Format(); got != want {
+		t.Fatalf("Format() = %q, want %q", got, want)
+	}
+	if got := snap.NestedCallProductCacheGap(); got != 1 {
+		t.Fatalf("NestedCallProductCacheGap() = %d, want 1", got)
+	}
+}
+
 func TestSummaryStats_DiagnosticObservationDoesNotDemandKeys(t *testing.T) {
 	ref := summary.FuncRef{GraphID: 81}
 	key := summary.NewDefaultKey(ref, nil)

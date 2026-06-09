@@ -1,9 +1,6 @@
 package canonical
 
 import (
-	"fmt"
-	"sort"
-	"strings"
 	"testing"
 
 	"github.com/wippyai/go-lua/compiler/check/canonical/summary"
@@ -144,10 +141,10 @@ return caller
 		MaxNestedCallProductCacheGap: 4,
 	})
 	if stats.DiagnosticObservedStates < 6 {
-		t.Fatalf("diagnostic observation did not exercise enough exact states\n%s", formatStatsSnapshot(stats))
+		t.Fatalf("diagnostic observation did not exercise enough exact states\n%s", stats.Format())
 	}
 	if stats.UniqueSummaryKeyDemands >= stats.DiagnosticObservedStates {
-		t.Fatalf("diagnostic observation appears to create one summary-key demand per observed state\n%s", formatStatsSnapshot(stats))
+		t.Fatalf("diagnostic observation appears to create one summary-key demand per observed state\n%s", stats.Format())
 	}
 }
 
@@ -180,106 +177,31 @@ func runCanonicalStatsBudget(t *testing.T, name, src string) ([]diag.Diagnostic,
 func requireNoBudgetDiagnostics(t *testing.T, diags []diag.Diagnostic, stats summary.StatsSnapshot) {
 	t.Helper()
 	if errors := errorDiagnosticsOnly(diags); len(errors) != 0 {
-		t.Fatalf("expected clean check, got diagnostics: %v\n%s", diagnosticMessages(errors), formatStatsSnapshot(stats))
+		t.Fatalf("expected clean check, got diagnostics: %v\n%s", diagnosticMessages(errors), stats.Format())
 	}
 }
 
 func requireStatsBudget(t *testing.T, b statsBudget) {
 	t.Helper()
 	if b.Stats.UniqueSummaryKeyDemands > b.MaxUniqueSummaryKeyDemands {
-		t.Fatalf("%s UniqueSummaryKeyDemands=%d, budget=%d\n%s", b.Name, b.Stats.UniqueSummaryKeyDemands, b.MaxUniqueSummaryKeyDemands, formatStatsSnapshot(b.Stats))
+		t.Fatalf("%s UniqueSummaryKeyDemands=%d, budget=%d\n%s", b.Name, b.Stats.UniqueSummaryKeyDemands, b.MaxUniqueSummaryKeyDemands, b.Stats.Format())
 	}
 	if b.Stats.DiagnosticObservedStates > b.MaxDiagnosticObservedStates {
-		t.Fatalf("%s DiagnosticObservedStates=%d, budget=%d\n%s", b.Name, b.Stats.DiagnosticObservedStates, b.MaxDiagnosticObservedStates, formatStatsSnapshot(b.Stats))
+		t.Fatalf("%s DiagnosticObservedStates=%d, budget=%d\n%s", b.Name, b.Stats.DiagnosticObservedStates, b.MaxDiagnosticObservedStates, b.Stats.Format())
 	}
 	if b.Stats.SnapshotExactKeyMisses > b.MaxSnapshotExactKeyMisses {
-		t.Fatalf("%s SnapshotExactKeyMisses=%d, budget=%d\n%s", b.Name, b.Stats.SnapshotExactKeyMisses, b.MaxSnapshotExactKeyMisses, formatStatsSnapshot(b.Stats))
+		t.Fatalf("%s SnapshotExactKeyMisses=%d, budget=%d\n%s", b.Name, b.Stats.SnapshotExactKeyMisses, b.MaxSnapshotExactKeyMisses, b.Stats.Format())
 	}
 	if b.Stats.ObserveIntraWithKeyCalls > b.MaxObserveIntraWithKeyCalls {
-		t.Fatalf("%s ObserveIntraWithKeyCalls=%d, budget=%d\n%s", b.Name, b.Stats.ObserveIntraWithKeyCalls, b.MaxObserveIntraWithKeyCalls, formatStatsSnapshot(b.Stats))
+		t.Fatalf("%s ObserveIntraWithKeyCalls=%d, budget=%d\n%s", b.Name, b.Stats.ObserveIntraWithKeyCalls, b.MaxObserveIntraWithKeyCalls, b.Stats.Format())
 	}
 	if b.Stats.NestedCallProductCacheMisses > b.MaxNestedCallProductMisses {
-		t.Fatalf("%s NestedCallProductCacheMisses=%d, budget=%d\n%s", b.Name, b.Stats.NestedCallProductCacheMisses, b.MaxNestedCallProductMisses, formatStatsSnapshot(b.Stats))
+		t.Fatalf("%s NestedCallProductCacheMisses=%d, budget=%d\n%s", b.Name, b.Stats.NestedCallProductCacheMisses, b.MaxNestedCallProductMisses, b.Stats.Format())
 	}
-	cacheGap := b.Stats.NestedCallProductCacheMisses - b.Stats.NestedCallProductCacheHits
+	cacheGap := b.Stats.NestedCallProductCacheGap()
 	if cacheGap > b.MaxNestedCallProductCacheGap {
-		t.Fatalf("%s nested call product cache gap=%d, budget=%d\n%s", b.Name, cacheGap, b.MaxNestedCallProductCacheGap, formatStatsSnapshot(b.Stats))
+		t.Fatalf("%s nested call product cache gap=%d, budget=%d\n%s", b.Name, cacheGap, b.MaxNestedCallProductCacheGap, b.Stats.Format())
 	}
-}
-
-func formatStatsSnapshot(s summary.StatsSnapshot) string {
-	var b strings.Builder
-	fmt.Fprintf(&b, "stats{uniqueKeys=%d summarizeWithKey=%d intra=%d observeIntraWithKey=%d snapshotHit=%d snapshotMiss=%d diagnosticStates=%d callEntryProjectionRuns=%d nestedCacheHit=%d nestedCacheMiss=%d}",
-		s.UniqueSummaryKeyDemands,
-		s.SummarizeWithKeyCalls,
-		s.IntraObserverCalls,
-		s.ObserveIntraWithKeyCalls,
-		s.SnapshotExactKeyHits,
-		s.SnapshotExactKeyMisses,
-		s.DiagnosticObservedStates,
-		s.CallEntryProjectionRuns,
-		s.NestedCallProductCacheHits,
-		s.NestedCallProductCacheMisses,
-	)
-	if len(s.SummaryKeyDemandsByRef) != 0 {
-		fmt.Fprintf(&b, "\nbyRef=%s", formatIntByRef(s.SummaryKeyDemandsByRef))
-	}
-	if len(s.SummaryKeyDemandFamiliesByRef) != 0 {
-		fmt.Fprintf(&b, "\nfamilies=%s", formatFamiliesByRef(s.SummaryKeyDemandFamiliesByRef))
-	}
-	return b.String()
-}
-
-func formatIntByRef(in map[summary.FuncRef]int) string {
-	refs := sortedIntStatsRefs(in)
-	parts := make([]string, 0, len(refs))
-	for _, ref := range refs {
-		parts = append(parts, fmt.Sprintf("%s:%d", formatStatsRef(ref), in[ref]))
-	}
-	return "{" + strings.Join(parts, ", ") + "}"
-}
-
-func formatFamiliesByRef(in map[summary.FuncRef]summary.SummaryKeyFamilyCounts) string {
-	refs := sortedFamilyStatsRefs(in)
-	parts := make([]string, 0, len(refs))
-	for _, ref := range refs {
-		c := in[ref]
-		parts = append(parts, fmt.Sprintf("%s:{default=%d values=%d refs=%d facts=%d multi=%d}",
-			formatStatsRef(ref), c.Default, c.WithValues, c.WithReferences, c.WithFacts, c.WithMultipleAxes))
-	}
-	return "{" + strings.Join(parts, ", ") + "}"
-}
-
-func sortedIntStatsRefs(in map[summary.FuncRef]int) []summary.FuncRef {
-	refs := make([]summary.FuncRef, 0, len(in))
-	for ref := range in {
-		refs = append(refs, ref)
-	}
-	sort.Slice(refs, func(i, j int) bool {
-		if refs[i].GraphID != refs[j].GraphID {
-			return refs[i].GraphID < refs[j].GraphID
-		}
-		return refs[i].ParentHash < refs[j].ParentHash
-	})
-	return refs
-}
-
-func sortedFamilyStatsRefs(in map[summary.FuncRef]summary.SummaryKeyFamilyCounts) []summary.FuncRef {
-	refs := make([]summary.FuncRef, 0, len(in))
-	for ref := range in {
-		refs = append(refs, ref)
-	}
-	sort.Slice(refs, func(i, j int) bool {
-		if refs[i].GraphID != refs[j].GraphID {
-			return refs[i].GraphID < refs[j].GraphID
-		}
-		return refs[i].ParentHash < refs[j].ParentHash
-	})
-	return refs
-}
-
-func formatStatsRef(ref summary.FuncRef) string {
-	return fmt.Sprintf("g%d/h%d", ref.GraphID, ref.ParentHash)
 }
 
 func errorDiagnosticsOnly(diags []diag.Diagnostic) []diag.Diagnostic {
