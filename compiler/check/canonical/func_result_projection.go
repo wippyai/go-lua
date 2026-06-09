@@ -47,7 +47,7 @@ func (p funcResultProjection) build() *api.FuncResult {
 	if p.artifact.Summaries != nil {
 		sum = p.artifact.Summaries[p.ref]
 	}
-	reader := summary.NewSnapshotReader(p.artifact.Snapshot)
+	reader := summary.NewSnapshotReaderWithStats(p.artifact.Snapshot, p.driver.stats)
 	flowProjection := p.driver.newCanonicalFacts(
 		p.graph,
 		p.observationState(),

@@ -401,6 +401,62 @@ func TestCanonicalSummarySnapshot_ExactKeyDoesNotFallbackToRef(t *testing.T) {
 	}
 }
 
+func TestSummaryStats_DedupesDemandedKeysAndRecordsSnapshotReads(t *testing.T) {
+	ref := summary.FuncRef{GraphID: 79}
+	key := summary.NewDefaultKey(ref, nil)
+	stats := summary.NewStats()
+	prog := &returnPostconditionCellProgram{}
+	q := summary.NewWithStats(prog, stats)
+	ctx := db.NewQueryContext(db.New())
+
+	_ = q.SummarizeWithKey(ctx, key)
+	_ = q.SummarizeWithKey(ctx, key)
+
+	snap := stats.Snapshot()
+	if snap.SummarizeWithKeyCalls != 2 {
+		t.Fatalf("SummarizeWithKeyCalls = %d, want 2", snap.SummarizeWithKeyCalls)
+	}
+	if snap.UniqueSummaryKeyDemands != 1 || snap.SummaryKeyDemandsByRef[ref] != 1 {
+		t.Fatalf("unique demands = %d by ref = %v, want one demand for ref", snap.UniqueSummaryKeyDemands, snap.SummaryKeyDemandsByRef)
+	}
+	if families := snap.SummaryKeyDemandFamiliesByRef[ref]; families.Default != 1 {
+		t.Fatalf("demand families = %#v, want one default key", families)
+	}
+
+	snapshot := summary.NewCanonicalSummarySnapshot(map[summary.FuncRef]summary.Summary{ref: summary.SummaryDomain.Bottom()}, map[summary.Key]summary.Summary{key: summary.SummaryDomain.Bottom()})
+	reader := summary.NewSnapshotReaderWithStats(snapshot, stats)
+	if _, ok := reader.ExactSummaryForKey(key); !ok {
+		t.Fatal("expected exact snapshot hit")
+	}
+	if _, ok := reader.ExactSummaryForKey(summary.NewDefaultKey(summary.FuncRef{GraphID: 80}, nil)); ok {
+		t.Fatal("unexpected exact snapshot hit for absent key")
+	}
+	snap = stats.Snapshot()
+	if snap.SnapshotExactKeyHits != 1 || snap.SnapshotExactKeyMisses != 1 {
+		t.Fatalf("snapshot exact reads hits=%d misses=%d, want 1/1", snap.SnapshotExactKeyHits, snap.SnapshotExactKeyMisses)
+	}
+}
+
+func TestSummaryStats_DiagnosticObservationDoesNotDemandKeys(t *testing.T) {
+	ref := summary.FuncRef{GraphID: 81}
+	key := summary.NewDefaultKey(ref, nil)
+	stats := summary.NewStats()
+	q := summary.NewWithStats(&returnPostconditionCellProgram{}, stats)
+	ctx := db.NewQueryContext(db.New())
+
+	_ = q.SummarizeWithKey(ctx, key)
+	before := stats.Snapshot()
+	_ = q.ObserveIntraWithKey(ctx, summary.NewDefaultKey(summary.FuncRef{GraphID: 82}, nil))
+	after := stats.Snapshot()
+
+	if after.UniqueSummaryKeyDemands != before.UniqueSummaryKeyDemands {
+		t.Fatalf("diagnostic observation changed demanded keys: before=%d after=%d", before.UniqueSummaryKeyDemands, after.UniqueSummaryKeyDemands)
+	}
+	if after.ObserveIntraWithKeyCalls != before.ObserveIntraWithKeyCalls+1 {
+		t.Fatalf("ObserveIntraWithKeyCalls before=%d after=%d, want +1", before.ObserveIntraWithKeyCalls, after.ObserveIntraWithKeyCalls)
+	}
+}
+
 func TestReader_MissingSnapshotIsBottom(t *testing.T) {
 	got := summary.NewReader(nil, nil, nil).Summarize(summary.FuncRef{GraphID: 88})
 	if !summary.SummaryDomain.Equal(got, summary.SummaryDomain.Bottom()) {
@@ -870,4 +926,36 @@ return r
 			t.Fatal("is_odd summary did not converge to a stable fixpoint")
 		}
 	})
+}
+
+func TestSummaryStats_RecursiveContextFamilyHasBoundedKeyGrowth(t *testing.T) {
+	prog := newTestProgram(t, map[string]string{
+		"is_even": `
+local r = is_odd()
+return r
+`,
+		"is_odd": `
+local r = is_even()
+return r
+`,
+	})
+	stats := summary.NewStats()
+	q := summary.NewWithStats(prog, stats)
+	ctx := db.NewQueryContext(db.New())
+
+	_ = q.Summarize(ctx, prog.byName["is_even"])
+	_ = q.Summarize(ctx, prog.byName["is_odd"])
+
+	snap := stats.Snapshot()
+	if snap.UniqueSummaryKeyDemands > 2 {
+		t.Fatalf("recursive default-context key growth = %d, want <= 2; by ref=%v families=%v", snap.UniqueSummaryKeyDemands, snap.SummaryKeyDemandsByRef, snap.SummaryKeyDemandFamiliesByRef)
+	}
+	for _, ref := range []summary.FuncRef{prog.byName["is_even"], prog.byName["is_odd"]} {
+		if snap.SummaryKeyDemandsByRef[ref] != 1 {
+			t.Fatalf("ref %v demanded %d keys, want 1", ref, snap.SummaryKeyDemandsByRef[ref])
+		}
+		if families := snap.SummaryKeyDemandFamiliesByRef[ref]; families.Default != 1 || families.WithMultipleAxes != 0 {
+			t.Fatalf("ref %v demand families = %#v, want one default family", ref, families)
+		}
+	}
 }

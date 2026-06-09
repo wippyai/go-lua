@@ -46,7 +46,7 @@ func (c callEntryProjector) pointArgProjection(in *flow.PointState) callEntryArg
 			return c.transfer.ProductCallContext(in, call)
 		},
 	}
-	evidence.nestedResult = cachedNestedCallResult(c.typer.ProductCallFromValues, evidence.nestedCall)
+	evidence.nestedResult = cachedNestedCallResult(c.typer.ProductCallFromValues, evidence.nestedCall, c.stats())
 	if in != nil {
 		evidence.references = flow.ReferenceContextFromPoint(in)
 	}
@@ -89,7 +89,7 @@ func (c callEntryProjector) productArgProjection(ctx transfer.ProductCallContext
 		},
 		nestedCall: ctx.NestedCall,
 	}
-	evidence.nestedResult = cachedNestedCallResult(c.typer.ProductCallFromValues, evidence.nestedCall)
+	evidence.nestedResult = cachedNestedCallResult(c.typer.ProductCallFromValues, evidence.nestedCall, c.stats())
 	return callEntryArgProjection{
 		program:  c.program,
 		graph:    c.graph,
@@ -101,6 +101,7 @@ func (c callEntryProjector) productArgProjection(ctx transfer.ProductCallContext
 func cachedNestedCallResult(
 	provider nestedCallResultProvider,
 	context func(*ast.FuncCallExpr) transfer.ProductCallContext,
+	stats *summary.Stats,
 ) func(*ast.FuncCallExpr) (transfer.ProductCallResult, bool) {
 	if provider == nil || context == nil {
 		return nil
@@ -111,7 +112,13 @@ func cachedNestedCallResult(
 			return transfer.EmptyProductCallResult(), false
 		}
 		if result, ok := results[call]; ok {
+			if stats != nil {
+				stats.RecordNestedCallProductCacheHit()
+			}
 			return result, true
+		}
+		if stats != nil {
+			stats.RecordNestedCallProductCacheMiss()
 		}
 		result := provider(call, context(call))
 		results[call] = result

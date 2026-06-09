@@ -123,6 +123,11 @@ type Driver struct {
 	// not a semantic Summary producer.
 	diagnostics diagnosticObservationArtifact
 
+	// stats is the latest run's solve/projection/cache observability carrier. It
+	// records counters only and is never read by transfer or summary logic to choose
+	// semantic results.
+	stats *summary.Stats
+
 	// globalTypes is the normalized source-global value namespace admitted from
 	// Config.GlobalTypes. The raw string map is external configuration only.
 	globalTypes globalenv.TypeOverlay
@@ -239,7 +244,7 @@ func (d *Driver) activeReader() summary.Reader {
 		return d.activeSummaryReader
 	}
 	if d.activeQueries != nil && d.activeCtx != nil {
-		return summary.NewReader(d.activeQueries, d.activeCtx, d.artifact.Summaries)
+		return summary.NewReaderWithStats(d.activeQueries, d.activeCtx, d.artifact.Summaries, d.stats)
 	}
 	return d.activeSummaryReader
 }
@@ -335,7 +340,8 @@ func (d *Driver) Run(sess api.AnalysisSession, chunk []ast.Stmt) {
 
 	prog := d.buildProgram(sess, rootGraph, topology.ResolveModuleAliases(moduleAliases, d.cfg.Manifests))
 	d.registerStoreGraphParents(sess, prog)
-	queries := summary.New(prog)
+	d.stats = summary.NewStats()
+	queries := summary.NewWithStats(prog, d.stats)
 
 	// Drive the canonical product equation system by demanding every module
 	// summary. The summary solve query evaluates the per-context point/demand
@@ -362,7 +368,7 @@ func (d *Driver) Run(sess api.AnalysisSession, chunk []ast.Stmt) {
 	}()
 	artifact := d.solvePass(sess, prog, queries)
 	d.artifact = artifact
-	snapshotReader := summary.NewSnapshotReader(artifact.Snapshot)
+	snapshotReader := summary.NewSnapshotReaderWithStats(artifact.Snapshot, d.stats)
 	var diagnostics diagnosticObservationArtifact
 	d.withActiveSummaryReader(snapshotReader, func() {
 		diagnostics = d.buildDiagnosticObservationArtifact(sess, prog, queries, artifact)
@@ -561,7 +567,7 @@ func (d *Driver) diagnosticState(sess api.AnalysisSession, prog *program, querie
 		contexts = diagnostics.Contexts[ref]
 	}
 	if len(contexts) == 0 {
-		reader := summary.NewSnapshotReader(artifact.Snapshot)
+		reader := summary.NewSnapshotReaderWithStats(artifact.Snapshot, d.stats)
 		values := prog.EntryValues(ref, reader)
 		if len(values) != 0 {
 			return state.CloneFunctionState(d.observeDiagnosticIntra(sess, queries, summary.NewDefaultKey(ref, values)))
@@ -634,6 +640,9 @@ func (d *Driver) observeDiagnosticIntra(sess api.AnalysisSession, queries *summa
 	if d == nil || sess == nil || queries == nil {
 		return state.FunctionStateDomain.Bottom()
 	}
+	if d.stats != nil {
+		d.stats.RecordDiagnosticObservedState()
+	}
 	return queries.ObserveIntraWithKey(sess.Context(), key)
 }
 
@@ -645,7 +654,7 @@ func (d *Driver) defaultDiagnosticKey(prog *program, artifact canonicalSolveArti
 	if d == nil || prog == nil {
 		return summary.NewDefaultKey(ref, nil)
 	}
-	reader := summary.NewSnapshotReader(artifact.Snapshot)
+	reader := summary.NewSnapshotReaderWithStats(artifact.Snapshot, d.stats)
 	values := prog.EntryValues(ref, reader)
 	if len(values) != 0 {
 		return summary.NewDefaultKey(ref, values)

@@ -135,6 +135,7 @@ type Reader struct {
 	queries  *Queries
 	ctx      *db.QueryContext
 	snapshot CanonicalSummarySnapshot
+	stats    *Stats
 }
 
 // NewReader constructs a summary observer for live query reads plus a converged
@@ -143,10 +144,23 @@ func NewReader(queries *Queries, ctx *db.QueryContext, converged map[FuncRef]Sum
 	return Reader{queries: queries, ctx: ctx, snapshot: BorrowCanonicalSummarySnapshot(converged, nil)}
 }
 
+// NewReaderWithStats constructs a summary reader that records live read and
+// snapshot activity in stats. Stats are observational only and are never read to
+// decide a summary result.
+func NewReaderWithStats(queries *Queries, ctx *db.QueryContext, converged map[FuncRef]Summary, stats *Stats) Reader {
+	return Reader{queries: queries, ctx: ctx, snapshot: BorrowCanonicalSummarySnapshot(converged, nil), stats: stats}
+}
+
 // NewSnapshotReader constructs a post-solve reader over a canonical summary
 // snapshot. It never computes or records new Summary keys.
 func NewSnapshotReader(snapshot CanonicalSummarySnapshot) Reader {
 	return Reader{snapshot: snapshot}
+}
+
+// NewSnapshotReaderWithStats constructs a post-solve reader that records exact
+// key hit/miss activity without changing snapshot semantics.
+func NewSnapshotReaderWithStats(snapshot CanonicalSummarySnapshot, stats *Stats) Reader {
+	return Reader{snapshot: snapshot, stats: stats}
 }
 
 // CanonicalSummarySnapshot is the immutable post-solve view of Summary facts
@@ -202,7 +216,8 @@ func (r Reader) Live() bool {
 // equation system over one Program. Construct it with New; share it across the
 // analysis so call-graph cycles memoize per function/context.
 type Queries struct {
-	prog Program
+	prog  Program
+	stats *Stats
 
 	// solveQ evaluates the recursive caller-facing Summary cell. Its compute
 	// performs the local point/demand solve needed to project that summary.
@@ -236,7 +251,13 @@ type solveResult struct {
 // states after caller entry evidence moves. Intra therefore re-solves exactly over
 // the converged Summary dependencies as an observer, not as a second fixed point.
 func New(prog Program) *Queries {
-	q := &Queries{prog: prog}
+	return NewWithStats(prog, nil)
+}
+
+// NewWithStats builds the canonical query product and records observability
+// counters in stats. The stats object is write-only from semantic code.
+func NewWithStats(prog Program, stats *Stats) *Queries {
+	q := &Queries{prog: prog, stats: stats}
 
 	q.solveQ = db.NewQueryWithSeedAndWiden(
 		"CanonicalSummarySolve",
@@ -285,6 +306,9 @@ func (q *Queries) IntraWithKey(ctx *db.QueryContext, key Key) state.FunctionStat
 // normalized exact entry key, without demanding a corresponding recursive
 // Summary cell first.
 func (q *Queries) ObserveIntraWithKey(ctx *db.QueryContext, key Key) state.FunctionState {
+	if q != nil && q.stats != nil {
+		q.stats.RecordObserveIntraWithKeyCall()
+	}
 	return q.solveIntra(ctx, key.Ref, q.entryReferences(ctx, key), q.entryValues(ctx, key), q.entryFacts(ctx, key), q.entrySymbolValues(key.Ref))
 }
 
@@ -307,6 +331,9 @@ func (q *Queries) ObservedSummary(ctx *db.QueryContext, ref FuncRef) Summary {
 
 // SummarizeWithKey returns the summary for an already normalized entry key.
 func (q *Queries) SummarizeWithKey(ctx *db.QueryContext, key Key) Summary {
+	if q != nil && q.stats != nil {
+		q.stats.RecordSummarizeWithKeyCall()
+	}
 	return q.canonicalSummary(ctx, key)
 }
 
@@ -336,7 +363,11 @@ func (r Reader) ExactSummaryForKey(key Key) (Summary, bool) {
 	if r.queries != nil && r.ctx != nil {
 		return r.queries.SummarizeWithKey(r.ctx, key), true
 	}
-	return r.snapshot.ExactSummaryForKey(key)
+	sum, ok := r.snapshot.ExactSummaryForKey(key)
+	if r.stats != nil {
+		r.stats.RecordSnapshotExactKeyRead(ok)
+	}
+	return sum, ok
 }
 
 // CanonicalSummarySnapshot returns a keyed snapshot for canonical Summary cells
@@ -376,7 +407,11 @@ func (q *Queries) recordDemandedKey(key Key) {
 	if q.demanded == nil {
 		q.demanded = make(map[Key]struct{})
 	}
+	_, existed := q.demanded[key]
 	q.demanded[key] = struct{}{}
+	if q.stats != nil {
+		q.stats.RecordSummaryKeyDemand(key, !existed)
+	}
 }
 
 func cloneSummaryByRef(in map[FuncRef]Summary) map[FuncRef]Summary {
@@ -413,6 +448,9 @@ func (r Reader) ReturnPostconditions(ref FuncRef) paramevidence.ReturnPostcondit
 }
 
 func (q *Queries) intra(ctx *db.QueryContext, key Key) state.FunctionState {
+	if q != nil && q.stats != nil {
+		q.stats.RecordIntraObserverCall()
+	}
 	// First demand the recursive Summary cell so entry-value/capture dependencies
 	// are at their converged approximation. The local state solve below is an exact
 	// observer over those dependencies; it is intentionally not memoized as a
@@ -541,7 +579,7 @@ func (q *Queries) entryValues(ctx *db.QueryContext, key Key) map[int]product.Abs
 	if !ok || provider == nil {
 		return values
 	}
-	provided := provider.EntryValues(key.Ref, NewReader(q, ctx, nil))
+	provided := provider.EntryValues(key.Ref, NewReaderWithStats(q, ctx, nil, q.stats))
 	if merger, ok := q.prog.(entryValueMerger); ok && merger != nil {
 		return merger.MergeEntryValues(key.Ref, values, provided)
 	}
@@ -566,7 +604,7 @@ func (q *Queries) entryFacts(ctx *db.QueryContext, key Key) flow.BoundaryFacts {
 	if !ok || provider == nil {
 		return facts
 	}
-	return mergeEntryFacts(facts, provider.EntryFacts(key.Ref, NewReader(q, ctx, nil)))
+	return mergeEntryFacts(facts, provider.EntryFacts(key.Ref, NewReaderWithStats(q, ctx, nil, q.stats)))
 }
 
 func (q *Queries) entrySymbolValues(ref FuncRef) map[cfg.SymbolID]product.AbstractValue {

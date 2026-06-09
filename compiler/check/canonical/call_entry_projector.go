@@ -172,6 +172,9 @@ func (p *program) callEntryProjector(ref summary.FuncRef) (callEntryProjector, b
 }
 
 func (p *program) ProjectCallEntryPublication(ref summary.FuncRef, fs state.FunctionState) summary.CallEntryPublications {
+	if p != nil && p.driver != nil && p.driver.stats != nil {
+		p.driver.stats.RecordCallEntryProjectionRun()
+	}
 	projector, ok := p.callEntryProjector(ref)
 	if !ok {
 		return nil
@@ -180,11 +183,21 @@ func (p *program) ProjectCallEntryPublication(ref summary.FuncRef, fs state.Func
 }
 
 func (p *program) ProjectCallEntryContextKeys(ref summary.FuncRef, fs state.FunctionState) []summary.Key {
+	if p != nil && p.driver != nil && p.driver.stats != nil {
+		p.driver.stats.RecordCallEntryProjectionRun()
+	}
 	projector, ok := p.callEntryProjector(ref)
 	if !ok {
 		return nil
 	}
 	return projector.projection(fs).ProjectKeys()
+}
+
+func (c callEntryProjector) stats() *summary.Stats {
+	if c.program == nil || c.program.driver == nil {
+		return nil
+	}
+	return c.program.driver.stats
 }
 
 func (c callEntryProjector) projection(fs state.FunctionState) summary.CallEntryProjection {

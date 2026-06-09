@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/compiler/ast"
+	"github.com/wippyai/go-lua/compiler/check/canonical/summary"
 	"github.com/wippyai/go-lua/compiler/check/canonical/transfer"
 	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/domain/value/product"
@@ -19,6 +20,7 @@ func TestCallEntryArgProjectionCachesNestedProductResult(t *testing.T) {
 	key := flow.BoundaryPath{Kind: flow.BoundaryPathParam, Index: 1}
 
 	calls := 0
+	stats := summary.NewStats()
 	projection := callEntryArgProjection{
 		evidence: callEntryArgEvidence{
 			nestedCall: func(*ast.FuncCallExpr) transfer.ProductCallContext {
@@ -47,6 +49,7 @@ func TestCallEntryArgProjectionCachesNestedProductResult(t *testing.T) {
 			return result
 		},
 		projection.evidence.nestedCall,
+		stats,
 	)
 
 	refs, ok := projection.argRefTrees(arg)
@@ -61,5 +64,9 @@ func TestCallEntryArgProjectionCachesNestedProductResult(t *testing.T) {
 	}
 	if calls != 1 {
 		t.Fatalf("nested ProductCallResult selections = %d, want 1", calls)
+	}
+	snap := stats.Snapshot()
+	if snap.NestedCallProductCacheMisses != 1 || snap.NestedCallProductCacheHits != 1 {
+		t.Fatalf("nested ProductCallResult cache stats hits=%d misses=%d, want 1/1", snap.NestedCallProductCacheHits, snap.NestedCallProductCacheMisses)
 	}
 }
