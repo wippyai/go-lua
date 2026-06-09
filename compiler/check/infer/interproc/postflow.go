@@ -81,7 +81,7 @@ func StoreFactsFromResult(
 		fn != nil && len(fn.ReturnTypes) > 0,
 		fn != nil && fn.ParList != nil && fn.ParList.HasVargs,
 	)
-	envReturns := functionfact.ExtractEnvironmentReturns(result, fnSym, observation.FromFuncResult(result, nil))
+	envReturns := functionfact.ExtractEnvironmentReturns(result, fnSym, observation.FromSolvedObservationState(result.ObservationState(), nil))
 	signature = attachReturnLengthEnsures(signature, result)
 	builder := functionfact.NewBuilder()
 	builder.AddSummary(fnSym, summary)
@@ -180,10 +180,10 @@ func attachReturnLengthEnsures(signature *typ.Function, result *api.FuncResult) 
 // relation the body proves is emitted; a non-parameter source or a returned slot
 // that is not the accumulator yields nothing.
 func returnLengthParamEnsures(result *api.FuncResult) []constraint.ExprCompare {
-	if result == nil || result.FlowInputs == nil || result.Graph == nil {
+	if result == nil || result.Graph == nil {
 		return nil
 	}
-	lils := result.FlowInputs.LoopInsertLengths
+	lils := result.FlowInputView().LoopInsertLengths()
 	if len(lils) == 0 {
 		return nil
 	}
@@ -504,7 +504,7 @@ func CollectParameterEvidenceFromResult(store Store, result *api.FuncResult, par
 		currentKey:                   currentKey,
 		currentOK:                    currentOK,
 		currentSym:                   currentSym,
-		skipCurrentBodyPreconditions: result.FlowProjection != nil,
+		skipCurrentBodyPreconditions: result.HasSolvedFlowProjection(),
 		bodyContext:                  paramevidence.NewBodyPreconditionContext(graph, result, bindings).WithCurrentFunctionSymbol(currentSym),
 		scopes:                       result.Scopes,
 		callEntry: paramevidence.NewCallEntryProjector(paramevidence.CallEntryConfig{
@@ -517,7 +517,7 @@ func CollectParameterEvidenceFromResult(store Store, result *api.FuncResult, par
 			EvidenceAllowed: func(sym cfg.SymbolID, idx int) bool {
 				return callArgumentEvidenceAllowedForSymbol(store, sym, idx)
 			},
-			Observer: observation.FromFuncResult(result, functionfact.StoreProjection(store, parent).TypeLookup(functionfact.ProjectionSibling, api.SynthModeDeclared)),
+			Observer: observation.FromSolvedObservationState(result.ObservationState(), functionfact.StoreProjection(store, parent).TypeLookup(functionfact.ProjectionSibling, api.SynthModeDeclared)),
 			ArgumentObservation: func(point cfg.Point, arg ast.Expr, current typ.Type) typ.Type {
 				return observation.ObservedArgumentType(result, point, arg, current, bindings)
 			},
@@ -532,7 +532,7 @@ func CollectParameterEvidenceFromResult(store Store, result *api.FuncResult, par
 			if receiver == nil || method == "" || result.TypeOps == nil {
 				return false
 			}
-			receiverType := observation.FromFuncResult(result, nil).TypeOf(receiver, p)
+			receiverType := observation.FromSolvedObservationState(result.ObservationState(), nil).TypeOf(receiver, p)
 			if typ.IsAbsentOrUnknown(receiverType) || typ.IsAny(receiverType) {
 				return false
 			}

@@ -71,12 +71,12 @@ func FieldFactsFromEvidence(evidence []api.CapturedFieldEvidence, observe Assign
 // visible at observedPoint into captured field facts. Root rebindings are
 // excluded; only paths below a captured root are admitted as mutable
 // capture-surface evidence.
-func FieldFactsFromAssignmentsAtPoint(inputs *flow.Inputs, capturedSyms functionsymbols.Set, observedPoint cfg.Point) map[cfg.SymbolID]interprocdomain.FieldValues {
-	if inputs == nil || len(inputs.Assignments) == 0 || capturedSyms.IsEmpty() {
+func FieldFactsFromAssignmentsAtPoint(assignments []flow.UnifiedAssignment, capturedSyms functionsymbols.Set, observedPoint cfg.Point) map[cfg.SymbolID]interprocdomain.FieldValues {
+	if len(assignments) == 0 || capturedSyms.IsEmpty() {
 		return nil
 	}
 	facts := make(map[cfg.SymbolID]interprocdomain.FieldValues)
-	for _, assignment := range inputs.Assignments {
+	for _, assignment := range assignments {
 		if observedPoint != 0 && assignment.Point > observedPoint {
 			continue
 		}
@@ -112,16 +112,16 @@ func FieldFactsFromAssignmentsAtPoint(inputs *flow.Inputs, capturedSyms function
 // longer optional) at the capture boundary. Multi-segment writes (s.f.g = v) do
 // not establish that s.f itself is present and are excluded.
 func PromotedFieldsAtPoint(
-	inputs *flow.Inputs,
+	assignments []flow.UnifiedAssignment,
 	capturedSyms functionsymbols.Set,
 	observedPoint cfg.Point,
 	dominates func(assignPoint, observedPoint cfg.Point) bool,
 ) PromotedFields {
-	if inputs == nil || len(inputs.Assignments) == 0 || capturedSyms.IsEmpty() || dominates == nil {
+	if len(assignments) == 0 || capturedSyms.IsEmpty() || dominates == nil {
 		return nil
 	}
 	promoted := make(PromotedFields)
-	for _, assignment := range inputs.Assignments {
+	for _, assignment := range assignments {
 		path := assignment.TargetPath
 		if path.Symbol == 0 || len(path.Segments) != 1 || !capturedSyms.Contains(path.Symbol) {
 			continue

@@ -434,14 +434,11 @@ func (s *Session) Release() {
 
 	// Clear per-function results
 	for _, result := range s.Results {
+		result.ReleaseAnalysisArtifacts()
 		if result != nil {
 			result.Graph = nil
 			result.BaseScope = nil
 			result.Scopes = nil
-			result.Facts = nil
-			result.FlowInputs = nil
-			result.FlowProjection = nil
-			result.NarrowSynth = nil
 		}
 	}
 	clear(s.Results)

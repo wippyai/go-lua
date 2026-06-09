@@ -110,11 +110,8 @@ func (idx *LSPIndexer) extractParameters(file string, graph *cfg.Graph, result *
 
 		// Get type from declared facts
 		var paramType typ.Type
-		if result.Facts != nil {
-			tv := result.Facts.DeclaredAt(graph.Entry(), slot.Symbol)
-			if tv.Type != nil {
-				paramType = tv.Type
-			}
+		if tv := result.DeclaredTypeAt(graph.Entry(), slot.Symbol); tv.Type != nil {
+			paramType = tv.Type
 		}
 
 		idx.Symbols.AddDefinition(file, name, index.SymbolParameter, paramType, span, scope)
@@ -147,10 +144,8 @@ func (idx *LSPIndexer) extractLocals(file string, graph *cfg.Graph, result *api.
 
 			// Get type from synth
 			var varType typ.Type
-			if result.NarrowSynth != nil {
-				if source != nil {
-					varType = result.NarrowSynth.TypeOf(source, p)
-				}
+			if source != nil {
+				varType = result.SolvedTypeOf(source, p)
 			}
 
 			idx.Symbols.AddDefinition(file, target.Name, index.SymbolVariable, varType, span, scope)
@@ -181,8 +176,8 @@ func (idx *LSPIndexer) extractFuncDefs(file string, graph *cfg.Graph, result *ap
 
 		// Get function type
 		var funcType typ.Type
-		if result.NarrowSynth != nil && info.FuncExpr != nil {
-			funcType = result.NarrowSynth.TypeOf(info.FuncExpr, p)
+		if info.FuncExpr != nil {
+			funcType = result.SolvedTypeOf(info.FuncExpr, p)
 		}
 
 		idx.Symbols.AddDefinition(file, info.Name, kind, funcType, span, parentScope)

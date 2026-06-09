@@ -348,7 +348,7 @@ func (p *Processor) capturedTypesAtCallPoints(
 	var out map[cfg.SymbolID]typ.Type
 	for _, raw := range ordered {
 		point := cfg.Point(raw)
-		observed := captured.FromParentFactsAtPoint(parentResult.Facts, childGraph, point, childGraph.Bindings(), projection)
+		observed := captured.FromParentFactsAtPoint(parentResult.TypeFacts(), childGraph, point, childGraph.Bindings(), projection)
 		out = mergeCapturedObservation(out, observed)
 	}
 	return out
@@ -506,7 +506,7 @@ func (p *Processor) processNestedFunction(
 			Paths:    nestedPathObservationFacts(parentResult, parentObserver),
 			Children: parentResult.PathChildFacts(),
 		}
-		capturedTypes = captured.FromParentFactsAtPoint(parentResult.Facts, nestedGraph, info.NF.Point, nestedGraph.Bindings(), projection)
+		capturedTypes = captured.FromParentFactsAtPoint(parentResult.TypeFacts(), nestedGraph, info.NF.Point, nestedGraph.Bindings(), projection)
 		if observed := p.capturedTypesAtCallPoints(graph, parentResult, nestedGraph, info, projection); len(observed) > 0 {
 			capturedTypes = observed
 		}
@@ -515,7 +515,7 @@ func (p *Processor) processNestedFunction(
 		if bindings != nil {
 			capturedSet := functionsymbols.Captured(bindings, info.NF.Func)
 			if !capturedSet.IsEmpty() {
-				fields := captured.FieldFactsFromAssignmentsAtPoint(parentResult.FlowInputs, capturedSet, info.NF.Point)
+				fields := captured.FieldFactsFromAssignmentsAtPoint(parentResult.FlowInputView().Assignments(), capturedSet, info.NF.Point)
 				if len(fields) > 0 {
 					if capturedTypes == nil {
 						capturedTypes = make(map[cfg.SymbolID]typ.Type, len(fields))
@@ -638,7 +638,8 @@ func (p *Processor) promotedCapturedFields(
 	capturedSet functionsymbols.Set,
 	defPoint cfg.Point,
 ) captured.PromotedFields {
-	if parentGraph == nil || parentResult == nil || parentResult.FlowInputs == nil {
+	inputs := parentResult.FlowInputView()
+	if parentGraph == nil || parentResult == nil || !inputs.Present() {
 		return nil
 	}
 	dom := cfganalysis.ImmediateDominatorsFor(parentResult.QueryContext, parentGraph.CFG())
@@ -646,7 +647,7 @@ func (p *Processor) promotedCapturedFields(
 		return nil
 	}
 	return captured.PromotedFieldsAtPoint(
-		parentResult.FlowInputs,
+		inputs.Assignments(),
 		capturedSet,
 		defPoint,
 		dom.Dominates,
@@ -725,8 +726,8 @@ func constructorFieldSynth(result *api.FuncAnalysisView) func(ast.Expr, cfg.Poin
 	}
 	return func(expr ast.Expr, p cfg.Point) typ.Type {
 		if ident, ok := expr.(*ast.IdentExpr); ok {
-			if sym, found := bindings.SymbolOf(ident); found && sym != 0 && result.Facts != nil {
-				tv := result.Facts.EffectiveTypeAt(p, sym)
+			if sym, found := bindings.SymbolOf(ident); found && sym != 0 {
+				tv := result.EffectiveTypeAt(p, sym)
 				if tv.State == flow.StateResolved && !typ.IsAbsentOrUnknown(tv.Type) {
 					return tv.Type
 				}
@@ -770,16 +771,16 @@ func (p *Processor) resolveSelfTypeForMethod(
 	}
 
 	// Then try root result facts.
-	if !explicitSelfType && receiverType == nil && rootResult != nil && rootResult.Facts != nil {
-		tv := rootResult.Facts.EffectiveTypeAt(info.NF.Point, sym)
+	if !explicitSelfType && receiverType == nil && rootResult != nil {
+		tv := rootResult.EffectiveTypeAt(info.NF.Point, sym)
 		if tv.Type != nil && tv.State == flow.StateResolved {
 			receiverType = tv.Type
 		}
 	}
 
 	// Then consult parent result facts.
-	if !explicitSelfType && receiverType == nil && parentResult != nil && parentResult.Facts != nil {
-		tv := parentResult.Facts.EffectiveTypeAt(info.NF.Point, sym)
+	if !explicitSelfType && receiverType == nil && parentResult != nil {
+		tv := parentResult.EffectiveTypeAt(info.NF.Point, sym)
 		if tv.Type != nil && tv.State == flow.StateResolved {
 			receiverType = tv.Type
 		}
@@ -872,8 +873,8 @@ func (p *Processor) resolveSelfTypeForImplicitSelf(
 			selfType = observedNestedPathType(nestedPathObservationFacts(parentResult, parentObserver), info.NF.Point, path)
 		}
 		// Then consult Facts.EffectiveTypeAt.
-		if selfType == nil && parentResult != nil && parentResult.Facts != nil {
-			tv := parentResult.Facts.EffectiveTypeAt(info.NF.Point, tblSym)
+		if selfType == nil && parentResult != nil {
+			tv := parentResult.EffectiveTypeAt(info.NF.Point, tblSym)
 			if tv.Type != nil && tv.State == flow.StateResolved {
 				selfType = tv.Type
 			}
@@ -907,8 +908,8 @@ func (p *Processor) resolveSelfTypeForImplicitSelf(
 				selfType = observedNestedPathType(nestedPathObservationFacts(parentResult, parentObserver), info.NF.Point, path)
 			}
 			// Then consult Facts.EffectiveTypeAt.
-			if selfType == nil && parentResult != nil && parentResult.Facts != nil {
-				tv := parentResult.Facts.EffectiveTypeAt(info.NF.Point, baseSym)
+			if selfType == nil && parentResult != nil {
+				tv := parentResult.EffectiveTypeAt(info.NF.Point, baseSym)
 				if tv.Type != nil && tv.State == flow.StateResolved {
 					selfType = tv.Type
 				}
@@ -993,11 +994,11 @@ func (p *Processor) buildSiblingTypesForGroup(
 			return bindings.CapturedSymbols(fn)
 		},
 		TypeAtPointFn: func(point cfg.Point, sym cfg.SymbolID) typ.Type {
-			if parentResult == nil || parentResult.Facts == nil {
+			if parentResult == nil || parentResult.TypeFacts() == nil {
 				return nil
 			}
-			ref := parentResult.Facts.RefinedAt(point, sym)
-			decl := parentResult.Facts.DeclaredAt(point, sym)
+			ref := parentResult.RefinedTypeAt(point, sym)
+			decl := parentResult.DeclaredTypeAt(point, sym)
 
 			var chosen typ.Type
 			if ref.Type != nil && !typ.IsSoft(ref.Type, typ.SoftAnnotationPolicy) {

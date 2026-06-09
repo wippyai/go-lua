@@ -89,7 +89,7 @@ func TestFieldFactsFromAssignmentsAtPoint_NestsLoweredPath(t *testing.T) {
 		}},
 	}
 
-	got := FieldFactsFromAssignmentsAtPoint(inputs, capturedTestSymbols(sym), cfg.Point(3))
+	got := FieldFactsFromAssignmentsAtPoint(inputs.Assignments, capturedTestSymbols(sym), cfg.Point(3))
 
 	repoType := got[sym][capturedTestFieldKey("repo")].ProjectValue()
 	repo, ok := repoType.(*typ.Record)
@@ -128,7 +128,7 @@ func TestFieldFactsFromAssignmentsAtPoint_RejectsFutureLoweredPath(t *testing.T)
 		}},
 	}
 
-	got := FieldFactsFromAssignmentsAtPoint(inputs, capturedTestSymbols(sym), cfg.Point(3))
+	got := FieldFactsFromAssignmentsAtPoint(inputs.Assignments, capturedTestSymbols(sym), cfg.Point(3))
 	if len(got) != 0 {
 		t.Fatalf("future captured field facts = %v, want none", got)
 	}
@@ -148,7 +148,7 @@ func TestPromotedFieldsAtPoint_DominatingConcreteAssignment(t *testing.T) {
 	defPoint := cfg.Point(5)
 	dominates := func(a, b cfg.Point) bool { return a == cfg.Point(2) && b == defPoint }
 
-	got := PromotedFieldsAtPoint(inputs, capturedTestSymbols(sym), defPoint, dominates)
+	got := PromotedFieldsAtPoint(inputs.Assignments, capturedTestSymbols(sym), defPoint, dominates)
 	if !got[sym][capturedTestFieldKey("client")] {
 		t.Fatalf("expected client promoted to definite, got %v", got)
 	}
@@ -168,7 +168,7 @@ func TestPromotedFieldsAtPoint_NonDominatingAssignmentNotPromoted(t *testing.T) 
 	defPoint := cfg.Point(5)
 	dominates := func(a, b cfg.Point) bool { return false }
 
-	got := PromotedFieldsAtPoint(inputs, capturedTestSymbols(sym), defPoint, dominates)
+	got := PromotedFieldsAtPoint(inputs.Assignments, capturedTestSymbols(sym), defPoint, dominates)
 	if got[sym][capturedTestFieldKey("client")] {
 		t.Fatalf("expected non-dominating assignment to stay optional, got %v", got)
 	}
@@ -187,7 +187,7 @@ func TestPromotedFieldsAtPoint_NilAssignmentNotPromoted(t *testing.T) {
 	defPoint := cfg.Point(5)
 	dominates := func(a, b cfg.Point) bool { return true }
 
-	got := PromotedFieldsAtPoint(inputs, capturedTestSymbols(sym), defPoint, dominates)
+	got := PromotedFieldsAtPoint(inputs.Assignments, capturedTestSymbols(sym), defPoint, dominates)
 	if got[sym][capturedTestFieldKey("client")] {
 		t.Fatalf("expected nil assignment not to promote, got %v", got)
 	}
@@ -207,7 +207,7 @@ func TestPromotedFieldsAtPoint_OptionalAssignmentNotPromoted(t *testing.T) {
 	defPoint := cfg.Point(5)
 	dominates := func(a, b cfg.Point) bool { return true }
 
-	got := PromotedFieldsAtPoint(inputs, capturedTestSymbols(sym), defPoint, dominates)
+	got := PromotedFieldsAtPoint(inputs.Assignments, capturedTestSymbols(sym), defPoint, dominates)
 	if got[sym][capturedTestFieldKey("client")] {
 		t.Fatalf("expected optional assignment not to promote, got %v", got)
 	}

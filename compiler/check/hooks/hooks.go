@@ -38,14 +38,11 @@ package hooks
 
 import (
 	"github.com/wippyai/go-lua/compiler/ast"
-	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check"
 	"github.com/wippyai/go-lua/compiler/check/api"
 	"github.com/wippyai/go-lua/compiler/check/domain/functionfact"
 	"github.com/wippyai/go-lua/compiler/check/domain/observation"
 	"github.com/wippyai/go-lua/types/diag"
-	"github.com/wippyai/go-lua/types/flow"
-	"github.com/wippyai/go-lua/types/typ"
 )
 
 // All returns all standard analysis passes.
@@ -68,10 +65,7 @@ func WithAssign() check.Option {
 			return nil
 		}
 		observer := solvedObservation(result)
-		var declared flow.DeclaredTypes
-		if result.FlowInputs != nil {
-			declared = result.FlowInputs.DeclaredTypes
-		}
+		declared := result.FlowInputView().DeclaredTypes()
 		return CheckAssignments(result.Graph, result.Evidence, declared, observer, result.SolvedFlow(), sess.SourceName)
 	})
 }
@@ -79,10 +73,11 @@ func WithAssign() check.Option {
 // WithReturn enables return type checking.
 func WithReturn() check.Option {
 	return check.WithPass(func(sess *check.Session, fn *ast.FunctionExpr, result *api.FuncResult) []diag.Diagnostic {
-		if result.NarrowSynth == nil {
+		synth := result.SolvedSynth()
+		if synth == nil {
 			return nil
 		}
-		return CheckReturns(fn, result.Graph, result.Evidence, result.Scopes, result.BaseScope, result.NarrowSynth, solvedObservation(result), sess.SourceName)
+		return CheckReturns(fn, result.Graph, result.Evidence, result.Scopes, result.BaseScope, synth, solvedObservation(result), sess.SourceName)
 	})
 }
 
@@ -119,14 +114,12 @@ func WithControl() check.Option {
 // WithExhaustiveness enables warnings for non-exhaustive discriminated union matches.
 func WithExhaustiveness() check.Option {
 	return check.WithPass(func(sess *check.Session, fn *ast.FunctionExpr, result *api.FuncResult) []diag.Diagnostic {
-		if fn == nil || result.Graph == nil || result.NarrowSynth == nil {
+		synth := result.SolvedSynth()
+		if fn == nil || result.Graph == nil || synth == nil {
 			return nil
 		}
-		var declared flow.DeclaredTypes
-		if result.FlowInputs != nil {
-			declared = result.FlowInputs.DeclaredTypes
-		}
-		return CheckExhaustiveness(fn, result.Graph, result.Evidence, declared, result.NarrowSynth.Narrow(), sess.SourceName)
+		declared := result.FlowInputView().DeclaredTypes()
+		return CheckExhaustiveness(fn, result.Graph, result.Evidence, declared, synth.Narrow(), sess.SourceName)
 	})
 }
 
@@ -136,12 +129,9 @@ func WithIdent() check.Option {
 		if result.Graph == nil {
 			return nil
 		}
-		var declared map[cfg.SymbolID]typ.Type
-		var bindings map[cfg.SymbolID]typ.Type
-		if result.FlowInputs != nil {
-			declared = result.FlowInputs.DeclaredTypes
-			bindings = result.FlowInputs.BindingTypes
-		}
+		inputs := result.FlowInputView()
+		declared := inputs.DeclaredTypes()
+		bindings := inputs.BindingTypes()
 		return CheckIdents(result.Graph, result.Evidence, result.Scopes, declared, bindings, sess.SourceName)
 	})
 }
@@ -152,5 +142,5 @@ func solvedObservation(result *api.FuncResult) observation.Projector {
 	}
 	store := api.StoreFrom(result.QueryContext)
 	lookup := functionfact.StoreProjection(store, result.BaseScope).TypeLookup(functionfact.ProjectionSibling, api.SynthModeDeclared)
-	return observation.FromFuncResult(result, lookup).WithProofValues()
+	return observation.FromSolvedObservationState(result.ObservationState(), lookup).WithProofValues()
 }

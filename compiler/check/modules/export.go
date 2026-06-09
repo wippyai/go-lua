@@ -34,11 +34,12 @@ type exportFunctionOverlay struct {
 // ExportType computes the module's exported type from return statements.
 // Pass refinementsBySym to enrich exported functions with effect summaries.
 func ExportType(result *api.FuncResult, refinementsBySym map[cfg.SymbolID]*constraint.FunctionRefinement) typ.Type {
-	if result == nil || result.Graph == nil || result.NarrowSynth == nil {
+	if result == nil || result.Graph == nil || result.SolvedSynth() == nil {
 		return typ.Nil
 	}
 
-	synth := result.NarrowSynth
+	synth := result.SolvedSynth()
+	inputs := result.FlowInputView()
 
 	var export typ.Type
 	var exportRootName string
@@ -50,7 +51,7 @@ func ExportType(result *api.FuncResult, refinementsBySym map[cfg.SymbolID]*const
 		if info == nil {
 			continue
 		}
-		if result.FlowInputs != nil && result.FlowInputs.DeadPoints[p] {
+		if inputs.IsPointDead(p) {
 			continue
 		}
 		if len(info.Exprs) == 0 {
@@ -111,7 +112,7 @@ func ExportType(result *api.FuncResult, refinementsBySym map[cfg.SymbolID]*const
 // the map component (V?), so the read of a key the producer never wrote stays
 // soundly optional.
 func preservePopulatedMapKeys(export typ.Type, result *api.FuncResult) typ.Type {
-	if export == nil || result == nil || result.NarrowSynth == nil || result.Graph == nil {
+	if export == nil || result == nil || result.SolvedSynth() == nil || result.Graph == nil {
 		return export
 	}
 	rec, ok := unwrap.Alias(export).(*typ.Record)
@@ -231,7 +232,7 @@ func populatedStringKeyWrites(result *api.FuncResult, sourceSym cfg.SymbolID, de
 		if !ok {
 			continue
 		}
-		value := result.NarrowSynth.TypeOf(info.Sources[0], asg.Point)
+		value := result.SolvedTypeOf(info.Sources[0], asg.Point)
 		if value == nil || typ.IsAbsentOrUnknown(value) {
 			continue
 		}
@@ -526,12 +527,12 @@ func enrichExportFunctionType(base *typ.Function, result *api.FuncResult) *typ.F
 	if withDeclared := preserveClosedDeclaredExportReturns(enriched, result.SourceSignature); withDeclared != nil {
 		enriched = withDeclared
 	}
-	if result.NarrowSynth != nil && len(result.Evidence.Returns) > 0 {
+	if synth := result.SolvedSynth(); synth != nil && len(result.Evidence.Returns) > 0 {
 		observed := returns.ObservedSummary(
 			result.Graph,
 			result.Evidence.Returns,
 			deadPointFlow(result),
-			result.NarrowSynth,
+			synth,
 		)
 		if withReturns := withObservedExportReturns(enriched, observed); withReturns != nil {
 			enriched = withReturns
@@ -541,12 +542,12 @@ func enrichExportFunctionType(base *typ.Function, result *api.FuncResult) *typ.F
 	if !erreffect.HasErrorReturnLabel(enriched) {
 		enriched = attachExportReturnRelations(enriched, result.ReturnRelations)
 	}
-	if result.NarrowSynth != nil && !erreffect.HasErrorReturnLabel(enriched) {
+	if synth := result.SolvedSynth(); synth != nil && !erreffect.HasErrorReturnLabel(enriched) {
 		enriched = erreffect.AttachInferredErrorReturnSpec(
 			enriched,
 			result.Evidence,
 			deadPointFlow(result),
-			result.NarrowSynth,
+			synth,
 		)
 	}
 	return enriched

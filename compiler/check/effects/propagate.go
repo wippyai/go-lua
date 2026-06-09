@@ -54,8 +54,8 @@ func Propagate(result *api.FuncResult, lookup LookupFunc) *constraint.FunctionRe
 			continue
 		}
 		var synthFn func(ast.Expr, cfg.Point) typ.Type
-		if result.NarrowSynth != nil {
-			synthFn = result.NarrowSynth.TypeOf
+		if synth := result.SolvedSynth(); synth != nil {
+			synthFn = synth.TypeOf
 		}
 		calleeEffect := callsite.ResolveCalleeEffect(
 			info,
@@ -210,17 +210,7 @@ func conditionProofFacts(result *api.FuncResult) flow.ConditionProofFacts {
 	if result == nil {
 		return nil
 	}
-	if result.Facts != nil {
-		if proofs, ok := result.Facts.(flow.ConditionProofFacts); ok {
-			return proofs
-		}
-	}
-	if flowOps := result.SolvedFlow(); flowOps != nil {
-		if proofs, ok := flowOps.(flow.ConditionProofFacts); ok {
-			return proofs
-		}
-	}
-	return nil
+	return result.ConditionProofFacts()
 }
 
 // EffectFromType extracts FunctionRefinement from a function type's declared effect annotations.

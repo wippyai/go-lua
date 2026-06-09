@@ -209,6 +209,31 @@ func (r *FuncResult) EffectiveTypeAt(p cfg.Point, sym cfg.SymbolID) flow.TypedVa
 	return r.Facts.EffectiveTypeAt(p, sym)
 }
 
+// DeclaredTypeAt returns source/static declaration facts for a symbol.
+func (r *FuncResult) DeclaredTypeAt(p cfg.Point, sym cfg.SymbolID) flow.TypedValue {
+	if r == nil || r.Facts == nil {
+		return flow.TypedValue{Type: typ.Unknown, State: flow.StateUnknown}
+	}
+	return r.Facts.DeclaredAt(p, sym)
+}
+
+// SolvedSynth returns the flow-refined synthesis view for this result.
+func (r *FuncResult) SolvedSynth() Synth {
+	if r == nil {
+		return nil
+	}
+	return r.NarrowSynth
+}
+
+// SolvedTypeOf observes an expression through the solved synthesis view.
+func (r *FuncResult) SolvedTypeOf(expr ast.Expr, p cfg.Point) typ.Type {
+	synth := r.SolvedSynth()
+	if synth == nil {
+		return nil
+	}
+	return synth.TypeOf(expr, p)
+}
+
 // SolvedFlow returns the normalized solved-flow projection for this result.
 func (r *FuncResult) SolvedFlow() FlowOps {
 	if r == nil {
@@ -218,6 +243,68 @@ func (r *FuncResult) SolvedFlow() FlowOps {
 		return r.FlowProjection
 	}
 	return nil
+}
+
+// HasSolvedFlowProjection reports whether the result carries a concrete
+// producer-neutral flow projection.
+func (r *FuncResult) HasSolvedFlowProjection() bool {
+	return r != nil && r.FlowProjection != nil
+}
+
+// FlowInputView is a read-only facade over extracted flow inputs. It keeps
+// consumers from treating FuncResult as an internal engine handle.
+type FlowInputView struct {
+	inputs *flow.Inputs
+}
+
+// Present reports whether extracted flow inputs are available.
+func (v FlowInputView) Present() bool {
+	return v.inputs != nil
+}
+
+// DeclaredTypes returns source declaration facts extracted for flow.
+func (v FlowInputView) DeclaredTypes() flow.DeclaredTypes {
+	if v.inputs == nil {
+		return nil
+	}
+	return v.inputs.DeclaredTypes
+}
+
+// BindingTypes returns immutable value-binding type facts extracted for flow.
+func (v FlowInputView) BindingTypes() map[cfg.SymbolID]typ.Type {
+	if v.inputs == nil {
+		return nil
+	}
+	return v.inputs.BindingTypes
+}
+
+// Assignments returns normalized assignment evidence extracted for flow.
+func (v FlowInputView) Assignments() []flow.UnifiedAssignment {
+	if v.inputs == nil {
+		return nil
+	}
+	return v.inputs.Assignments
+}
+
+// LoopInsertLengths returns flow-extracted length evidence from counted loops.
+func (v FlowInputView) LoopInsertLengths() []flow.LoopInsertLength {
+	if v.inputs == nil {
+		return nil
+	}
+	return v.inputs.LoopInsertLengths
+}
+
+// IsPointDead reports whether flow extraction marked point unreachable.
+func (v FlowInputView) IsPointDead(p cfg.Point) bool {
+	return v.inputs != nil && v.inputs.DeadPoints[p]
+}
+
+// FlowInputView returns the read-only extracted-input view for this result.
+func (r *FuncResult) FlowInputView() FlowInputView {
+	if r == nil {
+		return FlowInputView{}
+	}
+	return FlowInputView{inputs: r.FlowInputs}
 }
 
 // ConditionProofFacts returns the producer-neutral condition-proof surface for
@@ -491,6 +578,66 @@ func ViewFromResult(r *FuncResult) *FuncAnalysisView {
 		RecursiveFamilies:        r.RecursiveFamilies,
 		ClassFamilyJoin:          r.ClassFamilyJoin,
 	}
+}
+
+// ReleaseAnalysisArtifacts drops heavyweight internal analysis machinery while
+// preserving the public result object identity for session cleanup.
+func (r *FuncResult) ReleaseAnalysisArtifacts() {
+	if r == nil {
+		return
+	}
+	r.Facts = nil
+	r.FlowInputs = nil
+	r.FlowProjection = nil
+	r.NarrowSynth = nil
+}
+
+// EffectiveTypeAt returns the narrowed type for a symbol at a specific CFG point.
+func (r *FuncAnalysisView) EffectiveTypeAt(p cfg.Point, sym cfg.SymbolID) flow.TypedValue {
+	if r == nil || r.Facts == nil {
+		return flow.TypedValue{Type: typ.Unknown, State: flow.StateUnknown}
+	}
+	return r.Facts.EffectiveTypeAt(p, sym)
+}
+
+// DeclaredTypeAt returns source/static declaration facts for a symbol.
+func (r *FuncAnalysisView) DeclaredTypeAt(p cfg.Point, sym cfg.SymbolID) flow.TypedValue {
+	if r == nil || r.Facts == nil {
+		return flow.TypedValue{Type: typ.Unknown, State: flow.StateUnknown}
+	}
+	return r.Facts.DeclaredAt(p, sym)
+}
+
+// RefinedTypeAt returns flow-refined type facts for a symbol.
+func (r *FuncAnalysisView) RefinedTypeAt(p cfg.Point, sym cfg.SymbolID) flow.TypedValue {
+	if r == nil || r.Facts == nil {
+		return flow.TypedValue{Type: nil, State: flow.StateUnknown}
+	}
+	return r.Facts.RefinedAt(p, sym)
+}
+
+// TypeFacts returns the mode-safe solved type-fact view for this analysis view.
+func (r *FuncAnalysisView) TypeFacts() flow.TypeFacts {
+	if r == nil {
+		return nil
+	}
+	return r.Facts
+}
+
+// SolvedSynth returns the flow-refined synthesis view for this analysis view.
+func (r *FuncAnalysisView) SolvedSynth() Synth {
+	if r == nil {
+		return nil
+	}
+	return r.NarrowSynth
+}
+
+// FlowInputView returns the read-only extracted-input view for this analysis view.
+func (r *FuncAnalysisView) FlowInputView() FlowInputView {
+	if r == nil {
+		return FlowInputView{}
+	}
+	return FlowInputView{inputs: r.FlowInputs}
 }
 
 // SolvedFlow returns the normalized solved-flow projection for this view.

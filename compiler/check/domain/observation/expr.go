@@ -257,7 +257,7 @@ func ObservedArgumentType(result *api.FuncResult, point cfg.Point, arg ast.Expr,
 		return current
 	}
 	argPath = flowpath.WithVersion(argPath, result.Graph, point)
-	projector := FromFuncResult(result, nil)
+	projector := FromSolvedObservationState(result.ObservationState(), nil)
 	obs := projector.proofs.PathObservationFacts(projector).ObservePath(flow.PathObservationQuery{
 		Point:               point,
 		Path:                argPath,

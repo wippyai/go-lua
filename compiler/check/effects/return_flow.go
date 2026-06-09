@@ -20,7 +20,7 @@ func inferLocalReturnFlowRow(result *api.FuncResult) effect.Row {
 	if len(params) == 0 {
 		return effect.Empty
 	}
-	observer := observation.FromFuncResult(result, nil)
+	observer := observation.FromSolvedObservationState(result.ObservationState(), nil)
 	aliases := newReturnFlowAliasResolver(result, result.Graph, observer, params)
 	var row effect.Row
 	result.Graph.EachReturn(func(p cfg.Point, info *cfg.ReturnInfo) {

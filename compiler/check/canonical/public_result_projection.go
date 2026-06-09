@@ -79,7 +79,7 @@ func (p publicResultProjection) build() *api.FuncResult {
 		Extras:                   p.driver.runComputePasses(p.graph, pointScopes),
 		DepthLimitExceeded:       p.driver.scopeDepthExceededFor(p.graph),
 	}
-	obs := observation.FromFuncResult(result, nil).WithProofValues()
+	obs := observation.FromSolvedObservationState(result.ObservationState(), nil).WithProofValues()
 	result.ResolvedTypeDefs = p.resolvedTypeDefs(pointScopes, obs.TypeOf)
 	result.CallExpectedArgs = callEdges.ExpectedArgs
 	result.CallContracts = callEdges.Contracts

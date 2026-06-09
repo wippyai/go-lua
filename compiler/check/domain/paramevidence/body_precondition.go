@@ -530,13 +530,15 @@ func (c BodyPreconditionContext) symbolLocallyReboundBefore(sym cfg.SymbolID, p 
 }
 
 func (c BodyPreconditionContext) dominatingAssignmentForPath(path constraint.Path, p cfg.Point) (flow.UnifiedAssignment, bool) {
-	if c.result == nil || c.result.FlowInputs == nil || path.Symbol == 0 || c.dominates == nil {
+	inputs := c.result.FlowInputView()
+	assignments := inputs.Assignments()
+	if c.result == nil || !inputs.Present() || path.Symbol == 0 || c.dominates == nil {
 		return flow.UnifiedAssignment{}, false
 	}
 	best := -1
 	ambiguous := false
-	for i := range c.result.FlowInputs.Assignments {
-		assign := c.result.FlowInputs.Assignments[i]
+	for i := range assignments {
+		assign := assignments[i]
 		if !assignmentTargetPrefixOfPath(assign.TargetPath, path) || !c.dominates(assign.Point, p) {
 			continue
 		}
@@ -545,7 +547,7 @@ func (c BodyPreconditionContext) dominatingAssignmentForPath(path constraint.Pat
 			ambiguous = false
 			continue
 		}
-		current := c.result.FlowInputs.Assignments[best]
+		current := assignments[best]
 		switch {
 		case assign.Point == current.Point && len(assign.TargetPath.Segments) > len(current.TargetPath.Segments):
 			best = i
@@ -561,7 +563,7 @@ func (c BodyPreconditionContext) dominatingAssignmentForPath(path constraint.Pat
 	if best < 0 || ambiguous {
 		return flow.UnifiedAssignment{}, false
 	}
-	return c.result.FlowInputs.Assignments[best], true
+	return assignments[best], true
 }
 
 func assignmentTargetPrefixOfPath(target, path constraint.Path) bool {

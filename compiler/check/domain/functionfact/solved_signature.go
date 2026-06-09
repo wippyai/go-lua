@@ -36,8 +36,8 @@ func SolvedSignatureFromResult(result *api.FuncResult, fn *ast.FunctionExpr) *ty
 		flowOps:        result.SolvedFlow(),
 		source:         result.SourceSignature,
 		moduleBindings: result.ModuleBindings,
-		observer:       observation.FromFuncResult(result, nil),
-		returnSynth:    result.NarrowSynth,
+		observer:       observation.FromSolvedObservationState(result.ObservationState(), nil),
+		returnSynth:    result.SolvedSynth(),
 	}, fn)
 }
 
@@ -53,7 +53,7 @@ func SolvedSignatureFromView(result *api.FuncAnalysisView, fn *ast.FunctionExpr)
 		flowOps:     result.SolvedFlow(),
 		source:      result.SourceSignature,
 		observer:    observation.FromAnalysisView(result, nil),
-		returnSynth: result.NarrowSynth,
+		returnSynth: result.SolvedSynth(),
 	}, fn)
 }
 
