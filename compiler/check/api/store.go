@@ -12,7 +12,7 @@
 //	InterprocFactReader   - Visible interproc fact products
 //	FunctionRefs    - Symbol/function bidirectional lookup
 //	StoreReader     - Read-only combination of above
-//	CanonicalStore  - Canonical module metadata plus final fact projection
+//	CanonicalStore  - Canonical-owned metadata plus final fact projection
 //	NestedStore     - StoreReader + legacy fact product writes
 //	IterationStore  - Full mutation capability for legacy fixpoint paths
 package api
@@ -126,14 +126,13 @@ type CanonicalFunctionFactProjectionSink interface {
 }
 
 // CanonicalStore is the store surface the canonical summary engine is allowed to
-// mutate: module metadata, graph-parent publication, and final Summary-derived
-// fact projection. It intentionally excludes legacy interproc iteration methods.
+// use: module binding publication, graph-parent publication, parent-key lookup,
+// and final Summary-derived FunctionFacts projection. It intentionally excludes
+// legacy interproc iteration and visible interproc fact-product reads.
 type CanonicalStore interface {
-	StoreReader
 	CanonicalFunctionFactProjectionSink
 
 	SetModuleBindings(bindings *bind.BindingTable)
-	SetModuleAliases(aliases map[cfg.SymbolID]string)
 	SetParentScope(parentHash uint64, parent *scope.State)
 	SetGraphParentHash(graphID, parentHash uint64)
 	ParentGraphKeyForSymbol(sym cfg.SymbolID) (GraphKey, bool)

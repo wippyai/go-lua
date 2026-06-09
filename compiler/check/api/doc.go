@@ -13,7 +13,7 @@
 //   - [ParentScopes]: Parent scope lookup for nested functions
 //   - [InterprocFactReader]: Visible interprocedural fact products
 //   - [StoreReader]: Read contract combining the immutable stores above
-//   - [CanonicalStore]: Canonical metadata publication and final fact projection
+//   - [CanonicalStore]: Canonical-owned metadata and final fact projection
 //   - [IterationStore]: Adds mutation for legacy fixpoint paths
 //
 // These interfaces allow different phases to declare their dependencies and
