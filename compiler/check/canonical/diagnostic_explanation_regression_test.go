@@ -16,6 +16,8 @@ return x
 	requireExplanationContains(t, d, "source expression was observed as")
 	requireExplanationContains(t, d, "assignment target requires")
 	requireExplanationContains(t, d, "no canonical assignment-source proof")
+	requireExplanationContains(t, d, "canonical evidence: local transfer/point observation")
+	requireExplanationContains(t, d, "missing proof: checker could not prove required assignment proof")
 }
 
 func TestCanonicalDiagnosticsExplainCallArgumentContractMismatch(t *testing.T) {
@@ -27,6 +29,9 @@ take("bad")
 	requireExplanationContains(t, d, "argument 1 was observed as")
 	requireExplanationContains(t, d, "solved call contract requires")
 	requireExplanationContains(t, d, "no canonical argument proof")
+	requireExplanationContains(t, d, "canonical evidence: summary projection")
+	requireExplanationContains(t, d, "canonical evidence: call-boundary rebasing")
+	requireExplanationContains(t, d, "missing proof: checker could not prove argument 1 proof")
 }
 
 func TestCanonicalDiagnosticsExplainOptionalIndexFailure(t *testing.T) {
@@ -43,6 +48,57 @@ return run
 	requireExplanationContains(t, d, "receiver was observed as")
 	requireExplanationContains(t, d, "indexing requires a non-nil container")
 	requireExplanationContains(t, d, "no canonical branch or product proof")
+	requireExplanationContains(t, d, "missing proof: checker could not prove non-nil receiver proof")
+}
+
+func TestCanonicalDiagnosticsExplainCrossFunctionCallBoundaryEvidence(t *testing.T) {
+	d := requireDiagnosticWithMessage(t, `
+local function take_node(node: string)
+end
+
+local function dispatch()
+    take_node(1)
+end
+
+dispatch()
+`, "argument 1")
+	requireExplanationContains(t, d, "canonical evidence: summary projection")
+	requireExplanationContains(t, d, "canonical evidence: call-boundary rebasing")
+	requireExplanationContains(t, d, "parameter 1 obligation")
+}
+
+func TestCanonicalDiagnosticsExplainIteratorProvenanceEvidence(t *testing.T) {
+	d := requireDiagnosticWithMessage(t, `
+type Item = {id: string}
+local items: {Item} = {}
+table.insert(items, {id = "a"})
+for _, item in ipairs(items) do
+    local n: number = item.id
+end
+`, "cannot assign")
+	requireExplanationContains(t, d, "canonical evidence: provenance route observation")
+	requireExplanationContains(t, d, "comes from indexed iterator source")
+	requireExplanationContains(t, d, "missing proof: checker could not prove required assignment proof")
+}
+
+func TestCanonicalDiagnosticsExplainMissingIndexReadProof(t *testing.T) {
+	d := requireDiagnosticWithMessage(t, `
+local value = true
+local n = value[1]
+return n
+`, "cannot index type")
+	requireExplanationContains(t, d, "no canonical indexed-read proof")
+	requireExplanationContains(t, d, "missing proof: checker could not prove runtime index/key read proof")
+}
+
+func TestCanonicalDiagnosticsExplainUnknownPrecisionBoundary(t *testing.T) {
+	d := requireDiagnosticWithMessage(t, `
+local raw: any = "bad"
+local n: number = raw
+return n
+`, "cannot assign")
+	requireExplanationContains(t, d, "precision boundary: top/unknown boundary")
+	requireExplanationContains(t, d, "stronger precision was not available from canonical evidence")
 }
 
 func requireDiagnosticWithMessage(t *testing.T, src, needle string) diag.Diagnostic {

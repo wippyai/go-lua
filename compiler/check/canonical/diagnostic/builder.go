@@ -31,10 +31,11 @@ func (b Builder) ExplainAssignmentMismatch(source ast.Expr, point cfg.Point, act
 	missing := g.AddNode(ExplanationNode{Kind: NodeMissingProof, Label: "required assignment proof for " + formatType(expected)})
 	g.AddEdge(expr, fact, EdgeDerivedByTransferRule)
 	g.AddEdge(fact, missing, EdgeRejectedBecauseUnproved)
+	b.addPathEvidence(&g, point, source, fact)
+	b.addUnknownBoundary(&g, fact, actual)
 	return b.render(g, point, source, []string{
 		"source expression was observed as " + formatType(actual),
 		"assignment target requires " + formatType(expected),
-		b.pathEvidence(point, source),
 		"no canonical assignment-source proof made the observed value satisfy the target type",
 	})
 }
@@ -48,10 +49,14 @@ func (b Builder) ExplainCallArgumentMismatch(info *cfg.CallInfo, argIdx int, poi
 	call := g.AddNode(ExplanationNode{Kind: NodeCallTarget, Label: "selected call contract"})
 	argNode := g.AddNode(ExplanationNode{Kind: NodeSourceExpression, Label: "argument " + intString(argIdx)})
 	fact := g.AddNode(ValueFactNode(product.FromType(actual), "observed argument type "+formatType(actual)))
-	missing := g.AddNode(ExplanationNode{Kind: NodeParameterObligation, Label: "required argument type " + formatType(expected)})
-	g.AddEdge(call, missing, EdgeProjectedFromSummary)
+	obligationNode := g.AddNode(ExplanationNode{Kind: NodeParameterObligation, Label: "parameter " + intString(argIdx) + " obligation " + formatType(expected)})
+	missing := g.AddNode(ExplanationNode{Kind: NodeMissingProof, Label: "argument " + intString(argIdx) + " proof for " + formatType(expected)})
+	g.AddEdge(call, obligationNode, EdgeProjectedFromSummary)
+	g.AddEdge(obligationNode, argNode, EdgeRebasedThroughCallBoundary)
 	g.AddEdge(argNode, fact, EdgeDerivedByTransferRule)
 	g.AddEdge(fact, missing, EdgeRejectedBecauseUnproved)
+	b.addPathEvidence(&g, point, arg, fact)
+	b.addUnknownBoundary(&g, fact, actual)
 
 	lines := []string{
 		"argument " + intString(argIdx) + " was observed as " + formatType(actual),
@@ -61,7 +66,6 @@ func (b Builder) ExplainCallArgumentMismatch(info *cfg.CallInfo, argIdx int, poi
 		lines = append(lines, "the obligation came from the canonical call boundary")
 	}
 	lines = append(lines,
-		b.pathEvidence(point, arg),
 		"no canonical argument proof or postcondition satisfied the selected obligation",
 	)
 	return b.render(g, point, arg, lines)
@@ -74,15 +78,16 @@ func (b Builder) ExplainOptionalIndex(expr *ast.AttrGetExpr, point cfg.Point, ob
 	missing := g.AddNode(ExplanationNode{Kind: NodeMissingProof, Label: "non-nil receiver proof"})
 	g.AddEdge(receiver, fact, EdgeDerivedByTransferRule)
 	g.AddEdge(fact, missing, EdgeRejectedBecauseUnproved)
+	b.addUnknownBoundary(&g, fact, objType)
 
 	var obj ast.Expr
 	if expr != nil {
 		obj = expr.Object
 	}
+	b.addPathEvidence(&g, point, obj, fact)
 	return b.render(g, point, obj, []string{
 		"receiver was observed as " + formatType(objType),
 		"indexing requires a non-nil container at this point",
-		b.pathEvidence(point, obj),
 		"no canonical branch or product proof made the receiver definitely present",
 	})
 }
@@ -91,18 +96,19 @@ func (b Builder) ExplainIndexFailure(expr *ast.AttrGetExpr, point cfg.Point, obj
 	var g ExplanationGraph
 	receiver := g.AddNode(ExplanationNode{Kind: NodeSourceExpression, Label: "indexed receiver"})
 	fact := g.AddNode(ValueFactNode(product.FromType(objType), "receiver type "+formatType(objType)))
-	missing := g.AddNode(ExplanationNode{Kind: NodeMissingProof, Label: "runtime index proof"})
+	missing := g.AddNode(ExplanationNode{Kind: NodeMissingProof, Label: "runtime index/key read proof"})
 	g.AddEdge(receiver, fact, EdgeDerivedByTransferRule)
 	g.AddEdge(fact, missing, EdgeRejectedBecauseUnproved)
+	b.addUnknownBoundary(&g, fact, objType)
 
 	var obj ast.Expr
 	if expr != nil {
 		obj = expr.Object
 	}
+	b.addPathEvidence(&g, point, obj, fact)
 	lines := []string{
 		"receiver was observed as " + formatType(objType),
 		"index key was observed as " + formatType(keyType),
-		b.pathEvidence(point, obj),
 		"no canonical indexed-read proof or runtime index projection proved a readable value",
 	}
 	return b.render(g, point, obj, lines)
@@ -118,26 +124,43 @@ func (b Builder) render(g ExplanationGraph, point cfg.Point, expr ast.Expr, line
 	if expr != nil && expr.Line() > 0 {
 		lines = append([]string{"at line " + intString(expr.Line()) + ", column " + intString(expr.Column())}, lines...)
 	}
+	lines = append(lines, g.evidenceLines()...)
 	return renderLines(lines)
 }
 
-func (b Builder) pathEvidence(point cfg.Point, expr ast.Expr) string {
+func (b Builder) addPathEvidence(g *ExplanationGraph, point cfg.Point, expr ast.Expr, observed ExplanationNodeID) {
 	path := b.observer.PathOfExpr(expr, point)
 	if path.IsEmpty() || path.Symbol == 0 {
-		return "the expression has no normalized path-backed provenance route"
+		return
 	}
 	routes := b.observer.ProvenanceRoutesAt(point, path)
 	if len(routes) == 0 {
 		if appendRoutes := b.appendElementFieldRoutes(point, path); len(appendRoutes) > 0 {
-			return "append-element provenance route: " + describeRoute(appendRoutes[0], path)
+			route := g.AddNode(ExplanationNode{Kind: NodeProvenanceRoute, Label: describeRoute(appendRoutes[0], path)})
+			g.AddEdge(route, observed, EdgeDerivedByTransferRule)
+			return
 		}
 		pv := b.observer.ProductValueAtPath(point, path)
 		if pv.State == flow.StateResolved && !pv.Value.IsZero() {
-			return "canonical point state has product evidence for " + path.String()
+			pointFact := g.AddNode(ValueFactNode(pv.Value, "point-state product evidence for "+path.String()))
+			g.AddEdge(pointFact, observed, EdgeDerivedByTransferRule)
+			return
 		}
-		return "no provenance route was recorded for " + path.String()
+		missing := g.AddNode(ExplanationNode{Kind: NodeMissingProof, Label: "provenance route or product evidence for " + path.String()})
+		g.AddEdge(observed, missing, EdgeRejectedBecauseUnproved)
+		return
 	}
-	return "provenance route: " + describeRoute(routes[0], path)
+	route := g.AddNode(ExplanationNode{Kind: NodeProvenanceRoute, Label: describeRoute(routes[0], path)})
+	g.AddEdge(route, observed, EdgeDerivedByTransferRule)
+}
+
+func (b Builder) addUnknownBoundary(g *ExplanationGraph, fact ExplanationNodeID, t typ.Type) {
+	if !typ.IsAbsentOrUnknown(t) && !typ.IsAny(t) {
+		return
+	}
+	label := "observed fact is " + formatType(t) + ", so stronger precision was not available from canonical evidence"
+	node := g.AddNode(ExplanationNode{Kind: NodeWideningUnknownBoundary, Label: label})
+	g.AddEdge(fact, node, EdgeLostBecauseTop)
 }
 
 func (b Builder) appendElementFieldRoutes(point cfg.Point, path constraint.Path) []flow.ProvenanceRoute {
