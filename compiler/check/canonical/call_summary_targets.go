@@ -10,44 +10,6 @@ import (
 	"github.com/wippyai/go-lua/types/typ/unwrap"
 )
 
-func (ct callTyper) callOutcomeForTypedCall(
-	call *ast.FuncCallExpr,
-	exprType func(ast.Expr) typ.Type,
-	references flow.ReferenceContext,
-) canonicalcall.CallOutcome {
-	d := ct.d
-	if d == nil || call == nil || d.activeProgram == nil {
-		return canonicalcall.CallOutcome{}
-	}
-	site, ok := ct.typedCallSiteFrame(call, argTypesFromCall(call, exprType), exprType, references, nil)
-	if !ok {
-		return canonicalcall.CallOutcome{}
-	}
-	return callOutcomeProjection{
-		typer:   ct,
-		program: d.activeProgram,
-		site:    site,
-		targets: ct.resolveCallTargets(site.call, d.activeProgram, site.references),
-		entryContext: func(target canonicalcall.SelectedTarget) canonicalcall.EntryContext {
-			ref := target.Ref()
-			entryValues := ct.callEntryValuesForRef(ref, site.call, site.exprType)
-			if d.summaryReader().Live() {
-				return d.activeProgram.CallEntryContext(
-					ref,
-					site.references,
-					entryValues,
-				)
-			}
-			return canonicalcall.NewEntryContext(
-				ref,
-				flow.ReferenceContextOf(flow.CaptureCellsDomain.Bottom(), flow.FunctionRefsDomain.Bottom(), flow.ClosureRefsDomain.Bottom()),
-				entryValues,
-				flow.BoundaryFactsDomain.Top(),
-			)
-		},
-	}.outcome()
-}
-
 type productCallOutcomeOptions struct {
 	skipSignatureReturns   bool
 	skipSignatureRelations bool

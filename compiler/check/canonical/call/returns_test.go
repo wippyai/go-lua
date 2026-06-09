@@ -9,6 +9,7 @@ import (
 	"github.com/wippyai/go-lua/types/db"
 	"github.com/wippyai/go-lua/types/domain/value/product"
 	"github.com/wippyai/go-lua/types/effect"
+	"github.com/wippyai/go-lua/types/flow"
 	"github.com/wippyai/go-lua/types/query/core"
 	"github.com/wippyai/go-lua/types/typ"
 	"github.com/wippyai/go-lua/types/typ/subst"
@@ -295,58 +296,37 @@ func TestInferReturnValuesInterceptBeatsSummary(t *testing.T) {
 		Returns(typ.String).
 		Effects(effect.WithCallableType()).
 		Build()
-	summaryUsed := false
 
 	got, ok := (ReturnValueInput{
-		Call:                call,
-		TypePolicyAvailable: true,
-		Env: InterceptEnv{
-			TypeLookup: func(name string) typ.Type {
-				if name == "UserId" {
-					return castFn
-				}
-				return nil
-			},
-		},
-		SummaryReturnValues: func(*ast.FuncCallExpr) []product.AbstractValue {
-			summaryUsed = true
-			return []product.AbstractValue{product.FromType(typ.Boolean)}
-		},
+		Call:                  call,
+		TypePolicyAvailable:   true,
+		PrimaryReturnTypes:    []typ.Type{castFn.Returns[0]},
+		HasPrimaryReturnTypes: true,
+		SummaryReturnValues:   []product.AbstractValue{product.FromType(typ.Boolean)},
 	}).Values()
 	if !ok || len(got) != 1 || !typ.TypeEquals(got[0].ProjectValue(), typ.String) {
 		t.Fatalf("InferReturnValues intercept = %#v, %v; want string, true", got, ok)
-	}
-	if summaryUsed {
-		t.Fatal("summary ran before intercept")
 	}
 }
 
 func TestInferReturnValuesSummaryBeatsGradualAndTypeFallback(t *testing.T) {
 	call := &ast.FuncCallExpr{Func: &ast.IdentExpr{Value: "dynamic"}}
-	typeFallbackUsed := false
 
 	got, ok := (ReturnValueInput{
 		Call:                call,
 		TypePolicyAvailable: true,
-		SummaryReturnValues: func(*ast.FuncCallExpr) []product.AbstractValue {
-			return []product.AbstractValue{product.FromType(typ.String)}
-		},
+		SummaryReturnValues: []product.AbstractValue{product.FromType(typ.String)},
 		ExprValue: func(ast.Expr) (product.AbstractValue, bool) {
 			return product.GradualAny(), true
 		},
-		TypeFallback: func() ([]typ.Type, bool) {
-			typeFallbackUsed = true
-			return []typ.Type{typ.Boolean}, true
-		},
+		FallbackReturnTypes:    []typ.Type{typ.Boolean},
+		HasFallbackReturnTypes: true,
 	}).Values()
 	if !ok || len(got) != 1 || !typ.TypeEquals(got[0].ProjectValue(), typ.String) {
 		t.Fatalf("InferReturnValues summary = %#v, %v; want string, true", got, ok)
 	}
 	if got[0].IsGradualTop() {
 		t.Fatal("gradual fallback overrode summary return")
-	}
-	if typeFallbackUsed {
-		t.Fatal("type fallback ran after summary return")
 	}
 }
 
@@ -363,25 +343,17 @@ func TestInferReturnValuesSkipsRecursiveFamilyFallbackScan(t *testing.T) {
 		Field("next", tower).
 		Field("hole", typ.Unknown).
 		Build())
-	typeFallbackUsed := false
 
 	got, ok := (ReturnValueInput{
-		Call:                call,
-		TypePolicyAvailable: true,
-		SummaryReturnValues: func(*ast.FuncCallExpr) []product.AbstractValue {
-			return []product.AbstractValue{product.FromType(tower)}
-		},
-		TypeFallback: func() ([]typ.Type, bool) {
-			typeFallbackUsed = true
-			return []typ.Type{typ.String}, true
-		},
+		Call:                   call,
+		TypePolicyAvailable:    true,
+		SummaryReturnValues:    []product.AbstractValue{product.FromType(tower)},
+		FallbackReturnTypes:    []typ.Type{typ.String},
+		HasFallbackReturnTypes: true,
 	}).Values()
 
 	if !ok || len(got) != 1 || got[0].IsZero() {
 		t.Fatalf("InferReturnValues recursive summary = %#v, %v; want summary value", got, ok)
-	}
-	if typeFallbackUsed {
-		t.Fatal("recursive family return forced type fallback")
 	}
 }
 
@@ -391,25 +363,17 @@ func TestInferReturnValuesSkipsOversizedStructuralFallbackScan(t *testing.T) {
 	for i := 0; i < summaryReturnFallbackScanLimit+16; i++ {
 		tower = typ.NewMap(typ.String, typ.NewOptional(tower))
 	}
-	typeFallbackUsed := false
 
 	got, ok := (ReturnValueInput{
-		Call:                call,
-		TypePolicyAvailable: true,
-		SummaryReturnValues: func(*ast.FuncCallExpr) []product.AbstractValue {
-			return []product.AbstractValue{product.FromType(tower)}
-		},
-		TypeFallback: func() ([]typ.Type, bool) {
-			typeFallbackUsed = true
-			return []typ.Type{typ.String}, true
-		},
+		Call:                   call,
+		TypePolicyAvailable:    true,
+		SummaryReturnValues:    []product.AbstractValue{product.FromType(tower)},
+		FallbackReturnTypes:    []typ.Type{typ.String},
+		HasFallbackReturnTypes: true,
 	}).Values()
 
 	if !ok || len(got) != 1 || got[0].IsZero() {
 		t.Fatalf("InferReturnValues oversized summary = %#v, %v; want summary value", got, ok)
-	}
-	if typeFallbackUsed {
-		t.Fatal("oversized structural summary forced type fallback")
 	}
 }
 
@@ -436,14 +400,11 @@ func TestInferReturnValuesRefinesStructuralSummaryWithTypeFallback(t *testing.T)
 	)
 
 	got, ok := (ReturnValueInput{
-		Call:                call,
-		TypePolicyAvailable: true,
-		SummaryReturnValues: func(*ast.FuncCallExpr) []product.AbstractValue {
-			return []product.AbstractValue{product.FromType(summary)}
-		},
-		TypeFallback: func() ([]typ.Type, bool) {
-			return []typ.Type{refined}, true
-		},
+		Call:                   call,
+		TypePolicyAvailable:    true,
+		SummaryReturnValues:    []product.AbstractValue{product.FromType(summary)},
+		FallbackReturnTypes:    []typ.Type{refined},
+		HasFallbackReturnTypes: true,
 	}).Values()
 	if !ok || len(got) != 1 || !typ.TypeEquals(got[0].ProjectValue(), refined) {
 		t.Fatalf("InferReturnValues refined structural summary = %#v, %v; want %v, true", got, ok, refined)
@@ -470,14 +431,11 @@ func TestInferReturnValuesRepairsOpenGenericLeafWithInstantiatedFallback(t *test
 	}
 
 	got, ok := (ReturnValueInput{
-		Call:                call,
-		TypePolicyAvailable: true,
-		SummaryReturnValues: func(*ast.FuncCallExpr) []product.AbstractValue {
-			return []product.AbstractValue{product.FromType(summary)}
-		},
-		TypeFallback: func() ([]typ.Type, bool) {
-			return []typ.Type{instantiated}, true
-		},
+		Call:                   call,
+		TypePolicyAvailable:    true,
+		SummaryReturnValues:    []product.AbstractValue{product.FromType(summary)},
+		FallbackReturnTypes:    []typ.Type{instantiated},
+		HasFallbackReturnTypes: true,
 	}).Values()
 	if !ok || len(got) != 1 {
 		t.Fatalf("InferReturnValues generic fallback = %#v, %v; want one value", got, ok)
@@ -513,14 +471,11 @@ func TestInferReturnValuesRepairsOpenGenericLeafWithExpandedFallback(t *testing.
 		Build()
 
 	got, ok := (ReturnValueInput{
-		Call:                call,
-		TypePolicyAvailable: true,
-		SummaryReturnValues: func(*ast.FuncCallExpr) []product.AbstractValue {
-			return []product.AbstractValue{product.FromType(summary)}
-		},
-		TypeFallback: func() ([]typ.Type, bool) {
-			return []typ.Type{fallback}, true
-		},
+		Call:                   call,
+		TypePolicyAvailable:    true,
+		SummaryReturnValues:    []product.AbstractValue{product.FromType(summary)},
+		FallbackReturnTypes:    []typ.Type{fallback},
+		HasFallbackReturnTypes: true,
 	}).Values()
 	if !ok || len(got) != 1 {
 		t.Fatalf("InferReturnValues expanded fallback = %#v, %v; want one value", got, ok)
@@ -547,14 +502,11 @@ func TestInferReturnValuesTopLikeSummaryYieldsToTypeFallback(t *testing.T) {
 	call := &ast.FuncCallExpr{Func: &ast.IdentExpr{Value: "f"}}
 
 	got, ok := (ReturnValueInput{
-		Call:                call,
-		TypePolicyAvailable: true,
-		SummaryReturnValues: func(*ast.FuncCallExpr) []product.AbstractValue {
-			return []product.AbstractValue{product.FromType(typ.Any)}
-		},
-		TypeFallback: func() ([]typ.Type, bool) {
-			return []typ.Type{typ.String}, true
-		},
+		Call:                   call,
+		TypePolicyAvailable:    true,
+		SummaryReturnValues:    []product.AbstractValue{product.FromType(typ.Any)},
+		FallbackReturnTypes:    []typ.Type{typ.String},
+		HasFallbackReturnTypes: true,
 	}).Values()
 	if !ok || len(got) != 1 || !typ.TypeEquals(got[0].ProjectValue(), typ.String) {
 		t.Fatalf("InferReturnValues top-like summary fallback = %#v, %v; want string, true", got, ok)
@@ -563,7 +515,6 @@ func TestInferReturnValuesTopLikeSummaryYieldsToTypeFallback(t *testing.T) {
 
 func TestInferReturnValuesGradualBeatsTypeFallback(t *testing.T) {
 	call := &ast.FuncCallExpr{Func: &ast.IdentExpr{Value: "dynamic"}}
-	typeFallbackUsed := false
 
 	got, ok := (ReturnValueInput{
 		Call:                call,
@@ -571,27 +522,21 @@ func TestInferReturnValuesGradualBeatsTypeFallback(t *testing.T) {
 		ExprValue: func(ast.Expr) (product.AbstractValue, bool) {
 			return product.GradualAny(), true
 		},
-		TypeFallback: func() ([]typ.Type, bool) {
-			typeFallbackUsed = true
-			return []typ.Type{typ.String}, true
-		},
+		FallbackReturnTypes:    []typ.Type{typ.String},
+		HasFallbackReturnTypes: true,
 	}).Values()
 	if !ok || len(got) != 1 || !got[0].IsGradualTop() {
 		t.Fatalf("InferReturnValues gradual = %#v, %v; want gradual top, true", got, ok)
-	}
-	if typeFallbackUsed {
-		t.Fatal("type fallback ran before gradual dynamic return")
 	}
 }
 
 func TestInferReturnValuesTypeFallbackProjectsTypes(t *testing.T) {
 	call := &ast.FuncCallExpr{Func: &ast.IdentExpr{Value: "f"}}
 	got, ok := (ReturnValueInput{
-		Call:                call,
-		TypePolicyAvailable: true,
-		TypeFallback: func() ([]typ.Type, bool) {
-			return []typ.Type{typ.String, typ.Boolean}, true
-		},
+		Call:                   call,
+		TypePolicyAvailable:    true,
+		FallbackReturnTypes:    []typ.Type{typ.String, typ.Boolean},
+		HasFallbackReturnTypes: true,
 	}).Values()
 	if !ok || len(got) != 2 ||
 		!typ.TypeEquals(got[0].ProjectValue(), typ.String) ||
@@ -612,9 +557,8 @@ func TestInferReturnValuesPendingInputAllowsInformativeTypeFallback(t *testing.T
 			gradualUsed = true
 			return product.GradualAny(), true
 		},
-		TypeFallback: func() ([]typ.Type, bool) {
-			return []typ.Type{typ.String, typ.NewOptional(typ.Boolean)}, true
-		},
+		FallbackReturnTypes:    []typ.Type{typ.String, typ.NewOptional(typ.Boolean)},
+		HasFallbackReturnTypes: true,
 	}).Values()
 	if !ok || len(got) != 2 ||
 		!typ.TypeEquals(got[0].ProjectValue(), typ.String) ||
@@ -642,9 +586,8 @@ func TestInferReturnValuesPendingInputRejectsTopLikeTypeFallback(t *testing.T) {
 				ExprValue: func(ast.Expr) (product.AbstractValue, bool) {
 					return product.GradualAny(), true
 				},
-				TypeFallback: func() ([]typ.Type, bool) {
-					return returns, true
-				},
+				FallbackReturnTypes:    returns,
+				HasFallbackReturnTypes: true,
 			}).Values()
 			if ok || got != nil {
 				t.Fatalf("pending top-like fallback = %#v, %v; want nil, false", got, ok)
@@ -686,9 +629,8 @@ func TestInferReturnValuesSelectedTargetBlocksGradualAnySeed(t *testing.T) {
 			gradualUsed = true
 			return product.GradualAny(), true
 		},
-		TypeFallback: func() ([]typ.Type, bool) {
-			return []typ.Type{typ.Any}, true
-		},
+		FallbackReturnTypes:    []typ.Type{typ.Any},
+		HasFallbackReturnTypes: true,
 	}).Values()
 	if !ok || len(got) != 1 || !product.Domain.Equal(got[0], product.Bottom()) {
 		t.Fatalf("selected target top-like fallback = %#v, %v; want bottom, true", got, ok)
@@ -702,12 +644,11 @@ func TestInferReturnValuesSelectedTargetAllowsInformativeTypeFallback(t *testing
 	call := &ast.FuncCallExpr{Func: &ast.IdentExpr{Value: "f"}}
 
 	got, ok := (ReturnValueInput{
-		Call:                 call,
-		TypePolicyAvailable:  true,
-		BlockDynamicFallback: true,
-		TypeFallback: func() ([]typ.Type, bool) {
-			return []typ.Type{typ.Number}, true
-		},
+		Call:                   call,
+		TypePolicyAvailable:    true,
+		BlockDynamicFallback:   true,
+		FallbackReturnTypes:    []typ.Type{typ.Number},
+		HasFallbackReturnTypes: true,
 	}).Values()
 	if !ok || len(got) != 1 || !typ.TypeEquals(got[0].ProjectValue(), typ.Number) {
 		t.Fatalf("selected target informative fallback = %#v, %v; want number, true", got, ok)
@@ -716,24 +657,107 @@ func TestInferReturnValuesSelectedTargetAllowsInformativeTypeFallback(t *testing
 
 func TestInferReturnValuesTypePolicyUnavailableSkipsInterceptAndFallback(t *testing.T) {
 	call := &ast.FuncCallExpr{Func: &ast.IdentExpr{Value: "UserId"}}
-	usedFallback := false
 	got, ok := (ReturnValueInput{
-		Call: call,
-		Env: InterceptEnv{
-			TypeLookup: func(string) typ.Type {
-				return typ.Func().Returns(typ.String).Effects(effect.WithCallableType()).Build()
-			},
-		},
-		TypeFallback: func() ([]typ.Type, bool) {
-			usedFallback = true
-			return []typ.Type{typ.String}, true
-		},
+		Call:                   call,
+		PrimaryReturnTypes:     []typ.Type{typ.String},
+		HasPrimaryReturnTypes:  true,
+		FallbackReturnTypes:    []typ.Type{typ.String},
+		HasFallbackReturnTypes: true,
 	}).Values()
 	if ok || got != nil {
 		t.Fatalf("InferReturnValues without type policy = %#v, %v; want nil, false", got, ok)
 	}
-	if usedFallback {
-		t.Fatal("type fallback ran while type policy unavailable")
+}
+
+func TestTypeFallbackOutcomeMaterializesBuiltinInterceptReturns(t *testing.T) {
+	call := &ast.FuncCallExpr{
+		Func: &ast.IdentExpr{Value: "UserId"},
+		Args: []ast.Expr{&ast.StringExpr{Value: "u1"}},
+	}
+	castFn := typ.Func().
+		Param("value", typ.Any).
+		Returns(typ.String).
+		Effects(effect.WithCallableType()).
+		Build()
+
+	outcome := NewTypeFallbackOutcome(TypeFallbackInput{
+		Return: ReturnInput{
+			Call: call,
+			Env: InterceptEnv{
+				TypeLookup: func(name string) typ.Type {
+					if name == "UserId" {
+						return castFn
+					}
+					return nil
+				},
+			},
+			Ctx:   db.NewQueryContext(db.New()),
+			Query: core.NewEngine(),
+		},
+	})
+	got, ok := CallOutcome{}.WithTypeFallbackOutcome(outcome).ReturnValues(ReturnValueInput{
+		Call:                call,
+		TypePolicyAvailable: true,
+	})
+	if !ok || len(got) != 1 || !typ.TypeEquals(got[0].ProjectValue(), typ.String) {
+		t.Fatalf("builtin outcome returns = %#v, %v; want string", got, ok)
+	}
+}
+
+func TestTypeFallbackOutcomeMaterializesDeclaredSignatureReturns(t *testing.T) {
+	call := &ast.FuncCallExpr{
+		Func: &ast.IdentExpr{Value: "decode"},
+		Args: []ast.Expr{&ast.StringExpr{Value: "{}"}},
+	}
+	outcome := NewTypeFallbackOutcome(TypeFallbackInput{
+		Return: ReturnInput{
+			Call:     call,
+			ArgTypes: []typ.Type{typ.String},
+			Ctx:      db.NewQueryContext(db.New()),
+			Query:    core.NewEngine(),
+			Resolver: TypeResolver{
+				ExprType: func(expr ast.Expr) typ.Type {
+					if expr == call.Func {
+						return typ.Func().Param("raw", typ.String).Returns(typ.Number).Build()
+					}
+					return typ.Unknown
+				},
+			},
+		},
+		UseResolvedSignature: true,
+	})
+
+	got, ok := CallOutcome{}.WithTypeFallbackOutcome(outcome).ReturnValues(ReturnValueInput{
+		Call:                call,
+		TypePolicyAvailable: true,
+	})
+	if !ok || len(got) != 1 || !typ.TypeEquals(got[0].ProjectValue(), typ.Number) {
+		t.Fatalf("declared outcome returns = %#v, %v; want number", got, ok)
+	}
+}
+
+func TestTypeFallbackOutcomeUnknownExternalStaysConservative(t *testing.T) {
+	call := &ast.FuncCallExpr{Func: &ast.IdentExpr{Value: "external"}}
+	outcome := NewTypeFallbackOutcome(TypeFallbackInput{
+		Return: ReturnInput{
+			Call:  call,
+			Ctx:   db.NewQueryContext(db.New()),
+			Query: core.NewEngine(),
+		},
+	})
+
+	values, ok := CallOutcome{}.WithTypeFallbackOutcome(outcome).ReturnValues(ReturnValueInput{
+		Call:                call,
+		TypePolicyAvailable: true,
+	})
+	if ok || values != nil {
+		t.Fatalf("unknown external returns = %#v, %v; want no product return proof", values, ok)
+	}
+	if rels := (CallOutcome{}).WithTypeFallbackOutcome(outcome).ReturnRelations(); !flow.ReturnRelationsDomain.Equal(rels, flow.ReturnRelationsFromFunctionType(nil)) {
+		t.Fatalf("unknown external relations = %#v, want conservative top-like fallback", rels)
+	}
+	if facts := (CallOutcome{}).WithTypeFallbackOutcome(outcome).BoundaryFacts(); !flow.BoundaryFactsDomain.Equal(facts, flow.BoundaryFactsFromFunctionType(nil)) {
+		t.Fatalf("unknown external boundary facts = %#v, want conservative top-like fallback", facts)
 	}
 }
 

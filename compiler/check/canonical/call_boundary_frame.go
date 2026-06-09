@@ -37,36 +37,24 @@ func (ct callTyper) callBoundaryFrame(call *ast.FuncCallExpr, ctx transfer.Produ
 	if !ok {
 		return callBoundaryFrame{}, false
 	}
+	outcome := ct.productCallOutcomeProjection(site, ctx, opts, nil).outcome().
+		WithTypeFallbackOutcome(site.typeFallbackOutcome(ctx.ExprValue != nil))
 	return callBoundaryFrame{
 		typer:   ct,
 		ctx:     ctx,
 		site:    site,
-		outcome: ct.productCallOutcomeProjection(site, ctx, opts, nil).outcome(),
+		outcome: outcome,
 	}, true
 }
 
-func (p callBoundaryFrame) inferredReturnValues() []product.AbstractValue {
-	return p.outcome.InferredReturnValues()
-}
-
 func (p callBoundaryFrame) callReturnValues() ([]product.AbstractValue, bool) {
-	summaryReturns := p.inferredReturnValues()
-	return canonicalcall.ReturnValueInput{
+	return p.outcome.ReturnValues(canonicalcall.ReturnValueInput{
 		Call:                 p.site.call,
-		Env:                  p.typer.callInterceptEnv(p.site.exprType),
 		TypePolicyAvailable:  p.typer.d.cfg.Types != nil,
 		PendingInput:         p.ctx.PendingInput,
 		BlockDynamicFallback: p.outcome.HasTargets() && !p.outcome.HasInformativeReturnValues(),
-		SummaryReturnValues: func(call *ast.FuncCallExpr) []product.AbstractValue {
-			return summaryReturns
-		},
-		ExprValue: p.ctx.ExprValue,
-		TypeFallback: func() ([]typ.Type, bool) {
-			return p.site.returnTypes(func(call *ast.FuncCallExpr, exprType func(ast.Expr) typ.Type) []typ.Type {
-				return p.typer.callOutcomeForTypedCall(call, exprType, p.site.references).InferredReturnTypes()
-			})
-		},
-	}.Values()
+		ExprValue:            p.ctx.ExprValue,
+	})
 }
 
 func (p callBoundaryFrame) result(evidence canonicalcall.BoundaryEvidence, effects callboundary.Effects) transfer.ProductCallResult {
@@ -108,13 +96,7 @@ func (p callBoundaryFrame) returnPostconditions() paramevidence.ReturnPostcondit
 	if d == nil || d.activeProgram == nil || p.site.call == nil {
 		return paramevidence.ReturnPostconditionsDomain.Bottom()
 	}
-	if p.outcome.HasTargets() {
-		return p.outcome.Postconditions()
-	}
-	return (canonicalcall.PostconditionProjection{
-		Call:     p.site.call,
-		Resolver: p.typer.callTypeResolver(nil),
-	}).Postconditions()
+	return p.outcome.Postconditions()
 }
 
 func (p callBoundaryFrame) argDemands() ([]callobligation.Obligation, bool) {
@@ -251,12 +233,9 @@ func (p callBoundaryFrame) boundaryEvidenceAndEffects() (canonicalcall.BoundaryE
 
 func (p callBoundaryFrame) boundaryEvidence(cellEffects summary.CellEffectAggregation) canonicalcall.BoundaryEvidence {
 	evidence := p.outcome.BoundaryEvidence(canonicalcall.BoundaryEvidenceInput{
-		Call:                 p.site.call,
-		Resolver:             p.typer.callTypeResolver(p.site.exprType),
-		UseResolvedSignature: p.ctx.ExprValue != nil,
-		CellEffects:          cellEffects,
-		ArgDemands:           p.callArgDemands(),
-		Postconditions:       p.returnPostconditions(),
+		CellEffects:    cellEffects,
+		ArgDemands:     p.callArgDemands(),
+		Postconditions: p.returnPostconditions(),
 		HasNoReturn: func(ref summary.FuncRef) bool {
 			return p.typer.d.activeProgram.facts.HasNoReturn(ref)
 		},

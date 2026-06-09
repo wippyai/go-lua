@@ -19,11 +19,20 @@ import (
 type CallOutcome struct {
 	Projection summary.CallSummaryProjection
 	Selection  TargetSelection
+	fallback   TypeFallbackOutcome
 }
 
 // HasTargets reports whether the outcome has selected concrete callee summaries.
 func (o CallOutcome) HasTargets() bool {
 	return o.Selection.HasTargets()
+}
+
+// WithTypeFallbackOutcome attaches the explicitly computed non-summary outcome.
+// Fallback facts are intentionally restricted to type-contract evidence; summary
+// effects, return refs, static members, and no-return facts remain summary-only.
+func (o CallOutcome) WithTypeFallbackOutcome(fallback TypeFallbackOutcome) CallOutcome {
+	o.fallback = fallback
+	return o
 }
 
 // Targets returns the selected summary targets as a copy.
@@ -54,6 +63,19 @@ func (o CallOutcome) InferredReturnTypes() []typ.Type {
 	return o.Projection.InferredReturnTypes()
 }
 
+// ReturnValues projects the caller-visible product return tuple from the single
+// selected outcome. Summary results remain authoritative, while builtin/type
+// fallback is already materialized in the fallback outcome instead of being
+// recovered through late resolver callbacks.
+func (o CallOutcome) ReturnValues(in ReturnValueInput) ([]product.AbstractValue, bool) {
+	in.SummaryReturnValues = o.InferredReturnValues()
+	in.PrimaryReturnTypes = o.fallback.PrimaryReturnTypes()
+	in.HasPrimaryReturnTypes = len(in.PrimaryReturnTypes) > 0 || o.fallback.hasPrimaryReturnTypes
+	in.FallbackReturnTypes = o.fallback.FallbackReturnTypes()
+	in.HasFallbackReturnTypes = len(in.FallbackReturnTypes) > 0 || o.fallback.hasFallbackReturnTypes
+	return in.Values()
+}
+
 // ReturnRefs projects returned callable identities from selected summaries.
 func (o CallOutcome) ReturnRefs() flow.ReturnRefs {
 	return o.Projection.ReturnRefs()
@@ -67,25 +89,15 @@ func (o CallOutcome) ReturnStaticMembers() []flow.StaticMemberFacts {
 	return o.Projection.ReturnStaticMembers()
 }
 
-// ReturnRelations projects return-slot relations through the canonical fallback
-// policy owned by this package.
-func (o CallOutcome) ReturnRelations(call *ast.FuncCallExpr, resolver TypeResolver, useResolvedSignature bool) flow.ReturnRelations {
+// ReturnRelations projects return-slot relations from the selected outcome.
+func (o CallOutcome) ReturnRelations() flow.ReturnRelations {
 	if len(o.Projection.Targets) > 0 {
 		return o.Projection.ReturnRelations()
 	}
 	if o.Selection.BlocksTypeFallback() {
 		return flow.ReturnRelationsDomain.Top()
 	}
-	if useResolvedSignature && call != nil {
-		sig := resolver.ResolveCallee(call.Func)
-		if rels := flow.ReturnRelationsFromFunctionType(sig); rels.HasProof() {
-			return rels
-		}
-	}
-	if call == nil {
-		return flow.ReturnRelationsFromFunctionType(nil)
-	}
-	return flow.ReturnRelationsFromFunctionType(resolver.ResolveStaticCallee(call.Func))
+	return o.fallback.ReturnRelations()
 }
 
 // CellEffects projects caller-visible capture effects through the canonical
@@ -103,56 +115,34 @@ func (o CallOutcome) ReceiverEffects() flow.ReceiverEffects {
 	return o.Projection.ReceiverEffects()
 }
 
-// BoundaryFacts projects caller-visible parameter/return-relative facts through
-// the canonical summary-first, static-contract-fallback policy.
-func (o CallOutcome) BoundaryFacts(call *ast.FuncCallExpr, resolver TypeResolver, useResolvedSignature bool) flow.BoundaryFacts {
+// BoundaryFacts projects caller-visible parameter/return-relative facts from the
+// selected outcome.
+func (o CallOutcome) BoundaryFacts() flow.BoundaryFacts {
 	if len(o.Projection.Targets) > 0 {
 		return o.Projection.BoundaryFacts()
 	}
 	if o.Selection.BlocksTypeFallback() {
 		return flow.BoundaryFactsDomain.Top()
 	}
-	if useResolvedSignature && call != nil {
-		facts := flow.BoundaryFactsFromFunctionType(resolver.ResolveCallee(call.Func))
-		if facts.HasProof() {
-			return facts
-		}
-	}
-	if call == nil {
-		return flow.BoundaryFactsFromFunctionType(nil)
-	}
-	return flow.BoundaryFactsFromFunctionType(resolver.ResolveStaticCallee(call.Func))
+	return o.fallback.BoundaryFacts()
 }
 
-// Postconditions projects portable normal-return proofs from selected summaries.
+// Postconditions projects portable normal-return proofs from the selected
+// outcome. Summary targets own body-derived postconditions; fallback owns only
+// static signature/imported contract postconditions.
 func (o CallOutcome) Postconditions() paramevidence.ReturnPostconditions {
-	return o.Projection.Postconditions()
+	if o.HasTargets() {
+		return o.Projection.Postconditions()
+	}
+	if o.Selection.BlocksTypeFallback() {
+		return paramevidence.ReturnPostconditionsDomain.Bottom()
+	}
+	return o.fallback.Postconditions()
 }
 
 // NeverReturns reports whether every selected target is proven no-return.
 func (o CallOutcome) NeverReturns(hasNoReturn func(summary.FuncRef) bool) bool {
 	return selectionNeverReturns(o.Selection, hasNoReturn)
-}
-
-// PostconditionProjection resolves portable normal-return postconditions without
-// collapsing imported FunctionRefinement conditions into a local extraction view.
-type PostconditionProjection struct {
-	Call *ast.FuncCallExpr
-
-	SummaryPostconditions func(*ast.FuncCallExpr) (paramevidence.ReturnPostconditions, bool)
-	Resolver              TypeResolver
-}
-
-func (p PostconditionProjection) Postconditions() paramevidence.ReturnPostconditions {
-	if p.Call == nil {
-		return paramevidence.ReturnPostconditionsDomain.Bottom()
-	}
-	if p.SummaryPostconditions != nil {
-		if post, ok := p.SummaryPostconditions(p.Call); ok {
-			return paramevidence.CloneReturnPostconditions(post)
-		}
-	}
-	return paramevidence.ReturnPostconditionsFromFunctionType(p.Resolver.ResolveStaticCallee(p.Call.Func))
 }
 
 // CallbackSpecProjection is the canonical policy for finding a call's callback

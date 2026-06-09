@@ -22,10 +22,8 @@ import (
 func TestCallOutcomeReturnRelationsSummaryBeatsTypeFallback(t *testing.T) {
 	t.Parallel()
 
-	call := &ast.FuncCallExpr{Func: &ast.IdentExpr{Value: "f"}}
 	summaryRel := flow.ReturnRelationsOfErrorReturns([]flow.ReturnCorrelation{{ValueIndex: 0, ErrorIndex: 2}})
 	typeRel := flow.ReturnRelationsOfErrorReturns([]flow.ReturnCorrelation{{ValueIndex: 0, ErrorIndex: 1}})
-	fallbackUsed := false
 
 	got := (CallOutcome{
 		Projection: summary.CallSummaryProjection{
@@ -33,47 +31,29 @@ func TestCallOutcomeReturnRelationsSummaryBeatsTypeFallback(t *testing.T) {
 				{Summary: summary.Summary{Relations: summaryRel}},
 			},
 		},
-	}).ReturnRelations(call, TypeResolver{
-		ExprType: func(ast.Expr) typ.Type {
-			fallbackUsed = true
-			return signatureWithRelation(typeRel)
-		},
-	}, true)
+	}).WithTypeFallbackOutcome(TypeFallbackOutcome{returnRelations: typeRel}).ReturnRelations()
 
 	if !flow.ReturnRelationsDomain.Equal(got, summaryRel) {
 		t.Fatalf("relations = %#v, want summary relation %#v", got.ErrorReturns(), summaryRel.ErrorReturns())
-	}
-	if fallbackUsed {
-		t.Fatal("type fallback ran despite summary relation")
 	}
 }
 
 func TestCallOutcomeReturnRelationsClosureAuthoritativeMissBlocksTypeFallback(t *testing.T) {
 	t.Parallel()
 
-	call := &ast.FuncCallExpr{Func: &ast.IdentExpr{Value: "f"}}
 	typeRel := flow.ReturnRelationsOfErrorReturns([]flow.ReturnCorrelation{{ValueIndex: 0, ErrorIndex: 1}})
 	selection := NewTargetSet(nil, false, nil, true).Select()
-	fallbackUsed := false
 
 	got := (CallOutcome{
 		Selection: selection,
-	}).ReturnRelations(call, TypeResolver{
-		ExprType: func(ast.Expr) typ.Type {
-			fallbackUsed = true
-			return signatureWithRelation(typeRel)
-		},
-	}, true)
+	}).WithTypeFallbackOutcome(TypeFallbackOutcome{returnRelations: typeRel}).ReturnRelations()
 
 	if !flow.ReturnRelationsDomain.Equal(got, flow.ReturnRelationsDomain.Top()) {
 		t.Fatalf("relations = %#v, want Top", got.ErrorReturns())
 	}
-	if fallbackUsed {
-		t.Fatal("type fallback ran despite closure-authoritative miss")
-	}
 }
 
-func TestCallOutcomeReturnRelationsUsesTypeThenStaticFallback(t *testing.T) {
+func TestTypeFallbackOutcomeReturnRelationsUsesTypeThenStaticFallback(t *testing.T) {
 	t.Parallel()
 
 	ident := &ast.IdentExpr{Value: "f"}
@@ -96,37 +76,42 @@ func TestCallOutcomeReturnRelationsUsesTypeThenStaticFallback(t *testing.T) {
 		},
 	}
 
-	got := (CallOutcome{}).ReturnRelations(call, TypeResolver{
-		Bindings: bindings,
-		ExprType: func(ast.Expr) typ.Type {
-			return signatureWithRelation(typeRel)
+	got := NewTypeFallbackOutcome(TypeFallbackInput{
+		Return: ReturnInput{
+			Call:     call,
+			Resolver: TypeResolver{Bindings: bindings, ExprType: func(ast.Expr) typ.Type { return signatureWithRelation(typeRel) }, Static: staticLookup},
 		},
-		Static: staticLookup,
-	}, true)
+		UseResolvedSignature: true,
+	}).ReturnRelations()
 	if !flow.ReturnRelationsDomain.Equal(got, typeRel) {
 		t.Fatalf("relations = %#v, want type fallback %#v", got.ErrorReturns(), typeRel.ErrorReturns())
 	}
 
-	got = (CallOutcome{}).ReturnRelations(call, TypeResolver{
-		Bindings: bindings,
-		ExprType: func(ast.Expr) typ.Type {
-			return typ.Func().Returns(typ.String, typ.Nil).Build()
+	got = NewTypeFallbackOutcome(TypeFallbackInput{
+		Return: ReturnInput{
+			Call:     call,
+			Resolver: TypeResolver{Bindings: bindings, ExprType: func(ast.Expr) typ.Type { return typ.Func().Returns(typ.String, typ.Nil).Build() }, Static: staticLookup},
 		},
-		Static: staticLookup,
-	}, true)
+		UseResolvedSignature: true,
+	}).ReturnRelations()
 	if !flow.ReturnRelationsDomain.Equal(got, staticRel) {
 		t.Fatalf("relations = %#v, want static fallback %#v", got.ErrorReturns(), staticRel.ErrorReturns())
 	}
 
 	resolvedUsed := false
-	got = (CallOutcome{}).ReturnRelations(call, TypeResolver{
-		Bindings: bindings,
-		ExprType: func(ast.Expr) typ.Type {
-			resolvedUsed = true
-			return signatureWithRelation(typeRel)
+	got = NewTypeFallbackOutcome(TypeFallbackInput{
+		Return: ReturnInput{
+			Call: call,
+			Resolver: TypeResolver{
+				Bindings: bindings,
+				ExprType: func(ast.Expr) typ.Type {
+					resolvedUsed = true
+					return signatureWithRelation(typeRel)
+				},
+				Static: staticLookup,
+			},
 		},
-		Static: staticLookup,
-	}, false)
+	}).ReturnRelations()
 	if !flow.ReturnRelationsDomain.Equal(got, staticRel) {
 		t.Fatalf("relations = %#v, want static fallback %#v", got.ErrorReturns(), staticRel.ErrorReturns())
 	}
@@ -135,18 +120,20 @@ func TestCallOutcomeReturnRelationsUsesTypeThenStaticFallback(t *testing.T) {
 	}
 }
 
-func TestCallOutcomeBoundaryFactsUsesLengthTypeFallback(t *testing.T) {
+func TestTypeFallbackOutcomeBoundaryFactsUsesLengthTypeFallback(t *testing.T) {
 	t.Parallel()
 
 	ident := &ast.IdentExpr{Value: "keys"}
 	call := &ast.FuncCallExpr{Func: ident}
 	spec := contract.NewSpec().WithEffects(effect.ReturnLength{ReturnIndex: 0, Length: constraint.ParamLen{Index: 0}})
 
-	got := (CallOutcome{}).BoundaryFacts(call, TypeResolver{
-		ExprType: func(ast.Expr) typ.Type {
-			return typ.Func().Returns(typ.String).Spec(spec).Build()
+	got := NewTypeFallbackOutcome(TypeFallbackInput{
+		Return: ReturnInput{
+			Call:     call,
+			Resolver: TypeResolver{ExprType: func(ast.Expr) typ.Type { return typ.Func().Returns(typ.String).Spec(spec).Build() }},
 		},
-	}, true)
+		UseResolvedSignature: true,
+	}).BoundaryFacts()
 
 	want := flow.BoundaryLengthRelationFact{
 		Target: flow.BoundaryPath{Kind: flow.BoundaryPathReturn, Index: 0},
@@ -230,7 +217,6 @@ func TestCallOutcomeBoundaryEvidenceCarriesSelectedBoundaryAxes(t *testing.T) {
 	t.Parallel()
 
 	ref := summary.FuncRef{GraphID: 42}
-	call := &ast.FuncCallExpr{Func: &ast.IdentExpr{Value: "f"}}
 	returnPath := constraint.NewPlaceholder(0).Field("run")
 	returnRefs := flow.ReturnRefsOfSlots([]flow.ReturnRefSlot{
 		flow.ReturnRefSlotOf(
@@ -263,11 +249,9 @@ func TestCallOutcomeBoundaryEvidenceCarriesSelectedBoundaryAxes(t *testing.T) {
 		},
 		Selection: NewTargetSet([]summary.FuncRef{ref}, true, nil, false).Select(),
 	}).BoundaryEvidence(BoundaryEvidenceInput{
-		Call:                 call,
-		CellEffects:          summary.CellEffectAggregation{},
-		ArgDemands:           demands,
-		Postconditions:       post,
-		UseResolvedSignature: true,
+		CellEffects:    summary.CellEffectAggregation{},
+		ArgDemands:     demands,
+		Postconditions: post,
 		HasNoReturn: func(got summary.FuncRef) bool {
 			return got == ref
 		},
@@ -307,45 +291,26 @@ func TestCallOutcomeBoundaryEvidenceCarriesSelectedBoundaryAxes(t *testing.T) {
 	}
 }
 
-func TestPostconditionProjectionSummaryBeatsImportedSignature(t *testing.T) {
+func TestCallOutcomePostconditionsSummaryBeatsTypeFallback(t *testing.T) {
 	t.Parallel()
 
-	base := &ast.IdentExpr{Value: "svc"}
-	callee := &ast.AttrGetExpr{Object: base, Key: &ast.StringExpr{Value: "run"}}
-	call := &ast.FuncCallExpr{Func: callee}
-	bindings := bind.NewBindingTable()
-	bindings.Bind(base, 99)
-	bindings.SetName(99, "svc")
+	ref := summary.FuncRef{GraphID: 77}
 	summaryPost := paramevidence.ReturnPostconditionsFromParamNarrows([]paramevidence.ParamNarrow{{Param: 0, Check: compilecfg.CheckTruthy, EqParam: -1}})
-	importedUsed := false
+	fallbackPost := paramevidence.ReturnPostconditionsFromParamNarrows([]paramevidence.ParamNarrow{{Param: 1, Check: compilecfg.CheckNotNil, EqParam: -1}})
 
-	got := (PostconditionProjection{
-		Call: call,
-		SummaryPostconditions: func(*ast.FuncCallExpr) (paramevidence.ReturnPostconditions, bool) {
-			return summaryPost, true
+	got := (CallOutcome{
+		Projection: summary.CallSummaryProjection{
+			Targets: []summary.CallSummaryTarget{{Ref: ref, Summary: summary.Summary{Postconditions: summaryPost}}},
 		},
-		Resolver: TypeResolver{
-			Bindings: bindings,
-			Static: StaticTypeLookup{
-				ImportedBase: func(compilecfg.SymbolID) (typ.Type, bool) {
-					importedUsed = true
-					return typ.NewRecord().
-						Field("run", signatureWithParamNarrow(1, compilecfg.CheckNotNil)).
-						Build(), true
-				},
-			},
-		},
-	}).Postconditions()
+		Selection: NewTargetSet([]summary.FuncRef{ref}, true, nil, false).Select(),
+	}).WithTypeFallbackOutcome(TypeFallbackOutcome{postconditions: fallbackPost}).Postconditions()
 
 	if !containsConstraint(got.Condition().MustConstraints(), constraint.Truthy{Path: constraint.ParamPath(0)}) {
 		t.Fatalf("postconditions = %v, want summary truthy proof", got.Condition())
 	}
-	if importedUsed {
-		t.Fatal("imported signature fallback ran despite summary postconditions")
-	}
 }
 
-func TestPostconditionProjectionImportedSignatureFallback(t *testing.T) {
+func TestTypeFallbackOutcomeImportedSignaturePostconditions(t *testing.T) {
 	t.Parallel()
 
 	base := &ast.IdentExpr{Value: "svc"}
@@ -354,21 +319,20 @@ func TestPostconditionProjectionImportedSignatureFallback(t *testing.T) {
 	bindings := bind.NewBindingTable()
 	bindings.Bind(base, 100)
 	bindings.SetName(100, "svc")
-	got := (PostconditionProjection{
-		Call: call,
-		SummaryPostconditions: func(*ast.FuncCallExpr) (paramevidence.ReturnPostconditions, bool) {
-			return paramevidence.ReturnPostconditionsDomain.Bottom(), false
-		},
-		Resolver: TypeResolver{
-			Bindings: bindings,
-			Static: StaticTypeLookup{
-				ImportedBase: func(sym compilecfg.SymbolID) (typ.Type, bool) {
-					if sym != 100 {
-						t.Fatalf("ImportedBase sym = %d, want 100", sym)
-					}
-					return typ.NewRecord().
-						Field("run", signatureWithParamNarrow(1, compilecfg.CheckNotNil)).
-						Build(), true
+	got := NewTypeFallbackOutcome(TypeFallbackInput{
+		Return: ReturnInput{
+			Call: call,
+			Resolver: TypeResolver{
+				Bindings: bindings,
+				Static: StaticTypeLookup{
+					ImportedBase: func(sym compilecfg.SymbolID) (typ.Type, bool) {
+						if sym != 100 {
+							t.Fatalf("ImportedBase sym = %d, want 100", sym)
+						}
+						return typ.NewRecord().
+							Field("run", signatureWithParamNarrow(1, compilecfg.CheckNotNil)).
+							Build(), true
+					},
 				},
 			},
 		},
@@ -379,7 +343,7 @@ func TestPostconditionProjectionImportedSignatureFallback(t *testing.T) {
 	}
 }
 
-func TestPostconditionProjectionPreservesImportedDNF(t *testing.T) {
+func TestTypeFallbackOutcomePreservesImportedDNF(t *testing.T) {
 	t.Parallel()
 
 	call := &ast.FuncCallExpr{Func: &ast.IdentExpr{Value: "check"}}
@@ -387,22 +351,24 @@ func TestPostconditionProjectionPreservesImportedDNF(t *testing.T) {
 	left := constraint.Truthy{Path: constraint.ParamPath(1)}
 	right := constraint.Falsy{Path: constraint.ParamPath(1)}
 
-	got := (PostconditionProjection{
-		Call: call,
-		Resolver: TypeResolver{
-			Static: StaticTypeLookup{
-				GlobalByName: func(name string) (typ.Type, bool) {
-					if name != "check" {
-						return nil, false
-					}
-					return typ.Func().
-						WithRefinement(&constraint.FunctionRefinement{
-							OnReturn: constraint.FromDisjuncts([][]constraint.Constraint{
-								{common, left},
-								{common, right},
-							}),
-						}).
-						Build(), true
+	got := NewTypeFallbackOutcome(TypeFallbackInput{
+		Return: ReturnInput{
+			Call: call,
+			Resolver: TypeResolver{
+				Static: StaticTypeLookup{
+					GlobalByName: func(name string) (typ.Type, bool) {
+						if name != "check" {
+							return nil, false
+						}
+						return typ.Func().
+							WithRefinement(&constraint.FunctionRefinement{
+								OnReturn: constraint.FromDisjuncts([][]constraint.Constraint{
+									{common, left},
+									{common, right},
+								}),
+							}).
+							Build(), true
+					},
 				},
 			},
 		},
@@ -417,7 +383,7 @@ func TestPostconditionProjectionPreservesImportedDNF(t *testing.T) {
 	}
 }
 
-func TestPostconditionProjectionStaticGlobalFieldFallback(t *testing.T) {
+func TestTypeFallbackOutcomeStaticGlobalFieldPostconditions(t *testing.T) {
 	t.Parallel()
 
 	base := &ast.IdentExpr{Value: "assert"}
@@ -427,21 +393,20 @@ func TestPostconditionProjectionStaticGlobalFieldFallback(t *testing.T) {
 	bindings.Bind(base, 101)
 	bindings.SetName(101, "assert")
 
-	got := (PostconditionProjection{
-		Call: call,
-		SummaryPostconditions: func(*ast.FuncCallExpr) (paramevidence.ReturnPostconditions, bool) {
-			return paramevidence.ReturnPostconditionsDomain.Bottom(), false
-		},
-		Resolver: TypeResolver{
-			Bindings: bindings,
-			Static: StaticTypeLookup{
-				GlobalBySymbol: func(sym compilecfg.SymbolID) (typ.Type, bool) {
-					if sym != 101 {
-						t.Fatalf("GlobalBySymbol sym = %d, want 101", sym)
-					}
-					return typ.NewRecord().
-						Field("not_nil", signatureWithParamNarrow(0, compilecfg.CheckNotNil)).
-						Build(), true
+	got := NewTypeFallbackOutcome(TypeFallbackInput{
+		Return: ReturnInput{
+			Call: call,
+			Resolver: TypeResolver{
+				Bindings: bindings,
+				Static: StaticTypeLookup{
+					GlobalBySymbol: func(sym compilecfg.SymbolID) (typ.Type, bool) {
+						if sym != 101 {
+							t.Fatalf("GlobalBySymbol sym = %d, want 101", sym)
+						}
+						return typ.NewRecord().
+							Field("not_nil", signatureWithParamNarrow(0, compilecfg.CheckNotNil)).
+							Build(), true
+					},
 				},
 			},
 		},
@@ -452,7 +417,7 @@ func TestPostconditionProjectionStaticGlobalFieldFallback(t *testing.T) {
 	}
 }
 
-func TestPostconditionProjectionStaticIdentFallback(t *testing.T) {
+func TestTypeFallbackOutcomeStaticIdentPostconditions(t *testing.T) {
 	t.Parallel()
 
 	callee := &ast.IdentExpr{Value: "expect_present"}
@@ -461,19 +426,18 @@ func TestPostconditionProjectionStaticIdentFallback(t *testing.T) {
 	bindings.Bind(callee, 102)
 	bindings.SetName(102, "expect_present")
 
-	got := (PostconditionProjection{
-		Call: call,
-		SummaryPostconditions: func(*ast.FuncCallExpr) (paramevidence.ReturnPostconditions, bool) {
-			return paramevidence.ReturnPostconditionsDomain.Bottom(), false
-		},
-		Resolver: TypeResolver{
-			Bindings: bindings,
-			Static: StaticTypeLookup{
-				FuncBySymbol: func(sym compilecfg.SymbolID) (typ.Type, bool) {
-					if sym != 102 {
-						t.Fatalf("FuncBySymbol sym = %d, want 102", sym)
-					}
-					return signatureWithParamNarrow(0, compilecfg.CheckNotNil), true
+	got := NewTypeFallbackOutcome(TypeFallbackInput{
+		Return: ReturnInput{
+			Call: call,
+			Resolver: TypeResolver{
+				Bindings: bindings,
+				Static: StaticTypeLookup{
+					FuncBySymbol: func(sym compilecfg.SymbolID) (typ.Type, bool) {
+						if sym != 102 {
+							t.Fatalf("FuncBySymbol sym = %d, want 102", sym)
+						}
+						return signatureWithParamNarrow(0, compilecfg.CheckNotNil), true
+					},
 				},
 			},
 		},
@@ -481,6 +445,30 @@ func TestPostconditionProjectionStaticIdentFallback(t *testing.T) {
 
 	if !containsConstraint(got.Condition().MustConstraints(), constraint.NotNil{Path: constraint.ParamPath(0)}) {
 		t.Fatalf("postconditions = %v, want static identifier not-nil proof", got.Condition())
+	}
+}
+
+func TestCallOutcomeTypeFallbackCannotInventSummaryAuthority(t *testing.T) {
+	t.Parallel()
+
+	effectValue := flow.CaptureMustWrite(valuecfg.SymbolID(22), product.FromType(typ.String))
+	fallbackPost := paramevidence.ReturnPostconditionsFromParamNarrows([]paramevidence.ParamNarrow{{Param: 0, Check: compilecfg.CheckTruthy, EqParam: -1}})
+	outcome := CallOutcome{}.WithTypeFallbackOutcome(TypeFallbackOutcome{postconditions: fallbackPost})
+
+	if !flow.CaptureEffectsDomain.Equal(outcome.CellEffects(summary.CellEffectAggregation{DirectEffects: effectValue}), flow.CaptureEffectsDomain.Bottom()) {
+		t.Fatal("type fallback outcome invented summary capture effects")
+	}
+	if outcome.ReturnRefs().Len() != 0 {
+		t.Fatalf("type fallback ReturnRefs len = %d, want 0", outcome.ReturnRefs().Len())
+	}
+	if members := outcome.ReturnStaticMembers(); len(members) != 0 {
+		t.Fatalf("type fallback ReturnStaticMembers = %#v, want none", members)
+	}
+	if outcome.NeverReturns(func(summary.FuncRef) bool { return true }) {
+		t.Fatal("type fallback outcome invented no-return proof")
+	}
+	if !outcome.Postconditions().HasConstraints() {
+		t.Fatal("type fallback should still expose imported/static postconditions")
 	}
 }
 

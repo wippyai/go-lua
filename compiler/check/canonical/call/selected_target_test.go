@@ -69,7 +69,7 @@ func TestTargetSelectionFallbackClassification(t *testing.T) {
 		targets                TargetSet
 		hasTargets             bool
 		hasClosureTargets      bool
-		blocksTypeFallback     bool
+		blocksFallback         bool
 		allowsCallbackFallback bool
 	}{
 		{
@@ -77,7 +77,7 @@ func TestTargetSelectionFallbackClassification(t *testing.T) {
 			targets:                NewTargetSet(direct, true, []flow.ClosureRef{closure}, true),
 			hasTargets:             true,
 			hasClosureTargets:      true,
-			blocksTypeFallback:     false,
+			blocksFallback:         false,
 			allowsCallbackFallback: false,
 		},
 		{
@@ -85,7 +85,7 @@ func TestTargetSelectionFallbackClassification(t *testing.T) {
 			targets:                NewTargetSet(direct, true, nil, true),
 			hasTargets:             true,
 			hasClosureTargets:      false,
-			blocksTypeFallback:     false,
+			blocksFallback:         false,
 			allowsCallbackFallback: true,
 		},
 		{
@@ -93,7 +93,7 @@ func TestTargetSelectionFallbackClassification(t *testing.T) {
 			targets:                NewTargetSet(nil, false, nil, true),
 			hasTargets:             false,
 			hasClosureTargets:      false,
-			blocksTypeFallback:     true,
+			blocksFallback:         true,
 			allowsCallbackFallback: false,
 		},
 		{
@@ -101,7 +101,7 @@ func TestTargetSelectionFallbackClassification(t *testing.T) {
 			targets:                NewTargetSet(direct, true, nil, false),
 			hasTargets:             true,
 			hasClosureTargets:      false,
-			blocksTypeFallback:     false,
+			blocksFallback:         false,
 			allowsCallbackFallback: true,
 		},
 		{
@@ -109,7 +109,7 @@ func TestTargetSelectionFallbackClassification(t *testing.T) {
 			targets:                NewTargetSet(nil, false, nil, false),
 			hasTargets:             false,
 			hasClosureTargets:      false,
-			blocksTypeFallback:     false,
+			blocksFallback:         false,
 			allowsCallbackFallback: true,
 		},
 	}
@@ -125,8 +125,8 @@ func TestTargetSelectionFallbackClassification(t *testing.T) {
 			if got := selection.HasClosureTargets(); got != tc.hasClosureTargets {
 				t.Fatalf("HasClosureTargets = %v, want %v", got, tc.hasClosureTargets)
 			}
-			if got := selection.BlocksTypeFallback(); got != tc.blocksTypeFallback {
-				t.Fatalf("BlocksTypeFallback = %v, want %v", got, tc.blocksTypeFallback)
+			if got := selection.BlocksTypeFallback(); got != tc.blocksFallback {
+				t.Fatalf("BlocksTypeFallback = %v, want %v", got, tc.blocksFallback)
 			}
 			if got := selection.AllowsCallbackFallback(); got != tc.allowsCallbackFallback {
 				t.Fatalf("AllowsCallbackFallback = %v, want %v", got, tc.allowsCallbackFallback)

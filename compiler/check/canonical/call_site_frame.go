@@ -129,6 +129,13 @@ func (f callSiteFrame) returnTypes(summaryReturns func(*ast.FuncCallExpr, func(a
 	return f.returnInput(summaryReturns).Types()
 }
 
+func (f callSiteFrame) typeFallbackOutcome(useResolvedSignature bool) canonicalcall.TypeFallbackOutcome {
+	return canonicalcall.NewTypeFallbackOutcome(canonicalcall.TypeFallbackInput{
+		Return:               f.returnInput(nil),
+		UseResolvedSignature: useResolvedSignature,
+	})
+}
+
 func (f callSiteFrame) refinedArgTypes() []typ.Type {
 	if f.call == nil || len(f.call.Args) == 0 {
 		return f.argTypes

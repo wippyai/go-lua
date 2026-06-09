@@ -7,12 +7,14 @@ import (
 	canonicalsummary "github.com/wippyai/go-lua/compiler/check/canonical/summary"
 	"github.com/wippyai/go-lua/compiler/check/domain/callobligation"
 	"github.com/wippyai/go-lua/compiler/check/domain/callreturn"
+	"github.com/wippyai/go-lua/compiler/check/domain/paramevidence"
 	"github.com/wippyai/go-lua/compiler/check/scope"
 	"github.com/wippyai/go-lua/compiler/check/synth/intercept"
 	"github.com/wippyai/go-lua/compiler/check/synth/ops"
 	"github.com/wippyai/go-lua/compiler/check/synth/transform"
 	"github.com/wippyai/go-lua/types/db"
 	"github.com/wippyai/go-lua/types/domain/value/product"
+	"github.com/wippyai/go-lua/types/flow"
 	"github.com/wippyai/go-lua/types/io"
 	"github.com/wippyai/go-lua/types/kind"
 	"github.com/wippyai/go-lua/types/query/core"
@@ -58,17 +60,98 @@ type ReturnInput struct {
 // supplies summary/product sources; this package owns their canonical precedence.
 type ReturnValueInput struct {
 	Call                *ast.FuncCallExpr
-	Env                 InterceptEnv
 	TypePolicyAvailable bool
 	PendingInput        bool
 	// BlockDynamicFallback is set when the caller has selected a concrete local
 	// target but its summary is not yet informative. That target selection is an
 	// authoritative fixed-point dependency, so a gradual dynamic return must not
 	// seed the recursive SCC with any/top while the real summary is still growing.
-	BlockDynamicFallback bool
-	SummaryReturnValues  func(call *ast.FuncCallExpr) []product.AbstractValue
-	ExprValue            func(ast.Expr) (product.AbstractValue, bool)
-	TypeFallback         func() ([]typ.Type, bool)
+	BlockDynamicFallback   bool
+	SummaryReturnValues    []product.AbstractValue
+	ExprValue              func(ast.Expr) (product.AbstractValue, bool)
+	PrimaryReturnTypes     []typ.Type
+	HasPrimaryReturnTypes  bool
+	FallbackReturnTypes    []typ.Type
+	HasFallbackReturnTypes bool
+}
+
+// TypeFallbackInput is the normalized type-only call outcome source. It is
+// computed before call-boundary projection so declared/imported/builtin calls do
+// not act as hidden late result engines.
+type TypeFallbackInput struct {
+	Return               ReturnInput
+	UseResolvedSignature bool
+}
+
+// TypeFallbackOutcome is the restricted non-summary call outcome. It may prove
+// type-contract returns, return relations, boundary facts, and imported
+// postconditions; it never carries summary effects, return refs, static members,
+// or no-return facts.
+type TypeFallbackOutcome struct {
+	primaryReturnTypes     []typ.Type
+	hasPrimaryReturnTypes  bool
+	fallbackReturnTypes    []typ.Type
+	hasFallbackReturnTypes bool
+	returnRelations        flow.ReturnRelations
+	boundaryFacts          flow.BoundaryFacts
+	postconditions         paramevidence.ReturnPostconditions
+}
+
+// NewTypeFallbackOutcome materializes all type-only fallback facts once.
+func NewTypeFallbackOutcome(in TypeFallbackInput) TypeFallbackOutcome {
+	out := TypeFallbackOutcome{
+		returnRelations: flow.ReturnRelationsFromFunctionType(nil),
+		boundaryFacts:   flow.BoundaryFactsFromFunctionType(nil),
+		postconditions:  paramevidence.ReturnPostconditionsDomain.Bottom(),
+	}
+	if in.Return.Call == nil {
+		return out
+	}
+	if types, ok := interceptReturnTypes(in.Return.Call, in.Return.Env); ok {
+		out.primaryReturnTypes = cloneTypes(types)
+		out.hasPrimaryReturnTypes = true
+	}
+	pipeline := in.Return
+	pipeline.SummaryReturns = nil
+	if types, ok := pipeline.typesAfterIntercept(); ok {
+		out.fallbackReturnTypes = cloneTypes(types)
+		out.hasFallbackReturnTypes = true
+	}
+	resolved := typ.Type(nil)
+	if in.UseResolvedSignature {
+		resolved = in.Return.Resolver.ResolveCallee(in.Return.Call.Func)
+	}
+	static := in.Return.Resolver.ResolveStaticCallee(in.Return.Call.Func)
+	out.returnRelations = fallbackReturnRelations(resolved, static)
+	out.boundaryFacts = fallbackBoundaryFacts(resolved, static)
+	out.postconditions = paramevidence.ReturnPostconditionsFromFunctionType(static)
+	return out
+}
+
+func (o TypeFallbackOutcome) PrimaryReturnTypes() []typ.Type {
+	return cloneTypes(o.primaryReturnTypes)
+}
+
+func (o TypeFallbackOutcome) FallbackReturnTypes() []typ.Type {
+	return cloneTypes(o.fallbackReturnTypes)
+}
+
+func (o TypeFallbackOutcome) ReturnRelations() flow.ReturnRelations {
+	if o.returnRelations.HasProof() {
+		return o.returnRelations
+	}
+	return flow.ReturnRelationsFromFunctionType(nil)
+}
+
+func (o TypeFallbackOutcome) BoundaryFacts() flow.BoundaryFacts {
+	if o.boundaryFacts.HasProof() {
+		return o.boundaryFacts
+	}
+	return flow.BoundaryFactsFromFunctionType(nil)
+}
+
+func (o TypeFallbackOutcome) Postconditions() paramevidence.ReturnPostconditions {
+	return paramevidence.CloneReturnPostconditions(o.postconditions)
 }
 
 // Types applies the canonical type-level call-return policy.
@@ -76,11 +159,18 @@ func (in ReturnInput) Types() ([]typ.Type, bool) {
 	if in.Call == nil || in.Query == nil {
 		return nil, false
 	}
-	args := normalizedArgTypes(in.ArgTypes)
 
 	if types, ok := interceptReturnTypes(in.Call, in.Env); ok {
 		return types, true
 	}
+	return in.typesAfterIntercept()
+}
+
+func (in ReturnInput) typesAfterIntercept() ([]typ.Type, bool) {
+	if in.Call == nil || in.Query == nil {
+		return nil, false
+	}
+	args := normalizedArgTypes(in.ArgTypes)
 	if in.SummaryReturns != nil {
 		if returns := in.SummaryReturns(in.Call, in.Env.ExprType); len(returns) > 0 {
 			if informativeReturnTypes(returns) {
@@ -148,23 +238,20 @@ func (in ReturnValueInput) Values() ([]product.AbstractValue, bool) {
 		return nil, false
 	}
 	deferredArity := 0
-	if in.TypePolicyAvailable {
-		if types, ok := interceptReturnTypes(in.Call, in.Env); ok {
-			// Product call returns are consumed by transfer storage. Preserve zero
-			// slots for nil/unknown type-only intercepts so unresolved evidence can
-			// still be refined by the same canonical fixed point.
-			return product.FromTypes(types), true
-		}
+	if in.TypePolicyAvailable && in.HasPrimaryReturnTypes {
+		// Product call returns are consumed by transfer storage. Preserve zero
+		// slots for nil/unknown type-only intercepts so unresolved evidence can
+		// still be refined by the same canonical fixed point.
+		return product.FromTypes(in.PrimaryReturnTypes), true
 	}
-	if in.SummaryReturnValues != nil {
-		if returns := in.SummaryReturnValues(in.Call); len(returns) > 0 {
-			deferredArity = len(returns)
-			if refined, ok := refineSummaryReturnValuesWithTypeFallback(in, returns); ok && informativeReturnValues(refined) {
-				return refined, true
-			}
-			if informativeReturnValues(returns) {
-				return returns, true
-			}
+	if len(in.SummaryReturnValues) > 0 {
+		returns := in.SummaryReturnValues
+		deferredArity = len(returns)
+		if refined, ok := refineSummaryReturnValuesWithTypeFallback(in, returns); ok && informativeReturnValues(refined) {
+			return refined, true
+		}
+		if informativeReturnValues(returns) {
+			return returns, true
 		}
 	}
 	requireInformativeFallback := in.PendingInput || in.BlockDynamicFallback
@@ -194,14 +281,14 @@ func bottomReturnValues(arity int) []product.AbstractValue {
 }
 
 func refineSummaryReturnValuesWithTypeFallback(in ReturnValueInput, summary []product.AbstractValue) ([]product.AbstractValue, bool) {
-	if !in.TypePolicyAvailable || in.TypeFallback == nil {
+	if !in.TypePolicyAvailable || !in.HasFallbackReturnTypes {
 		return nil, false
 	}
 	if !summaryReturnValuesNeedTypeFallback(summary) {
 		return nil, false
 	}
-	types, ok := in.TypeFallback()
-	if !ok || len(types) != len(summary) {
+	types := in.FallbackReturnTypes
+	if len(types) != len(summary) {
 		return nil, false
 	}
 	return canonicalsummary.RefineReturnValuesWithTypes(summary, types)
@@ -245,11 +332,11 @@ func summaryReturnValueNeedsTypeFallback(t typ.Type) bool {
 }
 
 func typeFallbackReturnValues(in ReturnValueInput, requireInformative bool) ([]product.AbstractValue, bool) {
-	if !in.TypePolicyAvailable || in.TypeFallback == nil {
+	if !in.TypePolicyAvailable || !in.HasFallbackReturnTypes {
 		return nil, false
 	}
-	types, ok := in.TypeFallback()
-	if !ok || len(types) == 0 {
+	types := in.FallbackReturnTypes
+	if len(types) == 0 {
 		return nil, false
 	}
 	if requireInformative && !informativeReturnTypes(types) {
@@ -259,6 +346,29 @@ func typeFallbackReturnValues(in ReturnValueInput, requireInformative bool) ([]p
 	// stay zero here; summary projection totalizes only when it crosses into tuple
 	// lattice algebra.
 	return product.FromTypes(types), true
+}
+
+func fallbackReturnRelations(resolved, static typ.Type) flow.ReturnRelations {
+	if rels := flow.ReturnRelationsFromFunctionType(resolved); rels.HasProof() {
+		return rels
+	}
+	return flow.ReturnRelationsFromFunctionType(static)
+}
+
+func fallbackBoundaryFacts(resolved, static typ.Type) flow.BoundaryFacts {
+	if facts := flow.BoundaryFactsFromFunctionType(resolved); facts.HasProof() {
+		return facts
+	}
+	return flow.BoundaryFactsFromFunctionType(static)
+}
+
+func cloneTypes(in []typ.Type) []typ.Type {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make([]typ.Type, len(in))
+	copy(out, in)
+	return out
 }
 
 func informativeReturnValues(values []product.AbstractValue) bool {
