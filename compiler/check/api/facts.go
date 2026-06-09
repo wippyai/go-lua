@@ -1,9 +1,7 @@
-// Postflow projection lane and final projection types.
+// Final projection types.
 //
 // Canonical checking uses Summary as its interprocedural authority. These types
-// remain as typed lanes for noncanonical compatibility paths and final/public
-// projection. The convergence product that combines these lanes is owned by
-// compiler/check/domain/interproc.
+// are final/public projection shapes, not canonical input.
 package api
 
 import (
@@ -124,30 +122,3 @@ func (m LiteralSigsLookup) Lookup(fn *ast.FunctionExpr) *typ.Function {
 	}
 	return m[fn]
 }
-
-// CapturedTypes maps captured symbols to their flow-derived types for a graph.
-// These are computed from the parent function's flow facts at the definition
-// point of the nested function and used as type hints for captured variables.
-// The carrier holds interned product.AbstractValue lifted at admission and
-// projected at egress.
-type CapturedTypes = map[cfg.SymbolID]product.AbstractValue
-
-// FieldValues maps a typed field/path segment to its product-domain value.
-// Boundary collection/projection APIs may still speak in source field names;
-// postflow projection lanes store typed keys so field identity has one language.
-type FieldValues = map[constraint.Segment]product.AbstractValue
-
-// CapturedFieldAssigns maps nested function symbols to field assignments
-// they make to captured variables from parent scopes.
-//
-// Structure: nestedFuncSymbol -> capturedVarSymbol -> fieldKey -> fieldType
-//
-// This enables the parent scope to see which fields a nested function assigns
-// to its captured variables, supporting constructor inference patterns. The
-// field type carrier holds interned product.AbstractValue.
-type CapturedFieldAssigns = map[cfg.SymbolID]map[cfg.SymbolID]FieldValues
-
-// ConstructorFields maps class symbols to field assignments captured in constructors.
-// Structure: classSymbol -> fieldKey -> fieldType. The field type carrier holds
-// interned product.AbstractValue.
-type ConstructorFields = map[cfg.SymbolID]FieldValues

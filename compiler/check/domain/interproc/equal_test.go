@@ -5,6 +5,7 @@ import (
 
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/api"
+	"github.com/wippyai/go-lua/compiler/check/domain/postflow"
 	"github.com/wippyai/go-lua/types/contract"
 	"github.com/wippyai/go-lua/types/domain/value/product"
 	"github.com/wippyai/go-lua/types/typ"
@@ -188,8 +189,8 @@ func TestCapturedTypesEqual_Empty(t *testing.T) {
 }
 
 func TestCapturedTypesEqual_Same(t *testing.T) {
-	a := api.CapturedTypes{cfg.SymbolID(1): product.FromType(typ.String)}
-	b := api.CapturedTypes{cfg.SymbolID(1): product.FromType(typ.String)}
+	a := postflow.CapturedTypes{cfg.SymbolID(1): product.FromType(typ.String)}
+	b := postflow.CapturedTypes{cfg.SymbolID(1): product.FromType(typ.String)}
 	if !symbolTypeMapEqual(a, b) {
 		t.Error("same captured types should be equal")
 	}
@@ -202,10 +203,10 @@ func TestCapturedFieldAssignsEqual_Empty(t *testing.T) {
 }
 
 func TestCapturedFieldAssignsEqual_DifferentCallee(t *testing.T) {
-	a := api.CapturedFieldAssigns{
+	a := postflow.CapturedFieldAssigns{
 		cfg.SymbolID(1): {cfg.SymbolID(2): {fieldKey("foo"): product.FromType(typ.String)}},
 	}
-	b := api.CapturedFieldAssigns{
+	b := postflow.CapturedFieldAssigns{
 		cfg.SymbolID(3): {cfg.SymbolID(2): {fieldKey("foo"): product.FromType(typ.String)}},
 	}
 	if CapturedFieldAssignsEqual(a, b) {
@@ -215,8 +216,8 @@ func TestCapturedFieldAssignsEqual_DifferentCallee(t *testing.T) {
 
 func TestCapturedFieldAssignsEqual_DoesNotRepairOptionalFunctionValues(t *testing.T) {
 	fn := typ.Func().Param("fn", typ.Unknown).Build()
-	left := api.CapturedFieldAssigns{1: {2: {fieldKey("after_all"): product.FromType(typ.NewOptional(fn))}}}
-	right := api.CapturedFieldAssigns{1: {2: {fieldKey("after_all"): product.FromType(fn)}}}
+	left := postflow.CapturedFieldAssigns{1: {2: {fieldKey("after_all"): product.FromType(typ.NewOptional(fn))}}}
+	right := postflow.CapturedFieldAssigns{1: {2: {fieldKey("after_all"): product.FromType(fn)}}}
 	if CapturedFieldAssignsEqual(left, right) {
 		t.Fatal("equality must compare stored canonical products, not repair non-canonical optional function values")
 	}

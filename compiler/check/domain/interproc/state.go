@@ -3,6 +3,7 @@ package interproc
 import (
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/api"
+	"github.com/wippyai/go-lua/compiler/check/domain/postflow"
 	"github.com/wippyai/go-lua/types/constraint"
 )
 
@@ -54,7 +55,7 @@ func OverlayFunctionFacts(prev, next api.FunctionFacts) api.FunctionFacts {
 }
 
 // CapturedTypeMapsEqual compares graph-keyed captured-type projection lanes.
-func CapturedTypeMapsEqual(a, b map[api.GraphKey]api.CapturedTypes) bool {
+func CapturedTypeMapsEqual(a, b map[api.GraphKey]postflow.CapturedTypes) bool {
 	if len(a) != len(b) {
 		return false
 	}
@@ -68,11 +69,11 @@ func CapturedTypeMapsEqual(a, b map[api.GraphKey]api.CapturedTypes) bool {
 
 // WidenCapturedTypeMaps merges next-iteration captured-type projections into
 // the stable lane.
-func WidenCapturedTypeMaps(prev, next map[api.GraphKey]api.CapturedTypes) map[api.GraphKey]api.CapturedTypes {
+func WidenCapturedTypeMaps(prev, next map[api.GraphKey]postflow.CapturedTypes) map[api.GraphKey]postflow.CapturedTypes {
 	if len(prev) == 0 && len(next) == 0 {
-		return make(map[api.GraphKey]api.CapturedTypes)
+		return make(map[api.GraphKey]postflow.CapturedTypes)
 	}
-	out := make(map[api.GraphKey]api.CapturedTypes, len(prev)+len(next))
+	out := make(map[api.GraphKey]postflow.CapturedTypes, len(prev)+len(next))
 	for _, key := range api.SortedGraphKeys(prev) {
 		out[key] = prev[key]
 	}
@@ -87,7 +88,7 @@ func WidenCapturedTypeMaps(prev, next map[api.GraphKey]api.CapturedTypes) map[ap
 }
 
 // CapturedFieldAssignMapsEqual compares graph-keyed captured-field projection lanes.
-func CapturedFieldAssignMapsEqual(a, b map[api.GraphKey]api.CapturedFieldAssigns) bool {
+func CapturedFieldAssignMapsEqual(a, b map[api.GraphKey]postflow.CapturedFieldAssigns) bool {
 	if len(a) != len(b) {
 		return false
 	}
@@ -101,11 +102,11 @@ func CapturedFieldAssignMapsEqual(a, b map[api.GraphKey]api.CapturedFieldAssigns
 
 // WidenCapturedFieldAssignMaps merges next-iteration captured-field projections
 // into the stable lane.
-func WidenCapturedFieldAssignMaps(prev, next map[api.GraphKey]api.CapturedFieldAssigns) map[api.GraphKey]api.CapturedFieldAssigns {
+func WidenCapturedFieldAssignMaps(prev, next map[api.GraphKey]postflow.CapturedFieldAssigns) map[api.GraphKey]postflow.CapturedFieldAssigns {
 	if len(prev) == 0 && len(next) == 0 {
-		return make(map[api.GraphKey]api.CapturedFieldAssigns)
+		return make(map[api.GraphKey]postflow.CapturedFieldAssigns)
 	}
-	out := make(map[api.GraphKey]api.CapturedFieldAssigns, len(prev)+len(next))
+	out := make(map[api.GraphKey]postflow.CapturedFieldAssigns, len(prev)+len(next))
 	for _, key := range api.SortedGraphKeys(prev) {
 		out[key] = prev[key]
 	}
@@ -120,7 +121,7 @@ func WidenCapturedFieldAssignMaps(prev, next map[api.GraphKey]api.CapturedFieldA
 }
 
 // ConstructorFieldMapsEqual compares graph-keyed constructor-field projection lanes.
-func ConstructorFieldMapsEqual(a, b map[api.GraphKey]api.ConstructorFields) bool {
+func ConstructorFieldMapsEqual(a, b map[api.GraphKey]postflow.ConstructorFields) bool {
 	if len(a) != len(b) {
 		return false
 	}
@@ -134,11 +135,11 @@ func ConstructorFieldMapsEqual(a, b map[api.GraphKey]api.ConstructorFields) bool
 
 // WidenConstructorFieldMaps merges next-iteration constructor-field projections
 // into the stable lane.
-func WidenConstructorFieldMaps(prev, next map[api.GraphKey]api.ConstructorFields) map[api.GraphKey]api.ConstructorFields {
+func WidenConstructorFieldMaps(prev, next map[api.GraphKey]postflow.ConstructorFields) map[api.GraphKey]postflow.ConstructorFields {
 	if len(prev) == 0 && len(next) == 0 {
-		return make(map[api.GraphKey]api.ConstructorFields)
+		return make(map[api.GraphKey]postflow.ConstructorFields)
 	}
-	out := make(map[api.GraphKey]api.ConstructorFields, len(prev)+len(next))
+	out := make(map[api.GraphKey]postflow.ConstructorFields, len(prev)+len(next))
 	for _, key := range api.SortedGraphKeys(prev) {
 		out[key] = prev[key]
 	}
@@ -169,7 +170,7 @@ func ConstructorFieldMapEqual(sym cfg.SymbolID, a, b FieldValues) bool {
 		return true
 	}
 	return ConstructorFieldsEqual(
-		api.ConstructorFields{sym: a},
-		api.ConstructorFields{sym: b},
+		postflow.ConstructorFields{sym: a},
+		postflow.ConstructorFields{sym: b},
 	)
 }

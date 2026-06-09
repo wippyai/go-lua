@@ -5,6 +5,7 @@ import (
 
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/api"
+	"github.com/wippyai/go-lua/compiler/check/domain/postflow"
 	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/domain/value/product"
 	"github.com/wippyai/go-lua/types/typ"
@@ -74,7 +75,7 @@ func TestWidenFunctionFactMaps_OnlyNext(t *testing.T) {
 func TestWidenCapturedFieldAssignMaps_NormalizesNewFacts(t *testing.T) {
 	fn := typ.Func().Param("value", typ.Unknown).Build()
 	key := api.GraphKey{GraphID: 1, ParentHash: 2}
-	next := map[api.GraphKey]api.CapturedFieldAssigns{
+	next := map[api.GraphKey]postflow.CapturedFieldAssigns{
 		key: {
 			cfg.SymbolID(10): {
 				cfg.SymbolID(20): {

@@ -4,6 +4,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/api"
 	"github.com/wippyai/go-lua/compiler/check/domain/functionfact"
+	"github.com/wippyai/go-lua/compiler/check/domain/postflow"
 	"github.com/wippyai/go-lua/types/domain/value"
 	"github.com/wippyai/go-lua/types/domain/value/product"
 )
@@ -73,12 +74,12 @@ func symbolTypeMapEqual(a map[cfg.SymbolID]product.AbstractValue, b map[cfg.Symb
 }
 
 // CapturedTypesEqual checks whether two captured-type lane maps are equal.
-func CapturedTypesEqual(a, b api.CapturedTypes) bool {
+func CapturedTypesEqual(a, b postflow.CapturedTypes) bool {
 	return symbolTypeMapEqual(a, b)
 }
 
 // CapturedFieldAssignsEqual checks if two captured field assignment maps are equal.
-func CapturedFieldAssignsEqual(a, b api.CapturedFieldAssigns) bool {
+func CapturedFieldAssignsEqual(a, b postflow.CapturedFieldAssigns) bool {
 	if len(a) != len(b) {
 		return false
 	}
@@ -107,7 +108,7 @@ func CapturedFieldAssignsEqual(a, b api.CapturedFieldAssigns) bool {
 }
 
 // ConstructorFieldsEqual checks if two constructor field maps are equal.
-func ConstructorFieldsEqual(a, b api.ConstructorFields) bool {
+func ConstructorFieldsEqual(a, b postflow.ConstructorFields) bool {
 	if len(a) != len(b) {
 		return false
 	}

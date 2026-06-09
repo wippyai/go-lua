@@ -21,6 +21,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/bind"
 	"github.com/wippyai/go-lua/compiler/cfg"
+	"github.com/wippyai/go-lua/compiler/check/domain/postflow"
 	"github.com/wippyai/go-lua/compiler/check/scope"
 	"github.com/wippyai/go-lua/types/domain/value/product"
 	"github.com/wippyai/go-lua/types/typ"
@@ -111,12 +112,12 @@ type PostflowCapturedTypeProjectionWriter interface {
 // PostflowCapturedFieldProjectionReader exposes captured-field assignment projections
 // from the noncanonical postflow product.
 type PostflowCapturedFieldProjectionReader interface {
-	CapturedFieldAssignsProjection(graph *cfg.Graph, parent *scope.State) CapturedFieldAssigns
+	CapturedFieldAssignsProjection(graph *cfg.Graph, parent *scope.State) postflow.CapturedFieldAssigns
 }
 
 // PostflowCapturedFieldProjectionWriter records captured-field assignment projections.
 type PostflowCapturedFieldProjectionWriter interface {
-	MergeCapturedFieldProjection(key GraphKey, nestedSym cfg.SymbolID, capturedSym cfg.SymbolID, fields FieldValues)
+	MergeCapturedFieldProjection(key GraphKey, nestedSym cfg.SymbolID, capturedSym cfg.SymbolID, fields postflow.FieldValues)
 }
 
 // PostflowCapturedProjectionStore owns the captured-symbol and captured-field
@@ -132,12 +133,12 @@ type PostflowCapturedProjectionStore interface {
 // PostflowConstructorProjectionReader exposes constructor field projections from
 // the noncanonical postflow product.
 type PostflowConstructorProjectionReader interface {
-	ConstructorFieldsProjection(classSym cfg.SymbolID) (FieldValues, bool)
+	ConstructorFieldsProjection(classSym cfg.SymbolID) (postflow.FieldValues, bool)
 }
 
 // PostflowConstructorProjectionWriter records constructor field projections.
 type PostflowConstructorProjectionWriter interface {
-	MergeConstructorFieldProjection(classSym cfg.SymbolID, fields FieldValues)
+	MergeConstructorFieldProjection(classSym cfg.SymbolID, fields postflow.FieldValues)
 }
 
 // PostflowConstructorProjectionStore owns the constructor-field postflow lane.

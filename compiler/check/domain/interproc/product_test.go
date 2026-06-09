@@ -5,6 +5,7 @@ import (
 
 	"github.com/wippyai/go-lua/compiler/check/api"
 	"github.com/wippyai/go-lua/compiler/check/domain/functionfact"
+	"github.com/wippyai/go-lua/compiler/check/domain/postflow"
 	"github.com/wippyai/go-lua/compiler/check/domain/returnsummary"
 	"github.com/wippyai/go-lua/types/domain/value/product"
 	querycore "github.com/wippyai/go-lua/types/query/core"
@@ -205,7 +206,7 @@ func TestReturnSummaryMerge_KeepsNonRecursiveContainerRefinement(t *testing.T) {
 
 func TestWidenCapturedFieldAssigns_NormalizesOptionalFunctionValues(t *testing.T) {
 	fn := typ.Func().Param("fn", typ.Unknown).Build()
-	merged := WidenCapturedFieldAssigns(nil, api.CapturedFieldAssigns{
+	merged := WidenCapturedFieldAssigns(nil, postflow.CapturedFieldAssigns{
 		1: {2: {fieldKey("after_all"): product.FromType(typ.NewOptional(fn))}},
 	})
 
@@ -219,8 +220,8 @@ func TestWidenCapturedFieldAssigns_ReplacesUnsolvedFunctionSeed(t *testing.T) {
 	seed := typ.Func().Build()
 	solved := typ.Func().Param("self", typ.Unknown).Returns(typ.Number).Build()
 	merged := WidenCapturedFieldAssigns(
-		api.CapturedFieldAssigns{1: {2: {fieldKey("get_x"): product.FromType(seed)}}},
-		api.CapturedFieldAssigns{1: {2: {fieldKey("get_x"): product.FromType(solved)}}},
+		postflow.CapturedFieldAssigns{1: {2: {fieldKey("get_x"): product.FromType(seed)}}},
+		postflow.CapturedFieldAssigns{1: {2: {fieldKey("get_x"): product.FromType(solved)}}},
 	)
 
 	got := merged[1][2][fieldKey("get_x")].ProjectValue()
@@ -232,14 +233,14 @@ func TestWidenCapturedFieldAssigns_ReplacesUnsolvedFunctionSeed(t *testing.T) {
 func TestWidenCapturedTypes_ReplacesTopSeedWithPreciseSnapshot(t *testing.T) {
 	entry := typ.NewRecord().Field("id", typ.String).Build()
 	merged := WidenCapturedTypes(
-		api.CapturedTypes{1: product.FromType(typ.Any)},
-		api.CapturedTypes{1: product.FromType(entry)},
+		postflow.CapturedTypes{1: product.FromType(typ.Any)},
+		postflow.CapturedTypes{1: product.FromType(entry)},
 	)
 
 	if got := merged[1].ProjectValue(); !typ.TypeEquals(got, entry) {
 		t.Fatalf("captured top seed should not poison later precise snapshot: got %v, want %v", got, entry)
 	}
-	again := WidenCapturedTypes(merged, api.CapturedTypes{1: product.FromType(entry)})
+	again := WidenCapturedTypes(merged, postflow.CapturedTypes{1: product.FromType(entry)})
 	if got := again[1].ProjectValue(); !typ.TypeEquals(got, entry) {
 		t.Fatalf("captured precision replacement must be idempotent: got %v, want %v", got, entry)
 	}
@@ -248,8 +249,8 @@ func TestWidenCapturedTypes_ReplacesTopSeedWithPreciseSnapshot(t *testing.T) {
 func TestJoinCapturedTypes_ReplacesTopSeedWithPreciseSnapshot(t *testing.T) {
 	entry := typ.NewRecord().Field("id", typ.String).Build()
 	merged := JoinCapturedTypes(
-		api.CapturedTypes{1: product.FromType(typ.NewOptional(typ.Any))},
-		api.CapturedTypes{1: product.FromType(typ.NewOptional(entry))},
+		postflow.CapturedTypes{1: product.FromType(typ.NewOptional(typ.Any))},
+		postflow.CapturedTypes{1: product.FromType(typ.NewOptional(entry))},
 	)
 	want := typ.NewOptional(entry)
 	if got := merged[1].ProjectValue(); !typ.TypeEquals(got, want) {
@@ -275,8 +276,8 @@ func TestWidenCapturedFieldAssigns_MergesSameShapeFunctionValues(t *testing.T) {
 		Build()
 
 	merged := WidenCapturedFieldAssigns(
-		api.CapturedFieldAssigns{1: {2: {fieldKey("describe"): product.FromType(prevFn)}}},
-		api.CapturedFieldAssigns{1: {2: {fieldKey("describe"): product.FromType(nextFn)}}},
+		postflow.CapturedFieldAssigns{1: {2: {fieldKey("describe"): product.FromType(prevFn)}}},
+		postflow.CapturedFieldAssigns{1: {2: {fieldKey("describe"): product.FromType(nextFn)}}},
 	)
 
 	got := merged[1][2][fieldKey("describe")].ProjectValue()
@@ -315,8 +316,8 @@ func TestJoinCapturedFieldAssigns_UsesCanonicalRecursiveProductJoin(t *testing.T
 	})
 
 	merged := JoinCapturedFieldAssigns(
-		api.CapturedFieldAssigns{1: {2: {fieldKey("suite"): product.FromType(left)}}},
-		api.CapturedFieldAssigns{1: {2: {fieldKey("suite"): product.FromType(right)}}},
+		postflow.CapturedFieldAssigns{1: {2: {fieldKey("suite"): product.FromType(left)}}},
+		postflow.CapturedFieldAssigns{1: {2: {fieldKey("suite"): product.FromType(right)}}},
 	)
 	got := merged[1][2][fieldKey("suite")].ProjectValue()
 	if _, ok := got.(*typ.Union); ok {

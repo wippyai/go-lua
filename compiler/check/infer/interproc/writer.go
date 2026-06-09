@@ -3,6 +3,7 @@ package interproc
 import (
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/api"
+	"github.com/wippyai/go-lua/compiler/check/domain/postflow"
 )
 
 type factsWriteStore interface {
@@ -35,7 +36,7 @@ func (w projectionFactWriter) mergeParentFunctionFacts(facts api.FunctionFacts) 
 	return updated
 }
 
-func (w projectionFactWriter) mergeParentCapturedFieldProjections(nestedSym cfg.SymbolID, fields map[cfg.SymbolID]api.FieldValues) bool {
+func (w projectionFactWriter) mergeParentCapturedFieldProjections(nestedSym cfg.SymbolID, fields map[cfg.SymbolID]postflow.FieldValues) bool {
 	if w.store == nil || nestedSym == 0 || len(fields) == 0 {
 		return false
 	}

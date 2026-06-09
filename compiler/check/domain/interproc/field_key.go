@@ -2,6 +2,7 @@ package interproc
 
 import (
 	"github.com/wippyai/go-lua/compiler/check/domain/fieldkey"
+	"github.com/wippyai/go-lua/compiler/check/domain/postflow"
 	"github.com/wippyai/go-lua/types/domain/value/product"
 	"github.com/wippyai/go-lua/types/typ"
 )
@@ -10,10 +11,10 @@ import (
 // product state. Boundary collectors may still speak in source field names, but
 // the product lattice stores typed path segments so field identity is not an
 // ad-hoc string carrier.
-type FieldKey = fieldkey.Key
+type FieldKey = postflow.FieldKey
 
 // FieldValues is the canonical product carrier for field-indexed facts.
-type FieldValues = map[FieldKey]product.AbstractValue
+type FieldValues = postflow.FieldValues
 
 // FieldKeyFromName lowers a source field name into the product field key.
 func FieldKeyFromName(name string) (FieldKey, bool) {

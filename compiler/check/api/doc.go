@@ -34,9 +34,8 @@
 // compiler/check/domain/interproc:
 //
 //   - [FunctionFacts]: final/public per-function projection facts
-//   - [CapturedTypes]: Flow-derived types for captured variables
-//   - [CapturedFieldAssigns]: Field assignments to captured variables
-//   - [ConstructorFields]: Instance fields collected from constructors
+//   - compiler/check/domain/postflow captured/constructor lanes: noncanonical
+//     postflow compatibility projections
 //
 // Projection lanes are keyed by a (graph, parent-scope) [GraphKey]; module-wide
 // lanes use [ModuleFactsKey].

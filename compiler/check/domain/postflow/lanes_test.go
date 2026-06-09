@@ -1,4 +1,4 @@
-package api
+package postflow
 
 import (
 	"testing"
@@ -9,7 +9,7 @@ import (
 	"github.com/wippyai/go-lua/types/typ"
 )
 
-func TestCapturedTypes_Basic(t *testing.T) {
+func TestCapturedTypesBasic(t *testing.T) {
 	captured := make(CapturedTypes)
 	sym := cfg.SymbolID(1)
 	captured[sym] = product.FromType(typ.String)
@@ -23,7 +23,7 @@ func TestCapturedTypes_Basic(t *testing.T) {
 	}
 }
 
-func TestCapturedFieldAssigns_Basic(t *testing.T) {
+func TestCapturedFieldAssignsBasic(t *testing.T) {
 	assigns := make(CapturedFieldAssigns)
 	nestedSym := cfg.SymbolID(1)
 	capturedSym := cfg.SymbolID(2)

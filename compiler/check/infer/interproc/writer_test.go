@@ -6,6 +6,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/api"
 	"github.com/wippyai/go-lua/compiler/check/domain/functionfact"
+	"github.com/wippyai/go-lua/compiler/check/domain/postflow"
 	"github.com/wippyai/go-lua/types/domain/value/product"
 	"github.com/wippyai/go-lua/types/typ"
 )
@@ -13,14 +14,14 @@ import (
 type factsWriteStoreStub struct {
 	parentKeyBySymbol   map[cfg.SymbolID]api.GraphKey
 	functionFactsByKey  map[api.GraphKey]api.FunctionFacts
-	capturedFieldsByKey map[api.GraphKey]api.CapturedFieldAssigns
+	capturedFieldsByKey map[api.GraphKey]postflow.CapturedFieldAssigns
 }
 
 func newFactsWriteStoreStub() *factsWriteStoreStub {
 	return &factsWriteStoreStub{
 		parentKeyBySymbol:   make(map[cfg.SymbolID]api.GraphKey),
 		functionFactsByKey:  make(map[api.GraphKey]api.FunctionFacts),
-		capturedFieldsByKey: make(map[api.GraphKey]api.CapturedFieldAssigns),
+		capturedFieldsByKey: make(map[api.GraphKey]postflow.CapturedFieldAssigns),
 	}
 }
 
@@ -31,12 +32,12 @@ func (s *factsWriteStoreStub) MergeFunctionFactProjection(key api.GraphKey, sym 
 	s.functionFactsByKey[key][sym] = fact
 }
 
-func (s *factsWriteStoreStub) MergeCapturedFieldProjection(key api.GraphKey, nestedSym cfg.SymbolID, capturedSym cfg.SymbolID, fields api.FieldValues) {
+func (s *factsWriteStoreStub) MergeCapturedFieldProjection(key api.GraphKey, nestedSym cfg.SymbolID, capturedSym cfg.SymbolID, fields postflow.FieldValues) {
 	if s.capturedFieldsByKey[key] == nil {
-		s.capturedFieldsByKey[key] = make(api.CapturedFieldAssigns)
+		s.capturedFieldsByKey[key] = make(postflow.CapturedFieldAssigns)
 	}
 	if s.capturedFieldsByKey[key][nestedSym] == nil {
-		s.capturedFieldsByKey[key][nestedSym] = make(map[cfg.SymbolID]api.FieldValues)
+		s.capturedFieldsByKey[key][nestedSym] = make(map[cfg.SymbolID]postflow.FieldValues)
 	}
 	s.capturedFieldsByKey[key][nestedSym][capturedSym] = fields
 }

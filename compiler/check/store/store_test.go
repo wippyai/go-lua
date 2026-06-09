@@ -7,6 +7,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/api"
 	"github.com/wippyai/go-lua/compiler/check/domain/functionfact"
+	"github.com/wippyai/go-lua/compiler/check/domain/postflow"
 	"github.com/wippyai/go-lua/compiler/check/scope"
 	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/db"
@@ -403,7 +404,7 @@ func TestAdvancePostflowProjections_TracksLaneDiffsAndResetsNext(t *testing.T) {
 			Effects: api.FunctionEffectProjection{Refinement: &constraint.FunctionRefinement{Terminates: true}},
 		},
 	}
-	s.postflowNext.constructorFields[api.ModuleFactsKey()] = api.ConstructorFields{
+	s.postflowNext.constructorFields[api.ModuleFactsKey()] = postflow.ConstructorFields{
 		3: {constraint.Segment{Kind: constraint.SegmentField, Name: "v"}: product.FromType(typ.Number)},
 	}
 

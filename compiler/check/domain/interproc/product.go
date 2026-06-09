@@ -4,6 +4,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/api"
 	"github.com/wippyai/go-lua/compiler/check/domain/functionfact"
+	"github.com/wippyai/go-lua/compiler/check/domain/postflow"
 	"github.com/wippyai/go-lua/types/domain/value"
 	"github.com/wippyai/go-lua/types/typ"
 	"github.com/wippyai/go-lua/types/typ/unwrap"
@@ -95,11 +96,11 @@ func joinInterprocValueType(existing, candidate typ.Type) typ.Type {
 }
 
 // WidenCapturedTypes merges two captured type maps using monotone join.
-func WidenCapturedTypes(prev, next api.CapturedTypes) api.CapturedTypes {
+func WidenCapturedTypes(prev, next postflow.CapturedTypes) postflow.CapturedTypes {
 	return widenCapturedTypesWith(value.NewConvergenceWidening(), prev, next)
 }
 
-func widenCapturedTypesWith(widening *value.ConvergenceWidening, prev, next api.CapturedTypes) api.CapturedTypes {
+func widenCapturedTypesWith(widening *value.ConvergenceWidening, prev, next postflow.CapturedTypes) postflow.CapturedTypes {
 	if prev == nil && next == nil {
 		return nil
 	}
@@ -112,7 +113,7 @@ func widenCapturedTypesWith(widening *value.ConvergenceWidening, prev, next api.
 	if next == nil {
 		return normalizeCapturedTypesWith(widening, prev)
 	}
-	merged := make(api.CapturedTypes, len(prev)+len(next))
+	merged := make(postflow.CapturedTypes, len(prev)+len(next))
 	for _, sym := range cfg.SortedSymbolIDs(prev) {
 		merged[sym] = liftCarrier(canonicalInterprocValueTypeWith(widening, projectCarrier(prev[sym])))
 	}
@@ -128,7 +129,7 @@ func widenCapturedTypesWith(widening *value.ConvergenceWidening, prev, next api.
 }
 
 // JoinCapturedTypes merges captured types precisely inside one iteration.
-func JoinCapturedTypes(prev, next api.CapturedTypes) api.CapturedTypes {
+func JoinCapturedTypes(prev, next postflow.CapturedTypes) postflow.CapturedTypes {
 	if prev == nil && next == nil {
 		return nil
 	}
@@ -138,7 +139,7 @@ func JoinCapturedTypes(prev, next api.CapturedTypes) api.CapturedTypes {
 	if next == nil {
 		return normalizeCapturedTypesForJoin(prev)
 	}
-	merged := make(api.CapturedTypes, len(prev)+len(next))
+	merged := make(postflow.CapturedTypes, len(prev)+len(next))
 	for _, sym := range cfg.SortedSymbolIDs(prev) {
 		merged[sym] = liftCarrier(normalizeInterprocValueType(projectCarrier(prev[sym])))
 	}
@@ -205,11 +206,11 @@ func capturedConcreteSnapshot(t typ.Type) bool {
 }
 
 // WidenCapturedFieldAssigns merges captured field assignment maps using monotone union.
-func WidenCapturedFieldAssigns(prev, next api.CapturedFieldAssigns) api.CapturedFieldAssigns {
+func WidenCapturedFieldAssigns(prev, next postflow.CapturedFieldAssigns) postflow.CapturedFieldAssigns {
 	return widenCapturedFieldAssignsWith(value.NewConvergenceWidening(), prev, next)
 }
 
-func widenCapturedFieldAssignsWith(widening *value.ConvergenceWidening, prev, next api.CapturedFieldAssigns) api.CapturedFieldAssigns {
+func widenCapturedFieldAssignsWith(widening *value.ConvergenceWidening, prev, next postflow.CapturedFieldAssigns) postflow.CapturedFieldAssigns {
 	if prev == nil && next == nil {
 		return nil
 	}
@@ -219,7 +220,7 @@ func widenCapturedFieldAssignsWith(widening *value.ConvergenceWidening, prev, ne
 	if next == nil {
 		return normalizeCapturedFieldAssignsWith(widening, prev)
 	}
-	merged := make(api.CapturedFieldAssigns, len(prev)+len(next))
+	merged := make(postflow.CapturedFieldAssigns, len(prev)+len(next))
 	for _, callee := range cfg.SortedSymbolIDs(prev) {
 		merged[callee] = normalizeCapturedFieldSymbolMapWith(widening, prev[callee])
 	}
@@ -240,33 +241,33 @@ func widenCapturedFieldAssignsWith(widening *value.ConvergenceWidening, prev, ne
 	return merged
 }
 
-func normalizeCapturedTypesWith(widening *value.ConvergenceWidening, types api.CapturedTypes) api.CapturedTypes {
+func normalizeCapturedTypesWith(widening *value.ConvergenceWidening, types postflow.CapturedTypes) postflow.CapturedTypes {
 	if types == nil {
 		return nil
 	}
-	out := make(api.CapturedTypes, len(types))
+	out := make(postflow.CapturedTypes, len(types))
 	for _, sym := range cfg.SortedSymbolIDs(types) {
 		out[sym] = liftCarrier(canonicalInterprocValueTypeWith(widening, projectCarrier(types[sym])))
 	}
 	return out
 }
 
-func normalizeCapturedTypesForJoin(types api.CapturedTypes) api.CapturedTypes {
+func normalizeCapturedTypesForJoin(types postflow.CapturedTypes) postflow.CapturedTypes {
 	if types == nil {
 		return nil
 	}
-	out := make(api.CapturedTypes, len(types))
+	out := make(postflow.CapturedTypes, len(types))
 	for _, sym := range cfg.SortedSymbolIDs(types) {
 		out[sym] = liftCarrier(normalizeInterprocValueType(projectCarrier(types[sym])))
 	}
 	return out
 }
 
-func normalizeCapturedFieldAssignsWith(widening *value.ConvergenceWidening, fields api.CapturedFieldAssigns) api.CapturedFieldAssigns {
+func normalizeCapturedFieldAssignsWith(widening *value.ConvergenceWidening, fields postflow.CapturedFieldAssigns) postflow.CapturedFieldAssigns {
 	if fields == nil {
 		return nil
 	}
-	out := make(api.CapturedFieldAssigns, len(fields))
+	out := make(postflow.CapturedFieldAssigns, len(fields))
 	for _, callee := range cfg.SortedSymbolIDs(fields) {
 		out[callee] = normalizeCapturedFieldSymbolMapWith(widening, fields[callee])
 	}
@@ -290,7 +291,7 @@ func normalizeCapturedFieldSymbolMapWith(widening *value.ConvergenceWidening, fi
 }
 
 // JoinCapturedFieldAssigns merges captured field assignments inside one iteration.
-func JoinCapturedFieldAssigns(prev, next api.CapturedFieldAssigns) api.CapturedFieldAssigns {
+func JoinCapturedFieldAssigns(prev, next postflow.CapturedFieldAssigns) postflow.CapturedFieldAssigns {
 	if prev == nil && next == nil {
 		return nil
 	}
@@ -300,7 +301,7 @@ func JoinCapturedFieldAssigns(prev, next api.CapturedFieldAssigns) api.CapturedF
 	if next == nil {
 		return normalizeCapturedFieldAssignsForJoin(prev)
 	}
-	merged := make(api.CapturedFieldAssigns, len(prev)+len(next))
+	merged := make(postflow.CapturedFieldAssigns, len(prev)+len(next))
 	for _, callee := range cfg.SortedSymbolIDs(prev) {
 		merged[callee] = normalizeCapturedFieldSymbolMapForJoin(prev[callee])
 	}
@@ -321,11 +322,11 @@ func JoinCapturedFieldAssigns(prev, next api.CapturedFieldAssigns) api.CapturedF
 	return merged
 }
 
-func normalizeCapturedFieldAssignsForJoin(fields api.CapturedFieldAssigns) api.CapturedFieldAssigns {
+func normalizeCapturedFieldAssignsForJoin(fields postflow.CapturedFieldAssigns) postflow.CapturedFieldAssigns {
 	if fields == nil {
 		return nil
 	}
-	out := make(api.CapturedFieldAssigns, len(fields))
+	out := make(postflow.CapturedFieldAssigns, len(fields))
 	for _, callee := range cfg.SortedSymbolIDs(fields) {
 		out[callee] = normalizeCapturedFieldSymbolMapForJoin(fields[callee])
 	}
@@ -349,11 +350,11 @@ func normalizeCapturedFieldSymbolMapForJoin(fieldsBySym map[cfg.SymbolID]FieldVa
 }
 
 // WidenConstructorFields merges constructor field maps using monotone join.
-func WidenConstructorFields(prev, next api.ConstructorFields) api.ConstructorFields {
+func WidenConstructorFields(prev, next postflow.ConstructorFields) postflow.ConstructorFields {
 	return widenConstructorFieldsWith(value.NewConvergenceWidening(), prev, next)
 }
 
-func widenConstructorFieldsWith(widening *value.ConvergenceWidening, prev, next api.ConstructorFields) api.ConstructorFields {
+func widenConstructorFieldsWith(widening *value.ConvergenceWidening, prev, next postflow.ConstructorFields) postflow.ConstructorFields {
 	if prev == nil && next == nil {
 		return nil
 	}
@@ -363,7 +364,7 @@ func widenConstructorFieldsWith(widening *value.ConvergenceWidening, prev, next 
 	if next == nil {
 		return normalizeConstructorFieldsWith(widening, prev)
 	}
-	merged := make(api.ConstructorFields, len(prev)+len(next))
+	merged := make(postflow.ConstructorFields, len(prev)+len(next))
 	for _, sym := range cfg.SortedSymbolIDs(prev) {
 		merged[sym] = normalizeConstructorFieldMapWith(widening, prev[sym])
 	}
@@ -391,11 +392,11 @@ func widenConstructorFieldsWith(widening *value.ConvergenceWidening, prev, next 
 	return merged
 }
 
-func normalizeConstructorFieldsWith(widening *value.ConvergenceWidening, fields api.ConstructorFields) api.ConstructorFields {
+func normalizeConstructorFieldsWith(widening *value.ConvergenceWidening, fields postflow.ConstructorFields) postflow.ConstructorFields {
 	if fields == nil {
 		return nil
 	}
-	out := make(api.ConstructorFields, len(fields))
+	out := make(postflow.ConstructorFields, len(fields))
 	for _, sym := range cfg.SortedSymbolIDs(fields) {
 		out[sym] = normalizeConstructorFieldMapWith(widening, fields[sym])
 	}
@@ -414,7 +415,7 @@ func normalizeConstructorFieldMapWith(widening *value.ConvergenceWidening, field
 }
 
 // JoinConstructorFields merges constructor field maps inside one iteration.
-func JoinConstructorFields(prev, next api.ConstructorFields) api.ConstructorFields {
+func JoinConstructorFields(prev, next postflow.ConstructorFields) postflow.ConstructorFields {
 	if prev == nil && next == nil {
 		return nil
 	}
@@ -424,7 +425,7 @@ func JoinConstructorFields(prev, next api.ConstructorFields) api.ConstructorFiel
 	if next == nil {
 		return normalizeConstructorFieldsForJoin(prev)
 	}
-	merged := make(api.ConstructorFields, len(prev)+len(next))
+	merged := make(postflow.ConstructorFields, len(prev)+len(next))
 	for _, sym := range cfg.SortedSymbolIDs(prev) {
 		merged[sym] = normalizeConstructorFieldMapForJoin(prev[sym])
 	}
@@ -452,11 +453,11 @@ func JoinConstructorFields(prev, next api.ConstructorFields) api.ConstructorFiel
 	return merged
 }
 
-func normalizeConstructorFieldsForJoin(fields api.ConstructorFields) api.ConstructorFields {
+func normalizeConstructorFieldsForJoin(fields postflow.ConstructorFields) postflow.ConstructorFields {
 	if fields == nil {
 		return nil
 	}
-	out := make(api.ConstructorFields, len(fields))
+	out := make(postflow.ConstructorFields, len(fields))
 	for _, sym := range cfg.SortedSymbolIDs(fields) {
 		out[sym] = normalizeConstructorFieldMapForJoin(fields[sym])
 	}

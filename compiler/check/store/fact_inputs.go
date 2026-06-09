@@ -5,6 +5,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/check/api"
 	"github.com/wippyai/go-lua/compiler/check/domain/functionfact"
 	"github.com/wippyai/go-lua/compiler/check/domain/interproc"
+	"github.com/wippyai/go-lua/compiler/check/domain/postflow"
 	"github.com/wippyai/go-lua/types/db"
 	"github.com/wippyai/go-lua/types/domain/value/product"
 	"github.com/wippyai/go-lua/types/typ"
@@ -20,13 +21,13 @@ type factInputs struct {
 	functionFactMaps    *db.Input[api.GraphKey, api.FunctionFacts]
 	functionFacts       *db.Input[api.FunctionFactKey, api.FunctionFact]
 	capturedTypes       *db.Input[api.CapturedTypeKey, product.AbstractValue]
-	capturedFields      *db.Input[api.GraphKey, api.CapturedFieldAssigns]
-	constructorFields   *db.Input[api.ConstructorFieldKey, api.FieldValues]
+	capturedFields      *db.Input[api.GraphKey, postflow.CapturedFieldAssigns]
+	constructorFields   *db.Input[api.ConstructorFieldKey, postflow.FieldValues]
 	functionMapValues   map[api.GraphKey]api.FunctionFacts
 	functionFactValues  map[api.FunctionFactKey]api.FunctionFact
 	capturedTypeValues  map[api.CapturedTypeKey]product.AbstractValue
-	capturedFieldValues map[api.GraphKey]api.CapturedFieldAssigns
-	constructorValues   map[api.ConstructorFieldKey]api.FieldValues
+	capturedFieldValues map[api.GraphKey]postflow.CapturedFieldAssigns
+	constructorValues   map[api.ConstructorFieldKey]postflow.FieldValues
 }
 
 func newFactInputs(database *db.DB) *factInputs {
@@ -38,13 +39,13 @@ func newFactInputs(database *db.DB) *factInputs {
 		functionFactMaps:    db.NewInput[api.GraphKey, api.FunctionFacts](database),
 		functionFacts:       db.NewInput[api.FunctionFactKey, api.FunctionFact](database),
 		capturedTypes:       db.NewInput[api.CapturedTypeKey, product.AbstractValue](database),
-		capturedFields:      db.NewInput[api.GraphKey, api.CapturedFieldAssigns](database),
-		constructorFields:   db.NewInput[api.ConstructorFieldKey, api.FieldValues](database),
+		capturedFields:      db.NewInput[api.GraphKey, postflow.CapturedFieldAssigns](database),
+		constructorFields:   db.NewInput[api.ConstructorFieldKey, postflow.FieldValues](database),
 		functionMapValues:   make(map[api.GraphKey]api.FunctionFacts),
 		functionFactValues:  make(map[api.FunctionFactKey]api.FunctionFact),
 		capturedTypeValues:  make(map[api.CapturedTypeKey]product.AbstractValue),
-		capturedFieldValues: make(map[api.GraphKey]api.CapturedFieldAssigns),
-		constructorValues:   make(map[api.ConstructorFieldKey]api.FieldValues),
+		capturedFieldValues: make(map[api.GraphKey]postflow.CapturedFieldAssigns),
+		constructorValues:   make(map[api.ConstructorFieldKey]postflow.FieldValues),
 	}
 }
 
@@ -108,7 +109,7 @@ func (in *factInputs) capturedTypeFor(ctx *db.QueryContext, key api.CapturedType
 	return t.ProjectValue(), true
 }
 
-func (in *factInputs) capturedFieldAssignsFor(ctx *db.QueryContext, key api.GraphKey) (api.CapturedFieldAssigns, bool) {
+func (in *factInputs) capturedFieldAssignsFor(ctx *db.QueryContext, key api.GraphKey) (postflow.CapturedFieldAssigns, bool) {
 	if in == nil || in.capturedFields == nil {
 		return nil, false
 	}
@@ -119,7 +120,7 @@ func (in *factInputs) capturedFieldAssignsFor(ctx *db.QueryContext, key api.Grap
 	return cloneCapturedFieldAssigns(fields), true
 }
 
-func (in *factInputs) constructorFieldsFor(ctx *db.QueryContext, key api.ConstructorFieldKey) (api.FieldValues, bool) {
+func (in *factInputs) constructorFieldsFor(ctx *db.QueryContext, key api.ConstructorFieldKey) (postflow.FieldValues, bool) {
 	if in == nil || in.constructorFields == nil {
 		return nil, false
 	}
@@ -134,9 +135,9 @@ func (in *factInputs) setPostflowProjectionLanes(
 	batch *db.InputBatch,
 	key api.GraphKey,
 	functionFacts api.FunctionFacts,
-	capturedTypes api.CapturedTypes,
-	capturedFields api.CapturedFieldAssigns,
-	constructorFields api.ConstructorFields,
+	capturedTypes postflow.CapturedTypes,
+	capturedFields postflow.CapturedFieldAssigns,
+	constructorFields postflow.ConstructorFields,
 ) {
 	in.setProjectedFunctionFactMap(batch, key, functionFacts)
 	in.setProjectedFunctionFacts(batch, key, functionFacts)
@@ -189,7 +190,7 @@ func (in *factInputs) setProjectedFunctionFacts(batch *db.InputBatch, key api.Gr
 	}
 }
 
-func (in *factInputs) setProjectedCapturedTypes(batch *db.InputBatch, key api.GraphKey, types api.CapturedTypes) {
+func (in *factInputs) setProjectedCapturedTypes(batch *db.InputBatch, key api.GraphKey, types postflow.CapturedTypes) {
 	if in == nil || in.capturedTypes == nil {
 		return
 	}
@@ -212,7 +213,7 @@ func (in *factInputs) setProjectedCapturedTypes(batch *db.InputBatch, key api.Gr
 	}
 }
 
-func (in *factInputs) setProjectedCapturedFields(batch *db.InputBatch, key api.GraphKey, fields api.CapturedFieldAssigns) {
+func (in *factInputs) setProjectedCapturedFields(batch *db.InputBatch, key api.GraphKey, fields postflow.CapturedFieldAssigns) {
 	if in == nil || in.capturedFields == nil {
 		return
 	}
@@ -232,7 +233,7 @@ func (in *factInputs) setProjectedCapturedFields(batch *db.InputBatch, key api.G
 	in.capturedFields.SetInBatch(batch, key, next)
 }
 
-func (in *factInputs) setProjectedConstructorFields(batch *db.InputBatch, key api.GraphKey, fields api.ConstructorFields) {
+func (in *factInputs) setProjectedConstructorFields(batch *db.InputBatch, key api.GraphKey, fields postflow.ConstructorFields) {
 	if in == nil || in.constructorFields == nil {
 		return
 	}
@@ -331,8 +332,8 @@ func (s *SessionStore) visibleCapturedType(key api.GraphKey, sym cfg.SymbolID) (
 			return prev.ProjectValue(), true
 		default:
 			merged := interproc.WidenCapturedTypes(
-				api.CapturedTypes{sym: prev},
-				api.CapturedTypes{sym: next},
+				postflow.CapturedTypes{sym: prev},
+				postflow.CapturedTypes{sym: next},
 			)
 			t := merged[sym]
 			if t.IsZero() {
@@ -344,29 +345,29 @@ func (s *SessionStore) visibleCapturedType(key api.GraphKey, sym cfg.SymbolID) (
 	return nil, false
 }
 
-func capturedTypeFromMap(types api.CapturedTypes, sym cfg.SymbolID) product.AbstractValue {
+func capturedTypeFromMap(types postflow.CapturedTypes, sym cfg.SymbolID) product.AbstractValue {
 	if sym == 0 || len(types) == 0 {
 		return product.AbstractValue{}
 	}
 	return types[sym]
 }
 
-func (s *SessionStore) visibleCapturedFieldAssigns(key api.GraphKey) api.CapturedFieldAssigns {
+func (s *SessionStore) visibleCapturedFieldAssigns(key api.GraphKey) postflow.CapturedFieldAssigns {
 	if s == nil {
 		return nil
 	}
-	var prev api.CapturedFieldAssigns
+	var prev postflow.CapturedFieldAssigns
 	if s.postflowPrev != nil {
 		prev = s.postflowPrev.capturedFields[key]
 	}
-	var next api.CapturedFieldAssigns
+	var next postflow.CapturedFieldAssigns
 	if s.postflowNext != nil {
 		next = s.postflowNext.capturedFields[key]
 	}
 	return cloneCapturedFieldAssigns(interproc.WidenCapturedFieldAssigns(prev, next))
 }
 
-func (s *SessionStore) visibleConstructorFields(key api.GraphKey, sym cfg.SymbolID) (api.FieldValues, bool) {
+func (s *SessionStore) visibleConstructorFields(key api.GraphKey, sym cfg.SymbolID) (postflow.FieldValues, bool) {
 	if s == nil || sym == 0 {
 		return nil, false
 	}
@@ -382,8 +383,8 @@ func (s *SessionStore) visibleConstructorFields(key api.GraphKey, sym cfg.Symbol
 			return cloneConstructorFieldMap(prev), true
 		default:
 			merged := interproc.WidenConstructorFields(
-				api.ConstructorFields{sym: prev},
-				api.ConstructorFields{sym: next},
+				postflow.ConstructorFields{sym: prev},
+				postflow.ConstructorFields{sym: next},
 			)
 			fields := merged[sym]
 			return cloneConstructorFieldMap(fields), len(fields) > 0
@@ -392,7 +393,7 @@ func (s *SessionStore) visibleConstructorFields(key api.GraphKey, sym cfg.Symbol
 	return nil, false
 }
 
-func constructorFieldsFromMap(fields api.ConstructorFields, sym cfg.SymbolID) api.FieldValues {
+func constructorFieldsFromMap(fields postflow.ConstructorFields, sym cfg.SymbolID) postflow.FieldValues {
 	if sym == 0 || len(fields) == 0 {
 		return nil
 	}
@@ -435,7 +436,7 @@ func (s *SessionStore) capturedTypeByKey(key api.CapturedTypeKey) (typ.Type, boo
 	return s.visibleCapturedType(key.GraphKey, key.Symbol)
 }
 
-func (s *SessionStore) capturedFieldAssignsByKey(key api.GraphKey) api.CapturedFieldAssigns {
+func (s *SessionStore) capturedFieldAssignsByKey(key api.GraphKey) postflow.CapturedFieldAssigns {
 	if s == nil {
 		return nil
 	}
@@ -448,7 +449,7 @@ func (s *SessionStore) capturedFieldAssignsByKey(key api.GraphKey) api.CapturedF
 	return s.visibleCapturedFieldAssigns(key)
 }
 
-func (s *SessionStore) constructorFieldsByKey(key api.ConstructorFieldKey) (api.FieldValues, bool) {
+func (s *SessionStore) constructorFieldsByKey(key api.ConstructorFieldKey) (postflow.FieldValues, bool) {
 	if s == nil || key.Symbol == 0 {
 		return nil, false
 	}
@@ -497,30 +498,30 @@ func (s *SessionStore) SetCanonicalFunctionFactsProjection(facts map[api.GraphKe
 	}
 }
 
-func (s *SessionStore) visibleCapturedTypes(key api.GraphKey) api.CapturedTypes {
+func (s *SessionStore) visibleCapturedTypes(key api.GraphKey) postflow.CapturedTypes {
 	if s == nil {
 		return nil
 	}
-	var prev api.CapturedTypes
+	var prev postflow.CapturedTypes
 	if s.postflowPrev != nil {
 		prev = s.postflowPrev.capturedTypes[key]
 	}
-	var next api.CapturedTypes
+	var next postflow.CapturedTypes
 	if s.postflowNext != nil {
 		next = s.postflowNext.capturedTypes[key]
 	}
 	return interproc.WidenCapturedTypes(prev, next)
 }
 
-func (s *SessionStore) visibleConstructorFieldMap(key api.GraphKey) api.ConstructorFields {
+func (s *SessionStore) visibleConstructorFieldMap(key api.GraphKey) postflow.ConstructorFields {
 	if s == nil {
 		return nil
 	}
-	var prev api.ConstructorFields
+	var prev postflow.ConstructorFields
 	if s.postflowPrev != nil {
 		prev = s.postflowPrev.constructorFields[key]
 	}
-	var next api.ConstructorFields
+	var next postflow.ConstructorFields
 	if s.postflowNext != nil {
 		next = s.postflowNext.constructorFields[key]
 	}

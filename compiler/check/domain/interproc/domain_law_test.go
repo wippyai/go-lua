@@ -6,6 +6,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/api"
 	"github.com/wippyai/go-lua/compiler/check/domain/functionfact"
+	"github.com/wippyai/go-lua/compiler/check/domain/postflow"
 	"github.com/wippyai/go-lua/compiler/check/domain/returnsummary"
 	"github.com/wippyai/go-lua/types/domain/value/product"
 	"github.com/wippyai/go-lua/types/typ"
@@ -24,17 +25,17 @@ func TestFactsDomain_LaneOperatorsAreIdempotent(t *testing.T) {
 			Public:  api.FunctionPublicProjection{Signature: fn},
 		},
 	}
-	capturedTypes := api.CapturedTypes{
+	capturedTypes := postflow.CapturedTypes{
 		capturedSym: product.FromType(typ.NewRecord().Field("name", typ.String).Build()),
 	}
-	capturedFields := api.CapturedFieldAssigns{
+	capturedFields := postflow.CapturedFieldAssigns{
 		fnSym: {
 			capturedSym: {
 				fieldKey("callback"): product.FromType(typ.NewOptional(callback)),
 			},
 		},
 	}
-	constructorFields := api.ConstructorFields{
+	constructorFields := postflow.ConstructorFields{
 		classSym: {
 			fieldKey("name"): product.FromType(typ.String),
 		},
@@ -151,10 +152,10 @@ func TestFactsDomain_WidenPreservesCapturedCallbackUnionMembers(t *testing.T) {
 		Build()
 
 	widened := WidenCapturedTypes(
-		api.CapturedTypes{sym: product.FromType(prevFn)},
-		api.CapturedTypes{sym: product.FromType(nextFn)},
+		postflow.CapturedTypes{sym: product.FromType(prevFn)},
+		postflow.CapturedTypes{sym: product.FromType(nextFn)},
 	)
-	widenedAgain := WidenCapturedTypes(widened, api.CapturedTypes{sym: product.FromType(nextFn)})
+	widenedAgain := WidenCapturedTypes(widened, postflow.CapturedTypes{sym: product.FromType(nextFn)})
 	if !symbolTypeMapEqual(widened, widenedAgain) {
 		t.Fatalf("Widen must be idempotent for captured callback union members")
 	}

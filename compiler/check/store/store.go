@@ -9,6 +9,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/check/api"
 	"github.com/wippyai/go-lua/compiler/check/domain/functionfact"
 	"github.com/wippyai/go-lua/compiler/check/domain/interproc"
+	"github.com/wippyai/go-lua/compiler/check/domain/postflow"
 	"github.com/wippyai/go-lua/compiler/check/domain/trace"
 	"github.com/wippyai/go-lua/compiler/check/scope"
 	"github.com/wippyai/go-lua/types/constraint"
@@ -47,17 +48,17 @@ type SessionStore struct {
 // mixed convergence product.
 type postflowProjectionState struct {
 	functionFacts     map[api.GraphKey]api.FunctionFacts
-	capturedTypes     map[api.GraphKey]api.CapturedTypes
-	capturedFields    map[api.GraphKey]api.CapturedFieldAssigns
-	constructorFields map[api.GraphKey]api.ConstructorFields
+	capturedTypes     map[api.GraphKey]postflow.CapturedTypes
+	capturedFields    map[api.GraphKey]postflow.CapturedFieldAssigns
+	constructorFields map[api.GraphKey]postflow.ConstructorFields
 }
 
 func newPostflowProjectionState() *postflowProjectionState {
 	return &postflowProjectionState{
 		functionFacts:     make(map[api.GraphKey]api.FunctionFacts),
-		capturedTypes:     make(map[api.GraphKey]api.CapturedTypes),
-		capturedFields:    make(map[api.GraphKey]api.CapturedFieldAssigns),
-		constructorFields: make(map[api.GraphKey]api.ConstructorFields),
+		capturedTypes:     make(map[api.GraphKey]postflow.CapturedTypes),
+		capturedFields:    make(map[api.GraphKey]postflow.CapturedFieldAssigns),
+		constructorFields: make(map[api.GraphKey]postflow.ConstructorFields),
 	}
 }
 
@@ -184,25 +185,25 @@ func (s *SessionStore) ensurePostflowProjectionStates() {
 		s.postflowPrev.functionFacts = make(map[api.GraphKey]api.FunctionFacts)
 	}
 	if s.postflowPrev.capturedTypes == nil {
-		s.postflowPrev.capturedTypes = make(map[api.GraphKey]api.CapturedTypes)
+		s.postflowPrev.capturedTypes = make(map[api.GraphKey]postflow.CapturedTypes)
 	}
 	if s.postflowPrev.capturedFields == nil {
-		s.postflowPrev.capturedFields = make(map[api.GraphKey]api.CapturedFieldAssigns)
+		s.postflowPrev.capturedFields = make(map[api.GraphKey]postflow.CapturedFieldAssigns)
 	}
 	if s.postflowPrev.constructorFields == nil {
-		s.postflowPrev.constructorFields = make(map[api.GraphKey]api.ConstructorFields)
+		s.postflowPrev.constructorFields = make(map[api.GraphKey]postflow.ConstructorFields)
 	}
 	if s.postflowNext.functionFacts == nil {
 		s.postflowNext.functionFacts = make(map[api.GraphKey]api.FunctionFacts)
 	}
 	if s.postflowNext.capturedTypes == nil {
-		s.postflowNext.capturedTypes = make(map[api.GraphKey]api.CapturedTypes)
+		s.postflowNext.capturedTypes = make(map[api.GraphKey]postflow.CapturedTypes)
 	}
 	if s.postflowNext.capturedFields == nil {
-		s.postflowNext.capturedFields = make(map[api.GraphKey]api.CapturedFieldAssigns)
+		s.postflowNext.capturedFields = make(map[api.GraphKey]postflow.CapturedFieldAssigns)
 	}
 	if s.postflowNext.constructorFields == nil {
-		s.postflowNext.constructorFields = make(map[api.GraphKey]api.ConstructorFields)
+		s.postflowNext.constructorFields = make(map[api.GraphKey]postflow.ConstructorFields)
 	}
 }
 
@@ -252,8 +253,8 @@ func (s *SessionStore) swapPostflowProjections() []string {
 					&s.postflowNext.capturedTypes,
 					interproc.WidenCapturedTypeMaps,
 					interproc.CapturedTypeMapsEqual,
-					func() map[api.GraphKey]api.CapturedTypes {
-						return make(map[api.GraphKey]api.CapturedTypes)
+					func() map[api.GraphKey]postflow.CapturedTypes {
+						return make(map[api.GraphKey]postflow.CapturedTypes)
 					},
 				)
 			},
@@ -266,8 +267,8 @@ func (s *SessionStore) swapPostflowProjections() []string {
 					&s.postflowNext.capturedFields,
 					interproc.WidenCapturedFieldAssignMaps,
 					interproc.CapturedFieldAssignMapsEqual,
-					func() map[api.GraphKey]api.CapturedFieldAssigns {
-						return make(map[api.GraphKey]api.CapturedFieldAssigns)
+					func() map[api.GraphKey]postflow.CapturedFieldAssigns {
+						return make(map[api.GraphKey]postflow.CapturedFieldAssigns)
 					},
 				)
 			},
@@ -280,8 +281,8 @@ func (s *SessionStore) swapPostflowProjections() []string {
 					&s.postflowNext.constructorFields,
 					interproc.WidenConstructorFieldMaps,
 					interproc.ConstructorFieldMapsEqual,
-					func() map[api.GraphKey]api.ConstructorFields {
-						return make(map[api.GraphKey]api.ConstructorFields)
+					func() map[api.GraphKey]postflow.ConstructorFields {
+						return make(map[api.GraphKey]postflow.ConstructorFields)
 					},
 				)
 			},
@@ -526,7 +527,7 @@ func (s *SessionStore) MergeCapturedTypeProjection(key api.GraphKey, sym cfg.Sym
 	}
 	s.ensurePostflowProjectionStates()
 	existing := s.postflowNext.capturedTypes[key]
-	types := interproc.JoinCapturedTypes(existing, api.CapturedTypes{sym: value})
+	types := interproc.JoinCapturedTypes(existing, postflow.CapturedTypes{sym: value})
 	if len(types) == 0 {
 		if len(existing) == 0 {
 			return
@@ -542,13 +543,13 @@ func (s *SessionStore) MergeCapturedTypeProjection(key api.GraphKey, sym cfg.Sym
 
 // MergeCapturedFieldProjection merges field writes performed by one nested
 // function against one captured parent symbol.
-func (s *SessionStore) MergeCapturedFieldProjection(key api.GraphKey, nestedSym cfg.SymbolID, capturedSym cfg.SymbolID, fields api.FieldValues) {
+func (s *SessionStore) MergeCapturedFieldProjection(key api.GraphKey, nestedSym cfg.SymbolID, capturedSym cfg.SymbolID, fields postflow.FieldValues) {
 	if nestedSym == 0 || capturedSym == 0 || len(fields) == 0 {
 		return
 	}
 	s.ensurePostflowProjectionStates()
 	existing := s.postflowNext.capturedFields[key]
-	next := api.CapturedFieldAssigns{nestedSym: {capturedSym: fields}}
+	next := postflow.CapturedFieldAssigns{nestedSym: {capturedSym: fields}}
 	assigns := interproc.JoinCapturedFieldAssigns(existing, next)
 	if len(assigns) == 0 {
 		if len(existing) == 0 {
@@ -565,14 +566,14 @@ func (s *SessionStore) MergeCapturedFieldProjection(key api.GraphKey, nestedSym 
 
 // MergeConstructorFieldProjection merges constructor field evidence into the
 // module-wide projection lane.
-func (s *SessionStore) MergeConstructorFieldProjection(classSym cfg.SymbolID, fields api.FieldValues) {
+func (s *SessionStore) MergeConstructorFieldProjection(classSym cfg.SymbolID, fields postflow.FieldValues) {
 	if classSym == 0 || len(fields) == 0 {
 		return
 	}
 	key := api.ModuleFactsKey()
 	s.ensurePostflowProjectionStates()
 	existing := s.postflowNext.constructorFields[key]
-	next := api.ConstructorFields{classSym: fields}
+	next := postflow.ConstructorFields{classSym: fields}
 	constructors := interproc.JoinConstructorFields(existing, next)
 	if len(constructors) == 0 {
 		if len(existing) == 0 {
@@ -850,7 +851,7 @@ func (s *SessionStore) CapturedTypeProjection(graph *cfg.Graph, parent *scope.St
 
 // CapturedFieldAssignsProjection returns the visible captured-field projection
 // for a graph key.
-func (s *SessionStore) CapturedFieldAssignsProjection(graph *cfg.Graph, parent *scope.State) api.CapturedFieldAssigns {
+func (s *SessionStore) CapturedFieldAssignsProjection(graph *cfg.Graph, parent *scope.State) postflow.CapturedFieldAssigns {
 	if s == nil || graph == nil {
 		return nil
 	}
@@ -863,7 +864,7 @@ func (s *SessionStore) CapturedFieldAssignsProjection(graph *cfg.Graph, parent *
 
 // ConstructorFieldsProjection returns visible constructor field evidence for a
 // class symbol from the module-wide projection lane.
-func (s *SessionStore) ConstructorFieldsProjection(classSym cfg.SymbolID) (api.FieldValues, bool) {
+func (s *SessionStore) ConstructorFieldsProjection(classSym cfg.SymbolID) (postflow.FieldValues, bool) {
 	if s == nil || classSym == 0 {
 		return nil, false
 	}
