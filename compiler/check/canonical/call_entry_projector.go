@@ -174,8 +174,8 @@ func (c callEntryProjector) publicationProjection(fs state.FunctionState) summar
 		ResolveCallback: func(arg ast.Expr, rawSym cfg.SymbolID, in *flow.PointState) ([]summary.FuncRef, bool) {
 			return c.resolveCallback(arg, rawSym, in)
 		},
-		ExpectedArgType: func(point cfg.Point, info *cfg.CallInfo, in *flow.PointState, argIdx int) typ.Type {
-			return c.expectedArgType(point, info, in, argIdx)
+		ExpectedArgTypes: func(point cfg.Point, info *cfg.CallInfo, in *flow.PointState) []typ.Type {
+			return c.expectedArgTypes(point, info, in)
 		},
 		ParamSlot: c.paramSlot,
 		ParamAnnotated: func(callee summary.FuncRef, sourceParam int) bool {
@@ -209,8 +209,8 @@ func (c callEntryProjector) contextProjection(fs state.FunctionState) summary.Ca
 		ResolveCallback: func(arg ast.Expr, rawSym cfg.SymbolID, in *flow.PointState) ([]summary.FuncRef, bool) {
 			return c.resolveCallback(arg, rawSym, in)
 		},
-		ExpectedArgType: func(point cfg.Point, info *cfg.CallInfo, in *flow.PointState, argIdx int) typ.Type {
-			return c.expectedArgType(point, info, in, argIdx)
+		ExpectedArgTypes: func(point cfg.Point, info *cfg.CallInfo, in *flow.PointState) []typ.Type {
+			return c.expectedArgTypes(point, info, in)
 		},
 		ParamSlot: c.paramSlot,
 		ParamSlotCount: func(callee summary.FuncRef, _ *ast.FuncCallExpr) int {

@@ -98,11 +98,12 @@ type CallEntryTargetResolver func(call *ast.FuncCallExpr, in *flow.PointState) [
 // product axis may return (nil, true), deliberately blocking static fallback.
 type CallEntryCallbackResolver func(arg ast.Expr, rawSym cfg.SymbolID, in *flow.PointState) ([]FuncRef, bool)
 
-// CallEntryExpectedArgType returns the contextual type expected for a concrete
-// source argument at a call site. Method shape and forced-receiver evidence are
-// call-site facts, so the projection receives the point and full CallInfo rather
-// than only the bare FuncCallExpr.
-type CallEntryExpectedArgType func(point cfg.Point, info *cfg.CallInfo, in *flow.PointState, argIdx int) typ.Type
+// CallEntryExpectedArgTypes returns the contextual types expected at one call
+// site. Method shape and forced-receiver evidence are call-site facts, so the
+// projection receives the point and full CallInfo rather than only the bare
+// FuncCallExpr. Callback projection indexes this vector instead of rebuilding
+// call-boundary evidence once per argument.
+type CallEntryExpectedArgTypes func(point cfg.Point, info *cfg.CallInfo, in *flow.PointState) []typ.Type
 
 // EntryValuePrototypeReceiver maps a prototype-self relation to the callee entry
 // parameter slot that receives runtime self.
@@ -385,7 +386,7 @@ type CallEntryContextProjection struct {
 	State               state.FunctionState
 	ResolveTargets      CallEntryTargetResolver
 	ResolveCallback     CallEntryCallbackResolver
-	ExpectedArgType     CallEntryExpectedArgType
+	ExpectedArgTypes    CallEntryExpectedArgTypes
 	ParamSlot           EntryValueParamSlot
 	ParamSlotCount      EntryValueParamSlotCount
 	ParamPath           EntryReferenceParamPath
@@ -635,7 +636,7 @@ func (p CallEntryContextProjection) referenceProjection(callee FuncRef) flow.Ref
 
 func (p CallEntryContextProjection) callbackEntryKeys(site callEntrySite) []Key {
 	var keys []Key
-	for _, callback := range callEntryCallbacks(site, p.ResolveCallback, p.ExpectedArgType, p.ReferenceArgSources.ClosureRefs) {
+	for _, callback := range callEntryCallbacks(site, p.ResolveCallback, p.ExpectedArgTypes, p.ReferenceArgSources.ClosureRefs) {
 		for _, ref := range callback.Refs {
 			emitted := false
 			if callback.HasClosures {
@@ -665,18 +666,18 @@ func (p CallEntryContextProjection) callbackEntryKeys(site callEntrySite) []Key 
 // both come from the same call-boundary frame; splitting them reintroduced two
 // vocabularies for one summary fact.
 type CallEntryPublicationProjection struct {
-	Graph           *cfg.Graph
-	State           state.FunctionState
-	ResolveTargets  CallEntryTargetResolver
-	ResolveCallback CallEntryCallbackResolver
-	ExpectedArgType CallEntryExpectedArgType
-	ParamSlot       EntryValueParamSlot
-	ParamAnnotated  EntryValueParamAnnotated
-	EvalArg         EntryValueEvaluator
-	ParamSlotCount  EntryValueParamSlotCount
-	ParamPath       EntryReferenceParamPath
-	ArgPath         EntryReferenceArgPath
-	ReferencePaths  EntryReferenceProjection
+	Graph            *cfg.Graph
+	State            state.FunctionState
+	ResolveTargets   CallEntryTargetResolver
+	ResolveCallback  CallEntryCallbackResolver
+	ExpectedArgTypes CallEntryExpectedArgTypes
+	ParamSlot        EntryValueParamSlot
+	ParamAnnotated   EntryValueParamAnnotated
+	EvalArg          EntryValueEvaluator
+	ParamSlotCount   EntryValueParamSlotCount
+	ParamPath        EntryReferenceParamPath
+	ArgPath          EntryReferenceArgPath
+	ReferencePaths   EntryReferenceProjection
 }
 
 // Project returns finite caller-to-callee entry-publication summary components.
@@ -773,10 +774,10 @@ func joinCallEntryPublicationFacts(out CallEntryPublications, blocked map[FuncRe
 }
 
 func (p CallEntryPublicationProjection) projectCallbackEntryValues(out CallEntryPublications, site callEntrySite) CallEntryPublications {
-	if p.ExpectedArgType == nil {
+	if p.ExpectedArgTypes == nil {
 		return out
 	}
-	for _, callback := range callEntryCallbacks(site, p.ResolveCallback, p.ExpectedArgType, nil) {
+	for _, callback := range callEntryCallbacks(site, p.ResolveCallback, p.ExpectedArgTypes, nil) {
 		if !callback.HasValues || len(callback.Values) == 0 {
 			continue
 		}
@@ -800,13 +801,15 @@ type callEntryCallback struct {
 func callEntryCallbacks(
 	site callEntrySite,
 	resolve CallEntryCallbackResolver,
-	expected CallEntryExpectedArgType,
+	expected CallEntryExpectedArgTypes,
 	resolveClosures EntryClosureRefArgResolver,
 ) []callEntryCallback {
 	if resolve == nil || site.Call == nil {
 		return nil
 	}
 	var out []callEntryCallback
+	var expectedTypes []typ.Type
+	loadedExpected := false
 	for argIdx, arg := range site.Call.Args {
 		if arg == nil {
 			continue
@@ -817,8 +820,14 @@ func callEntryCallbacks(
 		}
 		callback := callEntryCallback{Refs: refs}
 		if expected != nil {
-			if fn := unwrap.Function(expected(site.Point, site.Info, &site.EventState, argIdx)); fn != nil {
-				callback.Values, callback.HasValues = callbackExpectedEntryValues(fn)
+			if !loadedExpected {
+				expectedTypes = expected(site.Point, site.Info, &site.EventState)
+				loadedExpected = true
+			}
+			if argIdx < len(expectedTypes) {
+				if fn := unwrap.Function(expectedTypes[argIdx]); fn != nil {
+					callback.Values, callback.HasValues = callbackExpectedEntryValues(fn)
+				}
 			}
 		}
 		if resolveClosures != nil {

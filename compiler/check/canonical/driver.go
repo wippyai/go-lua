@@ -1538,7 +1538,7 @@ func (ct callTyper) ProductCallFromValues(call *ast.FuncCallExpr, ctx transfer.P
 	if !ok {
 		return transfer.EmptyProductCallResult()
 	}
-	return frame.result(frame.boundaryOutcome())
+	return frame.productResult()
 }
 
 func (ct callTyper) IterVarProjection(iter *ast.FuncCallExpr, count int, exprType func(ast.Expr) typ.Type) (flow.IteratorVarProjection, bool) {

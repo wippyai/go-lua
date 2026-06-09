@@ -1019,6 +1019,7 @@ func TestCallEntryPublicationProjection_ProjectsCallbackExpectedParams(t *testin
 
 	callbackRef := summary.FuncRef{GraphID: 21}
 	callbackRef2 := summary.FuncRef{GraphID: 31}
+	expectedCalls := 0
 	got := summary.CallEntryPublicationProjection{
 		Graph: graph,
 		State: state.FunctionState{
@@ -1035,11 +1036,9 @@ func TestCallEntryPublicationProjection_ProjectsCallbackExpectedParams(t *testin
 			}
 			return []summary.FuncRef{callbackRef2, callbackRef}, true
 		},
-		ExpectedArgType: func(_ cfg.Point, _ *cfg.CallInfo, _ *flow.PointState, argIdx int) typ.Type {
-			if argIdx != 0 {
-				t.Fatalf("ExpectedArgType index = %d, want 0", argIdx)
-			}
-			return typ.Func().Param("db", typ.String).Build()
+		ExpectedArgTypes: func(_ cfg.Point, _ *cfg.CallInfo, _ *flow.PointState) []typ.Type {
+			expectedCalls++
+			return []typ.Type{typ.Func().Param("db", typ.String).Build()}
 		},
 		ParamSlot: func(summary.FuncRef, *ast.FuncCallExpr, int) (int, int, bool) {
 			return 0, 0, true
@@ -1054,6 +1053,9 @@ func TestCallEntryPublicationProjection_ProjectsCallbackExpectedParams(t *testin
 	}
 	if gotValue, ok := got[callbackRef2].Values[0]; !ok || !typ.TypeEquals(gotValue.ProjectValue(), typ.String) {
 		t.Fatalf("second callback slot 0 = %v/%v, want string", gotValue.ProjectValue(), ok)
+	}
+	if expectedCalls != 1 {
+		t.Fatalf("ExpectedArgTypes calls = %d, want 1", expectedCalls)
 	}
 }
 
@@ -1074,6 +1076,7 @@ func TestCallEntryContextProjection_ProjectsCallbackExpectedParams(t *testing.T)
 	}
 
 	callbackRef := summary.FuncRef{GraphID: 22}
+	expectedCalls := 0
 	keys := summary.CallEntryContextProjection{
 		Graph: graph,
 		State: state.FunctionState{
@@ -1090,11 +1093,9 @@ func TestCallEntryContextProjection_ProjectsCallbackExpectedParams(t *testing.T)
 			}
 			return []summary.FuncRef{callbackRef}, true
 		},
-		ExpectedArgType: func(_ cfg.Point, _ *cfg.CallInfo, _ *flow.PointState, argIdx int) typ.Type {
-			if argIdx != 0 {
-				t.Fatalf("ExpectedArgType index = %d, want 0", argIdx)
-			}
-			return typ.Func().Param("db", typ.Number).Build()
+		ExpectedArgTypes: func(_ cfg.Point, _ *cfg.CallInfo, _ *flow.PointState) []typ.Type {
+			expectedCalls++
+			return []typ.Type{typ.Func().Param("db", typ.Number).Build()}
 		},
 	}.ProjectKeys()
 
@@ -1104,6 +1105,9 @@ func TestCallEntryContextProjection_ProjectsCallbackExpectedParams(t *testing.T)
 	values := keys[0].Values.Values()
 	if got, ok := values[0]; !ok || !typ.TypeEquals(got.ProjectValue(), typ.Number) {
 		t.Fatalf("callback context slot 0 = %v/%v, want number", got.ProjectValue(), ok)
+	}
+	if expectedCalls != 1 {
+		t.Fatalf("ExpectedArgTypes calls = %d, want 1", expectedCalls)
 	}
 }
 
@@ -1140,11 +1144,8 @@ func TestCallEntryContextProjection_ProjectsZeroParamCallbackContext(t *testing.
 			}
 			return []summary.FuncRef{callbackRef}, true
 		},
-		ExpectedArgType: func(_ cfg.Point, _ *cfg.CallInfo, _ *flow.PointState, argIdx int) typ.Type {
-			if argIdx != 1 {
-				return nil
-			}
-			return typ.Func().Build()
+		ExpectedArgTypes: func(_ cfg.Point, _ *cfg.CallInfo, _ *flow.PointState) []typ.Type {
+			return []typ.Type{nil, typ.Func().Build()}
 		},
 	}.ProjectKeys()
 

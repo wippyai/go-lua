@@ -10,9 +10,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/check/canonical/transfer"
 	"github.com/wippyai/go-lua/compiler/check/domain/callobligation"
 	"github.com/wippyai/go-lua/compiler/check/domain/paramevidence"
-	"github.com/wippyai/go-lua/types/contract"
 	"github.com/wippyai/go-lua/types/domain/value/product"
-	"github.com/wippyai/go-lua/types/effect"
 	"github.com/wippyai/go-lua/types/flow"
 	"github.com/wippyai/go-lua/types/typ"
 )
@@ -46,22 +44,18 @@ func (ct callTyper) callBoundaryFrame(call *ast.FuncCallExpr, ctx transfer.Produ
 	}, true
 }
 
-func (p callBoundaryFrame) callReturnValues() ([]product.AbstractValue, bool) {
-	return p.outcome.ReturnValues(canonicalcall.ReturnValueInput{
+func (p callBoundaryFrame) productResult() transfer.ProductCallResult {
+	values, ok := p.outcome.ReturnValues(canonicalcall.ReturnValueInput{
 		Call:                 p.site.call,
 		TypePolicyAvailable:  p.typer.d.cfg.Types != nil,
 		PendingInput:         p.ctx.PendingInput,
 		BlockDynamicFallback: p.outcome.HasTargets() && !p.outcome.HasInformativeReturnValues(),
 		ExprValue:            p.ctx.ExprValue,
 	})
-}
-
-func (p callBoundaryFrame) result(boundary transfer.BoundaryOutcome) transfer.ProductCallResult {
-	values, ok := p.callReturnValues()
 	return transfer.ProductCallResult{
 		ReturnValues:    values,
 		HasReturnValues: ok,
-		Boundary:        boundary,
+		Boundary:        p.boundaryOutcome(),
 	}
 }
 
@@ -214,17 +208,6 @@ func (p callBoundaryFrame) expectedCalleeType(expr ast.Expr) typ.Type {
 	return nil
 }
 
-func (p callBoundaryFrame) expectedArgType(info *cfg.CallInfo, forceMethodReceiver bool, argIdx int) typ.Type {
-	if argIdx < 0 {
-		return nil
-	}
-	evidence, ok := p.expectedArgEvidence(info, forceMethodReceiver)
-	if !ok || argIdx >= len(evidence.Args) {
-		return nil
-	}
-	return evidence.Args[argIdx]
-}
-
 func (p callBoundaryFrame) contractEvidence() (api.CallContractEvidence, bool) {
 	demands := p.callArgDemands()
 	if len(demands) == 0 {
@@ -246,7 +229,7 @@ func (p callBoundaryFrame) boundaryOutcome() transfer.BoundaryOutcome {
 		CellEffects:         p.outcome.CellEffects(cellEffects),
 		ReceiverEffects:     p.outcome.ReceiverEffects(),
 		BoundaryFacts:       p.outcome.BoundaryFacts(),
-		ElementUnions:       p.containerElementUnions(),
+		ElementUnions:       p.outcome.ContainerElementUnions(),
 		ArgDemands:          cloneCallArgDemands(p.callArgDemands()),
 		NeverReturns: p.outcome.NeverReturns(func(ref summary.FuncRef) bool {
 			return p.typer.d.activeProgram.facts.HasNoReturn(ref)
@@ -292,7 +275,7 @@ func (p callBoundaryFrame) cellEffectAggregation() (summary.CellEffectAggregatio
 	}
 	callbackRefs := callEntry.productCallbackRefs(p.site.call, p.ctx)
 	return summary.CellEffectAggregation{
-		CallbackSpec: p.callbackSpec(),
+		CallbackSpec: p.outcome.CallbackSpec(),
 		CallbackArgs: p.site.call.Args,
 		MethodCall:   p.site.call.Method != "",
 		ResolveCallback: func(arg ast.Expr) ([]summary.FuncRef, bool) {
@@ -304,14 +287,6 @@ func (p callBoundaryFrame) cellEffectAggregation() (summary.CellEffectAggregatio
 			return p.effectsForRef(ref, entryValues, evidence.Facts)
 		},
 	}, true
-}
-
-func (p callBoundaryFrame) callbackSpec() *contract.Spec {
-	return p.outcome.CallbackSpec()
-}
-
-func (p callBoundaryFrame) containerElementUnions() []effect.ContainerElementUnion {
-	return p.outcome.ContainerElementUnions()
 }
 
 func (p callBoundaryFrame) effectsForRef(
