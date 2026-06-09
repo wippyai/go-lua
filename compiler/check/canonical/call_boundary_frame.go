@@ -3,14 +3,12 @@ package canonical
 import (
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/cfg"
-	"github.com/wippyai/go-lua/compiler/check/api"
 	"github.com/wippyai/go-lua/compiler/check/callsite"
 	canonicalcall "github.com/wippyai/go-lua/compiler/check/canonical/call"
 	"github.com/wippyai/go-lua/compiler/check/canonical/summary"
 	"github.com/wippyai/go-lua/compiler/check/canonical/transfer"
 	"github.com/wippyai/go-lua/compiler/check/domain/callobligation"
 	"github.com/wippyai/go-lua/compiler/check/domain/paramevidence"
-	"github.com/wippyai/go-lua/types/domain/value/product"
 	"github.com/wippyai/go-lua/types/flow"
 	"github.com/wippyai/go-lua/types/typ"
 )
@@ -149,9 +147,16 @@ func (p callBoundaryFrame) callerVisibleContracts(prog *program, ref summary.Fun
 	return paramevidence.ContractDomain.Join(aggregate, exact)
 }
 
-func (p callBoundaryFrame) expectedArgEvidence(info *cfg.CallInfo, forceMethodReceiver bool) (api.CallExpectedArgEvidence, bool) {
+func (p callBoundaryFrame) expectation(info *cfg.CallInfo, forceMethodReceiver bool) canonicalcall.CallExpectation {
+	return canonicalcall.CallExpectationOf(
+		p.expectationArgTypes(info, forceMethodReceiver),
+		p.callArgDemands(),
+	)
+}
+
+func (p callBoundaryFrame) expectationArgTypes(info *cfg.CallInfo, forceMethodReceiver bool) []typ.Type {
 	if info == nil || info.Call == nil || len(info.Call.Args) == 0 {
-		return api.CallExpectedArgEvidence{}, false
+		return nil
 	}
 	expectedArgs := p.site.expectedArgProjection()
 	expectedArgs.ShallowFuncLiterals = true
@@ -176,9 +181,9 @@ func (p callBoundaryFrame) expectedArgEvidence(info *cfg.CallInfo, forceMethodRe
 		any = true
 	}
 	if !any {
-		return api.CallExpectedArgEvidence{}, false
+		return nil
 	}
-	return api.NewCallExpectedArgEvidence(args), true
+	return args
 }
 
 func (p callBoundaryFrame) expectedCalleeType(expr ast.Expr) typ.Type {
@@ -186,14 +191,6 @@ func (p callBoundaryFrame) expectedCalleeType(expr ast.Expr) typ.Type {
 		if ref, ok := p.typer.targetResolver(p.typer.d.activeProgram).ResolveStaticCall(p.site.call); ok {
 			if sig := p.typer.d.signatureForRef(p.typer.d.activeProgram, ref); sig != nil {
 				return sig
-			}
-		}
-	}
-	if nested, ok := expr.(*ast.FuncCallExpr); ok && nested != nil && p.site.nestedCall != nil {
-		result := p.typer.ProductCallFromValues(nested, p.site.nestedCall(nested))
-		if result.HasReturnValues && len(result.ReturnValues) > 0 {
-			if t := product.ProjectValueOrUnknown(result.ReturnValues[0]); t != nil && !typ.IsAbsentOrUnknown(t) {
-				return t
 			}
 		}
 	}
@@ -208,19 +205,12 @@ func (p callBoundaryFrame) expectedCalleeType(expr ast.Expr) typ.Type {
 	return nil
 }
 
-func (p callBoundaryFrame) contractEvidence() (api.CallContractEvidence, bool) {
-	demands := p.callArgDemands()
-	if len(demands) == 0 {
-		return api.CallContractEvidence{}, false
-	}
-	return api.NewCallContractEvidence(demands), true
-}
-
 func (p callBoundaryFrame) boundaryOutcome() transfer.BoundaryOutcome {
 	cellEffects, ok := p.cellEffectAggregation()
 	if !ok {
 		cellEffects = summary.CellEffectAggregation{}
 	}
+	expectation := canonicalcall.CallExpectationOf(nil, p.callArgDemands())
 	postconditions := p.returnPostconditions()
 	return transfer.BoundaryOutcome{
 		ReturnRefs:          p.outcome.ReturnRefs(),
@@ -230,7 +220,7 @@ func (p callBoundaryFrame) boundaryOutcome() transfer.BoundaryOutcome {
 		ReceiverEffects:     p.outcome.ReceiverEffects(),
 		BoundaryFacts:       p.outcome.BoundaryFacts(),
 		ElementUnions:       p.outcome.ContainerElementUnions(),
-		ArgDemands:          cloneCallArgDemands(p.callArgDemands()),
+		ArgDemands:          expectation.CloneArgDemands(),
 		NeverReturns: p.outcome.NeverReturns(func(ref summary.FuncRef) bool {
 			return p.typer.d.activeProgram.facts.HasNoReturn(ref)
 		}),
@@ -257,15 +247,6 @@ func (p callBoundaryFrame) callerVisibleReturnRelations(exact flow.ReturnRelatio
 	// Exact entry summaries specialize a call context, but caller-visible
 	// return relations proved by the aggregate summary remain valid body facts.
 	return flow.MergeReturnRelationProofs(aggregate, exact)
-}
-
-func cloneCallArgDemands(in []callobligation.Obligation) []callobligation.Obligation {
-	if len(in) == 0 {
-		return nil
-	}
-	out := make([]callobligation.Obligation, len(in))
-	copy(out, in)
-	return out
 }
 
 func (p callBoundaryFrame) cellEffectAggregation() (summary.CellEffectAggregation, bool) {

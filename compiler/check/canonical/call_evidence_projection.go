@@ -4,6 +4,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/api"
 	"github.com/wippyai/go-lua/compiler/check/callsite"
+	canonicalcall "github.com/wippyai/go-lua/compiler/check/canonical/call"
 	"github.com/wippyai/go-lua/compiler/check/canonical/state"
 	"github.com/wippyai/go-lua/compiler/check/canonical/summary"
 	"github.com/wippyai/go-lua/compiler/check/canonical/transfer"
@@ -59,18 +60,18 @@ func (p solvedCallEvidenceProjection) project() solvedCallEdgeEvidence {
 			continue
 		}
 		if ps, ok := callEventPointState(p.state, ev.Point); ok {
-			expected, hasExpected := p.expectedEvidenceForCall(ct, ev.Point, info, &ps)
-			if hasExpected {
+			expectation, ok := p.expectationForCall(ct, ev.Point, info, &ps)
+			if !ok {
+				continue
+			}
+			if expected, hasExpected := apiExpectedArgsFromExpectation(expectation); hasExpected {
 				if out.ExpectedArgs == nil {
 					out.ExpectedArgs = make([]api.CallExpectedArgEvidence, len(p.evidence.Calls))
 				}
 				out.ExpectedArgs[i] = expected
 			}
-		}
-		if ps, ok := callEventPointState(p.state, ev.Point); ok {
 			_, hasPostState := p.state.Points[ev.Point]
-			contracts, hasContracts := p.contractEvidenceForCall(ct, ev.Point, info, &ps)
-			if hasPostState && hasContracts {
+			if contracts, hasContracts := apiContractsFromExpectation(expectation); hasPostState && hasContracts {
 				if out.Contracts == nil {
 					out.Contracts = make([]api.CallContractEvidence, len(p.evidence.Calls))
 				}
@@ -81,38 +82,35 @@ func (p solvedCallEvidenceProjection) project() solvedCallEdgeEvidence {
 	return out
 }
 
-func (p solvedCallEvidenceProjection) expectedEvidenceForCall(
+func (p solvedCallEvidenceProjection) expectationForCall(
 	ct callTyper,
 	point cfg.Point,
 	info *cfg.CallInfo,
 	ps *flow.PointState,
-) (api.CallExpectedArgEvidence, bool) {
+) (canonicalcall.CallExpectation, bool) {
 	if info == nil || info.Call == nil || ps == nil {
-		return api.CallExpectedArgEvidence{}, false
+		return canonicalcall.CallExpectation{}, false
 	}
 	ctx := p.transfer.ProductCallContext(ps, info.Call)
 	frame, ok := ct.callBoundaryFrame(info.Call, ctx, productCallOutcomeOptions{})
 	if !ok {
-		return api.CallExpectedArgEvidence{}, false
+		return canonicalcall.CallExpectation{}, false
 	}
-	return frame.expectedArgEvidence(info, p.forceMethodReceiver(point, info))
+	return frame.expectation(info, p.forceMethodReceiver(point, info)), true
 }
 
-func (p solvedCallEvidenceProjection) contractEvidenceForCall(
-	ct callTyper,
-	_ cfg.Point,
-	info *cfg.CallInfo,
-	ps *flow.PointState,
-) (api.CallContractEvidence, bool) {
-	if info == nil || info.Call == nil || ps == nil {
+func apiExpectedArgsFromExpectation(expectation canonicalcall.CallExpectation) (api.CallExpectedArgEvidence, bool) {
+	if !expectation.HasExpectedArgs() {
+		return api.CallExpectedArgEvidence{}, false
+	}
+	return api.NewCallExpectedArgEvidence(expectation.CloneExpectedArgs()), true
+}
+
+func apiContractsFromExpectation(expectation canonicalcall.CallExpectation) (api.CallContractEvidence, bool) {
+	if !expectation.HasArgDemands() {
 		return api.CallContractEvidence{}, false
 	}
-	ctx := p.transfer.ProductCallContext(ps, info.Call)
-	frame, ok := ct.callBoundaryFrame(info.Call, ctx, productCallOutcomeOptions{})
-	if !ok {
-		return api.CallContractEvidence{}, false
-	}
-	return frame.contractEvidence()
+	return api.NewCallContractEvidence(expectation.CloneArgDemands()), true
 }
 
 func (p solvedCallEvidenceProjection) forceMethodReceiver(point cfg.Point, info *cfg.CallInfo) bool {

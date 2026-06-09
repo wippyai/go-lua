@@ -7,7 +7,7 @@ import (
 	"github.com/wippyai/go-lua/types/typ"
 )
 
-func (c callEntryProjector) expectedArgTypes(point cfg.Point, info *cfg.CallInfo, in *flow.PointState) []typ.Type {
+func (c callEntryProjector) expectationArgTypes(point cfg.Point, info *cfg.CallInfo, in *flow.PointState) []typ.Type {
 	if c.program == nil || c.program.driver == nil || c.graph == nil || c.transfer == nil || info == nil || info.Call == nil || in == nil {
 		return nil
 	}
@@ -15,11 +15,7 @@ func (c callEntryProjector) expectedArgTypes(point cfg.Point, info *cfg.CallInfo
 	if !ok {
 		return nil
 	}
-	evidence, ok := frame.expectedArgEvidence(info, c.forceMethodReceiver(point, info))
-	if !ok {
-		return nil
-	}
-	return append([]typ.Type(nil), evidence.Args...)
+	return frame.expectation(info, c.forceMethodReceiver(point, info)).CloneExpectedArgs()
 }
 
 func (c callEntryProjector) forceMethodReceiver(point cfg.Point, info *cfg.CallInfo) bool {
