@@ -42,6 +42,21 @@ func (t *Transfer) exprValueResolver(
 	}
 }
 
+// resolveExprType resolves an expression's value type against the live Env for
+// callee, receiver, and iterator-source resolution. It projects determined
+// product values and falls back to gradual any only for genuinely gradual
+// expression sources.
+func (t *Transfer) resolveExprType(
+	out *flow.PointState,
+	e ast.Expr,
+	demand func(int, paramevidence.ParamContract),
+) typ.Type {
+	if e == nil {
+		return typ.Unknown
+	}
+	return t.exprTypeResolver(t.exprValueResolver(out, demand))(e)
+}
+
 func (t *Transfer) projectExprTypeResolver(out *flow.PointState) func(ast.Expr) typ.Type {
 	return t.exprTypeResolver(t.projectExprValueResolver(out))
 }

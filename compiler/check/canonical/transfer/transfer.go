@@ -3212,25 +3212,6 @@ func (t *Transfer) gradualAnySource(out *flow.PointState, expr ast.Expr) bool {
 	}
 }
 
-// resolveExprType resolves an expression's value type against the live Env for the
-// driver's callee/receiver/iterator-source resolution. It projects a determined
-// value, and otherwise falls back to gradual `any` for a read of an unannotated
-// parameter (the same gradual-source projection operandType applies): an
-// unannotated parameter is a genuinely-gradual source, so a callee/iterator over it
-// is gradual `any`, not strict unknown. It returns the value-domain unknown when no
-// value resolves and the expression is not a gradual-parameter read, so the driver
-// falls back to its module-wide signatures and globals.
-func (t *Transfer) resolveExprType(
-	out *flow.PointState,
-	e ast.Expr,
-	demand func(int, paramevidence.ParamContract),
-) typ.Type {
-	if e == nil {
-		return typ.Unknown
-	}
-	return t.exprTypeResolver(t.exprValueResolver(out, demand))(e)
-}
-
 func (t *Transfer) resolveExprValue(
 	out *flow.PointState,
 	e ast.Expr,
