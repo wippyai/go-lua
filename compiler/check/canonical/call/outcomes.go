@@ -55,14 +55,6 @@ func (o CallOutcome) HasInformativeReturnValues() bool {
 	return informativeReturnValues(o.InferredReturnValues())
 }
 
-// InferredReturnTypes projects selected summary returns to the type surface.
-func (o CallOutcome) InferredReturnTypes() []typ.Type {
-	if !o.HasTargets() {
-		return nil
-	}
-	return o.Projection.InferredReturnTypes()
-}
-
 // ReturnValues projects the caller-visible product return tuple from the single
 // selected outcome. Summary results remain authoritative, while builtin/type
 // fallback is already materialized in the fallback outcome instead of being

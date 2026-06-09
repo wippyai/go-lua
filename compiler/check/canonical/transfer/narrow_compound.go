@@ -47,13 +47,6 @@ func (t *Transfer) narrowByCompound(point cfg.Point, out flow.PointState, info *
 	return state, applied
 }
 
-// narrowOrUnionTrueEdge narrows the TRUE edge of `A or B` when both operands are
-// guards on the SAME tested value: at least one operand holds, so the value is the
-// UNION of each operand's narrowing.
-func (t *Transfer) narrowOrUnionTrueEdge(out flow.PointState, logical *ast.LogicalOpExpr) (flow.PointState, bool) {
-	return t.narrowOrUnionTrueEdgeAtPoint(0, out, logical)
-}
-
 func (t *Transfer) narrowOrUnionTrueEdgeAtPoint(point cfg.Point, out flow.PointState, logical *ast.LogicalOpExpr) (flow.PointState, bool) {
 	return t.narrowSameValueUnion(point, out,
 		operandGuard{expr: logical.Lhs, truthy: true},

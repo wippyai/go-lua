@@ -91,8 +91,3 @@ func testStaticMemberValue(t *testing.T, facts flow.StaticMemberFacts, sym cfg.S
 	t.Helper()
 	return facts.ValueAtAddress(testStaticMemberAddress(t, sym, segs))
 }
-
-func testStaticMemberValueKey(t *testing.T, facts flow.StaticMemberFacts, key constraint.PathKey) (product.AbstractValue, bool) {
-	t.Helper()
-	return facts.ValueAtAddress(testStaticMemberAddressKey(t, key))
-}

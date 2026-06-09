@@ -90,27 +90,6 @@ func (p Projector) admitGradualAssignmentSource(t typ.Type, source ast.Expr, poi
 	return t
 }
 
-// sourceAnyIsGradualTop reports whether a source observed as `any` is the
-// gradual top admissible at a CONSISTENCY boundary (assignment to a typed local,
-// return, call argument), rather than an `any` the boundary check must still flag.
-//
-// The preferred proof is the product-valued path observation boundary, which
-// reads the product carrier's evidence axis without splitting root and member
-// reads at the caller. That distinguishes a gradual `any` introduced by an
-// unannotated source from a strict declared `any`, even though both project to
-// typ.Any. Product evidence is authoritative when present; the unannotated-
-// parameter root check is only a compatibility fallback for flow surfaces that
-// do not yet expose product facts.
-//
-// This relation gates CONSISTENCY boundaries only. A WRITE into a typed container's
-// element slot (a structured index-write target) is a store into invariant
-// container state, not a boundary coercion: its element-domain obligation is gated
-// by the strict source type (see checkStructuredAssignmentTarget's strict source
-// projection).
-func (p Projector) sourceAnyIsGradualTop(source ast.Expr, point cfg.Point) bool {
-	return p.exprIsGradualTop(source, point)
-}
-
 // AssignmentSourceTableCheck validates a table literal through the same
 // assignment-source boundary as AssignmentSourceType. Self-referential writes
 // therefore observe the RHS in the point-entry state for both value projection

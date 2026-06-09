@@ -278,14 +278,6 @@ func callArgEntryType(resolve func(slot int) typ.Type, slot int) typ.Type {
 	return informativeOrNil(resolve(slot))
 }
 
-func callArgContractType(contracts Contracts, slot int) typ.Type {
-	contract := callArgContract(contracts, slot)
-	if ParamContractDomain.Equal(contract, ParamContractDomain.Bottom()) {
-		return nil
-	}
-	return informativeOrNil(contract.ProjectValue())
-}
-
 func callArgContract(contracts Contracts, slot int) ParamContract {
 	if slot < 0 || len(contracts) == 0 {
 		return ParamContractDomain.Bottom()
@@ -295,10 +287,6 @@ func callArgContract(contracts Contracts, slot int) ParamContract {
 		return ParamContractDomain.Bottom()
 	}
 	return contract
-}
-
-func mergeCallArgContracts(declared, contract typ.Type) typ.Type {
-	return mergeCallArgObligations(declared, DemandFromType(contract), nil).Type
 }
 
 func mergeCallArgObligations(declared typ.Type, contract ParamContract, entry typ.Type) callobligation.Obligation {

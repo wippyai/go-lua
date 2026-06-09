@@ -7,17 +7,6 @@ import (
 	"github.com/wippyai/go-lua/types/typ"
 )
 
-func refinedStr(refined, base typ.Type) string {
-	switch {
-	case refined == nil:
-		return "<nil>"
-	case refined == base:
-		return "<UNCHANGED>"
-	default:
-		return refined.String()
-	}
-}
-
 // narrow.go is the path-sensitive narrowing of the flow: the per-edge
 // refinement a branch guard proves about its tested value, expressed directly
 // over PointState by reusing the same value-domain narrowing primitives:

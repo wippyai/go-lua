@@ -64,10 +64,6 @@ func JoinFacts(prev, next api.Facts) api.Facts {
 	return out
 }
 
-func canonicalInterprocValueType(t typ.Type) typ.Type {
-	return canonicalInterprocValueTypeWith(value.NewConvergenceWidening(), t)
-}
-
 func canonicalInterprocValueTypeWith(widening *value.ConvergenceWidening, t typ.Type) typ.Type {
 	if t == nil {
 		return nil
@@ -76,10 +72,6 @@ func canonicalInterprocValueTypeWith(widening *value.ConvergenceWidening, t typ.
 		return widening.Function(fn)
 	}
 	return widening.Type(t)
-}
-
-func mergeInterprocValueType(existing, candidate typ.Type) typ.Type {
-	return mergeInterprocValueTypeWith(value.NewConvergenceWidening(), existing, candidate)
 }
 
 func mergeInterprocValueTypeWith(widening *value.ConvergenceWidening, existing, candidate typ.Type) typ.Type {
@@ -150,10 +142,6 @@ func widenLiteralSigsWith(widening *value.ConvergenceWidening, prev, next api.Li
 	return merged
 }
 
-func normalizeLiteralSigs(sigs api.LiteralSigs) api.LiteralSigs {
-	return normalizeLiteralSigsWith(value.NewConvergenceWidening(), sigs)
-}
-
 func normalizeLiteralSigsWith(widening *value.ConvergenceWidening, sigs api.LiteralSigs) api.LiteralSigs {
 	if sigs == nil {
 		return nil
@@ -163,11 +151,6 @@ func normalizeLiteralSigsWith(widening *value.ConvergenceWidening, sigs api.Lite
 		out[fn] = widening.Function(sig)
 	}
 	return out
-}
-
-// JoinLiteralSigs merges literal signatures precisely inside one iteration.
-func JoinLiteralSigs(prev, next api.LiteralSigs) api.LiteralSigs {
-	return joinLiteralSigsWith(value.NewConvergenceWidening(), prev, next)
 }
 
 func joinLiteralSigsWith(widening *value.ConvergenceWidening, prev, next api.LiteralSigs) api.LiteralSigs {
@@ -289,10 +272,6 @@ func JoinCapturedTypes(prev, next api.CapturedTypes) api.CapturedTypes {
 	return merged
 }
 
-func mergeCapturedType(existing, candidate typ.Type) typ.Type {
-	return mergeCapturedTypeWith(value.NewConvergenceWidening(), existing, candidate)
-}
-
 func mergeCapturedTypeWith(widening *value.ConvergenceWidening, existing, candidate typ.Type) typ.Type {
 	existing = canonicalInterprocValueTypeWith(widening, existing)
 	candidate = canonicalInterprocValueTypeWith(widening, candidate)
@@ -380,10 +359,6 @@ func widenCapturedFieldAssignsWith(widening *value.ConvergenceWidening, prev, ne
 	return merged
 }
 
-func normalizeCapturedTypes(types api.CapturedTypes) api.CapturedTypes {
-	return normalizeCapturedTypesWith(value.NewConvergenceWidening(), types)
-}
-
 func normalizeCapturedTypesWith(widening *value.ConvergenceWidening, types api.CapturedTypes) api.CapturedTypes {
 	if types == nil {
 		return nil
@@ -406,10 +381,6 @@ func normalizeCapturedTypesForJoin(types api.CapturedTypes) api.CapturedTypes {
 	return out
 }
 
-func normalizeCapturedFieldAssigns(fields api.CapturedFieldAssigns) api.CapturedFieldAssigns {
-	return normalizeCapturedFieldAssignsWith(value.NewConvergenceWidening(), fields)
-}
-
 func normalizeCapturedFieldAssignsWith(widening *value.ConvergenceWidening, fields api.CapturedFieldAssigns) api.CapturedFieldAssigns {
 	if fields == nil {
 		return nil
@@ -419,10 +390,6 @@ func normalizeCapturedFieldAssignsWith(widening *value.ConvergenceWidening, fiel
 		out[callee] = normalizeCapturedFieldSymbolMapWith(widening, fields[callee])
 	}
 	return out
-}
-
-func normalizeCapturedFieldSymbolMap(fieldsBySym map[cfg.SymbolID]FieldValues) map[cfg.SymbolID]FieldValues {
-	return normalizeCapturedFieldSymbolMapWith(value.NewConvergenceWidening(), fieldsBySym)
 }
 
 func normalizeCapturedFieldSymbolMapWith(widening *value.ConvergenceWidening, fieldsBySym map[cfg.SymbolID]FieldValues) map[cfg.SymbolID]FieldValues {
@@ -543,10 +510,6 @@ func widenConstructorFieldsWith(widening *value.ConvergenceWidening, prev, next 
 	return merged
 }
 
-func normalizeConstructorFields(fields api.ConstructorFields) api.ConstructorFields {
-	return normalizeConstructorFieldsWith(value.NewConvergenceWidening(), fields)
-}
-
 func normalizeConstructorFieldsWith(widening *value.ConvergenceWidening, fields api.ConstructorFields) api.ConstructorFields {
 	if fields == nil {
 		return nil
@@ -556,10 +519,6 @@ func normalizeConstructorFieldsWith(widening *value.ConvergenceWidening, fields 
 		out[sym] = normalizeConstructorFieldMapWith(widening, fields[sym])
 	}
 	return out
-}
-
-func normalizeConstructorFieldMap(fields FieldValues) FieldValues {
-	return normalizeConstructorFieldMapWith(value.NewConvergenceWidening(), fields)
 }
 
 func normalizeConstructorFieldMapWith(widening *value.ConvergenceWidening, fields FieldValues) FieldValues {

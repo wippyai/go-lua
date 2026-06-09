@@ -1045,22 +1045,6 @@ func (t *Transfer) pendingUnannotatedParamSource(out *flow.PointState, src ast.E
 	return t.exprUsesPendingUnannotatedParam(out, src)
 }
 
-func (t *Transfer) sourceRootSymbol(src ast.Expr) cfg.SymbolID {
-	switch e := src.(type) {
-	case *ast.IdentExpr:
-		return t.symbolOf(e)
-	case *ast.AttrGetExpr:
-		return t.sourceRootSymbol(e.Object)
-	case *ast.FuncCallExpr:
-		if e.Method != "" {
-			return t.sourceRootSymbol(e.Receiver)
-		}
-		return t.sourceRootSymbol(e.Func)
-	default:
-		return 0
-	}
-}
-
 func (t *Transfer) exprUsesPendingUnannotatedParam(out *flow.PointState, expr ast.Expr) bool {
 	switch e := expr.(type) {
 	case nil:
@@ -1844,30 +1828,6 @@ func staticIndexSegment(key ast.Expr) (constraint.Segment, bool) {
 	default:
 		return constraint.Segment{}, false
 	}
-}
-
-func staticIndexSegmentFromValue(av product.AbstractValue) (constraint.Segment, bool) {
-	t := av.ProjectValue()
-	return staticIndexSegmentFromType(t)
-}
-
-func staticIndexSegmentFromType(t typ.Type) (constraint.Segment, bool) {
-	switch v := unwrap.Alias(t).(type) {
-	case *typ.Annotated:
-		return staticIndexSegmentFromType(v.Inner)
-	case *typ.Literal:
-		switch v.Base {
-		case kind.String:
-			if s, ok := v.Value.(string); ok {
-				return constraint.Segment{Kind: constraint.SegmentIndexString, Name: s}, true
-			}
-		case kind.Integer:
-			if i, ok := v.Value.(int64); ok {
-				return constraint.Segment{Kind: constraint.SegmentIndexInt, Index: int(i)}, true
-			}
-		}
-	}
-	return constraint.Segment{}, false
 }
 
 // applyNumericFor types the control variable of a numeric for-loop
@@ -2880,10 +2840,6 @@ func (t *Transfer) demandParamCtx(expr ast.Expr, ctx typ.Type, demand func(int, 
 	}
 }
 
-func stringableContextType() typ.Type {
-	return typ.NewUnion(typ.String, typ.Number)
-}
-
 func lengthContextType() typ.Type {
 	return typ.NewUnion(
 		typ.String,
@@ -2892,21 +2848,6 @@ func lengthContextType() typ.Type {
 		typ.NewReadonlyMap(typ.Any, typ.Any),
 		typ.NewRecord().SetOpen(true).Build(),
 	)
-}
-
-func orderableContextType() typ.Type {
-	return typ.NewUnion(typ.String, typ.Number)
-}
-
-func orderedComparisonContexts(left, right typ.Type) (typ.Type, typ.Type) {
-	if family := concreteOrderFamily(right); family != nil {
-		return family, family
-	}
-	if family := concreteOrderFamily(left); family != nil {
-		return family, family
-	}
-	orderable := orderableContextType()
-	return orderable, orderable
 }
 
 func (t *Transfer) demandOrderedComparisonCtx(

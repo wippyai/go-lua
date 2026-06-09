@@ -759,14 +759,6 @@ func (p Projector) directBodyContractPathType(path constraint.Path) typ.Type {
 	return p.typeAtSegments(base, path.Segments)
 }
 
-func (p Projector) pathIsBodyContractSeed(point cfg.Point, path constraint.Path, expected typ.Type) bool {
-	if path.IsEmpty() || path.Symbol == 0 || expected == nil {
-		return false
-	}
-	contractPathType := p.bodyContractPathTypeAtPath(point, path)
-	return !typ.IsAbsentOrUnknown(contractPathType) && subtype.IsSubtype(contractPathType, expected)
-}
-
 func (p Projector) conditionBodyContractSeedType(point cfg.Point, path constraint.Path, seed typ.Type) typ.Type {
 	if typ.IsAbsentOrUnknown(seed) || path.IsEmpty() {
 		return seed
@@ -891,20 +883,6 @@ func productValueIsGradualTop(pv flow.ProductValue) bool {
 // compatibility.
 func (p Projector) AdmitGradualArgument(t typ.Type, arg ast.Expr, point cfg.Point, expected typ.Type) typ.Type {
 	return t
-}
-
-func (p Projector) exprIsGradualCallArg(expr ast.Expr, point cfg.Point) bool {
-	path := p.pathOfExpr(expr, point)
-	if path.IsEmpty() || path.Symbol == 0 {
-		return false
-	}
-	if p.isUnannotatedParamSymbol(path.Symbol) {
-		return true
-	}
-	if gradual, ok := p.productGradualTopAt(point, path); ok {
-		return gradual
-	}
-	return false
 }
 
 // SourceReadIsNonIndexable reports whether the source expression is an attribute
@@ -1936,21 +1914,4 @@ func firstType(types []typ.Type) typ.Type {
 		return typ.Unknown
 	}
 	return types[0]
-}
-
-func addRecordField(builder *typ.RecordBuilder, name string, ft typ.Type) {
-	if builder == nil || name == "" {
-		return
-	}
-	if ft == nil {
-		ft = typ.Unknown
-	}
-	if inner, optional := typ.SplitNilableFieldType(ft); optional {
-		builder.OptField(name, inner)
-		return
-	}
-	if lit, ok := ft.(*typ.Literal); ok && lit.Base != kind.String && lit.Base != kind.Boolean {
-		ft = value.AdmitObservation(ft)
-	}
-	builder.Field(name, ft)
 }
