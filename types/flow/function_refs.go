@@ -274,6 +274,39 @@ func ResetCanonicalFunctionRefsKeys() {
 // FunctionRefsDomain is the pointwise finite-map lattice for closure identities.
 var FunctionRefsDomain = latticeproduct.MapLattice[constraint.PathKey](FunctionRefSetDomain)
 
+// FunctionRefsOf returns the function-ref axis carried by state.
+func FunctionRefsOf(state PointState) FunctionRefs {
+	return state.FunctionRefs
+}
+
+// FunctionRefsOfPoint returns the function-ref axis carried by state. Nil
+// points represent an empty reference store.
+func FunctionRefsOfPoint(state *PointState) FunctionRefs {
+	if state == nil {
+		return FunctionRefsDomain.Bottom()
+	}
+	return state.FunctionRefs
+}
+
+// FunctionRefAtPointAddress returns the identity set for addr in state.
+func FunctionRefAtPointAddress(state *PointState, addr StableAddress) (FunctionRefSet, bool) {
+	return FunctionRefAtAddress(FunctionRefsOfPoint(state), addr)
+}
+
+// FunctionRefAtPointPath returns the identity set for path in state.
+func FunctionRefAtPointPath(state *PointState, path constraint.Path) (FunctionRefSet, bool) {
+	return FunctionRefAtPath(FunctionRefsOfPoint(state), path)
+}
+
+func updateFunctionRefs(state *PointState, update func(FunctionRefs) FunctionRefs) bool {
+	if state == nil || update == nil {
+		return false
+	}
+	before := state.FunctionRefs
+	state.FunctionRefs = update(state.FunctionRefs)
+	return !FunctionRefsDomain.Equal(before, state.FunctionRefs)
+}
+
 // FunctionRefAtAddress returns the identity set for addr.
 func FunctionRefAtAddress(refs FunctionRefs, addr StableAddress) (FunctionRefSet, bool) {
 	if len(refs) == 0 || addr.Key() == "" {

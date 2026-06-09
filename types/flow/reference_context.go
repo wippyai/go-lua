@@ -94,7 +94,7 @@ func ReferenceContextFromPoint(point *PointState) ReferenceContext {
 	if point == nil {
 		return ReferenceContextOf(CaptureCellsDomain.Bottom(), FunctionRefsDomain.Bottom(), ClosureRefsDomain.Bottom())
 	}
-	return ReferenceContextOf(point.Cells, point.FunctionRefs, point.ClosureRefs)
+	return ReferenceContextOf(CaptureCellsOfPoint(point), FunctionRefsOfPoint(point), ClosureRefsOfPoint(point))
 }
 
 // ReferenceContextWithStaticMembersFromPoint extracts the live reference store
@@ -106,7 +106,7 @@ func ReferenceContextWithStaticMembersFromPoint(point *PointState) ReferenceCont
 	if point == nil {
 		return ReferenceContextOf(CaptureCellsDomain.Bottom(), FunctionRefsDomain.Bottom(), ClosureRefsDomain.Bottom())
 	}
-	return ReferenceContextOf(point.Cells.WithStaticMembers(StaticMembersOfPoint(point)), point.FunctionRefs, point.ClosureRefs)
+	return ReferenceContextOf(CaptureCellsOfPoint(point).WithStaticMembers(StaticMembersOfPoint(point)), FunctionRefsOfPoint(point), ClosureRefsOfPoint(point))
 }
 
 // MergeReferenceContextWithFixed combines caller-provided fixed reference

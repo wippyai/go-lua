@@ -47,6 +47,59 @@ func CaptureEffectsIdentity() CaptureEffects {
 	return CaptureEffects{}
 }
 
+// CellEffectsOfPoint returns the caller-visible cell-effect axis carried by
+// state.
+func CellEffectsOfPoint(state *PointState) CaptureEffects {
+	if state == nil {
+		return CaptureEffectsDomain.Bottom()
+	}
+	return state.CellEffects
+}
+
+// CellEffectsAxisIsBottom reports whether the cell-effect axis is unreachable.
+func CellEffectsAxisIsBottom(state *PointState) bool {
+	return state == nil || state.CellEffects.IsBottom()
+}
+
+// LiftCellEffectsEntry turns the unreachable entry seed into the reachable
+// identity element for the caller-visible cell-effect axis.
+func LiftCellEffectsEntry(state *PointState) bool {
+	if state == nil || !state.CellEffects.IsBottom() {
+		return false
+	}
+	state.CellEffects = CaptureEffectsIdentity()
+	return true
+}
+
+func updateCellEffects(state *PointState, update func(CaptureEffects) CaptureEffects) bool {
+	if state == nil || update == nil {
+		return false
+	}
+	before := state.CellEffects
+	state.CellEffects = update(state.CellEffects)
+	return !CaptureEffectsDomain.Equal(before, state.CellEffects)
+}
+
+// RecordCellEffects composes caller-visible captured-cell effects into state.
+func RecordCellEffects(state *PointState, effects CaptureEffects) bool {
+	if CaptureEffectsDomain.Equal(effects, CaptureEffectsDomain.Bottom()) {
+		return false
+	}
+	return updateCellEffects(state, func(current CaptureEffects) CaptureEffects {
+		return current.Then(effects)
+	})
+}
+
+// ApplyCellEffectsToCaptureCells applies effects to state's captured-cell store.
+func ApplyCellEffectsToCaptureCells(state *PointState, effects CaptureEffects) bool {
+	if CaptureEffectsDomain.Equal(effects, CaptureEffectsDomain.Bottom()) {
+		return false
+	}
+	return updateCaptureCells(state, func(cells CaptureCells) CaptureCells {
+		return effects.Apply(cells)
+	})
+}
+
 // CaptureMustWrite constructs the single-cell must-write effect.
 func CaptureMustWrite(sym cfg.SymbolID, v product.AbstractValue) CaptureEffects {
 	return CaptureEffectsOf([]CaptureEffect{{Symbol: sym, Value: v, MustWrite: true}})

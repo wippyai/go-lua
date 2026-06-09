@@ -34,13 +34,10 @@ type ClosureRefTreeEntry struct {
 // ReplaceFunctionRefSubtree clears all function identities at addr and its
 // descendants, then joins the supplied refs into the function-reference axis.
 func ReplaceFunctionRefSubtree(out *PointState, addr StableAddress, refs FunctionRefs) bool {
-	if out == nil {
-		return false
-	}
-	before := out.FunctionRefs
-	out.FunctionRefs = WithoutFunctionRefSubtreeAddress(out.FunctionRefs, addr)
-	out.FunctionRefs = FunctionRefsDomain.Join(out.FunctionRefs, refs)
-	return !FunctionRefsDomain.Equal(before, out.FunctionRefs)
+	return updateFunctionRefs(out, func(current FunctionRefs) FunctionRefs {
+		current = WithoutFunctionRefSubtreeAddress(current, addr)
+		return FunctionRefsDomain.Join(current, refs)
+	})
 }
 
 // ReplaceFunctionRefSubtreePath applies a strong subtree update from a
@@ -62,16 +59,13 @@ func ReplaceFunctionRefTreePath(out *PointState, target constraint.Path, tree Fu
 // JoinFunctionRefTreePath additively publishes a normalized function-identity
 // tree at target without clearing existing identities.
 func JoinFunctionRefTreePath(out *PointState, target constraint.Path, tree FunctionRefTree) bool {
-	if out == nil {
-		return false
-	}
 	refs := functionRefsFromTree(target, tree)
 	if FunctionRefsDomain.Equal(refs, FunctionRefsDomain.Bottom()) {
 		return false
 	}
-	before := out.FunctionRefs
-	out.FunctionRefs = FunctionRefsDomain.Join(out.FunctionRefs, refs)
-	return !FunctionRefsDomain.Equal(before, out.FunctionRefs)
+	return updateFunctionRefs(out, func(current FunctionRefs) FunctionRefs {
+		return FunctionRefsDomain.Join(current, refs)
+	})
 }
 
 func functionRefsFromTree(target constraint.Path, tree FunctionRefTree) FunctionRefs {
@@ -138,7 +132,7 @@ func AssignFunctionRefSubtreePath(out *PointState, source, target constraint.Pat
 	if out == nil {
 		return false
 	}
-	refs := ProjectFunctionRefsByReferencePaths(out.FunctionRefs, ReferencePathProjection{
+	refs := ProjectFunctionRefsByReferencePaths(FunctionRefsOfPoint(out), ReferencePathProjection{
 		Subtrees: []constraint.Path{source},
 	})
 	rebased := RebaseFunctionRefsPath(refs, source, target)
@@ -148,13 +142,10 @@ func AssignFunctionRefSubtreePath(out *PointState, source, target constraint.Pat
 // ReplaceClosureRefSubtree clears all closure identities at addr and its
 // descendants, then joins the supplied refs into the closure-reference axis.
 func ReplaceClosureRefSubtree(out *PointState, addr StableAddress, refs ClosureRefs) bool {
-	if out == nil {
-		return false
-	}
-	before := out.ClosureRefs
-	out.ClosureRefs = WithoutClosureRefSubtreeAddress(out.ClosureRefs, addr)
-	out.ClosureRefs = ClosureRefsDomain.Join(out.ClosureRefs, refs)
-	return !ClosureRefsDomain.Equal(before, out.ClosureRefs)
+	return updateClosureRefs(out, func(current ClosureRefs) ClosureRefs {
+		current = WithoutClosureRefSubtreeAddress(current, addr)
+		return ClosureRefsDomain.Join(current, refs)
+	})
 }
 
 // ReplaceClosureRefSubtreePath applies a strong closure-ref subtree update from
@@ -401,7 +392,7 @@ func AssignClosureRefSubtreePath(out *PointState, source, target constraint.Path
 	if out == nil {
 		return false
 	}
-	refs := ProjectClosureRefsByReferencePaths(out.ClosureRefs, ReferencePathProjection{
+	refs := ProjectClosureRefsByReferencePaths(ClosureRefsOfPoint(out), ReferencePathProjection{
 		Subtrees: []constraint.Path{source},
 	})
 	rebased := RebaseClosureRefsPath(refs, source, target)
@@ -409,12 +400,9 @@ func AssignClosureRefSubtreePath(out *PointState, source, target constraint.Path
 }
 
 func ClearFunctionRefSubtree(out *PointState, addr StableAddress) bool {
-	if out == nil {
-		return false
-	}
-	before := out.FunctionRefs
-	out.FunctionRefs = WithoutFunctionRefSubtreeAddress(out.FunctionRefs, addr)
-	return !FunctionRefsDomain.Equal(before, out.FunctionRefs)
+	return updateFunctionRefs(out, func(current FunctionRefs) FunctionRefs {
+		return WithoutFunctionRefSubtreeAddress(current, addr)
+	})
 }
 
 // ClearFunctionRefSubtreePath removes function identities below a structured
@@ -428,12 +416,9 @@ func ClearFunctionRefSubtreePath(out *PointState, path constraint.Path) bool {
 }
 
 func ClearClosureRefSubtree(out *PointState, addr StableAddress) bool {
-	if out == nil {
-		return false
-	}
-	before := out.ClosureRefs
-	out.ClosureRefs = WithoutClosureRefSubtreeAddress(out.ClosureRefs, addr)
-	return !ClosureRefsDomain.Equal(before, out.ClosureRefs)
+	return updateClosureRefs(out, func(current ClosureRefs) ClosureRefs {
+		return WithoutClosureRefSubtreeAddress(current, addr)
+	})
 }
 
 // ClearClosureRefSubtreePath removes closure identities below a structured path.
@@ -446,12 +431,9 @@ func ClearClosureRefSubtreePath(out *PointState, path constraint.Path) bool {
 }
 
 func ApplyClosureCellEffectsToRefs(out *PointState, addr StableAddress, effects CaptureEffects) bool {
-	if out == nil {
-		return false
-	}
-	before := out.ClosureRefs
-	out.ClosureRefs = ApplyClosureRefCellEffectsAddress(out.ClosureRefs, addr, effects)
-	return !ClosureRefsDomain.Equal(before, out.ClosureRefs)
+	return updateClosureRefs(out, func(current ClosureRefs) ClosureRefs {
+		return ApplyClosureRefCellEffectsAddress(current, addr, effects)
+	})
 }
 
 // ApplyClosureCellEffectsToRefsPath updates a stored closure environment at a

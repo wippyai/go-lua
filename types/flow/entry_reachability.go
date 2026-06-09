@@ -30,10 +30,7 @@ func LiftEntryReachability(ps *PointState) bool {
 		ps.ReturnRel = ReturnRelationsDomain.Top()
 		changed = true
 	}
-	if ps.CellEffects.IsBottom() {
-		ps.CellEffects = CaptureEffectsIdentity()
-		changed = true
-	}
+	changed = LiftCellEffectsEntry(ps) || changed
 	if ps.ReceiverEffects.IsBottom() {
 		ps.ReceiverEffects = ReceiverEffectsIdentity()
 		changed = true

@@ -74,6 +74,45 @@ func CaptureCellsTop() CaptureCells {
 	return CaptureCells{top: true}
 }
 
+// CaptureCellsOfPoint returns the captured-cell store carried by state.
+func CaptureCellsOfPoint(state *PointState) CaptureCells {
+	if state == nil {
+		return CaptureCellsDomain.Bottom()
+	}
+	return state.Cells
+}
+
+// CaptureCellValueOfPoint returns sym's captured-cell value from state.
+func CaptureCellValueOfPoint(state *PointState, sym cfg.SymbolID) (product.AbstractValue, bool) {
+	if sym == 0 {
+		return product.AbstractValue{}, false
+	}
+	av, ok := CaptureCellsOfPoint(state).Value(sym)
+	if !ok || av.IsZero() {
+		return product.AbstractValue{}, false
+	}
+	return av, true
+}
+
+func updateCaptureCells(state *PointState, update func(CaptureCells) CaptureCells) bool {
+	if state == nil || update == nil {
+		return false
+	}
+	before := state.Cells
+	state.Cells = update(state.Cells)
+	return !CaptureCellsDomain.Equal(before, state.Cells)
+}
+
+// WriteCaptureCell strongly updates sym in state's captured-cell store.
+func WriteCaptureCell(state *PointState, sym cfg.SymbolID, value product.AbstractValue) bool {
+	if sym == 0 {
+		return false
+	}
+	return updateCaptureCells(state, func(cells CaptureCells) CaptureCells {
+		return cells.With(sym, value)
+	})
+}
+
 // Entries returns a copy of the sorted finite entries. Top has no finite entry
 // representation and returns nil.
 func (c CaptureCells) Entries() []CaptureCell {

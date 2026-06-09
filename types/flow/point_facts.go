@@ -77,8 +77,10 @@ func SingleChangedValueSlot(before, after PointState) (ValueSlot, bool) {
 			return ValueSlot{}, false
 		}
 	}
-	for _, cell := range after.Cells.Entries() {
-		prev, _ := before.Cells.Value(cell.Symbol)
+	beforeCells := CaptureCellsOfPoint(&before)
+	afterCells := CaptureCellsOfPoint(&after)
+	for _, cell := range afterCells.Entries() {
+		prev, _ := beforeCells.Value(cell.Symbol)
 		if product.Domain.Equal(prev, cell.Value) {
 			continue
 		}
@@ -87,8 +89,8 @@ func SingleChangedValueSlot(before, after PointState) (ValueSlot, bool) {
 			return ValueSlot{}, false
 		}
 	}
-	for _, cell := range before.Cells.Entries() {
-		if _, ok := after.Cells.Value(cell.Symbol); ok {
+	for _, cell := range beforeCells.Entries() {
+		if _, ok := afterCells.Value(cell.Symbol); ok {
 			continue
 		}
 		slot, ok := SymbolValueSlot(cell.Symbol)
@@ -160,11 +162,7 @@ func (f PointFacts) CellValue(sym cfg.SymbolID) (product.AbstractValue, bool) {
 	if sym == 0 {
 		return product.AbstractValue{}, false
 	}
-	av, ok := f.state.Cells.Value(sym)
-	if !ok || av.IsZero() {
-		return product.AbstractValue{}, false
-	}
-	return av, true
+	return CaptureCellValueOfPoint(f.state, sym)
 }
 
 // ValueKeyValue returns the abstract value stored under key.
@@ -364,11 +362,11 @@ func (f PointFacts) CallablePathType(path constraint.Path, resolve CallableSigna
 		return nil, false
 	}
 	state := PointState{
-		Cells:        f.state.Cells,
-		FunctionRefs: f.state.FunctionRefs,
-		ClosureRefs:  f.state.ClosureRefs,
+		Cells:        CaptureCellsOfPoint(f.state),
+		FunctionRefs: FunctionRefsOfPoint(f.state),
+		ClosureRefs:  ClosureRefsOfPoint(f.state),
 	}
-	if refs, ok := FunctionRefAtPath(f.state.FunctionRefs, path); ok {
+	if refs, ok := FunctionRefAtPointPath(f.state, path); ok {
 		if ref, singleton := refs.Singleton(); singleton {
 			if sig, ok := resolve(CallableSignatureQuery{Ref: ref, State: state}); ok && !typ.IsAbsentOrUnknown(sig) {
 				return sig, true

@@ -184,6 +184,39 @@ func ResetCanonicalClosureRefsKeys() {
 // ClosureRefsDomain is the pointwise finite-map lattice for closure values.
 var ClosureRefsDomain = latticeproduct.MapLattice[constraint.PathKey](ClosureRefSetDomain)
 
+// ClosureRefsOf returns the closure-ref axis carried by state.
+func ClosureRefsOf(state PointState) ClosureRefs {
+	return state.ClosureRefs
+}
+
+// ClosureRefsOfPoint returns the closure-ref axis carried by state. Nil points
+// represent an empty reference store.
+func ClosureRefsOfPoint(state *PointState) ClosureRefs {
+	if state == nil {
+		return ClosureRefsDomain.Bottom()
+	}
+	return state.ClosureRefs
+}
+
+// ClosureRefAtPointAddress returns the closure set for addr in state.
+func ClosureRefAtPointAddress(state *PointState, addr StableAddress) (ClosureRefSet, bool) {
+	return ClosureRefAtAddress(ClosureRefsOfPoint(state), addr)
+}
+
+// ClosureRefAtPointPath returns the closure set for path in state.
+func ClosureRefAtPointPath(state *PointState, path constraint.Path) (ClosureRefSet, bool) {
+	return ClosureRefAtPath(ClosureRefsOfPoint(state), path)
+}
+
+func updateClosureRefs(state *PointState, update func(ClosureRefs) ClosureRefs) bool {
+	if state == nil || update == nil {
+		return false
+	}
+	before := state.ClosureRefs
+	state.ClosureRefs = update(state.ClosureRefs)
+	return !ClosureRefsDomain.Equal(before, state.ClosureRefs)
+}
+
 // ClosureRefsKeyOf returns an exact comparable key for refs.
 func ClosureRefsKeyOf(refs ClosureRefs) ClosureRefsKey {
 	return closureRefsKeyOfDepth(refs, closureContextDepth)

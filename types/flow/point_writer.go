@@ -92,13 +92,13 @@ func (w PointWriter) WriteSymbolValue(sym cfg.SymbolID, val product.AbstractValu
 
 	if toCells {
 		if joinExisting {
-			if prev, ok := SymbolValue(*w.state, sym); ok {
+			if prev, ok := PointFactsOfBorrowed(w.state).SymbolValue(sym); ok {
 				val = product.Domain.Join(prev, val)
 			}
 		}
-		w.state.Cells = w.state.Cells.With(sym, val)
+		WriteCaptureCell(w.state, sym, val)
 		if emitCellEffect {
-			w.state.CellEffects = w.state.CellEffects.WithMustWrite(sym, val)
+			RecordCellEffects(w.state, CaptureMustWrite(sym, val))
 		}
 		w.DeleteValueKey(SymbolValueKey(sym))
 		return

@@ -6,21 +6,11 @@ import (
 )
 
 func ApplyCaptureEffectsToCellStore(out *PointState, effects CaptureEffects) bool {
-	if out == nil || CaptureEffectsDomain.Equal(effects, CaptureEffectsDomain.Bottom()) {
-		return false
-	}
-	before := out.Cells
-	out.Cells = effects.Apply(out.Cells)
-	return !CaptureCellsDomain.Equal(before, out.Cells)
+	return ApplyCellEffectsToCaptureCells(out, effects)
 }
 
 func RecordCaptureEffects(out *PointState, effects CaptureEffects) bool {
-	if out == nil || CaptureEffectsDomain.Equal(effects, CaptureEffectsDomain.Bottom()) {
-		return false
-	}
-	before := out.CellEffects
-	out.CellEffects = out.CellEffects.Then(effects)
-	return !CaptureEffectsDomain.Equal(before, out.CellEffects)
+	return RecordCellEffects(out, effects)
 }
 
 func RecordReceiverWrite(out *PointState, slot int, value product.AbstractValue, mutations ...ReceiverMutation) bool {
