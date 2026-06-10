@@ -2,6 +2,7 @@ package product
 
 import (
 	"fmt"
+	"slices"
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
@@ -30,6 +31,63 @@ func TestDefaultProductLaws(t *testing.T) {
 		Format: formatValue,
 	}
 	suite.Run(t)
+}
+
+func TestDefaultRegistryBundleFrozenAndStable(t *testing.T) {
+	reg := DefaultRegistry()
+	want := defaultRegistrySpecIDs()
+	if got := registrySpecIDs(reg); !slices.Equal(got, want) {
+		t.Fatalf("DefaultRegistry axes = %v, want %v", got, want)
+	}
+	if !reg.Frozen() {
+		t.Fatalf("DefaultRegistry must be frozen")
+	}
+	if _, ok := reg.LookupErased(presence.Key.ID()); ok {
+		t.Fatalf("presence must be core, not registered as a sparse default axis")
+	}
+
+	fresh, err := DefaultRegistryWithAxes()
+	if err != nil {
+		t.Fatalf("DefaultRegistryWithAxes() error = %v", err)
+	}
+	if fresh == reg {
+		t.Fatalf("DefaultRegistryWithAxes must not expose the default singleton")
+	}
+	if !fresh.Frozen() {
+		t.Fatalf("DefaultRegistryWithAxes must return a frozen registry")
+	}
+	if got := registrySpecIDs(fresh); !slices.Equal(got, want) {
+		t.Fatalf("DefaultRegistryWithAxes axes = %v, want %v", got, want)
+	}
+}
+
+func TestDefaultRegistryWithAxesAddsCustomSparseAxis(t *testing.T) {
+	reg, err := DefaultRegistryWithAxes(syntheticSpec().Erase())
+	if err != nil {
+		t.Fatalf("DefaultRegistryWithAxes error = %v", err)
+	}
+	want := append(defaultRegistrySpecIDs(), syntheticKey.ID())
+	if got := registrySpecIDs(reg); !slices.Equal(got, want) {
+		t.Fatalf("custom registry axes = %v, want %v", got, want)
+	}
+	if _, ok := DefaultRegistry().LookupErased(syntheticKey.ID()); ok {
+		t.Fatalf("custom axis mutated DefaultRegistry")
+	}
+
+	d := Domain(reg)
+	v := Set(reg, d.Top(), syntheticKey, syntheticLow)
+	if got := Get(reg, v, syntheticKey); got != syntheticLow {
+		t.Fatalf("custom sparse axis value = %v, want %v", got, syntheticLow)
+	}
+}
+
+func TestDefaultRegistryWithAxesRejectsDuplicateIDs(t *testing.T) {
+	if _, err := DefaultRegistryWithAxes(escape.Spec().Erase()); err == nil {
+		t.Fatalf("duplicate default axis ID should fail")
+	}
+	if _, err := DefaultRegistryWithAxes(syntheticSpec().Erase(), syntheticSpec().Erase()); err == nil {
+		t.Fatalf("duplicate caller axis ID should fail")
+	}
 }
 
 func TestExplicitTopSparseSlotNormalizesToOmission(t *testing.T) {
@@ -190,6 +248,9 @@ func TestPresenceCannotBeSparseProductAxis(t *testing.T) {
 	axis.Register(reg, presence.Spec())
 	reg.Freeze()
 
+	if _, err := DefaultRegistryWithAxes(presence.Spec().Erase()); err == nil {
+		t.Fatalf("DefaultRegistryWithAxes should reject presence as a sparse axis")
+	}
 	mustPanic(t, func() {
 		_ = Domain(reg)
 	})
@@ -243,6 +304,25 @@ func TestSyntheticAxisParticipatesThroughRegistry(t *testing.T) {
 	if !d.Equal(explicitTop, d.Top()) || Hash(reg, explicitTop) != Hash(reg, d.Top()) {
 		t.Fatalf("synthetic explicit top must canonicalize to omission")
 	}
+}
+
+func defaultRegistrySpecIDs() []string {
+	return []string{
+		variantorigin.Key.ID(),
+		identity.Key.ID(),
+		escape.Key.ID(),
+		ownership.Key.ID(),
+		evidence.Key.ID(),
+	}
+}
+
+func registrySpecIDs(reg *axis.Registry) []string {
+	specs := reg.Specs()
+	ids := make([]string, len(specs))
+	for i, spec := range specs {
+		ids[i] = spec.ID()
+	}
+	return ids
 }
 
 func defaultProductSample(reg *axis.Registry, bottom, top Value) []Value {
