@@ -135,6 +135,8 @@ func (b *builder) buildStmt(state flowState, stmt ast.Stmt) flowState {
 		return b.buildGenericFor(state, stmt)
 	case *ast.FuncDefStmt:
 		return b.buildFuncDef(state, stmt)
+	case *ast.LabelStmt:
+		return b.appendNodeForStmt(state, cfg.NodeNoop, stmt)
 	case *ast.BreakStmt:
 		return b.buildBreak(state)
 	case *ast.TypeDefStmt, *ast.InterfaceDefStmt:

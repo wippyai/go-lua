@@ -383,6 +383,45 @@ func TestBuildChunkFunctionDefinitionAfterReturnIsUnmapped(t *testing.T) {
 	requireTargetCount(t, result.Graph, result.Meta, mustIdentSymbol(t, bindings, target), 0)
 }
 
+func TestBuildChunkLabelCreatesStructuralPoint(t *testing.T) {
+	before := localAssign([]string{"before"}, number("1"))
+	label := &ast.LabelStmt{Name: "again"}
+	after := localAssign([]string{"after"}, number("2"))
+	stmts := []ast.Stmt{before, label, after}
+	bindings := bind.BindChunk(stmts, bind.Options{})
+	result := BuildChunk(stmts, bindings)
+	if result == nil || result.Graph == nil {
+		t.Fatalf("BuildChunk returned nil for label declaration")
+	}
+	graph := result.Graph
+
+	beforePoint := requireStmtPoints(t, result, before, 1)[0]
+	labelPoint := requireStmtPoints(t, result, label, 1)[0]
+	afterPoint := requireStmtPoints(t, result, after, 1)[0]
+	requirePointKind(t, graph, labelPoint, cfg.NodeNoop)
+	if _, ok := result.Meta.Assignment(labelPoint); ok {
+		t.Fatalf("label point produced assignment metadata")
+	}
+	requireEdge(t, graph, graph.Entry(), beforePoint, false)
+	requireEdge(t, graph, beforePoint, labelPoint, false)
+	requireEdge(t, graph, labelPoint, afterPoint, false)
+	requireEdge(t, graph, afterPoint, graph.Exit(), false)
+}
+
+func TestBuildChunkLabelAfterReturnIsUnmapped(t *testing.T) {
+	deadLabel := &ast.LabelStmt{Name: "dead"}
+	stmts := []ast.Stmt{&ast.ReturnStmt{}, deadLabel}
+	bindings := bind.BindChunk(stmts, bind.Options{})
+	result := BuildChunk(stmts, bindings)
+	if result == nil || result.Graph == nil {
+		t.Fatalf("BuildChunk returned nil")
+	}
+
+	if got := result.StmtPoints.PointsFor(deadLabel); len(got) != 0 {
+		t.Fatalf("dead label mapped to points %v", got)
+	}
+}
+
 func TestBuildChunkStatementPointMappingReturnsSafeSlices(t *testing.T) {
 	stmt := localAssign([]string{"a", "b"}, number("1"), number("2"))
 	stmts := []ast.Stmt{stmt}

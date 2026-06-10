@@ -45,6 +45,7 @@ type Result struct {
 	functionDefinitions map[cfg.Point]FunctionDefinitionFact
 	numericFors         map[cfg.Point]NumericForFact
 	genericFors         map[cfg.Point]GenericForFact
+	labels              map[cfg.Point]LabelFact
 }
 
 type LocalAssignmentFact struct {
@@ -142,6 +143,11 @@ type GenericForFact struct {
 
 	Symbols    []symbol.ID
 	HasSymbols bool
+}
+
+type LabelFact struct {
+	Stmt *ast.LabelStmt
+	Name string
 }
 
 func ExtractChunk(stmts []ast.Stmt, bindings *bind.Result, built *cfgbuild.Result) (*Result, error) {
@@ -262,6 +268,14 @@ func (r *Result) GenericFor(point cfg.Point) (GenericForFact, bool) {
 	return copyGenericForFact(fact), true
 }
 
+func (r *Result) Label(point cfg.Point) (LabelFact, bool) {
+	if r == nil {
+		return LabelFact{}, false
+	}
+	fact, ok := r.labels[point]
+	return fact, ok
+}
+
 func newResult(fn *ast.FunctionExpr) *Result {
 	return &Result{
 		function:            fn,
@@ -274,6 +288,7 @@ func newResult(fn *ast.FunctionExpr) *Result {
 		functionDefinitions: make(map[cfg.Point]FunctionDefinitionFact),
 		numericFors:         make(map[cfg.Point]NumericForFact),
 		genericFors:         make(map[cfg.Point]GenericForFact),
+		labels:              make(map[cfg.Point]LabelFact),
 	}
 }
 
@@ -330,6 +345,8 @@ func (r *Result) extractStmt(stmt ast.Stmt, bindings *bind.Result, built *cfgbui
 		return r.extractStmts(stmt.Stmts, bindings, built)
 	case *ast.FuncDefStmt:
 		return r.extractFunctionDefinition(stmt, bindings, built.StmtPoints.PointsFor(stmt))
+	case *ast.LabelStmt:
+		return r.extractLabel(stmt, built.StmtPoints.PointsFor(stmt))
 	case *ast.TypeDefStmt:
 		return r.extractTypeDef(stmt, built.StmtPoints.PointsFor(stmt))
 	case *ast.InterfaceDefStmt:
@@ -443,7 +460,7 @@ func (r *Result) extractBranch(stmt ast.Stmt, kind BranchKind, condition ast.Exp
 	if len(points) == 0 {
 		return nil
 	}
-	if len(points) < 1 {
+	if len(points) != 1 {
 		return ErrPointMismatch
 	}
 	fact := BranchConditionFact{
@@ -562,6 +579,20 @@ func (r *Result) extractGenericFor(stmt *ast.GenericForStmt, bindings *bind.Resu
 	}
 	for _, point := range points {
 		r.genericFors[point] = fact
+	}
+	return nil
+}
+
+func (r *Result) extractLabel(stmt *ast.LabelStmt, points []cfg.Point) error {
+	if len(points) == 0 {
+		return nil
+	}
+	if len(points) < 1 {
+		return ErrPointMismatch
+	}
+	r.labels[points[0]] = LabelFact{
+		Stmt: stmt,
+		Name: stmt.Name,
 	}
 	return nil
 }

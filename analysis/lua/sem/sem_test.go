@@ -159,6 +159,36 @@ func TestExtractChunkFunctionDefinitionFactPreservesIdentity(t *testing.T) {
 	}
 }
 
+func TestExtractChunkLabelFactPreservesIdentity(t *testing.T) {
+	label := &ast.LabelStmt{Name: "again"}
+	stmts := []ast.Stmt{label}
+	bindings := bind.BindChunk(stmts, bind.Options{})
+	built := cfgbuild.BuildChunk(stmts, bindings)
+
+	result, err := ExtractChunk(stmts, bindings, built)
+	if err != nil {
+		t.Fatalf("ExtractChunk: %v", err)
+	}
+
+	point := requireStmtPoints(t, built, label, 1)[0]
+	fact, ok := result.Label(point)
+	if !ok {
+		t.Fatalf("missing label fact")
+	}
+	if fact.Stmt != label || fact.Name != "again" {
+		t.Fatalf("label fact = %#v", fact)
+	}
+	if _, ok := result.LocalAssignment(point); ok {
+		t.Fatalf("label point produced local assignment fact")
+	}
+	if _, ok := result.OrdinaryAssignment(point); ok {
+		t.Fatalf("label point produced ordinary assignment fact")
+	}
+	if _, ok := result.FunctionDefinition(point); ok {
+		t.Fatalf("label point produced function definition fact")
+	}
+}
+
 func TestExtractChunkCallReturnBranchAndTypeFacts(t *testing.T) {
 	decl := localAssign([]string{"x"}, number("1"))
 	printIdent := ident("print")
@@ -385,6 +415,28 @@ func TestExtractChunkSkipsUnmappedFunctionDefinition(t *testing.T) {
 	}
 	if len(result.functionDefinitions) != 0 {
 		t.Fatalf("unmapped function definition produced function facts: %#v", result.functionDefinitions)
+	}
+}
+
+func TestExtractChunkSkipsUnmappedLabel(t *testing.T) {
+	ret := &ast.ReturnStmt{}
+	deadLabel := &ast.LabelStmt{Name: "dead"}
+	stmts := []ast.Stmt{ret, deadLabel}
+	bindings := bind.BindChunk(stmts, bind.Options{})
+	built := cfgbuild.BuildChunk(stmts, bindings)
+	if built == nil {
+		t.Fatalf("BuildChunk returned nil")
+	}
+	if got := built.StmtPoints.PointsFor(deadLabel); len(got) != 0 {
+		t.Fatalf("dead label mapped to points %v", got)
+	}
+
+	result, err := ExtractChunk(stmts, bindings, built)
+	if err != nil {
+		t.Fatalf("ExtractChunk: %v", err)
+	}
+	if len(result.labels) != 0 {
+		t.Fatalf("unmapped label produced label facts: %#v", result.labels)
 	}
 }
 
