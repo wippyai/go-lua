@@ -2,16 +2,16 @@ package typ
 
 import "github.com/wippyai/go-lua/analysis/type/kind"
 
-func recursiveContainsGraphClosed(t Type, seen map[*Recursive]bool, depth int) bool {
-	return recursiveContainsGraphClosedMemo(t, seen, make(map[graphClosedKey]bool), depth)
+func recursiveContainsGraphClosed(t Type, seen map[*Recursive]bool) bool {
+	return recursiveContainsGraphClosedMemo(t, seen, make(map[recursiveTraversalMemoKey]bool))
 }
 
-type graphClosedKey struct {
+type recursiveTraversalMemoKey struct {
 	kind kind.Kind
 	ptr  uintptr
 }
 
-func recursiveContainsGraphClosedMemo(t Type, seen map[*Recursive]bool, memo map[graphClosedKey]bool, depth int) bool {
+func recursiveContainsGraphClosedMemo(t Type, seen map[*Recursive]bool, memo map[recursiveTraversalMemoKey]bool) bool {
 	if t == nil {
 		return true
 	}
@@ -19,7 +19,7 @@ func recursiveContainsGraphClosedMemo(t Type, seen map[*Recursive]bool, memo map
 	if t == nil {
 		return true
 	}
-	if key, ok := graphClosedMemoKey(t); ok {
+	if key, ok := recursiveTraversalMemo(t); ok {
 		if closed, found := memo[key]; found {
 			return closed
 		}
@@ -39,107 +39,107 @@ func recursiveContainsGraphClosedMemo(t Type, seen map[*Recursive]bool, memo map
 			break
 		}
 		seen[n] = true
-		result = recursiveContainsGraphClosedMemo(n.Body, seen, memo, depth+1)
+		result = recursiveContainsGraphClosedMemo(n.Body, seen, memo)
 	case *Alias:
-		result = recursiveContainsGraphClosedMemo(n.Target, seen, memo, depth+1)
+		result = recursiveContainsGraphClosedMemo(n.Target, seen, memo)
 	case *Optional:
-		result = recursiveContainsGraphClosedMemo(n.Inner, seen, memo, depth+1)
+		result = recursiveContainsGraphClosedMemo(n.Inner, seen, memo)
 	case *Union:
 		for _, member := range n.Members {
-			if !recursiveContainsGraphClosedMemo(member, seen, memo, depth+1) {
+			if !recursiveContainsGraphClosedMemo(member, seen, memo) {
 				result = false
 				break
 			}
 		}
 	case *Intersection:
 		for _, member := range n.Members {
-			if !recursiveContainsGraphClosedMemo(member, seen, memo, depth+1) {
+			if !recursiveContainsGraphClosedMemo(member, seen, memo) {
 				result = false
 				break
 			}
 		}
 	case *Array:
-		result = recursiveContainsGraphClosedMemo(n.Element, seen, memo, depth+1)
+		result = recursiveContainsGraphClosedMemo(n.Element, seen, memo)
 	case *Map:
-		result = recursiveContainsGraphClosedMemo(n.Key, seen, memo, depth+1) &&
-			recursiveContainsGraphClosedMemo(n.Value, seen, memo, depth+1)
+		result = recursiveContainsGraphClosedMemo(n.Key, seen, memo) &&
+			recursiveContainsGraphClosedMemo(n.Value, seen, memo)
 	case *ReadonlyMap:
-		result = recursiveContainsGraphClosedMemo(n.Key, seen, memo, depth+1) &&
-			recursiveContainsGraphClosedMemo(n.Value, seen, memo, depth+1)
+		result = recursiveContainsGraphClosedMemo(n.Key, seen, memo) &&
+			recursiveContainsGraphClosedMemo(n.Value, seen, memo)
 	case *Tuple:
 		for _, elem := range n.Elements {
-			if !recursiveContainsGraphClosedMemo(elem, seen, memo, depth+1) {
+			if !recursiveContainsGraphClosedMemo(elem, seen, memo) {
 				result = false
 				break
 			}
 		}
 	case *Function:
 		for _, param := range n.Params {
-			if !recursiveContainsGraphClosedMemo(param.Type, seen, memo, depth+1) {
+			if !recursiveContainsGraphClosedMemo(param.Type, seen, memo) {
 				result = false
 				break
 			}
 		}
 		if result {
 			for _, ret := range n.Returns {
-				if !recursiveContainsGraphClosedMemo(ret, seen, memo, depth+1) {
+				if !recursiveContainsGraphClosedMemo(ret, seen, memo) {
 					result = false
 					break
 				}
 			}
 		}
-		if result && n.Variadic != nil && !recursiveContainsGraphClosedMemo(n.Variadic, seen, memo, depth+1) {
+		if result && n.Variadic != nil && !recursiveContainsGraphClosedMemo(n.Variadic, seen, memo) {
 			result = false
 		}
 	case *Record:
 		for _, field := range n.Fields {
-			if !recursiveContainsGraphClosedMemo(field.Type, seen, memo, depth+1) {
+			if !recursiveContainsGraphClosedMemo(field.Type, seen, memo) {
 				result = false
 				break
 			}
 		}
 		if result {
 			for _, member := range n.StaticMembers {
-				if !recursiveContainsGraphClosedMemo(member.Type, seen, memo, depth+1) {
+				if !recursiveContainsGraphClosedMemo(member.Type, seen, memo) {
 					result = false
 					break
 				}
 			}
 		}
-		if result && n.Metatable != nil && !recursiveContainsGraphClosedMemo(n.Metatable, seen, memo, depth+1) {
+		if result && n.Metatable != nil && !recursiveContainsGraphClosedMemo(n.Metatable, seen, memo) {
 			result = false
 		}
 		if result && n.HasMapComponent() {
-			result = recursiveContainsGraphClosedMemo(n.MapKey, seen, memo, depth+1) &&
-				recursiveContainsGraphClosedMemo(n.MapValue, seen, memo, depth+1)
+			result = recursiveContainsGraphClosedMemo(n.MapKey, seen, memo) &&
+				recursiveContainsGraphClosedMemo(n.MapValue, seen, memo)
 		}
 	case *Generic:
 		for _, param := range n.TypeParams {
-			if param != nil && !recursiveContainsGraphClosedMemo(param.Constraint, seen, memo, depth+1) {
+			if param != nil && !recursiveContainsGraphClosedMemo(param.Constraint, seen, memo) {
 				result = false
 				break
 			}
 		}
 		if result {
-			result = recursiveContainsGraphClosedMemo(n.Body, seen, memo, depth+1)
+			result = recursiveContainsGraphClosedMemo(n.Body, seen, memo)
 		}
 	case *Instantiated:
-		if !recursiveContainsGraphClosedMemo(n.Generic, seen, memo, depth+1) {
+		if !recursiveContainsGraphClosedMemo(n.Generic, seen, memo) {
 			result = false
 			break
 		}
 		for _, arg := range n.TypeArgs {
-			if !recursiveContainsGraphClosedMemo(arg, seen, memo, depth+1) {
+			if !recursiveContainsGraphClosedMemo(arg, seen, memo) {
 				result = false
 				break
 			}
 		}
 	case *TypeParam:
-		result = recursiveContainsGraphClosedMemo(n.Constraint, seen, memo, depth+1)
+		result = recursiveContainsGraphClosedMemo(n.Constraint, seen, memo)
 	case *Sum:
 		for _, variant := range n.Variants {
 			for _, t := range variant.Types {
-				if !recursiveContainsGraphClosedMemo(t, seen, memo, depth+1) {
+				if !recursiveContainsGraphClosedMemo(t, seen, memo) {
 					result = false
 					break
 				}
@@ -150,25 +150,25 @@ func recursiveContainsGraphClosedMemo(t Type, seen map[*Recursive]bool, memo map
 		}
 	case *Interface:
 		for _, method := range n.Methods {
-			if method.Type != nil && !recursiveContainsGraphClosedMemo(method.Type, seen, memo, depth+1) {
+			if method.Type != nil && !recursiveContainsGraphClosedMemo(method.Type, seen, memo) {
 				result = false
 				break
 			}
 		}
 	}
-	if key, ok := graphClosedMemoKey(t); ok {
+	if key, ok := recursiveTraversalMemo(t); ok {
 		memo[key] = result
 	}
 	return result
 }
 
-func graphClosedMemoKey(t Type) (graphClosedKey, bool) {
+func recursiveTraversalMemo(t Type) (recursiveTraversalMemoKey, bool) {
 	if t == nil {
-		return graphClosedKey{}, false
+		return recursiveTraversalMemoKey{}, false
 	}
 	ptr := typePointer(t)
 	if ptr == 0 {
 		ptr = uintptr(t.Kind())
 	}
-	return graphClosedKey{kind: t.Kind(), ptr: ptr}, true
+	return recursiveTraversalMemoKey{kind: t.Kind(), ptr: ptr}, true
 }

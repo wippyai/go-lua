@@ -5,12 +5,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/type/kind"
 )
 
-// hashWithVisited computes hash with cycle detection for recursive types.
-// Uses structural traversal to ensure order-independent hashing for mutual recursion.
-func hashWithVisited(t Type, visited map[*Recursive]bool) uint64 {
-	return hashWithVisitedMemo(t, visited, make(map[Type]uint64))
-}
-
 func hashWithVisitedMemo(t Type, visited map[*Recursive]bool, memo map[Type]uint64) uint64 {
 	if t == nil {
 		return 0
@@ -51,13 +45,6 @@ func hashWithVisitedMemo(t Type, visited map[*Recursive]bool, memo map[Type]uint
 	h := hashBodyWithVisitedMemo(t, visited, memo)
 	memo[t] = h
 	return h
-}
-
-// hashBodyWithVisited hashes a type's structure with cycle detection.
-// Handles compound types that may contain recursive references.
-// Mirrors the real Hash() semantics of each type constructor for consistency.
-func hashBodyWithVisited(t Type, visited map[*Recursive]bool) uint64 {
-	return hashBodyWithVisitedMemo(t, visited, make(map[Type]uint64))
 }
 
 func hashBodyWithVisitedMemo(t Type, visited map[*Recursive]bool, memo map[Type]uint64) uint64 {
@@ -253,7 +240,7 @@ func typeEqualityHash(t Type) uint64 {
 		return 0
 	}
 	if knownContainsOpenRecursive(t) {
-		return hashBodyWithVisited(t, make(map[*Recursive]bool))
+		return hashBodyWithVisitedMemo(t, make(map[*Recursive]bool), make(map[Type]uint64))
 	}
 	return t.Hash()
 }
@@ -272,7 +259,7 @@ func (r *Recursive) Hash() uint64 {
 	// Compute hash on demand with cycle detection. Recursive types are mutable
 	// only until SetBody completes, then share the same cached-hash contract as
 	// other type nodes.
-	h := hashWithVisited(r, make(map[*Recursive]bool))
+	h := hashWithVisitedMemo(r, make(map[*Recursive]bool), make(map[Type]uint64))
 	if deps, ok := recursiveHashDeps(r); ok {
 		r.hash = h
 		r.hashDeps = deps

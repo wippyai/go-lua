@@ -49,5 +49,5 @@ func (r *Recursive) refreshContainsClosedFlag() {
 		r.containsClosedComputing = false
 		r.containsClosedDirty = false
 	}()
-	r.containsFlagsClosed = recursiveContainsGraphClosed(r.Body, map[*Recursive]bool{r: true}, 1)
+	r.containsFlagsClosed = recursiveContainsGraphClosed(r.Body, map[*Recursive]bool{r: true})
 }

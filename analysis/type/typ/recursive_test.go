@@ -809,7 +809,7 @@ func TestRecursiveContainsGraphClosedHandlesDeepAcyclicProducts(t *testing.T) {
 		body = NewArray(body)
 	}
 
-	if !recursiveContainsGraphClosed(body, nil, 0) {
+	if !recursiveContainsGraphClosed(body, nil) {
 		t.Fatal("deep acyclic products should be recognized as closed without a depth cap")
 	}
 }

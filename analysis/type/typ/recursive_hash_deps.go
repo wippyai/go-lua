@@ -19,7 +19,7 @@ func recursiveHashDeps(r *Recursive) ([]recursiveHashDep, bool) {
 		return nil, true
 	}
 	seen := make(map[*Recursive]bool)
-	if !collectRecursiveHashDepsMemo(r, seen, make(map[graphClosedKey]bool)) {
+	if !collectRecursiveHashDepsMemo(r, seen, make(map[recursiveTraversalMemoKey]bool)) {
 		return nil, false
 	}
 	deps := make([]recursiveHashDep, 0, len(seen))
@@ -29,7 +29,7 @@ func recursiveHashDeps(r *Recursive) ([]recursiveHashDep, bool) {
 	return deps, true
 }
 
-func collectRecursiveHashDepsMemo(r *Recursive, seen map[*Recursive]bool, memo map[graphClosedKey]bool) bool {
+func collectRecursiveHashDepsMemo(r *Recursive, seen map[*Recursive]bool, memo map[recursiveTraversalMemoKey]bool) bool {
 	if r == nil {
 		return true
 	}
@@ -43,7 +43,7 @@ func collectRecursiveHashDepsMemo(r *Recursive, seen map[*Recursive]bool, memo m
 	return collectRecursiveHashDepsInTypeMemo(r.Body, seen, memo)
 }
 
-func collectRecursiveHashDepsInTypeMemo(t Type, seen map[*Recursive]bool, memo map[graphClosedKey]bool) bool {
+func collectRecursiveHashDepsInTypeMemo(t Type, seen map[*Recursive]bool, memo map[recursiveTraversalMemoKey]bool) bool {
 	if t == nil {
 		return true
 	}
@@ -51,7 +51,7 @@ func collectRecursiveHashDepsInTypeMemo(t Type, seen map[*Recursive]bool, memo m
 	if t == nil {
 		return true
 	}
-	if key, ok := graphClosedMemoKey(t); ok {
+	if key, ok := recursiveTraversalMemo(t); ok {
 		if closed, found := memo[key]; found {
 			return closed
 		}
@@ -179,7 +179,7 @@ func collectRecursiveHashDepsInTypeMemo(t Type, seen map[*Recursive]bool, memo m
 			}
 		}
 	}
-	if key, ok := graphClosedMemoKey(t); ok {
+	if key, ok := recursiveTraversalMemo(t); ok {
 		memo[key] = result
 	}
 	return result

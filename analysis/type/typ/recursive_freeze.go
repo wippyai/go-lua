@@ -1,13 +1,5 @@
 package typ
 
-// Freeze marks the recursive node and its reachable recursive descendants as
-// immutable input. After freezing, SetBody is a no-op, so a shared stdlib,
-// manifest, DB, or cache type graph cannot be mutated by any compilation that
-// references it.
-func (r *Recursive) Freeze() {
-	FreezeType(r)
-}
-
 // FreezeType walks t and freezes every reachable recursive node, marking the whole
 // type graph as immutable input. Stdlib types are frozen once at library init so
 // any recursive body reached through them is immutable to every compilation.
