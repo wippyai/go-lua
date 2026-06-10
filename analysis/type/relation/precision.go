@@ -1,7 +1,6 @@
 package relation
 
 import (
-	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
 	"github.com/wippyai/go-lua/analysis/type/kind"
 	. "github.com/wippyai/go-lua/analysis/type/typ"
 )
@@ -30,21 +29,6 @@ func MorePrecise(candidate, baseline Type) bool {
 // in the precision relation. Equal types are comparable but not strict.
 func ComparePrecision(candidate, baseline Type) (bool, bool) {
 	return comparePrecision(candidate, baseline, 0, &precisionSeen{})
-}
-
-// productFamilyHash returns a stable structural family hash for product-domain
-// relations that must compare recursive products coinductively without
-// unfolding them by concrete node identity.
-func productFamilyHash(t Type) uint64 {
-	return identity.ProductFamilyHash(t)
-}
-
-// sameProductFamily reports whether two recursive product observations describe
-// the same fixed-point family with equal precision. It is the canonical
-// recursive-product equality relation for union/member dedupe and convergence
-// checks; generic TypeEquals remains exact structural equality.
-func sameProductFamily(a, b Type) bool {
-	return identity.SameProductFamilyWithPrecision(a, b, ComparePrecision)
 }
 
 func comparePrecision(candidate, baseline Type, depth int, seen *precisionSeen) (strict bool, comparable bool) {
@@ -382,7 +366,7 @@ func precisionFamilyPairKey(candidate, baseline Type, seen *precisionSeen) (prec
 }
 
 func productFamilyHashWithSeen(t Type, seen *precisionSeen) uint64 {
-	return identity.ProductFamilyHashWithCache(t, productFamilyHashCache(seen))
+	return productFamilyHashWithCache(t, productFamilyHashCache(seen))
 }
 
 func productFamilyHashCache(seen *precisionSeen) map[Type]uint64 {

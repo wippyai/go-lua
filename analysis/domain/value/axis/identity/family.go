@@ -351,12 +351,11 @@ func collapseChildren(slot typ.Type, family *typ.Recursive) typ.Type {
 // global typ metadata; callers that need keyed family identity must use
 // RecursiveFamilyInterner.RecursiveFamilyFingerprint.
 //
-// The fingerprint is the discriminator the product-family precision relation
-// lacks: SameProductFamily and ProductFamilyHash bottom out at a constant for
-// any recursive-containing terminal, so they conflate distinct recursive
-// surfaces that share structural precision. Combining SameProductFamily with an
-// equal fingerprint keeps equivalent unfoldings shared while keeping distinct
-// recursive names or interner-owned families apart.
+// The fingerprint is the discriminator a structural product-family relation
+// lacks when recursive-containing terminals collapse to one family placeholder.
+// Combining a relation-level same-family check with an equal fingerprint keeps
+// equivalent unfoldings shared while keeping distinct recursive names or
+// interner-owned families apart.
 func RecursiveFamilyFingerprint(t typ.Type) uint64 {
 	fp, _ := RecursiveFamilyFingerprintWithin(t, 0)
 	return fp

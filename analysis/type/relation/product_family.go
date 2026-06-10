@@ -1,4 +1,4 @@
-package identity
+package relation
 
 import (
 	"reflect"
@@ -8,43 +8,42 @@ import (
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
-// PrecisionCompareFunc compares candidate precision against a baseline. It is
-// supplied by higher-level relation packages so identity stays a lower axis.
-type PrecisionCompareFunc func(candidate, baseline typ.Type) (strict bool, comparable bool)
+type precisionCompareFunc func(candidate, baseline typ.Type) (strict bool, comparable bool)
 
-// ProductFamilyHash returns a stable structural family hash for product-domain
+// productFamilyHash returns a stable structural family hash for product-domain
 // relations that must compare recursive products coinductively without
 // unfolding them by concrete node identity.
-func ProductFamilyHash(t typ.Type) uint64 {
-	return ProductFamilyHashWithCache(t, nil)
+func productFamilyHash(t typ.Type) uint64 {
+	return productFamilyHashWithCache(t, nil)
 }
 
-// ProductFamilyHashWithCache returns ProductFamilyHash while reusing caller-owned
+// productFamilyHashWithCache returns productFamilyHash while reusing caller-owned
 // per-type hash cache entries. A nil cache is valid and disables caching.
-func ProductFamilyHashWithCache(t typ.Type, cache map[typ.Type]uint64) uint64 {
+func productFamilyHashWithCache(t typ.Type, cache map[typ.Type]uint64) uint64 {
 	return productFamilyHashSeen(t, make(map[uintptr]bool), cache)
 }
 
-// SameProductFamily reports whether two recursive product observations describe
-// the same fixed-point family under identity's structural family hash. Callers
-// that need equal-precision semantics should use SameProductFamilyWithPrecision.
-func SameProductFamily(a, b typ.Type) bool {
-	return sameProductFamily(a, b, nil, nil)
+// sameProductFamily reports whether two recursive product observations describe
+// the same fixed-point family under relation-owned structural family hashing.
+// Callers that need equal-precision semantics should use
+// sameProductFamilyWithPrecision.
+func sameProductFamily(a, b typ.Type) bool {
+	return sameProductFamilyWithPrecision(a, b, ComparePrecision)
 }
 
-// SameProductFamilyWithPrecision reports whether two recursive product
+// sameProductFamilyWithPrecision reports whether two recursive product
 // observations describe the same fixed-point family with equal precision.
-func SameProductFamilyWithPrecision(a, b typ.Type, compare PrecisionCompareFunc) bool {
-	return sameProductFamily(a, b, compare, nil)
+func sameProductFamilyWithPrecision(a, b typ.Type, compare precisionCompareFunc) bool {
+	return sameProductFamilyWithCompare(a, b, compare, nil)
 }
 
-// SameProductFamilyWithPrecisionAndCache is SameProductFamilyWithPrecision using
-// a caller-owned ProductFamilyHashWithCache cache.
-func SameProductFamilyWithPrecisionAndCache(a, b typ.Type, compare PrecisionCompareFunc, cache map[typ.Type]uint64) bool {
-	return sameProductFamily(a, b, compare, cache)
+// sameProductFamilyWithPrecisionAndCache is sameProductFamilyWithPrecision using
+// a caller-owned product-family hash cache.
+func sameProductFamilyWithPrecisionAndCache(a, b typ.Type, compare precisionCompareFunc, cache map[typ.Type]uint64) bool {
+	return sameProductFamilyWithCompare(a, b, compare, cache)
 }
 
-func sameProductFamily(a, b typ.Type, compare PrecisionCompareFunc, cache map[typ.Type]uint64) bool {
+func sameProductFamilyWithCompare(a, b typ.Type, compare precisionCompareFunc, cache map[typ.Type]uint64) bool {
 	if typ.SameNodeOrAcyclicEqual(a, b) {
 		return true
 	}
@@ -54,7 +53,7 @@ func sameProductFamily(a, b typ.Type, compare PrecisionCompareFunc, cache map[ty
 	if !typ.ContainsRecursive(a) && !typ.ContainsRecursive(b) {
 		return false
 	}
-	if ProductFamilyHashWithCache(a, cache) != ProductFamilyHashWithCache(b, cache) {
+	if productFamilyHashWithCache(a, cache) != productFamilyHashWithCache(b, cache) {
 		return false
 	}
 	if compare == nil {
@@ -284,7 +283,7 @@ func normalizeNilType(t typ.Type) typ.Type {
 }
 
 func productFamilyTypePointer(t typ.Type) uintptr {
-	if ptr := typeNodePointer(t); ptr != 0 {
+	if ptr := typ.TypePointer(t); ptr != 0 {
 		return ptr
 	}
 	v := reflect.ValueOf(t)

@@ -3,7 +3,6 @@ package relation
 import (
 	"sort"
 
-	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
 	"github.com/wippyai/go-lua/analysis/internal/hash"
 	luatable "github.com/wippyai/go-lua/analysis/lua/table"
 	"github.com/wippyai/go-lua/analysis/type/coalesce"
@@ -419,16 +418,16 @@ func (s *returnJoinState) coalesceFoldedProductFamilyMembers(types []Type) []Typ
 
 func (s *returnJoinState) sameProductFamily(a, b Type) bool {
 	seen := s.precisionState()
-	return identity.SameProductFamilyWithPrecisionAndCache(a, b, func(candidate, baseline Type) (bool, bool) {
+	return sameProductFamilyWithPrecisionAndCache(a, b, func(candidate, baseline Type) (bool, bool) {
 		return comparePrecision(candidate, baseline, 0, seen)
 	}, productFamilyHashCache(seen))
 }
 
 func (s *returnJoinState) productFamilyHash(t Type) uint64 {
 	if s == nil {
-		return identity.ProductFamilyHash(t)
+		return productFamilyHash(t)
 	}
-	return identity.ProductFamilyHashWithCache(t, productFamilyHashCache(s.precisionState()))
+	return productFamilyHashWithCache(t, productFamilyHashCache(s.precisionState()))
 }
 
 func (s *returnJoinState) precisionState() *precisionSeen {
