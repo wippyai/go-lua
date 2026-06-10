@@ -103,6 +103,8 @@ func (b *builder) buildStmt(state flowState, stmt ast.Stmt) flowState {
 		return b.buildIf(state, stmt)
 	case *ast.WhileStmt:
 		return b.buildWhile(state, stmt)
+	case *ast.RepeatStmt:
+		return b.buildRepeat(state, stmt)
 	case *ast.BreakStmt:
 		return b.buildBreak(state)
 	case *ast.TypeDefStmt, *ast.InterfaceDefStmt:
@@ -182,6 +184,32 @@ func (b *builder) buildWhile(state flowState, stmt *ast.WhileStmt) flowState {
 	return flowState{current: join, live: true}
 }
 
+func (b *builder) buildRepeat(state flowState, stmt *ast.RepeatStmt) flowState {
+	if b.hasDeferredExprSemantics(stmt.Condition) {
+		b.unsupported = true
+		return flowState{current: state.current}
+	}
+	join := b.graph.AddNode(cfg.NodeJoin, 0, "")
+
+	beforeEdges := len(b.graph.Edges())
+	b.breakTargets = append(b.breakTargets, join)
+	body := b.buildStmts(state, stmt.Stmts)
+	b.breakTargets = b.breakTargets[:len(b.breakTargets)-1]
+
+	if body.live {
+		bodyStart, ok := b.firstNewEdgeTarget(beforeEdges, state.current, state.edgeCond())
+		if !ok {
+			body = b.appendNode(state, cfg.NodeNoop, 0, "")
+			bodyStart = body.current
+		}
+		branch := b.appendBranch(body, stmt.Condition)
+		b.graph.AddEdge(branch.current, join, true)
+		b.graph.AddEdge(branch.current, bodyStart, false)
+		return flowState{current: join, live: true}
+	}
+	return flowState{current: join, live: len(b.graph.Predecessors(join)) > 0}
+}
+
 func (b *builder) buildBreak(state flowState) flowState {
 	if len(b.breakTargets) == 0 {
 		b.unsupported = true
@@ -230,6 +258,19 @@ func (state flowState) edgeCond() bool {
 		return state.cond
 	}
 	return false
+}
+
+func (b *builder) firstNewEdgeTarget(edgeStart int, from cfg.Point, cond bool) (cfg.Point, bool) {
+	edges := b.graph.Edges()
+	if edgeStart < 0 || edgeStart > len(edges) {
+		edgeStart = len(edges)
+	}
+	for _, edge := range edges[edgeStart:] {
+		if edge.From == from && edge.Cond == cond {
+			return edge.To, true
+		}
+	}
+	return 0, false
 }
 
 func (b *builder) branchMetadata(expr ast.Expr) (symbol.ID, cfg.CondCheck) {

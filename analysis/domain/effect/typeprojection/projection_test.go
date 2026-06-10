@@ -1,8 +1,9 @@
-package effect
+package typeprojection
 
 import (
 	"testing"
 
+	"github.com/wippyai/go-lua/analysis/domain/effect"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
@@ -12,8 +13,8 @@ func TestApplyTypeProjectionField(t *testing.T) {
 		Field("age", typ.Integer).
 		Build()
 
-	got, ok := ApplyTypeProjection(source, TypeProjection{
-		Steps: []TypeProjectionStep{ProjectField("name")},
+	got, ok := ApplyTypeProjection(source, effect.TypeProjection{
+		Steps: []effect.TypeProjectionStep{effect.ProjectField("name")},
 	})
 	if !ok {
 		t.Fatal("ApplyTypeProjection field failed")
@@ -27,8 +28,8 @@ func TestApplyTypeProjectionCallableReturn(t *testing.T) {
 		Returns(typ.Number, typ.Boolean).
 		Build()
 
-	got, ok := ApplyTypeProjection(source, TypeProjection{
-		Steps: []TypeProjectionStep{ProjectCallableReturn()},
+	got, ok := ApplyTypeProjection(source, effect.TypeProjection{
+		Steps: []effect.TypeProjectionStep{effect.ProjectCallableReturn()},
 	})
 	if !ok {
 		t.Fatal("ApplyTypeProjection callable return failed")
@@ -40,8 +41,8 @@ func TestApplyTypeProjectionGenericArg(t *testing.T) {
 	param := typ.NewTypeParam("T", nil)
 	box := typ.NewGeneric("Box", []*typ.TypeParam{param}, param)
 
-	got, ok := ApplyTypeProjection(typ.NewAlias("StringBox", typ.Instantiate(box, typ.String)), TypeProjection{
-		Steps: []TypeProjectionStep{ProjectGenericArg(0)},
+	got, ok := ApplyTypeProjection(typ.NewAlias("StringBox", typ.Instantiate(box, typ.String)), effect.TypeProjection{
+		Steps: []effect.TypeProjectionStep{effect.ProjectGenericArg(0)},
 	})
 	if !ok {
 		t.Fatal("ApplyTypeProjection generic arg failed")
@@ -53,8 +54,8 @@ func TestApplyTypeProjectionGenericArgRejectsMissingArg(t *testing.T) {
 	param := typ.NewTypeParam("T", nil)
 	box := typ.NewGeneric("Box", []*typ.TypeParam{param}, param)
 
-	if got, ok := ApplyTypeProjection(typ.Instantiate(box, typ.String), TypeProjection{
-		Steps: []TypeProjectionStep{ProjectGenericArg(1)},
+	if got, ok := ApplyTypeProjection(typ.Instantiate(box, typ.String), effect.TypeProjection{
+		Steps: []effect.TypeProjectionStep{effect.ProjectGenericArg(1)},
 	}); ok || got != nil {
 		t.Fatal("ApplyTypeProjection generic missing arg succeeded")
 	}
@@ -64,8 +65,8 @@ func TestApplyTypeProjectionInstantiateGeneric(t *testing.T) {
 	param := typ.NewTypeParam("T", nil)
 	channel := typ.NewGeneric("Channel", []*typ.TypeParam{param}, typ.NewInterface("Channel", nil))
 
-	got, ok := ApplyTypeProjection(typ.NewMeta(typ.String), TypeProjection{
-		Steps: []TypeProjectionStep{ProjectInstantiateGeneric(channel)},
+	got, ok := ApplyTypeProjection(typ.NewMeta(typ.String), effect.TypeProjection{
+		Steps: []effect.TypeProjectionStep{effect.ProjectInstantiateGeneric(channel)},
 	})
 	if !ok {
 		t.Fatal("ApplyTypeProjection instantiate generic failed")
@@ -77,8 +78,8 @@ func TestApplyTypeProjectionInstantiateGenericRejectsConstraintMismatch(t *testi
 	param := typ.NewTypeParam("T", typ.Number)
 	channel := typ.NewGeneric("Channel", []*typ.TypeParam{param}, typ.NewInterface("Channel", nil))
 
-	if got, ok := ApplyTypeProjection(typ.NewMeta(typ.String), TypeProjection{
-		Steps: []TypeProjectionStep{ProjectInstantiateGeneric(channel)},
+	if got, ok := ApplyTypeProjection(typ.NewMeta(typ.String), effect.TypeProjection{
+		Steps: []effect.TypeProjectionStep{effect.ProjectInstantiateGeneric(channel)},
 	}); ok || got != nil {
 		t.Fatal("ApplyTypeProjection instantiate generic constraint mismatch succeeded")
 	}
@@ -89,10 +90,10 @@ func TestApplyTypeProjectionChainFieldCallableReturn(t *testing.T) {
 		Field("make", typ.Func().Returns(typ.Boolean).Build()).
 		Build()
 
-	got, ok := ApplyTypeProjection(source, TypeProjection{
-		Steps: []TypeProjectionStep{
-			ProjectField("make"),
-			ProjectCallableReturn(),
+	got, ok := ApplyTypeProjection(source, effect.TypeProjection{
+		Steps: []effect.TypeProjectionStep{
+			effect.ProjectField("make"),
+			effect.ProjectCallableReturn(),
 		},
 	})
 	if !ok {

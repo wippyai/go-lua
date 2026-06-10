@@ -88,6 +88,17 @@ func firstJoin(t *testing.T, graph *cfg.CFG) cfg.Point {
 	return points[0]
 }
 
+func rpoIndex(t *testing.T, graph *cfg.CFG, point cfg.Point) int {
+	t.Helper()
+	for i, candidate := range graph.RPO() {
+		if candidate == point {
+			return i
+		}
+	}
+	t.Fatalf("point %d is not reachable; rpo=%v", point, graph.RPO())
+	return -1
+}
+
 func nodeWithTarget(t *testing.T, graph *cfg.CFG, target symbol.ID, ordinal int) cfg.Point {
 	t.Helper()
 	seen := 0
@@ -465,15 +476,113 @@ func TestBuildChunkBreakInsideWhileReachesJoinPath(t *testing.T) {
 	requireEdge(t, graph, join, afterAssign, false)
 }
 
+func TestBuildChunkRepeatBuildsNonNilCFG(t *testing.T) {
+	bodyStmt := localAssign([]string{"bodyValue"}, number("1"))
+	stmts := []ast.Stmt{
+		&ast.RepeatStmt{
+			Stmts:     []ast.Stmt{bodyStmt},
+			Condition: &ast.TrueExpr{},
+		},
+	}
+	bindings := bind.BindChunk(stmts, bind.Options{})
+	graph := BuildChunk(stmts, bindings)
+	if graph == nil {
+		t.Fatal("BuildChunk returned nil for repeat-until")
+	}
+	requireTargetCount(t, graph, mustLocalAt(t, bindings, bodyStmt, 0), 1)
+}
+
+func TestBuildChunkRepeatCreatesPostTestLoop(t *testing.T) {
+	cond := ident("done")
+	bodyStmt := localAssign([]string{"bodyValue"}, number("1"))
+	afterStmt := localAssign([]string{"afterValue"}, number("2"))
+	stmts := []ast.Stmt{
+		&ast.RepeatStmt{
+			Stmts:     []ast.Stmt{bodyStmt},
+			Condition: cond,
+		},
+		afterStmt,
+	}
+	bindings := bind.BindChunk(stmts, bind.Options{})
+	graph := BuildChunk(stmts, bindings)
+
+	branch := firstBranch(t, graph)
+	join := firstJoin(t, graph)
+	bodyID := mustLocalAt(t, bindings, bodyStmt, 0)
+	afterID := mustLocalAt(t, bindings, afterStmt, 0)
+	bodyAssign := nodeWithTarget(t, graph, bodyID, 0)
+	afterAssign := nodeWithTarget(t, graph, afterID, 0)
+
+	if bodyAt, branchAt := rpoIndex(t, graph, bodyAssign), rpoIndex(t, graph, branch); bodyAt >= branchAt {
+		t.Fatalf("repeat body should be before branch in reachable flow; body rpo=%d branch rpo=%d", bodyAt, branchAt)
+	}
+	requireEdge(t, graph, bodyAssign, branch, false)
+	requireEdge(t, graph, branch, bodyAssign, false)
+	requireEdge(t, graph, branch, join, true)
+	requireEdge(t, graph, join, afterAssign, false)
+}
+
+func TestBuildChunkRepeatConditionSeesBodyLocal(t *testing.T) {
+	bodyLocal := localAssign([]string{"again"}, number("1"))
+	conditionRead := ident("again")
+	stmts := []ast.Stmt{
+		&ast.RepeatStmt{
+			Stmts:     []ast.Stmt{bodyLocal},
+			Condition: conditionRead,
+		},
+	}
+	bindings := bind.BindChunk(stmts, bind.Options{})
+	graph := BuildChunk(stmts, bindings)
+
+	bodyID := mustLocalAt(t, bindings, bodyLocal, 0)
+	conditionID := mustIdentSymbol(t, bindings, conditionRead)
+	if conditionID != bodyID {
+		t.Fatalf("repeat condition symbol = %d, want body local %d", conditionID, bodyID)
+	}
+	branch := firstBranch(t, graph)
+	if got := graph.Node(branch).CondSymbol; got != bodyID {
+		t.Fatalf("branch symbol = %d, want body local %d", got, bodyID)
+	}
+	if got := graph.Node(branch).CondCheck.Kind; got != cfg.CheckTruthy {
+		t.Fatalf("branch check = %v, want truthy", got)
+	}
+}
+
+func TestBuildChunkBreakInsideRepeatReachesJoinPath(t *testing.T) {
+	bodyStmt := localAssign([]string{"bodyValue"}, number("1"))
+	deadStmt := localAssign([]string{"deadValue"}, number("2"))
+	afterStmt := localAssign([]string{"afterValue"}, number("3"))
+	stmts := []ast.Stmt{
+		&ast.RepeatStmt{
+			Stmts: []ast.Stmt{
+				bodyStmt,
+				&ast.BreakStmt{},
+				deadStmt,
+			},
+			Condition: &ast.TrueExpr{},
+		},
+		afterStmt,
+	}
+	bindings := bind.BindChunk(stmts, bind.Options{})
+	graph := BuildChunk(stmts, bindings)
+
+	join := firstJoin(t, graph)
+	bodyID := mustLocalAt(t, bindings, bodyStmt, 0)
+	deadID := mustLocalAt(t, bindings, deadStmt, 0)
+	afterID := mustLocalAt(t, bindings, afterStmt, 0)
+	bodyAssign := nodeWithTarget(t, graph, bodyID, 0)
+	afterAssign := nodeWithTarget(t, graph, afterID, 0)
+
+	requireTargetCount(t, graph, deadID, 0)
+	requireEdge(t, graph, bodyAssign, join, false)
+	requireEdge(t, graph, join, afterAssign, false)
+}
+
 func TestBuildChunkUnsupportedControlFlowReturnsNil(t *testing.T) {
 	tests := []struct {
 		name string
 		stmt ast.Stmt
 	}{
-		{
-			name: "repeat",
-			stmt: &ast.RepeatStmt{Condition: &ast.TrueExpr{}},
-		},
 		{
 			name: "number for",
 			stmt: &ast.NumberForStmt{Name: "i", Init: number("1"), Limit: number("2")},
