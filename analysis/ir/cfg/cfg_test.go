@@ -73,6 +73,7 @@ func TestAddNode(t *testing.T) {
 		{"return", NodeReturn, 0, ""},
 		{"scope enter", NodeScopeEnter, 0, ""},
 		{"scope exit", NodeScopeExit, 0, ""},
+		{"noop", NodeNoop, 0, ""},
 	}
 
 	for _, tt := range tests {

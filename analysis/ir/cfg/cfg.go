@@ -56,6 +56,7 @@ const (
 	NodeScopeEnter                 // Lexical scope entry (function, block, loop body)
 	NodeScopeExit                  // Lexical scope exit (end of block)
 	NodeTypeDef                    // Type definition (type annotation)
+	NodeNoop                       // Structural no-op used to materialize empty control-flow arms
 )
 
 // CondCheckKind identifies the type of condition check in a branch.

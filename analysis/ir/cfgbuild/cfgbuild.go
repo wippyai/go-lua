@@ -1,0 +1,368 @@
+package cfgbuild
+
+import (
+	"github.com/wippyai/go-lua/analysis/ir/cfg"
+	"github.com/wippyai/go-lua/analysis/ir/symbol"
+	"github.com/wippyai/go-lua/analysis/lua/bind"
+	"github.com/wippyai/go-lua/compiler/ast"
+)
+
+// BuildFunction builds a minimal CFG for a function body using lexical bindings.
+func BuildFunction(fn *ast.FunctionExpr, bindings *bind.Result) *cfg.CFG {
+	graph := cfg.New()
+	b := builder{graph: graph, bindings: bindings}
+
+	state := liveAt(graph.Entry())
+	if fn != nil {
+		for _, id := range bindings.ParamSymbols(fn) {
+			state = b.appendNode(state, cfg.NodeAssign, id, "")
+		}
+		state = b.buildStmts(state, fn.Stmts)
+	}
+	if b.unsupported {
+		return nil
+	}
+	b.connect(state, graph.Exit())
+	return graph
+}
+
+// BuildChunk builds a minimal CFG for a chunk-level statement list.
+func BuildChunk(stmts []ast.Stmt, bindings *bind.Result) *cfg.CFG {
+	graph := cfg.New()
+	b := builder{graph: graph, bindings: bindings}
+
+	state := b.buildStmts(liveAt(graph.Entry()), stmts)
+	if b.unsupported {
+		return nil
+	}
+	b.connect(state, graph.Exit())
+	return graph
+}
+
+type builder struct {
+	graph        *cfg.CFG
+	bindings     *bind.Result
+	breakTargets []cfg.Point
+	unsupported  bool
+}
+
+type flowState struct {
+	current     cfg.Point
+	live        bool
+	pendingCond bool
+	cond        bool
+}
+
+func liveAt(point cfg.Point) flowState {
+	return flowState{current: point, live: true}
+}
+
+func branchPath(point cfg.Point, cond bool) flowState {
+	return flowState{current: point, live: true, pendingCond: true, cond: cond}
+}
+
+func (b *builder) buildStmts(state flowState, stmts []ast.Stmt) flowState {
+	for _, stmt := range stmts {
+		if !state.live {
+			return state
+		}
+		state = b.buildStmt(state, stmt)
+	}
+	return state
+}
+
+func (b *builder) buildStmt(state flowState, stmt ast.Stmt) flowState {
+	switch stmt := stmt.(type) {
+	case nil:
+		return state
+	case *ast.AssignStmt:
+		return b.buildAssign(state, stmt)
+	case *ast.LocalAssignStmt:
+		return b.buildLocalAssign(state, stmt)
+	case *ast.FuncCallStmt:
+		if _, ok := stmt.Expr.(*ast.FuncCallExpr); !ok {
+			b.unsupported = true
+			return flowState{current: state.current}
+		}
+		if b.hasDeferredExprSemanticsInCall(stmt.Expr) {
+			b.unsupported = true
+			return flowState{current: state.current}
+		}
+		return b.appendNode(state, cfg.NodeCall, 0, callName(stmt.Expr))
+	case *ast.ReturnStmt:
+		if b.hasDeferredExprSemantics(stmt.Exprs...) {
+			b.unsupported = true
+			return flowState{current: state.current}
+		}
+		state = b.appendNode(state, cfg.NodeReturn, 0, "")
+		b.graph.AddEdge(state.current, b.graph.Exit(), false)
+		return flowState{current: state.current}
+	case *ast.DoBlockStmt:
+		return b.buildDoBlock(state, stmt)
+	case *ast.IfStmt:
+		return b.buildIf(state, stmt)
+	case *ast.WhileStmt:
+		return b.buildWhile(state, stmt)
+	case *ast.BreakStmt:
+		return b.buildBreak(state)
+	case *ast.TypeDefStmt, *ast.InterfaceDefStmt:
+		return b.appendNode(state, cfg.NodeTypeDef, 0, "")
+	default:
+		b.unsupported = true
+		return flowState{current: state.current}
+	}
+}
+
+func (b *builder) buildAssign(state flowState, stmt *ast.AssignStmt) flowState {
+	if b.hasDeferredExprSemantics(stmt.Rhs...) {
+		b.unsupported = true
+		return flowState{current: state.current}
+	}
+	for _, lhs := range stmt.Lhs {
+		id, ok := b.simpleIdentSymbol(lhs)
+		if !ok {
+			b.unsupported = true
+			return flowState{current: state.current}
+		}
+		state = b.appendNode(state, cfg.NodeAssign, id, "")
+	}
+	return state
+}
+
+func (b *builder) buildLocalAssign(state flowState, stmt *ast.LocalAssignStmt) flowState {
+	if b.hasDeferredExprSemantics(stmt.Exprs...) {
+		b.unsupported = true
+		return flowState{current: state.current}
+	}
+	for _, id := range b.bindings.LocalSymbols(stmt) {
+		state = b.appendNode(state, cfg.NodeAssign, id, "")
+	}
+	return state
+}
+
+func (b *builder) buildDoBlock(state flowState, stmt *ast.DoBlockStmt) flowState {
+	return b.buildStmts(state, stmt.Stmts)
+}
+
+func (b *builder) buildIf(state flowState, stmt *ast.IfStmt) flowState {
+	if b.hasDeferredExprSemantics(stmt.Condition) {
+		b.unsupported = true
+		return flowState{current: state.current}
+	}
+	branch := b.appendBranch(state, stmt.Condition)
+	join := b.graph.AddNode(cfg.NodeJoin, 0, "")
+
+	thenState := b.buildStmts(branchPath(branch.current, true), stmt.Then)
+	thenState = b.materializePendingCond(thenState)
+	b.connect(thenState, join)
+
+	elseState := b.buildStmts(branchPath(branch.current, false), stmt.Else)
+	elseState = b.materializePendingCond(elseState)
+	b.connect(elseState, join)
+
+	return flowState{current: join, live: thenState.live || elseState.live}
+}
+
+func (b *builder) buildWhile(state flowState, stmt *ast.WhileStmt) flowState {
+	if b.hasDeferredExprSemantics(stmt.Condition) {
+		b.unsupported = true
+		return flowState{current: state.current}
+	}
+	branch := b.appendBranch(state, stmt.Condition)
+	join := b.graph.AddNode(cfg.NodeJoin, 0, "")
+
+	b.graph.AddEdge(branch.current, join, false)
+	b.breakTargets = append(b.breakTargets, join)
+	body := b.buildStmts(branchPath(branch.current, true), stmt.Stmts)
+	b.breakTargets = b.breakTargets[:len(b.breakTargets)-1]
+
+	if body.live {
+		b.connect(body, branch.current)
+	}
+	return flowState{current: join, live: true}
+}
+
+func (b *builder) buildBreak(state flowState) flowState {
+	if len(b.breakTargets) == 0 {
+		b.unsupported = true
+		return flowState{current: state.current}
+	}
+	state = b.materializePendingCond(state)
+	b.connect(state, b.breakTargets[len(b.breakTargets)-1])
+	return flowState{current: state.current}
+}
+
+func (b *builder) appendNode(state flowState, kind cfg.NodeKind, target symbol.ID, callee string) flowState {
+	if !state.live {
+		return state
+	}
+	point := b.graph.AddNode(kind, target, callee)
+	b.connect(state, point)
+	return flowState{current: point, live: true}
+}
+
+func (b *builder) appendBranch(state flowState, expr ast.Expr) flowState {
+	if !state.live {
+		return state
+	}
+	condSymbol, condCheck := b.branchMetadata(expr)
+	point := b.graph.AddBranch(condSymbol, condCheck)
+	b.connect(state, point)
+	return flowState{current: point, live: true}
+}
+
+func (b *builder) materializePendingCond(state flowState) flowState {
+	if !state.live || !state.pendingCond {
+		return state
+	}
+	return b.appendNode(state, cfg.NodeNoop, 0, "")
+}
+
+func (b *builder) connect(state flowState, to cfg.Point) {
+	if !state.live {
+		return
+	}
+	b.graph.AddEdge(state.current, to, state.edgeCond())
+}
+
+func (state flowState) edgeCond() bool {
+	if state.pendingCond {
+		return state.cond
+	}
+	return false
+}
+
+func (b *builder) branchMetadata(expr ast.Expr) (symbol.ID, cfg.CondCheck) {
+	switch expr := expr.(type) {
+	case *ast.IdentExpr:
+		if id, ok := b.identSymbol(expr); ok {
+			return id, cfg.CondCheck{Kind: cfg.CheckTruthy}
+		}
+	case *ast.UnaryNotOpExpr:
+		if ident, ok := expr.Expr.(*ast.IdentExpr); ok {
+			if id, ok := b.identSymbol(ident); ok {
+				return id, cfg.CondCheck{Kind: cfg.CheckFalsy}
+			}
+		}
+	case *ast.RelationalOpExpr:
+		if expr.Operator != "==" && expr.Operator != "~=" {
+			break
+		}
+		if id, ok := b.nilCompareSymbol(expr.Lhs, expr.Rhs); ok {
+			if expr.Operator == "==" {
+				return id, cfg.CondCheck{Kind: cfg.CheckNil}
+			}
+			return id, cfg.CondCheck{Kind: cfg.CheckNotNil}
+		}
+	}
+	return 0, cfg.CondCheck{Kind: cfg.CheckNone}
+}
+
+func (b *builder) nilCompareSymbol(lhs, rhs ast.Expr) (symbol.ID, bool) {
+	if _, ok := lhs.(*ast.NilExpr); ok {
+		if ident, ok := rhs.(*ast.IdentExpr); ok {
+			return b.identSymbol(ident)
+		}
+	}
+	if _, ok := rhs.(*ast.NilExpr); ok {
+		if ident, ok := lhs.(*ast.IdentExpr); ok {
+			return b.identSymbol(ident)
+		}
+	}
+	return 0, false
+}
+
+func (b *builder) hasDeferredExprSemantics(exprs ...ast.Expr) bool {
+	for _, expr := range exprs {
+		if b.hasDeferredExprSemantic(expr) {
+			return true
+		}
+	}
+	return false
+}
+
+func (b *builder) hasDeferredExprSemanticsInCall(expr ast.Expr) bool {
+	call, ok := expr.(*ast.FuncCallExpr)
+	if !ok {
+		return b.hasDeferredExprSemantic(expr)
+	}
+	if b.hasDeferredExprSemantic(call.Func) || b.hasDeferredExprSemantic(call.Receiver) {
+		return true
+	}
+	return b.hasDeferredExprSemantics(call.Args...)
+}
+
+func (b *builder) hasDeferredExprSemantic(expr ast.Expr) bool {
+	switch expr := expr.(type) {
+	case nil:
+		return false
+	case *ast.TrueExpr, *ast.FalseExpr, *ast.NilExpr, *ast.NumberExpr, *ast.StringExpr, *ast.Comma3Expr:
+		return false
+	case *ast.IdentExpr:
+		return false
+	case *ast.AttrGetExpr:
+		return b.hasDeferredExprSemantic(expr.Object) || b.hasDeferredExprSemantic(expr.Key)
+	case *ast.TableExpr:
+		for _, field := range expr.Fields {
+			if field == nil {
+				continue
+			}
+			if b.hasDeferredExprSemantic(field.Key) || b.hasDeferredExprSemantic(field.Value) {
+				return true
+			}
+		}
+		return false
+	case *ast.FuncCallExpr, *ast.FunctionExpr:
+		return true
+	case *ast.LogicalOpExpr:
+		return b.hasDeferredExprSemantic(expr.Lhs) || b.hasDeferredExprSemantic(expr.Rhs)
+	case *ast.RelationalOpExpr:
+		return b.hasDeferredExprSemantic(expr.Lhs) || b.hasDeferredExprSemantic(expr.Rhs)
+	case *ast.StringConcatOpExpr:
+		return b.hasDeferredExprSemantic(expr.Lhs) || b.hasDeferredExprSemantic(expr.Rhs)
+	case *ast.ArithmeticOpExpr:
+		return b.hasDeferredExprSemantic(expr.Lhs) || b.hasDeferredExprSemantic(expr.Rhs)
+	case *ast.UnaryMinusOpExpr:
+		return b.hasDeferredExprSemantic(expr.Expr)
+	case *ast.UnaryNotOpExpr:
+		return b.hasDeferredExprSemantic(expr.Expr)
+	case *ast.UnaryLenOpExpr:
+		return b.hasDeferredExprSemantic(expr.Expr)
+	case *ast.UnaryBNotOpExpr:
+		return b.hasDeferredExprSemantic(expr.Expr)
+	case *ast.CastExpr:
+		return b.hasDeferredExprSemantic(expr.Expr)
+	case *ast.NonNilAssertExpr:
+		return b.hasDeferredExprSemantic(expr.Expr)
+	default:
+		return true
+	}
+}
+
+func (b *builder) simpleIdentSymbol(expr ast.Expr) (symbol.ID, bool) {
+	ident, ok := expr.(*ast.IdentExpr)
+	if !ok {
+		return 0, false
+	}
+	return b.identSymbol(ident)
+}
+
+func (b *builder) identSymbol(ident *ast.IdentExpr) (symbol.ID, bool) {
+	if b.bindings == nil || ident == nil {
+		return 0, false
+	}
+	id, ok := b.bindings.SymbolOf(ident)
+	return id, ok && id != 0
+}
+
+func callName(expr ast.Expr) string {
+	call, ok := expr.(*ast.FuncCallExpr)
+	if !ok {
+		return ""
+	}
+	ident, ok := call.Func.(*ast.IdentExpr)
+	if !ok {
+		return ""
+	}
+	return ident.Value
+}
