@@ -1,4 +1,4 @@
-package sibling
+package cond
 
 import (
 	"github.com/wippyai/go-lua/compiler/ast"
@@ -9,11 +9,11 @@ import (
 	"github.com/wippyai/go-lua/types/narrow"
 )
 
-// ConstraintsForIdent returns sibling constraints derived from correlated
+// siblingConstraintsForIdent returns sibling constraints derived from correlated
 // multi-return assignments using bindings.
 //
 // wantNonNil means the queried symbol is known non-nil/truthy at this point.
-func ConstraintsForIdent(ident *ast.IdentExpr, p cfg.Point, inputs *flow.Inputs, wantNonNil bool) []constraint.Constraint {
+func siblingConstraintsForIdent(ident *ast.IdentExpr, p cfg.Point, inputs *flow.Inputs, wantNonNil bool) []constraint.Constraint {
 	if ident == nil || inputs == nil || inputs.SiblingAssignments == nil || inputs.Graph == nil {
 		return nil
 	}
@@ -33,11 +33,11 @@ func ConstraintsForIdent(ident *ast.IdentExpr, p cfg.Point, inputs *flow.Inputs,
 	if ver.ID == 0 {
 		return nil
 	}
-	return ConstraintsForSymbol(sym, ver.ID, inputs, wantNonNil, bindings)
+	return siblingConstraintsForSymbol(sym, ver.ID, inputs, wantNonNil, bindings)
 }
 
-// ConstraintsForSymbol returns sibling constraints given a resolved symbol.
-func ConstraintsForSymbol(sym cfg.SymbolID, versionID int, inputs *flow.Inputs, wantNonNil bool, bindings *bind.BindingTable) []constraint.Constraint {
+// siblingConstraintsForSymbol returns sibling constraints given a resolved symbol.
+func siblingConstraintsForSymbol(sym cfg.SymbolID, versionID int, inputs *flow.Inputs, wantNonNil bool, bindings *bind.BindingTable) []constraint.Constraint {
 	if sym == 0 || versionID == 0 || inputs == nil || inputs.SiblingAssignments == nil {
 		return nil
 	}

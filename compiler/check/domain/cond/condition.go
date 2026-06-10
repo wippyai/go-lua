@@ -50,7 +50,6 @@ import (
 	flowpath "github.com/wippyai/go-lua/compiler/check/domain/path"
 	"github.com/wippyai/go-lua/compiler/check/domain/predicate"
 	"github.com/wippyai/go-lua/compiler/check/domain/resolve"
-	"github.com/wippyai/go-lua/compiler/check/domain/sibling"
 	"github.com/wippyai/go-lua/compiler/check/scope"
 	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/effect"
@@ -390,11 +389,11 @@ func (ce *ConditionExtractor) branchConditionsFromIdent(ident *ast.IdentExpr) Br
 	onFalse := constraint.TrueCondition()
 	if !path.IsEmpty() {
 		trueConstraints := append([]constraint.Constraint{constraint.Truthy{Path: path}},
-			versionSiblingConstraints(sibling.ConstraintsForIdent(ident, ce.P, ce.Inputs, true), ce.graph(), ce.P)...)
+			versionSiblingConstraints(siblingConstraintsForIdent(ident, ce.P, ce.Inputs, true), ce.graph(), ce.P)...)
 		trueConstraints = append(trueConstraints, ce.keyOfConstraintsForTruthyValue(path)...)
 		onTrue = constraint.FromConstraints(trueConstraints...)
 		onFalse = constraint.FromConstraints(append([]constraint.Constraint{constraint.Falsy{Path: path}},
-			versionSiblingConstraints(sibling.ConstraintsForIdent(ident, ce.P, ce.Inputs, false), ce.graph(), ce.P)...)...)
+			versionSiblingConstraints(siblingConstraintsForIdent(ident, ce.P, ce.Inputs, false), ce.graph(), ce.P)...)...)
 	}
 	if link := ce.predicateLinkForIdent(ident); link != nil {
 		if link.OnTruthy.HasConstraints() {
@@ -653,7 +652,7 @@ func (ce *ConditionExtractor) ConditionFromEquality(lhs, rhs ast.Expr) constrain
 			path := ce.pathFromExpr(rhs)
 			if !path.IsEmpty() {
 				result := []constraint.Constraint{constraint.IsNil{Path: path}}
-				result = append(result, versionSiblingConstraints(sibling.ConstraintsForIdent(ident, ce.P, ce.Inputs, false), ce.graph(), ce.P)...)
+				result = append(result, versionSiblingConstraints(siblingConstraintsForIdent(ident, ce.P, ce.Inputs, false), ce.graph(), ce.P)...)
 				return constraint.FromConstraints(result...)
 			}
 		}
@@ -673,7 +672,7 @@ func (ce *ConditionExtractor) ConditionFromEquality(lhs, rhs ast.Expr) constrain
 			path := ce.pathFromExpr(lhs)
 			if !path.IsEmpty() {
 				result := []constraint.Constraint{constraint.IsNil{Path: path}}
-				result = append(result, versionSiblingConstraints(sibling.ConstraintsForIdent(ident, ce.P, ce.Inputs, false), ce.graph(), ce.P)...)
+				result = append(result, versionSiblingConstraints(siblingConstraintsForIdent(ident, ce.P, ce.Inputs, false), ce.graph(), ce.P)...)
 				return constraint.FromConstraints(result...)
 			}
 		}
@@ -819,7 +818,7 @@ func (ce *ConditionExtractor) ConditionFromInequality(lhs, rhs ast.Expr) constra
 			path := ce.pathFromExpr(rhs)
 			if !path.IsEmpty() {
 				result := []constraint.Constraint{constraint.NotNil{Path: path}}
-				result = append(result, versionSiblingConstraints(sibling.ConstraintsForIdent(ident, ce.P, ce.Inputs, true), ce.graph(), ce.P)...)
+				result = append(result, versionSiblingConstraints(siblingConstraintsForIdent(ident, ce.P, ce.Inputs, true), ce.graph(), ce.P)...)
 				return constraint.FromConstraints(result...)
 			}
 		}
@@ -839,7 +838,7 @@ func (ce *ConditionExtractor) ConditionFromInequality(lhs, rhs ast.Expr) constra
 			path := ce.pathFromExpr(lhs)
 			if !path.IsEmpty() {
 				result := []constraint.Constraint{constraint.NotNil{Path: path}}
-				result = append(result, versionSiblingConstraints(sibling.ConstraintsForIdent(ident, ce.P, ce.Inputs, true), ce.graph(), ce.P)...)
+				result = append(result, versionSiblingConstraints(siblingConstraintsForIdent(ident, ce.P, ce.Inputs, true), ce.graph(), ce.P)...)
 				return constraint.FromConstraints(result...)
 			}
 		}

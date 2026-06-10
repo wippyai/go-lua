@@ -25,7 +25,6 @@ import (
 	"github.com/wippyai/go-lua/compiler/check/domain/path"
 	"github.com/wippyai/go-lua/compiler/check/domain/predicate"
 	"github.com/wippyai/go-lua/compiler/check/domain/resolve"
-	"github.com/wippyai/go-lua/compiler/check/domain/sibling"
 	"github.com/wippyai/go-lua/compiler/check/domain/tblutil"
 	checkeffects "github.com/wippyai/go-lua/compiler/check/effects"
 	"github.com/wippyai/go-lua/compiler/check/scope"
@@ -1380,7 +1379,7 @@ func siblingConstraintsFromOnReturn(disj []constraint.Constraint, inputs *flow.I
 			continue
 		}
 		version := graph.VisibleVersion(p, cpath.Symbol)
-		raw := sibling.ConstraintsForSymbol(cpath.Symbol, version.ID, inputs, wantNonNil, bindings)
+		raw := siblingConstraintsForSymbol(cpath.Symbol, version.ID, inputs, wantNonNil, bindings)
 		if len(raw) == 0 {
 			continue
 		}
