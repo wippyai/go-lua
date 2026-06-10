@@ -25,7 +25,6 @@ import (
 	"github.com/wippyai/go-lua/compiler/check/domain/path"
 	"github.com/wippyai/go-lua/compiler/check/domain/predicate"
 	"github.com/wippyai/go-lua/compiler/check/domain/resolve"
-	checkeffects "github.com/wippyai/go-lua/compiler/check/effects"
 	"github.com/wippyai/go-lua/compiler/check/scope"
 	"github.com/wippyai/go-lua/compiler/pathseg"
 	"github.com/wippyai/go-lua/types/constraint"
@@ -1489,7 +1488,7 @@ func ExtractFunctionRefinement(
 		refinementLookupSym,
 		synthFn,
 		symResolver,
-		checkeffects.EffectFromType,
+		callsite.EffectFromType,
 	)
 }
 
@@ -1520,7 +1519,7 @@ func CallTerminates(
 		refinementLookupSym,
 		synthFn,
 		symResolver,
-		checkeffects.EffectFromType,
+		callsite.EffectFromType,
 	); eff != nil && eff.Terminates {
 		return true
 	}

@@ -5,6 +5,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/bind"
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/types/constraint"
+	"github.com/wippyai/go-lua/types/effect"
 	"github.com/wippyai/go-lua/types/query/core"
 	"github.com/wippyai/go-lua/types/typ"
 	"github.com/wippyai/go-lua/types/typ/unwrap"
@@ -52,6 +53,48 @@ func resolveCalleeTypeBySymbolCandidates(
 		}
 	}
 	return nil
+}
+
+// EffectFromType extracts FunctionRefinement from a function type's declared effect annotations.
+func EffectFromType(t typ.Type) *constraint.FunctionRefinement {
+	if t == nil {
+		return nil
+	}
+	fn, ok := unwrap.Alias(t).(*typ.Function)
+	if !ok || fn == nil {
+		return nil
+	}
+	if fn.Refinement != nil {
+		if eff, ok := fn.Refinement.(*constraint.FunctionRefinement); ok {
+			return eff
+		}
+	}
+
+	var row effect.Row
+	if fn.Effects != nil {
+		if r, ok := fn.Effects.(effect.Row); ok {
+			row = r
+		}
+	}
+	terminates := row.HasDiverge()
+	if !terminates {
+		for _, r := range fn.Returns {
+			if r == nil {
+				continue
+			}
+			if typ.IsNever(unwrap.Alias(r)) {
+				terminates = true
+				break
+			}
+		}
+	}
+	if row.Pure() && !row.IsOpen() && !terminates {
+		return nil
+	}
+	return &constraint.FunctionRefinement{
+		Row:        row,
+		Terminates: terminates,
+	}
 }
 
 // ResolveCalleeEffect resolves the best effect for a callsite using one canonical order:

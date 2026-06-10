@@ -8,9 +8,9 @@ import (
 	"github.com/wippyai/go-lua/compiler/bind"
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/api"
+	"github.com/wippyai/go-lua/compiler/check/callsite"
 	"github.com/wippyai/go-lua/compiler/check/domain/flowctx"
 	"github.com/wippyai/go-lua/compiler/check/domain/resolve"
-	checkeffects "github.com/wippyai/go-lua/compiler/check/effects"
 	"github.com/wippyai/go-lua/compiler/parse"
 	typecfg "github.com/wippyai/go-lua/types/cfg"
 	"github.com/wippyai/go-lua/types/constraint"
@@ -161,14 +161,14 @@ func TestConstraintsFromAssignOnReturn_NilInfo(t *testing.T) {
 }
 
 func TestExtractEffectFromType_NilType(t *testing.T) {
-	result := checkeffects.EffectFromType(nil)
+	result := callsite.EffectFromType(nil)
 	if result != nil {
 		t.Error("nil type should return nil effect")
 	}
 }
 
 func TestExtractEffectFromType_NonFunction(t *testing.T) {
-	result := checkeffects.EffectFromType(typ.String)
+	result := callsite.EffectFromType(typ.String)
 	if result != nil {
 		t.Error("non-function type should return nil effect")
 	}
@@ -176,7 +176,7 @@ func TestExtractEffectFromType_NonFunction(t *testing.T) {
 
 func TestExtractEffectFromType_FunctionNoRefinement(t *testing.T) {
 	fn := typ.Func().Returns(typ.String).Build()
-	result := checkeffects.EffectFromType(fn)
+	result := callsite.EffectFromType(fn)
 	if result != nil {
 		t.Error("function without refinement should return nil effect")
 	}

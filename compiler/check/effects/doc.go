@@ -1,12 +1,7 @@
-// Package effects provides operations for function effect extraction and export.
+// Package effects provides operations for function effect export.
 //
-// This package handles effect annotations for functions. Effects include
-// termination guarantees, IO markers, and type predicates.
-//
-// # Type Extraction
-//
-// [EffectFromType] extracts function refinements from declared function type
-// annotations and never-returning return types.
+// This package attaches already-known effect annotations to exported function
+// types so they remain visible across module boundaries.
 //
 // # Export
 //
