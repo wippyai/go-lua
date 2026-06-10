@@ -6,6 +6,7 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/internal/hash"
 	luatable "github.com/wippyai/go-lua/analysis/lua/table"
+	"github.com/wippyai/go-lua/analysis/type/recursivefamily"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
@@ -35,13 +36,7 @@ func typeNodePointer(t typ.Type) uintptr {
 }
 
 // FamilyKey is the stable producer identity of a recursive family.
-type FamilyKey = typ.RecursiveFamilyKey
-
-// hash folds the key into a stable bucket value.
-func hashFamilyKey(k FamilyKey) uint64 {
-	h := hash.FnvString(k.Namespace)
-	return hash.HashCombine(h, hash.FnvString(k.Owner))
-}
+type FamilyKey = recursivefamily.Key
 
 // sameKey reports whether two recursive nodes carry the same family key.
 func sameKey(a, b *typ.Recursive) bool {
@@ -54,7 +49,7 @@ func sameKey(a, b *typ.Recursive) bool {
 
 // recFamilyKeyHash returns the hash of the family key embedded in rec.
 func recFamilyKeyHash(rec *typ.Recursive) uint64 {
-	return hashFamilyKey(rec.RecursiveFamilyKey())
+	return rec.RecursiveFamilyKey().Hash()
 }
 
 // RecursiveFamilyInterner owns one canonical *typ.Recursive handle per FamilyKey

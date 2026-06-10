@@ -5,6 +5,7 @@ import (
 
 	luatable "github.com/wippyai/go-lua/analysis/lua/table"
 	"github.com/wippyai/go-lua/analysis/type/kind"
+	"github.com/wippyai/go-lua/analysis/type/recursivefamily"
 	"github.com/wippyai/go-lua/analysis/type/subst"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/analysis/type/unwrap"
@@ -499,14 +500,14 @@ func (c *checker) metaSubtype(subMT, superMT typ.Type, depth int) bool {
 	return c.check(subMT, superMT, depth)
 }
 
-func recursiveFamilyKeyOf(t typ.Type) (typ.RecursiveFamilyKey, bool) {
+func recursiveFamilyKeyOf(t typ.Type) (recursivefamily.Key, bool) {
 	r, ok := t.(*typ.Recursive)
 	if !ok {
-		return typ.RecursiveFamilyKey{}, false
+		return recursivefamily.Key{}, false
 	}
 	key := r.RecursiveFamilyKey()
 	if key.IsZero() {
-		return typ.RecursiveFamilyKey{}, false
+		return recursivefamily.Key{}, false
 	}
 	return key, true
 }

@@ -5,6 +5,7 @@ import (
 	"sync/atomic"
 
 	"github.com/wippyai/go-lua/analysis/type/kind"
+	"github.com/wippyai/go-lua/analysis/type/recursivefamily"
 )
 
 // recursiveIDCounter generates unique IDs for recursive types.
@@ -26,7 +27,7 @@ type Recursive struct {
 
 	// familyKey is optional identity metadata supplied by domain identity.
 	// Ownership and mutation authorization stay outside typ.
-	familyKey RecursiveFamilyKey
+	familyKey recursivefamily.Key
 
 	// frozen marks an immutable input graph (stdlib/manifest/DB/cache). SetBody on
 	// a frozen node is a no-op so a shared recursive body cannot be mutated by a
@@ -77,7 +78,7 @@ func NewRecursivePlaceholder(name string) *Recursive {
 
 // NewRecursiveFamilyPlaceholder creates an empty recursive type tagged with a
 // stable family key. Ownership of the returned node is tracked by the caller.
-func NewRecursiveFamilyPlaceholder(key RecursiveFamilyKey) *Recursive {
+func NewRecursiveFamilyPlaceholder(key recursivefamily.Key) *Recursive {
 	rec := NewRecursivePlaceholder(key.String())
 	rec.familyKey = key
 	return rec
