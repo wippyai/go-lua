@@ -42,6 +42,15 @@ func mustLocalAt(t *testing.T, bindings *bind.Result, stmt *ast.LocalAssignStmt,
 	return id
 }
 
+func mustGenericForAt(t *testing.T, bindings *bind.Result, stmt *ast.GenericForStmt, index int) symbol.ID {
+	t.Helper()
+	ids := bindings.GenericForSymbols(stmt)
+	if index < 0 || index >= len(ids) {
+		t.Fatalf("missing generic for symbol at %d", index)
+	}
+	return ids[index]
+}
+
 func mustIdentSymbol(t *testing.T, bindings *bind.Result, ident *ast.IdentExpr) symbol.ID {
 	t.Helper()
 	id, ok := bindings.SymbolOf(ident)
@@ -642,6 +651,113 @@ func TestBuildChunkNumberForBreakExitsToJoin(t *testing.T) {
 	requireEdge(t, graph, join, afterAssign, false)
 }
 
+func TestBuildChunkGenericForCreatesLoopTopologyAndMetadata(t *testing.T) {
+	iter := ident("iter")
+	bodyStmt := localAssign([]string{"bodyValue"}, number("3"))
+	afterStmt := localAssign([]string{"afterValue"}, number("4"))
+	loop := &ast.GenericForStmt{
+		Names: []string{"k", "v"},
+		Exprs: []ast.Expr{iter},
+		Stmts: []ast.Stmt{bodyStmt},
+	}
+	stmts := []ast.Stmt{loop, afterStmt}
+	bindings := bind.BindChunk(stmts, bind.Options{Globals: []string{"iter"}})
+	result := BuildChunk(stmts, bindings)
+	if result == nil || result.Graph == nil {
+		t.Fatalf("BuildChunk returned nil for generic for")
+	}
+	graph := result.Graph
+
+	kID := mustGenericForAt(t, bindings, loop, 0)
+	vID := mustGenericForAt(t, bindings, loop, 1)
+	points := requireStmtPoints(t, result, loop, 3)
+	branch, kAssign, vAssign := points[0], points[1], points[2]
+	requirePointKind(t, graph, branch, cfg.NodeBranch)
+	requirePointKind(t, graph, kAssign, cfg.NodeAssign)
+	requirePointKind(t, graph, vAssign, cfg.NodeAssign)
+
+	for i, tt := range []struct {
+		point cfg.Point
+		want  symbol.ID
+	}{
+		{kAssign, kID},
+		{vAssign, vID},
+	} {
+		fact, ok := result.Meta.Assignment(tt.point)
+		if !ok || fact.Target != tt.want {
+			t.Fatalf("generic for assignment %d = %#v, ok=%v, want target %d", i, fact, ok, tt.want)
+		}
+	}
+	branchFact, ok := result.Meta.Branch(branch)
+	if !ok {
+		t.Fatalf("missing generic for branch fact")
+	}
+	if branchFact.Symbol != 0 || branchFact.Check.Kind != cfgmeta.CheckNone {
+		t.Fatalf("generic for branch fact = %#v, want check none", branchFact)
+	}
+	loopFact, ok := result.Meta.Loop(branch)
+	if !ok {
+		t.Fatalf("missing generic for loop fact")
+	}
+	wantIDs := []symbol.ID{kID, vID}
+	if len(loopFact.Vars) != len(wantIDs) || len(loopFact.Locals) != len(wantIDs) {
+		t.Fatalf("generic for loop fact = %#v, want vars/locals %v", loopFact, wantIDs)
+	}
+	for i, want := range wantIDs {
+		if loopFact.Vars[i] != want || loopFact.Locals[i] != want {
+			t.Fatalf("generic for loop symbol %d = vars %v locals %v, want %v", i, loopFact.Vars, loopFact.Locals, wantIDs)
+		}
+	}
+	if loopFact.HasPreheader {
+		t.Fatalf("generic for preheader = %d/%v, want none", loopFact.Preheader, loopFact.HasPreheader)
+	}
+
+	join := firstJoin(t, graph)
+	bodyAssign := nodeWithTarget(t, graph, result.Meta, mustLocalAt(t, bindings, bodyStmt, 0), 0)
+	afterAssign := nodeWithTarget(t, graph, result.Meta, mustLocalAt(t, bindings, afterStmt, 0), 0)
+
+	requireEdge(t, graph, graph.Entry(), branch, false)
+	requireEdge(t, graph, branch, join, false)
+	requireEdge(t, graph, branch, kAssign, true)
+	requireEdge(t, graph, kAssign, vAssign, false)
+	requireEdge(t, graph, vAssign, bodyAssign, false)
+	requireEdge(t, graph, bodyAssign, branch, false)
+	requireEdge(t, graph, join, afterAssign, false)
+}
+
+func TestBuildChunkGenericForBreakExitsToJoin(t *testing.T) {
+	bodyStmt := localAssign([]string{"bodyValue"}, number("1"))
+	deadStmt := localAssign([]string{"deadValue"}, number("2"))
+	afterStmt := localAssign([]string{"afterValue"}, number("3"))
+	loop := &ast.GenericForStmt{
+		Names: []string{"k"},
+		Exprs: []ast.Expr{ident("iter")},
+		Stmts: []ast.Stmt{
+			bodyStmt,
+			&ast.BreakStmt{},
+			deadStmt,
+		},
+	}
+	stmts := []ast.Stmt{loop, afterStmt}
+	bindings := bind.BindChunk(stmts, bind.Options{Globals: []string{"iter"}})
+	result := BuildChunk(stmts, bindings)
+	if result == nil || result.Graph == nil {
+		t.Fatalf("BuildChunk returned nil for generic for break")
+	}
+	graph := result.Graph
+
+	join := firstJoin(t, graph)
+	bodyID := mustLocalAt(t, bindings, bodyStmt, 0)
+	deadID := mustLocalAt(t, bindings, deadStmt, 0)
+	afterID := mustLocalAt(t, bindings, afterStmt, 0)
+	bodyAssign := nodeWithTarget(t, graph, result.Meta, bodyID, 0)
+	afterAssign := nodeWithTarget(t, graph, result.Meta, afterID, 0)
+
+	requireTargetCount(t, graph, result.Meta, deadID, 0)
+	requireEdge(t, graph, bodyAssign, join, false)
+	requireEdge(t, graph, join, afterAssign, false)
+}
+
 func TestBuildChunkStatementPointMappingForBranches(t *testing.T) {
 	decl := localAssign([]string{"x"}, number("0"))
 	ifStmt := &ast.IfStmt{Condition: ident("x")}
@@ -856,10 +972,6 @@ func TestBuildChunkUnsupportedControlFlowReturnsNil(t *testing.T) {
 		stmt ast.Stmt
 	}{
 		{
-			name: "generic for",
-			stmt: &ast.GenericForStmt{Names: []string{"x"}, Exprs: []ast.Expr{ident("iter")}},
-		},
-		{
 			name: "function definition",
 			stmt: &ast.FuncDefStmt{Name: &ast.FuncName{Func: ident("f")}, Func: function(nil)},
 		},
@@ -922,6 +1034,13 @@ func TestBuildChunkDeferredExpressionSemanticsReturnNil(t *testing.T) {
 				Name:  "i",
 				Init:  &ast.FuncCallExpr{Func: ident("make")},
 				Limit: number("3"),
+			},
+		},
+		{
+			name: "generic for iterator call",
+			stmt: &ast.GenericForStmt{
+				Names: []string{"x"},
+				Exprs: []ast.Expr{&ast.FuncCallExpr{Func: ident("make")}},
 			},
 		},
 	}

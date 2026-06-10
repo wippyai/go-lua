@@ -131,6 +131,8 @@ func (b *builder) buildStmt(state flowState, stmt ast.Stmt) flowState {
 		return b.buildRepeat(state, stmt)
 	case *ast.NumberForStmt:
 		return b.buildNumberFor(state, stmt)
+	case *ast.GenericForStmt:
+		return b.buildGenericFor(state, stmt)
 	case *ast.BreakStmt:
 		return b.buildBreak(state)
 	case *ast.TypeDefStmt, *ast.InterfaceDefStmt:
@@ -261,6 +263,48 @@ func (b *builder) buildNumberFor(state flowState, stmt *ast.NumberForStmt) flowS
 	b.graph.AddEdge(branch.current, join, false)
 	b.breakTargets = append(b.breakTargets, join)
 	body := b.buildStmts(branchPath(branch.current, true), stmt.Stmts)
+	b.breakTargets = b.breakTargets[:len(b.breakTargets)-1]
+
+	body = b.materializePendingCond(body)
+	if body.live {
+		b.connect(body, branch.current)
+	}
+	return flowState{current: join, live: true}
+}
+
+func (b *builder) buildGenericFor(state flowState, stmt *ast.GenericForStmt) flowState {
+	if b.hasDeferredExprSemantics(stmt.Exprs...) {
+		b.unsupported = true
+		return flowState{current: state.current}
+	}
+	ids := b.bindings.GenericForSymbols(stmt)
+	if len(ids) != len(stmt.Names) {
+		b.unsupported = true
+		return flowState{current: state.current}
+	}
+	for _, id := range ids {
+		if id == 0 {
+			b.unsupported = true
+			return flowState{current: state.current}
+		}
+	}
+
+	branch := b.appendBranch(state, nil, stmt)
+	join := b.graph.AddNode(cfg.NodeJoin)
+
+	b.meta.SetLoop(branch.current, cfgmeta.LoopFact{
+		Vars:   ids,
+		Locals: ids,
+	})
+	b.graph.AddEdge(branch.current, join, false)
+
+	iterState := branchPath(branch.current, true)
+	for _, id := range ids {
+		iterState = b.appendAssign(iterState, id, stmt)
+	}
+
+	b.breakTargets = append(b.breakTargets, join)
+	body := b.buildStmts(iterState, stmt.Stmts)
 	b.breakTargets = b.breakTargets[:len(b.breakTargets)-1]
 
 	body = b.materializePendingCond(body)

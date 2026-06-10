@@ -43,6 +43,15 @@ func mustLocalAt(t *testing.T, bindings *bind.Result, stmt *ast.LocalAssignStmt,
 	return id
 }
 
+func mustGenericForAt(t *testing.T, bindings *bind.Result, stmt *ast.GenericForStmt, index int) symbol.ID {
+	t.Helper()
+	ids := bindings.GenericForSymbols(stmt)
+	if index < 0 || index >= len(ids) {
+		t.Fatalf("missing generic for symbol at %d", index)
+	}
+	return ids[index]
+}
+
 func mustIdentSymbol(t *testing.T, bindings *bind.Result, ident *ast.IdentExpr) symbol.ID {
 	t.Helper()
 	id, ok := bindings.SymbolOf(ident)
@@ -242,6 +251,61 @@ func TestExtractChunkNumericForFactsUseStmtPointsAndPreserveIdentity(t *testing.
 	bodyPoint := requireStmtPoints(t, built, bodyLocal, 1)[0]
 	if _, ok := result.LocalAssignment(bodyPoint); !ok {
 		t.Fatalf("missing numeric for body local assignment fact")
+	}
+}
+
+func TestExtractChunkGenericForFactsUseStmtPointsAndPreserveIdentity(t *testing.T) {
+	iter := ident("iter")
+	state := ident("state")
+	bodyLocal := localAssign([]string{"bodyValue"}, number("3"))
+	loop := &ast.GenericForStmt{
+		Names: []string{"k", "v"},
+		Exprs: []ast.Expr{iter, state},
+		Stmts: []ast.Stmt{bodyLocal},
+	}
+	stmts := []ast.Stmt{loop}
+	bindings := bind.BindChunk(stmts, bind.Options{Globals: []string{"iter", "state"}})
+	built := cfgbuild.BuildChunk(stmts, bindings)
+
+	result, err := ExtractChunk(stmts, bindings, built)
+	if err != nil {
+		t.Fatalf("ExtractChunk: %v", err)
+	}
+
+	kID := mustGenericForAt(t, bindings, loop, 0)
+	vID := mustGenericForAt(t, bindings, loop, 1)
+	points := requireStmtPoints(t, built, loop, 3)
+	for _, point := range points {
+		fact, ok := result.GenericFor(point)
+		if !ok {
+			t.Fatalf("missing generic for fact at point %d", point)
+		}
+		if fact.Stmt != loop {
+			t.Fatalf("generic for stmt = %p, want %p", fact.Stmt, loop)
+		}
+		if len(fact.Names) != 2 || fact.Names[0] != "k" || fact.Names[1] != "v" {
+			t.Fatalf("generic for names = %v", fact.Names)
+		}
+		if len(fact.Exprs) != 2 || fact.Exprs[0] != iter || fact.Exprs[1] != state {
+			t.Fatalf("generic for exprs = %#v", fact.Exprs)
+		}
+		if len(fact.Symbols) != 2 || fact.Symbols[0] != kID || fact.Symbols[1] != vID || !fact.HasSymbols {
+			t.Fatalf("generic for symbols = %v/%v, want %d,%d/true", fact.Symbols, fact.HasSymbols, kID, vID)
+		}
+	}
+
+	firstFact, _ := result.GenericFor(points[0])
+	firstFact.Names[0] = "mutated"
+	firstFact.Exprs[0] = ident("mutated")
+	firstFact.Symbols[0] = 0
+	again, _ := result.GenericFor(points[0])
+	if again.Names[0] != "k" || again.Exprs[0] != iter || again.Symbols[0] != kID {
+		t.Fatalf("GenericFor exposed mutable slices")
+	}
+
+	bodyPoint := requireStmtPoints(t, built, bodyLocal, 1)[0]
+	if _, ok := result.LocalAssignment(bodyPoint); !ok {
+		t.Fatalf("missing generic for body local assignment fact")
 	}
 }
 

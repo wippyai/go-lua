@@ -43,6 +43,7 @@ type Result struct {
 	branches            map[cfg.Point]BranchConditionFact
 	typeDefinitions     map[cfg.Point]TypeDefinitionFact
 	numericFors         map[cfg.Point]NumericForFact
+	genericFors         map[cfg.Point]GenericForFact
 }
 
 type LocalAssignmentFact struct {
@@ -121,6 +122,16 @@ type NumericForFact struct {
 
 	Symbol    symbol.ID
 	HasSymbol bool
+}
+
+type GenericForFact struct {
+	Stmt *ast.GenericForStmt
+
+	Names []string
+	Exprs []ast.Expr
+
+	Symbols    []symbol.ID
+	HasSymbols bool
 }
 
 func ExtractChunk(stmts []ast.Stmt, bindings *bind.Result, built *cfgbuild.Result) (*Result, error) {
@@ -222,6 +233,17 @@ func (r *Result) NumericFor(point cfg.Point) (NumericForFact, bool) {
 	return fact, ok
 }
 
+func (r *Result) GenericFor(point cfg.Point) (GenericForFact, bool) {
+	if r == nil {
+		return GenericForFact{}, false
+	}
+	fact, ok := r.genericFors[point]
+	if !ok {
+		return GenericForFact{}, false
+	}
+	return copyGenericForFact(fact), true
+}
+
 func newResult(fn *ast.FunctionExpr) *Result {
 	return &Result{
 		function:            fn,
@@ -232,6 +254,7 @@ func newResult(fn *ast.FunctionExpr) *Result {
 		branches:            make(map[cfg.Point]BranchConditionFact),
 		typeDefinitions:     make(map[cfg.Point]TypeDefinitionFact),
 		numericFors:         make(map[cfg.Point]NumericForFact),
+		genericFors:         make(map[cfg.Point]GenericForFact),
 	}
 }
 
@@ -278,6 +301,11 @@ func (r *Result) extractStmt(stmt ast.Stmt, bindings *bind.Result, built *cfgbui
 		return r.extractBranch(stmt, BranchRepeat, stmt.Condition, built.StmtPoints.PointsFor(stmt))
 	case *ast.NumberForStmt:
 		if err := r.extractNumberFor(stmt, bindings, built.StmtPoints.PointsFor(stmt)); err != nil {
+			return err
+		}
+		return r.extractStmts(stmt.Stmts, bindings, built)
+	case *ast.GenericForStmt:
+		if err := r.extractGenericFor(stmt, bindings, built.StmtPoints.PointsFor(stmt)); err != nil {
 			return err
 		}
 		return r.extractStmts(stmt.Stmts, bindings, built)
@@ -470,6 +498,30 @@ func (r *Result) extractNumberFor(stmt *ast.NumberForStmt, bindings *bind.Result
 	return nil
 }
 
+func (r *Result) extractGenericFor(stmt *ast.GenericForStmt, bindings *bind.Result, points []cfg.Point) error {
+	if len(points) == 0 {
+		return nil
+	}
+	if len(points) < 1+len(stmt.Names) {
+		return ErrPointMismatch
+	}
+	var symbols []symbol.ID
+	if bindings != nil {
+		symbols = bindings.GenericForSymbols(stmt)
+	}
+	fact := GenericForFact{
+		Stmt:       stmt,
+		Names:      copyStrings(stmt.Names),
+		Exprs:      copyExprs(stmt.Exprs),
+		Symbols:    copySymbols(symbols),
+		HasSymbols: completeSymbols(symbols, len(stmt.Names)),
+	}
+	for _, point := range points {
+		r.genericFors[point] = fact
+	}
+	return nil
+}
+
 func exprAt(exprs []ast.Expr, index int) ast.Expr {
 	if index < 0 || index >= len(exprs) {
 		return nil
@@ -502,6 +554,36 @@ func copyTypeExprs(in []ast.TypeExpr) []ast.TypeExpr {
 	return out
 }
 
+func copyStrings(in []string) []string {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make([]string, len(in))
+	copy(out, in)
+	return out
+}
+
+func copySymbols(in []symbol.ID) []symbol.ID {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make([]symbol.ID, len(in))
+	copy(out, in)
+	return out
+}
+
+func completeSymbols(symbols []symbol.ID, want int) bool {
+	if len(symbols) != want {
+		return false
+	}
+	for _, id := range symbols {
+		if id == 0 {
+			return false
+		}
+	}
+	return true
+}
+
 func copyLocalAssignmentFact(fact LocalAssignmentFact) LocalAssignmentFact {
 	fact.Exprs = copyExprs(fact.Exprs)
 	fact.Types = copyTypeExprs(fact.Types)
@@ -522,5 +604,12 @@ func copyCallFact(fact CallFact) CallFact {
 
 func copyReturnFact(fact ReturnFact) ReturnFact {
 	fact.Exprs = copyExprs(fact.Exprs)
+	return fact
+}
+
+func copyGenericForFact(fact GenericForFact) GenericForFact {
+	fact.Names = copyStrings(fact.Names)
+	fact.Exprs = copyExprs(fact.Exprs)
+	fact.Symbols = copySymbols(fact.Symbols)
 	return fact
 }
