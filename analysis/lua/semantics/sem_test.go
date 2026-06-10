@@ -279,11 +279,17 @@ func TestExtractChunkCallReturnBranchAndTypeFacts(t *testing.T) {
 	}
 
 	typePoint := requireStmtPoints(t, built, typeDef, 1)[0]
+	if node := built.Graph.Node(typePoint); node == nil || node.Kind != cfg.NodeNoop {
+		t.Fatalf("type def cfg node = %#v, want NodeNoop", node)
+	}
 	typeFact, ok := result.TypeDefinition(typePoint)
 	if !ok || typeFact.Kind != TypeDefinitionAlias || typeFact.Type != typeDef {
 		t.Fatalf("type def fact = %#v, ok=%v", typeFact, ok)
 	}
 	interfacePoint := requireStmtPoints(t, built, interfaceDef, 1)[0]
+	if node := built.Graph.Node(interfacePoint); node == nil || node.Kind != cfg.NodeNoop {
+		t.Fatalf("interface def cfg node = %#v, want NodeNoop", node)
+	}
 	interfaceFact, ok := result.TypeDefinition(interfacePoint)
 	if !ok || interfaceFact.Kind != TypeDefinitionInterface || interfaceFact.Interface != interfaceDef {
 		t.Fatalf("interface def fact = %#v, ok=%v", interfaceFact, ok)

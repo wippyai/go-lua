@@ -1,4 +1,4 @@
-// Package cfgfacts stores semantic facts for CFG points.
+// Package cfgfacts stores Lua sidecar facts for CFG points.
 package cfgfacts
 
 import (
@@ -38,11 +38,6 @@ type AssignmentFact struct {
 	Target symbol.ID
 }
 
-// CallFact describes a call target when it can be named.
-type CallFact struct {
-	CalleeName string
-}
-
 // LoopFact describes loop structure associated with a CFG point.
 type LoopFact struct {
 	Vars         []symbol.ID
@@ -51,19 +46,11 @@ type LoopFact struct {
 	HasPreheader bool
 }
 
-// ScopeExitFact describes the branch origin for a copied scope-exit guard.
-type ScopeExitFact struct {
-	CondOrigin    cfg.Point
-	HasCondOrigin bool
-}
-
-// Metadata stores semantic facts keyed by CFG point.
+// Metadata stores Lua sidecar facts keyed by CFG point.
 type Metadata struct {
 	branches    map[cfg.Point]BranchFact
 	assignments map[cfg.Point]AssignmentFact
-	calls       map[cfg.Point]CallFact
 	loops       map[cfg.Point]LoopFact
-	scopeExits  map[cfg.Point]ScopeExitFact
 }
 
 // Branch returns the branch fact for point.
@@ -94,20 +81,6 @@ func (m *Metadata) SetAssignment(point cfg.Point, fact AssignmentFact) {
 	m.assignments[point] = fact
 }
 
-// Call returns the call fact for point.
-func (m Metadata) Call(point cfg.Point) (CallFact, bool) {
-	fact, ok := m.calls[point]
-	return fact, ok
-}
-
-// SetCall records a call fact for point.
-func (m *Metadata) SetCall(point cfg.Point, fact CallFact) {
-	if m.calls == nil {
-		m.calls = make(map[cfg.Point]CallFact)
-	}
-	m.calls[point] = fact
-}
-
 // Loop returns the loop fact for point.
 func (m Metadata) Loop(point cfg.Point) (LoopFact, bool) {
 	fact, ok := m.loops[point]
@@ -123,20 +96,6 @@ func (m *Metadata) SetLoop(point cfg.Point, fact LoopFact) {
 		m.loops = make(map[cfg.Point]LoopFact)
 	}
 	m.loops[point] = copyLoopFact(fact)
-}
-
-// ScopeExit returns the scope-exit fact for point.
-func (m Metadata) ScopeExit(point cfg.Point) (ScopeExitFact, bool) {
-	fact, ok := m.scopeExits[point]
-	return fact, ok
-}
-
-// SetScopeExit records a scope-exit fact for point.
-func (m *Metadata) SetScopeExit(point cfg.Point, fact ScopeExitFact) {
-	if m.scopeExits == nil {
-		m.scopeExits = make(map[cfg.Point]ScopeExitFact)
-	}
-	m.scopeExits[point] = fact
 }
 
 func copyLoopFact(fact LoopFact) LoopFact {

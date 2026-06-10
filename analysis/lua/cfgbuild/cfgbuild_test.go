@@ -286,8 +286,8 @@ func TestBuildChunkStatementPointMappingForLinearStatements(t *testing.T) {
 	for _, point := range allAssignmentPoints {
 		requirePointKind(t, graph, point, cfg.NodeAssign)
 	}
-	requirePointKind(t, graph, typePoints[0], cfg.NodeTypeDef)
-	requirePointKind(t, graph, ifacePoints[0], cfg.NodeTypeDef)
+	requirePointKind(t, graph, typePoints[0], cfg.NodeNoop)
+	requirePointKind(t, graph, ifacePoints[0], cfg.NodeNoop)
 	requirePointKind(t, graph, callPoints[0], cfg.NodeCall)
 	requirePointKind(t, graph, returnPoints[0], cfg.NodeReturn)
 
@@ -307,9 +307,6 @@ func TestBuildChunkStatementPointMappingForLinearStatements(t *testing.T) {
 		if fact.Target != tt.want {
 			t.Fatalf("assignment %d target = %d, want %d", i, fact.Target, tt.want)
 		}
-	}
-	if fact, ok := result.Meta.Call(callPoints[0]); !ok || fact.CalleeName != "print" {
-		t.Fatalf("call fact = %#v, %v; want print", fact, ok)
 	}
 	requireEdge(t, graph, returnPoints[0], graph.Exit(), false)
 }
@@ -534,7 +531,7 @@ func TestBuildChunkStatementPointMappingReturnsSafeSlices(t *testing.T) {
 	}
 }
 
-func TestBuildChunkCallStatementCalleeName(t *testing.T) {
+func TestBuildChunkCallStatementNodes(t *testing.T) {
 	printIdent := ident("print")
 	objIdent := ident("obj")
 	stmts := []ast.Stmt{
@@ -554,20 +551,6 @@ func TestBuildChunkCallStatementCalleeName(t *testing.T) {
 	calls := pointsOfKind(graph, cfg.NodeCall)
 	if len(calls) != 2 {
 		t.Fatalf("call node count = %d, want 2", len(calls))
-	}
-	first, ok := result.Meta.Call(calls[0])
-	if !ok {
-		t.Fatalf("missing first call fact")
-	}
-	if got := first.CalleeName; got != "print" {
-		t.Fatalf("simple call callee = %q, want print", got)
-	}
-	second, ok := result.Meta.Call(calls[1])
-	if !ok {
-		t.Fatalf("missing second call fact")
-	}
-	if got := second.CalleeName; got != "" {
-		t.Fatalf("non-simple call callee = %q, want empty", got)
 	}
 	requireEdge(t, graph, graph.Entry(), calls[0], false)
 	requireEdge(t, graph, calls[0], calls[1], false)
@@ -1275,18 +1258,17 @@ func TestBuildChunkBreakOutsideLoopReturnsNil(t *testing.T) {
 	}
 }
 
-func TestBuildChunkDoBlockDoesNotEmitScopeNodes(t *testing.T) {
+func TestBuildChunkDoBlockIsTopologyTransparent(t *testing.T) {
 	stmt := localAssign([]string{"x"}, number("1"))
 	stmts := []ast.Stmt{&ast.DoBlockStmt{Stmts: []ast.Stmt{stmt}}}
 	bindings := bind.BindChunk(stmts, bind.Options{})
 	result := BuildChunk(stmts, bindings)
 	graph := result.Graph
 
-	if points := pointsOfKind(graph, cfg.NodeScopeEnter); len(points) != 0 {
-		t.Fatalf("scope enter nodes = %v, want none", points)
-	}
-	if points := pointsOfKind(graph, cfg.NodeScopeExit); len(points) != 0 {
-		t.Fatalf("scope exit nodes = %v, want none", points)
+	for _, node := range graph.NodeSnapshot() {
+		if node.Kind == cfg.NodeNoop {
+			t.Fatalf("do block emitted structural noop node at %d", node.Point)
+		}
 	}
 	requireTargetCount(t, graph, result.Meta, mustLocalAt(t, bindings, stmt, 0), 1)
 }

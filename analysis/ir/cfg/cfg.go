@@ -10,8 +10,7 @@
 // function's CFG and serve as keys for type state maps.
 //
 // Node: Contains only the program point and node kind. Language-specific facts
-// for assignments, calls, branches, loops, and scope exits live in sidecars
-// outside this package.
+// live in sidecars outside this package.
 //
 // Edge: A directed edge from one point to another. For branch edges, Cond is the
 // taken-branch flag.
@@ -45,17 +44,14 @@ type NodeKind uint8
 
 // Node kind constants identify the type of each CFG node.
 const (
-	NodeEntry      NodeKind = iota // Function entry point, always first node
-	NodeExit                       // Function exit point, always last node
-	NodeAssign                     // Assignment statement (local x = expr)
-	NodeCall                       // Function call expression
-	NodeBranch                     // Conditional branch (if, while, for condition)
-	NodeJoin                       // Join point where multiple paths merge
-	NodeReturn                     // Return statement
-	NodeScopeEnter                 // Lexical scope entry (function, block, loop body)
-	NodeScopeExit                  // Lexical scope exit (end of block)
-	NodeTypeDef                    // Type definition (type annotation)
-	NodeNoop                       // Structural no-op used to materialize empty control-flow arms
+	NodeEntry  NodeKind = iota // Function entry point, always first node
+	NodeExit                   // Function exit point, always last node
+	NodeAssign                 // Assignment statement (local x = expr)
+	NodeCall                   // Function call expression
+	NodeBranch                 // Conditional branch (if, while, for condition)
+	NodeJoin                   // Join point where multiple paths merge
+	NodeReturn                 // Return statement
+	NodeNoop                   // Structural no-op used where a source statement needs a CFG point
 )
 
 // Node represents a CFG topology node.

@@ -64,8 +64,6 @@ func TestAddNode(t *testing.T) {
 		{"branch", NodeBranch},
 		{"join", NodeJoin},
 		{"return", NodeReturn},
-		{"scope enter", NodeScopeEnter},
-		{"scope exit", NodeScopeExit},
 		{"noop", NodeNoop},
 	}
 

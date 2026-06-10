@@ -119,7 +119,7 @@ func (b *builder) buildStmt(state flowState, stmt ast.Stmt) flowState {
 			b.unsupported = true
 			return flowState{current: state.current}
 		}
-		return b.appendCall(state, callName(stmt.Expr), stmt)
+		return b.appendCall(state, stmt)
 	case *ast.ReturnStmt:
 		if b.hasDeferredExprSemantics(stmt.Exprs...) {
 			b.unsupported = true
@@ -149,7 +149,7 @@ func (b *builder) buildStmt(state flowState, stmt ast.Stmt) flowState {
 	case *ast.BreakStmt:
 		return b.buildBreak(state)
 	case *ast.TypeDefStmt, *ast.InterfaceDefStmt:
-		return b.appendNodeForStmt(state, cfg.NodeTypeDef, stmt)
+		return b.appendNodeForStmt(state, cfg.NodeNoop, stmt)
 	default:
 		b.unsupported = true
 		return flowState{current: state.current}
@@ -408,12 +408,8 @@ func (b *builder) appendAssign(state flowState, target symbol.ID, stmt ast.Stmt)
 	return next
 }
 
-func (b *builder) appendCall(state flowState, calleeName string, stmt ast.Stmt) flowState {
-	next := b.appendNodeForStmt(state, cfg.NodeCall, stmt)
-	if next.live {
-		b.meta.SetCall(next.current, cfgfacts.CallFact{CalleeName: calleeName})
-	}
-	return next
+func (b *builder) appendCall(state flowState, stmt ast.Stmt) flowState {
+	return b.appendNodeForStmt(state, cfg.NodeCall, stmt)
 }
 
 func (b *builder) appendBranch(state flowState, expr ast.Expr, stmt ast.Stmt) flowState {
@@ -613,16 +609,4 @@ func (b *builder) identSymbol(ident *ast.IdentExpr) (symbol.ID, bool) {
 	}
 	id, ok := b.bindings.SymbolOf(ident)
 	return id, ok && id != 0
-}
-
-func callName(expr ast.Expr) string {
-	call, ok := expr.(*ast.FuncCallExpr)
-	if !ok {
-		return ""
-	}
-	ident, ok := call.Func.(*ast.IdentExpr)
-	if !ok {
-		return ""
-	}
-	return ident.Value
 }
