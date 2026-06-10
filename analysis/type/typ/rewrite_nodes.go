@@ -5,9 +5,33 @@ import "github.com/wippyai/go-lua/analysis/internal/recursion"
 func rewriteFunction(v *Function, orig Type, fn func(Type) (Type, bool), guard recursion.Guard, memo map[rewriteKey]Type) Type {
 	changed := false
 
+	var typeParams []*TypeParam
+	var typeParamReplacements map[*TypeParam]*TypeParam
+	for i, p := range v.TypeParams {
+		newParamType := rewriteDepth(p, fn, guard, memo)
+		newParam, ok := newParamType.(*TypeParam)
+		if !ok || newParam == p {
+			if typeParams != nil {
+				typeParams[i] = p
+			}
+			continue
+		}
+		if typeParams == nil {
+			typeParams = make([]*TypeParam, len(v.TypeParams))
+			copy(typeParams, v.TypeParams)
+		}
+		changed = true
+		typeParams[i] = newParam
+		if typeParamReplacements == nil {
+			typeParamReplacements = make(map[*TypeParam]*TypeParam)
+		}
+		typeParamReplacements[p] = newParam
+	}
+	rewriteChild := rewriteFnWithTypeParamReplacements(fn, typeParamReplacements)
+
 	var params []Param
 	for i, p := range v.Params {
-		newType := rewriteDepth(p.Type, fn, guard, memo)
+		newType := rewriteDepth(p.Type, rewriteChild, guard, memo)
 		if newType != p.Type {
 			if params == nil {
 				params = make([]Param, len(v.Params))
@@ -22,7 +46,7 @@ func rewriteFunction(v *Function, orig Type, fn func(Type) (Type, bool), guard r
 
 	var returns []Type
 	for i, r := range v.Returns {
-		newRet := rewriteDepth(r, fn, guard, memo)
+		newRet := rewriteDepth(r, rewriteChild, guard, memo)
 		if newRet != r {
 			if returns == nil {
 				returns = make([]Type, len(v.Returns))
@@ -37,7 +61,7 @@ func rewriteFunction(v *Function, orig Type, fn func(Type) (Type, bool), guard r
 
 	var variadic Type
 	if v.Variadic != nil {
-		variadic = rewriteDepth(v.Variadic, fn, guard, memo)
+		variadic = rewriteDepth(v.Variadic, rewriteChild, guard, memo)
 		if variadic != v.Variadic {
 			changed = true
 		}
@@ -51,16 +75,116 @@ func rewriteFunction(v *Function, orig Type, fn func(Type) (Type, bool), guard r
 	if params != nil {
 		paramSrc = params
 	}
+	typeParamSrc := v.TypeParams
+	if typeParams != nil {
+		typeParamSrc = typeParams
+	}
 	returnsSrc := v.Returns
 	if returns != nil {
 		returnsSrc = returns
 	}
 	return buildFunctionType(
-		v.TypeParams,
+		typeParamSrc,
 		paramSrc,
 		variadic,
 		returnsSrc,
 	)
+}
+
+func rewriteMeta(v *Meta, orig Type, fn func(Type) (Type, bool), guard recursion.Guard, memo map[rewriteKey]Type) Type {
+	of := rewriteDepth(v.Of, fn, guard, memo)
+	if of == v.Of {
+		return orig
+	}
+	return NewMeta(of)
+}
+
+func rewriteTypeParam(v *TypeParam, orig Type, fn func(Type) (Type, bool), guard recursion.Guard, memo map[rewriteKey]Type) Type {
+	constraint := rewriteDepth(v.Constraint, fn, guard, memo)
+	if constraint == v.Constraint {
+		return orig
+	}
+	return NewTypeParam(v.Name, constraint)
+}
+
+func rewriteGeneric(v *Generic, orig Type, fn func(Type) (Type, bool), guard recursion.Guard, memo map[rewriteKey]Type) Type {
+	changed := false
+
+	var typeParams []*TypeParam
+	var typeParamReplacements map[*TypeParam]*TypeParam
+	for i, p := range v.TypeParams {
+		newParamType := rewriteDepth(p, fn, guard, memo)
+		newParam, ok := newParamType.(*TypeParam)
+		if !ok || newParam == p {
+			if typeParams != nil {
+				typeParams[i] = p
+			}
+			continue
+		}
+		if typeParams == nil {
+			typeParams = make([]*TypeParam, len(v.TypeParams))
+			copy(typeParams, v.TypeParams)
+		}
+		changed = true
+		typeParams[i] = newParam
+		if typeParamReplacements == nil {
+			typeParamReplacements = make(map[*TypeParam]*TypeParam)
+		}
+		typeParamReplacements[p] = newParam
+	}
+
+	body := rewriteDepth(v.Body, rewriteFnWithTypeParamReplacements(fn, typeParamReplacements), guard, memo)
+	if body != v.Body {
+		changed = true
+	}
+	if !changed {
+		return orig
+	}
+	typeParamSrc := v.TypeParams
+	if typeParams != nil {
+		typeParamSrc = typeParams
+	}
+	return NewGeneric(v.Name, typeParamSrc, body)
+}
+
+func rewriteFnWithTypeParamReplacements(fn func(Type) (Type, bool), replacements map[*TypeParam]*TypeParam) func(Type) (Type, bool) {
+	if len(replacements) == 0 {
+		return fn
+	}
+	return func(t Type) (Type, bool) {
+		if tp, ok := t.(*TypeParam); ok {
+			if replacement, ok := replacements[tp]; ok {
+				return replacement, true
+			}
+		}
+		return fn(t)
+	}
+}
+
+func rewriteRecursive(v *Recursive, orig Type, fn func(Type) (Type, bool), guard recursion.Guard, memo map[rewriteKey]Type) Type {
+	if v.Body == nil {
+		return orig
+	}
+	var replacement *Recursive
+	replacementNode := func() *Recursive {
+		if replacement == nil {
+			replacement = NewRecursivePlaceholder(v.Name)
+		}
+		return replacement
+	}
+	selfAware := func(t Type) (Type, bool) {
+		if IsRecursiveRef(t, v) {
+			return replacementNode(), true
+		}
+		return fn(t)
+	}
+	body := rewriteDepth(v.Body, selfAware, guard, memo)
+	if body == v.Body {
+		return orig
+	}
+	replacement = replacementNode()
+	replacement.SetBody(body)
+	return replacement
 }
 
 func rewriteRecord(v *Record, orig Type, fn func(Type) (Type, bool), guard recursion.Guard, memo map[rewriteKey]Type) Type {

@@ -76,16 +76,16 @@ func rewriteDepth(t Type, fn func(Type) (Type, bool), guard recursion.Guard, mem
 		}
 	}
 
-	next, ok := guard.Enter(t)
-	if !ok {
-		return t
-	}
-
 	if replacement, ok := fn(t); ok {
 		if memo != nil {
 			memo[key] = replacement
 		}
 		return replacement
+	}
+
+	next, ok := guard.Enter(t)
+	if !ok {
+		return t
 	}
 
 	var out Type
@@ -185,6 +185,14 @@ func rewriteDepth(t Type, fn func(Type) (Type, bool), guard recursion.Guard, mem
 		out = rewriteFunction(tt, t, fn, next, memo)
 	case *Record:
 		out = rewriteRecord(tt, t, fn, next, memo)
+	case *Meta:
+		out = rewriteMeta(tt, t, fn, next, memo)
+	case *TypeParam:
+		out = rewriteTypeParam(tt, t, fn, next, memo)
+	case *Generic:
+		out = rewriteGeneric(tt, t, fn, next, memo)
+	case *Recursive:
+		out = rewriteRecursive(tt, t, fn, next, memo)
 	case *Alias:
 		target := rewriteDepth(tt.Target, fn, next, memo)
 		if target == tt.Target {
@@ -258,6 +266,10 @@ func rewriteCanDescend(t Type) bool {
 		kind.Tuple,
 		kind.Function,
 		kind.Record,
+		kind.Meta,
+		kind.TypeParam,
+		kind.Generic,
+		kind.Recursive,
 		kind.Alias,
 		kind.Instantiated,
 		kind.Interface:

@@ -251,6 +251,69 @@ func TestRewrite_Instantiated(t *testing.T) {
 	}
 }
 
+func TestRewrite_Meta(t *testing.T) {
+	meta := NewMeta(Number)
+	result := Rewrite(meta, replaceNumber(String))
+	got, ok := result.(*Meta)
+	if !ok {
+		t.Fatalf("expected Meta, got %T", result)
+	}
+	if got.Of != String {
+		t.Fatalf("expected meta payload String, got %v", got.Of)
+	}
+}
+
+func TestRewrite_TypeParamConstraint(t *testing.T) {
+	tp := NewTypeParam("T", Number)
+	result := Rewrite(tp, replaceNumber(String))
+	got, ok := result.(*TypeParam)
+	if !ok {
+		t.Fatalf("expected TypeParam, got %T", result)
+	}
+	if got.Constraint != String {
+		t.Fatalf("expected constraint String, got %v", got.Constraint)
+	}
+}
+
+func TestRewrite_GenericBodyAndTypeParamConstraint(t *testing.T) {
+	tp := NewTypeParam("T", Number)
+	g := NewGeneric("Box", []*TypeParam{tp}, NewRecord().Field("value", tp).Build())
+
+	result := Rewrite(g, replaceNumber(String))
+	got, ok := result.(*Generic)
+	if !ok {
+		t.Fatalf("expected Generic, got %T", result)
+	}
+	if len(got.TypeParams) != 1 || got.TypeParams[0].Constraint != String {
+		t.Fatalf("expected rewritten type param constraint, got %#v", got.TypeParams)
+	}
+	body, ok := got.Body.(*Record)
+	if !ok {
+		t.Fatalf("expected generic body record, got %T", got.Body)
+	}
+	field := body.GetField("value")
+	if field == nil || field.Type != got.TypeParams[0] {
+		t.Fatalf("expected body to reference rewritten type param, got %v", field)
+	}
+}
+
+func TestRewrite_FunctionTypeParamConstraint(t *testing.T) {
+	tp := NewTypeParam("T", Number)
+	fn := Func().TypeParamRef(tp).Param("value", tp).Build()
+	result := Rewrite(fn, replaceNumber(String))
+	got, ok := result.(*Function)
+	if !ok {
+		t.Fatalf("expected Function, got %T", result)
+	}
+	if len(got.TypeParams) != 1 || got.TypeParams[0].Constraint != String {
+		t.Fatalf("expected rewritten function type param constraint, got %#v", got.TypeParams)
+	}
+	param, ok := got.Params[0].Type.(*TypeParam)
+	if !ok || param != got.TypeParams[0] || param.Constraint != String {
+		t.Fatalf("expected rewritten parameter type param, got %v", got.Params[0].Type)
+	}
+}
+
 func TestRewrite_Interface(t *testing.T) {
 	iface := NewInterface("Readable", []Method{
 		{Name: "read", Type: Func().Param("self", Self).Returns(Number).Build()},
@@ -262,6 +325,37 @@ func TestRewrite_Interface(t *testing.T) {
 	}
 	if inf.Methods[0].Type.Returns[0] != String {
 		t.Fatalf("expected return String, got %v", inf.Methods[0].Type.Returns[0])
+	}
+}
+
+func TestRewrite_RecursiveBody(t *testing.T) {
+	node := NewRecursive("Node", func(self Type) Type {
+		return NewRecord().
+			Field("value", Number).
+			Field("next", NewOptional(self)).
+			Build()
+	})
+
+	result := Rewrite(node, replaceNumber(String))
+	got, ok := result.(*Recursive)
+	if !ok {
+		t.Fatalf("expected Recursive, got %T", result)
+	}
+	if got == node {
+		t.Fatal("expected recursive rewrite to create a new node")
+	}
+	body, ok := got.Body.(*Record)
+	if !ok {
+		t.Fatalf("expected recursive body record, got %T", got.Body)
+	}
+	value := body.GetField("value")
+	if value == nil || value.Type != String {
+		t.Fatalf("expected rewritten value field, got %v", value)
+	}
+	next := body.GetField("next")
+	opt, ok := next.Type.(*Optional)
+	if next == nil || !ok || opt.Inner != got {
+		t.Fatalf("expected self-reference to point at rewritten recursive node, got %v", next)
 	}
 }
 
