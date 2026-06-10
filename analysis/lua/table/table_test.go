@@ -16,6 +16,25 @@ func TestNormalizeKeyRemovesNilAlternatives(t *testing.T) {
 	if !typ.TypeEquals(got, want) {
 		t.Fatalf("NormalizeKey(string|boolean|nil) = %v, want %v", got, want)
 	}
+
+	if got := NormalizeKey(typ.Nil); got != typ.Never {
+		t.Fatalf("NormalizeKey(nil) = %v, want never", got)
+	}
+}
+
+func TestNormalizeKeyPreservesAliasToOptionalPayload(t *testing.T) {
+	maybeKey := typ.NewAlias("MaybeKey", typ.NewOptional(typ.String))
+	got := NormalizeKey(maybeKey)
+	alias, ok := got.(*typ.Alias)
+	if !ok {
+		t.Fatalf("NormalizeKey(alias optional) = %T, want alias", got)
+	}
+	if alias.Name != "MaybeKey" {
+		t.Fatalf("alias name = %q, want MaybeKey", alias.Name)
+	}
+	if !typ.TypeEquals(alias.Target, typ.String) {
+		t.Fatalf("alias target = %v, want string", alias.Target)
+	}
 }
 
 func TestConstructorsNormalizeKeys(t *testing.T) {
@@ -71,6 +90,9 @@ func TestSplitNilableField(t *testing.T) {
 		if !typ.TypeEquals(inner, typ.String) {
 			t.Fatalf("inner = %v, want string", inner)
 		}
+		if _, ok := inner.(*typ.Alias); ok {
+			t.Fatalf("inner = %v, want structural payload", inner)
+		}
 	})
 
 	t.Run("non optional alias preserved", func(t *testing.T) {
@@ -81,6 +103,16 @@ func TestSplitNilableField(t *testing.T) {
 		}
 		if inner != name {
 			t.Fatalf("inner = %v, want original alias", inner)
+		}
+	})
+
+	t.Run("nil", func(t *testing.T) {
+		inner, optional := SplitNilableField(typ.Nil)
+		if !optional {
+			t.Fatal("expected optional")
+		}
+		if inner != typ.Never {
+			t.Fatalf("inner = %v, want never", inner)
 		}
 	})
 }
