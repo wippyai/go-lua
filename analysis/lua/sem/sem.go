@@ -42,6 +42,7 @@ type Result struct {
 	returns             map[cfg.Point]ReturnFact
 	branches            map[cfg.Point]BranchConditionFact
 	typeDefinitions     map[cfg.Point]TypeDefinitionFact
+	numericFors         map[cfg.Point]NumericForFact
 }
 
 type LocalAssignmentFact struct {
@@ -108,6 +109,18 @@ type TypeDefinitionFact struct {
 	Stmt      ast.Stmt
 	Type      *ast.TypeDefStmt
 	Interface *ast.InterfaceDefStmt
+}
+
+type NumericForFact struct {
+	Stmt *ast.NumberForStmt
+
+	Name  string
+	Init  ast.Expr
+	Limit ast.Expr
+	Step  ast.Expr
+
+	Symbol    symbol.ID
+	HasSymbol bool
 }
 
 func ExtractChunk(stmts []ast.Stmt, bindings *bind.Result, built *cfgbuild.Result) (*Result, error) {
@@ -201,6 +214,14 @@ func (r *Result) TypeDefinition(point cfg.Point) (TypeDefinitionFact, bool) {
 	return fact, ok
 }
 
+func (r *Result) NumericFor(point cfg.Point) (NumericForFact, bool) {
+	if r == nil {
+		return NumericForFact{}, false
+	}
+	fact, ok := r.numericFors[point]
+	return fact, ok
+}
+
 func newResult(fn *ast.FunctionExpr) *Result {
 	return &Result{
 		function:            fn,
@@ -210,6 +231,7 @@ func newResult(fn *ast.FunctionExpr) *Result {
 		returns:             make(map[cfg.Point]ReturnFact),
 		branches:            make(map[cfg.Point]BranchConditionFact),
 		typeDefinitions:     make(map[cfg.Point]TypeDefinitionFact),
+		numericFors:         make(map[cfg.Point]NumericForFact),
 	}
 }
 
@@ -254,6 +276,11 @@ func (r *Result) extractStmt(stmt ast.Stmt, bindings *bind.Result, built *cfgbui
 			return err
 		}
 		return r.extractBranch(stmt, BranchRepeat, stmt.Condition, built.StmtPoints.PointsFor(stmt))
+	case *ast.NumberForStmt:
+		if err := r.extractNumberFor(stmt, bindings, built.StmtPoints.PointsFor(stmt)); err != nil {
+			return err
+		}
+		return r.extractStmts(stmt.Stmts, bindings, built)
 	case *ast.TypeDefStmt:
 		return r.extractTypeDef(stmt, built.StmtPoints.PointsFor(stmt))
 	case *ast.InterfaceDefStmt:
@@ -413,6 +440,32 @@ func (r *Result) extractInterfaceDef(stmt *ast.InterfaceDefStmt, points []cfg.Po
 		Kind:      TypeDefinitionInterface,
 		Stmt:      stmt,
 		Interface: stmt,
+	}
+	return nil
+}
+
+func (r *Result) extractNumberFor(stmt *ast.NumberForStmt, bindings *bind.Result, points []cfg.Point) error {
+	if len(points) == 0 {
+		return nil
+	}
+	if len(points) < 2 {
+		return ErrPointMismatch
+	}
+	id, hasSymbol := symbol.ID(0), false
+	if bindings != nil {
+		id, hasSymbol = bindings.NumForSymbol(stmt)
+	}
+	fact := NumericForFact{
+		Stmt:      stmt,
+		Name:      stmt.Name,
+		Init:      stmt.Init,
+		Limit:     stmt.Limit,
+		Step:      stmt.Step,
+		Symbol:    id,
+		HasSymbol: hasSymbol && id != 0,
+	}
+	for _, point := range points {
+		r.numericFors[point] = fact
 	}
 	return nil
 }

@@ -544,6 +544,104 @@ func TestBuildChunkWhileCreatesBackedgeAndFalseExit(t *testing.T) {
 	requireEdge(t, graph, join, graph.Exit(), false)
 }
 
+func TestBuildChunkNumberForCreatesLoopTopologyAndMetadata(t *testing.T) {
+	init := number("1")
+	limit := number("10")
+	step := number("2")
+	bodyStmt := localAssign([]string{"bodyValue"}, number("3"))
+	afterStmt := localAssign([]string{"afterValue"}, number("4"))
+	loop := &ast.NumberForStmt{
+		Name:  "i",
+		Init:  init,
+		Limit: limit,
+		Step:  step,
+		Stmts: []ast.Stmt{bodyStmt},
+	}
+	stmts := []ast.Stmt{loop, afterStmt}
+	bindings := bind.BindChunk(stmts, bind.Options{})
+	result := BuildChunk(stmts, bindings)
+	if result == nil || result.Graph == nil {
+		t.Fatalf("BuildChunk returned nil for numeric for")
+	}
+	graph := result.Graph
+
+	loopID, ok := bindings.NumForSymbol(loop)
+	if !ok {
+		t.Fatalf("missing numeric for symbol")
+	}
+	points := requireStmtPoints(t, result, loop, 2)
+	initAssign, branch := points[0], points[1]
+	requirePointKind(t, graph, initAssign, cfg.NodeAssign)
+	requirePointKind(t, graph, branch, cfg.NodeBranch)
+
+	assignFact, ok := result.Meta.Assignment(initAssign)
+	if !ok || assignFact.Target != loopID {
+		t.Fatalf("numeric for init assignment = %#v, ok=%v, want target %d", assignFact, ok, loopID)
+	}
+	branchFact, ok := result.Meta.Branch(branch)
+	if !ok {
+		t.Fatalf("missing numeric for branch fact")
+	}
+	if branchFact.Symbol != loopID || branchFact.Check.Kind != cfgmeta.CheckLimit {
+		t.Fatalf("numeric for branch fact = %#v, want symbol %d check limit", branchFact, loopID)
+	}
+	loopFact, ok := result.Meta.Loop(branch)
+	if !ok {
+		t.Fatalf("missing numeric for loop fact")
+	}
+	if len(loopFact.Vars) != 1 || loopFact.Vars[0] != loopID || len(loopFact.Locals) != 1 || loopFact.Locals[0] != loopID {
+		t.Fatalf("numeric for loop vars/locals = %#v, want %d", loopFact, loopID)
+	}
+	if !loopFact.HasPreheader || loopFact.Preheader != initAssign {
+		t.Fatalf("numeric for preheader = %d/%v, want %d/true", loopFact.Preheader, loopFact.HasPreheader, initAssign)
+	}
+
+	join := firstJoin(t, graph)
+	bodyAssign := nodeWithTarget(t, graph, result.Meta, mustLocalAt(t, bindings, bodyStmt, 0), 0)
+	afterAssign := nodeWithTarget(t, graph, result.Meta, mustLocalAt(t, bindings, afterStmt, 0), 0)
+
+	requireEdge(t, graph, graph.Entry(), initAssign, false)
+	requireEdge(t, graph, initAssign, branch, false)
+	requireEdge(t, graph, branch, bodyAssign, true)
+	requireEdge(t, graph, branch, join, false)
+	requireEdge(t, graph, bodyAssign, branch, false)
+	requireEdge(t, graph, join, afterAssign, false)
+}
+
+func TestBuildChunkNumberForBreakExitsToJoin(t *testing.T) {
+	bodyStmt := localAssign([]string{"bodyValue"}, number("1"))
+	deadStmt := localAssign([]string{"deadValue"}, number("2"))
+	afterStmt := localAssign([]string{"afterValue"}, number("3"))
+	loop := &ast.NumberForStmt{
+		Name:  "i",
+		Init:  number("1"),
+		Limit: number("3"),
+		Stmts: []ast.Stmt{
+			bodyStmt,
+			&ast.BreakStmt{},
+			deadStmt,
+		},
+	}
+	stmts := []ast.Stmt{loop, afterStmt}
+	bindings := bind.BindChunk(stmts, bind.Options{})
+	result := BuildChunk(stmts, bindings)
+	if result == nil || result.Graph == nil {
+		t.Fatalf("BuildChunk returned nil for numeric for break")
+	}
+	graph := result.Graph
+
+	join := firstJoin(t, graph)
+	bodyID := mustLocalAt(t, bindings, bodyStmt, 0)
+	deadID := mustLocalAt(t, bindings, deadStmt, 0)
+	afterID := mustLocalAt(t, bindings, afterStmt, 0)
+	bodyAssign := nodeWithTarget(t, graph, result.Meta, bodyID, 0)
+	afterAssign := nodeWithTarget(t, graph, result.Meta, afterID, 0)
+
+	requireTargetCount(t, graph, result.Meta, deadID, 0)
+	requireEdge(t, graph, bodyAssign, join, false)
+	requireEdge(t, graph, join, afterAssign, false)
+}
+
 func TestBuildChunkStatementPointMappingForBranches(t *testing.T) {
 	decl := localAssign([]string{"x"}, number("0"))
 	ifStmt := &ast.IfStmt{Condition: ident("x")}
@@ -555,11 +653,19 @@ func TestBuildChunkStatementPointMappingForBranches(t *testing.T) {
 		Stmts:     []ast.Stmt{localAssign([]string{"again"}, number("1"))},
 		Condition: ident("x"),
 	}
-	stmts := []ast.Stmt{decl, ifStmt, whileStmt, repeatStmt}
+	numForStmt := &ast.NumberForStmt{
+		Name:  "i",
+		Init:  number("1"),
+		Limit: number("2"),
+	}
+	stmts := []ast.Stmt{decl, ifStmt, whileStmt, repeatStmt, numForStmt}
 	bindings := bind.BindChunk(stmts, bind.Options{})
 	result := BuildChunk(stmts, bindings)
 	graph := result.Graph
 
+	numForPoints := requireStmtPoints(t, result, numForStmt, 2)
+	requirePointKind(t, graph, numForPoints[0], cfg.NodeAssign)
+	requirePointKind(t, graph, numForPoints[1], cfg.NodeBranch)
 	for _, stmt := range []ast.Stmt{ifStmt, whileStmt, repeatStmt} {
 		points := requireStmtPoints(t, result, stmt, 1)
 		requirePointKind(t, graph, points[0], cfg.NodeBranch)
@@ -750,10 +856,6 @@ func TestBuildChunkUnsupportedControlFlowReturnsNil(t *testing.T) {
 		stmt ast.Stmt
 	}{
 		{
-			name: "number for",
-			stmt: &ast.NumberForStmt{Name: "i", Init: number("1"), Limit: number("2")},
-		},
-		{
 			name: "generic for",
 			stmt: &ast.GenericForStmt{Names: []string{"x"}, Exprs: []ast.Expr{ident("iter")}},
 		},
@@ -813,6 +915,14 @@ func TestBuildChunkDeferredExpressionSemanticsReturnNil(t *testing.T) {
 				Func: ident("print"),
 				Args: []ast.Expr{&ast.FuncCallExpr{Func: ident("value")}},
 			}},
+		},
+		{
+			name: "number for init call",
+			stmt: &ast.NumberForStmt{
+				Name:  "i",
+				Init:  &ast.FuncCallExpr{Func: ident("make")},
+				Limit: number("3"),
+			},
 		},
 	}
 

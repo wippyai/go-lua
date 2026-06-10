@@ -200,6 +200,51 @@ func TestExtractChunkCallReturnBranchAndTypeFacts(t *testing.T) {
 	}
 }
 
+func TestExtractChunkNumericForFactsUseStmtPointsAndPreserveIdentity(t *testing.T) {
+	init := number("1")
+	limit := number("10")
+	step := number("2")
+	bodyLocal := localAssign([]string{"bodyValue"}, number("3"))
+	loop := &ast.NumberForStmt{
+		Name:  "i",
+		Init:  init,
+		Limit: limit,
+		Step:  step,
+		Stmts: []ast.Stmt{bodyLocal},
+	}
+	stmts := []ast.Stmt{loop}
+	bindings := bind.BindChunk(stmts, bind.Options{})
+	built := cfgbuild.BuildChunk(stmts, bindings)
+
+	result, err := ExtractChunk(stmts, bindings, built)
+	if err != nil {
+		t.Fatalf("ExtractChunk: %v", err)
+	}
+
+	loopID, ok := bindings.NumForSymbol(loop)
+	if !ok {
+		t.Fatalf("missing numeric for symbol")
+	}
+	points := requireStmtPoints(t, built, loop, 2)
+	for _, point := range points {
+		fact, ok := result.NumericFor(point)
+		if !ok {
+			t.Fatalf("missing numeric for fact at point %d", point)
+		}
+		if fact.Stmt != loop || fact.Name != "i" || fact.Init != init || fact.Limit != limit || fact.Step != step {
+			t.Fatalf("numeric for fact = %#v", fact)
+		}
+		if fact.Symbol != loopID || !fact.HasSymbol {
+			t.Fatalf("numeric for symbol = %d/%v, want %d/true", fact.Symbol, fact.HasSymbol, loopID)
+		}
+	}
+
+	bodyPoint := requireStmtPoints(t, built, bodyLocal, 1)[0]
+	if _, ok := result.LocalAssignment(bodyPoint); !ok {
+		t.Fatalf("missing numeric for body local assignment fact")
+	}
+}
+
 func TestExtractFunctionRecordsFunctionIdentity(t *testing.T) {
 	ret := &ast.ReturnStmt{Exprs: []ast.Expr{ident("a")}}
 	fn := function([]string{"a"}, ret)

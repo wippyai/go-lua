@@ -129,6 +129,8 @@ func (b *builder) buildStmt(state flowState, stmt ast.Stmt) flowState {
 		return b.buildWhile(state, stmt)
 	case *ast.RepeatStmt:
 		return b.buildRepeat(state, stmt)
+	case *ast.NumberForStmt:
+		return b.buildNumberFor(state, stmt)
 	case *ast.BreakStmt:
 		return b.buildBreak(state)
 	case *ast.TypeDefStmt, *ast.InterfaceDefStmt:
@@ -234,6 +236,40 @@ func (b *builder) buildRepeat(state flowState, stmt *ast.RepeatStmt) flowState {
 	return flowState{current: join, live: len(b.graph.Predecessors(join)) > 0}
 }
 
+func (b *builder) buildNumberFor(state flowState, stmt *ast.NumberForStmt) flowState {
+	if b.hasDeferredExprSemantics(stmt.Init, stmt.Limit, stmt.Step) {
+		b.unsupported = true
+		return flowState{current: state.current}
+	}
+	id, ok := b.bindings.NumForSymbol(stmt)
+	if !ok || id == 0 {
+		b.unsupported = true
+		return flowState{current: state.current}
+	}
+
+	state = b.appendAssign(state, id, stmt)
+	preheader := state.current
+	branch := b.appendLimitBranch(state, id, stmt)
+	join := b.graph.AddNode(cfg.NodeJoin)
+
+	b.meta.SetLoop(branch.current, cfgmeta.LoopFact{
+		Vars:         []symbol.ID{id},
+		Locals:       []symbol.ID{id},
+		Preheader:    preheader,
+		HasPreheader: true,
+	})
+	b.graph.AddEdge(branch.current, join, false)
+	b.breakTargets = append(b.breakTargets, join)
+	body := b.buildStmts(branchPath(branch.current, true), stmt.Stmts)
+	b.breakTargets = b.breakTargets[:len(b.breakTargets)-1]
+
+	body = b.materializePendingCond(body)
+	if body.live {
+		b.connect(body, branch.current)
+	}
+	return flowState{current: join, live: true}
+}
+
 func (b *builder) buildBreak(state flowState) flowState {
 	if len(b.breakTargets) == 0 {
 		b.unsupported = true
@@ -281,6 +317,17 @@ func (b *builder) appendBranch(state flowState, expr ast.Expr, stmt ast.Stmt) fl
 	branchFact := b.branchMetadata(expr)
 	point := b.graph.AddBranch()
 	b.meta.SetBranch(point, branchFact)
+	b.connect(state, point)
+	b.recordStmtPoint(stmt, point)
+	return flowState{current: point, live: true}
+}
+
+func (b *builder) appendLimitBranch(state flowState, id symbol.ID, stmt ast.Stmt) flowState {
+	if !state.live {
+		return state
+	}
+	point := b.graph.AddBranch()
+	b.meta.SetBranch(point, cfgmeta.BranchFact{Symbol: id, Check: cfgmeta.BranchCheck{Kind: cfgmeta.CheckLimit}})
 	b.connect(state, point)
 	b.recordStmtPoint(stmt, point)
 	return flowState{current: point, live: true}
