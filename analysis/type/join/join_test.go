@@ -3,8 +3,8 @@ package join_test
 import (
 	"testing"
 
+	typejoin "github.com/wippyai/go-lua/analysis/type/join"
 	"github.com/wippyai/go-lua/analysis/type/typ"
-	typejoin "github.com/wippyai/go-lua/analysis/type/typ/join"
 )
 
 // mockSpec implements typ.SpecInfo for in-package testing without importing contract/effect.
