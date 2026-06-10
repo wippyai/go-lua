@@ -98,7 +98,7 @@ func TestComparePrecisionStaticStringMemberRefinesUnknown(t *testing.T) {
 	if strict, comparable := ComparePrecision(candidate, baseline); !strict || !comparable {
 		t.Fatalf("static member precision = (%v, %v), want strict comparable", strict, comparable)
 	}
-	if SameProductFamily(candidate, baseline) {
+	if sameProductFamily(candidate, baseline) {
 		t.Fatalf("static member precision variants must not share product family")
 	}
 }
@@ -114,7 +114,7 @@ func TestComparePrecisionDistinguishesDotFieldAndStaticStringMember(t *testing.T
 	if strict, comparable := ComparePrecision(index, field); strict || comparable {
 		t.Fatalf("static string index vs dot field precision = (%v, %v), want unrelated", strict, comparable)
 	}
-	if SameProductFamily(index, field) {
+	if sameProductFamily(index, field) {
 		t.Fatalf("static string index and dot field must not share product family")
 	}
 }
@@ -507,7 +507,7 @@ func TestProductFamilyHashTerminatesOnRecursiveMapTower(t *testing.T) {
 		tower = NewMap(String, NewOptional(NewUnion(tower, Nil)))
 	}
 
-	if got := ProductFamilyHash(tower); got == 0 {
+	if got := productFamilyHash(tower); got == 0 {
 		t.Fatal("recursive map tower family hash should be non-zero")
 	}
 }
@@ -556,7 +556,7 @@ func TestSameProductFamily_EquivalentRecursiveProducts(t *testing.T) {
 			Build()
 	})
 
-	if !SameProductFamily(left, right) {
+	if !sameProductFamily(left, right) {
 		t.Fatal("same recursive product family should compare equal without structural unfolding")
 	}
 }
@@ -576,7 +576,7 @@ func TestSameProductFamily_DistinguishesPrecisionVariants(t *testing.T) {
 			Build()
 	})
 
-	if SameProductFamily(base, richer) {
+	if sameProductFamily(base, richer) {
 		t.Fatal("same product family must not collapse strictly richer evidence")
 	}
 }

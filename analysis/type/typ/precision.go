@@ -691,18 +691,18 @@ func ComparePrecision(candidate, baseline Type) (bool, bool) {
 	return comparePrecision(candidate, baseline, 0, &precisionSeen{})
 }
 
-// ProductFamilyHash returns a stable structural family hash for product-domain
+// productFamilyHash returns a stable structural family hash for product-domain
 // relations that must compare recursive products coinductively without
 // unfolding them by concrete node identity.
-func ProductFamilyHash(t Type) uint64 {
+func productFamilyHash(t Type) uint64 {
 	return precisionFamilyHash(t, nil)
 }
 
-// SameProductFamily reports whether two recursive product observations describe
+// sameProductFamily reports whether two recursive product observations describe
 // the same fixed-point family with equal precision. It is the canonical
 // recursive-product equality relation for union/member dedupe and convergence
 // checks; generic TypeEquals remains exact structural equality.
-func SameProductFamily(a, b Type) bool {
+func sameProductFamily(a, b Type) bool {
 	if SameNodeOrAcyclicEqual(a, b) {
 		return true
 	}
@@ -712,7 +712,7 @@ func SameProductFamily(a, b Type) bool {
 	if !ContainsRecursive(a) && !ContainsRecursive(b) {
 		return false
 	}
-	if ProductFamilyHash(a) != ProductFamilyHash(b) {
+	if productFamilyHash(a) != productFamilyHash(b) {
 		return false
 	}
 	aStrict, aComparable := ComparePrecision(a, b)

@@ -79,3 +79,46 @@ func TestRecursiveFamilyFingerprintWithinReportsBudgetExhaustion(t *testing.T) {
 		t.Fatalf("unbounded fingerprint = %x/%v, want non-zero/true", fp, ok)
 	}
 }
+
+func TestProductFamilyHashTerminatesOnRecursiveMapTower(t *testing.T) {
+	node := typ.NewRecursive("Node", func(self typ.Type) typ.Type {
+		return typ.NewMap(typ.String, typ.NewOptional(self))
+	})
+	var tower typ.Type = node
+	for i := 0; i < 2048; i++ {
+		tower = typ.NewMap(typ.String, typ.NewOptional(typ.NewUnion(tower, typ.Nil)))
+	}
+
+	if got := ProductFamilyHash(tower); got == 0 {
+		t.Fatal("recursive map tower family hash should be non-zero")
+	}
+}
+
+func TestSameProductFamily(t *testing.T) {
+	left := typ.NewRecursive("Node", func(self typ.Type) typ.Type {
+		return typ.NewRecord().
+			Field("name", typ.String).
+			OptField("next", self).
+			Build()
+	})
+	right := typ.NewRecursive("Node", func(self typ.Type) typ.Type {
+		return typ.NewRecord().
+			Field("name", typ.String).
+			OptField("next", self).
+			Build()
+	})
+	richer := typ.NewRecursive("Node", func(self typ.Type) typ.Type {
+		return typ.NewRecord().
+			Field("name", typ.String).
+			Field("path", typ.String).
+			OptField("next", self).
+			Build()
+	})
+
+	if !SameProductFamily(left, right) {
+		t.Fatal("same recursive product family should compare equal")
+	}
+	if SameProductFamily(left, richer) {
+		t.Fatal("same product family must not collapse strictly richer evidence")
+	}
+}

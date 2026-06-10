@@ -334,7 +334,7 @@ func FamilyKeyOf(t typ.Type) (FamilyKey, bool) {
 // carry different identities and differ.
 //
 // The fingerprint is the discriminator the product-family precision relation
-// lacks: SameProductFamily and precisionFamilyHash bottom out at a constant for
+// lacks: SameProductFamily and ProductFamilyHash bottom out at a constant for
 // any recursive-containing terminal, so they conflate distinct families that
 // share structural precision. That conflation is unsound when a memoized result
 // must reflect a specific family. Combining SameProductFamily with an equal

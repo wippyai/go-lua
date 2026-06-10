@@ -28,6 +28,7 @@
 package join
 
 import (
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
 	"github.com/wippyai/go-lua/analysis/type/kind"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/analysis/type/typ/unwrap"
@@ -193,7 +194,7 @@ func sameJoinInput(a, b typ.Type) bool {
 		return true
 	}
 	if typ.ContainsRecursive(a) || typ.ContainsRecursive(b) {
-		return typ.SameProductFamily(a, b)
+		return identity.SameProductFamily(a, b)
 	}
 	return false
 }

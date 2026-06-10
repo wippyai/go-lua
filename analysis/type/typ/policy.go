@@ -121,7 +121,7 @@ func returnJoinHash(t Type) uint64 {
 		if ptr := typePointer(t); ptr != 0 {
 			return hash.HashCombine(uint64(t.Kind()), uint64(ptr))
 		}
-		return ProductFamilyHash(t)
+		return productFamilyHash(t)
 	}
 	return typeEqualityHash(t)
 }
@@ -433,10 +433,10 @@ func (s *returnJoinState) coalesceFoldedProductFamilyMembers(types []Type) []Typ
 		// *Recursive is minted each fixpoint iteration) cannot be detected by
 		// pointer identity, so dedup by the coinductive family hash refined with
 		// the structural same-family probe.
-		h := ProductFamilyHash(candidate)
+		h := productFamilyHash(candidate)
 		duplicate := false
 		for _, r := range recReps {
-			if r.hash == h && SameProductFamily(r.rep, candidate) {
+			if r.hash == h && sameProductFamily(r.rep, candidate) {
 				duplicate = true
 				break
 			}
@@ -481,7 +481,7 @@ func (s *returnJoinState) sameProductFamily(a, b Type) bool {
 
 func (s *returnJoinState) productFamilyHash(t Type) uint64 {
 	if s == nil {
-		return ProductFamilyHash(t)
+		return productFamilyHash(t)
 	}
 	return precisionFamilyHash(t, s.precisionState())
 }
@@ -618,7 +618,7 @@ func (s *returnJoinState) recursiveRecordCoalesceKey(rec *Recursive) uint64 {
 	}
 	body, _ := UnwrapAnnotated(rec.Body).(*Record)
 	if body == nil {
-		return ProductFamilyHash(rec)
+		return productFamilyHash(rec)
 	}
 	h := hash.HashCombine(uint64(kind.Recursive), uint64(kind.Record))
 	if body.HasMapComponent() {
@@ -649,7 +649,7 @@ func sameRecursiveFamilyBody(a, b Type) bool {
 	if !ContainsRecursive(a) && !ContainsRecursive(b) {
 		return false
 	}
-	return SameProductFamily(a, b)
+	return sameProductFamily(a, b)
 }
 
 func recursiveFamilyBodiesShareAnchor(a, b Type) bool {
@@ -686,7 +686,7 @@ func recursiveFamilyAnchorTypesCompatible(a, b Type) bool {
 		return false
 	}
 	if ContainsRecursive(a) || ContainsRecursive(b) {
-		return SameProductFamily(a, b)
+		return sameProductFamily(a, b)
 	}
 	return TypeEquals(a, b)
 }
