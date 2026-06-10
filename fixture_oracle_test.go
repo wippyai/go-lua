@@ -147,7 +147,7 @@ func judgeAgainstCuratedExpectations(s namedSuite, diagnostics []diag.Diagnostic
 }
 
 func diagSummary(d diag.Diagnostic) string {
-	return fmt.Sprintf("%s:%d:%d [%s] %s", d.Position.File, d.Position.Line, d.Position.Column, d.Code.Name(), d.Message)
+	return fmt.Sprintf("%s:%d:%d [%s] %s", d.Position.File, d.Position.Line, d.Position.Column, d.Code.String(), d.Message)
 }
 
 // shouldSkipOracleSuite mirrors the fixture harness's suite-level skips.

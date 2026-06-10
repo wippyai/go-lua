@@ -10,7 +10,13 @@
 //   - TypeExpr: type annotations for the optional type system
 package ast
 
-import diag "github.com/wippyai/go-lua/analysis/diagnostic"
+import "github.com/wippyai/go-lua/compiler/source"
+
+// Position identifies a source location.
+type Position = source.Position
+
+// Span defines a source range.
+type Span = source.Span
 
 // PositionHolder provides source location info for AST nodes.
 type PositionHolder interface {
@@ -76,12 +82,12 @@ func (n *Node) SetLastColumn(col int) {
 	n.lastcol = col
 }
 
-// SpanOf extracts a diagnostic span from a PositionHolder.
-func SpanOf(p PositionHolder) diag.Span {
+// SpanOf extracts a source span from a PositionHolder.
+func SpanOf(p PositionHolder) Span {
 	if p == nil {
-		return diag.Span{}
+		return Span{}
 	}
-	return diag.Span{
+	return Span{
 		StartLine: p.Line(),
 		StartCol:  p.Column(),
 		EndLine:   p.LastLine(),

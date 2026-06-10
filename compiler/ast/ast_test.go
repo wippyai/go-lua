@@ -1,10 +1,6 @@
 package ast
 
-import (
-	"testing"
-
-	diag "github.com/wippyai/go-lua/analysis/diagnostic"
-)
+import "testing"
 
 func TestNodeColumn(t *testing.T) {
 	n := &Node{}
@@ -88,14 +84,14 @@ func TestNodeCopyLastPos(t *testing.T) {
 func TestSpanValid(t *testing.T) {
 	tests := []struct {
 		name string
-		span diag.Span
+		span Span
 		want bool
 	}{
-		{"zero span", diag.Span{}, false},
-		{"only start line", diag.Span{StartLine: 1}, false},
-		{"only start col", diag.Span{StartCol: 1}, false},
-		{"valid span", diag.Span{StartLine: 1, StartCol: 1}, true},
-		{"full span", diag.Span{StartLine: 1, StartCol: 5, EndLine: 10, EndCol: 15}, true},
+		{"zero span", Span{}, false},
+		{"only start line", Span{StartLine: 1}, false},
+		{"only start col", Span{StartCol: 1}, false},
+		{"valid span", Span{StartLine: 1, StartCol: 1}, true},
+		{"full span", Span{StartLine: 1, StartCol: 5, EndLine: 10, EndCol: 15}, true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -109,12 +105,12 @@ func TestSpanValid(t *testing.T) {
 func TestSpanSingleLine(t *testing.T) {
 	tests := []struct {
 		name string
-		span diag.Span
+		span Span
 		want bool
 	}{
-		{"same line", diag.Span{StartLine: 5, EndLine: 5}, true},
-		{"end line zero", diag.Span{StartLine: 5, EndLine: 0}, true},
-		{"different lines", diag.Span{StartLine: 5, EndLine: 10}, false},
+		{"same line", Span{StartLine: 5, EndLine: 5}, true},
+		{"end line zero", Span{StartLine: 5, EndLine: 0}, true},
+		{"different lines", Span{StartLine: 5, EndLine: 10}, false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

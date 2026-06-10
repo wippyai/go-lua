@@ -265,7 +265,7 @@ func verifyInlineExpectations(t *testing.T, expectations []inlineExpectation, di
 		}
 		failed = true
 		t.Errorf("unexpected %s at %s:%d: %s (%s)",
-			d.Severity, d.Position.File, d.Position.Line, d.Message, d.Code.Name())
+			d.Severity, d.Position.File, d.Position.Line, d.Message, d.Code.String())
 	}
 
 	if failed {
@@ -330,7 +330,7 @@ func dumpDiagnostics(t *testing.T, diagnostics []diag.Diagnostic) {
 	for _, d := range diagnostics {
 		t.Logf("  %s:%d:%d [%s] %s: %s",
 			d.Position.File, d.Position.Line, d.Position.Column,
-			d.Severity, d.Code.Name(), d.Message)
+			d.Severity, d.Code.String(), d.Message)
 	}
 }
 
