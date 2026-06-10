@@ -1,5 +1,5 @@
-// Package project provides pure type projections over active typ.Type values.
-package project
+// Package access provides Lua table and callable access projections.
+package access
 
 import (
 	luatable "github.com/wippyai/go-lua/analysis/lua/table"
@@ -24,35 +24,6 @@ func MissingFieldReadsNil(t typ.Type) bool {
 // CallableReturn projects a callable witness to its first return type.
 func CallableReturn(t typ.Type) (typ.Type, bool) {
 	return callableReturnDepth(t, 0)
-}
-
-// GenericArg returns the type argument at index from an instantiated generic.
-func GenericArg(t typ.Type, index int) (typ.Type, bool) {
-	if index < 0 {
-		return nil, false
-	}
-	inst, ok := unwrap.Alias(t).(*typ.Instantiated)
-	if !ok || inst == nil || index >= len(inst.TypeArgs) || inst.TypeArgs[index] == nil {
-		return nil, false
-	}
-	return inst.TypeArgs[index], true
-}
-
-// InstantiateGeneric creates a one-argument instantiation of generic using arg
-// as the payload. Meta<T> arguments project to T before instantiation.
-func InstantiateGeneric(generic typ.Type, arg typ.Type) (typ.Type, bool) {
-	g, ok := unwrap.Alias(generic).(*typ.Generic)
-	if !ok || g == nil || len(g.TypeParams) != 1 || arg == nil {
-		return nil, false
-	}
-	payload := payloadType(arg)
-	if payload == nil {
-		return nil, false
-	}
-	if constraint := g.TypeParams[0].Constraint; constraint != nil && !subtype.IsSubtype(payload, constraint) {
-		return nil, false
-	}
-	return typ.Instantiate(g, payload), true
 }
 
 type fieldResult struct {
@@ -300,13 +271,6 @@ func recordCallReturn(r *typ.Record, depth int) (typ.Type, bool) {
 		return nil, false
 	}
 	return callableReturnDepth(call, depth+1)
-}
-
-func payloadType(t typ.Type) typ.Type {
-	if meta, ok := unwrap.Alias(t).(*typ.Meta); ok && meta != nil && meta.Of != nil {
-		return meta.Of
-	}
-	return t
 }
 
 func specialAccessType(t typ.Type) (typ.Type, bool) {

@@ -1,4 +1,4 @@
-package project
+package access
 
 import (
 	"testing"
@@ -149,33 +149,6 @@ func TestCallableReturnFirstReturn(t *testing.T) {
 		t.Fatal("CallableReturn(function) failed")
 	}
 	assertType(t, got, typ.Number)
-}
-
-func TestGenericArgExtraction(t *testing.T) {
-	param := typ.NewTypeParam("T", nil)
-	box := typ.NewGeneric("Box", []*typ.TypeParam{param}, param)
-	inst := typ.Instantiate(box, typ.String)
-
-	got, ok := GenericArg(typ.NewAlias("StringBox", inst), 0)
-	if !ok {
-		t.Fatal("GenericArg(alias Box<string>, 0) failed")
-	}
-	assertType(t, got, typ.String)
-
-	if _, ok := GenericArg(inst, 1); ok {
-		t.Fatal("GenericArg(Box<string>, 1) succeeded")
-	}
-}
-
-func TestInstantiateGenericOneArg(t *testing.T) {
-	param := typ.NewTypeParam("T", nil)
-	channel := typ.NewGeneric("Channel", []*typ.TypeParam{param}, typ.NewInterface("Channel", nil))
-
-	got, ok := InstantiateGeneric(channel, typ.NewMeta(typ.String))
-	if !ok {
-		t.Fatal("InstantiateGeneric(Channel<T>, typeof(string)) failed")
-	}
-	assertType(t, got, typ.Instantiate(channel, typ.String))
 }
 
 func assertType(t *testing.T, got typ.Type, want typ.Type) {
