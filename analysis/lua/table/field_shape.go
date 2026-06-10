@@ -8,7 +8,7 @@ func SplitNilableField(t typ.Type) (inner typ.Type, optional bool) {
 	if t == nil {
 		return typ.Unknown, true
 	}
-	nonNil, nilable := typ.WithoutNil(t, typ.NilProjectionStructural)
+	nonNil, nilable := withoutNil(t, nilProjectionStructural)
 	if !nilable {
 		return t, false
 	}

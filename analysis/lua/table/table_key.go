@@ -7,7 +7,7 @@ func NormalizeKey(t typ.Type) typ.Type {
 	if t == nil {
 		return typ.Unknown
 	}
-	nonNil, nilable := typ.WithoutNil(t, typ.NilProjectionPreserveAliases)
+	nonNil, nilable := withoutNil(t, nilProjectionPreserveAliases)
 	if !nilable {
 		return t
 	}

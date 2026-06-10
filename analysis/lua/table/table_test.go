@@ -37,6 +37,16 @@ func TestNormalizeKeyPreservesAliasToOptionalPayload(t *testing.T) {
 	}
 }
 
+func TestProjectNilLeavesAbsentTypeAlone(t *testing.T) {
+	got, nilable := withoutNil(nil, nilProjectionStructural)
+	if nilable {
+		t.Fatal("did not expect nilable")
+	}
+	if got != nil {
+		t.Fatalf("project nil absent type = %v, want nil", got)
+	}
+}
+
 func TestConstructorsNormalizeKeys(t *testing.T) {
 	m := NewMap(typ.NewOptional(typ.String), typ.Number)
 	if !typ.TypeEquals(m.Key, typ.String) {
@@ -139,4 +149,44 @@ func TestSplitNilableField(t *testing.T) {
 			t.Fatalf("inner = %v, want never", inner)
 		}
 	})
+
+	t.Run("annotated optional", func(t *testing.T) {
+		ann := []typ.Annotation{{Name: "tag"}}
+		inner, optional := SplitNilableField(typ.NewAnnotated(typ.NewOptional(typ.String), ann))
+		if !optional {
+			t.Fatal("expected optional")
+		}
+		annotated, ok := inner.(*typ.Annotated)
+		if !ok {
+			t.Fatalf("inner = %T, want annotated", inner)
+		}
+		if !typ.TypeEquals(annotated.Inner, typ.String) {
+			t.Fatalf("annotated inner = %v, want string", annotated.Inner)
+		}
+	})
+}
+
+func TestSplitNilableFieldPreservesRecursiveUnionMemberHashes(t *testing.T) {
+	recA := typ.NewRecursive("Node", func(self typ.Type) typ.Type {
+		return typ.NewRecord().Field("next", typ.NewOptional(self)).Build()
+	})
+	recB := typ.NewRecursive("Node", func(self typ.Type) typ.Type {
+		return typ.NewRecord().Field("next", typ.NewOptional(self)).Field("name", typ.String).Build()
+	})
+	u, ok := typ.NewUnion(typ.Nil, recA, recB).(*typ.Union)
+	if !ok {
+		t.Fatalf("expected union")
+	}
+
+	got, optional := SplitNilableField(u)
+	if !optional {
+		t.Fatalf("expected optional")
+	}
+	want := typ.NewUnion(recA, recB)
+	if !typ.TypeEquals(got, want) {
+		t.Fatalf("inner = %v, want %v", got, want)
+	}
+	if got.Hash() != want.Hash() {
+		t.Fatalf("hash = %d, want %d", got.Hash(), want.Hash())
+	}
 }

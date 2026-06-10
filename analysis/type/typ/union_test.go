@@ -407,31 +407,6 @@ func TestUnionConstructionHashesEachMemberOnce(t *testing.T) {
 	}
 }
 
-func TestWithoutNilPreservesRecursiveMemberHashes(t *testing.T) {
-	recA := NewRecursive("Node", func(self Type) Type {
-		return NewRecord().Field("next", NewOptional(self)).Build()
-	})
-	recB := NewRecursive("Node", func(self Type) Type {
-		return NewRecord().Field("next", NewOptional(self)).Field("name", String).Build()
-	})
-	u, ok := NewUnion(Nil, recA, recB).(*Union)
-	if !ok {
-		t.Fatalf("expected union")
-	}
-
-	got, nilable := WithoutNil(u, NilProjectionStructural)
-	if !nilable {
-		t.Fatalf("WithoutNil did not report nilable input")
-	}
-	want := NewUnion(recA, recB)
-	if !TypeEquals(got, want) {
-		t.Fatalf("WithoutNil = %v, want %v", got, want)
-	}
-	if got.Hash() != want.Hash() {
-		t.Fatalf("hash = %d, want %d", got.Hash(), want.Hash())
-	}
-}
-
 func TestProjectUnionMembersFilterPreservesMemberHashes(t *testing.T) {
 	calls := 0
 	keep := &countingHashType{name: "keep", hash: 10, calls: &calls}

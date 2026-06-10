@@ -156,9 +156,6 @@ func TestCoalesceMapsNormalizesMergedMapKeys(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected map, got %T", result[0])
 	}
-	if _, nilable := typ.WithoutNil(m.Key, typ.NilProjectionStructural); nilable {
-		t.Fatalf("coalesced map key still permits nil: %v", m.Key)
-	}
 	want := typ.NewUnion(typ.String, typ.Integer)
 	if !typ.TypeEquals(m.Key, want) {
 		t.Fatalf("coalesced map key = %v, want %v", m.Key, want)
