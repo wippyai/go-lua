@@ -3,17 +3,17 @@ package refinement
 import (
 	"testing"
 
-	. "github.com/wippyai/go-lua/analysis/type/typ"
+	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
 func TestIsClosedUnionAnnotationRecognizesInstantiatedGenericUnion(t *testing.T) {
-	tp := NewTypeParam("T", nil)
-	result := NewGeneric("Result", []*TypeParam{tp}, NewUnion(
-		NewRecord().Field("ok", LiteralBool(true)).Field("value", tp).Build(),
-		NewRecord().Field("ok", LiteralBool(false)).Field("error", String).Build(),
+	tp := typ.NewTypeParam("T", nil)
+	result := typ.NewGeneric("Result", []*typ.TypeParam{tp}, typ.NewUnion(
+		typ.NewRecord().Field("ok", typ.LiteralBool(true)).Field("value", tp).Build(),
+		typ.NewRecord().Field("ok", typ.LiteralBool(false)).Field("error", typ.String).Build(),
 	))
 
-	if !IsClosedUnionAnnotation(Instantiate(result, NewRecord().Field("id", String).Build())) {
+	if !IsClosedUnionAnnotation(typ.Instantiate(result, typ.NewRecord().Field("id", typ.String).Build())) {
 		t.Fatal("IsClosedUnionAnnotation(Result<User>) = false, want true")
 	}
 }
@@ -21,20 +21,20 @@ func TestIsClosedUnionAnnotationRecognizesInstantiatedGenericUnion(t *testing.T)
 func TestIsRefinableAnnotation(t *testing.T) {
 	tests := []struct {
 		name string
-		t    Type
+		t    typ.Type
 		want bool
 	}{
 		{"nil", nil, false},
-		{"any", Any, false},
-		{"unknown", Unknown, false},
-		{"optional any", NewOptional(Any), false},
-		{"array any", NewArray(Any), true},
-		{"map string any", NewMap(String, Any), true},
-		{"map string any array", NewMap(String, NewArray(Any)), true},
-		{"open table top", NewRecord().SetOpen(true).Build(), true},
-		{"array or open table top", NewUnion(NewArray(Any), NewRecord().SetOpen(true).Build()), true},
-		{"record map any", NewRecord().MapComponent(String, Any).Build(), true},
-		{"record", NewRecord().Field("id", String).Build(), false},
+		{"any", typ.Any, false},
+		{"unknown", typ.Unknown, false},
+		{"optional any", typ.NewOptional(typ.Any), false},
+		{"array any", typ.NewArray(typ.Any), true},
+		{"map string any", typ.NewMap(typ.String, typ.Any), true},
+		{"map string any array", typ.NewMap(typ.String, typ.NewArray(typ.Any)), true},
+		{"open table top", typ.NewRecord().SetOpen(true).Build(), true},
+		{"array or open table top", typ.NewUnion(typ.NewArray(typ.Any), typ.NewRecord().SetOpen(true).Build()), true},
+		{"record map any", typ.NewRecord().MapComponent(typ.String, typ.Any).Build(), true},
+		{"record", typ.NewRecord().Field("id", typ.String).Build(), false},
 	}
 
 	for _, tt := range tests {
@@ -45,13 +45,13 @@ func TestIsRefinableAnnotation(t *testing.T) {
 }
 
 func TestPruneLessPreciseRefinableUnionMembersDropsDominatedSoftAlternative(t *testing.T) {
-	soft := NewMap(String, NewArray(Any))
-	precise := NewMap(String, NewArray(NewRecord().Field("id", String).Build()))
+	soft := typ.NewMap(typ.String, typ.NewArray(typ.Any))
+	precise := typ.NewMap(typ.String, typ.NewArray(typ.NewRecord().Field("id", typ.String).Build()))
 
-	got := PruneLessPreciseRefinableUnionMembers(NewUnion(soft, precise), func(candidate, baseline Type) bool {
-		return TypeEquals(candidate, precise) && TypeEquals(baseline, soft)
-	}, NewUnion)
-	if !TypeEquals(got, precise) {
+	got := PruneLessPreciseRefinableUnionMembers(typ.NewUnion(soft, precise), func(candidate, baseline typ.Type) bool {
+		return typ.TypeEquals(candidate, precise) && typ.TypeEquals(baseline, soft)
+	}, typ.NewUnion)
+	if !typ.TypeEquals(got, precise) {
 		t.Fatalf("pruned union = %v, want %v", got, precise)
 	}
 }
