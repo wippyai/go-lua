@@ -1,4 +1,4 @@
-package subtype
+package widen
 
 import (
 	"fmt"

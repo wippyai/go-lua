@@ -1,4 +1,4 @@
-package subtype
+package widen
 
 import (
 	"github.com/wippyai/go-lua/analysis/type/kind"
