@@ -80,11 +80,20 @@ func joinDedupeUsesStructuralEquality(t Type) bool {
 // CoalesceJoinProducts applies the relation-owned product-family coalescing
 // policy used before constructing a flow-join union.
 func CoalesceJoinProducts(types []Type, joinTypes coalesce.TypeSetJoinFunc) []Type {
+	return CoalesceJoinProductsWithSlotJoin(types, joinTypes, nil)
+}
+
+// CoalesceJoinProductsWithSlotJoin applies the relation-owned product-family
+// coalescing policy using slotJoin for compatible record/product slots. A nil
+// slotJoin preserves the default JoinReturnSlot-backed record coalescing.
+func CoalesceJoinProductsWithSlotJoin(types []Type, joinTypes coalesce.TypeSetJoinFunc, slotJoin SlotJoinFunc) []Type {
+	state := newReturnJoinState()
+	slotJoin = state.slotJoinOrDefault(slotJoin)
 	types = CoalesceEmptyRecordWithMap(types)
 	types = CoalesceEmptyRecordWithArray(types)
 	types = CoalesceMaps(types, joinTypes)
-	types = CoalesceRecursiveRecordFamilies(types)
-	types = CoalesceCompatibleRecords(types)
+	types = state.coalesceRecursiveRecordFamiliesWithSlotJoin(types, slotJoin)
+	types = state.coalesceCompatibleRecordTypesWithSlotJoin(types, slotJoin)
 	types = CoalesceRecordOpenness(types)
 	types = CoalesceMaps(types, joinTypes)
 	return types

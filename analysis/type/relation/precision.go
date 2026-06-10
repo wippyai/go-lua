@@ -288,11 +288,14 @@ func normalizePrecisionUnion(t Type, seen *precisionSeen) (normalized Type, chan
 			seen.normalizedUnions[t] = precisionUnionNormalization{typ: normalized, changed: changed}
 		}()
 	}
-	members := coalescePrecisionUnionMembers(u.Members)
+	state := newReturnJoinState()
+	state.recursiveFamilyFold = true
+	slotJoin := state.slotJoinOrDefault(nil)
+	members := state.coalesceProductUnionMembersWithSlotJoin(u.Members, slotJoin)
 	if !sameTypeSlice(u.Members, members) {
 		return NormalizeUnionForJoin(members...), true
 	}
-	candidate := CoalesceCompatibleRecordAlternatives(u)
+	candidate := state.coalesceCompatibleRecordAlternativesWithSlotJoin(u, slotJoin)
 	if candidate == nil || candidate == t {
 		return nil, false
 	}
@@ -302,7 +305,7 @@ func normalizePrecisionUnion(t Type, seen *precisionSeen) (normalized Type, chan
 func coalescePrecisionUnionMembers(types []Type) []Type {
 	state := newReturnJoinState()
 	state.recursiveFamilyFold = true
-	return state.coalesceProductUnionMembers(types)
+	return state.coalesceProductUnionMembersWithSlotJoin(types, state.slotJoinOrDefault(nil))
 }
 
 type precisionSeen struct {

@@ -70,7 +70,9 @@ func Types(types ...typ.Type) typ.Type {
 		return first
 	}
 	beforeCoalesce := len(filtered)
-	filtered = relation.CoalesceJoinProducts(filtered, Types)
+	filtered = relation.CoalesceJoinProductsWithSlotJoin(filtered, Types, func(a, b typ.Type) typ.Type {
+		return Types(a, b)
+	})
 	if len(filtered) < beforeCoalesce {
 		filtered = dedupeJoinInputs(filtered)
 	}

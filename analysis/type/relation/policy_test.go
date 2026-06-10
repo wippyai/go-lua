@@ -190,6 +190,38 @@ func TestJoinCompatibleRecordsPreservesStaticBracketMembers(t *testing.T) {
 	}
 }
 
+func TestJoinCompatibleRecordsWithSlotJoinUsesInjectedSlotJoinForSharedField(t *testing.T) {
+	left := NewRecord().Field("value", Number).Build()
+	right := NewRecord().Field("value", String).Build()
+	sentinel := NewArray(Boolean)
+	called := false
+
+	got, ok := JoinCompatibleRecordsWithSlotJoin(left, right, func(a, b Type) Type {
+		called = true
+		if !TypeEquals(a, Number) || !TypeEquals(b, String) {
+			t.Fatalf("slot join inputs = (%v, %v), want (number, string)", a, b)
+		}
+		return sentinel
+	})
+	if !ok {
+		t.Fatal("JoinCompatibleRecordsWithSlotJoin ok=false")
+	}
+	if !called {
+		t.Fatal("slot join callback was not called")
+	}
+	rec, ok := got.(*Record)
+	if !ok {
+		t.Fatalf("JoinCompatibleRecordsWithSlotJoin = %T %[1]v, want record", got)
+	}
+	field := rec.GetField("value")
+	if field == nil {
+		t.Fatal("merged record missing value field")
+	}
+	if !TypeEquals(field.Type, sentinel) {
+		t.Fatalf("merged value field = %v, want sentinel %v", field.Type, sentinel)
+	}
+}
+
 func TestJoinCompatibleRecordsPreservesSharedMetatable(t *testing.T) {
 	meta := NewRecord().
 		Field("__index", NewRecord().Field("run", Func().Build()).Build()).
