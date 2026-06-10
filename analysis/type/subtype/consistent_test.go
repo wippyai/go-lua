@@ -7,7 +7,6 @@ import (
 )
 
 func TestFreshEmptyTableConsistency(t *testing.T) {
-	fresh := typ.NewFreshEmptyRecord()
 	cases := []struct {
 		name  string
 		super typ.Type
@@ -18,23 +17,30 @@ func TestFreshEmptyTableConsistency(t *testing.T) {
 		{"readonly map", typ.NewReadonlyMap(typ.String, typ.Number), true},
 		{"optional-only record", typ.NewRecord().OptField("x", typ.Number).Build(), true},
 		{"required-field record", typ.NewRecord().Field("x", typ.Number).Build(), false},
+		{"optional static member record", typ.NewRecord().AddStaticMember(typ.StaticMember{Kind: typ.StaticMemberStringIndex, Name: "x", Type: typ.Number, Optional: true}).Build(), true},
+		{"required static member record", typ.NewRecord().StaticStringIndex("x", typ.Number).Build(), false},
 		{"empty tuple", typ.NewTuple(), true},
 		{"non-empty tuple", typ.NewTuple(typ.Number), false},
+		{"optional table target", typ.NewOptional(typ.NewMap(typ.String, typ.Number)), true},
+		{"union with table member", typ.NewUnion(typ.Number, typ.NewArray(typ.String)), true},
+		{"union without table member", typ.NewUnion(typ.Number, typ.String), false},
+		{"intersection all table-like", typ.NewIntersection(typ.NewMap(typ.String, typ.Number), typ.NewReadonlyMap(typ.String, typ.Number)), true},
+		{"intersection mixed scalar", typ.NewIntersection(typ.NewMap(typ.String, typ.Number), typ.Number), false},
 		{"scalar", typ.Number, false},
 	}
 	for _, c := range cases {
-		if got := Consistent(fresh, c.super); got != c.want {
-			t.Fatalf("Consistent(fresh empty record, %s) = %v, want %v", c.name, got, c.want)
+		if got := ConsistentFreshEmptyTable(c.super); got != c.want {
+			t.Fatalf("ConsistentFreshEmptyTable(%s) = %v, want %v", c.name, got, c.want)
 		}
 	}
-	if !Consistent(typ.NewFreshArray(), typ.NewArray(typ.Number)) {
-		t.Fatal("fresh array should satisfy array target")
-	}
-	if Consistent(typ.NewArray(typ.Number), fresh) {
-		t.Fatal("fresh target direction should not be admitted here")
+	if !ConsistentFreshEmptyTable(typ.NewArray(typ.Number)) {
+		t.Fatal("fresh empty table should satisfy array target")
 	}
 	if Consistent(typ.NewArray(typ.Number), typ.NewRecord().Build()) {
-		t.Fatal("ordinary empty record target should stay strict")
+		t.Fatal("empty table literal direction should not be admitted through ordinary Consistent")
+	}
+	if Consistent(typ.NewRecord().Build(), typ.NewTuple()) {
+		t.Fatal("ordinary empty record source should not gain empty-literal consistency")
 	}
 }
 

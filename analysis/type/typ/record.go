@@ -14,18 +14,12 @@ import "github.com/wippyai/go-lua/analysis/type/kind"
 //
 // Fields are sorted by name for deterministic hashing and comparison.
 type Record struct {
-	Fields        []Field
-	StaticMembers []StaticMember
-	Metatable     Type // Metatable type for metamethod lookup
-	MapKey        Type // Map component key type (nil if no map component)
-	MapValue      Type // Map component value type (nil if no map component)
-	Open          bool // Allow access to undefined fields
-	// Fresh marks a transient empty-table-literal seed ({}). It is the gradual
-	// bottom of the table lattice: invisible to IsSubtype (a Fresh empty record
-	// behaves exactly as a closed empty record under <:) but admitted by
-	// subtype.Consistent against any table-like target. Fresh is set only via
-	// NewFreshEmptyRecord; rebuilt/merged records drop it.
-	Fresh                 bool
+	Fields                []Field
+	StaticMembers         []StaticMember
+	Metatable             Type // Metatable type for metamethod lookup
+	MapKey                Type // Map component key type (nil if no map component)
+	MapValue              Type // Map component value type (nil if no map component)
+	Open                  bool // Allow access to undefined fields
 	sorted                bool
 	hash                  uint64
 	containsAny           bool

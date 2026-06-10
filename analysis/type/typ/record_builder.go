@@ -43,16 +43,5 @@ func (b *RecordBuilder) MapComponent(key, value Type) *RecordBuilder {
 
 // Build creates the record type.
 func (b *RecordBuilder) Build() *Record {
-	return buildRecordType(b.fields, b.staticMembers, b.metatable, b.mapKey, b.mapValue, b.open, false, false)
-}
-
-// NewFreshEmptyRecord creates the transient empty-table-literal seed ({}).
-//
-// It is a zero-field record (so under IsSubtype it is exactly the closed empty
-// record), but Fresh is folded into hash/equals so it is distinct from an
-// ordinary empty record. As the gradual bottom of the table lattice it is
-// admitted by subtype.Consistent against any table-like target an empty table
-// can satisfy (see emptyTableSatisfies).
-func NewFreshEmptyRecord() *Record {
-	return buildRecordType(nil, nil, nil, nil, nil, false, true, true)
+	return buildRecordType(b.fields, b.staticMembers, b.metatable, b.mapKey, b.mapValue, b.open, false)
 }

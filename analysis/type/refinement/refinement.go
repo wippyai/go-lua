@@ -653,7 +653,6 @@ func (s *fallbackRefineState) refineRecord(summary, fallback *Record) (Type, boo
 		MapKey:        mapKey,
 		MapValue:      mapValue,
 		Open:          summary.Open,
-		Fresh:         summary.Fresh,
 		AssumeSorted:  true,
 	}), true
 }

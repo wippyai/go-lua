@@ -6,19 +6,20 @@ import (
 )
 
 // Consistent reports whether a source type may be assigned to a target type.
-// It is strict subtyping plus the fresh empty-table source admission.
+// Empty table literal source admission is explicit; use
+// ConsistentFreshEmptyTable when the source expression is syntactically {}.
 func Consistent(sub, super typ.Type) bool {
 	if sub == nil || super == nil {
 		return false
 	}
-	return IsSubtype(sub, super) || ConsistentBeyondSubtype(sub, super)
+	return IsSubtype(sub, super)
 }
 
-func ConsistentBeyondSubtype(sub, super typ.Type) bool {
-	if sub == nil || super == nil {
-		return false
-	}
-	return isFreshEmptyTable(sub) && emptyTableSatisfies(super)
+// ConsistentFreshEmptyTable reports whether a syntactic empty table literal ({})
+// may be assigned to super. This source-only rule is intentionally not encoded
+// in typ.Record or typ.Array structural identity.
+func ConsistentFreshEmptyTable(super typ.Type) bool {
+	return super != nil && emptyTableSatisfies(super)
 }
 
 // ConsistentSubtype is strict subtyping with explicit any acting as a source
@@ -29,16 +30,6 @@ func ConsistentSubtype(sub, super typ.Type) bool {
 	}
 	c := &checker{gradual: true}
 	return c.check(sub, super, 0)
-}
-
-func isFreshEmptyTable(t typ.Type) bool {
-	switch tt := t.(type) {
-	case *typ.Record:
-		return tt.Fresh
-	case *typ.Array:
-		return tt.Fresh
-	}
-	return false
 }
 
 func emptyTableSatisfies(super typ.Type) bool {

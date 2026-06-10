@@ -11,7 +11,6 @@ var (
 	recordMapKeyHash   = hash.FnvString("$mapKey")
 	recordMapValueHash = hash.FnvString("$mapValue")
 	recordStaticHash   = hash.FnvString("$staticMember")
-	freshRecordHash    = hash.FnvString("$freshEmptyTable")
 )
 
 // RecordParts carries the structural pieces needed to rebuild a record.
@@ -22,7 +21,6 @@ type RecordParts struct {
 	MapKey        Type
 	MapValue      Type
 	Open          bool
-	Fresh         bool
 	AssumeSorted  bool
 }
 
@@ -36,11 +34,10 @@ func RebuildRecord(parts RecordParts) *Record {
 		parts.MapValue,
 		parts.Open,
 		parts.AssumeSorted,
-		parts.Fresh,
 	)
 }
 
-func buildRecordType(fields []Field, staticMembers []StaticMember, metatable, mapKey, mapValue Type, open bool, assumeSorted bool, fresh bool) *Record {
+func buildRecordType(fields []Field, staticMembers []StaticMember, metatable, mapKey, mapValue Type, open bool, assumeSorted bool) *Record {
 	sorted := make([]Field, len(fields))
 	copy(sorted, fields)
 	if !assumeSorted || !fieldsSortedByName(sorted) {
@@ -116,9 +113,6 @@ func buildRecordType(fields []Field, staticMembers []StaticMember, metatable, ma
 		h = hash.HashCombine(h, recordMapValueHash)
 		h = hash.HashCombine(h, mapValue.Hash())
 	}
-	if fresh {
-		h = hash.HashCombine(h, freshRecordHash)
-	}
 	containsAny := knownAnyFields(sorted) || knownAnyStaticMembers(members) || knownAny(metatable, mapKey, mapValue)
 	containsNever := knownNeverFields(sorted) || knownNeverStaticMembers(members) || knownNever(metatable, mapKey, mapValue)
 	containsTypeParam := knownTypeParamFields(sorted) || knownTypeParamStaticMembers(members) || knownTypeParam(metatable, mapKey, mapValue)
@@ -133,7 +127,6 @@ func buildRecordType(fields []Field, staticMembers []StaticMember, metatable, ma
 		MapKey:                mapKey,
 		MapValue:              mapValue,
 		Open:                  open,
-		Fresh:                 fresh,
 		sorted:                true,
 		hash:                  h,
 		containsAny:           containsAny,

@@ -129,5 +129,5 @@ func rewriteRecord(v *Record, orig Type, fn func(Type) (Type, bool), guard recur
 	if staticMembers != nil {
 		staticMembersSrc = staticMembers
 	}
-	return buildRecordType(fieldsSrc, staticMembersSrc, metatable, mapKey, mapValue, v.Open, true, false)
+	return buildRecordType(fieldsSrc, staticMembersSrc, metatable, mapKey, mapValue, v.Open, true)
 }

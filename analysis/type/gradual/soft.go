@@ -492,7 +492,6 @@ func pruneSoftRecord(
 		MapValue:      mapValue,
 		Open:          r.Open,
 		AssumeSorted:  true,
-		Fresh:         false,
 	})
 }
 

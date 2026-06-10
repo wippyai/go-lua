@@ -5,16 +5,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
-// NewFreshArray creates a fresh empty-array table seed.
-func NewFreshArray() *typ.Array {
-	return typ.NewFreshArray()
-}
-
-// NewFreshEmptyRecord creates a fresh empty-record table seed.
-func NewFreshEmptyRecord() *typ.Record {
-	return typ.NewFreshEmptyRecord()
-}
-
 // NewMap creates a map type with table-key normalization.
 func NewMap(key, value typ.Type) *typ.Map {
 	return typ.NewMap(NormalizeKey(key), value)

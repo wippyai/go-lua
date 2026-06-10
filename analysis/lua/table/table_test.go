@@ -72,18 +72,6 @@ func TestNewRecordMapComponentNormalizesKey(t *testing.T) {
 	}
 }
 
-func TestFreshConstructorsReturnFreshNodes(t *testing.T) {
-	arr := NewFreshArray()
-	if arr == nil || !arr.Fresh {
-		t.Fatalf("NewFreshArray() = %#v, want fresh array", arr)
-	}
-
-	rec := NewFreshEmptyRecord()
-	if rec == nil || !rec.Fresh {
-		t.Fatalf("NewFreshEmptyRecord() = %#v, want fresh record", rec)
-	}
-}
-
 func TestRebuildRecordNormalizesMapKey(t *testing.T) {
 	rec := RebuildRecord(typ.RecordParts{
 		MapKey:   typ.NewOptional(typ.String),

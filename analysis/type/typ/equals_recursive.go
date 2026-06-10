@@ -100,7 +100,7 @@ func typeEqualsGuard(a, b Type, guard recursion.Guard, seen map[typePair]bool) b
 		return true
 	case *Array:
 		vb, ok := b.(*Array)
-		return ok && va.Fresh == vb.Fresh && typeEqualsGuard(va.Element, vb.Element, next, seen)
+		return ok && typeEqualsGuard(va.Element, vb.Element, next, seen)
 	case *Map:
 		vb, ok := b.(*Map)
 		return ok &&
@@ -113,7 +113,7 @@ func typeEqualsGuard(a, b Type, guard recursion.Guard, seen map[typePair]bool) b
 			typeEqualsGuard(va.Value, vb.Value, next, seen)
 	case *Record:
 		vb, ok := b.(*Record)
-		if !ok || va.Open != vb.Open || va.Fresh != vb.Fresh ||
+		if !ok || va.Open != vb.Open ||
 			len(va.Fields) != len(vb.Fields) ||
 			len(va.StaticMembers) != len(vb.StaticMembers) {
 			return false
