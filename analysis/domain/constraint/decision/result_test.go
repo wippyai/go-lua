@@ -1,4 +1,4 @@
-package theory
+package decision
 
 import "testing"
 

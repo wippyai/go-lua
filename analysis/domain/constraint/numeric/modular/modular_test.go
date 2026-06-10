@@ -1,4 +1,4 @@
-package theory
+package modular
 
 import "testing"
 

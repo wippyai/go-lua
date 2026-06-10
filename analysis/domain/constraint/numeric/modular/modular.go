@@ -1,4 +1,4 @@
-package theory
+package modular
 
 // ModularFact represents the constraint x ≡ residue (mod modulus).
 //

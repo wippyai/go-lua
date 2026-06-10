@@ -1,4 +1,4 @@
-package theory
+package decision
 
 // Result represents the outcome of a satisfiability or entailment check.
 //

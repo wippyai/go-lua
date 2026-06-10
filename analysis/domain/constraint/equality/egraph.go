@@ -1,4 +1,4 @@
-// Package theory provides constraint solving theories for SMT-style reasoning.
+// Package equality provides congruence-closure reasoning for path equality.
 //
 // This file implements an E-graph (Equivalence Graph) for path equality with
 // congruence closure. This data structure tracks
@@ -34,7 +34,7 @@
 //
 // - "Congruence Closure" by Nelson & Oppen (1980)
 // - "egg: Fast and Extensible E-graphs" (2021)
-package theory
+package equality
 
 import (
 	"sort"
