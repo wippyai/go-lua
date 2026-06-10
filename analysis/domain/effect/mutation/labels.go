@@ -1,14 +1,15 @@
-package effect
+package mutation
 
 import (
 	"fmt"
 
 	"github.com/wippyai/go-lua/analysis/domain/constraint/expr"
+	"github.com/wippyai/go-lua/analysis/domain/effect"
 )
 
 // Mutate indicates that a function changes a parameter's type-level shape.
 type Mutate struct {
-	Target      ParamRef
+	Target      effect.ParamRef
 	Transform   TypeTransform
 	LengthDelta expr.Expr
 }
@@ -20,7 +21,7 @@ func (m Mutate) String() string {
 	}
 	return fmt.Sprintf("mutate(%s, %s)", m.Target, m.Transform)
 }
-func (m Mutate) Equals(other Label) bool {
+func (m Mutate) Equals(other effect.Label) bool {
 	if o, ok := other.(Mutate); ok {
 		return m.Target.Index == o.Target.Index &&
 			transformEquals(m.Transform, o.Transform) &&
@@ -36,7 +37,7 @@ type TypeTransform interface {
 }
 
 type ElementUnion struct {
-	Source ParamRef
+	Source effect.ParamRef
 }
 
 func (ElementUnion) transform() {}
@@ -45,8 +46,8 @@ func (e ElementUnion) String() string {
 }
 
 type ContainerElementUnion struct {
-	Container ParamRef
-	Value     ParamRef
+	Container effect.ParamRef
+	Value     effect.ParamRef
 }
 
 func (ContainerElementUnion) transform() {}
@@ -55,7 +56,7 @@ func (c ContainerElementUnion) String() string {
 }
 
 type ToArray struct {
-	Element ParamRef
+	Element effect.ParamRef
 }
 
 func (ToArray) transform() {}
@@ -69,7 +70,7 @@ func (Unchanged) transform()     {}
 func (Unchanged) String() string { return "unchanged" }
 
 type LengthChange struct {
-	Target ParamRef
+	Target effect.ParamRef
 	Delta  int
 }
 
@@ -80,7 +81,7 @@ func (l LengthChange) String() string {
 	}
 	return fmt.Sprintf("len(%s) -= %d", l.Target, -l.Delta)
 }
-func (l LengthChange) Equals(other Label) bool {
+func (l LengthChange) Equals(other effect.Label) bool {
 	if o, ok := other.(LengthChange); ok {
 		return l.Target.Index == o.Target.Index && l.Delta == o.Delta
 	}
@@ -88,15 +89,15 @@ func (l LengthChange) Equals(other Label) bool {
 }
 
 type TableMutator struct {
-	Target ParamRef
-	Value  ParamRef
+	Target effect.ParamRef
+	Value  effect.ParamRef
 }
 
 func (TableMutator) EffectLabel() {}
 func (t TableMutator) String() string {
 	return fmt.Sprintf("table_mutator(%s, %s)", t.Target, t.Value)
 }
-func (t TableMutator) Equals(other Label) bool {
+func (t TableMutator) Equals(other effect.Label) bool {
 	if o, ok := other.(TableMutator); ok {
 		return t.Target.Index == o.Target.Index && t.Value.Index == o.Value.Index
 	}

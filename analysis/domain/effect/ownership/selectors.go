@@ -1,6 +1,9 @@
 package ownership
 
-import "github.com/wippyai/go-lua/analysis/domain/effect"
+import (
+	"github.com/wippyai/go-lua/analysis/domain/effect"
+	"github.com/wippyai/go-lua/analysis/domain/effect/mutation"
+)
 
 func BorrowsOnly() effect.Row {
 	return effect.Row{Labels: []effect.Label{BorrowAll{}}}
@@ -56,7 +59,10 @@ func HasFreeze(r effect.Row) bool {
 }
 
 func OnlyBorrows(r effect.Row) bool {
-	return HasBorrow(r) && !HasStore(r) && !r.HasMutate()
+	return HasBorrow(r) && !HasStore(r) && !r.Has(func(l effect.Label) bool {
+		_, ok := l.(mutation.Mutate)
+		return ok
+	})
 }
 
 func GetBorrow(r effect.Row, paramIdx int) *Borrow {

@@ -1,12 +1,9 @@
 package effect
 
 type LabelVisitor[R any] struct {
-	Mutate           func(Mutate) R
 	Return           func(Return) R
 	ErrorReturn      func(ErrorReturn) R
 	ReturnLength     func(ReturnLength) R
-	LengthChange     func(LengthChange) R
-	TableMutator     func(TableMutator) R
 	PassThrough      func(PassThrough) R
 	FlowInto         func(FlowInto) R
 	CorrelatedReturn func(CorrelatedReturn) R
@@ -15,14 +12,6 @@ type LabelVisitor[R any] struct {
 
 func VisitLabel[R any](l Label, v LabelVisitor[R]) R {
 	switch ll := l.(type) {
-	case Mutate:
-		if v.Mutate != nil {
-			return v.Mutate(ll)
-		}
-	case *Mutate:
-		if v.Mutate != nil {
-			return v.Mutate(*ll)
-		}
 	case Return:
 		if v.Return != nil {
 			return v.Return(ll)
@@ -46,22 +35,6 @@ func VisitLabel[R any](l Label, v LabelVisitor[R]) R {
 	case *ReturnLength:
 		if v.ReturnLength != nil {
 			return v.ReturnLength(*ll)
-		}
-	case LengthChange:
-		if v.LengthChange != nil {
-			return v.LengthChange(ll)
-		}
-	case *LengthChange:
-		if v.LengthChange != nil {
-			return v.LengthChange(*ll)
-		}
-	case TableMutator:
-		if v.TableMutator != nil {
-			return v.TableMutator(ll)
-		}
-	case *TableMutator:
-		if v.TableMutator != nil {
-			return v.TableMutator(*ll)
 		}
 	case PassThrough:
 		if v.PassThrough != nil {
@@ -90,56 +63,6 @@ func VisitLabel[R any](l Label, v LabelVisitor[R]) R {
 	}
 	if v.Default != nil {
 		return v.Default(l)
-	}
-	var zero R
-	return zero
-}
-
-type TypeTransformVisitor[R any] struct {
-	Unchanged             func(Unchanged) R
-	ElementUnion          func(ElementUnion) R
-	ContainerElementUnion func(ContainerElementUnion) R
-	ToArray               func(ToArray) R
-	Default               func(TypeTransform) R
-}
-
-func VisitTransform[R any](t TypeTransform, v TypeTransformVisitor[R]) R {
-	switch tt := t.(type) {
-	case Unchanged:
-		if v.Unchanged != nil {
-			return v.Unchanged(tt)
-		}
-	case *Unchanged:
-		if v.Unchanged != nil {
-			return v.Unchanged(*tt)
-		}
-	case ElementUnion:
-		if v.ElementUnion != nil {
-			return v.ElementUnion(tt)
-		}
-	case *ElementUnion:
-		if v.ElementUnion != nil {
-			return v.ElementUnion(*tt)
-		}
-	case ContainerElementUnion:
-		if v.ContainerElementUnion != nil {
-			return v.ContainerElementUnion(tt)
-		}
-	case *ContainerElementUnion:
-		if v.ContainerElementUnion != nil {
-			return v.ContainerElementUnion(*tt)
-		}
-	case ToArray:
-		if v.ToArray != nil {
-			return v.ToArray(tt)
-		}
-	case *ToArray:
-		if v.ToArray != nil {
-			return v.ToArray(*tt)
-		}
-	}
-	if v.Default != nil {
-		return v.Default(t)
 	}
 	var zero R
 	return zero

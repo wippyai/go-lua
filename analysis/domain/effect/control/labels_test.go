@@ -30,7 +30,7 @@ func TestLabels(t *testing.T) {
 				t.Error("label should equal same control label")
 			}
 
-			if tt.label.Equals(effect.Mutate{}) {
+			if tt.label.Equals(effect.Return{}) {
 				t.Error("label should not equal unrelated effect label")
 			}
 		})

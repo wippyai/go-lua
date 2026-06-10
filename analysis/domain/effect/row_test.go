@@ -32,15 +32,16 @@ func TestUnknown(t *testing.T) {
 
 func TestRowWith(t *testing.T) {
 	r := Empty.With(
-		Mutate{Target: ParamRef{Index: 0}, Transform: Unchanged{}},
 		Return{ReturnIndex: 0, Transform: ElementOf{Source: ParamRef{Index: 0}}},
+		ErrorReturn{ValueIndex: 0, ErrorIndex: 1},
 	)
-	if !r.HasMutate() {
-		t.Error("Should have mutation")
-	}
 
 	if r.GetReturn(0) == nil {
 		t.Error("Should have return")
+	}
+
+	if r.GetErrorReturn(0) == nil {
+		t.Error("Should have error return")
 	}
 
 	if r.Pure() {
@@ -50,19 +51,19 @@ func TestRowWith(t *testing.T) {
 
 func TestRowWithDuplicate(t *testing.T) {
 	r := Empty.With(
-		Mutate{Target: ParamRef{Index: 0}, Transform: Unchanged{}},
-		Mutate{Target: ParamRef{Index: 0}, Transform: Unchanged{}},
+		Return{ReturnIndex: 0, Transform: ElementOf{Source: ParamRef{Index: 0}}},
+		Return{ReturnIndex: 0, Transform: ElementOf{Source: ParamRef{Index: 0}}},
 	)
 	count := 0
 
 	for _, l := range r.Labels {
-		if _, ok := l.(Mutate); ok {
+		if _, ok := l.(Return); ok {
 			count++
 		}
 	}
 
 	if count != 1 {
-		t.Errorf("Should have exactly 1 mutation, got %d", count)
+		t.Errorf("Should have exactly 1 return, got %d", count)
 	}
 }
 
@@ -72,12 +73,12 @@ func TestRowString(t *testing.T) {
 		want string
 	}{
 		{Empty, "{}"},
-		{Mutates(0, Unchanged{}), "{mutate(param[0], unchanged)}"},
+		{Returns(0, ElementOf{Source: ParamRef{Index: 0}}), "{ret[0].type = elem(param[0])}"},
 		{Row{Labels: []Label{
-			Mutate{Target: ParamRef{Index: 0}, Transform: Unchanged{}},
 			Return{ReturnIndex: 0, Transform: ElementOf{Source: ParamRef{Index: 0}}},
-		}}, "{mutate(param[0], unchanged), ret[0].type = elem(param[0])}"},
-		{Open("rho", Mutate{Target: ParamRef{Index: 0}, Transform: Unchanged{}}), "{mutate(param[0], unchanged) | rho}"},
+			ErrorReturn{ValueIndex: 0, ErrorIndex: 1},
+		}}, "{ret[0].type = elem(param[0]), errret(val[0], err[1])}"},
+		{Open("rho", Return{ReturnIndex: 0, Transform: ElementOf{Source: ParamRef{Index: 0}}}), "{ret[0].type = elem(param[0]) | rho}"},
 		{Open("rho"), "{rho}"},
 	}
 
@@ -90,12 +91,12 @@ func TestRowString(t *testing.T) {
 
 func TestUnion(t *testing.T) {
 	t.Run("closed rows", func(t *testing.T) {
-		r1 := Row{Labels: []Label{Mutate{Target: ParamRef{Index: 0}, Transform: Unchanged{}}}}
-		r2 := Row{Labels: []Label{Return{ReturnIndex: 0, Transform: ElementOf{Source: ParamRef{Index: 0}}}}}
+		r1 := Row{Labels: []Label{Return{ReturnIndex: 0, Transform: ElementOf{Source: ParamRef{Index: 0}}}}}
+		r2 := Row{Labels: []Label{ErrorReturn{ValueIndex: 0, ErrorIndex: 1}}}
 		u := Union(r1, r2)
 
-		if !u.HasMutate() || u.GetReturn(0) == nil {
-			t.Error("Union should have both mutation and return")
+		if u.GetReturn(0) == nil || u.GetErrorReturn(0) == nil {
+			t.Error("Union should have both effects")
 		}
 
 		if !u.IsClosed() {
@@ -104,11 +105,11 @@ func TestUnion(t *testing.T) {
 	})
 
 	t.Run("open row", func(t *testing.T) {
-		r1 := Open("rho", Mutate{Target: ParamRef{Index: 0}, Transform: Unchanged{}})
-		r2 := Row{Labels: []Label{Return{ReturnIndex: 0, Transform: ElementOf{Source: ParamRef{Index: 0}}}}}
+		r1 := Open("rho", Return{ReturnIndex: 0, Transform: ElementOf{Source: ParamRef{Index: 0}}})
+		r2 := Row{Labels: []Label{ErrorReturn{ValueIndex: 0, ErrorIndex: 1}}}
 		u := Union(r1, r2)
 
-		if !u.HasMutate() || u.GetReturn(0) == nil {
+		if u.GetReturn(0) == nil || u.GetErrorReturn(0) == nil {
 			t.Error("Union should have both effects")
 		}
 
@@ -118,7 +119,7 @@ func TestUnion(t *testing.T) {
 	})
 
 	t.Run("unknown absorbs", func(t *testing.T) {
-		r := Row{Labels: []Label{Mutate{Target: ParamRef{Index: 0}, Transform: Unchanged{}}}}
+		r := Row{Labels: []Label{Return{ReturnIndex: 0, Transform: ElementOf{Source: ParamRef{Index: 0}}}}}
 		u := Union(r, Unknown)
 
 		if !u.IsUnknown() {
@@ -127,42 +128,25 @@ func TestUnion(t *testing.T) {
 	})
 
 	t.Run("deduplication", func(t *testing.T) {
-		r1 := Row{Labels: []Label{Mutate{Target: ParamRef{Index: 0}, Transform: Unchanged{}}}}
+		r1 := Row{Labels: []Label{Return{ReturnIndex: 0, Transform: ElementOf{Source: ParamRef{Index: 0}}}}}
 		r2 := Row{Labels: []Label{
-			Mutate{Target: ParamRef{Index: 0}, Transform: Unchanged{}},
 			Return{ReturnIndex: 0, Transform: ElementOf{Source: ParamRef{Index: 0}}},
+			ErrorReturn{ValueIndex: 0, ErrorIndex: 1},
 		}}
 		u := Union(r1, r2)
 
 		count := 0
 
 		for _, l := range u.Labels {
-			if _, ok := l.(Mutate); ok {
+			if _, ok := l.(Return); ok {
 				count++
 			}
 		}
 
 		if count != 1 {
-			t.Errorf("Union should deduplicate, got %d mutation labels", count)
+			t.Errorf("Union should deduplicate, got %d return labels", count)
 		}
 	})
-}
-
-func TestMutateEffect(t *testing.T) {
-	m := Mutates(0, ElementUnion{Source: ParamRef{Index: 1}})
-
-	if !m.HasMutate() {
-		t.Error("Should have mutation")
-	}
-
-	got := m.GetMutate(0)
-	if got == nil {
-		t.Error("Should find mutation for param 0")
-	}
-
-	if m.GetMutate(1) != nil {
-		t.Error("Should not find mutation for param 1")
-	}
 }
 
 func TestReturnEffect(t *testing.T) {
@@ -184,18 +168,18 @@ func TestRowEquals(t *testing.T) {
 		want   bool
 	}{
 		{Empty, Empty, true},
-		{Empty, Mutates(0, Unchanged{}), false},
-		{Mutates(0, Unchanged{}), Mutates(0, Unchanged{}), true},
+		{Empty, Returns(0, ElementOf{Source: ParamRef{Index: 0}}), false},
+		{Returns(0, ElementOf{Source: ParamRef{Index: 0}}), Returns(0, ElementOf{Source: ParamRef{Index: 0}}), true},
 		{Row{Labels: []Label{
-			Mutate{Target: ParamRef{Index: 0}, Transform: Unchanged{}},
 			Return{ReturnIndex: 0, Transform: ElementOf{Source: ParamRef{Index: 0}}},
+			ErrorReturn{ValueIndex: 0, ErrorIndex: 1},
 		}}, Row{Labels: []Label{
+			ErrorReturn{ValueIndex: 0, ErrorIndex: 1},
 			Return{ReturnIndex: 0, Transform: ElementOf{Source: ParamRef{Index: 0}}},
-			Mutate{Target: ParamRef{Index: 0}, Transform: Unchanged{}},
 		}}, true},
 		{Open("rho"), Open("rho"), true},
 		{Open("rho"), Open("sigma"), false},
-		{Mutates(0, Unchanged{}), Open("rho", Mutate{Target: ParamRef{Index: 0}, Transform: Unchanged{}}), false},
+		{Returns(0, ElementOf{Source: ParamRef{Index: 0}}), Open("rho", Return{ReturnIndex: 0, Transform: ElementOf{Source: ParamRef{Index: 0}}}), false},
 	}
 
 	for _, tt := range tests {
@@ -219,9 +203,9 @@ func TestReads(t *testing.T) {
 
 func TestRowWithout(t *testing.T) {
 	r := Row{Labels: []Label{
-		Mutate{Target: ParamRef{Index: 0}, Transform: Unchanged{}},
 		Return{ReturnIndex: 0, Transform: ElementOf{Source: ParamRef{Index: 0}}},
-		TableMutator{Target: ParamRef{Index: 0}, Value: ParamRef{Index: 1}},
+		ErrorReturn{ValueIndex: 0, ErrorIndex: 1},
+		CorrelatedReturn{Indices: []int{0, 1}},
 	}}
 	filtered := r.Without(func(l Label) bool {
 		_, ok := l.(Return)
@@ -232,12 +216,12 @@ func TestRowWithout(t *testing.T) {
 		t.Error("Without should remove Return")
 	}
 
-	if !filtered.HasMutate() {
-		t.Error("Without should keep Mutate")
+	if filtered.GetErrorReturn(0) == nil {
+		t.Error("Without should keep ErrorReturn")
 	}
 
-	if !filtered.HasTableMutator() {
-		t.Error("Without should keep TableMutator")
+	if filtered.GetCorrelatedReturn(1) == nil {
+		t.Error("Without should keep CorrelatedReturn")
 	}
 }
 
@@ -257,24 +241,6 @@ func TestRowStringOpenNoLabels(t *testing.T) {
 	r := Row{Tail: &Var{Name: "rho"}}
 	if got := r.String(); got != "{rho}" {
 		t.Errorf("Open row no labels.String() = %q, want '{rho}'", got)
-	}
-}
-
-func TestTableMutatorEffects(t *testing.T) {
-	r := Row{Labels: []Label{TableMutator{Target: ParamRef{Index: 0}, Value: ParamRef{Index: 1}}}}
-
-	if !r.HasTableMutator() {
-		t.Error("Should have table mutator")
-	}
-
-	mut := r.GetTableMutator()
-	if mut == nil {
-		t.Error("Should find table mutator")
-	}
-
-	// No mutator
-	if Empty.GetTableMutator() != nil {
-		t.Error("Empty row should not have table mutator")
 	}
 }
 
@@ -306,10 +272,10 @@ func TestErrorReturnEffect(t *testing.T) {
 
 func TestNewRow(t *testing.T) {
 	r := Row{Labels: []Label{
-		Mutate{Target: ParamRef{Index: 0}, Transform: Unchanged{}},
 		Return{ReturnIndex: 0, Transform: ElementOf{Source: ParamRef{Index: 0}}},
+		ErrorReturn{ValueIndex: 0, ErrorIndex: 1},
 	}}
-	if !r.HasMutate() || r.GetReturn(0) == nil {
+	if r.GetReturn(0) == nil || r.GetErrorReturn(0) == nil {
 		t.Error("Row should have the given labels")
 	}
 }

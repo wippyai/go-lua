@@ -50,23 +50,6 @@ func (r Row) Has(check func(Label) bool) bool {
 	return false
 }
 
-func (r Row) HasMutate() bool {
-	return r.Has(func(l Label) bool { _, ok := l.(Mutate); return ok })
-}
-
-func (r Row) HasTableMutator() bool {
-	return r.Has(func(l Label) bool { _, ok := l.(TableMutator); return ok })
-}
-
-func (r Row) GetMutate(paramIdx int) *Mutate {
-	for _, l := range r.Labels {
-		if m, ok := l.(Mutate); ok && m.Target.Index == paramIdx {
-			return &m
-		}
-	}
-	return nil
-}
-
 func (r Row) GetReturn(retIdx int) *Return {
 	for _, l := range r.Labels {
 		if ret, ok := l.(Return); ok && ret.ReturnIndex == retIdx {
@@ -112,15 +95,6 @@ func (r Row) GetReturnLength(retIdx int) *ReturnLength {
 	for _, l := range r.Labels {
 		if ret, ok := l.(ReturnLength); ok && ret.ReturnIndex == retIdx {
 			return &ret
-		}
-	}
-	return nil
-}
-
-func (r Row) GetTableMutator() *TableMutator {
-	for _, l := range r.Labels {
-		if mut, ok := l.(TableMutator); ok {
-			return &mut
 		}
 	}
 	return nil
@@ -189,13 +163,6 @@ func (r Row) equalsRow(other Row) bool {
 		return false
 	}
 	return r.Tail.Name == other.Tail.Name
-}
-
-func Mutates(paramIdx int, transform TypeTransform) Row {
-	return Row{Labels: []Label{Mutate{
-		Target:    ParamRef{Index: paramIdx},
-		Transform: transform,
-	}}}
 }
 
 func Returns(retIdx int, derive ReturnType) Row {

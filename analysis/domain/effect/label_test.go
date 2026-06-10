@@ -24,87 +24,6 @@ func TestParamRef_String(t *testing.T) {
 	}
 }
 
-func TestMutate_String(t *testing.T) {
-	m := Mutate{
-		Target:    ParamRef{Index: 0},
-		Transform: Unchanged{},
-	}
-
-	got := m.String()
-	if got != "mutate(param[0], unchanged)" {
-		t.Errorf("Mutate.String() = %q", got)
-	}
-
-	mWithDelta := Mutate{
-		Target:      ParamRef{Index: 0},
-		Transform:   ElementUnion{Source: ParamRef{Index: 1}},
-		LengthDelta: expr.C(1),
-	}
-
-	got = mWithDelta.String()
-	if got != "mutate(param[0], union_elem(param[1]), delta=1)" {
-		t.Errorf("Mutate with delta.String() = %q", got)
-	}
-}
-
-func TestMutate_Equals(t *testing.T) {
-	m1 := Mutate{Target: ParamRef{Index: 0}, Transform: Unchanged{}}
-	m2 := Mutate{Target: ParamRef{Index: 0}, Transform: Unchanged{}}
-	m3 := Mutate{Target: ParamRef{Index: 1}, Transform: Unchanged{}}
-
-	if !m1.Equals(m2) {
-		t.Error("same Mutates should be equal")
-	}
-
-	if m1.Equals(m3) {
-		t.Error("different target Mutates should not be equal")
-	}
-
-	if m1.Equals(Return{}) {
-		t.Error("Mutate should not equal Return")
-	}
-
-	// Different transforms should not be equal
-	m4 := Mutate{Target: ParamRef{Index: 0}, Transform: ElementUnion{Source: ParamRef{Index: 1}}}
-	if m1.Equals(m4) {
-		t.Error("different transform Mutates should not be equal")
-	}
-
-	// Different LengthDelta should not be equal
-	m5 := Mutate{Target: ParamRef{Index: 0}, Transform: Unchanged{}, LengthDelta: expr.C(1)}
-	m6 := Mutate{Target: ParamRef{Index: 0}, Transform: Unchanged{}, LengthDelta: expr.C(2)}
-
-	if m5.Equals(m6) {
-		t.Error("different LengthDelta Mutates should not be equal")
-	}
-
-	m7 := Mutate{Target: ParamRef{Index: 0}, Transform: Unchanged{}, LengthDelta: expr.C(1)}
-	if !m5.Equals(m7) {
-		t.Error("same LengthDelta Mutates should be equal")
-	}
-}
-
-func TestElementUnion_String(t *testing.T) {
-	e := ElementUnion{Source: ParamRef{Index: 1}}
-	if got := e.String(); got != "union_elem(param[1])" {
-		t.Errorf("ElementUnion.String() = %q", got)
-	}
-}
-
-func TestToArray_String(t *testing.T) {
-	ta := ToArray{Element: ParamRef{Index: 0}}
-	if got := ta.String(); got != "to_array(param[0])" {
-		t.Errorf("ToArray.String() = %q", got)
-	}
-}
-
-func TestUnchanged_String(t *testing.T) {
-	u := Unchanged{}
-	if got := u.String(); got != "unchanged" {
-		t.Errorf("Unchanged.String() = %q", got)
-	}
-}
-
 func TestReturn_String(t *testing.T) {
 	r := Return{
 		ReturnIndex: 0,
@@ -128,8 +47,8 @@ func TestReturn_Equals(t *testing.T) {
 		t.Error("different index Returns should not be equal")
 	}
 
-	if r1.Equals(Mutate{}) {
-		t.Error("Return should not equal Mutate")
+	if r1.Equals(ErrorReturn{}) {
+		t.Error("Return should not equal ErrorReturn")
 	}
 
 	// Different transforms should not be equal
@@ -259,67 +178,16 @@ func TestStringUnpackValue_String(t *testing.T) {
 	}
 }
 
-func TestLengthChange_String(t *testing.T) {
-	lc := LengthChange{Target: ParamRef{Index: 0}, Delta: 1}
-	if got := lc.String(); got != "len(param[0]) += 1" {
-		t.Errorf("LengthChange positive.String() = %q", got)
-	}
-
-	lcNeg := LengthChange{Target: ParamRef{Index: 0}, Delta: -1}
-	if got := lcNeg.String(); got != "len(param[0]) -= 1" {
-		t.Errorf("LengthChange negative.String() = %q", got)
-	}
-}
-
-func TestLengthChange_Equals(t *testing.T) {
-	lc1 := LengthChange{Target: ParamRef{Index: 0}, Delta: 1}
-	lc2 := LengthChange{Target: ParamRef{Index: 0}, Delta: 1}
-	lc3 := LengthChange{Target: ParamRef{Index: 1}, Delta: 1}
-
-	if !lc1.Equals(lc2) {
-		t.Error("same LengthChanges should be equal")
-	}
-
-	if lc1.Equals(lc3) {
-		t.Error("different target LengthChanges should not be equal")
-	}
-
-	// Different deltas should not be equal
-	lc4 := LengthChange{Target: ParamRef{Index: 0}, Delta: 2}
-	if lc1.Equals(lc4) {
-		t.Error("different Delta LengthChanges should not be equal")
-	}
-
-	lc5 := LengthChange{Target: ParamRef{Index: 0}, Delta: -1}
-	if lc1.Equals(lc5) {
-		t.Error("positive and negative Delta should not be equal")
-	}
-}
-
 func TestLabelInterface(t *testing.T) {
 	labels := []Label{
-		Mutate{},
 		Return{},
 		ErrorReturn{},
 		ReturnLength{},
-		LengthChange{},
 	}
 
 	for _, l := range labels {
 		_ = l.String()
 		_ = l.Equals(l)
-	}
-}
-
-func TestTransformInterface(t *testing.T) {
-	transforms := []TypeTransform{
-		ElementUnion{},
-		ToArray{},
-		Unchanged{},
-	}
-
-	for _, tr := range transforms {
-		_ = tr.String()
 	}
 }
 
@@ -340,38 +208,11 @@ func TestReturnTypeInterface(t *testing.T) {
 	}
 }
 
-func TestTableMutator(t *testing.T) {
-	tm := TableMutator{Target: ParamRef{Index: 0}, Value: ParamRef{Index: 1}}
-	if got := tm.String(); got != "table_mutator(param[0], param[1])" {
-		t.Errorf("TableMutator.String() = %q", got)
-	}
-
-	// Equals
-	if !tm.Equals(TableMutator{Target: ParamRef{Index: 0}, Value: ParamRef{Index: 1}}) {
-		t.Error("same TableMutator should be equal")
-	}
-
-	if tm.Equals(TableMutator{Target: ParamRef{Index: 1}, Value: ParamRef{Index: 1}}) {
-		t.Error("different target should not be equal")
-	}
-
-	if tm.Equals(TableMutator{Target: ParamRef{Index: 0}, Value: ParamRef{Index: 2}}) {
-		t.Error("different value should not be equal")
-	}
-
-	if tm.Equals(Return{}) {
-		t.Error("TableMutator should not equal Return")
-	}
-}
-
 func TestAllLabelsImplementInterface(t *testing.T) {
 	labels := []Label{
-		Mutate{},
 		Return{},
 		ErrorReturn{},
 		ReturnLength{},
-		LengthChange{},
-		TableMutator{},
 		PassThrough{},
 		FlowInto{},
 		CorrelatedReturn{},
@@ -385,20 +226,12 @@ func TestAllLabelsImplementInterface(t *testing.T) {
 
 func TestMarkerMethods(t *testing.T) {
 	// Test EffectLabel marker methods
-	Mutate{}.EffectLabel()
 	Return{}.EffectLabel()
 	ErrorReturn{}.EffectLabel()
 	ReturnLength{}.EffectLabel()
-	LengthChange{}.EffectLabel()
-	TableMutator{}.EffectLabel()
 	PassThrough{}.EffectLabel()
 	FlowInto{}.EffectLabel()
 	CorrelatedReturn{}.EffectLabel()
-
-	// Test transform() marker methods
-	ElementUnion{}.transform()
-	ToArray{}.transform()
-	Unchanged{}.transform()
 
 	// Test returnType() marker methods
 	ElementOf{}.returnType()
@@ -437,13 +270,6 @@ func TestCorrelatedReturn(t *testing.T) {
 
 	if cr.Equals(Return{}) {
 		t.Error("CorrelatedReturn should not equal Return")
-	}
-}
-
-func TestContainerElementUnion_String(t *testing.T) {
-	c := ContainerElementUnion{Container: ParamRef{Index: 0}, Value: ParamRef{Index: 1}}
-	if got := c.String(); got != "union_elem(param[0], param[1])" {
-		t.Errorf("ContainerElementUnion.String() = %q", got)
 	}
 }
 

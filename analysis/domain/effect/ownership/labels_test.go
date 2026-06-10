@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/domain/effect"
+	"github.com/wippyai/go-lua/analysis/domain/effect/mutation"
 )
 
 func TestBorrow(t *testing.T) {
@@ -67,8 +68,8 @@ func TestBorrowAll(t *testing.T) {
 		t.Error("BorrowAll should equal BorrowAll")
 	}
 
-	if ba.Equals(effect.Mutate{}) {
-		t.Error("BorrowAll should not equal Mutate")
+	if ba.Equals(effect.Return{}) {
+		t.Error("BorrowAll should not equal Return")
 	}
 }
 
@@ -185,7 +186,7 @@ func TestSelectors(t *testing.T) {
 
 	r4 := effect.Row{Labels: []effect.Label{
 		Borrow{Param: effect.ParamRef{Index: 0}},
-		effect.Mutate{Target: effect.ParamRef{Index: 0}},
+		mutation.Mutate{Target: effect.ParamRef{Index: 0}},
 	}}
 	if OnlyBorrows(r4) {
 		t.Error("Borrow+Mutate should not be only borrows")
