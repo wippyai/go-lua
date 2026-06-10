@@ -153,18 +153,28 @@ func TestMorePreciseRequiredFieldRefinesOptionalBaselineField(t *testing.T) {
 	}
 }
 
-func TestMorePreciseLiteralRefinesPrimitive(t *testing.T) {
-	if !MorePrecise(LiteralString("ready"), String) {
-		t.Fatal("string literal should be more precise than string")
+func TestMorePrecisePolicyLiteralAndIntegerRefinePrimitiveBases(t *testing.T) {
+	tests := []struct {
+		name      string
+		candidate Type
+		baseline  Type
+	}{
+		{name: "string literal by string", candidate: LiteralString("ready"), baseline: String},
+		{name: "number literal by number", candidate: LiteralNumber(3.5), baseline: Number},
+		{name: "boolean literal by boolean", candidate: LiteralBool(true), baseline: Boolean},
+		{name: "integer literal by integer", candidate: LiteralInt(3), baseline: Integer},
+		{name: "integer literal by number", candidate: LiteralInt(3), baseline: Number},
+		{name: "integer by number", candidate: Integer, baseline: Number},
 	}
-	if !MorePrecise(LiteralInt(3), Number) {
-		t.Fatal("integer literal should be more precise than number")
-	}
-	if !MorePrecise(Integer, Number) {
-		t.Fatal("integer should be more precise than number")
-	}
-	if MorePrecise(String, LiteralString("ready")) {
-		t.Fatal("string should not be more precise than a string literal")
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if !MorePrecise(tt.candidate, tt.baseline) {
+				t.Fatalf("%v should be more precise than %v", tt.candidate, tt.baseline)
+			}
+			if MorePrecise(tt.baseline, tt.candidate) {
+				t.Fatalf("%v should not be more precise than %v", tt.baseline, tt.candidate)
+			}
+		})
 	}
 }
 

@@ -33,14 +33,14 @@ func TestIntersectionBasic(t *testing.T) {
 	}
 }
 
-func TestIntersectionWithNever(t *testing.T) {
+func TestNewIntersectionLegacyConstructorPolicyNeverAbsorbs(t *testing.T) {
 	i := NewIntersection(Number, Never)
 	if i != Never {
 		t.Error("intersection containing Never should collapse to Never")
 	}
 }
 
-func TestIntersectionAnyIdentity(t *testing.T) {
+func TestNewIntersectionLegacyConstructorPolicyAnyIdentity(t *testing.T) {
 	i := NewIntersection(Number, Any, String)
 
 	inter := i.(*Intersection)

@@ -92,14 +92,14 @@ func TestUnionWithNil(t *testing.T) {
 	}
 }
 
-func TestUnionWithAny(t *testing.T) {
+func TestNewUnionLegacyConstructorPolicyAnyAbsorbs(t *testing.T) {
 	u := NewUnion(Number, String, Any)
 	if u != Any {
 		t.Error("union containing Any should collapse to Any")
 	}
 }
 
-func TestUnionNeverIdentity(t *testing.T) {
+func TestNewUnionLegacyConstructorPolicyNeverIdentity(t *testing.T) {
 	u := NewUnion(Number, Never, String)
 
 	union := u.(*Union)
@@ -263,68 +263,69 @@ func TestUnionTripleFlatten(t *testing.T) {
 	// Deeply nested unions should flatten completely
 	inner := NewUnion(Number, String)
 	mid := NewUnion(inner, Boolean)
-	outer := NewUnion(mid, Integer)
+	record := NewRecord().Field("id", String).Build()
+	outer := NewUnion(mid, record)
 
 	u, ok := outer.(*Union)
 	if !ok {
 		t.Fatalf("expected union, got %T", outer)
 	}
 
-	if len(u.Members) != 3 {
-		t.Errorf("expected 3 members after flattening/subsumption, got %d", len(u.Members))
+	if len(u.Members) != 4 {
+		t.Errorf("expected 4 members after flattening, got %d", len(u.Members))
 	}
 }
 
-func TestUnionSubsumesStringLiteral(t *testing.T) {
+func TestNewUnionLegacyConstructorPolicySubsumesStringLiteral(t *testing.T) {
 	u := NewUnion(String, LiteralString(""))
 	if u != String {
 		t.Errorf("string | \"\" should collapse to string, got %v", u)
 	}
 }
 
-func TestUnionSubsumesNumberLiteral(t *testing.T) {
+func TestNewUnionLegacyConstructorPolicySubsumesNumberLiteral(t *testing.T) {
 	u := NewUnion(Number, LiteralNumber(42))
 	if u != Number {
 		t.Errorf("number | 42 should collapse to number, got %v", u)
 	}
 }
 
-func TestUnionSubsumesBooleanLiteral(t *testing.T) {
+func TestNewUnionLegacyConstructorPolicySubsumesBooleanLiteral(t *testing.T) {
 	u := NewUnion(Boolean, True)
 	if u != Boolean {
 		t.Errorf("boolean | true should collapse to boolean, got %v", u)
 	}
 }
 
-func TestUnionSubsumesIntegerLiteral(t *testing.T) {
+func TestNewUnionLegacyConstructorPolicySubsumesIntegerLiteral(t *testing.T) {
 	u := NewUnion(Integer, LiteralInt(7))
 	if u != Integer {
 		t.Errorf("integer | 7 should collapse to integer, got %v", u)
 	}
 }
 
-func TestUnionSubsumesIntegerByNumber(t *testing.T) {
+func TestNewUnionLegacyConstructorPolicySubsumesIntegerByNumber(t *testing.T) {
 	u := NewUnion(Number, Integer)
 	if u != Number {
 		t.Errorf("number | integer should collapse to number, got %v", u)
 	}
 }
 
-func TestUnionSubsumesIntegerLiteralByNumber(t *testing.T) {
+func TestNewUnionLegacyConstructorPolicySubsumesIntegerLiteralByNumber(t *testing.T) {
 	u := NewUnion(Number, LiteralInt(7))
 	if u != Number {
 		t.Errorf("number | 7 should collapse to number, got %v", u)
 	}
 }
 
-func TestUnionSubsumesMultipleLiterals(t *testing.T) {
+func TestNewUnionLegacyConstructorPolicySubsumesMultipleLiterals(t *testing.T) {
 	u := NewUnion(String, LiteralString("a"), LiteralString("b"))
 	if u != String {
 		t.Errorf("string | \"a\" | \"b\" should collapse to string, got %v", u)
 	}
 }
 
-func TestUnionSubsumesOptionalStringLiteral(t *testing.T) {
+func TestNewUnionLegacyConstructorPolicySubsumesOptionalStringLiteral(t *testing.T) {
 	// string? | "" => string? (nil + string, literal "" subsumed)
 	u := NewUnion(NewOptional(String), LiteralString(""))
 	if u.Kind() != kind.Optional {
@@ -336,14 +337,14 @@ func TestUnionSubsumesOptionalStringLiteral(t *testing.T) {
 	}
 }
 
-func TestUnionPreservesUnknownAlone(t *testing.T) {
+func TestNewUnionLegacyConstructorPolicyPreservesUnknownAlone(t *testing.T) {
 	u := NewUnion(Unknown)
 	if u != Unknown {
 		t.Errorf("unknown alone should remain unknown, got %v", u)
 	}
 }
 
-func TestUnionPreservesUnknownWithNil(t *testing.T) {
+func TestNewUnionLegacyConstructorPolicyPreservesUnknownWithNil(t *testing.T) {
 	u := NewUnion(Unknown, Nil)
 	if u.Kind() != kind.Optional {
 		t.Errorf("unknown | nil should be optional, got %v (%v)", u, u.Kind())
@@ -354,7 +355,7 @@ func TestUnionPreservesUnknownWithNil(t *testing.T) {
 	}
 }
 
-func TestUnionDropsUnknownWithConcrete(t *testing.T) {
+func TestNewUnionLegacyConstructorPolicyDropsUnknownWithConcrete(t *testing.T) {
 	u := NewUnion(Unknown, String)
 	if u != String {
 		t.Errorf("unknown | string should collapse to string, got %v", u)

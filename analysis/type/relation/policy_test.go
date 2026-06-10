@@ -58,6 +58,46 @@ func TestJoinReturnSlot_PrefersConcreteScalarOverUnknown(t *testing.T) {
 	}
 }
 
+func TestIntersectionMeetPolicyAnyNeverAndNil(t *testing.T) {
+	tests := []struct {
+		name string
+		got  Type
+		want Type
+	}{
+		{name: "any identity left", got: NewIntersection(Any, String), want: String},
+		{name: "any identity right", got: NewIntersection(String, Any), want: String},
+		{name: "never absorbs left", got: NewIntersection(Never, String), want: Never},
+		{name: "never absorbs right", got: NewIntersection(String, Never), want: Never},
+		{name: "nil accepted by optional", got: NewIntersection(Nil, NewOptional(String)), want: Nil},
+		{name: "nil accepted by unknown", got: NewIntersection(Nil, Unknown), want: Nil},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if !TypeEquals(tt.got, tt.want) {
+				t.Fatalf("intersection meet = %v, want %v", tt.got, tt.want)
+			}
+		})
+	}
+
+	got := NewIntersection(Nil, String)
+	inter, ok := got.(*Intersection)
+	if !ok {
+		t.Fatalf("intersection meet nil & string = %T %[1]v, want explicit intersection", got)
+	}
+	if !intersectionHasMember(inter, Nil) || !intersectionHasMember(inter, String) {
+		t.Fatalf("intersection meet nil & string members = %v, want nil and string", inter.Members)
+	}
+}
+
+func intersectionHasMember(inter *Intersection, want Type) bool {
+	for _, member := range inter.Members {
+		if TypeEquals(member, want) {
+			return true
+		}
+	}
+	return false
+}
+
 func TestJoinCompatibleRecordsPreservesStaticBracketMembers(t *testing.T) {
 	left := NewRecord().
 		Field("name", String).

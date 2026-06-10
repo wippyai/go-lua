@@ -463,7 +463,7 @@ func TestTypes_AllUnknown(t *testing.T) {
 	}
 }
 
-func TestTypes_MixedUnknown(t *testing.T) {
+func TestTypesPolicyFiltersUnknownWhenConcreteEvidenceExists(t *testing.T) {
 	result := Types(typ.String, typ.Unknown, typ.Number)
 	// Unknown should be filtered out
 	u, ok := result.(*typ.Union)
@@ -473,6 +473,56 @@ func TestTypes_MixedUnknown(t *testing.T) {
 	// Should have string and number only
 	if len(u.Members) != 2 {
 		t.Errorf("expected 2 members after filtering unknown, got %d", len(u.Members))
+	}
+}
+
+func TestTypesPolicyAnyAbsorbsUnion(t *testing.T) {
+	got := Types(typ.NewUnion(typ.String, typ.Number), typ.Any)
+	if !typ.TypeEquals(got, typ.Any) {
+		t.Fatalf("Types(string|number, any) = %v, want any", got)
+	}
+}
+
+func TestTypesPolicyNeverIdentity(t *testing.T) {
+	tests := []struct {
+		name  string
+		types []typ.Type
+		want  typ.Type
+	}{
+		{name: "left", types: []typ.Type{typ.Never, typ.String}, want: typ.String},
+		{name: "right", types: []typ.Type{typ.String, typ.Never}, want: typ.String},
+		{name: "only never", types: []typ.Type{typ.Never, typ.Never}, want: typ.Never},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := Types(tt.types...)
+			if !typ.TypeEquals(got, tt.want) {
+				t.Fatalf("Types(%v) = %v, want %v", tt.types, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestTypesPolicySubsumesLiteralBases(t *testing.T) {
+	tests := []struct {
+		name  string
+		types []typ.Type
+		want  typ.Type
+	}{
+		{name: "string literal by string", types: []typ.Type{typ.String, typ.LiteralString("x")}, want: typ.String},
+		{name: "number literal by number", types: []typ.Type{typ.Number, typ.LiteralNumber(42)}, want: typ.Number},
+		{name: "boolean literal by boolean", types: []typ.Type{typ.Boolean, typ.True}, want: typ.Boolean},
+		{name: "integer literal by integer", types: []typ.Type{typ.Integer, typ.LiteralInt(7)}, want: typ.Integer},
+		{name: "integer by number", types: []typ.Type{typ.Number, typ.Integer}, want: typ.Number},
+		{name: "integer literal by number", types: []typ.Type{typ.Number, typ.LiteralInt(7)}, want: typ.Number},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := Types(tt.types...)
+			if !typ.TypeEquals(got, tt.want) {
+				t.Fatalf("Types(%v) = %v, want %v", tt.types, got, tt.want)
+			}
+		})
 	}
 }
 
