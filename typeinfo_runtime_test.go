@@ -3,9 +3,10 @@ package lua
 import (
 	"testing"
 
+	typemanifest "github.com/wippyai/go-lua/analysis/module/manifest"
+	"github.com/wippyai/go-lua/analysis/type/annotation"
+	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/compiler/check/tests/testutil"
-	typeio "github.com/wippyai/go-lua/types/io"
-	"github.com/wippyai/go-lua/types/typ"
 )
 
 func TestTypeInfoInjection_TypeIs(t *testing.T) {
@@ -23,7 +24,7 @@ func TestTypeInfoInjection_TypeIs(t *testing.T) {
 		t.Fatalf("compile failed: %v", err)
 	}
 
-	manifest := typeio.NewManifest("typeinfo")
+	manifest := typemanifest.New("typeinfo")
 	pointType := typ.NewRecord().
 		Field("x", typ.Number).
 		Field("y", typ.Number).
@@ -35,7 +36,7 @@ func TestTypeInfoInjection_TypeIs(t *testing.T) {
 		Build()
 	manifest.DefineType("User", userType)
 
-	data, err := typeio.EncodeManifest(manifest)
+	data, err := typemanifest.Encode(manifest)
 	if err != nil {
 		t.Fatalf("encode manifest failed: %v", err)
 	}
@@ -72,9 +73,9 @@ func TestTypeInfoRuntime_StringCastAndLib(t *testing.T) {
 		t.Fatalf("compile failed: %v", err)
 	}
 
-	manifest := typeio.NewManifest("string_cast")
+	manifest := typemanifest.New("string_cast")
 	manifest.DefineType("string", typ.String)
-	data, err := typeio.EncodeManifest(manifest)
+	data, err := typemanifest.Encode(manifest)
 	if err != nil {
 		t.Fatalf("encode manifest failed: %v", err)
 	}
@@ -110,14 +111,14 @@ func TestTypeInfoRuntime_TypeIsDotSyntax(t *testing.T) {
 		t.Fatalf("compile failed: %v", err)
 	}
 
-	manifest := typeio.NewManifest("typeinfo_dot")
+	manifest := typemanifest.New("typeinfo_dot")
 	pointType := typ.NewRecord().
 		Field("x", typ.Number).
 		Field("y", typ.Number).
 		Build()
 	manifest.DefineType("Point", pointType)
 
-	data, err := typeio.EncodeManifest(manifest)
+	data, err := typemanifest.Encode(manifest)
 	if err != nil {
 		t.Fatalf("encode manifest failed: %v", err)
 	}
@@ -156,14 +157,14 @@ func TestTypeInfoRuntime_TypeIsNestedFunction(t *testing.T) {
 		t.Fatalf("compile failed: %v", err)
 	}
 
-	manifest := typeio.NewManifest("typeinfo_nested")
+	manifest := typemanifest.New("typeinfo_nested")
 	pointType := typ.NewRecord().
 		Field("x", typ.Number).
 		Field("y", typ.Number).
 		Build()
 	manifest.DefineType("Point", pointType)
 
-	data, err := typeio.EncodeManifest(manifest)
+	data, err := typemanifest.Encode(manifest)
 	if err != nil {
 		t.Fatalf("encode manifest failed: %v", err)
 	}
@@ -202,14 +203,14 @@ func TestTypeInfoRuntime_AnnotatedArrayField(t *testing.T) {
 		t.Fatalf("compile failed: %v", err)
 	}
 
-	manifest := typeio.NewManifest("typeinfo_annotated_array")
-	listType := typ.NewAnnotated(typ.NewArray(typ.Number), []typ.Annotation{
+	manifest := typemanifest.New("typeinfo_annotated_array")
+	listType := typ.NewAnnotated(typ.NewArray(typ.Number), []annotation.Annotation{
 		{Name: "min_len", Arg: float64(1)},
 	})
 	holderType := typ.NewRecord().Field("items", listType).Build()
 	manifest.DefineType("Holder", holderType)
 
-	data, err := typeio.EncodeManifest(manifest)
+	data, err := typemanifest.Encode(manifest)
 	if err != nil {
 		t.Fatalf("encode manifest failed: %v", err)
 	}
@@ -249,13 +250,13 @@ func TestTypeInfoRuntime_InstantiatedGeneric(t *testing.T) {
 		t.Fatalf("compile failed: %v", err)
 	}
 
-	manifest := typeio.NewManifest("typeinfo_inst_generic")
+	manifest := typemanifest.New("typeinfo_inst_generic")
 	tp := typ.NewTypeParam("T", nil)
 	boxGeneric := typ.NewGeneric("Box", []*typ.TypeParam{tp}, typ.NewRecord().Field("value", tp).Build())
 	boxNum := typ.Instantiate(boxGeneric, typ.Number)
 	manifest.DefineType("BoxNum", boxNum)
 
-	data, err := typeio.EncodeManifest(manifest)
+	data, err := typemanifest.Encode(manifest)
 	if err != nil {
 		t.Fatalf("encode manifest failed: %v", err)
 	}

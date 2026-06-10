@@ -37,7 +37,7 @@ type FunctionProto struct {
 	DbgUpvalues        []string
 
 	// TypeInfo holds encoded type manifest for this module.
-	// Use types/io.EncodeManifest/DecodeManifest to work with this data.
+	// Use analysis/module/manifest Encode/Decode to work with this data.
 	// Stored on the root FunctionProto and propagated to nested functions.
 	TypeInfo []byte
 

@@ -3,7 +3,8 @@ package lua
 import (
 	"testing"
 
-	"github.com/wippyai/go-lua/types/typ"
+	"github.com/wippyai/go-lua/analysis/type/annotation"
+	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
 // ---------------------------------------------------------------------------
@@ -352,7 +353,7 @@ func BenchmarkValidate_Annotated_MinMax(b *testing.B) {
 	L := NewState()
 	defer L.Close()
 	ann := &LType{
-		inner: typ.NewAnnotated(typ.Number, []typ.Annotation{
+		inner: typ.NewAnnotated(typ.Number, []annotation.Annotation{
 			{Name: "min", Arg: float64(0)},
 			{Name: "max", Arg: float64(100)},
 		}),
@@ -366,7 +367,7 @@ func BenchmarkValidate_Annotated_Pattern(b *testing.B) {
 	L := NewState()
 	defer L.Close()
 	ann := &LType{
-		inner: typ.NewAnnotated(typ.String, []typ.Annotation{
+		inner: typ.NewAnnotated(typ.String, []annotation.Annotation{
 			{Name: "pattern", Arg: "^[a-z]+$"},
 		}),
 	}
@@ -380,11 +381,11 @@ func BenchmarkValidate_Record_Annotated(b *testing.B) {
 	defer L.Close()
 	rec := &LType{
 		inner: typ.NewRecord().
-			AnnotatedField("name", typ.String, false, []typ.Annotation{
+			AnnotatedField("name", typ.String, false, []annotation.Annotation{
 				{Name: "min_len", Arg: float64(1)},
 				{Name: "max_len", Arg: float64(100)},
 			}).
-			AnnotatedField("age", typ.Number, false, []typ.Annotation{
+			AnnotatedField("age", typ.Number, false, []annotation.Annotation{
 				{Name: "min", Arg: float64(0)},
 				{Name: "max", Arg: float64(150)},
 			}).

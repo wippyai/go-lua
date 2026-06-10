@@ -11,10 +11,10 @@ import (
 	"strings"
 	"testing"
 
+	typemanifest "github.com/wippyai/go-lua/analysis/module/manifest"
+	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/compiler/check/tests/testutil"
 	"github.com/wippyai/go-lua/types/diag"
-	"github.com/wippyai/go-lua/types/io"
-	"github.com/wippyai/go-lua/types/typ"
 )
 
 // Suite describes a fixture suite loaded from manifest.json.
@@ -388,7 +388,7 @@ func runExecPhase(t *testing.T, s namedSuite) {
 }
 
 // resolvePackageManifest returns a predefined manifest for a system package name.
-func resolvePackageManifest(name string) *io.Manifest {
+func resolvePackageManifest(name string) *typemanifest.Manifest {
 	switch name {
 	case "channel":
 		return testutil.ChannelManifest()
@@ -403,8 +403,8 @@ func resolvePackageManifest(name string) *io.Manifest {
 	}
 }
 
-func fixtureTimeManifest() *io.Manifest {
-	m := io.NewManifest("time")
+func fixtureTimeManifest() *typemanifest.Manifest {
+	m := typemanifest.New("time")
 
 	durationType := typ.NewInterface("time.Duration", []typ.Method{
 		{Name: "seconds", Type: typ.Func().Param("self", typ.Self).Returns(typ.Number).Build()},
@@ -427,8 +427,8 @@ func fixtureTimeManifest() *io.Manifest {
 	return m
 }
 
-func fixtureUuidManifest() *io.Manifest {
-	m := io.NewManifest("uuid")
+func fixtureUuidManifest() *typemanifest.Manifest {
+	m := typemanifest.New("uuid")
 	m.SetExport(typ.NewInterface("uuid", []typ.Method{
 		{Name: "v7", Type: typ.Func().Returns(typ.String).Build()},
 	}))

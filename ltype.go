@@ -4,10 +4,11 @@ import (
 	"fmt"
 	"strconv"
 
-	"github.com/wippyai/go-lua/types/kind"
-	"github.com/wippyai/go-lua/types/subtype"
-	"github.com/wippyai/go-lua/types/typ"
-	"github.com/wippyai/go-lua/types/typ/subst"
+	"github.com/wippyai/go-lua/analysis/type/annotation"
+	"github.com/wippyai/go-lua/analysis/type/kind"
+	"github.com/wippyai/go-lua/analysis/type/subst"
+	"github.com/wippyai/go-lua/analysis/type/subtype"
+	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/validate"
 )
 
@@ -816,7 +817,7 @@ func toValidationLuaError(L *LState, verr *validationError) *Error {
 	return e
 }
 
-func validateAnnotations(val LValue, annotations []typ.Annotation, path string) *validate.Error {
+func validateAnnotations(val LValue, annotations []annotation.Annotation, path string) *validate.Error {
 	if len(annotations) == 0 {
 		return nil
 	}

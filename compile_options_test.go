@@ -3,9 +3,9 @@ package lua
 import (
 	"testing"
 
+	typemanifest "github.com/wippyai/go-lua/analysis/module/manifest"
+	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/compiler/parse"
-	typeio "github.com/wippyai/go-lua/types/io"
-	"github.com/wippyai/go-lua/types/typ"
 )
 
 func TestCompileWithOptions_StringCastAndLib(t *testing.T) {
@@ -55,13 +55,13 @@ func TestCompileWithOptions_TypeIsDotAndColon(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parse failed: %v", err)
 	}
-	manifest := typeio.NewManifest("type_is")
+	manifest := typemanifest.New("type_is")
 	pointType := typ.NewRecord().
 		Field("x", typ.Number).
 		Field("y", typ.Number).
 		Build()
 	manifest.DefineType("Point", pointType)
-	data, err := typeio.EncodeManifest(manifest)
+	data, err := typemanifest.Encode(manifest)
 	if err != nil {
 		t.Fatalf("encode manifest failed: %v", err)
 	}

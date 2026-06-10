@@ -5,7 +5,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/wippyai/go-lua/types/typ"
+	"github.com/wippyai/go-lua/analysis/type/annotation"
+	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
 // errMessage extracts the message string from a validation error.
@@ -307,7 +308,7 @@ func TestOptionalAnnotated(t *testing.T) {
 	defer L.Close()
 
 	// (number @min(0))?
-	annotated := typ.NewAnnotated(typ.Number, []typ.Annotation{
+	annotated := typ.NewAnnotated(typ.Number, []annotation.Annotation{
 		{Name: "min", Arg: float64(0)},
 	})
 	optAnnotated := &LType{inner: typ.NewOptional(annotated)}
@@ -1445,7 +1446,7 @@ func TestRecordWithAnnotatedOptionalField(t *testing.T) {
 	defer L.Close()
 
 	// {name: string, score: (number @min(0) @max(100))?}
-	annotatedNum := typ.NewAnnotated(typ.Number, []typ.Annotation{
+	annotatedNum := typ.NewAnnotated(typ.Number, []annotation.Annotation{
 		{Name: "min", Arg: float64(0)},
 		{Name: "max", Arg: float64(100)},
 	})
@@ -1945,7 +1946,7 @@ func TestStructuredError_ConstraintViolation(t *testing.T) {
 	defer L.Close()
 
 	annotated := &LType{
-		inner: typ.NewAnnotated(typ.Number, []typ.Annotation{
+		inner: typ.NewAnnotated(typ.Number, []annotation.Annotation{
 			{Name: "min", Arg: float64(0)},
 		}),
 	}
@@ -1973,7 +1974,7 @@ func TestStructuredError_NestedConstraint(t *testing.T) {
 
 	rec := &LType{
 		inner: typ.NewRecord().
-			AnnotatedField("score", typ.Number, false, []typ.Annotation{
+			AnnotatedField("score", typ.Number, false, []annotation.Annotation{
 				{Name: "max", Arg: float64(100)},
 			}).
 			Build(),
@@ -2475,11 +2476,11 @@ func TestLuaIntegration_AnnotationErrors(t *testing.T) {
 
 	rec := &LType{
 		inner: typ.NewRecord().
-			AnnotatedField("score", typ.Number, false, []typ.Annotation{
+			AnnotatedField("score", typ.Number, false, []annotation.Annotation{
 				{Name: "min", Arg: float64(0)},
 				{Name: "max", Arg: float64(100)},
 			}).
-			AnnotatedField("name", typ.String, false, []typ.Annotation{
+			AnnotatedField("name", typ.String, false, []annotation.Annotation{
 				{Name: "min_len", Arg: float64(1)},
 			}).
 			Build(),
@@ -2655,7 +2656,7 @@ func TestAnnotation_OnOptionalField(t *testing.T) {
 	// {name: string @min_len(1)?} — optional field with annotated type
 	rec := &LType{
 		inner: typ.NewRecord().
-			AnnotatedField("name", typ.String, true, []typ.Annotation{
+			AnnotatedField("name", typ.String, true, []annotation.Annotation{
 				{Name: "min_len", Arg: float64(1)},
 			}).
 			Build(),
@@ -2689,7 +2690,7 @@ func TestAnnotation_PatternOnField(t *testing.T) {
 
 	rec := &LType{
 		inner: typ.NewRecord().
-			AnnotatedField("email", typ.String, false, []typ.Annotation{
+			AnnotatedField("email", typ.String, false, []annotation.Annotation{
 				{Name: "pattern", Arg: "^[^@]+@[^@]+$"},
 			}).
 			Build(),
@@ -2738,7 +2739,7 @@ func TestAnnotation_MultipleOnSameField(t *testing.T) {
 	// score: number @min(0) @max(100) — multiple annotations
 	rec := &LType{
 		inner: typ.NewRecord().
-			AnnotatedField("score", typ.Number, false, []typ.Annotation{
+			AnnotatedField("score", typ.Number, false, []annotation.Annotation{
 				{Name: "min", Arg: float64(0)},
 				{Name: "max", Arg: float64(100)},
 			}).
@@ -2774,7 +2775,7 @@ func TestAnnotation_MinLenOnArray(t *testing.T) {
 
 	// {string} @min_len(1) — array must have at least 1 element
 	arrType := &LType{
-		inner: typ.NewAnnotated(typ.NewArray(typ.String), []typ.Annotation{
+		inner: typ.NewAnnotated(typ.NewArray(typ.String), []annotation.Annotation{
 			{Name: "min_len", Arg: float64(1)},
 		}),
 	}
@@ -2951,7 +2952,7 @@ func TestAnnotation_MinOnInteger(t *testing.T) {
 	L := NewState()
 	defer L.Close()
 
-	ann := &LType{inner: typ.NewAnnotated(typ.Integer, []typ.Annotation{
+	ann := &LType{inner: typ.NewAnnotated(typ.Integer, []annotation.Annotation{
 		{Name: "min", Arg: float64(0)},
 	})}
 
@@ -2980,7 +2981,7 @@ func TestAnnotation_MaxOnInteger(t *testing.T) {
 	L := NewState()
 	defer L.Close()
 
-	ann := &LType{inner: typ.NewAnnotated(typ.Integer, []typ.Annotation{
+	ann := &LType{inner: typ.NewAnnotated(typ.Integer, []annotation.Annotation{
 		{Name: "max", Arg: float64(100)},
 	})}
 
@@ -3007,7 +3008,7 @@ func TestAnnotation_MinLenOnString(t *testing.T) {
 	L := NewState()
 	defer L.Close()
 
-	ann := &LType{inner: typ.NewAnnotated(typ.String, []typ.Annotation{
+	ann := &LType{inner: typ.NewAnnotated(typ.String, []annotation.Annotation{
 		{Name: "min_len", Arg: float64(3)},
 	})}
 
@@ -3035,7 +3036,7 @@ func TestAnnotation_MaxLenZero(t *testing.T) {
 	L := NewState()
 	defer L.Close()
 
-	ann := &LType{inner: typ.NewAnnotated(typ.String, []typ.Annotation{
+	ann := &LType{inner: typ.NewAnnotated(typ.String, []annotation.Annotation{
 		{Name: "max_len", Arg: float64(0)},
 	})}
 
@@ -3062,7 +3063,7 @@ func TestAnnotation_MinLenOnTable(t *testing.T) {
 	defer L.Close()
 
 	// @min_len on table checks LTable.Len() which counts the array part
-	ann := &LType{inner: typ.NewAnnotated(typ.NewInterface("table", nil), []typ.Annotation{
+	ann := &LType{inner: typ.NewAnnotated(typ.NewInterface("table", nil), []annotation.Annotation{
 		{Name: "min_len", Arg: float64(1)},
 	})}
 
@@ -3119,7 +3120,7 @@ func TestAnnotation_PatternEdgeCases(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			ann := &LType{inner: typ.NewAnnotated(typ.String, []typ.Annotation{
+			ann := &LType{inner: typ.NewAnnotated(typ.String, []annotation.Annotation{
 				{Name: "pattern", Arg: tt.pattern},
 			})}
 			if got := ann.Validate(L, LString(tt.value)); got != tt.ok {
@@ -3136,7 +3137,7 @@ func TestAnnotation_PatternStructuredError(t *testing.T) {
 
 	rec := &LType{
 		inner: typ.NewRecord().
-			AnnotatedField("code", typ.String, false, []typ.Annotation{
+			AnnotatedField("code", typ.String, false, []annotation.Annotation{
 				{Name: "pattern", Arg: "^[A-Z]{3}$"},
 			}).
 			Build(),
@@ -3170,7 +3171,7 @@ func TestAnnotation_WrongBaseType(t *testing.T) {
 
 	// @min on a string type — the min validator silently passes
 	// because toNumber fails on string. The TYPE check catches the error.
-	ann := &LType{inner: typ.NewAnnotated(typ.String, []typ.Annotation{
+	ann := &LType{inner: typ.NewAnnotated(typ.String, []annotation.Annotation{
 		{Name: "min", Arg: float64(0)},
 	})}
 
@@ -3190,7 +3191,7 @@ func TestAnnotation_MinLenOnWrongType(t *testing.T) {
 	defer L.Close()
 
 	// @min_len on number type — length check silently passes
-	ann := &LType{inner: typ.NewAnnotated(typ.Number, []typ.Annotation{
+	ann := &LType{inner: typ.NewAnnotated(typ.Number, []annotation.Annotation{
 		{Name: "min_len", Arg: float64(1)},
 	})}
 
@@ -3208,18 +3209,18 @@ func TestAnnotation_CombinedRecord(t *testing.T) {
 	// Full real-world-like record with multiple annotated fields
 	rec := &LType{
 		inner: typ.NewRecord().
-			AnnotatedField("name", typ.String, false, []typ.Annotation{
+			AnnotatedField("name", typ.String, false, []annotation.Annotation{
 				{Name: "min_len", Arg: float64(1)},
 				{Name: "max_len", Arg: float64(255)},
 			}).
-			AnnotatedField("email", typ.String, false, []typ.Annotation{
+			AnnotatedField("email", typ.String, false, []annotation.Annotation{
 				{Name: "pattern", Arg: "^[^@]+@[^@]+$"},
 			}).
-			AnnotatedField("age", typ.Number, false, []typ.Annotation{
+			AnnotatedField("age", typ.Number, false, []annotation.Annotation{
 				{Name: "min", Arg: float64(0)},
 				{Name: "max", Arg: float64(200)},
 			}).
-			AnnotatedField("bio", typ.String, true, []typ.Annotation{
+			AnnotatedField("bio", typ.String, true, []annotation.Annotation{
 				{Name: "max_len", Arg: float64(1000)},
 			}).
 			Build(),

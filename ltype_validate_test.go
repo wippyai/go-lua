@@ -3,7 +3,8 @@ package lua
 import (
 	"testing"
 
-	"github.com/wippyai/go-lua/types/typ"
+	"github.com/wippyai/go-lua/analysis/type/annotation"
+	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
 // Test toString behavior for different type kinds
@@ -592,7 +593,7 @@ func TestAnnotation_MinMax(t *testing.T) {
 	ctx := DefaultValidationContext()
 
 	// number @min(0) @max(100)
-	annotatedType := typ.NewAnnotated(typ.Number, []typ.Annotation{
+	annotatedType := typ.NewAnnotated(typ.Number, []annotation.Annotation{
 		{Name: "min", Arg: float64(0)},
 		{Name: "max", Arg: float64(100)},
 	})
@@ -627,7 +628,7 @@ func TestAnnotation_MinLen_MaxLen(t *testing.T) {
 	ctx := DefaultValidationContext()
 
 	// string @min_len(2) @max_len(10)
-	annotatedType := typ.NewAnnotated(typ.String, []typ.Annotation{
+	annotatedType := typ.NewAnnotated(typ.String, []annotation.Annotation{
 		{Name: "min_len", Arg: float64(2)},
 		{Name: "max_len", Arg: float64(10)},
 	})
@@ -662,7 +663,7 @@ func TestAnnotation_Pattern(t *testing.T) {
 	ctx := DefaultValidationContext()
 
 	// string @pattern("^[a-z]+$")
-	annotatedType := typ.NewAnnotated(typ.String, []typ.Annotation{
+	annotatedType := typ.NewAnnotated(typ.String, []annotation.Annotation{
 		{Name: "pattern", Arg: "^[a-z]+$"},
 	})
 	lt := NewLType(annotatedType)
@@ -696,11 +697,11 @@ func TestAnnotation_RecordFieldAnnotations(t *testing.T) {
 
 	// type User = {age: number @min(0) @max(150), name: string @min_len(1)}
 	userType := typ.NewRecord().
-		AnnotatedField("age", typ.Number, false, []typ.Annotation{
+		AnnotatedField("age", typ.Number, false, []annotation.Annotation{
 			{Name: "min", Arg: float64(0)},
 			{Name: "max", Arg: float64(150)},
 		}).
-		AnnotatedField("name", typ.String, false, []typ.Annotation{
+		AnnotatedField("name", typ.String, false, []annotation.Annotation{
 			{Name: "min_len", Arg: float64(1)},
 		}).
 		Build()
@@ -772,7 +773,7 @@ func TestAnnotation_NestedRecordAnnotations(t *testing.T) {
 	// type Address = {zip: string @pattern("^[0-9]{5}$")}
 	// type Person = {name: string, address: Address}
 	addressType := typ.NewRecord().
-		AnnotatedField("zip", typ.String, false, []typ.Annotation{
+		AnnotatedField("zip", typ.String, false, []annotation.Annotation{
 			{Name: "pattern", Arg: "^[0-9]{5}$"},
 		}).
 		Build()
@@ -828,7 +829,7 @@ func TestAnnotation_ErrorPath(t *testing.T) {
 
 	// Test that error paths are correct for nested structures
 	addressType := typ.NewRecord().
-		AnnotatedField("zip", typ.String, false, []typ.Annotation{
+		AnnotatedField("zip", typ.String, false, []annotation.Annotation{
 			{Name: "min_len", Arg: float64(5)},
 		}).
 		Build()
@@ -855,7 +856,7 @@ func TestAnnotation_ErrorPath(t *testing.T) {
 
 func TestAnnotation_TypeString(t *testing.T) {
 	// Verify annotated types render correctly
-	annotatedType := typ.NewAnnotated(typ.Number, []typ.Annotation{
+	annotatedType := typ.NewAnnotated(typ.Number, []annotation.Annotation{
 		{Name: "min", Arg: float64(0)},
 		{Name: "max", Arg: float64(100)},
 	})

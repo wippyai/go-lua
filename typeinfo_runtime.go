@@ -1,8 +1,8 @@
 package lua
 
 import (
-	typeio "github.com/wippyai/go-lua/types/io"
-	"github.com/wippyai/go-lua/types/typ"
+	"github.com/wippyai/go-lua/analysis/module/manifest"
+	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
 type typeBinding struct {
@@ -55,16 +55,16 @@ func (fp *FunctionProto) runtimeTypeValueByName(name string) *LType {
 	return fp.typeBindingsByName[name]
 }
 
-func safeDecodeManifest(data []byte) (manifest *typeio.Manifest) {
+func safeDecodeManifest(data []byte) (m *manifest.Manifest) {
 	if len(data) == 0 {
 		return nil
 	}
 	defer func() {
 		if recover() != nil {
-			manifest = nil
+			m = nil
 		}
 	}()
-	decoded, err := typeio.DecodeManifest(data)
+	decoded, err := manifest.Decode(data)
 	if err != nil {
 		return nil
 	}

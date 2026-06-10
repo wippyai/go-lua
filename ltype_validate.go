@@ -4,8 +4,9 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/wippyai/go-lua/types/kind"
-	"github.com/wippyai/go-lua/types/typ"
+	"github.com/wippyai/go-lua/analysis/type/annotation"
+	"github.com/wippyai/go-lua/analysis/type/kind"
+	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/validate"
 )
 
@@ -180,7 +181,7 @@ func (vc *ValidationContext) validateValue(val LValue, t typ.Type, path *pathBui
 	}
 }
 
-func (vc *ValidationContext) checkAnnotations(val LValue, annotations []typ.Annotation, path *pathBuilder, errors *[]*validate.Error) {
+func (vc *ValidationContext) checkAnnotations(val LValue, annotations []annotation.Annotation, path *pathBuilder, errors *[]*validate.Error) {
 	for _, ann := range annotations {
 		if fn := vc.registry.Get(ann.Name); fn != nil {
 			if err := fn(val, ann.Arg); err != nil {

@@ -6,7 +6,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/wippyai/go-lua/types/typ"
+	"github.com/wippyai/go-lua/analysis/type/annotation"
+	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
 // ---------------------------------------------------------------------------
@@ -32,7 +33,7 @@ func TestAdversarial_NaN(t *testing.T) {
 	// NaN in @min/@max: NaN < anything is false, NaN > anything is false
 	// So @min(0) should pass for NaN (n < minVal is false)
 	// This is a known IEEE 754 behavior — NaN comparisons are always false
-	minType := &LType{inner: typ.NewAnnotated(typ.Number, []typ.Annotation{
+	minType := &LType{inner: typ.NewAnnotated(typ.Number, []annotation.Annotation{
 		{Name: "min", Arg: float64(0)},
 	})}
 	// NaN is a number, and `NaN < 0` is false so min validator passes
@@ -68,7 +69,7 @@ func TestAdversarial_Inf(t *testing.T) {
 	}
 
 	// @max(100) should reject +Inf
-	maxType := &LType{inner: typ.NewAnnotated(typ.Number, []typ.Annotation{
+	maxType := &LType{inner: typ.NewAnnotated(typ.Number, []annotation.Annotation{
 		{Name: "max", Arg: float64(100)},
 	})}
 	if maxType.Validate(L, posInf) {
@@ -76,7 +77,7 @@ func TestAdversarial_Inf(t *testing.T) {
 	}
 
 	// @min(0) should reject -Inf
-	minType := &LType{inner: typ.NewAnnotated(typ.Number, []typ.Annotation{
+	minType := &LType{inner: typ.NewAnnotated(typ.Number, []annotation.Annotation{
 		{Name: "min", Arg: float64(0)},
 	})}
 	if minType.Validate(L, negInf) {
@@ -472,7 +473,7 @@ func TestAdversarial_LongString(t *testing.T) {
 	}
 
 	// @max_len(100) should reject
-	maxLen := &LType{inner: typ.NewAnnotated(typ.String, []typ.Annotation{
+	maxLen := &LType{inner: typ.NewAnnotated(typ.String, []annotation.Annotation{
 		{Name: "max_len", Arg: float64(100)},
 	})}
 	if maxLen.Validate(L, longStr) {
@@ -480,7 +481,7 @@ func TestAdversarial_LongString(t *testing.T) {
 	}
 
 	// @pattern should work on long strings
-	pattern := &LType{inner: typ.NewAnnotated(typ.String, []typ.Annotation{
+	pattern := &LType{inner: typ.NewAnnotated(typ.String, []annotation.Annotation{
 		{Name: "pattern", Arg: "^a+$"},
 	})}
 	if !pattern.Validate(L, longStr) {
@@ -649,24 +650,24 @@ func TestAdversarial_AnnotationExtremeValues(t *testing.T) {
 
 	tests := []struct {
 		name       string
-		annotation typ.Annotation
+		annotation annotation.Annotation
 		value      LValue
 		ok         bool
 	}{
-		{"min MaxFloat64", typ.Annotation{Name: "min", Arg: math.MaxFloat64}, LNumber(math.MaxFloat64), true},
-		{"min MaxFloat64 rejects less", typ.Annotation{Name: "min", Arg: math.MaxFloat64}, LNumber(0), false},
-		{"max -MaxFloat64", typ.Annotation{Name: "max", Arg: -math.MaxFloat64}, LNumber(-math.MaxFloat64), true},
-		{"max -MaxFloat64 rejects more", typ.Annotation{Name: "max", Arg: -math.MaxFloat64}, LNumber(0), false},
-		{"min_len very large", typ.Annotation{Name: "min_len", Arg: float64(999999)}, LString("short"), false},
-		{"max_len negative", typ.Annotation{Name: "max_len", Arg: float64(-1)}, LString("anything"), true}, // negative max_len returns nil
+		{"min MaxFloat64", annotation.Annotation{Name: "min", Arg: math.MaxFloat64}, LNumber(math.MaxFloat64), true},
+		{"min MaxFloat64 rejects less", annotation.Annotation{Name: "min", Arg: math.MaxFloat64}, LNumber(0), false},
+		{"max -MaxFloat64", annotation.Annotation{Name: "max", Arg: -math.MaxFloat64}, LNumber(-math.MaxFloat64), true},
+		{"max -MaxFloat64 rejects more", annotation.Annotation{Name: "max", Arg: -math.MaxFloat64}, LNumber(0), false},
+		{"min_len very large", annotation.Annotation{Name: "min_len", Arg: float64(999999)}, LString("short"), false},
+		{"max_len negative", annotation.Annotation{Name: "max_len", Arg: float64(-1)}, LString("anything"), true}, // negative max_len returns nil
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			ann := &LType{inner: typ.NewAnnotated(typ.Number, []typ.Annotation{tt.annotation})}
+			ann := &LType{inner: typ.NewAnnotated(typ.Number, []annotation.Annotation{tt.annotation})}
 			// For string annotations, use string type
 			if _, ok := tt.value.(LString); ok {
-				ann = &LType{inner: typ.NewAnnotated(typ.String, []typ.Annotation{tt.annotation})}
+				ann = &LType{inner: typ.NewAnnotated(typ.String, []annotation.Annotation{tt.annotation})}
 			}
 			if got := ann.Validate(L, tt.value); got != tt.ok {
 				t.Errorf("Validate() = %v, want %v", got, tt.ok)
@@ -862,11 +863,11 @@ func TestAdversarial_DoubleAnnotated(t *testing.T) {
 	defer L.Close()
 
 	// number @min(0) @max(100) — then wrap that in another @pattern (nonsensical but shouldn't crash)
-	inner := typ.NewAnnotated(typ.Number, []typ.Annotation{
+	inner := typ.NewAnnotated(typ.Number, []annotation.Annotation{
 		{Name: "min", Arg: float64(0)},
 		{Name: "max", Arg: float64(100)},
 	})
-	outer := &LType{inner: typ.NewAnnotated(inner, []typ.Annotation{
+	outer := &LType{inner: typ.NewAnnotated(inner, []annotation.Annotation{
 		{Name: "min", Arg: float64(10)}, // stricter min on top
 	})}
 
@@ -1002,7 +1003,7 @@ func TestExploit_NilAnnotatedInner(t *testing.T) {
 	defer L.Close()
 	OpenErrors(L)
 
-	ann := &LType{inner: &typ.Annotated{Inner: nil, Annotations: []typ.Annotation{
+	ann := &LType{inner: &typ.Annotated{Inner: nil, Annotations: []annotation.Annotation{
 		{Name: "min", Arg: float64(0)},
 	}}}
 

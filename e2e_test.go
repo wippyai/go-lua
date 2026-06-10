@@ -4,12 +4,12 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/compiler/check"
 	"github.com/wippyai/go-lua/compiler/check/hooks"
 	"github.com/wippyai/go-lua/compiler/parse"
 	"github.com/wippyai/go-lua/types/db"
 	"github.com/wippyai/go-lua/types/query/core"
-	"github.com/wippyai/go-lua/types/typ"
 )
 
 // TestE2E_ParseTypeCheckCompileRun tests the full pipeline:

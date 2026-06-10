@@ -3,7 +3,8 @@ package lua
 import (
 	"testing"
 
-	"github.com/wippyai/go-lua/types/typ"
+	"github.com/wippyai/go-lua/analysis/type/annotation"
+	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
 func TestLTypeBasic(t *testing.T) {
@@ -1056,7 +1057,7 @@ func TestTypeMethodIs_AnnotatedType(t *testing.T) {
 	defer L.Close()
 
 	annotated := &LType{
-		inner: typ.NewAnnotated(typ.Number, []typ.Annotation{
+		inner: typ.NewAnnotated(typ.Number, []annotation.Annotation{
 			{Name: "min", Arg: float64(0)},
 		}),
 		name: "NonNegative",
@@ -1101,7 +1102,7 @@ func TestTypeMethodIs_AnnotatedArrayMinLen(t *testing.T) {
 	defer L.Close()
 
 	annotated := &LType{
-		inner: typ.NewAnnotated(typ.NewArray(typ.Number), []typ.Annotation{
+		inner: typ.NewAnnotated(typ.NewArray(typ.Number), []annotation.Annotation{
 			{Name: "min_len", Arg: float64(1)},
 		}),
 		name: "NumList",
