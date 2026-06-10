@@ -51,7 +51,7 @@ func withoutNil(t typ.Type, mode nilProjectionMode) (nonNil typ.Type, nilable bo
 		return inner, true
 	case *typ.Union:
 		nilable := false
-		projected := typ.ProjectUnionMembers(v, func(member typ.Type) typ.Type {
+		rewritten := typ.RewriteUnionMembers(v, func(member typ.Type) typ.Type {
 			member = typ.NormalizeNilType(member)
 			if member == nil {
 				return typ.Never
@@ -68,7 +68,7 @@ func withoutNil(t typ.Type, mode nilProjectionMode) (nonNil typ.Type, nilable bo
 		if !nilable {
 			return t, false
 		}
-		return projected, true
+		return rewritten, true
 	default:
 		if t.Kind() == kind.Nil {
 			return typ.Never, true

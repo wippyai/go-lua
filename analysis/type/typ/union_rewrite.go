@@ -2,17 +2,17 @@ package typ
 
 import "github.com/wippyai/go-lua/analysis/type/kind"
 
-// ProjectUnionMembers applies a cache-preserving projection to the members of
-// an already normalized union. If the projection only drops members, the
+// RewriteUnionMembers applies a cache-preserving rewrite to the members of
+// an already normalized union. If the rewrite only drops members, the
 // existing member hash vector is reused so path-sensitive filters do not rehash
 // recursive products. Rewrites preserve only root union representation
 // normalization: deduplication, nil/optional folding, literal subsumption, and
 // deterministic member order.
-func ProjectUnionMembers(u *Union, project func(Type) Type) Type {
+func RewriteUnionMembers(u *Union, rewrite func(Type) Type) Type {
 	if u == nil {
 		return Never
 	}
-	if project == nil {
+	if rewrite == nil {
 		return u
 	}
 	kept := make([]Type, 0, len(u.Members))
@@ -22,13 +22,13 @@ func ProjectUnionMembers(u *Union, project func(Type) Type) Type {
 	scalarRewriteOnly := true
 	hasStoredHashes := len(u.memberHashes) == len(u.Members)
 	for i, member := range u.Members {
-		projected := project(member)
-		if projected == nil || projected.Kind().IsNever() {
+		rewritten := rewrite(member)
+		if rewritten == nil || rewritten.Kind().IsNever() {
 			changed = true
 			continue
 		}
-		kept = append(kept, projected)
-		if projected == member {
+		kept = append(kept, rewritten)
+		if rewritten == member {
 			if hasStoredHashes && !knownContainsOpenRecursive(member) {
 				hashes = append(hashes, u.memberHashes[i])
 			} else {
@@ -38,10 +38,10 @@ func ProjectUnionMembers(u *Union, project func(Type) Type) Type {
 		}
 		changed = true
 		filterOnly = false
-		if !projectedUnionMemberUsesStructuralDedupe(projected) {
+		if !rewrittenUnionMemberUsesStructuralDedupe(rewritten) {
 			scalarRewriteOnly = false
 		}
-		hashes = append(hashes, UnionMemberHash(projected))
+		hashes = append(hashes, UnionMemberHash(rewritten))
 	}
 	if !changed {
 		return u
@@ -50,15 +50,15 @@ func ProjectUnionMembers(u *Union, project func(Type) Type) Type {
 		return Never
 	}
 	if filterOnly {
-		return newProjectedNormalizedUnion(kept, hashes)
+		return newRewrittenNormalizedUnion(kept, hashes)
 	}
-	if scalarRewriteOnly && projectedMembersStayFlatNormalized(kept) {
-		return newRewrittenProjectedUnion(kept, hashes)
+	if scalarRewriteOnly && rewrittenMembersStayFlatNormalized(kept) {
+		return newScalarRewrittenUnion(kept, hashes)
 	}
 	return NewUnion(kept...)
 }
 
-func newProjectedNormalizedUnion(members []Type, memberHashes []uint64) Type {
+func newRewrittenNormalizedUnion(members []Type, memberHashes []uint64) Type {
 	if len(members) == 0 {
 		return Never
 	}
@@ -76,13 +76,13 @@ func newProjectedNormalizedUnion(members []Type, memberHashes []uint64) Type {
 	return newNormalizedUnion(members, memberHashes)
 }
 
-func newRewrittenProjectedUnion(members []Type, memberHashes []uint64) Type {
-	unique, uniqueHashes := deduplicateProjectedTypesWithKnownHashes(members, memberHashes)
+func newScalarRewrittenUnion(members []Type, memberHashes []uint64) Type {
+	unique, uniqueHashes := deduplicateRewrittenTypesWithKnownHashes(members, memberHashes)
 	sortHashedTypes(unique, uniqueHashes)
-	return newProjectedNormalizedUnion(unique, uniqueHashes)
+	return newRewrittenNormalizedUnion(unique, uniqueHashes)
 }
 
-func deduplicateProjectedTypesWithKnownHashes(types []Type, hashes []uint64) ([]Type, []uint64) {
+func deduplicateRewrittenTypesWithKnownHashes(types []Type, hashes []uint64) ([]Type, []uint64) {
 	if len(types) == 0 {
 		return nil, nil
 	}
@@ -98,7 +98,7 @@ func deduplicateProjectedTypesWithKnownHashes(types []Type, hashes []uint64) ([]
 			continue
 		}
 		h := hashes[i]
-		if !projectedUnionMemberUsesStructuralDedupe(t) {
+		if !rewrittenUnionMemberUsesStructuralDedupe(t) {
 			result = append(result, t)
 			resultHashes = append(resultHashes, h)
 			continue
@@ -121,7 +121,7 @@ func deduplicateProjectedTypesWithKnownHashes(types []Type, hashes []uint64) ([]
 	return result, resultHashes
 }
 
-func projectedUnionMemberUsesStructuralDedupe(t Type) bool {
+func rewrittenUnionMemberUsesStructuralDedupe(t Type) bool {
 	if t == nil {
 		return true
 	}
@@ -138,7 +138,7 @@ func projectedUnionMemberUsesStructuralDedupe(t Type) bool {
 	}
 }
 
-func projectedMembersStayFlatNormalized(members []Type) bool {
+func rewrittenMembersStayFlatNormalized(members []Type) bool {
 	var baseMask uint8
 	var literalMask uint8
 	for _, member := range members {
