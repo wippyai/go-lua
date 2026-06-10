@@ -1,14 +1,36 @@
 package typ
 
+func containsAnyDynamic(t Type, seen map[Type]bool, depth int) bool {
+	return containsDynamicFlag(t, seen, depth, DefaultRecursionDepth, knownContainsAny)
+}
+
+func containsNeverDynamic(t Type, seen map[Type]bool) bool {
+	return containsDynamicFlag(t, seen, 0, -1, knownContainsNever)
+}
+
+func containsTypeParamDynamic(t Type, seen map[Type]bool, depth int) bool {
+	return containsDynamicFlag(t, seen, depth, DefaultRecursionDepth, knownContainsTypeParam)
+}
+
 func containsInstantiatedDynamic(t Type, seen map[Type]bool, depth int) bool {
-	if t == nil || DepthExceeded(depth) {
+	return containsDynamicFlag(t, seen, depth, DefaultRecursionDepth, knownContainsInstantiated)
+}
+
+func containsDynamicFlag(
+	t Type,
+	seen map[Type]bool,
+	depth int,
+	maxDepth int,
+	known func(Type) bool,
+) bool {
+	if t == nil || known == nil || (maxDepth >= 0 && depth > maxDepth) {
 		return false
 	}
 	t = UnwrapAnnotated(t)
 	if t == nil {
 		return false
 	}
-	if knownContainsInstantiated(t) {
+	if known(t) {
 		return true
 	}
 	if _, ok := t.(*Recursive); ok {
@@ -22,13 +44,17 @@ func containsInstantiatedDynamic(t Type, seen map[Type]bool, depth int) bool {
 	}
 	seen[t] = true
 
+	next := func(child Type) bool {
+		return containsDynamicFlag(child, seen, depth+1, maxDepth, known)
+	}
+
 	return Visit(t, Visitor[bool]{
 		Optional: func(o *Optional) bool {
-			return containsInstantiatedDynamic(o.Inner, seen, depth+1)
+			return next(o.Inner)
 		},
 		Union: func(u *Union) bool {
 			for _, member := range u.Members {
-				if containsInstantiatedDynamic(member, seen, depth+1) {
+				if next(member) {
 					return true
 				}
 			}
@@ -36,26 +62,24 @@ func containsInstantiatedDynamic(t Type, seen map[Type]bool, depth int) bool {
 		},
 		Intersection: func(in *Intersection) bool {
 			for _, member := range in.Members {
-				if containsInstantiatedDynamic(member, seen, depth+1) {
+				if next(member) {
 					return true
 				}
 			}
 			return false
 		},
 		Array: func(a *Array) bool {
-			return containsInstantiatedDynamic(a.Element, seen, depth+1)
+			return next(a.Element)
 		},
 		Map: func(m *Map) bool {
-			return containsInstantiatedDynamic(m.Key, seen, depth+1) ||
-				containsInstantiatedDynamic(m.Value, seen, depth+1)
+			return next(m.Key) || next(m.Value)
 		},
 		ReadonlyMap: func(m *ReadonlyMap) bool {
-			return containsInstantiatedDynamic(m.Key, seen, depth+1) ||
-				containsInstantiatedDynamic(m.Value, seen, depth+1)
+			return next(m.Key) || next(m.Value)
 		},
 		Tuple: func(tup *Tuple) bool {
 			for _, elem := range tup.Elements {
-				if containsInstantiatedDynamic(elem, seen, depth+1) {
+				if next(elem) {
 					return true
 				}
 			}
@@ -63,70 +87,79 @@ func containsInstantiatedDynamic(t Type, seen map[Type]bool, depth int) bool {
 		},
 		Function: func(fn *Function) bool {
 			for _, param := range fn.Params {
-				if containsInstantiatedDynamic(param.Type, seen, depth+1) {
+				if next(param.Type) {
 					return true
 				}
 			}
-			if containsInstantiatedDynamic(fn.Variadic, seen, depth+1) {
+			if next(fn.Variadic) {
 				return true
 			}
 			for _, ret := range fn.Returns {
-				if containsInstantiatedDynamic(ret, seen, depth+1) {
+				if next(ret) {
 					return true
 				}
 			}
 			for _, param := range fn.TypeParams {
-				if param != nil && containsInstantiatedDynamic(param.Constraint, seen, depth+1) {
+				if param != nil && next(param.Constraint) {
 					return true
 				}
 			}
 			return false
 		},
 		Record: func(r *Record) bool {
-			if containsInstantiatedDynamic(r.MapKey, seen, depth+1) ||
-				containsInstantiatedDynamic(r.MapValue, seen, depth+1) ||
-				containsInstantiatedDynamic(r.Metatable, seen, depth+1) {
+			if next(r.MapKey) || next(r.MapValue) || next(r.Metatable) {
 				return true
 			}
 			for _, field := range r.Fields {
-				if containsInstantiatedDynamic(field.Type, seen, depth+1) {
+				if next(field.Type) {
 					return true
 				}
 			}
 			for _, member := range r.StaticMembers {
-				if containsInstantiatedDynamic(member.Type, seen, depth+1) {
+				if next(member.Type) {
 					return true
 				}
 			}
 			return false
 		},
 		Alias: func(a *Alias) bool {
-			return containsInstantiatedDynamic(a.Target, seen, depth+1)
+			return next(a.Target)
 		},
 		Meta: func(m *Meta) bool {
-			return containsInstantiatedDynamic(m.Of, seen, depth+1)
+			return next(m.Of)
 		},
 		Generic: func(g *Generic) bool {
 			for _, param := range g.TypeParams {
-				if param != nil && containsInstantiatedDynamic(param.Constraint, seen, depth+1) {
+				if param != nil && next(param.Constraint) {
 					return true
 				}
 			}
-			return containsInstantiatedDynamic(g.Body, seen, depth+1)
+			return next(g.Body)
+		},
+		Instantiated: func(i *Instantiated) bool {
+			if i.Generic != nil && next(i.Generic) {
+				return true
+			}
+			for _, arg := range i.TypeArgs {
+				if next(arg) {
+					return true
+				}
+			}
+			return false
 		},
 		TypeParam: func(p *TypeParam) bool {
-			return containsInstantiatedDynamic(p.Constraint, seen, depth+1)
+			return next(p.Constraint)
 		},
 		Interface: func(i *Interface) bool {
 			for _, method := range i.Methods {
-				if method.Type != nil && containsInstantiatedDynamic(method.Type, seen, depth+1) {
+				if method.Type != nil && next(method.Type) {
 					return true
 				}
 			}
 			return false
 		},
 		Recursive: func(r *Recursive) bool {
-			return containsInstantiatedDynamic(r.Body, seen, depth+1)
+			return next(r.Body)
 		},
 		Default: func(Type) bool {
 			return false
