@@ -554,18 +554,13 @@ func (r *Result) extractFunctionDefinition(stmt *ast.FuncDefStmt, bindings *bind
 	if len(points) < 1 {
 		return ErrPointMismatch
 	}
-	id, hasSymbol := symbol.ID(0), false
-	if stmt.Name != nil {
-		if ident, ok := stmt.Name.Func.(*ast.IdentExpr); ok && bindings != nil {
-			id, hasSymbol = bindings.SymbolOf(ident)
-		}
-	}
+	id, hasSymbol := bindings.FuncDefTargetSymbol(stmt)
 	r.functionDefinitions[points[0]] = FunctionDefinitionFact{
 		Stmt:            stmt,
 		Name:            stmt.Name,
 		Func:            stmt.Func,
 		TargetSymbol:    id,
-		HasTargetSymbol: hasSymbol && id != 0,
+		HasTargetSymbol: hasSymbol,
 	}
 	return nil
 }

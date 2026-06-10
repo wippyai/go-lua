@@ -184,11 +184,7 @@ func (b *builder) buildLocalAssign(state flowState, stmt *ast.LocalAssignStmt) f
 }
 
 func (b *builder) buildFuncDef(state flowState, stmt *ast.FuncDefStmt) flowState {
-	if stmt.Name == nil || stmt.Name.Receiver != nil || stmt.Name.Method != "" {
-		b.unsupported = true
-		return flowState{current: state.current}
-	}
-	id, ok := b.simpleIdentSymbol(stmt.Name.Func)
+	id, ok := b.bindings.FuncDefTargetSymbol(stmt)
 	if !ok {
 		b.unsupported = true
 		return flowState{current: state.current}

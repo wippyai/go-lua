@@ -166,6 +166,63 @@ func TestImplicitGlobals(t *testing.T) {
 	}
 }
 
+func TestFuncDefTargetSymbol(t *testing.T) {
+	globalTarget := ident("f")
+	globalStmt := &ast.FuncDefStmt{Name: &ast.FuncName{Func: globalTarget}, Func: function(nil)}
+	localDecl := localAssign([]string{"f"})
+	localTarget := ident("f")
+	localStmt := &ast.FuncDefStmt{Name: &ast.FuncName{Func: localTarget}, Func: function(nil)}
+	dottedStmt := &ast.FuncDefStmt{
+		Name: &ast.FuncName{Func: &ast.AttrGetExpr{
+			Object:    ident("module"),
+			Key:       &ast.StringExpr{Value: "f"},
+			KeySyntax: ast.AttrKeyDot,
+		}},
+		Func: function(nil),
+	}
+	methodStmt := &ast.FuncDefStmt{
+		Name: &ast.FuncName{Receiver: ident("module"), Method: "f"},
+		Func: function(nil),
+	}
+
+	r := BindChunk([]ast.Stmt{globalStmt, localDecl, localStmt, dottedStmt, methodStmt}, Options{})
+
+	globalID := mustSymbol(t, r, globalTarget)
+	id, ok := r.FuncDefTargetSymbol(globalStmt)
+	if !ok || id != globalID {
+		t.Fatalf("global FuncDefTargetSymbol = %d/%v, want %d/true", id, ok, globalID)
+	}
+	assertKind(t, r, id, symbol.Global)
+
+	localID := mustLocalAt(t, r, localDecl, 0)
+	id, ok = r.FuncDefTargetSymbol(localStmt)
+	if !ok || id != localID {
+		t.Fatalf("local FuncDefTargetSymbol = %d/%v, want %d/true", id, ok, localID)
+	}
+
+	for _, tt := range []struct {
+		name string
+		stmt *ast.FuncDefStmt
+	}{
+		{name: "dotted", stmt: dottedStmt},
+		{name: "method", stmt: methodStmt},
+		{name: "nil stmt", stmt: nil},
+		{name: "nil name", stmt: &ast.FuncDefStmt{Func: function(nil)}},
+		{name: "nil func name", stmt: &ast.FuncDefStmt{Name: &ast.FuncName{}, Func: function(nil)}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			if id, ok := r.FuncDefTargetSymbol(tt.stmt); ok || id != 0 {
+				t.Fatalf("FuncDefTargetSymbol = %d/%v, want 0/false", id, ok)
+			}
+		})
+	}
+
+	var nilResult *Result
+	if id, ok := nilResult.FuncDefTargetSymbol(globalStmt); ok || id != 0 {
+		t.Fatalf("nil result FuncDefTargetSymbol = %d/%v, want 0/false", id, ok)
+	}
+}
+
 func TestParamSymbols(t *testing.T) {
 	aRead := ident("a")
 	bRead := ident("b")

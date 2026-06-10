@@ -72,6 +72,23 @@ func (r *Result) SymbolOf(ident *ast.IdentExpr) (symbol.ID, bool) {
 	return id, ok
 }
 
+// FuncDefTargetSymbol returns the simple assignment target for a function
+// definition of the form "function f(...) ... end".
+func (r *Result) FuncDefTargetSymbol(stmt *ast.FuncDefStmt) (symbol.ID, bool) {
+	if r == nil || stmt == nil || stmt.Name == nil {
+		return 0, false
+	}
+	if stmt.Name.Receiver != nil || stmt.Name.Method != "" {
+		return 0, false
+	}
+	ident, ok := stmt.Name.Func.(*ast.IdentExpr)
+	if !ok {
+		return 0, false
+	}
+	id, ok := r.SymbolOf(ident)
+	return id, ok && id != 0
+}
+
 // IsImplicitGlobalUse reports whether ident is an unresolved read that created
 // an implicit global symbol.
 func (r *Result) IsImplicitGlobalUse(ident *ast.IdentExpr) bool {
