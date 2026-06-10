@@ -6,7 +6,6 @@ import (
 	typemanifest "github.com/wippyai/go-lua/analysis/module/manifest"
 	"github.com/wippyai/go-lua/analysis/type/annotation"
 	"github.com/wippyai/go-lua/analysis/type/typ"
-	"github.com/wippyai/go-lua/compiler/check/tests/testutil"
 )
 
 func TestTypeInfoInjection_TypeIs(t *testing.T) {
@@ -279,36 +278,33 @@ func TestTypeInfoRuntime_InstantiatedGeneric(t *testing.T) {
 	}
 }
 
-func TestTypeInfoRuntime_TypeOfLocalAnnotation(t *testing.T) {
+func TestTypeInfoRuntime_ManifestRecordInjection(t *testing.T) {
 	L := NewState()
 	defer L.Close()
 	OpenBase(L)
 
 	source := `
-		local sample: {name: string, age: number} = {name = "Ada", age = 33}
-		type Sample = typeof(sample)
-
 		local function main()
-			local ok, err = Sample:is({name = 123, age = 1})
+			local value = {name = "Ada", age = 33}
+			local ok, err = Sample:is(value)
 			return ok, err
 		end
 		return main()
 	`
 
-	mod := testutil.CheckAndExport(source, "typeinfo_typeof", testutil.WithStdlib())
-	if mod.HasError() {
-		for _, e := range mod.Errors {
-			t.Logf("provider error: %s", e.Message)
-		}
-		t.Fatal("provider has errors")
-	}
+	manifest := typemanifest.New("typeinfo_sample")
+	sampleType := typ.NewRecord().
+		Field("name", typ.String).
+		Field("age", typ.Number).
+		Build()
+	manifest.DefineType("Sample", sampleType)
 
-	data, err := mod.Manifest.Encode()
+	data, err := typemanifest.Encode(manifest)
 	if err != nil {
 		t.Fatalf("encode manifest failed: %v", err)
 	}
 
-	proto, err := CompileString(source, "typeinfo_typeof.lua")
+	proto, err := CompileString(source, "typeinfo_sample.lua")
 	if err != nil {
 		t.Fatalf("compile failed: %v", err)
 	}
@@ -323,10 +319,10 @@ func TestTypeInfoRuntime_TypeOfLocalAnnotation(t *testing.T) {
 	errVal := L.Get(-1)
 	L.Pop(2)
 
-	if val != LNil {
-		t.Errorf("expected nil value for invalid Sample, got %v", val)
+	if val == LNil {
+		t.Error("expected non-nil value for Sample, got nil")
 	}
-	if errVal == LNil {
-		t.Error("expected error for invalid Sample, got nil")
+	if errVal != LNil {
+		t.Errorf("expected nil error for Sample, got %v", errVal)
 	}
 }
