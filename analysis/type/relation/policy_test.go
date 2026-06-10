@@ -776,9 +776,9 @@ func TestFoldedProductFamilyMembersCollapseEquivalentRecursiveProducts(t *testin
 		}))
 	}
 
-	state := newReturnJoinState()
-	state.recursiveFamilyFold = true
-	got := state.coalesceProductUnionMembers(members)
+	coalescer := newProductCoalescer()
+	coalescer.recursiveFamilyFold = true
+	got := coalescer.coalesceProductUnionMembers(members)
 	if len(got) != 1 {
 		t.Fatalf("folded recursive products = %d members, want 1", len(got))
 	}

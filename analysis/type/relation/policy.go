@@ -78,7 +78,11 @@ type recursiveRewriteKey struct {
 }
 
 type returnJoinState struct {
-	returnSlots         map[returnJoinKey]Type
+	returnSlots map[returnJoinKey]Type
+	product     productCoalescer
+}
+
+type productCoalescer struct {
 	records             map[returnJoinKey]recordJoinResult
 	recursiveRewrites   map[recursiveRewriteKey]Type
 	discriminants       *discriminant.Detector
@@ -90,14 +94,55 @@ func newReturnJoinState() *returnJoinState {
 	return &returnJoinState{}
 }
 
-func (s *returnJoinState) discriminantDetector() *discriminant.Detector {
+func newProductCoalescer() *productCoalescer {
+	return &productCoalescer{}
+}
+
+func (s *returnJoinState) productCoalescer() *productCoalescer {
 	if s == nil {
+		return newProductCoalescer()
+	}
+	return &s.product
+}
+
+func (c *productCoalescer) discriminantDetector() *discriminant.Detector {
+	if c == nil {
 		return discriminant.NewDetector()
 	}
-	if s.discriminants == nil {
-		s.discriminants = discriminant.NewDetector()
+	if c.discriminants == nil {
+		c.discriminants = discriminant.NewDetector()
 	}
-	return s.discriminants
+	return c.discriminants
+}
+
+func (c *productCoalescer) recordJoin(key returnJoinKey) (Type, bool, bool) {
+	if c == nil || c.records == nil {
+		return nil, false, false
+	}
+	cached, ok := c.records[key]
+	return cached.t, cached.ok, ok
+}
+
+func (c *productCoalescer) cacheRecordJoin(key returnJoinKey, t Type, ok bool) {
+	if c.records == nil {
+		c.records = make(map[returnJoinKey]recordJoinResult)
+	}
+	c.records[key] = recordJoinResult{t: t, ok: ok}
+}
+
+func (c *productCoalescer) recursiveRewrite(key recursiveRewriteKey) (Type, bool) {
+	if c == nil || c.recursiveRewrites == nil {
+		return nil, false
+	}
+	cached, ok := c.recursiveRewrites[key]
+	return cached, ok
+}
+
+func (c *productCoalescer) cacheRecursiveRewrite(key recursiveRewriteKey, t Type) {
+	if c.recursiveRewrites == nil {
+		c.recursiveRewrites = make(map[recursiveRewriteKey]Type)
+	}
+	c.recursiveRewrites[key] = t
 }
 
 func (s *returnJoinState) slotJoinOrDefault(slotJoin SlotJoinFunc) SlotJoinFunc {
@@ -111,15 +156,22 @@ func (s *returnJoinState) slotJoinOrDefault(slotJoin SlotJoinFunc) SlotJoinFunc 
 	return state.joinReturnSlot
 }
 
-func (s *returnJoinState) recordPolicy(slotJoin SlotJoinFunc) coalesce.RecordPolicy {
+func (c *productCoalescer) slotJoinOrDefault(slotJoin SlotJoinFunc) SlotJoinFunc {
+	if slotJoin != nil {
+		return slotJoin
+	}
+	return JoinReturnSlot
+}
+
+func (c *productCoalescer) recordPolicy(slotJoin SlotJoinFunc) coalesce.RecordPolicy {
 	return coalesce.RecordPolicy{
-		SlotJoin:      s.slotJoinOrDefault(slotJoin),
+		SlotJoin:      c.slotJoinOrDefault(slotJoin),
 		KeyJoin:       JoinPreferNonSoft,
-		Discriminants: s.discriminantDetector(),
+		Discriminants: c.discriminantDetector(),
 	}
 }
 
-func (s *returnJoinState) joinKey(a, b Type) returnJoinKey {
+func makeReturnJoinKey(a, b Type) returnJoinKey {
 	if a == nil || b == nil {
 		return returnJoinKey{}
 	}
@@ -130,6 +182,14 @@ func (s *returnJoinState) joinKey(a, b Type) returnJoinKey {
 		ak, bk = bk, ak
 	}
 	return returnJoinKey{aHash: ah, bHash: bh, aKind: ak, bKind: bk}
+}
+
+func (s *returnJoinState) joinKey(a, b Type) returnJoinKey {
+	return makeReturnJoinKey(a, b)
+}
+
+func (c *productCoalescer) joinKey(a, b Type) returnJoinKey {
+	return makeReturnJoinKey(a, b)
 }
 
 func returnJoinHash(t Type) uint64 {
@@ -146,6 +206,10 @@ func returnJoinHash(t Type) uint64 {
 }
 
 func (s *returnJoinState) sameReturnJoinInput(a, b Type) bool {
+	return s.productCoalescer().sameJoinInput(a, b)
+}
+
+func (c *productCoalescer) sameJoinInput(a, b Type) bool {
 	if a == b {
 		return true
 	}
@@ -153,7 +217,7 @@ func (s *returnJoinState) sameReturnJoinInput(a, b Type) bool {
 		return false
 	}
 	if ContainsRecursive(a) || ContainsRecursive(b) {
-		if s != nil && s.recursiveFamilyFold {
+		if c != nil && c.recursiveFamilyFold {
 			return false
 		}
 		return sameProductFamily(a, b)
@@ -183,7 +247,7 @@ func (s *returnJoinState) joinReturnSlot(a, b Type) Type {
 	var result Type
 	if preferred, ok := coalesce.PreferArrayOverEmptyRecord(a, b); ok {
 		result = preferred
-	} else if merged, ok := s.joinCompatibleRecordsWithSlotJoin(a, b, s.joinReturnSlot); ok {
+	} else if merged, ok := s.product.joinCompatibleRecordsWithSlotJoin(a, b, s.joinReturnSlot); ok {
 		result = merged
 	} else if (IsAny(a) && b.Kind() == kind.Nil) || (IsAny(b) && a.Kind() == kind.Nil) {
 		result = Any
@@ -192,7 +256,7 @@ func (s *returnJoinState) joinReturnSlot(a, b Type) Type {
 	} else if IsUnknown(a) || IsUnknown(b) {
 		result = Unknown
 	} else {
-		result = s.joinCoalescedUnionWithSlotJoin(a, b, s.joinReturnSlot)
+		result = s.product.joinCoalescedUnionWithSlotJoin(a, b, s.joinReturnSlot)
 	}
 	if s != nil {
 		if s.returnSlots == nil {
@@ -262,7 +326,7 @@ func JoinCompatibleRecords(a, b Type) (Type, bool) {
 // behavior.
 func JoinCompatibleRecordsWithSlotJoin(a, b Type, slotJoin SlotJoinFunc) (Type, bool) {
 	state := newReturnJoinState()
-	return state.joinCompatibleRecordsWithSlotJoin(a, b, state.slotJoinOrDefault(slotJoin))
+	return state.product.joinCompatibleRecordsWithSlotJoin(a, b, state.slotJoinOrDefault(slotJoin))
 }
 
 // JoinClosedCompatibleRecordSet joins a compatible set of closed, non-map
@@ -278,17 +342,13 @@ func JoinClosedCompatibleRecordSet(records []*Record) (Type, bool) {
 // slotJoin preserves JoinReturnSlot behavior.
 func JoinClosedCompatibleRecordSetWithSlotJoin(records []*Record, slotJoin SlotJoinFunc) (Type, bool) {
 	state := newReturnJoinState()
-	return state.joinClosedCompatibleRecordSetWithSlotJoin(records, state.slotJoinOrDefault(slotJoin))
+	return state.product.joinClosedCompatibleRecordSetWithSlotJoin(records, state.slotJoinOrDefault(slotJoin))
 }
 
-func (s *returnJoinState) joinClosedCompatibleRecordSet(records []*Record) (Type, bool) {
-	return s.joinClosedCompatibleRecordSetWithSlotJoin(records, s.slotJoinOrDefault(nil))
-}
-
-func (s *returnJoinState) joinClosedCompatibleRecordSetWithSlotJoin(records []*Record, slotJoin SlotJoinFunc) (Type, bool) {
-	state := s
+func (c *productCoalescer) joinClosedCompatibleRecordSetWithSlotJoin(records []*Record, slotJoin SlotJoinFunc) (Type, bool) {
+	state := c
 	if state == nil {
-		state = newReturnJoinState()
+		state = newProductCoalescer()
 	}
 	return coalesce.JoinClosedCompatibleRecordSet(records, state.recordPolicy(slotJoin))
 }
@@ -305,7 +365,7 @@ func CoalesceCompatibleRecords(types []Type) []Type {
 // preserves JoinReturnSlot behavior.
 func CoalesceCompatibleRecordsWithSlotJoin(types []Type, slotJoin SlotJoinFunc) []Type {
 	state := newReturnJoinState()
-	return state.coalesceCompatibleRecordTypesWithSlotJoin(types, state.slotJoinOrDefault(slotJoin))
+	return state.product.coalesceCompatibleRecordTypesWithSlotJoin(types, state.slotJoinOrDefault(slotJoin))
 }
 
 // CoalesceCompatibleRecordAlternatives canonicalizes compatible record members
@@ -319,7 +379,7 @@ func CoalesceCompatibleRecordAlternatives(t Type) Type {
 // slots. A nil slotJoin preserves JoinReturnSlot behavior.
 func CoalesceCompatibleRecordAlternativesWithSlotJoin(t Type, slotJoin SlotJoinFunc) Type {
 	state := newReturnJoinState()
-	return state.coalesceCompatibleRecordAlternativesWithSlotJoin(t, state.slotJoinOrDefault(slotJoin))
+	return state.product.coalesceCompatibleRecordAlternativesWithSlotJoin(t, state.slotJoinOrDefault(slotJoin))
 }
 
 // CoalesceProductUnionMembers applies the canonical product-level union
@@ -336,20 +396,20 @@ func CoalesceProductUnionMembers(types []Type) []Type {
 // preserves JoinReturnSlot behavior.
 func CoalesceProductUnionMembersWithSlotJoin(types []Type, slotJoin SlotJoinFunc) []Type {
 	state := newReturnJoinState()
-	return state.coalesceProductUnionMembersWithSlotJoin(types, state.slotJoinOrDefault(slotJoin))
+	return state.product.coalesceProductUnionMembersWithSlotJoin(types, state.slotJoinOrDefault(slotJoin))
 }
 
-func (s *returnJoinState) coalesceProductUnionMembers(types []Type) []Type {
-	return s.coalesceProductUnionMembersWithSlotJoin(types, s.slotJoinOrDefault(nil))
+func (c *productCoalescer) coalesceProductUnionMembers(types []Type) []Type {
+	return c.coalesceProductUnionMembersWithSlotJoin(types, c.slotJoinOrDefault(nil))
 }
 
-func (s *returnJoinState) coalesceProductUnionMembersWithSlotJoin(types []Type, slotJoin SlotJoinFunc) []Type {
+func (c *productCoalescer) coalesceProductUnionMembersWithSlotJoin(types []Type, slotJoin SlotJoinFunc) []Type {
 	if len(types) < 2 {
 		return types
 	}
-	state := s
+	state := c
 	if state == nil {
-		state = newReturnJoinState()
+		state = newProductCoalescer()
 	}
 	slotJoin = state.slotJoinOrDefault(slotJoin)
 	out := types
@@ -362,7 +422,7 @@ func (s *returnJoinState) coalesceProductUnionMembersWithSlotJoin(types []Type, 
 	return out
 }
 
-func (s *returnJoinState) coalesceFoldedProductFamilyMembers(types []Type) []Type {
+func (c *productCoalescer) coalesceFoldedProductFamilyMembers(types []Type) []Type {
 	if len(types) < 2 {
 		return types
 	}
@@ -416,28 +476,28 @@ func (s *returnJoinState) coalesceFoldedProductFamilyMembers(types []Type) []Typ
 	return out
 }
 
-func (s *returnJoinState) sameProductFamily(a, b Type) bool {
-	seen := s.precisionState()
+func (c *productCoalescer) sameProductFamily(a, b Type) bool {
+	seen := c.precisionState()
 	return sameProductFamilyWithPrecisionAndCache(a, b, func(candidate, baseline Type) (bool, bool) {
 		return comparePrecision(candidate, baseline, 0, seen)
 	}, productFamilyHashCache(seen))
 }
 
-func (s *returnJoinState) productFamilyHash(t Type) uint64 {
-	if s == nil {
+func (c *productCoalescer) productFamilyHash(t Type) uint64 {
+	if c == nil {
 		return productFamilyHash(t)
 	}
-	return productFamilyHashWithCache(t, productFamilyHashCache(s.precisionState()))
+	return productFamilyHashWithCache(t, productFamilyHashCache(c.precisionState()))
 }
 
-func (s *returnJoinState) precisionState() *precisionSeen {
-	if s == nil {
+func (c *productCoalescer) precisionState() *precisionSeen {
+	if c == nil {
 		return &precisionSeen{}
 	}
-	if s.precision == nil {
-		s.precision = &precisionSeen{}
+	if c.precision == nil {
+		c.precision = &precisionSeen{}
 	}
-	return s.precision
+	return c.precision
 }
 
 // CoalesceProductUnion canonicalizes union-bearing values with the
@@ -451,17 +511,13 @@ func CoalesceProductUnion(t Type) Type {
 // JoinReturnSlot behavior.
 func CoalesceProductUnionWithSlotJoin(t Type, slotJoin SlotJoinFunc) Type {
 	state := newReturnJoinState()
-	return state.coalesceProductUnionWithSlotJoin(t, state.slotJoinOrDefault(slotJoin))
+	return state.product.coalesceProductUnionWithSlotJoin(t, state.slotJoinOrDefault(slotJoin))
 }
 
-func (s *returnJoinState) coalesceProductUnion(t Type) Type {
-	return s.coalesceProductUnionWithSlotJoin(t, s.slotJoinOrDefault(nil))
-}
-
-func (s *returnJoinState) coalesceProductUnionWithSlotJoin(t Type, slotJoin SlotJoinFunc) Type {
-	state := s
+func (c *productCoalescer) coalesceProductUnionWithSlotJoin(t Type, slotJoin SlotJoinFunc) Type {
+	state := c
 	if state == nil {
-		state = newReturnJoinState()
+		state = newProductCoalescer()
 	}
 	slotJoin = state.slotJoinOrDefault(slotJoin)
 	switch v := UnwrapAnnotated(t).(type) {
@@ -499,20 +555,16 @@ func CoalesceRecursiveRecordFamilies(types []Type) []Type {
 // JoinReturnSlot behavior.
 func CoalesceRecursiveRecordFamiliesWithSlotJoin(types []Type, slotJoin SlotJoinFunc) []Type {
 	state := newReturnJoinState()
-	return state.coalesceRecursiveRecordFamiliesWithSlotJoin(types, state.slotJoinOrDefault(slotJoin))
+	return state.product.coalesceRecursiveRecordFamiliesWithSlotJoin(types, state.slotJoinOrDefault(slotJoin))
 }
 
-func (s *returnJoinState) coalesceRecursiveRecordFamilies(types []Type) []Type {
-	return s.coalesceRecursiveRecordFamiliesWithSlotJoin(types, s.slotJoinOrDefault(nil))
-}
-
-func (s *returnJoinState) coalesceRecursiveRecordFamiliesWithSlotJoin(types []Type, slotJoin SlotJoinFunc) []Type {
+func (c *productCoalescer) coalesceRecursiveRecordFamiliesWithSlotJoin(types []Type, slotJoin SlotJoinFunc) []Type {
 	if len(types) < 2 {
 		return types
 	}
-	state := s
+	state := c
 	if state == nil {
-		state = newReturnJoinState()
+		state = newProductCoalescer()
 	}
 	slotJoin = state.slotJoinOrDefault(slotJoin)
 	types = state.coalesceFoldedProductFamilyMembers(types)
@@ -586,7 +638,7 @@ func (s *returnJoinState) coalesceRecursiveRecordFamiliesWithSlotJoin(types []Ty
 	return out
 }
 
-func (s *returnJoinState) recursiveRecordCoalesceKey(rec *Recursive) uint64 {
+func (c *productCoalescer) recursiveRecordCoalesceKey(rec *Recursive) uint64 {
 	if rec == nil {
 		return 0
 	}
@@ -600,7 +652,7 @@ func (s *returnJoinState) recursiveRecordCoalesceKey(rec *Recursive) uint64 {
 	} else {
 		h = hash.HashCombine(h, 0)
 	}
-	tags := s.discriminantDetector().RequiredTags(body)
+	tags := c.discriminantDetector().RequiredTags(body)
 	if len(tags) == 0 {
 		return h
 	}
@@ -665,14 +717,14 @@ func recursiveFamilyAnchorTypesCompatible(a, b Type) bool {
 	return TypeEquals(a, b)
 }
 
-func (s *returnJoinState) joinRecursiveFamilyBodies(a, b Type) (Type, bool) {
-	return s.joinRecursiveFamilyBodiesWithSlotJoin(a, b, s.slotJoinOrDefault(nil))
+func (c *productCoalescer) joinRecursiveFamilyBodies(a, b Type) (Type, bool) {
+	return c.joinRecursiveFamilyBodiesWithSlotJoin(a, b, c.slotJoinOrDefault(nil))
 }
 
-func (s *returnJoinState) joinRecursiveFamilyBodiesWithSlotJoin(a, b Type, slotJoin SlotJoinFunc) (Type, bool) {
-	state := s
+func (c *productCoalescer) joinRecursiveFamilyBodiesWithSlotJoin(a, b Type, slotJoin SlotJoinFunc) (Type, bool) {
+	state := c
 	if state == nil {
-		state = newReturnJoinState()
+		state = newProductCoalescer()
 	}
 	slotJoin = state.slotJoinOrDefault(slotJoin)
 	previous := state.recursiveFamilyFold
@@ -695,19 +747,19 @@ func unaliasRecursive(t Type) *Recursive {
 	return rec
 }
 
-func (s *returnJoinState) rewriteRecursiveFamilySelf(t Type, from, to *Recursive) Type {
+func (c *productCoalescer) rewriteRecursiveFamilySelf(t Type, from, to *Recursive) Type {
 	if from == nil || to == nil {
 		return t
 	}
 	if from == to {
 		return t
 	}
-	if s == nil {
-		s = newReturnJoinState()
+	if c == nil {
+		c = newProductCoalescer()
 	}
 	key, ok := recursiveRewriteCacheKey(t, from, to)
-	if ok && s.recursiveRewrites != nil {
-		if cached, found := s.recursiveRewrites[key]; found {
+	if ok {
+		if cached, found := c.recursiveRewrite(key); found {
 			return cached
 		}
 	}
@@ -718,10 +770,7 @@ func (s *returnJoinState) rewriteRecursiveFamilySelf(t Type, from, to *Recursive
 		return nil, false
 	})
 	if ok {
-		if s.recursiveRewrites == nil {
-			s.recursiveRewrites = make(map[recursiveRewriteKey]Type)
-		}
-		s.recursiveRewrites[key] = out
+		c.cacheRecursiveRewrite(key, out)
 	}
 	return out
 }
@@ -747,14 +796,10 @@ func recursiveRewriteCacheKey(t Type, from, to *Recursive) (recursiveRewriteKey,
 	return key, true
 }
 
-func (s *returnJoinState) coalesceCompatibleRecordAlternatives(t Type) Type {
-	return s.coalesceCompatibleRecordAlternativesWithSlotJoin(t, s.slotJoinOrDefault(nil))
-}
-
-func (s *returnJoinState) coalesceCompatibleRecordAlternativesWithSlotJoin(t Type, slotJoin SlotJoinFunc) Type {
-	state := s
+func (c *productCoalescer) coalesceCompatibleRecordAlternativesWithSlotJoin(t Type, slotJoin SlotJoinFunc) Type {
+	state := c
 	if state == nil {
-		state = newReturnJoinState()
+		state = newProductCoalescer()
 	}
 	slotJoin = state.slotJoinOrDefault(slotJoin)
 	switch v := UnwrapAnnotated(t).(type) {
@@ -780,14 +825,10 @@ func (s *returnJoinState) coalesceCompatibleRecordAlternativesWithSlotJoin(t Typ
 	}
 }
 
-func (s *returnJoinState) joinCoalescedUnion(a, b Type) Type {
-	return s.joinCoalescedUnionWithSlotJoin(a, b, s.slotJoinOrDefault(nil))
-}
-
-func (s *returnJoinState) joinCoalescedUnionWithSlotJoin(a, b Type, slotJoin SlotJoinFunc) Type {
-	state := s
+func (c *productCoalescer) joinCoalescedUnionWithSlotJoin(a, b Type, slotJoin SlotJoinFunc) Type {
+	state := c
 	if state == nil {
-		state = newReturnJoinState()
+		state = newProductCoalescer()
 	}
 	slotJoin = state.slotJoinOrDefault(slotJoin)
 	members := make([]Type, 0, 4)
@@ -820,17 +861,13 @@ func appendUnionMembers(out []Type, t Type) []Type {
 	return append(out, t)
 }
 
-func (s *returnJoinState) coalesceCompatibleRecordTypes(types []Type) []Type {
-	return s.coalesceCompatibleRecordTypesWithSlotJoin(types, s.slotJoinOrDefault(nil))
-}
-
-func (s *returnJoinState) coalesceCompatibleRecordTypesWithSlotJoin(types []Type, slotJoin SlotJoinFunc) []Type {
+func (c *productCoalescer) coalesceCompatibleRecordTypesWithSlotJoin(types []Type, slotJoin SlotJoinFunc) []Type {
 	if len(types) < 2 {
 		return types
 	}
-	state := s
+	state := c
 	if state == nil {
-		state = newReturnJoinState()
+		state = newProductCoalescer()
 	}
 	slotJoin = state.slotJoinOrDefault(slotJoin)
 	if fast, ok, complete := state.coalesceClosedCompatibleRecordsWithSlotJoin(types, slotJoin); ok {
@@ -851,14 +888,10 @@ type compatibleRecordGroup struct {
 	hasMap  bool
 }
 
-func (s *returnJoinState) coalesceCompatibleRecordGroups(types []Type) ([]Type, bool) {
-	return s.coalesceCompatibleRecordGroupsWithSlotJoin(types, s.slotJoinOrDefault(nil))
-}
-
-func (s *returnJoinState) coalesceCompatibleRecordGroupsWithSlotJoin(types []Type, slotJoin SlotJoinFunc) ([]Type, bool) {
-	state := s
+func (c *productCoalescer) coalesceCompatibleRecordGroupsWithSlotJoin(types []Type, slotJoin SlotJoinFunc) ([]Type, bool) {
+	state := c
 	if state == nil {
-		state = newReturnJoinState()
+		state = newProductCoalescer()
 	}
 	slotJoin = state.slotJoinOrDefault(slotJoin)
 	groups := make([]*compatibleRecordGroup, 0, len(types))
@@ -917,17 +950,17 @@ func (s *returnJoinState) coalesceCompatibleRecordGroupsWithSlotJoin(types []Typ
 	return out, true
 }
 
-func (s *returnJoinState) joinCompatibleRecordSet(records []*Record) (Type, bool) {
-	return s.joinCompatibleRecordSetWithSlotJoin(records, s.slotJoinOrDefault(nil))
+func (c *productCoalescer) joinCompatibleRecordSet(records []*Record) (Type, bool) {
+	return c.joinCompatibleRecordSetWithSlotJoin(records, c.slotJoinOrDefault(nil))
 }
 
-func (s *returnJoinState) joinCompatibleRecordSetWithSlotJoin(records []*Record, slotJoin SlotJoinFunc) (Type, bool) {
+func (c *productCoalescer) joinCompatibleRecordSetWithSlotJoin(records []*Record, slotJoin SlotJoinFunc) (Type, bool) {
 	if len(records) == 0 {
 		return nil, false
 	}
-	state := s
+	state := c
 	if state == nil {
-		state = newReturnJoinState()
+		state = newProductCoalescer()
 	}
 	slotJoin = state.slotJoinOrDefault(slotJoin)
 	current := Type(records[0])
@@ -941,17 +974,13 @@ func (s *returnJoinState) joinCompatibleRecordSetWithSlotJoin(records []*Record,
 	return current, true
 }
 
-func (s *returnJoinState) coalesceCompatibleRecordsPairwise(types []Type) []Type {
-	return s.coalesceCompatibleRecordsPairwiseWithSlotJoin(types, s.slotJoinOrDefault(nil))
-}
-
-func (s *returnJoinState) coalesceCompatibleRecordsPairwiseWithSlotJoin(types []Type, slotJoin SlotJoinFunc) []Type {
+func (c *productCoalescer) coalesceCompatibleRecordsPairwiseWithSlotJoin(types []Type, slotJoin SlotJoinFunc) []Type {
 	if len(types) < 2 {
 		return types
 	}
-	state := s
+	state := c
 	if state == nil {
-		state = newReturnJoinState()
+		state = newProductCoalescer()
 	}
 	slotJoin = state.slotJoinOrDefault(slotJoin)
 	used := make([]bool, len(types))
@@ -990,26 +1019,18 @@ func (s *returnJoinState) coalesceCompatibleRecordsPairwiseWithSlotJoin(types []
 	return out
 }
 
-func (s *returnJoinState) coalesceClosedCompatibleRecords(types []Type) ([]Type, bool, bool) {
-	return s.coalesceClosedCompatibleRecordsWithSlotJoin(types, s.slotJoinOrDefault(nil))
-}
-
-func (s *returnJoinState) coalesceClosedCompatibleRecordsWithSlotJoin(types []Type, slotJoin SlotJoinFunc) ([]Type, bool, bool) {
-	state := s
+func (c *productCoalescer) coalesceClosedCompatibleRecordsWithSlotJoin(types []Type, slotJoin SlotJoinFunc) ([]Type, bool, bool) {
+	state := c
 	if state == nil {
-		state = newReturnJoinState()
+		state = newProductCoalescer()
 	}
 	return coalesce.CoalesceClosedCompatibleRecords(types, state.recordPolicy(slotJoin))
 }
 
-func (s *returnJoinState) joinCompatibleRecords(a, b Type) (Type, bool) {
-	return s.joinCompatibleRecordsWithSlotJoin(a, b, s.slotJoinOrDefault(nil))
-}
-
-func (s *returnJoinState) joinCompatibleRecordsWithSlotJoin(a, b Type, slotJoin SlotJoinFunc) (Type, bool) {
-	state := s
+func (c *productCoalescer) joinCompatibleRecordsWithSlotJoin(a, b Type, slotJoin SlotJoinFunc) (Type, bool) {
+	state := c
 	if state == nil {
-		state = newReturnJoinState()
+		state = newProductCoalescer()
 	}
 	slotJoin = state.slotJoinOrDefault(slotJoin)
 	ar := unaliasRecord(a)
@@ -1017,14 +1038,12 @@ func (s *returnJoinState) joinCompatibleRecordsWithSlotJoin(a, b Type, slotJoin 
 	if ar == nil || br == nil {
 		return nil, false
 	}
-	if state.sameReturnJoinInput(ar, br) {
+	if state.sameJoinInput(ar, br) {
 		return ar, true
 	}
 	key := state.joinKey(ar, br)
-	if state.records != nil {
-		if cached, ok := state.records[key]; ok {
-			return cached.t, cached.ok
-		}
+	if cached, cachedOK, found := state.recordJoin(key); found {
+		return cached, cachedOK
 	}
 
 	// Keep discriminated unions intact when required literal tags conflict.
@@ -1092,15 +1111,8 @@ func (s *returnJoinState) joinCompatibleRecordsWithSlotJoin(a, b Type, slotJoin 
 	return merged, true
 }
 
-func (s *returnJoinState) cacheRecordJoin(key returnJoinKey, t Type, ok bool) {
-	if s.records == nil {
-		s.records = make(map[returnJoinKey]recordJoinResult)
-	}
-	s.records[key] = recordJoinResult{t: t, ok: ok}
-}
-
-func (s *returnJoinState) mergeRecordField(name string, fa Field, oka bool, fb Field, okb bool, ar, br *Record, slotJoin SlotJoinFunc) Field {
-	slotJoin = s.slotJoinOrDefault(slotJoin)
+func (c *productCoalescer) mergeRecordField(name string, fa Field, oka bool, fb Field, okb bool, ar, br *Record, slotJoin SlotJoinFunc) Field {
+	slotJoin = c.slotJoinOrDefault(slotJoin)
 	fieldType := Type(nil)
 	optional := true
 	readonly := false
@@ -1109,7 +1121,7 @@ func (s *returnJoinState) mergeRecordField(name string, fa Field, oka bool, fb F
 		// Keep field-level merge on the caller's slot policy so
 		// empty-collection paths and nil/unknown interactions stay consistent
 		// with the surrounding join.
-		fieldType = coalesce.JoinRecordFieldSlot(fa.Type, fb.Type, s.recordPolicy(slotJoin))
+		fieldType = coalesce.JoinRecordFieldSlot(fa.Type, fb.Type, c.recordPolicy(slotJoin))
 		optional = fa.Optional || fb.Optional
 		readonly = fa.Readonly && fb.Readonly
 	case oka:
@@ -1138,30 +1150,30 @@ func (s *returnJoinState) mergeRecordField(name string, fa Field, oka bool, fb F
 	return Field{Name: name, Type: fieldType, Optional: optional, Readonly: readonly}
 }
 
-func (s *returnJoinState) mergeRecordStaticMembers(ar, br *Record, slotJoin SlotJoinFunc) []StaticMember {
-	slotJoin = s.slotJoinOrDefault(slotJoin)
+func (c *productCoalescer) mergeRecordStaticMembers(ar, br *Record, slotJoin SlotJoinFunc) []StaticMember {
+	slotJoin = c.slotJoinOrDefault(slotJoin)
 	staticMembers := make([]StaticMember, 0, len(ar.StaticMembers)+len(br.StaticMembers))
 	i, j := 0, 0
 	for i < len(ar.StaticMembers) || j < len(br.StaticMembers) {
 		switch {
 		case j >= len(br.StaticMembers):
-			staticMembers = append(staticMembers, s.mergeRecordStaticMember(ar.StaticMembers[i], true, StaticMember{}, false, ar, br, slotJoin))
+			staticMembers = append(staticMembers, c.mergeRecordStaticMember(ar.StaticMembers[i], true, StaticMember{}, false, ar, br, slotJoin))
 			i++
 		case i >= len(ar.StaticMembers):
-			staticMembers = append(staticMembers, s.mergeRecordStaticMember(StaticMember{}, false, br.StaticMembers[j], true, ar, br, slotJoin))
+			staticMembers = append(staticMembers, c.mergeRecordStaticMember(StaticMember{}, false, br.StaticMembers[j], true, ar, br, slotJoin))
 			j++
 		default:
 			cmp := CompareStaticMembers(ar.StaticMembers[i], br.StaticMembers[j])
 			switch {
 			case cmp == 0:
-				staticMembers = append(staticMembers, s.mergeRecordStaticMember(ar.StaticMembers[i], true, br.StaticMembers[j], true, ar, br, slotJoin))
+				staticMembers = append(staticMembers, c.mergeRecordStaticMember(ar.StaticMembers[i], true, br.StaticMembers[j], true, ar, br, slotJoin))
 				i++
 				j++
 			case cmp < 0:
-				staticMembers = append(staticMembers, s.mergeRecordStaticMember(ar.StaticMembers[i], true, StaticMember{}, false, ar, br, slotJoin))
+				staticMembers = append(staticMembers, c.mergeRecordStaticMember(ar.StaticMembers[i], true, StaticMember{}, false, ar, br, slotJoin))
 				i++
 			default:
-				staticMembers = append(staticMembers, s.mergeRecordStaticMember(StaticMember{}, false, br.StaticMembers[j], true, ar, br, slotJoin))
+				staticMembers = append(staticMembers, c.mergeRecordStaticMember(StaticMember{}, false, br.StaticMembers[j], true, ar, br, slotJoin))
 				j++
 			}
 		}
@@ -1169,15 +1181,15 @@ func (s *returnJoinState) mergeRecordStaticMembers(ar, br *Record, slotJoin Slot
 	return staticMembers
 }
 
-func (s *returnJoinState) mergeRecordStaticMember(ma StaticMember, oka bool, mb StaticMember, okb bool, ar, br *Record, slotJoin SlotJoinFunc) StaticMember {
-	slotJoin = s.slotJoinOrDefault(slotJoin)
+func (c *productCoalescer) mergeRecordStaticMember(ma StaticMember, oka bool, mb StaticMember, okb bool, ar, br *Record, slotJoin SlotJoinFunc) StaticMember {
+	slotJoin = c.slotJoinOrDefault(slotJoin)
 	member := ma
 	memberType := Type(nil)
 	optional := true
 	readonly := false
 	switch {
 	case oka && okb:
-		memberType = coalesce.JoinRecordFieldSlot(ma.Type, mb.Type, s.recordPolicy(slotJoin))
+		memberType = coalesce.JoinRecordFieldSlot(ma.Type, mb.Type, c.recordPolicy(slotJoin))
 		optional = ma.Optional || mb.Optional
 		readonly = ma.Readonly && mb.Readonly
 	case oka:
@@ -1217,15 +1229,15 @@ func (s *returnJoinState) mergeRecordStaticMember(ma StaticMember, oka bool, mb 
 // many-member unions do not explode into giant literal unions on read. The caller
 // owns the discriminant decision because it alone holds the union context.
 func JoinUnionFieldSlot(a, b Type, preserveLiteral bool) Type {
-	s := newReturnJoinState()
-	slotJoin := s.slotJoinOrDefault(nil)
+	coalescer := newProductCoalescer()
+	slotJoin := coalescer.slotJoinOrDefault(nil)
 	if preserveLiteral {
-		if joined, ok := coalesce.JoinFieldContainerSlot(a, b, s.recordPolicy(slotJoin)); ok {
+		if joined, ok := coalesce.JoinFieldContainerSlot(a, b, coalescer.recordPolicy(slotJoin)); ok {
 			return joined
 		}
 		return slotJoin(a, b)
 	}
-	return coalesce.JoinRecordFieldSlot(a, b, s.recordPolicy(slotJoin))
+	return coalesce.JoinRecordFieldSlot(a, b, coalescer.recordPolicy(slotJoin))
 }
 
 func normalizeMergedRecordField(t Type) (Type, bool) {

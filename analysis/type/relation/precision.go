@@ -255,14 +255,14 @@ func normalizePrecisionUnion(t Type, seen *precisionSeen) (normalized Type, chan
 			seen.normalizedUnions[t] = precisionUnionNormalization{typ: normalized, changed: changed}
 		}()
 	}
-	state := newReturnJoinState()
-	state.recursiveFamilyFold = true
-	slotJoin := state.slotJoinOrDefault(nil)
-	members := state.coalesceProductUnionMembersWithSlotJoin(u.Members, slotJoin)
+	coalescer := newProductCoalescer()
+	coalescer.recursiveFamilyFold = true
+	slotJoin := newReturnJoinState().slotJoinOrDefault(nil)
+	members := coalescer.coalesceProductUnionMembersWithSlotJoin(u.Members, slotJoin)
 	if !sameTypeSlice(u.Members, members) {
 		return NormalizeUnionForJoin(members...), true
 	}
-	candidate := state.coalesceCompatibleRecordAlternativesWithSlotJoin(u, slotJoin)
+	candidate := coalescer.coalesceCompatibleRecordAlternativesWithSlotJoin(u, slotJoin)
 	if candidate == nil || candidate == t {
 		return nil, false
 	}
@@ -270,9 +270,9 @@ func normalizePrecisionUnion(t Type, seen *precisionSeen) (normalized Type, chan
 }
 
 func coalescePrecisionUnionMembers(types []Type) []Type {
-	state := newReturnJoinState()
-	state.recursiveFamilyFold = true
-	return state.coalesceProductUnionMembersWithSlotJoin(types, state.slotJoinOrDefault(nil))
+	coalescer := newProductCoalescer()
+	coalescer.recursiveFamilyFold = true
+	return coalescer.coalesceProductUnionMembersWithSlotJoin(types, newReturnJoinState().slotJoinOrDefault(nil))
 }
 
 type precisionSeen struct {

@@ -89,11 +89,12 @@ func CoalesceJoinProducts(types []Type, joinTypes coalesce.TypeSetJoinFunc) []Ty
 func CoalesceJoinProductsWithSlotJoin(types []Type, joinTypes coalesce.TypeSetJoinFunc, slotJoin SlotJoinFunc) []Type {
 	state := newReturnJoinState()
 	slotJoin = state.slotJoinOrDefault(slotJoin)
+	products := state.productCoalescer()
 	types = CoalesceEmptyRecordWithMap(types)
 	types = CoalesceEmptyRecordWithArray(types)
 	types = CoalesceMaps(types, joinTypes)
-	types = state.coalesceRecursiveRecordFamiliesWithSlotJoin(types, slotJoin)
-	types = state.coalesceCompatibleRecordTypesWithSlotJoin(types, slotJoin)
+	types = products.coalesceRecursiveRecordFamiliesWithSlotJoin(types, slotJoin)
+	types = products.coalesceCompatibleRecordTypesWithSlotJoin(types, slotJoin)
 	types = CoalesceRecordOpenness(types)
 	types = CoalesceMaps(types, joinTypes)
 	return types
