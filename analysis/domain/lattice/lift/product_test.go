@@ -1,4 +1,4 @@
-package product
+package lift
 
 import (
 	"fmt"
@@ -32,7 +32,7 @@ func TestProduct2_Laws(t *testing.T) {
 		t.Fatalf("Product2 of two meet-bearing lattices must provide Meet")
 	}
 	suite := latticelaws.LawSuite[Pair[sign, sign]]{
-		Name:   "product.Product2(sign,sign)",
+		Name:   "lift.Product2(sign,sign)",
 		Domain: d,
 		Sample: product2Sample(),
 		Format: formatPair2,
@@ -59,7 +59,7 @@ func TestProduct2_MeetNilPropagation(t *testing.T) {
 		t.Fatalf("Product2(forward, forward).Meet should be nil")
 	}
 	suite := latticelaws.LawSuite[Pair[sign, sign]]{
-		Name:   "product.Product2(forward,forward)",
+		Name:   "lift.Product2(forward,forward)",
 		Domain: d,
 		Sample: product2Sample(),
 		Format: formatPair2,
@@ -88,7 +88,7 @@ func product3Sample() []Pair[sign, Pair[sign, sign]] {
 func TestProduct3_Laws(t *testing.T) {
 	d := Product3(signLattice(), signLattice(), signLattice())
 	suite := latticelaws.LawSuite[Pair[sign, Pair[sign, sign]]]{
-		Name:   "product.Product3(sign,sign,sign)",
+		Name:   "lift.Product3(sign,sign,sign)",
 		Domain: d,
 		Sample: product3Sample(),
 		Format: func(p Pair[sign, Pair[sign, sign]]) string {

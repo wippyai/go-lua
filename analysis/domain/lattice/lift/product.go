@@ -1,5 +1,5 @@
-// Package product builds lattice combinators over the lattice.Lattice
-// contract: a product-of-lattices and a pointwise map lattice.
+// Package lift builds lattice combinators over the lattice.Lattice contract:
+// a product-of-lattices and a pointwise map lattice.
 //
 // These combinators build larger abstract states from smaller domains. A
 // program-point state can be a product of independent component lattices, while
@@ -19,7 +19,7 @@
 // Reference: Patrick Cousot & Radhia Cousot, "Abstract interpretation: a
 // unified lattice model for static analysis of programs by construction or
 // approximation of fixpoints", POPL 1977 — §6 on Cartesian (reduced) products.
-package product
+package lift
 
 import "github.com/wippyai/go-lua/analysis/domain/lattice"
 

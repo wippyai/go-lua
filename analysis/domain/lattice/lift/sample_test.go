@@ -1,4 +1,4 @@
-package product
+package lift
 
 import "github.com/wippyai/go-lua/analysis/domain/lattice"
 

@@ -1,4 +1,4 @@
-package product
+package lift
 
 import (
 	"reflect"
@@ -6,7 +6,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/lattice"
 )
 
-// MapLattice lifts an element lattice pointwise over a key universe.
+// Map lifts an element lattice pointwise over a key universe.
 //
 // A map cell m represents the total function K -> V defined by
 //
@@ -29,7 +29,7 @@ import (
 // TOP. The greatest element is the function k -> elem.Top() for every k. Over
 // an infinite key universe with a non-trivial element lattice that is not a
 // finite map value, so it is not representable in band. To honor the Lattice
-// contract (Top must be non-nil and x ⊑ Top for all x), MapLattice uses a
+// contract (Top must be non-nil and x ⊑ Top for all x), Map uses a
 // distinguished sentinel map value for Top, recognized by reference identity.
 // Every operation special-cases the sentinel: it is the maximum of the order,
 // it is absorbing for Join/Widen, it is the identity for Meet, and it is Equal
@@ -37,7 +37,7 @@ import (
 // sentinel; it exists solely so the lattice has a greatest element. (Map
 // states arising in the flow engine are always finite, key-explicit maps;
 // the sentinel is never produced by Join/Widen of two finite maps.)
-func MapLattice[K comparable, V any](elem lattice.Lattice[V]) lattice.Lattice[map[K]V] {
+func Map[K comparable, V any](elem lattice.Lattice[V]) lattice.Lattice[map[K]V] {
 	// topSentinel is a unique map value denoting k -> elem.Top() for all k.
 	// It is recognized by reference identity (its backing pointer), never by
 	// contents, so it can never collide with a legitimate finite state.

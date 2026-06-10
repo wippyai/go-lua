@@ -1,4 +1,4 @@
-package product
+package lift
 
 import (
 	"fmt"
@@ -51,17 +51,17 @@ func formatMap(m map[string]sign) string {
 	return out + "}"
 }
 
-// TestMapLattice_Laws drives the full law suite over map[string]sign. The
+// TestMap_Laws drives the full law suite over map[string]sign. The
 // element lattice provides a Meet, so the map lattice's Meet is present and
 // the meet-side laws run. The sample includes the Top sentinel and an
 // explicit-bottom cell to exercise the canonicalization.
-func TestMapLattice_Laws(t *testing.T) {
-	d := MapLattice[string, sign](signLattice())
+func TestMap_Laws(t *testing.T) {
+	d := Map[string, sign](signLattice())
 	if d.Meet == nil {
-		t.Fatalf("MapLattice over a meet-bearing element must provide Meet")
+		t.Fatalf("Map over a meet-bearing element must provide Meet")
 	}
 	suite := latticelaws.LawSuite[map[string]sign]{
-		Name:   "product.MapLattice(string,sign)",
+		Name:   "lift.Map(string,sign)",
 		Domain: d,
 		Sample: mapSample(d),
 		Format: formatMap,
@@ -69,18 +69,18 @@ func TestMapLattice_Laws(t *testing.T) {
 	suite.Run(t)
 }
 
-// TestMapLattice_MeetNilPropagation pins that a forward-only element lattice
+// TestMap_MeetNilPropagation pins that a forward-only element lattice
 // (Meet == nil) makes the map lattice forward-only, and the law suite still
 // runs (skipping meet-side laws).
-func TestMapLattice_MeetNilPropagation(t *testing.T) {
+func TestMap_MeetNilPropagation(t *testing.T) {
 	forward := signLattice()
 	forward.Meet = nil
-	d := MapLattice[string, sign](forward)
+	d := Map[string, sign](forward)
 	if d.Meet != nil {
-		t.Fatalf("MapLattice over a forward-only element must have nil Meet")
+		t.Fatalf("Map over a forward-only element must have nil Meet")
 	}
 	suite := latticelaws.LawSuite[map[string]sign]{
-		Name:   "product.MapLattice(forward)",
+		Name:   "lift.Map(forward)",
 		Domain: d,
 		Sample: mapSample(d),
 		Format: formatMap,
@@ -88,12 +88,12 @@ func TestMapLattice_MeetNilPropagation(t *testing.T) {
 	suite.Run(t)
 }
 
-// TestMapLattice_AbsentKeyIsBottom pins the central semantic invariant: an
+// TestMap_AbsentKeyIsBottom pins the central semantic invariant: an
 // absent key denotes elem.Bottom(), so a map with an explicit bottom entry is
 // Equal to the same map without that key, and Join/Widen drop bottom-valued
 // keys (canonicalization).
-func TestMapLattice_AbsentKeyIsBottom(t *testing.T) {
-	d := MapLattice[string, sign](signLattice())
+func TestMap_AbsentKeyIsBottom(t *testing.T) {
+	d := Map[string, sign](signLattice())
 
 	withExplicit := map[string]sign{"x": sNeg, "y": sBottom}
 	withoutKey := map[string]sign{"x": sNeg}
@@ -124,8 +124,8 @@ func TestMapLattice_AbsentKeyIsBottom(t *testing.T) {
 	}
 }
 
-func TestMapLattice_JoinBottomNormalizesCanonicalMapWithoutCopy(t *testing.T) {
-	d := MapLattice[string, sign](signLattice())
+func TestMap_JoinBottomNormalizesCanonicalMapWithoutCopy(t *testing.T) {
+	d := Map[string, sign](signLattice())
 	canonical := map[string]sign{"x": sNeg, "y": sPos}
 
 	got := d.Join(canonical, d.Bottom())
@@ -146,8 +146,8 @@ func TestMapLattice_JoinBottomNormalizesCanonicalMapWithoutCopy(t *testing.T) {
 	}
 }
 
-func TestMapLattice_JoinSubsumedMapWithoutCopy(t *testing.T) {
-	d := MapLattice[string, sign](signLattice())
+func TestMap_JoinSubsumedMapWithoutCopy(t *testing.T) {
+	d := Map[string, sign](signLattice())
 	superset := map[string]sign{"x": sTop, "y": sPos}
 	subset := map[string]sign{"x": sNeg}
 
@@ -168,10 +168,10 @@ func TestMapLattice_JoinSubsumedMapWithoutCopy(t *testing.T) {
 	}
 }
 
-// TestMapLattice_Order pins the pointwise partial order, especially that a
+// TestMap_Order pins the pointwise partial order, especially that a
 // finite map is strictly below the Top sentinel and that Bottom is below all.
-func TestMapLattice_Order(t *testing.T) {
-	d := MapLattice[string, sign](signLattice())
+func TestMap_Order(t *testing.T) {
+	d := Map[string, sign](signLattice())
 	top := d.Top()
 	bot := d.Bottom()
 
@@ -205,10 +205,10 @@ func TestMapLattice_Order(t *testing.T) {
 	}
 }
 
-// TestMapLattice_TopAbsorbing pins the sentinel algebra: Top absorbs Join and
+// TestMap_TopAbsorbing pins the sentinel algebra: Top absorbs Join and
 // Widen, and is the identity for Meet.
-func TestMapLattice_TopAbsorbing(t *testing.T) {
-	d := MapLattice[string, sign](signLattice())
+func TestMap_TopAbsorbing(t *testing.T) {
+	d := Map[string, sign](signLattice())
 	top := d.Top()
 	x := map[string]sign{"x": sNeg, "y": sPos}
 
