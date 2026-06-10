@@ -31,13 +31,9 @@ func TestDirectCallEntryFactsProjectsLengthBoundsToParamPaths(t *testing.T) {
 		},
 	}
 	got := projection.DirectEvidence(summary.DirectEntryEvidenceInput{
-		Callee: callee,
-		Call:   call,
-		BoundaryFacts: flow.BoundaryFactProjectionInput{
-			KeyPresence: flow.KeyPresenceFacts{},
-			Num:         num,
-			IndexWrites: flow.IndexWriteAdmissionFacts{},
-		},
+		Callee:        callee,
+		Call:          call,
+		BoundaryFacts: flow.BoundaryFactProjectionInputOf(flow.PointState{Num: num}),
 	}).Facts
 
 	bounds := got.LengthLowerBounds()
