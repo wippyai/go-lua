@@ -1,22 +1,23 @@
-package synth
+package fieldaccess
 
 import (
 	"testing"
 
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/types/cfg"
+	querycore "github.com/wippyai/go-lua/types/query/core"
 	"github.com/wippyai/go-lua/types/typ"
 )
 
-func TestFieldAccessResult_Zero(t *testing.T) {
-	var r FieldAccessResult
+func TestResult_Zero(t *testing.T) {
+	var r Result
 	if r.Found || r.SkipCheck || r.NotIndexable || r.Type != nil {
-		t.Fatal("zero FieldAccessResult should have all false/nil")
+		t.Fatal("zero Result should have all false/nil")
 	}
 }
 
-func TestFieldAccessResult_WithType(t *testing.T) {
-	r := FieldAccessResult{Type: typ.String, Found: true}
+func TestResult_WithType(t *testing.T) {
+	r := Result{Type: typ.String, Found: true}
 	if !r.Found {
 		t.Fatal("expected Found=true")
 	}
@@ -25,34 +26,30 @@ func TestFieldAccessResult_WithType(t *testing.T) {
 	}
 }
 
-func TestResolveFieldAccess_NilObjType(t *testing.T) {
-	e := newTestEngine()
-	result := e.ResolveFieldAccess(nil, nil, "field", cfg.Point(0))
+func TestResolve_NilObjType(t *testing.T) {
+	result := Resolve(testResolver{}, nil, nil, "field", cfg.Point(0))
 	if !result.SkipCheck {
 		t.Fatal("expected SkipCheck for nil obj type")
 	}
 }
 
-func TestResolveFieldAccess_AnyType(t *testing.T) {
-	e := newTestEngine()
-	result := e.ResolveFieldAccess(nil, typ.Any, "field", cfg.Point(0))
+func TestResolve_AnyType(t *testing.T) {
+	result := Resolve(testResolver{}, nil, typ.Any, "field", cfg.Point(0))
 	if !result.SkipCheck {
 		t.Fatal("expected SkipCheck for any type")
 	}
 }
 
-func TestResolveFieldAccess_UnknownType(t *testing.T) {
-	e := newTestEngine()
-	result := e.ResolveFieldAccess(nil, typ.Unknown, "field", cfg.Point(0))
+func TestResolve_UnknownType(t *testing.T) {
+	result := Resolve(testResolver{}, nil, typ.Unknown, "field", cfg.Point(0))
 	if !result.SkipCheck {
 		t.Fatal("expected SkipCheck for unknown type")
 	}
 }
 
-func TestResolveFieldAccess_RecordField(t *testing.T) {
-	e := newTestEngine()
+func TestResolve_RecordField(t *testing.T) {
 	rec := typ.NewRecord().Field("name", typ.String).Build()
-	result := e.ResolveFieldAccess(nil, rec, "name", cfg.Point(0))
+	result := Resolve(testResolver{}, nil, rec, "name", cfg.Point(0))
 	if !result.Found {
 		t.Fatal("expected field to be found")
 	}
@@ -61,27 +58,26 @@ func TestResolveFieldAccess_RecordField(t *testing.T) {
 	}
 }
 
-func TestResolveFieldAccess_RecordFieldNotFound(t *testing.T) {
-	e := newTestEngine()
+func TestResolve_RecordFieldNotFound(t *testing.T) {
 	rec := typ.NewRecord().Field("name", typ.String).Build()
-	result := e.ResolveFieldAccess(nil, rec, "age", cfg.Point(0))
+	result := Resolve(testResolver{}, nil, rec, "age", cfg.Point(0))
 	if result.Found {
 		t.Fatal("expected field not found")
 	}
 }
 
-func TestResolveFieldAccess_MissingTableFieldTrustsPresentFullPathValue(t *testing.T) {
+func TestResolve_MissingTableFieldTrustsPresentFullPathValue(t *testing.T) {
 	rec := typ.NewRecord().Field("name", typ.String).Build()
 	expr := &ast.AttrGetExpr{
 		Object: &ast.IdentExpr{Value: "obj"},
 		Key:    &ast.StringExpr{Value: "installed"},
 	}
-	resolver := presentFieldAccessResolver{
+	resolver := testResolver{
 		fullType: typ.NewArray(typ.String),
 		present:  true,
 	}
 
-	result := ResolveFieldAccess(resolver, expr, rec, "installed", cfg.Point(0))
+	result := Resolve(resolver, expr, rec, "installed", cfg.Point(0))
 	if !result.Found || !result.SkipCheck {
 		t.Fatalf("expected present full-path value to satisfy missing table field access, got %#v", result)
 	}
@@ -90,18 +86,18 @@ func TestResolveFieldAccess_MissingTableFieldTrustsPresentFullPathValue(t *testi
 	}
 }
 
-func TestResolveFieldAccess_MissingTableFieldTrustsPresentFullPathAny(t *testing.T) {
+func TestResolve_MissingTableFieldTrustsPresentFullPathAny(t *testing.T) {
 	rec := typ.NewRecord().Field("name", typ.String).Build()
 	expr := &ast.AttrGetExpr{
 		Object: &ast.IdentExpr{Value: "obj"},
 		Key:    &ast.StringExpr{Value: "installed"},
 	}
-	resolver := presentFieldAccessResolver{
+	resolver := testResolver{
 		fullType: typ.Any,
 		present:  true,
 	}
 
-	result := ResolveFieldAccess(resolver, expr, rec, "installed", cfg.Point(0))
+	result := Resolve(resolver, expr, rec, "installed", cfg.Point(0))
 	if !result.Found || !result.SkipCheck {
 		t.Fatalf("expected present full-path any to satisfy missing table field access, got %#v", result)
 	}
@@ -110,45 +106,42 @@ func TestResolveFieldAccess_MissingTableFieldTrustsPresentFullPathAny(t *testing
 	}
 }
 
-func TestResolveFieldAccess_MissingTableFieldRejectsUnprovedFullPathType(t *testing.T) {
+func TestResolve_MissingTableFieldRejectsUnprovedFullPathType(t *testing.T) {
 	rec := typ.NewRecord().Field("name", typ.String).Build()
 	expr := &ast.AttrGetExpr{
 		Object: &ast.IdentExpr{Value: "obj"},
 		Key:    &ast.StringExpr{Value: "missing"},
 	}
-	resolver := presentFieldAccessResolver{
+	resolver := testResolver{
 		fullType: typ.String,
 		present:  false,
 	}
 
-	result := ResolveFieldAccess(resolver, expr, rec, "missing", cfg.Point(0))
+	result := Resolve(resolver, expr, rec, "missing", cfg.Point(0))
 	if result.Found || result.SkipCheck {
 		t.Fatalf("expected unproved missing table field to remain missing, got %#v", result)
 	}
 }
 
-func TestResolveFieldAccess_EmptyFieldNameMap(t *testing.T) {
-	e := newTestEngine()
+func TestResolve_EmptyFieldNameMap(t *testing.T) {
 	m := typ.NewMap(typ.String, typ.Integer)
-	result := e.ResolveFieldAccess(nil, m, "", cfg.Point(0))
+	result := Resolve(testResolver{}, nil, m, "", cfg.Point(0))
 	if !result.SkipCheck {
 		t.Fatal("expected SkipCheck for map with empty field")
 	}
 }
 
-func TestResolveFieldAccess_EmptyFieldNameArray(t *testing.T) {
-	e := newTestEngine()
+func TestResolve_EmptyFieldNameArray(t *testing.T) {
 	arr := typ.NewArray(typ.String)
-	result := e.ResolveFieldAccess(nil, arr, "", cfg.Point(0))
+	result := Resolve(testResolver{}, nil, arr, "", cfg.Point(0))
 	if !result.SkipCheck {
 		t.Fatal("expected SkipCheck for array with empty field")
 	}
 }
 
-func TestResolveFieldAccess_MapWithFieldName(t *testing.T) {
-	e := newTestEngine()
+func TestResolve_MapWithFieldName(t *testing.T) {
 	m := typ.NewMap(typ.String, typ.Integer)
-	result := e.ResolveFieldAccess(nil, m, "key", cfg.Point(0))
+	result := Resolve(testResolver{}, nil, m, "key", cfg.Point(0))
 	if result.SkipCheck {
 		t.Fatal("expected map field lookup to be checked")
 	}
@@ -161,10 +154,9 @@ func TestResolveFieldAccess_MapWithFieldName(t *testing.T) {
 	}
 }
 
-func TestResolveFieldAccess_ArrayWithFieldName(t *testing.T) {
-	e := newTestEngine()
+func TestResolve_ArrayWithFieldName(t *testing.T) {
 	arr := typ.NewArray(typ.String)
-	result := e.ResolveFieldAccess(nil, arr, "index", cfg.Point(0))
+	result := Resolve(testResolver{}, nil, arr, "index", cfg.Point(0))
 	if result.SkipCheck {
 		t.Fatal("expected array field lookup to be checked")
 	}
@@ -173,73 +165,68 @@ func TestResolveFieldAccess_ArrayWithFieldName(t *testing.T) {
 	}
 }
 
-func TestResolveFieldAccess_IdentKey(t *testing.T) {
-	e := newTestEngine()
+func TestResolve_IdentKey(t *testing.T) {
 	rec := typ.NewRecord().Field("name", typ.String).Build()
 	ex := &ast.AttrGetExpr{
 		Object: &ast.IdentExpr{Value: "obj"},
 		Key:    &ast.IdentExpr{Value: "name"},
 	}
-	result := e.ResolveFieldAccess(ex, rec, "name", cfg.Point(0))
+	result := Resolve(testResolver{}, ex, rec, "name", cfg.Point(0))
 	if !result.SkipCheck {
 		t.Fatal("expected SkipCheck for ident key")
 	}
 }
 
-func TestResolveFieldAccess_EmptyFieldNamePrimitive(t *testing.T) {
-	e := newTestEngine()
-	result := e.ResolveFieldAccess(nil, typ.String, "", cfg.Point(0))
+func TestResolve_EmptyFieldNamePrimitive(t *testing.T) {
+	result := Resolve(testResolver{}, nil, typ.String, "", cfg.Point(0))
 	if !result.NotIndexable {
 		t.Fatal("expected NotIndexable for primitive with empty field")
 	}
 }
 
-func TestResolveFieldAccess_TypeParam(t *testing.T) {
-	e := newTestEngine()
+func TestResolve_TypeParam(t *testing.T) {
 	tp := typ.NewTypeParam("T", nil)
-	result := e.ResolveFieldAccess(nil, tp, "field", cfg.Point(0))
+	result := Resolve(testResolver{}, nil, tp, "field", cfg.Point(0))
 	if !result.SkipCheck {
 		t.Fatal("expected SkipCheck for type param")
 	}
 }
 
-func TestResolveFieldAccess_EmptyFieldTypeParam(t *testing.T) {
-	e := newTestEngine()
+func TestResolve_EmptyFieldTypeParam(t *testing.T) {
 	tp := typ.NewTypeParam("T", nil)
-	result := e.ResolveFieldAccess(nil, tp, "", cfg.Point(0))
+	result := Resolve(testResolver{}, nil, tp, "", cfg.Point(0))
 	if !result.SkipCheck {
 		t.Fatal("expected SkipCheck for type param with empty field")
 	}
 }
 
-func TestResolveFieldAccess_UnexpandedRecursivePlaceholder(t *testing.T) {
-	e := newTestEngine()
+func TestResolve_UnexpandedRecursivePlaceholder(t *testing.T) {
 	rec := typ.NewRecursivePlaceholder("Inferred")
 
-	result := e.ResolveFieldAccess(nil, rec, "field", cfg.Point(0))
+	result := Resolve(testResolver{}, nil, rec, "field", cfg.Point(0))
 	if !result.SkipCheck {
 		t.Fatal("expected SkipCheck for unexpanded recursive placeholder")
 	}
 }
 
-type presentFieldAccessResolver struct {
+type testResolver struct {
 	fullType typ.Type
 	fields   map[string]typ.Type
 	present  bool
 }
 
-func (r presentFieldAccessResolver) TypeOf(ast.Expr, cfg.Point) typ.Type {
+func (r testResolver) TypeOf(ast.Expr, cfg.Point) typ.Type {
 	return r.fullType
 }
 
-func (r presentFieldAccessResolver) Field(_ typ.Type, name string) (typ.Type, bool) {
-	if r.fields == nil {
-		return nil, false
+func (r testResolver) Field(t typ.Type, name string) (typ.Type, bool) {
+	if r.fields != nil {
+		fieldType, ok := r.fields[name]
+		return fieldType, ok
 	}
-	t, ok := r.fields[name]
-	return t, ok
+	return querycore.Field(t, name)
 }
 
-func (r presentFieldAccessResolver) FieldAccessHasPresentValue(*ast.AttrGetExpr, cfg.Point) bool {
+func (r testResolver) FieldAccessHasPresentValue(*ast.AttrGetExpr, cfg.Point) bool {
 	return r.present
 }

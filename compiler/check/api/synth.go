@@ -1,6 +1,6 @@
 // Package api defines canonical interfaces for the type synthesis subsystem.
-// These interfaces decouple the synthesis engine implementation (synth.Engine)
-// from its consumers (hooks, input extraction, diagnostics, etc.).
+// These interfaces decouple synthesis implementations from their consumers
+// (hooks, input extraction, diagnostics, etc.).
 //
 // # INTERFACE HIERARCHY
 //
@@ -99,7 +99,7 @@ type BaseSynth interface {
 }
 
 // Synth is the full type synthesis interface with mode awareness and member access.
-// Implemented by synth.Engine and used throughout the type checking pipeline.
+// Implementations are used throughout the type checking pipeline.
 //
 // MODE AWARENESS: Synth supports both declared/static and flow-refined modes
 // through the Narrow() method, which returns a BaseSynth operating in flow mode.
@@ -229,7 +229,6 @@ type ExprSynth = func(ast.Expr, cfg.Point) typ.Type
 type PathFromExprFunc func(p cfg.Point, expr ast.Expr, sc *scope.State) constraint.Path
 
 // SynthAPI provides type synthesis operations for flow extraction.
-// synth.Engine satisfies this interface directly.
 type SynthAPI interface {
 	TypeOf(expr ast.Expr, p cfg.Point) typ.Type
 	ExpandValues(exprs []ast.Expr, needed int, p cfg.Point) []typ.Type

@@ -20,10 +20,10 @@ import (
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/api"
 	canonicaldiag "github.com/wippyai/go-lua/compiler/check/canonical/diagnostic"
+	"github.com/wippyai/go-lua/compiler/check/domain/fieldaccess"
 	"github.com/wippyai/go-lua/compiler/check/domain/guard"
 	"github.com/wippyai/go-lua/compiler/check/domain/observation"
 	"github.com/wippyai/go-lua/compiler/check/domain/path"
-	checksynth "github.com/wippyai/go-lua/compiler/check/synth"
 	"github.com/wippyai/go-lua/compiler/check/synth/ops"
 	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/diag"
@@ -550,7 +550,7 @@ func checkAttrGet(e *ast.AttrGetExpr, p cfg.Point, resolver fieldResolverImpl, s
 	}
 
 	fieldName := ast.KeyName(e.Key)
-	result := checksynth.ResolveFieldAccess(resolver, e, objType, fieldName, p)
+	result := fieldaccess.Resolve(resolver, e, objType, fieldName, p)
 
 	if result.SkipCheck {
 		return diags

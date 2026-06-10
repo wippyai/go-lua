@@ -54,6 +54,6 @@
 // # Synthesis Interface
 //
 // [BaseSynth] provides the type synthesis interface for expression analysis.
-// It is implemented by the synth.Engine and used by diagnostics and flow input
-// construction to evaluate expressions in context.
+// Implementations are used by diagnostics and flow input construction to
+// evaluate expressions in context.
 package api
