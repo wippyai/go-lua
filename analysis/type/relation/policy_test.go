@@ -301,24 +301,6 @@ func TestJoinUnionFieldSlot_KeepsScalarFieldOverUnknownPeer(t *testing.T) {
 	}
 }
 
-func TestClosedRecordConflictFastPath_NoRequiredDiscriminants(t *testing.T) {
-	records := []*Record{
-		NewRecord().
-			Field("from", Func().Param("self", Self).Returns(Self).Build()).
-			Field("where", Func().Param("self", Self).Param("clause", String).Returns(Self).Build()).
-			Build(),
-		NewRecord().
-			Field("from", Func().Param("self", Self).Returns(Self).Build()).
-			Field("where", Func().Param("self", Self).Param("clause", String).Returns(Self).Build()).
-			Field("limit", Number).
-			Build(),
-	}
-
-	if closedRecordSetHasConflictingRequiredLiteralField(records) {
-		t.Fatal("records without required literal discriminants reported a conflict")
-	}
-}
-
 func TestCoalesceProductUnion_OpenRecordsWithoutDiscriminantsDoesNotPanic(t *testing.T) {
 	left := NewRecord().
 		SetOpen(true).
@@ -718,10 +700,6 @@ func TestJoinReturnSlot_PreservesStructuralDiscriminantUnion(t *testing.T) {
 		t.Fatalf("JoinReturnSlot(shape_kind discriminated records) = %T %[1]v, want *Union", got)
 	}
 
-	tags := requiredDiscriminantTags(a)
-	if tags["shape_kind"] != LiteralString("circle").Hash() {
-		t.Fatalf("shape_kind not recognized as a structural discriminant tag: %v", tags)
-	}
 }
 
 // TestJoinReturnSlot_CoalescesBroadScalarSharedField is the negative: a shared
@@ -780,38 +758,6 @@ func TestJoinReturnSlot_PreservesNestedDiscriminatedRecordUnion(t *testing.T) {
 	}
 	if len(union.Members) != 2 {
 		t.Fatalf("nested discriminated union members = %d, want 2", len(union.Members))
-	}
-}
-
-func TestRequiredDiscriminantTags_PreservesNestedNonRecursiveTag(t *testing.T) {
-	chanInt := NewAlias("__test_ChanInt", NewRecord().
-		Field("__tag", LiteralString("int")).
-		Build())
-	errCase := NewRecord().
-		Field("channel", chanInt).
-		Field("value", NewRecord().Field("error", String).Build()).
-		Build()
-
-	tags := requiredDiscriminantTags(errCase)
-	if tags["channel.__tag"] != LiteralString("int").Hash() {
-		t.Fatalf("nested channel tag was not summarized: %v", tags)
-	}
-}
-
-func TestRequiredDiscriminantTags_RecursiveCycleSummarizesFiniteTags(t *testing.T) {
-	node := NewRecursive("Node", func(self Type) Type {
-		return NewRecord().
-			Field("kind", LiteralString("node")).
-			Field("next", self).
-			Build()
-	})
-
-	tags := requiredDiscriminantTags(node)
-	if tags["kind"] != LiteralString("node").Hash() {
-		t.Fatalf("recursive top-level tag was not summarized: %v", tags)
-	}
-	if _, ok := tags["next.kind"]; ok {
-		t.Fatalf("recursive discriminant summary unfolded through self: %v", tags)
 	}
 }
 

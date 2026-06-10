@@ -2,11 +2,11 @@ package relation
 
 import (
 	"sort"
-	"strconv"
 
 	"github.com/wippyai/go-lua/analysis/internal/hash"
 	luatable "github.com/wippyai/go-lua/analysis/lua/table"
 	"github.com/wippyai/go-lua/analysis/type/coalesce"
+	"github.com/wippyai/go-lua/analysis/type/discriminant"
 	"github.com/wippyai/go-lua/analysis/type/gradual"
 	"github.com/wippyai/go-lua/analysis/type/kind"
 	. "github.com/wippyai/go-lua/analysis/type/typ"
@@ -97,14 +97,23 @@ type returnJoinState struct {
 	returnSlots         map[returnJoinKey]Type
 	records             map[returnJoinKey]recordJoinResult
 	recursiveRewrites   map[recursiveRewriteKey]Type
-	discriminants       map[Type]map[string]uint64
-	activeDiscriminants map[Type]bool
+	discriminants       *discriminant.Detector
 	precision           *precisionSeen
 	recursiveFamilyFold bool
 }
 
 func newReturnJoinState() *returnJoinState {
 	return &returnJoinState{}
+}
+
+func (s *returnJoinState) discriminantDetector() *discriminant.Detector {
+	if s == nil {
+		return discriminant.NewDetector()
+	}
+	if s.discriminants == nil {
+		s.discriminants = discriminant.NewDetector()
+	}
+	return s.discriminants
 }
 
 func (s *returnJoinState) slotJoinOrDefault(slotJoin SlotJoinFunc) SlotJoinFunc {
@@ -301,7 +310,7 @@ func (s *returnJoinState) joinClosedCompatibleRecordSetWithSlotJoin(records []*R
 			return nil, false
 		}
 	}
-	if state.closedRecordSetHasConflictingRequiredLiteralField(records) {
+	if state.discriminantDetector().ClosedRecordSetConflicts(records) {
 		return nil, false
 	}
 
@@ -700,7 +709,7 @@ func (s *returnJoinState) recursiveRecordCoalesceKey(rec *Recursive) uint64 {
 	} else {
 		h = hash.HashCombine(h, 0)
 	}
-	tags := s.requiredDiscriminantTags(body)
+	tags := s.discriminantDetector().RequiredTags(body)
 	if len(tags) == 0 {
 		return h
 	}
@@ -1175,32 +1184,6 @@ func (s *returnJoinState) coalesceClosedCompatibleRecordsWithSlotJoin(types []Ty
 	return out, true, !ineligible
 }
 
-func (s *returnJoinState) closedRecordSetHasConflictingRequiredLiteralField(records []*Record) bool {
-	hasTags := false
-	for _, rec := range records {
-		if s.hasRequiredDiscriminantTag(rec) {
-			hasTags = true
-			break
-		}
-	}
-	if !hasTags {
-		return false
-	}
-
-	for i := 0; i < len(records); i++ {
-		for j := i + 1; j < len(records); j++ {
-			if s.hasConflictingRequiredLiteralField(records[i], records[j]) {
-				return true
-			}
-		}
-	}
-	return false
-}
-
-func closedRecordSetHasConflictingRequiredLiteralField(records []*Record) bool {
-	return newReturnJoinState().closedRecordSetHasConflictingRequiredLiteralField(records)
-}
-
 func (s *returnJoinState) joinCompatibleRecords(a, b Type) (Type, bool) {
 	return s.joinCompatibleRecordsWithSlotJoin(a, b, s.slotJoinOrDefault(nil))
 }
@@ -1227,7 +1210,7 @@ func (s *returnJoinState) joinCompatibleRecordsWithSlotJoin(a, b Type, slotJoin 
 	}
 
 	// Keep discriminated unions intact when required literal tags conflict.
-	if state.hasConflictingRequiredLiteralField(ar, br) {
+	if state.discriminantDetector().RecordsConflict(ar, br) {
 		state.cacheRecordJoin(key, nil, false)
 		return nil, false
 	}
@@ -1691,17 +1674,6 @@ func staticMemberKey(member StaticMember) staticMemberJoinKey {
 	return staticMemberJoinKey{kind: member.Kind, name: member.Name, index: member.Index}
 }
 
-func staticMemberDiscriminantPath(member StaticMember) string {
-	switch member.Kind {
-	case StaticMemberStringIndex:
-		return "[" + strconv.Quote(member.Name) + "]"
-	case StaticMemberIntIndex:
-		return "[" + strconv.FormatInt(member.Index, 10) + "]"
-	default:
-		return "[]"
-	}
-}
-
 func unaliasRecord(t Type) *Record {
 	for {
 		a, ok := t.(*Alias)
@@ -1726,60 +1698,12 @@ func sameTypeSlice(a, b []Type) bool {
 	return true
 }
 
-// hasConflictingRequiredLiteralField reports whether two records are discriminated
-// variants the join keeps distinct rather than coalescing.
-//
-// A required literal field shared by both records is either a variant tag or
-// incidental literal data. The structural signal of a tag is that it is the single
-// literal axis on which the records disagree: exactly one shared required literal
-// field has differing values, and no shared required literal field has an equal
-// value acting as a constant data key. When the records disagree on several literal
-// fields, or share an equal-valued literal alongside the difference, the literals
-// are incidental data and the records coalesce (the differing literals widen, the
-// equal one stays). Records whose literal-erased residuals do not merge cleanly
-// (conflicting shared non-literal field, or mutually disjoint required payloads)
-// also stay distinct, since merging them would lose structure rather than widen a
-// scalar.
-func (s *returnJoinState) hasConflictingRequiredLiteralField(a, b *Record) bool {
-	differing, equal := s.sharedRequiredLiteralAxes(a, b)
-	if differing == 1 && equal == 0 {
-		return true
-	}
-	if differing == 0 {
-		return false
-	}
-	return !literalErasedResidualsCleanlyMergeable(a, b)
-}
-
 // RecordsConflictOnLiteralDiscriminant reports whether two records are discriminated
 // variants kept distinct by a shared required literal field rather than coalesced.
 // It is the structural, name-free discriminant test shared by the return-slot join
 // and the value-domain shape join.
 func RecordsConflictOnLiteralDiscriminant(a, b *Record) bool {
-	return newReturnJoinState().hasConflictingRequiredLiteralField(a, b)
-}
-
-// sharedRequiredLiteralAxes counts the required literal fields both records require,
-// split into those whose literal values differ and those whose values are equal.
-func (s *returnJoinState) sharedRequiredLiteralAxes(a, b *Record) (differing, equal int) {
-	left := s.requiredDiscriminantTags(a)
-	right := s.requiredDiscriminantTags(b)
-	for path, leftHash := range left {
-		rightHash, ok := right[path]
-		if !ok {
-			continue
-		}
-		if leftHash == rightHash {
-			equal++
-		} else {
-			differing++
-		}
-	}
-	return differing, equal
-}
-
-func (s *returnJoinState) hasRequiredDiscriminantTag(t Type) bool {
-	return len(s.requiredDiscriminantTags(t)) > 0
+	return discriminant.RecordsConflict(a, b)
 }
 
 // recordMergesIntoGroup reports whether rec coalesces with every record already
@@ -1787,11 +1711,12 @@ func (s *returnJoinState) hasRequiredDiscriminantTag(t Type) bool {
 // them. A record joins a group only when no member of the group conflicts with it
 // on a genuine literal discriminant.
 func (s *returnJoinState) recordMergesIntoGroup(rec *Record, group []*Record) bool {
+	detector := s.discriminantDetector()
 	for _, member := range group {
 		if !compatibleRecordMetatables(rec, member) {
 			return false
 		}
-		if s.hasConflictingRequiredLiteralField(rec, member) {
+		if detector.RecordsConflict(rec, member) {
 			return false
 		}
 	}
@@ -1806,259 +1731,6 @@ func compatibleRecordMetatables(a, b *Record) bool {
 		return a.Metatable == nil && b.Metatable == nil
 	}
 	return SameNodeOrAcyclicEqual(a.Metatable, b.Metatable)
-}
-
-// literalErasedResidualsCleanlyMergeable reports whether two records merge into a
-// single precise record once their literal-valued fields are erased. Bodies merge
-// cleanly when every required non-literal field shared by both has compatible
-// types (equal or ordered by subtyping, so the merge keeps one precise type) and
-// neither carries a required non-literal field the other lacks (no disjoint
-// payload). When merging would instead widen a shared required field to a union or
-// optionalize a disjoint required payload, the residuals are not cleanly mergeable
-// and the records form discriminated variants.
-func literalErasedResidualsCleanlyMergeable(a, b *Record) bool {
-	if a == nil || b == nil {
-		return false
-	}
-	// Disjoint payload: each record requires a non-literal field the other lacks
-	// entirely. A field missing from only one side is additive width that
-	// optionalizes on merge; mutual exclusion is what partitions variants.
-	if requiredNonLiteralPayloadMissingFrom(a, b) && requiredNonLiteralPayloadMissingFrom(b, a) {
-		return false
-	}
-	for _, field := range a.Fields {
-		if field.Optional {
-			continue
-		}
-		if _, ok := literalType(field.Type); ok {
-			continue
-		}
-		other := b.GetField(field.Name)
-		if other == nil || other.Optional {
-			continue
-		}
-		if _, ok := literalType(other.Type); ok {
-			continue
-		}
-		if !mergeKeepsPreciseFieldType(field.Type, other.Type) {
-			return false
-		}
-	}
-	for _, member := range a.StaticMembers {
-		if member.Optional {
-			continue
-		}
-		if _, ok := literalType(member.Type); ok {
-			continue
-		}
-		other := b.GetStaticMember(member.Kind, member.Name, member.Index)
-		if other == nil || other.Optional {
-			continue
-		}
-		if _, ok := literalType(other.Type); ok {
-			continue
-		}
-		if !mergeKeepsPreciseFieldType(member.Type, other.Type) {
-			return false
-		}
-	}
-	return true
-}
-
-// requiredNonLiteralPayloadMissingFrom reports whether src carries a required
-// non-literal field that dst lacks entirely. A field present (even optionally) in
-// dst is additive width that optionalizes on merge, not a disjoint payload.
-func requiredNonLiteralPayloadMissingFrom(src, dst *Record) bool {
-	for _, field := range src.Fields {
-		if field.Optional {
-			continue
-		}
-		if _, ok := literalType(field.Type); ok {
-			continue
-		}
-		if dst.GetField(field.Name) == nil {
-			return true
-		}
-	}
-	for _, member := range src.StaticMembers {
-		if member.Optional {
-			continue
-		}
-		if _, ok := literalType(member.Type); ok {
-			continue
-		}
-		if dst.GetStaticMember(member.Kind, member.Name, member.Index) == nil {
-			return true
-		}
-	}
-	return false
-}
-
-// mergeKeepsPreciseFieldType reports whether joining two field types stays within a
-// single type rather than widening to a cross-kind union. Equal types and types of
-// the same outer kind merge precisely; differing kinds (number vs string, record vs
-// scalar) widen, which marks the enclosing literal field as a real partition.
-func mergeKeepsPreciseFieldType(a, b Type) bool {
-	if SameNodeOrAcyclicEqual(a, b) {
-		return true
-	}
-	if fieldMergeKind(a) != fieldMergeKind(b) {
-		return false
-	}
-	// Two record-valued fields merge precisely only when they are not themselves
-	// discriminated variants, so a nested literal tag (channel.__tag) still
-	// partitions the enclosing records.
-	ar := unaliasRecord(a)
-	br := unaliasRecord(b)
-	if ar != nil && br != nil {
-		return literalErasedResidualsCleanlyMergeable(ar, br) && !nestedRequiredLiteralConflict(ar, br)
-	}
-	return true
-}
-
-// nestedRequiredLiteralConflict reports whether two nested record-valued fields
-// are separated by a genuine literal discriminant. It uses the same structural
-// signal as top-level record coalescing: a lone differing required literal axis
-// partitions variants, while an equal literal axis alongside the difference marks
-// incidental payload data that can widen under the field-slot join.
-func nestedRequiredLiteralConflict(a, b *Record) bool {
-	return newReturnJoinState().hasConflictingRequiredLiteralField(a, b)
-}
-
-// fieldMergeKind reduces a field type to the outer kind that governs whether two
-// fields merge precisely, normalizing a literal to its scalar base so a literal and
-// its base count as the same kind.
-func fieldMergeKind(t Type) kind.Kind {
-	t = UnwrapAnnotated(t)
-	for {
-		a, ok := t.(*Alias)
-		if !ok {
-			break
-		}
-		t = a.Target
-	}
-	if lit, ok := t.(*Literal); ok {
-		return lit.Base
-	}
-	if t == nil {
-		return kind.Nil
-	}
-	return t.Kind()
-}
-
-func requiredDiscriminantTags(t Type) map[string]uint64 {
-	return newReturnJoinState().requiredDiscriminantTags(t)
-}
-
-func (s *returnJoinState) requiredDiscriminantTags(t Type) map[string]uint64 {
-	t = UnwrapAnnotated(t)
-	if t == nil {
-		return nil
-	}
-	if s == nil {
-		s = newReturnJoinState()
-	}
-	if s.discriminants != nil {
-		if cached, ok := s.discriminants[t]; ok {
-			return copyDiscriminantTags(cached)
-		}
-	}
-	if s.activeDiscriminants != nil && s.activeDiscriminants[t] {
-		return nil
-	}
-	if s.activeDiscriminants == nil {
-		s.activeDiscriminants = make(map[Type]bool)
-	}
-	s.activeDiscriminants[t] = true
-	defer delete(s.activeDiscriminants, t)
-
-	tags := s.collectRequiredDiscriminantTags(t)
-	if s.discriminants == nil {
-		s.discriminants = make(map[Type]map[string]uint64)
-	}
-	s.discriminants[t] = copyDiscriminantTags(tags)
-	return tags
-}
-
-func (s *returnJoinState) collectRequiredDiscriminantTags(t Type) map[string]uint64 {
-	t = UnwrapAnnotated(t)
-	switch v := t.(type) {
-	case *Alias:
-		return s.requiredDiscriminantTags(v.Target)
-	case *Recursive:
-		return s.requiredDiscriminantTags(v.Body)
-	case *Record:
-		tags := make(map[string]uint64)
-		for _, field := range v.Fields {
-			if field.Optional {
-				continue
-			}
-			if lit, ok := literalType(field.Type); ok {
-				tags[field.Name] = lit.Hash()
-				continue
-			}
-			addPrefixedDiscriminantTags(tags, field.Name, s.requiredDiscriminantTags(field.Type))
-		}
-		for _, member := range v.StaticMembers {
-			if member.Optional {
-				continue
-			}
-			path := staticMemberDiscriminantPath(member)
-			if lit, ok := literalType(member.Type); ok {
-				tags[path] = lit.Hash()
-				continue
-			}
-			addPrefixedDiscriminantTags(tags, path, s.requiredDiscriminantTags(member.Type))
-		}
-		return tags
-	case *Union:
-		return s.commonUnionDiscriminantTags(v)
-	}
-	return nil
-}
-
-func (s *returnJoinState) commonUnionDiscriminantTags(u *Union) map[string]uint64 {
-	if u == nil || len(u.Members) == 0 {
-		return nil
-	}
-	var common map[string]uint64
-	for i, member := range u.Members {
-		memberTags := s.requiredDiscriminantTags(member)
-		if i == 0 {
-			common = copyDiscriminantTags(memberTags)
-			continue
-		}
-		for path, hash := range common {
-			if memberHash, ok := memberTags[path]; !ok || memberHash != hash {
-				delete(common, path)
-			}
-		}
-	}
-	return common
-}
-
-func addPrefixedDiscriminantTags(dst map[string]uint64, prefix string, src map[string]uint64) {
-	for path, hash := range src {
-		dst[joinDiscriminantPath(prefix, path)] = hash
-	}
-}
-
-func copyDiscriminantTags(src map[string]uint64) map[string]uint64 {
-	if len(src) == 0 {
-		return nil
-	}
-	dst := make(map[string]uint64, len(src))
-	for path, hash := range src {
-		dst[path] = hash
-	}
-	return dst
-}
-
-func joinDiscriminantPath(prefix, name string) string {
-	if prefix == "" {
-		return name
-	}
-	return prefix + "." + name
 }
 
 func literalType(t Type) (*Literal, bool) {
