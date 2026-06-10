@@ -3,6 +3,7 @@ package subtype
 import (
 	"reflect"
 
+	luatable "github.com/wippyai/go-lua/analysis/lua/table"
 	"github.com/wippyai/go-lua/analysis/type/kind"
 	"github.com/wippyai/go-lua/analysis/type/subst"
 	"github.com/wippyai/go-lua/analysis/type/typ"
@@ -473,8 +474,8 @@ func (c *checker) metaSubtype(subMT, superMT typ.Type, depth int) bool {
 	if subMT == nil && superMT == nil {
 		return true
 	}
-	subUnconstrained := subMT != nil && typ.IsMetatableUnconstrained(subMT)
-	superUnconstrained := superMT != nil && typ.IsMetatableUnconstrained(superMT)
+	subUnconstrained := subMT != nil && luatable.IsMetatableUnconstrained(subMT)
+	superUnconstrained := superMT != nil && luatable.IsMetatableUnconstrained(superMT)
 	if subUnconstrained && (superMT == nil || superUnconstrained) {
 		return true
 	}

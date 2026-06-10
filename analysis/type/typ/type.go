@@ -76,13 +76,6 @@ var (
 	Unknown Type = unknownType{}
 	Never   Type = neverType{}
 	Self    Type = selfType{}
-
-	// MetatableUnconstrained marks a record metatable axis that is unconstrained
-	// by a source-level annotation. Subtype treats it as the top of the metatable
-	// axis (anything narrows to it), and method lookup ignores it (it carries no
-	// methods of its own). This is distinct from Unknown, which would otherwise
-	// leak through specialAccessType-driven field/method queries.
-	MetatableUnconstrained Type = metatableUnconstrainedType{}
 )
 
 // Primitive type implementations
@@ -149,27 +142,3 @@ func (selfType) Kind() kind.Kind    { return kind.Self }
 func (selfType) String() string     { return "self" }
 func (selfType) Hash() uint64       { return uint64(kind.Self) }
 func (selfType) Equals(o Type) bool { return o.Kind() == kind.Self }
-
-// metatableUnconstrainedType reports the sentinel kind as Unknown so existing
-// generic dispatch (visitors, kind-based switches) treats it as unresolved,
-// while the value identity itself is unique so subtype/method lookup can
-// special-case it via IsMetatableUnconstrained.
-type metatableUnconstrainedType struct{}
-
-func (metatableUnconstrainedType) Kind() kind.Kind { return kind.Unknown }
-func (metatableUnconstrainedType) String() string  { return "<metatable-unconstrained>" }
-func (metatableUnconstrainedType) Hash() uint64    { return uint64(kind.Unknown) ^ 0x9E3779B97F4A7C15 }
-func (metatableUnconstrainedType) Equals(o Type) bool {
-	_, ok := o.(metatableUnconstrainedType)
-	return ok
-}
-
-// LuaError is the standard error type for Lua functions.
-// It represents structured errors with message, kind, retryable, etc.
-var LuaError Type = NewInterface("Error", []Method{
-	{Name: "kind", Type: Func().Param("self", Self).Returns(String).Build()},
-	{Name: "retryable", Type: Func().Param("self", Self).Returns(Boolean).Build()},
-	{Name: "details", Type: Func().Param("self", Self).Returns(Any).Build()},
-	{Name: "message", Type: Func().Param("self", Self).Returns(String).Build()},
-	{Name: "stack", Type: Func().Param("self", Self).Returns(String).Build()},
-})

@@ -13,6 +13,10 @@ type mockSpec struct{}
 func (mockSpec) IsSpecInfo()           {}
 func (mockSpec) Equals(other any) bool { _, ok := other.(mockSpec); return ok }
 
+var joinTestError = typ.NewInterface("JoinTestError", []typ.Method{
+	{Name: "message", Type: typ.Func().Param("self", typ.Self).Returns(typ.String).Build()},
+})
+
 func TestReturnVectors(t *testing.T) {
 	t.Run("empty left", func(t *testing.T) {
 		right := []typ.Type{typ.String}
@@ -92,12 +96,13 @@ func TestWithReturns(t *testing.T) {
 
 	t.Run("preserves spec", func(t *testing.T) {
 		spec := mockSpec{}
+		errReturn := typ.NewOptional(joinTestError)
 		sig := typ.Func().
 			Param("x", typ.String).
-			Returns(typ.String, typ.NewOptional(typ.LuaError)).
+			Returns(typ.String, errReturn).
 			Spec(spec).
 			Build()
-		result := typejoin.WithReturns(sig, []typ.Type{typ.String, typ.NewOptional(typ.LuaError)})
+		result := typejoin.WithReturns(sig, []typ.Type{typ.String, errReturn})
 		if result.Spec == nil {
 			t.Fatal("expected function spec to be preserved")
 		}
