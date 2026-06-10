@@ -55,64 +55,11 @@ func TestVersion_IsZero(t *testing.T) {
 	}
 }
 
-func TestVersion_Key(t *testing.T) {
-	tests := []struct {
-		name    string
-		version Version
-		want    string
-	}{
-		{
-			name:    "simple version",
-			version: Version{Root: "x", ID: 1},
-			want:    "x@1",
-		},
-		{
-			name:    "zero version",
-			version: Version{Root: "y", ID: 0},
-			want:    "y@0",
-		},
-		{
-			name:    "high version number",
-			version: Version{Root: "counter", ID: 42},
-			want:    "counter@42",
-		},
-		{
-			name:    "with symbol",
-			version: Version{Root: "x", Symbol: 123, ID: 1},
-			want:    "x#123@1",
-		},
-		{
-			name:    "with large symbol",
-			version: Version{Root: "var", Symbol: 9999, ID: 5},
-			want:    "var#9999@5",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if got := tt.version.Key(); got != tt.want {
-				t.Errorf("Key() = %q, want %q", got, tt.want)
-			}
-		})
-	}
-}
-
 func TestVersion_String(t *testing.T) {
 	v := Version{Root: "x", Symbol: 42, ID: 3}
 	s := v.String()
 	if s != "x@3" {
 		t.Errorf("String() = %q, want %q", s, "x@3")
-	}
-}
-
-func TestVersion_KeyDeterminism(t *testing.T) {
-	v := Version{Root: "x", Symbol: 42, ID: 5}
-	first := v.Key()
-
-	for i := 0; i < 100; i++ {
-		if got := v.Key(); got != first {
-			t.Errorf("Iteration %d: Key() = %q, want %q", i, got, first)
-		}
 	}
 }
 
@@ -146,9 +93,6 @@ func TestVersion_DistinguishesShadowedVariables(t *testing.T) {
 	// Same name, same version number, but different symbols
 	if outerX == innerX {
 		t.Error("Shadowed variables with different symbols should not be equal")
-	}
-	if outerX.Key() == innerX.Key() {
-		t.Error("Shadowed variables should have different keys")
 	}
 }
 

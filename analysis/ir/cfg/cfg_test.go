@@ -240,38 +240,6 @@ func TestPredecessors(t *testing.T) {
 	})
 }
 
-func TestPredecessor(t *testing.T) {
-	t.Run("returns first predecessor", func(t *testing.T) {
-		c := New()
-		p := c.AddNode(NodeAssign, 1, "")
-		c.AddEdge(c.Entry(), p, false)
-
-		pred := c.Predecessor(p)
-		if pred != c.Entry() {
-			t.Errorf("predecessor = %d, want %d", pred, c.Entry())
-		}
-	})
-
-	t.Run("returns self when no predecessors", func(t *testing.T) {
-		c := New()
-		orphan := c.AddNode(NodeAssign, 1, "")
-
-		pred := c.Predecessor(orphan)
-		if pred != orphan {
-			t.Errorf("predecessor = %d, want self (%d)", pred, orphan)
-		}
-	})
-
-	t.Run("entry returns self", func(t *testing.T) {
-		c := New()
-		pred := c.Predecessor(c.Entry())
-
-		if pred != c.Entry() {
-			t.Errorf("entry predecessor = %d, want self (%d)", pred, c.Entry())
-		}
-	})
-}
-
 func TestSuccessors(t *testing.T) {
 	t.Run("no successors", func(t *testing.T) {
 		c := New()
@@ -696,8 +664,8 @@ func TestAddBranch(t *testing.T) {
 
 	t.Run("has condition info", func(t *testing.T) {
 		n := c.Node(branch)
-		if n.CondVar != 1 {
-			t.Errorf("expected CondVar 1, got %d", n.CondVar)
+		if n.CondSymbol != 1 {
+			t.Errorf("expected CondSymbol 1, got %d", n.CondSymbol)
 		}
 
 		if n.CondCheck.Kind != CheckNil {
@@ -796,71 +764,6 @@ func TestID(t *testing.T) {
 	})
 }
 
-func TestRemoveOutgoing(t *testing.T) {
-	t.Run("nil CFG does not panic", func(_ *testing.T) {
-		var c *CFG
-		c.RemoveOutgoing(0)
-	})
-
-	t.Run("removes all outgoing edges", func(t *testing.T) {
-		c := New()
-		n1 := c.AddNode(NodeBranch, 0, "")
-		n2 := c.AddNode(NodeAssign, 0, "")
-		n3 := c.AddNode(NodeAssign, 0, "")
-		c.AddEdge(n1, n2, true)
-		c.AddEdge(n1, n3, false)
-
-		if len(c.Successors(n1)) != 2 {
-			t.Fatalf("expected 2 successors before remove, got %d", len(c.Successors(n1)))
-		}
-
-		c.RemoveOutgoing(n1)
-
-		if len(c.Successors(n1)) != 0 {
-			t.Errorf("expected 0 successors after remove, got %d", len(c.Successors(n1)))
-		}
-	})
-
-	t.Run("removes from predecessors", func(t *testing.T) {
-		c := New()
-		n1 := c.AddNode(NodeAssign, 0, "")
-		n2 := c.AddNode(NodeAssign, 0, "")
-		c.AddEdge(n1, n2, false)
-
-		c.RemoveOutgoing(n1)
-
-		if len(c.Predecessors(n2)) != 0 {
-			t.Errorf("expected n2 to have 0 predecessors after remove, got %d", len(c.Predecessors(n2)))
-		}
-	})
-
-	t.Run("preserves other predecessors", func(t *testing.T) {
-		c := New()
-		n1 := c.AddNode(NodeAssign, 0, "")
-		n2 := c.AddNode(NodeAssign, 0, "")
-		join := c.AddNode(NodeJoin, 0, "")
-		c.AddEdge(n1, join, false)
-		c.AddEdge(n2, join, false)
-
-		c.RemoveOutgoing(n1)
-
-		preds := c.Predecessors(join)
-		if len(preds) != 1 {
-			t.Errorf("expected 1 predecessor after remove, got %d", len(preds))
-		}
-		if len(preds) > 0 && preds[0] != n2 {
-			t.Errorf("expected n2 as predecessor, got %d", preds[0])
-		}
-	})
-
-	t.Run("handles node with no successors", func(t *testing.T) {
-		c := New()
-		n := c.AddNode(NodeAssign, 0, "")
-		c.RemoveOutgoing(n)
-		// Should not panic, just return early
-	})
-}
-
 func TestNilCFG(t *testing.T) {
 	var c *CFG
 
@@ -882,9 +785,6 @@ func TestNilCFG(t *testing.T) {
 		}
 	})
 
-	t.Run("RemoveOutgoing does not panic", func(_ *testing.T) {
-		c.RemoveOutgoing(0)
-	})
 }
 
 func TestRPO(t *testing.T) {
@@ -971,8 +871,6 @@ func TestRPO_InvalidatesOnGraphMutation(t *testing.T) {
 	}
 
 	n2 := c.AddNode(NodeAssign, 0, "")
-	c.AddEdge(n1, n2, false)
-	c.RemoveOutgoing(n1)
 	c.AddEdge(n1, n2, false)
 	c.AddEdge(n2, c.Exit(), false)
 
@@ -1111,131 +1009,4 @@ func buildLargeCFG(n int) *CFG {
 	}
 	c.AddEdge(prev, c.Exit(), false)
 	return c
-}
-
-func TestReachable(t *testing.T) {
-	t.Run("nil CFG returns nil", func(t *testing.T) {
-		var c *CFG
-		if c.Reachable() != nil {
-			t.Error("nil CFG should return nil")
-		}
-	})
-
-	t.Run("all connected nodes are reachable", func(t *testing.T) {
-		c := New()
-		n1 := c.AddNode(NodeAssign, 0, "")
-		n2 := c.AddNode(NodeAssign, 0, "")
-		c.AddEdge(c.Entry(), n1, false)
-		c.AddEdge(n1, n2, false)
-		c.AddEdge(n2, c.Exit(), false)
-
-		reachable := c.Reachable()
-		if len(reachable) != 4 {
-			t.Errorf("expected 4 reachable nodes, got %d", len(reachable))
-		}
-		if !reachable[c.Entry()] {
-			t.Error("entry should be reachable")
-		}
-		if !reachable[n1] {
-			t.Error("n1 should be reachable")
-		}
-		if !reachable[n2] {
-			t.Error("n2 should be reachable")
-		}
-		if !reachable[c.Exit()] {
-			t.Error("exit should be reachable")
-		}
-	})
-
-	t.Run("disconnected nodes not reachable", func(t *testing.T) {
-		c := New()
-		orphan := c.AddNode(NodeAssign, 0, "")
-		c.AddEdge(c.Entry(), c.Exit(), false)
-
-		reachable := c.Reachable()
-		if reachable[orphan] {
-			t.Error("orphan node should not be reachable")
-		}
-	})
-}
-
-func TestUnreachablePoints(t *testing.T) {
-	t.Run("nil CFG returns nil", func(t *testing.T) {
-		var c *CFG
-		if c.UnreachablePoints() != nil {
-			t.Error("nil CFG should return nil")
-		}
-	})
-
-	t.Run("fully connected CFG has no unreachable", func(t *testing.T) {
-		c := New()
-		n := c.AddNode(NodeAssign, 0, "")
-		c.AddEdge(c.Entry(), n, false)
-		c.AddEdge(n, c.Exit(), false)
-
-		unreachable := c.UnreachablePoints()
-		if len(unreachable) != 0 {
-			t.Errorf("expected no unreachable, got %d", len(unreachable))
-		}
-	})
-
-	t.Run("orphan nodes are unreachable", func(t *testing.T) {
-		c := New()
-		orphan1 := c.AddNode(NodeAssign, 0, "")
-		orphan2 := c.AddNode(NodeAssign, 0, "")
-		c.AddEdge(c.Entry(), c.Exit(), false)
-
-		unreachable := c.UnreachablePoints()
-		if len(unreachable) != 2 {
-			t.Errorf("expected 2 unreachable, got %d", len(unreachable))
-		}
-
-		found1, found2 := false, false
-		for _, p := range unreachable {
-			if p == orphan1 {
-				found1 = true
-			}
-			if p == orphan2 {
-				found2 = true
-			}
-		}
-		if !found1 || !found2 {
-			t.Error("both orphans should be in unreachable list")
-		}
-	})
-}
-
-func TestValidateEdges(t *testing.T) {
-	t.Run("nil CFG returns nil", func(t *testing.T) {
-		var c *CFG
-		if err := c.ValidateEdges(); err != nil {
-			t.Errorf("nil CFG should return nil error, got %v", err)
-		}
-	})
-
-	t.Run("valid edges return nil", func(t *testing.T) {
-		c := New()
-		n := c.AddNode(NodeAssign, 0, "")
-		c.AddEdge(c.Entry(), n, false)
-		c.AddEdge(n, c.Exit(), false)
-
-		if err := c.ValidateEdges(); err != nil {
-			t.Errorf("valid CFG should return nil error, got %v", err)
-		}
-	})
-
-	t.Run("empty CFG is valid", func(t *testing.T) {
-		c := New()
-		if err := c.ValidateEdges(); err != nil {
-			t.Errorf("empty CFG should be valid, got %v", err)
-		}
-	})
-}
-
-func TestEdgeError(t *testing.T) {
-	err := &EdgeError{From: 5, To: 10, Reason: "test reason"}
-	msg := err.Error()
-	if msg != "invalid edge: test reason" {
-		t.Errorf("unexpected error message: %s", msg)
-	}
 }

@@ -12,18 +12,18 @@
 // Node: Contains metadata about a program point including its kind, target variable
 // (for assignments), callee (for calls), and condition info (for branches).
 //
-// Edge: A directed edge from one point to another, with a condition flag indicating
-// whether it's the then-branch (true) or else-branch (false) of a conditional.
+// Edge: A directed edge from one point to another. For branch edges, Cond is the
+// taken-branch flag.
 //
 // Graph: Interface for CFG access, implemented by CFG. Provides node lookup,
 // edge traversal, predecessor/successor queries, and reverse post-order iteration.
 //
-// # SSA-Like Identity
+// # Symbol And Version Identity
 //
-// The cfg package provides SymbolID for SSA-style value identity. Unlike SSA which
-// creates new versions at each assignment, SymbolID identifies the lexical variable
-// binding. Combined with Point, this enables tracking which value a name refers to
-// at each program point.
+// SymbolID identifies a lexical binding. It distinguishes shadowed declarations
+// but does not identify assignments. Version identifies an SSA definition of a
+// SymbolID at a program point. Point locates where a version is visible in the
+// control graph.
 //
 // # Analysis Support
 //
@@ -65,8 +65,8 @@ type CondCheckKind uint8
 // Condition check kind constants represent recognizable branch patterns.
 const (
 	CheckNone      CondCheckKind = iota // Complex expression, no simple constraint
-	CheckTruthy                         // if x: narrows x to truthy values
-	CheckFalsy                          // if not x: narrows x to falsy values
+	CheckTruthy                         // if x then: narrows x to truthy values
+	CheckFalsy                          // if not x then: narrows x to falsy values
 	CheckNil                            // x == nil: narrows x to nil
 	CheckNotNil                         // x ~= nil: narrows x to non-nil
 	CheckLimit                          // Numeric for loop limit (i <= n)
@@ -85,22 +85,22 @@ type CondCheck struct {
 // Different node kinds use different fields:
 //   - NodeAssign: Target holds the assigned variable's SymbolID
 //   - NodeCall: Callee holds the function name for global/external calls
-//   - NodeBranch: CondVar and CondCheck describe the condition for narrowing
+//   - NodeBranch: CondSymbol and CondCheck describe the condition for narrowing
 //   - NodeScopeExit: CondOrigin points at the branch whose guard was copied onto
 //     this exit when CondOriginSet is true
 //   - NodeJoin: LoopVars, LoopLocals, LoopPreheader describe loop structure
 //
 // The Point field is the node's index in the CFG's Nodes slice.
 type Node struct {
-	Point     Point
-	Kind      NodeKind
-	Target    SymbolID  // Variable for assignments (0 = none or unresolved)
-	Callee    string    // Function for calls (global/external name)
-	CondVar   SymbolID  // Variable being tested (0 = none or complex expression)
-	CondCheck CondCheck // Condition check type and optional type name
+	Point      Point
+	Kind       NodeKind
+	Target     SymbolID  // Variable for assignments (0 = none or unresolved)
+	Callee     string    // Function for calls (global/external name)
+	CondSymbol SymbolID  // Root symbol being tested (0 = none or complex expression)
+	CondCheck  CondCheck // Condition check type and optional type name
 	// CondOrigin is the exact branch point that owns a copied scope-exit guard.
 	// It prevents post-branch narrowing from rediscovering guards by loose
-	// CondVar/CondCheck matching, which is ambiguous for relational conditions.
+	// CondSymbol/CondCheck matching, which is ambiguous for relational conditions.
 	CondOrigin    Point
 	CondOriginSet bool
 	LoopVars      []SymbolID
@@ -118,7 +118,7 @@ type Node struct {
 //   - Cond=true: the "then" branch, taken when condition is truthy
 //   - Cond=false: the "else" branch, taken when condition is falsy
 //
-// For non-branch nodes, Cond is typically true (single successor).
+// For non-branch edges, Cond has no semantic meaning.
 type Edge struct {
 	From Point
 	To   Point
@@ -136,7 +136,7 @@ type Edge struct {
 //   - EdgeCond: Retrieves branch condition for type narrowing
 //   - IsJoin/IsBranch: Identifies merge points and decision points
 type Graph interface {
-	ID() uint64                           // Unique identifier for this CFG instance
+	ID() uint64                           // Process-local identifier for this CFG instance
 	Entry() Point                         // Function entry point (always node 0)
 	Exit() Point                          // Function exit point
 	Node(p Point) *Node                   // Node metadata at point p
@@ -146,7 +146,7 @@ type Graph interface {
 	Successors(p Point) []Point           // All successors (branch nodes have 2)
 	Edges() []Edge                        // All edges in the graph
 	Size() int                            // Number of nodes
-	EdgeCond(from, to Point) (bool, bool) // Branch condition for an edge
+	EdgeCond(from, to Point) (bool, bool) // Branch taken flag for an edge
 	IsJoin(p Point) bool                  // True if p has multiple predecessors
 	IsBranch(p Point) bool                // True if p has multiple successors
 }
@@ -206,35 +206,6 @@ func NewWithCapacity(nodeCap, edgeCap int) *CFG {
 	return c
 }
 
-// Reserve increases node/edge capacities to at least the provided values.
-func (c *CFG) Reserve(nodeCap, edgeCap int) {
-	if c == nil {
-		return
-	}
-
-	if nodeCap > cap(c.Nodes) {
-		nodes := make([]Node, len(c.Nodes), nodeCap)
-		copy(nodes, c.Nodes)
-		c.Nodes = nodes
-	}
-	if nodeCap > cap(c.preds) {
-		preds := make([][]Point, len(c.preds), nodeCap)
-		copy(preds, c.preds)
-		c.preds = preds
-	}
-	if nodeCap > cap(c.succs) {
-		succs := make([][]Point, len(c.succs), nodeCap)
-		copy(succs, c.succs)
-		c.succs = succs
-	}
-
-	if edgeCap > cap(c.edges) {
-		edges := make([]Edge, len(c.edges), edgeCap)
-		copy(edges, c.edges)
-		c.edges = edges
-	}
-}
-
 // Entry returns the entry point.
 func (c *CFG) Entry() Point {
 	if c == nil {
@@ -262,7 +233,7 @@ func (c *CFG) Successor(p Point) Point {
 	return p
 }
 
-// ID returns the stable identifier for this CFG instance.
+// ID returns the process-local identifier for this CFG instance.
 func (c *CFG) ID() uint64 {
 	if c == nil {
 		return 0
@@ -309,52 +280,6 @@ func (c *CFG) AddEdge(from, to Point, cond bool) {
 	c.preds[toIdx] = preds
 }
 
-// RemoveOutgoing removes all outgoing edges from a node.
-func (c *CFG) RemoveOutgoing(from Point) {
-	if c == nil {
-		return
-	}
-	fromIdx := int(from)
-	if fromIdx < 0 || fromIdx >= len(c.succs) {
-		return
-	}
-	succs := c.succs[fromIdx]
-	if len(succs) == 0 {
-		return
-	}
-	c.invalidateRPO()
-	filtered := c.edges[:0]
-	for _, e := range c.edges {
-		if e.From == from {
-			continue
-		}
-		filtered = append(filtered, e)
-	}
-	c.edges = filtered
-	c.succs[fromIdx] = nil
-	for _, to := range succs {
-		toIdx := int(to)
-		if toIdx < 0 || toIdx >= len(c.preds) {
-			continue
-		}
-		preds := c.preds[toIdx]
-		if len(preds) == 0 {
-			continue
-		}
-		next := preds[:0]
-		for _, p := range preds {
-			if p != from {
-				next = append(next, p)
-			}
-		}
-		if len(next) == 0 {
-			c.preds[toIdx] = nil
-			continue
-		}
-		c.preds[toIdx] = next
-	}
-}
-
 // Node returns the node at point p.
 func (c *CFG) Node(p Point) *Node {
 	if int(p) < len(c.Nodes) {
@@ -387,17 +312,6 @@ func (c *CFG) PredecessorsReadOnly(p Point) []Point {
 		return nil
 	}
 	return c.preds[idx]
-}
-
-// Predecessor returns single predecessor (for non-join nodes).
-func (c *CFG) Predecessor(p Point) Point {
-	idx := int(p)
-	if idx >= 0 && idx < len(c.preds) {
-		if preds := c.preds[idx]; len(preds) > 0 {
-			return preds[0]
-		}
-	}
-	return p
 }
 
 // Successors returns all successors of p.
@@ -453,7 +367,7 @@ func (c *CFG) Size() int {
 	return len(c.Nodes)
 }
 
-// EdgeCond returns the condition value for edge from->to.
+// EdgeCond returns the branch taken flag for edge from->to.
 // Returns (true, ok) for then-branch, (false, ok) for else-branch.
 func (c *CFG) EdgeCond(from, to Point) (bool, bool) {
 	for _, e := range c.edges {
@@ -465,14 +379,14 @@ func (c *CFG) EdgeCond(from, to Point) (bool, bool) {
 }
 
 // AddBranch adds a branch node with condition info.
-func (c *CFG) AddBranch(condVar SymbolID, condCheck CondCheck) Point {
+func (c *CFG) AddBranch(condSymbol SymbolID, condCheck CondCheck) Point {
 	c.invalidateRPO()
 	p := Point(len(c.Nodes))
 	c.Nodes = append(c.Nodes, Node{
-		Point:     p,
-		Kind:      NodeBranch,
-		CondVar:   condVar,
-		CondCheck: condCheck,
+		Point:      p,
+		Kind:       NodeBranch,
+		CondSymbol: condSymbol,
+		CondCheck:  condCheck,
 	})
 	return p
 }
@@ -548,73 +462,4 @@ func (c *CFG) ensureAdjacencyLen(n int) {
 	grow := n - len(c.preds)
 	c.preds = append(c.preds, make([][]Point, grow)...)
 	c.succs = append(c.succs, make([][]Point, grow)...)
-}
-
-// Reachable returns a set of all nodes reachable from entry.
-func (c *CFG) Reachable() map[Point]bool {
-	if c == nil {
-		return nil
-	}
-	n := len(c.Nodes)
-	visited := make([]bool, n)
-	result := make(map[Point]bool)
-
-	var visit func(p Point)
-	visit = func(p Point) {
-		if int(p) >= n || visited[p] {
-			return
-		}
-		visited[p] = true
-		result[p] = true
-		for _, succ := range c.succs[int(p)] {
-			visit(succ)
-		}
-	}
-	visit(c.entry)
-	return result
-}
-
-// UnreachablePoints returns all nodes not reachable from entry.
-func (c *CFG) UnreachablePoints() []Point {
-	if c == nil {
-		return nil
-	}
-	reachable := c.Reachable()
-	var unreachable []Point
-	for i := range c.Nodes {
-		p := Point(i)
-		if !reachable[p] {
-			unreachable = append(unreachable, p)
-		}
-	}
-	return unreachable
-}
-
-// ValidateEdges checks that all edges reference valid node indices.
-// Returns nil if valid, otherwise returns an error describing the issue.
-func (c *CFG) ValidateEdges() error {
-	if c == nil {
-		return nil
-	}
-	n := len(c.Nodes)
-	for _, e := range c.edges {
-		if int(e.From) >= n {
-			return &EdgeError{From: e.From, To: e.To, Reason: "from point out of bounds"}
-		}
-		if int(e.To) >= n {
-			return &EdgeError{From: e.From, To: e.To, Reason: "to point out of bounds"}
-		}
-	}
-	return nil
-}
-
-// EdgeError describes an invalid edge.
-type EdgeError struct {
-	From   Point
-	To     Point
-	Reason string
-}
-
-func (e *EdgeError) Error() string {
-	return "invalid edge: " + e.Reason
 }

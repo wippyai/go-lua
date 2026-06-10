@@ -89,12 +89,11 @@ type ParamProvider interface {
 	ParamDeclPoints() []Point
 }
 
-// VersionedGraph combines a CFG graph with SSA versioning and symbol scope info.
+// VersionedGraph combines flow topology with symbol scope and SSA visibility.
 //
-// This is the full interface required by the type checker for flow-sensitive
-// analysis. It combines:
+// It is the minimum graph contract needed by flow-sensitive analysis:
 //   - Graph: control flow structure for traversal
-//   - SSAVersioned: version information for flow-sensitive types
+//   - SSAVersioned: definition visibility at each point
 //   - SymbolScopeProvider: name resolution at each point
 //   - ParamProvider: function signature information
 type VersionedGraph interface {

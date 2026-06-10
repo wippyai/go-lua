@@ -59,11 +59,11 @@ func ReserveSymbolIDs(n int) SymbolID {
 //	-- x@5 = phi(x@3, x@4) at join point
 //
 // Version components:
-//   - Root: The variable name for display purposes
+//   - Root: The variable name for display/debug output only
 //   - Symbol: The SymbolID of the declaration (distinguishes shadowed names)
 //   - ID: The version number (0 = undefined, 1+ = specific assignment)
 type Version struct {
-	Root   string   // Variable name (for display and lookup)
+	Root   string   // Variable name for display/debug output only
 	Symbol SymbolID // Declaration identity (distinguishes same-named variables in different scopes)
 	ID     int      // Version number within the function (0 = undefined/uninitialized)
 }
@@ -72,17 +72,6 @@ type Version struct {
 // Zero versions indicate the variable has not been assigned on this path.
 func (v Version) IsZero() bool {
 	return v.ID == 0
-}
-
-// Key returns a unique string key for this version, suitable for use as a map key.
-// Format: "name#symbol@version" or "name@version" if symbol is zero.
-// Note: This is an SSA-level key, not a PathKey. For PathKey-based lookups,
-// use pathkey.Resolver.KeyAtVersion().
-func (v Version) Key() string {
-	if v.Symbol != 0 {
-		return v.Root + "#" + strconv.FormatUint(uint64(v.Symbol), 10) + "@" + strconv.Itoa(v.ID)
-	}
-	return v.Root + "@" + strconv.Itoa(v.ID)
 }
 
 // String returns a human-readable representation of the version.
