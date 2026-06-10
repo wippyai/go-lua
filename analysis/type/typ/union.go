@@ -366,8 +366,8 @@ func (u *Union) Equals(other Type) bool {
 // ProjectUnionMembers applies a projection to the members of an already
 // normalized union. If the projection only drops members, the existing member
 // hash vector is reused so path-sensitive filters do not rehash recursive
-// products. If any member is rewritten, the result is re-normalized through
-// NewUnion because rewrites may introduce duplicates or subsumed literals.
+// products. Rewrites preserve only root union normalization: deduplication,
+// nil/optional folding, literal subsumption, and deterministic member order.
 func ProjectUnionMembers(u *Union, project func(Type) Type) Type {
 	if u == nil {
 		return Never
@@ -411,10 +411,6 @@ func ProjectUnionMembers(u *Union, project func(Type) Type) Type {
 	}
 	if filterOnly {
 		return newProjectedNormalizedUnion(kept, hashes)
-	}
-	coalesced := CoalesceProductUnionMembers(kept)
-	if !sameTypeSlice(kept, coalesced) {
-		return NewUnion(coalesced...)
 	}
 	if scalarRewriteOnly && projectedMembersStayFlatNormalized(kept) {
 		return newRewrittenProjectedUnion(kept, hashes)

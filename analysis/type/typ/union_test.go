@@ -526,7 +526,7 @@ func TestProjectUnionMembersScalarRewriteDoesNotCompareCompoundMembers(t *testin
 	}
 }
 
-func TestProjectUnionMembersCoalescesRecursiveFamiliesAfterScalarRewrite(t *testing.T) {
+func TestProjectUnionMembersLeavesRecursiveFamiliesForPolicyCoalescing(t *testing.T) {
 	base := NewRecursive("SuiteA", func(self Type) Type {
 		return NewRecord().
 			Field("name", String).
@@ -561,8 +561,23 @@ func TestProjectUnionMembersCoalescesRecursiveFamiliesAfterScalarRewrite(t *test
 			recursiveCount++
 		}
 	}
+	if recursiveCount != 2 {
+		t.Fatalf("projected union kept %d recursive family members, want 2: %v", recursiveCount, got)
+	}
+
+	coalesced := CoalesceProductUnion(got)
+	coalescedUnion, ok := coalesced.(*Union)
+	if !ok {
+		t.Fatalf("policy-coalesced projection = %T %v, want union", coalesced, coalesced)
+	}
+	recursiveCount = 0
+	for _, member := range coalescedUnion.Members {
+		if _, ok := member.(*Recursive); ok {
+			recursiveCount++
+		}
+	}
 	if recursiveCount != 1 {
-		t.Fatalf("projected union kept %d recursive family members, want 1: %v", recursiveCount, got)
+		t.Fatalf("policy coalescing kept %d recursive family members, want 1: %v", recursiveCount, coalesced)
 	}
 }
 
