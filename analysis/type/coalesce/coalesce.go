@@ -1,9 +1,9 @@
 package coalesce
 
 import (
-	luatable "github.com/wippyai/go-lua/analysis/lua/table"
 	"github.com/wippyai/go-lua/analysis/type/kind"
 	"github.com/wippyai/go-lua/analysis/type/normalize"
+	typetable "github.com/wippyai/go-lua/analysis/type/table"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
@@ -67,7 +67,7 @@ func CoalesceMaps(types []typ.Type, joinTypes TypeSetJoinFunc) []typ.Type {
 		keys = append(keys, m.Key)
 		values = append(values, m.Value)
 	}
-	rest = append(rest, luatable.NewMap(joinTypeSet(joinTypes, keys), joinTypeSet(joinTypes, values)))
+	rest = append(rest, typetable.NewMap(joinTypeSet(joinTypes, keys), joinTypeSet(joinTypes, values)))
 	return rest
 }
 
@@ -102,7 +102,7 @@ func CoalesceRecordOpenness(types []typ.Type) []typ.Type {
 			result = append(result, t)
 			continue
 		}
-		result = append(result, luatable.RebuildRecord(typ.RecordParts{
+		result = append(result, typetable.RebuildRecord(typ.RecordParts{
 			Fields:        r.Fields,
 			StaticMembers: r.StaticMembers,
 			Metatable:     r.Metatable,

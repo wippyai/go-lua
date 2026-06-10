@@ -3,9 +3,9 @@ package subtype
 import (
 	"reflect"
 
-	luatable "github.com/wippyai/go-lua/analysis/lua/table"
 	"github.com/wippyai/go-lua/analysis/type/kind"
 	"github.com/wippyai/go-lua/analysis/type/subst"
+	typetable "github.com/wippyai/go-lua/analysis/type/table"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/analysis/type/unwrap"
 )
@@ -245,7 +245,7 @@ func (c *checker) checkCore(sub, super typ.Type, depth int) bool {
 			return c.checkMapToRecord(m, r, depth+1)
 		}
 		if view, ok := super.(*typ.ReadonlyMap); ok {
-			return c.checkReadonlyMap(luatable.NewReadonlyMap(m.Key, m.Value), view, depth+1)
+			return c.checkReadonlyMap(typetable.NewReadonlyMap(m.Key, m.Value), view, depth+1)
 		}
 	}
 	if arr, ok := sub.(*typ.Array); ok {
@@ -253,7 +253,7 @@ func (c *checker) checkCore(sub, super typ.Type, depth int) bool {
 			return c.checkArrayToMap(arr, m, depth+1)
 		}
 		if view, ok := super.(*typ.ReadonlyMap); ok {
-			return c.checkReadonlyMap(luatable.NewReadonlyMap(typ.Integer, arr.Element), view, depth+1)
+			return c.checkReadonlyMap(typetable.NewReadonlyMap(typ.Integer, arr.Element), view, depth+1)
 		}
 	}
 	if tup, ok := sub.(*typ.Tuple); ok {
@@ -474,8 +474,8 @@ func (c *checker) metaSubtype(subMT, superMT typ.Type, depth int) bool {
 	if subMT == nil && superMT == nil {
 		return true
 	}
-	subUnconstrained := subMT != nil && luatable.IsMetatableUnconstrained(subMT)
-	superUnconstrained := superMT != nil && luatable.IsMetatableUnconstrained(superMT)
+	subUnconstrained := subMT != nil && typetable.IsMetatableUnconstrained(subMT)
+	superUnconstrained := superMT != nil && typetable.IsMetatableUnconstrained(superMT)
 	if subUnconstrained && (superMT == nil || superUnconstrained) {
 		return true
 	}
@@ -807,7 +807,7 @@ func (c *checker) checkMapToRecord(sub *typ.Map, super *typ.Record, depth int) b
 	if sub == nil || super == nil || !super.HasMapComponent() {
 		return false
 	}
-	if !c.checkMap(sub, luatable.NewMap(super.MapKey, super.MapValue), depth+1) {
+	if !c.checkMap(sub, typetable.NewMap(super.MapKey, super.MapValue), depth+1) {
 		return false
 	}
 	for _, sf := range super.Fields {

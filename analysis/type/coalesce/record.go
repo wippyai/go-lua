@@ -1,9 +1,9 @@
 package coalesce
 
 import (
-	luatable "github.com/wippyai/go-lua/analysis/lua/table"
 	"github.com/wippyai/go-lua/analysis/type/discriminant"
 	"github.com/wippyai/go-lua/analysis/type/normalize"
+	typetable "github.com/wippyai/go-lua/analysis/type/table"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
@@ -73,13 +73,13 @@ func JoinFieldContainerSlot(a, b typ.Type, policy RecordPolicy) (typ.Type, bool)
 		if !ok {
 			return nil, false
 		}
-		return luatable.NewMap(keyJoin(av.Key, bv.Key), slotJoin(av.Value, bv.Value)), true
+		return typetable.NewMap(keyJoin(av.Key, bv.Key), slotJoin(av.Value, bv.Value)), true
 	case *typ.ReadonlyMap:
 		bv, ok := b.(*typ.ReadonlyMap)
 		if !ok {
 			return nil, false
 		}
-		return luatable.NewReadonlyMap(keyJoin(av.Key, bv.Key), slotJoin(av.Value, bv.Value)), true
+		return typetable.NewReadonlyMap(keyJoin(av.Key, bv.Key), slotJoin(av.Value, bv.Value)), true
 	case *typ.Tuple:
 		bv, ok := b.(*typ.Tuple)
 		if !ok || len(av.Elements) != len(bv.Elements) {
@@ -274,7 +274,7 @@ func JoinClosedCompatibleRecordSet(records []*typ.Record, policy RecordPolicy) (
 			Readonly: acc.readonly,
 		})
 	}
-	return luatable.RebuildRecord(typ.RecordParts{
+	return typetable.RebuildRecord(typ.RecordParts{
 		Fields:        mergedFields,
 		StaticMembers: mergedStaticMembers,
 	}), true

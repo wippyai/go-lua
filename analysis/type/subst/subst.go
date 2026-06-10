@@ -8,8 +8,8 @@ import (
 	"sync"
 
 	"github.com/wippyai/go-lua/analysis/internal/recursion"
-	luatable "github.com/wippyai/go-lua/analysis/lua/table"
 	"github.com/wippyai/go-lua/analysis/type/kind"
+	typetable "github.com/wippyai/go-lua/analysis/type/table"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
@@ -591,14 +591,14 @@ func expandInstantiatedCore(t typ.Type, orig typ.Type, guard recursion.Guard, me
 		if key == v.Key && value == v.Value {
 			return orig
 		}
-		return luatable.NewMap(key, value)
+		return typetable.NewMap(key, value)
 	case *typ.ReadonlyMap:
 		key := expandInstantiatedGuard(v.Key, guard, memo)
 		value := expandInstantiatedGuard(v.Value, guard, memo)
 		if key == v.Key && value == v.Value {
 			return orig
 		}
-		return luatable.NewReadonlyMap(key, value)
+		return typetable.NewReadonlyMap(key, value)
 	case *typ.Tuple:
 		var elems []typ.Type
 		for i, e := range v.Elements {
@@ -734,7 +734,7 @@ func expandInstantiatedCore(t typ.Type, orig typ.Type, guard recursion.Guard, me
 			return orig
 		}
 
-		builder := luatable.NewRecord()
+		builder := typetable.NewRecord()
 		if v.Open {
 			builder.SetOpen(true)
 		}

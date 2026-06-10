@@ -2,10 +2,10 @@
 package access
 
 import (
-	luatable "github.com/wippyai/go-lua/analysis/lua/table"
 	"github.com/wippyai/go-lua/analysis/type/normalize"
 	"github.com/wippyai/go-lua/analysis/type/subst"
 	"github.com/wippyai/go-lua/analysis/type/subtype"
+	typetable "github.com/wippyai/go-lua/analysis/type/table"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/analysis/type/unwrap"
 )
@@ -263,7 +263,7 @@ func firstReturn(fn *typ.Function) (typ.Type, bool) {
 }
 
 func recordCallReturn(r *typ.Record, depth int) (typ.Type, bool) {
-	if r == nil || r.Metatable == nil || luatable.IsMetatableUnconstrained(r.Metatable) {
+	if r == nil || r.Metatable == nil || typetable.IsMetatableUnconstrained(r.Metatable) {
 		return nil, false
 	}
 	call, ok := fieldAtDepth(r.Metatable, "__call", depth+1)

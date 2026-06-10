@@ -1,10 +1,10 @@
 package refinement
 
 import (
-	luatable "github.com/wippyai/go-lua/analysis/lua/table"
 	"github.com/wippyai/go-lua/analysis/type/kind"
 	"github.com/wippyai/go-lua/analysis/type/nodeid"
 	"github.com/wippyai/go-lua/analysis/type/presence"
+	typetable "github.com/wippyai/go-lua/analysis/type/table"
 	. "github.com/wippyai/go-lua/analysis/type/typ"
 )
 
@@ -423,7 +423,7 @@ func (s *fallbackRefineState) refine(summary, fallback Type) (Type, bool) {
 		if !keyChanged && !valueChanged {
 			return summary, false
 		}
-		return luatable.NewMap(key, value), true
+		return typetable.NewMap(key, value), true
 	case *ReadonlyMap:
 		b, ok := fallback.(*ReadonlyMap)
 		if !ok {
@@ -434,7 +434,7 @@ func (s *fallbackRefineState) refine(summary, fallback Type) (Type, bool) {
 		if !keyChanged && !valueChanged {
 			return summary, false
 		}
-		return luatable.NewReadonlyMap(key, value), true
+		return typetable.NewReadonlyMap(key, value), true
 	case *Tuple:
 		b, ok := fallback.(*Tuple)
 		if !ok || len(a.Elements) != len(b.Elements) {
@@ -647,7 +647,7 @@ func (s *fallbackRefineState) refineRecord(summary, fallback *Record) (Type, boo
 	if !changed {
 		return summary, false
 	}
-	return luatable.RebuildRecord(RecordParts{
+	return typetable.RebuildRecord(RecordParts{
 		Fields:        fields,
 		StaticMembers: staticMembers,
 		Metatable:     metatable,

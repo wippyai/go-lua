@@ -4,8 +4,8 @@ import (
 	"sync"
 
 	"github.com/wippyai/go-lua/analysis/internal/recursion"
-	luatable "github.com/wippyai/go-lua/analysis/lua/table"
 	"github.com/wippyai/go-lua/analysis/type/kind"
+	typetable "github.com/wippyai/go-lua/analysis/type/table"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
@@ -276,7 +276,7 @@ func pruneSoftUnionMembersMemo(
 			out = t
 			break
 		}
-		out = luatable.NewMap(key, val)
+		out = typetable.NewMap(key, val)
 	case *typ.ReadonlyMap:
 		key := pruneSoftUnionMembersMemo(node.Key, next, memo, visiting, softMemo)
 		val := pruneSoftUnionMembersMemo(node.Value, next, memo, visiting, softMemo)
@@ -284,7 +284,7 @@ func pruneSoftUnionMembersMemo(
 			out = t
 			break
 		}
-		out = luatable.NewReadonlyMap(key, val)
+		out = typetable.NewReadonlyMap(key, val)
 	case *typ.Tuple:
 		var elems []typ.Type
 		for i, e := range node.Elements {
@@ -483,7 +483,7 @@ func pruneSoftRecord(
 	if staticMembers != nil {
 		staticMembersSrc = staticMembers
 	}
-	return luatable.RebuildRecord(typ.RecordParts{
+	return typetable.RebuildRecord(typ.RecordParts{
 		Fields:        fieldsSrc,
 		StaticMembers: staticMembersSrc,
 		Metatable:     metatable,
