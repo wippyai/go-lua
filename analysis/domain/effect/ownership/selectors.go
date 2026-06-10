@@ -15,10 +15,6 @@ func WithBorrow(paramIdx int) effect.Row {
 	}}}
 }
 
-func StoresParam(paramIdx int, intoIdx int) effect.Row {
-	return WithStore(paramIdx, intoIdx)
-}
-
 func WithStore(paramIdx int, intoIdx int) effect.Row {
 	return effect.Row{Labels: []effect.Label{Store{
 		Param: effect.ParamRef{Index: paramIdx},

@@ -159,9 +159,9 @@ func TestSelectors(t *testing.T) {
 		t.Error("Should not find borrow for param 1")
 	}
 
-	r3 := StoresParam(0, 1)
+	r3 := WithStore(0, 1)
 	if !HasStore(r3) {
-		t.Error("StoresParam should have store")
+		t.Error("WithStore should have store")
 	}
 
 	s := GetStore(r3, 0)
@@ -178,7 +178,7 @@ func TestSelectors(t *testing.T) {
 	}
 
 	if OnlyBorrows(r3) {
-		t.Error("StoresParam should not only borrow")
+		t.Error("WithStore should not only borrow")
 	}
 
 	if OnlyBorrows(effect.Empty) {

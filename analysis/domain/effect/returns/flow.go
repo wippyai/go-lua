@@ -62,15 +62,7 @@ func (f FlowInto) Equals(other effect.Label) bool {
 	return false
 }
 
-const (
-	PathSegmentField       = segment.SegmentField
-	PathSegmentIndexString = segment.SegmentIndexString
-	PathSegmentIndexInt    = segment.SegmentIndexInt
-)
-
-type PathSegment = segment.Segment
-
-type PathSuffix []PathSegment
+type PathSuffix []segment.Segment
 
 func FieldPath(names ...string) PathSuffix {
 	if len(names) == 0 {
@@ -78,12 +70,12 @@ func FieldPath(names ...string) PathSuffix {
 	}
 	out := make(PathSuffix, 0, len(names))
 	for _, name := range names {
-		out = append(out, PathSegment{Kind: PathSegmentField, Name: name})
+		out = append(out, segment.Segment{Kind: segment.SegmentField, Name: name})
 	}
 	return out
 }
 
-func PathSuffixFromSegments(segments []PathSegment) PathSuffix {
+func PathSuffixFromSegments(segments []segment.Segment) PathSuffix {
 	if len(segments) == 0 {
 		return nil
 	}
@@ -96,16 +88,16 @@ func (p PathSuffix) Empty() bool {
 	return len(p) == 0
 }
 
-func (p PathSuffix) Segments() []PathSegment {
+func (p PathSuffix) Segments() []segment.Segment {
 	if len(p) == 0 {
 		return nil
 	}
-	out := make([]PathSegment, len(p))
+	out := make([]segment.Segment, len(p))
 	copy(out, p)
 	return out
 }
 
-func (p PathSuffix) Append(seg PathSegment) PathSuffix {
+func (p PathSuffix) Append(seg segment.Segment) PathSuffix {
 	out := make(PathSuffix, 0, len(p)+1)
 	out = append(out, p...)
 	out = append(out, seg)

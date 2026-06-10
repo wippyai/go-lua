@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/domain/effect"
+	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 )
 
 func TestPassThroughLabel(t *testing.T) {
@@ -71,5 +72,25 @@ func TestFlowIntoEquals(t *testing.T) {
 
 	if f1.Equals(Return{}) {
 		t.Error("FlowInto should not equal other label types")
+	}
+}
+
+func TestPathSuffixUsesSegmentVocabulary(t *testing.T) {
+	suffix := PathSuffixFromSegments([]segment.Segment{
+		{Kind: segment.SegmentField, Name: "items"},
+		{Kind: segment.SegmentIndexString, Name: "primary"},
+	}).Append(segment.Segment{Kind: segment.SegmentIndexInt, Index: 0})
+
+	if got := suffix.String(); got != `.items["primary"][0]` {
+		t.Fatalf("PathSuffix.String() = %q", got)
+	}
+
+	segments := suffix.Segments()
+	if len(segments) != 3 {
+		t.Fatalf("Segments() length = %d, want 3", len(segments))
+	}
+	segments[0].Name = "mutated"
+	if got := suffix.String(); got != `.items["primary"][0]` {
+		t.Fatalf("Segments() should return a copy, got mutated suffix %q", got)
 	}
 }
