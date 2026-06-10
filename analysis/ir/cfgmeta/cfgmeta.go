@@ -3,7 +3,7 @@ package cfgmeta
 
 import (
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
-	"github.com/wippyai/go-lua/analysis/ir/symbol"
+	"github.com/wippyai/go-lua/analysis/symbol"
 )
 
 // BranchCheckKind identifies the type of condition check in a branch.

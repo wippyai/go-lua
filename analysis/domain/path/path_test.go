@@ -5,7 +5,7 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
-	"github.com/wippyai/go-lua/analysis/ir/symbol"
+	"github.com/wippyai/go-lua/analysis/symbol"
 )
 
 func TestPathPlaceholderIndex_OverflowRejected(t *testing.T) {

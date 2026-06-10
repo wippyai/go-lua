@@ -4,7 +4,7 @@ import (
 	"testing"
 
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
-	"github.com/wippyai/go-lua/analysis/ir/symbol"
+	"github.com/wippyai/go-lua/analysis/symbol"
 )
 
 func makePath(name string, sym symbol.ID, segments ...string) pathdom.Path {

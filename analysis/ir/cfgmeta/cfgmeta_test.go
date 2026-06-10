@@ -4,7 +4,7 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
-	"github.com/wippyai/go-lua/analysis/ir/symbol"
+	"github.com/wippyai/go-lua/analysis/symbol"
 )
 
 func TestBranchCheckKind(t *testing.T) {

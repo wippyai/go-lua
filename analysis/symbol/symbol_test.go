@@ -20,19 +20,6 @@ func TestNextReturnsDistinctIDs(t *testing.T) {
 	}
 }
 
-func TestReserve(t *testing.T) {
-	if got := Reserve(0); got != 0 {
-		t.Fatalf("Reserve(0) = %d, want 0", got)
-	}
-	start := Reserve(3)
-	if start == 0 {
-		t.Fatal("Reserve(3) returned zero")
-	}
-	if ID(uint64(start)+2) == 0 {
-		t.Fatal("reserved range overflowed to zero")
-	}
-}
-
 func TestKindValues(t *testing.T) {
 	tests := []struct {
 		kind Kind

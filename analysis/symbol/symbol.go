@@ -1,4 +1,4 @@
-// Package symbol defines lexical declaration identity for analysis IR.
+// Package symbol defines lexical declaration identity for analysis.
 package symbol
 
 import "sync/atomic"
@@ -13,17 +13,6 @@ var counter uint64
 // Next generates a unique symbol ID.
 func Next() ID {
 	return ID(atomic.AddUint64(&counter, 1))
-}
-
-// Reserve reserves a contiguous block of symbol IDs and returns the first ID.
-// It returns 0 when n <= 0.
-func Reserve(n int) ID {
-	if n <= 0 {
-		return 0
-	}
-	end := atomic.AddUint64(&counter, uint64(n))
-	start := end - uint64(n) + 1
-	return ID(start)
 }
 
 // Kind classifies how a symbol was declared.

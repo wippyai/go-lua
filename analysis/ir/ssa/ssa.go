@@ -9,7 +9,7 @@ import (
 	"strconv"
 
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
-	"github.com/wippyai/go-lua/analysis/ir/symbol"
+	"github.com/wippyai/go-lua/analysis/symbol"
 )
 
 // Version represents a stable SSA version of a variable.
