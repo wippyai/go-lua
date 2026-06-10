@@ -1,7 +1,6 @@
 package diagnostic
 
 import (
-	"strings"
 	"testing"
 )
 
@@ -49,6 +48,25 @@ func TestPosition_String(t *testing.T) {
 	}
 }
 
+func TestPosition_Valid(t *testing.T) {
+	tests := []struct {
+		pos  Position
+		want bool
+	}{
+		{Position{Line: 1, Column: 1}, true},
+		{Position{File: "test.lua", Line: 10, Column: 5}, true},
+		{Position{Line: 0, Column: 1}, false},
+		{Position{Line: 1, Column: 0}, false},
+		{Position{}, false},
+	}
+
+	for _, tt := range tests {
+		if got := tt.pos.Valid(); got != tt.want {
+			t.Errorf("Position.Valid() = %v, want %v for %+v", got, tt.want, tt.pos)
+		}
+	}
+}
+
 func TestSpan_Valid(t *testing.T) {
 	tests := []struct {
 		span Span
@@ -84,68 +102,19 @@ func TestSpan_SingleLine(t *testing.T) {
 	}
 }
 
-func TestCodeName(t *testing.T) {
+func TestCodeString(t *testing.T) {
 	tests := []struct {
 		code Code
 		want string
 	}{
-		{ErrTypeMismatch, "E0000"},
-		{ErrUndefined, "E0001"},
-		{ErrNotCallable, "E0002"},
-		{ErrInvalidOperand, "E0019"},
+		{Code("type.mismatch"), "type.mismatch"},
+		{Code(""), "diagnostic"},
 	}
 
 	for _, tt := range tests {
-		if got := tt.code.Name(); got != tt.want {
-			t.Errorf("Code(%d).Name() = %q, want %q", tt.code, got, tt.want)
+		if got := tt.code.String(); got != tt.want {
+			t.Errorf("Code(%q).String() = %q, want %q", tt.code, got, tt.want)
 		}
-	}
-}
-
-func TestCodeNameFormat(t *testing.T) {
-	for c := ErrTypeMismatch; c <= ErrInvalidOperand; c++ {
-		name := c.Name()
-		if !strings.HasPrefix(name, "E") {
-			t.Errorf("Code(%d).Name() = %q, should start with E", c, name)
-		}
-		if len(name) != 5 {
-			t.Errorf("Code(%d).Name() = %q, should be 5 chars", c, name)
-		}
-	}
-}
-
-func TestCodeInfo(t *testing.T) {
-	info := ErrTypeMismatch.Info()
-	if info.Title == "" {
-		t.Error("ErrTypeMismatch should have a title")
-	}
-	if info.Explanation == "" {
-		t.Error("ErrTypeMismatch should have an explanation")
-	}
-}
-
-func TestCodeInfoKnownCodes(t *testing.T) {
-	knownCodes := []Code{
-		ErrTypeMismatch, ErrUndefined, ErrNotCallable,
-		ErrWrongArity, ErrNoField, ErrNotIndexable,
-		ErrReadonly, ErrMissingReturn, ErrNonExhaustive,
-		ErrUseBeforeAssign, ErrDuplicateDeclaration,
-		ErrInvalidIndexType, ErrInvalidOperand,
-	}
-
-	for _, c := range knownCodes {
-		info := c.Info()
-		if info.Title == "" || info.Title == "error" {
-			t.Errorf("Code(%d) should have specific title, got %q", c, info.Title)
-		}
-	}
-}
-
-func TestCodeInfoUnknown(t *testing.T) {
-	unknownCode := Code(9999)
-	info := unknownCode.Info()
-	if info.Title != "error" {
-		t.Errorf("unknown code should return default title, got %q", info.Title)
 	}
 }
 
@@ -156,6 +125,27 @@ func TestDiagnostic_StringMethod(t *testing.T) {
 	}
 	got := d.String()
 	want := "test.lua:10:5: test error"
+	if got != want {
+		t.Errorf("Diagnostic.String() = %q, want %q", got, want)
+	}
+}
+
+func TestDiagnostic_StringMethodWithoutFile(t *testing.T) {
+	d := Diagnostic{
+		Position: Position{Line: 10, Column: 5},
+		Message:  "test error",
+	}
+	got := d.String()
+	want := "10:5: test error"
+	if got != want {
+		t.Errorf("Diagnostic.String() = %q, want %q", got, want)
+	}
+}
+
+func TestDiagnostic_StringMethodWithoutPosition(t *testing.T) {
+	d := Diagnostic{Message: "test error"}
+	got := d.String()
+	want := "test error"
 	if got != want {
 		t.Errorf("Diagnostic.String() = %q, want %q", got, want)
 	}
