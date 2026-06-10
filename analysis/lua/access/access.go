@@ -3,7 +3,7 @@ package access
 
 import (
 	luatable "github.com/wippyai/go-lua/analysis/lua/table"
-	"github.com/wippyai/go-lua/analysis/type/relation"
+	"github.com/wippyai/go-lua/analysis/type/normalize"
 	"github.com/wippyai/go-lua/analysis/type/subst"
 	"github.com/wippyai/go-lua/analysis/type/subtype"
 	"github.com/wippyai/go-lua/analysis/type/typ"
@@ -148,7 +148,7 @@ func fieldInUnion(u *typ.Union, name string, depth int) fieldResult {
 		}
 		return fieldResult{}
 	}
-	return fieldResult{t: relation.NormalizeUnionForProjection(out...), ok: true, nilable: nilable}
+	return fieldResult{t: normalize.UnionForProjection(out...), ok: true, nilable: nilable}
 }
 
 func fieldInIntersection(in *typ.Intersection, name string, depth int) fieldResult {
@@ -167,7 +167,7 @@ func fieldInIntersection(in *typ.Intersection, name string, depth int) fieldResu
 	if len(out) == 1 {
 		return fieldResult{t: out[0], ok: true}
 	}
-	return fieldResult{t: relation.NormalizeIntersectionForMeet(out...), ok: true}
+	return fieldResult{t: normalize.IntersectionForMeet(out...), ok: true}
 }
 
 func fieldAtDepth(t typ.Type, name string, depth int) (typ.Type, bool) {
@@ -228,7 +228,7 @@ func callableReturnDepth(t typ.Type, depth int) (typ.Type, bool) {
 		if len(out) == 0 {
 			return nil, false
 		}
-		return relation.NormalizeUnionForProjection(out...), true
+		return normalize.UnionForProjection(out...), true
 	case *typ.Intersection:
 		for _, member := range v.Members {
 			if rt, ok := callableReturnDepth(member, depth+1); ok {

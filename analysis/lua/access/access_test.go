@@ -3,7 +3,7 @@ package access
 import (
 	"testing"
 
-	"github.com/wippyai/go-lua/analysis/type/relation"
+	"github.com/wippyai/go-lua/analysis/type/normalize"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
@@ -198,7 +198,7 @@ func TestCallableReturnFirstReturn(t *testing.T) {
 	assertType(t, got, typ.Number)
 }
 
-func TestCallableReturnUnionProjectionUsesRelationNormalizer(t *testing.T) {
+func TestCallableReturnUnionProjectionUsesNormalizePackage(t *testing.T) {
 	callableReturning := func(t typ.Type) typ.Type {
 		return typ.Func().Returns(t).Build()
 	}
@@ -212,7 +212,7 @@ func TestCallableReturnUnionProjectionUsesRelationNormalizer(t *testing.T) {
 	if !ok {
 		t.Fatal("CallableReturn(union) failed")
 	}
-	assertType(t, got, relation.NormalizeUnionForProjection(returns...))
+	assertType(t, got, normalize.UnionForProjection(returns...))
 }
 
 func TestCallableReturnUnionProjectionPolicy(t *testing.T) {

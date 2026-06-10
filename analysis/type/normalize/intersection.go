@@ -1,0 +1,101 @@
+package normalize
+
+import (
+	"github.com/wippyai/go-lua/analysis/type/kind"
+	"github.com/wippyai/go-lua/analysis/type/typ"
+)
+
+// IntersectionForMeet applies the pure intersection normalization policy used
+// by semantic meet and access projection code.
+func IntersectionForMeet(members ...typ.Type) typ.Type {
+	flat := make([]typ.Type, 0, len(members))
+	hasNever := false
+	hasNil := false
+
+	var addMember func(typ.Type)
+	addMember = func(member typ.Type) {
+		if member == nil {
+			return
+		}
+		unwrapped := typ.UnwrapAnnotated(member)
+		if unwrapped == nil {
+			return
+		}
+		switch unwrapped.Kind() {
+		case kind.Any:
+			return
+		case kind.Never:
+			hasNever = true
+			return
+		case kind.Nil:
+			hasNil = true
+			return
+		case kind.Intersection:
+			for _, nested := range unwrapped.(*typ.Intersection).Members {
+				addMember(nested)
+			}
+			return
+		default:
+			flat = append(flat, member)
+		}
+	}
+
+	for _, member := range members {
+		addMember(member)
+	}
+
+	if hasNever {
+		return typ.Never
+	}
+
+	if hasNil {
+		if len(flat) == 0 {
+			return typ.Nil
+		}
+		allAcceptNil := true
+		for _, member := range flat {
+			if !intersectionMemberAcceptsNil(member) {
+				allAcceptNil = false
+				break
+			}
+		}
+		if allAcceptNil {
+			return typ.Nil
+		}
+		flat = append(flat, typ.Nil)
+	}
+
+	return typ.NewIntersection(flat...)
+}
+
+func intersectionMemberAcceptsNil(t typ.Type) bool {
+	if t == nil {
+		return false
+	}
+
+	return typ.Visit(t, typ.Visitor[bool]{
+		Optional: func(o *typ.Optional) bool {
+			return true
+		},
+		Union: func(u *typ.Union) bool {
+			for _, member := range u.Members {
+				if member.Kind() == kind.Nil {
+					return true
+				}
+			}
+			return false
+		},
+		Intersection: func(in *typ.Intersection) bool {
+			for _, member := range in.Members {
+				if member.Kind() == kind.Nil {
+					return true
+				}
+			}
+			return false
+		},
+		Default: func(t typ.Type) bool {
+			k := t.Kind()
+			return k == kind.Nil || k.IsPlaceholder()
+		},
+	})
+}
