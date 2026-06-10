@@ -124,8 +124,16 @@ type FunctionDefinitionFact struct {
 	HasTargetSymbol bool
 }
 
+type NumericForRole uint8
+
+const (
+	NumericForRoleInit NumericForRole = iota + 1
+	NumericForRoleCheck
+)
+
 type NumericForFact struct {
 	Stmt *ast.NumberForStmt
+	Role NumericForRole
 
 	Name  string
 	Init  ast.Expr
@@ -136,14 +144,26 @@ type NumericForFact struct {
 	HasSymbol bool
 }
 
+type GenericForRole uint8
+
+const (
+	GenericForRoleCheck GenericForRole = iota + 1
+	GenericForRoleVariable
+)
+
+const NoGenericForVariableIndex = -1
+
 type GenericForFact struct {
 	Stmt *ast.GenericForStmt
+	Role GenericForRole
 
 	Names []string
 	Exprs []ast.Expr
 
 	Symbols    []symbol.ID
 	HasSymbols bool
+
+	VariableIndex int
 }
 
 type LabelFact struct {
@@ -554,7 +574,7 @@ func (r *Result) extractNumberFor(stmt *ast.NumberForStmt, bindings *bind.Result
 	if len(points) == 0 {
 		return nil
 	}
-	if len(points) < 2 {
+	if len(points) != 2 {
 		return ErrPointMismatch
 	}
 	id, hasSymbol := symbol.ID(0), false
@@ -570,9 +590,12 @@ func (r *Result) extractNumberFor(stmt *ast.NumberForStmt, bindings *bind.Result
 		Symbol:    id,
 		HasSymbol: hasSymbol && id != 0,
 	}
-	for _, point := range points {
-		r.numericFors[point] = fact
-	}
+	initFact := fact
+	initFact.Role = NumericForRoleInit
+	checkFact := fact
+	checkFact.Role = NumericForRoleCheck
+	r.numericFors[points[0]] = initFact
+	r.numericFors[points[1]] = checkFact
 	return nil
 }
 
@@ -580,7 +603,7 @@ func (r *Result) extractGenericFor(stmt *ast.GenericForStmt, bindings *bind.Resu
 	if len(points) == 0 {
 		return nil
 	}
-	if len(points) < 1+len(stmt.Names) {
+	if len(points) != 1+len(stmt.Names) {
 		return ErrPointMismatch
 	}
 	var symbols []symbol.ID
@@ -588,14 +611,21 @@ func (r *Result) extractGenericFor(stmt *ast.GenericForStmt, bindings *bind.Resu
 		symbols = bindings.GenericForSymbols(stmt)
 	}
 	fact := GenericForFact{
-		Stmt:       stmt,
-		Names:      copyStrings(stmt.Names),
-		Exprs:      copyExprs(stmt.Exprs),
-		Symbols:    copySymbols(symbols),
-		HasSymbols: completeSymbols(symbols, len(stmt.Names)),
+		Stmt:          stmt,
+		Names:         copyStrings(stmt.Names),
+		Exprs:         copyExprs(stmt.Exprs),
+		Symbols:       copySymbols(symbols),
+		HasSymbols:    completeSymbols(symbols, len(stmt.Names)),
+		VariableIndex: NoGenericForVariableIndex,
 	}
-	for _, point := range points {
-		r.genericFors[point] = fact
+	checkFact := fact
+	checkFact.Role = GenericForRoleCheck
+	r.genericFors[points[0]] = checkFact
+	for i, point := range points[1 : 1+len(stmt.Names)] {
+		varFact := fact
+		varFact.Role = GenericForRoleVariable
+		varFact.VariableIndex = i
+		r.genericFors[point] = varFact
 	}
 	return nil
 }

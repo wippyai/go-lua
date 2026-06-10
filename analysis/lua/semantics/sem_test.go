@@ -327,10 +327,17 @@ func TestExtractChunkNumericForFactsUseStmtPointsAndPreserveIdentity(t *testing.
 		t.Fatalf("missing numeric for symbol")
 	}
 	points := requireStmtPoints(t, built, loop, 2)
+	expectedRoles := map[cfg.Point]NumericForRole{
+		points[0]: NumericForRoleInit,
+		points[1]: NumericForRoleCheck,
+	}
 	for _, point := range points {
 		fact, ok := result.NumericFor(point)
 		if !ok {
 			t.Fatalf("missing numeric for fact at point %d", point)
+		}
+		if fact.Role != expectedRoles[point] {
+			t.Fatalf("numeric for role at point %d = %v, want %v", point, fact.Role, expectedRoles[point])
 		}
 		if fact.Stmt != loop || fact.Name != "i" || fact.Init != init || fact.Limit != limit || fact.Step != step {
 			t.Fatalf("numeric for fact = %#v", fact)
@@ -367,10 +374,26 @@ func TestExtractChunkGenericForFactsUseStmtPointsAndPreserveIdentity(t *testing.
 	kID := mustGenericForAt(t, bindings, loop, 0)
 	vID := mustGenericForAt(t, bindings, loop, 1)
 	points := requireStmtPoints(t, built, loop, 3)
+	expectedRoles := map[cfg.Point]GenericForRole{
+		points[0]: GenericForRoleCheck,
+		points[1]: GenericForRoleVariable,
+		points[2]: GenericForRoleVariable,
+	}
+	expectedVariableIndexes := map[cfg.Point]int{
+		points[0]: NoGenericForVariableIndex,
+		points[1]: 0,
+		points[2]: 1,
+	}
 	for _, point := range points {
 		fact, ok := result.GenericFor(point)
 		if !ok {
 			t.Fatalf("missing generic for fact at point %d", point)
+		}
+		if fact.Role != expectedRoles[point] {
+			t.Fatalf("generic for role at point %d = %v, want %v", point, fact.Role, expectedRoles[point])
+		}
+		if fact.VariableIndex != expectedVariableIndexes[point] {
+			t.Fatalf("generic for variable index at point %d = %d, want %d", point, fact.VariableIndex, expectedVariableIndexes[point])
 		}
 		if fact.Stmt != loop {
 			t.Fatalf("generic for stmt = %p, want %p", fact.Stmt, loop)
