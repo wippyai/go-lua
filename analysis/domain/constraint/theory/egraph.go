@@ -40,6 +40,7 @@ import (
 	"sort"
 
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
+	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 )
 
 // EGraph implements an E-graph for path equality with congruence closure.
@@ -150,7 +151,7 @@ func (e *EGraph) RegisterKey(key pathdom.PathKey) {
 
 // segmentKey returns a string key for a segment (for children map).
 func segmentKey(seg pathdom.Segment) string {
-	return pathdom.FormatSegments([]pathdom.Segment{seg})
+	return segment.FormatSegments([]pathdom.Segment{seg})
 }
 
 // makeSet ensures a path exists in the union-find structure.

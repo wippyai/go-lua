@@ -5,25 +5,11 @@ import (
 	"strings"
 )
 
-// ParamPath returns the path for a parameter value.
-// Uses the $N format which is recognized by IsPlaceholder() and PlaceholderIndex().
-func ParamPath(index int) Path {
-	return NewPlaceholder(index)
-}
-
-// PlaceholderIndexFromString extracts a placeholder index from canonical forms.
-//
-// Accepted forms:
-//   - "$N" (constraint path placeholder)
-//   - "param[N]" (predicate placeholder)
-//
+// PlaceholderIndexFromString extracts a placeholder index from the canonical $N form.
 // Returns -1 for invalid syntax, negative values, and overflow.
 func PlaceholderIndexFromString(s string) int {
 	if len(s) >= 2 && s[0] == '$' {
 		return parseNonNegativeDecimal(s[1:])
-	}
-	if strings.HasPrefix(s, "param[") && strings.HasSuffix(s, "]") {
-		return parseNonNegativeDecimal(s[6 : len(s)-1])
 	}
 	return -1
 }
@@ -63,8 +49,8 @@ func PlaceholderArgIndex(path Path, argCount int) (int, bool) {
 	return idx, true
 }
 
-// RetPath returns the path for a return value.
-func RetPath(index int) Path {
+// NewReturnSlot returns the path for a return value slot.
+func NewReturnSlot(index int) Path {
 	if index < 0 {
 		return Path{}
 	}

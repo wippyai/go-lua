@@ -3,12 +3,12 @@ package numeric
 import (
 	"testing"
 
-	. "github.com/wippyai/go-lua/analysis/domain/path"
+	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 )
 
 func TestLe(t *testing.T) {
-	x := Path{Root: "x"}
-	y := Path{Root: "y"}
+	x := pathdom.Path{Root: "x"}
+	y := pathdom.Path{Root: "y"}
 	c := Le{X: x, Y: y, C: 5}
 
 	if c.NumKind() != NumLe {
@@ -36,8 +36,8 @@ func TestLe(t *testing.T) {
 }
 
 func TestLt(t *testing.T) {
-	x := Path{Root: "x"}
-	y := Path{Root: "y"}
+	x := pathdom.Path{Root: "x"}
+	y := pathdom.Path{Root: "y"}
 	c := Lt{X: x, Y: y}
 
 	if c.NumKind() != NumLt {
@@ -60,8 +60,8 @@ func TestLt(t *testing.T) {
 }
 
 func TestGe(t *testing.T) {
-	x := Path{Root: "x"}
-	y := Path{Root: "y"}
+	x := pathdom.Path{Root: "x"}
+	y := pathdom.Path{Root: "y"}
 	c := Ge{X: x, Y: y}
 
 	if c.NumKind() != NumGe {
@@ -75,8 +75,8 @@ func TestGe(t *testing.T) {
 }
 
 func TestGt(t *testing.T) {
-	x := Path{Root: "x"}
-	y := Path{Root: "y"}
+	x := pathdom.Path{Root: "x"}
+	y := pathdom.Path{Root: "y"}
 	c := Gt{X: x, Y: y}
 
 	if c.NumKind() != NumGt {
@@ -90,8 +90,8 @@ func TestGt(t *testing.T) {
 }
 
 func TestEq(t *testing.T) {
-	x := Path{Root: "x"}
-	y := Path{Root: "y"}
+	x := pathdom.Path{Root: "x"}
+	y := pathdom.Path{Root: "y"}
 	c := Eq{X: x, Y: y}
 
 	if c.NumKind() != NumEq {
@@ -105,7 +105,7 @@ func TestEq(t *testing.T) {
 }
 
 func TestEqConst(t *testing.T) {
-	x := Path{Root: "x"}
+	x := pathdom.Path{Root: "x"}
 	c := EqConst{X: x, C: 42}
 
 	if c.NumKind() != NumEqConst {
@@ -128,7 +128,7 @@ func TestEqConst(t *testing.T) {
 }
 
 func TestLeConst(t *testing.T) {
-	x := Path{Root: "x"}
+	x := pathdom.Path{Root: "x"}
 	c := LeConst{X: x, C: 10}
 
 	if c.NumKind() != NumLeConst {
@@ -142,7 +142,7 @@ func TestLeConst(t *testing.T) {
 }
 
 func TestGeConst(t *testing.T) {
-	x := Path{Root: "x"}
+	x := pathdom.Path{Root: "x"}
 	c := GeConst{X: x, C: 0}
 
 	if c.NumKind() != NumGeConst {
@@ -156,7 +156,7 @@ func TestGeConst(t *testing.T) {
 }
 
 func TestModEq(t *testing.T) {
-	x := Path{Root: "x"}
+	x := pathdom.Path{Root: "x"}
 	c := ModEq{X: x, M: 3, R: 1}
 
 	if c.NumKind() != NumModEq {
@@ -184,8 +184,8 @@ func TestModEq(t *testing.T) {
 }
 
 func TestNumericConstraintHashUniqueness(t *testing.T) {
-	x := Path{Root: "x"}
-	y := Path{Root: "y"}
+	x := pathdom.Path{Root: "x"}
+	y := pathdom.Path{Root: "y"}
 
 	constraints := []NumericConstraint{
 		Le{X: x, Y: y, C: 5},
@@ -212,8 +212,8 @@ func TestNumericConstraintHashUniqueness(t *testing.T) {
 }
 
 func TestNumericConstraintEqualsWrongType(t *testing.T) {
-	x := Path{Root: "x"}
-	y := Path{Root: "y"}
+	x := pathdom.Path{Root: "x"}
+	y := pathdom.Path{Root: "y"}
 
 	le := Le{X: x, Y: y, C: 5}
 	lt := Lt{X: x, Y: y}
@@ -249,8 +249,8 @@ func TestNumKindValues(t *testing.T) {
 }
 
 func TestLeLenOf(t *testing.T) {
-	x := Path{Root: "x"}
-	arr := Path{Root: "arr"}
+	x := pathdom.Path{Root: "x"}
+	arr := pathdom.Path{Root: "arr"}
 	c := LeLenOf{X: x, Array: arr}
 
 	if c.NumKind() != NumLeLenOf {
@@ -274,19 +274,19 @@ func TestLeLenOf(t *testing.T) {
 		t.Error("equal constraints should be equal")
 	}
 
-	c3 := LeLenOf{X: x, Array: Path{Root: "other"}}
+	c3 := LeLenOf{X: x, Array: pathdom.Path{Root: "other"}}
 	if c.Equals(c3) {
 		t.Error("different array should not be equal")
 	}
 
-	c4 := LeLenOf{X: Path{Root: "other"}, Array: arr}
+	c4 := LeLenOf{X: pathdom.Path{Root: "other"}, Array: arr}
 	if c.Equals(c4) {
 		t.Error("different X should not be equal")
 	}
 }
 
 func TestLenConstBounds(t *testing.T) {
-	arr := Path{Root: "arr"}
+	arr := pathdom.Path{Root: "arr"}
 	le := LenLeConst{Array: arr, C: 3}
 	if le.NumKind() != NumLenLeConst {
 		t.Errorf("expected NumLenLeConst, got %v", le.NumKind())
@@ -317,14 +317,14 @@ func TestLenConstBounds(t *testing.T) {
 	if !ge.Equals(LenGeConst{Array: arr, C: 1}) {
 		t.Fatal("equal LenGeConst constraints should be equal")
 	}
-	if ge.Equals(LenGeConst{Array: Path{Root: "other"}, C: 1}) {
+	if ge.Equals(LenGeConst{Array: pathdom.Path{Root: "other"}, C: 1}) {
 		t.Fatal("different LenGeConst arrays should not be equal")
 	}
 }
 
 func TestNumericPathsMethod(t *testing.T) {
-	x := Path{Root: "x"}
-	y := Path{Root: "y"}
+	x := pathdom.Path{Root: "x"}
+	y := pathdom.Path{Root: "y"}
 
 	tests := []struct {
 		name    string

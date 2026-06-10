@@ -27,10 +27,11 @@ type Segment = segment.Segment
 // Path identifies a runtime value through its access path (variable.field.index).
 //
 // Paths are the fundamental identity mechanism for type narrowing. They track
-// values across control flow using SSA-style symbol IDs, enabling precise
-// narrowing even when the same variable name refers to different bindings.
+// values across control flow using lexical symbol identity plus an optional
+// flow/SSA version, enabling precise narrowing even when the same variable name
+// refers to different bindings.
 //
-// Symbol provides SSA identity; Root is optional for display when Symbol is set.
+// Symbol provides lexical binding identity; Root is optional for display when Symbol is set.
 // When Symbol is non-zero, it is the primary identity for the path root.
 // Placeholder paths ($0, $1, etc.) use Root only with Symbol=0 and are
 // substituted with concrete paths when applying function refinements at call sites.
@@ -165,31 +166,6 @@ func (p Path) DirectFieldName() (string, bool) {
 	}
 }
 
-// FormatSegments converts path segments to a canonical suffix string.
-// It forwards to segment.FormatSegments for compatibility with existing path users.
-func FormatSegments(segs []Segment) string {
-	return segment.FormatSegments(segs)
-}
-
-// InternFormattedSegments parses the canonical suffix emitted by FormatSegments.
-// The returned slice is interned and immutable; callers that expose or mutate
-// segment slices must use ParseFormattedSegments instead.
-func InternFormattedSegments(suffix string) ([]Segment, bool) {
-	return segment.InternFormattedSegments(suffix)
-}
-
-// ParseFormattedSegments parses the canonical suffix emitted by FormatSegments
-// and returns a defensive copy for public consumers.
-func ParseFormattedSegments(suffix string) ([]Segment, bool) {
-	return segment.ParseFormattedSegments(suffix)
-}
-
-// ValidFormattedSegments reports whether suffix is a canonical FormatSegments
-// suffix without projecting segment values.
-func ValidFormattedSegments(suffix string) bool {
-	return segment.ValidFormattedSegments(suffix)
-}
-
 // IsEmpty returns true if the path has no identity (no Root and no Symbol).
 func (p Path) IsEmpty() bool { return p.Root == "" && p.Symbol == 0 }
 
@@ -299,7 +275,6 @@ func (p Path) String() string {
 // Key returns a stable key representation of the path.
 // Format: sym<symbol>@<version><segments> for versioned symbol paths,
 // sym<symbol><segments> for unversioned symbol paths, <Root><segments> for placeholders.
-// For versioned flow lookups, prefer pathkey.Resolver.KeyAt.
 func (p Path) Key() PathKey {
 	if p.IsEmpty() {
 		return ""
@@ -315,7 +290,7 @@ func (p Path) Key() PathKey {
 	} else {
 		b.WriteString(p.Root)
 	}
-	b.WriteString(FormatSegments(p.Segments))
+	b.WriteString(segment.FormatSegments(p.Segments))
 	return PathKey(b.String())
 }
 

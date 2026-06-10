@@ -6,7 +6,7 @@ import (
 	"testing"
 )
 
-func TestParamPath(t *testing.T) {
+func TestNewPlaceholderCanonicalRoot(t *testing.T) {
 	tests := []struct {
 		index    int
 		wantRoot string
@@ -18,36 +18,36 @@ func TestParamPath(t *testing.T) {
 		{99, "$99"},
 	}
 	for _, tt := range tests {
-		p := ParamPath(tt.index)
+		p := NewPlaceholder(tt.index)
 		if p.Root != tt.wantRoot {
-			t.Errorf("ParamPath(%d).Root = %q, want %q", tt.index, p.Root, tt.wantRoot)
+			t.Errorf("NewPlaceholder(%d).Root = %q, want %q", tt.index, p.Root, tt.wantRoot)
 		}
 		if p.Symbol != 0 {
-			t.Errorf("ParamPath(%d).Symbol = %d, want 0", tt.index, p.Symbol)
+			t.Errorf("NewPlaceholder(%d).Symbol = %d, want 0", tt.index, p.Symbol)
 		}
 		if len(p.Segments) != 0 {
-			t.Errorf("ParamPath(%d) should have no segments", tt.index)
+			t.Errorf("NewPlaceholder(%d) should have no segments", tt.index)
 		}
 	}
 }
 
-func TestParamPath_IsPlaceholder(t *testing.T) {
+func TestNewPlaceholder_IsPlaceholder(t *testing.T) {
 	for i := 0; i < 10; i++ {
-		p := ParamPath(i)
+		p := NewPlaceholder(i)
 		if !p.IsPlaceholder() {
-			t.Errorf("ParamPath(%d) should be a placeholder", i)
+			t.Errorf("NewPlaceholder(%d) should be a placeholder", i)
 		}
 		idx := p.PlaceholderIndex()
 		if idx < 0 {
-			t.Errorf("ParamPath(%d).PlaceholderIndex() should return non-negative, got %d", i, idx)
+			t.Errorf("NewPlaceholder(%d).PlaceholderIndex() should return non-negative, got %d", i, idx)
 		}
 		if idx != i {
-			t.Errorf("ParamPath(%d).PlaceholderIndex() = %d, want %d", i, idx, i)
+			t.Errorf("NewPlaceholder(%d).PlaceholderIndex() = %d, want %d", i, idx, i)
 		}
 	}
 }
 
-func TestRetPath(t *testing.T) {
+func TestNewReturnSlot(t *testing.T) {
 	tests := []struct {
 		index    int
 		wantRoot string
@@ -58,69 +58,69 @@ func TestRetPath(t *testing.T) {
 		{10, "ret[10]"},
 	}
 	for _, tt := range tests {
-		p := RetPath(tt.index)
+		p := NewReturnSlot(tt.index)
 		if p.Root != tt.wantRoot {
-			t.Errorf("RetPath(%d).Root = %q, want %q", tt.index, p.Root, tt.wantRoot)
+			t.Errorf("NewReturnSlot(%d).Root = %q, want %q", tt.index, p.Root, tt.wantRoot)
 		}
 		if p.Symbol != 0 {
-			t.Errorf("RetPath(%d).Symbol = %d, want 0", tt.index, p.Symbol)
+			t.Errorf("NewReturnSlot(%d).Symbol = %d, want 0", tt.index, p.Symbol)
 		}
 	}
 }
 
-func TestRetPath_NotPlaceholder(t *testing.T) {
+func TestNewReturnSlot_NotPlaceholder(t *testing.T) {
 	for i := 0; i < 5; i++ {
-		p := RetPath(i)
+		p := NewReturnSlot(i)
 		if p.IsPlaceholder() {
-			t.Errorf("RetPath(%d) should not be a placeholder", i)
+			t.Errorf("NewReturnSlot(%d) should not be a placeholder", i)
 		}
 	}
 }
 
 func TestPathHelpers_PathKey(t *testing.T) {
-	// ParamPath should generate valid path keys
-	p := ParamPath(0)
+	// NewPlaceholder should generate valid path keys
+	p := NewPlaceholder(0)
 	key := p.Key()
 	if key == "" {
-		t.Error("ParamPath(0).Key() should not be empty")
+		t.Error("NewPlaceholder(0).Key() should not be empty")
 	}
 
-	// RetPath should generate valid path keys
-	r := RetPath(0)
+	// NewReturnSlot should generate valid path keys
+	r := NewReturnSlot(0)
 	rkey := r.Key()
 	if rkey == "" {
-		t.Error("RetPath(0).Key() should not be empty")
+		t.Error("NewReturnSlot(0).Key() should not be empty")
 	}
 
 	// Different paths should have different keys
 	if p.Key() == r.Key() {
-		t.Error("ParamPath and RetPath should have different keys")
+		t.Error("NewPlaceholder and NewReturnSlot should have different keys")
 	}
 }
 
 func TestPathHelpers_Consistency(t *testing.T) {
 	// Multiple calls should return consistent values
 	for i := 0; i < 10; i++ {
-		p1 := ParamPath(i)
-		p2 := ParamPath(i)
+		p1 := NewPlaceholder(i)
+		p2 := NewPlaceholder(i)
 		if p1.Root != p2.Root {
-			t.Errorf("ParamPath(%d) not consistent", i)
+			t.Errorf("NewPlaceholder(%d) not consistent", i)
 		}
 
-		r1 := RetPath(i)
-		r2 := RetPath(i)
+		r1 := NewReturnSlot(i)
+		r2 := NewReturnSlot(i)
 		if r1.Root != r2.Root {
-			t.Errorf("RetPath(%d) not consistent", i)
+			t.Errorf("NewReturnSlot(%d) not consistent", i)
 		}
 	}
 }
 
 func TestPathHelpers_NegativeIndicesRejected(t *testing.T) {
-	if p := ParamPath(-1); !p.IsEmpty() {
-		t.Fatalf("ParamPath(-1) should be empty path, got %+v", p)
+	if p := NewPlaceholder(-1); !p.IsEmpty() {
+		t.Fatalf("NewPlaceholder(-1) should be empty path, got %+v", p)
 	}
-	if p := RetPath(-1); !p.IsEmpty() {
-		t.Fatalf("RetPath(-1) should be empty path, got %+v", p)
+	if p := NewReturnSlot(-1); !p.IsEmpty() {
+		t.Fatalf("NewReturnSlot(-1) should be empty path, got %+v", p)
 	}
 }
 
@@ -130,12 +130,12 @@ func TestPathHelpers_UniqueKeys(t *testing.T) {
 		name string
 		path Path
 	}{
-		{"param0", ParamPath(0)},
-		{"param1", ParamPath(1)},
-		{"param2", ParamPath(2)},
-		{"ret0", RetPath(0)},
-		{"ret1", RetPath(1)},
-		{"ret2", RetPath(2)},
+		{"param0", NewPlaceholder(0)},
+		{"param1", NewPlaceholder(1)},
+		{"param2", NewPlaceholder(2)},
+		{"ret0", NewReturnSlot(0)},
+		{"ret1", NewReturnSlot(1)},
+		{"ret2", NewReturnSlot(2)},
 	}
 
 	for _, p := range paths {
@@ -237,20 +237,11 @@ func TestPlaceholderIndexFromString(t *testing.T) {
 		{"$0", 0},
 		{"$42", 42},
 		{"$001", 1},
-		{"param[0]", 0},
-		{"param[42]", 42},
-		{"param[001]", 1},
 		{"$-1", -1},
 		{"$+1", -1},
-		{"param[-1]", -1},
-		{"param[+1]", -1},
 		{"$", -1},
-		{"param[]", -1},
-		{"param[abc]", -1},
-		{"param[1", -1},
 		{"x", -1},
 		{"$" + overflow, -1},
-		{"param[" + overflow + "]", -1},
 	}
 
 	for _, tc := range tests {
@@ -296,10 +287,10 @@ func TestPlaceholderArgIndex(t *testing.T) {
 		wantIdx  int
 		wantOK   bool
 	}{
-		{name: "placeholder in range", path: ParamPath(0), argCount: 1, wantIdx: 0, wantOK: true},
-		{name: "placeholder out of range", path: ParamPath(1), argCount: 1, wantOK: false},
+		{name: "placeholder in range", path: NewPlaceholder(0), argCount: 1, wantIdx: 0, wantOK: true},
+		{name: "placeholder out of range", path: NewPlaceholder(1), argCount: 1, wantOK: false},
 		{name: "non-placeholder path", path: Path{Root: "x"}, argCount: 1, wantOK: false},
-		{name: "empty arg list", path: ParamPath(0), argCount: 0, wantOK: false},
+		{name: "empty arg list", path: NewPlaceholder(0), argCount: 0, wantOK: false},
 	}
 
 	for _, tt := range tests {
