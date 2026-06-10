@@ -1,0 +1,152 @@
+package typ
+
+func containsInstantiatedDynamic(t Type, seen map[Type]bool, depth int) bool {
+	if t == nil || DepthExceeded(depth) {
+		return false
+	}
+	t = UnwrapAnnotated(t)
+	if t == nil {
+		return false
+	}
+	if knownContainsInstantiated(t) {
+		return true
+	}
+	if _, ok := t.(*Recursive); ok {
+		return false
+	}
+	if !knownContainsOpenRecursive(t) {
+		return false
+	}
+	if seen[t] {
+		return false
+	}
+	seen[t] = true
+
+	return Visit(t, Visitor[bool]{
+		Optional: func(o *Optional) bool {
+			return containsInstantiatedDynamic(o.Inner, seen, depth+1)
+		},
+		Union: func(u *Union) bool {
+			for _, member := range u.Members {
+				if containsInstantiatedDynamic(member, seen, depth+1) {
+					return true
+				}
+			}
+			return false
+		},
+		Intersection: func(in *Intersection) bool {
+			for _, member := range in.Members {
+				if containsInstantiatedDynamic(member, seen, depth+1) {
+					return true
+				}
+			}
+			return false
+		},
+		Array: func(a *Array) bool {
+			return containsInstantiatedDynamic(a.Element, seen, depth+1)
+		},
+		Map: func(m *Map) bool {
+			return containsInstantiatedDynamic(m.Key, seen, depth+1) ||
+				containsInstantiatedDynamic(m.Value, seen, depth+1)
+		},
+		ReadonlyMap: func(m *ReadonlyMap) bool {
+			return containsInstantiatedDynamic(m.Key, seen, depth+1) ||
+				containsInstantiatedDynamic(m.Value, seen, depth+1)
+		},
+		Tuple: func(tup *Tuple) bool {
+			for _, elem := range tup.Elements {
+				if containsInstantiatedDynamic(elem, seen, depth+1) {
+					return true
+				}
+			}
+			return false
+		},
+		Function: func(fn *Function) bool {
+			for _, param := range fn.Params {
+				if containsInstantiatedDynamic(param.Type, seen, depth+1) {
+					return true
+				}
+			}
+			if containsInstantiatedDynamic(fn.Variadic, seen, depth+1) {
+				return true
+			}
+			for _, ret := range fn.Returns {
+				if containsInstantiatedDynamic(ret, seen, depth+1) {
+					return true
+				}
+			}
+			for _, param := range fn.TypeParams {
+				if param != nil && containsInstantiatedDynamic(param.Constraint, seen, depth+1) {
+					return true
+				}
+			}
+			return false
+		},
+		Record: func(r *Record) bool {
+			if containsInstantiatedDynamic(r.MapKey, seen, depth+1) ||
+				containsInstantiatedDynamic(r.MapValue, seen, depth+1) ||
+				containsInstantiatedDynamic(r.Metatable, seen, depth+1) {
+				return true
+			}
+			for _, field := range r.Fields {
+				if containsInstantiatedDynamic(field.Type, seen, depth+1) {
+					return true
+				}
+			}
+			for _, member := range r.StaticMembers {
+				if containsInstantiatedDynamic(member.Type, seen, depth+1) {
+					return true
+				}
+			}
+			return false
+		},
+		Alias: func(a *Alias) bool {
+			return containsInstantiatedDynamic(a.Target, seen, depth+1)
+		},
+		Meta: func(m *Meta) bool {
+			return containsInstantiatedDynamic(m.Of, seen, depth+1)
+		},
+		Generic: func(g *Generic) bool {
+			for _, param := range g.TypeParams {
+				if param != nil && containsInstantiatedDynamic(param.Constraint, seen, depth+1) {
+					return true
+				}
+			}
+			return containsInstantiatedDynamic(g.Body, seen, depth+1)
+		},
+		TypeParam: func(p *TypeParam) bool {
+			return containsInstantiatedDynamic(p.Constraint, seen, depth+1)
+		},
+		FieldAccess: func(f *FieldAccess) bool {
+			return containsInstantiatedDynamic(f.Base, seen, depth+1)
+		},
+		IndexAccess: func(i *IndexAccess) bool {
+			return containsInstantiatedDynamic(i.Base, seen, depth+1) ||
+				containsInstantiatedDynamic(i.Index, seen, depth+1)
+		},
+		Sum: func(s *Sum) bool {
+			for _, variant := range s.Variants {
+				for _, t := range variant.Types {
+					if containsInstantiatedDynamic(t, seen, depth+1) {
+						return true
+					}
+				}
+			}
+			return false
+		},
+		Interface: func(i *Interface) bool {
+			for _, method := range i.Methods {
+				if method.Type != nil && containsInstantiatedDynamic(method.Type, seen, depth+1) {
+					return true
+				}
+			}
+			return false
+		},
+		Recursive: func(r *Recursive) bool {
+			return containsInstantiatedDynamic(r.Body, seen, depth+1)
+		},
+		Default: func(Type) bool {
+			return false
+		},
+	})
+}
