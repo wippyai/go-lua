@@ -2,11 +2,12 @@ package typ
 
 import "github.com/wippyai/go-lua/analysis/type/kind"
 
-// ProjectUnionMembers applies a projection to the members of an already
-// normalized union. If the projection only drops members, the existing member
-// hash vector is reused so path-sensitive filters do not rehash recursive
-// products. Rewrites preserve only root union normalization: deduplication,
-// nil/optional folding, literal subsumption, and deterministic member order.
+// ProjectUnionMembers applies a cache-preserving projection to the members of
+// an already normalized union. If the projection only drops members, the
+// existing member hash vector is reused so path-sensitive filters do not rehash
+// recursive products. Rewrites preserve only root union representation
+// normalization: deduplication, nil/optional folding, literal subsumption, and
+// deterministic member order.
 func ProjectUnionMembers(u *Union, project func(Type) Type) Type {
 	if u == nil {
 		return Never

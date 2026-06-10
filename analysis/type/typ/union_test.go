@@ -491,6 +491,46 @@ func TestProjectUnionMembersScalarRewriteDoesNotCompareCompoundMembers(t *testin
 	}
 }
 
+func TestProjectUnionMembersPreservesDistinctRecursiveFamilyNodes(t *testing.T) {
+	base := NewRecursive("SuiteA", func(self Type) Type {
+		return NewRecord().
+			Field("name", String).
+			Field("children", NewArray(self)).
+			Build()
+	})
+	withPath := NewRecursive("SuiteB", func(self Type) Type {
+		return NewRecord().
+			Field("name", String).
+			Field("children", NewArray(self)).
+			Field("full_path", String).
+			Build()
+	})
+	u, ok := NewUnion(base, Boolean, withPath).(*Union)
+	if !ok {
+		t.Fatalf("expected union")
+	}
+
+	got := ProjectUnionMembers(u, func(member Type) Type {
+		if member == Boolean {
+			return True
+		}
+		return member
+	})
+	union, ok := got.(*Union)
+	if !ok {
+		t.Fatalf("projected recursive family union = %T %v, want union", got, got)
+	}
+	recursiveCount := 0
+	for _, member := range union.Members {
+		if _, ok := member.(*Recursive); ok {
+			recursiveCount++
+		}
+	}
+	if recursiveCount != 2 {
+		t.Fatalf("projected union kept %d recursive family members, want 2: %v", recursiveCount, got)
+	}
+}
+
 func TestNewOptionalUnionPreservesRecursiveMemberHashes(t *testing.T) {
 	recA := NewRecursive("Node", func(self Type) Type {
 		return NewRecord().Field("next", NewOptional(self)).Build()
