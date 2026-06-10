@@ -31,6 +31,7 @@ package typ
 
 import (
 	"reflect"
+	"sync"
 
 	"github.com/wippyai/go-lua/analysis/type/kind"
 )
@@ -42,6 +43,18 @@ type Type interface {
 	String() string
 	Hash() uint64
 	Equals(other Type) bool
+}
+
+type stringCache struct {
+	once  sync.Once
+	value string
+}
+
+func (c *stringCache) get(build func() string) string {
+	c.once.Do(func() {
+		c.value = build()
+	})
+	return c.value
 }
 
 // SameNode reports whether two Type interface values point at the same
