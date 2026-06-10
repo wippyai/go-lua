@@ -1,12 +1,11 @@
 // Package product builds lattice combinators over the lattice.Lattice
 // contract: a product-of-lattices and a pointwise map lattice.
 //
-// These combinators are the substrate for a single-canonical-flow refactor.
-// The per-program-point abstract state is a PRODUCT of the existing axis
-// lattices (Condition, AbstractValue, NumericRange, PathPresence, ...), and
-// the per-symbol environment is a MAP lattice keyed by symbol. Because the
-// combinators are derived structurally from the component lattices, the
-// product and the map satisfy the full lattice laws exactly when their
+// These combinators build larger abstract states from smaller domains. A
+// program-point state can be a product of independent component lattices, while
+// an environment or summary can be a map lattice keyed by program identifiers.
+// Because the combinators are derived structurally from the component lattices,
+// the product and the map satisfy the full lattice laws exactly when their
 // components do; domain law tests verify this against any component
 // instantiation.
 //

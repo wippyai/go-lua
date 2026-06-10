@@ -259,10 +259,10 @@ func TestSolve_DelayedWideningKeepsInitialJoinsExact(t *testing.T) {
 	}
 }
 
-// TestSolve_AbstractRunsAfterJoin pins the solver-level abstraction hook used by
-// canonical condition relevance projection. The hook must run on the cell's
-// joined accumulator, not only on the transfer contribution, otherwise a stale
-// value already stored in the cell could survive every future projected emit.
+// TestSolve_AbstractRunsAfterJoin pins the solver-level abstraction hook. The
+// hook must run on the cell's joined accumulator, not only on the transfer
+// contribution, otherwise a stale value already stored in the cell could survive
+// every future projected emit.
 func TestSolve_AbstractRunsAfterJoin(t *testing.T) {
 	cl := capLattice{top: 10}
 	sys := EquationSystem[string, int]{

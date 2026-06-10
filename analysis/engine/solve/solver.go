@@ -1,14 +1,14 @@
-// Package solve is the single canonical fixed-point engine over the
-// analysis/domain/lattice Lattice contract.
+// Package solve implements a deterministic fixed-point engine over the
+// lattice.Lattice contract.
 //
-// Every flow analysis in the type system is, abstractly, a system of monotone
-// equations over an abstract domain: a finite set of cells (program points,
-// path keys, summary slots) each carrying an element of a lattice, related by
-// transfer functions that read some cells and contribute to others. The least
-// solution of that system — the least fixed point of the combined transfer
-// function — is the analysis result. This package computes it once, generically,
-// so the domains supply only their Lattice value and their transfer functions
-// rather than re-deriving a worklist loop each time.
+// A flow analysis is, abstractly, a system of monotone equations over an
+// abstract domain: a finite set of cells (program points, path keys, summary
+// slots) each carrying an element of a lattice, related by transfer functions
+// that read some cells and contribute to others. The least solution of that
+// system — the least fixed point of the combined transfer function — is the
+// analysis result. This package computes it generically, so callers supply only
+// their Lattice value and transfer functions rather than re-deriving a worklist
+// loop each time.
 //
 // The algorithm is Kildall's worklist iteration (Gary A. Kildall, "A unified
 // approach to global program optimization", POPL 1973) with join-accumulation
@@ -98,8 +98,8 @@ type EquationSystem[Cell comparable, State any] struct {
 
 	// Abstract, when non-nil, is a cell-local upper-closure applied after
 	// Join/Widen and before convergence comparison. It is for sound abstractions
-	// such as relevance projection: Abstract(c, x) must over-approximate x in
-	// the lattice order, be monotone, and be deterministic. Nil means the raw
+	// such as relevance or shape projection: Abstract(c, x) must over-approximate
+	// x in the lattice order, be monotone, and be deterministic. Nil means the raw
 	// Join/Widen result is stored.
 	Abstract func(Cell, State) State
 }
@@ -122,7 +122,7 @@ func Solve[Cell comparable, State any](sys EquationSystem[Cell, State]) map[Cell
 
 // solveState is the mutable scratch of one Solve run.
 type solveState[Cell comparable, State any] struct {
-	sys lattice.Lattice[State]
+	domain lattice.Lattice[State]
 
 	// transfer/widenAt mirror the system's functions so run does not re-read
 	// the struct each visit.
@@ -185,7 +185,7 @@ func newState[Cell comparable, State any](sys EquationSystem[Cell, State]) *solv
 
 	n := len(sys.Cells)
 	s := &solveState[Cell, State]{
-		sys:          sys.Lattice,
+		domain:       sys.Lattice,
 		transfer:     sys.Transfer,
 		widenAt:      widenAt,
 		widenDelay:   widenDelay,
@@ -220,7 +220,7 @@ func (s *solveState[Cell, State]) curOf(c Cell) State {
 	if v, ok := s.cur[c]; ok {
 		return v
 	}
-	v := s.sys.Bottom()
+	v := s.domain.Bottom()
 	s.cur[c] = v
 	return v
 }
@@ -259,17 +259,17 @@ func (s *solveState[Cell, State]) recordDependency(d Cell) {
 // and its readers are re-queued.
 func (s *solveState[Cell, State]) emit(d Cell, v State) {
 	prev := s.curOf(d)
-	next := s.sys.Join(prev, v)
+	next := s.domain.Join(prev, v)
 	delayConsumed := false
 	if s.widenAt(d) && s.visits[d] > 0 {
 		if s.widenChanges[d] >= max(0, s.widenDelay(d)) {
-			next = s.sys.Widen(prev, next)
+			next = s.domain.Widen(prev, next)
 		} else {
 			delayConsumed = true
 		}
 	}
 	next = s.abstract(d, next)
-	if s.sys.Equal(next, prev) {
+	if s.domain.Equal(next, prev) {
 		return
 	}
 	s.cur[d] = next

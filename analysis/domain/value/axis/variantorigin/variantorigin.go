@@ -106,7 +106,10 @@ func (v Value) NarrowCase(family uint64, caseIndex int, equal bool) Value {
 		return v
 	case concrete:
 		if v.family != family {
-			return Bottom()
+			if equal {
+				return Bottom()
+			}
+			return v
 		}
 		if equal {
 			if slices.Contains(v.cases, caseIndex) {

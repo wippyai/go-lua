@@ -35,6 +35,20 @@ func TestNarrowCase(t *testing.T) {
 	}
 }
 
+func TestNarrowCaseDifferentFamily(t *testing.T) {
+	v := Of(8, []int{0, 1})
+
+	got := v.NarrowCase(7, 1, true)
+	if !got.IsBottom() {
+		t.Fatalf("equal against different family = %#v, want Bottom", got)
+	}
+
+	got = v.NarrowCase(7, 1, false)
+	if !Equal(got, v) {
+		t.Fatalf("not-equal against different family = %#v, want unchanged %#v", got, v)
+	}
+}
+
 func TestHashFollowsCanonicalCaseOrder(t *testing.T) {
 	a := Of(7, []int{2, 1, 1})
 	b := Of(7, []int{1, 2})

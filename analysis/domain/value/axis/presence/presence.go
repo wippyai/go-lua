@@ -3,7 +3,7 @@ package presence
 import internal "github.com/wippyai/go-lua/analysis/internal/hash"
 
 // Value is the Presence/Nilability axis abstraction of whether a slot holds a
-// value. It is a point in the four-element chain bottom < {present, absent} < maybe.
+// value. It is a point in the four-element lattice bottom < {present, absent} < maybe.
 type Value uint8
 
 const (
@@ -62,7 +62,7 @@ func Widen(prev, next Value) Value {
 	return Join(prev, next)
 }
 
-// Equal is lattice equivalence (identity on this finite chain).
+// Equal is lattice equivalence (identity on this finite lattice).
 func Equal(a, b Value) bool {
 	return a == b
 }
@@ -72,7 +72,7 @@ func (v Value) Hash() uint64 {
 	return internal.HashCombine(internal.FnvString("presence"), uint64(v))
 }
 
-// Covers reports whether the receiver is at least as high as other in the chain.
+// Covers reports whether the receiver is at least as high as other in the lattice.
 //
 // Defined through Join so it is consistent with the order: v covers other iff
 // joining them does not raise v.
