@@ -18,6 +18,14 @@ func number(value string) *ast.NumberExpr {
 	return &ast.NumberExpr{Value: value}
 }
 
+func stringLit(value string) *ast.StringExpr {
+	return &ast.StringExpr{Value: value}
+}
+
+func typeCall(arg ast.Expr) *ast.FuncCallExpr {
+	return &ast.FuncCallExpr{Func: ident("type"), Args: []ast.Expr{arg}}
+}
+
 func localAssign(names []string, exprs ...ast.Expr) *ast.LocalAssignStmt {
 	return &ast.LocalAssignStmt{Names: names, Exprs: exprs}
 }
@@ -652,9 +660,10 @@ func TestBuildChunkEmptyIfMaterializesDistinctBranchArms(t *testing.T) {
 
 func TestBuildChunkBranchMetadataPatterns(t *testing.T) {
 	tests := []struct {
-		name string
-		expr func(*ast.IdentExpr) ast.Expr
-		want cfgfacts.BranchCheckKind
+		name     string
+		expr     func(*ast.IdentExpr) ast.Expr
+		want     cfgfacts.BranchCheckKind
+		typeName string
 	}{
 		{
 			name: "truthy",
@@ -684,6 +693,38 @@ func TestBuildChunkBranchMetadataPatterns(t *testing.T) {
 			},
 			want: cfgfacts.CheckNotNil,
 		},
+		{
+			name: "type equal",
+			expr: func(x *ast.IdentExpr) ast.Expr {
+				return &ast.RelationalOpExpr{Operator: "==", Lhs: typeCall(x), Rhs: stringLit("string")}
+			},
+			want:     cfgfacts.CheckTypeEqual,
+			typeName: "string",
+		},
+		{
+			name: "type not equal",
+			expr: func(x *ast.IdentExpr) ast.Expr {
+				return &ast.RelationalOpExpr{Operator: "~=", Lhs: typeCall(x), Rhs: stringLit("number")}
+			},
+			want:     cfgfacts.CheckTypeNot,
+			typeName: "number",
+		},
+		{
+			name: "type equal reversed operands",
+			expr: func(x *ast.IdentExpr) ast.Expr {
+				return &ast.RelationalOpExpr{Operator: "==", Lhs: stringLit("table"), Rhs: typeCall(x)}
+			},
+			want:     cfgfacts.CheckTypeEqual,
+			typeName: "table",
+		},
+		{
+			name: "type not equal reversed operands",
+			expr: func(x *ast.IdentExpr) ast.Expr {
+				return &ast.RelationalOpExpr{Operator: "~=", Lhs: stringLit("boolean"), Rhs: typeCall(x)}
+			},
+			want:     cfgfacts.CheckTypeNot,
+			typeName: "boolean",
+		},
 	}
 
 	for _, tt := range tests {
@@ -694,7 +735,7 @@ func TestBuildChunkBranchMetadataPatterns(t *testing.T) {
 				xDecl,
 				&ast.IfStmt{Condition: tt.expr(xRead)},
 			}
-			bindings := bind.BindChunk(stmts, bind.Options{})
+			bindings := bind.BindChunk(stmts, bind.Options{Globals: []string{"type"}})
 			result := BuildChunk(stmts, bindings)
 			graph := result.Graph
 			branch := firstBranch(t, graph)
@@ -707,6 +748,83 @@ func TestBuildChunkBranchMetadataPatterns(t *testing.T) {
 			}
 			if got := fact.Check.Kind; got != tt.want {
 				t.Fatalf("branch check = %v, want %v", got, tt.want)
+			}
+			if got := fact.Check.TypeName; got != tt.typeName {
+				t.Fatalf("branch type name = %q, want %q", got, tt.typeName)
+			}
+		})
+	}
+}
+
+func TestBuildChunkTypeGuardConditionRejectsUnsupportedCalls(t *testing.T) {
+	tests := []struct {
+		name    string
+		stmts   []ast.Stmt
+		globals []string
+	}{
+		{
+			name: "local shadowed type",
+			stmts: []ast.Stmt{
+				localAssign([]string{"type"}, number("0")),
+				localAssign([]string{"x"}, number("1")),
+				&ast.IfStmt{Condition: &ast.RelationalOpExpr{Operator: "==", Lhs: typeCall(ident("x")), Rhs: stringLit("string")}},
+			},
+			globals: []string{"type"},
+		},
+		{
+			name: "ready call",
+			stmts: []ast.Stmt{
+				&ast.IfStmt{Condition: &ast.FuncCallExpr{Func: ident("ready")}},
+			},
+			globals: []string{"ready"},
+		},
+		{
+			name: "method call",
+			stmts: []ast.Stmt{
+				&ast.IfStmt{Condition: &ast.RelationalOpExpr{
+					Operator: "==",
+					Lhs:      &ast.FuncCallExpr{Receiver: ident("obj"), Method: "type", Args: []ast.Expr{ident("x")}},
+					Rhs:      stringLit("string"),
+				}},
+			},
+			globals: []string{"obj"},
+		},
+		{
+			name: "type call argument call",
+			stmts: []ast.Stmt{
+				&ast.IfStmt{Condition: &ast.RelationalOpExpr{
+					Operator: "==",
+					Lhs:      typeCall(&ast.FuncCallExpr{Func: ident("f")}),
+					Rhs:      stringLit("string"),
+				}},
+			},
+			globals: []string{"type", "f"},
+		},
+		{
+			name: "wrong arity",
+			stmts: []ast.Stmt{
+				&ast.IfStmt{Condition: &ast.RelationalOpExpr{
+					Operator: "==",
+					Lhs:      &ast.FuncCallExpr{Func: ident("type"), Args: []ast.Expr{ident("x"), ident("y")}},
+					Rhs:      stringLit("string"),
+				}},
+			},
+			globals: []string{"type"},
+		},
+		{
+			name: "non-string comparison",
+			stmts: []ast.Stmt{
+				&ast.IfStmt{Condition: &ast.RelationalOpExpr{Operator: "==", Lhs: typeCall(ident("x")), Rhs: number("1")}},
+			},
+			globals: []string{"type"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			bindings := bind.BindChunk(tt.stmts, bind.Options{Globals: tt.globals})
+			if result := BuildChunk(tt.stmts, bindings); result != nil {
+				t.Fatalf("BuildChunk returned graph for unsupported type guard condition %s", tt.name)
 			}
 		})
 	}
