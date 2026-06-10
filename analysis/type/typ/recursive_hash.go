@@ -12,11 +12,6 @@ func hashWithVisitedMemo(t Type, visited map[*Recursive]bool, memo map[Type]uint
 
 	// Check if this is a recursive type we've already seen
 	if rec, ok := t.(*Recursive); ok {
-		if key := rec.familyKey; !key.IsZero() {
-			// Family-key identity: stable across body refinement, so any product
-			// embedding this node sees a fixed recursive component.
-			return hash.HashCombine(uint64(kind.Recursive), key.Hash())
-		}
 		if visited[rec] {
 			// Self-reference: use a sentinel hash value
 			return hash.HashCombine(uint64(kind.Recursive), hash.FnvString("$self"))
@@ -235,12 +230,6 @@ func typeEqualityHash(t Type) uint64 {
 }
 
 func (r *Recursive) Hash() uint64 {
-	if key := r.familyKey; !key.IsZero() {
-		// Family-key identity: the hash is stable across every body refinement so
-		// inter-procedural fixpoints can observe the family while the body slot
-		// still widens.
-		return hash.HashCombine(uint64(kind.Recursive), key.Hash())
-	}
 	if r.hash != 0 && recursiveHashDepsValid(r.hashDeps) {
 		return r.hash
 	}

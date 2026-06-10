@@ -229,12 +229,6 @@ func typeEqualsGuard(a, b Type, guard recursion.Guard, seen map[typePair]bool) b
 		if va.ID == vb.ID {
 			return true
 		}
-		// Family keys compare independent of the body slot, so two observations
-		// of one family are equal before their bodies reach a common fixed point.
-		vaKey, vbKey := va.familyKey, vb.familyKey
-		if !vaKey.IsZero() || !vbKey.IsZero() {
-			return !vaKey.IsZero() && vaKey == vbKey
-		}
 		if va.Name != vb.Name {
 			return false
 		}
