@@ -84,6 +84,14 @@ func NewRecursiveFamilyPlaceholder(key recursivefamily.Key) *Recursive {
 	return rec
 }
 
+// RecursiveFamilyKey returns the optional family identity metadata for this node.
+func (r *Recursive) RecursiveFamilyKey() recursivefamily.Key {
+	if r == nil {
+		return recursivefamily.Key{}
+	}
+	return r.familyKey
+}
+
 // SetBody assigns the body to a placeholder recursive type.
 //
 // A frozen node is an immutable input graph (stdlib/manifest/DB/cache); SetBody on
