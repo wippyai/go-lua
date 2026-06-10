@@ -42,6 +42,7 @@ type Result struct {
 	returns             map[cfg.Point]ReturnFact
 	branches            map[cfg.Point]BranchConditionFact
 	typeDefinitions     map[cfg.Point]TypeDefinitionFact
+	functionDefinitions map[cfg.Point]FunctionDefinitionFact
 	numericFors         map[cfg.Point]NumericForFact
 	genericFors         map[cfg.Point]GenericForFact
 }
@@ -110,6 +111,15 @@ type TypeDefinitionFact struct {
 	Stmt      ast.Stmt
 	Type      *ast.TypeDefStmt
 	Interface *ast.InterfaceDefStmt
+}
+
+type FunctionDefinitionFact struct {
+	Stmt *ast.FuncDefStmt
+	Name *ast.FuncName
+	Func *ast.FunctionExpr
+
+	TargetSymbol    symbol.ID
+	HasTargetSymbol bool
 }
 
 type NumericForFact struct {
@@ -225,6 +235,14 @@ func (r *Result) TypeDefinition(point cfg.Point) (TypeDefinitionFact, bool) {
 	return fact, ok
 }
 
+func (r *Result) FunctionDefinition(point cfg.Point) (FunctionDefinitionFact, bool) {
+	if r == nil {
+		return FunctionDefinitionFact{}, false
+	}
+	fact, ok := r.functionDefinitions[point]
+	return fact, ok
+}
+
 func (r *Result) NumericFor(point cfg.Point) (NumericForFact, bool) {
 	if r == nil {
 		return NumericForFact{}, false
@@ -253,6 +271,7 @@ func newResult(fn *ast.FunctionExpr) *Result {
 		returns:             make(map[cfg.Point]ReturnFact),
 		branches:            make(map[cfg.Point]BranchConditionFact),
 		typeDefinitions:     make(map[cfg.Point]TypeDefinitionFact),
+		functionDefinitions: make(map[cfg.Point]FunctionDefinitionFact),
 		numericFors:         make(map[cfg.Point]NumericForFact),
 		genericFors:         make(map[cfg.Point]GenericForFact),
 	}
@@ -309,6 +328,8 @@ func (r *Result) extractStmt(stmt ast.Stmt, bindings *bind.Result, built *cfgbui
 			return err
 		}
 		return r.extractStmts(stmt.Stmts, bindings, built)
+	case *ast.FuncDefStmt:
+		return r.extractFunctionDefinition(stmt, bindings, built.StmtPoints.PointsFor(stmt))
 	case *ast.TypeDefStmt:
 		return r.extractTypeDef(stmt, built.StmtPoints.PointsFor(stmt))
 	case *ast.InterfaceDefStmt:
@@ -408,7 +429,7 @@ func (r *Result) extractReturn(stmt *ast.ReturnStmt, points []cfg.Point) error {
 	if len(points) == 0 {
 		return nil
 	}
-	if len(points) < 1 {
+	if len(points) != 1 {
 		return ErrPointMismatch
 	}
 	r.returns[points[0]] = ReturnFact{
@@ -468,6 +489,29 @@ func (r *Result) extractInterfaceDef(stmt *ast.InterfaceDefStmt, points []cfg.Po
 		Kind:      TypeDefinitionInterface,
 		Stmt:      stmt,
 		Interface: stmt,
+	}
+	return nil
+}
+
+func (r *Result) extractFunctionDefinition(stmt *ast.FuncDefStmt, bindings *bind.Result, points []cfg.Point) error {
+	if len(points) == 0 {
+		return nil
+	}
+	if len(points) < 1 {
+		return ErrPointMismatch
+	}
+	id, hasSymbol := symbol.ID(0), false
+	if stmt.Name != nil {
+		if ident, ok := stmt.Name.Func.(*ast.IdentExpr); ok && bindings != nil {
+			id, hasSymbol = bindings.SymbolOf(ident)
+		}
+	}
+	r.functionDefinitions[points[0]] = FunctionDefinitionFact{
+		Stmt:            stmt,
+		Name:            stmt.Name,
+		Func:            stmt.Func,
+		TargetSymbol:    id,
+		HasTargetSymbol: hasSymbol && id != 0,
 	}
 	return nil
 }

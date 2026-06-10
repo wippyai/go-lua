@@ -133,6 +133,8 @@ func (b *builder) buildStmt(state flowState, stmt ast.Stmt) flowState {
 		return b.buildNumberFor(state, stmt)
 	case *ast.GenericForStmt:
 		return b.buildGenericFor(state, stmt)
+	case *ast.FuncDefStmt:
+		return b.buildFuncDef(state, stmt)
 	case *ast.BreakStmt:
 		return b.buildBreak(state)
 	case *ast.TypeDefStmt, *ast.InterfaceDefStmt:
@@ -168,6 +170,19 @@ func (b *builder) buildLocalAssign(state flowState, stmt *ast.LocalAssignStmt) f
 		state = b.appendAssign(state, id, stmt)
 	}
 	return state
+}
+
+func (b *builder) buildFuncDef(state flowState, stmt *ast.FuncDefStmt) flowState {
+	if stmt.Name == nil || stmt.Name.Receiver != nil || stmt.Name.Method != "" {
+		b.unsupported = true
+		return flowState{current: state.current}
+	}
+	id, ok := b.simpleIdentSymbol(stmt.Name.Func)
+	if !ok {
+		b.unsupported = true
+		return flowState{current: state.current}
+	}
+	return b.appendAssign(state, id, stmt)
 }
 
 func (b *builder) buildDoBlock(state flowState, stmt *ast.DoBlockStmt) flowState {

@@ -127,6 +127,38 @@ func TestExtractChunkAssignmentsUseStmtPointsAndPreserveIdentity(t *testing.T) {
 	}
 }
 
+func TestExtractChunkFunctionDefinitionFactPreservesIdentity(t *testing.T) {
+	target := ident("f")
+	fn := function(nil, localAssign([]string{"inside"}, number("1")))
+	stmt := &ast.FuncDefStmt{
+		Name: &ast.FuncName{Func: target},
+		Func: fn,
+	}
+	stmts := []ast.Stmt{stmt}
+	bindings := bind.BindChunk(stmts, bind.Options{})
+	built := cfgbuild.BuildChunk(stmts, bindings)
+
+	result, err := ExtractChunk(stmts, bindings, built)
+	if err != nil {
+		t.Fatalf("ExtractChunk: %v", err)
+	}
+
+	points := requireStmtPoints(t, built, stmt, 1)
+	fact, ok := result.FunctionDefinition(points[0])
+	if !ok {
+		t.Fatalf("missing function definition fact")
+	}
+	if fact.Stmt != stmt || fact.Name != stmt.Name || fact.Func != fn {
+		t.Fatalf("function definition fact = %#v", fact)
+	}
+	if fact.TargetSymbol != mustIdentSymbol(t, bindings, target) || !fact.HasTargetSymbol {
+		t.Fatalf("function definition target = %d/%v", fact.TargetSymbol, fact.HasTargetSymbol)
+	}
+	if _, ok := result.OrdinaryAssignment(points[0]); ok {
+		t.Fatalf("function definition point produced ordinary assignment fact")
+	}
+}
+
 func TestExtractChunkCallReturnBranchAndTypeFacts(t *testing.T) {
 	decl := localAssign([]string{"x"}, number("1"))
 	printIdent := ident("print")
@@ -350,6 +382,9 @@ func TestExtractChunkSkipsUnmappedFunctionDefinition(t *testing.T) {
 	}
 	if len(result.typeDefinitions) != 0 {
 		t.Fatalf("function definition produced type facts: %#v", result.typeDefinitions)
+	}
+	if len(result.functionDefinitions) != 0 {
+		t.Fatalf("unmapped function definition produced function facts: %#v", result.functionDefinitions)
 	}
 }
 

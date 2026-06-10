@@ -314,6 +314,75 @@ func TestBuildChunkStatementPointMappingForLinearStatements(t *testing.T) {
 	requireEdge(t, graph, returnPoints[0], graph.Exit(), false)
 }
 
+func TestBuildChunkSimpleFunctionDefinitionCreatesAssignment(t *testing.T) {
+	target := ident("f")
+	stmt := &ast.FuncDefStmt{
+		Name: &ast.FuncName{Func: target},
+		Func: function(nil),
+	}
+	stmts := []ast.Stmt{stmt}
+	bindings := bind.BindChunk(stmts, bind.Options{})
+	result := BuildChunk(stmts, bindings)
+	if result == nil || result.Graph == nil {
+		t.Fatalf("BuildChunk returned nil for simple function definition")
+	}
+	graph := result.Graph
+
+	targetID := mustIdentSymbol(t, bindings, target)
+	points := requireStmtPoints(t, result, stmt, 1)
+	requirePointKind(t, graph, points[0], cfg.NodeAssign)
+	fact, ok := result.Meta.Assignment(points[0])
+	if !ok {
+		t.Fatalf("missing function definition assignment fact")
+	}
+	if fact.Target != targetID {
+		t.Fatalf("function definition target = %d, want %d", fact.Target, targetID)
+	}
+	requireEdge(t, graph, graph.Entry(), points[0], false)
+	requireEdge(t, graph, points[0], graph.Exit(), false)
+}
+
+func TestBuildChunkFunctionDefinitionDoesNotInlineBody(t *testing.T) {
+	target := ident("f")
+	bodyStmt := localAssign([]string{"inside"}, number("1"))
+	stmt := &ast.FuncDefStmt{
+		Name: &ast.FuncName{Func: target},
+		Func: function(nil, bodyStmt),
+	}
+	stmts := []ast.Stmt{stmt}
+	bindings := bind.BindChunk(stmts, bind.Options{})
+	result := BuildChunk(stmts, bindings)
+	if result == nil || result.Graph == nil {
+		t.Fatalf("BuildChunk returned nil for simple function definition")
+	}
+
+	requireStmtPoints(t, result, stmt, 1)
+	if got := result.StmtPoints.PointsFor(bodyStmt); len(got) != 0 {
+		t.Fatalf("nested function body statement mapped to parent CFG points %v", got)
+	}
+	requireTargetCount(t, result.Graph, result.Meta, mustIdentSymbol(t, bindings, target), 1)
+	requireTargetCount(t, result.Graph, result.Meta, mustLocalAt(t, bindings, bodyStmt, 0), 0)
+}
+
+func TestBuildChunkFunctionDefinitionAfterReturnIsUnmapped(t *testing.T) {
+	target := ident("dead")
+	deadFn := &ast.FuncDefStmt{
+		Name: &ast.FuncName{Func: target},
+		Func: function(nil),
+	}
+	stmts := []ast.Stmt{&ast.ReturnStmt{}, deadFn}
+	bindings := bind.BindChunk(stmts, bind.Options{})
+	result := BuildChunk(stmts, bindings)
+	if result == nil || result.Graph == nil {
+		t.Fatalf("BuildChunk returned nil")
+	}
+
+	if got := result.StmtPoints.PointsFor(deadFn); len(got) != 0 {
+		t.Fatalf("dead function definition mapped to points %v", got)
+	}
+	requireTargetCount(t, result.Graph, result.Meta, mustIdentSymbol(t, bindings, target), 0)
+}
+
 func TestBuildChunkStatementPointMappingReturnsSafeSlices(t *testing.T) {
 	stmt := localAssign([]string{"a", "b"}, number("1"), number("2"))
 	stmts := []ast.Stmt{stmt}
@@ -972,12 +1041,44 @@ func TestBuildChunkUnsupportedControlFlowReturnsNil(t *testing.T) {
 		stmt ast.Stmt
 	}{
 		{
-			name: "function definition",
-			stmt: &ast.FuncDefStmt{Name: &ast.FuncName{Func: ident("f")}, Func: function(nil)},
-		},
-		{
 			name: "goto",
 			stmt: &ast.GotoStmt{Label: "label"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			stmts := []ast.Stmt{tt.stmt}
+			bindings := bind.BindChunk(stmts, bind.Options{})
+			if result := BuildChunk(stmts, bindings); result != nil {
+				t.Fatalf("BuildChunk returned graph for unsupported %s", tt.name)
+			}
+		})
+	}
+}
+
+func TestBuildChunkUnsupportedFunctionDefinitionTargetsReturnNil(t *testing.T) {
+	tests := []struct {
+		name string
+		stmt ast.Stmt
+	}{
+		{
+			name: "dotted function definition",
+			stmt: &ast.FuncDefStmt{
+				Name: &ast.FuncName{Func: &ast.AttrGetExpr{
+					Object:    ident("module"),
+					Key:       &ast.StringExpr{Value: "f"},
+					KeySyntax: ast.AttrKeyDot,
+				}},
+				Func: function(nil),
+			},
+		},
+		{
+			name: "method function definition",
+			stmt: &ast.FuncDefStmt{
+				Name: &ast.FuncName{Receiver: ident("module"), Method: "f"},
+				Func: function(nil),
+			},
 		},
 	}
 
