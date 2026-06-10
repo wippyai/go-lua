@@ -86,7 +86,7 @@ func Types(types ...typ.Type) typ.Type {
 	if len(filtered) == 1 {
 		return filtered[0]
 	}
-	return gradual.PruneSoftUnionMembers(relation.PruneLessPreciseRefinableUnionMembers(typ.NewUnion(filtered...)))
+	return gradual.PruneSoftUnionMembers(relation.PruneLessPreciseRefinableUnionMembers(relation.NormalizeUnionForJoin(filtered...)))
 }
 
 // FlattenUnions exposes explicit union members before coalescing. This keeps

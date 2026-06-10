@@ -734,7 +734,7 @@ func PruneLessPreciseRefinableUnionMembers(t Type) Type {
 	if len(keep) == 1 {
 		return keep[0]
 	}
-	return NewUnion(keep...)
+	return NormalizeUnionForJoin(keep...)
 }
 
 // ComparePrecision compares two same-expression type descriptions.
@@ -1004,7 +1004,7 @@ func normalizePrecisionUnion(t Type, seen *precisionSeen) (normalized Type, chan
 	}
 	members := coalescePrecisionUnionMembers(u.Members)
 	if !sameTypeSlice(u.Members, members) {
-		return NewUnion(members...), true
+		return NormalizeUnionForJoin(members...), true
 	}
 	candidate := CoalesceCompatibleRecordAlternatives(u)
 	if candidate == nil || candidate == t {

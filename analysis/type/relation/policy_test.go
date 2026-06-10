@@ -39,6 +39,63 @@ func TestIsClosedUnionAnnotationRecognizesInstantiatedGenericUnion(t *testing.T)
 	}
 }
 
+func TestNormalizeUnionForJoinUsesCurrentSemanticPolicy(t *testing.T) {
+	tests := []struct {
+		name    string
+		members []Type
+		want    Type
+	}{
+		{
+			name:    "flattens union inputs",
+			members: []Type{NewUnion(String, Number), Boolean},
+			want:    NewUnion(String, Number, Boolean),
+		},
+		{
+			name:    "flattens optional inputs",
+			members: []Type{NewOptional(String), Number},
+			want:    NewUnion(Nil, String, Number),
+		},
+		{
+			name:    "filters unknown under concrete evidence",
+			members: []Type{Unknown, String},
+			want:    String,
+		},
+		{
+			name:    "preserves unknown with nil",
+			members: []Type{Unknown, Nil},
+			want:    NewOptional(Unknown),
+		},
+		{
+			name:    "any absorbs",
+			members: []Type{Any, String},
+			want:    Any,
+		},
+		{
+			name:    "never identity",
+			members: []Type{Never, String},
+			want:    String,
+		},
+		{
+			name:    "literal base subsumption",
+			members: []Type{LiteralString("ready"), String},
+			want:    String,
+		},
+		{
+			name:    "integer number subsumption",
+			members: []Type{Integer, Number},
+			want:    Number,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := NormalizeUnionForJoin(tt.members...); !TypeEquals(got, tt.want) {
+				t.Fatalf("NormalizeUnionForJoin(%v) = %v, want %v", tt.members, got, tt.want)
+			}
+		})
+	}
+}
+
 // TestJoinReturnSlot_PrefersConcreteScalarOverUnknown locks the evidence-lattice
 // semantics for a converged slot: a bare unknown is unresolved evidence ("no
 // value yet"), not the dynamic top, so its least upper bound with a concrete

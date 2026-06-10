@@ -41,7 +41,7 @@ func JoinPreferNonSoft(a, b Type) Type {
 	if SameNodeOrAcyclicEqual(a, b) {
 		return a
 	}
-	return gradual.PruneSoftUnionMembers(NewUnion(a, b))
+	return gradual.PruneSoftUnionMembers(NormalizeUnionForJoin(a, b))
 }
 
 // JoinReturnSlot merges return slot types while preserving uncertainty.
@@ -525,7 +525,7 @@ func (s *returnJoinState) coalesceProductUnion(t Type) Type {
 		if sameTypeSlice(v.Members, members) {
 			return t
 		}
-		return NewUnion(members...)
+		return NormalizeUnionForJoin(members...)
 	default:
 		return t
 	}
@@ -792,7 +792,7 @@ func (s *returnJoinState) coalesceCompatibleRecordAlternatives(t Type) Type {
 		if sameTypeSlice(members, coalesced) {
 			return t
 		}
-		return NewUnion(coalesced...)
+		return NormalizeUnionForJoin(coalesced...)
 	default:
 		return t
 	}
@@ -809,7 +809,7 @@ func (s *returnJoinState) joinCoalescedUnion(a, b Type) Type {
 	if len(members) == 1 {
 		return gradual.PruneSoftUnionMembers(members[0])
 	}
-	return gradual.PruneSoftUnionMembers(NewUnion(members...))
+	return gradual.PruneSoftUnionMembers(NormalizeUnionForJoin(members...))
 }
 
 func appendUnionMembers(out []Type, t Type) []Type {
@@ -1955,7 +1955,7 @@ func JoinBranchOutcome(a, b Type) Type {
 	if IsUnknown(b) && a.Kind() != kind.Nil {
 		return Unknown
 	}
-	return NewUnion(a, b)
+	return NormalizeUnionForJoin(a, b)
 }
 
 // IsRefinableAnnotation reports whether an explicit annotation should be
