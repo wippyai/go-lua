@@ -40,13 +40,24 @@ func TestApplyTypeProjectionGenericArg(t *testing.T) {
 	param := typ.NewTypeParam("T", nil)
 	box := typ.NewGeneric("Box", []*typ.TypeParam{param}, param)
 
-	got, ok := ApplyTypeProjection(typ.Instantiate(box, typ.String), TypeProjection{
+	got, ok := ApplyTypeProjection(typ.NewAlias("StringBox", typ.Instantiate(box, typ.String)), TypeProjection{
 		Steps: []TypeProjectionStep{ProjectGenericArg(0)},
 	})
 	if !ok {
 		t.Fatal("ApplyTypeProjection generic arg failed")
 	}
 	assertProjectionType(t, got, typ.String)
+}
+
+func TestApplyTypeProjectionGenericArgRejectsMissingArg(t *testing.T) {
+	param := typ.NewTypeParam("T", nil)
+	box := typ.NewGeneric("Box", []*typ.TypeParam{param}, param)
+
+	if got, ok := ApplyTypeProjection(typ.Instantiate(box, typ.String), TypeProjection{
+		Steps: []TypeProjectionStep{ProjectGenericArg(1)},
+	}); ok || got != nil {
+		t.Fatal("ApplyTypeProjection generic missing arg succeeded")
+	}
 }
 
 func TestApplyTypeProjectionInstantiateGeneric(t *testing.T) {
@@ -60,6 +71,17 @@ func TestApplyTypeProjectionInstantiateGeneric(t *testing.T) {
 		t.Fatal("ApplyTypeProjection instantiate generic failed")
 	}
 	assertProjectionType(t, got, typ.Instantiate(channel, typ.String))
+}
+
+func TestApplyTypeProjectionInstantiateGenericRejectsConstraintMismatch(t *testing.T) {
+	param := typ.NewTypeParam("T", typ.Number)
+	channel := typ.NewGeneric("Channel", []*typ.TypeParam{param}, typ.NewInterface("Channel", nil))
+
+	if got, ok := ApplyTypeProjection(typ.NewMeta(typ.String), TypeProjection{
+		Steps: []TypeProjectionStep{ProjectInstantiateGeneric(channel)},
+	}); ok || got != nil {
+		t.Fatal("ApplyTypeProjection instantiate generic constraint mismatch succeeded")
+	}
 }
 
 func TestApplyTypeProjectionChainFieldCallableReturn(t *testing.T) {

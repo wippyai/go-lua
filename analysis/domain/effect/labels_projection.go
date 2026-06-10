@@ -5,8 +5,9 @@ import (
 	"strings"
 
 	"github.com/wippyai/go-lua/analysis/lua/access"
-	"github.com/wippyai/go-lua/analysis/type/generic"
+	"github.com/wippyai/go-lua/analysis/type/subtype"
 	"github.com/wippyai/go-lua/analysis/type/typ"
+	"github.com/wippyai/go-lua/analysis/type/unwrap"
 )
 
 type TypeProjection struct {
@@ -58,25 +59,50 @@ func ProjectInstantiateGeneric(generic typ.Type) TypeProjectionStep {
 	return TypeProjectionStep{Kind: TypeProjectionInstantiateGeneric, Type: generic}
 }
 
-// ApplyTypeProjection applies projection steps to source using the pure type
-// projection packages.
+// ApplyTypeProjection applies projection steps to source.
 func ApplyTypeProjection(source typ.Type, projection TypeProjection) (typ.Type, bool) {
 	current := source
 	for _, step := range projection.Steps {
-		var ok bool
 		switch step.Kind {
 		case TypeProjectionField:
-			current, ok = access.Field(current, step.Field)
+			next, ok := access.Field(current, step.Field)
+			if !ok {
+				return nil, false
+			}
+			current = next
 		case TypeProjectionCallableReturn:
-			current, ok = access.CallableReturn(current)
+			next, ok := access.CallableReturn(current)
+			if !ok {
+				return nil, false
+			}
+			current = next
 		case TypeProjectionGenericArg:
-			current, ok = generic.Arg(current, step.Index)
+			if step.Index < 0 {
+				return nil, false
+			}
+			inst, ok := unwrap.Alias(current).(*typ.Instantiated)
+			if !ok || inst == nil || step.Index >= len(inst.TypeArgs) || inst.TypeArgs[step.Index] == nil {
+				return nil, false
+			}
+			current = inst.TypeArgs[step.Index]
 		case TypeProjectionInstantiateGeneric:
-			current, ok = generic.InstantiateOne(step.Type, current)
+			g, ok := unwrap.Alias(step.Type).(*typ.Generic)
+			if !ok || g == nil || len(g.TypeParams) != 1 || current == nil {
+				return nil, false
+			}
+
+			payload := current
+			if meta, ok := unwrap.Alias(payload).(*typ.Meta); ok && meta != nil && meta.Of != nil {
+				payload = meta.Of
+			}
+			if payload == nil {
+				return nil, false
+			}
+			if constraint := g.TypeParams[0].Constraint; constraint != nil && !subtype.IsSubtype(payload, constraint) {
+				return nil, false
+			}
+			current = typ.Instantiate(g, payload)
 		default:
-			return nil, false
-		}
-		if !ok {
 			return nil, false
 		}
 	}
