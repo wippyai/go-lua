@@ -40,15 +40,15 @@ func TestRecursiveFamilyInternerOwnershipIsolation(t *testing.T) {
 
 	body := typ.NewRecord().Field("value", typ.String).Build()
 	left.Widen(rightFamily, body, nil)
-	if rightFamily.RecursiveBody() != nil {
+	if rightFamily.Body != nil {
 		t.Fatal("foreign family body should not be mutated")
 	}
 
 	left.Widen(leftFamily, body, nil)
-	if leftFamily.RecursiveBody() == nil {
+	if leftFamily.Body == nil {
 		t.Fatal("owned family body should be initialized")
 	}
-	if rightFamily.RecursiveBody() != nil {
+	if rightFamily.Body != nil {
 		t.Fatal("foreign family should remain unchanged")
 	}
 }
@@ -61,17 +61,17 @@ func TestRecursiveFamilyInternerWidenRequiresOwnedHandle(t *testing.T) {
 	body := typ.NewRecord().Field("value", typ.Number).Build()
 
 	interner.Widen(unmanaged, body, nil)
-	if unmanaged.RecursiveBody() != nil {
+	if unmanaged.Body != nil {
 		t.Fatal("unmanaged family placeholder should not be mutated")
 	}
 	interner.Widen(plain, body, nil)
-	if plain.RecursiveBody() != nil {
+	if plain.Body != nil {
 		t.Fatal("plain recursive placeholder should not be mutated")
 	}
 
 	owned := interner.Intern(key)
 	interner.Widen(owned, body, nil)
-	if owned.RecursiveBody() == nil {
+	if owned.Body == nil {
 		t.Fatal("owned family should accept widen")
 	}
 }

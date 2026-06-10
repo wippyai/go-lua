@@ -20,27 +20,6 @@ func (k RecursiveFamilyKey) IsZero() bool {
 	return k == RecursiveFamilyKey{}
 }
 
-// RecursiveName returns the declared name of the recursion variable.
-func (r *Recursive) RecursiveName() string {
-	if r == nil {
-		return ""
-	}
-	return r.Name
-}
-
-// RecursiveBody returns the body type, which may be nil for an unsealed placeholder.
-func (r *Recursive) RecursiveBody() Type {
-	if r == nil {
-		return nil
-	}
-	return r.Body
-}
-
-// SetRecursiveBody is an alias for SetBody exposed for the identity axis package.
-func (r *Recursive) SetRecursiveBody(body Type) {
-	r.SetBody(body)
-}
-
 // RecursiveFamilyKey returns the optional family identity metadata for this node.
 func (r *Recursive) RecursiveFamilyKey() RecursiveFamilyKey {
 	if r == nil {

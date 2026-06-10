@@ -159,18 +159,18 @@ func (i *RecursiveFamilyInterner) Widen(family *typ.Recursive, candidateBody typ
 		return family
 	}
 	candidateBody = rebindRecursiveSelf(candidateBody, family)
-	if family.RecursiveBody() == nil {
-		family.SetRecursiveBody(candidateBody)
+	if family.Body == nil {
+		family.SetBody(candidateBody)
 		return family
 	}
 	if join == nil {
 		return family
 	}
-	widened := join(family.RecursiveBody(), candidateBody)
-	if widened == nil || typ.SameNode(widened, family.RecursiveBody()) {
+	widened := join(family.Body, candidateBody)
+	if widened == nil || typ.SameNode(widened, family.Body) {
 		return family
 	}
-	family.SetRecursiveBody(rebindRecursiveSelf(widened, family))
+	family.SetBody(rebindRecursiveSelf(widened, family))
 	return family
 }
 
@@ -460,7 +460,7 @@ func (s *recursiveFamilyFingerprintScan) add(rec *typ.Recursive) {
 	if !rec.RecursiveFamilyKey().IsZero() {
 		id = hash.HashCombine(recursiveFamilyKeyedSalt, recFamilyKeyHash(rec))
 	} else {
-		id = hash.HashCombine(recursiveFamilyNamedSalt, hash.FnvString(rec.RecursiveName()))
+		id = hash.HashCombine(recursiveFamilyNamedSalt, hash.FnvString(rec.Name))
 	}
 	if s.seenFamilies[id] {
 		return
