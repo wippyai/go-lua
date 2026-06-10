@@ -4,7 +4,6 @@ import (
 	"strconv"
 
 	"github.com/wippyai/go-lua/analysis/type/kind"
-	"github.com/wippyai/go-lua/analysis/type/literalbase"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
@@ -154,7 +153,7 @@ func (d *Detector) collectRequiredTags(t typ.Type) map[string]uint64 {
 			if field.Optional {
 				continue
 			}
-			if lit, ok := literalbase.Extract(field.Type); ok {
+			if lit, ok := extractLiteral(field.Type); ok {
 				tags[field.Name] = lit.Hash()
 				continue
 			}
@@ -165,7 +164,7 @@ func (d *Detector) collectRequiredTags(t typ.Type) map[string]uint64 {
 				continue
 			}
 			path := staticMemberPath(member)
-			if lit, ok := literalbase.Extract(member.Type); ok {
+			if lit, ok := extractLiteral(member.Type); ok {
 				tags[path] = lit.Hash()
 				continue
 			}
@@ -211,14 +210,14 @@ func (d *Detector) literalErasedResidualsCleanlyMergeable(a, b *typ.Record) bool
 		if field.Optional {
 			continue
 		}
-		if _, ok := literalbase.Extract(field.Type); ok {
+		if _, ok := extractLiteral(field.Type); ok {
 			continue
 		}
 		other := b.GetField(field.Name)
 		if other == nil || other.Optional {
 			continue
 		}
-		if _, ok := literalbase.Extract(other.Type); ok {
+		if _, ok := extractLiteral(other.Type); ok {
 			continue
 		}
 		if !d.mergeKeepsPreciseFieldType(field.Type, other.Type) {
@@ -229,14 +228,14 @@ func (d *Detector) literalErasedResidualsCleanlyMergeable(a, b *typ.Record) bool
 		if member.Optional {
 			continue
 		}
-		if _, ok := literalbase.Extract(member.Type); ok {
+		if _, ok := extractLiteral(member.Type); ok {
 			continue
 		}
 		other := b.GetStaticMember(member.Kind, member.Name, member.Index)
 		if other == nil || other.Optional {
 			continue
 		}
-		if _, ok := literalbase.Extract(other.Type); ok {
+		if _, ok := extractLiteral(other.Type); ok {
 			continue
 		}
 		if !d.mergeKeepsPreciseFieldType(member.Type, other.Type) {
@@ -251,7 +250,7 @@ func requiredNonLiteralPayloadMissingFrom(src, dst *typ.Record) bool {
 		if field.Optional {
 			continue
 		}
-		if _, ok := literalbase.Extract(field.Type); ok {
+		if _, ok := extractLiteral(field.Type); ok {
 			continue
 		}
 		if dst.GetField(field.Name) == nil {
@@ -262,7 +261,7 @@ func requiredNonLiteralPayloadMissingFrom(src, dst *typ.Record) bool {
 		if member.Optional {
 			continue
 		}
-		if _, ok := literalbase.Extract(member.Type); ok {
+		if _, ok := extractLiteral(member.Type); ok {
 			continue
 		}
 		if dst.GetStaticMember(member.Kind, member.Name, member.Index) == nil {
@@ -296,7 +295,7 @@ func fieldMergeKind(t typ.Type) kind.Kind {
 		}
 		t = a.Target
 	}
-	if lit, ok := literalbase.Extract(t); ok {
+	if lit, ok := extractLiteral(t); ok {
 		return lit.Base
 	}
 	if t == nil {
@@ -315,6 +314,18 @@ func unaliasRecord(t typ.Type) *typ.Record {
 	}
 	rec, _ := t.(*typ.Record)
 	return rec
+}
+
+func extractLiteral(t typ.Type) (*typ.Literal, bool) {
+	for {
+		a, ok := t.(*typ.Alias)
+		if !ok {
+			break
+		}
+		t = a.Target
+	}
+	lit, ok := t.(*typ.Literal)
+	return lit, ok
 }
 
 func staticMemberPath(member typ.StaticMember) string {

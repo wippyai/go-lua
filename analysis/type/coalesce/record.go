@@ -3,7 +3,6 @@ package coalesce
 import (
 	luatable "github.com/wippyai/go-lua/analysis/lua/table"
 	"github.com/wippyai/go-lua/analysis/type/discriminant"
-	"github.com/wippyai/go-lua/analysis/type/literalbase"
 	"github.com/wippyai/go-lua/analysis/type/normalize"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
@@ -50,7 +49,7 @@ func JoinRecordFieldSlot(a, b typ.Type, policy RecordPolicy) typ.Type {
 	if joined, ok := JoinFieldContainerSlot(a, b, policy); ok {
 		return joined
 	}
-	if widened, ok := literalbase.JoinNonDiscriminantField(a, b); ok {
+	if widened, ok := joinNonDiscriminantField(a, b); ok {
 		return widened
 	}
 	return slotJoin(a, b)

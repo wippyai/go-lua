@@ -1,12 +1,11 @@
-package literalbase
+package coalesce
 
 import (
 	"github.com/wippyai/go-lua/analysis/type/kind"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
-// Extract returns a literal after following transparent aliases.
-func Extract(t typ.Type) (*typ.Literal, bool) {
+func extractLiteral(t typ.Type) (*typ.Literal, bool) {
 	for {
 		a, ok := t.(*typ.Alias)
 		if !ok {
@@ -18,8 +17,7 @@ func Extract(t typ.Type) (*typ.Literal, bool) {
 	return lit, ok
 }
 
-// Base maps a literal to its scalar base type.
-func Base(lit *typ.Literal) typ.Type {
+func literalBase(lit *typ.Literal) typ.Type {
 	if lit == nil {
 		return nil
 	}
@@ -37,23 +35,21 @@ func Base(lit *typ.Literal) typ.Type {
 	}
 }
 
-// FamilyBase returns the scalar base shared by a literal, scalar, or literal
-// union family. Integer and number families merge upward to number.
-func FamilyBase(t typ.Type) (typ.Type, bool) {
+func literalFamilyBase(t typ.Type) (typ.Type, bool) {
 	t = typ.UnwrapAnnotated(t)
 	if t == nil {
 		return nil, false
 	}
 	switch v := t.(type) {
 	case *typ.Alias:
-		return FamilyBase(v.Target)
+		return literalFamilyBase(v.Target)
 	case *typ.Literal:
-		base := Base(v)
+		base := literalBase(v)
 		return base, base != nil
 	case *typ.Union:
 		var base typ.Type
 		for _, member := range v.Members {
-			memberBase, ok := FamilyBase(member)
+			memberBase, ok := literalFamilyBase(member)
 			if !ok {
 				return nil, false
 			}
@@ -61,7 +57,7 @@ func FamilyBase(t typ.Type) (typ.Type, bool) {
 				base = memberBase
 				continue
 			}
-			merged, ok := MergeBases(base, memberBase)
+			merged, ok := mergeLiteralFamilyBases(base, memberBase)
 			if !ok {
 				return nil, false
 			}
@@ -78,8 +74,7 @@ func FamilyBase(t typ.Type) (typ.Type, bool) {
 	}
 }
 
-// MergeBases returns the common scalar base for two literal family bases.
-func MergeBases(a, b typ.Type) (typ.Type, bool) {
+func mergeLiteralFamilyBases(a, b typ.Type) (typ.Type, bool) {
 	if a == nil || b == nil {
 		return nil, false
 	}
@@ -93,27 +88,25 @@ func MergeBases(a, b typ.Type) (typ.Type, bool) {
 	return nil, false
 }
 
-// JoinNonDiscriminantField preserves equal literals while widening
-// non-discriminant literal families to their shared scalar base.
-func JoinNonDiscriminantField(a, b typ.Type) (typ.Type, bool) {
+func joinNonDiscriminantField(a, b typ.Type) (typ.Type, bool) {
 	if typ.SameNodeOrAcyclicEqual(a, b) {
 		return a, true
 	}
-	al, aOK := Extract(a)
-	bl, bOK := Extract(b)
+	al, aOK := extractLiteral(a)
+	bl, bOK := extractLiteral(b)
 	if aOK && bOK && al.Base == bl.Base {
 		if typ.LiteralEquals(al, bl) {
 			return a, true
 		}
-		return Base(al), true
+		return literalBase(al), true
 	}
-	left, ok := FamilyBase(a)
+	left, ok := literalFamilyBase(a)
 	if !ok {
 		return nil, false
 	}
-	right, ok := FamilyBase(b)
+	right, ok := literalFamilyBase(b)
 	if !ok {
 		return nil, false
 	}
-	return MergeBases(left, right)
+	return mergeLiteralFamilyBases(left, right)
 }

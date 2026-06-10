@@ -93,7 +93,7 @@ func PruneLessPreciseRefinableUnionMembers(t Type, morePrecise MorePreciseFunc, 
 }
 
 // closedUnionOf unwraps Annotated/Alias/Optional layers to expose an underlying
-// Union, mirroring the unwrap.Union helper without the import.
+// Union for refinement-local pruning.
 func closedUnionOf(t Type) *Union {
 	for {
 		switch v := UnwrapAnnotated(t).(type) {
