@@ -2,7 +2,8 @@ package cfg
 
 import (
 	"strconv"
-	"sync/atomic"
+
+	"github.com/wippyai/go-lua/analysis/ir/symbol"
 )
 
 // SymbolID uniquely identifies a variable declaration across the program.
@@ -22,25 +23,17 @@ import (
 // definition of that variable.
 //
 // SymbolID 0 is reserved for unresolved or unknown references.
-type SymbolID uint64
-
-var symbolCounter uint64
+type SymbolID = symbol.ID
 
 // NextSymbolID generates a unique symbol ID.
-// Thread-safe via atomic operations.
 func NextSymbolID() SymbolID {
-	return SymbolID(atomic.AddUint64(&symbolCounter, 1))
+	return symbol.Next()
 }
 
 // ReserveSymbolIDs reserves a contiguous block of symbol IDs and returns the
 // first ID in the block. Returns 0 when n <= 0.
 func ReserveSymbolIDs(n int) SymbolID {
-	if n <= 0 {
-		return 0
-	}
-	end := atomic.AddUint64(&symbolCounter, uint64(n))
-	start := end - uint64(n) + 1
-	return SymbolID(start)
+	return symbol.Reserve(n)
 }
 
 // Version represents a stable SSA version of a variable.

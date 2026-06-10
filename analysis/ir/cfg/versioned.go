@@ -1,5 +1,7 @@
 package cfg
 
+import "github.com/wippyai/go-lua/analysis/ir/symbol"
+
 // SymbolKind classifies how a symbol was declared.
 //
 // The declaration kind affects type checking behavior:
@@ -7,19 +9,19 @@ package cfg
 //   - Local: Initialized at declaration point
 //   - Global: Initialized from global environment
 //   - Upvalue: Captured from enclosing scope, may have multiple definitions
-type SymbolKind int
+type SymbolKind = symbol.Kind
 
 const (
 	// SymbolUnknown indicates the symbol kind is not known.
-	SymbolUnknown SymbolKind = iota
+	SymbolUnknown SymbolKind = symbol.Unknown
 	// SymbolParam indicates a function parameter.
-	SymbolParam
+	SymbolParam = symbol.Param
 	// SymbolLocal indicates a local variable.
-	SymbolLocal
+	SymbolLocal = symbol.Local
 	// SymbolGlobal indicates a global variable.
-	SymbolGlobal
+	SymbolGlobal = symbol.Global
 	// SymbolUpvalue indicates an upvalue (captured variable).
-	SymbolUpvalue
+	SymbolUpvalue = symbol.Upvalue
 )
 
 // SSAVersioned provides SSA versioning data for a CFG.
