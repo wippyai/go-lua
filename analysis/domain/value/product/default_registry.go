@@ -4,6 +4,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/escape"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/evidence"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/ownership"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/variantorigin"
@@ -38,6 +39,7 @@ func requireProductRegistry(reg *axis.Registry) {
 func buildDefaultRegistry() *axis.Registry {
 	reg := axis.NewRegistry()
 	axis.Register(reg, variantorigin.Spec())
+	axis.Register(reg, identity.Spec())
 	axis.Register(reg, escape.Spec())
 	axis.Register(reg, ownership.Spec())
 	axis.Register(reg, evidence.Spec())

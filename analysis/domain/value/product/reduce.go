@@ -10,6 +10,8 @@ import (
 const maxReducerPasses = 32
 
 func reduce(reg *axis.Registry, shape Shape, p presence.Value, slots []slot) (Shape, presence.Value, []slot) {
+	shape, p, _ = reducePresenceShape(shape, p)
+
 	reducers := reg.Reducers()
 	if len(reducers) == 0 {
 		return shape, p, slots
@@ -25,11 +27,37 @@ func reduce(reg *axis.Registry, shape Shape, p presence.Value, slots []slot) (Sh
 				changed = true
 			}
 		}
+		nextShape, nextPresence, shapePresenceChanged := reducePresenceShape(shape, editor.presence)
+		if shapePresenceChanged {
+			shape = nextShape
+			editor.presence = nextPresence
+			changed = true
+		}
 		if !changed {
 			return shape, editor.presence, editor.slots()
 		}
 	}
 	panic("product: reducer loop did not converge")
+}
+
+func reducePresenceShape(shape Shape, p presence.Value) (Shape, presence.Value, bool) {
+	nextShape := shape
+	nextPresence := p
+
+	if presence.Equal(nextPresence, presence.Bottom()) {
+		nextShape = ShapeBottom
+	} else if presence.Equal(nextPresence, presence.Absent()) {
+		nextShape = ShapeBottom
+	} else if nextShape == ShapeBottom {
+		switch {
+		case presence.Equal(nextPresence, presence.Present()):
+			nextPresence = presence.Bottom()
+		case presence.Equal(nextPresence, presence.Top()):
+			nextPresence = presence.Absent()
+		}
+	}
+
+	return nextShape, nextPresence, nextShape != shape || !presence.Equal(nextPresence, p)
 }
 
 type reduceEditor struct {

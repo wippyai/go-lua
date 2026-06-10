@@ -7,6 +7,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/escape"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/evidence"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/ownership"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/variantorigin"
@@ -31,7 +32,7 @@ func TestDefaultProductLaws(t *testing.T) {
 	suite.Run(t)
 }
 
-func TestExplicitTopSparseSlotCanonicalizesToOmission(t *testing.T) {
+func TestExplicitTopSparseSlotNormalizesToOmission(t *testing.T) {
 	reg := DefaultRegistry()
 	top := Top()
 	explicit := intern(reg, ShapeTop, presence.Top(), []slot{{key: escape.Key.ID(), value: escape.Top()}})
@@ -50,6 +51,107 @@ func TestExplicitTopSparseSlotCanonicalizesToOmission(t *testing.T) {
 	if !Equal(reg, setTop, top) || Hash(reg, setTop) != Hash(reg, top) {
 		t.Fatalf("Set(top axis) did not preserve omitted-slot canonical form")
 	}
+}
+
+func TestReducePresenceShapeNormalizesCoreLanes(t *testing.T) {
+	reg := DefaultRegistry()
+	tests := []struct {
+		name         string
+		shape        Shape
+		presence     presence.Value
+		wantShape    Shape
+		wantPresence presence.Value
+	}{
+		{
+			name:         "ShapeTopAbsent",
+			shape:        ShapeTop,
+			presence:     presence.Absent(),
+			wantShape:    ShapeBottom,
+			wantPresence: presence.Absent(),
+		},
+		{
+			name:         "ShapeBottomPresent",
+			shape:        ShapeBottom,
+			presence:     presence.Present(),
+			wantShape:    ShapeBottom,
+			wantPresence: presence.Bottom(),
+		},
+		{
+			name:         "ShapeBottomTop",
+			shape:        ShapeBottom,
+			presence:     presence.Top(),
+			wantShape:    ShapeBottom,
+			wantPresence: presence.Absent(),
+		},
+		{
+			name:         "PresenceBottomDragsShape",
+			shape:        ShapeTop,
+			presence:     presence.Bottom(),
+			wantShape:    ShapeBottom,
+			wantPresence: presence.Bottom(),
+		},
+		{
+			name:         "ShapeTopPresent",
+			shape:        ShapeTop,
+			presence:     presence.Present(),
+			wantShape:    ShapeTop,
+			wantPresence: presence.Present(),
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := NewWithPresence(reg, tt.shape, tt.presence)
+			if ShapeOf(got) != tt.wantShape {
+				t.Fatalf("ShapeOf = %s, want %s", ShapeOf(got), tt.wantShape)
+			}
+			if !presence.Equal(PresenceOf(got), tt.wantPresence) {
+				t.Fatalf("PresenceOf = %s, want %s", PresenceOf(got), tt.wantPresence)
+			}
+		})
+	}
+}
+
+func TestReducePresenceShapeSparseSlots(t *testing.T) {
+	t.Run("preserves sparse slots", func(t *testing.T) {
+		reg := axis.NewRegistry()
+		axis.Register(reg, syntheticSpec())
+		reg.Freeze()
+
+		v := Set(reg, Top(), syntheticKey, syntheticLow)
+		v = WithPresence(reg, v, presence.Absent())
+
+		if ShapeOf(v) != ShapeBottom {
+			t.Fatalf("ShapeOf = %s, want %s", ShapeOf(v), ShapeBottom)
+		}
+		if !presence.Equal(PresenceOf(v), presence.Absent()) {
+			t.Fatalf("PresenceOf = %s, want absent", PresenceOf(v))
+		}
+		if got := Get(reg, v, syntheticKey); got != syntheticLow {
+			t.Fatalf("sparse slot = %v, want %v", got, syntheticLow)
+		}
+	})
+
+	t.Run("explicit top removes sparse slot", func(t *testing.T) {
+		reg := axis.NewRegistry()
+		axis.Register(reg, syntheticTopReducerSpec())
+		reg.Freeze()
+
+		v := intern(reg, ShapeTop, presence.Absent(), []slot{{key: syntheticKey.ID(), value: syntheticLow}})
+
+		if ShapeOf(v) != ShapeBottom {
+			t.Fatalf("ShapeOf = %s, want %s", ShapeOf(v), ShapeBottom)
+		}
+		if !presence.Equal(PresenceOf(v), presence.Absent()) {
+			t.Fatalf("PresenceOf = %s, want absent", PresenceOf(v))
+		}
+		if got := Get(reg, v, syntheticKey); got != syntheticTop {
+			t.Fatalf("sparse slot = %v, want omitted top %v", got, syntheticTop)
+		}
+		if v.n == nil || len(v.n.slots) != 0 {
+			t.Fatalf("explicit top should omit sparse slot, got %s", formatValue(v))
+		}
+	})
 }
 
 func TestPresenceIsCoreLane(t *testing.T) {
@@ -150,6 +252,7 @@ func defaultProductSample(reg *axis.Registry, bottom, top Value) []Value {
 	unique := Set(reg, top, ownership.Key, ownership.Unique())
 	gradual := Set(reg, top, evidence.Key, evidence.GradualTop())
 	variant := Set(reg, top, variantorigin.Key, variantorigin.Singleton(7, 1))
+	ident := Set(reg, top, identity.Key, identity.Singleton(identity.ID{Kind: "alloc", Site: "sample", Index: 1}))
 	combo := Set(reg, present, escape.Key, escape.Fresh())
 	combo = Set(reg, combo, evidence.Key, evidence.GradualTop())
 	presenceBottom := WithPresence(reg, top, presence.Bottom())
@@ -163,6 +266,7 @@ func defaultProductSample(reg *axis.Registry, bottom, top Value) []Value {
 		unique,
 		gradual,
 		variant,
+		ident,
 		combo,
 		presenceBottom,
 	}
@@ -217,6 +321,15 @@ func syntheticSpec() axis.Spec[synthetic] {
 func secondSyntheticSpec() axis.Spec[synthetic] {
 	spec := syntheticSpec()
 	spec.Key = secondSyntheticKey
+	return spec
+}
+
+func syntheticTopReducerSpec() axis.Spec[synthetic] {
+	spec := syntheticSpec()
+	spec.Reducer = func(w axis.Writer) bool {
+		axis.Set(w, syntheticKey, syntheticTop)
+		return false
+	}
 	return spec
 }
 
