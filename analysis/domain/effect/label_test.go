@@ -340,35 +340,6 @@ func TestReturnTypeInterface(t *testing.T) {
 	}
 }
 
-func TestIterator(t *testing.T) {
-	iter := Iterator{Source: ParamRef{Index: 0}, Kind: IterateIndexed}
-	if got := iter.String(); got != "iterator(param[0], indexed)" {
-		t.Errorf("Iterator indexed.String() = %q", got)
-	}
-
-	iterKeyed := Iterator{Source: ParamRef{Index: 0}, Kind: IterateKeyed}
-	if got := iterKeyed.String(); got != "iterator(param[0], keyed)" {
-		t.Errorf("Iterator keyed.String() = %q", got)
-	}
-
-	// Equals
-	if !iter.Equals(Iterator{Source: ParamRef{Index: 0}, Kind: IterateIndexed}) {
-		t.Error("same Iterator should be equal")
-	}
-
-	if iter.Equals(Iterator{Source: ParamRef{Index: 1}, Kind: IterateIndexed}) {
-		t.Error("different source should not be equal")
-	}
-
-	if iter.Equals(Iterator{Source: ParamRef{Index: 0}, Kind: IterateKeyed}) {
-		t.Error("different kind should not be equal")
-	}
-
-	if iter.Equals(Return{}) {
-		t.Error("Iterator should not equal Return")
-	}
-}
-
 func TestTableMutator(t *testing.T) {
 	tm := TableMutator{Target: ParamRef{Index: 0}, Value: ParamRef{Index: 1}}
 	if got := tm.String(); got != "table_mutator(param[0], param[1])" {
@@ -400,7 +371,6 @@ func TestAllLabelsImplementInterface(t *testing.T) {
 		ErrorReturn{},
 		ReturnLength{},
 		LengthChange{},
-		Iterator{},
 		TableMutator{},
 		PassThrough{},
 		FlowInto{},
@@ -420,7 +390,6 @@ func TestMarkerMethods(t *testing.T) {
 	ErrorReturn{}.EffectLabel()
 	ReturnLength{}.EffectLabel()
 	LengthChange{}.EffectLabel()
-	Iterator{}.EffectLabel()
 	TableMutator{}.EffectLabel()
 	PassThrough{}.EffectLabel()
 	FlowInto{}.EffectLabel()

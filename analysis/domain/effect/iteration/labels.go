@@ -1,6 +1,12 @@
-package effect
+package iteration
 
-import "fmt"
+import (
+	"fmt"
+
+	"github.com/wippyai/go-lua/analysis/domain/effect"
+)
+
+var _ effect.Label = Iterator{}
 
 type IteratorKind int
 
@@ -10,7 +16,7 @@ const (
 )
 
 type Iterator struct {
-	Source ParamRef
+	Source effect.ParamRef
 	Kind   IteratorKind
 }
 
@@ -22,7 +28,7 @@ func (i Iterator) String() string {
 	}
 	return fmt.Sprintf("iterator(%s, %s)", i.Source, kind)
 }
-func (i Iterator) Equals(other Label) bool {
+func (i Iterator) Equals(other effect.Label) bool {
 	if o, ok := other.(Iterator); ok {
 		return i.Source.Index == o.Source.Index && i.Kind == o.Kind
 	}

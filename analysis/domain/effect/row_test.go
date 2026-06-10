@@ -221,7 +221,7 @@ func TestRowWithout(t *testing.T) {
 	r := Row{Labels: []Label{
 		Mutate{Target: ParamRef{Index: 0}, Transform: Unchanged{}},
 		Return{ReturnIndex: 0, Transform: ElementOf{Source: ParamRef{Index: 0}}},
-		Iterator{Source: ParamRef{Index: 0}, Kind: IterateIndexed},
+		TableMutator{Target: ParamRef{Index: 0}, Value: ParamRef{Index: 1}},
 	}}
 	filtered := r.Without(func(l Label) bool {
 		_, ok := l.(Return)
@@ -236,8 +236,8 @@ func TestRowWithout(t *testing.T) {
 		t.Error("Without should keep Mutate")
 	}
 
-	if !filtered.HasIterator() {
-		t.Error("Without should keep Iterator")
+	if !filtered.HasTableMutator() {
+		t.Error("Without should keep TableMutator")
 	}
 }
 
@@ -257,43 +257,6 @@ func TestRowStringOpenNoLabels(t *testing.T) {
 	r := Row{Tail: &Var{Name: "rho"}}
 	if got := r.String(); got != "{rho}" {
 		t.Errorf("Open row no labels.String() = %q, want '{rho}'", got)
-	}
-}
-
-func TestIteratorEffects(t *testing.T) {
-	r := Row{Labels: []Label{Iterator{Source: ParamRef{Index: 0}, Kind: IterateIndexed}}}
-
-	if !r.HasIterator() {
-		t.Error("Should have iterator")
-	}
-
-	iter := r.GetIterator()
-	if iter == nil {
-		t.Error("Should find iterator")
-	}
-
-	if !r.IsIndexedIterator() {
-		t.Error("Should be indexed iterator")
-	}
-
-	if r.IsKeyedIterator() {
-		t.Error("Should not be keyed iterator")
-	}
-
-	// Keyed iterator
-	r2 := Row{Labels: []Label{Iterator{Source: ParamRef{Index: 0}, Kind: IterateKeyed}}}
-	if !r2.IsKeyedIterator() {
-		t.Error("Should be keyed iterator")
-	}
-
-	if r2.IsIndexedIterator() {
-		t.Error("Should not be indexed iterator")
-	}
-
-	// No iterator
-	r3 := Empty
-	if r3.IsIndexedIterator() || r3.IsKeyedIterator() {
-		t.Error("Empty row should not be any iterator")
 	}
 }
 

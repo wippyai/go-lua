@@ -6,7 +6,6 @@ type LabelVisitor[R any] struct {
 	ErrorReturn      func(ErrorReturn) R
 	ReturnLength     func(ReturnLength) R
 	LengthChange     func(LengthChange) R
-	Iterator         func(Iterator) R
 	TableMutator     func(TableMutator) R
 	PassThrough      func(PassThrough) R
 	FlowInto         func(FlowInto) R
@@ -55,14 +54,6 @@ func VisitLabel[R any](l Label, v LabelVisitor[R]) R {
 	case *LengthChange:
 		if v.LengthChange != nil {
 			return v.LengthChange(*ll)
-		}
-	case Iterator:
-		if v.Iterator != nil {
-			return v.Iterator(ll)
-		}
-	case *Iterator:
-		if v.Iterator != nil {
-			return v.Iterator(*ll)
 		}
 	case TableMutator:
 		if v.TableMutator != nil {

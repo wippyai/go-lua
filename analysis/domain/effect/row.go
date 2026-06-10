@@ -54,10 +54,6 @@ func (r Row) HasMutate() bool {
 	return r.Has(func(l Label) bool { _, ok := l.(Mutate); return ok })
 }
 
-func (r Row) HasIterator() bool {
-	return r.Has(func(l Label) bool { _, ok := l.(Iterator); return ok })
-}
-
 func (r Row) HasTableMutator() bool {
 	return r.Has(func(l Label) bool { _, ok := l.(TableMutator); return ok })
 }
@@ -121,15 +117,6 @@ func (r Row) GetReturnLength(retIdx int) *ReturnLength {
 	return nil
 }
 
-func (r Row) GetIterator() *Iterator {
-	for _, l := range r.Labels {
-		if iter, ok := l.(Iterator); ok {
-			return &iter
-		}
-	}
-	return nil
-}
-
 func (r Row) GetTableMutator() *TableMutator {
 	for _, l := range r.Labels {
 		if mut, ok := l.(TableMutator); ok {
@@ -137,16 +124,6 @@ func (r Row) GetTableMutator() *TableMutator {
 		}
 	}
 	return nil
-}
-
-func (r Row) IsIndexedIterator() bool {
-	iter := r.GetIterator()
-	return iter != nil && iter.Kind == IterateIndexed
-}
-
-func (r Row) IsKeyedIterator() bool {
-	iter := r.GetIterator()
-	return iter != nil && iter.Kind == IterateKeyed
 }
 
 func (r Row) String() string {
