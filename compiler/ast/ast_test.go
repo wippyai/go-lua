@@ -3,7 +3,7 @@ package ast
 import (
 	"testing"
 
-	"github.com/wippyai/go-lua/types/diag"
+	diag "github.com/wippyai/go-lua/analysis/diagnostic"
 )
 
 func TestNodeColumn(t *testing.T) {

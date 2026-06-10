@@ -10,7 +10,7 @@
 //   - TypeExpr: type annotations for the optional type system
 package ast
 
-import "github.com/wippyai/go-lua/types/diag"
+import diag "github.com/wippyai/go-lua/analysis/diagnostic"
 
 // PositionHolder provides source location info for AST nodes.
 type PositionHolder interface {
