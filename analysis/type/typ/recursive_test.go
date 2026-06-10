@@ -143,7 +143,6 @@ func TestRecursiveStringNoPanic(t *testing.T) {
 
 	// Should not panic or hang
 	_ = rec.String()
-	_ = TypeString(rec)
 }
 
 // TestRecursiveMutualRecursion tests two mutually recursive types.

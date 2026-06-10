@@ -32,7 +32,7 @@ func ProjectUnionMembers(u *Union, project func(Type) Type) Type {
 			if hasStoredHashes && !knownContainsOpenRecursive(member) {
 				hashes = append(hashes, u.memberHashes[i])
 			} else {
-				hashes = append(hashes, unionMemberHash(member))
+				hashes = append(hashes, UnionMemberHash(member))
 			}
 			continue
 		}
@@ -41,7 +41,7 @@ func ProjectUnionMembers(u *Union, project func(Type) Type) Type {
 		if !projectedUnionMemberUsesStructuralDedupe(projected) {
 			scalarRewriteOnly = false
 		}
-		hashes = append(hashes, unionMemberHash(projected))
+		hashes = append(hashes, UnionMemberHash(projected))
 	}
 	if !changed {
 		return u

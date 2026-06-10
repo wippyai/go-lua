@@ -193,16 +193,6 @@ func TestTypeEqualsDepthLimit(t *testing.T) {
 	}
 }
 
-func TestTypeString(t *testing.T) {
-	if TypeString(nil) != "nil" {
-		t.Error("TypeString(nil) should be nil")
-	}
-
-	if TypeString(Number) != "number" {
-		t.Error("TypeString(Number) should be number")
-	}
-}
-
 func TestTypeEqualsNilNil(t *testing.T) {
 	// Both nil should return true
 	if !TypeEquals(nil, nil) {

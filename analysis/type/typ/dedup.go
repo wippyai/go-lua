@@ -15,12 +15,12 @@ func deduplicateTypesWithHashes(types []Type) ([]Type, []uint64) {
 	hashes := make([]uint64, 0, len(types))
 
 	for _, t := range types {
-		h := unionMemberHash(t)
+		h := UnionMemberHash(t)
 		bucket := seen[h]
 		duplicate := false
 
 		for _, existing := range bucket {
-			if unionMemberEquals(existing, t) {
+			if SameUnionMember(existing, t) {
 				duplicate = true
 				break
 			}
@@ -36,10 +36,6 @@ func deduplicateTypesWithHashes(types []Type) ([]Type, []uint64) {
 	return result, hashes
 }
 
-func unionMemberHash(t Type) uint64 {
-	return UnionMemberHash(t)
-}
-
 // UnionMemberHash returns the hash paired with SameUnionMember for normalized
 // union/member-set construction.
 func UnionMemberHash(t Type) uint64 {
@@ -47,10 +43,6 @@ func UnionMemberHash(t Type) uint64 {
 		return 0
 	}
 	return typeEqualityHash(t)
-}
-
-func unionMemberEquals(a, b Type) bool {
-	return SameUnionMember(a, b)
 }
 
 // SameUnionMember is the canonical equality relation for generic union

@@ -84,9 +84,9 @@ func (a *Annotated) String() string {
 				case float64:
 					sb.WriteString(formatFloat(v))
 				case int64:
-					sb.WriteString(formatInt(v))
+					sb.WriteString(strconv.FormatInt(v, 10))
 				case int:
-					sb.WriteString(formatInt(int64(v)))
+					sb.WriteString(strconv.FormatInt(int64(v), 10))
 				default:
 					sb.WriteString("...")
 				}
@@ -156,29 +156,7 @@ func GetAnnotations(t Type) []Annotation {
 
 func formatFloat(f float64) string {
 	if f == float64(int64(f)) {
-		return formatInt(int64(f))
+		return strconv.FormatInt(int64(f), 10)
 	}
 	return strconv.FormatFloat(f, 'f', -1, 64)
-}
-
-func formatInt(i int64) string {
-	if i == 0 {
-		return "0"
-	}
-	neg := i < 0
-	if neg {
-		i = -i
-	}
-	var buf [20]byte
-	pos := len(buf)
-	for i > 0 {
-		pos--
-		buf[pos] = byte(i%10) + '0'
-		i /= 10
-	}
-	if neg {
-		pos--
-		buf[pos] = '-'
-	}
-	return string(buf[pos:])
 }

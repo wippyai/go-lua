@@ -103,18 +103,3 @@ func typePointer(t Type) uintptr {
 func TypePointer(t Type) uintptr {
 	return typePointer(t)
 }
-
-// TypeString returns string representation with depth limiting.
-func TypeString(t Type) string {
-	guard := NewGuard()
-	return typeStringGuard(t, guard)
-}
-
-func typeStringGuard(t Type, guard recursion.Guard) string {
-	if t == nil {
-		return "nil"
-	}
-	return WithGuard(t, guard, "...", func(recursion.Guard) string {
-		return t.String()
-	})
-}
