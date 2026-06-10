@@ -422,6 +422,99 @@ func TestBuildChunkLabelAfterReturnIsUnmapped(t *testing.T) {
 	}
 }
 
+func TestBuildChunkBackwardGotoConnectsToExistingLabelAndKillsFallthrough(t *testing.T) {
+	label := &ast.LabelStmt{Name: "again"}
+	jump := &ast.GotoStmt{Label: "again"}
+	dead := localAssign([]string{"dead"}, number("1"))
+	stmts := []ast.Stmt{label, jump, dead}
+	bindings := bind.BindChunk(stmts, bind.Options{})
+	result := BuildChunk(stmts, bindings)
+	if result == nil || result.Graph == nil {
+		t.Fatalf("BuildChunk returned nil for backward goto")
+	}
+	graph := result.Graph
+
+	labelPoint := requireStmtPoints(t, result, label, 1)[0]
+	gotoPoint := requireStmtPoints(t, result, jump, 1)[0]
+	requirePointKind(t, graph, labelPoint, cfg.NodeNoop)
+	requirePointKind(t, graph, gotoPoint, cfg.NodeNoop)
+	requireEdge(t, graph, graph.Entry(), labelPoint, false)
+	requireEdge(t, graph, labelPoint, gotoPoint, false)
+	requireEdge(t, graph, gotoPoint, labelPoint, false)
+	if got := result.StmtPoints.PointsFor(dead); len(got) != 0 {
+		t.Fatalf("fallthrough after goto mapped to points %v", got)
+	}
+}
+
+func TestBuildChunkForwardGotoOverReturnRevivesTargetLabel(t *testing.T) {
+	jump := &ast.GotoStmt{Label: "target"}
+	deadReturn := &ast.ReturnStmt{}
+	label := &ast.LabelStmt{Name: "target"}
+	after := localAssign([]string{"after"}, number("1"))
+	stmts := []ast.Stmt{jump, deadReturn, label, after}
+	bindings := bind.BindChunk(stmts, bind.Options{})
+	result := BuildChunk(stmts, bindings)
+	if result == nil || result.Graph == nil {
+		t.Fatalf("BuildChunk returned nil for forward goto")
+	}
+	graph := result.Graph
+
+	gotoPoint := requireStmtPoints(t, result, jump, 1)[0]
+	labelPoint := requireStmtPoints(t, result, label, 1)[0]
+	afterPoint := requireStmtPoints(t, result, after, 1)[0]
+	requireEdge(t, graph, graph.Entry(), gotoPoint, false)
+	requireEdge(t, graph, gotoPoint, labelPoint, false)
+	requireEdge(t, graph, labelPoint, afterPoint, false)
+	requireEdge(t, graph, afterPoint, graph.Exit(), false)
+	if got := result.StmtPoints.PointsFor(deadReturn); len(got) != 0 {
+		t.Fatalf("return after goto mapped to points %v", got)
+	}
+}
+
+func TestBuildChunkStatementAfterGotoBeforeTargetIsUnmapped(t *testing.T) {
+	jump := &ast.GotoStmt{Label: "target"}
+	dead := localAssign([]string{"dead"}, number("1"))
+	label := &ast.LabelStmt{Name: "target"}
+	after := localAssign([]string{"after"}, number("2"))
+	stmts := []ast.Stmt{jump, dead, label, after}
+	bindings := bind.BindChunk(stmts, bind.Options{})
+	result := BuildChunk(stmts, bindings)
+	if result == nil || result.Graph == nil {
+		t.Fatalf("BuildChunk returned nil for forward goto")
+	}
+
+	gotoPoint := requireStmtPoints(t, result, jump, 1)[0]
+	labelPoint := requireStmtPoints(t, result, label, 1)[0]
+	afterPoint := requireStmtPoints(t, result, after, 1)[0]
+	requireEdge(t, result.Graph, gotoPoint, labelPoint, false)
+	requireEdge(t, result.Graph, labelPoint, afterPoint, false)
+	if got := result.StmtPoints.PointsFor(dead); len(got) != 0 {
+		t.Fatalf("statement after goto before target mapped to points %v", got)
+	}
+}
+
+func TestBuildChunkGotoMissingBuildsOpenPointAndKillsFallthrough(t *testing.T) {
+	jump := &ast.GotoStmt{Label: "missing"}
+	dead := localAssign([]string{"dead"}, number("1"))
+	stmts := []ast.Stmt{jump, dead}
+	bindings := bind.BindChunk(stmts, bind.Options{})
+	result := BuildChunk(stmts, bindings)
+	if result == nil || result.Graph == nil {
+		t.Fatalf("BuildChunk returned nil for undefined goto")
+	}
+	graph := result.Graph
+
+	gotoPoint := requireStmtPoints(t, result, jump, 1)[0]
+	requirePointKind(t, graph, gotoPoint, cfg.NodeNoop)
+	requireEdge(t, graph, graph.Entry(), gotoPoint, false)
+	if succs := graph.Successors(gotoPoint); len(succs) != 0 {
+		t.Fatalf("undefined goto successors = %v, want none", succs)
+	}
+	if got := result.StmtPoints.PointsFor(dead); len(got) != 0 {
+		t.Fatalf("fallthrough after undefined goto mapped to points %v", got)
+	}
+}
+
 func TestBuildChunkStatementPointMappingReturnsSafeSlices(t *testing.T) {
 	stmt := localAssign([]string{"a", "b"}, number("1"), number("2"))
 	stmts := []ast.Stmt{stmt}
@@ -1072,28 +1165,6 @@ func TestBuildChunkBreakInsideRepeatReachesJoinPath(t *testing.T) {
 	requireTargetCount(t, graph, result.Meta, deadID, 0)
 	requireEdge(t, graph, bodyAssign, join, false)
 	requireEdge(t, graph, join, afterAssign, false)
-}
-
-func TestBuildChunkUnsupportedControlFlowReturnsNil(t *testing.T) {
-	tests := []struct {
-		name string
-		stmt ast.Stmt
-	}{
-		{
-			name: "goto",
-			stmt: &ast.GotoStmt{Label: "label"},
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			stmts := []ast.Stmt{tt.stmt}
-			bindings := bind.BindChunk(stmts, bind.Options{})
-			if result := BuildChunk(stmts, bindings); result != nil {
-				t.Fatalf("BuildChunk returned graph for unsupported %s", tt.name)
-			}
-		})
-	}
 }
 
 func TestBuildChunkUnsupportedFunctionDefinitionTargetsReturnNil(t *testing.T) {

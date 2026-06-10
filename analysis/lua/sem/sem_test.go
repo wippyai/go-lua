@@ -189,6 +189,36 @@ func TestExtractChunkLabelFactPreservesIdentity(t *testing.T) {
 	}
 }
 
+func TestExtractChunkGotoFactPreservesIdentity(t *testing.T) {
+	jump := &ast.GotoStmt{Label: "again"}
+	stmts := []ast.Stmt{jump}
+	bindings := bind.BindChunk(stmts, bind.Options{})
+	built := cfgbuild.BuildChunk(stmts, bindings)
+
+	result, err := ExtractChunk(stmts, bindings, built)
+	if err != nil {
+		t.Fatalf("ExtractChunk: %v", err)
+	}
+
+	point := requireStmtPoints(t, built, jump, 1)[0]
+	fact, ok := result.Goto(point)
+	if !ok {
+		t.Fatalf("missing goto fact")
+	}
+	if fact.Stmt != jump || fact.Label != "again" {
+		t.Fatalf("goto fact = %#v", fact)
+	}
+	if _, ok := result.Label(point); ok {
+		t.Fatalf("goto point produced label fact")
+	}
+	if _, ok := result.LocalAssignment(point); ok {
+		t.Fatalf("goto point produced local assignment fact")
+	}
+	if _, ok := result.OrdinaryAssignment(point); ok {
+		t.Fatalf("goto point produced ordinary assignment fact")
+	}
+}
+
 func TestExtractChunkCallReturnBranchAndTypeFacts(t *testing.T) {
 	decl := localAssign([]string{"x"}, number("1"))
 	printIdent := ident("print")
@@ -437,6 +467,28 @@ func TestExtractChunkSkipsUnmappedLabel(t *testing.T) {
 	}
 	if len(result.labels) != 0 {
 		t.Fatalf("unmapped label produced label facts: %#v", result.labels)
+	}
+}
+
+func TestExtractChunkSkipsUnmappedGoto(t *testing.T) {
+	ret := &ast.ReturnStmt{}
+	deadGoto := &ast.GotoStmt{Label: "dead"}
+	stmts := []ast.Stmt{ret, deadGoto}
+	bindings := bind.BindChunk(stmts, bind.Options{})
+	built := cfgbuild.BuildChunk(stmts, bindings)
+	if built == nil {
+		t.Fatalf("BuildChunk returned nil")
+	}
+	if got := built.StmtPoints.PointsFor(deadGoto); len(got) != 0 {
+		t.Fatalf("dead goto mapped to points %v", got)
+	}
+
+	result, err := ExtractChunk(stmts, bindings, built)
+	if err != nil {
+		t.Fatalf("ExtractChunk: %v", err)
+	}
+	if len(result.gotos) != 0 {
+		t.Fatalf("unmapped goto produced goto facts: %#v", result.gotos)
 	}
 }
 

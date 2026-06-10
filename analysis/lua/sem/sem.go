@@ -46,6 +46,7 @@ type Result struct {
 	numericFors         map[cfg.Point]NumericForFact
 	genericFors         map[cfg.Point]GenericForFact
 	labels              map[cfg.Point]LabelFact
+	gotos               map[cfg.Point]GotoFact
 }
 
 type LocalAssignmentFact struct {
@@ -148,6 +149,11 @@ type GenericForFact struct {
 type LabelFact struct {
 	Stmt *ast.LabelStmt
 	Name string
+}
+
+type GotoFact struct {
+	Stmt  *ast.GotoStmt
+	Label string
 }
 
 func ExtractChunk(stmts []ast.Stmt, bindings *bind.Result, built *cfgbuild.Result) (*Result, error) {
@@ -276,6 +282,14 @@ func (r *Result) Label(point cfg.Point) (LabelFact, bool) {
 	return fact, ok
 }
 
+func (r *Result) Goto(point cfg.Point) (GotoFact, bool) {
+	if r == nil {
+		return GotoFact{}, false
+	}
+	fact, ok := r.gotos[point]
+	return fact, ok
+}
+
 func newResult(fn *ast.FunctionExpr) *Result {
 	return &Result{
 		function:            fn,
@@ -289,6 +303,7 @@ func newResult(fn *ast.FunctionExpr) *Result {
 		numericFors:         make(map[cfg.Point]NumericForFact),
 		genericFors:         make(map[cfg.Point]GenericForFact),
 		labels:              make(map[cfg.Point]LabelFact),
+		gotos:               make(map[cfg.Point]GotoFact),
 	}
 }
 
@@ -347,6 +362,8 @@ func (r *Result) extractStmt(stmt ast.Stmt, bindings *bind.Result, built *cfgbui
 		return r.extractFunctionDefinition(stmt, bindings, built.StmtPoints.PointsFor(stmt))
 	case *ast.LabelStmt:
 		return r.extractLabel(stmt, built.StmtPoints.PointsFor(stmt))
+	case *ast.GotoStmt:
+		return r.extractGoto(stmt, built.StmtPoints.PointsFor(stmt))
 	case *ast.TypeDefStmt:
 		return r.extractTypeDef(stmt, built.StmtPoints.PointsFor(stmt))
 	case *ast.InterfaceDefStmt:
@@ -484,7 +501,7 @@ func (r *Result) extractTypeDef(stmt *ast.TypeDefStmt, points []cfg.Point) error
 	if len(points) == 0 {
 		return nil
 	}
-	if len(points) < 1 {
+	if len(points) != 1 {
 		return ErrPointMismatch
 	}
 	r.typeDefinitions[points[0]] = TypeDefinitionFact{
@@ -593,6 +610,20 @@ func (r *Result) extractLabel(stmt *ast.LabelStmt, points []cfg.Point) error {
 	r.labels[points[0]] = LabelFact{
 		Stmt: stmt,
 		Name: stmt.Name,
+	}
+	return nil
+}
+
+func (r *Result) extractGoto(stmt *ast.GotoStmt, points []cfg.Point) error {
+	if len(points) == 0 {
+		return nil
+	}
+	if len(points) < 1 {
+		return ErrPointMismatch
+	}
+	r.gotos[points[0]] = GotoFact{
+		Stmt:  stmt,
+		Label: stmt.Label,
 	}
 	return nil
 }

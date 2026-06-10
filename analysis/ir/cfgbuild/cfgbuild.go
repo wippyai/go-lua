@@ -65,6 +65,8 @@ type builder struct {
 	graph        *cfg.CFG
 	meta         cfgmeta.Metadata
 	stmtPoints   map[ast.Stmt][]cfg.Point
+	labels       map[string]cfg.Point
+	pendingGotos map[string][]cfg.Point
 	bindings     *bind.Result
 	breakTargets []cfg.Point
 	unsupported  bool
@@ -88,7 +90,12 @@ func branchPath(point cfg.Point, cond bool) flowState {
 func (b *builder) buildStmts(state flowState, stmts []ast.Stmt) flowState {
 	for _, stmt := range stmts {
 		if !state.live {
-			return state
+			label, ok := stmt.(*ast.LabelStmt)
+			if !ok {
+				continue
+			}
+			state = b.buildLabel(state, label)
+			continue
 		}
 		state = b.buildStmt(state, stmt)
 	}
@@ -136,7 +143,9 @@ func (b *builder) buildStmt(state flowState, stmt ast.Stmt) flowState {
 	case *ast.FuncDefStmt:
 		return b.buildFuncDef(state, stmt)
 	case *ast.LabelStmt:
-		return b.appendNodeForStmt(state, cfg.NodeNoop, stmt)
+		return b.buildLabel(state, stmt)
+	case *ast.GotoStmt:
+		return b.buildGoto(state, stmt)
 	case *ast.BreakStmt:
 		return b.buildBreak(state)
 	case *ast.TypeDefStmt, *ast.InterfaceDefStmt:
@@ -185,6 +194,42 @@ func (b *builder) buildFuncDef(state flowState, stmt *ast.FuncDefStmt) flowState
 		return flowState{current: state.current}
 	}
 	return b.appendAssign(state, id, stmt)
+}
+
+func (b *builder) buildLabel(state flowState, stmt *ast.LabelStmt) flowState {
+	pending := b.takePendingGotos(stmt.Name)
+	if !state.live && len(pending) == 0 {
+		return state
+	}
+	point := b.graph.AddNode(cfg.NodeNoop)
+	if state.live {
+		b.connect(state, point)
+	}
+	for _, from := range pending {
+		b.graph.AddEdge(from, point, false)
+	}
+	b.recordStmtPoint(stmt, point)
+	if b.labels == nil {
+		b.labels = make(map[string]cfg.Point)
+	}
+	b.labels[stmt.Name] = point
+	return flowState{current: point, live: true}
+}
+
+func (b *builder) buildGoto(state flowState, stmt *ast.GotoStmt) flowState {
+	gotoState := b.appendNodeForStmt(state, cfg.NodeNoop, stmt)
+	if !gotoState.live {
+		return flowState{current: state.current}
+	}
+	if target, ok := b.labels[stmt.Label]; ok {
+		b.graph.AddEdge(gotoState.current, target, false)
+	} else {
+		if b.pendingGotos == nil {
+			b.pendingGotos = make(map[string][]cfg.Point)
+		}
+		b.pendingGotos[stmt.Label] = append(b.pendingGotos[stmt.Label], gotoState.current)
+	}
+	return flowState{current: gotoState.current}
 }
 
 func (b *builder) buildDoBlock(state flowState, stmt *ast.DoBlockStmt) flowState {
@@ -402,6 +447,15 @@ func (b *builder) recordStmtPoint(stmt ast.Stmt, point cfg.Point) {
 		b.stmtPoints = make(map[ast.Stmt][]cfg.Point)
 	}
 	b.stmtPoints[stmt] = append(b.stmtPoints[stmt], point)
+}
+
+func (b *builder) takePendingGotos(label string) []cfg.Point {
+	if len(b.pendingGotos) == 0 {
+		return nil
+	}
+	points := b.pendingGotos[label]
+	delete(b.pendingGotos, label)
+	return points
 }
 
 func (b *builder) materializePendingCond(state flowState) flowState {
