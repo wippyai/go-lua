@@ -2,38 +2,38 @@ package typ
 
 import "testing"
 
-func TestDeduplicateTypes_Empty(t *testing.T) {
-	result := deduplicateTypes(nil)
-	if result != nil {
-		t.Error("deduplicateTypes(nil) should return nil")
+func TestDeduplicateTypesWithHashes_Empty(t *testing.T) {
+	result, hashes := deduplicateTypesWithHashes(nil)
+	if result != nil || hashes != nil {
+		t.Error("deduplicateTypesWithHashes(nil) should return nil slices")
 	}
 
-	result = deduplicateTypes([]Type{})
-	if result != nil {
-		t.Error("deduplicateTypes([]) should return nil")
+	result, hashes = deduplicateTypesWithHashes([]Type{})
+	if result != nil || hashes != nil {
+		t.Error("deduplicateTypesWithHashes([]) should return nil slices")
 	}
 }
 
-func TestDeduplicateTypes_NoDuplicates(t *testing.T) {
+func TestDeduplicateTypesWithHashes_NoDuplicates(t *testing.T) {
 	types := []Type{String, Number, Boolean}
-	result := deduplicateTypes(types)
-	if len(result) != 3 {
-		t.Errorf("len = %d, want 3", len(result))
+	result, hashes := deduplicateTypesWithHashes(types)
+	if len(result) != 3 || len(hashes) != 3 {
+		t.Errorf("len = %d/%d, want 3/3", len(result), len(hashes))
 	}
 }
 
-func TestDeduplicateTypes_WithDuplicates(t *testing.T) {
+func TestDeduplicateTypesWithHashes_WithDuplicates(t *testing.T) {
 	types := []Type{String, Number, String, Number, Boolean}
-	result := deduplicateTypes(types)
-	if len(result) != 3 {
-		t.Errorf("len = %d, want 3", len(result))
+	result, hashes := deduplicateTypesWithHashes(types)
+	if len(result) != 3 || len(hashes) != 3 {
+		t.Errorf("len = %d/%d, want 3/3", len(result), len(hashes))
 	}
 }
 
-func TestDeduplicateTypes_AllSame(t *testing.T) {
+func TestDeduplicateTypesWithHashes_AllSame(t *testing.T) {
 	types := []Type{String, String, String}
-	result := deduplicateTypes(types)
-	if len(result) != 1 {
-		t.Errorf("len = %d, want 1", len(result))
+	result, hashes := deduplicateTypesWithHashes(types)
+	if len(result) != 1 || len(hashes) != 1 {
+		t.Errorf("len = %d/%d, want 1/1", len(result), len(hashes))
 	}
 }

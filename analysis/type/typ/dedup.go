@@ -5,13 +5,6 @@ type hashedType struct {
 	hash uint64
 }
 
-// deduplicateTypes removes duplicate types using hash-based bucketing
-// with structural equality checks to handle hash collisions.
-func deduplicateTypes(types []Type) []Type {
-	deduped, _ := deduplicateTypesWithHashes(types)
-	return deduped
-}
-
 func deduplicateTypesWithHashes(types []Type) ([]Type, []uint64) {
 	if len(types) == 0 {
 		return nil, nil
