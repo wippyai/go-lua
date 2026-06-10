@@ -1,9 +1,8 @@
 package subtype
 
 import (
-	"reflect"
-
 	"github.com/wippyai/go-lua/analysis/type/kind"
+	"github.com/wippyai/go-lua/analysis/type/nodeid"
 	"github.com/wippyai/go-lua/analysis/type/subst"
 	typetable "github.com/wippyai/go-lua/analysis/type/table"
 	"github.com/wippyai/go-lua/analysis/type/typ"
@@ -993,23 +992,12 @@ type typePair struct {
 }
 
 func newTypePair(sub, super typ.Type) (typePair, bool) {
-	subPtr := typeNodePointer(sub)
-	superPtr := typeNodePointer(super)
+	subPtr := nodeid.Pointer(sub)
+	superPtr := nodeid.Pointer(super)
 	if subPtr == 0 || superPtr == 0 {
 		return typePair{}, false
 	}
 	return typePair{sub: subPtr, super: superPtr}, true
-}
-
-func typeNodePointer(t typ.Type) uintptr {
-	if t == nil {
-		return 0
-	}
-	v := reflect.ValueOf(t)
-	if v.Kind() != reflect.Pointer || v.IsNil() {
-		return 0
-	}
-	return v.Pointer()
 }
 
 func needsCycleGuard(k kind.Kind) bool {

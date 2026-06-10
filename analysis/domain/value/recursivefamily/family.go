@@ -2,37 +2,12 @@ package recursivefamily
 
 import (
 	"sync"
-	"unsafe"
 
 	"github.com/wippyai/go-lua/analysis/internal/hash"
+	"github.com/wippyai/go-lua/analysis/type/nodeid"
 	typetable "github.com/wippyai/go-lua/analysis/type/table"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
-
-// typeNodePointer returns a pointer-based identity for structural type nodes
-// used to detect cycles during fingerprint traversal. Returns 0 for scalar or
-// non-pointer types.
-func typeNodePointer(t typ.Type) uintptr {
-	switch tt := t.(type) {
-	case *typ.Union:
-		return uintptr(unsafe.Pointer(tt))
-	case *typ.Intersection:
-		return uintptr(unsafe.Pointer(tt))
-	case *typ.Record:
-		return uintptr(unsafe.Pointer(tt))
-	case *typ.Function:
-		return uintptr(unsafe.Pointer(tt))
-	case *typ.Generic:
-		return uintptr(unsafe.Pointer(tt))
-	case *typ.Instantiated:
-		return uintptr(unsafe.Pointer(tt))
-	case *typ.Interface:
-		return uintptr(unsafe.Pointer(tt))
-	case *typ.Recursive:
-		return uintptr(unsafe.Pointer(tt))
-	}
-	return 0
-}
 
 // FamilyKey is the stable producer identity of a recursive family.
 type FamilyKey struct {
@@ -437,7 +412,7 @@ func (s *recursiveFamilyFingerprintScan) scan(t typ.Type) {
 		s.add(rec)
 		return
 	}
-	if ptr := typeNodePointer(t); ptr != 0 {
+	if ptr := nodeid.StructuralPointer(t); ptr != 0 {
 		if s.seenNodes[ptr] {
 			return
 		}

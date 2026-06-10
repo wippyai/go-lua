@@ -19,3 +19,24 @@ func Pointer(t typ.Type) uintptr {
 	}
 	return v.Pointer()
 }
+
+// StructuralPointer returns the stable node pointer for structural type nodes
+// used by recursive cycle guards.
+//
+// This intentionally excludes pointer-backed wrapper nodes such as Optional,
+// Array, Map, ReadonlyMap, Tuple, Alias, and Ref.
+func StructuralPointer(t typ.Type) uintptr {
+	switch tt := t.(type) {
+	case *typ.Union,
+		*typ.Intersection,
+		*typ.Record,
+		*typ.Function,
+		*typ.Generic,
+		*typ.Instantiated,
+		*typ.Interface,
+		*typ.Recursive:
+		return Pointer(tt)
+	default:
+		return 0
+	}
+}
