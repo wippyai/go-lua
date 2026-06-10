@@ -94,6 +94,67 @@ func TestRebuildRecordNormalizesMapKey(t *testing.T) {
 	}
 }
 
+func TestRecordConstructionSplitsNilableOptionalPayloads(t *testing.T) {
+	assertField := func(t *testing.T, rec *typ.Record, name string, want typ.Type) {
+		t.Helper()
+		field := rec.GetField(name)
+		if field == nil || !field.Optional {
+			t.Fatalf("field %q = %#v, want optional field", name, field)
+		}
+		if !typ.TypeEquals(field.Type, want) {
+			t.Fatalf("field %q type = %v, want %v", name, field.Type, want)
+		}
+	}
+	assertStaticString := func(t *testing.T, rec *typ.Record, name string, want typ.Type) {
+		t.Helper()
+		member := rec.GetStaticStringIndex(name)
+		if member == nil || !member.Optional {
+			t.Fatalf("static %q = %#v, want optional member", name, member)
+		}
+		if !typ.TypeEquals(member.Type, want) {
+			t.Fatalf("static %q type = %v, want %v", name, member.Type, want)
+		}
+	}
+	assertStaticInt := func(t *testing.T, rec *typ.Record, index int64, want typ.Type) {
+		t.Helper()
+		member := rec.GetStaticIntIndex(index)
+		if member == nil || !member.Optional {
+			t.Fatalf("static %d = %#v, want optional member", index, member)
+		}
+		if !typ.TypeEquals(member.Type, want) {
+			t.Fatalf("static %d type = %v, want %v", index, member.Type, want)
+		}
+	}
+
+	built := NewRecord().
+		OptField("error", typ.NewOptional(typ.String)).
+		AddStaticMember(typ.StaticMember{
+			Kind:     typ.StaticMemberStringIndex,
+			Name:     "raw",
+			Type:     typ.NewUnion(typ.Number, typ.Nil),
+			Optional: true,
+		}).
+		Build()
+	assertField(t, built, "error", typ.String)
+	assertStaticString(t, built, "raw", typ.Number)
+
+	rebuilt := RebuildRecord(typ.RecordParts{
+		Fields: []typ.Field{{
+			Name:     "ok",
+			Type:     typ.NewUnion(typ.Boolean, typ.Nil),
+			Optional: true,
+		}},
+		StaticMembers: []typ.StaticMember{{
+			Kind:     typ.StaticMemberIntIndex,
+			Index:    1,
+			Type:     typ.NewOptional(typ.Integer),
+			Optional: true,
+		}},
+	})
+	assertField(t, rebuilt, "ok", typ.Boolean)
+	assertStaticInt(t, rebuilt, 1, typ.Integer)
+}
+
 func TestSplitNilableField(t *testing.T) {
 	t.Run("optional", func(t *testing.T) {
 		inner, optional := SplitNilableField(typ.NewOptional(typ.String))

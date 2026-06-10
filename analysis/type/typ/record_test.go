@@ -67,19 +67,35 @@ func TestRecordFieldsSorted(t *testing.T) {
 	}
 }
 
-func TestRecordOptionalFieldNormalizesNestedOptionalType(t *testing.T) {
+func TestRecordOptionalMembersPreserveNilablePayloads(t *testing.T) {
+	optionalString := NewOptional(String)
+	optionalNumber := NewOptional(Number)
+	assertOptionalPayload := func(t *testing.T, got Type, want Type) {
+		t.Helper()
+		if _, ok := got.(*Optional); !ok {
+			t.Fatalf("payload = %T %[1]v, want optional payload", got)
+		}
+		if !TypeEquals(got, want) {
+			t.Fatalf("payload = %v, want %v", got, want)
+		}
+	}
+
 	r := NewRecord().
-		OptField("error", NewOptional(String)).
+		OptField("error", optionalString).
 		OptField("nil_only", Nil).
+		AddStaticMember(StaticMember{
+			Kind:     StaticMemberStringIndex,
+			Name:     "raw",
+			Type:     optionalNumber,
+			Optional: true,
+		}).
 		Build()
 
 	err := r.GetField("error")
 	if err == nil || !err.Optional {
 		t.Fatal("expected optional error field")
 	}
-	if !TypeEquals(err.Type, String) {
-		t.Fatalf("expected nested optional field type to normalize to string, got %v", err.Type)
-	}
+	assertOptionalPayload(t, err.Type, optionalString)
 
 	nilOnly := r.GetField("nil_only")
 	if nilOnly == nil || !nilOnly.Optional {
@@ -87,6 +103,36 @@ func TestRecordOptionalFieldNormalizesNestedOptionalType(t *testing.T) {
 	}
 	if !TypeEquals(nilOnly.Type, Nil) {
 		t.Fatalf("expected nil-only optional field type to remain nil, got %v", nilOnly.Type)
+	}
+
+	member := r.GetStaticStringIndex("raw")
+	if member == nil || !member.Optional {
+		t.Fatal("expected optional raw static member")
+	}
+	assertOptionalPayload(t, member.Type, optionalNumber)
+
+	rebuilt := RebuildRecord(RecordParts{
+		Fields: []Field{{
+			Name:     "error",
+			Type:     optionalString,
+			Optional: true,
+		}},
+		StaticMembers: []StaticMember{{
+			Kind:     StaticMemberIntIndex,
+			Index:    1,
+			Type:     optionalNumber,
+			Optional: true,
+		}},
+	})
+	if field := rebuilt.GetField("error"); field == nil || !field.Optional {
+		t.Fatal("expected rebuilt optional error field")
+	} else {
+		assertOptionalPayload(t, field.Type, optionalString)
+	}
+	if member := rebuilt.GetStaticIntIndex(1); member == nil || !member.Optional {
+		t.Fatal("expected rebuilt optional static member")
+	} else {
+		assertOptionalPayload(t, member.Type, optionalNumber)
 	}
 }
 

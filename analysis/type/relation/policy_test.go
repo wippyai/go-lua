@@ -612,11 +612,15 @@ func TestOptionalFieldBuilderKeepsProductCoalescingAtPolicyBoundary(t *testing.T
 		t.Fatal("optional field was not built")
 	}
 	union, ok := field.Type.(*Union)
-	if !ok || len(union.Members) != 2 {
-		t.Fatalf("optional field construction coalesced product union: %T %[1]v", field.Type)
+	if !ok || len(union.Members) != 3 {
+		t.Fatalf("optional field construction changed nilable product union: %T %[1]v", field.Type)
 	}
 
-	coalesced := CoalesceProductUnion(field.Type)
+	nonNil, optional := luatable.SplitNilableField(field.Type)
+	if !optional {
+		t.Fatalf("optional field payload did not split nil absence: %T %[1]v", field.Type)
+	}
+	coalesced := CoalesceProductUnion(nonNil)
 	if _, ok := coalesced.(*Recursive); !ok {
 		t.Fatalf("explicit product-union coalescing = %T %[1]v, want recursive family", coalesced)
 	}
@@ -1029,7 +1033,11 @@ func TestOptionalFieldKeepsProductCoalescingAtPolicyBoundaryAfterNilRemoval(t *t
 	if _, ok := field.Type.(*Union); !ok {
 		t.Fatalf("optional recursive family field = %T %v, want explicit union before policy coalescing", field.Type, field.Type)
 	}
-	if _, ok := CoalesceProductUnion(field.Type).(*Recursive); !ok {
-		t.Fatalf("explicit recursive family coalescing = %T %v, want recursive product", field.Type, field.Type)
+	nonNil, optional := luatable.SplitNilableField(field.Type)
+	if !optional {
+		t.Fatalf("optional recursive family field did not split nil absence: %T %v", field.Type, field.Type)
+	}
+	if _, ok := CoalesceProductUnion(nonNil).(*Recursive); !ok {
+		t.Fatalf("explicit recursive family coalescing = %T %v, want recursive product", nonNil, nonNil)
 	}
 }

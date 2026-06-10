@@ -52,9 +52,6 @@ func buildRecordType(fields []Field, staticMembers []StaticMember, metatable, ma
 		if sorted[i].Type == nil {
 			sorted[i].Type = Unknown
 		}
-		if sorted[i].Optional {
-			sorted[i].Type = normalizeOptionalFieldType(sorted[i].Type)
-		}
 	}
 	members := make([]StaticMember, len(staticMembers))
 	copy(members, staticMembers)
@@ -66,9 +63,6 @@ func buildRecordType(fields []Field, staticMembers []StaticMember, metatable, ma
 	for i := range members {
 		if members[i].Type == nil {
 			members[i].Type = Unknown
-		}
-		if members[i].Optional {
-			members[i].Type = normalizeOptionalFieldType(members[i].Type)
 		}
 	}
 

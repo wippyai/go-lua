@@ -275,7 +275,7 @@ func JoinClosedCompatibleRecordSet(records []*typ.Record, policy RecordPolicy) (
 			Readonly: acc.readonly,
 		})
 	}
-	return typ.RebuildRecord(typ.RecordParts{
+	return luatable.RebuildRecord(typ.RecordParts{
 		Fields:        mergedFields,
 		StaticMembers: mergedStaticMembers,
 	}), true
