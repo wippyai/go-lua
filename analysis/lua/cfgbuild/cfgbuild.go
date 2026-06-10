@@ -251,6 +251,7 @@ func (b *builder) buildIf(state flowState, stmt *ast.IfStmt) flowState {
 		b.unsupported = true
 		return flowState{current: state.current}
 	}
+	state, _, _ = b.appendConditionCall(state, stmt, stmt.Condition)
 	branch := b.appendBranch(state, stmt.Condition, stmt)
 	join := b.graph.AddNode(cfg.NodeJoin)
 
@@ -270,7 +271,12 @@ func (b *builder) buildWhile(state flowState, stmt *ast.WhileStmt) flowState {
 		b.unsupported = true
 		return flowState{current: state.current}
 	}
+	state, conditionCall, hasConditionCall := b.appendConditionCall(state, stmt, stmt.Condition)
 	branch := b.appendBranch(state, stmt.Condition, stmt)
+	backedgeTarget := branch.current
+	if hasConditionCall {
+		backedgeTarget = conditionCall
+	}
 	join := b.graph.AddNode(cfg.NodeJoin)
 
 	b.graph.AddEdge(branch.current, join, false)
@@ -279,7 +285,7 @@ func (b *builder) buildWhile(state flowState, stmt *ast.WhileStmt) flowState {
 	b.breakTargets = b.breakTargets[:len(b.breakTargets)-1]
 
 	if body.live {
-		b.connect(body, branch.current)
+		b.connect(body, backedgeTarget)
 	}
 	return flowState{current: join, live: true}
 }
@@ -302,6 +308,7 @@ func (b *builder) buildRepeat(state flowState, stmt *ast.RepeatStmt) flowState {
 			body = b.appendNode(state, cfg.NodeNoop)
 			bodyStart = body.current
 		}
+		body, _, _ = b.appendConditionCall(body, stmt, stmt.Condition)
 		branch := b.appendBranch(body, stmt.Condition, stmt)
 		b.graph.AddEdge(branch.current, join, true)
 		b.graph.AddEdge(branch.current, bodyStart, false)
@@ -345,7 +352,7 @@ func (b *builder) buildNumberFor(state flowState, stmt *ast.NumberForStmt) flowS
 }
 
 func (b *builder) buildGenericFor(state flowState, stmt *ast.GenericForStmt) flowState {
-	if b.hasUnsupportedExprs(stmt.Exprs...) {
+	if b.hasUnsupportedValueListExprs(stmt.Exprs...) {
 		b.unsupported = true
 		return flowState{current: state.current}
 	}
@@ -361,6 +368,7 @@ func (b *builder) buildGenericFor(state flowState, stmt *ast.GenericForStmt) flo
 		}
 	}
 
+	state = b.appendValueListCalls(state, stmt, stmt.Exprs)
 	branch := b.appendBranch(state, nil, stmt)
 	join := b.graph.AddNode(cfg.NodeJoin)
 

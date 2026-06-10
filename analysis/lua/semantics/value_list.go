@@ -16,6 +16,8 @@ const (
 	CallContextStatement
 	CallContextAssignmentSource
 	CallContextReturnSource
+	CallContextIteratorSource
+	CallContextCondition
 )
 
 type CallResultTargetKind uint8
@@ -196,16 +198,43 @@ func assignmentValueSource(exprs []ast.Expr, targetIndex int, callPoints map[int
 }
 
 func returnValueSources(exprs []ast.Expr, callPoints map[int]cfg.Point) []ValueSource {
+	return valueListSources(exprs, callPoints, true)
+}
+
+func iteratorValueSources(exprs []ast.Expr, callPoints map[int]cfg.Point) []ValueSource {
+	return valueListSources(exprs, callPoints, false)
+}
+
+func valueListSources(exprs []ast.Expr, callPoints map[int]cfg.Point, openTailFinal bool) []ValueSource {
 	if len(exprs) == 0 {
 		return nil
 	}
 	sources := make([]ValueSource, len(exprs))
 	for i, expr := range exprs {
 		final := i == len(exprs)-1
-		openTail := final && canExpandFinal(expr)
+		openTail := openTailFinal && final && canExpandFinal(expr)
 		sources[i] = valueSourceForExpr(expr, i, i, 0, final, openTail, callPoints)
 	}
 	return sources
+}
+
+func conditionValueSource(expr ast.Expr, callPoints map[int]cfg.Point) ValueSource {
+	source := ValueSource{
+		Kind:        valueSourceKind(expr),
+		Expr:        expr,
+		ExprIndex:   0,
+		TargetIndex: NoValueSourceIndex,
+		ResultIndex: 0,
+		Final:       true,
+		Adjusted:    ast.CanProduceMultipleValues(expr),
+	}
+	if source.Kind == ValueSourceCall {
+		if point, ok := callPoints[0]; ok {
+			source.CallPoint = point
+			source.HasCallPoint = point != 0
+		}
+	}
+	return source
 }
 
 func valueSourceForExpr(expr ast.Expr, exprIndex, targetIndex, resultIndex int, final bool, openTail bool, callPoints map[int]cfg.Point) ValueSource {
@@ -305,12 +334,14 @@ func callListFlags(context CallContextKind, exprs []ast.Expr, exprIndex int, cal
 	switch context {
 	case CallContextStatement:
 		return true, false, true, false
-	case CallContextAssignmentSource, CallContextReturnSource:
+	case CallContextAssignmentSource, CallContextReturnSource, CallContextIteratorSource:
 		final = exprIndex >= 0 && exprIndex == len(exprs)-1
 		expanded = final && canExpandFinal(call)
 		adjusted = !expanded
 		openTail = context == CallContextReturnSource && expanded
 		return final, expanded, adjusted, openTail
+	case CallContextCondition:
+		return true, false, true, false
 	default:
 		return false, false, false, false
 	}

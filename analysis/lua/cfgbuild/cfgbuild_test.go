@@ -621,6 +621,112 @@ func TestBuildChunkAssignmentAndReturnCallsPrecedeValuePoints(t *testing.T) {
 	requireEdge(t, graph, returnPoints[1], graph.Exit(), false)
 }
 
+func TestBuildChunkConditionCallPrecedesIfBranch(t *testing.T) {
+	readyCall := &ast.FuncCallExpr{Func: ident("ready")}
+	thenStmt := localAssign([]string{"thenValue"}, number("1"))
+	stmt := &ast.IfStmt{
+		Condition: readyCall,
+		Then:      []ast.Stmt{thenStmt},
+	}
+	stmts := []ast.Stmt{stmt}
+	bindings := bind.BindChunk(stmts, bind.Options{Globals: []string{"ready"}})
+	result := BuildChunk(stmts, bindings)
+	if result == nil || result.Graph == nil {
+		t.Fatalf("BuildChunk returned nil")
+	}
+	graph := result.Graph
+
+	points := requireStmtPoints(t, result, stmt, 2)
+	callPoint, branch := points[0], points[1]
+	requirePointKind(t, graph, callPoint, cfg.NodeCall)
+	requirePointKind(t, graph, branch, cfg.NodeBranch)
+
+	branchFact, ok := result.Meta.Branch(branch)
+	if !ok {
+		t.Fatalf("missing branch fact")
+	}
+	if branchFact.Symbol != 0 || branchFact.Check.Kind != cfgfacts.CheckNone {
+		t.Fatalf("condition call branch fact = %#v, want check none", branchFact)
+	}
+
+	thenAssign := nodeWithTarget(t, graph, result.Meta, mustLocalAt(t, bindings, thenStmt, 0), 0)
+	requireEdge(t, graph, graph.Entry(), callPoint, false)
+	requireEdge(t, graph, callPoint, branch, false)
+	requireEdge(t, graph, branch, thenAssign, true)
+}
+
+func TestBuildChunkWhileConditionCallBackedgeReevaluatesCall(t *testing.T) {
+	readyCall := &ast.FuncCallExpr{Func: ident("ready")}
+	bodyStmt := localAssign([]string{"bodyValue"}, number("1"))
+	stmt := &ast.WhileStmt{
+		Condition: readyCall,
+		Stmts:     []ast.Stmt{bodyStmt},
+	}
+	stmts := []ast.Stmt{stmt}
+	bindings := bind.BindChunk(stmts, bind.Options{Globals: []string{"ready"}})
+	result := BuildChunk(stmts, bindings)
+	if result == nil || result.Graph == nil {
+		t.Fatalf("BuildChunk returned nil")
+	}
+	graph := result.Graph
+
+	points := requireStmtPoints(t, result, stmt, 2)
+	callPoint, branch := points[0], points[1]
+	requirePointKind(t, graph, callPoint, cfg.NodeCall)
+	requirePointKind(t, graph, branch, cfg.NodeBranch)
+
+	join := firstJoin(t, graph)
+	bodyAssign := nodeWithTarget(t, graph, result.Meta, mustLocalAt(t, bindings, bodyStmt, 0), 0)
+	requireEdge(t, graph, graph.Entry(), callPoint, false)
+	requireEdge(t, graph, callPoint, branch, false)
+	requireEdge(t, graph, branch, bodyAssign, true)
+	requireEdge(t, graph, branch, join, false)
+	requireEdge(t, graph, bodyAssign, callPoint, false)
+}
+
+func TestBuildChunkGenericForIteratorCallsPrecedeLoopCheck(t *testing.T) {
+	iterCall := &ast.FuncCallExpr{Func: ident("iter")}
+	stateCall := &ast.FuncCallExpr{Func: ident("state")}
+	loop := &ast.GenericForStmt{
+		Names: []string{"k"},
+		Exprs: []ast.Expr{iterCall, stateCall},
+	}
+	stmts := []ast.Stmt{loop}
+	bindings := bind.BindChunk(stmts, bind.Options{Globals: []string{"iter", "state"}})
+	result := BuildChunk(stmts, bindings)
+	if result == nil || result.Graph == nil {
+		t.Fatalf("BuildChunk returned nil")
+	}
+	graph := result.Graph
+
+	points := requireStmtPoints(t, result, loop, 4)
+	firstCall, secondCall, branch, kAssign := points[0], points[1], points[2], points[3]
+	for i, tt := range []struct {
+		point cfg.Point
+		kind  cfg.NodeKind
+	}{
+		{firstCall, cfg.NodeCall},
+		{secondCall, cfg.NodeCall},
+		{branch, cfg.NodeBranch},
+		{kAssign, cfg.NodeAssign},
+	} {
+		requirePointKind(t, graph, tt.point, tt.kind)
+		if i > 0 && tt.point != kAssign {
+			requireEdge(t, graph, points[i-1], tt.point, false)
+		}
+	}
+
+	assignFact, ok := result.Meta.Assignment(kAssign)
+	if !ok || assignFact.Target != mustGenericForAt(t, bindings, loop, 0) {
+		t.Fatalf("generic for variable assignment = %#v, ok=%v", assignFact, ok)
+	}
+	join := firstJoin(t, graph)
+	requireEdge(t, graph, graph.Entry(), firstCall, false)
+	requireEdge(t, graph, branch, kAssign, true)
+	requireEdge(t, graph, branch, join, false)
+	requireEdge(t, graph, kAssign, branch, false)
+}
+
 func TestBuildChunkReturnKillsFollowingFlow(t *testing.T) {
 	before := localAssign([]string{"before"}, number("1"))
 	beforeRead := ident("before")
@@ -826,13 +932,6 @@ func TestBuildChunkTypeGuardConditionRejectsUnsupportedCalls(t *testing.T) {
 				&ast.IfStmt{Condition: &ast.RelationalOpExpr{Operator: "==", Lhs: typeCall(ident("x")), Rhs: stringLit("string")}},
 			},
 			globals: []string{"type"},
-		},
-		{
-			name: "ready call",
-			stmts: []ast.Stmt{
-				&ast.IfStmt{Condition: &ast.FuncCallExpr{Func: ident("ready")}},
-			},
-			globals: []string{"ready"},
 		},
 		{
 			name: "method call",
@@ -1378,8 +1477,12 @@ func TestBuildChunkUnsupportedExpressionCoverageReturnsNil(t *testing.T) {
 			stmt: localAssign([]string{"f"}, function(nil)),
 		},
 		{
-			name: "condition call",
-			stmt: &ast.IfStmt{Condition: &ast.FuncCallExpr{Func: ident("ready")}},
+			name: "nested condition comparison call",
+			stmt: &ast.IfStmt{Condition: &ast.RelationalOpExpr{
+				Operator: "==",
+				Lhs:      &ast.FuncCallExpr{Func: ident("ready")},
+				Rhs:      &ast.TrueExpr{},
+			}},
 		},
 		{
 			name: "nested call argument",
@@ -1394,13 +1497,6 @@ func TestBuildChunkUnsupportedExpressionCoverageReturnsNil(t *testing.T) {
 				Name:  "i",
 				Init:  &ast.FuncCallExpr{Func: ident("make")},
 				Limit: number("3"),
-			},
-		},
-		{
-			name: "generic for iterator call",
-			stmt: &ast.GenericForStmt{
-				Names: []string{"x"},
-				Exprs: []ast.Expr{&ast.FuncCallExpr{Func: ident("make")}},
 			},
 		},
 	}

@@ -126,6 +126,7 @@ type BranchConditionFact struct {
 	While     *ast.WhileStmt
 	Repeat    *ast.RepeatStmt
 	Condition ast.Expr
+	Source    ValueSource
 	Check     BranchConditionCheck
 }
 
@@ -179,8 +180,9 @@ type GenericForFact struct {
 	Stmt *ast.GenericForStmt
 	Role GenericForRole
 
-	Names []string
-	Exprs []ast.Expr
+	Names   []string
+	Exprs   []ast.Expr
+	Sources []ValueSource
 
 	Symbols    []symbol.ID
 	HasSymbols bool
@@ -530,13 +532,19 @@ func (r *Result) extractBranch(stmt ast.Stmt, kind BranchKind, condition ast.Exp
 	if len(points) == 0 {
 		return nil
 	}
-	if len(points) != 1 {
+	calls := topLevelValueListCalls([]ast.Expr{condition})
+	if len(points) != len(calls)+1 {
 		return ErrPointMismatch
 	}
+	for i, call := range calls {
+		r.calls[points[i]] = buildCallFact(stmt, nil, CallContextCondition, []ast.Expr{condition}, call.index, call.call, bindings, nil)
+	}
+	branchPoint := points[len(calls)]
 	fact := BranchConditionFact{
 		Kind:      kind,
 		Stmt:      stmt,
 		Condition: condition,
+		Source:    conditionValueSource(condition, callPointsByExprIndex(calls, points)),
 		Check:     normalizeBranchCondition(condition, bindings),
 	}
 	switch stmt := stmt.(type) {
@@ -547,7 +555,7 @@ func (r *Result) extractBranch(stmt ast.Stmt, kind BranchKind, condition ast.Exp
 	case *ast.RepeatStmt:
 		fact.Repeat = stmt
 	}
-	r.branches[points[0]] = fact
+	r.branches[branchPoint] = fact
 	return nil
 }
 
@@ -635,8 +643,12 @@ func (r *Result) extractGenericFor(stmt *ast.GenericForStmt, bindings *bind.Resu
 	if len(points) == 0 {
 		return nil
 	}
-	if len(points) != 1+len(stmt.Names) {
+	calls := topLevelValueListCalls(stmt.Exprs)
+	if len(points) != len(calls)+1+len(stmt.Names) {
 		return ErrPointMismatch
+	}
+	for i, call := range calls {
+		r.calls[points[i]] = buildCallFact(stmt, nil, CallContextIteratorSource, stmt.Exprs, call.index, call.call, bindings, nil)
 	}
 	var symbols []symbol.ID
 	if bindings != nil {
@@ -646,14 +658,15 @@ func (r *Result) extractGenericFor(stmt *ast.GenericForStmt, bindings *bind.Resu
 		Stmt:          stmt,
 		Names:         copyStrings(stmt.Names),
 		Exprs:         copyExprs(stmt.Exprs),
+		Sources:       iteratorValueSources(stmt.Exprs, callPointsByExprIndex(calls, points)),
 		Symbols:       copySymbols(symbols),
 		HasSymbols:    completeSymbols(symbols, len(stmt.Names)),
 		VariableIndex: NoGenericForVariableIndex,
 	}
 	checkFact := fact
 	checkFact.Role = GenericForRoleCheck
-	r.genericFors[points[0]] = checkFact
-	for i, point := range points[1 : 1+len(stmt.Names)] {
+	r.genericFors[points[len(calls)]] = checkFact
+	for i, point := range points[len(calls)+1 : len(calls)+1+len(stmt.Names)] {
 		varFact := fact
 		varFact.Role = GenericForRoleVariable
 		varFact.VariableIndex = i
@@ -783,6 +796,7 @@ func copyReturnFact(fact ReturnFact) ReturnFact {
 func copyGenericForFact(fact GenericForFact) GenericForFact {
 	fact.Names = copyStrings(fact.Names)
 	fact.Exprs = copyExprs(fact.Exprs)
+	fact.Sources = copyValueSources(fact.Sources)
 	fact.Symbols = copySymbols(fact.Symbols)
 	return fact
 }

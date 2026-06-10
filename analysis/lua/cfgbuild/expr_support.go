@@ -1,6 +1,9 @@
 package cfgbuild
 
-import "github.com/wippyai/go-lua/compiler/ast"
+import (
+	"github.com/wippyai/go-lua/analysis/ir/cfg"
+	"github.com/wippyai/go-lua/compiler/ast"
+)
 
 func (b *builder) hasUnsupportedExprs(exprs ...ast.Expr) bool {
 	for _, expr := range exprs {
@@ -48,10 +51,21 @@ func (b *builder) appendValueListCalls(state flowState, stmt ast.Stmt, exprs []a
 }
 
 func (b *builder) hasUnsupportedConditionExpr(expr ast.Expr) bool {
+	if call, ok := expr.(*ast.FuncCallExpr); ok {
+		return b.hasUnsupportedExprInCall(call)
+	}
 	if b.exprCovered(expr) {
 		return false
 	}
 	return !b.typeCompareConditionSupported(expr)
+}
+
+func (b *builder) appendConditionCall(state flowState, stmt ast.Stmt, expr ast.Expr) (flowState, cfg.Point, bool) {
+	if _, ok := expr.(*ast.FuncCallExpr); !ok {
+		return state, 0, false
+	}
+	next := b.appendCall(state, stmt)
+	return next, next.current, next.live
 }
 
 func (b *builder) exprCovered(expr ast.Expr) bool {

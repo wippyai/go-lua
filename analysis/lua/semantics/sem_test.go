@@ -471,6 +471,97 @@ func TestExtractChunkAssignmentAndReturnCallFactsUseLuaListRules(t *testing.T) {
 	}
 }
 
+func TestExtractChunkConditionAndIteratorCallFactsUseDeferredContexts(t *testing.T) {
+	readyIdent := ident("ready")
+	readyCall := &ast.FuncCallExpr{Func: readyIdent}
+	ifStmt := &ast.IfStmt{Condition: readyCall}
+	iterIdent := ident("iter")
+	iterCall := &ast.FuncCallExpr{Func: iterIdent}
+	stateIdent := ident("state")
+	stateCall := &ast.FuncCallExpr{Func: stateIdent}
+	loop := &ast.GenericForStmt{
+		Names: []string{"k"},
+		Exprs: []ast.Expr{iterCall, stateCall},
+	}
+	stmts := []ast.Stmt{ifStmt, loop}
+	bindings := bind.BindChunk(stmts, bind.Options{Globals: []string{"ready", "iter", "state"}})
+	built := cfgbuild.BuildChunk(stmts, bindings)
+
+	result, err := ExtractChunk(stmts, bindings, built)
+	if err != nil {
+		t.Fatalf("ExtractChunk: %v", err)
+	}
+
+	ifPoints := requireStmtPoints(t, built, ifStmt, 2)
+	conditionCall, ok := result.Call(ifPoints[0])
+	if !ok {
+		t.Fatalf("missing condition call fact")
+	}
+	if conditionCall.Context != CallContextCondition || conditionCall.SourceStmt != ifStmt || conditionCall.ExprIndex != 0 {
+		t.Fatalf("condition call context = %#v", conditionCall)
+	}
+	if !conditionCall.Final || conditionCall.Expanded || !conditionCall.Adjusted || conditionCall.OpenTail {
+		t.Fatalf("condition call flags = %#v", conditionCall)
+	}
+	if conditionCall.CalleeSymbol != mustIdentSymbol(t, bindings, readyIdent) || !conditionCall.HasCalleeSymbol {
+		t.Fatalf("condition callee symbol = %d/%v", conditionCall.CalleeSymbol, conditionCall.HasCalleeSymbol)
+	}
+	if len(conditionCall.ResultTargets) != 0 {
+		t.Fatalf("condition result targets = %#v, want none", conditionCall.ResultTargets)
+	}
+	branchFact, ok := result.BranchCondition(ifPoints[1])
+	if !ok {
+		t.Fatalf("missing condition branch fact")
+	}
+	if branchFact.Source.Kind != ValueSourceCall || branchFact.Source.Expr != readyCall || branchFact.Source.CallPoint != ifPoints[0] || !branchFact.Source.HasCallPoint {
+		t.Fatalf("condition source = %#v", branchFact.Source)
+	}
+	if branchFact.Source.TargetIndex != NoValueSourceIndex || !branchFact.Source.Adjusted || branchFact.Source.Expanded {
+		t.Fatalf("condition source flags = %#v", branchFact.Source)
+	}
+
+	loopPoints := requireStmtPoints(t, built, loop, 4)
+	iterFact, ok := result.Call(loopPoints[0])
+	if !ok {
+		t.Fatalf("missing iterator call fact")
+	}
+	if iterFact.Context != CallContextIteratorSource || iterFact.SourceStmt != loop || iterFact.ExprIndex != 0 || iterFact.Final || iterFact.Expanded || !iterFact.Adjusted {
+		t.Fatalf("iterator call fact = %#v", iterFact)
+	}
+	if iterFact.CalleeSymbol != mustIdentSymbol(t, bindings, iterIdent) || !iterFact.HasCalleeSymbol {
+		t.Fatalf("iterator callee symbol = %d/%v", iterFact.CalleeSymbol, iterFact.HasCalleeSymbol)
+	}
+	stateFact, ok := result.Call(loopPoints[1])
+	if !ok {
+		t.Fatalf("missing final iterator source call fact")
+	}
+	if stateFact.Context != CallContextIteratorSource || stateFact.ExprIndex != 1 || !stateFact.Final || !stateFact.Expanded || stateFact.Adjusted || stateFact.OpenTail {
+		t.Fatalf("final iterator source fact = %#v", stateFact)
+	}
+	if len(stateFact.ResultTargets) != 0 {
+		t.Fatalf("iterator source result targets = %#v, want none", stateFact.ResultTargets)
+	}
+
+	genericFact, ok := result.GenericFor(loopPoints[2])
+	if !ok {
+		t.Fatalf("missing generic for check fact")
+	}
+	if len(genericFact.Sources) != 2 {
+		t.Fatalf("generic for sources = %#v", genericFact.Sources)
+	}
+	if genericFact.Sources[0].Kind != ValueSourceCall || genericFact.Sources[0].Expr != iterCall || genericFact.Sources[0].CallPoint != loopPoints[0] || !genericFact.Sources[0].HasCallPoint || !genericFact.Sources[0].Adjusted {
+		t.Fatalf("first generic source = %#v", genericFact.Sources[0])
+	}
+	if genericFact.Sources[1].Kind != ValueSourceCall || genericFact.Sources[1].Expr != stateCall || genericFact.Sources[1].CallPoint != loopPoints[1] || !genericFact.Sources[1].HasCallPoint || !genericFact.Sources[1].Expanded || genericFact.Sources[1].OpenTail {
+		t.Fatalf("final generic source = %#v", genericFact.Sources[1])
+	}
+	genericFact.Sources[0].Kind = ValueSourceNil
+	genericAgain, _ := result.GenericFor(loopPoints[2])
+	if genericAgain.Sources[0].Kind != ValueSourceCall {
+		t.Fatalf("GenericFor exposed mutable sources slice")
+	}
+}
+
 func TestExtractChunkAssignmentValueSourcesHandleAdjustRetNilFillAndVararg(t *testing.T) {
 	singleCall := &ast.FuncCallExpr{Func: ident("single"), AdjustRet: true}
 	adjusted := assign([]ast.Expr{ident("x"), ident("y")}, singleCall)
