@@ -92,36 +92,6 @@ func TestAliasEquality(t *testing.T) {
 	}
 }
 
-func TestPlatform(t *testing.T) {
-	p := NewPlatform("userdata")
-
-	if p.Kind() != kind.Platform {
-		t.Errorf("Kind: got %v, want Platform", p.Kind())
-	}
-
-	if p.Name != "userdata" {
-		t.Errorf("Name: got %q, want %q", p.Name, "userdata")
-	}
-
-	if p.String() != "userdata" {
-		t.Errorf("String: got %q, want %q", p.String(), "userdata")
-	}
-}
-
-func TestPlatformEquality(t *testing.T) {
-	p1 := NewPlatform("userdata")
-	p2 := NewPlatform("userdata")
-	p3 := NewPlatform("thread")
-
-	if !p1.Equals(p2) {
-		t.Error("same platform types should be equal")
-	}
-
-	if p1.Equals(p3) {
-		t.Error("different platform types should not be equal")
-	}
-}
-
 func TestMeta(t *testing.T) {
 	m := NewMeta(Number)
 
@@ -180,13 +150,6 @@ func TestAliasTransitiveEquality(t *testing.T) {
 
 	if !a1.Equals(a2) {
 		t.Error("aliases with same target should be equal")
-	}
-}
-
-func TestPlatformNotEqualToPrimitive(t *testing.T) {
-	p := NewPlatform("x")
-	if p.Equals(Number) {
-		t.Error("platform should not equal primitive")
 	}
 }
 

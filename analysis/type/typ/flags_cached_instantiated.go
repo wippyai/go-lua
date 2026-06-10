@@ -40,8 +40,6 @@ func knownContainsInstantiated(t Type) bool {
 		return n.containsInstantiated
 	case *TypeParam:
 		return n.containsInstantiated
-	case *Sum:
-		return n.containsInstantiated
 	case *Interface:
 		return n.containsInstantiated
 	default:

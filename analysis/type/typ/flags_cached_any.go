@@ -43,8 +43,6 @@ func knownContainsAny(t Type) bool {
 		return n.containsAny
 	case *TypeParam:
 		return n.containsAny
-	case *Sum:
-		return n.containsAny
 	case *Interface:
 		return n.containsAny
 	default:

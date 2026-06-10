@@ -128,16 +128,6 @@ func containsNeverDynamic(t Type, seen map[Type]bool) bool {
 		TypeParam: func(p *TypeParam) bool {
 			return containsNeverDynamic(p.Constraint, seen)
 		},
-		Sum: func(s *Sum) bool {
-			for _, variant := range s.Variants {
-				for _, t := range variant.Types {
-					if containsNeverDynamic(t, seen) {
-						return true
-					}
-				}
-			}
-			return false
-		},
 		Interface: func(i *Interface) bool {
 			for _, method := range i.Methods {
 				if method.Type != nil && containsNeverDynamic(method.Type, seen) {

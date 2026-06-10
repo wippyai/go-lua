@@ -6,74 +6,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/type/kind"
 )
 
-func TestSumEmpty(t *testing.T) {
-	s := NewSum("Option", nil)
-
-	if s.Kind() != kind.Sum {
-		t.Errorf("Kind: got %v, want Sum", s.Kind())
-	}
-
-	if s.Name != "Option" {
-		t.Errorf("Name: got %q, want %q", s.Name, "Option")
-	}
-}
-
-func TestSumWithVariants(t *testing.T) {
-	variants := []Variant{
-		{Tag: "None", Types: nil},
-		{Tag: "Some", Types: []Type{Number}},
-	}
-	s := NewSum("Option", variants)
-
-	if len(s.Variants) != 2 {
-		t.Errorf("Variants: got %d, want 2", len(s.Variants))
-	}
-
-	if s.Variants[0].Tag != "None" {
-		t.Errorf("first variant tag: got %q, want %q", s.Variants[0].Tag, "None")
-	}
-
-	if s.Variants[1].Tag != "Some" {
-		t.Errorf("second variant tag: got %q, want %q", s.Variants[1].Tag, "Some")
-	}
-}
-
-func TestSumString(t *testing.T) {
-	variants := []Variant{
-		{Tag: "Left", Types: []Type{Number}},
-		{Tag: "Right", Types: []Type{String}},
-	}
-	s := NewSum("Either", variants)
-
-	expected := "enum Either { Left(number) | Right(string) }"
-	if s.String() != expected {
-		t.Errorf("String: got %q, want %q", s.String(), expected)
-	}
-}
-
-func TestSumEquality(t *testing.T) {
-	v1 := []Variant{{Tag: "A"}, {Tag: "B"}}
-	v2 := []Variant{{Tag: "A"}, {Tag: "B"}}
-	v3 := []Variant{{Tag: "X"}, {Tag: "Y"}}
-
-	s1 := NewSum("T", v1)
-	s2 := NewSum("T", v2)
-	s3 := NewSum("T", v3)
-	s4 := NewSum("U", v1)
-
-	if !s1.Equals(s2) {
-		t.Error("same sum types should be equal")
-	}
-
-	if s1.Equals(s3) {
-		t.Error("different variants should not be equal")
-	}
-
-	if s1.Equals(s4) {
-		t.Error("different names should not be equal")
-	}
-}
-
 func TestInterface(t *testing.T) {
 	methods := []Method{
 		{Name: "read", Type: Func().Returns(String).Build()},
@@ -134,13 +66,6 @@ func TestInterfaceEquality(t *testing.T) {
 
 	if i1.Equals(i4) {
 		t.Error("different names should not be equal")
-	}
-}
-
-func TestSumNotEqualToPrimitive(t *testing.T) {
-	s := NewSum("T", nil)
-	if s.Equals(Number) {
-		t.Error("sum type should not equal primitive")
 	}
 }
 

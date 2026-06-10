@@ -136,18 +136,6 @@ func recursiveContainsGraphClosedMemo(t Type, seen map[*Recursive]bool, memo map
 		}
 	case *TypeParam:
 		result = recursiveContainsGraphClosedMemo(n.Constraint, seen, memo)
-	case *Sum:
-		for _, variant := range n.Variants {
-			for _, t := range variant.Types {
-				if !recursiveContainsGraphClosedMemo(t, seen, memo) {
-					result = false
-					break
-				}
-			}
-			if !result {
-				break
-			}
-		}
 	case *Interface:
 		for _, method := range n.Methods {
 			if method.Type != nil && !recursiveContainsGraphClosedMemo(method.Type, seen, memo) {

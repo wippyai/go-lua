@@ -199,15 +199,6 @@ func productFamilyHashSeen(t typ.Type, active map[uintptr]bool, cache map[typ.Ty
 		return h
 	case *typ.Meta:
 		return hash.HashCombine(uint64(kind.Meta), productFamilyMemberHash(v.Of, active, cache))
-	case *typ.Sum:
-		h := hash.HashCombine(uint64(kind.Sum), hash.FnvString(v.Name))
-		for _, variant := range v.Variants {
-			h = hash.HashCombine(h, hash.FnvString(variant.Tag))
-			for _, vt := range variant.Types {
-				h = hash.HashCombine(h, productFamilyMemberHash(vt, active, cache))
-			}
-		}
-		return h
 	case *typ.Interface:
 		h := hash.HashCombine(uint64(kind.Interface), hash.FnvString(v.Name))
 		for _, method := range v.Methods {

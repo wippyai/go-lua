@@ -128,35 +128,6 @@ func flattenAliasTarget(target Type) Type {
 	return current
 }
 
-// Platform represents a platform-specific opaque type.
-//
-// Platform types are provided by the runtime environment and have
-// no structural representation in the type system. They are compared
-// nominally by name.
-//
-// Example: userdata types, file handles, coroutines.
-type Platform struct {
-	Name string // Platform type name
-	hash uint64
-}
-
-// NewPlatform creates a platform type.
-func NewPlatform(name string) *Platform {
-	h := hash.HashCombine(uint64(kind.Platform), hash.FnvString(name))
-	return &Platform{Name: name, hash: h}
-}
-
-func (p *Platform) Kind() kind.Kind { return kind.Platform }
-func (p *Platform) String() string  { return p.Name }
-func (p *Platform) Hash() uint64    { return p.hash }
-func (p *Platform) Equals(other Type) bool {
-	if other.Kind() != kind.Platform {
-		return false
-	}
-
-	return p.Name == other.(*Platform).Name
-}
-
 // Meta represents a metatype (the type of a type value).
 //
 // Meta types are used when types themselves are values, such as in

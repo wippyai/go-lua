@@ -16,12 +16,10 @@ type Visitor[R any] struct {
 	Record       func(*Record) R
 	Alias        func(*Alias) R
 	Ref          func(*Ref) R
-	Platform     func(*Platform) R
 	Meta         func(*Meta) R
 	Generic      func(*Generic) R
 	Instantiated func(*Instantiated) R
 	TypeParam    func(*TypeParam) R
-	Sum          func(*Sum) R
 	Interface    func(*Interface) R
 	Recursive    func(*Recursive) R
 	Literal      func(*Literal) R
@@ -77,10 +75,6 @@ func Visit[R any](t Type, v Visitor[R]) R {
 		if v.Ref != nil {
 			return v.Ref(tt)
 		}
-	case *Platform:
-		if v.Platform != nil {
-			return v.Platform(tt)
-		}
 	case *Meta:
 		if v.Meta != nil {
 			return v.Meta(tt)
@@ -96,10 +90,6 @@ func Visit[R any](t Type, v Visitor[R]) R {
 	case *TypeParam:
 		if v.TypeParam != nil {
 			return v.TypeParam(tt)
-		}
-	case *Sum:
-		if v.Sum != nil {
-			return v.Sum(tt)
 		}
 	case *Interface:
 		if v.Interface != nil {

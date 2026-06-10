@@ -39,8 +39,6 @@ func knownContainsRecursive(t Type) bool {
 		return n.containsRecursive
 	case *TypeParam:
 		return n.containsRecursive
-	case *Sum:
-		return n.containsRecursive
 	case *Interface:
 		return n.containsRecursive
 	default:

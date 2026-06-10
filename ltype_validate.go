@@ -226,7 +226,7 @@ func validateBasic(val LValue, t typ.Type) bool {
 		}
 		return false
 	case kind.Array, kind.Map, kind.Record, kind.Tuple,
-		kind.Sum, kind.Interface, kind.Intersection:
+		kind.Interface, kind.Intersection:
 		_, ok := val.(*LTable)
 		return ok
 	case kind.Recursive:
@@ -234,9 +234,6 @@ func validateBasic(val LValue, t typ.Type) bool {
 			return validateBasic(val, rec.Body)
 		}
 		return true
-	case kind.Platform:
-		_, ok := val.(*LUserData)
-		return ok
 	case kind.Generic, kind.TypeParam, kind.Self, kind.Meta:
 		return true
 	default:

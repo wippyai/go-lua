@@ -43,8 +43,6 @@ func knownContainsNever(t Type) bool {
 		return n.containsNever
 	case *TypeParam:
 		return n.containsNever
-	case *Sum:
-		return n.containsNever
 	case *Interface:
 		return n.containsNever
 	default:

@@ -414,17 +414,6 @@ func validateValueDepth(val LValue, t typ.Type, resolver *typeResolver, depth in
 		}
 		return validateValueDepth(val, tt.Body, resolver, depth+1)
 
-	case *typ.Sum:
-		// Sum types are tagged unions. At runtime, a value is a table
-		// with a discriminant field. Accept any table.
-		_, ok := val.(*LTable)
-		return ok
-
-	case *typ.Platform:
-		// Platform types represent opaque host types (userdata).
-		_, ok := val.(*LUserData)
-		return ok
-
 	case *typ.Generic:
 		return false
 
@@ -791,18 +780,6 @@ func validateWithErrorDepth(val LValue, t typ.Type, resolver *typeResolver, path
 			return false, newTypeError(path, typeName, luaTypeName(val))
 		}
 		return validateWithErrorDepth(val, tt.Body, resolver, path, depth+1)
-
-	case *typ.Sum:
-		if _, ok := val.(*LTable); ok {
-			return true, nil
-		}
-		return false, newTypeError(path, typeName, luaTypeName(val))
-
-	case *typ.Platform:
-		if _, ok := val.(*LUserData); ok {
-			return true, nil
-		}
-		return false, newTypeError(path, typeName, luaTypeName(val))
 
 	case *typ.Instantiated:
 		expanded := subst.ExpandInstantiated(tt)

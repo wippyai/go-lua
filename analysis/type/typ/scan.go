@@ -192,16 +192,6 @@ func contains(t Type, pred func(Type) bool, seen containsSeen) bool {
 		TypeParam: func(p *TypeParam) bool {
 			return contains(p.Constraint, pred, seen)
 		},
-		Sum: func(s *Sum) bool {
-			for _, variant := range s.Variants {
-				for _, t := range variant.Types {
-					if contains(t, pred, seen) {
-						return true
-					}
-				}
-			}
-			return false
-		},
 		Interface: func(i *Interface) bool {
 			for _, method := range i.Methods {
 				if method.Type != nil && contains(method.Type, pred, seen) {

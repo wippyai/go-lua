@@ -199,16 +199,6 @@ func containsFreeTypeParam(t Type, seen containsSeen, owned map[*TypeParam]int) 
 		Recursive: func(r *Recursive) bool {
 			return containsFreeTypeParam(r.Body, seen, owned)
 		},
-		Sum: func(s *Sum) bool {
-			for _, variant := range s.Variants {
-				for _, t := range variant.Types {
-					if containsFreeTypeParam(t, seen, owned) {
-						return true
-					}
-				}
-			}
-			return false
-		},
 	})
 }
 
@@ -358,16 +348,6 @@ func (s *sameExpressionFallbackScan) needs(t Type) bool {
 		},
 		Recursive: func(r *Recursive) bool {
 			return s.needs(r.Body)
-		},
-		Sum: func(sum *Sum) bool {
-			for _, variant := range sum.Variants {
-				for _, t := range variant.Types {
-					if s.needs(t) {
-						return true
-					}
-				}
-			}
-			return false
 		},
 	})
 }

@@ -90,7 +90,7 @@ func TestKindValuesUnique(t *testing.T) {
 	kinds := []Kind{
 		Nil, Boolean, Number, Integer, String, Any, Unknown, Never,
 		Optional, Union, Intersection, Tuple, Function, Array, Map, Record,
-		Sum, Interface, Alias, Generic, Instantiated, Platform, Literal,
+		Interface, Alias, Generic, Instantiated, Literal,
 		Self, Ref, Meta, TypeParam, Refined, Recursive,
 		ReadonlyMap,
 	}
@@ -109,7 +109,7 @@ func TestKindNamesComplete(t *testing.T) {
 	kinds := []Kind{
 		Nil, Boolean, Number, Integer, String, Any, Unknown, Never,
 		Optional, Union, Intersection, Tuple, Function, Array, Map, Record,
-		Sum, Interface, Alias, Generic, Instantiated, Platform, Literal,
+		Interface, Alias, Generic, Instantiated, Literal,
 		Self, Ref, Meta, TypeParam, Refined, Recursive, ReadonlyMap,
 	}
 

@@ -87,10 +87,6 @@ func (f *formatter) formatType(t Type, depth int, guard recursion.Guard) {
 				}
 				return struct{}{}
 			},
-			Platform: func(p *Platform) struct{} {
-				f.write(p.Name)
-				return struct{}{}
-			},
 			TypeParam: func(p *TypeParam) struct{} {
 				f.write(p.Name)
 				if p.Constraint != nil {

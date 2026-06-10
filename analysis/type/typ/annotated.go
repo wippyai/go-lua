@@ -9,6 +9,8 @@ import (
 	"github.com/wippyai/go-lua/analysis/type/kind"
 )
 
+const annotatedHashSalt = 0x9e3779b97f4a7c15
+
 // Annotated wraps a type with runtime validation annotations.
 // The underlying type determines structural typing while annotations
 // add runtime constraints like @min(0), @max(100), @pattern("^.+$").
@@ -34,7 +36,7 @@ func NewAnnotated(inner Type, annotations []annotation.Annotation) Type {
 	if inner == nil {
 		inner = Unknown
 	}
-	h := hash.HashCombine(inner.Hash(), uint64(kind.Platform)<<32)
+	h := hash.HashCombine(inner.Hash(), annotatedHashSalt)
 	for _, ann := range annotations {
 		h = hash.HashCombine(h, hash.FnvString(ann.Name))
 	}

@@ -125,16 +125,6 @@ func containsTypeParamDynamic(t Type, seen map[Type]bool, depth int) bool {
 			}
 			return false
 		},
-		Sum: func(s *Sum) bool {
-			for _, variant := range s.Variants {
-				for _, t := range variant.Types {
-					if containsTypeParamDynamic(t, seen, depth+1) {
-						return true
-					}
-				}
-			}
-			return false
-		},
 		Interface: func(i *Interface) bool {
 			for _, method := range i.Methods {
 				if method.Type != nil && containsTypeParamDynamic(method.Type, seen, depth+1) {

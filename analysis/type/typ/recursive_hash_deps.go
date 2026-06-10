@@ -159,18 +159,6 @@ func collectRecursiveHashDepsInTypeMemo(t Type, seen map[*Recursive]bool, memo m
 		}
 	case *TypeParam:
 		result = collectRecursiveHashDepsInTypeMemo(n.Constraint, seen, memo)
-	case *Sum:
-		for _, variant := range n.Variants {
-			for _, t := range variant.Types {
-				if !collectRecursiveHashDepsInTypeMemo(t, seen, memo) {
-					result = false
-					break
-				}
-			}
-			if !result {
-				break
-			}
-		}
 	case *Interface:
 		for _, method := range n.Methods {
 			if method.Type != nil && !collectRecursiveHashDepsInTypeMemo(method.Type, seen, memo) {

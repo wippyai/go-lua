@@ -15,14 +15,14 @@
 // Composite kinds: Optional, Union, Intersection, Tuple, Function, Array, Map, Record
 // Structural types built from other types.
 //
-// Nominal kinds: Sum, Interface, Alias, Generic, Instantiated
+// Nominal kinds: Interface, Alias, Generic, Instantiated
 // Named types with identity-based semantics.
 //
 // Deferred kinds: Ref, TypeParam
 // Types requiring resolution (forward references and generics).
 //
-// Other kinds: Platform, Literal, Self, Meta, Refined, Recursive
-// Specialized types for platform APIs, literal values, and advanced features.
+// Other kinds: Literal, Self, Meta, Refined, Recursive
+// Specialized types for literal values and advanced features.
 package kind
 
 // Kind identifies the structural category of a type for efficient dispatch.
@@ -46,12 +46,12 @@ const (
 	Array
 	Map
 	Record
-	Sum
+	_
 	Interface
 	Alias
 	Generic
 	Instantiated
-	Platform
+	_
 	Literal
 	Self
 	Ref
@@ -82,12 +82,10 @@ var kindNames = [...]string{
 	Array:        "array",
 	Map:          "map",
 	Record:       "record",
-	Sum:          "sum",
 	Interface:    "interface",
 	Alias:        "alias",
 	Generic:      "generic",
 	Instantiated: "instantiated",
-	Platform:     "platform",
 	Literal:      "literal",
 	Self:         "self",
 	Ref:          "ref",

@@ -199,16 +199,6 @@ func hashBodyWithVisitedMemo(t Type, visited map[*Recursive]bool, memo map[Type]
 			}
 			return h
 		},
-		Sum: func(s *Sum) uint64 {
-			h := hash.HashCombine(uint64(kind.Sum), hash.FnvString(s.Name))
-			for _, variant := range s.Variants {
-				h = hash.HashCombine(h, hash.FnvString(variant.Tag))
-				for _, vt := range variant.Types {
-					h = hash.HashCombine(h, hashBodyWithVisitedMemo(vt, visited, memo))
-				}
-			}
-			return h
-		},
 		Interface: func(i *Interface) uint64 {
 			h := hash.HashCombine(uint64(kind.Interface), hash.FnvString(i.Name))
 			for _, method := range i.Methods {
