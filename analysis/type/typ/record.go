@@ -299,16 +299,18 @@ func (r *Record) GetField(name string) *Field {
 // GetStaticStringIndex returns the exact bracket-string member with the given
 // key, or nil when no such member is carried.
 func (r *Record) GetStaticStringIndex(name string) *StaticMember {
-	return r.getStaticMember(StaticMemberStringIndex, name, 0)
+	return r.GetStaticMember(StaticMemberStringIndex, name, 0)
 }
 
 // GetStaticIntIndex returns the exact bracket-integer member with the given key,
 // or nil when no such member is carried.
 func (r *Record) GetStaticIntIndex(index int64) *StaticMember {
-	return r.getStaticMember(StaticMemberIntIndex, "", index)
+	return r.GetStaticMember(StaticMemberIntIndex, "", index)
 }
 
-func (r *Record) getStaticMember(kind StaticMemberKind, name string, index int64) *StaticMember {
+// GetStaticMember returns the exact bracket member with the given key, or nil
+// when no such member is carried.
+func (r *Record) GetStaticMember(kind StaticMemberKind, name string, index int64) *StaticMember {
 	if r == nil || len(r.StaticMembers) == 0 {
 		return nil
 	}

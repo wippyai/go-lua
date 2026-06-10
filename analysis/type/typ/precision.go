@@ -546,7 +546,15 @@ func (s *fallbackRefineState) refineFunction(summary, fallback *Function) (Type,
 	if !changed {
 		return summary, false
 	}
-	return buildFunctionType(summary.TypeParams, params, variadic, returns, summary.Effects, summary.Spec, summary.Refinement), true
+	return RebuildFunction(FunctionParts{
+		TypeParams: summary.TypeParams,
+		Params:     params,
+		Variadic:   variadic,
+		Returns:    returns,
+		Effects:    summary.Effects,
+		Spec:       summary.Spec,
+		Refinement: summary.Refinement,
+	}), true
 }
 
 func (s *fallbackRefineState) pushOwnedTypeParams(params []*TypeParam) {
@@ -598,7 +606,7 @@ func (s *fallbackRefineState) refineRecord(summary, fallback *Record) (Type, boo
 	staticMembers := make([]StaticMember, len(summary.StaticMembers))
 	copy(staticMembers, summary.StaticMembers)
 	for i := range staticMembers {
-		fb := fallback.getStaticMember(staticMembers[i].Kind, staticMembers[i].Name, staticMembers[i].Index)
+		fb := fallback.GetStaticMember(staticMembers[i].Kind, staticMembers[i].Name, staticMembers[i].Index)
 		if fb == nil || staticMembers[i].Optional != fb.Optional {
 			continue
 		}
@@ -636,7 +644,16 @@ func (s *fallbackRefineState) refineRecord(summary, fallback *Record) (Type, boo
 	if !changed {
 		return summary, false
 	}
-	return buildRecordType(fields, staticMembers, metatable, mapKey, mapValue, summary.Open, true, summary.Fresh), true
+	return RebuildRecord(RecordParts{
+		Fields:        fields,
+		StaticMembers: staticMembers,
+		Metatable:     metatable,
+		MapKey:        mapKey,
+		MapValue:      mapValue,
+		Open:          summary.Open,
+		Fresh:         summary.Fresh,
+		AssumeSorted:  true,
+	}), true
 }
 
 // PruneLessPreciseRefinableUnionMembers removes refinable structural
@@ -1420,7 +1437,7 @@ func compareRecordPrecision(candidate, baseline *Record, depth int, seen *precis
 		strict = true
 	}
 	for _, baselineMember := range baseline.StaticMembers {
-		candidateMember := candidate.getStaticMember(baselineMember.Kind, baselineMember.Name, baselineMember.Index)
+		candidateMember := candidate.GetStaticMember(baselineMember.Kind, baselineMember.Name, baselineMember.Index)
 		if candidateMember == nil {
 			if baselineMember.Optional {
 				strict = true

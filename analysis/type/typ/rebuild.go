@@ -14,6 +14,30 @@ var (
 	freshRecordHash    = hash.FnvString("$freshEmptyTable")
 )
 
+// FunctionParts carries the structural pieces needed to rebuild a function.
+type FunctionParts struct {
+	TypeParams []*TypeParam
+	Params     []Param
+	Variadic   Type
+	Returns    []Type
+	Effects    EffectInfo
+	Spec       SpecInfo
+	Refinement RefinementInfo
+}
+
+// RebuildFunction rebuilds a function from already-computed structural parts.
+func RebuildFunction(parts FunctionParts) *Function {
+	return buildFunctionType(
+		parts.TypeParams,
+		parts.Params,
+		parts.Variadic,
+		parts.Returns,
+		parts.Effects,
+		parts.Spec,
+		parts.Refinement,
+	)
+}
+
 func buildFunctionType(
 	typeParams []*TypeParam,
 	params []Param,
@@ -97,6 +121,32 @@ func buildFunctionType(
 	}
 }
 
+// RecordParts carries the structural pieces needed to rebuild a record.
+type RecordParts struct {
+	Fields        []Field
+	StaticMembers []StaticMember
+	Metatable     Type
+	MapKey        Type
+	MapValue      Type
+	Open          bool
+	Fresh         bool
+	AssumeSorted  bool
+}
+
+// RebuildRecord rebuilds a record from already-computed structural parts.
+func RebuildRecord(parts RecordParts) *Record {
+	return buildRecordType(
+		parts.Fields,
+		parts.StaticMembers,
+		parts.Metatable,
+		parts.MapKey,
+		parts.MapValue,
+		parts.Open,
+		parts.AssumeSorted,
+		parts.Fresh,
+	)
+}
+
 func buildRecordType(fields []Field, staticMembers []StaticMember, metatable, mapKey, mapValue Type, open bool, assumeSorted bool, fresh bool) *Record {
 	sorted := make([]Field, len(fields))
 	copy(sorted, fields)
@@ -117,7 +167,7 @@ func buildRecordType(fields []Field, staticMembers []StaticMember, metatable, ma
 	copy(members, staticMembers)
 	if !assumeSorted || !staticMembersSorted(members) {
 		sort.Slice(members, func(i, j int) bool {
-			return compareStaticMembers(members[i], members[j]) < 0
+			return CompareStaticMembers(members[i], members[j]) < 0
 		})
 	}
 	for i := range members {
@@ -215,7 +265,8 @@ func buildRecordType(fields []Field, staticMembers []StaticMember, metatable, ma
 	}
 }
 
-func compareStaticMembers(left, right StaticMember) int {
+// CompareStaticMembers compares static members by their canonical record key.
+func CompareStaticMembers(left, right StaticMember) int {
 	return compareStaticMemberKey(left, right.Kind, right.Name, right.Index)
 }
 
@@ -247,7 +298,7 @@ func compareStaticMemberKey(left StaticMember, kind StaticMemberKind, name strin
 
 func staticMembersSorted(members []StaticMember) bool {
 	for i := 1; i < len(members); i++ {
-		if compareStaticMembers(members[i-1], members[i]) > 0 {
+		if CompareStaticMembers(members[i-1], members[i]) > 0 {
 			return false
 		}
 	}

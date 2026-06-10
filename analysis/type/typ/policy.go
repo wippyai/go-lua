@@ -365,7 +365,10 @@ func (s *returnJoinState) joinClosedCompatibleRecordSet(records []*Record) (Type
 			Readonly: acc.readonly,
 		})
 	}
-	return buildRecordType(mergedFields, mergedStaticMembers, nil, nil, nil, false, false, false), true
+	return RebuildRecord(RecordParts{
+		Fields:        mergedFields,
+		StaticMembers: mergedStaticMembers,
+	}), true
 }
 
 // CoalesceCompatibleRecords merges compatible record alternatives before a
@@ -1132,7 +1135,15 @@ func (s *returnJoinState) joinCompatibleRecords(a, b Type) (Type, bool) {
 	}
 
 	staticMembers := s.mergeRecordStaticMembers(ar, br)
-	merged := buildRecordType(fields, staticMembers, metatable, mapKey, mapValue, open, true, false)
+	merged := RebuildRecord(RecordParts{
+		Fields:        fields,
+		StaticMembers: staticMembers,
+		Metatable:     metatable,
+		MapKey:        mapKey,
+		MapValue:      mapValue,
+		Open:          open,
+		AssumeSorted:  true,
+	})
 	if s != nil {
 		s.cacheRecordJoin(key, merged, true)
 	}
@@ -1196,7 +1207,7 @@ func (s *returnJoinState) mergeRecordStaticMembers(ar, br *Record) []StaticMembe
 			staticMembers = append(staticMembers, s.mergeRecordStaticMember(StaticMember{}, false, br.StaticMembers[j], true, ar, br))
 			j++
 		default:
-			cmp := compareStaticMembers(ar.StaticMembers[i], br.StaticMembers[j])
+			cmp := CompareStaticMembers(ar.StaticMembers[i], br.StaticMembers[j])
 			switch {
 			case cmp == 0:
 				staticMembers = append(staticMembers, s.mergeRecordStaticMember(ar.StaticMembers[i], true, br.StaticMembers[j], true, ar, br))
@@ -1693,7 +1704,7 @@ func literalErasedResidualsCleanlyMergeable(a, b *Record) bool {
 		if _, ok := literalType(member.Type); ok {
 			continue
 		}
-		other := b.getStaticMember(member.Kind, member.Name, member.Index)
+		other := b.GetStaticMember(member.Kind, member.Name, member.Index)
 		if other == nil || other.Optional {
 			continue
 		}
@@ -1729,7 +1740,7 @@ func requiredNonLiteralPayloadMissingFrom(src, dst *Record) bool {
 		if _, ok := literalType(member.Type); ok {
 			continue
 		}
-		if dst.getStaticMember(member.Kind, member.Name, member.Index) == nil {
+		if dst.GetStaticMember(member.Kind, member.Name, member.Index) == nil {
 			return true
 		}
 	}
