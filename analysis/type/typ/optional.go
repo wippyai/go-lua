@@ -15,7 +15,6 @@ import (
 type Optional struct {
 	Inner                 Type
 	hash                  uint64
-	softPrunable          bool
 	containsAny           bool
 	containsNever         bool
 	containsTypeParam     bool
@@ -69,7 +68,6 @@ func NewOptional(inner Type) Type {
 	return &Optional{
 		Inner:                 inner,
 		hash:                  h,
-		softPrunable:          softPruneMayRewrite(inner),
 		containsAny:           knownContainsAny(inner),
 		containsNever:         knownContainsNever(inner),
 		containsTypeParam:     knownContainsTypeParam(inner),

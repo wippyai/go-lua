@@ -62,7 +62,6 @@ type Alias struct {
 	Target                Type   // Underlying type
 	unaliased             Type
 	hash                  uint64
-	softPrunable          bool
 	containsAny           bool
 	containsNever         bool
 	containsTypeParam     bool
@@ -80,7 +79,6 @@ func NewAlias(name string, target Type) *Alias {
 		Target:                target,
 		unaliased:             flattenAliasTarget(target),
 		hash:                  h,
-		softPrunable:          softPruneMayRewrite(target),
 		containsAny:           knownContainsAny(target),
 		containsNever:         knownContainsNever(target),
 		containsTypeParam:     knownContainsTypeParam(target),

@@ -29,6 +29,7 @@ package join
 
 import (
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
+	"github.com/wippyai/go-lua/analysis/type/gradual"
 	"github.com/wippyai/go-lua/analysis/type/kind"
 	"github.com/wippyai/go-lua/analysis/type/relation"
 	"github.com/wippyai/go-lua/analysis/type/typ"
@@ -85,7 +86,7 @@ func Types(types ...typ.Type) typ.Type {
 	if len(filtered) == 1 {
 		return filtered[0]
 	}
-	return typ.PruneSoftUnionMembers(relation.PruneLessPreciseRefinableUnionMembers(typ.NewUnion(filtered...)))
+	return gradual.PruneSoftUnionMembers(relation.PruneLessPreciseRefinableUnionMembers(typ.NewUnion(filtered...)))
 }
 
 // FlattenUnions exposes explicit union members before coalescing. This keeps

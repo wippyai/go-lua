@@ -1,10 +1,11 @@
-package typ
+package gradual
 
 import (
 	"sync"
 
 	"github.com/wippyai/go-lua/analysis/internal/recursion"
 	"github.com/wippyai/go-lua/analysis/type/kind"
+	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
 // SoftPolicy controls how soft-placeholder detection behaves.
@@ -20,17 +21,42 @@ var SoftAnnotationPolicy = SoftPolicy{}
 var SoftPlaceholderPolicy = SoftPolicy{AllowEmptyRecord: true}
 
 // IsSoft reports whether a type should be treated as a soft placeholder under policy.
-func IsSoft(t Type, policy SoftPolicy) bool {
-	return isSoft(t, NewGuard(), policy)
+func IsSoft(t typ.Type, policy SoftPolicy) bool {
+	state := getSoftPruneState()
+	defer putSoftPruneState(state)
+	return isSoftMemo(t, typ.NewGuard(), policy, state.softMemo)
 }
 
-func isSoft(t Type, guard recursion.Guard, policy SoftPolicy) bool {
+func isSoftMemo(t typ.Type, guard recursion.Guard, policy SoftPolicy, memo map[typ.Type]bool) bool {
+	if t == nil {
+		return false
+	}
+	if cached, ok := memo[t]; ok {
+		return cached
+	}
+	node := unwrapTransparentSoft(t)
+	if node != t {
+		if cached, ok := memo[node]; ok {
+			memo[t] = cached
+			return cached
+		}
+	}
+
+	soft := isSoftNode(node, guard, policy, memo)
+	memo[t] = soft
+	if node != t {
+		memo[node] = soft
+	}
+	return soft
+}
+
+func isSoftNode(t typ.Type, guard recursion.Guard, policy SoftPolicy, memo map[typ.Type]bool) bool {
 	if t == nil {
 		return false
 	}
 	node := unwrapTransparentSoft(t)
 	switch node.(type) {
-	case *Alias, *Optional, *Array, *Map, *ReadonlyMap, *Record, *Union:
+	case *typ.Alias, *typ.Optional, *typ.Array, *typ.Map, *typ.ReadonlyMap, *typ.Record, *typ.Union:
 		// recurse below
 	default:
 		return node.Kind().IsPlaceholder()
@@ -42,17 +68,17 @@ func isSoft(t Type, guard recursion.Guard, policy SoftPolicy) bool {
 	}
 
 	switch tt := node.(type) {
-	case *Alias:
-		return isSoft(tt.Target, next, policy)
-	case *Optional:
-		return isSoft(tt.Inner, next, policy)
-	case *Array:
-		return isSoft(tt.Element, next, policy)
-	case *Map:
-		return isSoft(tt.Key, next, policy) && isSoft(tt.Value, next, policy)
-	case *ReadonlyMap:
-		return isSoft(tt.Key, next, policy) && isSoft(tt.Value, next, policy)
-	case *Record:
+	case *typ.Alias:
+		return isSoftMemo(tt.Target, next, policy, memo)
+	case *typ.Optional:
+		return isSoftMemo(tt.Inner, next, policy, memo)
+	case *typ.Array:
+		return isSoftMemo(tt.Element, next, policy, memo)
+	case *typ.Map:
+		return isSoftMemo(tt.Key, next, policy, memo) && isSoftMemo(tt.Value, next, policy, memo)
+	case *typ.ReadonlyMap:
+		return isSoftMemo(tt.Key, next, policy, memo) && isSoftMemo(tt.Value, next, policy, memo)
+	case *typ.Record:
 		if tt.Open && len(tt.Fields) == 0 && !tt.HasMapComponent() {
 			return true
 		}
@@ -60,15 +86,15 @@ func isSoft(t Type, guard recursion.Guard, policy SoftPolicy) bool {
 			return policy.AllowEmptyRecord
 		}
 		if tt.HasMapComponent() && len(tt.Fields) == 0 {
-			return isSoft(tt.MapKey, next, policy) && isSoft(tt.MapValue, next, policy)
+			return isSoftMemo(tt.MapKey, next, policy, memo) && isSoftMemo(tt.MapValue, next, policy, memo)
 		}
 		return false
-	case *Union:
+	case *typ.Union:
 		if len(tt.Members) == 0 {
 			return false
 		}
 		for _, m := range tt.Members {
-			if !isSoft(m, next, policy) {
+			if !isSoftMemo(m, next, policy, memo) {
 				return false
 			}
 		}
@@ -77,9 +103,9 @@ func isSoft(t Type, guard recursion.Guard, policy SoftPolicy) bool {
 	return false
 }
 
-func unwrapTransparentSoft(t Type) Type {
+func unwrapTransparentSoft(t typ.Type) typ.Type {
 	for {
-		ann, ok := t.(*Annotated)
+		ann, ok := t.(*typ.Annotated)
 		if !ok {
 			return t
 		}
@@ -93,33 +119,30 @@ func unwrapTransparentSoft(t Type) Type {
 // PruneSoftUnionMembers removes soft placeholder members from unions when
 // any non-soft member is present. This helps inference avoid contaminating
 // concrete types with placeholder unions.
-func PruneSoftUnionMembers(t Type) Type {
+func PruneSoftUnionMembers(t typ.Type) typ.Type {
 	if t == nil {
 		return nil
 	}
-	if !softPruneMayRewrite(t) {
-		return t
-	}
 	state := getSoftPruneState()
 	defer putSoftPruneState(state)
-	guard := NewGuard()
+	guard := typ.NewGuard()
 	return pruneSoftUnionMembersMemo(t, guard, state.memo, state.visiting, state.softMemo)
 }
 
 const softPruneMemoMaxEntries = 4096
 
 type softPruneState struct {
-	memo     map[Type]Type
-	visiting map[Type]struct{}
-	softMemo map[Type]bool
+	memo     map[typ.Type]typ.Type
+	visiting map[typ.Type]struct{}
+	softMemo map[typ.Type]bool
 }
 
 var softPruneStatePool = sync.Pool{
 	New: func() any {
 		return &softPruneState{
-			memo:     make(map[Type]Type, 64),
-			visiting: make(map[Type]struct{}, 64),
-			softMemo: make(map[Type]bool, 64),
+			memo:     make(map[typ.Type]typ.Type, 64),
+			visiting: make(map[typ.Type]struct{}, 64),
+			softMemo: make(map[typ.Type]bool, 64),
 		}
 	},
 }
@@ -133,17 +156,17 @@ func putSoftPruneState(state *softPruneState) {
 		return
 	}
 	if len(state.memo) > softPruneMemoMaxEntries {
-		state.memo = make(map[Type]Type, 64)
+		state.memo = make(map[typ.Type]typ.Type, 64)
 	} else {
 		clear(state.memo)
 	}
 	if len(state.visiting) > softPruneMemoMaxEntries {
-		state.visiting = make(map[Type]struct{}, 64)
+		state.visiting = make(map[typ.Type]struct{}, 64)
 	} else {
 		clear(state.visiting)
 	}
 	if len(state.softMemo) > softPruneMemoMaxEntries {
-		state.softMemo = make(map[Type]bool, 64)
+		state.softMemo = make(map[typ.Type]bool, 64)
 	} else {
 		clear(state.softMemo)
 	}
@@ -151,16 +174,13 @@ func putSoftPruneState(state *softPruneState) {
 }
 
 func pruneSoftUnionMembersMemo(
-	t Type,
+	t typ.Type,
 	guard recursion.Guard,
-	memo map[Type]Type,
-	visiting map[Type]struct{},
-	softMemo map[Type]bool,
-) Type {
+	memo map[typ.Type]typ.Type,
+	visiting map[typ.Type]struct{},
+	softMemo map[typ.Type]bool,
+) typ.Type {
 	if t == nil {
-		return t
-	}
-	if !softPruneMayRewrite(t) {
 		return t
 	}
 	if cached, ok := memo[t]; ok {
@@ -175,47 +195,21 @@ func pruneSoftUnionMembersMemo(
 	}
 	visiting[t] = struct{}{}
 
-	var out Type
+	var out typ.Type
 	switch node := unwrapTransparentSoft(t).(type) {
-	case *Function:
+	case *typ.Function:
 		out = pruneSoftFunction(node, t, next, memo, visiting, softMemo)
-	case *Record:
+	case *typ.Record:
 		out = pruneSoftRecord(node, t, next, memo, visiting, softMemo)
-	case *Union:
-		// Fast path: if this union has no soft members and no nested changes needed,
-		// skip the expensive isSoftWithMemo checks entirely.
-		if !node.HasSoftMember() {
-			anyChildChanged := false
-			var rewrittenFast []Type
-			for idx, m := range node.Members {
-				pm := pruneSoftUnionMembersMemo(m, next, memo, visiting, softMemo)
-				if pm != m {
-					if rewrittenFast == nil {
-						rewrittenFast = make([]Type, len(node.Members))
-						copy(rewrittenFast, node.Members)
-					}
-					rewrittenFast[idx] = pm
-					anyChildChanged = true
-				} else if rewrittenFast != nil {
-					rewrittenFast[idx] = m
-				}
-			}
-			if !anyChildChanged {
-				out = t
-			} else {
-				out = NewUnion(rewrittenFast...)
-			}
-			break
-		}
-
-		var rewritten []Type
+	case *typ.Union:
+		var rewritten []typ.Type
 		softCount := 0
 		changed := false
 		for idx, m := range node.Members {
 			pm := pruneSoftUnionMembersMemo(m, next, memo, visiting, softMemo)
 			if pm != m {
 				if rewritten == nil {
-					rewritten = make([]Type, len(node.Members))
+					rewritten = make([]typ.Type, len(node.Members))
 					copy(rewritten, node.Members)
 				}
 				rewritten[idx] = pm
@@ -232,7 +226,7 @@ func pruneSoftUnionMembersMemo(
 			if rewritten != nil {
 				members = rewritten
 			}
-			nonSoftMembers := make([]Type, 0, len(node.Members)-softCount)
+			nonSoftMembers := make([]typ.Type, 0, len(node.Members)-softCount)
 			hasNonNilConcreteMember := false
 			for _, member := range members {
 				if !isSoftWithMemo(member, SoftPlaceholderPolicy, softMemo) {
@@ -243,7 +237,7 @@ func pruneSoftUnionMembersMemo(
 				}
 			}
 			if hasNonNilConcreteMember {
-				out = NewUnion(nonSoftMembers...)
+				out = typ.NewUnion(nonSoftMembers...)
 				break
 			}
 		}
@@ -255,8 +249,8 @@ func pruneSoftUnionMembersMemo(
 		if rewritten != nil {
 			members = rewritten
 		}
-		out = NewUnion(members...)
-	case *Optional:
+		out = typ.NewUnion(members...)
+	case *typ.Optional:
 		if node.Inner == nil {
 			out = t
 			break
@@ -266,37 +260,37 @@ func pruneSoftUnionMembersMemo(
 			out = t
 			break
 		}
-		out = NewOptional(inner)
-	case *Array:
+		out = typ.NewOptional(inner)
+	case *typ.Array:
 		elem := pruneSoftUnionMembersMemo(node.Element, next, memo, visiting, softMemo)
 		if elem == node.Element {
 			out = t
 			break
 		}
-		out = NewArray(elem)
-	case *Map:
+		out = typ.NewArray(elem)
+	case *typ.Map:
 		key := pruneSoftUnionMembersMemo(node.Key, next, memo, visiting, softMemo)
 		val := pruneSoftUnionMembersMemo(node.Value, next, memo, visiting, softMemo)
 		if key == node.Key && val == node.Value {
 			out = t
 			break
 		}
-		out = NewMap(key, val)
-	case *ReadonlyMap:
+		out = typ.NewMap(key, val)
+	case *typ.ReadonlyMap:
 		key := pruneSoftUnionMembersMemo(node.Key, next, memo, visiting, softMemo)
 		val := pruneSoftUnionMembersMemo(node.Value, next, memo, visiting, softMemo)
 		if key == node.Key && val == node.Value {
 			out = t
 			break
 		}
-		out = NewReadonlyMap(key, val)
-	case *Tuple:
-		var elems []Type
+		out = typ.NewReadonlyMap(key, val)
+	case *typ.Tuple:
+		var elems []typ.Type
 		for i, e := range node.Elements {
 			newElem := pruneSoftUnionMembersMemo(e, next, memo, visiting, softMemo)
 			if newElem != e {
 				if elems == nil {
-					elems = make([]Type, len(node.Elements))
+					elems = make([]typ.Type, len(node.Elements))
 					copy(elems, node.Elements)
 				}
 				elems[i] = newElem
@@ -308,21 +302,21 @@ func pruneSoftUnionMembersMemo(
 			out = t
 			break
 		}
-		out = NewTuple(elems...)
-	case *Alias:
+		out = typ.NewTuple(elems...)
+	case *typ.Alias:
 		target := pruneSoftUnionMembersMemo(node.Target, next, memo, visiting, softMemo)
 		if target == node.Target {
 			out = t
 			break
 		}
-		out = NewAlias(node.Name, target)
-	case *Instantiated:
-		var args []Type
+		out = typ.NewAlias(node.Name, target)
+	case *typ.Instantiated:
+		var args []typ.Type
 		for idx, a := range node.TypeArgs {
 			newArg := pruneSoftUnionMembersMemo(a, next, memo, visiting, softMemo)
 			if newArg != a {
 				if args == nil {
-					args = make([]Type, len(node.TypeArgs))
+					args = make([]typ.Type, len(node.TypeArgs))
 					copy(args, node.TypeArgs)
 				}
 				args[idx] = newArg
@@ -334,7 +328,7 @@ func pruneSoftUnionMembersMemo(
 			out = t
 			break
 		}
-		out = Instantiate(node.Generic, args...)
+		out = typ.Instantiate(node.Generic, args...)
 	default:
 		out = t
 	}
@@ -345,36 +339,36 @@ func pruneSoftUnionMembersMemo(
 }
 
 func pruneSoftFunction(
-	f *Function,
-	orig Type,
+	f *typ.Function,
+	orig typ.Type,
 	next recursion.Guard,
-	memo map[Type]Type,
-	visiting map[Type]struct{},
-	softMemo map[Type]bool,
-) Type {
+	memo map[typ.Type]typ.Type,
+	visiting map[typ.Type]struct{},
+	softMemo map[typ.Type]bool,
+) typ.Type {
 	changed := false
 
-	var params []Param
+	var params []typ.Param
 	for i, p := range f.Params {
 		newType := pruneSoftUnionMembersMemo(p.Type, next, memo, visiting, softMemo)
 		if newType != p.Type {
 			if params == nil {
-				params = make([]Param, len(f.Params))
+				params = make([]typ.Param, len(f.Params))
 				copy(params, f.Params)
 			}
 			changed = true
-			params[i] = Param{Name: p.Name, Type: newType, Optional: p.Optional}
+			params[i] = typ.Param{Name: p.Name, Type: newType, Optional: p.Optional}
 		} else if params != nil {
 			params[i] = p
 		}
 	}
 
-	var returns []Type
+	var returns []typ.Type
 	for i, r := range f.Returns {
 		newRet := pruneSoftUnionMembersMemo(r, next, memo, visiting, softMemo)
 		if newRet != r {
 			if returns == nil {
-				returns = make([]Type, len(f.Returns))
+				returns = make([]typ.Type, len(f.Returns))
 				copy(returns, f.Returns)
 			}
 			changed = true
@@ -405,47 +399,47 @@ func pruneSoftFunction(
 	if returns != nil {
 		returnsSrc = returns
 	}
-	return buildFunctionType(
-		f.TypeParams,
-		paramSrc,
-		variadic,
-		returnsSrc,
-		f.Effects,
-		f.Spec,
-		f.Refinement,
-	)
+	return typ.RebuildFunction(typ.FunctionParts{
+		TypeParams: f.TypeParams,
+		Params:     paramSrc,
+		Variadic:   variadic,
+		Returns:    returnsSrc,
+		Effects:    f.Effects,
+		Spec:       f.Spec,
+		Refinement: f.Refinement,
+	})
 }
 
 func pruneSoftRecord(
-	r *Record,
-	orig Type,
+	r *typ.Record,
+	orig typ.Type,
 	next recursion.Guard,
-	memo map[Type]Type,
-	visiting map[Type]struct{},
-	softMemo map[Type]bool,
-) Type {
+	memo map[typ.Type]typ.Type,
+	visiting map[typ.Type]struct{},
+	softMemo map[typ.Type]bool,
+) typ.Type {
 	changed := false
 
-	var fields []Field
+	var fields []typ.Field
 	for i, f := range r.Fields {
 		newType := pruneSoftUnionMembersMemo(f.Type, next, memo, visiting, softMemo)
 		if newType != f.Type {
 			if fields == nil {
-				fields = make([]Field, len(r.Fields))
+				fields = make([]typ.Field, len(r.Fields))
 				copy(fields, r.Fields)
 			}
 			changed = true
-			fields[i] = Field{Name: f.Name, Type: newType, Optional: f.Optional, Readonly: f.Readonly}
+			fields[i] = typ.Field{Name: f.Name, Type: newType, Optional: f.Optional, Readonly: f.Readonly}
 		} else if fields != nil {
 			fields[i] = f
 		}
 	}
-	var staticMembers []StaticMember
+	var staticMembers []typ.StaticMember
 	for i, m := range r.StaticMembers {
 		newType := pruneSoftUnionMembersMemo(m.Type, next, memo, visiting, softMemo)
 		if newType != m.Type {
 			if staticMembers == nil {
-				staticMembers = make([]StaticMember, len(r.StaticMembers))
+				staticMembers = make([]typ.StaticMember, len(r.StaticMembers))
 				copy(staticMembers, r.StaticMembers)
 			}
 			changed = true
@@ -491,27 +485,18 @@ func pruneSoftRecord(
 	if staticMembers != nil {
 		staticMembersSrc = staticMembers
 	}
-	return buildRecordType(fieldsSrc, staticMembersSrc, metatable, mapKey, mapValue, r.Open, true, false)
+	return typ.RebuildRecord(typ.RecordParts{
+		Fields:        fieldsSrc,
+		StaticMembers: staticMembersSrc,
+		Metatable:     metatable,
+		MapKey:        mapKey,
+		MapValue:      mapValue,
+		Open:          r.Open,
+		AssumeSorted:  true,
+		Fresh:         false,
+	})
 }
 
-func isSoftWithMemo(t Type, policy SoftPolicy, memo map[Type]bool) bool {
-	if t == nil {
-		return false
-	}
-	if cached, ok := memo[t]; ok {
-		return cached
-	}
-	node := unwrapTransparentSoft(t)
-	if node != t {
-		if cached, ok := memo[node]; ok {
-			memo[t] = cached
-			return cached
-		}
-	}
-	soft := IsSoft(node, policy)
-	memo[t] = soft
-	if node != t {
-		memo[node] = soft
-	}
-	return soft
+func isSoftWithMemo(t typ.Type, policy SoftPolicy, memo map[typ.Type]bool) bool {
+	return isSoftMemo(t, typ.NewGuard(), policy, memo)
 }

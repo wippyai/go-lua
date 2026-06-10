@@ -29,7 +29,6 @@ type Function struct {
 	Spec                  SpecInfo       // Contract specification (*contract.Spec)
 	Refinement            RefinementInfo // Type refinement effect (*constraint.FunctionRefinement)
 	hash                  uint64
-	softPrunable          bool
 	containsAny           bool
 	containsNever         bool
 	containsTypeParam     bool

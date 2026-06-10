@@ -23,8 +23,6 @@ type Union struct {
 	Members               []Type
 	memberHashes          []uint64
 	hash                  uint64
-	hasSoftMbr            bool // true if any member is a soft placeholder
-	softPrunable          bool
 	containsAny           bool
 	containsNever         bool
 	containsTypeParam     bool
@@ -228,11 +226,8 @@ func newNormalizedUnion(members []Type, memberHashes []uint64) Type {
 	hashesCopy := make([]uint64, len(memberHashes))
 	copy(hashesCopy, memberHashes)
 
-	// Compute hash and check for soft members
+	// Compute hash and cached structural flags.
 	h := uint64(kind.Union)
-	hasSoft := false
-	hasNonSoft := false
-	softPrunable := false
 	containsAny := false
 	containsNever := false
 	containsTypeParam := false
@@ -242,9 +237,6 @@ func newNormalizedUnion(members []Type, memberHashes []uint64) Type {
 	containsCallableSurf := false
 	for i, m := range membersCopy {
 		h = hash.HashCombine(h, hashesCopy[i])
-		if softPruneMayRewrite(m) {
-			softPrunable = true
-		}
 		if !containsAny && knownContainsAny(m) {
 			containsAny = true
 		}
@@ -266,22 +258,12 @@ func newNormalizedUnion(members []Type, memberHashes []uint64) Type {
 		if !containsCallableSurf && HasCallableSurface(m) {
 			containsCallableSurf = true
 		}
-		if memberIsSoft(m) {
-			hasSoft = true
-		} else {
-			hasNonSoft = true
-		}
-	}
-	if hasSoft && hasNonSoft {
-		softPrunable = true
 	}
 
 	return &Union{
 		Members:               membersCopy,
 		memberHashes:          hashesCopy,
 		hash:                  h,
-		hasSoftMbr:            hasSoft,
-		softPrunable:          softPrunable,
 		containsAny:           containsAny,
 		containsNever:         containsNever,
 		containsTypeParam:     containsTypeParam,
@@ -292,56 +274,7 @@ func newNormalizedUnion(members []Type, memberHashes []uint64) Type {
 	}
 }
 
-// HasSoftMember reports whether any union member is a soft placeholder type.
-// Computed at construction time for O(1) access.
-func (u *Union) HasSoftMember() bool { return u.hasSoftMbr }
-
 func (u *Union) Kind() kind.Kind { return kind.Union }
-
-// memberIsSoft checks if a type is a soft placeholder.
-// Used at Union construction to set the hasSoftMbr flag.
-// Mirrors isSoft logic but without recursion guard (unions are already flat).
-func memberIsSoft(t Type) bool {
-	if t == nil {
-		return false
-	}
-	for {
-		if ann, ok := t.(*Annotated); ok && ann.Inner != nil {
-			t = ann.Inner
-			continue
-		}
-		break
-	}
-	if t.Kind().IsPlaceholder() {
-		return true
-	}
-	switch v := t.(type) {
-	case *Optional:
-		return memberIsSoft(v.Inner)
-	case *Alias:
-		return memberIsSoft(v.Target)
-	case *Array:
-		return memberIsSoft(v.Element)
-	case *Map:
-		return memberIsSoft(v.Value)
-	case *Record:
-		if len(v.Fields) == 0 && !v.HasMapComponent() {
-			return true
-		}
-		if v.HasMapComponent() && len(v.Fields) == 0 {
-			return memberIsSoft(v.MapValue)
-		}
-		return false
-	case *Union:
-		for _, m := range v.Members {
-			if !memberIsSoft(m) {
-				return false
-			}
-		}
-		return len(v.Members) > 0
-	}
-	return false
-}
 
 func (u *Union) String() string {
 	return u.strCache.get(func() string {

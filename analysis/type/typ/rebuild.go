@@ -76,7 +76,6 @@ func buildFunctionType(
 	copy(paramsCopy, params)
 	returnsCopy := make([]Type, len(returns))
 	copy(returnsCopy, returns)
-	softPrunable := softPruneParams(paramsCopy) || softPruneAny(variadic) || softPruneAny(returnsCopy...)
 	containsAny := knownAnyTypeParams(typeParamsCopy) ||
 		knownAnyParams(paramsCopy) ||
 		knownContainsAny(variadic) ||
@@ -111,7 +110,6 @@ func buildFunctionType(
 		Spec:                  spec,
 		Refinement:            refinement,
 		hash:                  h,
-		softPrunable:          softPrunable,
 		containsAny:           containsAny,
 		containsNever:         containsNever,
 		containsTypeParam:     containsTypeParam,
@@ -235,7 +233,6 @@ func buildRecordType(fields []Field, staticMembers []StaticMember, metatable, ma
 	if fresh {
 		h = hash.HashCombine(h, freshRecordHash)
 	}
-	softPrunable := softPruneFields(sorted) || softPruneStaticMembers(members) || softPruneAny(metatable, mapKey, mapValue)
 	containsAny := knownAnyFields(sorted) || knownAnyStaticMembers(members) || knownAny(metatable, mapKey, mapValue)
 	containsNever := knownNeverFields(sorted) || knownNeverStaticMembers(members) || knownNever(metatable, mapKey, mapValue)
 	containsTypeParam := knownTypeParamFields(sorted) || knownTypeParamStaticMembers(members) || knownTypeParam(metatable, mapKey, mapValue)
@@ -254,7 +251,6 @@ func buildRecordType(fields []Field, staticMembers []StaticMember, metatable, ma
 		Fresh:                 fresh,
 		sorted:                true,
 		hash:                  h,
-		softPrunable:          softPrunable,
 		containsAny:           containsAny,
 		containsNever:         containsNever,
 		containsTypeParam:     containsTypeParam,
@@ -317,15 +313,6 @@ func knownCallableSurfaceFields(fields []Field) bool {
 func knownCallableSurfaceStaticMembers(members []StaticMember) bool {
 	for _, m := range members {
 		if HasCallableSurface(m.Type) {
-			return true
-		}
-	}
-	return false
-}
-
-func softPruneStaticMembers(members []StaticMember) bool {
-	for _, m := range members {
-		if softPruneAny(m.Type) {
 			return true
 		}
 	}

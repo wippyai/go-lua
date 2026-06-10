@@ -202,7 +202,6 @@ type Instantiated struct {
 	Generic               *Generic // The generic being instantiated
 	TypeArgs              []Type   // Concrete types for each type parameter
 	hash                  uint64
-	softPrunable          bool
 	containsAny           bool
 	containsNever         bool
 	containsTypeParam     bool
@@ -215,7 +214,6 @@ type Instantiated struct {
 // Instantiate creates an instantiated generic type with the given arguments.
 func Instantiate(g *Generic, args ...Type) *Instantiated {
 	h := hash.HashCombine(uint64(kind.Instantiated), g.Hash())
-	softPrunable := false
 	containsAny := knownContainsAny(g)
 	containsNever := knownContainsNever(g)
 	containsTypeParam := knownContainsTypeParam(g)
@@ -224,9 +222,6 @@ func Instantiate(g *Generic, args ...Type) *Instantiated {
 	containsOpenRecursive := knownContainsOpenRecursive(g)
 	for _, a := range args {
 		h = hash.HashCombine(h, a.Hash())
-		if !softPrunable && softPruneMayRewrite(a) {
-			softPrunable = true
-		}
 		if !containsAny && knownContainsAny(a) {
 			containsAny = true
 		}
@@ -251,7 +246,6 @@ func Instantiate(g *Generic, args ...Type) *Instantiated {
 		Generic:               g,
 		TypeArgs:              args,
 		hash:                  h,
-		softPrunable:          softPrunable,
 		containsAny:           containsAny,
 		containsNever:         containsNever,
 		containsTypeParam:     containsTypeParam,

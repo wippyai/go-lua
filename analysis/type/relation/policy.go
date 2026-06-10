@@ -6,6 +6,7 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/internal/hash"
 	"github.com/wippyai/go-lua/analysis/internal/recursion"
+	"github.com/wippyai/go-lua/analysis/type/gradual"
 	"github.com/wippyai/go-lua/analysis/type/kind"
 	. "github.com/wippyai/go-lua/analysis/type/typ"
 )
@@ -21,12 +22,12 @@ func JoinPreferNonSoft(a, b Type) Type {
 	if b == nil {
 		return a
 	}
-	a = PruneSoftUnionMembers(a)
-	b = PruneSoftUnionMembers(b)
-	if IsSoft(a, SoftPlaceholderPolicy) && !IsSoft(b, SoftPlaceholderPolicy) {
+	a = gradual.PruneSoftUnionMembers(a)
+	b = gradual.PruneSoftUnionMembers(b)
+	if gradual.IsSoft(a, gradual.SoftPlaceholderPolicy) && !gradual.IsSoft(b, gradual.SoftPlaceholderPolicy) {
 		return b
 	}
-	if IsSoft(b, SoftPlaceholderPolicy) && !IsSoft(a, SoftPlaceholderPolicy) {
+	if gradual.IsSoft(b, gradual.SoftPlaceholderPolicy) && !gradual.IsSoft(a, gradual.SoftPlaceholderPolicy) {
 		return a
 	}
 	// Inline join.Two to avoid dependency cycles inside typ.
@@ -39,7 +40,7 @@ func JoinPreferNonSoft(a, b Type) Type {
 	if SameNodeOrAcyclicEqual(a, b) {
 		return a
 	}
-	return PruneSoftUnionMembers(NewUnion(a, b))
+	return gradual.PruneSoftUnionMembers(NewUnion(a, b))
 }
 
 // JoinReturnSlot merges return slot types while preserving uncertainty.
@@ -150,8 +151,8 @@ func (s *returnJoinState) joinReturnSlot(a, b Type) Type {
 	if b == nil {
 		return a
 	}
-	a = PruneSoftUnionMembers(a)
-	b = PruneSoftUnionMembers(b)
+	a = gradual.PruneSoftUnionMembers(a)
+	b = gradual.PruneSoftUnionMembers(b)
 	if s.sameReturnJoinInput(a, b) {
 		return a
 	}
@@ -805,9 +806,9 @@ func (s *returnJoinState) joinCoalescedUnion(a, b Type) Type {
 		return Never
 	}
 	if len(members) == 1 {
-		return PruneSoftUnionMembers(members[0])
+		return gradual.PruneSoftUnionMembers(members[0])
 	}
-	return PruneSoftUnionMembers(NewUnion(members...))
+	return gradual.PruneSoftUnionMembers(NewUnion(members...))
 }
 
 func appendUnionMembers(out []Type, t Type) []Type {

@@ -62,7 +62,6 @@ type Record struct {
 	Fresh                 bool
 	sorted                bool
 	hash                  uint64
-	softPrunable          bool
 	containsAny           bool
 	containsNever         bool
 	containsTypeParam     bool

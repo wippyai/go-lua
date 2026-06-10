@@ -20,7 +20,6 @@ type Array struct {
 	// the empty seed. Fresh is set only via NewFreshArray; user types never set it.
 	Fresh                 bool
 	hash                  uint64
-	softPrunable          bool
 	containsAny           bool
 	containsNever         bool
 	containsTypeParam     bool
@@ -39,7 +38,6 @@ func NewArray(elem Type) *Array {
 	return &Array{
 		Element:               elem,
 		hash:                  h,
-		softPrunable:          softPruneMayRewrite(elem),
 		containsAny:           knownContainsAny(elem),
 		containsNever:         knownContainsNever(elem),
 		containsTypeParam:     knownContainsTypeParam(elem),
@@ -62,7 +60,6 @@ func NewFreshArray() *Array {
 		Element:               elem,
 		Fresh:                 true,
 		hash:                  h,
-		softPrunable:          softPruneMayRewrite(elem),
 		containsAny:           knownContainsAny(elem),
 		containsNever:         knownContainsNever(elem),
 		containsTypeParam:     knownContainsTypeParam(elem),
@@ -95,7 +92,6 @@ type Map struct {
 	Key                   Type
 	Value                 Type
 	hash                  uint64
-	softPrunable          bool
 	containsAny           bool
 	containsNever         bool
 	containsTypeParam     bool
@@ -121,7 +117,6 @@ func NewMap(key, value Type) *Map {
 		Key:                   key,
 		Value:                 value,
 		hash:                  h,
-		softPrunable:          softPruneAny(key, value),
 		containsAny:           knownAny(key, value),
 		containsNever:         knownNever(key, value),
 		containsTypeParam:     knownTypeParam(key, value),
@@ -159,7 +154,6 @@ type ReadonlyMap struct {
 	Key                   Type
 	Value                 Type
 	hash                  uint64
-	softPrunable          bool
 	containsAny           bool
 	containsNever         bool
 	containsTypeParam     bool
@@ -185,7 +179,6 @@ func NewReadonlyMap(key, value Type) *ReadonlyMap {
 		Key:                   key,
 		Value:                 value,
 		hash:                  h,
-		softPrunable:          softPruneAny(key, value),
 		containsAny:           knownAny(key, value),
 		containsNever:         knownNever(key, value),
 		containsTypeParam:     knownTypeParam(key, value),
@@ -221,7 +214,6 @@ func (m *ReadonlyMap) Equals(o Type) bool {
 type Tuple struct {
 	Elements              []Type
 	hash                  uint64
-	softPrunable          bool
 	containsAny           bool
 	containsNever         bool
 	containsTypeParam     bool
@@ -235,7 +227,6 @@ type Tuple struct {
 func NewTuple(elems ...Type) *Tuple {
 	h := uint64(kind.Tuple)
 	cleaned := make([]Type, len(elems))
-	softPrunable := false
 	containsAny := false
 	containsNever := false
 	containsTypeParam := false
@@ -248,9 +239,6 @@ func NewTuple(elems ...Type) *Tuple {
 		}
 		cleaned[i] = e
 		h = hash.HashCombine(h, e.Hash())
-		if !softPrunable && softPruneMayRewrite(e) {
-			softPrunable = true
-		}
 		if !containsAny && knownContainsAny(e) {
 			containsAny = true
 		}
@@ -274,7 +262,6 @@ func NewTuple(elems ...Type) *Tuple {
 	return &Tuple{
 		Elements:              cleaned,
 		hash:                  h,
-		softPrunable:          softPrunable,
 		containsAny:           containsAny,
 		containsNever:         containsNever,
 		containsTypeParam:     containsTypeParam,
