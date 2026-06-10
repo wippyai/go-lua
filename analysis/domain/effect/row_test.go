@@ -31,13 +31,16 @@ func TestUnknown(t *testing.T) {
 }
 
 func TestRowWith(t *testing.T) {
-	r := Empty.With(BorrowAll{}, Store{Param: ParamRef{Index: 0}, Into: ParamRef{Index: 1}})
-	if !r.HasBorrow() {
-		t.Error("Should have borrow")
+	r := Empty.With(
+		Mutate{Target: ParamRef{Index: 0}, Transform: Unchanged{}},
+		Return{ReturnIndex: 0, Transform: ElementOf{Source: ParamRef{Index: 0}}},
+	)
+	if !r.HasMutate() {
+		t.Error("Should have mutation")
 	}
 
-	if !r.HasStore() {
-		t.Error("Should have store")
+	if r.GetReturn(0) == nil {
+		t.Error("Should have return")
 	}
 
 	if r.Pure() {
@@ -46,17 +49,20 @@ func TestRowWith(t *testing.T) {
 }
 
 func TestRowWithDuplicate(t *testing.T) {
-	r := Empty.With(BorrowAll{}, BorrowAll{})
+	r := Empty.With(
+		Mutate{Target: ParamRef{Index: 0}, Transform: Unchanged{}},
+		Mutate{Target: ParamRef{Index: 0}, Transform: Unchanged{}},
+	)
 	count := 0
 
 	for _, l := range r.Labels {
-		if _, ok := l.(BorrowAll); ok {
+		if _, ok := l.(Mutate); ok {
 			count++
 		}
 	}
 
 	if count != 1 {
-		t.Errorf("Should have exactly 1 borrow_all, got %d", count)
+		t.Errorf("Should have exactly 1 mutation, got %d", count)
 	}
 }
 
@@ -66,9 +72,12 @@ func TestRowString(t *testing.T) {
 		want string
 	}{
 		{Empty, "{}"},
-		{BorrowsOnly(), "{borrow_all}"},
-		{Row{Labels: []Label{BorrowAll{}, Store{Param: ParamRef{Index: 0}, Into: ParamRef{Index: 1}}}}, "{borrow_all, store(param[0] into param[1])}"},
-		{Open("rho", BorrowAll{}), "{borrow_all | rho}"},
+		{Mutates(0, Unchanged{}), "{mutate(param[0], unchanged)}"},
+		{Row{Labels: []Label{
+			Mutate{Target: ParamRef{Index: 0}, Transform: Unchanged{}},
+			Return{ReturnIndex: 0, Transform: ElementOf{Source: ParamRef{Index: 0}}},
+		}}, "{mutate(param[0], unchanged), ret[0].type = elem(param[0])}"},
+		{Open("rho", Mutate{Target: ParamRef{Index: 0}, Transform: Unchanged{}}), "{mutate(param[0], unchanged) | rho}"},
 		{Open("rho"), "{rho}"},
 	}
 
@@ -81,12 +90,12 @@ func TestRowString(t *testing.T) {
 
 func TestUnion(t *testing.T) {
 	t.Run("closed rows", func(t *testing.T) {
-		r1 := Row{Labels: []Label{BorrowAll{}}}
-		r2 := Row{Labels: []Label{Store{Param: ParamRef{Index: 0}, Into: ParamRef{Index: 1}}}}
+		r1 := Row{Labels: []Label{Mutate{Target: ParamRef{Index: 0}, Transform: Unchanged{}}}}
+		r2 := Row{Labels: []Label{Return{ReturnIndex: 0, Transform: ElementOf{Source: ParamRef{Index: 0}}}}}
 		u := Union(r1, r2)
 
-		if !u.HasBorrow() || !u.HasStore() {
-			t.Error("Union should have both borrow and store")
+		if !u.HasMutate() || u.GetReturn(0) == nil {
+			t.Error("Union should have both mutation and return")
 		}
 
 		if !u.IsClosed() {
@@ -95,11 +104,11 @@ func TestUnion(t *testing.T) {
 	})
 
 	t.Run("open row", func(t *testing.T) {
-		r1 := Open("rho", BorrowAll{})
-		r2 := Row{Labels: []Label{Store{Param: ParamRef{Index: 0}, Into: ParamRef{Index: 1}}}}
+		r1 := Open("rho", Mutate{Target: ParamRef{Index: 0}, Transform: Unchanged{}})
+		r2 := Row{Labels: []Label{Return{ReturnIndex: 0, Transform: ElementOf{Source: ParamRef{Index: 0}}}}}
 		u := Union(r1, r2)
 
-		if !u.HasBorrow() || !u.HasStore() {
+		if !u.HasMutate() || u.GetReturn(0) == nil {
 			t.Error("Union should have both effects")
 		}
 
@@ -109,7 +118,7 @@ func TestUnion(t *testing.T) {
 	})
 
 	t.Run("unknown absorbs", func(t *testing.T) {
-		r := Row{Labels: []Label{BorrowAll{}}}
+		r := Row{Labels: []Label{Mutate{Target: ParamRef{Index: 0}, Transform: Unchanged{}}}}
 		u := Union(r, Unknown)
 
 		if !u.IsUnknown() {
@@ -118,20 +127,23 @@ func TestUnion(t *testing.T) {
 	})
 
 	t.Run("deduplication", func(t *testing.T) {
-		r1 := Row{Labels: []Label{BorrowAll{}}}
-		r2 := Row{Labels: []Label{BorrowAll{}, Store{Param: ParamRef{Index: 0}, Into: ParamRef{Index: 1}}}}
+		r1 := Row{Labels: []Label{Mutate{Target: ParamRef{Index: 0}, Transform: Unchanged{}}}}
+		r2 := Row{Labels: []Label{
+			Mutate{Target: ParamRef{Index: 0}, Transform: Unchanged{}},
+			Return{ReturnIndex: 0, Transform: ElementOf{Source: ParamRef{Index: 0}}},
+		}}
 		u := Union(r1, r2)
 
 		count := 0
 
 		for _, l := range u.Labels {
-			if _, ok := l.(BorrowAll); ok {
+			if _, ok := l.(Mutate); ok {
 				count++
 			}
 		}
 
 		if count != 1 {
-			t.Errorf("Union should deduplicate, got %d borrow_all labels", count)
+			t.Errorf("Union should deduplicate, got %d mutation labels", count)
 		}
 	})
 }
@@ -172,12 +184,18 @@ func TestRowEquals(t *testing.T) {
 		want   bool
 	}{
 		{Empty, Empty, true},
-		{Empty, BorrowsOnly(), false},
-		{BorrowsOnly(), BorrowsOnly(), true},
-		{Row{Labels: []Label{BorrowAll{}, Store{Param: ParamRef{Index: 0}, Into: ParamRef{Index: 1}}}}, Row{Labels: []Label{Store{Param: ParamRef{Index: 0}, Into: ParamRef{Index: 1}}, BorrowAll{}}}, true},
+		{Empty, Mutates(0, Unchanged{}), false},
+		{Mutates(0, Unchanged{}), Mutates(0, Unchanged{}), true},
+		{Row{Labels: []Label{
+			Mutate{Target: ParamRef{Index: 0}, Transform: Unchanged{}},
+			Return{ReturnIndex: 0, Transform: ElementOf{Source: ParamRef{Index: 0}}},
+		}}, Row{Labels: []Label{
+			Return{ReturnIndex: 0, Transform: ElementOf{Source: ParamRef{Index: 0}}},
+			Mutate{Target: ParamRef{Index: 0}, Transform: Unchanged{}},
+		}}, true},
 		{Open("rho"), Open("rho"), true},
 		{Open("rho"), Open("sigma"), false},
-		{BorrowsOnly(), Open("rho", BorrowAll{}), false},
+		{Mutates(0, Unchanged{}), Open("rho", Mutate{Target: ParamRef{Index: 0}, Transform: Unchanged{}}), false},
 	}
 
 	for _, tt := range tests {
@@ -200,22 +218,26 @@ func TestReads(t *testing.T) {
 }
 
 func TestRowWithout(t *testing.T) {
-	r := Row{Labels: []Label{BorrowAll{}, Store{Param: ParamRef{Index: 0}, Into: ParamRef{Index: 1}}, Freeze{Param: ParamRef{Index: 0}}}}
+	r := Row{Labels: []Label{
+		Mutate{Target: ParamRef{Index: 0}, Transform: Unchanged{}},
+		Return{ReturnIndex: 0, Transform: ElementOf{Source: ParamRef{Index: 0}}},
+		Iterator{Source: ParamRef{Index: 0}, Kind: IterateIndexed},
+	}}
 	filtered := r.Without(func(l Label) bool {
-		_, ok := l.(Store)
+		_, ok := l.(Return)
 		return ok
 	})
 
-	if filtered.HasStore() {
-		t.Error("Without should remove Store")
+	if filtered.GetReturn(0) != nil {
+		t.Error("Without should remove Return")
 	}
 
-	if !filtered.HasBorrow() {
-		t.Error("Without should keep BorrowAll")
+	if !filtered.HasMutate() {
+		t.Error("Without should keep Mutate")
 	}
 
-	if !filtered.Has(func(l Label) bool { _, ok := l.(Freeze); return ok }) {
-		t.Error("Without should keep Freeze")
+	if !filtered.HasIterator() {
+		t.Error("Without should keep Iterator")
 	}
 }
 
@@ -319,70 +341,12 @@ func TestErrorReturnEffect(t *testing.T) {
 	}
 }
 
-func TestBorrowStoreEffects(t *testing.T) {
-	// BorrowsOnly
-	r := BorrowsOnly()
-	if !r.HasBorrow() {
-		t.Error("BorrowsOnly should have borrow")
-	}
-
-	if !r.BorrowsAllParams() {
-		t.Error("BorrowsOnly should borrow all params")
-	}
-
-	// Borrow param
-	r2 := Row{Labels: []Label{Borrow{Param: ParamRef{Index: 0}}}}
-	if !r2.HasBorrow() {
-		t.Error("Borrow should have borrow")
-	}
-
-	b := r2.GetBorrow(0)
-	if b == nil {
-		t.Error("Should find borrow for param 0")
-	}
-
-	if r2.GetBorrow(1) != nil {
-		t.Error("Should not find borrow for param 1")
-	}
-
-	// StoresParam
-	r3 := StoresParam(0, 1)
-	if !r3.HasStore() {
-		t.Error("StoresParam should have store")
-	}
-
-	s := r3.GetStore(0)
-	if s == nil {
-		t.Error("Should find store for param 0")
-	}
-
-	if r3.GetStore(1) != nil {
-		t.Error("Should not find store for param 1")
-	}
-
-	// OnlyBorrows
-	if !r2.OnlyBorrows() {
-		t.Error("BorrowsParam should only borrow")
-	}
-
-	if r3.OnlyBorrows() {
-		t.Error("StoresParam should not only borrow")
-	}
-
-	if Empty.OnlyBorrows() {
-		t.Error("Empty should not only borrow")
-	}
-
-	// Mutate with borrow
-	r4 := Row{Labels: []Label{Borrow{Param: ParamRef{Index: 0}}, Mutate{Target: ParamRef{Index: 0}}}}
-	if r4.OnlyBorrows() {
-		t.Error("Borrow+Mutate should not be only borrows")
-	}
-}
-
 func TestNewRow(t *testing.T) {
-	r := Row{Labels: []Label{BorrowAll{}, Store{Param: ParamRef{Index: 0}, Into: ParamRef{Index: 1}}}}
-	if !r.HasBorrow() || !r.HasStore() {
+	r := Row{Labels: []Label{
+		Mutate{Target: ParamRef{Index: 0}, Transform: Unchanged{}},
+		Return{ReturnIndex: 0, Transform: ElementOf{Source: ParamRef{Index: 0}}},
+	}}
+	if !r.HasMutate() || r.GetReturn(0) == nil {
 		t.Error("Row should have the given labels")
 	}
 }

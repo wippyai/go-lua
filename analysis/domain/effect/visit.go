@@ -8,14 +8,9 @@ type LabelVisitor[R any] struct {
 	LengthChange     func(LengthChange) R
 	Iterator         func(Iterator) R
 	TableMutator     func(TableMutator) R
-	Borrow           func(Borrow) R
-	Store            func(Store) R
-	BorrowAll        func(BorrowAll) R
 	PassThrough      func(PassThrough) R
 	FlowInto         func(FlowInto) R
-	Send             func(Send) R
 	CorrelatedReturn func(CorrelatedReturn) R
-	Freeze           func(Freeze) R
 	Default          func(Label) R
 }
 
@@ -77,30 +72,6 @@ func VisitLabel[R any](l Label, v LabelVisitor[R]) R {
 		if v.TableMutator != nil {
 			return v.TableMutator(*ll)
 		}
-	case Borrow:
-		if v.Borrow != nil {
-			return v.Borrow(ll)
-		}
-	case *Borrow:
-		if v.Borrow != nil {
-			return v.Borrow(*ll)
-		}
-	case Store:
-		if v.Store != nil {
-			return v.Store(ll)
-		}
-	case *Store:
-		if v.Store != nil {
-			return v.Store(*ll)
-		}
-	case BorrowAll:
-		if v.BorrowAll != nil {
-			return v.BorrowAll(ll)
-		}
-	case *BorrowAll:
-		if v.BorrowAll != nil {
-			return v.BorrowAll(*ll)
-		}
 	case PassThrough:
 		if v.PassThrough != nil {
 			return v.PassThrough(ll)
@@ -117,14 +88,6 @@ func VisitLabel[R any](l Label, v LabelVisitor[R]) R {
 		if v.FlowInto != nil {
 			return v.FlowInto(*ll)
 		}
-	case Send:
-		if v.Send != nil {
-			return v.Send(ll)
-		}
-	case *Send:
-		if v.Send != nil {
-			return v.Send(*ll)
-		}
 	case CorrelatedReturn:
 		if v.CorrelatedReturn != nil {
 			return v.CorrelatedReturn(ll)
@@ -132,14 +95,6 @@ func VisitLabel[R any](l Label, v LabelVisitor[R]) R {
 	case *CorrelatedReturn:
 		if v.CorrelatedReturn != nil {
 			return v.CorrelatedReturn(*ll)
-		}
-	case Freeze:
-		if v.Freeze != nil {
-			return v.Freeze(ll)
-		}
-	case *Freeze:
-		if v.Freeze != nil {
-			return v.Freeze(*ll)
 		}
 	}
 	if v.Default != nil {

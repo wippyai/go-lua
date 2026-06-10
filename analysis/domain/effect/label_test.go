@@ -60,8 +60,8 @@ func TestMutate_Equals(t *testing.T) {
 		t.Error("different target Mutates should not be equal")
 	}
 
-	if m1.Equals(BorrowAll{}) {
-		t.Error("Mutate should not equal BorrowAll")
+	if m1.Equals(Return{}) {
+		t.Error("Mutate should not equal Return")
 	}
 
 	// Different transforms should not be equal
@@ -128,8 +128,8 @@ func TestReturn_Equals(t *testing.T) {
 		t.Error("different index Returns should not be equal")
 	}
 
-	if r1.Equals(BorrowAll{}) {
-		t.Error("Return should not equal BorrowAll")
+	if r1.Equals(Mutate{}) {
+		t.Error("Return should not equal Mutate")
 	}
 
 	// Different transforms should not be equal
@@ -364,8 +364,8 @@ func TestIterator(t *testing.T) {
 		t.Error("different kind should not be equal")
 	}
 
-	if iter.Equals(BorrowAll{}) {
-		t.Error("Iterator should not equal BorrowAll")
+	if iter.Equals(Return{}) {
+		t.Error("Iterator should not equal Return")
 	}
 }
 
@@ -388,78 +388,8 @@ func TestTableMutator(t *testing.T) {
 		t.Error("different value should not be equal")
 	}
 
-	if tm.Equals(BorrowAll{}) {
-		t.Error("TableMutator should not equal BorrowAll")
-	}
-}
-
-func TestBorrow(t *testing.T) {
-	b := Borrow{Param: ParamRef{Index: 0}}
-	if got := b.String(); got != "borrow(param[0])" {
-		t.Errorf("Borrow.String() = %q", got)
-	}
-
-	// Equals
-	if !b.Equals(Borrow{Param: ParamRef{Index: 0}}) {
-		t.Error("same Borrow should be equal")
-	}
-
-	if b.Equals(Borrow{Param: ParamRef{Index: 1}}) {
-		t.Error("different param Borrow should not be equal")
-	}
-
-	if b.Equals(BorrowAll{}) {
-		t.Error("Borrow should not equal BorrowAll")
-	}
-}
-
-func TestStore(t *testing.T) {
-	s := Store{Param: ParamRef{Index: 0}, Into: ParamRef{Index: 1}}
-	if got := s.String(); got != "store(param[0] into param[1])" {
-		t.Errorf("Store with into.String() = %q", got)
-	}
-
-	sUnknown := Store{Param: ParamRef{Index: 0}, Into: ParamRef{Index: -1}}
-	if got := sUnknown.String(); got != "store(param[0])" {
-		t.Errorf("Store unknown into.String() = %q", got)
-	}
-
-	// Equals
-	if !s.Equals(Store{Param: ParamRef{Index: 0}, Into: ParamRef{Index: 1}}) {
-		t.Error("same Store should be equal")
-	}
-
-	if s.Equals(Store{Param: ParamRef{Index: 1}, Into: ParamRef{Index: 1}}) {
-		t.Error("different param Store should not be equal")
-	}
-
-	if s.Equals(BorrowAll{}) {
-		t.Error("Store should not equal BorrowAll")
-	}
-
-	// Different Into should not be equal
-	s2 := Store{Param: ParamRef{Index: 0}, Into: ParamRef{Index: 2}}
-	if s.Equals(s2) {
-		t.Error("different Into Store should not be equal")
-	}
-	// Same param but different Into (one known, one unknown)
-	if s.Equals(sUnknown) {
-		t.Error("different Into (known vs unknown) Store should not be equal")
-	}
-}
-
-func TestBorrowAll(t *testing.T) {
-	ba := BorrowAll{}
-	if got := ba.String(); got != "borrow_all" {
-		t.Errorf("BorrowAll.String() = %q", got)
-	}
-
-	if !ba.Equals(BorrowAll{}) {
-		t.Error("BorrowAll should equal BorrowAll")
-	}
-
-	if ba.Equals(Mutate{}) {
-		t.Error("BorrowAll should not equal Mutate")
+	if tm.Equals(Return{}) {
+		t.Error("TableMutator should not equal Return")
 	}
 }
 
@@ -472,9 +402,9 @@ func TestAllLabelsImplementInterface(t *testing.T) {
 		LengthChange{},
 		Iterator{},
 		TableMutator{},
-		Borrow{},
-		Store{},
-		BorrowAll{},
+		PassThrough{},
+		FlowInto{},
+		CorrelatedReturn{},
 	}
 
 	for _, l := range labels {
@@ -492,9 +422,9 @@ func TestMarkerMethods(t *testing.T) {
 	LengthChange{}.EffectLabel()
 	Iterator{}.EffectLabel()
 	TableMutator{}.EffectLabel()
-	Borrow{}.EffectLabel()
-	Store{}.EffectLabel()
-	BorrowAll{}.EffectLabel()
+	PassThrough{}.EffectLabel()
+	FlowInto{}.EffectLabel()
+	CorrelatedReturn{}.EffectLabel()
 
 	// Test transform() marker methods
 	ElementUnion{}.transform()
@@ -513,46 +443,8 @@ func TestMarkerMethods(t *testing.T) {
 
 func TestReturnLengthEqualsNonMatch(t *testing.T) {
 	rl := ReturnLength{ReturnIndex: 0}
-	if rl.Equals(BorrowAll{}) {
-		t.Error("ReturnLength should not equal BorrowAll")
-	}
-}
-
-func TestSend(t *testing.T) {
-	s := Send{FromParam: 2}
-	if got := s.String(); got != "send(params[2:])" {
-		t.Errorf("Send.String() = %q", got)
-	}
-
-	if !s.Equals(Send{FromParam: 2}) {
-		t.Error("same Send should be equal")
-	}
-
-	if s.Equals(Send{FromParam: 3}) {
-		t.Error("different FromParam should not be equal")
-	}
-
-	if s.Equals(BorrowAll{}) {
-		t.Error("Send should not equal BorrowAll")
-	}
-}
-
-func TestFreeze(t *testing.T) {
-	f := Freeze{Param: ParamRef{Index: 0}}
-	if got := f.String(); got != "freeze(param[0])" {
-		t.Errorf("Freeze.String() = %q", got)
-	}
-
-	if !f.Equals(Freeze{Param: ParamRef{Index: 0}}) {
-		t.Error("same Freeze should be equal")
-	}
-
-	if f.Equals(Freeze{Param: ParamRef{Index: 1}}) {
-		t.Error("different Param should not be equal")
-	}
-
-	if f.Equals(BorrowAll{}) {
-		t.Error("Freeze should not equal BorrowAll")
+	if rl.Equals(Return{}) {
+		t.Error("ReturnLength should not equal Return")
 	}
 }
 
@@ -574,8 +466,8 @@ func TestCorrelatedReturn(t *testing.T) {
 		t.Error("different indices should not be equal")
 	}
 
-	if cr.Equals(BorrowAll{}) {
-		t.Error("CorrelatedReturn should not equal BorrowAll")
+	if cr.Equals(Return{}) {
+		t.Error("CorrelatedReturn should not equal Return")
 	}
 }
 
