@@ -1844,7 +1844,7 @@ func (t *Transfer) applyNumericFor(out *flow.PointState, info *cfg.AssignInfo) {
 		return
 	}
 	t.applyIterationTargetWrite(out, target, product.FromType(typ.Integer), false)
-	if out.Num != nil && info.NumericFor != nil {
+	if flow.PointNumericHasState(out) && info.NumericFor != nil {
 		t.seedNumericForBounds(out, target.Symbol, info.NumericFor)
 	}
 }
@@ -3213,10 +3213,7 @@ func (t *Transfer) applyNumeric(out *flow.PointState, sym cfg.SymbolID, src ast.
 	if !self || delta == 0 {
 		return
 	}
-	if out.Num == nil {
-		return
-	}
-	_, prevUpper, bounded := out.Num.BoundsFor(pk)
+	_, prevUpper, bounded := flow.PointNumericBoundsFor(out, pk)
 	if !bounded {
 		return
 	}

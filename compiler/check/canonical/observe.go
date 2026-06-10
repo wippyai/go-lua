@@ -15,7 +15,6 @@ import (
 	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/domain/value/product"
 	"github.com/wippyai/go-lua/types/flow"
-	"github.com/wippyai/go-lua/types/flow/numeric"
 	"github.com/wippyai/go-lua/types/kind"
 	"github.com/wippyai/go-lua/types/narrow"
 	querycore "github.com/wippyai/go-lua/types/query/core"
@@ -911,15 +910,12 @@ func (canonicalConditionResolver) Index(t typ.Type, key typ.Type) (typ.Type, boo
 // transitively through a relation (an induction variable bounded by another value)
 // is recovered.
 func (f *canonicalFacts) NumericBoundsAt(p cfg.Point, sym cfg.SymbolID) (int64, int64, bool) {
-	num := f.inState(p).Num
-	if num == nil {
-		return 0, 0, false
-	}
 	key, ok := flow.NumericVarKeyOfSymbol(sym)
 	if !ok {
 		return 0, 0, false
 	}
-	return numeric.BoundsForWithTheory(num, key)
+	state := f.inState(p)
+	return flow.PointNumericBoundsForWithTheory(&state, key)
 }
 
 // ArrayLenRefAt returns the container symbol and constant offset of a proven
@@ -928,23 +924,8 @@ func (f *canonicalFacts) NumericBoundsAt(p cfg.Point, sym cfg.SymbolID) (int64, 
 // induction variable. A value with no length reference, or a length reference
 // keyed on a non-symbol path, reports ok=false.
 func (f *canonicalFacts) ArrayLenRefAt(p cfg.Point, sym cfg.SymbolID) (cfg.SymbolID, int64, bool) {
-	num := f.inState(p).Num
-	if num == nil {
-		return 0, 0, false
-	}
-	key, ok := flow.NumericVarKeyOfSymbol(sym)
-	if !ok {
-		return 0, 0, false
-	}
-	arrKey, offset, ok := num.LenRefWithOffsetFor(key)
-	if !ok {
-		return 0, 0, false
-	}
-	arrSym, ok := flow.SymbolOfNumericVarKey(arrKey)
-	if !ok {
-		return 0, 0, false
-	}
-	return arrSym, offset, true
+	state := f.inState(p)
+	return flow.PointNumericLenRefRootSymbolWithOffsetForVar(&state, sym)
 }
 
 func (f *canonicalFacts) ArrayLenRefPathAt(p cfg.Point, sym cfg.SymbolID) (constraint.Path, int64, bool) {

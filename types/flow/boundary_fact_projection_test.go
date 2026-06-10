@@ -23,8 +23,8 @@ func TestProjectBoundaryFactsProjectsPointFactLanesTogether(t *testing.T) {
 	num := numericStateWithLenBounds(t, tablePath, 2, 5)
 	facts := ProjectBoundaryFacts(
 		BoundaryFactProjectionInput{
-			KeyPresence: KeyPresenceFacts{}.WithAddresses(table, key),
-			Num:         num,
+			KeyPresence:  KeyPresenceFacts{}.WithAddresses(table, key),
+			LengthBounds: numericLengthBoundAddressesForTest(num),
 			IndexWrites: IndexWriteAdmissionFacts{}.WithAddress(IndexWriteAdmissionAddressFact{
 				Target:     table,
 				KeyPath:    key,
@@ -255,7 +255,7 @@ func TestProjectBoundaryFactsCachesAddressProjectionAcrossLanes(t *testing.T) {
 			KeyPresence: KeyPresenceFacts{}.
 				WithAddresses(table, key).
 				WithKeyArrayAddresses(key, table),
-			Num: num,
+			LengthBounds: numericLengthBoundAddressesForTest(num),
 			IndexWrites: IndexWriteAdmissionFacts{}.WithAddress(IndexWriteAdmissionAddressFact{
 				Target:     table,
 				KeyPath:    key,
@@ -284,7 +284,7 @@ func TestProjectBoundaryFactsIgnoresNonContainerNumericLengthKeys(t *testing.T) 
 	num := numericStateWithLenLower(t, tablePath, 2)
 	num.ApplyLenGeConst(constraint.PathKey("stale.nodes"), 9)
 	facts := ProjectBoundaryFacts(
-		BoundaryFactProjectionInput{Num: num},
+		BoundaryFactProjectionInput{LengthBounds: numericLengthBoundAddressesForTest(num)},
 		NewBoundaryPathProjection(map[cfg.SymbolID]int{sym: 0}, nil),
 		BoundaryFactProjectionPolicy{},
 	)
@@ -335,6 +335,10 @@ func numericStateWithLenBounds(t *testing.T, path constraint.Path, lower, upper 
 		t.Fatalf("ApplyNumericEffect did not apply len bounds lower=%d upper=%d for %v", lower, upper, path)
 	}
 	return state.Num
+}
+
+func numericLengthBoundAddressesForTest(num *numeric.State) []NumericLengthBoundAddress {
+	return PointNumericLengthBoundAddresses(&PointState{Num: num})
 }
 
 func boundaryProjectionPathEqual(a, b BoundaryPath) bool {

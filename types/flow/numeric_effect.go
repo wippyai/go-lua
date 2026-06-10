@@ -135,6 +135,55 @@ func normalizeNumericEffectState(num *numeric.State) *numeric.State {
 	return num
 }
 
+// PointNumericIsUnsat reports whether the point's numeric axis is unreachable.
+func PointNumericIsUnsat(state *PointState) bool {
+	return state != nil && state.Num != nil && state.Num.IsUnsat()
+}
+
+// PointNumericCheckUnsat runs the numeric domain's consistency check and
+// reports whether the point's numeric axis is unreachable.
+func PointNumericCheckUnsat(state *PointState) bool {
+	return state != nil && state.Num != nil && !state.Num.CheckSatisfiability()
+}
+
+// PointNumericIsReachable reports whether the point's numeric axis admits at
+// least one numeric state.
+func PointNumericIsReachable(state *PointState) bool {
+	return !PointNumericIsUnsat(state)
+}
+
+// PointNumericHasState reports whether the point carries a materialized numeric
+// axis, including the unreachable numeric bottom.
+func PointNumericHasState(state *PointState) bool {
+	return state != nil && state.Num != nil
+}
+
+func pointNumericState(state *PointState) *numeric.State {
+	if state == nil {
+		return nil
+	}
+	return state.Num
+}
+
+// PointNumericHasReachableState reports whether the point carries a materialized
+// numeric axis that is not the unreachable numeric bottom.
+func PointNumericHasReachableState(state *PointState) bool {
+	return PointNumericHasState(state) && !state.Num.IsUnsat()
+}
+
+// EnsurePointNumericReachableState materializes the reachable empty numeric
+// state for entry seeding when the axis is absent or unreachable.
+func EnsurePointNumericReachableState(state *PointState) bool {
+	if state == nil {
+		return false
+	}
+	if state.Num != nil && !state.Num.IsUnsat() {
+		return false
+	}
+	state.Num = numeric.NewState()
+	return true
+}
+
 func NumericConstComparisonOps(key constraint.PathKey, op string, c int64) []NumericOp {
 	switch op {
 	case "<":
@@ -364,18 +413,52 @@ func NumericLenGeConstPathOp(path constraint.Path, lower int64) (NumericOp, bool
 	return NumericLenGeConstContainerOp(ref, lower)
 }
 
-// NumericLenBoundsForContainer reads the numeric length interval for container.
-func NumericLenBoundsForContainer(num *numeric.State, container ContainerRef) (lower, upper int64, ok bool) {
+// NumericLengthBoundAddress is a point-local numeric length interval keyed by
+// the shared stable-address vocabulary.
+type NumericLengthBoundAddress struct {
+	Target StableAddress
+	Lower  int64
+	Upper  int64
+}
+
+// PointNumericLenBoundsForContainer reads the numeric length interval for
+// container from a point state.
+func PointNumericLenBoundsForContainer(state *PointState, container ContainerRef) (lower, upper int64, ok bool) {
+	if state == nil || PointNumericIsUnsat(state) {
+		return 0, 0, false
+	}
+	return numericLenBoundsForContainer(state.Num, container)
+}
+
+func numericLenBoundsForContainer(num *numeric.State, container ContainerRef) (lower, upper int64, ok bool) {
 	if num == nil || !container.IsValid() {
 		return 0, 0, false
 	}
 	return num.LenBoundsFor(container.pathKey())
 }
 
-// ForEachNumericLenBoundAddress visits numeric length facts through the shared
-// stable-address vocabulary. Non-container numeric keys remain private to the
-// numeric domain and are not exported as boundary container proofs.
-func ForEachNumericLenBoundAddress(num *numeric.State, fn func(target StableAddress, lower, upper int64) bool) {
+// ForEachPointNumericLenBoundAddress visits numeric length facts through the
+// shared stable-address vocabulary. Non-container numeric keys remain private to
+// the numeric domain and are not exported as boundary container proofs.
+func ForEachPointNumericLenBoundAddress(state *PointState, fn func(target StableAddress, lower, upper int64) bool) {
+	if state == nil || PointNumericIsUnsat(state) {
+		return
+	}
+	forEachNumericLenBoundAddress(state.Num, fn)
+}
+
+// PointNumericLengthBoundAddresses returns all point-local numeric length facts
+// in stable-address form.
+func PointNumericLengthBoundAddresses(state *PointState) []NumericLengthBoundAddress {
+	var out []NumericLengthBoundAddress
+	ForEachPointNumericLenBoundAddress(state, func(target StableAddress, lower, upper int64) bool {
+		out = append(out, NumericLengthBoundAddress{Target: target, Lower: lower, Upper: upper})
+		return true
+	})
+	return out
+}
+
+func forEachNumericLenBoundAddress(num *numeric.State, fn func(target StableAddress, lower, upper int64) bool) {
 	if num == nil || num.IsUnsat() || fn == nil {
 		return
 	}
@@ -392,9 +475,49 @@ func ForEachNumericLenBoundAddress(num *numeric.State, fn func(target StableAddr
 	})
 }
 
-// NumericLenRefWithOffsetForVar reports the container length reference currently
-// bounding sym, if the numeric domain carries one.
-func NumericLenRefWithOffsetForVar(num *numeric.State, sym cfg.SymbolID) (ContainerRef, int64, bool) {
+// PointNumericBoundsForWithTheory reads scalar bounds for key using numeric
+// theory inference.
+func PointNumericBoundsForWithTheory(state *PointState, key constraint.PathKey) (lower, upper int64, ok bool) {
+	if state == nil || PointNumericIsUnsat(state) || key == "" {
+		return 0, 0, false
+	}
+	return numeric.BoundsForWithTheory(state.Num, key)
+}
+
+// PointNumericBoundsFor reads direct scalar bounds for key without deriving
+// additional theory consequences.
+func PointNumericBoundsFor(state *PointState, key constraint.PathKey) (lower, upper int64, ok bool) {
+	if state == nil || PointNumericIsUnsat(state) || key == "" {
+		return 0, 0, false
+	}
+	return state.Num.BoundsFor(key)
+}
+
+// PointNumericLenRefWithOffsetForVar reports the container length reference
+// currently bounding sym, if the numeric domain carries one.
+func PointNumericLenRefWithOffsetForVar(state *PointState, sym cfg.SymbolID) (ContainerRef, int64, bool) {
+	if state == nil || PointNumericIsUnsat(state) {
+		return ContainerRef{}, 0, false
+	}
+	return numericLenRefWithOffsetForVar(state.Num, sym)
+}
+
+// PointNumericLenRefRootSymbolWithOffsetForVar reports a bare-symbol length
+// reference currently bounding sym. Nested container refs are intentionally not
+// collapsed to their root symbol.
+func PointNumericLenRefRootSymbolWithOffsetForVar(state *PointState, sym cfg.SymbolID) (cfg.SymbolID, int64, bool) {
+	ref, offset, ok := PointNumericLenRefWithOffsetForVar(state, sym)
+	if !ok {
+		return 0, 0, false
+	}
+	root, segments, ok := ParseSymbolPathKey(ref.pathKey())
+	if !ok || len(segments) != 0 {
+		return 0, 0, false
+	}
+	return root, offset, true
+}
+
+func numericLenRefWithOffsetForVar(num *numeric.State, sym cfg.SymbolID) (ContainerRef, int64, bool) {
 	if num == nil {
 		return ContainerRef{}, 0, false
 	}

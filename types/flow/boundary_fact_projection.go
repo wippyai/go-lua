@@ -11,9 +11,11 @@ import (
 type BoundaryFactProjectionInput struct {
 	KeyPresence     KeyPresenceFacts
 	StaticMembers   StaticMemberFacts
-	Num             *numeric.State
+	LengthBounds    []NumericLengthBoundAddress
 	IndexWrites     IndexWriteAdmissionFacts
 	IdentityAliases PathAliasFacts
+
+	lengthSource *numeric.State
 }
 
 // BoundaryFactProjectionInputOf extracts the replayable boundary fact axes from
@@ -22,9 +24,9 @@ func BoundaryFactProjectionInputOf(state PointState) BoundaryFactProjectionInput
 	return BoundaryFactProjectionInput{
 		KeyPresence:     KeyPresenceOf(state),
 		StaticMembers:   StaticMembersOf(state),
-		Num:             state.Num,
 		IndexWrites:     IndexWritesOf(state),
 		IdentityAliases: PathAliasesOf(state),
+		lengthSource:    pointNumericState(&state),
 	}
 }
 
@@ -73,21 +75,27 @@ func ProjectBoundaryFacts(
 
 	var lenLower []BoundaryLengthLowerBound
 	var lenUpper []BoundaryLengthUpperBound
-	ForEachNumericLenBoundAddress(in.Num, func(targetAddr StableAddress, lower, upper int64) bool {
-		targets := paths.fromAddress(targetAddr)
+	emitLengthBound := func(bound NumericLengthBoundAddress) {
+		targets := paths.fromAddress(bound.Target)
 		if len(targets) == 0 {
-			return true
+			return
 		}
-		if lower > 0 {
+		if bound.Lower > 0 {
 			for _, target := range targets {
-				lenLower = append(lenLower, BoundaryLengthLowerBound{Target: target, Lower: lower})
+				lenLower = append(lenLower, BoundaryLengthLowerBound{Target: target, Lower: bound.Lower})
 			}
 		}
-		if upper < math.MaxInt64 {
+		if bound.Upper < math.MaxInt64 {
 			for _, target := range targets {
-				lenUpper = append(lenUpper, BoundaryLengthUpperBound{Target: target, Upper: upper})
+				lenUpper = append(lenUpper, BoundaryLengthUpperBound{Target: target, Upper: bound.Upper})
 			}
 		}
+	}
+	for _, bound := range in.LengthBounds {
+		emitLengthBound(bound)
+	}
+	forEachNumericLenBoundAddress(in.lengthSource, func(target StableAddress, lower, upper int64) bool {
+		emitLengthBound(NumericLengthBoundAddress{Target: target, Lower: lower, Upper: upper})
 		return true
 	})
 

@@ -2,7 +2,6 @@ package flow
 
 import (
 	"github.com/wippyai/go-lua/types/constraint"
-	"github.com/wippyai/go-lua/types/flow/numeric"
 )
 
 // LiftEntryReachability turns the solver's bottom seed into the reachable
@@ -14,10 +13,7 @@ func LiftEntryReachability(ps *PointState) bool {
 		return false
 	}
 	changed := false
-	if ps.Num == nil || ps.Num.IsUnsat() {
-		ps.Num = numeric.NewState()
-		changed = true
-	}
+	changed = EnsurePointNumericReachableState(ps) || changed
 	if constraint.Domain.Equal(ps.Cond, constraint.Domain.Bottom()) {
 		ps.Cond = constraint.Domain.Top()
 		changed = true

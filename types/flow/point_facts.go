@@ -426,7 +426,7 @@ func (f PointFacts) LengthLowerBound(path constraint.Path) (int64, bool) {
 	if !ok {
 		return 0, false
 	}
-	lower, _, ok := NumericLenBoundsForContainer(f.state.Num, ref)
+	lower, _, ok := PointNumericLenBoundsForContainer(f.state, ref)
 	return lower, ok
 }
 

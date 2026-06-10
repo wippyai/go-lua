@@ -13,7 +13,7 @@ import (
 
 // lenseed.go carries two related but distinct size proofs plus the in-bounds
 // index-read refinement. Numeric length facts model Lua's sequence border (`#x`)
-// and live in out.Num. Container cardinality facts model statically-known
+// and live in the flow numeric axis. Container cardinality facts model statically-known
 // definitely-present constructor entries for iteration/postcondition reasoning
 // (`keys(data)` returning at least one key from a non-empty map) and live in
 // out.Rel. Keeping the axes separate prevents string-keyed maps from polluting
@@ -483,7 +483,7 @@ func (t *Transfer) applyTableInsert(
 	}
 	target := args[0]
 	elemExpr := args[len(args)-1]
-	if out.Num == nil {
+	if !flow.PointNumericHasState(out) {
 		effect, ok := t.tableInsertMutatorEffect(out, target, elemExpr, product.AbstractValue{}, demand)
 		if ok {
 			effect.LengthRef = flow.ContainerRef{}
@@ -641,7 +641,7 @@ func (t *Transfer) seedNumericForBodyBounds(out *flow.PointState, idxSym cfg.Sym
 		}
 	}
 	flow.ApplyNumericEffect(out, flow.NumericEffect{Ops: ops, RequireExisting: true})
-	if out.Num != nil && !out.Num.CheckSatisfiability() {
+	if flow.PointNumericCheckUnsat(out) {
 		*out = flow.PointStateDomain.Bottom()
 	}
 }
@@ -832,7 +832,7 @@ func (t *Transfer) writeIsSelfDerived(out *flow.PointState, target cfg.AssignTar
 
 // refineIndexRead recovers a non-optional element type for a provably in-bounds
 // sequence read `base[key]`. It ports the four arms of the store-side
-// refineIndexReadAt against the canonical numeric component (out.Num): a literal
+// refineIndexReadAt against the canonical flow numeric axis: a literal
 // index within a proven length floor, an index variable bounded by the
 // container's own length, a length-relative index (`#arr + k`), and a fixed-arity
 // tuple. Each arm reads only the converged numeric state and the narrow laws

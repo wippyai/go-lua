@@ -4,7 +4,6 @@ import (
 	"github.com/wippyai/go-lua/types/cfg"
 	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/domain/value/product"
-	"github.com/wippyai/go-lua/types/flow/numeric"
 	"github.com/wippyai/go-lua/types/narrow"
 	"github.com/wippyai/go-lua/types/typ"
 )
@@ -68,7 +67,7 @@ func (f PointFacts) RefineIndexRead(q IndexReadRefinementQuery) ProductValue {
 		if arity, ok := narrow.TupleArity(container); ok && arity >= q.LiteralIndex {
 			return resolved(narrow.RefineSequenceIndex(container, result, q.LiteralIndex))
 		}
-		if lower, _, ok := NumericLenBoundsForContainer(f.state.Num, q.ContainerRef); q.ContainerRef.IsValid() && ok && lower >= q.LiteralIndex {
+		if lower, _, ok := PointNumericLenBoundsForContainer(f.state, q.ContainerRef); ok && lower >= q.LiteralIndex {
 			return resolved(narrow.RefineSequenceIndex(container, result, q.LiteralIndex))
 		}
 		return ProductValue{State: StateUnknown}
@@ -78,7 +77,7 @@ func (f PointFacts) RefineIndexRead(q IndexReadRefinementQuery) ProductValue {
 		if arity, ok := narrow.TupleArity(container); ok {
 			return resolved(narrow.RefineLengthIndex(container, result, arity, q.LengthIndexOffset))
 		}
-		if lower, _, ok := NumericLenBoundsForContainer(f.state.Num, q.ContainerRef); ok {
+		if lower, _, ok := PointNumericLenBoundsForContainer(f.state, q.ContainerRef); ok {
 			return resolved(narrow.RefineLengthIndex(container, result, lower, q.LengthIndexOffset))
 		}
 		return ProductValue{State: StateUnknown}
@@ -90,13 +89,13 @@ func (f PointFacts) RefineIndexRead(q IndexReadRefinementQuery) ProductValue {
 	}
 
 	if arity, ok := narrow.TupleArity(container); ok {
-		if lower, upper, ok := numeric.BoundsForWithTheory(f.state.Num, idxKey); ok && lower >= 1 && upper <= arity {
+		if lower, upper, ok := PointNumericBoundsForWithTheory(f.state, idxKey); ok && lower >= 1 && upper <= arity {
 			return resolved(narrow.RefineSequenceIndex(container, result, lower))
 		}
 	}
 
-	if ref, offset, ok := NumericLenRefWithOffsetForVar(f.state.Num, q.IndexSymbol); q.ContainerRef.IsValid() && ok && ref.Equal(q.ContainerRef) {
-		if lower, _, ok := numeric.BoundsForWithTheory(f.state.Num, idxKey); ok && lower+offset >= 1 && offset <= 0 {
+	if ref, offset, ok := PointNumericLenRefWithOffsetForVar(f.state, q.IndexSymbol); q.ContainerRef.IsValid() && ok && ref.Equal(q.ContainerRef) {
+		if lower, _, ok := PointNumericBoundsForWithTheory(f.state, idxKey); ok && lower+offset >= 1 && offset <= 0 {
 			return resolved(narrow.RefineSequenceIndex(container, result, lower+offset))
 		}
 	}

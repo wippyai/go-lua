@@ -30,7 +30,7 @@ func (t *Transfer) applyLoopAppendLengthFacts(out *flow.PointState, facts []inpu
 	if out == nil || len(facts) == 0 {
 		return false
 	}
-	if out.Num != nil && out.Num.IsUnsat() {
+	if flow.PointNumericIsUnsat(out) {
 		return false
 	}
 	changed := false

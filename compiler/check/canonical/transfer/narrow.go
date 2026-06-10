@@ -131,7 +131,7 @@ func (t *Transfer) NarrowEdge(g *cfg.Graph, pred, succ cfg.Point, out flow.Point
 	// narrowing must not resurrect a value into an unreachable point, or the
 	// successor merge would re-admit the terminated arm. The join then drops this
 	// predecessor as unreachable, exactly as it should.
-	if out.Num != nil && out.Num.IsUnsat() {
+	if flow.PointNumericIsUnsat(&out) {
 		return out
 	}
 	atExit := false

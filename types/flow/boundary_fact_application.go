@@ -501,10 +501,8 @@ func boundaryLengthRelationSourceLower(state PointState, source constraint.Path)
 		return 0
 	}
 	lower := int64(0)
-	if state.Num != nil {
-		if numericLower, _, ok := NumericLenBoundsForContainer(state.Num, ref); ok && numericLower > lower {
-			lower = numericLower
-		}
+	if numericLower, _, ok := PointNumericLenBoundsForContainer(&state, ref); ok && numericLower > lower {
+		lower = numericLower
 	}
 	if relationLower, ok := state.Rel.ContainerLowerBoundForRef(ref); ok && relationLower > lower {
 		lower = relationLower
