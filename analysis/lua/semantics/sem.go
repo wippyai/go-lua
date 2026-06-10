@@ -1,5 +1,5 @@
-// Package sem extracts AST semantic facts owned by cfgbuild statement points.
-package sem
+// Package semantics extracts AST semantic facts owned by cfgbuild statement points.
+package semantics
 
 import (
 	"errors"
@@ -12,8 +12,8 @@ import (
 )
 
 var (
-	ErrNoCFG         = errors.New("sem: missing cfg")
-	ErrPointMismatch = errors.New("sem: statement point count mismatch")
+	ErrNoCFG         = errors.New("semantics: missing cfg")
+	ErrPointMismatch = errors.New("semantics: statement point count mismatch")
 )
 
 type BranchKind uint8
