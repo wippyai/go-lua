@@ -11,10 +11,10 @@ import (
 
 // Path identifies a runtime value through its access path (variable.field.index).
 //
-// Paths are the fundamental identity mechanism for flow-sensitive refinement.
-// They track values across control flow using lexical symbol identity plus an
-// optional flow version, keeping shadowed bindings distinct even when they share
-// a variable name.
+// Paths are the syntax-facing access identity used by Lua extraction,
+// refinement placeholders, and domain projections. Point-local abstract state
+// keys must be produced by a state/key resolver with an explicit nonzero SSA
+// version; finite must-fact addresses deliberately ignore versions.
 //
 // Symbol provides lexical binding identity; Root is optional for display when Symbol is set.
 // When Symbol is non-zero, it is the primary identity for the path root.
@@ -29,7 +29,7 @@ type Path struct {
 	Root     string            // Variable name (optional for symbol paths, required for placeholders)
 	Symbol   symbol.ID         // Symbol identity (0 if unresolved/placeholder)
 	Segments []segment.Segment // Field/index access suffix
-	Version  int               // SSA version ID (0 = unspecified, non-zero binds path to a specific version)
+	Version  int               // Optional syntax/projection SSA version; point-state keys require an explicit resolver version.
 }
 
 // PathKey is a stable string key for map usage.
