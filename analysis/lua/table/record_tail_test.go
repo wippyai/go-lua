@@ -1,0 +1,94 @@
+package table
+
+import (
+	"testing"
+
+	"github.com/wippyai/go-lua/analysis/type/typ"
+)
+
+func TestRecordTailFieldTypeUsesStringMapComponent(t *testing.T) {
+	rec := NewRecord().
+		MapComponent(typ.String, typ.Number).
+		Build()
+
+	tail, ok := RecordTailFieldType(rec, "status")
+	if !ok {
+		t.Fatal("RecordTailFieldType returned ok=false")
+	}
+	want := typ.NewOptional(typ.Number)
+	if !typ.TypeEquals(tail, want) {
+		t.Fatalf("tail = %v, want %v", tail, want)
+	}
+	if !RecordMapTailMayContainFieldName(rec, "status") {
+		t.Fatal("expected string map tail to contain status field")
+	}
+}
+
+func TestRecordMapTailStaticMemberContainment(t *testing.T) {
+	rec := NewRecord().
+		MapComponent(typ.NewUnion(typ.LiteralString("raw"), typ.Integer), typ.Boolean).
+		Build()
+	stringMember := typ.StaticMember{Kind: typ.StaticMemberStringIndex, Name: "raw"}
+	intMember := typ.StaticMember{Kind: typ.StaticMemberIntIndex, Index: 7}
+	missingString := typ.StaticMember{Kind: typ.StaticMemberStringIndex, Name: "other"}
+
+	if !RecordMapTailMayContainStaticMember(rec, stringMember) {
+		t.Fatal("expected map tail to contain static string member")
+	}
+	if !RecordMapTailMayContainStaticMember(rec, intMember) {
+		t.Fatal("expected map tail to contain static int member")
+	}
+	if RecordMapTailMayContainStaticMember(rec, missingString) {
+		t.Fatal("did not expect map tail to contain unrelated static string member")
+	}
+
+	tail, ok := RecordTailStaticMemberType(rec, intMember)
+	if !ok {
+		t.Fatal("RecordTailStaticMemberType returned ok=false")
+	}
+	want := typ.NewOptional(typ.Boolean)
+	if !typ.TypeEquals(tail, want) {
+		t.Fatalf("static member tail = %v, want %v", tail, want)
+	}
+}
+
+func TestRecordTailTypeReturnsUnknownForOpenRecord(t *testing.T) {
+	rec := NewRecord().
+		SetOpen(true).
+		Build()
+
+	fieldTail, ok := RecordTailFieldType(rec, "missing")
+	if !ok {
+		t.Fatal("RecordTailFieldType(open record) returned ok=false")
+	}
+	if !typ.TypeEquals(fieldTail, typ.Unknown) {
+		t.Fatalf("field tail = %v, want unknown", fieldTail)
+	}
+
+	member := typ.StaticMember{Kind: typ.StaticMemberStringIndex, Name: "missing"}
+	memberTail, ok := RecordTailStaticMemberType(rec, member)
+	if !ok {
+		t.Fatal("RecordTailStaticMemberType(open record) returned ok=false")
+	}
+	if !typ.TypeEquals(memberTail, typ.Unknown) {
+		t.Fatalf("static member tail = %v, want unknown", memberTail)
+	}
+	if RecordMapTailMayContainFieldName(rec, "missing") {
+		t.Fatal("open record without map component should not report map-tail containment")
+	}
+}
+
+func TestRecordTailFieldTypeKeepsOptionalMapValueShape(t *testing.T) {
+	rec := NewRecord().
+		MapComponent(typ.String, typ.NewOptional(typ.Number)).
+		Build()
+
+	tail, ok := RecordTailFieldType(rec, "maybe")
+	if !ok {
+		t.Fatal("RecordTailFieldType returned ok=false")
+	}
+	want := typ.NewOptional(typ.Number)
+	if !typ.TypeEquals(tail, want) {
+		t.Fatalf("tail = %v, want %v", tail, want)
+	}
+}

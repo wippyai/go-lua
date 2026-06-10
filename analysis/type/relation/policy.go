@@ -1298,9 +1298,9 @@ func (s *returnJoinState) mergeRecordField(name string, fa Field, oka bool, fb F
 		fieldType = fa.Type
 		optional = true
 		readonly = fa.Readonly
-		if tail, ok := recordTailFieldType(br, name); ok {
+		if tail, ok := luatable.RecordTailFieldType(br, name); ok {
 			fieldType, optional = normalizeMergedRecordField(slotJoin(fa.Type, tail))
-			if recordMapTailMayContain(br, name) {
+			if luatable.RecordMapTailMayContainFieldName(br, name) {
 				optional = true
 			}
 			readonly = false
@@ -1309,9 +1309,9 @@ func (s *returnJoinState) mergeRecordField(name string, fa Field, oka bool, fb F
 		fieldType = fb.Type
 		optional = true
 		readonly = fb.Readonly
-		if tail, ok := recordTailFieldType(ar, name); ok {
+		if tail, ok := luatable.RecordTailFieldType(ar, name); ok {
 			fieldType, optional = normalizeMergedRecordField(slotJoin(tail, fb.Type))
-			if recordMapTailMayContain(ar, name) {
+			if luatable.RecordMapTailMayContainFieldName(ar, name) {
 				optional = true
 			}
 			readonly = false
@@ -1366,9 +1366,9 @@ func (s *returnJoinState) mergeRecordStaticMember(ma StaticMember, oka bool, mb 
 		memberType = ma.Type
 		optional = true
 		readonly = ma.Readonly
-		if tail, ok := recordTailStaticMemberType(br, ma); ok {
+		if tail, ok := luatable.RecordTailStaticMemberType(br, ma); ok {
 			memberType, optional = normalizeMergedRecordField(slotJoin(ma.Type, tail))
-			if recordMapTailMayContainStaticMember(br, ma) {
+			if luatable.RecordMapTailMayContainStaticMember(br, ma) {
 				optional = true
 			}
 			readonly = false
@@ -1378,9 +1378,9 @@ func (s *returnJoinState) mergeRecordStaticMember(ma StaticMember, oka bool, mb 
 		memberType = mb.Type
 		optional = true
 		readonly = mb.Readonly
-		if tail, ok := recordTailStaticMemberType(ar, mb); ok {
+		if tail, ok := luatable.RecordTailStaticMemberType(ar, mb); ok {
 			memberType, optional = normalizeMergedRecordField(slotJoin(tail, mb.Type))
-			if recordMapTailMayContainStaticMember(ar, mb) {
+			if luatable.RecordMapTailMayContainStaticMember(ar, mb) {
 				optional = true
 			}
 			readonly = false
@@ -1567,107 +1567,6 @@ func normalizeMergedRecordField(t Type) (Type, bool) {
 		return inner, true
 	}
 	return t, false
-}
-
-func recordTailFieldType(r *Record, name string) (Type, bool) {
-	if r == nil {
-		return nil, false
-	}
-	if r.HasMapComponent() && mapComponentMayContainStringKey(r.MapKey, name) {
-		return NewOptional(r.MapValue), true
-	}
-	if r.Open {
-		return Unknown, true
-	}
-	return nil, false
-}
-
-func recordTailStaticMemberType(r *Record, member StaticMember) (Type, bool) {
-	if r == nil {
-		return nil, false
-	}
-	if r.HasMapComponent() && mapComponentMayContainStaticMemberKey(r.MapKey, member) {
-		return NewOptional(r.MapValue), true
-	}
-	if r.Open {
-		return Unknown, true
-	}
-	return nil, false
-}
-
-func recordMapTailMayContain(r *Record, name string) bool {
-	return r != nil && r.HasMapComponent() && mapComponentMayContainStringKey(r.MapKey, name)
-}
-
-func recordMapTailMayContainStaticMember(r *Record, member StaticMember) bool {
-	return r != nil && r.HasMapComponent() && mapComponentMayContainStaticMemberKey(r.MapKey, member)
-}
-
-func mapComponentMayContainStaticMemberKey(key Type, member StaticMember) bool {
-	switch member.Kind {
-	case StaticMemberStringIndex:
-		return mapComponentMayContainStringKey(key, member.Name)
-	case StaticMemberIntIndex:
-		return mapComponentMayContainIntKey(key, member.Index)
-	default:
-		return false
-	}
-}
-
-func mapComponentMayContainStringKey(key Type, name string) bool {
-	if key == nil {
-		return false
-	}
-	if IsAny(key) || IsUnknown(key) {
-		return true
-	}
-	switch k := key.(type) {
-	case *Alias:
-		return mapComponentMayContainStringKey(k.Target, name)
-	case *Union:
-		for _, member := range k.Members {
-			if mapComponentMayContainStringKey(member, name) {
-				return true
-			}
-		}
-		return false
-	case *Literal:
-		return k.Base == kind.String && k.Value == name
-	default:
-		return k.Kind() == kind.String
-	}
-}
-
-func mapComponentMayContainIntKey(key Type, index int64) bool {
-	if key == nil {
-		return false
-	}
-	if IsAny(key) || IsUnknown(key) {
-		return true
-	}
-	switch k := key.(type) {
-	case *Alias:
-		return mapComponentMayContainIntKey(k.Target, index)
-	case *Union:
-		for _, member := range k.Members {
-			if mapComponentMayContainIntKey(member, index) {
-				return true
-			}
-		}
-		return false
-	case *Literal:
-		switch k.Base {
-		case kind.Integer:
-			return k.Value == index
-		case kind.Number:
-			number, ok := k.Value.(float64)
-			return ok && number == float64(index)
-		default:
-			return false
-		}
-	default:
-		return k.Kind() == kind.Integer || k.Kind() == kind.Number
-	}
 }
 
 func staticMemberKey(member StaticMember) staticMemberJoinKey {
