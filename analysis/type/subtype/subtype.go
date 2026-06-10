@@ -245,7 +245,7 @@ func (c *checker) checkCore(sub, super typ.Type, depth int) bool {
 			return c.checkMapToRecord(m, r, depth+1)
 		}
 		if view, ok := super.(*typ.ReadonlyMap); ok {
-			return c.checkReadonlyMap(typ.NewReadonlyMap(m.Key, m.Value), view, depth+1)
+			return c.checkReadonlyMap(luatable.NewReadonlyMap(m.Key, m.Value), view, depth+1)
 		}
 	}
 	if arr, ok := sub.(*typ.Array); ok {
@@ -253,7 +253,7 @@ func (c *checker) checkCore(sub, super typ.Type, depth int) bool {
 			return c.checkArrayToMap(arr, m, depth+1)
 		}
 		if view, ok := super.(*typ.ReadonlyMap); ok {
-			return c.checkReadonlyMap(typ.NewReadonlyMap(typ.Integer, arr.Element), view, depth+1)
+			return c.checkReadonlyMap(luatable.NewReadonlyMap(typ.Integer, arr.Element), view, depth+1)
 		}
 	}
 	if tup, ok := sub.(*typ.Tuple); ok {
@@ -824,7 +824,7 @@ func (c *checker) checkMapToRecord(sub *typ.Map, super *typ.Record, depth int) b
 	if sub == nil || super == nil || !super.HasMapComponent() {
 		return false
 	}
-	if !c.checkMap(sub, typ.NewMap(super.MapKey, super.MapValue), depth+1) {
+	if !c.checkMap(sub, luatable.NewMap(super.MapKey, super.MapValue), depth+1) {
 		return false
 	}
 	for _, sf := range super.Fields {

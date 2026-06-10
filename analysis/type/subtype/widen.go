@@ -1,6 +1,7 @@
 package subtype
 
 import (
+	luatable "github.com/wippyai/go-lua/analysis/lua/table"
 	"github.com/wippyai/go-lua/analysis/type/kind"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
@@ -115,7 +116,7 @@ func widenForInferenceDepth(t typ.Type, depth int, preserveParams bool) typ.Type
 			if typ.SameNode(key, m.Key) && typ.SameNode(value, m.Value) {
 				return t
 			}
-			return typ.NewMap(key, value)
+			return luatable.NewMap(key, value)
 		},
 		ReadonlyMap: func(m *typ.ReadonlyMap) typ.Type {
 			key := widenForInferenceDepth(m.Key, depth+1, preserveParams)
@@ -123,7 +124,7 @@ func widenForInferenceDepth(t typ.Type, depth int, preserveParams bool) typ.Type
 			if typ.SameNode(key, m.Key) && typ.SameNode(value, m.Value) {
 				return t
 			}
-			return typ.NewReadonlyMap(key, value)
+			return luatable.NewReadonlyMap(key, value)
 		},
 		Record: func(r *typ.Record) typ.Type {
 			if len(r.Fields) > typ.DefaultRecursionDepth {
@@ -137,10 +138,10 @@ func widenForInferenceDepth(t typ.Type, depth int, preserveParams bool) typ.Type
 					elem = typ.NewUnion(fieldTypes...)
 				}
 
-				return typ.NewMap(typ.String, elem)
+				return luatable.NewMap(typ.String, elem)
 			}
 
-			builder := typ.NewRecord()
+			builder := luatable.NewRecord()
 			if r.Open {
 				builder.SetOpen(true)
 			}

@@ -134,3 +134,39 @@ func TestPruneSoftUnionMembers_AliasStillDescends(t *testing.T) {
 		t.Fatalf("expected alias target to be pruned to %v, got %v", leaf, gotAlias.Target)
 	}
 }
+
+func TestPruneSoftUnionMembers_NormalizesNilableTableKeys(t *testing.T) {
+	key := typ.LiteralString("name")
+	softKey := typ.NewRecord().Build()
+	nilableKey := typ.NewUnion(typ.Nil, softKey, key)
+
+	assertKey := func(name string, got typ.Type) {
+		t.Helper()
+		if !typ.TypeEquals(got, key) {
+			t.Fatalf("%s key = %v, want %v", name, got, key)
+		}
+	}
+
+	mapPruned := PruneSoftUnionMembers(typ.NewMap(nilableKey, typ.String))
+	mapResult, ok := mapPruned.(*typ.Map)
+	if !ok {
+		t.Fatalf("expected map, got %T", mapPruned)
+	}
+	assertKey("map", mapResult.Key)
+
+	readonlyPruned := PruneSoftUnionMembers(typ.NewReadonlyMap(nilableKey, typ.String))
+	readonlyResult, ok := readonlyPruned.(*typ.ReadonlyMap)
+	if !ok {
+		t.Fatalf("expected readonly map, got %T", readonlyPruned)
+	}
+	assertKey("readonly map", readonlyResult.Key)
+
+	recordPruned := PruneSoftUnionMembers(typ.NewRecord().
+		MapComponent(nilableKey, typ.String).
+		Build())
+	recordResult, ok := recordPruned.(*typ.Record)
+	if !ok {
+		t.Fatalf("expected record, got %T", recordPruned)
+	}
+	assertKey("record map component", recordResult.MapKey)
+}

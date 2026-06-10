@@ -134,6 +134,39 @@ func TestWidenForInferenceBasicContainers(t *testing.T) {
 	}
 }
 
+func TestWidenForInferenceNormalizesNilableTableKeys(t *testing.T) {
+	nilableLiteralKey := typ.NewOptional(typ.LiteralString("key"))
+
+	widenedMap := WidenForInference(typ.NewMap(nilableLiteralKey, typ.LiteralInt(42)))
+	resultMap, ok := widenedMap.(*typ.Map)
+	if !ok {
+		t.Fatalf("expected Map, got %T", widenedMap)
+	}
+	if resultMap.Key != typ.String {
+		t.Fatalf("map key should widen and drop nil, got %v", resultMap.Key)
+	}
+
+	widenedReadonly := WidenForInference(typ.NewReadonlyMap(nilableLiteralKey, typ.LiteralInt(42)))
+	resultReadonly, ok := widenedReadonly.(*typ.ReadonlyMap)
+	if !ok {
+		t.Fatalf("expected ReadonlyMap, got %T", widenedReadonly)
+	}
+	if resultReadonly.Key != typ.String {
+		t.Fatalf("readonly map key should widen and drop nil, got %v", resultReadonly.Key)
+	}
+
+	widenedRecord := WidenForInference(typ.NewRecord().
+		MapComponent(nilableLiteralKey, typ.LiteralInt(42)).
+		Build())
+	resultRecord, ok := widenedRecord.(*typ.Record)
+	if !ok {
+		t.Fatalf("expected Record, got %T", widenedRecord)
+	}
+	if resultRecord.MapKey != typ.String {
+		t.Fatalf("record map key should widen and drop nil, got %v", resultRecord.MapKey)
+	}
+}
+
 func TestWidenForInferenceNil(t *testing.T) {
 	if WidenForInference(nil) != nil {
 		t.Fatal("WidenForInference(nil) should return nil")

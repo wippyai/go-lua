@@ -135,6 +135,19 @@ func TestReadonlyMapViews(t *testing.T) {
 	}
 }
 
+func TestMapAdaptersNormalizeNilableKeys(t *testing.T) {
+	nilableString := typ.NewOptional(typ.String)
+
+	if !IsSubtype(typ.NewMap(nilableString, typ.Integer), typ.NewReadonlyMap(typ.String, typ.Number)) {
+		t.Fatal("mutable map should normalize its key for readonly map view checks")
+	}
+
+	recordView := typ.NewRecord().MapComponent(nilableString, typ.Integer).Build()
+	if !IsSubtype(typ.NewMap(typ.String, typ.Integer), recordView) {
+		t.Fatal("record map component should normalize its key for map-to-record checks")
+	}
+}
+
 func TestTableShapesAndMapViews(t *testing.T) {
 	if !IsSubtype(typ.NewRecord().Build(), typ.NewArray(typ.Number)) {
 		t.Fatal("empty record should satisfy array shape")

@@ -252,6 +252,45 @@ func TestExpandInstantiated(t *testing.T) {
 		}
 	})
 
+	t.Run("normalizes instantiated table keys", func(t *testing.T) {
+		tp := typ.NewTypeParam("T", nil)
+		optionalParam := typ.NewTypeParam("U", nil)
+		optionalGeneric := typ.NewGeneric("OptionalKey", []*typ.TypeParam{optionalParam}, typ.NewOptional(optionalParam))
+		nilableKey := typ.Instantiate(optionalGeneric, tp)
+
+		mapGeneric := typ.NewGeneric("Map", []*typ.TypeParam{tp}, typ.NewMap(nilableKey, typ.Number))
+		mapExpanded := ExpandInstantiated(typ.Instantiate(mapGeneric, typ.String))
+		mapResult, ok := mapExpanded.(*typ.Map)
+		if !ok {
+			t.Fatalf("expected map, got %T", mapExpanded)
+		}
+		if mapResult.Key != typ.String {
+			t.Fatalf("instantiated map key = %v, want string", mapResult.Key)
+		}
+
+		readonlyGeneric := typ.NewGeneric("ReadonlyMap", []*typ.TypeParam{tp}, typ.NewReadonlyMap(nilableKey, typ.Number))
+		readonlyExpanded := ExpandInstantiated(typ.Instantiate(readonlyGeneric, typ.String))
+		readonlyResult, ok := readonlyExpanded.(*typ.ReadonlyMap)
+		if !ok {
+			t.Fatalf("expected readonly map, got %T", readonlyExpanded)
+		}
+		if readonlyResult.Key != typ.String {
+			t.Fatalf("instantiated readonly map key = %v, want string", readonlyResult.Key)
+		}
+
+		recordGeneric := typ.NewGeneric("RecordMap", []*typ.TypeParam{tp}, typ.NewRecord().
+			MapComponent(nilableKey, typ.Number).
+			Build())
+		recordExpanded := ExpandInstantiated(typ.Instantiate(recordGeneric, typ.String))
+		recordResult, ok := recordExpanded.(*typ.Record)
+		if !ok {
+			t.Fatalf("expected record, got %T", recordExpanded)
+		}
+		if recordResult.MapKey != typ.String {
+			t.Fatalf("instantiated record map key = %v, want string", recordResult.MapKey)
+		}
+	})
+
 	t.Run("optional", func(t *testing.T) {
 		tp := typ.NewTypeParam("T", nil)
 		generic := typ.NewGeneric("Opt", []*typ.TypeParam{tp}, typ.NewOptional(tp))
