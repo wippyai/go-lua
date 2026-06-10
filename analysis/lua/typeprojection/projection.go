@@ -2,7 +2,7 @@ package typeprojection
 
 import (
 	"github.com/wippyai/go-lua/analysis/domain/effect/returns"
-	"github.com/wippyai/go-lua/analysis/lua/access"
+	"github.com/wippyai/go-lua/analysis/lua/typeaccess"
 	"github.com/wippyai/go-lua/analysis/type/subtype"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/analysis/type/unwrap"
@@ -14,13 +14,13 @@ func ApplyTypeProjection(source typ.Type, projection returns.TypeProjection) (ty
 	for _, step := range projection.Steps {
 		switch step.Kind {
 		case returns.TypeProjectionField:
-			next, ok := access.Field(current, step.Field)
+			next, ok := typeaccess.Field(current, step.Field)
 			if !ok {
 				return nil, false
 			}
 			current = next
 		case returns.TypeProjectionCallableReturn:
-			next, ok := access.CallableReturn(current)
+			next, ok := typeaccess.CallableReturn(current)
 			if !ok {
 				return nil, false
 			}

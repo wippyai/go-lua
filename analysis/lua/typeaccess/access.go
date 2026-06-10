@@ -1,5 +1,5 @@
-// Package access provides Lua table and callable access projections.
-package access
+// Package typeaccess provides Lua table and callable type access projections.
+package typeaccess
 
 import (
 	"github.com/wippyai/go-lua/analysis/type/normalize"
