@@ -152,7 +152,7 @@ func IsContainer(t typ.Type) bool {
 // IsBuiltinTableTop reports whether t is the builtin "table" top marker type.
 //
 // The checker models `table` as an interface named "table" with no methods.
-// This marker means "some Lua table shape", not a closed interface.
+// This marker means "some table-like shape", not a closed interface.
 func IsBuiltinTableTop(t typ.Type) bool {
 	if t == nil {
 		return false

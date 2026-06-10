@@ -5,6 +5,7 @@ import (
 	"unsafe"
 
 	"github.com/wippyai/go-lua/analysis/internal/hash"
+	luatable "github.com/wippyai/go-lua/analysis/lua/table"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
@@ -291,13 +292,13 @@ func collapseChildren(slot typ.Type, family *typ.Recursive) typ.Type {
 			builder.Metatable(child(v.Metatable))
 		}
 		if v.HasMapComponent() {
-			builder.MapComponent(child(v.MapKey), child(v.MapValue))
+			builder.MapComponent(luatable.NormalizeKey(child(v.MapKey)), child(v.MapValue))
 		}
 		return builder.Build()
 	case *typ.Map:
-		return typ.NewMap(child(v.Key), child(v.Value))
+		return luatable.NewMap(child(v.Key), child(v.Value))
 	case *typ.ReadonlyMap:
-		return typ.NewReadonlyMap(child(v.Key), child(v.Value))
+		return luatable.NewReadonlyMap(child(v.Key), child(v.Value))
 	case *typ.Array:
 		return typ.NewArray(child(v.Element))
 	case *typ.Optional:

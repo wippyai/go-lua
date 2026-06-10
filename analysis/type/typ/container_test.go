@@ -92,10 +92,11 @@ func TestMapNilKeyValueDefaultsToUnknown(t *testing.T) {
 	}
 }
 
-func TestMapKeyRemovesImpossibleNil(t *testing.T) {
-	m := NewMap(NewOptional(String), Number)
-	if !TypeEquals(m.Key, String) {
-		t.Fatalf("map key = %v, want string", m.Key)
+func TestMapKeyPreservesNilableKey(t *testing.T) {
+	key := NewOptional(String)
+	m := NewMap(key, Number)
+	if m.Key != key {
+		t.Fatalf("map key = %v, want original key", m.Key)
 	}
 }
 

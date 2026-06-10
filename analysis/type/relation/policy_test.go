@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"testing"
 
+	luatable "github.com/wippyai/go-lua/analysis/lua/table"
 	. "github.com/wippyai/go-lua/analysis/type/typ"
 )
 
@@ -542,7 +543,10 @@ func TestJoinReturnSlot_MergesMissingOpenRecordFieldWithUnknownTail(t *testing.T
 }
 
 func TestRecordMapKeyRemovesImpossibleNil(t *testing.T) {
-	rec := NewRecord().MapComponent(NewOptional(String), Number).Build()
+	rec := luatable.RebuildRecord(RecordParts{
+		MapKey:   NewOptional(String),
+		MapValue: Number,
+	})
 	if !TypeEquals(rec.MapKey, String) {
 		t.Fatalf("record map key = %v, want string", rec.MapKey)
 	}

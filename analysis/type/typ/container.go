@@ -9,9 +9,7 @@ import (
 
 // Array represents a homogeneous sequence type: T[].
 //
-// Arrays are Lua tables with integer keys starting at 1. The Element type
-// describes what each element contains. Arrays support ipairs iteration
-// and length operator (#).
+// The Element type describes what each element contains.
 type Array struct {
 	Element Type
 	// Fresh marks a transient empty-array-literal seed ({}). It participates in
@@ -85,9 +83,8 @@ func (a *Array) Equals(o Type) bool {
 
 // Map represents a homogeneous key-value mapping: {[K]: V}.
 //
-// Maps are Lua tables where all keys have type K and all values have type V.
-// Unlike Records, Maps have uniform types for all entries rather than
-// named fields with potentially different types.
+// Maps have uniform types for all entries rather than named fields with
+// potentially different types.
 type Map struct {
 	Key                   Type
 	Value                 Type
@@ -106,7 +103,6 @@ func NewMap(key, value Type) *Map {
 	if key == nil {
 		key = Unknown
 	}
-	key = NormalizeTableKey(key)
 	if value == nil {
 		value = Unknown
 	}
@@ -168,7 +164,6 @@ func NewReadonlyMap(key, value Type) *ReadonlyMap {
 	if key == nil {
 		key = Unknown
 	}
-	key = NormalizeTableKey(key)
 	if value == nil {
 		value = Unknown
 	}

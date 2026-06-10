@@ -180,9 +180,6 @@ func buildRecordType(fields []Field, staticMembers []StaticMember, metatable, ma
 	if mapKey == nil && mapValue != nil {
 		mapKey = Unknown
 	}
-	if mapKey != nil {
-		mapKey = NormalizeTableKey(mapKey)
-	}
 	if mapValue == nil && mapKey != nil {
 		mapValue = Unknown
 	}

@@ -6,6 +6,7 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/internal/hash"
 	"github.com/wippyai/go-lua/analysis/internal/recursion"
+	luatable "github.com/wippyai/go-lua/analysis/lua/table"
 	"github.com/wippyai/go-lua/analysis/type/gradual"
 	"github.com/wippyai/go-lua/analysis/type/kind"
 	. "github.com/wippyai/go-lua/analysis/type/typ"
@@ -1138,7 +1139,7 @@ func (s *returnJoinState) joinCompatibleRecords(a, b Type) (Type, bool) {
 	}
 
 	staticMembers := s.mergeRecordStaticMembers(ar, br)
-	merged := RebuildRecord(RecordParts{
+	merged := luatable.RebuildRecord(RecordParts{
 		Fields:        fields,
 		StaticMembers: staticMembers,
 		Metatable:     metatable,
@@ -1296,13 +1297,13 @@ func (s *returnJoinState) joinFieldContainerSlot(a, b Type) (Type, bool) {
 		if !ok {
 			return nil, false
 		}
-		return NewMap(JoinPreferNonSoft(av.Key, bv.Key), s.joinReturnSlot(av.Value, bv.Value)), true
+		return luatable.NewMap(JoinPreferNonSoft(av.Key, bv.Key), s.joinReturnSlot(av.Value, bv.Value)), true
 	case *ReadonlyMap:
 		bv, ok := b.(*ReadonlyMap)
 		if !ok {
 			return nil, false
 		}
-		return NewReadonlyMap(JoinPreferNonSoft(av.Key, bv.Key), s.joinReturnSlot(av.Value, bv.Value)), true
+		return luatable.NewReadonlyMap(JoinPreferNonSoft(av.Key, bv.Key), s.joinReturnSlot(av.Value, bv.Value)), true
 	case *Tuple:
 		bv, ok := b.(*Tuple)
 		if !ok || len(av.Elements) != len(bv.Elements) {
@@ -1436,7 +1437,7 @@ func literalBase(lit *Literal) Type {
 }
 
 func normalizeMergedRecordField(t Type) (Type, bool) {
-	if inner, optional := SplitNilableFieldType(t); optional {
+	if inner, optional := luatable.SplitNilableField(t); optional {
 		return inner, true
 	}
 	return t, false

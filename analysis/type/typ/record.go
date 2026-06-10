@@ -36,7 +36,7 @@ type StaticMember struct {
 	Readonly bool
 }
 
-// Record represents a Lua table with named fields: {field1: T1, field2: T2, ...}.
+// Record represents a product type with named fields: {field1: T1, field2: T2, ...}.
 //
 // Records support both structural typing (field presence/type matching) and
 // optional map components for tables with dynamic indexing.
