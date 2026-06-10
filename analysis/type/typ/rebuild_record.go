@@ -131,7 +131,6 @@ func buildRecordType(fields []Field, staticMembers []StaticMember, metatable, ma
 	containsInstantiated := knownInstantiatedFields(sorted) || knownInstantiatedStaticMembers(members) || knownInstantiated(metatable, mapKey, mapValue)
 	containsRecursive := knownRecursiveFields(sorted) || knownRecursiveStaticMembers(members) || knownRecursive(metatable, mapKey, mapValue)
 	containsOpenRecursive := knownOpenRecursiveFields(sorted) || knownOpenRecursiveStaticMembers(members) || knownOpenRecursive(metatable, mapKey, mapValue)
-	containsCallableSurf := knownCallableSurfaceFields(sorted) || knownCallableSurfaceStaticMembers(members) || hasCallableSurface(metatable) || hasCallableSurface(mapValue)
 
 	return &Record{
 		Fields:                sorted,
@@ -149,7 +148,6 @@ func buildRecordType(fields []Field, staticMembers []StaticMember, metatable, ma
 		containsInstantiated:  containsInstantiated,
 		containsRecursive:     containsRecursive,
 		containsOpenRecursive: containsOpenRecursive,
-		containsCallableSurf:  containsCallableSurf,
 	}
 }
 

@@ -34,7 +34,6 @@ type Record struct {
 	containsInstantiated  bool
 	containsRecursive     bool
 	containsOpenRecursive bool
-	containsCallableSurf  bool
 	strCache              stringCache
 }
 

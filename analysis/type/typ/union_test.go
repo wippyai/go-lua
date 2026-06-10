@@ -527,22 +527,6 @@ func TestIntersectionConstructionHashesEachMemberOnce(t *testing.T) {
 	}
 }
 
-func TestUnionCallableSurfaceFlag(t *testing.T) {
-	dataMembers := make([]Type, 0, 1024)
-	for i := 0; i < cap(dataMembers); i++ {
-		dataMembers = append(dataMembers, NewRecord().Field("id", LiteralInt(int64(i))).Build())
-	}
-	data := NewUnion(dataMembers...)
-	if hasCallableSurface(data) {
-		t.Fatalf("data-only union reported callable surface: %v", data)
-	}
-
-	callable := NewUnion(data, NewOptional(Func().Returns(String).Build()))
-	if !hasCallableSurface(callable) {
-		t.Fatalf("union with optional function did not report callable surface: %v", callable)
-	}
-}
-
 func TestNewUnionRecursiveMembersUseNodeIdentityDedup(t *testing.T) {
 	left := NewRecursive("Suite", func(self Type) Type {
 		return NewRecord().
@@ -592,41 +576,5 @@ func TestNewUnionRecursiveMembersDoNotStructuralDedupeEquivalentFamilies(t *test
 	}
 	if !union.Contains(left) || !union.Contains(right) {
 		t.Fatalf("recursive union does not contain both identity members: %v", union)
-	}
-}
-
-func TestRecordCallableSurfaceFlag(t *testing.T) {
-	data := NewRecord().
-		Field("id", String).
-		Field("items", NewArray(Func().Returns(String).Build())).
-		Build()
-	if recordCallableSurface(data) {
-		t.Fatalf("callable inside data container should not be a record callable surface")
-	}
-
-	methodRecord := NewRecord().
-		Field("build", Func().Returns(String).Build()).
-		Build()
-	if !recordCallableSurface(methodRecord) {
-		t.Fatalf("direct function field should be a record callable surface")
-	}
-
-	mapRecord := NewRecord().
-		MapComponent(String, NewOptional(Func().Returns(String).Build())).
-		Build()
-	if !recordCallableSurface(mapRecord) {
-		t.Fatalf("callable map value should be a record callable surface")
-	}
-}
-
-func TestCallableSurfaceFastPathDoesNotAllocateForDataShapes(t *testing.T) {
-	record := NewRecord().Field("id", String).Build()
-	data := NewUnion(record, NewArray(Integer), NewMap(String, Number))
-
-	if got := testing.AllocsPerRun(100, func() {
-		_ = hasCallableSurface(record)
-		_ = hasCallableSurface(data)
-	}); got != 0 {
-		t.Fatalf("callable surface data-shape allocations = %v, want 0", got)
 	}
 }

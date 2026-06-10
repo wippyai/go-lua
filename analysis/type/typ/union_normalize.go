@@ -32,7 +32,6 @@ func newNormalizedUnion(members []Type, memberHashes []uint64) Type {
 	containsInstantiated := false
 	containsRecursive := false
 	containsOpenRecursive := false
-	containsCallableSurf := false
 	for i, m := range membersCopy {
 		h = hash.HashCombine(h, hashesCopy[i])
 		if !containsAny && knownContainsAny(m) {
@@ -53,9 +52,6 @@ func newNormalizedUnion(members []Type, memberHashes []uint64) Type {
 		if !containsOpenRecursive && unionMemberContainsOpenRecursive(m) {
 			containsOpenRecursive = true
 		}
-		if !containsCallableSurf && hasCallableSurface(m) {
-			containsCallableSurf = true
-		}
 	}
 
 	return &Union{
@@ -68,7 +64,6 @@ func newNormalizedUnion(members []Type, memberHashes []uint64) Type {
 		containsInstantiated:  containsInstantiated,
 		containsRecursive:     containsRecursive,
 		containsOpenRecursive: containsOpenRecursive,
-		containsCallableSurf:  containsCallableSurf,
 	}
 }
 

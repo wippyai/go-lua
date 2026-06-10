@@ -1,23 +1,5 @@
 package typ
 
-func knownCallableSurfaceFields(fields []Field) bool {
-	for _, f := range fields {
-		if hasCallableSurface(f.Type) {
-			return true
-		}
-	}
-	return false
-}
-
-func knownCallableSurfaceStaticMembers(members []StaticMember) bool {
-	for _, m := range members {
-		if hasCallableSurface(m.Type) {
-			return true
-		}
-	}
-	return false
-}
-
 func knownAnyStaticMembers(members []StaticMember) bool {
 	for _, m := range members {
 		if knownAny(m.Type) {
