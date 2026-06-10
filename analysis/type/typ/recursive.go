@@ -73,19 +73,6 @@ func NewRecursive(name string, builder RecursiveBuilder) *Recursive {
 	return rec
 }
 
-// NewRecursiveWithBody creates a recursive type with a pre-built body.
-// Use this when the body is already constructed with proper self-references.
-func NewRecursiveWithBody(name string, body Type) *Recursive {
-	id := atomic.AddUint64(&recursiveIDCounter, 1)
-
-	rec := &Recursive{
-		ID:   id,
-		Name: name,
-	}
-	rec.SetBody(body)
-	return rec
-}
-
 // NewRecursivePlaceholder creates an empty recursive type for deferred body assignment.
 // Use SetBody to assign the body after creation. This is useful for mutual recursion.
 func NewRecursivePlaceholder(name string) *Recursive {

@@ -420,7 +420,7 @@ func TestUnionConstructionHashesEachMemberOnce(t *testing.T) {
 	}
 }
 
-func TestUnionWithoutNilPreservesRecursiveMemberHashes(t *testing.T) {
+func TestWithoutNilPreservesRecursiveMemberHashes(t *testing.T) {
 	recA := NewRecursive("Node", func(self Type) Type {
 		return NewRecord().Field("next", NewOptional(self)).Build()
 	})
@@ -432,10 +432,13 @@ func TestUnionWithoutNilPreservesRecursiveMemberHashes(t *testing.T) {
 		t.Fatalf("expected union")
 	}
 
-	got := UnionWithoutNil(u)
+	got, nilable := WithoutNil(u, NilProjectionStructural)
+	if !nilable {
+		t.Fatalf("WithoutNil did not report nilable input")
+	}
 	want := NewUnion(recA, recB)
 	if !TypeEquals(got, want) {
-		t.Fatalf("UnionWithoutNil = %v, want %v", got, want)
+		t.Fatalf("WithoutNil = %v, want %v", got, want)
 	}
 	if got.Hash() != want.Hash() {
 		t.Fatalf("hash = %d, want %d", got.Hash(), want.Hash())
@@ -568,12 +571,12 @@ func TestUnionCallableSurfaceFlag(t *testing.T) {
 		dataMembers = append(dataMembers, NewRecord().Field("id", LiteralInt(int64(i))).Build())
 	}
 	data := NewUnion(dataMembers...)
-	if HasCallableSurface(data) {
+	if hasCallableSurface(data) {
 		t.Fatalf("data-only union reported callable surface: %v", data)
 	}
 
 	callable := NewUnion(data, NewOptional(Func().Returns(String).Build()))
-	if !HasCallableSurface(callable) {
+	if !hasCallableSurface(callable) {
 		t.Fatalf("union with optional function did not report callable surface: %v", callable)
 	}
 }
@@ -635,33 +638,33 @@ func TestRecordCallableSurfaceFlag(t *testing.T) {
 		Field("id", String).
 		Field("items", NewArray(Func().Returns(String).Build())).
 		Build()
-	if RecordHasCallableSurface(data) {
+	if recordCallableSurface(data) {
 		t.Fatalf("callable inside data container should not be a record callable surface")
 	}
 
 	methodRecord := NewRecord().
 		Field("build", Func().Returns(String).Build()).
 		Build()
-	if !RecordHasCallableSurface(methodRecord) {
+	if !recordCallableSurface(methodRecord) {
 		t.Fatalf("direct function field should be a record callable surface")
 	}
 
 	mapRecord := NewRecord().
 		MapComponent(String, NewOptional(Func().Returns(String).Build())).
 		Build()
-	if !RecordHasCallableSurface(mapRecord) {
+	if !recordCallableSurface(mapRecord) {
 		t.Fatalf("callable map value should be a record callable surface")
 	}
 }
 
-func TestHasCallableSurfaceFastPathDoesNotAllocateForDataShapes(t *testing.T) {
+func TestCallableSurfaceFastPathDoesNotAllocateForDataShapes(t *testing.T) {
 	record := NewRecord().Field("id", String).Build()
 	data := NewUnion(record, NewArray(Integer), NewMap(String, Number))
 
 	if got := testing.AllocsPerRun(100, func() {
-		_ = HasCallableSurface(record)
-		_ = HasCallableSurface(data)
+		_ = hasCallableSurface(record)
+		_ = hasCallableSurface(data)
 	}); got != 0 {
-		t.Fatalf("HasCallableSurface data-shape allocations = %v, want 0", got)
+		t.Fatalf("callable surface data-shape allocations = %v, want 0", got)
 	}
 }

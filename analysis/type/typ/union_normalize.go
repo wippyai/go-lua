@@ -53,7 +53,7 @@ func newNormalizedUnion(members []Type, memberHashes []uint64) Type {
 		if !containsOpenRecursive && unionMemberContainsOpenRecursive(m) {
 			containsOpenRecursive = true
 		}
-		if !containsCallableSurf && HasCallableSurface(m) {
+		if !containsCallableSurf && hasCallableSurface(m) {
 			containsCallableSurf = true
 		}
 	}

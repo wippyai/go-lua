@@ -21,7 +21,7 @@ func normalizeOptionalFieldType(t Type) Type {
 		}
 		return v.Inner
 	case *Union:
-		nonNil := optionalFieldUnionWithoutNil(v)
+		nonNil := optionalFieldNonNilUnion(v)
 		if nonNil == nil || nonNil.Kind() == kind.Never {
 			return t
 		}
@@ -31,7 +31,7 @@ func normalizeOptionalFieldType(t Type) Type {
 	}
 }
 
-func optionalFieldUnionWithoutNil(u *Union) Type {
+func optionalFieldNonNilUnion(u *Union) Type {
 	if u == nil {
 		return nil
 	}

@@ -136,10 +136,3 @@ func UnaryOperatorToMetamethod(op string) (Metamethod, bool) {
 
 	return "", false
 }
-
-// Metatabled is an interface for types that can have metamethods.
-type Metatabled interface {
-	Type
-	GetMetamethod(m Metamethod) *Function
-	HasMetamethod(m Metamethod) bool
-}

@@ -1,19 +1,19 @@
 package typ
 
-// HasCallableSurface reports whether t is, or is transparently wrapped around,
+// hasCallableSurface reports whether t is, or is transparently wrapped around,
 // a function at the callable surface. It deliberately does not descend through
 // data containers such as records, arrays, maps, or tuples.
-func HasCallableSurface(t Type) bool {
+func hasCallableSurface(t Type) bool {
 	if result, ok := hasCallableSurfaceFast(t); ok {
 		return result
 	}
-	return hasCallableSurface(t, make(map[Type]bool))
+	return hasCallableSurfaceSlow(t, make(map[Type]bool))
 }
 
-// RecordHasCallableSurface reports whether a record exposes a callable value
+// recordCallableSurface reports whether a record exposes a callable value
 // directly through a field, metatable, or map value. It does not descend
 // through data containers.
-func RecordHasCallableSurface(r *Record) bool {
+func recordCallableSurface(r *Record) bool {
 	return r != nil && r.containsCallableSurf
 }
 
@@ -39,7 +39,7 @@ func hasCallableSurfaceFast(t Type) (bool, bool) {
 	}
 }
 
-func hasCallableSurface(t Type, seen map[Type]bool) bool {
+func hasCallableSurfaceSlow(t Type, seen map[Type]bool) bool {
 	if t == nil {
 		return false
 	}
@@ -55,26 +55,26 @@ func hasCallableSurface(t Type, seen map[Type]bool) bool {
 	case *Function:
 		return true
 	case *Optional:
-		return hasCallableSurface(n.Inner, seen)
+		return hasCallableSurfaceSlow(n.Inner, seen)
 	case *Union:
 		if n.memberHashes != nil || n.hash != 0 {
 			return n.containsCallableSurf
 		}
 		for _, member := range n.Members {
-			if hasCallableSurface(member, seen) {
+			if hasCallableSurfaceSlow(member, seen) {
 				return true
 			}
 		}
 		return false
 	case *Intersection:
 		for _, member := range n.Members {
-			if hasCallableSurface(member, seen) {
+			if hasCallableSurfaceSlow(member, seen) {
 				return true
 			}
 		}
 		return false
 	case *Alias:
-		return hasCallableSurface(n.Target, seen)
+		return hasCallableSurfaceSlow(n.Target, seen)
 	default:
 		return false
 	}

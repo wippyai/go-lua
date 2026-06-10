@@ -2,7 +2,7 @@ package typ
 
 func knownCallableSurfaceFields(fields []Field) bool {
 	for _, f := range fields {
-		if HasCallableSurface(f.Type) {
+		if hasCallableSurface(f.Type) {
 			return true
 		}
 	}
@@ -11,7 +11,7 @@ func knownCallableSurfaceFields(fields []Field) bool {
 
 func knownCallableSurfaceStaticMembers(members []StaticMember) bool {
 	for _, m := range members {
-		if HasCallableSurface(m.Type) {
+		if hasCallableSurface(m.Type) {
 			return true
 		}
 	}

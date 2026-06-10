@@ -109,7 +109,7 @@ func TestOptionalOfUnionWithNil(t *testing.T) {
 	}
 }
 
-func TestOptionalOfUnionWithoutNil(t *testing.T) {
+func TestOptionalOfUnionAddsNil(t *testing.T) {
 	u := NewUnion(Number, String)
 	o := NewOptional(u)
 

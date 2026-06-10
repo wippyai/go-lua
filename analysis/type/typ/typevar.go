@@ -1,9 +1,6 @@
 package typ
 
-import (
-	"github.com/wippyai/go-lua/analysis/internal/hash"
-	"github.com/wippyai/go-lua/analysis/type/kind"
-)
+import "github.com/wippyai/go-lua/analysis/type/kind"
 
 // TypeVar represents an inference variable during type checking.
 //
@@ -13,12 +10,6 @@ import (
 type TypeVar struct {
 	ID   int
 	hash uint64
-}
-
-// NewTypeVar creates a type variable with the given ID.
-func NewTypeVar(id int) *TypeVar {
-	h := hash.HashCombine(uint64(kind.TypeVar), uint64(id))
-	return &TypeVar{ID: id, hash: h}
 }
 
 func (t *TypeVar) Kind() kind.Kind { return kind.TypeVar }
