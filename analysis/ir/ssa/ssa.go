@@ -1,3 +1,8 @@
+// Package ssa defines SSA value identifiers and phi metadata over CFG points.
+//
+// CFG construction owns graph topology. SSA data is kept in this leaf package so
+// analysis layers can attach versions and phi nodes to cfg.Point values without
+// adding SSA state back to the CFG package.
 package ssa
 
 import (
@@ -23,11 +28,11 @@ import (
 //	-- x@5 = phi(x@3, x@4) at join point
 //
 // Version components:
-//   - Root: The variable name for display/debug output only
+//   - Root: The variable name used for display/debug output
 //   - Symbol: The symbol.ID of the declaration (distinguishes shadowed names)
 //   - ID: The version number (0 = undefined, 1+ = specific assignment)
 type Version struct {
-	Root   string    // Variable name for display/debug output only
+	Root   string    // Variable name used for display/debug output
 	Symbol symbol.ID // Declaration identity (distinguishes same-named variables in different scopes)
 	ID     int       // Version number within the function (0 = undefined/uninitialized)
 }
@@ -75,18 +80,4 @@ type PhiNode struct {
 	Point    cfg.Point    // CFG point where the phi is located
 	Target   Version      // The new version created by this phi
 	Operands []PhiOperand // Incoming versions from each predecessor
-}
-
-// Versioned provides SSA versioning data for a CFG.
-type Versioned interface {
-	// VisibleVersion returns the SSA version of a symbol visible at a point.
-	// Returns a zero Version if the symbol is not defined on all paths to this point.
-	VisibleVersion(p cfg.Point, sym symbol.ID) Version
-
-	// AllVisibleVersions returns all symbol versions visible at a point.
-	// The returned map should not be modified by callers.
-	AllVisibleVersions(p cfg.Point) map[symbol.ID]Version
-
-	// PhiNodes returns all phi nodes in the graph.
-	PhiNodes() []PhiNode
 }

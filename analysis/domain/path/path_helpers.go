@@ -3,9 +3,6 @@ package path
 import (
 	"strconv"
 	"strings"
-
-	"github.com/wippyai/go-lua/analysis/lua/literal/numparse"
-	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
 // ParamPath returns the path for a parameter value.
@@ -32,9 +29,22 @@ func PlaceholderIndexFromString(s string) int {
 }
 
 func parseNonNegativeDecimal(s string) int {
-	value, ok := numparse.ParseNonNegativeDecimalInt(s)
-	if !ok {
+	if s == "" {
 		return -1
+	}
+
+	maxInt := int(^uint(0) >> 1)
+	value := 0
+	for i := 0; i < len(s); i++ {
+		ch := s[i]
+		if ch < '0' || ch > '9' {
+			return -1
+		}
+		digit := int(ch - '0')
+		if value > (maxInt-digit)/10 {
+			return -1
+		}
+		value = value*10 + digit
 	}
 	return value
 }
@@ -106,27 +116,4 @@ func SplitFieldPath(path Path) (parent Path, field string, ok bool) {
 		parent.Segments = append(parent.Segments, path.Segments[:len(path.Segments)-1]...)
 	}
 	return parent, last.Name, true
-}
-
-// SplitIndexPath splits a path into its parent path and literal index key.
-// Returns false if the path has no static index segment. The returned parent
-// path owns its own segment slice.
-func SplitIndexPath(path Path) (parent Path, key typ.Type, ok bool) {
-	if path.IsEmpty() || len(path.Segments) == 0 {
-		return Path{}, nil, false
-	}
-	last := path.Segments[len(path.Segments)-1]
-	switch last.Kind {
-	case SegmentIndexString:
-		key = typ.LiteralString(last.Name)
-	case SegmentIndexInt:
-		key = typ.LiteralInt(int64(last.Index))
-	default:
-		return Path{}, nil, false
-	}
-	parent = Path{Root: path.Root, Symbol: path.Symbol, Version: path.Version}
-	if len(path.Segments) > 1 {
-		parent.Segments = append(parent.Segments, path.Segments[:len(path.Segments)-1]...)
-	}
-	return parent, key, true
 }
