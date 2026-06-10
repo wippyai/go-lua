@@ -295,6 +295,14 @@ func recursiveContainsGraphClosedMemo(t Type, seen map[*Recursive]bool, memo map
 				break
 			}
 		}
+		if result {
+			for _, member := range n.StaticMembers {
+				if !recursiveContainsGraphClosedMemo(member.Type, seen, memo, depth+1) {
+					result = false
+					break
+				}
+			}
+		}
 		if result && n.Metatable != nil && !recursiveContainsGraphClosedMemo(n.Metatable, seen, memo, depth+1) {
 			result = false
 		}
@@ -469,6 +477,23 @@ func hashBodyWithVisitedMemo(t Type, visited map[*Recursive]bool, memo map[Type]
 					h = hash.HashCombine(h, 1)
 				}
 				if f.Readonly {
+					h = hash.HashCombine(h, 2)
+				}
+			}
+			for _, m := range r.StaticMembers {
+				h = hash.HashCombine(h, recordStaticHash)
+				h = hash.HashCombine(h, uint64(m.Kind))
+				switch m.Kind {
+				case StaticMemberStringIndex:
+					h = hash.HashCombine(h, hash.FnvString(m.Name))
+				case StaticMemberIntIndex:
+					h = hash.HashCombine(h, uint64(m.Index))
+				}
+				h = hash.HashCombine(h, hashBodyWithVisitedMemo(m.Type, visited, memo))
+				if m.Optional {
+					h = hash.HashCombine(h, 1)
+				}
+				if m.Readonly {
 					h = hash.HashCombine(h, 2)
 				}
 			}
@@ -753,6 +778,14 @@ func collectRecursiveHashDepsInTypeMemo(t Type, seen map[*Recursive]bool, memo m
 			if !collectRecursiveHashDepsInTypeMemo(field.Type, seen, memo) {
 				result = false
 				break
+			}
+		}
+		if result {
+			for _, member := range n.StaticMembers {
+				if !collectRecursiveHashDepsInTypeMemo(member.Type, seen, memo) {
+					result = false
+					break
+				}
 			}
 		}
 		if result && n.Metatable != nil && !collectRecursiveHashDepsInTypeMemo(n.Metatable, seen, memo) {

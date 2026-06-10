@@ -508,6 +508,10 @@ func containsInstantiatedDynamic(t Type, seen map[Type]bool, depth int) bool {
 			return containsInstantiatedDynamic(m.Key, seen, depth+1) ||
 				containsInstantiatedDynamic(m.Value, seen, depth+1)
 		},
+		ReadonlyMap: func(m *ReadonlyMap) bool {
+			return containsInstantiatedDynamic(m.Key, seen, depth+1) ||
+				containsInstantiatedDynamic(m.Value, seen, depth+1)
+		},
 		Tuple: func(tup *Tuple) bool {
 			for _, elem := range tup.Elements {
 				if containsInstantiatedDynamic(elem, seen, depth+1) {
@@ -545,6 +549,11 @@ func containsInstantiatedDynamic(t Type, seen map[Type]bool, depth int) bool {
 			}
 			for _, field := range r.Fields {
 				if containsInstantiatedDynamic(field.Type, seen, depth+1) {
+					return true
+				}
+			}
+			for _, member := range r.StaticMembers {
+				if containsInstantiatedDynamic(member.Type, seen, depth+1) {
 					return true
 				}
 			}
@@ -650,6 +659,10 @@ func containsNeverDynamic(t Type, seen map[Type]bool) bool {
 			return containsNeverDynamic(m.Key, seen) ||
 				containsNeverDynamic(m.Value, seen)
 		},
+		ReadonlyMap: func(m *ReadonlyMap) bool {
+			return containsNeverDynamic(m.Key, seen) ||
+				containsNeverDynamic(m.Value, seen)
+		},
 		Tuple: func(tup *Tuple) bool {
 			for _, elem := range tup.Elements {
 				if containsNeverDynamic(elem, seen) {
@@ -687,6 +700,11 @@ func containsNeverDynamic(t Type, seen map[Type]bool) bool {
 			}
 			for _, field := range r.Fields {
 				if containsNeverDynamic(field.Type, seen) {
+					return true
+				}
+			}
+			for _, member := range r.StaticMembers {
+				if containsNeverDynamic(member.Type, seen) {
 					return true
 				}
 			}
@@ -803,6 +821,10 @@ func containsTypeParamDynamic(t Type, seen map[Type]bool, depth int) bool {
 			return containsTypeParamDynamic(m.Key, seen, depth+1) ||
 				containsTypeParamDynamic(m.Value, seen, depth+1)
 		},
+		ReadonlyMap: func(m *ReadonlyMap) bool {
+			return containsTypeParamDynamic(m.Key, seen, depth+1) ||
+				containsTypeParamDynamic(m.Value, seen, depth+1)
+		},
 		Tuple: func(tup *Tuple) bool {
 			for _, elem := range tup.Elements {
 				if containsTypeParamDynamic(elem, seen, depth+1) {
@@ -840,6 +862,11 @@ func containsTypeParamDynamic(t Type, seen map[Type]bool, depth int) bool {
 			}
 			for _, field := range r.Fields {
 				if containsTypeParamDynamic(field.Type, seen, depth+1) {
+					return true
+				}
+			}
+			for _, member := range r.StaticMembers {
+				if containsTypeParamDynamic(member.Type, seen, depth+1) {
 					return true
 				}
 			}
@@ -953,6 +980,10 @@ func containsAnyDynamic(t Type, seen map[Type]bool, depth int) bool {
 			return containsAnyDynamic(m.Key, seen, depth+1) ||
 				containsAnyDynamic(m.Value, seen, depth+1)
 		},
+		ReadonlyMap: func(m *ReadonlyMap) bool {
+			return containsAnyDynamic(m.Key, seen, depth+1) ||
+				containsAnyDynamic(m.Value, seen, depth+1)
+		},
 		Tuple: func(tup *Tuple) bool {
 			for _, elem := range tup.Elements {
 				if containsAnyDynamic(elem, seen, depth+1) {
@@ -990,6 +1021,11 @@ func containsAnyDynamic(t Type, seen map[Type]bool, depth int) bool {
 			}
 			for _, field := range r.Fields {
 				if containsAnyDynamic(field.Type, seen, depth+1) {
+					return true
+				}
+			}
+			for _, member := range r.StaticMembers {
+				if containsAnyDynamic(member.Type, seen, depth+1) {
 					return true
 				}
 			}

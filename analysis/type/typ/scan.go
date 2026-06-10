@@ -113,6 +113,10 @@ func contains(t Type, pred func(Type) bool, seen containsSeen) bool {
 			return contains(m.Key, pred, seen) ||
 				contains(m.Value, pred, seen)
 		},
+		ReadonlyMap: func(m *ReadonlyMap) bool {
+			return contains(m.Key, pred, seen) ||
+				contains(m.Value, pred, seen)
+		},
 		Tuple: func(tup *Tuple) bool {
 			for _, elem := range tup.Elements {
 				if contains(elem, pred, seen) {
@@ -150,6 +154,11 @@ func contains(t Type, pred func(Type) bool, seen containsSeen) bool {
 			}
 			for _, field := range r.Fields {
 				if contains(field.Type, pred, seen) {
+					return true
+				}
+			}
+			for _, member := range r.StaticMembers {
+				if contains(member.Type, pred, seen) {
 					return true
 				}
 			}

@@ -383,3 +383,119 @@ func TestContainsNever_OpenRecursiveProductSeesLaterBodyMutation(t *testing.T) {
 		t.Fatal("ContainsNever() missed never introduced by later recursive placeholder body")
 	}
 }
+
+func TestContainsReadonlyMapTraversesKeyAndValue(t *testing.T) {
+	key := NewTypeParam("K", nil)
+	value := NewTypeParam("V", nil)
+	wrapper := NewReadonlyMap(key, value)
+
+	if !Contains(wrapper, func(node Type) bool { return node == key }) {
+		t.Fatal("Contains() missed ReadonlyMap key")
+	}
+	if !Contains(wrapper, func(node Type) bool { return node == value }) {
+		t.Fatal("Contains() missed ReadonlyMap value")
+	}
+}
+
+func TestContainsReadonlyMapDynamicPredicatesTraverseKeyAndValue(t *testing.T) {
+	cases := []struct {
+		name     string
+		contains func(Type) bool
+		marker   func() Type
+	}{
+		{name: "any", contains: ContainsAny, marker: func() Type { return Any }},
+		{name: "never", contains: ContainsNever, marker: func() Type { return Never }},
+		{name: "type-param", contains: ContainsTypeParam, marker: func() Type {
+			return NewTypeParam("T", nil)
+		}},
+		{name: "instantiated", contains: ContainsInstantiated, marker: traversalInstantiatedMarker},
+	}
+	positions := []struct {
+		name string
+		wrap func(*Recursive) Type
+	}{
+		{name: "key", wrap: func(node *Recursive) Type { return NewReadonlyMap(node, String) }},
+		{name: "value", wrap: func(node *Recursive) Type { return NewReadonlyMap(String, node) }},
+	}
+
+	for _, tc := range cases {
+		for _, pos := range positions {
+			t.Run(tc.name+"/"+pos.name, func(t *testing.T) {
+				node := NewRecursivePlaceholder("Node")
+				wrapper := pos.wrap(node)
+
+				if !knownContainsOpenRecursive(wrapper) {
+					t.Fatal("ReadonlyMap built over placeholder must remain dynamically checked")
+				}
+				if tc.contains(wrapper) {
+					t.Fatal("predicate reported marker before recursive placeholder body existed")
+				}
+
+				node.SetBody(NewRecord().Field("value", tc.marker()).Build())
+
+				if !tc.contains(wrapper) {
+					t.Fatal("predicate missed marker introduced through ReadonlyMap")
+				}
+			})
+		}
+	}
+}
+
+func TestContainsStaticMemberTraversesTypes(t *testing.T) {
+	stringMember := NewTypeParam("S", nil)
+	intMember := NewTypeParam("I", nil)
+	wrapper := NewRecord().
+		StaticStringIndex("name", stringMember).
+		StaticIntIndex(1, intMember).
+		Build()
+
+	if !Contains(wrapper, func(node Type) bool { return node == stringMember }) {
+		t.Fatal("Contains() missed string static member type")
+	}
+	if !Contains(wrapper, func(node Type) bool { return node == intMember }) {
+		t.Fatal("Contains() missed integer static member type")
+	}
+}
+
+func TestContainsStaticMemberDynamicPredicatesTraverseTypes(t *testing.T) {
+	cases := []struct {
+		name     string
+		contains func(Type) bool
+		marker   func() Type
+	}{
+		{name: "any", contains: ContainsAny, marker: func() Type { return Any }},
+		{name: "never", contains: ContainsNever, marker: func() Type { return Never }},
+		{name: "type-param", contains: ContainsTypeParam, marker: func() Type {
+			return NewTypeParam("T", nil)
+		}},
+		{name: "instantiated", contains: ContainsInstantiated, marker: traversalInstantiatedMarker},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			node := NewRecursivePlaceholder("Node")
+			wrapper := NewRecord().
+				StaticStringIndex("node", node).
+				Build()
+
+			if !knownContainsOpenRecursive(wrapper) {
+				t.Fatal("record built over static-member placeholder must remain dynamically checked")
+			}
+			if tc.contains(wrapper) {
+				t.Fatal("predicate reported marker before recursive placeholder body existed")
+			}
+
+			node.SetBody(NewRecord().Field("value", tc.marker()).Build())
+
+			if !tc.contains(wrapper) {
+				t.Fatal("predicate missed marker introduced through static member")
+			}
+		})
+	}
+}
+
+func traversalInstantiatedMarker() Type {
+	tp := NewTypeParam("T", nil)
+	box := NewGeneric("Box", []*TypeParam{tp}, NewRecord().Field("value", tp).Build())
+	return Instantiate(box, Number)
+}

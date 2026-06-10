@@ -836,3 +836,167 @@ func TestRecursiveHashDepsHandlesDeepAcyclicProducts(t *testing.T) {
 		t.Fatalf("recursive hash not stable after dependency caching: %d vs %d", first, second)
 	}
 }
+
+func TestFreezeTypeReadonlyMapFreezesKeyAndValue(t *testing.T) {
+	cases := []struct {
+		name string
+		wrap func(*Recursive) Type
+	}{
+		{name: "key", wrap: func(node *Recursive) Type { return NewReadonlyMap(node, String) }},
+		{name: "value", wrap: func(node *Recursive) Type { return NewReadonlyMap(String, node) }},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			node := NewRecursivePlaceholder("Node")
+
+			FreezeType(tc.wrap(node))
+
+			if !node.frozen {
+				t.Fatal("FreezeType() missed recursive node through ReadonlyMap")
+			}
+			node.SetBody(NewRecord().Field("value", Number).Build())
+			if node.Body != nil {
+				t.Fatal("frozen recursive node accepted SetBody after FreezeType")
+			}
+		})
+	}
+}
+
+func TestFreezeTypeStaticMemberFreezesType(t *testing.T) {
+	node := NewRecursivePlaceholder("Node")
+	wrapper := NewRecord().
+		StaticStringIndex("node", node).
+		Build()
+
+	FreezeType(wrapper)
+
+	if !node.frozen {
+		t.Fatal("FreezeType() missed recursive node through static member")
+	}
+	node.SetBody(NewRecord().Field("value", Number).Build())
+	if node.Body != nil {
+		t.Fatal("frozen recursive node accepted SetBody after FreezeType")
+	}
+}
+
+func TestEqualityHashReadonlyMapRefreshesOpenRecursiveKeyAndValue(t *testing.T) {
+	cases := []struct {
+		name string
+		wrap func(*Recursive) Type
+	}{
+		{name: "key", wrap: func(node *Recursive) Type { return NewReadonlyMap(node, String) }},
+		{name: "value", wrap: func(node *Recursive) Type { return NewReadonlyMap(String, node) }},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			node := NewRecursivePlaceholder("Node")
+			staleWrapper := tc.wrap(node)
+
+			node.SetBody(NewRecord().Field("value", Number).Build())
+			freshWrapper := tc.wrap(node)
+
+			if !TypeEquals(staleWrapper, freshWrapper) {
+				t.Fatal("ReadonlyMap built before SetBody should remain structurally equal to a fresh wrapper")
+			}
+			if EqualityHash(staleWrapper) != EqualityHash(freshWrapper) {
+				t.Fatalf("equality hash should refresh ReadonlyMap wrapper: %d vs %d", EqualityHash(staleWrapper), EqualityHash(freshWrapper))
+			}
+		})
+	}
+}
+
+func TestEqualityHashStaticMemberIncludesTypeInOpenRecursiveWrapper(t *testing.T) {
+	node := NewRecursivePlaceholder("Node")
+	direct := NewRecord().
+		StaticStringIndex("node", node).
+		Build()
+	nested := NewRecord().
+		StaticStringIndex("node", NewArray(node)).
+		Build()
+
+	if EqualityHash(direct) == EqualityHash(nested) {
+		t.Fatal("EqualityHash() ignored static member type in open recursive wrapper")
+	}
+}
+
+func TestRecursiveHashReadonlyMapTraversesKeyAndValue(t *testing.T) {
+	cases := []struct {
+		name string
+		wrap func(Type) Type
+	}{
+		{name: "key", wrap: func(node Type) Type { return NewReadonlyMap(node, String) }},
+		{name: "value", wrap: func(node Type) Type { return NewReadonlyMap(String, node) }},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			direct := NewRecursive("Box", func(self Type) Type {
+				return tc.wrap(self)
+			})
+			nested := NewRecursive("Box", func(self Type) Type {
+				return tc.wrap(NewArray(self))
+			})
+
+			if direct.Hash() != direct.Hash() {
+				t.Fatal("recursive ReadonlyMap hash should be stable")
+			}
+			if direct.Hash() == nested.Hash() {
+				t.Fatal("recursive hash ignored ReadonlyMap component type")
+			}
+		})
+	}
+}
+
+func TestRecursiveGraphClosureStaticMemberSeesUnsealedPlaceholder(t *testing.T) {
+	root := NewRecursivePlaceholder("Root")
+	dangling := NewRecursivePlaceholder("Dangling")
+	root.SetBody(NewRecord().
+		StaticStringIndex("dangling", dangling).
+		Build())
+
+	if !knownContainsOpenRecursive(root) {
+		t.Fatal("graph-closure traversal missed unsealed recursive placeholder through static member")
+	}
+}
+
+func TestRecursiveHashStaticMemberTraversesType(t *testing.T) {
+	direct := NewRecursive("Box", func(self Type) Type {
+		return NewRecord().
+			StaticStringIndex("node", self).
+			Build()
+	})
+	nested := NewRecursive("Box", func(self Type) Type {
+		return NewRecord().
+			StaticStringIndex("node", NewArray(self)).
+			Build()
+	})
+
+	if direct.Hash() != direct.Hash() {
+		t.Fatal("recursive static-member hash should be stable")
+	}
+	if direct.Hash() == nested.Hash() {
+		t.Fatal("recursive hash ignored static member type")
+	}
+}
+
+func TestRecursiveHashDependencyInvalidatesThroughStaticMember(t *testing.T) {
+	root := NewRecursivePlaceholder("Root")
+	child := NewRecursivePlaceholder("Child")
+	child.SetBody(NewRecord().Field("value", String).Build())
+	root.SetBody(NewRecord().
+		StaticStringIndex("child", child).
+		Build())
+
+	initial := root.Hash()
+	child.SetBody(NewRecord().Field("value", Number).Build())
+	updated := root.Hash()
+
+	if updated == initial {
+		t.Fatal("recursive hash dependency missed static member recursive child")
+	}
+	if got := root.Hash(); got != updated {
+		t.Fatalf("updated recursive hash did not stabilize: %d vs %d", got, updated)
+	}
+}
