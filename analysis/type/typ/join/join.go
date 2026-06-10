@@ -4,11 +4,14 @@
 // where multiple control flow paths converge.
 package join
 
-import "github.com/wippyai/go-lua/analysis/type/typ"
+import (
+	"github.com/wippyai/go-lua/analysis/type/relation"
+	"github.com/wippyai/go-lua/analysis/type/typ"
+)
 
 // ReturnVectors merges two multi-return type vectors at join points.
 //
-// Each position is joined independently using typ.JoinReturnSlot. Shorter vectors
+// Each position is joined independently using relation.JoinReturnSlot. Shorter vectors
 // are padded with Nil since Lua returns nil for missing values.
 func ReturnVectors(a, b []typ.Type) []typ.Type {
 	if len(a) == 0 {
@@ -36,7 +39,7 @@ func ReturnVectors(a, b []typ.Type) []typ.Type {
 		} else {
 			bi = typ.Nil
 		}
-		result[i] = typ.JoinReturnSlot(ai, bi)
+		result[i] = relation.JoinReturnSlot(ai, bi)
 	}
 	return result
 }

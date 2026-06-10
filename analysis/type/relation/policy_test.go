@@ -1,8 +1,10 @@
-package typ
+package relation
 
 import (
 	"fmt"
 	"testing"
+
+	. "github.com/wippyai/go-lua/analysis/type/typ"
 )
 
 func TestJoinReturnSlot_PreservesUnknownOverNil(t *testing.T) {
@@ -844,5 +846,164 @@ func TestJoinReturnSlot_CoalescesUnionRecordMember(t *testing.T) {
 	typeField := merged.GetField("type")
 	if typeField == nil || !typeField.Optional || !TypeEquals(typeField.Type, String) {
 		t.Fatalf("expected optional type:string after coalescing, got %v", typeField)
+	}
+}
+
+func TestIsRefinableAnnotation(t *testing.T) {
+	tests := []struct {
+		name string
+		t    Type
+		want bool
+	}{
+		{"nil", nil, false},
+		{"any", Any, false},
+		{"unknown", Unknown, false},
+		{"optional any", NewOptional(Any), false},
+		{"array any", NewArray(Any), true},
+		{"map string any", NewMap(String, Any), true},
+		{"map string any array", NewMap(String, NewArray(Any)), true},
+		{"open table top", NewRecord().SetOpen(true).Build(), true},
+		{"array or open table top", NewUnion(NewArray(Any), NewRecord().SetOpen(true).Build()), true},
+		{"record map any", NewRecord().MapComponent(String, Any).Build(), true},
+		{"record", NewRecord().Field("id", String).Build(), false},
+	}
+
+	for _, tt := range tests {
+		if got := IsRefinableAnnotation(tt.t); got != tt.want {
+			t.Errorf("%s: got %v, want %v", tt.name, got, tt.want)
+		}
+	}
+}
+
+func TestCoalesceCompatibleRecords_MergesExtraFieldsAsOptional(t *testing.T) {
+	base := NewRecord().
+		Field("status_code", Number).
+		Field("message", String).
+		Build()
+	withDetails := NewRecord().
+		Field("status_code", Number).
+		Field("message", String).
+		Field("code", String).
+		Field("type", String).
+		Build()
+
+	result := CoalesceCompatibleRecords([]Type{base, withDetails})
+	if len(result) != 1 {
+		t.Fatalf("expected one merged record, got %d", len(result))
+	}
+
+	rec, ok := result[0].(*Record)
+	if !ok {
+		t.Fatalf("expected record, got %T", result[0])
+	}
+	fields := map[string]Field{}
+	for _, f := range rec.Fields {
+		fields[f.Name] = f
+	}
+	if !fields["code"].Optional || !TypeEquals(fields["code"].Type, String) {
+		t.Fatalf("expected optional code:string, got %#v", fields["code"])
+	}
+	if !fields["type"].Optional || !TypeEquals(fields["type"].Type, String) {
+		t.Fatalf("expected optional type:string, got %#v", fields["type"])
+	}
+}
+
+func TestCoalesceCompatibleRecords_PreservesDiscriminatedUnion(t *testing.T) {
+	a := NewRecord().
+		Field("kind", LiteralString("a")).
+		Field("x", Number).
+		Build()
+	b := NewRecord().
+		Field("kind", LiteralString("b")).
+		Field("y", String).
+		Build()
+
+	result := CoalesceCompatibleRecords([]Type{a, b})
+	if len(result) != 2 {
+		t.Fatalf("expected discriminated variants to remain separate, got %d", len(result))
+	}
+}
+
+func TestProjectUnionMembersLeavesRecursiveFamiliesForPolicyCoalescing(t *testing.T) {
+	base := NewRecursive("SuiteA", func(self Type) Type {
+		return NewRecord().
+			Field("name", String).
+			Field("children", NewArray(self)).
+			Build()
+	})
+	withPath := NewRecursive("SuiteB", func(self Type) Type {
+		return NewRecord().
+			Field("name", String).
+			Field("children", NewArray(self)).
+			Field("full_path", String).
+			Build()
+	})
+	u, ok := NewUnion(base, Boolean, withPath).(*Union)
+	if !ok {
+		t.Fatalf("expected union")
+	}
+
+	got := ProjectUnionMembers(u, func(member Type) Type {
+		if member == Boolean {
+			return True
+		}
+		return member
+	})
+	union, ok := got.(*Union)
+	if !ok {
+		t.Fatalf("projected recursive family union = %T %v, want union", got, got)
+	}
+	recursiveCount := 0
+	for _, member := range union.Members {
+		if _, ok := member.(*Recursive); ok {
+			recursiveCount++
+		}
+	}
+	if recursiveCount != 2 {
+		t.Fatalf("projected union kept %d recursive family members, want 2: %v", recursiveCount, got)
+	}
+
+	coalesced := CoalesceProductUnion(got)
+	coalescedUnion, ok := coalesced.(*Union)
+	if !ok {
+		t.Fatalf("policy-coalesced projection = %T %v, want union", coalesced, coalesced)
+	}
+	recursiveCount = 0
+	for _, member := range coalescedUnion.Members {
+		if _, ok := member.(*Recursive); ok {
+			recursiveCount++
+		}
+	}
+	if recursiveCount != 1 {
+		t.Fatalf("policy coalescing kept %d recursive family members, want 1: %v", recursiveCount, coalesced)
+	}
+}
+
+func TestOptionalFieldKeepsProductCoalescingAtPolicyBoundaryAfterNilRemoval(t *testing.T) {
+	base := NewRecursive("SuiteA", func(self Type) Type {
+		return NewRecord().
+			Field("name", String).
+			Field("children", NewArray(self)).
+			Build()
+	})
+	withPath := NewRecursive("SuiteB", func(self Type) Type {
+		return NewRecord().
+			Field("name", String).
+			Field("children", NewArray(self)).
+			Field("full_path", String).
+			Build()
+	})
+	record := NewRecord().
+		OptField("parent", NewUnion(Nil, base, withPath)).
+		Build()
+	field := record.GetField("parent")
+	if field == nil {
+		t.Fatal("missing parent field")
+	}
+	if _, ok := field.Type.(*Union); !ok {
+		t.Fatalf("optional recursive family field = %T %v, want explicit union before policy coalescing", field.Type, field.Type)
+	}
+	if _, ok := CoalesceProductUnion(field.Type).(*Recursive); !ok {
+		t.Fatalf("explicit recursive family coalescing = %T %v, want recursive product", field.Type, field.Type)
 	}
 }

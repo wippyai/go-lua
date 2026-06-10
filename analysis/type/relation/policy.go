@@ -1,4 +1,4 @@
-package typ
+package relation
 
 import (
 	"sort"
@@ -7,6 +7,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/internal/hash"
 	"github.com/wippyai/go-lua/analysis/internal/recursion"
 	"github.com/wippyai/go-lua/analysis/type/kind"
+	. "github.com/wippyai/go-lua/analysis/type/typ"
 )
 
 const recursiveRecordFamilyName = "FlowJoin"
@@ -118,12 +119,12 @@ func returnJoinHash(t Type) uint64 {
 		return 0
 	}
 	if ContainsRecursive(t) {
-		if ptr := typePointer(t); ptr != 0 {
+		if ptr := TypePointer(t); ptr != 0 {
 			return hash.HashCombine(uint64(t.Kind()), uint64(ptr))
 		}
 		return productFamilyHash(t)
 	}
-	return typeEqualityHash(t)
+	return EqualityHash(t)
 }
 
 func (s *returnJoinState) sameReturnJoinInput(a, b Type) bool {
@@ -139,7 +140,7 @@ func (s *returnJoinState) sameReturnJoinInput(a, b Type) bool {
 		}
 		return sameProductFamily(a, b)
 	}
-	return typeEqualityHash(a) == typeEqualityHash(b) && TypeEquals(a, b)
+	return EqualityHash(a) == EqualityHash(b) && TypeEquals(a, b)
 }
 
 func (s *returnJoinState) joinReturnSlot(a, b Type) Type {
@@ -429,7 +430,7 @@ func (s *returnJoinState) coalesceFoldedProductFamilyMembers(types []Type) []Typ
 			out = append(out, candidate)
 			continue
 		}
-		if ptr := typePointer(rec); ptr != 0 && seenNodes[ptr] {
+		if ptr := TypePointer(rec); ptr != 0 && seenNodes[ptr] {
 			changed = true
 			continue
 		}
@@ -450,7 +451,7 @@ func (s *returnJoinState) coalesceFoldedProductFamilyMembers(types []Type) []Typ
 			continue
 		}
 		recReps = append(recReps, familyRep{hash: h, rep: rec})
-		if ptr := typePointer(rec); ptr != 0 {
+		if ptr := TypePointer(rec); ptr != 0 {
 			seenNodes[ptr] = true
 		}
 		out = append(out, candidate)
@@ -758,7 +759,7 @@ func recursiveRewriteCacheKey(t Type, from, to *Recursive) (recursiveRewriteKey,
 	if t == nil {
 		return recursiveRewriteKey{}, false
 	}
-	ptr := typePointer(t)
+	ptr := TypePointer(t)
 	key := recursiveRewriteKey{
 		bodyKind: t.Kind(),
 		bodyPtr:  ptr,
@@ -766,7 +767,7 @@ func recursiveRewriteCacheKey(t Type, from, to *Recursive) (recursiveRewriteKey,
 		toID:     to.ID,
 	}
 	if ptr == 0 {
-		key.bodyHash = typeEqualityHash(t)
+		key.bodyHash = EqualityHash(t)
 	}
 	return key, true
 }

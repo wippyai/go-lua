@@ -5,6 +5,7 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/internal/hash"
 	"github.com/wippyai/go-lua/analysis/type/kind"
+	"github.com/wippyai/go-lua/analysis/type/relation"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
@@ -32,11 +33,11 @@ func SameProductFamily(a, b typ.Type) bool {
 	if ProductFamilyHash(a) != ProductFamilyHash(b) {
 		return false
 	}
-	aStrict, aComparable := typ.ComparePrecision(a, b)
+	aStrict, aComparable := relation.ComparePrecision(a, b)
 	if !aComparable || aStrict {
 		return false
 	}
-	bStrict, bComparable := typ.ComparePrecision(b, a)
+	bStrict, bComparable := relation.ComparePrecision(b, a)
 	return bComparable && !bStrict
 }
 

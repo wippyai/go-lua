@@ -30,6 +30,7 @@ package join
 import (
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
 	"github.com/wippyai/go-lua/analysis/type/kind"
+	"github.com/wippyai/go-lua/analysis/type/relation"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/analysis/type/typ/unwrap"
 )
@@ -74,8 +75,8 @@ func Types(types ...typ.Type) typ.Type {
 	filtered = CoalesceEmptyRecordWithMap(filtered)
 	filtered = CoalesceEmptyRecordWithArray(filtered)
 	filtered = CoalesceMaps(filtered)
-	filtered = CoalesceRecursiveRecordFamilies(filtered)
-	filtered = CoalesceCompatibleRecords(filtered)
+	filtered = relation.CoalesceRecursiveRecordFamilies(filtered)
+	filtered = relation.CoalesceCompatibleRecords(filtered)
 	filtered = CoalesceRecordOpenness(filtered)
 	filtered = CoalesceMaps(filtered)
 	if len(filtered) < beforeCoalesce {
@@ -84,7 +85,7 @@ func Types(types ...typ.Type) typ.Type {
 	if len(filtered) == 1 {
 		return filtered[0]
 	}
-	return typ.PruneSoftUnionMembers(typ.PruneLessPreciseRefinableUnionMembers(typ.NewUnion(filtered...)))
+	return typ.PruneSoftUnionMembers(relation.PruneLessPreciseRefinableUnionMembers(typ.NewUnion(filtered...)))
 }
 
 // FlattenUnions exposes explicit union members before coalescing. This keeps
@@ -241,23 +242,6 @@ func CoalesceEmptyRecordWithArray(types []typ.Type) []typ.Type {
 		}
 	}
 	return result
-}
-
-// CoalesceCompatibleRecords merges structurally compatible record variants into
-// one optional-field record. This keeps flow joins precise for mutation-style
-// code paths while preserving discriminated unions.
-func CoalesceCompatibleRecords(types []typ.Type) []typ.Type {
-	return typ.CoalesceCompatibleRecords(types)
-}
-
-// CoalesceRecursiveRecordFamilies merges recursive record observations that
-// describe the same inferred table family. The recursive wrapper is an
-// implementation detail of the finite-height flow domain; when two branches
-// produce the same family with compatible record bodies, the join is one
-// recursive product with optional/merged body fields, not a growing union of
-// construction histories.
-func CoalesceRecursiveRecordFamilies(types []typ.Type) []typ.Type {
-	return typ.CoalesceRecursiveRecordFamilies(types)
 }
 
 // filterUnknown removes nil and unknown types from the slice.

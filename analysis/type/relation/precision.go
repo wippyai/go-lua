@@ -1,9 +1,46 @@
-package typ
+package relation
 
 import (
 	"github.com/wippyai/go-lua/analysis/internal/hash"
 	"github.com/wippyai/go-lua/analysis/type/kind"
+	. "github.com/wippyai/go-lua/analysis/type/typ"
 )
+
+type typePair struct {
+	a uintptr
+	b uintptr
+}
+
+type containsSeen map[uint64][]Type
+
+func (s containsSeen) contains(t Type) bool {
+	if t == nil || s == nil {
+		return false
+	}
+	for _, existing := range s[containsSeenKey(t)] {
+		if TypeEquals(existing, t) {
+			return true
+		}
+	}
+	return false
+}
+
+func (s containsSeen) remember(t Type) {
+	if t == nil || s == nil {
+		return
+	}
+	hash := containsSeenKey(t)
+	s[hash] = append(s[hash], t)
+}
+
+func containsSeenKey(t Type) uint64 {
+	if ContainsRecursive(t) {
+		if ptr := TypePointer(t); ptr != 0 {
+			return uint64(ptr)
+		}
+	}
+	return EqualityHash(t)
+}
 
 // MorePrecise reports whether candidate carries strictly more type information
 // than baseline under the gradual-typing precision relation.
@@ -484,8 +521,8 @@ func (s *fallbackRefineState) ownsTypeParam(t Type) bool {
 }
 
 func fallbackRefinePair(summary, fallback Type) (typePair, bool) {
-	sp := typePointer(summary)
-	fp := typePointer(fallback)
+	sp := TypePointer(summary)
+	fp := TypePointer(fallback)
 	if sp == 0 && fp == 0 {
 		return typePair{}, false
 	}
@@ -1012,8 +1049,8 @@ func enterPrecisionPair(candidate, baseline Type, seen *precisionSeen, familyPai
 	releaseNodes := false
 	releaseFamilies := false
 
-	cp := typePointer(candidate)
-	bp := typePointer(baseline)
+	cp := TypePointer(candidate)
+	bp := TypePointer(baseline)
 	if cp != 0 || bp != 0 {
 		if seen.nodes == nil {
 			seen.nodes = make(map[typePair]int)
@@ -1076,7 +1113,7 @@ func precisionFamilyHash(t Type, seen *precisionSeen) uint64 {
 }
 
 func precisionFamilyHashSeen(t Type, active map[uintptr]bool, seen *precisionSeen) (out uint64) {
-	t = normalizeNilType(t)
+	t = NormalizeNilType(t)
 	if t == nil {
 		return 0
 	}
@@ -1104,7 +1141,7 @@ func precisionFamilyHashSeen(t Type, active map[uintptr]bool, seen *precisionSee
 		}()
 	}
 
-	ptr := typePointer(t)
+	ptr := TypePointer(t)
 	if ptr != 0 {
 		if active[ptr] {
 			return hash.HashCombine(uint64(kind.Recursive), hash.FnvString("$cycle"))
@@ -1239,7 +1276,7 @@ func precisionFamilyHashSeen(t Type, active map[uintptr]bool, seen *precisionSee
 }
 
 func precisionFamilyMemberHash(t Type, active map[uintptr]bool, seen *precisionSeen) (out uint64) {
-	t = normalizeNilType(t)
+	t = NormalizeNilType(t)
 	if t == nil {
 		return 0
 	}
@@ -1267,13 +1304,13 @@ func precisionFamilyMemberHash(t Type, active map[uintptr]bool, seen *precisionS
 		}()
 	}
 	if !ContainsRecursive(t) {
-		return typeEqualityHash(t)
+		return EqualityHash(t)
 	}
 	return precisionFamilyTerminalHash(t, seen)
 }
 
 func precisionFamilyTerminalHash(t Type, seen *precisionSeen) (out uint64) {
-	t = normalizeNilType(t)
+	t = NormalizeNilType(t)
 	if t == nil {
 		return 0
 	}
@@ -1301,7 +1338,7 @@ func precisionFamilyTerminalHash(t Type, seen *precisionSeen) (out uint64) {
 		}()
 	}
 	if !ContainsRecursive(t) {
-		return typeEqualityHash(t)
+		return EqualityHash(t)
 	}
 	return hash.HashCombine(uint64(t.Kind()), hash.FnvString("$recursive-family"))
 }

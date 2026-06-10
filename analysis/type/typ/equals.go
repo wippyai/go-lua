@@ -318,6 +318,11 @@ func normalizeNilType(t Type) Type {
 	return t
 }
 
+// NormalizeNilType converts typed nil Type implementations to nil.
+func NormalizeNilType(t Type) Type {
+	return normalizeNilType(t)
+}
+
 func typeEqualsCanUseHashPrefilter(a, b Type) bool {
 	return !knownContainsRecursive(a) &&
 		!knownContainsRecursive(b) &&
@@ -366,6 +371,12 @@ func typePointer(t Type) uintptr {
 	}
 
 	return v.Pointer()
+}
+
+// TypePointer returns the stable node pointer used by recursive relation
+// algorithms. It returns 0 for non-pointer type implementations.
+func TypePointer(t Type) uintptr {
+	return typePointer(t)
 }
 
 // TypeString returns string representation with depth limiting.

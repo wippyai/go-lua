@@ -130,29 +130,3 @@ func TestPruneSoftUnionMembers_AliasStillDescends(t *testing.T) {
 		t.Fatalf("expected alias target to be pruned to %v, got %v", leaf, gotAlias.Target)
 	}
 }
-
-func TestIsRefinableAnnotation(t *testing.T) {
-	tests := []struct {
-		name string
-		t    Type
-		want bool
-	}{
-		{"nil", nil, false},
-		{"any", Any, false},
-		{"unknown", Unknown, false},
-		{"optional any", NewOptional(Any), false},
-		{"array any", NewArray(Any), true},
-		{"map string any", NewMap(String, Any), true},
-		{"map string any array", NewMap(String, NewArray(Any)), true},
-		{"open table top", NewRecord().SetOpen(true).Build(), true},
-		{"array or open table top", NewUnion(NewArray(Any), NewRecord().SetOpen(true).Build()), true},
-		{"record map any", NewRecord().MapComponent(String, Any).Build(), true},
-		{"record", NewRecord().Field("id", String).Build(), false},
-	}
-
-	for _, tt := range tests {
-		if got := IsRefinableAnnotation(tt.t); got != tt.want {
-			t.Errorf("%s: got %v, want %v", tt.name, got, tt.want)
-		}
-	}
-}

@@ -476,55 +476,6 @@ func TestTypes_MixedUnknown(t *testing.T) {
 	}
 }
 
-func TestCoalesceCompatibleRecords_MergesExtraFieldsAsOptional(t *testing.T) {
-	base := typ.NewRecord().
-		Field("status_code", typ.Number).
-		Field("message", typ.String).
-		Build()
-	withDetails := typ.NewRecord().
-		Field("status_code", typ.Number).
-		Field("message", typ.String).
-		Field("code", typ.String).
-		Field("type", typ.String).
-		Build()
-
-	result := CoalesceCompatibleRecords([]typ.Type{base, withDetails})
-	if len(result) != 1 {
-		t.Fatalf("expected one merged record, got %d", len(result))
-	}
-
-	rec, ok := result[0].(*typ.Record)
-	if !ok {
-		t.Fatalf("expected record, got %T", result[0])
-	}
-	fields := map[string]typ.Field{}
-	for _, f := range rec.Fields {
-		fields[f.Name] = f
-	}
-	if !fields["code"].Optional || !typ.TypeEquals(fields["code"].Type, typ.String) {
-		t.Fatalf("expected optional code:string, got %#v", fields["code"])
-	}
-	if !fields["type"].Optional || !typ.TypeEquals(fields["type"].Type, typ.String) {
-		t.Fatalf("expected optional type:string, got %#v", fields["type"])
-	}
-}
-
-func TestCoalesceCompatibleRecords_PreservesDiscriminatedUnion(t *testing.T) {
-	a := typ.NewRecord().
-		Field("kind", typ.LiteralString("a")).
-		Field("x", typ.Number).
-		Build()
-	b := typ.NewRecord().
-		Field("kind", typ.LiteralString("b")).
-		Field("y", typ.String).
-		Build()
-
-	result := CoalesceCompatibleRecords([]typ.Type{a, b})
-	if len(result) != 2 {
-		t.Fatalf("expected discriminated variants to remain separate, got %d", len(result))
-	}
-}
-
 func TestTypes_CoalescesCompatibleRecursiveRecordFamilies(t *testing.T) {
 	base := typ.NewRecursive("Suite", func(self typ.Type) typ.Type {
 		return typ.NewRecord().

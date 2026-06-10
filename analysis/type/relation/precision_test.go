@@ -1,6 +1,10 @@
-package typ
+package relation
 
-import "testing"
+import (
+	"testing"
+
+	. "github.com/wippyai/go-lua/analysis/type/typ"
+)
 
 func TestMorePreciseRecordFieldReplacesUnknown(t *testing.T) {
 	baseline := NewRecord().
