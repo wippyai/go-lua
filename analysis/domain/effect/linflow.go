@@ -2,9 +2,8 @@ package effect
 
 import (
 	"fmt"
-	"strconv"
-	"strings"
 
+	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
@@ -62,19 +61,13 @@ func (f FlowInto) Equals(other Label) bool {
 	return false
 }
 
-type PathSegmentKind uint8
-
 const (
-	PathSegmentField PathSegmentKind = iota
-	PathSegmentIndexString
-	PathSegmentIndexInt
+	PathSegmentField       = segment.SegmentField
+	PathSegmentIndexString = segment.SegmentIndexString
+	PathSegmentIndexInt    = segment.SegmentIndexInt
 )
 
-type PathSegment struct {
-	Kind  PathSegmentKind
-	Name  string
-	Index int
-}
+type PathSegment = segment.Segment
 
 type PathSuffix []PathSegment
 
@@ -144,36 +137,5 @@ func (p PathSuffix) Equal(other PathSuffix) bool {
 }
 
 func (p PathSuffix) String() string {
-	if len(p) == 0 {
-		return ""
-	}
-	var b strings.Builder
-	for _, seg := range p {
-		switch seg.Kind {
-		case PathSegmentField:
-			b.WriteByte('.')
-			b.WriteString(seg.Name)
-		case PathSegmentIndexString:
-			writeQuotedPathSegment(&b, seg.Name)
-		case PathSegmentIndexInt:
-			b.WriteByte('[')
-			b.WriteString(strconv.Itoa(seg.Index))
-			b.WriteByte(']')
-		}
-	}
-	return b.String()
-}
-
-func writeQuotedPathSegment(b *strings.Builder, key string) {
-	b.WriteString("[\"")
-	for i := 0; i < len(key); i++ {
-		switch key[i] {
-		case '\\', '"':
-			b.WriteByte('\\')
-			b.WriteByte(key[i])
-		default:
-			b.WriteByte(key[i])
-		}
-	}
-	b.WriteString("\"]")
+	return segment.FormatSegments(p)
 }
