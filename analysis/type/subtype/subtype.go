@@ -701,7 +701,7 @@ func (c *checker) checkReadonlyMap(sub, super *typ.ReadonlyMap, depth int) bool 
 		return false
 	}
 	return c.check(sub.Key, super.Key, depth+1) &&
-		c.check(presentReadonlyEntryValue(sub.Value), super.Value, depth+1)
+		c.check(typetable.PresentReadonlyEntryValue(sub.Value), super.Value, depth+1)
 }
 
 func (c *checker) checkTuple(sub, super *typ.Tuple, depth int) bool {
@@ -773,7 +773,7 @@ func (c *checker) checkRecordToReadonlyMap(sub *typ.Record, super *typ.ReadonlyM
 		if !c.check(typ.LiteralString(f.Name), super.Key, depth+1) {
 			return false
 		}
-		if !c.check(presentReadonlyEntryValue(f.Type), super.Value, depth+1) {
+		if !c.check(typetable.PresentReadonlyEntryValue(f.Type), super.Value, depth+1) {
 			return false
 		}
 	}
@@ -782,7 +782,7 @@ func (c *checker) checkRecordToReadonlyMap(sub *typ.Record, super *typ.ReadonlyM
 		if !ok || !c.check(keyType, super.Key, depth+1) {
 			return false
 		}
-		if !c.check(presentReadonlyEntryValue(m.Type), super.Value, depth+1) {
+		if !c.check(typetable.PresentReadonlyEntryValue(m.Type), super.Value, depth+1) {
 			return false
 		}
 	}
@@ -795,7 +795,7 @@ func (c *checker) checkRecordToReadonlyMap(sub *typ.Record, super *typ.ReadonlyM
 		if !c.check(sub.MapKey, super.Key, depth+1) {
 			return false
 		}
-		if !c.check(presentReadonlyEntryValue(sub.MapValue), super.Value, depth+1) {
+		if !c.check(typetable.PresentReadonlyEntryValue(sub.MapValue), super.Value, depth+1) {
 			return false
 		}
 	}
@@ -845,7 +845,7 @@ func (c *checker) checkTupleToReadonlyMap(sub *typ.Tuple, super *typ.ReadonlyMap
 		if !c.check(typ.LiteralInt(int64(i+1)), super.Key, depth+1) {
 			return false
 		}
-		if !c.check(presentReadonlyEntryValue(elem), super.Value, depth+1) {
+		if !c.check(typetable.PresentReadonlyEntryValue(elem), super.Value, depth+1) {
 			return false
 		}
 	}
@@ -860,52 +860,6 @@ func readonlyStaticMemberKeyType(member typ.StaticMember) (typ.Type, bool) {
 		return typ.LiteralInt(member.Index), true
 	default:
 		return nil, false
-	}
-}
-
-func presentReadonlyEntryValue(t typ.Type) typ.Type {
-	if inner, optional := splitNilableFieldType(t); optional {
-		return inner
-	}
-	return t
-}
-
-func splitNilableFieldType(t typ.Type) (typ.Type, bool) {
-	switch v := typ.UnwrapAnnotated(t).(type) {
-	case nil:
-		return nil, false
-	case *typ.Optional:
-		return v.Inner, true
-	case *typ.Union:
-		kept := make([]typ.Type, 0, len(v.Members))
-		removed := false
-		for _, member := range v.Members {
-			inner, ok := splitNilableFieldType(member)
-			if ok {
-				removed = true
-				if inner != nil && !typ.IsNever(inner) {
-					kept = append(kept, inner)
-				}
-				continue
-			}
-			if member != nil && member.Kind() == kind.Nil {
-				removed = true
-				continue
-			}
-			kept = append(kept, member)
-		}
-		if !removed {
-			return t, false
-		}
-		if len(kept) == 0 {
-			return typ.Never, true
-		}
-		return typ.NewUnion(kept...), true
-	default:
-		if v.Kind() == kind.Nil {
-			return typ.Never, true
-		}
-		return t, false
 	}
 }
 

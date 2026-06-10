@@ -155,7 +155,7 @@ func FieldWithOptionalPayloadSplit(field typ.Field) typ.Field {
 	if !field.Optional {
 		return field
 	}
-	if inner, optional := SplitNilableField(field.Type); optional {
+	if inner, optional := SplitNilableFieldType(field.Type); optional {
 		field.Type = inner
 		field.Optional = true
 	}
@@ -189,7 +189,7 @@ func StaticMemberWithOptionalPayloadSplit(member typ.StaticMember) typ.StaticMem
 	if !member.Optional {
 		return member
 	}
-	if inner, optional := SplitNilableField(member.Type); optional {
+	if inner, optional := SplitNilableFieldType(member.Type); optional {
 		member.Type = inner
 		member.Optional = true
 	}

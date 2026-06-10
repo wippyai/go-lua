@@ -143,9 +143,9 @@ func TestRecordConstructionSplitsNilableOptionalPayloads(t *testing.T) {
 	assertStaticInt(t, rebuilt, 1, typ.Integer)
 }
 
-func TestSplitNilableField(t *testing.T) {
+func TestSplitNilableFieldType(t *testing.T) {
 	t.Run("optional", func(t *testing.T) {
-		inner, optional := SplitNilableField(typ.NewOptional(typ.String))
+		inner, optional := SplitNilableFieldType(typ.NewOptional(typ.String))
 		if !optional {
 			t.Fatal("expected optional")
 		}
@@ -155,7 +155,7 @@ func TestSplitNilableField(t *testing.T) {
 	})
 
 	t.Run("union with nil", func(t *testing.T) {
-		inner, optional := SplitNilableField(typ.NewUnion(typ.String, typ.Boolean, typ.Nil))
+		inner, optional := SplitNilableFieldType(typ.NewUnion(typ.String, typ.Boolean, typ.Nil))
 		if !optional {
 			t.Fatal("expected optional")
 		}
@@ -167,7 +167,7 @@ func TestSplitNilableField(t *testing.T) {
 
 	t.Run("alias to optional", func(t *testing.T) {
 		maybeString := typ.NewAlias("MaybeString", typ.NewOptional(typ.String))
-		inner, optional := SplitNilableField(maybeString)
+		inner, optional := SplitNilableFieldType(maybeString)
 		if !optional {
 			t.Fatal("expected optional")
 		}
@@ -181,7 +181,7 @@ func TestSplitNilableField(t *testing.T) {
 
 	t.Run("non optional alias preserved", func(t *testing.T) {
 		name := typ.NewAlias("Name", typ.String)
-		inner, optional := SplitNilableField(name)
+		inner, optional := SplitNilableFieldType(name)
 		if optional {
 			t.Fatal("did not expect optional")
 		}
@@ -191,7 +191,7 @@ func TestSplitNilableField(t *testing.T) {
 	})
 
 	t.Run("nil", func(t *testing.T) {
-		inner, optional := SplitNilableField(typ.Nil)
+		inner, optional := SplitNilableFieldType(typ.Nil)
 		if !optional {
 			t.Fatal("expected optional")
 		}
@@ -202,7 +202,7 @@ func TestSplitNilableField(t *testing.T) {
 
 	t.Run("annotated optional", func(t *testing.T) {
 		ann := []annotation.Annotation{{Name: "tag"}}
-		inner, optional := SplitNilableField(typ.NewAnnotated(typ.NewOptional(typ.String), ann))
+		inner, optional := SplitNilableFieldType(typ.NewAnnotated(typ.NewOptional(typ.String), ann))
 		if !optional {
 			t.Fatal("expected optional")
 		}
@@ -212,6 +212,47 @@ func TestSplitNilableField(t *testing.T) {
 		}
 		if !typ.TypeEquals(annotated.Inner, typ.String) {
 			t.Fatalf("annotated inner = %v, want string", annotated.Inner)
+		}
+	})
+}
+
+func TestPresentReadonlyEntryValue(t *testing.T) {
+	t.Run("optional", func(t *testing.T) {
+		got := PresentReadonlyEntryValue(typ.NewOptional(typ.String))
+		if !typ.TypeEquals(got, typ.String) {
+			t.Fatalf("present readonly entry = %v, want string", got)
+		}
+	})
+
+	t.Run("union with nil", func(t *testing.T) {
+		got := PresentReadonlyEntryValue(typ.NewUnion(typ.String, typ.Boolean, typ.Nil))
+		want := typ.NewUnion(typ.String, typ.Boolean)
+		if !typ.TypeEquals(got, want) {
+			t.Fatalf("present readonly entry = %v, want %v", got, want)
+		}
+	})
+
+	t.Run("alias to optional", func(t *testing.T) {
+		maybeString := typ.NewAlias("MaybeString", typ.NewOptional(typ.String))
+		got := PresentReadonlyEntryValue(maybeString)
+		if !typ.TypeEquals(got, typ.String) {
+			t.Fatalf("present readonly entry = %v, want string", got)
+		}
+		if _, ok := got.(*typ.Alias); ok {
+			t.Fatalf("present readonly entry = %v, want structural payload", got)
+		}
+	})
+
+	t.Run("non nilable unchanged", func(t *testing.T) {
+		got := PresentReadonlyEntryValue(typ.String)
+		if got != typ.String {
+			t.Fatalf("present readonly entry = %v, want original string type", got)
+		}
+	})
+
+	t.Run("absent type stays absent", func(t *testing.T) {
+		if got := PresentReadonlyEntryValue(nil); got != nil {
+			t.Fatalf("present readonly entry = %v, want nil", got)
 		}
 	})
 }
@@ -228,7 +269,7 @@ func TestSplitNilableFieldPreservesRecursiveUnionMemberHashes(t *testing.T) {
 		t.Fatalf("expected union")
 	}
 
-	got, optional := SplitNilableField(u)
+	got, optional := SplitNilableFieldType(u)
 	if !optional {
 		t.Fatalf("expected optional")
 	}
