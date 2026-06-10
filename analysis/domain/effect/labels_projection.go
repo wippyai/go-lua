@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/wippyai/go-lua/analysis/type/project"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
@@ -54,6 +55,31 @@ func ProjectGenericArg(index int) TypeProjectionStep {
 
 func ProjectInstantiateGeneric(generic typ.Type) TypeProjectionStep {
 	return TypeProjectionStep{Kind: TypeProjectionInstantiateGeneric, Type: generic}
+}
+
+// ApplyTypeProjection applies projection steps to source using the pure type
+// projection package.
+func ApplyTypeProjection(source typ.Type, projection TypeProjection) (typ.Type, bool) {
+	current := source
+	for _, step := range projection.Steps {
+		var ok bool
+		switch step.Kind {
+		case TypeProjectionField:
+			current, ok = project.Field(current, step.Field)
+		case TypeProjectionCallableReturn:
+			current, ok = project.CallableReturn(current)
+		case TypeProjectionGenericArg:
+			current, ok = project.GenericArg(current, step.Index)
+		case TypeProjectionInstantiateGeneric:
+			current, ok = project.InstantiateGeneric(step.Type, current)
+		default:
+			return nil, false
+		}
+		if !ok {
+			return nil, false
+		}
+	}
+	return current, current != nil
 }
 
 func (s TypeProjectionStep) String() string {

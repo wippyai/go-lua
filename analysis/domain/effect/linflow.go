@@ -2,8 +2,9 @@ package effect
 
 import (
 	"fmt"
+	"strconv"
+	"strings"
 
-	"github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
@@ -61,7 +62,21 @@ func (f FlowInto) Equals(other Label) bool {
 	return false
 }
 
-type PathSuffix []path.Segment
+type PathSegmentKind uint8
+
+const (
+	PathSegmentField PathSegmentKind = iota
+	PathSegmentIndexString
+	PathSegmentIndexInt
+)
+
+type PathSegment struct {
+	Kind  PathSegmentKind
+	Name  string
+	Index int
+}
+
+type PathSuffix []PathSegment
 
 func FieldPath(names ...string) PathSuffix {
 	if len(names) == 0 {
@@ -69,12 +84,12 @@ func FieldPath(names ...string) PathSuffix {
 	}
 	out := make(PathSuffix, 0, len(names))
 	for _, name := range names {
-		out = append(out, path.Segment{Kind: path.SegmentField, Name: name})
+		out = append(out, PathSegment{Kind: PathSegmentField, Name: name})
 	}
 	return out
 }
 
-func PathSuffixFromSegments(segments []path.Segment) PathSuffix {
+func PathSuffixFromSegments(segments []PathSegment) PathSuffix {
 	if len(segments) == 0 {
 		return nil
 	}
@@ -87,16 +102,16 @@ func (p PathSuffix) Empty() bool {
 	return len(p) == 0
 }
 
-func (p PathSuffix) Segments() []path.Segment {
+func (p PathSuffix) Segments() []PathSegment {
 	if len(p) == 0 {
 		return nil
 	}
-	out := make([]path.Segment, len(p))
+	out := make([]PathSegment, len(p))
 	copy(out, p)
 	return out
 }
 
-func (p PathSuffix) Append(seg path.Segment) PathSuffix {
+func (p PathSuffix) Append(seg PathSegment) PathSuffix {
 	out := make(PathSuffix, 0, len(p)+1)
 	out = append(out, p...)
 	out = append(out, seg)
@@ -129,5 +144,36 @@ func (p PathSuffix) Equal(other PathSuffix) bool {
 }
 
 func (p PathSuffix) String() string {
-	return path.FormatSegments(p)
+	if len(p) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	for _, seg := range p {
+		switch seg.Kind {
+		case PathSegmentField:
+			b.WriteByte('.')
+			b.WriteString(seg.Name)
+		case PathSegmentIndexString:
+			writeQuotedPathSegment(&b, seg.Name)
+		case PathSegmentIndexInt:
+			b.WriteByte('[')
+			b.WriteString(strconv.Itoa(seg.Index))
+			b.WriteByte(']')
+		}
+	}
+	return b.String()
+}
+
+func writeQuotedPathSegment(b *strings.Builder, key string) {
+	b.WriteString("[\"")
+	for i := 0; i < len(key); i++ {
+		switch key[i] {
+		case '\\', '"':
+			b.WriteByte('\\')
+			b.WriteByte(key[i])
+		default:
+			b.WriteByte(key[i])
+		}
+	}
+	b.WriteString("\"]")
 }
