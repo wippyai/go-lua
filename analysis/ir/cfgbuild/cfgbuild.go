@@ -10,8 +10,23 @@ import (
 
 // Result contains the CFG topology and semantic metadata extracted during build.
 type Result struct {
-	Graph *cfg.CFG
-	Meta  cfgmeta.Metadata
+	Graph      *cfg.CFG
+	Meta       cfgmeta.Metadata
+	StmtPoints StmtPoints
+}
+
+// StmtPoints maps AST statements to the CFG points emitted for them.
+type StmtPoints struct {
+	points map[ast.Stmt][]cfg.Point
+}
+
+// PointsFor returns the CFG points produced for stmt in build order.
+func (m StmtPoints) PointsFor(stmt ast.Stmt) []cfg.Point {
+	if stmt == nil {
+		return nil
+	}
+	points := m.points[stmt]
+	return append([]cfg.Point(nil), points...)
 }
 
 // BuildFunction builds a minimal CFG for a function body using lexical bindings.
@@ -22,7 +37,7 @@ func BuildFunction(fn *ast.FunctionExpr, bindings *bind.Result) *Result {
 	state := liveAt(graph.Entry())
 	if fn != nil {
 		for _, id := range bindings.ParamSymbols(fn) {
-			state = b.appendAssign(state, id)
+			state = b.appendAssign(state, id, nil)
 		}
 		state = b.buildStmts(state, fn.Stmts)
 	}
@@ -30,7 +45,7 @@ func BuildFunction(fn *ast.FunctionExpr, bindings *bind.Result) *Result {
 		return nil
 	}
 	b.connect(state, graph.Exit())
-	return &Result{Graph: graph, Meta: b.meta}
+	return &Result{Graph: graph, Meta: b.meta, StmtPoints: StmtPoints{points: b.stmtPoints}}
 }
 
 // BuildChunk builds a minimal CFG for a chunk-level statement list.
@@ -43,12 +58,13 @@ func BuildChunk(stmts []ast.Stmt, bindings *bind.Result) *Result {
 		return nil
 	}
 	b.connect(state, graph.Exit())
-	return &Result{Graph: graph, Meta: b.meta}
+	return &Result{Graph: graph, Meta: b.meta, StmtPoints: StmtPoints{points: b.stmtPoints}}
 }
 
 type builder struct {
 	graph        *cfg.CFG
 	meta         cfgmeta.Metadata
+	stmtPoints   map[ast.Stmt][]cfg.Point
 	bindings     *bind.Result
 	breakTargets []cfg.Point
 	unsupported  bool
@@ -96,13 +112,13 @@ func (b *builder) buildStmt(state flowState, stmt ast.Stmt) flowState {
 			b.unsupported = true
 			return flowState{current: state.current}
 		}
-		return b.appendCall(state, callName(stmt.Expr))
+		return b.appendCall(state, callName(stmt.Expr), stmt)
 	case *ast.ReturnStmt:
 		if b.hasDeferredExprSemantics(stmt.Exprs...) {
 			b.unsupported = true
 			return flowState{current: state.current}
 		}
-		state = b.appendNode(state, cfg.NodeReturn)
+		state = b.appendNodeForStmt(state, cfg.NodeReturn, stmt)
 		b.graph.AddEdge(state.current, b.graph.Exit(), false)
 		return flowState{current: state.current}
 	case *ast.DoBlockStmt:
@@ -116,7 +132,7 @@ func (b *builder) buildStmt(state flowState, stmt ast.Stmt) flowState {
 	case *ast.BreakStmt:
 		return b.buildBreak(state)
 	case *ast.TypeDefStmt, *ast.InterfaceDefStmt:
-		return b.appendNode(state, cfg.NodeTypeDef)
+		return b.appendNodeForStmt(state, cfg.NodeTypeDef, stmt)
 	default:
 		b.unsupported = true
 		return flowState{current: state.current}
@@ -134,7 +150,7 @@ func (b *builder) buildAssign(state flowState, stmt *ast.AssignStmt) flowState {
 			b.unsupported = true
 			return flowState{current: state.current}
 		}
-		state = b.appendAssign(state, id)
+		state = b.appendAssign(state, id, stmt)
 	}
 	return state
 }
@@ -145,7 +161,7 @@ func (b *builder) buildLocalAssign(state flowState, stmt *ast.LocalAssignStmt) f
 		return flowState{current: state.current}
 	}
 	for _, id := range b.bindings.LocalSymbols(stmt) {
-		state = b.appendAssign(state, id)
+		state = b.appendAssign(state, id, stmt)
 	}
 	return state
 }
@@ -159,7 +175,7 @@ func (b *builder) buildIf(state flowState, stmt *ast.IfStmt) flowState {
 		b.unsupported = true
 		return flowState{current: state.current}
 	}
-	branch := b.appendBranch(state, stmt.Condition)
+	branch := b.appendBranch(state, stmt.Condition, stmt)
 	join := b.graph.AddNode(cfg.NodeJoin)
 
 	thenState := b.buildStmts(branchPath(branch.current, true), stmt.Then)
@@ -178,7 +194,7 @@ func (b *builder) buildWhile(state flowState, stmt *ast.WhileStmt) flowState {
 		b.unsupported = true
 		return flowState{current: state.current}
 	}
-	branch := b.appendBranch(state, stmt.Condition)
+	branch := b.appendBranch(state, stmt.Condition, stmt)
 	join := b.graph.AddNode(cfg.NodeJoin)
 
 	b.graph.AddEdge(branch.current, join, false)
@@ -210,7 +226,7 @@ func (b *builder) buildRepeat(state flowState, stmt *ast.RepeatStmt) flowState {
 			body = b.appendNode(state, cfg.NodeNoop)
 			bodyStart = body.current
 		}
-		branch := b.appendBranch(body, stmt.Condition)
+		branch := b.appendBranch(body, stmt.Condition, stmt)
 		b.graph.AddEdge(branch.current, join, true)
 		b.graph.AddEdge(branch.current, bodyStart, false)
 		return flowState{current: join, live: true}
@@ -229,31 +245,36 @@ func (b *builder) buildBreak(state flowState) flowState {
 }
 
 func (b *builder) appendNode(state flowState, kind cfg.NodeKind) flowState {
+	return b.appendNodeForStmt(state, kind, nil)
+}
+
+func (b *builder) appendNodeForStmt(state flowState, kind cfg.NodeKind, stmt ast.Stmt) flowState {
 	if !state.live {
 		return state
 	}
 	point := b.graph.AddNode(kind)
 	b.connect(state, point)
+	b.recordStmtPoint(stmt, point)
 	return flowState{current: point, live: true}
 }
 
-func (b *builder) appendAssign(state flowState, target symbol.ID) flowState {
-	next := b.appendNode(state, cfg.NodeAssign)
+func (b *builder) appendAssign(state flowState, target symbol.ID, stmt ast.Stmt) flowState {
+	next := b.appendNodeForStmt(state, cfg.NodeAssign, stmt)
 	if next.live {
 		b.meta.SetAssignment(next.current, cfgmeta.AssignmentFact{Target: target})
 	}
 	return next
 }
 
-func (b *builder) appendCall(state flowState, calleeName string) flowState {
-	next := b.appendNode(state, cfg.NodeCall)
+func (b *builder) appendCall(state flowState, calleeName string, stmt ast.Stmt) flowState {
+	next := b.appendNodeForStmt(state, cfg.NodeCall, stmt)
 	if next.live {
 		b.meta.SetCall(next.current, cfgmeta.CallFact{CalleeName: calleeName})
 	}
 	return next
 }
 
-func (b *builder) appendBranch(state flowState, expr ast.Expr) flowState {
+func (b *builder) appendBranch(state flowState, expr ast.Expr, stmt ast.Stmt) flowState {
 	if !state.live {
 		return state
 	}
@@ -261,7 +282,18 @@ func (b *builder) appendBranch(state flowState, expr ast.Expr) flowState {
 	point := b.graph.AddBranch()
 	b.meta.SetBranch(point, branchFact)
 	b.connect(state, point)
+	b.recordStmtPoint(stmt, point)
 	return flowState{current: point, live: true}
+}
+
+func (b *builder) recordStmtPoint(stmt ast.Stmt, point cfg.Point) {
+	if stmt == nil {
+		return
+	}
+	if b.stmtPoints == nil {
+		b.stmtPoints = make(map[ast.Stmt][]cfg.Point)
+	}
+	b.stmtPoints[stmt] = append(b.stmtPoints[stmt], point)
 }
 
 func (b *builder) materializePendingCond(state flowState) flowState {

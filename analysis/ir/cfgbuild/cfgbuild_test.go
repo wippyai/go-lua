@@ -120,6 +120,26 @@ func nodeWithTarget(t *testing.T, graph *cfg.CFG, meta cfgmeta.Metadata, target 
 	return 0
 }
 
+func requireStmtPoints(t *testing.T, result *Result, stmt ast.Stmt, want int) []cfg.Point {
+	t.Helper()
+	points := result.StmtPoints.PointsFor(stmt)
+	if len(points) != want {
+		t.Fatalf("points for %T = %v, want %d point(s)", stmt, points, want)
+	}
+	return points
+}
+
+func requirePointKind(t *testing.T, graph *cfg.CFG, point cfg.Point, want cfg.NodeKind) {
+	t.Helper()
+	node := graph.Node(point)
+	if node == nil {
+		t.Fatalf("missing node for point %d", point)
+	}
+	if node.Kind != want {
+		t.Fatalf("node %d kind = %v, want %v", point, node.Kind, want)
+	}
+}
+
 func requireEdge(t *testing.T, graph *cfg.CFG, from, to cfg.Point, cond bool) {
 	t.Helper()
 	for _, edge := range graph.Edges() {
@@ -227,6 +247,81 @@ func TestBuildChunkLinearAssignmentSequencing(t *testing.T) {
 		requireEdge(t, graph, assigns[i], assigns[i+1], false)
 	}
 	requireEdge(t, graph, assigns[len(assigns)-1], graph.Exit(), false)
+}
+
+func TestBuildChunkStatementPointMappingForLinearStatements(t *testing.T) {
+	local := localAssign([]string{"a", "b"}, number("1"), number("2"))
+	aWrite := ident("a")
+	bWrite := ident("b")
+	reassign := assign([]ast.Expr{aWrite, bWrite}, number("3"), number("4"))
+	typeDef := &ast.TypeDefStmt{Name: "Alias"}
+	ifaceDef := &ast.InterfaceDefStmt{Name: "Shape"}
+	callStmt := &ast.FuncCallStmt{Expr: &ast.FuncCallExpr{Func: ident("print")}}
+	returnStmt := &ast.ReturnStmt{Exprs: []ast.Expr{ident("a")}}
+	stmts := []ast.Stmt{local, reassign, typeDef, ifaceDef, callStmt, returnStmt}
+	bindings := bind.BindChunk(stmts, bind.Options{Globals: []string{"print"}})
+	result := BuildChunk(stmts, bindings)
+	graph := result.Graph
+
+	aID := mustLocalAt(t, bindings, local, 0)
+	bID := mustLocalAt(t, bindings, local, 1)
+	localPoints := requireStmtPoints(t, result, local, 2)
+	reassignPoints := requireStmtPoints(t, result, reassign, 2)
+	typePoints := requireStmtPoints(t, result, typeDef, 1)
+	ifacePoints := requireStmtPoints(t, result, ifaceDef, 1)
+	callPoints := requireStmtPoints(t, result, callStmt, 1)
+	returnPoints := requireStmtPoints(t, result, returnStmt, 1)
+
+	allAssignmentPoints := append([]cfg.Point(nil), localPoints...)
+	allAssignmentPoints = append(allAssignmentPoints, reassignPoints...)
+	for _, point := range allAssignmentPoints {
+		requirePointKind(t, graph, point, cfg.NodeAssign)
+	}
+	requirePointKind(t, graph, typePoints[0], cfg.NodeTypeDef)
+	requirePointKind(t, graph, ifacePoints[0], cfg.NodeTypeDef)
+	requirePointKind(t, graph, callPoints[0], cfg.NodeCall)
+	requirePointKind(t, graph, returnPoints[0], cfg.NodeReturn)
+
+	for i, tt := range []struct {
+		point cfg.Point
+		want  symbol.ID
+	}{
+		{localPoints[0], aID},
+		{localPoints[1], bID},
+		{reassignPoints[0], aID},
+		{reassignPoints[1], bID},
+	} {
+		fact, ok := result.Meta.Assignment(tt.point)
+		if !ok {
+			t.Fatalf("assignment %d at point %d missing fact", i, tt.point)
+		}
+		if fact.Target != tt.want {
+			t.Fatalf("assignment %d target = %d, want %d", i, fact.Target, tt.want)
+		}
+	}
+	if fact, ok := result.Meta.Call(callPoints[0]); !ok || fact.CalleeName != "print" {
+		t.Fatalf("call fact = %#v, %v; want print", fact, ok)
+	}
+	requireEdge(t, graph, returnPoints[0], graph.Exit(), false)
+}
+
+func TestBuildChunkStatementPointMappingReturnsSafeSlices(t *testing.T) {
+	stmt := localAssign([]string{"a", "b"}, number("1"), number("2"))
+	stmts := []ast.Stmt{stmt}
+	bindings := bind.BindChunk(stmts, bind.Options{})
+	result := BuildChunk(stmts, bindings)
+
+	points := requireStmtPoints(t, result, stmt, 2)
+	first := points[0]
+	points[0] = cfg.Point(999)
+
+	copied := requireStmtPoints(t, result, stmt, 2)
+	if copied[0] != first {
+		t.Fatalf("StmtPoints.PointsFor exposed mutable storage: got %v, want first point %d", copied, first)
+	}
+	if got := result.StmtPoints.PointsFor(&ast.BreakStmt{}); len(got) != 0 {
+		t.Fatalf("unmapped statement points = %v, want none", got)
+	}
 }
 
 func TestBuildChunkCallStatementCalleeName(t *testing.T) {
@@ -447,6 +542,31 @@ func TestBuildChunkWhileCreatesBackedgeAndFalseExit(t *testing.T) {
 	requireEdge(t, graph, branch, join, false)
 	requireEdge(t, graph, bodyAssign, branch, false)
 	requireEdge(t, graph, join, graph.Exit(), false)
+}
+
+func TestBuildChunkStatementPointMappingForBranches(t *testing.T) {
+	decl := localAssign([]string{"x"}, number("0"))
+	ifStmt := &ast.IfStmt{Condition: ident("x")}
+	whileStmt := &ast.WhileStmt{
+		Condition: ident("x"),
+		Stmts:     []ast.Stmt{localAssign([]string{"bodyValue"}, number("1"))},
+	}
+	repeatStmt := &ast.RepeatStmt{
+		Stmts:     []ast.Stmt{localAssign([]string{"again"}, number("1"))},
+		Condition: ident("x"),
+	}
+	stmts := []ast.Stmt{decl, ifStmt, whileStmt, repeatStmt}
+	bindings := bind.BindChunk(stmts, bind.Options{})
+	result := BuildChunk(stmts, bindings)
+	graph := result.Graph
+
+	for _, stmt := range []ast.Stmt{ifStmt, whileStmt, repeatStmt} {
+		points := requireStmtPoints(t, result, stmt, 1)
+		requirePointKind(t, graph, points[0], cfg.NodeBranch)
+		if _, ok := result.Meta.Branch(points[0]); !ok {
+			t.Fatalf("branch point %d for %T missing branch fact", points[0], stmt)
+		}
+	}
 }
 
 func TestBuildChunkWhileBreakOnlyDoesNotCreateParallelEdges(t *testing.T) {
