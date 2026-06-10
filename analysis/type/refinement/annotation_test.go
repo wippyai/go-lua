@@ -43,3 +43,15 @@ func TestIsRefinableAnnotation(t *testing.T) {
 		}
 	}
 }
+
+func TestPruneLessPreciseRefinableUnionMembersDropsDominatedSoftAlternative(t *testing.T) {
+	soft := NewMap(String, NewArray(Any))
+	precise := NewMap(String, NewArray(NewRecord().Field("id", String).Build()))
+
+	got := PruneLessPreciseRefinableUnionMembers(NewUnion(soft, precise), func(candidate, baseline Type) bool {
+		return TypeEquals(candidate, precise) && TypeEquals(baseline, soft)
+	}, NewUnion)
+	if !TypeEquals(got, precise) {
+		t.Fatalf("pruned union = %v, want %v", got, precise)
+	}
+}

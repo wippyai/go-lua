@@ -38,6 +38,37 @@ func TestJoinClosedCompatibleRecordSetMergesMissingFieldsAndStaticMembers(t *tes
 	}
 }
 
+func TestJoinClosedCompatibleRecordSetUsesInjectedSlotJoinForSharedField(t *testing.T) {
+	left := typ.NewRecord().Field("value", typ.Number).Build()
+	right := typ.NewRecord().Field("value", typ.String).Build()
+	sentinel := typ.NewArray(typ.Boolean)
+	called := false
+
+	got, ok := JoinClosedCompatibleRecordSet([]*typ.Record{left, right}, RecordPolicy{
+		SlotJoin: func(a, b typ.Type) typ.Type {
+			called = true
+			if !typ.TypeEquals(a, typ.Number) || !typ.TypeEquals(b, typ.String) {
+				t.Fatalf("slot join inputs = (%v, %v), want number and string", a, b)
+			}
+			return sentinel
+		},
+	})
+	if !ok {
+		t.Fatal("JoinClosedCompatibleRecordSet ok=false")
+	}
+	if !called {
+		t.Fatal("slot join callback was not called")
+	}
+	rec, ok := got.(*typ.Record)
+	if !ok {
+		t.Fatalf("JoinClosedCompatibleRecordSet = %T %[1]v, want record", got)
+	}
+	field := rec.GetField("value")
+	if field == nil || !typ.TypeEquals(field.Type, sentinel) {
+		t.Fatalf("merged value field = %v, want sentinel %v", field, sentinel)
+	}
+}
+
 func TestCoalesceClosedCompatibleRecordsPreservesDiscriminatedUnion(t *testing.T) {
 	a := typ.NewRecord().
 		Field("kind", typ.LiteralString("a")).
@@ -91,5 +122,70 @@ func TestJoinFieldContainerSlotUsesInjectedSlotAndKeyJoins(t *testing.T) {
 	}
 	if !typ.TypeEquals(m.Key, typ.String) || !typ.TypeEquals(m.Value, typ.Boolean) {
 		t.Fatalf("joined map = %v, want {[string]: boolean}", m)
+	}
+}
+
+func TestJoinFieldContainerSlotJoinsArrayElementsPointwise(t *testing.T) {
+	left := typ.NewArray(typ.NewRecord().
+		Field("name", typ.LiteralString("a")).
+		Field("line", typ.LiteralInt(1)).
+		Build())
+	right := typ.NewArray(typ.NewRecord().
+		Field("name", typ.LiteralString("b")).
+		Field("line", typ.LiteralInt(2)).
+		Build())
+
+	slotJoin := func(a, b typ.Type) typ.Type {
+		ar, aOK := a.(*typ.Record)
+		br, bOK := b.(*typ.Record)
+		if aOK && bOK {
+			joined, ok := JoinClosedCompatibleRecordSet([]*typ.Record{ar, br}, RecordPolicy{})
+			if ok {
+				return joined
+			}
+		}
+		return typ.NewUnion(a, b)
+	}
+
+	got, ok := JoinFieldContainerSlot(left, right, RecordPolicy{SlotJoin: slotJoin})
+	if !ok {
+		t.Fatal("JoinFieldContainerSlot ok=false")
+	}
+	arr, ok := got.(*typ.Array)
+	if !ok {
+		t.Fatalf("JoinFieldContainerSlot = %T %[1]v, want array", got)
+	}
+	elem, ok := arr.Element.(*typ.Record)
+	if !ok {
+		t.Fatalf("joined array element = %T %[1]v, want record", arr.Element)
+	}
+	if name := elem.GetField("name"); name == nil || !typ.TypeEquals(name.Type, typ.String) {
+		t.Fatalf("joined name field = %v, want string", name)
+	}
+	if line := elem.GetField("line"); line == nil || !typ.TypeEquals(line.Type, typ.Integer) {
+		t.Fatalf("joined line field = %v, want integer", line)
+	}
+}
+
+func TestCompatibleRecordMetatablesRequireMatchingPresenceAndShape(t *testing.T) {
+	meta := typ.NewRecord().
+		Field("__index", typ.NewRecord().Field("run", typ.Func().Build()).Build()).
+		Build()
+	withMeta := typ.NewRecord().Field("id", typ.String).Metatable(meta).Build()
+	withSameMeta := typ.NewRecord().Field("name", typ.String).Metatable(meta).Build()
+	withoutMeta := typ.NewRecord().Field("id", typ.String).Build()
+	otherMeta := typ.NewRecord().
+		Field("__index", typ.NewRecord().Field("stop", typ.Func().Build()).Build()).
+		Build()
+	withOtherMeta := typ.NewRecord().Field("id", typ.String).Metatable(otherMeta).Build()
+
+	if !CompatibleRecordMetatables(withMeta, withSameMeta) {
+		t.Fatal("records sharing the same metatable should be compatible")
+	}
+	if CompatibleRecordMetatables(withMeta, withoutMeta) {
+		t.Fatal("record with metatable should not merge with record without metatable")
+	}
+	if CompatibleRecordMetatables(withMeta, withOtherMeta) {
+		t.Fatal("records with different metatables should not be compatible")
 	}
 }

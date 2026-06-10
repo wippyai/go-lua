@@ -60,3 +60,12 @@ func TestLiteralFamilyBaseLiteralUnion(t *testing.T) {
 		t.Fatalf("literalFamilyBase(integer-number literal union) = %v, want number", got)
 	}
 }
+
+func TestJoinRecordFieldSlotWidensAccumulatedNonDiscriminantLiteralUnion(t *testing.T) {
+	acc := typ.NewUnion(typ.LiteralString("a"), typ.LiteralString("b"))
+
+	got := JoinRecordFieldSlot(acc, typ.LiteralString("c"), RecordPolicy{})
+	if !typ.TypeEquals(got, typ.String) {
+		t.Fatalf("JoinRecordFieldSlot(non-discriminant literal union) = %v, want string", got)
+	}
+}
