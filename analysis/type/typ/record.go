@@ -7,6 +7,14 @@ import (
 	"github.com/wippyai/go-lua/analysis/type/kind"
 )
 
+// Field represents a record field with name, type, optionality, and mutability.
+type Field struct {
+	Name     string
+	Type     Type
+	Optional bool // True if field may be absent (nil access returns nil)
+	Readonly bool // True if field cannot be reassigned
+}
+
 // Record represents a product type with named fields: {field1: T1, field2: T2, ...}.
 //
 // Records support both structural typing (field presence/type matching) and
