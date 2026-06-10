@@ -29,11 +29,6 @@ type Recursive struct {
 	// Ownership and mutation authorization stay outside typ.
 	familyKey recursivefamily.Key
 
-	// frozen marks an immutable input graph (stdlib/manifest/DB/cache). SetBody on
-	// a frozen node is a no-op so a shared recursive body cannot be mutated by a
-	// later compilation that reaches it.
-	frozen bool
-
 	containsAny             bool
 	containsNever           bool
 	containsTypeParam       bool
@@ -93,14 +88,7 @@ func (r *Recursive) RecursiveFamilyKey() recursivefamily.Key {
 }
 
 // SetBody assigns the body to a placeholder recursive type.
-//
-// A frozen node is an immutable input graph (stdlib/manifest/DB/cache); SetBody on
-// it is a no-op so a shared recursive body cannot be mutated by a compilation that
-// reaches it. The freeze guard is what makes stdlib immutability explicit.
 func (r *Recursive) SetBody(body Type) {
-	if r.frozen {
-		return
-	}
 	r.Body = body
 	r.hash = 0
 	r.rev++

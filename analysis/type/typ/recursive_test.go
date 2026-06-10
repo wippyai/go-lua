@@ -836,49 +836,6 @@ func TestRecursiveHashDepsHandlesDeepAcyclicProducts(t *testing.T) {
 	}
 }
 
-func TestFreezeTypeReadonlyMapFreezesKeyAndValue(t *testing.T) {
-	cases := []struct {
-		name string
-		wrap func(*Recursive) Type
-	}{
-		{name: "key", wrap: func(node *Recursive) Type { return NewReadonlyMap(node, String) }},
-		{name: "value", wrap: func(node *Recursive) Type { return NewReadonlyMap(String, node) }},
-	}
-
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			node := NewRecursivePlaceholder("Node")
-
-			FreezeType(tc.wrap(node))
-
-			if !node.frozen {
-				t.Fatal("FreezeType() missed recursive node through ReadonlyMap")
-			}
-			node.SetBody(NewRecord().Field("value", Number).Build())
-			if node.Body != nil {
-				t.Fatal("frozen recursive node accepted SetBody after FreezeType")
-			}
-		})
-	}
-}
-
-func TestFreezeTypeStaticMemberFreezesType(t *testing.T) {
-	node := NewRecursivePlaceholder("Node")
-	wrapper := NewRecord().
-		StaticStringIndex("node", node).
-		Build()
-
-	FreezeType(wrapper)
-
-	if !node.frozen {
-		t.Fatal("FreezeType() missed recursive node through static member")
-	}
-	node.SetBody(NewRecord().Field("value", Number).Build())
-	if node.Body != nil {
-		t.Fatal("frozen recursive node accepted SetBody after FreezeType")
-	}
-}
-
 func TestEqualityHashReadonlyMapRefreshesOpenRecursiveKeyAndValue(t *testing.T) {
 	cases := []struct {
 		name string
