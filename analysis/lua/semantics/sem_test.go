@@ -52,6 +52,10 @@ func typeCall(arg ast.Expr) *ast.FuncCallExpr {
 	return &ast.FuncCallExpr{Func: ident("type"), Args: []ast.Expr{arg}}
 }
 
+func call(name string) *ast.FuncCallExpr {
+	return &ast.FuncCallExpr{Func: ident(name)}
+}
+
 func localAssign(names []string, exprs ...ast.Expr) *ast.LocalAssignStmt {
 	return &ast.LocalAssignStmt{Names: names, Exprs: exprs}
 }
@@ -366,6 +370,211 @@ func TestExtractChunkCallReturnBranchAndTypeFacts(t *testing.T) {
 	returnAgain, _ := result.Return(returnPoint)
 	if returnAgain.Exprs[0] != retExpr {
 		t.Fatalf("Return exposed mutable expr slice")
+	}
+}
+
+func TestExtractChunkAssignmentAndReturnCallFactsUseLuaListRules(t *testing.T) {
+	makeIdent := ident("make")
+	makeCall := &ast.FuncCallExpr{Func: makeIdent}
+	packIdent := ident("pack")
+	packCall := &ast.FuncCallExpr{Func: packIdent}
+	local := localAssign([]string{"a", "b", "c"}, makeCall, packCall)
+	aRead := ident("a")
+	tailIdent := ident("tail")
+	tailCall := &ast.FuncCallExpr{Func: tailIdent}
+	ret := &ast.ReturnStmt{Exprs: []ast.Expr{aRead, tailCall}}
+	stmts := []ast.Stmt{local, ret}
+	bindings := bind.BindChunk(stmts, bind.Options{Globals: []string{"make", "pack", "tail"}})
+	built := cfgbuild.BuildChunk(stmts, bindings)
+
+	result, err := ExtractChunk(stmts, bindings, built)
+	if err != nil {
+		t.Fatalf("ExtractChunk: %v", err)
+	}
+
+	localPoints := requireStmtPoints(t, built, local, 5)
+	makeFact, ok := result.Call(localPoints[0])
+	if !ok {
+		t.Fatalf("missing make call fact")
+	}
+	if makeFact.Context != CallContextAssignmentSource || makeFact.SourceStmt != local || makeFact.ExprIndex != 0 {
+		t.Fatalf("make context = %#v", makeFact)
+	}
+	if makeFact.Final || makeFact.Expanded || !makeFact.Adjusted || makeFact.OpenTail {
+		t.Fatalf("make flags = final:%v expanded:%v adjusted:%v open:%v", makeFact.Final, makeFact.Expanded, makeFact.Adjusted, makeFact.OpenTail)
+	}
+	if makeFact.CalleeSymbol != mustIdentSymbol(t, bindings, makeIdent) || !makeFact.HasCalleeSymbol {
+		t.Fatalf("make callee symbol = %d/%v", makeFact.CalleeSymbol, makeFact.HasCalleeSymbol)
+	}
+	if len(makeFact.ResultTargets) != 1 || makeFact.ResultTargets[0].Kind != CallResultTargetLocalAssignment || makeFact.ResultTargets[0].Index != 0 || makeFact.ResultTargets[0].Name != "a" {
+		t.Fatalf("make result targets = %#v", makeFact.ResultTargets)
+	}
+
+	packFact, ok := result.Call(localPoints[1])
+	if !ok {
+		t.Fatalf("missing pack call fact")
+	}
+	if packFact.Context != CallContextAssignmentSource || packFact.ExprIndex != 1 || !packFact.Final || !packFact.Expanded || packFact.Adjusted {
+		t.Fatalf("pack fact = %#v", packFact)
+	}
+	if len(packFact.ResultTargets) != 2 || packFact.ResultTargets[0].Index != 1 || packFact.ResultTargets[1].Index != 2 {
+		t.Fatalf("pack result targets = %#v", packFact.ResultTargets)
+	}
+
+	aFact, ok := result.LocalAssignment(localPoints[2])
+	if !ok {
+		t.Fatalf("missing local a fact")
+	}
+	if aFact.Source.Kind != ValueSourceCall || aFact.Source.Expr != makeCall || aFact.Source.ExprIndex != 0 || aFact.Source.ResultIndex != 0 || !aFact.Source.Adjusted || aFact.Source.CallPoint != localPoints[0] || !aFact.Source.HasCallPoint {
+		t.Fatalf("a source = %#v", aFact.Source)
+	}
+	bFact, ok := result.LocalAssignment(localPoints[3])
+	if !ok {
+		t.Fatalf("missing local b fact")
+	}
+	cFact, ok := result.LocalAssignment(localPoints[4])
+	if !ok {
+		t.Fatalf("missing local c fact")
+	}
+	if bFact.Source.Kind != ValueSourceCall || bFact.Source.Expr != packCall || !bFact.Source.Expanded || bFact.Source.ResultIndex != 0 || bFact.Source.CallPoint != localPoints[1] || !bFact.Source.HasCallPoint {
+		t.Fatalf("b source = %#v", bFact.Source)
+	}
+	if cFact.Source.Kind != ValueSourceCall || cFact.Source.Expr != packCall || !cFact.Source.Expanded || cFact.Source.ResultIndex != 1 || cFact.Source.CallPoint != localPoints[1] || !cFact.Source.HasCallPoint {
+		t.Fatalf("c source = %#v", cFact.Source)
+	}
+
+	returnPoints := requireStmtPoints(t, built, ret, 2)
+	tailFact, ok := result.Call(returnPoints[0])
+	if !ok {
+		t.Fatalf("missing return tail call fact")
+	}
+	if tailFact.Context != CallContextReturnSource || tailFact.SourceStmt != ret || tailFact.ExprIndex != 1 || !tailFact.Final || !tailFact.Expanded || !tailFact.OpenTail {
+		t.Fatalf("tail fact = %#v", tailFact)
+	}
+	if len(tailFact.ResultTargets) != 1 || tailFact.ResultTargets[0].Kind != CallResultTargetReturn || tailFact.ResultTargets[0].Index != 1 || !tailFact.ResultTargets[0].OpenTail {
+		t.Fatalf("tail result targets = %#v", tailFact.ResultTargets)
+	}
+	returnFact, ok := result.Return(returnPoints[1])
+	if !ok {
+		t.Fatalf("missing return fact")
+	}
+	if len(returnFact.Sources) != 2 || returnFact.Sources[0].Kind != ValueSourceExpression || returnFact.Sources[0].Expr != aRead {
+		t.Fatalf("return first source = %#v", returnFact.Sources)
+	}
+	if returnFact.Sources[1].Kind != ValueSourceCall || returnFact.Sources[1].Expr != tailCall || !returnFact.Sources[1].Expanded || !returnFact.Sources[1].OpenTail || returnFact.Sources[1].CallPoint != returnPoints[0] || !returnFact.Sources[1].HasCallPoint {
+		t.Fatalf("return tail source = %#v", returnFact.Sources[1])
+	}
+	returnFact.Sources[1].Kind = ValueSourceNil
+	returnAgain, _ := result.Return(returnPoints[1])
+	if returnAgain.Sources[1].Kind != ValueSourceCall {
+		t.Fatalf("Return exposed mutable sources slice")
+	}
+}
+
+func TestExtractChunkAssignmentValueSourcesHandleAdjustRetNilFillAndVararg(t *testing.T) {
+	singleCall := &ast.FuncCallExpr{Func: ident("single"), AdjustRet: true}
+	adjusted := assign([]ast.Expr{ident("x"), ident("y")}, singleCall)
+	vararg := &ast.Comma3Expr{}
+	varargAssign := assign([]ast.Expr{ident("p"), ident("q"), ident("r")}, number("1"), vararg)
+	varargReturn := &ast.ReturnStmt{Exprs: []ast.Expr{number("2"), vararg}}
+	stmts := []ast.Stmt{adjusted, varargAssign, varargReturn}
+	bindings := bind.BindChunk(stmts, bind.Options{Globals: []string{"single"}})
+	built := cfgbuild.BuildChunk(stmts, bindings)
+
+	result, err := ExtractChunk(stmts, bindings, built)
+	if err != nil {
+		t.Fatalf("ExtractChunk: %v", err)
+	}
+
+	adjustedPoints := requireStmtPoints(t, built, adjusted, 3)
+	callFact, ok := result.Call(adjustedPoints[0])
+	if !ok {
+		t.Fatalf("missing adjusted call fact")
+	}
+	if !callFact.Final || callFact.Expanded || !callFact.Adjusted {
+		t.Fatalf("adjusted call flags = %#v", callFact)
+	}
+	if len(callFact.ResultTargets) != 1 || callFact.ResultTargets[0].Kind != CallResultTargetOrdinaryAssignment || callFact.ResultTargets[0].Index != 0 {
+		t.Fatalf("adjusted call targets = %#v", callFact.ResultTargets)
+	}
+	first, ok := result.OrdinaryAssignment(adjustedPoints[1])
+	if !ok {
+		t.Fatalf("missing first adjusted assignment")
+	}
+	second, ok := result.OrdinaryAssignment(adjustedPoints[2])
+	if !ok {
+		t.Fatalf("missing second adjusted assignment")
+	}
+	if first.Source.Kind != ValueSourceCall || first.Source.Expr != singleCall || !first.Source.Final || !first.Source.Adjusted || first.Source.Expanded || first.Source.CallPoint != adjustedPoints[0] || !first.Source.HasCallPoint {
+		t.Fatalf("first adjusted source = %#v", first.Source)
+	}
+	if second.Source.Kind != ValueSourceNil || second.Source.ExprIndex != NoValueSourceIndex {
+		t.Fatalf("second adjusted source = %#v", second.Source)
+	}
+
+	varargPoints := requireStmtPoints(t, built, varargAssign, 3)
+	qFact, ok := result.OrdinaryAssignment(varargPoints[1])
+	if !ok {
+		t.Fatalf("missing q assignment")
+	}
+	rFact, ok := result.OrdinaryAssignment(varargPoints[2])
+	if !ok {
+		t.Fatalf("missing r assignment")
+	}
+	if qFact.Source.Kind != ValueSourceVararg || qFact.Source.Expr != vararg || !qFact.Source.Expanded || qFact.Source.ResultIndex != 0 {
+		t.Fatalf("q source = %#v", qFact.Source)
+	}
+	if rFact.Source.Kind != ValueSourceVararg || rFact.Source.Expr != vararg || !rFact.Source.Expanded || rFact.Source.ResultIndex != 1 {
+		t.Fatalf("r source = %#v", rFact.Source)
+	}
+
+	returnPoint := requireStmtPoints(t, built, varargReturn, 1)[0]
+	returnFact, ok := result.Return(returnPoint)
+	if !ok {
+		t.Fatalf("missing vararg return fact")
+	}
+	if len(returnFact.Sources) != 2 || returnFact.Sources[1].Kind != ValueSourceVararg || !returnFact.Sources[1].Expanded || !returnFact.Sources[1].OpenTail {
+		t.Fatalf("vararg return sources = %#v", returnFact.Sources)
+	}
+}
+
+func TestExtractChunkCallFactResolvesMethodPaths(t *testing.T) {
+	obj := ident("obj")
+	arg := ident("arg")
+	callExpr := &ast.FuncCallExpr{Receiver: obj, Method: "run", Args: []ast.Expr{arg}}
+	stmt := &ast.FuncCallStmt{Expr: callExpr}
+	stmts := []ast.Stmt{stmt}
+	bindings := bind.BindChunk(stmts, bind.Options{Globals: []string{"obj", "arg"}})
+	built := cfgbuild.BuildChunk(stmts, bindings)
+
+	result, err := ExtractChunk(stmts, bindings, built)
+	if err != nil {
+		t.Fatalf("ExtractChunk: %v", err)
+	}
+
+	point := requireStmtPoints(t, built, stmt, 1)[0]
+	fact, ok := result.Call(point)
+	if !ok {
+		t.Fatalf("missing method call fact")
+	}
+	if fact.Context != CallContextStatement || fact.SourceStmt != stmt || !fact.Final || !fact.Adjusted || fact.Expanded {
+		t.Fatalf("method call flags = %#v", fact)
+	}
+	receiverPath := path.NewPath(mustIdentSymbol(t, bindings, obj), "obj")
+	methodPath := receiverPath.Field("run")
+	if !fact.HasReceiverPath || !fact.ReceiverPath.Equal(receiverPath) {
+		t.Fatalf("receiver path = %#v, want %#v", fact.ReceiverPath, receiverPath)
+	}
+	if !fact.HasMethodPath || !fact.MethodPath.Equal(methodPath) {
+		t.Fatalf("method path = %#v, want %#v", fact.MethodPath, methodPath)
+	}
+	if !fact.HasCalleePath || !fact.CalleePath.Equal(methodPath) {
+		t.Fatalf("callee path = %#v, want %#v", fact.CalleePath, methodPath)
+	}
+	fact.MethodPath.Segments[0].Name = "mutated"
+	again, _ := result.Call(point)
+	if !again.MethodPath.Equal(methodPath) {
+		t.Fatalf("Call exposed mutable method path: %#v", again.MethodPath)
 	}
 }
 

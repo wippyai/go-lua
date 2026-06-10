@@ -577,6 +577,50 @@ func TestBuildChunkCallStatementNodes(t *testing.T) {
 	requireEdge(t, graph, calls[1], graph.Exit(), false)
 }
 
+func TestBuildChunkAssignmentAndReturnCallsPrecedeValuePoints(t *testing.T) {
+	makeCall := &ast.FuncCallExpr{Func: ident("make")}
+	packCall := &ast.FuncCallExpr{Func: ident("pack")}
+	local := localAssign([]string{"a", "b", "c"}, makeCall, packCall)
+	writeX := ident("x")
+	writeY := ident("y")
+	ordinary := assign([]ast.Expr{writeX, writeY}, &ast.FuncCallExpr{Func: ident("next")})
+	ret := &ast.ReturnStmt{Exprs: []ast.Expr{
+		ident("a"),
+		&ast.FuncCallExpr{Func: ident("tail")},
+	}}
+	stmts := []ast.Stmt{local, ordinary, ret}
+	bindings := bind.BindChunk(stmts, bind.Options{Globals: []string{"make", "pack", "next", "tail"}})
+	result := BuildChunk(stmts, bindings)
+	if result == nil || result.Graph == nil {
+		t.Fatalf("BuildChunk returned nil")
+	}
+	graph := result.Graph
+
+	localPoints := requireStmtPoints(t, result, local, 5)
+	for i, want := range []cfg.NodeKind{cfg.NodeCall, cfg.NodeCall, cfg.NodeAssign, cfg.NodeAssign, cfg.NodeAssign} {
+		requirePointKind(t, graph, localPoints[i], want)
+	}
+	requireEdge(t, graph, graph.Entry(), localPoints[0], false)
+	for i := 0; i+1 < len(localPoints); i++ {
+		requireEdge(t, graph, localPoints[i], localPoints[i+1], false)
+	}
+
+	ordinaryPoints := requireStmtPoints(t, result, ordinary, 3)
+	for i, want := range []cfg.NodeKind{cfg.NodeCall, cfg.NodeAssign, cfg.NodeAssign} {
+		requirePointKind(t, graph, ordinaryPoints[i], want)
+	}
+	requireEdge(t, graph, localPoints[len(localPoints)-1], ordinaryPoints[0], false)
+	requireEdge(t, graph, ordinaryPoints[0], ordinaryPoints[1], false)
+	requireEdge(t, graph, ordinaryPoints[1], ordinaryPoints[2], false)
+
+	returnPoints := requireStmtPoints(t, result, ret, 2)
+	requirePointKind(t, graph, returnPoints[0], cfg.NodeCall)
+	requirePointKind(t, graph, returnPoints[1], cfg.NodeReturn)
+	requireEdge(t, graph, ordinaryPoints[2], returnPoints[0], false)
+	requireEdge(t, graph, returnPoints[0], returnPoints[1], false)
+	requireEdge(t, graph, returnPoints[1], graph.Exit(), false)
+}
+
 func TestBuildChunkReturnKillsFollowingFlow(t *testing.T) {
 	before := localAssign([]string{"before"}, number("1"))
 	beforeRead := ident("before")
@@ -1330,16 +1374,8 @@ func TestBuildChunkUnsupportedExpressionCoverageReturnsNil(t *testing.T) {
 			}}, number("1")),
 		},
 		{
-			name: "assignment rhs call",
-			stmt: assign([]ast.Expr{ident("x")}, &ast.FuncCallExpr{Func: ident("make")}),
-		},
-		{
 			name: "local function literal",
 			stmt: localAssign([]string{"f"}, function(nil)),
-		},
-		{
-			name: "return call",
-			stmt: &ast.ReturnStmt{Exprs: []ast.Expr{&ast.FuncCallExpr{Func: ident("make")}}},
 		},
 		{
 			name: "condition call",

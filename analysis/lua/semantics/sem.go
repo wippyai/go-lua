@@ -4,6 +4,7 @@ package semantics
 import (
 	"errors"
 
+	"github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/lua/bind"
 	"github.com/wippyai/go-lua/analysis/lua/cfgbuild"
@@ -53,9 +54,10 @@ type LocalAssignmentFact struct {
 	Stmt  *ast.LocalAssignStmt
 	Index int
 
-	Name string
-	Type ast.TypeExpr
-	Expr ast.Expr
+	Name   string
+	Type   ast.TypeExpr
+	Expr   ast.Expr
+	Source ValueSource
 
 	Symbol    symbol.ID
 	HasSymbol bool
@@ -70,6 +72,7 @@ type OrdinaryAssignmentFact struct {
 
 	Target ast.Expr
 	Value  ast.Expr
+	Source ValueSource
 
 	Symbol    symbol.ID
 	HasSymbol bool
@@ -79,8 +82,16 @@ type OrdinaryAssignmentFact struct {
 }
 
 type CallFact struct {
-	Stmt *ast.FuncCallStmt
-	Call *ast.FuncCallExpr
+	Stmt       *ast.FuncCallStmt
+	SourceStmt ast.Stmt
+	Context    CallContextKind
+
+	Call      *ast.FuncCallExpr
+	ExprIndex int
+	Final     bool
+	Expanded  bool
+	Adjusted  bool
+	OpenTail  bool
 
 	Func     ast.Expr
 	Receiver ast.Expr
@@ -88,13 +99,23 @@ type CallFact struct {
 	Args     []ast.Expr
 	TypeArgs []ast.TypeExpr
 
+	CalleePath      path.Path
+	HasCalleePath   bool
+	ReceiverPath    path.Path
+	HasReceiverPath bool
+	MethodPath      path.Path
+	HasMethodPath   bool
+
+	ResultTargets []CallResultTarget
+
 	CalleeSymbol    symbol.ID
 	HasCalleeSymbol bool
 }
 
 type ReturnFact struct {
-	Stmt  *ast.ReturnStmt
-	Exprs []ast.Expr
+	Stmt    *ast.ReturnStmt
+	Exprs   []ast.Expr
+	Sources []ValueSource
 }
 
 type BranchConditionFact struct {
@@ -351,7 +372,7 @@ func (r *Result) extractStmt(stmt ast.Stmt, bindings *bind.Result, built *cfgbui
 	case *ast.FuncCallStmt:
 		return r.extractCall(stmt, bindings, built.StmtPoints.PointsFor(stmt))
 	case *ast.ReturnStmt:
-		return r.extractReturn(stmt, built.StmtPoints.PointsFor(stmt))
+		return r.extractReturn(stmt, bindings, built.StmtPoints.PointsFor(stmt))
 	case *ast.DoBlockStmt:
 		return r.extractStmts(stmt.Stmts, bindings, built)
 	case *ast.IfStmt:
@@ -401,9 +422,16 @@ func (r *Result) extractLocalAssign(stmt *ast.LocalAssignStmt, bindings *bind.Re
 	if len(points) == 0 {
 		return nil
 	}
-	if len(points) < len(stmt.Names) {
+	calls := topLevelValueListCalls(stmt.Exprs)
+	if len(points) != len(calls)+len(stmt.Names) {
 		return ErrPointMismatch
 	}
+	targets := localResultTargets(stmt, bindings)
+	for i, call := range calls {
+		r.calls[points[i]] = buildCallFact(stmt, nil, CallContextAssignmentSource, stmt.Exprs, call.index, call.call, bindings, targets)
+	}
+	assignPoints := points[len(calls):]
+	sources := assignmentValueSources(stmt.Exprs, len(stmt.Names), callPointsByExprIndex(calls, points))
 	exprs := copyExprs(stmt.Exprs)
 	types := copyTypeExprs(stmt.Types)
 	for i, name := range stmt.Names {
@@ -411,12 +439,13 @@ func (r *Result) extractLocalAssign(stmt *ast.LocalAssignStmt, bindings *bind.Re
 		if bindings != nil {
 			id, hasSymbol = bindings.LocalSymbolAt(stmt, i)
 		}
-		r.localAssignments[points[i]] = LocalAssignmentFact{
+		r.localAssignments[assignPoints[i]] = LocalAssignmentFact{
 			Stmt:      stmt,
 			Index:     i,
 			Name:      name,
 			Type:      typeAt(stmt.Types, i),
 			Expr:      exprAt(stmt.Exprs, i),
+			Source:    sources[i],
 			Symbol:    id,
 			HasSymbol: hasSymbol && id != 0,
 			Exprs:     exprs,
@@ -430,9 +459,16 @@ func (r *Result) extractAssign(stmt *ast.AssignStmt, bindings *bind.Result, poin
 	if len(points) == 0 {
 		return nil
 	}
-	if len(points) < len(stmt.Lhs) {
+	calls := topLevelValueListCalls(stmt.Rhs)
+	if len(points) != len(calls)+len(stmt.Lhs) {
 		return ErrPointMismatch
 	}
+	targets := ordinaryResultTargets(stmt, bindings)
+	for i, call := range calls {
+		r.calls[points[i]] = buildCallFact(stmt, nil, CallContextAssignmentSource, stmt.Rhs, call.index, call.call, bindings, targets)
+	}
+	assignPoints := points[len(calls):]
+	sources := assignmentValueSources(stmt.Rhs, len(stmt.Lhs), callPointsByExprIndex(calls, points))
 	lhs := copyExprs(stmt.Lhs)
 	rhs := copyExprs(stmt.Rhs)
 	for i, target := range stmt.Lhs {
@@ -440,11 +476,12 @@ func (r *Result) extractAssign(stmt *ast.AssignStmt, bindings *bind.Result, poin
 		if ident, ok := target.(*ast.IdentExpr); ok && bindings != nil {
 			id, hasSymbol = bindings.SymbolOf(ident)
 		}
-		r.ordinaryAssignments[points[i]] = OrdinaryAssignmentFact{
+		r.ordinaryAssignments[assignPoints[i]] = OrdinaryAssignmentFact{
 			Stmt:      stmt,
 			Index:     i,
 			Target:    target,
 			Value:     exprAt(stmt.Rhs, i),
+			Source:    sources[i],
 			Symbol:    id,
 			HasSymbol: hasSymbol && id != 0,
 			Lhs:       lhs,
@@ -462,37 +499,29 @@ func (r *Result) extractCall(stmt *ast.FuncCallStmt, bindings *bind.Result, poin
 	if !ok {
 		return nil
 	}
-	if len(points) < 1 {
-		return ErrPointMismatch
-	}
-	id, hasSymbol := symbol.ID(0), false
-	if ident, ok := call.Func.(*ast.IdentExpr); ok && bindings != nil {
-		id, hasSymbol = bindings.SymbolOf(ident)
-	}
-	r.calls[points[0]] = CallFact{
-		Stmt:            stmt,
-		Call:            call,
-		Func:            call.Func,
-		Receiver:        call.Receiver,
-		Method:          call.Method,
-		Args:            copyExprs(call.Args),
-		TypeArgs:        copyTypeExprs(call.TypeArgs),
-		CalleeSymbol:    id,
-		HasCalleeSymbol: hasSymbol && id != 0,
-	}
-	return nil
-}
-
-func (r *Result) extractReturn(stmt *ast.ReturnStmt, points []cfg.Point) error {
-	if len(points) == 0 {
-		return nil
-	}
 	if len(points) != 1 {
 		return ErrPointMismatch
 	}
-	r.returns[points[0]] = ReturnFact{
-		Stmt:  stmt,
-		Exprs: copyExprs(stmt.Exprs),
+	r.calls[points[0]] = buildCallFact(stmt, stmt, CallContextStatement, []ast.Expr{call}, 0, call, bindings, nil)
+	return nil
+}
+
+func (r *Result) extractReturn(stmt *ast.ReturnStmt, bindings *bind.Result, points []cfg.Point) error {
+	if len(points) == 0 {
+		return nil
+	}
+	calls := topLevelValueListCalls(stmt.Exprs)
+	if len(points) != len(calls)+1 {
+		return ErrPointMismatch
+	}
+	for i, call := range calls {
+		r.calls[points[i]] = buildCallFact(stmt, nil, CallContextReturnSource, stmt.Exprs, call.index, call.call, bindings, nil)
+	}
+	returnPoint := points[len(calls)]
+	r.returns[returnPoint] = ReturnFact{
+		Stmt:    stmt,
+		Exprs:   copyExprs(stmt.Exprs),
+		Sources: returnValueSources(stmt.Exprs, callPointsByExprIndex(calls, points)),
 	}
 	return nil
 }
@@ -738,11 +767,16 @@ func copyOrdinaryAssignmentFact(fact OrdinaryAssignmentFact) OrdinaryAssignmentF
 func copyCallFact(fact CallFact) CallFact {
 	fact.Args = copyExprs(fact.Args)
 	fact.TypeArgs = copyTypeExprs(fact.TypeArgs)
+	fact.CalleePath = copyPath(fact.CalleePath)
+	fact.ReceiverPath = copyPath(fact.ReceiverPath)
+	fact.MethodPath = copyPath(fact.MethodPath)
+	fact.ResultTargets = copyResultTargets(fact.ResultTargets)
 	return fact
 }
 
 func copyReturnFact(fact ReturnFact) ReturnFact {
 	fact.Exprs = copyExprs(fact.Exprs)
+	fact.Sources = copyValueSources(fact.Sources)
 	return fact
 }
 

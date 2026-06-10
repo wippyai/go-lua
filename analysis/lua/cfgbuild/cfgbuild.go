@@ -132,10 +132,11 @@ func (b *builder) buildStmt(state flowState, stmt ast.Stmt) flowState {
 		}
 		return b.appendCall(state, stmt)
 	case *ast.ReturnStmt:
-		if b.hasUnsupportedExprs(stmt.Exprs...) {
+		if b.hasUnsupportedValueListExprs(stmt.Exprs...) {
 			b.unsupported = true
 			return flowState{current: state.current}
 		}
+		state = b.appendValueListCalls(state, stmt, stmt.Exprs)
 		state = b.appendNodeForStmt(state, cfg.NodeReturn, stmt)
 		b.graph.AddEdge(state.current, b.graph.Exit(), false)
 		return flowState{current: state.current}
@@ -168,10 +169,11 @@ func (b *builder) buildStmt(state flowState, stmt ast.Stmt) flowState {
 }
 
 func (b *builder) buildAssign(state flowState, stmt *ast.AssignStmt) flowState {
-	if b.hasUnsupportedExprs(stmt.Rhs...) {
+	if b.hasUnsupportedValueListExprs(stmt.Rhs...) {
 		b.unsupported = true
 		return flowState{current: state.current}
 	}
+	state = b.appendValueListCalls(state, stmt, stmt.Rhs)
 	for _, lhs := range stmt.Lhs {
 		id, ok := b.simpleIdentSymbol(lhs)
 		if !ok {
@@ -184,10 +186,11 @@ func (b *builder) buildAssign(state flowState, stmt *ast.AssignStmt) flowState {
 }
 
 func (b *builder) buildLocalAssign(state flowState, stmt *ast.LocalAssignStmt) flowState {
-	if b.hasUnsupportedExprs(stmt.Exprs...) {
+	if b.hasUnsupportedValueListExprs(stmt.Exprs...) {
 		b.unsupported = true
 		return flowState{current: state.current}
 	}
+	state = b.appendValueListCalls(state, stmt, stmt.Exprs)
 	for _, id := range b.bindings.LocalSymbols(stmt) {
 		state = b.appendAssign(state, id, stmt)
 	}

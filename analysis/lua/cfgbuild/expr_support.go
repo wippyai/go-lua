@@ -11,6 +11,22 @@ func (b *builder) hasUnsupportedExprs(exprs ...ast.Expr) bool {
 	return false
 }
 
+func (b *builder) hasUnsupportedValueListExprs(exprs ...ast.Expr) bool {
+	for _, expr := range exprs {
+		call, ok := expr.(*ast.FuncCallExpr)
+		if !ok {
+			if !b.exprCovered(expr) {
+				return true
+			}
+			continue
+		}
+		if b.hasUnsupportedExprInCall(call) {
+			return true
+		}
+	}
+	return false
+}
+
 func (b *builder) hasUnsupportedExprInCall(expr ast.Expr) bool {
 	call, ok := expr.(*ast.FuncCallExpr)
 	if !ok {
@@ -20,6 +36,15 @@ func (b *builder) hasUnsupportedExprInCall(expr ast.Expr) bool {
 		return true
 	}
 	return b.hasUnsupportedExprs(call.Args...)
+}
+
+func (b *builder) appendValueListCalls(state flowState, stmt ast.Stmt, exprs []ast.Expr) flowState {
+	for _, expr := range exprs {
+		if _, ok := expr.(*ast.FuncCallExpr); ok {
+			state = b.appendCall(state, stmt)
+		}
+	}
+	return state
 }
 
 func (b *builder) hasUnsupportedConditionExpr(expr ast.Expr) bool {
