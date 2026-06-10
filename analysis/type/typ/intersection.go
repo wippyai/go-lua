@@ -83,7 +83,7 @@ func NewIntersection(members ...Type) Type {
 	containsRecursive := false
 	containsOpenRecursive := false
 	for i, m := range unique {
-		h = hash.HashCombine(h, uniqueHashes[i])
+		h = hash.MixHash(h, uniqueHashes[i])
 		if !containsAny && knownContainsAny(m) {
 			containsAny = true
 		}

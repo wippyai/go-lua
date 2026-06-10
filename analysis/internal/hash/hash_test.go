@@ -62,22 +62,3 @@ func TestMixHash(t *testing.T) {
 		t.Error("different inputs should produce different outputs")
 	}
 }
-
-func TestHashCombine(t *testing.T) {
-	t.Parallel()
-
-	if HashCombine(1, 2) != MixHash(1, 2) {
-		t.Error("HashCombine should equal MixHash")
-	}
-}
-
-func TestHashCombineChaining(t *testing.T) {
-	t.Parallel()
-
-	hash1 := HashCombine(HashCombine(1, 2), 3)
-	hash2 := HashCombine(1, HashCombine(2, 3))
-
-	if hash1 == hash2 {
-		t.Log("HashCombine is associative (unexpected but not wrong)")
-	}
-}

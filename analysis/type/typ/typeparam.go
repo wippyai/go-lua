@@ -26,9 +26,9 @@ type TypeParam struct {
 
 // NewTypeParam creates a type parameter.
 func NewTypeParam(name string, constraint Type) *TypeParam {
-	h := hash.HashCombine(uint64(kind.TypeParam), hash.FnvString(name))
+	h := hash.MixHash(uint64(kind.TypeParam), hash.FnvString(name))
 	if constraint != nil {
-		h = hash.HashCombine(h, constraint.Hash())
+		h = hash.MixHash(h, constraint.Hash())
 	}
 
 	return &TypeParam{

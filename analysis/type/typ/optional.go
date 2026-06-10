@@ -75,7 +75,7 @@ func newOptionalNode(inner Type) Type {
 		return inner
 	}
 
-	h := hash.HashCombine(uint64(kind.Optional), inner.Hash())
+	h := hash.MixHash(uint64(kind.Optional), inner.Hash())
 
 	return &Optional{
 		Inner:                 inner,

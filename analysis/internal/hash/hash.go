@@ -14,11 +14,6 @@ func MixHash(h, v uint64) uint64 {
 	return h
 }
 
-// HashCombine is an alias for MixHash.
-func HashCombine(a, b uint64) uint64 {
-	return MixHash(a, b)
-}
-
 // FnvString hashes a string using FNV-1a.
 func FnvString(s string) uint64 {
 	var h uint64 = FnvOffset64

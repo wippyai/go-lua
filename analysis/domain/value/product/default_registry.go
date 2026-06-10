@@ -4,12 +4,8 @@ import (
 	"fmt"
 
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
-	"github.com/wippyai/go-lua/analysis/domain/value/axis/escape"
-	"github.com/wippyai/go-lua/analysis/domain/value/axis/evidence"
-	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
-	"github.com/wippyai/go-lua/analysis/domain/value/axis/ownership"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/defaults"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
-	"github.com/wippyai/go-lua/analysis/domain/value/axis/variantorigin"
 )
 
 var defaultRegistry = buildDefaultRegistry()
@@ -58,11 +54,11 @@ func buildDefaultRegistry() *axis.Registry {
 }
 
 func registerDefaultSparseAxes(reg *axis.Registry) {
-	axis.Register(reg, variantorigin.Spec())
-	axis.Register(reg, identity.Spec())
-	axis.Register(reg, escape.Spec())
-	axis.Register(reg, ownership.Spec())
-	axis.Register(reg, evidence.Spec())
+	for _, spec := range defaults.SparseSpecs() {
+		if err := registerProductSparseAxis(reg, spec); err != nil {
+			panic(err)
+		}
+	}
 }
 
 func registerProductSparseAxis(reg *axis.Registry, spec axis.ErasedSpec) error {

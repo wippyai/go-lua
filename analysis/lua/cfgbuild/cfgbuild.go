@@ -29,8 +29,13 @@ func (m StmtPoints) PointsFor(stmt ast.Stmt) []cfg.Point {
 	return append([]cfg.Point(nil), points...)
 }
 
-// BuildFunction builds a minimal CFG for a function body using lexical bindings.
+// BuildFunction builds a minimal CFG for a function body using lexical bindings
+// produced for the same function AST. It returns nil when bindings are nil or
+// the function uses an unsupported analysis surface; nil is not a malformed CFG.
 func BuildFunction(fn *ast.FunctionExpr, bindings *bind.Result) *Result {
+	if bindings == nil {
+		return nil
+	}
 	graph := cfg.New()
 	b := builder{graph: graph, bindings: bindings}
 
@@ -48,8 +53,14 @@ func BuildFunction(fn *ast.FunctionExpr, bindings *bind.Result) *Result {
 	return &Result{Graph: graph, Meta: b.meta, StmtPoints: StmtPoints{points: b.stmtPoints}}
 }
 
-// BuildChunk builds a minimal CFG for a chunk-level statement list.
+// BuildChunk builds a minimal CFG for a chunk-level statement list using
+// lexical bindings produced for the same AST. It returns nil when bindings are
+// nil or the chunk uses an unsupported analysis surface; nil is not a malformed
+// CFG.
 func BuildChunk(stmts []ast.Stmt, bindings *bind.Result) *Result {
+	if bindings == nil {
+		return nil
+	}
 	graph := cfg.New()
 	b := builder{graph: graph, bindings: bindings}
 

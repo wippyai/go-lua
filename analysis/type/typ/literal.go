@@ -26,8 +26,8 @@ type Literal struct {
 
 // True and False are singleton boolean literals.
 var (
-	trueHash  = hash.HashCombine(hash.HashCombine(uint64(kind.Literal), uint64(kind.Boolean)), 1)
-	falseHash = hash.HashCombine(uint64(kind.Literal), uint64(kind.Boolean))
+	trueHash  = hash.MixHash(hash.MixHash(uint64(kind.Literal), uint64(kind.Boolean)), 1)
+	falseHash = hash.MixHash(uint64(kind.Literal), uint64(kind.Boolean))
 
 	True  = &Literal{Base: kind.Boolean, Value: true, hash: trueHash, str: "true"}
 	False = &Literal{Base: kind.Boolean, Value: false, hash: falseHash, str: "false"}
@@ -44,24 +44,24 @@ func LiteralBool(v bool) *Literal {
 
 // LiteralInt creates an integer literal type.
 func LiteralInt(v int64) *Literal {
-	h := hash.HashCombine(uint64(kind.Literal), uint64(kind.Integer))
-	h = hash.HashCombine(h, uint64(v))
+	h := hash.MixHash(uint64(kind.Literal), uint64(kind.Integer))
+	h = hash.MixHash(h, uint64(v))
 
 	return &Literal{Base: kind.Integer, Value: v, hash: h, str: strconv.FormatInt(v, 10)}
 }
 
 // LiteralNumber creates a number literal type.
 func LiteralNumber(v float64) *Literal {
-	h := hash.HashCombine(uint64(kind.Literal), uint64(kind.Number))
-	h = hash.HashCombine(h, uint64(v))
+	h := hash.MixHash(uint64(kind.Literal), uint64(kind.Number))
+	h = hash.MixHash(h, uint64(v))
 
 	return &Literal{Base: kind.Number, Value: v, hash: h, str: strconv.FormatFloat(v, 'g', -1, 64)}
 }
 
 // LiteralString creates a string literal type.
 func LiteralString(v string) *Literal {
-	h := hash.HashCombine(uint64(kind.Literal), uint64(kind.String))
-	h = hash.HashCombine(h, hash.FnvString(v))
+	h := hash.MixHash(uint64(kind.Literal), uint64(kind.String))
+	h = hash.MixHash(h, hash.FnvString(v))
 
 	return &Literal{Base: kind.String, Value: v, hash: h, str: strconv.Quote(v)}
 }

@@ -29,9 +29,9 @@ func (id ID) String() string {
 
 func (id ID) hash() uint64 {
 	h := internal.FnvString("identity.id")
-	h = internal.HashCombine(h, internal.FnvString(id.Kind))
-	h = internal.HashCombine(h, internal.FnvString(id.Site))
-	return internal.HashCombine(h, id.Index)
+	h = internal.MixHash(h, internal.FnvString(id.Kind))
+	h = internal.MixHash(h, internal.FnvString(id.Site))
+	return internal.MixHash(h, id.Index)
 }
 
 // Value is the runtime identity axis. Its lattice is flat:
@@ -117,9 +117,9 @@ func Hash(v Value) uint64 {
 }
 
 func (v Value) Hash() uint64 {
-	h := internal.HashCombine(internal.FnvString("identity"), uint64(v.state))
+	h := internal.MixHash(internal.FnvString("identity"), uint64(v.state))
 	if v.state == singleton {
-		h = internal.HashCombine(h, v.id.hash())
+		h = internal.MixHash(h, v.id.hash())
 	}
 	return h
 }

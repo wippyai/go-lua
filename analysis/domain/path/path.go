@@ -304,20 +304,20 @@ func (p Path) Hash() uint64 {
 	var h uint64
 	if p.Symbol != 0 {
 		// Use Symbol as primary identity for hashing
-		h = hash.HashCombine(0, uint64(p.Symbol))
-		h = hash.HashCombine(h, uint64(p.Version))
+		h = hash.MixHash(0, uint64(p.Symbol))
+		h = hash.MixHash(h, uint64(p.Version))
 	} else {
 		h = hash.FnvString(p.Root)
 	}
 
 	for _, seg := range p.Segments {
-		h = hash.HashCombine(h, uint64(seg.Kind))
+		h = hash.MixHash(h, uint64(seg.Kind))
 
 		switch seg.Kind {
 		case SegmentField, SegmentIndexString:
-			h = hash.HashCombine(h, hash.FnvString(seg.Name))
+			h = hash.MixHash(h, hash.FnvString(seg.Name))
 		case SegmentIndexInt:
-			h = hash.HashCombine(h, uint64(seg.Index))
+			h = hash.MixHash(h, uint64(seg.Index))
 		}
 	}
 

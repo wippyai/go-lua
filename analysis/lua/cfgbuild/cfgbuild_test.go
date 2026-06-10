@@ -224,6 +224,18 @@ func TestBuildFunctionParamsBecomeLeadingAssignments(t *testing.T) {
 	requireEdge(t, graph, assigns[1], graph.Exit(), false)
 }
 
+func TestBuildRequiresBindings(t *testing.T) {
+	fn := function([]string{"a"})
+	if result := BuildFunction(fn, nil); result != nil {
+		t.Fatalf("BuildFunction(nil bindings) = %#v, want nil", result)
+	}
+
+	stmts := []ast.Stmt{localAssign([]string{"a"}, number("1"))}
+	if result := BuildChunk(stmts, nil); result != nil {
+		t.Fatalf("BuildChunk(nil bindings) = %#v, want nil", result)
+	}
+}
+
 func TestBuildChunkLinearAssignmentSequencing(t *testing.T) {
 	decl := localAssign([]string{"a", "b"}, number("1"), number("2"))
 	aWrite := ident("a")

@@ -31,25 +31,25 @@ func buildFunctionType(
 ) *Function {
 	h := uint64(kind.Function)
 	for _, tp := range typeParams {
-		h = hash.HashCombine(h, tp.Hash())
+		h = hash.MixHash(h, tp.Hash())
 	}
 
 	for _, p := range params {
-		h = hash.HashCombine(h, p.Type.Hash())
+		h = hash.MixHash(h, p.Type.Hash())
 		if p.Optional {
-			h = hash.HashCombine(h, 1)
+			h = hash.MixHash(h, 1)
 		}
 	}
 
 	if variadic != nil {
-		h = hash.HashCombine(h, variadic.Hash())
+		h = hash.MixHash(h, variadic.Hash())
 	}
 
 	for _, r := range returns {
 		if r == nil {
 			panic("FunctionBuilder.Build: nil entry in returns; normalize before building")
 		}
-		h = hash.HashCombine(h, r.Hash())
+		h = hash.MixHash(h, r.Hash())
 	}
 
 	typeParamsCopy := make([]*TypeParam, len(typeParams))

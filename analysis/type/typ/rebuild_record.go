@@ -72,46 +72,46 @@ func buildRecordType(fields []Field, staticMembers []StaticMember, metatable, ma
 
 	h := uint64(kind.Record)
 	for _, f := range sorted {
-		h = hash.HashCombine(h, hash.FnvString(f.Name))
-		h = hash.HashCombine(h, f.Type.Hash())
+		h = hash.MixHash(h, hash.FnvString(f.Name))
+		h = hash.MixHash(h, f.Type.Hash())
 		if f.Optional {
-			h = hash.HashCombine(h, 1)
+			h = hash.MixHash(h, 1)
 		}
 		if f.Readonly {
-			h = hash.HashCombine(h, 2)
+			h = hash.MixHash(h, 2)
 		}
 	}
 	for _, m := range members {
-		h = hash.HashCombine(h, recordStaticHash)
-		h = hash.HashCombine(h, uint64(m.Kind))
+		h = hash.MixHash(h, recordStaticHash)
+		h = hash.MixHash(h, uint64(m.Kind))
 		switch m.Kind {
 		case StaticMemberStringIndex:
-			h = hash.HashCombine(h, hash.FnvString(m.Name))
+			h = hash.MixHash(h, hash.FnvString(m.Name))
 		case StaticMemberIntIndex:
-			h = hash.HashCombine(h, uint64(m.Index))
+			h = hash.MixHash(h, uint64(m.Index))
 		}
-		h = hash.HashCombine(h, m.Type.Hash())
+		h = hash.MixHash(h, m.Type.Hash())
 		if m.Optional {
-			h = hash.HashCombine(h, 1)
+			h = hash.MixHash(h, 1)
 		}
 		if m.Readonly {
-			h = hash.HashCombine(h, 2)
+			h = hash.MixHash(h, 2)
 		}
 	}
 
 	if metatable != nil {
-		h = hash.HashCombine(h, metatable.Hash())
+		h = hash.MixHash(h, metatable.Hash())
 	}
 	if open {
-		h = hash.HashCombine(h, 3)
+		h = hash.MixHash(h, 3)
 	}
 	if mapKey != nil {
-		h = hash.HashCombine(h, recordMapKeyHash)
-		h = hash.HashCombine(h, mapKey.Hash())
+		h = hash.MixHash(h, recordMapKeyHash)
+		h = hash.MixHash(h, mapKey.Hash())
 	}
 	if mapValue != nil {
-		h = hash.HashCombine(h, recordMapValueHash)
-		h = hash.HashCombine(h, mapValue.Hash())
+		h = hash.MixHash(h, recordMapValueHash)
+		h = hash.MixHash(h, mapValue.Hash())
 	}
 	containsAny := knownAnyFields(sorted) || knownAnyStaticMembers(members) || knownAny(metatable, mapKey, mapValue)
 	containsNever := knownNeverFields(sorted) || knownNeverStaticMembers(members) || knownNever(metatable, mapKey, mapValue)

@@ -33,7 +33,7 @@ func newNormalizedUnion(members []Type, memberHashes []uint64) Type {
 	containsRecursive := false
 	containsOpenRecursive := false
 	for i, m := range membersCopy {
-		h = hash.HashCombine(h, hashesCopy[i])
+		h = hash.MixHash(h, hashesCopy[i])
 		if !containsAny && knownContainsAny(m) {
 			containsAny = true
 		}

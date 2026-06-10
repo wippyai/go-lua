@@ -36,9 +36,9 @@ func NewAnnotated(inner Type, annotations []annotation.Annotation) Type {
 	if inner == nil {
 		inner = Unknown
 	}
-	h := hash.HashCombine(inner.Hash(), annotatedHashSalt)
+	h := hash.MixHash(inner.Hash(), annotatedHashSalt)
 	for _, ann := range annotations {
-		h = hash.HashCombine(h, ann.Hash())
+		h = hash.MixHash(h, ann.Hash())
 	}
 	return &Annotated{
 		Inner:                 inner,

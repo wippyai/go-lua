@@ -31,7 +31,7 @@ func (k FamilyKey) IsZero() bool {
 // Hash folds the key into a stable bucket value.
 func (k FamilyKey) Hash() uint64 {
 	h := hash.FnvString(k.Namespace)
-	return hash.HashCombine(h, hash.FnvString(k.Owner))
+	return hash.MixHash(h, hash.FnvString(k.Owner))
 }
 
 // RecursiveFamilyInterner owns one canonical *typ.Recursive handle per FamilyKey
@@ -135,7 +135,7 @@ func (i *RecursiveFamilyInterner) FamilyIdentityHash(rec *typ.Recursive) (uint64
 	if !ok {
 		return 0, false
 	}
-	return hash.HashCombine(recursiveFamilyKeyedSalt, key.Hash()), true
+	return hash.MixHash(recursiveFamilyKeyedSalt, key.Hash()), true
 }
 
 // owns reports whether family is a handle minted by this interner. Only owned
@@ -485,7 +485,7 @@ func (s *recursiveFamilyFingerprintScan) add(rec *typ.Recursive) {
 		}
 	}
 	if id == 0 {
-		id = hash.HashCombine(recursiveFamilyNamedSalt, hash.FnvString(rec.Name))
+		id = hash.MixHash(recursiveFamilyNamedSalt, hash.FnvString(rec.Name))
 	}
 	if s.seenFamilies[id] {
 		return

@@ -159,6 +159,35 @@ func TestExtractChunkFunctionDefinitionFactPreservesIdentity(t *testing.T) {
 	}
 }
 
+func TestExtractChunkFunctionDefinitionWithNilBindingsHasNoTargetSymbol(t *testing.T) {
+	target := ident("f")
+	fn := function(nil)
+	stmt := &ast.FuncDefStmt{
+		Name: &ast.FuncName{Func: target},
+		Func: fn,
+	}
+	stmts := []ast.Stmt{stmt}
+	bindings := bind.BindChunk(stmts, bind.Options{})
+	built := cfgbuild.BuildChunk(stmts, bindings)
+
+	result, err := ExtractChunk(stmts, nil, built)
+	if err != nil {
+		t.Fatalf("ExtractChunk: %v", err)
+	}
+
+	points := requireStmtPoints(t, built, stmt, 1)
+	fact, ok := result.FunctionDefinition(points[0])
+	if !ok {
+		t.Fatalf("missing function definition fact")
+	}
+	if fact.Stmt != stmt || fact.Name != stmt.Name || fact.Func != fn {
+		t.Fatalf("function definition fact = %#v", fact)
+	}
+	if fact.TargetSymbol != 0 || fact.HasTargetSymbol {
+		t.Fatalf("function definition target = %d/%v, want 0/false", fact.TargetSymbol, fact.HasTargetSymbol)
+	}
+}
+
 func TestExtractChunkLabelFactPreservesIdentity(t *testing.T) {
 	label := &ast.LabelStmt{Name: "again"}
 	stmts := []ast.Stmt{label}

@@ -27,7 +27,7 @@ type Instantiated struct {
 
 // Instantiate creates an instantiated generic type with the given arguments.
 func Instantiate(g *Generic, args ...Type) *Instantiated {
-	h := hash.HashCombine(uint64(kind.Instantiated), g.Hash())
+	h := hash.MixHash(uint64(kind.Instantiated), g.Hash())
 	containsAny := knownContainsAny(g)
 	containsNever := knownContainsNever(g)
 	containsTypeParam := knownContainsTypeParam(g)
@@ -35,7 +35,7 @@ func Instantiate(g *Generic, args ...Type) *Instantiated {
 	containsRecursive := knownContainsRecursive(g)
 	containsOpenRecursive := knownContainsOpenRecursive(g)
 	for _, a := range args {
-		h = hash.HashCombine(h, a.Hash())
+		h = hash.MixHash(h, a.Hash())
 		if !containsAny && knownContainsAny(a) {
 			containsAny = true
 		}

@@ -66,7 +66,7 @@ func Equal(a, b Value) bool {
 
 // Hash is a stable hash consistent with Equal.
 func (v Value) Hash() uint64 {
-	return internal.HashCombine(internal.FnvString("escape"), uint64(v))
+	return internal.MixHash(internal.FnvString("escape"), uint64(v))
 }
 
 // Covers reports whether the receiver is at least as high as other in the chain.

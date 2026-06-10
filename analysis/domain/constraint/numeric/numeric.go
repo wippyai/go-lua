@@ -230,13 +230,13 @@ func (c LenGeConst) Equals(o NumericConstraint) bool {
 }
 
 func hashNumConstraint(kind NumKind, a, b pathdom.Path, extra ...int64) uint64 {
-	h := internal.HashCombine(uint64(kind), a.Hash())
+	h := internal.MixHash(uint64(kind), a.Hash())
 	if !b.IsEmpty() {
-		h = internal.HashCombine(h, b.Hash())
+		h = internal.MixHash(h, b.Hash())
 	}
 
 	for _, v := range extra {
-		h = internal.HashCombine(h, uint64(v))
+		h = internal.MixHash(h, uint64(v))
 	}
 
 	return h

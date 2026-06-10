@@ -38,9 +38,9 @@ type Generic struct {
 // NewGeneric creates a generic type definition identified by name + type params
 // + body structure.
 func NewGeneric(name string, params []*TypeParam, body Type) *Generic {
-	h := hash.HashCombine(uint64(kind.Generic), hash.FnvString(name))
+	h := hash.MixHash(uint64(kind.Generic), hash.FnvString(name))
 	for _, p := range params {
-		h = hash.HashCombine(h, p.Hash())
+		h = hash.MixHash(h, p.Hash())
 	}
 
 	// The body participates in identity so two same-named declarations with
@@ -50,7 +50,7 @@ func NewGeneric(name string, params []*TypeParam, body Type) *Generic {
 	// out of the hash; structural equality still distinguishes such generics
 	// through the coinductive body comparison.
 	if body != nil {
-		h = hash.HashCombine(h, body.Hash())
+		h = hash.MixHash(h, body.Hash())
 	}
 
 	copied := make([]*TypeParam, len(params))
@@ -82,11 +82,11 @@ func (g *Generic) SetBody(body Type) {
 	}
 	g.Body = body
 
-	h := hash.HashCombine(uint64(kind.Generic), hash.FnvString(g.Name))
+	h := hash.MixHash(uint64(kind.Generic), hash.FnvString(g.Name))
 	for _, p := range g.TypeParams {
-		h = hash.HashCombine(h, p.Hash())
+		h = hash.MixHash(h, p.Hash())
 	}
-	h = hash.HashCombine(h, body.Hash())
+	h = hash.MixHash(h, body.Hash())
 	g.hash = h
 
 	g.containsAny = g.containsAny || knownContainsAny(body)

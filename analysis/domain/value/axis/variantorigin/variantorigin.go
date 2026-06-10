@@ -80,10 +80,10 @@ func Equal(a, b Value) bool {
 }
 
 func (v Value) Hash() uint64 {
-	h := internal.HashCombine(internal.FnvString("variantorigin"), uint64(v.state))
-	h = internal.HashCombine(h, v.family)
+	h := internal.MixHash(internal.FnvString("variantorigin"), uint64(v.state))
+	h = internal.MixHash(h, v.family)
 	for _, c := range v.cases {
-		h = internal.HashCombine(h, uint64(c+1))
+		h = internal.MixHash(h, uint64(c+1))
 	}
 	return h
 }

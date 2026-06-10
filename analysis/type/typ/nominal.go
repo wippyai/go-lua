@@ -36,7 +36,7 @@ type Interface struct {
 
 // NewInterface creates an interface type.
 func NewInterface(name string, methods []Method) *Interface {
-	h := hash.HashCombine(uint64(kind.Interface), hash.FnvString(name))
+	h := hash.MixHash(uint64(kind.Interface), hash.FnvString(name))
 	containsAny := false
 	containsNever := false
 	containsTypeParam := false
@@ -44,8 +44,8 @@ func NewInterface(name string, methods []Method) *Interface {
 	containsRecursive := false
 	containsOpenRecursive := false
 	for _, m := range methods {
-		h = hash.HashCombine(h, hash.FnvString(m.Name))
-		h = hash.HashCombine(h, m.Type.Hash())
+		h = hash.MixHash(h, hash.FnvString(m.Name))
+		h = hash.MixHash(h, m.Type.Hash())
 		if !containsAny && knownContainsAny(m.Type) {
 			containsAny = true
 		}

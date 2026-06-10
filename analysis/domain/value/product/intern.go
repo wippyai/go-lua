@@ -130,15 +130,15 @@ func Hash(reg *axis.Registry, v Value) uint64 {
 
 func stableHash(reg *axis.Registry, shape Shape, p presence.Value, slots []slot) uint64 {
 	h := internal.FnvString("value.product")
-	h = internal.HashCombine(h, uint64(shape)+1)
-	h = internal.HashCombine(h, presence.Value.Hash(p))
+	h = internal.MixHash(h, uint64(shape)+1)
+	h = internal.MixHash(h, presence.Value.Hash(p))
 	for _, slot := range slots {
 		spec, ok := reg.LookupErased(slot.key)
 		if !ok {
 			panic("product: unregistered axis slot " + slot.key)
 		}
-		h = internal.HashCombine(h, internal.FnvString(slot.key))
-		h = internal.HashCombine(h, spec.HashAny(slot.value))
+		h = internal.MixHash(h, internal.FnvString(slot.key))
+		h = internal.MixHash(h, spec.HashAny(slot.value))
 	}
 	return h
 }

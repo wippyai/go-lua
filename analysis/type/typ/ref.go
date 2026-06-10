@@ -22,8 +22,8 @@ type Ref struct {
 
 // NewRef creates a type reference.
 func NewRef(module, name string) *Ref {
-	h := hash.HashCombine(uint64(kind.Ref), hash.FnvString(module))
-	h = hash.HashCombine(h, hash.FnvString(name))
+	h := hash.MixHash(uint64(kind.Ref), hash.FnvString(module))
+	h = hash.MixHash(h, hash.FnvString(name))
 
 	str := name
 	if module != "" {
@@ -149,7 +149,7 @@ type Meta struct {
 
 // NewMeta creates a metatype.
 func NewMeta(of Type) *Meta {
-	h := hash.HashCombine(uint64(kind.Meta), of.Hash())
+	h := hash.MixHash(uint64(kind.Meta), of.Hash())
 	return &Meta{
 		Of:                    of,
 		hash:                  h,

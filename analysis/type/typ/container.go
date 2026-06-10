@@ -27,7 +27,7 @@ func NewArray(elem Type) *Array {
 	if elem == nil {
 		elem = Unknown
 	}
-	h := hash.HashCombine(uint64(kind.Array), elem.Hash())
+	h := hash.MixHash(uint64(kind.Array), elem.Hash())
 	return &Array{
 		Element:               elem,
 		hash:                  h,
@@ -79,8 +79,8 @@ func NewMap(key, value Type) *Map {
 	if value == nil {
 		value = Unknown
 	}
-	h := hash.HashCombine(uint64(kind.Map), key.Hash())
-	h = hash.HashCombine(h, value.Hash())
+	h := hash.MixHash(uint64(kind.Map), key.Hash())
+	h = hash.MixHash(h, value.Hash())
 
 	return &Map{
 		Key:                   key,
@@ -140,8 +140,8 @@ func NewReadonlyMap(key, value Type) *ReadonlyMap {
 	if value == nil {
 		value = Unknown
 	}
-	h := hash.HashCombine(uint64(kind.ReadonlyMap), key.Hash())
-	h = hash.HashCombine(h, value.Hash())
+	h := hash.MixHash(uint64(kind.ReadonlyMap), key.Hash())
+	h = hash.MixHash(h, value.Hash())
 
 	return &ReadonlyMap{
 		Key:                   key,
@@ -206,7 +206,7 @@ func NewTuple(elems ...Type) *Tuple {
 			e = Unknown
 		}
 		cleaned[i] = e
-		h = hash.HashCombine(h, e.Hash())
+		h = hash.MixHash(h, e.Hash())
 		if !containsAny && knownContainsAny(e) {
 			containsAny = true
 		}

@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/defaults"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/escape"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/evidence"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
@@ -307,17 +308,14 @@ func TestSyntheticAxisParticipatesThroughRegistry(t *testing.T) {
 }
 
 func defaultRegistrySpecIDs() []string {
-	return []string{
-		variantorigin.Key.ID(),
-		identity.Key.ID(),
-		escape.Key.ID(),
-		ownership.Key.ID(),
-		evidence.Key.ID(),
-	}
+	return specIDs(defaults.SparseSpecs())
 }
 
 func registrySpecIDs(reg *axis.Registry) []string {
-	specs := reg.Specs()
+	return specIDs(reg.Specs())
+}
+
+func specIDs(specs []axis.ErasedSpec) []string {
 	ids := make([]string, len(specs))
 	for i, spec := range specs {
 		ids[i] = spec.ID()
