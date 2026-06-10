@@ -1304,7 +1304,7 @@ func TestBuildChunkUnsupportedFunctionDefinitionTargetsReturnNil(t *testing.T) {
 	}
 }
 
-func TestBuildChunkDeferredExpressionSemanticsReturnNil(t *testing.T) {
+func TestBuildChunkUnsupportedExpressionCoverageReturnsNil(t *testing.T) {
 	tests := []struct {
 		name string
 		stmt ast.Stmt
@@ -1362,7 +1362,7 @@ func TestBuildChunkDeferredExpressionSemanticsReturnNil(t *testing.T) {
 			stmts := []ast.Stmt{tt.stmt}
 			bindings := bind.BindChunk(stmts, bind.Options{Globals: []string{"make", "print", "ready", "value"}})
 			if result := BuildChunk(stmts, bindings); result != nil {
-				t.Fatalf("BuildChunk returned graph for deferred expression semantics in %s", tt.name)
+				t.Fatalf("BuildChunk returned graph for unsupported expression coverage in %s", tt.name)
 			}
 		})
 	}

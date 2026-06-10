@@ -8,7 +8,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/ast"
 )
 
-// Result contains the CFG topology and semantic metadata extracted during build.
+// Result contains the CFG topology and facts extracted during build.
 type Result struct {
 	Graph      *cfg.CFG
 	Meta       cfgfacts.Metadata
@@ -115,13 +115,13 @@ func (b *builder) buildStmt(state flowState, stmt ast.Stmt) flowState {
 			b.unsupported = true
 			return flowState{current: state.current}
 		}
-		if b.hasDeferredExprSemanticsInCall(stmt.Expr) {
+		if b.hasUnsupportedExprInCall(stmt.Expr) {
 			b.unsupported = true
 			return flowState{current: state.current}
 		}
 		return b.appendCall(state, stmt)
 	case *ast.ReturnStmt:
-		if b.hasDeferredExprSemantics(stmt.Exprs...) {
+		if b.hasUnsupportedExprs(stmt.Exprs...) {
 			b.unsupported = true
 			return flowState{current: state.current}
 		}
@@ -157,7 +157,7 @@ func (b *builder) buildStmt(state flowState, stmt ast.Stmt) flowState {
 }
 
 func (b *builder) buildAssign(state flowState, stmt *ast.AssignStmt) flowState {
-	if b.hasDeferredExprSemantics(stmt.Rhs...) {
+	if b.hasUnsupportedExprs(stmt.Rhs...) {
 		b.unsupported = true
 		return flowState{current: state.current}
 	}
@@ -173,7 +173,7 @@ func (b *builder) buildAssign(state flowState, stmt *ast.AssignStmt) flowState {
 }
 
 func (b *builder) buildLocalAssign(state flowState, stmt *ast.LocalAssignStmt) flowState {
-	if b.hasDeferredExprSemantics(stmt.Exprs...) {
+	if b.hasUnsupportedExprs(stmt.Exprs...) {
 		b.unsupported = true
 		return flowState{current: state.current}
 	}
@@ -297,7 +297,7 @@ func (b *builder) buildRepeat(state flowState, stmt *ast.RepeatStmt) flowState {
 }
 
 func (b *builder) buildNumberFor(state flowState, stmt *ast.NumberForStmt) flowState {
-	if b.hasDeferredExprSemantics(stmt.Init, stmt.Limit, stmt.Step) {
+	if b.hasUnsupportedExprs(stmt.Init, stmt.Limit, stmt.Step) {
 		b.unsupported = true
 		return flowState{current: state.current}
 	}
@@ -331,7 +331,7 @@ func (b *builder) buildNumberFor(state flowState, stmt *ast.NumberForStmt) flowS
 }
 
 func (b *builder) buildGenericFor(state flowState, stmt *ast.GenericForStmt) flowState {
-	if b.hasDeferredExprSemantics(stmt.Exprs...) {
+	if b.hasUnsupportedExprs(stmt.Exprs...) {
 		b.unsupported = true
 		return flowState{current: state.current}
 	}
@@ -482,186 +482,6 @@ func (b *builder) firstNewEdgeTarget(edgeStart int, from cfg.Point, cond bool) (
 		}
 	}
 	return 0, false
-}
-
-func (b *builder) branchMetadata(expr ast.Expr) cfgfacts.BranchFact {
-	switch expr := expr.(type) {
-	case *ast.IdentExpr:
-		if id, ok := b.identSymbol(expr); ok {
-			return cfgfacts.BranchFact{Symbol: id, Check: cfgfacts.BranchCheck{Kind: cfgfacts.CheckTruthy}}
-		}
-	case *ast.UnaryNotOpExpr:
-		if ident, ok := expr.Expr.(*ast.IdentExpr); ok {
-			if id, ok := b.identSymbol(ident); ok {
-				return cfgfacts.BranchFact{Symbol: id, Check: cfgfacts.BranchCheck{Kind: cfgfacts.CheckFalsy}}
-			}
-		}
-	case *ast.RelationalOpExpr:
-		if expr.Operator != "==" && expr.Operator != "~=" {
-			break
-		}
-		if fact, ok := b.typeCompareBranchFact(expr); ok {
-			return fact
-		}
-		if id, ok := b.nilCompareSymbol(expr.Lhs, expr.Rhs); ok {
-			if expr.Operator == "==" {
-				return cfgfacts.BranchFact{Symbol: id, Check: cfgfacts.BranchCheck{Kind: cfgfacts.CheckNil}}
-			}
-			return cfgfacts.BranchFact{Symbol: id, Check: cfgfacts.BranchCheck{Kind: cfgfacts.CheckNotNil}}
-		}
-	}
-	return cfgfacts.BranchFact{Check: cfgfacts.BranchCheck{Kind: cfgfacts.CheckNone}}
-}
-
-func (b *builder) hasUnsupportedConditionExpr(expr ast.Expr) bool {
-	if !b.hasDeferredExprSemantic(expr) {
-		return false
-	}
-	_, ok := b.typeCompareBranchFact(expr)
-	return !ok
-}
-
-func (b *builder) typeCompareBranchFact(expr ast.Expr) (cfgfacts.BranchFact, bool) {
-	rel, ok := expr.(*ast.RelationalOpExpr)
-	if !ok || (rel.Operator != "==" && rel.Operator != "~=") {
-		return cfgfacts.BranchFact{}, false
-	}
-	id, typeName, ok := b.typeCompareOperands(rel.Lhs, rel.Rhs)
-	if !ok {
-		id, typeName, ok = b.typeCompareOperands(rel.Rhs, rel.Lhs)
-	}
-	if !ok {
-		return cfgfacts.BranchFact{}, false
-	}
-	kind := cfgfacts.CheckTypeEqual
-	if rel.Operator == "~=" {
-		kind = cfgfacts.CheckTypeNot
-	}
-	return cfgfacts.BranchFact{
-		Symbol: id,
-		Check:  cfgfacts.BranchCheck{Kind: kind, TypeName: typeName},
-	}, true
-}
-
-func (b *builder) typeCompareOperands(callExpr, literalExpr ast.Expr) (symbol.ID, string, bool) {
-	lit, ok := literalExpr.(*ast.StringExpr)
-	if !ok {
-		return 0, "", false
-	}
-	call, ok := callExpr.(*ast.FuncCallExpr)
-	if !ok {
-		return 0, "", false
-	}
-	id, ok := b.typeCallSubjectSymbol(call)
-	if !ok {
-		return 0, "", false
-	}
-	return id, lit.Value, true
-}
-
-func (b *builder) typeCallSubjectSymbol(call *ast.FuncCallExpr) (symbol.ID, bool) {
-	if call == nil || call.Receiver != nil || call.Method != "" || len(call.Args) != 1 || len(call.TypeArgs) != 0 {
-		return 0, false
-	}
-	fn, ok := call.Func.(*ast.IdentExpr)
-	if !ok || fn.Value != "type" || !b.isGlobalTypeIdent(fn) {
-		return 0, false
-	}
-	arg, ok := call.Args[0].(*ast.IdentExpr)
-	if !ok {
-		return 0, false
-	}
-	return b.identSymbol(arg)
-}
-
-func (b *builder) isGlobalTypeIdent(ident *ast.IdentExpr) bool {
-	id, ok := b.identSymbol(ident)
-	if !ok || b.bindings.Name(id) != "type" {
-		return false
-	}
-	kind, ok := b.bindings.Kind(id)
-	return ok && kind == symbol.Global
-}
-
-func (b *builder) nilCompareSymbol(lhs, rhs ast.Expr) (symbol.ID, bool) {
-	if _, ok := lhs.(*ast.NilExpr); ok {
-		if ident, ok := rhs.(*ast.IdentExpr); ok {
-			return b.identSymbol(ident)
-		}
-	}
-	if _, ok := rhs.(*ast.NilExpr); ok {
-		if ident, ok := lhs.(*ast.IdentExpr); ok {
-			return b.identSymbol(ident)
-		}
-	}
-	return 0, false
-}
-
-func (b *builder) hasDeferredExprSemantics(exprs ...ast.Expr) bool {
-	for _, expr := range exprs {
-		if b.hasDeferredExprSemantic(expr) {
-			return true
-		}
-	}
-	return false
-}
-
-func (b *builder) hasDeferredExprSemanticsInCall(expr ast.Expr) bool {
-	call, ok := expr.(*ast.FuncCallExpr)
-	if !ok {
-		return b.hasDeferredExprSemantic(expr)
-	}
-	if b.hasDeferredExprSemantic(call.Func) || b.hasDeferredExprSemantic(call.Receiver) {
-		return true
-	}
-	return b.hasDeferredExprSemantics(call.Args...)
-}
-
-func (b *builder) hasDeferredExprSemantic(expr ast.Expr) bool {
-	switch expr := expr.(type) {
-	case nil:
-		return false
-	case *ast.TrueExpr, *ast.FalseExpr, *ast.NilExpr, *ast.NumberExpr, *ast.StringExpr, *ast.Comma3Expr:
-		return false
-	case *ast.IdentExpr:
-		return false
-	case *ast.AttrGetExpr:
-		return b.hasDeferredExprSemantic(expr.Object) || b.hasDeferredExprSemantic(expr.Key)
-	case *ast.TableExpr:
-		for _, field := range expr.Fields {
-			if field == nil {
-				continue
-			}
-			if b.hasDeferredExprSemantic(field.Key) || b.hasDeferredExprSemantic(field.Value) {
-				return true
-			}
-		}
-		return false
-	case *ast.FuncCallExpr, *ast.FunctionExpr:
-		return true
-	case *ast.LogicalOpExpr:
-		return b.hasDeferredExprSemantic(expr.Lhs) || b.hasDeferredExprSemantic(expr.Rhs)
-	case *ast.RelationalOpExpr:
-		return b.hasDeferredExprSemantic(expr.Lhs) || b.hasDeferredExprSemantic(expr.Rhs)
-	case *ast.StringConcatOpExpr:
-		return b.hasDeferredExprSemantic(expr.Lhs) || b.hasDeferredExprSemantic(expr.Rhs)
-	case *ast.ArithmeticOpExpr:
-		return b.hasDeferredExprSemantic(expr.Lhs) || b.hasDeferredExprSemantic(expr.Rhs)
-	case *ast.UnaryMinusOpExpr:
-		return b.hasDeferredExprSemantic(expr.Expr)
-	case *ast.UnaryNotOpExpr:
-		return b.hasDeferredExprSemantic(expr.Expr)
-	case *ast.UnaryLenOpExpr:
-		return b.hasDeferredExprSemantic(expr.Expr)
-	case *ast.UnaryBNotOpExpr:
-		return b.hasDeferredExprSemantic(expr.Expr)
-	case *ast.CastExpr:
-		return b.hasDeferredExprSemantic(expr.Expr)
-	case *ast.NonNilAssertExpr:
-		return b.hasDeferredExprSemantic(expr.Expr)
-	default:
-		return true
-	}
 }
 
 func (b *builder) simpleIdentSymbol(expr ast.Expr) (symbol.ID, bool) {
