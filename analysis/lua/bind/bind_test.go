@@ -27,6 +27,13 @@ func function(names []string, stmts ...ast.Stmt) *ast.FunctionExpr {
 	}
 }
 
+func varargFunction(names []string, stmts ...ast.Stmt) *ast.FunctionExpr {
+	return &ast.FunctionExpr{
+		ParList: &ast.ParList{Names: names, HasVargs: true},
+		Stmts:   stmts,
+	}
+}
+
 func typeRef(name string) *ast.TypeRefExpr {
 	return &ast.TypeRefExpr{Path: []string{name}}
 }
@@ -73,6 +80,14 @@ func assertDeclaringFunction(t *testing.T, r *Result, id symbol.ID, want *ast.Fu
 	if got != want {
 		t.Fatalf("DeclaringFunction(%d) = %p, want %p", id, got, want)
 	}
+}
+
+func captureIDs(captures []Capture) []symbol.ID {
+	ids := make([]symbol.ID, len(captures))
+	for i, capture := range captures {
+		ids[i] = capture.Captured
+	}
+	return ids
 }
 
 func TestShadowingAndDeferredLocalRules(t *testing.T) {
@@ -391,6 +406,138 @@ func TestDeclaringFunctionForLexicalSymbols(t *testing.T) {
 	topID := mustLocalAt(t, r, topLocal, 0)
 	if got, ok := r.DeclaringFunction(topID); ok || got != nil {
 		t.Fatalf("top-level DeclaringFunction = %p/%v, want nil/false", got, ok)
+	}
+}
+
+func TestDirectCapturesOuterParamLocalAndGlobals(t *testing.T) {
+	localWrite := ident("x")
+	paramRead := ident("p")
+	localRead := ident("x")
+	globalRead := ident("print")
+	child := function(nil,
+		&ast.AssignStmt{Lhs: []ast.Expr{localWrite}, Rhs: []ast.Expr{number("2")}},
+		ret(paramRead, localRead, globalRead),
+	)
+	outerLocal := localAssign([]string{"x"}, number("1"))
+	outer := function([]string{"p"},
+		outerLocal,
+		localAssign([]string{"child"}, child),
+	)
+
+	r := BindFunction(outer, Options{Globals: []string{"print"}})
+
+	localID := mustLocalAt(t, r, outerLocal, 0)
+	paramID := r.ParamSymbols(outer)[0]
+	if got := mustSymbol(t, r, localWrite); got != localID {
+		t.Fatalf("outer local write resolved to %d, want %d", got, localID)
+	}
+	if got := mustSymbol(t, r, localRead); got != localID {
+		t.Fatalf("outer local read resolved to %d, want %d", got, localID)
+	}
+	if got := mustSymbol(t, r, paramRead); got != paramID {
+		t.Fatalf("outer param read resolved to %d, want %d", got, paramID)
+	}
+	assertKind(t, r, localID, symbol.Local)
+	assertKind(t, r, paramID, symbol.Param)
+	assertKind(t, r, mustSymbol(t, r, globalRead), symbol.Global)
+
+	captures := r.DirectCaptures(child)
+	if got, want := captureIDs(captures), []symbol.ID{localID, paramID}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("DirectCaptures(child) = %v, want %v", got, want)
+	}
+	for i, want := range []struct {
+		id   symbol.ID
+		name string
+	}{
+		{id: localID, name: "x"},
+		{id: paramID, name: "p"},
+	} {
+		if captures[i].Captured != want.id || captures[i].CapturedName != want.name || captures[i].DeclaringFunction != outer {
+			t.Fatalf("capture %d = %#v, want %q declared by outer", i, captures[i], want.name)
+		}
+	}
+	if got := r.DirectCaptures(outer); got != nil {
+		t.Fatalf("DirectCaptures(outer) = %#v, want nil", got)
+	}
+
+	captures[0].CapturedName = "mutated"
+	if got := r.DirectCaptures(child)[0].CapturedName; got != "x" {
+		t.Fatalf("DirectCaptures returned mutable backing slice; name = %q", got)
+	}
+}
+
+func TestDirectCapturesNestedNonVarargDoesNotCaptureOuterVararg(t *testing.T) {
+	localRead := ident("x")
+	child := function(nil, ret(&ast.Comma3Expr{}, localRead))
+	outerLocal := localAssign([]string{"x"}, number("1"))
+	outer := varargFunction(nil,
+		outerLocal,
+		localAssign([]string{"child"}, child),
+	)
+
+	r := BindFunction(outer, Options{})
+
+	localID := mustLocalAt(t, r, outerLocal, 0)
+	varargID, ok := r.VarargSymbol(outer)
+	if !ok {
+		t.Fatalf("outer VarargSymbol missing")
+	}
+	if got := mustSymbol(t, r, localRead); got != localID {
+		t.Fatalf("outer local read resolved to %d, want %d", got, localID)
+	}
+
+	captures := r.DirectCaptures(child)
+	if got, want := captureIDs(captures), []symbol.ID{localID}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("DirectCaptures(child) = %v, want %v without outer vararg %d", got, want, varargID)
+	}
+	if captures[0].CapturedName != "x" || captures[0].DeclaringFunction != outer {
+		t.Fatalf("capture = %#v, want x declared by outer", captures[0])
+	}
+}
+
+func TestDirectCapturesShadowingAndNestedDirectness(t *testing.T) {
+	outerX := localAssign([]string{"x"}, number("1"))
+	outerOnly := localAssign([]string{"outerOnly"}, number("2"))
+	shadowX := localAssign([]string{"x"}, number("3"))
+	shadowRead := ident("x")
+	shadowUse := localAssign([]string{"shadowUse"}, shadowRead)
+	parentOnly := localAssign([]string{"parentOnly"}, number("4"))
+	parentOnlyRead := ident("parentOnly")
+	outerOnlyRead := ident("outerOnly")
+	grandchild := function(nil, ret(parentOnlyRead, outerOnlyRead))
+	child := function(nil,
+		shadowX,
+		shadowUse,
+		parentOnly,
+		localAssign([]string{"grandchild"}, grandchild),
+	)
+	outer := function(nil,
+		outerX,
+		outerOnly,
+		localAssign([]string{"child"}, child),
+	)
+
+	r := BindFunction(outer, Options{})
+
+	shadowID := mustLocalAt(t, r, shadowX, 0)
+	if got := mustSymbol(t, r, shadowRead); got != shadowID {
+		t.Fatalf("shadowed x read resolved to %d, want child local %d", got, shadowID)
+	}
+	if got := r.DirectCaptures(child); got != nil {
+		t.Fatalf("DirectCaptures(child) = %#v, want nil for shadowed and grandchild-only uses", got)
+	}
+
+	parentOnlyID := mustLocalAt(t, r, parentOnly, 0)
+	outerOnlyID := mustLocalAt(t, r, outerOnly, 0)
+	captures := r.DirectCaptures(grandchild)
+	if got, want := captureIDs(captures), []symbol.ID{parentOnlyID, outerOnlyID}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("DirectCaptures(grandchild) = %v, want %v", got, want)
+	}
+	if captures[0].CapturedName != "parentOnly" || captures[0].DeclaringFunction != child {
+		t.Fatalf("grandchild parent capture = %#v, want parentOnly declared by child", captures[0])
+	}
+	if captures[1].CapturedName != "outerOnly" || captures[1].DeclaringFunction != outer {
+		t.Fatalf("grandchild outer capture = %#v, want outerOnly declared by outer", captures[1])
 	}
 }
 

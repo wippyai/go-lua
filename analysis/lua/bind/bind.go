@@ -27,6 +27,8 @@ type Result struct {
 	functions          []*ast.FunctionExpr
 	nestedFunctions    map[*ast.FunctionExpr][]*ast.FunctionExpr
 	declaringFunctions map[symbol.ID]*ast.FunctionExpr
+	directCaptures     map[*ast.FunctionExpr][]Capture
+	directCaptureSeen  map[*ast.FunctionExpr]map[symbol.ID]struct{}
 
 	paramSymbols      map[*ast.FunctionExpr][]symbol.ID
 	varargSymbols     map[*ast.FunctionExpr]symbol.ID
@@ -49,6 +51,13 @@ type ParamSlot struct {
 	SourceIndex  int
 	Vararg       bool
 	ImplicitSelf bool
+}
+
+// Capture describes one declaration directly captured by a function body.
+type Capture struct {
+	Captured          symbol.ID
+	CapturedName      string
+	DeclaringFunction *ast.FunctionExpr
 }
 
 // BindFunction binds a single function expression with a fresh global seed.
@@ -190,6 +199,14 @@ func (r *Result) DeclaringFunction(sym symbol.ID) (*ast.FunctionExpr, bool) {
 	return fn, ok
 }
 
+// DirectCaptures returns declarations directly captured by fn in first-use order.
+func (r *Result) DirectCaptures(fn *ast.FunctionExpr) []Capture {
+	if r == nil || fn == nil {
+		return nil
+	}
+	return cloneCaptures(r.directCaptures[fn])
+}
+
 // ParamSymbols returns ordered parameter symbols for fn.
 func (r *Result) ParamSymbols(fn *ast.FunctionExpr) []symbol.ID {
 	if r == nil || fn == nil {
@@ -263,6 +280,8 @@ func newResult(opts Options) *Result {
 		functionsBySymbol:  make(map[symbol.ID]*ast.FunctionExpr),
 		nestedFunctions:    make(map[*ast.FunctionExpr][]*ast.FunctionExpr),
 		declaringFunctions: make(map[symbol.ID]*ast.FunctionExpr),
+		directCaptures:     make(map[*ast.FunctionExpr][]Capture),
+		directCaptureSeen:  make(map[*ast.FunctionExpr]map[symbol.ID]struct{}),
 		paramSymbols:       make(map[*ast.FunctionExpr][]symbol.ID),
 		varargSymbols:      make(map[*ast.FunctionExpr]symbol.ID),
 		paramSlots:         make(map[*ast.FunctionExpr][]ParamSlot),
@@ -310,6 +329,13 @@ func cloneParamSlots(slots []ParamSlot) []ParamSlot {
 		return nil
 	}
 	return append([]ParamSlot(nil), slots...)
+}
+
+func cloneCaptures(captures []Capture) []Capture {
+	if len(captures) == 0 {
+		return nil
+	}
+	return append([]Capture(nil), captures...)
 }
 
 func (r *Result) newSymbol(name string, kind symbol.Kind) symbol.ID {
@@ -398,6 +424,38 @@ func (b *binder) newSymbol(name string, kind symbol.Kind) symbol.ID {
 		b.result.declaringFunctions[id] = fn
 	}
 	return id
+}
+
+func (b *binder) recordDirectCapture(id symbol.ID) {
+	if id == 0 {
+		return
+	}
+	current := b.currentFunction()
+	if current == nil {
+		return
+	}
+	kind, ok := b.result.kinds[id]
+	if !ok || (kind != symbol.Local && kind != symbol.Param) {
+		return
+	}
+	declaringFn := b.result.declaringFunctions[id]
+	if declaringFn == current {
+		return
+	}
+	seen := b.result.directCaptureSeen[current]
+	if seen == nil {
+		seen = make(map[symbol.ID]struct{})
+		b.result.directCaptureSeen[current] = seen
+	}
+	if _, ok := seen[id]; ok {
+		return
+	}
+	seen[id] = struct{}{}
+	b.result.directCaptures[current] = append(b.result.directCaptures[current], Capture{
+		Captured:          id,
+		CapturedName:      b.result.names[id],
+		DeclaringFunction: declaringFn,
+	})
 }
 
 func (b *binder) lookup(name string) (symbol.ID, bool, bool) {
@@ -557,7 +615,9 @@ func (b *binder) bindExprs(exprs []ast.Expr) {
 func (b *binder) bindExpr(expr ast.Expr) {
 	switch expr := expr.(type) {
 	case nil:
-	case *ast.TrueExpr, *ast.FalseExpr, *ast.NilExpr, *ast.NumberExpr, *ast.StringExpr, *ast.Comma3Expr:
+	case *ast.TrueExpr, *ast.FalseExpr, *ast.NilExpr, *ast.NumberExpr, *ast.StringExpr:
+	case *ast.Comma3Expr:
+		b.bindVararg()
 	case *ast.IdentExpr:
 		b.bindReadIdent(expr)
 	case *ast.AttrGetExpr:
@@ -606,6 +666,18 @@ func (b *binder) bindExpr(expr ast.Expr) {
 	case *ast.NonNilAssertExpr:
 		b.bindExpr(expr.Expr)
 	}
+}
+
+func (b *binder) bindVararg() {
+	current := b.currentFunction()
+	if current == nil {
+		return
+	}
+	id, ok := b.result.varargSymbols[current]
+	if !ok || id == 0 {
+		return
+	}
+	b.recordDirectCapture(id)
 }
 
 func (b *binder) bindFunction(fn *ast.FunctionExpr, method bool) {
@@ -707,6 +779,7 @@ func (b *binder) bindReadIdent(ident *ast.IdentExpr) {
 		b.result.implicitGlobalUses[ident] = struct{}{}
 	}
 	b.result.identSymbols[ident] = id
+	b.recordDirectCapture(id)
 }
 
 func (b *binder) bindWriteIdent(ident *ast.IdentExpr) {
@@ -718,4 +791,5 @@ func (b *binder) bindWriteIdent(ident *ast.IdentExpr) {
 		id = b.result.global(ident.Value, false)
 	}
 	b.result.identSymbols[ident] = id
+	b.recordDirectCapture(id)
 }
