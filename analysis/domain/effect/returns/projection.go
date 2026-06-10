@@ -1,14 +1,15 @@
-package effect
+package returns
 
 import (
 	"fmt"
 	"strings"
 
+	"github.com/wippyai/go-lua/analysis/domain/effect"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
 type TypeProjection struct {
-	Source ParamRef
+	Source effect.ParamRef
 	Steps  []TypeProjectionStep
 }
 

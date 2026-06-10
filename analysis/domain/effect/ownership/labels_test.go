@@ -5,6 +5,7 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/domain/effect"
 	"github.com/wippyai/go-lua/analysis/domain/effect/mutation"
+	"github.com/wippyai/go-lua/analysis/domain/effect/returns"
 )
 
 func TestBorrow(t *testing.T) {
@@ -68,7 +69,7 @@ func TestBorrowAll(t *testing.T) {
 		t.Error("BorrowAll should equal BorrowAll")
 	}
 
-	if ba.Equals(effect.Return{}) {
+	if ba.Equals(returns.Return{}) {
 		t.Error("BorrowAll should not equal Return")
 	}
 }

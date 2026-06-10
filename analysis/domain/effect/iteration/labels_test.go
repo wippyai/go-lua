@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/domain/effect"
+	"github.com/wippyai/go-lua/analysis/domain/effect/returns"
 )
 
 func TestIterator(t *testing.T) {
@@ -29,7 +30,7 @@ func TestIterator(t *testing.T) {
 		t.Error("different kind should not be equal")
 	}
 
-	if iter.Equals(effect.Return{}) {
+	if iter.Equals(returns.Return{}) {
 		t.Error("Iterator should not equal Return")
 	}
 }

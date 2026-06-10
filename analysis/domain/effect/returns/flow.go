@@ -1,8 +1,9 @@
-package effect
+package returns
 
 import (
 	"fmt"
 
+	"github.com/wippyai/go-lua/analysis/domain/effect"
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
@@ -18,7 +19,7 @@ func (p PassThrough) String() string {
 	return fmt.Sprintf("passthrough(param[%d]->ret[%d])", p.ParamIndex, p.ReturnIndex)
 }
 
-func (p PassThrough) Equals(other Label) bool {
+func (p PassThrough) Equals(other effect.Label) bool {
 	if o, ok := other.(PassThrough); ok {
 		return p.ParamIndex == o.ParamIndex && p.ReturnIndex == o.ReturnIndex
 	}
@@ -50,7 +51,7 @@ func (f FlowInto) String() string {
 	return fmt.Sprintf("FlowInto(%s->%s)", source, target)
 }
 
-func (f FlowInto) Equals(other Label) bool {
+func (f FlowInto) Equals(other effect.Label) bool {
 	if o, ok := other.(FlowInto); ok {
 		return f.ParamIndex == o.ParamIndex &&
 			f.ReturnIndex == o.ReturnIndex &&

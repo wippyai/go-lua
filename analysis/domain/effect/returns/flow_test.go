@@ -1,12 +1,15 @@
-package effect
+package returns
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/wippyai/go-lua/analysis/domain/effect"
+)
 
 func TestPassThroughLabel(t *testing.T) {
 	p := PassThrough{ParamIndex: 0, ReturnIndex: 0}
 
-	// Implements Label interface
-	var _ Label = p
+	var _ effect.Label = p
 
 	s := p.String()
 	if s == "" {
@@ -40,8 +43,7 @@ func TestPassThroughEquals(t *testing.T) {
 func TestFlowIntoLabel(t *testing.T) {
 	f := FlowInto{ParamIndex: 0, ReturnIndex: 0, TargetPath: FieldPath("inner")}
 
-	// Implements Label interface
-	var _ Label = f
+	var _ effect.Label = f
 
 	s := f.String()
 	if s == "" {

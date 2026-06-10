@@ -2,6 +2,12 @@ package effect
 
 import "testing"
 
+func hasTestLabel(r Row, label testLabel) bool {
+	return r.Has(func(l Label) bool {
+		return l.Equals(label)
+	})
+}
+
 func TestEmpty(t *testing.T) {
 	if !Empty.Pure() {
 		t.Error("Empty should be pure")
@@ -31,17 +37,16 @@ func TestUnknown(t *testing.T) {
 }
 
 func TestRowWith(t *testing.T) {
-	r := Empty.With(
-		Return{ReturnIndex: 0, Transform: ElementOf{Source: ParamRef{Index: 0}}},
-		ErrorReturn{ValueIndex: 0, ErrorIndex: 1},
-	)
+	a := testLabel{name: "a"}
+	b := testLabel{name: "b"}
+	r := Empty.With(a, b)
 
-	if r.GetReturn(0) == nil {
-		t.Error("Should have return")
+	if !hasTestLabel(r, a) {
+		t.Error("Should have first label")
 	}
 
-	if r.GetErrorReturn(0) == nil {
-		t.Error("Should have error return")
+	if !hasTestLabel(r, b) {
+		t.Error("Should have second label")
 	}
 
 	if r.Pure() {
@@ -50,35 +55,25 @@ func TestRowWith(t *testing.T) {
 }
 
 func TestRowWithDuplicate(t *testing.T) {
-	r := Empty.With(
-		Return{ReturnIndex: 0, Transform: ElementOf{Source: ParamRef{Index: 0}}},
-		Return{ReturnIndex: 0, Transform: ElementOf{Source: ParamRef{Index: 0}}},
-	)
-	count := 0
+	a := testLabel{name: "a"}
+	r := Empty.With(a, a)
 
-	for _, l := range r.Labels {
-		if _, ok := l.(Return); ok {
-			count++
-		}
-	}
-
-	if count != 1 {
-		t.Errorf("Should have exactly 1 return, got %d", count)
+	if len(r.Labels) != 1 {
+		t.Errorf("Should have exactly 1 label, got %d", len(r.Labels))
 	}
 }
 
 func TestRowString(t *testing.T) {
+	a := testLabel{name: "a"}
+	b := testLabel{name: "b"}
 	tests := []struct {
 		row  Row
 		want string
 	}{
 		{Empty, "{}"},
-		{Returns(0, ElementOf{Source: ParamRef{Index: 0}}), "{ret[0].type = elem(param[0])}"},
-		{Row{Labels: []Label{
-			Return{ReturnIndex: 0, Transform: ElementOf{Source: ParamRef{Index: 0}}},
-			ErrorReturn{ValueIndex: 0, ErrorIndex: 1},
-		}}, "{ret[0].type = elem(param[0]), errret(val[0], err[1])}"},
-		{Open("rho", Return{ReturnIndex: 0, Transform: ElementOf{Source: ParamRef{Index: 0}}}), "{ret[0].type = elem(param[0]) | rho}"},
+		{Row{Labels: []Label{a}}, "{a}"},
+		{Row{Labels: []Label{a, b}}, "{a, b}"},
+		{Open("rho", a), "{a | rho}"},
 		{Open("rho"), "{rho}"},
 	}
 
@@ -91,11 +86,13 @@ func TestRowString(t *testing.T) {
 
 func TestUnion(t *testing.T) {
 	t.Run("closed rows", func(t *testing.T) {
-		r1 := Row{Labels: []Label{Return{ReturnIndex: 0, Transform: ElementOf{Source: ParamRef{Index: 0}}}}}
-		r2 := Row{Labels: []Label{ErrorReturn{ValueIndex: 0, ErrorIndex: 1}}}
+		a := testLabel{name: "a"}
+		b := testLabel{name: "b"}
+		r1 := Row{Labels: []Label{a}}
+		r2 := Row{Labels: []Label{b}}
 		u := Union(r1, r2)
 
-		if u.GetReturn(0) == nil || u.GetErrorReturn(0) == nil {
+		if !hasTestLabel(u, a) || !hasTestLabel(u, b) {
 			t.Error("Union should have both effects")
 		}
 
@@ -105,11 +102,13 @@ func TestUnion(t *testing.T) {
 	})
 
 	t.Run("open row", func(t *testing.T) {
-		r1 := Open("rho", Return{ReturnIndex: 0, Transform: ElementOf{Source: ParamRef{Index: 0}}})
-		r2 := Row{Labels: []Label{ErrorReturn{ValueIndex: 0, ErrorIndex: 1}}}
+		a := testLabel{name: "a"}
+		b := testLabel{name: "b"}
+		r1 := Open("rho", a)
+		r2 := Row{Labels: []Label{b}}
 		u := Union(r1, r2)
 
-		if u.GetReturn(0) == nil || u.GetErrorReturn(0) == nil {
+		if !hasTestLabel(u, a) || !hasTestLabel(u, b) {
 			t.Error("Union should have both effects")
 		}
 
@@ -119,7 +118,7 @@ func TestUnion(t *testing.T) {
 	})
 
 	t.Run("unknown absorbs", func(t *testing.T) {
-		r := Row{Labels: []Label{Return{ReturnIndex: 0, Transform: ElementOf{Source: ParamRef{Index: 0}}}}}
+		r := Row{Labels: []Label{testLabel{name: "a"}}}
 		u := Union(r, Unknown)
 
 		if !u.IsUnknown() {
@@ -128,58 +127,32 @@ func TestUnion(t *testing.T) {
 	})
 
 	t.Run("deduplication", func(t *testing.T) {
-		r1 := Row{Labels: []Label{Return{ReturnIndex: 0, Transform: ElementOf{Source: ParamRef{Index: 0}}}}}
-		r2 := Row{Labels: []Label{
-			Return{ReturnIndex: 0, Transform: ElementOf{Source: ParamRef{Index: 0}}},
-			ErrorReturn{ValueIndex: 0, ErrorIndex: 1},
-		}}
+		a := testLabel{name: "a"}
+		b := testLabel{name: "b"}
+		r1 := Row{Labels: []Label{a}}
+		r2 := Row{Labels: []Label{a, b}}
 		u := Union(r1, r2)
 
-		count := 0
-
-		for _, l := range u.Labels {
-			if _, ok := l.(Return); ok {
-				count++
-			}
-		}
-
-		if count != 1 {
-			t.Errorf("Union should deduplicate, got %d return labels", count)
+		if len(u.Labels) != 2 {
+			t.Errorf("Union should deduplicate, got %d labels", len(u.Labels))
 		}
 	})
 }
 
-func TestReturnEffect(t *testing.T) {
-	r := Returns(0, ElementOf{Source: ParamRef{Index: 0}})
-
-	got := r.GetReturn(0)
-	if got == nil {
-		t.Error("Should find return for index 0")
-	}
-
-	if r.GetReturn(1) != nil {
-		t.Error("Should not find return for index 1")
-	}
-}
-
 func TestRowEquals(t *testing.T) {
+	a := testLabel{name: "a"}
+	b := testLabel{name: "b"}
 	tests := []struct {
 		r1, r2 Row
 		want   bool
 	}{
 		{Empty, Empty, true},
-		{Empty, Returns(0, ElementOf{Source: ParamRef{Index: 0}}), false},
-		{Returns(0, ElementOf{Source: ParamRef{Index: 0}}), Returns(0, ElementOf{Source: ParamRef{Index: 0}}), true},
-		{Row{Labels: []Label{
-			Return{ReturnIndex: 0, Transform: ElementOf{Source: ParamRef{Index: 0}}},
-			ErrorReturn{ValueIndex: 0, ErrorIndex: 1},
-		}}, Row{Labels: []Label{
-			ErrorReturn{ValueIndex: 0, ErrorIndex: 1},
-			Return{ReturnIndex: 0, Transform: ElementOf{Source: ParamRef{Index: 0}}},
-		}}, true},
+		{Empty, Row{Labels: []Label{a}}, false},
+		{Row{Labels: []Label{a}}, Row{Labels: []Label{a}}, true},
+		{Row{Labels: []Label{a, b}}, Row{Labels: []Label{b, a}}, true},
 		{Open("rho"), Open("rho"), true},
 		{Open("rho"), Open("sigma"), false},
-		{Returns(0, ElementOf{Source: ParamRef{Index: 0}}), Open("rho", Return{ReturnIndex: 0, Transform: ElementOf{Source: ParamRef{Index: 0}}}), false},
+		{Row{Labels: []Label{a}}, Open("rho", a), false},
 	}
 
 	for _, tt := range tests {
@@ -202,26 +175,24 @@ func TestReads(t *testing.T) {
 }
 
 func TestRowWithout(t *testing.T) {
-	r := Row{Labels: []Label{
-		Return{ReturnIndex: 0, Transform: ElementOf{Source: ParamRef{Index: 0}}},
-		ErrorReturn{ValueIndex: 0, ErrorIndex: 1},
-		CorrelatedReturn{Indices: []int{0, 1}},
-	}}
+	a := testLabel{name: "a"}
+	b := testLabel{name: "b"}
+	c := testLabel{name: "c"}
+	r := Row{Labels: []Label{a, b, c}}
 	filtered := r.Without(func(l Label) bool {
-		_, ok := l.(Return)
-		return ok
+		return l.Equals(a)
 	})
 
-	if filtered.GetReturn(0) != nil {
-		t.Error("Without should remove Return")
+	if hasTestLabel(filtered, a) {
+		t.Error("Without should remove matching label")
 	}
 
-	if filtered.GetErrorReturn(0) == nil {
-		t.Error("Without should keep ErrorReturn")
+	if !hasTestLabel(filtered, b) {
+		t.Error("Without should keep non-matching label")
 	}
 
-	if filtered.GetCorrelatedReturn(1) == nil {
-		t.Error("Without should keep CorrelatedReturn")
+	if !hasTestLabel(filtered, c) {
+		t.Error("Without should keep later non-matching label")
 	}
 }
 
@@ -244,56 +215,12 @@ func TestRowStringOpenNoLabels(t *testing.T) {
 	}
 }
 
-func TestReturnLengthEffect(t *testing.T) {
-	r := Row{Labels: []Label{ReturnLength{ReturnIndex: 0, Length: nil}}}
-
-	rl := r.GetReturnLength(0)
-	if rl == nil {
-		t.Error("Should find return length")
-	}
-
-	if r.GetReturnLength(1) != nil {
-		t.Error("Should not find return length for wrong index")
-	}
-}
-
-func TestErrorReturnEffect(t *testing.T) {
-	r := Row{Labels: []Label{ErrorReturn{ValueIndex: 0, ErrorIndex: 1}}}
-
-	er := r.GetErrorReturn(0)
-	if er == nil {
-		t.Error("Should find error return")
-	}
-
-	if r.GetErrorReturn(1) != nil {
-		t.Error("Should not find error return for wrong value index")
-	}
-}
-
 func TestNewRow(t *testing.T) {
-	r := Row{Labels: []Label{
-		Return{ReturnIndex: 0, Transform: ElementOf{Source: ParamRef{Index: 0}}},
-		ErrorReturn{ValueIndex: 0, ErrorIndex: 1},
-	}}
-	if r.GetReturn(0) == nil || r.GetErrorReturn(0) == nil {
+	a := testLabel{name: "a"}
+	b := testLabel{name: "b"}
+	r := Row{Labels: []Label{a, b}}
+	if !hasTestLabel(r, a) || !hasTestLabel(r, b) {
 		t.Error("Row should have the given labels")
-	}
-}
-
-func TestGetCorrelatedReturn(t *testing.T) {
-	r := Row{Labels: []Label{CorrelatedReturn{Indices: []int{0, 1, 2}}}}
-
-	cr := r.GetCorrelatedReturn(1)
-	if cr == nil {
-		t.Error("Should find correlated return for index 1")
-	}
-
-	if r.GetCorrelatedReturn(5) != nil {
-		t.Error("Should not find correlated return for index 5")
-	}
-
-	if Empty.GetCorrelatedReturn(0) != nil {
-		t.Error("Empty row should not have correlated return")
 	}
 }
 

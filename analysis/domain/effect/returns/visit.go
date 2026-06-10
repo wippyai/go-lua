@@ -1,4 +1,6 @@
-package effect
+package returns
+
+import "github.com/wippyai/go-lua/analysis/domain/effect"
 
 type LabelVisitor[R any] struct {
 	Return           func(Return) R
@@ -7,10 +9,10 @@ type LabelVisitor[R any] struct {
 	PassThrough      func(PassThrough) R
 	FlowInto         func(FlowInto) R
 	CorrelatedReturn func(CorrelatedReturn) R
-	Default          func(Label) R
+	Default          func(effect.Label) R
 }
 
-func VisitLabel[R any](l Label, v LabelVisitor[R]) R {
+func VisitLabel[R any](l effect.Label, v LabelVisitor[R]) R {
 	switch ll := l.(type) {
 	case Return:
 		if v.Return != nil {

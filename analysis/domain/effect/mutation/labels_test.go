@@ -5,6 +5,7 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/domain/constraint/expr"
 	"github.com/wippyai/go-lua/analysis/domain/effect"
+	"github.com/wippyai/go-lua/analysis/domain/effect/returns"
 )
 
 func TestMutate_String(t *testing.T) {
@@ -43,7 +44,7 @@ func TestMutate_Equals(t *testing.T) {
 		t.Error("different target Mutates should not be equal")
 	}
 
-	if m1.Equals(effect.Return{}) {
+	if m1.Equals(returns.Return{}) {
 		t.Error("Mutate should not equal Return")
 	}
 
@@ -147,7 +148,7 @@ func TestTableMutator(t *testing.T) {
 		t.Error("different value should not be equal")
 	}
 
-	if tm.Equals(effect.Return{}) {
+	if tm.Equals(returns.Return{}) {
 		t.Error("TableMutator should not equal Return")
 	}
 }

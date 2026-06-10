@@ -50,56 +50,6 @@ func (r Row) Has(check func(Label) bool) bool {
 	return false
 }
 
-func (r Row) GetReturn(retIdx int) *Return {
-	for _, l := range r.Labels {
-		if ret, ok := l.(Return); ok && ret.ReturnIndex == retIdx {
-			return &ret
-		}
-	}
-	return nil
-}
-
-func (r Row) FlowIntoReturns(retIdx int) []FlowInto {
-	var out []FlowInto
-	for _, l := range r.Labels {
-		if fi, ok := l.(FlowInto); ok && fi.ReturnIndex == retIdx {
-			out = append(out, fi)
-		}
-	}
-	return out
-}
-
-func (r Row) GetErrorReturn(valueIdx int) *ErrorReturn {
-	for _, l := range r.Labels {
-		if er, ok := l.(ErrorReturn); ok && er.ValueIndex == valueIdx {
-			return &er
-		}
-	}
-	return nil
-}
-
-func (r Row) GetCorrelatedReturn(idx int) *CorrelatedReturn {
-	for _, l := range r.Labels {
-		if cr, ok := l.(CorrelatedReturn); ok {
-			for _, i := range cr.Indices {
-				if i == idx {
-					return &cr
-				}
-			}
-		}
-	}
-	return nil
-}
-
-func (r Row) GetReturnLength(retIdx int) *ReturnLength {
-	for _, l := range r.Labels {
-		if ret, ok := l.(ReturnLength); ok && ret.ReturnIndex == retIdx {
-			return &ret
-		}
-	}
-	return nil
-}
-
 func (r Row) String() string {
 	if r.Pure() {
 		return "{}"
@@ -163,8 +113,4 @@ func (r Row) equalsRow(other Row) bool {
 		return false
 	}
 	return r.Tail.Name == other.Tail.Name
-}
-
-func Returns(retIdx int, derive ReturnType) Row {
-	return Row{Labels: []Label{Return{ReturnIndex: retIdx, Transform: derive}}}
 }

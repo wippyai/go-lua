@@ -10,7 +10,7 @@ func TestUnionEmpty(t *testing.T) {
 }
 
 func TestUnionWithEmpty(t *testing.T) {
-	r := Empty.With(Return{ReturnIndex: 0, Transform: ElementOf{Source: ParamRef{Index: 0}}})
+	r := Empty.With(testLabel{name: "a"})
 	result := Union(r, Empty)
 
 	if len(result.Labels) != 1 {
@@ -19,8 +19,8 @@ func TestUnionWithEmpty(t *testing.T) {
 }
 
 func TestUnionCombinesLabels(t *testing.T) {
-	r1 := Empty.With(Return{ReturnIndex: 0, Transform: ElementOf{Source: ParamRef{Index: 0}}})
-	r2 := Empty.With(ErrorReturn{ValueIndex: 0, ErrorIndex: 1})
+	r1 := Empty.With(testLabel{name: "a"})
+	r2 := Empty.With(testLabel{name: "b"})
 	result := Union(r1, r2)
 
 	if len(result.Labels) != 2 {
@@ -29,8 +29,9 @@ func TestUnionCombinesLabels(t *testing.T) {
 }
 
 func TestUnionDeduplicates(t *testing.T) {
-	r1 := Empty.With(Return{ReturnIndex: 0, Transform: ElementOf{Source: ParamRef{Index: 0}}})
-	r2 := Empty.With(Return{ReturnIndex: 0, Transform: ElementOf{Source: ParamRef{Index: 0}}})
+	label := testLabel{name: "a"}
+	r1 := Empty.With(label)
+	r2 := Empty.With(label)
 	result := Union(r1, r2)
 
 	if len(result.Labels) != 1 {
@@ -39,7 +40,7 @@ func TestUnionDeduplicates(t *testing.T) {
 }
 
 func TestUnionWithUnknown(t *testing.T) {
-	r := Empty.With(Return{ReturnIndex: 0, Transform: ElementOf{Source: ParamRef{Index: 0}}})
+	r := Empty.With(testLabel{name: "a"})
 	result := Union(r, Unknown)
 
 	if !result.IsUnknown() {
@@ -48,8 +49,8 @@ func TestUnionWithUnknown(t *testing.T) {
 }
 
 func TestUnionPreservesTail(t *testing.T) {
-	r1 := Open("e1", Return{ReturnIndex: 0, Transform: ElementOf{Source: ParamRef{Index: 0}}})
-	r2 := Empty.With(ErrorReturn{ValueIndex: 0, ErrorIndex: 1})
+	r1 := Open("e1", testLabel{name: "a"})
+	r2 := Empty.With(testLabel{name: "b"})
 	result := Union(r1, r2)
 
 	if !result.IsOpen() {
@@ -58,7 +59,7 @@ func TestUnionPreservesTail(t *testing.T) {
 }
 
 func TestIntersectEmpty(t *testing.T) {
-	r := Empty.With(Return{ReturnIndex: 0, Transform: ElementOf{Source: ParamRef{Index: 0}}})
+	r := Empty.With(testLabel{name: "a"})
 	result := Intersect(r, Empty)
 
 	if !result.Pure() {
@@ -67,28 +68,23 @@ func TestIntersectEmpty(t *testing.T) {
 }
 
 func TestIntersectCommonLabels(t *testing.T) {
-	r1 := Row{Labels: []Label{
-		Return{ReturnIndex: 0, Transform: ElementOf{Source: ParamRef{Index: 0}}},
-		ErrorReturn{ValueIndex: 0, ErrorIndex: 1},
-	}}
-	r2 := Row{Labels: []Label{
-		Return{ReturnIndex: 0, Transform: ElementOf{Source: ParamRef{Index: 0}}},
-		ReturnLength{ReturnIndex: 0},
-	}}
+	a := testLabel{name: "a"}
+	r1 := Row{Labels: []Label{a, testLabel{name: "b"}}}
+	r2 := Row{Labels: []Label{a, testLabel{name: "c"}}}
 	result := Intersect(r1, r2)
 
 	if len(result.Labels) != 1 {
 		t.Errorf("expected 1 common label, got %d", len(result.Labels))
 	}
 
-	if _, ok := result.Labels[0].(Return); !ok {
-		t.Error("common label should be Return")
+	if !result.Labels[0].Equals(a) {
+		t.Error("common label should be preserved")
 	}
 }
 
 func TestIntersectNoCommon(t *testing.T) {
-	r1 := Empty.With(Return{ReturnIndex: 0, Transform: ElementOf{Source: ParamRef{Index: 0}}})
-	r2 := Empty.With(ErrorReturn{ValueIndex: 0, ErrorIndex: 1})
+	r1 := Empty.With(testLabel{name: "a"})
+	r2 := Empty.With(testLabel{name: "b"})
 	result := Intersect(r1, r2)
 
 	if len(result.Labels) != 0 {
@@ -97,24 +93,22 @@ func TestIntersectNoCommon(t *testing.T) {
 }
 
 func TestSubsetEmpty(t *testing.T) {
-	if !Subset(Empty, Empty.With(Return{ReturnIndex: 0, Transform: ElementOf{Source: ParamRef{Index: 0}}})) {
+	if !Subset(Empty, Empty.With(testLabel{name: "a"})) {
 		t.Error("empty should be subset of any row")
 	}
 }
 
 func TestSubsetSame(t *testing.T) {
-	r := Empty.With(Return{ReturnIndex: 0, Transform: ElementOf{Source: ParamRef{Index: 0}}})
+	r := Empty.With(testLabel{name: "a"})
 	if !Subset(r, r) {
 		t.Error("row should be subset of itself")
 	}
 }
 
 func TestSubsetSmaller(t *testing.T) {
-	r1 := Empty.With(Return{ReturnIndex: 0, Transform: ElementOf{Source: ParamRef{Index: 0}}})
-	r2 := Row{Labels: []Label{
-		Return{ReturnIndex: 0, Transform: ElementOf{Source: ParamRef{Index: 0}}},
-		ErrorReturn{ValueIndex: 0, ErrorIndex: 1},
-	}}
+	a := testLabel{name: "a"}
+	r1 := Empty.With(a)
+	r2 := Row{Labels: []Label{a, testLabel{name: "b"}}}
 
 	if !Subset(r1, r2) {
 		t.Error("smaller row should be subset of larger")
@@ -122,11 +116,10 @@ func TestSubsetSmaller(t *testing.T) {
 }
 
 func TestSubsetLargerNotSubset(t *testing.T) {
-	r1 := Row{Labels: []Label{
-		Return{ReturnIndex: 0, Transform: ElementOf{Source: ParamRef{Index: 0}}},
-		ErrorReturn{ValueIndex: 0, ErrorIndex: 1},
-	}}
-	r2 := Empty.With(Return{ReturnIndex: 0, Transform: ElementOf{Source: ParamRef{Index: 0}}})
+	a := testLabel{name: "a"}
+	b := testLabel{name: "b"}
+	r1 := Row{Labels: []Label{a, b}}
+	r2 := Empty.With(a)
 
 	if Subset(r1, r2) {
 		t.Error("larger row should not be subset of smaller closed row")
@@ -134,7 +127,7 @@ func TestSubsetLargerNotSubset(t *testing.T) {
 }
 
 func TestSubsetUnknown(t *testing.T) {
-	r := Empty.With(Return{ReturnIndex: 0, Transform: ElementOf{Source: ParamRef{Index: 0}}})
+	r := Empty.With(testLabel{name: "a"})
 	if !Subset(r, Unknown) {
 		t.Error("any row should be subset of Unknown")
 	}
@@ -145,7 +138,7 @@ func TestSubsetUnknown(t *testing.T) {
 }
 
 func TestOpen(t *testing.T) {
-	r := Open("e", Return{ReturnIndex: 0, Transform: ElementOf{Source: ParamRef{Index: 0}}})
+	r := Open("e", testLabel{name: "a"})
 
 	if !r.IsOpen() {
 		t.Error("should be open")

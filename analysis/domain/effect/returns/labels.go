@@ -1,9 +1,10 @@
-package effect
+package returns
 
 import (
 	"fmt"
 
 	"github.com/wippyai/go-lua/analysis/domain/constraint/expr"
+	"github.com/wippyai/go-lua/analysis/domain/effect"
 )
 
 type Return struct {
@@ -15,7 +16,7 @@ func (Return) EffectLabel() {}
 func (r Return) String() string {
 	return fmt.Sprintf("ret[%d].type = %s", r.ReturnIndex, r.Transform)
 }
-func (r Return) Equals(other Label) bool {
+func (r Return) Equals(other effect.Label) bool {
 	if o, ok := other.(Return); ok {
 		return r.ReturnIndex == o.ReturnIndex && returnTypeEquals(r.Transform, o.Transform)
 	}
@@ -31,7 +32,7 @@ func (ErrorReturn) EffectLabel() {}
 func (e ErrorReturn) String() string {
 	return fmt.Sprintf("errret(val[%d], err[%d])", e.ValueIndex, e.ErrorIndex)
 }
-func (e ErrorReturn) Equals(other Label) bool {
+func (e ErrorReturn) Equals(other effect.Label) bool {
 	if o, ok := other.(ErrorReturn); ok {
 		return e.ValueIndex == o.ValueIndex && e.ErrorIndex == o.ErrorIndex
 	}
@@ -47,7 +48,7 @@ func (ReturnLength) EffectLabel() {}
 func (r ReturnLength) String() string {
 	return fmt.Sprintf("ret[%d].len = %s", r.ReturnIndex, r.Length)
 }
-func (r ReturnLength) Equals(other Label) bool {
+func (r ReturnLength) Equals(other effect.Label) bool {
 	if o, ok := other.(ReturnLength); ok {
 		return r.ReturnIndex == o.ReturnIndex && expr.ExprEquals(r.Length, o.Length)
 	}
@@ -60,7 +61,7 @@ type ReturnType interface {
 }
 
 type SelectCaseOfParam struct {
-	Source ParamRef
+	Source effect.ParamRef
 }
 
 func (SelectCaseOfParam) returnType() {}
@@ -74,8 +75,8 @@ const (
 )
 
 type SelectResultOfCases struct {
-	Cases   ParamRef
-	Default ParamRef
+	Cases   effect.ParamRef
+	Default effect.ParamRef
 }
 
 func (SelectResultOfCases) returnType() {}
@@ -84,7 +85,7 @@ func (s SelectResultOfCases) String() string {
 }
 
 type ElementOf struct {
-	Source ParamRef
+	Source effect.ParamRef
 }
 
 func (ElementOf) returnType() {}
@@ -93,7 +94,7 @@ func (e ElementOf) String() string {
 }
 
 type OptionalElementOf struct {
-	Source ParamRef
+	Source effect.ParamRef
 }
 
 func (OptionalElementOf) returnType() {}
@@ -102,7 +103,7 @@ func (e OptionalElementOf) String() string {
 }
 
 type CallbackReturn struct {
-	CallbackParam ParamRef
+	CallbackParam effect.ParamRef
 }
 
 func (CallbackReturn) returnType() {}
@@ -111,7 +112,7 @@ func (c CallbackReturn) String() string {
 }
 
 type ArrayOfCallbackReturn struct {
-	CallbackParam ParamRef
+	CallbackParam effect.ParamRef
 }
 
 func (ArrayOfCallbackReturn) returnType() {}
@@ -120,7 +121,7 @@ func (a ArrayOfCallbackReturn) String() string {
 }
 
 type SameAs struct {
-	Source ParamRef
+	Source effect.ParamRef
 }
 
 func (SameAs) returnType() {}
@@ -129,7 +130,7 @@ func (s SameAs) String() string {
 }
 
 type DeepElementOf struct {
-	Source ParamRef
+	Source effect.ParamRef
 }
 
 func (DeepElementOf) returnType() {}
@@ -138,7 +139,7 @@ func (d DeepElementOf) String() string {
 }
 
 type StringUnpackValue struct {
-	Format ParamRef
+	Format effect.ParamRef
 }
 
 func (StringUnpackValue) returnType() {}
@@ -154,7 +155,7 @@ func (CorrelatedReturn) EffectLabel() {}
 func (c CorrelatedReturn) String() string {
 	return fmt.Sprintf("correlated_return(%v)", c.Indices)
 }
-func (c CorrelatedReturn) Equals(other Label) bool {
+func (c CorrelatedReturn) Equals(other effect.Label) bool {
 	o, ok := other.(CorrelatedReturn)
 	if !ok || len(c.Indices) != len(o.Indices) {
 		return false

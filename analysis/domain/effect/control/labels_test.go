@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/domain/effect"
+	"github.com/wippyai/go-lua/analysis/domain/effect/returns"
 )
 
 func TestLabels(t *testing.T) {
@@ -30,7 +31,7 @@ func TestLabels(t *testing.T) {
 				t.Error("label should equal same control label")
 			}
 
-			if tt.label.Equals(effect.Return{}) {
+			if tt.label.Equals(returns.Return{}) {
 				t.Error("label should not equal unrelated effect label")
 			}
 		})
