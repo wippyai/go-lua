@@ -17,17 +17,12 @@ type Param struct {
 //
 // Functions support generics via TypeParams, variadic arguments via Variadic,
 // multiple return values via Returns, and effect tracking via Effects.
-//
-// The Spec field holds Hoare-style contracts (pre/post conditions).
-// The Refinement field holds type narrowing constraints for predicate functions.
 type Function struct {
-	TypeParams            []*TypeParam   // Generic type parameters (empty for non-generic)
-	Params                []Param        // Positional parameters
-	Variadic              Type           // Variadic element type (nil if not variadic)
-	Returns               []Type         // Return types (empty for void functions)
-	Effects               EffectInfo     // Effect row (effect.Row) for mutation/throw/io tracking
-	Spec                  SpecInfo       // Contract specification (*contract.Spec)
-	Refinement            RefinementInfo // Type refinement effect (*constraint.FunctionRefinement)
+	TypeParams            []*TypeParam // Generic type parameters (empty for non-generic)
+	Params                []Param      // Positional parameters
+	Variadic              Type         // Variadic element type (nil if not variadic)
+	Returns               []Type       // Return types (empty for void functions)
+	Effects               EffectInfo   // Effect row (effect.Row) for mutation/throw/io tracking
 	hash                  uint64
 	containsAny           bool
 	containsNever         bool
@@ -53,8 +48,6 @@ type FunctionBuilder struct {
 	variadic   Type
 	returns    []Type
 	effects    EffectInfo
-	spec       SpecInfo
-	refinement RefinementInfo
 }
 
 // Func starts building a function type.
@@ -120,18 +113,6 @@ func (b *FunctionBuilder) Effects(e EffectInfo) *FunctionBuilder {
 	return b
 }
 
-// Spec sets contract specification.
-func (b *FunctionBuilder) Spec(s SpecInfo) *FunctionBuilder {
-	b.spec = s
-	return b
-}
-
-// WithRefinement sets the function refinement effect.
-func (b *FunctionBuilder) WithRefinement(r RefinementInfo) *FunctionBuilder {
-	b.refinement = r
-	return b
-}
-
 // Build creates the function type.
 func (b *FunctionBuilder) Build() *Function {
 	return buildFunctionType(
@@ -140,8 +121,6 @@ func (b *FunctionBuilder) Build() *Function {
 		b.variadic,
 		b.returns,
 		b.effects,
-		b.spec,
-		b.refinement,
 	)
 }
 

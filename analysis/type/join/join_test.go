@@ -7,12 +7,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
-// mockSpec implements typ.SpecInfo for in-package testing without importing contract/effect.
-type mockSpec struct{}
-
-func (mockSpec) IsSpecInfo()           {}
-func (mockSpec) Equals(other any) bool { _, ok := other.(mockSpec); return ok }
-
 var joinTestError = typ.NewInterface("JoinTestError", []typ.Method{
 	{Name: "message", Type: typ.Func().Param("self", typ.Self).Returns(typ.String).Build()},
 })
@@ -94,22 +88,6 @@ func TestWithReturns(t *testing.T) {
 		}
 	})
 
-	t.Run("preserves spec", func(t *testing.T) {
-		spec := mockSpec{}
-		errReturn := typ.NewOptional(joinTestError)
-		sig := typ.Func().
-			Param("x", typ.String).
-			Returns(typ.String, errReturn).
-			Spec(spec).
-			Build()
-		result := typejoin.WithReturns(sig, []typ.Type{typ.String, errReturn})
-		if result.Spec == nil {
-			t.Fatal("expected function spec to be preserved")
-		}
-		if !result.Spec.Equals(spec) {
-			t.Fatal("expected spec identity to be preserved")
-		}
-	})
 }
 
 func TestWithReturnsOrUnknown(t *testing.T) {

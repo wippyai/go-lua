@@ -12,8 +12,6 @@ type FunctionParts struct {
 	Variadic   Type
 	Returns    []Type
 	Effects    EffectInfo
-	Spec       SpecInfo
-	Refinement RefinementInfo
 }
 
 // RebuildFunction rebuilds a function from already-computed structural parts.
@@ -24,8 +22,6 @@ func RebuildFunction(parts FunctionParts) *Function {
 		parts.Variadic,
 		parts.Returns,
 		parts.Effects,
-		parts.Spec,
-		parts.Refinement,
 	)
 }
 
@@ -35,8 +31,6 @@ func buildFunctionType(
 	variadic Type,
 	returns []Type,
 	effects EffectInfo,
-	spec SpecInfo,
-	refinement RefinementInfo,
 ) *Function {
 	h := uint64(kind.Function)
 	for _, tp := range typeParams {
@@ -98,8 +92,6 @@ func buildFunctionType(
 		Variadic:              variadic,
 		Returns:               returnsCopy,
 		Effects:               effects,
-		Spec:                  spec,
-		Refinement:            refinement,
 		hash:                  h,
 		containsAny:           containsAny,
 		containsNever:         containsNever,

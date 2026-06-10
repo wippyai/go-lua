@@ -61,8 +61,6 @@ func rewriteFunction(v *Function, orig Type, fn func(Type) (Type, bool), guard r
 		variadic,
 		returnsSrc,
 		v.Effects,
-		v.Spec,
-		v.Refinement,
 	)
 }
 

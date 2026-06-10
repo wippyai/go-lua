@@ -590,8 +590,6 @@ func (s *fallbackRefineState) refineFunction(summary, fallback *Function) (Type,
 		Variadic:   variadic,
 		Returns:    returns,
 		Effects:    summary.Effects,
-		Spec:       summary.Spec,
-		Refinement: summary.Refinement,
 	}), true
 }
 

@@ -405,8 +405,6 @@ func pruneSoftFunction(
 		Variadic:   variadic,
 		Returns:    returnsSrc,
 		Effects:    f.Effects,
-		Spec:       f.Spec,
-		Refinement: f.Refinement,
 	})
 }
 

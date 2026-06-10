@@ -44,11 +44,5 @@ func ProjectContextualFunctionArg(expected, candidate typ.Type) typ.Type {
 	if candidateFn.Effects != nil {
 		builder = builder.Effects(candidateFn.Effects)
 	}
-	if candidateFn.Spec != nil {
-		builder = builder.Spec(candidateFn.Spec)
-	}
-	if candidateFn.Refinement != nil {
-		builder = builder.WithRefinement(candidateFn.Refinement)
-	}
 	return builder.Build()
 }

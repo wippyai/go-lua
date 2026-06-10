@@ -11,17 +11,3 @@ type EffectInfo interface {
 	equaler
 	IsEffectInfo()
 }
-
-// SpecInfo describes function specifications (pre/post conditions).
-// Implemented by *contract.Spec.
-type SpecInfo interface {
-	equaler
-	IsSpecInfo()
-}
-
-// RefinementInfo describes type refinements from function calls.
-// Implemented by *constraint.FunctionRefinement.
-type RefinementInfo interface {
-	equaler
-	IsRefinementInfo()
-}

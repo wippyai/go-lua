@@ -86,12 +86,6 @@ func WithReturns(sig *typ.Function, returns []typ.Type) *typ.Function {
 	if sig.Effects != nil {
 		builder = builder.Effects(sig.Effects)
 	}
-	if sig.Spec != nil {
-		builder = builder.Spec(sig.Spec)
-	}
-	if sig.Refinement != nil {
-		builder = builder.WithRefinement(sig.Refinement)
-	}
 	return builder.Build()
 }
 

@@ -124,10 +124,7 @@ func substituteFunctionParams(fn *typ.Function, subs []paramSubstitution) typ.Ty
 		return fn
 	}
 
-	builder := typ.Func().
-		Effects(fn.Effects).
-		Spec(fn.Spec).
-		WithRefinement(fn.Refinement)
+	builder := typ.Func().Effects(fn.Effects)
 	for _, tp := range keptTypeParams {
 		builder.TypeParamRef(tp)
 	}
@@ -694,12 +691,6 @@ func expandInstantiatedCore(t typ.Type, orig typ.Type, guard recursion.Guard, me
 		}
 		if v.Effects != nil {
 			builder = builder.Effects(v.Effects)
-		}
-		if v.Spec != nil {
-			builder = builder.Spec(v.Spec)
-		}
-		if v.Refinement != nil {
-			builder = builder.WithRefinement(v.Refinement)
 		}
 		return builder.Build()
 	case *typ.Record:
