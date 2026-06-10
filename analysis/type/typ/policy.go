@@ -137,7 +137,7 @@ func (s *returnJoinState) sameReturnJoinInput(a, b Type) bool {
 		if s != nil && s.recursiveFamilyFold {
 			return false
 		}
-		return s.sameProductFamily(a, b)
+		return sameProductFamily(a, b)
 	}
 	return typeEqualityHash(a) == typeEqualityHash(b) && TypeEquals(a, b)
 }
@@ -424,11 +424,12 @@ func (s *returnJoinState) coalesceFoldedProductFamilyMembers(types []Type) []Typ
 			changed = true
 			continue
 		}
-		if !ContainsRecursive(candidate) {
+		rec := unaliasRecursive(candidate)
+		if rec == nil {
 			out = append(out, candidate)
 			continue
 		}
-		if ptr := typePointer(candidate); ptr != 0 && seenNodes[ptr] {
+		if ptr := typePointer(rec); ptr != 0 && seenNodes[ptr] {
 			changed = true
 			continue
 		}
@@ -436,10 +437,10 @@ func (s *returnJoinState) coalesceFoldedProductFamilyMembers(types []Type) []Typ
 		// *Recursive is minted each fixpoint iteration) cannot be detected by
 		// pointer identity, so dedup by the coinductive family hash refined with
 		// the structural same-family probe.
-		h := productFamilyHash(candidate)
+		h := productFamilyHash(rec)
 		duplicate := false
 		for _, r := range recReps {
-			if r.hash == h && sameProductFamily(r.rep, candidate) {
+			if r.hash == h && sameProductFamily(r.rep, rec) {
 				duplicate = true
 				break
 			}
@@ -448,8 +449,8 @@ func (s *returnJoinState) coalesceFoldedProductFamilyMembers(types []Type) []Typ
 			changed = true
 			continue
 		}
-		recReps = append(recReps, familyRep{hash: h, rep: candidate})
-		if ptr := typePointer(candidate); ptr != 0 {
+		recReps = append(recReps, familyRep{hash: h, rep: rec})
+		if ptr := typePointer(rec); ptr != 0 {
 			seenNodes[ptr] = true
 		}
 		out = append(out, candidate)
