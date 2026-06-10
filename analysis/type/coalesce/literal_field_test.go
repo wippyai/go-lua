@@ -40,27 +40,6 @@ func TestJoinNonDiscriminantFieldFollowsLiteralAliases(t *testing.T) {
 	}
 }
 
-func TestMergeLiteralFamilyBasesIntegerAndNumberToNumber(t *testing.T) {
-	got, ok := mergeLiteralFamilyBases(typ.Integer, typ.Number)
-	if !ok {
-		t.Fatal("mergeLiteralFamilyBases returned !ok")
-	}
-	if !typ.TypeEquals(got, typ.Number) {
-		t.Fatalf("mergeLiteralFamilyBases(integer, number) = %v, want number", got)
-	}
-}
-
-func TestLiteralFamilyBaseLiteralUnion(t *testing.T) {
-	u := typ.NewUnion(typ.LiteralInt(1), typ.LiteralNumber(2.5))
-	got, ok := literalFamilyBase(u)
-	if !ok {
-		t.Fatal("literalFamilyBase returned !ok")
-	}
-	if !typ.TypeEquals(got, typ.Number) {
-		t.Fatalf("literalFamilyBase(integer-number literal union) = %v, want number", got)
-	}
-}
-
 func TestJoinRecordFieldSlotWidensAccumulatedNonDiscriminantLiteralUnion(t *testing.T) {
 	acc := typ.NewUnion(typ.LiteralString("a"), typ.LiteralString("b"))
 

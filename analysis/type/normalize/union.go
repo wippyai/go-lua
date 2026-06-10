@@ -4,6 +4,7 @@ package normalize
 
 import (
 	"github.com/wippyai/go-lua/analysis/type/kind"
+	"github.com/wippyai/go-lua/analysis/type/literal"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
@@ -138,7 +139,12 @@ func applyUnionSubsumption(members []typ.Type) []typ.Type {
 	for _, member := range members {
 		if lit, ok := member.(*typ.Literal); ok {
 			drop := false
-			switch lit.Base {
+			base := literal.PrimitiveBase(lit)
+			if base == nil {
+				filtered = append(filtered, member)
+				continue
+			}
+			switch base.Kind() {
 			case kind.String:
 				drop = baseMask&1 != 0
 			case kind.Number:

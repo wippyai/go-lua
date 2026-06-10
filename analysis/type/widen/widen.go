@@ -1,7 +1,7 @@
 package widen
 
 import (
-	"github.com/wippyai/go-lua/analysis/type/kind"
+	"github.com/wippyai/go-lua/analysis/type/literal"
 	typetable "github.com/wippyai/go-lua/analysis/type/table"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
@@ -25,18 +25,10 @@ func widenDepth(t typ.Type, depth int) typ.Type {
 
 	return typ.Visit(t, typ.Visitor[typ.Type]{
 		Literal: func(lit *typ.Literal) typ.Type {
-			switch lit.Base {
-			case kind.Boolean:
-				return typ.Boolean
-			case kind.Integer:
-				return typ.Integer
-			case kind.Number:
-				return typ.Number
-			case kind.String:
-				return typ.String
-			default:
-				return t
+			if base := literal.PrimitiveBase(lit); base != nil {
+				return base
 			}
+			return t
 		},
 		Union: func(u *typ.Union) typ.Type {
 			members := make([]typ.Type, len(u.Members))

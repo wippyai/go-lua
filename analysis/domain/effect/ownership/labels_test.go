@@ -4,7 +4,6 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/domain/effect"
-	"github.com/wippyai/go-lua/analysis/domain/effect/mutation"
 	"github.com/wippyai/go-lua/analysis/domain/effect/returns"
 )
 
@@ -171,26 +170,6 @@ func TestSelectors(t *testing.T) {
 
 	if GetStore(r3, 1) != nil {
 		t.Error("Should not find store for param 1")
-	}
-
-	if !OnlyBorrows(r2) {
-		t.Error("WithBorrow should only borrow")
-	}
-
-	if OnlyBorrows(r3) {
-		t.Error("WithStore should not only borrow")
-	}
-
-	if OnlyBorrows(effect.Empty) {
-		t.Error("Empty should not only borrow")
-	}
-
-	r4 := effect.Row{Labels: []effect.Label{
-		Borrow{Param: effect.ParamRef{Index: 0}},
-		mutation.Mutate{Target: effect.ParamRef{Index: 0}},
-	}}
-	if OnlyBorrows(r4) {
-		t.Error("Borrow+Mutate should not be only borrows")
 	}
 
 	if !HasSend(WithSend(2)) {

@@ -95,19 +95,6 @@ func TestRequiredTagsPreservesNestedNonRecursiveTag(t *testing.T) {
 	}
 }
 
-func TestExtractLiteralFollowsAliases(t *testing.T) {
-	lit := LiteralString("tag")
-	alias := NewAlias("Tag", NewAlias("InnerTag", lit))
-
-	got, ok := extractLiteral(alias)
-	if !ok {
-		t.Fatal("extractLiteral(alias literal) returned !ok")
-	}
-	if got != lit {
-		t.Fatalf("extractLiteral(alias literal) = %v, want original literal", got)
-	}
-}
-
 func TestRequiredTagsRecursiveCycleSummarizesFiniteTags(t *testing.T) {
 	node := NewRecursive("Node", func(self Type) Type {
 		return NewRecord().
