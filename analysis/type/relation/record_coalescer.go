@@ -394,7 +394,7 @@ func (c *productCoalescer) mergeRecordField(name string, fa Field, oka bool, fb 
 	case oka && okb:
 		// Keep field-level merge on the caller's slot policy so
 		// empty-collection paths and nil/unknown interactions stay consistent
-		// with the surrounding join.
+		// with the surrounding merge policy.
 		fieldType = coalesce.JoinRecordFieldSlot(fa.Type, fb.Type, c.recordPolicy(slotJoin))
 		optional = fa.Optional || fb.Optional
 		readonly = fa.Readonly && fb.Readonly
@@ -524,7 +524,7 @@ func normalizeMergedRecordField(t Type) (Type, bool) {
 // RecordsConflictOnLiteralDiscriminant reports whether two records are discriminated
 // variants kept distinct by a shared required literal field rather than coalesced.
 // It is the structural, name-free discriminant test shared by the return-slot join
-// and the value-domain shape join.
+// and the value-domain shape merge.
 func RecordsConflictOnLiteralDiscriminant(a, b *Record) bool {
 	return discriminant.RecordsConflict(a, b)
 }

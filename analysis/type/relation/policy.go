@@ -31,7 +31,7 @@ func JoinPreferNonSoft(a, b Type) Type {
 	if gradual.IsSoft(b, gradual.SoftPlaceholderPolicy) && !gradual.IsSoft(a, gradual.SoftPlaceholderPolicy) {
 		return a
 	}
-	// Inline join.Two to avoid dependency cycles inside typ.
+	// Keep the two-input join policy local to relation to avoid dependency cycles.
 	if presence.AbsentOrUnknown(a) {
 		return b
 	}

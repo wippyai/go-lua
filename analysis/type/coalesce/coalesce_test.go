@@ -83,6 +83,83 @@ func TestCoalesceMapsDefaultJoinUsesJoinUnionPolicy(t *testing.T) {
 	}
 }
 
+func TestCoalesceMapsShapeCases(t *testing.T) {
+	t.Run("nil input", func(t *testing.T) {
+		if got := CoalesceMaps(nil, nil); got != nil {
+			t.Fatalf("CoalesceMaps(nil) = %v, want nil", got)
+		}
+	})
+
+	t.Run("empty input", func(t *testing.T) {
+		got := CoalesceMaps([]typ.Type{}, nil)
+		if len(got) != 0 {
+			t.Fatalf("CoalesceMaps(empty) len = %d, want 0", len(got))
+		}
+	})
+
+	t.Run("no maps unchanged", func(t *testing.T) {
+		input := []typ.Type{typ.String, typ.Number}
+		got := CoalesceMaps(input, nil)
+		if len(got) != 2 || got[0] != typ.String || got[1] != typ.Number {
+			t.Fatalf("CoalesceMaps(no maps) = %v, want original scalars", got)
+		}
+	})
+
+	t.Run("single map unchanged", func(t *testing.T) {
+		m := typ.NewMap(typ.String, typ.Number)
+		input := []typ.Type{m, typ.Boolean}
+		got := CoalesceMaps(input, nil)
+		if len(got) != 2 || got[0] != m || got[1] != typ.Boolean {
+			t.Fatalf("CoalesceMaps(single map) = %v, want original inputs", got)
+		}
+	})
+}
+
+func TestCoalesceMapsSkipsNilWhenMergingMaps(t *testing.T) {
+	m1 := typ.NewMap(typ.String, typ.Number)
+	m2 := typ.NewMap(typ.String, typ.Boolean)
+
+	got := CoalesceMaps([]typ.Type{m1, nil, m2}, nil)
+	if len(got) != 1 {
+		t.Fatalf("CoalesceMaps maps with nil len = %d, want 1", len(got))
+	}
+	if _, ok := got[0].(*typ.Map); !ok {
+		t.Fatalf("CoalesceMaps maps with nil = %T, want map", got[0])
+	}
+}
+
+func TestCoalesceMapsRecursesThroughProvidedJoin(t *testing.T) {
+	inner1 := typ.NewMap(typ.String, typ.Number)
+	inner2 := typ.NewMap(typ.String, typ.Boolean)
+	m1 := typ.NewMap(typ.String, inner1)
+	m2 := typ.NewMap(typ.String, inner2)
+
+	var join func(...typ.Type) typ.Type
+	join = func(types ...typ.Type) typ.Type {
+		coalesced := CoalesceMaps(types, join)
+		if len(coalesced) == 1 {
+			return coalesced[0]
+		}
+		return typ.NewUnion(coalesced...)
+	}
+
+	got := CoalesceMaps([]typ.Type{m1, m2}, join)
+	if len(got) != 1 {
+		t.Fatalf("CoalesceMaps nested len = %d, want 1", len(got))
+	}
+	m, ok := got[0].(*typ.Map)
+	if !ok {
+		t.Fatalf("CoalesceMaps nested result = %T, want map", got[0])
+	}
+	inner, ok := m.Value.(*typ.Map)
+	if !ok {
+		t.Fatalf("coalesced outer value = %T %[1]v, want inner map", m.Value)
+	}
+	if _, ok := inner.Value.(*typ.Union); !ok {
+		t.Fatalf("coalesced inner value = %T %[1]v, want union", inner.Value)
+	}
+}
+
 func TestCoalesceEmptyRecordWithMapHandlesAliasAndReadonlyMap(t *testing.T) {
 	empty := typ.NewAlias("Empty", typ.NewRecord().Build())
 	readonly := typ.NewReadonlyMap(typ.String, typ.Number)

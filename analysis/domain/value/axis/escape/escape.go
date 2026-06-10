@@ -11,7 +11,7 @@ import internal "github.com/wippyai/go-lua/analysis/internal/hash"
 // and retains its strong-update identity; escaped is a value that has been
 // published and may be observed elsewhere, so it is heap-required. The order is
 // conservatism: Join takes the higher point, so a value that escapes on any
-// incoming path escapes at the join. Top is escaped (the conservative assumption)
+// incoming path escapes at the merge point. Top is escaped (the conservative assumption)
 // and Bottom is unreachable.
 type Value uint8
 
