@@ -1,7 +1,6 @@
 package typ
 
 import (
-	"sort"
 	"strings"
 
 	"github.com/wippyai/go-lua/analysis/internal/hash"
@@ -14,8 +13,6 @@ import (
 // They are normalized during construction:
 //   - Nested intersections are flattened
 //   - Duplicate members are removed
-//   - Any members are dropped (Any is identity for intersection)
-//   - Never absorbs all other members (intersection with Never = Never)
 //
 // Members are sorted by hash for deterministic comparison.
 type Intersection struct {
@@ -38,79 +35,37 @@ func NewIntersection(members ...Type) Type {
 		return Any
 	}
 
-	if len(members) == 1 {
-		return members[0]
-	}
-
 	// Flatten and collect
 	flat := make([]Type, 0, len(members))
-	hasNever := false
-	hasNil := false
 
-	for _, m := range members {
+	var addMember func(Type)
+	addMember = func(m Type) {
 		if m == nil {
-			continue
+			return
 		}
 
 		unwrapped := UnwrapAnnotated(m)
-
-		switch unwrapped.Kind() {
-		case kind.Any:
-			continue // Any is identity for intersection
-		case kind.Never:
-			hasNever = true
-		case kind.Nil:
-			hasNil = true
-		case kind.Intersection:
-			flat = append(flat, unwrapped.(*Intersection).Members...)
-		default:
-			flat = append(flat, m)
+		if unwrapped == nil {
+			return
 		}
-	}
 
-	if hasNever {
-		return Never
-	}
-
-	// If nil is in the intersection, check if all other members accept nil.
-	// If so, the intersection simplifies to nil (the only value satisfying all).
-	if hasNil && len(flat) > 0 {
-		allAcceptNil := true
-
-		for _, m := range flat {
-			if !containsNilValue(m) {
-				allAcceptNil = false
-				break
+		if unwrapped.Kind() == kind.Intersection {
+			for _, member := range unwrapped.(*Intersection).Members {
+				addMember(member)
 			}
+			return
 		}
 
-		if allAcceptNil {
-			return Nil
-		}
+		flat = append(flat, m)
 	}
 
-	if hasNil {
-		flat = append(flat, Nil)
+	for _, m := range members {
+		addMember(m)
 	}
 
 	// Deduplicate by hash + structural equality (collision-safe).
 	unique, uniqueHashes := deduplicateTypesWithHashes(flat)
-
-	slots := make([]hashedType, len(unique))
-	for i, m := range unique {
-		slots[i] = hashedType{typ: m, hash: uniqueHashes[i]}
-	}
-	sort.Slice(slots, func(i, j int) bool {
-		if slots[i].hash != slots[j].hash {
-			return slots[i].hash < slots[j].hash
-		}
-
-		return slots[i].typ.String() < slots[j].typ.String()
-	})
-	for i, slot := range slots {
-		unique[i] = slot.typ
-		uniqueHashes[i] = slot.hash
-	}
+	sortHashedTypes(unique, uniqueHashes)
 
 	if len(unique) == 0 {
 		return Any
@@ -181,37 +136,4 @@ func (i *Intersection) Hash() uint64 { return i.hash }
 
 func (i *Intersection) Equals(other Type) bool {
 	return TypeEquals(i, other)
-}
-
-// containsNilValue checks if a type can hold nil values.
-func containsNilValue(t Type) bool {
-	if t == nil {
-		return false
-	}
-
-	return Visit(t, Visitor[bool]{
-		Optional: func(o *Optional) bool {
-			return true
-		},
-		Union: func(u *Union) bool {
-			for _, m := range u.Members {
-				if m.Kind() == kind.Nil {
-					return true
-				}
-			}
-			return false
-		},
-		Intersection: func(in *Intersection) bool {
-			for _, m := range in.Members {
-				if m.Kind() == kind.Nil {
-					return true
-				}
-			}
-			return false
-		},
-		Default: func(t Type) bool {
-			k := t.Kind()
-			return k == kind.Nil || k.IsPlaceholder()
-		},
-	})
 }

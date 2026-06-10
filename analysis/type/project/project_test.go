@@ -97,6 +97,47 @@ func TestFieldCommonUnionField(t *testing.T) {
 	assertType(t, got, typ.String)
 }
 
+func TestFieldIntersectionFieldMeetPolicy(t *testing.T) {
+	tests := []struct {
+		name  string
+		left  typ.Type
+		right typ.Type
+		want  typ.Type
+	}{
+		{
+			name:  "any and string",
+			left:  typ.Any,
+			right: typ.String,
+			want:  typ.String,
+		},
+		{
+			name:  "never and string",
+			left:  typ.Never,
+			right: typ.String,
+			want:  typ.Never,
+		},
+		{
+			name:  "nil and optional string",
+			left:  typ.Nil,
+			right: typ.NewOptional(typ.String),
+			want:  typ.Nil,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			left := typ.NewRecord().Field("value", tt.left).Build()
+			right := typ.NewRecord().Field("value", tt.right).Build()
+
+			got, ok := Field(typ.NewIntersection(left, right), "value")
+			if !ok {
+				t.Fatal("Field(intersection, value) failed")
+			}
+			assertType(t, got, tt.want)
+		})
+	}
+}
+
 func TestCallableReturnFirstReturn(t *testing.T) {
 	fn := typ.Func().
 		Param("input", typ.String).

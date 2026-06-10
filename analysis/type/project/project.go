@@ -3,6 +3,7 @@ package project
 
 import (
 	luatable "github.com/wippyai/go-lua/analysis/lua/table"
+	"github.com/wippyai/go-lua/analysis/type/relation"
 	"github.com/wippyai/go-lua/analysis/type/subst"
 	"github.com/wippyai/go-lua/analysis/type/subtype"
 	"github.com/wippyai/go-lua/analysis/type/typ"
@@ -195,7 +196,7 @@ func fieldInIntersection(in *typ.Intersection, name string, depth int) fieldResu
 	if len(out) == 1 {
 		return fieldResult{t: out[0], ok: true}
 	}
-	return fieldResult{t: typ.NewIntersection(out...), ok: true}
+	return fieldResult{t: relation.NormalizeIntersectionForMeet(out...), ok: true}
 }
 
 func fieldAtDepth(t typ.Type, name string, depth int) (typ.Type, bool) {

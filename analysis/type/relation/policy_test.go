@@ -117,26 +117,28 @@ func TestJoinReturnSlot_PrefersConcreteScalarOverUnknown(t *testing.T) {
 
 func TestIntersectionMeetPolicyAnyNeverAndNil(t *testing.T) {
 	tests := []struct {
-		name string
-		got  Type
-		want Type
+		name    string
+		members []Type
+		want    Type
 	}{
-		{name: "any identity left", got: NewIntersection(Any, String), want: String},
-		{name: "any identity right", got: NewIntersection(String, Any), want: String},
-		{name: "never absorbs left", got: NewIntersection(Never, String), want: Never},
-		{name: "never absorbs right", got: NewIntersection(String, Never), want: Never},
-		{name: "nil accepted by optional", got: NewIntersection(Nil, NewOptional(String)), want: Nil},
-		{name: "nil accepted by unknown", got: NewIntersection(Nil, Unknown), want: Nil},
+		{name: "flattens intersection inputs", members: []Type{NewIntersection(Any, String), Boolean}, want: NewIntersection(String, Boolean)},
+		{name: "any identity left", members: []Type{Any, String}, want: String},
+		{name: "any identity right", members: []Type{String, Any}, want: String},
+		{name: "never absorbs left", members: []Type{Never, String}, want: Never},
+		{name: "never absorbs right", members: []Type{String, Never}, want: Never},
+		{name: "nil accepted by optional", members: []Type{Nil, NewOptional(String)}, want: Nil},
+		{name: "nil accepted by unknown", members: []Type{Nil, Unknown}, want: Nil},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if !TypeEquals(tt.got, tt.want) {
-				t.Fatalf("intersection meet = %v, want %v", tt.got, tt.want)
+			got := NormalizeIntersectionForMeet(tt.members...)
+			if !TypeEquals(got, tt.want) {
+				t.Fatalf("NormalizeIntersectionForMeet(%v) = %v, want %v", tt.members, got, tt.want)
 			}
 		})
 	}
 
-	got := NewIntersection(Nil, String)
+	got := NormalizeIntersectionForMeet(Nil, String)
 	inter, ok := got.(*Intersection)
 	if !ok {
 		t.Fatalf("intersection meet nil & string = %T %[1]v, want explicit intersection", got)

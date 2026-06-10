@@ -33,22 +33,16 @@ func TestIntersectionBasic(t *testing.T) {
 	}
 }
 
-func TestNewIntersectionLegacyConstructorPolicyNeverAbsorbs(t *testing.T) {
-	i := NewIntersection(Number, Never)
-	if i != Never {
-		t.Error("intersection containing Never should collapse to Never")
-	}
+func TestNewIntersectionPreservesNeverMember(t *testing.T) {
+	requireIntersectionMembers(t, NewIntersection(Number, Never), Number, Never)
 }
 
-func TestNewIntersectionLegacyConstructorPolicyAnyIdentity(t *testing.T) {
-	i := NewIntersection(Number, Any, String)
+func TestNewIntersectionPreservesAnyMember(t *testing.T) {
+	requireIntersectionMembers(t, NewIntersection(Number, Any, String), Number, Any, String)
+}
 
-	inter := i.(*Intersection)
-	for _, m := range inter.Members {
-		if m.Kind() == kind.Any {
-			t.Error("Any should be filtered from intersection")
-		}
-	}
+func TestNewIntersectionPreservesNilWithoutMeetPolicy(t *testing.T) {
+	requireIntersectionMembers(t, NewIntersection(Nil, NewOptional(String)), Nil, NewOptional(String))
 }
 
 func TestIntersectionFlattening(t *testing.T) {
@@ -124,5 +118,28 @@ func TestIntersectionString(t *testing.T) {
 	s := i.String()
 	if s == "" {
 		t.Error("intersection String() should not be empty")
+	}
+}
+
+func requireIntersectionMembers(t *testing.T, got Type, wants ...Type) {
+	t.Helper()
+	inter, ok := got.(*Intersection)
+	if !ok {
+		t.Fatalf("NewIntersection() = %T %[1]v, want intersection", got)
+	}
+	if len(inter.Members) != len(wants) {
+		t.Fatalf("intersection members = %v, want %v", inter.Members, wants)
+	}
+	for _, want := range wants {
+		found := false
+		for _, member := range inter.Members {
+			if TypeEquals(member, want) {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Fatalf("intersection members = %v, missing %v", inter.Members, want)
+		}
 	}
 }
