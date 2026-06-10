@@ -30,6 +30,7 @@ func TestKindValues(t *testing.T) {
 		{Local, 2},
 		{Global, 3},
 		{Upvalue, 4},
+		{Function, 5},
 	}
 	for _, tt := range tests {
 		if int(tt.kind) != tt.want {

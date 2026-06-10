@@ -22,7 +22,15 @@ type Result struct {
 
 	globals map[string]globalSymbol
 
+	functionSymbols    map[*ast.FunctionExpr]symbol.ID
+	functionsBySymbol  map[symbol.ID]*ast.FunctionExpr
+	functions          []*ast.FunctionExpr
+	nestedFunctions    map[*ast.FunctionExpr][]*ast.FunctionExpr
+	declaringFunctions map[symbol.ID]*ast.FunctionExpr
+
 	paramSymbols      map[*ast.FunctionExpr][]symbol.ID
+	varargSymbols     map[*ast.FunctionExpr]symbol.ID
+	paramSlots        map[*ast.FunctionExpr][]ParamSlot
 	localSymbols      map[*ast.LocalAssignStmt][]symbol.ID
 	numForSymbols     map[*ast.NumberForStmt]symbol.ID
 	genericForSymbols map[*ast.GenericForStmt][]symbol.ID
@@ -31,6 +39,16 @@ type Result struct {
 type globalSymbol struct {
 	id          symbol.ID
 	predeclared bool
+}
+
+// ParamSlot describes one runtime parameter slot for a function.
+type ParamSlot struct {
+	Symbol       symbol.ID
+	Name         string
+	Type         ast.TypeExpr
+	SourceIndex  int
+	Vararg       bool
+	ImplicitSelf bool
 }
 
 // BindFunction binds a single function expression with a fresh global seed.
@@ -129,12 +147,72 @@ func (r *Result) Kind(id symbol.ID) (symbol.Kind, bool) {
 	return kind, ok
 }
 
+// FunctionSymbol returns the function identity symbol for fn.
+func (r *Result) FunctionSymbol(fn *ast.FunctionExpr) (symbol.ID, bool) {
+	if r == nil || fn == nil {
+		return 0, false
+	}
+	id, ok := r.functionSymbols[fn]
+	return id, ok && id != 0
+}
+
+// FunctionBySymbol returns the function expression identified by sym.
+func (r *Result) FunctionBySymbol(sym symbol.ID) (*ast.FunctionExpr, bool) {
+	if r == nil || sym == 0 {
+		return nil, false
+	}
+	fn, ok := r.functionsBySymbol[sym]
+	return fn, ok
+}
+
+// Functions returns all bound functions in parent-before-child order.
+func (r *Result) Functions() []*ast.FunctionExpr {
+	if r == nil {
+		return nil
+	}
+	return cloneFunctions(r.functions)
+}
+
+// NestedFunctions returns the direct nested functions declared under parent.
+func (r *Result) NestedFunctions(parent *ast.FunctionExpr) []*ast.FunctionExpr {
+	if r == nil {
+		return nil
+	}
+	return cloneFunctions(r.nestedFunctions[parent])
+}
+
+// DeclaringFunction returns the function that owns a declaration symbol.
+func (r *Result) DeclaringFunction(sym symbol.ID) (*ast.FunctionExpr, bool) {
+	if r == nil || sym == 0 {
+		return nil, false
+	}
+	fn, ok := r.declaringFunctions[sym]
+	return fn, ok
+}
+
 // ParamSymbols returns ordered parameter symbols for fn.
 func (r *Result) ParamSymbols(fn *ast.FunctionExpr) []symbol.ID {
 	if r == nil || fn == nil {
 		return nil
 	}
 	return cloneSymbols(r.paramSymbols[fn])
+}
+
+// VarargSymbol returns the vararg parameter identity for fn, when present.
+func (r *Result) VarargSymbol(fn *ast.FunctionExpr) (symbol.ID, bool) {
+	if r == nil || fn == nil {
+		return 0, false
+	}
+	id, ok := r.varargSymbols[fn]
+	return id, ok && id != 0
+}
+
+// ParamSlots returns the bind-owned runtime parameter layout for fn.
+func (r *Result) ParamSlots(fn *ast.FunctionExpr) []ParamSlot {
+	if r == nil || fn == nil {
+		return nil
+	}
+	return cloneParamSlots(r.paramSlots[fn])
 }
 
 // LocalSymbols returns ordered local symbols declared by stmt.
@@ -181,7 +259,13 @@ func newResult(opts Options) *Result {
 		names:              make(map[symbol.ID]string),
 		kinds:              make(map[symbol.ID]symbol.Kind),
 		globals:            make(map[string]globalSymbol),
+		functionSymbols:    make(map[*ast.FunctionExpr]symbol.ID),
+		functionsBySymbol:  make(map[symbol.ID]*ast.FunctionExpr),
+		nestedFunctions:    make(map[*ast.FunctionExpr][]*ast.FunctionExpr),
+		declaringFunctions: make(map[symbol.ID]*ast.FunctionExpr),
 		paramSymbols:       make(map[*ast.FunctionExpr][]symbol.ID),
+		varargSymbols:      make(map[*ast.FunctionExpr]symbol.ID),
+		paramSlots:         make(map[*ast.FunctionExpr][]ParamSlot),
 		localSymbols:       make(map[*ast.LocalAssignStmt][]symbol.ID),
 		numForSymbols:      make(map[*ast.NumberForStmt]symbol.ID),
 		genericForSymbols:  make(map[*ast.GenericForStmt][]symbol.ID),
@@ -214,10 +298,40 @@ func cloneSymbols(ids []symbol.ID) []symbol.ID {
 	return append([]symbol.ID(nil), ids...)
 }
 
+func cloneFunctions(fns []*ast.FunctionExpr) []*ast.FunctionExpr {
+	if len(fns) == 0 {
+		return nil
+	}
+	return append([]*ast.FunctionExpr(nil), fns...)
+}
+
+func cloneParamSlots(slots []ParamSlot) []ParamSlot {
+	if len(slots) == 0 {
+		return nil
+	}
+	return append([]ParamSlot(nil), slots...)
+}
+
 func (r *Result) newSymbol(name string, kind symbol.Kind) symbol.ID {
 	id := symbol.Next()
 	r.names[id] = name
 	r.kinds[id] = kind
+	return id
+}
+
+func (r *Result) registerFunction(fn, parent *ast.FunctionExpr) symbol.ID {
+	if fn == nil {
+		return 0
+	}
+	if id, ok := r.functionSymbols[fn]; ok {
+		return id
+	}
+	id := r.newSymbol("", symbol.Function)
+	r.functionSymbols[fn] = id
+	r.functionsBySymbol[id] = fn
+	r.functions = append(r.functions, fn)
+	r.nestedFunctions[parent] = append(r.nestedFunctions[parent], fn)
+	r.declaringFunctions[id] = fn
 	return id
 }
 
@@ -247,6 +361,8 @@ type binder struct {
 	result *Result
 	scopes []scope
 
+	functionStack []*ast.FunctionExpr
+
 	deferred        []deferredScope
 	visibleDeferred int
 }
@@ -267,6 +383,21 @@ func (b *binder) define(name string, id symbol.ID) {
 		return
 	}
 	b.scopes[len(b.scopes)-1].names[name] = id
+}
+
+func (b *binder) currentFunction() *ast.FunctionExpr {
+	if len(b.functionStack) == 0 {
+		return nil
+	}
+	return b.functionStack[len(b.functionStack)-1]
+}
+
+func (b *binder) newSymbol(name string, kind symbol.Kind) symbol.ID {
+	id := b.result.newSymbol(name, kind)
+	if fn := b.currentFunction(); fn != nil {
+		b.result.declaringFunctions[id] = fn
+	}
+	return id
 }
 
 func (b *binder) lookup(name string) (symbol.ID, bool, bool) {
@@ -350,7 +481,7 @@ func (b *binder) bindLocalAssign(stmt *ast.LocalAssignStmt) {
 	ids := make([]symbol.ID, len(stmt.Names))
 	pending := make(map[string]symbol.ID, len(stmt.Names))
 	for i, name := range stmt.Names {
-		id := b.result.newSymbol(name, symbol.Local)
+		id := b.newSymbol(name, symbol.Local)
 		ids[i] = id
 		if name != "" {
 			pending[name] = id
@@ -381,7 +512,7 @@ func (b *binder) bindNumberFor(stmt *ast.NumberForStmt) {
 	b.bindExpr(stmt.Limit)
 	b.bindExpr(stmt.Step)
 
-	id := b.result.newSymbol(stmt.Name, symbol.Local)
+	id := b.newSymbol(stmt.Name, symbol.Local)
 	b.result.numForSymbols[stmt] = id
 
 	b.pushScope()
@@ -396,7 +527,7 @@ func (b *binder) bindGenericFor(stmt *ast.GenericForStmt) {
 	ids := make([]symbol.ID, len(stmt.Names))
 	b.pushScope()
 	for i, name := range stmt.Names {
-		id := b.result.newSymbol(name, symbol.Local)
+		id := b.newSymbol(name, symbol.Local)
 		ids[i] = id
 		b.define(name, id)
 	}
@@ -482,30 +613,73 @@ func (b *binder) bindFunction(fn *ast.FunctionExpr, method bool) {
 		return
 	}
 
+	parent := b.currentFunction()
+	b.result.registerFunction(fn, parent)
+	b.functionStack = append(b.functionStack, fn)
+
 	oldVisibleDeferred := b.visibleDeferred
 	b.visibleDeferred = len(b.deferred)
 
 	b.pushScope()
 	params := make([]symbol.ID, 0)
+	slots := make([]ParamSlot, 0)
 	names := []string(nil)
+	types := []ast.TypeExpr(nil)
+	hasVargs := false
+	varargType := ast.TypeExpr(nil)
 	if fn.ParList != nil {
 		names = fn.ParList.Names
+		types = fn.ParList.Types
+		hasVargs = fn.ParList.HasVargs
+		varargType = fn.ParList.VarargType
 	}
 	if method && (len(names) == 0 || names[0] != "self") {
-		id := b.result.newSymbol("self", symbol.Param)
+		id := b.newSymbol("self", symbol.Param)
 		params = append(params, id)
 		b.define("self", id)
+		slots = append(slots, ParamSlot{
+			Symbol:       id,
+			Name:         "self",
+			SourceIndex:  -1,
+			ImplicitSelf: true,
+		})
 	}
-	for _, name := range names {
-		id := b.result.newSymbol(name, symbol.Param)
+	for i, name := range names {
+		id := b.newSymbol(name, symbol.Param)
 		params = append(params, id)
 		b.define(name, id)
+		slots = append(slots, ParamSlot{
+			Symbol:      id,
+			Name:        name,
+			Type:        typeAt(types, i),
+			SourceIndex: i,
+		})
 	}
 	b.result.paramSymbols[fn] = params
+	if hasVargs {
+		id := b.newSymbol("...", symbol.Param)
+		b.result.varargSymbols[fn] = id
+		slots = append(slots, ParamSlot{
+			Symbol:      id,
+			Name:        "...",
+			Type:        varargType,
+			SourceIndex: len(names),
+			Vararg:      true,
+		})
+	}
+	b.result.paramSlots[fn] = slots
 	b.bindStmts(fn.Stmts)
 	b.popScope()
 
 	b.visibleDeferred = oldVisibleDeferred
+	b.functionStack = b.functionStack[:len(b.functionStack)-1]
+}
+
+func typeAt(types []ast.TypeExpr, index int) ast.TypeExpr {
+	if index < 0 || index >= len(types) {
+		return nil
+	}
+	return types[index]
 }
 
 func (b *binder) bindLValue(expr ast.Expr) {

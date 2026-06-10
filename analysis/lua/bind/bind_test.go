@@ -27,6 +27,10 @@ func function(names []string, stmts ...ast.Stmt) *ast.FunctionExpr {
 	}
 }
 
+func typeRef(name string) *ast.TypeRefExpr {
+	return &ast.TypeRefExpr{Path: []string{name}}
+}
+
 func ret(exprs ...ast.Expr) *ast.ReturnStmt {
 	return &ast.ReturnStmt{Exprs: exprs}
 }
@@ -57,6 +61,17 @@ func assertKind(t *testing.T, r *Result, id symbol.ID, want symbol.Kind) {
 	}
 	if got != want {
 		t.Fatalf("Kind(%d) = %v, want %v", id, got, want)
+	}
+}
+
+func assertDeclaringFunction(t *testing.T, r *Result, id symbol.ID, want *ast.FunctionExpr) {
+	t.Helper()
+	got, ok := r.DeclaringFunction(id)
+	if !ok {
+		t.Fatalf("DeclaringFunction(%d) missing", id)
+	}
+	if got != want {
+		t.Fatalf("DeclaringFunction(%d) = %p, want %p", id, got, want)
 	}
 }
 
@@ -276,6 +291,211 @@ func TestParamSymbols(t *testing.T) {
 		t.Fatalf("typed params = %v, want typed param", params)
 	}
 	assertKind(t, r, params[0], symbol.Param)
+}
+
+func TestFunctionIdentityAndTree(t *testing.T) {
+	grandchild := function(nil)
+	childA := function(nil, localAssign([]string{"grandchild"}, grandchild))
+	childB := function(nil)
+	root := function(nil,
+		localAssign([]string{"childA"}, childA),
+		localAssign([]string{"childB"}, childB),
+	)
+
+	r := BindFunction(root, Options{})
+
+	wantFunctions := []*ast.FunctionExpr{root, childA, grandchild, childB}
+	for _, fn := range wantFunctions {
+		first, ok := r.FunctionSymbol(fn)
+		if !ok || first == 0 {
+			t.Fatalf("FunctionSymbol(%p) = %d/%v, want non-zero/true", fn, first, ok)
+		}
+		second, ok := r.FunctionSymbol(fn)
+		if !ok || second != first {
+			t.Fatalf("second FunctionSymbol(%p) = %d/%v, want stable %d/true", fn, second, ok, first)
+		}
+		assertKind(t, r, first, symbol.Function)
+
+		gotFn, ok := r.FunctionBySymbol(first)
+		if !ok || gotFn != fn {
+			t.Fatalf("FunctionBySymbol(%d) = %p/%v, want %p/true", first, gotFn, ok, fn)
+		}
+		assertDeclaringFunction(t, r, first, fn)
+	}
+
+	if got := r.Functions(); !reflect.DeepEqual(got, wantFunctions) {
+		t.Fatalf("Functions() = %p, want parent-before-child %p", got, wantFunctions)
+	}
+	functions := r.Functions()
+	functions[0] = nil
+	if got := r.Functions(); got[0] != root {
+		t.Fatalf("Functions returned mutable backing slice")
+	}
+
+	if got, want := r.NestedFunctions(nil), []*ast.FunctionExpr{root}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("NestedFunctions(nil) = %p, want %p", got, want)
+	}
+	if got, want := r.NestedFunctions(root), []*ast.FunctionExpr{childA, childB}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("NestedFunctions(root) = %p, want %p", got, want)
+	}
+	if got, want := r.NestedFunctions(childA), []*ast.FunctionExpr{grandchild}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("NestedFunctions(childA) = %p, want %p", got, want)
+	}
+	if got := r.NestedFunctions(childB); got != nil {
+		t.Fatalf("NestedFunctions(childB) = %p, want nil", got)
+	}
+
+	unknown := function(nil)
+	if id, ok := r.FunctionSymbol(unknown); ok || id != 0 {
+		t.Fatalf("unknown FunctionSymbol = %d/%v, want 0/false", id, ok)
+	}
+	if fn, ok := r.FunctionBySymbol(symbol.ID(0)); ok || fn != nil {
+		t.Fatalf("zero FunctionBySymbol = %p/%v, want nil/false", fn, ok)
+	}
+}
+
+func TestDeclaringFunctionForLexicalSymbols(t *testing.T) {
+	paramRead := ident("p")
+	localStmt := localAssign([]string{"x"}, number("1"))
+	loopRead := ident("i")
+	numLoop := &ast.NumberForStmt{
+		Name:  "i",
+		Init:  number("1"),
+		Limit: number("3"),
+		Stmts: []ast.Stmt{ret(loopRead)},
+	}
+	fn := function([]string{"p"}, localStmt, numLoop, ret(paramRead))
+	topLocal := localAssign([]string{"fn"}, fn)
+
+	r := BindChunk([]ast.Stmt{topLocal}, Options{})
+
+	paramID := r.ParamSymbols(fn)[0]
+	assertDeclaringFunction(t, r, paramID, fn)
+
+	localID := mustLocalAt(t, r, localStmt, 0)
+	assertDeclaringFunction(t, r, localID, fn)
+
+	loopID, ok := r.NumForSymbol(numLoop)
+	if !ok {
+		t.Fatalf("NumForSymbol missing")
+	}
+	assertDeclaringFunction(t, r, loopID, fn)
+
+	if got := mustSymbol(t, r, paramRead); got != paramID {
+		t.Fatalf("param read resolved to %d, want %d", got, paramID)
+	}
+	if got := mustSymbol(t, r, loopRead); got != loopID {
+		t.Fatalf("loop read resolved to %d, want %d", got, loopID)
+	}
+
+	topID := mustLocalAt(t, r, topLocal, 0)
+	if got, ok := r.DeclaringFunction(topID); ok || got != nil {
+		t.Fatalf("top-level DeclaringFunction = %p/%v, want nil/false", got, ok)
+	}
+}
+
+func TestParamSlotsTypedAndVararg(t *testing.T) {
+	xType := typeRef("X")
+	yType := typeRef("Y")
+	varargType := typeRef("Rest")
+	fn := &ast.FunctionExpr{
+		ParList: &ast.ParList{
+			Names:      []string{"x", "y"},
+			Types:      []ast.TypeExpr{xType, yType},
+			HasVargs:   true,
+			VarargType: varargType,
+		},
+	}
+
+	r := BindFunction(fn, Options{})
+
+	params := r.ParamSymbols(fn)
+	if len(params) != 2 {
+		t.Fatalf("ParamSymbols = %v, want only named params", params)
+	}
+	slots := r.ParamSlots(fn)
+	if len(slots) != 3 {
+		t.Fatalf("ParamSlots = %#v, want x, y, vararg", slots)
+	}
+	for i, tt := range []struct {
+		name string
+		typ  ast.TypeExpr
+	}{
+		{name: "x", typ: xType},
+		{name: "y", typ: yType},
+	} {
+		if slots[i].Symbol != params[i] || slots[i].Name != tt.name || slots[i].Type != tt.typ {
+			t.Fatalf("slot %d = %#v, want symbol %d name %q type %p", i, slots[i], params[i], tt.name, tt.typ)
+		}
+		if slots[i].SourceIndex != i {
+			t.Fatalf("slot %d source index = %d, want %d", i, slots[i].SourceIndex, i)
+		}
+		if slots[i].Vararg || slots[i].ImplicitSelf {
+			t.Fatalf("slot %d flags = vararg %v implicit self %v, want false/false", i, slots[i].Vararg, slots[i].ImplicitSelf)
+		}
+	}
+	varargID, ok := r.VarargSymbol(fn)
+	if !ok || varargID == 0 {
+		t.Fatalf("VarargSymbol = %d/%v, want non-zero/true", varargID, ok)
+	}
+	assertKind(t, r, varargID, symbol.Param)
+	if slots[2].Symbol != varargID || slots[2].Name != "..." || slots[2].Type != varargType || slots[2].SourceIndex != 2 || !slots[2].Vararg || slots[2].ImplicitSelf {
+		t.Fatalf("vararg slot = %#v, want typed vararg symbol %d", slots[2], varargID)
+	}
+	assertDeclaringFunction(t, r, varargID, fn)
+
+	slots[0].Name = "mutated"
+	if got := r.ParamSlots(fn)[0].Name; got != "x" {
+		t.Fatalf("ParamSlots returned mutable backing slice; name = %q", got)
+	}
+}
+
+func TestParamSlotsMethodSelf(t *testing.T) {
+	implicitFn := function([]string{"arg"})
+	r := BindChunk([]ast.Stmt{
+		&ast.FuncDefStmt{
+			Name: &ast.FuncName{Receiver: ident("obj"), Method: "method"},
+			Func: implicitFn,
+		},
+	}, Options{Globals: []string{"obj"}})
+
+	params := r.ParamSymbols(implicitFn)
+	slots := r.ParamSlots(implicitFn)
+	if len(params) != 2 || len(slots) != 2 {
+		t.Fatalf("implicit method params/slots = %v/%#v, want two", params, slots)
+	}
+	if slots[0].Symbol != params[0] || slots[0].Name != "self" || slots[0].SourceIndex != -1 || !slots[0].ImplicitSelf || slots[0].Vararg {
+		t.Fatalf("implicit self slot = %#v, want implicit self", slots[0])
+	}
+	if slots[1].Symbol != params[1] || slots[1].Name != "arg" || slots[1].SourceIndex != 0 || slots[1].ImplicitSelf || slots[1].Vararg {
+		t.Fatalf("implicit method arg slot = %#v, want explicit arg", slots[1])
+	}
+
+	selfType := typeRef("Self")
+	explicitFn := &ast.FunctionExpr{
+		ParList: &ast.ParList{
+			Names: []string{"self", "arg"},
+			Types: []ast.TypeExpr{selfType},
+		},
+	}
+	r = BindChunk([]ast.Stmt{
+		&ast.FuncDefStmt{
+			Name: &ast.FuncName{Receiver: ident("obj"), Method: "method"},
+			Func: explicitFn,
+		},
+	}, Options{Globals: []string{"obj"}})
+
+	params = r.ParamSymbols(explicitFn)
+	slots = r.ParamSlots(explicitFn)
+	if len(params) != 2 || len(slots) != 2 {
+		t.Fatalf("explicit method params/slots = %v/%#v, want two", params, slots)
+	}
+	if slots[0].Symbol != params[0] || slots[0].Name != "self" || slots[0].Type != selfType || slots[0].SourceIndex != 0 || slots[0].ImplicitSelf {
+		t.Fatalf("explicit self slot = %#v, want typed explicit self", slots[0])
+	}
+	if slots[1].Symbol != params[1] || slots[1].Name != "arg" || slots[1].SourceIndex != 1 || slots[1].ImplicitSelf {
+		t.Fatalf("explicit method arg slot = %#v, want explicit arg", slots[1])
+	}
 }
 
 func TestMethodSelfParam(t *testing.T) {

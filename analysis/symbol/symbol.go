@@ -29,4 +29,6 @@ const (
 	Global
 	// Upvalue indicates an upvalue captured from an enclosing scope.
 	Upvalue
+	// Function indicates a function expression identity.
+	Function
 )
