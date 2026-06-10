@@ -4,7 +4,6 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/types/constraint"
-	"github.com/wippyai/go-lua/types/flow/domain"
 	"github.com/wippyai/go-lua/types/flow/numeric"
 	"github.com/wippyai/go-lua/types/narrow"
 	"github.com/wippyai/go-lua/types/query/core"
@@ -31,13 +30,13 @@ func makeMockEnv(types map[constraint.PathKey]typ.Type) constraint.Env {
 	}
 }
 
-func TestTypeDomain_ApplyTruthy(t *testing.T) {
+func TestConditionTypeDomainParent_ApplyTruthy(t *testing.T) {
 	key := constraint.PathKey("x")
 	env := makeMockEnv(map[constraint.PathKey]typ.Type{
 		key: typ.NewUnion(typ.String, typ.Nil),
 	})
 
-	d := domain.NewTypeDomain(env)
+	d := NewConditionTypeDomain(env)
 	atom := constraint.AtomTruthy(constraint.TermVar(key))
 
 	ok := d.ApplyAtom(atom)
@@ -56,13 +55,13 @@ func TestTypeDomain_ApplyTruthy(t *testing.T) {
 	}
 }
 
-func TestTypeDomain_ApplyFalsy(t *testing.T) {
+func TestConditionTypeDomainParent_ApplyFalsy(t *testing.T) {
 	key := constraint.PathKey("x")
 	env := makeMockEnv(map[constraint.PathKey]typ.Type{
 		key: typ.NewUnion(typ.String, typ.Nil),
 	})
 
-	d := domain.NewTypeDomain(env)
+	d := NewConditionTypeDomain(env)
 	atom := constraint.AtomFalsy(constraint.TermVar(key))
 
 	ok := d.ApplyAtom(atom)
@@ -81,13 +80,13 @@ func TestTypeDomain_ApplyFalsy(t *testing.T) {
 	}
 }
 
-func TestTypeDomain_ApplyIsNil(t *testing.T) {
+func TestConditionTypeDomainParent_ApplyIsNil(t *testing.T) {
 	key := constraint.PathKey("x")
 	env := makeMockEnv(map[constraint.PathKey]typ.Type{
 		key: typ.NewUnion(typ.String, typ.Nil),
 	})
 
-	d := domain.NewTypeDomain(env)
+	d := NewConditionTypeDomain(env)
 	atom := constraint.AtomEq(constraint.TermVar(key), constraint.TermNil())
 
 	ok := d.ApplyAtom(atom)
@@ -101,13 +100,13 @@ func TestTypeDomain_ApplyIsNil(t *testing.T) {
 	}
 }
 
-func TestTypeDomain_ApplyNotNil(t *testing.T) {
+func TestConditionTypeDomainParent_ApplyNotNil(t *testing.T) {
 	key := constraint.PathKey("x")
 	env := makeMockEnv(map[constraint.PathKey]typ.Type{
 		key: typ.NewUnion(typ.String, typ.Nil),
 	})
 
-	d := domain.NewTypeDomain(env)
+	d := NewConditionTypeDomain(env)
 	atom := constraint.AtomNe(constraint.TermVar(key), constraint.TermNil())
 
 	ok := d.ApplyAtom(atom)
@@ -125,16 +124,16 @@ func TestTypeDomain_ApplyNotNil(t *testing.T) {
 	}
 }
 
-func TestTypeDomain_Join_TypeUnion(t *testing.T) {
+func TestConditionTypeDomain_Join_TypeUnion(t *testing.T) {
 	env := makeMockEnv(nil)
 
-	a := domain.NewTypeDomain(env)
+	a := NewConditionTypeDomain(env)
 	a.Narrowed["x"] = typ.String
 
-	b := domain.NewTypeDomain(env)
+	b := NewConditionTypeDomain(env)
 	b.Narrowed["x"] = typ.Number
 
-	joined := a.Join(b).(*domain.TypeDomain)
+	joined := a.Join(b)
 	result := joined.TypeAt("x")
 
 	if result == nil {
@@ -150,16 +149,16 @@ func TestTypeDomain_Join_TypeUnion(t *testing.T) {
 	}
 }
 
-func TestTypeDomain_Join_DropsNonCommonKeys(t *testing.T) {
+func TestConditionTypeDomainParent_Join_DropsNonCommonKeys(t *testing.T) {
 	env := makeMockEnv(nil)
 
-	a := domain.NewTypeDomain(env)
+	a := NewConditionTypeDomain(env)
 	a.Narrowed["x"] = typ.String
 
-	b := domain.NewTypeDomain(env)
+	b := NewConditionTypeDomain(env)
 	// b has no key "x"
 
-	joined := a.Join(b).(*domain.TypeDomain)
+	joined := a.Join(b)
 	_, hasKey := joined.Narrowed["x"]
 	if hasKey {
 		t.Fatal("key should be dropped")
@@ -246,7 +245,7 @@ func TestNumericDomain_Join(t *testing.T) {
 	b.ApplyAtom(atomB1)
 	b.ApplyAtom(atomB2)
 
-	joined := a.Join(b).(*numeric.Domain)
+	joined := a.Join(b)
 
 	// LUB of [0,10] and [5,15] is the interval HULL [0,15] (set union of admitted
 	// values). The prior assertion (intersection [5,10]) was an algebraic bug
@@ -262,14 +261,14 @@ func TestNumericDomain_Join(t *testing.T) {
 	}
 }
 
-func TestProductDomain_TypeAndNumericCombined(t *testing.T) {
+func TestConditionProofDomain_TypeAndNumericCombined(t *testing.T) {
 	key := constraint.PathKey("x")
 
 	env := makeMockEnv(map[constraint.PathKey]typ.Type{
 		key: typ.NewUnion(typ.String, typ.Number),
 	})
 
-	d := NewProductDomain(env)
+	d := NewConditionProofDomain(env)
 
 	// Apply type constraint (hastype number)
 	d.ApplyAtom(constraint.AtomHasType(
@@ -302,14 +301,14 @@ func TestProductDomain_TypeAndNumericCombined(t *testing.T) {
 	}
 }
 
-func TestProductDomain_ApplyConjunction(t *testing.T) {
+func TestConditionProofDomain_ApplyConjunction(t *testing.T) {
 	key := constraint.PathKey("x")
 
 	env := makeMockEnv(map[constraint.PathKey]typ.Type{
 		key: typ.NewUnion(typ.String, typ.Nil),
 	})
 
-	d := NewProductDomain(env)
+	d := NewConditionProofDomain(env)
 
 	// Create constraint set with Truthy
 	path := constraint.Path{Root: "x"}
@@ -330,7 +329,7 @@ func TestProductDomain_ApplyConjunction(t *testing.T) {
 	}
 }
 
-func TestProductDomain_ContradictoryAliasWithoutResolver(t *testing.T) {
+func TestConditionProofDomain_ContradictoryAliasWithoutResolver(t *testing.T) {
 	pathX := constraint.Path{Root: "x"}
 	pathY := constraint.Path{Root: "y"}
 
@@ -344,7 +343,7 @@ func TestProductDomain_ContradictoryAliasWithoutResolver(t *testing.T) {
 			}
 		},
 	}
-	d := NewProductDomain(env)
+	d := NewConditionProofDomain(env)
 
 	ok := d.ApplyConjunction([]constraint.Constraint{
 		constraint.NewEqPath(pathX, pathY),
@@ -359,14 +358,14 @@ func TestProductDomain_ContradictoryAliasWithoutResolver(t *testing.T) {
 	}
 }
 
-func TestProductDomain_IsUnsat(t *testing.T) {
+func TestConditionProofDomain_IsUnsat(t *testing.T) {
 	key := constraint.PathKey("x")
 
 	env := makeMockEnv(map[constraint.PathKey]typ.Type{
 		key: typ.String,
 	})
 
-	d := NewProductDomain(env)
+	d := NewConditionProofDomain(env)
 
 	// Apply contradictory constraint
 	d.ApplyAtom(constraint.AtomFalsy(constraint.TermVar(key)))
@@ -376,17 +375,17 @@ func TestProductDomain_IsUnsat(t *testing.T) {
 	}
 }
 
-func TestProductDomain_Clone(t *testing.T) {
+func TestConditionProofDomain_Clone(t *testing.T) {
 	key := constraint.PathKey("x")
 
 	env := makeMockEnv(map[constraint.PathKey]typ.Type{
 		key: typ.NewUnion(typ.String, typ.Nil),
 	})
 
-	d := NewProductDomain(env)
+	d := NewConditionProofDomain(env)
 	d.ApplyAtom(constraint.AtomTruthy(constraint.TermVar(key)))
 
-	clone := d.Clone().(*ProductDomain)
+	clone := d.Clone()
 
 	// Clone should have the same narrowed type in Type domain
 	original := d.Type.TypeAt(key)
@@ -403,18 +402,18 @@ func TestProductDomain_Clone(t *testing.T) {
 	}
 }
 
-func TestProductDomain_Join(t *testing.T) {
+func TestConditionProofDomain_Join(t *testing.T) {
 	key := constraint.PathKey("x")
 
 	env := makeMockEnv(nil)
 
-	a := NewProductDomain(env)
+	a := NewConditionProofDomain(env)
 	a.Type.Narrowed[key] = typ.String
 
-	b := NewProductDomain(env)
+	b := NewConditionProofDomain(env)
 	b.Type.Narrowed[key] = typ.Number
 
-	joined := a.Join(b).(*ProductDomain)
+	joined := a.Join(b)
 	result := joined.TypeAt(key)
 
 	if result == nil {
@@ -430,9 +429,9 @@ func TestProductDomain_Join(t *testing.T) {
 	}
 }
 
-func TestProductDomain_NarrowedChildPaths_IncludesIndexChildren(t *testing.T) {
+func TestConditionProofDomain_NarrowedChildPaths_IncludesIndexChildren(t *testing.T) {
 	env := makeMockEnv(nil)
-	d := NewProductDomain(env)
+	d := NewConditionProofDomain(env)
 
 	parent := constraint.PathKey("sym1@1")
 	indexChild := constraint.PathKey(`sym1@1["meta.type"]`)
@@ -457,7 +456,7 @@ func TestProductDomain_NarrowedChildPaths_IncludesIndexChildren(t *testing.T) {
 
 func TestProductProjectionViewChildPathsMatchDomainQuery(t *testing.T) {
 	env := makeMockEnv(nil)
-	d := NewProductDomain(env)
+	d := NewConditionProofDomain(env)
 
 	parent := constraint.PathKey("sym1@1")
 	nestedParent := constraint.PathKey("sym1@1.meta")
@@ -470,7 +469,7 @@ func TestProductProjectionViewChildPathsMatchDomainQuery(t *testing.T) {
 	d.Shape.Narrowed[sharedChild] = typ.Boolean
 	d.Shape.Narrowed[unrelated] = typ.Number
 
-	view := newProductProjectionView(d)
+	view := newConditionProjectionView(d)
 	for _, key := range []constraint.PathKey{parent, nestedParent} {
 		fromDomain := d.NarrowedChildPaths(key)
 		fromView := view.NarrowedChildPaths(key)
@@ -492,97 +491,97 @@ func TestProductProjectionViewChildPathsMatchDomainQuery(t *testing.T) {
 	}
 }
 
-func TestClassifyAtom(t *testing.T) {
+func TestClassifyConditionAtom(t *testing.T) {
 	tests := []struct {
 		name     string
 		atom     constraint.Atom
-		expected domain.AtomClass
+		expected conditionAtomClass
 	}{
 		{
 			name:     "HasType is type",
 			atom:     constraint.AtomHasType(constraint.TermVar("x"), narrow.TypeKey{}),
-			expected: domain.AtomClassType,
+			expected: conditionAtomClassType,
 		},
 		{
 			name:     "NotHasType is type",
 			atom:     constraint.AtomNotHasType(constraint.TermVar("x"), narrow.TypeKey{}),
-			expected: domain.AtomClassType,
+			expected: conditionAtomClassType,
 		},
 		{
 			name:     "Truthy is type",
 			atom:     constraint.AtomTruthy(constraint.TermVar("x")),
-			expected: domain.AtomClassType,
+			expected: conditionAtomClassType,
 		},
 		{
 			name:     "Falsy is type",
 			atom:     constraint.AtomFalsy(constraint.TermVar("x")),
-			expected: domain.AtomClassType,
+			expected: conditionAtomClassType,
 		},
 		{
 			name:     "Lt is numeric",
 			atom:     constraint.AtomLt(constraint.TermVar("x"), constraint.TermVar("y")),
-			expected: domain.AtomClassNumeric,
+			expected: conditionAtomClassNumeric,
 		},
 		{
 			name:     "Le is numeric",
 			atom:     constraint.AtomLe(constraint.TermVar("x"), constraint.TermConst(5)),
-			expected: domain.AtomClassNumeric,
+			expected: conditionAtomClassNumeric,
 		},
 		{
 			name:     "Ge is numeric",
 			atom:     constraint.AtomGe(constraint.TermVar("x"), constraint.TermConst(5)),
-			expected: domain.AtomClassNumeric,
+			expected: conditionAtomClassNumeric,
 		},
 		{
 			name:     "Gt is numeric",
 			atom:     constraint.AtomGt(constraint.TermVar("x"), constraint.TermVar("y")),
-			expected: domain.AtomClassNumeric,
+			expected: conditionAtomClassNumeric,
 		},
 		{
 			name:     "ModEq is numeric",
 			atom:     constraint.AtomModEq(constraint.TermVar("x"), 2, 0),
-			expected: domain.AtomClassNumeric,
+			expected: conditionAtomClassNumeric,
 		},
 		{
 			name:     "Eq nil is type",
 			atom:     constraint.AtomEq(constraint.TermVar("x"), constraint.TermNil()),
-			expected: domain.AtomClassType,
+			expected: conditionAtomClassType,
 		},
 		{
 			name:     "Ne nil is type",
 			atom:     constraint.AtomNe(constraint.TermVar("x"), constraint.TermNil()),
-			expected: domain.AtomClassType,
+			expected: conditionAtomClassType,
 		},
 		{
 			name:     "Eq const is numeric",
 			atom:     constraint.AtomEq(constraint.TermVar("x"), constraint.TermConst(5)),
-			expected: domain.AtomClassNumeric,
+			expected: conditionAtomClassNumeric,
 		},
 		{
 			name:     "Eq var is both",
 			atom:     constraint.AtomEq(constraint.TermVar("x"), constraint.TermVar("y")),
-			expected: domain.AtomClassBoth,
+			expected: conditionAtomClassBoth,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := domain.ClassifyAtom(tt.atom)
+			got := classifyConditionAtom(tt.atom)
 			if got != tt.expected {
-				t.Errorf("ClassifyAtom() = %v, want %v", got, tt.expected)
+				t.Errorf("classifyConditionAtom() = %v, want %v", got, tt.expected)
 			}
 		})
 	}
 }
 
-func TestProductDomain_MixedTypeAndNumericConstraints(t *testing.T) {
+func TestConditionProofDomain_MixedTypeAndNumericConstraints(t *testing.T) {
 	key := constraint.PathKey("x")
 
 	env := makeMockEnv(map[constraint.PathKey]typ.Type{
 		key: typ.NewUnion(typ.String, typ.Number, typ.Nil),
 	})
 
-	d := NewProductDomain(env)
+	d := NewConditionProofDomain(env)
 
 	// Apply type constraint via atom (hastype number - narrows to number)
 	hasTypeAtom := constraint.AtomHasType(
@@ -626,17 +625,17 @@ func TestProductDomain_MixedTypeAndNumericConstraints(t *testing.T) {
 		t.Fatalf("expected upper 100, got %d", upper)
 	}
 
-	// ProductDomain.TypeAt should return number
+	// ConditionProofDomain.TypeAt should return number
 	finalType := d.TypeAt(key)
 	if finalType == nil {
-		t.Fatal("expected ProductDomain.TypeAt result")
+		t.Fatal("expected ConditionProofDomain.TypeAt result")
 	}
 	if finalType.Kind() != typ.Number.Kind() {
-		t.Fatalf("expected ProductDomain.TypeAt to return number, got %v", finalType)
+		t.Fatalf("expected ConditionProofDomain.TypeAt to return number, got %v", finalType)
 	}
 }
 
-func TestProductDomain_PlaceholderResolution(t *testing.T) {
+func TestConditionProofDomain_PlaceholderResolution(t *testing.T) {
 	placeholderKey := constraint.PathKey("$0")
 	versionedKey := constraint.PathKey("sym1@1")
 
@@ -661,7 +660,7 @@ func TestProductDomain_PlaceholderResolution(t *testing.T) {
 		},
 	}
 
-	d := NewProductDomain(env)
+	d := NewConditionProofDomain(env)
 
 	// Apply truthy constraint to placeholder path
 	atom := constraint.AtomTruthy(constraint.TermVar(placeholderKey))
@@ -679,7 +678,7 @@ func TestProductDomain_PlaceholderResolution(t *testing.T) {
 	}
 }
 
-func TestProductDomain_NonPlaceholderSymbol0Rejected(t *testing.T) {
+func TestConditionProofDomain_NonPlaceholderSymbol0Rejected(t *testing.T) {
 	env := constraint.Env{
 		ResolvePath: func(p constraint.Path) constraint.PathKey {
 			if p.Symbol == 0 {
@@ -709,7 +708,7 @@ func TestProductDomain_NonPlaceholderSymbol0Rejected(t *testing.T) {
 	}
 }
 
-func TestProductDomain_EqPathPropagation(t *testing.T) {
+func TestConditionProofDomain_EqPathPropagation(t *testing.T) {
 	typeA := typ.NewRecord().Field("tag", typ.LiteralString("a")).Build()
 	typeB := typ.NewRecord().Field("tag", typ.LiteralString("b")).Build()
 	union := typ.NewUnion(typeA, typeB)
@@ -751,7 +750,7 @@ func TestProductDomain_EqPathPropagation(t *testing.T) {
 		Resolver: resolver,
 	}
 
-	d := NewProductDomain(env)
+	d := NewConditionProofDomain(env)
 
 	// Apply EqPath{x, y} AND FieldEquals{y, "tag", "a"}
 	constraints := []constraint.Constraint{
@@ -788,7 +787,7 @@ func TestProductDomain_EqPathPropagation(t *testing.T) {
 	}
 }
 
-func TestProductDomain_EqPathPropagation_ViaDNF(t *testing.T) {
+func TestConditionProofDomain_EqPathPropagation_ViaDNF(t *testing.T) {
 	typeA := typ.NewRecord().Field("tag", typ.LiteralString("a")).Build()
 	typeB := typ.NewRecord().Field("tag", typ.LiteralString("b")).Build()
 	union := typ.NewUnion(typeA, typeB)
@@ -838,7 +837,7 @@ func TestProductDomain_EqPathPropagation_ViaDNF(t *testing.T) {
 
 	// Apply via DNF condition (like solver does)
 	cond := constraint.FromConstraints(constraints...)
-	d := NewProductDomain(env)
+	d := NewConditionProofDomain(env)
 
 	if !d.ApplyCondition(cond) {
 		t.Fatal("ApplyCondition should succeed")
@@ -885,7 +884,7 @@ func TestCongruenceClosurePropagation(t *testing.T) {
 	}
 
 	env := makeMockEnv(types)
-	dom := NewProductDomain(env)
+	dom := NewConditionProofDomain(env)
 
 	// Constraints: x == y, y == z, type(x) == "string"
 	constraints := []constraint.Constraint{
@@ -956,7 +955,7 @@ func TestCongruenceClosureUnsatOnIncompatibleTypes(t *testing.T) {
 		},
 	}
 
-	dom := NewProductDomain(env)
+	dom := NewConditionProofDomain(env)
 
 	// EqPath(x, y) with x:string and y:number should be unsat
 	constraints := []constraint.Constraint{
@@ -1015,7 +1014,7 @@ func TestEGraphCongruenceClosurePropagation(t *testing.T) {
 		Resolver: resolver,
 	}
 
-	d := NewProductDomain(env)
+	d := NewConditionProofDomain(env)
 
 	constraints := []constraint.Constraint{
 		constraint.NewEqPath(pathX, pathY),

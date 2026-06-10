@@ -1,16 +1,17 @@
-package domain
+package flow
 
 import (
 	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/kind"
 	"github.com/wippyai/go-lua/types/narrow"
 	"github.com/wippyai/go-lua/types/typ"
+	typejoin "github.com/wippyai/go-lua/types/typ/join"
 	"github.com/wippyai/go-lua/types/typ/unwrap"
 )
 
-// TypeDomain handles type narrowing based on type predicates and boolean constraints.
+// ConditionTypeDomain handles type narrowing based on type predicates and boolean constraints.
 //
-// TypeDomain is one of the three subdomains in ProductDomain. It tracks narrowings
+// ConditionTypeDomain is one of the three subdomains in ConditionProofDomain. It tracks narrowings
 // derived from type-related constraints:
 //
 //   - HasType: Narrows a union to include only the specified type.
@@ -31,7 +32,7 @@ import (
 // The domain maintains a map of narrowed types keyed by canonical path keys.
 // When no narrowing exists, the domain falls back to env.LookupPathType for base types.
 //
-// TypeDomain supports boolean discriminant narrowing: when a field like .ok is
+// ConditionTypeDomain supports boolean discriminant narrowing: when a field like .ok is
 // tested for truthiness, and the parent type uses .ok as a discriminant, the
 // parent type is also narrowed. This enables result type patterns:
 //
@@ -40,20 +41,20 @@ import (
 //	if result.ok then
 //	    -- result is narrowed to {ok: true, value: T}
 //	end
-type TypeDomain struct {
+type ConditionTypeDomain struct {
 	Narrowed map[constraint.PathKey]typ.Type
 	Env      constraint.Env
 	Unsat    bool
 }
 
-// NewTypeDomain creates a new TypeDomain with the given environment.
+// NewConditionTypeDomain creates a new ConditionTypeDomain with the given environment.
 //
 // The environment provides type resolution functions:
 //   - env.LookupPathType: Returns base type for a path key before narrowing
 //   - env.ResolveType: Resolves type keys to actual types (for HasType atoms)
 //   - env.Resolver: Field/index access for boolean discriminant narrowing
-func NewTypeDomain(env constraint.Env) *TypeDomain {
-	return &TypeDomain{
+func NewConditionTypeDomain(env constraint.Env) *ConditionTypeDomain {
+	return &ConditionTypeDomain{
 		Narrowed: make(map[constraint.PathKey]typ.Type),
 		Env:      env,
 	}
@@ -66,7 +67,7 @@ func NewTypeDomain(env constraint.Env) *TypeDomain {
 //  2. env.LookupPathType(key) - base type from declarations
 //
 // Returns nil if the key has no type in either source.
-func (d *TypeDomain) TypeAt(key constraint.PathKey) typ.Type {
+func (d *ConditionTypeDomain) TypeAt(key constraint.PathKey) typ.Type {
 	if t, ok := d.Narrowed[key]; ok {
 		return t
 	}
@@ -77,7 +78,7 @@ func (d *TypeDomain) TypeAt(key constraint.PathKey) typ.Type {
 //
 // Unlike TypeAt, this returns nil if there is no narrowing, even if the key
 // has a base type. Used to check whether narrowing has occurred for a path.
-func (d *TypeDomain) NarrowedTypeAt(key constraint.PathKey) typ.Type {
+func (d *ConditionTypeDomain) NarrowedTypeAt(key constraint.PathKey) typ.Type {
 	return d.Narrowed[key]
 }
 
@@ -95,7 +96,7 @@ func (d *TypeDomain) NarrowedTypeAt(key constraint.PathKey) typ.Type {
 //
 // Returns false and sets Unsat=true if the atom proves unsatisfiability
 // (e.g., HasType("string") on a number-only type).
-func (d *TypeDomain) ApplyAtom(atom constraint.Atom) bool {
+func (d *ConditionTypeDomain) ApplyAtom(atom constraint.Atom) bool {
 	if d.Unsat {
 		return false
 	}
@@ -127,9 +128,9 @@ func (d *TypeDomain) ApplyAtom(atom constraint.Atom) bool {
 	return true
 }
 
-func (d *TypeDomain) applyHasType(atom constraint.Atom) bool {
+func (d *ConditionTypeDomain) applyHasType(atom constraint.Atom) bool {
 	key := atom.Left.Path
-	if parent, field, ok := SplitPathKey(key); ok {
+	if parent, field, ok := splitConditionPathKey(key); ok {
 		if parentType := d.TypeAt(parent); parentType != nil {
 			parentNarrowed := narrow.ByFieldTypeKey(parentType, field, atom.TypeKey, &d.Env, d.Env.ResolveType)
 			if parentNarrowed == nil || parentNarrowed.Kind().IsNever() {
@@ -155,7 +156,7 @@ func (d *TypeDomain) applyHasType(atom constraint.Atom) bool {
 	return true
 }
 
-func (d *TypeDomain) applyNotHasType(atom constraint.Atom) bool {
+func (d *ConditionTypeDomain) applyNotHasType(atom constraint.Atom) bool {
 	key := atom.Left.Path
 	base := d.TypeAt(key)
 	if base == nil {
@@ -170,7 +171,7 @@ func (d *TypeDomain) applyNotHasType(atom constraint.Atom) bool {
 	return true
 }
 
-func (d *TypeDomain) applyTruthy(atom constraint.Atom) bool {
+func (d *ConditionTypeDomain) applyTruthy(atom constraint.Atom) bool {
 	key := atom.Left.Path
 	base := d.TypeAt(key)
 	if base != nil {
@@ -184,7 +185,7 @@ func (d *TypeDomain) applyTruthy(atom constraint.Atom) bool {
 
 	// Parent narrowing: if this is a field path (r.ok), narrow the parent (r)
 	// by the boolean discriminant if applicable.
-	if parent, field, ok := SplitPathKey(key); ok {
+	if parent, field, ok := splitConditionPathKey(key); ok {
 		if parentType := d.TypeAt(parent); parentType != nil {
 			if d.Env.HasResolver() && constraint.IsBooleanDiscriminantField(parentType, field, &d.Env) {
 				parentNarrowed := narrow.ByFieldLiteral(parentType, field, typ.True, &d.Env)
@@ -203,7 +204,7 @@ func (d *TypeDomain) applyTruthy(atom constraint.Atom) bool {
 	return true
 }
 
-func (d *TypeDomain) applyFalsy(atom constraint.Atom) bool {
+func (d *ConditionTypeDomain) applyFalsy(atom constraint.Atom) bool {
 	key := atom.Left.Path
 	base := d.TypeAt(key)
 	if base != nil {
@@ -217,7 +218,7 @@ func (d *TypeDomain) applyFalsy(atom constraint.Atom) bool {
 
 	// Parent narrowing: if this is a field path (r.ok), narrow the parent (r)
 	// by the boolean discriminant if applicable.
-	if parent, field, ok := SplitPathKey(key); ok {
+	if parent, field, ok := splitConditionPathKey(key); ok {
 		if parentType := d.TypeAt(parent); parentType != nil {
 			if d.Env.HasResolver() && constraint.IsBooleanDiscriminantField(parentType, field, &d.Env) {
 				parentNarrowed := narrow.ByFieldLiteral(parentType, field, typ.False, &d.Env)
@@ -236,9 +237,9 @@ func (d *TypeDomain) applyFalsy(atom constraint.Atom) bool {
 	return true
 }
 
-func (d *TypeDomain) applyIsNil(atom constraint.Atom) bool {
+func (d *ConditionTypeDomain) applyIsNil(atom constraint.Atom) bool {
 	key := atom.Left.Path
-	if parent, field, ok := SplitPathKey(key); ok {
+	if parent, field, ok := splitConditionPathKey(key); ok {
 		if parentType := d.TypeAt(parent); parentType != nil {
 			parentNarrowed := narrow.ByFieldTypeKey(parentType, field, narrow.BuiltinTypeKey("nil"), &d.Env, d.Env.ResolveType)
 			if parentNarrowed == nil || parentNarrowed.Kind().IsNever() {
@@ -264,7 +265,7 @@ func (d *TypeDomain) applyIsNil(atom constraint.Atom) bool {
 	return true
 }
 
-func (d *TypeDomain) applyNotNil(atom constraint.Atom) bool {
+func (d *ConditionTypeDomain) applyNotNil(atom constraint.Atom) bool {
 	key := atom.Left.Path
 	base := d.TypeAt(key)
 	if base == nil {
@@ -279,14 +280,14 @@ func (d *TypeDomain) applyNotNil(atom constraint.Atom) bool {
 	return true
 }
 
-func (d *TypeDomain) applyEqVars(atom constraint.Atom) bool {
+func (d *ConditionTypeDomain) applyEqVars(atom constraint.Atom) bool {
 	// EqPath (x == y) does NOT narrow types.
 	// Equivalence is tracked in the E-graph. Type narrowings are only from
 	// HasType, Truthy, Falsy atoms, and propagate through equivalence classes.
 	return true
 }
 
-func (d *TypeDomain) applyNeVars(atom constraint.Atom) bool {
+func (d *ConditionTypeDomain) applyNeVars(atom constraint.Atom) bool {
 	leftKey := atom.Left.Path
 	rightKey := atom.Right.Path
 	leftType := d.TypeAt(leftKey)
@@ -327,13 +328,13 @@ func (d *TypeDomain) applyNeVars(atom constraint.Atom) bool {
 }
 
 // IsUnsat returns true if the domain has proven a contradiction.
-func (d *TypeDomain) IsUnsat() bool { return d.Unsat }
+func (d *ConditionTypeDomain) IsUnsat() bool { return d.Unsat }
 
-// Clone creates a deep copy of the TypeDomain for speculative evaluation.
+// Clone creates a deep copy of the ConditionTypeDomain for speculative evaluation.
 //
 // The Narrowed map is deep copied; the Env is shared by reference.
-func (d *TypeDomain) Clone() Domain {
-	c := &TypeDomain{
+func (d *ConditionTypeDomain) Clone() *ConditionTypeDomain {
+	c := &ConditionTypeDomain{
 		Narrowed: make(map[constraint.PathKey]typ.Type, len(d.Narrowed)),
 		Env:      d.Env,
 		Unsat:    d.Unsat,
@@ -344,18 +345,18 @@ func (d *TypeDomain) Clone() Domain {
 	return c
 }
 
-// Join computes the least upper bound of two TypeDomain states.
+// Join computes the least upper bound of two ConditionTypeDomain states.
 //
 // Join semantics for type domains:
 //   - If either domain is unsatisfiable, return a clone of the other
-//   - For keys in both domains, compute type union (join.Two)
+//   - For keys in both domains, compute type union (typejoin.Types)
 //   - Keys only in one domain are dropped (no narrowing survives)
 //
 // The intuition: after joining branches, we only know facts that hold in BOTH.
 // If one branch has x:string and the other doesn't narrow x at all, the joined
 // result has no narrowing for x (could be anything).
-func (d *TypeDomain) Join(other Domain) Domain {
-	o := other.(*TypeDomain)
+func (d *ConditionTypeDomain) Join(other *ConditionTypeDomain) *ConditionTypeDomain {
+	o := other
 	if d.Unsat {
 		return o.Clone()
 	}
@@ -363,7 +364,7 @@ func (d *TypeDomain) Join(other Domain) Domain {
 		return d.Clone()
 	}
 
-	result := &TypeDomain{
+	result := &ConditionTypeDomain{
 		Narrowed: make(map[constraint.PathKey]typ.Type),
 		Env:      d.Env,
 	}
@@ -372,7 +373,7 @@ func (d *TypeDomain) Join(other Domain) Domain {
 	for _, key := range constraint.SortedPathKeys(d.Narrowed) {
 		dt := d.Narrowed[key]
 		if ot, ok := o.Narrowed[key]; ok {
-			result.Narrowed[key] = joinNarrowedTypes(dt, ot)
+			result.Narrowed[key] = typejoin.Types(dt, ot)
 		}
 		// Keys only in one side are dropped
 	}

@@ -1,4 +1,4 @@
-package domain
+package flow
 
 import (
 	"testing"
@@ -25,13 +25,13 @@ func makeTestEnv(types map[constraint.PathKey]typ.Type) constraint.Env {
 	}
 }
 
-func TestTypeDomain_ApplyTruthy(t *testing.T) {
+func TestConditionTypeDomain_ApplyTruthy(t *testing.T) {
 	key := constraint.PathKey("x")
 	env := makeTestEnv(map[constraint.PathKey]typ.Type{
 		key: typ.NewUnion(typ.String, typ.Nil),
 	})
 
-	d := NewTypeDomain(env)
+	d := NewConditionTypeDomain(env)
 	atom := constraint.AtomTruthy(constraint.TermVar(key))
 
 	ok := d.ApplyAtom(atom)
@@ -48,13 +48,13 @@ func TestTypeDomain_ApplyTruthy(t *testing.T) {
 	}
 }
 
-func TestTypeDomain_ApplyFalsy(t *testing.T) {
+func TestConditionTypeDomain_ApplyFalsy(t *testing.T) {
 	key := constraint.PathKey("x")
 	env := makeTestEnv(map[constraint.PathKey]typ.Type{
 		key: typ.NewUnion(typ.String, typ.Nil),
 	})
 
-	d := NewTypeDomain(env)
+	d := NewConditionTypeDomain(env)
 	atom := constraint.AtomFalsy(constraint.TermVar(key))
 
 	ok := d.ApplyAtom(atom)
@@ -68,13 +68,13 @@ func TestTypeDomain_ApplyFalsy(t *testing.T) {
 	}
 }
 
-func TestTypeDomain_ApplyHasType(t *testing.T) {
+func TestConditionTypeDomain_ApplyHasType(t *testing.T) {
 	key := constraint.PathKey("x")
 	env := makeTestEnv(map[constraint.PathKey]typ.Type{
 		key: typ.NewUnion(typ.String, typ.Number, typ.Nil),
 	})
 
-	d := NewTypeDomain(env)
+	d := NewConditionTypeDomain(env)
 	atom := constraint.AtomHasType(constraint.TermVar(key), narrow.BuiltinTypeKey("number"))
 
 	ok := d.ApplyAtom(atom)
@@ -91,7 +91,7 @@ func TestTypeDomain_ApplyHasType(t *testing.T) {
 	}
 }
 
-func TestTypeDomain_ApplyHasTypeOnFieldMaterializesParentShape(t *testing.T) {
+func TestConditionTypeDomain_ApplyHasTypeOnFieldMaterializesParentShape(t *testing.T) {
 	parentKey := constraint.PathKey("op")
 	fieldKey := constraint.PathKey("op.from_pid")
 	env := makeTestEnv(map[constraint.PathKey]typ.Type{
@@ -99,7 +99,7 @@ func TestTypeDomain_ApplyHasTypeOnFieldMaterializesParentShape(t *testing.T) {
 		fieldKey:  typ.Any,
 	})
 
-	d := NewTypeDomain(env)
+	d := NewConditionTypeDomain(env)
 	atom := constraint.AtomHasType(constraint.TermVar(fieldKey), narrow.BuiltinTypeKey("string"))
 
 	if ok := d.ApplyAtom(atom); !ok {
@@ -115,7 +115,7 @@ func TestTypeDomain_ApplyHasTypeOnFieldMaterializesParentShape(t *testing.T) {
 	}
 }
 
-func TestTypeDomain_ApplyHasTypeOnClosedMissingFieldIsUnsat(t *testing.T) {
+func TestConditionTypeDomain_ApplyHasTypeOnClosedMissingFieldIsUnsat(t *testing.T) {
 	parentKey := constraint.PathKey("op")
 	fieldKey := constraint.PathKey("op.from_pid")
 	env := makeTestEnv(map[constraint.PathKey]typ.Type{
@@ -123,7 +123,7 @@ func TestTypeDomain_ApplyHasTypeOnClosedMissingFieldIsUnsat(t *testing.T) {
 		fieldKey:  typ.Any,
 	})
 
-	d := NewTypeDomain(env)
+	d := NewConditionTypeDomain(env)
 	atom := constraint.AtomHasType(constraint.TermVar(fieldKey), narrow.BuiltinTypeKey("string"))
 
 	if ok := d.ApplyAtom(atom); ok {
@@ -134,13 +134,13 @@ func TestTypeDomain_ApplyHasTypeOnClosedMissingFieldIsUnsat(t *testing.T) {
 	}
 }
 
-func TestTypeDomain_ApplyIsNil(t *testing.T) {
+func TestConditionTypeDomain_ApplyIsNil(t *testing.T) {
 	key := constraint.PathKey("x")
 	env := makeTestEnv(map[constraint.PathKey]typ.Type{
 		key: typ.NewUnion(typ.String, typ.Nil),
 	})
 
-	d := NewTypeDomain(env)
+	d := NewConditionTypeDomain(env)
 	atom := constraint.AtomEq(constraint.TermVar(key), constraint.TermNil())
 
 	ok := d.ApplyAtom(atom)
@@ -154,7 +154,7 @@ func TestTypeDomain_ApplyIsNil(t *testing.T) {
 	}
 }
 
-func TestTypeDomain_ApplyIsNilOnFieldMaterializesParentShape(t *testing.T) {
+func TestConditionTypeDomain_ApplyIsNilOnFieldMaterializesParentShape(t *testing.T) {
 	parentKey := constraint.PathKey("raw")
 	fieldKey := constraint.PathKey("raw.kind")
 	env := makeTestEnv(map[constraint.PathKey]typ.Type{
@@ -162,7 +162,7 @@ func TestTypeDomain_ApplyIsNilOnFieldMaterializesParentShape(t *testing.T) {
 		fieldKey:  typ.Any,
 	})
 
-	d := NewTypeDomain(env)
+	d := NewConditionTypeDomain(env)
 	atom := constraint.AtomEq(constraint.TermVar(fieldKey), constraint.TermNil())
 
 	if ok := d.ApplyAtom(atom); !ok {
@@ -178,7 +178,7 @@ func TestTypeDomain_ApplyIsNilOnFieldMaterializesParentShape(t *testing.T) {
 	}
 }
 
-func TestTypeDomain_ApplyIsNil_RespectsPriorTruthyNarrowing(t *testing.T) {
+func TestConditionTypeDomain_ApplyIsNil_RespectsPriorTruthyNarrowing(t *testing.T) {
 	key := constraint.PathKey("x")
 	env := makeTestEnv(map[constraint.PathKey]typ.Type{
 		key: typ.NewUnion(typ.String, typ.Nil),
@@ -206,7 +206,7 @@ func TestTypeDomain_ApplyIsNil_RespectsPriorTruthyNarrowing(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			d := NewTypeDomain(env)
+			d := NewConditionTypeDomain(env)
 
 			if ok := d.ApplyAtom(tc.atoms[0]); !ok {
 				t.Fatalf("first atom unexpectedly failed; unsat=%v", d.IsUnsat())
@@ -221,13 +221,13 @@ func TestTypeDomain_ApplyIsNil_RespectsPriorTruthyNarrowing(t *testing.T) {
 	}
 }
 
-func TestTypeDomain_ApplyNotNil(t *testing.T) {
+func TestConditionTypeDomain_ApplyNotNil(t *testing.T) {
 	key := constraint.PathKey("x")
 	env := makeTestEnv(map[constraint.PathKey]typ.Type{
 		key: typ.NewUnion(typ.String, typ.Nil),
 	})
 
-	d := NewTypeDomain(env)
+	d := NewConditionTypeDomain(env)
 	atom := constraint.AtomNe(constraint.TermVar(key), constraint.TermNil())
 
 	ok := d.ApplyAtom(atom)
@@ -244,13 +244,13 @@ func TestTypeDomain_ApplyNotNil(t *testing.T) {
 	}
 }
 
-func TestTypeDomain_Unsat_OnImpossibleNarrowing(t *testing.T) {
+func TestConditionTypeDomain_Unsat_OnImpossibleNarrowing(t *testing.T) {
 	key := constraint.PathKey("x")
 	env := makeTestEnv(map[constraint.PathKey]typ.Type{
 		key: typ.String, // Only string
 	})
 
-	d := NewTypeDomain(env)
+	d := NewConditionTypeDomain(env)
 	// Apply falsy to string-only type should be unsat
 	atom := constraint.AtomFalsy(constraint.TermVar(key))
 
@@ -263,16 +263,16 @@ func TestTypeDomain_Unsat_OnImpossibleNarrowing(t *testing.T) {
 	}
 }
 
-func TestTypeDomain_Clone(t *testing.T) {
+func TestConditionTypeDomain_Clone(t *testing.T) {
 	key := constraint.PathKey("x")
 	env := makeTestEnv(map[constraint.PathKey]typ.Type{
 		key: typ.NewUnion(typ.String, typ.Nil),
 	})
 
-	d := NewTypeDomain(env)
+	d := NewConditionTypeDomain(env)
 	d.ApplyAtom(constraint.AtomTruthy(constraint.TermVar(key)))
 
-	clone := d.Clone().(*TypeDomain)
+	clone := d.Clone()
 
 	if !typ.TypeEquals(d.TypeAt(key), clone.TypeAt(key)) {
 		t.Fatal("clone should have same narrowed type")
@@ -285,16 +285,16 @@ func TestTypeDomain_Clone(t *testing.T) {
 	}
 }
 
-func TestTypeDomain_Join(t *testing.T) {
+func TestConditionTypeDomain_Join(t *testing.T) {
 	env := makeTestEnv(nil)
 
-	a := NewTypeDomain(env)
+	a := NewConditionTypeDomain(env)
 	a.Narrowed["x"] = typ.String
 
-	b := NewTypeDomain(env)
+	b := NewConditionTypeDomain(env)
 	b.Narrowed["x"] = typ.Number
 
-	joined := a.Join(b).(*TypeDomain)
+	joined := a.Join(b)
 	result := joined.TypeAt("x")
 
 	u, ok := result.(*typ.Union)
@@ -306,7 +306,7 @@ func TestTypeDomain_Join(t *testing.T) {
 	}
 }
 
-func TestTypeDomain_JoinCoalescesRecursiveFamilies(t *testing.T) {
+func TestConditionTypeDomain_JoinCoalescesRecursiveFamilies(t *testing.T) {
 	env := makeTestEnv(nil)
 	key := constraint.PathKey("node")
 	base := typ.NewRecursive("FlowA", func(self typ.Type) typ.Type {
@@ -323,13 +323,13 @@ func TestTypeDomain_JoinCoalescesRecursiveFamilies(t *testing.T) {
 			Build()
 	})
 
-	a := NewTypeDomain(env)
+	a := NewConditionTypeDomain(env)
 	a.Narrowed[key] = base
-	b := NewTypeDomain(env)
+	b := NewConditionTypeDomain(env)
 	b.Narrowed[key] = withPath
 
-	ab := a.Join(b).(*TypeDomain).NarrowedTypeAt(key)
-	ba := b.Join(a).(*TypeDomain).NarrowedTypeAt(key)
+	ab := a.Join(b).NarrowedTypeAt(key)
+	ba := b.Join(a).NarrowedTypeAt(key)
 	if !typ.TypeEquals(ab, ba) {
 		t.Fatalf("recursive domain join differs by order: %v vs %v", ab, ba)
 	}
@@ -350,31 +350,31 @@ func TestTypeDomain_JoinCoalescesRecursiveFamilies(t *testing.T) {
 	}
 }
 
-func TestTypeDomain_Join_DropsNonCommonKeys(t *testing.T) {
+func TestConditionTypeDomain_Join_DropsNonCommonKeys(t *testing.T) {
 	env := makeTestEnv(nil)
 
-	a := NewTypeDomain(env)
+	a := NewConditionTypeDomain(env)
 	a.Narrowed["x"] = typ.String
 
-	b := NewTypeDomain(env)
+	b := NewConditionTypeDomain(env)
 	// b has no key "x"
 
-	joined := a.Join(b).(*TypeDomain)
+	joined := a.Join(b)
 	if _, hasKey := joined.Narrowed["x"]; hasKey {
 		t.Fatal("key should be dropped when not in both sides")
 	}
 }
 
-func TestTypeDomain_Join_UnsatSideIgnored(t *testing.T) {
+func TestConditionTypeDomain_Join_UnsatSideIgnored(t *testing.T) {
 	env := makeTestEnv(nil)
 
-	a := NewTypeDomain(env)
+	a := NewConditionTypeDomain(env)
 	a.Narrowed["x"] = typ.String
 
-	b := NewTypeDomain(env)
+	b := NewConditionTypeDomain(env)
 	b.Unsat = true
 
-	joined := a.Join(b).(*TypeDomain)
+	joined := a.Join(b)
 	if joined.TypeAt("x").Kind() != typ.String.Kind() {
 		t.Fatal("should use non-unsat side")
 	}

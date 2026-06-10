@@ -1,16 +1,14 @@
-// domain.go implements the numeric subdomain for ProductDomain.
+// domain.go implements the numeric subdomain for ConditionProofDomain.
 //
 // The numeric Domain tracks integer constraints (bounds, orderings, modular residues)
 // and integrates State (compact storage) with TheorySolver (transitive inference).
-// It satisfies the domain.Domain interface for use in the constraint solving framework.
 package numeric
 
 import (
 	"github.com/wippyai/go-lua/types/constraint"
-	"github.com/wippyai/go-lua/types/flow/domain"
 )
 
-// Domain implements the numeric subdomain for ProductDomain.
+// Domain implements the numeric subdomain for ConditionProofDomain.
 //
 // Domain tracks numeric constraints and bounds for variables. It combines two
 // complementary analysis components:
@@ -99,7 +97,7 @@ func (d *Domain) IsTop() bool {
 // Clone creates a deep copy of the Domain for speculative evaluation.
 //
 // Both State and TheorySolver are cloned to ensure independent modification.
-func (d *Domain) Clone() domain.Domain {
+func (d *Domain) Clone() *Domain {
 	return &Domain{
 		state:  d.state.Clone(),
 		theory: d.theory.Clone(),
@@ -115,8 +113,8 @@ func (d *Domain) Clone() domain.Domain {
 //   - Modular constraints are intersected
 //
 // The TheorySolver is rebuilt from the joined State to ensure consistency.
-func (d *Domain) Join(other domain.Domain) domain.Domain {
-	o := other.(*Domain)
+func (d *Domain) Join(other *Domain) *Domain {
+	o := other
 	// Join State (takes intersection of facts)
 	joinedState := Join(d.state, o.state)
 	// Rebuild theory solver from joined state

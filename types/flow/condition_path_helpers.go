@@ -1,11 +1,11 @@
-package domain
+package flow
 
 import (
 	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/flow/pathkey"
 )
 
-// SplitPathKey extracts the parent key and field name from a path key.
+// splitConditionPathKey extracts the parent key and field name from a path key.
 //
 // Given a key like "sym42@3.field", returns ("sym42@3", "field", true).
 // This is used for parent narrowing: when a field like r.ok is tested,
@@ -20,7 +20,7 @@ import (
 //   - "sym1@1[0].x" -> ("sym1@1[0]", "x", true)
 //   - "sym1@1" -> ("", "", false)
 //   - "sym1@1[0]" -> ("", "", false)
-func SplitPathKey(key constraint.PathKey) (constraint.PathKey, string, bool) {
+func splitConditionPathKey(key constraint.PathKey) (constraint.PathKey, string, bool) {
 	root, suffix, ok := pathkey.ParseRootAndSuffix(key)
 	if !ok || suffix == "" {
 		return "", "", false
@@ -40,19 +40,19 @@ func SplitPathKey(key constraint.PathKey) (constraint.PathKey, string, bool) {
 	return constraint.PathKey(parent), last.Name, true
 }
 
-// IsChildPath returns true if child is a descendant path of parent.
+// isConditionChildPath returns true if child is a descendant path of parent.
 //
 // A path is a child if it extends the parent with one or more path segments
 // (field or index access) under the same canonical root.
 //
 // Examples:
-//   - IsChildPath("sym1@1", "sym1@1.foo") -> true
-//   - IsChildPath("sym1@1", "sym1@1.foo.bar") -> true
-//   - IsChildPath("sym1@1.foo", "sym1@1.foo.bar") -> true
-//   - IsChildPath("sym1@1", "sym1@1[0]") -> true
-//   - IsChildPath("sym1@1", "sym1@1") -> false (not strict descendant)
-//   - IsChildPath("sym1@1", "sym1@10") -> false (different version, not child)
-func IsChildPath(parent, child string) bool {
+//   - isConditionChildPath("sym1@1", "sym1@1.foo") -> true
+//   - isConditionChildPath("sym1@1", "sym1@1.foo.bar") -> true
+//   - isConditionChildPath("sym1@1.foo", "sym1@1.foo.bar") -> true
+//   - isConditionChildPath("sym1@1", "sym1@1[0]") -> true
+//   - isConditionChildPath("sym1@1", "sym1@1") -> false (not strict descendant)
+//   - isConditionChildPath("sym1@1", "sym1@10") -> false (different version, not child)
+func isConditionChildPath(parent, child string) bool {
 	if parent == "" || child == "" || parent == child {
 		return false
 	}

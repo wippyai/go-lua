@@ -10,7 +10,7 @@ import (
 	"github.com/wippyai/go-lua/types/typ"
 )
 
-func TestProductDomain_ApplyCondition_UsesTypeNarrowedBaseForLeftoverFieldConstraint(t *testing.T) {
+func TestConditionProofDomain_ApplyCondition_UsesTypeNarrowedBaseForLeftoverFieldConstraint(t *testing.T) {
 	allow := typ.NewAlias("Allow", typ.NewRecord().
 		Field("kind", typ.LiteralString("allow")).
 		Field("reason", typ.String).
@@ -43,7 +43,7 @@ func TestProductDomain_ApplyCondition_UsesTypeNarrowedBaseForLeftoverFieldConstr
 		},
 	}
 
-	dom := NewProductDomain(env)
+	dom := NewConditionProofDomain(env)
 	ok := dom.ApplyCondition(constraint.FromConstraints(
 		constraint.Truthy{Path: path},
 		constraint.FieldEquals{Target: path, Field: "kind", Value: typ.LiteralString("defer")},
@@ -67,7 +67,7 @@ func TestProductDomain_ApplyCondition_UsesTypeNarrowedBaseForLeftoverFieldConstr
 	}
 }
 
-func TestProductDomain_IndexElementTypeProofDoesNotCollapseReachableParent(t *testing.T) {
+func TestConditionProofDomain_IndexElementTypeProofDoesNotCollapseReachableParent(t *testing.T) {
 	itemsPath := constraint.Path{Root: "raw", Symbol: 1}.Append(
 		constraint.Segment{Kind: constraint.SegmentField, Name: "items"},
 	)
@@ -93,7 +93,7 @@ func TestProductDomain_IndexElementTypeProofDoesNotCollapseReachableParent(t *te
 		},
 	}
 
-	dom := NewProductDomain(env)
+	dom := NewConditionProofDomain(env)
 	ok := dom.ApplyCondition(constraint.FromConstraints(
 		constraint.HasType{Path: itemsPath, Type: narrow.BuiltinTypeKey("table")},
 		constraint.HasType{Path: firstPath, Type: narrow.BuiltinTypeKey("string")},
@@ -111,7 +111,7 @@ func TestProductDomain_IndexElementTypeProofDoesNotCollapseReachableParent(t *te
 	}
 }
 
-func TestProductDomain_ApplyCondition_HasFieldUsesTruthyNarrowedOptionalInterface(t *testing.T) {
+func TestConditionProofDomain_ApplyCondition_HasFieldUsesTruthyNarrowedOptionalInterface(t *testing.T) {
 	errType := typ.NewInterface("Err", []typ.Method{
 		{Name: "kind", Type: typ.Func().Returns(typ.String).Build()},
 	})
@@ -134,7 +134,7 @@ func TestProductDomain_ApplyCondition_HasFieldUsesTruthyNarrowedOptionalInterfac
 		},
 	}
 
-	dom := NewProductDomain(env)
+	dom := NewConditionProofDomain(env)
 	ok := dom.ApplyCondition(constraint.FromConstraints(
 		constraint.Truthy{Path: path},
 		constraint.HasField{Path: path, Field: "kind"},
@@ -149,7 +149,7 @@ func TestProductDomain_ApplyCondition_HasFieldUsesTruthyNarrowedOptionalInterfac
 	}
 }
 
-func TestProductDomain_ApplyCondition_JoinsProjectedTypeShapeCorrelation(t *testing.T) {
+func TestConditionProofDomain_ApplyCondition_JoinsProjectedTypeShapeCorrelation(t *testing.T) {
 	spec := typ.NewRecord().
 		Field("id", typ.String).
 		OptField("alias", typ.String).
@@ -175,7 +175,7 @@ func TestProductDomain_ApplyCondition_JoinsProjectedTypeShapeCorrelation(t *test
 		},
 	}
 
-	dom := NewProductDomain(env)
+	dom := NewConditionProofDomain(env)
 	ok := dom.ApplyCondition(constraint.FromDisjuncts([][]constraint.Constraint{
 		{
 			constraint.HasType{Path: path, Type: narrow.BuiltinTypeKey("string")},
@@ -206,7 +206,7 @@ func TestProductDomain_ApplyCondition_JoinsProjectedTypeShapeCorrelation(t *test
 	}
 }
 
-func TestProductDomain_KeyOfRejectsClosedEmptyRecord(t *testing.T) {
+func TestConditionProofDomain_KeyOfRejectsClosedEmptyRecord(t *testing.T) {
 	tablePath := constraint.Path{Root: "blocks", Symbol: 1}
 	keyPath := constraint.Path{Root: "index", Symbol: 2}
 	tableKey := tablePath.Key()
@@ -227,14 +227,14 @@ func TestProductDomain_KeyOfRejectsClosedEmptyRecord(t *testing.T) {
 		},
 	}
 
-	dom := NewProductDomain(env)
+	dom := NewConditionProofDomain(env)
 	cond := constraint.FromConstraints(constraint.KeyOf{Table: tablePath, Key: keyPath})
 	if dom.ApplyCondition(cond) {
 		t.Fatal("KeyOf on closed empty record should be unsatisfiable")
 	}
 }
 
-func TestProductDomain_KeyOfFiltersEmptyRecordUnion(t *testing.T) {
+func TestConditionProofDomain_KeyOfFiltersEmptyRecordUnion(t *testing.T) {
 	tablePath := constraint.Path{Root: "blocks", Symbol: 1}
 	keyPath := constraint.Path{Root: "index", Symbol: 2}
 	tableKey := tablePath.Key()
@@ -261,7 +261,7 @@ func TestProductDomain_KeyOfFiltersEmptyRecordUnion(t *testing.T) {
 		},
 	}
 
-	dom := NewProductDomain(env)
+	dom := NewConditionProofDomain(env)
 	cond := constraint.FromConstraints(constraint.KeyOf{Table: tablePath, Key: keyPath})
 	if !dom.ApplyCondition(cond) {
 		t.Fatal("KeyOf should keep the map branch")
@@ -274,7 +274,7 @@ func TestProductDomain_KeyOfFiltersEmptyRecordUnion(t *testing.T) {
 	}
 }
 
-func TestProductDomain_CanSatisfyCondition_DoesNotJoinWitnessProducts(t *testing.T) {
+func TestConditionProofDomain_CanSatisfyCondition_DoesNotJoinWitnessProducts(t *testing.T) {
 	path := constraint.Path{Root: "x", Symbol: 1}
 	key := path.Key()
 	env := constraint.Env{
@@ -289,7 +289,7 @@ func TestProductDomain_CanSatisfyCondition_DoesNotJoinWitnessProducts(t *testing
 		},
 	}
 
-	dom := NewProductDomain(env)
+	dom := NewConditionProofDomain(env)
 	cond := constraint.FromDisjuncts([][]constraint.Constraint{
 		{constraint.Truthy{Path: path}},
 		{constraint.Falsy{Path: path}},
@@ -306,7 +306,7 @@ func TestProductDomain_CanSatisfyCondition_DoesNotJoinWitnessProducts(t *testing
 	}
 }
 
-func TestProductDomain_CanSatisfyCondition_RejectsUnsatisfiableDNF(t *testing.T) {
+func TestConditionProofDomain_CanSatisfyCondition_RejectsUnsatisfiableDNF(t *testing.T) {
 	path := constraint.Path{Root: "x", Symbol: 1}
 	key := path.Key()
 	env := constraint.Env{
@@ -321,7 +321,7 @@ func TestProductDomain_CanSatisfyCondition_RejectsUnsatisfiableDNF(t *testing.T)
 		},
 	}
 
-	dom := NewProductDomain(env)
+	dom := NewConditionProofDomain(env)
 	cond := constraint.FromDisjuncts([][]constraint.Constraint{
 		{constraint.Truthy{Path: path}, constraint.Falsy{Path: path}},
 		{constraint.IsNil{Path: path}, constraint.NotNil{Path: path}},
@@ -332,7 +332,7 @@ func TestProductDomain_CanSatisfyCondition_RejectsUnsatisfiableDNF(t *testing.T)
 	}
 }
 
-func TestProductDomain_CanSatisfyCondition_RejectsKeyOfClosedEmptyRecord(t *testing.T) {
+func TestConditionProofDomain_CanSatisfyCondition_RejectsKeyOfClosedEmptyRecord(t *testing.T) {
 	tablePath := constraint.Path{Root: "blocks", Symbol: 1}
 	keyPath := constraint.Path{Root: "index", Symbol: 2}
 	tableKey := tablePath.Key()
@@ -353,7 +353,7 @@ func TestProductDomain_CanSatisfyCondition_RejectsKeyOfClosedEmptyRecord(t *test
 		},
 	}
 
-	dom := NewProductDomain(env)
+	dom := NewConditionProofDomain(env)
 	if dom.CanSatisfyCondition(constraint.FromConstraints(constraint.KeyOf{Table: tablePath, Key: keyPath})) {
 		t.Fatal("CanSatisfyCondition should reject KeyOf on closed empty record")
 	}

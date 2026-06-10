@@ -110,11 +110,11 @@ func ProductConditionReductionValue(q ProductConditionReduction) (product.Abstra
 	fact := conditionWithPositiveFieldPresence(q.Fact)
 	env, rootKey := SymbolProductEnv(q.Symbol, base, q.Facts, q.Resolver)
 	env.ResolveType = q.ResolveType
-	domain := NewProductDomain(env)
+	domain := NewConditionProofDomain(env)
 	if !domain.ApplyCondition(fact) {
 		return product.AbstractValue{}, false
 	}
-	if !ProductDomainHasNarrowingForSymbol(domain, q.Symbol) {
+	if !ConditionProofDomainHasNarrowingForSymbol(domain, q.Symbol) {
 		return product.AbstractValue{}, false
 	}
 	projected := domain.ProjectedTypeAt(rootKey, q.Resolver)

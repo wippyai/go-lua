@@ -3,17 +3,16 @@ package flow
 import (
 	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/constraint/theory"
-	"github.com/wippyai/go-lua/types/flow/domain"
 	"github.com/wippyai/go-lua/types/flow/numeric"
 	"github.com/wippyai/go-lua/types/narrow"
 	"github.com/wippyai/go-lua/types/query/core"
 	"github.com/wippyai/go-lua/types/typ"
 )
 
-// ProductDomain combines Type, Numeric, and Shape domains into a single
+// ConditionProofDomain combines Type, Numeric, and Shape domains into a single
 // abstract domain for constraint solving in flow-sensitive type analysis.
 //
-// ProductDomain is the central abstraction for narrowing types based on
+// ConditionProofDomain is the central abstraction for narrowing types based on
 // control flow constraints. It orchestrates three specialized subdomains,
 // each handling different aspects of constraint narrowing:
 //
@@ -38,23 +37,23 @@ import (
 //	    -- both a and b are narrowed to string
 //	end
 //
-// ProductDomain routes constraint atoms to the appropriate subdomain via
-// domain.ClassifyAtom, applies conjunctions by collecting atoms and leftovers,
+// ConditionProofDomain routes constraint atoms to the appropriate subdomain via
+// classifyConditionAtom, applies conjunctions by collecting atoms and leftovers,
 // and handles disjunctions by cloning the domain state, speculatively applying
 // each disjunct, and joining the results.
 //
 // The domain satisfies the abstract domain interface with Clone, Join, and
 // IsUnsat operations, enabling the flow analysis to track type information
 // along different control flow paths and merge it at join points.
-type ProductDomain struct {
-	Type    *domain.TypeDomain
+type ConditionProofDomain struct {
+	Type    *ConditionTypeDomain
 	Numeric *numeric.Domain
-	Shape   *domain.ShapeDomain
+	Shape   *ConditionShapeDomain
 	EGraph  *theory.EGraph
 	env     constraint.Env
 }
 
-// NewProductDomain creates a new ProductDomain initialized with the given environment.
+// NewConditionProofDomain creates a new ConditionProofDomain initialized with the given environment.
 //
 // The environment provides type resolution functions needed by the subdomains:
 //
@@ -76,14 +75,14 @@ type ProductDomain struct {
 //	    PathTypeAt: func(key constraint.PathKey) typ.Type { return types[key] },
 //	    ResolvePath: resolver.KeyAt,
 //	}
-//	domain := NewProductDomain(env)
+//	domain := NewConditionProofDomain(env)
 //	domain.ApplyCondition(condition) // Apply narrowing constraints
 //	narrowedType := domain.TypeAt(key) // Get narrowed type
-func NewProductDomain(env constraint.Env) *ProductDomain {
-	return &ProductDomain{
-		Type:    domain.NewTypeDomain(env),
+func NewConditionProofDomain(env constraint.Env) *ConditionProofDomain {
+	return &ConditionProofDomain{
+		Type:    NewConditionTypeDomain(env),
 		Numeric: numeric.NewDomain(env),
-		Shape:   domain.NewShapeDomain(env),
+		Shape:   NewConditionShapeDomain(env),
 		EGraph:  theory.NewEGraph(),
 		env:     env,
 	}
@@ -92,35 +91,35 @@ func NewProductDomain(env constraint.Env) *ProductDomain {
 // ApplyAtom applies a constraint atom to the appropriate subdomain(s).
 //
 // Atoms are the primitive building blocks of constraints. Each atom type is
-// routed to the appropriate subdomain based on domain.ClassifyAtom:
+// routed to the appropriate subdomain based on classifyConditionAtom:
 //
-//   - AtomClassType: Routed to Type domain. Includes HasType, NotHasType,
+//   - conditionAtomClassType: Routed to Type domain. Includes HasType, NotHasType,
 //     Truthy, and Falsy atoms that narrow union types.
 //
-//   - AtomClassNumeric: Routed to Numeric domain. Includes Lt, Le, Gt, Ge,
+//   - conditionAtomClassNumeric: Routed to Numeric domain. Includes Lt, Le, Gt, Ge,
 //     and ModEq atoms that establish numeric bounds.
 //
-//   - AtomClassBoth: Applied to both Type and Numeric domains. Used for atoms
+//   - conditionAtomClassBoth: Applied to both Type and Numeric domains. Used for atoms
 //     that have implications in both domains (e.g., equality with a constant).
 //
-//   - AtomClassNone: No-op, returns true. Used for atoms that don't affect
+//   - conditionAtomClassNone: No-op, returns true. Used for atoms that don't affect
 //     type narrowing.
 //
 // Returns false if the atom makes the domain unsatisfiable (proves a contradiction).
 // For example, applying HasType("string") to a path known to be `number` returns
 // false since a value cannot be both string and number.
 //
-// For AtomClassBoth atoms, both domains must accept the atom; if either returns
+// For conditionAtomClassBoth atoms, both domains must accept the atom; if either returns
 // false, the overall result is false.
-func (d *ProductDomain) ApplyAtom(atom constraint.Atom) bool {
-	switch domain.ClassifyAtom(atom) {
-	case domain.AtomClassType:
+func (d *ConditionProofDomain) ApplyAtom(atom constraint.Atom) bool {
+	switch classifyConditionAtom(atom) {
+	case conditionAtomClassType:
 		return d.Type.ApplyAtom(atom)
-	case domain.AtomClassNumeric:
+	case conditionAtomClassNumeric:
 		return d.Numeric.ApplyAtom(atom)
-	case domain.AtomClassBoth:
+	case conditionAtomClassBoth:
 		return d.Type.ApplyAtom(atom) && d.Numeric.ApplyAtom(atom)
-	case domain.AtomClassNone:
+	case conditionAtomClassNone:
 		return true
 	default:
 		return true
@@ -146,7 +145,7 @@ func (d *ProductDomain) ApplyAtom(atom constraint.Atom) bool {
 // cannot reason about it without a target.
 //
 // Returns false if the constraint proves the domain unsatisfiable.
-func (d *ProductDomain) ApplyLeftoverConstraint(c constraint.Constraint) bool {
+func (d *ConditionProofDomain) ApplyLeftoverConstraint(c constraint.Constraint) bool {
 	path, ok := constraint.FirstPath(c)
 	if !ok {
 		return true
@@ -189,7 +188,7 @@ func (d *ProductDomain) ApplyLeftoverConstraint(c constraint.Constraint) bool {
 //     equivalence classes via propagateShapeNarrowingsCC.
 //
 // Returns false if any step proves the domain unsatisfiable.
-func (d *ProductDomain) ApplyConjunction(constraints []constraint.Constraint) bool {
+func (d *ConditionProofDomain) ApplyConjunction(constraints []constraint.Constraint) bool {
 	// Use the canonical path environment for path-to-key conversion.
 	result := constraint.ToAtomsWithEnv(constraints, &d.env)
 
@@ -240,7 +239,7 @@ func (d *ProductDomain) ApplyConjunction(constraints []constraint.Constraint) bo
 	return true
 }
 
-func (d *ProductDomain) applyRelationalTypeNarrowings(constraints []constraint.Constraint) bool {
+func (d *ConditionProofDomain) applyRelationalTypeNarrowings(constraints []constraint.Constraint) bool {
 	for _, c := range constraints {
 		keyOf, ok := c.(constraint.KeyOf)
 		if !ok {
@@ -253,7 +252,7 @@ func (d *ProductDomain) applyRelationalTypeNarrowings(constraints []constraint.C
 	return true
 }
 
-func (d *ProductDomain) applyKeyOfTypeNarrowing(keyOf constraint.KeyOf) bool {
+func (d *ConditionProofDomain) applyKeyOfTypeNarrowing(keyOf constraint.KeyOf) bool {
 	tableKey := d.resolvePathKey(keyOf.Table)
 	keyKey := d.resolvePathKey(keyOf.Key)
 	if tableKey == "" || keyKey == "" {
@@ -325,7 +324,7 @@ func keyTypesOverlap(a, b typ.Type) bool {
 	return narrow.TypesOverlap(a, b)
 }
 
-func (d *ProductDomain) resolvePathKey(path constraint.Path) constraint.PathKey {
+func (d *ConditionProofDomain) resolvePathKey(path constraint.Path) constraint.PathKey {
 	if path.IsEmpty() {
 		return ""
 	}
@@ -374,7 +373,7 @@ func atomsContainContradiction(atoms []constraint.Atom, equalities *theory.EGrap
 //  1. Register keys for a and b
 //  2. Union a and b (now Find(a) == Find(b))
 //  3. When Type domain narrows a to string, propagation narrows b to string
-func (d *ProductDomain) buildCongruenceClosure(atoms []constraint.Atom, constraints []constraint.Constraint) {
+func (d *ConditionProofDomain) buildCongruenceClosure(atoms []constraint.Atom, constraints []constraint.Constraint) {
 	newConditionPathEvidence(atoms, constraints, d.resolvePathKey).RegisterInto(d.EGraph)
 }
 
@@ -408,7 +407,7 @@ func (d *ProductDomain) buildCongruenceClosure(atoms []constraint.Atom, constrai
 //	end
 //
 // The method modifies d.Type.Narrowed in place and may set d.Type.Unsat = true.
-func (d *ProductDomain) propagateTypeNarrowingsCC() {
+func (d *ConditionProofDomain) propagateTypeNarrowingsCC() {
 	allPaths := d.EGraph.AllPaths()
 	if len(allPaths) == 0 {
 		return
@@ -483,7 +482,7 @@ func (d *ProductDomain) propagateTypeNarrowingsCC() {
 //	-- ref should know about .foo field through shape propagation
 //
 // The method modifies d.Shape.Narrowed in place.
-func (d *ProductDomain) propagateShapeNarrowingsCC() {
+func (d *ConditionProofDomain) propagateShapeNarrowingsCC() {
 	if len(d.Shape.Narrowed) == 0 {
 		return
 	}
@@ -551,7 +550,7 @@ func (d *ProductDomain) propagateShapeNarrowingsCC() {
 //	end
 //
 // The method mutates the receiver to match the accumulated result.
-func (d *ProductDomain) ApplyCondition(cond constraint.Condition) bool {
+func (d *ConditionProofDomain) ApplyCondition(cond constraint.Condition) bool {
 	if cond.IsFalse() {
 		return false
 	}
@@ -563,14 +562,14 @@ func (d *ProductDomain) ApplyCondition(cond constraint.Condition) bool {
 		return d.ApplyConjunction(cond.Disjuncts[0])
 	}
 
-	var accumulator *ProductDomain
+	var accumulator *ConditionProofDomain
 	for _, disjunct := range cond.Disjuncts {
-		clone := d.Clone().(*ProductDomain)
+		clone := d.Clone()
 		if clone.ApplyConjunction(disjunct) {
 			if accumulator == nil {
 				accumulator = clone
 			} else {
-				accumulator = accumulator.Join(clone).(*ProductDomain)
+				accumulator = accumulator.Join(clone)
 			}
 		}
 	}
@@ -587,12 +586,12 @@ func (d *ProductDomain) ApplyCondition(cond constraint.Condition) bool {
 }
 
 // CanSatisfyCondition reports whether at least one DNF disjunct is satisfiable
-// under the current product state.
+// under the current condition proof state.
 //
 // This is the proof-only sibling of ApplyCondition. It intentionally does not
-// join satisfiable disjunct products because callers such as reachability only
+// join satisfiable disjunct states because callers such as reachability only
 // need a boolean witness, not the merged post-condition state.
-func (d *ProductDomain) CanSatisfyCondition(cond constraint.Condition) bool {
+func (d *ConditionProofDomain) CanSatisfyCondition(cond constraint.Condition) bool {
 	if d == nil || d.IsUnsat() {
 		return false
 	}
@@ -604,17 +603,17 @@ func (d *ProductDomain) CanSatisfyCondition(cond constraint.Condition) bool {
 	}
 
 	for _, disjunct := range cond.Disjuncts {
-		if newProductSatisfiabilityProof(d).CanSatisfyConjunction(disjunct) {
+		if newConditionSatisfiabilityProof(d).CanSatisfyConjunction(disjunct) {
 			return true
 		}
 	}
 	return false
 }
 
-// IsTop reports whether the product carries no already-applied facts. Top
-// domains can check DNF satisfiability with fresh witnesses instead of cloning
+// IsTop reports whether the condition proof carries no already-applied facts. Top
+// states can check DNF satisfiability with fresh witnesses instead of cloning
 // empty subdomains for every disjunct.
-func (d *ProductDomain) IsTop() bool {
+func (d *ConditionProofDomain) IsTop() bool {
 	if d == nil {
 		return true
 	}
@@ -654,7 +653,7 @@ func (d *ProductDomain) IsTop() bool {
 // The intersection semantics ensure soundness: if Type domain says "string"
 // and Shape domain says "has field .len", the result is their intersection
 // (which would be string, since strings have .len in Lua).
-func (d *ProductDomain) TypeAt(key constraint.PathKey) typ.Type {
+func (d *ConditionProofDomain) TypeAt(key constraint.PathKey) typ.Type {
 	typeNarrowed := d.Type.NarrowedTypeAt(key)
 	shapeNarrowed := d.Shape.NarrowedTypeAt(key)
 
@@ -684,16 +683,16 @@ func (d *ProductDomain) TypeAt(key constraint.PathKey) typ.Type {
 //
 //   - Shape contradiction: Record proven to lack a field that's required.
 //
-// When any subdomain becomes unsatisfiable, the entire ProductDomain is
+// When any subdomain becomes unsatisfiable, the entire ConditionProofDomain is
 // considered unsatisfiable. This is used during ApplyCondition to detect
 // dead branches and during ApplyConjunction to detect invalid constraints.
 //
 // Returns true if Type, Numeric, OR Shape subdomain is unsatisfiable.
-func (d *ProductDomain) IsUnsat() bool {
+func (d *ConditionProofDomain) IsUnsat() bool {
 	return d.Type.IsUnsat() || d.Numeric.IsUnsat() || d.Shape.IsUnsat()
 }
 
-// Clone creates a deep copy of the ProductDomain.
+// Clone creates a deep copy of the ConditionProofDomain.
 //
 // Clone is essential for speculative evaluation in ApplyCondition. When
 // evaluating disjunctions (OR conditions), each branch is explored on a
@@ -709,30 +708,30 @@ func (d *ProductDomain) IsUnsat() bool {
 // function pointers that don't change during analysis.
 //
 // Clone operations are a significant cost in constraint solving. The
-// ProductDomain minimizes this by only cloning the narrowed values maps,
+// ConditionProofDomain minimizes this by only cloning the narrowed values maps,
 // not the base types (which are immutable and shared).
 //
 // Example:
 //
-//	original := NewProductDomain(env)
+//	original := NewConditionProofDomain(env)
 //	original.ApplyAtom(hasTypeString)  // Narrows x to string
 //
-//	clone := original.Clone().(*ProductDomain)
+//	clone := original.Clone()
 //	clone.ApplyAtom(hasTypeNumber)  // Narrows x to number in clone only
 //
 //	original.TypeAt("x")  // Still string
 //	clone.TypeAt("x")     // Now number
-func (d *ProductDomain) Clone() domain.Domain {
-	return &ProductDomain{
-		Type:    d.Type.Clone().(*domain.TypeDomain),
-		Numeric: d.Numeric.Clone().(*numeric.Domain),
-		Shape:   d.Shape.Clone().(*domain.ShapeDomain),
+func (d *ConditionProofDomain) Clone() *ConditionProofDomain {
+	return &ConditionProofDomain{
+		Type:    d.Type.Clone(),
+		Numeric: d.Numeric.Clone(),
+		Shape:   d.Shape.Clone(),
 		EGraph:  d.EGraph.Clone(),
 		env:     d.env,
 	}
 }
 
-// Join computes the least upper bound of two ProductDomain states.
+// Join computes the least upper bound of two ConditionProofDomain states.
 //
 // Join is used to merge type information at control flow join points, such as
 // after if-else branches or at loop headers. The result represents values that
@@ -760,19 +759,19 @@ func (d *ProductDomain) Clone() domain.Domain {
 // Example:
 //
 //	// Branch 1: x is string
-//	d := NewProductDomain(env)
+//	d := NewConditionProofDomain(env)
 //	d.ApplyAtom(hasTypeString)
 //
 //	// Branch 2: x is number
-//	o := NewProductDomain(env)
+//	o := NewConditionProofDomain(env)
 //	o.ApplyAtom(hasTypeNumber)
 //
 //	// After join: x is string|number
-//	joined := d.Join(o).(*ProductDomain)
+//	joined := d.Join(o)
 //
 // Join is commutative: d.Join(o) equals o.Join(d).
-func (d *ProductDomain) Join(other domain.Domain) domain.Domain {
-	o := other.(*ProductDomain)
+func (d *ConditionProofDomain) Join(other *ConditionProofDomain) *ConditionProofDomain {
+	o := other
 	joinedEG := theory.NewEGraph()
 	for _, k := range d.EGraph.AllPaths() {
 		rootD := d.EGraph.Find(k)
@@ -781,10 +780,10 @@ func (d *ProductDomain) Join(other domain.Domain) domain.Domain {
 			joinedEG.Union(k, rootD)
 		}
 	}
-	return (&ProductDomain{
-		Type:    d.Type.Join(o.Type).(*domain.TypeDomain),
-		Numeric: d.Numeric.Join(o.Numeric).(*numeric.Domain),
-		Shape:   d.Shape.Join(o.Shape).(*domain.ShapeDomain),
+	return (&ConditionProofDomain{
+		Type:    d.Type.Join(o.Type),
+		Numeric: d.Numeric.Join(o.Numeric),
+		Shape:   d.Shape.Join(o.Shape),
 		EGraph:  joinedEG,
 		env:     d.env,
 	}).withProjectedJoinFacts(d, o)
@@ -815,23 +814,23 @@ func (d *ProductDomain) Join(other domain.Domain) domain.Domain {
 // Example:
 //
 //	// After narrowing t.x to string and t.y to number:
-//	children := domain.NarrowedChildPaths("t@1")
+//	children := proof.NarrowedChildPaths("t@1")
 //	// Returns: {"t@1.x": string, "t@1.y": number}
 //
 // Returns an empty map if no child paths have narrowings.
-func (d *ProductDomain) NarrowedChildPaths(parentKey constraint.PathKey) map[constraint.PathKey]typ.Type {
+func (d *ConditionProofDomain) NarrowedChildPaths(parentKey constraint.PathKey) map[constraint.PathKey]typ.Type {
 	result := make(map[constraint.PathKey]typ.Type)
 	parent := string(parentKey)
 
 	for _, key := range constraint.SortedPathKeys(d.Type.Narrowed) {
 		t := d.Type.Narrowed[key]
-		if domain.IsChildPath(parent, string(key)) {
+		if isConditionChildPath(parent, string(key)) {
 			result[key] = t
 		}
 	}
 	for _, key := range constraint.SortedPathKeys(d.Shape.Narrowed) {
 		t := d.Shape.Narrowed[key]
-		if domain.IsChildPath(parent, string(key)) {
+		if isConditionChildPath(parent, string(key)) {
 			if existing, ok := result[key]; ok {
 				result[key] = narrow.Intersect(existing, t)
 			} else {

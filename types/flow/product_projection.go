@@ -10,9 +10,9 @@ import (
 	"github.com/wippyai/go-lua/types/typ/unwrap"
 )
 
-// ProjectedTypeAt returns the product-domain type visible at key, including
+// ProjectedTypeAt returns the condition-proof type visible at key, including
 // structural implications from narrowed ancestors and child paths.
-func (d *ProductDomain) ProjectedTypeAt(key constraint.PathKey, resolver narrow.Resolver) typ.Type {
+func (d *ConditionProofDomain) ProjectedTypeAt(key constraint.PathKey, resolver narrow.Resolver) typ.Type {
 	if d == nil || key == "" {
 		return nil
 	}
@@ -20,7 +20,7 @@ func (d *ProductDomain) ProjectedTypeAt(key constraint.PathKey, resolver narrow.
 	return d.projectedTypeAtWithEvidence(key, resolver, ancestor, hasAncestor, d.NarrowedChildPaths(key))
 }
 
-func (d *ProductDomain) projectedTypeAtWithEvidence(
+func (d *ConditionProofDomain) projectedTypeAtWithEvidence(
 	key constraint.PathKey,
 	resolver narrow.Resolver,
 	ancestor typ.Type,
@@ -44,13 +44,13 @@ func (d *ProductDomain) projectedTypeAtWithEvidence(
 	return current
 }
 
-func (d *ProductDomain) withProjectedJoinFacts(left, right *ProductDomain) *ProductDomain {
+func (d *ConditionProofDomain) withProjectedJoinFacts(left, right *ConditionProofDomain) *ConditionProofDomain {
 	if d == nil || left == nil || right == nil {
 		return d
 	}
-	leftProjection := newProductProjectionView(left)
-	rightProjection := newProductProjectionView(right)
-	keys := productJoinSupportKeys(leftProjection, rightProjection)
+	leftProjection := newConditionProjectionView(left)
+	rightProjection := newConditionProjectionView(right)
+	keys := conditionJoinSupportKeys(leftProjection, rightProjection)
 	for _, key := range keys {
 		leftType := leftProjection.ProjectedTypeAt(key)
 		rightType := rightProjection.ProjectedTypeAt(key)
@@ -73,26 +73,26 @@ func (d *ProductDomain) withProjectedJoinFacts(left, right *ProductDomain) *Prod
 	return d
 }
 
-func productJoinSupportKeys(left, right productProjectionView) []constraint.PathKey {
+func conditionJoinSupportKeys(left, right conditionProjectionView) []constraint.PathKey {
 	var keys pathKeyList
 	keys.AddList(left.SupportKeys())
 	keys.AddList(right.SupportKeys())
 	return keys.SortedValues()
 }
 
-type productProjectionView struct {
-	domain        *ProductDomain
+type conditionProjectionView struct {
+	domain        *ConditionProofDomain
 	resolver      narrow.Resolver
 	narrowed      pathKeySet
 	support       pathKeyList
 	childByParent map[constraint.PathKey]map[constraint.PathKey]typ.Type
 }
 
-// newProductProjectionView indexes one product domain's projection evidence for
-// multi-key queries such as join. One-off reads can use ProductDomain directly;
+// newConditionProjectionView indexes one condition proof state's projection evidence for
+// multi-key queries such as join. One-off reads can use ConditionProofDomain directly;
 // joins should not rescan every narrowed path for every support key.
-func newProductProjectionView(d *ProductDomain) productProjectionView {
-	view := productProjectionView{
+func newConditionProjectionView(d *ConditionProofDomain) conditionProjectionView {
+	view := conditionProjectionView{
 		domain:        d,
 		childByParent: make(map[constraint.PathKey]map[constraint.PathKey]typ.Type),
 	}
@@ -113,11 +113,11 @@ func newProductProjectionView(d *ProductDomain) productProjectionView {
 	return view
 }
 
-func (v productProjectionView) SupportKeys() []constraint.PathKey {
+func (v conditionProjectionView) SupportKeys() []constraint.PathKey {
 	return v.support.SortedValues()
 }
 
-func (v productProjectionView) ProjectedTypeAt(key constraint.PathKey) typ.Type {
+func (v conditionProjectionView) ProjectedTypeAt(key constraint.PathKey) typ.Type {
 	if v.domain == nil || key == "" {
 		return nil
 	}
@@ -125,7 +125,7 @@ func (v productProjectionView) ProjectedTypeAt(key constraint.PathKey) typ.Type 
 	return v.domain.projectedTypeAtWithEvidence(key, v.resolver, ancestor, hasAncestor, v.NarrowedChildPaths(key))
 }
 
-func (v productProjectionView) NarrowedChildPaths(parentKey constraint.PathKey) map[constraint.PathKey]typ.Type {
+func (v conditionProjectionView) NarrowedChildPaths(parentKey constraint.PathKey) map[constraint.PathKey]typ.Type {
 	if parentKey == "" || v.childByParent == nil {
 		return nil
 	}
@@ -136,7 +136,7 @@ func (v productProjectionView) NarrowedChildPaths(parentKey constraint.PathKey) 
 	return children
 }
 
-func (v *productProjectionView) addNarrowing(key constraint.PathKey, t typ.Type) {
+func (v *conditionProjectionView) addNarrowing(key constraint.PathKey, t typ.Type) {
 	if key == "" || t == nil {
 		return
 	}
@@ -156,7 +156,7 @@ func (v *productProjectionView) addNarrowing(key constraint.PathKey, t typ.Type)
 	}
 }
 
-func (v productProjectionView) deriveFromNarrowedAncestors(targetKey constraint.PathKey) (typ.Type, bool) {
+func (v conditionProjectionView) deriveFromNarrowedAncestors(targetKey constraint.PathKey) (typ.Type, bool) {
 	if v.domain == nil || v.resolver == nil || targetKey == "" {
 		return nil, false
 	}
@@ -196,7 +196,7 @@ func (v productProjectionView) deriveFromNarrowedAncestors(targetKey constraint.
 	return combined, combined != nil
 }
 
-func (v *productProjectionView) addSupportKey(key constraint.PathKey) {
+func (v *conditionProjectionView) addSupportKey(key constraint.PathKey) {
 	if key == "" {
 		return
 	}
@@ -231,7 +231,7 @@ func productProjectionAncestorKeys(key constraint.PathKey) []constraint.PathKey 
 	return out.SortedValues()
 }
 
-func (d *ProductDomain) baseTypeAt(key constraint.PathKey) typ.Type {
+func (d *ConditionProofDomain) baseTypeAt(key constraint.PathKey) typ.Type {
 	if d == nil || key == "" {
 		return nil
 	}
@@ -353,7 +353,7 @@ func recordShapeEvidenceAdmitsType(t typ.Type, shape *typ.Record, resolver narro
 	return true
 }
 
-func (d *ProductDomain) deriveFromNarrowedAncestors(targetKey constraint.PathKey, resolver narrow.Resolver) (typ.Type, bool) {
+func (d *ConditionProofDomain) deriveFromNarrowedAncestors(targetKey constraint.PathKey, resolver narrow.Resolver) (typ.Type, bool) {
 	targetSym, targetVersion, targetSuffix, ok := pathkey.ParseKeyUnchecked(targetKey)
 	if !ok || targetSuffix == "" {
 		return nil, false

@@ -1,7 +1,7 @@
 // domain_lattice.go wires *numeric.State to the lattice.Lattice contract.
 //
 // Per DOMAIN_DESIGN.md §7 (rev 3), the lattice variable is named StateDomain
-// (not Domain — that identifier is taken by the ProductDomain numeric.Domain
+// (not Domain — that identifier is taken by the ConditionProofDomain numeric.Domain
 // struct at domain.go:42; Go has a single package-level namespace). No adapter
 // type is used; the struct of function fields IS the contract and points
 // directly at the package-level State operations.

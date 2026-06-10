@@ -1,4 +1,4 @@
-package domain
+package flow
 
 import (
 	"testing"
@@ -6,9 +6,9 @@ import (
 	"github.com/wippyai/go-lua/types/constraint"
 )
 
-func TestSplitPathKey_Simple(t *testing.T) {
+func TestSplitConditionPathKey_Simple(t *testing.T) {
 	key := constraint.PathKey("sym1.field")
-	parent, field, ok := SplitPathKey(key)
+	parent, field, ok := splitConditionPathKey(key)
 	if !ok {
 		t.Fatal("expected split to succeed")
 	}
@@ -20,9 +20,9 @@ func TestSplitPathKey_Simple(t *testing.T) {
 	}
 }
 
-func TestSplitPathKey_Nested(t *testing.T) {
+func TestSplitConditionPathKey_Nested(t *testing.T) {
 	key := constraint.PathKey("sym1.a.b")
-	parent, field, ok := SplitPathKey(key)
+	parent, field, ok := splitConditionPathKey(key)
 	if !ok {
 		t.Fatal("expected split to succeed")
 	}
@@ -34,33 +34,33 @@ func TestSplitPathKey_Nested(t *testing.T) {
 	}
 }
 
-func TestSplitPathKey_NoField(t *testing.T) {
+func TestSplitConditionPathKey_NoField(t *testing.T) {
 	key := constraint.PathKey("sym1")
-	_, _, ok := SplitPathKey(key)
+	_, _, ok := splitConditionPathKey(key)
 	if ok {
 		t.Fatal("expected split to fail for path without field")
 	}
 }
 
-func TestSplitPathKey_Index(t *testing.T) {
+func TestSplitConditionPathKey_Index(t *testing.T) {
 	key := constraint.PathKey("sym1[0]")
-	_, _, ok := SplitPathKey(key)
+	_, _, ok := splitConditionPathKey(key)
 	if ok {
 		t.Fatal("expected split to fail for indexed path")
 	}
 }
 
-func TestSplitPathKey_StringIndexWithDot_NoField(t *testing.T) {
+func TestSplitConditionPathKey_StringIndexWithDot_NoField(t *testing.T) {
 	key := constraint.PathKey(`sym1@2["a.b"]`)
-	_, _, ok := SplitPathKey(key)
+	_, _, ok := splitConditionPathKey(key)
 	if ok {
 		t.Fatalf("expected split to fail for non-field terminal segment: %q", key)
 	}
 }
 
-func TestSplitPathKey_FieldAfterStringIndexWithDot(t *testing.T) {
+func TestSplitConditionPathKey_FieldAfterStringIndexWithDot(t *testing.T) {
 	key := constraint.PathKey(`sym1@2["a.b"].c`)
-	parent, field, ok := SplitPathKey(key)
+	parent, field, ok := splitConditionPathKey(key)
 	if !ok {
 		t.Fatalf("expected split to succeed: %q", key)
 	}
@@ -72,9 +72,9 @@ func TestSplitPathKey_FieldAfterStringIndexWithDot(t *testing.T) {
 	}
 }
 
-func TestSplitPathKey_FieldAfterEscapedStringIndex(t *testing.T) {
+func TestSplitConditionPathKey_FieldAfterEscapedStringIndex(t *testing.T) {
 	key := constraint.PathKey(`sym1@2["a\"b"].c`)
-	parent, field, ok := SplitPathKey(key)
+	parent, field, ok := splitConditionPathKey(key)
 	if !ok {
 		t.Fatalf("expected split to succeed: %q", key)
 	}
@@ -86,7 +86,7 @@ func TestSplitPathKey_FieldAfterEscapedStringIndex(t *testing.T) {
 	}
 }
 
-func TestSplitPathKey_PlaceholderAndReturnRoots(t *testing.T) {
+func TestSplitConditionPathKey_PlaceholderAndReturnRoots(t *testing.T) {
 	tests := []struct {
 		key    constraint.PathKey
 		parent constraint.PathKey
@@ -97,7 +97,7 @@ func TestSplitPathKey_PlaceholderAndReturnRoots(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		parent, field, ok := SplitPathKey(tt.key)
+		parent, field, ok := splitConditionPathKey(tt.key)
 		if !ok {
 			t.Fatalf("expected split to succeed for %q", tt.key)
 		}
@@ -110,7 +110,7 @@ func TestSplitPathKey_PlaceholderAndReturnRoots(t *testing.T) {
 	}
 }
 
-func TestIsChildPath(t *testing.T) {
+func TestConditionChildPath(t *testing.T) {
 	tests := []struct {
 		parent string
 		child  string
@@ -132,9 +132,9 @@ func TestIsChildPath(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		got := IsChildPath(tt.parent, tt.child)
+		got := isConditionChildPath(tt.parent, tt.child)
 		if got != tt.want {
-			t.Errorf("IsChildPath(%q, %q) = %v, want %v", tt.parent, tt.child, got, tt.want)
+			t.Errorf("isConditionChildPath(%q, %q) = %v, want %v", tt.parent, tt.child, got, tt.want)
 		}
 	}
 }

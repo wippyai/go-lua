@@ -1,13 +1,14 @@
-package domain
+package flow
 
 import (
 	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/typ"
+	typejoin "github.com/wippyai/go-lua/types/typ/join"
 )
 
-// ShapeDomain handles structural narrowing for tables and records.
+// ConditionShapeDomain handles structural narrowing for tables and records.
 //
-// ShapeDomain is one of the three subdomains in ProductDomain. It handles
+// ConditionShapeDomain is one of the three subdomains in ConditionProofDomain. It handles
 // constraints that affect the structural shape of types, particularly tables:
 //
 //   - Field presence: HasField constraints proving a table has a field
@@ -15,7 +16,7 @@ import (
 //   - Index constraints: HasIndex proving indexability with a type
 //   - Metatable constraints: Proving metatable presence or structure
 //
-// Unlike TypeDomain which handles primitive type predicates, ShapeDomain uses
+// Unlike ConditionTypeDomain which handles primitive type predicates, ConditionShapeDomain uses
 // constraint.Solver for sophisticated shape reasoning. The Solver can:
 //
 //   - Apply constraints to record types, narrowing fields
@@ -23,26 +24,26 @@ import (
 //   - Process map component constraints
 //   - Chain constraints through nested paths
 //
-// When a constraint targets a nested path (e.g., t.user.name), ShapeDomain
+// When a constraint targets a nested path (e.g., t.user.name), ConditionShapeDomain
 // propagates narrowings to ancestor paths. If t.user.name is proven to be
 // string, this may narrow t.user and t as well by proving they have the
 // required structure.
 //
 // The domain maintains a Narrowed map from path keys to narrowed types.
 // Missing keys are read from env.LookupPathType for base types.
-type ShapeDomain struct {
+type ConditionShapeDomain struct {
 	Narrowed map[constraint.PathKey]typ.Type
 	Solver   constraint.Solver
 	Env      constraint.Env
 	Unsat    bool
 }
 
-// NewShapeDomain creates a new ShapeDomain with the given environment.
+// NewConditionShapeDomain creates a new ConditionShapeDomain with the given environment.
 //
 // The Solver is initialized with the same environment, ensuring consistent
 // type resolution for nested constraint application.
-func NewShapeDomain(env constraint.Env) *ShapeDomain {
-	return &ShapeDomain{
+func NewConditionShapeDomain(env constraint.Env) *ConditionShapeDomain {
+	return &ConditionShapeDomain{
 		Narrowed: make(map[constraint.PathKey]typ.Type),
 		Solver:   constraint.Solver{Env: env},
 		Env:      env,
@@ -56,7 +57,7 @@ func NewShapeDomain(env constraint.Env) *ShapeDomain {
 //  2. env.LookupPathType(key) - base type from declarations
 //
 // Returns nil if the key has no type in either source.
-func (d *ShapeDomain) TypeAt(key constraint.PathKey) typ.Type {
+func (d *ConditionShapeDomain) TypeAt(key constraint.PathKey) typ.Type {
 	if t, ok := d.Narrowed[key]; ok {
 		return t
 	}
@@ -67,7 +68,7 @@ func (d *ShapeDomain) TypeAt(key constraint.PathKey) typ.Type {
 //
 // Unlike TypeAt, this returns nil if there is no shape narrowing, even if
 // the key has a base type. Used to check whether narrowing has occurred.
-func (d *ShapeDomain) NarrowedTypeAt(key constraint.PathKey) typ.Type {
+func (d *ConditionShapeDomain) NarrowedTypeAt(key constraint.PathKey) typ.Type {
 	return d.Narrowed[key]
 }
 
@@ -91,7 +92,7 @@ func (d *ShapeDomain) NarrowedTypeAt(key constraint.PathKey) typ.Type {
 // The method walks from the deepest path segment up to the root.
 //
 // Returns false and sets Unsat=true if the constraint proves unsatisfiability.
-func (d *ShapeDomain) ApplyConstraint(c constraint.Constraint, target constraint.PathKey) bool {
+func (d *ConditionShapeDomain) ApplyConstraint(c constraint.Constraint, target constraint.PathKey) bool {
 	if d.Unsat {
 		return false
 	}
@@ -144,13 +145,13 @@ func (d *ShapeDomain) ApplyConstraint(c constraint.Constraint, target constraint
 }
 
 // IsUnsat returns true if the domain has proven a structural contradiction.
-func (d *ShapeDomain) IsUnsat() bool { return d.Unsat }
+func (d *ConditionShapeDomain) IsUnsat() bool { return d.Unsat }
 
-// Clone creates a deep copy of the ShapeDomain for speculative evaluation.
+// Clone creates a deep copy of the ConditionShapeDomain for speculative evaluation.
 //
 // The Narrowed map is deep copied; Solver and Env are shared by reference.
-func (d *ShapeDomain) Clone() Domain {
-	c := &ShapeDomain{
+func (d *ConditionShapeDomain) Clone() *ConditionShapeDomain {
+	c := &ConditionShapeDomain{
 		Narrowed: make(map[constraint.PathKey]typ.Type, len(d.Narrowed)),
 		Solver:   d.Solver,
 		Env:      d.Env,
@@ -162,18 +163,18 @@ func (d *ShapeDomain) Clone() Domain {
 	return c
 }
 
-// Join computes the least upper bound of two ShapeDomain states.
+// Join computes the least upper bound of two ConditionShapeDomain states.
 //
 // Join semantics for shape domains:
 //   - If either domain is unsatisfiable, return a clone of the other
-//   - For keys in both domains, compute type union (join.Two)
+//   - For keys in both domains, compute type union (typejoin.Types)
 //   - Keys only in one domain are dropped (no narrowing survives)
 //
 // For records, type union preserves only fields present in both types.
 // For example, joining {foo: string, bar: number} with {foo: string}
 // yields {foo: string} (bar is not present in both).
-func (d *ShapeDomain) Join(other Domain) Domain {
-	o := other.(*ShapeDomain)
+func (d *ConditionShapeDomain) Join(other *ConditionShapeDomain) *ConditionShapeDomain {
+	o := other
 	if d.Unsat {
 		return o.Clone()
 	}
@@ -181,7 +182,7 @@ func (d *ShapeDomain) Join(other Domain) Domain {
 		return d.Clone()
 	}
 
-	result := &ShapeDomain{
+	result := &ConditionShapeDomain{
 		Narrowed: make(map[constraint.PathKey]typ.Type),
 		Solver:   d.Solver,
 		Env:      d.Env,
@@ -191,7 +192,7 @@ func (d *ShapeDomain) Join(other Domain) Domain {
 	for _, key := range constraint.SortedPathKeys(d.Narrowed) {
 		dt := d.Narrowed[key]
 		if ot, ok := o.Narrowed[key]; ok {
-			result.Narrowed[key] = joinNarrowedTypes(dt, ot)
+			result.Narrowed[key] = typejoin.Types(dt, ot)
 		}
 	}
 	return result

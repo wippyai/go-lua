@@ -1,4 +1,4 @@
-package domain
+package flow
 
 import (
 	"testing"
@@ -7,7 +7,7 @@ import (
 	"github.com/wippyai/go-lua/types/typ"
 )
 
-func TestShapeDomain_ApplyConstraint(t *testing.T) {
+func TestConditionShapeDomain_ApplyConstraint(t *testing.T) {
 	typeA := typ.NewRecord().Field("tag", typ.LiteralString("a")).Build()
 	typeB := typ.NewRecord().Field("tag", typ.LiteralString("b")).Build()
 	union := typ.NewUnion(typeA, typeB)
@@ -38,7 +38,7 @@ func TestShapeDomain_ApplyConstraint(t *testing.T) {
 		Resolver: &mockResolver{fieldFunc: fieldResolver},
 	}
 
-	d := NewShapeDomain(env)
+	d := NewConditionShapeDomain(env)
 
 	path := constraint.Path{Root: "x", Symbol: 1}
 	c := constraint.FieldEquals{Target: path, Field: "tag", Value: typ.LiteralString("a")}
@@ -85,7 +85,7 @@ func (m *mockResolver) Expand(t typ.Type) typ.Type {
 	return t
 }
 
-func TestShapeDomain_TypeAt_FallsBackToResolver(t *testing.T) {
+func TestConditionShapeDomain_TypeAt_FallsBackToResolver(t *testing.T) {
 	key := constraint.PathKey("sym1")
 	env := constraint.Env{
 		PathTypeAt: func(k constraint.PathKey) typ.Type {
@@ -96,7 +96,7 @@ func TestShapeDomain_TypeAt_FallsBackToResolver(t *testing.T) {
 		},
 	}
 
-	d := NewShapeDomain(env)
+	d := NewConditionShapeDomain(env)
 
 	result := d.TypeAt(key)
 	if result == nil || result.Kind() != typ.String.Kind() {
@@ -104,9 +104,9 @@ func TestShapeDomain_TypeAt_FallsBackToResolver(t *testing.T) {
 	}
 }
 
-func TestShapeDomain_NarrowedTypeAt_ReturnsNilIfNotNarrowed(t *testing.T) {
+func TestConditionShapeDomain_NarrowedTypeAt_ReturnsNilIfNotNarrowed(t *testing.T) {
 	env := constraint.Env{}
-	d := NewShapeDomain(env)
+	d := NewConditionShapeDomain(env)
 
 	result := d.NarrowedTypeAt("nonexistent")
 	if result != nil {
@@ -114,12 +114,12 @@ func TestShapeDomain_NarrowedTypeAt_ReturnsNilIfNotNarrowed(t *testing.T) {
 	}
 }
 
-func TestShapeDomain_Clone(t *testing.T) {
+func TestConditionShapeDomain_Clone(t *testing.T) {
 	env := constraint.Env{}
-	d := NewShapeDomain(env)
+	d := NewConditionShapeDomain(env)
 	d.Narrowed["x"] = typ.String
 
-	clone := d.Clone().(*ShapeDomain)
+	clone := d.Clone()
 
 	if clone.NarrowedTypeAt("x").Kind() != typ.String.Kind() {
 		t.Fatal("clone should have same narrowed type")
@@ -131,16 +131,16 @@ func TestShapeDomain_Clone(t *testing.T) {
 	}
 }
 
-func TestShapeDomain_Join(t *testing.T) {
+func TestConditionShapeDomain_Join(t *testing.T) {
 	env := constraint.Env{}
 
-	a := NewShapeDomain(env)
+	a := NewConditionShapeDomain(env)
 	a.Narrowed["x"] = typ.String
 
-	b := NewShapeDomain(env)
+	b := NewConditionShapeDomain(env)
 	b.Narrowed["x"] = typ.Number
 
-	joined := a.Join(b).(*ShapeDomain)
+	joined := a.Join(b)
 	result := joined.NarrowedTypeAt("x")
 
 	u, ok := result.(*typ.Union)
@@ -152,7 +152,7 @@ func TestShapeDomain_Join(t *testing.T) {
 	}
 }
 
-func TestShapeDomain_JoinCoalescesRecursiveFamilies(t *testing.T) {
+func TestConditionShapeDomain_JoinCoalescesRecursiveFamilies(t *testing.T) {
 	env := constraint.Env{}
 	key := constraint.PathKey("node")
 	base := typ.NewRecursive("FlowA", func(self typ.Type) typ.Type {
@@ -169,12 +169,12 @@ func TestShapeDomain_JoinCoalescesRecursiveFamilies(t *testing.T) {
 			Build()
 	})
 
-	a := NewShapeDomain(env)
+	a := NewConditionShapeDomain(env)
 	a.Narrowed[key] = base
-	b := NewShapeDomain(env)
+	b := NewConditionShapeDomain(env)
 	b.Narrowed[key] = withParent
 
-	joined := a.Join(b).(*ShapeDomain).NarrowedTypeAt(key)
+	joined := a.Join(b).NarrowedTypeAt(key)
 	rec, ok := joined.(*typ.Recursive)
 	if !ok {
 		t.Fatalf("joined recursive family = %T %[1]v, want recursive", joined)
@@ -189,38 +189,38 @@ func TestShapeDomain_JoinCoalescesRecursiveFamilies(t *testing.T) {
 	}
 }
 
-func TestShapeDomain_Join_DropsNonCommonKeys(t *testing.T) {
+func TestConditionShapeDomain_Join_DropsNonCommonKeys(t *testing.T) {
 	env := constraint.Env{}
 
-	a := NewShapeDomain(env)
+	a := NewConditionShapeDomain(env)
 	a.Narrowed["x"] = typ.String
 
-	b := NewShapeDomain(env)
+	b := NewConditionShapeDomain(env)
 
-	joined := a.Join(b).(*ShapeDomain)
+	joined := a.Join(b)
 	if _, hasKey := joined.Narrowed["x"]; hasKey {
 		t.Fatal("key should be dropped when not in both sides")
 	}
 }
 
-func TestShapeDomain_Join_UnsatSideIgnored(t *testing.T) {
+func TestConditionShapeDomain_Join_UnsatSideIgnored(t *testing.T) {
 	env := constraint.Env{}
 
-	a := NewShapeDomain(env)
+	a := NewConditionShapeDomain(env)
 	a.Narrowed["x"] = typ.String
 
-	b := NewShapeDomain(env)
+	b := NewConditionShapeDomain(env)
 	b.Unsat = true
 
-	joined := a.Join(b).(*ShapeDomain)
+	joined := a.Join(b)
 	if joined.NarrowedTypeAt("x").Kind() != typ.String.Kind() {
 		t.Fatal("should use non-unsat side")
 	}
 }
 
-func TestShapeDomain_IsUnsat(t *testing.T) {
+func TestConditionShapeDomain_IsUnsat(t *testing.T) {
 	env := constraint.Env{}
-	d := NewShapeDomain(env)
+	d := NewConditionShapeDomain(env)
 
 	if d.IsUnsat() {
 		t.Fatal("new domain should not be unsat")

@@ -3,37 +3,36 @@ package flow
 import (
 	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/constraint/theory"
-	"github.com/wippyai/go-lua/types/flow/domain"
 	"github.com/wippyai/go-lua/types/flow/numeric"
 	"github.com/wippyai/go-lua/types/narrow"
 	"github.com/wippyai/go-lua/types/query/core"
 	"github.com/wippyai/go-lua/types/typ"
 )
 
-// productSatisfiabilityProof is the read-only proof sibling of ProductDomain
-// transfer. It may build local proof state, but it cannot call
-// ApplyCondition/ApplyConjunction or mutate the source product.
-type productSatisfiabilityProof struct {
-	source        *ProductDomain
+// conditionSatisfiabilityProof is the read-only proof sibling of
+// ConditionProofDomain transfer. It may build local proof state, but it cannot
+// call ApplyCondition/ApplyConjunction or mutate the source proof state.
+type conditionSatisfiabilityProof struct {
+	source        *ConditionProofDomain
 	env           constraint.Env
-	types         *domain.TypeDomain
+	types         *ConditionTypeDomain
 	numeric       *numeric.Domain
 	shapes        map[constraint.PathKey]typ.Type
 	equalities    *theory.EGraph
 	structuralEnv constraint.Env
 }
 
-func newProductSatisfiabilityProof(source *ProductDomain) *productSatisfiabilityProof {
-	p := &productSatisfiabilityProof{
+func newConditionSatisfiabilityProof(source *ConditionProofDomain) *conditionSatisfiabilityProof {
+	p := &conditionSatisfiabilityProof{
 		source:     source,
 		env:        source.env,
 		shapes:     make(map[constraint.PathKey]typ.Type),
 		equalities: theory.NewEGraph(),
 	}
-	typeEnv := source.env.WithPathTypeOverlay(p.typeBaseForTypeDomain)
-	p.types = domain.NewTypeDomain(typeEnv)
+	typeEnv := source.env.WithPathTypeOverlay(p.typeBaseForConditionTypeDomain)
+	p.types = NewConditionTypeDomain(typeEnv)
 	if source.Numeric != nil {
-		p.numeric = source.Numeric.Clone().(*numeric.Domain)
+		p.numeric = source.Numeric.Clone()
 	} else {
 		p.numeric = numeric.NewDomain(source.env)
 	}
@@ -41,7 +40,7 @@ func newProductSatisfiabilityProof(source *ProductDomain) *productSatisfiability
 	return p
 }
 
-func (p *productSatisfiabilityProof) CanSatisfyConjunction(constraints []constraint.Constraint) bool {
+func (p *conditionSatisfiabilityProof) CanSatisfyConjunction(constraints []constraint.Constraint) bool {
 	if p == nil || p.source == nil || p.source.IsUnsat() {
 		return false
 	}
@@ -67,37 +66,37 @@ func (p *productSatisfiabilityProof) CanSatisfyConjunction(constraints []constra
 	return p.propagateEqualityTypes()
 }
 
-func (p *productSatisfiabilityProof) buildEqualities(atoms []constraint.Atom, constraints []constraint.Constraint) {
+func (p *conditionSatisfiabilityProof) buildEqualities(atoms []constraint.Atom, constraints []constraint.Constraint) {
 	if p.equalities == nil {
 		p.equalities = theory.NewEGraph()
 	}
 	newConditionPathEvidence(atoms, constraints, p.resolvePath).RegisterInto(p.equalities)
 }
 
-func (p *productSatisfiabilityProof) applyAtom(atom constraint.Atom) bool {
-	switch domain.ClassifyAtom(atom) {
-	case domain.AtomClassType:
+func (p *conditionSatisfiabilityProof) applyAtom(atom constraint.Atom) bool {
+	switch classifyConditionAtom(atom) {
+	case conditionAtomClassType:
 		return p.applyTypeAtom(atom)
-	case domain.AtomClassNumeric:
+	case conditionAtomClassNumeric:
 		return p.applyNumericAtom(atom)
-	case domain.AtomClassBoth:
+	case conditionAtomClassBoth:
 		return p.applyTypeAtom(atom) && p.applyNumericAtom(atom)
-	case domain.AtomClassNone:
+	case conditionAtomClassNone:
 		return true
 	default:
 		return true
 	}
 }
 
-func (p *productSatisfiabilityProof) applyTypeAtom(atom constraint.Atom) bool {
+func (p *conditionSatisfiabilityProof) applyTypeAtom(atom constraint.Atom) bool {
 	return p.types == nil || p.types.ApplyAtom(atom)
 }
 
-func (p *productSatisfiabilityProof) applyNumericAtom(atom constraint.Atom) bool {
+func (p *conditionSatisfiabilityProof) applyNumericAtom(atom constraint.Atom) bool {
 	return p.numeric == nil || p.numeric.ApplyAtom(atom)
 }
 
-func (p *productSatisfiabilityProof) applyRelationalTypeConstraints(constraints []constraint.Constraint) bool {
+func (p *conditionSatisfiabilityProof) applyRelationalTypeConstraints(constraints []constraint.Constraint) bool {
 	for _, c := range constraints {
 		keyOf, ok := c.(constraint.KeyOf)
 		if !ok {
@@ -110,7 +109,7 @@ func (p *productSatisfiabilityProof) applyRelationalTypeConstraints(constraints 
 	return true
 }
 
-func (p *productSatisfiabilityProof) applyKeyOfTypeConstraint(keyOf constraint.KeyOf) bool {
+func (p *conditionSatisfiabilityProof) applyKeyOfTypeConstraint(keyOf constraint.KeyOf) bool {
 	tableKey := p.resolvePath(keyOf.Table)
 	keyKey := p.resolvePath(keyOf.Key)
 	if tableKey == "" || keyKey == "" {
@@ -154,7 +153,7 @@ func (p *productSatisfiabilityProof) applyKeyOfTypeConstraint(keyOf constraint.K
 	return true
 }
 
-func (p *productSatisfiabilityProof) applyStructuralConstraints(constraints []constraint.Constraint) bool {
+func (p *conditionSatisfiabilityProof) applyStructuralConstraints(constraints []constraint.Constraint) bool {
 	for _, c := range constraints {
 		if _, ok := c.(constraint.KeyOf); ok {
 			continue
@@ -166,7 +165,7 @@ func (p *productSatisfiabilityProof) applyStructuralConstraints(constraints []co
 	return true
 }
 
-func (p *productSatisfiabilityProof) applyStructuralConstraint(c constraint.Constraint) bool {
+func (p *conditionSatisfiabilityProof) applyStructuralConstraint(c constraint.Constraint) bool {
 	targets := p.constraintTargetKeys(c)
 	if len(targets) == 0 {
 		return true
@@ -188,7 +187,7 @@ func (p *productSatisfiabilityProof) applyStructuralConstraint(c constraint.Cons
 	return true
 }
 
-func (p *productSatisfiabilityProof) propagateEqualityTypes() bool {
+func (p *conditionSatisfiabilityProof) propagateEqualityTypes() bool {
 	if p.equalities == nil || p.equalities.IsEmpty() {
 		return true
 	}
@@ -221,15 +220,15 @@ func (p *productSatisfiabilityProof) propagateEqualityTypes() bool {
 	return true
 }
 
-func (p *productSatisfiabilityProof) constraintTargetKeys(c constraint.Constraint) []constraint.PathKey {
+func (p *conditionSatisfiabilityProof) constraintTargetKeys(c constraint.Constraint) []constraint.PathKey {
 	return newConstraintPathEvidence(c, p.resolvePath).Keys()
 }
 
-func (p *productSatisfiabilityProof) typeAt(key constraint.PathKey) typ.Type {
+func (p *conditionSatisfiabilityProof) typeAt(key constraint.PathKey) typ.Type {
 	if p == nil || p.source == nil || key == "" {
 		return nil
 	}
-	base := p.typeBaseForTypeDomain(key)
+	base := p.typeBaseForConditionTypeDomain(key)
 	if p.types != nil {
 		if narrowed := p.types.NarrowedTypeAt(key); narrowed != nil {
 			return combineProofTypes(narrowed, p.shapes[key])
@@ -238,7 +237,7 @@ func (p *productSatisfiabilityProof) typeAt(key constraint.PathKey) typ.Type {
 	return base
 }
 
-func (p *productSatisfiabilityProof) typeBaseForTypeDomain(key constraint.PathKey) typ.Type {
+func (p *conditionSatisfiabilityProof) typeBaseForConditionTypeDomain(key constraint.PathKey) typ.Type {
 	if p == nil || p.source == nil || key == "" {
 		return nil
 	}
@@ -249,7 +248,7 @@ func (p *productSatisfiabilityProof) typeBaseForTypeDomain(key constraint.PathKe
 	return combineProofTypes(base, p.shapes[key])
 }
 
-func (p *productSatisfiabilityProof) resolvePath(path constraint.Path) constraint.PathKey {
+func (p *conditionSatisfiabilityProof) resolvePath(path constraint.Path) constraint.PathKey {
 	if path.IsEmpty() {
 		return ""
 	}

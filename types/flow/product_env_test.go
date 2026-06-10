@@ -108,19 +108,19 @@ func TestProductWithOnlyMemberPathBuildsMinimalNestedProduct(t *testing.T) {
 	}
 }
 
-func TestProductDomainHasNarrowingForSymbolUsesStableAddress(t *testing.T) {
+func TestConditionProofDomainHasNarrowingForSymbolUsesStableAddress(t *testing.T) {
 	const sym = cfg.SymbolID(51)
 	path := constraint.NewPath(sym, "node")
 	env, _ := SymbolProductEnv(sym, product.FromType(typ.NewOptional(typ.String)), PointFactsOf(PointState{}), &core.FuncResolver{FieldFunc: core.Field})
-	dom := NewProductDomain(env)
+	dom := NewConditionProofDomain(env)
 	if !dom.ApplyCondition(constraint.FromConstraints(constraint.Truthy{Path: path})) {
 		t.Fatal("ApplyCondition returned false")
 	}
 
-	if !ProductDomainHasNarrowingForSymbol(dom, sym) {
+	if !ConditionProofDomainHasNarrowingForSymbol(dom, sym) {
 		t.Fatalf("expected narrowing for symbol %d", sym)
 	}
-	if ProductDomainHasNarrowingForSymbol(dom, cfg.SymbolID(52)) {
+	if ConditionProofDomainHasNarrowingForSymbol(dom, cfg.SymbolID(52)) {
 		t.Fatalf("unexpected narrowing for unrelated symbol")
 	}
 }

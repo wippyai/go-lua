@@ -28,7 +28,7 @@ func benchProductEnv(types map[constraint.PathKey]typ.Type) constraint.Env {
 	}
 }
 
-func BenchmarkProductDomain_ApplyAtom_TypeOnly(b *testing.B) {
+func BenchmarkConditionProofDomain_ApplyAtom_TypeOnly(b *testing.B) {
 	key := constraint.PathKey("x")
 	env := benchProductEnv(map[constraint.PathKey]typ.Type{
 		key: typ.NewUnion(typ.String, typ.Nil),
@@ -37,24 +37,24 @@ func BenchmarkProductDomain_ApplyAtom_TypeOnly(b *testing.B) {
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		d := NewProductDomain(env)
+		d := NewConditionProofDomain(env)
 		d.ApplyAtom(atom)
 	}
 }
 
-func BenchmarkProductDomain_ApplyAtom_NumericOnly(b *testing.B) {
+func BenchmarkConditionProofDomain_ApplyAtom_NumericOnly(b *testing.B) {
 	key := constraint.PathKey("x")
 	env := benchProductEnv(nil)
 	atom := constraint.AtomGe(constraint.TermVar(key), constraint.TermConst(0))
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		d := NewProductDomain(env)
+		d := NewConditionProofDomain(env)
 		d.ApplyAtom(atom)
 	}
 }
 
-func BenchmarkProductDomain_ApplyAtom_Both(b *testing.B) {
+func BenchmarkConditionProofDomain_ApplyAtom_Both(b *testing.B) {
 	key := constraint.PathKey("x")
 	env := benchProductEnv(map[constraint.PathKey]typ.Type{
 		key: typ.NewUnion(typ.String, typ.Number),
@@ -64,13 +64,13 @@ func BenchmarkProductDomain_ApplyAtom_Both(b *testing.B) {
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		d := NewProductDomain(env)
+		d := NewConditionProofDomain(env)
 		d.ApplyAtom(atomType)
 		d.ApplyAtom(atomNumeric)
 	}
 }
 
-func BenchmarkProductDomain_ApplyConjunction_Simple(b *testing.B) {
+func BenchmarkConditionProofDomain_ApplyConjunction_Simple(b *testing.B) {
 	key := constraint.PathKey("x")
 	env := benchProductEnv(map[constraint.PathKey]typ.Type{
 		key: typ.NewUnion(typ.String, typ.Nil),
@@ -80,12 +80,12 @@ func BenchmarkProductDomain_ApplyConjunction_Simple(b *testing.B) {
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		d := NewProductDomain(env)
+		d := NewConditionProofDomain(env)
 		d.ApplyConjunction(constraints)
 	}
 }
 
-func BenchmarkProductDomain_ApplyConjunction_Multiple(b *testing.B) {
+func BenchmarkConditionProofDomain_ApplyConjunction_Multiple(b *testing.B) {
 	types := make(map[constraint.PathKey]typ.Type, 5)
 	constraints := make([]constraint.Constraint, 5)
 	for i := 0; i < 5; i++ {
@@ -99,12 +99,12 @@ func BenchmarkProductDomain_ApplyConjunction_Multiple(b *testing.B) {
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		d := NewProductDomain(env)
+		d := NewConditionProofDomain(env)
 		d.ApplyConjunction(conj)
 	}
 }
 
-func BenchmarkProductDomain_ApplyCondition_SingleDisjunct(b *testing.B) {
+func BenchmarkConditionProofDomain_ApplyCondition_SingleDisjunct(b *testing.B) {
 	key := constraint.PathKey("x")
 	env := benchProductEnv(map[constraint.PathKey]typ.Type{
 		key: typ.NewUnion(typ.String, typ.Nil),
@@ -114,12 +114,12 @@ func BenchmarkProductDomain_ApplyCondition_SingleDisjunct(b *testing.B) {
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		d := NewProductDomain(env)
+		d := NewConditionProofDomain(env)
 		d.ApplyCondition(cond)
 	}
 }
 
-func BenchmarkProductDomain_ApplyCondition_TwoDisjuncts(b *testing.B) {
+func BenchmarkConditionProofDomain_ApplyCondition_TwoDisjuncts(b *testing.B) {
 	keyX := constraint.PathKey("x")
 	keyY := constraint.PathKey("y")
 	env := benchProductEnv(map[constraint.PathKey]typ.Type{
@@ -135,19 +135,19 @@ func BenchmarkProductDomain_ApplyCondition_TwoDisjuncts(b *testing.B) {
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		d := NewProductDomain(env)
+		d := NewConditionProofDomain(env)
 		d.ApplyCondition(cond)
 	}
 }
 
-func BenchmarkProductDomain_Clone(b *testing.B) {
+func BenchmarkConditionProofDomain_Clone(b *testing.B) {
 	types := make(map[constraint.PathKey]typ.Type, 5)
 	for i := 0; i < 5; i++ {
 		name := string(rune('a' + i))
 		types[constraint.PathKey(name)] = typ.NewUnion(typ.String, typ.Nil)
 	}
 	env := benchProductEnv(types)
-	d := NewProductDomain(env)
+	d := NewConditionProofDomain(env)
 	for i := 0; i < 5; i++ {
 		name := string(rune('a' + i))
 		d.ApplyAtom(constraint.AtomTruthy(constraint.TermVar(constraint.PathKey(name))))
@@ -159,14 +159,14 @@ func BenchmarkProductDomain_Clone(b *testing.B) {
 	}
 }
 
-func BenchmarkProductDomain_Join(b *testing.B) {
+func BenchmarkConditionProofDomain_Join(b *testing.B) {
 	env := benchProductEnv(nil)
 
-	a := NewProductDomain(env)
+	a := NewConditionProofDomain(env)
 	a.Type.Narrowed["x"] = typ.String
 	a.Type.Narrowed["y"] = typ.Number
 
-	c := NewProductDomain(env)
+	c := NewConditionProofDomain(env)
 	c.Type.Narrowed["x"] = typ.Number
 	c.Type.Narrowed["y"] = typ.Boolean
 
@@ -176,12 +176,12 @@ func BenchmarkProductDomain_Join(b *testing.B) {
 	}
 }
 
-func BenchmarkProductDomain_TypeAt(b *testing.B) {
+func BenchmarkConditionProofDomain_TypeAt(b *testing.B) {
 	key := constraint.PathKey("x")
 	env := benchProductEnv(map[constraint.PathKey]typ.Type{
 		key: typ.NewUnion(typ.String, typ.Nil),
 	})
-	d := NewProductDomain(env)
+	d := NewConditionProofDomain(env)
 	d.ApplyAtom(constraint.AtomTruthy(constraint.TermVar(key)))
 
 	b.ResetTimer()
@@ -190,9 +190,9 @@ func BenchmarkProductDomain_TypeAt(b *testing.B) {
 	}
 }
 
-func BenchmarkProductDomain_NarrowedChildPaths(b *testing.B) {
+func BenchmarkConditionProofDomain_NarrowedChildPaths(b *testing.B) {
 	env := benchProductEnv(nil)
-	d := NewProductDomain(env)
+	d := NewConditionProofDomain(env)
 
 	parent := constraint.PathKey("sym1@1")
 	for i := 0; i < 10; i++ {
@@ -207,10 +207,10 @@ func BenchmarkProductDomain_NarrowedChildPaths(b *testing.B) {
 	}
 }
 
-func BenchmarkProductDomain_JoinProjectedChildNarrowings(b *testing.B) {
+func BenchmarkConditionProofDomain_JoinProjectedChildNarrowings(b *testing.B) {
 	env := benchProductEnv(nil)
-	left := NewProductDomain(env)
-	right := NewProductDomain(env)
+	left := NewConditionProofDomain(env)
+	right := NewConditionProofDomain(env)
 
 	for i := 0; i < 200; i++ {
 		child := constraint.PathKey("sym1@1.field" + string(rune(i/26+'a')) + string(rune(i%26+'a')))
@@ -230,7 +230,7 @@ func BenchmarkProductDomain_JoinProjectedChildNarrowings(b *testing.B) {
 	}
 }
 
-func BenchmarkProductDomain_EqPath_Propagation(b *testing.B) {
+func BenchmarkConditionProofDomain_EqPath_Propagation(b *testing.B) {
 	pathX := constraint.Path{Root: "x", Symbol: 1}
 	pathY := constraint.Path{Root: "y", Symbol: 2}
 	types := map[constraint.PathKey]typ.Type{
@@ -245,7 +245,7 @@ func BenchmarkProductDomain_EqPath_Propagation(b *testing.B) {
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		d := NewProductDomain(env)
+		d := NewConditionProofDomain(env)
 		d.ApplyConjunction(constraints)
 	}
 }

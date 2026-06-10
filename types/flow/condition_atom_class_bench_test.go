@@ -1,4 +1,4 @@
-package domain
+package flow
 
 import (
 	"testing"
@@ -25,26 +25,26 @@ func benchEnv(types map[constraint.PathKey]typ.Type) constraint.Env {
 	}
 }
 
-func BenchmarkClassifyAtom_HasType(b *testing.B) {
+func BenchmarkClassifyConditionAtom_HasType(b *testing.B) {
 	atom := constraint.Atom{Kind: constraint.AtomKindHasType}
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		ClassifyAtom(atom)
+		classifyConditionAtom(atom)
 	}
 }
 
-func BenchmarkClassifyAtom_EqNil(b *testing.B) {
+func BenchmarkClassifyConditionAtom_EqNil(b *testing.B) {
 	atom := constraint.Atom{
 		Kind:  constraint.AtomKindEq,
 		Right: constraint.TermNil(),
 	}
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		ClassifyAtom(atom)
+		classifyConditionAtom(atom)
 	}
 }
 
-func BenchmarkClassifyAtom_EqVar(b *testing.B) {
+func BenchmarkClassifyConditionAtom_EqVar(b *testing.B) {
 	atom := constraint.Atom{
 		Kind:  constraint.AtomKindEq,
 		Left:  constraint.TermVar("x"),
@@ -52,11 +52,11 @@ func BenchmarkClassifyAtom_EqVar(b *testing.B) {
 	}
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		ClassifyAtom(atom)
+		classifyConditionAtom(atom)
 	}
 }
 
-func BenchmarkTypeDomain_ApplyAtom_Truthy(b *testing.B) {
+func BenchmarkConditionTypeDomain_ApplyAtom_Truthy(b *testing.B) {
 	key := constraint.PathKey("x")
 	env := benchEnv(map[constraint.PathKey]typ.Type{
 		key: typ.NewUnion(typ.String, typ.Nil),
@@ -65,12 +65,12 @@ func BenchmarkTypeDomain_ApplyAtom_Truthy(b *testing.B) {
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		d := NewTypeDomain(env)
+		d := NewConditionTypeDomain(env)
 		d.ApplyAtom(atom)
 	}
 }
 
-func BenchmarkTypeDomain_ApplyAtom_HasType(b *testing.B) {
+func BenchmarkConditionTypeDomain_ApplyAtom_HasType(b *testing.B) {
 	key := constraint.PathKey("x")
 	env := benchEnv(map[constraint.PathKey]typ.Type{
 		key: typ.NewUnion(typ.String, typ.Number, typ.Boolean, typ.Nil),
@@ -79,17 +79,17 @@ func BenchmarkTypeDomain_ApplyAtom_HasType(b *testing.B) {
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		d := NewTypeDomain(env)
+		d := NewConditionTypeDomain(env)
 		d.ApplyAtom(atom)
 	}
 }
 
-func BenchmarkTypeDomain_Clone(b *testing.B) {
+func BenchmarkConditionTypeDomain_Clone(b *testing.B) {
 	key := constraint.PathKey("x")
 	env := benchEnv(map[constraint.PathKey]typ.Type{
 		key: typ.NewUnion(typ.String, typ.Nil),
 	})
-	d := NewTypeDomain(env)
+	d := NewConditionTypeDomain(env)
 	d.ApplyAtom(constraint.AtomTruthy(constraint.TermVar(key)))
 
 	b.ResetTimer()
@@ -98,13 +98,13 @@ func BenchmarkTypeDomain_Clone(b *testing.B) {
 	}
 }
 
-func BenchmarkTypeDomain_Join(b *testing.B) {
+func BenchmarkConditionTypeDomain_Join(b *testing.B) {
 	env := benchEnv(nil)
-	a := NewTypeDomain(env)
+	a := NewConditionTypeDomain(env)
 	a.Narrowed["x"] = typ.String
 	a.Narrowed["y"] = typ.Number
 
-	c := NewTypeDomain(env)
+	c := NewConditionTypeDomain(env)
 	c.Narrowed["x"] = typ.Number
 	c.Narrowed["y"] = typ.Boolean
 
@@ -114,7 +114,7 @@ func BenchmarkTypeDomain_Join(b *testing.B) {
 	}
 }
 
-func BenchmarkTypeDomain_MultipleNarrowings(b *testing.B) {
+func BenchmarkConditionTypeDomain_MultipleNarrowings(b *testing.B) {
 	keys := make([]constraint.PathKey, 10)
 	types := make(map[constraint.PathKey]typ.Type, 10)
 	for i := 0; i < 10; i++ {
@@ -126,16 +126,16 @@ func BenchmarkTypeDomain_MultipleNarrowings(b *testing.B) {
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		d := NewTypeDomain(env)
+		d := NewConditionTypeDomain(env)
 		for _, key := range keys {
 			d.ApplyAtom(constraint.AtomTruthy(constraint.TermVar(key)))
 		}
 	}
 }
 
-func BenchmarkShapeDomain_Clone(b *testing.B) {
+func BenchmarkConditionShapeDomain_Clone(b *testing.B) {
 	env := benchEnv(nil)
-	d := NewShapeDomain(env)
+	d := NewConditionShapeDomain(env)
 	d.Narrowed["x"] = typ.String
 	d.Narrowed["y"] = typ.Number
 	d.Narrowed["z"] = typ.Boolean
@@ -146,13 +146,13 @@ func BenchmarkShapeDomain_Clone(b *testing.B) {
 	}
 }
 
-func BenchmarkShapeDomain_Join(b *testing.B) {
+func BenchmarkConditionShapeDomain_Join(b *testing.B) {
 	env := benchEnv(nil)
-	a := NewShapeDomain(env)
+	a := NewConditionShapeDomain(env)
 	a.Narrowed["x"] = typ.String
 	a.Narrowed["y"] = typ.Number
 
-	c := NewShapeDomain(env)
+	c := NewConditionShapeDomain(env)
 	c.Narrowed["x"] = typ.Number
 	c.Narrowed["y"] = typ.Boolean
 
@@ -162,22 +162,22 @@ func BenchmarkShapeDomain_Join(b *testing.B) {
 	}
 }
 
-func BenchmarkIsChildPath(b *testing.B) {
+func BenchmarkConditionChildPath(b *testing.B) {
 	parent := "sym1@1"
 	child := "sym1@1.field.nested"
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		IsChildPath(parent, child)
+		isConditionChildPath(parent, child)
 	}
 }
 
-func BenchmarkIsChildPath_NotChild(b *testing.B) {
+func BenchmarkConditionChildPath_NotChild(b *testing.B) {
 	parent := "sym1@1"
 	notChild := "sym2@1.field"
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		IsChildPath(parent, notChild)
+		isConditionChildPath(parent, notChild)
 	}
 }

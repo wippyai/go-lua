@@ -232,7 +232,7 @@ func (p ConditionProofProjector) applyConditionProofConstraints(point cfg.Point,
 		PathTypeAt:  proofEnv.TypeAt,
 		ResolvePath: proofEnv.ResolvePath,
 	}
-	dom := NewProductDomain(env)
+	dom := NewConditionProofDomain(env)
 	if !dom.ApplyCondition(constraint.FromConstraints(constraints...)) {
 		return conditionProjectionResult{status: conditionProjectionUnsat}
 	}
@@ -247,7 +247,7 @@ func (p ConditionProofProjector) applyConditionProofConstraints(point cfg.Point,
 	return conditionProjectionResult{typ: projected, status: conditionProjectionType}
 }
 
-func projectedDescendantRead(dom *ProductDomain, resolver narrow.Resolver, seedKey constraint.PathKey, seedType typ.Type, seedPath, queryPath constraint.Path) (typ.Type, bool) {
+func projectedDescendantRead(dom *ConditionProofDomain, resolver narrow.Resolver, seedKey constraint.PathKey, seedType typ.Type, seedPath, queryPath constraint.Path) (typ.Type, bool) {
 	if dom == nil || resolver == nil || seedKey == "" || !isDescendantOf(queryPath, seedPath) {
 		return nil, false
 	}

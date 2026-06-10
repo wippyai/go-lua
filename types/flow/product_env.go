@@ -9,7 +9,7 @@ import (
 	"github.com/wippyai/go-lua/types/typ"
 )
 
-// SymbolProductEnv builds the ProductDomain environment for reducing
+// SymbolProductEnv builds the ConditionProofDomain environment for reducing
 // constraints against one symbol-rooted product value.
 func SymbolProductEnv(
 	sym cfg.SymbolID,
@@ -138,9 +138,9 @@ func ProductWithOnlyMemberPath(segments []constraint.Segment, val product.Abstra
 	return product.WithMember(product.FromType(typ.NewRecord().Build()), member, child)
 }
 
-// ProductDomainHasNarrowingForSymbol reports whether domain has any narrowed
+// ConditionProofDomainHasNarrowingForSymbol reports whether domain has any narrowed
 // fact rooted at sym.
-func ProductDomainHasNarrowingForSymbol(domain *ProductDomain, sym cfg.SymbolID) bool {
+func ConditionProofDomainHasNarrowingForSymbol(domain *ConditionProofDomain, sym cfg.SymbolID) bool {
 	if domain == nil || sym == 0 {
 		return false
 	}
