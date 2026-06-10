@@ -2,20 +2,27 @@ package cfgbuild
 
 import (
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
+	"github.com/wippyai/go-lua/analysis/ir/cfgmeta"
 	"github.com/wippyai/go-lua/analysis/ir/symbol"
 	"github.com/wippyai/go-lua/analysis/lua/bind"
 	"github.com/wippyai/go-lua/compiler/ast"
 )
 
+// Result contains the CFG topology and semantic metadata extracted during build.
+type Result struct {
+	Graph *cfg.CFG
+	Meta  cfgmeta.Metadata
+}
+
 // BuildFunction builds a minimal CFG for a function body using lexical bindings.
-func BuildFunction(fn *ast.FunctionExpr, bindings *bind.Result) *cfg.CFG {
+func BuildFunction(fn *ast.FunctionExpr, bindings *bind.Result) *Result {
 	graph := cfg.New()
 	b := builder{graph: graph, bindings: bindings}
 
 	state := liveAt(graph.Entry())
 	if fn != nil {
 		for _, id := range bindings.ParamSymbols(fn) {
-			state = b.appendNode(state, cfg.NodeAssign, id, "")
+			state = b.appendAssign(state, id)
 		}
 		state = b.buildStmts(state, fn.Stmts)
 	}
@@ -23,11 +30,11 @@ func BuildFunction(fn *ast.FunctionExpr, bindings *bind.Result) *cfg.CFG {
 		return nil
 	}
 	b.connect(state, graph.Exit())
-	return graph
+	return &Result{Graph: graph, Meta: b.meta}
 }
 
 // BuildChunk builds a minimal CFG for a chunk-level statement list.
-func BuildChunk(stmts []ast.Stmt, bindings *bind.Result) *cfg.CFG {
+func BuildChunk(stmts []ast.Stmt, bindings *bind.Result) *Result {
 	graph := cfg.New()
 	b := builder{graph: graph, bindings: bindings}
 
@@ -36,11 +43,12 @@ func BuildChunk(stmts []ast.Stmt, bindings *bind.Result) *cfg.CFG {
 		return nil
 	}
 	b.connect(state, graph.Exit())
-	return graph
+	return &Result{Graph: graph, Meta: b.meta}
 }
 
 type builder struct {
 	graph        *cfg.CFG
+	meta         cfgmeta.Metadata
 	bindings     *bind.Result
 	breakTargets []cfg.Point
 	unsupported  bool
@@ -88,13 +96,13 @@ func (b *builder) buildStmt(state flowState, stmt ast.Stmt) flowState {
 			b.unsupported = true
 			return flowState{current: state.current}
 		}
-		return b.appendNode(state, cfg.NodeCall, 0, callName(stmt.Expr))
+		return b.appendCall(state, callName(stmt.Expr))
 	case *ast.ReturnStmt:
 		if b.hasDeferredExprSemantics(stmt.Exprs...) {
 			b.unsupported = true
 			return flowState{current: state.current}
 		}
-		state = b.appendNode(state, cfg.NodeReturn, 0, "")
+		state = b.appendNode(state, cfg.NodeReturn)
 		b.graph.AddEdge(state.current, b.graph.Exit(), false)
 		return flowState{current: state.current}
 	case *ast.DoBlockStmt:
@@ -108,7 +116,7 @@ func (b *builder) buildStmt(state flowState, stmt ast.Stmt) flowState {
 	case *ast.BreakStmt:
 		return b.buildBreak(state)
 	case *ast.TypeDefStmt, *ast.InterfaceDefStmt:
-		return b.appendNode(state, cfg.NodeTypeDef, 0, "")
+		return b.appendNode(state, cfg.NodeTypeDef)
 	default:
 		b.unsupported = true
 		return flowState{current: state.current}
@@ -126,7 +134,7 @@ func (b *builder) buildAssign(state flowState, stmt *ast.AssignStmt) flowState {
 			b.unsupported = true
 			return flowState{current: state.current}
 		}
-		state = b.appendNode(state, cfg.NodeAssign, id, "")
+		state = b.appendAssign(state, id)
 	}
 	return state
 }
@@ -137,7 +145,7 @@ func (b *builder) buildLocalAssign(state flowState, stmt *ast.LocalAssignStmt) f
 		return flowState{current: state.current}
 	}
 	for _, id := range b.bindings.LocalSymbols(stmt) {
-		state = b.appendNode(state, cfg.NodeAssign, id, "")
+		state = b.appendAssign(state, id)
 	}
 	return state
 }
@@ -152,7 +160,7 @@ func (b *builder) buildIf(state flowState, stmt *ast.IfStmt) flowState {
 		return flowState{current: state.current}
 	}
 	branch := b.appendBranch(state, stmt.Condition)
-	join := b.graph.AddNode(cfg.NodeJoin, 0, "")
+	join := b.graph.AddNode(cfg.NodeJoin)
 
 	thenState := b.buildStmts(branchPath(branch.current, true), stmt.Then)
 	thenState = b.materializePendingCond(thenState)
@@ -171,7 +179,7 @@ func (b *builder) buildWhile(state flowState, stmt *ast.WhileStmt) flowState {
 		return flowState{current: state.current}
 	}
 	branch := b.appendBranch(state, stmt.Condition)
-	join := b.graph.AddNode(cfg.NodeJoin, 0, "")
+	join := b.graph.AddNode(cfg.NodeJoin)
 
 	b.graph.AddEdge(branch.current, join, false)
 	b.breakTargets = append(b.breakTargets, join)
@@ -189,7 +197,7 @@ func (b *builder) buildRepeat(state flowState, stmt *ast.RepeatStmt) flowState {
 		b.unsupported = true
 		return flowState{current: state.current}
 	}
-	join := b.graph.AddNode(cfg.NodeJoin, 0, "")
+	join := b.graph.AddNode(cfg.NodeJoin)
 
 	beforeEdges := len(b.graph.Edges())
 	b.breakTargets = append(b.breakTargets, join)
@@ -199,7 +207,7 @@ func (b *builder) buildRepeat(state flowState, stmt *ast.RepeatStmt) flowState {
 	if body.live {
 		bodyStart, ok := b.firstNewEdgeTarget(beforeEdges, state.current, state.edgeCond())
 		if !ok {
-			body = b.appendNode(state, cfg.NodeNoop, 0, "")
+			body = b.appendNode(state, cfg.NodeNoop)
 			bodyStart = body.current
 		}
 		branch := b.appendBranch(body, stmt.Condition)
@@ -220,21 +228,38 @@ func (b *builder) buildBreak(state flowState) flowState {
 	return flowState{current: state.current}
 }
 
-func (b *builder) appendNode(state flowState, kind cfg.NodeKind, target symbol.ID, callee string) flowState {
+func (b *builder) appendNode(state flowState, kind cfg.NodeKind) flowState {
 	if !state.live {
 		return state
 	}
-	point := b.graph.AddNode(kind, target, callee)
+	point := b.graph.AddNode(kind)
 	b.connect(state, point)
 	return flowState{current: point, live: true}
+}
+
+func (b *builder) appendAssign(state flowState, target symbol.ID) flowState {
+	next := b.appendNode(state, cfg.NodeAssign)
+	if next.live {
+		b.meta.SetAssignment(next.current, cfgmeta.AssignmentFact{Target: target})
+	}
+	return next
+}
+
+func (b *builder) appendCall(state flowState, calleeName string) flowState {
+	next := b.appendNode(state, cfg.NodeCall)
+	if next.live {
+		b.meta.SetCall(next.current, cfgmeta.CallFact{CalleeName: calleeName})
+	}
+	return next
 }
 
 func (b *builder) appendBranch(state flowState, expr ast.Expr) flowState {
 	if !state.live {
 		return state
 	}
-	condSymbol, condCheck := b.branchMetadata(expr)
-	point := b.graph.AddBranch(condSymbol, condCheck)
+	branchFact := b.branchMetadata(expr)
+	point := b.graph.AddBranch()
+	b.meta.SetBranch(point, branchFact)
 	b.connect(state, point)
 	return flowState{current: point, live: true}
 }
@@ -243,7 +268,7 @@ func (b *builder) materializePendingCond(state flowState) flowState {
 	if !state.live || !state.pendingCond {
 		return state
 	}
-	return b.appendNode(state, cfg.NodeNoop, 0, "")
+	return b.appendNode(state, cfg.NodeNoop)
 }
 
 func (b *builder) connect(state flowState, to cfg.Point) {
@@ -273,16 +298,16 @@ func (b *builder) firstNewEdgeTarget(edgeStart int, from cfg.Point, cond bool) (
 	return 0, false
 }
 
-func (b *builder) branchMetadata(expr ast.Expr) (symbol.ID, cfg.CondCheck) {
+func (b *builder) branchMetadata(expr ast.Expr) cfgmeta.BranchFact {
 	switch expr := expr.(type) {
 	case *ast.IdentExpr:
 		if id, ok := b.identSymbol(expr); ok {
-			return id, cfg.CondCheck{Kind: cfg.CheckTruthy}
+			return cfgmeta.BranchFact{Symbol: id, Check: cfgmeta.BranchCheck{Kind: cfgmeta.CheckTruthy}}
 		}
 	case *ast.UnaryNotOpExpr:
 		if ident, ok := expr.Expr.(*ast.IdentExpr); ok {
 			if id, ok := b.identSymbol(ident); ok {
-				return id, cfg.CondCheck{Kind: cfg.CheckFalsy}
+				return cfgmeta.BranchFact{Symbol: id, Check: cfgmeta.BranchCheck{Kind: cfgmeta.CheckFalsy}}
 			}
 		}
 	case *ast.RelationalOpExpr:
@@ -291,12 +316,12 @@ func (b *builder) branchMetadata(expr ast.Expr) (symbol.ID, cfg.CondCheck) {
 		}
 		if id, ok := b.nilCompareSymbol(expr.Lhs, expr.Rhs); ok {
 			if expr.Operator == "==" {
-				return id, cfg.CondCheck{Kind: cfg.CheckNil}
+				return cfgmeta.BranchFact{Symbol: id, Check: cfgmeta.BranchCheck{Kind: cfgmeta.CheckNil}}
 			}
-			return id, cfg.CondCheck{Kind: cfg.CheckNotNil}
+			return cfgmeta.BranchFact{Symbol: id, Check: cfgmeta.BranchCheck{Kind: cfgmeta.CheckNotNil}}
 		}
 	}
-	return 0, cfg.CondCheck{Kind: cfg.CheckNone}
+	return cfgmeta.BranchFact{Check: cfgmeta.BranchCheck{Kind: cfgmeta.CheckNone}}
 }
 
 func (b *builder) nilCompareSymbol(lhs, rhs ast.Expr) (symbol.ID, bool) {

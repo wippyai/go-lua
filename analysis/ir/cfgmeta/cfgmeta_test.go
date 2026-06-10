@@ -1,0 +1,59 @@
+package cfgmeta
+
+import (
+	"testing"
+
+	"github.com/wippyai/go-lua/analysis/ir/cfg"
+	"github.com/wippyai/go-lua/analysis/ir/symbol"
+)
+
+func TestBranchCheckKind(t *testing.T) {
+	tests := []struct {
+		kind BranchCheckKind
+		name string
+	}{
+		{CheckNone, "CheckNone"},
+		{CheckTruthy, "CheckTruthy"},
+		{CheckFalsy, "CheckFalsy"},
+		{CheckNil, "CheckNil"},
+		{CheckNotNil, "CheckNotNil"},
+		{CheckLimit, "CheckLimit"},
+		{CheckTypeEqual, "CheckTypeEqual"},
+		{CheckTypeNot, "CheckTypeNot"},
+	}
+
+	for i, tt := range tests {
+		if int(tt.kind) != i {
+			t.Errorf("%s: expected value %d, got %d", tt.name, i, tt.kind)
+		}
+	}
+}
+
+func TestLoopFactCopiesSlices(t *testing.T) {
+	var meta Metadata
+	vars := []symbol.ID{1}
+	locals := []symbol.ID{2}
+
+	meta.SetLoop(3, LoopFact{
+		Vars:         vars,
+		Locals:       locals,
+		Preheader:    cfg.Point(1),
+		HasPreheader: true,
+	})
+	vars[0] = 10
+	locals[0] = 20
+
+	fact, ok := meta.Loop(3)
+	if !ok {
+		t.Fatal("missing loop fact")
+	}
+	if fact.Vars[0] != 1 || fact.Locals[0] != 2 {
+		t.Fatalf("loop fact was mutated through input slices: %+v", fact)
+	}
+
+	fact.Vars[0] = 30
+	again, _ := meta.Loop(3)
+	if again.Vars[0] != 1 {
+		t.Fatalf("loop fact was mutated through getter slice: %+v", again)
+	}
+}

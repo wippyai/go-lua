@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
+	"github.com/wippyai/go-lua/analysis/ir/cfgmeta"
 	"github.com/wippyai/go-lua/analysis/ir/symbol"
 	"github.com/wippyai/go-lua/analysis/lua/bind"
 	"github.com/wippyai/go-lua/compiler/ast"
@@ -60,11 +61,14 @@ func pointsOfKind(graph *cfg.CFG, kind cfg.NodeKind) []cfg.Point {
 	return points
 }
 
-func assignTargets(graph *cfg.CFG) []symbol.ID {
+func assignTargets(graph *cfg.CFG, meta cfgmeta.Metadata) []symbol.ID {
 	var targets []symbol.ID
 	for _, node := range graph.Nodes {
 		if node.Kind == cfg.NodeAssign {
-			targets = append(targets, node.Target)
+			fact, ok := meta.Assignment(node.Point)
+			if ok {
+				targets = append(targets, fact.Target)
+			}
 		}
 	}
 	return targets
@@ -99,11 +103,12 @@ func rpoIndex(t *testing.T, graph *cfg.CFG, point cfg.Point) int {
 	return -1
 }
 
-func nodeWithTarget(t *testing.T, graph *cfg.CFG, target symbol.ID, ordinal int) cfg.Point {
+func nodeWithTarget(t *testing.T, graph *cfg.CFG, meta cfgmeta.Metadata, target symbol.ID, ordinal int) cfg.Point {
 	t.Helper()
 	seen := 0
 	for _, node := range graph.Nodes {
-		if node.Kind != cfg.NodeAssign || node.Target != target {
+		fact, ok := meta.Assignment(node.Point)
+		if node.Kind != cfg.NodeAssign || !ok || fact.Target != target {
 			continue
 		}
 		if seen == ordinal {
@@ -134,11 +139,12 @@ func rejectEdge(t *testing.T, graph *cfg.CFG, from, to cfg.Point) {
 	}
 }
 
-func requireTargetCount(t *testing.T, graph *cfg.CFG, target symbol.ID, want int) {
+func requireTargetCount(t *testing.T, graph *cfg.CFG, meta cfgmeta.Metadata, target symbol.ID, want int) {
 	t.Helper()
 	got := 0
 	for _, node := range graph.Nodes {
-		if node.Kind == cfg.NodeAssign && node.Target == target {
+		fact, ok := meta.Assignment(node.Point)
+		if node.Kind == cfg.NodeAssign && ok && fact.Target == target {
 			got++
 		}
 	}
@@ -150,7 +156,8 @@ func requireTargetCount(t *testing.T, graph *cfg.CFG, target symbol.ID, want int
 func TestBuildFunctionParamsBecomeLeadingAssignments(t *testing.T) {
 	fn := function([]string{"a", "b"})
 	bindings := bind.BindFunction(fn, bind.Options{})
-	graph := BuildFunction(fn, bindings)
+	result := BuildFunction(fn, bindings)
+	graph := result.Graph
 	params := bindings.ParamSymbols(fn)
 	if len(params) != 2 {
 		t.Fatalf("params = %v, want 2", params)
@@ -160,10 +167,18 @@ func TestBuildFunctionParamsBecomeLeadingAssignments(t *testing.T) {
 	if len(assigns) != 2 {
 		t.Fatalf("assign node count = %d, want 2", len(assigns))
 	}
-	if got := graph.Node(assigns[0]).Target; got != params[0] {
+	first, ok := result.Meta.Assignment(assigns[0])
+	if !ok {
+		t.Fatalf("missing first param assignment fact")
+	}
+	if got := first.Target; got != params[0] {
 		t.Fatalf("first param target = %d, want %d", got, params[0])
 	}
-	if got := graph.Node(assigns[1]).Target; got != params[1] {
+	second, ok := result.Meta.Assignment(assigns[1])
+	if !ok {
+		t.Fatalf("missing second param assignment fact")
+	}
+	if got := second.Target; got != params[1] {
 		t.Fatalf("second param target = %d, want %d", got, params[1])
 	}
 
@@ -182,7 +197,8 @@ func TestBuildChunkLinearAssignmentSequencing(t *testing.T) {
 
 	stmts := []ast.Stmt{decl, reassign, globalAssign}
 	bindings := bind.BindChunk(stmts, bind.Options{})
-	graph := BuildChunk(stmts, bindings)
+	result := BuildChunk(stmts, bindings)
+	graph := result.Graph
 
 	aID := mustLocalAt(t, bindings, decl, 0)
 	bID := mustLocalAt(t, bindings, decl, 1)
@@ -194,7 +210,7 @@ func TestBuildChunkLinearAssignmentSequencing(t *testing.T) {
 		t.Fatalf("b write symbol = %d, want %d", got, want)
 	}
 
-	targets := assignTargets(graph)
+	targets := assignTargets(graph, result.Meta)
 	want := []symbol.ID{aID, bID, aID, bID, gID}
 	if len(targets) != len(want) {
 		t.Fatalf("targets = %v, want %v", targets, want)
@@ -227,16 +243,25 @@ func TestBuildChunkCallStatementCalleeName(t *testing.T) {
 		}},
 	}
 	bindings := bind.BindChunk(stmts, bind.Options{Globals: []string{"print", "obj"}})
-	graph := BuildChunk(stmts, bindings)
+	result := BuildChunk(stmts, bindings)
+	graph := result.Graph
 
 	calls := pointsOfKind(graph, cfg.NodeCall)
 	if len(calls) != 2 {
 		t.Fatalf("call node count = %d, want 2", len(calls))
 	}
-	if got := graph.Node(calls[0]).Callee; got != "print" {
+	first, ok := result.Meta.Call(calls[0])
+	if !ok {
+		t.Fatalf("missing first call fact")
+	}
+	if got := first.CalleeName; got != "print" {
 		t.Fatalf("simple call callee = %q, want print", got)
 	}
-	if got := graph.Node(calls[1]).Callee; got != "" {
+	second, ok := result.Meta.Call(calls[1])
+	if !ok {
+		t.Fatalf("missing second call fact")
+	}
+	if got := second.CalleeName; got != "" {
 		t.Fatalf("non-simple call callee = %q, want empty", got)
 	}
 	requireEdge(t, graph, graph.Entry(), calls[0], false)
@@ -254,7 +279,8 @@ func TestBuildChunkReturnKillsFollowingFlow(t *testing.T) {
 		after,
 	}
 	bindings := bind.BindChunk(stmts, bind.Options{})
-	graph := BuildChunk(stmts, bindings)
+	result := BuildChunk(stmts, bindings)
+	graph := result.Graph
 
 	beforeID := mustLocalAt(t, bindings, before, 0)
 	afterID := mustLocalAt(t, bindings, after, 0)
@@ -262,10 +288,10 @@ func TestBuildChunkReturnKillsFollowingFlow(t *testing.T) {
 	if len(returns) != 1 {
 		t.Fatalf("return node count = %d, want 1", len(returns))
 	}
-	requireTargetCount(t, graph, beforeID, 1)
-	requireTargetCount(t, graph, afterID, 0)
+	requireTargetCount(t, graph, result.Meta, beforeID, 1)
+	requireTargetCount(t, graph, result.Meta, afterID, 0)
 	requireEdge(t, graph, returns[0], graph.Exit(), false)
-	rejectEdge(t, graph, returns[0], nodeWithTarget(t, graph, beforeID, 0))
+	rejectEdge(t, graph, returns[0], nodeWithTarget(t, graph, result.Meta, beforeID, 0))
 }
 
 func TestBuildChunkIfCreatesBranchAndJoin(t *testing.T) {
@@ -281,22 +307,26 @@ func TestBuildChunkIfCreatesBranchAndJoin(t *testing.T) {
 		},
 	}
 	bindings := bind.BindChunk(stmts, bind.Options{})
-	graph := BuildChunk(stmts, bindings)
+	result := BuildChunk(stmts, bindings)
+	graph := result.Graph
 
 	branch := firstBranch(t, graph)
 	join := firstJoin(t, graph)
 	xID := mustIdentSymbol(t, bindings, cond)
 	thenID := mustLocalAt(t, bindings, thenStmt, 0)
 	elseID := mustLocalAt(t, bindings, elseStmt, 0)
-	thenAssign := nodeWithTarget(t, graph, thenID, 0)
-	elseAssign := nodeWithTarget(t, graph, elseID, 0)
+	thenAssign := nodeWithTarget(t, graph, result.Meta, thenID, 0)
+	elseAssign := nodeWithTarget(t, graph, result.Meta, elseID, 0)
 
-	node := graph.Node(branch)
-	if node.CondSymbol != xID {
-		t.Fatalf("branch symbol = %d, want %d", node.CondSymbol, xID)
+	fact, ok := result.Meta.Branch(branch)
+	if !ok {
+		t.Fatalf("missing branch fact")
 	}
-	if node.CondCheck.Kind != cfg.CheckTruthy {
-		t.Fatalf("branch check = %v, want truthy", node.CondCheck.Kind)
+	if fact.Symbol != xID {
+		t.Fatalf("branch symbol = %d, want %d", fact.Symbol, xID)
+	}
+	if fact.Check.Kind != cfgmeta.CheckTruthy {
+		t.Fatalf("branch check = %v, want truthy", fact.Check.Kind)
 	}
 	requireEdge(t, graph, branch, thenAssign, true)
 	requireEdge(t, graph, branch, elseAssign, false)
@@ -314,7 +344,8 @@ func TestBuildChunkEmptyIfMaterializesDistinctBranchArms(t *testing.T) {
 		&ast.IfStmt{Condition: cond},
 	}
 	bindings := bind.BindChunk(stmts, bind.Options{})
-	graph := BuildChunk(stmts, bindings)
+	result := BuildChunk(stmts, bindings)
+	graph := result.Graph
 
 	branch := firstBranch(t, graph)
 	join := firstJoin(t, graph)
@@ -335,35 +366,35 @@ func TestBuildChunkBranchMetadataPatterns(t *testing.T) {
 	tests := []struct {
 		name string
 		expr func(*ast.IdentExpr) ast.Expr
-		want cfg.CondCheckKind
+		want cfgmeta.BranchCheckKind
 	}{
 		{
 			name: "truthy",
 			expr: func(x *ast.IdentExpr) ast.Expr {
 				return x
 			},
-			want: cfg.CheckTruthy,
+			want: cfgmeta.CheckTruthy,
 		},
 		{
 			name: "falsy",
 			expr: func(x *ast.IdentExpr) ast.Expr {
 				return &ast.UnaryNotOpExpr{Expr: x}
 			},
-			want: cfg.CheckFalsy,
+			want: cfgmeta.CheckFalsy,
 		},
 		{
 			name: "nil equal",
 			expr: func(x *ast.IdentExpr) ast.Expr {
 				return &ast.RelationalOpExpr{Operator: "==", Lhs: x, Rhs: &ast.NilExpr{}}
 			},
-			want: cfg.CheckNil,
+			want: cfgmeta.CheckNil,
 		},
 		{
 			name: "nil not equal",
 			expr: func(x *ast.IdentExpr) ast.Expr {
 				return &ast.RelationalOpExpr{Operator: "~=", Lhs: x, Rhs: &ast.NilExpr{}}
 			},
-			want: cfg.CheckNotNil,
+			want: cfgmeta.CheckNotNil,
 		},
 	}
 
@@ -376,13 +407,17 @@ func TestBuildChunkBranchMetadataPatterns(t *testing.T) {
 				&ast.IfStmt{Condition: tt.expr(xRead)},
 			}
 			bindings := bind.BindChunk(stmts, bind.Options{})
-			graph := BuildChunk(stmts, bindings)
+			result := BuildChunk(stmts, bindings)
+			graph := result.Graph
 			branch := firstBranch(t, graph)
-			node := graph.Node(branch)
-			if got, want := node.CondSymbol, mustIdentSymbol(t, bindings, xRead); got != want {
+			fact, ok := result.Meta.Branch(branch)
+			if !ok {
+				t.Fatalf("missing branch fact")
+			}
+			if got, want := fact.Symbol, mustIdentSymbol(t, bindings, xRead); got != want {
 				t.Fatalf("branch symbol = %d, want %d", got, want)
 			}
-			if got := node.CondCheck.Kind; got != tt.want {
+			if got := fact.Check.Kind; got != tt.want {
 				t.Fatalf("branch check = %v, want %v", got, tt.want)
 			}
 		})
@@ -400,12 +435,13 @@ func TestBuildChunkWhileCreatesBackedgeAndFalseExit(t *testing.T) {
 		},
 	}
 	bindings := bind.BindChunk(stmts, bind.Options{})
-	graph := BuildChunk(stmts, bindings)
+	result := BuildChunk(stmts, bindings)
+	graph := result.Graph
 
 	branch := firstBranch(t, graph)
 	join := firstJoin(t, graph)
 	bodyID := mustLocalAt(t, bindings, bodyStmt, 0)
-	bodyAssign := nodeWithTarget(t, graph, bodyID, 0)
+	bodyAssign := nodeWithTarget(t, graph, result.Meta, bodyID, 0)
 
 	requireEdge(t, graph, branch, bodyAssign, true)
 	requireEdge(t, graph, branch, join, false)
@@ -423,7 +459,8 @@ func TestBuildChunkWhileBreakOnlyDoesNotCreateParallelEdges(t *testing.T) {
 		},
 	}
 	bindings := bind.BindChunk(stmts, bind.Options{})
-	graph := BuildChunk(stmts, bindings)
+	result := BuildChunk(stmts, bindings)
+	graph := result.Graph
 
 	branch := firstBranch(t, graph)
 	join := firstJoin(t, graph)
@@ -462,16 +499,17 @@ func TestBuildChunkBreakInsideWhileReachesJoinPath(t *testing.T) {
 		afterStmt,
 	}
 	bindings := bind.BindChunk(stmts, bind.Options{})
-	graph := BuildChunk(stmts, bindings)
+	result := BuildChunk(stmts, bindings)
+	graph := result.Graph
 
 	join := firstJoin(t, graph)
 	bodyID := mustLocalAt(t, bindings, bodyStmt, 0)
 	deadID := mustLocalAt(t, bindings, deadStmt, 0)
 	afterID := mustLocalAt(t, bindings, afterStmt, 0)
-	bodyAssign := nodeWithTarget(t, graph, bodyID, 0)
-	afterAssign := nodeWithTarget(t, graph, afterID, 0)
+	bodyAssign := nodeWithTarget(t, graph, result.Meta, bodyID, 0)
+	afterAssign := nodeWithTarget(t, graph, result.Meta, afterID, 0)
 
-	requireTargetCount(t, graph, deadID, 0)
+	requireTargetCount(t, graph, result.Meta, deadID, 0)
 	requireEdge(t, graph, bodyAssign, join, false)
 	requireEdge(t, graph, join, afterAssign, false)
 }
@@ -485,11 +523,12 @@ func TestBuildChunkRepeatBuildsNonNilCFG(t *testing.T) {
 		},
 	}
 	bindings := bind.BindChunk(stmts, bind.Options{})
-	graph := BuildChunk(stmts, bindings)
+	result := BuildChunk(stmts, bindings)
+	graph := result.Graph
 	if graph == nil {
 		t.Fatal("BuildChunk returned nil for repeat-until")
 	}
-	requireTargetCount(t, graph, mustLocalAt(t, bindings, bodyStmt, 0), 1)
+	requireTargetCount(t, graph, result.Meta, mustLocalAt(t, bindings, bodyStmt, 0), 1)
 }
 
 func TestBuildChunkRepeatCreatesPostTestLoop(t *testing.T) {
@@ -504,14 +543,15 @@ func TestBuildChunkRepeatCreatesPostTestLoop(t *testing.T) {
 		afterStmt,
 	}
 	bindings := bind.BindChunk(stmts, bind.Options{})
-	graph := BuildChunk(stmts, bindings)
+	result := BuildChunk(stmts, bindings)
+	graph := result.Graph
 
 	branch := firstBranch(t, graph)
 	join := firstJoin(t, graph)
 	bodyID := mustLocalAt(t, bindings, bodyStmt, 0)
 	afterID := mustLocalAt(t, bindings, afterStmt, 0)
-	bodyAssign := nodeWithTarget(t, graph, bodyID, 0)
-	afterAssign := nodeWithTarget(t, graph, afterID, 0)
+	bodyAssign := nodeWithTarget(t, graph, result.Meta, bodyID, 0)
+	afterAssign := nodeWithTarget(t, graph, result.Meta, afterID, 0)
 
 	if bodyAt, branchAt := rpoIndex(t, graph, bodyAssign), rpoIndex(t, graph, branch); bodyAt >= branchAt {
 		t.Fatalf("repeat body should be before branch in reachable flow; body rpo=%d branch rpo=%d", bodyAt, branchAt)
@@ -532,7 +572,8 @@ func TestBuildChunkRepeatConditionSeesBodyLocal(t *testing.T) {
 		},
 	}
 	bindings := bind.BindChunk(stmts, bind.Options{})
-	graph := BuildChunk(stmts, bindings)
+	result := BuildChunk(stmts, bindings)
+	graph := result.Graph
 
 	bodyID := mustLocalAt(t, bindings, bodyLocal, 0)
 	conditionID := mustIdentSymbol(t, bindings, conditionRead)
@@ -540,10 +581,14 @@ func TestBuildChunkRepeatConditionSeesBodyLocal(t *testing.T) {
 		t.Fatalf("repeat condition symbol = %d, want body local %d", conditionID, bodyID)
 	}
 	branch := firstBranch(t, graph)
-	if got := graph.Node(branch).CondSymbol; got != bodyID {
+	fact, ok := result.Meta.Branch(branch)
+	if !ok {
+		t.Fatalf("missing branch fact")
+	}
+	if got := fact.Symbol; got != bodyID {
 		t.Fatalf("branch symbol = %d, want body local %d", got, bodyID)
 	}
-	if got := graph.Node(branch).CondCheck.Kind; got != cfg.CheckTruthy {
+	if got := fact.Check.Kind; got != cfgmeta.CheckTruthy {
 		t.Fatalf("branch check = %v, want truthy", got)
 	}
 }
@@ -564,16 +609,17 @@ func TestBuildChunkBreakInsideRepeatReachesJoinPath(t *testing.T) {
 		afterStmt,
 	}
 	bindings := bind.BindChunk(stmts, bind.Options{})
-	graph := BuildChunk(stmts, bindings)
+	result := BuildChunk(stmts, bindings)
+	graph := result.Graph
 
 	join := firstJoin(t, graph)
 	bodyID := mustLocalAt(t, bindings, bodyStmt, 0)
 	deadID := mustLocalAt(t, bindings, deadStmt, 0)
 	afterID := mustLocalAt(t, bindings, afterStmt, 0)
-	bodyAssign := nodeWithTarget(t, graph, bodyID, 0)
-	afterAssign := nodeWithTarget(t, graph, afterID, 0)
+	bodyAssign := nodeWithTarget(t, graph, result.Meta, bodyID, 0)
+	afterAssign := nodeWithTarget(t, graph, result.Meta, afterID, 0)
 
-	requireTargetCount(t, graph, deadID, 0)
+	requireTargetCount(t, graph, result.Meta, deadID, 0)
 	requireEdge(t, graph, bodyAssign, join, false)
 	requireEdge(t, graph, join, afterAssign, false)
 }
@@ -605,7 +651,7 @@ func TestBuildChunkUnsupportedControlFlowReturnsNil(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			stmts := []ast.Stmt{tt.stmt}
 			bindings := bind.BindChunk(stmts, bind.Options{})
-			if graph := BuildChunk(stmts, bindings); graph != nil {
+			if result := BuildChunk(stmts, bindings); result != nil {
 				t.Fatalf("BuildChunk returned graph for unsupported %s", tt.name)
 			}
 		})
@@ -654,7 +700,7 @@ func TestBuildChunkDeferredExpressionSemanticsReturnNil(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			stmts := []ast.Stmt{tt.stmt}
 			bindings := bind.BindChunk(stmts, bind.Options{Globals: []string{"make", "print", "ready", "value"}})
-			if graph := BuildChunk(stmts, bindings); graph != nil {
+			if result := BuildChunk(stmts, bindings); result != nil {
 				t.Fatalf("BuildChunk returned graph for deferred expression semantics in %s", tt.name)
 			}
 		})
@@ -664,7 +710,7 @@ func TestBuildChunkDeferredExpressionSemanticsReturnNil(t *testing.T) {
 func TestBuildChunkBreakOutsideLoopReturnsNil(t *testing.T) {
 	stmts := []ast.Stmt{&ast.BreakStmt{}}
 	bindings := bind.BindChunk(stmts, bind.Options{})
-	if graph := BuildChunk(stmts, bindings); graph != nil {
+	if result := BuildChunk(stmts, bindings); result != nil {
 		t.Fatalf("BuildChunk returned graph for break outside loop")
 	}
 }
@@ -673,7 +719,8 @@ func TestBuildChunkDoBlockDoesNotEmitScopeNodes(t *testing.T) {
 	stmt := localAssign([]string{"x"}, number("1"))
 	stmts := []ast.Stmt{&ast.DoBlockStmt{Stmts: []ast.Stmt{stmt}}}
 	bindings := bind.BindChunk(stmts, bind.Options{})
-	graph := BuildChunk(stmts, bindings)
+	result := BuildChunk(stmts, bindings)
+	graph := result.Graph
 
 	if points := pointsOfKind(graph, cfg.NodeScopeEnter); len(points) != 0 {
 		t.Fatalf("scope enter nodes = %v, want none", points)
@@ -681,7 +728,7 @@ func TestBuildChunkDoBlockDoesNotEmitScopeNodes(t *testing.T) {
 	if points := pointsOfKind(graph, cfg.NodeScopeExit); len(points) != 0 {
 		t.Fatalf("scope exit nodes = %v, want none", points)
 	}
-	requireTargetCount(t, graph, mustLocalAt(t, bindings, stmt, 0), 1)
+	requireTargetCount(t, graph, result.Meta, mustLocalAt(t, bindings, stmt, 0), 1)
 }
 
 func TestBuildChunkBindShadowingAffectsTargetsAndConditions(t *testing.T) {
@@ -702,7 +749,8 @@ func TestBuildChunkBindShadowingAffectsTargetsAndConditions(t *testing.T) {
 		assign([]ast.Expr{outerWrite}, number("4")),
 	}
 	bindings := bind.BindChunk(stmts, bind.Options{})
-	graph := BuildChunk(stmts, bindings)
+	result := BuildChunk(stmts, bindings)
+	graph := result.Graph
 
 	outerID := mustLocalAt(t, bindings, outerDecl, 0)
 	innerID := mustLocalAt(t, bindings, innerDecl, 0)
@@ -717,9 +765,13 @@ func TestBuildChunkBindShadowingAffectsTargetsAndConditions(t *testing.T) {
 	}
 
 	branch := firstBranch(t, graph)
-	if got := graph.Node(branch).CondSymbol; got != innerID {
+	fact, ok := result.Meta.Branch(branch)
+	if !ok {
+		t.Fatalf("missing branch fact")
+	}
+	if got := fact.Symbol; got != innerID {
 		t.Fatalf("branch symbol = %d, want inner symbol %d", got, innerID)
 	}
-	requireTargetCount(t, graph, outerID, 2)
-	requireTargetCount(t, graph, innerID, 2)
+	requireTargetCount(t, graph, result.Meta, outerID, 2)
+	requireTargetCount(t, graph, result.Meta, innerID, 2)
 }

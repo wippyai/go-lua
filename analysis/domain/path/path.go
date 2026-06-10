@@ -26,10 +26,10 @@ type Segment = segment.Segment
 
 // Path identifies a runtime value through its access path (variable.field.index).
 //
-// Paths are the fundamental identity mechanism for type narrowing. They track
-// values across control flow using lexical symbol identity plus an optional
-// flow/SSA version, enabling precise narrowing even when the same variable name
-// refers to different bindings.
+// Paths are the fundamental identity mechanism for flow-sensitive refinement.
+// They track values across control flow using lexical symbol identity plus an
+// optional flow version, keeping shadowed bindings distinct even when they share
+// a variable name.
 //
 // Symbol provides lexical binding identity; Root is optional for display when Symbol is set.
 // When Symbol is non-zero, it is the primary identity for the path root.

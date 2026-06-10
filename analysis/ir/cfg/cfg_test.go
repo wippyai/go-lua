@@ -1,10 +1,6 @@
 package cfg
 
-import (
-	"testing"
-
-	"github.com/wippyai/go-lua/analysis/ir/symbol"
-)
+import "testing"
 
 func TestNew(t *testing.T) {
 	c := New()
@@ -58,29 +54,26 @@ func TestNew(t *testing.T) {
 
 func TestAddNode(t *testing.T) {
 	tests := []struct {
-		name   string
-		kind   NodeKind
-		target symbol.ID
-		callee string
+		name string
+		kind NodeKind
 	}{
-		{"entry", NodeEntry, 0, ""},
-		{"exit", NodeExit, 0, ""},
-		{"assign with target", NodeAssign, 1, ""},
-		{"call with callee", NodeCall, 0, "print"},
-		{"call with both", NodeCall, 2, "fn"},
-		{"branch", NodeBranch, 0, ""},
-		{"join", NodeJoin, 0, ""},
-		{"return", NodeReturn, 0, ""},
-		{"scope enter", NodeScopeEnter, 0, ""},
-		{"scope exit", NodeScopeExit, 0, ""},
-		{"noop", NodeNoop, 0, ""},
+		{"entry", NodeEntry},
+		{"exit", NodeExit},
+		{"assign", NodeAssign},
+		{"call", NodeCall},
+		{"branch", NodeBranch},
+		{"join", NodeJoin},
+		{"return", NodeReturn},
+		{"scope enter", NodeScopeEnter},
+		{"scope exit", NodeScopeExit},
+		{"noop", NodeNoop},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			c := New()
 			initialSize := c.Size()
-			p := c.AddNode(tt.kind, tt.target, tt.callee)
+			p := c.AddNode(tt.kind)
 
 			if c.Size() != initialSize+1 {
 				t.Errorf("size = %d, want %d", c.Size(), initialSize+1)
@@ -95,14 +88,6 @@ func TestAddNode(t *testing.T) {
 				t.Errorf("kind = %d, want %d", n.Kind, tt.kind)
 			}
 
-			if n.Target != tt.target {
-				t.Errorf("target = %d, want %d", n.Target, tt.target)
-			}
-
-			if n.Callee != tt.callee {
-				t.Errorf("callee = %q, want %q", n.Callee, tt.callee)
-			}
-
 			if n.Point != p {
 				t.Errorf("point = %d, want %d", n.Point, p)
 			}
@@ -112,7 +97,7 @@ func TestAddNode(t *testing.T) {
 
 func TestNode(t *testing.T) {
 	c := New()
-	p := c.AddNode(NodeAssign, 1, "")
+	p := c.AddNode(NodeAssign)
 
 	tests := []struct {
 		name  string
@@ -144,7 +129,7 @@ func TestNode(t *testing.T) {
 func TestAddEdge(t *testing.T) {
 	t.Run("single edge", func(t *testing.T) {
 		c := New()
-		p := c.AddNode(NodeAssign, 1, "")
+		p := c.AddNode(NodeAssign)
 		c.AddEdge(c.Entry(), p, false)
 
 		edges := c.Edges()
@@ -159,9 +144,9 @@ func TestAddEdge(t *testing.T) {
 
 	t.Run("conditional edges", func(t *testing.T) {
 		c := New()
-		branch := c.AddNode(NodeBranch, 0, "")
-		then := c.AddNode(NodeAssign, 1, "")
-		els := c.AddNode(NodeAssign, 2, "")
+		branch := c.AddNode(NodeBranch)
+		then := c.AddNode(NodeAssign)
+		els := c.AddNode(NodeAssign)
 
 		c.AddEdge(branch, then, true)
 		c.AddEdge(branch, els, false)
@@ -183,7 +168,7 @@ func TestAddEdge(t *testing.T) {
 
 	t.Run("updates predecessors", func(t *testing.T) {
 		c := New()
-		p := c.AddNode(NodeAssign, 1, "")
+		p := c.AddNode(NodeAssign)
 		c.AddEdge(c.Entry(), p, false)
 
 		preds := c.Predecessors(p)
@@ -194,7 +179,7 @@ func TestAddEdge(t *testing.T) {
 
 	t.Run("updates successors", func(t *testing.T) {
 		c := New()
-		p := c.AddNode(NodeAssign, 1, "")
+		p := c.AddNode(NodeAssign)
 		c.AddEdge(c.Entry(), p, false)
 
 		succs := c.Successors(c.Entry())
@@ -216,7 +201,7 @@ func TestPredecessors(t *testing.T) {
 
 	t.Run("single predecessor", func(t *testing.T) {
 		c := New()
-		p := c.AddNode(NodeAssign, 1, "")
+		p := c.AddNode(NodeAssign)
 		c.AddEdge(c.Entry(), p, false)
 
 		preds := c.Predecessors(p)
@@ -231,9 +216,9 @@ func TestPredecessors(t *testing.T) {
 
 	t.Run("multiple predecessors", func(t *testing.T) {
 		c := New()
-		left := c.AddNode(NodeAssign, 1, "")
-		right := c.AddNode(NodeAssign, 2, "")
-		join := c.AddNode(NodeJoin, 0, "")
+		left := c.AddNode(NodeAssign)
+		right := c.AddNode(NodeAssign)
+		join := c.AddNode(NodeJoin)
 
 		c.AddEdge(left, join, false)
 		c.AddEdge(right, join, false)
@@ -257,7 +242,7 @@ func TestSuccessors(t *testing.T) {
 
 	t.Run("single successor", func(t *testing.T) {
 		c := New()
-		p := c.AddNode(NodeAssign, 1, "")
+		p := c.AddNode(NodeAssign)
 		c.AddEdge(c.Entry(), p, false)
 
 		succs := c.Successors(c.Entry())
@@ -268,9 +253,9 @@ func TestSuccessors(t *testing.T) {
 
 	t.Run("multiple successors", func(t *testing.T) {
 		c := New()
-		branch := c.AddNode(NodeBranch, 0, "")
-		left := c.AddNode(NodeAssign, 1, "")
-		right := c.AddNode(NodeAssign, 2, "")
+		branch := c.AddNode(NodeBranch)
+		left := c.AddNode(NodeAssign)
+		right := c.AddNode(NodeAssign)
 
 		c.AddEdge(branch, left, true)
 		c.AddEdge(branch, right, false)
@@ -296,7 +281,7 @@ func TestIsJoin(t *testing.T) {
 		{
 			"single predecessor",
 			func(c *CFG) Point {
-				p := c.AddNode(NodeAssign, 1, "")
+				p := c.AddNode(NodeAssign)
 				c.AddEdge(c.Entry(), p, false)
 				return p
 			},
@@ -305,9 +290,9 @@ func TestIsJoin(t *testing.T) {
 		{
 			"two predecessors",
 			func(c *CFG) Point {
-				left := c.AddNode(NodeAssign, 1, "")
-				right := c.AddNode(NodeAssign, 2, "")
-				join := c.AddNode(NodeJoin, 0, "")
+				left := c.AddNode(NodeAssign)
+				right := c.AddNode(NodeAssign)
+				join := c.AddNode(NodeJoin)
 				c.AddEdge(left, join, false)
 				c.AddEdge(right, join, false)
 				return join
@@ -342,7 +327,7 @@ func TestIsBranch(t *testing.T) {
 		{
 			"single successor",
 			func(c *CFG) Point {
-				p := c.AddNode(NodeAssign, 1, "")
+				p := c.AddNode(NodeAssign)
 				c.AddEdge(c.Entry(), p, false)
 				return c.Entry()
 			},
@@ -351,9 +336,9 @@ func TestIsBranch(t *testing.T) {
 		{
 			"two successors",
 			func(c *CFG) Point {
-				branch := c.AddNode(NodeBranch, 0, "")
-				left := c.AddNode(NodeAssign, 1, "")
-				right := c.AddNode(NodeAssign, 2, "")
+				branch := c.AddNode(NodeBranch)
+				left := c.AddNode(NodeAssign)
+				right := c.AddNode(NodeAssign)
 				c.AddEdge(branch, left, true)
 				c.AddEdge(branch, right, false)
 				return branch
@@ -384,8 +369,8 @@ func TestEdges(t *testing.T) {
 
 	t.Run("returns all edges", func(t *testing.T) {
 		c := New()
-		p1 := c.AddNode(NodeAssign, 1, "")
-		p2 := c.AddNode(NodeAssign, 2, "")
+		p1 := c.AddNode(NodeAssign)
+		p2 := c.AddNode(NodeAssign)
 
 		c.AddEdge(c.Entry(), p1, false)
 		c.AddEdge(p1, p2, false)
@@ -405,7 +390,7 @@ func TestSize(t *testing.T) {
 	}
 
 	for i := 0; i < 5; i++ {
-		c.AddNode(NodeAssign, 0, "")
+		c.AddNode(NodeAssign)
 
 		if c.Size() != 3+i {
 			t.Errorf("after %d adds, size = %d, want %d", i+1, c.Size(), 3+i)
@@ -418,7 +403,7 @@ func TestLinearCFG(t *testing.T) {
 	nodes := make([]Point, 5)
 
 	for i := range nodes {
-		nodes[i] = c.AddNode(NodeAssign, 0, "")
+		nodes[i] = c.AddNode(NodeAssign)
 	}
 
 	c.AddEdge(c.Entry(), nodes[0], false)
@@ -462,10 +447,10 @@ func TestLinearCFG(t *testing.T) {
 
 func TestDiamondCFG(t *testing.T) {
 	c := New()
-	branch := c.AddNode(NodeBranch, 0, "")
-	left := c.AddNode(NodeAssign, 5, "")
-	right := c.AddNode(NodeAssign, 6, "")
-	join := c.AddNode(NodeJoin, 0, "")
+	branch := c.AddNode(NodeBranch)
+	left := c.AddNode(NodeAssign)
+	right := c.AddNode(NodeAssign)
+	join := c.AddNode(NodeJoin)
 
 	c.AddEdge(c.Entry(), branch, false)
 	c.AddEdge(branch, left, true)
@@ -526,11 +511,11 @@ func TestDiamondCFG(t *testing.T) {
 func TestNestedLoopCFG(t *testing.T) {
 	c := New()
 
-	outerHeader := c.AddNode(NodeBranch, 0, "")
-	innerHeader := c.AddNode(NodeBranch, 0, "")
-	body := c.AddNode(NodeAssign, 1, "")
-	innerJoin := c.AddNode(NodeJoin, 0, "")
-	outerJoin := c.AddNode(NodeJoin, 0, "")
+	outerHeader := c.AddNode(NodeBranch)
+	innerHeader := c.AddNode(NodeBranch)
+	body := c.AddNode(NodeAssign)
+	innerJoin := c.AddNode(NodeJoin)
+	outerJoin := c.AddNode(NodeJoin)
 
 	c.AddEdge(c.Entry(), outerHeader, false)
 	c.AddEdge(outerHeader, innerHeader, true)
@@ -581,10 +566,10 @@ func TestNestedLoopCFG(t *testing.T) {
 func TestMultipleExits(t *testing.T) {
 	c := New()
 
-	check := c.AddNode(NodeBranch, 0, "")
-	earlyReturn := c.AddNode(NodeReturn, 0, "")
-	normal := c.AddNode(NodeAssign, 1, "")
-	normalReturn := c.AddNode(NodeReturn, 0, "")
+	check := c.AddNode(NodeBranch)
+	earlyReturn := c.AddNode(NodeReturn)
+	normal := c.AddNode(NodeAssign)
+	normalReturn := c.AddNode(NodeReturn)
 
 	c.AddEdge(c.Entry(), check, false)
 	c.AddEdge(check, earlyReturn, true)
@@ -606,9 +591,9 @@ func TestMultipleExits(t *testing.T) {
 func TestEdgeCond(t *testing.T) {
 	c := New()
 
-	branch := c.AddNode(NodeBranch, 1, "")
-	thenBlock := c.AddNode(NodeAssign, 2, "")
-	elseBlock := c.AddNode(NodeAssign, 3, "")
+	branch := c.AddNode(NodeBranch)
+	thenBlock := c.AddNode(NodeAssign)
+	elseBlock := c.AddNode(NodeAssign)
 
 	c.AddEdge(c.Entry(), branch, false)
 	c.AddEdge(branch, thenBlock, true)  // then-branch
@@ -651,7 +636,7 @@ func TestEdgeCond(t *testing.T) {
 func TestAddBranch(t *testing.T) {
 	c := New()
 
-	branch := c.AddBranch(1, CondCheck{Kind: CheckNil})
+	branch := c.AddBranch()
 
 	t.Run("returns valid point", func(t *testing.T) {
 		n := c.Node(branch)
@@ -667,65 +652,21 @@ func TestAddBranch(t *testing.T) {
 		}
 	})
 
-	t.Run("has condition info", func(t *testing.T) {
-		n := c.Node(branch)
-		if n.CondSymbol != 1 {
-			t.Errorf("expected CondSymbol 1, got %d", n.CondSymbol)
-		}
-
-		if n.CondCheck.Kind != CheckNil {
-			t.Errorf("expected CondCheck.Kind CheckNil, got %d", n.CondCheck.Kind)
-		}
-	})
-
 	t.Run("increments size", func(t *testing.T) {
 		before := c.Size()
-		c.AddBranch(2, CondCheck{})
+		c.AddBranch()
 		after := c.Size()
 
 		if after != before+1 {
 			t.Errorf("size = %d, want %d", after, before+1)
 		}
 	})
-
-	t.Run("type check with typename", func(t *testing.T) {
-		typeCheck := c.AddBranch(3, CondCheck{Kind: CheckTypeEqual, TypeName: "string"})
-		n := c.Node(typeCheck)
-		if n.CondCheck.Kind != CheckTypeEqual {
-			t.Errorf("expected CheckTypeEqual, got %d", n.CondCheck.Kind)
-		}
-		if n.CondCheck.TypeName != "string" {
-			t.Errorf("expected TypeName 'string', got %q", n.CondCheck.TypeName)
-		}
-	})
-}
-
-func TestCondCheckKind(t *testing.T) {
-	tests := []struct {
-		kind CondCheckKind
-		name string
-	}{
-		{CheckNone, "CheckNone"},
-		{CheckTruthy, "CheckTruthy"},
-		{CheckFalsy, "CheckFalsy"},
-		{CheckNil, "CheckNil"},
-		{CheckNotNil, "CheckNotNil"},
-		{CheckLimit, "CheckLimit"},
-		{CheckTypeEqual, "CheckTypeEqual"},
-		{CheckTypeNot, "CheckTypeNot"},
-	}
-
-	for i, tt := range tests {
-		if int(tt.kind) != i {
-			t.Errorf("%s: expected value %d, got %d", tt.name, i, tt.kind)
-		}
-	}
 }
 
 func TestSuccessor(t *testing.T) {
 	c := New()
-	n1 := c.AddNode(NodeAssign, 1, "")
-	n2 := c.AddNode(NodeAssign, 2, "")
+	n1 := c.AddNode(NodeAssign)
+	n2 := c.AddNode(NodeAssign)
 	c.AddEdge(n1, n2, false)
 
 	t.Run("returns single successor", func(t *testing.T) {
@@ -795,8 +736,8 @@ func TestNilCFG(t *testing.T) {
 func TestRPO(t *testing.T) {
 	t.Run("simple linear CFG", func(t *testing.T) {
 		c := New()
-		n1 := c.AddNode(NodeAssign, 0, "")
-		n2 := c.AddNode(NodeAssign, 0, "")
+		n1 := c.AddNode(NodeAssign)
+		n2 := c.AddNode(NodeAssign)
 		c.AddEdge(c.Entry(), n1, false)
 		c.AddEdge(n1, n2, false)
 		c.AddEdge(n2, c.Exit(), false)
@@ -814,10 +755,10 @@ func TestRPO(t *testing.T) {
 
 	t.Run("branch CFG", func(t *testing.T) {
 		c := New()
-		branch := c.AddBranch(1, CondCheck{})
-		thenN := c.AddNode(NodeAssign, 0, "")
-		elseN := c.AddNode(NodeAssign, 0, "")
-		join := c.AddNode(NodeJoin, 0, "")
+		branch := c.AddBranch()
+		thenN := c.AddNode(NodeAssign)
+		elseN := c.AddNode(NodeAssign)
+		join := c.AddNode(NodeJoin)
 
 		c.AddEdge(c.Entry(), branch, false)
 		c.AddEdge(branch, thenN, true)
@@ -842,8 +783,8 @@ func TestRPO(t *testing.T) {
 
 func TestRPO_ReturnValueIsIndependentSlice(t *testing.T) {
 	c := New()
-	n1 := c.AddNode(NodeAssign, 0, "")
-	n2 := c.AddNode(NodeAssign, 0, "")
+	n1 := c.AddNode(NodeAssign)
+	n2 := c.AddNode(NodeAssign)
 	c.AddEdge(c.Entry(), n1, false)
 	c.AddEdge(n1, n2, false)
 	c.AddEdge(n2, c.Exit(), false)
@@ -866,7 +807,7 @@ func TestRPO_ReturnValueIsIndependentSlice(t *testing.T) {
 
 func TestRPO_InvalidatesOnGraphMutation(t *testing.T) {
 	c := New()
-	n1 := c.AddNode(NodeAssign, 0, "")
+	n1 := c.AddNode(NodeAssign)
 	c.AddEdge(c.Entry(), n1, false)
 	c.AddEdge(n1, c.Exit(), false)
 
@@ -875,7 +816,7 @@ func TestRPO_InvalidatesOnGraphMutation(t *testing.T) {
 		t.Fatalf("expected 3 points before mutation, got %d", len(before))
 	}
 
-	n2 := c.AddNode(NodeAssign, 0, "")
+	n2 := c.AddNode(NodeAssign)
 	c.AddEdge(n1, n2, false)
 	c.AddEdge(n2, c.Exit(), false)
 
@@ -904,7 +845,7 @@ func BenchmarkAddNode(b *testing.B) {
 	c := New()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		c.AddNode(NodeAssign, 1, "")
+		c.AddNode(NodeAssign)
 	}
 }
 
@@ -912,7 +853,7 @@ func BenchmarkAddEdge(b *testing.B) {
 	c := New()
 	nodes := make([]Point, b.N+1)
 	for i := range nodes {
-		nodes[i] = c.AddNode(NodeAssign, 0, "")
+		nodes[i] = c.AddNode(NodeAssign)
 	}
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
@@ -922,8 +863,8 @@ func BenchmarkAddEdge(b *testing.B) {
 
 func BenchmarkPredecessors(b *testing.B) {
 	c := New()
-	n1 := c.AddNode(NodeAssign, 0, "")
-	n2 := c.AddNode(NodeAssign, 0, "")
+	n1 := c.AddNode(NodeAssign)
+	n2 := c.AddNode(NodeAssign)
 	c.AddEdge(c.Entry(), n1, false)
 	c.AddEdge(n1, n2, false)
 	b.ResetTimer()
@@ -934,8 +875,8 @@ func BenchmarkPredecessors(b *testing.B) {
 
 func BenchmarkSuccessors(b *testing.B) {
 	c := New()
-	n1 := c.AddNode(NodeAssign, 0, "")
-	n2 := c.AddNode(NodeAssign, 0, "")
+	n1 := c.AddNode(NodeAssign)
+	n2 := c.AddNode(NodeAssign)
 	c.AddEdge(c.Entry(), n1, false)
 	c.AddEdge(n1, n2, false)
 	b.ResetTimer()
@@ -957,7 +898,7 @@ func BenchmarkBuildLinearCFG(b *testing.B) {
 		c := New()
 		prev := c.Entry()
 		for j := 0; j < 50; j++ {
-			n := c.AddNode(NodeAssign, 1, "")
+			n := c.AddNode(NodeAssign)
 			c.AddEdge(prev, n, false)
 			prev = n
 		}
@@ -970,10 +911,10 @@ func BenchmarkBuildDiamondCFG(b *testing.B) {
 		c := New()
 		prev := c.Entry()
 		for j := 0; j < 20; j++ {
-			branch := c.AddBranch(1, CondCheck{})
-			thenN := c.AddNode(NodeAssign, 2, "")
-			elseN := c.AddNode(NodeAssign, 3, "")
-			join := c.AddNode(NodeJoin, 0, "")
+			branch := c.AddBranch()
+			thenN := c.AddNode(NodeAssign)
+			elseN := c.AddNode(NodeAssign)
+			join := c.AddNode(NodeJoin)
 			c.AddEdge(prev, branch, false)
 			c.AddEdge(branch, thenN, true)
 			c.AddEdge(branch, elseN, false)
@@ -996,10 +937,10 @@ func buildLargeCFG(n int) *CFG {
 	prev := c.Entry()
 	for i := 0; i < n; i++ {
 		if i%5 == 0 {
-			branch := c.AddBranch(10, CondCheck{})
-			thenN := c.AddNode(NodeAssign, 1, "")
-			elseN := c.AddNode(NodeAssign, 2, "")
-			join := c.AddNode(NodeJoin, 0, "")
+			branch := c.AddBranch()
+			thenN := c.AddNode(NodeAssign)
+			elseN := c.AddNode(NodeAssign)
+			join := c.AddNode(NodeJoin)
 			c.AddEdge(prev, branch, false)
 			c.AddEdge(branch, thenN, true)
 			c.AddEdge(branch, elseN, false)
@@ -1007,7 +948,7 @@ func buildLargeCFG(n int) *CFG {
 			c.AddEdge(elseN, join, false)
 			prev = join
 		} else {
-			node := c.AddNode(NodeAssign, 4, "")
+			node := c.AddNode(NodeAssign)
 			c.AddEdge(prev, node, false)
 			prev = node
 		}

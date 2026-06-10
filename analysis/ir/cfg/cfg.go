@@ -9,8 +9,8 @@
 // Point: An index identifying a location in the CFG. Points are local to each
 // function's CFG and serve as keys for type state maps.
 //
-// Node: Contains metadata about a program point including its kind, target variable
-// (for assignments), callee (for calls), and condition info (for branches).
+// Node: Contains only the program point and node kind. Semantic facts for
+// assignments, calls, branches, loops, and scope exits live in cfgmeta.Metadata.
 //
 // Edge: A directed edge from one point to another. For branch edges, Cond is the
 // taken-branch flag.
@@ -27,15 +27,10 @@
 // # Analysis Support
 //
 // The CFG supports forward dataflow analysis via RPO (reverse post-order) traversal.
-// Branch conditions are exposed for constraint extraction, and join points are
-// identified for type merging.
+// Join and branch topology is exposed through predecessor/successor shape.
 package cfg
 
-import (
-	"sync/atomic"
-
-	"github.com/wippyai/go-lua/analysis/ir/symbol"
-)
+import "sync/atomic"
 
 // Point represents a location in a control flow graph.
 // Each Point is an index into the CFG's node array, local to that CFG.
@@ -59,61 +54,10 @@ const (
 	NodeNoop                       // Structural no-op used to materialize empty control-flow arms
 )
 
-// CondCheckKind identifies the type of condition check in a branch.
-//
-// The type checker uses CondCheckKind to extract constraints from branch
-// conditions without re-analyzing the expression. This enables efficient
-// type narrowing in then/else branches.
-type CondCheckKind uint8
-
-// Condition check kind constants represent recognizable branch patterns.
-const (
-	CheckNone      CondCheckKind = iota // Complex expression, no simple constraint
-	CheckTruthy                         // if x then: narrows x to truthy values
-	CheckFalsy                          // if not x then: narrows x to falsy values
-	CheckNil                            // x == nil: narrows x to nil
-	CheckNotNil                         // x ~= nil: narrows x to non-nil
-	CheckLimit                          // Numeric for loop limit (i <= n)
-	CheckTypeEqual                      // type(x) == "typename": narrows to that type
-	CheckTypeNot                        // type(x) ~= "typename": excludes that type
-)
-
-// CondCheck represents a condition check in a branch node.
-type CondCheck struct {
-	Kind     CondCheckKind
-	TypeName string // Only for CheckTypeEqual/CheckTypeNot
-}
-
-// Node represents a CFG node with metadata about the program point.
-//
-// Different node kinds use different fields:
-//   - NodeAssign: Target holds the assigned variable's symbol.ID
-//   - NodeCall: Callee holds the function name for global/external calls
-//   - NodeBranch: CondSymbol and CondCheck describe the condition for narrowing
-//   - NodeScopeExit: CondOrigin points at the branch whose guard was copied onto
-//     this exit when CondOriginSet is true
-//   - NodeJoin: LoopVars, LoopLocals, LoopPreheader describe loop structure
-//
-// The Point field is the node's index in the CFG's Nodes slice.
+// Node represents a CFG topology node.
 type Node struct {
-	Point      Point
-	Kind       NodeKind
-	Target     symbol.ID // Variable for assignments (0 = none or unresolved)
-	Callee     string    // Function for calls (global/external name)
-	CondSymbol symbol.ID // Root symbol being tested (0 = none or complex expression)
-	CondCheck  CondCheck // Condition check type and optional type name
-	// CondOrigin is the exact branch point that owns a copied scope-exit guard.
-	// It prevents post-branch narrowing from rediscovering guards by loose
-	// CondSymbol/CondCheck matching, which is ambiguous for relational conditions.
-	CondOrigin    Point
-	CondOriginSet bool
-	LoopVars      []symbol.ID
-	LoopLocals    []symbol.ID
-	// LoopPreheader is the unique predecessor that enters a loop from outside
-	// (i.e., not a back-edge). For loops with multiple entry points or complex
-	// goto patterns, this points to the primary loop entry.
-	LoopPreheader    Point
-	LoopPreheaderSet bool
+	Point Point
+	Kind  NodeKind
 }
 
 // Edge represents a directed control flow edge between two points.
@@ -131,13 +75,13 @@ type Edge struct {
 
 // Graph is the interface for control flow graphs.
 //
-// This interface abstracts over different CFG implementations, allowing the
-// type checker to work with various CFG builders.
+// This interface abstracts over different CFG implementations for dataflow
+// consumers.
 //
 // Key methods for dataflow analysis:
 //   - RPO(): Returns nodes in reverse post-order for forward analysis
 //   - Predecessors/Successors: Enable backward/forward traversal
-//   - EdgeCond: Retrieves branch condition for type narrowing
+//   - EdgeCond: Retrieves branch edge direction
 //   - IsJoin/IsBranch: Identifies merge points and decision points
 type Graph interface {
 	ID() uint64                           // Process-local identifier for this CFG instance
@@ -157,8 +101,8 @@ type Graph interface {
 
 // CFG represents the control flow graph for a function.
 //
-// A CFG is built during AST analysis and consumed by the type checker for
-// flow-sensitive analysis. The graph is immutable after construction.
+// A CFG is built during AST analysis and consumed by flow-sensitive analysis.
+// The graph is immutable after construction.
 //
 // Structure:
 //   - Nodes: flat array indexed by Point
@@ -205,8 +149,8 @@ func NewWithCapacity(nodeCap, edgeCap int) *CFG {
 		preds: make([][]Point, 0, nodeCap),
 		succs: make([][]Point, 0, nodeCap),
 	}
-	c.entry = c.AddNode(NodeEntry, 0, "")
-	c.exit = c.AddNode(NodeExit, 0, "")
+	c.entry = c.AddNode(NodeEntry)
+	c.exit = c.AddNode(NodeExit)
 	return c
 }
 
@@ -246,10 +190,10 @@ func (c *CFG) ID() uint64 {
 }
 
 // AddNode adds a node and returns its point.
-func (c *CFG) AddNode(kind NodeKind, target symbol.ID, callee string) Point {
+func (c *CFG) AddNode(kind NodeKind) Point {
 	c.invalidateRPO()
 	p := Point(len(c.Nodes))
-	c.Nodes = append(c.Nodes, Node{Point: p, Kind: kind, Target: target, Callee: callee})
+	c.Nodes = append(c.Nodes, Node{Point: p, Kind: kind})
 	c.ensureAdjacencyLen(len(c.Nodes))
 	return p
 }
@@ -382,17 +326,9 @@ func (c *CFG) EdgeCond(from, to Point) (bool, bool) {
 	return false, false
 }
 
-// AddBranch adds a branch node with condition info.
-func (c *CFG) AddBranch(condSymbol symbol.ID, condCheck CondCheck) Point {
-	c.invalidateRPO()
-	p := Point(len(c.Nodes))
-	c.Nodes = append(c.Nodes, Node{
-		Point:      p,
-		Kind:       NodeBranch,
-		CondSymbol: condSymbol,
-		CondCheck:  condCheck,
-	})
-	return p
+// AddBranch adds a branch node.
+func (c *CFG) AddBranch() Point {
+	return c.AddNode(NodeBranch)
 }
 
 // RPO returns nodes in reverse post-order for forward dataflow analysis.
