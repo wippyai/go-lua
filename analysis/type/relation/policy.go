@@ -9,6 +9,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/type/discriminant"
 	"github.com/wippyai/go-lua/analysis/type/gradual"
 	"github.com/wippyai/go-lua/analysis/type/kind"
+	"github.com/wippyai/go-lua/analysis/type/literalbase"
 	. "github.com/wippyai/go-lua/analysis/type/typ"
 )
 
@@ -1400,7 +1401,7 @@ func (s *returnJoinState) joinRecordFieldSlot(a, b Type, slotJoin SlotJoinFunc) 
 	// Records reach a field-slot merge only after the discriminant gate admits
 	// their coalesce, so no surviving field is a partitioning tag: equal literals
 	// stay precise and differing literals widen to their shared base.
-	if widened, ok := joinNonDiscriminantLiteralField(a, b); ok {
+	if widened, ok := literalbase.JoinNonDiscriminantField(a, b); ok {
 		return widened
 	}
 	return slotJoin(a, b)
@@ -1460,106 +1461,6 @@ func JoinUnionFieldSlot(a, b Type, preserveLiteral bool) Type {
 		return slotJoin(a, b)
 	}
 	return s.joinRecordFieldSlot(a, b, slotJoin)
-}
-
-func joinNonDiscriminantLiteralField(a, b Type) (Type, bool) {
-	// Join is idempotent: equal literal-bearing slots (single literals or whole
-	// literal unions) keep their precise type rather than widening to the base.
-	if SameNodeOrAcyclicEqual(a, b) {
-		return a, true
-	}
-	al, aOK := literalType(a)
-	bl, bOK := literalType(b)
-	if aOK && bOK && al.Base == bl.Base {
-		if LiteralEquals(al, bl) {
-			return a, true
-		}
-		return literalBase(al), true
-	}
-	return commonLiteralFamilyBase(a, b)
-}
-
-func commonLiteralFamilyBase(a, b Type) (Type, bool) {
-	left, ok := literalFamilyBase(a)
-	if !ok {
-		return nil, false
-	}
-	right, ok := literalFamilyBase(b)
-	if !ok {
-		return nil, false
-	}
-	return mergeLiteralBases(left, right)
-}
-
-func literalFamilyBase(t Type) (Type, bool) {
-	t = UnwrapAnnotated(t)
-	if t == nil {
-		return nil, false
-	}
-	switch v := t.(type) {
-	case *Alias:
-		return literalFamilyBase(v.Target)
-	case *Literal:
-		base := literalBase(v)
-		return base, base != nil
-	case *Union:
-		var base Type
-		for _, member := range v.Members {
-			memberBase, ok := literalFamilyBase(member)
-			if !ok {
-				return nil, false
-			}
-			if base == nil {
-				base = memberBase
-				continue
-			}
-			merged, ok := mergeLiteralBases(base, memberBase)
-			if !ok {
-				return nil, false
-			}
-			base = merged
-		}
-		return base, base != nil
-	default:
-		switch t.Kind() {
-		case kind.Boolean, kind.Integer, kind.Number, kind.String:
-			return t, true
-		default:
-			return nil, false
-		}
-	}
-}
-
-func mergeLiteralBases(a, b Type) (Type, bool) {
-	if a == nil || b == nil {
-		return nil, false
-	}
-	if SameNodeOrAcyclicEqual(a, b) {
-		return a, true
-	}
-	if (a.Kind() == kind.Integer && b.Kind() == kind.Number) ||
-		(a.Kind() == kind.Number && b.Kind() == kind.Integer) {
-		return Number, true
-	}
-	return nil, false
-}
-
-func literalBase(lit *Literal) Type {
-	if lit == nil {
-		return nil
-	}
-	switch lit.Base {
-	case kind.Boolean:
-		return Boolean
-	case kind.Integer:
-		return Integer
-	case kind.Number:
-		return Number
-	case kind.String:
-		return String
-	default:
-		return nil
-	}
 }
 
 func normalizeMergedRecordField(t Type) (Type, bool) {
@@ -1630,18 +1531,6 @@ func compatibleRecordMetatables(a, b *Record) bool {
 		return a.Metatable == nil && b.Metatable == nil
 	}
 	return SameNodeOrAcyclicEqual(a.Metatable, b.Metatable)
-}
-
-func literalType(t Type) (*Literal, bool) {
-	for {
-		a, ok := t.(*Alias)
-		if !ok {
-			break
-		}
-		t = a.Target
-	}
-	lit, ok := t.(*Literal)
-	return lit, ok
 }
 
 // JoinBranchOutcome merges mutually-exclusive expression outcomes (for example,
