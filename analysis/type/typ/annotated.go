@@ -38,7 +38,7 @@ func NewAnnotated(inner Type, annotations []annotation.Annotation) Type {
 	}
 	h := hash.HashCombine(inner.Hash(), annotatedHashSalt)
 	for _, ann := range annotations {
-		h = hash.HashCombine(h, hash.FnvString(ann.Name))
+		h = hash.HashCombine(h, ann.Hash())
 	}
 	return &Annotated{
 		Inner:                 inner,
@@ -110,7 +110,7 @@ func (a *Annotated) Equals(other Type) bool {
 		return false
 	}
 	for i, ann := range a.Annotations {
-		if ann.Name != o.Annotations[i].Name {
+		if !ann.Equal(o.Annotations[i]) {
 			return false
 		}
 	}

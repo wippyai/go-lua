@@ -72,12 +72,16 @@ func TestAnnotated_Hash(t *testing.T) {
 	ann1 := NewAnnotated(Number, []annotation.Annotation{{Name: "min", Arg: float64(0)}})
 	ann2 := NewAnnotated(Number, []annotation.Annotation{{Name: "min", Arg: float64(0)}})
 	ann3 := NewAnnotated(Number, []annotation.Annotation{{Name: "max", Arg: float64(100)}})
+	ann4 := NewAnnotated(Number, []annotation.Annotation{{Name: "min", Arg: float64(1)}})
 
 	if ann1.Hash() != ann2.Hash() {
 		t.Error("same annotations should have same hash")
 	}
 	if ann1.Hash() == ann3.Hash() {
 		t.Error("different annotations should have different hash")
+	}
+	if ann1.Hash() == ann4.Hash() {
+		t.Error("different annotation args should have different hash")
 	}
 }
 
@@ -86,6 +90,7 @@ func TestAnnotated_Equals(t *testing.T) {
 	ann2 := NewAnnotated(Number, []annotation.Annotation{{Name: "min", Arg: float64(0)}})
 	ann3 := NewAnnotated(Number, []annotation.Annotation{{Name: "max", Arg: float64(100)}})
 	ann4 := NewAnnotated(String, []annotation.Annotation{{Name: "min", Arg: float64(0)}})
+	ann5 := NewAnnotated(Number, []annotation.Annotation{{Name: "min", Arg: float64(1)}})
 
 	if !ann1.Equals(ann2) {
 		t.Error("same annotated types should be equal")
@@ -95,6 +100,9 @@ func TestAnnotated_Equals(t *testing.T) {
 	}
 	if ann1.Equals(ann4) {
 		t.Error("different inner types should not be equal")
+	}
+	if ann1.Equals(ann5) {
+		t.Error("different annotation args should not be equal")
 	}
 	if ann1.Equals(Number) {
 		t.Error("annotated should not equal non-annotated")
