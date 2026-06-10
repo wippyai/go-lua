@@ -1,7 +1,6 @@
 package relation
 
 import (
-	"github.com/wippyai/go-lua/analysis/type/coalesce"
 	"github.com/wippyai/go-lua/analysis/type/kind"
 	. "github.com/wippyai/go-lua/analysis/type/typ"
 )
@@ -77,49 +76,14 @@ func joinDedupeUsesStructuralEquality(t Type) bool {
 	}
 }
 
-// CoalesceJoinProducts applies the relation-owned product-family coalescing
-// policy used before constructing a flow-join union.
-func CoalesceJoinProducts(types []Type, joinTypes coalesce.TypeSetJoinFunc) []Type {
-	return CoalesceJoinProductsWithSlotJoin(types, joinTypes, nil)
-}
-
-// CoalesceJoinProductsWithSlotJoin applies the relation-owned product-family
+// CoalesceProductFamiliesWithSlotJoin applies the relation-owned product-family
 // coalescing policy using slotJoin for compatible record/product slots. A nil
 // slotJoin preserves the default JoinReturnSlot-backed record coalescing.
-func CoalesceJoinProductsWithSlotJoin(types []Type, joinTypes coalesce.TypeSetJoinFunc, slotJoin SlotJoinFunc) []Type {
+func CoalesceProductFamiliesWithSlotJoin(types []Type, slotJoin SlotJoinFunc) []Type {
 	state := newReturnJoinState()
 	slotJoin = state.slotJoinOrDefault(slotJoin)
 	products := state.productCoalescer()
-	types = CoalesceEmptyRecordWithMap(types)
-	types = CoalesceEmptyRecordWithArray(types)
-	types = CoalesceMaps(types, joinTypes)
 	types = products.coalesceRecursiveRecordFamiliesWithSlotJoin(types, slotJoin)
 	types = products.coalesceCompatibleRecordTypesWithSlotJoin(types, slotJoin)
-	types = CoalesceRecordOpenness(types)
-	types = CoalesceMaps(types, joinTypes)
 	return types
-}
-
-// CoalesceEmptyRecordWithArray removes empty records when arrays are present.
-func CoalesceEmptyRecordWithArray(types []Type) []Type {
-	return coalesce.CoalesceEmptyRecordWithArray(types)
-}
-
-// CoalesceMaps merges multiple map types into a single map with joined key and
-// value slots. The caller supplies the slot join so flow joins keep their own
-// recursive orchestration while relation owns the map coalescing policy.
-func CoalesceMaps(types []Type, joinTypes coalesce.TypeSetJoinFunc) []Type {
-	return coalesce.CoalesceMaps(types, joinTypes)
-}
-
-// CoalesceRecordOpenness converts closed records to open when joining with open
-// records.
-func CoalesceRecordOpenness(types []Type) []Type {
-	return coalesce.CoalesceRecordOpenness(types)
-}
-
-// CoalesceEmptyRecordWithMap removes empty records when map-like alternatives
-// are present.
-func CoalesceEmptyRecordWithMap(types []Type) []Type {
-	return coalesce.CoalesceEmptyRecordWithMap(types)
 }

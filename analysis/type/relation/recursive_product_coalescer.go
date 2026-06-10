@@ -4,11 +4,12 @@ import (
 	"sort"
 
 	"github.com/wippyai/go-lua/analysis/internal/hash"
+	"github.com/wippyai/go-lua/analysis/type/coalesce"
 	"github.com/wippyai/go-lua/analysis/type/kind"
 	. "github.com/wippyai/go-lua/analysis/type/typ"
 )
 
-const recursiveRecordFamilyName = "FlowJoin"
+const coalescedRecursiveFamilyName = "CoalescedRecursiveFamily"
 
 type recursiveRewriteKey struct {
 	bodyKind kind.Kind
@@ -90,7 +91,7 @@ func (c *productCoalescer) coalesceRecursiveRecordFamiliesWithSlotJoin(types []T
 			continue
 		}
 
-		merged := NewRecursivePlaceholder(recursiveRecordFamilyName)
+		merged := NewRecursivePlaceholder(coalescedRecursiveFamilyName)
 		body := state.rewriteRecursiveFamilySelf(rec.Body, rec, merged)
 		mergedAny := false
 		bodyChanged := false
@@ -171,8 +172,8 @@ func sameRecursiveFamilyBody(a, b Type) bool {
 }
 
 func recursiveFamilyBodiesShareAnchor(a, b Type) bool {
-	ar := unaliasRecord(a)
-	br := unaliasRecord(b)
+	ar := coalesce.UnaliasRecord(a)
+	br := coalesce.UnaliasRecord(b)
 	if ar == nil || br == nil {
 		return false
 	}

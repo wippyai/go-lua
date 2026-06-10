@@ -10,7 +10,7 @@ import (
 
 // SlotJoinFunc joins two nested product slots while relation owns the
 // surrounding return/product orchestration.
-type SlotJoinFunc = coalesce.SlotJoinFunc
+type SlotJoinFunc func(a, b Type) Type
 
 // JoinPreferNonSoft joins two types while preferring non-soft placeholders.
 // This centralizes the "soft placeholder" policy used across inference and flow.

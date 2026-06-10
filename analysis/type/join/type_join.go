@@ -28,6 +28,7 @@
 package join
 
 import (
+	"github.com/wippyai/go-lua/analysis/type/coalesce"
 	"github.com/wippyai/go-lua/analysis/type/gradual"
 	"github.com/wippyai/go-lua/analysis/type/relation"
 	"github.com/wippyai/go-lua/analysis/type/typ"
@@ -70,9 +71,7 @@ func Types(types ...typ.Type) typ.Type {
 		return first
 	}
 	beforeCoalesce := len(filtered)
-	filtered = relation.CoalesceJoinProductsWithSlotJoin(filtered, Types, func(a, b typ.Type) typ.Type {
-		return Types(a, b)
-	})
+	filtered = coalesceJoinProducts(filtered)
 	if len(filtered) < beforeCoalesce {
 		filtered = dedupeJoinInputs(filtered)
 	}
@@ -122,6 +121,19 @@ func sameJoinInput(a, b typ.Type) bool {
 	return relation.SameJoinInput(a, b)
 }
 
+func coalesceJoinProducts(types []typ.Type) []typ.Type {
+	slotJoin := func(a, b typ.Type) typ.Type {
+		return Types(a, b)
+	}
+	types = coalesce.CoalesceEmptyRecordWithMap(types)
+	types = coalesce.CoalesceEmptyRecordWithArray(types)
+	types = coalesce.CoalesceMaps(types, Types)
+	types = relation.CoalesceProductFamiliesWithSlotJoin(types, slotJoin)
+	types = coalesce.CoalesceRecordOpenness(types)
+	types = coalesce.CoalesceMaps(types, Types)
+	return types
+}
+
 // CoalesceEmptyRecordWithArray removes empty records when arrays are present.
 //
 // Lua uses the same table runtime value for map-like and list-like tables. During
@@ -129,7 +141,7 @@ func sameJoinInput(a, b typ.Type) bool {
 // (table.insert). Keeping {} in the union loses sequence intent and creates
 // downstream nil-index noise. When an array shape is present, prefer it.
 func CoalesceEmptyRecordWithArray(types []typ.Type) []typ.Type {
-	return relation.CoalesceEmptyRecordWithArray(types)
+	return coalesce.CoalesceEmptyRecordWithArray(types)
 }
 
 // filterUnknown removes nil and unknown types from the slice.
@@ -161,7 +173,7 @@ func filterUnknown(types []typ.Type) []typ.Type {
 //
 // Non-map types in the input are preserved unchanged in the result.
 func CoalesceMaps(types []typ.Type) []typ.Type {
-	return relation.CoalesceMaps(types, Types)
+	return coalesce.CoalesceMaps(types, Types)
 }
 
 // CoalesceRecordOpenness converts closed records to open when joining with open records.
@@ -175,7 +187,7 @@ func CoalesceMaps(types []typ.Type) []typ.Type {
 //
 // If all records are closed or all are open, no transformation is needed.
 func CoalesceRecordOpenness(types []typ.Type) []typ.Type {
-	return relation.CoalesceRecordOpenness(types)
+	return coalesce.CoalesceRecordOpenness(types)
 }
 
 // CoalesceEmptyRecordWithMap removes empty records when maps are present.
@@ -188,5 +200,5 @@ func CoalesceRecordOpenness(types []typ.Type) []typ.Type {
 // Example: Joining {} and {[string]: number} produces {[string]: number}, not
 // {} | {[string]: number}.
 func CoalesceEmptyRecordWithMap(types []typ.Type) []typ.Type {
-	return relation.CoalesceEmptyRecordWithMap(types)
+	return coalesce.CoalesceEmptyRecordWithMap(types)
 }

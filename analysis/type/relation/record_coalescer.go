@@ -28,9 +28,10 @@ func (c *productCoalescer) cacheRecordJoin(key returnJoinKey, t Type, ok bool) {
 }
 
 func (c *productCoalescer) recordPolicy(slotJoin SlotJoinFunc) coalesce.RecordPolicy {
+	slotJoin = c.slotJoinOrDefault(slotJoin)
 	return coalesce.RecordPolicy{
-		SlotJoin:      c.slotJoinOrDefault(slotJoin),
-		KeyJoin:       JoinPreferNonSoft,
+		SlotJoin:      func(a, b Type) Type { return slotJoin(a, b) },
+		KeyJoin:       func(a, b Type) Type { return JoinPreferNonSoft(a, b) },
 		Discriminants: c.discriminantDetector(),
 	}
 }
@@ -169,7 +170,7 @@ func (c *productCoalescer) coalesceCompatibleRecordGroupsWithSlotJoin(types []Ty
 	slotJoin = state.slotJoinOrDefault(slotJoin)
 	groups := make([]*compatibleRecordGroup, 0, len(types))
 	for i, t := range types {
-		rec := unaliasRecord(t)
+		rec := coalesce.UnaliasRecord(t)
 		if rec == nil {
 			continue
 		}
@@ -263,7 +264,7 @@ func (c *productCoalescer) coalesceCompatibleRecordsPairwiseWithSlotJoin(types [
 			continue
 		}
 		current := types[i]
-		currentRecord := unaliasRecord(current)
+		currentRecord := coalesce.UnaliasRecord(current)
 		if currentRecord == nil {
 			out = append(out, current)
 			continue
@@ -272,7 +273,7 @@ func (c *productCoalescer) coalesceCompatibleRecordsPairwiseWithSlotJoin(types [
 			if used[j] {
 				continue
 			}
-			candidateRecord := unaliasRecord(types[j])
+			candidateRecord := coalesce.UnaliasRecord(types[j])
 			if candidateRecord == nil {
 				continue
 			}
@@ -281,7 +282,7 @@ func (c *productCoalescer) coalesceCompatibleRecordsPairwiseWithSlotJoin(types [
 				continue
 			}
 			current = merged
-			currentRecord = unaliasRecord(merged)
+			currentRecord = coalesce.UnaliasRecord(merged)
 			if currentRecord == nil {
 				break
 			}
@@ -306,8 +307,8 @@ func (c *productCoalescer) joinCompatibleRecordsWithSlotJoin(a, b Type, slotJoin
 		state = newProductCoalescer()
 	}
 	slotJoin = state.slotJoinOrDefault(slotJoin)
-	ar := unaliasRecord(a)
-	br := unaliasRecord(b)
+	ar := coalesce.UnaliasRecord(a)
+	br := coalesce.UnaliasRecord(b)
 	if ar == nil || br == nil {
 		return nil, false
 	}
@@ -518,10 +519,6 @@ func normalizeMergedRecordField(t Type) (Type, bool) {
 		return inner, true
 	}
 	return t, false
-}
-
-func unaliasRecord(t Type) *Record {
-	return coalesce.UnaliasRecord(t)
 }
 
 // RecordsConflictOnLiteralDiscriminant reports whether two records are discriminated
