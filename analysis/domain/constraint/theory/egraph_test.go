@@ -4,10 +4,10 @@ import (
 	"testing"
 
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
-	"github.com/wippyai/go-lua/analysis/ir/cfg"
+	"github.com/wippyai/go-lua/analysis/ir/symbol"
 )
 
-func makePath(name string, sym cfg.SymbolID, segments ...string) pathdom.Path {
+func makePath(name string, sym symbol.ID, segments ...string) pathdom.Path {
 	path := pathdom.Path{Root: name, Symbol: sym}
 	for _, s := range segments {
 		path.Segments = append(path.Segments, pathdom.Segment{

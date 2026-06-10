@@ -4,7 +4,7 @@ import (
 	"strconv"
 	"testing"
 
-	"github.com/wippyai/go-lua/analysis/ir/cfg"
+	"github.com/wippyai/go-lua/analysis/ir/symbol"
 )
 
 func TestPathPlaceholderIndex_OverflowRejected(t *testing.T) {
@@ -477,7 +477,7 @@ func TestPathHasSymbol(t *testing.T) {
 }
 
 func TestPathDisplayRoot(t *testing.T) {
-	resolver := func(id cfg.SymbolID) string {
+	resolver := func(id symbol.ID) string {
 		if id == 1 {
 			return "myResolvedVar"
 		}

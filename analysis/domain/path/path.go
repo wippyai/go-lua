@@ -6,7 +6,7 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	"github.com/wippyai/go-lua/analysis/internal/hash"
-	"github.com/wippyai/go-lua/analysis/ir/cfg"
+	"github.com/wippyai/go-lua/analysis/ir/symbol"
 )
 
 // SegmentKind describes how a path accesses a nested value.
@@ -40,8 +40,8 @@ type Segment = segment.Segment
 //   - {Root: "x", Symbol: 5, Segments: [{Field, "name", 0}]}: x.name
 //   - {Root: "$0", Symbol: 0}: Placeholder for first function parameter
 type Path struct {
-	Root     string       // Variable name (optional for symbol paths, required for placeholders)
-	Symbol   cfg.SymbolID // SymbolID for identity (0 if unresolved/placeholder)
+	Root     string    // Variable name (optional for symbol paths, required for placeholders)
+	Symbol   symbol.ID // SymbolID for identity (0 if unresolved/placeholder)
 	Segments []Segment
 	Version  int // SSA version ID (0 = unspecified, non-zero binds path to a specific version)
 }
@@ -56,7 +56,7 @@ type PathKey string
 //
 //	path := NewPath(sym, "x")           // x
 //	path := NewPath(sym, "x").Field("y") // x.y
-func NewPath(sym cfg.SymbolID, name string) Path {
+func NewPath(sym symbol.ID, name string) Path {
 	return Path{Root: name, Symbol: sym}
 }
 
@@ -199,7 +199,7 @@ func (p Path) HasSymbol() bool { return p.Symbol != 0 }
 // DisplayRoot returns the display name for the path root.
 // For symbol-rooted paths, uses the provided nameResolver to get the name.
 // For placeholder paths (Symbol=0), returns the Root field directly.
-func (p Path) DisplayRoot(nameResolver func(cfg.SymbolID) string) string {
+func (p Path) DisplayRoot(nameResolver func(symbol.ID) string) string {
 	if p.Symbol != 0 && nameResolver != nil {
 		if name := nameResolver(p.Symbol); name != "" {
 			return name
