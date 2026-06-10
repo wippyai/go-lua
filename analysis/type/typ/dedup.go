@@ -17,12 +17,12 @@ func deduplicateTypesWithHashes(types []Type) ([]Type, []uint64) {
 	hashes := make([]uint64, 0, len(types))
 
 	for _, t := range types {
-		h := UnionMemberHash(t)
+		h := unionMemberHash(t)
 		bucket := seen[h]
 		duplicate := false
 
 		for _, existing := range bucket {
-			if SameUnionMember(existing, t) {
+			if sameUnionMember(existing, t) {
 				duplicate = true
 				break
 			}
@@ -58,19 +58,14 @@ func sortHashedTypes(types []Type, hashes []uint64) {
 	}
 }
 
-// UnionMemberHash returns the hash paired with SameUnionMember for normalized
-// union/member-set construction.
-func UnionMemberHash(t Type) uint64 {
+func unionMemberHash(t Type) uint64 {
 	if t == nil {
 		return 0
 	}
 	return typeEqualityHash(t)
 }
 
-// SameUnionMember is the canonical equality relation for generic union
-// construction. It intentionally preserves distinct recursive product nodes;
-// product-family coalescing belongs to explicit convergence/join policies.
-func SameUnionMember(a, b Type) bool {
+func sameUnionMember(a, b Type) bool {
 	if SameNodeOrAcyclicEqual(a, b) {
 		return true
 	}

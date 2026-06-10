@@ -30,6 +30,7 @@ package join
 import (
 	"github.com/wippyai/go-lua/analysis/type/coalesce"
 	"github.com/wippyai/go-lua/analysis/type/gradual"
+	"github.com/wippyai/go-lua/analysis/type/presence"
 	"github.com/wippyai/go-lua/analysis/type/relation"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
@@ -154,7 +155,7 @@ func CoalesceEmptyRecordWithArray(types []typ.Type) []typ.Type {
 func filterUnknown(types []typ.Type) []typ.Type {
 	result := make([]typ.Type, 0, len(types))
 	for _, t := range types {
-		if typ.IsAbsentOrUnknown(t) {
+		if presence.AbsentOrUnknown(t) {
 			continue
 		}
 		result = append(result, t)

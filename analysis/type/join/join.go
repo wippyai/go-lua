@@ -5,6 +5,7 @@
 package join
 
 import (
+	"github.com/wippyai/go-lua/analysis/type/presence"
 	"github.com/wippyai/go-lua/analysis/type/relation"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
@@ -101,7 +102,7 @@ func WithReturnsOrUnknown(sig *typ.Function, returns []typ.Type) *typ.Function {
 		}
 		return WithReturns(sig, []typ.Type{typ.Unknown})
 	}
-	if len(sig.Returns) == 0 || typ.IsUnknownOnlyOrEmpty(sig.Returns) {
+	if len(sig.Returns) == 0 || presence.UnknownOnlyOrEmpty(sig.Returns) {
 		if returnVectorsEqual(sig.Returns, returns) {
 			return sig
 		}

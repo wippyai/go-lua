@@ -2,6 +2,8 @@ package relation
 
 import (
 	"github.com/wippyai/go-lua/analysis/type/kind"
+	"github.com/wippyai/go-lua/analysis/type/nodeid"
+	"github.com/wippyai/go-lua/analysis/type/presence"
 	. "github.com/wippyai/go-lua/analysis/type/typ"
 )
 
@@ -38,10 +40,10 @@ func comparePrecision(candidate, baseline Type, depth int, seen *precisionSeen) 
 	if baseline == nil {
 		return false, false
 	}
-	if IsAbsentOrUnknown(baseline) || baseline.Kind().IsPlaceholder() {
-		return candidate != nil && !IsAbsentOrUnknown(candidate) && !candidate.Kind().IsPlaceholder(), true
+	if presence.AbsentOrUnknown(baseline) || baseline.Kind().IsPlaceholder() {
+		return candidate != nil && !presence.AbsentOrUnknown(candidate) && !candidate.Kind().IsPlaceholder(), true
 	}
-	if candidate == nil || IsAbsentOrUnknown(candidate) || candidate.Kind().IsPlaceholder() {
+	if candidate == nil || presence.AbsentOrUnknown(candidate) || candidate.Kind().IsPlaceholder() {
 		return false, false
 	}
 	if candidate.Kind() == kind.Integer && baseline.Kind() == kind.Number {
@@ -306,8 +308,8 @@ func enterPrecisionPair(candidate, baseline Type, seen *precisionSeen, familyPai
 	releaseNodes := false
 	releaseFamilies := false
 
-	cp := TypePointer(candidate)
-	bp := TypePointer(baseline)
+	cp := nodeid.Pointer(candidate)
+	bp := nodeid.Pointer(baseline)
 	if cp != 0 || bp != 0 {
 		if seen.nodes == nil {
 			seen.nodes = make(map[typePair]int)

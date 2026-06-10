@@ -50,21 +50,7 @@ func withoutNil(t typ.Type, mode nilProjectionMode) (nonNil typ.Type, nilable bo
 		}
 		return inner, true
 	case *typ.Union:
-		nilable := false
-		rewritten := typ.RewriteUnionMembers(v, func(member typ.Type) typ.Type {
-			member = typ.NormalizeNilType(member)
-			if member == nil {
-				return typ.Never
-			}
-			nonNil, memberNilable := withoutNil(member, mode)
-			if memberNilable {
-				nilable = true
-			}
-			if nonNil == nil {
-				return member
-			}
-			return nonNil
-		})
+		rewritten, nilable := projectUnionWithoutNil(v, mode)
 		if !nilable {
 			return t, false
 		}
@@ -75,4 +61,39 @@ func withoutNil(t typ.Type, mode nilProjectionMode) (nonNil typ.Type, nilable bo
 		}
 		return t, false
 	}
+}
+
+func projectUnionWithoutNil(u *typ.Union, mode nilProjectionMode) (typ.Type, bool) {
+	if u == nil {
+		return typ.Never, false
+	}
+	members := make([]typ.Type, 0, len(u.Members))
+	nilable := false
+	for _, member := range u.Members {
+		member = typ.NormalizeNilType(member)
+		if member == nil {
+			continue
+		}
+		nonNil, memberNilable := withoutNil(member, mode)
+		if memberNilable {
+			nilable = true
+		}
+		if nonNil == nil {
+			nonNil = member
+		}
+		if nonNil.Kind().IsNever() {
+			continue
+		}
+		members = append(members, nonNil)
+	}
+	if !nilable {
+		return u, false
+	}
+	if len(members) == 0 {
+		return typ.Never, true
+	}
+	if len(members) == 1 {
+		return members[0], true
+	}
+	return typ.NewUnion(members...), true
 }

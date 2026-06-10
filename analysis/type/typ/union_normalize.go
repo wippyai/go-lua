@@ -15,7 +15,7 @@ func newNormalizedUnion(members []Type, memberHashes []uint64) Type {
 	if len(memberHashes) != len(members) {
 		memberHashes = make([]uint64, len(members))
 		for i, m := range members {
-			memberHashes[i] = UnionMemberHash(m)
+			memberHashes[i] = unionMemberHash(m)
 		}
 	}
 

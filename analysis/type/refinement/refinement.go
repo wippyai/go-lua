@@ -3,6 +3,8 @@ package refinement
 import (
 	luatable "github.com/wippyai/go-lua/analysis/lua/table"
 	"github.com/wippyai/go-lua/analysis/type/kind"
+	"github.com/wippyai/go-lua/analysis/type/nodeid"
+	"github.com/wippyai/go-lua/analysis/type/presence"
 	. "github.com/wippyai/go-lua/analysis/type/typ"
 )
 
@@ -35,7 +37,7 @@ func (s containsSeen) remember(t Type) {
 
 func containsSeenKey(t Type) uint64 {
 	if ContainsRecursive(t) {
-		if ptr := TypePointer(t); ptr != 0 {
+		if ptr := nodeid.Pointer(t); ptr != 0 {
 			return uint64(ptr)
 		}
 	}
@@ -471,11 +473,11 @@ func (s *fallbackRefineState) refine(summary, fallback Type) (Type, bool) {
 }
 
 func fallbackIsOpaque(t Type) bool {
-	return t == nil || IsAbsentOrUnknown(t) || t.Kind().IsPlaceholder() || ContainsFreeTypeParam(t)
+	return t == nil || presence.AbsentOrUnknown(t) || t.Kind().IsPlaceholder() || ContainsFreeTypeParam(t)
 }
 
 func summaryNeedsFallbackLeaf(t Type) bool {
-	if t == nil || IsAbsentOrUnknown(t) || t.Kind().IsPlaceholder() || t.Kind().IsDeferred() {
+	if t == nil || presence.AbsentOrUnknown(t) || t.Kind().IsPlaceholder() || t.Kind().IsDeferred() {
 		return true
 	}
 	_, ok := t.(*TypeParam)
@@ -488,8 +490,8 @@ func (s *fallbackRefineState) ownsTypeParam(t Type) bool {
 }
 
 func fallbackRefinePair(summary, fallback Type) (typePair, bool) {
-	sp := TypePointer(summary)
-	fp := TypePointer(fallback)
+	sp := nodeid.Pointer(summary)
+	fp := nodeid.Pointer(fallback)
 	if sp == 0 && fp == 0 {
 		return typePair{}, false
 	}

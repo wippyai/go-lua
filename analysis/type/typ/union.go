@@ -127,9 +127,9 @@ func (u *Union) Equals(other Type) bool {
 
 // Contains checks if the union contains a specific type.
 func (u *Union) Contains(t Type) bool {
-	h := UnionMemberHash(t)
+	h := unionMemberHash(t)
 	for _, m := range u.Members {
-		if UnionMemberHash(m) == h && SameUnionMember(m, t) {
+		if unionMemberHash(m) == h && sameUnionMember(m, t) {
 			return true
 		}
 	}

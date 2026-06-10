@@ -8,13 +8,13 @@ import (
 // SameJoinInput reports whether two inputs are equivalent under the relation
 // policy used by type joins.
 func SameJoinInput(a, b Type) bool {
-	if SameUnionMember(a, b) {
+	if SameNodeOrAcyclicEqual(a, b) {
 		return true
 	}
 	if ContainsRecursive(a) || ContainsRecursive(b) {
 		return sameProductFamily(a, b)
 	}
-	return false
+	return TypeEquals(a, b)
 }
 
 // DedupeJoinInputs removes duplicate inputs under SameJoinInput while avoiding
@@ -41,7 +41,7 @@ func DedupeJoinInputs(types []Type) []Type {
 			out = append(out, t)
 			continue
 		}
-		hash := UnionMemberHash(t)
+		hash := joinInputHash(t)
 		duplicate := false
 		for _, existing := range seen[hash] {
 			if SameJoinInput(existing, t) {
@@ -60,6 +60,16 @@ func DedupeJoinInputs(types []Type) []Type {
 		return types
 	}
 	return out
+}
+
+func joinInputHash(t Type) uint64 {
+	if t == nil {
+		return 0
+	}
+	if ContainsRecursive(t) {
+		return productFamilyHash(t)
+	}
+	return EqualityHash(t)
 }
 
 func joinDedupeUsesStructuralEquality(t Type) bool {

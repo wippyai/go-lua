@@ -6,6 +6,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/internal/hash"
 	"github.com/wippyai/go-lua/analysis/type/coalesce"
 	"github.com/wippyai/go-lua/analysis/type/kind"
+	"github.com/wippyai/go-lua/analysis/type/nodeid"
 	. "github.com/wippyai/go-lua/analysis/type/typ"
 )
 
@@ -272,7 +273,7 @@ func recursiveRewriteCacheKey(t Type, from, to *Recursive) (recursiveRewriteKey,
 	if t == nil {
 		return recursiveRewriteKey{}, false
 	}
-	ptr := TypePointer(t)
+	ptr := nodeid.Pointer(t)
 	key := recursiveRewriteKey{
 		bodyKind: t.Kind(),
 		bodyPtr:  ptr,

@@ -2,6 +2,7 @@ package refinement
 
 import (
 	"github.com/wippyai/go-lua/analysis/internal/recursion"
+	"github.com/wippyai/go-lua/analysis/type/presence"
 	. "github.com/wippyai/go-lua/analysis/type/typ"
 )
 
@@ -38,7 +39,7 @@ func IsClosedUnionAnnotation(t Type) bool {
 		if member == nil {
 			return false
 		}
-		if IsAbsentOrUnknown(member) || member.Kind().IsPlaceholder() {
+		if presence.AbsentOrUnknown(member) || member.Kind().IsPlaceholder() {
 			return false
 		}
 	}

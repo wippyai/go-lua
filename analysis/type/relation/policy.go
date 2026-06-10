@@ -5,6 +5,8 @@ import (
 	"github.com/wippyai/go-lua/analysis/type/coalesce"
 	"github.com/wippyai/go-lua/analysis/type/gradual"
 	"github.com/wippyai/go-lua/analysis/type/kind"
+	"github.com/wippyai/go-lua/analysis/type/nodeid"
+	"github.com/wippyai/go-lua/analysis/type/presence"
 	. "github.com/wippyai/go-lua/analysis/type/typ"
 )
 
@@ -30,10 +32,10 @@ func JoinPreferNonSoft(a, b Type) Type {
 		return a
 	}
 	// Inline join.Two to avoid dependency cycles inside typ.
-	if IsAbsentOrUnknown(a) {
+	if presence.AbsentOrUnknown(a) {
 		return b
 	}
-	if IsAbsentOrUnknown(b) {
+	if presence.AbsentOrUnknown(b) {
 		return a
 	}
 	if SameNodeOrAcyclicEqual(a, b) {
@@ -107,7 +109,7 @@ func returnJoinHash(t Type) uint64 {
 		return 0
 	}
 	if ContainsRecursive(t) {
-		if ptr := TypePointer(t); ptr != 0 {
+		if ptr := nodeid.Pointer(t); ptr != 0 {
 			return hash.HashCombine(uint64(t.Kind()), uint64(ptr))
 		}
 		return productFamilyHash(t)

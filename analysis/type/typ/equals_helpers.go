@@ -97,9 +97,3 @@ func typePointer(t Type) uintptr {
 
 	return v.Pointer()
 }
-
-// TypePointer returns the stable node pointer used by recursive relation
-// algorithms. It returns 0 for non-pointer type implementations.
-func TypePointer(t Type) uintptr {
-	return typePointer(t)
-}

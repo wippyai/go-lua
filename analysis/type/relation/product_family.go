@@ -5,6 +5,7 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/internal/hash"
 	"github.com/wippyai/go-lua/analysis/type/kind"
+	"github.com/wippyai/go-lua/analysis/type/nodeid"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
@@ -91,7 +92,7 @@ func productFamilyHashSeen(t typ.Type, active map[uintptr]bool, cache map[typ.Ty
 		}()
 	}
 
-	ptr := productFamilyTypePointer(t)
+	ptr := nodeid.Pointer(t)
 	if ptr != 0 {
 		if active[ptr] {
 			return hash.HashCombine(uint64(kind.Recursive), hash.FnvString("$cycle"))
@@ -280,17 +281,6 @@ func normalizeNilType(t typ.Type) typ.Type {
 		}
 	}
 	return t
-}
-
-func productFamilyTypePointer(t typ.Type) uintptr {
-	if ptr := typ.TypePointer(t); ptr != 0 {
-		return ptr
-	}
-	v := reflect.ValueOf(t)
-	if v.Kind() != reflect.Pointer {
-		return 0
-	}
-	return v.Pointer()
 }
 
 func boolProductFamilyHash(v bool) uint64 {

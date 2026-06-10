@@ -2,13 +2,13 @@ package typ
 
 import "github.com/wippyai/go-lua/analysis/type/kind"
 
-// RewriteUnionMembers applies a cache-preserving rewrite to the members of
+// rewriteUnionMembers applies a cache-preserving rewrite to the members of
 // an already normalized union. If the rewrite only drops members, the
 // existing member hash vector is reused so path-sensitive filters do not rehash
 // recursive products. Rewrites preserve only root union representation
 // normalization: deduplication, nil/optional folding, literal subsumption, and
 // deterministic member order.
-func RewriteUnionMembers(u *Union, rewrite func(Type) Type) Type {
+func rewriteUnionMembers(u *Union, rewrite func(Type) Type) Type {
 	if u == nil {
 		return Never
 	}
@@ -32,7 +32,7 @@ func RewriteUnionMembers(u *Union, rewrite func(Type) Type) Type {
 			if hasStoredHashes && !knownContainsOpenRecursive(member) {
 				hashes = append(hashes, u.memberHashes[i])
 			} else {
-				hashes = append(hashes, UnionMemberHash(member))
+				hashes = append(hashes, unionMemberHash(member))
 			}
 			continue
 		}
@@ -41,7 +41,7 @@ func RewriteUnionMembers(u *Union, rewrite func(Type) Type) Type {
 		if !rewrittenUnionMemberUsesStructuralDedupe(rewritten) {
 			scalarRewriteOnly = false
 		}
-		hashes = append(hashes, UnionMemberHash(rewritten))
+		hashes = append(hashes, unionMemberHash(rewritten))
 	}
 	if !changed {
 		return u

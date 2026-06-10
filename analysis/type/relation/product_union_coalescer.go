@@ -2,6 +2,7 @@ package relation
 
 import (
 	"github.com/wippyai/go-lua/analysis/type/gradual"
+	"github.com/wippyai/go-lua/analysis/type/nodeid"
 	. "github.com/wippyai/go-lua/analysis/type/typ"
 )
 
@@ -67,7 +68,7 @@ func (c *productCoalescer) coalesceFoldedProductFamilyMembers(types []Type) []Ty
 			out = append(out, candidate)
 			continue
 		}
-		if ptr := TypePointer(rec); ptr != 0 && seenNodes[ptr] {
+		if ptr := nodeid.Pointer(rec); ptr != 0 && seenNodes[ptr] {
 			changed = true
 			continue
 		}
@@ -88,7 +89,7 @@ func (c *productCoalescer) coalesceFoldedProductFamilyMembers(types []Type) []Ty
 			continue
 		}
 		recReps = append(recReps, familyRep{hash: h, rep: rec})
-		if ptr := TypePointer(rec); ptr != 0 {
+		if ptr := nodeid.Pointer(rec); ptr != 0 {
 			seenNodes[ptr] = true
 		}
 		out = append(out, candidate)

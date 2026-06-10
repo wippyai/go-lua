@@ -408,7 +408,7 @@ func TestUnionConstructionHashesEachMemberOnce(t *testing.T) {
 	}
 }
 
-func TestRewriteUnionMembersFilterPreservesMemberHashes(t *testing.T) {
+func TestRewriteMembersFilterPreservesMemberHashes(t *testing.T) {
 	calls := 0
 	keep := &countingHashType{name: "keep", hash: 10, calls: &calls}
 	drop := &countingHashType{name: "drop", hash: 20, calls: &calls}
@@ -420,21 +420,21 @@ func TestRewriteUnionMembersFilterPreservesMemberHashes(t *testing.T) {
 		t.Fatalf("NewUnion Hash calls = %d, want 2", calls)
 	}
 
-	got := RewriteUnionMembers(u, func(member Type) Type {
+	got := rewriteUnionMembers(u, func(member Type) Type {
 		if member == drop {
 			return Never
 		}
 		return member
 	})
 	if got != keep {
-		t.Fatalf("RewriteUnionMembers = %v, want keep member", got)
+		t.Fatalf("rewrite result = %v, want keep member", got)
 	}
 	if calls != 2 {
-		t.Fatalf("RewriteUnionMembers Hash calls = %d, want no additional calls beyond 2", calls)
+		t.Fatalf("rewrite Hash calls = %d, want no additional calls beyond 2", calls)
 	}
 }
 
-func TestRewriteUnionMembersFlatRewritePreservesMemberHashes(t *testing.T) {
+func TestRewriteMembersFlatRewritePreservesMemberHashes(t *testing.T) {
 	calls := 0
 	first := &countingHashType{name: "first", hash: 10, calls: &calls}
 	second := &countingHashType{name: "second", hash: 30, calls: &calls}
@@ -446,22 +446,22 @@ func TestRewriteUnionMembersFlatRewritePreservesMemberHashes(t *testing.T) {
 		t.Fatalf("NewUnion Hash calls = %d, want 2", calls)
 	}
 
-	got := RewriteUnionMembers(u, func(member Type) Type {
+	got := rewriteUnionMembers(u, func(member Type) Type {
 		if member == Boolean {
 			return True
 		}
 		return member
 	})
 	if calls != 2 {
-		t.Fatalf("RewriteUnionMembers Hash calls = %d, want no additional calls beyond 2", calls)
+		t.Fatalf("rewrite Hash calls = %d, want no additional calls beyond 2", calls)
 	}
 	want := NewUnion(first, True, second)
 	if !TypeEquals(got, want) {
-		t.Fatalf("RewriteUnionMembers = %v, want %v", got, want)
+		t.Fatalf("rewrite result = %v, want %v", got, want)
 	}
 }
 
-func TestRewriteUnionMembersScalarRewriteDoesNotCompareCompoundMembers(t *testing.T) {
+func TestRewriteMembersScalarRewriteDoesNotCompareCompoundMembers(t *testing.T) {
 	hashCalls := 0
 	equalsCalls := 0
 	first := &countingProjectType{name: "first", hash: 10, hashCalls: &hashCalls, equalsCalls: &equalsCalls}
@@ -474,25 +474,25 @@ func TestRewriteUnionMembersScalarRewriteDoesNotCompareCompoundMembers(t *testin
 		t.Fatalf("NewUnion Hash calls = %d, want 2", hashCalls)
 	}
 
-	got := RewriteUnionMembers(u, func(member Type) Type {
+	got := rewriteUnionMembers(u, func(member Type) Type {
 		if member == Boolean {
 			return True
 		}
 		return member
 	})
 	if hashCalls != 2 {
-		t.Fatalf("RewriteUnionMembers Hash calls = %d, want no additional compound hashing", hashCalls)
+		t.Fatalf("rewrite Hash calls = %d, want no additional compound hashing", hashCalls)
 	}
 	if equalsCalls != 0 {
-		t.Fatalf("RewriteUnionMembers Equals calls = %d, want no compound equality checks", equalsCalls)
+		t.Fatalf("rewrite Equals calls = %d, want no compound equality checks", equalsCalls)
 	}
 	want := NewUnion(first, True, second)
 	if !TypeEquals(got, want) {
-		t.Fatalf("RewriteUnionMembers = %v, want %v", got, want)
+		t.Fatalf("rewrite result = %v, want %v", got, want)
 	}
 }
 
-func TestRewriteUnionMembersPreservesDistinctRecursiveFamilyNodes(t *testing.T) {
+func TestRewriteMembersPreservesDistinctRecursiveFamilyNodes(t *testing.T) {
 	base := NewRecursive("SuiteA", func(self Type) Type {
 		return NewRecord().
 			Field("name", String).
@@ -511,7 +511,7 @@ func TestRewriteUnionMembersPreservesDistinctRecursiveFamilyNodes(t *testing.T) 
 		t.Fatalf("expected union")
 	}
 
-	got := RewriteUnionMembers(u, func(member Type) Type {
+	got := rewriteUnionMembers(u, func(member Type) Type {
 		if member == Boolean {
 			return True
 		}
