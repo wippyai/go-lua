@@ -23,49 +23,6 @@ func MorePrecise(candidate, baseline Type) bool {
 	return comparable && strict
 }
 
-// PruneLessPreciseRefinableUnionMembers removes refinable structural
-// placeholder members from a union when another member carries comparable,
-// strictly more precise evidence for the same runtime shape.
-func PruneLessPreciseRefinableUnionMembers(t Type) Type {
-	u, ok := t.(*Union)
-	if !ok || len(u.Members) < 2 {
-		return t
-	}
-	keep := make([]Type, 0, len(u.Members))
-	for i, member := range u.Members {
-		if member == nil {
-			continue
-		}
-		if !IsRefinableAnnotation(member) {
-			keep = append(keep, member)
-			continue
-		}
-		dominated := false
-		for j, candidate := range u.Members {
-			if i == j || candidate == nil {
-				continue
-			}
-			if MorePrecise(candidate, member) {
-				dominated = true
-				break
-			}
-		}
-		if !dominated {
-			keep = append(keep, member)
-		}
-	}
-	if len(keep) == 0 {
-		return t
-	}
-	if len(keep) == len(u.Members) {
-		return t
-	}
-	if len(keep) == 1 {
-		return keep[0]
-	}
-	return NormalizeUnionForJoin(keep...)
-}
-
 // ComparePrecision compares two same-expression type descriptions.
 //
 // The first return value is true when candidate is strictly more precise than
