@@ -73,7 +73,7 @@ func TestPruneSoftUnionMembers(t *testing.T) {
 	}{
 		{"drop soft array", typ.NewUnion(softArray, entryArray), entryArray},
 		{"drop empty record", typ.NewUnion(emptyRecord, entryArray), entryArray},
-		{"all soft stays", typ.NewUnion(typ.Any, softArray), typ.Any},
+		{"all soft stays", typ.NewUnion(typ.Any, softArray), typ.NewUnion(typ.Any, softArray)},
 		{"nil does not erase optional soft table shape", typ.NewUnion(typ.Nil, softArray, typ.NewRecord().SetOpen(true).Build()), typ.NewUnion(typ.Nil, softArray, typ.NewRecord().SetOpen(true).Build())},
 	}
 

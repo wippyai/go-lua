@@ -63,6 +63,18 @@ func NewOptional(inner Type) Type {
 		return newNormalizedUnion(members, hashes)
 	}
 
+	return newOptionalNode(inner)
+}
+
+func newOptionalNode(inner Type) Type {
+	if inner == nil || inner.Kind() == kind.Nil {
+		return Nil
+	}
+
+	if inner.Kind() == kind.Optional {
+		return inner
+	}
+
 	h := hash.HashCombine(uint64(kind.Optional), inner.Hash())
 
 	return &Optional{
