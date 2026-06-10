@@ -2,6 +2,7 @@ package cfgbuild
 
 import (
 	"github.com/wippyai/go-lua/analysis/lua/cfgfacts"
+	"github.com/wippyai/go-lua/analysis/lua/pathexpr"
 	"github.com/wippyai/go-lua/analysis/symbol"
 	"github.com/wippyai/go-lua/compiler/ast"
 )
@@ -57,6 +58,25 @@ func (b *builder) typeCompareBranchFact(expr ast.Expr) (cfgfacts.BranchFact, boo
 	}, true
 }
 
+func (b *builder) typeCompareConditionSupported(expr ast.Expr) bool {
+	rel, ok := expr.(*ast.RelationalOpExpr)
+	if !ok || (rel.Operator != "==" && rel.Operator != "~=") {
+		return false
+	}
+	return b.typeCompareOperandsSupported(rel.Lhs, rel.Rhs) || b.typeCompareOperandsSupported(rel.Rhs, rel.Lhs)
+}
+
+func (b *builder) typeCompareOperandsSupported(callExpr, literalExpr ast.Expr) bool {
+	if _, ok := literalExpr.(*ast.StringExpr); !ok {
+		return false
+	}
+	call, ok := callExpr.(*ast.FuncCallExpr)
+	if !ok {
+		return false
+	}
+	return b.typeCallSubjectPathSupported(call)
+}
+
 func (b *builder) typeCompareOperands(callExpr, literalExpr ast.Expr) (symbol.ID, string, bool) {
 	lit, ok := literalExpr.(*ast.StringExpr)
 	if !ok {
@@ -73,28 +93,36 @@ func (b *builder) typeCompareOperands(callExpr, literalExpr ast.Expr) (symbol.ID
 	return id, lit.Value, true
 }
 
+func (b *builder) typeCallSubjectPathSupported(call *ast.FuncCallExpr) bool {
+	arg, ok := b.typeCallSubjectExpr(call)
+	if !ok {
+		return false
+	}
+	_, ok = pathexpr.Resolve(arg, b.bindings)
+	return ok
+}
+
 func (b *builder) typeCallSubjectSymbol(call *ast.FuncCallExpr) (symbol.ID, bool) {
-	if call == nil || call.Receiver != nil || call.Method != "" || len(call.Args) != 1 || len(call.TypeArgs) != 0 {
-		return 0, false
-	}
-	fn, ok := call.Func.(*ast.IdentExpr)
-	if !ok || fn.Value != "type" || !b.isGlobalTypeIdent(fn) {
-		return 0, false
-	}
-	arg, ok := call.Args[0].(*ast.IdentExpr)
+	arg, ok := b.typeCallSubjectExpr(call)
 	if !ok {
 		return 0, false
 	}
-	return b.identSymbol(arg)
+	ident, ok := arg.(*ast.IdentExpr)
+	if !ok {
+		return 0, false
+	}
+	return b.identSymbol(ident)
 }
 
-func (b *builder) isGlobalTypeIdent(ident *ast.IdentExpr) bool {
-	id, ok := b.identSymbol(ident)
-	if !ok || b.bindings.Name(id) != "type" {
-		return false
+func (b *builder) typeCallSubjectExpr(call *ast.FuncCallExpr) (ast.Expr, bool) {
+	if call == nil || call.Receiver != nil || call.Method != "" || len(call.Args) != 1 || len(call.TypeArgs) != 0 {
+		return nil, false
 	}
-	kind, ok := b.bindings.Kind(id)
-	return ok && kind == symbol.Global
+	fn, ok := call.Func.(*ast.IdentExpr)
+	if !ok || !b.bindings.ResolvesToGlobal(fn, "type") {
+		return nil, false
+	}
+	return call.Args[0], true
 }
 
 func (b *builder) nilCompareSymbol(lhs, rhs ast.Expr) (symbol.ID, bool) {

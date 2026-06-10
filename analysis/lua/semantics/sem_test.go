@@ -4,6 +4,7 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/lua/bind"
 	"github.com/wippyai/go-lua/analysis/lua/cfgbuild"
@@ -17,6 +18,38 @@ func ident(name string) *ast.IdentExpr {
 
 func number(value string) *ast.NumberExpr {
 	return &ast.NumberExpr{Value: value}
+}
+
+func stringLit(value string) *ast.StringExpr {
+	return &ast.StringExpr{Value: value}
+}
+
+func dot(obj ast.Expr, name string) *ast.AttrGetExpr {
+	return &ast.AttrGetExpr{
+		Object:    obj,
+		Key:       stringLit(name),
+		KeySyntax: ast.AttrKeyDot,
+	}
+}
+
+func stringIndex(obj ast.Expr, key string) *ast.AttrGetExpr {
+	return &ast.AttrGetExpr{
+		Object:    obj,
+		Key:       stringLit(key),
+		KeySyntax: ast.AttrKeyIndex,
+	}
+}
+
+func intIndex(obj ast.Expr, index string) *ast.AttrGetExpr {
+	return &ast.AttrGetExpr{
+		Object:    obj,
+		Key:       number(index),
+		KeySyntax: ast.AttrKeyIndex,
+	}
+}
+
+func typeCall(arg ast.Expr) *ast.FuncCallExpr {
+	return &ast.FuncCallExpr{Func: ident("type"), Args: []ast.Expr{arg}}
 }
 
 func localAssign(names []string, exprs ...ast.Expr) *ast.LocalAssignStmt {
@@ -333,6 +366,152 @@ func TestExtractChunkCallReturnBranchAndTypeFacts(t *testing.T) {
 	returnAgain, _ := result.Return(returnPoint)
 	if returnAgain.Exprs[0] != retExpr {
 		t.Fatalf("Return exposed mutable expr slice")
+	}
+}
+
+func TestExtractChunkBranchConditionChecksResolvePaths(t *testing.T) {
+	tests := []struct {
+		name     string
+		expr     func(*ast.IdentExpr) ast.Expr
+		want     BranchConditionCheckKind
+		wantPath func(symbol.ID) path.Path
+		typeName string
+	}{
+		{
+			name: "truthy path",
+			expr: func(root *ast.IdentExpr) ast.Expr {
+				return dot(root, "ready")
+			},
+			want: BranchConditionCheckTruthy,
+			wantPath: func(root symbol.ID) path.Path {
+				return path.NewPath(root, "obj").Field("ready")
+			},
+		},
+		{
+			name: "falsy not path",
+			expr: func(root *ast.IdentExpr) ast.Expr {
+				return &ast.UnaryNotOpExpr{Expr: stringIndex(root, "missing")}
+			},
+			want: BranchConditionCheckFalsy,
+			wantPath: func(root symbol.ID) path.Path {
+				return path.NewPath(root, "obj").IndexStr("missing")
+			},
+		},
+		{
+			name: "nil equal path",
+			expr: func(root *ast.IdentExpr) ast.Expr {
+				return &ast.RelationalOpExpr{Operator: "==", Lhs: dot(root, "child"), Rhs: &ast.NilExpr{}}
+			},
+			want: BranchConditionCheckNil,
+			wantPath: func(root symbol.ID) path.Path {
+				return path.NewPath(root, "obj").Field("child")
+			},
+		},
+		{
+			name: "nil not equal reversed path",
+			expr: func(root *ast.IdentExpr) ast.Expr {
+				return &ast.RelationalOpExpr{Operator: "~=", Lhs: &ast.NilExpr{}, Rhs: intIndex(root, "1")}
+			},
+			want: BranchConditionCheckNotNil,
+			wantPath: func(root symbol.ID) path.Path {
+				return path.NewPath(root, "obj").IndexInt(1)
+			},
+		},
+		{
+			name: "type equal path",
+			expr: func(root *ast.IdentExpr) ast.Expr {
+				return &ast.RelationalOpExpr{Operator: "==", Lhs: typeCall(dot(root, "kind")), Rhs: stringLit("table")}
+			},
+			want: BranchConditionCheckTypeEqual,
+			wantPath: func(root symbol.ID) path.Path {
+				return path.NewPath(root, "obj").Field("kind")
+			},
+			typeName: "table",
+		},
+		{
+			name: "type not equal reversed path",
+			expr: func(root *ast.IdentExpr) ast.Expr {
+				return &ast.RelationalOpExpr{Operator: "~=", Lhs: stringLit("number"), Rhs: typeCall(stringIndex(root, "value"))}
+			},
+			want: BranchConditionCheckTypeNot,
+			wantPath: func(root symbol.ID) path.Path {
+				return path.NewPath(root, "obj").IndexStr("value")
+			},
+			typeName: "number",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			decl := localAssign([]string{"obj"}, &ast.TableExpr{})
+			root := ident("obj")
+			cond := tt.expr(root)
+			stmt := &ast.IfStmt{Condition: cond}
+			stmts := []ast.Stmt{decl, stmt}
+			bindings := bind.BindChunk(stmts, bind.Options{Globals: []string{"type"}})
+			built := cfgbuild.BuildChunk(stmts, bindings)
+			if built == nil {
+				t.Fatalf("BuildChunk returned nil")
+			}
+
+			result, err := ExtractChunk(stmts, bindings, built)
+			if err != nil {
+				t.Fatalf("ExtractChunk: %v", err)
+			}
+
+			point := requireStmtPoints(t, built, stmt, 1)[0]
+			fact, ok := result.BranchCondition(point)
+			if !ok {
+				t.Fatalf("missing branch condition fact")
+			}
+			if fact.Kind != BranchIf || fact.Condition != cond {
+				t.Fatalf("branch identity = %#v", fact)
+			}
+			check := fact.Check
+			if check.Kind != tt.want {
+				t.Fatalf("check kind = %v, want %v", check.Kind, tt.want)
+			}
+			if check.TypeName != tt.typeName {
+				t.Fatalf("type name = %q, want %q", check.TypeName, tt.typeName)
+			}
+			wantPath := tt.wantPath(mustIdentSymbol(t, bindings, root))
+			if !check.Path.Equal(wantPath) {
+				t.Fatalf("check path = %#v, want %#v", check.Path, wantPath)
+			}
+		})
+	}
+}
+
+func TestBranchConditionCheckPathIsCopied(t *testing.T) {
+	decl := localAssign([]string{"obj"}, &ast.TableExpr{})
+	root := ident("obj")
+	cond := dot(root, "ready")
+	stmt := &ast.IfStmt{Condition: cond}
+	stmts := []ast.Stmt{decl, stmt}
+	bindings := bind.BindChunk(stmts, bind.Options{})
+	built := cfgbuild.BuildChunk(stmts, bindings)
+	if built == nil {
+		t.Fatalf("BuildChunk returned nil")
+	}
+	result, err := ExtractChunk(stmts, bindings, built)
+	if err != nil {
+		t.Fatalf("ExtractChunk: %v", err)
+	}
+
+	point := requireStmtPoints(t, built, stmt, 1)[0]
+	fact, ok := result.BranchCondition(point)
+	if !ok {
+		t.Fatalf("missing branch condition fact")
+	}
+	if len(fact.Check.Path.Segments) != 1 {
+		t.Fatalf("path segments = %#v, want one segment", fact.Check.Path.Segments)
+	}
+	fact.Check.Path.Segments[0].Name = "mutated"
+
+	again, _ := result.BranchCondition(point)
+	wantPath := path.NewPath(mustIdentSymbol(t, bindings, root), "obj").Field("ready")
+	if !again.Check.Path.Equal(wantPath) {
+		t.Fatalf("BranchCondition exposed mutable path segments: %#v", again.Check.Path)
 	}
 }
 

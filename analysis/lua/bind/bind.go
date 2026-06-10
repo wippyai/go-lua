@@ -99,6 +99,19 @@ func (r *Result) IsImplicitGlobalUse(ident *ast.IdentExpr) bool {
 	return ok
 }
 
+// ResolvesToGlobal reports whether ident is bound to the global named name.
+func (r *Result) ResolvesToGlobal(ident *ast.IdentExpr, name string) bool {
+	if r == nil || ident == nil || name == "" || ident.Value != name {
+		return false
+	}
+	id, ok := r.SymbolOf(ident)
+	if !ok || id == 0 || r.Name(id) != name {
+		return false
+	}
+	kind, ok := r.Kind(id)
+	return ok && kind == symbol.Global
+}
+
 // Name returns the declaration name for a symbol.
 func (r *Result) Name(id symbol.ID) string {
 	if r == nil {

@@ -26,8 +26,7 @@ func (b *builder) hasUnsupportedConditionExpr(expr ast.Expr) bool {
 	if b.exprCovered(expr) {
 		return false
 	}
-	_, ok := b.typeCompareBranchFact(expr)
-	return !ok
+	return !b.typeCompareConditionSupported(expr)
 }
 
 func (b *builder) exprCovered(expr ast.Expr) bool {

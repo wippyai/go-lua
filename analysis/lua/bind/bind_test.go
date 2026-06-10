@@ -159,6 +159,18 @@ func TestImplicitGlobals(t *testing.T) {
 			t.Fatalf("predeclared global %q was marked implicit", read.Value)
 		}
 	}
+	if !r.ResolvesToGlobal(predeclaredRead, "print") {
+		t.Fatalf("predeclared read did not resolve to global print")
+	}
+	if !r.ResolvesToGlobal(unresolvedRead, "missing") {
+		t.Fatalf("implicit read did not resolve to global missing")
+	}
+	if r.ResolvesToGlobal(predeclaredRead, "math") {
+		t.Fatalf("print read resolved to wrong global")
+	}
+	if r.ResolvesToGlobal(nil, "print") {
+		t.Fatalf("nil ident resolved to global")
+	}
 
 	gotNames := PredeclaredGlobalNames(map[string]int{"": 1, "b": 2, "a": 3})
 	if want := []string{"a", "b"}; !reflect.DeepEqual(gotNames, want) {

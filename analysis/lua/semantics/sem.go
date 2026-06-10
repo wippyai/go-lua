@@ -105,6 +105,7 @@ type BranchConditionFact struct {
 	While     *ast.WhileStmt
 	Repeat    *ast.RepeatStmt
 	Condition ast.Expr
+	Check     BranchConditionCheck
 }
 
 type TypeDefinitionFact struct {
@@ -256,7 +257,10 @@ func (r *Result) BranchCondition(point cfg.Point) (BranchConditionFact, bool) {
 		return BranchConditionFact{}, false
 	}
 	fact, ok := r.branches[point]
-	return fact, ok
+	if !ok {
+		return BranchConditionFact{}, false
+	}
+	return copyBranchConditionFact(fact), true
 }
 
 func (r *Result) TypeDefinition(point cfg.Point) (TypeDefinitionFact, bool) {
@@ -351,7 +355,7 @@ func (r *Result) extractStmt(stmt ast.Stmt, bindings *bind.Result, built *cfgbui
 	case *ast.DoBlockStmt:
 		return r.extractStmts(stmt.Stmts, bindings, built)
 	case *ast.IfStmt:
-		if err := r.extractBranch(stmt, BranchIf, stmt.Condition, built.StmtPoints.PointsFor(stmt)); err != nil {
+		if err := r.extractBranch(stmt, BranchIf, stmt.Condition, bindings, built.StmtPoints.PointsFor(stmt)); err != nil {
 			return err
 		}
 		if err := r.extractStmts(stmt.Then, bindings, built); err != nil {
@@ -359,7 +363,7 @@ func (r *Result) extractStmt(stmt ast.Stmt, bindings *bind.Result, built *cfgbui
 		}
 		return r.extractStmts(stmt.Else, bindings, built)
 	case *ast.WhileStmt:
-		if err := r.extractBranch(stmt, BranchWhile, stmt.Condition, built.StmtPoints.PointsFor(stmt)); err != nil {
+		if err := r.extractBranch(stmt, BranchWhile, stmt.Condition, bindings, built.StmtPoints.PointsFor(stmt)); err != nil {
 			return err
 		}
 		return r.extractStmts(stmt.Stmts, bindings, built)
@@ -367,7 +371,7 @@ func (r *Result) extractStmt(stmt ast.Stmt, bindings *bind.Result, built *cfgbui
 		if err := r.extractStmts(stmt.Stmts, bindings, built); err != nil {
 			return err
 		}
-		return r.extractBranch(stmt, BranchRepeat, stmt.Condition, built.StmtPoints.PointsFor(stmt))
+		return r.extractBranch(stmt, BranchRepeat, stmt.Condition, bindings, built.StmtPoints.PointsFor(stmt))
 	case *ast.NumberForStmt:
 		if err := r.extractNumberFor(stmt, bindings, built.StmtPoints.PointsFor(stmt)); err != nil {
 			return err
@@ -493,7 +497,7 @@ func (r *Result) extractReturn(stmt *ast.ReturnStmt, points []cfg.Point) error {
 	return nil
 }
 
-func (r *Result) extractBranch(stmt ast.Stmt, kind BranchKind, condition ast.Expr, points []cfg.Point) error {
+func (r *Result) extractBranch(stmt ast.Stmt, kind BranchKind, condition ast.Expr, bindings *bind.Result, points []cfg.Point) error {
 	if len(points) == 0 {
 		return nil
 	}
@@ -504,6 +508,7 @@ func (r *Result) extractBranch(stmt ast.Stmt, kind BranchKind, condition ast.Exp
 		Kind:      kind,
 		Stmt:      stmt,
 		Condition: condition,
+		Check:     normalizeBranchCondition(condition, bindings),
 	}
 	switch stmt := stmt.(type) {
 	case *ast.IfStmt:
