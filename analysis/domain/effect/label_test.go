@@ -535,20 +535,20 @@ func TestAllLabelsImplementInterface(t *testing.T) {
 }
 
 func TestMarkerMethods(t *testing.T) {
-	// Test label() marker methods
-	Mutate{}.label()
-	Return{}.label()
-	ErrorReturn{}.label()
-	ReturnLength{}.label()
-	Throw{}.label()
-	Diverge{}.label()
-	IO{}.label()
-	LengthChange{}.label()
-	Iterator{}.label()
-	TableMutator{}.label()
-	Borrow{}.label()
-	Store{}.label()
-	BorrowAll{}.label()
+	// Test EffectLabel marker methods
+	Mutate{}.EffectLabel()
+	Return{}.EffectLabel()
+	ErrorReturn{}.EffectLabel()
+	ReturnLength{}.EffectLabel()
+	Throw{}.EffectLabel()
+	Diverge{}.EffectLabel()
+	IO{}.EffectLabel()
+	LengthChange{}.EffectLabel()
+	Iterator{}.EffectLabel()
+	TableMutator{}.EffectLabel()
+	Borrow{}.EffectLabel()
+	Store{}.EffectLabel()
+	BorrowAll{}.EffectLabel()
 
 	// Test transform() marker methods
 	ElementUnion{}.transform()
@@ -630,81 +630,6 @@ func TestCorrelatedReturn(t *testing.T) {
 
 	if cr.Equals(Throw{}) {
 		t.Error("CorrelatedReturn should not equal Throw")
-	}
-}
-
-func TestModuleLoad(t *testing.T) {
-	ml := ModuleLoad{}
-	if got := ml.String(); got != "module_load" {
-		t.Errorf("ModuleLoad.String() = %q", got)
-	}
-
-	if !ml.Equals(ModuleLoad{}) {
-		t.Error("ModuleLoad should equal ModuleLoad")
-	}
-
-	if ml.Equals(Throw{}) {
-		t.Error("ModuleLoad should not equal Throw")
-	}
-}
-
-func TestVariadicTransform(t *testing.T) {
-	vt := VariadicTransform{}
-	if got := vt.String(); got != "variadic_transform" {
-		t.Errorf("VariadicTransform.String() = %q", got)
-	}
-
-	if !vt.Equals(VariadicTransform{}) {
-		t.Error("VariadicTransform should equal VariadicTransform")
-	}
-
-	if vt.Equals(Throw{}) {
-		t.Error("VariadicTransform should not equal Throw")
-	}
-}
-
-func TestTypePredicate(t *testing.T) {
-	tp := TypePredicate{}
-	if got := tp.String(); got != "type_predicate" {
-		t.Errorf("TypePredicate.String() = %q", got)
-	}
-
-	if !tp.Equals(TypePredicate{}) {
-		t.Error("TypePredicate should equal TypePredicate")
-	}
-
-	if tp.Equals(Throw{}) {
-		t.Error("TypePredicate should not equal Throw")
-	}
-}
-
-func TestTypeValueMethod(t *testing.T) {
-	tvm := TypeValueMethod{}
-	if got := tvm.String(); got != "type_value_method" {
-		t.Errorf("TypeValueMethod.String() = %q", got)
-	}
-
-	if !tvm.Equals(TypeValueMethod{}) {
-		t.Error("TypeValueMethod should equal TypeValueMethod")
-	}
-
-	if tvm.Equals(Throw{}) {
-		t.Error("TypeValueMethod should not equal Throw")
-	}
-}
-
-func TestCallableType(t *testing.T) {
-	ct := CallableType{}
-	if got := ct.String(); got != "callable_type" {
-		t.Errorf("CallableType.String() = %q", got)
-	}
-
-	if !ct.Equals(CallableType{}) {
-		t.Error("CallableType should equal CallableType")
-	}
-
-	if ct.Equals(Throw{}) {
-		t.Error("CallableType should not equal Throw")
 	}
 }
 

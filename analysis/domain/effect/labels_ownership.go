@@ -6,7 +6,7 @@ type Borrow struct {
 	Param ParamRef
 }
 
-func (Borrow) label() {}
+func (Borrow) EffectLabel() {}
 func (b Borrow) String() string {
 	return fmt.Sprintf("borrow(%s)", b.Param)
 }
@@ -22,7 +22,7 @@ type Store struct {
 	Into  ParamRef
 }
 
-func (Store) label() {}
+func (Store) EffectLabel() {}
 func (s Store) String() string {
 	if s.Into.Index >= 0 {
 		return fmt.Sprintf("store(%s into %s)", s.Param, s.Into)
@@ -38,7 +38,7 @@ func (s Store) Equals(other Label) bool {
 
 type BorrowAll struct{}
 
-func (BorrowAll) label()         {}
+func (BorrowAll) EffectLabel()   {}
 func (BorrowAll) String() string { return "borrow_all" }
 func (BorrowAll) Equals(other Label) bool {
 	_, ok := other.(BorrowAll)
@@ -49,7 +49,7 @@ type Send struct {
 	FromParam int
 }
 
-func (Send) label() {}
+func (Send) EffectLabel() {}
 func (s Send) String() string {
 	return fmt.Sprintf("send(params[%d:])", s.FromParam)
 }
@@ -64,7 +64,7 @@ type Freeze struct {
 	Param ParamRef
 }
 
-func (Freeze) label() {}
+func (Freeze) EffectLabel() {}
 func (f Freeze) String() string {
 	return fmt.Sprintf("freeze(%s)", f.Param)
 }

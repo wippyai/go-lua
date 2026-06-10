@@ -426,43 +426,6 @@ func TestGetCorrelatedReturn(t *testing.T) {
 	}
 }
 
-func TestSemanticEffectConstructors(t *testing.T) {
-	t.Run("WithModuleLoad", func(t *testing.T) {
-		r := WithModuleLoad()
-		if !r.HasModuleLoad() {
-			t.Error("WithModuleLoad should have module load effect")
-		}
-	})
-
-	t.Run("WithVariadicTransform", func(t *testing.T) {
-		r := WithVariadicTransform()
-		if !r.HasVariadicTransform() {
-			t.Error("WithVariadicTransform should have variadic transform effect")
-		}
-	})
-
-	t.Run("WithTypePredicate", func(t *testing.T) {
-		r := WithTypePredicate()
-		if !r.HasTypePredicate() {
-			t.Error("WithTypePredicate should have type predicate effect")
-		}
-	})
-
-	t.Run("WithTypeValueMethod", func(t *testing.T) {
-		r := WithTypeValueMethod()
-		if !r.HasTypeValueMethod() {
-			t.Error("WithTypeValueMethod should have type value method effect")
-		}
-	})
-
-	t.Run("WithCallableType", func(t *testing.T) {
-		r := WithCallableType()
-		if !r.HasCallableType() {
-			t.Error("WithCallableType should have callable type effect")
-		}
-	})
-}
-
 func TestRowEqualsNonRow(t *testing.T) {
 	r := Empty
 	if r.Equals("not a row") {

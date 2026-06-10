@@ -12,7 +12,7 @@ type PassThrough struct {
 	ReturnIndex int
 }
 
-func (PassThrough) label() {}
+func (PassThrough) EffectLabel() {}
 
 func (p PassThrough) String() string {
 	return fmt.Sprintf("passthrough(param[%d]->ret[%d])", p.ParamIndex, p.ReturnIndex)
@@ -33,7 +33,7 @@ type FlowInto struct {
 	Remainder   typ.Type
 }
 
-func (FlowInto) label() {}
+func (FlowInto) EffectLabel() {}
 
 func (f FlowInto) String() string {
 	source := fmt.Sprintf("param[%d]", f.ParamIndex)

@@ -11,7 +11,7 @@ type Return struct {
 	Transform   ReturnType
 }
 
-func (Return) label() {}
+func (Return) EffectLabel() {}
 func (r Return) String() string {
 	return fmt.Sprintf("ret[%d].type = %s", r.ReturnIndex, r.Transform)
 }
@@ -27,7 +27,7 @@ type ErrorReturn struct {
 	ErrorIndex int
 }
 
-func (ErrorReturn) label() {}
+func (ErrorReturn) EffectLabel() {}
 func (e ErrorReturn) String() string {
 	return fmt.Sprintf("errret(val[%d], err[%d])", e.ValueIndex, e.ErrorIndex)
 }
@@ -43,7 +43,7 @@ type ReturnLength struct {
 	Length      expr.Expr
 }
 
-func (ReturnLength) label() {}
+func (ReturnLength) EffectLabel() {}
 func (r ReturnLength) String() string {
 	return fmt.Sprintf("ret[%d].len = %s", r.ReturnIndex, r.Length)
 }
@@ -150,7 +150,7 @@ type CorrelatedReturn struct {
 	Indices []int
 }
 
-func (CorrelatedReturn) label() {}
+func (CorrelatedReturn) EffectLabel() {}
 func (c CorrelatedReturn) String() string {
 	return fmt.Sprintf("correlated_return(%v)", c.Indices)
 }

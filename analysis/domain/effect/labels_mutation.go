@@ -13,7 +13,7 @@ type Mutate struct {
 	LengthDelta expr.Expr
 }
 
-func (Mutate) label() {}
+func (Mutate) EffectLabel() {}
 func (m Mutate) String() string {
 	if m.LengthDelta != nil {
 		return fmt.Sprintf("mutate(%s, %s, delta=%s)", m.Target, m.Transform, m.LengthDelta)
@@ -73,7 +73,7 @@ type LengthChange struct {
 	Delta  int
 }
 
-func (LengthChange) label() {}
+func (LengthChange) EffectLabel() {}
 func (l LengthChange) String() string {
 	if l.Delta >= 0 {
 		return fmt.Sprintf("len(%s) += %d", l.Target, l.Delta)
@@ -92,7 +92,7 @@ type TableMutator struct {
 	Value  ParamRef
 }
 
-func (TableMutator) label() {}
+func (TableMutator) EffectLabel() {}
 func (t TableMutator) String() string {
 	return fmt.Sprintf("table_mutator(%s, %s)", t.Target, t.Value)
 }

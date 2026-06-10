@@ -1,30 +1,25 @@
 package effect
 
 type LabelVisitor[R any] struct {
-	Mutate            func(Mutate) R
-	Return            func(Return) R
-	ErrorReturn       func(ErrorReturn) R
-	ReturnLength      func(ReturnLength) R
-	Throw             func(Throw) R
-	Diverge           func(Diverge) R
-	IO                func(IO) R
-	LengthChange      func(LengthChange) R
-	Iterator          func(Iterator) R
-	TableMutator      func(TableMutator) R
-	Borrow            func(Borrow) R
-	Store             func(Store) R
-	BorrowAll         func(BorrowAll) R
-	PassThrough       func(PassThrough) R
-	FlowInto          func(FlowInto) R
-	Send              func(Send) R
-	CorrelatedReturn  func(CorrelatedReturn) R
-	Freeze            func(Freeze) R
-	ModuleLoad        func(ModuleLoad) R
-	VariadicTransform func(VariadicTransform) R
-	TypePredicate     func(TypePredicate) R
-	TypeValueMethod   func(TypeValueMethod) R
-	CallableType      func(CallableType) R
-	Default           func(Label) R
+	Mutate           func(Mutate) R
+	Return           func(Return) R
+	ErrorReturn      func(ErrorReturn) R
+	ReturnLength     func(ReturnLength) R
+	Throw            func(Throw) R
+	Diverge          func(Diverge) R
+	IO               func(IO) R
+	LengthChange     func(LengthChange) R
+	Iterator         func(Iterator) R
+	TableMutator     func(TableMutator) R
+	Borrow           func(Borrow) R
+	Store            func(Store) R
+	BorrowAll        func(BorrowAll) R
+	PassThrough      func(PassThrough) R
+	FlowInto         func(FlowInto) R
+	Send             func(Send) R
+	CorrelatedReturn func(CorrelatedReturn) R
+	Freeze           func(Freeze) R
+	Default          func(Label) R
 }
 
 func VisitLabel[R any](l Label, v LabelVisitor[R]) R {
@@ -172,46 +167,6 @@ func VisitLabel[R any](l Label, v LabelVisitor[R]) R {
 	case *Freeze:
 		if v.Freeze != nil {
 			return v.Freeze(*ll)
-		}
-	case ModuleLoad:
-		if v.ModuleLoad != nil {
-			return v.ModuleLoad(ll)
-		}
-	case *ModuleLoad:
-		if v.ModuleLoad != nil {
-			return v.ModuleLoad(*ll)
-		}
-	case VariadicTransform:
-		if v.VariadicTransform != nil {
-			return v.VariadicTransform(ll)
-		}
-	case *VariadicTransform:
-		if v.VariadicTransform != nil {
-			return v.VariadicTransform(*ll)
-		}
-	case TypePredicate:
-		if v.TypePredicate != nil {
-			return v.TypePredicate(ll)
-		}
-	case *TypePredicate:
-		if v.TypePredicate != nil {
-			return v.TypePredicate(*ll)
-		}
-	case TypeValueMethod:
-		if v.TypeValueMethod != nil {
-			return v.TypeValueMethod(ll)
-		}
-	case *TypeValueMethod:
-		if v.TypeValueMethod != nil {
-			return v.TypeValueMethod(*ll)
-		}
-	case CallableType:
-		if v.CallableType != nil {
-			return v.CallableType(ll)
-		}
-	case *CallableType:
-		if v.CallableType != nil {
-			return v.CallableType(*ll)
 		}
 	}
 	if v.Default != nil {

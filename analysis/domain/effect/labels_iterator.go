@@ -14,7 +14,7 @@ type Iterator struct {
 	Kind   IteratorKind
 }
 
-func (Iterator) label() {}
+func (Iterator) EffectLabel() {}
 func (i Iterator) String() string {
 	kind := "indexed"
 	if i.Kind == IterateKeyed {
