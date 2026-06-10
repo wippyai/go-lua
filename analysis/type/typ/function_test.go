@@ -3,11 +3,14 @@ package typ
 import (
 	"testing"
 
+	"github.com/wippyai/go-lua/analysis/type/effectinfo"
 	"github.com/wippyai/go-lua/analysis/type/kind"
 )
 
-// mockEffect is a test-only implementation of EffectInfo.
+// mockEffect is a test-only implementation of effectinfo.Info.
 type mockEffect struct{}
+
+var _ effectinfo.Info = mockEffect{}
 
 func (m mockEffect) Equals(other any) bool {
 	_, ok := other.(mockEffect)

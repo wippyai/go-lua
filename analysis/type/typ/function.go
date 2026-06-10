@@ -3,6 +3,7 @@ package typ
 import (
 	"strings"
 
+	"github.com/wippyai/go-lua/analysis/type/effectinfo"
 	"github.com/wippyai/go-lua/analysis/type/kind"
 )
 
@@ -22,7 +23,7 @@ type Function struct {
 	Params                []Param      // Positional parameters
 	Variadic              Type         // Variadic element type (nil if not variadic)
 	Returns               []Type       // Return types (empty for void functions)
-	Effects               EffectInfo   // Effect row (effect.Row) for mutation/throw/io tracking
+	Effects               effectinfo.Info
 	hash                  uint64
 	containsAny           bool
 	containsNever         bool
@@ -47,7 +48,7 @@ type FunctionBuilder struct {
 	params     []Param
 	variadic   Type
 	returns    []Type
-	effects    EffectInfo
+	effects    effectinfo.Info
 }
 
 // Func starts building a function type.
@@ -108,7 +109,7 @@ func (b *FunctionBuilder) Returns(types ...Type) *FunctionBuilder {
 }
 
 // Effects sets effect row.
-func (b *FunctionBuilder) Effects(e EffectInfo) *FunctionBuilder {
+func (b *FunctionBuilder) Effects(e effectinfo.Info) *FunctionBuilder {
 	b.effects = e
 	return b
 }
