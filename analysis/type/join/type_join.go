@@ -28,13 +28,9 @@
 package join
 
 import (
-	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
-	luatable "github.com/wippyai/go-lua/analysis/lua/table"
 	"github.com/wippyai/go-lua/analysis/type/gradual"
-	"github.com/wippyai/go-lua/analysis/type/kind"
 	"github.com/wippyai/go-lua/analysis/type/relation"
 	"github.com/wippyai/go-lua/analysis/type/typ"
-	"github.com/wippyai/go-lua/analysis/type/unwrap"
 )
 
 // Types computes the union of multiple types for phi node joining.
@@ -74,13 +70,7 @@ func Types(types ...typ.Type) typ.Type {
 		return first
 	}
 	beforeCoalesce := len(filtered)
-	filtered = CoalesceEmptyRecordWithMap(filtered)
-	filtered = CoalesceEmptyRecordWithArray(filtered)
-	filtered = CoalesceMaps(filtered)
-	filtered = relation.CoalesceRecursiveRecordFamilies(filtered)
-	filtered = relation.CoalesceCompatibleRecords(filtered)
-	filtered = CoalesceRecordOpenness(filtered)
-	filtered = CoalesceMaps(filtered)
+	filtered = relation.CoalesceJoinProducts(filtered, Types)
 	if len(filtered) < beforeCoalesce {
 		filtered = dedupeJoinInputs(filtered)
 	}
@@ -99,36 +89,7 @@ func FlattenUnions(types []typ.Type) []typ.Type {
 		return types
 	}
 	var out []typ.Type
-	var seen map[uint64][]typ.Type
-	var identity map[typ.Type]struct{}
 	changed := false
-	appendLeaf := func(t typ.Type) {
-		if t == nil {
-			return
-		}
-		if !typ.ContainsRecursive(t) && !joinDedupeUsesStructuralEquality(t) {
-			if identity == nil {
-				identity = make(map[typ.Type]struct{}, len(types))
-			}
-			if _, ok := identity[t]; ok {
-				return
-			}
-			identity[t] = struct{}{}
-			out = append(out, t)
-			return
-		}
-		if seen == nil {
-			seen = make(map[uint64][]typ.Type, len(types))
-		}
-		hash := typ.UnionMemberHash(t)
-		for _, existing := range seen[hash] {
-			if sameJoinInput(existing, t) {
-				return
-			}
-		}
-		seen[hash] = append(seen[hash], t)
-		out = append(out, t)
-	}
 	var appendType func(typ.Type)
 	appendType = func(t typ.Type) {
 		if u, ok := t.(*typ.Union); ok {
@@ -138,7 +99,9 @@ func FlattenUnions(types []typ.Type) []typ.Type {
 			}
 			return
 		}
-		appendLeaf(t)
+		if t != nil {
+			out = append(out, t)
+		}
 	}
 	for _, t := range types {
 		appendType(t)
@@ -146,74 +109,15 @@ func FlattenUnions(types []typ.Type) []typ.Type {
 	if !changed {
 		return types
 	}
-	return out
+	return dedupeJoinInputs(out)
 }
 
 func dedupeJoinInputs(types []typ.Type) []typ.Type {
-	if len(types) < 2 {
-		return types
-	}
-	seen := make(map[uint64][]typ.Type, len(types))
-	identity := make(map[typ.Type]struct{})
-	out := make([]typ.Type, 0, len(types))
-	changed := false
-	for _, t := range types {
-		if t == nil {
-			changed = true
-			continue
-		}
-		if !typ.ContainsRecursive(t) && !joinDedupeUsesStructuralEquality(t) {
-			if _, ok := identity[t]; ok {
-				changed = true
-				continue
-			}
-			identity[t] = struct{}{}
-			out = append(out, t)
-			continue
-		}
-		hash := typ.UnionMemberHash(t)
-		duplicate := false
-		for _, existing := range seen[hash] {
-			if sameJoinInput(existing, t) {
-				duplicate = true
-				changed = true
-				break
-			}
-		}
-		if duplicate {
-			continue
-		}
-		seen[hash] = append(seen[hash], t)
-		out = append(out, t)
-	}
-	if !changed {
-		return types
-	}
-	return out
+	return relation.DedupeJoinInputs(types)
 }
 
 func sameJoinInput(a, b typ.Type) bool {
-	if typ.SameUnionMember(a, b) {
-		return true
-	}
-	if typ.ContainsRecursive(a) || typ.ContainsRecursive(b) {
-		return identity.SameProductFamily(a, b)
-	}
-	return false
-}
-
-func joinDedupeUsesStructuralEquality(t typ.Type) bool {
-	t = typ.UnwrapAnnotated(t)
-	if t == nil {
-		return false
-	}
-	switch t.Kind() {
-	case kind.Nil, kind.Boolean, kind.Number, kind.Integer, kind.String,
-		kind.Any, kind.Unknown, kind.Never, kind.Literal, kind.Self:
-		return true
-	default:
-		return false
-	}
+	return relation.SameJoinInput(a, b)
 }
 
 // CoalesceEmptyRecordWithArray removes empty records when arrays are present.
@@ -223,27 +127,7 @@ func joinDedupeUsesStructuralEquality(t typ.Type) bool {
 // (table.insert). Keeping {} in the union loses sequence intent and creates
 // downstream nil-index noise. When an array shape is present, prefer it.
 func CoalesceEmptyRecordWithArray(types []typ.Type) []typ.Type {
-	hasEmptyRecord := false
-	hasArray := false
-	for _, t := range types {
-		if unwrap.IsEmptyRecord(t) {
-			hasEmptyRecord = true
-			continue
-		}
-		if _, ok := unwrap.Alias(t).(*typ.Array); ok {
-			hasArray = true
-		}
-	}
-	if !hasEmptyRecord || !hasArray {
-		return types
-	}
-	result := make([]typ.Type, 0, len(types))
-	for _, t := range types {
-		if !unwrap.IsEmptyRecord(t) {
-			result = append(result, t)
-		}
-	}
-	return result
+	return relation.CoalesceEmptyRecordWithArray(types)
 }
 
 // filterUnknown removes nil and unknown types from the slice.
@@ -275,35 +159,7 @@ func filterUnknown(types []typ.Type) []typ.Type {
 //
 // Non-map types in the input are preserved unchanged in the result.
 func CoalesceMaps(types []typ.Type) []typ.Type {
-	if len(types) < 2 {
-		return types
-	}
-
-	var maps []*typ.Map
-	rest := make([]typ.Type, 0, len(types))
-	for _, t := range types {
-		if t == nil {
-			continue
-		}
-		if m, ok := t.(*typ.Map); ok {
-			maps = append(maps, m)
-			continue
-		}
-		rest = append(rest, t)
-	}
-
-	if len(maps) <= 1 {
-		return types
-	}
-
-	keys := make([]typ.Type, 0, len(maps))
-	values := make([]typ.Type, 0, len(maps))
-	for _, m := range maps {
-		keys = append(keys, m.Key)
-		values = append(values, m.Value)
-	}
-	rest = append(rest, luatable.NewMap(Types(keys...), Types(values...)))
-	return rest
+	return relation.CoalesceMaps(types, Types)
 }
 
 // CoalesceRecordOpenness converts closed records to open when joining with open records.
@@ -317,38 +173,7 @@ func CoalesceMaps(types []typ.Type) []typ.Type {
 //
 // If all records are closed or all are open, no transformation is needed.
 func CoalesceRecordOpenness(types []typ.Type) []typ.Type {
-	hasOpen := false
-	hasClosed := false
-	for _, t := range types {
-		if r, ok := t.(*typ.Record); ok {
-			if r.Open {
-				hasOpen = true
-			} else {
-				hasClosed = true
-			}
-		}
-	}
-	if !hasOpen || !hasClosed {
-		return types
-	}
-	result := make([]typ.Type, 0, len(types))
-	for _, t := range types {
-		r, ok := t.(*typ.Record)
-		if !ok || r.Open {
-			result = append(result, t)
-			continue
-		}
-		result = append(result, luatable.RebuildRecord(typ.RecordParts{
-			Fields:        r.Fields,
-			StaticMembers: r.StaticMembers,
-			Metatable:     r.Metatable,
-			MapKey:        r.MapKey,
-			MapValue:      r.MapValue,
-			Open:          true,
-			AssumeSorted:  true,
-		}))
-	}
-	return result
+	return relation.CoalesceRecordOpenness(types)
 }
 
 // CoalesceEmptyRecordWithMap removes empty records when maps are present.
@@ -361,24 +186,5 @@ func CoalesceRecordOpenness(types []typ.Type) []typ.Type {
 // Example: Joining {} and {[string]: number} produces {[string]: number}, not
 // {} | {[string]: number}.
 func CoalesceEmptyRecordWithMap(types []typ.Type) []typ.Type {
-	hasEmptyRecord := false
-	hasMap := false
-	for _, t := range types {
-		if unwrap.IsEmptyRecord(t) {
-			hasEmptyRecord = true
-		}
-		if t != nil && (t.Kind() == kind.Map || t.Kind() == kind.ReadonlyMap) {
-			hasMap = true
-		}
-	}
-	if !hasEmptyRecord || !hasMap {
-		return types
-	}
-	result := make([]typ.Type, 0, len(types))
-	for _, t := range types {
-		if !unwrap.IsEmptyRecord(t) {
-			result = append(result, t)
-		}
-	}
-	return result
+	return relation.CoalesceEmptyRecordWithMap(types)
 }
