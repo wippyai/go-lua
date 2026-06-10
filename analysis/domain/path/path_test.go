@@ -24,10 +24,10 @@ func TestPathPlaceholderIndex_OverflowRejected(t *testing.T) {
 func TestPathStringKeyHash(t *testing.T) {
 	p := Path{
 		Root: "x",
-		Segments: []Segment{
-			{Kind: SegmentField, Name: "y"},
-			{Kind: SegmentIndexString, Name: "z"},
-			{Kind: SegmentIndexInt, Index: 3},
+		Segments: []segment.Segment{
+			{Kind: segment.SegmentField, Name: "y"},
+			{Kind: segment.SegmentIndexString, Name: "z"},
+			{Kind: segment.SegmentIndexInt, Index: 3},
 		},
 	}
 	display := "x.y[z][3]"
@@ -41,10 +41,10 @@ func TestPathStringKeyHash(t *testing.T) {
 		t.Fatalf("expected key %q, got %q", key, p.Key())
 	}
 
-	p2 := Path{Root: "x", Segments: []Segment{
-		{Kind: SegmentField, Name: "y"},
-		{Kind: SegmentIndexString, Name: "z"},
-		{Kind: SegmentIndexInt, Index: 3},
+	p2 := Path{Root: "x", Segments: []segment.Segment{
+		{Kind: segment.SegmentField, Name: "y"},
+		{Kind: segment.SegmentIndexString, Name: "z"},
+		{Kind: segment.SegmentIndexInt, Index: 3},
 	}}
 	if p.Hash() != p2.Hash() {
 		t.Fatalf("expected stable hash, got %d vs %d", p.Hash(), p2.Hash())
@@ -59,7 +59,7 @@ func TestPathLessAndAppend(t *testing.T) {
 		t.Fatalf("expected a < b")
 	}
 
-	seg := Segment{Kind: SegmentField, Name: "field"}
+	seg := segment.Segment{Kind: segment.SegmentField, Name: "field"}
 
 	ap := a.Append(seg)
 	if ap.Root != "a" || len(ap.Segments) != 1 {
@@ -80,30 +80,30 @@ func TestPathDirectFieldName(t *testing.T) {
 	}{
 		{
 			name: "dot field",
-			path: Path{Root: "x", Symbol: 1, Segments: []Segment{{Kind: SegmentField, Name: "f"}}},
+			path: Path{Root: "x", Symbol: 1, Segments: []segment.Segment{{Kind: segment.SegmentField, Name: "f"}}},
 			want: "f",
 			ok:   true,
 		},
 		{
 			name: "string index",
-			path: Path{Root: "x", Symbol: 1, Segments: []Segment{{Kind: SegmentIndexString, Name: "f"}}},
+			path: Path{Root: "x", Symbol: 1, Segments: []segment.Segment{{Kind: segment.SegmentIndexString, Name: "f"}}},
 			want: "f",
 			ok:   true,
 		},
 		{
 			name: "nested field rejected",
-			path: Path{Root: "x", Symbol: 1, Segments: []Segment{
-				{Kind: SegmentField, Name: "a"},
-				{Kind: SegmentField, Name: "b"},
+			path: Path{Root: "x", Symbol: 1, Segments: []segment.Segment{
+				{Kind: segment.SegmentField, Name: "a"},
+				{Kind: segment.SegmentField, Name: "b"},
 			}},
 		},
 		{
 			name: "integer index rejected",
-			path: Path{Root: "x", Symbol: 1, Segments: []Segment{{Kind: SegmentIndexInt, Index: 1}}},
+			path: Path{Root: "x", Symbol: 1, Segments: []segment.Segment{{Kind: segment.SegmentIndexInt, Index: 1}}},
 		},
 		{
 			name: "empty name rejected",
-			path: Path{Root: "x", Symbol: 1, Segments: []Segment{{Kind: SegmentField}}},
+			path: Path{Root: "x", Symbol: 1, Segments: []segment.Segment{{Kind: segment.SegmentField}}},
 		},
 		{
 			name: "root only rejected",
@@ -135,10 +135,10 @@ func TestPathSubstitute(t *testing.T) {
 }
 
 func TestPathKeyUsesFormatSegments(t *testing.T) {
-	segs := []Segment{
-		{Kind: SegmentField, Name: "foo"},
-		{Kind: SegmentIndexString, Name: "bar"},
-		{Kind: SegmentIndexInt, Index: 1},
+	segs := []segment.Segment{
+		{Kind: segment.SegmentField, Name: "foo"},
+		{Kind: segment.SegmentIndexString, Name: "bar"},
+		{Kind: segment.SegmentIndexInt, Index: 1},
 	}
 
 	p := Path{Symbol: 42, Segments: segs}
@@ -152,14 +152,14 @@ func TestPathKeyUsesFormatSegments(t *testing.T) {
 func TestPathKeyPlaceholderUsesCanonicalSegments(t *testing.T) {
 	pStr := Path{
 		Root: "$0",
-		Segments: []Segment{
-			{Kind: SegmentIndexString, Name: "1"},
+		Segments: []segment.Segment{
+			{Kind: segment.SegmentIndexString, Name: "1"},
 		},
 	}
 	pInt := Path{
 		Root: "$0",
-		Segments: []Segment{
-			{Kind: SegmentIndexInt, Index: 1},
+		Segments: []segment.Segment{
+			{Kind: segment.SegmentIndexInt, Index: 1},
 		},
 	}
 
@@ -232,13 +232,13 @@ func TestPathFluentBuilders(t *testing.T) {
 	if len(p.Segments) != 3 {
 		t.Errorf("expected 3 segments, got %d", len(p.Segments))
 	}
-	if p.Segments[0].Kind != SegmentField || p.Segments[0].Name != "data" {
+	if p.Segments[0].Kind != segment.SegmentField || p.Segments[0].Name != "data" {
 		t.Errorf("segment 0: expected field 'data', got %+v", p.Segments[0])
 	}
-	if p.Segments[1].Kind != SegmentIndexString || p.Segments[1].Name != "key" {
+	if p.Segments[1].Kind != segment.SegmentIndexString || p.Segments[1].Name != "key" {
 		t.Errorf("segment 1: expected index string 'key', got %+v", p.Segments[1])
 	}
-	if p.Segments[2].Kind != SegmentIndexInt || p.Segments[2].Index != 0 {
+	if p.Segments[2].Kind != segment.SegmentIndexInt || p.Segments[2].Index != 0 {
 		t.Errorf("segment 2: expected index int 0, got %+v", p.Segments[2])
 	}
 }
@@ -269,7 +269,7 @@ func TestPathLastSegment(t *testing.T) {
 	if !ok {
 		t.Fatal("expected LastSegment to return ok=true")
 	}
-	if seg.Kind != SegmentIndexInt || seg.Index != 5 {
+	if seg.Kind != segment.SegmentIndexInt || seg.Index != 5 {
 		t.Errorf("expected index int 5, got %+v", seg)
 	}
 
@@ -514,8 +514,8 @@ func TestPathIsReturnPath(t *testing.T) {
 		{Root: "ret[1x]"},
 		{Root: "ret[1]]"},
 		{Root: "ret[0]", Symbol: 7},
-		{Root: "ret[0]", Segments: []Segment{{Kind: SegmentField, Name: "k"}}},
-		{Root: "ret[0]", Segments: []Segment{{Kind: SegmentIndexInt, Index: 1}}},
+		{Root: "ret[0]", Segments: []segment.Segment{{Kind: segment.SegmentField, Name: "k"}}},
+		{Root: "ret[0]", Segments: []segment.Segment{{Kind: segment.SegmentIndexInt, Index: 1}}},
 	}
 	for _, p := range invalid {
 		if IsReturnPath(p) {
@@ -529,9 +529,9 @@ func TestPathIsReturnPath(t *testing.T) {
 // modifications to one could corrupt the other.
 func TestPathParentSliceAliasing(t *testing.T) {
 	// Create a path with extra capacity in the segments slice
-	segments := make([]Segment, 2, 4)
-	segments[0] = Segment{Kind: SegmentField, Name: "a"}
-	segments[1] = Segment{Kind: SegmentField, Name: "b"}
+	segments := make([]segment.Segment, 2, 4)
+	segments[0] = segment.Segment{Kind: segment.SegmentField, Name: "a"}
+	segments[1] = segment.Segment{Kind: segment.SegmentField, Name: "b"}
 	original := Path{Root: "x", Symbol: 1, Segments: segments}
 
 	parent := original.Parent()
@@ -541,7 +541,7 @@ func TestPathParentSliceAliasing(t *testing.T) {
 	if cap(parent.Segments) > len(parent.Segments) {
 		// There's room in the backing array - this append would corrupt original
 		// if slice aliasing exists
-		extended := append(parent.Segments, Segment{Kind: SegmentField, Name: "CORRUPTED"})
+		extended := append(parent.Segments, segment.Segment{Kind: segment.SegmentField, Name: "CORRUPTED"})
 		_ = extended
 
 		// Check if original is corrupted

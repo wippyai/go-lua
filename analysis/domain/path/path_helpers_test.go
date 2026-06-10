@@ -4,6 +4,8 @@ import (
 	"reflect"
 	"strconv"
 	"testing"
+
+	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 )
 
 func TestNewPlaceholderCanonicalRoot(t *testing.T) {
@@ -186,33 +188,33 @@ func TestSplitFieldPathRejectsNonFieldPaths(t *testing.T) {
 func TestSegmentFieldName(t *testing.T) {
 	tests := []struct {
 		name      string
-		segment   Segment
+		segment   segment.Segment
 		want      string
 		wantValid bool
 	}{
 		{
 			name:      "field",
-			segment:   Segment{Kind: SegmentField, Name: "id"},
+			segment:   segment.Segment{Kind: segment.SegmentField, Name: "id"},
 			want:      "id",
 			wantValid: true,
 		},
 		{
 			name:      "string index",
-			segment:   Segment{Kind: SegmentIndexString, Name: "id"},
+			segment:   segment.Segment{Kind: segment.SegmentIndexString, Name: "id"},
 			want:      "id",
 			wantValid: true,
 		},
 		{
 			name:    "empty field",
-			segment: Segment{Kind: SegmentField},
+			segment: segment.Segment{Kind: segment.SegmentField},
 		},
 		{
 			name:    "empty string index",
-			segment: Segment{Kind: SegmentIndexString},
+			segment: segment.Segment{Kind: segment.SegmentIndexString},
 		},
 		{
 			name:    "int index",
-			segment: Segment{Kind: SegmentIndexInt, Index: 1},
+			segment: segment.Segment{Kind: segment.SegmentIndexInt, Index: 1},
 		},
 	}
 

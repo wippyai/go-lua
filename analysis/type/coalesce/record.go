@@ -5,6 +5,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/type/normalize"
 	typetable "github.com/wippyai/go-lua/analysis/type/table"
 	"github.com/wippyai/go-lua/analysis/type/typ"
+	"github.com/wippyai/go-lua/analysis/type/unwrap"
 )
 
 // SlotJoinFunc joins two nested product slots. Callers own the surrounding
@@ -124,7 +125,7 @@ func CoalesceClosedCompatibleRecords(types []typ.Type, policy RecordPolicy) ([]t
 	ineligible := false
 	eligibleCount := 0
 	for i, t := range types {
-		rec := UnaliasRecord(t)
+		rec := unwrap.RecordUnaliased(t)
 		if rec == nil {
 			ineligible = true
 			continue
@@ -307,19 +308,6 @@ func CompatibleRecordMetatables(a, b *typ.Record) bool {
 		return a.Metatable == nil && b.Metatable == nil
 	}
 	return typ.SameNodeOrAcyclicEqual(a.Metatable, b.Metatable)
-}
-
-// UnaliasRecord unwraps aliases and returns the underlying record, if any.
-func UnaliasRecord(t typ.Type) *typ.Record {
-	for {
-		a, ok := t.(*typ.Alias)
-		if !ok {
-			break
-		}
-		t = a.UnaliasedTarget()
-	}
-	rec, _ := t.(*typ.Record)
-	return rec
 }
 
 func staticMemberKey(member typ.StaticMember) staticMemberJoinKey {

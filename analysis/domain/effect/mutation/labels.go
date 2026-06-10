@@ -111,27 +111,46 @@ func transformEquals(a, b TypeTransform) bool {
 	if a == nil || b == nil {
 		return false
 	}
-	return VisitTransform(a, TypeTransformVisitor[bool]{
-		Unchanged: func(Unchanged) bool {
-			_, ok := b.(Unchanged)
-			return ok
-		},
-		ElementUnion: func(av ElementUnion) bool {
-			bv, ok := b.(ElementUnion)
-			return ok && av.Source.Index == bv.Source.Index
-		},
-		ContainerElementUnion: func(av ContainerElementUnion) bool {
-			bv, ok := b.(ContainerElementUnion)
-			return ok &&
-				av.Container.Index == bv.Container.Index &&
-				av.Value.Index == bv.Value.Index
-		},
-		ToArray: func(av ToArray) bool {
-			bv, ok := b.(ToArray)
-			return ok && av.Element.Index == bv.Element.Index
-		},
-		Default: func(TypeTransform) bool {
-			return false
-		},
-	})
+	switch av := a.(type) {
+	case Unchanged:
+		return unchangedEquals(av, b)
+	case *Unchanged:
+		return unchangedEquals(*av, b)
+	case ElementUnion:
+		return elementUnionEquals(av, b)
+	case *ElementUnion:
+		return elementUnionEquals(*av, b)
+	case ContainerElementUnion:
+		return containerElementUnionEquals(av, b)
+	case *ContainerElementUnion:
+		return containerElementUnionEquals(*av, b)
+	case ToArray:
+		return toArrayEquals(av, b)
+	case *ToArray:
+		return toArrayEquals(*av, b)
+	default:
+		return false
+	}
+}
+
+func unchangedEquals(_ Unchanged, b TypeTransform) bool {
+	_, ok := b.(Unchanged)
+	return ok
+}
+
+func elementUnionEquals(a ElementUnion, b TypeTransform) bool {
+	bb, ok := b.(ElementUnion)
+	return ok && a.Source.Index == bb.Source.Index
+}
+
+func containerElementUnionEquals(a ContainerElementUnion, b TypeTransform) bool {
+	bb, ok := b.(ContainerElementUnion)
+	return ok &&
+		a.Container.Index == bb.Container.Index &&
+		a.Value.Index == bb.Value.Index
+}
+
+func toArrayEquals(a ToArray, b TypeTransform) bool {
+	bb, ok := b.(ToArray)
+	return ok && a.Element.Index == bb.Element.Index
 }

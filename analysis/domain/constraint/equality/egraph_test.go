@@ -4,14 +4,15 @@ import (
 	"testing"
 
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
+	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	"github.com/wippyai/go-lua/analysis/symbol"
 )
 
 func makePath(name string, sym symbol.ID, segments ...string) pathdom.Path {
 	path := pathdom.Path{Root: name, Symbol: sym}
 	for _, s := range segments {
-		path.Segments = append(path.Segments, pathdom.Segment{
-			Kind: pathdom.SegmentField,
+		path.Segments = append(path.Segments, segment.Segment{
+			Kind: segment.SegmentField,
 			Name: s,
 		})
 	}
@@ -217,16 +218,16 @@ func TestEGraph_IndexCongruence(t *testing.T) {
 	arr1Idx := pathdom.Path{
 		Root:   "arr1",
 		Symbol: 1,
-		Segments: []pathdom.Segment{{
-			Kind: pathdom.SegmentIndexString,
+		Segments: []segment.Segment{{
+			Kind: segment.SegmentIndexString,
 			Name: "0",
 		}},
 	}
 	arr2Idx := pathdom.Path{
 		Root:   "arr2",
 		Symbol: 2,
-		Segments: []pathdom.Segment{{
-			Kind: pathdom.SegmentIndexString,
+		Segments: []segment.Segment{{
+			Kind: segment.SegmentIndexString,
 			Name: "0",
 		}},
 	}
@@ -274,16 +275,16 @@ func TestEGraph_IndexStringAndIndexInt_DoNotAliasInCongruence(t *testing.T) {
 	xStringIndex := pathdom.Path{
 		Root:   "x",
 		Symbol: 1,
-		Segments: []pathdom.Segment{{
-			Kind: pathdom.SegmentIndexString,
+		Segments: []segment.Segment{{
+			Kind: segment.SegmentIndexString,
 			Name: "1",
 		}},
 	}
 	yIntIndex := pathdom.Path{
 		Root:   "y",
 		Symbol: 2,
-		Segments: []pathdom.Segment{{
-			Kind:  pathdom.SegmentIndexInt,
+		Segments: []segment.Segment{{
+			Kind:  segment.SegmentIndexInt,
 			Index: 1,
 		}},
 	}

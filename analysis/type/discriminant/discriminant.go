@@ -6,6 +6,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/type/kind"
 	"github.com/wippyai/go-lua/analysis/type/literal"
 	"github.com/wippyai/go-lua/analysis/type/typ"
+	"github.com/wippyai/go-lua/analysis/type/unwrap"
 )
 
 // Detector owns required-literal tag extraction and conflict detection for
@@ -279,8 +280,8 @@ func (d *Detector) mergeKeepsPreciseFieldType(a, b typ.Type) bool {
 	if fieldMergeKind(a) != fieldMergeKind(b) {
 		return false
 	}
-	ar := unaliasRecord(a)
-	br := unaliasRecord(b)
+	ar := unwrap.RecordAliasOnly(a)
+	br := unwrap.RecordAliasOnly(b)
 	if ar != nil && br != nil {
 		return d.literalErasedResidualsCleanlyMergeable(ar, br) && !d.RecordsConflict(ar, br)
 	}
@@ -303,18 +304,6 @@ func fieldMergeKind(t typ.Type) kind.Kind {
 		return kind.Nil
 	}
 	return t.Kind()
-}
-
-func unaliasRecord(t typ.Type) *typ.Record {
-	for {
-		a, ok := t.(*typ.Alias)
-		if !ok {
-			break
-		}
-		t = a.Target
-	}
-	rec, _ := t.(*typ.Record)
-	return rec
 }
 
 func staticMemberPath(member typ.StaticMember) string {

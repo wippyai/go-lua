@@ -66,6 +66,20 @@ func TestMutate_Equals(t *testing.T) {
 	}
 }
 
+func TestTransformEqualsPointerLeftOnly(t *testing.T) {
+	tr := ToArray{Element: effect.ParamRef{Index: 0}}
+
+	if !transformEquals(&tr, tr) {
+		t.Error("pointer transform on left should equal value transform")
+	}
+	if transformEquals(tr, &tr) {
+		t.Error("value transform on left should not equal pointer transform")
+	}
+	if transformEquals(&tr, &tr) {
+		t.Error("pointer transforms on both sides should not be equal")
+	}
+}
+
 func TestElementUnion_String(t *testing.T) {
 	e := ElementUnion{Source: effect.ParamRef{Index: 1}}
 	if got := e.String(); got != "union_elem(param[1])" {
@@ -188,30 +202,6 @@ func TestMarkerMethods(t *testing.T) {
 	ContainerElementUnion{}.transform()
 	ToArray{}.transform()
 	Unchanged{}.transform()
-}
-
-func TestVisitTransform(t *testing.T) {
-	got := VisitTransform(ToArray{Element: effect.ParamRef{Index: 0}}, TypeTransformVisitor[string]{
-		ToArray: func(t ToArray) string {
-			return t.String()
-		},
-		Default: func(TypeTransform) string {
-			return "default"
-		},
-	})
-
-	if got != "to_array(param[0])" {
-		t.Errorf("VisitTransform() = %q", got)
-	}
-
-	got = VisitTransform(nil, TypeTransformVisitor[string]{
-		Default: func(TypeTransform) string {
-			return "default"
-		},
-	})
-	if got != "default" {
-		t.Errorf("VisitTransform default = %q", got)
-	}
 }
 
 func TestMutateEffect(t *testing.T) {

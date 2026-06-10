@@ -175,57 +175,106 @@ func returnTypeEquals(a, b ReturnType) bool {
 	if a == nil || b == nil {
 		return false
 	}
-	return VisitReturnType(a, ReturnTypeVisitor[bool]{
-		ElementOf: func(av ElementOf) bool {
-			bv, ok := b.(ElementOf)
-			return ok && av.Source.Index == bv.Source.Index
-		},
-		OptionalElementOf: func(av OptionalElementOf) bool {
-			bv, ok := b.(OptionalElementOf)
-			return ok && av.Source.Index == bv.Source.Index
-		},
-		CallbackReturn: func(av CallbackReturn) bool {
-			bv, ok := b.(CallbackReturn)
-			return ok && av.CallbackParam.Index == bv.CallbackParam.Index
-		},
-		ArrayOfCallbackReturn: func(av ArrayOfCallbackReturn) bool {
-			bv, ok := b.(ArrayOfCallbackReturn)
-			return ok && av.CallbackParam.Index == bv.CallbackParam.Index
-		},
-		SameAs: func(av SameAs) bool {
-			bv, ok := b.(SameAs)
-			return ok && av.Source.Index == bv.Source.Index
-		},
-		DeepElementOf: func(av DeepElementOf) bool {
-			bv, ok := b.(DeepElementOf)
-			return ok && av.Source.Index == bv.Source.Index
-		},
-		StringUnpackValue: func(av StringUnpackValue) bool {
-			bv, ok := b.(StringUnpackValue)
-			return ok && av.Format.Index == bv.Format.Index
-		},
-		TypeProjection: func(av TypeProjection) bool {
-			bv, ok := b.(TypeProjection)
-			if !ok || av.Source.Index != bv.Source.Index || len(av.Steps) != len(bv.Steps) {
-				return false
-			}
-			for i := range av.Steps {
-				if !typeProjectionStepEquals(av.Steps[i], bv.Steps[i]) {
-					return false
-				}
-			}
-			return true
-		},
-		SelectCaseOfParam: func(av SelectCaseOfParam) bool {
-			bv, ok := b.(SelectCaseOfParam)
-			return ok && av.Source.Index == bv.Source.Index
-		},
-		SelectResultOfCases: func(av SelectResultOfCases) bool {
-			bv, ok := b.(SelectResultOfCases)
-			return ok && av.Cases.Index == bv.Cases.Index && av.Default.Index == bv.Default.Index
-		},
-		Default: func(ReturnType) bool {
+	switch av := a.(type) {
+	case ElementOf:
+		return elementOfEquals(av, b)
+	case *ElementOf:
+		return elementOfEquals(*av, b)
+	case OptionalElementOf:
+		return optionalElementOfEquals(av, b)
+	case *OptionalElementOf:
+		return optionalElementOfEquals(*av, b)
+	case CallbackReturn:
+		return callbackReturnEquals(av, b)
+	case *CallbackReturn:
+		return callbackReturnEquals(*av, b)
+	case ArrayOfCallbackReturn:
+		return arrayOfCallbackReturnEquals(av, b)
+	case *ArrayOfCallbackReturn:
+		return arrayOfCallbackReturnEquals(*av, b)
+	case SameAs:
+		return sameAsEquals(av, b)
+	case *SameAs:
+		return sameAsEquals(*av, b)
+	case DeepElementOf:
+		return deepElementOfEquals(av, b)
+	case *DeepElementOf:
+		return deepElementOfEquals(*av, b)
+	case StringUnpackValue:
+		return stringUnpackValueEquals(av, b)
+	case *StringUnpackValue:
+		return stringUnpackValueEquals(*av, b)
+	case TypeProjection:
+		return typeProjectionEquals(av, b)
+	case *TypeProjection:
+		return typeProjectionEquals(*av, b)
+	case SelectCaseOfParam:
+		return selectCaseOfParamEquals(av, b)
+	case *SelectCaseOfParam:
+		return selectCaseOfParamEquals(*av, b)
+	case SelectResultOfCases:
+		return selectResultOfCasesEquals(av, b)
+	case *SelectResultOfCases:
+		return selectResultOfCasesEquals(*av, b)
+	default:
+		return false
+	}
+}
+
+func elementOfEquals(a ElementOf, b ReturnType) bool {
+	bb, ok := b.(ElementOf)
+	return ok && a.Source.Index == bb.Source.Index
+}
+
+func optionalElementOfEquals(a OptionalElementOf, b ReturnType) bool {
+	bb, ok := b.(OptionalElementOf)
+	return ok && a.Source.Index == bb.Source.Index
+}
+
+func callbackReturnEquals(a CallbackReturn, b ReturnType) bool {
+	bb, ok := b.(CallbackReturn)
+	return ok && a.CallbackParam.Index == bb.CallbackParam.Index
+}
+
+func arrayOfCallbackReturnEquals(a ArrayOfCallbackReturn, b ReturnType) bool {
+	bb, ok := b.(ArrayOfCallbackReturn)
+	return ok && a.CallbackParam.Index == bb.CallbackParam.Index
+}
+
+func sameAsEquals(a SameAs, b ReturnType) bool {
+	bb, ok := b.(SameAs)
+	return ok && a.Source.Index == bb.Source.Index
+}
+
+func deepElementOfEquals(a DeepElementOf, b ReturnType) bool {
+	bb, ok := b.(DeepElementOf)
+	return ok && a.Source.Index == bb.Source.Index
+}
+
+func stringUnpackValueEquals(a StringUnpackValue, b ReturnType) bool {
+	bb, ok := b.(StringUnpackValue)
+	return ok && a.Format.Index == bb.Format.Index
+}
+
+func typeProjectionEquals(a TypeProjection, b ReturnType) bool {
+	bb, ok := b.(TypeProjection)
+	if !ok || a.Source.Index != bb.Source.Index || len(a.Steps) != len(bb.Steps) {
+		return false
+	}
+	for i := range a.Steps {
+		if !typeProjectionStepEquals(a.Steps[i], bb.Steps[i]) {
 			return false
-		},
-	})
+		}
+	}
+	return true
+}
+
+func selectCaseOfParamEquals(a SelectCaseOfParam, b ReturnType) bool {
+	bb, ok := b.(SelectCaseOfParam)
+	return ok && a.Source.Index == bb.Source.Index
+}
+
+func selectResultOfCasesEquals(a SelectResultOfCases, b ReturnType) bool {
+	bb, ok := b.(SelectResultOfCases)
+	return ok && a.Cases.Index == bb.Cases.Index && a.Default.Index == bb.Default.Index
 }

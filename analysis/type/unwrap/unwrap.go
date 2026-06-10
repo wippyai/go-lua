@@ -52,6 +52,36 @@ func Optional(t typ.Type) typ.Type {
 	return nil
 }
 
+// RecordAliasOnly follows raw Alias.Target links and returns the final record.
+//
+// This intentionally does not unwrap annotations or use Alias.UnaliasedTarget.
+func RecordAliasOnly(t typ.Type) *typ.Record {
+	for {
+		a, ok := t.(*typ.Alias)
+		if !ok {
+			break
+		}
+		t = a.Target
+	}
+	rec, _ := t.(*typ.Record)
+	return rec
+}
+
+// RecordUnaliased follows Alias.UnaliasedTarget links and returns the final record.
+//
+// This intentionally does not unwrap annotations.
+func RecordUnaliased(t typ.Type) *typ.Record {
+	for {
+		a, ok := t.(*typ.Alias)
+		if !ok {
+			break
+		}
+		t = a.UnaliasedTarget()
+	}
+	rec, _ := t.(*typ.Record)
+	return rec
+}
+
 // IsOptionalLike returns true if the type is Optional or contains nil.
 func IsOptionalLike(t typ.Type) bool {
 	if t == nil {

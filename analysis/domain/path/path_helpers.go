@@ -3,6 +3,8 @@ package path
 import (
 	"strconv"
 	"strings"
+
+	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 )
 
 // PlaceholderIndexFromString extracts a placeholder index from the canonical $N form.
@@ -77,9 +79,9 @@ func IsReturnPath(p Path) bool {
 // structural typing. Empty names are rejected; callers that need runtime Lua
 // string-key semantics, where an empty bracket string is valid, should keep that
 // policy separate.
-func SegmentFieldName(seg Segment) (string, bool) {
+func SegmentFieldName(seg segment.Segment) (string, bool) {
 	switch seg.Kind {
-	case SegmentField, SegmentIndexString:
+	case segment.SegmentField, segment.SegmentIndexString:
 		return seg.Name, seg.Name != ""
 	default:
 		return "", false
@@ -94,7 +96,7 @@ func SplitFieldPath(path Path) (parent Path, field string, ok bool) {
 		return Path{}, "", false
 	}
 	last := path.Segments[len(path.Segments)-1]
-	if last.Kind != SegmentField {
+	if last.Kind != segment.SegmentField {
 		return Path{}, "", false
 	}
 	parent = Path{Root: path.Root, Symbol: path.Symbol, Version: path.Version}

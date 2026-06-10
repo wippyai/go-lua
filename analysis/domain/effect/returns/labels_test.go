@@ -45,6 +45,20 @@ func TestReturn_Equals(t *testing.T) {
 	}
 }
 
+func TestReturnTypeEqualsPointerLeftOnly(t *testing.T) {
+	rt := ElementOf{Source: effect.ParamRef{Index: 0}}
+
+	if !returnTypeEquals(&rt, rt) {
+		t.Error("pointer return type on left should equal value return type")
+	}
+	if returnTypeEquals(rt, &rt) {
+		t.Error("value return type on left should not equal pointer return type")
+	}
+	if returnTypeEquals(&rt, &rt) {
+		t.Error("pointer return types on both sides should not be equal")
+	}
+}
+
 func TestErrorReturn_String(t *testing.T) {
 	er := ErrorReturn{ValueIndex: 0, ErrorIndex: 1}
 	if got := er.String(); got != "errret(val[0], err[1])" {

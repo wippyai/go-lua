@@ -9,21 +9,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/symbol"
 )
 
-// SegmentKind describes how a path accesses a nested value.
-type SegmentKind = segment.SegmentKind
-
-const (
-	SegmentField       = segment.SegmentField
-	SegmentIndexString = segment.SegmentIndexString
-	SegmentIndexInt    = segment.SegmentIndexInt
-)
-
-// Segment identifies a single field or index access step on a path.
-// For field access (.name), Kind is SegmentField and Name holds the field name.
-// For string index (["key"]), Kind is SegmentIndexString and Name holds the key.
-// For integer index ([1]), Kind is SegmentIndexInt and Index holds the value.
-type Segment = segment.Segment
-
 // Path identifies a runtime value through its access path (variable.field.index).
 //
 // Paths are the fundamental identity mechanism for flow-sensitive refinement.
@@ -38,13 +23,13 @@ type Segment = segment.Segment
 //
 // Examples:
 //   - {Root: "x", Symbol: 5}: Variable x with symbol ID 5
-//   - {Root: "x", Symbol: 5, Segments: [{Field, "name", 0}]}: x.name
+//   - {Root: "x", Symbol: 5, Segments: [{Kind: segment.SegmentField, Name: "name"}]}: x.name
 //   - {Root: "$0", Symbol: 0}: Placeholder for first function parameter
 type Path struct {
-	Root     string    // Variable name (optional for symbol paths, required for placeholders)
-	Symbol   symbol.ID // Symbol identity (0 if unresolved/placeholder)
-	Segments []Segment
-	Version  int // SSA version ID (0 = unspecified, non-zero binds path to a specific version)
+	Root     string            // Variable name (optional for symbol paths, required for placeholders)
+	Symbol   symbol.ID         // Symbol identity (0 if unresolved/placeholder)
+	Segments []segment.Segment // Field/index access suffix
+	Version  int               // SSA version ID (0 = unspecified, non-zero binds path to a specific version)
 }
 
 // PathKey is a stable string key for map usage.
@@ -82,7 +67,7 @@ func NewPlaceholder(index int) Path {
 //	path.Field("name")  // path.name
 //	path.Field("a").Field("b") // path.a.b
 func (p Path) Field(name string) Path {
-	return p.Append(Segment{Kind: SegmentField, Name: name})
+	return p.Append(segment.Segment{Kind: segment.SegmentField, Name: name})
 }
 
 // IndexStr returns a new path with a string index segment appended.
@@ -91,7 +76,7 @@ func (p Path) Field(name string) Path {
 //
 //	path.IndexStr("key")  // path["key"]
 func (p Path) IndexStr(key string) Path {
-	return p.Append(Segment{Kind: SegmentIndexString, Name: key})
+	return p.Append(segment.Segment{Kind: segment.SegmentIndexString, Name: key})
 }
 
 // IndexInt returns a new path with an integer index segment appended.
@@ -101,7 +86,7 @@ func (p Path) IndexStr(key string) Path {
 //	path.IndexInt(0)  // path[0]
 //	path.IndexInt(1)  // path[1]
 func (p Path) IndexInt(index int) Path {
-	return p.Append(Segment{Kind: SegmentIndexInt, Index: index})
+	return p.Append(segment.Segment{Kind: segment.SegmentIndexInt, Index: index})
 }
 
 // Parent returns the path without its last segment.
@@ -115,7 +100,7 @@ func (p Path) Parent() Path {
 		return Path{}
 	}
 	// Copy segments to avoid slice aliasing
-	parentSegs := make([]Segment, len(p.Segments)-1)
+	parentSegs := make([]segment.Segment, len(p.Segments)-1)
 	copy(parentSegs, p.Segments[:len(p.Segments)-1])
 	return Path{
 		Root:     p.Root,
@@ -127,9 +112,9 @@ func (p Path) Parent() Path {
 
 // LastSegment returns the final segment of the path, if any.
 // Returns (segment, true) if the path has segments, (zero, false) otherwise.
-func (p Path) LastSegment() (Segment, bool) {
+func (p Path) LastSegment() (segment.Segment, bool) {
 	if len(p.Segments) == 0 {
-		return Segment{}, false
+		return segment.Segment{}, false
 	}
 	return p.Segments[len(p.Segments)-1], true
 }
@@ -139,13 +124,13 @@ func (p Path) IsFieldAccess() bool {
 	if len(p.Segments) == 0 {
 		return false
 	}
-	return p.Segments[len(p.Segments)-1].Kind == SegmentField
+	return p.Segments[len(p.Segments)-1].Kind == segment.SegmentField
 }
 
 // FieldName returns the field name if the last segment is a field access.
 // Returns empty string if not a field access.
 func (p Path) FieldName() string {
-	if seg, ok := p.LastSegment(); ok && seg.Kind == SegmentField {
+	if seg, ok := p.LastSegment(); ok && seg.Kind == segment.SegmentField {
 		return seg.Name
 	}
 	return ""
@@ -159,7 +144,7 @@ func (p Path) DirectFieldName() (string, bool) {
 	}
 	seg := p.Segments[0]
 	switch seg.Kind {
-	case SegmentField, SegmentIndexString:
+	case segment.SegmentField, segment.SegmentIndexString:
 		return seg.Name, seg.Name != ""
 	default:
 		return "", false
@@ -221,7 +206,7 @@ func (p Path) Equal(other Path) bool {
 
 // Append returns a new path with the given segment appended.
 // Returns an empty path if the receiver is empty.
-func (p Path) Append(seg Segment) Path {
+func (p Path) Append(seg segment.Segment) Path {
 	if p.IsEmpty() {
 		return Path{}
 	}
@@ -255,14 +240,14 @@ func (p Path) String() string {
 
 	for _, seg := range p.Segments {
 		switch seg.Kind {
-		case SegmentField:
+		case segment.SegmentField:
 			b.WriteByte('.')
 			b.WriteString(seg.Name)
-		case SegmentIndexString:
+		case segment.SegmentIndexString:
 			b.WriteByte('[')
 			b.WriteString(seg.Name)
 			b.WriteByte(']')
-		case SegmentIndexInt:
+		case segment.SegmentIndexInt:
 			b.WriteByte('[')
 			b.WriteString(strconv.Itoa(seg.Index))
 			b.WriteByte(']')
@@ -314,9 +299,9 @@ func (p Path) Hash() uint64 {
 		h = hash.MixHash(h, uint64(seg.Kind))
 
 		switch seg.Kind {
-		case SegmentField, SegmentIndexString:
+		case segment.SegmentField, segment.SegmentIndexString:
 			h = hash.MixHash(h, hash.FnvString(seg.Name))
-		case SegmentIndexInt:
+		case segment.SegmentIndexInt:
 			h = hash.MixHash(h, uint64(seg.Index))
 		}
 	}

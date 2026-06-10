@@ -150,8 +150,8 @@ func (e *EGraph) RegisterKey(key pathdom.PathKey) {
 }
 
 // segmentKey returns a string key for a segment (for children map).
-func segmentKey(seg pathdom.Segment) string {
-	return segment.FormatSegments([]pathdom.Segment{seg})
+func segmentKey(seg segment.Segment) string {
+	return segment.FormatSegments([]segment.Segment{seg})
 }
 
 // makeSet ensures a path exists in the union-find structure.
