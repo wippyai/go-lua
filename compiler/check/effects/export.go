@@ -1,16 +1,5 @@
-// Package effectops provides operations for function effect propagation and export.
-//
-// This package handles:
-//   - Effect propagation through call chains
-//   - Enriching exported types with computed effect information
-//   - Looking up effects for functions by symbol
-//
-// Effect propagation computes the combined effects of a function by examining
-// all call sites and merging callee effects. Effects include termination
-// guarantees, IO markers, and type predicates.
-//
-// Export enrichment attaches effect information to module export types so
-// that importers see function refinements (like "never returns" or "type guard").
+// Package effects provides helpers for extracting and exporting function effect
+// annotations.
 package effects
 
 import (
@@ -20,7 +9,50 @@ import (
 	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/effect"
 	"github.com/wippyai/go-lua/types/typ"
+	"github.com/wippyai/go-lua/types/typ/unwrap"
 )
+
+// EffectFromType extracts FunctionRefinement from a function type's declared effect annotations.
+func EffectFromType(t typ.Type) *constraint.FunctionRefinement {
+	if t == nil {
+		return nil
+	}
+	fn, ok := unwrap.Alias(t).(*typ.Function)
+	if !ok || fn == nil {
+		return nil
+	}
+	if fn.Refinement != nil {
+		if eff, ok := fn.Refinement.(*constraint.FunctionRefinement); ok {
+			return eff
+		}
+	}
+
+	var row effect.Row
+	if fn.Effects != nil {
+		if r, ok := fn.Effects.(effect.Row); ok {
+			row = r
+		}
+	}
+	terminates := row.HasDiverge()
+	if !terminates {
+		for _, r := range fn.Returns {
+			if r == nil {
+				continue
+			}
+			if typ.IsNever(unwrap.Alias(r)) {
+				terminates = true
+				break
+			}
+		}
+	}
+	if row.Pure() && !row.IsOpen() && !terminates {
+		return nil
+	}
+	return &constraint.FunctionRefinement{
+		Row:        row,
+		Terminates: terminates,
+	}
+}
 
 // EnrichExportWithEffects attaches known function refinements to exported values.
 // This is used when exporting module records or interfaces so method refinements
