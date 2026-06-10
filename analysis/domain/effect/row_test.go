@@ -31,13 +31,13 @@ func TestUnknown(t *testing.T) {
 }
 
 func TestRowWith(t *testing.T) {
-	r := Empty.With(Throw{}, IO{})
-	if !r.HasThrow() {
-		t.Error("Should have throw")
+	r := Empty.With(BorrowAll{}, Store{Param: ParamRef{Index: 0}, Into: ParamRef{Index: 1}})
+	if !r.HasBorrow() {
+		t.Error("Should have borrow")
 	}
 
-	if !r.HasIO() {
-		t.Error("Should have io")
+	if !r.HasStore() {
+		t.Error("Should have store")
 	}
 
 	if r.Pure() {
@@ -46,17 +46,17 @@ func TestRowWith(t *testing.T) {
 }
 
 func TestRowWithDuplicate(t *testing.T) {
-	r := Empty.With(Throw{}, Throw{})
+	r := Empty.With(BorrowAll{}, BorrowAll{})
 	count := 0
 
 	for _, l := range r.Labels {
-		if _, ok := l.(Throw); ok {
+		if _, ok := l.(BorrowAll); ok {
 			count++
 		}
 	}
 
 	if count != 1 {
-		t.Errorf("Should have exactly 1 throw, got %d", count)
+		t.Errorf("Should have exactly 1 borrow_all, got %d", count)
 	}
 }
 
@@ -66,9 +66,9 @@ func TestRowString(t *testing.T) {
 		want string
 	}{
 		{Empty, "{}"},
-		{Throws(), "{throw}"},
-		{Row{Labels: []Label{Throw{}, IO{}}}, "{throw, io}"},
-		{Open("rho", Throw{}), "{throw | rho}"},
+		{BorrowsOnly(), "{borrow_all}"},
+		{Row{Labels: []Label{BorrowAll{}, Store{Param: ParamRef{Index: 0}, Into: ParamRef{Index: 1}}}}, "{borrow_all, store(param[0] into param[1])}"},
+		{Open("rho", BorrowAll{}), "{borrow_all | rho}"},
 		{Open("rho"), "{rho}"},
 	}
 
@@ -81,12 +81,12 @@ func TestRowString(t *testing.T) {
 
 func TestUnion(t *testing.T) {
 	t.Run("closed rows", func(t *testing.T) {
-		r1 := Row{Labels: []Label{Throw{}}}
-		r2 := Row{Labels: []Label{IO{}}}
+		r1 := Row{Labels: []Label{BorrowAll{}}}
+		r2 := Row{Labels: []Label{Store{Param: ParamRef{Index: 0}, Into: ParamRef{Index: 1}}}}
 		u := Union(r1, r2)
 
-		if !u.HasThrow() || !u.HasIO() {
-			t.Error("Union should have both throw and io")
+		if !u.HasBorrow() || !u.HasStore() {
+			t.Error("Union should have both borrow and store")
 		}
 
 		if !u.IsClosed() {
@@ -95,11 +95,11 @@ func TestUnion(t *testing.T) {
 	})
 
 	t.Run("open row", func(t *testing.T) {
-		r1 := Open("rho", Throw{})
-		r2 := Row{Labels: []Label{IO{}}}
+		r1 := Open("rho", BorrowAll{})
+		r2 := Row{Labels: []Label{Store{Param: ParamRef{Index: 0}, Into: ParamRef{Index: 1}}}}
 		u := Union(r1, r2)
 
-		if !u.HasThrow() || !u.HasIO() {
+		if !u.HasBorrow() || !u.HasStore() {
 			t.Error("Union should have both effects")
 		}
 
@@ -109,7 +109,7 @@ func TestUnion(t *testing.T) {
 	})
 
 	t.Run("unknown absorbs", func(t *testing.T) {
-		r := Row{Labels: []Label{Throw{}}}
+		r := Row{Labels: []Label{BorrowAll{}}}
 		u := Union(r, Unknown)
 
 		if !u.IsUnknown() {
@@ -118,20 +118,20 @@ func TestUnion(t *testing.T) {
 	})
 
 	t.Run("deduplication", func(t *testing.T) {
-		r1 := Row{Labels: []Label{Throw{}}}
-		r2 := Row{Labels: []Label{Throw{}, IO{}}}
+		r1 := Row{Labels: []Label{BorrowAll{}}}
+		r2 := Row{Labels: []Label{BorrowAll{}, Store{Param: ParamRef{Index: 0}, Into: ParamRef{Index: 1}}}}
 		u := Union(r1, r2)
 
 		count := 0
 
 		for _, l := range u.Labels {
-			if _, ok := l.(Throw); ok {
+			if _, ok := l.(BorrowAll); ok {
 				count++
 			}
 		}
 
 		if count != 1 {
-			t.Errorf("Union should deduplicate, got %d throws", count)
+			t.Errorf("Union should deduplicate, got %d borrow_all labels", count)
 		}
 	})
 }
@@ -172,12 +172,12 @@ func TestRowEquals(t *testing.T) {
 		want   bool
 	}{
 		{Empty, Empty, true},
-		{Empty, Throws(), false},
-		{Throws(), Throws(), true},
-		{Row{Labels: []Label{Throw{}, IO{}}}, Row{Labels: []Label{IO{}, Throw{}}}, true},
+		{Empty, BorrowsOnly(), false},
+		{BorrowsOnly(), BorrowsOnly(), true},
+		{Row{Labels: []Label{BorrowAll{}, Store{Param: ParamRef{Index: 0}, Into: ParamRef{Index: 1}}}}, Row{Labels: []Label{Store{Param: ParamRef{Index: 0}, Into: ParamRef{Index: 1}}, BorrowAll{}}}, true},
 		{Open("rho"), Open("rho"), true},
 		{Open("rho"), Open("sigma"), false},
-		{Throws(), Open("rho", Throw{}), false},
+		{BorrowsOnly(), Open("rho", BorrowAll{}), false},
 	}
 
 	for _, tt := range tests {
@@ -199,45 +199,23 @@ func TestReads(t *testing.T) {
 	}
 }
 
-func TestWithIO(t *testing.T) {
-	r := WithIO()
-	if !r.HasIO() {
-		t.Error("WithIO should have IO effect")
-	}
-
-	if r.Pure() {
-		t.Error("WithIO should not be pure")
-	}
-}
-
-func TestMayDiverge(t *testing.T) {
-	r := MayDiverge()
-	if !r.HasDiverge() {
-		t.Error("MayDiverge should have Diverge effect")
-	}
-
-	if r.Pure() {
-		t.Error("MayDiverge should not be pure")
-	}
-}
-
 func TestRowWithout(t *testing.T) {
-	r := Row{Labels: []Label{Throw{}, IO{}, Diverge{}}}
+	r := Row{Labels: []Label{BorrowAll{}, Store{Param: ParamRef{Index: 0}, Into: ParamRef{Index: 1}}, Freeze{Param: ParamRef{Index: 0}}}}
 	filtered := r.Without(func(l Label) bool {
-		_, ok := l.(IO)
+		_, ok := l.(Store)
 		return ok
 	})
 
-	if filtered.HasIO() {
-		t.Error("Without should remove IO")
+	if filtered.HasStore() {
+		t.Error("Without should remove Store")
 	}
 
-	if !filtered.HasThrow() {
-		t.Error("Without should keep Throw")
+	if !filtered.HasBorrow() {
+		t.Error("Without should keep BorrowAll")
 	}
 
-	if !filtered.HasDiverge() {
-		t.Error("Without should keep Diverge")
+	if !filtered.Has(func(l Label) bool { _, ok := l.(Freeze); return ok }) {
+		t.Error("Without should keep Freeze")
 	}
 }
 
@@ -403,8 +381,8 @@ func TestBorrowStoreEffects(t *testing.T) {
 }
 
 func TestNewRow(t *testing.T) {
-	r := Row{Labels: []Label{Throw{}, IO{}}}
-	if !r.HasThrow() || !r.HasIO() {
+	r := Row{Labels: []Label{BorrowAll{}, Store{Param: ParamRef{Index: 0}, Into: ParamRef{Index: 1}}}}
+	if !r.HasBorrow() || !r.HasStore() {
 		t.Error("Row should have the given labels")
 	}
 }

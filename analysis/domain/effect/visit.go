@@ -5,9 +5,6 @@ type LabelVisitor[R any] struct {
 	Return           func(Return) R
 	ErrorReturn      func(ErrorReturn) R
 	ReturnLength     func(ReturnLength) R
-	Throw            func(Throw) R
-	Diverge          func(Diverge) R
-	IO               func(IO) R
 	LengthChange     func(LengthChange) R
 	Iterator         func(Iterator) R
 	TableMutator     func(TableMutator) R
@@ -55,30 +52,6 @@ func VisitLabel[R any](l Label, v LabelVisitor[R]) R {
 	case *ReturnLength:
 		if v.ReturnLength != nil {
 			return v.ReturnLength(*ll)
-		}
-	case Throw:
-		if v.Throw != nil {
-			return v.Throw(ll)
-		}
-	case *Throw:
-		if v.Throw != nil {
-			return v.Throw(*ll)
-		}
-	case Diverge:
-		if v.Diverge != nil {
-			return v.Diverge(ll)
-		}
-	case *Diverge:
-		if v.Diverge != nil {
-			return v.Diverge(*ll)
-		}
-	case IO:
-		if v.IO != nil {
-			return v.IO(ll)
-		}
-	case *IO:
-		if v.IO != nil {
-			return v.IO(*ll)
 		}
 	case LengthChange:
 		if v.LengthChange != nil {

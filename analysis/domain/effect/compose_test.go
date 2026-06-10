@@ -10,7 +10,7 @@ func TestUnionEmpty(t *testing.T) {
 }
 
 func TestUnionWithEmpty(t *testing.T) {
-	r := Empty.With(IO{})
+	r := Empty.With(BorrowAll{})
 	result := Union(r, Empty)
 
 	if len(result.Labels) != 1 {
@@ -19,8 +19,8 @@ func TestUnionWithEmpty(t *testing.T) {
 }
 
 func TestUnionCombinesLabels(t *testing.T) {
-	r1 := Empty.With(IO{})
-	r2 := Empty.With(Throw{})
+	r1 := Empty.With(BorrowAll{})
+	r2 := Empty.With(Store{Param: ParamRef{Index: 0}, Into: ParamRef{Index: 1}})
 	result := Union(r1, r2)
 
 	if len(result.Labels) != 2 {
@@ -29,8 +29,8 @@ func TestUnionCombinesLabels(t *testing.T) {
 }
 
 func TestUnionDeduplicates(t *testing.T) {
-	r1 := Empty.With(IO{})
-	r2 := Empty.With(IO{})
+	r1 := Empty.With(BorrowAll{})
+	r2 := Empty.With(BorrowAll{})
 	result := Union(r1, r2)
 
 	if len(result.Labels) != 1 {
@@ -39,7 +39,7 @@ func TestUnionDeduplicates(t *testing.T) {
 }
 
 func TestUnionWithUnknown(t *testing.T) {
-	r := Empty.With(IO{})
+	r := Empty.With(BorrowAll{})
 	result := Union(r, Unknown)
 
 	if !result.IsUnknown() {
@@ -48,8 +48,8 @@ func TestUnionWithUnknown(t *testing.T) {
 }
 
 func TestUnionPreservesTail(t *testing.T) {
-	r1 := Open("e1", IO{})
-	r2 := Empty.With(Throw{})
+	r1 := Open("e1", BorrowAll{})
+	r2 := Empty.With(Store{Param: ParamRef{Index: 0}, Into: ParamRef{Index: 1}})
 	result := Union(r1, r2)
 
 	if !result.IsOpen() {
@@ -58,7 +58,7 @@ func TestUnionPreservesTail(t *testing.T) {
 }
 
 func TestIntersectEmpty(t *testing.T) {
-	r := Empty.With(IO{})
+	r := Empty.With(BorrowAll{})
 	result := Intersect(r, Empty)
 
 	if !result.Pure() {
@@ -67,22 +67,22 @@ func TestIntersectEmpty(t *testing.T) {
 }
 
 func TestIntersectCommonLabels(t *testing.T) {
-	r1 := Row{Labels: []Label{IO{}, Throw{}}}
-	r2 := Row{Labels: []Label{IO{}, Diverge{}}}
+	r1 := Row{Labels: []Label{BorrowAll{}, Store{Param: ParamRef{Index: 0}, Into: ParamRef{Index: 1}}}}
+	r2 := Row{Labels: []Label{BorrowAll{}, Freeze{Param: ParamRef{Index: 0}}}}
 	result := Intersect(r1, r2)
 
 	if len(result.Labels) != 1 {
 		t.Errorf("expected 1 common label, got %d", len(result.Labels))
 	}
 
-	if _, ok := result.Labels[0].(IO); !ok {
-		t.Error("common label should be IO")
+	if _, ok := result.Labels[0].(BorrowAll); !ok {
+		t.Error("common label should be BorrowAll")
 	}
 }
 
 func TestIntersectNoCommon(t *testing.T) {
-	r1 := Empty.With(IO{})
-	r2 := Empty.With(Throw{})
+	r1 := Empty.With(BorrowAll{})
+	r2 := Empty.With(Store{Param: ParamRef{Index: 0}, Into: ParamRef{Index: 1}})
 	result := Intersect(r1, r2)
 
 	if len(result.Labels) != 0 {
@@ -91,21 +91,21 @@ func TestIntersectNoCommon(t *testing.T) {
 }
 
 func TestSubsetEmpty(t *testing.T) {
-	if !Subset(Empty, Empty.With(IO{})) {
+	if !Subset(Empty, Empty.With(BorrowAll{})) {
 		t.Error("empty should be subset of any row")
 	}
 }
 
 func TestSubsetSame(t *testing.T) {
-	r := Empty.With(IO{})
+	r := Empty.With(BorrowAll{})
 	if !Subset(r, r) {
 		t.Error("row should be subset of itself")
 	}
 }
 
 func TestSubsetSmaller(t *testing.T) {
-	r1 := Empty.With(IO{})
-	r2 := Row{Labels: []Label{IO{}, Throw{}}}
+	r1 := Empty.With(BorrowAll{})
+	r2 := Row{Labels: []Label{BorrowAll{}, Store{Param: ParamRef{Index: 0}, Into: ParamRef{Index: 1}}}}
 
 	if !Subset(r1, r2) {
 		t.Error("smaller row should be subset of larger")
@@ -113,8 +113,8 @@ func TestSubsetSmaller(t *testing.T) {
 }
 
 func TestSubsetLargerNotSubset(t *testing.T) {
-	r1 := Row{Labels: []Label{IO{}, Throw{}}}
-	r2 := Empty.With(IO{})
+	r1 := Row{Labels: []Label{BorrowAll{}, Store{Param: ParamRef{Index: 0}, Into: ParamRef{Index: 1}}}}
+	r2 := Empty.With(BorrowAll{})
 
 	if Subset(r1, r2) {
 		t.Error("larger row should not be subset of smaller closed row")
@@ -122,7 +122,7 @@ func TestSubsetLargerNotSubset(t *testing.T) {
 }
 
 func TestSubsetUnknown(t *testing.T) {
-	r := Empty.With(IO{})
+	r := Empty.With(BorrowAll{})
 	if !Subset(r, Unknown) {
 		t.Error("any row should be subset of Unknown")
 	}
@@ -133,7 +133,7 @@ func TestSubsetUnknown(t *testing.T) {
 }
 
 func TestOpen(t *testing.T) {
-	r := Open("e", IO{})
+	r := Open("e", BorrowAll{})
 
 	if !r.IsOpen() {
 		t.Error("should be open")

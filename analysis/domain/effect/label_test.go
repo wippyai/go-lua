@@ -60,8 +60,8 @@ func TestMutate_Equals(t *testing.T) {
 		t.Error("different target Mutates should not be equal")
 	}
 
-	if m1.Equals(Throw{}) {
-		t.Error("Mutate should not equal Throw")
+	if m1.Equals(BorrowAll{}) {
+		t.Error("Mutate should not equal BorrowAll")
 	}
 
 	// Different transforms should not be equal
@@ -128,8 +128,8 @@ func TestReturn_Equals(t *testing.T) {
 		t.Error("different index Returns should not be equal")
 	}
 
-	if r1.Equals(Throw{}) {
-		t.Error("Return should not equal Throw")
+	if r1.Equals(BorrowAll{}) {
+		t.Error("Return should not equal BorrowAll")
 	}
 
 	// Different transforms should not be equal
@@ -259,51 +259,6 @@ func TestStringUnpackValue_String(t *testing.T) {
 	}
 }
 
-func TestThrow(t *testing.T) {
-	th := Throw{}
-	if got := th.String(); got != "throw" {
-		t.Errorf("Throw.String() = %q", got)
-	}
-
-	if !th.Equals(Throw{}) {
-		t.Error("Throw should equal Throw")
-	}
-
-	if th.Equals(IO{}) {
-		t.Error("Throw should not equal IO")
-	}
-}
-
-func TestDiverge(t *testing.T) {
-	d := Diverge{}
-	if got := d.String(); got != "diverge" {
-		t.Errorf("Diverge.String() = %q", got)
-	}
-
-	if !d.Equals(Diverge{}) {
-		t.Error("Diverge should equal Diverge")
-	}
-
-	if d.Equals(Throw{}) {
-		t.Error("Diverge should not equal Throw")
-	}
-}
-
-func TestIO(t *testing.T) {
-	io := IO{}
-	if got := io.String(); got != "io" {
-		t.Errorf("IO.String() = %q", got)
-	}
-
-	if !io.Equals(IO{}) {
-		t.Error("IO should equal IO")
-	}
-
-	if io.Equals(Throw{}) {
-		t.Error("IO should not equal Throw")
-	}
-}
-
 func TestLengthChange_String(t *testing.T) {
 	lc := LengthChange{Target: ParamRef{Index: 0}, Delta: 1}
 	if got := lc.String(); got != "len(param[0]) += 1" {
@@ -347,9 +302,6 @@ func TestLabelInterface(t *testing.T) {
 		Return{},
 		ErrorReturn{},
 		ReturnLength{},
-		Throw{},
-		Diverge{},
-		IO{},
 		LengthChange{},
 	}
 
@@ -412,8 +364,8 @@ func TestIterator(t *testing.T) {
 		t.Error("different kind should not be equal")
 	}
 
-	if iter.Equals(Throw{}) {
-		t.Error("Iterator should not equal Throw")
+	if iter.Equals(BorrowAll{}) {
+		t.Error("Iterator should not equal BorrowAll")
 	}
 }
 
@@ -436,8 +388,8 @@ func TestTableMutator(t *testing.T) {
 		t.Error("different value should not be equal")
 	}
 
-	if tm.Equals(Throw{}) {
-		t.Error("TableMutator should not equal Throw")
+	if tm.Equals(BorrowAll{}) {
+		t.Error("TableMutator should not equal BorrowAll")
 	}
 }
 
@@ -456,8 +408,8 @@ func TestBorrow(t *testing.T) {
 		t.Error("different param Borrow should not be equal")
 	}
 
-	if b.Equals(Throw{}) {
-		t.Error("Borrow should not equal Throw")
+	if b.Equals(BorrowAll{}) {
+		t.Error("Borrow should not equal BorrowAll")
 	}
 }
 
@@ -481,8 +433,8 @@ func TestStore(t *testing.T) {
 		t.Error("different param Store should not be equal")
 	}
 
-	if s.Equals(Throw{}) {
-		t.Error("Store should not equal Throw")
+	if s.Equals(BorrowAll{}) {
+		t.Error("Store should not equal BorrowAll")
 	}
 
 	// Different Into should not be equal
@@ -506,8 +458,8 @@ func TestBorrowAll(t *testing.T) {
 		t.Error("BorrowAll should equal BorrowAll")
 	}
 
-	if ba.Equals(Throw{}) {
-		t.Error("BorrowAll should not equal Throw")
+	if ba.Equals(Mutate{}) {
+		t.Error("BorrowAll should not equal Mutate")
 	}
 }
 
@@ -517,9 +469,6 @@ func TestAllLabelsImplementInterface(t *testing.T) {
 		Return{},
 		ErrorReturn{},
 		ReturnLength{},
-		Throw{},
-		Diverge{},
-		IO{},
 		LengthChange{},
 		Iterator{},
 		TableMutator{},
@@ -540,9 +489,6 @@ func TestMarkerMethods(t *testing.T) {
 	Return{}.EffectLabel()
 	ErrorReturn{}.EffectLabel()
 	ReturnLength{}.EffectLabel()
-	Throw{}.EffectLabel()
-	Diverge{}.EffectLabel()
-	IO{}.EffectLabel()
 	LengthChange{}.EffectLabel()
 	Iterator{}.EffectLabel()
 	TableMutator{}.EffectLabel()
@@ -567,8 +513,8 @@ func TestMarkerMethods(t *testing.T) {
 
 func TestReturnLengthEqualsNonMatch(t *testing.T) {
 	rl := ReturnLength{ReturnIndex: 0}
-	if rl.Equals(Throw{}) {
-		t.Error("ReturnLength should not equal Throw")
+	if rl.Equals(BorrowAll{}) {
+		t.Error("ReturnLength should not equal BorrowAll")
 	}
 }
 
@@ -586,8 +532,8 @@ func TestSend(t *testing.T) {
 		t.Error("different FromParam should not be equal")
 	}
 
-	if s.Equals(Throw{}) {
-		t.Error("Send should not equal Throw")
+	if s.Equals(BorrowAll{}) {
+		t.Error("Send should not equal BorrowAll")
 	}
 }
 
@@ -605,8 +551,8 @@ func TestFreeze(t *testing.T) {
 		t.Error("different Param should not be equal")
 	}
 
-	if f.Equals(Throw{}) {
-		t.Error("Freeze should not equal Throw")
+	if f.Equals(BorrowAll{}) {
+		t.Error("Freeze should not equal BorrowAll")
 	}
 }
 
@@ -628,8 +574,8 @@ func TestCorrelatedReturn(t *testing.T) {
 		t.Error("different indices should not be equal")
 	}
 
-	if cr.Equals(Throw{}) {
-		t.Error("CorrelatedReturn should not equal Throw")
+	if cr.Equals(BorrowAll{}) {
+		t.Error("CorrelatedReturn should not equal BorrowAll")
 	}
 }
 

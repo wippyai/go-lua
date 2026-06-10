@@ -32,7 +32,7 @@ func TestLabels(t *testing.T) {
 				t.Error("label should equal same dispatch label")
 			}
 
-			if tt.label.Equals(effect.Throw{}) {
+			if tt.label.Equals(effect.Mutate{}) {
 				t.Error("label should not equal unrelated effect label")
 			}
 		})

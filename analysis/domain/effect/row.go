@@ -50,18 +50,6 @@ func (r Row) Has(check func(Label) bool) bool {
 	return false
 }
 
-func (r Row) HasThrow() bool {
-	return r.Has(func(l Label) bool { _, ok := l.(Throw); return ok })
-}
-
-func (r Row) HasIO() bool {
-	return r.Has(func(l Label) bool { _, ok := l.(IO); return ok })
-}
-
-func (r Row) HasDiverge() bool {
-	return r.Has(func(l Label) bool { _, ok := l.(Diverge); return ok })
-}
-
 func (r Row) HasMutate() bool {
 	return r.Has(func(l Label) bool { _, ok := l.(Mutate); return ok })
 }
@@ -226,10 +214,6 @@ func (r Row) equalsRow(other Row) bool {
 	return r.Tail.Name == other.Tail.Name
 }
 
-func Throws() Row {
-	return Row{Labels: []Label{Throw{}}}
-}
-
 func Mutates(paramIdx int, transform TypeTransform) Row {
 	return Row{Labels: []Label{Mutate{
 		Target:    ParamRef{Index: paramIdx},
@@ -239,14 +223,6 @@ func Mutates(paramIdx int, transform TypeTransform) Row {
 
 func Returns(retIdx int, derive ReturnType) Row {
 	return Row{Labels: []Label{Return{ReturnIndex: retIdx, Transform: derive}}}
-}
-
-func WithIO() Row {
-	return Row{Labels: []Label{IO{}}}
-}
-
-func MayDiverge() Row {
-	return Row{Labels: []Label{Diverge{}}}
 }
 
 func BorrowsOnly() Row {

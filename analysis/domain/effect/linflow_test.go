@@ -32,7 +32,7 @@ func TestPassThroughEquals(t *testing.T) {
 		t.Error("different ReturnIndex should not be equal")
 	}
 
-	if p1.Equals(IO{}) {
+	if p1.Equals(BorrowAll{}) {
 		t.Error("PassThrough should not equal other label types")
 	}
 }
@@ -67,7 +67,7 @@ func TestFlowIntoEquals(t *testing.T) {
 		t.Error("different Path should not be equal")
 	}
 
-	if f1.Equals(IO{}) {
+	if f1.Equals(BorrowAll{}) {
 		t.Error("FlowInto should not equal other label types")
 	}
 }
