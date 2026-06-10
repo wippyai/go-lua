@@ -1,5 +1,5 @@
-// Package cfgmeta stores semantic facts for CFG points.
-package cfgmeta
+// Package cfgfacts stores semantic facts for CFG points.
+package cfgfacts
 
 import (
 	"github.com/wippyai/go-lua/analysis/ir/cfg"

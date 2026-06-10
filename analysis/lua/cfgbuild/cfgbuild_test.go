@@ -4,8 +4,8 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
-	"github.com/wippyai/go-lua/analysis/ir/cfgmeta"
 	"github.com/wippyai/go-lua/analysis/lua/bind"
+	"github.com/wippyai/go-lua/analysis/lua/cfgfacts"
 	"github.com/wippyai/go-lua/analysis/symbol"
 	"github.com/wippyai/go-lua/compiler/ast"
 )
@@ -70,7 +70,7 @@ func pointsOfKind(graph *cfg.CFG, kind cfg.NodeKind) []cfg.Point {
 	return points
 }
 
-func assignTargets(graph *cfg.CFG, meta cfgmeta.Metadata) []symbol.ID {
+func assignTargets(graph *cfg.CFG, meta cfgfacts.Metadata) []symbol.ID {
 	var targets []symbol.ID
 	for _, node := range graph.Nodes {
 		if node.Kind == cfg.NodeAssign {
@@ -112,7 +112,7 @@ func rpoIndex(t *testing.T, graph *cfg.CFG, point cfg.Point) int {
 	return -1
 }
 
-func nodeWithTarget(t *testing.T, graph *cfg.CFG, meta cfgmeta.Metadata, target symbol.ID, ordinal int) cfg.Point {
+func nodeWithTarget(t *testing.T, graph *cfg.CFG, meta cfgfacts.Metadata, target symbol.ID, ordinal int) cfg.Point {
 	t.Helper()
 	seen := 0
 	for _, node := range graph.Nodes {
@@ -168,7 +168,7 @@ func rejectEdge(t *testing.T, graph *cfg.CFG, from, to cfg.Point) {
 	}
 }
 
-func requireTargetCount(t *testing.T, graph *cfg.CFG, meta cfgmeta.Metadata, target symbol.ID, want int) {
+func requireTargetCount(t *testing.T, graph *cfg.CFG, meta cfgfacts.Metadata, target symbol.ID, want int) {
 	t.Helper()
 	got := 0
 	for _, node := range graph.Nodes {
@@ -630,7 +630,7 @@ func TestBuildChunkIfCreatesBranchAndJoin(t *testing.T) {
 	if fact.Symbol != xID {
 		t.Fatalf("branch symbol = %d, want %d", fact.Symbol, xID)
 	}
-	if fact.Check.Kind != cfgmeta.CheckTruthy {
+	if fact.Check.Kind != cfgfacts.CheckTruthy {
 		t.Fatalf("branch check = %v, want truthy", fact.Check.Kind)
 	}
 	requireEdge(t, graph, branch, thenAssign, true)
@@ -671,35 +671,35 @@ func TestBuildChunkBranchMetadataPatterns(t *testing.T) {
 	tests := []struct {
 		name string
 		expr func(*ast.IdentExpr) ast.Expr
-		want cfgmeta.BranchCheckKind
+		want cfgfacts.BranchCheckKind
 	}{
 		{
 			name: "truthy",
 			expr: func(x *ast.IdentExpr) ast.Expr {
 				return x
 			},
-			want: cfgmeta.CheckTruthy,
+			want: cfgfacts.CheckTruthy,
 		},
 		{
 			name: "falsy",
 			expr: func(x *ast.IdentExpr) ast.Expr {
 				return &ast.UnaryNotOpExpr{Expr: x}
 			},
-			want: cfgmeta.CheckFalsy,
+			want: cfgfacts.CheckFalsy,
 		},
 		{
 			name: "nil equal",
 			expr: func(x *ast.IdentExpr) ast.Expr {
 				return &ast.RelationalOpExpr{Operator: "==", Lhs: x, Rhs: &ast.NilExpr{}}
 			},
-			want: cfgmeta.CheckNil,
+			want: cfgfacts.CheckNil,
 		},
 		{
 			name: "nil not equal",
 			expr: func(x *ast.IdentExpr) ast.Expr {
 				return &ast.RelationalOpExpr{Operator: "~=", Lhs: x, Rhs: &ast.NilExpr{}}
 			},
-			want: cfgmeta.CheckNotNil,
+			want: cfgfacts.CheckNotNil,
 		},
 	}
 
@@ -792,7 +792,7 @@ func TestBuildChunkNumberForCreatesLoopTopologyAndMetadata(t *testing.T) {
 	if !ok {
 		t.Fatalf("missing numeric for branch fact")
 	}
-	if branchFact.Symbol != loopID || branchFact.Check.Kind != cfgmeta.CheckLimit {
+	if branchFact.Symbol != loopID || branchFact.Check.Kind != cfgfacts.CheckLimit {
 		t.Fatalf("numeric for branch fact = %#v, want symbol %d check limit", branchFact, loopID)
 	}
 	loopFact, ok := result.Meta.Loop(branch)
@@ -893,7 +893,7 @@ func TestBuildChunkGenericForCreatesLoopTopologyAndMetadata(t *testing.T) {
 	if !ok {
 		t.Fatalf("missing generic for branch fact")
 	}
-	if branchFact.Symbol != 0 || branchFact.Check.Kind != cfgmeta.CheckNone {
+	if branchFact.Symbol != 0 || branchFact.Check.Kind != cfgfacts.CheckNone {
 		t.Fatalf("generic for branch fact = %#v, want check none", branchFact)
 	}
 	loopFact, ok := result.Meta.Loop(branch)
@@ -1131,7 +1131,7 @@ func TestBuildChunkRepeatConditionSeesBodyLocal(t *testing.T) {
 	if got := fact.Symbol; got != bodyID {
 		t.Fatalf("branch symbol = %d, want body local %d", got, bodyID)
 	}
-	if got := fact.Check.Kind; got != cfgmeta.CheckTruthy {
+	if got := fact.Check.Kind; got != cfgfacts.CheckTruthy {
 		t.Fatalf("branch check = %v, want truthy", got)
 	}
 }

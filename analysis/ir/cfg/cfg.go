@@ -9,8 +9,9 @@
 // Point: An index identifying a location in the CFG. Points are local to each
 // function's CFG and serve as keys for type state maps.
 //
-// Node: Contains only the program point and node kind. Semantic facts for
-// assignments, calls, branches, loops, and scope exits live in cfgmeta.Metadata.
+// Node: Contains only the program point and node kind. Language-specific facts
+// for assignments, calls, branches, loops, and scope exits live in sidecars
+// outside this package.
 //
 // Edge: A directed edge from one point to another. For branch edges, Cond is the
 // taken-branch flag.

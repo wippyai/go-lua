@@ -2,8 +2,8 @@ package cfgbuild
 
 import (
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
-	"github.com/wippyai/go-lua/analysis/ir/cfgmeta"
 	"github.com/wippyai/go-lua/analysis/lua/bind"
+	"github.com/wippyai/go-lua/analysis/lua/cfgfacts"
 	"github.com/wippyai/go-lua/analysis/symbol"
 	"github.com/wippyai/go-lua/compiler/ast"
 )
@@ -11,7 +11,7 @@ import (
 // Result contains the CFG topology and semantic metadata extracted during build.
 type Result struct {
 	Graph      *cfg.CFG
-	Meta       cfgmeta.Metadata
+	Meta       cfgfacts.Metadata
 	StmtPoints StmtPoints
 }
 
@@ -63,7 +63,7 @@ func BuildChunk(stmts []ast.Stmt, bindings *bind.Result) *Result {
 
 type builder struct {
 	graph        *cfg.CFG
-	meta         cfgmeta.Metadata
+	meta         cfgfacts.Metadata
 	stmtPoints   map[ast.Stmt][]cfg.Point
 	labels       map[string]cfg.Point
 	pendingGotos map[string][]cfg.Point
@@ -316,7 +316,7 @@ func (b *builder) buildNumberFor(state flowState, stmt *ast.NumberForStmt) flowS
 	branch := b.appendLimitBranch(state, id, stmt)
 	join := b.graph.AddNode(cfg.NodeJoin)
 
-	b.meta.SetLoop(branch.current, cfgmeta.LoopFact{
+	b.meta.SetLoop(branch.current, cfgfacts.LoopFact{
 		Vars:         []symbol.ID{id},
 		Locals:       []symbol.ID{id},
 		Preheader:    preheader,
@@ -354,7 +354,7 @@ func (b *builder) buildGenericFor(state flowState, stmt *ast.GenericForStmt) flo
 	branch := b.appendBranch(state, nil, stmt)
 	join := b.graph.AddNode(cfg.NodeJoin)
 
-	b.meta.SetLoop(branch.current, cfgmeta.LoopFact{
+	b.meta.SetLoop(branch.current, cfgfacts.LoopFact{
 		Vars:   ids,
 		Locals: ids,
 	})
@@ -403,7 +403,7 @@ func (b *builder) appendNodeForStmt(state flowState, kind cfg.NodeKind, stmt ast
 func (b *builder) appendAssign(state flowState, target symbol.ID, stmt ast.Stmt) flowState {
 	next := b.appendNodeForStmt(state, cfg.NodeAssign, stmt)
 	if next.live {
-		b.meta.SetAssignment(next.current, cfgmeta.AssignmentFact{Target: target})
+		b.meta.SetAssignment(next.current, cfgfacts.AssignmentFact{Target: target})
 	}
 	return next
 }
@@ -411,7 +411,7 @@ func (b *builder) appendAssign(state flowState, target symbol.ID, stmt ast.Stmt)
 func (b *builder) appendCall(state flowState, calleeName string, stmt ast.Stmt) flowState {
 	next := b.appendNodeForStmt(state, cfg.NodeCall, stmt)
 	if next.live {
-		b.meta.SetCall(next.current, cfgmeta.CallFact{CalleeName: calleeName})
+		b.meta.SetCall(next.current, cfgfacts.CallFact{CalleeName: calleeName})
 	}
 	return next
 }
@@ -433,7 +433,7 @@ func (b *builder) appendLimitBranch(state flowState, id symbol.ID, stmt ast.Stmt
 		return state
 	}
 	point := b.graph.AddBranch()
-	b.meta.SetBranch(point, cfgmeta.BranchFact{Symbol: id, Check: cfgmeta.BranchCheck{Kind: cfgmeta.CheckLimit}})
+	b.meta.SetBranch(point, cfgfacts.BranchFact{Symbol: id, Check: cfgfacts.BranchCheck{Kind: cfgfacts.CheckLimit}})
 	b.connect(state, point)
 	b.recordStmtPoint(stmt, point)
 	return flowState{current: point, live: true}
@@ -492,16 +492,16 @@ func (b *builder) firstNewEdgeTarget(edgeStart int, from cfg.Point, cond bool) (
 	return 0, false
 }
 
-func (b *builder) branchMetadata(expr ast.Expr) cfgmeta.BranchFact {
+func (b *builder) branchMetadata(expr ast.Expr) cfgfacts.BranchFact {
 	switch expr := expr.(type) {
 	case *ast.IdentExpr:
 		if id, ok := b.identSymbol(expr); ok {
-			return cfgmeta.BranchFact{Symbol: id, Check: cfgmeta.BranchCheck{Kind: cfgmeta.CheckTruthy}}
+			return cfgfacts.BranchFact{Symbol: id, Check: cfgfacts.BranchCheck{Kind: cfgfacts.CheckTruthy}}
 		}
 	case *ast.UnaryNotOpExpr:
 		if ident, ok := expr.Expr.(*ast.IdentExpr); ok {
 			if id, ok := b.identSymbol(ident); ok {
-				return cfgmeta.BranchFact{Symbol: id, Check: cfgmeta.BranchCheck{Kind: cfgmeta.CheckFalsy}}
+				return cfgfacts.BranchFact{Symbol: id, Check: cfgfacts.BranchCheck{Kind: cfgfacts.CheckFalsy}}
 			}
 		}
 	case *ast.RelationalOpExpr:
@@ -510,12 +510,12 @@ func (b *builder) branchMetadata(expr ast.Expr) cfgmeta.BranchFact {
 		}
 		if id, ok := b.nilCompareSymbol(expr.Lhs, expr.Rhs); ok {
 			if expr.Operator == "==" {
-				return cfgmeta.BranchFact{Symbol: id, Check: cfgmeta.BranchCheck{Kind: cfgmeta.CheckNil}}
+				return cfgfacts.BranchFact{Symbol: id, Check: cfgfacts.BranchCheck{Kind: cfgfacts.CheckNil}}
 			}
-			return cfgmeta.BranchFact{Symbol: id, Check: cfgmeta.BranchCheck{Kind: cfgmeta.CheckNotNil}}
+			return cfgfacts.BranchFact{Symbol: id, Check: cfgfacts.BranchCheck{Kind: cfgfacts.CheckNotNil}}
 		}
 	}
-	return cfgmeta.BranchFact{Check: cfgmeta.BranchCheck{Kind: cfgmeta.CheckNone}}
+	return cfgfacts.BranchFact{Check: cfgfacts.BranchCheck{Kind: cfgfacts.CheckNone}}
 }
 
 func (b *builder) nilCompareSymbol(lhs, rhs ast.Expr) (symbol.ID, bool) {

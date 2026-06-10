@@ -1,4 +1,4 @@
-package cfgmeta
+package cfgfacts
 
 import (
 	"testing"
