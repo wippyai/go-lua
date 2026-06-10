@@ -498,17 +498,16 @@ func (c *checker) metaSubtype(subMT, superMT typ.Type, depth int) bool {
 	return c.check(subMT, superMT, depth)
 }
 
-type recursiveFamilyKey struct {
-	namespace string
-	owner     string
-}
-
-func recursiveFamilyKeyOf(t typ.Type) (recursiveFamilyKey, bool) {
+func recursiveFamilyKeyOf(t typ.Type) (typ.RecursiveFamilyKey, bool) {
 	r, ok := t.(*typ.Recursive)
-	if !ok || !r.RecursiveIsKeyed() {
-		return recursiveFamilyKey{}, false
+	if !ok {
+		return typ.RecursiveFamilyKey{}, false
 	}
-	return recursiveFamilyKey{namespace: r.RecursiveFamilyNamespace(), owner: r.RecursiveFamilyOwner()}, true
+	key := r.RecursiveFamilyKey()
+	if key.IsZero() {
+		return typ.RecursiveFamilyKey{}, false
+	}
+	return key, true
 }
 
 func (c *checker) canWidenTo(narrow, wide typ.Type, depth int) bool {

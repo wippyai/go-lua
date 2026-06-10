@@ -6,6 +6,125 @@ import (
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
+func TestRecursiveFamilyInternerInternsSameKey(t *testing.T) {
+	interner := NewRecursiveFamilyInterner()
+	key := FamilyKey{Namespace: "store", Owner: "sym:1"}
+
+	first := interner.Intern(key)
+	second := interner.Intern(key)
+	if first == nil || second == nil {
+		t.Fatal("interned family should not be nil")
+	}
+	if first != second {
+		t.Fatal("same key should return the same family handle")
+	}
+	if got := first.RecursiveFamilyKey(); got != key {
+		t.Fatalf("RecursiveFamilyKey() = %#v, want %#v", got, key)
+	}
+	got, ok := FamilyKeyOf(first)
+	if !ok || got != key {
+		t.Fatalf("FamilyKeyOf() = (%#v, %v), want (%#v, true)", got, ok, key)
+	}
+}
+
+func TestRecursiveFamilyInternerOwnershipIsolation(t *testing.T) {
+	key := FamilyKey{Namespace: "class", Owner: "alloc:7"}
+	left := NewRecursiveFamilyInterner()
+	right := NewRecursiveFamilyInterner()
+
+	leftFamily := left.Intern(key)
+	rightFamily := right.Intern(key)
+	if leftFamily == rightFamily {
+		t.Fatal("separate interners should not share family handles")
+	}
+
+	body := typ.NewRecord().Field("value", typ.String).Build()
+	left.Widen(rightFamily, body, nil)
+	if rightFamily.RecursiveBody() != nil {
+		t.Fatal("foreign family body should not be mutated")
+	}
+
+	left.Widen(leftFamily, body, nil)
+	if leftFamily.RecursiveBody() == nil {
+		t.Fatal("owned family body should be initialized")
+	}
+	if rightFamily.RecursiveBody() != nil {
+		t.Fatal("foreign family should remain unchanged")
+	}
+}
+
+func TestRecursiveFamilyInternerWidenRequiresOwnedHandle(t *testing.T) {
+	interner := NewRecursiveFamilyInterner()
+	key := FamilyKey{Namespace: "fold", Owner: "site:3"}
+	unmanaged := typ.NewRecursiveFamilyPlaceholder(key)
+	plain := typ.NewRecursivePlaceholder("Plain")
+	body := typ.NewRecord().Field("value", typ.Number).Build()
+
+	interner.Widen(unmanaged, body, nil)
+	if unmanaged.RecursiveBody() != nil {
+		t.Fatal("unmanaged family placeholder should not be mutated")
+	}
+	interner.Widen(plain, body, nil)
+	if plain.RecursiveBody() != nil {
+		t.Fatal("plain recursive placeholder should not be mutated")
+	}
+
+	owned := interner.Intern(key)
+	interner.Widen(owned, body, nil)
+	if owned.RecursiveBody() == nil {
+		t.Fatal("owned family should accept widen")
+	}
+}
+
+func TestFamilyKeyOfReadback(t *testing.T) {
+	key := FamilyKey{Namespace: "ns", Owner: "owner"}
+	family := typ.NewRecursiveFamilyPlaceholder(key)
+	got, ok := FamilyKeyOf(family)
+	if !ok || got != key {
+		t.Fatalf("FamilyKeyOf(family) = (%#v, %v), want (%#v, true)", got, ok, key)
+	}
+
+	plain := typ.NewRecursivePlaceholder("Plain")
+	if got, ok := FamilyKeyOf(plain); ok || !got.IsZero() {
+		t.Fatalf("FamilyKeyOf(plain) = (%#v, %v), want zero/false", got, ok)
+	}
+}
+
+func TestRecursiveFamilyIdentityStableAcrossWiden(t *testing.T) {
+	interner := NewRecursiveFamilyInterner()
+	key := FamilyKey{Namespace: "store", Owner: "sym:stable"}
+	family := interner.Intern(key)
+
+	initialFingerprint := RecursiveFamilyFingerprint(family)
+	initialHash := family.Hash()
+	if initialFingerprint == 0 || initialHash == 0 {
+		t.Fatalf("initial identity values should be non-zero: fp=%x hash=%x", initialFingerprint, initialHash)
+	}
+
+	firstBody := typ.NewRecord().Field("value", typ.String).Build()
+	interner.Widen(family, firstBody, nil)
+	if got := RecursiveFamilyFingerprint(family); got != initialFingerprint {
+		t.Fatalf("fingerprint after first widen = %x, want %x", got, initialFingerprint)
+	}
+	if got := family.Hash(); got != initialHash {
+		t.Fatalf("hash after first widen = %x, want %x", got, initialHash)
+	}
+
+	secondBody := typ.NewRecord().
+		Field("value", typ.String).
+		Field("extra", typ.Number).
+		Build()
+	interner.Widen(family, secondBody, func(existing, candidate typ.Type) typ.Type {
+		return candidate
+	})
+	if got := RecursiveFamilyFingerprint(family); got != initialFingerprint {
+		t.Fatalf("fingerprint after second widen = %x, want %x", got, initialFingerprint)
+	}
+	if got := family.Hash(); got != initialHash {
+		t.Fatalf("hash after second widen = %x, want %x", got, initialHash)
+	}
+}
+
 func TestRecursiveFamilyFingerprintScansSurfaceWithoutUnfoldingBodies(t *testing.T) {
 	hidden := typ.NewRecursive("Hidden", func(self typ.Type) typ.Type {
 		return typ.NewRecord().Field("next", self).Build()

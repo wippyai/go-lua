@@ -34,46 +34,27 @@ func typeNodePointer(t typ.Type) uintptr {
 	return 0
 }
 
-// FamilyKey is the stable owner identity of a recursive family. It is supplied
-// by the producer of a recursive type (a source declaration, a class
-// allocation, a value-binding store path, a self-embedding equation site), not
-// derived from the body, so every observation of one recursive family resolves
-// to the same interned handle regardless of how deeply its body has been
-// discovered.
-//
-// Namespace distinguishes co-existing producer namespaces (class allocations,
-// store paths, fold sites) so two producers cannot collide on a shared Owner
-// string; Owner is the producer-local stable identity within that namespace.
-type FamilyKey struct {
-	Namespace string
-	Owner     string
-}
-
-// String renders the family key for the recursion-variable name.
-func (k FamilyKey) String() string {
-	if k.Namespace == "" {
-		return k.Owner
-	}
-	return k.Namespace + ":" + k.Owner
-}
+// FamilyKey is the stable producer identity of a recursive family.
+type FamilyKey = typ.RecursiveFamilyKey
 
 // hash folds the key into a stable bucket value.
-func (k FamilyKey) hash() uint64 {
+func hashFamilyKey(k FamilyKey) uint64 {
 	h := hash.FnvString(k.Namespace)
 	return hash.HashCombine(h, hash.FnvString(k.Owner))
 }
 
 // sameKey reports whether two recursive nodes carry the same family key.
 func sameKey(a, b *typ.Recursive) bool {
-	return a.RecursiveIsKeyed() && b.RecursiveIsKeyed() &&
-		a.RecursiveFamilyNamespace() == b.RecursiveFamilyNamespace() &&
-		a.RecursiveFamilyOwner() == b.RecursiveFamilyOwner()
+	if a == nil || b == nil {
+		return false
+	}
+	key := a.RecursiveFamilyKey()
+	return !key.IsZero() && key == b.RecursiveFamilyKey()
 }
 
 // recFamilyKeyHash returns the hash of the family key embedded in rec.
 func recFamilyKeyHash(rec *typ.Recursive) uint64 {
-	k := FamilyKey{Namespace: rec.RecursiveFamilyNamespace(), Owner: rec.RecursiveFamilyOwner()}
-	return k.hash()
+	return hashFamilyKey(rec.RecursiveFamilyKey())
 }
 
 // RecursiveFamilyInterner owns one canonical *typ.Recursive handle per FamilyKey
@@ -118,11 +99,11 @@ func (i *RecursiveFamilyInterner) Reset() {
 // Intern returns the one canonical *typ.Recursive handle for key.
 //
 // The first observation of a key mints a placeholder handle with a fixed ID, the
-// key recorded as its family, and this interner recorded as its owner; subsequent
-// observations return that same handle. Producers seal the body with Widen. The
-// returned handle is the family's stable recursive identity: two observations of
-// one family are literally the same pointer, so Equal is identity and Hash is the
-// key hash, stable across every body refinement.
+// key recorded as its family; subsequent observations return that same handle.
+// Producers seal the body with Widen. The returned handle is the family's stable
+// recursive identity: two observations of one family are literally the same
+// pointer, so Equal is identity and Hash is the key hash, stable across every
+// body refinement.
 func (i *RecursiveFamilyInterner) Intern(key FamilyKey) *typ.Recursive {
 	if i == nil {
 		return nil
@@ -133,8 +114,7 @@ func (i *RecursiveFamilyInterner) Intern(key FamilyKey) *typ.Recursive {
 	if rec, ok := i.families[key]; ok {
 		return rec
 	}
-	rec := typ.NewRecursivePlaceholder(key.String())
-	rec.MarkKeyedFamily(key.Namespace, key.Owner, i)
+	rec := typ.NewRecursiveFamilyPlaceholder(key)
 	i.families[key] = rec
 	return rec
 }
@@ -143,10 +123,19 @@ func (i *RecursiveFamilyInterner) Intern(key FamilyKey) *typ.Recursive {
 // handles may have their body slot mutated; a shared or foreign recursive node
 // (stdlib/manifest/DB/cache, or one minted by another compilation) is immutable.
 func (i *RecursiveFamilyInterner) owns(family *typ.Recursive) bool {
-	return i != nil && family != nil && family.FamilyOwnerToken() == i
+	if i == nil || family == nil {
+		return false
+	}
+	key := family.RecursiveFamilyKey()
+	if key.IsZero() {
+		return false
+	}
+	i.mu.Lock()
+	defer i.mu.Unlock()
+	return i.families[key] == family
 }
 
-// Widen widens the body slot of a keyed family handle by joining the candidate
+// Widen widens the body slot of a family handle by joining the candidate
 // body into the current body, rebinding the candidate's self-occurrences to the
 // family handle so the cycle stays closed on one node. It mutates the handle in
 // place under its stable identity and returns the handle. join is the value-domain
@@ -186,7 +175,7 @@ func (i *RecursiveFamilyInterner) Widen(family *typ.Recursive, candidateBody typ
 }
 
 // rebindRecursiveSelf rewrites every recursive reference inside body that
-// denotes the same family (a keyed reference to family's key, or a structurally
+// denotes the same family (a reference with family's key, or a structurally
 // self-embedding occurrence of family) to family itself, so the widened body
 // keeps a single recursion variable.
 func rebindRecursiveSelf(body typ.Type, family *typ.Recursive) typ.Type {
@@ -207,7 +196,7 @@ func rebindRecursiveSelf(body typ.Type, family *typ.Recursive) typ.Type {
 
 // RebindRecursiveRef rewrites every reference to the recursion variable from
 // inside body to to, so a body sealed under one recursion variable is re-rooted
-// onto another (a fresh fold placeholder onto its keyed family handle). The
+// onto another (a fresh fold placeholder onto its family handle). The
 // from node itself is left untouched when it appears as a non-reference value.
 func RebindRecursiveRef(body typ.Type, from, to *typ.Recursive) typ.Type {
 	if body == nil || from == nil || to == nil || from == to {
@@ -222,7 +211,7 @@ func RebindRecursiveRef(body typ.Type, from, to *typ.Recursive) typ.Type {
 }
 
 // ContainsRecursiveRef reports whether body contains any reference to the
-// recursion variable rec (the same node, the same ID, or a keyed reference with
+// recursion variable rec (the same node, the same ID, or a reference with
 // rec's family key).
 func ContainsRecursiveRef(body typ.Type, rec *typ.Recursive) bool {
 	if body == nil || rec == nil {
@@ -236,7 +225,7 @@ func ContainsRecursiveRef(body typ.Type, rec *typ.Recursive) bool {
 		if typ.IsRecursiveRef(t, rec) {
 			return true
 		}
-		return rec.RecursiveIsKeyed() && sameKey(other, rec)
+		return !rec.RecursiveFamilyKey().IsZero() && sameKey(other, rec)
 	})
 }
 
@@ -314,21 +303,24 @@ func collapseChildren(slot typ.Type, family *typ.Recursive) typ.Type {
 	}
 }
 
-// FamilyKeyOf returns the owner key of a keyed recursive family and whether t is
-// a keyed family handle.
+// FamilyKeyOf returns the family key carried by t, when present.
 func FamilyKeyOf(t typ.Type) (FamilyKey, bool) {
 	rec, ok := t.(*typ.Recursive)
-	if !ok || rec == nil || !rec.RecursiveIsKeyed() {
+	if !ok || rec == nil {
 		return FamilyKey{}, false
 	}
-	return FamilyKey{Namespace: rec.RecursiveFamilyNamespace(), Owner: rec.RecursiveFamilyOwner()}, true
+	key := rec.RecursiveFamilyKey()
+	if key.IsZero() {
+		return FamilyKey{}, false
+	}
+	return key, true
 }
 
 // RecursiveFamilyFingerprint folds the recursive-family identities reachable
 // from t into a stable, order-independent hash.
 //
-// A recursive family is identified by its keyed owner FamilyKey when it carries
-// one, otherwise by the recursion-variable name the source declaration gave it.
+// A recursive family is identified by its FamilyKey when it carries one,
+// otherwise by the recursion-variable name the source declaration gave it.
 // Both identities are stable across body refinement and unfolding depth, so two
 // equivalent unfoldings of one family reference the same handles and produce one
 // fingerprint, while two distinct families (a class allocation per module, say)
@@ -465,7 +457,7 @@ func (s *recursiveFamilyFingerprintScan) add(rec *typ.Recursive) {
 		return
 	}
 	var id uint64
-	if rec.RecursiveIsKeyed() {
+	if !rec.RecursiveFamilyKey().IsZero() {
 		id = hash.HashCombine(recursiveFamilyKeyedSalt, recFamilyKeyHash(rec))
 	} else {
 		id = hash.HashCombine(recursiveFamilyNamedSalt, hash.FnvString(rec.RecursiveName()))

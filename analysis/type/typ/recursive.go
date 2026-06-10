@@ -24,19 +24,9 @@ type Recursive struct {
 	hash uint64
 	rev  uint64
 
-	// keyed marks a family whose identity is (familyNS, familyOwnerStr) rather
-	// than the body, so Equal and Hash use those keys, not the body. Body
-	// refinement mutates the slot in place under the stable identity.
-	keyed          bool
-	familyNS       string
-	familyOwnerStr string
-
-	// owner is the compilation-scoped interner that minted a keyed family. Only
-	// the owning interner may widen the family body; a node with no owner (a
-	// declared type, an instantiated stdlib product) is immutable to the widen path.
-	// Stored as any so that the identity package (which defines the interner) does
-	// not create an import cycle with typ.
-	owner any
+	// familyKey is optional identity metadata supplied by domain identity.
+	// Ownership and mutation authorization stay outside typ.
+	familyKey RecursiveFamilyKey
 
 	// frozen marks an immutable input graph (stdlib/manifest/DB/cache). SetBody on
 	// a frozen node is a no-op so a shared recursive body cannot be mutated by a
@@ -83,6 +73,14 @@ func NewRecursivePlaceholder(name string) *Recursive {
 		containsFlagsDirty:  true,
 		containsClosedDirty: true,
 	}
+}
+
+// NewRecursiveFamilyPlaceholder creates an empty recursive type tagged with a
+// stable family key. Ownership of the returned node is tracked by the caller.
+func NewRecursiveFamilyPlaceholder(key RecursiveFamilyKey) *Recursive {
+	rec := NewRecursivePlaceholder(key.String())
+	rec.familyKey = key
+	return rec
 }
 
 // SetBody assigns the body to a placeholder recursive type.

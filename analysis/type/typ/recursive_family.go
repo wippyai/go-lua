@@ -1,5 +1,25 @@
 package typ
 
+// RecursiveFamilyKey is stable identity metadata for recursive families minted
+// outside typ.
+type RecursiveFamilyKey struct {
+	Namespace string
+	Owner     string
+}
+
+// String renders the key for a recursion-variable name.
+func (k RecursiveFamilyKey) String() string {
+	if k.Namespace == "" {
+		return k.Owner
+	}
+	return k.Namespace + ":" + k.Owner
+}
+
+// IsZero reports whether no family key is present.
+func (k RecursiveFamilyKey) IsZero() bool {
+	return k == RecursiveFamilyKey{}
+}
+
 // RecursiveName returns the declared name of the recursion variable.
 func (r *Recursive) RecursiveName() string {
 	if r == nil {
@@ -21,50 +41,10 @@ func (r *Recursive) SetRecursiveBody(body Type) {
 	r.SetBody(body)
 }
 
-// RecursiveIsKeyed reports whether this node carries a stable family-key identity.
-func (r *Recursive) RecursiveIsKeyed() bool {
+// RecursiveFamilyKey returns the optional family identity metadata for this node.
+func (r *Recursive) RecursiveFamilyKey() RecursiveFamilyKey {
 	if r == nil {
-		return false
+		return RecursiveFamilyKey{}
 	}
-	return r.keyed
-}
-
-// RecursiveFamilyNamespace returns the namespace component of the family key for
-// a keyed recursive node, or "" for an unkeyed node.
-func (r *Recursive) RecursiveFamilyNamespace() string {
-	if r == nil {
-		return ""
-	}
-	return r.familyNS
-}
-
-// RecursiveFamilyOwner returns the owner component of the family key for a keyed
-// recursive node, or "" for an unkeyed node.
-func (r *Recursive) RecursiveFamilyOwner() string {
-	if r == nil {
-		return ""
-	}
-	return r.familyOwnerStr
-}
-
-// MarkKeyedFamily seals this placeholder as a keyed family node owned by token.
-// It sets keyed=true, records the (ns, owner) key pair, and stores the opaque
-// owner token that the identity package uses for ownership checks.
-func (r *Recursive) MarkKeyedFamily(ns, owner string, token any) {
-	if r == nil {
-		return
-	}
-	r.keyed = true
-	r.familyNS = ns
-	r.familyOwnerStr = owner
-	r.owner = token
-}
-
-// FamilyOwnerToken returns the opaque owner token stored by MarkKeyedFamily.
-// The identity package compares it by pointer identity for ownership checks.
-func (r *Recursive) FamilyOwnerToken() any {
-	if r == nil {
-		return nil
-	}
-	return r.owner
+	return r.familyKey
 }

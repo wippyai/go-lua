@@ -18,10 +18,10 @@ func hashWithVisitedMemo(t Type, visited map[*Recursive]bool, memo map[Type]uint
 
 	// Check if this is a recursive type we've already seen
 	if rec, ok := t.(*Recursive); ok {
-		if rec.keyed {
-			// Keyed identity: hash by owner key, stable across body refinement, so a
-			// keyed family contributes a fixed hash to any product that embeds it.
-			keyHash := hash.HashCombine(hash.FnvString(rec.familyNS), hash.FnvString(rec.familyOwnerStr))
+		if key := rec.familyKey; !key.IsZero() {
+			// Family-key identity: stable across body refinement, so any product
+			// embedding this node sees a fixed recursive component.
+			keyHash := hash.HashCombine(hash.FnvString(key.Namespace), hash.FnvString(key.Owner))
 			return hash.HashCombine(uint64(kind.Recursive), keyHash)
 		}
 		if visited[rec] {
@@ -267,11 +267,11 @@ func typeEqualityHash(t Type) uint64 {
 }
 
 func (r *Recursive) Hash() uint64 {
-	if r.keyed {
-		// Keyed identity: the hash is stable across every body refinement so the
-		// inter-procedural fixpoint sees a fixed point on the family while the body
-		// slot still widens.
-		keyHash := hash.HashCombine(hash.FnvString(r.familyNS), hash.FnvString(r.familyOwnerStr))
+	if key := r.familyKey; !key.IsZero() {
+		// Family-key identity: the hash is stable across every body refinement so
+		// inter-procedural fixpoints can observe the family while the body slot
+		// still widens.
+		keyHash := hash.HashCombine(hash.FnvString(key.Namespace), hash.FnvString(key.Owner))
 		return hash.HashCombine(uint64(kind.Recursive), keyHash)
 	}
 	if r.hash != 0 && recursiveHashDepsValid(r.hashDeps) {
