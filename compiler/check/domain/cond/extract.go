@@ -25,9 +25,9 @@ import (
 	"github.com/wippyai/go-lua/compiler/check/domain/path"
 	"github.com/wippyai/go-lua/compiler/check/domain/predicate"
 	"github.com/wippyai/go-lua/compiler/check/domain/resolve"
-	"github.com/wippyai/go-lua/compiler/check/domain/tblutil"
 	checkeffects "github.com/wippyai/go-lua/compiler/check/effects"
 	"github.com/wippyai/go-lua/compiler/check/scope"
+	"github.com/wippyai/go-lua/compiler/pathseg"
 	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/contract"
 	"github.com/wippyai/go-lua/types/flow"
@@ -411,13 +411,41 @@ func argMapLiteralCardinality(sym cfg.SymbolID, graph *cfg.Graph) int64 {
 			if !ok {
 				continue
 			}
-			card = tblutil.MapLiteralKeyCardinality(tbl)
+			card = mapLiteralKeyCardinality(tbl)
 		}
 	})
 	if defs != 1 {
 		return 0
 	}
 	return card
+}
+
+// mapLiteralKeyCardinality returns the proven key-count lower bound of a pure
+// keyed-map constructor. Duplicate static keys collapse, dynamic keys prove no
+// new distinct entry, nil-literal values write no entry, and positional fields
+// make the constructor non-map-shaped for this length channel.
+func mapLiteralKeyCardinality(tbl *ast.TableExpr) int64 {
+	if tbl == nil || len(tbl.Fields) == 0 {
+		return 0
+	}
+	seen := make(map[constraint.Segment]struct{}, len(tbl.Fields))
+	for _, field := range tbl.Fields {
+		if field == nil || field.Value == nil {
+			return 0
+		}
+		if field.Key == nil {
+			return 0
+		}
+		if _, ok := field.Value.(*ast.NilExpr); ok {
+			continue
+		}
+		seg, ok := pathseg.StaticTableFieldSegment(field)
+		if !ok {
+			continue
+		}
+		seen[seg] = struct{}{}
+	}
+	return int64(len(seen))
 }
 
 // argLengthMutated reports whether the caller performs a segmented write on the
