@@ -95,6 +95,23 @@ func TestAddNode(t *testing.T) {
 	}
 }
 
+func TestNodeSnapshotReturnsCopy(t *testing.T) {
+	c := New()
+	nodes := c.NodeSnapshot()
+	if len(nodes) != c.Size() {
+		t.Fatalf("NodeSnapshot() length = %d, want %d", len(nodes), c.Size())
+	}
+	nodes[0] = Node{Point: c.Entry(), Kind: NodeReturn}
+
+	entry := c.Node(c.Entry())
+	if entry == nil {
+		t.Fatal("entry node is nil")
+	}
+	if entry.Kind != NodeEntry {
+		t.Fatalf("mutating NodeSnapshot() result changed CFG internals: entry kind = %v", entry.Kind)
+	}
+}
+
 func TestNode(t *testing.T) {
 	c := New()
 	p := c.AddNode(NodeAssign)
@@ -186,6 +203,26 @@ func TestAddEdge(t *testing.T) {
 		if len(succs) != 1 || succs[0] != p {
 			t.Errorf("successors = %v, want [%d]", succs, p)
 		}
+	})
+
+	t.Run("panics on invalid from point", func(t *testing.T) {
+		c := New()
+		defer func() {
+			if recover() == nil {
+				t.Fatal("expected panic")
+			}
+		}()
+		c.AddEdge(Point(c.Size()), c.Exit(), false)
+	})
+
+	t.Run("panics on invalid to point", func(t *testing.T) {
+		c := New()
+		defer func() {
+			if recover() == nil {
+				t.Fatal("expected panic")
+			}
+		}()
+		c.AddEdge(c.Entry(), Point(c.Size()), false)
 	})
 }
 
@@ -659,27 +696,6 @@ func TestAddBranch(t *testing.T) {
 
 		if after != before+1 {
 			t.Errorf("size = %d, want %d", after, before+1)
-		}
-	})
-}
-
-func TestSuccessor(t *testing.T) {
-	c := New()
-	n1 := c.AddNode(NodeAssign)
-	n2 := c.AddNode(NodeAssign)
-	c.AddEdge(n1, n2, false)
-
-	t.Run("returns single successor", func(t *testing.T) {
-		succ := c.Successor(n1)
-		if succ != n2 {
-			t.Errorf("Successor(%d) = %d, want %d", n1, succ, n2)
-		}
-	})
-
-	t.Run("returns self when no successors", func(t *testing.T) {
-		succ := c.Successor(n2)
-		if succ != n2 {
-			t.Errorf("Successor(%d) = %d, want %d (self)", n2, succ, n2)
 		}
 	})
 }

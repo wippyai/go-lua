@@ -62,7 +62,7 @@ func mustIdentSymbol(t *testing.T, bindings *bind.Result, ident *ast.IdentExpr) 
 
 func pointsOfKind(graph *cfg.CFG, kind cfg.NodeKind) []cfg.Point {
 	var points []cfg.Point
-	for _, node := range graph.Nodes {
+	for _, node := range graph.NodeSnapshot() {
 		if node.Kind == kind {
 			points = append(points, node.Point)
 		}
@@ -72,7 +72,7 @@ func pointsOfKind(graph *cfg.CFG, kind cfg.NodeKind) []cfg.Point {
 
 func assignTargets(graph *cfg.CFG, meta cfgfacts.Metadata) []symbol.ID {
 	var targets []symbol.ID
-	for _, node := range graph.Nodes {
+	for _, node := range graph.NodeSnapshot() {
 		if node.Kind == cfg.NodeAssign {
 			fact, ok := meta.Assignment(node.Point)
 			if ok {
@@ -115,7 +115,7 @@ func rpoIndex(t *testing.T, graph *cfg.CFG, point cfg.Point) int {
 func nodeWithTarget(t *testing.T, graph *cfg.CFG, meta cfgfacts.Metadata, target symbol.ID, ordinal int) cfg.Point {
 	t.Helper()
 	seen := 0
-	for _, node := range graph.Nodes {
+	for _, node := range graph.NodeSnapshot() {
 		fact, ok := meta.Assignment(node.Point)
 		if node.Kind != cfg.NodeAssign || !ok || fact.Target != target {
 			continue
@@ -171,7 +171,7 @@ func rejectEdge(t *testing.T, graph *cfg.CFG, from, to cfg.Point) {
 func requireTargetCount(t *testing.T, graph *cfg.CFG, meta cfgfacts.Metadata, target symbol.ID, want int) {
 	t.Helper()
 	got := 0
-	for _, node := range graph.Nodes {
+	for _, node := range graph.NodeSnapshot() {
 		fact, ok := meta.Assignment(node.Point)
 		if node.Kind == cfg.NodeAssign && ok && fact.Target == target {
 			got++

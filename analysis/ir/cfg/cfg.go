@@ -31,7 +31,10 @@
 // Join and branch topology is exposed through predecessor/successor shape.
 package cfg
 
-import "sync/atomic"
+import (
+	"fmt"
+	"sync/atomic"
+)
 
 // Point represents a location in a control flow graph.
 // Each Point is an index into the CFG's node array, local to that CFG.
@@ -91,7 +94,6 @@ type Graph interface {
 	Node(p Point) *Node                   // Node metadata at point p
 	RPO() []Point                         // Reverse post-order for forward analysis
 	Predecessors(p Point) []Point         // Incoming edges
-	Successor(p Point) Point              // Single successor (non-branch nodes)
 	Successors(p Point) []Point           // All successors (branch nodes have 2)
 	Edges() []Edge                        // All edges in the graph
 	Size() int                            // Number of nodes
@@ -106,7 +108,7 @@ type Graph interface {
 // The graph is immutable after construction.
 //
 // Structure:
-//   - Nodes: flat array indexed by Point
+//   - nodes: flat array indexed by Point
 //   - Edges: directed edges with predecessor/successor maps for efficient lookup
 //   - Entry/Exit: special nodes for function boundaries
 //
@@ -116,7 +118,7 @@ type CFG struct {
 	id    uint64
 	entry Point
 	exit  Point
-	Nodes []Node
+	nodes []Node
 	edges []Edge
 	preds [][]Point
 	succs [][]Point
@@ -145,7 +147,7 @@ func NewWithCapacity(nodeCap, edgeCap int) *CFG {
 
 	c := &CFG{
 		id:    nextCFGID(),
-		Nodes: make([]Node, 0, nodeCap),
+		nodes: make([]Node, 0, nodeCap),
 		edges: make([]Edge, 0, edgeCap),
 		preds: make([][]Point, 0, nodeCap),
 		succs: make([][]Point, 0, nodeCap),
@@ -171,17 +173,6 @@ func (c *CFG) Exit() Point {
 	return c.exit
 }
 
-// Successor returns single successor (for non-branch nodes).
-func (c *CFG) Successor(p Point) Point {
-	idx := int(p)
-	if idx >= 0 && idx < len(c.succs) {
-		if succs := c.succs[idx]; len(succs) > 0 {
-			return succs[0]
-		}
-	}
-	return p
-}
-
 // ID returns the process-local identifier for this CFG instance.
 func (c *CFG) ID() uint64 {
 	if c == nil {
@@ -193,24 +184,25 @@ func (c *CFG) ID() uint64 {
 // AddNode adds a node and returns its point.
 func (c *CFG) AddNode(kind NodeKind) Point {
 	c.invalidateRPO()
-	p := Point(len(c.Nodes))
-	c.Nodes = append(c.Nodes, Node{Point: p, Kind: kind})
-	c.ensureAdjacencyLen(len(c.Nodes))
+	p := Point(len(c.nodes))
+	c.nodes = append(c.nodes, Node{Point: p, Kind: kind})
+	c.ensureAdjacencyLen(len(c.nodes))
 	return p
 }
 
 // AddEdge adds an edge.
 func (c *CFG) AddEdge(from, to Point, cond bool) {
+	if c == nil {
+		panic("cfg: AddEdge on nil CFG")
+	}
 	fromIdx := int(from)
 	toIdx := int(to)
-	if fromIdx < 0 || toIdx < 0 {
-		return
+	if fromIdx < 0 || fromIdx >= len(c.nodes) {
+		panic(fmt.Sprintf("cfg: edge from nonexistent point %d", from))
 	}
-	maxIdx := fromIdx
-	if toIdx > maxIdx {
-		maxIdx = toIdx
+	if toIdx < 0 || toIdx >= len(c.nodes) {
+		panic(fmt.Sprintf("cfg: edge to nonexistent point %d", to))
 	}
-	c.ensureAdjacencyLen(maxIdx + 1)
 
 	c.invalidateRPO()
 	c.edges = append(c.edges, Edge{From: from, To: to, Cond: cond})
@@ -231,10 +223,20 @@ func (c *CFG) AddEdge(from, to Point, cond bool) {
 
 // Node returns the node at point p.
 func (c *CFG) Node(p Point) *Node {
-	if int(p) < len(c.Nodes) {
-		return &c.Nodes[p]
+	if int(p) < len(c.nodes) {
+		return &c.nodes[p]
 	}
 	return nil
+}
+
+// NodeSnapshot returns a copy of all nodes in point order.
+func (c *CFG) NodeSnapshot() []Node {
+	if c == nil || len(c.nodes) == 0 {
+		return nil
+	}
+	out := make([]Node, len(c.nodes))
+	copy(out, c.nodes)
+	return out
 }
 
 // Predecessors returns all predecessors of p.
@@ -313,7 +315,7 @@ func (c *CFG) Edges() []Edge {
 
 // Size returns node count.
 func (c *CFG) Size() int {
-	return len(c.Nodes)
+	return len(c.nodes)
 }
 
 // EdgeCond returns the branch taken flag for edge from->to.
@@ -362,7 +364,7 @@ func (c *CFG) RPOReadOnly() []Point {
 		return c.rpo
 	}
 
-	n := len(c.Nodes)
+	n := len(c.nodes)
 	visited := make([]bool, n)
 	order := make([]Point, 0, n)
 
