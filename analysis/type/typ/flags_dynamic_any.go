@@ -128,13 +128,6 @@ func containsAnyDynamic(t Type, seen map[Type]bool, depth int) bool {
 		TypeParam: func(p *TypeParam) bool {
 			return containsAnyDynamic(p.Constraint, seen, depth+1)
 		},
-		FieldAccess: func(f *FieldAccess) bool {
-			return containsAnyDynamic(f.Base, seen, depth+1)
-		},
-		IndexAccess: func(i *IndexAccess) bool {
-			return containsAnyDynamic(i.Base, seen, depth+1) ||
-				containsAnyDynamic(i.Index, seen, depth+1)
-		},
 		Sum: func(s *Sum) bool {
 			for _, variant := range s.Variants {
 				for _, t := range variant.Types {

@@ -213,14 +213,6 @@ func hashBodyWithVisitedMemo(t Type, visited map[*Recursive]bool, memo map[Type]
 			}
 			return h
 		},
-		FieldAccess: func(f *FieldAccess) uint64 {
-			h := hash.HashCombine(uint64(kind.FieldAccess), hashBodyWithVisitedMemo(f.Base, visited, memo))
-			return hash.HashCombine(h, hash.FnvString(f.Field))
-		},
-		IndexAccess: func(i *IndexAccess) uint64 {
-			h := hash.HashCombine(uint64(kind.IndexAccess), hashBodyWithVisitedMemo(i.Base, visited, memo))
-			return hash.HashCombine(h, hashBodyWithVisitedMemo(i.Index, visited, memo))
-		},
 		Sum: func(s *Sum) uint64 {
 			h := hash.HashCombine(uint64(kind.Sum), hash.FnvString(s.Name))
 			for _, variant := range s.Variants {

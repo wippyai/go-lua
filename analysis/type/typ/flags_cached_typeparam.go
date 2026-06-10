@@ -40,10 +40,6 @@ func knownContainsTypeParam(t Type) bool {
 		return n.containsTypeParam
 	case *Instantiated:
 		return n.containsTypeParam
-	case *FieldAccess:
-		return n.containsTypeParam
-	case *IndexAccess:
-		return n.containsTypeParam
 	case *Sum:
 		return n.containsTypeParam
 	case *Interface:

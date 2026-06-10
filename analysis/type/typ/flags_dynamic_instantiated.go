@@ -117,13 +117,6 @@ func containsInstantiatedDynamic(t Type, seen map[Type]bool, depth int) bool {
 		TypeParam: func(p *TypeParam) bool {
 			return containsInstantiatedDynamic(p.Constraint, seen, depth+1)
 		},
-		FieldAccess: func(f *FieldAccess) bool {
-			return containsInstantiatedDynamic(f.Base, seen, depth+1)
-		},
-		IndexAccess: func(i *IndexAccess) bool {
-			return containsInstantiatedDynamic(i.Base, seen, depth+1) ||
-				containsInstantiatedDynamic(i.Index, seen, depth+1)
-		},
 		Sum: func(s *Sum) bool {
 			for _, variant := range s.Variants {
 				for _, t := range variant.Types {

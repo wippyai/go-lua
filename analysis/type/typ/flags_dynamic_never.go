@@ -128,13 +128,6 @@ func containsNeverDynamic(t Type, seen map[Type]bool) bool {
 		TypeParam: func(p *TypeParam) bool {
 			return containsNeverDynamic(p.Constraint, seen)
 		},
-		FieldAccess: func(f *FieldAccess) bool {
-			return containsNeverDynamic(f.Base, seen)
-		},
-		IndexAccess: func(i *IndexAccess) bool {
-			return containsNeverDynamic(i.Base, seen) ||
-				containsNeverDynamic(i.Index, seen)
-		},
 		Sum: func(s *Sum) bool {
 			for _, variant := range s.Variants {
 				for _, t := range variant.Types {

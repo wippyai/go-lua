@@ -159,11 +159,6 @@ func collectRecursiveHashDepsInTypeMemo(t Type, seen map[*Recursive]bool, memo m
 		}
 	case *TypeParam:
 		result = collectRecursiveHashDepsInTypeMemo(n.Constraint, seen, memo)
-	case *FieldAccess:
-		result = collectRecursiveHashDepsInTypeMemo(n.Base, seen, memo)
-	case *IndexAccess:
-		result = collectRecursiveHashDepsInTypeMemo(n.Base, seen, memo) &&
-			collectRecursiveHashDepsInTypeMemo(n.Index, seen, memo)
 	case *Sum:
 		for _, variant := range n.Variants {
 			for _, t := range variant.Types {

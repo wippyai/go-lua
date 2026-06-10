@@ -135,10 +135,6 @@ func (f *formatter) formatType(t Type, depth int, guard recursion.Guard) {
 				f.write(">")
 				return struct{}{}
 			},
-			TypeVar: func(v *TypeVar) struct{} {
-				f.write(v.String())
-				return struct{}{}
-			},
 			Interface: func(i *Interface) struct{} {
 				if i.Name != "" {
 					f.write(i.Name)

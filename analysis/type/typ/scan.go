@@ -192,13 +192,6 @@ func contains(t Type, pred func(Type) bool, seen containsSeen) bool {
 		TypeParam: func(p *TypeParam) bool {
 			return contains(p.Constraint, pred, seen)
 		},
-		FieldAccess: func(f *FieldAccess) bool {
-			return contains(f.Base, pred, seen)
-		},
-		IndexAccess: func(i *IndexAccess) bool {
-			return contains(i.Base, pred, seen) ||
-				contains(i.Index, pred, seen)
-		},
 		Sum: func(s *Sum) bool {
 			for _, variant := range s.Variants {
 				for _, t := range variant.Types {

@@ -162,12 +162,6 @@ func productFamilyHashSeen(t typ.Type, active map[uintptr]bool) uint64 {
 			h = hash.HashCombine(h, productFamilyMemberHash(v.Constraint, active))
 		}
 		return h
-	case *typ.FieldAccess:
-		h := hash.HashCombine(uint64(kind.FieldAccess), productFamilyMemberHash(v.Base, active))
-		return hash.HashCombine(h, hash.FnvString(v.Field))
-	case *typ.IndexAccess:
-		h := hash.HashCombine(uint64(kind.IndexAccess), productFamilyMemberHash(v.Base, active))
-		return hash.HashCombine(h, productFamilyMemberHash(v.Index, active))
 	case *typ.Meta:
 		return hash.HashCombine(uint64(kind.Meta), productFamilyMemberHash(v.Of, active))
 	case *typ.Sum:

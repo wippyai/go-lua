@@ -101,7 +101,7 @@ func containsFreeTypeParam(t Type, seen containsSeen, owned map[*TypeParam]int) 
 	}
 
 	switch t.Kind() {
-	case kind.Ref, kind.TypeVar, kind.FieldAccess, kind.IndexAccess, kind.Generic:
+	case kind.Ref, kind.Generic:
 		return true
 	}
 
@@ -1247,12 +1247,6 @@ func precisionFamilyHashSeen(t Type, active map[uintptr]bool, seen *precisionSee
 			h = hash.HashCombine(h, precisionFamilyMemberHash(v.Constraint, active, seen))
 		}
 		return h
-	case *FieldAccess:
-		h := hash.HashCombine(uint64(kind.FieldAccess), precisionFamilyMemberHash(v.Base, active, seen))
-		return hash.HashCombine(h, hash.FnvString(v.Field))
-	case *IndexAccess:
-		h := hash.HashCombine(uint64(kind.IndexAccess), precisionFamilyMemberHash(v.Base, active, seen))
-		return hash.HashCombine(h, precisionFamilyMemberHash(v.Index, active, seen))
 	case *Meta:
 		return hash.HashCombine(uint64(kind.Meta), precisionFamilyMemberHash(v.Of, active, seen))
 	case *Sum:

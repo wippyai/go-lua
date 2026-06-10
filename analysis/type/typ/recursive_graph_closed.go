@@ -136,11 +136,6 @@ func recursiveContainsGraphClosedMemo(t Type, seen map[*Recursive]bool, memo map
 		}
 	case *TypeParam:
 		result = recursiveContainsGraphClosedMemo(n.Constraint, seen, memo, depth+1)
-	case *FieldAccess:
-		result = recursiveContainsGraphClosedMemo(n.Base, seen, memo, depth+1)
-	case *IndexAccess:
-		result = recursiveContainsGraphClosedMemo(n.Base, seen, memo, depth+1) &&
-			recursiveContainsGraphClosedMemo(n.Index, seen, memo, depth+1)
 	case *Sum:
 		for _, variant := range n.Variants {
 			for _, t := range variant.Types {

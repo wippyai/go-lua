@@ -21,9 +21,6 @@ type Visitor[R any] struct {
 	Generic      func(*Generic) R
 	Instantiated func(*Instantiated) R
 	TypeParam    func(*TypeParam) R
-	TypeVar      func(*TypeVar) R
-	FieldAccess  func(*FieldAccess) R
-	IndexAccess  func(*IndexAccess) R
 	Sum          func(*Sum) R
 	Interface    func(*Interface) R
 	Recursive    func(*Recursive) R
@@ -99,18 +96,6 @@ func Visit[R any](t Type, v Visitor[R]) R {
 	case *TypeParam:
 		if v.TypeParam != nil {
 			return v.TypeParam(tt)
-		}
-	case *TypeVar:
-		if v.TypeVar != nil {
-			return v.TypeVar(tt)
-		}
-	case *FieldAccess:
-		if v.FieldAccess != nil {
-			return v.FieldAccess(tt)
-		}
-	case *IndexAccess:
-		if v.IndexAccess != nil {
-			return v.IndexAccess(tt)
 		}
 	case *Sum:
 		if v.Sum != nil {

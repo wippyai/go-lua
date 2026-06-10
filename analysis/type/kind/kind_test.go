@@ -70,7 +70,7 @@ func TestKindIsComposite(t *testing.T) {
 }
 
 func TestKindIsDeferred(t *testing.T) {
-	deferred := []Kind{Ref, TypeParam, TypeVar, FieldAccess, IndexAccess}
+	deferred := []Kind{Ref, TypeParam}
 	for _, k := range deferred {
 		if !k.IsDeferred() {
 			t.Errorf("%s should be deferred", k)
@@ -91,7 +91,7 @@ func TestKindValuesUnique(t *testing.T) {
 		Nil, Boolean, Number, Integer, String, Any, Unknown, Never,
 		Optional, Union, Intersection, Tuple, Function, Array, Map, Record,
 		Sum, Interface, Alias, Generic, Instantiated, Platform, Literal,
-		Self, Ref, Meta, TypeParam, TypeVar, Refined, FieldAccess, IndexAccess,
+		Self, Ref, Meta, TypeParam, Refined, Recursive,
 		ReadonlyMap,
 	}
 
@@ -106,7 +106,14 @@ func TestKindValuesUnique(t *testing.T) {
 }
 
 func TestKindNamesComplete(t *testing.T) {
-	for k := Nil; k <= ReadonlyMap; k++ {
+	kinds := []Kind{
+		Nil, Boolean, Number, Integer, String, Any, Unknown, Never,
+		Optional, Union, Intersection, Tuple, Function, Array, Map, Record,
+		Sum, Interface, Alias, Generic, Instantiated, Platform, Literal,
+		Self, Ref, Meta, TypeParam, Refined, Recursive, ReadonlyMap,
+	}
+
+	for _, k := range kinds {
 		name := k.String()
 		if name == "" {
 			t.Errorf("Kind(%d) has no name", k)

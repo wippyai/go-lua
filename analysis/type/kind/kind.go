@@ -18,8 +18,8 @@
 // Nominal kinds: Sum, Interface, Alias, Generic, Instantiated
 // Named types with identity-based semantics.
 //
-// Deferred kinds: Ref, TypeParam, TypeVar, FieldAccess, IndexAccess
-// Types requiring resolution (forward references, generics, projections).
+// Deferred kinds: Ref, TypeParam
+// Types requiring resolution (forward references and generics).
 //
 // Other kinds: Platform, Literal, Self, Meta, Refined, Recursive
 // Specialized types for platform APIs, literal values, and advanced features.
@@ -57,10 +57,10 @@ const (
 	Ref
 	Meta
 	TypeParam
-	TypeVar
+	_
 	Refined
-	FieldAccess
-	IndexAccess
+	_
+	_
 	Recursive
 	ReadonlyMap
 )
@@ -93,17 +93,16 @@ var kindNames = [...]string{
 	Ref:          "ref",
 	Meta:         "meta",
 	TypeParam:    "typeparam",
-	TypeVar:      "typevar",
 	Refined:      "refined",
-	FieldAccess:  "fieldaccess",
-	IndexAccess:  "indexaccess",
 	Recursive:    "recursive",
 	ReadonlyMap:  "readonlymap",
 }
 
 func (k Kind) String() string {
 	if int(k) < len(kindNames) {
-		return kindNames[k]
+		if name := kindNames[k]; name != "" {
+			return name
+		}
 	}
 
 	return "unknown"
@@ -124,10 +123,10 @@ func (k Kind) IsComposite() bool {
 	return false
 }
 
-// IsDeferred returns true for types that need resolution (ref, typeparam, typevar, fieldaccess, indexaccess).
+// IsDeferred returns true for types that need resolution (ref, typeparam).
 func (k Kind) IsDeferred() bool {
 	switch k {
-	case Ref, TypeParam, TypeVar, FieldAccess, IndexAccess:
+	case Ref, TypeParam:
 		return true
 	}
 
