@@ -41,7 +41,7 @@ type Segment = segment.Segment
 //   - {Root: "$0", Symbol: 0}: Placeholder for first function parameter
 type Path struct {
 	Root     string    // Variable name (optional for symbol paths, required for placeholders)
-	Symbol   symbol.ID // SymbolID for identity (0 if unresolved/placeholder)
+	Symbol   symbol.ID // Symbol identity (0 if unresolved/placeholder)
 	Segments []Segment
 	Version  int // SSA version ID (0 = unspecified, non-zero binds path to a specific version)
 }
@@ -193,7 +193,7 @@ func ValidFormattedSegments(suffix string) bool {
 // IsEmpty returns true if the path has no identity (no Root and no Symbol).
 func (p Path) IsEmpty() bool { return p.Root == "" && p.Symbol == 0 }
 
-// HasSymbol returns true if this path has a resolved SymbolID.
+// HasSymbol returns true if this path has a resolved symbol identity.
 func (p Path) HasSymbol() bool { return p.Symbol != 0 }
 
 // DisplayRoot returns the display name for the path root.
@@ -297,8 +297,8 @@ func (p Path) String() string {
 }
 
 // Key returns a stable key representation of the path.
-// Format: sym<SymbolID>@<VersionID><segments> for versioned symbol paths,
-// sym<SymbolID><segments> for unversioned symbol paths, <Root><segments> for placeholders.
+// Format: sym<symbol>@<version><segments> for versioned symbol paths,
+// sym<symbol><segments> for unversioned symbol paths, <Root><segments> for placeholders.
 // For versioned flow lookups, prefer pathkey.Resolver.KeyAt.
 func (p Path) Key() PathKey {
 	if p.IsEmpty() {

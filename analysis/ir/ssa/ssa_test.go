@@ -1,7 +1,9 @@
-package cfg
+package ssa
 
 import (
 	"testing"
+
+	"github.com/wippyai/go-lua/analysis/ir/cfg"
 )
 
 // =============================================================================
@@ -96,49 +98,9 @@ func TestVersion_DistinguishesShadowedVariables(t *testing.T) {
 	}
 }
 
-// =============================================================================
-// SymbolID Tests
-// =============================================================================
-
-func TestSymbolID_Zero(t *testing.T) {
-	var sym SymbolID
-	if sym != 0 {
-		t.Error("Zero value should be 0")
-	}
-
-	sym = SymbolID(0)
-	if sym != 0 {
-		t.Error("Explicit zero should be 0")
-	}
-}
-
-func TestSymbolID_NonZero(t *testing.T) {
-	sym := SymbolID(42)
-	if sym == 0 {
-		t.Error("Non-zero symbol should not equal 0")
-	}
-}
-
-func TestSymbolID_Uniqueness(t *testing.T) {
-	sym1 := SymbolID(1)
-	sym2 := SymbolID(2)
-	sym3 := SymbolID(1)
-
-	if sym1 == sym2 {
-		t.Error("Different IDs should not be equal")
-	}
-	if sym1 != sym3 {
-		t.Error("Same IDs should be equal")
-	}
-}
-
-// =============================================================================
-// PhiOperand Tests
-// =============================================================================
-
 func TestPhiOperand(t *testing.T) {
 	op := PhiOperand{
-		From:    Point(5),
+		From:    cfg.Point(5),
 		Version: Version{Root: "x", ID: 1},
 	}
 
@@ -159,11 +121,11 @@ func TestPhiOperand(t *testing.T) {
 
 func TestPhiNode_Basic(t *testing.T) {
 	phi := PhiNode{
-		Point:  Point(10),
+		Point:  cfg.Point(10),
 		Target: Version{Root: "x", ID: 3},
 		Operands: []PhiOperand{
-			{From: Point(5), Version: Version{Root: "x", ID: 1}},
-			{From: Point(7), Version: Version{Root: "x", ID: 2}},
+			{From: cfg.Point(5), Version: Version{Root: "x", ID: 1}},
+			{From: cfg.Point(7), Version: Version{Root: "x", ID: 2}},
 		},
 	}
 
@@ -180,11 +142,11 @@ func TestPhiNode_Basic(t *testing.T) {
 
 func TestPhiNode_TargetDistinctFromOperands(t *testing.T) {
 	phi := PhiNode{
-		Point:  Point(10),
+		Point:  cfg.Point(10),
 		Target: Version{Root: "x", ID: 3},
 		Operands: []PhiOperand{
-			{From: Point(5), Version: Version{Root: "x", ID: 1}},
-			{From: Point(7), Version: Version{Root: "x", ID: 2}},
+			{From: cfg.Point(5), Version: Version{Root: "x", ID: 1}},
+			{From: cfg.Point(7), Version: Version{Root: "x", ID: 2}},
 		},
 	}
 
@@ -197,16 +159,16 @@ func TestPhiNode_TargetDistinctFromOperands(t *testing.T) {
 
 func TestPhiNode_OperandOrderPreserved(t *testing.T) {
 	phi := PhiNode{
-		Point:  Point(10),
+		Point:  cfg.Point(10),
 		Target: Version{Root: "x", ID: 4},
 		Operands: []PhiOperand{
-			{From: Point(3), Version: Version{Root: "x", ID: 1}},
-			{From: Point(5), Version: Version{Root: "x", ID: 2}},
-			{From: Point(7), Version: Version{Root: "x", ID: 3}},
+			{From: cfg.Point(3), Version: Version{Root: "x", ID: 1}},
+			{From: cfg.Point(5), Version: Version{Root: "x", ID: 2}},
+			{From: cfg.Point(7), Version: Version{Root: "x", ID: 3}},
 		},
 	}
 
-	expectedFroms := []Point{3, 5, 7}
+	expectedFroms := []cfg.Point{3, 5, 7}
 	expectedIDs := []int{1, 2, 3}
 
 	for i, op := range phi.Operands {
@@ -221,18 +183,18 @@ func TestPhiNode_OperandOrderPreserved(t *testing.T) {
 
 func TestPhiNode_MultipleVariables(t *testing.T) {
 	phiX := PhiNode{
-		Point:  Point(10),
+		Point:  cfg.Point(10),
 		Target: Version{Root: "x", ID: 2},
 		Operands: []PhiOperand{
-			{From: Point(5), Version: Version{Root: "x", ID: 1}},
+			{From: cfg.Point(5), Version: Version{Root: "x", ID: 1}},
 		},
 	}
 
 	phiY := PhiNode{
-		Point:  Point(10),
+		Point:  cfg.Point(10),
 		Target: Version{Root: "y", ID: 2},
 		Operands: []PhiOperand{
-			{From: Point(5), Version: Version{Root: "y", ID: 1}},
+			{From: cfg.Point(5), Version: Version{Root: "y", ID: 1}},
 		},
 	}
 

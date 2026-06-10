@@ -1,6 +1,10 @@
 package cfg
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/wippyai/go-lua/analysis/ir/symbol"
+)
 
 func TestNew(t *testing.T) {
 	c := New()
@@ -56,7 +60,7 @@ func TestAddNode(t *testing.T) {
 	tests := []struct {
 		name   string
 		kind   NodeKind
-		target SymbolID
+		target symbol.ID
 		callee string
 	}{
 		{"entry", NodeEntry, 0, ""},

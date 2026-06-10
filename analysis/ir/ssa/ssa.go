@@ -1,40 +1,11 @@
-package cfg
+package ssa
 
 import (
 	"strconv"
 
+	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/ir/symbol"
 )
-
-// SymbolID uniquely identifies a variable declaration across the program.
-//
-// SymbolID provides declaration-level identity, distinguishing between
-// variables that happen to have the same name but are different bindings:
-//
-//	local x = 1        -- SymbolID 100
-//	if cond then
-//	    local x = 2    -- SymbolID 101 (different binding)
-//	    print(x)       -- refers to SymbolID 101
-//	end
-//	print(x)           -- refers to SymbolID 100
-//
-// The combination of SymbolID and Version forms a complete SSA identity,
-// where SymbolID identifies which variable and Version identifies which
-// definition of that variable.
-//
-// SymbolID 0 is reserved for unresolved or unknown references.
-type SymbolID = symbol.ID
-
-// NextSymbolID generates a unique symbol ID.
-func NextSymbolID() SymbolID {
-	return symbol.Next()
-}
-
-// ReserveSymbolIDs reserves a contiguous block of symbol IDs and returns the
-// first ID in the block. Returns 0 when n <= 0.
-func ReserveSymbolIDs(n int) SymbolID {
-	return symbol.Reserve(n)
-}
 
 // Version represents a stable SSA version of a variable.
 //
@@ -53,12 +24,12 @@ func ReserveSymbolIDs(n int) SymbolID {
 //
 // Version components:
 //   - Root: The variable name for display/debug output only
-//   - Symbol: The SymbolID of the declaration (distinguishes shadowed names)
+//   - Symbol: The symbol.ID of the declaration (distinguishes shadowed names)
 //   - ID: The version number (0 = undefined, 1+ = specific assignment)
 type Version struct {
-	Root   string   // Variable name for display/debug output only
-	Symbol SymbolID // Declaration identity (distinguishes same-named variables in different scopes)
-	ID     int      // Version number within the function (0 = undefined/uninitialized)
+	Root   string    // Variable name for display/debug output only
+	Symbol symbol.ID // Declaration identity (distinguishes same-named variables in different scopes)
+	ID     int       // Version number within the function (0 = undefined/uninitialized)
 }
 
 // IsZero returns true if this is an undefined/uninitialized version.
@@ -78,8 +49,8 @@ func (v Version) String() string {
 // to know which version of a variable comes from each predecessor. Each
 // PhiOperand pairs a predecessor point with the version visible at that point.
 type PhiOperand struct {
-	From    Point   // Predecessor point where this version comes from
-	Version Version // The SSA version from that predecessor
+	From    cfg.Point // Predecessor point where this version comes from
+	Version Version   // The SSA version from that predecessor
 }
 
 // PhiNode represents a phi function at a control flow join point.
@@ -101,7 +72,21 @@ type PhiOperand struct {
 // For type checking, the phi node's type is typically the union of all
 // operand types.
 type PhiNode struct {
-	Point    Point        // CFG point where the phi is located
+	Point    cfg.Point    // CFG point where the phi is located
 	Target   Version      // The new version created by this phi
 	Operands []PhiOperand // Incoming versions from each predecessor
+}
+
+// Versioned provides SSA versioning data for a CFG.
+type Versioned interface {
+	// VisibleVersion returns the SSA version of a symbol visible at a point.
+	// Returns a zero Version if the symbol is not defined on all paths to this point.
+	VisibleVersion(p cfg.Point, sym symbol.ID) Version
+
+	// AllVisibleVersions returns all symbol versions visible at a point.
+	// The returned map should not be modified by callers.
+	AllVisibleVersions(p cfg.Point) map[symbol.ID]Version
+
+	// PhiNodes returns all phi nodes in the graph.
+	PhiNodes() []PhiNode
 }

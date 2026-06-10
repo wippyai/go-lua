@@ -18,12 +18,11 @@
 // Graph: Interface for CFG access, implemented by CFG. Provides node lookup,
 // edge traversal, predecessor/successor queries, and reverse post-order iteration.
 //
-// # Symbol And Version Identity
+// # Symbol Identity
 //
-// SymbolID identifies a lexical binding. It distinguishes shadowed declarations
-// but does not identify assignments. Version identifies an SSA definition of a
-// SymbolID at a program point. Point locates where a version is visible in the
-// control graph.
+// symbol.ID identifies a lexical binding. It distinguishes shadowed declarations
+// but does not identify assignments. SSA definition versions are computed by a
+// separate IR layer over the CFG.
 //
 // # Analysis Support
 //
@@ -32,7 +31,11 @@
 // identified for type merging.
 package cfg
 
-import "sync/atomic"
+import (
+	"sync/atomic"
+
+	"github.com/wippyai/go-lua/analysis/ir/symbol"
+)
 
 // Point represents a location in a control flow graph.
 // Each Point is an index into the CFG's node array, local to that CFG.
@@ -83,7 +86,7 @@ type CondCheck struct {
 // Node represents a CFG node with metadata about the program point.
 //
 // Different node kinds use different fields:
-//   - NodeAssign: Target holds the assigned variable's SymbolID
+//   - NodeAssign: Target holds the assigned variable's symbol.ID
 //   - NodeCall: Callee holds the function name for global/external calls
 //   - NodeBranch: CondSymbol and CondCheck describe the condition for narrowing
 //   - NodeScopeExit: CondOrigin points at the branch whose guard was copied onto
@@ -94,17 +97,17 @@ type CondCheck struct {
 type Node struct {
 	Point      Point
 	Kind       NodeKind
-	Target     SymbolID  // Variable for assignments (0 = none or unresolved)
+	Target     symbol.ID // Variable for assignments (0 = none or unresolved)
 	Callee     string    // Function for calls (global/external name)
-	CondSymbol SymbolID  // Root symbol being tested (0 = none or complex expression)
+	CondSymbol symbol.ID // Root symbol being tested (0 = none or complex expression)
 	CondCheck  CondCheck // Condition check type and optional type name
 	// CondOrigin is the exact branch point that owns a copied scope-exit guard.
 	// It prevents post-branch narrowing from rediscovering guards by loose
 	// CondSymbol/CondCheck matching, which is ambiguous for relational conditions.
 	CondOrigin    Point
 	CondOriginSet bool
-	LoopVars      []SymbolID
-	LoopLocals    []SymbolID
+	LoopVars      []symbol.ID
+	LoopLocals    []symbol.ID
 	// LoopPreheader is the unique predecessor that enters a loop from outside
 	// (i.e., not a back-edge). For loops with multiple entry points or complex
 	// goto patterns, this points to the primary loop entry.
@@ -242,7 +245,7 @@ func (c *CFG) ID() uint64 {
 }
 
 // AddNode adds a node and returns its point.
-func (c *CFG) AddNode(kind NodeKind, target SymbolID, callee string) Point {
+func (c *CFG) AddNode(kind NodeKind, target symbol.ID, callee string) Point {
 	c.invalidateRPO()
 	p := Point(len(c.Nodes))
 	c.Nodes = append(c.Nodes, Node{Point: p, Kind: kind, Target: target, Callee: callee})
@@ -379,7 +382,7 @@ func (c *CFG) EdgeCond(from, to Point) (bool, bool) {
 }
 
 // AddBranch adds a branch node with condition info.
-func (c *CFG) AddBranch(condSymbol SymbolID, condCheck CondCheck) Point {
+func (c *CFG) AddBranch(condSymbol symbol.ID, condCheck CondCheck) Point {
 	c.invalidateRPO()
 	p := Point(len(c.Nodes))
 	c.Nodes = append(c.Nodes, Node{
