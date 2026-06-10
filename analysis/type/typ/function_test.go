@@ -3,21 +3,8 @@ package typ
 import (
 	"testing"
 
-	"github.com/wippyai/go-lua/analysis/type/effectinfo"
 	"github.com/wippyai/go-lua/analysis/type/kind"
 )
-
-// mockEffect is a test-only implementation of effectinfo.Info.
-type mockEffect struct{}
-
-var _ effectinfo.Info = mockEffect{}
-
-func (m mockEffect) Equals(other any) bool {
-	_, ok := other.(mockEffect)
-	return ok
-}
-
-func (m mockEffect) IsEffectInfo() {}
 
 func TestFunctionEmpty(t *testing.T) {
 	f := Func().Build()
@@ -183,22 +170,6 @@ func TestFunctionNotEqualToPrimitive(t *testing.T) {
 	f := Func().Returns(Number).Build()
 	if f.Equals(Number) {
 		t.Error("function should not equal primitive")
-	}
-}
-
-func TestFunctionWithEffects(t *testing.T) {
-	eff := mockEffect{}
-	f := Func().
-		Param("x", Number).
-		Effects(eff).
-		Build()
-
-	if f.Effects == nil {
-		t.Error("Effects should not be nil")
-	}
-
-	if _, ok := f.Effects.(mockEffect); !ok {
-		t.Errorf("Effects: expected mockEffect, got %T", f.Effects)
 	}
 }
 

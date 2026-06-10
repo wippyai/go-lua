@@ -60,7 +60,6 @@ func rewriteFunction(v *Function, orig Type, fn func(Type) (Type, bool), guard r
 		paramSrc,
 		variadic,
 		returnsSrc,
-		v.Effects,
 	)
 }
 

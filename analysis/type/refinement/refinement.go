@@ -555,7 +555,6 @@ func (s *fallbackRefineState) refineFunction(summary, fallback *Function) (Type,
 		Params:     params,
 		Variadic:   variadic,
 		Returns:    returns,
-		Effects:    summary.Effects,
 	}), true
 }
 

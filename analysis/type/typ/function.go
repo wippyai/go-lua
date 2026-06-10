@@ -3,7 +3,6 @@ package typ
 import (
 	"strings"
 
-	"github.com/wippyai/go-lua/analysis/type/effectinfo"
 	"github.com/wippyai/go-lua/analysis/type/kind"
 )
 
@@ -14,16 +13,15 @@ type Param struct {
 	Optional bool // True if parameter has a default value
 }
 
-// Function represents a function type with parameters, returns, and effects.
+// Function represents a function type with parameters and returns.
 //
 // Functions support generics via TypeParams, variadic arguments via Variadic,
-// multiple return values via Returns, and effect tracking via Effects.
+// and multiple return values via Returns.
 type Function struct {
 	TypeParams            []*TypeParam // Generic type parameters (empty for non-generic)
 	Params                []Param      // Positional parameters
 	Variadic              Type         // Variadic element type (nil if not variadic)
 	Returns               []Type       // Return types (empty for void functions)
-	Effects               effectinfo.Info
 	hash                  uint64
 	containsAny           bool
 	containsNever         bool
@@ -48,7 +46,6 @@ type FunctionBuilder struct {
 	params     []Param
 	variadic   Type
 	returns    []Type
-	effects    effectinfo.Info
 }
 
 // Func starts building a function type.
@@ -108,12 +105,6 @@ func (b *FunctionBuilder) Returns(types ...Type) *FunctionBuilder {
 	return b
 }
 
-// Effects sets effect row.
-func (b *FunctionBuilder) Effects(e effectinfo.Info) *FunctionBuilder {
-	b.effects = e
-	return b
-}
-
 // Build creates the function type.
 func (b *FunctionBuilder) Build() *Function {
 	return buildFunctionType(
@@ -121,7 +112,6 @@ func (b *FunctionBuilder) Build() *Function {
 		b.params,
 		b.variadic,
 		b.returns,
-		b.effects,
 	)
 }
 

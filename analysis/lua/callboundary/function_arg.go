@@ -41,8 +41,5 @@ func ProjectContextualFunctionArg(expected, candidate typ.Type) typ.Type {
 	} else if len(expectedFn.Returns) > 0 {
 		builder = builder.Returns(expectedFn.Returns...)
 	}
-	if candidateFn.Effects != nil {
-		builder = builder.Effects(candidateFn.Effects)
-	}
 	return builder.Build()
 }

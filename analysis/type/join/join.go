@@ -83,9 +83,6 @@ func WithReturns(sig *typ.Function, returns []typ.Type) *typ.Function {
 	}
 	builder = builder.Returns(normalized...)
 
-	if sig.Effects != nil {
-		builder = builder.Effects(sig.Effects)
-	}
 	return builder.Build()
 }
 

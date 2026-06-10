@@ -2,7 +2,6 @@ package typ
 
 import (
 	"github.com/wippyai/go-lua/analysis/internal/hash"
-	"github.com/wippyai/go-lua/analysis/type/effectinfo"
 	"github.com/wippyai/go-lua/analysis/type/kind"
 )
 
@@ -12,7 +11,6 @@ type FunctionParts struct {
 	Params     []Param
 	Variadic   Type
 	Returns    []Type
-	Effects    effectinfo.Info
 }
 
 // RebuildFunction rebuilds a function from already-computed structural parts.
@@ -22,7 +20,6 @@ func RebuildFunction(parts FunctionParts) *Function {
 		parts.Params,
 		parts.Variadic,
 		parts.Returns,
-		parts.Effects,
 	)
 }
 
@@ -31,7 +28,6 @@ func buildFunctionType(
 	params []Param,
 	variadic Type,
 	returns []Type,
-	effects effectinfo.Info,
 ) *Function {
 	h := uint64(kind.Function)
 	for _, tp := range typeParams {
@@ -92,7 +88,6 @@ func buildFunctionType(
 		Params:                paramsCopy,
 		Variadic:              variadic,
 		Returns:               returnsCopy,
-		Effects:               effects,
 		hash:                  h,
 		containsAny:           containsAny,
 		containsNever:         containsNever,

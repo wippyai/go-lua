@@ -208,8 +208,6 @@ func (r Row) Equals(other any) bool {
 	return r.equalsRow(otherRow)
 }
 
-func (r Row) IsEffectInfo() {}
-
 func (r Row) equalsRow(other Row) bool {
 	if len(r.Labels) != len(other.Labels) {
 		return false
