@@ -3,6 +3,7 @@ package typ
 import (
 	"testing"
 
+	"github.com/wippyai/go-lua/analysis/type/annotation"
 	"github.com/wippyai/go-lua/analysis/type/kind"
 )
 
@@ -371,7 +372,7 @@ func TestUnionNestedOptionalAndUnionNilDedups(t *testing.T) {
 
 func TestUnionAnnotatedOptionalMember(t *testing.T) {
 	// Annotated wrapping Optional should not panic during union construction
-	annotatedOpt := NewAnnotated(NewOptional(String), []Annotation{{Name: "min_len", Arg: int64(1)}})
+	annotatedOpt := NewAnnotated(NewOptional(String), []annotation.Annotation{{Name: "min_len", Arg: int64(1)}})
 	u := NewUnion(annotatedOpt, Number)
 
 	if u == nil {
@@ -382,7 +383,7 @@ func TestUnionAnnotatedOptionalMember(t *testing.T) {
 func TestUnionAnnotatedUnionMember(t *testing.T) {
 	// Annotated wrapping Union should not panic during union construction
 	inner := NewUnion(String, Number)
-	annotatedUnion := NewAnnotated(inner, []Annotation{{Name: "max_len", Arg: int64(255)}})
+	annotatedUnion := NewAnnotated(inner, []annotation.Annotation{{Name: "max_len", Arg: int64(255)}})
 	u := NewUnion(annotatedUnion, Boolean)
 
 	if u == nil {

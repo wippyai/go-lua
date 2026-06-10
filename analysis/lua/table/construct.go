@@ -1,6 +1,9 @@
 package table
 
-import "github.com/wippyai/go-lua/analysis/type/typ"
+import (
+	"github.com/wippyai/go-lua/analysis/type/annotation"
+	"github.com/wippyai/go-lua/analysis/type/typ"
+)
 
 // NewFreshArray creates a fresh empty-array table seed.
 func NewFreshArray() *typ.Array {
@@ -76,7 +79,7 @@ func (b *RecordBuilder) OptReadonlyField(name string, t typ.Type) *RecordBuilder
 }
 
 // AnnotatedField adds a field with validation annotations.
-func (b *RecordBuilder) AnnotatedField(name string, t typ.Type, optional bool, annotations []typ.Annotation) *RecordBuilder {
+func (b *RecordBuilder) AnnotatedField(name string, t typ.Type, optional bool, annotations []annotation.Annotation) *RecordBuilder {
 	b.inner.AnnotatedField(name, t, optional, annotations)
 	return b
 }

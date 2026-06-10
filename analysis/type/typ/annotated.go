@@ -5,21 +5,16 @@ import (
 	"strings"
 
 	"github.com/wippyai/go-lua/analysis/internal/hash"
+	"github.com/wippyai/go-lua/analysis/type/annotation"
 	"github.com/wippyai/go-lua/analysis/type/kind"
 )
-
-// Annotation represents a runtime validation constraint.
-type Annotation struct {
-	Name string
-	Arg  any
-}
 
 // Annotated wraps a type with runtime validation annotations.
 // The underlying type determines structural typing while annotations
 // add runtime constraints like @min(0), @max(100), @pattern("^.+$").
 type Annotated struct {
 	Inner                 Type
-	Annotations           []Annotation
+	Annotations           []annotation.Annotation
 	hash                  uint64
 	containsAny           bool
 	containsNever         bool
@@ -32,7 +27,7 @@ type Annotated struct {
 
 // NewAnnotated creates an annotated type wrapper.
 // Returns the inner type directly if no annotations are provided.
-func NewAnnotated(inner Type, annotations []Annotation) Type {
+func NewAnnotated(inner Type, annotations []annotation.Annotation) Type {
 	if len(annotations) == 0 {
 		return inner
 	}
@@ -147,7 +142,7 @@ func UnwrapAnnotations(t Type) Type {
 }
 
 // GetAnnotations returns annotations from a type, or nil if none.
-func GetAnnotations(t Type) []Annotation {
+func GetAnnotations(t Type) []annotation.Annotation {
 	if a, ok := t.(*Annotated); ok {
 		return a.Annotations
 	}

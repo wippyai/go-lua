@@ -1,5 +1,7 @@
 package typ
 
+import "github.com/wippyai/go-lua/analysis/type/annotation"
+
 // Field represents a record field with name, type, optionality, and mutability.
 type Field struct {
 	Name     string
@@ -33,7 +35,7 @@ func (b *RecordBuilder) OptReadonlyField(name string, t Type) *RecordBuilder {
 }
 
 // AnnotatedField adds a field with validation annotations.
-func (b *RecordBuilder) AnnotatedField(name string, t Type, optional bool, annotations []Annotation) *RecordBuilder {
+func (b *RecordBuilder) AnnotatedField(name string, t Type, optional bool, annotations []annotation.Annotation) *RecordBuilder {
 	if len(annotations) > 0 {
 		t = NewAnnotated(t, annotations)
 	}

@@ -3,6 +3,7 @@ package table
 import (
 	"testing"
 
+	"github.com/wippyai/go-lua/analysis/type/annotation"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
@@ -151,7 +152,7 @@ func TestSplitNilableField(t *testing.T) {
 	})
 
 	t.Run("annotated optional", func(t *testing.T) {
-		ann := []typ.Annotation{{Name: "tag"}}
+		ann := []annotation.Annotation{{Name: "tag"}}
 		inner, optional := SplitNilableField(typ.NewAnnotated(typ.NewOptional(typ.String), ann))
 		if !optional {
 			t.Fatal("expected optional")
