@@ -6,6 +6,7 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/internal/hash"
 	luatable "github.com/wippyai/go-lua/analysis/lua/table"
+	"github.com/wippyai/go-lua/analysis/type/coalesce"
 	"github.com/wippyai/go-lua/analysis/type/gradual"
 	"github.com/wippyai/go-lua/analysis/type/kind"
 	. "github.com/wippyai/go-lua/analysis/type/typ"
@@ -164,7 +165,7 @@ func (s *returnJoinState) joinReturnSlot(a, b Type) Type {
 	}
 
 	var result Type
-	if preferred, ok := preferArrayOverEmptyRecord(a, b); ok {
+	if preferred, ok := coalesce.PreferArrayOverEmptyRecord(a, b); ok {
 		result = preferred
 	} else if merged, ok := s.joinCompatibleRecords(a, b); ok {
 		result = merged
@@ -225,38 +226,6 @@ func isScalarReturnSlotEvidence(t Type) bool {
 	}
 	switch k {
 	case kind.Number, kind.Integer, kind.String, kind.Boolean:
-		return true
-	default:
-		return false
-	}
-}
-
-func preferArrayOverEmptyRecord(a, b Type) (Type, bool) {
-	if isEmptyRecordNoMap(a) && isArrayLike(b) {
-		return b, true
-	}
-	if isEmptyRecordNoMap(b) && isArrayLike(a) {
-		return a, true
-	}
-	return nil, false
-}
-
-func isEmptyRecordNoMap(t Type) bool {
-	switch v := t.(type) {
-	case *Alias:
-		return isEmptyRecordNoMap(v.Target)
-	case *Record:
-		return len(v.Fields) == 0 && len(v.StaticMembers) == 0 && !v.HasMapComponent()
-	default:
-		return false
-	}
-}
-
-func isArrayLike(t Type) bool {
-	switch v := t.(type) {
-	case *Alias:
-		return isArrayLike(v.Target)
-	case *Array:
 		return true
 	default:
 		return false
