@@ -3,6 +3,7 @@ package access
 import (
 	"testing"
 
+	"github.com/wippyai/go-lua/analysis/type/relation"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
@@ -97,6 +98,52 @@ func TestFieldCommonUnionField(t *testing.T) {
 	assertType(t, got, typ.String)
 }
 
+func TestFieldUnionProjectionPolicy(t *testing.T) {
+	fieldRec := func(t typ.Type) typ.Type {
+		return typ.NewRecord().Field("value", t).Build()
+	}
+	optFieldRec := func(t typ.Type) typ.Type {
+		return typ.NewRecord().OptField("value", t).Build()
+	}
+
+	tests := []struct {
+		name     string
+		receiver typ.Type
+		want     typ.Type
+	}{
+		{
+			name:     "unknown refines to concrete projection",
+			receiver: typ.NewUnion(fieldRec(typ.Unknown), fieldRec(typ.String)),
+			want:     typ.String,
+		},
+		{
+			name:     "any absorbs concrete projection",
+			receiver: typ.NewUnion(fieldRec(typ.Any), fieldRec(typ.String)),
+			want:     typ.Any,
+		},
+		{
+			name:     "never is ignored as impossible projection",
+			receiver: typ.NewUnion(fieldRec(typ.Never), fieldRec(typ.String)),
+			want:     typ.String,
+		},
+		{
+			name:     "optional field preserves nilability",
+			receiver: typ.NewUnion(fieldRec(typ.String), optFieldRec(typ.Number)),
+			want:     typ.NewUnion(typ.Nil, typ.String, typ.Number),
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, ok := Field(tt.receiver, "value")
+			if !ok {
+				t.Fatal("Field(union, value) failed")
+			}
+			assertType(t, got, tt.want)
+		})
+	}
+}
+
 func TestFieldIntersectionFieldMeetPolicy(t *testing.T) {
 	tests := []struct {
 		name  string
@@ -149,6 +196,62 @@ func TestCallableReturnFirstReturn(t *testing.T) {
 		t.Fatal("CallableReturn(function) failed")
 	}
 	assertType(t, got, typ.Number)
+}
+
+func TestCallableReturnUnionProjectionUsesRelationNormalizer(t *testing.T) {
+	callableReturning := func(t typ.Type) typ.Type {
+		return typ.Func().Returns(t).Build()
+	}
+
+	returns := []typ.Type{typ.Unknown, typ.String, typ.Never}
+	got, ok := CallableReturn(typ.NewUnion(
+		callableReturning(returns[0]),
+		callableReturning(returns[1]),
+		callableReturning(returns[2]),
+	))
+	if !ok {
+		t.Fatal("CallableReturn(union) failed")
+	}
+	assertType(t, got, relation.NormalizeUnionForProjection(returns...))
+}
+
+func TestCallableReturnUnionProjectionPolicy(t *testing.T) {
+	callableReturning := func(t typ.Type) typ.Type {
+		return typ.Func().Returns(t).Build()
+	}
+
+	tests := []struct {
+		name     string
+		receiver typ.Type
+		want     typ.Type
+	}{
+		{
+			name: "any absorbs concrete projection",
+			receiver: typ.NewUnion(
+				callableReturning(typ.Any),
+				callableReturning(typ.String),
+			),
+			want: typ.Any,
+		},
+		{
+			name: "optional return preserves nilability",
+			receiver: typ.NewUnion(
+				callableReturning(typ.NewOptional(typ.Number)),
+				callableReturning(typ.String),
+			),
+			want: typ.NewUnion(typ.Nil, typ.String, typ.Number),
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, ok := CallableReturn(tt.receiver)
+			if !ok {
+				t.Fatal("CallableReturn(union) failed")
+			}
+			assertType(t, got, tt.want)
+		})
+	}
 }
 
 func assertType(t *testing.T, got typ.Type, want typ.Type) {

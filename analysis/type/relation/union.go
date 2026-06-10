@@ -8,7 +8,17 @@ import (
 // NormalizeUnionForJoin applies the union normalization policy explicitly
 // requested by relation and join code.
 func NormalizeUnionForJoin(members ...Type) Type {
-	flat, hasNil, hasUnknown, hasAny := flattenUnionForJoin(members)
+	return normalizeUnionForRelationEvidence(members)
+}
+
+// NormalizeUnionForProjection applies the relation-owned union policy for
+// projected values, such as Lua field and callable return projections.
+func NormalizeUnionForProjection(members ...Type) Type {
+	return normalizeUnionForRelationEvidence(members)
+}
+
+func normalizeUnionForRelationEvidence(members []Type) Type {
+	flat, hasNil, hasUnknown, hasAny := flattenUnionForRelationEvidence(members)
 	if hasAny {
 		return Any
 	}
@@ -28,7 +38,7 @@ func NormalizeUnionForJoin(members ...Type) Type {
 	return NewUnion(flat...)
 }
 
-func flattenUnionForJoin(members []Type) (flat []Type, hasNil, hasUnknown, hasAny bool) {
+func flattenUnionForRelationEvidence(members []Type) (flat []Type, hasNil, hasUnknown, hasAny bool) {
 	flat = make([]Type, 0, len(members))
 	var addMember func(Type)
 	addMember = func(member Type) {

@@ -148,7 +148,7 @@ func fieldInUnion(u *typ.Union, name string, depth int) fieldResult {
 		}
 		return fieldResult{}
 	}
-	return fieldResult{t: typ.NewUnion(out...), ok: true, nilable: nilable}
+	return fieldResult{t: relation.NormalizeUnionForProjection(out...), ok: true, nilable: nilable}
 }
 
 func fieldInIntersection(in *typ.Intersection, name string, depth int) fieldResult {
@@ -228,7 +228,7 @@ func callableReturnDepth(t typ.Type, depth int) (typ.Type, bool) {
 		if len(out) == 0 {
 			return nil, false
 		}
-		return typ.NewUnion(out...), true
+		return relation.NormalizeUnionForProjection(out...), true
 	case *typ.Intersection:
 		for _, member := range v.Members {
 			if rt, ok := callableReturnDepth(member, depth+1); ok {
