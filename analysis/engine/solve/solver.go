@@ -58,8 +58,9 @@ import (
 // least fixed point on finite-height systems; with widening, it is the standard
 // sound post-fixpoint over-approximation of that least fixed point.
 type EquationSystem[Cell comparable, State any] struct {
-	// Lattice is the abstract domain. Join accumulates contributions, Equal
-	// detects convergence, and Widen (at WidenAt cells) enforces termination.
+	// Lattice is the abstract domain. Bottom, Equal, and Join are required; Widen
+	// is also required when WidenAt is non-nil. Join accumulates contributions,
+	// Equal detects convergence, and Widen (at WidenAt cells) enforces termination.
 	Lattice lattice.Lattice[State]
 
 	// Cells lists every cell in a deterministic order. The order seeds the
@@ -114,10 +115,32 @@ type EquationSystem[Cell comparable, State any] struct {
 // The returned map has one entry per cell in sys.Cells (the value it held when
 // the worklist drained). Cells that were only ever emitted into but are absent
 // from sys.Cells do not appear in the result.
+//
+// Solve panics with deterministic "solve: ..." messages if sys omits a
+// function hook required by the solver contract.
 func Solve[Cell comparable, State any](sys EquationSystem[Cell, State]) map[Cell]State {
+	validateEquationSystem(sys)
 	s := newState(sys)
 	s.run()
 	return s.materialize()
+}
+
+func validateEquationSystem[Cell comparable, State any](sys EquationSystem[Cell, State]) {
+	if sys.Transfer == nil {
+		panic("solve: EquationSystem.Transfer is nil")
+	}
+	if sys.Lattice.Bottom == nil {
+		panic("solve: EquationSystem.Lattice.Bottom is nil")
+	}
+	if sys.Lattice.Equal == nil {
+		panic("solve: EquationSystem.Lattice.Equal is nil")
+	}
+	if sys.Lattice.Join == nil {
+		panic("solve: EquationSystem.Lattice.Join is nil")
+	}
+	if sys.WidenAt != nil && sys.Lattice.Widen == nil {
+		panic("solve: EquationSystem.Lattice.Widen is nil")
+	}
 }
 
 // solveState is the mutable scratch of one Solve run.

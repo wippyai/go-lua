@@ -65,6 +65,69 @@ func TestLawSuite_CapLattice(t *testing.T) {
 	latticelaws.LawSuite[int]{Name: "cap-join", Domain: cl.joinOnly(), Sample: sample}.Run(t)
 }
 
+func TestSolve_PanicsOnNilTransfer(t *testing.T) {
+	cl := capLattice{top: 1}
+	requireSolvePanic(t, EquationSystem[string, int]{
+		Lattice: cl.joinOnly(),
+		Cells:   []string{"x"},
+	}, "solve: EquationSystem.Transfer is nil")
+}
+
+func TestSolve_PanicsOnMissingLatticeHooks(t *testing.T) {
+	cl := capLattice{top: 1}
+	noOpTransfer := func(string, func(string) int, func(string, int)) {}
+
+	tests := []struct {
+		name   string
+		mutate func(*EquationSystem[string, int])
+		want   string
+	}{
+		{
+			name: "Bottom",
+			mutate: func(sys *EquationSystem[string, int]) {
+				sys.Lattice.Bottom = nil
+			},
+			want: "solve: EquationSystem.Lattice.Bottom is nil",
+		},
+		{
+			name: "Equal",
+			mutate: func(sys *EquationSystem[string, int]) {
+				sys.Lattice.Equal = nil
+			},
+			want: "solve: EquationSystem.Lattice.Equal is nil",
+		},
+		{
+			name: "Join",
+			mutate: func(sys *EquationSystem[string, int]) {
+				sys.Lattice.Join = nil
+			},
+			want: "solve: EquationSystem.Lattice.Join is nil",
+		},
+		{
+			name: "Widen",
+			mutate: func(sys *EquationSystem[string, int]) {
+				sys.Lattice.Widen = nil
+				sys.WidenAt = func(string) bool { return true }
+			},
+			want: "solve: EquationSystem.Lattice.Widen is nil",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			sys := EquationSystem[string, int]{
+				Lattice:  cl.joinOnly(),
+				Cells:    []string{"x"},
+				Initial:  func(string) int { return 0 },
+				Transfer: noOpTransfer,
+			}
+			tt.mutate(&sys)
+
+			requireSolvePanic(t, sys, tt.want)
+		})
+	}
+}
+
 // TestSolve_MonotoneLeastFixedPoint solves a small monotone system and checks
 // the result is the expected least fixed point.
 //
@@ -393,4 +456,19 @@ func assertMapEqual(t *testing.T, l lattice.Lattice[int], got, want map[string]i
 			t.Fatalf("cell %q = %d, want %d", c, g, w)
 		}
 	}
+}
+
+func requireSolvePanic(t *testing.T, sys EquationSystem[string, int], want string) {
+	t.Helper()
+	defer func() {
+		got := recover()
+		if got == nil {
+			t.Fatalf("expected panic %q", want)
+		}
+		msg, ok := got.(string)
+		if !ok || msg != want {
+			t.Fatalf("panic = %v, want %q", got, want)
+		}
+	}()
+	Solve(sys)
 }
