@@ -7,12 +7,12 @@ import (
 	"github.com/wippyai/go-lua/analysis/type/kind"
 )
 
-// Rewrite traverses a type tree and applies fn at each node (bottom-up transformation).
+// Rewrite traverses a type tree and applies fn at each node.
 //
-// The function fn is called on each type node before recursing into children.
-// If fn returns (replacement, true), the replacement is used and children are
-// not visited (early termination). If fn returns (_, false), children are
-// recursively rewritten first, then the result is reassembled.
+// The function fn is called before child traversal. If fn returns
+// (replacement, true), the replacement is used and that node's children are not
+// visited. If fn returns (_, false), children are recursively rewritten and the
+// parent is rebuilt only when a child changes.
 //
 // Returns the original pointer when nothing changed (structural sharing).
 // This is the foundation for type substitution, expansion, and other transforms.
