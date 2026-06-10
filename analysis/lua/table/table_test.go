@@ -49,6 +49,30 @@ func TestConstructorsNormalizeKeys(t *testing.T) {
 	}
 }
 
+func TestNewRecordMapComponentNormalizesKey(t *testing.T) {
+	rec := NewRecord().
+		MapComponent(typ.NewOptional(typ.String), typ.Number).
+		Build()
+	if !rec.HasMapComponent() {
+		t.Fatal("record should have map component")
+	}
+	if !typ.TypeEquals(rec.MapKey, typ.String) {
+		t.Fatalf("record map key = %v, want string", rec.MapKey)
+	}
+}
+
+func TestFreshConstructorsReturnFreshNodes(t *testing.T) {
+	arr := NewFreshArray()
+	if arr == nil || !arr.Fresh {
+		t.Fatalf("NewFreshArray() = %#v, want fresh array", arr)
+	}
+
+	rec := NewFreshEmptyRecord()
+	if rec == nil || !rec.Fresh {
+		t.Fatalf("NewFreshEmptyRecord() = %#v, want fresh record", rec)
+	}
+}
+
 func TestRebuildRecordNormalizesMapKey(t *testing.T) {
 	rec := RebuildRecord(typ.RecordParts{
 		MapKey:   typ.NewOptional(typ.String),

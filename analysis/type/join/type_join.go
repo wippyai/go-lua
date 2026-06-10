@@ -29,6 +29,7 @@ package join
 
 import (
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
+	luatable "github.com/wippyai/go-lua/analysis/lua/table"
 	"github.com/wippyai/go-lua/analysis/type/gradual"
 	"github.com/wippyai/go-lua/analysis/type/kind"
 	"github.com/wippyai/go-lua/analysis/type/relation"
@@ -301,7 +302,7 @@ func CoalesceMaps(types []typ.Type) []typ.Type {
 		keys = append(keys, m.Key)
 		values = append(values, m.Value)
 	}
-	rest = append(rest, typ.NewMap(Types(keys...), Types(values...)))
+	rest = append(rest, luatable.NewMap(Types(keys...), Types(values...)))
 	return rest
 }
 
@@ -337,26 +338,15 @@ func CoalesceRecordOpenness(types []typ.Type) []typ.Type {
 			result = append(result, t)
 			continue
 		}
-		builder := typ.NewRecord().SetOpen(true)
-		for _, f := range r.Fields {
-			switch {
-			case f.Optional && f.Readonly:
-				builder.OptReadonlyField(f.Name, f.Type)
-			case f.Optional:
-				builder.OptField(f.Name, f.Type)
-			case f.Readonly:
-				builder.ReadonlyField(f.Name, f.Type)
-			default:
-				builder.Field(f.Name, f.Type)
-			}
-		}
-		if r.Metatable != nil {
-			builder.Metatable(r.Metatable)
-		}
-		if r.HasMapComponent() {
-			builder.MapComponent(r.MapKey, r.MapValue)
-		}
-		result = append(result, builder.Build())
+		result = append(result, luatable.RebuildRecord(typ.RecordParts{
+			Fields:        r.Fields,
+			StaticMembers: r.StaticMembers,
+			Metatable:     r.Metatable,
+			MapKey:        r.MapKey,
+			MapValue:      r.MapValue,
+			Open:          true,
+			AssumeSorted:  true,
+		}))
 	}
 	return result
 }

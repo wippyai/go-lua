@@ -144,6 +144,27 @@ func TestCoalesceMaps_MultipleMaps(t *testing.T) {
 	}
 }
 
+func TestCoalesceMapsNormalizesMergedMapKeys(t *testing.T) {
+	m1 := typ.NewMap(typ.NewOptional(typ.String), typ.Number)
+	m2 := typ.NewMap(typ.Integer, typ.Boolean)
+
+	result := CoalesceMaps([]typ.Type{m1, m2})
+	if len(result) != 1 {
+		t.Fatalf("expected 1 coalesced map, got %d", len(result))
+	}
+	m, ok := result[0].(*typ.Map)
+	if !ok {
+		t.Fatalf("expected map, got %T", result[0])
+	}
+	if _, nilable := typ.WithoutNil(m.Key, typ.NilProjectionStructural); nilable {
+		t.Fatalf("coalesced map key still permits nil: %v", m.Key)
+	}
+	want := typ.NewUnion(typ.String, typ.Integer)
+	if !typ.TypeEquals(m.Key, want) {
+		t.Fatalf("coalesced map key = %v, want %v", m.Key, want)
+	}
+}
+
 func TestTypesCoalescesLargeMapValueFamilyInBatch(t *testing.T) {
 	maps := make([]typ.Type, 0, 512)
 	for i := 0; i < cap(maps); i++ {
@@ -1118,5 +1139,31 @@ func TestCoalesceRecordOpenness_MixedOpenClosed(t *testing.T) {
 		if !rec.Open {
 			t.Error("all records should be open after coalescing")
 		}
+	}
+}
+
+func TestCoalesceRecordOpennessNormalizesCopiedMapComponentKeys(t *testing.T) {
+	open := typ.NewRecord().SetOpen(true).Field("x", typ.Number).Build()
+	closed := typ.NewRecord().
+		MapComponent(typ.NewOptional(typ.String), typ.Number).
+		Build()
+
+	result := CoalesceRecordOpenness([]typ.Type{open, closed})
+	var copied *typ.Record
+	for _, r := range result {
+		rec, ok := r.(*typ.Record)
+		if ok && rec.HasMapComponent() {
+			copied = rec
+			break
+		}
+	}
+	if copied == nil {
+		t.Fatalf("expected copied record with map component in %v", result)
+	}
+	if !copied.Open {
+		t.Fatalf("copied record should be open: %v", copied)
+	}
+	if !typ.TypeEquals(copied.MapKey, typ.String) {
+		t.Fatalf("copied record map key = %v, want string", copied.MapKey)
 	}
 }
