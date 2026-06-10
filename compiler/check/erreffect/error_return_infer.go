@@ -61,16 +61,6 @@ type ReturnPatternProof struct {
 	Consistent bool
 }
 
-// HasStrictInversePattern proves this convention from the function body.
-func (c ErrorReturnConvention) HasStrictInversePattern(
-	returns []api.ReturnEvidence,
-	flowOps api.FlowOps,
-	synth returnextract.ExprSynth,
-) bool {
-	proof := c.ProveReturnPattern(returns, flowOps, synth)
-	return proof.Consistent && proof.SawSuccess && proof.SawFailure
-}
-
 // ProveReturnPattern classifies the function body's returns under this convention.
 func (c ErrorReturnConvention) ProveReturnPattern(
 	returns []api.ReturnEvidence,
@@ -141,22 +131,6 @@ func (c ErrorReturnConvention) valueSlotOptional(fn *typ.Function) bool {
 	return unwrap.IsOptionalLike(fn.Returns[c.ValueIndex])
 }
 
-// ProvenReturnPatternForReturns is the slice-typed counterpart of
-// ProvenReturnPatternAttaches for inferred return vectors that are not yet built
-// into a function type.
-func (c ErrorReturnConvention) ProvenReturnPatternForReturns(returns []typ.Type, proof ReturnPatternProof) bool {
-	if !proof.Consistent || !proof.SawSuccess {
-		return false
-	}
-	if proof.SawFailure {
-		return true
-	}
-	if c.ValueIndex < 0 || c.ValueIndex >= len(returns) {
-		return false
-	}
-	return unwrap.IsOptionalLike(returns[c.ValueIndex])
-}
-
 func HasErrorReturnLabel(fn *typ.Function) bool {
 	spec := contract.ExtractSpec(fn)
 	if spec == nil {
@@ -168,17 +142,6 @@ func HasErrorReturnLabel(fn *typ.Function) bool {
 		}
 	}
 	return false
-}
-
-func HasStrictInverseReturnPattern(
-	returns []api.ReturnEvidence,
-	flowOps api.FlowOps,
-	synth returnextract.ExprSynth,
-	valueIdx int,
-	errorIdx int,
-) bool {
-	proof := ProveReturnPattern(returns, flowOps, synth, valueIdx, errorIdx)
-	return proof.Consistent && proof.SawSuccess && proof.SawFailure
 }
 
 // ProveReturnPattern classifies a function body's returns under the (value, err)
