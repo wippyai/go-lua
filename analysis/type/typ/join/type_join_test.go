@@ -6,7 +6,7 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/type/kind"
 	"github.com/wippyai/go-lua/analysis/type/typ"
-	"github.com/wippyai/go-lua/analysis/type/typ/unwrap"
+	"github.com/wippyai/go-lua/analysis/type/unwrap"
 )
 
 func TestTypes_Empty(t *testing.T) {

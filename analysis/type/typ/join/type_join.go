@@ -33,7 +33,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/type/kind"
 	"github.com/wippyai/go-lua/analysis/type/relation"
 	"github.com/wippyai/go-lua/analysis/type/typ"
-	"github.com/wippyai/go-lua/analysis/type/typ/unwrap"
+	"github.com/wippyai/go-lua/analysis/type/unwrap"
 )
 
 // Types computes the union of multiple types for phi node joining.

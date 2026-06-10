@@ -6,8 +6,8 @@ package unwrap
 
 import (
 	"github.com/wippyai/go-lua/analysis/type/kind"
+	"github.com/wippyai/go-lua/analysis/type/subst"
 	"github.com/wippyai/go-lua/analysis/type/typ"
-	"github.com/wippyai/go-lua/analysis/type/typ/subst"
 )
 
 // Underlying returns the underlying type by unwrapping transparent wrappers.
