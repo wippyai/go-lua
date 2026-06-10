@@ -1,7 +1,7 @@
 package relation
 
 import (
-	"github.com/wippyai/go-lua/analysis/internal/hash"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
 	"github.com/wippyai/go-lua/analysis/type/kind"
 	. "github.com/wippyai/go-lua/analysis/type/typ"
 )
@@ -36,7 +36,7 @@ func ComparePrecision(candidate, baseline Type) (bool, bool) {
 // relations that must compare recursive products coinductively without
 // unfolding them by concrete node identity.
 func productFamilyHash(t Type) uint64 {
-	return precisionFamilyHash(t, nil)
+	return identity.ProductFamilyHash(t)
 }
 
 // sameProductFamily reports whether two recursive product observations describe
@@ -44,24 +44,7 @@ func productFamilyHash(t Type) uint64 {
 // recursive-product equality relation for union/member dedupe and convergence
 // checks; generic TypeEquals remains exact structural equality.
 func sameProductFamily(a, b Type) bool {
-	if SameNodeOrAcyclicEqual(a, b) {
-		return true
-	}
-	if a == nil || b == nil {
-		return false
-	}
-	if !ContainsRecursive(a) && !ContainsRecursive(b) {
-		return false
-	}
-	if productFamilyHash(a) != productFamilyHash(b) {
-		return false
-	}
-	aStrict, aComparable := ComparePrecision(a, b)
-	if !aComparable || aStrict {
-		return false
-	}
-	bStrict, bComparable := ComparePrecision(b, a)
-	return bComparable && !bStrict
+	return identity.SameProductFamilyWithPrecision(a, b, ComparePrecision)
 }
 
 func comparePrecision(candidate, baseline Type, depth int, seen *precisionSeen) (strict bool, comparable bool) {
@@ -393,245 +376,23 @@ func precisionFamilyPairKey(candidate, baseline Type, seen *precisionSeen) (prec
 	if !ContainsRecursive(candidate) && !ContainsRecursive(baseline) {
 		return precisionFamilyPair{}, false
 	}
-	candidateHash := precisionFamilyHash(candidate, seen)
-	baselineHash := precisionFamilyHash(baseline, seen)
+	candidateHash := productFamilyHashWithSeen(candidate, seen)
+	baselineHash := productFamilyHashWithSeen(baseline, seen)
 	return precisionFamilyPair{candidate: candidateHash, baseline: baselineHash}, true
 }
 
-func precisionFamilyHash(t Type, seen *precisionSeen) uint64 {
-	return precisionFamilyHashSeen(t, make(map[uintptr]bool), seen)
+func productFamilyHashWithSeen(t Type, seen *precisionSeen) uint64 {
+	return identity.ProductFamilyHashWithCache(t, productFamilyHashCache(seen))
 }
 
-func precisionFamilyHashSeen(t Type, active map[uintptr]bool, seen *precisionSeen) (out uint64) {
-	t = NormalizeNilType(t)
-	if t == nil {
-		return 0
-	}
-	t = UnwrapAnnotated(t)
-	if t == nil {
-		return 0
-	}
-	if alias, ok := t.(*Alias); ok {
-		return precisionFamilyHashSeen(alias.UnaliasedTarget(), active, seen)
-	}
-	if rec, ok := t.(*Recursive); ok {
-		return hash.HashCombine(uint64(kind.Recursive), hash.FnvString(rec.Name))
-	}
+func productFamilyHashCache(seen *precisionSeen) map[Type]uint64 {
 	if seen != nil {
-		if seen.familyHashes != nil {
-			if cached, ok := seen.familyHashes[t]; ok {
-				return cached
-			}
+		if seen.familyHashes == nil {
+			seen.familyHashes = make(map[Type]uint64)
 		}
-		defer func() {
-			if seen.familyHashes == nil {
-				seen.familyHashes = make(map[Type]uint64)
-			}
-			seen.familyHashes[t] = out
-		}()
+		return seen.familyHashes
 	}
-
-	ptr := TypePointer(t)
-	if ptr != 0 {
-		if active[ptr] {
-			return hash.HashCombine(uint64(kind.Recursive), hash.FnvString("$cycle"))
-		}
-		active[ptr] = true
-		defer delete(active, ptr)
-	}
-
-	switch v := t.(type) {
-	case *Optional:
-		return hash.HashCombine(uint64(kind.Optional), precisionFamilyMemberHash(v.Inner, active, seen))
-	case *Union:
-		h := hash.HashCombine(uint64(kind.Union), uint64(len(v.Members)))
-		for _, member := range v.Members {
-			h = hash.HashCombine(h, precisionFamilyMemberHash(member, active, seen))
-		}
-		return h
-	case *Intersection:
-		h := hash.HashCombine(uint64(kind.Intersection), uint64(len(v.Members)))
-		for _, member := range v.Members {
-			h = hash.HashCombine(h, precisionFamilyMemberHash(member, active, seen))
-		}
-		return h
-	case *Record:
-		h := hash.HashCombine(uint64(kind.Record), boolPrecisionHash(v.Open))
-		h = hash.HashCombine(h, boolPrecisionHash(v.HasMapComponent()))
-		if v.HasMapComponent() {
-			h = hash.HashCombine(h, precisionFamilyMemberHash(v.MapKey, active, seen))
-			h = hash.HashCombine(h, precisionFamilyMemberHash(v.MapValue, active, seen))
-		}
-		if v.Metatable != nil {
-			h = hash.HashCombine(h, precisionFamilyMemberHash(v.Metatable, active, seen))
-		}
-		h = hash.HashCombine(h, uint64(len(v.Fields)))
-		for _, field := range v.Fields {
-			h = hash.HashCombine(h, hash.FnvString(field.Name))
-			h = hash.HashCombine(h, boolPrecisionHash(field.Optional))
-			h = hash.HashCombine(h, boolPrecisionHash(field.Readonly))
-			h = hash.HashCombine(h, precisionFamilyTerminalHash(field.Type, seen))
-		}
-		h = hash.HashCombine(h, uint64(len(v.StaticMembers)))
-		for _, member := range v.StaticMembers {
-			h = hash.HashCombine(h, uint64(member.Kind))
-			h = hash.HashCombine(h, hash.FnvString(member.Name))
-			h = hash.HashCombine(h, uint64(member.Index))
-			h = hash.HashCombine(h, boolPrecisionHash(member.Optional))
-			h = hash.HashCombine(h, boolPrecisionHash(member.Readonly))
-			h = hash.HashCombine(h, precisionFamilyTerminalHash(member.Type, seen))
-		}
-		return h
-	case *Array:
-		return hash.HashCombine(uint64(kind.Array), precisionFamilyMemberHash(v.Element, active, seen))
-	case *Map:
-		h := hash.HashCombine(uint64(kind.Map), precisionFamilyMemberHash(v.Key, active, seen))
-		return hash.HashCombine(h, precisionFamilyMemberHash(v.Value, active, seen))
-	case *ReadonlyMap:
-		h := hash.HashCombine(uint64(kind.ReadonlyMap), precisionFamilyMemberHash(v.Key, active, seen))
-		return hash.HashCombine(h, precisionFamilyMemberHash(v.Value, active, seen))
-	case *Tuple:
-		h := hash.HashCombine(uint64(kind.Tuple), uint64(len(v.Elements)))
-		for _, elem := range v.Elements {
-			h = hash.HashCombine(h, precisionFamilyMemberHash(elem, active, seen))
-		}
-		return h
-	case *Function:
-		h := hash.HashCombine(uint64(kind.Function), uint64(len(v.TypeParams)))
-		for _, param := range v.TypeParams {
-			h = hash.HashCombine(h, precisionFamilyMemberHash(param, active, seen))
-		}
-		h = hash.HashCombine(h, uint64(len(v.Params)))
-		for _, param := range v.Params {
-			h = hash.HashCombine(h, boolPrecisionHash(param.Optional))
-			h = hash.HashCombine(h, precisionFamilyMemberHash(param.Type, active, seen))
-		}
-		if v.Variadic != nil {
-			h = hash.HashCombine(h, 1)
-			h = hash.HashCombine(h, precisionFamilyMemberHash(v.Variadic, active, seen))
-		}
-		h = hash.HashCombine(h, uint64(len(v.Returns)))
-		for _, ret := range v.Returns {
-			h = hash.HashCombine(h, precisionFamilyMemberHash(ret, active, seen))
-		}
-		return h
-	case *Instantiated:
-		h := hash.HashCombine(uint64(kind.Instantiated), precisionFamilyMemberHash(v.Generic, active, seen))
-		for _, arg := range v.TypeArgs {
-			h = hash.HashCombine(h, precisionFamilyMemberHash(arg, active, seen))
-		}
-		return h
-	case *Generic:
-		h := hash.HashCombine(uint64(kind.Generic), hash.FnvString(v.Name))
-		for _, param := range v.TypeParams {
-			h = hash.HashCombine(h, precisionFamilyMemberHash(param, active, seen))
-		}
-		if v.Name == "" && v.Body != nil {
-			h = hash.HashCombine(h, precisionFamilyMemberHash(v.Body, active, seen))
-		}
-		return h
-	case *TypeParam:
-		h := hash.HashCombine(uint64(kind.TypeParam), hash.FnvString(v.Name))
-		if v.Constraint != nil {
-			h = hash.HashCombine(h, precisionFamilyMemberHash(v.Constraint, active, seen))
-		}
-		return h
-	case *Meta:
-		return hash.HashCombine(uint64(kind.Meta), precisionFamilyMemberHash(v.Of, active, seen))
-	case *Sum:
-		h := hash.HashCombine(uint64(kind.Sum), hash.FnvString(v.Name))
-		for _, variant := range v.Variants {
-			h = hash.HashCombine(h, hash.FnvString(variant.Tag))
-			for _, vt := range variant.Types {
-				h = hash.HashCombine(h, precisionFamilyMemberHash(vt, active, seen))
-			}
-		}
-		return h
-	case *Interface:
-		h := hash.HashCombine(uint64(kind.Interface), hash.FnvString(v.Name))
-		for _, method := range v.Methods {
-			h = hash.HashCombine(h, hash.FnvString(method.Name))
-			h = hash.HashCombine(h, precisionFamilyMemberHash(method.Type, active, seen))
-		}
-		return h
-	default:
-		return t.Hash()
-	}
-}
-
-func precisionFamilyMemberHash(t Type, active map[uintptr]bool, seen *precisionSeen) (out uint64) {
-	t = NormalizeNilType(t)
-	if t == nil {
-		return 0
-	}
-	t = UnwrapAnnotated(t)
-	if t == nil {
-		return 0
-	}
-	if alias, ok := t.(*Alias); ok {
-		return precisionFamilyMemberHash(alias.UnaliasedTarget(), active, seen)
-	}
-	if rec, ok := t.(*Recursive); ok {
-		return hash.HashCombine(uint64(kind.Recursive), hash.FnvString(rec.Name))
-	}
-	if seen != nil {
-		if seen.familyHashes != nil {
-			if cached, ok := seen.familyHashes[t]; ok {
-				return cached
-			}
-		}
-		defer func() {
-			if seen.familyHashes == nil {
-				seen.familyHashes = make(map[Type]uint64)
-			}
-			seen.familyHashes[t] = out
-		}()
-	}
-	if !ContainsRecursive(t) {
-		return EqualityHash(t)
-	}
-	return precisionFamilyTerminalHash(t, seen)
-}
-
-func precisionFamilyTerminalHash(t Type, seen *precisionSeen) (out uint64) {
-	t = NormalizeNilType(t)
-	if t == nil {
-		return 0
-	}
-	t = UnwrapAnnotated(t)
-	if t == nil {
-		return 0
-	}
-	if alias, ok := t.(*Alias); ok {
-		return precisionFamilyTerminalHash(alias.UnaliasedTarget(), seen)
-	}
-	if rec, ok := t.(*Recursive); ok {
-		return hash.HashCombine(uint64(kind.Recursive), hash.FnvString(rec.Name))
-	}
-	if seen != nil {
-		if seen.familyHashes != nil {
-			if cached, ok := seen.familyHashes[t]; ok {
-				return cached
-			}
-		}
-		defer func() {
-			if seen.familyHashes == nil {
-				seen.familyHashes = make(map[Type]uint64)
-			}
-			seen.familyHashes[t] = out
-		}()
-	}
-	if !ContainsRecursive(t) {
-		return EqualityHash(t)
-	}
-	return hash.HashCombine(uint64(t.Kind()), hash.FnvString("$recursive-family"))
-}
-
-func boolPrecisionHash(v bool) uint64 {
-	if v {
-		return 1
-	}
-	return 0
+	return nil
 }
 
 func comparePrecisionSlices(candidate, baseline []Type, depth int, seen *precisionSeen) (bool, bool) {

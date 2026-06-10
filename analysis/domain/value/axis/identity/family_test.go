@@ -213,7 +213,7 @@ func TestProductFamilyHashTerminatesOnRecursiveMapTower(t *testing.T) {
 	}
 }
 
-func TestSameProductFamily(t *testing.T) {
+func TestSameProductFamilyWithPrecision(t *testing.T) {
 	left := typ.NewRecursive("Node", func(self typ.Type) typ.Type {
 		return typ.NewRecord().
 			Field("name", typ.String).
@@ -234,10 +234,67 @@ func TestSameProductFamily(t *testing.T) {
 			Build()
 	})
 
-	if !SameProductFamily(left, right) {
+	if !SameProductFamilyWithPrecision(left, right, testProductFamilyPrecisionCompare) {
 		t.Fatal("same recursive product family should compare equal")
 	}
-	if SameProductFamily(left, richer) {
+	if SameProductFamilyWithPrecision(left, richer, testProductFamilyPrecisionCompare) {
 		t.Fatal("same product family must not collapse strictly richer evidence")
 	}
+}
+
+func testProductFamilyPrecisionCompare(candidate, baseline typ.Type) (bool, bool) {
+	return testProductFamilyPrecisionCompareSeen(candidate, baseline, make(map[[2]uintptr]bool))
+}
+
+func testProductFamilyPrecisionCompareSeen(candidate, baseline typ.Type, seen map[[2]uintptr]bool) (bool, bool) {
+	if typ.SameNodeOrAcyclicEqual(candidate, baseline) {
+		return false, true
+	}
+	if candidate == nil || baseline == nil {
+		return false, false
+	}
+	cp, bp := typ.TypePointer(candidate), typ.TypePointer(baseline)
+	if cp != 0 || bp != 0 {
+		key := [2]uintptr{cp, bp}
+		if seen[key] {
+			return false, true
+		}
+		seen[key] = true
+	}
+	if c, ok := candidate.(*typ.Alias); ok {
+		return testProductFamilyPrecisionCompareSeen(c.UnaliasedTarget(), baseline, seen)
+	}
+	if b, ok := baseline.(*typ.Alias); ok {
+		return testProductFamilyPrecisionCompareSeen(candidate, b.UnaliasedTarget(), seen)
+	}
+	if c, ok := candidate.(*typ.Recursive); ok {
+		b, ok := baseline.(*typ.Recursive)
+		if !ok || c.Name != b.Name || c.Body == nil || b.Body == nil {
+			return false, false
+		}
+		return testProductFamilyPrecisionCompareSeen(c.Body, b.Body, seen)
+	}
+	if c, ok := candidate.(*typ.Record); ok {
+		b, ok := baseline.(*typ.Record)
+		if !ok {
+			return false, false
+		}
+		strict := false
+		for _, baselineField := range b.Fields {
+			candidateField := c.GetField(baselineField.Name)
+			if candidateField == nil {
+				return false, false
+			}
+			fieldStrict, comparable := testProductFamilyPrecisionCompareSeen(candidateField.Type, baselineField.Type, seen)
+			if !comparable {
+				return false, false
+			}
+			strict = strict || fieldStrict
+		}
+		return strict || len(c.Fields) > len(b.Fields), true
+	}
+	if typ.SameNodeOrAcyclicEqual(candidate, baseline) {
+		return false, true
+	}
+	return false, false
 }

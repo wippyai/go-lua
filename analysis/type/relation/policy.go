@@ -3,6 +3,7 @@ package relation
 import (
 	"sort"
 
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
 	"github.com/wippyai/go-lua/analysis/internal/hash"
 	luatable "github.com/wippyai/go-lua/analysis/lua/table"
 	"github.com/wippyai/go-lua/analysis/type/coalesce"
@@ -512,32 +513,17 @@ func (s *returnJoinState) coalesceFoldedProductFamilyMembers(types []Type) []Typ
 }
 
 func (s *returnJoinState) sameProductFamily(a, b Type) bool {
-	if SameNodeOrAcyclicEqual(a, b) {
-		return true
-	}
-	if a == nil || b == nil {
-		return false
-	}
-	if !ContainsRecursive(a) && !ContainsRecursive(b) {
-		return false
-	}
-	if s.productFamilyHash(a) != s.productFamilyHash(b) {
-		return false
-	}
 	seen := s.precisionState()
-	aStrict, aComparable := comparePrecision(a, b, 0, seen)
-	if !aComparable || aStrict {
-		return false
-	}
-	bStrict, bComparable := comparePrecision(b, a, 0, seen)
-	return bComparable && !bStrict
+	return identity.SameProductFamilyWithPrecisionAndCache(a, b, func(candidate, baseline Type) (bool, bool) {
+		return comparePrecision(candidate, baseline, 0, seen)
+	}, productFamilyHashCache(seen))
 }
 
 func (s *returnJoinState) productFamilyHash(t Type) uint64 {
 	if s == nil {
-		return productFamilyHash(t)
+		return identity.ProductFamilyHash(t)
 	}
-	return precisionFamilyHash(t, s.precisionState())
+	return identity.ProductFamilyHashWithCache(t, productFamilyHashCache(s.precisionState()))
 }
 
 func (s *returnJoinState) precisionState() *precisionSeen {
