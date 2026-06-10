@@ -3,7 +3,7 @@ package parse
 
 import (
   "github.com/wippyai/go-lua/compiler/ast"
-  "github.com/wippyai/go-lua/analysis/lua/literal/numparse"
+  "github.com/wippyai/go-lua/compiler/parse/numparse"
 )
 
 func setLastPosFromExprs(node ast.PositionHolder, exprs []ast.Expr, fallback ast.PositionHolder) {
