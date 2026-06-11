@@ -1,8 +1,11 @@
-package typ
+package format
 
-import "github.com/wippyai/go-lua/analysis/internal/recursion"
+import (
+	"github.com/wippyai/go-lua/analysis/internal/recursion"
+	"github.com/wippyai/go-lua/analysis/type/typ"
+)
 
-func (f *formatter) formatFunction(fn *Function, depth int, guard recursion.Guard) {
+func (f *formatter) formatFunction(fn *typ.Function, depth int, guard recursion.Guard) {
 	f.write("fun")
 	if len(fn.TypeParams) > 0 {
 		f.write("<")
@@ -65,5 +68,4 @@ func (f *formatter) formatFunction(fn *Function, depth int, guard recursion.Guar
 			f.write(")")
 		}
 	}
-
 }

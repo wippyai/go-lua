@@ -1,8 +1,11 @@
-package typ
+package format
 
-import "github.com/wippyai/go-lua/analysis/internal/recursion"
+import (
+	"github.com/wippyai/go-lua/analysis/internal/recursion"
+	"github.com/wippyai/go-lua/analysis/type/typ"
+)
 
-func (f *formatter) formatUnion(u *Union, depth int, guard recursion.Guard) {
+func (f *formatter) formatUnion(u *typ.Union, depth int, guard recursion.Guard) {
 	limit := minInt(len(u.Members), f.opts.MaxUnionMembers)
 	for i := 0; i < limit; i++ {
 		if i > 0 {
@@ -15,7 +18,7 @@ func (f *formatter) formatUnion(u *Union, depth int, guard recursion.Guard) {
 	}
 }
 
-func (f *formatter) formatIntersection(u *Intersection, depth int, guard recursion.Guard) {
+func (f *formatter) formatIntersection(u *typ.Intersection, depth int, guard recursion.Guard) {
 	limit := minInt(len(u.Members), f.opts.MaxUnionMembers)
 	for i := 0; i < limit; i++ {
 		if i > 0 {

@@ -535,6 +535,6 @@ func TestTypeEqualsDeepAliasFunctionSignature(t *testing.T) {
 	b := Func().Param("v", aliasChain(32)).Returns(Number).Build()
 
 	if !typeEquals(a, b) {
-		t.Fatalf("expected deep alias signatures to be equal:\nleft:  %s\nright: %s", FormatShort(a), FormatShort(b))
+		t.Fatalf("expected deep alias signatures to be equal:\nleft:  %s\nright: %s", a.String(), b.String())
 	}
 }

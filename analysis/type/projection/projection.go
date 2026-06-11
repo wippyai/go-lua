@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 
+	typeformat "github.com/wippyai/go-lua/analysis/type/format"
 	"github.com/wippyai/go-lua/analysis/type/identity"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
@@ -76,7 +77,7 @@ func (s Step) String() string {
 	case StepGenericArg:
 		return fmt.Sprintf("arg[%d]", s.Index)
 	case StepInstantiateGeneric:
-		return fmt.Sprintf("instantiate[%s]", typ.FormatShort(s.Type))
+		return fmt.Sprintf("instantiate[%s]", typeformat.Short(s.Type))
 	default:
 		return "unknown"
 	}

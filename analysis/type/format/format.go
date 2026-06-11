@@ -1,10 +1,14 @@
-package typ
+package format
 
-import "strings"
+import (
+	"strings"
 
-// FormatOptions controls budgeted type rendering for diagnostics.
+	"github.com/wippyai/go-lua/analysis/type/typ"
+)
+
+// Options controls budgeted type rendering for diagnostics.
 // Limits are best-effort; rendering may truncate with "..." when exceeded.
-type FormatOptions struct {
+type Options struct {
 	MaxDepth        int
 	MaxNodes        int
 	MaxUnionMembers int
@@ -16,8 +20,8 @@ type FormatOptions struct {
 	MaxBytes        int
 }
 
-// DefaultFormatOptions keeps diagnostics readable while avoiding huge output.
-var DefaultFormatOptions = FormatOptions{
+// DefaultOptions keeps diagnostics readable while avoiding huge output.
+var DefaultOptions = Options{
 	MaxDepth:        6,
 	MaxNodes:        200,
 	MaxUnionMembers: 6,
@@ -29,22 +33,22 @@ var DefaultFormatOptions = FormatOptions{
 	MaxBytes:        800,
 }
 
-// FormatShort renders a type for diagnostics with bounded output size.
-func FormatShort(t Type) string {
-	return Format(t, DefaultFormatOptions)
+// Short renders a type for diagnostics with bounded output size.
+func Short(t typ.Type) string {
+	return Type(t, DefaultOptions)
 }
 
-// Format renders a type using the provided options.
-func Format(t Type, opts FormatOptions) string {
+// Type renders a type using the provided options.
+func Type(t typ.Type, opts Options) string {
 	f := formatter{
 		opts: opts,
 	}
-	f.formatType(t, 0, NewGuard())
+	f.formatType(t, 0, typ.NewGuard())
 	return f.string()
 }
 
 type formatter struct {
-	opts      FormatOptions
+	opts      Options
 	nodes     int
 	bytes     int
 	truncated bool

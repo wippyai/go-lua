@@ -1,8 +1,11 @@
-package typ
+package format
 
-import "github.com/wippyai/go-lua/analysis/internal/recursion"
+import (
+	"github.com/wippyai/go-lua/analysis/internal/recursion"
+	"github.com/wippyai/go-lua/analysis/type/typ"
+)
 
-func (f *formatter) formatTuple(t *Tuple, depth int, guard recursion.Guard) {
+func (f *formatter) formatTuple(t *typ.Tuple, depth int, guard recursion.Guard) {
 	f.write("(")
 	limit := minInt(len(t.Elements), f.opts.MaxTupleElems)
 	for i := 0; i < limit; i++ {

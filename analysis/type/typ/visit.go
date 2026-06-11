@@ -1,7 +1,5 @@
 package typ
 
-import "github.com/wippyai/go-lua/analysis/internal/recursion"
-
 // Visitor dispatches on concrete type implementations.
 // Nil handlers fall back to Default when provided; otherwise return zero.
 type Visitor[R any] struct {
@@ -122,22 +120,4 @@ func unwrapTransparentWrappers(t Type) Type {
 		}
 		t = ann.Inner
 	}
-}
-
-// VisitWithGuard applies a Visitor with recursion guarding.
-// Returns onCycle when the guard disallows entry.
-func VisitWithGuard[R any](
-	t Type,
-	guard recursion.Guard,
-	onCycle R,
-	build func(next recursion.Guard) Visitor[R],
-) R {
-	if t == nil {
-		return onCycle
-	}
-	next, ok := guard.Enter(t)
-	if !ok {
-		return onCycle
-	}
-	return Visit(t, build(next))
 }

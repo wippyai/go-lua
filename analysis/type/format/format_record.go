@@ -1,12 +1,14 @@
-package typ
+package format
 
 import (
+	"strconv"
 	"strings"
 
 	"github.com/wippyai/go-lua/analysis/internal/recursion"
+	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
-func (f *formatter) formatRecord(r *Record, depth int, guard recursion.Guard) {
+func (f *formatter) formatRecord(r *typ.Record, depth int, guard recursion.Guard) {
 	f.write("{")
 	limit := minInt(len(r.Fields), f.opts.MaxRecordFields)
 	for i := 0; i < limit; i++ {
@@ -59,4 +61,19 @@ func (f *formatter) formatRecord(r *Record, depth int, guard recursion.Guard) {
 		f.write("...")
 	}
 	f.write("}")
+}
+
+func writeStaticMemberKey(sb *strings.Builder, member typ.StaticMember) {
+	switch member.Kind {
+	case typ.StaticMemberStringIndex:
+		sb.WriteString("[\"")
+		sb.WriteString(strings.ReplaceAll(member.Name, `"`, `\"`))
+		sb.WriteString("\"]")
+	case typ.StaticMemberIntIndex:
+		sb.WriteString("[")
+		sb.WriteString(strconv.FormatInt(member.Index, 10))
+		sb.WriteString("]")
+	default:
+		sb.WriteString("[unknown]")
+	}
 }

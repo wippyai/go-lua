@@ -1,8 +1,11 @@
-package typ
+package format
 
-import "github.com/wippyai/go-lua/analysis/internal/recursion"
+import (
+	"github.com/wippyai/go-lua/analysis/internal/recursion"
+	"github.com/wippyai/go-lua/analysis/type/typ"
+)
 
-func (f *formatter) formatType(t Type, depth int, guard recursion.Guard) {
+func (f *formatter) formatType(t typ.Type, depth int, guard recursion.Guard) {
 	if f.truncated {
 		return
 	}
@@ -21,27 +24,27 @@ func (f *formatter) formatType(t Type, depth int, guard recursion.Guard) {
 		return
 	}
 
-	VisitWithGuard(t, guard, struct{}{}, func(next recursion.Guard) Visitor[struct{}] {
-		return Visitor[struct{}]{
-			Union: func(u *Union) struct{} {
+	visitWithGuard(t, guard, struct{}{}, func(next recursion.Guard) typ.Visitor[struct{}] {
+		return typ.Visitor[struct{}]{
+			Union: func(u *typ.Union) struct{} {
 				f.formatUnion(u, depth, next)
 				return struct{}{}
 			},
-			Intersection: func(u *Intersection) struct{} {
+			Intersection: func(u *typ.Intersection) struct{} {
 				f.formatIntersection(u, depth, next)
 				return struct{}{}
 			},
-			Optional: func(o *Optional) struct{} {
+			Optional: func(o *typ.Optional) struct{} {
 				f.formatType(o.Inner, depth+1, next)
 				f.write("?")
 				return struct{}{}
 			},
-			Array: func(a *Array) struct{} {
+			Array: func(a *typ.Array) struct{} {
 				f.formatType(a.Element, depth+1, next)
 				f.write("[]")
 				return struct{}{}
 			},
-			Map: func(m *Map) struct{} {
+			Map: func(m *typ.Map) struct{} {
 				f.write("{[")
 				f.formatType(m.Key, depth+1, next)
 				f.write("]: ")
@@ -49,7 +52,7 @@ func (f *formatter) formatType(t Type, depth int, guard recursion.Guard) {
 				f.write("}")
 				return struct{}{}
 			},
-			ReadonlyMap: func(m *ReadonlyMap) struct{} {
+			ReadonlyMap: func(m *typ.ReadonlyMap) struct{} {
 				f.write("readonly {[")
 				f.formatType(m.Key, depth+1, next)
 				f.write("]: ")
@@ -57,27 +60,27 @@ func (f *formatter) formatType(t Type, depth int, guard recursion.Guard) {
 				f.write("}")
 				return struct{}{}
 			},
-			Tuple: func(tu *Tuple) struct{} {
+			Tuple: func(tu *typ.Tuple) struct{} {
 				f.formatTuple(tu, depth, next)
 				return struct{}{}
 			},
-			Function: func(fn *Function) struct{} {
+			Function: func(fn *typ.Function) struct{} {
 				f.formatFunction(fn, depth, next)
 				return struct{}{}
 			},
-			Record: func(r *Record) struct{} {
+			Record: func(r *typ.Record) struct{} {
 				f.formatRecord(r, depth, next)
 				return struct{}{}
 			},
-			Literal: func(l *Literal) struct{} {
+			Literal: func(l *typ.Literal) struct{} {
 				f.write(l.String())
 				return struct{}{}
 			},
-			Ref: func(r *Ref) struct{} {
+			Ref: func(r *typ.Ref) struct{} {
 				f.write(r.Name)
 				return struct{}{}
 			},
-			Alias: func(a *Alias) struct{} {
+			Alias: func(a *typ.Alias) struct{} {
 				if a.Name != "" {
 					f.write(a.Name)
 				} else if a.Target != nil {
@@ -87,7 +90,7 @@ func (f *formatter) formatType(t Type, depth int, guard recursion.Guard) {
 				}
 				return struct{}{}
 			},
-			TypeParam: func(p *TypeParam) struct{} {
+			TypeParam: func(p *typ.TypeParam) struct{} {
 				f.write(p.Name)
 				if p.Constraint != nil {
 					f.write(" : ")
@@ -95,7 +98,7 @@ func (f *formatter) formatType(t Type, depth int, guard recursion.Guard) {
 				}
 				return struct{}{}
 			},
-			Generic: func(g *Generic) struct{} {
+			Generic: func(g *typ.Generic) struct{} {
 				f.write(g.Name)
 				f.write("<")
 				limit := minInt(len(g.TypeParams), f.opts.MaxTypeParams)
@@ -111,7 +114,7 @@ func (f *formatter) formatType(t Type, depth int, guard recursion.Guard) {
 				f.write(">")
 				return struct{}{}
 			},
-			Instantiated: func(i *Instantiated) struct{} {
+			Instantiated: func(i *typ.Instantiated) struct{} {
 				if i.Generic != nil && i.Generic.Name != "" {
 					f.write(i.Generic.Name)
 				} else {
@@ -131,7 +134,7 @@ func (f *formatter) formatType(t Type, depth int, guard recursion.Guard) {
 				f.write(">")
 				return struct{}{}
 			},
-			Interface: func(i *Interface) struct{} {
+			Interface: func(i *typ.Interface) struct{} {
 				if i.Name != "" {
 					f.write(i.Name)
 				} else {
@@ -139,20 +142,36 @@ func (f *formatter) formatType(t Type, depth int, guard recursion.Guard) {
 				}
 				return struct{}{}
 			},
-			Recursive: func(r *Recursive) struct{} {
+			Recursive: func(r *typ.Recursive) struct{} {
 				f.write(r.String())
 				return struct{}{}
 			},
-			Meta: func(m *Meta) struct{} {
+			Meta: func(m *typ.Meta) struct{} {
 				f.write("typeof(")
 				f.formatType(m.Of, depth+1, next)
 				f.write(")")
 				return struct{}{}
 			},
-			Default: func(tt Type) struct{} {
+			Default: func(tt typ.Type) struct{} {
 				f.write(tt.String())
 				return struct{}{}
 			},
 		}
 	})
+}
+
+func visitWithGuard[R any](
+	t typ.Type,
+	guard recursion.Guard,
+	onCycle R,
+	build func(next recursion.Guard) typ.Visitor[R],
+) R {
+	if t == nil {
+		return onCycle
+	}
+	next, ok := guard.Enter(t)
+	if !ok {
+		return onCycle
+	}
+	return typ.Visit(t, build(next))
 }
