@@ -976,3 +976,37 @@ func TestRecursiveHashDependencyInvalidatesThroughStaticMember(t *testing.T) {
 		t.Fatalf("updated recursive hash did not stabilize: %d vs %d", got, updated)
 	}
 }
+
+func TestRecursiveGraphClosureFunctionTypeParamConstraintSeesUnsealedPlaceholder(t *testing.T) {
+	root := NewRecursivePlaceholder("Root")
+	dangling := NewRecursivePlaceholder("Dangling")
+	root.SetBody(Func().
+		TypeParam("T", dangling).
+		Returns(Number).
+		Build())
+
+	if !knownContainsOpenRecursive(root) {
+		t.Fatal("graph-closure traversal missed unsealed recursive placeholder through function type-param constraint")
+	}
+}
+
+func TestRecursiveHashDependencyInvalidatesThroughFunctionTypeParamConstraint(t *testing.T) {
+	root := NewRecursivePlaceholder("Root")
+	child := NewRecursivePlaceholder("Child")
+	child.SetBody(newRecord().Field("value", String).Build())
+	root.SetBody(Func().
+		TypeParam("T", child).
+		Returns(Number).
+		Build())
+
+	initial := root.Hash()
+	child.SetBody(newRecord().Field("value", Number).Build())
+	updated := root.Hash()
+
+	if updated == initial {
+		t.Fatal("recursive hash dependency missed function type-param constraint recursive child")
+	}
+	if got := root.Hash(); got != updated {
+		t.Fatalf("updated recursive hash did not stabilize: %d vs %d", got, updated)
+	}
+}
