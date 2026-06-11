@@ -1,0 +1,385 @@
+package query
+
+import (
+	"errors"
+	"os/exec"
+	"strings"
+	"testing"
+
+	"github.com/wippyai/go-lua/analysis/check/canonical/ref"
+	"github.com/wippyai/go-lua/analysis/check/canonical/summary"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis"
+	"github.com/wippyai/go-lua/analysis/domain/value/product"
+)
+
+func TestRunSingleBodyReturnsExactKeySnapshot(t *testing.T) {
+	reg := product.DefaultRegistry()
+	key := summary.DefaultSummaryKey(ref.FuncRef{Kind: ref.KindSymbol, ID: 1})
+
+	snap, err := Run(Config{
+		Registry: reg,
+		Functions: []Function{{
+			Key: key,
+			Body: func(Context) (summary.Summary, error) {
+				return oneReturn(product.Top()), nil
+			},
+		}},
+	})
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+
+	got, ok := snap.Read(key)
+	if !ok {
+		t.Fatalf("Read(key) missing")
+	}
+	if len(got.Returns) != 1 || !product.Equal(reg, got.Returns[0], product.Top()) {
+		t.Fatalf("Read(key) = %#v, want one top return", got)
+	}
+}
+
+func TestSnapshotExactReadsDoNotFallbackByFuncRef(t *testing.T) {
+	reg := product.DefaultRegistry()
+	fn := ref.FuncRef{Kind: ref.KindSymbol, ID: 2}
+	exact := summary.SummaryKey{Ref: fn, Entry: summary.EntryKey{Values: 1}}
+
+	snap, err := Run(Config{
+		Registry: reg,
+		Functions: []Function{{
+			Key: exact,
+			Body: func(Context) (summary.Summary, error) {
+				return oneReturn(product.Top()), nil
+			},
+		}},
+	})
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+
+	if got, ok := snap.Read(summary.DefaultSummaryKey(fn)); ok {
+		t.Fatalf("Read(default same ref) = %#v, want missing exact key", got)
+	}
+}
+
+func TestBodyReadCreatesDependencyAndObservesUpdatedValue(t *testing.T) {
+	reg, err := product.DefaultRegistryWithAxes(queryTestSpec().Erase())
+	if err != nil {
+		t.Fatalf("DefaultRegistryWithAxes() error = %v", err)
+	}
+	source := summary.DefaultSummaryKey(ref.FuncRef{Kind: ref.KindSymbol, ID: 3})
+	dependent := summary.DefaultSummaryKey(ref.FuncRef{Kind: ref.KindSymbol, ID: 4})
+	sourceVisits := 0
+
+	snap, err := Run(Config{
+		Registry: reg,
+		Functions: []Function{
+			{
+				Key: source,
+				Body: func(Context) (summary.Summary, error) {
+					sourceVisits++
+					if sourceVisits == 1 {
+						return oneReturn(testValue(reg, queryTestLow)), nil
+					}
+					return oneReturn(testValue(reg, queryTestHigh)), nil
+				},
+			},
+			{
+				Key: dependent,
+				Body: func(ctx Context) (summary.Summary, error) {
+					got, ok := ctx.Summaries.Read(source)
+					if !ok {
+						t.Fatalf("source read missing")
+					}
+					return got, nil
+				},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+
+	got, ok := snap.Read(dependent)
+	if !ok {
+		t.Fatalf("Read(dependent) missing")
+	}
+	if len(got.Returns) != 1 {
+		t.Fatalf("dependent returns = %d, want 1", len(got.Returns))
+	}
+	if value := product.Get(reg, got.Returns[0], queryTestKey); value != queryTestHigh {
+		t.Fatalf("dependent observed axis %v, want high", value)
+	}
+}
+
+func TestMissingReturnSlotsAreBottomInJoinAndWiden(t *testing.T) {
+	reg := product.DefaultRegistry()
+	joinKey := summary.DefaultSummaryKey(ref.FuncRef{Kind: ref.KindSymbol, ID: 5})
+	widenKey := summary.DefaultSummaryKey(ref.FuncRef{Kind: ref.KindSymbol, ID: 6})
+	joinVisits := 0
+	widenVisits := 0
+
+	snap, err := Run(Config{
+		Registry: reg,
+		Functions: []Function{
+			{
+				Key: joinKey,
+				Body: func(Context) (summary.Summary, error) {
+					joinVisits++
+					if joinVisits == 1 {
+						return oneReturn(product.Absent(reg)), nil
+					}
+					return summary.Summary{Returns: []product.Value{product.Absent(reg), product.Top()}}, nil
+				},
+			},
+			{
+				Key: widenKey,
+				Body: func(Context) (summary.Summary, error) {
+					widenVisits++
+					if widenVisits == 1 {
+						return oneReturn(product.Absent(reg)), nil
+					}
+					return summary.Summary{Returns: []product.Value{product.Absent(reg), product.Top()}}, nil
+				},
+			},
+		},
+		WidenAt: func(key summary.SummaryKey) bool {
+			return key == widenKey
+		},
+	})
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+
+	for _, key := range []summary.SummaryKey{joinKey, widenKey} {
+		got, ok := snap.Read(key)
+		if !ok {
+			t.Fatalf("Read(%v) missing", key)
+		}
+		if len(got.Returns) != 2 || !product.Equal(reg, got.Returns[1], product.Top()) {
+			t.Fatalf("Read(%v) = %#v, want missing second slot joined/widened to top", key, got)
+		}
+	}
+}
+
+func TestSeedInitializesExactKeyAndDoesNotFallbackByFuncRef(t *testing.T) {
+	reg := product.DefaultRegistry()
+	fn := ref.FuncRef{Kind: ref.KindSymbol, ID: 7}
+	seededKey := summary.SummaryKey{Ref: fn, Entry: summary.EntryKey{Values: 1}}
+	configuredKey := summary.DefaultSummaryKey(fn)
+	seed := summary.NewSnapshot(reg, summary.EntrySummary{
+		Key:     seededKey,
+		Summary: oneReturn(product.Top()),
+	})
+	visits := 0
+
+	snap, err := Run(Config{
+		Registry: reg,
+		Seed:     seed,
+		Functions: []Function{{
+			Key: configuredKey,
+			Body: func(ctx Context) (summary.Summary, error) {
+				visits++
+				if got, ok := ctx.Summaries.Read(configuredKey); visits == 1 && ok && len(got.Returns) != 0 {
+					t.Fatalf("configured key unexpectedly read seeded same-ref summary: %#v", got)
+				}
+				got, ok := ctx.Summaries.Read(seededKey)
+				if !ok {
+					t.Fatalf("seeded exact key missing")
+				}
+				return got, nil
+			},
+		}},
+	})
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+
+	got, ok := snap.Read(configuredKey)
+	if !ok {
+		t.Fatalf("Read(configuredKey) missing")
+	}
+	if len(got.Returns) != 1 || !product.Equal(reg, got.Returns[0], product.Top()) {
+		t.Fatalf("Read(configuredKey) = %#v, want seeded top return", got)
+	}
+	if got, ok := snap.Read(seededKey); ok {
+		t.Fatalf("snapshot included unconfigured seed key: %#v", got)
+	}
+}
+
+func TestSeedInitializesConfiguredExactKey(t *testing.T) {
+	reg := product.DefaultRegistry()
+	key := summary.DefaultSummaryKey(ref.FuncRef{Kind: ref.KindSymbol, ID: 8})
+	seed := summary.NewSnapshot(reg, summary.EntrySummary{
+		Key:     key,
+		Summary: oneReturn(product.Top()),
+	})
+
+	snap, err := Run(Config{
+		Registry: reg,
+		Seed:     seed,
+		Functions: []Function{{
+			Key: key,
+			Body: func(ctx Context) (summary.Summary, error) {
+				got, _ := ctx.Summaries.Read(key)
+				return got, nil
+			},
+		}},
+	})
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+
+	got, ok := snap.Read(key)
+	if !ok {
+		t.Fatalf("Read(key) missing")
+	}
+	if len(got.Returns) != 1 || !product.Equal(reg, got.Returns[0], product.Top()) {
+		t.Fatalf("Read(key) = %#v, want seeded top return", got)
+	}
+}
+
+func TestWidenHooksAreForwardedForSummaryKeys(t *testing.T) {
+	reg := product.DefaultRegistry()
+	key := summary.DefaultSummaryKey(ref.FuncRef{Kind: ref.KindSymbol, ID: 9})
+	var widenAtKeys []summary.SummaryKey
+	var widenDelayKeys []summary.SummaryKey
+	visits := 0
+
+	_, err := Run(Config{
+		Registry: reg,
+		Functions: []Function{{
+			Key: key,
+			Body: func(Context) (summary.Summary, error) {
+				visits++
+				if visits == 1 {
+					return oneReturn(product.Absent(reg)), nil
+				}
+				return oneReturn(product.Top()), nil
+			},
+		}},
+		WidenAt: func(got summary.SummaryKey) bool {
+			widenAtKeys = append(widenAtKeys, got)
+			return got == key
+		},
+		WidenDelay: func(got summary.SummaryKey) int {
+			widenDelayKeys = append(widenDelayKeys, got)
+			return 1
+		},
+	})
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if !containsKey(widenAtKeys, key) {
+		t.Fatalf("WidenAt was not called with key; calls=%v", widenAtKeys)
+	}
+	if !containsKey(widenDelayKeys, key) {
+		t.Fatalf("WidenDelay was not called with key; calls=%v", widenDelayKeys)
+	}
+}
+
+func TestNewValidationErrors(t *testing.T) {
+	reg := product.DefaultRegistry()
+	key := summary.DefaultSummaryKey(ref.FuncRef{Kind: ref.KindSymbol, ID: 10})
+
+	if _, err := New(Config{}); !errors.Is(err, ErrRegistryRequired) {
+		t.Fatalf("New(no registry) error = %v, want ErrRegistryRequired", err)
+	}
+	if _, err := New(Config{
+		Registry: reg,
+		Functions: []Function{
+			{Key: key, Body: func(Context) (summary.Summary, error) { return summary.Summary{}, nil }},
+			{Key: key, Body: func(Context) (summary.Summary, error) { return summary.Summary{}, nil }},
+		},
+	}); !errors.Is(err, ErrDuplicateFunction) {
+		t.Fatalf("New(duplicate) error = %v, want ErrDuplicateFunction", err)
+	}
+	if _, err := New(Config{
+		Registry:  reg,
+		Functions: []Function{{Key: key}},
+	}); !errors.Is(err, ErrNilBody) {
+		t.Fatalf("New(nil body) error = %v, want ErrNilBody", err)
+	}
+}
+
+func TestProductionDependenciesAvoidForbiddenPackages(t *testing.T) {
+	out, err := exec.Command("go", "list", "-f", "{{range .Imports}}{{.}}\n{{end}}", ".").Output()
+	if err != nil {
+		t.Fatalf("go list imports . error = %v", err)
+	}
+	forbidden := []string{
+		"/__old",
+		"/compiler",
+		"/analysis/lua",
+		"/cfgbuild",
+		"/semantics",
+		"/diagnostic",
+		"/store",
+		"/session",
+	}
+	for _, dep := range strings.Fields(string(out)) {
+		for _, forbiddenPart := range forbidden {
+			if strings.Contains(dep, forbiddenPart) {
+				t.Fatalf("forbidden dependency %q matched %q", dep, forbiddenPart)
+			}
+		}
+	}
+}
+
+func oneReturn(v product.Value) summary.Summary {
+	return summary.Summary{Returns: []product.Value{v}}
+}
+
+func containsKey(keys []summary.SummaryKey, want summary.SummaryKey) bool {
+	for _, got := range keys {
+		if got == want {
+			return true
+		}
+	}
+	return false
+}
+
+type queryTestAxis uint8
+
+const (
+	queryTestBottom queryTestAxis = iota
+	queryTestLow
+	queryTestHigh
+	queryTestTop
+)
+
+var queryTestKey = axis.NewKey[queryTestAxis]("test.query.axis")
+
+func queryTestSpec() axis.Spec[queryTestAxis] {
+	return axis.Spec[queryTestAxis]{
+		Key:    queryTestKey,
+		Bottom: func() queryTestAxis { return queryTestBottom },
+		Top:    func() queryTestAxis { return queryTestTop },
+		Equal:  func(a, b queryTestAxis) bool { return a == b },
+		LessOrEq: func(a, b queryTestAxis) bool {
+			return a <= b
+		},
+		Join: func(a, b queryTestAxis) queryTestAxis {
+			if a > b {
+				return a
+			}
+			return b
+		},
+		Meet: func(a, b queryTestAxis) queryTestAxis {
+			if a < b {
+				return a
+			}
+			return b
+		},
+		Widen: func(prev, next queryTestAxis) queryTestAxis {
+			if prev > next {
+				return prev
+			}
+			return next
+		},
+		Hash: func(v queryTestAxis) uint64 { return uint64(v) },
+	}
+}
+
+func testValue(reg *axis.Registry, value queryTestAxis) product.Value {
+	return product.Set(reg, product.Top(), queryTestKey, value)
+}
