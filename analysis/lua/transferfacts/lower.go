@@ -34,31 +34,31 @@ func Lower(result *semantics.Result, graph cfg.Graph) transfer.Facts {
 		Returns:             make(map[cfg.Point]transfer.Return),
 		Calls:               make(map[cfg.Point]transfer.CallProducer),
 		ObjectLiterals:      make(map[transfer.ExprRef]transfer.ObjectLiteral),
-		Assertions:          make(map[transfer.ExprRef]transfer.Assertion),
+		ValueOverlays:       make(map[transfer.ExprRef]transfer.ValueOverlay),
 	}
 	for _, point := range graph.RPO() {
 		if fact, ok := result.LocalAssignment(point); ok {
 			if lowered, ok := l.localAssignment(fact); ok {
 				input.LocalAssignments[point] = lowered
-				l.addAssertionsForSource(&input, fact.Source)
+				l.addAssertionOverlaysForSource(&input, fact.Source)
 				l.addObjectLiteral(&input, result, fact.Source)
 			}
 		}
 		if fact, ok := result.OrdinaryAssignment(point); ok {
 			if lowered, ok := l.pathAssignment(fact); ok {
 				input.PathAssignments[point] = lowered
-				l.addAssertionsForSource(&input, fact.Source)
+				l.addAssertionOverlaysForSource(&input, fact.Source)
 				l.addObjectLiteral(&input, result, fact.Source)
 			} else if lowered, ok := l.ordinaryAssignment(fact); ok {
 				input.OrdinaryAssignments[point] = lowered
-				l.addAssertionsForSource(&input, fact.Source)
+				l.addAssertionOverlaysForSource(&input, fact.Source)
 				l.addObjectLiteral(&input, result, fact.Source)
 			}
 		}
 		if fact, ok := result.Return(point); ok {
 			input.Returns[point] = transfer.NewReturn(l.valueSources(fact.Sources))
 			for _, source := range fact.Sources {
-				l.addAssertionsForSource(&input, source)
+				l.addAssertionOverlaysForSource(&input, source)
 			}
 		}
 		if fact, ok := result.Call(point); ok {
@@ -70,7 +70,7 @@ func Lower(result *semantics.Result, graph cfg.Graph) transfer.Facts {
 			if lowered, ok := l.branchRefinement(fact); ok {
 				input.BranchRefinements[point] = lowered
 			}
-			l.addAssertionsForSource(&input, fact.Source)
+			l.addAssertionOverlaysForSource(&input, fact.Source)
 		}
 	}
 	return transfer.NewFacts(input)
@@ -156,7 +156,7 @@ func (l *lowerer) addObjectLiteral(input *transfer.FactsInput, result *semantics
 	}
 	input.ObjectLiterals[exprRef] = lowered
 	for _, entry := range fact.Entries {
-		l.addAssertionsForSource(input, entry.Source)
+		l.addAssertionOverlaysForSource(input, entry.Source)
 	}
 }
 
@@ -302,7 +302,7 @@ func (l *lowerer) valueSource(source semantics.ValueSource) transfer.ValueSource
 	}
 }
 
-func (l *lowerer) addAssertionsForSource(input *transfer.FactsInput, source semantics.ValueSource) {
+func (l *lowerer) addAssertionOverlaysForSource(input *transfer.FactsInput, source semantics.ValueSource) {
 	if input == nil || source.Expr == nil {
 		return
 	}
@@ -321,11 +321,15 @@ func (l *lowerer) addAssertion(input *transfer.FactsInput, outer semantics.Value
 	}
 	inner := outer
 	inner.Expr = innerExpr
-	if input.Assertions == nil {
-		input.Assertions = make(map[transfer.ExprRef]transfer.Assertion)
+	if input.ValueOverlays == nil {
+		input.ValueOverlays = make(map[transfer.ExprRef]transfer.ValueOverlay)
 	}
-	input.Assertions[outerRef] = transfer.NewAssertion(l.valueSource(inner), value)
-	l.addAssertionsForSource(input, inner)
+	input.ValueOverlays[outerRef] = transfer.NewValueOverlay(l.valueSource(inner), assertionOverlay(value))
+	l.addAssertionOverlaysForSource(input, inner)
+}
+
+func assertionOverlay(value assertion.Value) product.Value {
+	return product.Set(product.DefaultRegistry(), product.Top(), assertion.Key, value)
 }
 
 func castAssertionValue(typ ast.TypeExpr) assertion.Value {

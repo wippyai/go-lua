@@ -221,7 +221,19 @@ func TestRun_ForwardsWidenAtAndWidenDelayToSolver(t *testing.T) {
 	}
 }
 
-func TestTransferPackageDoesNotImportLuaCompilerOldOrASTPackages(t *testing.T) {
+func TestTransferPackageDoesNotImportLuaCompilerOldASTOrAssertionPackages(t *testing.T) {
+	directCmd := exec.Command("go", "list", "-f", `{{range .Imports}}{{.}}{{"\n"}}{{end}}`, ".")
+	directOut, err := directCmd.Output()
+	if err != nil {
+		t.Fatalf("go list direct imports . failed: %v", err)
+	}
+	const assertionAxis = "github.com/wippyai/go-lua/analysis/domain/value/axis/assertion"
+	for _, dep := range strings.Fields(string(directOut)) {
+		if dep == assertionAxis || strings.HasPrefix(dep, assertionAxis+"/") {
+			t.Fatalf("transfer package directly imports forbidden dependency %q", dep)
+		}
+	}
+
 	cmd := exec.Command("go", "list", "-deps", ".")
 	out, err := cmd.Output()
 	if err != nil {

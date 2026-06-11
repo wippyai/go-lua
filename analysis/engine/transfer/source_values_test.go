@@ -4,7 +4,7 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/domain/state/key"
-	"github.com/wippyai/go-lua/analysis/domain/value/axis/assertion"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/runtimekind"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
@@ -165,15 +165,16 @@ func TestSourceValuesExpressionAndVarargProvidersAreGenericHooks(t *testing.T) {
 	}
 }
 
-func TestAssertionSourceValuesSidecarAttachesIndicatorOnly(t *testing.T) {
+func TestValueOverlaySourceValuesMeetsOverlayAndDoesNotMutateBase(t *testing.T) {
 	reg := product.DefaultRegistry()
 	inner := ExprRef(10)
 	outer := ExprRef(11)
 	innerSource := ValueSource{Kind: ValueSourceExpression, ExprRef: inner, HasExpr: true}
 	outerSource := ValueSource{Kind: ValueSourceExpression, ExprRef: outer, HasExpr: true}
 	base := product.NewWithPresence(reg, product.ShapeTop, presence.Present())
-	assertions := map[ExprRef]Assertion{
-		outer: NewAssertion(innerSource, assertion.Any()),
+	overlay := runtimeKindOverlay(reg, runtimekind.Singleton(runtimekind.Table))
+	overlays := map[ExprRef]ValueOverlay{
+		outer: NewValueOverlay(innerSource, overlay),
 	}
 	baseResolver := NewSourceValues(SourceValuesConfig{
 		Registry: reg,
@@ -181,27 +182,24 @@ func TestAssertionSourceValuesSidecarAttachesIndicatorOnly(t *testing.T) {
 			inner: base,
 		},
 	})
-	resolver := withAssertionSourceValues(reg, baseResolver, assertions)
+	resolver := withValueOverlaySourceValues(reg, baseResolver, overlays)
 
 	got, ok := resolver.ValueOfSource(cfg.Point(1), outerSource, state.State{}, nil)
 	if !ok {
-		t.Fatal("assertion source did not resolve through inner expression")
+		t.Fatal("value overlay source did not resolve through inner expression")
 	}
 	if gotPresence := product.PresenceOf(got); !presence.Equal(gotPresence, presence.Present()) {
 		t.Fatalf("presence = %s, want original present", gotPresence)
 	}
-	if gotKind := product.Get(reg, got, runtimekind.Key); !runtimekind.Equal(gotKind, runtimekind.Top()) {
-		t.Fatalf("runtimekind = %s, want unchanged top", gotKind)
+	if gotKind := product.Get(reg, got, runtimekind.Key); !runtimekind.Equal(gotKind, runtimekind.Singleton(runtimekind.Table)) {
+		t.Fatalf("runtimekind = %s, want table", gotKind)
 	}
-	if gotClaim := product.Get(reg, got, assertion.Key); !assertion.Equal(gotClaim, assertion.Any()) {
-		t.Fatalf("assertion = %s, want any claim", gotClaim)
-	}
-	if baseClaim := product.Get(reg, base, assertion.Key); !assertion.Equal(baseClaim, assertion.Top()) {
-		t.Fatalf("base expression value mutated with assertion = %s", baseClaim)
+	if baseKind := product.Get(reg, base, runtimekind.Key); !runtimekind.Equal(baseKind, runtimekind.Top()) {
+		t.Fatalf("base expression value mutated with runtime kind = %s", baseKind)
 	}
 }
 
-func TestAssertionSourceValuesAttachesIndicatorToCallSource(t *testing.T) {
+func TestValueOverlaySourceValuesAppliesOverlayToCallSource(t *testing.T) {
 	reg := product.DefaultRegistry()
 	inner := ExprRef(12)
 	outer := ExprRef(13)
@@ -218,8 +216,8 @@ func TestAssertionSourceValuesAttachesIndicatorToCallSource(t *testing.T) {
 	innerSource := outerSource
 	innerSource.ExprRef = inner
 	baseResolver := NewSourceValues(SourceValuesConfig{Registry: reg})
-	resolver := withAssertionSourceValues(reg, baseResolver, map[ExprRef]Assertion{
-		outer: NewAssertion(innerSource, assertion.Type()),
+	resolver := withValueOverlaySourceValues(reg, baseResolver, map[ExprRef]ValueOverlay{
+		outer: NewValueOverlay(innerSource, runtimeKindOverlay(reg, runtimekind.Singleton(runtimekind.Function))),
 	})
 
 	var readPoint cfg.Point
@@ -234,17 +232,17 @@ func TestAssertionSourceValuesAttachesIndicatorToCallSource(t *testing.T) {
 		t.Fatalf("read point = %d, want call point %d", readPoint, callPoint)
 	}
 	if gotPresence := product.PresenceOf(got); !presence.Equal(gotPresence, presence.Present()) {
-		t.Fatalf("asserted call presence = %s, want original present", gotPresence)
+		t.Fatalf("overlaid call presence = %s, want original present", gotPresence)
 	}
-	if gotClaim := product.Get(reg, got, assertion.Key); !assertion.Equal(gotClaim, assertion.Type()) {
-		t.Fatalf("asserted call claim = %s, want type claim", gotClaim)
+	if gotKind := product.Get(reg, got, runtimekind.Key); !runtimekind.Equal(gotKind, runtimekind.Singleton(runtimekind.Function)) {
+		t.Fatalf("overlaid call runtime kind = %s, want function", gotKind)
 	}
-	if baseClaim := product.Get(reg, callValue, assertion.Key); !assertion.Equal(baseClaim, assertion.Top()) {
-		t.Fatalf("call return value mutated with assertion = %s", baseClaim)
+	if baseKind := product.Get(reg, callValue, runtimekind.Key); !runtimekind.Equal(baseKind, runtimekind.Top()) {
+		t.Fatalf("call return value mutated with runtime kind = %s", baseKind)
 	}
 }
 
-func TestAssertionSourceValuesNonNilAssertionDoesNotRefineAbsentPresence(t *testing.T) {
+func TestValueOverlaySourceValuesCanMeetCorePresenceOverlay(t *testing.T) {
 	reg := product.DefaultRegistry()
 	inner := ExprRef(14)
 	outer := ExprRef(15)
@@ -254,23 +252,23 @@ func TestAssertionSourceValuesNonNilAssertionDoesNotRefineAbsentPresence(t *test
 			inner: absentValue(reg),
 		},
 	})
-	resolver := withAssertionSourceValues(reg, baseResolver, map[ExprRef]Assertion{
-		outer: NewAssertion(ValueSource{Kind: ValueSourceExpression, ExprRef: inner, HasExpr: true}, assertion.NonNil()),
+	resolver := withValueOverlaySourceValues(reg, baseResolver, map[ExprRef]ValueOverlay{
+		outer: NewValueOverlay(
+			ValueSource{Kind: ValueSourceExpression, ExprRef: inner, HasExpr: true},
+			product.NewWithPresence(reg, product.ShapeTop, presence.Absent()),
+		),
 	})
 
 	got, ok := resolver.ValueOfSource(cfg.Point(1), ValueSource{Kind: ValueSourceExpression, ExprRef: outer, HasExpr: true}, state.State{}, nil)
 	if !ok {
-		t.Fatal("non-nil assertion source did not resolve")
+		t.Fatal("presence overlay source did not resolve")
 	}
 	if gotPresence := product.PresenceOf(got); !presence.Equal(gotPresence, presence.Absent()) {
-		t.Fatalf("x! presence = %s, want original absent presence", gotPresence)
-	}
-	if gotClaim := product.Get(reg, got, assertion.Key); !assertion.Equal(gotClaim, assertion.NonNil()) {
-		t.Fatalf("x! assertion = %s, want non-nil claim", gotClaim)
+		t.Fatalf("presence overlay = %s, want absent", gotPresence)
 	}
 }
 
-func TestAssertionSourceValuesNestedAssertionsCombineClaims(t *testing.T) {
+func TestValueOverlaySourceValuesNestedOverlaysMeet(t *testing.T) {
 	reg := product.DefaultRegistry()
 	inner := ExprRef(20)
 	middle := ExprRef(21)
@@ -281,31 +279,43 @@ func TestAssertionSourceValuesNestedAssertionsCombineClaims(t *testing.T) {
 			inner: presentValue(reg),
 		},
 	})
-	resolver := withAssertionSourceValues(reg, baseResolver, map[ExprRef]Assertion{
-		middle: NewAssertion(ValueSource{Kind: ValueSourceExpression, ExprRef: inner, HasExpr: true}, assertion.NonNil()),
-		outer:  NewAssertion(ValueSource{Kind: ValueSourceExpression, ExprRef: middle, HasExpr: true}, assertion.Type()),
+	resolver := withValueOverlaySourceValues(reg, baseResolver, map[ExprRef]ValueOverlay{
+		middle: NewValueOverlay(
+			ValueSource{Kind: ValueSourceExpression, ExprRef: inner, HasExpr: true},
+			runtimeKindOverlay(reg, runtimekind.Top().Without(runtimekind.Nil)),
+		),
+		outer: NewValueOverlay(
+			ValueSource{Kind: ValueSourceExpression, ExprRef: middle, HasExpr: true},
+			runtimeKindOverlay(reg, runtimekind.Singleton(runtimekind.Table)),
+		),
 	})
 
 	got, ok := resolver.ValueOfSource(cfg.Point(2), ValueSource{Kind: ValueSourceExpression, ExprRef: outer, HasExpr: true}, state.State{}, nil)
 	if !ok {
-		t.Fatal("nested assertion source did not resolve")
+		t.Fatal("nested overlay source did not resolve")
 	}
-	gotClaim := product.Get(reg, got, assertion.Key)
-	if !gotClaim.Has(assertion.TypeAssertion) || !gotClaim.Has(assertion.NonNilAssertion) {
-		t.Fatalf("nested assertion = %s, want type and non-nil claims", gotClaim)
+	if gotKind := product.Get(reg, got, runtimekind.Key); !runtimekind.Equal(gotKind, runtimekind.Singleton(runtimekind.Table)) {
+		t.Fatalf("nested runtime kind = %s, want table", gotKind)
 	}
 }
 
-func TestAssertionSourceValuesMissingInnerSourceReturnsFalse(t *testing.T) {
+func TestValueOverlaySourceValuesMissingInnerSourceReturnsFalse(t *testing.T) {
 	reg := product.DefaultRegistry()
 	baseResolver := NewSourceValues(SourceValuesConfig{
 		Registry: reg,
 	})
-	resolver := withAssertionSourceValues(reg, baseResolver, map[ExprRef]Assertion{
-		ExprRef(30): NewAssertion(ValueSource{Kind: ValueSourceExpression, ExprRef: ExprRef(31), HasExpr: true}, assertion.Type()),
+	resolver := withValueOverlaySourceValues(reg, baseResolver, map[ExprRef]ValueOverlay{
+		ExprRef(30): NewValueOverlay(
+			ValueSource{Kind: ValueSourceExpression, ExprRef: ExprRef(31), HasExpr: true},
+			runtimeKindOverlay(reg, runtimekind.Singleton(runtimekind.Table)),
+		),
 	})
 
 	if got, ok := resolver.ValueOfSource(cfg.Point(3), ValueSource{Kind: ValueSourceExpression, ExprRef: ExprRef(30), HasExpr: true}, state.State{}, nil); ok {
-		t.Fatalf("missing assertion inner source resolved to %s, want false", formatValue(reg, got))
+		t.Fatalf("missing overlay inner source resolved to %s, want false", formatValue(reg, got))
 	}
+}
+
+func runtimeKindOverlay(reg *axis.Registry, value runtimekind.Value) product.Value {
+	return product.Set(reg, product.Top(), runtimekind.Key, value)
 }

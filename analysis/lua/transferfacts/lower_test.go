@@ -7,10 +7,12 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
+	"github.com/wippyai/go-lua/analysis/domain/state/key"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/assertion"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/runtimekind"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
+	"github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/engine/transfer"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/lua/bind"
@@ -585,23 +587,163 @@ func TestLowerNestedAssertionsPreserveOuterIdentityAndInnerFlow(t *testing.T) {
 
 	facts := Lower(result, built.Graph)
 	source := mustLocalSource(t, facts, requireStmtPoints(t, built, local, 1)[0])
-	outer, ok := facts.Assertion(source.ExprRef)
+	outer, ok := facts.ValueOverlay(source.ExprRef)
 	if !ok {
 		t.Fatalf("missing outer assertion for source %#v", source)
 	}
-	if !assertion.Equal(outer.Value(), assertion.Type()) {
-		t.Fatalf("outer assertion = %s, want type", outer.Value())
+	if got := overlayAssertion(t, outer); !assertion.Equal(got, assertion.Type()) {
+		t.Fatalf("outer assertion = %s, want type", got)
 	}
 	innerSource := outer.Source()
 	if innerSource.ExprRef == source.ExprRef || innerSource.ExprRef == 0 {
 		t.Fatalf("outer assertion did not point at distinct inner expr ref: outer=%#v inner=%#v", source, innerSource)
 	}
-	inner, ok := facts.Assertion(innerSource.ExprRef)
+	inner, ok := facts.ValueOverlay(innerSource.ExprRef)
 	if !ok {
 		t.Fatalf("missing inner non-nil assertion for source %#v", innerSource)
 	}
-	if !assertion.Equal(inner.Value(), assertion.NonNil()) {
-		t.Fatalf("inner assertion = %s, want non-nil", inner.Value())
+	if got := overlayAssertion(t, inner); !assertion.Equal(got, assertion.NonNil()) {
+		t.Fatalf("inner assertion = %s, want non-nil", got)
+	}
+}
+
+func TestLowerAssertionOverlaysApplyIndicatorsWithoutMutatingBaseValues(t *testing.T) {
+	decl := localAssign([]string{"x"}, number("0"))
+	typeRead := ident("x")
+	anyRead := ident("x")
+	nonNilRead := ident("x")
+	typeCast := &ast.CastExpr{Expr: typeRead, Type: primitiveType("number")}
+	anyCast := &ast.CastExpr{Expr: anyRead, Type: primitiveType("any")}
+	nonNil := &ast.NonNilAssertExpr{Expr: nonNilRead}
+	local := localAssign([]string{"a", "b", "c"}, typeCast, anyCast, nonNil)
+	stmts := []ast.Stmt{decl, local}
+	bindings := bind.BindChunk(stmts, bind.Options{})
+	built := cfgbuild.BuildChunk(stmts, bindings)
+	result, err := semantics.ExtractChunk(stmts, bindings, built)
+	if err != nil {
+		t.Fatalf("ExtractChunk: %v", err)
+	}
+
+	reg := product.DefaultRegistry()
+	facts := Lower(result, built.Graph)
+	points := requireStmtPoints(t, built, local, 3)
+	inputValues := make(map[transfer.ExprRef]product.Value)
+	type sourceCase struct {
+		name         string
+		point        cfg.Point
+		base         product.Value
+		wantClaim    assertion.Value
+		wantPresence presence.Value
+	}
+	cases := []sourceCase{
+		{
+			name:         "type",
+			point:        points[0],
+			base:         product.NewWithPresence(reg, product.ShapeTop, presence.Present()),
+			wantClaim:    assertion.Type(),
+			wantPresence: presence.Present(),
+		},
+		{
+			name:         "any",
+			point:        points[1],
+			base:         product.NewWithPresence(reg, product.ShapeTop, presence.Present()),
+			wantClaim:    assertion.Any(),
+			wantPresence: presence.Present(),
+		},
+		{
+			name:         "non-nil",
+			point:        points[2],
+			base:         product.NewWithPresence(reg, product.ShapeTop, presence.Absent()),
+			wantClaim:    assertion.NonNil(),
+			wantPresence: presence.Absent(),
+		},
+	}
+	for i := range cases {
+		source := mustLocalSource(t, facts, cases[i].point)
+		overlay, ok := facts.ValueOverlay(source.ExprRef)
+		if !ok {
+			t.Fatalf("%s overlay missing", cases[i].name)
+		}
+		inputValues[overlay.Source().ExprRef] = cases[i].base
+	}
+
+	apply := transfer.NewFactsNodeTransfer(transfer.FactsNodeTransferConfig{
+		Facts: facts,
+		Sources: transfer.NewSourceValues(transfer.SourceValuesConfig{
+			Registry:         reg,
+			ExpressionValues: inputValues,
+		}),
+	})
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			out := apply(transfer.NodeContext{Registry: reg, Point: tc.point}, state.State{})
+			fact, ok := facts.LocalAssignment(tc.point)
+			if !ok {
+				t.Fatalf("missing local assignment at point %d", tc.point)
+			}
+			assigned := out.ReadValue(reg, key.SymbolValue(fact.TargetSymbol()))
+			if got := product.Get(reg, assigned, assertion.Key); !assertion.Equal(got, tc.wantClaim) {
+				t.Fatalf("assigned assertion = %s, want %s", got, tc.wantClaim)
+			}
+			if got := product.PresenceOf(assigned); !presence.Equal(got, tc.wantPresence) {
+				t.Fatalf("assigned presence = %s, want %s", got, tc.wantPresence)
+			}
+			if got := product.Get(reg, tc.base, assertion.Key); !assertion.Equal(got, assertion.Top()) {
+				t.Fatalf("base value mutated with assertion = %s", got)
+			}
+		})
+	}
+}
+
+func TestLowerNestedAssertionOverlaysApplyCombinedIndicators(t *testing.T) {
+	decl := localAssign([]string{"x"}, number("0"))
+	read := ident("x")
+	nonNil := &ast.NonNilAssertExpr{Expr: read}
+	cast := &ast.CastExpr{Expr: nonNil, Type: primitiveType("number")}
+	local := localAssign([]string{"a"}, cast)
+	stmts := []ast.Stmt{decl, local}
+	bindings := bind.BindChunk(stmts, bind.Options{})
+	built := cfgbuild.BuildChunk(stmts, bindings)
+	result, err := semantics.ExtractChunk(stmts, bindings, built)
+	if err != nil {
+		t.Fatalf("ExtractChunk: %v", err)
+	}
+
+	reg := product.DefaultRegistry()
+	facts := Lower(result, built.Graph)
+	point := requireStmtPoints(t, built, local, 1)[0]
+	source := mustLocalSource(t, facts, point)
+	outer, ok := facts.ValueOverlay(source.ExprRef)
+	if !ok {
+		t.Fatalf("missing outer assertion overlay")
+	}
+	inner, ok := facts.ValueOverlay(outer.Source().ExprRef)
+	if !ok {
+		t.Fatalf("missing inner assertion overlay")
+	}
+	base := product.NewWithPresence(reg, product.ShapeTop, presence.Present())
+	apply := transfer.NewFactsNodeTransfer(transfer.FactsNodeTransferConfig{
+		Facts: facts,
+		Sources: transfer.NewSourceValues(transfer.SourceValuesConfig{
+			Registry: reg,
+			ExpressionValues: map[transfer.ExprRef]product.Value{
+				inner.Source().ExprRef: base,
+			},
+		}),
+	})
+
+	out := apply(transfer.NodeContext{Registry: reg, Point: point}, state.State{})
+	fact, ok := facts.LocalAssignment(point)
+	if !ok {
+		t.Fatalf("missing local assignment at point %d", point)
+	}
+	assigned := out.ReadValue(reg, key.SymbolValue(fact.TargetSymbol()))
+	got := product.Get(reg, assigned, assertion.Key)
+	if !got.Has(assertion.TypeAssertion) || !got.Has(assertion.NonNilAssertion) {
+		t.Fatalf("nested assertion = %s, want type and non-nil indicators", got)
+	}
+	if got := product.Get(reg, base, assertion.Key); !assertion.Equal(got, assertion.Top()) {
+		t.Fatalf("base value mutated with assertion = %s", got)
 	}
 }
 
@@ -641,12 +783,12 @@ func TestLowerAssertionWrappedCallPreservesProducerAndClaim(t *testing.T) {
 	if localSource.Kind != transfer.ValueSourceCall || localSource.ExprRef == innerRef || localSource.CallPoint != localPoints[0] || !localSource.HasCallPoint {
 		t.Fatalf("local wrapped call source = %#v, inner ref %d", localSource, innerRef)
 	}
-	claim, ok := facts.Assertion(localSource.ExprRef)
+	claim, ok := facts.ValueOverlay(localSource.ExprRef)
 	if !ok {
 		t.Fatalf("missing assertion sidecar for outer ref %d", localSource.ExprRef)
 	}
-	if !assertion.Equal(claim.Value(), assertion.Type()) {
-		t.Fatalf("outer assertion = %s, want type", claim.Value())
+	if got := overlayAssertion(t, claim); !assertion.Equal(got, assertion.Type()) {
+		t.Fatalf("outer assertion = %s, want type", got)
 	}
 	innerSource := claim.Source()
 	if innerSource.Kind != transfer.ValueSourceCall || innerSource.ExprRef != innerRef || innerSource.CallPoint != localPoints[0] || !innerSource.HasCallPoint {
@@ -670,8 +812,8 @@ func TestLowerAssertionWrappedCallPreservesProducerAndClaim(t *testing.T) {
 		t.Fatal("missing wrapped condition branch fact")
 	}
 	branchLowerer := lowerer{exprs: make(map[any]transfer.ExprRef)}
-	branchInput := transfer.FactsInput{Assertions: make(map[transfer.ExprRef]transfer.Assertion)}
-	branchLowerer.addAssertionsForSource(&branchInput, branch.Source)
+	branchInput := transfer.FactsInput{ValueOverlays: make(map[transfer.ExprRef]transfer.ValueOverlay)}
+	branchLowerer.addAssertionOverlaysForSource(&branchInput, branch.Source)
 	branchFacts := transfer.NewFacts(branchInput)
 	branchSource := branchLowerer.valueSource(branch.Source)
 	if branchSource.Kind != transfer.ValueSourceCall || branchSource.CallPoint != ifPoints[0] || !branchSource.HasCallPoint {
@@ -711,17 +853,22 @@ func mustLocalSource(t *testing.T, facts transfer.Facts, point cfg.Point) transf
 
 func assertLoweredAssertion(t *testing.T, facts transfer.Facts, source transfer.ValueSource, want assertion.Value, wantInnerKind transfer.ValueSourceKind) {
 	t.Helper()
-	claim, ok := facts.Assertion(source.ExprRef)
+	claim, ok := facts.ValueOverlay(source.ExprRef)
 	if !ok {
 		t.Fatalf("missing assertion for source ref %d", source.ExprRef)
 	}
-	if !assertion.Equal(claim.Value(), want) {
-		t.Fatalf("assertion value = %s, want %s", claim.Value(), want)
+	if got := overlayAssertion(t, claim); !assertion.Equal(got, want) {
+		t.Fatalf("assertion value = %s, want %s", got, want)
 	}
 	inner := claim.Source()
 	if inner.ExprRef == 0 || inner.ExprRef == source.ExprRef || inner.Kind != wantInnerKind {
 		t.Fatalf("assertion inner source = %#v, outer %#v", inner, source)
 	}
+}
+
+func overlayAssertion(t *testing.T, overlay transfer.ValueOverlay) assertion.Value {
+	t.Helper()
+	return product.Get(product.DefaultRegistry(), overlay.Overlay(), assertion.Key)
 }
 
 func assertLoweredBranchValuePresence(

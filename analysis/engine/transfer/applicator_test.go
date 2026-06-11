@@ -7,7 +7,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	"github.com/wippyai/go-lua/analysis/domain/state/key"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
-	"github.com/wippyai/go-lua/analysis/domain/value/axis/assertion"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/runtimekind"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
@@ -49,22 +48,25 @@ func TestFactsNodeTransferAppliesLocalAssignmentThroughResolver(t *testing.T) {
 	assertResolverCall(t, resolver, assign, source)
 }
 
-func TestFactsNodeTransferAppliesAssertionSidecarsToAssignments(t *testing.T) {
+func TestFactsNodeTransferAppliesValueOverlaysToAssignments(t *testing.T) {
 	tests := []struct {
 		name         string
 		innerAbsent  bool
-		claim        assertion.Value
+		overlay      product.Value
+		wantKind     runtimekind.Value
 		wantPresence presence.Value
 	}{
 		{
-			name:         "type assertion attaches claim",
-			claim:        assertion.Type(),
+			name:         "runtime kind overlay attaches",
+			overlay:      runtimeKindConstraint(runtimekind.Singleton(runtimekind.Table)),
+			wantKind:     runtimekind.Singleton(runtimekind.Table),
 			wantPresence: presence.Present(),
 		},
 		{
-			name:         "non-nil assertion does not refine absent presence",
+			name:         "runtime kind overlay keeps absent presence",
 			innerAbsent:  true,
-			claim:        assertion.NonNil(),
+			overlay:      runtimeKindConstraint(runtimekind.Singleton(runtimekind.Function)),
+			wantKind:     runtimekind.Singleton(runtimekind.Function),
 			wantPresence: presence.Absent(),
 		},
 	}
@@ -94,8 +96,8 @@ func TestFactsNodeTransferAppliesAssertionSidecarsToAssignments(t *testing.T) {
 					LocalAssignments: map[cfg.Point]LocalAssignment{
 						point: NewLocalAssignment(target, path.NewPath(target, "value"), outerSource),
 					},
-					Assertions: map[ExprRef]Assertion{
-						outer: NewAssertion(innerSource, tc.claim),
+					ValueOverlays: map[ExprRef]ValueOverlay{
+						outer: NewValueOverlay(innerSource, tc.overlay),
 					},
 				}),
 				Sources: sources,
@@ -108,8 +110,8 @@ func TestFactsNodeTransferAppliesAssertionSidecarsToAssignments(t *testing.T) {
 			if gotPresence := product.PresenceOf(assigned); !presence.Equal(gotPresence, tc.wantPresence) {
 				t.Fatalf("assigned presence = %s, want %s", gotPresence, tc.wantPresence)
 			}
-			if gotClaim := product.Get(reg, assigned, assertion.Key); !assertion.Equal(gotClaim, tc.claim) {
-				t.Fatalf("assigned assertion = %s, want %s", gotClaim, tc.claim)
+			if gotKind := product.Get(reg, assigned, runtimekind.Key); !runtimekind.Equal(gotKind, tc.wantKind) {
+				t.Fatalf("assigned runtime kind = %s, want %s", gotKind, tc.wantKind)
 			}
 		})
 	}

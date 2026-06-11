@@ -5,7 +5,6 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
-	"github.com/wippyai/go-lua/analysis/domain/value/axis/assertion"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/runtimekind"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
@@ -121,12 +120,13 @@ func TestDTOConstructorsAndAccessorsCopySlices(t *testing.T) {
 		t.Fatalf("object literal exposed mutable entries: %#v", got)
 	}
 
-	claim := NewAssertion(source, assertion.Type())
-	if got := claim.Source(); got != source {
-		t.Fatalf("assertion source = %#v, want %#v", got, source)
+	overlayValue := runtimeKindConstraint(runtimekind.Singleton(runtimekind.Table))
+	overlay := NewValueOverlay(source, overlayValue)
+	if got := overlay.Source(); got != source {
+		t.Fatalf("value overlay source = %#v, want %#v", got, source)
 	}
-	if got := claim.Value(); !assertion.Equal(got, assertion.Type()) {
-		t.Fatalf("assertion value = %s, want type", got)
+	if got := overlay.Overlay(); !product.Equal(product.DefaultRegistry(), got, overlayValue) {
+		t.Fatalf("value overlay = %s, want %s", formatValue(product.DefaultRegistry(), got), formatValue(product.DefaultRegistry(), overlayValue))
 	}
 
 	returnSources := []ValueSource{source, callSource}
@@ -265,8 +265,8 @@ func TestFactsCarrierCopiesAndReturnsFalseForMissingFacts(t *testing.T) {
 				NewObjectEntry(path.Path{Segments: []segment.Segment{{Kind: segment.SegmentField, Name: "field"}}}, source),
 			}),
 		},
-		Assertions: map[ExprRef]Assertion{
-			ExprRef(4): NewAssertion(source, assertion.Type()),
+		ValueOverlays: map[ExprRef]ValueOverlay{
+			ExprRef(4): NewValueOverlay(source, runtimeKindConstraint(runtimekind.Singleton(runtimekind.Table))),
 		},
 	}
 
@@ -284,7 +284,7 @@ func TestFactsCarrierCopiesAndReturnsFalseForMissingFacts(t *testing.T) {
 	input.ObjectLiterals[ExprRef(1)] = NewObjectLiteral([]ObjectEntry{
 		NewObjectEntry(path.Path{Segments: []segment.Segment{{Kind: segment.SegmentField, Name: "changed"}}}, callSource),
 	})
-	input.Assertions[ExprRef(4)] = NewAssertion(callSource, assertion.Any())
+	input.ValueOverlays[ExprRef(4)] = NewValueOverlay(callSource, runtimeKindConstraint(runtimekind.Singleton(runtimekind.Function)))
 
 	if _, ok := facts.LocalAssignment(missing); ok {
 		t.Fatal("missing local assignment returned ok")
@@ -307,8 +307,8 @@ func TestFactsCarrierCopiesAndReturnsFalseForMissingFacts(t *testing.T) {
 	if _, ok := facts.ObjectLiteral(ExprRef(99)); ok {
 		t.Fatal("missing object literal returned ok")
 	}
-	if _, ok := facts.Assertion(ExprRef(99)); ok {
-		t.Fatal("missing assertion returned ok")
+	if _, ok := facts.ValueOverlay(ExprRef(99)); ok {
+		t.Fatal("missing value overlay returned ok")
 	}
 
 	local, ok := facts.LocalAssignment(point)
@@ -410,12 +410,13 @@ func TestFactsCarrierCopiesAndReturnsFalseForMissingFacts(t *testing.T) {
 		t.Fatalf("facts object literal exposed mutable suffix: %#v", got)
 	}
 
-	assertionFact, ok := facts.Assertion(ExprRef(4))
+	overlayFact, ok := facts.ValueOverlay(ExprRef(4))
 	if !ok {
-		t.Fatal("assertion missing")
+		t.Fatal("value overlay missing")
 	}
-	if assertionFact.Source() != source || !assertion.Equal(assertionFact.Value(), assertion.Type()) {
-		t.Fatalf("assertion fact = %#v, want original type assertion", assertionFact)
+	wantOverlay := runtimeKindConstraint(runtimekind.Singleton(runtimekind.Table))
+	if overlayFact.Source() != source || !product.Equal(product.DefaultRegistry(), overlayFact.Overlay(), wantOverlay) {
+		t.Fatalf("value overlay fact = %#v, want original overlay", overlayFact)
 	}
 }
 

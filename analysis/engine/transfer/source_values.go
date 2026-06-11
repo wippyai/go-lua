@@ -2,7 +2,6 @@ package transfer
 
 import (
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
-	"github.com/wippyai/go-lua/analysis/domain/value/axis/assertion"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
@@ -105,24 +104,24 @@ func copyExpressionValues(in map[ExprRef]product.Value) map[ExprRef]product.Valu
 	return out
 }
 
-type assertionSourceValues struct {
-	registry   *axis.Registry
-	base       SourceValues
-	assertions map[ExprRef]Assertion
+type valueOverlaySourceValues struct {
+	registry *axis.Registry
+	base     SourceValues
+	overlays map[ExprRef]ValueOverlay
 }
 
-func withAssertionSourceValues(reg *axis.Registry, base SourceValues, assertions map[ExprRef]Assertion) SourceValues {
-	if base == nil || len(assertions) == 0 {
+func withValueOverlaySourceValues(reg *axis.Registry, base SourceValues, overlays map[ExprRef]ValueOverlay) SourceValues {
+	if base == nil || len(overlays) == 0 {
 		return base
 	}
-	return assertionSourceValues{
-		registry:   reg,
-		base:       base,
-		assertions: assertions,
+	return valueOverlaySourceValues{
+		registry: productRegistry(reg),
+		base:     base,
+		overlays: overlays,
 	}
 }
 
-func (r assertionSourceValues) ValueOfSource(
+func (r valueOverlaySourceValues) ValueOfSource(
 	point cfg.Point,
 	source ValueSource,
 	in state.State,
@@ -131,7 +130,7 @@ func (r assertionSourceValues) ValueOfSource(
 	return r.valueOfSource(point, source, in, read, nil)
 }
 
-func (r assertionSourceValues) valueOfSource(
+func (r valueOverlaySourceValues) valueOfSource(
 	point cfg.Point,
 	source ValueSource,
 	in state.State,
@@ -141,7 +140,7 @@ func (r assertionSourceValues) valueOfSource(
 	if !source.HasExpr {
 		return r.base.ValueOfSource(point, source, in, read)
 	}
-	if claim, ok := r.assertions[source.ExprRef]; ok {
+	if overlay, ok := r.overlays[source.ExprRef]; ok {
 		if active[source.ExprRef] {
 			return product.Value{}, false
 		}
@@ -149,23 +148,14 @@ func (r assertionSourceValues) valueOfSource(
 			active = make(map[ExprRef]bool, 1)
 		}
 		active[source.ExprRef] = true
-		value, ok := r.valueOfSource(point, claim.Source(), in, read, active)
+		value, ok := r.valueOfSource(point, overlay.Source(), in, read, active)
 		delete(active, source.ExprRef)
 		if !ok {
 			return product.Value{}, false
 		}
-		return attachAssertion(r.registry, value, claim.Value()), true
+		return product.Meet(r.registry, value, overlay.Overlay()), true
 	}
 	return r.base.ValueOfSource(point, source, in, read)
-}
-
-func attachAssertion(reg *axis.Registry, value product.Value, claim assertion.Value) product.Value {
-	reg = productRegistry(reg)
-	if product.Equal(reg, value, product.Bottom(reg)) || assertion.Equal(claim, assertion.Top()) {
-		return value
-	}
-	current := product.Get(reg, value, assertion.Key)
-	return product.Set(reg, value, assertion.Key, assertion.Combine(current, claim))
 }
 
 func productRegistry(reg *axis.Registry) *axis.Registry {

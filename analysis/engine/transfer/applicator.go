@@ -40,7 +40,7 @@ func NewFactsNodeTransfer(config FactsNodeTransferConfig) NodeTransfer {
 		if sources == nil {
 			return out
 		}
-		sources = withAssertionSourceValues(ctx.Registry, sources, facts.assertions)
+		sources = withValueOverlaySourceValues(ctx.Registry, sources, facts.valueOverlays)
 		if fact, ok := facts.LocalAssignment(ctx.Point); ok {
 			var targetPath pathdom.Path
 			var applied bool

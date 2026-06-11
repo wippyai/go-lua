@@ -3,7 +3,6 @@ package transfer
 import (
 	"github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
-	"github.com/wippyai/go-lua/analysis/domain/value/axis/assertion"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
@@ -176,28 +175,28 @@ func (l ObjectLiteral) copy() ObjectLiteral {
 	return l
 }
 
-// Assertion describes one user-written assertion expression. The source is the
-// asserted inner value; value is an assertion-axis indicator, not proof.
-type Assertion struct {
-	source ValueSource
-	value  assertion.Value
+// ValueOverlay describes a source expression whose value is resolved from an
+// inner source and then conjunctively overlaid with a product value.
+type ValueOverlay struct {
+	source  ValueSource
+	overlay product.Value
 }
 
-// NewAssertion creates an assertion sidecar for an expression.
-func NewAssertion(source ValueSource, value assertion.Value) Assertion {
-	return Assertion{
-		source: source,
-		value:  value,
+// NewValueOverlay creates a source-value overlay sidecar for an expression.
+func NewValueOverlay(source ValueSource, overlay product.Value) ValueOverlay {
+	return ValueOverlay{
+		source:  source,
+		overlay: overlay,
 	}
 }
 
-// Source returns the asserted inner value source.
-func (a Assertion) Source() ValueSource { return a.source }
+// Source returns the inner value source.
+func (o ValueOverlay) Source() ValueSource { return o.source }
 
-// Value returns the assertion-axis indicator attached by this sidecar.
-func (a Assertion) Value() assertion.Value { return a.value }
+// Overlay returns the product value met onto the resolved inner source value.
+func (o ValueOverlay) Overlay() product.Value { return o.overlay }
 
-func (a Assertion) copy() Assertion { return a }
+func (o ValueOverlay) copy() ValueOverlay { return o }
 
 // ValueRefinement describes one conjunctive product-value constraint. The
 // explicit has bit distinguishes "no edge constraint" from a deliberate
@@ -471,7 +470,7 @@ type FactsInput struct {
 	Returns             map[cfg.Point]Return
 	Calls               map[cfg.Point]CallProducer
 	ObjectLiterals      map[ExprRef]ObjectLiteral
-	Assertions          map[ExprRef]Assertion
+	ValueOverlays       map[ExprRef]ValueOverlay
 }
 
 // Facts is an immutable point-keyed transfer facts snapshot.
@@ -483,7 +482,7 @@ type Facts struct {
 	returns             map[cfg.Point]Return
 	calls               map[cfg.Point]CallProducer
 	objectLiterals      map[ExprRef]ObjectLiteral
-	assertions          map[ExprRef]Assertion
+	valueOverlays       map[ExprRef]ValueOverlay
 }
 
 // NewFacts copies the supplied point-keyed facts into an immutable snapshot.
@@ -496,7 +495,7 @@ func NewFacts(input FactsInput) Facts {
 		returns:             copyReturnMap(input.Returns),
 		calls:               copyCallProducerMap(input.Calls),
 		objectLiterals:      copyObjectLiteralMap(input.ObjectLiterals),
-		assertions:          copyAssertionMap(input.Assertions),
+		valueOverlays:       copyValueOverlayMap(input.ValueOverlays),
 	}
 }
 
@@ -563,11 +562,11 @@ func (f Facts) ObjectLiteral(expr ExprRef) (ObjectLiteral, bool) {
 	return fact.copy(), true
 }
 
-// Assertion returns the assertion sidecar for expr, if present.
-func (f Facts) Assertion(expr ExprRef) (Assertion, bool) {
-	fact, ok := f.assertions[expr]
+// ValueOverlay returns the source-value overlay sidecar for expr, if present.
+func (f Facts) ValueOverlay(expr ExprRef) (ValueOverlay, bool) {
+	fact, ok := f.valueOverlays[expr]
 	if !ok {
-		return Assertion{}, false
+		return ValueOverlay{}, false
 	}
 	return fact.copy(), true
 }
@@ -705,11 +704,11 @@ func copyObjectLiteralMap(in map[ExprRef]ObjectLiteral) map[ExprRef]ObjectLitera
 	return out
 }
 
-func copyAssertionMap(in map[ExprRef]Assertion) map[ExprRef]Assertion {
+func copyValueOverlayMap(in map[ExprRef]ValueOverlay) map[ExprRef]ValueOverlay {
 	if len(in) == 0 {
 		return nil
 	}
-	out := make(map[ExprRef]Assertion, len(in))
+	out := make(map[ExprRef]ValueOverlay, len(in))
 	for expr, fact := range in {
 		out[expr] = fact.copy()
 	}
