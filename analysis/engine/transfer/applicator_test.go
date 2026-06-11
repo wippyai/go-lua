@@ -8,6 +8,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/state/key"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/runtimekind"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/engine/visibility"
@@ -932,8 +933,8 @@ func TestFactsEdgeTransferAppliesNilRefinementsOnRootValue(t *testing.T) {
 		EntryState: initial,
 		EdgeTransfer: NewFactsEdgeTransfer(FactsEdgeTransferConfig{
 			Facts: NewFacts(FactsInput{
-				BranchRefinements: map[cfg.Point]BranchPresenceRefinement{
-					branch: NewBranchPresenceRefinement(path.NewPath(target, "x"), presence.Absent(), true, presence.Present(), true),
+				BranchRefinements: map[cfg.Point]BranchRefinement{
+					branch: branchWithPresence(path.NewPath(target, "x"), presence.Absent(), true, presence.Present(), true),
 				},
 			}),
 		}),
@@ -946,19 +947,19 @@ func TestFactsEdgeTransferAppliesNilRefinementsOnRootValue(t *testing.T) {
 func TestFactsEdgeTransferOneSidedTruthyFalsyRefinements(t *testing.T) {
 	tests := []struct {
 		name      string
-		fact      BranchPresenceRefinement
+		fact      BranchRefinement
 		wantTrue  product.Value
 		wantFalse product.Value
 	}{
 		{
 			name:      "truthy refines true edge only",
-			fact:      NewBranchPresenceRefinement(path.NewPath(symbol.ID(302), "x"), presence.Present(), true, presence.Bottom(), false),
+			fact:      branchWithPresence(path.NewPath(symbol.ID(302), "x"), presence.Present(), true, presence.Bottom(), false),
 			wantTrue:  presentValue(product.DefaultRegistry()),
 			wantFalse: product.Top(),
 		},
 		{
 			name:      "falsy refines false edge only",
-			fact:      NewBranchPresenceRefinement(path.NewPath(symbol.ID(303), "x"), presence.Bottom(), false, presence.Present(), true),
+			fact:      branchWithPresence(path.NewPath(symbol.ID(303), "x"), presence.Bottom(), false, presence.Present(), true),
 			wantTrue:  product.Top(),
 			wantFalse: presentValue(product.DefaultRegistry()),
 		},
@@ -985,7 +986,7 @@ func TestFactsEdgeTransferOneSidedTruthyFalsyRefinements(t *testing.T) {
 				EntryState: initial,
 				EdgeTransfer: NewFactsEdgeTransfer(FactsEdgeTransferConfig{
 					Facts: NewFacts(FactsInput{
-						BranchRefinements: map[cfg.Point]BranchPresenceRefinement{
+						BranchRefinements: map[cfg.Point]BranchRefinement{
 							branch: tc.fact,
 						},
 					}),
@@ -1023,8 +1024,8 @@ func TestFactsEdgeTransferRefinesStaticMemberPathThroughVisibility(t *testing.T)
 		EntryState: initial,
 		EdgeTransfer: NewFactsEdgeTransfer(FactsEdgeTransferConfig{
 			Facts: NewFacts(FactsInput{
-				BranchRefinements: map[cfg.Point]BranchPresenceRefinement{
-					branch: NewBranchPresenceRefinement(targetPath, presence.Present(), true, presence.Absent(), true),
+				BranchRefinements: map[cfg.Point]BranchRefinement{
+					branch: branchWithPresence(targetPath, presence.Present(), true, presence.Absent(), true),
 				},
 			}),
 			Visibility: visibility.NewResolver(visibilityBuilder.Build()),
@@ -1034,6 +1035,106 @@ func TestFactsEdgeTransferRefinesStaticMemberPathThroughVisibility(t *testing.T)
 	assertPathValue(t, reg, got[thenPoint], pathKey, presentValue(reg))
 	assertPathValue(t, reg, got[elsePoint], pathKey, absentValue(reg))
 	assertValue(t, reg, got[thenPoint], key.SymbolValue(target), product.Bottom(reg))
+}
+
+func TestFactsEdgeTransferRefinesRuntimeKindOnRootValue(t *testing.T) {
+	reg := product.DefaultRegistry()
+	graph := cfg.New()
+	branch := graph.AddNode(cfg.NodeBranch)
+	thenPoint := graph.AddNode(cfg.NodeNoop)
+	elsePoint := graph.AddNode(cfg.NodeNoop)
+	graph.AddEdge(graph.Entry(), branch, false)
+	graph.AddEdge(branch, thenPoint, true)
+	graph.AddEdge(branch, elsePoint, false)
+	graph.AddEdge(thenPoint, graph.Exit(), false)
+	graph.AddEdge(elsePoint, graph.Exit(), false)
+
+	target := symbol.ID(308)
+	initial := state.State{}.WriteValue(reg, key.SymbolValue(target), product.Top())
+	got := Run(Config{
+		Graph:      graph,
+		Registry:   reg,
+		EntryState: initial,
+		EdgeTransfer: NewFactsEdgeTransfer(FactsEdgeTransferConfig{
+			Facts: NewFacts(FactsInput{
+				BranchRefinements: map[cfg.Point]BranchRefinement{
+					branch: branchWithRuntimeKind(path.NewPath(target, "x"), runtimekind.Singleton(runtimekind.Table), true, runtimekind.Value{}, false),
+				},
+			}),
+		}),
+	})
+
+	assertRuntimeKind(t, reg, got[thenPoint].ReadValue(reg, key.SymbolValue(target)), runtimekind.Singleton(runtimekind.Table))
+	assertRuntimeKind(t, reg, got[elsePoint].ReadValue(reg, key.SymbolValue(target)), runtimekind.Top())
+}
+
+func TestFactsEdgeTransferRefinesRuntimeKindOnStaticMemberPath(t *testing.T) {
+	reg := product.DefaultRegistry()
+	graph := cfg.New()
+	branch := graph.AddNode(cfg.NodeBranch)
+	thenPoint := graph.AddNode(cfg.NodeNoop)
+	elsePoint := graph.AddNode(cfg.NodeNoop)
+	graph.AddEdge(graph.Entry(), branch, false)
+	graph.AddEdge(branch, thenPoint, true)
+	graph.AddEdge(branch, elsePoint, false)
+	graph.AddEdge(thenPoint, graph.Exit(), false)
+	graph.AddEdge(elsePoint, graph.Exit(), false)
+
+	target := symbol.ID(309)
+	targetPath := path.NewPath(target, "t").Field("field")
+	pathKey := path.PathKey("sym309@1.field")
+	initial := state.State{}.WritePathKey(reg, pathKey, product.Top())
+	visibilityBuilder := visibility.NewBuilder()
+	visibilityBuilder.Define(branch, target, "t")
+
+	got := Run(Config{
+		Graph:      graph,
+		Registry:   reg,
+		EntryState: initial,
+		EdgeTransfer: NewFactsEdgeTransfer(FactsEdgeTransferConfig{
+			Facts: NewFacts(FactsInput{
+				BranchRefinements: map[cfg.Point]BranchRefinement{
+					branch: branchWithRuntimeKind(targetPath, runtimekind.Singleton(runtimekind.Function), true, runtimekind.Value{}, false),
+				},
+			}),
+			Visibility: visibility.NewResolver(visibilityBuilder.Build()),
+		}),
+	})
+
+	assertRuntimeKind(t, reg, got[thenPoint].ReadPathKey(reg, pathKey), runtimekind.Singleton(runtimekind.Function))
+	assertRuntimeKind(t, reg, got[elsePoint].ReadPathKey(reg, pathKey), runtimekind.Top())
+}
+
+func TestFactsEdgeTransferRuntimeKindContradictionGoesBottom(t *testing.T) {
+	reg := product.DefaultRegistry()
+	graph := cfg.New()
+	branch := graph.AddNode(cfg.NodeBranch)
+	thenPoint := graph.AddNode(cfg.NodeNoop)
+	elsePoint := graph.AddNode(cfg.NodeNoop)
+	graph.AddEdge(graph.Entry(), branch, false)
+	graph.AddEdge(branch, thenPoint, true)
+	graph.AddEdge(branch, elsePoint, false)
+	graph.AddEdge(thenPoint, graph.Exit(), false)
+	graph.AddEdge(elsePoint, graph.Exit(), false)
+
+	target := symbol.ID(310)
+	numberValue := product.Set(reg, product.Top(), runtimekind.Key, runtimekind.Singleton(runtimekind.Number))
+	initial := state.State{}.WriteValue(reg, key.SymbolValue(target), numberValue)
+	got := Run(Config{
+		Graph:      graph,
+		Registry:   reg,
+		EntryState: initial,
+		EdgeTransfer: NewFactsEdgeTransfer(FactsEdgeTransferConfig{
+			Facts: NewFacts(FactsInput{
+				BranchRefinements: map[cfg.Point]BranchRefinement{
+					branch: branchWithRuntimeKind(path.NewPath(target, "x"), runtimekind.Singleton(runtimekind.Table), true, runtimekind.Value{}, false),
+				},
+			}),
+		}),
+	})
+
+	assertValue(t, reg, got[thenPoint], key.SymbolValue(target), product.Bottom(reg))
+	assertRuntimeKind(t, reg, got[elsePoint].ReadValue(reg, key.SymbolValue(target)), runtimekind.Singleton(runtimekind.Number))
 }
 
 func TestFactsEdgeTransferNoopsWithoutBranchConditionOrVisibility(t *testing.T) {
@@ -1052,8 +1153,8 @@ func TestFactsEdgeTransferNoopsWithoutBranchConditionOrVisibility(t *testing.T) 
 			EntryState: initial,
 			EdgeTransfer: NewFactsEdgeTransfer(FactsEdgeTransferConfig{
 				Facts: NewFacts(FactsInput{
-					BranchRefinements: map[cfg.Point]BranchPresenceRefinement{
-						graph.Entry(): NewBranchPresenceRefinement(path.NewPath(target, "x"), presence.Absent(), true, presence.Present(), true),
+					BranchRefinements: map[cfg.Point]BranchRefinement{
+						graph.Entry(): branchWithPresence(path.NewPath(target, "x"), presence.Absent(), true, presence.Present(), true),
 					},
 				}),
 			}),
@@ -1084,8 +1185,8 @@ func TestFactsEdgeTransferNoopsWithoutBranchConditionOrVisibility(t *testing.T) 
 			EntryState: initial,
 			EdgeTransfer: NewFactsEdgeTransfer(FactsEdgeTransferConfig{
 				Facts: NewFacts(FactsInput{
-					BranchRefinements: map[cfg.Point]BranchPresenceRefinement{
-						branch: NewBranchPresenceRefinement(targetPath, presence.Present(), true, presence.Absent(), true),
+					BranchRefinements: map[cfg.Point]BranchRefinement{
+						branch: branchWithPresence(targetPath, presence.Present(), true, presence.Absent(), true),
 					},
 				}),
 			}),
@@ -1118,8 +1219,8 @@ func TestFactsEdgeTransferJoinRestoresMaybePresence(t *testing.T) {
 		EntryState: initial,
 		EdgeTransfer: NewFactsEdgeTransfer(FactsEdgeTransferConfig{
 			Facts: NewFacts(FactsInput{
-				BranchRefinements: map[cfg.Point]BranchPresenceRefinement{
-					branch: NewBranchPresenceRefinement(path.NewPath(target, "x"), presence.Absent(), true, presence.Present(), true),
+				BranchRefinements: map[cfg.Point]BranchRefinement{
+					branch: branchWithPresence(path.NewPath(target, "x"), presence.Absent(), true, presence.Present(), true),
 				},
 			}),
 		}),
@@ -1128,6 +1229,46 @@ func TestFactsEdgeTransferJoinRestoresMaybePresence(t *testing.T) {
 	assertValue(t, reg, got[thenPoint], key.SymbolValue(target), absentValue(reg))
 	assertValue(t, reg, got[elsePoint], key.SymbolValue(target), presentValue(reg))
 	assertValue(t, reg, got[join], key.SymbolValue(target), product.Top())
+}
+
+func TestFactsEdgeTransferJoinRestoresRuntimeKindUnion(t *testing.T) {
+	reg := product.DefaultRegistry()
+	graph := cfg.New()
+	branch := graph.AddNode(cfg.NodeBranch)
+	thenPoint := graph.AddNode(cfg.NodeNoop)
+	elsePoint := graph.AddNode(cfg.NodeNoop)
+	join := graph.AddNode(cfg.NodeJoin)
+	graph.AddEdge(graph.Entry(), branch, false)
+	graph.AddEdge(branch, thenPoint, true)
+	graph.AddEdge(branch, elsePoint, false)
+	graph.AddEdge(thenPoint, join, false)
+	graph.AddEdge(elsePoint, join, false)
+	graph.AddEdge(join, graph.Exit(), false)
+
+	target := symbol.ID(311)
+	initial := state.State{}.WriteValue(reg, key.SymbolValue(target), product.Top())
+	got := Run(Config{
+		Graph:      graph,
+		Registry:   reg,
+		EntryState: initial,
+		EdgeTransfer: NewFactsEdgeTransfer(FactsEdgeTransferConfig{
+			Facts: NewFacts(FactsInput{
+				BranchRefinements: map[cfg.Point]BranchRefinement{
+					branch: branchWithRuntimeKind(
+						path.NewPath(target, "x"),
+						runtimekind.Singleton(runtimekind.Table), true,
+						runtimekind.Singleton(runtimekind.Function), true,
+					),
+				},
+			}),
+		}),
+	})
+
+	tableKind := runtimekind.Singleton(runtimekind.Table)
+	functionKind := runtimekind.Singleton(runtimekind.Function)
+	assertRuntimeKind(t, reg, got[thenPoint].ReadValue(reg, key.SymbolValue(target)), tableKind)
+	assertRuntimeKind(t, reg, got[elsePoint].ReadValue(reg, key.SymbolValue(target)), functionKind)
+	assertRuntimeKind(t, reg, got[join].ReadValue(reg, key.SymbolValue(target)), runtimekind.Join(tableKind, functionKind))
 }
 
 type sourceValueCall struct {
@@ -1188,6 +1329,49 @@ func assertPathValue(t *testing.T, reg *axis.Registry, gotState state.State, pat
 	if got := gotState.ReadPathKey(reg, pathKey); !product.Equal(reg, got, want) {
 		t.Fatalf("path %s = %s, want %s", pathKey, formatValue(reg, got), formatValue(reg, want))
 	}
+}
+
+func assertRuntimeKind(t *testing.T, reg *axis.Registry, got product.Value, want runtimekind.Value) {
+	t.Helper()
+	if kind := product.Get(reg, got, runtimekind.Key); !runtimekind.Equal(kind, want) {
+		t.Fatalf("runtime kind = %s in %s, want %s", kind, formatValue(reg, got), want)
+	}
+}
+
+func branchWithPresence(
+	targetPath path.Path,
+	truePresence presence.Value,
+	hasTrue bool,
+	falsePresence presence.Value,
+	hasFalse bool,
+) BranchRefinement {
+	var trueValue ValueRefinement
+	if hasTrue {
+		trueValue = trueValue.WithPresence(truePresence)
+	}
+	var falseValue ValueRefinement
+	if hasFalse {
+		falseValue = falseValue.WithPresence(falsePresence)
+	}
+	return NewBranchRefinement(targetPath, trueValue, hasTrue, falseValue, hasFalse)
+}
+
+func branchWithRuntimeKind(
+	targetPath path.Path,
+	trueRuntimeKind runtimekind.Value,
+	hasTrue bool,
+	falseRuntimeKind runtimekind.Value,
+	hasFalse bool,
+) BranchRefinement {
+	var trueValue ValueRefinement
+	if hasTrue {
+		trueValue = trueValue.WithRuntimeKind(trueRuntimeKind)
+	}
+	var falseValue ValueRefinement
+	if hasFalse {
+		falseValue = falseValue.WithRuntimeKind(falseRuntimeKind)
+	}
+	return NewBranchRefinement(targetPath, trueValue, hasTrue, falseValue, hasFalse)
 }
 
 func fieldSuffix(name string) path.Path {

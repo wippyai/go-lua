@@ -25,7 +25,7 @@ func Lower(result *semantics.Result, graph cfg.Graph) transfer.Facts {
 		LocalAssignments:    make(map[cfg.Point]transfer.LocalAssignment),
 		OrdinaryAssignments: make(map[cfg.Point]transfer.OrdinaryAssignment),
 		PathAssignments:     make(map[cfg.Point]transfer.PathAssignment),
-		BranchRefinements:   make(map[cfg.Point]transfer.BranchPresenceRefinement),
+		BranchRefinements:   make(map[cfg.Point]transfer.BranchRefinement),
 		Returns:             make(map[cfg.Point]transfer.Return),
 		Calls:               make(map[cfg.Point]transfer.CallProducer),
 		ObjectLiterals:      make(map[transfer.ExprRef]transfer.ObjectLiteral),
@@ -55,7 +55,7 @@ func Lower(result *semantics.Result, graph cfg.Graph) transfer.Facts {
 			}
 		}
 		if fact, ok := result.BranchCondition(point); ok {
-			if lowered, ok := l.branchPresenceRefinement(fact); ok {
+			if lowered, ok := l.branchRefinement(fact); ok {
 				input.BranchRefinements[point] = lowered
 			}
 		}
@@ -152,22 +152,38 @@ func (l *lowerer) objectLiteral(fact semantics.ObjectLiteralFact) transfer.Objec
 	return transfer.NewObjectLiteral(entries)
 }
 
-func (l *lowerer) branchPresenceRefinement(fact semantics.BranchConditionFact) (transfer.BranchPresenceRefinement, bool) {
+func (l *lowerer) branchRefinement(fact semantics.BranchConditionFact) (transfer.BranchRefinement, bool) {
 	target := fact.Check.Path
 	if target.IsEmpty() {
-		return transfer.BranchPresenceRefinement{}, false
+		return transfer.BranchRefinement{}, false
 	}
 	switch fact.Check.Kind {
 	case semantics.BranchConditionCheckNil:
-		return transfer.NewBranchPresenceRefinement(target, presence.Absent(), true, presence.Present(), true), true
+		return transfer.NewBranchRefinement(
+			target,
+			transfer.NewValueRefinement().WithPresence(presence.Absent()), true,
+			transfer.NewValueRefinement().WithPresence(presence.Present()), true,
+		), true
 	case semantics.BranchConditionCheckNotNil:
-		return transfer.NewBranchPresenceRefinement(target, presence.Present(), true, presence.Absent(), true), true
+		return transfer.NewBranchRefinement(
+			target,
+			transfer.NewValueRefinement().WithPresence(presence.Present()), true,
+			transfer.NewValueRefinement().WithPresence(presence.Absent()), true,
+		), true
 	case semantics.BranchConditionCheckTruthy:
-		return transfer.NewBranchPresenceRefinement(target, presence.Present(), true, presence.Bottom(), false), true
+		return transfer.NewBranchRefinement(
+			target,
+			transfer.NewValueRefinement().WithPresence(presence.Present()), true,
+			transfer.ValueRefinement{}, false,
+		), true
 	case semantics.BranchConditionCheckFalsy:
-		return transfer.NewBranchPresenceRefinement(target, presence.Bottom(), false, presence.Present(), true), true
+		return transfer.NewBranchRefinement(
+			target,
+			transfer.ValueRefinement{}, false,
+			transfer.NewValueRefinement().WithPresence(presence.Present()), true,
+		), true
 	default:
-		return transfer.BranchPresenceRefinement{}, false
+		return transfer.BranchRefinement{}, false
 	}
 }
 

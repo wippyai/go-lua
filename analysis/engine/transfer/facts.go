@@ -3,6 +3,7 @@ package transfer
 import (
 	"github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/runtimekind"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
@@ -175,58 +176,102 @@ func (l ObjectLiteral) copy() ObjectLiteral {
 	return l
 }
 
-// BranchPresenceRefinement describes branch-edge presence refinements for one
-// access path. Each edge may be independently absent when the condition gives no
-// presence-only fact for that direction.
-type BranchPresenceRefinement struct {
-	targetPath path.Path
+// ValueRefinement describes one conjunctive product-value refinement. Each axis
+// is optional so branch edges can carry only the evidence the condition proves.
+type ValueRefinement struct {
+	presence    presence.Value
+	hasPresence bool
 
-	truePresence    presence.Value
-	hasTruePresence bool
-
-	falsePresence    presence.Value
-	hasFalsePresence bool
+	runtimeKind    runtimekind.Value
+	hasRuntimeKind bool
 }
 
-// NewBranchPresenceRefinement creates a presence-only branch refinement fact.
-func NewBranchPresenceRefinement(
+// NewValueRefinement creates an empty value refinement.
+func NewValueRefinement() ValueRefinement {
+	return ValueRefinement{}
+}
+
+// WithPresence returns r with a presence refinement.
+func (r ValueRefinement) WithPresence(value presence.Value) ValueRefinement {
+	r.presence = value
+	r.hasPresence = true
+	return r
+}
+
+// WithRuntimeKind returns r with a runtime-kind refinement.
+func (r ValueRefinement) WithRuntimeKind(value runtimekind.Value) ValueRefinement {
+	r.runtimeKind = value
+	r.hasRuntimeKind = true
+	return r
+}
+
+// Presence returns the presence refinement, if present.
+func (r ValueRefinement) Presence() (presence.Value, bool) {
+	return r.presence, r.hasPresence
+}
+
+// RuntimeKind returns the runtime-kind refinement, if present.
+func (r ValueRefinement) RuntimeKind() (runtimekind.Value, bool) {
+	return r.runtimeKind, r.hasRuntimeKind
+}
+
+// IsEmpty reports whether r carries no axis refinements.
+func (r ValueRefinement) IsEmpty() bool {
+	return !r.hasPresence && !r.hasRuntimeKind
+}
+
+// BranchRefinement describes branch-edge value refinements for one access path.
+// Each edge may be independently absent when the condition gives no fact for
+// that direction.
+type BranchRefinement struct {
+	targetPath path.Path
+
+	trueValue    ValueRefinement
+	hasTrueValue bool
+
+	falseValue    ValueRefinement
+	hasFalseValue bool
+}
+
+// NewBranchRefinement creates a branch refinement fact.
+func NewBranchRefinement(
 	targetPath path.Path,
-	truePresence presence.Value,
-	hasTruePresence bool,
-	falsePresence presence.Value,
-	hasFalsePresence bool,
-) BranchPresenceRefinement {
-	return BranchPresenceRefinement{
-		targetPath:       copyPath(targetPath),
-		truePresence:     truePresence,
-		hasTruePresence:  hasTruePresence,
-		falsePresence:    falsePresence,
-		hasFalsePresence: hasFalsePresence,
+	trueValue ValueRefinement,
+	hasTrueValue bool,
+	falseValue ValueRefinement,
+	hasFalseValue bool,
+) BranchRefinement {
+	return BranchRefinement{
+		targetPath:    copyPath(targetPath),
+		trueValue:     trueValue,
+		hasTrueValue:  hasTrueValue,
+		falseValue:    falseValue,
+		hasFalseValue: hasFalseValue,
 	}
 }
 
 // TargetPath returns the refined path.
-func (r BranchPresenceRefinement) TargetPath() path.Path { return copyPath(r.targetPath) }
+func (r BranchRefinement) TargetPath() path.Path { return copyPath(r.targetPath) }
 
-// TruePresence returns the true-edge presence refinement, if present.
-func (r BranchPresenceRefinement) TruePresence() (presence.Value, bool) {
-	return r.truePresence, r.hasTruePresence
+// TrueValue returns the true-edge value refinement, if present.
+func (r BranchRefinement) TrueValue() (ValueRefinement, bool) {
+	return r.trueValue, r.hasTrueValue
 }
 
-// FalsePresence returns the false-edge presence refinement, if present.
-func (r BranchPresenceRefinement) FalsePresence() (presence.Value, bool) {
-	return r.falsePresence, r.hasFalsePresence
+// FalseValue returns the false-edge value refinement, if present.
+func (r BranchRefinement) FalseValue() (ValueRefinement, bool) {
+	return r.falseValue, r.hasFalseValue
 }
 
-// PresenceForEdge returns the refinement selected by a CFG branch edge.
-func (r BranchPresenceRefinement) PresenceForEdge(cond bool) (presence.Value, bool) {
+// ValueForEdge returns the refinement selected by a CFG branch edge.
+func (r BranchRefinement) ValueForEdge(cond bool) (ValueRefinement, bool) {
 	if cond {
-		return r.TruePresence()
+		return r.TrueValue()
 	}
-	return r.FalsePresence()
+	return r.FalseValue()
 }
 
-func (r BranchPresenceRefinement) copy() BranchPresenceRefinement {
+func (r BranchRefinement) copy() BranchRefinement {
 	r.targetPath = copyPath(r.targetPath)
 	return r
 }
@@ -403,7 +448,7 @@ type FactsInput struct {
 	LocalAssignments    map[cfg.Point]LocalAssignment
 	OrdinaryAssignments map[cfg.Point]OrdinaryAssignment
 	PathAssignments     map[cfg.Point]PathAssignment
-	BranchRefinements   map[cfg.Point]BranchPresenceRefinement
+	BranchRefinements   map[cfg.Point]BranchRefinement
 	Returns             map[cfg.Point]Return
 	Calls               map[cfg.Point]CallProducer
 	ObjectLiterals      map[ExprRef]ObjectLiteral
@@ -414,7 +459,7 @@ type Facts struct {
 	localAssignments    map[cfg.Point]LocalAssignment
 	ordinaryAssignments map[cfg.Point]OrdinaryAssignment
 	pathAssignments     map[cfg.Point]PathAssignment
-	branchRefinements   map[cfg.Point]BranchPresenceRefinement
+	branchRefinements   map[cfg.Point]BranchRefinement
 	returns             map[cfg.Point]Return
 	calls               map[cfg.Point]CallProducer
 	objectLiterals      map[ExprRef]ObjectLiteral
@@ -426,7 +471,7 @@ func NewFacts(input FactsInput) Facts {
 		localAssignments:    copyLocalAssignmentMap(input.LocalAssignments),
 		ordinaryAssignments: copyOrdinaryAssignmentMap(input.OrdinaryAssignments),
 		pathAssignments:     copyPathAssignmentMap(input.PathAssignments),
-		branchRefinements:   copyBranchPresenceRefinementMap(input.BranchRefinements),
+		branchRefinements:   copyBranchRefinementMap(input.BranchRefinements),
 		returns:             copyReturnMap(input.Returns),
 		calls:               copyCallProducerMap(input.Calls),
 		objectLiterals:      copyObjectLiteralMap(input.ObjectLiterals),
@@ -460,11 +505,11 @@ func (f Facts) PathAssignment(point cfg.Point) (PathAssignment, bool) {
 	return fact.copy(), true
 }
 
-// BranchRefinement returns the branch-edge presence refinement at point.
-func (f Facts) BranchRefinement(point cfg.Point) (BranchPresenceRefinement, bool) {
+// BranchRefinement returns the branch-edge value refinement at point.
+func (f Facts) BranchRefinement(point cfg.Point) (BranchRefinement, bool) {
 	fact, ok := f.branchRefinements[point]
 	if !ok {
-		return BranchPresenceRefinement{}, false
+		return BranchRefinement{}, false
 	}
 	return fact.copy(), true
 }
@@ -585,11 +630,11 @@ func copyPathAssignmentMap(in map[cfg.Point]PathAssignment) map[cfg.Point]PathAs
 	return out
 }
 
-func copyBranchPresenceRefinementMap(in map[cfg.Point]BranchPresenceRefinement) map[cfg.Point]BranchPresenceRefinement {
+func copyBranchRefinementMap(in map[cfg.Point]BranchRefinement) map[cfg.Point]BranchRefinement {
 	if len(in) == 0 {
 		return nil
 	}
-	out := make(map[cfg.Point]BranchPresenceRefinement, len(in))
+	out := make(map[cfg.Point]BranchRefinement, len(in))
 	for point, fact := range in {
 		out[point] = fact.copy()
 	}

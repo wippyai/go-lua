@@ -6,6 +6,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/runtimekind"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
@@ -69,16 +70,33 @@ func TestDTOConstructorsAndAccessorsCopySlices(t *testing.T) {
 	assertDirectField(t, pathAssignment.TargetPath(), "field")
 
 	branchTarget := path.NewPath(symbol.ID(15), "value").Field("ready")
-	branchRefinement := NewBranchPresenceRefinement(branchTarget, presence.Present(), true, presence.Absent(), true)
+	trueRefinement := NewValueRefinement().
+		WithPresence(presence.Present()).
+		WithRuntimeKind(runtimekind.Singleton(runtimekind.Table))
+	falseRefinement := NewValueRefinement().
+		WithPresence(presence.Absent()).
+		WithRuntimeKind(runtimekind.Singleton(runtimekind.Nil))
+	branchRefinement := NewBranchRefinement(branchTarget, trueRefinement, true, falseRefinement, true)
 	assertPathEqual(t, branchRefinement.TargetPath(), branchTarget)
-	if got, ok := branchRefinement.TruePresence(); !ok || !presence.Equal(got, presence.Present()) {
+	if got, ok := branchRefinement.TrueValue(); !ok || got.IsEmpty() {
+		t.Fatalf("true value refinement = %#v/%v, want non-empty/true", got, ok)
+	}
+	if got, ok := branchRefinement.FalseValue(); !ok || got.IsEmpty() {
+		t.Fatalf("false value refinement = %#v/%v, want non-empty/true", got, ok)
+	}
+	gotTrue, _ := branchRefinement.TrueValue()
+	if got, ok := gotTrue.Presence(); !ok || !presence.Equal(got, presence.Present()) {
 		t.Fatalf("true presence = %s/%v, want present/true", got, ok)
 	}
-	if got, ok := branchRefinement.FalsePresence(); !ok || !presence.Equal(got, presence.Absent()) {
+	if got, ok := gotTrue.RuntimeKind(); !ok || !runtimekind.Equal(got, runtimekind.Singleton(runtimekind.Table)) {
+		t.Fatalf("true runtime kind = %s/%v, want table/true", got, ok)
+	}
+	gotFalse, _ := branchRefinement.FalseValue()
+	if got, ok := gotFalse.Presence(); !ok || !presence.Equal(got, presence.Absent()) {
 		t.Fatalf("false presence = %s/%v, want absent/true", got, ok)
 	}
-	if got, ok := branchRefinement.PresenceForEdge(true); !ok || !presence.Equal(got, presence.Present()) {
-		t.Fatalf("true edge presence = %s/%v, want present/true", got, ok)
+	if got, ok := branchRefinement.ValueForEdge(true); !ok || got.IsEmpty() {
+		t.Fatalf("true edge value = %#v/%v, want non-empty/true", got, ok)
 	}
 	branchTarget.Segments[0].Name = "changed"
 	assertDirectField(t, branchRefinement.TargetPath(), "ready")
@@ -221,8 +239,12 @@ func TestFactsCarrierCopiesAndReturnsFalseForMissingFacts(t *testing.T) {
 		PathAssignments: map[cfg.Point]PathAssignment{
 			point: NewPathAssignment(path.NewPath(symbol.ID(33), "table").Field("field"), source),
 		},
-		BranchRefinements: map[cfg.Point]BranchPresenceRefinement{
-			point: NewBranchPresenceRefinement(path.NewPath(symbol.ID(34), "value").Field("ready"), presence.Present(), true, presence.Absent(), true),
+		BranchRefinements: map[cfg.Point]BranchRefinement{
+			point: NewBranchRefinement(
+				path.NewPath(symbol.ID(34), "value").Field("ready"),
+				NewValueRefinement().WithPresence(presence.Present()).WithRuntimeKind(runtimekind.Singleton(runtimekind.Table)), true,
+				NewValueRefinement().WithPresence(presence.Absent()).WithRuntimeKind(runtimekind.Singleton(runtimekind.Nil)), true,
+			),
 		},
 		Returns: map[cfg.Point]Return{
 			point: NewReturn([]ValueSource{source, callSource}),
@@ -251,7 +273,11 @@ func TestFactsCarrierCopiesAndReturnsFalseForMissingFacts(t *testing.T) {
 	input.LocalAssignments[point] = NewLocalAssignment(symbol.ID(40), path.NewPath(symbol.ID(40), "changed"), callSource)
 	input.OrdinaryAssignments[point] = NewOrdinaryAssignment(symbol.ID(41), path.NewPath(symbol.ID(41), "changed"), callSource)
 	input.PathAssignments[point] = NewPathAssignment(path.NewPath(symbol.ID(42), "changed").Field("field"), callSource)
-	input.BranchRefinements[point] = NewBranchPresenceRefinement(path.NewPath(symbol.ID(43), "changed").Field("field"), presence.Absent(), true, presence.Present(), true)
+	input.BranchRefinements[point] = NewBranchRefinement(
+		path.NewPath(symbol.ID(43), "changed").Field("field"),
+		NewValueRefinement().WithPresence(presence.Absent()), true,
+		NewValueRefinement().WithPresence(presence.Present()), true,
+	)
 	input.Returns[point] = NewReturn([]ValueSource{{Kind: ValueSourceNil}})
 	input.Calls[point] = NewCallProducer(CallProducerConfig{Context: CallProducerContextAssignment})
 	input.ObjectLiterals[ExprRef(1)] = NewObjectLiteral([]ObjectEntry{
@@ -319,11 +345,25 @@ func TestFactsCarrierCopiesAndReturnsFalseForMissingFacts(t *testing.T) {
 	branchRefinementPath.Segments[0].Name = "mutated"
 	branchRefinementAgain, _ := facts.BranchRefinement(point)
 	assertDirectField(t, branchRefinementAgain.TargetPath(), "ready")
-	if got, ok := branchRefinementAgain.TruePresence(); !ok || !presence.Equal(got, presence.Present()) {
+	trueValue, ok := branchRefinementAgain.TrueValue()
+	if !ok {
+		t.Fatalf("branch true value missing")
+	}
+	if got, ok := trueValue.Presence(); !ok || !presence.Equal(got, presence.Present()) {
 		t.Fatalf("branch true presence = %s/%v, want present/true", got, ok)
 	}
-	if got, ok := branchRefinementAgain.FalsePresence(); !ok || !presence.Equal(got, presence.Absent()) {
+	if got, ok := trueValue.RuntimeKind(); !ok || !runtimekind.Equal(got, runtimekind.Singleton(runtimekind.Table)) {
+		t.Fatalf("branch true runtime kind = %s/%v, want table/true", got, ok)
+	}
+	falseValue, ok := branchRefinementAgain.FalseValue()
+	if !ok {
+		t.Fatalf("branch false value missing")
+	}
+	if got, ok := falseValue.Presence(); !ok || !presence.Equal(got, presence.Absent()) {
 		t.Fatalf("branch false presence = %s/%v, want absent/true", got, ok)
+	}
+	if got, ok := falseValue.RuntimeKind(); !ok || !runtimekind.Equal(got, runtimekind.Singleton(runtimekind.Nil)) {
+		t.Fatalf("branch false runtime kind = %s/%v, want nil/true", got, ok)
 	}
 
 	ret, ok := facts.Return(point)

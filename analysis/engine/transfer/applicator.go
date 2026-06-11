@@ -5,6 +5,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/state/key"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/runtimekind"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/engine/visibility"
@@ -72,7 +73,7 @@ func NewFactsNodeTransfer(config FactsNodeTransferConfig) NodeTransfer {
 }
 
 // NewFactsEdgeTransfer returns a generic edge transfer that applies
-// presence-only branch refinements for the selected branch edge.
+// branch refinements for the selected branch edge.
 func NewFactsEdgeTransfer(config FactsEdgeTransferConfig) EdgeTransfer {
 	return func(ctx EdgeContext, out state.State) state.State {
 		if !ctx.HasCond {
@@ -82,11 +83,11 @@ func NewFactsEdgeTransfer(config FactsEdgeTransferConfig) EdgeTransfer {
 		if !ok {
 			return out
 		}
-		refinedPresence, ok := fact.PresenceForEdge(ctx.Edge.Cond)
+		refinement, ok := fact.ValueForEdge(ctx.Edge.Cond)
 		if !ok {
 			return out
 		}
-		return applyBranchPresenceRefinement(ctx, config.Visibility, out, fact.TargetPath(), refinedPresence)
+		return applyBranchRefinement(ctx, config.Visibility, out, fact.TargetPath(), refinement)
 	}
 }
 
@@ -221,31 +222,41 @@ func writeRootSymbol(ctx NodeContext, resolver *visibility.Resolver, out state.S
 	return out.WriteValue(ctx.Registry, key.SymbolValue(target), value)
 }
 
-func applyBranchPresenceRefinement(
+func applyBranchRefinement(
 	ctx EdgeContext,
 	resolver *visibility.Resolver,
 	out state.State,
 	targetPath pathdom.Path,
-	refinedPresence presence.Value,
+	refinement ValueRefinement,
 ) state.State {
 	if targetPath.Symbol == 0 {
 		return out
 	}
 	if len(targetPath.Segments) == 0 {
 		return out.UpdateValue(ctx.Registry, key.SymbolValue(targetPath.Symbol), func(value product.Value) product.Value {
-			return refineProductPresence(ctx.Registry, value, refinedPresence)
+			return refineProductValue(ctx.Registry, value, refinement)
 		})
 	}
 	if resolver == nil {
 		return out
 	}
 	updated, ok := out.UpdatePathAt(ctx.Registry, resolver, ctx.Edge.From, targetPath, func(value product.Value) product.Value {
-		return refineProductPresence(ctx.Registry, value, refinedPresence)
+		return refineProductValue(ctx.Registry, value, refinement)
 	})
 	if !ok {
 		return out
 	}
 	return updated
+}
+
+func refineProductValue(reg *axis.Registry, value product.Value, refinement ValueRefinement) product.Value {
+	if refinedPresence, ok := refinement.Presence(); ok {
+		value = refineProductPresence(reg, value, refinedPresence)
+	}
+	if runtimeKinds, ok := refinement.RuntimeKind(); ok {
+		value = refineProductRuntimeKind(reg, value, runtimeKinds)
+	}
+	return value
 }
 
 func refineProductPresence(reg *axis.Registry, value product.Value, refinedPresence presence.Value) product.Value {
@@ -264,6 +275,21 @@ func refineProductPresence(reg *axis.Registry, value product.Value, refinedPrese
 	default:
 		return product.Bottom(reg)
 	}
+}
+
+func refineProductRuntimeKind(reg *axis.Registry, value product.Value, refinedRuntimeKind runtimekind.Value) product.Value {
+	if product.Equal(reg, value, product.Bottom(reg)) {
+		return product.Bottom(reg)
+	}
+	currentRuntimeKind := product.Get(reg, value, runtimekind.Key)
+	nextRuntimeKind := runtimekind.Intersect(currentRuntimeKind, refinedRuntimeKind)
+	if nextRuntimeKind.IsBottom() {
+		return product.Bottom(reg)
+	}
+	if runtimekind.Equal(currentRuntimeKind, nextRuntimeKind) {
+		return value
+	}
+	return product.Set(reg, value, runtimekind.Key, nextRuntimeKind)
 }
 
 func applyPathAssignment(

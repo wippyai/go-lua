@@ -308,13 +308,13 @@ func TestLowerIdentifierNilTruthyFalsyBranches(t *testing.T) {
 
 	facts := Lower(result, built.Graph)
 	xPath := path.NewPath(mustIdentSymbol(t, bindings, nilRead), "x")
-	assertLoweredBranchPresence(t, facts, requireStmtPoints(t, built, nilStmt, 1)[0], xPath, presence.Absent(), true, presence.Present(), true)
-	assertLoweredBranchPresence(t, facts, requireStmtPoints(t, built, notNilStmt, 1)[0], xPath, presence.Present(), true, presence.Absent(), true)
-	assertLoweredBranchPresence(t, facts, requireStmtPoints(t, built, truthyStmt, 1)[0], xPath, presence.Present(), true, presence.Bottom(), false)
-	assertLoweredBranchPresence(t, facts, requireStmtPoints(t, built, falsyStmt, 1)[0], xPath, presence.Bottom(), false, presence.Present(), true)
+	assertLoweredBranchValuePresence(t, facts, requireStmtPoints(t, built, nilStmt, 1)[0], xPath, presence.Absent(), true, presence.Present(), true)
+	assertLoweredBranchValuePresence(t, facts, requireStmtPoints(t, built, notNilStmt, 1)[0], xPath, presence.Present(), true, presence.Absent(), true)
+	assertLoweredBranchValuePresence(t, facts, requireStmtPoints(t, built, truthyStmt, 1)[0], xPath, presence.Present(), true, presence.Bottom(), false)
+	assertLoweredBranchValuePresence(t, facts, requireStmtPoints(t, built, falsyStmt, 1)[0], xPath, presence.Bottom(), false, presence.Present(), true)
 }
 
-func TestLowerMemberPathBranchPresenceRefinement(t *testing.T) {
+func TestLowerMemberPathBranchRefinement(t *testing.T) {
 	decl := localAssign([]string{"t"}, &ast.TableExpr{})
 	rootRead := ident("t")
 	memberStmt := &ast.IfStmt{Condition: &ast.RelationalOpExpr{Operator: "~=", Lhs: dot(rootRead, "child"), Rhs: &ast.NilExpr{}}}
@@ -328,7 +328,7 @@ func TestLowerMemberPathBranchPresenceRefinement(t *testing.T) {
 
 	facts := Lower(result, built.Graph)
 	wantPath := path.NewPath(mustIdentSymbol(t, bindings, rootRead), "t").Field("child")
-	assertLoweredBranchPresence(t, facts, requireStmtPoints(t, built, memberStmt, 1)[0], wantPath, presence.Present(), true, presence.Absent(), true)
+	assertLoweredBranchValuePresence(t, facts, requireStmtPoints(t, built, memberStmt, 1)[0], wantPath, presence.Present(), true, presence.Absent(), true)
 }
 
 func TestLowerSkipsTypeGuardBranchRefinements(t *testing.T) {
@@ -412,7 +412,7 @@ func TestLowerSkipsMemberOrdinaryCallTargets(t *testing.T) {
 	}
 }
 
-func assertLoweredBranchPresence(
+func assertLoweredBranchValuePresence(
 	t *testing.T,
 	facts transfer.Facts,
 	point cfg.Point,
@@ -430,21 +430,28 @@ func assertLoweredBranchPresence(
 	if !refinement.TargetPath().Equal(wantPath) {
 		t.Fatalf("branch target path = %#v, want %#v", refinement.TargetPath(), wantPath)
 	}
-	assertOptionalPresence(t, "true edge", refinement.TruePresence, wantTrue, hasTrue)
-	assertOptionalPresence(t, "false edge", refinement.FalsePresence, wantFalse, hasFalse)
+	assertOptionalValuePresence(t, "true edge", refinement.TrueValue, wantTrue, hasTrue)
+	assertOptionalValuePresence(t, "false edge", refinement.FalseValue, wantFalse, hasFalse)
 }
 
-func assertOptionalPresence(
+func assertOptionalValuePresence(
 	t *testing.T,
 	label string,
-	gotFn func() (presence.Value, bool),
+	gotFn func() (transfer.ValueRefinement, bool),
 	want presence.Value,
 	wantOK bool,
 ) {
 	t.Helper()
 	got, ok := gotFn()
-	if ok != wantOK || (ok && !presence.Equal(got, want)) {
-		t.Fatalf("%s presence = %s/%v, want %s/%v", label, got, ok, want, wantOK)
+	if ok != wantOK {
+		t.Fatalf("%s value refinement ok = %v, want %v", label, ok, wantOK)
+	}
+	if !ok {
+		return
+	}
+	gotPresence, hasPresence := got.Presence()
+	if !hasPresence || !presence.Equal(gotPresence, want) {
+		t.Fatalf("%s presence = %s/%v, want %s/true", label, gotPresence, hasPresence, want)
 	}
 }
 
