@@ -18,12 +18,15 @@ const (
 	CheckNotNil
 	CheckTypeEqual
 	CheckTypeNot
+	CheckLiteralEqual
+	CheckLiteralNot
 )
 
 type Check struct {
-	Kind     CheckKind
-	Path     path.Path
-	TypeName string
+	Kind          CheckKind
+	Path          path.Path
+	TypeName      string
+	LiteralString string
 }
 
 func Normalize(expr ast.Expr, bindings *bind.Result) Check {
@@ -43,6 +46,9 @@ func Normalize(expr ast.Expr, bindings *bind.Result) Check {
 		if check, ok := normalizeTypeComparison(expr, bindings); ok {
 			return check
 		}
+		if check, ok := normalizeStringLiteralComparison(expr, bindings); ok {
+			return check
+		}
 		if p, ok := nilComparisonPath(expr.Lhs, expr.Rhs, bindings); ok {
 			kind := CheckNil
 			if expr.Operator == "~=" {
@@ -53,6 +59,33 @@ func Normalize(expr ast.Expr, bindings *bind.Result) Check {
 	}
 
 	return Check{}
+}
+
+func normalizeStringLiteralComparison(expr *ast.RelationalOpExpr, bindings *bind.Result) (Check, bool) {
+	p, value, ok := stringLiteralComparisonOperands(expr.Lhs, expr.Rhs, bindings)
+	if !ok {
+		p, value, ok = stringLiteralComparisonOperands(expr.Rhs, expr.Lhs, bindings)
+	}
+	if !ok {
+		return Check{}, false
+	}
+	kind := CheckLiteralEqual
+	if expr.Operator == "~=" {
+		kind = CheckLiteralNot
+	}
+	return Check{Kind: kind, Path: p, LiteralString: value}, true
+}
+
+func stringLiteralComparisonOperands(pathExpr, literalExpr ast.Expr, bindings *bind.Result) (path.Path, string, bool) {
+	lit, ok := literalExpr.(*ast.StringExpr)
+	if !ok {
+		return path.Path{}, "", false
+	}
+	p, ok := pathexpr.Resolve(pathExpr, bindings)
+	if !ok || p.IsEmpty() {
+		return path.Path{}, "", false
+	}
+	return p, lit.Value, true
 }
 
 func SupportsTypeComparison(expr ast.Expr, bindings *bind.Result) bool {

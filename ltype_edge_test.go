@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/type/annotation"
+	typetable "github.com/wippyai/go-lua/analysis/type/table"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
@@ -149,7 +150,7 @@ func TestOptionalRecord(t *testing.T) {
 	defer L.Close()
 
 	// {x: number}?
-	inner := typ.NewRecord().Field("x", typ.Number).Build()
+	inner := typetable.NewRecord().Field("x", typ.Number).Build()
 	optRecord := &LType{inner: typ.NewOptional(inner)}
 
 	valid := L.NewTable()
@@ -375,7 +376,7 @@ func TestRecordWithOptionalTableFields(t *testing.T) {
 	// Mirrors the UpdateInput type from the user's binding
 	tableIface := typ.NewInterface("table", nil)
 	updateInput := &LType{
-		inner: typ.NewRecord().
+		inner: typetable.NewRecord().
 			Field("id", typ.String).
 			OptField("name", typ.String).
 			OptField("meta", tableIface).
@@ -455,7 +456,7 @@ func TestRecordWithOptionalTableFieldsIs(t *testing.T) {
 	// Same structure but test via :is() for error message quality
 	tableIface := typ.NewInterface("table", nil)
 	updateInput := &LType{
-		inner: typ.NewRecord().
+		inner: typetable.NewRecord().
 			Field("id", typ.String).
 			OptField("content", tableIface).
 			Build(),
@@ -516,7 +517,7 @@ func TestRecordWithTypeLevelOptional(t *testing.T) {
 	// content field is non-optional, but type is table?
 	tableIface := typ.NewInterface("table", nil)
 	rec := &LType{
-		inner: typ.NewRecord().
+		inner: typetable.NewRecord().
 			Field("id", typ.String).
 			Field("content", typ.NewOptional(tableIface)).
 			Build(),
@@ -647,9 +648,9 @@ func TestErrorMessages_FieldPath(t *testing.T) {
 	defer L.Close()
 
 	// Nested: {a: {b: {c: number}}}
-	inner := typ.NewRecord().Field("c", typ.Number).Build()
-	mid := typ.NewRecord().Field("b", inner).Build()
-	outer := &LType{inner: typ.NewRecord().Field("a", mid).Build()}
+	inner := typetable.NewRecord().Field("c", typ.Number).Build()
+	mid := typetable.NewRecord().Field("b", inner).Build()
+	outer := &LType{inner: typetable.NewRecord().Field("a", mid).Build()}
 
 	bad := L.NewTable()
 	aTable := L.NewTable()
@@ -737,7 +738,7 @@ func TestErrorMessages_ExpectedVsGot(t *testing.T) {
 		},
 		{
 			"record rejects number",
-			&LType{inner: typ.NewRecord().Field("x", typ.Number).Build()},
+			&LType{inner: typetable.NewRecord().Field("x", typ.Number).Build()},
 			LNumber(42),
 			"expected", "expected table, got table",
 		},
@@ -776,12 +777,12 @@ func TestRecordWithOptionalNestedRecord(t *testing.T) {
 	defer L.Close()
 
 	// {name: string, address: {street: string, zip: string}?}
-	address := typ.NewRecord().
+	address := typetable.NewRecord().
 		Field("street", typ.String).
 		Field("zip", typ.String).
 		Build()
 	person := &LType{
-		inner: typ.NewRecord().
+		inner: typetable.NewRecord().
 			Field("name", typ.String).
 			OptField("address", address).
 			Build(),
@@ -896,11 +897,11 @@ func TestUnionOfRecords(t *testing.T) {
 	defer L.Close()
 
 	// {kind: "a", x: number} | {kind: "b", y: string}
-	recA := typ.NewRecord().
+	recA := typetable.NewRecord().
 		Field("kind", typ.LiteralString("a")).
 		Field("x", typ.Number).
 		Build()
-	recB := typ.NewRecord().
+	recB := typetable.NewRecord().
 		Field("kind", typ.LiteralString("b")).
 		Field("y", typ.String).
 		Build()
@@ -943,7 +944,7 @@ func TestRecordWithArrayField(t *testing.T) {
 
 	// {name: string, tags: {string}}
 	rec := &LType{
-		inner: typ.NewRecord().
+		inner: typetable.NewRecord().
 			Field("name", typ.String).
 			Field("tags", typ.NewArray(typ.String)).
 			Build(),
@@ -986,7 +987,7 @@ func TestRecordWithMapField(t *testing.T) {
 
 	// {config: {[string]: string}}
 	rec := &LType{
-		inner: typ.NewRecord().
+		inner: typetable.NewRecord().
 			Field("config", typ.NewMap(typ.String, typ.String)).
 			Build(),
 	}
@@ -1028,7 +1029,7 @@ func TestRecordRequiredFieldMissing(t *testing.T) {
 	defer L.Close()
 
 	rec := &LType{
-		inner: typ.NewRecord().
+		inner: typetable.NewRecord().
 			Field("a", typ.String).
 			Field("b", typ.Number).
 			OptField("c", typ.Boolean).
@@ -1058,7 +1059,7 @@ func TestRecordOptionalFieldWrongType(t *testing.T) {
 	defer L.Close()
 
 	rec := &LType{
-		inner: typ.NewRecord().
+		inner: typetable.NewRecord().
 			Field("id", typ.String).
 			OptField("count", typ.Number).
 			Build(),
@@ -1096,7 +1097,7 @@ func TestRecordAllFieldsOptional(t *testing.T) {
 	defer L.Close()
 
 	rec := &LType{
-		inner: typ.NewRecord().
+		inner: typetable.NewRecord().
 			OptField("a", typ.String).
 			OptField("b", typ.Number).
 			Build(),
@@ -1375,8 +1376,8 @@ func TestIntersectionTypeValidation(t *testing.T) {
 	defer L.Close()
 
 	// {x: number} & {y: string} — value must satisfy both
-	recA := typ.NewRecord().Field("x", typ.Number).Build()
-	recB := typ.NewRecord().Field("y", typ.String).Build()
+	recA := typetable.NewRecord().Field("x", typ.Number).Build()
+	recB := typetable.NewRecord().Field("y", typ.String).Build()
 	intersection := &LType{inner: typ.NewIntersection(recA, recB)}
 
 	// Has both x and y
@@ -1416,8 +1417,8 @@ func TestIntersectionTypeIs(t *testing.T) {
 	L := NewState()
 	defer L.Close()
 
-	recA := typ.NewRecord().Field("x", typ.Number).Build()
-	recB := typ.NewRecord().Field("y", typ.String).Build()
+	recA := typetable.NewRecord().Field("x", typ.Number).Build()
+	recB := typetable.NewRecord().Field("y", typ.String).Build()
 	intersection := &LType{inner: typ.NewIntersection(recA, recB)}
 
 	valid := L.NewTable()
@@ -1451,7 +1452,7 @@ func TestRecordWithAnnotatedOptionalField(t *testing.T) {
 		{Name: "max", Arg: float64(100)},
 	})
 	rec := &LType{
-		inner: typ.NewRecord().
+		inner: typetable.NewRecord().
 			Field("name", typ.String).
 			OptField("score", annotatedNum).
 			Build(),
@@ -1604,7 +1605,7 @@ func TestRecordWithRefField_Resolved(t *testing.T) {
 	statusType := typ.NewUnion(typ.LiteralString("active"), typ.LiteralString("draft"))
 
 	rec := &LType{
-		inner: typ.NewRecord().
+		inner: typetable.NewRecord().
 			Field("id", typ.String).
 			OptField("status", typ.NewRef("", "Status")).
 			Build(),
@@ -1652,7 +1653,7 @@ func TestRecordWithRefField_ResolvedIs(t *testing.T) {
 	statusType := typ.NewUnion(typ.LiteralString("active"), typ.LiteralString("draft"))
 
 	rec := &LType{
-		inner: typ.NewRecord().
+		inner: typetable.NewRecord().
 			Field("id", typ.String).
 			OptField("status", typ.NewRef("", "Status")).
 			Build(),
@@ -1689,7 +1690,7 @@ func TestRecordWithRefToTable_NoBuiltin(t *testing.T) {
 	// Record with content: Ref("table") — simulates what happens when
 	// the manifest stores table as a Ref instead of inline Interface
 	rec := &LType{
-		inner: typ.NewRecord().
+		inner: typetable.NewRecord().
 			Field("id", typ.String).
 			OptField("content", typ.NewRef("", "table")).
 			Build(),
@@ -1729,7 +1730,7 @@ func TestRecordWithRefToTable_WithBuiltin(t *testing.T) {
 	defer L.Close()
 
 	rec := &LType{
-		inner: typ.NewRecord().
+		inner: typetable.NewRecord().
 			Field("id", typ.String).
 			OptField("content", typ.NewRef("", "table")).
 			Build(),
@@ -1804,7 +1805,7 @@ func TestStructuredError_TypeMismatch(t *testing.T) {
 	defer L.Close()
 
 	rec := &LType{
-		inner: typ.NewRecord().
+		inner: typetable.NewRecord().
 			Field("name", typ.String).
 			Field("age", typ.Number).
 			Build(),
@@ -1843,7 +1844,7 @@ func TestStructuredError_MissingRequired(t *testing.T) {
 	defer L.Close()
 
 	rec := &LType{
-		inner: typ.NewRecord().
+		inner: typetable.NewRecord().
 			Field("id", typ.String).
 			Field("name", typ.String).
 			Build(),
@@ -1880,8 +1881,8 @@ func TestStructuredError_NestedField(t *testing.T) {
 	L := NewState()
 	defer L.Close()
 
-	inner := typ.NewRecord().Field("zip", typ.String).Build()
-	outer := &LType{inner: typ.NewRecord().Field("addr", inner).Build()}
+	inner := typetable.NewRecord().Field("zip", typ.String).Build()
+	outer := &LType{inner: typetable.NewRecord().Field("addr", inner).Build()}
 
 	bad := L.NewTable()
 	a := L.NewTable()
@@ -1973,7 +1974,7 @@ func TestStructuredError_NestedConstraint(t *testing.T) {
 	defer L.Close()
 
 	rec := &LType{
-		inner: typ.NewRecord().
+		inner: typetable.NewRecord().
 			AnnotatedField("score", typ.Number, false, []annotation.Annotation{
 				{Name: "max", Arg: float64(100)},
 			}).
@@ -2053,7 +2054,7 @@ func TestStructuredError_ErrorMethods(t *testing.T) {
 	OpenErrors(L)
 
 	rec := &LType{
-		inner: typ.NewRecord().
+		inner: typetable.NewRecord().
 			Field("name", typ.String).
 			Build(),
 		name: "TestRec",
@@ -2117,7 +2118,7 @@ func TestRecordWithMapComponent(t *testing.T) {
 
 	// {name: string, [string]: number} — record with known fields AND dynamic map
 	rec := &LType{
-		inner: typ.NewRecord().
+		inner: typetable.NewRecord().
 			Field("name", typ.String).
 			MapComponent(typ.String, typ.Number).
 			Build(),
@@ -2160,7 +2161,7 @@ func TestRecordWithMapComponentIs(t *testing.T) {
 	defer L.Close()
 
 	rec := &LType{
-		inner: typ.NewRecord().
+		inner: typetable.NewRecord().
 			Field("name", typ.String).
 			MapComponent(typ.String, typ.Number).
 			Build(),
@@ -2382,7 +2383,7 @@ func TestLuaIntegration_StructuredErrors(t *testing.T) {
 	OpenErrors(L)
 
 	personType := &LType{
-		inner: typ.NewRecord().
+		inner: typetable.NewRecord().
 			Field("name", typ.String).
 			Field("age", typ.Number).
 			OptField("email", typ.String).
@@ -2439,12 +2440,12 @@ func TestLuaIntegration_NestedStructuredErrors(t *testing.T) {
 	OpenBase(L)
 	OpenErrors(L)
 
-	addrType := typ.NewRecord().
+	addrType := typetable.NewRecord().
 		Field("street", typ.String).
 		Field("zip", typ.String).
 		Build()
 	personType := &LType{
-		inner: typ.NewRecord().
+		inner: typetable.NewRecord().
 			Field("name", typ.String).
 			Field("address", addrType).
 			Build(),
@@ -2475,7 +2476,7 @@ func TestLuaIntegration_AnnotationErrors(t *testing.T) {
 	OpenErrors(L)
 
 	rec := &LType{
-		inner: typ.NewRecord().
+		inner: typetable.NewRecord().
 			AnnotatedField("score", typ.Number, false, []annotation.Annotation{
 				{Name: "min", Arg: float64(0)},
 				{Name: "max", Arg: float64(100)},
@@ -2527,7 +2528,7 @@ func TestRecursiveTypeValidation(t *testing.T) {
 
 	// type Node = { value: number, next: Node? }
 	nodeType := typ.NewRecursive("Node", func(self typ.Type) typ.Type {
-		return typ.NewRecord().
+		return typetable.NewRecord().
 			Field("value", typ.Number).
 			OptField("next", self).
 			Build()
@@ -2583,7 +2584,7 @@ func TestRecursiveTypeValidationIs(t *testing.T) {
 	OpenErrors(L)
 
 	nodeType := typ.NewRecursive("Node", func(self typ.Type) typ.Type {
-		return typ.NewRecord().
+		return typetable.NewRecord().
 			Field("value", typ.Number).
 			OptField("next", self).
 			Build()
@@ -2615,7 +2616,7 @@ func TestRecursiveOptionalType(t *testing.T) {
 
 	// Node? — optional recursive
 	nodeType := typ.NewRecursive("Node", func(self typ.Type) typ.Type {
-		return typ.NewRecord().
+		return typetable.NewRecord().
 			Field("value", typ.Number).
 			OptField("next", self).
 			Build()
@@ -2655,7 +2656,7 @@ func TestAnnotation_OnOptionalField(t *testing.T) {
 
 	// {name: string @min_len(1)?} — optional field with annotated type
 	rec := &LType{
-		inner: typ.NewRecord().
+		inner: typetable.NewRecord().
 			AnnotatedField("name", typ.String, true, []annotation.Annotation{
 				{Name: "min_len", Arg: float64(1)},
 			}).
@@ -2689,7 +2690,7 @@ func TestAnnotation_PatternOnField(t *testing.T) {
 	OpenErrors(L)
 
 	rec := &LType{
-		inner: typ.NewRecord().
+		inner: typetable.NewRecord().
 			AnnotatedField("email", typ.String, false, []annotation.Annotation{
 				{Name: "pattern", Arg: "^[^@]+@[^@]+$"},
 			}).
@@ -2738,7 +2739,7 @@ func TestAnnotation_MultipleOnSameField(t *testing.T) {
 
 	// score: number @min(0) @max(100) — multiple annotations
 	rec := &LType{
-		inner: typ.NewRecord().
+		inner: typetable.NewRecord().
 			AnnotatedField("score", typ.Number, false, []annotation.Annotation{
 				{Name: "min", Arg: float64(0)},
 				{Name: "max", Arg: float64(100)},
@@ -2825,7 +2826,7 @@ func TestRecordFieldLookupDict(t *testing.T) {
 	defer L.Close()
 
 	rec := &LType{
-		inner: typ.NewRecord().
+		inner: typetable.NewRecord().
 			Field("name", typ.String).
 			Build(),
 	}
@@ -2851,7 +2852,7 @@ func TestOpenRecord(t *testing.T) {
 
 	// Open record: {name: string, ...}
 	rec := &LType{
-		inner: typ.NewRecord().
+		inner: typetable.NewRecord().
 			Field("name", typ.String).
 			SetOpen(true).
 			Build(),
@@ -2877,7 +2878,7 @@ func TestEmptyRecord(t *testing.T) {
 	defer L.Close()
 
 	// {} — empty record accepts any table
-	rec := &LType{inner: typ.NewRecord().Build()}
+	rec := &LType{inner: typetable.NewRecord().Build()}
 
 	tests := []struct {
 		name  string
@@ -3136,7 +3137,7 @@ func TestAnnotation_PatternStructuredError(t *testing.T) {
 	OpenErrors(L)
 
 	rec := &LType{
-		inner: typ.NewRecord().
+		inner: typetable.NewRecord().
 			AnnotatedField("code", typ.String, false, []annotation.Annotation{
 				{Name: "pattern", Arg: "^[A-Z]{3}$"},
 			}).
@@ -3208,7 +3209,7 @@ func TestAnnotation_CombinedRecord(t *testing.T) {
 
 	// Full real-world-like record with multiple annotated fields
 	rec := &LType{
-		inner: typ.NewRecord().
+		inner: typetable.NewRecord().
 			AnnotatedField("name", typ.String, false, []annotation.Annotation{
 				{Name: "min_len", Arg: float64(1)},
 				{Name: "max_len", Arg: float64(255)},
@@ -3364,7 +3365,7 @@ func TestTypeCall_ErrorFormat(t *testing.T) {
 	OpenBase(L)
 
 	rec := &LType{
-		inner: typ.NewRecord().
+		inner: typetable.NewRecord().
 			Field("x", typ.Number).
 			Build(),
 		name: "Point",
@@ -3460,7 +3461,7 @@ func TestRecordFieldOptionalAndTypeOptional(t *testing.T) {
 
 	// Field is optional AND type is Optional(number) — double optional
 	rec := &LType{
-		inner: typ.NewRecord().
+		inner: typetable.NewRecord().
 			OptField("count", typ.NewOptional(typ.Number)).
 			Build(),
 	}

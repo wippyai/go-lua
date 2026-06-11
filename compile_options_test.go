@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	typemanifest "github.com/wippyai/go-lua/analysis/module/manifest"
+	typetable "github.com/wippyai/go-lua/analysis/type/table"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/compiler/parse"
 )
@@ -56,7 +57,7 @@ func TestCompileWithOptions_TypeIsDotAndColon(t *testing.T) {
 		t.Fatalf("parse failed: %v", err)
 	}
 	manifest := typemanifest.New("type_is")
-	pointType := typ.NewRecord().
+	pointType := typetable.NewRecord().
 		Field("x", typ.Number).
 		Field("y", typ.Number).
 		Build()

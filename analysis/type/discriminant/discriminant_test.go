@@ -3,6 +3,7 @@ package discriminant
 import (
 	"testing"
 
+	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	typetable "github.com/wippyai/go-lua/analysis/type/table"
 	. "github.com/wippyai/go-lua/analysis/type/typ"
 )
@@ -144,5 +145,40 @@ func TestClosedRecordSetConflict(t *testing.T) {
 	}
 	if d.ClosedRecordSetConflicts(clean) {
 		t.Fatal("records without required literal discriminants reported a conflict")
+	}
+}
+
+func TestNarrowByPathLiteralKeepsMatchingVariant(t *testing.T) {
+	dog := typetable.NewRecord().
+		Field("kind", LiteralString("dog")).
+		Field("bark", Func().Returns().Build()).
+		Build()
+	cat := typetable.NewRecord().
+		Field("kind", LiteralString("cat")).
+		Field("meow", Func().Returns().Build()).
+		Build()
+
+	got, ok := NarrowByPathLiteral(NewUnion(dog, cat), []segment.Segment{
+		{Kind: segment.SegmentField, Name: "kind"},
+	}, LiteralString("dog"))
+	if !ok {
+		t.Fatal("expected strict discriminant narrowing")
+	}
+	if !TypeEquals(got, dog) {
+		t.Fatalf("narrowed type = %s, want dog variant %s", got, dog)
+	}
+}
+
+func TestNarrowByPathLiteralReturnsNeverForImpossibleSingleVariant(t *testing.T) {
+	dog := typetable.NewRecord().
+		Field("kind", LiteralString("dog")).
+		Field("bark", Func().Returns().Build()).
+		Build()
+
+	got, ok := NarrowByPathLiteral(dog, []segment.Segment{
+		{Kind: segment.SegmentField, Name: "kind"},
+	}, LiteralString("cat"))
+	if !ok || got != Never {
+		t.Fatalf("narrowed type = %s/%v, want never/true", got, ok)
 	}
 }

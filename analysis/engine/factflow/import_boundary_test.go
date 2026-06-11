@@ -16,7 +16,6 @@ func TestFactflowPackageDoesNotImportLuaCompilerCheckASTOrQuarantinedPackages(t 
 		"github.com/wippyai/go-lua/__old",
 		"github.com/wippyai/go-lua/analysis/lua",
 		"github.com/wippyai/go-lua/compiler/ast",
-		"github.com/wippyai/go-lua/compiler/check",
 	}
 	for _, dep := range strings.Fields(string(out)) {
 		for _, prefix := range banned {

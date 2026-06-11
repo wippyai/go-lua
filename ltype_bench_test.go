@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/type/annotation"
+	typetable "github.com/wippyai/go-lua/analysis/type/table"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
@@ -100,7 +101,7 @@ func BenchmarkValidate_Record_Small(b *testing.B) {
 	L := NewState()
 	defer L.Close()
 	rec := &LType{
-		inner: typ.NewRecord().
+		inner: typetable.NewRecord().
 			Field("x", typ.Number).
 			Field("y", typ.Number).
 			Build(),
@@ -117,7 +118,7 @@ func BenchmarkValidate_Record_Medium(b *testing.B) {
 	L := NewState()
 	defer L.Close()
 	rec := &LType{
-		inner: typ.NewRecord().
+		inner: typetable.NewRecord().
 			Field("id", typ.String).
 			Field("name", typ.String).
 			OptField("icon", typ.String).
@@ -141,7 +142,7 @@ func BenchmarkValidate_Record_Full(b *testing.B) {
 	L := NewState()
 	defer L.Close()
 	rec := &LType{
-		inner: typ.NewRecord().
+		inner: typetable.NewRecord().
 			Field("id", typ.String).
 			Field("name", typ.String).
 			OptField("icon", typ.String).
@@ -175,12 +176,12 @@ func BenchmarkValidate_Record_Full(b *testing.B) {
 func BenchmarkValidate_Record_Nested(b *testing.B) {
 	L := NewState()
 	defer L.Close()
-	addr := typ.NewRecord().
+	addr := typetable.NewRecord().
 		Field("street", typ.String).
 		Field("zip", typ.String).
 		Build()
 	person := &LType{
-		inner: typ.NewRecord().
+		inner: typetable.NewRecord().
 			Field("name", typ.String).
 			Field("address", addr).
 			Build(),
@@ -205,7 +206,7 @@ func BenchmarkIs_Record_Pass(b *testing.B) {
 	defer L.Close()
 	OpenErrors(L)
 	rec := &LType{
-		inner: typ.NewRecord().
+		inner: typetable.NewRecord().
 			Field("id", typ.String).
 			Field("name", typ.String).
 			OptField("count", typ.Number).
@@ -229,7 +230,7 @@ func BenchmarkIs_Record_Fail(b *testing.B) {
 	defer L.Close()
 	OpenErrors(L)
 	rec := &LType{
-		inner: typ.NewRecord().
+		inner: typetable.NewRecord().
 			Field("id", typ.String).
 			Field("name", typ.String).
 			Build(),
@@ -380,7 +381,7 @@ func BenchmarkValidate_Record_Annotated(b *testing.B) {
 	L := NewState()
 	defer L.Close()
 	rec := &LType{
-		inner: typ.NewRecord().
+		inner: typetable.NewRecord().
 			AnnotatedField("name", typ.String, false, []annotation.Annotation{
 				{Name: "min_len", Arg: float64(1)},
 				{Name: "max_len", Arg: float64(100)},
@@ -406,8 +407,8 @@ func BenchmarkValidate_Record_Annotated(b *testing.B) {
 func BenchmarkValidate_Intersection(b *testing.B) {
 	L := NewState()
 	defer L.Close()
-	recA := typ.NewRecord().Field("x", typ.Number).Build()
-	recB := typ.NewRecord().Field("y", typ.String).Build()
+	recA := typetable.NewRecord().Field("x", typ.Number).Build()
+	recB := typetable.NewRecord().Field("y", typ.String).Build()
 	inter := &LType{inner: typ.NewIntersection(recA, recB)}
 	tbl := L.NewTable()
 	tbl.RawSetString("x", LNumber(1))
@@ -425,7 +426,7 @@ func BenchmarkValidate_Recursive_Depth3(b *testing.B) {
 	L := NewState()
 	defer L.Close()
 	nodeType := typ.NewRecursive("Node", func(self typ.Type) typ.Type {
-		return typ.NewRecord().
+		return typetable.NewRecord().
 			Field("value", typ.Number).
 			OptField("next", self).
 			Build()
@@ -457,7 +458,7 @@ func BenchmarkValidate_RefResolution(b *testing.B) {
 		},
 	}
 	rec := &LType{
-		inner: typ.NewRecord().
+		inner: typetable.NewRecord().
 			Field("id", typ.String).
 			OptField("status", typ.NewRef("", "Status")).
 			Build(),
@@ -501,7 +502,7 @@ func BenchmarkIs_Fail_MissingField(b *testing.B) {
 	defer L.Close()
 	OpenErrors(L)
 	rec := &LType{
-		inner: typ.NewRecord().
+		inner: typetable.NewRecord().
 			Field("id", typ.String).
 			Field("name", typ.String).
 			Build(),

@@ -4,13 +4,14 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/type/annotation"
+	typetable "github.com/wippyai/go-lua/analysis/type/table"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
 // Test toString behavior for different type kinds
 func TestLTypeStringRepresentation(t *testing.T) {
 	// Record type uses its name
-	userType := NewLType(typ.NewRecord().
+	userType := NewLType(typetable.NewRecord().
 		Field("name", typ.String).
 		Field("age", typ.Number).
 		Build())
@@ -31,7 +32,7 @@ func TestLTypeStringRepresentation(t *testing.T) {
 func TestBasicTypeValidation(t *testing.T) {
 	ctx := NewValidationContext()
 
-	userType := typ.NewRecord().
+	userType := typetable.NewRecord().
 		Field("age", typ.Number).
 		Field("name", typ.String).
 		Build()
@@ -57,11 +58,11 @@ func TestBasicTypeValidation(t *testing.T) {
 func TestNestedRecordBasicValidation(t *testing.T) {
 	ctx := NewValidationContext()
 
-	addressType := typ.NewRecord().
+	addressType := typetable.NewRecord().
 		Field("zip", typ.String).
 		Build()
 
-	personType := typ.NewRecord().
+	personType := typetable.NewRecord().
 		Field("age", typ.Number).
 		Field("address", addressType).
 		Build()
@@ -224,7 +225,7 @@ func TestValidationIntegration_UnionTypes(t *testing.T) {
 func TestValidationIntegration_SimpleRecord(t *testing.T) {
 	ctx := DefaultValidationContext()
 
-	userType := typ.NewRecord().
+	userType := typetable.NewRecord().
 		Field("age", typ.Number).
 		Field("email", typ.String).
 		Field("name", typ.String).
@@ -282,12 +283,12 @@ func TestValidationIntegration_SimpleRecord(t *testing.T) {
 func TestValidationIntegration_NestedRecords(t *testing.T) {
 	ctx := DefaultValidationContext()
 
-	addressType := typ.NewRecord().
+	addressType := typetable.NewRecord().
 		Field("zip", typ.String).
 		Field("street", typ.String).
 		Build()
 
-	personType := typ.NewRecord().
+	personType := typetable.NewRecord().
 		Field("name", typ.String).
 		Field("address", addressType).
 		Build()
@@ -394,15 +395,15 @@ func TestValidationIntegration_ErrorFieldPaths(t *testing.T) {
 	ctx := DefaultValidationContext()
 
 	// Deep nesting to test field paths
-	level3 := typ.NewRecord().
+	level3 := typetable.NewRecord().
 		Field("value", typ.Number).
 		Build()
 
-	level2 := typ.NewRecord().
+	level2 := typetable.NewRecord().
 		Field("level3", level3).
 		Build()
 
-	level1 := typ.NewRecord().
+	level1 := typetable.NewRecord().
 		Field("level2", level2).
 		Build()
 
@@ -430,7 +431,7 @@ func TestValidationIntegration_ErrorFieldPaths(t *testing.T) {
 func TestValidationIntegration_TypeMismatch(t *testing.T) {
 	ctx := DefaultValidationContext()
 
-	recordType := typ.NewRecord().
+	recordType := typetable.NewRecord().
 		Field("num", typ.Number).
 		Field("str", typ.String).
 		Build()
@@ -526,7 +527,7 @@ func TestValidationIntegration_MapType(t *testing.T) {
 func BenchmarkValidation_SimpleRecord(b *testing.B) {
 	ctx := DefaultValidationContext()
 
-	userType := typ.NewRecord().
+	userType := typetable.NewRecord().
 		Field("age", typ.Number).
 		Field("name", typ.String).
 		Build()
@@ -546,11 +547,11 @@ func BenchmarkValidation_SimpleRecord(b *testing.B) {
 func BenchmarkValidation_NestedRecord(b *testing.B) {
 	ctx := DefaultValidationContext()
 
-	addressType := typ.NewRecord().
+	addressType := typetable.NewRecord().
 		Field("zip", typ.String).
 		Build()
 
-	personType := typ.NewRecord().
+	personType := typetable.NewRecord().
 		Field("name", typ.String).
 		Field("address", addressType).
 		Build()
@@ -696,7 +697,7 @@ func TestAnnotation_RecordFieldAnnotations(t *testing.T) {
 	ctx := DefaultValidationContext()
 
 	// type User = {age: number @min(0) @max(150), name: string @min_len(1)}
-	userType := typ.NewRecord().
+	userType := typetable.NewRecord().
 		AnnotatedField("age", typ.Number, false, []annotation.Annotation{
 			{Name: "min", Arg: float64(0)},
 			{Name: "max", Arg: float64(150)},
@@ -772,13 +773,13 @@ func TestAnnotation_NestedRecordAnnotations(t *testing.T) {
 
 	// type Address = {zip: string @pattern("^[0-9]{5}$")}
 	// type Person = {name: string, address: Address}
-	addressType := typ.NewRecord().
+	addressType := typetable.NewRecord().
 		AnnotatedField("zip", typ.String, false, []annotation.Annotation{
 			{Name: "pattern", Arg: "^[0-9]{5}$"},
 		}).
 		Build()
 
-	personType := typ.NewRecord().
+	personType := typetable.NewRecord().
 		Field("name", typ.String).
 		Field("address", addressType).
 		Build()
@@ -828,13 +829,13 @@ func TestAnnotation_ErrorPath(t *testing.T) {
 	ctx := DefaultValidationContext()
 
 	// Test that error paths are correct for nested structures
-	addressType := typ.NewRecord().
+	addressType := typetable.NewRecord().
 		AnnotatedField("zip", typ.String, false, []annotation.Annotation{
 			{Name: "min_len", Arg: float64(5)},
 		}).
 		Build()
 
-	personType := typ.NewRecord().
+	personType := typetable.NewRecord().
 		Field("address", addressType).
 		Build()
 	lt := NewLType(personType)

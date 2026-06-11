@@ -6,8 +6,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/wippyai/go-lua/compiler/check/tests/testutil"
-	"github.com/wippyai/go-lua/types/diag"
+	testutil "github.com/wippyai/go-lua/analysis/check/checktest"
+	diag "github.com/wippyai/go-lua/analysis/diagnostic"
 )
 
 // The fixture oracle is the scorecard for the normal type-checking flow. It runs

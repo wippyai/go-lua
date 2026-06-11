@@ -75,6 +75,14 @@ func assertCheck(t *testing.T, got Check, wantKind CheckKind, wantPath path.Path
 	}
 }
 
+func assertLiteralCheck(t *testing.T, got Check, wantKind CheckKind, wantPath path.Path, wantLiteral string) {
+	t.Helper()
+	assertCheck(t, got, wantKind, wantPath, "")
+	if got.LiteralString != wantLiteral {
+		t.Fatalf("literal = %q, want %q", got.LiteralString, wantLiteral)
+	}
+}
+
 func assertCheckNone(t *testing.T, got Check) {
 	t.Helper()
 	if got.Kind != CheckNone || !got.Path.IsEmpty() || got.TypeName != "" {
@@ -181,6 +189,42 @@ func TestNormalizeTypeComparisons(t *testing.T) {
 			bindings := bindReturn(expr, "type")
 			wantPath := path.NewPath(mustIdentSymbol(t, bindings, root), "obj").Field("kind")
 			assertCheck(t, Normalize(expr, bindings), tt.wantKind, wantPath, tt.typeName)
+		})
+	}
+}
+
+func TestNormalizeStringLiteralComparisons(t *testing.T) {
+	tests := []struct {
+		name     string
+		expr     func(*ast.IdentExpr) ast.Expr
+		wantKind CheckKind
+		literal  string
+	}{
+		{
+			name: "field equal literal",
+			expr: func(root *ast.IdentExpr) ast.Expr {
+				return &ast.RelationalOpExpr{Operator: "==", Lhs: dot(root, "kind"), Rhs: stringLit("dog")}
+			},
+			wantKind: CheckLiteralEqual,
+			literal:  "dog",
+		},
+		{
+			name: "literal not equal field",
+			expr: func(root *ast.IdentExpr) ast.Expr {
+				return &ast.RelationalOpExpr{Operator: "~=", Lhs: stringLit("cat"), Rhs: dot(root, "kind")}
+			},
+			wantKind: CheckLiteralNot,
+			literal:  "cat",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			root := ident("obj")
+			expr := tt.expr(root)
+			bindings := bindReturn(expr)
+			wantPath := path.NewPath(mustIdentSymbol(t, bindings, root), "obj").Field("kind")
+			assertLiteralCheck(t, Normalize(expr, bindings), tt.wantKind, wantPath, tt.literal)
 		})
 	}
 }

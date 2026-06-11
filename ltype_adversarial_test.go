@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/type/annotation"
+	typetable "github.com/wippyai/go-lua/analysis/type/table"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
@@ -138,7 +139,7 @@ func TestAdversarial_HugeRecord(t *testing.T) {
 	defer L.Close()
 
 	// Record with 100 fields
-	rb := typ.NewRecord()
+	rb := typetable.NewRecord()
 	for i := 0; i < 100; i++ {
 		rb.Field(fmt.Sprintf("f%d", i), typ.Number)
 	}
@@ -190,9 +191,9 @@ func TestAdversarial_DeeplyNestedRecord(t *testing.T) {
 	defer L.Close()
 
 	// type A = {inner: {inner: {inner: ... {value: number} ...}}}  20 levels
-	var inner typ.Type = typ.NewRecord().Field("value", typ.Number).Build()
+	var inner typ.Type = typetable.NewRecord().Field("value", typ.Number).Build()
 	for i := 0; i < 20; i++ {
-		inner = typ.NewRecord().Field("inner", inner).Build()
+		inner = typetable.NewRecord().Field("inner", inner).Build()
 	}
 
 	deepRec := &LType{inner: inner}
@@ -240,8 +241,8 @@ func TestAdversarial_MutualRecursion(t *testing.T) {
 	// type B = { a: A? }
 	a := typ.NewRecursivePlaceholder("A")
 	b := typ.NewRecursivePlaceholder("B")
-	a.SetBody(typ.NewRecord().OptField("b", b).Build())
-	b.SetBody(typ.NewRecord().OptField("a", a).Build())
+	a.SetBody(typetable.NewRecord().OptField("b", b).Build())
+	b.SetBody(typetable.NewRecord().OptField("a", a).Build())
 
 	aType := &LType{inner: a}
 
@@ -320,7 +321,7 @@ func TestAdversarial_NilInEveryPosition(t *testing.T) {
 		{inner: typ.NewOptional(typ.Number)},
 		{inner: typ.NewArray(typ.Number)},
 		{inner: typ.NewMap(typ.String, typ.Number)},
-		{inner: typ.NewRecord().Field("x", typ.Number).Build()},
+		{inner: typetable.NewRecord().Field("x", typ.Number).Build()},
 		{inner: typ.NewInterface("table", nil)},
 		{inner: typ.NewUnion(typ.Number, typ.String)},
 		{inner: typ.LiteralString("x")},
@@ -360,9 +361,9 @@ func TestAdversarial_EmptyTableAgainstAll(t *testing.T) {
 		{"nil", LTypeNil, false},
 		{"any", LTypeAny, true},
 		{"table", &LType{inner: typ.NewInterface("table", nil)}, true},
-		{"empty record", &LType{inner: typ.NewRecord().Build()}, true},
-		{"record with required field", &LType{inner: typ.NewRecord().Field("x", typ.Number).Build()}, false},
-		{"record all optional", &LType{inner: typ.NewRecord().OptField("x", typ.Number).Build()}, true},
+		{"empty record", &LType{inner: typetable.NewRecord().Build()}, true},
+		{"record with required field", &LType{inner: typetable.NewRecord().Field("x", typ.Number).Build()}, false},
+		{"record all optional", &LType{inner: typetable.NewRecord().OptField("x", typ.Number).Build()}, true},
 		{"empty array", &LType{inner: typ.NewArray(typ.Number)}, true},
 		{"empty map", &LType{inner: typ.NewMap(typ.String, typ.Number)}, true},
 		{"function", &LType{inner: typ.Func().Returns(typ.Number).Build()}, false},
@@ -393,7 +394,7 @@ func TestAdversarial_TableWithBothArrayAndDict(t *testing.T) {
 	mixed.RawSetString("name", LString("test")) // Strdict["name"] = "test"
 
 	// Record should see "name" field
-	rec := &LType{inner: typ.NewRecord().Field("name", typ.String).Build()}
+	rec := &LType{inner: typetable.NewRecord().Field("name", typ.String).Build()}
 	if !rec.Validate(L, mixed) {
 		t.Error("record should find 'name' in mixed table")
 	}
@@ -609,7 +610,7 @@ func TestAdversarial_RecordEmptyFieldName(t *testing.T) {
 	defer L.Close()
 
 	// Field with empty string name
-	rec := &LType{inner: typ.NewRecord().Field("", typ.Number).Build()}
+	rec := &LType{inner: typetable.NewRecord().Field("", typ.Number).Build()}
 
 	tbl := L.NewTable()
 	tbl.RawSetString("", LNumber(42))
@@ -623,7 +624,7 @@ func TestAdversarial_RecordSpecialFieldNames(t *testing.T) {
 	L := NewState()
 	defer L.Close()
 
-	rec := &LType{inner: typ.NewRecord().
+	rec := &LType{inner: typetable.NewRecord().
 		Field("__index", typ.String).
 		Field("__tostring", typ.String).
 		Field("is", typ.Number). // shadows the method name
@@ -727,7 +728,7 @@ func TestAdversarial_RecordLastFieldRequired(t *testing.T) {
 	defer L.Close()
 
 	// 20 optional fields, then one required at the end
-	rb := typ.NewRecord()
+	rb := typetable.NewRecord()
 	for i := 0; i < 20; i++ {
 		rb.OptField(fmt.Sprintf("opt%d", i), typ.String)
 	}
@@ -757,7 +758,7 @@ func TestAdversarial_ValidateIsConsistency(t *testing.T) {
 	OpenErrors(L)
 
 	rec := &LType{
-		inner: typ.NewRecord().
+		inner: typetable.NewRecord().
 			Field("id", typ.String).
 			OptField("tags", typ.NewArray(typ.String)).
 			OptField("meta", typ.NewInterface("table", nil)).
@@ -1073,14 +1074,14 @@ func TestExploit_ValidateIsDisagreement(t *testing.T) {
 		typ.NewOptional(typ.Number),
 		typ.NewArray(typ.Number),
 		typ.NewMap(typ.String, typ.Number),
-		typ.NewRecord().Field("x", typ.Number).Build(),
+		typetable.NewRecord().Field("x", typ.Number).Build(),
 		typ.NewUnion(typ.Number, typ.String),
 		typ.NewInterface("table", nil),
 		typ.LiteralString("hello"),
 		typ.LiteralInt(42),
 		typ.NewIntersection(
-			typ.NewRecord().Field("x", typ.Number).Build(),
-			typ.NewRecord().Field("y", typ.String).Build(),
+			typetable.NewRecord().Field("x", typ.Number).Build(),
+			typetable.NewRecord().Field("y", typ.String).Build(),
 		),
 	}
 
@@ -1229,11 +1230,11 @@ func TestAdversarial_UnionOfRecordsDiscriminant(t *testing.T) {
 
 	// Discriminated union pattern:
 	// {type: "circle", radius: number} | {type: "rect", width: number, height: number}
-	circle := typ.NewRecord().
+	circle := typetable.NewRecord().
 		Field("type", typ.LiteralString("circle")).
 		Field("radius", typ.Number).
 		Build()
-	rect := typ.NewRecord().
+	rect := typetable.NewRecord().
 		Field("type", typ.LiteralString("rect")).
 		Field("width", typ.Number).
 		Field("height", typ.Number).
@@ -1271,7 +1272,7 @@ func TestAdversarial_UnionRecordVsPrimitive(t *testing.T) {
 
 	// {x: number} | string — table or string
 	u := &LType{inner: typ.NewUnion(
-		typ.NewRecord().Field("x", typ.Number).Build(),
+		typetable.NewRecord().Field("x", typ.Number).Build(),
 		typ.String,
 	)}
 
@@ -1348,7 +1349,7 @@ func TestReflection_KindMethod(t *testing.T) {
 		"integer":  LTypeInteger,
 		"any":      LTypeAny,
 		"never":    LTypeNever,
-		"record":   {inner: typ.NewRecord().Field("x", typ.Number).Build()},
+		"record":   {inner: typetable.NewRecord().Field("x", typ.Number).Build()},
 		"array":    {inner: typ.NewArray(typ.Number)},
 		"map":      {inner: typ.NewMap(typ.String, typ.Number)},
 		"optional": {inner: typ.NewOptional(typ.Number)},
@@ -1370,7 +1371,7 @@ func TestReflection_FieldsIterator(t *testing.T) {
 	OpenBase(L)
 
 	rec := &LType{
-		inner: typ.NewRecord().
+		inner: typetable.NewRecord().
 			Field("name", typ.String).
 			OptField("age", typ.Number).
 			Field("active", typ.Boolean).
@@ -1497,7 +1498,7 @@ func TestAdversarial_ConcurrentValidation(t *testing.T) {
 	defer L.Close()
 
 	rec := &LType{
-		inner: typ.NewRecord().
+		inner: typetable.NewRecord().
 			Field("id", typ.String).
 			OptField("name", typ.String).
 			OptField("count", typ.Number).
@@ -1543,15 +1544,15 @@ func TestAdversarial_RecordFieldIsUnionOfRecords(t *testing.T) {
 	defer L.Close()
 
 	// {payload: ({kind: "text", body: string} | {kind: "image", url: string})}
-	textRec := typ.NewRecord().
+	textRec := typetable.NewRecord().
 		Field("kind", typ.LiteralString("text")).
 		Field("body", typ.String).
 		Build()
-	imageRec := typ.NewRecord().
+	imageRec := typetable.NewRecord().
 		Field("kind", typ.LiteralString("image")).
 		Field("url", typ.String).
 		Build()
-	outer := &LType{inner: typ.NewRecord().
+	outer := &LType{inner: typetable.NewRecord().
 		Field("payload", typ.NewUnion(textRec, imageRec)).
 		Build(),
 	}
@@ -1602,11 +1603,11 @@ func TestAdversarial_RecordFieldIsArrayOfRecords(t *testing.T) {
 	defer L.Close()
 
 	// {items: {name: string, price: number}[]}
-	itemRec := typ.NewRecord().
+	itemRec := typetable.NewRecord().
 		Field("name", typ.String).
 		Field("price", typ.Number).
 		Build()
-	outer := &LType{inner: typ.NewRecord().
+	outer := &LType{inner: typetable.NewRecord().
 		Field("items", typ.NewArray(itemRec)).
 		Build(),
 	}
@@ -1640,7 +1641,7 @@ func TestAdversarial_RecordFieldIsMapOfArrays(t *testing.T) {
 	defer L.Close()
 
 	// {groups: {[string]: {number}[]}} — map of string to array of numbers
-	outer := &LType{inner: typ.NewRecord().
+	outer := &LType{inner: typetable.NewRecord().
 		Field("groups", typ.NewMap(typ.String, typ.NewArray(typ.Number))).
 		Build(),
 	}

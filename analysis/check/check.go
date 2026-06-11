@@ -15,6 +15,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/lua/bind"
 	"github.com/wippyai/go-lua/analysis/lua/cfgbuild"
+	"github.com/wippyai/go-lua/analysis/lua/cfgfacts"
 	"github.com/wippyai/go-lua/analysis/lua/semantics"
 	"github.com/wippyai/go-lua/analysis/lua/transferfacts"
 	"github.com/wippyai/go-lua/analysis/symbol"
@@ -55,6 +56,7 @@ type Result struct {
 	semantics *semantics.Result
 	facts     factflow.Facts
 	flow      transfer.Result
+	functions []*Result
 }
 
 func (r *Result) Registry() *axis.Registry {
@@ -110,6 +112,72 @@ func (r *Result) ReturnFact(point cfg.Point) (semantics.ReturnFact, bool) {
 		return semantics.ReturnFact{}, false
 	}
 	return r.semantics.Return(point)
+}
+
+func (r *Result) LocalAssignment(point cfg.Point) (semantics.LocalAssignmentFact, bool) {
+	if r == nil || r.semantics == nil {
+		return semantics.LocalAssignmentFact{}, false
+	}
+	return r.semantics.LocalAssignment(point)
+}
+
+func (r *Result) Call(point cfg.Point) (semantics.CallFact, bool) {
+	if r == nil || r.semantics == nil {
+		return semantics.CallFact{}, false
+	}
+	return r.semantics.Call(point)
+}
+
+func (r *Result) BranchCondition(point cfg.Point) (semantics.BranchConditionFact, bool) {
+	if r == nil || r.semantics == nil {
+		return semantics.BranchConditionFact{}, false
+	}
+	return r.semantics.BranchCondition(point)
+}
+
+func (r *Result) TypeDefinition(point cfg.Point) (cfgfacts.TypeDefinitionFact, bool) {
+	if r == nil || r.semantics == nil {
+		return cfgfacts.TypeDefinitionFact{}, false
+	}
+	return r.semantics.TypeDefinition(point)
+}
+
+func (r *Result) FunctionResults() []*Result {
+	if r == nil || len(r.functions) == 0 {
+		return nil
+	}
+	return append([]*Result(nil), r.functions...)
+}
+
+func (r *Result) SymbolName(id symbol.ID) string {
+	if r == nil || r.bindings == nil {
+		return ""
+	}
+	return r.bindings.Name(id)
+}
+
+func (r *Result) SymbolTypeAnnotation(id symbol.ID) (ast.TypeExpr, bool) {
+	if r == nil || r.bindings == nil || id == 0 {
+		return nil, false
+	}
+	if fn, ok := r.bindings.DeclaringFunction(id); ok {
+		for _, slot := range r.bindings.ParamSlots(fn) {
+			if slot.Symbol == id && slot.Type != nil {
+				return slot.Type, true
+			}
+		}
+	}
+	graph := r.Graph()
+	if graph == nil {
+		return nil, false
+	}
+	for _, point := range graph.RPO() {
+		fact, ok := r.LocalAssignment(point)
+		if ok && fact.Symbol == id && fact.Type != nil {
+			return fact.Type, true
+		}
+	}
+	return nil, false
 }
 
 func (r *Result) ReturnArity(point cfg.Point) (int, bool) {
@@ -185,7 +253,9 @@ func (c *Checker) CheckBoundChunk(stmts []ast.Stmt, bindings *bind.Result) (*Res
 	if err != nil {
 		return nil, fmt.Errorf("check: extract chunk semantics: %w", err)
 	}
-	return c.run(bindings, built, sem), nil
+	result := c.run(bindings, built, sem)
+	c.attachFunctionResults(result, bindings, nil)
+	return result, nil
 }
 
 func (c *Checker) CheckFunction(fn *ast.FunctionExpr) (*Result, error) {
@@ -202,7 +272,9 @@ func (c *Checker) CheckBoundFunction(fn *ast.FunctionExpr, bindings *bind.Result
 	if err != nil {
 		return nil, fmt.Errorf("check: extract function semantics: %w", err)
 	}
-	return c.run(bindings, built, sem), nil
+	result := c.run(bindings, built, sem)
+	c.attachFunctionResults(result, bindings, fn)
+	return result, nil
 }
 
 func (c *Checker) run(bindings *bind.Result, built *cfgbuild.Result, sem *semantics.Result) *Result {
@@ -240,6 +312,32 @@ func (c *Checker) run(bindings *bind.Result, built *cfgbuild.Result, sem *semant
 		facts:     facts,
 		flow:      flow,
 	}
+}
+
+func (c *Checker) attachFunctionResults(parent *Result, bindings *bind.Result, fn *ast.FunctionExpr) {
+	if parent == nil || bindings == nil {
+		return
+	}
+	for _, nested := range bindings.NestedFunctions(fn) {
+		child, ok := c.checkNestedFunction(nested, bindings)
+		if !ok {
+			continue
+		}
+		c.attachFunctionResults(child, bindings, nested)
+		parent.functions = append(parent.functions, child)
+	}
+}
+
+func (c *Checker) checkNestedFunction(fn *ast.FunctionExpr, bindings *bind.Result) (*Result, bool) {
+	built := cfgbuild.BuildFunction(fn, bindings)
+	if built == nil || built.Graph == nil {
+		return nil, false
+	}
+	sem, err := semantics.ExtractFunction(fn, bindings, built)
+	if err != nil {
+		return nil, false
+	}
+	return c.run(bindings, built, sem), true
 }
 
 func copyConfig(config Config) Config {

@@ -11,10 +11,10 @@ import (
 	"strings"
 	"testing"
 
+	testutil "github.com/wippyai/go-lua/analysis/check/checktest"
+	diag "github.com/wippyai/go-lua/analysis/diagnostic"
 	typemanifest "github.com/wippyai/go-lua/analysis/module/manifest"
 	"github.com/wippyai/go-lua/analysis/type/typ"
-	"github.com/wippyai/go-lua/compiler/check/tests/testutil"
-	"github.com/wippyai/go-lua/types/diag"
 )
 
 // Suite describes a fixture suite loaded from manifest.json.

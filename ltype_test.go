@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/type/annotation"
+	typetable "github.com/wippyai/go-lua/analysis/type/table"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
@@ -113,7 +114,7 @@ func TestLTypeRecord(t *testing.T) {
 
 	// type Point = {x: number, y: number}
 	pointType := &LType{
-		inner: typ.NewRecord().
+		inner: typetable.NewRecord().
 			Field("x", typ.Number).
 			Field("y", typ.Number).
 			Build(),
@@ -231,7 +232,7 @@ func TestLTypeGetField(t *testing.T) {
 
 	// type Point = {x: number, y: number}
 	pointType := &LType{
-		inner: typ.NewRecord().
+		inner: typetable.NewRecord().
 			Field("x", typ.Number).
 			Field("y", typ.Number).
 			Build(),
@@ -369,7 +370,7 @@ func TestLTypeMethods(t *testing.T) {
 
 	// Create test types
 	pointType := &LType{
-		inner: typ.NewRecord().
+		inner: typetable.NewRecord().
 			Field("x", typ.Number).
 			Field("y", typ.Number).
 			Build(),
@@ -496,7 +497,7 @@ func TestLTypeIterators(t *testing.T) {
 	// Test :fields() iterator
 	t.Run("fields iterator", func(t *testing.T) {
 		pointType := &LType{
-			inner: typ.NewRecord().
+			inner: typetable.NewRecord().
 				Field("x", typ.Number).
 				Field("y", typ.Number).
 				Build(),
@@ -613,7 +614,7 @@ func TestLTypeIsMethod(t *testing.T) {
 	defer L.Close()
 
 	pointType := &LType{
-		inner: typ.NewRecord().
+		inner: typetable.NewRecord().
 			Field("x", typ.Number).
 			Field("y", typ.Number).
 			Build(),
@@ -670,7 +671,7 @@ func TestLTypeVMCall(t *testing.T) {
 
 	// Register a type as global
 	pointType := &LType{
-		inner: typ.NewRecord().
+		inner: typetable.NewRecord().
 			Field("x", typ.Number).
 			Field("y", typ.Number).
 			Build(),
@@ -702,7 +703,7 @@ func TestLTypeVMCall_ArityAndMixedArgs(t *testing.T) {
 	defer L.Close()
 
 	pointType := &LType{
-		inner: typ.NewRecord().
+		inner: typetable.NewRecord().
 			Field("x", typ.Number).
 			Field("y", typ.Number).
 			Build(),
@@ -736,7 +737,7 @@ func TestLTypeVMFieldAccess(t *testing.T) {
 
 	// Register types
 	pointType := &LType{
-		inner: typ.NewRecord().
+		inner: typetable.NewRecord().
 			Field("x", typ.Number).
 			Field("y", typ.Number).
 			Build(),
@@ -784,7 +785,7 @@ func TestLTypeVMFieldAccess_MethodPrecedence(t *testing.T) {
 
 	// Record field named "is" should not shadow the Type:is method.
 	pointType := &LType{
-		inner: typ.NewRecord().
+		inner: typetable.NewRecord().
 			Field("is", typ.Number).
 			Build(),
 		name: "Point",
@@ -850,7 +851,7 @@ func TestLTypeVMIterators(t *testing.T) {
 
 	// Register type
 	pointType := &LType{
-		inner: typ.NewRecord().
+		inner: typetable.NewRecord().
 			Field("x", typ.Number).
 			Field("y", typ.Number).
 			Build(),
@@ -879,7 +880,7 @@ func TestLTypeToString(t *testing.T) {
 	L.SetGlobal("Number", LTypeNumber)
 
 	pointType := &LType{
-		inner: typ.NewRecord().
+		inner: typetable.NewRecord().
 			Field("x", typ.Number).
 			Build(),
 		name: "Point",
@@ -939,7 +940,7 @@ func TestTypeMethodIs_ReturnsValueOnSuccess(t *testing.T) {
 	defer L.Close()
 
 	pointType := &LType{
-		inner: typ.NewRecord().
+		inner: typetable.NewRecord().
 			Field("x", typ.Number).
 			Field("y", typ.Number).
 			Build(),
@@ -982,7 +983,7 @@ func TestTypeMethodIs_ReturnsErrorOnFailure(t *testing.T) {
 	defer L.Close()
 
 	pointType := &LType{
-		inner: typ.NewRecord().
+		inner: typetable.NewRecord().
 			Field("x", typ.Number).
 			Field("y", typ.Number).
 			Build(),
@@ -1021,7 +1022,7 @@ func TestTypeMethodIs_OptionalFieldMissing(t *testing.T) {
 	defer L.Close()
 
 	personType := &LType{
-		inner: typ.NewRecord().
+		inner: typetable.NewRecord().
 			Field("name", typ.String).
 			OptField("age", typ.Number).
 			Build(),
@@ -1316,7 +1317,7 @@ func TestTypeMethodIs_VMLuaUsage(t *testing.T) {
 
 	// Register a type
 	pointType := &LType{
-		inner: typ.NewRecord().
+		inner: typetable.NewRecord().
 			Field("x", typ.Number).
 			Field("y", typ.Number).
 			Build(),
@@ -1355,7 +1356,7 @@ func TestTypeMethodIs_FlowNarrowingPattern(t *testing.T) {
 	defer L.Close()
 
 	pointType := &LType{
-		inner: typ.NewRecord().
+		inner: typetable.NewRecord().
 			Field("x", typ.Number).
 			Field("y", typ.Number).
 			Build(),
@@ -1551,7 +1552,7 @@ func TestLTypeRecordWithTableField(t *testing.T) {
 
 	// {kind: string, data: table}
 	commandType := &LType{
-		inner: typ.NewRecord().
+		inner: typetable.NewRecord().
 			Field("kind", typ.String).
 			Field("data", typ.NewInterface("table", nil)).
 			Build(),

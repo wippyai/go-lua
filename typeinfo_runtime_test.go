@@ -5,6 +5,7 @@ import (
 
 	typemanifest "github.com/wippyai/go-lua/analysis/module/manifest"
 	"github.com/wippyai/go-lua/analysis/type/annotation"
+	typetable "github.com/wippyai/go-lua/analysis/type/table"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
@@ -24,13 +25,13 @@ func TestTypeInfoInjection_TypeIs(t *testing.T) {
 	}
 
 	manifest := typemanifest.New("typeinfo")
-	pointType := typ.NewRecord().
+	pointType := typetable.NewRecord().
 		Field("x", typ.Number).
 		Field("y", typ.Number).
 		Build()
 	manifest.DefineType("Point", pointType)
 	manifest.DefineType("ID", typ.String)
-	userType := typ.NewRecord().
+	userType := typetable.NewRecord().
 		Field("id", typ.NewRef("", "ID")).
 		Build()
 	manifest.DefineType("User", userType)
@@ -111,7 +112,7 @@ func TestTypeInfoRuntime_TypeIsDotSyntax(t *testing.T) {
 	}
 
 	manifest := typemanifest.New("typeinfo_dot")
-	pointType := typ.NewRecord().
+	pointType := typetable.NewRecord().
 		Field("x", typ.Number).
 		Field("y", typ.Number).
 		Build()
@@ -157,7 +158,7 @@ func TestTypeInfoRuntime_TypeIsNestedFunction(t *testing.T) {
 	}
 
 	manifest := typemanifest.New("typeinfo_nested")
-	pointType := typ.NewRecord().
+	pointType := typetable.NewRecord().
 		Field("x", typ.Number).
 		Field("y", typ.Number).
 		Build()
@@ -206,7 +207,7 @@ func TestTypeInfoRuntime_AnnotatedArrayField(t *testing.T) {
 	listType := typ.NewAnnotated(typ.NewArray(typ.Number), []annotation.Annotation{
 		{Name: "min_len", Arg: float64(1)},
 	})
-	holderType := typ.NewRecord().Field("items", listType).Build()
+	holderType := typetable.NewRecord().Field("items", listType).Build()
 	manifest.DefineType("Holder", holderType)
 
 	data, err := typemanifest.Encode(manifest)
@@ -251,7 +252,7 @@ func TestTypeInfoRuntime_InstantiatedGeneric(t *testing.T) {
 
 	manifest := typemanifest.New("typeinfo_inst_generic")
 	tp := typ.NewTypeParam("T", nil)
-	boxGeneric := typ.NewGeneric("Box", []*typ.TypeParam{tp}, typ.NewRecord().Field("value", tp).Build())
+	boxGeneric := typ.NewGeneric("Box", []*typ.TypeParam{tp}, typetable.NewRecord().Field("value", tp).Build())
 	boxNum := typ.Instantiate(boxGeneric, typ.Number)
 	manifest.DefineType("BoxNum", boxNum)
 
@@ -293,7 +294,7 @@ func TestTypeInfoRuntime_ManifestRecordInjection(t *testing.T) {
 	`
 
 	manifest := typemanifest.New("typeinfo_sample")
-	sampleType := typ.NewRecord().
+	sampleType := typetable.NewRecord().
 		Field("name", typ.String).
 		Field("age", typ.Number).
 		Build()
