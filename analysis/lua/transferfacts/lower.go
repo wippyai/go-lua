@@ -3,6 +3,7 @@ package transferfacts
 
 import (
 	"github.com/wippyai/go-lua/analysis/domain/path"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/engine/transfer"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/lua/semantics"
@@ -24,6 +25,7 @@ func Lower(result *semantics.Result, graph cfg.Graph) transfer.Facts {
 		LocalAssignments:    make(map[cfg.Point]transfer.LocalAssignment),
 		OrdinaryAssignments: make(map[cfg.Point]transfer.OrdinaryAssignment),
 		PathAssignments:     make(map[cfg.Point]transfer.PathAssignment),
+		BranchRefinements:   make(map[cfg.Point]transfer.BranchPresenceRefinement),
 		Returns:             make(map[cfg.Point]transfer.Return),
 		Calls:               make(map[cfg.Point]transfer.CallProducer),
 		ObjectLiterals:      make(map[transfer.ExprRef]transfer.ObjectLiteral),
@@ -50,6 +52,11 @@ func Lower(result *semantics.Result, graph cfg.Graph) transfer.Facts {
 		if fact, ok := result.Call(point); ok {
 			if lowered, ok := l.callProducer(fact); ok {
 				input.Calls[point] = lowered
+			}
+		}
+		if fact, ok := result.BranchCondition(point); ok {
+			if lowered, ok := l.branchPresenceRefinement(fact); ok {
+				input.BranchRefinements[point] = lowered
 			}
 		}
 	}
@@ -143,6 +150,25 @@ func (l *lowerer) objectLiteral(fact semantics.ObjectLiteralFact) transfer.Objec
 		entries = append(entries, transfer.NewObjectEntry(entry.Suffix, l.valueSource(entry.Source)))
 	}
 	return transfer.NewObjectLiteral(entries)
+}
+
+func (l *lowerer) branchPresenceRefinement(fact semantics.BranchConditionFact) (transfer.BranchPresenceRefinement, bool) {
+	target := fact.Check.Path
+	if target.IsEmpty() {
+		return transfer.BranchPresenceRefinement{}, false
+	}
+	switch fact.Check.Kind {
+	case semantics.BranchConditionCheckNil:
+		return transfer.NewBranchPresenceRefinement(target, presence.Absent(), true, presence.Present(), true), true
+	case semantics.BranchConditionCheckNotNil:
+		return transfer.NewBranchPresenceRefinement(target, presence.Present(), true, presence.Absent(), true), true
+	case semantics.BranchConditionCheckTruthy:
+		return transfer.NewBranchPresenceRefinement(target, presence.Present(), true, presence.Bottom(), false), true
+	case semantics.BranchConditionCheckFalsy:
+		return transfer.NewBranchPresenceRefinement(target, presence.Bottom(), false, presence.Present(), true), true
+	default:
+		return transfer.BranchPresenceRefinement{}, false
+	}
 }
 
 func (l *lowerer) valueSources(sources []semantics.ValueSource) []transfer.ValueSource {

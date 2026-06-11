@@ -2,6 +2,7 @@ package transfer
 
 import (
 	"github.com/wippyai/go-lua/analysis/domain/path"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
@@ -172,6 +173,62 @@ func (l ObjectLiteral) Entries() []ObjectEntry { return copyObjectEntries(l.entr
 func (l ObjectLiteral) copy() ObjectLiteral {
 	l.entries = copyObjectEntries(l.entries)
 	return l
+}
+
+// BranchPresenceRefinement describes branch-edge presence refinements for one
+// access path. Each edge may be independently absent when the condition gives no
+// presence-only fact for that direction.
+type BranchPresenceRefinement struct {
+	targetPath path.Path
+
+	truePresence    presence.Value
+	hasTruePresence bool
+
+	falsePresence    presence.Value
+	hasFalsePresence bool
+}
+
+// NewBranchPresenceRefinement creates a presence-only branch refinement fact.
+func NewBranchPresenceRefinement(
+	targetPath path.Path,
+	truePresence presence.Value,
+	hasTruePresence bool,
+	falsePresence presence.Value,
+	hasFalsePresence bool,
+) BranchPresenceRefinement {
+	return BranchPresenceRefinement{
+		targetPath:       copyPath(targetPath),
+		truePresence:     truePresence,
+		hasTruePresence:  hasTruePresence,
+		falsePresence:    falsePresence,
+		hasFalsePresence: hasFalsePresence,
+	}
+}
+
+// TargetPath returns the refined path.
+func (r BranchPresenceRefinement) TargetPath() path.Path { return copyPath(r.targetPath) }
+
+// TruePresence returns the true-edge presence refinement, if present.
+func (r BranchPresenceRefinement) TruePresence() (presence.Value, bool) {
+	return r.truePresence, r.hasTruePresence
+}
+
+// FalsePresence returns the false-edge presence refinement, if present.
+func (r BranchPresenceRefinement) FalsePresence() (presence.Value, bool) {
+	return r.falsePresence, r.hasFalsePresence
+}
+
+// PresenceForEdge returns the refinement selected by a CFG branch edge.
+func (r BranchPresenceRefinement) PresenceForEdge(cond bool) (presence.Value, bool) {
+	if cond {
+		return r.TruePresence()
+	}
+	return r.FalsePresence()
+}
+
+func (r BranchPresenceRefinement) copy() BranchPresenceRefinement {
+	r.targetPath = copyPath(r.targetPath)
+	return r
 }
 
 // Return describes the ordered value sources returned at a CFG point.
@@ -346,6 +403,7 @@ type FactsInput struct {
 	LocalAssignments    map[cfg.Point]LocalAssignment
 	OrdinaryAssignments map[cfg.Point]OrdinaryAssignment
 	PathAssignments     map[cfg.Point]PathAssignment
+	BranchRefinements   map[cfg.Point]BranchPresenceRefinement
 	Returns             map[cfg.Point]Return
 	Calls               map[cfg.Point]CallProducer
 	ObjectLiterals      map[ExprRef]ObjectLiteral
@@ -356,6 +414,7 @@ type Facts struct {
 	localAssignments    map[cfg.Point]LocalAssignment
 	ordinaryAssignments map[cfg.Point]OrdinaryAssignment
 	pathAssignments     map[cfg.Point]PathAssignment
+	branchRefinements   map[cfg.Point]BranchPresenceRefinement
 	returns             map[cfg.Point]Return
 	calls               map[cfg.Point]CallProducer
 	objectLiterals      map[ExprRef]ObjectLiteral
@@ -367,6 +426,7 @@ func NewFacts(input FactsInput) Facts {
 		localAssignments:    copyLocalAssignmentMap(input.LocalAssignments),
 		ordinaryAssignments: copyOrdinaryAssignmentMap(input.OrdinaryAssignments),
 		pathAssignments:     copyPathAssignmentMap(input.PathAssignments),
+		branchRefinements:   copyBranchPresenceRefinementMap(input.BranchRefinements),
 		returns:             copyReturnMap(input.Returns),
 		calls:               copyCallProducerMap(input.Calls),
 		objectLiterals:      copyObjectLiteralMap(input.ObjectLiterals),
@@ -396,6 +456,15 @@ func (f Facts) PathAssignment(point cfg.Point) (PathAssignment, bool) {
 	fact, ok := f.pathAssignments[point]
 	if !ok {
 		return PathAssignment{}, false
+	}
+	return fact.copy(), true
+}
+
+// BranchRefinement returns the branch-edge presence refinement at point.
+func (f Facts) BranchRefinement(point cfg.Point) (BranchPresenceRefinement, bool) {
+	fact, ok := f.branchRefinements[point]
+	if !ok {
+		return BranchPresenceRefinement{}, false
 	}
 	return fact.copy(), true
 }
@@ -510,6 +579,17 @@ func copyPathAssignmentMap(in map[cfg.Point]PathAssignment) map[cfg.Point]PathAs
 		return nil
 	}
 	out := make(map[cfg.Point]PathAssignment, len(in))
+	for point, fact := range in {
+		out[point] = fact.copy()
+	}
+	return out
+}
+
+func copyBranchPresenceRefinementMap(in map[cfg.Point]BranchPresenceRefinement) map[cfg.Point]BranchPresenceRefinement {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make(map[cfg.Point]BranchPresenceRefinement, len(in))
 	for point, fact := range in {
 		out[point] = fact.copy()
 	}

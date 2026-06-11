@@ -3,6 +3,8 @@ package transfer
 import (
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/state/key"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/engine/visibility"
@@ -18,10 +20,16 @@ type FactsNodeTransferConfig struct {
 	Visibility  *visibility.Resolver
 }
 
+// FactsEdgeTransferConfig configures the generic edge fact applicator.
+type FactsEdgeTransferConfig struct {
+	Facts      Facts
+	Visibility *visibility.Resolver
+}
+
 // NewFactsNodeTransfer returns a generic node transfer that applies point-local
 // transfer facts. It intentionally handles only root assignment, member/path
-// assignment, call return-slot production, and return-slot facts; richer Lua
-// lowering, branches, and diagnostics stay outside this package.
+// assignment, call return-slot production, and return-slot facts; branch-edge
+// refinements are handled by NewFactsEdgeTransfer.
 func NewFactsNodeTransfer(config FactsNodeTransferConfig) NodeTransfer {
 	return func(ctx NodeContext, in state.State) state.State {
 		facts := config.Facts
@@ -60,6 +68,25 @@ func NewFactsNodeTransfer(config FactsNodeTransferConfig) NodeTransfer {
 			out = applyReturn(ctx, sources, read, in, out, fact)
 		}
 		return out
+	}
+}
+
+// NewFactsEdgeTransfer returns a generic edge transfer that applies
+// presence-only branch refinements for the selected branch edge.
+func NewFactsEdgeTransfer(config FactsEdgeTransferConfig) EdgeTransfer {
+	return func(ctx EdgeContext, out state.State) state.State {
+		if !ctx.HasCond {
+			return out
+		}
+		fact, ok := config.Facts.BranchRefinement(ctx.Edge.From)
+		if !ok {
+			return out
+		}
+		refinedPresence, ok := fact.PresenceForEdge(ctx.Edge.Cond)
+		if !ok {
+			return out
+		}
+		return applyBranchPresenceRefinement(ctx, config.Visibility, out, fact.TargetPath(), refinedPresence)
 	}
 }
 
@@ -186,6 +213,51 @@ func writeRootSymbol(ctx NodeContext, out state.State, target symbol.ID, value p
 		return out
 	}
 	return out.WriteValue(ctx.Registry, key.SymbolValue(target), value)
+}
+
+func applyBranchPresenceRefinement(
+	ctx EdgeContext,
+	resolver *visibility.Resolver,
+	out state.State,
+	targetPath pathdom.Path,
+	refinedPresence presence.Value,
+) state.State {
+	if targetPath.Symbol == 0 {
+		return out
+	}
+	if len(targetPath.Segments) == 0 {
+		return out.UpdateValue(ctx.Registry, key.SymbolValue(targetPath.Symbol), func(value product.Value) product.Value {
+			return refineProductPresence(ctx.Registry, value, refinedPresence)
+		})
+	}
+	if resolver == nil {
+		return out
+	}
+	updated, ok := out.UpdatePathAt(ctx.Registry, resolver, ctx.Edge.From, targetPath, func(value product.Value) product.Value {
+		return refineProductPresence(ctx.Registry, value, refinedPresence)
+	})
+	if !ok {
+		return out
+	}
+	return updated
+}
+
+func refineProductPresence(reg *axis.Registry, value product.Value, refinedPresence presence.Value) product.Value {
+	currentPresence := product.PresenceOf(value)
+	switch {
+	case presence.Equal(currentPresence, presence.Bottom()):
+		return product.Bottom(reg)
+	case presence.Equal(refinedPresence, presence.Bottom()):
+		return product.Bottom(reg)
+	case presence.Equal(currentPresence, refinedPresence):
+		return value
+	case presence.Equal(currentPresence, presence.Top()):
+		return product.WithPresence(reg, value, refinedPresence)
+	case presence.Equal(refinedPresence, presence.Top()):
+		return value
+	default:
+		return product.Bottom(reg)
+	}
 }
 
 func applyPathAssignment(

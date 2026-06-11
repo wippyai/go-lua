@@ -7,6 +7,7 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/engine/transfer"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/lua/bind"
@@ -287,6 +288,71 @@ func TestLowerObjectLiteralSidecarUsesAssignmentExprRef(t *testing.T) {
 	}
 }
 
+func TestLowerIdentifierNilTruthyFalsyBranches(t *testing.T) {
+	decl := localAssign([]string{"x"}, number("0"))
+	nilRead := ident("x")
+	nilStmt := &ast.IfStmt{Condition: &ast.RelationalOpExpr{Operator: "==", Lhs: nilRead, Rhs: &ast.NilExpr{}}}
+	notNilRead := ident("x")
+	notNilStmt := &ast.IfStmt{Condition: &ast.RelationalOpExpr{Operator: "~=", Lhs: notNilRead, Rhs: &ast.NilExpr{}}}
+	truthyRead := ident("x")
+	truthyStmt := &ast.IfStmt{Condition: truthyRead}
+	falsyRead := ident("x")
+	falsyStmt := &ast.IfStmt{Condition: &ast.UnaryNotOpExpr{Expr: falsyRead}}
+	stmts := []ast.Stmt{decl, nilStmt, notNilStmt, truthyStmt, falsyStmt}
+	bindings := bind.BindChunk(stmts, bind.Options{})
+	built := cfgbuild.BuildChunk(stmts, bindings)
+	result, err := semantics.ExtractChunk(stmts, bindings, built)
+	if err != nil {
+		t.Fatalf("ExtractChunk: %v", err)
+	}
+
+	facts := Lower(result, built.Graph)
+	xPath := path.NewPath(mustIdentSymbol(t, bindings, nilRead), "x")
+	assertLoweredBranchPresence(t, facts, requireStmtPoints(t, built, nilStmt, 1)[0], xPath, presence.Absent(), true, presence.Present(), true)
+	assertLoweredBranchPresence(t, facts, requireStmtPoints(t, built, notNilStmt, 1)[0], xPath, presence.Present(), true, presence.Absent(), true)
+	assertLoweredBranchPresence(t, facts, requireStmtPoints(t, built, truthyStmt, 1)[0], xPath, presence.Present(), true, presence.Bottom(), false)
+	assertLoweredBranchPresence(t, facts, requireStmtPoints(t, built, falsyStmt, 1)[0], xPath, presence.Bottom(), false, presence.Present(), true)
+}
+
+func TestLowerMemberPathBranchPresenceRefinement(t *testing.T) {
+	decl := localAssign([]string{"t"}, &ast.TableExpr{})
+	rootRead := ident("t")
+	memberStmt := &ast.IfStmt{Condition: &ast.RelationalOpExpr{Operator: "~=", Lhs: dot(rootRead, "child"), Rhs: &ast.NilExpr{}}}
+	stmts := []ast.Stmt{decl, memberStmt}
+	bindings := bind.BindChunk(stmts, bind.Options{})
+	built := cfgbuild.BuildChunk(stmts, bindings)
+	result, err := semantics.ExtractChunk(stmts, bindings, built)
+	if err != nil {
+		t.Fatalf("ExtractChunk: %v", err)
+	}
+
+	facts := Lower(result, built.Graph)
+	wantPath := path.NewPath(mustIdentSymbol(t, bindings, rootRead), "t").Field("child")
+	assertLoweredBranchPresence(t, facts, requireStmtPoints(t, built, memberStmt, 1)[0], wantPath, presence.Present(), true, presence.Absent(), true)
+}
+
+func TestLowerSkipsTypeGuardBranchRefinements(t *testing.T) {
+	decl := localAssign([]string{"x"}, number("0"))
+	typeStmt := &ast.IfStmt{Condition: &ast.RelationalOpExpr{
+		Operator: "==",
+		Lhs:      typeCall(ident("x")),
+		Rhs:      stringLit("table"),
+	}}
+	stmts := []ast.Stmt{decl, typeStmt}
+	bindings := bind.BindChunk(stmts, bind.Options{Globals: []string{"type"}})
+	built := cfgbuild.BuildChunk(stmts, bindings)
+	result, err := semantics.ExtractChunk(stmts, bindings, built)
+	if err != nil {
+		t.Fatalf("ExtractChunk: %v", err)
+	}
+
+	facts := Lower(result, built.Graph)
+	point := requireStmtPoints(t, built, typeStmt, 1)[0]
+	if _, ok := facts.BranchRefinement(point); ok {
+		t.Fatalf("type guard branch point %d lowered as presence refinement", point)
+	}
+}
+
 func TestLowerNestedObjectLiteralEntriesUnderAssignmentExprRef(t *testing.T) {
 	rootLeaf := number("1")
 	nestedLeaf := number("2")
@@ -346,6 +412,42 @@ func TestLowerSkipsMemberOrdinaryCallTargets(t *testing.T) {
 	}
 }
 
+func assertLoweredBranchPresence(
+	t *testing.T,
+	facts transfer.Facts,
+	point cfg.Point,
+	wantPath path.Path,
+	wantTrue presence.Value,
+	hasTrue bool,
+	wantFalse presence.Value,
+	hasFalse bool,
+) {
+	t.Helper()
+	refinement, ok := facts.BranchRefinement(point)
+	if !ok {
+		t.Fatalf("missing branch refinement at point %d", point)
+	}
+	if !refinement.TargetPath().Equal(wantPath) {
+		t.Fatalf("branch target path = %#v, want %#v", refinement.TargetPath(), wantPath)
+	}
+	assertOptionalPresence(t, "true edge", refinement.TruePresence, wantTrue, hasTrue)
+	assertOptionalPresence(t, "false edge", refinement.FalsePresence, wantFalse, hasFalse)
+}
+
+func assertOptionalPresence(
+	t *testing.T,
+	label string,
+	gotFn func() (presence.Value, bool),
+	want presence.Value,
+	wantOK bool,
+) {
+	t.Helper()
+	got, ok := gotFn()
+	if ok != wantOK || (ok && !presence.Equal(got, want)) {
+		t.Fatalf("%s presence = %s/%v, want %s/%v", label, got, ok, want, wantOK)
+	}
+}
+
 func assertLoweredObjectEntry(t *testing.T, entry transfer.ObjectEntry, wantSuffix path.Path, wantKind transfer.ValueSourceKind) {
 	t.Helper()
 	if !entry.Suffix().Equal(wantSuffix) {
@@ -383,6 +485,10 @@ func number(value string) *ast.NumberExpr {
 
 func stringLit(value string) *ast.StringExpr {
 	return &ast.StringExpr{Value: value}
+}
+
+func typeCall(arg ast.Expr) *ast.FuncCallExpr {
+	return &ast.FuncCallExpr{Func: ident("type"), Args: []ast.Expr{arg}}
 }
 
 func dot(obj ast.Expr, name string) *ast.AttrGetExpr {

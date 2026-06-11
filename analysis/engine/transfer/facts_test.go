@@ -5,6 +5,7 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
@@ -66,6 +67,24 @@ func TestDTOConstructorsAndAccessorsCopySlices(t *testing.T) {
 	gotPathTarget := pathAssignment.TargetPath()
 	gotPathTarget.Segments[0].Name = "changed-again"
 	assertDirectField(t, pathAssignment.TargetPath(), "field")
+
+	branchTarget := path.NewPath(symbol.ID(15), "value").Field("ready")
+	branchRefinement := NewBranchPresenceRefinement(branchTarget, presence.Present(), true, presence.Absent(), true)
+	assertPathEqual(t, branchRefinement.TargetPath(), branchTarget)
+	if got, ok := branchRefinement.TruePresence(); !ok || !presence.Equal(got, presence.Present()) {
+		t.Fatalf("true presence = %s/%v, want present/true", got, ok)
+	}
+	if got, ok := branchRefinement.FalsePresence(); !ok || !presence.Equal(got, presence.Absent()) {
+		t.Fatalf("false presence = %s/%v, want absent/true", got, ok)
+	}
+	if got, ok := branchRefinement.PresenceForEdge(true); !ok || !presence.Equal(got, presence.Present()) {
+		t.Fatalf("true edge presence = %s/%v, want present/true", got, ok)
+	}
+	branchTarget.Segments[0].Name = "changed"
+	assertDirectField(t, branchRefinement.TargetPath(), "ready")
+	gotBranchTarget := branchRefinement.TargetPath()
+	gotBranchTarget.Segments[0].Name = "changed-again"
+	assertDirectField(t, branchRefinement.TargetPath(), "ready")
 
 	entrySuffix := path.Path{Segments: []segment.Segment{{Kind: segment.SegmentField, Name: "field"}}}
 	entry := NewObjectEntry(entrySuffix, source)
@@ -202,6 +221,9 @@ func TestFactsCarrierCopiesAndReturnsFalseForMissingFacts(t *testing.T) {
 		PathAssignments: map[cfg.Point]PathAssignment{
 			point: NewPathAssignment(path.NewPath(symbol.ID(33), "table").Field("field"), source),
 		},
+		BranchRefinements: map[cfg.Point]BranchPresenceRefinement{
+			point: NewBranchPresenceRefinement(path.NewPath(symbol.ID(34), "value").Field("ready"), presence.Present(), true, presence.Absent(), true),
+		},
 		Returns: map[cfg.Point]Return{
 			point: NewReturn([]ValueSource{source, callSource}),
 		},
@@ -229,6 +251,7 @@ func TestFactsCarrierCopiesAndReturnsFalseForMissingFacts(t *testing.T) {
 	input.LocalAssignments[point] = NewLocalAssignment(symbol.ID(40), path.NewPath(symbol.ID(40), "changed"), callSource)
 	input.OrdinaryAssignments[point] = NewOrdinaryAssignment(symbol.ID(41), path.NewPath(symbol.ID(41), "changed"), callSource)
 	input.PathAssignments[point] = NewPathAssignment(path.NewPath(symbol.ID(42), "changed").Field("field"), callSource)
+	input.BranchRefinements[point] = NewBranchPresenceRefinement(path.NewPath(symbol.ID(43), "changed").Field("field"), presence.Absent(), true, presence.Present(), true)
 	input.Returns[point] = NewReturn([]ValueSource{{Kind: ValueSourceNil}})
 	input.Calls[point] = NewCallProducer(CallProducerConfig{Context: CallProducerContextAssignment})
 	input.ObjectLiterals[ExprRef(1)] = NewObjectLiteral([]ObjectEntry{
@@ -243,6 +266,9 @@ func TestFactsCarrierCopiesAndReturnsFalseForMissingFacts(t *testing.T) {
 	}
 	if _, ok := facts.PathAssignment(missing); ok {
 		t.Fatal("missing path assignment returned ok")
+	}
+	if _, ok := facts.BranchRefinement(missing); ok {
+		t.Fatal("missing branch refinement returned ok")
 	}
 	if _, ok := facts.Return(missing); ok {
 		t.Fatal("missing return returned ok")
@@ -283,6 +309,22 @@ func TestFactsCarrierCopiesAndReturnsFalseForMissingFacts(t *testing.T) {
 	pathAssignmentPath.Segments[0].Name = "mutated"
 	pathAssignmentAgain, _ := facts.PathAssignment(point)
 	assertDirectField(t, pathAssignmentAgain.TargetPath(), "field")
+
+	branchRefinement, ok := facts.BranchRefinement(point)
+	if !ok {
+		t.Fatal("branch refinement missing")
+	}
+	assertPathEqual(t, branchRefinement.TargetPath(), path.NewPath(symbol.ID(34), "value").Field("ready"))
+	branchRefinementPath := branchRefinement.TargetPath()
+	branchRefinementPath.Segments[0].Name = "mutated"
+	branchRefinementAgain, _ := facts.BranchRefinement(point)
+	assertDirectField(t, branchRefinementAgain.TargetPath(), "ready")
+	if got, ok := branchRefinementAgain.TruePresence(); !ok || !presence.Equal(got, presence.Present()) {
+		t.Fatalf("branch true presence = %s/%v, want present/true", got, ok)
+	}
+	if got, ok := branchRefinementAgain.FalsePresence(); !ok || !presence.Equal(got, presence.Absent()) {
+		t.Fatalf("branch false presence = %s/%v, want absent/true", got, ok)
+	}
 
 	ret, ok := facts.Return(point)
 	if !ok {
