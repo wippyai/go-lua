@@ -232,8 +232,6 @@ func TestAllLabelsImplementInterface(t *testing.T) {
 		Return{},
 		ErrorReturn{},
 		ReturnLength{},
-		PassThrough{},
-		FlowInto{},
 		CorrelatedReturn{},
 	}
 
@@ -247,8 +245,6 @@ func TestMarkerMethods(t *testing.T) {
 	Return{}.EffectLabel()
 	ErrorReturn{}.EffectLabel()
 	ReturnLength{}.EffectLabel()
-	PassThrough{}.EffectLabel()
-	FlowInto{}.EffectLabel()
 	CorrelatedReturn{}.EffectLabel()
 
 	ElementOf{}.returnType()

@@ -71,15 +71,3 @@ func TestGetCorrelatedReturn(t *testing.T) {
 		t.Error("Empty row should not have correlated return")
 	}
 }
-
-func TestFlowIntoReturns(t *testing.T) {
-	r := effect.Row{Labels: []effect.Label{
-		FlowInto{ParamIndex: 0, ReturnIndex: 0},
-		FlowInto{ParamIndex: 1, ReturnIndex: 1},
-	}}
-
-	got := FlowIntoReturns(r, 0)
-	if len(got) != 1 || got[0].ParamIndex != 0 {
-		t.Fatalf("FlowIntoReturns returned %#v, want param 0 flow", got)
-	}
-}

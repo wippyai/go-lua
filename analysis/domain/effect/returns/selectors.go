@@ -11,16 +11,6 @@ func GetReturn(r effect.Row, retIdx int) *Return {
 	return nil
 }
 
-func FlowIntoReturns(r effect.Row, retIdx int) []FlowInto {
-	var out []FlowInto
-	for _, l := range r.Labels {
-		if fi, ok := l.(FlowInto); ok && fi.ReturnIndex == retIdx {
-			out = append(out, fi)
-		}
-	}
-	return out
-}
-
 func GetErrorReturn(r effect.Row, valueIdx int) *ErrorReturn {
 	for _, l := range r.Labels {
 		if er, ok := l.(ErrorReturn); ok && er.ValueIndex == valueIdx {
