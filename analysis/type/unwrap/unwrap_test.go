@@ -58,7 +58,7 @@ func TestOptional(t *testing.T) {
 	})
 }
 
-func TestRecordAliasOnly(t *testing.T) {
+func TestRecordWithAliasPolicyTarget(t *testing.T) {
 	rec := typetable.NewRecord().Field("id", typ.String).Build()
 	nested := typ.NewAlias("Outer", typ.NewAlias("Inner", rec))
 	annotated := typ.NewAnnotated(rec, []annotation.Annotation{{Name: "brand"}})
@@ -79,14 +79,14 @@ func TestRecordAliasOnly(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := unwrap.RecordAliasOnly(tt.t); got != tt.want {
-				t.Fatalf("RecordAliasOnly() = %p, want %p", got, tt.want)
+			if got := unwrap.RecordWithAliasPolicy(tt.t, unwrap.RecordAliasTarget); got != tt.want {
+				t.Fatalf("RecordWithAliasPolicy(RecordAliasTarget) = %p, want %p", got, tt.want)
 			}
 		})
 	}
 }
 
-func TestRecordUnaliased(t *testing.T) {
+func TestRecordWithAliasPolicyUnaliasedTarget(t *testing.T) {
 	rec := typetable.NewRecord().Field("id", typ.String).Build()
 	nested := typ.NewAlias("Outer", typ.NewAlias("Inner", rec))
 	annotated := typ.NewAnnotated(rec, []annotation.Annotation{{Name: "brand"}})
@@ -107,8 +107,8 @@ func TestRecordUnaliased(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := unwrap.RecordUnaliased(tt.t); got != tt.want {
-				t.Fatalf("RecordUnaliased() = %p, want %p", got, tt.want)
+			if got := unwrap.RecordWithAliasPolicy(tt.t, unwrap.RecordAliasUnaliasedTarget); got != tt.want {
+				t.Fatalf("RecordWithAliasPolicy(RecordAliasUnaliasedTarget) = %p, want %p", got, tt.want)
 			}
 		})
 	}
@@ -120,11 +120,11 @@ func TestRecordAliasPoliciesDifferAfterTargetMutation(t *testing.T) {
 	alias := typ.NewAlias("Alias", typ.NewAlias("Inner", original))
 	alias.Target = updated
 
-	if got := unwrap.RecordAliasOnly(alias); got != updated {
-		t.Fatalf("RecordAliasOnly() = %p, want updated %p", got, updated)
+	if got := unwrap.RecordWithAliasPolicy(alias, unwrap.RecordAliasTarget); got != updated {
+		t.Fatalf("RecordWithAliasPolicy(RecordAliasTarget) = %p, want updated %p", got, updated)
 	}
-	if got := unwrap.RecordUnaliased(alias); got != original {
-		t.Fatalf("RecordUnaliased() = %p, want original %p", got, original)
+	if got := unwrap.RecordWithAliasPolicy(alias, unwrap.RecordAliasUnaliasedTarget); got != original {
+		t.Fatalf("RecordWithAliasPolicy(RecordAliasUnaliasedTarget) = %p, want original %p", got, original)
 	}
 }
 

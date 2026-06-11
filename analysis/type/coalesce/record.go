@@ -127,7 +127,7 @@ func CoalesceClosedCompatibleRecords(types []typ.Type, policy RecordPolicy) ([]t
 	ineligible := false
 	eligibleCount := 0
 	for i, t := range types {
-		rec := unwrap.RecordUnaliased(t)
+		rec := unwrap.RecordWithAliasPolicy(t, unwrap.RecordAliasUnaliasedTarget)
 		if rec == nil {
 			ineligible = true
 			continue

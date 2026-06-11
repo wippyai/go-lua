@@ -62,7 +62,7 @@ func HasFreeze(r effect.Row) bool {
 
 func GetBorrow(r effect.Row, paramIdx int) *Borrow {
 	for _, l := range r.Labels {
-		if b, ok := l.(Borrow); ok && b.Param.Index == paramIdx {
+		if b, ok := effect.NormalizeLabel(l).(Borrow); ok && b.Param.Index == paramIdx {
 			return &b
 		}
 	}
@@ -71,7 +71,7 @@ func GetBorrow(r effect.Row, paramIdx int) *Borrow {
 
 func GetStore(r effect.Row, paramIdx int) *Store {
 	for _, l := range r.Labels {
-		if s, ok := l.(Store); ok && s.Param.Index == paramIdx {
+		if s, ok := effect.NormalizeLabel(l).(Store); ok && s.Param.Index == paramIdx {
 			return &s
 		}
 	}

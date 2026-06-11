@@ -5,10 +5,11 @@ func Union(r1, r2 Row) Row {
 		return Unknown
 	}
 
-	labels := append([]Label{}, r1.Labels...)
+	labels := normalizeLabels(r1.Labels)
 	for _, l := range r2.Labels {
-		if !containsLabelEquals(labels, l) {
-			labels = append(labels, l)
+		normalized := NormalizeLabel(l)
+		if !containsLabelEquals(labels, normalized) {
+			labels = append(labels, normalized)
 		}
 	}
 
@@ -30,8 +31,9 @@ func Union(r1, r2 Row) Row {
 }
 
 func containsLabelEquals(labels []Label, l Label) bool {
+	l = NormalizeLabel(l)
 	for _, existing := range labels {
-		if existing.Equals(l) {
+		if normalized := NormalizeLabel(existing); normalized != nil && normalized.Equals(l) {
 			return true
 		}
 	}
@@ -45,9 +47,10 @@ func Intersect(r1, r2 Row) Row {
 
 	var labels []Label
 	for _, l := range r1.Labels {
+		normalized := NormalizeLabel(l)
 		for _, l2 := range r2.Labels {
-			if l.Equals(l2) {
-				labels = append(labels, l)
+			if normalized != nil && normalized.Equals(NormalizeLabel(l2)) {
+				labels = append(labels, normalized)
 				break
 			}
 		}
@@ -71,9 +74,10 @@ func Subset(r1, r2 Row) bool {
 		return false
 	}
 	for _, l := range r1.Labels {
+		normalized := NormalizeLabel(l)
 		found := false
 		for _, l2 := range r2.Labels {
-			if l.Equals(l2) {
+			if normalized != nil && normalized.Equals(NormalizeLabel(l2)) {
 				found = true
 				break
 			}
@@ -89,5 +93,13 @@ func Subset(r1, r2 Row) bool {
 }
 
 func Open(name string, labels ...Label) Row {
-	return Row{Labels: labels, Tail: &Var{Name: name}}
+	return Row{Labels: normalizeLabels(labels), Tail: &Var{Name: name}}
+}
+
+func normalizeLabels(labels []Label) []Label {
+	normalized := make([]Label, 0, len(labels))
+	for _, label := range labels {
+		normalized = append(normalized, NormalizeLabel(label))
+	}
+	return normalized
 }

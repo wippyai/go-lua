@@ -22,7 +22,7 @@ func (m Mutate) String() string {
 	return fmt.Sprintf("mutate(%s, %s)", m.Target, m.Transform)
 }
 func (m Mutate) Equals(other effect.Label) bool {
-	if o, ok := other.(Mutate); ok {
+	if o, ok := effect.NormalizeLabel(other).(Mutate); ok {
 		return m.Target.Index == o.Target.Index &&
 			transformEquals(m.Transform, o.Transform) &&
 			expr.ExprEquals(m.LengthDelta, o.LengthDelta)
@@ -82,7 +82,7 @@ func (l LengthChange) String() string {
 	return fmt.Sprintf("len(%s) -= %d", l.Target, -l.Delta)
 }
 func (l LengthChange) Equals(other effect.Label) bool {
-	if o, ok := other.(LengthChange); ok {
+	if o, ok := effect.NormalizeLabel(other).(LengthChange); ok {
 		return l.Target.Index == o.Target.Index && l.Delta == o.Delta
 	}
 	return false
@@ -98,7 +98,7 @@ func (t TableMutator) String() string {
 	return fmt.Sprintf("table_mutator(%s, %s)", t.Target, t.Value)
 }
 func (t TableMutator) Equals(other effect.Label) bool {
-	if o, ok := other.(TableMutator); ok {
+	if o, ok := effect.NormalizeLabel(other).(TableMutator); ok {
 		return t.Target.Index == o.Target.Index && t.Value.Index == o.Value.Index
 	}
 	return false
@@ -134,23 +134,63 @@ func transformEquals(a, b TypeTransform) bool {
 }
 
 func unchangedEquals(_ Unchanged, b TypeTransform) bool {
-	_, ok := b.(Unchanged)
-	return ok
+	switch b.(type) {
+	case Unchanged, *Unchanged:
+		return true
+	default:
+		return false
+	}
 }
 
 func elementUnionEquals(a ElementUnion, b TypeTransform) bool {
-	bb, ok := b.(ElementUnion)
+	bb, ok := normalizeElementUnion(b)
 	return ok && a.Source.Index == bb.Source.Index
 }
 
 func containerElementUnionEquals(a ContainerElementUnion, b TypeTransform) bool {
-	bb, ok := b.(ContainerElementUnion)
+	bb, ok := normalizeContainerElementUnion(b)
 	return ok &&
 		a.Container.Index == bb.Container.Index &&
 		a.Value.Index == bb.Value.Index
 }
 
 func toArrayEquals(a ToArray, b TypeTransform) bool {
-	bb, ok := b.(ToArray)
+	bb, ok := normalizeToArray(b)
 	return ok && a.Element.Index == bb.Element.Index
+}
+
+func normalizeElementUnion(t TypeTransform) (ElementUnion, bool) {
+	switch tt := t.(type) {
+	case ElementUnion:
+		return tt, true
+	case *ElementUnion:
+		if tt != nil {
+			return *tt, true
+		}
+	}
+	return ElementUnion{}, false
+}
+
+func normalizeContainerElementUnion(t TypeTransform) (ContainerElementUnion, bool) {
+	switch tt := t.(type) {
+	case ContainerElementUnion:
+		return tt, true
+	case *ContainerElementUnion:
+		if tt != nil {
+			return *tt, true
+		}
+	}
+	return ContainerElementUnion{}, false
+}
+
+func normalizeToArray(t TypeTransform) (ToArray, bool) {
+	switch tt := t.(type) {
+	case ToArray:
+		return tt, true
+	case *ToArray:
+		if tt != nil {
+			return *tt, true
+		}
+	}
+	return ToArray{}, false
 }

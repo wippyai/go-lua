@@ -78,31 +78,35 @@ func Optional(t typ.Type) typ.Type {
 	return nil
 }
 
-// RecordAliasOnly follows raw Alias.Target links and returns the final record.
-//
-// This intentionally does not unwrap annotations or use Alias.UnaliasedTarget.
-func RecordAliasOnly(t typ.Type) *typ.Record {
-	for {
-		a, ok := t.(*typ.Alias)
-		if !ok {
-			break
-		}
-		t = a.Target
-	}
-	rec, _ := t.(*typ.Record)
-	return rec
-}
+// RecordAliasPolicy selects how record unwrapping follows Alias nodes.
+type RecordAliasPolicy int
 
-// RecordUnaliased follows Alias.UnaliasedTarget links and returns the final record.
-//
-// This intentionally does not unwrap annotations.
-func RecordUnaliased(t typ.Type) *typ.Record {
+const (
+	// RecordAliasTarget follows the current Alias.Target chain.
+	//
+	// Use this when callers intentionally observe alias target mutation.
+	RecordAliasTarget RecordAliasPolicy = iota
+
+	// RecordAliasUnaliasedTarget follows Alias.UnaliasedTarget snapshots.
+	//
+	// Use this when callers need the flattened target captured at alias creation.
+	RecordAliasUnaliasedTarget
+)
+
+// RecordWithAliasPolicy follows Alias nodes according to policy and returns
+// the final record. It intentionally does not unwrap annotations.
+func RecordWithAliasPolicy(t typ.Type, policy RecordAliasPolicy) *typ.Record {
 	for {
 		a, ok := t.(*typ.Alias)
 		if !ok {
 			break
 		}
-		t = a.UnaliasedTarget()
+		switch policy {
+		case RecordAliasUnaliasedTarget:
+			t = a.UnaliasedTarget()
+		default:
+			t = a.Target
+		}
 	}
 	rec, _ := t.(*typ.Record)
 	return rec

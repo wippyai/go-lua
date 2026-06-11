@@ -126,39 +126,24 @@ func decodeEffectRow(w *effectRowWire) (effect.Row, error) {
 }
 
 func encodeEffectLabel(label effect.Label) (effectLabelWire, error) {
+	label = effect.NormalizeLabel(label)
 	switch l := label.(type) {
 	case control.Throw:
 		return effectLabelWire{Kind: "control.throw"}, nil
-	case *control.Throw:
-		return encodeEffectLabel(*l)
 	case control.Diverge:
 		return effectLabelWire{Kind: "control.diverge"}, nil
-	case *control.Diverge:
-		return encodeEffectLabel(*l)
 	case control.IO:
 		return effectLabelWire{Kind: "control.io"}, nil
-	case *control.IO:
-		return encodeEffectLabel(*l)
 	case dispatch.ModuleLoad:
 		return effectLabelWire{Kind: "dispatch.moduleLoad"}, nil
-	case *dispatch.ModuleLoad:
-		return encodeEffectLabel(*l)
 	case dispatch.VariadicTransform:
 		return effectLabelWire{Kind: "dispatch.variadicTransform"}, nil
-	case *dispatch.VariadicTransform:
-		return encodeEffectLabel(*l)
 	case dispatch.TypePredicate:
 		return effectLabelWire{Kind: "dispatch.typePredicate"}, nil
-	case *dispatch.TypePredicate:
-		return encodeEffectLabel(*l)
 	case dispatch.TypeValueMethod:
 		return effectLabelWire{Kind: "dispatch.typeValueMethod"}, nil
-	case *dispatch.TypeValueMethod:
-		return encodeEffectLabel(*l)
 	case dispatch.CallableType:
 		return effectLabelWire{Kind: "dispatch.callableType"}, nil
-	case *dispatch.CallableType:
-		return encodeEffectLabel(*l)
 	case iteration.Iterator:
 		kind, err := encodeIteratorKind(l.Kind)
 		if err != nil {
@@ -169,8 +154,6 @@ func encodeEffectLabel(label effect.Label) (effectLabelWire, error) {
 			Source:       encodeParamRef(l.Source),
 			IteratorKind: kind,
 		}, nil
-	case *iteration.Iterator:
-		return encodeEffectLabel(*l)
 	case mutation.Mutate:
 		transform, err := encodeEffectTransform(l.Transform)
 		if err != nil {
@@ -186,69 +169,45 @@ func encodeEffectLabel(label effect.Label) (effectLabelWire, error) {
 			Transform: transform,
 			Length:    length,
 		}, nil
-	case *mutation.Mutate:
-		return encodeEffectLabel(*l)
 	case mutation.LengthChange:
 		return effectLabelWire{
 			Kind:   "mutation.lengthChange",
 			Target: encodeParamRef(l.Target),
 			Delta:  l.Delta,
 		}, nil
-	case *mutation.LengthChange:
-		return encodeEffectLabel(*l)
 	case mutation.TableMutator:
 		return effectLabelWire{
 			Kind:   "mutation.tableMutator",
 			Target: encodeParamRef(l.Target),
 			Value:  encodeParamRef(l.Value),
 		}, nil
-	case *mutation.TableMutator:
-		return encodeEffectLabel(*l)
 	case ownership.Borrow:
 		return effectLabelWire{Kind: "ownership.borrow", Param: encodeParamRef(l.Param)}, nil
-	case *ownership.Borrow:
-		return encodeEffectLabel(*l)
 	case ownership.Store:
 		return effectLabelWire{Kind: "ownership.store", Param: encodeParamRef(l.Param), Into: encodeParamRef(l.Into)}, nil
-	case *ownership.Store:
-		return encodeEffectLabel(*l)
 	case ownership.BorrowAll:
 		return effectLabelWire{Kind: "ownership.borrowAll"}, nil
-	case *ownership.BorrowAll:
-		return encodeEffectLabel(*l)
 	case ownership.Send:
 		return effectLabelWire{Kind: "ownership.send", FromParam: l.FromParam}, nil
-	case *ownership.Send:
-		return encodeEffectLabel(*l)
 	case ownership.Freeze:
 		return effectLabelWire{Kind: "ownership.freeze", Param: encodeParamRef(l.Param)}, nil
-	case *ownership.Freeze:
-		return encodeEffectLabel(*l)
 	case returns.Return:
 		transform, err := encodeEffectReturn(l.Transform)
 		if err != nil {
 			return effectLabelWire{}, err
 		}
 		return effectLabelWire{Kind: "returns.return", ReturnIndex: l.ReturnIndex, ReturnType: transform}, nil
-	case *returns.Return:
-		return encodeEffectLabel(*l)
 	case returns.ErrorReturn:
 		return effectLabelWire{Kind: "returns.errorReturn", ValueIndex: l.ValueIndex, ErrorIndex: l.ErrorIndex}, nil
-	case *returns.ErrorReturn:
-		return encodeEffectLabel(*l)
 	case returns.ReturnLength:
 		length, err := encodeExpr(l.Length)
 		if err != nil {
 			return effectLabelWire{}, err
 		}
 		return effectLabelWire{Kind: "returns.returnLength", ReturnIndex: l.ReturnIndex, Length: length}, nil
-	case *returns.ReturnLength:
-		return encodeEffectLabel(*l)
 	case returns.CorrelatedReturn:
 		indices := append([]int(nil), l.Indices...)
 		return effectLabelWire{Kind: "returns.correlatedReturn", Indices: indices}, nil
-	case *returns.CorrelatedReturn:
-		return encodeEffectLabel(*l)
 	default:
 		return effectLabelWire{}, fmt.Errorf("manifest: unsupported effect label %T", label)
 	}

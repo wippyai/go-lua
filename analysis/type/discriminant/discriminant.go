@@ -267,8 +267,8 @@ func (d *Detector) mergeKeepsPreciseFieldType(a, b typ.Type) bool {
 	if fieldMergeKind(a) != fieldMergeKind(b) {
 		return false
 	}
-	ar := unwrap.RecordAliasOnly(a)
-	br := unwrap.RecordAliasOnly(b)
+	ar := unwrap.RecordWithAliasPolicy(a, unwrap.RecordAliasTarget)
+	br := unwrap.RecordWithAliasPolicy(b, unwrap.RecordAliasTarget)
 	if ar != nil && br != nil {
 		return d.literalErasedResidualsCleanlyMergeable(ar, br) && !d.RecordsConflict(ar, br)
 	}

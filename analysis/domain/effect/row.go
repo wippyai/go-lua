@@ -47,7 +47,9 @@ func (r Row) IsUnknown() bool {
 
 func (r Row) Clone() Row {
 	labels := make([]Label, len(r.Labels))
-	copy(labels, r.Labels)
+	for i, label := range r.Labels {
+		labels[i] = NormalizeLabel(label)
+	}
 	if r.Tail == nil {
 		return Row{Labels: labels}
 	}
@@ -60,7 +62,7 @@ func (r Row) Hash() uint64 {
 
 	labelKeys := make([]string, 0, len(r.Labels))
 	for _, label := range r.Labels {
-		labelKeys = append(labelKeys, labelIdentity(label))
+		labelKeys = append(labelKeys, labelIdentity(NormalizeLabel(label)))
 	}
 	sort.Strings(labelKeys)
 	for _, key := range labelKeys {
@@ -75,7 +77,7 @@ func (r Row) Hash() uint64 {
 
 func (r Row) Has(check func(Label) bool) bool {
 	for _, l := range r.Labels {
-		if check(l) {
+		if check(NormalizeLabel(l)) {
 			return true
 		}
 	}
@@ -88,7 +90,10 @@ func (r Row) String() string {
 	}
 	parts := make([]string, 0, len(r.Labels))
 	for _, l := range r.Labels {
-		parts = append(parts, l.String())
+		normalized := NormalizeLabel(l)
+		if normalized != nil {
+			parts = append(parts, normalized.String())
+		}
 	}
 	if r.Tail != nil {
 		if len(parts) == 0 {
@@ -101,11 +106,12 @@ func (r Row) String() string {
 
 func (r Row) With(labels ...Label) Row {
 	newLabels := make([]Label, 0, len(r.Labels)+len(labels))
-	newLabels = append(newLabels, r.Labels...)
+	newLabels = append(newLabels, normalizeLabels(r.Labels)...)
 	result := Row{Labels: newLabels, Tail: r.Tail}
 	for _, l := range labels {
-		if !containsLabelEquals(result.Labels, l) {
-			result.Labels = append(result.Labels, l)
+		normalized := NormalizeLabel(l)
+		if !containsLabelEquals(result.Labels, normalized) {
+			result.Labels = append(result.Labels, normalized)
 		}
 	}
 	return result
@@ -114,8 +120,9 @@ func (r Row) With(labels ...Label) Row {
 func (r Row) Without(match func(Label) bool) Row {
 	var newLabels []Label
 	for _, l := range r.Labels {
-		if !match(l) {
-			newLabels = append(newLabels, l)
+		normalized := NormalizeLabel(l)
+		if !match(normalized) {
+			newLabels = append(newLabels, normalized)
 		}
 	}
 	return Row{Labels: newLabels, Tail: r.Tail}

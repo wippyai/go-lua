@@ -30,6 +30,33 @@ func TestPrimitiveStrictOrder(t *testing.T) {
 	}
 }
 
+func TestAnySourceStrictSubtypeBehavior(t *testing.T) {
+	tableTop := typ.NewInterface("table", nil)
+	record := typetable.NewRecord().Field("id", typ.String).Build()
+
+	tests := []struct {
+		name  string
+		super typ.Type
+		want  bool
+	}{
+		{"concrete primitive", typ.String, false},
+		{"concrete record", record, false},
+		{"builtin table top marker", tableTop, true},
+		{"primitive union", typ.NewUnion(typ.String, typ.Number), false},
+		{"union with table top marker", typ.NewUnion(typ.String, tableTop), true},
+		{"intersection with concrete record", typ.NewIntersection(tableTop, record), false},
+		{"intersection with only accepted tops", typ.NewIntersection(tableTop, typ.Any), true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := IsSubtype(typ.Any, tt.super); got != tt.want {
+				t.Fatalf("IsSubtype(any, %s) = %v, want %v", tt.super, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestLiteralOptionalUnionAndIntersectionStrict(t *testing.T) {
 	if !IsSubtype(typ.LiteralInt(42), typ.Number) {
 		t.Fatal("integer literal should be a number")

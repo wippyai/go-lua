@@ -8,7 +8,7 @@ func HasIterator(r effect.Row) bool {
 
 func GetIterator(r effect.Row) *Iterator {
 	for _, l := range r.Labels {
-		if iter, ok := l.(Iterator); ok {
+		if iter, ok := effect.NormalizeLabel(l).(Iterator); ok {
 			return &iter
 		}
 	}

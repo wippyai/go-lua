@@ -18,7 +18,7 @@ func (r Return) String() string {
 	return fmt.Sprintf("ret[%d].type = %s", r.ReturnIndex, r.Transform)
 }
 func (r Return) Equals(other effect.Label) bool {
-	if o, ok := other.(Return); ok {
+	if o, ok := effect.NormalizeLabel(other).(Return); ok {
 		return r.ReturnIndex == o.ReturnIndex && returnTypeEquals(r.Transform, o.Transform)
 	}
 	return false
@@ -34,7 +34,7 @@ func (e ErrorReturn) String() string {
 	return fmt.Sprintf("errret(val[%d], err[%d])", e.ValueIndex, e.ErrorIndex)
 }
 func (e ErrorReturn) Equals(other effect.Label) bool {
-	if o, ok := other.(ErrorReturn); ok {
+	if o, ok := effect.NormalizeLabel(other).(ErrorReturn); ok {
 		return e.ValueIndex == o.ValueIndex && e.ErrorIndex == o.ErrorIndex
 	}
 	return false
@@ -50,7 +50,7 @@ func (r ReturnLength) String() string {
 	return fmt.Sprintf("ret[%d].len = %s", r.ReturnIndex, r.Length)
 }
 func (r ReturnLength) Equals(other effect.Label) bool {
-	if o, ok := other.(ReturnLength); ok {
+	if o, ok := effect.NormalizeLabel(other).(ReturnLength); ok {
 		return r.ReturnIndex == o.ReturnIndex && expr.ExprEquals(r.Length, o.Length)
 	}
 	return false
@@ -157,7 +157,7 @@ func (c CorrelatedReturn) String() string {
 	return fmt.Sprintf("correlated_return(%v)", c.Indices)
 }
 func (c CorrelatedReturn) Equals(other effect.Label) bool {
-	o, ok := other.(CorrelatedReturn)
+	o, ok := effect.NormalizeLabel(other).(CorrelatedReturn)
 	if !ok || len(c.Indices) != len(o.Indices) {
 		return false
 	}
@@ -223,42 +223,42 @@ func returnTypeEquals(a, b ReturnType) bool {
 }
 
 func elementOfEquals(a ElementOf, b ReturnType) bool {
-	bb, ok := b.(ElementOf)
+	bb, ok := normalizeElementOf(b)
 	return ok && a.Source.Index == bb.Source.Index
 }
 
 func optionalElementOfEquals(a OptionalElementOf, b ReturnType) bool {
-	bb, ok := b.(OptionalElementOf)
+	bb, ok := normalizeOptionalElementOf(b)
 	return ok && a.Source.Index == bb.Source.Index
 }
 
 func callbackReturnEquals(a CallbackReturn, b ReturnType) bool {
-	bb, ok := b.(CallbackReturn)
+	bb, ok := normalizeCallbackReturn(b)
 	return ok && a.CallbackParam.Index == bb.CallbackParam.Index
 }
 
 func arrayOfCallbackReturnEquals(a ArrayOfCallbackReturn, b ReturnType) bool {
-	bb, ok := b.(ArrayOfCallbackReturn)
+	bb, ok := normalizeArrayOfCallbackReturn(b)
 	return ok && a.CallbackParam.Index == bb.CallbackParam.Index
 }
 
 func sameAsEquals(a SameAs, b ReturnType) bool {
-	bb, ok := b.(SameAs)
+	bb, ok := normalizeSameAs(b)
 	return ok && a.Source.Index == bb.Source.Index
 }
 
 func deepElementOfEquals(a DeepElementOf, b ReturnType) bool {
-	bb, ok := b.(DeepElementOf)
+	bb, ok := normalizeDeepElementOf(b)
 	return ok && a.Source.Index == bb.Source.Index
 }
 
 func stringUnpackValueEquals(a StringUnpackValue, b ReturnType) bool {
-	bb, ok := b.(StringUnpackValue)
+	bb, ok := normalizeStringUnpackValue(b)
 	return ok && a.Format.Index == bb.Format.Index
 }
 
 func typeProjectionEquals(a TypeProjection, b ReturnType) bool {
-	bb, ok := b.(TypeProjection)
+	bb, ok := normalizeTypeProjection(b)
 	if !ok || a.Source.Index != bb.Source.Index {
 		return false
 	}
@@ -266,11 +266,131 @@ func typeProjectionEquals(a TypeProjection, b ReturnType) bool {
 }
 
 func selectCaseOfParamEquals(a SelectCaseOfParam, b ReturnType) bool {
-	bb, ok := b.(SelectCaseOfParam)
+	bb, ok := normalizeSelectCaseOfParam(b)
 	return ok && a.Source.Index == bb.Source.Index
 }
 
 func selectResultOfCasesEquals(a SelectResultOfCases, b ReturnType) bool {
-	bb, ok := b.(SelectResultOfCases)
+	bb, ok := normalizeSelectResultOfCases(b)
 	return ok && a.Cases.Index == bb.Cases.Index && a.Default.Index == bb.Default.Index
+}
+
+func normalizeElementOf(r ReturnType) (ElementOf, bool) {
+	switch rr := r.(type) {
+	case ElementOf:
+		return rr, true
+	case *ElementOf:
+		if rr != nil {
+			return *rr, true
+		}
+	}
+	return ElementOf{}, false
+}
+
+func normalizeOptionalElementOf(r ReturnType) (OptionalElementOf, bool) {
+	switch rr := r.(type) {
+	case OptionalElementOf:
+		return rr, true
+	case *OptionalElementOf:
+		if rr != nil {
+			return *rr, true
+		}
+	}
+	return OptionalElementOf{}, false
+}
+
+func normalizeCallbackReturn(r ReturnType) (CallbackReturn, bool) {
+	switch rr := r.(type) {
+	case CallbackReturn:
+		return rr, true
+	case *CallbackReturn:
+		if rr != nil {
+			return *rr, true
+		}
+	}
+	return CallbackReturn{}, false
+}
+
+func normalizeArrayOfCallbackReturn(r ReturnType) (ArrayOfCallbackReturn, bool) {
+	switch rr := r.(type) {
+	case ArrayOfCallbackReturn:
+		return rr, true
+	case *ArrayOfCallbackReturn:
+		if rr != nil {
+			return *rr, true
+		}
+	}
+	return ArrayOfCallbackReturn{}, false
+}
+
+func normalizeSameAs(r ReturnType) (SameAs, bool) {
+	switch rr := r.(type) {
+	case SameAs:
+		return rr, true
+	case *SameAs:
+		if rr != nil {
+			return *rr, true
+		}
+	}
+	return SameAs{}, false
+}
+
+func normalizeDeepElementOf(r ReturnType) (DeepElementOf, bool) {
+	switch rr := r.(type) {
+	case DeepElementOf:
+		return rr, true
+	case *DeepElementOf:
+		if rr != nil {
+			return *rr, true
+		}
+	}
+	return DeepElementOf{}, false
+}
+
+func normalizeStringUnpackValue(r ReturnType) (StringUnpackValue, bool) {
+	switch rr := r.(type) {
+	case StringUnpackValue:
+		return rr, true
+	case *StringUnpackValue:
+		if rr != nil {
+			return *rr, true
+		}
+	}
+	return StringUnpackValue{}, false
+}
+
+func normalizeTypeProjection(r ReturnType) (TypeProjection, bool) {
+	switch rr := r.(type) {
+	case TypeProjection:
+		return rr, true
+	case *TypeProjection:
+		if rr != nil {
+			return *rr, true
+		}
+	}
+	return TypeProjection{}, false
+}
+
+func normalizeSelectCaseOfParam(r ReturnType) (SelectCaseOfParam, bool) {
+	switch rr := r.(type) {
+	case SelectCaseOfParam:
+		return rr, true
+	case *SelectCaseOfParam:
+		if rr != nil {
+			return *rr, true
+		}
+	}
+	return SelectCaseOfParam{}, false
+}
+
+func normalizeSelectResultOfCases(r ReturnType) (SelectResultOfCases, bool) {
+	switch rr := r.(type) {
+	case SelectResultOfCases:
+		return rr, true
+	case *SelectResultOfCases:
+		if rr != nil {
+			return *rr, true
+		}
+	}
+	return SelectResultOfCases{}, false
 }

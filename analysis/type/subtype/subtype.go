@@ -27,7 +27,6 @@ func isOptionalTop(t typ.Type) bool {
 type checker struct {
 	inProgress map[typePair]bool
 	memo       map[typePair]bool
-	gradual    bool
 }
 
 func (c *checker) check(sub, super typ.Type, depth int) bool {
@@ -147,7 +146,7 @@ func (c *checker) checkCore(sub, super typ.Type, depth int) bool {
 		return true
 	}
 	if typ.IsAny(sub) {
-		if c.gradual || typetable.IsBuiltinTopMarker(super) {
+		if typetable.IsBuiltinTopMarker(super) {
 			return true
 		}
 		if i, ok := super.(*typ.Intersection); ok {

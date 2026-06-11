@@ -4,7 +4,7 @@ import "github.com/wippyai/go-lua/analysis/domain/effect"
 
 func GetReturn(r effect.Row, retIdx int) *Return {
 	for _, l := range r.Labels {
-		if ret, ok := l.(Return); ok && ret.ReturnIndex == retIdx {
+		if ret, ok := effect.NormalizeLabel(l).(Return); ok && ret.ReturnIndex == retIdx {
 			return &ret
 		}
 	}
@@ -13,7 +13,7 @@ func GetReturn(r effect.Row, retIdx int) *Return {
 
 func GetErrorReturn(r effect.Row, valueIdx int) *ErrorReturn {
 	for _, l := range r.Labels {
-		if er, ok := l.(ErrorReturn); ok && er.ValueIndex == valueIdx {
+		if er, ok := effect.NormalizeLabel(l).(ErrorReturn); ok && er.ValueIndex == valueIdx {
 			return &er
 		}
 	}
@@ -22,7 +22,7 @@ func GetErrorReturn(r effect.Row, valueIdx int) *ErrorReturn {
 
 func GetCorrelatedReturn(r effect.Row, idx int) *CorrelatedReturn {
 	for _, l := range r.Labels {
-		if cr, ok := l.(CorrelatedReturn); ok {
+		if cr, ok := effect.NormalizeLabel(l).(CorrelatedReturn); ok {
 			for _, i := range cr.Indices {
 				if i == idx {
 					return &cr
@@ -35,7 +35,7 @@ func GetCorrelatedReturn(r effect.Row, idx int) *CorrelatedReturn {
 
 func GetReturnLength(r effect.Row, retIdx int) *ReturnLength {
 	for _, l := range r.Labels {
-		if ret, ok := l.(ReturnLength); ok && ret.ReturnIndex == retIdx {
+		if ret, ok := effect.NormalizeLabel(l).(ReturnLength); ok && ret.ReturnIndex == retIdx {
 			return &ret
 		}
 	}

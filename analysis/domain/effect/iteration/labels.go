@@ -29,7 +29,7 @@ func (i Iterator) String() string {
 	return fmt.Sprintf("iterator(%s, %s)", i.Source, kind)
 }
 func (i Iterator) Equals(other effect.Label) bool {
-	if o, ok := other.(Iterator); ok {
+	if o, ok := effect.NormalizeLabel(other).(Iterator); ok {
 		return i.Source.Index == o.Source.Index && i.Kind == o.Kind
 	}
 	return false

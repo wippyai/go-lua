@@ -23,7 +23,7 @@ func (b Borrow) String() string {
 	return fmt.Sprintf("borrow(%s)", b.Param)
 }
 func (b Borrow) Equals(other effect.Label) bool {
-	if o, ok := other.(Borrow); ok {
+	if o, ok := effect.NormalizeLabel(other).(Borrow); ok {
 		return b.Param.Index == o.Param.Index
 	}
 	return false
@@ -42,7 +42,7 @@ func (s Store) String() string {
 	return fmt.Sprintf("store(%s)", s.Param)
 }
 func (s Store) Equals(other effect.Label) bool {
-	if o, ok := other.(Store); ok {
+	if o, ok := effect.NormalizeLabel(other).(Store); ok {
 		return s.Param.Index == o.Param.Index && s.Into.Index == o.Into.Index
 	}
 	return false
@@ -53,7 +53,7 @@ type BorrowAll struct{}
 func (BorrowAll) EffectLabel()   {}
 func (BorrowAll) String() string { return "borrow_all" }
 func (BorrowAll) Equals(other effect.Label) bool {
-	_, ok := other.(BorrowAll)
+	_, ok := effect.NormalizeLabel(other).(BorrowAll)
 	return ok
 }
 
@@ -66,7 +66,7 @@ func (s Send) String() string {
 	return fmt.Sprintf("send(params[%d:])", s.FromParam)
 }
 func (s Send) Equals(other effect.Label) bool {
-	if o, ok := other.(Send); ok {
+	if o, ok := effect.NormalizeLabel(other).(Send); ok {
 		return s.FromParam == o.FromParam
 	}
 	return false
@@ -81,7 +81,7 @@ func (f Freeze) String() string {
 	return fmt.Sprintf("freeze(%s)", f.Param)
 }
 func (f Freeze) Equals(other effect.Label) bool {
-	if o, ok := other.(Freeze); ok {
+	if o, ok := effect.NormalizeLabel(other).(Freeze); ok {
 		return f.Param.Index == o.Param.Index
 	}
 	return false

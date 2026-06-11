@@ -8,7 +8,7 @@ func HasMutate(r effect.Row) bool {
 
 func GetMutate(r effect.Row, paramIdx int) *Mutate {
 	for _, l := range r.Labels {
-		if m, ok := l.(Mutate); ok && m.Target.Index == paramIdx {
+		if m, ok := effect.NormalizeLabel(l).(Mutate); ok && m.Target.Index == paramIdx {
 			return &m
 		}
 	}
@@ -21,7 +21,7 @@ func HasTableMutator(r effect.Row) bool {
 
 func GetTableMutator(r effect.Row) *TableMutator {
 	for _, l := range r.Labels {
-		if mut, ok := l.(TableMutator); ok {
+		if mut, ok := effect.NormalizeLabel(l).(TableMutator); ok {
 			return &mut
 		}
 	}

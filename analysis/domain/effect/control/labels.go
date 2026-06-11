@@ -22,20 +22,20 @@ type (
 func (Throw) EffectLabel()   {}
 func (Throw) String() string { return "throw" }
 func (Throw) Equals(other effect.Label) bool {
-	_, ok := other.(Throw)
+	_, ok := effect.NormalizeLabel(other).(Throw)
 	return ok
 }
 
 func (Diverge) EffectLabel()   {}
 func (Diverge) String() string { return "diverge" }
 func (Diverge) Equals(other effect.Label) bool {
-	_, ok := other.(Diverge)
+	_, ok := effect.NormalizeLabel(other).(Diverge)
 	return ok
 }
 
 func (IO) EffectLabel()   {}
 func (IO) String() string { return "io" }
 func (IO) Equals(other effect.Label) bool {
-	_, ok := other.(IO)
+	_, ok := effect.NormalizeLabel(other).(IO)
 	return ok
 }

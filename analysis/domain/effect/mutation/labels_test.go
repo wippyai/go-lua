@@ -66,17 +66,17 @@ func TestMutate_Equals(t *testing.T) {
 	}
 }
 
-func TestTransformEqualsPointerLeftOnly(t *testing.T) {
+func TestTransformEqualsNormalizesPointers(t *testing.T) {
 	tr := ToArray{Element: effect.ParamRef{Index: 0}}
 
 	if !transformEquals(&tr, tr) {
 		t.Error("pointer transform on left should equal value transform")
 	}
-	if transformEquals(tr, &tr) {
-		t.Error("value transform on left should not equal pointer transform")
+	if !transformEquals(tr, &tr) {
+		t.Error("value transform on left should equal pointer transform")
 	}
-	if transformEquals(&tr, &tr) {
-		t.Error("pointer transforms on both sides should not be equal")
+	if !transformEquals(&tr, &tr) {
+		t.Error("pointer transforms on both sides should be equal")
 	}
 }
 
