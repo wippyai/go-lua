@@ -14,6 +14,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/symbol"
 	"github.com/wippyai/go-lua/analysis/type/subtype"
 	"github.com/wippyai/go-lua/analysis/type/typ"
+	"github.com/wippyai/go-lua/analysis/type/unwrap"
 	"github.com/wippyai/go-lua/compiler/ast"
 )
 
@@ -83,21 +84,24 @@ func (p DirectCallContract) call(
 	if !ok {
 		return directNotCallableDiagnostic(point, fact.Call, name, baseType), true
 	}
-	contract := directFunctionContract{
-		fn:         callable,
-		name:       name,
-		declSpan:   ast.SpanOf(fact.Call),
-		paramTypes: nil,
-	}
+	contract := lowerDirectFunctionType(callable)
+	contract.name = name
+	contract.declSpan = ast.SpanOf(fact.Call)
 	return p.directFunctionCall(point, fact.Call, contract)
 }
 
 type directFunctionContract struct {
-	fn         *typ.Function
-	name       string
-	declSpan   ast.Span
-	paramTypes []ast.TypeExpr
-	variadic   ast.TypeExpr
+	name      string
+	declSpan  ast.Span
+	params    []directCallParam
+	variadic  directCallParam
+	hasVararg bool
+}
+
+type directCallParam struct {
+	typ      typ.Type
+	explicit bool
+	optional bool
 }
 
 func (p DirectCallContract) callFunction(
@@ -121,27 +125,25 @@ func (p DirectCallContract) directFunctionCall(
 	contract directFunctionContract,
 ) (diagnostic.Diagnostic, bool) {
 	args := call.Args
-	required := minRequiredArgs(contract.fn)
+	required := contract.requiredArity()
 	if len(args) < required {
 		return tooFewArgsDiagnostic(point, call, contract.name, required, len(args), contract.declSpan), true
 	}
-	max := len(contract.fn.Params)
 	for i, arg := range args {
 		var want typ.Type
-		var wantExpr ast.TypeExpr
-		if i < len(contract.fn.Params) {
-			want = contract.fn.Params[i].Type
-			if i < len(contract.paramTypes) {
-				wantExpr = contract.paramTypes[i]
+		if i < len(contract.params) {
+			param := contract.params[i]
+			want = param.typ
+			if !param.explicit || want == nil || typ.IsAny(want) || typ.IsUnknown(want) {
+				continue
 			}
-		} else if contract.fn.Variadic != nil {
-			want = contract.fn.Variadic
-			wantExpr = contract.variadic
+		} else if contract.hasVararg {
+			want = contract.variadic.typ
+			if !contract.variadic.explicit || want == nil || typ.IsAny(want) || typ.IsUnknown(want) {
+				continue
+			}
 		} else {
 			break
-		}
-		if want == nil || typ.IsAny(want) || typ.IsUnknown(want) {
-			continue
 		}
 		got, ok := valueexpr.LiteralType(arg)
 		if !ok {
@@ -150,10 +152,7 @@ func (p DirectCallContract) directFunctionCall(
 		if subtype.IsSubtype(got, want) {
 			continue
 		}
-		return argTypeDiagnostic(point, call, contract.name, i, got, want, arg, wantExpr, contract.declSpan), true
-	}
-	if len(args) > max && contract.fn.Variadic == nil {
-		return diagnostic.Diagnostic{}, false
+		return argTypeDiagnostic(point, call, contract.name, i, got, want, arg, contract.declSpan), true
 	}
 	return diagnostic.Diagnostic{}, false
 }
@@ -162,95 +161,97 @@ func lowerDirectFunctionContract(fn *ast.FunctionExpr, resolver typeannotation.R
 	if fn == nil {
 		return directFunctionContract{}, false
 	}
-	fnTypeExpr := &ast.FunctionTypeExpr{
-		TypeParams: copyTypeParams(fn.TypeParams),
-		Params:     make([]ast.FunctionParamExpr, 0),
-		Returns:    functionReturnTypes(fn),
+	contract := directFunctionContract{
+		params: make([]directCallParam, 0),
 	}
 	if fn.ParList != nil {
-		fnTypeExpr.Params = make([]ast.FunctionParamExpr, len(fn.ParList.Names))
+		contract.params = make([]directCallParam, 0, len(fn.ParList.Names))
 		for i := range fn.ParList.Names {
-			paramType := typeExprOrUnknown(fn.ParList.Types, i)
-			fnTypeExpr.Params[i] = ast.FunctionParamExpr{
-				Name: fn.ParList.Names[i],
-				Type: paramType,
+			param, ok := lowerDirectCallParam(typeExprAt(fn.ParList.Types, i), resolver)
+			if !ok {
+				return directFunctionContract{}, false
 			}
+			contract.params = append(contract.params, param)
 		}
 		if fn.ParList.HasVargs {
-			fnTypeExpr.Variadic = typeExprOrUnknown([]ast.TypeExpr{fn.ParList.VarargType}, 0)
+			variadic, ok := lowerDirectCallParam(fn.ParList.VarargType, resolver)
+			if !ok {
+				return directFunctionContract{}, false
+			}
+			contract.hasVararg = true
+			contract.variadic = variadic
 		}
 	}
-	typType, ok := typeannotation.Type(fnTypeExpr, resolver)
-	if !ok {
-		return directFunctionContract{}, false
+	return contract, true
+}
+
+func lowerDirectFunctionType(fn *typ.Function) directFunctionContract {
+	contract := directFunctionContract{
+		params: make([]directCallParam, 0, len(fn.Params)),
 	}
-	fnType, ok := typType.(*typ.Function)
-	if !ok {
-		return directFunctionContract{}, false
+	for _, param := range fn.Params {
+		optional := param.Optional || isOptionalType(param.Type)
+		explicit := param.Type != nil && !typ.IsAny(param.Type) && !typ.IsUnknown(param.Type)
+		if !explicit {
+			optional = true
+		}
+		contract.params = append(contract.params, directCallParam{
+			typ:      param.Type,
+			explicit: explicit,
+			optional: optional,
+		})
 	}
-	return directFunctionContract{
-		fn:         fnType,
-		paramTypes: functionParamTypes(fn),
-		variadic:   functionVariadicType(fn),
+	if fn.Variadic != nil {
+		contract.hasVararg = true
+		contract.variadic = directCallParam{
+			typ:      fn.Variadic,
+			explicit: !typ.IsAny(fn.Variadic) && !typ.IsUnknown(fn.Variadic),
+			optional: isOptionalType(fn.Variadic) || typ.IsAny(fn.Variadic) || typ.IsUnknown(fn.Variadic),
+		}
+	}
+	return contract
+}
+
+func lowerDirectCallParam(expr ast.TypeExpr, resolver typeannotation.Resolver) (directCallParam, bool) {
+	if expr == nil {
+		return directCallParam{optional: true}, true
+	}
+	t, ok := typeannotation.Type(expr, resolver)
+	if !ok {
+		return directCallParam{}, false
+	}
+	explicit := !typ.IsAny(t) && !typ.IsUnknown(t)
+	optional := !explicit || isOptionalType(t)
+	return directCallParam{
+		typ:      t,
+		explicit: explicit,
+		optional: optional,
 	}, true
 }
 
-func functionParamTypes(fn *ast.FunctionExpr) []ast.TypeExpr {
-	if fn == nil || fn.ParList == nil || len(fn.ParList.Types) == 0 {
-		return nil
-	}
-	out := make([]ast.TypeExpr, len(fn.ParList.Names))
-	for i := range out {
-		out[i] = typeExprOrUnknown(fn.ParList.Types, i)
-	}
-	return out
-}
-
-func functionVariadicType(fn *ast.FunctionExpr) ast.TypeExpr {
-	if fn == nil || fn.ParList == nil || !fn.ParList.HasVargs {
-		return nil
-	}
-	return typeExprOrUnknown([]ast.TypeExpr{fn.ParList.VarargType}, 0)
-}
-
-func functionReturnTypes(fn *ast.FunctionExpr) []ast.TypeExpr {
-	if fn == nil || len(fn.ReturnTypes) == 0 {
-		return nil
-	}
-	out := make([]ast.TypeExpr, len(fn.ReturnTypes))
-	for i := range out {
-		out[i] = typeExprOrUnknown(fn.ReturnTypes, i)
-	}
-	return out
-}
-
-func typeExprOrUnknown(exprs []ast.TypeExpr, index int) ast.TypeExpr {
-	if index >= 0 && index < len(exprs) && exprs[index] != nil {
-		return exprs[index]
-	}
-	return &ast.PrimitiveTypeExpr{Name: "unknown"}
-}
-
-func copyTypeParams(in []ast.TypeParamExpr) []ast.TypeParamExpr {
-	if len(in) == 0 {
-		return nil
-	}
-	out := make([]ast.TypeParamExpr, len(in))
-	copy(out, in)
-	return out
-}
-
-func minRequiredArgs(fn *typ.Function) int {
-	if fn == nil {
-		return 0
-	}
+func (c directFunctionContract) requiredArity() int {
 	required := 0
-	for i, param := range fn.Params {
-		if !param.Optional {
+	for i, param := range c.params {
+		if param.explicit && !param.optional {
 			required = i + 1
 		}
 	}
 	return required
+}
+
+func typeExprAt(exprs []ast.TypeExpr, index int) ast.TypeExpr {
+	if index >= 0 && index < len(exprs) {
+		return exprs[index]
+	}
+	return nil
+}
+
+func isOptionalType(t typ.Type) bool {
+	if t == nil {
+		return false
+	}
+	_, ok := unwrap.Annotated(t).(*typ.Optional)
+	return ok
 }
 
 func directNotCallableDiagnostic(point cfg.Point, call *ast.FuncCallExpr, name string, calleeType typ.Type) diagnostic.Diagnostic {
@@ -315,13 +316,9 @@ func tooFewArgsDiagnostic(point cfg.Point, call *ast.FuncCallExpr, name string, 
 	}
 }
 
-func argTypeDiagnostic(point cfg.Point, call *ast.FuncCallExpr, name string, index int, got, want typ.Type, arg ast.Expr, wantExpr ast.TypeExpr, declSpan ast.Span) diagnostic.Diagnostic {
+func argTypeDiagnostic(point cfg.Point, call *ast.FuncCallExpr, name string, index int, got, want typ.Type, arg ast.Expr, declSpan ast.Span) diagnostic.Diagnostic {
 	span := ast.SpanOf(call)
 	argSpan := ast.SpanOf(arg)
-	paramSpan := declSpan
-	if wantExpr != nil {
-		paramSpan = ast.SpanOf(wantExpr)
-	}
 	return diagnostic.Diagnostic{
 		Position: diagnostic.Position{
 			Line:      span.StartLine,
@@ -343,7 +340,7 @@ func argTypeDiagnostic(point cfg.Point, call *ast.FuncCallExpr, name string, ind
 			diagnostic.Evidence{
 				Kind:    diagnostic.EvidenceUserAssertion,
 				Trust:   diagnostic.TrustClaimed,
-				Span:    paramSpan,
+				Span:    declSpan,
 				Message: fmt.Sprintf("%s parameter %d declares %s", name, index+1, formatType(want)),
 			},
 		),

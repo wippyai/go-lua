@@ -189,6 +189,59 @@ func TestDirectCallReportsWrongArgumentType(t *testing.T) {
 	}
 }
 
+func TestDirectCallAcceptsTypedOptionalParam(t *testing.T) {
+	diags := runDiagnostics(t, `
+		local function log(msg: string, level: string?)
+		end
+		log("hello")
+	`)
+	if len(diags) != 0 {
+		t.Fatalf("diagnostics = %#v, want none for typed optional param", diags)
+	}
+}
+
+func TestDirectCallAcceptsUntypedDefaultOptional(t *testing.T) {
+	diags := runDiagnostics(t, `
+		local function greet(name, greeting)
+			local message = greeting or "Hello"
+			return message
+		end
+		greet("World")
+	`)
+	if len(diags) != 0 {
+		t.Fatalf("diagnostics = %#v, want none for untyped default optional", diags)
+	}
+}
+
+func TestDirectCallAcceptsMultipleOrDefaults(t *testing.T) {
+	diags := runDiagnostics(t, `
+		local function pick(a, b, c)
+			local left = b or "left"
+			local right = c or "right"
+			return left, right
+		end
+		pick("head")
+	`)
+	if len(diags) != 0 {
+		t.Fatalf("diagnostics = %#v, want none for trailing defaults", diags)
+	}
+}
+
+func TestDirectCallAcceptsExplicitNilCheckOptional(t *testing.T) {
+	diags := runDiagnostics(t, `
+		local function maybe(value: string?)
+			if value == nil then
+				return
+			end
+			return value
+		end
+		maybe()
+	`)
+	if len(diags) != 0 {
+		t.Fatalf("diagnostics = %#v, want none for optional nil-checked param", diags)
+	}
+}
+
 func runDiagnostics(t *testing.T, src string) []diagnostic.Diagnostic {
 	t.Helper()
 	stmts, err := parse.ParseString(src, "diagnostics_test.lua")
