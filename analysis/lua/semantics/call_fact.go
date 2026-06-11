@@ -1,0 +1,153 @@
+package semantics
+
+import (
+	"github.com/wippyai/go-lua/analysis/domain/path"
+	"github.com/wippyai/go-lua/analysis/lua/bind"
+	"github.com/wippyai/go-lua/analysis/lua/pathexpr"
+	"github.com/wippyai/go-lua/analysis/symbol"
+	"github.com/wippyai/go-lua/compiler/ast"
+)
+
+func localResultTargets(stmt *ast.LocalAssignStmt, bindings *bind.Result) []CallResultTarget {
+	if stmt == nil || len(stmt.Names) == 0 {
+		return nil
+	}
+	targets := make([]CallResultTarget, len(stmt.Names))
+	for i, name := range stmt.Names {
+		target := CallResultTarget{
+			Kind:  CallResultTargetLocalAssignment,
+			Index: i,
+			Local: stmt,
+			Name:  name,
+		}
+		if bindings != nil {
+			id, ok := bindings.LocalSymbolAt(stmt, i)
+			target.Symbol = id
+			target.HasSymbol = ok && id != 0
+			if target.HasSymbol {
+				target.Path = path.NewPath(id, name)
+				target.HasPath = true
+			}
+		}
+		targets[i] = target
+	}
+	return targets
+}
+
+func ordinaryResultTargets(stmt *ast.AssignStmt, bindings *bind.Result) []CallResultTarget {
+	if stmt == nil || len(stmt.Lhs) == 0 {
+		return nil
+	}
+	targets := make([]CallResultTarget, len(stmt.Lhs))
+	for i, expr := range stmt.Lhs {
+		target := CallResultTarget{
+			Kind:   CallResultTargetOrdinaryAssignment,
+			Index:  i,
+			Assign: stmt,
+			Target: expr,
+		}
+		if p, ok := pathexpr.Resolve(expr, bindings); ok {
+			target.Path = p
+			target.HasPath = true
+			target.Symbol = p.Symbol
+			target.HasSymbol = p.Symbol != 0
+		}
+		targets[i] = target
+	}
+	return targets
+}
+
+func returnResultTarget(stmt *ast.ReturnStmt, index int, openTail bool) CallResultTarget {
+	return CallResultTarget{
+		Kind:     CallResultTargetReturn,
+		Index:    index,
+		Return:   stmt,
+		OpenTail: openTail,
+	}
+}
+
+func buildCallFact(sourceStmt ast.Stmt, callStmt *ast.FuncCallStmt, context CallContextKind, exprs []ast.Expr, exprIndex int, call *ast.FuncCallExpr, bindings *bind.Result, assignmentTargets []CallResultTarget) CallFact {
+	final, expanded, adjusted, openTail := callListFlags(context, exprs, exprIndex, call)
+	calleePath, hasCalleePath, receiverPath, hasReceiverPath, methodPath, hasMethodPath := resolveCallPaths(call, bindings)
+	calleeSymbol, hasCalleeSymbol := symbol.ID(0), false
+	if hasCalleePath && calleePath.Symbol != 0 {
+		calleeSymbol = calleePath.Symbol
+		hasCalleeSymbol = true
+	}
+	return CallFact{
+		Stmt:            callStmt,
+		SourceStmt:      sourceStmt,
+		Context:         context,
+		Call:            call,
+		ExprIndex:       exprIndex,
+		Final:           final,
+		Expanded:        expanded,
+		Adjusted:        adjusted,
+		OpenTail:        openTail,
+		Func:            call.Func,
+		Receiver:        call.Receiver,
+		Method:          call.Method,
+		Args:            copyExprs(call.Args),
+		TypeArgs:        copyTypeExprs(call.TypeArgs),
+		CalleePath:      calleePath,
+		HasCalleePath:   hasCalleePath,
+		ReceiverPath:    receiverPath,
+		HasReceiverPath: hasReceiverPath,
+		MethodPath:      methodPath,
+		HasMethodPath:   hasMethodPath,
+		ResultTargets:   callResultTargets(context, sourceStmt, exprIndex, adjusted, expanded, openTail, assignmentTargets),
+		CalleeSymbol:    calleeSymbol,
+		HasCalleeSymbol: hasCalleeSymbol,
+	}
+}
+
+func callListFlags(context CallContextKind, exprs []ast.Expr, exprIndex int, call *ast.FuncCallExpr) (final, expanded, adjusted, openTail bool) {
+	switch context {
+	case CallContextStatement:
+		return true, false, true, false
+	case CallContextAssignmentSource, CallContextReturnSource, CallContextIteratorSource:
+		final = exprIndex >= 0 && exprIndex == len(exprs)-1
+		expanded = final && canExpandFinal(call)
+		adjusted = !expanded
+		openTail = context == CallContextReturnSource && expanded
+		return final, expanded, adjusted, openTail
+	case CallContextCondition:
+		return true, false, true, false
+	default:
+		return false, false, false, false
+	}
+}
+
+func resolveCallPaths(call *ast.FuncCallExpr, bindings *bind.Result) (path.Path, bool, path.Path, bool, path.Path, bool) {
+	if call == nil {
+		return path.Path{}, false, path.Path{}, false, path.Path{}, false
+	}
+	if call.Receiver != nil {
+		receiverPath, hasReceiverPath := pathexpr.Resolve(call.Receiver, bindings)
+		if hasReceiverPath && call.Method != "" {
+			methodPath := receiverPath.Field(call.Method)
+			return methodPath, true, receiverPath, true, methodPath, true
+		}
+		return path.Path{}, false, receiverPath, hasReceiverPath, path.Path{}, false
+	}
+	calleePath, hasCalleePath := pathexpr.Resolve(call.Func, bindings)
+	return calleePath, hasCalleePath, path.Path{}, false, path.Path{}, false
+}
+
+func callResultTargets(context CallContextKind, sourceStmt ast.Stmt, exprIndex int, adjusted, expanded, openTail bool, assignmentTargets []CallResultTarget) []CallResultTarget {
+	switch context {
+	case CallContextAssignmentSource:
+		if len(assignmentTargets) == 0 || exprIndex >= len(assignmentTargets) {
+			return nil
+		}
+		if adjusted || !expanded {
+			return []CallResultTarget{copyResultTarget(assignmentTargets[exprIndex])}
+		}
+		return copyResultTargets(assignmentTargets[exprIndex:])
+	case CallContextReturnSource:
+		stmt, _ := sourceStmt.(*ast.ReturnStmt)
+		return []CallResultTarget{returnResultTarget(stmt, exprIndex, openTail)}
+	default:
+		return nil
+	}
+}
