@@ -189,6 +189,54 @@ func TestStableFromKeyRejectsVersionedPathKeys(t *testing.T) {
 	}
 }
 
+func TestStablePathKeySeparatesAmbiguousRootsAndVersionedLocalKeys(t *testing.T) {
+	ambiguousRoot := pathdom.Path{Root: "sym12", Segments: []segment.Segment{{Kind: segment.SegmentField, Name: "field"}}}
+	ambiguousStable := StablePathKey(ambiguousRoot)
+	if ambiguousStable == ambiguousRoot.Key() {
+		t.Fatalf("StablePathKey(%q) collided with path key %q", ambiguousRoot.String(), ambiguousRoot.Key())
+	}
+	if parsed, ok := StableFromKey(ambiguousStable); !ok || parsed.Key() != ambiguousStable {
+		t.Fatalf("StableFromKey(%q) = %s/%v, want round-trip", ambiguousStable, parsed.Key(), ok)
+	}
+	if _, ok := StableFromKey(ambiguousRoot.Key()); ok {
+		t.Fatalf("StableFromKey accepted ambiguous path key %q", ambiguousRoot.Key())
+	}
+
+	versionedLocal := pathdom.NewPath(12, "sym12").Field("field")
+	versionedLocal.Version = 3
+	if StablePathKey(versionedLocal) == versionedLocal.Key() {
+		t.Fatalf("StablePathKey(%q) collided with versioned local key %q", versionedLocal.String(), versionedLocal.Key())
+	}
+	if _, ok := StableFromKey(versionedLocal.Key()); ok {
+		t.Fatalf("StableFromKey accepted versioned local key %q", versionedLocal.Key())
+	}
+	if parsed, ok := StableFromKey(StablePathKey(versionedLocal)); !ok || !parsed.Equal(mustStableOfPath(t, versionedLocal)) {
+		t.Fatalf("StableFromKey(stable versioned key) = %s/%v, want round-trip", parsed.Key(), ok)
+	}
+
+	placeholder := pathdom.Path{Root: "$0", Segments: []segment.Segment{{Kind: segment.SegmentField, Name: "field"}}}
+	ret := pathdom.Path{Root: "ret[0]", Segments: []segment.Segment{{Kind: segment.SegmentField, Name: "field"}}}
+	for _, path := range []pathdom.Path{placeholder, ret} {
+		stable := StablePathKey(path)
+		parsed, ok := StableFromKey(stable)
+		if !ok || !parsed.Equal(mustStableOfPath(t, path)) {
+			t.Fatalf("StableFromKey(%q) = %s/%v, want round-trip", stable, parsed.Key(), ok)
+		}
+	}
+	if StablePathKey(placeholder) == StablePathKey(ret) {
+		t.Fatalf("placeholder and return-root stable keys collided: %q", StablePathKey(placeholder))
+	}
+}
+
+func mustStableOfPath(t *testing.T, path pathdom.Path) Stable {
+	t.Helper()
+	got, ok := StableOfPath(path)
+	if !ok {
+		t.Fatalf("StableOfPath(%q) failed", path.String())
+	}
+	return got
+}
+
 func TestStableConstructorsAreDefensive(t *testing.T) {
 	segments := []segment.Segment{{Kind: segment.SegmentField, Name: "payload"}}
 	addr, ok := StableOfSymbol(13, segments)

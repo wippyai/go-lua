@@ -81,6 +81,38 @@ func TestParsePathKeyAndRootSuffix(t *testing.T) {
 	}
 }
 
+func TestStateKeyAndPathKeySpellingsStayDisjoint(t *testing.T) {
+	if got := SymbolValue(12); got == Value("sym12") {
+		t.Fatalf("SymbolValue(12) collided with path-key spelling: %q", got)
+	}
+	if got := ReturnSlot(0); got == Value("$0") {
+		t.Fatalf("ReturnSlot(0) collided with placeholder spelling: %q", got)
+	}
+	if _, ok := ParseSymbolValue(Value("sym12")); ok {
+		t.Fatal("ParseSymbolValue accepted path-key spelling sym12")
+	}
+	if _, ok := ParseSymbolValue(Value("sym12@3.field")); ok {
+		t.Fatal("ParseSymbolValue accepted versioned path-key spelling sym12@3.field")
+	}
+	if _, ok := ParseReturnSlot(Value("ret[0]")); ok {
+		t.Fatal("ParseReturnSlot accepted return-path spelling ret[0]")
+	}
+	if _, ok := ParseReturnSlot(Value("$0")); ok {
+		t.Fatal("ParseReturnSlot accepted placeholder spelling $0")
+	}
+
+	sym, version, suffix, ok := ParsePathKey("sym12@3.field")
+	if !ok || sym != 12 || version != 3 || suffix != ".field" {
+		t.Fatalf("ParsePathKey(versioned) = %d/%d/%q/%v, want 12/3/.field/true", sym, version, suffix, ok)
+	}
+	if got := SymbolVersionRoot(sym, version); got != "sym12@3" {
+		t.Fatalf("SymbolVersionRoot = %q, want sym12@3", got)
+	}
+	if got := SymbolVersionPath(sym, version, []segment.Segment{{Kind: segment.SegmentField, Name: "field"}}); got != "sym12@3.field" {
+		t.Fatalf("SymbolVersionPath = %q, want sym12@3.field", got)
+	}
+}
+
 func TestSymbolVersionPathUsesPureKeySpelling(t *testing.T) {
 	segments := []segment.Segment{
 		{Kind: segment.SegmentField, Name: "field"},

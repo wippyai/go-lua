@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
+	pathaddr "github.com/wippyai/go-lua/analysis/domain/path/address"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/ir/ssa"
 	"github.com/wippyai/go-lua/analysis/symbol"
@@ -148,6 +149,50 @@ func TestResolverKeyForVersionUsesExplicitVersion(t *testing.T) {
 	}
 	if got := resolver.KeyForVersion(100, 0, path.Segments); got != "" {
 		t.Fatalf("KeyForVersion with zero version = %q, want empty", got)
+	}
+}
+
+func TestResolverKeepsSameSymbolDifferentVersionsDistinctWhileStableIdentityIgnoresVersion(t *testing.T) {
+	pointV1 := cfg.Point(10)
+	pointV2 := cfg.Point(11)
+	sym := symbol.ID(100)
+	resolver := NewResolver(NewTable(map[cfg.Point]map[symbol.ID]ssa.Version{
+		pointV1: {
+			sym: {Root: "x", Symbol: sym, ID: 1},
+		},
+		pointV2: {
+			sym: {Root: "x", Symbol: sym, ID: 2},
+		},
+	}))
+
+	pathV1 := pathdom.NewPath(sym, "x").Field("field")
+	pathV1.Version = 1
+	pathV2 := pathdom.NewPath(sym, "x").Field("field")
+	pathV2.Version = 2
+
+	if got, want := resolver.KeyAt(pointV1, pathV1), pathdom.PathKey("sym100@1.field"); got != want {
+		t.Fatalf("KeyAt(version 1) = %q, want %q", got, want)
+	}
+	if got, want := resolver.KeyAt(pointV2, pathV2), pathdom.PathKey("sym100@2.field"); got != want {
+		t.Fatalf("KeyAt(version 2) = %q, want %q", got, want)
+	}
+	if resolver.KeyAt(pointV1, pathV2) == resolver.KeyAt(pointV2, pathV1) {
+		t.Fatal("different versions resolved to the same local key")
+	}
+
+	stableV1, ok := pathaddr.StableOfPath(pathV1)
+	if !ok {
+		t.Fatal("StableOfPath(version 1) failed")
+	}
+	stableV2, ok := pathaddr.StableOfPath(pathV2)
+	if !ok {
+		t.Fatal("StableOfPath(version 2) failed")
+	}
+	if !stableV1.Equal(stableV2) {
+		t.Fatalf("stable identity changed across versions: %s vs %s", stableV1.Key(), stableV2.Key())
+	}
+	if got := pathaddr.StablePathKey(pathV1); got != pathaddr.StablePathKey(pathV2) {
+		t.Fatalf("StablePathKey changed across versions: %q vs %q", pathaddr.StablePathKey(pathV1), pathaddr.StablePathKey(pathV2))
 	}
 }
 

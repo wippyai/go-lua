@@ -327,6 +327,7 @@ func TestInvalidatePathKeySubtreeRemovesStructuredDescendants(t *testing.T) {
 	prefix := pathdom.PathKey("sym40@3.field")
 	child := pathdom.PathKey("sym40@3.field.deep")
 	siblingPrefixCollision := pathdom.PathKey("sym40@3.fieldish")
+	localVersionless := pathdom.PathKey("sym40.field.deep")
 	otherVersion := pathdom.PathKey("sym40@4.field.deep")
 	otherSymbol := pathdom.PathKey("sym41@3.field.deep")
 	placeholderPrefix := pathdom.PathKey("$0.field")
@@ -338,6 +339,7 @@ func TestInvalidatePathKeySubtreeRemovesStructuredDescendants(t *testing.T) {
 		WritePathKey(reg, prefix, present).
 		WritePathKey(reg, child, present).
 		WritePathKey(reg, siblingPrefixCollision, present).
+		WritePathKey(reg, localVersionless, present).
 		WritePathKey(reg, otherVersion, present).
 		WritePathKey(reg, otherSymbol, present).
 		WritePathKey(reg, placeholderPrefix, present).
@@ -361,7 +363,7 @@ func TestInvalidatePathKeySubtreeRemovesStructuredDescendants(t *testing.T) {
 			t.Fatalf("%s = %s, want bottom", removed, formatValue(reg, got))
 		}
 	}
-	for _, kept := range []pathdom.PathKey{root, siblingPrefixCollision, otherVersion, otherSymbol, placeholderPrefix, placeholderChild, placeholderSibling} {
+	for _, kept := range []pathdom.PathKey{root, siblingPrefixCollision, localVersionless, otherVersion, otherSymbol, placeholderPrefix, placeholderChild, placeholderSibling} {
 		if got := out.ReadPathKey(reg, kept); !valueDomain.Equal(got, present) {
 			t.Fatalf("%s = %s, want present", kept, formatValue(reg, got))
 		}
