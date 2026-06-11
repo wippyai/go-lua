@@ -15,6 +15,8 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/runtimekind"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
+	factapply "github.com/wippyai/go-lua/analysis/engine/factflow/apply"
+	factsource "github.com/wippyai/go-lua/analysis/engine/factflow/source"
 	"github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/engine/transfer"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
@@ -1119,9 +1121,9 @@ local a, b = x as any, x :: any
 		inputValues[overlay.Source().ExprRef] = base
 	}
 
-	apply := factflow.NewFactsNodeTransfer(factflow.FactsNodeTransferConfig{
+	apply := factapply.NewFactsNodeTransfer(factapply.FactsNodeTransferConfig{
 		Facts: facts,
-		Sources: factflow.NewSourceValues(factflow.SourceValuesConfig{
+		Sources: factsource.NewSourceValues(factsource.SourceValuesConfig{
 			Registry:         reg,
 			ExpressionValues: inputValues,
 		}),
@@ -1292,9 +1294,9 @@ func TestLowerClaimOverlaysApplyIndicatorsWithoutMutatingBaseValues(t *testing.T
 		inputValues[overlay.Source().ExprRef] = cases[i].base
 	}
 
-	apply := factflow.NewFactsNodeTransfer(factflow.FactsNodeTransferConfig{
+	apply := factapply.NewFactsNodeTransfer(factapply.FactsNodeTransferConfig{
 		Facts: facts,
-		Sources: factflow.NewSourceValues(factflow.SourceValuesConfig{
+		Sources: factsource.NewSourceValues(factsource.SourceValuesConfig{
 			Registry:         reg,
 			ExpressionValues: inputValues,
 		}),
@@ -1381,9 +1383,9 @@ func TestLowerNestedClaimOverlaysApplyCombinedIndicators(t *testing.T) {
 		t.Fatalf("missing inner assertion overlay")
 	}
 	base := product.NewWithPresence(reg, product.ShapeTop, presence.Present())
-	apply := factflow.NewFactsNodeTransfer(factflow.FactsNodeTransferConfig{
+	apply := factapply.NewFactsNodeTransfer(factapply.FactsNodeTransferConfig{
 		Facts: facts,
-		Sources: factflow.NewSourceValues(factflow.SourceValuesConfig{
+		Sources: factsource.NewSourceValues(factsource.SourceValuesConfig{
 			Registry: reg,
 			ExpressionValues: map[factflow.ExprRef]product.Value{
 				inner.Source().ExprRef: base,

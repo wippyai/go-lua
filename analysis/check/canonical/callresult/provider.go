@@ -4,6 +4,7 @@ package callresult
 import (
 	"github.com/wippyai/go-lua/analysis/check/canonical/summary"
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
+	"github.com/wippyai/go-lua/analysis/engine/factflow/apply"
 	"github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/engine/transfer"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
@@ -14,8 +15,8 @@ import (
 type KeyFunc func(ctx transfer.NodeContext, call factflow.CallProducer) (summary.SummaryKey, bool)
 
 // Provider returns a factflow call-result provider backed by exact summary reads.
-func Provider(summaries summary.Reader, keyFor KeyFunc) factflow.CallResultProvider {
-	return func(ctx transfer.NodeContext, call factflow.CallProducer, _ state.State, _ func(cfg.Point) state.State) []factflow.CallResult {
+func Provider(summaries summary.Reader, keyFor KeyFunc) apply.CallResultProvider {
+	return func(ctx transfer.NodeContext, call factflow.CallProducer, _ state.State, _ func(cfg.Point) state.State) []apply.CallResult {
 		if summaries == nil || keyFor == nil {
 			return nil
 		}
@@ -27,9 +28,9 @@ func Provider(summaries summary.Reader, keyFor KeyFunc) factflow.CallResultProvi
 		if !ok || len(got.Returns) == 0 {
 			return nil
 		}
-		results := make([]factflow.CallResult, len(got.Returns))
+		results := make([]apply.CallResult, len(got.Returns))
 		for i, value := range got.Returns {
-			results[i] = factflow.CallResult{Index: i, Value: value}
+			results[i] = apply.CallResult{Index: i, Value: value}
 		}
 		return results
 	}

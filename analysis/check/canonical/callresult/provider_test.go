@@ -12,6 +12,8 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
+	"github.com/wippyai/go-lua/analysis/engine/factflow/apply"
+	"github.com/wippyai/go-lua/analysis/engine/factflow/source"
 	"github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/engine/transfer"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
@@ -64,7 +66,7 @@ func TestProviderMissingInputsReturnNoResults(t *testing.T) {
 
 	tests := []struct {
 		name     string
-		provider factflow.CallResultProvider
+		provider apply.CallResultProvider
 	}{
 		{
 			name:     "nil reader",
@@ -136,7 +138,7 @@ func TestProviderIntegratesWithFactflowCallRead(t *testing.T) {
 		Graph:      graph,
 		Registry:   reg,
 		EntryState: state.State{}.WriteValue(reg, key.SymbolValue(target), existingTargetValue),
-		NodeTransfer: factflow.NewFactsNodeTransfer(factflow.FactsNodeTransferConfig{
+		NodeTransfer: apply.NewFactsNodeTransfer(apply.FactsNodeTransferConfig{
 			Facts: factflow.NewFacts(factflow.FactsInput{
 				Calls: map[cfg.Point]factflow.CallProducer{
 					call: factflow.NewCallProducer(factflow.CallProducerConfig{
@@ -156,7 +158,7 @@ func TestProviderIntegratesWithFactflowCallRead(t *testing.T) {
 					}),
 				},
 			}),
-			Sources: factflow.NewSourceValues(factflow.SourceValuesConfig{Registry: reg}),
+			Sources: source.NewSourceValues(source.SourceValuesConfig{Registry: reg}),
 			CallResults: Provider(summary.NewSnapshot(reg, summary.EntrySummary{
 				Key:     calleeKey,
 				Summary: summary.Summary{Returns: []product.Value{callValue}},
@@ -176,6 +178,7 @@ func TestProductionImportsAreBounded(t *testing.T) {
 	allowed := map[string]bool{
 		"github.com/wippyai/go-lua/analysis/check/canonical/summary": true,
 		"github.com/wippyai/go-lua/analysis/engine/factflow":         true,
+		"github.com/wippyai/go-lua/analysis/engine/factflow/apply":   true,
 		"github.com/wippyai/go-lua/analysis/engine/state":            true,
 		"github.com/wippyai/go-lua/analysis/engine/transfer":         true,
 		"github.com/wippyai/go-lua/analysis/ir/cfg":                  true,
@@ -209,7 +212,7 @@ func TestProductionImportsAreBounded(t *testing.T) {
 	}
 }
 
-func assertCallResults(t *testing.T, reg *axis.Registry, got []factflow.CallResult, want []product.Value) {
+func assertCallResults(t *testing.T, reg *axis.Registry, got []apply.CallResult, want []product.Value) {
 	t.Helper()
 	if len(got) != len(want) {
 		t.Fatalf("got %d results, want %d", len(got), len(want))

@@ -1,10 +1,12 @@
-package factflow
+package apply
 
 import (
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/state/key"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
+	"github.com/wippyai/go-lua/analysis/engine/factflow"
+	"github.com/wippyai/go-lua/analysis/engine/factflow/source"
 	"github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/engine/transfer"
 	"github.com/wippyai/go-lua/analysis/engine/visibility"
@@ -14,17 +16,28 @@ import (
 
 // FactsNodeTransferConfig configures the generic fact applicator.
 type FactsNodeTransferConfig struct {
-	Facts       Facts
-	Sources     SourceValues
+	Facts       factflow.Facts
+	Sources     source.SourceValues
 	CallResults CallResultProvider
 	Visibility  *visibility.Resolver
 }
 
 // FactsEdgeTransferConfig configures the generic edge fact applicator.
 type FactsEdgeTransferConfig struct {
-	Facts      Facts
+	Facts      factflow.Facts
 	Visibility *visibility.Resolver
 }
+
+// CallResult is one indexed abstract result produced by a call.
+type CallResult struct {
+	Index int
+	Value product.Value
+}
+
+// CallResultProvider resolves generic call-producer facts into indexed return
+// slots. Call result targets remain metadata for downstream facts; providers
+// produce only ReturnSlot(index) values.
+type CallResultProvider func(ctx transfer.NodeContext, call factflow.CallProducer, in state.State, read func(cfg.Point) state.State) []CallResult
 
 // NewFactsNodeTransfer returns a generic node transfer that applies point-local
 // transfer facts. It intentionally handles only root assignment, member/path
@@ -41,7 +54,7 @@ func NewFactsNodeTransfer(config FactsNodeTransferConfig) transfer.NodeTransfer 
 		if sources == nil {
 			return out
 		}
-		sources = withValueOverlaySourceValues(ctx.Registry, sources, facts.valueOverlays)
+		sources = source.WithValueOverlays(ctx.Registry, sources, facts.ValueOverlays())
 		if fact, ok := facts.LocalAssignment(ctx.Point); ok {
 			out = applyRootAssignmentFact(ctx, config.Visibility, facts, sources, read, in, out, fact)
 		}
@@ -84,12 +97,12 @@ func NewFactsEdgeTransfer(config FactsEdgeTransferConfig) transfer.EdgeTransfer 
 func applyRootAssignmentFact(
 	ctx transfer.NodeContext,
 	resolver *visibility.Resolver,
-	facts Facts,
-	sources SourceValues,
+	facts factflow.Facts,
+	sources source.SourceValues,
 	read func(cfg.Point) state.State,
 	in state.State,
 	out state.State,
-	fact RootAssignment,
+	fact factflow.RootAssignment,
 ) state.State {
 	out, targetPath, applied := applyRootAssignment(ctx, resolver, sources, read, in, out, fact.TargetSymbol(), fact.TargetPath(), fact.Source())
 	if applied {
@@ -100,7 +113,7 @@ func applyRootAssignmentFact(
 
 func callResultReader(
 	ctx transfer.NodeContext,
-	facts Facts,
+	facts factflow.Facts,
 	provider CallResultProvider,
 ) (func(cfg.Point) state.State, func(cfg.Point, state.State) state.State) {
 	rawRead := ctx.Read
@@ -151,7 +164,7 @@ func callContextAt(ctx transfer.NodeContext, point cfg.Point, read func(cfg.Poin
 
 func materializeCallResults(
 	ctx transfer.NodeContext,
-	facts Facts,
+	facts factflow.Facts,
 	provider CallResultProvider,
 	read func(cfg.Point) state.State,
 	in state.State,
@@ -176,13 +189,13 @@ func materializeCallResults(
 func applyRootAssignment(
 	ctx transfer.NodeContext,
 	resolver *visibility.Resolver,
-	sources SourceValues,
+	sources source.SourceValues,
 	read func(cfg.Point) state.State,
 	in state.State,
 	out state.State,
 	target symbol.ID,
 	targetPath pathdom.Path,
-	source ValueSource,
+	source factflow.ValueSource,
 ) (state.State, pathdom.Path, bool) {
 	root, ok := rootAssignmentTarget(target, targetPath)
 	if !ok {
@@ -234,7 +247,7 @@ func applyBranchRefinement(
 	resolver *visibility.Resolver,
 	out state.State,
 	targetPath pathdom.Path,
-	refinement ValueRefinement,
+	refinement factflow.ValueRefinement,
 ) state.State {
 	if targetPath.Symbol == 0 {
 		return out
@@ -256,7 +269,7 @@ func applyBranchRefinement(
 	return updated
 }
 
-func refineProductValue(reg *axis.Registry, value product.Value, refinement ValueRefinement) product.Value {
+func refineProductValue(reg *axis.Registry, value product.Value, refinement factflow.ValueRefinement) product.Value {
 	constraint, ok := refinement.Constraint()
 	if !ok {
 		return value
@@ -267,11 +280,11 @@ func refineProductValue(reg *axis.Registry, value product.Value, refinement Valu
 func applyPathAssignment(
 	ctx transfer.NodeContext,
 	resolver *visibility.Resolver,
-	sources SourceValues,
+	sources source.SourceValues,
 	read func(cfg.Point) state.State,
 	in state.State,
 	out state.State,
-	fact PathAssignment,
+	fact factflow.PathAssignment,
 ) (state.State, bool) {
 	if resolver == nil {
 		return out, false
@@ -298,18 +311,18 @@ func applyPathAssignment(
 func applyObjectLiteralEntries(
 	ctx transfer.NodeContext,
 	resolver *visibility.Resolver,
-	facts Facts,
-	sources SourceValues,
+	facts factflow.Facts,
+	sources source.SourceValues,
 	read func(cfg.Point) state.State,
 	in state.State,
 	out state.State,
 	targetPath pathdom.Path,
-	source ValueSource,
+	valueSource factflow.ValueSource,
 ) state.State {
-	if resolver == nil || !source.HasExpr {
+	if resolver == nil || !valueSource.HasExpr {
 		return out
 	}
-	literal, ok := facts.ObjectLiteral(source.ExprRef)
+	literal, ok := facts.ObjectLiteral(valueSource.ExprRef)
 	if !ok {
 		return out
 	}
@@ -349,11 +362,11 @@ func objectEntryTargetPath(root pathdom.Path, suffix pathdom.Path) (pathdom.Path
 
 func applyReturn(
 	ctx transfer.NodeContext,
-	sources SourceValues,
+	sources source.SourceValues,
 	read func(cfg.Point) state.State,
 	in state.State,
 	out state.State,
-	fact Return,
+	fact factflow.Return,
 ) state.State {
 	for i, source := range fact.Sources() {
 		value, ok := sources.ValueOfSource(ctx.Point, source, in, read)
@@ -367,4 +380,13 @@ func applyReturn(
 
 func emptyStateRead(cfg.Point) state.State {
 	return state.State{}
+}
+
+func copyPath(p pathdom.Path) pathdom.Path {
+	if len(p.Segments) == 0 {
+		return p
+	}
+	out := p
+	out.Segments = append(p.Segments[:0:0], p.Segments...)
+	return out
 }

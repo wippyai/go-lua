@@ -5,21 +5,13 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/runtimekind"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
-	"github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/symbol"
 )
-
-var _ SourceValues = sourceValuesStub{}
-
-type sourceValuesStub struct{}
-
-func (sourceValuesStub) ValueOfSource(cfg.Point, ValueSource, state.State, func(cfg.Point) state.State) (product.Value, bool) {
-	return product.Value{}, false
-}
 
 func TestDTOConstructorsAndAccessorsCopySlices(t *testing.T) {
 	source := ValueSource{
@@ -642,6 +634,17 @@ func presenceConstraint(value presence.Value) product.Value {
 
 func runtimeKindConstraint(value runtimekind.Value) product.Value {
 	return product.Set(product.DefaultRegistry(), product.Top(), runtimekind.Key, value)
+}
+
+func formatValue(reg *axis.Registry, v product.Value) string {
+	switch {
+	case product.Equal(reg, v, product.Bottom(reg)):
+		return "bottom"
+	case product.Equal(reg, v, product.Top()):
+		return "top"
+	default:
+		return product.PresenceOf(v).String()
+	}
 }
 
 func assertValueRefinementConstraint(

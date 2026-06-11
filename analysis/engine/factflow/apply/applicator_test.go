@@ -1,4 +1,4 @@
-package factflow
+package apply
 
 import (
 	"testing"
@@ -10,6 +10,8 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/runtimekind"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
+	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
+	factsource "github.com/wippyai/go-lua/analysis/engine/factflow/source"
 	"github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/engine/transfer"
 	"github.com/wippyai/go-lua/analysis/engine/visibility"
@@ -24,20 +26,20 @@ func TestFactsNodeTransferAppliesLocalAssignmentThroughResolver(t *testing.T) {
 	graph.AddEdge(graph.Entry(), assign, false)
 	graph.AddEdge(assign, graph.Exit(), false)
 
-	source := ValueSource{Kind: ValueSourceExpression, ExprRef: ExprRef(10), HasExpr: true}
+	source := factflow.ValueSource{Kind: factflow.ValueSourceExpression, ExprRef: factflow.ExprRef(10), HasExpr: true}
 	target := symbol.ID(101)
 	assigned := presentValue(reg)
 	resolver := &recordingSourceValues{
-		values: map[ValueSource]product.Value{source: assigned},
+		values: map[factflow.ValueSource]product.Value{source: assigned},
 	}
 
 	got := transfer.Run(transfer.Config{
 		Graph:    graph,
 		Registry: reg,
 		NodeTransfer: NewFactsNodeTransfer(FactsNodeTransferConfig{
-			Facts: NewFacts(FactsInput{
-				LocalAssignments: map[cfg.Point]RootAssignment{
-					assign: NewRootAssignment(target, path.NewPath(target, "local"), source),
+			Facts: factflow.NewFacts(factflow.FactsInput{
+				LocalAssignments: map[cfg.Point]factflow.RootAssignment{
+					assign: factflow.NewRootAssignment(target, path.NewPath(target, "local"), source),
 				},
 			}),
 			Sources: resolver,
@@ -77,28 +79,28 @@ func TestFactsNodeTransferAppliesValueOverlaysToAssignments(t *testing.T) {
 			reg := product.DefaultRegistry()
 			point := cfg.Point(51)
 			target := symbol.ID(151)
-			inner := ExprRef(1510)
-			outer := ExprRef(1511)
-			innerSource := ValueSource{Kind: ValueSourceExpression, ExprRef: inner, HasExpr: true}
-			outerSource := ValueSource{Kind: ValueSourceExpression, ExprRef: outer, HasExpr: true}
+			inner := factflow.ExprRef(1510)
+			outer := factflow.ExprRef(1511)
+			innerSource := factflow.ValueSource{Kind: factflow.ValueSourceExpression, ExprRef: inner, HasExpr: true}
+			outerSource := factflow.ValueSource{Kind: factflow.ValueSourceExpression, ExprRef: outer, HasExpr: true}
 			innerValue := presentValue(reg)
 			if tc.innerAbsent {
 				innerValue = absentValue(reg)
 			}
-			sources := NewSourceValues(SourceValuesConfig{
+			sources := factsource.NewSourceValues(factsource.SourceValuesConfig{
 				Registry: reg,
-				ExpressionValues: map[ExprRef]product.Value{
+				ExpressionValues: map[factflow.ExprRef]product.Value{
 					inner: innerValue,
 				},
 			})
 
 			got := NewFactsNodeTransfer(FactsNodeTransferConfig{
-				Facts: NewFacts(FactsInput{
-					LocalAssignments: map[cfg.Point]RootAssignment{
-						point: NewRootAssignment(target, path.NewPath(target, "value"), outerSource),
+				Facts: factflow.NewFacts(factflow.FactsInput{
+					LocalAssignments: map[cfg.Point]factflow.RootAssignment{
+						point: factflow.NewRootAssignment(target, path.NewPath(target, "value"), outerSource),
 					},
-					ValueOverlays: map[ExprRef]ValueOverlay{
-						outer: NewValueOverlay(innerSource, tc.overlay),
+					ValueOverlays: map[factflow.ExprRef]factflow.ValueOverlay{
+						outer: factflow.NewValueOverlay(innerSource, tc.overlay),
 					},
 				}),
 				Sources: sources,
@@ -125,20 +127,20 @@ func TestFactsNodeTransferAppliesOrdinaryAssignmentThroughResolver(t *testing.T)
 	graph.AddEdge(graph.Entry(), assign, false)
 	graph.AddEdge(assign, graph.Exit(), false)
 
-	source := ValueSource{Kind: ValueSourceExpression, ExprRef: ExprRef(11), HasExpr: true}
+	source := factflow.ValueSource{Kind: factflow.ValueSourceExpression, ExprRef: factflow.ExprRef(11), HasExpr: true}
 	target := symbol.ID(102)
 	assigned := absentValue(reg)
 	resolver := &recordingSourceValues{
-		values: map[ValueSource]product.Value{source: assigned},
+		values: map[factflow.ValueSource]product.Value{source: assigned},
 	}
 
 	got := transfer.Run(transfer.Config{
 		Graph:    graph,
 		Registry: reg,
 		NodeTransfer: NewFactsNodeTransfer(FactsNodeTransferConfig{
-			Facts: NewFacts(FactsInput{
-				OrdinaryAssignments: map[cfg.Point]RootAssignment{
-					assign: NewRootAssignment(target, path.NewPath(target, "ordinary"), source),
+			Facts: factflow.NewFacts(factflow.FactsInput{
+				OrdinaryAssignments: map[cfg.Point]factflow.RootAssignment{
+					assign: factflow.NewRootAssignment(target, path.NewPath(target, "ordinary"), source),
 				},
 			}),
 			Sources: resolver,
@@ -152,24 +154,24 @@ func TestFactsNodeTransferAppliesOrdinaryAssignmentThroughResolver(t *testing.T)
 func TestFactsNodeTransferRootAssignmentInvalidatesVisiblePathSubtree(t *testing.T) {
 	tests := []struct {
 		name string
-		fact func(cfg.Point, symbol.ID, ValueSource) FactsInput
+		fact func(cfg.Point, symbol.ID, factflow.ValueSource) factflow.FactsInput
 	}{
 		{
 			name: "local",
-			fact: func(point cfg.Point, target symbol.ID, source ValueSource) FactsInput {
-				return FactsInput{
-					LocalAssignments: map[cfg.Point]RootAssignment{
-						point: NewRootAssignment(target, path.NewPath(target, "obj"), source),
+			fact: func(point cfg.Point, target symbol.ID, source factflow.ValueSource) factflow.FactsInput {
+				return factflow.FactsInput{
+					LocalAssignments: map[cfg.Point]factflow.RootAssignment{
+						point: factflow.NewRootAssignment(target, path.NewPath(target, "obj"), source),
 					},
 				}
 			},
 		},
 		{
 			name: "ordinary",
-			fact: func(point cfg.Point, target symbol.ID, source ValueSource) FactsInput {
-				return FactsInput{
-					OrdinaryAssignments: map[cfg.Point]RootAssignment{
-						point: NewRootAssignment(target, path.NewPath(target, "obj"), source),
+			fact: func(point cfg.Point, target symbol.ID, source factflow.ValueSource) factflow.FactsInput {
+				return factflow.FactsInput{
+					OrdinaryAssignments: map[cfg.Point]factflow.RootAssignment{
+						point: factflow.NewRootAssignment(target, path.NewPath(target, "obj"), source),
 					},
 				}
 			},
@@ -181,7 +183,7 @@ func TestFactsNodeTransferRootAssignmentInvalidatesVisiblePathSubtree(t *testing
 			reg := product.DefaultRegistry()
 			point := cfg.Point(60)
 			target := symbol.ID(120)
-			source := ValueSource{Kind: ValueSourceExpression, ExprRef: ExprRef(60), HasExpr: true}
+			source := factflow.ValueSource{Kind: factflow.ValueSourceExpression, ExprRef: factflow.ExprRef(60), HasExpr: true}
 			assigned := absentValue(reg)
 			stale := presentValue(reg)
 			rootKey := path.PathKey("sym120@1")
@@ -190,13 +192,13 @@ func TestFactsNodeTransferRootAssignmentInvalidatesVisiblePathSubtree(t *testing
 			otherVersionKey := path.PathKey("sym120@2.field")
 			otherSymbolKey := path.PathKey("sym121@1.field")
 			sources := &recordingSourceValues{
-				values: map[ValueSource]product.Value{source: assigned},
+				values: map[factflow.ValueSource]product.Value{source: assigned},
 			}
 			visibilityBuilder := visibility.NewBuilder()
 			visibilityBuilder.Define(point, target, "obj")
 
 			got := NewFactsNodeTransfer(FactsNodeTransferConfig{
-				Facts:      NewFacts(tc.fact(point, target, source)),
+				Facts:      factflow.NewFacts(tc.fact(point, target, source)),
 				Sources:    sources,
 				Visibility: visibility.NewResolver(visibilityBuilder.Build()),
 			})(transfer.NodeContext{
@@ -223,24 +225,24 @@ func TestFactsNodeTransferRootAssignmentInvalidatesVisiblePathSubtree(t *testing
 func TestFactsNodeTransferObjectLiteralRootAssignmentsWriteStaticEntries(t *testing.T) {
 	tests := []struct {
 		name string
-		fact func(cfg.Point, symbol.ID, ValueSource) FactsInput
+		fact func(cfg.Point, symbol.ID, factflow.ValueSource) factflow.FactsInput
 	}{
 		{
 			name: "local",
-			fact: func(point cfg.Point, target symbol.ID, source ValueSource) FactsInput {
-				return FactsInput{
-					LocalAssignments: map[cfg.Point]RootAssignment{
-						point: NewRootAssignment(target, path.NewPath(target, "obj"), source),
+			fact: func(point cfg.Point, target symbol.ID, source factflow.ValueSource) factflow.FactsInput {
+				return factflow.FactsInput{
+					LocalAssignments: map[cfg.Point]factflow.RootAssignment{
+						point: factflow.NewRootAssignment(target, path.NewPath(target, "obj"), source),
 					},
 				}
 			},
 		},
 		{
 			name: "ordinary",
-			fact: func(point cfg.Point, target symbol.ID, source ValueSource) FactsInput {
-				return FactsInput{
-					OrdinaryAssignments: map[cfg.Point]RootAssignment{
-						point: NewRootAssignment(target, path.NewPath(target, "obj"), source),
+			fact: func(point cfg.Point, target symbol.ID, source factflow.ValueSource) factflow.FactsInput {
+				return factflow.FactsInput{
+					OrdinaryAssignments: map[cfg.Point]factflow.RootAssignment{
+						point: factflow.NewRootAssignment(target, path.NewPath(target, "obj"), source),
 					},
 				}
 			},
@@ -252,27 +254,27 @@ func TestFactsNodeTransferObjectLiteralRootAssignmentsWriteStaticEntries(t *test
 			reg := product.DefaultRegistry()
 			point := cfg.Point(61)
 			target := symbol.ID(121)
-			objectSource := ValueSource{Kind: ValueSourceExpression, ExprRef: ExprRef(61), HasExpr: true}
-			entrySource := ValueSource{Kind: ValueSourceExpression, ExprRef: ExprRef(62), HasExpr: true}
+			objectSource := factflow.ValueSource{Kind: factflow.ValueSourceExpression, ExprRef: factflow.ExprRef(61), HasExpr: true}
+			entrySource := factflow.ValueSource{Kind: factflow.ValueSourceExpression, ExprRef: factflow.ExprRef(62), HasExpr: true}
 			rootValue := presentValue(reg)
 			entryValue := absentValue(reg)
 			sources := &recordingSourceValues{
-				values: map[ValueSource]product.Value{
+				values: map[factflow.ValueSource]product.Value{
 					objectSource: rootValue,
 					entrySource:  entryValue,
 				},
 			}
 			input := tc.fact(point, target, objectSource)
-			input.ObjectLiterals = map[ExprRef]ObjectLiteral{
-				objectSource.ExprRef: NewObjectLiteral([]ObjectEntry{
-					NewObjectEntry(fieldSuffix("leaf"), entrySource),
+			input.ObjectLiterals = map[factflow.ExprRef]factflow.ObjectLiteral{
+				objectSource.ExprRef: factflow.NewObjectLiteral([]factflow.ObjectEntry{
+					factflow.NewObjectEntry(fieldSuffix("leaf"), entrySource),
 				}),
 			}
 			visibilityBuilder := visibility.NewBuilder()
 			visibilityBuilder.Define(point, target, "obj")
 
 			got := NewFactsNodeTransfer(FactsNodeTransferConfig{
-				Facts:      NewFacts(input),
+				Facts:      factflow.NewFacts(input),
 				Sources:    sources,
 				Visibility: visibility.NewResolver(visibilityBuilder.Build()),
 			})(transfer.NodeContext{
@@ -296,13 +298,13 @@ func TestFactsNodeTransferObjectLiteralEntriesUsePreWriteInputState(t *testing.T
 	reg := product.DefaultRegistry()
 	point := cfg.Point(62)
 	target := symbol.ID(122)
-	objectSource := ValueSource{Kind: ValueSourceExpression, ExprRef: ExprRef(63), HasExpr: true}
-	entrySource := ValueSource{Kind: ValueSourceExpression, ExprRef: ExprRef(64), HasExpr: true}
+	objectSource := factflow.ValueSource{Kind: factflow.ValueSourceExpression, ExprRef: factflow.ExprRef(63), HasExpr: true}
+	entrySource := factflow.ValueSource{Kind: factflow.ValueSourceExpression, ExprRef: factflow.ExprRef(64), HasExpr: true}
 	oldRootValue := presentValue(reg)
 	newRootValue := absentValue(reg)
-	sources := NewSourceValues(SourceValuesConfig{
+	sources := factsource.NewSourceValues(factsource.SourceValuesConfig{
 		Registry: reg,
-		ExpressionValue: func(point cfg.Point, expr ExprRef, source ValueSource, in state.State) (product.Value, bool) {
+		ExpressionValue: func(point cfg.Point, expr factflow.ExprRef, source factflow.ValueSource, in state.State) (product.Value, bool) {
 			switch expr {
 			case objectSource.ExprRef:
 				return newRootValue, true
@@ -317,13 +319,13 @@ func TestFactsNodeTransferObjectLiteralEntriesUsePreWriteInputState(t *testing.T
 	visibilityBuilder.Define(point, target, "obj")
 
 	got := NewFactsNodeTransfer(FactsNodeTransferConfig{
-		Facts: NewFacts(FactsInput{
-			LocalAssignments: map[cfg.Point]RootAssignment{
-				point: NewRootAssignment(target, path.NewPath(target, "obj"), objectSource),
+		Facts: factflow.NewFacts(factflow.FactsInput{
+			LocalAssignments: map[cfg.Point]factflow.RootAssignment{
+				point: factflow.NewRootAssignment(target, path.NewPath(target, "obj"), objectSource),
 			},
-			ObjectLiterals: map[ExprRef]ObjectLiteral{
-				objectSource.ExprRef: NewObjectLiteral([]ObjectEntry{
-					NewObjectEntry(fieldSuffix("old"), entrySource),
+			ObjectLiterals: map[factflow.ExprRef]factflow.ObjectLiteral{
+				objectSource.ExprRef: factflow.NewObjectLiteral([]factflow.ObjectEntry{
+					factflow.NewObjectEntry(fieldSuffix("old"), entrySource),
 				}),
 			},
 		}),
@@ -342,25 +344,25 @@ func TestFactsNodeTransferObjectLiteralMissingVisibilitySkipsEntriesKeepsRoot(t 
 	reg := product.DefaultRegistry()
 	point := cfg.Point(63)
 	target := symbol.ID(123)
-	objectSource := ValueSource{Kind: ValueSourceExpression, ExprRef: ExprRef(65), HasExpr: true}
-	entrySource := ValueSource{Kind: ValueSourceExpression, ExprRef: ExprRef(66), HasExpr: true}
+	objectSource := factflow.ValueSource{Kind: factflow.ValueSourceExpression, ExprRef: factflow.ExprRef(65), HasExpr: true}
+	entrySource := factflow.ValueSource{Kind: factflow.ValueSourceExpression, ExprRef: factflow.ExprRef(66), HasExpr: true}
 	rootValue := presentValue(reg)
 	entryValue := absentValue(reg)
 	sources := &recordingSourceValues{
-		values: map[ValueSource]product.Value{
+		values: map[factflow.ValueSource]product.Value{
 			objectSource: rootValue,
 			entrySource:  entryValue,
 		},
 	}
 
 	got := NewFactsNodeTransfer(FactsNodeTransferConfig{
-		Facts: NewFacts(FactsInput{
-			LocalAssignments: map[cfg.Point]RootAssignment{
-				point: NewRootAssignment(target, path.NewPath(target, "obj"), objectSource),
+		Facts: factflow.NewFacts(factflow.FactsInput{
+			LocalAssignments: map[cfg.Point]factflow.RootAssignment{
+				point: factflow.NewRootAssignment(target, path.NewPath(target, "obj"), objectSource),
 			},
-			ObjectLiterals: map[ExprRef]ObjectLiteral{
-				objectSource.ExprRef: NewObjectLiteral([]ObjectEntry{
-					NewObjectEntry(fieldSuffix("leaf"), entrySource),
+			ObjectLiterals: map[factflow.ExprRef]factflow.ObjectLiteral{
+				objectSource.ExprRef: factflow.NewObjectLiteral([]factflow.ObjectEntry{
+					factflow.NewObjectEntry(fieldSuffix("leaf"), entrySource),
 				}),
 			},
 		}),
@@ -381,12 +383,12 @@ func TestFactsNodeTransferObjectLiteralPathAssignmentWritesStaticEntries(t *test
 	point := cfg.Point(64)
 	target := symbol.ID(124)
 	targetPath := path.NewPath(target, "t").Field("child")
-	objectSource := ValueSource{Kind: ValueSourceExpression, ExprRef: ExprRef(67), HasExpr: true}
-	entrySource := ValueSource{Kind: ValueSourceExpression, ExprRef: ExprRef(68), HasExpr: true}
+	objectSource := factflow.ValueSource{Kind: factflow.ValueSourceExpression, ExprRef: factflow.ExprRef(67), HasExpr: true}
+	entrySource := factflow.ValueSource{Kind: factflow.ValueSourceExpression, ExprRef: factflow.ExprRef(68), HasExpr: true}
 	rootValue := presentValue(reg)
 	entryValue := absentValue(reg)
 	sources := &recordingSourceValues{
-		values: map[ValueSource]product.Value{
+		values: map[factflow.ValueSource]product.Value{
 			objectSource: rootValue,
 			entrySource:  entryValue,
 		},
@@ -395,13 +397,13 @@ func TestFactsNodeTransferObjectLiteralPathAssignmentWritesStaticEntries(t *test
 	visibilityBuilder.Define(point, target, "t")
 
 	got := NewFactsNodeTransfer(FactsNodeTransferConfig{
-		Facts: NewFacts(FactsInput{
-			PathAssignments: map[cfg.Point]PathAssignment{
-				point: NewPathAssignment(targetPath, objectSource),
+		Facts: factflow.NewFacts(factflow.FactsInput{
+			PathAssignments: map[cfg.Point]factflow.PathAssignment{
+				point: factflow.NewPathAssignment(targetPath, objectSource),
 			},
-			ObjectLiterals: map[ExprRef]ObjectLiteral{
-				objectSource.ExprRef: NewObjectLiteral([]ObjectEntry{
-					NewObjectEntry(fieldSuffix("leaf"), entrySource),
+			ObjectLiterals: map[factflow.ExprRef]factflow.ObjectLiteral{
+				objectSource.ExprRef: factflow.NewObjectLiteral([]factflow.ObjectEntry{
+					factflow.NewObjectEntry(fieldSuffix("leaf"), entrySource),
 				}),
 			},
 		}),
@@ -423,8 +425,8 @@ func TestFactsNodeTransferObjectLiteralEntriesInvalidateSubtreeBeforeWrite(t *te
 	reg := product.DefaultRegistry()
 	point := cfg.Point(65)
 	target := symbol.ID(125)
-	objectSource := ValueSource{Kind: ValueSourceExpression, ExprRef: ExprRef(69), HasExpr: true}
-	entrySource := ValueSource{Kind: ValueSourceExpression, ExprRef: ExprRef(70), HasExpr: true}
+	objectSource := factflow.ValueSource{Kind: factflow.ValueSourceExpression, ExprRef: factflow.ExprRef(69), HasExpr: true}
+	entrySource := factflow.ValueSource{Kind: factflow.ValueSourceExpression, ExprRef: factflow.ExprRef(70), HasExpr: true}
 	rootValue := presentValue(reg)
 	entryValue := absentValue(reg)
 	staleValue := presentValue(reg)
@@ -432,7 +434,7 @@ func TestFactsNodeTransferObjectLiteralEntriesInvalidateSubtreeBeforeWrite(t *te
 	staleChildKey := path.PathKey("sym125@1.a.old")
 	siblingKey := path.PathKey("sym125@1.b.old")
 	sources := &recordingSourceValues{
-		values: map[ValueSource]product.Value{
+		values: map[factflow.ValueSource]product.Value{
 			objectSource: rootValue,
 			entrySource:  entryValue,
 		},
@@ -441,13 +443,13 @@ func TestFactsNodeTransferObjectLiteralEntriesInvalidateSubtreeBeforeWrite(t *te
 	visibilityBuilder.Define(point, target, "t")
 
 	got := NewFactsNodeTransfer(FactsNodeTransferConfig{
-		Facts: NewFacts(FactsInput{
-			LocalAssignments: map[cfg.Point]RootAssignment{
-				point: NewRootAssignment(target, path.NewPath(target, "t"), objectSource),
+		Facts: factflow.NewFacts(factflow.FactsInput{
+			LocalAssignments: map[cfg.Point]factflow.RootAssignment{
+				point: factflow.NewRootAssignment(target, path.NewPath(target, "t"), objectSource),
 			},
-			ObjectLiterals: map[ExprRef]ObjectLiteral{
-				objectSource.ExprRef: NewObjectLiteral([]ObjectEntry{
-					NewObjectEntry(fieldSuffix("a"), entrySource),
+			ObjectLiterals: map[factflow.ExprRef]factflow.ObjectLiteral{
+				objectSource.ExprRef: factflow.NewObjectLiteral([]factflow.ObjectEntry{
+					factflow.NewObjectEntry(fieldSuffix("a"), entrySource),
 				}),
 			},
 		}),
@@ -473,12 +475,12 @@ func TestFactsNodeTransferAppliesPathAssignmentThroughVisibility(t *testing.T) {
 	graph.AddEdge(graph.Entry(), assign, false)
 	graph.AddEdge(assign, graph.Exit(), false)
 
-	source := ValueSource{Kind: ValueSourceExpression, ExprRef: ExprRef(15), HasExpr: true}
+	source := factflow.ValueSource{Kind: factflow.ValueSourceExpression, ExprRef: factflow.ExprRef(15), HasExpr: true}
 	target := symbol.ID(106)
 	targetPath := path.NewPath(target, "table").Field("field")
 	assigned := presentValue(reg)
 	sources := &recordingSourceValues{
-		values: map[ValueSource]product.Value{source: assigned},
+		values: map[factflow.ValueSource]product.Value{source: assigned},
 	}
 	visibilityBuilder := visibility.NewBuilder()
 	visibilityBuilder.Define(assign, target, "table")
@@ -488,9 +490,9 @@ func TestFactsNodeTransferAppliesPathAssignmentThroughVisibility(t *testing.T) {
 		Graph:    graph,
 		Registry: reg,
 		NodeTransfer: NewFactsNodeTransfer(FactsNodeTransferConfig{
-			Facts: NewFacts(FactsInput{
-				PathAssignments: map[cfg.Point]PathAssignment{
-					assign: NewPathAssignment(targetPath, source),
+			Facts: factflow.NewFacts(factflow.FactsInput{
+				PathAssignments: map[cfg.Point]factflow.PathAssignment{
+					assign: factflow.NewPathAssignment(targetPath, source),
 				},
 			}),
 			Sources:    sources,
@@ -506,7 +508,7 @@ func TestFactsNodeTransferAppliesPathAssignmentThroughVisibility(t *testing.T) {
 func TestFactsNodeTransferPathAssignmentInvalidatesSubtreeBeforeWriting(t *testing.T) {
 	reg := product.DefaultRegistry()
 	point := cfg.Point(16)
-	source := ValueSource{Kind: ValueSourceExpression, ExprRef: ExprRef(16), HasExpr: true}
+	source := factflow.ValueSource{Kind: factflow.ValueSourceExpression, ExprRef: factflow.ExprRef(16), HasExpr: true}
 	target := symbol.ID(107)
 	targetPath := path.NewPath(target, "table").Field("field")
 	childKey := path.PathKey("sym107@1.field.deep")
@@ -517,16 +519,16 @@ func TestFactsNodeTransferPathAssignmentInvalidatesSubtreeBeforeWriting(t *testi
 		WritePathKey(reg, childKey, present).
 		WritePathKey(reg, siblingKey, present)
 	sources := &recordingSourceValues{
-		values: map[ValueSource]product.Value{source: assigned},
+		values: map[factflow.ValueSource]product.Value{source: assigned},
 	}
 	visibilityBuilder := visibility.NewBuilder()
 	visibilityBuilder.Define(point, target, "table")
 	resolver := visibility.NewResolver(visibilityBuilder.Build())
 
 	got := NewFactsNodeTransfer(FactsNodeTransferConfig{
-		Facts: NewFacts(FactsInput{
-			PathAssignments: map[cfg.Point]PathAssignment{
-				point: NewPathAssignment(targetPath, source),
+		Facts: factflow.NewFacts(factflow.FactsInput{
+			PathAssignments: map[cfg.Point]factflow.PathAssignment{
+				point: factflow.NewPathAssignment(targetPath, source),
 			},
 		}),
 		Sources:    sources,
@@ -548,11 +550,11 @@ func TestFactsNodeTransferAppliesReturnSlotsThroughSourceValues(t *testing.T) {
 	graph.AddEdge(graph.Entry(), ret, false)
 	graph.AddEdge(ret, graph.Exit(), false)
 
-	expr := ExprRef(20)
+	expr := factflow.ExprRef(20)
 	exprValue := presentValue(reg)
-	sources := NewSourceValues(SourceValuesConfig{
+	sources := factsource.NewSourceValues(factsource.SourceValuesConfig{
 		Registry: reg,
-		ExpressionValues: map[ExprRef]product.Value{
+		ExpressionValues: map[factflow.ExprRef]product.Value{
 			expr: exprValue,
 		},
 	})
@@ -561,11 +563,11 @@ func TestFactsNodeTransferAppliesReturnSlotsThroughSourceValues(t *testing.T) {
 		Graph:    graph,
 		Registry: reg,
 		NodeTransfer: NewFactsNodeTransfer(FactsNodeTransferConfig{
-			Facts: NewFacts(FactsInput{
-				Returns: map[cfg.Point]Return{
-					ret: NewReturn([]ValueSource{
-						{Kind: ValueSourceExpression, ExprRef: expr, HasExpr: true},
-						{Kind: ValueSourceNil},
+			Facts: factflow.NewFacts(factflow.FactsInput{
+				Returns: map[cfg.Point]factflow.Return{
+					ret: factflow.NewReturn([]factflow.ValueSource{
+						{Kind: factflow.ValueSourceExpression, ExprRef: expr, HasExpr: true},
+						{Kind: factflow.ValueSourceNil},
 					}),
 				},
 			}),
@@ -583,13 +585,13 @@ func TestFactsNodeTransferUnresolvedReturnSourceLeavesSlotUnchanged(t *testing.T
 	point := cfg.Point(21)
 	slotValue := presentValue(reg)
 	in := state.State{}.WriteReturnSlot(reg, 0, slotValue)
-	sources := NewSourceValues(SourceValuesConfig{Registry: reg})
+	sources := factsource.NewSourceValues(factsource.SourceValuesConfig{Registry: reg})
 
 	got := NewFactsNodeTransfer(FactsNodeTransferConfig{
-		Facts: NewFacts(FactsInput{
-			Returns: map[cfg.Point]Return{
-				point: NewReturn([]ValueSource{
-					{Kind: ValueSourceExpression, ExprRef: ExprRef(21), HasExpr: true},
+		Facts: factflow.NewFacts(factflow.FactsInput{
+			Returns: map[cfg.Point]factflow.Return{
+				point: factflow.NewReturn([]factflow.ValueSource{
+					{Kind: factflow.ValueSourceExpression, ExprRef: factflow.ExprRef(21), HasExpr: true},
 				}),
 			},
 		}),
@@ -612,7 +614,7 @@ func TestFactsNodeTransferReturnCallSourceReadsReturnSlotThroughRead(t *testing.
 	graph.AddEdge(ret, graph.Exit(), false)
 
 	callValue := presentValue(reg)
-	sources := NewSourceValues(SourceValuesConfig{Registry: reg})
+	sources := factsource.NewSourceValues(factsource.SourceValuesConfig{Registry: reg})
 
 	got := transfer.Run(transfer.Config{
 		Graph:    graph,
@@ -624,11 +626,11 @@ func TestFactsNodeTransferReturnCallSourceReadsReturnSlotThroughRead(t *testing.
 			return state.State{}, false
 		},
 		NodeTransfer: NewFactsNodeTransfer(FactsNodeTransferConfig{
-			Facts: NewFacts(FactsInput{
-				Returns: map[cfg.Point]Return{
-					ret: NewReturn([]ValueSource{
+			Facts: factflow.NewFacts(factflow.FactsInput{
+				Returns: map[cfg.Point]factflow.Return{
+					ret: factflow.NewReturn([]factflow.ValueSource{
 						{
-							Kind:         ValueSourceCall,
+							Kind:         factflow.ValueSourceCall,
 							CallPoint:    call,
 							HasCallPoint: true,
 							ResultIndex:  2,
@@ -653,21 +655,21 @@ func TestFactsNodeTransferCallProducerProviderWritesReturnSlots(t *testing.T) {
 
 	var providerCalled bool
 	got := NewFactsNodeTransfer(FactsNodeTransferConfig{
-		Facts: NewFacts(FactsInput{
-			Calls: map[cfg.Point]CallProducer{
-				point: NewCallProducer(CallProducerConfig{
-					Context:      CallProducerContextAssignment,
+		Facts: factflow.NewFacts(factflow.FactsInput{
+			Calls: map[cfg.Point]factflow.CallProducer{
+				point: factflow.NewCallProducer(factflow.CallProducerConfig{
+					Context:      factflow.CallProducerContextAssignment,
 					CalleeSymbol: symbol.ID(201),
 					ExprIndex:    4,
 				}),
 			},
 		}),
-		CallResults: func(ctx transfer.NodeContext, call CallProducer, gotIn state.State, read func(cfg.Point) state.State) []CallResult {
+		CallResults: func(ctx transfer.NodeContext, call factflow.CallProducer, gotIn state.State, read func(cfg.Point) state.State) []CallResult {
 			providerCalled = true
 			if ctx.Point != point {
 				t.Fatalf("provider point = %d, want %d", ctx.Point, point)
 			}
-			if call.Context() != CallProducerContextAssignment || call.CalleeSymbol() != symbol.ID(201) || call.ExprIndex() != 4 {
+			if call.Context() != factflow.CallProducerContextAssignment || call.CalleeSymbol() != symbol.ID(201) || call.ExprIndex() != 4 {
 				t.Fatalf("provider call = %#v", call)
 			}
 			assertStateEqual(t, reg, gotIn, in)
@@ -703,21 +705,21 @@ func TestFactsNodeTransferAssignmentCallSourceConsumesProviderReturnSlotThroughR
 
 	target := symbol.ID(112)
 	callValue := presentValue(reg)
-	sources := NewSourceValues(SourceValuesConfig{Registry: reg})
+	sources := factsource.NewSourceValues(factsource.SourceValuesConfig{Registry: reg})
 
 	got := transfer.Run(transfer.Config{
 		Graph:    graph,
 		Registry: reg,
 		NodeTransfer: NewFactsNodeTransfer(FactsNodeTransferConfig{
-			Facts: NewFacts(FactsInput{
-				Calls: map[cfg.Point]CallProducer{
-					call: NewCallProducer(CallProducerConfig{
-						Context: CallProducerContextAssignment,
+			Facts: factflow.NewFacts(factflow.FactsInput{
+				Calls: map[cfg.Point]factflow.CallProducer{
+					call: factflow.NewCallProducer(factflow.CallProducerConfig{
+						Context: factflow.CallProducerContextAssignment,
 					}),
 				},
-				LocalAssignments: map[cfg.Point]RootAssignment{
-					assign: NewRootAssignment(target, path.NewPath(target, "local"), ValueSource{
-						Kind:         ValueSourceCall,
+				LocalAssignments: map[cfg.Point]factflow.RootAssignment{
+					assign: factflow.NewRootAssignment(target, path.NewPath(target, "local"), factflow.ValueSource{
+						Kind:         factflow.ValueSourceCall,
 						CallPoint:    call,
 						HasCallPoint: true,
 						ResultIndex:  0,
@@ -725,7 +727,7 @@ func TestFactsNodeTransferAssignmentCallSourceConsumesProviderReturnSlotThroughR
 				},
 			}),
 			Sources: sources,
-			CallResults: func(ctx transfer.NodeContext, call CallProducer, in state.State, read func(cfg.Point) state.State) []CallResult {
+			CallResults: func(ctx transfer.NodeContext, call factflow.CallProducer, in state.State, read func(cfg.Point) state.State) []CallResult {
 				return []CallResult{{Index: 0, Value: callValue}}
 			},
 		}),
@@ -756,11 +758,11 @@ func TestFactsNodeTransferPreservesCustomSparseAxisThroughAssignment(t *testing.
 	graph.AddEdge(assign, graph.Exit(), false)
 
 	target := symbol.ID(130)
-	source := ValueSource{Kind: ValueSourceExpression, ExprRef: ExprRef(130), HasExpr: true}
+	source := factflow.ValueSource{Kind: factflow.ValueSourceExpression, ExprRef: factflow.ExprRef(130), HasExpr: true}
 	assigned := product.Set(reg, product.NewWithPresence(reg, product.ShapeTop, presence.Present()), testSparseAxisKey, testSparseAxisLow)
-	sources := NewSourceValues(SourceValuesConfig{
+	sources := factsource.NewSourceValues(factsource.SourceValuesConfig{
 		Registry: reg,
-		ExpressionValues: map[ExprRef]product.Value{
+		ExpressionValues: map[factflow.ExprRef]product.Value{
 			source.ExprRef: assigned,
 		},
 	})
@@ -769,9 +771,9 @@ func TestFactsNodeTransferPreservesCustomSparseAxisThroughAssignment(t *testing.
 		Graph:    graph,
 		Registry: reg,
 		NodeTransfer: NewFactsNodeTransfer(FactsNodeTransferConfig{
-			Facts: NewFacts(FactsInput{
-				LocalAssignments: map[cfg.Point]RootAssignment{
-					assign: NewRootAssignment(target, path.NewPath(target, "sparse"), source),
+			Facts: factflow.NewFacts(factflow.FactsInput{
+				LocalAssignments: map[cfg.Point]factflow.RootAssignment{
+					assign: factflow.NewRootAssignment(target, path.NewPath(target, "sparse"), source),
 				},
 			}),
 			Sources: sources,
@@ -827,18 +829,18 @@ func TestFactsNodeTransferCallResultTargetsDoNotDirectlyWriteTargets(t *testing.
 		WritePathKey(reg, pathKey, pathValue)
 
 	got := NewFactsNodeTransfer(FactsNodeTransferConfig{
-		Facts: NewFacts(FactsInput{
-			Calls: map[cfg.Point]CallProducer{
-				point: NewCallProducer(CallProducerConfig{
-					Context: CallProducerContextAssignment,
-					ResultTargets: []CallResultTarget{
-						NewCallResultTarget(CallResultTargetLocalAssignment, 0, target, path.NewPath(target, "local")),
-						NewCallResultTarget(CallResultTargetOrdinaryAssignment, 0, target, targetPath),
+		Facts: factflow.NewFacts(factflow.FactsInput{
+			Calls: map[cfg.Point]factflow.CallProducer{
+				point: factflow.NewCallProducer(factflow.CallProducerConfig{
+					Context: factflow.CallProducerContextAssignment,
+					ResultTargets: []factflow.CallResultTarget{
+						factflow.NewCallResultTarget(factflow.CallResultTargetLocalAssignment, 0, target, path.NewPath(target, "local")),
+						factflow.NewCallResultTarget(factflow.CallResultTargetOrdinaryAssignment, 0, target, targetPath),
 					},
 				}),
 			},
 		}),
-		CallResults: func(ctx transfer.NodeContext, call CallProducer, in state.State, read func(cfg.Point) state.State) []CallResult {
+		CallResults: func(ctx transfer.NodeContext, call factflow.CallProducer, in state.State, read func(cfg.Point) state.State) []CallResult {
 			return []CallResult{{Index: 0, Value: resultValue}}
 		},
 	})(transfer.NodeContext{
@@ -859,9 +861,9 @@ func TestFactsNodeTransferMissingCallResultProviderOrNoResultsLeavesStateUnchang
 		WriteReturnSlot(reg, 0, presentValue(reg)).
 		WriteValue(reg, key.SymbolValue(target), absentValue(reg))
 
-	facts := NewFacts(FactsInput{
-		Calls: map[cfg.Point]CallProducer{
-			point: NewCallProducer(CallProducerConfig{Context: CallProducerContextAssignment}),
+	facts := factflow.NewFacts(factflow.FactsInput{
+		Calls: map[cfg.Point]factflow.CallProducer{
+			point: factflow.NewCallProducer(factflow.CallProducerConfig{Context: factflow.CallProducerContextAssignment}),
 		},
 	})
 	tests := []struct {
@@ -871,13 +873,13 @@ func TestFactsNodeTransferMissingCallResultProviderOrNoResultsLeavesStateUnchang
 		{name: "nil provider"},
 		{
 			name: "nil results",
-			provider: func(ctx transfer.NodeContext, call CallProducer, in state.State, read func(cfg.Point) state.State) []CallResult {
+			provider: func(ctx transfer.NodeContext, call factflow.CallProducer, in state.State, read func(cfg.Point) state.State) []CallResult {
 				return nil
 			},
 		},
 		{
 			name: "empty results",
-			provider: func(ctx transfer.NodeContext, call CallProducer, in state.State, read func(cfg.Point) state.State) []CallResult {
+			provider: func(ctx transfer.NodeContext, call factflow.CallProducer, in state.State, read func(cfg.Point) state.State) []CallResult {
 				return []CallResult{}
 			},
 		},
@@ -901,15 +903,15 @@ func TestFactsNodeTransferMissingCallResultProviderOrNoResultsLeavesStateUnchang
 func TestFactsNodeTransferMissingResolverValueLeavesStateUnchanged(t *testing.T) {
 	reg := product.DefaultRegistry()
 	point := cfg.Point(12)
-	source := ValueSource{Kind: ValueSourceExpression, ExprRef: ExprRef(12), HasExpr: true}
+	source := factflow.ValueSource{Kind: factflow.ValueSourceExpression, ExprRef: factflow.ExprRef(12), HasExpr: true}
 	target := symbol.ID(103)
 	unchangedValue := presentValue(reg)
 	in := state.State{}.WriteValue(reg, key.SymbolValue(target), unchangedValue)
 
 	got := NewFactsNodeTransfer(FactsNodeTransferConfig{
-		Facts: NewFacts(FactsInput{
-			LocalAssignments: map[cfg.Point]RootAssignment{
-				point: NewRootAssignment(target, path.NewPath(target, "local"), source),
+		Facts: factflow.NewFacts(factflow.FactsInput{
+			LocalAssignments: map[cfg.Point]factflow.RootAssignment{
+				point: factflow.NewRootAssignment(target, path.NewPath(target, "local"), source),
 			},
 		}),
 		Sources: &recordingSourceValues{},
@@ -927,7 +929,7 @@ func TestFactsNodeTransferAbsentFactsAndNilResolverLeaveStateUnchanged(t *testin
 	target := symbol.ID(104)
 	in := state.State{}.WriteValue(reg, key.SymbolValue(target), presentValue(reg))
 
-	gotNoResolver := NewFactsNodeTransfer(FactsNodeTransferConfig{Facts: Facts{}})(transfer.NodeContext{
+	gotNoResolver := NewFactsNodeTransfer(FactsNodeTransferConfig{Facts: factflow.Facts{}})(transfer.NodeContext{
 		Registry: reg,
 		Point:    point,
 	}, in)
@@ -943,17 +945,17 @@ func TestFactsNodeTransferAbsentFactsAndNilResolverLeaveStateUnchanged(t *testin
 func TestFactsNodeTransferIgnoresNonRootAssignmentFacts(t *testing.T) {
 	reg := product.DefaultRegistry()
 	point := cfg.Point(14)
-	source := ValueSource{Kind: ValueSourceExpression, ExprRef: ExprRef(14), HasExpr: true}
+	source := factflow.ValueSource{Kind: factflow.ValueSourceExpression, ExprRef: factflow.ExprRef(14), HasExpr: true}
 	target := symbol.ID(105)
 	in := state.State{}.WriteValue(reg, key.SymbolValue(target), presentValue(reg))
 	resolver := &recordingSourceValues{
-		values: map[ValueSource]product.Value{source: absentValue(reg)},
+		values: map[factflow.ValueSource]product.Value{source: absentValue(reg)},
 	}
 
 	got := NewFactsNodeTransfer(FactsNodeTransferConfig{
-		Facts: NewFacts(FactsInput{
-			OrdinaryAssignments: map[cfg.Point]RootAssignment{
-				point: NewRootAssignment(target, path.NewPath(target, "ordinary").Field("member"), source),
+		Facts: factflow.NewFacts(factflow.FactsInput{
+			OrdinaryAssignments: map[cfg.Point]factflow.RootAssignment{
+				point: factflow.NewRootAssignment(target, path.NewPath(target, "ordinary").Field("member"), source),
 			},
 		}),
 		Sources: resolver,
@@ -971,19 +973,19 @@ func TestFactsNodeTransferIgnoresNonRootAssignmentFacts(t *testing.T) {
 func TestFactsNodeTransferPathAssignmentRequiresVisibility(t *testing.T) {
 	reg := product.DefaultRegistry()
 	point := cfg.Point(17)
-	source := ValueSource{Kind: ValueSourceExpression, ExprRef: ExprRef(17), HasExpr: true}
+	source := factflow.ValueSource{Kind: factflow.ValueSourceExpression, ExprRef: factflow.ExprRef(17), HasExpr: true}
 	target := symbol.ID(108)
 	targetPath := path.NewPath(target, "table").Field("field")
 	pathKey := path.PathKey("sym108@1.field")
 	in := state.State{}.WritePathKey(reg, pathKey, presentValue(reg))
 	sources := &recordingSourceValues{
-		values: map[ValueSource]product.Value{source: absentValue(reg)},
+		values: map[factflow.ValueSource]product.Value{source: absentValue(reg)},
 	}
 
 	got := NewFactsNodeTransfer(FactsNodeTransferConfig{
-		Facts: NewFacts(FactsInput{
-			PathAssignments: map[cfg.Point]PathAssignment{
-				point: NewPathAssignment(targetPath, source),
+		Facts: factflow.NewFacts(factflow.FactsInput{
+			PathAssignments: map[cfg.Point]factflow.PathAssignment{
+				point: factflow.NewPathAssignment(targetPath, source),
 			},
 		}),
 		Sources: sources,
@@ -1001,18 +1003,18 @@ func TestFactsNodeTransferPathAssignmentRequiresVisibility(t *testing.T) {
 func TestFactsNodeTransferPathAssignmentWithUnresolvedVersionIsNoop(t *testing.T) {
 	reg := product.DefaultRegistry()
 	point := cfg.Point(18)
-	source := ValueSource{Kind: ValueSourceExpression, ExprRef: ExprRef(18), HasExpr: true}
+	source := factflow.ValueSource{Kind: factflow.ValueSourceExpression, ExprRef: factflow.ExprRef(18), HasExpr: true}
 	target := symbol.ID(109)
 	targetPath := path.NewPath(target, "table").Field("field")
 	in := state.State{}.WritePathKey(reg, path.PathKey("sym109@1.field"), presentValue(reg))
 	sources := &recordingSourceValues{
-		values: map[ValueSource]product.Value{source: absentValue(reg)},
+		values: map[factflow.ValueSource]product.Value{source: absentValue(reg)},
 	}
 
 	got := NewFactsNodeTransfer(FactsNodeTransferConfig{
-		Facts: NewFacts(FactsInput{
-			PathAssignments: map[cfg.Point]PathAssignment{
-				point: NewPathAssignment(targetPath, source),
+		Facts: factflow.NewFacts(factflow.FactsInput{
+			PathAssignments: map[cfg.Point]factflow.PathAssignment{
+				point: factflow.NewPathAssignment(targetPath, source),
 			},
 		}),
 		Sources:    sources,
@@ -1028,18 +1030,18 @@ func TestFactsNodeTransferPathAssignmentWithUnresolvedVersionIsNoop(t *testing.T
 func TestFactsNodeTransferIgnoresRootPathAssignment(t *testing.T) {
 	reg := product.DefaultRegistry()
 	point := cfg.Point(19)
-	source := ValueSource{Kind: ValueSourceExpression, ExprRef: ExprRef(19), HasExpr: true}
+	source := factflow.ValueSource{Kind: factflow.ValueSourceExpression, ExprRef: factflow.ExprRef(19), HasExpr: true}
 	target := symbol.ID(110)
 	sources := &recordingSourceValues{
-		values: map[ValueSource]product.Value{source: absentValue(reg)},
+		values: map[factflow.ValueSource]product.Value{source: absentValue(reg)},
 	}
 	visibilityBuilder := visibility.NewBuilder()
 	visibilityBuilder.Define(point, target, "table")
 
 	got := NewFactsNodeTransfer(FactsNodeTransferConfig{
-		Facts: NewFacts(FactsInput{
-			PathAssignments: map[cfg.Point]PathAssignment{
-				point: NewPathAssignment(path.NewPath(target, "table"), source),
+		Facts: factflow.NewFacts(factflow.FactsInput{
+			PathAssignments: map[cfg.Point]factflow.PathAssignment{
+				point: factflow.NewPathAssignment(path.NewPath(target, "table"), source),
 			},
 		}),
 		Sources:    sources,
@@ -1074,8 +1076,8 @@ func TestFactsEdgeTransferAppliesNilRefinementsOnRootValue(t *testing.T) {
 		Registry:   reg,
 		EntryState: initial,
 		EdgeTransfer: NewFactsEdgeTransfer(FactsEdgeTransferConfig{
-			Facts: NewFacts(FactsInput{
-				BranchRefinements: map[cfg.Point]BranchRefinement{
+			Facts: factflow.NewFacts(factflow.FactsInput{
+				BranchRefinements: map[cfg.Point]factflow.BranchRefinement{
 					branch: branchWithPresence(path.NewPath(target, "x"), presence.Absent(), true, presence.Present(), true),
 				},
 			}),
@@ -1089,7 +1091,7 @@ func TestFactsEdgeTransferAppliesNilRefinementsOnRootValue(t *testing.T) {
 func TestFactsEdgeTransferOneSidedTruthyFalsyRefinements(t *testing.T) {
 	tests := []struct {
 		name      string
-		fact      BranchRefinement
+		fact      factflow.BranchRefinement
 		wantTrue  product.Value
 		wantFalse product.Value
 	}{
@@ -1127,8 +1129,8 @@ func TestFactsEdgeTransferOneSidedTruthyFalsyRefinements(t *testing.T) {
 				Registry:   reg,
 				EntryState: initial,
 				EdgeTransfer: NewFactsEdgeTransfer(FactsEdgeTransferConfig{
-					Facts: NewFacts(FactsInput{
-						BranchRefinements: map[cfg.Point]BranchRefinement{
+					Facts: factflow.NewFacts(factflow.FactsInput{
+						BranchRefinements: map[cfg.Point]factflow.BranchRefinement{
 							branch: tc.fact,
 						},
 					}),
@@ -1165,8 +1167,8 @@ func TestFactsEdgeTransferRefinesStaticMemberPathThroughVisibility(t *testing.T)
 		Registry:   reg,
 		EntryState: initial,
 		EdgeTransfer: NewFactsEdgeTransfer(FactsEdgeTransferConfig{
-			Facts: NewFacts(FactsInput{
-				BranchRefinements: map[cfg.Point]BranchRefinement{
+			Facts: factflow.NewFacts(factflow.FactsInput{
+				BranchRefinements: map[cfg.Point]factflow.BranchRefinement{
 					branch: branchWithPresence(targetPath, presence.Present(), true, presence.Absent(), true),
 				},
 			}),
@@ -1198,8 +1200,8 @@ func TestFactsEdgeTransferRefinesRuntimeKindOnRootValue(t *testing.T) {
 		Registry:   reg,
 		EntryState: initial,
 		EdgeTransfer: NewFactsEdgeTransfer(FactsEdgeTransferConfig{
-			Facts: NewFacts(FactsInput{
-				BranchRefinements: map[cfg.Point]BranchRefinement{
+			Facts: factflow.NewFacts(factflow.FactsInput{
+				BranchRefinements: map[cfg.Point]factflow.BranchRefinement{
 					branch: branchWithRuntimeKind(path.NewPath(target, "x"), runtimekind.Singleton(runtimekind.Table), true, runtimekind.Value{}, false),
 				},
 			}),
@@ -1234,8 +1236,8 @@ func TestFactsEdgeTransferRefinesRuntimeKindOnStaticMemberPath(t *testing.T) {
 		Registry:   reg,
 		EntryState: initial,
 		EdgeTransfer: NewFactsEdgeTransfer(FactsEdgeTransferConfig{
-			Facts: NewFacts(FactsInput{
-				BranchRefinements: map[cfg.Point]BranchRefinement{
+			Facts: factflow.NewFacts(factflow.FactsInput{
+				BranchRefinements: map[cfg.Point]factflow.BranchRefinement{
 					branch: branchWithRuntimeKind(targetPath, runtimekind.Singleton(runtimekind.Function), true, runtimekind.Value{}, false),
 				},
 			}),
@@ -1267,8 +1269,8 @@ func TestFactsEdgeTransferRuntimeKindContradictionGoesBottom(t *testing.T) {
 		Registry:   reg,
 		EntryState: initial,
 		EdgeTransfer: NewFactsEdgeTransfer(FactsEdgeTransferConfig{
-			Facts: NewFacts(FactsInput{
-				BranchRefinements: map[cfg.Point]BranchRefinement{
+			Facts: factflow.NewFacts(factflow.FactsInput{
+				BranchRefinements: map[cfg.Point]factflow.BranchRefinement{
 					branch: branchWithRuntimeKind(path.NewPath(target, "x"), runtimekind.Singleton(runtimekind.Table), true, runtimekind.Value{}, false),
 				},
 			}),
@@ -1294,16 +1296,16 @@ func TestFactsEdgeTransferAppliesGenericProductConstraintAxis(t *testing.T) {
 	target := symbol.ID(312)
 	initialValue := wideningValue(reg, wideningExactMax)
 	constraint := product.Set(reg, product.Top(), wideningKey, wideningOne)
-	trueRefinement := NewValueRefinement().WithConstraint(reg, constraint)
+	trueRefinement := factflow.NewValueRefinement().WithConstraint(reg, constraint)
 	initial := state.State{}.WriteValue(reg, key.SymbolValue(target), initialValue)
 	got := transfer.Run(transfer.Config{
 		Graph:      graph,
 		Registry:   reg,
 		EntryState: initial,
 		EdgeTransfer: NewFactsEdgeTransfer(FactsEdgeTransferConfig{
-			Facts: NewFacts(FactsInput{
-				BranchRefinements: map[cfg.Point]BranchRefinement{
-					branch: NewBranchRefinement(path.NewPath(target, "x"), trueRefinement, true, ValueRefinement{}, false),
+			Facts: factflow.NewFacts(factflow.FactsInput{
+				BranchRefinements: map[cfg.Point]factflow.BranchRefinement{
+					branch: factflow.NewBranchRefinement(path.NewPath(target, "x"), trueRefinement, true, factflow.ValueRefinement{}, false),
 				},
 			}),
 		}),
@@ -1332,8 +1334,8 @@ func TestFactsEdgeTransferNoopsWithoutBranchConditionOrVisibility(t *testing.T) 
 			Registry:   reg,
 			EntryState: initial,
 			EdgeTransfer: NewFactsEdgeTransfer(FactsEdgeTransferConfig{
-				Facts: NewFacts(FactsInput{
-					BranchRefinements: map[cfg.Point]BranchRefinement{
+				Facts: factflow.NewFacts(factflow.FactsInput{
+					BranchRefinements: map[cfg.Point]factflow.BranchRefinement{
 						graph.Entry(): branchWithPresence(path.NewPath(target, "x"), presence.Absent(), true, presence.Present(), true),
 					},
 				}),
@@ -1364,8 +1366,8 @@ func TestFactsEdgeTransferNoopsWithoutBranchConditionOrVisibility(t *testing.T) 
 			Registry:   reg,
 			EntryState: initial,
 			EdgeTransfer: NewFactsEdgeTransfer(FactsEdgeTransferConfig{
-				Facts: NewFacts(FactsInput{
-					BranchRefinements: map[cfg.Point]BranchRefinement{
+				Facts: factflow.NewFacts(factflow.FactsInput{
+					BranchRefinements: map[cfg.Point]factflow.BranchRefinement{
 						branch: branchWithPresence(targetPath, presence.Present(), true, presence.Absent(), true),
 					},
 				}),
@@ -1398,8 +1400,8 @@ func TestFactsEdgeTransferJoinRestoresMaybePresence(t *testing.T) {
 		Registry:   reg,
 		EntryState: initial,
 		EdgeTransfer: NewFactsEdgeTransfer(FactsEdgeTransferConfig{
-			Facts: NewFacts(FactsInput{
-				BranchRefinements: map[cfg.Point]BranchRefinement{
+			Facts: factflow.NewFacts(factflow.FactsInput{
+				BranchRefinements: map[cfg.Point]factflow.BranchRefinement{
 					branch: branchWithPresence(path.NewPath(target, "x"), presence.Absent(), true, presence.Present(), true),
 				},
 			}),
@@ -1432,8 +1434,8 @@ func TestFactsEdgeTransferJoinRestoresRuntimeKindUnion(t *testing.T) {
 		Registry:   reg,
 		EntryState: initial,
 		EdgeTransfer: NewFactsEdgeTransfer(FactsEdgeTransferConfig{
-			Facts: NewFacts(FactsInput{
-				BranchRefinements: map[cfg.Point]BranchRefinement{
+			Facts: factflow.NewFacts(factflow.FactsInput{
+				BranchRefinements: map[cfg.Point]factflow.BranchRefinement{
 					branch: branchWithRuntimeKind(
 						path.NewPath(target, "x"),
 						runtimekind.Singleton(runtimekind.Table), true,
@@ -1453,17 +1455,17 @@ func TestFactsEdgeTransferJoinRestoresRuntimeKindUnion(t *testing.T) {
 
 type sourceValueCall struct {
 	point  cfg.Point
-	source ValueSource
+	source factflow.ValueSource
 }
 
 type recordingSourceValues struct {
-	values map[ValueSource]product.Value
+	values map[factflow.ValueSource]product.Value
 	calls  []sourceValueCall
 }
 
 func (r *recordingSourceValues) ValueOfSource(
 	point cfg.Point,
-	source ValueSource,
+	source factflow.ValueSource,
 	in state.State,
 	read func(cfg.Point) state.State,
 ) (product.Value, bool) {
@@ -1480,14 +1482,14 @@ type panicSourceValues struct{}
 
 func (panicSourceValues) ValueOfSource(
 	cfg.Point,
-	ValueSource,
+	factflow.ValueSource,
 	state.State,
 	func(cfg.Point) state.State,
 ) (product.Value, bool) {
 	panic("ValueOfSource should not be called")
 }
 
-func assertResolverCall(t *testing.T, resolver *recordingSourceValues, point cfg.Point, source ValueSource) {
+func assertResolverCall(t *testing.T, resolver *recordingSourceValues, point cfg.Point, source factflow.ValueSource) {
 	t.Helper()
 	if len(resolver.calls) != 1 {
 		t.Fatalf("resolver calls = %d, want 1", len(resolver.calls))
@@ -1531,6 +1533,10 @@ func presentValue(reg *axis.Registry) product.Value {
 
 func absentValue(reg *axis.Registry) product.Value {
 	return product.NewWithPresence(reg, product.ShapeTop, presence.Absent())
+}
+
+func runtimeKindConstraint(value runtimekind.Value) product.Value {
+	return product.Set(product.DefaultRegistry(), product.Top(), runtimekind.Key, value)
 }
 
 func formatValue(reg *axis.Registry, v product.Value) string {
@@ -1721,16 +1727,16 @@ func branchWithPresence(
 	hasTrue bool,
 	falsePresence presence.Value,
 	hasFalse bool,
-) BranchRefinement {
-	var trueValue ValueRefinement
+) factflow.BranchRefinement {
+	var trueValue factflow.ValueRefinement
 	if hasTrue {
-		trueValue = NewValueConstraint(product.NewWithPresence(product.DefaultRegistry(), product.ShapeTop, truePresence))
+		trueValue = factflow.NewValueConstraint(product.NewWithPresence(product.DefaultRegistry(), product.ShapeTop, truePresence))
 	}
-	var falseValue ValueRefinement
+	var falseValue factflow.ValueRefinement
 	if hasFalse {
-		falseValue = NewValueConstraint(product.NewWithPresence(product.DefaultRegistry(), product.ShapeTop, falsePresence))
+		falseValue = factflow.NewValueConstraint(product.NewWithPresence(product.DefaultRegistry(), product.ShapeTop, falsePresence))
 	}
-	return NewBranchRefinement(targetPath, trueValue, hasTrue, falseValue, hasFalse)
+	return factflow.NewBranchRefinement(targetPath, trueValue, hasTrue, falseValue, hasFalse)
 }
 
 func branchWithRuntimeKind(
@@ -1739,16 +1745,16 @@ func branchWithRuntimeKind(
 	hasTrue bool,
 	falseRuntimeKind runtimekind.Value,
 	hasFalse bool,
-) BranchRefinement {
-	var trueValue ValueRefinement
+) factflow.BranchRefinement {
+	var trueValue factflow.ValueRefinement
 	if hasTrue {
-		trueValue = NewValueConstraint(product.Set(product.DefaultRegistry(), product.Top(), runtimekind.Key, trueRuntimeKind))
+		trueValue = factflow.NewValueConstraint(product.Set(product.DefaultRegistry(), product.Top(), runtimekind.Key, trueRuntimeKind))
 	}
-	var falseValue ValueRefinement
+	var falseValue factflow.ValueRefinement
 	if hasFalse {
-		falseValue = NewValueConstraint(product.Set(product.DefaultRegistry(), product.Top(), runtimekind.Key, falseRuntimeKind))
+		falseValue = factflow.NewValueConstraint(product.Set(product.DefaultRegistry(), product.Top(), runtimekind.Key, falseRuntimeKind))
 	}
-	return NewBranchRefinement(targetPath, trueValue, hasTrue, falseValue, hasFalse)
+	return factflow.NewBranchRefinement(targetPath, trueValue, hasTrue, falseValue, hasFalse)
 }
 
 func fieldSuffix(name string) path.Path {

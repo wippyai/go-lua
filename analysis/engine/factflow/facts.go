@@ -4,8 +4,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
-	"github.com/wippyai/go-lua/analysis/engine/state"
-	"github.com/wippyai/go-lua/analysis/engine/transfer"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/symbol"
 )
@@ -712,21 +710,10 @@ func (f Facts) ValueOverlay(expr ExprRef) (ValueOverlay, bool) {
 	return fact.copy(), true
 }
 
-// SourceValues resolves ValueSource descriptors into product values.
-type SourceValues interface {
-	ValueOfSource(point cfg.Point, source ValueSource, in state.State, read func(cfg.Point) state.State) (product.Value, bool)
+// ValueOverlays returns the source-value overlay sidecars keyed by expression.
+func (f Facts) ValueOverlays() map[ExprRef]ValueOverlay {
+	return copyValueOverlayMap(f.valueOverlays)
 }
-
-// CallResult is one indexed abstract result produced by a call.
-type CallResult struct {
-	Index int
-	Value product.Value
-}
-
-// CallResultProvider resolves generic call-producer facts into indexed return
-// slots. Call result targets remain metadata for downstream facts; providers
-// produce only ReturnSlot(index) values.
-type CallResultProvider func(ctx transfer.NodeContext, call CallProducer, in state.State, read func(cfg.Point) state.State) []CallResult
 
 func copyPath(p path.Path) path.Path {
 	if len(p.Segments) == 0 {

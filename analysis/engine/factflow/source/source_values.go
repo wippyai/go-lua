@@ -1,24 +1,30 @@
-package factflow
+package source
 
 import (
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
+	"github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 )
 
+// SourceValues resolves ValueSource descriptors into product values.
+type SourceValues interface {
+	ValueOfSource(point cfg.Point, source factflow.ValueSource, in state.State, read func(cfg.Point) state.State) (product.Value, bool)
+}
+
 // ExpressionValueProvider resolves an opaque expression reference into a value.
-type ExpressionValueProvider func(point cfg.Point, expr ExprRef, source ValueSource, in state.State) (product.Value, bool)
+type ExpressionValueProvider func(point cfg.Point, expr factflow.ExprRef, source factflow.ValueSource, in state.State) (product.Value, bool)
 
 // VarargValueProvider resolves a vararg value source. It is intentionally
 // optional because the generic transfer engine cannot infer vararg shape.
-type VarargValueProvider func(point cfg.Point, source ValueSource, in state.State, read func(cfg.Point) state.State) (product.Value, bool)
+type VarargValueProvider func(point cfg.Point, source factflow.ValueSource, in state.State, read func(cfg.Point) state.State) (product.Value, bool)
 
 // SourceValuesConfig configures the generic ValueSource resolver.
 type SourceValuesConfig struct {
 	Registry *axis.Registry
 
-	ExpressionValues map[ExprRef]product.Value
+	ExpressionValues map[factflow.ExprRef]product.Value
 	ExpressionValue  ExpressionValueProvider
 	VarargValue      VarargValueProvider
 }
@@ -41,25 +47,25 @@ func NewSourceValues(config SourceValuesConfig) SourceValues {
 type sourceValueResolver struct {
 	registry *axis.Registry
 
-	expressionValues map[ExprRef]product.Value
+	expressionValues map[factflow.ExprRef]product.Value
 	expressionValue  ExpressionValueProvider
 	varargValue      VarargValueProvider
 }
 
 func (r sourceValueResolver) ValueOfSource(
 	point cfg.Point,
-	source ValueSource,
+	source factflow.ValueSource,
 	in state.State,
 	read func(cfg.Point) state.State,
 ) (product.Value, bool) {
 	switch source.Kind {
-	case ValueSourceNil:
+	case factflow.ValueSourceNil:
 		return product.Absent(r.registry), true
-	case ValueSourceExpression:
+	case factflow.ValueSourceExpression:
 		return r.valueOfExpression(point, source, in)
-	case ValueSourceCall:
+	case factflow.ValueSourceCall:
 		return r.valueOfCall(source, read)
-	case ValueSourceVararg:
+	case factflow.ValueSourceVararg:
 		if r.varargValue == nil {
 			return product.Value{}, false
 		}
@@ -71,7 +77,7 @@ func (r sourceValueResolver) ValueOfSource(
 
 func (r sourceValueResolver) valueOfExpression(
 	point cfg.Point,
-	source ValueSource,
+	source factflow.ValueSource,
 	in state.State,
 ) (product.Value, bool) {
 	if !source.HasExpr {
@@ -86,18 +92,18 @@ func (r sourceValueResolver) valueOfExpression(
 	return r.expressionValue(point, source.ExprRef, source, in)
 }
 
-func (r sourceValueResolver) valueOfCall(source ValueSource, read func(cfg.Point) state.State) (product.Value, bool) {
+func (r sourceValueResolver) valueOfCall(source factflow.ValueSource, read func(cfg.Point) state.State) (product.Value, bool) {
 	if !source.HasCallPoint || source.ResultIndex < 0 || read == nil {
 		return product.Value{}, false
 	}
 	return read(source.CallPoint).ReadReturnSlot(r.registry, source.ResultIndex), true
 }
 
-func copyExpressionValues(in map[ExprRef]product.Value) map[ExprRef]product.Value {
+func copyExpressionValues(in map[factflow.ExprRef]product.Value) map[factflow.ExprRef]product.Value {
 	if len(in) == 0 {
 		return nil
 	}
-	out := make(map[ExprRef]product.Value, len(in))
+	out := make(map[factflow.ExprRef]product.Value, len(in))
 	for ref, value := range in {
 		out[ref] = value
 	}
@@ -107,10 +113,10 @@ func copyExpressionValues(in map[ExprRef]product.Value) map[ExprRef]product.Valu
 type valueOverlaySourceValues struct {
 	registry *axis.Registry
 	base     SourceValues
-	overlays map[ExprRef]ValueOverlay
+	overlays map[factflow.ExprRef]factflow.ValueOverlay
 }
 
-func withValueOverlaySourceValues(reg *axis.Registry, base SourceValues, overlays map[ExprRef]ValueOverlay) SourceValues {
+func WithValueOverlays(reg *axis.Registry, base SourceValues, overlays map[factflow.ExprRef]factflow.ValueOverlay) SourceValues {
 	if base == nil || len(overlays) == 0 {
 		return base
 	}
@@ -126,7 +132,7 @@ func withValueOverlaySourceValues(reg *axis.Registry, base SourceValues, overlay
 
 func (r valueOverlaySourceValues) ValueOfSource(
 	point cfg.Point,
-	source ValueSource,
+	source factflow.ValueSource,
 	in state.State,
 	read func(cfg.Point) state.State,
 ) (product.Value, bool) {
@@ -135,10 +141,10 @@ func (r valueOverlaySourceValues) ValueOfSource(
 
 func (r valueOverlaySourceValues) valueOfSource(
 	point cfg.Point,
-	source ValueSource,
+	source factflow.ValueSource,
 	in state.State,
 	read func(cfg.Point) state.State,
-	active map[ExprRef]bool,
+	active map[factflow.ExprRef]bool,
 ) (product.Value, bool) {
 	if !source.HasExpr {
 		return r.base.ValueOfSource(point, source, in, read)
@@ -148,7 +154,7 @@ func (r valueOverlaySourceValues) valueOfSource(
 			return product.Value{}, false
 		}
 		if active == nil {
-			active = make(map[ExprRef]bool, 1)
+			active = make(map[factflow.ExprRef]bool, 1)
 		}
 		active[source.ExprRef] = true
 		value, ok := r.valueOfSource(point, overlay.Source(), in, read, active)

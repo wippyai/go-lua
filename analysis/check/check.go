@@ -7,6 +7,8 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
+	"github.com/wippyai/go-lua/analysis/engine/factflow/apply"
+	"github.com/wippyai/go-lua/analysis/engine/factflow/source"
 	"github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/engine/transfer"
 	"github.com/wippyai/go-lua/analysis/engine/visibility"
@@ -29,9 +31,9 @@ type Config struct {
 	Globals  []string
 
 	ExpressionValues map[factflow.ExprRef]product.Value
-	ExpressionValue  factflow.ExpressionValueProvider
-	VarargValue      factflow.VarargValueProvider
-	CallResults      factflow.CallResultProvider
+	ExpressionValue  source.ExpressionValueProvider
+	VarargValue      source.VarargValueProvider
+	CallResults      apply.CallResultProvider
 
 	Visibility *visibility.Resolver
 
@@ -180,7 +182,7 @@ func (c *Checker) CheckFunction(fn *ast.FunctionExpr) (*Result, error) {
 func (c *Checker) run(bindings *bind.Result, built *cfgbuild.Result, sem *semantics.Result) *Result {
 	config := c.config
 	facts := transferfacts.Lower(sem, built.Graph, transferfacts.Config{Registry: config.Registry})
-	sources := factflow.NewSourceValues(factflow.SourceValuesConfig{
+	sources := source.NewSourceValues(source.SourceValuesConfig{
 		Registry:         config.Registry,
 		ExpressionValues: config.ExpressionValues,
 		ExpressionValue:  config.ExpressionValue,
@@ -191,13 +193,13 @@ func (c *Checker) run(bindings *bind.Result, built *cfgbuild.Result, sem *semant
 		Registry:   config.Registry,
 		EntryState: config.EntryState,
 		Initial:    config.Initial,
-		NodeTransfer: factflow.NewFactsNodeTransfer(factflow.FactsNodeTransferConfig{
+		NodeTransfer: apply.NewFactsNodeTransfer(apply.FactsNodeTransferConfig{
 			Facts:       facts,
 			Sources:     sources,
 			CallResults: config.CallResults,
 			Visibility:  config.Visibility,
 		}),
-		EdgeTransfer: factflow.NewFactsEdgeTransfer(factflow.FactsEdgeTransferConfig{
+		EdgeTransfer: apply.NewFactsEdgeTransfer(apply.FactsEdgeTransferConfig{
 			Facts:      facts,
 			Visibility: config.Visibility,
 		}),

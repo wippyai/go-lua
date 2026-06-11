@@ -1,4 +1,4 @@
-package factflow
+package source
 
 import (
 	"strings"
@@ -9,6 +9,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/runtimekind"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
+	. "github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/symbol"
@@ -193,7 +194,7 @@ func TestValueOverlaySourceValuesMeetsOverlayAndDoesNotMutateBase(t *testing.T) 
 			inner: base,
 		},
 	})
-	resolver := withValueOverlaySourceValues(reg, baseResolver, overlays)
+	resolver := WithValueOverlays(reg, baseResolver, overlays)
 
 	got, ok := resolver.ValueOfSource(cfg.Point(1), outerSource, state.State{}, nil)
 	if !ok {
@@ -227,7 +228,7 @@ func TestValueOverlaySourceValuesAppliesOverlayToCallSource(t *testing.T) {
 	innerSource := outerSource
 	innerSource.ExprRef = inner
 	baseResolver := NewSourceValues(SourceValuesConfig{Registry: reg})
-	resolver := withValueOverlaySourceValues(reg, baseResolver, map[ExprRef]ValueOverlay{
+	resolver := WithValueOverlays(reg, baseResolver, map[ExprRef]ValueOverlay{
 		outer: NewValueOverlay(innerSource, runtimeKindOverlay(reg, runtimekind.Singleton(runtimekind.Function))),
 	})
 
@@ -259,11 +260,11 @@ func TestValueOverlaySourceValuesPanicsWithoutRegistry(t *testing.T) {
 
 	defer func() {
 		if r := recover(); r == nil || !strings.Contains(r.(string), "value overlay source values require a registry") {
-			t.Fatal("withValueOverlaySourceValues did not panic")
+			t.Fatal("WithValueOverlays did not panic")
 		}
 	}()
 
-	_ = withValueOverlaySourceValues(nil, base, map[ExprRef]ValueOverlay{
+	_ = WithValueOverlays(nil, base, map[ExprRef]ValueOverlay{
 		ExprRef(1): NewValueOverlay(
 			ValueSource{Kind: ValueSourceExpression, ExprRef: ExprRef(2), HasExpr: true},
 			runtimeKindOverlay(reg, runtimekind.Singleton(runtimekind.Table)),
@@ -281,7 +282,7 @@ func TestValueOverlaySourceValuesCanMeetCorePresenceOverlay(t *testing.T) {
 			inner: absentValue(reg),
 		},
 	})
-	resolver := withValueOverlaySourceValues(reg, baseResolver, map[ExprRef]ValueOverlay{
+	resolver := WithValueOverlays(reg, baseResolver, map[ExprRef]ValueOverlay{
 		outer: NewValueOverlay(
 			ValueSource{Kind: ValueSourceExpression, ExprRef: inner, HasExpr: true},
 			product.NewWithPresence(reg, product.ShapeTop, presence.Absent()),
@@ -308,7 +309,7 @@ func TestValueOverlaySourceValuesNestedOverlaysMeet(t *testing.T) {
 			inner: presentValue(reg),
 		},
 	})
-	resolver := withValueOverlaySourceValues(reg, baseResolver, map[ExprRef]ValueOverlay{
+	resolver := WithValueOverlays(reg, baseResolver, map[ExprRef]ValueOverlay{
 		middle: NewValueOverlay(
 			ValueSource{Kind: ValueSourceExpression, ExprRef: inner, HasExpr: true},
 			runtimeKindOverlay(reg, runtimekind.Top().Without(runtimekind.Nil)),
@@ -333,7 +334,7 @@ func TestValueOverlaySourceValuesMissingInnerSourceReturnsFalse(t *testing.T) {
 	baseResolver := NewSourceValues(SourceValuesConfig{
 		Registry: reg,
 	})
-	resolver := withValueOverlaySourceValues(reg, baseResolver, map[ExprRef]ValueOverlay{
+	resolver := WithValueOverlays(reg, baseResolver, map[ExprRef]ValueOverlay{
 		ExprRef(30): NewValueOverlay(
 			ValueSource{Kind: ValueSourceExpression, ExprRef: ExprRef(31), HasExpr: true},
 			runtimeKindOverlay(reg, runtimekind.Singleton(runtimekind.Table)),
@@ -347,4 +348,30 @@ func TestValueOverlaySourceValuesMissingInnerSourceReturnsFalse(t *testing.T) {
 
 func runtimeKindOverlay(reg *axis.Registry, value runtimekind.Value) product.Value {
 	return product.Set(reg, product.Top(), runtimekind.Key, value)
+}
+
+func assertStateEqual(t *testing.T, reg *axis.Registry, got state.State, want state.State) {
+	t.Helper()
+	if !state.Domain(reg).Equal(got, want) {
+		t.Fatalf("state changed")
+	}
+}
+
+func presentValue(reg *axis.Registry) product.Value {
+	return product.NewWithPresence(reg, product.ShapeTop, presence.Present())
+}
+
+func absentValue(reg *axis.Registry) product.Value {
+	return product.NewWithPresence(reg, product.ShapeTop, presence.Absent())
+}
+
+func formatValue(reg *axis.Registry, v product.Value) string {
+	switch {
+	case product.Equal(reg, v, product.Bottom(reg)):
+		return "bottom"
+	case product.Equal(reg, v, product.Top()):
+		return "top"
+	default:
+		return product.PresenceOf(v).String()
+	}
 }
