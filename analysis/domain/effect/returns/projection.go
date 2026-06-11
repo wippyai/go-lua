@@ -2,79 +2,21 @@ package returns
 
 import (
 	"fmt"
-	"strings"
 
 	"github.com/wippyai/go-lua/analysis/domain/effect"
-	"github.com/wippyai/go-lua/analysis/type/typ"
+	"github.com/wippyai/go-lua/analysis/type/projection"
 )
 
 type TypeProjection struct {
-	Source effect.ParamRef
-	Steps  []TypeProjectionStep
+	Source     effect.ParamRef
+	Projection projection.Projection
 }
 
 func (TypeProjection) returnType() {}
 func (p TypeProjection) String() string {
-	if len(p.Steps) == 0 {
+	path := p.Projection.String()
+	if path == "" {
 		return fmt.Sprintf("project_type(%s)", p.Source)
 	}
-	parts := make([]string, 0, len(p.Steps))
-	for _, step := range p.Steps {
-		parts = append(parts, step.String())
-	}
-	return fmt.Sprintf("project_type(%s.%s)", p.Source, strings.Join(parts, "."))
-}
-
-type TypeProjectionStepKind uint8
-
-const (
-	TypeProjectionField TypeProjectionStepKind = iota + 1
-	TypeProjectionCallableReturn
-	TypeProjectionGenericArg
-	TypeProjectionInstantiateGeneric
-)
-
-type TypeProjectionStep struct {
-	Kind  TypeProjectionStepKind
-	Field string
-	Index int
-	Type  typ.Type
-}
-
-func ProjectField(name string) TypeProjectionStep {
-	return TypeProjectionStep{Kind: TypeProjectionField, Field: name}
-}
-
-func ProjectCallableReturn() TypeProjectionStep {
-	return TypeProjectionStep{Kind: TypeProjectionCallableReturn}
-}
-
-func ProjectGenericArg(index int) TypeProjectionStep {
-	return TypeProjectionStep{Kind: TypeProjectionGenericArg, Index: index}
-}
-
-func ProjectInstantiateGeneric(generic typ.Type) TypeProjectionStep {
-	return TypeProjectionStep{Kind: TypeProjectionInstantiateGeneric, Type: generic}
-}
-
-func (s TypeProjectionStep) String() string {
-	switch s.Kind {
-	case TypeProjectionField:
-		return s.Field
-	case TypeProjectionCallableReturn:
-		return "return"
-	case TypeProjectionGenericArg:
-		return fmt.Sprintf("arg[%d]", s.Index)
-	case TypeProjectionInstantiateGeneric:
-		return fmt.Sprintf("instantiate[%s]", typ.FormatShort(s.Type))
-	default:
-		return "unknown"
-	}
-}
-
-func typeProjectionStepEquals(a, b TypeProjectionStep) bool {
-	if a.Kind != b.Kind || a.Field != b.Field || a.Index != b.Index {
-		return false
-	}
-	return typ.TypeEquals(a.Type, b.Type)
+	return fmt.Sprintf("project_type(%s.%s)", p.Source, path)
 }

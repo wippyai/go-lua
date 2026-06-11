@@ -5,6 +5,7 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/domain/constraint/expr"
 	"github.com/wippyai/go-lua/analysis/domain/effect"
+	"github.com/wippyai/go-lua/analysis/type/projection"
 )
 
 type Return struct {
@@ -258,15 +259,10 @@ func stringUnpackValueEquals(a StringUnpackValue, b ReturnType) bool {
 
 func typeProjectionEquals(a TypeProjection, b ReturnType) bool {
 	bb, ok := b.(TypeProjection)
-	if !ok || a.Source.Index != bb.Source.Index || len(a.Steps) != len(bb.Steps) {
+	if !ok || a.Source.Index != bb.Source.Index {
 		return false
 	}
-	for i := range a.Steps {
-		if !typeProjectionStepEquals(a.Steps[i], bb.Steps[i]) {
-			return false
-		}
-	}
-	return true
+	return projection.Equal(a.Projection, bb.Projection)
 }
 
 func selectCaseOfParamEquals(a SelectCaseOfParam, b ReturnType) bool {

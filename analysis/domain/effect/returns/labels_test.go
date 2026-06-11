@@ -5,6 +5,7 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/domain/constraint/expr"
 	"github.com/wippyai/go-lua/analysis/domain/effect"
+	"github.com/wippyai/go-lua/analysis/type/projection"
 )
 
 func TestReturn_String(t *testing.T) {
@@ -139,6 +140,17 @@ func TestReturnTransforms_String(t *testing.T) {
 		{"string unpack", StringUnpackValue{Format: effect.ParamRef{Index: 0}}, "string_unpack(param[0])"},
 		{"select case", SelectCaseOfParam{Source: effect.ParamRef{Index: 0}}, "select_case(param[0])"},
 		{"select result", SelectResultOfCases{Cases: effect.ParamRef{Index: 0}, Default: effect.ParamRef{Index: 1}}, "select_result(param[0], param[1])"},
+		{
+			"type projection",
+			TypeProjection{
+				Source: effect.ParamRef{Index: 0},
+				Projection: projection.Projection{Steps: []projection.Step{
+					projection.Field("payload"),
+					projection.CallableReturn(),
+				}},
+			},
+			"project_type(param[0].payload.return)",
+		},
 	}
 
 	for _, tt := range tests {
@@ -147,6 +159,41 @@ func TestReturnTransforms_String(t *testing.T) {
 				t.Errorf("String() = %q, want %q", got, tt.want)
 			}
 		})
+	}
+}
+
+func TestTypeProjectionTransform(t *testing.T) {
+	base := TypeProjection{
+		Source: effect.ParamRef{Index: 0},
+		Projection: projection.Projection{Steps: []projection.Step{
+			projection.Field("payload"),
+			projection.GenericArg(0),
+		}},
+	}
+
+	if got := (TypeProjection{Source: effect.ParamRef{Index: 0}}).String(); got != "project_type(param[0])" {
+		t.Fatalf("empty TypeProjection.String() = %q", got)
+	}
+	if !returnTypeEquals(base, base) {
+		t.Fatal("matching TypeProjection transforms should be equal")
+	}
+	if returnTypeEquals(base, TypeProjection{
+		Source: effect.ParamRef{Index: 1},
+		Projection: projection.Projection{Steps: []projection.Step{
+			projection.Field("payload"),
+			projection.GenericArg(0),
+		}},
+	}) {
+		t.Fatal("different TypeProjection source should not be equal")
+	}
+	if returnTypeEquals(base, TypeProjection{
+		Source: effect.ParamRef{Index: 0},
+		Projection: projection.Projection{Steps: []projection.Step{
+			projection.Field("payload"),
+			projection.GenericArg(1),
+		}},
+	}) {
+		t.Fatal("different TypeProjection descriptor should not be equal")
 	}
 }
 

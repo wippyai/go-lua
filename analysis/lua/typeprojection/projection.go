@@ -1,31 +1,31 @@
 package typeprojection
 
 import (
-	"github.com/wippyai/go-lua/analysis/domain/effect/returns"
 	"github.com/wippyai/go-lua/analysis/lua/typeaccess"
+	"github.com/wippyai/go-lua/analysis/type/projection"
 	"github.com/wippyai/go-lua/analysis/type/subtype"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/analysis/type/unwrap"
 )
 
-// ApplyTypeProjection applies projection steps to source.
-func ApplyTypeProjection(source typ.Type, projection returns.TypeProjection) (typ.Type, bool) {
+// Apply applies projection steps to source.
+func Apply(source typ.Type, p projection.Projection) (typ.Type, bool) {
 	current := source
-	for _, step := range projection.Steps {
+	for _, step := range p.Steps {
 		switch step.Kind {
-		case returns.TypeProjectionField:
+		case projection.StepField:
 			next, ok := typeaccess.Field(current, step.Field)
 			if !ok {
 				return nil, false
 			}
 			current = next
-		case returns.TypeProjectionCallableReturn:
+		case projection.StepCallableReturn:
 			next, ok := typeaccess.CallableReturn(current)
 			if !ok {
 				return nil, false
 			}
 			current = next
-		case returns.TypeProjectionGenericArg:
+		case projection.StepGenericArg:
 			if step.Index < 0 {
 				return nil, false
 			}
@@ -34,7 +34,7 @@ func ApplyTypeProjection(source typ.Type, projection returns.TypeProjection) (ty
 				return nil, false
 			}
 			current = inst.TypeArgs[step.Index]
-		case returns.TypeProjectionInstantiateGeneric:
+		case projection.StepInstantiateGeneric:
 			g, ok := unwrap.Alias(step.Type).(*typ.Generic)
 			if !ok || g == nil || len(g.TypeParams) != 1 || current == nil {
 				return nil, false
