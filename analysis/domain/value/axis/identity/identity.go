@@ -128,20 +128,12 @@ func Widen(prev, next Value) Value {
 	return Join(prev, next)
 }
 
-func Hash(v Value) uint64 {
-	return v.Hash()
-}
-
 func (v Value) Hash() uint64 {
 	h := internal.MixHash(internal.FnvString("identity"), uint64(v.state))
 	if v.state == singleton {
 		h = internal.MixHash(h, v.id.hash())
 	}
 	return h
-}
-
-func String(v Value) string {
-	return v.String()
 }
 
 func (v Value) String() string {
@@ -169,6 +161,6 @@ func Spec() axis.Spec[Value] {
 		Join:     Join,
 		Meet:     Meet,
 		Widen:    Widen,
-		Hash:     Hash,
+		Hash:     Value.Hash,
 	}
 }

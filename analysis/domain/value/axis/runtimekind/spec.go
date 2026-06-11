@@ -14,6 +14,6 @@ func Spec() axis.Spec[Value] {
 		Join:     Join,
 		Meet:     Meet,
 		Widen:    Widen,
-		Hash:     Hash,
+		Hash:     Value.Hash,
 	}
 }

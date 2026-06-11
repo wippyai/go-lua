@@ -74,20 +74,12 @@ func (v Value) Without(tags ...Tag) Value {
 	return Value{mask: mask}
 }
 
-func Without(v Value, tags ...Tag) Value {
-	return v.Without(tags...)
-}
-
 func Intersect(a, b Value) Value {
 	return Value{mask: a.mask & b.mask & allKnownMask}
 }
 
 func Meet(a, b Value) Value {
 	return Intersect(a, b)
-}
-
-func Contains(v Value, tag Tag) bool {
-	return v.Contains(tag)
 }
 
 func (v Value) Contains(tag Tag) bool {
@@ -115,10 +107,6 @@ func (v Value) Tags() []Tag {
 	return tags
 }
 
-func Tags(v Value) []Tag {
-	return v.Tags()
-}
-
 func Equal(a, b Value) bool {
 	return a.mask&allKnownMask == b.mask&allKnownMask
 }
@@ -137,10 +125,6 @@ func Widen(prev, next Value) Value {
 
 func (v Value) Covers(other Value) bool {
 	return other.mask&allKnownMask&^(v.mask&allKnownMask) == 0
-}
-
-func Hash(v Value) uint64 {
-	return v.Hash()
 }
 
 func (v Value) Hash() uint64 {
