@@ -2,6 +2,7 @@ package refinement
 
 import (
 	"github.com/wippyai/go-lua/analysis/type/identity"
+	"github.com/wippyai/go-lua/analysis/type/inspect"
 	"github.com/wippyai/go-lua/analysis/type/kind"
 	"github.com/wippyai/go-lua/analysis/type/nodeid"
 	typetable "github.com/wippyai/go-lua/analysis/type/table"
@@ -37,7 +38,7 @@ func (s containsSeen) remember(t typ.Type) {
 }
 
 func containsSeenKey(t typ.Type) uint64 {
-	if typ.ContainsRecursive(t) {
+	if inspect.ContainsRecursive(t) {
 		if ptr := nodeid.Pointer(t); ptr != 0 {
 			return uint64(ptr)
 		}
@@ -215,7 +216,7 @@ func freeTypeParamUseSeen(owned map[*typ.TypeParam]int) bool {
 // inside otherwise precise structure, and those holes should be repaired by a
 // closed signature observation without replacing the whole value.
 func NeedsSameExpressionFallback(t typ.Type) bool {
-	scan := &sameExpressionFallbackScan{seen: make(containsSeen)}
+	scan := &sameExpressionFallbackScan{seen: make(sameExpressionFallbackSeen)}
 	return scan.needs(t)
 }
 
@@ -225,16 +226,35 @@ func NeedsSameExpressionFallback(t typ.Type) bool {
 // "no precision repair from this optional fallback" rather than as proof that no
 // repairable leaf exists.
 func NeedsSameExpressionFallbackWithin(t typ.Type, maxNodes int) (needs bool, complete bool) {
-	scan := &sameExpressionFallbackScan{seen: make(containsSeen), maxNodes: maxNodes}
+	scan := &sameExpressionFallbackScan{seen: make(sameExpressionFallbackSeen), maxNodes: maxNodes}
 	needs = scan.needs(t)
 	return needs, !scan.exceeded
 }
 
 type sameExpressionFallbackScan struct {
-	seen     containsSeen
+	seen     sameExpressionFallbackSeen
 	maxNodes int
 	nodes    int
 	exceeded bool
+}
+
+type sameExpressionFallbackSeen map[uintptr]struct{}
+
+func (s sameExpressionFallbackSeen) contains(t typ.Type) bool {
+	key := nodeid.Pointer(t)
+	if key == 0 || s == nil {
+		return false
+	}
+	_, ok := s[key]
+	return ok
+}
+
+func (s sameExpressionFallbackSeen) remember(t typ.Type) {
+	key := nodeid.Pointer(t)
+	if key == 0 || s == nil {
+		return
+	}
+	s[key] = struct{}{}
 }
 
 func (s *sameExpressionFallbackScan) enter() bool {

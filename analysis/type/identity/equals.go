@@ -5,6 +5,7 @@ import (
 	"unsafe"
 
 	"github.com/wippyai/go-lua/analysis/internal/recursion"
+	"github.com/wippyai/go-lua/analysis/type/inspect"
 	"github.com/wippyai/go-lua/analysis/type/kind"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/analysis/type/unwrap"
@@ -50,7 +51,7 @@ func SameNodeOrAcyclicEqual(a, b typ.Type) bool {
 	if a == nil || b == nil {
 		return false
 	}
-	if typ.ContainsRecursive(a) || typ.ContainsRecursive(b) {
+	if inspect.ContainsRecursive(a) || inspect.ContainsRecursive(b) {
 		return false
 	}
 	return TypeEquals(a, b)
@@ -316,7 +317,7 @@ func normalizeNilType(t typ.Type) typ.Type {
 }
 
 func typeEqualsCanUseHashPrefilter(a, b typ.Type) bool {
-	return !typ.ContainsRecursive(a) && !typ.ContainsRecursive(b)
+	return !inspect.ContainsRecursive(a) && !inspect.ContainsRecursive(b)
 }
 
 func needsCycleCheck(k kind.Kind) bool {

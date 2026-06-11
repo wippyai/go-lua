@@ -3,6 +3,7 @@ package coalesce
 import (
 	"github.com/wippyai/go-lua/analysis/type/discriminant"
 	"github.com/wippyai/go-lua/analysis/type/identity"
+	"github.com/wippyai/go-lua/analysis/type/inspect"
 	"github.com/wippyai/go-lua/analysis/type/normalize"
 	typetable "github.com/wippyai/go-lua/analysis/type/table"
 	"github.com/wippyai/go-lua/analysis/type/typ"
@@ -131,7 +132,7 @@ func CoalesceClosedCompatibleRecords(types []typ.Type, policy RecordPolicy) ([]t
 			ineligible = true
 			continue
 		}
-		if rec.Open || rec.HasMapComponent() || rec.Metatable != nil || typ.ContainsRecursive(rec) {
+		if rec.Open || rec.HasMapComponent() || rec.Metatable != nil || inspect.ContainsRecursive(rec) {
 			ineligible = true
 			continue
 		}
@@ -201,7 +202,7 @@ func JoinClosedCompatibleRecordSet(records []*typ.Record, policy RecordPolicy) (
 		return records[0], true
 	}
 	for _, rec := range records {
-		if rec == nil || rec.Open || rec.HasMapComponent() || rec.Metatable != nil || typ.ContainsRecursive(rec) {
+		if rec == nil || rec.Open || rec.HasMapComponent() || rec.Metatable != nil || inspect.ContainsRecursive(rec) {
 			return nil, false
 		}
 	}

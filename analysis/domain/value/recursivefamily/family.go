@@ -5,6 +5,7 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/internal/hash"
 	"github.com/wippyai/go-lua/analysis/type/identity"
+	"github.com/wippyai/go-lua/analysis/type/inspect"
 	"github.com/wippyai/go-lua/analysis/type/nodeid"
 	typetable "github.com/wippyai/go-lua/analysis/type/table"
 	"github.com/wippyai/go-lua/analysis/type/typ"
@@ -237,7 +238,7 @@ func ContainsRecursiveRef(body typ.Type, rec *typ.Recursive) bool {
 	if body == nil || rec == nil {
 		return false
 	}
-	return typ.Contains(body, func(t typ.Type) bool {
+	return inspect.Contains(body, func(t typ.Type) bool {
 		other, ok := t.(*typ.Recursive)
 		if !ok || other == nil {
 			return false

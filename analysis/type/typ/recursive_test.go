@@ -620,7 +620,7 @@ func TestRecursiveContentFlagsDoNotForceGraphClosure(t *testing.T) {
 
 	direct := NewRecursivePlaceholder("Direct")
 	direct.SetBody(newRecord().Field("value", String).Build())
-	if ContainsAny(direct) {
+	if knownContainsAny(direct) {
 		t.Fatal("direct recursive record without any should not contain any")
 	}
 	if !direct.containsClosedDirty {

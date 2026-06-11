@@ -8,6 +8,7 @@ import (
 	"sync"
 
 	"github.com/wippyai/go-lua/analysis/internal/recursion"
+	"github.com/wippyai/go-lua/analysis/type/inspect"
 	"github.com/wippyai/go-lua/analysis/type/kind"
 	typetable "github.com/wippyai/go-lua/analysis/type/table"
 	"github.com/wippyai/go-lua/analysis/type/typ"
@@ -238,7 +239,7 @@ func containsSubstitutableSelf(t typ.Type, seen map[typ.Type]bool) bool {
 	if _, ok := t.(*typ.Recursive); ok {
 		return false
 	}
-	if typ.ContainsRecursive(t) && !containsSurfaceSelf(t) {
+	if inspect.ContainsRecursive(t) && !containsSurfaceSelf(t) {
 		return false
 	}
 	if seen[t] {
@@ -445,7 +446,7 @@ func SelfValue(t typ.Type, selfType typ.Type) typ.Type {
 //
 // Does not enforce generic constraints; use subtype checking for that.
 func ExpandInstantiated(t typ.Type) typ.Type {
-	if t == nil || !typ.ContainsInstantiated(t) {
+	if t == nil || !inspect.ContainsInstantiated(t) {
 		return t
 	}
 	memo := getExpandMemo()
@@ -476,7 +477,7 @@ func putExpandMemo(m map[typ.Type]typ.Type) {
 }
 
 func expandInstantiatedGuard(t typ.Type, guard recursion.Guard, memo map[typ.Type]typ.Type) typ.Type {
-	if t == nil || !typ.ContainsInstantiated(t) {
+	if t == nil || !inspect.ContainsInstantiated(t) {
 		return t
 	}
 
@@ -506,7 +507,7 @@ func expandInstantiatedGuard(t typ.Type, guard recursion.Guard, memo map[typ.Typ
 
 func isRecursiveInstantiated(t typ.Type) bool {
 	if inst, ok := t.(*typ.Instantiated); ok {
-		return typ.ContainsRecursive(inst) || genericBodySelfInstantiates(inst.Generic)
+		return inspect.ContainsRecursive(inst) || genericBodySelfInstantiates(inst.Generic)
 	}
 	return false
 }

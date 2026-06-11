@@ -1,10 +1,12 @@
-package typ
+package inspect
+
+import (
+	"github.com/wippyai/go-lua/analysis/type/typ"
+	"github.com/wippyai/go-lua/analysis/type/unwrap"
+)
 
 // Contains reports whether t or any nested type satisfies pred.
-//
-// This is the canonical structural scanner for type predicates. Callers should
-// keep policy decisions at their own layer and use this only for traversal.
-func Contains(t Type, pred func(Type) bool) bool {
+func Contains(t typ.Type, pred func(typ.Type) bool) bool {
 	if pred == nil {
 		return false
 	}
@@ -12,36 +14,42 @@ func Contains(t Type, pred func(Type) bool) bool {
 }
 
 // ContainsAny reports whether t contains an explicit dynamic any type.
-func ContainsAny(t Type) bool {
-	return containsAnyType(t)
+func ContainsAny(t typ.Type) bool {
+	return Contains(t, typ.IsAny)
 }
 
-// ContainsNever reports whether t contains the bottom type as a nested product
-// member. It uses construction-time containment flags for closed products.
-func ContainsNever(t Type) bool {
-	return containsNeverType(t)
+// ContainsNever reports whether t contains the bottom type as a nested member.
+func ContainsNever(t typ.Type) bool {
+	return Contains(t, typ.IsNever)
 }
 
 // ContainsTypeParam reports whether t contains a type parameter.
-func ContainsTypeParam(t Type) bool {
-	return containsTypeParamType(t)
+func ContainsTypeParam(t typ.Type) bool {
+	return Contains(t, func(t typ.Type) bool {
+		_, ok := t.(*typ.TypeParam)
+		return ok
+	})
 }
 
 // ContainsInstantiated reports whether t contains a generic instantiation.
-func ContainsInstantiated(t Type) bool {
-	return containsInstantiatedType(t)
+func ContainsInstantiated(t typ.Type) bool {
+	return Contains(t, func(t typ.Type) bool {
+		_, ok := t.(*typ.Instantiated)
+		return ok
+	})
 }
 
-// ContainsRecursive reports whether t contains a recursive product. The answer
-// uses construction-time flags for closed products and guarded recursive-body
-// inspection for open placeholders.
-func ContainsRecursive(t Type) bool {
-	return knownContainsRecursive(t)
+// ContainsRecursive reports whether t contains a recursive product.
+func ContainsRecursive(t typ.Type) bool {
+	return Contains(t, func(t typ.Type) bool {
+		_, ok := t.(*typ.Recursive)
+		return ok
+	})
 }
 
-type containsSeen map[uint64][]Type
+type containsSeen map[uint64][]typ.Type
 
-func (s containsSeen) contains(t Type) bool {
+func (s containsSeen) contains(t typ.Type) bool {
 	if t == nil || s == nil {
 		return false
 	}
@@ -53,7 +61,7 @@ func (s containsSeen) contains(t Type) bool {
 	return false
 }
 
-func (s containsSeen) remember(t Type) {
+func (s containsSeen) remember(t typ.Type) {
 	if t == nil || s == nil {
 		return
 	}
@@ -61,20 +69,28 @@ func (s containsSeen) remember(t Type) {
 	s[hash] = append(s[hash], t)
 }
 
-func containsSeenKey(t Type) uint64 {
-	if knownContainsOpenRecursive(t) {
-		if ptr := typePointer(t); ptr != 0 {
-			return uint64(ptr)
-		}
+func containsSeenKey(t typ.Type) uint64 {
+	if t == nil {
+		return 0
 	}
-	return typeEqualityHash(t)
+	return t.Hash()
 }
 
-func contains(t Type, pred func(Type) bool, seen containsSeen) bool {
+func typeEquals(a, b typ.Type) bool {
+	if a == b {
+		return true
+	}
+	if a == nil || b == nil {
+		return false
+	}
+	return a.Equals(b)
+}
+
+func contains(t typ.Type, pred func(typ.Type) bool, seen containsSeen) bool {
 	if t == nil {
 		return false
 	}
-	t = unwrapAnnotated(t)
+	t = unwrap.Annotated(t)
 	if t == nil {
 		return false
 	}
@@ -86,11 +102,11 @@ func contains(t Type, pred func(Type) bool, seen containsSeen) bool {
 		return true
 	}
 
-	return Visit(t, Visitor[bool]{
-		Optional: func(o *Optional) bool {
+	return typ.Visit(t, typ.Visitor[bool]{
+		Optional: func(o *typ.Optional) bool {
 			return contains(o.Inner, pred, seen)
 		},
-		Union: func(u *Union) bool {
+		Union: func(u *typ.Union) bool {
 			for _, member := range u.Members {
 				if contains(member, pred, seen) {
 					return true
@@ -98,7 +114,7 @@ func contains(t Type, pred func(Type) bool, seen containsSeen) bool {
 			}
 			return false
 		},
-		Intersection: func(in *Intersection) bool {
+		Intersection: func(in *typ.Intersection) bool {
 			for _, member := range in.Members {
 				if contains(member, pred, seen) {
 					return true
@@ -106,18 +122,18 @@ func contains(t Type, pred func(Type) bool, seen containsSeen) bool {
 			}
 			return false
 		},
-		Array: func(a *Array) bool {
+		Array: func(a *typ.Array) bool {
 			return contains(a.Element, pred, seen)
 		},
-		Map: func(m *Map) bool {
+		Map: func(m *typ.Map) bool {
 			return contains(m.Key, pred, seen) ||
 				contains(m.Value, pred, seen)
 		},
-		ReadonlyMap: func(m *ReadonlyMap) bool {
+		ReadonlyMap: func(m *typ.ReadonlyMap) bool {
 			return contains(m.Key, pred, seen) ||
 				contains(m.Value, pred, seen)
 		},
-		Tuple: func(tup *Tuple) bool {
+		Tuple: func(tup *typ.Tuple) bool {
 			for _, elem := range tup.Elements {
 				if contains(elem, pred, seen) {
 					return true
@@ -125,7 +141,7 @@ func contains(t Type, pred func(Type) bool, seen containsSeen) bool {
 			}
 			return false
 		},
-		Function: func(fn *Function) bool {
+		Function: func(fn *typ.Function) bool {
 			for _, param := range fn.Params {
 				if contains(param.Type, pred, seen) {
 					return true
@@ -146,7 +162,7 @@ func contains(t Type, pred func(Type) bool, seen containsSeen) bool {
 			}
 			return false
 		},
-		Record: func(r *Record) bool {
+		Record: func(r *typ.Record) bool {
 			if contains(r.MapKey, pred, seen) ||
 				contains(r.MapValue, pred, seen) ||
 				contains(r.Metatable, pred, seen) {
@@ -164,13 +180,13 @@ func contains(t Type, pred func(Type) bool, seen containsSeen) bool {
 			}
 			return false
 		},
-		Alias: func(a *Alias) bool {
+		Alias: func(a *typ.Alias) bool {
 			return contains(a.Target, pred, seen)
 		},
-		Meta: func(m *Meta) bool {
+		Meta: func(m *typ.Meta) bool {
 			return contains(m.Of, pred, seen)
 		},
-		Generic: func(g *Generic) bool {
+		Generic: func(g *typ.Generic) bool {
 			for _, param := range g.TypeParams {
 				if param != nil && contains(param.Constraint, pred, seen) {
 					return true
@@ -178,7 +194,7 @@ func contains(t Type, pred func(Type) bool, seen containsSeen) bool {
 			}
 			return contains(g.Body, pred, seen)
 		},
-		Instantiated: func(i *Instantiated) bool {
+		Instantiated: func(i *typ.Instantiated) bool {
 			if i.Generic != nil && contains(i.Generic, pred, seen) {
 				return true
 			}
@@ -189,10 +205,10 @@ func contains(t Type, pred func(Type) bool, seen containsSeen) bool {
 			}
 			return false
 		},
-		TypeParam: func(p *TypeParam) bool {
+		TypeParam: func(p *typ.TypeParam) bool {
 			return contains(p.Constraint, pred, seen)
 		},
-		Interface: func(i *Interface) bool {
+		Interface: func(i *typ.Interface) bool {
 			for _, method := range i.Methods {
 				if method.Type != nil && contains(method.Type, pred, seen) {
 					return true
@@ -200,10 +216,10 @@ func contains(t Type, pred func(Type) bool, seen containsSeen) bool {
 			}
 			return false
 		},
-		Recursive: func(r *Recursive) bool {
+		Recursive: func(r *typ.Recursive) bool {
 			return contains(r.Body, pred, seen)
 		},
-		Default: func(Type) bool {
+		Default: func(typ.Type) bool {
 			return false
 		},
 	})
