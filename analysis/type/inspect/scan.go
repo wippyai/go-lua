@@ -41,9 +41,185 @@ func ContainsInstantiated(t typ.Type) bool {
 
 // ContainsRecursive reports whether t contains a recursive product.
 func ContainsRecursive(t typ.Type) bool {
-	return Contains(t, func(t typ.Type) bool {
-		_, ok := t.(*typ.Recursive)
-		return ok
+	return containsRecursive(t, make(containsRecursiveSeen))
+}
+
+type containsRecursiveSeen map[typ.Type]struct{}
+
+func (s containsRecursiveSeen) contains(t typ.Type) bool {
+	if !containsRecursiveSeenTracks(t) {
+		return false
+	}
+	_, ok := s[t]
+	return ok
+}
+
+func (s containsRecursiveSeen) remember(t typ.Type) {
+	if s == nil || !containsRecursiveSeenTracks(t) {
+		return
+	}
+	s[t] = struct{}{}
+}
+
+func containsRecursiveSeenTracks(t typ.Type) bool {
+	switch t.(type) {
+	case *typ.Optional,
+		*typ.Union,
+		*typ.Intersection,
+		*typ.Array,
+		*typ.Map,
+		*typ.ReadonlyMap,
+		*typ.Tuple,
+		*typ.Function,
+		*typ.Record,
+		*typ.Alias,
+		*typ.Meta,
+		*typ.Generic,
+		*typ.Instantiated,
+		*typ.TypeParam,
+		*typ.Interface:
+		return true
+	default:
+		return false
+	}
+}
+
+func containsRecursive(t typ.Type, seen containsRecursiveSeen) bool {
+	if t == nil {
+		return false
+	}
+	t = unwrap.Annotations(t)
+	if t == nil {
+		return false
+	}
+	if _, ok := t.(*typ.Recursive); ok {
+		return true
+	}
+	if seen.contains(t) {
+		return false
+	}
+	seen.remember(t)
+
+	return typ.Visit(t, typ.Visitor[bool]{
+		Optional: func(o *typ.Optional) bool {
+			return containsRecursive(o.Inner, seen)
+		},
+		Union: func(u *typ.Union) bool {
+			for _, member := range u.Members {
+				if containsRecursive(member, seen) {
+					return true
+				}
+			}
+			return false
+		},
+		Intersection: func(in *typ.Intersection) bool {
+			for _, member := range in.Members {
+				if containsRecursive(member, seen) {
+					return true
+				}
+			}
+			return false
+		},
+		Array: func(a *typ.Array) bool {
+			return containsRecursive(a.Element, seen)
+		},
+		Map: func(m *typ.Map) bool {
+			return containsRecursive(m.Key, seen) ||
+				containsRecursive(m.Value, seen)
+		},
+		ReadonlyMap: func(m *typ.ReadonlyMap) bool {
+			return containsRecursive(m.Key, seen) ||
+				containsRecursive(m.Value, seen)
+		},
+		Tuple: func(tup *typ.Tuple) bool {
+			for _, elem := range tup.Elements {
+				if containsRecursive(elem, seen) {
+					return true
+				}
+			}
+			return false
+		},
+		Function: func(fn *typ.Function) bool {
+			for _, param := range fn.Params {
+				if containsRecursive(param.Type, seen) {
+					return true
+				}
+			}
+			if containsRecursive(fn.Variadic, seen) {
+				return true
+			}
+			for _, ret := range fn.Returns {
+				if containsRecursive(ret, seen) {
+					return true
+				}
+			}
+			for _, param := range fn.TypeParams {
+				if param != nil && containsRecursive(param.Constraint, seen) {
+					return true
+				}
+			}
+			return false
+		},
+		Record: func(r *typ.Record) bool {
+			if containsRecursive(r.MapKey, seen) ||
+				containsRecursive(r.MapValue, seen) ||
+				containsRecursive(r.Metatable, seen) {
+				return true
+			}
+			for _, field := range r.Fields {
+				if containsRecursive(field.Type, seen) {
+					return true
+				}
+			}
+			for _, member := range r.StaticMembers {
+				if containsRecursive(member.Type, seen) {
+					return true
+				}
+			}
+			return false
+		},
+		Alias: func(a *typ.Alias) bool {
+			return containsRecursive(a.Target, seen)
+		},
+		Meta: func(m *typ.Meta) bool {
+			return containsRecursive(m.Of, seen)
+		},
+		Generic: func(g *typ.Generic) bool {
+			for _, param := range g.TypeParams {
+				if param != nil && containsRecursive(param.Constraint, seen) {
+					return true
+				}
+			}
+			return containsRecursive(g.Body, seen)
+		},
+		Instantiated: func(i *typ.Instantiated) bool {
+			if i.Generic != nil && containsRecursive(i.Generic, seen) {
+				return true
+			}
+			for _, arg := range i.TypeArgs {
+				if containsRecursive(arg, seen) {
+					return true
+				}
+			}
+			return false
+		},
+		TypeParam: func(p *typ.TypeParam) bool {
+			return containsRecursive(p.Constraint, seen)
+		},
+		Interface: func(i *typ.Interface) bool {
+			for _, method := range i.Methods {
+				if method.Type != nil && containsRecursive(method.Type, seen) {
+					return true
+				}
+			}
+			return false
+		},
+		Recursive: func(*typ.Recursive) bool {
+			return true
+		},
+		Default: func(typ.Type) bool {
+			return false
+		},
 	})
 }
 

@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/type/inspect"
+	"github.com/wippyai/go-lua/analysis/type/kind"
 	typetable "github.com/wippyai/go-lua/analysis/type/table"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
@@ -30,6 +31,22 @@ func TestContainsRecursive_UsesProductFlags(t *testing.T) {
 	}
 	if inspect.ContainsRecursive(typetable.NewRecord().Field("name", typ.String).Build()) {
 		t.Fatal("ContainsRecursive() reported recursion in concrete record")
+	}
+}
+
+func TestContainsRecursive_DoesNotCallHashOrEquals(t *testing.T) {
+	root := &typ.Tuple{Elements: []typ.Type{
+		&typ.Record{Fields: []typ.Field{{Name: "value", Type: panickingIdentityType{}}}},
+	}}
+
+	defer func() {
+		if r := recover(); r != nil {
+			t.Fatalf("ContainsRecursive() called Hash or Equals: %v", r)
+		}
+	}()
+
+	if inspect.ContainsRecursive(root) {
+		t.Fatal("ContainsRecursive() reported recursion through non-recursive fake type")
 	}
 }
 
@@ -483,4 +500,13 @@ func traversalInstantiatedMarker() typ.Type {
 	tp := typ.NewTypeParam("T", nil)
 	box := typ.NewGeneric("Box", []*typ.TypeParam{tp}, typetable.NewRecord().Field("value", tp).Build())
 	return typ.Instantiate(box, typ.Number)
+}
+
+type panickingIdentityType struct{}
+
+func (panickingIdentityType) Kind() kind.Kind { return kind.Unknown }
+func (panickingIdentityType) String() string  { return "panickingIdentityType" }
+func (panickingIdentityType) Hash() uint64    { panic("Hash called") }
+func (panickingIdentityType) Equals(typ.Type) bool {
+	panic("Equals called")
 }
