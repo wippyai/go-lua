@@ -2,6 +2,7 @@ package transfer
 
 import (
 	"github.com/wippyai/go-lua/analysis/domain/path"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/assertion"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/runtimekind"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
@@ -175,6 +176,29 @@ func (l ObjectLiteral) copy() ObjectLiteral {
 	l.entries = copyObjectEntries(l.entries)
 	return l
 }
+
+// Assertion describes one user-written assertion expression. The source is the
+// asserted inner value; value is an assertion-axis indicator, not proof.
+type Assertion struct {
+	source ValueSource
+	value  assertion.Value
+}
+
+// NewAssertion creates an assertion sidecar for an expression.
+func NewAssertion(source ValueSource, value assertion.Value) Assertion {
+	return Assertion{
+		source: source,
+		value:  value,
+	}
+}
+
+// Source returns the asserted inner value source.
+func (a Assertion) Source() ValueSource { return a.source }
+
+// Value returns the assertion-axis indicator attached by this sidecar.
+func (a Assertion) Value() assertion.Value { return a.value }
+
+func (a Assertion) copy() Assertion { return a }
 
 // ValueRefinement describes one conjunctive product-value refinement. Each axis
 // is optional so branch edges can carry only the evidence the condition proves.
@@ -452,6 +476,7 @@ type FactsInput struct {
 	Returns             map[cfg.Point]Return
 	Calls               map[cfg.Point]CallProducer
 	ObjectLiterals      map[ExprRef]ObjectLiteral
+	Assertions          map[ExprRef]Assertion
 }
 
 // Facts is an immutable point-keyed transfer facts snapshot.
@@ -463,6 +488,7 @@ type Facts struct {
 	returns             map[cfg.Point]Return
 	calls               map[cfg.Point]CallProducer
 	objectLiterals      map[ExprRef]ObjectLiteral
+	assertions          map[ExprRef]Assertion
 }
 
 // NewFacts copies the supplied point-keyed facts into an immutable snapshot.
@@ -475,6 +501,7 @@ func NewFacts(input FactsInput) Facts {
 		returns:             copyReturnMap(input.Returns),
 		calls:               copyCallProducerMap(input.Calls),
 		objectLiterals:      copyObjectLiteralMap(input.ObjectLiterals),
+		assertions:          copyAssertionMap(input.Assertions),
 	}
 }
 
@@ -537,6 +564,15 @@ func (f Facts) ObjectLiteral(expr ExprRef) (ObjectLiteral, bool) {
 	fact, ok := f.objectLiterals[expr]
 	if !ok {
 		return ObjectLiteral{}, false
+	}
+	return fact.copy(), true
+}
+
+// Assertion returns the assertion sidecar for expr, if present.
+func (f Facts) Assertion(expr ExprRef) (Assertion, bool) {
+	fact, ok := f.assertions[expr]
+	if !ok {
+		return Assertion{}, false
 	}
 	return fact.copy(), true
 }
@@ -668,6 +704,17 @@ func copyObjectLiteralMap(in map[ExprRef]ObjectLiteral) map[ExprRef]ObjectLitera
 		return nil
 	}
 	out := make(map[ExprRef]ObjectLiteral, len(in))
+	for expr, fact := range in {
+		out[expr] = fact.copy()
+	}
+	return out
+}
+
+func copyAssertionMap(in map[ExprRef]Assertion) map[ExprRef]Assertion {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make(map[ExprRef]Assertion, len(in))
 	for expr, fact := range in {
 		out[expr] = fact.copy()
 	}

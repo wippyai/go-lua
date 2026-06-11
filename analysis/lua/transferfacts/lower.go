@@ -3,12 +3,14 @@ package transferfacts
 
 import (
 	"github.com/wippyai/go-lua/analysis/domain/path"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/assertion"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/runtimekind"
 	"github.com/wippyai/go-lua/analysis/engine/transfer"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/lua/semantics"
 	"github.com/wippyai/go-lua/analysis/symbol"
+	"github.com/wippyai/go-lua/compiler/ast"
 )
 
 // Lower converts Lua semantic facts into the generic transfer fact DTOs consumed
@@ -30,25 +32,32 @@ func Lower(result *semantics.Result, graph cfg.Graph) transfer.Facts {
 		Returns:             make(map[cfg.Point]transfer.Return),
 		Calls:               make(map[cfg.Point]transfer.CallProducer),
 		ObjectLiterals:      make(map[transfer.ExprRef]transfer.ObjectLiteral),
+		Assertions:          make(map[transfer.ExprRef]transfer.Assertion),
 	}
 	for _, point := range graph.RPO() {
 		if fact, ok := result.LocalAssignment(point); ok {
 			if lowered, ok := l.localAssignment(fact); ok {
 				input.LocalAssignments[point] = lowered
+				l.addAssertionsForSource(&input, fact.Source)
 				l.addObjectLiteral(&input, result, fact.Source)
 			}
 		}
 		if fact, ok := result.OrdinaryAssignment(point); ok {
 			if lowered, ok := l.pathAssignment(fact); ok {
 				input.PathAssignments[point] = lowered
+				l.addAssertionsForSource(&input, fact.Source)
 				l.addObjectLiteral(&input, result, fact.Source)
 			} else if lowered, ok := l.ordinaryAssignment(fact); ok {
 				input.OrdinaryAssignments[point] = lowered
+				l.addAssertionsForSource(&input, fact.Source)
 				l.addObjectLiteral(&input, result, fact.Source)
 			}
 		}
 		if fact, ok := result.Return(point); ok {
 			input.Returns[point] = transfer.NewReturn(l.valueSources(fact.Sources))
+			for _, source := range fact.Sources {
+				l.addAssertionsForSource(&input, source)
+			}
 		}
 		if fact, ok := result.Call(point); ok {
 			if lowered, ok := l.callProducer(fact); ok {
@@ -59,6 +68,7 @@ func Lower(result *semantics.Result, graph cfg.Graph) transfer.Facts {
 			if lowered, ok := l.branchRefinement(fact); ok {
 				input.BranchRefinements[point] = lowered
 			}
+			l.addAssertionsForSource(&input, fact.Source)
 		}
 	}
 	return transfer.NewFacts(input)
@@ -143,6 +153,9 @@ func (l *lowerer) addObjectLiteral(input *transfer.FactsInput, result *semantics
 		input.ObjectLiterals = make(map[transfer.ExprRef]transfer.ObjectLiteral)
 	}
 	input.ObjectLiterals[exprRef] = lowered
+	for _, entry := range fact.Entries {
+		l.addAssertionsForSource(input, entry.Source)
+	}
 }
 
 func (l *lowerer) objectLiteral(fact semantics.ObjectLiteralFact) transfer.ObjectLiteral {
@@ -269,6 +282,39 @@ func (l *lowerer) valueSource(source semantics.ValueSource) transfer.ValueSource
 		Adjusted:     source.Adjusted,
 		OpenTail:     source.OpenTail,
 	}
+}
+
+func (l *lowerer) addAssertionsForSource(input *transfer.FactsInput, source semantics.ValueSource) {
+	if input == nil || source.Expr == nil {
+		return
+	}
+	switch expr := source.Expr.(type) {
+	case *ast.CastExpr:
+		l.addAssertion(input, source, expr.Expr, castAssertionValue(expr.Type))
+	case *ast.NonNilAssertExpr:
+		l.addAssertion(input, source, expr.Expr, assertion.NonNil())
+	}
+}
+
+func (l *lowerer) addAssertion(input *transfer.FactsInput, outer semantics.ValueSource, innerExpr ast.Expr, value assertion.Value) {
+	outerRef, hasOuter := l.exprRef(outer.Expr)
+	if !hasOuter || innerExpr == nil {
+		return
+	}
+	inner := outer
+	inner.Expr = innerExpr
+	if input.Assertions == nil {
+		input.Assertions = make(map[transfer.ExprRef]transfer.Assertion)
+	}
+	input.Assertions[outerRef] = transfer.NewAssertion(l.valueSource(inner), value)
+	l.addAssertionsForSource(input, inner)
+}
+
+func castAssertionValue(typ ast.TypeExpr) assertion.Value {
+	if primitive, ok := typ.(*ast.PrimitiveTypeExpr); ok && primitive.Name == "any" {
+		return assertion.Any()
+	}
+	return assertion.Type()
 }
 
 func (l *lowerer) callResultTargets(targets []semantics.CallResultTarget) []transfer.CallResultTarget {

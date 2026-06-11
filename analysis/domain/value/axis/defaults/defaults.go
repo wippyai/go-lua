@@ -2,6 +2,7 @@ package defaults
 
 import (
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/assertion"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/escape"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/evidence"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
@@ -20,5 +21,6 @@ func SparseSpecs() []axis.ErasedSpec {
 		escape.Spec().Erase(),
 		ownership.Spec().Erase(),
 		evidence.Spec().Erase(),
+		assertion.Spec().Erase(),
 	}
 }

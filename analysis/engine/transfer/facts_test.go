@@ -5,6 +5,7 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/assertion"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/runtimekind"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
@@ -129,6 +130,14 @@ func TestDTOConstructorsAndAccessorsCopySlices(t *testing.T) {
 	gotEntries[0] = NewObjectEntry(path.Path{Segments: []segment.Segment{{Kind: segment.SegmentField, Name: "mutated"}}}, callSource)
 	if got := literal.Entries(); got[0].Source() != source {
 		t.Fatalf("object literal exposed mutable entries: %#v", got)
+	}
+
+	claim := NewAssertion(source, assertion.Type())
+	if got := claim.Source(); got != source {
+		t.Fatalf("assertion source = %#v, want %#v", got, source)
+	}
+	if got := claim.Value(); !assertion.Equal(got, assertion.Type()) {
+		t.Fatalf("assertion value = %s, want type", got)
 	}
 
 	returnSources := []ValueSource{source, callSource}
@@ -267,6 +276,9 @@ func TestFactsCarrierCopiesAndReturnsFalseForMissingFacts(t *testing.T) {
 				NewObjectEntry(path.Path{Segments: []segment.Segment{{Kind: segment.SegmentField, Name: "field"}}}, source),
 			}),
 		},
+		Assertions: map[ExprRef]Assertion{
+			ExprRef(4): NewAssertion(source, assertion.Type()),
+		},
 	}
 
 	facts := NewFacts(input)
@@ -283,6 +295,7 @@ func TestFactsCarrierCopiesAndReturnsFalseForMissingFacts(t *testing.T) {
 	input.ObjectLiterals[ExprRef(1)] = NewObjectLiteral([]ObjectEntry{
 		NewObjectEntry(path.Path{Segments: []segment.Segment{{Kind: segment.SegmentField, Name: "changed"}}}, callSource),
 	})
+	input.Assertions[ExprRef(4)] = NewAssertion(callSource, assertion.Any())
 
 	if _, ok := facts.LocalAssignment(missing); ok {
 		t.Fatal("missing local assignment returned ok")
@@ -304,6 +317,9 @@ func TestFactsCarrierCopiesAndReturnsFalseForMissingFacts(t *testing.T) {
 	}
 	if _, ok := facts.ObjectLiteral(ExprRef(99)); ok {
 		t.Fatal("missing object literal returned ok")
+	}
+	if _, ok := facts.Assertion(ExprRef(99)); ok {
+		t.Fatal("missing assertion returned ok")
 	}
 
 	local, ok := facts.LocalAssignment(point)
@@ -413,6 +429,14 @@ func TestFactsCarrierCopiesAndReturnsFalseForMissingFacts(t *testing.T) {
 	literalAgain, _ := facts.ObjectLiteral(ExprRef(1))
 	if got := literalAgain.Entries()[0].Suffix(); got.Segments[0].Name != "field" {
 		t.Fatalf("facts object literal exposed mutable suffix: %#v", got)
+	}
+
+	assertionFact, ok := facts.Assertion(ExprRef(4))
+	if !ok {
+		t.Fatal("assertion missing")
+	}
+	if assertionFact.Source() != source || !assertion.Equal(assertionFact.Value(), assertion.Type()) {
+		t.Fatalf("assertion fact = %#v, want original type assertion", assertionFact)
 	}
 }
 

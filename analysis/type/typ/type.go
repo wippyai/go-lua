@@ -11,8 +11,8 @@
 //
 // # Special Types
 //
-// Any: Explicit dynamic type (opt-out of type checking). Operations on Any
-// are permissive but lose type safety.
+// Any: Explicit dynamic type marker. Permissive or unchecked behavior requires
+// separate evidence; user assertions such as `as any` do not prove it.
 //
 // Unknown: Unresolved type information. Forces narrowing/inference rather
 // than silently permitting operations.
@@ -75,8 +75,9 @@ func SameNode(a, b Type) bool {
 // Primitives are singletons.
 //
 // Any vs Unknown semantics:
-//   - Any: explicit dynamic type (opt-out). Use only when the source is explicitly "any"
-//     or a deliberate dynamic escape hatch. Operations on Any are permissive.
+//   - Any: explicit dynamic type marker. Permissive or unchecked behavior must
+//     be justified by separate evidence and must not be inferred silently from a
+//     user assertion such as `as any`.
 //   - Unknown: missing or unresolved information. It should force narrowing/inference
 //     rather than silently permitting operations.
 var (

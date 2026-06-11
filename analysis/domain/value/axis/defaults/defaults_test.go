@@ -17,6 +17,7 @@ func TestSparseSpecsStableAndExcludePresence(t *testing.T) {
 		"escape",
 		"ownership",
 		"evidence",
+		"assertion",
 	}
 	if !slices.Equal(got, want) {
 		t.Fatalf("SparseSpecs IDs = %v, want %v", got, want)

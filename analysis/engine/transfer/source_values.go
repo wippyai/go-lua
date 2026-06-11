@@ -2,6 +2,7 @@ package transfer
 
 import (
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/assertion"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/engine/state"
@@ -70,7 +71,11 @@ func (r sourceValueResolver) ValueOfSource(
 	}
 }
 
-func (r sourceValueResolver) valueOfExpression(point cfg.Point, source ValueSource, in state.State) (product.Value, bool) {
+func (r sourceValueResolver) valueOfExpression(
+	point cfg.Point,
+	source ValueSource,
+	in state.State,
+) (product.Value, bool) {
 	if !source.HasExpr {
 		return product.Value{}, false
 	}
@@ -99,4 +104,74 @@ func copyExpressionValues(in map[ExprRef]product.Value) map[ExprRef]product.Valu
 		out[ref] = value
 	}
 	return out
+}
+
+type assertionSourceValues struct {
+	registry   *axis.Registry
+	base       SourceValues
+	assertions map[ExprRef]Assertion
+}
+
+func withAssertionSourceValues(reg *axis.Registry, base SourceValues, assertions map[ExprRef]Assertion) SourceValues {
+	if base == nil || len(assertions) == 0 {
+		return base
+	}
+	return assertionSourceValues{
+		registry:   reg,
+		base:       base,
+		assertions: assertions,
+	}
+}
+
+func (r assertionSourceValues) ValueOfSource(
+	point cfg.Point,
+	source ValueSource,
+	in state.State,
+	read func(cfg.Point) state.State,
+) (product.Value, bool) {
+	return r.valueOfSource(point, source, in, read, nil)
+}
+
+func (r assertionSourceValues) valueOfSource(
+	point cfg.Point,
+	source ValueSource,
+	in state.State,
+	read func(cfg.Point) state.State,
+	active map[ExprRef]bool,
+) (product.Value, bool) {
+	if source.Kind != ValueSourceExpression || !source.HasExpr {
+		return r.base.ValueOfSource(point, source, in, read)
+	}
+	if claim, ok := r.assertions[source.ExprRef]; ok {
+		if active[source.ExprRef] {
+			return product.Value{}, false
+		}
+		if active == nil {
+			active = make(map[ExprRef]bool, 1)
+		}
+		active[source.ExprRef] = true
+		value, ok := r.valueOfSource(point, claim.Source(), in, read, active)
+		delete(active, source.ExprRef)
+		if !ok {
+			return product.Value{}, false
+		}
+		return attachAssertion(r.registry, value, claim.Value()), true
+	}
+	return r.base.ValueOfSource(point, source, in, read)
+}
+
+func attachAssertion(reg *axis.Registry, value product.Value, claim assertion.Value) product.Value {
+	reg = productRegistry(reg)
+	if product.Equal(reg, value, product.Bottom(reg)) || assertion.Equal(claim, assertion.Top()) {
+		return value
+	}
+	current := product.Get(reg, value, assertion.Key)
+	return product.Set(reg, value, assertion.Key, assertion.Combine(current, claim))
+}
+
+func productRegistry(reg *axis.Registry) *axis.Registry {
+	if reg == nil {
+		return product.DefaultRegistry()
+	}
+	return reg
 }

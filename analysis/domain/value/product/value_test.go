@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/assertion"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/defaults"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/escape"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/evidence"
@@ -133,6 +134,38 @@ func TestDefaultRegistryRuntimeKindStoresAndSparsifiesTop(t *testing.T) {
 	explicitTop := intern(reg, ShapeTop, presence.Top(), []slot{{key: runtimekind.Key.ID(), value: runtimekind.Top()}})
 	if !Equal(reg, explicitTop, Top()) || Hash(reg, explicitTop) != Hash(reg, Top()) {
 		t.Fatalf("explicit runtimekind top slot should canonicalize to omission")
+	}
+}
+
+func TestDefaultRegistryAssertionStoresSparsifiesAndAffectsIdentity(t *testing.T) {
+	reg := DefaultRegistry()
+	typeClaim := assertion.Type()
+	anyClaim := assertion.Any()
+
+	v := Set(reg, Top(), assertion.Key, typeClaim)
+	if got := Get(reg, v, assertion.Key); !assertion.Equal(got, typeClaim) {
+		t.Fatalf("assertion value = %s, want %s", got, typeClaim)
+	}
+	if _, ok := lookupSlot(v, assertion.Key.ID()); !ok {
+		t.Fatalf("non-top assertion should be stored as a sparse slot")
+	}
+
+	other := Set(reg, Top(), assertion.Key, anyClaim)
+	if Equal(reg, v, other) {
+		t.Fatalf("different assertion indicators should affect product equality")
+	}
+	if Hash(reg, v) == Hash(reg, other) {
+		t.Fatalf("different assertion indicators should affect product hash")
+	}
+
+	setTop := Set(reg, v, assertion.Key, assertion.Top())
+	if !Equal(reg, setTop, Top()) {
+		t.Fatalf("setting assertion top should sparsify to product top, got %s", formatValue(setTop))
+	}
+
+	explicitTop := intern(reg, ShapeTop, presence.Top(), []slot{{key: assertion.Key.ID(), value: assertion.Top()}})
+	if !Equal(reg, explicitTop, Top()) || Hash(reg, explicitTop) != Hash(reg, Top()) {
+		t.Fatalf("explicit assertion top slot should canonicalize to omission")
 	}
 }
 
@@ -353,6 +386,7 @@ func defaultProductSample(reg *axis.Registry, bottom, top Value) []Value {
 	fresh := Set(reg, top, escape.Key, escape.Fresh())
 	unique := Set(reg, top, ownership.Key, ownership.Unique())
 	gradual := Set(reg, top, evidence.Key, evidence.GradualTop())
+	claimed := Set(reg, top, assertion.Key, assertion.Type())
 	variant := Set(reg, top, variantorigin.Key, variantorigin.Singleton(7, 1))
 	ident := Set(reg, top, identity.Key, identity.Singleton(identity.ID{Kind: "alloc", Site: "sample", Index: 1}))
 	tableKind := Set(reg, top, runtimekind.Key, runtimekind.Singleton(runtimekind.Table))
@@ -369,6 +403,7 @@ func defaultProductSample(reg *axis.Registry, bottom, top Value) []Value {
 		fresh,
 		unique,
 		gradual,
+		claimed,
 		variant,
 		ident,
 		tableKind,

@@ -7,6 +7,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	"github.com/wippyai/go-lua/analysis/domain/state/key"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/assertion"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/runtimekind"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
@@ -46,6 +47,72 @@ func TestFactsNodeTransferAppliesLocalAssignmentThroughResolver(t *testing.T) {
 	assertValue(t, reg, got[assign], key.SymbolValue(target), product.Bottom(reg))
 	assertValue(t, reg, got[graph.Exit()], key.SymbolValue(target), assigned)
 	assertResolverCall(t, resolver, assign, source)
+}
+
+func TestFactsNodeTransferAppliesAssertionSidecarsToAssignments(t *testing.T) {
+	tests := []struct {
+		name         string
+		innerAbsent  bool
+		claim        assertion.Value
+		wantPresence presence.Value
+	}{
+		{
+			name:         "type assertion attaches claim",
+			claim:        assertion.Type(),
+			wantPresence: presence.Present(),
+		},
+		{
+			name:         "non-nil assertion does not refine absent presence",
+			innerAbsent:  true,
+			claim:        assertion.NonNil(),
+			wantPresence: presence.Absent(),
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			reg := product.DefaultRegistry()
+			point := cfg.Point(51)
+			target := symbol.ID(151)
+			inner := ExprRef(1510)
+			outer := ExprRef(1511)
+			innerSource := ValueSource{Kind: ValueSourceExpression, ExprRef: inner, HasExpr: true}
+			outerSource := ValueSource{Kind: ValueSourceExpression, ExprRef: outer, HasExpr: true}
+			innerValue := presentValue(reg)
+			if tc.innerAbsent {
+				innerValue = absentValue(reg)
+			}
+			sources := NewSourceValues(SourceValuesConfig{
+				Registry: reg,
+				ExpressionValues: map[ExprRef]product.Value{
+					inner: innerValue,
+				},
+			})
+
+			got := NewFactsNodeTransfer(FactsNodeTransferConfig{
+				Facts: NewFacts(FactsInput{
+					LocalAssignments: map[cfg.Point]LocalAssignment{
+						point: NewLocalAssignment(target, path.NewPath(target, "value"), outerSource),
+					},
+					Assertions: map[ExprRef]Assertion{
+						outer: NewAssertion(innerSource, tc.claim),
+					},
+				}),
+				Sources: sources,
+			})(NodeContext{
+				Registry: reg,
+				Point:    point,
+			}, state.State{})
+
+			assigned := got.ReadValue(reg, key.SymbolValue(target))
+			if gotPresence := product.PresenceOf(assigned); !presence.Equal(gotPresence, tc.wantPresence) {
+				t.Fatalf("assigned presence = %s, want %s", gotPresence, tc.wantPresence)
+			}
+			if gotClaim := product.Get(reg, assigned, assertion.Key); !assertion.Equal(gotClaim, tc.claim) {
+				t.Fatalf("assigned assertion = %s, want %s", gotClaim, tc.claim)
+			}
+		})
+	}
 }
 
 func TestFactsNodeTransferAppliesOrdinaryAssignmentThroughResolver(t *testing.T) {

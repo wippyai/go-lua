@@ -7,6 +7,7 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/assertion"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/runtimekind"
 	"github.com/wippyai/go-lua/analysis/engine/transfer"
@@ -536,6 +537,73 @@ func TestLowerNestedObjectLiteralEntriesUnderAssignmentExprRef(t *testing.T) {
 	assertLoweredObjectEntry(t, entries[2], fieldChainSuffix("a", "b"), transfer.ValueSourceExpression)
 }
 
+func TestLowerAssertionsToSidecarsWithoutProofRefinements(t *testing.T) {
+	decl := localAssign([]string{"x"}, number("0"))
+	typeRead := ident("x")
+	anyRead := ident("x")
+	nonNilRead := ident("x")
+	typeCast := &ast.CastExpr{Expr: typeRead, Type: primitiveType("number")}
+	anyCast := &ast.CastExpr{Expr: anyRead, Type: primitiveType("any")}
+	nonNil := &ast.NonNilAssertExpr{Expr: nonNilRead}
+	local := localAssign([]string{"a", "b", "c"}, typeCast, anyCast, nonNil)
+	stmts := []ast.Stmt{decl, local}
+	bindings := bind.BindChunk(stmts, bind.Options{})
+	built := cfgbuild.BuildChunk(stmts, bindings)
+	result, err := semantics.ExtractChunk(stmts, bindings, built)
+	if err != nil {
+		t.Fatalf("ExtractChunk: %v", err)
+	}
+
+	facts := Lower(result, built.Graph)
+	points := requireStmtPoints(t, built, local, 3)
+	typeSource := mustLocalSource(t, facts, points[0])
+	anySource := mustLocalSource(t, facts, points[1])
+	nonNilSource := mustLocalSource(t, facts, points[2])
+
+	assertLoweredAssertion(t, facts, typeSource, assertion.Type(), transfer.ValueSourceExpression)
+	assertLoweredAssertion(t, facts, anySource, assertion.Any(), transfer.ValueSourceExpression)
+	assertLoweredAssertion(t, facts, nonNilSource, assertion.NonNil(), transfer.ValueSourceExpression)
+	if _, ok := facts.BranchRefinement(points[2]); ok {
+		t.Fatalf("x! assignment produced branch/presence refinement")
+	}
+}
+
+func TestLowerNestedAssertionsPreserveOuterIdentityAndInnerFlow(t *testing.T) {
+	decl := localAssign([]string{"x"}, number("0"))
+	read := ident("x")
+	nonNil := &ast.NonNilAssertExpr{Expr: read}
+	cast := &ast.CastExpr{Expr: nonNil, Type: primitiveType("number")}
+	local := localAssign([]string{"a"}, cast)
+	stmts := []ast.Stmt{decl, local}
+	bindings := bind.BindChunk(stmts, bind.Options{})
+	built := cfgbuild.BuildChunk(stmts, bindings)
+	result, err := semantics.ExtractChunk(stmts, bindings, built)
+	if err != nil {
+		t.Fatalf("ExtractChunk: %v", err)
+	}
+
+	facts := Lower(result, built.Graph)
+	source := mustLocalSource(t, facts, requireStmtPoints(t, built, local, 1)[0])
+	outer, ok := facts.Assertion(source.ExprRef)
+	if !ok {
+		t.Fatalf("missing outer assertion for source %#v", source)
+	}
+	if !assertion.Equal(outer.Value(), assertion.Type()) {
+		t.Fatalf("outer assertion = %s, want type", outer.Value())
+	}
+	innerSource := outer.Source()
+	if innerSource.ExprRef == source.ExprRef || innerSource.ExprRef == 0 {
+		t.Fatalf("outer assertion did not point at distinct inner expr ref: outer=%#v inner=%#v", source, innerSource)
+	}
+	inner, ok := facts.Assertion(innerSource.ExprRef)
+	if !ok {
+		t.Fatalf("missing inner non-nil assertion for source %#v", innerSource)
+	}
+	if !assertion.Equal(inner.Value(), assertion.NonNil()) {
+		t.Fatalf("inner assertion = %s, want non-nil", inner.Value())
+	}
+}
+
 func TestLowerSkipsMemberOrdinaryCallTargets(t *testing.T) {
 	l := lowerer{exprs: make(map[any]transfer.ExprRef)}
 	targetSym := symbol.ID(99)
@@ -549,6 +617,34 @@ func TestLowerSkipsMemberOrdinaryCallTargets(t *testing.T) {
 	}
 	if _, ok := l.callResultTarget(memberTarget); ok {
 		t.Fatalf("member ordinary call target lowered as root target")
+	}
+}
+
+func mustLocalSource(t *testing.T, facts transfer.Facts, point cfg.Point) transfer.ValueSource {
+	t.Helper()
+	fact, ok := facts.LocalAssignment(point)
+	if !ok {
+		t.Fatalf("missing local assignment at point %d", point)
+	}
+	source := fact.Source()
+	if !source.HasExpr || source.ExprRef == 0 {
+		t.Fatalf("local source = %#v, want expr ref", source)
+	}
+	return source
+}
+
+func assertLoweredAssertion(t *testing.T, facts transfer.Facts, source transfer.ValueSource, want assertion.Value, wantInnerKind transfer.ValueSourceKind) {
+	t.Helper()
+	claim, ok := facts.Assertion(source.ExprRef)
+	if !ok {
+		t.Fatalf("missing assertion for source ref %d", source.ExprRef)
+	}
+	if !assertion.Equal(claim.Value(), want) {
+		t.Fatalf("assertion value = %s, want %s", claim.Value(), want)
+	}
+	inner := claim.Source()
+	if inner.ExprRef == 0 || inner.ExprRef == source.ExprRef || inner.Kind != wantInnerKind {
+		t.Fatalf("assertion inner source = %#v, outer %#v", inner, source)
 	}
 }
 
@@ -686,6 +782,10 @@ func number(value string) *ast.NumberExpr {
 
 func stringLit(value string) *ast.StringExpr {
 	return &ast.StringExpr{Value: value}
+}
+
+func primitiveType(name string) *ast.PrimitiveTypeExpr {
+	return &ast.PrimitiveTypeExpr{Name: name}
 }
 
 func typeCall(arg ast.Expr) *ast.FuncCallExpr {
