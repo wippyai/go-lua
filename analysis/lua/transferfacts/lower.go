@@ -4,6 +4,7 @@ package transferfacts
 import (
 	"github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/runtimekind"
 	"github.com/wippyai/go-lua/analysis/engine/transfer"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/lua/semantics"
@@ -182,8 +183,62 @@ func (l *lowerer) branchRefinement(fact semantics.BranchConditionFact) (transfer
 			transfer.ValueRefinement{}, false,
 			transfer.NewValueRefinement().WithPresence(presence.Present()), true,
 		), true
+	case semantics.BranchConditionCheckTypeEqual, semantics.BranchConditionCheckTypeNot:
+		return l.typeBranchRefinement(target, fact.Check.Kind, fact.Check.TypeName)
 	default:
 		return transfer.BranchRefinement{}, false
+	}
+}
+
+func (l *lowerer) typeBranchRefinement(target path.Path, kind semantics.BranchConditionCheckKind, typeName string) (transfer.BranchRefinement, bool) {
+	tag, ok := runtimeTag(typeName)
+	if !ok {
+		return transfer.BranchRefinement{}, false
+	}
+	matched := typeMatchedRefinement(tag)
+	unmatched := typeUnmatchedRefinement(tag)
+	if kind == semantics.BranchConditionCheckTypeNot {
+		return transfer.NewBranchRefinement(target, unmatched, true, matched, true), true
+	}
+	return transfer.NewBranchRefinement(target, matched, true, unmatched, true), true
+}
+
+func typeMatchedRefinement(tag runtimekind.Tag) transfer.ValueRefinement {
+	value := transfer.NewValueRefinement().WithRuntimeKind(runtimekind.Singleton(tag))
+	if tag == runtimekind.Nil {
+		return value.WithPresence(presence.Absent())
+	}
+	return value.WithPresence(presence.Present())
+}
+
+func typeUnmatchedRefinement(tag runtimekind.Tag) transfer.ValueRefinement {
+	value := transfer.NewValueRefinement().WithRuntimeKind(runtimekind.Top().Without(tag))
+	if tag == runtimekind.Nil {
+		return value.WithPresence(presence.Present())
+	}
+	return value
+}
+
+func runtimeTag(typeName string) (runtimekind.Tag, bool) {
+	switch typeName {
+	case "nil":
+		return runtimekind.Nil, true
+	case "boolean":
+		return runtimekind.Boolean, true
+	case "number":
+		return runtimekind.Number, true
+	case "string":
+		return runtimekind.String, true
+	case "table":
+		return runtimekind.Table, true
+	case "function":
+		return runtimekind.Function, true
+	case "thread":
+		return runtimekind.Thread, true
+	case "userdata":
+		return runtimekind.Userdata, true
+	default:
+		return 0, false
 	}
 }
 

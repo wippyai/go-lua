@@ -8,6 +8,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/runtimekind"
 	"github.com/wippyai/go-lua/analysis/engine/transfer"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/lua/bind"
@@ -331,11 +332,12 @@ func TestLowerMemberPathBranchRefinement(t *testing.T) {
 	assertLoweredBranchValuePresence(t, facts, requireStmtPoints(t, built, memberStmt, 1)[0], wantPath, presence.Present(), true, presence.Absent(), true)
 }
 
-func TestLowerSkipsTypeGuardBranchRefinements(t *testing.T) {
+func TestLowerTypeGuardTableEqualityBranchRefinement(t *testing.T) {
 	decl := localAssign([]string{"x"}, number("0"))
+	xRead := ident("x")
 	typeStmt := &ast.IfStmt{Condition: &ast.RelationalOpExpr{
 		Operator: "==",
-		Lhs:      typeCall(ident("x")),
+		Lhs:      typeCall(xRead),
 		Rhs:      stringLit("table"),
 	}}
 	stmts := []ast.Stmt{decl, typeStmt}
@@ -348,8 +350,146 @@ func TestLowerSkipsTypeGuardBranchRefinements(t *testing.T) {
 
 	facts := Lower(result, built.Graph)
 	point := requireStmtPoints(t, built, typeStmt, 1)[0]
+	xPath := path.NewPath(mustIdentSymbol(t, bindings, xRead), "x")
+	assertLoweredBranchValueRefinement(t, facts, point, xPath,
+		valueRefinementExpectation{
+			presence:       presence.Present(),
+			hasPresence:    true,
+			runtimeKind:    runtimekind.Singleton(runtimekind.Table),
+			hasRuntimeKind: true,
+		},
+		valueRefinementExpectation{
+			runtimeKind:    runtimekind.Top().Without(runtimekind.Table),
+			hasRuntimeKind: true,
+		},
+	)
+}
+
+func TestLowerTypeGuardFunctionInequalityBranchRefinement(t *testing.T) {
+	decl := localAssign([]string{"x"}, number("0"))
+	xRead := ident("x")
+	typeStmt := &ast.IfStmt{Condition: &ast.RelationalOpExpr{
+		Operator: "~=",
+		Lhs:      typeCall(xRead),
+		Rhs:      stringLit("function"),
+	}}
+	stmts := []ast.Stmt{decl, typeStmt}
+	bindings := bind.BindChunk(stmts, bind.Options{Globals: []string{"type"}})
+	built := cfgbuild.BuildChunk(stmts, bindings)
+	result, err := semantics.ExtractChunk(stmts, bindings, built)
+	if err != nil {
+		t.Fatalf("ExtractChunk: %v", err)
+	}
+
+	facts := Lower(result, built.Graph)
+	point := requireStmtPoints(t, built, typeStmt, 1)[0]
+	xPath := path.NewPath(mustIdentSymbol(t, bindings, xRead), "x")
+	assertLoweredBranchValueRefinement(t, facts, point, xPath,
+		valueRefinementExpectation{
+			runtimeKind:    runtimekind.Top().Without(runtimekind.Function),
+			hasRuntimeKind: true,
+		},
+		valueRefinementExpectation{
+			presence:       presence.Present(),
+			hasPresence:    true,
+			runtimeKind:    runtimekind.Singleton(runtimekind.Function),
+			hasRuntimeKind: true,
+		},
+	)
+}
+
+func TestLowerTypeGuardNilBranchRefinements(t *testing.T) {
+	decl := localAssign([]string{"x"}, number("0"))
+	eqRead := ident("x")
+	eqStmt := &ast.IfStmt{Condition: &ast.RelationalOpExpr{
+		Operator: "==",
+		Lhs:      typeCall(eqRead),
+		Rhs:      stringLit("nil"),
+	}}
+	notRead := ident("x")
+	notStmt := &ast.IfStmt{Condition: &ast.RelationalOpExpr{
+		Operator: "~=",
+		Lhs:      typeCall(notRead),
+		Rhs:      stringLit("nil"),
+	}}
+	stmts := []ast.Stmt{decl, eqStmt, notStmt}
+	bindings := bind.BindChunk(stmts, bind.Options{Globals: []string{"type"}})
+	built := cfgbuild.BuildChunk(stmts, bindings)
+	result, err := semantics.ExtractChunk(stmts, bindings, built)
+	if err != nil {
+		t.Fatalf("ExtractChunk: %v", err)
+	}
+
+	facts := Lower(result, built.Graph)
+	xPath := path.NewPath(mustIdentSymbol(t, bindings, eqRead), "x")
+	nilValue := valueRefinementExpectation{
+		presence:       presence.Absent(),
+		hasPresence:    true,
+		runtimeKind:    runtimekind.Singleton(runtimekind.Nil),
+		hasRuntimeKind: true,
+	}
+	notNilValue := valueRefinementExpectation{
+		presence:       presence.Present(),
+		hasPresence:    true,
+		runtimeKind:    runtimekind.Top().Without(runtimekind.Nil),
+		hasRuntimeKind: true,
+	}
+	assertLoweredBranchValueRefinement(t, facts, requireStmtPoints(t, built, eqStmt, 1)[0], xPath, nilValue, notNilValue)
+	assertLoweredBranchValueRefinement(t, facts, requireStmtPoints(t, built, notStmt, 1)[0], xPath, notNilValue, nilValue)
+}
+
+func TestLowerTypeGuardReversedOperandsBranchRefinement(t *testing.T) {
+	decl := localAssign([]string{"x"}, number("0"))
+	xRead := ident("x")
+	typeStmt := &ast.IfStmt{Condition: &ast.RelationalOpExpr{
+		Operator: "==",
+		Lhs:      stringLit("table"),
+		Rhs:      typeCall(xRead),
+	}}
+	stmts := []ast.Stmt{decl, typeStmt}
+	bindings := bind.BindChunk(stmts, bind.Options{Globals: []string{"type"}})
+	built := cfgbuild.BuildChunk(stmts, bindings)
+	result, err := semantics.ExtractChunk(stmts, bindings, built)
+	if err != nil {
+		t.Fatalf("ExtractChunk: %v", err)
+	}
+
+	facts := Lower(result, built.Graph)
+	point := requireStmtPoints(t, built, typeStmt, 1)[0]
+	xPath := path.NewPath(mustIdentSymbol(t, bindings, xRead), "x")
+	assertLoweredBranchValueRefinement(t, facts, point, xPath,
+		valueRefinementExpectation{
+			presence:       presence.Present(),
+			hasPresence:    true,
+			runtimeKind:    runtimekind.Singleton(runtimekind.Table),
+			hasRuntimeKind: true,
+		},
+		valueRefinementExpectation{
+			runtimeKind:    runtimekind.Top().Without(runtimekind.Table),
+			hasRuntimeKind: true,
+		},
+	)
+}
+
+func TestLowerSkipsUnknownTypeGuardBranchRefinements(t *testing.T) {
+	decl := localAssign([]string{"x"}, number("0"))
+	typeStmt := &ast.IfStmt{Condition: &ast.RelationalOpExpr{
+		Operator: "==",
+		Lhs:      typeCall(ident("x")),
+		Rhs:      stringLit("mystery"),
+	}}
+	stmts := []ast.Stmt{decl, typeStmt}
+	bindings := bind.BindChunk(stmts, bind.Options{Globals: []string{"type"}})
+	built := cfgbuild.BuildChunk(stmts, bindings)
+	result, err := semantics.ExtractChunk(stmts, bindings, built)
+	if err != nil {
+		t.Fatalf("ExtractChunk: %v", err)
+	}
+
+	facts := Lower(result, built.Graph)
+	point := requireStmtPoints(t, built, typeStmt, 1)[0]
 	if _, ok := facts.BranchRefinement(point); ok {
-		t.Fatalf("type guard branch point %d lowered as presence refinement", point)
+		t.Fatalf("unknown type guard branch point %d lowered as branch refinement", point)
 	}
 }
 
@@ -452,6 +592,60 @@ func assertOptionalValuePresence(
 	gotPresence, hasPresence := got.Presence()
 	if !hasPresence || !presence.Equal(gotPresence, want) {
 		t.Fatalf("%s presence = %s/%v, want %s/true", label, gotPresence, hasPresence, want)
+	}
+}
+
+type valueRefinementExpectation struct {
+	presence    presence.Value
+	hasPresence bool
+
+	runtimeKind    runtimekind.Value
+	hasRuntimeKind bool
+}
+
+func assertLoweredBranchValueRefinement(
+	t *testing.T,
+	facts transfer.Facts,
+	point cfg.Point,
+	wantPath path.Path,
+	wantTrue valueRefinementExpectation,
+	wantFalse valueRefinementExpectation,
+) {
+	t.Helper()
+	refinement, ok := facts.BranchRefinement(point)
+	if !ok {
+		t.Fatalf("missing branch refinement at point %d", point)
+	}
+	if !refinement.TargetPath().Equal(wantPath) {
+		t.Fatalf("branch target path = %#v, want %#v", refinement.TargetPath(), wantPath)
+	}
+	trueValue, ok := refinement.TrueValue()
+	if !ok {
+		t.Fatalf("missing true-edge value refinement")
+	}
+	falseValue, ok := refinement.FalseValue()
+	if !ok {
+		t.Fatalf("missing false-edge value refinement")
+	}
+	assertValueRefinement(t, "true edge", trueValue, wantTrue)
+	assertValueRefinement(t, "false edge", falseValue, wantFalse)
+}
+
+func assertValueRefinement(t *testing.T, label string, got transfer.ValueRefinement, want valueRefinementExpectation) {
+	t.Helper()
+	gotPresence, hasPresence := got.Presence()
+	if hasPresence != want.hasPresence {
+		t.Fatalf("%s presence ok = %v, want %v", label, hasPresence, want.hasPresence)
+	}
+	if want.hasPresence && !presence.Equal(gotPresence, want.presence) {
+		t.Fatalf("%s presence = %s, want %s", label, gotPresence, want.presence)
+	}
+	gotRuntimeKind, hasRuntimeKind := got.RuntimeKind()
+	if hasRuntimeKind != want.hasRuntimeKind {
+		t.Fatalf("%s runtime kind ok = %v, want %v", label, hasRuntimeKind, want.hasRuntimeKind)
+	}
+	if want.hasRuntimeKind && !runtimekind.Equal(gotRuntimeKind, want.runtimeKind) {
+		t.Fatalf("%s runtime kind = %s, want %s", label, gotRuntimeKind, want.runtimeKind)
 	}
 }
 
