@@ -665,32 +665,20 @@ func expandInstantiatedCore(t typ.Type, orig typ.Type, guard recursion.Guard, me
 			return orig
 		}
 
-		builder := typ.Func()
-		for _, tp := range v.TypeParams {
-			builder.TypeParamRef(tp)
-		}
 		paramsSrc := v.Params
 		if params != nil {
 			paramsSrc = params
-		}
-		for _, p := range paramsSrc {
-			if p.Optional {
-				builder = builder.OptParam(p.Name, p.Type)
-			} else {
-				builder = builder.Param(p.Name, p.Type)
-			}
-		}
-		if variadic != nil {
-			builder = builder.Variadic(variadic)
 		}
 		returnsSrc := v.Returns
 		if returns != nil {
 			returnsSrc = returns
 		}
-		if len(returnsSrc) > 0 {
-			builder = builder.Returns(returnsSrc...)
-		}
-		return builder.Build()
+		return typ.RebuildFunction(typ.FunctionParts{
+			TypeParams: v.TypeParams,
+			Params:     paramsSrc,
+			Variadic:   variadic,
+			Returns:    returnsSrc,
+		})
 	case *typ.Record:
 		changed := false
 		var fields []typ.Field
@@ -734,33 +722,19 @@ func expandInstantiatedCore(t typ.Type, orig typ.Type, guard recursion.Guard, me
 			return orig
 		}
 
-		builder := typetable.NewRecord()
-		if v.Open {
-			builder.SetOpen(true)
-		}
 		fieldsSrc := v.Fields
 		if fields != nil {
 			fieldsSrc = fields
 		}
-		for _, f := range fieldsSrc {
-			switch {
-			case f.Optional && f.Readonly:
-				builder = builder.OptReadonlyField(f.Name, f.Type)
-			case f.Optional:
-				builder = builder.OptField(f.Name, f.Type)
-			case f.Readonly:
-				builder = builder.ReadonlyField(f.Name, f.Type)
-			default:
-				builder = builder.Field(f.Name, f.Type)
-			}
-		}
-		if metatable != nil {
-			builder = builder.Metatable(metatable)
-		}
-		if mapKey != nil && mapValue != nil {
-			builder = builder.MapComponent(mapKey, mapValue)
-		}
-		return builder.Build()
+		return typetable.RebuildRecord(typ.RecordParts{
+			Fields:        fieldsSrc,
+			StaticMembers: v.StaticMembers,
+			Metatable:     metatable,
+			MapKey:        mapKey,
+			MapValue:      mapValue,
+			Open:          v.Open,
+			AssumeSorted:  true,
+		})
 	case *typ.Alias:
 		target := expandInstantiatedGuard(v.Target, guard, memo)
 		if target == v.Target {
