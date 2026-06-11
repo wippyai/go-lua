@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	"github.com/wippyai/go-lua/analysis/domain/state/key"
@@ -25,6 +26,39 @@ import (
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/parse"
 )
+
+func lowerFacts(t *testing.T, result *semantics.Result, graph cfg.Graph, reg *axis.Registry) factflow.Facts {
+	t.Helper()
+	if reg == nil {
+		t.Fatal("lowerFacts requires a registry")
+	}
+	return Lower(result, graph, Config{Registry: reg})
+}
+
+func TestLowerPanicsWithoutRegistry(t *testing.T) {
+	stmts, bindings, built, result := parseSemanticChunk(t, "local x = 1")
+	_ = stmts
+	_ = bindings
+	_ = built
+
+	defer func() {
+		if r := recover(); r == nil || !strings.Contains(r.(string), "Config.Registry is required") {
+			t.Fatal("Lower did not panic")
+		}
+	}()
+
+	_ = Lower(result, built.Graph, Config{})
+}
+
+func TestLowerPanicsWithoutRegistryOnEmptyInputs(t *testing.T) {
+	defer func() {
+		if r := recover(); r == nil || !strings.Contains(r.(string), "Config.Registry is required") {
+			t.Fatal("Lower did not panic")
+		}
+	}()
+
+	_ = Lower(nil, nil, Config{})
+}
 
 func TestLowerAssignmentsReturnsAndCallsPreserveValueListMetadata(t *testing.T) {
 	makeIdent := ident("make")
@@ -51,7 +85,7 @@ func TestLowerAssignmentsReturnsAndCallsPreserveValueListMetadata(t *testing.T) 
 		t.Fatalf("ExtractChunk: %v", err)
 	}
 
-	facts := Lower(result, built.Graph)
+	facts := lowerFacts(t, result, built.Graph, product.DefaultRegistry())
 	assertNoCompilerASTTypes(t, reflect.TypeOf(facts))
 
 	localPoints := requireStmtPoints(t, built, local, 5)
@@ -181,7 +215,7 @@ func TestLowerCallSitesPreserveAllSemanticContextsAndProducerStaysNarrow(t *test
 		t.Fatalf("ExtractChunk: %v", err)
 	}
 
-	facts := Lower(result, built.Graph)
+	facts := lowerFacts(t, result, built.Graph, product.DefaultRegistry())
 
 	localPoints := requireStmtPoints(t, built, local, 2)
 	localSite, ok := facts.CallSite(localPoints[0])
@@ -282,7 +316,7 @@ func TestLowerCallSitePreservesPortableCallShapeAndArgumentOverlays(t *testing.T
 		t.Fatalf("ExtractChunk: %v", err)
 	}
 
-	facts := Lower(result, built.Graph)
+	facts := lowerFacts(t, result, built.Graph, product.DefaultRegistry())
 	assertNoCompilerASTTypes(t, reflect.TypeOf(facts))
 
 	point := requireStmtPoints(t, built, stmt, 1)[0]
@@ -404,7 +438,7 @@ func TestLowerOrdinaryAssignmentsSplitsRootAndStaticPathWrites(t *testing.T) {
 		t.Fatalf("ExtractChunk: %v", err)
 	}
 
-	facts := Lower(result, built.Graph)
+	facts := lowerFacts(t, result, built.Graph, product.DefaultRegistry())
 	tSym := mustLocalAt(t, bindings, local, 0)
 
 	dotPoint := requireStmtPoints(t, built, dotWrite, 1)[0]
@@ -467,7 +501,7 @@ func TestLowerObjectLiteralSidecarUsesAssignmentExprRef(t *testing.T) {
 		t.Fatalf("ExtractChunk: %v", err)
 	}
 
-	facts := Lower(result, built.Graph)
+	facts := lowerFacts(t, result, built.Graph, product.DefaultRegistry())
 	assertNoCompilerASTTypes(t, reflect.TypeOf(facts))
 
 	point := requireStmtPoints(t, built, local, 1)[0]
@@ -513,7 +547,7 @@ func TestLowerWrappedObjectLiteralKeepsAssertionOverlayAndEntries(t *testing.T) 
 		t.Fatalf("ExtractChunk: %v", err)
 	}
 
-	facts := Lower(result, built.Graph)
+	facts := lowerFacts(t, result, built.Graph, product.DefaultRegistry())
 	assertNoCompilerASTTypes(t, reflect.TypeOf(facts))
 
 	point := requireStmtPoints(t, built, local, 1)[0]
@@ -552,7 +586,7 @@ func TestLowerIdentifierNilTruthyFalsyBranches(t *testing.T) {
 		t.Fatalf("ExtractChunk: %v", err)
 	}
 
-	facts := Lower(result, built.Graph)
+	facts := lowerFacts(t, result, built.Graph, product.DefaultRegistry())
 	xPath := path.NewPath(mustIdentSymbol(t, bindings, nilRead), "x")
 	assertLoweredBranchValuePresence(t, facts, requireStmtPoints(t, built, nilStmt, 1)[0], xPath, presence.Absent(), true, presence.Present(), true)
 	assertLoweredBranchValuePresence(t, facts, requireStmtPoints(t, built, notNilStmt, 1)[0], xPath, presence.Present(), true, presence.Absent(), true)
@@ -572,7 +606,7 @@ func TestLowerMemberPathBranchRefinement(t *testing.T) {
 		t.Fatalf("ExtractChunk: %v", err)
 	}
 
-	facts := Lower(result, built.Graph)
+	facts := lowerFacts(t, result, built.Graph, product.DefaultRegistry())
 	wantPath := path.NewPath(mustIdentSymbol(t, bindings, rootRead), "t").Field("child")
 	assertLoweredBranchValuePresence(t, facts, requireStmtPoints(t, built, memberStmt, 1)[0], wantPath, presence.Present(), true, presence.Absent(), true)
 }
@@ -593,7 +627,7 @@ func TestLowerTypeGuardTableEqualityBranchRefinement(t *testing.T) {
 		t.Fatalf("ExtractChunk: %v", err)
 	}
 
-	facts := Lower(result, built.Graph)
+	facts := lowerFacts(t, result, built.Graph, product.DefaultRegistry())
 	point := requireStmtPoints(t, built, typeStmt, 1)[0]
 	xPath := path.NewPath(mustIdentSymbol(t, bindings, xRead), "x")
 	assertLoweredBranchValueRefinement(t, facts, point, xPath,
@@ -626,7 +660,7 @@ func TestLowerTypeGuardFunctionInequalityBranchRefinement(t *testing.T) {
 		t.Fatalf("ExtractChunk: %v", err)
 	}
 
-	facts := Lower(result, built.Graph)
+	facts := lowerFacts(t, result, built.Graph, product.DefaultRegistry())
 	point := requireStmtPoints(t, built, typeStmt, 1)[0]
 	xPath := path.NewPath(mustIdentSymbol(t, bindings, xRead), "x")
 	assertLoweredBranchValueRefinement(t, facts, point, xPath,
@@ -665,7 +699,7 @@ func TestLowerTypeGuardNilBranchRefinements(t *testing.T) {
 		t.Fatalf("ExtractChunk: %v", err)
 	}
 
-	facts := Lower(result, built.Graph)
+	facts := lowerFacts(t, result, built.Graph, product.DefaultRegistry())
 	xPath := path.NewPath(mustIdentSymbol(t, bindings, eqRead), "x")
 	nilValue := valueRefinementExpectation{
 		presence:       presence.Absent(),
@@ -699,7 +733,7 @@ func TestLowerTypeGuardReversedOperandsBranchRefinement(t *testing.T) {
 		t.Fatalf("ExtractChunk: %v", err)
 	}
 
-	facts := Lower(result, built.Graph)
+	facts := lowerFacts(t, result, built.Graph, product.DefaultRegistry())
 	point := requireStmtPoints(t, built, typeStmt, 1)[0]
 	xPath := path.NewPath(mustIdentSymbol(t, bindings, xRead), "x")
 	assertLoweredBranchValueRefinement(t, facts, point, xPath,
@@ -731,7 +765,7 @@ func TestLowerSkipsUnknownTypeGuardBranchRefinements(t *testing.T) {
 		t.Fatalf("ExtractChunk: %v", err)
 	}
 
-	facts := Lower(result, built.Graph)
+	facts := lowerFacts(t, result, built.Graph, product.DefaultRegistry())
 	point := requireStmtPoints(t, built, typeStmt, 1)[0]
 	if _, ok := facts.BranchRefinement(point); ok {
 		t.Fatalf("unknown type guard branch point %d lowered as branch refinement", point)
@@ -759,7 +793,7 @@ func TestLowerNestedObjectLiteralEntriesUnderAssignmentExprRef(t *testing.T) {
 		t.Fatalf("ExtractChunk: %v", err)
 	}
 
-	facts := Lower(result, built.Graph)
+	facts := lowerFacts(t, result, built.Graph, product.DefaultRegistry())
 	assertNoCompilerASTTypes(t, reflect.TypeOf(facts))
 
 	point := requireStmtPoints(t, built, local, 1)[0]
@@ -798,7 +832,7 @@ func TestLowerClaimsToSidecarsWithoutProofRefinements(t *testing.T) {
 		t.Fatalf("ExtractChunk: %v", err)
 	}
 
-	facts := Lower(result, built.Graph)
+	facts := lowerFacts(t, result, built.Graph, product.DefaultRegistry())
 	points := requireStmtPoints(t, built, local, 3)
 	typeSource := mustLocalSource(t, facts, points[0])
 	anySource := mustLocalSource(t, facts, points[1])
@@ -831,7 +865,7 @@ func TestLowerClaimsPreserveCastSyntaxVariantsWithoutProofRefinements(t *testing
 		t.Fatalf("ExtractChunk: %v", err)
 	}
 
-	facts := Lower(result, built.Graph)
+	facts := lowerFacts(t, result, built.Graph, product.DefaultRegistry())
 	points := requireStmtPoints(t, built, local, 4)
 	cases := []struct {
 		name  string
@@ -858,7 +892,7 @@ local x = 0
 local a, b, c, d = x as number, x :: number, x as any, x :: any
 `)
 
-	facts := Lower(result, built.Graph)
+	facts := lowerFacts(t, result, built.Graph, product.DefaultRegistry())
 	assertNoCompilerASTTypes(t, reflect.TypeOf(facts))
 
 	local := mustLocalStmt(t, stmts, 1)
@@ -894,7 +928,7 @@ if x as number then end
 if x :: number then end
 `)
 
-	facts := Lower(result, built.Graph)
+	facts := lowerFacts(t, result, built.Graph, product.DefaultRegistry())
 	cases := []struct {
 		name   string
 		index  int
@@ -941,7 +975,7 @@ local a, b = x as any, x :: any
 `)
 
 	reg := product.DefaultRegistry()
-	facts := Lower(result, built.Graph)
+	facts := lowerFacts(t, result, built.Graph, product.DefaultRegistry())
 	local := mustLocalStmt(t, stmts, 1)
 	points := requireStmtPoints(t, built, local, 2)
 	base := product.Set(reg, product.NewWithPresence(reg, product.ShapeTop, presence.Present()), runtimekind.Key, runtimekind.Singleton(runtimekind.Table))
@@ -1036,7 +1070,7 @@ func TestLowerNestedClaimsPreserveOuterIdentityAndInnerFlow(t *testing.T) {
 		t.Fatalf("ExtractChunk: %v", err)
 	}
 
-	facts := Lower(result, built.Graph)
+	facts := lowerFacts(t, result, built.Graph, product.DefaultRegistry())
 	source := mustLocalSource(t, facts, requireStmtPoints(t, built, local, 1)[0])
 	outer, ok := facts.ValueOverlay(source.ExprRef)
 	if !ok {
@@ -1075,8 +1109,11 @@ func TestLowerClaimOverlaysApplyIndicatorsWithoutMutatingBaseValues(t *testing.T
 		t.Fatalf("ExtractChunk: %v", err)
 	}
 
-	reg := product.DefaultRegistry()
-	facts := Lower(result, built.Graph)
+	reg, err := product.DefaultRegistryWithAxes(testLowerSparseAxisSpec().Erase())
+	if err != nil {
+		t.Fatalf("DefaultRegistryWithAxes error = %v", err)
+	}
+	facts := lowerFacts(t, result, built.Graph, reg)
 	points := requireStmtPoints(t, built, local, 3)
 	inputValues := make(map[factflow.ExprRef]product.Value)
 	type sourceCase struct {
@@ -1094,14 +1131,14 @@ func TestLowerClaimOverlaysApplyIndicatorsWithoutMutatingBaseValues(t *testing.T
 		{
 			name:         "type",
 			point:        points[0],
-			base:         product.NewWithPresence(reg, product.ShapeTop, presence.Present()),
+			base:         product.Set(reg, product.NewWithPresence(reg, product.ShapeTop, presence.Present()), testLowerSparseAxisKey, testLowerSparseAxisLow),
 			wantClaim:    assertion.Type(),
 			wantPresence: presence.Present(),
 		},
 		{
 			name:              "any",
 			point:             points[1],
-			base:              product.Set(reg, product.NewWithPresence(reg, product.ShapeTop, presence.Present()), runtimekind.Key, runtimekind.Singleton(runtimekind.Table)),
+			base:              product.Set(reg, product.Set(reg, product.NewWithPresence(reg, product.ShapeTop, presence.Present()), testLowerSparseAxisKey, testLowerSparseAxisLow), runtimekind.Key, runtimekind.Singleton(runtimekind.Table)),
 			wantClaim:         assertion.Any(),
 			wantPresence:      presence.Present(),
 			wantRuntimeKind:   runtimekind.Singleton(runtimekind.Table),
@@ -1112,7 +1149,7 @@ func TestLowerClaimOverlaysApplyIndicatorsWithoutMutatingBaseValues(t *testing.T
 		{
 			name:         "non-nil",
 			point:        points[2],
-			base:         product.NewWithPresence(reg, product.ShapeTop, presence.Absent()),
+			base:         product.Set(reg, product.NewWithPresence(reg, product.ShapeTop, presence.Absent()), testLowerSparseAxisKey, testLowerSparseAxisLow),
 			wantClaim:    assertion.NonNil(),
 			wantPresence: presence.Absent(),
 		},
@@ -1160,6 +1197,9 @@ func TestLowerClaimOverlaysApplyIndicatorsWithoutMutatingBaseValues(t *testing.T
 					t.Fatalf("assigned runtime kind = %s, want %s", got, tc.wantRuntimeKind)
 				}
 			}
+			if got := product.Get(reg, assigned, testLowerSparseAxisKey); got != testLowerSparseAxisLow {
+				t.Fatalf("assigned sparse axis = %v, want %v", got, testLowerSparseAxisLow)
+			}
 			if tc.checkNoProof {
 				if got := product.Get(reg, assigned, evidence.Key); !evidence.Equal(got, evidence.Top()) {
 					t.Fatalf("assigned evidence = %s, want top", got)
@@ -1177,6 +1217,9 @@ func TestLowerClaimOverlaysApplyIndicatorsWithoutMutatingBaseValues(t *testing.T
 				if got := product.Get(reg, tc.base, runtimekind.Key); !runtimekind.Equal(got, tc.wantRuntimeKind) {
 					t.Fatalf("base runtime kind = %s, want %s", got, tc.wantRuntimeKind)
 				}
+			}
+			if got := product.Get(reg, tc.base, testLowerSparseAxisKey); got != testLowerSparseAxisLow {
+				t.Fatalf("base sparse axis = %v, want %v", got, testLowerSparseAxisLow)
 			}
 		})
 	}
@@ -1197,7 +1240,7 @@ func TestLowerNestedClaimOverlaysApplyCombinedIndicators(t *testing.T) {
 	}
 
 	reg := product.DefaultRegistry()
-	facts := Lower(result, built.Graph)
+	facts := lowerFacts(t, result, built.Graph, product.DefaultRegistry())
 	point := requireStmtPoints(t, built, local, 1)[0]
 	source := mustLocalSource(t, facts, point)
 	outer, ok := facts.ValueOverlay(source.ExprRef)
@@ -1256,7 +1299,7 @@ func TestLowerClaimWrappedCallPreservesProducerAndClaim(t *testing.T) {
 		t.Fatalf("ExtractChunk: %v", err)
 	}
 
-	facts := Lower(result, built.Graph)
+	facts := lowerFacts(t, result, built.Graph, product.DefaultRegistry())
 	localPoints := requireStmtPoints(t, built, local, 2)
 	producer, ok := facts.Call(localPoints[0])
 	if !ok {
@@ -1322,7 +1365,7 @@ func TestLowerMemberOrdinaryCallTargetStaysCallSiteOnly(t *testing.T) {
 		t.Fatalf("ExtractChunk: %v", err)
 	}
 
-	facts := Lower(result, built.Graph)
+	facts := lowerFacts(t, result, built.Graph, product.DefaultRegistry())
 	points := requireStmtPoints(t, built, write, 2)
 	producer, ok := facts.Call(points[0])
 	if !ok {
@@ -1401,7 +1444,7 @@ func assertAssertionOnlyProduct(t *testing.T, value product.Value, want assertio
 	if got := product.Get(reg, value, evidence.Key); !evidence.Equal(got, evidence.Top()) {
 		t.Fatalf("assertion overlay evidence = %s, want top", got)
 	}
-	if !product.Equal(reg, value, assertionOverlay(want)) {
+	if !product.Equal(reg, value, product.Set(reg, product.Top(), assertion.Key, want)) {
 		t.Fatalf("assertion overlay carried non-assertion axes")
 	}
 }
@@ -1521,6 +1564,49 @@ func assertLoweredObjectEntry(t *testing.T, entry factflow.ObjectEntry, wantSuff
 	source := entry.Source()
 	if source.Kind != wantKind || !source.HasExpr || source.ExprRef == 0 {
 		t.Fatalf("entry source = %#v, want kind %v with expr ref", source, wantKind)
+	}
+}
+
+type testLowerSparseAxis uint8
+
+const (
+	testLowerSparseAxisBottom testLowerSparseAxis = iota
+	testLowerSparseAxisLow
+	testLowerSparseAxisTop
+)
+
+var testLowerSparseAxisKey = axis.NewKey[testLowerSparseAxis]("transferfacts.test.sparse")
+
+func testLowerSparseAxisSpec() axis.Spec[testLowerSparseAxis] {
+	return axis.Spec[testLowerSparseAxis]{
+		Key:    testLowerSparseAxisKey,
+		Bottom: func() testLowerSparseAxis { return testLowerSparseAxisBottom },
+		Top:    func() testLowerSparseAxis { return testLowerSparseAxisTop },
+		Equal:  func(a, b testLowerSparseAxis) bool { return a == b },
+		LessOrEq: func(a, b testLowerSparseAxis) bool {
+			return a <= b
+		},
+		Join: func(a, b testLowerSparseAxis) testLowerSparseAxis {
+			if a > b {
+				return a
+			}
+			return b
+		},
+		Meet: func(a, b testLowerSparseAxis) testLowerSparseAxis {
+			if a < b {
+				return a
+			}
+			return b
+		},
+		Widen: func(prev, next testLowerSparseAxis) testLowerSparseAxis {
+			if prev > next {
+				return prev
+			}
+			return next
+		},
+		Hash: func(v testLowerSparseAxis) uint64 {
+			return uint64(v) + 1
+		},
 	}
 }
 

@@ -2,6 +2,7 @@
 package transferfacts
 
 import (
+	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/assertion"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
@@ -21,11 +22,19 @@ import (
 // by the engine. It intentionally lowers only syntax facts already represented
 // by factflow.Facts; higher semantic layers add branch, iterator, interproc,
 // and diagnostic facts separately.
-func Lower(result *semantics.Result, graph cfg.Graph) factflow.Facts {
+type Config struct {
+	Registry *axis.Registry
+}
+
+func Lower(result *semantics.Result, graph cfg.Graph, config Config) factflow.Facts {
+	if config.Registry == nil {
+		panic("transferfacts: Config.Registry is required")
+	}
 	if result == nil || graph == nil {
 		return factflow.NewFacts(factflow.FactsInput{})
 	}
 	l := lowerer{
+		registry:   config.Registry,
 		exprs:      make(map[any]factflow.ExprRef),
 		types:      make(map[any]factflow.TypeRef),
 		callPoints: callPointsByExpr(result, graph),
@@ -88,6 +97,7 @@ func Lower(result *semantics.Result, graph cfg.Graph) factflow.Facts {
 }
 
 type lowerer struct {
+	registry   *axis.Registry
 	exprs      map[any]factflow.ExprRef
 	types      map[any]factflow.TypeRef
 	callPoints map[*ast.FuncCallExpr]cfg.Point
@@ -242,26 +252,26 @@ func (l *lowerer) branchRefinement(fact semantics.BranchConditionFact) (factflow
 	case branchcond.CheckNil:
 		return factflow.NewBranchRefinement(
 			target,
-			presenceRefinement(presence.Absent()), true,
-			presenceRefinement(presence.Present()), true,
+			l.presenceRefinement(presence.Absent()), true,
+			l.presenceRefinement(presence.Present()), true,
 		), true
 	case branchcond.CheckNotNil:
 		return factflow.NewBranchRefinement(
 			target,
-			presenceRefinement(presence.Present()), true,
-			presenceRefinement(presence.Absent()), true,
+			l.presenceRefinement(presence.Present()), true,
+			l.presenceRefinement(presence.Absent()), true,
 		), true
 	case branchcond.CheckTruthy:
 		return factflow.NewBranchRefinement(
 			target,
-			presenceRefinement(presence.Present()), true,
+			l.presenceRefinement(presence.Present()), true,
 			factflow.ValueRefinement{}, false,
 		), true
 	case branchcond.CheckFalsy:
 		return factflow.NewBranchRefinement(
 			target,
 			factflow.ValueRefinement{}, false,
-			presenceRefinement(presence.Present()), true,
+			l.presenceRefinement(presence.Present()), true,
 		), true
 	case branchcond.CheckTypeEqual, branchcond.CheckTypeNot:
 		return l.typeBranchRefinement(target, fact.Check.Kind, fact.Check.TypeName)
@@ -275,44 +285,44 @@ func (l *lowerer) typeBranchRefinement(target path.Path, kind branchcond.CheckKi
 	if !ok {
 		return factflow.BranchRefinement{}, false
 	}
-	matched := typeMatchedRefinement(tag)
-	unmatched := typeUnmatchedRefinement(tag)
+	matched := l.typeMatchedRefinement(tag)
+	unmatched := l.typeUnmatchedRefinement(tag)
 	if kind == branchcond.CheckTypeNot {
 		return factflow.NewBranchRefinement(target, unmatched, true, matched, true), true
 	}
 	return factflow.NewBranchRefinement(target, matched, true, unmatched, true), true
 }
 
-func typeMatchedRefinement(tag runtimekind.Tag) factflow.ValueRefinement {
-	value := runtimeKindRefinement(runtimekind.Singleton(tag))
+func (l *lowerer) typeMatchedRefinement(tag runtimekind.Tag) factflow.ValueRefinement {
+	value := l.runtimeKindRefinement(runtimekind.Singleton(tag))
 	if tag == runtimekind.Nil {
-		return value.WithConstraint(product.DefaultRegistry(), presenceConstraint(presence.Absent()))
+		return value.WithConstraint(l.registry, l.presenceConstraint(presence.Absent()))
 	}
-	return value.WithConstraint(product.DefaultRegistry(), presenceConstraint(presence.Present()))
+	return value.WithConstraint(l.registry, l.presenceConstraint(presence.Present()))
 }
 
-func typeUnmatchedRefinement(tag runtimekind.Tag) factflow.ValueRefinement {
-	value := runtimeKindRefinement(runtimekind.Top().Without(tag))
+func (l *lowerer) typeUnmatchedRefinement(tag runtimekind.Tag) factflow.ValueRefinement {
+	value := l.runtimeKindRefinement(runtimekind.Top().Without(tag))
 	if tag == runtimekind.Nil {
-		return value.WithConstraint(product.DefaultRegistry(), presenceConstraint(presence.Present()))
+		return value.WithConstraint(l.registry, l.presenceConstraint(presence.Present()))
 	}
 	return value
 }
 
-func presenceRefinement(value presence.Value) factflow.ValueRefinement {
-	return factflow.NewValueConstraint(presenceConstraint(value))
+func (l *lowerer) presenceRefinement(value presence.Value) factflow.ValueRefinement {
+	return factflow.NewValueConstraint(l.presenceConstraint(value))
 }
 
-func presenceConstraint(value presence.Value) product.Value {
-	return product.NewWithPresence(product.DefaultRegistry(), product.ShapeTop, value)
+func (l *lowerer) presenceConstraint(value presence.Value) product.Value {
+	return product.NewWithPresence(l.registry, product.ShapeTop, value)
 }
 
-func runtimeKindRefinement(value runtimekind.Value) factflow.ValueRefinement {
-	return factflow.NewValueConstraint(runtimeKindConstraint(value))
+func (l *lowerer) runtimeKindRefinement(value runtimekind.Value) factflow.ValueRefinement {
+	return factflow.NewValueConstraint(l.runtimeKindConstraint(value))
 }
 
-func runtimeKindConstraint(value runtimekind.Value) product.Value {
-	return product.Set(product.DefaultRegistry(), product.Top(), runtimekind.Key, value)
+func (l *lowerer) runtimeKindConstraint(value runtimekind.Value) product.Value {
+	return product.Set(l.registry, product.Top(), runtimekind.Key, value)
 }
 
 func runtimeTag(typeName string) (runtimekind.Tag, bool) {
@@ -469,12 +479,12 @@ func (l *lowerer) addAssertion(input *factflow.FactsInput, outer valuesource.Sou
 	if input.ValueOverlays == nil {
 		input.ValueOverlays = make(map[factflow.ExprRef]factflow.ValueOverlay)
 	}
-	input.ValueOverlays[outerRef] = factflow.NewValueOverlay(l.valueSource(inner), assertionOverlay(value))
+	input.ValueOverlays[outerRef] = factflow.NewValueOverlay(l.valueSource(inner), l.assertionOverlay(value))
 	l.addAssertionOverlaysForSource(input, inner)
 }
 
-func assertionOverlay(value assertion.Value) product.Value {
-	return product.Set(product.DefaultRegistry(), product.Top(), assertion.Key, value)
+func (l *lowerer) assertionOverlay(value assertion.Value) product.Value {
+	return product.Set(l.registry, product.Top(), assertion.Key, value)
 }
 
 func castAssertionValue(typ ast.TypeExpr) assertion.Value {

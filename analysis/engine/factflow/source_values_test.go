@@ -1,6 +1,7 @@
 package factflow
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/domain/state/key"
@@ -12,6 +13,16 @@ import (
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/symbol"
 )
+
+func TestSourceValuesPanicsWithoutRegistry(t *testing.T) {
+	defer func() {
+		if r := recover(); r == nil || !strings.Contains(r.(string), "SourceValuesConfig.Registry is required") {
+			t.Fatal("NewSourceValues did not panic")
+		}
+	}()
+
+	_ = NewSourceValues(SourceValuesConfig{})
+}
 
 func TestSourceValuesExpressionMapResolvesAndDoesNotMutateState(t *testing.T) {
 	reg := product.DefaultRegistry()
@@ -240,6 +251,24 @@ func TestValueOverlaySourceValuesAppliesOverlayToCallSource(t *testing.T) {
 	if baseKind := product.Get(reg, callValue, runtimekind.Key); !runtimekind.Equal(baseKind, runtimekind.Top()) {
 		t.Fatalf("call return value mutated with runtime kind = %s", baseKind)
 	}
+}
+
+func TestValueOverlaySourceValuesPanicsWithoutRegistry(t *testing.T) {
+	reg := product.DefaultRegistry()
+	base := NewSourceValues(SourceValuesConfig{Registry: reg})
+
+	defer func() {
+		if r := recover(); r == nil || !strings.Contains(r.(string), "value overlay source values require a registry") {
+			t.Fatal("withValueOverlaySourceValues did not panic")
+		}
+	}()
+
+	_ = withValueOverlaySourceValues(nil, base, map[ExprRef]ValueOverlay{
+		ExprRef(1): NewValueOverlay(
+			ValueSource{Kind: ValueSourceExpression, ExprRef: ExprRef(2), HasExpr: true},
+			runtimeKindOverlay(reg, runtimekind.Singleton(runtimekind.Table)),
+		),
+	})
 }
 
 func TestValueOverlaySourceValuesCanMeetCorePresenceOverlay(t *testing.T) {

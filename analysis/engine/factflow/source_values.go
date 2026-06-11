@@ -28,7 +28,7 @@ type SourceValuesConfig struct {
 func NewSourceValues(config SourceValuesConfig) SourceValues {
 	registry := config.Registry
 	if registry == nil {
-		registry = product.DefaultRegistry()
+		panic("factflow: SourceValuesConfig.Registry is required")
 	}
 	return sourceValueResolver{
 		registry:         registry,
@@ -114,8 +114,11 @@ func withValueOverlaySourceValues(reg *axis.Registry, base SourceValues, overlay
 	if base == nil || len(overlays) == 0 {
 		return base
 	}
+	if reg == nil {
+		panic("factflow: value overlay source values require a registry")
+	}
 	return valueOverlaySourceValues{
-		registry: productRegistry(reg),
+		registry: reg,
 		base:     base,
 		overlays: overlays,
 	}
@@ -156,11 +159,4 @@ func (r valueOverlaySourceValues) valueOfSource(
 		return product.Meet(r.registry, value, overlay.Overlay()), true
 	}
 	return r.base.ValueOfSource(point, source, in, read)
-}
-
-func productRegistry(reg *axis.Registry) *axis.Registry {
-	if reg == nil {
-		return product.DefaultRegistry()
-	}
-	return reg
 }
