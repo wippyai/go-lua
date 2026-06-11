@@ -42,6 +42,53 @@ func TestTypeEqualsRecursiveEquivalent(t *testing.T) {
 	}
 }
 
+func TestEqualityFacadeMatchesTypHelpers(t *testing.T) {
+	var nilFunction *typ.Function
+	var nilType typ.Type = nilFunction
+
+	recA := typ.NewRecursivePlaceholder("Node")
+	recA.SetBody(&typ.Record{Fields: []typ.Field{{Name: "next", Type: recA}}})
+	recB := typ.NewRecursivePlaceholder("Node")
+	recB.SetBody(&typ.Record{Fields: []typ.Field{{Name: "next", Type: recB}}})
+
+	acyclicA := &typ.Record{Fields: []typ.Field{{Name: "name", Type: typ.String}}}
+	acyclicB := &typ.Record{Fields: []typ.Field{{Name: "name", Type: typ.String}}}
+
+	for _, tc := range []struct {
+		name string
+		a    typ.Type
+		b    typ.Type
+	}{
+		{name: "recursive equivalent", a: recA, b: recB},
+		{name: "recursive same node", a: recA, b: recA},
+		{name: "acyclic structural pair", a: acyclicA, b: acyclicB},
+		{name: "typed nil and nil", a: nilType, b: nil},
+	} {
+		if got, want := TypeEquals(tc.a, tc.b), typ.TypeEquals(tc.a, tc.b); got != want {
+			t.Fatalf("%s: identity.TypeEquals = %v, typ.TypeEquals = %v", tc.name, got, want)
+		}
+		if got, want := SameNode(tc.a, tc.b), typ.SameNode(tc.a, tc.b); got != want {
+			t.Fatalf("%s: identity.SameNode = %v, typ.SameNode = %v", tc.name, got, want)
+		}
+		if got, want := SameNodeOrAcyclicEqual(tc.a, tc.b), typ.SameNodeOrAcyclicEqual(tc.a, tc.b); got != want {
+			t.Fatalf("%s: identity.SameNodeOrAcyclicEqual = %v, typ.SameNodeOrAcyclicEqual = %v", tc.name, got, want)
+		}
+	}
+
+	for _, tc := range []struct {
+		name string
+		t    typ.Type
+	}{
+		{name: "nil", t: nil},
+		{name: "typed nil", t: nilType},
+		{name: "non-nil", t: typ.String},
+	} {
+		if got, want := NormalizeNilType(tc.t), typ.NormalizeNilType(tc.t); got != want {
+			t.Fatalf("%s: identity.NormalizeNilType = %v, typ.NormalizeNilType = %v", tc.name, got, want)
+		}
+	}
+}
+
 func TestSameNodeOrAcyclicEqual(t *testing.T) {
 	left := &typ.Record{Fields: []typ.Field{{Name: "name", Type: typ.String}}}
 	right := &typ.Record{Fields: []typ.Field{{Name: "name", Type: typ.String}}}

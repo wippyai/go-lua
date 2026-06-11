@@ -175,7 +175,7 @@ func hashBodyWithVisitedMemo(t Type, visited map[*Recursive]bool, memo map[Type]
 			for _, p := range g.TypeParams {
 				h = hash.MixHash(h, hashBodyWithVisitedMemo(p, visited, memo))
 			}
-			if g.Name == "" && g.Body != nil {
+			if g.Body != nil {
 				h = hash.MixHash(h, hashBodyWithVisitedMemo(g.Body, visited, memo))
 			}
 			return h

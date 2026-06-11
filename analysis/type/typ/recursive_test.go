@@ -643,6 +643,26 @@ func TestOpenRecursiveWrapperHashRefreshesForEquality(t *testing.T) {
 	}
 }
 
+func TestEqualityHashNamedGenericIncludesBodyInOpenRecursivePath(t *testing.T) {
+	rec := NewRecursivePlaceholder("Node")
+	left := NewGeneric("Box", []*TypeParam{NewTypeParam("T", nil)},
+		newRecord().Field("value", String).OptField("next", rec).Build())
+	right := NewGeneric("Box", []*TypeParam{NewTypeParam("T", nil)},
+		newRecord().Field("value", Number).OptField("next", rec).Build())
+
+	rec.SetBody(newRecord().OptField("next", rec).Build())
+
+	if !knownContainsOpenRecursive(left) || !knownContainsOpenRecursive(right) {
+		t.Fatal("test requires generics built through the open-recursive equality hash path")
+	}
+	if typeEquals(left, right) {
+		t.Fatal("same-named generics with different bodies should not be equal")
+	}
+	if EqualityHash(left) == EqualityHash(right) {
+		t.Fatalf("same-named generics with different bodies must not share EqualityHash: %d", EqualityHash(left))
+	}
+}
+
 // TestRecursiveMutualHashConsistency tests that mutual recursion produces
 // consistent hashes when accessed multiple times.
 func TestRecursiveMutualHashConsistency(t *testing.T) {
