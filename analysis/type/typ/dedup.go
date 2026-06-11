@@ -69,7 +69,7 @@ func sameUnionMember(a, b Type) bool {
 	if sameNodeOrAcyclicEqual(a, b) {
 		return true
 	}
-	if containsRecursiveType(a) || containsRecursiveType(b) {
+	if knownContainsRecursive(a) || knownContainsRecursive(b) {
 		return false
 	}
 	return typeEquals(a, b)
