@@ -53,6 +53,14 @@ func Join(a, b Value) Value {
 	return top
 }
 
+// Meet is the greatest lower bound of the evidence chain.
+func Meet(a, b Value) Value {
+	if a < b {
+		return a
+	}
+	return b
+}
+
 // Widen accelerates an ascending chain. The evidence lattice is finite, so Widen
 // equals Join.
 func Widen(prev, next Value) Value {

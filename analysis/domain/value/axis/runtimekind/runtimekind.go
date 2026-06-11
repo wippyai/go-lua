@@ -82,6 +82,10 @@ func Intersect(a, b Value) Value {
 	return Value{mask: a.mask & b.mask & allKnownMask}
 }
 
+func Meet(a, b Value) Value {
+	return Intersect(a, b)
+}
+
 func Contains(v Value, tag Tag) bool {
 	return v.Contains(tag)
 }

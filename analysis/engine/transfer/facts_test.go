@@ -71,12 +71,8 @@ func TestDTOConstructorsAndAccessorsCopySlices(t *testing.T) {
 	assertDirectField(t, pathAssignment.TargetPath(), "field")
 
 	branchTarget := path.NewPath(symbol.ID(15), "value").Field("ready")
-	trueRefinement := NewValueRefinement().
-		WithPresence(presence.Present()).
-		WithRuntimeKind(runtimekind.Singleton(runtimekind.Table))
-	falseRefinement := NewValueRefinement().
-		WithPresence(presence.Absent()).
-		WithRuntimeKind(runtimekind.Singleton(runtimekind.Nil))
+	trueRefinement := valueRefinementWithPresenceRuntime(presence.Present(), runtimekind.Singleton(runtimekind.Table))
+	falseRefinement := valueRefinementWithPresenceRuntime(presence.Absent(), runtimekind.Singleton(runtimekind.Nil))
 	branchRefinement := NewBranchRefinement(branchTarget, trueRefinement, true, falseRefinement, true)
 	assertPathEqual(t, branchRefinement.TargetPath(), branchTarget)
 	if got, ok := branchRefinement.TrueValue(); !ok || got.IsEmpty() {
@@ -86,16 +82,9 @@ func TestDTOConstructorsAndAccessorsCopySlices(t *testing.T) {
 		t.Fatalf("false value refinement = %#v/%v, want non-empty/true", got, ok)
 	}
 	gotTrue, _ := branchRefinement.TrueValue()
-	if got, ok := gotTrue.Presence(); !ok || !presence.Equal(got, presence.Present()) {
-		t.Fatalf("true presence = %s/%v, want present/true", got, ok)
-	}
-	if got, ok := gotTrue.RuntimeKind(); !ok || !runtimekind.Equal(got, runtimekind.Singleton(runtimekind.Table)) {
-		t.Fatalf("true runtime kind = %s/%v, want table/true", got, ok)
-	}
+	assertValueRefinementConstraint(t, "true", gotTrue, presence.Present(), runtimekind.Singleton(runtimekind.Table))
 	gotFalse, _ := branchRefinement.FalseValue()
-	if got, ok := gotFalse.Presence(); !ok || !presence.Equal(got, presence.Absent()) {
-		t.Fatalf("false presence = %s/%v, want absent/true", got, ok)
-	}
+	assertValueRefinementConstraint(t, "false", gotFalse, presence.Absent(), runtimekind.Singleton(runtimekind.Nil))
 	if got, ok := branchRefinement.ValueForEdge(true); !ok || got.IsEmpty() {
 		t.Fatalf("true edge value = %#v/%v, want non-empty/true", got, ok)
 	}
@@ -251,8 +240,8 @@ func TestFactsCarrierCopiesAndReturnsFalseForMissingFacts(t *testing.T) {
 		BranchRefinements: map[cfg.Point]BranchRefinement{
 			point: NewBranchRefinement(
 				path.NewPath(symbol.ID(34), "value").Field("ready"),
-				NewValueRefinement().WithPresence(presence.Present()).WithRuntimeKind(runtimekind.Singleton(runtimekind.Table)), true,
-				NewValueRefinement().WithPresence(presence.Absent()).WithRuntimeKind(runtimekind.Singleton(runtimekind.Nil)), true,
+				valueRefinementWithPresenceRuntime(presence.Present(), runtimekind.Singleton(runtimekind.Table)), true,
+				valueRefinementWithPresenceRuntime(presence.Absent(), runtimekind.Singleton(runtimekind.Nil)), true,
 			),
 		},
 		Returns: map[cfg.Point]Return{
@@ -287,8 +276,8 @@ func TestFactsCarrierCopiesAndReturnsFalseForMissingFacts(t *testing.T) {
 	input.PathAssignments[point] = NewPathAssignment(path.NewPath(symbol.ID(42), "changed").Field("field"), callSource)
 	input.BranchRefinements[point] = NewBranchRefinement(
 		path.NewPath(symbol.ID(43), "changed").Field("field"),
-		NewValueRefinement().WithPresence(presence.Absent()), true,
-		NewValueRefinement().WithPresence(presence.Present()), true,
+		valueRefinementWithPresence(presence.Absent()), true,
+		valueRefinementWithPresence(presence.Present()), true,
 	)
 	input.Returns[point] = NewReturn([]ValueSource{{Kind: ValueSourceNil}})
 	input.Calls[point] = NewCallProducer(CallProducerConfig{Context: CallProducerContextAssignment})
@@ -365,22 +354,12 @@ func TestFactsCarrierCopiesAndReturnsFalseForMissingFacts(t *testing.T) {
 	if !ok {
 		t.Fatalf("branch true value missing")
 	}
-	if got, ok := trueValue.Presence(); !ok || !presence.Equal(got, presence.Present()) {
-		t.Fatalf("branch true presence = %s/%v, want present/true", got, ok)
-	}
-	if got, ok := trueValue.RuntimeKind(); !ok || !runtimekind.Equal(got, runtimekind.Singleton(runtimekind.Table)) {
-		t.Fatalf("branch true runtime kind = %s/%v, want table/true", got, ok)
-	}
+	assertValueRefinementConstraint(t, "branch true", trueValue, presence.Present(), runtimekind.Singleton(runtimekind.Table))
 	falseValue, ok := branchRefinementAgain.FalseValue()
 	if !ok {
 		t.Fatalf("branch false value missing")
 	}
-	if got, ok := falseValue.Presence(); !ok || !presence.Equal(got, presence.Absent()) {
-		t.Fatalf("branch false presence = %s/%v, want absent/true", got, ok)
-	}
-	if got, ok := falseValue.RuntimeKind(); !ok || !runtimekind.Equal(got, runtimekind.Singleton(runtimekind.Nil)) {
-		t.Fatalf("branch false runtime kind = %s/%v, want nil/true", got, ok)
-	}
+	assertValueRefinementConstraint(t, "branch false", falseValue, presence.Absent(), runtimekind.Singleton(runtimekind.Nil))
 
 	ret, ok := facts.Return(point)
 	if !ok {
@@ -452,5 +431,44 @@ func assertPathEqual(t *testing.T, got path.Path, want path.Path) {
 	t.Helper()
 	if !got.Equal(want) {
 		t.Fatalf("path = %q, want %q", got.String(), want.String())
+	}
+}
+
+func valueRefinementWithPresence(value presence.Value) ValueRefinement {
+	return NewValueConstraint(presenceConstraint(value))
+}
+
+func valueRefinementWithPresenceRuntime(p presence.Value, kind runtimekind.Value) ValueRefinement {
+	reg := product.DefaultRegistry()
+	return NewValueRefinement().
+		WithConstraint(reg, presenceConstraint(p)).
+		WithConstraint(reg, runtimeKindConstraint(kind))
+}
+
+func presenceConstraint(value presence.Value) product.Value {
+	return product.NewWithPresence(product.DefaultRegistry(), product.ShapeTop, value)
+}
+
+func runtimeKindConstraint(value runtimekind.Value) product.Value {
+	return product.Set(product.DefaultRegistry(), product.Top(), runtimekind.Key, value)
+}
+
+func assertValueRefinementConstraint(
+	t *testing.T,
+	label string,
+	got ValueRefinement,
+	wantPresence presence.Value,
+	wantRuntimeKind runtimekind.Value,
+) {
+	t.Helper()
+	constraint, ok := got.Constraint()
+	if !ok {
+		t.Fatalf("%s constraint missing", label)
+	}
+	if gotPresence := product.PresenceOf(constraint); !presence.Equal(gotPresence, wantPresence) {
+		t.Fatalf("%s presence = %s, want %s", label, gotPresence, wantPresence)
+	}
+	if gotRuntimeKind := product.Get(product.DefaultRegistry(), constraint, runtimekind.Key); !runtimekind.Equal(gotRuntimeKind, wantRuntimeKind) {
+		t.Fatalf("%s runtime kind = %s, want %s", label, gotRuntimeKind, wantRuntimeKind)
 	}
 }

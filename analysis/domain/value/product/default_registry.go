@@ -45,6 +45,11 @@ func requireProductRegistry(reg *axis.Registry) {
 	if _, ok := reg.LookupErased(presence.Key.ID()); ok {
 		panic("product: presence is a core lane and must not be registered as a sparse axis")
 	}
+	for _, spec := range reg.Specs() {
+		if err := validateProductSparseAxis(spec); err != nil {
+			panic(err)
+		}
+	}
 }
 
 func buildDefaultRegistry() *axis.Registry {
@@ -65,8 +70,18 @@ func registerProductSparseAxis(reg *axis.Registry, spec axis.ErasedSpec) error {
 	if spec == nil {
 		return reg.RegisterErased(spec)
 	}
+	if err := validateProductSparseAxis(spec); err != nil {
+		return err
+	}
+	return reg.RegisterErased(spec)
+}
+
+func validateProductSparseAxis(spec axis.ErasedSpec) error {
 	if spec.ID() == presence.Key.ID() {
 		return fmt.Errorf("product: presence is a core lane and must not be registered as a sparse axis")
 	}
-	return reg.RegisterErased(spec)
+	if !spec.HasMeet() {
+		return fmt.Errorf("product: sparse axis %q must define Meet", spec.ID())
+	}
+	return nil
 }

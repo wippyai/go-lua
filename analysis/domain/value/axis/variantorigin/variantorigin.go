@@ -63,6 +63,36 @@ func Join(a, b Value) Value {
 	return Of(a.family, cases)
 }
 
+func Meet(a, b Value) Value {
+	if a.state == bottom || b.state == bottom {
+		return Bottom()
+	}
+	if a.state == top {
+		return b
+	}
+	if b.state == top {
+		return a
+	}
+	if a.family != b.family {
+		return Bottom()
+	}
+	cases := make([]int, 0, min(len(a.cases), len(b.cases)))
+	i, j := 0, 0
+	for i < len(a.cases) && j < len(b.cases) {
+		switch {
+		case a.cases[i] == b.cases[j]:
+			cases = append(cases, a.cases[i])
+			i++
+			j++
+		case a.cases[i] < b.cases[j]:
+			i++
+		default:
+			j++
+		}
+	}
+	return Of(a.family, cases)
+}
+
 func Widen(prev, next Value) Value {
 	return Join(prev, next)
 }

@@ -108,6 +108,20 @@ func Join(a, b Value) Value {
 	return Of(a.flags & b.flags)
 }
 
+// Meet combines compatible assertion evidence on the same path.
+func Meet(a, b Value) Value {
+	if a.state == bottom || b.state == bottom {
+		return Bottom()
+	}
+	if a.state == top {
+		return b
+	}
+	if b.state == top {
+		return a
+	}
+	return Of(a.flags | b.flags)
+}
+
 // Combine adds same-path assertion indicators together. Unlike Join, this does
 // not model control-flow merging; it records multiple claims made about the same
 // value expression.

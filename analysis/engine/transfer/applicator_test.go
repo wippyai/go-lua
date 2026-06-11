@@ -1204,6 +1204,44 @@ func TestFactsEdgeTransferRuntimeKindContradictionGoesBottom(t *testing.T) {
 	assertRuntimeKind(t, reg, got[elsePoint].ReadValue(reg, key.SymbolValue(target)), runtimekind.Singleton(runtimekind.Number))
 }
 
+func TestFactsEdgeTransferAppliesGenericProductConstraintAxis(t *testing.T) {
+	reg := wideningRegistry()
+	graph := cfg.New()
+	branch := graph.AddNode(cfg.NodeBranch)
+	thenPoint := graph.AddNode(cfg.NodeNoop)
+	elsePoint := graph.AddNode(cfg.NodeNoop)
+	graph.AddEdge(graph.Entry(), branch, false)
+	graph.AddEdge(branch, thenPoint, true)
+	graph.AddEdge(branch, elsePoint, false)
+	graph.AddEdge(thenPoint, graph.Exit(), false)
+	graph.AddEdge(elsePoint, graph.Exit(), false)
+
+	target := symbol.ID(312)
+	initialValue := wideningValue(reg, wideningExactMax)
+	constraint := product.Set(reg, product.Top(), wideningKey, wideningOne)
+	trueRefinement := NewValueRefinement().WithConstraint(reg, constraint)
+	initial := state.State{}.WriteValue(reg, key.SymbolValue(target), initialValue)
+	got := Run(Config{
+		Graph:      graph,
+		Registry:   reg,
+		EntryState: initial,
+		EdgeTransfer: NewFactsEdgeTransfer(FactsEdgeTransferConfig{
+			Facts: NewFacts(FactsInput{
+				BranchRefinements: map[cfg.Point]BranchRefinement{
+					branch: NewBranchRefinement(path.NewPath(target, "x"), trueRefinement, true, ValueRefinement{}, false),
+				},
+			}),
+		}),
+	})
+
+	if gotValue := product.Get(reg, got[thenPoint].ReadValue(reg, key.SymbolValue(target)), wideningKey); gotValue != wideningOne {
+		t.Fatalf("true edge custom axis = %v, want %v", gotValue, wideningOne)
+	}
+	if gotValue := product.Get(reg, got[elsePoint].ReadValue(reg, key.SymbolValue(target)), wideningKey); gotValue != wideningExactMax {
+		t.Fatalf("false edge custom axis = %v, want %v", gotValue, wideningExactMax)
+	}
+}
+
 func TestFactsEdgeTransferNoopsWithoutBranchConditionOrVisibility(t *testing.T) {
 	t.Run("non-branch edge", func(t *testing.T) {
 		reg := product.DefaultRegistry()
@@ -1414,11 +1452,11 @@ func branchWithPresence(
 ) BranchRefinement {
 	var trueValue ValueRefinement
 	if hasTrue {
-		trueValue = trueValue.WithPresence(truePresence)
+		trueValue = NewValueConstraint(product.NewWithPresence(product.DefaultRegistry(), product.ShapeTop, truePresence))
 	}
 	var falseValue ValueRefinement
 	if hasFalse {
-		falseValue = falseValue.WithPresence(falsePresence)
+		falseValue = NewValueConstraint(product.NewWithPresence(product.DefaultRegistry(), product.ShapeTop, falsePresence))
 	}
 	return NewBranchRefinement(targetPath, trueValue, hasTrue, falseValue, hasFalse)
 }
@@ -1432,11 +1470,11 @@ func branchWithRuntimeKind(
 ) BranchRefinement {
 	var trueValue ValueRefinement
 	if hasTrue {
-		trueValue = trueValue.WithRuntimeKind(trueRuntimeKind)
+		trueValue = NewValueConstraint(product.Set(product.DefaultRegistry(), product.Top(), runtimekind.Key, trueRuntimeKind))
 	}
 	var falseValue ValueRefinement
 	if hasFalse {
-		falseValue = falseValue.WithRuntimeKind(falseRuntimeKind)
+		falseValue = NewValueConstraint(product.Set(product.DefaultRegistry(), product.Top(), runtimekind.Key, falseRuntimeKind))
 	}
 	return NewBranchRefinement(targetPath, trueValue, hasTrue, falseValue, hasFalse)
 }

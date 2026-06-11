@@ -299,6 +299,12 @@ func wideningRegistry() *axis.Registry {
 			}
 			return b
 		},
+		Meet: func(a, b widening) widening {
+			if a < b {
+				return a
+			}
+			return b
+		},
 		Widen: func(prev, next widening) widening {
 			if prev == next {
 				return prev
@@ -313,5 +319,5 @@ func wideningRegistry() *axis.Registry {
 }
 
 func wideningValue(reg *axis.Registry, value widening) product.Value {
-	return product.Set(reg, product.Bottom(reg), wideningKey, value)
+	return product.Set(reg, product.Top(), wideningKey, value)
 }

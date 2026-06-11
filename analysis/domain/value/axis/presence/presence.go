@@ -57,6 +57,20 @@ func Join(a, b Value) Value {
 	return maybe
 }
 
+// Meet is the greatest lower bound of the four-point lattice.
+func Meet(a, b Value) Value {
+	if a == b {
+		return a
+	}
+	if a == maybe {
+		return b
+	}
+	if b == maybe {
+		return a
+	}
+	return bottom
+}
+
 // Widen equals Join: the lattice has finite height, so no acceleration is needed.
 func Widen(prev, next Value) Value {
 	return Join(prev, next)

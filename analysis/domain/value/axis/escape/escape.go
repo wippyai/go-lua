@@ -54,6 +54,14 @@ func Join(a, b Value) Value {
 	return b
 }
 
+// Meet is the greatest lower bound of the three-point chain.
+func Meet(a, b Value) Value {
+	if a < b {
+		return a
+	}
+	return b
+}
+
 // Widen equals Join: the chain has finite height, so no acceleration is needed.
 func Widen(prev, next Value) Value {
 	return Join(prev, next)

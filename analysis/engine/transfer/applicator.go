@@ -4,8 +4,6 @@ import (
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/state/key"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
-	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
-	"github.com/wippyai/go-lua/analysis/domain/value/axis/runtimekind"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/engine/visibility"
@@ -251,46 +249,11 @@ func applyBranchRefinement(
 }
 
 func refineProductValue(reg *axis.Registry, value product.Value, refinement ValueRefinement) product.Value {
-	if refinedPresence, ok := refinement.Presence(); ok {
-		value = refineProductPresence(reg, value, refinedPresence)
-	}
-	if runtimeKinds, ok := refinement.RuntimeKind(); ok {
-		value = refineProductRuntimeKind(reg, value, runtimeKinds)
-	}
-	return value
-}
-
-func refineProductPresence(reg *axis.Registry, value product.Value, refinedPresence presence.Value) product.Value {
-	currentPresence := product.PresenceOf(value)
-	switch {
-	case presence.Equal(currentPresence, presence.Bottom()):
-		return product.Bottom(reg)
-	case presence.Equal(refinedPresence, presence.Bottom()):
-		return product.Bottom(reg)
-	case presence.Equal(currentPresence, refinedPresence):
-		return value
-	case presence.Equal(currentPresence, presence.Top()):
-		return product.WithPresence(reg, value, refinedPresence)
-	case presence.Equal(refinedPresence, presence.Top()):
-		return value
-	default:
-		return product.Bottom(reg)
-	}
-}
-
-func refineProductRuntimeKind(reg *axis.Registry, value product.Value, refinedRuntimeKind runtimekind.Value) product.Value {
-	if product.Equal(reg, value, product.Bottom(reg)) {
-		return product.Bottom(reg)
-	}
-	currentRuntimeKind := product.Get(reg, value, runtimekind.Key)
-	nextRuntimeKind := runtimekind.Intersect(currentRuntimeKind, refinedRuntimeKind)
-	if nextRuntimeKind.IsBottom() {
-		return product.Bottom(reg)
-	}
-	if runtimekind.Equal(currentRuntimeKind, nextRuntimeKind) {
+	constraint, ok := refinement.Constraint()
+	if !ok {
 		return value
 	}
-	return product.Set(reg, value, runtimekind.Key, nextRuntimeKind)
+	return product.Meet(reg, value, constraint)
 }
 
 func applyPathAssignment(

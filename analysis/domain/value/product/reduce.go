@@ -11,6 +11,9 @@ const maxReducerPasses = 32
 
 func reduce(reg *axis.Registry, shape Shape, p presence.Value, slots []slot) (Shape, presence.Value, []slot) {
 	shape, p, _ = reducePresenceShape(shape, p)
+	if isProductBottom(reg, p, slots) {
+		return ShapeBottom, presence.Bottom(), bottomSlots(reg)
+	}
 
 	reducers := reg.Reducers()
 	if len(reducers) == 0 {
@@ -33,11 +36,30 @@ func reduce(reg *axis.Registry, shape Shape, p presence.Value, slots []slot) (Sh
 			editor.presence = nextPresence
 			changed = true
 		}
+		if editor.isProductBottom() {
+			return ShapeBottom, presence.Bottom(), bottomSlots(reg)
+		}
 		if !changed {
 			return shape, editor.presence, editor.slots()
 		}
 	}
 	panic("product: reducer loop did not converge")
+}
+
+func isProductBottom(reg *axis.Registry, p presence.Value, slots []slot) bool {
+	if presence.Equal(p, presence.Bottom()) {
+		return true
+	}
+	for _, slot := range slots {
+		spec, ok := reg.LookupErased(slot.key)
+		if !ok {
+			panic("product: unregistered axis slot " + slot.key)
+		}
+		if spec.EqualAny(slot.value, spec.BottomAny()) {
+			return true
+		}
+	}
+	return false
 }
 
 func reducePresenceShape(shape Shape, p presence.Value) (Shape, presence.Value, bool) {
@@ -123,6 +145,22 @@ func (e *reduceEditor) consumeChanged() bool {
 	changed := e.changed
 	e.changed = false
 	return changed
+}
+
+func (e *reduceEditor) isProductBottom() bool {
+	if presence.Equal(e.presence, presence.Bottom()) {
+		return true
+	}
+	for key, value := range e.values {
+		spec, ok := e.reg.LookupErased(key)
+		if !ok {
+			panic("product: unregistered axis slot " + key)
+		}
+		if spec.EqualAny(value, spec.BottomAny()) {
+			return true
+		}
+	}
+	return false
 }
 
 func (e *reduceEditor) slots() []slot {

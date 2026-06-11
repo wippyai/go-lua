@@ -3,7 +3,6 @@ package transfer
 import (
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/assertion"
-	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
@@ -56,7 +55,7 @@ func (r sourceValueResolver) ValueOfSource(
 ) (product.Value, bool) {
 	switch source.Kind {
 	case ValueSourceNil:
-		return product.NewWithPresence(r.registry, product.ShapeTop, presence.Absent()), true
+		return product.Absent(r.registry), true
 	case ValueSourceExpression:
 		return r.valueOfExpression(point, source, in)
 	case ValueSourceCall:

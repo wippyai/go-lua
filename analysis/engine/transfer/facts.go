@@ -2,9 +2,8 @@ package transfer
 
 import (
 	"github.com/wippyai/go-lua/analysis/domain/path"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/assertion"
-	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
-	"github.com/wippyai/go-lua/analysis/domain/value/axis/runtimekind"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
@@ -200,14 +199,12 @@ func (a Assertion) Value() assertion.Value { return a.value }
 
 func (a Assertion) copy() Assertion { return a }
 
-// ValueRefinement describes one conjunctive product-value refinement. Each axis
-// is optional so branch edges can carry only the evidence the condition proves.
+// ValueRefinement describes one conjunctive product-value constraint. The
+// explicit has bit distinguishes "no edge constraint" from a deliberate
+// product.Top() no-op constraint.
 type ValueRefinement struct {
-	presence    presence.Value
-	hasPresence bool
-
-	runtimeKind    runtimekind.Value
-	hasRuntimeKind bool
+	constraint    product.Value
+	hasConstraint bool
 }
 
 // NewValueRefinement creates an empty value refinement.
@@ -215,33 +212,31 @@ func NewValueRefinement() ValueRefinement {
 	return ValueRefinement{}
 }
 
-// WithPresence returns r with a presence refinement.
-func (r ValueRefinement) WithPresence(value presence.Value) ValueRefinement {
-	r.presence = value
-	r.hasPresence = true
+// NewValueConstraint creates a value refinement from an already-built product
+// constraint.
+func NewValueConstraint(constraint product.Value) ValueRefinement {
+	return ValueRefinement{constraint: constraint, hasConstraint: true}
+}
+
+// WithConstraint returns r additionally constrained by constraint.
+func (r ValueRefinement) WithConstraint(reg *axis.Registry, constraint product.Value) ValueRefinement {
+	if !r.hasConstraint {
+		r.constraint = constraint
+		r.hasConstraint = true
+		return r
+	}
+	r.constraint = product.Meet(reg, r.constraint, constraint)
 	return r
 }
 
-// WithRuntimeKind returns r with a runtime-kind refinement.
-func (r ValueRefinement) WithRuntimeKind(value runtimekind.Value) ValueRefinement {
-	r.runtimeKind = value
-	r.hasRuntimeKind = true
-	return r
-}
-
-// Presence returns the presence refinement, if present.
-func (r ValueRefinement) Presence() (presence.Value, bool) {
-	return r.presence, r.hasPresence
-}
-
-// RuntimeKind returns the runtime-kind refinement, if present.
-func (r ValueRefinement) RuntimeKind() (runtimekind.Value, bool) {
-	return r.runtimeKind, r.hasRuntimeKind
+// Constraint returns the product constraint, if present.
+func (r ValueRefinement) Constraint() (product.Value, bool) {
+	return r.constraint, r.hasConstraint
 }
 
 // IsEmpty reports whether r carries no axis refinements.
 func (r ValueRefinement) IsEmpty() bool {
-	return !r.hasPresence && !r.hasRuntimeKind
+	return !r.hasConstraint
 }
 
 // BranchRefinement describes branch-edge value refinements for one access path.

@@ -3,6 +3,7 @@ package product
 import (
 	"fmt"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
@@ -91,6 +92,22 @@ func TestDefaultRegistryWithAxesRejectsDuplicateIDs(t *testing.T) {
 	if _, err := DefaultRegistryWithAxes(syntheticSpec().Erase(), syntheticSpec().Erase()); err == nil {
 		t.Fatalf("duplicate caller axis ID should fail")
 	}
+}
+
+func TestProductRegistryRejectsSparseAxisWithoutMeet(t *testing.T) {
+	spec := noMeetSpec().Erase()
+	if _, err := DefaultRegistryWithAxes(spec); err == nil || !strings.Contains(err.Error(), `product: sparse axis "test.synthetic.no_meet" must define Meet`) {
+		t.Fatalf("DefaultRegistryWithAxes(no-meet) error = %v, want product no-meet error", err)
+	}
+
+	reg := axis.NewRegistry()
+	if err := reg.RegisterErased(spec); err != nil {
+		t.Fatalf("generic axis registry should accept no-meet spec: %v", err)
+	}
+	reg.Freeze()
+	mustPanic(t, func() {
+		_ = Domain(reg)
+	})
 }
 
 func TestExplicitTopSparseSlotNormalizesToOmission(t *testing.T) {
@@ -301,6 +318,27 @@ func TestPresenceIsCoreLane(t *testing.T) {
 	}
 }
 
+func TestProductMeetCoreAndRuntimeKindRefinements(t *testing.T) {
+	reg := DefaultRegistry()
+	top := Top()
+
+	present := WithPresence(reg, top, presence.Present())
+	absent := WithPresence(reg, top, presence.Absent())
+	if got := Meet(reg, present, absent); !Equal(reg, got, Bottom(reg)) {
+		t.Fatalf("present meet absent = %s, want product bottom", formatValue(got))
+	}
+
+	tableKind := Set(reg, top, runtimekind.Key, runtimekind.Singleton(runtimekind.Table))
+	functionKind := Set(reg, top, runtimekind.Key, runtimekind.Singleton(runtimekind.Function))
+	if got := Meet(reg, tableKind, functionKind); !Equal(reg, got, Bottom(reg)) {
+		t.Fatalf("table meet function = %s, want product bottom", formatValue(got))
+	}
+
+	if got := Meet(reg, top, tableKind); !Equal(reg, got, tableKind) {
+		t.Fatalf("top meet table = %s, want table", formatValue(got))
+	}
+}
+
 func TestPresenceCannotBeSparseProductAxis(t *testing.T) {
 	reg := axis.NewRegistry()
 	axis.Register(reg, presence.Spec())
@@ -332,6 +370,20 @@ func TestProductRequiresFrozenRegistry(t *testing.T) {
 	})
 	if got := Get(reg, v, syntheticKey); got != syntheticLow {
 		t.Fatalf("value changed after failed frozen registry mutation: %v", got)
+	}
+}
+
+func TestProductMeetUsesCustomSparseAxis(t *testing.T) {
+	reg := axis.NewRegistry()
+	axis.Register(reg, syntheticSpec())
+	reg.Freeze()
+	d := Domain(reg)
+
+	low := Set(reg, d.Top(), syntheticKey, syntheticLow)
+	high := Set(reg, d.Top(), syntheticKey, syntheticHigh)
+	got := d.Meet(low, high)
+	if gotValue := Get(reg, got, syntheticKey); gotValue != syntheticLow {
+		t.Fatalf("custom sparse meet = %v, want %v", gotValue, syntheticLow)
 	}
 }
 
@@ -430,6 +482,7 @@ const (
 
 var syntheticKey = axis.NewKey[synthetic]("test.synthetic")
 var secondSyntheticKey = axis.NewKey[synthetic]("test.synthetic.second")
+var noMeetKey = axis.NewKey[synthetic]("test.synthetic.no_meet")
 
 func syntheticSpec() axis.Spec[synthetic] {
 	return axis.Spec[synthetic]{
@@ -442,6 +495,12 @@ func syntheticSpec() axis.Spec[synthetic] {
 		},
 		Join: func(a, b synthetic) synthetic {
 			if a > b {
+				return a
+			}
+			return b
+		},
+		Meet: func(a, b synthetic) synthetic {
+			if a < b {
 				return a
 			}
 			return b
@@ -461,6 +520,13 @@ func syntheticSpec() axis.Spec[synthetic] {
 func secondSyntheticSpec() axis.Spec[synthetic] {
 	spec := syntheticSpec()
 	spec.Key = secondSyntheticKey
+	return spec
+}
+
+func noMeetSpec() axis.Spec[synthetic] {
+	spec := syntheticSpec()
+	spec.Key = noMeetKey
+	spec.Meet = nil
 	return spec
 }
 

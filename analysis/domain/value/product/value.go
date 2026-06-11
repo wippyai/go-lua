@@ -64,11 +64,15 @@ func Top() Value {
 
 func Bottom(reg *axis.Registry) Value {
 	reg = registryOrDefault(reg)
+	return intern(reg, ShapeBottom, presence.Bottom(), bottomSlots(reg))
+}
+
+func bottomSlots(reg *axis.Registry) []slot {
 	slots := make([]slot, 0, len(reg.Specs()))
 	for _, spec := range reg.Specs() {
 		slots = append(slots, slot{key: spec.ID(), value: spec.BottomAny()})
 	}
-	return intern(reg, ShapeBottom, presence.Bottom(), slots)
+	return slots
 }
 
 func New(reg *axis.Registry, shape Shape) Value {
@@ -77,6 +81,10 @@ func New(reg *axis.Registry, shape Shape) Value {
 
 func NewWithPresence(reg *axis.Registry, shape Shape, p presence.Value) Value {
 	return intern(registryOrDefault(reg), shape, p, nil)
+}
+
+func Absent(reg *axis.Registry) Value {
+	return NewWithPresence(reg, ShapeTop, presence.Absent())
 }
 
 func ShapeOf(v Value) Shape {
@@ -195,6 +203,13 @@ func shapeJoin(a, b Shape) Shape {
 		return ShapeTop
 	}
 	return ShapeBottom
+}
+
+func shapeMeet(a, b Shape) Shape {
+	if a == ShapeBottom || b == ShapeBottom {
+		return ShapeBottom
+	}
+	return ShapeTop
 }
 
 func shapeWiden(prev, next Shape) Shape {

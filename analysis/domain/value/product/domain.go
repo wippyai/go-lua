@@ -20,6 +20,9 @@ func Domain(reg *axis.Registry) lattice.Lattice[Value] {
 		Join: func(a, b Value) Value {
 			return Join(reg, a, b)
 		},
+		Meet: func(a, b Value) Value {
+			return Meet(reg, a, b)
+		},
 		Widen: func(prev, next Value) Value {
 			return Widen(reg, prev, next)
 		},
@@ -80,6 +83,24 @@ func Join(reg *axis.Registry, a, b Value) Value {
 	return intern(reg,
 		shapeJoin(ShapeOf(a), ShapeOf(b)),
 		presence.Join(PresenceOf(a), PresenceOf(b)),
+		slots,
+	)
+}
+
+func Meet(reg *axis.Registry, a, b Value) Value {
+	reg = registryOrDefault(reg)
+	validateValue(reg, a)
+	validateValue(reg, b)
+	slots := make([]slot, 0, len(reg.Specs()))
+	for _, spec := range reg.Specs() {
+		value := spec.MeetAny(axisValue(spec, a), axisValue(spec, b))
+		if !spec.IsTopAny(value) {
+			slots = append(slots, slot{key: spec.ID(), value: value})
+		}
+	}
+	return intern(reg,
+		shapeMeet(ShapeOf(a), ShapeOf(b)),
+		presence.Meet(PresenceOf(a), PresenceOf(b)),
 		slots,
 	)
 }

@@ -53,6 +53,7 @@ type Spec[T any] struct {
 	Equal    func(a, b T) bool
 	LessOrEq func(a, b T) bool
 	Join     func(a, b T) T
+	Meet     func(a, b T) T
 	Widen    func(prev, next T) T
 	Hash     func(T) uint64
 	Reducer  Reducer
@@ -62,7 +63,7 @@ type Spec[T any] struct {
 func (s Spec[T]) Lattice() lattice.Lattice[T] {
 	s = s.normalized()
 	mustValidate(s)
-	return lattice.Lattice[T]{
+	l := lattice.Lattice[T]{
 		Bottom:   s.Bottom,
 		Top:      s.Top,
 		Equal:    s.Equal,
@@ -70,6 +71,10 @@ func (s Spec[T]) Lattice() lattice.Lattice[T] {
 		Join:     s.Join,
 		Widen:    s.Widen,
 	}
+	if s.Meet != nil {
+		l.Meet = s.Meet
+	}
+	return l
 }
 
 // Erase adapts this typed spec to the erased operations used by the product
@@ -135,6 +140,8 @@ type ErasedSpec interface {
 	EqualAny(a, b any) bool
 	LessOrEqAny(a, b any) bool
 	JoinAny(a, b any) any
+	HasMeet() bool
+	MeetAny(a, b any) any
 	WidenAny(prev, next any) any
 	HashAny(any) uint64
 	ReducerHook() Reducer
@@ -171,6 +178,17 @@ func (e erasedSpec[T]) LessOrEqAny(a, b any) bool {
 
 func (e erasedSpec[T]) JoinAny(a, b any) any {
 	return e.spec.Join(e.cast(a), e.cast(b))
+}
+
+func (e erasedSpec[T]) HasMeet() bool {
+	return e.spec.Meet != nil
+}
+
+func (e erasedSpec[T]) MeetAny(a, b any) any {
+	if e.spec.Meet == nil {
+		panic(fmt.Sprintf("axis %q: Meet is nil", e.ID()))
+	}
+	return e.spec.Meet(e.cast(a), e.cast(b))
 }
 
 func (e erasedSpec[T]) WidenAny(prev, next any) any {

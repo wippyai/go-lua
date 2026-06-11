@@ -10,6 +10,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/assertion"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/runtimekind"
+	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/engine/transfer"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/lua/bind"
@@ -760,9 +761,13 @@ func assertOptionalValuePresence(
 	if !ok {
 		return
 	}
-	gotPresence, hasPresence := got.Presence()
-	if !hasPresence || !presence.Equal(gotPresence, want) {
-		t.Fatalf("%s presence = %s/%v, want %s/true", label, gotPresence, hasPresence, want)
+	constraint, hasConstraint := got.Constraint()
+	if !hasConstraint {
+		t.Fatalf("%s constraint missing", label)
+	}
+	gotPresence := product.PresenceOf(constraint)
+	if !presence.Equal(gotPresence, want) {
+		t.Fatalf("%s presence = %s, want %s", label, gotPresence, want)
 	}
 }
 
@@ -804,14 +809,20 @@ func assertLoweredBranchValueRefinement(
 
 func assertValueRefinement(t *testing.T, label string, got transfer.ValueRefinement, want valueRefinementExpectation) {
 	t.Helper()
-	gotPresence, hasPresence := got.Presence()
+	constraint, hasConstraint := got.Constraint()
+	if !hasConstraint {
+		t.Fatalf("%s constraint missing", label)
+	}
+	gotPresence := product.PresenceOf(constraint)
+	hasPresence := !presence.Equal(gotPresence, presence.Top())
 	if hasPresence != want.hasPresence {
 		t.Fatalf("%s presence ok = %v, want %v", label, hasPresence, want.hasPresence)
 	}
 	if want.hasPresence && !presence.Equal(gotPresence, want.presence) {
 		t.Fatalf("%s presence = %s, want %s", label, gotPresence, want.presence)
 	}
-	gotRuntimeKind, hasRuntimeKind := got.RuntimeKind()
+	gotRuntimeKind := product.Get(product.DefaultRegistry(), constraint, runtimekind.Key)
+	hasRuntimeKind := !runtimekind.Equal(gotRuntimeKind, runtimekind.Top())
 	if hasRuntimeKind != want.hasRuntimeKind {
 		t.Fatalf("%s runtime kind ok = %v, want %v", label, hasRuntimeKind, want.hasRuntimeKind)
 	}

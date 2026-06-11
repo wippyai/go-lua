@@ -12,6 +12,7 @@ func Spec() axis.Spec[Value] {
 		Equal:    Equal,
 		LessOrEq: func(a, b Value) bool { return b.Covers(a) },
 		Join:     Join,
+		Meet:     Meet,
 		Widen:    Widen,
 		Hash:     Value.Hash,
 	}

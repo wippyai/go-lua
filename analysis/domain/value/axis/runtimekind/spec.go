@@ -12,6 +12,7 @@ func Spec() axis.Spec[Value] {
 		Equal:    Equal,
 		LessOrEq: LessOrEq,
 		Join:     Join,
+		Meet:     Meet,
 		Widen:    Widen,
 		Hash:     Hash,
 	}

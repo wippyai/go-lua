@@ -108,6 +108,22 @@ func Join(a, b Value) Value {
 	return Top()
 }
 
+func Meet(a, b Value) Value {
+	if a.state == top {
+		return b
+	}
+	if b.state == top {
+		return a
+	}
+	if a.state == bottom || b.state == bottom {
+		return Bottom()
+	}
+	if a.id == b.id {
+		return a
+	}
+	return Bottom()
+}
+
 func Widen(prev, next Value) Value {
 	return Join(prev, next)
 }
@@ -151,6 +167,7 @@ func Spec() axis.Spec[Value] {
 		Equal:    Equal,
 		LessOrEq: LessOrEq,
 		Join:     Join,
+		Meet:     Meet,
 		Widen:    Widen,
 		Hash:     Hash,
 	}

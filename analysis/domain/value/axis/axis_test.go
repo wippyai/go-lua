@@ -5,8 +5,10 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/assertion"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/escape"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/evidence"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/ownership"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/runtimekind"
@@ -72,6 +74,26 @@ func TestFiniteAxisSpecsLaws(t *testing.T) {
 			evidence.Bottom(),
 			evidence.GradualTop(),
 			evidence.Top(),
+		})
+	})
+
+	t.Run("identity", func(t *testing.T) {
+		runAxisLaws(t, "identity", identity.Spec(), []identity.Value{
+			identity.Bottom(),
+			identity.Singleton(identity.ID{Kind: "alloc", Site: "sample", Index: 1}),
+			identity.Singleton(identity.ID{Kind: "alloc", Site: "sample", Index: 2}),
+			identity.Top(),
+		})
+	})
+
+	t.Run("assertion", func(t *testing.T) {
+		runAxisLaws(t, "assertion", assertion.Spec(), []assertion.Value{
+			assertion.Bottom(),
+			assertion.Type(),
+			assertion.Any(),
+			assertion.NonNil(),
+			assertion.Of(assertion.TypeAssertion, assertion.NonNilAssertion),
+			assertion.Top(),
 		})
 	})
 }

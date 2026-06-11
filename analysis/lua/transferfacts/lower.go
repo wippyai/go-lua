@@ -6,6 +6,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/assertion"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/runtimekind"
+	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/engine/transfer"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/lua/branchcond"
@@ -176,26 +177,26 @@ func (l *lowerer) branchRefinement(fact semantics.BranchConditionFact) (transfer
 	case branchcond.CheckNil:
 		return transfer.NewBranchRefinement(
 			target,
-			transfer.NewValueRefinement().WithPresence(presence.Absent()), true,
-			transfer.NewValueRefinement().WithPresence(presence.Present()), true,
+			presenceRefinement(presence.Absent()), true,
+			presenceRefinement(presence.Present()), true,
 		), true
 	case branchcond.CheckNotNil:
 		return transfer.NewBranchRefinement(
 			target,
-			transfer.NewValueRefinement().WithPresence(presence.Present()), true,
-			transfer.NewValueRefinement().WithPresence(presence.Absent()), true,
+			presenceRefinement(presence.Present()), true,
+			presenceRefinement(presence.Absent()), true,
 		), true
 	case branchcond.CheckTruthy:
 		return transfer.NewBranchRefinement(
 			target,
-			transfer.NewValueRefinement().WithPresence(presence.Present()), true,
+			presenceRefinement(presence.Present()), true,
 			transfer.ValueRefinement{}, false,
 		), true
 	case branchcond.CheckFalsy:
 		return transfer.NewBranchRefinement(
 			target,
 			transfer.ValueRefinement{}, false,
-			transfer.NewValueRefinement().WithPresence(presence.Present()), true,
+			presenceRefinement(presence.Present()), true,
 		), true
 	case branchcond.CheckTypeEqual, branchcond.CheckTypeNot:
 		return l.typeBranchRefinement(target, fact.Check.Kind, fact.Check.TypeName)
@@ -218,19 +219,35 @@ func (l *lowerer) typeBranchRefinement(target path.Path, kind branchcond.CheckKi
 }
 
 func typeMatchedRefinement(tag runtimekind.Tag) transfer.ValueRefinement {
-	value := transfer.NewValueRefinement().WithRuntimeKind(runtimekind.Singleton(tag))
+	value := runtimeKindRefinement(runtimekind.Singleton(tag))
 	if tag == runtimekind.Nil {
-		return value.WithPresence(presence.Absent())
+		return value.WithConstraint(product.DefaultRegistry(), presenceConstraint(presence.Absent()))
 	}
-	return value.WithPresence(presence.Present())
+	return value.WithConstraint(product.DefaultRegistry(), presenceConstraint(presence.Present()))
 }
 
 func typeUnmatchedRefinement(tag runtimekind.Tag) transfer.ValueRefinement {
-	value := transfer.NewValueRefinement().WithRuntimeKind(runtimekind.Top().Without(tag))
+	value := runtimeKindRefinement(runtimekind.Top().Without(tag))
 	if tag == runtimekind.Nil {
-		return value.WithPresence(presence.Present())
+		return value.WithConstraint(product.DefaultRegistry(), presenceConstraint(presence.Present()))
 	}
 	return value
+}
+
+func presenceRefinement(value presence.Value) transfer.ValueRefinement {
+	return transfer.NewValueConstraint(presenceConstraint(value))
+}
+
+func presenceConstraint(value presence.Value) product.Value {
+	return product.NewWithPresence(product.DefaultRegistry(), product.ShapeTop, value)
+}
+
+func runtimeKindRefinement(value runtimekind.Value) transfer.ValueRefinement {
+	return transfer.NewValueConstraint(runtimeKindConstraint(value))
+}
+
+func runtimeKindConstraint(value runtimekind.Value) product.Value {
+	return product.Set(product.DefaultRegistry(), product.Top(), runtimekind.Key, value)
 }
 
 func runtimeTag(typeName string) (runtimekind.Tag, bool) {
