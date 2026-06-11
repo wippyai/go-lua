@@ -18,13 +18,13 @@ func TestJoinClosedCompatibleRecordSetMergesMissingFieldsAndStaticMembers(t *tes
 		Field("count", typ.Integer).
 		Build()
 
-	got, ok := JoinClosedCompatibleRecordSet([]*typ.Record{left, right}, RecordPolicy{})
+	got, ok := joinClosedCompatibleRecordSet([]*typ.Record{left, right}, RecordPolicy{})
 	if !ok {
-		t.Fatal("JoinClosedCompatibleRecordSet ok=false")
+		t.Fatal("joinClosedCompatibleRecordSet ok=false")
 	}
 	rec, ok := got.(*typ.Record)
 	if !ok {
-		t.Fatalf("JoinClosedCompatibleRecordSet = %T %[1]v, want record", got)
+		t.Fatalf("joinClosedCompatibleRecordSet = %T %[1]v, want record", got)
 	}
 	name := rec.GetField("name")
 	if name == nil || name.Optional || !identity.TypeEquals(name.Type, typ.String) {
@@ -46,7 +46,7 @@ func TestJoinClosedCompatibleRecordSetUsesInjectedSlotJoinForSharedField(t *test
 	sentinel := typ.NewArray(typ.Boolean)
 	called := false
 
-	got, ok := JoinClosedCompatibleRecordSet([]*typ.Record{left, right}, RecordPolicy{
+	got, ok := joinClosedCompatibleRecordSet([]*typ.Record{left, right}, RecordPolicy{
 		SlotJoin: func(a, b typ.Type) typ.Type {
 			called = true
 			if !identity.TypeEquals(a, typ.Number) || !identity.TypeEquals(b, typ.String) {
@@ -56,14 +56,14 @@ func TestJoinClosedCompatibleRecordSetUsesInjectedSlotJoinForSharedField(t *test
 		},
 	})
 	if !ok {
-		t.Fatal("JoinClosedCompatibleRecordSet ok=false")
+		t.Fatal("joinClosedCompatibleRecordSet ok=false")
 	}
 	if !called {
 		t.Fatal("slot join callback was not called")
 	}
 	rec, ok := got.(*typ.Record)
 	if !ok {
-		t.Fatalf("JoinClosedCompatibleRecordSet = %T %[1]v, want record", got)
+		t.Fatalf("joinClosedCompatibleRecordSet = %T %[1]v, want record", got)
 	}
 	field := rec.GetField("value")
 	if field == nil || !identity.TypeEquals(field.Type, sentinel) {
@@ -96,7 +96,7 @@ func TestJoinFieldContainerSlotUsesInjectedSlotAndKeyJoins(t *testing.T) {
 	slotCalls := 0
 	keyCalls := 0
 
-	got, ok := JoinFieldContainerSlot(left, right, RecordPolicy{
+	got, ok := joinFieldContainerSlot(left, right, RecordPolicy{
 		SlotJoin: func(a, b typ.Type) typ.Type {
 			slotCalls++
 			if !identity.TypeEquals(a, typ.Number) || !identity.TypeEquals(b, typ.Boolean) {
@@ -113,14 +113,14 @@ func TestJoinFieldContainerSlotUsesInjectedSlotAndKeyJoins(t *testing.T) {
 		},
 	})
 	if !ok {
-		t.Fatal("JoinFieldContainerSlot ok=false")
+		t.Fatal("joinFieldContainerSlot ok=false")
 	}
 	if slotCalls != 1 || keyCalls != 1 {
 		t.Fatalf("slot/key calls = %d/%d, want 1/1", slotCalls, keyCalls)
 	}
 	m, ok := got.(*typ.Map)
 	if !ok {
-		t.Fatalf("JoinFieldContainerSlot = %T %[1]v, want map", got)
+		t.Fatalf("joinFieldContainerSlot = %T %[1]v, want map", got)
 	}
 	if !identity.TypeEquals(m.Key, typ.String) || !identity.TypeEquals(m.Value, typ.Boolean) {
 		t.Fatalf("joined map = %v, want {[string]: boolean}", m)
@@ -141,7 +141,7 @@ func TestJoinFieldContainerSlotJoinsArrayElementsPointwise(t *testing.T) {
 		ar, aOK := a.(*typ.Record)
 		br, bOK := b.(*typ.Record)
 		if aOK && bOK {
-			joined, ok := JoinClosedCompatibleRecordSet([]*typ.Record{ar, br}, RecordPolicy{})
+			joined, ok := joinClosedCompatibleRecordSet([]*typ.Record{ar, br}, RecordPolicy{})
 			if ok {
 				return joined
 			}
@@ -149,13 +149,13 @@ func TestJoinFieldContainerSlotJoinsArrayElementsPointwise(t *testing.T) {
 		return typ.NewUnion(a, b)
 	}
 
-	got, ok := JoinFieldContainerSlot(left, right, RecordPolicy{SlotJoin: slotJoin})
+	got, ok := joinFieldContainerSlot(left, right, RecordPolicy{SlotJoin: slotJoin})
 	if !ok {
-		t.Fatal("JoinFieldContainerSlot ok=false")
+		t.Fatal("joinFieldContainerSlot ok=false")
 	}
 	arr, ok := got.(*typ.Array)
 	if !ok {
-		t.Fatalf("JoinFieldContainerSlot = %T %[1]v, want array", got)
+		t.Fatalf("joinFieldContainerSlot = %T %[1]v, want array", got)
 	}
 	elem, ok := arr.Element.(*typ.Record)
 	if !ok {
@@ -181,13 +181,13 @@ func TestCompatibleRecordMetatablesRequireMatchingPresenceAndShape(t *testing.T)
 		Build()
 	withOtherMeta := typetable.NewRecord().Field("id", typ.String).Metatable(otherMeta).Build()
 
-	if !CompatibleRecordMetatables(withMeta, withSameMeta) {
+	if !compatibleRecordMetatables(withMeta, withSameMeta) {
 		t.Fatal("records sharing the same metatable should be compatible")
 	}
-	if CompatibleRecordMetatables(withMeta, withoutMeta) {
+	if compatibleRecordMetatables(withMeta, withoutMeta) {
 		t.Fatal("record with metatable should not merge with record without metatable")
 	}
-	if CompatibleRecordMetatables(withMeta, withOtherMeta) {
+	if compatibleRecordMetatables(withMeta, withOtherMeta) {
 		t.Fatal("records with different metatables should not be compatible")
 	}
 }

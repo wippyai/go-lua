@@ -45,11 +45,11 @@ func (p RecordPolicy) detector() *discriminant.Detector {
 	return discriminant.NewDetector()
 }
 
-// JoinRecordFieldSlot merges one record field/static-member slot under the
+// joinRecordFieldSlot merges one record field/static-member slot under the
 // caller's nested slot policy.
-func JoinRecordFieldSlot(a, b typ.Type, policy RecordPolicy) typ.Type {
+func joinRecordFieldSlot(a, b typ.Type, policy RecordPolicy) typ.Type {
 	slotJoin := policy.slotJoin()
-	if joined, ok := JoinFieldContainerSlot(a, b, policy); ok {
+	if joined, ok := joinFieldContainerSlot(a, b, policy); ok {
 		return joined
 	}
 	if widened, ok := joinNonDiscriminantField(a, b); ok {
@@ -58,8 +58,8 @@ func JoinRecordFieldSlot(a, b typ.Type, policy RecordPolicy) typ.Type {
 	return slotJoin(a, b)
 }
 
-// JoinFieldContainerSlot merges homogeneous container slots pointwise.
-func JoinFieldContainerSlot(a, b typ.Type, policy RecordPolicy) (typ.Type, bool) {
+// joinFieldContainerSlot merges homogeneous container slots pointwise.
+func joinFieldContainerSlot(a, b typ.Type, policy RecordPolicy) (typ.Type, bool) {
 	slotJoin := policy.slotJoin()
 	keyJoin := policy.keyJoin()
 	a = unwrap.Annotated(a)
@@ -139,7 +139,7 @@ func CoalesceClosedCompatibleRecords(types []typ.Type, policy RecordPolicy) ([]t
 		eligibleCount++
 		var group *closedRecordGroup
 		for _, candidate := range groups {
-			if RecordMergesIntoGroup(rec, candidate.records, policy.Discriminants) {
+			if recordMergesIntoGroup(rec, candidate.records, policy.Discriminants) {
 				group = candidate
 				break
 			}
@@ -169,7 +169,7 @@ func CoalesceClosedCompatibleRecords(types []typ.Type, policy RecordPolicy) ([]t
 		if len(group.records) == 1 {
 			continue
 		}
-		merged, ok := JoinClosedCompatibleRecordSet(group.records, policy)
+		merged, ok := joinClosedCompatibleRecordSet(group.records, policy)
 		if !ok {
 			return nil, false, false
 		}
@@ -192,9 +192,9 @@ func CoalesceClosedCompatibleRecords(types []typ.Type, policy RecordPolicy) ([]t
 	return out, true, !ineligible
 }
 
-// JoinClosedCompatibleRecordSet joins a compatible set of closed, non-map
+// joinClosedCompatibleRecordSet joins a compatible set of closed, non-map
 // records into one record.
-func JoinClosedCompatibleRecordSet(records []*typ.Record, policy RecordPolicy) (typ.Type, bool) {
+func joinClosedCompatibleRecordSet(records []*typ.Record, policy RecordPolicy) (typ.Type, bool) {
 	if len(records) == 0 {
 		return nil, false
 	}
@@ -230,7 +230,7 @@ func JoinClosedCompatibleRecordSet(records []*typ.Record, policy RecordPolicy) (
 				}
 				continue
 			}
-			acc.fieldType = JoinRecordFieldSlot(acc.fieldType, field.Type, policy)
+			acc.fieldType = joinRecordFieldSlot(acc.fieldType, field.Type, policy)
 			acc.count++
 			acc.optional = acc.optional || field.Optional
 			acc.readonly = acc.readonly && field.Readonly
@@ -250,7 +250,7 @@ func JoinClosedCompatibleRecordSet(records []*typ.Record, policy RecordPolicy) (
 				}
 				continue
 			}
-			acc.memberType = JoinRecordFieldSlot(acc.memberType, member.Type, policy)
+			acc.memberType = joinRecordFieldSlot(acc.memberType, member.Type, policy)
 			acc.count++
 			acc.optional = acc.optional || member.Optional
 			acc.readonly = acc.readonly && member.Readonly
@@ -283,14 +283,14 @@ func JoinClosedCompatibleRecordSet(records []*typ.Record, policy RecordPolicy) (
 	}), true
 }
 
-// RecordMergesIntoGroup reports whether rec belongs with every record already
+// recordMergesIntoGroup reports whether rec belongs with every record already
 // grouped, rather than forming a discriminated variant.
-func RecordMergesIntoGroup(rec *typ.Record, group []*typ.Record, detector *discriminant.Detector) bool {
+func recordMergesIntoGroup(rec *typ.Record, group []*typ.Record, detector *discriminant.Detector) bool {
 	if detector == nil {
 		detector = discriminant.NewDetector()
 	}
 	for _, member := range group {
-		if !CompatibleRecordMetatables(rec, member) {
+		if !compatibleRecordMetatables(rec, member) {
 			return false
 		}
 		if detector.RecordsConflict(rec, member) {
@@ -300,9 +300,9 @@ func RecordMergesIntoGroup(rec *typ.Record, group []*typ.Record, detector *discr
 	return true
 }
 
-// CompatibleRecordMetatables reports whether two records may merge without
+// compatibleRecordMetatables reports whether two records may merge without
 // dropping distinct metatable behavior.
-func CompatibleRecordMetatables(a, b *typ.Record) bool {
+func compatibleRecordMetatables(a, b *typ.Record) bool {
 	if a == nil || b == nil {
 		return false
 	}

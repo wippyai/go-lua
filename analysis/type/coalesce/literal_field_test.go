@@ -44,8 +44,8 @@ func TestJoinNonDiscriminantFieldFollowsLiteralAliases(t *testing.T) {
 func TestJoinRecordFieldSlotWidensAccumulatedNonDiscriminantLiteralUnion(t *testing.T) {
 	acc := typ.NewUnion(typ.LiteralString("a"), typ.LiteralString("b"))
 
-	got := JoinRecordFieldSlot(acc, typ.LiteralString("c"), RecordPolicy{})
+	got := joinRecordFieldSlot(acc, typ.LiteralString("c"), RecordPolicy{})
 	if !identity.TypeEquals(got, typ.String) {
-		t.Fatalf("JoinRecordFieldSlot(non-discriminant literal union) = %v, want string", got)
+		t.Fatalf("joinRecordFieldSlot(non-discriminant literal union) = %v, want string", got)
 	}
 }
