@@ -1,7 +1,6 @@
 package refinement
 
 import (
-	"github.com/wippyai/go-lua/analysis/type/identity"
 	"github.com/wippyai/go-lua/analysis/type/nodeid"
 	typetable "github.com/wippyai/go-lua/analysis/type/table"
 	"github.com/wippyai/go-lua/analysis/type/typ"
@@ -35,7 +34,7 @@ type fallbackRefineState struct {
 }
 
 func (s *fallbackRefineState) refine(summary, fallback typ.Type) (typ.Type, bool) {
-	if summary == nil || fallback == nil || identity.TypeEquals(summary, fallback) || fallbackIsOpaque(fallback) {
+	if summary == nil || fallback == nil || typ.TypeEquals(summary, fallback) || fallbackIsOpaque(fallback) {
 		return summary, false
 	}
 	if s.ownsTypeParam(summary) {
@@ -139,7 +138,7 @@ func (s *fallbackRefineState) refine(summary, fallback typ.Type) (typ.Type, bool
 		return s.refineRecord(a, b)
 	case *typ.Instantiated:
 		b, ok := fallback.(*typ.Instantiated)
-		if !ok || a.Generic == nil || b.Generic == nil || !identity.TypeEquals(a.Generic, b.Generic) || len(a.TypeArgs) != len(b.TypeArgs) {
+		if !ok || a.Generic == nil || b.Generic == nil || !typ.TypeEquals(a.Generic, b.Generic) || len(a.TypeArgs) != len(b.TypeArgs) {
 			break
 		}
 		args, changed := s.refineTypeSlice(a.TypeArgs, b.TypeArgs)

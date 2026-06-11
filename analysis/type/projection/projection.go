@@ -5,7 +5,6 @@ import (
 	"strings"
 
 	typeformat "github.com/wippyai/go-lua/analysis/type/format"
-	"github.com/wippyai/go-lua/analysis/type/identity"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
@@ -87,5 +86,5 @@ func stepEqual(a, b Step) bool {
 	if a.Kind != b.Kind || a.Field != b.Field || a.Index != b.Index {
 		return false
 	}
-	return identity.TypeEquals(a.Type, b.Type)
+	return typ.TypeEquals(a.Type, b.Type)
 }

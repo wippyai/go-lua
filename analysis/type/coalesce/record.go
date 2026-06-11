@@ -2,7 +2,6 @@ package coalesce
 
 import (
 	"github.com/wippyai/go-lua/analysis/type/discriminant"
-	"github.com/wippyai/go-lua/analysis/type/identity"
 	"github.com/wippyai/go-lua/analysis/type/inspect"
 	"github.com/wippyai/go-lua/analysis/type/normalize"
 	typetable "github.com/wippyai/go-lua/analysis/type/table"
@@ -309,7 +308,7 @@ func compatibleRecordMetatables(a, b *typ.Record) bool {
 	if a.Metatable == nil || b.Metatable == nil {
 		return a.Metatable == nil && b.Metatable == nil
 	}
-	return identity.SameNodeOrAcyclicEqual(a.Metatable, b.Metatable)
+	return typ.SameNodeOrAcyclicEqual(a.Metatable, b.Metatable)
 }
 
 func staticMemberKey(member typ.StaticMember) staticMemberJoinKey {

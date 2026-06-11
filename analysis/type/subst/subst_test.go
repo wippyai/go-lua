@@ -3,7 +3,6 @@ package subst
 import (
 	"testing"
 
-	"github.com/wippyai/go-lua/analysis/type/identity"
 	typetable "github.com/wippyai/go-lua/analysis/type/table"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
@@ -169,7 +168,7 @@ func TestSelf(t *testing.T) {
 		})
 		arg := typ.NewUnion(typ.Self, rec)
 		result := Self(arg, typ.String)
-		if !identity.TypeEquals(result, typ.NewUnion(typ.String, rec)) {
+		if !typ.TypeEquals(result, typ.NewUnion(typ.String, rec)) {
 			t.Fatalf("union self substitution = %v", result)
 		}
 	})

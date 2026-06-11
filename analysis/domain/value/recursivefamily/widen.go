@@ -1,7 +1,6 @@
 package recursivefamily
 
 import (
-	"github.com/wippyai/go-lua/analysis/type/identity"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
@@ -37,7 +36,7 @@ func (i *RecursiveFamilyInterner) Widen(family *typ.Recursive, candidateBody typ
 		return family
 	}
 	widened := join(family.Body, candidateBody)
-	if widened == nil || identity.SameNode(widened, family.Body) {
+	if widened == nil || typ.SameNode(widened, family.Body) {
 		return family
 	}
 	family.SetBody(i.rebindRecursiveSelf(widened, family))

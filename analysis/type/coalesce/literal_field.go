@@ -1,13 +1,12 @@
 package coalesce
 
 import (
-	"github.com/wippyai/go-lua/analysis/type/identity"
 	"github.com/wippyai/go-lua/analysis/type/literal"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
 func joinNonDiscriminantField(a, b typ.Type) (typ.Type, bool) {
-	if identity.SameNodeOrAcyclicEqual(a, b) {
+	if typ.SameNodeOrAcyclicEqual(a, b) {
 		return a, true
 	}
 	al, aOK := literal.ExtractAliasOnly(a)

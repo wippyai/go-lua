@@ -1,7 +1,6 @@
 package widen
 
 import (
-	"github.com/wippyai/go-lua/analysis/type/identity"
 	"github.com/wippyai/go-lua/analysis/type/literal"
 	typetable "github.com/wippyai/go-lua/analysis/type/table"
 	"github.com/wippyai/go-lua/analysis/type/typ"
@@ -37,7 +36,7 @@ func widenDepth(t typ.Type, depth int) typ.Type {
 
 			for i, m := range u.Members {
 				members[i] = widenDepth(m, depth+1)
-				if !identity.SameNode(members[i], m) {
+				if !typ.SameNode(members[i], m) {
 					changed = true
 				}
 			}
@@ -50,7 +49,7 @@ func widenDepth(t typ.Type, depth int) typ.Type {
 		},
 		Optional: func(o *typ.Optional) typ.Type {
 			inner := widenDepth(o.Inner, depth+1)
-			if identity.SameNode(inner, o.Inner) {
+			if typ.SameNode(inner, o.Inner) {
 				return t
 			}
 
@@ -87,7 +86,7 @@ func widenForInferenceDepth(t typ.Type, depth int, preserveParams bool) typ.Type
 			changed := false
 			for i, e := range tup.Elements {
 				elems[i] = widenForInferenceDepth(e, depth+1, preserveParams)
-				if !identity.SameNode(elems[i], e) {
+				if !typ.SameNode(elems[i], e) {
 					changed = true
 				}
 			}
@@ -98,7 +97,7 @@ func widenForInferenceDepth(t typ.Type, depth int, preserveParams bool) typ.Type
 		},
 		Array: func(a *typ.Array) typ.Type {
 			elem := widenForInferenceDepth(a.Element, depth+1, preserveParams)
-			if identity.SameNode(elem, a.Element) {
+			if typ.SameNode(elem, a.Element) {
 				return t
 			}
 			return typ.NewArray(elem)
@@ -106,7 +105,7 @@ func widenForInferenceDepth(t typ.Type, depth int, preserveParams bool) typ.Type
 		Map: func(m *typ.Map) typ.Type {
 			key := widenForInferenceDepth(m.Key, depth+1, preserveParams)
 			value := widenForInferenceDepth(m.Value, depth+1, preserveParams)
-			if identity.SameNode(key, m.Key) && identity.SameNode(value, m.Value) {
+			if typ.SameNode(key, m.Key) && typ.SameNode(value, m.Value) {
 				return t
 			}
 			return typetable.NewMap(key, value)
@@ -114,7 +113,7 @@ func widenForInferenceDepth(t typ.Type, depth int, preserveParams bool) typ.Type
 		ReadonlyMap: func(m *typ.ReadonlyMap) typ.Type {
 			key := widenForInferenceDepth(m.Key, depth+1, preserveParams)
 			value := widenForInferenceDepth(m.Value, depth+1, preserveParams)
-			if identity.SameNode(key, m.Key) && identity.SameNode(value, m.Value) {
+			if typ.SameNode(key, m.Key) && typ.SameNode(value, m.Value) {
 				return t
 			}
 			return typetable.NewReadonlyMap(key, value)
@@ -142,7 +141,7 @@ func widenForInferenceDepth(t typ.Type, depth int, preserveParams bool) typ.Type
 			changed := false
 			for _, f := range r.Fields {
 				fieldType := widenForInferenceDepth(f.Type, depth+1, preserveParams)
-				if !identity.SameNode(fieldType, f.Type) {
+				if !typ.SameNode(fieldType, f.Type) {
 					changed = true
 				}
 				switch {
@@ -160,7 +159,7 @@ func widenForInferenceDepth(t typ.Type, depth int, preserveParams bool) typ.Type
 			for _, m := range r.StaticMembers {
 				member := m
 				member.Type = widenForInferenceDepth(m.Type, depth+1, preserveParams)
-				if !identity.SameNode(member.Type, m.Type) {
+				if !typ.SameNode(member.Type, m.Type) {
 					changed = true
 				}
 				builder.AddStaticMember(member)
@@ -168,7 +167,7 @@ func widenForInferenceDepth(t typ.Type, depth int, preserveParams bool) typ.Type
 
 			if r.Metatable != nil {
 				metatable := widenForInferenceDepth(r.Metatable, depth+1, preserveParams)
-				if !identity.SameNode(metatable, r.Metatable) {
+				if !typ.SameNode(metatable, r.Metatable) {
 					changed = true
 				}
 				builder.Metatable(metatable)
@@ -177,7 +176,7 @@ func widenForInferenceDepth(t typ.Type, depth int, preserveParams bool) typ.Type
 			if r.HasMapComponent() {
 				key := widenForInferenceDepth(r.MapKey, depth+1, preserveParams)
 				value := widenForInferenceDepth(r.MapValue, depth+1, preserveParams)
-				if !identity.SameNode(key, r.MapKey) || !identity.SameNode(value, r.MapValue) {
+				if !typ.SameNode(key, r.MapKey) || !typ.SameNode(value, r.MapValue) {
 					changed = true
 				}
 				builder.MapComponent(key, value)
@@ -201,7 +200,7 @@ func widenForInferenceDepth(t typ.Type, depth int, preserveParams bool) typ.Type
 					paramType = widenForInferenceDepth(p.Type, depth+1, preserveParams)
 				}
 				params[i] = typ.Param{Name: p.Name, Type: paramType, Optional: p.Optional}
-				if !identity.SameNode(paramType, p.Type) {
+				if !typ.SameNode(paramType, p.Type) {
 					changed = true
 				}
 			}
@@ -209,7 +208,7 @@ func widenForInferenceDepth(t typ.Type, depth int, preserveParams bool) typ.Type
 			var variadic typ.Type
 			if fn.Variadic != nil {
 				variadic = widenForInferenceDepth(fn.Variadic, depth+1, preserveParams)
-				if !identity.SameNode(variadic, fn.Variadic) {
+				if !typ.SameNode(variadic, fn.Variadic) {
 					changed = true
 				}
 			}
@@ -217,7 +216,7 @@ func widenForInferenceDepth(t typ.Type, depth int, preserveParams bool) typ.Type
 			returns := make([]typ.Type, len(fn.Returns))
 			for i, ret := range fn.Returns {
 				returns[i] = widenForInferenceDepth(ret, depth+1, preserveParams)
-				if !identity.SameNode(returns[i], ret) {
+				if !typ.SameNode(returns[i], ret) {
 					changed = true
 				}
 			}
@@ -249,7 +248,7 @@ func widenForInferenceDepth(t typ.Type, depth int, preserveParams bool) typ.Type
 					methodFn = m.Type
 				}
 				methods[i] = typ.Method{Name: m.Name, Type: methodFn}
-				if !identity.SameNode(methodFn, m.Type) {
+				if !typ.SameNode(methodFn, m.Type) {
 					changed = true
 				}
 			}

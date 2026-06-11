@@ -3,7 +3,6 @@ package projection
 import (
 	"testing"
 
-	"github.com/wippyai/go-lua/analysis/type/identity"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
@@ -51,7 +50,7 @@ func TestStepConstructors(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			if tt.got.Kind != tt.want.Kind || tt.got.Field != tt.want.Field ||
-				tt.got.Index != tt.want.Index || !identity.TypeEquals(tt.got.Type, tt.want.Type) {
+				tt.got.Index != tt.want.Index || !typ.TypeEquals(tt.got.Type, tt.want.Type) {
 				t.Fatalf("constructor = %#v, want %#v", tt.got, tt.want)
 			}
 		})

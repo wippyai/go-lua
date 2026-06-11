@@ -3,7 +3,6 @@ package typeaccess
 import (
 	"testing"
 
-	"github.com/wippyai/go-lua/analysis/type/identity"
 	"github.com/wippyai/go-lua/analysis/type/normalize"
 	typetable "github.com/wippyai/go-lua/analysis/type/table"
 	"github.com/wippyai/go-lua/analysis/type/typ"
@@ -302,7 +301,7 @@ func TestCallableReturnUnionProjectionPolicy(t *testing.T) {
 
 func assertType(t *testing.T, got typ.Type, want typ.Type) {
 	t.Helper()
-	if !identity.TypeEquals(got, want) {
+	if !typ.TypeEquals(got, want) {
 		t.Fatalf("type = %v, want %v", got, want)
 	}
 }

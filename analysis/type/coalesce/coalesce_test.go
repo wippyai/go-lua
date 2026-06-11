@@ -3,7 +3,6 @@ package coalesce
 import (
 	"testing"
 
-	"github.com/wippyai/go-lua/analysis/type/identity"
 	typetable "github.com/wippyai/go-lua/analysis/type/table"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
@@ -60,7 +59,7 @@ func TestCoalesceMapsDefaultJoinNormalizesMergedMapKeys(t *testing.T) {
 		t.Fatalf("CoalesceMaps result = %T, want map", got[0])
 	}
 	wantKey := typ.NewUnion(typ.String, typ.Integer)
-	if !identity.TypeEquals(m.Key, wantKey) {
+	if !typ.TypeEquals(m.Key, wantKey) {
 		t.Fatalf("coalesced map key = %v, want %v", m.Key, wantKey)
 	}
 }
@@ -77,10 +76,10 @@ func TestCoalesceMapsDefaultJoinUsesEvidenceUnionPolicy(t *testing.T) {
 	if !ok {
 		t.Fatalf("CoalesceMaps result = %T, want map", got[0])
 	}
-	if !identity.TypeEquals(m.Key, typ.String) {
+	if !typ.TypeEquals(m.Key, typ.String) {
 		t.Fatalf("coalesced map key = %v, want string", m.Key)
 	}
-	if !identity.TypeEquals(m.Value, typ.Number) {
+	if !typ.TypeEquals(m.Value, typ.Number) {
 		t.Fatalf("coalesced map value = %v, want number", m.Value)
 	}
 }
@@ -214,7 +213,7 @@ func TestCoalesceRecordOpennessNormalizesCopiedMapComponentKeys(t *testing.T) {
 	if !copied.Open {
 		t.Fatalf("copied record should be open: %v", copied)
 	}
-	if !identity.TypeEquals(copied.MapKey, typ.String) {
+	if !typ.TypeEquals(copied.MapKey, typ.String) {
 		t.Fatalf("copied record map key = %v, want string", copied.MapKey)
 	}
 }

@@ -72,7 +72,7 @@ func (c *checker) checkCore(sub, super typ.Type, depth int) bool {
 		}
 	}
 
-	if !isRecursiveRoot(sub) && !isRecursiveRoot(super) && sub.Hash() == super.Hash() && sub.Equals(super) {
+	if typ.SameNodeOrAcyclicEqual(sub, super) {
 		return true
 	}
 
@@ -98,7 +98,7 @@ func (c *checker) checkCore(sub, super typ.Type, depth int) bool {
 	subInst, subIsInst := sub.(*typ.Instantiated)
 	superInst, superIsInst := super.(*typ.Instantiated)
 	if subIsInst && superIsInst && subInst.Generic != nil && superInst.Generic != nil {
-		if subInst.Generic.Equals(superInst.Generic) {
+		if typ.TypeEquals(subInst.Generic, superInst.Generic) {
 			return c.checkInstantiated(subInst, superInst, depth)
 		}
 	}
@@ -252,7 +252,7 @@ func (c *checker) checkCore(sub, super typ.Type, depth int) bool {
 
 	if tp, ok := sub.(*typ.TypeParam); ok {
 		if sp, ok := super.(*typ.TypeParam); ok {
-			return tp.Equals(sp)
+			return typ.TypeEquals(tp, sp)
 		}
 		if tp.Constraint != nil {
 			return c.check(tp.Constraint, super, depth+1)
@@ -307,7 +307,7 @@ func (c *checker) checkCore(sub, super typ.Type, depth int) bool {
 	default:
 		// Opaque or deferred same-kind nodes are accepted only by their own
 		// equality relation, keeping unsupported structure closed.
-		return sub.Equals(super)
+		return typ.TypeEquals(sub, super)
 	}
 }
 
@@ -327,11 +327,6 @@ func newTypePair(sub, super typ.Type) (typePair, bool) {
 		return typePair{}, false
 	}
 	return typePair{sub: subPtr, super: superPtr}, true
-}
-
-func isRecursiveRoot(t typ.Type) bool {
-	_, ok := t.(*typ.Recursive)
-	return ok
 }
 
 func needsCycleGuard(k kind.Kind) bool {

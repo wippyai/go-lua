@@ -69,7 +69,7 @@ func (c *checker) checkInstantiated(sub, super *typ.Instantiated, depth int) boo
 	if sub == nil || super == nil || sub.Generic == nil || super.Generic == nil {
 		return false
 	}
-	if !sub.Generic.Equals(super.Generic) || len(sub.TypeArgs) != len(super.TypeArgs) {
+	if !typ.TypeEquals(sub.Generic, super.Generic) || len(sub.TypeArgs) != len(super.TypeArgs) {
 		return false
 	}
 	for i, a := range sub.TypeArgs {

@@ -4,7 +4,6 @@ import (
 	"fmt"
 
 	"github.com/wippyai/go-lua/analysis/domain/effect"
-	"github.com/wippyai/go-lua/analysis/type/identity"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
@@ -30,7 +29,7 @@ func (f Function) Equals(other Function) bool {
 	if (f.Type == nil) != (other.Type == nil) {
 		return false
 	}
-	if f.Type != nil && !identity.TypeEquals(f.Type, other.Type) {
+	if f.Type != nil && !typ.TypeEquals(f.Type, other.Type) {
 		return false
 	}
 	return f.Effect.Equals(other.Effect)

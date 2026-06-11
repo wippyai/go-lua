@@ -1,7 +1,6 @@
 package refinement
 
 import (
-	"github.com/wippyai/go-lua/analysis/type/identity"
 	"github.com/wippyai/go-lua/analysis/type/inspect"
 	"github.com/wippyai/go-lua/analysis/type/kind"
 	"github.com/wippyai/go-lua/analysis/type/nodeid"
@@ -16,7 +15,7 @@ func (s containsSeen) contains(t typ.Type) bool {
 		return false
 	}
 	for _, existing := range s[containsSeenKey(t)] {
-		if identity.TypeEquals(existing, t) {
+		if typ.TypeEquals(existing, t) {
 			return true
 		}
 	}
@@ -37,7 +36,7 @@ func containsSeenKey(t typ.Type) uint64 {
 			return uint64(ptr)
 		}
 	}
-	return identity.EqualityHash(t)
+	return typ.EqualityHash(t)
 }
 
 // ContainsFreeTypeParam reports whether t contains an unbound symbolic type

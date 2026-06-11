@@ -230,7 +230,7 @@ func (s containsSeen) contains(t typ.Type) bool {
 		return false
 	}
 	for _, existing := range s[containsSeenKey(t)] {
-		if typeEquals(existing, t) {
+		if typ.TypeEquals(existing, t) {
 			return true
 		}
 	}
@@ -249,17 +249,7 @@ func containsSeenKey(t typ.Type) uint64 {
 	if t == nil {
 		return 0
 	}
-	return t.Hash()
-}
-
-func typeEquals(a, b typ.Type) bool {
-	if a == b {
-		return true
-	}
-	if a == nil || b == nil {
-		return false
-	}
-	return a.Equals(b)
+	return typ.EqualityHash(t)
 }
 
 func contains(t typ.Type, pred func(typ.Type) bool, seen containsSeen) bool {

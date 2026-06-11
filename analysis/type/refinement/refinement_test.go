@@ -3,7 +3,6 @@ package refinement
 import (
 	"testing"
 
-	"github.com/wippyai/go-lua/analysis/type/identity"
 	typetable "github.com/wippyai/go-lua/analysis/type/table"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
@@ -131,7 +130,7 @@ func TestRefineWithFallbackRepairsTypeParamLeafAndKeepsLiteral(t *testing.T) {
 		t.Fatalf("refined = %T, want record", refined)
 	}
 	value := rec.GetField("value")
-	if value == nil || !identity.TypeEquals(value.Type, typ.LiteralString("hello")) {
+	if value == nil || !typ.TypeEquals(value.Type, typ.LiteralString("hello")) {
 		t.Fatalf("value field = %#v, want literal hello", value)
 	}
 	get := rec.GetField("get")
@@ -139,7 +138,7 @@ func TestRefineWithFallbackRepairsTypeParamLeafAndKeepsLiteral(t *testing.T) {
 		t.Fatal("missing get field")
 	}
 	fn, ok := get.Type.(*typ.Function)
-	if !ok || len(fn.Returns) != 1 || !identity.TypeEquals(fn.Returns[0], typ.String) {
+	if !ok || len(fn.Returns) != 1 || !typ.TypeEquals(fn.Returns[0], typ.String) {
 		t.Fatalf("get field = %#v, want function returning string", get)
 	}
 }
@@ -149,7 +148,7 @@ func TestRefineWithFallbackDoesNotReplaceWholeConcreteLeaf(t *testing.T) {
 	if changed {
 		t.Fatalf("RefineWithFallback changed concrete summary leaf to %v", refined)
 	}
-	if !identity.TypeEquals(refined, typ.String) {
+	if !typ.TypeEquals(refined, typ.String) {
 		t.Fatalf("refined = %v, want original string summary", refined)
 	}
 }
@@ -168,7 +167,7 @@ func TestRefineWithFallbackKeepsConcreteArrayElementOverEmptyFallback(t *testing
 	if changed {
 		t.Fatalf("RefineWithFallback replaced concrete array element with empty fallback: %v", refined)
 	}
-	if !identity.TypeEquals(refined, summary) {
+	if !typ.TypeEquals(refined, summary) {
 		t.Fatalf("refined = %v, want %v", refined, summary)
 	}
 }
@@ -192,10 +191,10 @@ func TestRefineWithFallbackRepairsFunctionReturnDespiteParamShapeMismatch(t *tes
 	if !ok {
 		t.Fatalf("refined = %T, want function", refined)
 	}
-	if len(fn.Params) != 1 || !fn.Params[0].Optional || !identity.TypeEquals(fn.Params[0].Type, typ.Any) {
+	if len(fn.Params) != 1 || !fn.Params[0].Optional || !typ.TypeEquals(fn.Params[0].Type, typ.Any) {
 		t.Fatalf("param = %#v, want original optional any parameter", fn.Params)
 	}
-	if len(fn.Returns) != 1 || !identity.TypeEquals(fn.Returns[0], typ.String) {
+	if len(fn.Returns) != 1 || !typ.TypeEquals(fn.Returns[0], typ.String) {
 		t.Fatalf("returns = %#v, want string", fn.Returns)
 	}
 }
@@ -227,7 +226,7 @@ func TestRefineWithFallbackRepairsFunctionReturnWithInstantiatedSelfParam(t *tes
 	}
 	get := rec.GetField("get")
 	fn, ok := get.Type.(*typ.Function)
-	if get == nil || !ok || len(fn.Returns) != 1 || !identity.TypeEquals(fn.Returns[0], typ.String) {
+	if get == nil || !ok || len(fn.Returns) != 1 || !typ.TypeEquals(fn.Returns[0], typ.String) {
 		t.Fatalf("get field = %#v, want function returning string", get)
 	}
 }
@@ -247,7 +246,7 @@ func TestRefineWithFallbackRepairsDeferredRefLeaf(t *testing.T) {
 		t.Fatal("RefineWithFallback did not repair deferred ref leaf")
 	}
 	fn, ok := refined.(*typ.Function)
-	if !ok || len(fn.Returns) != 1 || !identity.TypeEquals(fn.Returns[0], typ.String) {
+	if !ok || len(fn.Returns) != 1 || !typ.TypeEquals(fn.Returns[0], typ.String) {
 		t.Fatalf("refined = %v, want function returning string", refined)
 	}
 }

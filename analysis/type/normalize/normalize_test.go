@@ -3,7 +3,6 @@ package normalize
 import (
 	"testing"
 
-	"github.com/wippyai/go-lua/analysis/type/identity"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
@@ -93,7 +92,7 @@ func TestUnionForEvidence(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			got := UnionForEvidence(tt.members...)
-			if !identity.TypeEquals(got, tt.want) {
+			if !typ.TypeEquals(got, tt.want) {
 				t.Fatalf("UnionForEvidence(%v) = %v, want %v", tt.members, got, tt.want)
 			}
 		})
@@ -117,7 +116,7 @@ func TestIntersectionForMeet(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			got := IntersectionForMeet(tt.members...)
-			if !identity.TypeEquals(got, tt.want) {
+			if !typ.TypeEquals(got, tt.want) {
 				t.Fatalf("IntersectionForMeet(%v) = %v, want %v", tt.members, got, tt.want)
 			}
 		})
@@ -135,7 +134,7 @@ func TestIntersectionForMeet(t *testing.T) {
 
 func intersectionHasMember(inter *typ.Intersection, want typ.Type) bool {
 	for _, member := range inter.Members {
-		if identity.TypeEquals(member, want) {
+		if typ.TypeEquals(member, want) {
 			return true
 		}
 	}

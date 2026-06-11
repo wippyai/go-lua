@@ -3,7 +3,6 @@
 package literal
 
 import (
-	"github.com/wippyai/go-lua/analysis/type/identity"
 	"github.com/wippyai/go-lua/analysis/type/kind"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/analysis/type/unwrap"
@@ -98,7 +97,7 @@ func MergeFamilyBases(a, b typ.Type) (typ.Type, bool) {
 	if a == nil || b == nil {
 		return nil, false
 	}
-	if identity.SameNodeOrAcyclicEqual(a, b) {
+	if typ.SameNodeOrAcyclicEqual(a, b) {
 		return a, true
 	}
 	if (a.Kind() == kind.Integer && b.Kind() == kind.Number) ||

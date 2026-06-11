@@ -3,7 +3,6 @@ package discriminant
 import (
 	"strconv"
 
-	"github.com/wippyai/go-lua/analysis/type/identity"
 	"github.com/wippyai/go-lua/analysis/type/kind"
 	"github.com/wippyai/go-lua/analysis/type/literal"
 	"github.com/wippyai/go-lua/analysis/type/typ"
@@ -143,7 +142,7 @@ func (d *Detector) collectRequiredTags(t typ.Type) map[string]uint64 {
 				continue
 			}
 			if lit, ok := literal.ExtractAliasOnly(field.Type); ok {
-				tags[field.Name] = lit.Hash()
+				tags[field.Name] = typ.EqualityHash(lit)
 				continue
 			}
 			addPrefixedTags(tags, field.Name, d.RequiredTags(field.Type))
@@ -154,7 +153,7 @@ func (d *Detector) collectRequiredTags(t typ.Type) map[string]uint64 {
 			}
 			path := staticMemberPath(member)
 			if lit, ok := literal.ExtractAliasOnly(member.Type); ok {
-				tags[path] = lit.Hash()
+				tags[path] = typ.EqualityHash(lit)
 				continue
 			}
 			addPrefixedTags(tags, path, d.RequiredTags(member.Type))
@@ -261,7 +260,7 @@ func requiredNonLiteralPayloadMissingFrom(src, dst *typ.Record) bool {
 }
 
 func (d *Detector) mergeKeepsPreciseFieldType(a, b typ.Type) bool {
-	if identity.SameNodeOrAcyclicEqual(a, b) {
+	if typ.SameNodeOrAcyclicEqual(a, b) {
 		return true
 	}
 	if fieldMergeKind(a) != fieldMergeKind(b) {
