@@ -69,6 +69,99 @@ func TestFactsNodeTransferAppliesOrdinaryAssignmentThroughResolver(t *testing.T)
 	assertResolverCall(t, resolver, assign, source)
 }
 
+func TestFactsNodeTransferAppliesReturnSlotsThroughSourceValues(t *testing.T) {
+	reg := product.DefaultRegistry()
+	graph := cfg.New()
+	ret := graph.AddNode(cfg.NodeReturn)
+	graph.AddEdge(graph.Entry(), ret, false)
+	graph.AddEdge(ret, graph.Exit(), false)
+
+	expr := ExprRef(20)
+	exprValue := presentValue(reg)
+	sources := NewSourceValues(SourceValuesConfig{
+		Registry: reg,
+		ExpressionValues: map[ExprRef]product.Value{
+			expr: exprValue,
+		},
+	})
+
+	got := Run(Config{
+		Graph:    graph,
+		Registry: reg,
+		NodeTransfer: NewFactsNodeTransfer(NewFacts(FactsInput{
+			Returns: map[cfg.Point]Return{
+				ret: NewReturn([]ValueSource{
+					{Kind: ValueSourceExpression, ExprRef: expr, HasExpr: true},
+					{Kind: ValueSourceNil},
+				}),
+			},
+		}), sources),
+	})
+
+	assertValue(t, reg, got[ret], key.ReturnSlot(0), product.Bottom(reg))
+	assertValue(t, reg, got[graph.Exit()], key.ReturnSlot(0), exprValue)
+	assertValue(t, reg, got[graph.Exit()], key.ReturnSlot(1), absentValue(reg))
+}
+
+func TestFactsNodeTransferUnresolvedReturnSourceLeavesSlotUnchanged(t *testing.T) {
+	reg := product.DefaultRegistry()
+	point := cfg.Point(21)
+	slotValue := presentValue(reg)
+	in := state.State{}.WriteReturnSlot(reg, 0, slotValue)
+	sources := NewSourceValues(SourceValuesConfig{Registry: reg})
+
+	got := NewFactsNodeTransfer(NewFacts(FactsInput{
+		Returns: map[cfg.Point]Return{
+			point: NewReturn([]ValueSource{
+				{Kind: ValueSourceExpression, ExprRef: ExprRef(21), HasExpr: true},
+			}),
+		},
+	}), sources)(NodeContext{
+		Registry: reg,
+		Point:    point,
+	}, in)
+
+	assertValue(t, reg, got, key.ReturnSlot(0), slotValue)
+}
+
+func TestFactsNodeTransferReturnCallSourceReadsReturnSlotThroughRead(t *testing.T) {
+	reg := product.DefaultRegistry()
+	graph := cfg.New()
+	call := graph.AddNode(cfg.NodeCall)
+	ret := graph.AddNode(cfg.NodeReturn)
+	graph.AddEdge(graph.Entry(), call, false)
+	graph.AddEdge(call, ret, false)
+	graph.AddEdge(ret, graph.Exit(), false)
+
+	callValue := presentValue(reg)
+	sources := NewSourceValues(SourceValuesConfig{Registry: reg})
+
+	got := Run(Config{
+		Graph:    graph,
+		Registry: reg,
+		Initial: func(point cfg.Point) (state.State, bool) {
+			if point == call {
+				return state.State{}.WriteReturnSlot(reg, 2, callValue), true
+			}
+			return state.State{}, false
+		},
+		NodeTransfer: NewFactsNodeTransfer(NewFacts(FactsInput{
+			Returns: map[cfg.Point]Return{
+				ret: NewReturn([]ValueSource{
+					{
+						Kind:         ValueSourceCall,
+						CallPoint:    call,
+						HasCallPoint: true,
+						ResultIndex:  2,
+					},
+				}),
+			},
+		}), sources),
+	})
+
+	assertValue(t, reg, got[graph.Exit()], key.ReturnSlot(0), callValue)
+}
+
 func TestFactsNodeTransferMissingResolverValueLeavesStateUnchanged(t *testing.T) {
 	reg := product.DefaultRegistry()
 	point := cfg.Point(12)
