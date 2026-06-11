@@ -53,6 +53,60 @@ func TestByCalleeSymbolProviderReadsSummaryReturns(t *testing.T) {
 	assertCallResults(t, reg, got, []product.Value{want})
 }
 
+func TestByCalleePathProviderReadsPathSpecificSummaryReturns(t *testing.T) {
+	reg := product.DefaultRegistry()
+	root := symbol.ID(29)
+	fPath := path.NewPath(root, "M").Field("f")
+	gPath := path.NewPath(root, "M").Field("g")
+	rootPath := path.NewPath(root, "M")
+	fCallPath := fPath
+	fCallPath.Version = 7
+	gCallPath := gPath
+	gCallPath.Version = 8
+
+	fPathKey := mustCalleePathKey(t, fPath)
+	gPathKey := mustCalleePathKey(t, gPath)
+	rootPathKey := mustCalleePathKey(t, rootPath)
+	if fPathKey == gPathKey {
+		t.Fatalf("callee path keys collided: %#v", fPathKey)
+	}
+
+	fKey := summary.DefaultSummaryKey(ref.FuncRef{Kind: ref.KindSymbol, ID: 30})
+	gKey := summary.DefaultSummaryKey(ref.FuncRef{Kind: ref.KindSymbol, ID: 31})
+	rootKey := summary.DefaultSummaryKey(ref.FuncRef{Kind: ref.KindSymbol, ID: 32})
+	fValue := product.Top()
+	gValue := product.Absent(reg)
+	rootValue := product.Bottom(reg)
+	provider := Provider(summary.NewSnapshot(reg,
+		summary.EntrySummary{Key: fKey, Summary: summary.Summary{Returns: []product.Value{fValue}}},
+		summary.EntrySummary{Key: gKey, Summary: summary.Summary{Returns: []product.Value{gValue}}},
+		summary.EntrySummary{Key: rootKey, Summary: summary.Summary{Returns: []product.Value{rootValue}}},
+	), ByCalleePath(map[CalleePathKey]summary.SummaryKey{
+		fPathKey:    fKey,
+		gPathKey:    gKey,
+		rootPathKey: rootKey,
+	}))
+
+	gotF := provider(transfer.NodeContext{Registry: reg}, factflow.NewCallProducer(factflow.CallProducerConfig{
+		CalleeSymbol: root,
+		CalleePath:   fCallPath,
+	}), state.State{}, nil)
+	assertCallResults(t, reg, gotF, []product.Value{fValue})
+
+	gotG := provider(transfer.NodeContext{Registry: reg}, factflow.NewCallProducer(factflow.CallProducerConfig{
+		CalleeSymbol: root,
+		CalleePath:   gCallPath,
+	}), state.State{}, nil)
+	assertCallResults(t, reg, gotG, []product.Value{gValue})
+
+	gotMissingPath := provider(transfer.NodeContext{Registry: reg}, factflow.NewCallProducer(factflow.CallProducerConfig{
+		CalleeSymbol: root,
+	}), state.State{}, nil)
+	if len(gotMissingPath) != 0 {
+		t.Fatalf("provider returned %d results for missing callee path, want none", len(gotMissingPath))
+	}
+}
+
 func TestProviderMissingInputsReturnNoResults(t *testing.T) {
 	reg := product.DefaultRegistry()
 	point := cfg.Point(3)
@@ -177,6 +231,8 @@ func TestProductionImportsAreBounded(t *testing.T) {
 	}
 	allowed := map[string]bool{
 		"github.com/wippyai/go-lua/analysis/check/canonical/summary": true,
+		"github.com/wippyai/go-lua/analysis/domain/path":             true,
+		"github.com/wippyai/go-lua/analysis/domain/path/segment":     true,
 		"github.com/wippyai/go-lua/analysis/engine/factflow":         true,
 		"github.com/wippyai/go-lua/analysis/engine/factflow/apply":   true,
 		"github.com/wippyai/go-lua/analysis/engine/state":            true,
@@ -210,6 +266,15 @@ func TestProductionImportsAreBounded(t *testing.T) {
 			}
 		}
 	}
+}
+
+func mustCalleePathKey(t *testing.T, p path.Path) CalleePathKey {
+	t.Helper()
+	key, ok := CalleePathKeyOf(p)
+	if !ok {
+		t.Fatalf("CalleePathKeyOf(%#v) returned no key", p)
+	}
+	return key
 }
 
 func assertCallResults(t *testing.T, reg *axis.Registry, got []apply.CallResult, want []product.Value) {

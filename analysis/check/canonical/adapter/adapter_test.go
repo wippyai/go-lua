@@ -213,7 +213,7 @@ func TestCheckErrorsPropagateThroughQueryRun(t *testing.T) {
 	_, err = query.Run(query.Config{
 		Registry: reg,
 		Functions: []query.Function{
-			Chunk(key, adapterParseChunk(t, "local f = function() end"), check.Config{Registry: reg}),
+			Chunk(key, adapterParseChunk(t, "print(value())"), check.Config{Registry: reg}),
 		},
 	})
 	if !errors.Is(err, check.ErrUnsupportedCFG) {

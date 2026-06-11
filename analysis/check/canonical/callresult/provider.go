@@ -3,6 +3,8 @@ package callresult
 
 import (
 	"github.com/wippyai/go-lua/analysis/check/canonical/summary"
+	"github.com/wippyai/go-lua/analysis/domain/path"
+	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/engine/factflow/apply"
 	"github.com/wippyai/go-lua/analysis/engine/state"
@@ -13,6 +15,24 @@ import (
 
 // KeyFunc maps one call producer in context to an exact canonical summary key.
 type KeyFunc func(ctx transfer.NodeContext, call factflow.CallProducer) (summary.SummaryKey, bool)
+
+// CalleePathKey identifies a symbol-rooted callee path independently of display
+// name and point-local path version.
+type CalleePathKey struct {
+	Root   symbol.ID
+	Suffix string
+}
+
+// CalleePathKeyOf returns the call-result key for a resolved symbol-rooted path.
+func CalleePathKeyOf(p path.Path) (CalleePathKey, bool) {
+	if p.Symbol == 0 {
+		return CalleePathKey{}, false
+	}
+	return CalleePathKey{
+		Root:   p.Symbol,
+		Suffix: segment.FormatSegments(p.Segments),
+	}, true
+}
 
 // Provider returns a factflow call-result provider backed by exact summary reads.
 func Provider(summaries summary.Reader, keyFor KeyFunc) apply.CallResultProvider {
@@ -56,6 +76,22 @@ func ByCalleeSymbol(keys map[symbol.ID]summary.SummaryKey) KeyFunc {
 	}
 	return func(_ transfer.NodeContext, call factflow.CallProducer) (summary.SummaryKey, bool) {
 		key, ok := cloned[call.CalleeSymbol()]
+		return key, ok
+	}
+}
+
+// ByCalleePath maps resolved symbol-rooted callee paths to exact canonical summary keys.
+func ByCalleePath(keys map[CalleePathKey]summary.SummaryKey) KeyFunc {
+	cloned := make(map[CalleePathKey]summary.SummaryKey, len(keys))
+	for pathKey, key := range keys {
+		cloned[pathKey] = key
+	}
+	return func(_ transfer.NodeContext, call factflow.CallProducer) (summary.SummaryKey, bool) {
+		pathKey, ok := CalleePathKeyOf(call.CalleePath())
+		if !ok {
+			return summary.SummaryKey{}, false
+		}
+		key, ok := cloned[pathKey]
 		return key, ok
 	}
 }

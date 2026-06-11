@@ -90,8 +90,10 @@ func (b *builder) exprCovered(expr ast.Expr) bool {
 			}
 		}
 		return true
-	case *ast.FuncCallExpr, *ast.FunctionExpr:
+	case *ast.FuncCallExpr:
 		return false
+	case *ast.FunctionExpr:
+		return true
 	case *ast.LogicalOpExpr:
 		return b.exprCovered(expr.Lhs) && b.exprCovered(expr.Rhs)
 	case *ast.RelationalOpExpr:

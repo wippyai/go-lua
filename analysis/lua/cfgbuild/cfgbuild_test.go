@@ -438,6 +438,26 @@ func TestBuildChunkFunctionDefinitionDoesNotInlineBody(t *testing.T) {
 	requireTargetCount(t, result.Graph, result.Meta, mustLocalAt(t, bindings, bodyStmt, 0), 0)
 }
 
+func TestBuildChunkFunctionLiteralDoesNotInlineBody(t *testing.T) {
+	bodyStmt := localAssign([]string{"inside"}, number("1"))
+	fn := function(nil, bodyStmt)
+	stmt := localAssign([]string{"factory"}, fn)
+	stmts := []ast.Stmt{stmt}
+	bindings := bind.BindChunk(stmts, bind.Options{})
+	result := BuildChunk(stmts, bindings)
+	if result == nil || result.Graph == nil {
+		t.Fatalf("BuildChunk returned nil for local function literal")
+	}
+
+	points := requireStmtPoints(t, result, stmt, 1)
+	requirePointKind(t, result.Graph, points[0], cfg.NodeAssign)
+	requireTargetCount(t, result.Graph, result.Meta, mustLocalAt(t, bindings, stmt, 0), 1)
+	requireTargetCount(t, result.Graph, result.Meta, mustLocalAt(t, bindings, bodyStmt, 0), 0)
+	if got := result.StmtPoints.PointsFor(bodyStmt); len(got) != 0 {
+		t.Fatalf("nested function body statement mapped to parent CFG points %v", got)
+	}
+}
+
 func TestBuildChunkFunctionDefinitionAfterReturnIsUnmapped(t *testing.T) {
 	target := ident("dead")
 	deadFn := &ast.FuncDefStmt{
@@ -1738,10 +1758,6 @@ func TestBuildChunkUnsupportedExpressionCoverageReturnsNil(t *testing.T) {
 				Key:       &ast.StringExpr{Value: "field"},
 				KeySyntax: ast.AttrKeyDot,
 			}}, number("1")),
-		},
-		{
-			name: "local function literal",
-			stmt: localAssign([]string{"f"}, function(nil)),
 		},
 		{
 			name: "nested condition comparison call",

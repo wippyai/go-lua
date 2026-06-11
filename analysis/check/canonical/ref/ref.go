@@ -15,6 +15,7 @@ const (
 	KindZero Kind = iota
 	KindCFG
 	KindSymbol
+	KindRoot
 )
 
 // FuncRef is a compact, comparable function identity.
@@ -48,6 +49,11 @@ func FromSymbol(id symbol.ID) FuncRef {
 	return FuncRef{Kind: KindSymbol, ID: uint64(id)}
 }
 
+// Root returns the in-memory root reference for a chunk or entry body.
+func Root() FuncRef {
+	return FuncRef{Kind: KindRoot, ID: 1}
+}
+
 // IsZero reports whether r is the zero function reference.
 func (r FuncRef) IsZero() bool {
 	return r.Kind == KindZero || r.ID == 0
@@ -70,6 +76,8 @@ func (r FuncRef) String() string {
 		return fmt.Sprintf("func:cfg:%d", r.ID)
 	case KindSymbol:
 		return fmt.Sprintf("func:symbol:%d", r.ID)
+	case KindRoot:
+		return fmt.Sprintf("func:root:%d", r.ID)
 	default:
 		return fmt.Sprintf("func:kind%d:%d", r.Kind, r.ID)
 	}

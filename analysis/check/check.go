@@ -145,6 +145,15 @@ func CheckChunk(stmts []ast.Stmt, config Config) (*Result, error) {
 	return checker.CheckChunk(stmts)
 }
 
+// CheckBoundChunk checks a chunk using caller-supplied lexical bindings.
+func CheckBoundChunk(stmts []ast.Stmt, bindings *bind.Result, config Config) (*Result, error) {
+	checker, err := New(config)
+	if err != nil {
+		return nil, err
+	}
+	return checker.CheckBoundChunk(stmts, bindings)
+}
+
 func CheckFunction(fn *ast.FunctionExpr, config Config) (*Result, error) {
 	checker, err := New(config)
 	if err != nil {
@@ -153,8 +162,21 @@ func CheckFunction(fn *ast.FunctionExpr, config Config) (*Result, error) {
 	return checker.CheckFunction(fn)
 }
 
+// CheckBoundFunction checks a function using caller-supplied lexical bindings.
+func CheckBoundFunction(fn *ast.FunctionExpr, bindings *bind.Result, config Config) (*Result, error) {
+	checker, err := New(config)
+	if err != nil {
+		return nil, err
+	}
+	return checker.CheckBoundFunction(fn, bindings)
+}
+
 func (c *Checker) CheckChunk(stmts []ast.Stmt) (*Result, error) {
 	bindings := bind.BindChunk(stmts, bind.Options{Globals: c.config.Globals})
+	return c.CheckBoundChunk(stmts, bindings)
+}
+
+func (c *Checker) CheckBoundChunk(stmts []ast.Stmt, bindings *bind.Result) (*Result, error) {
 	built := cfgbuild.BuildChunk(stmts, bindings)
 	if built == nil || built.Graph == nil {
 		return nil, ErrUnsupportedCFG
@@ -168,6 +190,10 @@ func (c *Checker) CheckChunk(stmts []ast.Stmt) (*Result, error) {
 
 func (c *Checker) CheckFunction(fn *ast.FunctionExpr) (*Result, error) {
 	bindings := bind.BindFunction(fn, bind.Options{Globals: c.config.Globals})
+	return c.CheckBoundFunction(fn, bindings)
+}
+
+func (c *Checker) CheckBoundFunction(fn *ast.FunctionExpr, bindings *bind.Result) (*Result, error) {
 	built := cfgbuild.BuildFunction(fn, bindings)
 	if built == nil || built.Graph == nil {
 		return nil, ErrUnsupportedCFG

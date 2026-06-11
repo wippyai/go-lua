@@ -26,6 +26,7 @@ type Result struct {
 	functionsBySymbol  map[symbol.ID]*ast.FunctionExpr
 	functions          []*ast.FunctionExpr
 	nestedFunctions    map[*ast.FunctionExpr][]*ast.FunctionExpr
+	functionOrigins    map[*ast.FunctionExpr]FunctionOrigin
 	declaringFunctions map[symbol.ID]*ast.FunctionExpr
 	directCaptures     map[*ast.FunctionExpr][]Capture
 	directCaptureSeen  map[*ast.FunctionExpr]map[symbol.ID]struct{}
@@ -60,11 +61,40 @@ type Capture struct {
 	DeclaringFunction *ast.FunctionExpr
 }
 
+// FunctionOriginKind classifies the syntactic form that introduced a function.
+type FunctionOriginKind uint8
+
+const (
+	FunctionOriginUnknown FunctionOriginKind = iota
+	FunctionOriginDeclaration
+	FunctionOriginLocalAssignment
+	FunctionOriginLiteral
+	FunctionOriginMethod
+)
+
+// FunctionOrigin records where a function expression was introduced.
+type FunctionOrigin struct {
+	Func   *ast.FunctionExpr
+	Symbol symbol.ID
+	Parent *ast.FunctionExpr
+	Kind   FunctionOriginKind
+
+	Stmt       ast.Stmt
+	LocalIndex int
+	Method     string
+
+	TargetSymbol    symbol.ID
+	HasTargetSymbol bool
+}
+
 // BindFunction binds a single function expression with a fresh global seed.
 func BindFunction(fn *ast.FunctionExpr, opts Options) *Result {
 	r := newResult(opts)
 	b := binder{result: r}
-	b.bindFunction(fn, false)
+	b.bindFunction(fn, false, functionOriginDetails{
+		kind:       FunctionOriginLiteral,
+		localIndex: -1,
+	})
 	return r
 }
 
@@ -190,6 +220,43 @@ func (r *Result) NestedFunctions(parent *ast.FunctionExpr) []*ast.FunctionExpr {
 	return cloneFunctions(r.nestedFunctions[parent])
 }
 
+// FunctionOrigins returns all bound function origins in parent-before-child order.
+func (r *Result) FunctionOrigins() []FunctionOrigin {
+	if r == nil {
+		return nil
+	}
+	if len(r.functions) == 0 {
+		return nil
+	}
+	origins := make([]FunctionOrigin, 0, len(r.functions))
+	for _, fn := range r.functions {
+		origin, ok := r.functionOrigins[fn]
+		if !ok {
+			continue
+		}
+		origins = append(origins, origin)
+	}
+	return origins
+}
+
+// FunctionOrigin returns the origin metadata for fn.
+func (r *Result) FunctionOrigin(fn *ast.FunctionExpr) (FunctionOrigin, bool) {
+	if r == nil || fn == nil {
+		return FunctionOrigin{}, false
+	}
+	origin, ok := r.functionOrigins[fn]
+	return origin, ok && origin.Func != nil
+}
+
+// ParentFunction returns the direct lexical parent of fn, if fn is known.
+func (r *Result) ParentFunction(fn *ast.FunctionExpr) (*ast.FunctionExpr, bool) {
+	origin, ok := r.FunctionOrigin(fn)
+	if !ok {
+		return nil, false
+	}
+	return origin.Parent, true
+}
+
 // DeclaringFunction returns the function that owns a declaration symbol.
 func (r *Result) DeclaringFunction(sym symbol.ID) (*ast.FunctionExpr, bool) {
 	if r == nil || sym == 0 {
@@ -279,6 +346,7 @@ func newResult(opts Options) *Result {
 		functionSymbols:    make(map[*ast.FunctionExpr]symbol.ID),
 		functionsBySymbol:  make(map[symbol.ID]*ast.FunctionExpr),
 		nestedFunctions:    make(map[*ast.FunctionExpr][]*ast.FunctionExpr),
+		functionOrigins:    make(map[*ast.FunctionExpr]FunctionOrigin),
 		declaringFunctions: make(map[symbol.ID]*ast.FunctionExpr),
 		directCaptures:     make(map[*ast.FunctionExpr][]Capture),
 		directCaptureSeen:  make(map[*ast.FunctionExpr]map[symbol.ID]struct{}),
@@ -345,7 +413,16 @@ func (r *Result) newSymbol(name string, kind symbol.Kind) symbol.ID {
 	return id
 }
 
-func (r *Result) registerFunction(fn, parent *ast.FunctionExpr) symbol.ID {
+type functionOriginDetails struct {
+	kind            FunctionOriginKind
+	stmt            ast.Stmt
+	localIndex      int
+	method          string
+	targetSymbol    symbol.ID
+	hasTargetSymbol bool
+}
+
+func (r *Result) registerFunction(fn, parent *ast.FunctionExpr, details functionOriginDetails) symbol.ID {
 	if fn == nil {
 		return 0
 	}
@@ -358,6 +435,17 @@ func (r *Result) registerFunction(fn, parent *ast.FunctionExpr) symbol.ID {
 	r.functions = append(r.functions, fn)
 	r.nestedFunctions[parent] = append(r.nestedFunctions[parent], fn)
 	r.declaringFunctions[id] = fn
+	r.functionOrigins[fn] = FunctionOrigin{
+		Func:            fn,
+		Symbol:          id,
+		Parent:          parent,
+		Kind:            details.kind,
+		Stmt:            details.stmt,
+		LocalIndex:      details.localIndex,
+		Method:          details.method,
+		TargetSymbol:    details.targetSymbol,
+		HasTargetSymbol: details.hasTargetSymbol,
+	}
 	return id
 }
 
@@ -554,7 +642,24 @@ func (b *binder) bindLocalAssign(stmt *ast.LocalAssignStmt) {
 			names:      pending,
 		})
 	}
-	b.bindExprs(stmt.Exprs)
+	for i, expr := range stmt.Exprs {
+		if fn, ok := expr.(*ast.FunctionExpr); ok {
+			details := functionOriginDetails{
+				kind:       FunctionOriginLiteral,
+				localIndex: -1,
+			}
+			if i < len(ids) {
+				details.kind = FunctionOriginLocalAssignment
+				details.stmt = stmt
+				details.localIndex = i
+				details.targetSymbol = ids[i]
+				details.hasTargetSymbol = ids[i] != 0
+			}
+			b.bindFunction(fn, false, details)
+			continue
+		}
+		b.bindExpr(expr)
+	}
 	b.deferred = b.deferred[:oldDeferredLen]
 	if b.visibleDeferred > len(b.deferred) {
 		b.visibleDeferred = len(b.deferred)
@@ -603,7 +708,19 @@ func (b *binder) bindFuncDef(stmt *ast.FuncDefStmt) {
 			b.bindExpr(stmt.Name.Receiver)
 		}
 	}
-	b.bindFunction(stmt.Func, stmt.Name != nil && stmt.Name.Method != "")
+	details := functionOriginDetails{
+		kind:       FunctionOriginDeclaration,
+		stmt:       stmt,
+		localIndex: -1,
+	}
+	if stmt.Name != nil && stmt.Name.Method != "" {
+		details.kind = FunctionOriginMethod
+		details.method = stmt.Name.Method
+	} else if id, ok := b.result.FuncDefTargetSymbol(stmt); ok {
+		details.targetSymbol = id
+		details.hasTargetSymbol = true
+	}
+	b.bindFunction(stmt.Func, stmt.Name != nil && stmt.Name.Method != "", details)
 }
 
 func (b *binder) bindExprs(exprs []ast.Expr) {
@@ -660,7 +777,10 @@ func (b *binder) bindExpr(expr ast.Expr) {
 	case *ast.UnaryBNotOpExpr:
 		b.bindExpr(expr.Expr)
 	case *ast.FunctionExpr:
-		b.bindFunction(expr, false)
+		b.bindFunction(expr, false, functionOriginDetails{
+			kind:       FunctionOriginLiteral,
+			localIndex: -1,
+		})
 	case *ast.CastExpr:
 		b.bindExpr(expr.Expr)
 	case *ast.NonNilAssertExpr:
@@ -680,13 +800,13 @@ func (b *binder) bindVararg() {
 	b.recordDirectCapture(id)
 }
 
-func (b *binder) bindFunction(fn *ast.FunctionExpr, method bool) {
+func (b *binder) bindFunction(fn *ast.FunctionExpr, method bool, origin functionOriginDetails) {
 	if fn == nil {
 		return
 	}
 
 	parent := b.currentFunction()
-	b.result.registerFunction(fn, parent)
+	b.result.registerFunction(fn, parent, origin)
 	b.functionStack = append(b.functionStack, fn)
 
 	oldVisibleDeferred := b.visibleDeferred

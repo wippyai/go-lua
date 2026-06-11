@@ -12,6 +12,7 @@ import (
 	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
+	"github.com/wippyai/go-lua/analysis/lua/bind"
 	"github.com/wippyai/go-lua/analysis/symbol"
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/parse"
@@ -109,6 +110,64 @@ func TestCheckFunctionReturnArityUsesLoweredFacts(t *testing.T) {
 	}
 }
 
+func TestCheckBoundFunctionUsesSuppliedBindingIdentity(t *testing.T) {
+	reg, markKey := testRegistry(t)
+	want := product.Set(reg, product.NewWithPresence(reg, product.ShapeTop, presence.Present()), markKey, markLow)
+	stmts := parseChunk(t, `
+local captured = 1
+function f()
+	local value = captured
+	return value
+end`)
+	capturedDecl, ok := stmts[0].(*ast.LocalAssignStmt)
+	if !ok {
+		t.Fatalf("stmt 0 = %T, want *ast.LocalAssignStmt", stmts[0])
+	}
+	def, ok := stmts[1].(*ast.FuncDefStmt)
+	if !ok || def.Func == nil {
+		t.Fatalf("stmt 1 = %T, want function definition", stmts[1])
+	}
+	valueDecl, ok := def.Func.Stmts[0].(*ast.LocalAssignStmt)
+	if !ok {
+		t.Fatalf("function stmt 0 = %T, want *ast.LocalAssignStmt", def.Func.Stmts[0])
+	}
+
+	bindings := bind.BindChunk(stmts, bind.Options{})
+	captured := mustBoundLocalAt(t, bindings, capturedDecl, 0)
+	suppliedLocal := mustBoundLocalAt(t, bindings, valueDecl, 0)
+	captures := bindings.DirectCaptures(def.Func)
+	if len(captures) != 1 || captures[0].Captured != captured {
+		t.Fatalf("DirectCaptures = %+v, want captured symbol %d", captures, captured)
+	}
+
+	config := Config{
+		Registry: reg,
+		ExpressionValue: func(_ cfg.Point, _ factflow.ExprRef, _ factflow.ValueSource, _ state.State) (product.Value, bool) {
+			return want, true
+		},
+	}
+	result, err := CheckBoundFunction(def.Func, bindings, config)
+	if err != nil {
+		t.Fatalf("CheckBoundFunction: %v", err)
+	}
+	if got := mustLocalAt(t, result, valueDecl, 0); got != suppliedLocal {
+		t.Fatalf("bound result local = %d, want supplied binding local %d", got, suppliedLocal)
+	}
+	exit, ok := result.ExitState()
+	if !ok {
+		t.Fatalf("missing exit state")
+	}
+	assertProductEqual(t, reg, exit.ReadValue(reg, key.SymbolValue(suppliedLocal)), want)
+
+	independent, err := CheckFunction(def.Func, config)
+	if err != nil {
+		t.Fatalf("CheckFunction: %v", err)
+	}
+	if got := mustLocalAt(t, independent, valueDecl, 0); got == suppliedLocal {
+		t.Fatalf("independent CheckFunction local = %d, want a fresh rebind", got)
+	}
+}
+
 func TestCopyConfigCopiesMutableFields(t *testing.T) {
 	reg := product.DefaultRegistry()
 	expr := factflow.ExprRef(42)
@@ -136,7 +195,7 @@ func TestCopyConfigCopiesMutableFields(t *testing.T) {
 
 func TestCheckChunkReturnsUnsupportedCFG(t *testing.T) {
 	reg := product.DefaultRegistry()
-	stmts := parseChunk(t, "local f = function() end")
+	stmts := parseChunk(t, "print(value())")
 
 	_, err := CheckChunk(stmts, Config{Registry: reg})
 	if !errors.Is(err, ErrUnsupportedCFG) {
@@ -174,6 +233,18 @@ func mustLocalAt(t *testing.T, result *Result, stmt *ast.LocalAssignStmt, index 
 	}
 	if locals[index] == 0 {
 		t.Fatalf("local symbol at %d is zero", index)
+	}
+	return locals[index]
+}
+
+func mustBoundLocalAt(t *testing.T, bindings *bind.Result, stmt *ast.LocalAssignStmt, index int) symbol.ID {
+	t.Helper()
+	locals := bindings.LocalSymbols(stmt)
+	if index < 0 || index >= len(locals) {
+		t.Fatalf("bound local index %d out of range for %d locals", index, len(locals))
+	}
+	if locals[index] == 0 {
+		t.Fatalf("bound local symbol at %d is zero", index)
 	}
 	return locals[index]
 }

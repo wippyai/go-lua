@@ -82,6 +82,24 @@ func assertDeclaringFunction(t *testing.T, r *Result, id symbol.ID, want *ast.Fu
 	}
 }
 
+func mustFunctionSymbol(t *testing.T, r *Result, fn *ast.FunctionExpr) symbol.ID {
+	t.Helper()
+	id, ok := r.FunctionSymbol(fn)
+	if !ok {
+		t.Fatalf("FunctionSymbol(%p) missing", fn)
+	}
+	return id
+}
+
+func mustOrigin(t *testing.T, r *Result, fn *ast.FunctionExpr) FunctionOrigin {
+	t.Helper()
+	origin, ok := r.FunctionOrigin(fn)
+	if !ok {
+		t.Fatalf("FunctionOrigin(%p) missing", fn)
+	}
+	return origin
+}
+
 func captureIDs(captures []Capture) []symbol.ID {
 	ids := make([]symbol.ID, len(captures))
 	for i, capture := range captures {
@@ -366,6 +384,120 @@ func TestFunctionIdentityAndTree(t *testing.T) {
 	}
 	if fn, ok := r.FunctionBySymbol(symbol.ID(0)); ok || fn != nil {
 		t.Fatalf("zero FunctionBySymbol = %p/%v, want nil/false", fn, ok)
+	}
+
+	rootOrigin := mustOrigin(t, r, root)
+	if rootOrigin.Kind != FunctionOriginLiteral || rootOrigin.Parent != nil || rootOrigin.Symbol != mustFunctionSymbol(t, r, root) {
+		t.Fatalf("root origin = %#v, want literal root with function symbol", rootOrigin)
+	}
+	childParent, ok := r.ParentFunction(childA)
+	if !ok || childParent != root {
+		t.Fatalf("ParentFunction(childA) = %p/%v, want root/true", childParent, ok)
+	}
+	rootParent, ok := r.ParentFunction(root)
+	if !ok || rootParent != nil {
+		t.Fatalf("ParentFunction(root) = %p/%v, want nil/true", rootParent, ok)
+	}
+	if parent, ok := r.ParentFunction(unknown); ok || parent != nil {
+		t.Fatalf("unknown ParentFunction = %p/%v, want nil/false", parent, ok)
+	}
+}
+
+func TestFunctionOrigins(t *testing.T) {
+	nestedFn := function(nil)
+	nestedStmt := localAssign([]string{"nested"}, nestedFn)
+	globalTarget := ident("globalFn")
+	globalFn := function(nil, nestedStmt)
+	globalStmt := &ast.FuncDefStmt{Name: &ast.FuncName{Func: globalTarget}, Func: globalFn}
+
+	localFunctionFn := function(nil)
+	localFunctionStmt := localAssign([]string{"localFunction"}, localFunctionFn)
+
+	localAssignmentFn := function(nil)
+	localAssignmentStmt := localAssign([]string{"value", "localAssignment"}, number("1"), localAssignmentFn)
+
+	methodFn := function(nil)
+	methodStmt := &ast.FuncDefStmt{
+		Name: &ast.FuncName{Receiver: ident("obj"), Method: "method"},
+		Func: methodFn,
+	}
+
+	literalFn := function(nil)
+	literalStmt := localAssign([]string{"table"}, &ast.TableExpr{Fields: []*ast.Field{{
+		Value: literalFn,
+	}}})
+
+	stmts := []ast.Stmt{globalStmt, localFunctionStmt, localAssignmentStmt, methodStmt, literalStmt}
+	r := BindChunk(stmts, Options{Globals: []string{"obj"}})
+
+	wantOrder := []*ast.FunctionExpr{globalFn, nestedFn, localFunctionFn, localAssignmentFn, methodFn, literalFn}
+	if got := r.Functions(); !reflect.DeepEqual(got, wantOrder) {
+		t.Fatalf("Functions() = %p, want %p", got, wantOrder)
+	}
+	origins := r.FunctionOrigins()
+	if len(origins) != len(wantOrder) {
+		t.Fatalf("FunctionOrigins length = %d, want %d", len(origins), len(wantOrder))
+	}
+	for i, fn := range wantOrder {
+		if origins[i].Func != fn || origins[i].Symbol != mustFunctionSymbol(t, r, fn) {
+			t.Fatalf("origin %d = %#v, want function %p with its symbol", i, origins[i], fn)
+		}
+	}
+
+	globalOrigin := mustOrigin(t, r, globalFn)
+	globalTargetID := mustSymbol(t, r, globalTarget)
+	if globalOrigin.Kind != FunctionOriginDeclaration || globalOrigin.Parent != nil || globalOrigin.Stmt != globalStmt || globalOrigin.LocalIndex != -1 {
+		t.Fatalf("global function origin = %#v, want declaration on stmt", globalOrigin)
+	}
+	if !globalOrigin.HasTargetSymbol || globalOrigin.TargetSymbol != globalTargetID {
+		t.Fatalf("global target symbol = %d/%v, want %d/true", globalOrigin.TargetSymbol, globalOrigin.HasTargetSymbol, globalTargetID)
+	}
+
+	nestedOrigin := mustOrigin(t, r, nestedFn)
+	nestedTargetID := mustLocalAt(t, r, nestedStmt, 0)
+	if nestedOrigin.Kind != FunctionOriginLocalAssignment || nestedOrigin.Parent != globalFn || nestedOrigin.Stmt != nestedStmt || nestedOrigin.LocalIndex != 0 {
+		t.Fatalf("nested origin = %#v, want local assignment under globalFn", nestedOrigin)
+	}
+	if !nestedOrigin.HasTargetSymbol || nestedOrigin.TargetSymbol != nestedTargetID {
+		t.Fatalf("nested target symbol = %d/%v, want %d/true", nestedOrigin.TargetSymbol, nestedOrigin.HasTargetSymbol, nestedTargetID)
+	}
+
+	// Current AST lowers local-function syntax to a local assignment shape, so
+	// bind records the local statement/index rather than inventing syntax.
+	localFunctionOrigin := mustOrigin(t, r, localFunctionFn)
+	localFunctionTargetID := mustLocalAt(t, r, localFunctionStmt, 0)
+	if localFunctionOrigin.Kind != FunctionOriginLocalAssignment || localFunctionOrigin.Stmt != localFunctionStmt || localFunctionOrigin.LocalIndex != 0 {
+		t.Fatalf("local function origin = %#v, want normalized local assignment", localFunctionOrigin)
+	}
+	if !localFunctionOrigin.HasTargetSymbol || localFunctionOrigin.TargetSymbol != localFunctionTargetID {
+		t.Fatalf("local function target = %d/%v, want %d/true", localFunctionOrigin.TargetSymbol, localFunctionOrigin.HasTargetSymbol, localFunctionTargetID)
+	}
+
+	localAssignmentOrigin := mustOrigin(t, r, localAssignmentFn)
+	localAssignmentTargetID := mustLocalAt(t, r, localAssignmentStmt, 1)
+	if localAssignmentOrigin.Kind != FunctionOriginLocalAssignment || localAssignmentOrigin.Stmt != localAssignmentStmt || localAssignmentOrigin.LocalIndex != 1 {
+		t.Fatalf("local assignment origin = %#v, want local assignment index 1", localAssignmentOrigin)
+	}
+	if !localAssignmentOrigin.HasTargetSymbol || localAssignmentOrigin.TargetSymbol != localAssignmentTargetID {
+		t.Fatalf("local assignment target = %d/%v, want %d/true", localAssignmentOrigin.TargetSymbol, localAssignmentOrigin.HasTargetSymbol, localAssignmentTargetID)
+	}
+
+	methodOrigin := mustOrigin(t, r, methodFn)
+	if methodOrigin.Kind != FunctionOriginMethod || methodOrigin.Stmt != methodStmt || methodOrigin.Method != "method" {
+		t.Fatalf("method origin = %#v, want method origin with method name", methodOrigin)
+	}
+	if methodOrigin.HasTargetSymbol || methodOrigin.TargetSymbol != 0 {
+		t.Fatalf("method target = %d/%v, want no target symbol", methodOrigin.TargetSymbol, methodOrigin.HasTargetSymbol)
+	}
+
+	literalOrigin := mustOrigin(t, r, literalFn)
+	if literalOrigin.Kind != FunctionOriginLiteral || literalOrigin.Parent != nil || literalOrigin.Stmt != nil || literalOrigin.LocalIndex != -1 {
+		t.Fatalf("literal origin = %#v, want side-effect-free literal metadata", literalOrigin)
+	}
+
+	origins[0].Kind = FunctionOriginUnknown
+	if got := mustOrigin(t, r, globalFn).Kind; got != FunctionOriginDeclaration {
+		t.Fatalf("FunctionOrigins returned mutable origin storage; kind = %v", got)
 	}
 }
 
