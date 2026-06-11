@@ -12,6 +12,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/lua/branchcond"
 	"github.com/wippyai/go-lua/analysis/lua/semantics"
 	"github.com/wippyai/go-lua/analysis/lua/valueexpr"
+	"github.com/wippyai/go-lua/analysis/lua/valuesource"
 	"github.com/wippyai/go-lua/analysis/symbol"
 	"github.com/wippyai/go-lua/compiler/ast"
 )
@@ -202,7 +203,7 @@ func (l *lowerer) callSite(fact semantics.CallFact) factflow.CallSite {
 	})
 }
 
-func (l *lowerer) addObjectLiteral(input *factflow.FactsInput, result *semantics.Result, source semantics.ValueSource) {
+func (l *lowerer) addObjectLiteral(input *factflow.FactsInput, result *semantics.Result, source valuesource.Source) {
 	fact, ok := result.ObjectLiteral(source.Expr)
 	if !ok {
 		return
@@ -337,7 +338,7 @@ func runtimeTag(typeName string) (runtimekind.Tag, bool) {
 	}
 }
 
-func (l *lowerer) valueSources(sources []semantics.ValueSource) []factflow.ValueSource {
+func (l *lowerer) valueSources(sources []valuesource.Source) []factflow.ValueSource {
 	if len(sources) == 0 {
 		return nil
 	}
@@ -348,7 +349,7 @@ func (l *lowerer) valueSources(sources []semantics.ValueSource) []factflow.Value
 	return out
 }
 
-func (l *lowerer) valueSource(source semantics.ValueSource) factflow.ValueSource {
+func (l *lowerer) valueSource(source valuesource.Source) factflow.ValueSource {
 	exprRef, hasExpr := l.exprRef(source.Expr)
 	return factflow.ValueSource{
 		Kind:         valueSourceKind(source.Kind),
@@ -402,10 +403,10 @@ func (l *lowerer) argumentValueSource(arg ast.Expr, index int, final bool) factf
 	return source
 }
 
-func (l *lowerer) argumentSemanticValueSource(arg ast.Expr, index int, final bool) semantics.ValueSource {
+func (l *lowerer) argumentSemanticValueSource(arg ast.Expr, index int, final bool) valuesource.Source {
 	producer := valueexpr.TopLevelProducer(arg)
 	expanded := final && valueexpr.CanProduceMultipleValues(arg) && !valueexpr.AdjustRet(arg)
-	source := semantics.ValueSource{
+	source := valuesource.Source{
 		Kind:        argumentSemanticSourceKind(producer.Kind),
 		Expr:        arg,
 		ExprIndex:   index,
@@ -435,18 +436,18 @@ func argumentTransferSourceKind(kind valueexpr.ProducerKind) factflow.ValueSourc
 	}
 }
 
-func argumentSemanticSourceKind(kind valueexpr.ProducerKind) semantics.ValueSourceKind {
+func argumentSemanticSourceKind(kind valueexpr.ProducerKind) valuesource.Kind {
 	switch kind {
 	case valueexpr.ProducerCall:
-		return semantics.ValueSourceCall
+		return valuesource.Call
 	case valueexpr.ProducerVararg:
-		return semantics.ValueSourceVararg
+		return valuesource.Vararg
 	default:
-		return semantics.ValueSourceExpression
+		return valuesource.Expression
 	}
 }
 
-func (l *lowerer) addAssertionOverlaysForSource(input *factflow.FactsInput, source semantics.ValueSource) {
+func (l *lowerer) addAssertionOverlaysForSource(input *factflow.FactsInput, source valuesource.Source) {
 	if input == nil || source.Expr == nil {
 		return
 	}
@@ -458,7 +459,7 @@ func (l *lowerer) addAssertionOverlaysForSource(input *factflow.FactsInput, sour
 	}
 }
 
-func (l *lowerer) addAssertion(input *factflow.FactsInput, outer semantics.ValueSource, innerExpr ast.Expr, value assertion.Value) {
+func (l *lowerer) addAssertion(input *factflow.FactsInput, outer valuesource.Source, innerExpr ast.Expr, value assertion.Value) {
 	outerRef, hasOuter := l.exprRef(outer.Expr)
 	if !hasOuter || innerExpr == nil {
 		return
@@ -628,15 +629,15 @@ func callSiteContext(kind semantics.CallContextKind) factflow.CallSiteContext {
 	}
 }
 
-func valueSourceKind(kind semantics.ValueSourceKind) factflow.ValueSourceKind {
+func valueSourceKind(kind valuesource.Kind) factflow.ValueSourceKind {
 	switch kind {
-	case semantics.ValueSourceExpression:
+	case valuesource.Expression:
 		return factflow.ValueSourceExpression
-	case semantics.ValueSourceCall:
+	case valuesource.Call:
 		return factflow.ValueSourceCall
-	case semantics.ValueSourceVararg:
+	case valuesource.Vararg:
 		return factflow.ValueSourceVararg
-	case semantics.ValueSourceNil:
+	case valuesource.Nil:
 		return factflow.ValueSourceNil
 	default:
 		return factflow.ValueSourceUnknown

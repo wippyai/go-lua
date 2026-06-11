@@ -3,6 +3,7 @@ package semantics
 import (
 	"github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
+	"github.com/wippyai/go-lua/analysis/lua/valuesource"
 	"github.com/wippyai/go-lua/compiler/ast"
 )
 
@@ -150,13 +151,13 @@ func appendSuffix(prefix path.Path, suffix path.Path) path.Path {
 	return out
 }
 
-func objectEntryValueSource(expr ast.Expr, final bool) ValueSource {
+func objectEntryValueSource(expr ast.Expr, final bool) valuesource.Source {
 	expanded := final && canExpandFinal(expr)
-	return ValueSource{
+	return valuesource.Source{
 		Kind:        valueSourceKind(expr),
 		Expr:        expr,
-		ExprIndex:   NoValueSourceIndex,
-		TargetIndex: NoValueSourceIndex,
+		ExprIndex:   valuesource.NoIndex,
+		TargetIndex: valuesource.NoIndex,
 		ResultIndex: 0,
 		Final:       final,
 		Expanded:    expanded,

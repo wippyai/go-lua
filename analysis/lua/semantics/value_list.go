@@ -6,6 +6,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/lua/bind"
 	"github.com/wippyai/go-lua/analysis/lua/pathexpr"
 	"github.com/wippyai/go-lua/analysis/lua/valueexpr"
+	"github.com/wippyai/go-lua/analysis/lua/valuesource"
 	"github.com/wippyai/go-lua/analysis/symbol"
 	"github.com/wippyai/go-lua/compiler/ast"
 )
@@ -46,34 +47,6 @@ type CallResultTarget struct {
 	Path      path.Path
 	HasPath   bool
 
-	OpenTail bool
-}
-
-type ValueSourceKind uint8
-
-const (
-	ValueSourceUnknown ValueSourceKind = iota
-	ValueSourceExpression
-	ValueSourceCall
-	ValueSourceVararg
-	ValueSourceNil
-)
-
-const NoValueSourceIndex = -1
-
-type ValueSource struct {
-	Kind ValueSourceKind
-	Expr ast.Expr
-
-	ExprIndex    int
-	TargetIndex  int
-	ResultIndex  int
-	CallPoint    cfg.Point
-	HasCallPoint bool
-
-	Final    bool
-	Expanded bool
-	Adjusted bool
 	OpenTail bool
 }
 
@@ -166,18 +139,18 @@ func returnResultTarget(stmt *ast.ReturnStmt, index int, openTail bool) CallResu
 	}
 }
 
-func assignmentValueSources(exprs []ast.Expr, targetCount int, callPoints map[int]cfg.Point) []ValueSource {
+func assignmentValueSources(exprs []ast.Expr, targetCount int, callPoints map[int]cfg.Point) []valuesource.Source {
 	if targetCount <= 0 {
 		return nil
 	}
-	sources := make([]ValueSource, targetCount)
+	sources := make([]valuesource.Source, targetCount)
 	for targetIndex := range sources {
 		sources[targetIndex] = assignmentValueSource(exprs, targetIndex, callPoints)
 	}
 	return sources
 }
 
-func assignmentValueSource(exprs []ast.Expr, targetIndex int, callPoints map[int]cfg.Point) ValueSource {
+func assignmentValueSource(exprs []ast.Expr, targetIndex int, callPoints map[int]cfg.Point) valuesource.Source {
 	if len(exprs) == 0 {
 		return nilFillSource(targetIndex)
 	}
@@ -198,19 +171,19 @@ func assignmentValueSource(exprs []ast.Expr, targetIndex int, callPoints map[int
 	return nilFillSource(targetIndex)
 }
 
-func returnValueSources(exprs []ast.Expr, callPoints map[int]cfg.Point) []ValueSource {
+func returnValueSources(exprs []ast.Expr, callPoints map[int]cfg.Point) []valuesource.Source {
 	return valueListSources(exprs, callPoints, true)
 }
 
-func iteratorValueSources(exprs []ast.Expr, callPoints map[int]cfg.Point) []ValueSource {
+func iteratorValueSources(exprs []ast.Expr, callPoints map[int]cfg.Point) []valuesource.Source {
 	return valueListSources(exprs, callPoints, false)
 }
 
-func valueListSources(exprs []ast.Expr, callPoints map[int]cfg.Point, openTailFinal bool) []ValueSource {
+func valueListSources(exprs []ast.Expr, callPoints map[int]cfg.Point, openTailFinal bool) []valuesource.Source {
 	if len(exprs) == 0 {
 		return nil
 	}
-	sources := make([]ValueSource, len(exprs))
+	sources := make([]valuesource.Source, len(exprs))
 	for i, expr := range exprs {
 		final := i == len(exprs)-1
 		openTail := openTailFinal && final && canExpandFinal(expr)
@@ -219,17 +192,17 @@ func valueListSources(exprs []ast.Expr, callPoints map[int]cfg.Point, openTailFi
 	return sources
 }
 
-func conditionValueSource(expr ast.Expr, callPoints map[int]cfg.Point) ValueSource {
-	source := ValueSource{
+func conditionValueSource(expr ast.Expr, callPoints map[int]cfg.Point) valuesource.Source {
+	source := valuesource.Source{
 		Kind:        valueSourceKind(expr),
 		Expr:        expr,
 		ExprIndex:   0,
-		TargetIndex: NoValueSourceIndex,
+		TargetIndex: valuesource.NoIndex,
 		ResultIndex: 0,
 		Final:       true,
 		Adjusted:    canProduceMultipleValues(expr),
 	}
-	if source.Kind == ValueSourceCall {
+	if source.Kind == valuesource.Call {
 		if point, ok := callPoints[0]; ok {
 			source.CallPoint = point
 			source.HasCallPoint = point != 0
@@ -238,10 +211,10 @@ func conditionValueSource(expr ast.Expr, callPoints map[int]cfg.Point) ValueSour
 	return source
 }
 
-func valueSourceForExpr(expr ast.Expr, exprIndex, targetIndex, resultIndex int, final bool, openTail bool, callPoints map[int]cfg.Point) ValueSource {
+func valueSourceForExpr(expr ast.Expr, exprIndex, targetIndex, resultIndex int, final bool, openTail bool, callPoints map[int]cfg.Point) valuesource.Source {
 	expanded := final && canExpandFinal(expr)
 	adjusted := canProduceMultipleValues(expr) && !expanded
-	source := ValueSource{
+	source := valuesource.Source{
 		Kind:        valueSourceKind(expr),
 		Expr:        expr,
 		ExprIndex:   exprIndex,
@@ -252,7 +225,7 @@ func valueSourceForExpr(expr ast.Expr, exprIndex, targetIndex, resultIndex int, 
 		Adjusted:    adjusted,
 		OpenTail:    openTail && expanded,
 	}
-	if source.Kind == ValueSourceCall {
+	if source.Kind == valuesource.Call {
 		if point, ok := callPoints[exprIndex]; ok {
 			source.CallPoint = point
 			source.HasCallPoint = point != 0
@@ -261,23 +234,23 @@ func valueSourceForExpr(expr ast.Expr, exprIndex, targetIndex, resultIndex int, 
 	return source
 }
 
-func nilFillSource(targetIndex int) ValueSource {
-	return ValueSource{
-		Kind:        ValueSourceNil,
-		ExprIndex:   NoValueSourceIndex,
+func nilFillSource(targetIndex int) valuesource.Source {
+	return valuesource.Source{
+		Kind:        valuesource.Nil,
+		ExprIndex:   valuesource.NoIndex,
 		TargetIndex: targetIndex,
-		ResultIndex: NoValueSourceIndex,
+		ResultIndex: valuesource.NoIndex,
 	}
 }
 
-func valueSourceKind(expr ast.Expr) ValueSourceKind {
+func valueSourceKind(expr ast.Expr) valuesource.Kind {
 	switch valueexpr.TopLevelProducer(expr).Kind {
 	case valueexpr.ProducerCall:
-		return ValueSourceCall
+		return valuesource.Call
 	case valueexpr.ProducerVararg:
-		return ValueSourceVararg
+		return valuesource.Vararg
 	default:
-		return ValueSourceExpression
+		return valuesource.Expression
 	}
 }
 
@@ -379,11 +352,11 @@ func callResultTargets(context CallContextKind, sourceStmt ast.Stmt, exprIndex i
 	}
 }
 
-func copyValueSources(in []ValueSource) []ValueSource {
+func copyValueSources(in []valuesource.Source) []valuesource.Source {
 	if len(in) == 0 {
 		return nil
 	}
-	out := make([]ValueSource, len(in))
+	out := make([]valuesource.Source, len(in))
 	copy(out, in)
 	return out
 }

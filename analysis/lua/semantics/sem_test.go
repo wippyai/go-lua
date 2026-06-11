@@ -10,6 +10,8 @@ import (
 	"github.com/wippyai/go-lua/analysis/lua/bind"
 	"github.com/wippyai/go-lua/analysis/lua/branchcond"
 	"github.com/wippyai/go-lua/analysis/lua/cfgbuild"
+	"github.com/wippyai/go-lua/analysis/lua/cfgfacts"
+	"github.com/wippyai/go-lua/analysis/lua/valuesource"
 	"github.com/wippyai/go-lua/analysis/symbol"
 	"github.com/wippyai/go-lua/compiler/ast"
 )
@@ -114,7 +116,7 @@ func assertEntry(t *testing.T, got ObjectEntryFact, wantIndex int, wantSuffix pa
 	if got.Index != wantIndex || got.Value != wantValue || got.Source.Expr != wantValue {
 		t.Fatalf("entry = %#v, want index %d value %p", got, wantIndex, wantValue)
 	}
-	if got.Source.Kind != ValueSourceExpression || got.Source.ExprIndex != NoValueSourceIndex || got.Source.TargetIndex != NoValueSourceIndex {
+	if got.Source.Kind != valuesource.Expression || got.Source.ExprIndex != valuesource.NoIndex || got.Source.TargetIndex != valuesource.NoIndex {
 		t.Fatalf("entry source = %#v, want expression source without value-list indexes", got.Source)
 	}
 	if !got.Suffix.Equal(wantSuffix) {
@@ -467,13 +469,13 @@ func TestExtractChunkObjectLiteralSkipsFinalExpandingArrayField(t *testing.T) {
 	if entries[0].Value != nonFinalVararg || !entries[0].Suffix.Equal(intSuffix(1)) {
 		t.Fatalf("non-final vararg entry = %#v", entries[0])
 	}
-	if entries[0].Source.Kind != ValueSourceVararg || entries[0].Source.Final || !entries[0].Source.Adjusted || entries[0].Source.Expanded {
+	if entries[0].Source.Kind != valuesource.Vararg || entries[0].Source.Final || !entries[0].Source.Adjusted || entries[0].Source.Expanded {
 		t.Fatalf("non-final vararg source = %#v, want adjusted single value", entries[0].Source)
 	}
 	if entries[1].Value != keyedVararg || !entries[1].Suffix.Equal(fieldChainSuffix("key")) {
 		t.Fatalf("keyed vararg entry = %#v", entries[1])
 	}
-	if entries[1].Source.Kind != ValueSourceVararg || entries[1].Source.Final || !entries[1].Source.Adjusted || entries[1].Source.Expanded {
+	if entries[1].Source.Kind != valuesource.Vararg || entries[1].Source.Final || !entries[1].Source.Adjusted || entries[1].Source.Expanded {
 		t.Fatalf("keyed vararg source = %#v, want adjusted single value", entries[1].Source)
 	}
 	for _, entry := range entries {
@@ -668,7 +670,7 @@ func TestExtractChunkCallReturnBranchAndTypeFacts(t *testing.T) {
 		t.Fatalf("type def cfg node = %#v, want NodeNoop", node)
 	}
 	typeFact, ok := result.TypeDefinition(typePoint)
-	if !ok || typeFact.Kind != TypeDefinitionAlias || typeFact.Type != typeDef {
+	if !ok || typeFact.Kind != cfgfacts.TypeDefinitionAlias || typeFact.Type != typeDef {
 		t.Fatalf("type def fact = %#v, ok=%v", typeFact, ok)
 	}
 	interfacePoint := requireStmtPoints(t, built, interfaceDef, 1)[0]
@@ -676,7 +678,7 @@ func TestExtractChunkCallReturnBranchAndTypeFacts(t *testing.T) {
 		t.Fatalf("interface def cfg node = %#v, want NodeNoop", node)
 	}
 	interfaceFact, ok := result.TypeDefinition(interfacePoint)
-	if !ok || interfaceFact.Kind != TypeDefinitionInterface || interfaceFact.Interface != interfaceDef {
+	if !ok || interfaceFact.Kind != cfgfacts.TypeDefinitionInterface || interfaceFact.Interface != interfaceDef {
 		t.Fatalf("interface def fact = %#v, ok=%v", interfaceFact, ok)
 	}
 
@@ -744,7 +746,7 @@ func TestExtractChunkAssignmentAndReturnCallFactsUseLuaListRules(t *testing.T) {
 	if !ok {
 		t.Fatalf("missing local a fact")
 	}
-	if aFact.Source.Kind != ValueSourceCall || aFact.Source.Expr != makeCall || aFact.Source.ExprIndex != 0 || aFact.Source.ResultIndex != 0 || !aFact.Source.Adjusted || aFact.Source.CallPoint != localPoints[0] || !aFact.Source.HasCallPoint {
+	if aFact.Source.Kind != valuesource.Call || aFact.Source.Expr != makeCall || aFact.Source.ExprIndex != 0 || aFact.Source.ResultIndex != 0 || !aFact.Source.Adjusted || aFact.Source.CallPoint != localPoints[0] || !aFact.Source.HasCallPoint {
 		t.Fatalf("a source = %#v", aFact.Source)
 	}
 	bFact, ok := result.LocalAssignment(localPoints[3])
@@ -755,10 +757,10 @@ func TestExtractChunkAssignmentAndReturnCallFactsUseLuaListRules(t *testing.T) {
 	if !ok {
 		t.Fatalf("missing local c fact")
 	}
-	if bFact.Source.Kind != ValueSourceCall || bFact.Source.Expr != packCall || !bFact.Source.Expanded || bFact.Source.ResultIndex != 0 || bFact.Source.CallPoint != localPoints[1] || !bFact.Source.HasCallPoint {
+	if bFact.Source.Kind != valuesource.Call || bFact.Source.Expr != packCall || !bFact.Source.Expanded || bFact.Source.ResultIndex != 0 || bFact.Source.CallPoint != localPoints[1] || !bFact.Source.HasCallPoint {
 		t.Fatalf("b source = %#v", bFact.Source)
 	}
-	if cFact.Source.Kind != ValueSourceCall || cFact.Source.Expr != packCall || !cFact.Source.Expanded || cFact.Source.ResultIndex != 1 || cFact.Source.CallPoint != localPoints[1] || !cFact.Source.HasCallPoint {
+	if cFact.Source.Kind != valuesource.Call || cFact.Source.Expr != packCall || !cFact.Source.Expanded || cFact.Source.ResultIndex != 1 || cFact.Source.CallPoint != localPoints[1] || !cFact.Source.HasCallPoint {
 		t.Fatalf("c source = %#v", cFact.Source)
 	}
 
@@ -777,15 +779,15 @@ func TestExtractChunkAssignmentAndReturnCallFactsUseLuaListRules(t *testing.T) {
 	if !ok {
 		t.Fatalf("missing return fact")
 	}
-	if len(returnFact.Sources) != 2 || returnFact.Sources[0].Kind != ValueSourceExpression || returnFact.Sources[0].Expr != aRead {
+	if len(returnFact.Sources) != 2 || returnFact.Sources[0].Kind != valuesource.Expression || returnFact.Sources[0].Expr != aRead {
 		t.Fatalf("return first source = %#v", returnFact.Sources)
 	}
-	if returnFact.Sources[1].Kind != ValueSourceCall || returnFact.Sources[1].Expr != tailCall || !returnFact.Sources[1].Expanded || !returnFact.Sources[1].OpenTail || returnFact.Sources[1].CallPoint != returnPoints[0] || !returnFact.Sources[1].HasCallPoint {
+	if returnFact.Sources[1].Kind != valuesource.Call || returnFact.Sources[1].Expr != tailCall || !returnFact.Sources[1].Expanded || !returnFact.Sources[1].OpenTail || returnFact.Sources[1].CallPoint != returnPoints[0] || !returnFact.Sources[1].HasCallPoint {
 		t.Fatalf("return tail source = %#v", returnFact.Sources[1])
 	}
-	returnFact.Sources[1].Kind = ValueSourceNil
+	returnFact.Sources[1].Kind = valuesource.Nil
 	returnAgain, _ := result.Return(returnPoints[1])
-	if returnAgain.Sources[1].Kind != ValueSourceCall {
+	if returnAgain.Sources[1].Kind != valuesource.Call {
 		t.Fatalf("Return exposed mutable sources slice")
 	}
 }
@@ -832,10 +834,10 @@ func TestExtractChunkConditionAndIteratorCallFactsUseDeferredContexts(t *testing
 	if !ok {
 		t.Fatalf("missing condition branch fact")
 	}
-	if branchFact.Source.Kind != ValueSourceCall || branchFact.Source.Expr != readyCall || branchFact.Source.CallPoint != ifPoints[0] || !branchFact.Source.HasCallPoint {
+	if branchFact.Source.Kind != valuesource.Call || branchFact.Source.Expr != readyCall || branchFact.Source.CallPoint != ifPoints[0] || !branchFact.Source.HasCallPoint {
 		t.Fatalf("condition source = %#v", branchFact.Source)
 	}
-	if branchFact.Source.TargetIndex != NoValueSourceIndex || !branchFact.Source.Adjusted || branchFact.Source.Expanded {
+	if branchFact.Source.TargetIndex != valuesource.NoIndex || !branchFact.Source.Adjusted || branchFact.Source.Expanded {
 		t.Fatalf("condition source flags = %#v", branchFact.Source)
 	}
 
@@ -868,15 +870,15 @@ func TestExtractChunkConditionAndIteratorCallFactsUseDeferredContexts(t *testing
 	if len(genericFact.Sources) != 2 {
 		t.Fatalf("generic for sources = %#v", genericFact.Sources)
 	}
-	if genericFact.Sources[0].Kind != ValueSourceCall || genericFact.Sources[0].Expr != iterCall || genericFact.Sources[0].CallPoint != loopPoints[0] || !genericFact.Sources[0].HasCallPoint || !genericFact.Sources[0].Adjusted {
+	if genericFact.Sources[0].Kind != valuesource.Call || genericFact.Sources[0].Expr != iterCall || genericFact.Sources[0].CallPoint != loopPoints[0] || !genericFact.Sources[0].HasCallPoint || !genericFact.Sources[0].Adjusted {
 		t.Fatalf("first generic source = %#v", genericFact.Sources[0])
 	}
-	if genericFact.Sources[1].Kind != ValueSourceCall || genericFact.Sources[1].Expr != stateCall || genericFact.Sources[1].CallPoint != loopPoints[1] || !genericFact.Sources[1].HasCallPoint || !genericFact.Sources[1].Expanded || genericFact.Sources[1].OpenTail {
+	if genericFact.Sources[1].Kind != valuesource.Call || genericFact.Sources[1].Expr != stateCall || genericFact.Sources[1].CallPoint != loopPoints[1] || !genericFact.Sources[1].HasCallPoint || !genericFact.Sources[1].Expanded || genericFact.Sources[1].OpenTail {
 		t.Fatalf("final generic source = %#v", genericFact.Sources[1])
 	}
-	genericFact.Sources[0].Kind = ValueSourceNil
+	genericFact.Sources[0].Kind = valuesource.Nil
 	genericAgain, _ := result.GenericFor(loopPoints[2])
-	if genericAgain.Sources[0].Kind != ValueSourceCall {
+	if genericAgain.Sources[0].Kind != valuesource.Call {
 		t.Fatalf("GenericFor exposed mutable sources slice")
 	}
 }
@@ -925,7 +927,7 @@ func TestExtractChunkAssertionWrappedCallProducersKeepOuterSources(t *testing.T)
 		t.Fatalf("return call = %#v, ok=%v", returnCall, ok)
 	}
 	returnFact, ok := result.Return(returnPoints[1])
-	if !ok || len(returnFact.Sources) != 1 || returnFact.Sources[0].Kind != ValueSourceCall || returnFact.Sources[0].Expr != barCast || returnFact.Sources[0].CallPoint != returnPoints[0] || !returnFact.Sources[0].HasCallPoint {
+	if !ok || len(returnFact.Sources) != 1 || returnFact.Sources[0].Kind != valuesource.Call || returnFact.Sources[0].Expr != barCast || returnFact.Sources[0].CallPoint != returnPoints[0] || !returnFact.Sources[0].HasCallPoint {
 		t.Fatalf("return sources = %#v, ok=%v", returnFact.Sources, ok)
 	}
 
@@ -935,7 +937,7 @@ func TestExtractChunkAssertionWrappedCallProducersKeepOuterSources(t *testing.T)
 		t.Fatalf("condition call = %#v, ok=%v", conditionCall, ok)
 	}
 	branchFact, ok := result.BranchCondition(ifPoints[1])
-	if !ok || branchFact.Source.Kind != ValueSourceCall || branchFact.Source.Expr != readyCast || branchFact.Source.CallPoint != ifPoints[0] || !branchFact.Source.HasCallPoint {
+	if !ok || branchFact.Source.Kind != valuesource.Call || branchFact.Source.Expr != readyCast || branchFact.Source.CallPoint != ifPoints[0] || !branchFact.Source.HasCallPoint {
 		t.Fatalf("branch source = %#v, ok=%v", branchFact.Source, ok)
 	}
 
@@ -945,7 +947,7 @@ func TestExtractChunkAssertionWrappedCallProducersKeepOuterSources(t *testing.T)
 		t.Fatalf("iterator call = %#v, ok=%v", iterCallFact, ok)
 	}
 	genericFact, ok := result.GenericFor(loopPoints[1])
-	if !ok || len(genericFact.Sources) != 1 || genericFact.Sources[0].Kind != ValueSourceCall || genericFact.Sources[0].Expr != iterCast || genericFact.Sources[0].CallPoint != loopPoints[0] || !genericFact.Sources[0].HasCallPoint {
+	if !ok || len(genericFact.Sources) != 1 || genericFact.Sources[0].Kind != valuesource.Call || genericFact.Sources[0].Expr != iterCast || genericFact.Sources[0].CallPoint != loopPoints[0] || !genericFact.Sources[0].HasCallPoint {
 		t.Fatalf("generic sources = %#v, ok=%v", genericFact.Sources, ok)
 	}
 }
@@ -957,7 +959,7 @@ func assertWrappedCallSource(t *testing.T, result *Result, callPoint, assignPoin
 		t.Fatalf("call fact = %#v, ok=%v", callFact, ok)
 	}
 	assignFact, ok := result.LocalAssignment(assignPoint)
-	if !ok || assignFact.Source.Kind != ValueSourceCall || assignFact.Source.Expr != outerExpr || assignFact.Source.CallPoint != callPoint || !assignFact.Source.HasCallPoint {
+	if !ok || assignFact.Source.Kind != valuesource.Call || assignFact.Source.Expr != outerExpr || assignFact.Source.CallPoint != callPoint || !assignFact.Source.HasCallPoint {
 		t.Fatalf("assignment source = %#v, ok=%v", assignFact.Source, ok)
 	}
 }
@@ -996,10 +998,10 @@ func TestExtractChunkAssignmentValueSourcesHandleAdjustRetNilFillAndVararg(t *te
 	if !ok {
 		t.Fatalf("missing second adjusted assignment")
 	}
-	if first.Source.Kind != ValueSourceCall || first.Source.Expr != singleCall || !first.Source.Final || !first.Source.Adjusted || first.Source.Expanded || first.Source.CallPoint != adjustedPoints[0] || !first.Source.HasCallPoint {
+	if first.Source.Kind != valuesource.Call || first.Source.Expr != singleCall || !first.Source.Final || !first.Source.Adjusted || first.Source.Expanded || first.Source.CallPoint != adjustedPoints[0] || !first.Source.HasCallPoint {
 		t.Fatalf("first adjusted source = %#v", first.Source)
 	}
-	if second.Source.Kind != ValueSourceNil || second.Source.ExprIndex != NoValueSourceIndex {
+	if second.Source.Kind != valuesource.Nil || second.Source.ExprIndex != valuesource.NoIndex {
 		t.Fatalf("second adjusted source = %#v", second.Source)
 	}
 
@@ -1012,10 +1014,10 @@ func TestExtractChunkAssignmentValueSourcesHandleAdjustRetNilFillAndVararg(t *te
 	if !ok {
 		t.Fatalf("missing r assignment")
 	}
-	if qFact.Source.Kind != ValueSourceVararg || qFact.Source.Expr != vararg || !qFact.Source.Expanded || qFact.Source.ResultIndex != 0 {
+	if qFact.Source.Kind != valuesource.Vararg || qFact.Source.Expr != vararg || !qFact.Source.Expanded || qFact.Source.ResultIndex != 0 {
 		t.Fatalf("q source = %#v", qFact.Source)
 	}
-	if rFact.Source.Kind != ValueSourceVararg || rFact.Source.Expr != vararg || !rFact.Source.Expanded || rFact.Source.ResultIndex != 1 {
+	if rFact.Source.Kind != valuesource.Vararg || rFact.Source.Expr != vararg || !rFact.Source.Expanded || rFact.Source.ResultIndex != 1 {
 		t.Fatalf("r source = %#v", rFact.Source)
 	}
 
@@ -1024,7 +1026,7 @@ func TestExtractChunkAssignmentValueSourcesHandleAdjustRetNilFillAndVararg(t *te
 	if !ok {
 		t.Fatalf("missing vararg return fact")
 	}
-	if len(returnFact.Sources) != 2 || returnFact.Sources[1].Kind != ValueSourceVararg || !returnFact.Sources[1].Expanded || !returnFact.Sources[1].OpenTail {
+	if len(returnFact.Sources) != 2 || returnFact.Sources[1].Kind != valuesource.Vararg || !returnFact.Sources[1].Expanded || !returnFact.Sources[1].OpenTail {
 		t.Fatalf("vararg return sources = %#v", returnFact.Sources)
 	}
 }
@@ -1241,9 +1243,9 @@ func TestExtractChunkNumericForFactsUseStmtPointsAndPreserveIdentity(t *testing.
 		t.Fatalf("missing numeric for symbol")
 	}
 	points := requireStmtPoints(t, built, loop, 2)
-	expectedRoles := map[cfg.Point]NumericForRole{
-		points[0]: NumericForRoleInit,
-		points[1]: NumericForRoleCheck,
+	expectedRoles := map[cfg.Point]cfgfacts.NumericForRole{
+		points[0]: cfgfacts.NumericForRoleInit,
+		points[1]: cfgfacts.NumericForRoleCheck,
 	}
 	for _, point := range points {
 		fact, ok := result.NumericFor(point)
@@ -1288,13 +1290,13 @@ func TestExtractChunkGenericForFactsUseStmtPointsAndPreserveIdentity(t *testing.
 	kID := mustGenericForAt(t, bindings, loop, 0)
 	vID := mustGenericForAt(t, bindings, loop, 1)
 	points := requireStmtPoints(t, built, loop, 3)
-	expectedRoles := map[cfg.Point]GenericForRole{
-		points[0]: GenericForRoleCheck,
-		points[1]: GenericForRoleVariable,
-		points[2]: GenericForRoleVariable,
+	expectedRoles := map[cfg.Point]cfgfacts.GenericForRole{
+		points[0]: cfgfacts.GenericForRoleCheck,
+		points[1]: cfgfacts.GenericForRoleVariable,
+		points[2]: cfgfacts.GenericForRoleVariable,
 	}
 	expectedVariableIndexes := map[cfg.Point]int{
-		points[0]: NoGenericForVariableIndex,
+		points[0]: cfgfacts.NoGenericForVariableIndex,
 		points[1]: 0,
 		points[2]: 1,
 	}
@@ -1357,13 +1359,15 @@ func TestExtractFunctionRecordsFunctionIdentity(t *testing.T) {
 	}
 }
 
-func TestExtractChunkSkipsUnmappedFunctionDefinition(t *testing.T) {
+func TestExtractChunkSkipsUnmappedDeclarationFacts(t *testing.T) {
 	ret := &ast.ReturnStmt{}
 	deadFn := &ast.FuncDefStmt{
 		Name: &ast.FuncName{Func: ident("f")},
 		Func: function(nil),
 	}
-	stmts := []ast.Stmt{ret, deadFn}
+	deadType := &ast.TypeDefStmt{Name: "Alias", Type: &ast.PrimitiveTypeExpr{Name: "number"}}
+	deadIface := &ast.InterfaceDefStmt{Name: "Shape"}
+	stmts := []ast.Stmt{ret, deadFn, deadType, deadIface}
 	bindings := bind.BindChunk(stmts, bind.Options{})
 	built := cfgbuild.BuildChunk(stmts, bindings)
 	if built == nil {
@@ -1372,16 +1376,23 @@ func TestExtractChunkSkipsUnmappedFunctionDefinition(t *testing.T) {
 	if got := built.StmtPoints.PointsFor(deadFn); len(got) != 0 {
 		t.Fatalf("dead function definition mapped to points %v", got)
 	}
+	if got := built.StmtPoints.PointsFor(deadType); len(got) != 0 {
+		t.Fatalf("dead type definition mapped to points %v", got)
+	}
+	if got := built.StmtPoints.PointsFor(deadIface); len(got) != 0 {
+		t.Fatalf("dead interface definition mapped to points %v", got)
+	}
 
 	result, err := ExtractChunk(stmts, bindings, built)
 	if err != nil {
 		t.Fatalf("ExtractChunk: %v", err)
 	}
-	if len(result.typeDefinitions) != 0 {
-		t.Fatalf("function definition produced type facts: %#v", result.typeDefinitions)
+	deadPoint := cfg.Point(9999)
+	if _, ok := result.FunctionDefinition(deadPoint); ok {
+		t.Fatalf("unmapped function definition produced function fact at dead point")
 	}
-	if len(result.functionDefinitions) != 0 {
-		t.Fatalf("unmapped function definition produced function facts: %#v", result.functionDefinitions)
+	if _, ok := result.TypeDefinition(deadPoint); ok {
+		t.Fatalf("unmapped type definition produced type fact at dead point")
 	}
 }
 
@@ -1402,8 +1413,8 @@ func TestExtractChunkSkipsUnmappedLabel(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ExtractChunk: %v", err)
 	}
-	if len(result.labels) != 0 {
-		t.Fatalf("unmapped label produced label facts: %#v", result.labels)
+	if _, ok := result.Label(cfg.Point(9999)); ok {
+		t.Fatalf("unmapped label produced label fact at dead point")
 	}
 }
 
@@ -1424,8 +1435,8 @@ func TestExtractChunkSkipsUnmappedGoto(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ExtractChunk: %v", err)
 	}
-	if len(result.gotos) != 0 {
-		t.Fatalf("unmapped goto produced goto facts: %#v", result.gotos)
+	if _, ok := result.Goto(cfg.Point(9999)); ok {
+		t.Fatalf("unmapped goto produced goto fact at dead point")
 	}
 }
 

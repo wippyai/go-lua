@@ -20,6 +20,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/lua/bind"
 	"github.com/wippyai/go-lua/analysis/lua/cfgbuild"
 	"github.com/wippyai/go-lua/analysis/lua/semantics"
+	"github.com/wippyai/go-lua/analysis/lua/valuesource"
 	"github.com/wippyai/go-lua/analysis/symbol"
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/parse"
@@ -370,7 +371,7 @@ func TestLowerCallSiteArgumentNestedCallSourceHasCallPoint(t *testing.T) {
 		t.Fatalf("wrapped nested call arg source = %#v, want call point %d", wrappedSource, innerPoint)
 	}
 	wrappedSemanticSource := l.argumentSemanticValueSource(wrapped, 0, true)
-	if wrappedSemanticSource.Kind != semantics.ValueSourceCall || !wrappedSemanticSource.HasCallPoint || wrappedSemanticSource.CallPoint != innerPoint {
+	if wrappedSemanticSource.Kind != valuesource.Call || !wrappedSemanticSource.HasCallPoint || wrappedSemanticSource.CallPoint != innerPoint {
 		t.Fatalf("wrapped nested call semantic source = %#v, want call point %d", wrappedSemanticSource, innerPoint)
 	}
 }

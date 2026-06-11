@@ -9,7 +9,9 @@ import (
 	"github.com/wippyai/go-lua/analysis/lua/bind"
 	"github.com/wippyai/go-lua/analysis/lua/branchcond"
 	"github.com/wippyai/go-lua/analysis/lua/cfgbuild"
+	"github.com/wippyai/go-lua/analysis/lua/cfgfacts"
 	"github.com/wippyai/go-lua/analysis/lua/pathexpr"
+	"github.com/wippyai/go-lua/analysis/lua/valuesource"
 	"github.com/wippyai/go-lua/analysis/symbol"
 	"github.com/wippyai/go-lua/compiler/ast"
 )
@@ -28,14 +30,6 @@ const (
 	BranchRepeat
 )
 
-type TypeDefinitionKind uint8
-
-const (
-	TypeDefinitionUnknown TypeDefinitionKind = iota
-	TypeDefinitionAlias
-	TypeDefinitionInterface
-)
-
 type Result struct {
 	function *ast.FunctionExpr
 
@@ -45,12 +39,7 @@ type Result struct {
 	returns             map[cfg.Point]ReturnFact
 	objectLiterals      map[ast.Expr]ObjectLiteralFact
 	branches            map[cfg.Point]BranchConditionFact
-	typeDefinitions     map[cfg.Point]TypeDefinitionFact
-	functionDefinitions map[cfg.Point]FunctionDefinitionFact
-	numericFors         map[cfg.Point]NumericForFact
-	genericFors         map[cfg.Point]GenericForFact
-	labels              map[cfg.Point]LabelFact
-	gotos               map[cfg.Point]GotoFact
+	meta                cfgfacts.Metadata
 }
 
 type LocalAssignmentFact struct {
@@ -60,7 +49,7 @@ type LocalAssignmentFact struct {
 	Name   string
 	Type   ast.TypeExpr
 	Expr   ast.Expr
-	Source ValueSource
+	Source valuesource.Source
 
 	Symbol    symbol.ID
 	HasSymbol bool
@@ -75,7 +64,7 @@ type OrdinaryAssignmentFact struct {
 
 	Target ast.Expr
 	Value  ast.Expr
-	Source ValueSource
+	Source valuesource.Source
 
 	Symbol    symbol.ID
 	HasSymbol bool
@@ -120,7 +109,7 @@ type CallFact struct {
 type ReturnFact struct {
 	Stmt    *ast.ReturnStmt
 	Exprs   []ast.Expr
-	Sources []ValueSource
+	Sources []valuesource.Source
 }
 
 type ObjectLiteralFact struct {
@@ -135,7 +124,7 @@ type ObjectEntryFact struct {
 	Key    ast.Expr
 	Value  ast.Expr
 	Suffix path.Path
-	Source ValueSource
+	Source valuesource.Source
 }
 
 type BranchConditionFact struct {
@@ -146,78 +135,8 @@ type BranchConditionFact struct {
 	While     *ast.WhileStmt
 	Repeat    *ast.RepeatStmt
 	Condition ast.Expr
-	Source    ValueSource
+	Source    valuesource.Source
 	Check     branchcond.Check
-}
-
-type TypeDefinitionFact struct {
-	Kind TypeDefinitionKind
-
-	Stmt      ast.Stmt
-	Type      *ast.TypeDefStmt
-	Interface *ast.InterfaceDefStmt
-}
-
-type FunctionDefinitionFact struct {
-	Stmt *ast.FuncDefStmt
-	Name *ast.FuncName
-	Func *ast.FunctionExpr
-
-	TargetSymbol    symbol.ID
-	HasTargetSymbol bool
-}
-
-type NumericForRole uint8
-
-const (
-	NumericForRoleInit NumericForRole = iota + 1
-	NumericForRoleCheck
-)
-
-type NumericForFact struct {
-	Stmt *ast.NumberForStmt
-	Role NumericForRole
-
-	Name  string
-	Init  ast.Expr
-	Limit ast.Expr
-	Step  ast.Expr
-
-	Symbol    symbol.ID
-	HasSymbol bool
-}
-
-type GenericForRole uint8
-
-const (
-	GenericForRoleCheck GenericForRole = iota + 1
-	GenericForRoleVariable
-)
-
-const NoGenericForVariableIndex = -1
-
-type GenericForFact struct {
-	Stmt *ast.GenericForStmt
-	Role GenericForRole
-
-	Names   []string
-	Exprs   []ast.Expr
-	Sources []ValueSource
-
-	Symbols    []symbol.ID
-	HasSymbols bool
-
-	VariableIndex int
-}
-
-type LabelFact struct {
-	Stmt *ast.LabelStmt
-	Name string
-}
-
-type GotoFact struct {
-	Stmt  *ast.GotoStmt
-	Label string
 }
 
 func ExtractChunk(stmts []ast.Stmt, bindings *bind.Result, built *cfgbuild.Result) (*Result, error) {
@@ -317,55 +236,46 @@ func (r *Result) BranchCondition(point cfg.Point) (BranchConditionFact, bool) {
 	return copyBranchConditionFact(fact), true
 }
 
-func (r *Result) TypeDefinition(point cfg.Point) (TypeDefinitionFact, bool) {
+func (r *Result) TypeDefinition(point cfg.Point) (cfgfacts.TypeDefinitionFact, bool) {
 	if r == nil {
-		return TypeDefinitionFact{}, false
+		return cfgfacts.TypeDefinitionFact{}, false
 	}
-	fact, ok := r.typeDefinitions[point]
-	return fact, ok
+	return r.meta.TypeDefinition(point)
 }
 
-func (r *Result) FunctionDefinition(point cfg.Point) (FunctionDefinitionFact, bool) {
+func (r *Result) FunctionDefinition(point cfg.Point) (cfgfacts.FunctionDefinitionFact, bool) {
 	if r == nil {
-		return FunctionDefinitionFact{}, false
+		return cfgfacts.FunctionDefinitionFact{}, false
 	}
-	fact, ok := r.functionDefinitions[point]
-	return fact, ok
+	return r.meta.FunctionDefinition(point)
 }
 
-func (r *Result) NumericFor(point cfg.Point) (NumericForFact, bool) {
+func (r *Result) NumericFor(point cfg.Point) (cfgfacts.NumericForFact, bool) {
 	if r == nil {
-		return NumericForFact{}, false
+		return cfgfacts.NumericForFact{}, false
 	}
-	fact, ok := r.numericFors[point]
-	return fact, ok
+	return r.meta.NumericFor(point)
 }
 
-func (r *Result) GenericFor(point cfg.Point) (GenericForFact, bool) {
+func (r *Result) GenericFor(point cfg.Point) (cfgfacts.GenericForFact, bool) {
 	if r == nil {
-		return GenericForFact{}, false
+		return cfgfacts.GenericForFact{}, false
 	}
-	fact, ok := r.genericFors[point]
-	if !ok {
-		return GenericForFact{}, false
-	}
-	return copyGenericForFact(fact), true
+	return r.meta.GenericFor(point)
 }
 
-func (r *Result) Label(point cfg.Point) (LabelFact, bool) {
+func (r *Result) Label(point cfg.Point) (cfgfacts.LabelFact, bool) {
 	if r == nil {
-		return LabelFact{}, false
+		return cfgfacts.LabelFact{}, false
 	}
-	fact, ok := r.labels[point]
-	return fact, ok
+	return r.meta.Label(point)
 }
 
-func (r *Result) Goto(point cfg.Point) (GotoFact, bool) {
+func (r *Result) Goto(point cfg.Point) (cfgfacts.GotoFact, bool) {
 	if r == nil {
-		return GotoFact{}, false
+		return cfgfacts.GotoFact{}, false
 	}
-	fact, ok := r.gotos[point]
-	return fact, ok
+	return r.meta.Goto(point)
 }
 
 func newResult(fn *ast.FunctionExpr) *Result {
@@ -377,12 +287,6 @@ func newResult(fn *ast.FunctionExpr) *Result {
 		returns:             make(map[cfg.Point]ReturnFact),
 		objectLiterals:      make(map[ast.Expr]ObjectLiteralFact),
 		branches:            make(map[cfg.Point]BranchConditionFact),
-		typeDefinitions:     make(map[cfg.Point]TypeDefinitionFact),
-		functionDefinitions: make(map[cfg.Point]FunctionDefinitionFact),
-		numericFors:         make(map[cfg.Point]NumericForFact),
-		genericFors:         make(map[cfg.Point]GenericForFact),
-		labels:              make(map[cfg.Point]LabelFact),
-		gotos:               make(map[cfg.Point]GotoFact),
 	}
 }
 
@@ -603,11 +507,11 @@ func (r *Result) extractTypeDef(stmt *ast.TypeDefStmt, points []cfg.Point) error
 	if len(points) != 1 {
 		return ErrPointMismatch
 	}
-	r.typeDefinitions[points[0]] = TypeDefinitionFact{
-		Kind: TypeDefinitionAlias,
+	r.meta.SetTypeDefinition(points[0], cfgfacts.TypeDefinitionFact{
+		Kind: cfgfacts.TypeDefinitionAlias,
 		Stmt: stmt,
 		Type: stmt,
-	}
+	})
 	return nil
 }
 
@@ -618,11 +522,11 @@ func (r *Result) extractInterfaceDef(stmt *ast.InterfaceDefStmt, points []cfg.Po
 	if len(points) < 1 {
 		return ErrPointMismatch
 	}
-	r.typeDefinitions[points[0]] = TypeDefinitionFact{
-		Kind:      TypeDefinitionInterface,
+	r.meta.SetTypeDefinition(points[0], cfgfacts.TypeDefinitionFact{
+		Kind:      cfgfacts.TypeDefinitionInterface,
 		Stmt:      stmt,
 		Interface: stmt,
-	}
+	})
 	return nil
 }
 
@@ -637,13 +541,13 @@ func (r *Result) extractFunctionDefinition(stmt *ast.FuncDefStmt, bindings *bind
 	if bindings != nil {
 		id, hasSymbol = bindings.FuncDefTargetSymbol(stmt)
 	}
-	r.functionDefinitions[points[0]] = FunctionDefinitionFact{
+	r.meta.SetFunctionDefinition(points[0], cfgfacts.FunctionDefinitionFact{
 		Stmt:            stmt,
 		Name:            stmt.Name,
 		Func:            stmt.Func,
 		TargetSymbol:    id,
 		HasTargetSymbol: hasSymbol,
-	}
+	})
 	return nil
 }
 
@@ -658,7 +562,7 @@ func (r *Result) extractNumberFor(stmt *ast.NumberForStmt, bindings *bind.Result
 	if bindings != nil {
 		id, hasSymbol = bindings.NumForSymbol(stmt)
 	}
-	fact := NumericForFact{
+	fact := cfgfacts.NumericForFact{
 		Stmt:      stmt,
 		Name:      stmt.Name,
 		Init:      stmt.Init,
@@ -668,11 +572,11 @@ func (r *Result) extractNumberFor(stmt *ast.NumberForStmt, bindings *bind.Result
 		HasSymbol: hasSymbol && id != 0,
 	}
 	initFact := fact
-	initFact.Role = NumericForRoleInit
+	initFact.Role = cfgfacts.NumericForRoleInit
 	checkFact := fact
-	checkFact.Role = NumericForRoleCheck
-	r.numericFors[points[0]] = initFact
-	r.numericFors[points[1]] = checkFact
+	checkFact.Role = cfgfacts.NumericForRoleCheck
+	r.meta.SetNumericFor(points[0], initFact)
+	r.meta.SetNumericFor(points[1], checkFact)
 	return nil
 }
 
@@ -691,23 +595,23 @@ func (r *Result) extractGenericFor(stmt *ast.GenericForStmt, bindings *bind.Resu
 	if bindings != nil {
 		symbols = bindings.GenericForSymbols(stmt)
 	}
-	fact := GenericForFact{
+	fact := cfgfacts.GenericForFact{
 		Stmt:          stmt,
 		Names:         copyStrings(stmt.Names),
 		Exprs:         copyExprs(stmt.Exprs),
-		Sources:       iteratorValueSources(stmt.Exprs, callPointsByExprIndex(calls, points)),
+		Sources:       copyValueSources(iteratorValueSources(stmt.Exprs, callPointsByExprIndex(calls, points))),
 		Symbols:       copySymbols(symbols),
 		HasSymbols:    completeSymbols(symbols, len(stmt.Names)),
-		VariableIndex: NoGenericForVariableIndex,
+		VariableIndex: cfgfacts.NoGenericForVariableIndex,
 	}
 	checkFact := fact
-	checkFact.Role = GenericForRoleCheck
-	r.genericFors[points[len(calls)]] = checkFact
+	checkFact.Role = cfgfacts.GenericForRoleCheck
+	r.meta.SetGenericFor(points[len(calls)], checkFact)
 	for i, point := range points[len(calls)+1 : len(calls)+1+len(stmt.Names)] {
 		varFact := fact
-		varFact.Role = GenericForRoleVariable
+		varFact.Role = cfgfacts.GenericForRoleVariable
 		varFact.VariableIndex = i
-		r.genericFors[point] = varFact
+		r.meta.SetGenericFor(point, varFact)
 	}
 	return nil
 }
@@ -719,10 +623,10 @@ func (r *Result) extractLabel(stmt *ast.LabelStmt, points []cfg.Point) error {
 	if len(points) < 1 {
 		return ErrPointMismatch
 	}
-	r.labels[points[0]] = LabelFact{
+	r.meta.SetLabel(points[0], cfgfacts.LabelFact{
 		Stmt: stmt,
 		Name: stmt.Name,
-	}
+	})
 	return nil
 }
 
@@ -733,10 +637,10 @@ func (r *Result) extractGoto(stmt *ast.GotoStmt, points []cfg.Point) error {
 	if len(points) < 1 {
 		return ErrPointMismatch
 	}
-	r.gotos[points[0]] = GotoFact{
+	r.meta.SetGoto(points[0], cfgfacts.GotoFact{
 		Stmt:  stmt,
 		Label: stmt.Label,
-	}
+	})
 	return nil
 }
 
@@ -846,12 +750,4 @@ func copyObjectEntries(in []ObjectEntryFact) []ObjectEntryFact {
 		out[i].Suffix = copyPath(in[i].Suffix)
 	}
 	return out
-}
-
-func copyGenericForFact(fact GenericForFact) GenericForFact {
-	fact.Names = copyStrings(fact.Names)
-	fact.Exprs = copyExprs(fact.Exprs)
-	fact.Sources = copyValueSources(fact.Sources)
-	fact.Symbols = copySymbols(fact.Symbols)
-	return fact
 }
