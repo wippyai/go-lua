@@ -143,14 +143,6 @@ func UnwrapAnnotations(t Type) Type {
 	}
 }
 
-// GetAnnotations returns annotations from a type, or nil if none.
-func GetAnnotations(t Type) []annotation.Annotation {
-	if a, ok := t.(*Annotated); ok {
-		return a.Annotations
-	}
-	return nil
-}
-
 func formatFloat(f float64) string {
 	if f == float64(int64(f)) {
 		return strconv.FormatInt(int64(f), 10)

@@ -101,16 +101,3 @@ func (l *Literal) Equals(other Type) bool {
 
 	return l.Base == ol.Base && l.Value == ol.Value
 }
-
-// LiteralEquals checks if two literals are equal.
-func LiteralEquals(a, b *Literal) bool {
-	if a == nil || b == nil {
-		return false
-	}
-
-	if a.Base != b.Base {
-		return false
-	}
-
-	return a.Value == b.Value
-}

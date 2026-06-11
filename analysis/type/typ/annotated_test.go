@@ -138,16 +138,14 @@ func TestUnwrapAnnotated(t *testing.T) {
 	}
 }
 
-func TestGetAnnotations(t *testing.T) {
-	annotations := []annotation.Annotation{{Name: "min", Arg: float64(0)}}
-	ann := NewAnnotated(Number, annotations)
+func TestUnwrapAnnotations(t *testing.T) {
+	inner := NewAnnotated(Number, []annotation.Annotation{{Name: "max", Arg: float64(100)}})
+	outer := NewAnnotated(inner, []annotation.Annotation{{Name: "min", Arg: float64(0)}})
 
-	got := GetAnnotations(ann)
-	if len(got) != 1 || got[0].Name != "min" {
-		t.Error("GetAnnotations should return annotations")
+	if got := UnwrapAnnotations(outer); got != Number {
+		t.Fatalf("UnwrapAnnotations should strip nested wrappers, got %T", got)
 	}
-
-	if GetAnnotations(Number) != nil {
-		t.Error("GetAnnotations on non-annotated should return nil")
+	if got := UnwrapAnnotations(Number); got != Number {
+		t.Fatalf("UnwrapAnnotations on non-annotated should return same type, got %T", got)
 	}
 }

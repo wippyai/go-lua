@@ -13,7 +13,7 @@ func joinNonDiscriminantField(a, b typ.Type) (typ.Type, bool) {
 	al, aOK := literal.ExtractAliasOnly(a)
 	bl, bOK := literal.ExtractAliasOnly(b)
 	if aOK && bOK && al.Base == bl.Base {
-		if typ.LiteralEquals(al, bl) {
+		if al.Value == bl.Value {
 			return a, true
 		}
 		return literal.PrimitiveBase(al), true

@@ -141,20 +141,3 @@ func VisitWithGuard[R any](
 	}
 	return Visit(t, build(next))
 }
-
-// WithGuard runs fn with a recursion guard and returns onCycle on guard rejection.
-func WithGuard[R any](
-	t Type,
-	guard recursion.Guard,
-	onCycle R,
-	fn func(next recursion.Guard) R,
-) R {
-	if t == nil {
-		return onCycle
-	}
-	next, ok := guard.Enter(t)
-	if !ok {
-		return onCycle
-	}
-	return fn(next)
-}
