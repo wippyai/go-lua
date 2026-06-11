@@ -106,7 +106,7 @@ func deduplicateRewrittenTypesWithKnownHashes(types []Type, hashes []uint64) ([]
 		bucket := seen[h]
 		duplicate := false
 		for _, existing := range bucket {
-			if TypeEquals(existing, t) {
+			if typeEquals(existing, t) {
 				duplicate = true
 				break
 			}

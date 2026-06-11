@@ -3,6 +3,7 @@ package gradual
 import (
 	"testing"
 
+	"github.com/wippyai/go-lua/analysis/type/identity"
 	typetable "github.com/wippyai/go-lua/analysis/type/table"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
@@ -80,7 +81,7 @@ func TestPruneSoftUnionMembers(t *testing.T) {
 
 	for _, tt := range tests {
 		got := PruneSoftUnionMembers(tt.in)
-		if !typ.TypeEquals(got, tt.want) {
+		if !identity.TypeEquals(got, tt.want) {
 			t.Errorf("%s: got %v, want %v", tt.name, got, tt.want)
 		}
 	}
@@ -111,7 +112,7 @@ func TestPruneSoftUnionMembers_ReusesRewrittenSharedSubtrees(t *testing.T) {
 		t.Fatalf("expected rewritten shared record, got %T", a.Type)
 	}
 	payload := sharedRec.GetField("payload")
-	if payload == nil || !typ.TypeEquals(payload.Type, leaf) {
+	if payload == nil || !identity.TypeEquals(payload.Type, leaf) {
 		t.Fatalf("expected payload field to prune to leaf record, got %v", payload)
 	}
 }
@@ -131,7 +132,7 @@ func TestPruneSoftUnionMembers_AliasStillDescends(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected alias result, got %T", got)
 	}
-	if !typ.TypeEquals(gotAlias.Target, leaf) {
+	if !identity.TypeEquals(gotAlias.Target, leaf) {
 		t.Fatalf("expected alias target to be pruned to %v, got %v", leaf, gotAlias.Target)
 	}
 }
@@ -143,7 +144,7 @@ func TestPruneSoftUnionMembers_NormalizesNilableTableKeys(t *testing.T) {
 
 	assertKey := func(name string, got typ.Type) {
 		t.Helper()
-		if !typ.TypeEquals(got, key) {
+		if !identity.TypeEquals(got, key) {
 			t.Fatalf("%s key = %v, want %v", name, got, key)
 		}
 	}

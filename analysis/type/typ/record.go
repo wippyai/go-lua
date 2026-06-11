@@ -49,7 +49,7 @@ func (r *Record) Kind() kind.Kind { return kind.Record }
 func (r *Record) Hash() uint64 { return r.hash }
 
 func (r *Record) Equals(other Type) bool {
-	return TypeEquals(r, other)
+	return typeEquals(r, other)
 }
 
 func (r *Record) String() string {

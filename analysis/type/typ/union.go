@@ -122,7 +122,7 @@ func (u *Union) String() string {
 func (u *Union) Hash() uint64 { return u.hash }
 
 func (u *Union) Equals(other Type) bool {
-	return TypeEquals(u, other)
+	return typeEquals(u, other)
 }
 
 // Contains checks if the union contains a specific type.

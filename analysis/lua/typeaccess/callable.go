@@ -1,6 +1,7 @@
 package typeaccess
 
 import (
+	"github.com/wippyai/go-lua/analysis/type/identity"
 	"github.com/wippyai/go-lua/analysis/type/normalize"
 	"github.com/wippyai/go-lua/analysis/type/subst"
 	typetable "github.com/wippyai/go-lua/analysis/type/table"
@@ -154,7 +155,7 @@ func callableUnion(u *typ.Union, depth int) (*typ.Function, bool) {
 			witness = fn
 			continue
 		}
-		if !typ.TypeEquals(witness, fn) {
+		if !identity.TypeEquals(witness, fn) {
 			return nil, false
 		}
 	}
@@ -217,7 +218,7 @@ func functionWitnessUnion(u *typ.Union, depth int) (*typ.Function, bool) {
 			witness = fn
 			continue
 		}
-		if !typ.TypeEquals(witness, fn) {
+		if !identity.TypeEquals(witness, fn) {
 			return nil, false
 		}
 	}

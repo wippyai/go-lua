@@ -194,5 +194,5 @@ func (f *Function) String() string {
 func (f *Function) Hash() uint64 { return f.hash }
 
 func (f *Function) Equals(other Type) bool {
-	return TypeEquals(f, other)
+	return typeEquals(f, other)
 }

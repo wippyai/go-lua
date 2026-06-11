@@ -51,7 +51,7 @@ func (a *Array) String() string {
 }
 func (a *Array) Hash() uint64 { return a.hash }
 func (a *Array) Equals(o Type) bool {
-	return TypeEquals(a, o)
+	return typeEquals(a, o)
 }
 
 // Map represents a homogeneous key-value mapping: {[K]: V}.
@@ -110,7 +110,7 @@ func (m *Map) String() string {
 }
 func (m *Map) Hash() uint64 { return m.hash }
 func (m *Map) Equals(o Type) bool {
-	return TypeEquals(m, o)
+	return typeEquals(m, o)
 }
 
 // ReadonlyMap represents a covariant read-only view of key/value table entries.
@@ -171,7 +171,7 @@ func (m *ReadonlyMap) String() string {
 }
 func (m *ReadonlyMap) Hash() uint64 { return m.hash }
 func (m *ReadonlyMap) Equals(o Type) bool {
-	return TypeEquals(m, o)
+	return typeEquals(m, o)
 }
 
 // Tuple represents a fixed-length heterogeneous sequence: (T1, T2, ...).
@@ -258,5 +258,5 @@ func (t *Tuple) String() string {
 func (t *Tuple) Hash() uint64 { return t.hash }
 
 func (t *Tuple) Equals(o Type) bool {
-	return TypeEquals(t, o)
+	return typeEquals(t, o)
 }

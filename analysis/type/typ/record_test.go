@@ -125,7 +125,7 @@ func TestRecordOptionalMembersPreserveNilablePayloads(t *testing.T) {
 		if _, ok := got.(*Optional); !ok {
 			t.Fatalf("payload = %T %[1]v, want optional payload", got)
 		}
-		if !TypeEquals(got, want) {
+		if !typeEquals(got, want) {
 			t.Fatalf("payload = %v, want %v", got, want)
 		}
 	}
@@ -151,7 +151,7 @@ func TestRecordOptionalMembersPreserveNilablePayloads(t *testing.T) {
 	if nilOnly == nil || !nilOnly.Optional {
 		t.Fatal("expected optional nil_only field")
 	}
-	if !TypeEquals(nilOnly.Type, Nil) {
+	if !typeEquals(nilOnly.Type, Nil) {
 		t.Fatalf("expected nil-only optional field type to remain nil, got %v", nilOnly.Type)
 	}
 
@@ -389,12 +389,12 @@ func TestRecordOpenTypeEquals(t *testing.T) {
 	closed := newRecord().Field("x", Number).Build()
 	open := newRecord().SetOpen(true).Field("x", Number).Build()
 
-	if TypeEquals(closed, open) {
+	if typeEquals(closed, open) {
 		t.Error("TypeEquals should distinguish open from closed")
 	}
 
 	open2 := newRecord().SetOpen(true).Field("x", Number).Build()
-	if !TypeEquals(open, open2) {
+	if !typeEquals(open, open2) {
 		t.Error("TypeEquals should match two identical open records")
 	}
 }

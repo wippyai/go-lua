@@ -3,6 +3,7 @@ package coalesce
 import (
 	"testing"
 
+	"github.com/wippyai/go-lua/analysis/type/identity"
 	typetable "github.com/wippyai/go-lua/analysis/type/table"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
@@ -26,15 +27,15 @@ func TestJoinClosedCompatibleRecordSetMergesMissingFieldsAndStaticMembers(t *tes
 		t.Fatalf("JoinClosedCompatibleRecordSet = %T %[1]v, want record", got)
 	}
 	name := rec.GetField("name")
-	if name == nil || name.Optional || !typ.TypeEquals(name.Type, typ.String) {
+	if name == nil || name.Optional || !identity.TypeEquals(name.Type, typ.String) {
 		t.Fatalf("name field = %#v, want required string", name)
 	}
 	count := rec.GetField("count")
-	if count == nil || !count.Optional || !typ.TypeEquals(count.Type, typ.Integer) {
+	if count == nil || !count.Optional || !identity.TypeEquals(count.Type, typ.Integer) {
 		t.Fatalf("count field = %#v, want optional integer", count)
 	}
 	member := rec.GetStaticStringIndex("raw-key")
-	if member == nil || !member.Optional || !typ.TypeEquals(member.Type, typ.Number) {
+	if member == nil || !member.Optional || !identity.TypeEquals(member.Type, typ.Number) {
 		t.Fatalf("static raw-key = %#v, want optional number", member)
 	}
 }
@@ -48,7 +49,7 @@ func TestJoinClosedCompatibleRecordSetUsesInjectedSlotJoinForSharedField(t *test
 	got, ok := JoinClosedCompatibleRecordSet([]*typ.Record{left, right}, RecordPolicy{
 		SlotJoin: func(a, b typ.Type) typ.Type {
 			called = true
-			if !typ.TypeEquals(a, typ.Number) || !typ.TypeEquals(b, typ.String) {
+			if !identity.TypeEquals(a, typ.Number) || !identity.TypeEquals(b, typ.String) {
 				t.Fatalf("slot join inputs = (%v, %v), want number and string", a, b)
 			}
 			return sentinel
@@ -65,7 +66,7 @@ func TestJoinClosedCompatibleRecordSetUsesInjectedSlotJoinForSharedField(t *test
 		t.Fatalf("JoinClosedCompatibleRecordSet = %T %[1]v, want record", got)
 	}
 	field := rec.GetField("value")
-	if field == nil || !typ.TypeEquals(field.Type, sentinel) {
+	if field == nil || !identity.TypeEquals(field.Type, sentinel) {
 		t.Fatalf("merged value field = %v, want sentinel %v", field, sentinel)
 	}
 }
@@ -98,14 +99,14 @@ func TestJoinFieldContainerSlotUsesInjectedSlotAndKeyJoins(t *testing.T) {
 	got, ok := JoinFieldContainerSlot(left, right, RecordPolicy{
 		SlotJoin: func(a, b typ.Type) typ.Type {
 			slotCalls++
-			if !typ.TypeEquals(a, typ.Number) || !typ.TypeEquals(b, typ.Boolean) {
+			if !identity.TypeEquals(a, typ.Number) || !identity.TypeEquals(b, typ.Boolean) {
 				t.Fatalf("slot join inputs = (%v, %v), want number and boolean", a, b)
 			}
 			return typ.Boolean
 		},
 		KeyJoin: func(a, b typ.Type) typ.Type {
 			keyCalls++
-			if !typ.TypeEquals(a, typ.String) || !typ.TypeEquals(b, typ.Integer) {
+			if !identity.TypeEquals(a, typ.String) || !identity.TypeEquals(b, typ.Integer) {
 				t.Fatalf("key join inputs = (%v, %v), want string and integer", a, b)
 			}
 			return typ.String
@@ -121,7 +122,7 @@ func TestJoinFieldContainerSlotUsesInjectedSlotAndKeyJoins(t *testing.T) {
 	if !ok {
 		t.Fatalf("JoinFieldContainerSlot = %T %[1]v, want map", got)
 	}
-	if !typ.TypeEquals(m.Key, typ.String) || !typ.TypeEquals(m.Value, typ.Boolean) {
+	if !identity.TypeEquals(m.Key, typ.String) || !identity.TypeEquals(m.Value, typ.Boolean) {
 		t.Fatalf("joined map = %v, want {[string]: boolean}", m)
 	}
 }
@@ -160,10 +161,10 @@ func TestJoinFieldContainerSlotJoinsArrayElementsPointwise(t *testing.T) {
 	if !ok {
 		t.Fatalf("joined array element = %T %[1]v, want record", arr.Element)
 	}
-	if name := elem.GetField("name"); name == nil || !typ.TypeEquals(name.Type, typ.String) {
+	if name := elem.GetField("name"); name == nil || !identity.TypeEquals(name.Type, typ.String) {
 		t.Fatalf("joined name field = %v, want string", name)
 	}
-	if line := elem.GetField("line"); line == nil || !typ.TypeEquals(line.Type, typ.Integer) {
+	if line := elem.GetField("line"); line == nil || !identity.TypeEquals(line.Type, typ.Integer) {
 		t.Fatalf("joined line field = %v, want integer", line)
 	}
 }

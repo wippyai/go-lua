@@ -139,7 +139,7 @@ func TestAliasStructuralEquality(t *testing.T) {
 		t.Error("alias should equal its target type structurally")
 	}
 
-	if !TypeEquals(Number, a) {
+	if !typeEquals(Number, a) {
 		t.Error("TypeEquals should handle alias comparison symmetrically")
 	}
 }

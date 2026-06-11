@@ -18,6 +18,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/effect/ownership"
 	"github.com/wippyai/go-lua/analysis/domain/effect/returns"
 	"github.com/wippyai/go-lua/analysis/module/manifest"
+	"github.com/wippyai/go-lua/analysis/type/identity"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
@@ -87,7 +88,7 @@ func TestLookupSeededFunctionTypes(t *testing.T) {
 			if !ok {
 				t.Fatalf("Lookup(%q) missing", tt.name)
 			}
-			if !typ.TypeEquals(got.Type, tt.want) {
+			if !identity.TypeEquals(got.Type, tt.want) {
 				t.Fatalf("type = %v, want %v", got.Type, tt.want)
 			}
 		})

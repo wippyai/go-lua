@@ -133,7 +133,7 @@ func requireIntersectionMembers(t *testing.T, got Type, wants ...Type) {
 	for _, want := range wants {
 		found := false
 		for _, member := range inter.Members {
-			if TypeEquals(member, want) {
+			if typeEquals(member, want) {
 				found = true
 				break
 			}

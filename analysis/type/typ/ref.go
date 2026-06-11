@@ -106,7 +106,7 @@ func (a *Alias) UnaliasedTarget() Type {
 
 // Equals compares structurally through the alias target.
 func (a *Alias) Equals(other Type) bool {
-	return TypeEquals(a.Target, other)
+	return typeEquals(a.Target, other)
 }
 
 func flattenAliasTarget(target Type) Type {

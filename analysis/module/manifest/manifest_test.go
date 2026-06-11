@@ -14,6 +14,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/effect/returns"
 	"github.com/wippyai/go-lua/analysis/domain/effect/signature"
 	"github.com/wippyai/go-lua/analysis/type/annotation"
+	"github.com/wippyai/go-lua/analysis/type/identity"
 	typetable "github.com/wippyai/go-lua/analysis/type/table"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
@@ -37,10 +38,10 @@ func TestManifestDefineTypeAndSetExport(t *testing.T) {
 	if m.Path != "example/module" {
 		t.Fatalf("path = %q", m.Path)
 	}
-	if got := m.Types["User"]; !typ.TypeEquals(got, user) {
+	if got := m.Types["User"]; !identity.TypeEquals(got, user) {
 		t.Fatalf("User type = %v, want %v", got, user)
 	}
-	if !typ.TypeEquals(m.Export, export) {
+	if !identity.TypeEquals(m.Export, export) {
 		t.Fatalf("export = %v, want %v", m.Export, export)
 	}
 }
@@ -81,11 +82,11 @@ func TestManifestRoundTrip(t *testing.T) {
 		t.Fatalf("types = %d, want %d", len(got.Types), len(m.Types))
 	}
 	for name, want := range m.Types {
-		if !typ.TypeEquals(got.Types[name], want) {
+		if !identity.TypeEquals(got.Types[name], want) {
 			t.Fatalf("type %s = %v, want %v", name, got.Types[name], want)
 		}
 	}
-	if !typ.TypeEquals(got.Export, m.Export) {
+	if !identity.TypeEquals(got.Export, m.Export) {
 		t.Fatalf("export = %v, want %v", got.Export, m.Export)
 	}
 }
@@ -122,7 +123,7 @@ func TestManifestRoundTripNamedFunctionSignatureEffects(t *testing.T) {
 	if !ok {
 		t.Fatalf("export = %T, want function", got.Export)
 	}
-	if !typ.TypeEquals(got.Export, export) {
+	if !identity.TypeEquals(got.Export, export) {
 		t.Fatalf("export = %v, want %v", got.Export, export)
 	}
 	gotSig, ok := got.FunctionSignatures["transform"]
@@ -132,7 +133,7 @@ func TestManifestRoundTripNamedFunctionSignatureEffects(t *testing.T) {
 	if !gotSig.Effect.Equals(row) {
 		t.Fatalf("effect = %v, want %v", gotSig.Effect, row)
 	}
-	if !typ.TypeEquals(gotSig.Type, gotFn) {
+	if !identity.TypeEquals(gotSig.Type, gotFn) {
 		t.Fatalf("signature type = %v, want %v", gotSig.Type, gotFn)
 	}
 	if !(signature.Function{Type: export, Effect: row}).Equals(gotSig) {

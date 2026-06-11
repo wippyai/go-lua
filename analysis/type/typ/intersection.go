@@ -135,5 +135,5 @@ func (i *Intersection) String() string {
 func (i *Intersection) Hash() uint64 { return i.hash }
 
 func (i *Intersection) Equals(other Type) bool {
-	return TypeEquals(i, other)
+	return typeEquals(i, other)
 }

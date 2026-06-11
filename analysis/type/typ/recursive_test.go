@@ -41,7 +41,7 @@ func TestRecursiveEqualsSelf(t *testing.T) {
 	})
 
 	// Should equal itself without stack overflow
-	if !TypeEquals(rec, rec) {
+	if !typeEquals(rec, rec) {
 		t.Error("recursive type should equal itself")
 	}
 
@@ -62,7 +62,7 @@ func TestRecursiveEqualsEquivalent(t *testing.T) {
 	})
 
 	// They should be structurally equal
-	if !TypeEquals(rec1, rec2) {
+	if !typeEquals(rec1, rec2) {
 		t.Error("structurally equivalent recursive types should be equal")
 	}
 }
@@ -76,7 +76,7 @@ func TestRecursiveNotEqualsNonRecursive(t *testing.T) {
 	// A non-recursive record
 	plain := newRecord().OptField("next", Number).Build()
 
-	if TypeEquals(rec, plain) {
+	if typeEquals(rec, plain) {
 		t.Error("recursive type should not equal non-recursive type")
 	}
 }
@@ -158,16 +158,16 @@ func TestRecursiveMutualRecursion(t *testing.T) {
 	recB.SetBody(newRecord().OptField("a", recA).Build())
 
 	// Neither should cause infinite loops
-	if !TypeEquals(recA, recA) {
+	if !typeEquals(recA, recA) {
 		t.Error("recA should equal itself")
 	}
 
-	if !TypeEquals(recB, recB) {
+	if !typeEquals(recB, recB) {
 		t.Error("recB should equal itself")
 	}
 
 	// A and B should not be equal
-	if TypeEquals(recA, recB) {
+	if typeEquals(recA, recB) {
 		t.Error("A should not equal B")
 	}
 }
@@ -196,10 +196,10 @@ func TestRecursiveMutualHashOrderIndependence(t *testing.T) {
 	}
 
 	// Types should be equal
-	if !TypeEquals(recA1, recA2) {
+	if !typeEquals(recA1, recA2) {
 		t.Error("X types should be structurally equal")
 	}
-	if !TypeEquals(recB1, recB2) {
+	if !typeEquals(recB1, recB2) {
 		t.Error("Y types should be structurally equal")
 	}
 }
@@ -229,7 +229,7 @@ func TestRecursiveAsAliasTarget(t *testing.T) {
 
 	alias := NewAlias("MyNode", rec)
 
-	if !TypeEquals(alias, rec) {
+	if !typeEquals(alias, rec) {
 		t.Error("alias to recursive type should equal the recursive type")
 	}
 
@@ -250,7 +250,7 @@ func TestRecursiveListType(t *testing.T) {
 	})
 
 	// Should handle equality
-	if !TypeEquals(rec, rec) {
+	if !typeEquals(rec, rec) {
 		t.Error("list type should equal itself")
 	}
 
@@ -273,7 +273,7 @@ func TestRecursiveTreeType(t *testing.T) {
 			Build()
 	})
 
-	if !TypeEquals(rec, rec) {
+	if !typeEquals(rec, rec) {
 		t.Error("tree type should equal itself")
 	}
 }
@@ -293,7 +293,7 @@ func TestRecursiveDifferentStructuresNotEqual(t *testing.T) {
 			Build()
 	})
 
-	if TypeEquals(recA, recB) {
+	if typeEquals(recA, recB) {
 		t.Error("different recursive structures should not be equal")
 	}
 }
@@ -349,7 +349,7 @@ func TestRecursiveInArray(t *testing.T) {
 	}
 
 	// Should equal itself
-	if !TypeEquals(rec, rec) {
+	if !typeEquals(rec, rec) {
 		t.Error("recursive type in array should equal itself")
 	}
 
@@ -357,7 +357,7 @@ func TestRecursiveInArray(t *testing.T) {
 	rec2 := NewRecursive("Node", func(self Type) Type {
 		return newRecord().Field("children", NewArray(self)).Build()
 	})
-	if !TypeEquals(rec, rec2) {
+	if !typeEquals(rec, rec2) {
 		t.Error("equivalent recursive types in arrays should be equal")
 	}
 }
@@ -375,7 +375,7 @@ func TestRecursiveInMap(t *testing.T) {
 		t.Error("recursive type in map value should have stable hash")
 	}
 
-	if !TypeEquals(rec, rec) {
+	if !typeEquals(rec, rec) {
 		t.Error("recursive type in map should equal itself")
 	}
 }
@@ -393,7 +393,7 @@ func TestRecursiveInTuple(t *testing.T) {
 		t.Error("recursive type in tuple should have stable hash")
 	}
 
-	if !TypeEquals(rec, rec) {
+	if !typeEquals(rec, rec) {
 		t.Error("recursive type in tuple should equal itself")
 	}
 }
@@ -411,7 +411,7 @@ func TestRecursiveInFunction(t *testing.T) {
 		t.Error("recursive type in function should have stable hash")
 	}
 
-	if !TypeEquals(rec, rec) {
+	if !typeEquals(rec, rec) {
 		t.Error("recursive type in function should equal itself")
 	}
 }
@@ -431,7 +431,7 @@ func TestRecursiveNestedRecords(t *testing.T) {
 		t.Error("deeply nested recursive type should have stable hash")
 	}
 
-	if !TypeEquals(rec, rec) {
+	if !typeEquals(rec, rec) {
 		t.Error("deeply nested recursive type should equal itself")
 	}
 
@@ -441,7 +441,7 @@ func TestRecursiveNestedRecords(t *testing.T) {
 		middle := newRecord().Field("b", inner).Build()
 		return newRecord().Field("a", middle).Build()
 	})
-	if !TypeEquals(rec, rec2) {
+	if !typeEquals(rec, rec2) {
 		t.Error("equivalent deeply nested recursive types should be equal")
 	}
 }
@@ -460,13 +460,13 @@ func TestRecursiveTripleMutual(t *testing.T) {
 	recC.SetBody(newRecord().OptField("a", recA).Build())
 
 	// All should equal themselves
-	if !TypeEquals(recA, recA) {
+	if !typeEquals(recA, recA) {
 		t.Error("recA should equal itself")
 	}
-	if !TypeEquals(recB, recB) {
+	if !typeEquals(recB, recB) {
 		t.Error("recB should equal itself")
 	}
-	if !TypeEquals(recC, recC) {
+	if !typeEquals(recC, recC) {
 		t.Error("recC should equal itself")
 	}
 
@@ -477,7 +477,7 @@ func TestRecursiveTripleMutual(t *testing.T) {
 	}
 
 	// None should equal each other
-	if TypeEquals(recA, recB) || TypeEquals(recB, recC) || TypeEquals(recA, recC) {
+	if typeEquals(recA, recB) || typeEquals(recB, recC) || typeEquals(recA, recC) {
 		t.Error("different mutually recursive types should not be equal")
 	}
 }
@@ -525,7 +525,7 @@ func TestRecursiveInOptional(t *testing.T) {
 		t.Error("recursive in optional should have stable hash")
 	}
 
-	if !TypeEquals(rec, rec) {
+	if !typeEquals(rec, rec) {
 		t.Error("recursive in optional should equal itself")
 	}
 }
@@ -542,7 +542,7 @@ func TestRecursiveInUnionMultiple(t *testing.T) {
 		t.Error("recursive in multi-member union should have stable hash")
 	}
 
-	if !TypeEquals(rec, rec) {
+	if !typeEquals(rec, rec) {
 		t.Error("recursive in multi-member union should equal itself")
 	}
 }
@@ -558,7 +558,7 @@ func TestRecursiveEqualsDifferentNames(t *testing.T) {
 	})
 
 	// Different names means different types
-	if TypeEquals(rec1, rec2) {
+	if typeEquals(rec1, rec2) {
 		t.Error("recursive types with different names should not be equal")
 	}
 
@@ -635,11 +635,11 @@ func TestOpenRecursiveWrapperHashRefreshesForEquality(t *testing.T) {
 	rec.SetBody(newRecord().Field("value", Number).OptField("next", rec).Build())
 	freshWrapper := newRecord().OptField("next", rec).Build()
 
-	if !TypeEquals(staleWrapper, freshWrapper) {
+	if !typeEquals(staleWrapper, freshWrapper) {
 		t.Fatal("wrapper built before recursive SetBody should remain structurally equal to a fresh wrapper")
 	}
-	if EqualityHash(staleWrapper) != EqualityHash(freshWrapper) {
-		t.Fatalf("equality hash should refresh open recursive wrapper: %d vs %d", EqualityHash(staleWrapper), EqualityHash(freshWrapper))
+	if equalityHash(staleWrapper) != equalityHash(freshWrapper) {
+		t.Fatalf("equality hash should refresh open recursive wrapper: %d vs %d", equalityHash(staleWrapper), equalityHash(freshWrapper))
 	}
 }
 
@@ -797,7 +797,7 @@ func TestRecursiveHashIntersection(t *testing.T) {
 		t.Error("recursive intersection hash should be stable")
 	}
 
-	if !TypeEquals(rec, rec) {
+	if !typeEquals(rec, rec) {
 		t.Error("recursive intersection should equal itself")
 	}
 }
@@ -853,11 +853,11 @@ func TestEqualityHashReadonlyMapRefreshesOpenRecursiveKeyAndValue(t *testing.T) 
 			node.SetBody(newRecord().Field("value", Number).Build())
 			freshWrapper := tc.wrap(node)
 
-			if !TypeEquals(staleWrapper, freshWrapper) {
+			if !typeEquals(staleWrapper, freshWrapper) {
 				t.Fatal("ReadonlyMap built before SetBody should remain structurally equal to a fresh wrapper")
 			}
-			if EqualityHash(staleWrapper) != EqualityHash(freshWrapper) {
-				t.Fatalf("equality hash should refresh ReadonlyMap wrapper: %d vs %d", EqualityHash(staleWrapper), EqualityHash(freshWrapper))
+			if equalityHash(staleWrapper) != equalityHash(freshWrapper) {
+				t.Fatalf("equality hash should refresh ReadonlyMap wrapper: %d vs %d", equalityHash(staleWrapper), equalityHash(freshWrapper))
 			}
 		})
 	}
@@ -872,8 +872,8 @@ func TestEqualityHashStaticMemberIncludesTypeInOpenRecursiveWrapper(t *testing.T
 		StaticStringIndex("node", NewArray(node)).
 		Build()
 
-	if EqualityHash(direct) == EqualityHash(nested) {
-		t.Fatal("EqualityHash() ignored static member type in open recursive wrapper")
+	if equalityHash(direct) == equalityHash(nested) {
+		t.Fatal("equalityHash() ignored static member type in open recursive wrapper")
 	}
 }
 

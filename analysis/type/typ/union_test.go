@@ -78,7 +78,7 @@ func TestUnionDeduplicatesTransparentAlias(t *testing.T) {
 	if _, ok := u.(*Union); ok {
 		t.Fatalf("transparent alias should dedupe with target, got union %v", u)
 	}
-	if !TypeEquals(u, Number) {
+	if !typeEquals(u, Number) {
 		t.Fatalf("deduped alias result should remain structurally equal to target, got %v", u)
 	}
 }
@@ -256,10 +256,10 @@ func TestUnionCanonicalForm(t *testing.T) {
 	u2 := NewUnion(NewUnion(Boolean, Number), String)
 	u3 := NewUnion(String, Boolean, Number)
 
-	if !TypeEquals(u1, u2) {
+	if !typeEquals(u1, u2) {
 		t.Error("u1 should equal u2")
 	}
-	if !TypeEquals(u2, u3) {
+	if !typeEquals(u2, u3) {
 		t.Error("u2 should equal u3")
 	}
 	if u1.Hash() != u2.Hash() || u2.Hash() != u3.Hash() {
@@ -272,7 +272,7 @@ func TestUnionIdempotence(t *testing.T) {
 	base := NewUnion(Number, String)
 	extended := NewUnion(base, Number)
 
-	if !TypeEquals(base, extended) {
+	if !typeEquals(base, extended) {
 		t.Error("adding existing member should not change union")
 	}
 }
@@ -456,7 +456,7 @@ func TestRewriteMembersFlatRewritePreservesMemberHashes(t *testing.T) {
 		t.Fatalf("rewrite Hash calls = %d, want no additional calls beyond 2", calls)
 	}
 	want := NewUnion(first, True, second)
-	if !TypeEquals(got, want) {
+	if !typeEquals(got, want) {
 		t.Fatalf("rewrite result = %v, want %v", got, want)
 	}
 }
@@ -487,7 +487,7 @@ func TestRewriteMembersScalarRewriteDoesNotCompareCompoundMembers(t *testing.T) 
 		t.Fatalf("rewrite Equals calls = %d, want no compound equality checks", equalsCalls)
 	}
 	want := NewUnion(first, True, second)
-	if !TypeEquals(got, want) {
+	if !typeEquals(got, want) {
 		t.Fatalf("rewrite result = %v, want %v", got, want)
 	}
 }
@@ -543,7 +543,7 @@ func TestNewOptionalUnionPreservesRecursiveMemberHashes(t *testing.T) {
 
 	got := NewOptional(u)
 	want := NewUnion(Nil, recA, recB)
-	if !TypeEquals(got, want) {
+	if !typeEquals(got, want) {
 		t.Fatalf("NewOptional(union) = %v, want %v", got, want)
 	}
 	if got.Hash() != want.Hash() {

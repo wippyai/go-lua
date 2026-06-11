@@ -3,6 +3,7 @@ package normalize
 import (
 	"testing"
 
+	"github.com/wippyai/go-lua/analysis/type/identity"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
@@ -57,7 +58,7 @@ func TestUnionForJoin(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			got := UnionForJoin(tt.members...)
-			if !typ.TypeEquals(got, tt.want) {
+			if !identity.TypeEquals(got, tt.want) {
 				t.Fatalf("UnionForJoin(%v) = %v, want %v", tt.members, got, tt.want)
 			}
 		})
@@ -110,7 +111,7 @@ func TestUnionForProjection(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			got := UnionForProjection(tt.members...)
-			if !typ.TypeEquals(got, tt.want) {
+			if !identity.TypeEquals(got, tt.want) {
 				t.Fatalf("UnionForProjection(%v) = %v, want %v", tt.members, got, tt.want)
 			}
 		})
@@ -134,7 +135,7 @@ func TestIntersectionForMeet(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			got := IntersectionForMeet(tt.members...)
-			if !typ.TypeEquals(got, tt.want) {
+			if !identity.TypeEquals(got, tt.want) {
 				t.Fatalf("IntersectionForMeet(%v) = %v, want %v", tt.members, got, tt.want)
 			}
 		})
@@ -152,7 +153,7 @@ func TestIntersectionForMeet(t *testing.T) {
 
 func intersectionHasMember(inter *typ.Intersection, want typ.Type) bool {
 	for _, member := range inter.Members {
-		if typ.TypeEquals(member, want) {
+		if identity.TypeEquals(member, want) {
 			return true
 		}
 	}

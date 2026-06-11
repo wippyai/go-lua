@@ -3,6 +3,7 @@ package table
 import (
 	"testing"
 
+	"github.com/wippyai/go-lua/analysis/type/identity"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
@@ -16,7 +17,7 @@ func TestRecordTailFieldTypeUsesStringMapComponent(t *testing.T) {
 		t.Fatal("RecordTailFieldType returned ok=false")
 	}
 	want := typ.NewOptional(typ.Number)
-	if !typ.TypeEquals(tail, want) {
+	if !identity.TypeEquals(tail, want) {
 		t.Fatalf("tail = %v, want %v", tail, want)
 	}
 	if !RecordMapTailMayContainFieldName(rec, "status") {
@@ -47,7 +48,7 @@ func TestRecordMapTailStaticMemberContainment(t *testing.T) {
 		t.Fatal("RecordTailStaticMemberType returned ok=false")
 	}
 	want := typ.NewOptional(typ.Boolean)
-	if !typ.TypeEquals(tail, want) {
+	if !identity.TypeEquals(tail, want) {
 		t.Fatalf("static member tail = %v, want %v", tail, want)
 	}
 }
@@ -61,7 +62,7 @@ func TestRecordTailTypeReturnsUnknownForOpenRecord(t *testing.T) {
 	if !ok {
 		t.Fatal("RecordTailFieldType(open record) returned ok=false")
 	}
-	if !typ.TypeEquals(fieldTail, typ.Unknown) {
+	if !identity.TypeEquals(fieldTail, typ.Unknown) {
 		t.Fatalf("field tail = %v, want unknown", fieldTail)
 	}
 
@@ -70,7 +71,7 @@ func TestRecordTailTypeReturnsUnknownForOpenRecord(t *testing.T) {
 	if !ok {
 		t.Fatal("RecordTailStaticMemberType(open record) returned ok=false")
 	}
-	if !typ.TypeEquals(memberTail, typ.Unknown) {
+	if !identity.TypeEquals(memberTail, typ.Unknown) {
 		t.Fatalf("static member tail = %v, want unknown", memberTail)
 	}
 	if RecordMapTailMayContainFieldName(rec, "missing") {
@@ -88,7 +89,7 @@ func TestRecordTailFieldTypeKeepsOptionalMapValueShape(t *testing.T) {
 		t.Fatal("RecordTailFieldType returned ok=false")
 	}
 	want := typ.NewOptional(typ.Number)
-	if !typ.TypeEquals(tail, want) {
+	if !identity.TypeEquals(tail, want) {
 		t.Fatalf("tail = %v, want %v", tail, want)
 	}
 }

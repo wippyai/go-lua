@@ -7,7 +7,7 @@ package typ
 // infinite recursive structures correctly.
 //
 // Aliases are transparent: compares through to their targets.
-func TypeEquals(a, b Type) bool {
+func typeEquals(a, b Type) bool {
 	if a == b {
 		return true
 	}
@@ -19,7 +19,7 @@ func TypeEquals(a, b Type) bool {
 // that cannot contain recursive cycles. Recursive product-family equivalence is
 // a domain relation; generic constructors and hot convergence paths must not
 // prove it by unfolding structural equality.
-func SameNodeOrAcyclicEqual(a, b Type) bool {
+func sameNodeOrAcyclicEqual(a, b Type) bool {
 	if a == b {
 		return true
 	}
@@ -30,5 +30,5 @@ func SameNodeOrAcyclicEqual(a, b Type) bool {
 		knownContainsOpenRecursive(a) || knownContainsOpenRecursive(b) {
 		return false
 	}
-	return TypeEquals(a, b)
+	return typeEquals(a, b)
 }

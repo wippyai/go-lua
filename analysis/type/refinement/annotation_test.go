@@ -3,6 +3,7 @@ package refinement
 import (
 	"testing"
 
+	"github.com/wippyai/go-lua/analysis/type/identity"
 	typetable "github.com/wippyai/go-lua/analysis/type/table"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
@@ -50,9 +51,9 @@ func TestPruneLessPreciseRefinableUnionMembersDropsDominatedSoftAlternative(t *t
 	precise := typ.NewMap(typ.String, typ.NewArray(typetable.NewRecord().Field("id", typ.String).Build()))
 
 	got := PruneLessPreciseRefinableUnionMembers(typ.NewUnion(soft, precise), func(candidate, baseline typ.Type) bool {
-		return typ.TypeEquals(candidate, precise) && typ.TypeEquals(baseline, soft)
+		return identity.TypeEquals(candidate, precise) && identity.TypeEquals(baseline, soft)
 	}, typ.NewUnion)
-	if !typ.TypeEquals(got, precise) {
+	if !identity.TypeEquals(got, precise) {
 		t.Fatalf("pruned union = %v, want %v", got, precise)
 	}
 }

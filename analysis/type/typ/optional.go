@@ -103,5 +103,5 @@ func (o *Optional) String() string {
 func (o *Optional) Hash() uint64 { return o.hash }
 
 func (o *Optional) Equals(other Type) bool {
-	return TypeEquals(o, other)
+	return typeEquals(o, other)
 }

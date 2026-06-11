@@ -3,6 +3,7 @@ package coalesce
 import (
 	"testing"
 
+	"github.com/wippyai/go-lua/analysis/type/identity"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
@@ -12,7 +13,7 @@ func TestJoinNonDiscriminantFieldPreservesEqualLiteral(t *testing.T) {
 	if !ok {
 		t.Fatal("joinNonDiscriminantField returned !ok")
 	}
-	if !typ.TypeEquals(got, lit) {
+	if !identity.TypeEquals(got, lit) {
 		t.Fatalf("joinNonDiscriminantField(equal literals) = %v, want %v", got, lit)
 	}
 }
@@ -22,7 +23,7 @@ func TestJoinNonDiscriminantFieldWidensDifferingSameBaseLiterals(t *testing.T) {
 	if !ok {
 		t.Fatal("joinNonDiscriminantField returned !ok")
 	}
-	if !typ.TypeEquals(got, typ.String) {
+	if !identity.TypeEquals(got, typ.String) {
 		t.Fatalf("joinNonDiscriminantField(differing strings) = %v, want string", got)
 	}
 }
@@ -44,7 +45,7 @@ func TestJoinRecordFieldSlotWidensAccumulatedNonDiscriminantLiteralUnion(t *test
 	acc := typ.NewUnion(typ.LiteralString("a"), typ.LiteralString("b"))
 
 	got := JoinRecordFieldSlot(acc, typ.LiteralString("c"), RecordPolicy{})
-	if !typ.TypeEquals(got, typ.String) {
+	if !identity.TypeEquals(got, typ.String) {
 		t.Fatalf("JoinRecordFieldSlot(non-discriminant literal union) = %v, want string", got)
 	}
 }

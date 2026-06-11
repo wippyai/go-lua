@@ -92,5 +92,5 @@ func (i *Instantiated) String() string {
 }
 func (i *Instantiated) Hash() uint64 { return i.hash }
 func (i *Instantiated) Equals(other Type) bool {
-	return TypeEquals(i, other)
+	return typeEquals(i, other)
 }

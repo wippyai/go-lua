@@ -66,11 +66,11 @@ func unionMemberHash(t Type) uint64 {
 }
 
 func sameUnionMember(a, b Type) bool {
-	if SameNodeOrAcyclicEqual(a, b) {
+	if sameNodeOrAcyclicEqual(a, b) {
 		return true
 	}
 	if ContainsRecursive(a) || ContainsRecursive(b) {
 		return false
 	}
-	return TypeEquals(a, b)
+	return typeEquals(a, b)
 }

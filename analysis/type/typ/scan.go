@@ -46,7 +46,7 @@ func (s containsSeen) contains(t Type) bool {
 		return false
 	}
 	for _, existing := range s[containsSeenKey(t)] {
-		if TypeEquals(existing, t) {
+		if typeEquals(existing, t) {
 			return true
 		}
 	}

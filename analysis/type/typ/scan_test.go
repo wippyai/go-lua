@@ -69,7 +69,7 @@ func TestContains_PrunesEquivalentRebuiltStructuralNodes(t *testing.T) {
 			return false
 		}
 		field := rec.GetField("payload")
-		if field != nil && TypeEquals(field.Type, String) {
+		if field != nil && typeEquals(field.Type, String) {
 			leafVisits++
 		}
 		return false

@@ -86,7 +86,7 @@ func (r *Recursive) String() string {
 // Two recursive types are equal if they have the same structure when
 // the self-references are treated as equivalent.
 func (r *Recursive) Equals(other Type) bool {
-	return TypeEquals(r, other)
+	return typeEquals(r, other)
 }
 
 // IsRecursiveRef returns true if t is a reference to the given recursive type.

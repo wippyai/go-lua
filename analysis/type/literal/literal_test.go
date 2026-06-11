@@ -3,6 +3,7 @@ package literal
 import (
 	"testing"
 
+	"github.com/wippyai/go-lua/analysis/type/identity"
 	"github.com/wippyai/go-lua/analysis/type/kind"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
@@ -58,7 +59,7 @@ func TestFamilyBaseLiteralUnion(t *testing.T) {
 	if !ok {
 		t.Fatal("FamilyBase(integer-number literal union) returned !ok")
 	}
-	if !typ.TypeEquals(got, typ.Number) {
+	if !identity.TypeEquals(got, typ.Number) {
 		t.Fatalf("FamilyBase(integer-number literal union) = %v, want number", got)
 	}
 }

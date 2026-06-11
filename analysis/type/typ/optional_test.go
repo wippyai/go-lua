@@ -105,7 +105,7 @@ func TestOptionalOfUnionWithNil(t *testing.T) {
 	o := NewOptional(u)
 
 	// NewOptional normalizes through NewUnion, result should be equivalent
-	if !TypeEquals(o, u) {
+	if !typeEquals(o, u) {
 		t.Errorf("Optional(Union containing Nil) should equal the union, got %v vs %v", o, u)
 	}
 }

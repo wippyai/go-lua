@@ -121,5 +121,5 @@ func (g *Generic) String() string {
 }
 func (g *Generic) Hash() uint64 { return g.hash }
 func (g *Generic) Equals(other Type) bool {
-	return TypeEquals(g, other)
+	return typeEquals(g, other)
 }
