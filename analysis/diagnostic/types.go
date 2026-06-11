@@ -51,7 +51,7 @@ type Diagnostic struct {
 	Code        Code
 	Message     string
 	Severity    Severity
-	Explanation string
+	Explanation Explanation
 	Help        string
 	Labels      []Label
 }
