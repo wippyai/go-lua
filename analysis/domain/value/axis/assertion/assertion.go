@@ -14,38 +14,37 @@ const (
 	top
 )
 
-// Flag identifies one user-written assertion marker attached to a value. These
+// Flag identifies one user-written claim marker attached to a value. These
 // flags are claims, not proof; transfer must not lower them into other axes.
 type Flag uint8
 
 const (
-	TypeAssertion Flag = 1 << iota
-	AnyAssertion
-	NonNilAssertion
+	TypeClaim Flag = 1 << iota
+	AnyClaim
+	NonNilClaim
 )
 
-const knownFlags = TypeAssertion | AnyAssertion | NonNilAssertion
+const knownFlags = TypeClaim | AnyClaim | NonNilClaim
 
-var flagOrder = []Flag{TypeAssertion, AnyAssertion, NonNilAssertion}
+var flagOrder = []Flag{TypeClaim, AnyClaim, NonNilClaim}
 
-// Value carries finite must-evidence for user-written assertions.
+// Value carries finite must-evidence for user-written claims.
 //
-// Top means no assertion indicator is known on all paths. Bottom is
-// unreachable. A concrete value contains the assertion flags common to every
-// incoming path.
+// Top means no claim indicator is known on all paths. Bottom is unreachable. A
+// concrete value contains the claim flags common to every incoming path.
 type Value struct {
 	state state
 	flags Flag
 }
 
-// Bottom is the unreachable assertion state.
+// Bottom is the unreachable claim state.
 func Bottom() Value { return Value{state: bottom} }
 
-// Top carries no assertion indicator.
+// Top carries no claim indicator.
 func Top() Value { return Value{state: top} }
 
-// Of constructs a concrete assertion indicator from flags. No flags normalize
-// to Top because absence is represented by the sparse-axis top value.
+// Of constructs a concrete claim indicator from flags. No flags normalize to
+// Top because absence is represented by the sparse-axis top value.
 func Of(flags ...Flag) Value {
 	var mask Flag
 	for _, flag := range flags {
@@ -57,19 +56,19 @@ func Of(flags ...Flag) Value {
 	return Value{state: concrete, flags: mask}
 }
 
-// Type returns the ordinary type assertion indicator.
-func Type() Value { return Of(TypeAssertion) }
+// Type returns the ordinary type claim indicator.
+func Type() Value { return Of(TypeClaim) }
 
-// Any returns the explicit any assertion indicator.
-func Any() Value { return Of(AnyAssertion) }
+// Any returns the explicit any claim indicator.
+func Any() Value { return Of(AnyClaim) }
 
-// NonNil returns the non-nil assertion indicator.
-func NonNil() Value { return Of(NonNilAssertion) }
+// NonNil returns the non-nil claim indicator.
+func NonNil() Value { return Of(NonNilClaim) }
 
-// IsBottom reports whether the assertion state is unreachable.
+// IsBottom reports whether the claim state is unreachable.
 func (v Value) IsBottom() bool { return v.state == bottom }
 
-// IsTop reports whether the value carries no assertion indicator.
+// IsTop reports whether the value carries no claim indicator.
 func (v Value) IsTop() bool { return v.state == top }
 
 // Has reports whether flag is guaranteed on all paths represented by v.
@@ -77,7 +76,7 @@ func (v Value) Has(flag Flag) bool {
 	return v.state == concrete && v.flags&flag != 0
 }
 
-// Flags returns the concrete assertion flags in stable order.
+// Flags returns the concrete claim flags in stable order.
 func (v Value) Flags() []Flag {
 	if v.state != concrete {
 		return nil
@@ -91,7 +90,7 @@ func (v Value) Flags() []Flag {
 	return out
 }
 
-// Join keeps only assertion indicators present on all incoming paths.
+// Join keeps only claim indicators present on all incoming paths.
 func Join(a, b Value) Value {
 	if Equal(a, b) {
 		return a
@@ -108,7 +107,7 @@ func Join(a, b Value) Value {
 	return Of(a.flags & b.flags)
 }
 
-// Meet combines compatible assertion evidence on the same path.
+// Meet combines compatible claim evidence on the same path.
 func Meet(a, b Value) Value {
 	if a.state == bottom || b.state == bottom {
 		return Bottom()
@@ -122,8 +121,8 @@ func Meet(a, b Value) Value {
 	return Of(a.flags | b.flags)
 }
 
-// Combine adds same-path assertion indicators together. Unlike Join, this does
-// not model control-flow merging; it records multiple claims made about the same
+// Combine adds same-path claim indicators together. Unlike Join, this does not
+// model control-flow merging; it records multiple claims made about the same
 // value expression.
 func Combine(a, b Value) Value {
 	if a.state == bottom || b.state == bottom {
@@ -138,7 +137,7 @@ func Combine(a, b Value) Value {
 	return Of(a.flags | b.flags)
 }
 
-// Widen equals Join because the assertion lattice is finite.
+// Widen equals Join because the claim lattice is finite.
 func Widen(prev, next Value) Value {
 	return Join(prev, next)
 }
@@ -161,11 +160,11 @@ func (v Value) Hash() uint64 {
 
 func (f Flag) String() string {
 	switch f {
-	case TypeAssertion:
+	case TypeClaim:
 		return "type"
-	case AnyAssertion:
+	case AnyClaim:
 		return "any"
-	case NonNilAssertion:
+	case NonNilClaim:
 		return "non-nil"
 	default:
 		return "assertion-flag(invalid)"

@@ -7,59 +7,59 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/assertion"
 )
 
-func TestAssertionEvidenceTypeAssertion(t *testing.T) {
+func TestAssertionEvidenceTypeClaim(t *testing.T) {
 	items := AssertionEvidence(Span{StartLine: 1, StartCol: 2}, assertion.Type())
 	if len(items) != 1 {
 		t.Fatalf("AssertionEvidence(type) = %d items, want 1", len(items))
 	}
 	item := items[0]
 	if item.Kind != EvidenceUserAssertion || item.Trust != TrustClaimed {
-		t.Fatalf("type assertion evidence = %#v, want claimed user assertion", item)
+		t.Fatalf("type claim evidence = %#v, want claimed user evidence", item)
 	}
 	if !strings.Contains(item.Message, "claimed by user type assertion") {
-		t.Fatalf("type assertion message missing claim: %q", item.Message)
+		t.Fatalf("type claim message missing claim: %q", item.Message)
 	}
 	if !strings.Contains(item.Message, "not proven by analysis") {
-		t.Fatalf("type assertion message missing non-proof: %q", item.Message)
+		t.Fatalf("type claim message missing non-proof: %q", item.Message)
 	}
 }
 
-func TestAssertionEvidenceAnyAssertionIsNotProofOrEscapeHatch(t *testing.T) {
+func TestAssertionEvidenceAnyClaimIsNotProofOrEscapeHatch(t *testing.T) {
 	items := AssertionEvidence(Span{}, assertion.Any())
 	if len(items) != 1 {
 		t.Fatalf("AssertionEvidence(any) = %d items, want 1", len(items))
 	}
 	message := items[0].Message
 	if !strings.Contains(message, "claimed as any") {
-		t.Fatalf("any assertion message missing claim: %q", message)
+		t.Fatalf("any claim message missing claim: %q", message)
 	}
 	if !strings.Contains(message, "not abstract-interpreter proof") {
-		t.Fatalf("any assertion message missing non-proof: %q", message)
+		t.Fatalf("any claim message missing non-proof: %q", message)
 	}
 	lower := strings.ToLower(message)
 	for _, forbidden := range []string{"proven", "escape hatch"} {
 		if strings.Contains(lower, forbidden) {
-			t.Fatalf("any assertion message contains forbidden wording %q: %q", forbidden, message)
+			t.Fatalf("any claim message contains forbidden wording %q: %q", forbidden, message)
 		}
 	}
 }
 
-func TestAssertionEvidenceNonNilAssertionIsNotNilProof(t *testing.T) {
+func TestAssertionEvidenceNonNilClaimIsNotNilProof(t *testing.T) {
 	items := AssertionEvidence(Span{}, assertion.NonNil())
 	if len(items) != 1 {
 		t.Fatalf("AssertionEvidence(non-nil) = %d items, want 1", len(items))
 	}
 	message := items[0].Message
 	if !strings.Contains(message, "claimed non-nil") {
-		t.Fatalf("non-nil assertion message missing claim: %q", message)
+		t.Fatalf("non-nil claim message missing claim: %q", message)
 	}
 	if !strings.Contains(message, "nil absence not proven") {
-		t.Fatalf("non-nil assertion message missing non-proof: %q", message)
+		t.Fatalf("non-nil claim message missing non-proof: %q", message)
 	}
 }
 
 func TestAssertionEvidenceCombinedStableOrder(t *testing.T) {
-	value := assertion.Of(assertion.NonNilAssertion, assertion.AnyAssertion, assertion.TypeAssertion)
+	value := assertion.Of(assertion.NonNilClaim, assertion.AnyClaim, assertion.TypeClaim)
 	got := FormatAssertionClaims(value)
 	want := "claimed by user type assertion; not proven by analysis; " +
 		"claimed as any; not abstract-interpreter proof; " +
@@ -95,12 +95,12 @@ func TestAssertionEvidenceBottomRendersUnreachable(t *testing.T) {
 	}
 	item := items[0]
 	if item.Kind != EvidenceAbstractFact || item.Trust != TrustRefuted {
-		t.Fatalf("bottom assertion evidence = %#v, want refuted abstract fact", item)
+		t.Fatalf("bottom claim evidence = %#v, want refuted abstract fact", item)
 	}
-	if item.Message != "unreachable assertion state" {
-		t.Fatalf("bottom assertion message = %q, want unreachable assertion state", item.Message)
+	if item.Message != "unreachable claim state" {
+		t.Fatalf("bottom claim message = %q, want unreachable claim state", item.Message)
 	}
-	if got := FormatAssertionClaims(assertion.Bottom()); got != "unreachable assertion state" {
-		t.Fatalf("FormatAssertionClaims(bottom) = %q, want unreachable assertion state", got)
+	if got := FormatAssertionClaims(assertion.Bottom()); got != "unreachable claim state" {
+		t.Fatalf("FormatAssertionClaims(bottom) = %q, want unreachable claim state", got)
 	}
 }

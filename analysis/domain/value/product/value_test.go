@@ -154,7 +154,7 @@ func TestDefaultRegistryRuntimeKindStoresAndSparsifiesTop(t *testing.T) {
 	}
 }
 
-func TestDefaultRegistryAssertionStoresSparsifiesAndAffectsIdentity(t *testing.T) {
+func TestDefaultRegistryClaimAxisStoresSparsifiesAndAffectsIdentity(t *testing.T) {
 	reg := DefaultRegistry()
 	typeClaim := assertion.Type()
 	anyClaim := assertion.Any()
@@ -169,10 +169,10 @@ func TestDefaultRegistryAssertionStoresSparsifiesAndAffectsIdentity(t *testing.T
 
 	other := Set(reg, Top(), assertion.Key, anyClaim)
 	if Equal(reg, v, other) {
-		t.Fatalf("different assertion indicators should affect product equality")
+		t.Fatalf("different claim indicators should affect product equality")
 	}
 	if Hash(reg, v) == Hash(reg, other) {
-		t.Fatalf("different assertion indicators should affect product hash")
+		t.Fatalf("different claim indicators should affect product hash")
 	}
 
 	setTop := Set(reg, v, assertion.Key, assertion.Top())

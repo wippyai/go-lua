@@ -92,7 +92,7 @@ func TestFiniteAxisSpecsLaws(t *testing.T) {
 			assertion.Type(),
 			assertion.Any(),
 			assertion.NonNil(),
-			assertion.Of(assertion.TypeAssertion, assertion.NonNilAssertion),
+			assertion.Of(assertion.TypeClaim, assertion.NonNilClaim),
 			assertion.Top(),
 		})
 	})

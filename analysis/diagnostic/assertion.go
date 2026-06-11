@@ -16,7 +16,7 @@ func AssertionEvidence(span Span, v assertion.Value) []Evidence {
 			Kind:    EvidenceAbstractFact,
 			Trust:   TrustRefuted,
 			Span:    span,
-			Message: "unreachable assertion state",
+			Message: "unreachable claim state",
 		}}
 	}
 	flags := v.Flags()
@@ -49,11 +49,11 @@ func FormatAssertionClaims(v assertion.Value) string {
 
 func assertionFlagMessage(flag assertion.Flag) string {
 	switch flag {
-	case assertion.TypeAssertion:
+	case assertion.TypeClaim:
 		return "claimed by user type assertion; not proven by analysis"
-	case assertion.AnyAssertion:
+	case assertion.AnyClaim:
 		return "claimed as any; not abstract-interpreter proof"
-	case assertion.NonNilAssertion:
+	case assertion.NonNilClaim:
 		return "claimed non-nil; nil absence not proven"
 	default:
 		return ""

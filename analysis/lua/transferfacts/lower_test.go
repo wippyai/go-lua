@@ -542,7 +542,7 @@ func TestLowerNestedObjectLiteralEntriesUnderAssignmentExprRef(t *testing.T) {
 	assertLoweredObjectEntry(t, entries[2], fieldChainSuffix("a", "b"), transfer.ValueSourceExpression)
 }
 
-func TestLowerAssertionsToSidecarsWithoutProofRefinements(t *testing.T) {
+func TestLowerClaimsToSidecarsWithoutProofRefinements(t *testing.T) {
 	decl := localAssign([]string{"x"}, number("0"))
 	typeRead := ident("x")
 	anyRead := ident("x")
@@ -573,7 +573,7 @@ func TestLowerAssertionsToSidecarsWithoutProofRefinements(t *testing.T) {
 	}
 }
 
-func TestLowerAssertionsPreserveCastSyntaxVariantsWithoutProofRefinements(t *testing.T) {
+func TestLowerClaimsPreserveCastSyntaxVariantsWithoutProofRefinements(t *testing.T) {
 	decl := localAssign([]string{"x"}, number("0"))
 	asTypeRead := ident("x")
 	colonTypeRead := ident("x")
@@ -613,7 +613,7 @@ func TestLowerAssertionsPreserveCastSyntaxVariantsWithoutProofRefinements(t *tes
 	}
 }
 
-func TestLowerParsedCastAssertionsOnlyProduceClaimOverlays(t *testing.T) {
+func TestLowerParsedCastClaimsOnlyProduceClaimOverlays(t *testing.T) {
 	stmts, _, built, result := parseSemanticChunk(t, `
 local x = 0
 local a, b, c, d = x as number, x :: number, x as any, x :: any
@@ -648,7 +648,7 @@ local a, b, c, d = x as number, x :: number, x as any, x :: any
 	}
 }
 
-func TestLowerAssertionConditionsDoNotCreateBranchRefinements(t *testing.T) {
+func TestLowerClaimConditionsDoNotCreateBranchRefinements(t *testing.T) {
 	stmts, _, built, result := parseSemanticChunk(t, `
 local x = 0
 if x as number then end
@@ -695,7 +695,7 @@ if x :: number then end
 	}
 }
 
-func TestLowerParsedAnyAssertionCastsDoNotEraseRuntimeAxes(t *testing.T) {
+func TestLowerParsedAnyClaimCastsDoNotEraseRuntimeAxes(t *testing.T) {
 	stmts, _, built, result := parseSemanticChunk(t, `
 local x = 0
 local a, b = x as any, x :: any
@@ -711,7 +711,7 @@ local a, b = x as any, x :: any
 		source := mustLocalSource(t, facts, point)
 		overlay, ok := facts.ValueOverlay(source.ExprRef)
 		if !ok {
-			t.Fatalf("missing any assertion overlay for source ref %d", source.ExprRef)
+			t.Fatalf("missing any claim overlay for source ref %d", source.ExprRef)
 		}
 		assertAssertionOnlyProduct(t, overlay.Overlay(), assertion.Any())
 		inputValues[overlay.Source().ExprRef] = base
@@ -783,7 +783,7 @@ local a, b = x as number, x :: any
 	}
 }
 
-func TestLowerNestedAssertionsPreserveOuterIdentityAndInnerFlow(t *testing.T) {
+func TestLowerNestedClaimsPreserveOuterIdentityAndInnerFlow(t *testing.T) {
 	decl := localAssign([]string{"x"}, number("0"))
 	read := ident("x")
 	nonNil := &ast.NonNilAssertExpr{Expr: read}
@@ -812,14 +812,14 @@ func TestLowerNestedAssertionsPreserveOuterIdentityAndInnerFlow(t *testing.T) {
 	}
 	inner, ok := facts.ValueOverlay(innerSource.ExprRef)
 	if !ok {
-		t.Fatalf("missing inner non-nil assertion for source %#v", innerSource)
+		t.Fatalf("missing inner non-nil claim for source %#v", innerSource)
 	}
 	if got := overlayAssertion(t, inner); !assertion.Equal(got, assertion.NonNil()) {
 		t.Fatalf("inner assertion = %s, want non-nil", got)
 	}
 }
 
-func TestLowerAssertionOverlaysApplyIndicatorsWithoutMutatingBaseValues(t *testing.T) {
+func TestLowerClaimOverlaysApplyIndicatorsWithoutMutatingBaseValues(t *testing.T) {
 	decl := localAssign([]string{"x"}, number("0"))
 	typeRead := ident("x")
 	anyRead := ident("x")
@@ -943,7 +943,7 @@ func TestLowerAssertionOverlaysApplyIndicatorsWithoutMutatingBaseValues(t *testi
 	}
 }
 
-func TestLowerNestedAssertionOverlaysApplyCombinedIndicators(t *testing.T) {
+func TestLowerNestedClaimOverlaysApplyCombinedIndicators(t *testing.T) {
 	decl := localAssign([]string{"x"}, number("0"))
 	read := ident("x")
 	nonNil := &ast.NonNilAssertExpr{Expr: read}
@@ -987,7 +987,7 @@ func TestLowerNestedAssertionOverlaysApplyCombinedIndicators(t *testing.T) {
 	}
 	assigned := out.ReadValue(reg, key.SymbolValue(fact.TargetSymbol()))
 	got := product.Get(reg, assigned, assertion.Key)
-	if !got.Has(assertion.TypeAssertion) || !got.Has(assertion.NonNilAssertion) {
+	if !got.Has(assertion.TypeClaim) || !got.Has(assertion.NonNilClaim) {
 		t.Fatalf("nested assertion = %s, want type and non-nil indicators", got)
 	}
 	if got := product.Get(reg, base, assertion.Key); !assertion.Equal(got, assertion.Top()) {
@@ -995,7 +995,7 @@ func TestLowerNestedAssertionOverlaysApplyCombinedIndicators(t *testing.T) {
 	}
 }
 
-func TestLowerAssertionWrappedCallPreservesProducerAndClaim(t *testing.T) {
+func TestLowerClaimWrappedCallPreservesProducerAndClaim(t *testing.T) {
 	fooIdent := ident("foo")
 	fooCall := &ast.FuncCallExpr{Func: fooIdent}
 	fooCast := &ast.CastExpr{Expr: fooCall, Type: primitiveType("number")}
