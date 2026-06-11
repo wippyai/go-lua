@@ -431,6 +431,113 @@ func (c CallProducer) copy() CallProducer {
 	return c
 }
 
+// CallSiteContext identifies the semantic context in which a call appears.
+type CallSiteContext uint8
+
+const (
+	CallSiteContextUnknown CallSiteContext = iota
+	CallSiteContextStatement
+	CallSiteContextAssignmentSource
+	CallSiteContextReturnSource
+	CallSiteContextIteratorSource
+	CallSiteContextCondition
+)
+
+// CallSiteConfig carries constructor input for CallSite.
+type CallSiteConfig struct {
+	Context CallSiteContext
+
+	CalleeSymbol symbol.ID
+	CalleePath   path.Path
+
+	ExprRef ExprRef
+	HasExpr bool
+
+	ExprIndex int
+
+	ResultTargets []CallResultTarget
+
+	Final    bool
+	Expanded bool
+	Adjusted bool
+	OpenTail bool
+}
+
+// CallSite describes a semantic call occurrence used as canonical evidence.
+type CallSite struct {
+	context CallSiteContext
+
+	calleeSymbol symbol.ID
+	calleePath   path.Path
+
+	exprRef ExprRef
+	hasExpr bool
+
+	exprIndex int
+
+	resultTargets []CallResultTarget
+
+	final    bool
+	expanded bool
+	adjusted bool
+	openTail bool
+}
+
+// NewCallSite creates a call-site evidence fact.
+func NewCallSite(config CallSiteConfig) CallSite {
+	return CallSite{
+		context:       config.Context,
+		calleeSymbol:  config.CalleeSymbol,
+		calleePath:    copyPath(config.CalleePath),
+		exprRef:       config.ExprRef,
+		hasExpr:       config.HasExpr,
+		exprIndex:     config.ExprIndex,
+		resultTargets: copyCallResultTargets(config.ResultTargets),
+		final:         config.Final,
+		expanded:      config.Expanded,
+		adjusted:      config.Adjusted,
+		openTail:      config.OpenTail,
+	}
+}
+
+// Context returns the call site's semantic context.
+func (c CallSite) Context() CallSiteContext { return c.context }
+
+// CalleeSymbol returns the callee's symbol identity.
+func (c CallSite) CalleeSymbol() symbol.ID { return c.calleeSymbol }
+
+// CalleePath returns the callee's path identity.
+func (c CallSite) CalleePath() path.Path { return copyPath(c.calleePath) }
+
+// Expr returns the call expression reference, if present.
+func (c CallSite) Expr() (ExprRef, bool) { return c.exprRef, c.hasExpr }
+
+// ExprIndex returns the expression's index in its containing value list.
+func (c CallSite) ExprIndex() int { return c.exprIndex }
+
+// ResultTargets returns the targets that consume this call's results.
+func (c CallSite) ResultTargets() []CallResultTarget {
+	return copyCallResultTargets(c.resultTargets)
+}
+
+// Final reports whether this call is the final value-list expression.
+func (c CallSite) Final() bool { return c.final }
+
+// Expanded reports whether this call contributes multiple result slots.
+func (c CallSite) Expanded() bool { return c.expanded }
+
+// Adjusted reports whether this call is adjusted to one result.
+func (c CallSite) Adjusted() bool { return c.adjusted }
+
+// OpenTail reports whether this call is an open tail return.
+func (c CallSite) OpenTail() bool { return c.openTail }
+
+func (c CallSite) copy() CallSite {
+	c.calleePath = copyPath(c.calleePath)
+	c.resultTargets = copyCallResultTargets(c.resultTargets)
+	return c
+}
+
 // FactsInput carries point-keyed facts used to construct an immutable Facts snapshot.
 type FactsInput struct {
 	LocalAssignments    map[cfg.Point]RootAssignment
@@ -439,6 +546,7 @@ type FactsInput struct {
 	BranchRefinements   map[cfg.Point]BranchRefinement
 	Returns             map[cfg.Point]Return
 	Calls               map[cfg.Point]CallProducer
+	CallSites           map[cfg.Point]CallSite
 	ObjectLiterals      map[ExprRef]ObjectLiteral
 	ValueOverlays       map[ExprRef]ValueOverlay
 }
@@ -451,6 +559,7 @@ type Facts struct {
 	branchRefinements   map[cfg.Point]BranchRefinement
 	returns             map[cfg.Point]Return
 	calls               map[cfg.Point]CallProducer
+	callSites           map[cfg.Point]CallSite
 	objectLiterals      map[ExprRef]ObjectLiteral
 	valueOverlays       map[ExprRef]ValueOverlay
 }
@@ -464,6 +573,7 @@ func NewFacts(input FactsInput) Facts {
 		branchRefinements:   copyBranchRefinementMap(input.BranchRefinements),
 		returns:             copyReturnMap(input.Returns),
 		calls:               copyCallProducerMap(input.Calls),
+		callSites:           copyCallSiteMap(input.CallSites),
 		objectLiterals:      copyObjectLiteralMap(input.ObjectLiterals),
 		valueOverlays:       copyValueOverlayMap(input.ValueOverlays),
 	}
@@ -519,6 +629,15 @@ func (f Facts) Call(point cfg.Point) (CallProducer, bool) {
 	fact, ok := f.calls[point]
 	if !ok {
 		return CallProducer{}, false
+	}
+	return fact.copy(), true
+}
+
+// CallSite returns the call-site evidence fact at point.
+func (f Facts) CallSite(point cfg.Point) (CallSite, bool) {
+	fact, ok := f.callSites[point]
+	if !ok {
+		return CallSite{}, false
 	}
 	return fact.copy(), true
 }
@@ -646,6 +765,17 @@ func copyCallProducerMap(in map[cfg.Point]CallProducer) map[cfg.Point]CallProduc
 		return nil
 	}
 	out := make(map[cfg.Point]CallProducer, len(in))
+	for point, fact := range in {
+		out[point] = fact.copy()
+	}
+	return out
+}
+
+func copyCallSiteMap(in map[cfg.Point]CallSite) map[cfg.Point]CallSite {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make(map[cfg.Point]CallSite, len(in))
 	for point, fact := range in {
 		out[point] = fact.copy()
 	}

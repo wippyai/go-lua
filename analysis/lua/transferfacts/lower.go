@@ -33,6 +33,7 @@ func Lower(result *semantics.Result, graph cfg.Graph) transfer.Facts {
 		BranchRefinements:   make(map[cfg.Point]transfer.BranchRefinement),
 		Returns:             make(map[cfg.Point]transfer.Return),
 		Calls:               make(map[cfg.Point]transfer.CallProducer),
+		CallSites:           make(map[cfg.Point]transfer.CallSite),
 		ObjectLiterals:      make(map[transfer.ExprRef]transfer.ObjectLiteral),
 		ValueOverlays:       make(map[transfer.ExprRef]transfer.ValueOverlay),
 	}
@@ -62,6 +63,7 @@ func Lower(result *semantics.Result, graph cfg.Graph) transfer.Facts {
 			}
 		}
 		if fact, ok := result.Call(point); ok {
+			input.CallSites[point] = l.callSite(fact)
 			if lowered, ok := l.callProducer(fact); ok {
 				input.Calls[point] = lowered
 			}
@@ -130,12 +132,37 @@ func (l *lowerer) callProducer(fact semantics.CallFact) (transfer.CallProducer, 
 		ExprRef:       exprRef,
 		HasExpr:       hasExpr,
 		ExprIndex:     fact.ExprIndex,
-		ResultTargets: l.callResultTargets(fact.ResultTargets),
+		ResultTargets: l.callProducerResultTargets(fact.ResultTargets),
 		Final:         fact.Final,
 		Expanded:      fact.Expanded,
 		Adjusted:      fact.Adjusted,
 		OpenTail:      fact.OpenTail,
 	}), true
+}
+
+func (l *lowerer) callSite(fact semantics.CallFact) transfer.CallSite {
+	exprRef, hasExpr := l.exprRef(fact.Call)
+	calleeSymbol := symbol.ID(0)
+	if fact.HasCalleeSymbol {
+		calleeSymbol = fact.CalleeSymbol
+	}
+	calleePath := path.Path{}
+	if fact.HasCalleePath {
+		calleePath = fact.CalleePath
+	}
+	return transfer.NewCallSite(transfer.CallSiteConfig{
+		Context:       callSiteContext(fact.Context),
+		CalleeSymbol:  calleeSymbol,
+		CalleePath:    calleePath,
+		ExprRef:       exprRef,
+		HasExpr:       hasExpr,
+		ExprIndex:     fact.ExprIndex,
+		ResultTargets: l.callSiteResultTargets(fact.ResultTargets),
+		Final:         fact.Final,
+		Expanded:      fact.Expanded,
+		Adjusted:      fact.Adjusted,
+		OpenTail:      fact.OpenTail,
+	})
 }
 
 func (l *lowerer) addObjectLiteral(input *transfer.FactsInput, result *semantics.Result, source semantics.ValueSource) {
@@ -339,20 +366,20 @@ func castAssertionValue(typ ast.TypeExpr) assertion.Value {
 	return assertion.Type()
 }
 
-func (l *lowerer) callResultTargets(targets []semantics.CallResultTarget) []transfer.CallResultTarget {
+func (l *lowerer) callProducerResultTargets(targets []semantics.CallResultTarget) []transfer.CallResultTarget {
 	if len(targets) == 0 {
 		return nil
 	}
 	out := make([]transfer.CallResultTarget, 0, len(targets))
 	for _, target := range targets {
-		if lowered, ok := l.callResultTarget(target); ok {
+		if lowered, ok := l.callProducerResultTarget(target); ok {
 			out = append(out, lowered)
 		}
 	}
 	return out
 }
 
-func (l *lowerer) callResultTarget(target semantics.CallResultTarget) (transfer.CallResultTarget, bool) {
+func (l *lowerer) callProducerResultTarget(target semantics.CallResultTarget) (transfer.CallResultTarget, bool) {
 	switch target.Kind {
 	case semantics.CallResultTargetLocalAssignment:
 		if !target.HasSymbol || target.Symbol == 0 {
@@ -382,6 +409,42 @@ func (l *lowerer) callResultTarget(target semantics.CallResultTarget) (transfer.
 	}
 }
 
+func (l *lowerer) callSiteResultTargets(targets []semantics.CallResultTarget) []transfer.CallResultTarget {
+	if len(targets) == 0 {
+		return nil
+	}
+	out := make([]transfer.CallResultTarget, len(targets))
+	for i := range targets {
+		out[i] = callSiteResultTarget(targets[i])
+	}
+	return out
+}
+
+func callSiteResultTarget(target semantics.CallResultTarget) transfer.CallResultTarget {
+	targetKind := transfer.CallResultTargetUnknown
+	switch target.Kind {
+	case semantics.CallResultTargetLocalAssignment:
+		targetKind = transfer.CallResultTargetLocalAssignment
+	case semantics.CallResultTargetOrdinaryAssignment:
+		targetKind = transfer.CallResultTargetOrdinaryAssignment
+	case semantics.CallResultTargetReturn:
+		targetKind = transfer.CallResultTargetReturn
+	}
+	targetSymbol := symbol.ID(0)
+	if target.HasSymbol {
+		targetSymbol = target.Symbol
+	}
+	targetPath := path.Path{}
+	if target.HasPath {
+		targetPath = target.Path
+	} else if target.Kind == semantics.CallResultTargetLocalAssignment && target.HasSymbol {
+		targetPath = path.NewPath(target.Symbol, target.Name)
+	} else if target.Kind == semantics.CallResultTargetOrdinaryAssignment && target.HasSymbol {
+		targetPath = path.NewPath(target.Symbol, "")
+	}
+	return transfer.NewCallResultTarget(targetKind, target.Index, targetSymbol, targetPath)
+}
+
 func (l *lowerer) exprRef(expr any) (transfer.ExprRef, bool) {
 	if expr == nil {
 		return 0, false
@@ -402,6 +465,23 @@ func callProducerContext(kind semantics.CallContextKind) (transfer.CallProducerC
 		return transfer.CallProducerContextReturn, true
 	default:
 		return transfer.CallProducerContextUnknown, false
+	}
+}
+
+func callSiteContext(kind semantics.CallContextKind) transfer.CallSiteContext {
+	switch kind {
+	case semantics.CallContextStatement:
+		return transfer.CallSiteContextStatement
+	case semantics.CallContextAssignmentSource:
+		return transfer.CallSiteContextAssignmentSource
+	case semantics.CallContextReturnSource:
+		return transfer.CallSiteContextReturnSource
+	case semantics.CallContextIteratorSource:
+		return transfer.CallSiteContextIteratorSource
+	case semantics.CallContextCondition:
+		return transfer.CallSiteContextCondition
+	default:
+		return transfer.CallSiteContextUnknown
 	}
 }
 

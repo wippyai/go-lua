@@ -187,6 +187,47 @@ func TestDTOConstructorsAndAccessorsCopySlices(t *testing.T) {
 	gotCallTargetPath := call.ResultTargets()[0].TargetPath()
 	assertPathEqual(t, gotCallTargetPath, targetPath)
 	assertPathEqual(t, call.ResultTargets()[0].TargetPath(), targetPath)
+
+	siteCalleePath := path.NewPath(symbol.ID(16), "svc").Field("run")
+	siteTargetPath := path.NewPath(symbol.ID(17), "t").Field("x")
+	siteTargets := []CallResultTarget{
+		NewCallResultTarget(CallResultTargetOrdinaryAssignment, 0, symbol.ID(17), siteTargetPath),
+	}
+	site := NewCallSite(CallSiteConfig{
+		Context:       CallSiteContextCondition,
+		CalleeSymbol:  symbol.ID(16),
+		CalleePath:    siteCalleePath,
+		ExprRef:       ExprRef(4),
+		HasExpr:       true,
+		ExprIndex:     0,
+		ResultTargets: siteTargets,
+		Final:         true,
+		Adjusted:      true,
+	})
+	siteCalleePath.Segments[0].Name = "changed"
+	siteTargets[0] = NewCallResultTarget(CallResultTargetReturn, 0, 0, path.Path{})
+	assertDirectField(t, site.CalleePath(), "run")
+	gotSiteCalleePath := site.CalleePath()
+	gotSiteCalleePath.Segments[0].Name = "changed-again"
+	assertDirectField(t, site.CalleePath(), "run")
+	if site.Context() != CallSiteContextCondition || site.CalleeSymbol() != symbol.ID(16) || site.ExprIndex() != 0 {
+		t.Fatalf("call site context/symbol/expr index = %v/%v/%v", site.Context(), site.CalleeSymbol(), site.ExprIndex())
+	}
+	if expr, ok := site.Expr(); !ok || expr != ExprRef(4) {
+		t.Fatalf("call site expr = %v/%v, want %v/true", expr, ok, ExprRef(4))
+	}
+	if !site.Final() || site.Expanded() || !site.Adjusted() || site.OpenTail() {
+		t.Fatalf("call site flags were not preserved")
+	}
+	gotSiteTargets := site.ResultTargets()
+	if len(gotSiteTargets) != 1 || gotSiteTargets[0].Kind() != CallResultTargetOrdinaryAssignment {
+		t.Fatalf("call site targets = %#v, want one ordinary-assignment target", gotSiteTargets)
+	}
+	assertDirectField(t, gotSiteTargets[0].TargetPath(), "x")
+	gotSiteTargets[0] = NewCallResultTarget(CallResultTargetReturn, 0, 0, path.Path{})
+	if got := site.ResultTargets(); got[0].Kind() != CallResultTargetOrdinaryAssignment {
+		t.Fatalf("call site result targets exposed mutable slice, got %v", got[0].Kind())
+	}
 }
 
 func TestTransferOwnedEnumsAreIndependentContracts(t *testing.T) {
@@ -208,6 +249,18 @@ func TestTransferOwnedEnumsAreIndependentContracts(t *testing.T) {
 	}
 	if len(contexts) != 3 || contexts[1] != CallProducerContextAssignment {
 		t.Fatalf("unexpected call producer contexts: %#v", contexts)
+	}
+
+	siteContexts := []CallSiteContext{
+		CallSiteContextUnknown,
+		CallSiteContextStatement,
+		CallSiteContextAssignmentSource,
+		CallSiteContextReturnSource,
+		CallSiteContextIteratorSource,
+		CallSiteContextCondition,
+	}
+	if len(siteContexts) != 6 || siteContexts[5] != CallSiteContextCondition {
+		t.Fatalf("unexpected call site contexts: %#v", siteContexts)
 	}
 
 	targets := []CallResultTargetKind{
@@ -260,6 +313,21 @@ func TestFactsCarrierCopiesAndReturnsFalseForMissingFacts(t *testing.T) {
 				},
 			}),
 		},
+		CallSites: map[cfg.Point]CallSite{
+			point: NewCallSite(CallSiteConfig{
+				Context:      CallSiteContextAssignmentSource,
+				CalleeSymbol: symbol.ID(35),
+				CalleePath:   path.NewPath(symbol.ID(35), "callee").Field("site"),
+				ExprRef:      ExprRef(5),
+				HasExpr:      true,
+				ExprIndex:    1,
+				ResultTargets: []CallResultTarget{
+					NewCallResultTarget(CallResultTargetOrdinaryAssignment, 0, symbol.ID(33), path.NewPath(symbol.ID(33), "table").Field("field")),
+				},
+				Final:    true,
+				Expanded: true,
+			}),
+		},
 		ObjectLiterals: map[ExprRef]ObjectLiteral{
 			ExprRef(1): NewObjectLiteral([]ObjectEntry{
 				NewObjectEntry(path.Path{Segments: []segment.Segment{{Kind: segment.SegmentField, Name: "field"}}}, source),
@@ -281,6 +349,7 @@ func TestFactsCarrierCopiesAndReturnsFalseForMissingFacts(t *testing.T) {
 	)
 	input.Returns[point] = NewReturn([]ValueSource{{Kind: ValueSourceNil}})
 	input.Calls[point] = NewCallProducer(CallProducerConfig{Context: CallProducerContextAssignment})
+	input.CallSites[point] = NewCallSite(CallSiteConfig{Context: CallSiteContextStatement})
 	input.ObjectLiterals[ExprRef(1)] = NewObjectLiteral([]ObjectEntry{
 		NewObjectEntry(path.Path{Segments: []segment.Segment{{Kind: segment.SegmentField, Name: "changed"}}}, callSource),
 	})
@@ -303,6 +372,9 @@ func TestFactsCarrierCopiesAndReturnsFalseForMissingFacts(t *testing.T) {
 	}
 	if _, ok := facts.Call(missing); ok {
 		t.Fatal("missing call returned ok")
+	}
+	if _, ok := facts.CallSite(missing); ok {
+		t.Fatal("missing call site returned ok")
 	}
 	if _, ok := facts.ObjectLiteral(ExprRef(99)); ok {
 		t.Fatal("missing object literal returned ok")
@@ -393,6 +465,29 @@ func TestFactsCarrierCopiesAndReturnsFalseForMissingFacts(t *testing.T) {
 	callTargets[0] = NewCallResultTarget(CallResultTargetLocalAssignment, 0, symbol.ID(33), path.NewPath(symbol.ID(33), "changed"))
 	if got := callAgain.ResultTargets(); got[0].Kind() != CallResultTargetReturn {
 		t.Fatalf("facts call exposed mutable targets, got %v", got[0].Kind())
+	}
+
+	callSite, ok := facts.CallSite(point)
+	if !ok {
+		t.Fatal("call site missing")
+	}
+	if callSite.Context() != CallSiteContextAssignmentSource || callSite.CalleeSymbol() != symbol.ID(35) || callSite.ExprIndex() != 1 {
+		t.Fatalf("call site context/symbol/expr index = %v/%v/%v", callSite.Context(), callSite.CalleeSymbol(), callSite.ExprIndex())
+	}
+	callSiteCalleePath := callSite.CalleePath()
+	callSiteCalleePath.Segments[0].Name = "mutated"
+	callSiteAgain, _ := facts.CallSite(point)
+	assertDirectField(t, callSiteAgain.CalleePath(), "site")
+	callSiteTargets := callSite.ResultTargets()
+	if len(callSiteTargets) != 1 || callSiteTargets[0].Kind() != CallResultTargetOrdinaryAssignment {
+		t.Fatalf("call site targets = %#v", callSiteTargets)
+	}
+	callSiteTargetPath := callSiteTargets[0].TargetPath()
+	callSiteTargetPath.Segments[0].Name = "mutated"
+	assertDirectField(t, callSiteAgain.ResultTargets()[0].TargetPath(), "field")
+	callSiteTargets[0] = NewCallResultTarget(CallResultTargetReturn, 0, 0, path.Path{})
+	if got := callSiteAgain.ResultTargets(); got[0].Kind() != CallResultTargetOrdinaryAssignment {
+		t.Fatalf("facts call site exposed mutable targets, got %v", got[0].Kind())
 	}
 
 	literal, ok := facts.ObjectLiteral(ExprRef(1))
