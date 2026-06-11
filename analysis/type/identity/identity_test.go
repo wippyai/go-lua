@@ -75,20 +75,44 @@ func TestSameNode(t *testing.T) {
 	}
 }
 
-func TestEqualityHashStableForRecursiveWrappers(t *testing.T) {
+func TestEqualityHashParityWithTypForRecursiveWrappers(t *testing.T) {
 	node := typ.NewRecursivePlaceholder("Node")
 	staleWrapper := &typ.Record{Fields: []typ.Field{{Name: "next", Type: node, Optional: true}}}
 
 	node.SetBody(&typ.Record{Fields: []typ.Field{
 		{Name: "next", Type: node, Optional: true},
 		{Name: "value", Type: typ.Number},
+	}, StaticMembers: []typ.StaticMember{
+		{Kind: typ.StaticMemberStringIndex, Name: "meta", Type: typ.String, Optional: true},
 	}})
 	freshWrapper := &typ.Record{Fields: []typ.Field{{Name: "next", Type: node, Optional: true}}}
+	memberWrapper := &typ.Record{
+		Fields: []typ.Field{{Name: "next", Type: node, Optional: true}},
+		StaticMembers: []typ.StaticMember{{
+			Kind:     typ.StaticMemberStringIndex,
+			Name:     "meta",
+			Type:     typ.String,
+			Optional: true,
+		}},
+	}
 
 	if !TypeEquals(staleWrapper, freshWrapper) {
 		t.Fatal("wrapper built before SetBody should remain structurally equal to a fresh wrapper")
 	}
 	if EqualityHash(staleWrapper) != EqualityHash(freshWrapper) {
 		t.Fatalf("equality hash should refresh open recursive wrapper: %d vs %d", EqualityHash(staleWrapper), EqualityHash(freshWrapper))
+	}
+
+	for _, tc := range []struct {
+		name string
+		t    typ.Type
+	}{
+		{name: "stale wrapper", t: staleWrapper},
+		{name: "fresh wrapper", t: freshWrapper},
+		{name: "member wrapper", t: memberWrapper},
+	} {
+		if got, want := EqualityHash(tc.t), typ.EqualityHash(tc.t); got != want {
+			t.Fatalf("%s: identity.EqualityHash = %d, typ.EqualityHash = %d", tc.name, got, want)
+		}
 	}
 }

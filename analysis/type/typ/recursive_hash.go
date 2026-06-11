@@ -214,11 +214,7 @@ func hashBodyWithVisitedMemo(t Type, visited map[*Recursive]bool, memo map[Type]
 // deduplication. It matches Hash for immutable closed products, but recomputes
 // wrappers around open recursive placeholders so SetBody cannot leave stale
 // construction-time hashes in the type algebra.
-func equalityHash(t Type) uint64 {
-	return typeEqualityHash(t)
-}
-
-func typeEqualityHash(t Type) uint64 {
+func EqualityHash(t Type) uint64 {
 	t = unwrapAliasForEquals(t, NewGuard())
 	if t == nil {
 		return 0
@@ -227,6 +223,14 @@ func typeEqualityHash(t Type) uint64 {
 		return hashBodyWithVisitedMemo(t, make(map[*Recursive]bool), make(map[Type]uint64))
 	}
 	return t.Hash()
+}
+
+func equalityHash(t Type) uint64 {
+	return EqualityHash(t)
+}
+
+func typeEqualityHash(t Type) uint64 {
+	return EqualityHash(t)
 }
 
 func (r *Recursive) Hash() uint64 {
