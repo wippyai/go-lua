@@ -2,9 +2,9 @@ package table
 
 import "github.com/wippyai/go-lua/analysis/type/typ"
 
-// SplitNilableFieldType converts a nil-capable table field value into an
+// splitNilableFieldType converts a nil-capable table field value into an
 // optional field shape.
-func SplitNilableFieldType(t typ.Type) (inner typ.Type, optional bool) {
+func splitNilableFieldType(t typ.Type) (inner typ.Type, optional bool) {
 	if t == nil {
 		return typ.Unknown, true
 	}
@@ -24,7 +24,7 @@ func PresentReadonlyEntryValue(t typ.Type) typ.Type {
 	if t == nil {
 		return nil
 	}
-	if inner, optional := SplitNilableFieldType(t); optional {
+	if inner, optional := splitNilableFieldType(t); optional {
 		return inner
 	}
 	return t

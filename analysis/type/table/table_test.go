@@ -146,7 +146,7 @@ func TestRecordConstructionSplitsNilableOptionalPayloads(t *testing.T) {
 
 func TestSplitNilableFieldType(t *testing.T) {
 	t.Run("optional", func(t *testing.T) {
-		inner, optional := SplitNilableFieldType(typ.NewOptional(typ.String))
+		inner, optional := splitNilableFieldType(typ.NewOptional(typ.String))
 		if !optional {
 			t.Fatal("expected optional")
 		}
@@ -156,7 +156,7 @@ func TestSplitNilableFieldType(t *testing.T) {
 	})
 
 	t.Run("union with nil", func(t *testing.T) {
-		inner, optional := SplitNilableFieldType(typ.NewUnion(typ.String, typ.Boolean, typ.Nil))
+		inner, optional := splitNilableFieldType(typ.NewUnion(typ.String, typ.Boolean, typ.Nil))
 		if !optional {
 			t.Fatal("expected optional")
 		}
@@ -168,7 +168,7 @@ func TestSplitNilableFieldType(t *testing.T) {
 
 	t.Run("alias to optional", func(t *testing.T) {
 		maybeString := typ.NewAlias("MaybeString", typ.NewOptional(typ.String))
-		inner, optional := SplitNilableFieldType(maybeString)
+		inner, optional := splitNilableFieldType(maybeString)
 		if !optional {
 			t.Fatal("expected optional")
 		}
@@ -182,7 +182,7 @@ func TestSplitNilableFieldType(t *testing.T) {
 
 	t.Run("non optional alias preserved", func(t *testing.T) {
 		name := typ.NewAlias("Name", typ.String)
-		inner, optional := SplitNilableFieldType(name)
+		inner, optional := splitNilableFieldType(name)
 		if optional {
 			t.Fatal("did not expect optional")
 		}
@@ -192,7 +192,7 @@ func TestSplitNilableFieldType(t *testing.T) {
 	})
 
 	t.Run("nil", func(t *testing.T) {
-		inner, optional := SplitNilableFieldType(typ.Nil)
+		inner, optional := splitNilableFieldType(typ.Nil)
 		if !optional {
 			t.Fatal("expected optional")
 		}
@@ -203,7 +203,7 @@ func TestSplitNilableFieldType(t *testing.T) {
 
 	t.Run("annotated optional", func(t *testing.T) {
 		ann := []annotation.Annotation{{Name: "tag"}}
-		inner, optional := SplitNilableFieldType(typ.NewAnnotated(typ.NewOptional(typ.String), ann))
+		inner, optional := splitNilableFieldType(typ.NewAnnotated(typ.NewOptional(typ.String), ann))
 		if !optional {
 			t.Fatal("expected optional")
 		}
@@ -270,7 +270,7 @@ func TestSplitNilableFieldPreservesRecursiveUnionMemberHashes(t *testing.T) {
 		t.Fatalf("expected union")
 	}
 
-	got, optional := SplitNilableFieldType(u)
+	got, optional := splitNilableFieldType(u)
 	if !optional {
 		t.Fatalf("expected optional")
 	}

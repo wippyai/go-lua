@@ -21,7 +21,7 @@ func TestRecordsConflictOnRequiredLiteral(t *testing.T) {
 	if !d.RecordsConflict(a, b) {
 		t.Fatal("records with one differing required literal tag did not conflict")
 	}
-	differing, equal := d.SharedRequiredLiteralAxes(a, b)
+	differing, equal := d.sharedRequiredLiteralAxes(a, b)
 	if differing != 1 || equal != 0 {
 		t.Fatalf("shared literal axes = differing %d equal %d, want 1/0", differing, equal)
 	}
@@ -46,7 +46,7 @@ func TestRecordsDoNotConflictOnMultipleDifferingLiteralsWithCleanResidual(t *tes
 	if !d.literalErasedResidualsCleanlyMergeable(a, b) {
 		t.Fatal("literal-erased residuals with the same non-literal payload should merge cleanly")
 	}
-	differing, equal := d.SharedRequiredLiteralAxes(a, b)
+	differing, equal := d.sharedRequiredLiteralAxes(a, b)
 	if differing != 2 || equal != 0 {
 		t.Fatalf("shared literal axes = differing %d equal %d, want 2/0", differing, equal)
 	}
@@ -90,7 +90,8 @@ func TestRequiredTagsPreservesNestedNonRecursiveTag(t *testing.T) {
 		Field("value", typetable.NewRecord().Field("error", String).Build()).
 		Build()
 
-	tags := RequiredTags(errCase)
+	d := NewDetector()
+	tags := d.RequiredTags(errCase)
 	if tags["channel.__tag"] != LiteralString("int").Hash() {
 		t.Fatalf("nested channel tag was not summarized: %v", tags)
 	}
@@ -104,7 +105,8 @@ func TestRequiredTagsRecursiveCycleSummarizesFiniteTags(t *testing.T) {
 			Build()
 	})
 
-	tags := RequiredTags(node)
+	d := NewDetector()
+	tags := d.RequiredTags(node)
 	if tags["kind"] != LiteralString("node").Hash() {
 		t.Fatalf("recursive top-level tag was not summarized: %v", tags)
 	}
@@ -124,7 +126,8 @@ func TestClosedRecordSetConflict(t *testing.T) {
 			Field("y", String).
 			Build(),
 	}
-	if !ClosedRecordSetConflicts(conflicting) {
+	d := NewDetector()
+	if !d.ClosedRecordSetConflicts(conflicting) {
 		t.Fatal("closed record set with required literal variants did not conflict")
 	}
 
@@ -139,7 +142,7 @@ func TestClosedRecordSetConflict(t *testing.T) {
 			Field("limit", Number).
 			Build(),
 	}
-	if ClosedRecordSetConflicts(clean) {
+	if d.ClosedRecordSetConflicts(clean) {
 		t.Fatal("records without required literal discriminants reported a conflict")
 	}
 }

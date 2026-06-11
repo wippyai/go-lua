@@ -22,18 +22,6 @@ func NewDetector() *Detector {
 	return &Detector{}
 }
 
-func RequiredTags(t typ.Type) map[string]uint64 {
-	return NewDetector().RequiredTags(t)
-}
-
-func RecordsConflict(a, b *typ.Record) bool {
-	return NewDetector().RecordsConflict(a, b)
-}
-
-func ClosedRecordSetConflicts(records []*typ.Record) bool {
-	return NewDetector().ClosedRecordSetConflicts(records)
-}
-
 // ClosedRecordSetConflicts reports whether any pair in a closed record set is
 // separated by a required literal discriminant.
 func (d *Detector) ClosedRecordSetConflicts(records []*typ.Record) bool {
@@ -77,7 +65,7 @@ func (d *Detector) RecordsConflict(a, b *typ.Record) bool {
 	if d == nil {
 		d = NewDetector()
 	}
-	differing, equal := d.SharedRequiredLiteralAxes(a, b)
+	differing, equal := d.sharedRequiredLiteralAxes(a, b)
 	if differing == 1 && equal == 0 {
 		return true
 	}
@@ -87,9 +75,7 @@ func (d *Detector) RecordsConflict(a, b *typ.Record) bool {
 	return !d.literalErasedResidualsCleanlyMergeable(a, b)
 }
 
-// SharedRequiredLiteralAxes counts required literal fields both records require,
-// split into differing and equal literal values.
-func (d *Detector) SharedRequiredLiteralAxes(a, b *typ.Record) (differing, equal int) {
+func (d *Detector) sharedRequiredLiteralAxes(a, b *typ.Record) (differing, equal int) {
 	if d == nil {
 		d = NewDetector()
 	}

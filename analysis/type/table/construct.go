@@ -108,33 +108,33 @@ func (b *RecordBuilder) Build() *typ.Record {
 // component and nil/absence normalization for optional field/static-member
 // payloads.
 func RebuildRecord(parts typ.RecordParts) *typ.Record {
-	return typ.RebuildRecord(RecordPartsWithTableNormalization(parts))
+	return typ.RebuildRecord(recordPartsWithTableNormalization(parts))
 }
 
-// RecordPartsWithTableNormalization returns a copy of parts with Lua table
+// recordPartsWithTableNormalization returns a copy of parts with Lua table
 // construction policy applied.
-func RecordPartsWithTableNormalization(parts typ.RecordParts) typ.RecordParts {
-	parts = RecordPartsWithMapKeyNormalization(parts)
-	parts.Fields = FieldsWithOptionalPayloadsSplit(parts.Fields)
-	parts.StaticMembers = StaticMembersWithOptionalPayloadsSplit(parts.StaticMembers)
+func recordPartsWithTableNormalization(parts typ.RecordParts) typ.RecordParts {
+	parts = recordPartsWithMapKeyNormalization(parts)
+	parts.Fields = fieldsWithOptionalPayloadsSplit(parts.Fields)
+	parts.StaticMembers = staticMembersWithOptionalPayloadsSplit(parts.StaticMembers)
 	return parts
 }
 
-// RecordPartsWithMapKeyNormalization returns a copy of parts with the map key
+// recordPartsWithMapKeyNormalization returns a copy of parts with the map key
 // normalized when a map component key is present.
-func RecordPartsWithMapKeyNormalization(parts typ.RecordParts) typ.RecordParts {
+func recordPartsWithMapKeyNormalization(parts typ.RecordParts) typ.RecordParts {
 	if parts.MapKey != nil {
 		parts.MapKey = NormalizeKey(parts.MapKey)
 	}
 	return parts
 }
 
-// FieldsWithOptionalPayloadsSplit returns fields with nilable optional payloads
+// fieldsWithOptionalPayloadsSplit returns fields with nilable optional payloads
 // split into absent-vs-present table shape.
-func FieldsWithOptionalPayloadsSplit(fields []typ.Field) []typ.Field {
+func fieldsWithOptionalPayloadsSplit(fields []typ.Field) []typ.Field {
 	var out []typ.Field
 	for i, field := range fields {
-		normalized := FieldWithOptionalPayloadSplit(field)
+		normalized := fieldWithOptionalPayloadSplit(field)
 		if out == nil {
 			if sameFieldShape(normalized, field) {
 				continue
@@ -150,25 +150,25 @@ func FieldsWithOptionalPayloadsSplit(fields []typ.Field) []typ.Field {
 	return out
 }
 
-// FieldWithOptionalPayloadSplit returns field with nilable optional payloads
+// fieldWithOptionalPayloadSplit returns field with nilable optional payloads
 // split into absent-vs-present table shape.
-func FieldWithOptionalPayloadSplit(field typ.Field) typ.Field {
+func fieldWithOptionalPayloadSplit(field typ.Field) typ.Field {
 	if !field.Optional {
 		return field
 	}
-	if inner, optional := SplitNilableFieldType(field.Type); optional {
+	if inner, optional := splitNilableFieldType(field.Type); optional {
 		field.Type = inner
 		field.Optional = true
 	}
 	return field
 }
 
-// StaticMembersWithOptionalPayloadsSplit returns static members with nilable
+// staticMembersWithOptionalPayloadsSplit returns static members with nilable
 // optional payloads split into absent-vs-present table shape.
-func StaticMembersWithOptionalPayloadsSplit(members []typ.StaticMember) []typ.StaticMember {
+func staticMembersWithOptionalPayloadsSplit(members []typ.StaticMember) []typ.StaticMember {
 	var out []typ.StaticMember
 	for i, member := range members {
-		normalized := StaticMemberWithOptionalPayloadSplit(member)
+		normalized := staticMemberWithOptionalPayloadSplit(member)
 		if out == nil {
 			if sameStaticMemberShape(normalized, member) {
 				continue
@@ -184,13 +184,13 @@ func StaticMembersWithOptionalPayloadsSplit(members []typ.StaticMember) []typ.St
 	return out
 }
 
-// StaticMemberWithOptionalPayloadSplit returns member with nilable optional
+// staticMemberWithOptionalPayloadSplit returns member with nilable optional
 // payloads split into absent-vs-present table shape.
-func StaticMemberWithOptionalPayloadSplit(member typ.StaticMember) typ.StaticMember {
+func staticMemberWithOptionalPayloadSplit(member typ.StaticMember) typ.StaticMember {
 	if !member.Optional {
 		return member
 	}
-	if inner, optional := SplitNilableFieldType(member.Type); optional {
+	if inner, optional := splitNilableFieldType(member.Type); optional {
 		member.Type = inner
 		member.Optional = true
 	}
