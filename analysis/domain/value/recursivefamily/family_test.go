@@ -58,6 +58,39 @@ func TestRecursiveFamilyInternerInternsSameKey(t *testing.T) {
 	}
 }
 
+func TestRecursiveFamilyInternerResetDropsOwnedFamilies(t *testing.T) {
+	interner := NewRecursiveFamilyInterner()
+	key := FamilyKey{Namespace: "store", Owner: "sym:reset"}
+	first := interner.Intern(key)
+	body := typetable.NewRecord().Field("value", typ.String).Build()
+	interner.Widen(first, body, nil)
+	if first.Body == nil {
+		t.Fatal("precondition: first family body should be initialized")
+	}
+
+	interner.Reset()
+	if got, ok := interner.FamilyKeyOf(first); ok || !got.IsZero() {
+		t.Fatalf("FamilyKeyOf(old family) after Reset = (%#v, %v), want zero/false", got, ok)
+	}
+	if got, ok := interner.FamilyIdentityHash(first); ok || got != 0 {
+		t.Fatalf("FamilyIdentityHash(old family) after Reset = %x/%v, want 0/false", got, ok)
+	}
+
+	second := interner.Intern(key)
+	if second == nil {
+		t.Fatal("intern after Reset should return a family")
+	}
+	if second == first {
+		t.Fatal("intern after Reset should mint a fresh family handle")
+	}
+	if second.Body != nil {
+		t.Fatal("fresh family after Reset should not inherit the old body")
+	}
+	if interner.SameFamily(first, second) {
+		t.Fatal("old family should no longer be owned after Reset")
+	}
+}
+
 func TestRecursiveFamilyInternerOwnershipIsolation(t *testing.T) {
 	key := FamilyKey{Namespace: "class", Owner: "alloc:7"}
 	left := NewRecursiveFamilyInterner()
@@ -179,6 +212,92 @@ func TestRecursiveFamilyIdentityStableAcrossWiden(t *testing.T) {
 	}
 	if got, ok := interner.FamilyIdentityHash(family); !ok || got != initialIdentityHash {
 		t.Fatalf("identity hash after second widen = %x/%v, want %x/true", got, ok, initialIdentityHash)
+	}
+}
+
+func TestRebindRecursiveRefRewritesNestedReferences(t *testing.T) {
+	from := typ.NewRecursivePlaceholder("Fold")
+	to := typ.NewRecursivePlaceholder("Family")
+	body := typetable.NewRecord().
+		Field("next", typ.NewOptional(from)).
+		Field("value", typ.String).
+		Build()
+
+	rebuilt := RebindRecursiveRef(body, from, to)
+	rec, ok := rebuilt.(*typ.Record)
+	if !ok {
+		t.Fatalf("RebindRecursiveRef() = %T, want *typ.Record", rebuilt)
+	}
+	next := rec.GetField("next")
+	if next == nil {
+		t.Fatal("rebuilt record missing next field")
+	}
+	nextOpt, ok := next.Type.(*typ.Optional)
+	if !ok {
+		t.Fatalf("next field = %T, want *typ.Optional", next.Type)
+	}
+	if nextOpt.Inner != to {
+		t.Fatalf("next inner = %v, want target recursive handle", nextOpt.Inner)
+	}
+	if value := rec.GetField("value"); value == nil || value.Type != typ.String {
+		t.Fatalf("value field = %#v, want string field", value)
+	}
+	if got := RebindRecursiveRef(body, from, from); got != body {
+		t.Fatal("rebinding to the same recursive handle should be a no-op")
+	}
+}
+
+func TestContainsRecursiveRefDetectsTargetOnly(t *testing.T) {
+	target := typ.NewRecursivePlaceholder("Target")
+	other := typ.NewRecursivePlaceholder("Other")
+	body := typetable.NewRecord().
+		Field("next", typ.NewOptional(target)).
+		Field("other", other).
+		Field("value", typ.Number).
+		Build()
+
+	if !ContainsRecursiveRef(body, target) {
+		t.Fatal("body should contain target recursive reference")
+	}
+	if ContainsRecursiveRef(typetable.NewRecord().Field("value", typ.Number).Build(), target) {
+		t.Fatal("non-recursive body should not contain target recursive reference")
+	}
+	if ContainsRecursiveRef(body, typ.NewRecursivePlaceholder("Missing")) {
+		t.Fatal("body should not contain an unrelated recursive reference")
+	}
+	if ContainsRecursiveRef(nil, target) || ContainsRecursiveRef(body, nil) {
+		t.Fatal("nil inputs should not report recursive references")
+	}
+}
+
+func TestCollapseUnfoldingToFamilyFoldsRecursiveChildren(t *testing.T) {
+	family := typ.NewRecursivePlaceholder("Family")
+	deepUnfolding := typetable.NewRecord().
+		Field("next", typ.NewOptional(family)).
+		Field("payload", typ.Number).
+		Build()
+	slot := typetable.NewRecord().
+		Field("head", typ.String).
+		Field("child", deepUnfolding).
+		Field("leaf", typ.Boolean).
+		Build()
+
+	collapsed := CollapseUnfoldingToFamily(slot, family)
+	rec, ok := collapsed.(*typ.Record)
+	if !ok {
+		t.Fatalf("CollapseUnfoldingToFamily() = %T, want *typ.Record", collapsed)
+	}
+	if head := rec.GetField("head"); head == nil || head.Type != typ.String {
+		t.Fatalf("head field = %#v, want string field", head)
+	}
+	if child := rec.GetField("child"); child == nil || child.Type != family {
+		t.Fatalf("child field = %#v, want family handle", child)
+	}
+	if leaf := rec.GetField("leaf"); leaf == nil || leaf.Type != typ.Boolean {
+		t.Fatalf("leaf field = %#v, want boolean field", leaf)
+	}
+	if got := CollapseUnfoldingToFamily(family, family); got != family {
+		t.Fatal("bare recursive reference should collapse to the family handle")
 	}
 }
 
