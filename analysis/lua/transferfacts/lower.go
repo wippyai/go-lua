@@ -8,6 +8,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/runtimekind"
 	"github.com/wippyai/go-lua/analysis/engine/transfer"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
+	"github.com/wippyai/go-lua/analysis/lua/branchcond"
 	"github.com/wippyai/go-lua/analysis/lua/semantics"
 	"github.com/wippyai/go-lua/analysis/symbol"
 	"github.com/wippyai/go-lua/compiler/ast"
@@ -172,45 +173,45 @@ func (l *lowerer) branchRefinement(fact semantics.BranchConditionFact) (transfer
 		return transfer.BranchRefinement{}, false
 	}
 	switch fact.Check.Kind {
-	case semantics.BranchConditionCheckNil:
+	case branchcond.CheckNil:
 		return transfer.NewBranchRefinement(
 			target,
 			transfer.NewValueRefinement().WithPresence(presence.Absent()), true,
 			transfer.NewValueRefinement().WithPresence(presence.Present()), true,
 		), true
-	case semantics.BranchConditionCheckNotNil:
+	case branchcond.CheckNotNil:
 		return transfer.NewBranchRefinement(
 			target,
 			transfer.NewValueRefinement().WithPresence(presence.Present()), true,
 			transfer.NewValueRefinement().WithPresence(presence.Absent()), true,
 		), true
-	case semantics.BranchConditionCheckTruthy:
+	case branchcond.CheckTruthy:
 		return transfer.NewBranchRefinement(
 			target,
 			transfer.NewValueRefinement().WithPresence(presence.Present()), true,
 			transfer.ValueRefinement{}, false,
 		), true
-	case semantics.BranchConditionCheckFalsy:
+	case branchcond.CheckFalsy:
 		return transfer.NewBranchRefinement(
 			target,
 			transfer.ValueRefinement{}, false,
 			transfer.NewValueRefinement().WithPresence(presence.Present()), true,
 		), true
-	case semantics.BranchConditionCheckTypeEqual, semantics.BranchConditionCheckTypeNot:
+	case branchcond.CheckTypeEqual, branchcond.CheckTypeNot:
 		return l.typeBranchRefinement(target, fact.Check.Kind, fact.Check.TypeName)
 	default:
 		return transfer.BranchRefinement{}, false
 	}
 }
 
-func (l *lowerer) typeBranchRefinement(target path.Path, kind semantics.BranchConditionCheckKind, typeName string) (transfer.BranchRefinement, bool) {
+func (l *lowerer) typeBranchRefinement(target path.Path, kind branchcond.CheckKind, typeName string) (transfer.BranchRefinement, bool) {
 	tag, ok := runtimeTag(typeName)
 	if !ok {
 		return transfer.BranchRefinement{}, false
 	}
 	matched := typeMatchedRefinement(tag)
 	unmatched := typeUnmatchedRefinement(tag)
-	if kind == semantics.BranchConditionCheckTypeNot {
+	if kind == branchcond.CheckTypeNot {
 		return transfer.NewBranchRefinement(target, unmatched, true, matched, true), true
 	}
 	return transfer.NewBranchRefinement(target, matched, true, unmatched, true), true

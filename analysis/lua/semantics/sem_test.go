@@ -8,6 +8,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/lua/bind"
+	"github.com/wippyai/go-lua/analysis/lua/branchcond"
 	"github.com/wippyai/go-lua/analysis/lua/cfgbuild"
 	"github.com/wippyai/go-lua/analysis/symbol"
 	"github.com/wippyai/go-lua/compiler/ast"
@@ -984,7 +985,7 @@ func TestExtractChunkBranchConditionChecksResolvePaths(t *testing.T) {
 	tests := []struct {
 		name     string
 		expr     func(*ast.IdentExpr) ast.Expr
-		want     BranchConditionCheckKind
+		want     branchcond.CheckKind
 		wantPath func(symbol.ID) path.Path
 		typeName string
 	}{
@@ -993,7 +994,7 @@ func TestExtractChunkBranchConditionChecksResolvePaths(t *testing.T) {
 			expr: func(root *ast.IdentExpr) ast.Expr {
 				return dot(root, "ready")
 			},
-			want: BranchConditionCheckTruthy,
+			want: branchcond.CheckTruthy,
 			wantPath: func(root symbol.ID) path.Path {
 				return path.NewPath(root, "obj").Field("ready")
 			},
@@ -1003,7 +1004,7 @@ func TestExtractChunkBranchConditionChecksResolvePaths(t *testing.T) {
 			expr: func(root *ast.IdentExpr) ast.Expr {
 				return &ast.UnaryNotOpExpr{Expr: stringIndex(root, "missing")}
 			},
-			want: BranchConditionCheckFalsy,
+			want: branchcond.CheckFalsy,
 			wantPath: func(root symbol.ID) path.Path {
 				return path.NewPath(root, "obj").IndexStr("missing")
 			},
@@ -1013,7 +1014,7 @@ func TestExtractChunkBranchConditionChecksResolvePaths(t *testing.T) {
 			expr: func(root *ast.IdentExpr) ast.Expr {
 				return &ast.RelationalOpExpr{Operator: "==", Lhs: dot(root, "child"), Rhs: &ast.NilExpr{}}
 			},
-			want: BranchConditionCheckNil,
+			want: branchcond.CheckNil,
 			wantPath: func(root symbol.ID) path.Path {
 				return path.NewPath(root, "obj").Field("child")
 			},
@@ -1023,7 +1024,7 @@ func TestExtractChunkBranchConditionChecksResolvePaths(t *testing.T) {
 			expr: func(root *ast.IdentExpr) ast.Expr {
 				return &ast.RelationalOpExpr{Operator: "~=", Lhs: &ast.NilExpr{}, Rhs: intIndex(root, "1")}
 			},
-			want: BranchConditionCheckNotNil,
+			want: branchcond.CheckNotNil,
 			wantPath: func(root symbol.ID) path.Path {
 				return path.NewPath(root, "obj").IndexInt(1)
 			},
@@ -1033,7 +1034,7 @@ func TestExtractChunkBranchConditionChecksResolvePaths(t *testing.T) {
 			expr: func(root *ast.IdentExpr) ast.Expr {
 				return &ast.RelationalOpExpr{Operator: "==", Lhs: typeCall(dot(root, "kind")), Rhs: stringLit("table")}
 			},
-			want: BranchConditionCheckTypeEqual,
+			want: branchcond.CheckTypeEqual,
 			wantPath: func(root symbol.ID) path.Path {
 				return path.NewPath(root, "obj").Field("kind")
 			},
@@ -1044,7 +1045,7 @@ func TestExtractChunkBranchConditionChecksResolvePaths(t *testing.T) {
 			expr: func(root *ast.IdentExpr) ast.Expr {
 				return &ast.RelationalOpExpr{Operator: "~=", Lhs: stringLit("number"), Rhs: typeCall(stringIndex(root, "value"))}
 			},
-			want: BranchConditionCheckTypeNot,
+			want: branchcond.CheckTypeNot,
 			wantPath: func(root symbol.ID) path.Path {
 				return path.NewPath(root, "obj").IndexStr("value")
 			},

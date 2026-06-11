@@ -2,6 +2,7 @@ package cfgbuild
 
 import (
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
+	"github.com/wippyai/go-lua/analysis/lua/branchcond"
 	"github.com/wippyai/go-lua/analysis/lua/valueexpr"
 	"github.com/wippyai/go-lua/compiler/ast"
 )
@@ -58,7 +59,7 @@ func (b *builder) hasUnsupportedConditionExpr(expr ast.Expr) bool {
 	if b.exprCovered(expr) {
 		return false
 	}
-	return !b.typeCompareConditionSupported(expr)
+	return !branchcond.SupportsTypeComparison(expr, b.bindings)
 }
 
 func (b *builder) appendConditionCall(state flowState, stmt ast.Stmt, expr ast.Expr) (flowState, cfg.Point, bool) {

@@ -7,6 +7,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/lua/bind"
+	"github.com/wippyai/go-lua/analysis/lua/branchcond"
 	"github.com/wippyai/go-lua/analysis/lua/cfgbuild"
 	"github.com/wippyai/go-lua/analysis/lua/pathexpr"
 	"github.com/wippyai/go-lua/analysis/symbol"
@@ -146,7 +147,7 @@ type BranchConditionFact struct {
 	Repeat    *ast.RepeatStmt
 	Condition ast.Expr
 	Source    ValueSource
-	Check     BranchConditionCheck
+	Check     branchcond.Check
 }
 
 type TypeDefinitionFact struct {
@@ -581,7 +582,7 @@ func (r *Result) extractBranch(stmt ast.Stmt, kind BranchKind, condition ast.Exp
 		Stmt:      stmt,
 		Condition: condition,
 		Source:    conditionValueSource(condition, callPointsByExprIndex(calls, points)),
-		Check:     normalizeBranchCondition(condition, bindings),
+		Check:     branchcond.Normalize(condition, bindings),
 	}
 	switch stmt := stmt.(type) {
 	case *ast.IfStmt:

@@ -1,0 +1,121 @@
+// Package branchcond recognizes normalized Lua branch-condition checks.
+package branchcond
+
+import (
+	"github.com/wippyai/go-lua/analysis/domain/path"
+	"github.com/wippyai/go-lua/analysis/lua/bind"
+	"github.com/wippyai/go-lua/analysis/lua/pathexpr"
+	"github.com/wippyai/go-lua/compiler/ast"
+)
+
+type CheckKind uint8
+
+const (
+	CheckNone CheckKind = iota
+	CheckTruthy
+	CheckFalsy
+	CheckNil
+	CheckNotNil
+	CheckTypeEqual
+	CheckTypeNot
+)
+
+type Check struct {
+	Kind     CheckKind
+	Path     path.Path
+	TypeName string
+}
+
+func Normalize(expr ast.Expr, bindings *bind.Result) Check {
+	if p, ok := pathexpr.Resolve(expr, bindings); ok {
+		return Check{Kind: CheckTruthy, Path: p}
+	}
+
+	switch expr := expr.(type) {
+	case *ast.UnaryNotOpExpr:
+		if p, ok := pathexpr.Resolve(expr.Expr, bindings); ok {
+			return Check{Kind: CheckFalsy, Path: p}
+		}
+	case *ast.RelationalOpExpr:
+		if !isSupportedRelop(expr.Operator) {
+			return Check{}
+		}
+		if check, ok := normalizeTypeComparison(expr, bindings); ok {
+			return check
+		}
+		if p, ok := nilComparisonPath(expr.Lhs, expr.Rhs, bindings); ok {
+			kind := CheckNil
+			if expr.Operator == "~=" {
+				kind = CheckNotNil
+			}
+			return Check{Kind: kind, Path: p}
+		}
+	}
+
+	return Check{}
+}
+
+func SupportsTypeComparison(expr ast.Expr, bindings *bind.Result) bool {
+	rel, ok := expr.(*ast.RelationalOpExpr)
+	if !ok || !isSupportedRelop(rel.Operator) {
+		return false
+	}
+	_, ok = normalizeTypeComparison(rel, bindings)
+	return ok
+}
+
+func normalizeTypeComparison(expr *ast.RelationalOpExpr, bindings *bind.Result) (Check, bool) {
+	p, typeName, ok := typeComparisonOperands(expr.Lhs, expr.Rhs, bindings)
+	if !ok {
+		p, typeName, ok = typeComparisonOperands(expr.Rhs, expr.Lhs, bindings)
+	}
+	if !ok {
+		return Check{}, false
+	}
+	kind := CheckTypeEqual
+	if expr.Operator == "~=" {
+		kind = CheckTypeNot
+	}
+	return Check{Kind: kind, Path: p, TypeName: typeName}, true
+}
+
+func typeComparisonOperands(callExpr, literalExpr ast.Expr, bindings *bind.Result) (path.Path, string, bool) {
+	lit, ok := literalExpr.(*ast.StringExpr)
+	if !ok {
+		return path.Path{}, "", false
+	}
+	call, ok := callExpr.(*ast.FuncCallExpr)
+	if !ok {
+		return path.Path{}, "", false
+	}
+	p, ok := typeCallSubjectPath(call, bindings)
+	if !ok {
+		return path.Path{}, "", false
+	}
+	return p, lit.Value, true
+}
+
+func typeCallSubjectPath(call *ast.FuncCallExpr, bindings *bind.Result) (path.Path, bool) {
+	if call == nil || call.Receiver != nil || call.Method != "" || len(call.Args) != 1 || len(call.TypeArgs) != 0 {
+		return path.Path{}, false
+	}
+	fn, ok := call.Func.(*ast.IdentExpr)
+	if !ok || !bindings.ResolvesToGlobal(fn, "type") {
+		return path.Path{}, false
+	}
+	return pathexpr.Resolve(call.Args[0], bindings)
+}
+
+func nilComparisonPath(lhs, rhs ast.Expr, bindings *bind.Result) (path.Path, bool) {
+	if _, ok := lhs.(*ast.NilExpr); ok {
+		return pathexpr.Resolve(rhs, bindings)
+	}
+	if _, ok := rhs.(*ast.NilExpr); ok {
+		return pathexpr.Resolve(lhs, bindings)
+	}
+	return path.Path{}, false
+}
+
+func isSupportedRelop(op string) bool {
+	return op == "==" || op == "~="
+}
