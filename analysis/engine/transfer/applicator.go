@@ -44,7 +44,7 @@ func NewFactsNodeTransfer(config FactsNodeTransferConfig) NodeTransfer {
 		if fact, ok := facts.LocalAssignment(ctx.Point); ok {
 			var targetPath pathdom.Path
 			var applied bool
-			out, targetPath, applied = applyRootAssignment(ctx, sources, read, in, out, fact.TargetSymbol(), fact.TargetPath(), fact.Source())
+			out, targetPath, applied = applyRootAssignment(ctx, config.Visibility, sources, read, in, out, fact.TargetSymbol(), fact.TargetPath(), fact.Source())
 			if applied {
 				out = applyObjectLiteralEntries(ctx, config.Visibility, facts, sources, read, in, out, targetPath, fact.Source())
 			}
@@ -52,7 +52,7 @@ func NewFactsNodeTransfer(config FactsNodeTransferConfig) NodeTransfer {
 		if fact, ok := facts.OrdinaryAssignment(ctx.Point); ok {
 			var targetPath pathdom.Path
 			var applied bool
-			out, targetPath, applied = applyRootAssignment(ctx, sources, read, in, out, fact.TargetSymbol(), fact.TargetPath(), fact.Source())
+			out, targetPath, applied = applyRootAssignment(ctx, config.Visibility, sources, read, in, out, fact.TargetSymbol(), fact.TargetPath(), fact.Source())
 			if applied {
 				out = applyObjectLiteralEntries(ctx, config.Visibility, facts, sources, read, in, out, targetPath, fact.Source())
 			}
@@ -167,6 +167,7 @@ func materializeCallResults(
 
 func applyRootAssignment(
 	ctx NodeContext,
+	resolver *visibility.Resolver,
 	sources SourceValues,
 	read func(cfg.Point) state.State,
 	in state.State,
@@ -184,7 +185,7 @@ func applyRootAssignment(
 		return out, pathdom.Path{}, false
 	}
 	targetPath = rootAssignmentPath(root, targetPath)
-	return writeRootSymbol(ctx, out, root, value), targetPath, true
+	return writeRootSymbol(ctx, resolver, out, root, targetPath, value), targetPath, true
 }
 
 func rootAssignmentTarget(target symbol.ID, targetPath pathdom.Path) (symbol.ID, bool) {
@@ -208,9 +209,14 @@ func rootAssignmentPath(target symbol.ID, targetPath pathdom.Path) pathdom.Path 
 	return out
 }
 
-func writeRootSymbol(ctx NodeContext, out state.State, target symbol.ID, value product.Value) state.State {
+func writeRootSymbol(ctx NodeContext, resolver *visibility.Resolver, out state.State, target symbol.ID, targetPath pathdom.Path, value product.Value) state.State {
 	if target == 0 {
 		return out
+	}
+	if resolver != nil {
+		if invalidated, ok := out.InvalidatePathSubtreeAt(resolver, ctx.Point, targetPath); ok {
+			out = invalidated
+		}
 	}
 	return out.WriteValue(ctx.Registry, key.SymbolValue(target), value)
 }

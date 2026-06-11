@@ -78,6 +78,77 @@ func TestFactsNodeTransferAppliesOrdinaryAssignmentThroughResolver(t *testing.T)
 	assertResolverCall(t, resolver, assign, source)
 }
 
+func TestFactsNodeTransferRootAssignmentInvalidatesVisiblePathSubtree(t *testing.T) {
+	tests := []struct {
+		name string
+		fact func(cfg.Point, symbol.ID, ValueSource) FactsInput
+	}{
+		{
+			name: "local",
+			fact: func(point cfg.Point, target symbol.ID, source ValueSource) FactsInput {
+				return FactsInput{
+					LocalAssignments: map[cfg.Point]LocalAssignment{
+						point: NewLocalAssignment(target, path.NewPath(target, "obj"), source),
+					},
+				}
+			},
+		},
+		{
+			name: "ordinary",
+			fact: func(point cfg.Point, target symbol.ID, source ValueSource) FactsInput {
+				return FactsInput{
+					OrdinaryAssignments: map[cfg.Point]OrdinaryAssignment{
+						point: NewOrdinaryAssignment(target, path.NewPath(target, "obj"), source),
+					},
+				}
+			},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			reg := product.DefaultRegistry()
+			point := cfg.Point(60)
+			target := symbol.ID(120)
+			source := ValueSource{Kind: ValueSourceExpression, ExprRef: ExprRef(60), HasExpr: true}
+			assigned := absentValue(reg)
+			stale := presentValue(reg)
+			rootKey := path.PathKey("sym120@1")
+			childKey := path.PathKey("sym120@1.field")
+			deepKey := path.PathKey("sym120@1.field.deep")
+			otherVersionKey := path.PathKey("sym120@2.field")
+			otherSymbolKey := path.PathKey("sym121@1.field")
+			sources := &recordingSourceValues{
+				values: map[ValueSource]product.Value{source: assigned},
+			}
+			visibilityBuilder := visibility.NewBuilder()
+			visibilityBuilder.Define(point, target, "obj")
+
+			got := NewFactsNodeTransfer(FactsNodeTransferConfig{
+				Facts:      NewFacts(tc.fact(point, target, source)),
+				Sources:    sources,
+				Visibility: visibility.NewResolver(visibilityBuilder.Build()),
+			})(NodeContext{
+				Registry: reg,
+				Point:    point,
+			}, state.State{}.
+				WritePathKey(reg, rootKey, stale).
+				WritePathKey(reg, childKey, stale).
+				WritePathKey(reg, deepKey, stale).
+				WritePathKey(reg, otherVersionKey, stale).
+				WritePathKey(reg, otherSymbolKey, stale))
+
+			assertValue(t, reg, got, key.SymbolValue(target), assigned)
+			assertPathValue(t, reg, got, rootKey, product.Bottom(reg))
+			assertPathValue(t, reg, got, childKey, product.Bottom(reg))
+			assertPathValue(t, reg, got, deepKey, product.Bottom(reg))
+			assertPathValue(t, reg, got, otherVersionKey, stale)
+			assertPathValue(t, reg, got, otherSymbolKey, stale)
+			assertResolverCall(t, sources, point, source)
+		})
+	}
+}
+
 func TestFactsNodeTransferObjectLiteralRootAssignmentsWriteStaticEntries(t *testing.T) {
 	tests := []struct {
 		name string
@@ -321,7 +392,7 @@ func TestFactsNodeTransferObjectLiteralEntriesInvalidateSubtreeBeforeWrite(t *te
 	assertValue(t, reg, got, key.SymbolValue(target), rootValue)
 	assertPathValue(t, reg, got, path.PathKey("sym125@1.a"), entryValue)
 	assertPathValue(t, reg, got, staleChildKey, product.Bottom(reg))
-	assertPathValue(t, reg, got, siblingKey, siblingValue)
+	assertPathValue(t, reg, got, siblingKey, product.Bottom(reg))
 }
 
 func TestFactsNodeTransferAppliesPathAssignmentThroughVisibility(t *testing.T) {
