@@ -252,7 +252,7 @@ func (b *builder) buildIf(state flowState, stmt *ast.IfStmt) flowState {
 		return flowState{current: state.current}
 	}
 	state, _, _ = b.appendConditionCall(state, stmt, stmt.Condition)
-	branch := b.appendBranch(state, stmt.Condition, stmt)
+	branch := b.appendBranch(state, stmt)
 	join := b.graph.AddNode(cfg.NodeJoin)
 
 	thenState := b.buildStmts(branchPath(branch.current, true), stmt.Then)
@@ -272,7 +272,7 @@ func (b *builder) buildWhile(state flowState, stmt *ast.WhileStmt) flowState {
 		return flowState{current: state.current}
 	}
 	state, conditionCall, hasConditionCall := b.appendConditionCall(state, stmt, stmt.Condition)
-	branch := b.appendBranch(state, stmt.Condition, stmt)
+	branch := b.appendBranch(state, stmt)
 	backedgeTarget := branch.current
 	if hasConditionCall {
 		backedgeTarget = conditionCall
@@ -280,6 +280,7 @@ func (b *builder) buildWhile(state flowState, stmt *ast.WhileStmt) flowState {
 	join := b.graph.AddNode(cfg.NodeJoin)
 
 	b.meta.SetLoop(branch.current, cfgfacts.LoopFact{
+		Kind:                 cfgfacts.LoopKindConditional,
 		DirectModifiedOuters: b.loopDirectModifiedOuters(nil, stmt.Stmts),
 	})
 	b.graph.AddEdge(branch.current, join, false)
@@ -313,8 +314,9 @@ func (b *builder) buildRepeat(state flowState, stmt *ast.RepeatStmt) flowState {
 			bodyStart = body.current
 		}
 		body, _, _ = b.appendConditionCall(body, stmt, stmt.Condition)
-		branch := b.appendBranch(body, stmt.Condition, stmt)
+		branch := b.appendBranch(body, stmt)
 		b.meta.SetLoop(branch.current, cfgfacts.LoopFact{
+			Kind:                 cfgfacts.LoopKindConditional,
 			DirectModifiedOuters: directModifiedOuters,
 		})
 		b.graph.AddEdge(branch.current, join, true)
@@ -337,10 +339,11 @@ func (b *builder) buildNumberFor(state flowState, stmt *ast.NumberForStmt) flowS
 
 	state = b.appendAssign(state, id, stmt)
 	preheader := state.current
-	branch := b.appendLimitBranch(state, id, stmt)
+	branch := b.appendBranch(state, stmt)
 	join := b.graph.AddNode(cfg.NodeJoin)
 
 	b.meta.SetLoop(branch.current, cfgfacts.LoopFact{
+		Kind:                 cfgfacts.LoopKindNumericFor,
 		Vars:                 []symbol.ID{id},
 		Locals:               []symbol.ID{id},
 		DirectModifiedOuters: b.loopDirectModifiedOuters([]symbol.ID{id}, stmt.Stmts),
@@ -377,10 +380,11 @@ func (b *builder) buildGenericFor(state flowState, stmt *ast.GenericForStmt) flo
 	}
 
 	state = b.appendValueListCalls(state, stmt, stmt.Exprs)
-	branch := b.appendBranch(state, nil, stmt)
+	branch := b.appendBranch(state, stmt)
 	join := b.graph.AddNode(cfg.NodeJoin)
 
 	b.meta.SetLoop(branch.current, cfgfacts.LoopFact{
+		Kind:                 cfgfacts.LoopKindGenericFor,
 		Vars:                 ids,
 		Locals:               ids,
 		DirectModifiedOuters: b.loopDirectModifiedOuters(ids, stmt.Stmts),
@@ -439,24 +443,11 @@ func (b *builder) appendCall(state flowState, stmt ast.Stmt) flowState {
 	return b.appendNodeForStmt(state, cfg.NodeCall, stmt)
 }
 
-func (b *builder) appendBranch(state flowState, expr ast.Expr, stmt ast.Stmt) flowState {
-	if !state.live {
-		return state
-	}
-	branchFact := b.branchMetadata(expr)
-	point := b.graph.AddBranch()
-	b.meta.SetBranch(point, branchFact)
-	b.connect(state, point)
-	b.recordStmtPoint(stmt, point)
-	return flowState{current: point, live: true}
-}
-
-func (b *builder) appendLimitBranch(state flowState, id symbol.ID, stmt ast.Stmt) flowState {
+func (b *builder) appendBranch(state flowState, stmt ast.Stmt) flowState {
 	if !state.live {
 		return state
 	}
 	point := b.graph.AddBranch()
-	b.meta.SetBranch(point, cfgfacts.BranchFact{Symbol: id, Check: cfgfacts.BranchCheck{Kind: cfgfacts.CheckLimit}})
 	b.connect(state, point)
 	b.recordStmtPoint(stmt, point)
 	return flowState{current: point, live: true}

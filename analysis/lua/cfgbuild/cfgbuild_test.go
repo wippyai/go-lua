@@ -698,14 +698,6 @@ func TestBuildChunkConditionCallPrecedesIfBranch(t *testing.T) {
 	requirePointKind(t, graph, callPoint, cfg.NodeCall)
 	requirePointKind(t, graph, branch, cfg.NodeBranch)
 
-	branchFact, ok := result.Meta.Branch(branch)
-	if !ok {
-		t.Fatalf("missing branch fact")
-	}
-	if branchFact.Symbol != 0 || branchFact.Check.Kind != cfgfacts.CheckNone {
-		t.Fatalf("condition call branch fact = %#v, want check none", branchFact)
-	}
-
 	thenAssign := nodeWithTarget(t, graph, result.Meta, mustLocalAt(t, bindings, thenStmt, 0), 0)
 	requireEdge(t, graph, graph.Entry(), callPoint, false)
 	requireEdge(t, graph, callPoint, branch, false)
@@ -827,22 +819,11 @@ func TestBuildChunkIfCreatesBranchAndJoin(t *testing.T) {
 
 	branch := firstBranch(t, graph)
 	join := firstJoin(t, graph)
-	xID := mustIdentSymbol(t, bindings, cond)
 	thenID := mustLocalAt(t, bindings, thenStmt, 0)
 	elseID := mustLocalAt(t, bindings, elseStmt, 0)
 	thenAssign := nodeWithTarget(t, graph, result.Meta, thenID, 0)
 	elseAssign := nodeWithTarget(t, graph, result.Meta, elseID, 0)
 
-	fact, ok := result.Meta.Branch(branch)
-	if !ok {
-		t.Fatalf("missing branch fact")
-	}
-	if fact.Symbol != xID {
-		t.Fatalf("branch symbol = %d, want %d", fact.Symbol, xID)
-	}
-	if fact.Check.Kind != cfgfacts.CheckTruthy {
-		t.Fatalf("branch check = %v, want truthy", fact.Check.Kind)
-	}
 	requireEdge(t, graph, branch, thenAssign, true)
 	requireEdge(t, graph, branch, elseAssign, false)
 	requireEdge(t, graph, thenAssign, join, false)
@@ -877,105 +858,7 @@ func TestBuildChunkEmptyIfMaterializesDistinctBranchArms(t *testing.T) {
 	requireEdge(t, graph, succs[1], join, false)
 }
 
-func TestBuildChunkBranchMetadataPatterns(t *testing.T) {
-	tests := []struct {
-		name     string
-		expr     func(*ast.IdentExpr) ast.Expr
-		want     cfgfacts.BranchCheckKind
-		typeName string
-	}{
-		{
-			name: "truthy",
-			expr: func(x *ast.IdentExpr) ast.Expr {
-				return x
-			},
-			want: cfgfacts.CheckTruthy,
-		},
-		{
-			name: "falsy",
-			expr: func(x *ast.IdentExpr) ast.Expr {
-				return &ast.UnaryNotOpExpr{Expr: x}
-			},
-			want: cfgfacts.CheckFalsy,
-		},
-		{
-			name: "nil equal",
-			expr: func(x *ast.IdentExpr) ast.Expr {
-				return &ast.RelationalOpExpr{Operator: "==", Lhs: x, Rhs: &ast.NilExpr{}}
-			},
-			want: cfgfacts.CheckNil,
-		},
-		{
-			name: "nil not equal",
-			expr: func(x *ast.IdentExpr) ast.Expr {
-				return &ast.RelationalOpExpr{Operator: "~=", Lhs: x, Rhs: &ast.NilExpr{}}
-			},
-			want: cfgfacts.CheckNotNil,
-		},
-		{
-			name: "type equal",
-			expr: func(x *ast.IdentExpr) ast.Expr {
-				return &ast.RelationalOpExpr{Operator: "==", Lhs: typeCall(x), Rhs: stringLit("string")}
-			},
-			want:     cfgfacts.CheckTypeEqual,
-			typeName: "string",
-		},
-		{
-			name: "type not equal",
-			expr: func(x *ast.IdentExpr) ast.Expr {
-				return &ast.RelationalOpExpr{Operator: "~=", Lhs: typeCall(x), Rhs: stringLit("number")}
-			},
-			want:     cfgfacts.CheckTypeNot,
-			typeName: "number",
-		},
-		{
-			name: "type equal reversed operands",
-			expr: func(x *ast.IdentExpr) ast.Expr {
-				return &ast.RelationalOpExpr{Operator: "==", Lhs: stringLit("table"), Rhs: typeCall(x)}
-			},
-			want:     cfgfacts.CheckTypeEqual,
-			typeName: "table",
-		},
-		{
-			name: "type not equal reversed operands",
-			expr: func(x *ast.IdentExpr) ast.Expr {
-				return &ast.RelationalOpExpr{Operator: "~=", Lhs: stringLit("boolean"), Rhs: typeCall(x)}
-			},
-			want:     cfgfacts.CheckTypeNot,
-			typeName: "boolean",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			xDecl := localAssign([]string{"x"}, number("1"))
-			xRead := ident("x")
-			stmts := []ast.Stmt{
-				xDecl,
-				&ast.IfStmt{Condition: tt.expr(xRead)},
-			}
-			bindings := bind.BindChunk(stmts, bind.Options{Globals: []string{"type"}})
-			result := BuildChunk(stmts, bindings)
-			graph := result.Graph
-			branch := firstBranch(t, graph)
-			fact, ok := result.Meta.Branch(branch)
-			if !ok {
-				t.Fatalf("missing branch fact")
-			}
-			if got, want := fact.Symbol, mustIdentSymbol(t, bindings, xRead); got != want {
-				t.Fatalf("branch symbol = %d, want %d", got, want)
-			}
-			if got := fact.Check.Kind; got != tt.want {
-				t.Fatalf("branch check = %v, want %v", got, tt.want)
-			}
-			if got := fact.Check.TypeName; got != tt.typeName {
-				t.Fatalf("branch type name = %q, want %q", got, tt.typeName)
-			}
-		})
-	}
-}
-
-func TestBuildChunkTypeGuardConditionRejectsUnsupportedCalls(t *testing.T) {
+func TestBuildChunkTypeCompareConditionRejectsUnsupportedCalls(t *testing.T) {
 	tests := []struct {
 		name    string
 		stmts   []ast.Stmt
@@ -1036,7 +919,7 @@ func TestBuildChunkTypeGuardConditionRejectsUnsupportedCalls(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			bindings := bind.BindChunk(tt.stmts, bind.Options{Globals: tt.globals})
 			if result := BuildChunk(tt.stmts, bindings); result != nil {
-				t.Fatalf("BuildChunk returned graph for unsupported type guard condition %s", tt.name)
+				t.Fatalf("BuildChunk returned graph for unsupported type compare condition %s", tt.name)
 			}
 		})
 	}
@@ -1101,16 +984,12 @@ func TestBuildChunkNumberForCreatesLoopTopologyAndMetadata(t *testing.T) {
 	if !ok || assignFact.Target != loopID {
 		t.Fatalf("numeric for init assignment = %#v, ok=%v, want target %d", assignFact, ok, loopID)
 	}
-	branchFact, ok := result.Meta.Branch(branch)
-	if !ok {
-		t.Fatalf("missing numeric for branch fact")
-	}
-	if branchFact.Symbol != loopID || branchFact.Check.Kind != cfgfacts.CheckLimit {
-		t.Fatalf("numeric for branch fact = %#v, want symbol %d check limit", branchFact, loopID)
-	}
 	loopFact, ok := result.Meta.Loop(branch)
 	if !ok {
 		t.Fatalf("missing numeric for loop fact")
+	}
+	if loopFact.Kind != cfgfacts.LoopKindNumericFor {
+		t.Fatalf("numeric for loop kind = %v, want %v", loopFact.Kind, cfgfacts.LoopKindNumericFor)
 	}
 	if len(loopFact.Vars) != 1 || loopFact.Vars[0] != loopID || len(loopFact.Locals) != 1 || loopFact.Locals[0] != loopID {
 		t.Fatalf("numeric for loop vars/locals = %#v, want %d", loopFact, loopID)
@@ -1202,16 +1081,12 @@ func TestBuildChunkGenericForCreatesLoopTopologyAndMetadata(t *testing.T) {
 			t.Fatalf("generic for assignment %d = %#v, ok=%v, want target %d", i, fact, ok, tt.want)
 		}
 	}
-	branchFact, ok := result.Meta.Branch(branch)
-	if !ok {
-		t.Fatalf("missing generic for branch fact")
-	}
-	if branchFact.Symbol != 0 || branchFact.Check.Kind != cfgfacts.CheckNone {
-		t.Fatalf("generic for branch fact = %#v, want check none", branchFact)
-	}
 	loopFact, ok := result.Meta.Loop(branch)
 	if !ok {
 		t.Fatalf("missing generic for loop fact")
+	}
+	if loopFact.Kind != cfgfacts.LoopKindGenericFor {
+		t.Fatalf("generic for loop kind = %v, want %v", loopFact.Kind, cfgfacts.LoopKindGenericFor)
 	}
 	wantIDs := []symbol.ID{kID, vID}
 	if len(loopFact.Vars) != len(wantIDs) || len(loopFact.Locals) != len(wantIDs) {
@@ -1603,9 +1478,6 @@ func TestBuildChunkStatementPointMappingForBranches(t *testing.T) {
 	for _, stmt := range []ast.Stmt{ifStmt, whileStmt, repeatStmt} {
 		points := requireStmtPoints(t, result, stmt, 1)
 		requirePointKind(t, graph, points[0], cfg.NodeBranch)
-		if _, ok := result.Meta.Branch(points[0]); !ok {
-			t.Fatalf("branch point %d for %T missing branch fact", points[0], stmt)
-		}
 	}
 }
 
@@ -1741,16 +1613,7 @@ func TestBuildChunkRepeatConditionSeesBodyLocal(t *testing.T) {
 		t.Fatalf("repeat condition symbol = %d, want body local %d", conditionID, bodyID)
 	}
 	branch := firstBranch(t, graph)
-	fact, ok := result.Meta.Branch(branch)
-	if !ok {
-		t.Fatalf("missing branch fact")
-	}
-	if got := fact.Symbol; got != bodyID {
-		t.Fatalf("branch symbol = %d, want body local %d", got, bodyID)
-	}
-	if got := fact.Check.Kind; got != cfgfacts.CheckTruthy {
-		t.Fatalf("branch check = %v, want truthy", got)
-	}
+	requirePointKind(t, graph, branch, cfg.NodeBranch)
 }
 
 func TestBuildChunkBreakInsideRepeatReachesJoinPath(t *testing.T) {
@@ -1929,14 +1792,6 @@ func TestBuildChunkBindShadowingAffectsTargetsAndConditions(t *testing.T) {
 		t.Fatalf("outer write symbol = %d, want %d", got, outerID)
 	}
 
-	branch := firstBranch(t, graph)
-	fact, ok := result.Meta.Branch(branch)
-	if !ok {
-		t.Fatalf("missing branch fact")
-	}
-	if got := fact.Symbol; got != innerID {
-		t.Fatalf("branch symbol = %d, want inner symbol %d", got, innerID)
-	}
 	requireTargetCount(t, graph, result.Meta, outerID, 2)
 	requireTargetCount(t, graph, result.Meta, innerID, 2)
 }

@@ -6,32 +6,16 @@ import (
 	"github.com/wippyai/go-lua/analysis/symbol"
 )
 
-// BranchCheckKind identifies the type of condition check in a branch.
-type BranchCheckKind uint8
+// LoopKind identifies the structural loop form associated with a CFG point.
+type LoopKind uint8
 
-// Branch check kind constants represent recognizable branch patterns.
+// Loop kind constants represent recognizable loop shapes.
 const (
-	CheckNone      BranchCheckKind = iota // Complex expression, no simple constraint
-	CheckTruthy                           // if x then: narrows x to truthy values
-	CheckFalsy                            // if not x then: narrows x to falsy values
-	CheckNil                              // x == nil: narrows x to nil
-	CheckNotNil                           // x ~= nil: narrows x to non-nil
-	CheckLimit                            // Numeric for loop limit (i <= n)
-	CheckTypeEqual                        // type(x) == "typename": narrows to that type
-	CheckTypeNot                          // type(x) ~= "typename": excludes that type
+	LoopKindUnknown LoopKind = iota
+	LoopKindConditional
+	LoopKindNumericFor
+	LoopKindGenericFor
 )
-
-// BranchCheck represents a condition check in a branch fact.
-type BranchCheck struct {
-	Kind     BranchCheckKind
-	TypeName string // Only for CheckTypeEqual/CheckTypeNot
-}
-
-// BranchFact describes a branch condition.
-type BranchFact struct {
-	Symbol symbol.ID
-	Check  BranchCheck
-}
 
 // AssignmentFact describes an assignment target.
 type AssignmentFact struct {
@@ -40,6 +24,7 @@ type AssignmentFact struct {
 
 // LoopFact describes loop structure associated with a CFG point.
 type LoopFact struct {
+	Kind                 LoopKind
 	Vars                 []symbol.ID
 	Locals               []symbol.ID
 	DirectModifiedOuters []symbol.ID
@@ -49,23 +34,8 @@ type LoopFact struct {
 
 // Metadata stores Lua sidecar facts keyed by CFG point.
 type Metadata struct {
-	branches    map[cfg.Point]BranchFact
 	assignments map[cfg.Point]AssignmentFact
 	loops       map[cfg.Point]LoopFact
-}
-
-// Branch returns the branch fact for point.
-func (m Metadata) Branch(point cfg.Point) (BranchFact, bool) {
-	fact, ok := m.branches[point]
-	return fact, ok
-}
-
-// SetBranch records a branch fact for point.
-func (m *Metadata) SetBranch(point cfg.Point, fact BranchFact) {
-	if m.branches == nil {
-		m.branches = make(map[cfg.Point]BranchFact)
-	}
-	m.branches[point] = fact
 }
 
 // Assignment returns the assignment fact for point.

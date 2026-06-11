@@ -7,19 +7,15 @@ import (
 	"github.com/wippyai/go-lua/analysis/symbol"
 )
 
-func TestBranchCheckKind(t *testing.T) {
+func TestLoopKind(t *testing.T) {
 	tests := []struct {
-		kind BranchCheckKind
+		kind LoopKind
 		name string
 	}{
-		{CheckNone, "CheckNone"},
-		{CheckTruthy, "CheckTruthy"},
-		{CheckFalsy, "CheckFalsy"},
-		{CheckNil, "CheckNil"},
-		{CheckNotNil, "CheckNotNil"},
-		{CheckLimit, "CheckLimit"},
-		{CheckTypeEqual, "CheckTypeEqual"},
-		{CheckTypeNot, "CheckTypeNot"},
+		{LoopKindUnknown, "LoopKindUnknown"},
+		{LoopKindConditional, "LoopKindConditional"},
+		{LoopKindNumericFor, "LoopKindNumericFor"},
+		{LoopKindGenericFor, "LoopKindGenericFor"},
 	}
 
 	for i, tt := range tests {
