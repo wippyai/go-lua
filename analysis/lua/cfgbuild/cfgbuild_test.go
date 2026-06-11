@@ -190,6 +190,27 @@ func requireTargetCount(t *testing.T, graph *cfg.CFG, meta cfgfacts.Metadata, ta
 	}
 }
 
+func requireLoopFact(t *testing.T, meta cfgfacts.Metadata, point cfg.Point) cfgfacts.LoopFact {
+	t.Helper()
+	fact, ok := meta.Loop(point)
+	if !ok {
+		t.Fatalf("missing loop fact at point %d", point)
+	}
+	return fact
+}
+
+func requireSymbols(t *testing.T, got, want []symbol.ID) {
+	t.Helper()
+	if len(got) != len(want) {
+		t.Fatalf("symbols = %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("symbol %d = %d, want %d; all symbols=%v", i, got[i], want[i], got)
+		}
+	}
+}
+
 func TestBuildFunctionParamsBecomeLeadingAssignments(t *testing.T) {
 	fn := function([]string{"a", "b"})
 	bindings := bind.BindFunction(fn, bind.Options{})
@@ -1180,6 +1201,310 @@ func TestBuildChunkGenericForCreatesLoopTopologyAndMetadata(t *testing.T) {
 	requireEdge(t, graph, vAssign, bodyAssign, false)
 	requireEdge(t, graph, bodyAssign, branch, false)
 	requireEdge(t, graph, join, afterAssign, false)
+}
+
+func TestBuildChunkNumberForLoopFactDirectModifiedOuters(t *testing.T) {
+	outerDecl := localAssign([]string{"outer"}, number("0"))
+	outerWrite := ident("outer")
+	globalWrite := ident("g")
+	loopVarWrite := ident("i")
+	innerDecl := localAssign([]string{"inner"}, number("1"))
+	innerWrite := ident("inner")
+	outerWriteAgain := ident("outer")
+	loop := &ast.NumberForStmt{
+		Name:  "i",
+		Init:  number("1"),
+		Limit: number("3"),
+		Stmts: []ast.Stmt{
+			assign([]ast.Expr{outerWrite}, number("2")),
+			assign([]ast.Expr{globalWrite}, number("3")),
+			assign([]ast.Expr{loopVarWrite}, number("4")),
+			innerDecl,
+			assign([]ast.Expr{innerWrite}, number("5")),
+			assign([]ast.Expr{outerWriteAgain}, number("6")),
+		},
+	}
+	stmts := []ast.Stmt{outerDecl, loop}
+	bindings := bind.BindChunk(stmts, bind.Options{Globals: []string{"g"}})
+	result := BuildChunk(stmts, bindings)
+	if result == nil || result.Graph == nil {
+		t.Fatalf("BuildChunk returned nil for numeric for modified outers")
+	}
+
+	loopID, ok := bindings.NumForSymbol(loop)
+	if !ok {
+		t.Fatalf("missing numeric for symbol")
+	}
+	outerID := mustLocalAt(t, bindings, outerDecl, 0)
+	innerID := mustLocalAt(t, bindings, innerDecl, 0)
+	globalID := mustIdentSymbol(t, bindings, globalWrite)
+	if got := mustIdentSymbol(t, bindings, loopVarWrite); got != loopID {
+		t.Fatalf("loop variable write symbol = %d, want %d", got, loopID)
+	}
+	if got := mustIdentSymbol(t, bindings, innerWrite); got != innerID {
+		t.Fatalf("inner write symbol = %d, want %d", got, innerID)
+	}
+	if got := mustIdentSymbol(t, bindings, outerWriteAgain); got != outerID {
+		t.Fatalf("second outer write symbol = %d, want %d", got, outerID)
+	}
+
+	branch := requireStmtPoints(t, result, loop, 2)[1]
+	loopFact := requireLoopFact(t, result.Meta, branch)
+	requireSymbols(t, loopFact.DirectModifiedOuters, []symbol.ID{outerID, globalID})
+}
+
+func TestBuildChunkGenericForLoopFactDirectModifiedOuters(t *testing.T) {
+	outerDecl := localAssign([]string{"outer"}, number("0"))
+	outerWrite := ident("outer")
+	globalWrite := ident("g")
+	loopVarWrite := ident("k")
+	innerDecl := localAssign([]string{"inner"}, number("1"))
+	innerWrite := ident("inner")
+	loop := &ast.GenericForStmt{
+		Names: []string{"k", "v"},
+		Exprs: []ast.Expr{ident("iter")},
+		Stmts: []ast.Stmt{
+			assign([]ast.Expr{outerWrite}, number("2")),
+			assign([]ast.Expr{globalWrite}, number("3")),
+			assign([]ast.Expr{loopVarWrite}, number("4")),
+			innerDecl,
+			assign([]ast.Expr{innerWrite}, number("5")),
+		},
+	}
+	stmts := []ast.Stmt{outerDecl, loop}
+	bindings := bind.BindChunk(stmts, bind.Options{Globals: []string{"g", "iter"}})
+	result := BuildChunk(stmts, bindings)
+	if result == nil || result.Graph == nil {
+		t.Fatalf("BuildChunk returned nil for generic for modified outers")
+	}
+
+	kID := mustGenericForAt(t, bindings, loop, 0)
+	outerID := mustLocalAt(t, bindings, outerDecl, 0)
+	innerID := mustLocalAt(t, bindings, innerDecl, 0)
+	globalID := mustIdentSymbol(t, bindings, globalWrite)
+	if got := mustIdentSymbol(t, bindings, loopVarWrite); got != kID {
+		t.Fatalf("generic loop variable write symbol = %d, want %d", got, kID)
+	}
+	if got := mustIdentSymbol(t, bindings, innerWrite); got != innerID {
+		t.Fatalf("inner write symbol = %d, want %d", got, innerID)
+	}
+
+	branch := requireStmtPoints(t, result, loop, 3)[0]
+	loopFact := requireLoopFact(t, result.Meta, branch)
+	requireSymbols(t, loopFact.DirectModifiedOuters, []symbol.ID{outerID, globalID})
+}
+
+func TestBuildChunkWhileLoopFactDirectModifiedOuters(t *testing.T) {
+	outerDecl := localAssign([]string{"outer"}, number("0"))
+	outerWrite := ident("outer")
+	globalWrite := ident("g")
+	innerDecl := localAssign([]string{"inner"}, number("1"))
+	innerWrite := ident("inner")
+	loop := &ast.WhileStmt{
+		Condition: &ast.TrueExpr{},
+		Stmts: []ast.Stmt{
+			assign([]ast.Expr{outerWrite}, number("2")),
+			assign([]ast.Expr{globalWrite}, number("3")),
+			innerDecl,
+			assign([]ast.Expr{innerWrite}, number("4")),
+		},
+	}
+	stmts := []ast.Stmt{outerDecl, loop}
+	bindings := bind.BindChunk(stmts, bind.Options{Globals: []string{"g"}})
+	result := BuildChunk(stmts, bindings)
+	if result == nil || result.Graph == nil {
+		t.Fatalf("BuildChunk returned nil for while modified outers")
+	}
+
+	outerID := mustLocalAt(t, bindings, outerDecl, 0)
+	innerID := mustLocalAt(t, bindings, innerDecl, 0)
+	globalID := mustIdentSymbol(t, bindings, globalWrite)
+	if got := mustIdentSymbol(t, bindings, innerWrite); got != innerID {
+		t.Fatalf("inner write symbol = %d, want %d", got, innerID)
+	}
+
+	branch := requireStmtPoints(t, result, loop, 1)[0]
+	loopFact := requireLoopFact(t, result.Meta, branch)
+	requireSymbols(t, loopFact.Vars, nil)
+	requireSymbols(t, loopFact.Locals, nil)
+	requireSymbols(t, loopFact.DirectModifiedOuters, []symbol.ID{outerID, globalID})
+}
+
+func TestBuildChunkRepeatLoopFactDirectModifiedOuters(t *testing.T) {
+	outerDecl := localAssign([]string{"outer"}, number("0"))
+	outerWrite := ident("outer")
+	globalWrite := ident("g")
+	innerDecl := localAssign([]string{"inner"}, number("1"))
+	innerWrite := ident("inner")
+	loop := &ast.RepeatStmt{
+		Stmts: []ast.Stmt{
+			assign([]ast.Expr{outerWrite}, number("2")),
+			assign([]ast.Expr{globalWrite}, number("3")),
+			innerDecl,
+			assign([]ast.Expr{innerWrite}, number("4")),
+		},
+		Condition: &ast.TrueExpr{},
+	}
+	stmts := []ast.Stmt{outerDecl, loop}
+	bindings := bind.BindChunk(stmts, bind.Options{Globals: []string{"g"}})
+	result := BuildChunk(stmts, bindings)
+	if result == nil || result.Graph == nil {
+		t.Fatalf("BuildChunk returned nil for repeat modified outers")
+	}
+
+	outerID := mustLocalAt(t, bindings, outerDecl, 0)
+	innerID := mustLocalAt(t, bindings, innerDecl, 0)
+	globalID := mustIdentSymbol(t, bindings, globalWrite)
+	if got := mustIdentSymbol(t, bindings, innerWrite); got != innerID {
+		t.Fatalf("inner write symbol = %d, want %d", got, innerID)
+	}
+
+	branch := requireStmtPoints(t, result, loop, 1)[0]
+	loopFact := requireLoopFact(t, result.Meta, branch)
+	requireSymbols(t, loopFact.Vars, nil)
+	requireSymbols(t, loopFact.Locals, nil)
+	requireSymbols(t, loopFact.DirectModifiedOuters, []symbol.ID{outerID, globalID})
+}
+
+func TestBuildChunkLoopFactDirectModifiedOutersUsesSymbolIdentityForShadowing(t *testing.T) {
+	outerDecl := localAssign([]string{"x"}, number("0"))
+	outerWrite := ident("x")
+	innerDecl := localAssign([]string{"x"}, number("1"))
+	innerWrite := ident("x")
+	loop := &ast.WhileStmt{
+		Condition: &ast.TrueExpr{},
+		Stmts: []ast.Stmt{
+			assign([]ast.Expr{outerWrite}, number("2")),
+			innerDecl,
+			assign([]ast.Expr{innerWrite}, number("3")),
+		},
+	}
+	stmts := []ast.Stmt{outerDecl, loop}
+	bindings := bind.BindChunk(stmts, bind.Options{})
+	result := BuildChunk(stmts, bindings)
+	if result == nil || result.Graph == nil {
+		t.Fatalf("BuildChunk returned nil for shadowing modified outers")
+	}
+
+	outerID := mustLocalAt(t, bindings, outerDecl, 0)
+	innerID := mustLocalAt(t, bindings, innerDecl, 0)
+	if got := mustIdentSymbol(t, bindings, outerWrite); got != outerID {
+		t.Fatalf("outer write symbol = %d, want %d", got, outerID)
+	}
+	if got := mustIdentSymbol(t, bindings, innerWrite); got != innerID {
+		t.Fatalf("inner write symbol = %d, want %d", got, innerID)
+	}
+
+	branch := requireStmtPoints(t, result, loop, 1)[0]
+	loopFact := requireLoopFact(t, result.Meta, branch)
+	requireSymbols(t, loopFact.DirectModifiedOuters, []symbol.ID{outerID})
+}
+
+func TestBuildChunkLoopFactDirectModifiedOutersSkipsNestedFunctionBodies(t *testing.T) {
+	outerDecl := localAssign([]string{"x"}, number("0"))
+	target := ident("f")
+	closureWrite := ident("x")
+	fn := &ast.FuncDefStmt{
+		Name: &ast.FuncName{Func: target},
+		Func: function(nil, assign([]ast.Expr{closureWrite}, number("1"))),
+	}
+	loop := &ast.WhileStmt{
+		Condition: &ast.TrueExpr{},
+		Stmts:     []ast.Stmt{fn},
+	}
+	stmts := []ast.Stmt{outerDecl, loop}
+	bindings := bind.BindChunk(stmts, bind.Options{})
+	result := BuildChunk(stmts, bindings)
+	if result == nil || result.Graph == nil {
+		t.Fatalf("BuildChunk returned nil for nested function modified outers")
+	}
+
+	outerID := mustLocalAt(t, bindings, outerDecl, 0)
+	targetID := mustIdentSymbol(t, bindings, target)
+	if got := mustIdentSymbol(t, bindings, closureWrite); got != outerID {
+		t.Fatalf("closure write symbol = %d, want %d", got, outerID)
+	}
+
+	branch := requireStmtPoints(t, result, loop, 1)[0]
+	loopFact := requireLoopFact(t, result.Meta, branch)
+	requireSymbols(t, loopFact.DirectModifiedOuters, []symbol.ID{targetID})
+}
+
+func TestBuildChunkLoopFactDirectModifiedOutersIncludesNestedLoopWrites(t *testing.T) {
+	outerDecl := localAssign([]string{"x"}, number("0"))
+	outerWrite := ident("x")
+	globalWrite := ident("g")
+	loopVarWrite := ident("i")
+	innerDecl := localAssign([]string{"inner"}, number("1"))
+	innerWrite := ident("inner")
+	innerLoop := &ast.NumberForStmt{
+		Name:  "i",
+		Init:  number("1"),
+		Limit: number("2"),
+		Stmts: []ast.Stmt{
+			assign([]ast.Expr{outerWrite}, number("3")),
+			assign([]ast.Expr{globalWrite}, number("4")),
+			assign([]ast.Expr{loopVarWrite}, number("5")),
+			innerDecl,
+			assign([]ast.Expr{innerWrite}, number("6")),
+		},
+	}
+	outerLoop := &ast.WhileStmt{
+		Condition: &ast.TrueExpr{},
+		Stmts:     []ast.Stmt{innerLoop},
+	}
+	stmts := []ast.Stmt{outerDecl, outerLoop}
+	bindings := bind.BindChunk(stmts, bind.Options{Globals: []string{"g"}})
+	result := BuildChunk(stmts, bindings)
+	if result == nil || result.Graph == nil {
+		t.Fatalf("BuildChunk returned nil for nested loop modified outers")
+	}
+
+	loopID, ok := bindings.NumForSymbol(innerLoop)
+	if !ok {
+		t.Fatalf("missing nested numeric for symbol")
+	}
+	outerID := mustLocalAt(t, bindings, outerDecl, 0)
+	innerID := mustLocalAt(t, bindings, innerDecl, 0)
+	globalID := mustIdentSymbol(t, bindings, globalWrite)
+	if got := mustIdentSymbol(t, bindings, loopVarWrite); got != loopID {
+		t.Fatalf("nested loop variable write symbol = %d, want %d", got, loopID)
+	}
+	if got := mustIdentSymbol(t, bindings, innerWrite); got != innerID {
+		t.Fatalf("nested loop inner write symbol = %d, want %d", got, innerID)
+	}
+
+	outerBranch := requireStmtPoints(t, result, outerLoop, 1)[0]
+	innerBranch := requireStmtPoints(t, result, innerLoop, 2)[1]
+	want := []symbol.ID{outerID, globalID}
+	outerFact := requireLoopFact(t, result.Meta, outerBranch)
+	innerFact := requireLoopFact(t, result.Meta, innerBranch)
+	requireSymbols(t, outerFact.DirectModifiedOuters, want)
+	requireSymbols(t, innerFact.DirectModifiedOuters, want)
+}
+
+func TestBuildChunkLoopFactDirectModifiedOutersReturnsSafeSlices(t *testing.T) {
+	outerDecl := localAssign([]string{"outer"}, number("0"))
+	outerWrite := ident("outer")
+	loop := &ast.WhileStmt{
+		Condition: &ast.TrueExpr{},
+		Stmts:     []ast.Stmt{assign([]ast.Expr{outerWrite}, number("1"))},
+	}
+	stmts := []ast.Stmt{outerDecl, loop}
+	bindings := bind.BindChunk(stmts, bind.Options{})
+	result := BuildChunk(stmts, bindings)
+	if result == nil || result.Graph == nil {
+		t.Fatalf("BuildChunk returned nil for modified outer slice safety")
+	}
+
+	outerID := mustLocalAt(t, bindings, outerDecl, 0)
+	branch := requireStmtPoints(t, result, loop, 1)[0]
+	loopFact := requireLoopFact(t, result.Meta, branch)
+	requireSymbols(t, loopFact.DirectModifiedOuters, []symbol.ID{outerID})
+
+	loopFact.DirectModifiedOuters[0] = symbol.ID(999)
+	again := requireLoopFact(t, result.Meta, branch)
+	requireSymbols(t, again.DirectModifiedOuters, []symbol.ID{outerID})
 }
 
 func TestBuildChunkGenericForBreakExitsToJoin(t *testing.T) {

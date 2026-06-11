@@ -40,10 +40,11 @@ type AssignmentFact struct {
 
 // LoopFact describes loop structure associated with a CFG point.
 type LoopFact struct {
-	Vars         []symbol.ID
-	Locals       []symbol.ID
-	Preheader    cfg.Point
-	HasPreheader bool
+	Vars                 []symbol.ID
+	Locals               []symbol.ID
+	DirectModifiedOuters []symbol.ID
+	Preheader            cfg.Point
+	HasPreheader         bool
 }
 
 // Metadata stores Lua sidecar facts keyed by CFG point.
@@ -101,5 +102,6 @@ func (m *Metadata) SetLoop(point cfg.Point, fact LoopFact) {
 func copyLoopFact(fact LoopFact) LoopFact {
 	fact.Vars = append([]symbol.ID(nil), fact.Vars...)
 	fact.Locals = append([]symbol.ID(nil), fact.Locals...)
+	fact.DirectModifiedOuters = append([]symbol.ID(nil), fact.DirectModifiedOuters...)
 	return fact
 }

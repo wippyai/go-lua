@@ -279,6 +279,9 @@ func (b *builder) buildWhile(state flowState, stmt *ast.WhileStmt) flowState {
 	}
 	join := b.graph.AddNode(cfg.NodeJoin)
 
+	b.meta.SetLoop(branch.current, cfgfacts.LoopFact{
+		DirectModifiedOuters: b.loopDirectModifiedOuters(nil, stmt.Stmts),
+	})
 	b.graph.AddEdge(branch.current, join, false)
 	b.breakTargets = append(b.breakTargets, join)
 	body := b.buildStmts(branchPath(branch.current, true), stmt.Stmts)
@@ -295,6 +298,7 @@ func (b *builder) buildRepeat(state flowState, stmt *ast.RepeatStmt) flowState {
 		b.unsupported = true
 		return flowState{current: state.current}
 	}
+	directModifiedOuters := b.loopDirectModifiedOuters(nil, stmt.Stmts)
 	join := b.graph.AddNode(cfg.NodeJoin)
 
 	beforeEdges := len(b.graph.Edges())
@@ -310,6 +314,9 @@ func (b *builder) buildRepeat(state flowState, stmt *ast.RepeatStmt) flowState {
 		}
 		body, _, _ = b.appendConditionCall(body, stmt, stmt.Condition)
 		branch := b.appendBranch(body, stmt.Condition, stmt)
+		b.meta.SetLoop(branch.current, cfgfacts.LoopFact{
+			DirectModifiedOuters: directModifiedOuters,
+		})
 		b.graph.AddEdge(branch.current, join, true)
 		b.graph.AddEdge(branch.current, bodyStart, false)
 		return flowState{current: join, live: true}
@@ -334,10 +341,11 @@ func (b *builder) buildNumberFor(state flowState, stmt *ast.NumberForStmt) flowS
 	join := b.graph.AddNode(cfg.NodeJoin)
 
 	b.meta.SetLoop(branch.current, cfgfacts.LoopFact{
-		Vars:         []symbol.ID{id},
-		Locals:       []symbol.ID{id},
-		Preheader:    preheader,
-		HasPreheader: true,
+		Vars:                 []symbol.ID{id},
+		Locals:               []symbol.ID{id},
+		DirectModifiedOuters: b.loopDirectModifiedOuters([]symbol.ID{id}, stmt.Stmts),
+		Preheader:            preheader,
+		HasPreheader:         true,
 	})
 	b.graph.AddEdge(branch.current, join, false)
 	b.breakTargets = append(b.breakTargets, join)
@@ -373,8 +381,9 @@ func (b *builder) buildGenericFor(state flowState, stmt *ast.GenericForStmt) flo
 	join := b.graph.AddNode(cfg.NodeJoin)
 
 	b.meta.SetLoop(branch.current, cfgfacts.LoopFact{
-		Vars:   ids,
-		Locals: ids,
+		Vars:                 ids,
+		Locals:               ids,
+		DirectModifiedOuters: b.loopDirectModifiedOuters(ids, stmt.Stmts),
 	})
 	b.graph.AddEdge(branch.current, join, false)
 
