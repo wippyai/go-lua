@@ -7,10 +7,10 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/check"
-	"github.com/wippyai/go-lua/analysis/check/canonical/callresult"
-	"github.com/wippyai/go-lua/analysis/check/canonical/query"
-	"github.com/wippyai/go-lua/analysis/check/canonical/ref"
-	"github.com/wippyai/go-lua/analysis/check/canonical/summary"
+	"github.com/wippyai/go-lua/analysis/check/fixpoint/callresult"
+	"github.com/wippyai/go-lua/analysis/check/fixpoint/query"
+	"github.com/wippyai/go-lua/analysis/check/fixpoint/ref"
+	"github.com/wippyai/go-lua/analysis/check/fixpoint/summary"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
@@ -229,11 +229,11 @@ func TestProductionImportsAreBounded(t *testing.T) {
 	allowed := map[string]bool{
 		"maps":   true,
 		"slices": true,
-		"github.com/wippyai/go-lua/analysis/check":                      true,
-		"github.com/wippyai/go-lua/analysis/check/canonical/callresult": true,
-		"github.com/wippyai/go-lua/analysis/check/canonical/query":      true,
-		"github.com/wippyai/go-lua/analysis/check/canonical/summary":    true,
-		"github.com/wippyai/go-lua/compiler/ast":                        true,
+		"github.com/wippyai/go-lua/analysis/check":                     true,
+		"github.com/wippyai/go-lua/analysis/check/fixpoint/callresult": true,
+		"github.com/wippyai/go-lua/analysis/check/fixpoint/query":      true,
+		"github.com/wippyai/go-lua/analysis/check/fixpoint/summary":    true,
+		"github.com/wippyai/go-lua/compiler/ast":                       true,
 	}
 	for _, dep := range strings.Fields(string(out)) {
 		if !allowed[dep] {

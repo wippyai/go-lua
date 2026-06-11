@@ -4,7 +4,7 @@ import (
 	"sort"
 	"testing"
 
-	"github.com/wippyai/go-lua/analysis/check/canonical/ref"
+	"github.com/wippyai/go-lua/analysis/check/fixpoint/ref"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 )

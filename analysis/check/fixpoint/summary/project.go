@@ -6,7 +6,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 )
 
-// FromResult projects one completed check result into a canonical summary.
+// FromResult projects one completed check result into a fixed-point summary.
 func FromResult(result *check.Result) Summary {
 	if result == nil {
 		return Summary{}

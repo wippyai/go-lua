@@ -4,8 +4,8 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/check"
-	"github.com/wippyai/go-lua/analysis/check/canonical/ref"
-	"github.com/wippyai/go-lua/analysis/check/canonical/summary"
+	"github.com/wippyai/go-lua/analysis/check/fixpoint/ref"
+	"github.com/wippyai/go-lua/analysis/check/fixpoint/summary"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
@@ -89,7 +89,7 @@ func fixedExpressionValue(value product.Value) func(cfg.Point, factflow.ExprRef,
 
 func parseChunk(t *testing.T, src string) []ast.Stmt {
 	t.Helper()
-	stmts, err := parse.ParseString(src, "canonical_program_test.lua")
+	stmts, err := parse.ParseString(src, "fixpoint_program_test.lua")
 	if err != nil {
 		t.Fatalf("ParseString(%q): %v", src, err)
 	}

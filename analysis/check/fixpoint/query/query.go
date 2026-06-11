@@ -1,10 +1,10 @@
-// Package query runs pure canonical summary equations to a fixed point.
+// Package query runs pure fixed-point summary equations.
 package query
 
 import (
 	"errors"
 
-	"github.com/wippyai/go-lua/analysis/check/canonical/summary"
+	"github.com/wippyai/go-lua/analysis/check/fixpoint/summary"
 	"github.com/wippyai/go-lua/analysis/domain/lattice"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/engine/solve"

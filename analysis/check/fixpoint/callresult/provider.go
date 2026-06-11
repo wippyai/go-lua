@@ -1,8 +1,8 @@
-// Package callresult bridges canonical summaries into factflow call results.
+// Package callresult bridges summary values into factflow call results.
 package callresult
 
 import (
-	"github.com/wippyai/go-lua/analysis/check/canonical/summary"
+	"github.com/wippyai/go-lua/analysis/check/fixpoint/summary"
 	"github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	"github.com/wippyai/go-lua/analysis/engine/factflow"
@@ -13,7 +13,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/symbol"
 )
 
-// KeyFunc maps one call producer in context to an exact canonical summary key.
+// KeyFunc maps one call producer in context to an exact summary key.
 type KeyFunc func(ctx transfer.NodeContext, call factflow.CallProducer) (summary.SummaryKey, bool)
 
 // CalleePathKey identifies a symbol-rooted callee path independently of display
@@ -56,7 +56,7 @@ func Provider(summaries summary.Reader, keyFor KeyFunc) apply.CallResultProvider
 	}
 }
 
-// ByPoint maps call CFG points to exact canonical summary keys.
+// ByPoint maps call CFG points to exact summary keys.
 func ByPoint(keys map[cfg.Point]summary.SummaryKey) KeyFunc {
 	cloned := make(map[cfg.Point]summary.SummaryKey, len(keys))
 	for point, key := range keys {
@@ -68,7 +68,7 @@ func ByPoint(keys map[cfg.Point]summary.SummaryKey) KeyFunc {
 	}
 }
 
-// ByCalleeSymbol maps callee symbol IDs to exact canonical summary keys.
+// ByCalleeSymbol maps callee symbol IDs to exact summary keys.
 func ByCalleeSymbol(keys map[symbol.ID]summary.SummaryKey) KeyFunc {
 	cloned := make(map[symbol.ID]summary.SummaryKey, len(keys))
 	for id, key := range keys {
@@ -80,7 +80,7 @@ func ByCalleeSymbol(keys map[symbol.ID]summary.SummaryKey) KeyFunc {
 	}
 }
 
-// ByCalleePath maps resolved symbol-rooted callee paths to exact canonical summary keys.
+// ByCalleePath maps resolved symbol-rooted callee paths to exact summary keys.
 func ByCalleePath(keys map[CalleePathKey]summary.SummaryKey) KeyFunc {
 	cloned := make(map[CalleePathKey]summary.SummaryKey, len(keys))
 	for pathKey, key := range keys {

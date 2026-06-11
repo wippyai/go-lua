@@ -1,8 +1,8 @@
-// Package summary defines canonical function summaries for analysis checks.
+// Package summary defines fixed-point function summaries for analysis checks.
 package summary
 
 import (
-	"github.com/wippyai/go-lua/analysis/check/canonical/ref"
+	"github.com/wippyai/go-lua/analysis/check/fixpoint/ref"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 )
@@ -42,7 +42,7 @@ func (k SummaryKey) Less(other SummaryKey) bool {
 	return k.Entry.References < other.Entry.References
 }
 
-// Summary is the canonical analysis summary payload for one function entry.
+// Summary is the fixed-point analysis summary payload for one function entry.
 type Summary struct {
 	Returns []product.Value
 }

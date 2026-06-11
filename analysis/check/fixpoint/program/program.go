@@ -1,4 +1,4 @@
-// Package program composes Lua-bound check bodies into canonical summary queries.
+// Package program composes Lua-bound check bodies into fixed-point summary queries.
 package program
 
 import (
@@ -6,16 +6,16 @@ import (
 	"slices"
 
 	"github.com/wippyai/go-lua/analysis/check"
-	"github.com/wippyai/go-lua/analysis/check/canonical/callresult"
-	"github.com/wippyai/go-lua/analysis/check/canonical/query"
-	"github.com/wippyai/go-lua/analysis/check/canonical/ref"
-	"github.com/wippyai/go-lua/analysis/check/canonical/summary"
+	"github.com/wippyai/go-lua/analysis/check/fixpoint/callresult"
+	"github.com/wippyai/go-lua/analysis/check/fixpoint/query"
+	"github.com/wippyai/go-lua/analysis/check/fixpoint/ref"
+	"github.com/wippyai/go-lua/analysis/check/fixpoint/summary"
 	"github.com/wippyai/go-lua/analysis/lua/bind"
 	"github.com/wippyai/go-lua/analysis/symbol"
 	"github.com/wippyai/go-lua/compiler/ast"
 )
 
-// Config configures canonical analysis for one Lua program.
+// Config configures fixed-point analysis for one Lua program.
 type Config struct {
 	Check check.Config
 
@@ -26,7 +26,7 @@ type Config struct {
 	WidenDelay func(summary.SummaryKey) int
 }
 
-// Result is the fixed-point canonical result for one bound program.
+// Result is the fixed-point result for one bound program.
 type Result struct {
 	snapshot     summary.Snapshot
 	rootKey      summary.SummaryKey
@@ -34,14 +34,14 @@ type Result struct {
 	targetKeys   map[symbol.ID]summary.SummaryKey
 }
 
-// RunChunk binds stmts once and runs canonical summary equations over the
+// RunChunk binds stmts once and runs fixed-point summary equations over the
 // chunk plus all discovered function expressions.
 func RunChunk(stmts []ast.Stmt, config Config) (Result, error) {
 	bindings := bind.BindChunk(stmts, bind.Options{Globals: config.Check.Globals})
 	return RunBoundChunk(stmts, bindings, config)
 }
 
-// RunBoundChunk runs canonical summary equations over stmts using caller-owned
+// RunBoundChunk runs fixed-point summary equations over stmts using caller-owned
 // lexical bindings. Summary keys and call results are derived from the same
 // binding identity, so function calls cannot drift through an accidental rebind.
 func RunBoundChunk(stmts []ast.Stmt, bindings *bind.Result, config Config) (Result, error) {
@@ -71,7 +71,7 @@ func RunBoundChunk(stmts []ast.Stmt, bindings *bind.Result, config Config) (Resu
 	}, nil
 }
 
-// Snapshot returns the exact-key canonical summary snapshot.
+// Snapshot returns the exact-key summary snapshot.
 func (r Result) Snapshot() summary.Snapshot { return r.snapshot }
 
 // RootKey returns the summary key used for the chunk root.

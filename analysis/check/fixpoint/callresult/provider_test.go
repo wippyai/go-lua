@@ -5,8 +5,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/wippyai/go-lua/analysis/check/canonical/ref"
-	"github.com/wippyai/go-lua/analysis/check/canonical/summary"
+	"github.com/wippyai/go-lua/analysis/check/fixpoint/ref"
+	"github.com/wippyai/go-lua/analysis/check/fixpoint/summary"
 	"github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/state/key"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
@@ -230,15 +230,15 @@ func TestProductionImportsAreBounded(t *testing.T) {
 		t.Fatalf("go list imports . error = %v", err)
 	}
 	allowed := map[string]bool{
-		"github.com/wippyai/go-lua/analysis/check/canonical/summary": true,
-		"github.com/wippyai/go-lua/analysis/domain/path":             true,
-		"github.com/wippyai/go-lua/analysis/domain/path/segment":     true,
-		"github.com/wippyai/go-lua/analysis/engine/factflow":         true,
-		"github.com/wippyai/go-lua/analysis/engine/factflow/apply":   true,
-		"github.com/wippyai/go-lua/analysis/engine/state":            true,
-		"github.com/wippyai/go-lua/analysis/engine/transfer":         true,
-		"github.com/wippyai/go-lua/analysis/ir/cfg":                  true,
-		"github.com/wippyai/go-lua/analysis/symbol":                  true,
+		"github.com/wippyai/go-lua/analysis/check/fixpoint/summary": true,
+		"github.com/wippyai/go-lua/analysis/domain/path":            true,
+		"github.com/wippyai/go-lua/analysis/domain/path/segment":    true,
+		"github.com/wippyai/go-lua/analysis/engine/factflow":        true,
+		"github.com/wippyai/go-lua/analysis/engine/factflow/apply":  true,
+		"github.com/wippyai/go-lua/analysis/engine/state":           true,
+		"github.com/wippyai/go-lua/analysis/engine/transfer":        true,
+		"github.com/wippyai/go-lua/analysis/ir/cfg":                 true,
+		"github.com/wippyai/go-lua/analysis/symbol":                 true,
 	}
 	for _, dep := range strings.Fields(string(out)) {
 		if !allowed[dep] {

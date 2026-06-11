@@ -1,4 +1,4 @@
-// Package ref defines canonical function identities for analysis summaries.
+// Package ref defines stable function identities for analysis summaries.
 package ref
 
 import (
