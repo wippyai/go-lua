@@ -154,15 +154,9 @@ func (c *checker) checkTupleToMap(sub *typ.Tuple, super *typ.Map, depth int) boo
 	return true
 }
 
-func isTableLikeType(t typ.Type) bool {
-	switch v := t.(type) {
-	case *typ.Alias:
-		return isTableLikeType(v.UnaliasedTarget())
-	case *typ.Recursive:
-		return v.Body != nil && v.Body != v && isTableLikeType(v.Body)
-	case *typ.Record, *typ.Map, *typ.ReadonlyMap, *typ.Array, *typ.Tuple, *typ.Interface, *typ.Intersection:
-		return true
-	default:
-		return false
+func checkTableTop(sub, super typ.Type) (bool, bool) {
+	if !typetable.IsBuiltinTopMarker(super) {
+		return false, false
 	}
+	return typetable.IsLike(sub), true
 }

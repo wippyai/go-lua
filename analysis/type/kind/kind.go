@@ -151,24 +151,3 @@ func (k Kind) IsTopOrBottom() bool {
 func (k Kind) IsNever() bool {
 	return k == Never
 }
-
-// FromString converts a Lua type() result string to a Kind.
-// Returns Unknown for unrecognized strings.
-func FromString(s string) Kind {
-	switch s {
-	case "string":
-		return String
-	case "number":
-		return Number
-	case "boolean":
-		return Boolean
-	case "table":
-		return Record
-	case "function":
-		return Function
-	case "nil":
-		return Nil
-	default:
-		return Unknown
-	}
-}

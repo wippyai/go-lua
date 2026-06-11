@@ -258,6 +258,69 @@ func TestPresentReadonlyEntryValue(t *testing.T) {
 	})
 }
 
+func TestBuiltinTopMarker(t *testing.T) {
+	tableTop := typ.NewInterface("table", nil)
+	nonTableIface := typ.NewInterface("Reader", nil)
+	aliasedTable := typ.NewAlias("TTable", tableTop)
+	annotatedTable := typ.NewAnnotated(tableTop, []annotation.Annotation{{Name: "source"}})
+
+	tests := []struct {
+		name string
+		t    typ.Type
+		want bool
+	}{
+		{"builtin table marker", tableTop, true},
+		{"aliased builtin table marker", aliasedTable, true},
+		{"annotated builtin table marker", annotatedTable, true},
+		{"non-table interface", nonTableIface, false},
+		{"interface with method", typ.NewInterface("table", []typ.Method{{Name: "x", Type: typ.Func().Build()}}), false},
+		{"string", typ.String, false},
+		{"nil", nil, false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := IsBuiltinTopMarker(tt.t); got != tt.want {
+				t.Errorf("IsBuiltinTopMarker() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestIsLike(t *testing.T) {
+	rec := NewRecord().Build()
+	recursiveTable := typ.NewRecursive("T", func(typ.Type) typ.Type {
+		return rec
+	})
+
+	tests := []struct {
+		name string
+		t    typ.Type
+		want bool
+	}{
+		{"record", rec, true},
+		{"map", NewMap(typ.String, typ.Number), true},
+		{"readonly map", NewReadonlyMap(typ.String, typ.Number), true},
+		{"array", typ.NewArray(typ.String), true},
+		{"tuple", typ.NewTuple(typ.String), true},
+		{"interface", typ.NewInterface("Reader", nil), true},
+		{"intersection", typ.NewIntersection(rec, typ.NewInterface("Reader", nil)), true},
+		{"alias to table", typ.NewAlias("Alias", rec), true},
+		{"recursive table", recursiveTable, true},
+		{"builtin top marker", typ.NewInterface("table", nil), true},
+		{"string", typ.String, false},
+		{"nil", nil, false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := IsLike(tt.t); got != tt.want {
+				t.Errorf("IsLike() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestSplitNilableFieldPreservesRecursiveUnionMemberHashes(t *testing.T) {
 	recA := typ.NewRecursive("Node", func(self typ.Type) typ.Type {
 		return NewRecord().Field("next", typ.NewOptional(self)).Build()

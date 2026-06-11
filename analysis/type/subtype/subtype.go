@@ -147,7 +147,7 @@ func (c *checker) checkCore(sub, super typ.Type, depth int) bool {
 		return true
 	}
 	if typ.IsAny(sub) {
-		if c.gradual || unwrap.IsBuiltinTableTop(super) {
+		if c.gradual || typetable.IsBuiltinTopMarker(super) {
 			return true
 		}
 		if i, ok := super.(*typ.Intersection); ok {
@@ -221,8 +221,8 @@ func (c *checker) checkCore(sub, super typ.Type, depth int) bool {
 		return c.checkNil(super, depth+1) && c.check(o.Inner, super, depth+1)
 	}
 
-	if unwrap.IsBuiltinTableTop(super) {
-		return isTableLikeType(sub)
+	if ok, handled := checkTableTop(sub, super); handled {
+		return ok
 	}
 
 	if r, ok := sub.(*typ.Record); ok && len(r.Fields) == 0 && len(r.StaticMembers) == 0 {

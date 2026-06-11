@@ -151,29 +151,3 @@ func TestIsOptionalLike(t *testing.T) {
 		})
 	}
 }
-
-func TestIsBuiltinTableTop(t *testing.T) {
-	tableTop := typ.NewInterface("table", nil)
-	nonTableIface := typ.NewInterface("Reader", nil)
-	aliasedTable := typ.NewAlias("TTable", tableTop)
-
-	tests := []struct {
-		name string
-		t    typ.Type
-		want bool
-	}{
-		{"builtin table marker", tableTop, true},
-		{"aliased builtin table marker", aliasedTable, true},
-		{"non-table interface", nonTableIface, false},
-		{"string", typ.String, false},
-		{"nil", nil, false},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if got := unwrap.IsBuiltinTableTop(tt.t); got != tt.want {
-				t.Errorf("IsBuiltinTableTop() = %v, want %v", got, tt.want)
-			}
-		})
-	}
-}

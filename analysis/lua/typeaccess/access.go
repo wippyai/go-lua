@@ -288,7 +288,7 @@ func specialAccessType(t typ.Type) (typ.Type, bool) {
 	if typ.IsNever(t) {
 		return typ.Never, true
 	}
-	if unwrap.IsBuiltinTableTop(t) {
+	if typetable.IsBuiltinTopMarker(t) {
 		return typ.Any, true
 	}
 	return nil, false

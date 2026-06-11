@@ -49,3 +49,35 @@ func TestTagsAccessorIsStableAndSafe(t *testing.T) {
 		t.Fatalf("mutating Tags result changed value: %s", value)
 	}
 }
+
+func TestParseTagAcceptsLuaRuntimeTypeNames(t *testing.T) {
+	tests := []struct {
+		name string
+		tag  Tag
+	}{
+		{"nil", Nil},
+		{"boolean", Boolean},
+		{"number", Number},
+		{"string", String},
+		{"table", Table},
+		{"function", Function},
+		{"thread", Thread},
+		{"userdata", Userdata},
+	}
+
+	for _, tt := range tests {
+		got, ok := ParseTag(tt.name)
+		if !ok || got != tt.tag {
+			t.Fatalf("ParseTag(%q) = %v/%v, want %v/true", tt.name, got, ok, tt.tag)
+		}
+		if got.String() != tt.name {
+			t.Fatalf("ParseTag(%q).String() = %q", tt.name, got.String())
+		}
+	}
+}
+
+func TestParseTagRejectsUnknownRuntimeTypeName(t *testing.T) {
+	if got, ok := ParseTag("integer"); ok {
+		t.Fatalf("ParseTag(integer) = %v/true, want false", got)
+	}
+}

@@ -19,6 +19,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/transfer"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/lua/bind"
+	"github.com/wippyai/go-lua/analysis/lua/branchcond"
 	"github.com/wippyai/go-lua/analysis/lua/cfgbuild"
 	"github.com/wippyai/go-lua/analysis/lua/cfgfacts"
 	"github.com/wippyai/go-lua/analysis/lua/semantics"
@@ -790,6 +791,60 @@ func TestLowerTypeGuardNilBranchRefinements(t *testing.T) {
 	}
 	assertLoweredBranchValueRefinement(t, facts, requireStmtPoints(t, built, eqStmt, 1)[0], xPath, nilValue, notNilValue)
 	assertLoweredBranchValueRefinement(t, facts, requireStmtPoints(t, built, notStmt, 1)[0], xPath, notNilValue, nilValue)
+}
+
+func TestLowerTypeGuardRuntimeTypeNames(t *testing.T) {
+	l := lowerer{registry: product.DefaultRegistry()}
+	target := path.NewPath(symbol.ID(1), "x")
+	tests := []struct {
+		typeName string
+		tag      runtimekind.Tag
+	}{
+		{"nil", runtimekind.Nil},
+		{"boolean", runtimekind.Boolean},
+		{"number", runtimekind.Number},
+		{"string", runtimekind.String},
+		{"table", runtimekind.Table},
+		{"function", runtimekind.Function},
+		{"thread", runtimekind.Thread},
+		{"userdata", runtimekind.Userdata},
+	}
+
+	for _, tt := range tests {
+		refinement, ok := l.typeBranchRefinement(target, branchcond.CheckTypeEqual, tt.typeName)
+		if !ok {
+			t.Fatalf("typeBranchRefinement(%q) returned false", tt.typeName)
+		}
+		trueValue, ok := refinement.TrueValue()
+		if !ok {
+			t.Fatalf("typeBranchRefinement(%q) missing true-edge refinement", tt.typeName)
+		}
+		falseValue, ok := refinement.FalseValue()
+		if !ok {
+			t.Fatalf("typeBranchRefinement(%q) missing false-edge refinement", tt.typeName)
+		}
+
+		truePresence := presence.Present()
+		falsePresence := presence.Top()
+		falseHasPresence := false
+		if tt.tag == runtimekind.Nil {
+			truePresence = presence.Absent()
+			falsePresence = presence.Present()
+			falseHasPresence = true
+		}
+		assertValueRefinement(t, tt.typeName+" true edge", trueValue, valueRefinementExpectation{
+			presence:       truePresence,
+			hasPresence:    true,
+			runtimeKind:    runtimekind.Singleton(tt.tag),
+			hasRuntimeKind: true,
+		})
+		assertValueRefinement(t, tt.typeName+" false edge", falseValue, valueRefinementExpectation{
+			presence:       falsePresence,
+			hasPresence:    falseHasPresence,
+			runtimeKind:    runtimekind.Top().Without(tt.tag),
+			hasRuntimeKind: true,
+		})
+	}
 }
 
 func TestLowerTypeGuardReversedOperandsBranchRefinement(t *testing.T) {

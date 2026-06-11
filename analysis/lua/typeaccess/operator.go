@@ -9,6 +9,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/type/normalize"
 	"github.com/wippyai/go-lua/analysis/type/subst"
 	"github.com/wippyai/go-lua/analysis/type/subtype"
+	typetable "github.com/wippyai/go-lua/analysis/type/table"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/analysis/type/unwrap"
 )
@@ -524,7 +525,7 @@ func isTableLike(t typ.Type) bool {
 	case *typ.Record, *typ.Map, *typ.ReadonlyMap, *typ.Array, *typ.Tuple:
 		return true
 	default:
-		return unwrap.IsBuiltinTableTop(t)
+		return typetable.IsBuiltinTopMarker(t)
 	}
 }
 

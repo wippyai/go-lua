@@ -26,6 +26,22 @@ func TestFieldDirectRecordField(t *testing.T) {
 	}
 }
 
+func TestBuiltinTableTopMarkerAccess(t *testing.T) {
+	tableTop := typ.NewInterface("table", nil)
+
+	got, ok := Field(tableTop, "dynamic")
+	if !ok {
+		t.Fatal("Field(table top marker, dynamic) failed")
+	}
+	assertType(t, got, typ.Any)
+
+	got, ok = Index(tableTop, typ.LiteralString("dynamic"))
+	if !ok {
+		t.Fatal("Index(table top marker, dynamic) failed")
+	}
+	assertType(t, got, typ.Any)
+}
+
 func TestFieldOptionalAliasInstantiatedRecord(t *testing.T) {
 	t.Run("optional", func(t *testing.T) {
 		rec := typetable.NewRecord().Field("value", typ.String).Build()

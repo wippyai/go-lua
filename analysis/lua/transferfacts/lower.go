@@ -2,8 +2,8 @@
 package transferfacts
 
 import (
-	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/path"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/assertion"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/runtimekind"
@@ -281,7 +281,7 @@ func (l *lowerer) branchRefinement(fact semantics.BranchConditionFact) (factflow
 }
 
 func (l *lowerer) typeBranchRefinement(target path.Path, kind branchcond.CheckKind, typeName string) (factflow.BranchRefinement, bool) {
-	tag, ok := runtimeTag(typeName)
+	tag, ok := runtimekind.ParseTag(typeName)
 	if !ok {
 		return factflow.BranchRefinement{}, false
 	}
@@ -323,29 +323,6 @@ func (l *lowerer) runtimeKindRefinement(value runtimekind.Value) factflow.ValueR
 
 func (l *lowerer) runtimeKindConstraint(value runtimekind.Value) product.Value {
 	return product.Set(l.registry, product.Top(), runtimekind.Key, value)
-}
-
-func runtimeTag(typeName string) (runtimekind.Tag, bool) {
-	switch typeName {
-	case "nil":
-		return runtimekind.Nil, true
-	case "boolean":
-		return runtimekind.Boolean, true
-	case "number":
-		return runtimekind.Number, true
-	case "string":
-		return runtimekind.String, true
-	case "table":
-		return runtimekind.Table, true
-	case "function":
-		return runtimekind.Function, true
-	case "thread":
-		return runtimekind.Thread, true
-	case "userdata":
-		return runtimekind.Userdata, true
-	default:
-		return 0, false
-	}
 }
 
 func (l *lowerer) valueSources(sources []valuesource.Source) []factflow.ValueSource {

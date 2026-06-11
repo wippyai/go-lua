@@ -164,6 +164,33 @@ func TestTableShapesAndMapViews(t *testing.T) {
 	}
 }
 
+func TestBuiltinTableTopMarkerSubtyping(t *testing.T) {
+	tableTop := typ.NewInterface("table", nil)
+
+	accepted := []typ.Type{
+		typetable.NewRecord().Field("x", typ.Number).Build(),
+		typetable.NewMap(typ.String, typ.Number),
+		typetable.NewReadonlyMap(typ.String, typ.Number),
+		typ.NewArray(typ.String),
+		typ.NewTuple(typ.String),
+		typ.NewInterface("NamedTableLike", nil),
+		typ.NewIntersection(typetable.NewRecord().Build(), typ.NewInterface("NamedTableLike", nil)),
+		typ.Any,
+	}
+	for _, sub := range accepted {
+		if !IsSubtype(sub, tableTop) {
+			t.Fatalf("%v should satisfy builtin table top marker", sub)
+		}
+	}
+
+	rejected := []typ.Type{typ.String, typ.Number, typ.Unknown}
+	for _, sub := range rejected {
+		if IsSubtype(sub, tableTop) {
+			t.Fatalf("%v should not satisfy builtin table top marker", sub)
+		}
+	}
+}
+
 func TestGenericConstraintsAndInstantiation(t *testing.T) {
 	tp := typ.NewTypeParam("T", typ.Number)
 	if !IsSubtype(tp, typ.Number) || !IsSubtype(typ.Integer, tp) {

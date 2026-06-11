@@ -154,6 +154,16 @@ func (t Tag) String() string {
 	return tagNames[t]
 }
 
+// ParseTag converts a Lua runtime type() result string to its runtime kind tag.
+func ParseTag(name string) (Tag, bool) {
+	for _, tag := range allTags {
+		if tagNames[tag] == name {
+			return tag, true
+		}
+	}
+	return 0, false
+}
+
 func (v Value) String() string {
 	if v.IsBottom() {
 		return "bottom"
