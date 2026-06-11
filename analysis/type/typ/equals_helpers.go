@@ -43,11 +43,6 @@ func normalizeNilType(t Type) Type {
 	return t
 }
 
-// NormalizeNilType converts typed nil Type implementations to nil.
-func NormalizeNilType(t Type) Type {
-	return normalizeNilType(t)
-}
-
 func typeEqualsCanUseHashPrefilter(a, b Type) bool {
 	return !knownContainsRecursive(a) &&
 		!knownContainsRecursive(b) &&

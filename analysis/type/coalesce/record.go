@@ -61,8 +61,8 @@ func JoinRecordFieldSlot(a, b typ.Type, policy RecordPolicy) typ.Type {
 func JoinFieldContainerSlot(a, b typ.Type, policy RecordPolicy) (typ.Type, bool) {
 	slotJoin := policy.slotJoin()
 	keyJoin := policy.keyJoin()
-	a = typ.UnwrapAnnotated(a)
-	b = typ.UnwrapAnnotated(b)
+	a = unwrap.Annotated(a)
+	b = unwrap.Annotated(b)
 	switch av := a.(type) {
 	case *typ.Array:
 		bv, ok := b.(*typ.Array)

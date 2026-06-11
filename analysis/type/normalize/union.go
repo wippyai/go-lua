@@ -6,6 +6,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/type/kind"
 	"github.com/wippyai/go-lua/analysis/type/literal"
 	"github.com/wippyai/go-lua/analysis/type/typ"
+	"github.com/wippyai/go-lua/analysis/type/unwrap"
 )
 
 // UnionForJoin applies the union normalization policy used by join-like
@@ -48,7 +49,7 @@ func flattenUnionForRelationEvidence(members []typ.Type) (flat []typ.Type, hasNi
 		if member == nil {
 			return
 		}
-		unwrapped := typ.UnwrapAnnotated(member)
+		unwrapped := unwrap.Annotated(member)
 		if unwrapped == nil {
 			return
 		}
@@ -85,7 +86,7 @@ func flattenUnionForRelationEvidence(members []typ.Type) (flat []typ.Type, hasNi
 
 func canonicalPolicyMembers(members []typ.Type) []typ.Type {
 	normalized := typ.NewUnion(members...)
-	if u, ok := typ.UnwrapAnnotated(normalized).(*typ.Union); ok {
+	if u, ok := unwrap.Annotated(normalized).(*typ.Union); ok {
 		out := make([]typ.Type, len(u.Members))
 		copy(out, u.Members)
 		return out

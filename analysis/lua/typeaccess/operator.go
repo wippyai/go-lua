@@ -122,7 +122,7 @@ func unaryOpDepth(op string, operand typ.Type, depth int) (typ.Type, bool) {
 
 func operatorSurface(t typ.Type, depth int) typ.Type {
 	for !stopDepth(t, depth) {
-		t = typ.UnwrapAnnotated(t)
+		t = unwrap.Annotated(t)
 		switch v := t.(type) {
 		case *typ.Alias:
 			next := v.UnaliasedTarget()

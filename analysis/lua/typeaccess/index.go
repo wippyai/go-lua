@@ -6,6 +6,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/type/subst"
 	"github.com/wippyai/go-lua/analysis/type/subtype"
 	"github.com/wippyai/go-lua/analysis/type/typ"
+	"github.com/wippyai/go-lua/analysis/type/unwrap"
 )
 
 type indexMode uint8
@@ -46,7 +47,7 @@ func indexDepth(container typ.Type, key typ.Type, depth int, mode indexMode) fie
 }
 
 func indexDepthCore(container typ.Type, key typ.Type, depth int, mode indexMode) fieldResult {
-	switch v := typ.UnwrapAnnotated(container).(type) {
+	switch v := unwrap.Annotated(container).(type) {
 	case *typ.Record:
 		return indexInRecord(v, key, depth+1, mode)
 	case *typ.Map:
@@ -235,7 +236,7 @@ func indexByKeyVariants(key typ.Type, depth int, mode indexMode, missingNil bool
 	if stopDepth(key, depth) {
 		return fieldResult{}
 	}
-	switch v := typ.UnwrapAnnotated(key).(type) {
+	switch v := unwrap.Annotated(key).(type) {
 	case *typ.Union:
 		return indexKeyUnion(v, depth+1, mode, missingNil, project)
 	case *typ.Optional:

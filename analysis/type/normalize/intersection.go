@@ -3,6 +3,7 @@ package normalize
 import (
 	"github.com/wippyai/go-lua/analysis/type/kind"
 	"github.com/wippyai/go-lua/analysis/type/typ"
+	"github.com/wippyai/go-lua/analysis/type/unwrap"
 )
 
 // IntersectionForMeet applies the pure intersection normalization policy used
@@ -17,7 +18,7 @@ func IntersectionForMeet(members ...typ.Type) typ.Type {
 		if member == nil {
 			return
 		}
-		unwrapped := typ.UnwrapAnnotated(member)
+		unwrapped := unwrap.Annotated(member)
 		if unwrapped == nil {
 			return
 		}

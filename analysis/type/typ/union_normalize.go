@@ -68,7 +68,7 @@ func newNormalizedUnion(members []Type, memberHashes []uint64) Type {
 }
 
 func unionMemberContainsOpenRecursive(t Type) bool {
-	if rec, ok := UnwrapAnnotated(t).(*Recursive); ok {
+	if rec, ok := unwrapAnnotated(t).(*Recursive); ok {
 		return rec.Body == nil
 	}
 	return knownContainsOpenRecursive(t)

@@ -114,7 +114,7 @@ func (d *Detector) HasRequiredTag(t typ.Type) bool {
 }
 
 func (d *Detector) RequiredTags(t typ.Type) map[string]uint64 {
-	t = typ.UnwrapAnnotated(t)
+	t = unwrap.Annotated(t)
 	if t == nil {
 		return nil
 	}
@@ -144,7 +144,7 @@ func (d *Detector) RequiredTags(t typ.Type) map[string]uint64 {
 }
 
 func (d *Detector) collectRequiredTags(t typ.Type) map[string]uint64 {
-	t = typ.UnwrapAnnotated(t)
+	t = unwrap.Annotated(t)
 	switch v := t.(type) {
 	case *typ.Alias:
 		return d.RequiredTags(v.Target)
@@ -290,7 +290,7 @@ func (d *Detector) mergeKeepsPreciseFieldType(a, b typ.Type) bool {
 }
 
 func fieldMergeKind(t typ.Type) kind.Kind {
-	t = typ.UnwrapAnnotated(t)
+	t = unwrap.Annotated(t)
 	for {
 		a, ok := t.(*typ.Alias)
 		if !ok {

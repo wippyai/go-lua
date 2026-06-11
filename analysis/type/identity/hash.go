@@ -4,6 +4,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/internal/hash"
 	"github.com/wippyai/go-lua/analysis/type/kind"
 	"github.com/wippyai/go-lua/analysis/type/typ"
+	"github.com/wippyai/go-lua/analysis/type/unwrap"
 )
 
 // EqualityHash returns the canonical hash used by structural equality and
@@ -54,7 +55,7 @@ func hashBodyWithVisitedMemo(t typ.Type, visited map[*typ.Recursive]bool, memo m
 	if t == nil {
 		return 0
 	}
-	t = typ.UnwrapAnnotated(t)
+	t = unwrap.Annotated(t)
 	if alias, ok := t.(*typ.Alias); ok {
 		return hashBodyWithVisitedMemo(alias.UnaliasedTarget(), visited, memo)
 	}

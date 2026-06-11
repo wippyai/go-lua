@@ -117,8 +117,7 @@ func (a *Annotated) Equals(other Type) bool {
 	return true
 }
 
-// UnwrapAnnotated returns the inner type, stripping annotations.
-func UnwrapAnnotated(t Type) Type {
+func unwrapAnnotated(t Type) Type {
 	if a, ok := t.(*Annotated); ok {
 		if a.Inner == nil {
 			return Unknown
@@ -128,9 +127,7 @@ func UnwrapAnnotated(t Type) Type {
 	return t
 }
 
-// UnwrapAnnotations strips all Annotated wrappers, returning the innermost
-// non-Annotated type.
-func UnwrapAnnotations(t Type) Type {
+func unwrapAnnotations(t Type) Type {
 	for {
 		ann, ok := t.(*Annotated)
 		if !ok {

@@ -3,6 +3,7 @@ package refinement
 import (
 	"github.com/wippyai/go-lua/analysis/internal/recursion"
 	"github.com/wippyai/go-lua/analysis/type/typ"
+	"github.com/wippyai/go-lua/analysis/type/unwrap"
 )
 
 // IsRefinableAnnotation reports whether an explicit annotation should be
@@ -95,7 +96,7 @@ func PruneLessPreciseRefinableUnionMembers(t typ.Type, morePrecise MorePreciseFu
 // underlying Union for refinement-local pruning.
 func closedUnionOf(t typ.Type) *typ.Union {
 	for {
-		switch v := typ.UnwrapAnnotated(t).(type) {
+		switch v := unwrap.Annotated(t).(type) {
 		case *typ.Union:
 			return v
 		case *typ.Alias:
@@ -138,7 +139,7 @@ func isRefinableStructuralAnnotation(t typ.Type, guard recursion.Guard) bool {
 	if t == nil {
 		return false
 	}
-	t = typ.UnwrapAnnotated(t)
+	t = unwrap.Annotated(t)
 	next, ok := guard.Enter(t)
 	if !ok {
 		return false
@@ -191,7 +192,7 @@ func annotationSlotRefinable(t typ.Type, guard recursion.Guard) bool {
 	if t == nil {
 		return false
 	}
-	t = typ.UnwrapAnnotated(t)
+	t = unwrap.Annotated(t)
 	if t.Kind().IsPlaceholder() {
 		return true
 	}

@@ -44,7 +44,7 @@ func NewIntersection(members ...Type) Type {
 			return
 		}
 
-		unwrapped := UnwrapAnnotated(m)
+		unwrapped := unwrapAnnotated(m)
 		if unwrapped == nil {
 			return
 		}

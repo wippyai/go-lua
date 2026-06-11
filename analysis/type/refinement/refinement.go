@@ -6,6 +6,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/type/nodeid"
 	typetable "github.com/wippyai/go-lua/analysis/type/table"
 	"github.com/wippyai/go-lua/analysis/type/typ"
+	"github.com/wippyai/go-lua/analysis/type/unwrap"
 )
 
 type typePair struct {
@@ -78,7 +79,7 @@ func containsFreeTypeParam(t typ.Type, seen containsSeen, owned map[*typ.TypePar
 	if t == nil {
 		return false
 	}
-	t = typ.UnwrapAnnotated(t)
+	t = unwrap.Annotated(t)
 	if t == nil {
 		return false
 	}
@@ -255,7 +256,7 @@ func (s *sameExpressionFallbackScan) needs(t typ.Type) bool {
 	if t == nil {
 		return true
 	}
-	t = typ.UnwrapAnnotated(t)
+	t = unwrap.Annotated(t)
 	if t == nil {
 		return true
 	}

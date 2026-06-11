@@ -45,7 +45,7 @@ func NewOptional(inner Type) Type {
 	}
 
 	if inner.Kind() == kind.Union {
-		u := UnwrapAnnotated(inner).(*Union)
+		u := unwrapAnnotated(inner).(*Union)
 		for _, member := range u.Members {
 			if member != nil && member.Kind() == kind.Nil {
 				return inner

@@ -26,7 +26,7 @@ func containsDynamicFlag(
 	if t == nil || known == nil || (maxDepth >= 0 && depth > maxDepth) {
 		return false
 	}
-	t = UnwrapAnnotated(t)
+	t = unwrapAnnotated(t)
 	if t == nil {
 		return false
 	}

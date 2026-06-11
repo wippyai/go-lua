@@ -7,7 +7,23 @@ import (
 	"github.com/wippyai/go-lua/analysis/internal/recursion"
 	"github.com/wippyai/go-lua/analysis/type/kind"
 	"github.com/wippyai/go-lua/analysis/type/typ"
+	"github.com/wippyai/go-lua/analysis/type/unwrap"
 )
+
+// SameNode reports whether two Type interface values point at the same
+// immutable type node. It is intentionally not structural equality; callers
+// use it to detect no-op rewrites without walking recursive products.
+func SameNode(a, b typ.Type) bool {
+	if a == nil || b == nil {
+		return a == b
+	}
+	va := reflect.ValueOf(a)
+	vb := reflect.ValueOf(b)
+	if va.Type() != vb.Type() || !va.Type().Comparable() {
+		return false
+	}
+	return a == b
+}
 
 // TypeEquals compares two types for structural equality with cycle detection.
 //
@@ -86,8 +102,8 @@ func typeEqualsGuard(a, b typ.Type, guard recursion.Guard, seen map[typePair]boo
 	}
 
 	next := guard
-	a = typ.UnwrapAnnotated(a)
-	b = typ.UnwrapAnnotated(b)
+	a = unwrap.Annotated(a)
+	b = unwrap.Annotated(b)
 
 	switch va := a.(type) {
 	case *typ.Optional:
@@ -259,13 +275,18 @@ func typeEqualsGuard(a, b typ.Type, guard recursion.Guard, seen map[typePair]boo
 	}
 }
 
+// NormalizeNilType converts typed nil Type implementations to nil.
+func NormalizeNilType(t typ.Type) typ.Type {
+	return normalizeNilType(t)
+}
+
 func unwrapAliasForEquals(t typ.Type, guard recursion.Guard) typ.Type {
 	for {
 		t = normalizeNilType(t)
 		if t == nil {
 			return nil
 		}
-		t = typ.UnwrapAnnotated(t)
+		t = unwrap.Annotated(t)
 		next, ok := guard.Enter(t)
 		if !ok {
 			return nil

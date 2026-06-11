@@ -125,7 +125,7 @@ func rewrittenUnionMemberUsesStructuralDedupe(t Type) bool {
 	if t == nil {
 		return true
 	}
-	t = UnwrapAnnotated(t)
+	t = unwrapAnnotated(t)
 	if t == nil {
 		return true
 	}
@@ -145,7 +145,7 @@ func rewrittenMembersStayFlatNormalized(members []Type) bool {
 		if member == nil {
 			return false
 		}
-		unwrapped := UnwrapAnnotated(member)
+		unwrapped := unwrapAnnotated(member)
 		switch unwrapped.Kind() {
 		case kind.Never, kind.Unknown, kind.Any, kind.Nil, kind.Union, kind.Optional:
 			return false

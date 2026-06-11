@@ -2,6 +2,7 @@ package table
 
 import (
 	"github.com/wippyai/go-lua/analysis/type/annotation"
+	"github.com/wippyai/go-lua/analysis/type/identity"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
@@ -200,7 +201,7 @@ func sameFieldShape(a, b typ.Field) bool {
 	return a.Name == b.Name &&
 		a.Optional == b.Optional &&
 		a.Readonly == b.Readonly &&
-		typ.SameNode(a.Type, b.Type)
+		identity.SameNode(a.Type, b.Type)
 }
 
 func sameStaticMemberShape(a, b typ.StaticMember) bool {
@@ -209,5 +210,5 @@ func sameStaticMemberShape(a, b typ.StaticMember) bool {
 		a.Index == b.Index &&
 		a.Optional == b.Optional &&
 		a.Readonly == b.Readonly &&
-		typ.SameNode(a.Type, b.Type)
+		identity.SameNode(a.Type, b.Type)
 }

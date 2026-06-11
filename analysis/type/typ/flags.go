@@ -8,7 +8,7 @@ func containsAnyType(t Type) bool {
 	if t == nil {
 		return false
 	}
-	if _, ok := UnwrapAnnotated(t).(*Recursive); ok {
+	if _, ok := unwrapAnnotated(t).(*Recursive); ok {
 		return knownContainsAny(t)
 	}
 	if !knownContainsOpenRecursive(t) {
@@ -21,7 +21,7 @@ func containsNeverType(t Type) bool {
 	if t == nil {
 		return false
 	}
-	if _, ok := UnwrapAnnotated(t).(*Recursive); ok {
+	if _, ok := unwrapAnnotated(t).(*Recursive); ok {
 		return knownContainsNever(t)
 	}
 	if !knownContainsOpenRecursive(t) {
@@ -34,7 +34,7 @@ func containsTypeParamType(t Type) bool {
 	if t == nil {
 		return false
 	}
-	if _, ok := UnwrapAnnotated(t).(*Recursive); ok {
+	if _, ok := unwrapAnnotated(t).(*Recursive); ok {
 		return knownContainsTypeParam(t)
 	}
 	if !knownContainsOpenRecursive(t) {
@@ -47,7 +47,7 @@ func containsInstantiatedType(t Type) bool {
 	if t == nil {
 		return false
 	}
-	if _, ok := UnwrapAnnotated(t).(*Recursive); ok {
+	if _, ok := unwrapAnnotated(t).(*Recursive); ok {
 		return knownContainsInstantiated(t)
 	}
 	if !knownContainsOpenRecursive(t) {

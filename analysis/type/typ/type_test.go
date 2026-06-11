@@ -6,17 +6,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/type/kind"
 )
 
-func TestSameNodeUsesIdentityNotStructuralEquality(t *testing.T) {
-	left := newRecord().Field("name", String).Build()
-	right := newRecord().Field("name", String).Build()
-	if !SameNode(left, left) {
-		t.Fatal("SameNode should accept the same type node")
-	}
-	if SameNode(left, right) {
-		t.Fatal("SameNode must not collapse structurally equal but distinct nodes")
-	}
-}
-
 func TestPrimitives(t *testing.T) {
 	primitives := []struct {
 		typ  Type

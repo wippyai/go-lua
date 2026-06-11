@@ -127,25 +127,3 @@ func TestNewAnnotated_NilInner(t *testing.T) {
 		t.Error("nil inner should become Unknown")
 	}
 }
-
-func TestUnwrapAnnotated(t *testing.T) {
-	ann := NewAnnotated(Number, []annotation.Annotation{{Name: "min", Arg: float64(0)}})
-	if UnwrapAnnotated(ann) != Number {
-		t.Error("UnwrapAnnotated should return inner type")
-	}
-	if UnwrapAnnotated(Number) != Number {
-		t.Error("UnwrapAnnotated on non-annotated should return same type")
-	}
-}
-
-func TestUnwrapAnnotations(t *testing.T) {
-	inner := NewAnnotated(Number, []annotation.Annotation{{Name: "max", Arg: float64(100)}})
-	outer := NewAnnotated(inner, []annotation.Annotation{{Name: "min", Arg: float64(0)}})
-
-	if got := UnwrapAnnotations(outer); got != Number {
-		t.Fatalf("UnwrapAnnotations should strip nested wrappers, got %T", got)
-	}
-	if got := UnwrapAnnotations(Number); got != Number {
-		t.Fatalf("UnwrapAnnotations on non-annotated should return same type, got %T", got)
-	}
-}

@@ -4,9 +4,11 @@ import (
 	"sync"
 
 	"github.com/wippyai/go-lua/analysis/internal/hash"
+	"github.com/wippyai/go-lua/analysis/type/identity"
 	"github.com/wippyai/go-lua/analysis/type/nodeid"
 	typetable "github.com/wippyai/go-lua/analysis/type/table"
 	"github.com/wippyai/go-lua/analysis/type/typ"
+	"github.com/wippyai/go-lua/analysis/type/unwrap"
 )
 
 // FamilyKey is the stable producer identity of a recursive family.
@@ -186,7 +188,7 @@ func (i *RecursiveFamilyInterner) Widen(family *typ.Recursive, candidateBody typ
 		return family
 	}
 	widened := join(family.Body, candidateBody)
-	if widened == nil || typ.SameNode(widened, family.Body) {
+	if widened == nil || identity.SameNode(widened, family.Body) {
 		return family
 	}
 	family.SetBody(i.rebindRecursiveSelf(widened, family))
@@ -407,7 +409,7 @@ func (s *recursiveFamilyFingerprintScan) scan(t typ.Type) {
 		s.add(rec)
 		return
 	}
-	t = typ.UnwrapAnnotations(t)
+	t = unwrap.Annotations(t)
 	if rec, ok := t.(*typ.Recursive); ok {
 		s.add(rec)
 		return

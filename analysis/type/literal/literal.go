@@ -6,6 +6,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/type/identity"
 	"github.com/wippyai/go-lua/analysis/type/kind"
 	"github.com/wippyai/go-lua/analysis/type/typ"
+	"github.com/wippyai/go-lua/analysis/type/unwrap"
 )
 
 // ExtractAliasOnly returns a literal after following Alias targets only.
@@ -51,7 +52,7 @@ func PrimitiveBase(lit *typ.Literal) typ.Type {
 // unions whose members all belong to a mergeable literal family. Annotated
 // wrappers and aliases are unwrapped for this family-level policy.
 func FamilyBase(t typ.Type) (typ.Type, bool) {
-	t = typ.UnwrapAnnotated(t)
+	t = unwrap.Annotated(t)
 	if t == nil {
 		return nil, false
 	}

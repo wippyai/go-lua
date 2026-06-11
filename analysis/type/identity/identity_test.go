@@ -19,6 +19,17 @@ func TestTypeEqualsAliasAndNilNormalization(t *testing.T) {
 	}
 }
 
+func TestNormalizeNilType(t *testing.T) {
+	var nilFunction *typ.Function
+	var nilType typ.Type = nilFunction
+	if NormalizeNilType(nilType) != nil {
+		t.Fatal("typed nil should normalize to nil")
+	}
+	if NormalizeNilType(typ.String) != typ.String {
+		t.Fatal("non-nil types should be returned unchanged")
+	}
+}
+
 func TestTypeEqualsRecursiveEquivalent(t *testing.T) {
 	left := typ.NewRecursivePlaceholder("Node")
 	left.SetBody(&typ.Record{Fields: []typ.Field{{Name: "next", Type: left}}})
@@ -49,6 +60,18 @@ func TestSameNodeOrAcyclicEqual(t *testing.T) {
 	}
 	if !SameNodeOrAcyclicEqual(recA, recA) {
 		t.Fatal("same node identity should still succeed for recursive nodes")
+	}
+}
+
+func TestSameNode(t *testing.T) {
+	left := &typ.Record{Fields: []typ.Field{{Name: "name", Type: typ.String}}}
+	right := &typ.Record{Fields: []typ.Field{{Name: "name", Type: typ.String}}}
+
+	if !SameNode(left, left) {
+		t.Fatal("SameNode should accept the same type node")
+	}
+	if SameNode(left, right) {
+		t.Fatal("SameNode must not collapse structurally equal but distinct nodes")
 	}
 }
 

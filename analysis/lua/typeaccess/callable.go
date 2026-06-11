@@ -6,6 +6,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/type/subst"
 	typetable "github.com/wippyai/go-lua/analysis/type/table"
 	"github.com/wippyai/go-lua/analysis/type/typ"
+	"github.com/wippyai/go-lua/analysis/type/unwrap"
 )
 
 // GetMetamethod resolves a direct metatable field from t.
@@ -32,7 +33,7 @@ func metamethodDepth(t typ.Type, name string, depth int) (typ.Type, bool) {
 		return top, true
 	}
 
-	switch v := typ.UnwrapAnnotated(t).(type) {
+	switch v := unwrap.Annotated(t).(type) {
 	case *typ.Record:
 		return metamethodInRecord(v, name, depth+1)
 	case *typ.Union:
@@ -106,7 +107,7 @@ func callableDepth(t typ.Type, depth int) (*typ.Function, bool) {
 		return nil, false
 	}
 
-	switch v := typ.UnwrapAnnotated(t).(type) {
+	switch v := unwrap.Annotated(t).(type) {
 	case *typ.Function:
 		return v, true
 	case *typ.Record:
@@ -179,7 +180,7 @@ func functionWitnessDepth(t typ.Type, depth int) (*typ.Function, bool) {
 		return nil, false
 	}
 
-	switch v := typ.UnwrapAnnotated(t).(type) {
+	switch v := unwrap.Annotated(t).(type) {
 	case *typ.Function:
 		return v, true
 	case *typ.Union:
@@ -238,6 +239,6 @@ func functionWitnessIntersection(in *typ.Intersection, depth int) (*typ.Function
 }
 
 func isNilType(t typ.Type) bool {
-	t = typ.UnwrapAnnotated(t)
+	t = unwrap.Annotated(t)
 	return t != nil && t.Kind() == typ.Nil.Kind()
 }

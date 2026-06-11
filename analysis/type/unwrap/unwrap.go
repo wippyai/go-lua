@@ -8,6 +8,32 @@ import (
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
+// Annotated unwraps a single Annotated layer.
+func Annotated(t typ.Type) typ.Type {
+	if a, ok := t.(*typ.Annotated); ok {
+		if a.Inner == nil {
+			return typ.Unknown
+		}
+		return a.Inner
+	}
+	return t
+}
+
+// Annotations strips all Annotated wrappers, returning the innermost
+// non-Annotated type.
+func Annotations(t typ.Type) typ.Type {
+	for {
+		ann, ok := t.(*typ.Annotated)
+		if !ok {
+			return t
+		}
+		if ann.Inner == nil || ann.Inner == t {
+			return t
+		}
+		t = ann.Inner
+	}
+}
+
 // Alias unwraps only Alias wrappers, preserving Optional.
 func Alias(t typ.Type) typ.Type {
 	for depth := 0; depth <= typ.DefaultRecursionDepth; depth++ {

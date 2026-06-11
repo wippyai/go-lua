@@ -11,6 +11,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/type/kind"
 	typetable "github.com/wippyai/go-lua/analysis/type/table"
 	"github.com/wippyai/go-lua/analysis/type/typ"
+	"github.com/wippyai/go-lua/analysis/type/unwrap"
 )
 
 // Substitute replaces type parameters with concrete types throughout a type.
@@ -224,7 +225,7 @@ func containsSubstitutableSelf(t typ.Type, seen map[typ.Type]bool) bool {
 	if t == nil {
 		return false
 	}
-	t = typ.UnwrapAnnotated(t)
+	t = unwrap.Annotated(t)
 	if t == nil {
 		return false
 	}
@@ -325,7 +326,7 @@ func containsSurfaceSelf(t typ.Type) bool {
 }
 
 func containsSurfaceSelfSeen(t typ.Type, seen map[typ.Type]bool) bool {
-	t = typ.UnwrapAnnotated(t)
+	t = unwrap.Annotated(t)
 	if t == nil {
 		return false
 	}

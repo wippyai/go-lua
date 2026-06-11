@@ -4,7 +4,7 @@ func knownContainsInstantiated(t Type) bool {
 	if t == nil {
 		return false
 	}
-	t = UnwrapAnnotated(t)
+	t = unwrapAnnotated(t)
 	if t == nil {
 		return false
 	}

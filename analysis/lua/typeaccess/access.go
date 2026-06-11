@@ -53,7 +53,7 @@ func fieldDepth(t typ.Type, name string, depth int) fieldResult {
 		return fieldResult{t: top, ok: true}
 	}
 
-	switch v := typ.UnwrapAnnotated(t).(type) {
+	switch v := unwrap.Annotated(t).(type) {
 	case *typ.Record:
 		return fieldInRecord(v, name)
 	case *typ.Map:
@@ -178,7 +178,7 @@ func missingFieldReadsNilDepth(t typ.Type, depth int) bool {
 	if stopDepth(t, depth) {
 		return false
 	}
-	switch v := typ.UnwrapAnnotated(t).(type) {
+	switch v := unwrap.Annotated(t).(type) {
 	case *typ.Record, *typ.Map, *typ.ReadonlyMap, *typ.Array, *typ.Tuple, *typ.Interface:
 		return true
 	case *typ.Union:

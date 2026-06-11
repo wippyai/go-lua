@@ -74,7 +74,7 @@ func contains(t Type, pred func(Type) bool, seen containsSeen) bool {
 	if t == nil {
 		return false
 	}
-	t = UnwrapAnnotated(t)
+	t = unwrapAnnotated(t)
 	if t == nil {
 		return false
 	}

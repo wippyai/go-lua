@@ -47,7 +47,7 @@ func collectRecursiveHashDepsInTypeMemo(t Type, seen map[*Recursive]bool, memo m
 	if t == nil {
 		return true
 	}
-	t = UnwrapAnnotated(t)
+	t = unwrapAnnotated(t)
 	if t == nil {
 		return true
 	}

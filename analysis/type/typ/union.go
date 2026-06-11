@@ -49,7 +49,7 @@ func NewUnion(members ...Type) Type {
 		// Annotations delegate Kind() to their inner type, so type
 		// assertions on concrete wrappers (Union, Optional) require
 		// operating on the unwrapped type.
-		unwrapped := UnwrapAnnotated(m)
+		unwrapped := unwrapAnnotated(m)
 		if unwrapped == nil {
 			return
 		}
