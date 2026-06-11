@@ -3,6 +3,7 @@ package typ
 import (
 	"strings"
 
+	"github.com/wippyai/go-lua/analysis/domain/effect"
 	"github.com/wippyai/go-lua/analysis/type/kind"
 )
 
@@ -22,6 +23,7 @@ type Function struct {
 	Params                []Param      // Positional parameters
 	Variadic              Type         // Variadic element type (nil if not variadic)
 	Returns               []Type       // Return types (empty for void functions)
+	Effect                effect.Row   // Function effect row (pure when empty)
 	hash                  uint64
 	containsAny           bool
 	containsNever         bool
@@ -46,6 +48,7 @@ type FunctionBuilder struct {
 	params     []Param
 	variadic   Type
 	returns    []Type
+	effect     effect.Row
 }
 
 // Func starts building a function type.
@@ -105,6 +108,12 @@ func (b *FunctionBuilder) Returns(types ...Type) *FunctionBuilder {
 	return b
 }
 
+// Effects sets the function's effect row.
+func (b *FunctionBuilder) Effects(row effect.Row) *FunctionBuilder {
+	b.effect = row
+	return b
+}
+
 // Build creates the function type.
 func (b *FunctionBuilder) Build() *Function {
 	return buildFunctionType(
@@ -112,6 +121,7 @@ func (b *FunctionBuilder) Build() *Function {
 		b.params,
 		b.variadic,
 		b.returns,
+		b.effect,
 	)
 }
 
@@ -185,6 +195,11 @@ func (f *Function) String() string {
 
 				sb.WriteString(")")
 			}
+		}
+
+		if !f.Effect.Pure() {
+			sb.WriteString(" ! ")
+			sb.WriteString(f.Effect.String())
 		}
 
 		return sb.String()

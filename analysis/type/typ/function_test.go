@@ -3,6 +3,8 @@ package typ
 import (
 	"testing"
 
+	"github.com/wippyai/go-lua/analysis/domain/effect"
+	"github.com/wippyai/go-lua/analysis/domain/effect/control"
 	"github.com/wippyai/go-lua/analysis/type/kind"
 )
 
@@ -108,6 +110,22 @@ func TestFunctionMultiReturn(t *testing.T) {
 	}
 }
 
+func TestFunctionWithEffects(t *testing.T) {
+	row := effect.Empty.With(control.IO{}, control.Throw{})
+	f := Func().
+		Param("path", String).
+		Returns(Boolean).
+		Effects(row).
+		Build()
+
+	if !f.Effect.Equals(row) {
+		t.Fatalf("effect = %v, want %v", f.Effect, row)
+	}
+	if f.String() != "fun(path: string) -> boolean ! {io, throw}" {
+		t.Fatalf("String: got %q", f.String())
+	}
+}
+
 func TestFunctionEquality(t *testing.T) {
 	f1 := Func().Param("x", Number).Returns(Boolean).Build()
 	f2 := Func().Param("y", Number).Returns(Boolean).Build()
@@ -124,6 +142,33 @@ func TestFunctionEquality(t *testing.T) {
 
 	if f1.Equals(f4) {
 		t.Error("functions with different return types should not be equal")
+	}
+}
+
+func TestFunctionEqualityEffects(t *testing.T) {
+	ioThrow := effect.Empty.With(control.IO{}, control.Throw{})
+	throwIO := effect.Empty.With(control.Throw{}, control.IO{})
+	ioOnly := effect.Empty.With(control.IO{})
+
+	f1 := Func().Param("x", Number).Effects(ioThrow).Build()
+	f2 := Func().Param("x", Number).Effects(throwIO).Build()
+	f3 := Func().Param("x", Number).Effects(ioOnly).Build()
+	pure := Func().Param("x", Number).Build()
+
+	if !f1.Equals(f2) {
+		t.Fatal("effect label order should not affect function equality")
+	}
+	if f1.Hash() != f2.Hash() {
+		t.Fatal("effect label order should not affect function hash")
+	}
+	if f1.Equals(f3) {
+		t.Fatal("different effect rows should not be equal")
+	}
+	if f1.Hash() == f3.Hash() {
+		t.Fatal("different effect rows should affect function hash")
+	}
+	if f1.Equals(pure) {
+		t.Fatal("effectful and pure function types should differ")
 	}
 }
 

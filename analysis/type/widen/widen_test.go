@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"testing"
 
+	"github.com/wippyai/go-lua/analysis/domain/effect"
+	"github.com/wippyai/go-lua/analysis/domain/effect/control"
 	"github.com/wippyai/go-lua/analysis/type/kind"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
@@ -302,6 +304,7 @@ func TestWidenForInferenceUnchangedContainers(t *testing.T) {
 }
 
 func TestWidenForInferenceFunctionNestedLiterals(t *testing.T) {
+	row := effect.Empty.With(control.IO{})
 	fn := typ.Func().
 		Param("x", typ.LiteralInt(7)).
 		OptParam("flag", typ.LiteralBool(true)).
@@ -311,6 +314,7 @@ func TestWidenForInferenceFunctionNestedLiterals(t *testing.T) {
 				Field("label", typ.LiteralString("ok")).
 				Build(),
 		).
+		Effects(row).
 		Build()
 
 	resultFn, ok := WidenForInference(fn).(*typ.Function)
@@ -334,6 +338,9 @@ func TestWidenForInferenceFunctionNestedLiterals(t *testing.T) {
 	field := retRec.GetField("label")
 	if field == nil || field.Type != typ.String {
 		t.Fatalf("expected widened record field String, got %v", field)
+	}
+	if !resultFn.Effect.Equals(row) {
+		t.Fatalf("effect = %v, want %v", resultFn.Effect, row)
 	}
 }
 

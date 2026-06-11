@@ -2,7 +2,11 @@ package effect
 
 import (
 	"fmt"
+	"reflect"
+	"sort"
 	"strings"
+
+	"github.com/wippyai/go-lua/analysis/internal/hash"
 )
 
 type Var struct {
@@ -39,6 +43,34 @@ func (r Row) IsOpen() bool {
 
 func (r Row) IsUnknown() bool {
 	return r.Tail != nil && r.Tail.Name == "?"
+}
+
+func (r Row) Clone() Row {
+	labels := make([]Label, len(r.Labels))
+	copy(labels, r.Labels)
+	if r.Tail == nil {
+		return Row{Labels: labels}
+	}
+	tail := *r.Tail
+	return Row{Labels: labels, Tail: &tail}
+}
+
+func (r Row) Hash() uint64 {
+	h := hash.FnvString("effect.Row")
+
+	labelKeys := make([]string, 0, len(r.Labels))
+	for _, label := range r.Labels {
+		labelKeys = append(labelKeys, labelIdentity(label))
+	}
+	sort.Strings(labelKeys)
+	for _, key := range labelKeys {
+		h = hash.MixHash(h, hash.FnvString(key))
+	}
+
+	if r.Tail != nil {
+		h = hash.MixHash(h, hash.FnvString("tail:"+r.Tail.Name))
+	}
+	return h
 }
 
 func (r Row) Has(check func(Label) bool) bool {
@@ -97,6 +129,10 @@ func (r Row) Equals(other any) bool {
 	return r.equalsRow(otherRow)
 }
 
+func (r Row) SubsetOf(other Row) bool {
+	return Subset(r, other)
+}
+
 func (r Row) equalsRow(other Row) bool {
 	if len(r.Labels) != len(other.Labels) {
 		return false
@@ -113,4 +149,15 @@ func (r Row) equalsRow(other Row) bool {
 		return false
 	}
 	return r.Tail.Name == other.Tail.Name
+}
+
+func labelIdentity(label Label) string {
+	if label == nil {
+		return "<nil>"
+	}
+	t := reflect.TypeOf(label)
+	if t.Kind() == reflect.Pointer {
+		t = t.Elem()
+	}
+	return t.PkgPath() + "." + t.Name() + "\x00" + label.String()
 }

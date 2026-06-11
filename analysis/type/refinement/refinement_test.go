@@ -3,6 +3,8 @@ package refinement
 import (
 	"testing"
 
+	"github.com/wippyai/go-lua/analysis/domain/effect"
+	"github.com/wippyai/go-lua/analysis/domain/effect/control"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
@@ -173,9 +175,11 @@ func TestRefineWithFallbackKeepsConcreteArrayElementOverEmptyFallback(t *testing
 
 func TestRefineWithFallbackRepairsFunctionReturnDespiteParamShapeMismatch(t *testing.T) {
 	tp := typ.NewTypeParam("T", nil)
+	row := effect.Empty.With(control.IO{})
 	summary := typ.Func().
 		OptParam("self", typ.Any).
 		Returns(tp).
+		Effects(row).
 		Build()
 	fallback := typ.Func().
 		Param("self", typ.NewRecord().Field("value", typ.String).Build()).
@@ -195,6 +199,9 @@ func TestRefineWithFallbackRepairsFunctionReturnDespiteParamShapeMismatch(t *tes
 	}
 	if len(fn.Returns) != 1 || !typ.TypeEquals(fn.Returns[0], typ.String) {
 		t.Fatalf("returns = %#v, want string", fn.Returns)
+	}
+	if !fn.Effect.Equals(row) {
+		t.Fatalf("effect = %v, want %v", fn.Effect, row)
 	}
 }
 

@@ -5,6 +5,12 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/wippyai/go-lua/analysis/domain/constraint/expr"
+	"github.com/wippyai/go-lua/analysis/domain/effect"
+	"github.com/wippyai/go-lua/analysis/domain/effect/control"
+	"github.com/wippyai/go-lua/analysis/domain/effect/mutation"
+	"github.com/wippyai/go-lua/analysis/domain/effect/ownership"
+	"github.com/wippyai/go-lua/analysis/domain/effect/returns"
 	"github.com/wippyai/go-lua/analysis/type/annotation"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
@@ -78,6 +84,46 @@ func TestManifestRoundTrip(t *testing.T) {
 	}
 	if !typ.TypeEquals(got.Export, m.Export) {
 		t.Fatalf("export = %v, want %v", got.Export, m.Export)
+	}
+}
+
+func TestManifestRoundTripFunctionEffects(t *testing.T) {
+	row := effect.Open("rho",
+		control.IO{},
+		ownership.Store{Param: effect.ParamRef{Index: 0}, Into: effect.ParamRef{Index: 1}},
+		mutation.LengthChange{Target: effect.ParamRef{Index: 1}, Delta: -1},
+		returns.Return{ReturnIndex: 0, Transform: returns.ElementOf{Source: effect.ParamRef{Index: 1}}},
+		returns.ReturnLength{ReturnIndex: 0, Length: expr.Add(expr.PL(1), expr.C(1))},
+	)
+	export := typ.Func().
+		Param("input", typ.String).
+		Param("out", typ.NewArray(typ.String)).
+		Returns(typ.String).
+		Effects(row).
+		Build()
+	m := New("example/effects")
+	m.SetExport(export)
+
+	data, err := Encode(m)
+	if err != nil {
+		t.Fatalf("Encode: %v", err)
+	}
+	if !strings.Contains(string(data), `"effect"`) {
+		t.Fatalf("encoded manifest missing effect row:\n%s", data)
+	}
+	got, err := Decode(data)
+	if err != nil {
+		t.Fatalf("Decode: %v", err)
+	}
+	gotFn, ok := got.Export.(*typ.Function)
+	if !ok {
+		t.Fatalf("export = %T, want function", got.Export)
+	}
+	if !gotFn.Effect.Equals(row) {
+		t.Fatalf("effect = %v, want %v", gotFn.Effect, row)
+	}
+	if !typ.TypeEquals(got.Export, export) {
+		t.Fatalf("export = %v, want %v", got.Export, export)
 	}
 }
 

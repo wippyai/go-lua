@@ -163,6 +163,35 @@ func TestRowEquals(t *testing.T) {
 	}
 }
 
+func TestRowHashIgnoresLabelOrder(t *testing.T) {
+	a := testLabel{name: "a"}
+	b := testLabel{name: "b"}
+	left := Row{Labels: []Label{a, b}}
+	right := Row{Labels: []Label{b, a}}
+
+	if !left.Equals(right) {
+		t.Fatal("test setup expected equal rows")
+	}
+	if left.Hash() != right.Hash() {
+		t.Fatalf("equal rows should have equal hashes: %d != %d", left.Hash(), right.Hash())
+	}
+}
+
+func TestRowCloneCopiesTailAndLabels(t *testing.T) {
+	a := testLabel{name: "a"}
+	row := Open("rho", a)
+	clone := row.Clone()
+
+	if !row.Equals(clone) {
+		t.Fatalf("clone = %v, want %v", clone, row)
+	}
+	clone.Labels[0] = testLabel{name: "b"}
+	clone.Tail.Name = "sigma"
+	if row.Labels[0].String() != "a" || row.Tail.Name != "rho" {
+		t.Fatalf("clone mutation changed source row: %v", row)
+	}
+}
+
 func TestReads(t *testing.T) {
 	r := Empty
 	if !r.Pure() {
