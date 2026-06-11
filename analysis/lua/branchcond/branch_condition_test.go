@@ -21,6 +21,14 @@ func stringLit(value string) *ast.StringExpr {
 	return &ast.StringExpr{Value: value}
 }
 
+func primitiveType(name string) *ast.PrimitiveTypeExpr {
+	return &ast.PrimitiveTypeExpr{Name: name}
+}
+
+func cast(expr ast.Expr, typeName string, syntax ast.CastSyntax) *ast.CastExpr {
+	return &ast.CastExpr{Expr: expr, Type: primitiveType(typeName), Syntax: syntax}
+}
+
 func dot(obj ast.Expr, name string) *ast.AttrGetExpr {
 	return &ast.AttrGetExpr{
 		Object:    obj,
@@ -173,6 +181,62 @@ func TestNormalizeTypeComparisons(t *testing.T) {
 			bindings := bindReturn(expr, "type")
 			wantPath := path.NewPath(mustIdentSymbol(t, bindings, root), "obj").Field("kind")
 			assertCheck(t, Normalize(expr, bindings), tt.wantKind, wantPath, tt.typeName)
+		})
+	}
+}
+
+func TestNormalizeAssertionWrappedPathsDoesNotResolve(t *testing.T) {
+	tests := []struct {
+		name    string
+		expr    func(*ast.IdentExpr) ast.Expr
+		globals []string
+	}{
+		{
+			name: "as cast truthy",
+			expr: func(root *ast.IdentExpr) ast.Expr {
+				return cast(root, "number", ast.CastSyntaxAs)
+			},
+		},
+		{
+			name: "colon cast truthy",
+			expr: func(root *ast.IdentExpr) ast.Expr {
+				return cast(root, "any", ast.CastSyntaxColonColon)
+			},
+		},
+		{
+			name: "not as cast",
+			expr: func(root *ast.IdentExpr) ast.Expr {
+				return &ast.UnaryNotOpExpr{Expr: cast(root, "number", ast.CastSyntaxAs)}
+			},
+		},
+		{
+			name: "colon cast equal nil",
+			expr: func(root *ast.IdentExpr) ast.Expr {
+				return &ast.RelationalOpExpr{
+					Operator: "==",
+					Lhs:      cast(root, "string", ast.CastSyntaxColonColon),
+					Rhs:      &ast.NilExpr{},
+				}
+			},
+		},
+		{
+			name: "type of as cast equal table",
+			expr: func(root *ast.IdentExpr) ast.Expr {
+				return &ast.RelationalOpExpr{
+					Operator: "==",
+					Lhs:      typeCall(cast(root, "table", ast.CastSyntaxAs)),
+					Rhs:      stringLit("table"),
+				}
+			},
+			globals: []string{"type"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			root := ident("x")
+			expr := tt.expr(root)
+			assertCheckNone(t, Normalize(expr, bindReturn(expr, tt.globals...)))
 		})
 	}
 }

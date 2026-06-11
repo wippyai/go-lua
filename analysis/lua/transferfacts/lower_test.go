@@ -21,6 +21,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/lua/semantics"
 	"github.com/wippyai/go-lua/analysis/symbol"
 	"github.com/wippyai/go-lua/compiler/ast"
+	"github.com/wippyai/go-lua/compiler/parse"
 )
 
 func TestLowerAssignmentsReturnsAndCallsPreserveValueListMetadata(t *testing.T) {
@@ -612,6 +613,176 @@ func TestLowerAssertionsPreserveCastSyntaxVariantsWithoutProofRefinements(t *tes
 	}
 }
 
+func TestLowerParsedCastAssertionsOnlyProduceClaimOverlays(t *testing.T) {
+	stmts, _, built, result := parseSemanticChunk(t, `
+local x = 0
+local a, b, c, d = x as number, x :: number, x as any, x :: any
+`)
+
+	facts := Lower(result, built.Graph)
+	assertNoCompilerASTTypes(t, reflect.TypeOf(facts))
+
+	local := mustLocalStmt(t, stmts, 1)
+	points := requireStmtPoints(t, built, local, 4)
+	cases := []struct {
+		name  string
+		point cfg.Point
+		want  assertion.Value
+	}{
+		{name: "as number", point: points[0], want: assertion.Type()},
+		{name: "colon number", point: points[1], want: assertion.Type()},
+		{name: "as any", point: points[2], want: assertion.Any()},
+		{name: "colon any", point: points[3], want: assertion.Any()},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			source := mustLocalSource(t, facts, tc.point)
+			assertLoweredAssertion(t, facts, source, tc.want, transfer.ValueSourceExpression)
+		})
+	}
+	for _, point := range built.Graph.RPO() {
+		if _, ok := facts.BranchRefinement(point); ok {
+			t.Fatalf("parsed source cast emitted branch refinement at point %d", point)
+		}
+	}
+}
+
+func TestLowerAssertionConditionsDoNotCreateBranchRefinements(t *testing.T) {
+	stmts, _, built, result := parseSemanticChunk(t, `
+local x = 0
+if x as number then end
+if x :: number then end
+`)
+
+	facts := Lower(result, built.Graph)
+	cases := []struct {
+		name   string
+		index  int
+		syntax ast.CastSyntax
+	}{
+		{name: "as condition", index: 1, syntax: ast.CastSyntaxAs},
+		{name: "colon condition", index: 2, syntax: ast.CastSyntaxColonColon},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			stmt := mustIfStmt(t, stmts, tc.index)
+			point := requireStmtPoints(t, built, stmt, 1)[0]
+			if _, ok := facts.BranchRefinement(point); ok {
+				t.Fatalf("%s emitted branch refinement at point %d", tc.name, point)
+			}
+
+			branch, ok := result.BranchCondition(point)
+			if !ok {
+				t.Fatalf("missing branch condition at point %d", point)
+			}
+			cast, ok := branch.Source.Expr.(*ast.CastExpr)
+			if !ok {
+				t.Fatalf("branch source expr = %T, want *ast.CastExpr", branch.Source.Expr)
+			}
+			if cast.Syntax != tc.syntax {
+				t.Fatalf("cast syntax = %v, want %v", cast.Syntax, tc.syntax)
+			}
+
+			branchLowerer := lowerer{exprs: make(map[any]transfer.ExprRef)}
+			branchInput := transfer.FactsInput{ValueOverlays: make(map[transfer.ExprRef]transfer.ValueOverlay)}
+			branchLowerer.addAssertionOverlaysForSource(&branchInput, branch.Source)
+			branchFacts := transfer.NewFacts(branchInput)
+			branchSource := branchLowerer.valueSource(branch.Source)
+			assertLoweredAssertion(t, branchFacts, branchSource, assertion.Type(), transfer.ValueSourceExpression)
+		})
+	}
+}
+
+func TestLowerParsedAnyAssertionCastsDoNotEraseRuntimeAxes(t *testing.T) {
+	stmts, _, built, result := parseSemanticChunk(t, `
+local x = 0
+local a, b = x as any, x :: any
+`)
+
+	reg := product.DefaultRegistry()
+	facts := Lower(result, built.Graph)
+	local := mustLocalStmt(t, stmts, 1)
+	points := requireStmtPoints(t, built, local, 2)
+	base := product.Set(reg, product.NewWithPresence(reg, product.ShapeTop, presence.Present()), runtimekind.Key, runtimekind.Singleton(runtimekind.Table))
+	inputValues := make(map[transfer.ExprRef]product.Value)
+	for _, point := range points {
+		source := mustLocalSource(t, facts, point)
+		overlay, ok := facts.ValueOverlay(source.ExprRef)
+		if !ok {
+			t.Fatalf("missing any assertion overlay for source ref %d", source.ExprRef)
+		}
+		assertAssertionOnlyProduct(t, overlay.Overlay(), assertion.Any())
+		inputValues[overlay.Source().ExprRef] = base
+	}
+
+	apply := transfer.NewFactsNodeTransfer(transfer.FactsNodeTransferConfig{
+		Facts: facts,
+		Sources: transfer.NewSourceValues(transfer.SourceValuesConfig{
+			Registry:         reg,
+			ExpressionValues: inputValues,
+		}),
+	})
+	for _, point := range points {
+		out := apply(transfer.NodeContext{Registry: reg, Point: point}, state.State{})
+		fact, ok := facts.LocalAssignment(point)
+		if !ok {
+			t.Fatalf("missing local assignment at point %d", point)
+		}
+		assigned := out.ReadValue(reg, key.SymbolValue(fact.TargetSymbol()))
+		want := product.Set(reg, base, assertion.Key, assertion.Any())
+		if !product.Equal(reg, assigned, want) {
+			t.Fatalf("assigned value changed axes other than assertion.Any at point %d", point)
+		}
+		if got := product.Get(reg, assigned, assertion.Key); !assertion.Equal(got, assertion.Any()) {
+			t.Fatalf("assigned assertion = %s, want any", got)
+		}
+		if got := product.PresenceOf(assigned); !presence.Equal(got, presence.Present()) {
+			t.Fatalf("assigned presence = %s, want present", got)
+		}
+		if got := product.Get(reg, assigned, runtimekind.Key); !runtimekind.Equal(got, runtimekind.Singleton(runtimekind.Table)) {
+			t.Fatalf("assigned runtime kind = %s, want table", got)
+		}
+		if got := product.Get(reg, assigned, evidence.Key); !evidence.Equal(got, evidence.Top()) {
+			t.Fatalf("assigned evidence = %s, want top", got)
+		}
+	}
+}
+
+func TestExtractedCastValueSourcesPreserveParsedSyntax(t *testing.T) {
+	stmts, _, built, result := parseSemanticChunk(t, `
+local x = 0
+local a, b = x as number, x :: any
+`)
+
+	local := mustLocalStmt(t, stmts, 1)
+	points := requireStmtPoints(t, built, local, 2)
+	cases := []struct {
+		name   string
+		point  cfg.Point
+		syntax ast.CastSyntax
+	}{
+		{name: "as", point: points[0], syntax: ast.CastSyntaxAs},
+		{name: "colon", point: points[1], syntax: ast.CastSyntaxColonColon},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			fact, ok := result.LocalAssignment(tc.point)
+			if !ok {
+				t.Fatalf("missing local assignment at point %d", tc.point)
+			}
+			cast, ok := fact.Source.Expr.(*ast.CastExpr)
+			if !ok {
+				t.Fatalf("semantic source expr = %T, want *ast.CastExpr", fact.Source.Expr)
+			}
+			if cast.Syntax != tc.syntax {
+				t.Fatalf("cast syntax = %v, want %v", cast.Syntax, tc.syntax)
+			}
+		})
+	}
+}
+
 func TestLowerNestedAssertionsPreserveOuterIdentityAndInnerFlow(t *testing.T) {
 	decl := localAssign([]string{"x"}, number("0"))
 	read := ident("x")
@@ -934,9 +1105,7 @@ func assertLoweredAssertion(t *testing.T, facts transfer.Facts, source transfer.
 	if !ok {
 		t.Fatalf("missing assertion for source ref %d", source.ExprRef)
 	}
-	if got := overlayAssertion(t, claim); !assertion.Equal(got, want) {
-		t.Fatalf("assertion value = %s, want %s", got, want)
-	}
+	assertAssertionOnlyProduct(t, claim.Overlay(), want)
 	inner := claim.Source()
 	if inner.ExprRef == 0 || inner.ExprRef == source.ExprRef || inner.Kind != wantInnerKind {
 		t.Fatalf("assertion inner source = %#v, outer %#v", inner, source)
@@ -946,6 +1115,29 @@ func assertLoweredAssertion(t *testing.T, facts transfer.Facts, source transfer.
 func overlayAssertion(t *testing.T, overlay transfer.ValueOverlay) assertion.Value {
 	t.Helper()
 	return product.Get(product.DefaultRegistry(), overlay.Overlay(), assertion.Key)
+}
+
+func assertAssertionOnlyProduct(t *testing.T, value product.Value, want assertion.Value) {
+	t.Helper()
+	reg := product.DefaultRegistry()
+	if got := product.Get(reg, value, assertion.Key); !assertion.Equal(got, want) {
+		t.Fatalf("assertion value = %s, want %s", got, want)
+	}
+	if got := product.ShapeOf(value); got != product.ShapeTop {
+		t.Fatalf("assertion overlay shape = %s, want top", got)
+	}
+	if got := product.PresenceOf(value); !presence.Equal(got, presence.Top()) {
+		t.Fatalf("assertion overlay presence = %s, want top", got)
+	}
+	if got := product.Get(reg, value, runtimekind.Key); !runtimekind.Equal(got, runtimekind.Top()) {
+		t.Fatalf("assertion overlay runtime kind = %s, want top", got)
+	}
+	if got := product.Get(reg, value, evidence.Key); !evidence.Equal(got, evidence.Top()) {
+		t.Fatalf("assertion overlay evidence = %s, want top", got)
+	}
+	if !product.Equal(reg, value, assertionOverlay(want)) {
+		t.Fatalf("assertion overlay carried non-assertion axes")
+	}
 }
 
 func assertLoweredBranchValuePresence(
@@ -1132,6 +1324,48 @@ func localAssign(names []string, exprs ...ast.Expr) *ast.LocalAssignStmt {
 
 func assign(lhs []ast.Expr, rhs ...ast.Expr) *ast.AssignStmt {
 	return &ast.AssignStmt{Lhs: lhs, Rhs: rhs}
+}
+
+func parseSemanticChunk(t *testing.T, source string, globals ...string) ([]ast.Stmt, *bind.Result, *cfgbuild.Result, *semantics.Result) {
+	t.Helper()
+	stmts, err := parse.ParseString(source, "transferfacts_test.lua")
+	if err != nil {
+		t.Fatalf("ParseString: %v", err)
+	}
+	bindings := bind.BindChunk(stmts, bind.Options{Globals: globals})
+	built := cfgbuild.BuildChunk(stmts, bindings)
+	if built == nil {
+		t.Fatalf("BuildChunk returned nil")
+	}
+	result, err := semantics.ExtractChunk(stmts, bindings, built)
+	if err != nil {
+		t.Fatalf("ExtractChunk: %v", err)
+	}
+	return stmts, bindings, built, result
+}
+
+func mustLocalStmt(t *testing.T, stmts []ast.Stmt, index int) *ast.LocalAssignStmt {
+	t.Helper()
+	if index < 0 || index >= len(stmts) {
+		t.Fatalf("statement index %d out of range for %d statements", index, len(stmts))
+	}
+	stmt, ok := stmts[index].(*ast.LocalAssignStmt)
+	if !ok {
+		t.Fatalf("statement %d = %T, want *ast.LocalAssignStmt", index, stmts[index])
+	}
+	return stmt
+}
+
+func mustIfStmt(t *testing.T, stmts []ast.Stmt, index int) *ast.IfStmt {
+	t.Helper()
+	if index < 0 || index >= len(stmts) {
+		t.Fatalf("statement index %d out of range for %d statements", index, len(stmts))
+	}
+	stmt, ok := stmts[index].(*ast.IfStmt)
+	if !ok {
+		t.Fatalf("statement %d = %T, want *ast.IfStmt", index, stmts[index])
+	}
+	return stmt
 }
 
 func mustLocalAt(t *testing.T, bindings *bind.Result, stmt *ast.LocalAssignStmt, index int) symbol.ID {
