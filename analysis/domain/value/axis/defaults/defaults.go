@@ -6,6 +6,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/evidence"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/ownership"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/runtimekind"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/variantorigin"
 )
 
@@ -15,6 +16,7 @@ func SparseSpecs() []axis.ErasedSpec {
 	return []axis.ErasedSpec{
 		variantorigin.Spec().Erase(),
 		identity.Spec().Erase(),
+		runtimekind.Spec().Erase(),
 		escape.Spec().Erase(),
 		ownership.Spec().Erase(),
 		evidence.Spec().Erase(),

@@ -12,6 +12,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/identity"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/ownership"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/runtimekind"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/variantorigin"
 	latticelaws "github.com/wippyai/go-lua/analysis/test/laws/lattice"
 )
@@ -109,6 +110,29 @@ func TestExplicitTopSparseSlotNormalizesToOmission(t *testing.T) {
 	setTop := Set(reg, top, escape.Key, escape.Top())
 	if !Equal(reg, setTop, top) || Hash(reg, setTop) != Hash(reg, top) {
 		t.Fatalf("Set(top axis) did not preserve omitted-slot canonical form")
+	}
+}
+
+func TestDefaultRegistryRuntimeKindStoresAndSparsifiesTop(t *testing.T) {
+	reg := DefaultRegistry()
+	tableKind := runtimekind.Singleton(runtimekind.Table)
+
+	v := Set(reg, Top(), runtimekind.Key, tableKind)
+	if got := Get(reg, v, runtimekind.Key); !runtimekind.Equal(got, tableKind) {
+		t.Fatalf("runtimekind value = %s, want %s", got, tableKind)
+	}
+	if _, ok := lookupSlot(v, runtimekind.Key.ID()); !ok {
+		t.Fatalf("runtimekind singleton should be stored as a sparse slot")
+	}
+
+	setTop := Set(reg, v, runtimekind.Key, runtimekind.Top())
+	if !Equal(reg, setTop, Top()) {
+		t.Fatalf("setting runtimekind top should sparsify to product top, got %s", formatValue(setTop))
+	}
+
+	explicitTop := intern(reg, ShapeTop, presence.Top(), []slot{{key: runtimekind.Key.ID(), value: runtimekind.Top()}})
+	if !Equal(reg, explicitTop, Top()) || Hash(reg, explicitTop) != Hash(reg, Top()) {
+		t.Fatalf("explicit runtimekind top slot should canonicalize to omission")
 	}
 }
 
@@ -331,8 +355,10 @@ func defaultProductSample(reg *axis.Registry, bottom, top Value) []Value {
 	gradual := Set(reg, top, evidence.Key, evidence.GradualTop())
 	variant := Set(reg, top, variantorigin.Key, variantorigin.Singleton(7, 1))
 	ident := Set(reg, top, identity.Key, identity.Singleton(identity.ID{Kind: "alloc", Site: "sample", Index: 1}))
+	tableKind := Set(reg, top, runtimekind.Key, runtimekind.Singleton(runtimekind.Table))
 	combo := Set(reg, present, escape.Key, escape.Fresh())
 	combo = Set(reg, combo, evidence.Key, evidence.GradualTop())
+	combo = Set(reg, combo, runtimekind.Key, runtimekind.Singleton(runtimekind.Function))
 	presenceBottom := WithPresence(reg, top, presence.Bottom())
 
 	return []Value{
@@ -345,6 +371,7 @@ func defaultProductSample(reg *axis.Registry, bottom, top Value) []Value {
 		gradual,
 		variant,
 		ident,
+		tableKind,
 		combo,
 		presenceBottom,
 	}

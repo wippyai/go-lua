@@ -13,6 +13,7 @@ func TestSparseSpecsStableAndExcludePresence(t *testing.T) {
 	want := []string{
 		"variantorigin",
 		"identity",
+		"runtimekind",
 		"escape",
 		"ownership",
 		"evidence",

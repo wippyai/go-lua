@@ -9,6 +9,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/evidence"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/ownership"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
+	"github.com/wippyai/go-lua/analysis/domain/value/axis/runtimekind"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/variantorigin"
 	latticelaws "github.com/wippyai/go-lua/analysis/test/laws/lattice"
 )
@@ -31,6 +32,22 @@ func TestFiniteAxisSpecsLaws(t *testing.T) {
 			variantorigin.Of(7, []int{0, 1}),
 			variantorigin.Singleton(8, 0),
 			variantorigin.Top(),
+		})
+	})
+
+	t.Run("runtimekind", func(t *testing.T) {
+		numberOrString := runtimekind.Join(
+			runtimekind.Singleton(runtimekind.Number),
+			runtimekind.Singleton(runtimekind.String),
+		)
+		runAxisLaws(t, "runtimekind", runtimekind.Spec(), []runtimekind.Value{
+			runtimekind.Bottom(),
+			runtimekind.Singleton(runtimekind.Nil),
+			runtimekind.Singleton(runtimekind.Number),
+			runtimekind.Singleton(runtimekind.String),
+			numberOrString,
+			runtimekind.Top().Without(runtimekind.Table),
+			runtimekind.Top(),
 		})
 	})
 
