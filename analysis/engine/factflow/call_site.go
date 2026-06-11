@@ -1,0 +1,173 @@
+package factflow
+
+import (
+	"github.com/wippyai/go-lua/analysis/domain/path"
+	"github.com/wippyai/go-lua/analysis/ir/cfg"
+	"github.com/wippyai/go-lua/analysis/symbol"
+)
+
+// CallSiteContext identifies the semantic context in which a call appears.
+type CallSiteContext uint8
+
+const (
+	CallSiteContextUnknown CallSiteContext = iota
+	CallSiteContextStatement
+	CallSiteContextAssignmentSource
+	CallSiteContextReturnSource
+	CallSiteContextIteratorSource
+	CallSiteContextCondition
+)
+
+// CallSiteConfig carries constructor input for CallSite.
+type CallSiteConfig struct {
+	Context CallSiteContext
+
+	CalleeSymbol symbol.ID
+	CalleePath   path.Path
+
+	ReceiverPath    path.Path
+	HasReceiverPath bool
+	MethodPath      path.Path
+	HasMethodPath   bool
+	MethodName      string
+
+	ExprRef ExprRef
+	HasExpr bool
+
+	ExprIndex int
+
+	ArgumentSources []ValueSource
+	TypeArgs        []TypeRef
+	ResultTargets   []CallResultTarget
+
+	Final    bool
+	Expanded bool
+	Adjusted bool
+	OpenTail bool
+}
+
+// CallSite describes a semantic call occurrence used as canonical evidence.
+type CallSite struct {
+	context CallSiteContext
+
+	calleeSymbol symbol.ID
+	calleePath   path.Path
+
+	receiverPath    path.Path
+	hasReceiverPath bool
+	methodPath      path.Path
+	hasMethodPath   bool
+	methodName      string
+
+	exprRef ExprRef
+	hasExpr bool
+
+	exprIndex int
+
+	argumentSources []ValueSource
+	typeArgs        []TypeRef
+	resultTargets   []CallResultTarget
+
+	final    bool
+	expanded bool
+	adjusted bool
+	openTail bool
+}
+
+// NewCallSite creates a call-site evidence fact.
+func NewCallSite(config CallSiteConfig) CallSite {
+	return CallSite{
+		context:         config.Context,
+		calleeSymbol:    config.CalleeSymbol,
+		calleePath:      copyPath(config.CalleePath),
+		receiverPath:    copyPath(config.ReceiverPath),
+		hasReceiverPath: config.HasReceiverPath,
+		methodPath:      copyPath(config.MethodPath),
+		hasMethodPath:   config.HasMethodPath,
+		methodName:      config.MethodName,
+		exprRef:         config.ExprRef,
+		hasExpr:         config.HasExpr,
+		exprIndex:       config.ExprIndex,
+		argumentSources: copyValueSources(config.ArgumentSources),
+		typeArgs:        copyTypeRefs(config.TypeArgs),
+		resultTargets:   copyCallResultTargets(config.ResultTargets),
+		final:           config.Final,
+		expanded:        config.Expanded,
+		adjusted:        config.Adjusted,
+		openTail:        config.OpenTail,
+	}
+}
+
+// Context returns the call site's semantic context.
+func (c CallSite) Context() CallSiteContext { return c.context }
+
+// CalleeSymbol returns the callee's symbol identity.
+func (c CallSite) CalleeSymbol() symbol.ID { return c.calleeSymbol }
+
+// CalleePath returns the callee's path identity.
+func (c CallSite) CalleePath() path.Path { return copyPath(c.calleePath) }
+
+// ReceiverPath returns the receiver path identity, if one was resolved.
+func (c CallSite) ReceiverPath() (path.Path, bool) {
+	return copyPath(c.receiverPath), c.hasReceiverPath
+}
+
+// MethodPath returns the receiver-method path identity, if one was resolved.
+func (c CallSite) MethodPath() (path.Path, bool) {
+	return copyPath(c.methodPath), c.hasMethodPath
+}
+
+// MethodName returns the method name carried by receiver-call syntax.
+func (c CallSite) MethodName() string { return c.methodName }
+
+// Expr returns the call expression reference, if present.
+func (c CallSite) Expr() (ExprRef, bool) { return c.exprRef, c.hasExpr }
+
+// ExprIndex returns the expression's index in its containing value list.
+func (c CallSite) ExprIndex() int { return c.exprIndex }
+
+// ArgumentSources returns the ordered argument value sources.
+func (c CallSite) ArgumentSources() []ValueSource {
+	return copyValueSources(c.argumentSources)
+}
+
+// TypeArgs returns the ordered explicit type argument identities.
+func (c CallSite) TypeArgs() []TypeRef { return copyTypeRefs(c.typeArgs) }
+
+// ResultTargets returns the targets that consume this call's results.
+func (c CallSite) ResultTargets() []CallResultTarget {
+	return copyCallResultTargets(c.resultTargets)
+}
+
+// Final reports whether this call is the final value-list expression.
+func (c CallSite) Final() bool { return c.final }
+
+// Expanded reports whether this call contributes multiple result slots.
+func (c CallSite) Expanded() bool { return c.expanded }
+
+// Adjusted reports whether this call is adjusted to one result.
+func (c CallSite) Adjusted() bool { return c.adjusted }
+
+// OpenTail reports whether this call is an open tail return.
+func (c CallSite) OpenTail() bool { return c.openTail }
+
+func (c CallSite) copy() CallSite {
+	c.calleePath = copyPath(c.calleePath)
+	c.receiverPath = copyPath(c.receiverPath)
+	c.methodPath = copyPath(c.methodPath)
+	c.argumentSources = copyValueSources(c.argumentSources)
+	c.typeArgs = copyTypeRefs(c.typeArgs)
+	c.resultTargets = copyCallResultTargets(c.resultTargets)
+	return c
+}
+
+func copyCallSiteMap(in map[cfg.Point]CallSite) map[cfg.Point]CallSite {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make(map[cfg.Point]CallSite, len(in))
+	for point, fact := range in {
+		out[point] = fact.copy()
+	}
+	return out
+}
