@@ -77,6 +77,70 @@ func TestWritesAreImmutable(t *testing.T) {
 	}
 }
 
+func TestUpdateHelpersReadCurrentAndCanonicalizeBottom(t *testing.T) {
+	reg := product.DefaultRegistry()
+	valueDomain := product.Domain(reg)
+	stateDomain := Domain(reg)
+	slot := key.SymbolValue(symbol.ID(12))
+	retSlot := 0
+	pathKey := pathdom.PathKey("sym12@1.field")
+	present := presentValue(reg)
+	absent := absentValue(reg)
+	bottom := valueDomain.Bottom()
+
+	s1 := State{}.
+		WriteValue(reg, slot, present).
+		WriteReturnSlot(reg, retSlot, present).
+		WritePathKey(reg, pathKey, present)
+	s2 := s1.
+		UpdateValue(reg, slot, func(got product.Value) product.Value {
+			if !valueDomain.Equal(got, present) {
+				t.Fatalf("UpdateValue read %s, want present", formatValue(reg, got))
+			}
+			return bottom
+		}).
+		UpdateReturnSlot(reg, retSlot, func(got product.Value) product.Value {
+			if !valueDomain.Equal(got, present) {
+				t.Fatalf("UpdateReturnSlot read %s, want present", formatValue(reg, got))
+			}
+			return absent
+		}).
+		UpdatePathKey(reg, pathKey, func(got product.Value) product.Value {
+			if !valueDomain.Equal(got, present) {
+				t.Fatalf("UpdatePathKey read %s, want present", formatValue(reg, got))
+			}
+			return bottom
+		})
+
+	if got := s1.ReadValue(reg, slot); !valueDomain.Equal(got, present) {
+		t.Fatalf("original value slot changed to %s", formatValue(reg, got))
+	}
+	if got := s1.ReadReturnSlot(reg, retSlot); !valueDomain.Equal(got, present) {
+		t.Fatalf("original return slot changed to %s", formatValue(reg, got))
+	}
+	if got := s1.ReadPathKey(reg, pathKey); !valueDomain.Equal(got, present) {
+		t.Fatalf("original path key changed to %s", formatValue(reg, got))
+	}
+	if got := s2.ReadValue(reg, slot); !valueDomain.Equal(got, bottom) {
+		t.Fatalf("updated value slot = %s, want bottom", formatValue(reg, got))
+	}
+	if got := s2.ReadReturnSlot(reg, retSlot); !valueDomain.Equal(got, absent) {
+		t.Fatalf("updated return slot = %s, want absent", formatValue(reg, got))
+	}
+	if got := s2.ReadPathKey(reg, pathKey); !valueDomain.Equal(got, bottom) {
+		t.Fatalf("updated path key = %s, want bottom", formatValue(reg, got))
+	}
+	if _, ok := s2.values[slot]; ok {
+		t.Fatalf("UpdateValue to bottom kept finite value entry")
+	}
+	if _, ok := s2.paths[pathKey]; ok {
+		t.Fatalf("UpdatePathKey to bottom kept finite path entry")
+	}
+	if !stateDomain.Equal(State{}.WriteReturnSlot(reg, retSlot, absent), State{}.WriteValue(reg, key.ReturnSlot(retSlot), absent)) {
+		t.Fatalf("return-slot helper does not use key.ReturnSlot spelling")
+	}
+}
+
 func TestDomainPointwiseOperations(t *testing.T) {
 	reg := product.DefaultRegistry()
 	valueDomain := product.Domain(reg)
@@ -203,6 +267,219 @@ func TestResolverBackedPathHelpersUseVersionedKeys(t *testing.T) {
 	}
 }
 
+func TestUpdatePathAtUsesResolvedKeyAndSkipsUnresolvedPath(t *testing.T) {
+	reg := product.DefaultRegistry()
+	valueDomain := product.Domain(reg)
+	point := cfg.Point(8)
+	sym := symbol.ID(31)
+	resolver := key.NewResolver(fakeVersionedGraph{
+		versions: map[cfg.Point]map[symbol.ID]ssa.Version{
+			point: {
+				sym: {Root: "x", Symbol: sym, ID: 5},
+			},
+		},
+	})
+	path := pathdom.NewPath(sym, "x").Field("field")
+	pathKey := pathdom.PathKey("sym31@5.field")
+	present := presentValue(reg)
+	bottom := valueDomain.Bottom()
+
+	s := State{}.WritePathKey(reg, pathKey, present)
+	updated, ok := s.UpdatePathAt(reg, resolver, point, path, func(got product.Value) product.Value {
+		if !valueDomain.Equal(got, present) {
+			t.Fatalf("UpdatePathAt read %s, want present", formatValue(reg, got))
+		}
+		return bottom
+	})
+	if !ok {
+		t.Fatal("UpdatePathAt rejected visible version")
+	}
+	if got := updated.ReadPathKey(reg, pathKey); !valueDomain.Equal(got, bottom) {
+		t.Fatalf("updated resolved path = %s, want bottom", formatValue(reg, got))
+	}
+	if got := s.ReadPathKey(reg, pathKey); !valueDomain.Equal(got, present) {
+		t.Fatalf("original path changed to %s", formatValue(reg, got))
+	}
+
+	called := false
+	unchanged, ok := s.UpdatePathAt(reg, key.NewResolver(fakeVersionedGraph{}), point, path, func(product.Value) product.Value {
+		called = true
+		return absentValue(reg)
+	})
+	if ok {
+		t.Fatal("UpdatePathAt accepted missing visible version")
+	}
+	if called {
+		t.Fatal("UpdatePathAt called transform for unresolved path")
+	}
+	if !Domain(reg).Equal(unchanged, s) {
+		t.Fatalf("unresolved UpdatePathAt changed state")
+	}
+}
+
+func TestInvalidatePathKeySubtreeRemovesStructuredDescendants(t *testing.T) {
+	reg := product.DefaultRegistry()
+	valueDomain := product.Domain(reg)
+	present := presentValue(reg)
+	bottom := valueDomain.Bottom()
+	root := pathdom.PathKey("sym40@3")
+	prefix := pathdom.PathKey("sym40@3.field")
+	child := pathdom.PathKey("sym40@3.field.deep")
+	siblingPrefixCollision := pathdom.PathKey("sym40@3.fieldish")
+	otherVersion := pathdom.PathKey("sym40@4.field.deep")
+	otherSymbol := pathdom.PathKey("sym41@3.field.deep")
+	placeholderPrefix := pathdom.PathKey("$0.field")
+	placeholderChild := pathdom.PathKey("$0.field.deep")
+	placeholderSibling := pathdom.PathKey("$0.fieldish")
+
+	s := State{}.
+		WritePathKey(reg, root, present).
+		WritePathKey(reg, prefix, present).
+		WritePathKey(reg, child, present).
+		WritePathKey(reg, siblingPrefixCollision, present).
+		WritePathKey(reg, otherVersion, present).
+		WritePathKey(reg, otherSymbol, present).
+		WritePathKey(reg, placeholderPrefix, present).
+		WritePathKey(reg, placeholderChild, present).
+		WritePathKey(reg, placeholderSibling, present)
+
+	invalidPrefix, ok := s.InvalidatePathKeySubtree(pathdom.PathKey(".field"))
+	if ok {
+		t.Fatal("InvalidatePathKeySubtree accepted invalid path key")
+	}
+	if !Domain(reg).Equal(invalidPrefix, s) {
+		t.Fatal("invalid path-key prefix changed state")
+	}
+
+	out, ok := s.InvalidatePathKeySubtree(prefix)
+	if !ok {
+		t.Fatal("InvalidatePathKeySubtree rejected versioned prefix")
+	}
+	for _, removed := range []pathdom.PathKey{prefix, child} {
+		if got := out.ReadPathKey(reg, removed); !valueDomain.Equal(got, bottom) {
+			t.Fatalf("%s = %s, want bottom", removed, formatValue(reg, got))
+		}
+	}
+	for _, kept := range []pathdom.PathKey{root, siblingPrefixCollision, otherVersion, otherSymbol, placeholderPrefix, placeholderChild, placeholderSibling} {
+		if got := out.ReadPathKey(reg, kept); !valueDomain.Equal(got, present) {
+			t.Fatalf("%s = %s, want present", kept, formatValue(reg, got))
+		}
+	}
+	if got := s.ReadPathKey(reg, child); !valueDomain.Equal(got, present) {
+		t.Fatalf("original child changed to %s", formatValue(reg, got))
+	}
+
+	out, ok = out.InvalidatePathKeySubtree(placeholderPrefix)
+	if !ok {
+		t.Fatal("InvalidatePathKeySubtree rejected placeholder prefix")
+	}
+	for _, removed := range []pathdom.PathKey{placeholderPrefix, placeholderChild} {
+		if got := out.ReadPathKey(reg, removed); !valueDomain.Equal(got, bottom) {
+			t.Fatalf("%s = %s, want bottom", removed, formatValue(reg, got))
+		}
+	}
+	if got := out.ReadPathKey(reg, placeholderSibling); !valueDomain.Equal(got, present) {
+		t.Fatalf("%s = %s, want present", placeholderSibling, formatValue(reg, got))
+	}
+}
+
+func TestInvalidatePathSubtreeAtUsesResolvedKeyAndRejectsUnresolvedPath(t *testing.T) {
+	reg := product.DefaultRegistry()
+	valueDomain := product.Domain(reg)
+	point := cfg.Point(9)
+	sym := symbol.ID(42)
+	resolver := key.NewResolver(fakeVersionedGraph{
+		versions: map[cfg.Point]map[symbol.ID]ssa.Version{
+			point: {
+				sym: {Root: "obj", Symbol: sym, ID: 6},
+			},
+		},
+	})
+	path := pathdom.NewPath(sym, "obj").Field("field")
+	childKey := pathdom.PathKey("sym42@6.field.deep")
+	otherKey := pathdom.PathKey("sym42@7.field.deep")
+	present := presentValue(reg)
+	bottom := valueDomain.Bottom()
+	s := State{}.
+		WritePathKey(reg, childKey, present).
+		WritePathKey(reg, otherKey, present)
+
+	out, ok := s.InvalidatePathSubtreeAt(resolver, point, path)
+	if !ok {
+		t.Fatal("InvalidatePathSubtreeAt rejected visible version")
+	}
+	if got := out.ReadPathKey(reg, childKey); !valueDomain.Equal(got, bottom) {
+		t.Fatalf("resolved child = %s, want bottom", formatValue(reg, got))
+	}
+	if got := out.ReadPathKey(reg, otherKey); !valueDomain.Equal(got, present) {
+		t.Fatalf("other version = %s, want present", formatValue(reg, got))
+	}
+
+	unchanged, ok := s.InvalidatePathSubtreeAt(key.NewResolver(fakeVersionedGraph{}), point, path)
+	if ok {
+		t.Fatal("InvalidatePathSubtreeAt accepted missing visible version")
+	}
+	if !Domain(reg).Equal(unchanged, s) {
+		t.Fatal("unresolved InvalidatePathSubtreeAt changed state")
+	}
+}
+
+func TestTopLanesReadTopAndRejectFiniteUpdates(t *testing.T) {
+	reg := product.DefaultRegistry()
+	valueDomain := product.Domain(reg)
+	top := Domain(reg).Top()
+	slot := key.SymbolValue(symbol.ID(50))
+	pathKey := pathdom.PathKey("sym50@1.field")
+	present := presentValue(reg)
+
+	if got := top.ReadValue(reg, slot); !valueDomain.Equal(got, product.Top()) {
+		t.Fatalf("top value read = %s, want top", formatValue(reg, got))
+	}
+	if got := top.ReadReturnSlot(reg, 0); !valueDomain.Equal(got, product.Top()) {
+		t.Fatalf("top return read = %s, want top", formatValue(reg, got))
+	}
+	if got := top.ReadPathKey(reg, pathKey); !valueDomain.Equal(got, product.Top()) {
+		t.Fatalf("top path read = %s, want top", formatValue(reg, got))
+	}
+
+	requirePanic(t, func() {
+		top.WriteValue(reg, slot, present)
+	})
+	requirePanic(t, func() {
+		top.UpdateValue(reg, slot, func(v product.Value) product.Value {
+			if !valueDomain.Equal(v, product.Top()) {
+				t.Fatalf("UpdateValue on top read %s, want top", formatValue(reg, v))
+			}
+			return present
+		})
+	})
+	requirePanic(t, func() {
+		top.WriteReturnSlot(reg, 0, present)
+	})
+	requirePanic(t, func() {
+		top.UpdateReturnSlot(reg, 0, func(v product.Value) product.Value {
+			if !valueDomain.Equal(v, product.Top()) {
+				t.Fatalf("UpdateReturnSlot on top read %s, want top", formatValue(reg, v))
+			}
+			return present
+		})
+	})
+	requirePanic(t, func() {
+		top.WritePathKey(reg, pathKey, present)
+	})
+	requirePanic(t, func() {
+		top.UpdatePathKey(reg, pathKey, func(v product.Value) product.Value {
+			if !valueDomain.Equal(v, product.Top()) {
+				t.Fatalf("UpdatePathKey on top read %s, want top", formatValue(reg, v))
+			}
+			return present
+		})
+	})
+	requirePanic(t, func() {
+		top.InvalidatePathKeySubtree(pathKey)
+	})
+}
+
 func TestStatePackageDoesNotImportLuaPackages(t *testing.T) {
 	cmd := exec.Command("go", "list", "-deps", ".")
 	out, err := cmd.Output()
@@ -210,8 +487,11 @@ func TestStatePackageDoesNotImportLuaPackages(t *testing.T) {
 		t.Fatalf("go list -deps . failed: %v", err)
 	}
 	banned := []string{
+		"github.com/wippyai/go-lua/__old",
 		"github.com/wippyai/go-lua/analysis/lua",
 		"github.com/wippyai/go-lua/compiler",
+		"github.com/wippyai/go-lua/compiler/ast",
+		"go/ast",
 	}
 	for _, dep := range strings.Fields(string(out)) {
 		for _, prefix := range banned {
@@ -220,6 +500,16 @@ func TestStatePackageDoesNotImportLuaPackages(t *testing.T) {
 			}
 		}
 	}
+}
+
+func requirePanic(t *testing.T, fn func()) {
+	t.Helper()
+	defer func() {
+		if recover() == nil {
+			t.Fatal("expected panic")
+		}
+	}()
+	fn()
 }
 
 type fakeVersionedGraph struct {
