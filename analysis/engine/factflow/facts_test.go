@@ -1,4 +1,4 @@
-package transfer
+package factflow
 
 import (
 	"testing"

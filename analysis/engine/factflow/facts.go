@@ -1,10 +1,11 @@
-package transfer
+package factflow
 
 import (
 	"github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/engine/state"
+	"github.com/wippyai/go-lua/analysis/engine/transfer"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/symbol"
 )
@@ -725,7 +726,7 @@ type CallResult struct {
 // CallResultProvider resolves generic call-producer facts into indexed return
 // slots. Call result targets remain metadata for downstream facts; providers
 // produce only ReturnSlot(index) values.
-type CallResultProvider func(ctx NodeContext, call CallProducer, in state.State, read func(cfg.Point) state.State) []CallResult
+type CallResultProvider func(ctx transfer.NodeContext, call CallProducer, in state.State, read func(cfg.Point) state.State) []CallResult
 
 func copyPath(p path.Path) path.Path {
 	if len(p.Segments) == 0 {

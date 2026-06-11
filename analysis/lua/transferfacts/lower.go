@@ -7,7 +7,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/runtimekind"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
-	"github.com/wippyai/go-lua/analysis/engine/transfer"
+	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/lua/branchcond"
 	"github.com/wippyai/go-lua/analysis/lua/semantics"
@@ -18,27 +18,27 @@ import (
 
 // Lower converts Lua semantic facts into the generic transfer fact DTOs consumed
 // by the engine. It intentionally lowers only syntax facts already represented
-// by transfer.Facts; higher semantic layers add branch, iterator, interproc,
+// by factflow.Facts; higher semantic layers add branch, iterator, interproc,
 // and diagnostic facts separately.
-func Lower(result *semantics.Result, graph cfg.Graph) transfer.Facts {
+func Lower(result *semantics.Result, graph cfg.Graph) factflow.Facts {
 	if result == nil || graph == nil {
-		return transfer.NewFacts(transfer.FactsInput{})
+		return factflow.NewFacts(factflow.FactsInput{})
 	}
 	l := lowerer{
-		exprs:      make(map[any]transfer.ExprRef),
-		types:      make(map[any]transfer.TypeRef),
+		exprs:      make(map[any]factflow.ExprRef),
+		types:      make(map[any]factflow.TypeRef),
 		callPoints: callPointsByExpr(result, graph),
 	}
-	input := transfer.FactsInput{
-		LocalAssignments:    make(map[cfg.Point]transfer.RootAssignment),
-		OrdinaryAssignments: make(map[cfg.Point]transfer.RootAssignment),
-		PathAssignments:     make(map[cfg.Point]transfer.PathAssignment),
-		BranchRefinements:   make(map[cfg.Point]transfer.BranchRefinement),
-		Returns:             make(map[cfg.Point]transfer.Return),
-		Calls:               make(map[cfg.Point]transfer.CallProducer),
-		CallSites:           make(map[cfg.Point]transfer.CallSite),
-		ObjectLiterals:      make(map[transfer.ExprRef]transfer.ObjectLiteral),
-		ValueOverlays:       make(map[transfer.ExprRef]transfer.ValueOverlay),
+	input := factflow.FactsInput{
+		LocalAssignments:    make(map[cfg.Point]factflow.RootAssignment),
+		OrdinaryAssignments: make(map[cfg.Point]factflow.RootAssignment),
+		PathAssignments:     make(map[cfg.Point]factflow.PathAssignment),
+		BranchRefinements:   make(map[cfg.Point]factflow.BranchRefinement),
+		Returns:             make(map[cfg.Point]factflow.Return),
+		Calls:               make(map[cfg.Point]factflow.CallProducer),
+		CallSites:           make(map[cfg.Point]factflow.CallSite),
+		ObjectLiterals:      make(map[factflow.ExprRef]factflow.ObjectLiteral),
+		ValueOverlays:       make(map[factflow.ExprRef]factflow.ValueOverlay),
 	}
 	for _, point := range graph.RPO() {
 		if fact, ok := result.LocalAssignment(point); ok {
@@ -60,7 +60,7 @@ func Lower(result *semantics.Result, graph cfg.Graph) transfer.Facts {
 			}
 		}
 		if fact, ok := result.Return(point); ok {
-			input.Returns[point] = transfer.NewReturn(l.valueSources(fact.Sources))
+			input.Returns[point] = factflow.NewReturn(l.valueSources(fact.Sources))
 			for _, source := range fact.Sources {
 				l.addAssertionOverlaysForSource(&input, source)
 			}
@@ -83,12 +83,12 @@ func Lower(result *semantics.Result, graph cfg.Graph) transfer.Facts {
 			l.addAssertionOverlaysForSource(&input, fact.Source)
 		}
 	}
-	return transfer.NewFacts(input)
+	return factflow.NewFacts(input)
 }
 
 type lowerer struct {
-	exprs      map[any]transfer.ExprRef
-	types      map[any]transfer.TypeRef
+	exprs      map[any]factflow.ExprRef
+	types      map[any]factflow.TypeRef
 	callPoints map[*ast.FuncCallExpr]cfg.Point
 }
 
@@ -104,39 +104,39 @@ func callPointsByExpr(result *semantics.Result, graph cfg.Graph) map[*ast.FuncCa
 	return out
 }
 
-func (l *lowerer) localAssignment(fact semantics.LocalAssignmentFact) (transfer.RootAssignment, bool) {
+func (l *lowerer) localAssignment(fact semantics.LocalAssignmentFact) (factflow.RootAssignment, bool) {
 	if !fact.HasSymbol || fact.Symbol == 0 {
-		return transfer.RootAssignment{}, false
+		return factflow.RootAssignment{}, false
 	}
 	target := path.NewPath(fact.Symbol, fact.Name)
-	return transfer.NewRootAssignment(fact.Symbol, target, l.valueSource(fact.Source)), true
+	return factflow.NewRootAssignment(fact.Symbol, target, l.valueSource(fact.Source)), true
 }
 
-func (l *lowerer) ordinaryAssignment(fact semantics.OrdinaryAssignmentFact) (transfer.RootAssignment, bool) {
+func (l *lowerer) ordinaryAssignment(fact semantics.OrdinaryAssignmentFact) (factflow.RootAssignment, bool) {
 	if !fact.HasSymbol || fact.Symbol == 0 {
-		return transfer.RootAssignment{}, false
+		return factflow.RootAssignment{}, false
 	}
 	target := fact.Path
 	if !fact.HasPath {
 		target = path.NewPath(fact.Symbol, "")
 	}
 	if len(target.Segments) != 0 {
-		return transfer.RootAssignment{}, false
+		return factflow.RootAssignment{}, false
 	}
-	return transfer.NewRootAssignment(fact.Symbol, target, l.valueSource(fact.Source)), true
+	return factflow.NewRootAssignment(fact.Symbol, target, l.valueSource(fact.Source)), true
 }
 
-func (l *lowerer) pathAssignment(fact semantics.OrdinaryAssignmentFact) (transfer.PathAssignment, bool) {
+func (l *lowerer) pathAssignment(fact semantics.OrdinaryAssignmentFact) (factflow.PathAssignment, bool) {
 	if !fact.HasPath || fact.Path.Symbol == 0 || len(fact.Path.Segments) == 0 {
-		return transfer.PathAssignment{}, false
+		return factflow.PathAssignment{}, false
 	}
-	return transfer.NewPathAssignment(fact.Path, l.valueSource(fact.Source)), true
+	return factflow.NewPathAssignment(fact.Path, l.valueSource(fact.Source)), true
 }
 
-func (l *lowerer) callProducer(fact semantics.CallFact) (transfer.CallProducer, bool) {
+func (l *lowerer) callProducer(fact semantics.CallFact) (factflow.CallProducer, bool) {
 	context, ok := callProducerContext(fact.Context)
 	if !ok {
-		return transfer.CallProducer{}, false
+		return factflow.CallProducer{}, false
 	}
 	exprRef, hasExpr := l.exprRef(fact.Call)
 	calleeSymbol := symbol.ID(0)
@@ -147,7 +147,7 @@ func (l *lowerer) callProducer(fact semantics.CallFact) (transfer.CallProducer, 
 	if fact.HasCalleePath {
 		calleePath = fact.CalleePath
 	}
-	return transfer.NewCallProducer(transfer.CallProducerConfig{
+	return factflow.NewCallProducer(factflow.CallProducerConfig{
 		Context:       context,
 		CalleeSymbol:  calleeSymbol,
 		CalleePath:    calleePath,
@@ -162,7 +162,7 @@ func (l *lowerer) callProducer(fact semantics.CallFact) (transfer.CallProducer, 
 	}), true
 }
 
-func (l *lowerer) callSite(fact semantics.CallFact) transfer.CallSite {
+func (l *lowerer) callSite(fact semantics.CallFact) factflow.CallSite {
 	exprRef, hasExpr := l.exprRef(fact.Call)
 	calleeSymbol := symbol.ID(0)
 	if fact.HasCalleeSymbol {
@@ -180,7 +180,7 @@ func (l *lowerer) callSite(fact semantics.CallFact) transfer.CallSite {
 	if fact.HasMethodPath {
 		methodPath = fact.MethodPath
 	}
-	return transfer.NewCallSite(transfer.CallSiteConfig{
+	return factflow.NewCallSite(factflow.CallSiteConfig{
 		Context:         callSiteContext(fact.Context),
 		CalleeSymbol:    calleeSymbol,
 		CalleePath:      calleePath,
@@ -202,7 +202,7 @@ func (l *lowerer) callSite(fact semantics.CallFact) transfer.CallSite {
 	})
 }
 
-func (l *lowerer) addObjectLiteral(input *transfer.FactsInput, result *semantics.Result, source semantics.ValueSource) {
+func (l *lowerer) addObjectLiteral(input *factflow.FactsInput, result *semantics.Result, source semantics.ValueSource) {
 	fact, ok := result.ObjectLiteral(source.Expr)
 	if !ok {
 		return
@@ -216,7 +216,7 @@ func (l *lowerer) addObjectLiteral(input *transfer.FactsInput, result *semantics
 		return
 	}
 	if input.ObjectLiterals == nil {
-		input.ObjectLiterals = make(map[transfer.ExprRef]transfer.ObjectLiteral)
+		input.ObjectLiterals = make(map[factflow.ExprRef]factflow.ObjectLiteral)
 	}
 	input.ObjectLiterals[exprRef] = lowered
 	for _, entry := range fact.Entries {
@@ -224,65 +224,65 @@ func (l *lowerer) addObjectLiteral(input *transfer.FactsInput, result *semantics
 	}
 }
 
-func (l *lowerer) objectLiteral(fact semantics.ObjectLiteralFact) transfer.ObjectLiteral {
-	entries := make([]transfer.ObjectEntry, 0, len(fact.Entries))
+func (l *lowerer) objectLiteral(fact semantics.ObjectLiteralFact) factflow.ObjectLiteral {
+	entries := make([]factflow.ObjectEntry, 0, len(fact.Entries))
 	for _, entry := range fact.Entries {
-		entries = append(entries, transfer.NewObjectEntry(entry.Suffix, l.valueSource(entry.Source)))
+		entries = append(entries, factflow.NewObjectEntry(entry.Suffix, l.valueSource(entry.Source)))
 	}
-	return transfer.NewObjectLiteral(entries)
+	return factflow.NewObjectLiteral(entries)
 }
 
-func (l *lowerer) branchRefinement(fact semantics.BranchConditionFact) (transfer.BranchRefinement, bool) {
+func (l *lowerer) branchRefinement(fact semantics.BranchConditionFact) (factflow.BranchRefinement, bool) {
 	target := fact.Check.Path
 	if target.IsEmpty() {
-		return transfer.BranchRefinement{}, false
+		return factflow.BranchRefinement{}, false
 	}
 	switch fact.Check.Kind {
 	case branchcond.CheckNil:
-		return transfer.NewBranchRefinement(
+		return factflow.NewBranchRefinement(
 			target,
 			presenceRefinement(presence.Absent()), true,
 			presenceRefinement(presence.Present()), true,
 		), true
 	case branchcond.CheckNotNil:
-		return transfer.NewBranchRefinement(
+		return factflow.NewBranchRefinement(
 			target,
 			presenceRefinement(presence.Present()), true,
 			presenceRefinement(presence.Absent()), true,
 		), true
 	case branchcond.CheckTruthy:
-		return transfer.NewBranchRefinement(
+		return factflow.NewBranchRefinement(
 			target,
 			presenceRefinement(presence.Present()), true,
-			transfer.ValueRefinement{}, false,
+			factflow.ValueRefinement{}, false,
 		), true
 	case branchcond.CheckFalsy:
-		return transfer.NewBranchRefinement(
+		return factflow.NewBranchRefinement(
 			target,
-			transfer.ValueRefinement{}, false,
+			factflow.ValueRefinement{}, false,
 			presenceRefinement(presence.Present()), true,
 		), true
 	case branchcond.CheckTypeEqual, branchcond.CheckTypeNot:
 		return l.typeBranchRefinement(target, fact.Check.Kind, fact.Check.TypeName)
 	default:
-		return transfer.BranchRefinement{}, false
+		return factflow.BranchRefinement{}, false
 	}
 }
 
-func (l *lowerer) typeBranchRefinement(target path.Path, kind branchcond.CheckKind, typeName string) (transfer.BranchRefinement, bool) {
+func (l *lowerer) typeBranchRefinement(target path.Path, kind branchcond.CheckKind, typeName string) (factflow.BranchRefinement, bool) {
 	tag, ok := runtimeTag(typeName)
 	if !ok {
-		return transfer.BranchRefinement{}, false
+		return factflow.BranchRefinement{}, false
 	}
 	matched := typeMatchedRefinement(tag)
 	unmatched := typeUnmatchedRefinement(tag)
 	if kind == branchcond.CheckTypeNot {
-		return transfer.NewBranchRefinement(target, unmatched, true, matched, true), true
+		return factflow.NewBranchRefinement(target, unmatched, true, matched, true), true
 	}
-	return transfer.NewBranchRefinement(target, matched, true, unmatched, true), true
+	return factflow.NewBranchRefinement(target, matched, true, unmatched, true), true
 }
 
-func typeMatchedRefinement(tag runtimekind.Tag) transfer.ValueRefinement {
+func typeMatchedRefinement(tag runtimekind.Tag) factflow.ValueRefinement {
 	value := runtimeKindRefinement(runtimekind.Singleton(tag))
 	if tag == runtimekind.Nil {
 		return value.WithConstraint(product.DefaultRegistry(), presenceConstraint(presence.Absent()))
@@ -290,7 +290,7 @@ func typeMatchedRefinement(tag runtimekind.Tag) transfer.ValueRefinement {
 	return value.WithConstraint(product.DefaultRegistry(), presenceConstraint(presence.Present()))
 }
 
-func typeUnmatchedRefinement(tag runtimekind.Tag) transfer.ValueRefinement {
+func typeUnmatchedRefinement(tag runtimekind.Tag) factflow.ValueRefinement {
 	value := runtimeKindRefinement(runtimekind.Top().Without(tag))
 	if tag == runtimekind.Nil {
 		return value.WithConstraint(product.DefaultRegistry(), presenceConstraint(presence.Present()))
@@ -298,16 +298,16 @@ func typeUnmatchedRefinement(tag runtimekind.Tag) transfer.ValueRefinement {
 	return value
 }
 
-func presenceRefinement(value presence.Value) transfer.ValueRefinement {
-	return transfer.NewValueConstraint(presenceConstraint(value))
+func presenceRefinement(value presence.Value) factflow.ValueRefinement {
+	return factflow.NewValueConstraint(presenceConstraint(value))
 }
 
 func presenceConstraint(value presence.Value) product.Value {
 	return product.NewWithPresence(product.DefaultRegistry(), product.ShapeTop, value)
 }
 
-func runtimeKindRefinement(value runtimekind.Value) transfer.ValueRefinement {
-	return transfer.NewValueConstraint(runtimeKindConstraint(value))
+func runtimeKindRefinement(value runtimekind.Value) factflow.ValueRefinement {
+	return factflow.NewValueConstraint(runtimeKindConstraint(value))
 }
 
 func runtimeKindConstraint(value runtimekind.Value) product.Value {
@@ -337,20 +337,20 @@ func runtimeTag(typeName string) (runtimekind.Tag, bool) {
 	}
 }
 
-func (l *lowerer) valueSources(sources []semantics.ValueSource) []transfer.ValueSource {
+func (l *lowerer) valueSources(sources []semantics.ValueSource) []factflow.ValueSource {
 	if len(sources) == 0 {
 		return nil
 	}
-	out := make([]transfer.ValueSource, len(sources))
+	out := make([]factflow.ValueSource, len(sources))
 	for i := range sources {
 		out[i] = l.valueSource(sources[i])
 	}
 	return out
 }
 
-func (l *lowerer) valueSource(source semantics.ValueSource) transfer.ValueSource {
+func (l *lowerer) valueSource(source semantics.ValueSource) factflow.ValueSource {
 	exprRef, hasExpr := l.exprRef(source.Expr)
-	return transfer.ValueSource{
+	return factflow.ValueSource{
 		Kind:         valueSourceKind(source.Kind),
 		ExprRef:      exprRef,
 		HasExpr:      hasExpr,
@@ -366,23 +366,23 @@ func (l *lowerer) valueSource(source semantics.ValueSource) transfer.ValueSource
 	}
 }
 
-func (l *lowerer) argumentValueSources(args []ast.Expr) []transfer.ValueSource {
+func (l *lowerer) argumentValueSources(args []ast.Expr) []factflow.ValueSource {
 	if len(args) == 0 {
 		return nil
 	}
-	out := make([]transfer.ValueSource, len(args))
+	out := make([]factflow.ValueSource, len(args))
 	for i, arg := range args {
 		out[i] = l.argumentValueSource(arg, i, i == len(args)-1)
 	}
 	return out
 }
 
-func (l *lowerer) argumentValueSource(arg ast.Expr, index int, final bool) transfer.ValueSource {
+func (l *lowerer) argumentValueSource(arg ast.Expr, index int, final bool) factflow.ValueSource {
 	exprRef, hasExpr := l.exprRef(arg)
 	producer := valueexpr.TopLevelProducer(arg)
 	kind := argumentTransferSourceKind(producer.Kind)
 	expanded := final && valueexpr.CanProduceMultipleValues(arg) && !valueexpr.AdjustRet(arg)
-	source := transfer.ValueSource{
+	source := factflow.ValueSource{
 		Kind:        kind,
 		ExprRef:     exprRef,
 		HasExpr:     hasExpr,
@@ -424,14 +424,14 @@ func (l *lowerer) argumentSemanticValueSource(arg ast.Expr, index int, final boo
 	return source
 }
 
-func argumentTransferSourceKind(kind valueexpr.ProducerKind) transfer.ValueSourceKind {
+func argumentTransferSourceKind(kind valueexpr.ProducerKind) factflow.ValueSourceKind {
 	switch kind {
 	case valueexpr.ProducerCall:
-		return transfer.ValueSourceCall
+		return factflow.ValueSourceCall
 	case valueexpr.ProducerVararg:
-		return transfer.ValueSourceVararg
+		return factflow.ValueSourceVararg
 	default:
-		return transfer.ValueSourceExpression
+		return factflow.ValueSourceExpression
 	}
 }
 
@@ -446,7 +446,7 @@ func argumentSemanticSourceKind(kind valueexpr.ProducerKind) semantics.ValueSour
 	}
 }
 
-func (l *lowerer) addAssertionOverlaysForSource(input *transfer.FactsInput, source semantics.ValueSource) {
+func (l *lowerer) addAssertionOverlaysForSource(input *factflow.FactsInput, source semantics.ValueSource) {
 	if input == nil || source.Expr == nil {
 		return
 	}
@@ -458,7 +458,7 @@ func (l *lowerer) addAssertionOverlaysForSource(input *transfer.FactsInput, sour
 	}
 }
 
-func (l *lowerer) addAssertion(input *transfer.FactsInput, outer semantics.ValueSource, innerExpr ast.Expr, value assertion.Value) {
+func (l *lowerer) addAssertion(input *factflow.FactsInput, outer semantics.ValueSource, innerExpr ast.Expr, value assertion.Value) {
 	outerRef, hasOuter := l.exprRef(outer.Expr)
 	if !hasOuter || innerExpr == nil {
 		return
@@ -466,9 +466,9 @@ func (l *lowerer) addAssertion(input *transfer.FactsInput, outer semantics.Value
 	inner := outer
 	inner.Expr = innerExpr
 	if input.ValueOverlays == nil {
-		input.ValueOverlays = make(map[transfer.ExprRef]transfer.ValueOverlay)
+		input.ValueOverlays = make(map[factflow.ExprRef]factflow.ValueOverlay)
 	}
-	input.ValueOverlays[outerRef] = transfer.NewValueOverlay(l.valueSource(inner), assertionOverlay(value))
+	input.ValueOverlays[outerRef] = factflow.NewValueOverlay(l.valueSource(inner), assertionOverlay(value))
 	l.addAssertionOverlaysForSource(input, inner)
 }
 
@@ -483,11 +483,11 @@ func castAssertionValue(typ ast.TypeExpr) assertion.Value {
 	return assertion.Type()
 }
 
-func (l *lowerer) callProducerResultTargets(targets []semantics.CallResultTarget) []transfer.CallResultTarget {
+func (l *lowerer) callProducerResultTargets(targets []semantics.CallResultTarget) []factflow.CallResultTarget {
 	if len(targets) == 0 {
 		return nil
 	}
-	out := make([]transfer.CallResultTarget, 0, len(targets))
+	out := make([]factflow.CallResultTarget, 0, len(targets))
 	for _, target := range targets {
 		if lowered, ok := l.callProducerResultTarget(target); ok {
 			out = append(out, lowered)
@@ -496,56 +496,56 @@ func (l *lowerer) callProducerResultTargets(targets []semantics.CallResultTarget
 	return out
 }
 
-func (l *lowerer) callProducerResultTarget(target semantics.CallResultTarget) (transfer.CallResultTarget, bool) {
+func (l *lowerer) callProducerResultTarget(target semantics.CallResultTarget) (factflow.CallResultTarget, bool) {
 	switch target.Kind {
 	case semantics.CallResultTargetLocalAssignment:
 		if !target.HasSymbol || target.Symbol == 0 {
-			return transfer.CallResultTarget{}, false
+			return factflow.CallResultTarget{}, false
 		}
 		targetPath := target.Path
 		if !target.HasPath {
 			targetPath = path.NewPath(target.Symbol, target.Name)
 		}
-		return transfer.NewCallResultTarget(transfer.CallResultTargetLocalAssignment, target.Index, target.Symbol, targetPath), true
+		return factflow.NewCallResultTarget(factflow.CallResultTargetLocalAssignment, target.Index, target.Symbol, targetPath), true
 	case semantics.CallResultTargetOrdinaryAssignment:
 		if !target.HasSymbol || target.Symbol == 0 {
-			return transfer.CallResultTarget{}, false
+			return factflow.CallResultTarget{}, false
 		}
 		if target.HasPath && len(target.Path.Segments) != 0 {
-			return transfer.CallResultTarget{}, false
+			return factflow.CallResultTarget{}, false
 		}
 		targetPath := target.Path
 		if !target.HasPath {
 			targetPath = path.NewPath(target.Symbol, "")
 		}
-		return transfer.NewCallResultTarget(transfer.CallResultTargetOrdinaryAssignment, target.Index, target.Symbol, targetPath), true
+		return factflow.NewCallResultTarget(factflow.CallResultTargetOrdinaryAssignment, target.Index, target.Symbol, targetPath), true
 	case semantics.CallResultTargetReturn:
-		return transfer.NewCallResultTarget(transfer.CallResultTargetReturn, target.Index, 0, path.Path{}), true
+		return factflow.NewCallResultTarget(factflow.CallResultTargetReturn, target.Index, 0, path.Path{}), true
 	default:
-		return transfer.CallResultTarget{}, false
+		return factflow.CallResultTarget{}, false
 	}
 }
 
-func (l *lowerer) callSiteResultTargets(targets []semantics.CallResultTarget) []transfer.CallResultTarget {
+func (l *lowerer) callSiteResultTargets(targets []semantics.CallResultTarget) []factflow.CallResultTarget {
 	if len(targets) == 0 {
 		return nil
 	}
-	out := make([]transfer.CallResultTarget, len(targets))
+	out := make([]factflow.CallResultTarget, len(targets))
 	for i := range targets {
 		out[i] = callSiteResultTarget(targets[i])
 	}
 	return out
 }
 
-func callSiteResultTarget(target semantics.CallResultTarget) transfer.CallResultTarget {
-	targetKind := transfer.CallResultTargetUnknown
+func callSiteResultTarget(target semantics.CallResultTarget) factflow.CallResultTarget {
+	targetKind := factflow.CallResultTargetUnknown
 	switch target.Kind {
 	case semantics.CallResultTargetLocalAssignment:
-		targetKind = transfer.CallResultTargetLocalAssignment
+		targetKind = factflow.CallResultTargetLocalAssignment
 	case semantics.CallResultTargetOrdinaryAssignment:
-		targetKind = transfer.CallResultTargetOrdinaryAssignment
+		targetKind = factflow.CallResultTargetOrdinaryAssignment
 	case semantics.CallResultTargetReturn:
-		targetKind = transfer.CallResultTargetReturn
+		targetKind = factflow.CallResultTargetReturn
 	}
 	targetSymbol := symbol.ID(0)
 	if target.HasSymbol {
@@ -559,33 +559,33 @@ func callSiteResultTarget(target semantics.CallResultTarget) transfer.CallResult
 	} else if target.Kind == semantics.CallResultTargetOrdinaryAssignment && target.HasSymbol {
 		targetPath = path.NewPath(target.Symbol, "")
 	}
-	return transfer.NewCallResultTarget(targetKind, target.Index, targetSymbol, targetPath)
+	return factflow.NewCallResultTarget(targetKind, target.Index, targetSymbol, targetPath)
 }
 
-func (l *lowerer) exprRef(expr any) (transfer.ExprRef, bool) {
+func (l *lowerer) exprRef(expr any) (factflow.ExprRef, bool) {
 	if expr == nil {
 		return 0, false
 	}
 	if ref, ok := l.exprs[expr]; ok {
 		return ref, true
 	}
-	ref := transfer.ExprRef(len(l.exprs) + 1)
+	ref := factflow.ExprRef(len(l.exprs) + 1)
 	l.exprs[expr] = ref
 	return ref, true
 }
 
-func (l *lowerer) typeRefs(types []ast.TypeExpr) []transfer.TypeRef {
+func (l *lowerer) typeRefs(types []ast.TypeExpr) []factflow.TypeRef {
 	if len(types) == 0 {
 		return nil
 	}
-	out := make([]transfer.TypeRef, len(types))
+	out := make([]factflow.TypeRef, len(types))
 	for i := range types {
 		out[i], _ = l.typeRef(types[i])
 	}
 	return out
 }
 
-func (l *lowerer) typeRef(typ any) (transfer.TypeRef, bool) {
+func (l *lowerer) typeRef(typ any) (factflow.TypeRef, bool) {
 	if typ == nil {
 		return 0, false
 	}
@@ -593,52 +593,52 @@ func (l *lowerer) typeRef(typ any) (transfer.TypeRef, bool) {
 		return ref, true
 	}
 	if l.types == nil {
-		l.types = make(map[any]transfer.TypeRef)
+		l.types = make(map[any]factflow.TypeRef)
 	}
-	ref := transfer.TypeRef(len(l.types) + 1)
+	ref := factflow.TypeRef(len(l.types) + 1)
 	l.types[typ] = ref
 	return ref, true
 }
 
-func callProducerContext(kind semantics.CallContextKind) (transfer.CallProducerContext, bool) {
+func callProducerContext(kind semantics.CallContextKind) (factflow.CallProducerContext, bool) {
 	switch kind {
 	case semantics.CallContextAssignmentSource:
-		return transfer.CallProducerContextAssignment, true
+		return factflow.CallProducerContextAssignment, true
 	case semantics.CallContextReturnSource:
-		return transfer.CallProducerContextReturn, true
+		return factflow.CallProducerContextReturn, true
 	default:
-		return transfer.CallProducerContextUnknown, false
+		return factflow.CallProducerContextUnknown, false
 	}
 }
 
-func callSiteContext(kind semantics.CallContextKind) transfer.CallSiteContext {
+func callSiteContext(kind semantics.CallContextKind) factflow.CallSiteContext {
 	switch kind {
 	case semantics.CallContextStatement:
-		return transfer.CallSiteContextStatement
+		return factflow.CallSiteContextStatement
 	case semantics.CallContextAssignmentSource:
-		return transfer.CallSiteContextAssignmentSource
+		return factflow.CallSiteContextAssignmentSource
 	case semantics.CallContextReturnSource:
-		return transfer.CallSiteContextReturnSource
+		return factflow.CallSiteContextReturnSource
 	case semantics.CallContextIteratorSource:
-		return transfer.CallSiteContextIteratorSource
+		return factflow.CallSiteContextIteratorSource
 	case semantics.CallContextCondition:
-		return transfer.CallSiteContextCondition
+		return factflow.CallSiteContextCondition
 	default:
-		return transfer.CallSiteContextUnknown
+		return factflow.CallSiteContextUnknown
 	}
 }
 
-func valueSourceKind(kind semantics.ValueSourceKind) transfer.ValueSourceKind {
+func valueSourceKind(kind semantics.ValueSourceKind) factflow.ValueSourceKind {
 	switch kind {
 	case semantics.ValueSourceExpression:
-		return transfer.ValueSourceExpression
+		return factflow.ValueSourceExpression
 	case semantics.ValueSourceCall:
-		return transfer.ValueSourceCall
+		return factflow.ValueSourceCall
 	case semantics.ValueSourceVararg:
-		return transfer.ValueSourceVararg
+		return factflow.ValueSourceVararg
 	case semantics.ValueSourceNil:
-		return transfer.ValueSourceNil
+		return factflow.ValueSourceNil
 	default:
-		return transfer.ValueSourceUnknown
+		return factflow.ValueSourceUnknown
 	}
 }

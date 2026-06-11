@@ -1,4 +1,4 @@
-package transfer
+package factflow
 
 import (
 	"testing"
@@ -11,6 +11,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/runtimekind"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/engine/state"
+	"github.com/wippyai/go-lua/analysis/engine/transfer"
 	"github.com/wippyai/go-lua/analysis/engine/visibility"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/symbol"
@@ -30,7 +31,7 @@ func TestFactsNodeTransferAppliesLocalAssignmentThroughResolver(t *testing.T) {
 		values: map[ValueSource]product.Value{source: assigned},
 	}
 
-	got := Run(Config{
+	got := transfer.Run(transfer.Config{
 		Graph:    graph,
 		Registry: reg,
 		NodeTransfer: NewFactsNodeTransfer(FactsNodeTransferConfig{
@@ -101,7 +102,7 @@ func TestFactsNodeTransferAppliesValueOverlaysToAssignments(t *testing.T) {
 					},
 				}),
 				Sources: sources,
-			})(NodeContext{
+			})(transfer.NodeContext{
 				Registry: reg,
 				Point:    point,
 			}, state.State{})
@@ -131,7 +132,7 @@ func TestFactsNodeTransferAppliesOrdinaryAssignmentThroughResolver(t *testing.T)
 		values: map[ValueSource]product.Value{source: assigned},
 	}
 
-	got := Run(Config{
+	got := transfer.Run(transfer.Config{
 		Graph:    graph,
 		Registry: reg,
 		NodeTransfer: NewFactsNodeTransfer(FactsNodeTransferConfig{
@@ -198,7 +199,7 @@ func TestFactsNodeTransferRootAssignmentInvalidatesVisiblePathSubtree(t *testing
 				Facts:      NewFacts(tc.fact(point, target, source)),
 				Sources:    sources,
 				Visibility: visibility.NewResolver(visibilityBuilder.Build()),
-			})(NodeContext{
+			})(transfer.NodeContext{
 				Registry: reg,
 				Point:    point,
 			}, state.State{}.
@@ -274,7 +275,7 @@ func TestFactsNodeTransferObjectLiteralRootAssignmentsWriteStaticEntries(t *test
 				Facts:      NewFacts(input),
 				Sources:    sources,
 				Visibility: visibility.NewResolver(visibilityBuilder.Build()),
-			})(NodeContext{
+			})(transfer.NodeContext{
 				Registry: reg,
 				Point:    point,
 			}, state.State{})
@@ -328,7 +329,7 @@ func TestFactsNodeTransferObjectLiteralEntriesUsePreWriteInputState(t *testing.T
 		}),
 		Sources:    sources,
 		Visibility: visibility.NewResolver(visibilityBuilder.Build()),
-	})(NodeContext{
+	})(transfer.NodeContext{
 		Registry: reg,
 		Point:    point,
 	}, state.State{}.WriteValue(reg, key.SymbolValue(target), oldRootValue))
@@ -365,7 +366,7 @@ func TestFactsNodeTransferObjectLiteralMissingVisibilitySkipsEntriesKeepsRoot(t 
 		}),
 		Sources:    sources,
 		Visibility: visibility.NewResolver(visibility.NewTable(nil)),
-	})(NodeContext{
+	})(transfer.NodeContext{
 		Registry: reg,
 		Point:    point,
 	}, state.State{})
@@ -406,7 +407,7 @@ func TestFactsNodeTransferObjectLiteralPathAssignmentWritesStaticEntries(t *test
 		}),
 		Sources:    sources,
 		Visibility: visibility.NewResolver(visibilityBuilder.Build()),
-	})(NodeContext{
+	})(transfer.NodeContext{
 		Registry: reg,
 		Point:    point,
 	}, state.State{})
@@ -452,7 +453,7 @@ func TestFactsNodeTransferObjectLiteralEntriesInvalidateSubtreeBeforeWrite(t *te
 		}),
 		Sources:    sources,
 		Visibility: visibility.NewResolver(visibilityBuilder.Build()),
-	})(NodeContext{
+	})(transfer.NodeContext{
 		Registry: reg,
 		Point:    point,
 	}, state.State{}.
@@ -483,7 +484,7 @@ func TestFactsNodeTransferAppliesPathAssignmentThroughVisibility(t *testing.T) {
 	visibilityBuilder.Define(assign, target, "table")
 	resolver := visibility.NewResolver(visibilityBuilder.Build())
 
-	got := Run(Config{
+	got := transfer.Run(transfer.Config{
 		Graph:    graph,
 		Registry: reg,
 		NodeTransfer: NewFactsNodeTransfer(FactsNodeTransferConfig{
@@ -530,7 +531,7 @@ func TestFactsNodeTransferPathAssignmentInvalidatesSubtreeBeforeWriting(t *testi
 		}),
 		Sources:    sources,
 		Visibility: resolver,
-	})(NodeContext{
+	})(transfer.NodeContext{
 		Registry: reg,
 		Point:    point,
 	}, in)
@@ -556,7 +557,7 @@ func TestFactsNodeTransferAppliesReturnSlotsThroughSourceValues(t *testing.T) {
 		},
 	})
 
-	got := Run(Config{
+	got := transfer.Run(transfer.Config{
 		Graph:    graph,
 		Registry: reg,
 		NodeTransfer: NewFactsNodeTransfer(FactsNodeTransferConfig{
@@ -593,7 +594,7 @@ func TestFactsNodeTransferUnresolvedReturnSourceLeavesSlotUnchanged(t *testing.T
 			},
 		}),
 		Sources: sources,
-	})(NodeContext{
+	})(transfer.NodeContext{
 		Registry: reg,
 		Point:    point,
 	}, in)
@@ -613,7 +614,7 @@ func TestFactsNodeTransferReturnCallSourceReadsReturnSlotThroughRead(t *testing.
 	callValue := presentValue(reg)
 	sources := NewSourceValues(SourceValuesConfig{Registry: reg})
 
-	got := Run(Config{
+	got := transfer.Run(transfer.Config{
 		Graph:    graph,
 		Registry: reg,
 		Initial: func(point cfg.Point) (state.State, bool) {
@@ -661,7 +662,7 @@ func TestFactsNodeTransferCallProducerProviderWritesReturnSlots(t *testing.T) {
 				}),
 			},
 		}),
-		CallResults: func(ctx NodeContext, call CallProducer, gotIn state.State, read func(cfg.Point) state.State) []CallResult {
+		CallResults: func(ctx transfer.NodeContext, call CallProducer, gotIn state.State, read func(cfg.Point) state.State) []CallResult {
 			providerCalled = true
 			if ctx.Point != point {
 				t.Fatalf("provider point = %d, want %d", ctx.Point, point)
@@ -677,7 +678,7 @@ func TestFactsNodeTransferCallProducerProviderWritesReturnSlots(t *testing.T) {
 				{Index: -1, Value: product.Top()},
 			}
 		},
-	})(NodeContext{
+	})(transfer.NodeContext{
 		Registry: reg,
 		Point:    point,
 	}, in)
@@ -704,7 +705,7 @@ func TestFactsNodeTransferAssignmentCallSourceConsumesProviderReturnSlotThroughR
 	callValue := presentValue(reg)
 	sources := NewSourceValues(SourceValuesConfig{Registry: reg})
 
-	got := Run(Config{
+	got := transfer.Run(transfer.Config{
 		Graph:    graph,
 		Registry: reg,
 		NodeTransfer: NewFactsNodeTransfer(FactsNodeTransferConfig{
@@ -724,11 +725,11 @@ func TestFactsNodeTransferAssignmentCallSourceConsumesProviderReturnSlotThroughR
 				},
 			}),
 			Sources: sources,
-			CallResults: func(ctx NodeContext, call CallProducer, in state.State, read func(cfg.Point) state.State) []CallResult {
+			CallResults: func(ctx transfer.NodeContext, call CallProducer, in state.State, read func(cfg.Point) state.State) []CallResult {
 				return []CallResult{{Index: 0, Value: callValue}}
 			},
 		}),
-		EdgeTransfer: func(ctx EdgeContext, out state.State) state.State {
+		EdgeTransfer: func(ctx transfer.EdgeContext, out state.State) state.State {
 			if ctx.Edge.From == call && ctx.Edge.To == assign {
 				return out.WriteReturnSlot(reg, 0, product.Bottom(reg))
 			}
@@ -765,10 +766,10 @@ func TestFactsNodeTransferCallResultTargetsDoNotDirectlyWriteTargets(t *testing.
 				}),
 			},
 		}),
-		CallResults: func(ctx NodeContext, call CallProducer, in state.State, read func(cfg.Point) state.State) []CallResult {
+		CallResults: func(ctx transfer.NodeContext, call CallProducer, in state.State, read func(cfg.Point) state.State) []CallResult {
 			return []CallResult{{Index: 0, Value: resultValue}}
 		},
-	})(NodeContext{
+	})(transfer.NodeContext{
 		Registry: reg,
 		Point:    point,
 	}, in)
@@ -798,13 +799,13 @@ func TestFactsNodeTransferMissingCallResultProviderOrNoResultsLeavesStateUnchang
 		{name: "nil provider"},
 		{
 			name: "nil results",
-			provider: func(ctx NodeContext, call CallProducer, in state.State, read func(cfg.Point) state.State) []CallResult {
+			provider: func(ctx transfer.NodeContext, call CallProducer, in state.State, read func(cfg.Point) state.State) []CallResult {
 				return nil
 			},
 		},
 		{
 			name: "empty results",
-			provider: func(ctx NodeContext, call CallProducer, in state.State, read func(cfg.Point) state.State) []CallResult {
+			provider: func(ctx transfer.NodeContext, call CallProducer, in state.State, read func(cfg.Point) state.State) []CallResult {
 				return []CallResult{}
 			},
 		},
@@ -815,7 +816,7 @@ func TestFactsNodeTransferMissingCallResultProviderOrNoResultsLeavesStateUnchang
 			got := NewFactsNodeTransfer(FactsNodeTransferConfig{
 				Facts:       facts,
 				CallResults: tc.provider,
-			})(NodeContext{
+			})(transfer.NodeContext{
 				Registry: reg,
 				Point:    point,
 			}, in)
@@ -840,7 +841,7 @@ func TestFactsNodeTransferMissingResolverValueLeavesStateUnchanged(t *testing.T)
 			},
 		}),
 		Sources: &recordingSourceValues{},
-	})(NodeContext{
+	})(transfer.NodeContext{
 		Registry: reg,
 		Point:    point,
 	}, in)
@@ -854,13 +855,13 @@ func TestFactsNodeTransferAbsentFactsAndNilResolverLeaveStateUnchanged(t *testin
 	target := symbol.ID(104)
 	in := state.State{}.WriteValue(reg, key.SymbolValue(target), presentValue(reg))
 
-	gotNoResolver := NewFactsNodeTransfer(FactsNodeTransferConfig{Facts: Facts{}})(NodeContext{
+	gotNoResolver := NewFactsNodeTransfer(FactsNodeTransferConfig{Facts: Facts{}})(transfer.NodeContext{
 		Registry: reg,
 		Point:    point,
 	}, in)
 	assertStateEqual(t, reg, gotNoResolver, in)
 
-	gotNoFacts := NewFactsNodeTransfer(FactsNodeTransferConfig{Sources: panicSourceValues{}})(NodeContext{
+	gotNoFacts := NewFactsNodeTransfer(FactsNodeTransferConfig{Sources: panicSourceValues{}})(transfer.NodeContext{
 		Registry: reg,
 		Point:    point,
 	}, in)
@@ -884,7 +885,7 @@ func TestFactsNodeTransferIgnoresNonRootAssignmentFacts(t *testing.T) {
 			},
 		}),
 		Sources: resolver,
-	})(NodeContext{
+	})(transfer.NodeContext{
 		Registry: reg,
 		Point:    point,
 	}, in)
@@ -914,7 +915,7 @@ func TestFactsNodeTransferPathAssignmentRequiresVisibility(t *testing.T) {
 			},
 		}),
 		Sources: sources,
-	})(NodeContext{
+	})(transfer.NodeContext{
 		Registry: reg,
 		Point:    point,
 	}, in)
@@ -944,7 +945,7 @@ func TestFactsNodeTransferPathAssignmentWithUnresolvedVersionIsNoop(t *testing.T
 		}),
 		Sources:    sources,
 		Visibility: visibility.NewResolver(visibility.NewTable(nil)),
-	})(NodeContext{
+	})(transfer.NodeContext{
 		Registry: reg,
 		Point:    point,
 	}, in)
@@ -971,7 +972,7 @@ func TestFactsNodeTransferIgnoresRootPathAssignment(t *testing.T) {
 		}),
 		Sources:    sources,
 		Visibility: visibility.NewResolver(visibilityBuilder.Build()),
-	})(NodeContext{
+	})(transfer.NodeContext{
 		Registry: reg,
 		Point:    point,
 	}, state.State{})
@@ -996,7 +997,7 @@ func TestFactsEdgeTransferAppliesNilRefinementsOnRootValue(t *testing.T) {
 
 	target := symbol.ID(301)
 	initial := state.State{}.WriteValue(reg, key.SymbolValue(target), product.Top())
-	got := Run(Config{
+	got := transfer.Run(transfer.Config{
 		Graph:      graph,
 		Registry:   reg,
 		EntryState: initial,
@@ -1049,7 +1050,7 @@ func TestFactsEdgeTransferOneSidedTruthyFalsyRefinements(t *testing.T) {
 
 			target := tc.fact.TargetPath().Symbol
 			initial := state.State{}.WriteValue(reg, key.SymbolValue(target), product.Top())
-			got := Run(Config{
+			got := transfer.Run(transfer.Config{
 				Graph:      graph,
 				Registry:   reg,
 				EntryState: initial,
@@ -1087,7 +1088,7 @@ func TestFactsEdgeTransferRefinesStaticMemberPathThroughVisibility(t *testing.T)
 	visibilityBuilder := visibility.NewBuilder()
 	visibilityBuilder.Define(branch, target, "t")
 
-	got := Run(Config{
+	got := transfer.Run(transfer.Config{
 		Graph:      graph,
 		Registry:   reg,
 		EntryState: initial,
@@ -1120,7 +1121,7 @@ func TestFactsEdgeTransferRefinesRuntimeKindOnRootValue(t *testing.T) {
 
 	target := symbol.ID(308)
 	initial := state.State{}.WriteValue(reg, key.SymbolValue(target), product.Top())
-	got := Run(Config{
+	got := transfer.Run(transfer.Config{
 		Graph:      graph,
 		Registry:   reg,
 		EntryState: initial,
@@ -1156,7 +1157,7 @@ func TestFactsEdgeTransferRefinesRuntimeKindOnStaticMemberPath(t *testing.T) {
 	visibilityBuilder := visibility.NewBuilder()
 	visibilityBuilder.Define(branch, target, "t")
 
-	got := Run(Config{
+	got := transfer.Run(transfer.Config{
 		Graph:      graph,
 		Registry:   reg,
 		EntryState: initial,
@@ -1189,7 +1190,7 @@ func TestFactsEdgeTransferRuntimeKindContradictionGoesBottom(t *testing.T) {
 	target := symbol.ID(310)
 	numberValue := product.Set(reg, product.Top(), runtimekind.Key, runtimekind.Singleton(runtimekind.Number))
 	initial := state.State{}.WriteValue(reg, key.SymbolValue(target), numberValue)
-	got := Run(Config{
+	got := transfer.Run(transfer.Config{
 		Graph:      graph,
 		Registry:   reg,
 		EntryState: initial,
@@ -1223,7 +1224,7 @@ func TestFactsEdgeTransferAppliesGenericProductConstraintAxis(t *testing.T) {
 	constraint := product.Set(reg, product.Top(), wideningKey, wideningOne)
 	trueRefinement := NewValueRefinement().WithConstraint(reg, constraint)
 	initial := state.State{}.WriteValue(reg, key.SymbolValue(target), initialValue)
-	got := Run(Config{
+	got := transfer.Run(transfer.Config{
 		Graph:      graph,
 		Registry:   reg,
 		EntryState: initial,
@@ -1254,7 +1255,7 @@ func TestFactsEdgeTransferNoopsWithoutBranchConditionOrVisibility(t *testing.T) 
 
 		target := symbol.ID(305)
 		initial := state.State{}.WriteValue(reg, key.SymbolValue(target), product.Top())
-		got := Run(Config{
+		got := transfer.Run(transfer.Config{
 			Graph:      graph,
 			Registry:   reg,
 			EntryState: initial,
@@ -1286,7 +1287,7 @@ func TestFactsEdgeTransferNoopsWithoutBranchConditionOrVisibility(t *testing.T) 
 		targetPath := path.NewPath(target, "t").Field("field")
 		pathKey := path.PathKey("sym306@1.field")
 		initial := state.State{}.WritePathKey(reg, pathKey, product.Top())
-		got := Run(Config{
+		got := transfer.Run(transfer.Config{
 			Graph:      graph,
 			Registry:   reg,
 			EntryState: initial,
@@ -1320,7 +1321,7 @@ func TestFactsEdgeTransferJoinRestoresMaybePresence(t *testing.T) {
 
 	target := symbol.ID(307)
 	initial := state.State{}.WriteValue(reg, key.SymbolValue(target), product.Top())
-	got := Run(Config{
+	got := transfer.Run(transfer.Config{
 		Graph:      graph,
 		Registry:   reg,
 		EntryState: initial,
@@ -1354,7 +1355,7 @@ func TestFactsEdgeTransferJoinRestoresRuntimeKindUnion(t *testing.T) {
 
 	target := symbol.ID(311)
 	initial := state.State{}.WriteValue(reg, key.SymbolValue(target), product.Top())
-	got := Run(Config{
+	got := transfer.Run(transfer.Config{
 		Graph:      graph,
 		Registry:   reg,
 		EntryState: initial,
@@ -1424,6 +1425,13 @@ func assertResolverCall(t *testing.T, resolver *recordingSourceValues, point cfg
 	}
 }
 
+func assertValue(t *testing.T, reg *axis.Registry, gotState state.State, slot key.Value, want product.Value) {
+	t.Helper()
+	if got := gotState.ReadValue(reg, slot); !product.Equal(reg, got, want) {
+		t.Fatalf("slot %s = %s, want %s", slot, formatValue(reg, got), formatValue(reg, want))
+	}
+}
+
 func assertStateEqual(t *testing.T, reg *axis.Registry, got state.State, want state.State) {
 	t.Helper()
 	if !state.Domain(reg).Equal(got, want) {
@@ -1443,6 +1451,78 @@ func assertRuntimeKind(t *testing.T, reg *axis.Registry, got product.Value, want
 	if kind := product.Get(reg, got, runtimekind.Key); !runtimekind.Equal(kind, want) {
 		t.Fatalf("runtime kind = %s in %s, want %s", kind, formatValue(reg, got), want)
 	}
+}
+
+func presentValue(reg *axis.Registry) product.Value {
+	return product.NewWithPresence(reg, product.ShapeTop, presence.Present())
+}
+
+func absentValue(reg *axis.Registry) product.Value {
+	return product.NewWithPresence(reg, product.ShapeTop, presence.Absent())
+}
+
+func formatValue(reg *axis.Registry, v product.Value) string {
+	switch {
+	case product.Equal(reg, v, product.Bottom(reg)):
+		return "bottom"
+	case product.Equal(reg, v, product.Top()):
+		return "top"
+	default:
+		return product.PresenceOf(v).String()
+	}
+}
+
+type widening uint8
+
+const (
+	wideningBottom   widening = 0
+	wideningOne      widening = 1
+	wideningExactMax widening = 4
+	wideningTop      widening = 100
+)
+
+var wideningKey = axis.NewKey[widening]("factflow.test.widening")
+
+func wideningRegistry() *axis.Registry {
+	reg := axis.NewRegistry()
+	axis.Register(reg, axis.Spec[widening]{
+		Key:    wideningKey,
+		Bottom: func() widening { return wideningBottom },
+		Top:    func() widening { return wideningTop },
+		Equal:  func(a, b widening) bool { return a == b },
+		LessOrEq: func(a, b widening) bool {
+			return a == b || a != wideningTop && b == wideningTop || a < b && b != wideningTop
+		},
+		Join: func(a, b widening) widening {
+			if a == wideningTop || b == wideningTop {
+				return wideningTop
+			}
+			if a > b {
+				return a
+			}
+			return b
+		},
+		Meet: func(a, b widening) widening {
+			if a < b {
+				return a
+			}
+			return b
+		},
+		Widen: func(prev, next widening) widening {
+			if prev == next {
+				return prev
+			}
+			return wideningTop
+		},
+		Hash: func(v widening) uint64 {
+			return uint64(v) + 1
+		},
+	})
+	return reg.Freeze()
+}
+
+func wideningValue(reg *axis.Registry, value widening) product.Value {
+	return product.Set(reg, product.Top(), wideningKey, value)
 }
 
 func branchWithPresence(

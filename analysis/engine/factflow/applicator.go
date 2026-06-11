@@ -1,4 +1,4 @@
-package transfer
+package factflow
 
 import (
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
@@ -6,6 +6,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/engine/state"
+	"github.com/wippyai/go-lua/analysis/engine/transfer"
 	"github.com/wippyai/go-lua/analysis/engine/visibility"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/symbol"
@@ -29,8 +30,8 @@ type FactsEdgeTransferConfig struct {
 // transfer facts. It intentionally handles only root assignment, member/path
 // assignment, call return-slot production, and return-slot facts; branch-edge
 // refinements are handled by NewFactsEdgeTransfer.
-func NewFactsNodeTransfer(config FactsNodeTransferConfig) NodeTransfer {
-	return func(ctx NodeContext, in state.State) state.State {
+func NewFactsNodeTransfer(config FactsNodeTransferConfig) transfer.NodeTransfer {
+	return func(ctx transfer.NodeContext, in state.State) state.State {
 		facts := config.Facts
 		sources := config.Sources
 		callResults := config.CallResults
@@ -63,8 +64,8 @@ func NewFactsNodeTransfer(config FactsNodeTransferConfig) NodeTransfer {
 
 // NewFactsEdgeTransfer returns a generic edge transfer that applies
 // branch refinements for the selected branch edge.
-func NewFactsEdgeTransfer(config FactsEdgeTransferConfig) EdgeTransfer {
-	return func(ctx EdgeContext, out state.State) state.State {
+func NewFactsEdgeTransfer(config FactsEdgeTransferConfig) transfer.EdgeTransfer {
+	return func(ctx transfer.EdgeContext, out state.State) state.State {
 		if !ctx.HasCond {
 			return out
 		}
@@ -81,7 +82,7 @@ func NewFactsEdgeTransfer(config FactsEdgeTransferConfig) EdgeTransfer {
 }
 
 func applyRootAssignmentFact(
-	ctx NodeContext,
+	ctx transfer.NodeContext,
 	resolver *visibility.Resolver,
 	facts Facts,
 	sources SourceValues,
@@ -98,7 +99,7 @@ func applyRootAssignmentFact(
 }
 
 func callResultReader(
-	ctx NodeContext,
+	ctx transfer.NodeContext,
 	facts Facts,
 	provider CallResultProvider,
 ) (func(cfg.Point) state.State, func(cfg.Point, state.State) state.State) {
@@ -137,7 +138,7 @@ func callResultReader(
 	return read, materialize
 }
 
-func callContextAt(ctx NodeContext, point cfg.Point, read func(cfg.Point) state.State) NodeContext {
+func callContextAt(ctx transfer.NodeContext, point cfg.Point, read func(cfg.Point) state.State) transfer.NodeContext {
 	ctx.Point = point
 	ctx.Read = read
 	if ctx.Graph != nil {
@@ -149,7 +150,7 @@ func callContextAt(ctx NodeContext, point cfg.Point, read func(cfg.Point) state.
 }
 
 func materializeCallResults(
-	ctx NodeContext,
+	ctx transfer.NodeContext,
 	facts Facts,
 	provider CallResultProvider,
 	read func(cfg.Point) state.State,
@@ -173,7 +174,7 @@ func materializeCallResults(
 }
 
 func applyRootAssignment(
-	ctx NodeContext,
+	ctx transfer.NodeContext,
 	resolver *visibility.Resolver,
 	sources SourceValues,
 	read func(cfg.Point) state.State,
@@ -216,7 +217,7 @@ func rootAssignmentPath(target symbol.ID, targetPath pathdom.Path) pathdom.Path 
 	return out
 }
 
-func writeRootSymbol(ctx NodeContext, resolver *visibility.Resolver, out state.State, target symbol.ID, targetPath pathdom.Path, value product.Value) state.State {
+func writeRootSymbol(ctx transfer.NodeContext, resolver *visibility.Resolver, out state.State, target symbol.ID, targetPath pathdom.Path, value product.Value) state.State {
 	if target == 0 {
 		return out
 	}
@@ -229,7 +230,7 @@ func writeRootSymbol(ctx NodeContext, resolver *visibility.Resolver, out state.S
 }
 
 func applyBranchRefinement(
-	ctx EdgeContext,
+	ctx transfer.EdgeContext,
 	resolver *visibility.Resolver,
 	out state.State,
 	targetPath pathdom.Path,
@@ -264,7 +265,7 @@ func refineProductValue(reg *axis.Registry, value product.Value, refinement Valu
 }
 
 func applyPathAssignment(
-	ctx NodeContext,
+	ctx transfer.NodeContext,
 	resolver *visibility.Resolver,
 	sources SourceValues,
 	read func(cfg.Point) state.State,
@@ -295,7 +296,7 @@ func applyPathAssignment(
 }
 
 func applyObjectLiteralEntries(
-	ctx NodeContext,
+	ctx transfer.NodeContext,
 	resolver *visibility.Resolver,
 	facts Facts,
 	sources SourceValues,
@@ -347,7 +348,7 @@ func objectEntryTargetPath(root pathdom.Path, suffix pathdom.Path) (pathdom.Path
 }
 
 func applyReturn(
-	ctx NodeContext,
+	ctx transfer.NodeContext,
 	sources SourceValues,
 	read func(cfg.Point) state.State,
 	in state.State,

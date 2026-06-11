@@ -13,6 +13,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/runtimekind"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
+	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/engine/state"
 	"github.com/wippyai/go-lua/analysis/engine/transfer"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
@@ -57,7 +58,7 @@ func TestLowerAssignmentsReturnsAndCallsPreserveValueListMetadata(t *testing.T) 
 	if !ok {
 		t.Fatalf("missing make call producer")
 	}
-	if makeProducer.Context() != transfer.CallProducerContextAssignment || makeProducer.ExprIndex() != 0 || makeProducer.Final() || makeProducer.Expanded() || !makeProducer.Adjusted() || makeProducer.OpenTail() {
+	if makeProducer.Context() != factflow.CallProducerContextAssignment || makeProducer.ExprIndex() != 0 || makeProducer.Final() || makeProducer.Expanded() || !makeProducer.Adjusted() || makeProducer.OpenTail() {
 		t.Fatalf("make producer flags/context are wrong")
 	}
 	makeRef, ok := makeProducer.Expr()
@@ -65,7 +66,7 @@ func TestLowerAssignmentsReturnsAndCallsPreserveValueListMetadata(t *testing.T) 
 		t.Fatalf("make producer expr ref = %d/%v", makeRef, ok)
 	}
 	makeTargets := makeProducer.ResultTargets()
-	if len(makeTargets) != 1 || makeTargets[0].Kind() != transfer.CallResultTargetLocalAssignment || makeTargets[0].Index() != 0 {
+	if len(makeTargets) != 1 || makeTargets[0].Kind() != factflow.CallResultTargetLocalAssignment || makeTargets[0].Index() != 0 {
 		t.Fatalf("make targets = %#v", makeTargets)
 	}
 
@@ -77,7 +78,7 @@ func TestLowerAssignmentsReturnsAndCallsPreserveValueListMetadata(t *testing.T) 
 	if aFact.TargetSymbol() != mustLocalAt(t, bindings, local, 0) || !aFact.TargetPath().Equal(path.NewPath(aFact.TargetSymbol(), "a")) {
 		t.Fatalf("local a target = %d %v", aFact.TargetSymbol(), aFact.TargetPath())
 	}
-	if aSource.Kind != transfer.ValueSourceCall || aSource.ExprRef != makeRef || !aSource.HasExpr || aSource.ExprIndex != 0 || aSource.TargetIndex != 0 || aSource.ResultIndex != 0 || aSource.CallPoint != localPoints[0] || !aSource.HasCallPoint || !aSource.Adjusted {
+	if aSource.Kind != factflow.ValueSourceCall || aSource.ExprRef != makeRef || !aSource.HasExpr || aSource.ExprIndex != 0 || aSource.TargetIndex != 0 || aSource.ResultIndex != 0 || aSource.CallPoint != localPoints[0] || !aSource.HasCallPoint || !aSource.Adjusted {
 		t.Fatalf("local a source = %#v, make ref %d", aSource, makeRef)
 	}
 
@@ -127,7 +128,7 @@ func TestLowerAssignmentsReturnsAndCallsPreserveValueListMetadata(t *testing.T) 
 	if ordinary.TargetSymbol() != mustIdentSymbol(t, bindings, aWrite) {
 		t.Fatalf("ordinary target = %d, want %d", ordinary.TargetSymbol(), mustIdentSymbol(t, bindings, aWrite))
 	}
-	if got := ordinary.Source(); got.Kind != transfer.ValueSourceCall || got.ExprRef != putRef || !got.HasExpr || got.CallPoint != writePoints[0] || !got.HasCallPoint {
+	if got := ordinary.Source(); got.Kind != factflow.ValueSourceCall || got.ExprRef != putRef || !got.HasExpr || got.CallPoint != writePoints[0] || !got.HasCallPoint {
 		t.Fatalf("ordinary source = %#v, put ref %d", got, putRef)
 	}
 
@@ -136,7 +137,7 @@ func TestLowerAssignmentsReturnsAndCallsPreserveValueListMetadata(t *testing.T) 
 	if !ok {
 		t.Fatalf("missing tail call producer")
 	}
-	if tailProducer.Context() != transfer.CallProducerContextReturn || !tailProducer.Final() || !tailProducer.Expanded() || !tailProducer.OpenTail() {
+	if tailProducer.Context() != factflow.CallProducerContextReturn || !tailProducer.Final() || !tailProducer.Expanded() || !tailProducer.OpenTail() {
 		t.Fatalf("tail producer flags/context are wrong")
 	}
 	tailRef, ok := tailProducer.Expr()
@@ -144,7 +145,7 @@ func TestLowerAssignmentsReturnsAndCallsPreserveValueListMetadata(t *testing.T) 
 		t.Fatalf("tail producer expr ref = %d/%v", tailRef, ok)
 	}
 	tailTargets := tailProducer.ResultTargets()
-	if len(tailTargets) != 1 || tailTargets[0].Kind() != transfer.CallResultTargetReturn || tailTargets[0].Index() != 1 {
+	if len(tailTargets) != 1 || tailTargets[0].Kind() != factflow.CallResultTargetReturn || tailTargets[0].Index() != 1 {
 		t.Fatalf("tail targets = %#v", tailTargets)
 	}
 	returnFact, ok := facts.Return(returnPoints[1])
@@ -152,7 +153,7 @@ func TestLowerAssignmentsReturnsAndCallsPreserveValueListMetadata(t *testing.T) 
 		t.Fatalf("missing return fact")
 	}
 	sources := returnFact.Sources()
-	if len(sources) != 2 || sources[0].Kind != transfer.ValueSourceExpression || !sources[0].HasExpr || sources[1].Kind != transfer.ValueSourceCall {
+	if len(sources) != 2 || sources[0].Kind != factflow.ValueSourceExpression || !sources[0].HasExpr || sources[1].Kind != factflow.ValueSourceCall {
 		t.Fatalf("return sources = %#v", sources)
 	}
 	if sources[1].ExprRef != tailRef || !sources[1].Expanded || !sources[1].OpenTail || sources[1].CallPoint != returnPoints[0] || !sources[1].HasCallPoint {
@@ -186,14 +187,14 @@ func TestLowerCallSitesPreserveAllSemanticContextsAndProducerStaysNarrow(t *test
 	if !ok {
 		t.Fatalf("missing assignment-source call site")
 	}
-	if localSite.Context() != transfer.CallSiteContextAssignmentSource || localSite.ExprIndex() != 0 || localSite.CalleeSymbol() == 0 {
+	if localSite.Context() != factflow.CallSiteContextAssignmentSource || localSite.ExprIndex() != 0 || localSite.CalleeSymbol() == 0 {
 		t.Fatalf("assignment-source call site = context %v expr index %d callee %d", localSite.Context(), localSite.ExprIndex(), localSite.CalleeSymbol())
 	}
 	if expr, ok := localSite.Expr(); !ok || expr == 0 {
 		t.Fatalf("assignment-source call-site expr = %d/%v", expr, ok)
 	}
 	localTargets := localSite.ResultTargets()
-	if len(localTargets) != 1 || localTargets[0].Kind() != transfer.CallResultTargetLocalAssignment || localTargets[0].Index() != 0 {
+	if len(localTargets) != 1 || localTargets[0].Kind() != factflow.CallResultTargetLocalAssignment || localTargets[0].Index() != 0 {
 		t.Fatalf("assignment-source call-site targets = %#v", localTargets)
 	}
 	if _, ok := facts.Call(localPoints[0]); !ok {
@@ -205,7 +206,7 @@ func TestLowerCallSitesPreserveAllSemanticContextsAndProducerStaysNarrow(t *test
 	if !ok {
 		t.Fatalf("missing statement call site")
 	}
-	if statementSite.Context() != transfer.CallSiteContextStatement || !statementSite.Final() || !statementSite.Adjusted() || statementSite.Expanded() {
+	if statementSite.Context() != factflow.CallSiteContextStatement || !statementSite.Final() || !statementSite.Adjusted() || statementSite.Expanded() {
 		t.Fatalf("statement call site flags/context = %v final=%v adjusted=%v expanded=%v", statementSite.Context(), statementSite.Final(), statementSite.Adjusted(), statementSite.Expanded())
 	}
 	if len(statementSite.ResultTargets()) != 0 {
@@ -220,7 +221,7 @@ func TestLowerCallSitesPreserveAllSemanticContextsAndProducerStaysNarrow(t *test
 	if !ok {
 		t.Fatalf("missing condition call site")
 	}
-	if conditionSite.Context() != transfer.CallSiteContextCondition || conditionSite.ExprIndex() != 0 || !conditionSite.Final() || !conditionSite.Adjusted() {
+	if conditionSite.Context() != factflow.CallSiteContextCondition || conditionSite.ExprIndex() != 0 || !conditionSite.Final() || !conditionSite.Adjusted() {
 		t.Fatalf("condition call site = context %v expr index %d final=%v adjusted=%v", conditionSite.Context(), conditionSite.ExprIndex(), conditionSite.Final(), conditionSite.Adjusted())
 	}
 	if _, ok := facts.Call(branchPoints[0]); ok {
@@ -232,7 +233,7 @@ func TestLowerCallSitesPreserveAllSemanticContextsAndProducerStaysNarrow(t *test
 	if !ok {
 		t.Fatalf("missing iterator call site")
 	}
-	if iteratorSite.Context() != transfer.CallSiteContextIteratorSource || iteratorSite.ExprIndex() != 0 {
+	if iteratorSite.Context() != factflow.CallSiteContextIteratorSource || iteratorSite.ExprIndex() != 0 {
 		t.Fatalf("iterator call site = context %v expr index %d", iteratorSite.Context(), iteratorSite.ExprIndex())
 	}
 	if _, ok := facts.Call(genericPoints[0]); ok {
@@ -244,11 +245,11 @@ func TestLowerCallSitesPreserveAllSemanticContextsAndProducerStaysNarrow(t *test
 	if !ok {
 		t.Fatalf("missing return-source call site")
 	}
-	if returnSite.Context() != transfer.CallSiteContextReturnSource || returnSite.ExprIndex() != 0 || !returnSite.OpenTail() {
+	if returnSite.Context() != factflow.CallSiteContextReturnSource || returnSite.ExprIndex() != 0 || !returnSite.OpenTail() {
 		t.Fatalf("return-source call site = context %v expr index %d open tail=%v", returnSite.Context(), returnSite.ExprIndex(), returnSite.OpenTail())
 	}
 	returnTargets := returnSite.ResultTargets()
-	if len(returnTargets) != 1 || returnTargets[0].Kind() != transfer.CallResultTargetReturn || returnTargets[0].Index() != 0 {
+	if len(returnTargets) != 1 || returnTargets[0].Kind() != factflow.CallResultTargetReturn || returnTargets[0].Index() != 0 {
 		t.Fatalf("return-source call-site targets = %#v", returnTargets)
 	}
 	if _, ok := facts.Call(returnPoints[0]); !ok {
@@ -288,7 +289,7 @@ func TestLowerCallSitePreservesPortableCallShapeAndArgumentOverlays(t *testing.T
 	if !ok {
 		t.Fatalf("missing call site at point %d", point)
 	}
-	if site.Context() != transfer.CallSiteContextStatement || site.MethodName() != "run" {
+	if site.Context() != factflow.CallSiteContextStatement || site.MethodName() != "run" {
 		t.Fatalf("call site context/method = %v/%q", site.Context(), site.MethodName())
 	}
 	receiverPath := path.NewPath(mustIdentSymbol(t, bindings, obj), "obj")
@@ -307,13 +308,13 @@ func TestLowerCallSitePreservesPortableCallShapeAndArgumentOverlays(t *testing.T
 	if len(args) != 2 {
 		t.Fatalf("argument sources = %#v, want two args", args)
 	}
-	if args[0].Kind != transfer.ValueSourceExpression || !args[0].HasExpr || args[0].ExprRef == 0 || args[0].ExprIndex != 0 || args[0].TargetIndex != 0 || args[0].Final {
+	if args[0].Kind != factflow.ValueSourceExpression || !args[0].HasExpr || args[0].ExprRef == 0 || args[0].ExprIndex != 0 || args[0].TargetIndex != 0 || args[0].Final {
 		t.Fatalf("first arg source = %#v", args[0])
 	}
-	if args[1].Kind != transfer.ValueSourceExpression || !args[1].HasExpr || args[1].ExprRef == 0 || args[1].ExprIndex != 1 || args[1].TargetIndex != 1 || !args[1].Final {
+	if args[1].Kind != factflow.ValueSourceExpression || !args[1].HasExpr || args[1].ExprRef == 0 || args[1].ExprIndex != 1 || args[1].TargetIndex != 1 || !args[1].Final {
 		t.Fatalf("second arg source = %#v", args[1])
 	}
-	assertLoweredAssertion(t, facts, args[0], assertion.Type(), transfer.ValueSourceExpression)
+	assertLoweredAssertion(t, facts, args[0], assertion.Type(), factflow.ValueSourceExpression)
 
 	typeArgs := site.TypeArgs()
 	if len(typeArgs) != 2 || typeArgs[0] == 0 || typeArgs[1] == 0 || typeArgs[0] == typeArgs[1] {
@@ -326,7 +327,7 @@ func TestLowerCallSitePreservesPortableCallShapeAndArgumentOverlays(t *testing.T
 		t.Fatalf("statement method call point %d lowered as call producer", point)
 	}
 
-	producerType := reflect.TypeOf(transfer.CallProducer{})
+	producerType := reflect.TypeOf(factflow.CallProducer{})
 	for _, method := range []string{"ReceiverPath", "MethodPath", "MethodName", "ArgumentSources", "TypeArgs"} {
 		if _, ok := producerType.MethodByName(method); ok {
 			t.Fatalf("CallProducer unexpectedly exposes broad call-shape method %s", method)
@@ -347,7 +348,7 @@ func TestLowerCallSiteArgumentNestedCallSourceHasCallPoint(t *testing.T) {
 	}
 	innerPoint := cfg.Point(42)
 	l := lowerer{
-		exprs:      make(map[any]transfer.ExprRef),
+		exprs:      make(map[any]factflow.ExprRef),
 		callPoints: map[*ast.FuncCallExpr]cfg.Point{inner: innerPoint},
 	}
 	site := l.callSite(semantics.CallFact{
@@ -360,12 +361,12 @@ func TestLowerCallSiteArgumentNestedCallSourceHasCallPoint(t *testing.T) {
 		t.Fatalf("argument sources = %#v, want one arg", args)
 	}
 	arg := args[0]
-	if arg.Kind != transfer.ValueSourceCall || !arg.HasCallPoint || arg.CallPoint != innerPoint {
+	if arg.Kind != factflow.ValueSourceCall || !arg.HasCallPoint || arg.CallPoint != innerPoint {
 		t.Fatalf("nested call arg source = %#v, want call point %d", arg, innerPoint)
 	}
 
 	wrappedSource := l.argumentValueSource(wrapped, 0, true)
-	if wrappedSource.Kind != transfer.ValueSourceCall || !wrappedSource.HasCallPoint || wrappedSource.CallPoint != innerPoint {
+	if wrappedSource.Kind != factflow.ValueSourceCall || !wrappedSource.HasCallPoint || wrappedSource.CallPoint != innerPoint {
 		t.Fatalf("wrapped nested call arg source = %#v, want call point %d", wrappedSource, innerPoint)
 	}
 	wrappedSemanticSource := l.argumentSemanticValueSource(wrapped, 0, true)
@@ -375,12 +376,12 @@ func TestLowerCallSiteArgumentNestedCallSourceHasCallPoint(t *testing.T) {
 }
 
 func TestLowerCallSiteMapsUnknownContextExplicitly(t *testing.T) {
-	l := lowerer{exprs: make(map[any]transfer.ExprRef)}
+	l := lowerer{exprs: make(map[any]factflow.ExprRef)}
 	site := l.callSite(semantics.CallFact{
 		Context: semantics.CallContextUnknown,
 		Call:    &ast.FuncCallExpr{Func: ident("mystery")},
 	})
-	if site.Context() != transfer.CallSiteContextUnknown {
+	if site.Context() != factflow.CallSiteContextUnknown {
 		t.Fatalf("unknown semantic call context lowered as %v", site.Context())
 	}
 	if expr, ok := site.Expr(); !ok || expr == 0 {
@@ -474,7 +475,7 @@ func TestLowerObjectLiteralSidecarUsesAssignmentExprRef(t *testing.T) {
 		t.Fatalf("missing local assignment fact")
 	}
 	source := localFact.Source()
-	if source.Kind != transfer.ValueSourceExpression || !source.HasExpr || source.ExprRef == 0 {
+	if source.Kind != factflow.ValueSourceExpression || !source.HasExpr || source.ExprRef == 0 {
 		t.Fatalf("local source = %#v, want expression source with expr ref", source)
 	}
 	literal, ok := facts.ObjectLiteral(source.ExprRef)
@@ -485,8 +486,8 @@ func TestLowerObjectLiteralSidecarUsesAssignmentExprRef(t *testing.T) {
 	if len(entries) != 2 {
 		t.Fatalf("literal entries = %#v, want two static entries", entries)
 	}
-	assertLoweredObjectEntry(t, entries[0], fieldSuffix("leaf"), transfer.ValueSourceExpression)
-	assertLoweredObjectEntry(t, entries[1], stringSuffix("key"), transfer.ValueSourceExpression)
+	assertLoweredObjectEntry(t, entries[0], fieldSuffix("leaf"), factflow.ValueSourceExpression)
+	assertLoweredObjectEntry(t, entries[1], stringSuffix("key"), factflow.ValueSourceExpression)
 	if entries[0].Source().ExprRef == source.ExprRef || entries[1].Source().ExprRef == source.ExprRef {
 		t.Fatalf("entry source expr refs reused table expr ref: source=%#v entries=%#v", source, entries)
 	}
@@ -520,7 +521,7 @@ func TestLowerWrappedObjectLiteralKeepsAssertionOverlayAndEntries(t *testing.T) 
 		t.Fatalf("missing local assignment fact")
 	}
 	source := localFact.Source()
-	assertLoweredAssertion(t, facts, source, assertion.Any(), transfer.ValueSourceExpression)
+	assertLoweredAssertion(t, facts, source, assertion.Any(), factflow.ValueSourceExpression)
 	literal, ok := facts.ObjectLiteral(source.ExprRef)
 	if !ok {
 		t.Fatalf("missing object literal sidecar for wrapped assignment expr ref %d", source.ExprRef)
@@ -529,7 +530,7 @@ func TestLowerWrappedObjectLiteralKeepsAssertionOverlayAndEntries(t *testing.T) 
 	if len(entries) != 1 {
 		t.Fatalf("literal entries = %#v, want one static entry", entries)
 	}
-	assertLoweredObjectEntry(t, entries[0], fieldSuffix("leaf"), transfer.ValueSourceExpression)
+	assertLoweredObjectEntry(t, entries[0], fieldSuffix("leaf"), factflow.ValueSourceExpression)
 }
 
 func TestLowerIdentifierNilTruthyFalsyBranches(t *testing.T) {
@@ -774,9 +775,9 @@ func TestLowerNestedObjectLiteralEntriesUnderAssignmentExprRef(t *testing.T) {
 	if len(entries) != 3 {
 		t.Fatalf("literal entries = %#v, want root, nested root, and nested leaf", entries)
 	}
-	assertLoweredObjectEntry(t, entries[0], fieldSuffix("x"), transfer.ValueSourceExpression)
-	assertLoweredObjectEntry(t, entries[1], fieldSuffix("a"), transfer.ValueSourceExpression)
-	assertLoweredObjectEntry(t, entries[2], fieldChainSuffix("a", "b"), transfer.ValueSourceExpression)
+	assertLoweredObjectEntry(t, entries[0], fieldSuffix("x"), factflow.ValueSourceExpression)
+	assertLoweredObjectEntry(t, entries[1], fieldSuffix("a"), factflow.ValueSourceExpression)
+	assertLoweredObjectEntry(t, entries[2], fieldChainSuffix("a", "b"), factflow.ValueSourceExpression)
 }
 
 func TestLowerClaimsToSidecarsWithoutProofRefinements(t *testing.T) {
@@ -802,9 +803,9 @@ func TestLowerClaimsToSidecarsWithoutProofRefinements(t *testing.T) {
 	anySource := mustLocalSource(t, facts, points[1])
 	nonNilSource := mustLocalSource(t, facts, points[2])
 
-	assertLoweredAssertion(t, facts, typeSource, assertion.Type(), transfer.ValueSourceExpression)
-	assertLoweredAssertion(t, facts, anySource, assertion.Any(), transfer.ValueSourceExpression)
-	assertLoweredAssertion(t, facts, nonNilSource, assertion.NonNil(), transfer.ValueSourceExpression)
+	assertLoweredAssertion(t, facts, typeSource, assertion.Type(), factflow.ValueSourceExpression)
+	assertLoweredAssertion(t, facts, anySource, assertion.Any(), factflow.ValueSourceExpression)
+	assertLoweredAssertion(t, facts, nonNilSource, assertion.NonNil(), factflow.ValueSourceExpression)
 	if _, ok := facts.BranchRefinement(points[2]); ok {
 		t.Fatalf("x! assignment produced branch/presence refinement")
 	}
@@ -845,7 +846,7 @@ func TestLowerClaimsPreserveCastSyntaxVariantsWithoutProofRefinements(t *testing
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			source := mustLocalSource(t, facts, tc.point)
-			assertLoweredAssertion(t, facts, source, tc.want, transfer.ValueSourceExpression)
+			assertLoweredAssertion(t, facts, source, tc.want, factflow.ValueSourceExpression)
 		})
 	}
 }
@@ -875,7 +876,7 @@ local a, b, c, d = x as number, x :: number, x as any, x :: any
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			source := mustLocalSource(t, facts, tc.point)
-			assertLoweredAssertion(t, facts, source, tc.want, transfer.ValueSourceExpression)
+			assertLoweredAssertion(t, facts, source, tc.want, factflow.ValueSourceExpression)
 		})
 	}
 	for _, point := range built.Graph.RPO() {
@@ -922,12 +923,12 @@ if x :: number then end
 				t.Fatalf("cast syntax = %v, want %v", cast.Syntax, tc.syntax)
 			}
 
-			branchLowerer := lowerer{exprs: make(map[any]transfer.ExprRef)}
-			branchInput := transfer.FactsInput{ValueOverlays: make(map[transfer.ExprRef]transfer.ValueOverlay)}
+			branchLowerer := lowerer{exprs: make(map[any]factflow.ExprRef)}
+			branchInput := factflow.FactsInput{ValueOverlays: make(map[factflow.ExprRef]factflow.ValueOverlay)}
 			branchLowerer.addAssertionOverlaysForSource(&branchInput, branch.Source)
-			branchFacts := transfer.NewFacts(branchInput)
+			branchFacts := factflow.NewFacts(branchInput)
 			branchSource := branchLowerer.valueSource(branch.Source)
-			assertLoweredAssertion(t, branchFacts, branchSource, assertion.Type(), transfer.ValueSourceExpression)
+			assertLoweredAssertion(t, branchFacts, branchSource, assertion.Type(), factflow.ValueSourceExpression)
 		})
 	}
 }
@@ -943,7 +944,7 @@ local a, b = x as any, x :: any
 	local := mustLocalStmt(t, stmts, 1)
 	points := requireStmtPoints(t, built, local, 2)
 	base := product.Set(reg, product.NewWithPresence(reg, product.ShapeTop, presence.Present()), runtimekind.Key, runtimekind.Singleton(runtimekind.Table))
-	inputValues := make(map[transfer.ExprRef]product.Value)
+	inputValues := make(map[factflow.ExprRef]product.Value)
 	for _, point := range points {
 		source := mustLocalSource(t, facts, point)
 		overlay, ok := facts.ValueOverlay(source.ExprRef)
@@ -954,9 +955,9 @@ local a, b = x as any, x :: any
 		inputValues[overlay.Source().ExprRef] = base
 	}
 
-	apply := transfer.NewFactsNodeTransfer(transfer.FactsNodeTransferConfig{
+	apply := factflow.NewFactsNodeTransfer(factflow.FactsNodeTransferConfig{
 		Facts: facts,
-		Sources: transfer.NewSourceValues(transfer.SourceValuesConfig{
+		Sources: factflow.NewSourceValues(factflow.SourceValuesConfig{
 			Registry:         reg,
 			ExpressionValues: inputValues,
 		}),
@@ -1076,7 +1077,7 @@ func TestLowerClaimOverlaysApplyIndicatorsWithoutMutatingBaseValues(t *testing.T
 	reg := product.DefaultRegistry()
 	facts := Lower(result, built.Graph)
 	points := requireStmtPoints(t, built, local, 3)
-	inputValues := make(map[transfer.ExprRef]product.Value)
+	inputValues := make(map[factflow.ExprRef]product.Value)
 	type sourceCase struct {
 		name              string
 		point             cfg.Point
@@ -1124,9 +1125,9 @@ func TestLowerClaimOverlaysApplyIndicatorsWithoutMutatingBaseValues(t *testing.T
 		inputValues[overlay.Source().ExprRef] = cases[i].base
 	}
 
-	apply := transfer.NewFactsNodeTransfer(transfer.FactsNodeTransferConfig{
+	apply := factflow.NewFactsNodeTransfer(factflow.FactsNodeTransferConfig{
 		Facts: facts,
-		Sources: transfer.NewSourceValues(transfer.SourceValuesConfig{
+		Sources: factflow.NewSourceValues(factflow.SourceValuesConfig{
 			Registry:         reg,
 			ExpressionValues: inputValues,
 		}),
@@ -1207,11 +1208,11 @@ func TestLowerNestedClaimOverlaysApplyCombinedIndicators(t *testing.T) {
 		t.Fatalf("missing inner assertion overlay")
 	}
 	base := product.NewWithPresence(reg, product.ShapeTop, presence.Present())
-	apply := transfer.NewFactsNodeTransfer(transfer.FactsNodeTransferConfig{
+	apply := factflow.NewFactsNodeTransfer(factflow.FactsNodeTransferConfig{
 		Facts: facts,
-		Sources: transfer.NewSourceValues(transfer.SourceValuesConfig{
+		Sources: factflow.NewSourceValues(factflow.SourceValuesConfig{
 			Registry: reg,
-			ExpressionValues: map[transfer.ExprRef]product.Value{
+			ExpressionValues: map[factflow.ExprRef]product.Value{
 				inner.Source().ExprRef: base,
 			},
 		}),
@@ -1265,7 +1266,7 @@ func TestLowerClaimWrappedCallPreservesProducerAndClaim(t *testing.T) {
 		t.Fatalf("inner producer expr ref = %d/%v", innerRef, ok)
 	}
 	localSource := mustLocalSource(t, facts, localPoints[1])
-	if localSource.Kind != transfer.ValueSourceCall || localSource.ExprRef == innerRef || localSource.CallPoint != localPoints[0] || !localSource.HasCallPoint {
+	if localSource.Kind != factflow.ValueSourceCall || localSource.ExprRef == innerRef || localSource.CallPoint != localPoints[0] || !localSource.HasCallPoint {
 		t.Fatalf("local wrapped call source = %#v, inner ref %d", localSource, innerRef)
 	}
 	claim, ok := facts.ValueOverlay(localSource.ExprRef)
@@ -1276,7 +1277,7 @@ func TestLowerClaimWrappedCallPreservesProducerAndClaim(t *testing.T) {
 		t.Fatalf("outer assertion = %s, want type", got)
 	}
 	innerSource := claim.Source()
-	if innerSource.Kind != transfer.ValueSourceCall || innerSource.ExprRef != innerRef || innerSource.CallPoint != localPoints[0] || !innerSource.HasCallPoint {
+	if innerSource.Kind != factflow.ValueSourceCall || innerSource.ExprRef != innerRef || innerSource.CallPoint != localPoints[0] || !innerSource.HasCallPoint {
 		t.Fatalf("assertion inner source = %#v, want call source ref %d at point %d", innerSource, innerRef, localPoints[0])
 	}
 
@@ -1286,25 +1287,25 @@ func TestLowerClaimWrappedCallPreservesProducerAndClaim(t *testing.T) {
 		t.Fatal("missing wrapped return fact")
 	}
 	returnSources := returnFact.Sources()
-	if len(returnSources) != 1 || returnSources[0].Kind != transfer.ValueSourceCall || returnSources[0].CallPoint != returnPoints[0] || !returnSources[0].HasCallPoint {
+	if len(returnSources) != 1 || returnSources[0].Kind != factflow.ValueSourceCall || returnSources[0].CallPoint != returnPoints[0] || !returnSources[0].HasCallPoint {
 		t.Fatalf("wrapped return source = %#v", returnSources)
 	}
-	assertLoweredAssertion(t, facts, returnSources[0], assertion.Type(), transfer.ValueSourceCall)
+	assertLoweredAssertion(t, facts, returnSources[0], assertion.Type(), factflow.ValueSourceCall)
 
 	ifPoints := requireStmtPoints(t, built, ifStmt, 2)
 	branch, ok := result.BranchCondition(ifPoints[1])
 	if !ok {
 		t.Fatal("missing wrapped condition branch fact")
 	}
-	branchLowerer := lowerer{exprs: make(map[any]transfer.ExprRef)}
-	branchInput := transfer.FactsInput{ValueOverlays: make(map[transfer.ExprRef]transfer.ValueOverlay)}
+	branchLowerer := lowerer{exprs: make(map[any]factflow.ExprRef)}
+	branchInput := factflow.FactsInput{ValueOverlays: make(map[factflow.ExprRef]factflow.ValueOverlay)}
 	branchLowerer.addAssertionOverlaysForSource(&branchInput, branch.Source)
-	branchFacts := transfer.NewFacts(branchInput)
+	branchFacts := factflow.NewFacts(branchInput)
 	branchSource := branchLowerer.valueSource(branch.Source)
-	if branchSource.Kind != transfer.ValueSourceCall || branchSource.CallPoint != ifPoints[0] || !branchSource.HasCallPoint {
+	if branchSource.Kind != factflow.ValueSourceCall || branchSource.CallPoint != ifPoints[0] || !branchSource.HasCallPoint {
 		t.Fatalf("wrapped condition source = %#v", branchSource)
 	}
-	assertLoweredAssertion(t, branchFacts, branchSource, assertion.Type(), transfer.ValueSourceCall)
+	assertLoweredAssertion(t, branchFacts, branchSource, assertion.Type(), factflow.ValueSourceCall)
 }
 
 func TestLowerMemberOrdinaryCallTargetStaysCallSiteOnly(t *testing.T) {
@@ -1326,7 +1327,7 @@ func TestLowerMemberOrdinaryCallTargetStaysCallSiteOnly(t *testing.T) {
 	if !ok {
 		t.Fatalf("missing assignment call producer at point %d", points[0])
 	}
-	if producer.Context() != transfer.CallProducerContextAssignment {
+	if producer.Context() != factflow.CallProducerContextAssignment {
 		t.Fatalf("producer context = %v, want assignment", producer.Context())
 	}
 	if got := producer.ResultTargets(); len(got) != 0 {
@@ -1337,11 +1338,11 @@ func TestLowerMemberOrdinaryCallTargetStaysCallSiteOnly(t *testing.T) {
 	if !ok {
 		t.Fatalf("missing call site at point %d", points[0])
 	}
-	if site.Context() != transfer.CallSiteContextAssignmentSource {
+	if site.Context() != factflow.CallSiteContextAssignmentSource {
 		t.Fatalf("call-site context = %v, want assignment source", site.Context())
 	}
 	targets := site.ResultTargets()
-	if len(targets) != 1 || targets[0].Kind() != transfer.CallResultTargetOrdinaryAssignment || targets[0].Index() != 0 {
+	if len(targets) != 1 || targets[0].Kind() != factflow.CallResultTargetOrdinaryAssignment || targets[0].Index() != 0 {
 		t.Fatalf("call-site targets = %#v", targets)
 	}
 	wantPath := path.NewPath(mustIdentSymbol(t, bindings, targetRoot), "t").Field("x")
@@ -1350,7 +1351,7 @@ func TestLowerMemberOrdinaryCallTargetStaysCallSiteOnly(t *testing.T) {
 	}
 }
 
-func mustLocalSource(t *testing.T, facts transfer.Facts, point cfg.Point) transfer.ValueSource {
+func mustLocalSource(t *testing.T, facts factflow.Facts, point cfg.Point) factflow.ValueSource {
 	t.Helper()
 	fact, ok := facts.LocalAssignment(point)
 	if !ok {
@@ -1363,7 +1364,7 @@ func mustLocalSource(t *testing.T, facts transfer.Facts, point cfg.Point) transf
 	return source
 }
 
-func assertLoweredAssertion(t *testing.T, facts transfer.Facts, source transfer.ValueSource, want assertion.Value, wantInnerKind transfer.ValueSourceKind) {
+func assertLoweredAssertion(t *testing.T, facts factflow.Facts, source factflow.ValueSource, want assertion.Value, wantInnerKind factflow.ValueSourceKind) {
 	t.Helper()
 	claim, ok := facts.ValueOverlay(source.ExprRef)
 	if !ok {
@@ -1376,7 +1377,7 @@ func assertLoweredAssertion(t *testing.T, facts transfer.Facts, source transfer.
 	}
 }
 
-func overlayAssertion(t *testing.T, overlay transfer.ValueOverlay) assertion.Value {
+func overlayAssertion(t *testing.T, overlay factflow.ValueOverlay) assertion.Value {
 	t.Helper()
 	return product.Get(product.DefaultRegistry(), overlay.Overlay(), assertion.Key)
 }
@@ -1406,7 +1407,7 @@ func assertAssertionOnlyProduct(t *testing.T, value product.Value, want assertio
 
 func assertLoweredBranchValuePresence(
 	t *testing.T,
-	facts transfer.Facts,
+	facts factflow.Facts,
 	point cfg.Point,
 	wantPath path.Path,
 	wantTrue presence.Value,
@@ -1429,7 +1430,7 @@ func assertLoweredBranchValuePresence(
 func assertOptionalValuePresence(
 	t *testing.T,
 	label string,
-	gotFn func() (transfer.ValueRefinement, bool),
+	gotFn func() (factflow.ValueRefinement, bool),
 	want presence.Value,
 	wantOK bool,
 ) {
@@ -1461,7 +1462,7 @@ type valueRefinementExpectation struct {
 
 func assertLoweredBranchValueRefinement(
 	t *testing.T,
-	facts transfer.Facts,
+	facts factflow.Facts,
 	point cfg.Point,
 	wantPath path.Path,
 	wantTrue valueRefinementExpectation,
@@ -1487,7 +1488,7 @@ func assertLoweredBranchValueRefinement(
 	assertValueRefinement(t, "false edge", falseValue, wantFalse)
 }
 
-func assertValueRefinement(t *testing.T, label string, got transfer.ValueRefinement, want valueRefinementExpectation) {
+func assertValueRefinement(t *testing.T, label string, got factflow.ValueRefinement, want valueRefinementExpectation) {
 	t.Helper()
 	constraint, hasConstraint := got.Constraint()
 	if !hasConstraint {
@@ -1511,7 +1512,7 @@ func assertValueRefinement(t *testing.T, label string, got transfer.ValueRefinem
 	}
 }
 
-func assertLoweredObjectEntry(t *testing.T, entry transfer.ObjectEntry, wantSuffix path.Path, wantKind transfer.ValueSourceKind) {
+func assertLoweredObjectEntry(t *testing.T, entry factflow.ObjectEntry, wantSuffix path.Path, wantKind factflow.ValueSourceKind) {
 	t.Helper()
 	if !entry.Suffix().Equal(wantSuffix) {
 		t.Fatalf("entry suffix = %#v, want %#v", entry.Suffix(), wantSuffix)
