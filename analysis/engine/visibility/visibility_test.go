@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/ir/ssa"
 	"github.com/wippyai/go-lua/analysis/symbol"
@@ -98,6 +99,55 @@ func TestNewTableClonesPointSymbolMap(t *testing.T) {
 	want := ssa.Version{Root: "value", Symbol: sym, ID: 7}
 	if got != want {
 		t.Fatalf("VisibleVersion after input mutation = %+v, want %+v", got, want)
+	}
+}
+
+func TestResolverKeyAtUsesVisibleVersion(t *testing.T) {
+	point := cfg.Point(1)
+	sym := symbol.ID(100)
+	resolver := NewResolver(NewTable(map[cfg.Point]map[symbol.ID]ssa.Version{
+		point: {
+			sym: {Root: "x", Symbol: sym, ID: 3},
+		},
+	}))
+	path := pathdom.NewPath(sym, "x").Field("field")
+
+	if got, want := resolver.KeyAt(point, path), pathdom.PathKey("sym100@3.field"); got != want {
+		t.Fatalf("KeyAt(versioned path) = %q, want %q", got, want)
+	}
+}
+
+func TestResolverRejectsMissingVersionAndUnresolvedRoot(t *testing.T) {
+	resolver := NewResolver(NewTable(nil))
+	if got := resolver.KeyAt(1, pathdom.NewPath(100, "x")); got != "" {
+		t.Fatalf("KeyAt without version = %q, want empty", got)
+	}
+	if got := resolver.KeyAt(1, pathdom.Path{Root: "x"}); got != "" {
+		t.Fatalf("KeyAt unresolved root = %q, want empty", got)
+	}
+	if got := resolver.KeyAt(1, pathdom.Path{}); got != "" {
+		t.Fatalf("KeyAt empty = %q, want empty", got)
+	}
+}
+
+func TestResolverPlaceholderUsesCurrentPathKey(t *testing.T) {
+	resolver := NewResolver(nil)
+	path := pathdom.NewPlaceholder(0).IndexStr("item")
+
+	if got, want := resolver.KeyAt(1, path), path.Key(); got != want {
+		t.Fatalf("KeyAt(placeholder) = %q, want %q", got, want)
+	}
+}
+
+func TestResolverKeyForVersionUsesExplicitVersion(t *testing.T) {
+	resolver := NewResolver(nil)
+	path := pathdom.NewPath(100, "x").Field("field")
+
+	if got, want := resolver.KeyForVersion(100, 7, path.Segments), pathdom.PathKey("sym100@7.field"); got != want {
+		t.Fatalf("KeyForVersion = %q, want %q", got, want)
+	}
+	if got := resolver.KeyForVersion(100, 0, path.Segments); got != "" {
+		t.Fatalf("KeyForVersion with zero version = %q, want empty", got)
 	}
 }
 

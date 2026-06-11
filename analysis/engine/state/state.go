@@ -9,6 +9,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/state/key"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
+	"github.com/wippyai/go-lua/analysis/engine/visibility"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/symbol"
 )
@@ -159,7 +160,7 @@ func (s State) UpdatePathKey(reg *axis.Registry, pathKey pathdom.PathKey, fn fun
 // symbol-rooted path with no visible SSA version.
 func (s State) ReadPathAt(
 	reg *axis.Registry,
-	resolver *key.Resolver,
+	resolver *visibility.Resolver,
 	point cfg.Point,
 	path pathdom.Path,
 ) (product.Value, bool) {
@@ -174,7 +175,7 @@ func (s State) ReadPathAt(
 // It returns false and leaves s unchanged when no key can be resolved.
 func (s State) WritePathAt(
 	reg *axis.Registry,
-	resolver *key.Resolver,
+	resolver *visibility.Resolver,
 	point cfg.Point,
 	path pathdom.Path,
 	value product.Value,
@@ -191,7 +192,7 @@ func (s State) WritePathAt(
 // unchanged when no key can be resolved.
 func (s State) UpdatePathAt(
 	reg *axis.Registry,
-	resolver *key.Resolver,
+	resolver *visibility.Resolver,
 	point cfg.Point,
 	path pathdom.Path,
 	fn func(product.Value) product.Value,
@@ -227,7 +228,7 @@ func (s State) InvalidatePathKeySubtree(pathKey pathdom.PathKey) (State, bool) {
 // refinements at the resolved key and any descendant key. It returns false and
 // leaves s unchanged when no key can be resolved.
 func (s State) InvalidatePathSubtreeAt(
-	resolver *key.Resolver,
+	resolver *visibility.Resolver,
 	point cfg.Point,
 	path pathdom.Path,
 ) (State, bool) {

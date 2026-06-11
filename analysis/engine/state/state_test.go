@@ -10,6 +10,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/axis/presence"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
+	"github.com/wippyai/go-lua/analysis/engine/visibility"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/ir/ssa"
 	"github.com/wippyai/go-lua/analysis/symbol"
@@ -230,7 +231,7 @@ func TestResolverBackedPathHelpersUseVersionedKeys(t *testing.T) {
 	valueDomain := product.Domain(reg)
 	point := cfg.Point(7)
 	sym := symbol.ID(30)
-	resolver := key.NewResolver(fakeVersionedGraph{
+	resolver := visibility.NewResolver(fakeVersionedGraph{
 		versions: map[cfg.Point]map[symbol.ID]ssa.Version{
 			point: {
 				sym: {Root: "x", Symbol: sym, ID: 4},
@@ -254,7 +255,7 @@ func TestResolverBackedPathHelpersUseVersionedKeys(t *testing.T) {
 		t.Fatalf("ReadPathAt = %s/%v, want value/true", formatValue(reg, got), ok)
 	}
 
-	missingResolver := key.NewResolver(fakeVersionedGraph{})
+	missingResolver := visibility.NewResolver(fakeVersionedGraph{})
 	unchanged, ok := s.WritePathAt(reg, missingResolver, point, path, absentValue(reg))
 	if ok {
 		t.Fatal("WritePathAt accepted missing visible version")
@@ -272,7 +273,7 @@ func TestUpdatePathAtUsesResolvedKeyAndSkipsUnresolvedPath(t *testing.T) {
 	valueDomain := product.Domain(reg)
 	point := cfg.Point(8)
 	sym := symbol.ID(31)
-	resolver := key.NewResolver(fakeVersionedGraph{
+	resolver := visibility.NewResolver(fakeVersionedGraph{
 		versions: map[cfg.Point]map[symbol.ID]ssa.Version{
 			point: {
 				sym: {Root: "x", Symbol: sym, ID: 5},
@@ -302,7 +303,7 @@ func TestUpdatePathAtUsesResolvedKeyAndSkipsUnresolvedPath(t *testing.T) {
 	}
 
 	called := false
-	unchanged, ok := s.UpdatePathAt(reg, key.NewResolver(fakeVersionedGraph{}), point, path, func(product.Value) product.Value {
+	unchanged, ok := s.UpdatePathAt(reg, visibility.NewResolver(fakeVersionedGraph{}), point, path, func(product.Value) product.Value {
 		called = true
 		return absentValue(reg)
 	})
@@ -388,7 +389,7 @@ func TestInvalidatePathSubtreeAtUsesResolvedKeyAndRejectsUnresolvedPath(t *testi
 	valueDomain := product.Domain(reg)
 	point := cfg.Point(9)
 	sym := symbol.ID(42)
-	resolver := key.NewResolver(fakeVersionedGraph{
+	resolver := visibility.NewResolver(fakeVersionedGraph{
 		versions: map[cfg.Point]map[symbol.ID]ssa.Version{
 			point: {
 				sym: {Root: "obj", Symbol: sym, ID: 6},
@@ -415,7 +416,7 @@ func TestInvalidatePathSubtreeAtUsesResolvedKeyAndRejectsUnresolvedPath(t *testi
 		t.Fatalf("other version = %s, want present", formatValue(reg, got))
 	}
 
-	unchanged, ok := s.InvalidatePathSubtreeAt(key.NewResolver(fakeVersionedGraph{}), point, path)
+	unchanged, ok := s.InvalidatePathSubtreeAt(visibility.NewResolver(fakeVersionedGraph{}), point, path)
 	if ok {
 		t.Fatal("InvalidatePathSubtreeAt accepted missing visible version")
 	}

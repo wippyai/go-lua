@@ -1,15 +1,16 @@
-package key
+package visibility
 
 import (
 	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/domain/path/segment"
+	"github.com/wippyai/go-lua/analysis/domain/state/key"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/ir/ssa"
 	"github.com/wippyai/go-lua/analysis/symbol"
 )
 
-// VersionedGraph provides SSA version lookup for symbols at CFG points.
-type VersionedGraph interface {
+// VersionSource provides SSA version lookup for symbols at CFG points.
+type VersionSource interface {
 	VisibleVersion(cfg.Point, symbol.ID) ssa.Version
 }
 
@@ -26,15 +27,15 @@ type singleSegment struct {
 // Resolver provides normalized point-local state path keys from source paths.
 // Every symbol-rooted state key includes a concrete nonzero SSA version.
 type Resolver struct {
-	graph  VersionedGraph
+	source VersionSource
 	root   map[versionedRoot]pathdom.PathKey
 	single map[singleSegment]pathdom.PathKey
 }
 
-// NewResolver creates a resolver bound to a version source.
-func NewResolver(graph VersionedGraph) *Resolver {
+// NewResolver creates a resolver bound to a visibility source.
+func NewResolver(source VersionSource) *Resolver {
 	return &Resolver{
-		graph:  graph,
+		source: source,
 		root:   make(map[versionedRoot]pathdom.PathKey),
 		single: make(map[singleSegment]pathdom.PathKey),
 	}
@@ -50,10 +51,10 @@ func (r *Resolver) KeyAt(point cfg.Point, path pathdom.Path) pathdom.PathKey {
 	if path.IsPlaceholder() {
 		return path.Key()
 	}
-	if path.Symbol == 0 || r == nil || r.graph == nil {
+	if path.Symbol == 0 || r == nil || r.source == nil {
 		return ""
 	}
-	version := r.graph.VisibleVersion(point, path.Symbol)
+	version := r.source.VisibleVersion(point, path.Symbol)
 	if version.IsZero() {
 		return ""
 	}
@@ -90,9 +91,9 @@ func (r *Resolver) rootKey(sym symbol.ID, version int) pathdom.PathKey {
 		if cached, ok := r.root[cacheKey]; ok {
 			return cached
 		}
-		key := pathdom.PathKey(SymbolVersionRoot(sym, version))
-		r.root[cacheKey] = key
-		return key
+		rootKey := pathdom.PathKey(key.SymbolVersionRoot(sym, version))
+		r.root[cacheKey] = rootKey
+		return rootKey
 	}
-	return pathdom.PathKey(SymbolVersionRoot(sym, version))
+	return pathdom.PathKey(key.SymbolVersionRoot(sym, version))
 }

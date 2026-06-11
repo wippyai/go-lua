@@ -2,13 +2,12 @@
 package visibility
 
 import (
-	"github.com/wippyai/go-lua/analysis/domain/state/key"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/ir/ssa"
 	"github.com/wippyai/go-lua/analysis/symbol"
 )
 
-var _ key.VersionedGraph = (*Table)(nil)
+var _ VersionSource = (*Table)(nil)
 
 type lookup struct {
 	point  cfg.Point

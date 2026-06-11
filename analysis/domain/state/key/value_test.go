@@ -1,13 +1,12 @@
 package key
 
 import (
+	"os/exec"
 	"strconv"
+	"strings"
 	"testing"
 
-	pathdom "github.com/wippyai/go-lua/analysis/domain/path"
-	"github.com/wippyai/go-lua/analysis/ir/cfg"
-	"github.com/wippyai/go-lua/analysis/ir/ssa"
-	"github.com/wippyai/go-lua/analysis/symbol"
+	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 )
 
 func TestValueConstructorsAreStableAndTyped(t *testing.T) {
@@ -69,52 +68,6 @@ func TestParseReturnSlotRejectsOverflow(t *testing.T) {
 	}
 }
 
-type mockVersions struct {
-	versions map[cfg.Point]map[symbol.ID]ssa.Version
-}
-
-func (m mockVersions) VisibleVersion(point cfg.Point, sym symbol.ID) ssa.Version {
-	if byPoint, ok := m.versions[point]; ok {
-		return byPoint[sym]
-	}
-	return ssa.Version{}
-}
-
-func TestResolverKeyAtUsesVisibleVersion(t *testing.T) {
-	resolver := NewResolver(mockVersions{
-		versions: map[cfg.Point]map[symbol.ID]ssa.Version{
-			1: {100: {Root: "x", Symbol: 100, ID: 3}},
-		},
-	})
-	path := pathdom.NewPath(100, "x").Field("field")
-
-	if got, want := resolver.KeyAt(1, path), pathdom.PathKey("sym100@3.field"); got != want {
-		t.Fatalf("KeyAt(versioned path) = %q, want %q", got, want)
-	}
-}
-
-func TestResolverRejectsMissingVersionAndUnresolvedRoot(t *testing.T) {
-	resolver := NewResolver(mockVersions{})
-	if got := resolver.KeyAt(1, pathdom.NewPath(100, "x")); got != "" {
-		t.Fatalf("KeyAt without version = %q, want empty", got)
-	}
-	if got := resolver.KeyAt(1, pathdom.Path{Root: "x"}); got != "" {
-		t.Fatalf("KeyAt unresolved root = %q, want empty", got)
-	}
-	if got := resolver.KeyAt(1, pathdom.Path{}); got != "" {
-		t.Fatalf("KeyAt empty = %q, want empty", got)
-	}
-}
-
-func TestResolverPlaceholderUsesCurrentPathKey(t *testing.T) {
-	resolver := NewResolver(nil)
-	path := pathdom.NewPlaceholder(0).IndexStr("item")
-
-	if got, want := resolver.KeyAt(1, path), path.Key(); got != want {
-		t.Fatalf("KeyAt(placeholder) = %q, want %q", got, want)
-	}
-}
-
 func TestParsePathKeyAndRootSuffix(t *testing.T) {
 	sym, version, suffix, ok := ParsePathKey(`sym42@3.field["k"]`)
 	if !ok || sym != 42 || version != 3 || suffix != `.field["k"]` {
@@ -125,5 +78,40 @@ func TestParsePathKeyAndRootSuffix(t *testing.T) {
 	}
 	if _, _, _, ok := ParsePathKey("sym1@1[bad]"); ok {
 		t.Fatal("ParsePathKey accepted invalid suffix")
+	}
+}
+
+func TestSymbolVersionPathUsesPureKeySpelling(t *testing.T) {
+	segments := []segment.Segment{
+		{Kind: segment.SegmentField, Name: "field"},
+		{Kind: segment.SegmentIndexString, Name: "k"},
+	}
+	if got := SymbolVersionPath(42, 3, segments); got != `sym42@3.field["k"]` {
+		t.Fatalf("SymbolVersionPath = %q, want verbose versioned path", got)
+	}
+	if got := SymbolVersionPath(0, 3, segments); got != "" {
+		t.Fatalf("SymbolVersionPath with zero symbol = %q, want empty", got)
+	}
+	if got := SymbolVersionPath(42, 0, segments); got != "" {
+		t.Fatalf("SymbolVersionPath with zero version = %q, want empty", got)
+	}
+}
+
+func TestPackageDoesNotImportIRorEngine(t *testing.T) {
+	cmd := exec.Command("go", "list", "-deps", ".")
+	out, err := cmd.Output()
+	if err != nil {
+		t.Fatalf("go list -deps . failed: %v", err)
+	}
+	banned := []string{
+		"github.com/wippyai/go-lua/analysis/ir",
+		"github.com/wippyai/go-lua/analysis/engine",
+	}
+	for _, dep := range strings.Fields(string(out)) {
+		for _, prefix := range banned {
+			if dep == prefix || strings.HasPrefix(dep, prefix+"/") {
+				t.Fatalf("key package imports forbidden dependency %q", dep)
+			}
+		}
 	}
 }
