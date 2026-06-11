@@ -121,11 +121,25 @@ func (r *Result) LocalAssignment(point cfg.Point) (semantics.LocalAssignmentFact
 	return r.semantics.LocalAssignment(point)
 }
 
+func (r *Result) OrdinaryAssignment(point cfg.Point) (semantics.OrdinaryAssignmentFact, bool) {
+	if r == nil || r.semantics == nil {
+		return semantics.OrdinaryAssignmentFact{}, false
+	}
+	return r.semantics.OrdinaryAssignment(point)
+}
+
 func (r *Result) Call(point cfg.Point) (semantics.CallFact, bool) {
 	if r == nil || r.semantics == nil {
 		return semantics.CallFact{}, false
 	}
 	return r.semantics.Call(point)
+}
+
+func (r *Result) CallSite(point cfg.Point) (factflow.CallSite, bool) {
+	if r == nil {
+		return factflow.CallSite{}, false
+	}
+	return r.facts.CallSite(point)
 }
 
 func (r *Result) BranchCondition(point cfg.Point) (semantics.BranchConditionFact, bool) {
@@ -140,6 +154,13 @@ func (r *Result) TypeDefinition(point cfg.Point) (cfgfacts.TypeDefinitionFact, b
 		return cfgfacts.TypeDefinitionFact{}, false
 	}
 	return r.semantics.TypeDefinition(point)
+}
+
+func (r *Result) FunctionDefinition(point cfg.Point) (cfgfacts.FunctionDefinitionFact, bool) {
+	if r == nil || r.semantics == nil {
+		return cfgfacts.FunctionDefinitionFact{}, false
+	}
+	return r.semantics.FunctionDefinition(point)
 }
 
 func (r *Result) FunctionResults() []*Result {

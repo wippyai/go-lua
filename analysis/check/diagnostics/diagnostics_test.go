@@ -125,6 +125,70 @@ func TestMemberCallSkipsUnnarrowedPrimitiveMethod(t *testing.T) {
 	}
 }
 
+func TestDirectCallReportsNonCallableTarget(t *testing.T) {
+	diags := runDiagnostics(t, `
+		local x: number = 42
+		x()
+	`)
+	if len(diags) != 1 {
+		t.Fatalf("diagnostics = %d, want 1: %#v", len(diags), diags)
+	}
+	d := diags[0]
+	if d.Code != CodeDirectCallNotCallable || d.Severity != diagnostic.SeverityError {
+		t.Fatalf("diagnostic code/severity = %s/%s", d.Code, d.Severity)
+	}
+	if !strings.Contains(d.Message, "not callable") || !strings.Contains(d.Message, "number") {
+		t.Fatalf("message = %q", d.Message)
+	}
+	if len(d.Explanation.Evidence()) == 0 {
+		t.Fatalf("explanation evidence = %#v, want non-empty", d.Explanation.Evidence())
+	}
+}
+
+func TestDirectCallReportsTooFewArgs(t *testing.T) {
+	diags := runDiagnostics(t, `
+		local function add(a: number, b: number): number
+			return a
+		end
+		add(1)
+	`)
+	if len(diags) != 1 {
+		t.Fatalf("diagnostics = %d, want 1: %#v", len(diags), diags)
+	}
+	d := diags[0]
+	if d.Code != CodeDirectCallTooFewArgs || d.Severity != diagnostic.SeverityError {
+		t.Fatalf("diagnostic code/severity = %s/%s", d.Code, d.Severity)
+	}
+	if !strings.Contains(d.Message, "expects 2 arguments") || !strings.Contains(d.Message, "got 1") {
+		t.Fatalf("message = %q", d.Message)
+	}
+	if len(d.Explanation.Evidence()) < 2 {
+		t.Fatalf("explanation evidence = %#v, want call and declaration evidence", d.Explanation.Evidence())
+	}
+}
+
+func TestDirectCallReportsWrongArgumentType(t *testing.T) {
+	diags := runDiagnostics(t, `
+		local function add(a: number, b: number): number
+			return a
+		end
+		add(1, "wrong")
+	`)
+	if len(diags) != 1 {
+		t.Fatalf("diagnostics = %d, want 1: %#v", len(diags), diags)
+	}
+	d := diags[0]
+	if d.Code != CodeDirectCallArgType || d.Severity != diagnostic.SeverityError {
+		t.Fatalf("diagnostic code/severity = %s/%s", d.Code, d.Severity)
+	}
+	if !strings.Contains(d.Message, "argument 2") || !strings.Contains(d.Message, `"wrong"`) || !strings.Contains(d.Message, "number") {
+		t.Fatalf("message = %q", d.Message)
+	}
+	if len(d.Explanation.Evidence()) < 2 {
+		t.Fatalf("explanation evidence = %#v, want call and parameter evidence", d.Explanation.Evidence())
+	}
+}
+
 func runDiagnostics(t *testing.T, src string) []diagnostic.Diagnostic {
 	t.Helper()
 	stmts, err := parse.ParseString(src, "diagnostics_test.lua")

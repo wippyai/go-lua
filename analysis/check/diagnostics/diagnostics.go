@@ -11,9 +11,12 @@ import (
 )
 
 const (
-	CodeAssignmentType diagnostic.Code = "type.assignment"
-	CodeMissingMember  diagnostic.Code = "type.member.missing"
-	CodeNotCallable    diagnostic.Code = "type.call.not_callable"
+	CodeAssignmentType        diagnostic.Code = "type.assignment"
+	CodeMissingMember         diagnostic.Code = "type.member.missing"
+	CodeNotCallable           diagnostic.Code = "type.call.not_callable"
+	CodeDirectCallNotCallable diagnostic.Code = "type.call.direct.not_callable"
+	CodeDirectCallTooFewArgs  diagnostic.Code = "type.call.direct.too_few_args"
+	CodeDirectCallArgType     diagnostic.Code = "type.call.direct.argument_type"
 )
 
 type Config struct {
@@ -34,6 +37,7 @@ func produceWithResolver(result *check.Result, config Config, parent typeannotat
 	config.Resolver = resolver
 	var out []diagnostic.Diagnostic
 	out = append(out, AnnotationAssignability(config).Produce(result)...)
+	out = append(out, DirectCallContract(config).Produce(result)...)
 	out = append(out, MemberCall(config).Produce(result)...)
 	for _, fn := range result.FunctionResults() {
 		out = append(out, produceWithResolver(fn, config, resolver)...)
