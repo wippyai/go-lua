@@ -678,6 +678,49 @@ func TestBuildChunkAssignmentAndReturnCallsPrecedeValuePoints(t *testing.T) {
 	requireEdge(t, graph, returnPoints[1], graph.Exit(), false)
 }
 
+func TestBuildChunkAssertionWrappedCallsProduceCallPoints(t *testing.T) {
+	makeCall := &ast.FuncCallExpr{Func: ident("make")}
+	makeCast := &ast.CastExpr{Expr: makeCall, Type: &ast.PrimitiveTypeExpr{Name: "number"}}
+	local := localAssign([]string{"value"}, makeCast)
+
+	readyCall := &ast.FuncCallExpr{Func: ident("ready")}
+	readyCast := &ast.CastExpr{Expr: readyCall, Type: &ast.PrimitiveTypeExpr{Name: "boolean"}}
+	ifStmt := &ast.IfStmt{Condition: readyCast}
+
+	iterCall := &ast.FuncCallExpr{Func: ident("iter")}
+	iterAssert := &ast.NonNilAssertExpr{Expr: iterCall}
+	loop := &ast.GenericForStmt{Names: []string{"item"}, Exprs: []ast.Expr{iterAssert}}
+
+	tailCall := &ast.FuncCallExpr{Func: ident("tail")}
+	tailCast := &ast.CastExpr{Expr: tailCall, Type: &ast.PrimitiveTypeExpr{Name: "any"}}
+	ret := &ast.ReturnStmt{Exprs: []ast.Expr{tailCast}}
+
+	stmts := []ast.Stmt{local, ifStmt, loop, ret}
+	bindings := bind.BindChunk(stmts, bind.Options{Globals: []string{"make", "ready", "iter", "tail"}})
+	result := BuildChunk(stmts, bindings)
+	if result == nil || result.Graph == nil {
+		t.Fatalf("BuildChunk returned nil")
+	}
+	graph := result.Graph
+
+	localPoints := requireStmtPoints(t, result, local, 2)
+	requirePointKind(t, graph, localPoints[0], cfg.NodeCall)
+	requirePointKind(t, graph, localPoints[1], cfg.NodeAssign)
+
+	ifPoints := requireStmtPoints(t, result, ifStmt, 2)
+	requirePointKind(t, graph, ifPoints[0], cfg.NodeCall)
+	requirePointKind(t, graph, ifPoints[1], cfg.NodeBranch)
+
+	loopPoints := requireStmtPoints(t, result, loop, 3)
+	requirePointKind(t, graph, loopPoints[0], cfg.NodeCall)
+	requirePointKind(t, graph, loopPoints[1], cfg.NodeBranch)
+	requirePointKind(t, graph, loopPoints[2], cfg.NodeAssign)
+
+	returnPoints := requireStmtPoints(t, result, ret, 2)
+	requirePointKind(t, graph, returnPoints[0], cfg.NodeCall)
+	requirePointKind(t, graph, returnPoints[1], cfg.NodeReturn)
+}
+
 func TestBuildChunkConditionCallPrecedesIfBranch(t *testing.T) {
 	readyCall := &ast.FuncCallExpr{Func: ident("ready")}
 	thenStmt := localAssign([]string{"thenValue"}, number("1"))

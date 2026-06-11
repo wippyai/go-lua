@@ -5,6 +5,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/lua/bind"
 	"github.com/wippyai/go-lua/analysis/lua/pathexpr"
+	"github.com/wippyai/go-lua/analysis/lua/valueexpr"
 	"github.com/wippyai/go-lua/analysis/symbol"
 	"github.com/wippyai/go-lua/compiler/ast"
 )
@@ -98,7 +99,7 @@ func callPointsByExprIndex(calls []indexedCall, points []cfg.Point) map[int]cfg.
 func topLevelValueListCalls(exprs []ast.Expr) []indexedCall {
 	var calls []indexedCall
 	for i, expr := range exprs {
-		call, ok := expr.(*ast.FuncCallExpr)
+		call, ok := valueexpr.Call(expr)
 		if !ok {
 			continue
 		}
@@ -226,7 +227,7 @@ func conditionValueSource(expr ast.Expr, callPoints map[int]cfg.Point) ValueSour
 		TargetIndex: NoValueSourceIndex,
 		ResultIndex: 0,
 		Final:       true,
-		Adjusted:    ast.CanProduceMultipleValues(expr),
+		Adjusted:    canProduceMultipleValues(expr),
 	}
 	if source.Kind == ValueSourceCall {
 		if point, ok := callPoints[0]; ok {
@@ -239,7 +240,7 @@ func conditionValueSource(expr ast.Expr, callPoints map[int]cfg.Point) ValueSour
 
 func valueSourceForExpr(expr ast.Expr, exprIndex, targetIndex, resultIndex int, final bool, openTail bool, callPoints map[int]cfg.Point) ValueSource {
 	expanded := final && canExpandFinal(expr)
-	adjusted := ast.CanProduceMultipleValues(expr) && !expanded
+	adjusted := canProduceMultipleValues(expr) && !expanded
 	source := ValueSource{
 		Kind:        valueSourceKind(expr),
 		Expr:        expr,
@@ -270,10 +271,10 @@ func nilFillSource(targetIndex int) ValueSource {
 }
 
 func valueSourceKind(expr ast.Expr) ValueSourceKind {
-	switch expr.(type) {
-	case *ast.FuncCallExpr:
+	switch valueexpr.TopLevelProducer(expr).Kind {
+	case valueexpr.ProducerCall:
 		return ValueSourceCall
-	case *ast.Comma3Expr:
+	case valueexpr.ProducerVararg:
 		return ValueSourceVararg
 	default:
 		return ValueSourceExpression
@@ -281,18 +282,15 @@ func valueSourceKind(expr ast.Expr) ValueSourceKind {
 }
 
 func canExpandFinal(expr ast.Expr) bool {
-	return ast.CanProduceMultipleValues(expr) && !adjustRet(expr)
+	return canProduceMultipleValues(expr) && !adjustRet(expr)
+}
+
+func canProduceMultipleValues(expr ast.Expr) bool {
+	return valueexpr.CanProduceMultipleValues(expr)
 }
 
 func adjustRet(expr ast.Expr) bool {
-	switch expr := expr.(type) {
-	case *ast.FuncCallExpr:
-		return expr.AdjustRet
-	case *ast.Comma3Expr:
-		return expr.AdjustRet
-	default:
-		return false
-	}
+	return valueexpr.AdjustRet(expr)
 }
 
 func buildCallFact(sourceStmt ast.Stmt, callStmt *ast.FuncCallStmt, context CallContextKind, exprs []ast.Expr, exprIndex int, call *ast.FuncCallExpr, bindings *bind.Result, assignmentTargets []CallResultTarget) CallFact {

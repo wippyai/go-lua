@@ -792,6 +792,87 @@ func TestExtractChunkConditionAndIteratorCallFactsUseDeferredContexts(t *testing
 	}
 }
 
+func TestExtractChunkAssertionWrappedCallProducersKeepOuterSources(t *testing.T) {
+	fooCall := call("foo")
+	fooCast := &ast.CastExpr{Expr: fooCall, Type: &ast.PrimitiveTypeExpr{Name: "number"}}
+	localCast := localAssign([]string{"x"}, fooCast)
+
+	mustCall := call("must")
+	mustAssert := &ast.NonNilAssertExpr{Expr: mustCall}
+	localNonNil := localAssign([]string{"y"}, mustAssert)
+
+	barCall := call("bar")
+	barCast := &ast.CastExpr{Expr: barCall, Type: &ast.PrimitiveTypeExpr{Name: "string"}}
+	ret := &ast.ReturnStmt{Exprs: []ast.Expr{barCast}}
+
+	readyCall := call("ready")
+	readyCast := &ast.CastExpr{Expr: readyCall, Type: &ast.PrimitiveTypeExpr{Name: "boolean"}}
+	ifStmt := &ast.IfStmt{Condition: readyCast}
+
+	iterCall := call("iter")
+	iterCast := &ast.CastExpr{Expr: iterCall, Type: &ast.PrimitiveTypeExpr{Name: "any"}}
+	loop := &ast.GenericForStmt{Names: []string{"item"}, Exprs: []ast.Expr{iterCast}}
+
+	stmts := []ast.Stmt{localCast, localNonNil, ifStmt, loop, ret}
+	bindings := bind.BindChunk(stmts, bind.Options{Globals: []string{"foo", "must", "bar", "ready", "iter"}})
+	built := cfgbuild.BuildChunk(stmts, bindings)
+	if built == nil {
+		t.Fatal("BuildChunk returned nil")
+	}
+	result, err := ExtractChunk(stmts, bindings, built)
+	if err != nil {
+		t.Fatalf("ExtractChunk: %v", err)
+	}
+
+	localCastPoints := requireStmtPoints(t, built, localCast, 2)
+	assertWrappedCallSource(t, result, localCastPoints[0], localCastPoints[1], localCast, fooCall, fooCast)
+
+	localNonNilPoints := requireStmtPoints(t, built, localNonNil, 2)
+	assertWrappedCallSource(t, result, localNonNilPoints[0], localNonNilPoints[1], localNonNil, mustCall, mustAssert)
+
+	returnPoints := requireStmtPoints(t, built, ret, 2)
+	returnCall, ok := result.Call(returnPoints[0])
+	if !ok || returnCall.Call != barCall || returnCall.ExprIndex != 0 || returnCall.Context != CallContextReturnSource {
+		t.Fatalf("return call = %#v, ok=%v", returnCall, ok)
+	}
+	returnFact, ok := result.Return(returnPoints[1])
+	if !ok || len(returnFact.Sources) != 1 || returnFact.Sources[0].Kind != ValueSourceCall || returnFact.Sources[0].Expr != barCast || returnFact.Sources[0].CallPoint != returnPoints[0] || !returnFact.Sources[0].HasCallPoint {
+		t.Fatalf("return sources = %#v, ok=%v", returnFact.Sources, ok)
+	}
+
+	ifPoints := requireStmtPoints(t, built, ifStmt, 2)
+	conditionCall, ok := result.Call(ifPoints[0])
+	if !ok || conditionCall.Call != readyCall || conditionCall.Context != CallContextCondition {
+		t.Fatalf("condition call = %#v, ok=%v", conditionCall, ok)
+	}
+	branchFact, ok := result.BranchCondition(ifPoints[1])
+	if !ok || branchFact.Source.Kind != ValueSourceCall || branchFact.Source.Expr != readyCast || branchFact.Source.CallPoint != ifPoints[0] || !branchFact.Source.HasCallPoint {
+		t.Fatalf("branch source = %#v, ok=%v", branchFact.Source, ok)
+	}
+
+	loopPoints := requireStmtPoints(t, built, loop, 3)
+	iterCallFact, ok := result.Call(loopPoints[0])
+	if !ok || iterCallFact.Call != iterCall || iterCallFact.Context != CallContextIteratorSource {
+		t.Fatalf("iterator call = %#v, ok=%v", iterCallFact, ok)
+	}
+	genericFact, ok := result.GenericFor(loopPoints[1])
+	if !ok || len(genericFact.Sources) != 1 || genericFact.Sources[0].Kind != ValueSourceCall || genericFact.Sources[0].Expr != iterCast || genericFact.Sources[0].CallPoint != loopPoints[0] || !genericFact.Sources[0].HasCallPoint {
+		t.Fatalf("generic sources = %#v, ok=%v", genericFact.Sources, ok)
+	}
+}
+
+func assertWrappedCallSource(t *testing.T, result *Result, callPoint, assignPoint cfg.Point, stmt *ast.LocalAssignStmt, innerCall *ast.FuncCallExpr, outerExpr ast.Expr) {
+	t.Helper()
+	callFact, ok := result.Call(callPoint)
+	if !ok || callFact.Call != innerCall || callFact.Context != CallContextAssignmentSource || callFact.SourceStmt != stmt {
+		t.Fatalf("call fact = %#v, ok=%v", callFact, ok)
+	}
+	assignFact, ok := result.LocalAssignment(assignPoint)
+	if !ok || assignFact.Source.Kind != ValueSourceCall || assignFact.Source.Expr != outerExpr || assignFact.Source.CallPoint != callPoint || !assignFact.Source.HasCallPoint {
+		t.Fatalf("assignment source = %#v, ok=%v", assignFact.Source, ok)
+	}
+}
+
 func TestExtractChunkAssignmentValueSourcesHandleAdjustRetNilFillAndVararg(t *testing.T) {
 	singleCall := &ast.FuncCallExpr{Func: ident("single"), AdjustRet: true}
 	adjusted := assign([]ast.Expr{ident("x"), ident("y")}, singleCall)

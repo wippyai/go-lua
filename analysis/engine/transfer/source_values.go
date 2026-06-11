@@ -139,7 +139,7 @@ func (r assertionSourceValues) valueOfSource(
 	read func(cfg.Point) state.State,
 	active map[ExprRef]bool,
 ) (product.Value, bool) {
-	if source.Kind != ValueSourceExpression || !source.HasExpr {
+	if !source.HasExpr {
 		return r.base.ValueOfSource(point, source, in, read)
 	}
 	if claim, ok := r.assertions[source.ExprRef]; ok {

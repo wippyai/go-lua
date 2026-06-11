@@ -201,6 +201,49 @@ func TestAssertionSourceValuesSidecarAttachesIndicatorOnly(t *testing.T) {
 	}
 }
 
+func TestAssertionSourceValuesAttachesIndicatorToCallSource(t *testing.T) {
+	reg := product.DefaultRegistry()
+	inner := ExprRef(12)
+	outer := ExprRef(13)
+	callPoint := cfg.Point(44)
+	callValue := presentValue(reg)
+	outerSource := ValueSource{
+		Kind:         ValueSourceCall,
+		ExprRef:      outer,
+		HasExpr:      true,
+		CallPoint:    callPoint,
+		HasCallPoint: true,
+		ResultIndex:  0,
+	}
+	innerSource := outerSource
+	innerSource.ExprRef = inner
+	baseResolver := NewSourceValues(SourceValuesConfig{Registry: reg})
+	resolver := withAssertionSourceValues(reg, baseResolver, map[ExprRef]Assertion{
+		outer: NewAssertion(innerSource, assertion.Type()),
+	})
+
+	var readPoint cfg.Point
+	got, ok := resolver.ValueOfSource(cfg.Point(1), outerSource, state.State{}, func(point cfg.Point) state.State {
+		readPoint = point
+		return state.State{}.WriteReturnSlot(reg, 0, callValue)
+	})
+	if !ok {
+		t.Fatal("asserted call source did not resolve")
+	}
+	if readPoint != callPoint {
+		t.Fatalf("read point = %d, want call point %d", readPoint, callPoint)
+	}
+	if gotPresence := product.PresenceOf(got); !presence.Equal(gotPresence, presence.Present()) {
+		t.Fatalf("asserted call presence = %s, want original present", gotPresence)
+	}
+	if gotClaim := product.Get(reg, got, assertion.Key); !assertion.Equal(gotClaim, assertion.Type()) {
+		t.Fatalf("asserted call claim = %s, want type claim", gotClaim)
+	}
+	if baseClaim := product.Get(reg, callValue, assertion.Key); !assertion.Equal(baseClaim, assertion.Top()) {
+		t.Fatalf("call return value mutated with assertion = %s", baseClaim)
+	}
+}
+
 func TestAssertionSourceValuesNonNilAssertionDoesNotRefineAbsentPresence(t *testing.T) {
 	reg := product.DefaultRegistry()
 	inner := ExprRef(14)

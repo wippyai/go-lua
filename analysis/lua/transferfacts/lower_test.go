@@ -604,6 +604,81 @@ func TestLowerNestedAssertionsPreserveOuterIdentityAndInnerFlow(t *testing.T) {
 	}
 }
 
+func TestLowerAssertionWrappedCallPreservesProducerAndClaim(t *testing.T) {
+	fooIdent := ident("foo")
+	fooCall := &ast.FuncCallExpr{Func: fooIdent}
+	fooCast := &ast.CastExpr{Expr: fooCall, Type: primitiveType("number")}
+	local := localAssign([]string{"x"}, fooCast)
+	barCall := &ast.FuncCallExpr{Func: ident("bar")}
+	barCast := &ast.CastExpr{Expr: barCall, Type: primitiveType("string")}
+	ret := &ast.ReturnStmt{Exprs: []ast.Expr{barCast}}
+	readyCall := &ast.FuncCallExpr{Func: ident("ready")}
+	readyCast := &ast.CastExpr{Expr: readyCall, Type: primitiveType("boolean")}
+	ifStmt := &ast.IfStmt{Condition: readyCast}
+	stmts := []ast.Stmt{local, ifStmt, ret}
+	bindings := bind.BindChunk(stmts, bind.Options{Globals: []string{"foo", "bar", "ready"}})
+	built := cfgbuild.BuildChunk(stmts, bindings)
+	if built == nil {
+		t.Fatal("BuildChunk returned nil")
+	}
+	result, err := semantics.ExtractChunk(stmts, bindings, built)
+	if err != nil {
+		t.Fatalf("ExtractChunk: %v", err)
+	}
+
+	facts := Lower(result, built.Graph)
+	localPoints := requireStmtPoints(t, built, local, 2)
+	producer, ok := facts.Call(localPoints[0])
+	if !ok {
+		t.Fatal("missing assertion-wrapped assignment call producer")
+	}
+	innerRef, ok := producer.Expr()
+	if !ok || innerRef == 0 {
+		t.Fatalf("inner producer expr ref = %d/%v", innerRef, ok)
+	}
+	localSource := mustLocalSource(t, facts, localPoints[1])
+	if localSource.Kind != transfer.ValueSourceCall || localSource.ExprRef == innerRef || localSource.CallPoint != localPoints[0] || !localSource.HasCallPoint {
+		t.Fatalf("local wrapped call source = %#v, inner ref %d", localSource, innerRef)
+	}
+	claim, ok := facts.Assertion(localSource.ExprRef)
+	if !ok {
+		t.Fatalf("missing assertion sidecar for outer ref %d", localSource.ExprRef)
+	}
+	if !assertion.Equal(claim.Value(), assertion.Type()) {
+		t.Fatalf("outer assertion = %s, want type", claim.Value())
+	}
+	innerSource := claim.Source()
+	if innerSource.Kind != transfer.ValueSourceCall || innerSource.ExprRef != innerRef || innerSource.CallPoint != localPoints[0] || !innerSource.HasCallPoint {
+		t.Fatalf("assertion inner source = %#v, want call source ref %d at point %d", innerSource, innerRef, localPoints[0])
+	}
+
+	returnPoints := requireStmtPoints(t, built, ret, 2)
+	returnFact, ok := facts.Return(returnPoints[1])
+	if !ok {
+		t.Fatal("missing wrapped return fact")
+	}
+	returnSources := returnFact.Sources()
+	if len(returnSources) != 1 || returnSources[0].Kind != transfer.ValueSourceCall || returnSources[0].CallPoint != returnPoints[0] || !returnSources[0].HasCallPoint {
+		t.Fatalf("wrapped return source = %#v", returnSources)
+	}
+	assertLoweredAssertion(t, facts, returnSources[0], assertion.Type(), transfer.ValueSourceCall)
+
+	ifPoints := requireStmtPoints(t, built, ifStmt, 2)
+	branch, ok := result.BranchCondition(ifPoints[1])
+	if !ok {
+		t.Fatal("missing wrapped condition branch fact")
+	}
+	branchLowerer := lowerer{exprs: make(map[any]transfer.ExprRef)}
+	branchInput := transfer.FactsInput{Assertions: make(map[transfer.ExprRef]transfer.Assertion)}
+	branchLowerer.addAssertionsForSource(&branchInput, branch.Source)
+	branchFacts := transfer.NewFacts(branchInput)
+	branchSource := branchLowerer.valueSource(branch.Source)
+	if branchSource.Kind != transfer.ValueSourceCall || branchSource.CallPoint != ifPoints[0] || !branchSource.HasCallPoint {
+		t.Fatalf("wrapped condition source = %#v", branchSource)
+	}
+	assertLoweredAssertion(t, branchFacts, branchSource, assertion.Type(), transfer.ValueSourceCall)
+}
+
 func TestLowerSkipsMemberOrdinaryCallTargets(t *testing.T) {
 	l := lowerer{exprs: make(map[any]transfer.ExprRef)}
 	targetSym := symbol.ID(99)

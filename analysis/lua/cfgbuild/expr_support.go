@@ -2,6 +2,7 @@ package cfgbuild
 
 import (
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
+	"github.com/wippyai/go-lua/analysis/lua/valueexpr"
 	"github.com/wippyai/go-lua/compiler/ast"
 )
 
@@ -16,7 +17,7 @@ func (b *builder) hasUnsupportedExprs(exprs ...ast.Expr) bool {
 
 func (b *builder) hasUnsupportedValueListExprs(exprs ...ast.Expr) bool {
 	for _, expr := range exprs {
-		call, ok := expr.(*ast.FuncCallExpr)
+		call, ok := valueexpr.Call(expr)
 		if !ok {
 			if !b.exprCovered(expr) {
 				return true
@@ -31,7 +32,7 @@ func (b *builder) hasUnsupportedValueListExprs(exprs ...ast.Expr) bool {
 }
 
 func (b *builder) hasUnsupportedExprInCall(expr ast.Expr) bool {
-	call, ok := expr.(*ast.FuncCallExpr)
+	call, ok := valueexpr.Call(expr)
 	if !ok {
 		return !b.exprCovered(expr)
 	}
@@ -43,7 +44,7 @@ func (b *builder) hasUnsupportedExprInCall(expr ast.Expr) bool {
 
 func (b *builder) appendValueListCalls(state flowState, stmt ast.Stmt, exprs []ast.Expr) flowState {
 	for _, expr := range exprs {
-		if _, ok := expr.(*ast.FuncCallExpr); ok {
+		if _, ok := valueexpr.Call(expr); ok {
 			state = b.appendCall(state, stmt)
 		}
 	}
@@ -51,7 +52,7 @@ func (b *builder) appendValueListCalls(state flowState, stmt ast.Stmt, exprs []a
 }
 
 func (b *builder) hasUnsupportedConditionExpr(expr ast.Expr) bool {
-	if call, ok := expr.(*ast.FuncCallExpr); ok {
+	if call, ok := valueexpr.Call(expr); ok {
 		return b.hasUnsupportedExprInCall(call)
 	}
 	if b.exprCovered(expr) {
@@ -61,7 +62,7 @@ func (b *builder) hasUnsupportedConditionExpr(expr ast.Expr) bool {
 }
 
 func (b *builder) appendConditionCall(state flowState, stmt ast.Stmt, expr ast.Expr) (flowState, cfg.Point, bool) {
-	if _, ok := expr.(*ast.FuncCallExpr); !ok {
+	if _, ok := valueexpr.Call(expr); !ok {
 		return state, 0, false
 	}
 	next := b.appendCall(state, stmt)

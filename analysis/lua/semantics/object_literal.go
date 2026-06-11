@@ -145,7 +145,7 @@ func objectEntryValueSource(expr ast.Expr, final bool) ValueSource {
 		ResultIndex: 0,
 		Final:       final,
 		Expanded:    expanded,
-		Adjusted:    ast.CanProduceMultipleValues(expr) && !expanded,
+		Adjusted:    canProduceMultipleValues(expr) && !expanded,
 	}
 }
 
