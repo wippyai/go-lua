@@ -256,6 +256,124 @@ func TestLowerCallSitesPreserveAllSemanticContextsAndProducerStaysNarrow(t *test
 	}
 }
 
+func TestLowerCallSitePreservesPortableCallShapeAndArgumentOverlays(t *testing.T) {
+	obj := ident("obj")
+	arg := ident("arg")
+	other := ident("other")
+	castArg := &ast.CastExpr{
+		Expr:   arg,
+		Type:   primitiveType("number"),
+		Syntax: ast.CastSyntaxAs,
+	}
+	call := &ast.FuncCallExpr{
+		Receiver: obj,
+		Method:   "run",
+		Args:     []ast.Expr{castArg, other},
+		TypeArgs: []ast.TypeExpr{primitiveType("string"), primitiveType("number")},
+	}
+	stmt := &ast.FuncCallStmt{Expr: call}
+	stmts := []ast.Stmt{stmt}
+	bindings := bind.BindChunk(stmts, bind.Options{Globals: []string{"obj", "arg", "other"}})
+	built := cfgbuild.BuildChunk(stmts, bindings)
+	result, err := semantics.ExtractChunk(stmts, bindings, built)
+	if err != nil {
+		t.Fatalf("ExtractChunk: %v", err)
+	}
+
+	facts := Lower(result, built.Graph)
+	assertNoCompilerASTTypes(t, reflect.TypeOf(facts))
+
+	point := requireStmtPoints(t, built, stmt, 1)[0]
+	site, ok := facts.CallSite(point)
+	if !ok {
+		t.Fatalf("missing call site at point %d", point)
+	}
+	if site.Context() != transfer.CallSiteContextStatement || site.MethodName() != "run" {
+		t.Fatalf("call site context/method = %v/%q", site.Context(), site.MethodName())
+	}
+	receiverPath := path.NewPath(mustIdentSymbol(t, bindings, obj), "obj")
+	methodPath := receiverPath.Field("run")
+	if got, ok := site.ReceiverPath(); !ok || !got.Equal(receiverPath) {
+		t.Fatalf("receiver path = %#v/%v, want %#v/true", got, ok, receiverPath)
+	}
+	if got, ok := site.MethodPath(); !ok || !got.Equal(methodPath) {
+		t.Fatalf("method path = %#v/%v, want %#v/true", got, ok, methodPath)
+	}
+	if got := site.CalleePath(); !got.Equal(methodPath) {
+		t.Fatalf("callee path = %#v, want %#v", got, methodPath)
+	}
+
+	args := site.ArgumentSources()
+	if len(args) != 2 {
+		t.Fatalf("argument sources = %#v, want two args", args)
+	}
+	if args[0].Kind != transfer.ValueSourceExpression || !args[0].HasExpr || args[0].ExprRef == 0 || args[0].ExprIndex != 0 || args[0].TargetIndex != 0 || args[0].Final {
+		t.Fatalf("first arg source = %#v", args[0])
+	}
+	if args[1].Kind != transfer.ValueSourceExpression || !args[1].HasExpr || args[1].ExprRef == 0 || args[1].ExprIndex != 1 || args[1].TargetIndex != 1 || !args[1].Final {
+		t.Fatalf("second arg source = %#v", args[1])
+	}
+	assertLoweredAssertion(t, facts, args[0], assertion.Type(), transfer.ValueSourceExpression)
+
+	typeArgs := site.TypeArgs()
+	if len(typeArgs) != 2 || typeArgs[0] == 0 || typeArgs[1] == 0 || typeArgs[0] == typeArgs[1] {
+		t.Fatalf("type args = %#v, want two distinct opaque refs", typeArgs)
+	}
+	if targets := site.ResultTargets(); len(targets) != 0 {
+		t.Fatalf("statement method call targets = %#v, want none", targets)
+	}
+	if _, ok := facts.Call(point); ok {
+		t.Fatalf("statement method call point %d lowered as call producer", point)
+	}
+
+	producerType := reflect.TypeOf(transfer.CallProducer{})
+	for _, method := range []string{"ReceiverPath", "MethodPath", "MethodName", "ArgumentSources", "TypeArgs"} {
+		if _, ok := producerType.MethodByName(method); ok {
+			t.Fatalf("CallProducer unexpectedly exposes broad call-shape method %s", method)
+		}
+	}
+}
+
+func TestLowerCallSiteArgumentNestedCallSourceHasCallPoint(t *testing.T) {
+	inner := &ast.FuncCallExpr{Func: ident("g")}
+	wrapped := &ast.CastExpr{
+		Expr:   inner,
+		Type:   primitiveType("number"),
+		Syntax: ast.CastSyntaxAs,
+	}
+	outer := &ast.FuncCallExpr{
+		Func: ident("f"),
+		Args: []ast.Expr{wrapped},
+	}
+	innerPoint := cfg.Point(42)
+	l := lowerer{
+		exprs:      make(map[any]transfer.ExprRef),
+		callPoints: map[*ast.FuncCallExpr]cfg.Point{inner: innerPoint},
+	}
+	site := l.callSite(semantics.CallFact{
+		Context: semantics.CallContextStatement,
+		Call:    outer,
+		Args:    []ast.Expr{wrapped},
+	})
+	args := site.ArgumentSources()
+	if len(args) != 1 {
+		t.Fatalf("argument sources = %#v, want one arg", args)
+	}
+	arg := args[0]
+	if arg.Kind != transfer.ValueSourceCall || !arg.HasCallPoint || arg.CallPoint != innerPoint {
+		t.Fatalf("nested call arg source = %#v, want call point %d", arg, innerPoint)
+	}
+
+	wrappedSource := l.argumentValueSource(wrapped, 0, true)
+	if wrappedSource.Kind != transfer.ValueSourceCall || !wrappedSource.HasCallPoint || wrappedSource.CallPoint != innerPoint {
+		t.Fatalf("wrapped nested call arg source = %#v, want call point %d", wrappedSource, innerPoint)
+	}
+	wrappedSemanticSource := l.argumentSemanticValueSource(wrapped, 0, true)
+	if wrappedSemanticSource.Kind != semantics.ValueSourceCall || !wrappedSemanticSource.HasCallPoint || wrappedSemanticSource.CallPoint != innerPoint {
+		t.Fatalf("wrapped nested call semantic source = %#v, want call point %d", wrappedSemanticSource, innerPoint)
+	}
+}
+
 func TestLowerCallSiteMapsUnknownContextExplicitly(t *testing.T) {
 	l := lowerer{exprs: make(map[any]transfer.ExprRef)}
 	site := l.callSite(semantics.CallFact{

@@ -189,27 +189,60 @@ func TestDTOConstructorsAndAccessorsCopySlices(t *testing.T) {
 	assertPathEqual(t, call.ResultTargets()[0].TargetPath(), targetPath)
 
 	siteCalleePath := path.NewPath(symbol.ID(16), "svc").Field("run")
+	siteReceiverPath := path.NewPath(symbol.ID(16), "svc")
+	siteMethodPath := siteReceiverPath.Field("run")
 	siteTargetPath := path.NewPath(symbol.ID(17), "t").Field("x")
+	siteArgs := []ValueSource{source, callSource}
+	siteTypeArgs := []TypeRef{TypeRef(1), TypeRef(2)}
 	siteTargets := []CallResultTarget{
 		NewCallResultTarget(CallResultTargetOrdinaryAssignment, 0, symbol.ID(17), siteTargetPath),
 	}
 	site := NewCallSite(CallSiteConfig{
-		Context:       CallSiteContextCondition,
-		CalleeSymbol:  symbol.ID(16),
-		CalleePath:    siteCalleePath,
-		ExprRef:       ExprRef(4),
-		HasExpr:       true,
-		ExprIndex:     0,
-		ResultTargets: siteTargets,
-		Final:         true,
-		Adjusted:      true,
+		Context:         CallSiteContextCondition,
+		CalleeSymbol:    symbol.ID(16),
+		CalleePath:      siteCalleePath,
+		ReceiverPath:    siteReceiverPath,
+		HasReceiverPath: true,
+		MethodPath:      siteMethodPath,
+		HasMethodPath:   true,
+		MethodName:      "run",
+		ExprRef:         ExprRef(4),
+		HasExpr:         true,
+		ExprIndex:       0,
+		ArgumentSources: siteArgs,
+		TypeArgs:        siteTypeArgs,
+		ResultTargets:   siteTargets,
+		Final:           true,
+		Adjusted:        true,
 	})
 	siteCalleePath.Segments[0].Name = "changed"
+	siteReceiverPath.Root = "changed"
+	siteMethodPath.Segments[0].Name = "changed"
+	siteArgs[0].Kind = ValueSourceNil
+	siteTypeArgs[0] = TypeRef(99)
 	siteTargets[0] = NewCallResultTarget(CallResultTargetReturn, 0, 0, path.Path{})
 	assertDirectField(t, site.CalleePath(), "run")
 	gotSiteCalleePath := site.CalleePath()
 	gotSiteCalleePath.Segments[0].Name = "changed-again"
 	assertDirectField(t, site.CalleePath(), "run")
+	if receiverPath, ok := site.ReceiverPath(); !ok || !receiverPath.Equal(path.NewPath(symbol.ID(16), "svc")) {
+		t.Fatalf("call site receiver path = %#v/%v", receiverPath, ok)
+	}
+	gotReceiverPath, _ := site.ReceiverPath()
+	gotReceiverPath.Root = "changed-again"
+	if receiverPath, _ := site.ReceiverPath(); !receiverPath.Equal(path.NewPath(symbol.ID(16), "svc")) {
+		t.Fatalf("call site receiver path exposed mutable path: %#v", receiverPath)
+	}
+	if methodPath, ok := site.MethodPath(); !ok || !methodPath.Equal(path.NewPath(symbol.ID(16), "svc").Field("run")) {
+		t.Fatalf("call site method path = %#v/%v", methodPath, ok)
+	}
+	gotMethodPath, _ := site.MethodPath()
+	gotMethodPath.Segments[0].Name = "changed-again"
+	methodPathAgain, _ := site.MethodPath()
+	assertDirectField(t, methodPathAgain, "run")
+	if site.MethodName() != "run" {
+		t.Fatalf("call site method name = %q, want run", site.MethodName())
+	}
 	if site.Context() != CallSiteContextCondition || site.CalleeSymbol() != symbol.ID(16) || site.ExprIndex() != 0 {
 		t.Fatalf("call site context/symbol/expr index = %v/%v/%v", site.Context(), site.CalleeSymbol(), site.ExprIndex())
 	}
@@ -218,6 +251,22 @@ func TestDTOConstructorsAndAccessorsCopySlices(t *testing.T) {
 	}
 	if !site.Final() || site.Expanded() || !site.Adjusted() || site.OpenTail() {
 		t.Fatalf("call site flags were not preserved")
+	}
+	gotSiteArgs := site.ArgumentSources()
+	if len(gotSiteArgs) != 2 || gotSiteArgs[0].Kind != ValueSourceExpression || gotSiteArgs[1].Kind != ValueSourceCall {
+		t.Fatalf("call site args = %#v, want copied argument sources", gotSiteArgs)
+	}
+	gotSiteArgs[0].Kind = ValueSourceNil
+	if got := site.ArgumentSources(); got[0].Kind != ValueSourceExpression {
+		t.Fatalf("call site exposed mutable argument sources, got %v", got[0].Kind)
+	}
+	gotSiteTypeArgs := site.TypeArgs()
+	if len(gotSiteTypeArgs) != 2 || gotSiteTypeArgs[0] != TypeRef(1) || gotSiteTypeArgs[1] != TypeRef(2) {
+		t.Fatalf("call site type args = %#v, want copied type refs", gotSiteTypeArgs)
+	}
+	gotSiteTypeArgs[0] = TypeRef(99)
+	if got := site.TypeArgs(); got[0] != TypeRef(1) {
+		t.Fatalf("call site exposed mutable type args, got %#v", got)
 	}
 	gotSiteTargets := site.ResultTargets()
 	if len(gotSiteTargets) != 1 || gotSiteTargets[0].Kind() != CallResultTargetOrdinaryAssignment {
@@ -315,12 +364,19 @@ func TestFactsCarrierCopiesAndReturnsFalseForMissingFacts(t *testing.T) {
 		},
 		CallSites: map[cfg.Point]CallSite{
 			point: NewCallSite(CallSiteConfig{
-				Context:      CallSiteContextAssignmentSource,
-				CalleeSymbol: symbol.ID(35),
-				CalleePath:   path.NewPath(symbol.ID(35), "callee").Field("site"),
-				ExprRef:      ExprRef(5),
-				HasExpr:      true,
-				ExprIndex:    1,
+				Context:         CallSiteContextAssignmentSource,
+				CalleeSymbol:    symbol.ID(35),
+				CalleePath:      path.NewPath(symbol.ID(35), "callee").Field("site"),
+				ReceiverPath:    path.NewPath(symbol.ID(35), "callee"),
+				HasReceiverPath: true,
+				MethodPath:      path.NewPath(symbol.ID(35), "callee").Field("site"),
+				HasMethodPath:   true,
+				MethodName:      "site",
+				ExprRef:         ExprRef(5),
+				HasExpr:         true,
+				ExprIndex:       1,
+				ArgumentSources: []ValueSource{source, callSource},
+				TypeArgs:        []TypeRef{TypeRef(7), TypeRef(8)},
 				ResultTargets: []CallResultTarget{
 					NewCallResultTarget(CallResultTargetOrdinaryAssignment, 0, symbol.ID(33), path.NewPath(symbol.ID(33), "table").Field("field")),
 				},
@@ -478,6 +534,45 @@ func TestFactsCarrierCopiesAndReturnsFalseForMissingFacts(t *testing.T) {
 	callSiteCalleePath.Segments[0].Name = "mutated"
 	callSiteAgain, _ := facts.CallSite(point)
 	assertDirectField(t, callSiteAgain.CalleePath(), "site")
+	callSiteReceiverPath, ok := callSite.ReceiverPath()
+	if !ok || !callSiteReceiverPath.Equal(path.NewPath(symbol.ID(35), "callee")) {
+		t.Fatalf("call site receiver path = %#v/%v", callSiteReceiverPath, ok)
+	}
+	callSiteReceiverPath.Root = "mutated"
+	callSiteAgain, _ = facts.CallSite(point)
+	if receiverPath, ok := callSiteAgain.ReceiverPath(); !ok || !receiverPath.Equal(path.NewPath(symbol.ID(35), "callee")) {
+		t.Fatalf("facts call site exposed mutable receiver path: %#v/%v", receiverPath, ok)
+	}
+	callSiteMethodPath, ok := callSite.MethodPath()
+	if !ok || !callSiteMethodPath.Equal(path.NewPath(symbol.ID(35), "callee").Field("site")) {
+		t.Fatalf("call site method path = %#v/%v", callSiteMethodPath, ok)
+	}
+	callSiteMethodPath.Segments[0].Name = "mutated"
+	callSiteAgain, _ = facts.CallSite(point)
+	if methodPath, ok := callSiteAgain.MethodPath(); !ok || !methodPath.Equal(path.NewPath(symbol.ID(35), "callee").Field("site")) {
+		t.Fatalf("facts call site exposed mutable method path: %#v/%v", methodPath, ok)
+	}
+	if callSite.MethodName() != "site" {
+		t.Fatalf("call site method name = %q, want site", callSite.MethodName())
+	}
+	callSiteArgs := callSite.ArgumentSources()
+	if len(callSiteArgs) != 2 || callSiteArgs[0].Kind != ValueSourceExpression || callSiteArgs[1].Kind != ValueSourceCall {
+		t.Fatalf("call site argument sources = %#v", callSiteArgs)
+	}
+	callSiteArgs[0].Kind = ValueSourceNil
+	callSiteAgain, _ = facts.CallSite(point)
+	if got := callSiteAgain.ArgumentSources(); got[0].Kind != ValueSourceExpression {
+		t.Fatalf("facts call site exposed mutable argument sources, got %v", got[0].Kind)
+	}
+	callSiteTypeArgs := callSite.TypeArgs()
+	if len(callSiteTypeArgs) != 2 || callSiteTypeArgs[0] != TypeRef(7) || callSiteTypeArgs[1] != TypeRef(8) {
+		t.Fatalf("call site type args = %#v", callSiteTypeArgs)
+	}
+	callSiteTypeArgs[0] = TypeRef(99)
+	callSiteAgain, _ = facts.CallSite(point)
+	if got := callSiteAgain.TypeArgs(); got[0] != TypeRef(7) {
+		t.Fatalf("facts call site exposed mutable type args, got %#v", got)
+	}
 	callSiteTargets := callSite.ResultTargets()
 	if len(callSiteTargets) != 1 || callSiteTargets[0].Kind() != CallResultTargetOrdinaryAssignment {
 		t.Fatalf("call site targets = %#v", callSiteTargets)

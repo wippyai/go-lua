@@ -12,6 +12,9 @@ import (
 // ExprRef is an opaque, comparable reference to a source expression.
 type ExprRef uint32
 
+// TypeRef is an opaque, comparable reference to a source type expression.
+type TypeRef uint32
+
 // ValueSourceKind classifies where a value-list slot comes from.
 type ValueSourceKind uint8
 
@@ -450,12 +453,20 @@ type CallSiteConfig struct {
 	CalleeSymbol symbol.ID
 	CalleePath   path.Path
 
+	ReceiverPath    path.Path
+	HasReceiverPath bool
+	MethodPath      path.Path
+	HasMethodPath   bool
+	MethodName      string
+
 	ExprRef ExprRef
 	HasExpr bool
 
 	ExprIndex int
 
-	ResultTargets []CallResultTarget
+	ArgumentSources []ValueSource
+	TypeArgs        []TypeRef
+	ResultTargets   []CallResultTarget
 
 	Final    bool
 	Expanded bool
@@ -470,12 +481,20 @@ type CallSite struct {
 	calleeSymbol symbol.ID
 	calleePath   path.Path
 
+	receiverPath    path.Path
+	hasReceiverPath bool
+	methodPath      path.Path
+	hasMethodPath   bool
+	methodName      string
+
 	exprRef ExprRef
 	hasExpr bool
 
 	exprIndex int
 
-	resultTargets []CallResultTarget
+	argumentSources []ValueSource
+	typeArgs        []TypeRef
+	resultTargets   []CallResultTarget
 
 	final    bool
 	expanded bool
@@ -486,17 +505,24 @@ type CallSite struct {
 // NewCallSite creates a call-site evidence fact.
 func NewCallSite(config CallSiteConfig) CallSite {
 	return CallSite{
-		context:       config.Context,
-		calleeSymbol:  config.CalleeSymbol,
-		calleePath:    copyPath(config.CalleePath),
-		exprRef:       config.ExprRef,
-		hasExpr:       config.HasExpr,
-		exprIndex:     config.ExprIndex,
-		resultTargets: copyCallResultTargets(config.ResultTargets),
-		final:         config.Final,
-		expanded:      config.Expanded,
-		adjusted:      config.Adjusted,
-		openTail:      config.OpenTail,
+		context:         config.Context,
+		calleeSymbol:    config.CalleeSymbol,
+		calleePath:      copyPath(config.CalleePath),
+		receiverPath:    copyPath(config.ReceiverPath),
+		hasReceiverPath: config.HasReceiverPath,
+		methodPath:      copyPath(config.MethodPath),
+		hasMethodPath:   config.HasMethodPath,
+		methodName:      config.MethodName,
+		exprRef:         config.ExprRef,
+		hasExpr:         config.HasExpr,
+		exprIndex:       config.ExprIndex,
+		argumentSources: copyValueSources(config.ArgumentSources),
+		typeArgs:        copyTypeRefs(config.TypeArgs),
+		resultTargets:   copyCallResultTargets(config.ResultTargets),
+		final:           config.Final,
+		expanded:        config.Expanded,
+		adjusted:        config.Adjusted,
+		openTail:        config.OpenTail,
 	}
 }
 
@@ -509,11 +535,32 @@ func (c CallSite) CalleeSymbol() symbol.ID { return c.calleeSymbol }
 // CalleePath returns the callee's path identity.
 func (c CallSite) CalleePath() path.Path { return copyPath(c.calleePath) }
 
+// ReceiverPath returns the receiver path identity, if one was resolved.
+func (c CallSite) ReceiverPath() (path.Path, bool) {
+	return copyPath(c.receiverPath), c.hasReceiverPath
+}
+
+// MethodPath returns the receiver-method path identity, if one was resolved.
+func (c CallSite) MethodPath() (path.Path, bool) {
+	return copyPath(c.methodPath), c.hasMethodPath
+}
+
+// MethodName returns the method name carried by receiver-call syntax.
+func (c CallSite) MethodName() string { return c.methodName }
+
 // Expr returns the call expression reference, if present.
 func (c CallSite) Expr() (ExprRef, bool) { return c.exprRef, c.hasExpr }
 
 // ExprIndex returns the expression's index in its containing value list.
 func (c CallSite) ExprIndex() int { return c.exprIndex }
+
+// ArgumentSources returns the ordered argument value sources.
+func (c CallSite) ArgumentSources() []ValueSource {
+	return copyValueSources(c.argumentSources)
+}
+
+// TypeArgs returns the ordered explicit type argument identities.
+func (c CallSite) TypeArgs() []TypeRef { return copyTypeRefs(c.typeArgs) }
 
 // ResultTargets returns the targets that consume this call's results.
 func (c CallSite) ResultTargets() []CallResultTarget {
@@ -534,6 +581,10 @@ func (c CallSite) OpenTail() bool { return c.openTail }
 
 func (c CallSite) copy() CallSite {
 	c.calleePath = copyPath(c.calleePath)
+	c.receiverPath = copyPath(c.receiverPath)
+	c.methodPath = copyPath(c.methodPath)
+	c.argumentSources = copyValueSources(c.argumentSources)
+	c.typeArgs = copyTypeRefs(c.typeArgs)
 	c.resultTargets = copyCallResultTargets(c.resultTargets)
 	return c
 }
@@ -690,6 +741,15 @@ func copyValueSources(in []ValueSource) []ValueSource {
 		return nil
 	}
 	out := make([]ValueSource, len(in))
+	copy(out, in)
+	return out
+}
+
+func copyTypeRefs(in []TypeRef) []TypeRef {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make([]TypeRef, len(in))
 	copy(out, in)
 	return out
 }

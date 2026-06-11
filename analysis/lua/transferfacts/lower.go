@@ -11,6 +11,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/lua/branchcond"
 	"github.com/wippyai/go-lua/analysis/lua/semantics"
+	"github.com/wippyai/go-lua/analysis/lua/valueexpr"
 	"github.com/wippyai/go-lua/analysis/symbol"
 	"github.com/wippyai/go-lua/compiler/ast"
 )
@@ -24,7 +25,9 @@ func Lower(result *semantics.Result, graph cfg.Graph) transfer.Facts {
 		return transfer.NewFacts(transfer.FactsInput{})
 	}
 	l := lowerer{
-		exprs: make(map[any]transfer.ExprRef),
+		exprs:      make(map[any]transfer.ExprRef),
+		types:      make(map[any]transfer.TypeRef),
+		callPoints: callPointsByExpr(result, graph),
 	}
 	input := transfer.FactsInput{
 		LocalAssignments:    make(map[cfg.Point]transfer.RootAssignment),
@@ -64,6 +67,11 @@ func Lower(result *semantics.Result, graph cfg.Graph) transfer.Facts {
 		}
 		if fact, ok := result.Call(point); ok {
 			input.CallSites[point] = l.callSite(fact)
+			for i, arg := range fact.Args {
+				source := l.argumentSemanticValueSource(arg, i, i == len(fact.Args)-1)
+				l.addAssertionOverlaysForSource(&input, source)
+				l.addObjectLiteral(&input, result, source)
+			}
 			if lowered, ok := l.callProducer(fact); ok {
 				input.Calls[point] = lowered
 			}
@@ -79,7 +87,21 @@ func Lower(result *semantics.Result, graph cfg.Graph) transfer.Facts {
 }
 
 type lowerer struct {
-	exprs map[any]transfer.ExprRef
+	exprs      map[any]transfer.ExprRef
+	types      map[any]transfer.TypeRef
+	callPoints map[*ast.FuncCallExpr]cfg.Point
+}
+
+func callPointsByExpr(result *semantics.Result, graph cfg.Graph) map[*ast.FuncCallExpr]cfg.Point {
+	out := make(map[*ast.FuncCallExpr]cfg.Point)
+	for _, point := range graph.RPO() {
+		fact, ok := result.Call(point)
+		if !ok || fact.Call == nil {
+			continue
+		}
+		out[fact.Call] = point
+	}
+	return out
 }
 
 func (l *lowerer) localAssignment(fact semantics.LocalAssignmentFact) (transfer.RootAssignment, bool) {
@@ -150,18 +172,33 @@ func (l *lowerer) callSite(fact semantics.CallFact) transfer.CallSite {
 	if fact.HasCalleePath {
 		calleePath = fact.CalleePath
 	}
+	receiverPath := path.Path{}
+	if fact.HasReceiverPath {
+		receiverPath = fact.ReceiverPath
+	}
+	methodPath := path.Path{}
+	if fact.HasMethodPath {
+		methodPath = fact.MethodPath
+	}
 	return transfer.NewCallSite(transfer.CallSiteConfig{
-		Context:       callSiteContext(fact.Context),
-		CalleeSymbol:  calleeSymbol,
-		CalleePath:    calleePath,
-		ExprRef:       exprRef,
-		HasExpr:       hasExpr,
-		ExprIndex:     fact.ExprIndex,
-		ResultTargets: l.callSiteResultTargets(fact.ResultTargets),
-		Final:         fact.Final,
-		Expanded:      fact.Expanded,
-		Adjusted:      fact.Adjusted,
-		OpenTail:      fact.OpenTail,
+		Context:         callSiteContext(fact.Context),
+		CalleeSymbol:    calleeSymbol,
+		CalleePath:      calleePath,
+		ReceiverPath:    receiverPath,
+		HasReceiverPath: fact.HasReceiverPath,
+		MethodPath:      methodPath,
+		HasMethodPath:   fact.HasMethodPath,
+		MethodName:      fact.Method,
+		ExprRef:         exprRef,
+		HasExpr:         hasExpr,
+		ExprIndex:       fact.ExprIndex,
+		ArgumentSources: l.argumentValueSources(fact.Args),
+		TypeArgs:        l.typeRefs(fact.TypeArgs),
+		ResultTargets:   l.callSiteResultTargets(fact.ResultTargets),
+		Final:           fact.Final,
+		Expanded:        fact.Expanded,
+		Adjusted:        fact.Adjusted,
+		OpenTail:        fact.OpenTail,
 	})
 }
 
@@ -329,6 +366,86 @@ func (l *lowerer) valueSource(source semantics.ValueSource) transfer.ValueSource
 	}
 }
 
+func (l *lowerer) argumentValueSources(args []ast.Expr) []transfer.ValueSource {
+	if len(args) == 0 {
+		return nil
+	}
+	out := make([]transfer.ValueSource, len(args))
+	for i, arg := range args {
+		out[i] = l.argumentValueSource(arg, i, i == len(args)-1)
+	}
+	return out
+}
+
+func (l *lowerer) argumentValueSource(arg ast.Expr, index int, final bool) transfer.ValueSource {
+	exprRef, hasExpr := l.exprRef(arg)
+	producer := valueexpr.TopLevelProducer(arg)
+	kind := argumentTransferSourceKind(producer.Kind)
+	expanded := final && valueexpr.CanProduceMultipleValues(arg) && !valueexpr.AdjustRet(arg)
+	source := transfer.ValueSource{
+		Kind:        kind,
+		ExprRef:     exprRef,
+		HasExpr:     hasExpr,
+		ExprIndex:   index,
+		TargetIndex: index,
+		ResultIndex: 0,
+		Final:       final,
+		Expanded:    expanded,
+		Adjusted:    valueexpr.CanProduceMultipleValues(arg) && !expanded,
+	}
+	if producer.Kind == valueexpr.ProducerCall && producer.Call != nil {
+		if point, ok := l.callPoints[producer.Call]; ok {
+			source.CallPoint = point
+			source.HasCallPoint = point != 0
+		}
+	}
+	return source
+}
+
+func (l *lowerer) argumentSemanticValueSource(arg ast.Expr, index int, final bool) semantics.ValueSource {
+	producer := valueexpr.TopLevelProducer(arg)
+	expanded := final && valueexpr.CanProduceMultipleValues(arg) && !valueexpr.AdjustRet(arg)
+	source := semantics.ValueSource{
+		Kind:        argumentSemanticSourceKind(producer.Kind),
+		Expr:        arg,
+		ExprIndex:   index,
+		TargetIndex: index,
+		ResultIndex: 0,
+		Final:       final,
+		Expanded:    expanded,
+		Adjusted:    valueexpr.CanProduceMultipleValues(arg) && !expanded,
+	}
+	if producer.Kind == valueexpr.ProducerCall && producer.Call != nil {
+		if point, ok := l.callPoints[producer.Call]; ok {
+			source.CallPoint = point
+			source.HasCallPoint = point != 0
+		}
+	}
+	return source
+}
+
+func argumentTransferSourceKind(kind valueexpr.ProducerKind) transfer.ValueSourceKind {
+	switch kind {
+	case valueexpr.ProducerCall:
+		return transfer.ValueSourceCall
+	case valueexpr.ProducerVararg:
+		return transfer.ValueSourceVararg
+	default:
+		return transfer.ValueSourceExpression
+	}
+}
+
+func argumentSemanticSourceKind(kind valueexpr.ProducerKind) semantics.ValueSourceKind {
+	switch kind {
+	case valueexpr.ProducerCall:
+		return semantics.ValueSourceCall
+	case valueexpr.ProducerVararg:
+		return semantics.ValueSourceVararg
+	default:
+		return semantics.ValueSourceExpression
+	}
+}
+
 func (l *lowerer) addAssertionOverlaysForSource(input *transfer.FactsInput, source semantics.ValueSource) {
 	if input == nil || source.Expr == nil {
 		return
@@ -454,6 +571,32 @@ func (l *lowerer) exprRef(expr any) (transfer.ExprRef, bool) {
 	}
 	ref := transfer.ExprRef(len(l.exprs) + 1)
 	l.exprs[expr] = ref
+	return ref, true
+}
+
+func (l *lowerer) typeRefs(types []ast.TypeExpr) []transfer.TypeRef {
+	if len(types) == 0 {
+		return nil
+	}
+	out := make([]transfer.TypeRef, len(types))
+	for i := range types {
+		out[i], _ = l.typeRef(types[i])
+	}
+	return out
+}
+
+func (l *lowerer) typeRef(typ any) (transfer.TypeRef, bool) {
+	if typ == nil {
+		return 0, false
+	}
+	if ref, ok := l.types[typ]; ok {
+		return ref, true
+	}
+	if l.types == nil {
+		l.types = make(map[any]transfer.TypeRef)
+	}
+	ref := transfer.TypeRef(len(l.types) + 1)
+	l.types[typ] = ref
 	return ref, true
 }
 
