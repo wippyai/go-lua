@@ -374,6 +374,46 @@ func TestLowerObjectLiteralSidecarUsesAssignmentExprRef(t *testing.T) {
 	}
 }
 
+func TestLowerWrappedObjectLiteralKeepsAssertionOverlayAndEntries(t *testing.T) {
+	leafValue := number("1")
+	table := &ast.TableExpr{Fields: []*ast.Field{
+		{Key: stringLit("leaf"), KeySyntax: ast.AttrKeyDot, Value: leafValue},
+	}}
+	cast := &ast.CastExpr{
+		Expr:   table,
+		Type:   primitiveType("any"),
+		Syntax: ast.CastSyntaxAs,
+	}
+	local := localAssign([]string{"t"}, cast)
+	stmts := []ast.Stmt{local}
+	bindings := bind.BindChunk(stmts, bind.Options{})
+	built := cfgbuild.BuildChunk(stmts, bindings)
+	result, err := semantics.ExtractChunk(stmts, bindings, built)
+	if err != nil {
+		t.Fatalf("ExtractChunk: %v", err)
+	}
+
+	facts := Lower(result, built.Graph)
+	assertNoCompilerASTTypes(t, reflect.TypeOf(facts))
+
+	point := requireStmtPoints(t, built, local, 1)[0]
+	localFact, ok := facts.LocalAssignment(point)
+	if !ok {
+		t.Fatalf("missing local assignment fact")
+	}
+	source := localFact.Source()
+	assertLoweredAssertion(t, facts, source, assertion.Any(), transfer.ValueSourceExpression)
+	literal, ok := facts.ObjectLiteral(source.ExprRef)
+	if !ok {
+		t.Fatalf("missing object literal sidecar for wrapped assignment expr ref %d", source.ExprRef)
+	}
+	entries := literal.Entries()
+	if len(entries) != 1 {
+		t.Fatalf("literal entries = %#v, want one static entry", entries)
+	}
+	assertLoweredObjectEntry(t, entries[0], fieldSuffix("leaf"), transfer.ValueSourceExpression)
+}
+
 func TestLowerIdentifierNilTruthyFalsyBranches(t *testing.T) {
 	decl := localAssign([]string{"x"}, number("0"))
 	nilRead := ident("x")

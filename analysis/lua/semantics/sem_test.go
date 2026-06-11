@@ -305,6 +305,94 @@ func TestExtractChunkObjectLiteralStaticEntriesAndDynamicSkip(t *testing.T) {
 	}
 }
 
+func TestExtractChunkObjectLiteralThroughAssertionWrappers(t *testing.T) {
+	asTable := &ast.TableExpr{Fields: []*ast.Field{
+		{Key: stringLit("a"), KeySyntax: ast.AttrKeyDot, Value: number("1")},
+	}}
+	asCast := &ast.CastExpr{
+		Expr:   asTable,
+		Type:   &ast.PrimitiveTypeExpr{Name: "any"},
+		Syntax: ast.CastSyntaxAs,
+	}
+	colonTable := &ast.TableExpr{Fields: []*ast.Field{
+		{Key: stringLit("b"), KeySyntax: ast.AttrKeyDot, Value: number("2")},
+	}}
+	colonCast := &ast.CastExpr{
+		Expr:   colonTable,
+		Type:   &ast.PrimitiveTypeExpr{Name: "any"},
+		Syntax: ast.CastSyntaxColonColon,
+	}
+	nonNilTable := &ast.TableExpr{Fields: []*ast.Field{
+		{Key: stringLit("c"), KeySyntax: ast.AttrKeyDot, Value: number("3")},
+	}}
+	nonNil := &ast.NonNilAssertExpr{Expr: nonNilTable}
+	nestedTable := &ast.TableExpr{Fields: []*ast.Field{
+		{Key: stringLit("leaf"), KeySyntax: ast.AttrKeyDot, Value: number("4")},
+	}}
+	nestedCast := &ast.CastExpr{
+		Expr:   nestedTable,
+		Type:   &ast.PrimitiveTypeExpr{Name: "any"},
+		Syntax: ast.CastSyntaxAs,
+	}
+	rootTable := &ast.TableExpr{Fields: []*ast.Field{
+		{Key: stringLit("nested"), KeySyntax: ast.AttrKeyDot, Value: nestedCast},
+	}}
+	local := localAssign([]string{"a", "b", "c", "d"}, asCast, colonCast, nonNil, rootTable)
+	stmts := []ast.Stmt{local}
+	bindings := bind.BindChunk(stmts, bind.Options{})
+	built := cfgbuild.BuildChunk(stmts, bindings)
+
+	result, err := ExtractChunk(stmts, bindings, built)
+	if err != nil {
+		t.Fatalf("ExtractChunk: %v", err)
+	}
+
+	for _, tc := range []struct {
+		name  string
+		expr  ast.Expr
+		table *ast.TableExpr
+		want  path.Path
+	}{
+		{name: "as", expr: asCast, table: asTable, want: fieldChainSuffix("a")},
+		{name: "colon", expr: colonCast, table: colonTable, want: fieldChainSuffix("b")},
+		{name: "non-nil", expr: nonNil, table: nonNilTable, want: fieldChainSuffix("c")},
+	} {
+		fact, ok := result.ObjectLiteral(tc.expr)
+		if !ok {
+			t.Fatalf("%s wrapper missing object literal sidecar", tc.name)
+		}
+		if fact.Expr != tc.expr || fact.Table != tc.table {
+			t.Fatalf("%s object literal identity = %#v", tc.name, fact)
+		}
+		if len(fact.Entries) != 1 || !fact.Entries[0].Suffix.Equal(tc.want) {
+			t.Fatalf("%s entries = %#v, want suffix %v", tc.name, fact.Entries, tc.want)
+		}
+	}
+	if _, ok := result.ObjectLiteral(asTable); ok {
+		t.Fatalf("wrapped table also keyed by inner table")
+	}
+
+	rootFact, ok := result.ObjectLiteral(rootTable)
+	if !ok {
+		t.Fatalf("missing root object literal sidecar")
+	}
+	if len(rootFact.Entries) != 2 {
+		t.Fatalf("root entries = %#v, want wrapped nested entry and leaf", rootFact.Entries)
+	}
+	assertEntry(t, rootFact.Entries[0], 0, fieldChainSuffix("nested"), nestedCast)
+	if !rootFact.Entries[1].Suffix.Equal(fieldChainSuffix("nested", "leaf")) {
+		t.Fatalf("nested wrapped entry suffix = %v", rootFact.Entries[1].Suffix)
+	}
+
+	nestedFact, ok := result.ObjectLiteral(nestedCast)
+	if !ok {
+		t.Fatalf("missing nested wrapped object literal sidecar")
+	}
+	if nestedFact.Expr != nestedCast || nestedFact.Table != nestedTable {
+		t.Fatalf("nested wrapped identity = %#v", nestedFact)
+	}
+}
+
 func TestExtractChunkObjectLiteralNestedStaticEntriesFlatten(t *testing.T) {
 	nestedLeaf := number("1")
 	dynamicValue := number("2")

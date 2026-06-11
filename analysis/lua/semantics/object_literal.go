@@ -16,14 +16,14 @@ func (r *Result) extractObjectLiterals(exprs []ast.Expr) {
 }
 
 func (r *Result) extractObjectLiteral(expr ast.Expr) {
-	table, ok := expr.(*ast.TableExpr)
+	table, ok := objectLiteralTable(expr)
 	if !ok || table == nil {
 		return
 	}
-	if _, exists := r.objectLiterals[table]; !exists {
+	if _, exists := r.objectLiterals[expr]; !exists {
 		if entries := objectEntries(table); len(entries) != 0 {
-			r.objectLiterals[table] = ObjectLiteralFact{
-				Expr:    table,
+			r.objectLiterals[expr] = ObjectLiteralFact{
+				Expr:    expr,
 				Table:   table,
 				Entries: entries,
 			}
@@ -34,6 +34,21 @@ func (r *Result) extractObjectLiteral(expr ast.Expr) {
 			continue
 		}
 		r.extractObjectLiteral(field.Value)
+	}
+}
+
+func objectLiteralTable(expr ast.Expr) (*ast.TableExpr, bool) {
+	for {
+		switch wrapped := expr.(type) {
+		case *ast.CastExpr:
+			expr = wrapped.Expr
+		case *ast.NonNilAssertExpr:
+			expr = wrapped.Expr
+		case *ast.TableExpr:
+			return wrapped, true
+		default:
+			return nil, false
+		}
 	}
 }
 
@@ -60,7 +75,7 @@ func objectEntries(table *ast.TableExpr) []ObjectEntryFact {
 			Suffix: suffix,
 			Source: objectEntryValueSource(field.Value, field.Key == nil && i == finalField),
 		})
-		if nested, ok := field.Value.(*ast.TableExpr); ok {
+		if nested, ok := objectLiteralTable(field.Value); ok {
 			entries = append(entries, nestedObjectEntries(nested, suffix)...)
 		}
 	}
