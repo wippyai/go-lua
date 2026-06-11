@@ -101,8 +101,11 @@ func objectEntrySuffix(field *ast.Field, arrayIndex *int, finalField bool) (path
 	}
 	if field.Key == nil {
 		*arrayIndex = *arrayIndex + 1
-		if finalField && canExpandFinal(field.Value) {
-			return path.Path{}, false
+		if finalField {
+			expanded, _, _ := sourceprovenance.ValueShape(field.Value, true, true, false)
+			if expanded {
+				return path.Path{}, false
+			}
 		}
 		return suffix(segment.Segment{Kind: segment.SegmentIndexInt, Index: *arrayIndex}), true
 	}
@@ -153,17 +156,7 @@ func appendSuffix(prefix path.Path, suffix path.Path) path.Path {
 }
 
 func objectEntryValueSource(expr ast.Expr, final bool) sourceprovenance.ASTSource {
-	expanded := final && canExpandFinal(expr)
-	return sourceprovenance.ASTSource{
-		Kind:        valueSourceKind(expr),
-		Expr:        expr,
-		ExprIndex:   factflow.NoValueSourceIndex,
-		TargetIndex: factflow.NoValueSourceIndex,
-		ResultIndex: 0,
-		Final:       final,
-		Expanded:    expanded,
-		Adjusted:    canProduceMultipleValues(expr) && !expanded,
-	}
+	return sourceprovenance.SourceForExpr(expr, factflow.NoValueSourceIndex, factflow.NoValueSourceIndex, 0, final, false, nil)
 }
 
 func parseStaticNonNegativeDecimalInt(s string) (int, bool) {

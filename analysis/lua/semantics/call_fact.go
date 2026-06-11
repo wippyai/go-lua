@@ -4,6 +4,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/path"
 	"github.com/wippyai/go-lua/analysis/lua/bind"
 	"github.com/wippyai/go-lua/analysis/lua/pathexpr"
+	"github.com/wippyai/go-lua/analysis/lua/sourceprovenance"
 	"github.com/wippyai/go-lua/analysis/symbol"
 	"github.com/wippyai/go-lua/compiler/ast"
 )
@@ -67,7 +68,8 @@ func returnResultTarget(stmt *ast.ReturnStmt, index int, openTail bool) CallResu
 }
 
 func buildCallFact(sourceStmt ast.Stmt, callStmt *ast.FuncCallStmt, context CallContextKind, exprs []ast.Expr, exprIndex int, call *ast.FuncCallExpr, bindings *bind.Result, assignmentTargets []CallResultTarget) CallFact {
-	final, expanded, adjusted, openTail := callListFlags(context, exprs, exprIndex, call)
+	final, allowExpansion, openTail := callListFlags(context, exprs, exprIndex)
+	expanded, adjusted, shapedOpenTail := sourceprovenance.ValueShape(call, final, allowExpansion, openTail)
 	calleePath, hasCalleePath, receiverPath, hasReceiverPath, methodPath, hasMethodPath := resolveCallPaths(call, bindings)
 	calleeSymbol, hasCalleeSymbol := symbol.ID(0), false
 	if hasCalleePath && calleePath.Symbol != 0 {
@@ -83,7 +85,7 @@ func buildCallFact(sourceStmt ast.Stmt, callStmt *ast.FuncCallStmt, context Call
 		Final:           final,
 		Expanded:        expanded,
 		Adjusted:        adjusted,
-		OpenTail:        openTail,
+		OpenTail:        shapedOpenTail,
 		Func:            call.Func,
 		Receiver:        call.Receiver,
 		Method:          call.Method,
@@ -95,26 +97,25 @@ func buildCallFact(sourceStmt ast.Stmt, callStmt *ast.FuncCallStmt, context Call
 		HasReceiverPath: hasReceiverPath,
 		MethodPath:      methodPath,
 		HasMethodPath:   hasMethodPath,
-		ResultTargets:   callResultTargets(context, sourceStmt, exprIndex, adjusted, expanded, openTail, assignmentTargets),
+		ResultTargets:   callResultTargets(context, sourceStmt, exprIndex, adjusted, expanded, shapedOpenTail, assignmentTargets),
 		CalleeSymbol:    calleeSymbol,
 		HasCalleeSymbol: hasCalleeSymbol,
 	}
 }
 
-func callListFlags(context CallContextKind, exprs []ast.Expr, exprIndex int, call *ast.FuncCallExpr) (final, expanded, adjusted, openTail bool) {
+func callListFlags(context CallContextKind, exprs []ast.Expr, exprIndex int) (final, allowExpansion, openTail bool) {
 	switch context {
 	case CallContextStatement:
-		return true, false, true, false
+		return true, false, false
 	case CallContextAssignmentSource, CallContextReturnSource, CallContextIteratorSource:
 		final = exprIndex >= 0 && exprIndex == len(exprs)-1
-		expanded = final && canExpandFinal(call)
-		adjusted = !expanded
-		openTail = context == CallContextReturnSource && expanded
-		return final, expanded, adjusted, openTail
+		allowExpansion = true
+		openTail = context == CallContextReturnSource
+		return final, allowExpansion, openTail
 	case CallContextCondition:
-		return true, false, true, false
+		return true, false, false
 	default:
-		return false, false, false, false
+		return false, false, false
 	}
 }
 

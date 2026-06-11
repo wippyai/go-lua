@@ -68,8 +68,7 @@ func Lower(result *semantics.Result, graph cfg.Graph, config Config) factflow.Fa
 		}
 		if fact, ok := result.Call(point); ok {
 			input.CallSites[point] = l.callSite(fact)
-			for i, arg := range fact.Args {
-				source := l.argumentSemanticValueSource(arg, i, i == len(fact.Args)-1)
+			for _, source := range l.argumentSemanticValueSources(fact.Args) {
 				l.addAssertionOverlaysForSource(&input, source)
 				l.addObjectLiteral(&input, result, source)
 			}
