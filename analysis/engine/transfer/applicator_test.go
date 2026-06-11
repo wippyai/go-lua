@@ -8,6 +8,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/axis"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/engine/state"
+	"github.com/wippyai/go-lua/analysis/engine/visibility"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/symbol"
 )
@@ -29,11 +30,14 @@ func TestFactsNodeTransferAppliesLocalAssignmentThroughResolver(t *testing.T) {
 	got := Run(Config{
 		Graph:    graph,
 		Registry: reg,
-		NodeTransfer: NewFactsNodeTransfer(NewFacts(FactsInput{
-			LocalAssignments: map[cfg.Point]LocalAssignment{
-				assign: NewLocalAssignment(target, path.NewPath(target, "local"), source),
-			},
-		}), resolver),
+		NodeTransfer: NewFactsNodeTransfer(FactsNodeTransferConfig{
+			Facts: NewFacts(FactsInput{
+				LocalAssignments: map[cfg.Point]LocalAssignment{
+					assign: NewLocalAssignment(target, path.NewPath(target, "local"), source),
+				},
+			}),
+			Sources: resolver,
+		}),
 	})
 
 	assertValue(t, reg, got[assign], key.SymbolValue(target), product.Bottom(reg))
@@ -58,15 +62,93 @@ func TestFactsNodeTransferAppliesOrdinaryAssignmentThroughResolver(t *testing.T)
 	got := Run(Config{
 		Graph:    graph,
 		Registry: reg,
-		NodeTransfer: NewFactsNodeTransfer(NewFacts(FactsInput{
-			OrdinaryAssignments: map[cfg.Point]OrdinaryAssignment{
-				assign: NewOrdinaryAssignment(target, path.NewPath(target, "ordinary"), source),
-			},
-		}), resolver),
+		NodeTransfer: NewFactsNodeTransfer(FactsNodeTransferConfig{
+			Facts: NewFacts(FactsInput{
+				OrdinaryAssignments: map[cfg.Point]OrdinaryAssignment{
+					assign: NewOrdinaryAssignment(target, path.NewPath(target, "ordinary"), source),
+				},
+			}),
+			Sources: resolver,
+		}),
 	})
 
 	assertValue(t, reg, got[graph.Exit()], key.SymbolValue(target), assigned)
 	assertResolverCall(t, resolver, assign, source)
+}
+
+func TestFactsNodeTransferAppliesPathAssignmentThroughVisibility(t *testing.T) {
+	reg := product.DefaultRegistry()
+	graph := cfg.New()
+	assign := graph.AddNode(cfg.NodeAssign)
+	graph.AddEdge(graph.Entry(), assign, false)
+	graph.AddEdge(assign, graph.Exit(), false)
+
+	source := ValueSource{Kind: ValueSourceExpression, ExprRef: ExprRef(15), HasExpr: true}
+	target := symbol.ID(106)
+	targetPath := path.NewPath(target, "table").Field("field")
+	assigned := presentValue(reg)
+	sources := &recordingSourceValues{
+		values: map[ValueSource]product.Value{source: assigned},
+	}
+	visibilityBuilder := visibility.NewBuilder()
+	visibilityBuilder.Define(assign, target, "table")
+	resolver := visibility.NewResolver(visibilityBuilder.Build())
+
+	got := Run(Config{
+		Graph:    graph,
+		Registry: reg,
+		NodeTransfer: NewFactsNodeTransfer(FactsNodeTransferConfig{
+			Facts: NewFacts(FactsInput{
+				PathAssignments: map[cfg.Point]PathAssignment{
+					assign: NewPathAssignment(targetPath, source),
+				},
+			}),
+			Sources:    sources,
+			Visibility: resolver,
+		}),
+	})
+
+	assertPathValue(t, reg, got[assign], path.PathKey("sym106@1.field"), product.Bottom(reg))
+	assertPathValue(t, reg, got[graph.Exit()], path.PathKey("sym106@1.field"), assigned)
+	assertResolverCall(t, sources, assign, source)
+}
+
+func TestFactsNodeTransferPathAssignmentInvalidatesSubtreeBeforeWriting(t *testing.T) {
+	reg := product.DefaultRegistry()
+	point := cfg.Point(16)
+	source := ValueSource{Kind: ValueSourceExpression, ExprRef: ExprRef(16), HasExpr: true}
+	target := symbol.ID(107)
+	targetPath := path.NewPath(target, "table").Field("field")
+	childKey := path.PathKey("sym107@1.field.deep")
+	siblingKey := path.PathKey("sym107@1.other")
+	assigned := absentValue(reg)
+	present := presentValue(reg)
+	in := state.State{}.
+		WritePathKey(reg, childKey, present).
+		WritePathKey(reg, siblingKey, present)
+	sources := &recordingSourceValues{
+		values: map[ValueSource]product.Value{source: assigned},
+	}
+	visibilityBuilder := visibility.NewBuilder()
+	visibilityBuilder.Define(point, target, "table")
+	resolver := visibility.NewResolver(visibilityBuilder.Build())
+
+	got := NewFactsNodeTransfer(FactsNodeTransferConfig{
+		Facts: NewFacts(FactsInput{
+			PathAssignments: map[cfg.Point]PathAssignment{
+				point: NewPathAssignment(targetPath, source),
+			},
+		}),
+		Sources:    sources,
+		Visibility: resolver,
+	})(NodeContext{
+		Registry: reg,
+		Point:    point,
+	}, in)
+
+	assertPathValue(t, reg, got, path.PathKey("sym107@1.field"), assigned)
+	assertPathValue(t, reg, got, childKey, product.Bottom(reg))
+	assertPathValue(t, reg, got, siblingKey, present)
 }
 
 func TestFactsNodeTransferAppliesReturnSlotsThroughSourceValues(t *testing.T) {
@@ -88,14 +170,17 @@ func TestFactsNodeTransferAppliesReturnSlotsThroughSourceValues(t *testing.T) {
 	got := Run(Config{
 		Graph:    graph,
 		Registry: reg,
-		NodeTransfer: NewFactsNodeTransfer(NewFacts(FactsInput{
-			Returns: map[cfg.Point]Return{
-				ret: NewReturn([]ValueSource{
-					{Kind: ValueSourceExpression, ExprRef: expr, HasExpr: true},
-					{Kind: ValueSourceNil},
-				}),
-			},
-		}), sources),
+		NodeTransfer: NewFactsNodeTransfer(FactsNodeTransferConfig{
+			Facts: NewFacts(FactsInput{
+				Returns: map[cfg.Point]Return{
+					ret: NewReturn([]ValueSource{
+						{Kind: ValueSourceExpression, ExprRef: expr, HasExpr: true},
+						{Kind: ValueSourceNil},
+					}),
+				},
+			}),
+			Sources: sources,
+		}),
 	})
 
 	assertValue(t, reg, got[ret], key.ReturnSlot(0), product.Bottom(reg))
@@ -110,13 +195,16 @@ func TestFactsNodeTransferUnresolvedReturnSourceLeavesSlotUnchanged(t *testing.T
 	in := state.State{}.WriteReturnSlot(reg, 0, slotValue)
 	sources := NewSourceValues(SourceValuesConfig{Registry: reg})
 
-	got := NewFactsNodeTransfer(NewFacts(FactsInput{
-		Returns: map[cfg.Point]Return{
-			point: NewReturn([]ValueSource{
-				{Kind: ValueSourceExpression, ExprRef: ExprRef(21), HasExpr: true},
-			}),
-		},
-	}), sources)(NodeContext{
+	got := NewFactsNodeTransfer(FactsNodeTransferConfig{
+		Facts: NewFacts(FactsInput{
+			Returns: map[cfg.Point]Return{
+				point: NewReturn([]ValueSource{
+					{Kind: ValueSourceExpression, ExprRef: ExprRef(21), HasExpr: true},
+				}),
+			},
+		}),
+		Sources: sources,
+	})(NodeContext{
 		Registry: reg,
 		Point:    point,
 	}, in)
@@ -145,18 +233,21 @@ func TestFactsNodeTransferReturnCallSourceReadsReturnSlotThroughRead(t *testing.
 			}
 			return state.State{}, false
 		},
-		NodeTransfer: NewFactsNodeTransfer(NewFacts(FactsInput{
-			Returns: map[cfg.Point]Return{
-				ret: NewReturn([]ValueSource{
-					{
-						Kind:         ValueSourceCall,
-						CallPoint:    call,
-						HasCallPoint: true,
-						ResultIndex:  2,
-					},
-				}),
-			},
-		}), sources),
+		NodeTransfer: NewFactsNodeTransfer(FactsNodeTransferConfig{
+			Facts: NewFacts(FactsInput{
+				Returns: map[cfg.Point]Return{
+					ret: NewReturn([]ValueSource{
+						{
+							Kind:         ValueSourceCall,
+							CallPoint:    call,
+							HasCallPoint: true,
+							ResultIndex:  2,
+						},
+					}),
+				},
+			}),
+			Sources: sources,
+		}),
 	})
 
 	assertValue(t, reg, got[graph.Exit()], key.ReturnSlot(0), callValue)
@@ -170,11 +261,14 @@ func TestFactsNodeTransferMissingResolverValueLeavesStateUnchanged(t *testing.T)
 	unchangedValue := presentValue(reg)
 	in := state.State{}.WriteValue(reg, key.SymbolValue(target), unchangedValue)
 
-	got := NewFactsNodeTransfer(NewFacts(FactsInput{
-		LocalAssignments: map[cfg.Point]LocalAssignment{
-			point: NewLocalAssignment(target, path.NewPath(target, "local"), source),
-		},
-	}), &recordingSourceValues{})(NodeContext{
+	got := NewFactsNodeTransfer(FactsNodeTransferConfig{
+		Facts: NewFacts(FactsInput{
+			LocalAssignments: map[cfg.Point]LocalAssignment{
+				point: NewLocalAssignment(target, path.NewPath(target, "local"), source),
+			},
+		}),
+		Sources: &recordingSourceValues{},
+	})(NodeContext{
 		Registry: reg,
 		Point:    point,
 	}, in)
@@ -188,13 +282,13 @@ func TestFactsNodeTransferAbsentFactsAndNilResolverLeaveStateUnchanged(t *testin
 	target := symbol.ID(104)
 	in := state.State{}.WriteValue(reg, key.SymbolValue(target), presentValue(reg))
 
-	gotNoResolver := NewFactsNodeTransfer(Facts{}, nil)(NodeContext{
+	gotNoResolver := NewFactsNodeTransfer(FactsNodeTransferConfig{Facts: Facts{}})(NodeContext{
 		Registry: reg,
 		Point:    point,
 	}, in)
 	assertStateEqual(t, reg, gotNoResolver, in)
 
-	gotNoFacts := NewFactsNodeTransfer(Facts{}, panicSourceValues{})(NodeContext{
+	gotNoFacts := NewFactsNodeTransfer(FactsNodeTransferConfig{Sources: panicSourceValues{}})(NodeContext{
 		Registry: reg,
 		Point:    point,
 	}, in)
@@ -211,11 +305,14 @@ func TestFactsNodeTransferIgnoresNonRootAssignmentFacts(t *testing.T) {
 		values: map[ValueSource]product.Value{source: absentValue(reg)},
 	}
 
-	got := NewFactsNodeTransfer(NewFacts(FactsInput{
-		OrdinaryAssignments: map[cfg.Point]OrdinaryAssignment{
-			point: NewOrdinaryAssignment(target, path.NewPath(target, "ordinary").Field("member"), source),
-		},
-	}), resolver)(NodeContext{
+	got := NewFactsNodeTransfer(FactsNodeTransferConfig{
+		Facts: NewFacts(FactsInput{
+			OrdinaryAssignments: map[cfg.Point]OrdinaryAssignment{
+				point: NewOrdinaryAssignment(target, path.NewPath(target, "ordinary").Field("member"), source),
+			},
+		}),
+		Sources: resolver,
+	})(NodeContext{
 		Registry: reg,
 		Point:    point,
 	}, in)
@@ -223,6 +320,93 @@ func TestFactsNodeTransferIgnoresNonRootAssignmentFacts(t *testing.T) {
 	assertStateEqual(t, reg, got, in)
 	if len(resolver.calls) != 0 {
 		t.Fatalf("non-root assignment resolved source %d times, want zero", len(resolver.calls))
+	}
+}
+
+func TestFactsNodeTransferPathAssignmentRequiresVisibility(t *testing.T) {
+	reg := product.DefaultRegistry()
+	point := cfg.Point(17)
+	source := ValueSource{Kind: ValueSourceExpression, ExprRef: ExprRef(17), HasExpr: true}
+	target := symbol.ID(108)
+	targetPath := path.NewPath(target, "table").Field("field")
+	pathKey := path.PathKey("sym108@1.field")
+	in := state.State{}.WritePathKey(reg, pathKey, presentValue(reg))
+	sources := &recordingSourceValues{
+		values: map[ValueSource]product.Value{source: absentValue(reg)},
+	}
+
+	got := NewFactsNodeTransfer(FactsNodeTransferConfig{
+		Facts: NewFacts(FactsInput{
+			PathAssignments: map[cfg.Point]PathAssignment{
+				point: NewPathAssignment(targetPath, source),
+			},
+		}),
+		Sources: sources,
+	})(NodeContext{
+		Registry: reg,
+		Point:    point,
+	}, in)
+
+	assertStateEqual(t, reg, got, in)
+	if len(sources.calls) != 0 {
+		t.Fatalf("path assignment without visibility resolved source %d times, want zero", len(sources.calls))
+	}
+}
+
+func TestFactsNodeTransferPathAssignmentWithUnresolvedVersionIsNoop(t *testing.T) {
+	reg := product.DefaultRegistry()
+	point := cfg.Point(18)
+	source := ValueSource{Kind: ValueSourceExpression, ExprRef: ExprRef(18), HasExpr: true}
+	target := symbol.ID(109)
+	targetPath := path.NewPath(target, "table").Field("field")
+	in := state.State{}.WritePathKey(reg, path.PathKey("sym109@1.field"), presentValue(reg))
+	sources := &recordingSourceValues{
+		values: map[ValueSource]product.Value{source: absentValue(reg)},
+	}
+
+	got := NewFactsNodeTransfer(FactsNodeTransferConfig{
+		Facts: NewFacts(FactsInput{
+			PathAssignments: map[cfg.Point]PathAssignment{
+				point: NewPathAssignment(targetPath, source),
+			},
+		}),
+		Sources:    sources,
+		Visibility: visibility.NewResolver(visibility.NewTable(nil)),
+	})(NodeContext{
+		Registry: reg,
+		Point:    point,
+	}, in)
+
+	assertStateEqual(t, reg, got, in)
+}
+
+func TestFactsNodeTransferIgnoresRootPathAssignment(t *testing.T) {
+	reg := product.DefaultRegistry()
+	point := cfg.Point(19)
+	source := ValueSource{Kind: ValueSourceExpression, ExprRef: ExprRef(19), HasExpr: true}
+	target := symbol.ID(110)
+	sources := &recordingSourceValues{
+		values: map[ValueSource]product.Value{source: absentValue(reg)},
+	}
+	visibilityBuilder := visibility.NewBuilder()
+	visibilityBuilder.Define(point, target, "table")
+
+	got := NewFactsNodeTransfer(FactsNodeTransferConfig{
+		Facts: NewFacts(FactsInput{
+			PathAssignments: map[cfg.Point]PathAssignment{
+				point: NewPathAssignment(path.NewPath(target, "table"), source),
+			},
+		}),
+		Sources:    sources,
+		Visibility: visibility.NewResolver(visibilityBuilder.Build()),
+	})(NodeContext{
+		Registry: reg,
+		Point:    point,
+	}, state.State{})
+
+	assertStateEqual(t, reg, got, state.State{})
+	if len(sources.calls) != 0 {
+		t.Fatalf("root path assignment resolved source %d times, want zero", len(sources.calls))
 	}
 }
 
@@ -276,5 +460,12 @@ func assertStateEqual(t *testing.T, reg *axis.Registry, got state.State, want st
 	t.Helper()
 	if !state.Domain(reg).Equal(got, want) {
 		t.Fatalf("state changed")
+	}
+}
+
+func assertPathValue(t *testing.T, reg *axis.Registry, gotState state.State, pathKey path.PathKey, want product.Value) {
+	t.Helper()
+	if got := gotState.ReadPathKey(reg, pathKey); !product.Equal(reg, got, want) {
+		t.Fatalf("path %s = %s, want %s", pathKey, formatValue(reg, got), formatValue(reg, want))
 	}
 }

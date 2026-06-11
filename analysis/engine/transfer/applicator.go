@@ -5,16 +5,26 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/state/key"
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	"github.com/wippyai/go-lua/analysis/engine/state"
+	"github.com/wippyai/go-lua/analysis/engine/visibility"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/symbol"
 )
 
+// FactsNodeTransferConfig configures the generic fact applicator.
+type FactsNodeTransferConfig struct {
+	Facts      Facts
+	Sources    SourceValues
+	Visibility *visibility.Resolver
+}
+
 // NewFactsNodeTransfer returns a generic node transfer that applies point-local
-// transfer facts. It intentionally handles only root assignment and return-slot
-// facts; richer Lua lowering, member writes, calls, branches, and diagnostics
-// stay outside this package.
-func NewFactsNodeTransfer(facts Facts, sources SourceValues) NodeTransfer {
+// transfer facts. It intentionally handles only root assignment, member/path
+// assignment, and return-slot facts; richer Lua lowering, calls, branches, and
+// diagnostics stay outside this package.
+func NewFactsNodeTransfer(config FactsNodeTransferConfig) NodeTransfer {
 	return func(ctx NodeContext, in state.State) state.State {
+		facts := config.Facts
+		sources := config.Sources
 		if sources == nil {
 			return in
 		}
@@ -29,6 +39,9 @@ func NewFactsNodeTransfer(facts Facts, sources SourceValues) NodeTransfer {
 		}
 		if fact, ok := facts.OrdinaryAssignment(ctx.Point); ok {
 			out = applyRootAssignment(ctx, sources, read, in, out, fact.TargetSymbol(), fact.TargetPath(), fact.Source())
+		}
+		if fact, ok := facts.PathAssignment(ctx.Point); ok {
+			out = applyPathAssignment(ctx, config.Visibility, sources, read, in, out, fact)
 		}
 		if fact, ok := facts.Return(ctx.Point); ok {
 			out = applyReturn(ctx, sources, read, in, out, fact)
@@ -76,6 +89,37 @@ func writeRootSymbol(ctx NodeContext, out state.State, target symbol.ID, value p
 		return out
 	}
 	return out.WriteValue(ctx.Registry, key.SymbolValue(target), value)
+}
+
+func applyPathAssignment(
+	ctx NodeContext,
+	resolver *visibility.Resolver,
+	sources SourceValues,
+	read func(cfg.Point) state.State,
+	in state.State,
+	out state.State,
+	fact PathAssignment,
+) state.State {
+	if resolver == nil {
+		return out
+	}
+	targetPath := fact.TargetPath()
+	if len(targetPath.Segments) == 0 {
+		return out
+	}
+	value, ok := sources.ValueOfSource(ctx.Point, fact.Source(), in, read)
+	if !ok {
+		return out
+	}
+	invalidated, ok := out.InvalidatePathSubtreeAt(resolver, ctx.Point, targetPath)
+	if !ok {
+		return out
+	}
+	written, ok := invalidated.WritePathAt(ctx.Registry, resolver, ctx.Point, targetPath, value)
+	if !ok {
+		return out
+	}
+	return written
 }
 
 func applyReturn(

@@ -54,6 +54,18 @@ func TestDTOConstructorsAndAccessorsCopySlices(t *testing.T) {
 		t.Fatalf("ordinary source = %#v, want %#v", got, source)
 	}
 
+	pathTarget := path.NewPath(symbol.ID(14), "table").Field("field")
+	pathAssignment := NewPathAssignment(pathTarget, source)
+	assertPathEqual(t, pathAssignment.TargetPath(), pathTarget)
+	if got := pathAssignment.Source(); got != source {
+		t.Fatalf("path assignment source = %#v, want %#v", got, source)
+	}
+	pathTarget.Segments[0].Name = "changed"
+	assertDirectField(t, pathAssignment.TargetPath(), "field")
+	gotPathTarget := pathAssignment.TargetPath()
+	gotPathTarget.Segments[0].Name = "changed-again"
+	assertDirectField(t, pathAssignment.TargetPath(), "field")
+
 	returnSources := []ValueSource{source, callSource}
 	ret := NewReturn(returnSources)
 	returnSources[0].Kind = ValueSourceNil
@@ -159,6 +171,9 @@ func TestFactsCarrierCopiesAndReturnsFalseForMissingFacts(t *testing.T) {
 		OrdinaryAssignments: map[cfg.Point]OrdinaryAssignment{
 			point: NewOrdinaryAssignment(symbol.ID(31), path.NewPath(symbol.ID(31), "ordinary"), source),
 		},
+		PathAssignments: map[cfg.Point]PathAssignment{
+			point: NewPathAssignment(path.NewPath(symbol.ID(33), "table").Field("field"), source),
+		},
 		Returns: map[cfg.Point]Return{
 			point: NewReturn([]ValueSource{source, callSource}),
 		},
@@ -180,6 +195,7 @@ func TestFactsCarrierCopiesAndReturnsFalseForMissingFacts(t *testing.T) {
 	facts := NewFacts(input)
 	input.LocalAssignments[point] = NewLocalAssignment(symbol.ID(40), path.NewPath(symbol.ID(40), "changed"), callSource)
 	input.OrdinaryAssignments[point] = NewOrdinaryAssignment(symbol.ID(41), path.NewPath(symbol.ID(41), "changed"), callSource)
+	input.PathAssignments[point] = NewPathAssignment(path.NewPath(symbol.ID(42), "changed").Field("field"), callSource)
 	input.Returns[point] = NewReturn([]ValueSource{{Kind: ValueSourceNil}})
 	input.Calls[point] = NewCallProducer(CallProducerConfig{Context: CallProducerContextAssignment})
 
@@ -188,6 +204,9 @@ func TestFactsCarrierCopiesAndReturnsFalseForMissingFacts(t *testing.T) {
 	}
 	if _, ok := facts.OrdinaryAssignment(missing); ok {
 		t.Fatal("missing ordinary assignment returned ok")
+	}
+	if _, ok := facts.PathAssignment(missing); ok {
+		t.Fatal("missing path assignment returned ok")
 	}
 	if _, ok := facts.Return(missing); ok {
 		t.Fatal("missing return returned ok")
@@ -215,6 +234,16 @@ func TestFactsCarrierCopiesAndReturnsFalseForMissingFacts(t *testing.T) {
 	}
 	ordinaryAgain, _ := facts.OrdinaryAssignment(point)
 	assertPathEqual(t, ordinaryAgain.TargetPath(), path.NewPath(symbol.ID(31), "ordinary"))
+
+	pathAssignment, ok := facts.PathAssignment(point)
+	if !ok {
+		t.Fatal("path assignment missing")
+	}
+	assertPathEqual(t, pathAssignment.TargetPath(), path.NewPath(symbol.ID(33), "table").Field("field"))
+	pathAssignmentPath := pathAssignment.TargetPath()
+	pathAssignmentPath.Segments[0].Name = "mutated"
+	pathAssignmentAgain, _ := facts.PathAssignment(point)
+	assertDirectField(t, pathAssignmentAgain.TargetPath(), "field")
 
 	ret, ok := facts.Return(point)
 	if !ok {

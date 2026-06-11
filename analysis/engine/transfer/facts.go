@@ -106,6 +106,31 @@ func (a OrdinaryAssignment) copy() OrdinaryAssignment {
 	return a
 }
 
+// PathAssignment describes a member/path refinement write at a CFG point.
+type PathAssignment struct {
+	targetPath path.Path
+	source     ValueSource
+}
+
+// NewPathAssignment creates a member/path assignment fact.
+func NewPathAssignment(targetPath path.Path, source ValueSource) PathAssignment {
+	return PathAssignment{
+		targetPath: copyPath(targetPath),
+		source:     source,
+	}
+}
+
+// TargetPath returns the assignment target's path identity.
+func (a PathAssignment) TargetPath() path.Path { return copyPath(a.targetPath) }
+
+// Source returns the value assigned to the target path.
+func (a PathAssignment) Source() ValueSource { return a.source }
+
+func (a PathAssignment) copy() PathAssignment {
+	a.targetPath = copyPath(a.targetPath)
+	return a
+}
+
 // Return describes the ordered value sources returned at a CFG point.
 type Return struct {
 	sources []ValueSource
@@ -277,6 +302,7 @@ func (c CallProducer) copy() CallProducer {
 type FactsInput struct {
 	LocalAssignments    map[cfg.Point]LocalAssignment
 	OrdinaryAssignments map[cfg.Point]OrdinaryAssignment
+	PathAssignments     map[cfg.Point]PathAssignment
 	Returns             map[cfg.Point]Return
 	Calls               map[cfg.Point]CallProducer
 }
@@ -285,6 +311,7 @@ type FactsInput struct {
 type Facts struct {
 	localAssignments    map[cfg.Point]LocalAssignment
 	ordinaryAssignments map[cfg.Point]OrdinaryAssignment
+	pathAssignments     map[cfg.Point]PathAssignment
 	returns             map[cfg.Point]Return
 	calls               map[cfg.Point]CallProducer
 }
@@ -294,6 +321,7 @@ func NewFacts(input FactsInput) Facts {
 	return Facts{
 		localAssignments:    copyLocalAssignmentMap(input.LocalAssignments),
 		ordinaryAssignments: copyOrdinaryAssignmentMap(input.OrdinaryAssignments),
+		pathAssignments:     copyPathAssignmentMap(input.PathAssignments),
 		returns:             copyReturnMap(input.Returns),
 		calls:               copyCallProducerMap(input.Calls),
 	}
@@ -313,6 +341,15 @@ func (f Facts) OrdinaryAssignment(point cfg.Point) (OrdinaryAssignment, bool) {
 	fact, ok := f.ordinaryAssignments[point]
 	if !ok {
 		return OrdinaryAssignment{}, false
+	}
+	return fact.copy(), true
+}
+
+// PathAssignment returns the member/path assignment fact at point.
+func (f Facts) PathAssignment(point cfg.Point) (PathAssignment, bool) {
+	fact, ok := f.pathAssignments[point]
+	if !ok {
+		return PathAssignment{}, false
 	}
 	return fact.copy(), true
 }
@@ -385,6 +422,17 @@ func copyOrdinaryAssignmentMap(in map[cfg.Point]OrdinaryAssignment) map[cfg.Poin
 		return nil
 	}
 	out := make(map[cfg.Point]OrdinaryAssignment, len(in))
+	for point, fact := range in {
+		out[point] = fact.copy()
+	}
+	return out
+}
+
+func copyPathAssignmentMap(in map[cfg.Point]PathAssignment) map[cfg.Point]PathAssignment {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make(map[cfg.Point]PathAssignment, len(in))
 	for point, fact := range in {
 		out[point] = fact.copy()
 	}
