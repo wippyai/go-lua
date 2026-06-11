@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/check"
+	"github.com/wippyai/go-lua/analysis/check/canonical/callresult"
 	"github.com/wippyai/go-lua/analysis/check/canonical/query"
 	"github.com/wippyai/go-lua/analysis/check/canonical/ref"
 	"github.com/wippyai/go-lua/analysis/check/canonical/summary"
@@ -15,6 +16,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/value/product"
 	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/engine/state"
+	"github.com/wippyai/go-lua/analysis/engine/transfer"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/parse"
@@ -110,6 +112,62 @@ func TestExpressionValueProviderAppearsInCanonicalSummary(t *testing.T) {
 	assertSnapshotValue(t, reg, snap, key, want)
 }
 
+func TestChunkWithCallResultsReturnCallSource(t *testing.T) {
+	reg, markKey := adapterTestRegistry(t)
+	want := adapterTestValue(reg, markKey, adapterMarkA)
+	callerKey := summary.DefaultSummaryKey(ref.FuncRef{Kind: ref.KindSymbol, ID: 201})
+	calleeKey := summary.DefaultSummaryKey(ref.FuncRef{Kind: ref.KindSymbol, ID: 202})
+
+	snap, err := query.Run(query.Config{
+		Registry: reg,
+		Functions: []query.Function{
+			{
+				Key: calleeKey,
+				Body: func(query.Context) (summary.Summary, error) {
+					return summary.Summary{Returns: []product.Value{want}}, nil
+				},
+			},
+			ChunkWithCallResults(callerKey, adapterParseChunk(t, "return callee()"), check.Config{
+				Registry: reg,
+				Globals:  []string{"callee"},
+			}, adapterCalleeKey(calleeKey, factflow.CallProducerContextReturn)),
+		},
+	})
+	if err != nil {
+		t.Fatalf("query.Run() error = %v", err)
+	}
+
+	assertSnapshotValue(t, reg, snap, callerKey, want)
+}
+
+func TestChunkWithCallResultsAssignmentCallSource(t *testing.T) {
+	reg, markKey := adapterTestRegistry(t)
+	want := adapterTestValue(reg, markKey, adapterMarkB)
+	callerKey := summary.DefaultSummaryKey(ref.FuncRef{Kind: ref.KindSymbol, ID: 203})
+	calleeKey := summary.DefaultSummaryKey(ref.FuncRef{Kind: ref.KindSymbol, ID: 204})
+
+	snap, err := query.Run(query.Config{
+		Registry: reg,
+		Functions: []query.Function{
+			{
+				Key: calleeKey,
+				Body: func(query.Context) (summary.Summary, error) {
+					return summary.Summary{Returns: []product.Value{want}}, nil
+				},
+			},
+			ChunkWithCallResults(callerKey, adapterParseChunk(t, "local x = callee(); return x"), check.Config{
+				Registry: reg,
+				Globals:  []string{"callee"},
+			}, adapterCalleeKey(calleeKey, factflow.CallProducerContextAssignment)),
+		},
+	})
+	if err != nil {
+		t.Fatalf("query.Run() error = %v", err)
+	}
+
+	assertSnapshotValue(t, reg, snap, callerKey, want)
+}
+
 func TestAdapterClonesMutableConfig(t *testing.T) {
 	reg, markKey := adapterTestRegistry(t)
 	want := adapterTestValue(reg, markKey, adapterMarkA)
@@ -171,10 +229,11 @@ func TestProductionImportsAreBounded(t *testing.T) {
 	allowed := map[string]bool{
 		"maps":   true,
 		"slices": true,
-		"github.com/wippyai/go-lua/analysis/check":                   true,
-		"github.com/wippyai/go-lua/analysis/check/canonical/query":   true,
-		"github.com/wippyai/go-lua/analysis/check/canonical/summary": true,
-		"github.com/wippyai/go-lua/compiler/ast":                     true,
+		"github.com/wippyai/go-lua/analysis/check":                      true,
+		"github.com/wippyai/go-lua/analysis/check/canonical/callresult": true,
+		"github.com/wippyai/go-lua/analysis/check/canonical/query":      true,
+		"github.com/wippyai/go-lua/analysis/check/canonical/summary":    true,
+		"github.com/wippyai/go-lua/compiler/ast":                        true,
 	}
 	for _, dep := range strings.Fields(string(out)) {
 		if !allowed[dep] {
@@ -221,6 +280,15 @@ func adapterParseFunction(t *testing.T, src string) *ast.FunctionExpr {
 		t.Fatalf("stmt = %T, want function definition", stmts[0])
 	}
 	return def.Func
+}
+
+func adapterCalleeKey(key summary.SummaryKey, wantContext factflow.CallProducerContext) callresult.KeyFunc {
+	return func(_ transfer.NodeContext, call factflow.CallProducer) (summary.SummaryKey, bool) {
+		if call.CalleeSymbol() == 0 || call.Context() != wantContext {
+			return summary.SummaryKey{}, false
+		}
+		return key, true
+	}
 }
 
 func assertSnapshotValue(t *testing.T, reg *axis.Registry, snap summary.Snapshot, key summary.SummaryKey, want product.Value) {
