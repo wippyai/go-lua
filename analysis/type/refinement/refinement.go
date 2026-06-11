@@ -3,7 +3,6 @@ package refinement
 import (
 	"github.com/wippyai/go-lua/analysis/type/kind"
 	"github.com/wippyai/go-lua/analysis/type/nodeid"
-	"github.com/wippyai/go-lua/analysis/type/presence"
 	typetable "github.com/wippyai/go-lua/analysis/type/table"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
@@ -473,11 +472,11 @@ func (s *fallbackRefineState) refine(summary, fallback typ.Type) (typ.Type, bool
 }
 
 func fallbackIsOpaque(t typ.Type) bool {
-	return t == nil || presence.AbsentOrUnknown(t) || t.Kind().IsPlaceholder() || ContainsFreeTypeParam(t)
+	return t == nil || typ.AbsentOrUnknown(t) || t.Kind().IsPlaceholder() || ContainsFreeTypeParam(t)
 }
 
 func summaryNeedsFallbackLeaf(t typ.Type) bool {
-	if t == nil || presence.AbsentOrUnknown(t) || t.Kind().IsPlaceholder() || t.Kind().IsDeferred() {
+	if t == nil || typ.AbsentOrUnknown(t) || t.Kind().IsPlaceholder() || t.Kind().IsDeferred() {
 		return true
 	}
 	_, ok := t.(*typ.TypeParam)

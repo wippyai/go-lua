@@ -63,3 +63,86 @@ func TestIsNever(t *testing.T) {
 		})
 	}
 }
+
+func TestAbsentOrUnknown(t *testing.T) {
+	tests := []struct {
+		name string
+		in   Type
+		want bool
+	}{
+		{name: "nil", in: nil, want: true},
+		{name: "unknown", in: Unknown, want: true},
+		{name: "nil type", in: Nil, want: false},
+		{name: "any", in: Any, want: false},
+		{name: "number", in: Number, want: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := AbsentOrUnknown(tt.in); got != tt.want {
+				t.Fatalf("AbsentOrUnknown(%v) = %v, want %v", tt.in, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestUnknownOrNil(t *testing.T) {
+	tests := []struct {
+		name string
+		in   Type
+		want bool
+	}{
+		{name: "nil", in: nil, want: true},
+		{name: "unknown", in: Unknown, want: true},
+		{name: "nil type", in: Nil, want: true},
+		{name: "any", in: Any, want: false},
+		{name: "number", in: Number, want: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := UnknownOrNil(tt.in); got != tt.want {
+				t.Fatalf("UnknownOrNil(%v) = %v, want %v", tt.in, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestHasKnown(t *testing.T) {
+	tests := []struct {
+		name string
+		in   []Type
+		want bool
+	}{
+		{name: "nil slice", in: nil, want: false},
+		{name: "unknown only", in: []Type{Unknown, nil}, want: false},
+		{name: "includes nil type", in: []Type{Unknown, Nil}, want: true},
+		{name: "includes concrete", in: []Type{Unknown, String}, want: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := HasKnown(tt.in); got != tt.want {
+				t.Fatalf("HasKnown(%v) = %v, want %v", tt.in, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestUnknownOnlyOrEmpty(t *testing.T) {
+	tests := []struct {
+		name string
+		in   []Type
+		want bool
+	}{
+		{name: "nil slice", in: nil, want: true},
+		{name: "unknown only", in: []Type{Unknown, nil}, want: true},
+		{name: "has concrete", in: []Type{Unknown, Number}, want: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := UnknownOnlyOrEmpty(tt.in); got != tt.want {
+				t.Fatalf("UnknownOnlyOrEmpty(%v) = %v, want %v", tt.in, got, tt.want)
+			}
+		})
+	}
+}

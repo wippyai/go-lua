@@ -2,6 +2,7 @@ package ownership
 
 import (
 	"github.com/wippyai/go-lua/analysis/domain/effect"
+	"github.com/wippyai/go-lua/analysis/domain/effect/mutation"
 )
 
 func BorrowsOnly() effect.Row {
@@ -43,6 +44,12 @@ func HasBorrow(r effect.Row) bool {
 
 func HasStore(r effect.Row) bool {
 	return r.Has(func(l effect.Label) bool { _, ok := l.(Store); return ok })
+}
+
+// OnlyBorrows reports whether r contains an ownership borrow label without an
+// ownership store or mutation.Mutate label.
+func OnlyBorrows(r effect.Row) bool {
+	return HasBorrow(r) && !HasStore(r) && !mutation.HasMutate(r)
 }
 
 func HasSend(r effect.Row) bool {
