@@ -12,8 +12,8 @@ import (
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/lua/branchcond"
 	"github.com/wippyai/go-lua/analysis/lua/semantics"
+	"github.com/wippyai/go-lua/analysis/lua/sourceprovenance"
 	"github.com/wippyai/go-lua/analysis/lua/valueexpr"
-	"github.com/wippyai/go-lua/analysis/lua/valuesource"
 	"github.com/wippyai/go-lua/analysis/symbol"
 	"github.com/wippyai/go-lua/compiler/ast"
 )
@@ -213,7 +213,7 @@ func (l *lowerer) callSite(fact semantics.CallFact) factflow.CallSite {
 	})
 }
 
-func (l *lowerer) addObjectLiteral(input *factflow.FactsInput, result *semantics.Result, source valuesource.Source) {
+func (l *lowerer) addObjectLiteral(input *factflow.FactsInput, result *semantics.Result, source sourceprovenance.ASTSource) {
 	fact, ok := result.ObjectLiteral(source.Expr)
 	if !ok {
 		return
@@ -325,7 +325,7 @@ func (l *lowerer) runtimeKindConstraint(value runtimekind.Value) product.Value {
 	return product.Set(l.registry, product.Top(), runtimekind.Key, value)
 }
 
-func (l *lowerer) valueSources(sources []valuesource.Source) []factflow.ValueSource {
+func (l *lowerer) valueSources(sources []sourceprovenance.ASTSource) []factflow.ValueSource {
 	if len(sources) == 0 {
 		return nil
 	}
@@ -336,10 +336,10 @@ func (l *lowerer) valueSources(sources []valuesource.Source) []factflow.ValueSou
 	return out
 }
 
-func (l *lowerer) valueSource(source valuesource.Source) factflow.ValueSource {
+func (l *lowerer) valueSource(source sourceprovenance.ASTSource) factflow.ValueSource {
 	exprRef, hasExpr := l.exprRef(source.Expr)
 	return factflow.ValueSource{
-		Kind:         valueSourceKind(source.Kind),
+		Kind:         source.Kind,
 		ExprRef:      exprRef,
 		HasExpr:      hasExpr,
 		ExprIndex:    source.ExprIndex,
@@ -368,7 +368,7 @@ func (l *lowerer) argumentValueSources(args []ast.Expr) []factflow.ValueSource {
 func (l *lowerer) argumentValueSource(arg ast.Expr, index int, final bool) factflow.ValueSource {
 	exprRef, hasExpr := l.exprRef(arg)
 	producer := valueexpr.TopLevelProducer(arg)
-	kind := argumentTransferSourceKind(producer.Kind)
+	kind := producerValueSourceKind(producer.Kind)
 	expanded := final && valueexpr.CanProduceMultipleValues(arg) && !valueexpr.AdjustRet(arg)
 	source := factflow.ValueSource{
 		Kind:        kind,
@@ -390,11 +390,11 @@ func (l *lowerer) argumentValueSource(arg ast.Expr, index int, final bool) factf
 	return source
 }
 
-func (l *lowerer) argumentSemanticValueSource(arg ast.Expr, index int, final bool) valuesource.Source {
+func (l *lowerer) argumentSemanticValueSource(arg ast.Expr, index int, final bool) sourceprovenance.ASTSource {
 	producer := valueexpr.TopLevelProducer(arg)
 	expanded := final && valueexpr.CanProduceMultipleValues(arg) && !valueexpr.AdjustRet(arg)
-	source := valuesource.Source{
-		Kind:        argumentSemanticSourceKind(producer.Kind),
+	source := sourceprovenance.ASTSource{
+		Kind:        producerValueSourceKind(producer.Kind),
 		Expr:        arg,
 		ExprIndex:   index,
 		TargetIndex: index,
@@ -412,7 +412,7 @@ func (l *lowerer) argumentSemanticValueSource(arg ast.Expr, index int, final boo
 	return source
 }
 
-func argumentTransferSourceKind(kind valueexpr.ProducerKind) factflow.ValueSourceKind {
+func producerValueSourceKind(kind valueexpr.ProducerKind) factflow.ValueSourceKind {
 	switch kind {
 	case valueexpr.ProducerCall:
 		return factflow.ValueSourceCall
@@ -423,18 +423,7 @@ func argumentTransferSourceKind(kind valueexpr.ProducerKind) factflow.ValueSourc
 	}
 }
 
-func argumentSemanticSourceKind(kind valueexpr.ProducerKind) valuesource.Kind {
-	switch kind {
-	case valueexpr.ProducerCall:
-		return valuesource.Call
-	case valueexpr.ProducerVararg:
-		return valuesource.Vararg
-	default:
-		return valuesource.Expression
-	}
-}
-
-func (l *lowerer) addAssertionOverlaysForSource(input *factflow.FactsInput, source valuesource.Source) {
+func (l *lowerer) addAssertionOverlaysForSource(input *factflow.FactsInput, source sourceprovenance.ASTSource) {
 	if input == nil || source.Expr == nil {
 		return
 	}
@@ -446,7 +435,7 @@ func (l *lowerer) addAssertionOverlaysForSource(input *factflow.FactsInput, sour
 	}
 }
 
-func (l *lowerer) addAssertion(input *factflow.FactsInput, outer valuesource.Source, innerExpr ast.Expr, value assertion.Value) {
+func (l *lowerer) addAssertion(input *factflow.FactsInput, outer sourceprovenance.ASTSource, innerExpr ast.Expr, value assertion.Value) {
 	outerRef, hasOuter := l.exprRef(outer.Expr)
 	if !hasOuter || innerExpr == nil {
 		return
@@ -613,20 +602,5 @@ func callSiteContext(kind semantics.CallContextKind) factflow.CallSiteContext {
 		return factflow.CallSiteContextCondition
 	default:
 		return factflow.CallSiteContextUnknown
-	}
-}
-
-func valueSourceKind(kind valuesource.Kind) factflow.ValueSourceKind {
-	switch kind {
-	case valuesource.Expression:
-		return factflow.ValueSourceExpression
-	case valuesource.Call:
-		return factflow.ValueSourceCall
-	case valuesource.Vararg:
-		return factflow.ValueSourceVararg
-	case valuesource.Nil:
-		return factflow.ValueSourceNil
-	default:
-		return factflow.ValueSourceUnknown
 	}
 }

@@ -2,11 +2,12 @@ package semantics
 
 import (
 	"github.com/wippyai/go-lua/analysis/domain/path"
+	factflow "github.com/wippyai/go-lua/analysis/engine/factflow"
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
 	"github.com/wippyai/go-lua/analysis/lua/bind"
 	"github.com/wippyai/go-lua/analysis/lua/pathexpr"
+	"github.com/wippyai/go-lua/analysis/lua/sourceprovenance"
 	"github.com/wippyai/go-lua/analysis/lua/valueexpr"
-	"github.com/wippyai/go-lua/analysis/lua/valuesource"
 	"github.com/wippyai/go-lua/analysis/symbol"
 	"github.com/wippyai/go-lua/compiler/ast"
 )
@@ -139,18 +140,18 @@ func returnResultTarget(stmt *ast.ReturnStmt, index int, openTail bool) CallResu
 	}
 }
 
-func assignmentValueSources(exprs []ast.Expr, targetCount int, callPoints map[int]cfg.Point) []valuesource.Source {
+func assignmentValueSources(exprs []ast.Expr, targetCount int, callPoints map[int]cfg.Point) []sourceprovenance.ASTSource {
 	if targetCount <= 0 {
 		return nil
 	}
-	sources := make([]valuesource.Source, targetCount)
+	sources := make([]sourceprovenance.ASTSource, targetCount)
 	for targetIndex := range sources {
 		sources[targetIndex] = assignmentValueSource(exprs, targetIndex, callPoints)
 	}
 	return sources
 }
 
-func assignmentValueSource(exprs []ast.Expr, targetIndex int, callPoints map[int]cfg.Point) valuesource.Source {
+func assignmentValueSource(exprs []ast.Expr, targetIndex int, callPoints map[int]cfg.Point) sourceprovenance.ASTSource {
 	if len(exprs) == 0 {
 		return nilFillSource(targetIndex)
 	}
@@ -171,19 +172,19 @@ func assignmentValueSource(exprs []ast.Expr, targetIndex int, callPoints map[int
 	return nilFillSource(targetIndex)
 }
 
-func returnValueSources(exprs []ast.Expr, callPoints map[int]cfg.Point) []valuesource.Source {
+func returnValueSources(exprs []ast.Expr, callPoints map[int]cfg.Point) []sourceprovenance.ASTSource {
 	return valueListSources(exprs, callPoints, true)
 }
 
-func iteratorValueSources(exprs []ast.Expr, callPoints map[int]cfg.Point) []valuesource.Source {
+func iteratorValueSources(exprs []ast.Expr, callPoints map[int]cfg.Point) []sourceprovenance.ASTSource {
 	return valueListSources(exprs, callPoints, false)
 }
 
-func valueListSources(exprs []ast.Expr, callPoints map[int]cfg.Point, openTailFinal bool) []valuesource.Source {
+func valueListSources(exprs []ast.Expr, callPoints map[int]cfg.Point, openTailFinal bool) []sourceprovenance.ASTSource {
 	if len(exprs) == 0 {
 		return nil
 	}
-	sources := make([]valuesource.Source, len(exprs))
+	sources := make([]sourceprovenance.ASTSource, len(exprs))
 	for i, expr := range exprs {
 		final := i == len(exprs)-1
 		openTail := openTailFinal && final && canExpandFinal(expr)
@@ -192,17 +193,17 @@ func valueListSources(exprs []ast.Expr, callPoints map[int]cfg.Point, openTailFi
 	return sources
 }
 
-func conditionValueSource(expr ast.Expr, callPoints map[int]cfg.Point) valuesource.Source {
-	source := valuesource.Source{
+func conditionValueSource(expr ast.Expr, callPoints map[int]cfg.Point) sourceprovenance.ASTSource {
+	source := sourceprovenance.ASTSource{
 		Kind:        valueSourceKind(expr),
 		Expr:        expr,
 		ExprIndex:   0,
-		TargetIndex: valuesource.NoIndex,
+		TargetIndex: factflow.NoValueSourceIndex,
 		ResultIndex: 0,
 		Final:       true,
 		Adjusted:    canProduceMultipleValues(expr),
 	}
-	if source.Kind == valuesource.Call {
+	if source.Kind == factflow.ValueSourceCall {
 		if point, ok := callPoints[0]; ok {
 			source.CallPoint = point
 			source.HasCallPoint = point != 0
@@ -211,10 +212,10 @@ func conditionValueSource(expr ast.Expr, callPoints map[int]cfg.Point) valuesour
 	return source
 }
 
-func valueSourceForExpr(expr ast.Expr, exprIndex, targetIndex, resultIndex int, final bool, openTail bool, callPoints map[int]cfg.Point) valuesource.Source {
+func valueSourceForExpr(expr ast.Expr, exprIndex, targetIndex, resultIndex int, final bool, openTail bool, callPoints map[int]cfg.Point) sourceprovenance.ASTSource {
 	expanded := final && canExpandFinal(expr)
 	adjusted := canProduceMultipleValues(expr) && !expanded
-	source := valuesource.Source{
+	source := sourceprovenance.ASTSource{
 		Kind:        valueSourceKind(expr),
 		Expr:        expr,
 		ExprIndex:   exprIndex,
@@ -225,7 +226,7 @@ func valueSourceForExpr(expr ast.Expr, exprIndex, targetIndex, resultIndex int, 
 		Adjusted:    adjusted,
 		OpenTail:    openTail && expanded,
 	}
-	if source.Kind == valuesource.Call {
+	if source.Kind == factflow.ValueSourceCall {
 		if point, ok := callPoints[exprIndex]; ok {
 			source.CallPoint = point
 			source.HasCallPoint = point != 0
@@ -234,23 +235,23 @@ func valueSourceForExpr(expr ast.Expr, exprIndex, targetIndex, resultIndex int, 
 	return source
 }
 
-func nilFillSource(targetIndex int) valuesource.Source {
-	return valuesource.Source{
-		Kind:        valuesource.Nil,
-		ExprIndex:   valuesource.NoIndex,
+func nilFillSource(targetIndex int) sourceprovenance.ASTSource {
+	return sourceprovenance.ASTSource{
+		Kind:        factflow.ValueSourceNil,
+		ExprIndex:   factflow.NoValueSourceIndex,
 		TargetIndex: targetIndex,
-		ResultIndex: valuesource.NoIndex,
+		ResultIndex: factflow.NoValueSourceIndex,
 	}
 }
 
-func valueSourceKind(expr ast.Expr) valuesource.Kind {
+func valueSourceKind(expr ast.Expr) factflow.ValueSourceKind {
 	switch valueexpr.TopLevelProducer(expr).Kind {
 	case valueexpr.ProducerCall:
-		return valuesource.Call
+		return factflow.ValueSourceCall
 	case valueexpr.ProducerVararg:
-		return valuesource.Vararg
+		return factflow.ValueSourceVararg
 	default:
-		return valuesource.Expression
+		return factflow.ValueSourceExpression
 	}
 }
 
@@ -352,11 +353,11 @@ func callResultTargets(context CallContextKind, sourceStmt ast.Stmt, exprIndex i
 	}
 }
 
-func copyValueSources(in []valuesource.Source) []valuesource.Source {
+func copyValueSources(in []sourceprovenance.ASTSource) []sourceprovenance.ASTSource {
 	if len(in) == 0 {
 		return nil
 	}
-	out := make([]valuesource.Source, len(in))
+	out := make([]sourceprovenance.ASTSource, len(in))
 	copy(out, in)
 	return out
 }

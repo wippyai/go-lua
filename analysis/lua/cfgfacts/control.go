@@ -2,7 +2,7 @@ package cfgfacts
 
 import (
 	"github.com/wippyai/go-lua/analysis/ir/cfg"
-	"github.com/wippyai/go-lua/analysis/lua/valuesource"
+	"github.com/wippyai/go-lua/analysis/lua/sourceprovenance"
 	"github.com/wippyai/go-lua/analysis/symbol"
 	"github.com/wippyai/go-lua/compiler/ast"
 )
@@ -70,7 +70,7 @@ type GenericForFact struct {
 
 	Names   []string
 	Exprs   []ast.Expr
-	Sources []valuesource.Source
+	Sources []sourceprovenance.ASTSource
 
 	Symbols    []symbol.ID
 	HasSymbols bool

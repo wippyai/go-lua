@@ -11,7 +11,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/lua/cfgbuild"
 	"github.com/wippyai/go-lua/analysis/lua/cfgfacts"
 	"github.com/wippyai/go-lua/analysis/lua/pathexpr"
-	"github.com/wippyai/go-lua/analysis/lua/valuesource"
+	"github.com/wippyai/go-lua/analysis/lua/sourceprovenance"
 	"github.com/wippyai/go-lua/analysis/symbol"
 	"github.com/wippyai/go-lua/compiler/ast"
 )
@@ -49,7 +49,7 @@ type LocalAssignmentFact struct {
 	Name   string
 	Type   ast.TypeExpr
 	Expr   ast.Expr
-	Source valuesource.Source
+	Source sourceprovenance.ASTSource
 
 	Symbol    symbol.ID
 	HasSymbol bool
@@ -64,7 +64,7 @@ type OrdinaryAssignmentFact struct {
 
 	Target ast.Expr
 	Value  ast.Expr
-	Source valuesource.Source
+	Source sourceprovenance.ASTSource
 
 	Symbol    symbol.ID
 	HasSymbol bool
@@ -109,7 +109,7 @@ type CallFact struct {
 type ReturnFact struct {
 	Stmt    *ast.ReturnStmt
 	Exprs   []ast.Expr
-	Sources []valuesource.Source
+	Sources []sourceprovenance.ASTSource
 }
 
 type ObjectLiteralFact struct {
@@ -124,7 +124,7 @@ type ObjectEntryFact struct {
 	Key    ast.Expr
 	Value  ast.Expr
 	Suffix path.Path
-	Source valuesource.Source
+	Source sourceprovenance.ASTSource
 }
 
 type BranchConditionFact struct {
@@ -135,7 +135,7 @@ type BranchConditionFact struct {
 	While     *ast.WhileStmt
 	Repeat    *ast.RepeatStmt
 	Condition ast.Expr
-	Source    valuesource.Source
+	Source    sourceprovenance.ASTSource
 	Check     branchcond.Check
 }
 
