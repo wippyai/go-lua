@@ -36,7 +36,7 @@ func ValueListSources(exprs []ast.Expr, openTailFinal bool, resolver CallPointRe
 
 func ValueShape(expr ast.Expr, final, allowExpansion, openTail bool) (expanded, adjusted, shapedOpenTail bool) {
 	expanded = final && allowExpansion && canExpandFinal(expr)
-	adjusted = canProduceMultipleValues(expr) && !expanded
+	adjusted = valueexpr.CanProduceMultipleValues(expr) && !expanded
 	shapedOpenTail = openTail && expanded
 	return expanded, adjusted, shapedOpenTail
 }
@@ -49,7 +49,7 @@ func ConditionSource(expr ast.Expr, resolver CallPointResolver) ASTSource {
 		TargetIndex: factflow.NoValueSourceIndex,
 		ResultIndex: 0,
 		Final:       true,
-		Adjusted:    canProduceMultipleValues(expr),
+		Adjusted:    valueexpr.CanProduceMultipleValues(expr),
 	}
 	if source.Kind == factflow.ValueSourceCall {
 		if point, ok := resolveCallPoint(resolver, 0, expr); ok {
@@ -116,8 +116,8 @@ func resolveCallPoint(resolver CallPointResolver, exprIndex int, expr ast.Expr) 
 	if resolver == nil {
 		return 0, false
 	}
-	if producer := valueexpr.TopLevelProducer(expr); producer.Kind == valueexpr.ProducerCall && producer.Call != nil {
-		return resolver(exprIndex, producer.Call)
+	if call, ok := valueexpr.Call(expr); ok {
+		return resolver(exprIndex, call)
 	}
 	return 0, false
 }
@@ -134,13 +134,5 @@ func valueSourceKind(expr ast.Expr) factflow.ValueSourceKind {
 }
 
 func canExpandFinal(expr ast.Expr) bool {
-	return canProduceMultipleValues(expr) && !adjustRet(expr)
-}
-
-func canProduceMultipleValues(expr ast.Expr) bool {
-	return valueexpr.CanProduceMultipleValues(expr)
-}
-
-func adjustRet(expr ast.Expr) bool {
-	return valueexpr.AdjustRet(expr)
+	return valueexpr.CanProduceMultipleValues(expr) && !valueexpr.AdjustRet(expr)
 }

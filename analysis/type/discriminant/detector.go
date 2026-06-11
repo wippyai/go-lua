@@ -3,11 +3,8 @@ package discriminant
 import (
 	"strconv"
 
-	"github.com/wippyai/go-lua/analysis/domain/path/segment"
 	"github.com/wippyai/go-lua/analysis/type/kind"
 	"github.com/wippyai/go-lua/analysis/type/literal"
-	"github.com/wippyai/go-lua/analysis/type/normalize"
-	"github.com/wippyai/go-lua/analysis/type/subtype"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 	"github.com/wippyai/go-lua/analysis/type/unwrap"
 )
@@ -22,112 +19,6 @@ type Detector struct {
 
 func NewDetector() *Detector {
 	return &Detector{}
-}
-
-// NarrowByPathLiteral keeps the variants of t whose static member path admits
-// lit. The returned bool reports whether a strict narrowing was possible.
-func NarrowByPathLiteral(t typ.Type, suffix []segment.Segment, lit typ.Type) (typ.Type, bool) {
-	if t == nil || len(suffix) == 0 || lit == nil {
-		return nil, false
-	}
-	narrowed, ok := narrowByPathLiteral(t, suffix, lit, 0)
-	if !ok || narrowed == nil || typ.SameNodeOrAcyclicEqual(narrowed, t) {
-		return narrowed, false
-	}
-	return narrowed, true
-}
-
-func narrowByPathLiteral(t typ.Type, suffix []segment.Segment, lit typ.Type, depth int) (typ.Type, bool) {
-	if t == nil || depth > typ.DefaultRecursionDepth {
-		return nil, false
-	}
-	switch v := unwrap.Annotated(t).(type) {
-	case *typ.Alias:
-		return narrowByPathLiteral(v.UnaliasedTarget(), suffix, lit, depth+1)
-	case *typ.Optional:
-		return narrowByPathLiteral(v.Inner, suffix, lit, depth+1)
-	case *typ.Union:
-		out := make([]typ.Type, 0, len(v.Members))
-		for _, member := range v.Members {
-			if pathAdmitsLiteral(member, suffix, lit, depth+1) {
-				out = append(out, member)
-			}
-		}
-		if len(out) == 0 || len(out) == len(v.Members) {
-			return t, false
-		}
-		return normalize.UnionForEvidence(out...), true
-	default:
-		if pathAdmitsLiteral(t, suffix, lit, depth+1) {
-			return t, false
-		}
-		return typ.Never, true
-	}
-}
-
-func pathAdmitsLiteral(t typ.Type, suffix []segment.Segment, lit typ.Type, depth int) bool {
-	field, ok := fieldAtPath(t, suffix, depth+1)
-	return ok && subtype.IsSubtype(lit, field)
-}
-
-func fieldAtPath(t typ.Type, suffix []segment.Segment, depth int) (typ.Type, bool) {
-	if t == nil || len(suffix) == 0 || depth > typ.DefaultRecursionDepth {
-		return nil, false
-	}
-	switch v := unwrap.Annotated(t).(type) {
-	case *typ.Alias:
-		return fieldAtPath(v.UnaliasedTarget(), suffix, depth+1)
-	case *typ.Optional:
-		return fieldAtPath(v.Inner, suffix, depth+1)
-	case *typ.Union:
-		out := make([]typ.Type, 0, len(v.Members))
-		for _, member := range v.Members {
-			field, ok := fieldAtPath(member, suffix, depth+1)
-			if !ok {
-				return nil, false
-			}
-			out = append(out, field)
-		}
-		return normalize.UnionForEvidence(out...), true
-	case *typ.Record:
-		field, ok := directRecordMember(v, suffix[0])
-		if !ok {
-			return nil, false
-		}
-		if len(suffix) == 1 {
-			return field, true
-		}
-		return fieldAtPath(field, suffix[1:], depth+1)
-	default:
-		return nil, false
-	}
-}
-
-func directRecordMember(r *typ.Record, seg segment.Segment) (typ.Type, bool) {
-	if r == nil {
-		return nil, false
-	}
-	switch seg.Kind {
-	case segment.SegmentField:
-		if field := r.GetField(seg.Name); field != nil {
-			return field.Type, true
-		}
-		if member := r.GetStaticStringIndex(seg.Name); member != nil {
-			return member.Type, true
-		}
-	case segment.SegmentIndexString:
-		if member := r.GetStaticStringIndex(seg.Name); member != nil {
-			return member.Type, true
-		}
-		if field := r.GetField(seg.Name); field != nil {
-			return field.Type, true
-		}
-	case segment.SegmentIndexInt:
-		if member := r.GetStaticIntIndex(int64(seg.Index)); member != nil {
-			return member.Type, true
-		}
-	}
-	return nil, false
 }
 
 // ClosedRecordSetConflicts reports whether any pair in a closed record set is
