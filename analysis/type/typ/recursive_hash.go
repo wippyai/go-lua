@@ -165,9 +165,6 @@ func hashBodyWithVisitedMemo(t Type, visited map[*Recursive]bool, memo map[Type]
 			for _, r := range fn.Returns {
 				h = hash.MixHash(h, hashBodyWithVisitedMemo(r, visited, memo))
 			}
-			if !fn.Effect.Pure() {
-				h = hash.MixHash(h, fn.Effect.Hash())
-			}
 			return h
 		},
 		Meta: func(m *Meta) uint64 {

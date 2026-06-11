@@ -137,6 +137,26 @@ func TestSubsetUnknown(t *testing.T) {
 	}
 }
 
+func TestSubsetOpenTailOnlyIsNotSubsetOfClosedEmpty(t *testing.T) {
+	if Subset(Open("rho"), Empty) {
+		t.Error("open tail should not be subset of closed empty row")
+	}
+}
+
+func TestSubsetOpenTailWithMatchingLabelsIsNotSubsetOfClosedRow(t *testing.T) {
+	io := testLabel{name: "io"}
+	if Subset(Open("rho", io), Empty.With(io)) {
+		t.Error("open row should not be subset of closed row even when labels match")
+	}
+}
+
+func TestSubsetClosedLabelsAreSubsetOfOpenRowWithMatchingLabels(t *testing.T) {
+	io := testLabel{name: "io"}
+	if !Subset(Empty.With(io), Open("rho", io)) {
+		t.Error("closed row should be subset of open row with matching labels")
+	}
+}
+
 func TestOpen(t *testing.T) {
 	r := Open("e", testLabel{name: "a"})
 

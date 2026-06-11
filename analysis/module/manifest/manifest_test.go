@@ -8,9 +8,11 @@ import (
 	"github.com/wippyai/go-lua/analysis/domain/constraint/expr"
 	"github.com/wippyai/go-lua/analysis/domain/effect"
 	"github.com/wippyai/go-lua/analysis/domain/effect/control"
+	"github.com/wippyai/go-lua/analysis/domain/effect/iteration"
 	"github.com/wippyai/go-lua/analysis/domain/effect/mutation"
 	"github.com/wippyai/go-lua/analysis/domain/effect/ownership"
 	"github.com/wippyai/go-lua/analysis/domain/effect/returns"
+	"github.com/wippyai/go-lua/analysis/domain/effect/signature"
 	"github.com/wippyai/go-lua/analysis/type/annotation"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
@@ -87,7 +89,7 @@ func TestManifestRoundTrip(t *testing.T) {
 	}
 }
 
-func TestManifestRoundTripFunctionEffects(t *testing.T) {
+func TestManifestRoundTripNamedFunctionSignatureEffects(t *testing.T) {
 	row := effect.Open("rho",
 		control.IO{},
 		ownership.Store{Param: effect.ParamRef{Index: 0}, Into: effect.ParamRef{Index: 1}},
@@ -99,17 +101,17 @@ func TestManifestRoundTripFunctionEffects(t *testing.T) {
 		Param("input", typ.String).
 		Param("out", typ.NewArray(typ.String)).
 		Returns(typ.String).
-		Effects(row).
 		Build()
 	m := New("example/effects")
 	m.SetExport(export)
+	m.DefineFunctionSignature("transform", signature.Function{Type: export, Effect: row})
 
 	data, err := Encode(m)
 	if err != nil {
 		t.Fatalf("Encode: %v", err)
 	}
-	if !strings.Contains(string(data), `"effect"`) {
-		t.Fatalf("encoded manifest missing effect row:\n%s", data)
+	if !strings.Contains(string(data), `"functionSignatures"`) || !strings.Contains(string(data), `"effect"`) {
+		t.Fatalf("encoded manifest missing function signature effect row:\n%s", data)
 	}
 	got, err := Decode(data)
 	if err != nil {
@@ -119,11 +121,46 @@ func TestManifestRoundTripFunctionEffects(t *testing.T) {
 	if !ok {
 		t.Fatalf("export = %T, want function", got.Export)
 	}
-	if !gotFn.Effect.Equals(row) {
-		t.Fatalf("effect = %v, want %v", gotFn.Effect, row)
-	}
 	if !typ.TypeEquals(got.Export, export) {
 		t.Fatalf("export = %v, want %v", got.Export, export)
+	}
+	gotSig, ok := got.FunctionSignatures["transform"]
+	if !ok {
+		t.Fatalf("missing transform function signature")
+	}
+	if !gotSig.Effect.Equals(row) {
+		t.Fatalf("effect = %v, want %v", gotSig.Effect, row)
+	}
+	if !typ.TypeEquals(gotSig.Type, gotFn) {
+		t.Fatalf("signature type = %v, want %v", gotSig.Type, gotFn)
+	}
+	if !(signature.Function{Type: export, Effect: row}).Equals(gotSig) {
+		t.Fatalf("signature = %v, want %v", gotSig, signature.Function{Type: export, Effect: row})
+	}
+}
+
+func TestManifestEncodeUnknownIteratorKindErrors(t *testing.T) {
+	m := New("example/bad-iterator")
+	m.DefineFunctionSignature("iter", signature.Function{
+		Type: typ.Func().
+			Param("input", typ.NewArray(typ.String)).
+			Build(),
+		Effect: effect.Empty.With(iteration.Iterator{
+			Source: effect.ParamRef{Index: 0},
+			Kind:   iteration.IteratorKind(99),
+		}),
+	})
+
+	_, err := Encode(m)
+	if err == nil || !strings.Contains(err.Error(), "unknown iterator kind 99") {
+		t.Fatalf("Encode error = %v, want unknown iterator kind", err)
+	}
+}
+
+func TestManifestDecodeIteratorRequiresExplicitKind(t *testing.T) {
+	_, err := decodeEffectLabel(effectLabelWire{Kind: "iteration.iterator"})
+	if err == nil || !strings.Contains(err.Error(), `unknown iterator kind ""`) {
+		t.Fatalf("decodeEffectLabel error = %v, want unknown iterator kind", err)
 	}
 }
 

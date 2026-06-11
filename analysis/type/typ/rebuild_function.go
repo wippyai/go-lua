@@ -1,7 +1,6 @@
 package typ
 
 import (
-	"github.com/wippyai/go-lua/analysis/domain/effect"
 	"github.com/wippyai/go-lua/analysis/internal/hash"
 	"github.com/wippyai/go-lua/analysis/type/kind"
 )
@@ -12,7 +11,6 @@ type FunctionParts struct {
 	Params     []Param
 	Variadic   Type
 	Returns    []Type
-	Effect     effect.Row
 }
 
 // RebuildFunction rebuilds a function from already-computed structural parts.
@@ -22,7 +20,6 @@ func RebuildFunction(parts FunctionParts) *Function {
 		parts.Params,
 		parts.Variadic,
 		parts.Returns,
-		parts.Effect,
 	)
 }
 
@@ -31,7 +28,6 @@ func buildFunctionType(
 	params []Param,
 	variadic Type,
 	returns []Type,
-	row effect.Row,
 ) *Function {
 	h := uint64(kind.Function)
 	for _, tp := range typeParams {
@@ -55,9 +51,6 @@ func buildFunctionType(
 		}
 		h = hash.MixHash(h, r.Hash())
 	}
-	if !row.Pure() {
-		h = hash.MixHash(h, row.Hash())
-	}
 
 	typeParamsCopy := make([]*TypeParam, len(typeParams))
 	copy(typeParamsCopy, typeParams)
@@ -65,7 +58,6 @@ func buildFunctionType(
 	copy(paramsCopy, params)
 	returnsCopy := make([]Type, len(returns))
 	copy(returnsCopy, returns)
-	rowCopy := row.Clone()
 	containsAny := knownAnyTypeParams(typeParamsCopy) ||
 		knownAnyParams(paramsCopy) ||
 		knownContainsAny(variadic) ||
@@ -96,7 +88,6 @@ func buildFunctionType(
 		Params:                paramsCopy,
 		Variadic:              variadic,
 		Returns:               returnsCopy,
-		Effect:                rowCopy,
 		hash:                  h,
 		containsAny:           containsAny,
 		containsNever:         containsNever,

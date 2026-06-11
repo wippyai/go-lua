@@ -160,10 +160,14 @@ func encodeEffectLabel(label effect.Label) (effectLabelWire, error) {
 	case *dispatch.CallableType:
 		return encodeEffectLabel(*l)
 	case iteration.Iterator:
+		kind, err := encodeIteratorKind(l.Kind)
+		if err != nil {
+			return effectLabelWire{}, err
+		}
 		return effectLabelWire{
 			Kind:         "iteration.iterator",
 			Source:       encodeParamRef(l.Source),
-			IteratorKind: encodeIteratorKind(l.Kind),
+			IteratorKind: kind,
 		}, nil
 	case *iteration.Iterator:
 		return encodeEffectLabel(*l)
@@ -654,20 +658,20 @@ func decodeParamRef(w *paramRefWire) effect.ParamRef {
 	return effect.ParamRef{Index: w.Index}
 }
 
-func encodeIteratorKind(kind iteration.IteratorKind) string {
+func encodeIteratorKind(kind iteration.IteratorKind) (string, error) {
 	switch kind {
 	case iteration.IterateIndexed:
-		return "indexed"
+		return "indexed", nil
 	case iteration.IterateKeyed:
-		return "keyed"
+		return "keyed", nil
 	default:
-		return fmt.Sprintf("unknown:%d", kind)
+		return "", fmt.Errorf("manifest: unknown iterator kind %d", kind)
 	}
 }
 
 func decodeIteratorKind(kind string) (iteration.IteratorKind, error) {
 	switch kind {
-	case "", "indexed":
+	case "indexed":
 		return iteration.IterateIndexed, nil
 	case "keyed":
 		return iteration.IterateKeyed, nil

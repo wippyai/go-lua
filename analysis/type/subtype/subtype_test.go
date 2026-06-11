@@ -3,8 +3,6 @@ package subtype
 import (
 	"testing"
 
-	"github.com/wippyai/go-lua/analysis/domain/effect"
-	"github.com/wippyai/go-lua/analysis/domain/effect/control"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
@@ -75,24 +73,6 @@ func TestFunctionParameterReturnAndArity(t *testing.T) {
 	}
 	if !IsSubtype(typ.Func().Build(), typ.Func().Returns(typ.NewOptional(typ.Unknown)).Build()) {
 		t.Fatal("missing Lua return should satisfy nilable return slot")
-	}
-}
-
-func TestFunctionSubtypeChecksEffects(t *testing.T) {
-	ioRow := effect.Empty.With(control.IO{})
-	ioThrowRow := effect.Empty.With(control.IO{}, control.Throw{})
-	pure := typ.Func().Build()
-	ioFn := typ.Func().Effects(ioRow).Build()
-	ioThrowFn := typ.Func().Effects(ioThrowRow).Build()
-
-	if IsSubtype(ioFn, pure) {
-		t.Fatal("effectful function should not satisfy pure target")
-	}
-	if !IsSubtype(pure, ioFn) {
-		t.Fatal("pure function should satisfy an effectful target")
-	}
-	if IsSubtype(ioThrowFn, ioFn) {
-		t.Fatal("function with extra effects should not satisfy narrower effect target")
 	}
 }
 

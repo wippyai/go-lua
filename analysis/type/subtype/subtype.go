@@ -338,10 +338,6 @@ func (c *checker) checkNil(super typ.Type, depth int) bool {
 }
 
 func (c *checker) checkFunction(sub, super *typ.Function, depth int) bool {
-	if !sub.Effect.SubsetOf(super.Effect) {
-		return false
-	}
-
 	subReq := minRequiredArgs(sub)
 	superReq := minRequiredArgs(super)
 	if subReq > superReq || (super.Variadic == nil && subReq > len(super.Params)) {

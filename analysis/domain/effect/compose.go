@@ -82,6 +82,9 @@ func Subset(r1, r2 Row) bool {
 			return false
 		}
 	}
+	if r1.IsOpen() && !r2.IsOpen() {
+		return false
+	}
 	return true
 }
 

@@ -126,7 +126,6 @@ func substituteFunctionParams(fn *typ.Function, subs []paramSubstitution) typ.Ty
 	}
 
 	builder := typ.Func()
-	builder.Effects(fn.Effect)
 	for _, tp := range keptTypeParams {
 		builder.TypeParamRef(tp)
 	}
@@ -679,7 +678,6 @@ func expandInstantiatedCore(t typ.Type, orig typ.Type, guard recursion.Guard, me
 			Params:     paramsSrc,
 			Variadic:   variadic,
 			Returns:    returnsSrc,
-			Effect:     v.Effect,
 		})
 	case *typ.Record:
 		changed := false

@@ -3,8 +3,6 @@ package typ
 import (
 	"testing"
 
-	"github.com/wippyai/go-lua/analysis/domain/effect"
-	"github.com/wippyai/go-lua/analysis/domain/effect/control"
 	"github.com/wippyai/go-lua/analysis/type/kind"
 )
 
@@ -141,8 +139,7 @@ func TestRewrite_Tuple(t *testing.T) {
 }
 
 func TestRewrite_Function(t *testing.T) {
-	row := effect.Empty.With(control.IO{})
-	fn := Func().Param("a", Number).Returns(Number).Effects(row).Build()
+	fn := Func().Param("a", Number).Returns(Number).Build()
 	result := Rewrite(fn, replaceNumber(String))
 	f, ok := result.(*Function)
 	if !ok {
@@ -153,9 +150,6 @@ func TestRewrite_Function(t *testing.T) {
 	}
 	if f.Returns[0] != String {
 		t.Fatalf("expected return String, got %v", f.Returns[0])
-	}
-	if !f.Effect.Equals(row) {
-		t.Fatalf("effect = %v, want %v", f.Effect, row)
 	}
 }
 

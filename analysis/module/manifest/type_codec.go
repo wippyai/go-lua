@@ -35,7 +35,6 @@ type typeWire struct {
 	Params     []paramWire     `json:"params,omitempty"`
 	Variadic   *typeWire       `json:"variadic,omitempty"`
 	Returns    []*typeWire     `json:"returns,omitempty"`
-	Effect     *effectRowWire  `json:"effect,omitempty"`
 
 	Module string    `json:"module,omitempty"`
 	Name   string    `json:"name,omitempty"`
@@ -602,10 +601,6 @@ func encodeFunction(f *typ.Function) (*typeWire, error) {
 	if err != nil {
 		return nil, err
 	}
-	out.Effect, err = encodeEffectRow(f.Effect)
-	if err != nil {
-		return nil, err
-	}
 	return out, nil
 }
 
@@ -643,11 +638,6 @@ func decodeFunction(w *typeWire) (typ.Type, error) {
 	if len(returns) > 0 {
 		b.Returns(returns...)
 	}
-	row, err := decodeEffectRow(w.Effect)
-	if err != nil {
-		return nil, err
-	}
-	b.Effects(row)
 	return b.Build(), nil
 }
 

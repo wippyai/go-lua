@@ -66,8 +66,4 @@ func (f *formatter) formatFunction(fn *Function, depth int, guard recursion.Guar
 		}
 	}
 
-	if !fn.Effect.Pure() {
-		f.write(" ! ")
-		f.write(fn.Effect.String())
-	}
 }

@@ -160,9 +160,6 @@ func typeEqualsGuard(a, b Type, guard recursion.Guard, seen map[typePair]bool) b
 		if !ok || len(va.TypeParams) != len(vb.TypeParams) {
 			return false
 		}
-		if !va.Effect.Equals(vb.Effect) {
-			return false
-		}
 		for i, tp := range va.TypeParams {
 			if !typeEqualsGuard(tp, vb.TypeParams[i], next, seen) {
 				return false

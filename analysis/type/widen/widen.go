@@ -226,7 +226,6 @@ func widenForInferenceDepth(t typ.Type, depth int, preserveParams bool) typ.Type
 			}
 
 			builder := typ.Func()
-			builder.Effects(fn.Effect)
 			for _, p := range params {
 				if p.Optional {
 					builder.OptParam(p.Name, p.Type)

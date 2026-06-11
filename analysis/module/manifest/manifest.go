@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"sort"
 
+	"github.com/wippyai/go-lua/analysis/domain/effect/signature"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
@@ -15,17 +16,19 @@ import (
 // compiled modules. It intentionally does not own checker stores, query caches,
 // or interprocedural state.
 type Manifest struct {
-	Path    string
-	Version string
-	Export  typ.Type
-	Types   map[string]typ.Type
+	Path               string
+	Version            string
+	Export             typ.Type
+	Types              map[string]typ.Type
+	FunctionSignatures map[string]signature.Function
 }
 
 // New creates an empty module manifest for path.
 func New(path string) *Manifest {
 	return &Manifest{
-		Path:  path,
-		Types: make(map[string]typ.Type),
+		Path:               path,
+		Types:              make(map[string]typ.Type),
+		FunctionSignatures: make(map[string]signature.Function),
 	}
 }
 
@@ -38,6 +41,17 @@ func (m *Manifest) DefineType(name string, t typ.Type) {
 		m.Types = make(map[string]typ.Type)
 	}
 	m.Types[name] = t
+}
+
+// DefineFunctionSignature records effect-bearing metadata for a named function.
+func (m *Manifest) DefineFunctionSignature(name string, sig signature.Function) {
+	if m == nil || name == "" {
+		return
+	}
+	if m.FunctionSignatures == nil {
+		m.FunctionSignatures = make(map[string]signature.Function)
+	}
+	m.FunctionSignatures[name] = sig
 }
 
 // SetExport records the module's exported type.
@@ -86,6 +100,24 @@ func Encode(m *Manifest) ([]byte, error) {
 		}
 	}
 
+	if len(m.FunctionSignatures) > 0 {
+		names := make([]string, 0, len(m.FunctionSignatures))
+		for name := range m.FunctionSignatures {
+			names = append(names, name)
+		}
+		sort.Strings(names)
+
+		wm.FunctionSignatures = make([]functionSignatureWire, 0, len(names))
+		for _, name := range names {
+			encoded, err := encodeFunctionSignature(m.FunctionSignatures[name])
+			if err != nil {
+				return nil, fmt.Errorf("manifest: encode function signature %q: %w", name, err)
+			}
+			encoded.Name = name
+			wm.FunctionSignatures = append(wm.FunctionSignatures, encoded)
+		}
+	}
+
 	data, err := json.MarshalIndent(wm, "", "  ")
 	if err != nil {
 		return nil, err
@@ -122,17 +154,63 @@ func Decode(data []byte) (*Manifest, error) {
 		m.DefineType(named.Name, t)
 	}
 
+	for _, named := range wm.FunctionSignatures {
+		sig, err := decodeFunctionSignature(named)
+		if err != nil {
+			return nil, fmt.Errorf("manifest: decode function signature %q: %w", named.Name, err)
+		}
+		m.DefineFunctionSignature(named.Name, sig)
+	}
+
 	return m, nil
 }
 
 type manifestWire struct {
-	Path    string          `json:"path"`
-	Version string          `json:"version,omitempty"`
-	Export  *typeWire       `json:"export,omitempty"`
-	Types   []namedTypeWire `json:"types,omitempty"`
+	Path               string                  `json:"path"`
+	Version            string                  `json:"version,omitempty"`
+	Export             *typeWire               `json:"export,omitempty"`
+	Types              []namedTypeWire         `json:"types,omitempty"`
+	FunctionSignatures []functionSignatureWire `json:"functionSignatures,omitempty"`
 }
 
 type namedTypeWire struct {
 	Name string    `json:"name"`
 	Type *typeWire `json:"type,omitempty"`
+}
+
+type functionSignatureWire struct {
+	Name   string         `json:"name"`
+	Type   *typeWire      `json:"type,omitempty"`
+	Effect *effectRowWire `json:"effect,omitempty"`
+}
+
+func encodeFunctionSignature(sig signature.Function) (functionSignatureWire, error) {
+	if sig.Type == nil {
+		return functionSignatureWire{}, errors.New("missing function type")
+	}
+	encodedType, err := encodeType(sig.Type)
+	if err != nil {
+		return functionSignatureWire{}, err
+	}
+	encodedEffect, err := encodeEffectRow(sig.Effect)
+	if err != nil {
+		return functionSignatureWire{}, err
+	}
+	return functionSignatureWire{Type: encodedType, Effect: encodedEffect}, nil
+}
+
+func decodeFunctionSignature(w functionSignatureWire) (signature.Function, error) {
+	decodedType, err := decodeType(w.Type)
+	if err != nil {
+		return signature.Function{}, err
+	}
+	fn, ok := decodedType.(*typ.Function)
+	if !ok {
+		return signature.Function{}, fmt.Errorf("type is %T, want *typ.Function", decodedType)
+	}
+	row, err := decodeEffectRow(w.Effect)
+	if err != nil {
+		return signature.Function{}, err
+	}
+	return signature.Function{Type: fn, Effect: row}, nil
 }

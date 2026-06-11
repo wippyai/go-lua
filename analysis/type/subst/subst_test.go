@@ -3,8 +3,6 @@ package subst
 import (
 	"testing"
 
-	"github.com/wippyai/go-lua/analysis/domain/effect"
-	"github.com/wippyai/go-lua/analysis/domain/effect/control"
 	"github.com/wippyai/go-lua/analysis/type/typ"
 )
 
@@ -35,8 +33,7 @@ func TestSubstitute(t *testing.T) {
 
 	t.Run("in function", func(t *testing.T) {
 		tp := typ.NewTypeParam("T", nil)
-		row := effect.Empty.With(control.IO{})
-		fn := typ.Func().Param("x", tp).Returns(tp).Effects(row).Build()
+		fn := typ.Func().Param("x", tp).Returns(tp).Build()
 		subs := map[string]typ.Type{"T": typ.Number}
 		result := Substitute(fn, subs)
 		resultFn, ok := result.(*typ.Function)
@@ -48,9 +45,6 @@ func TestSubstitute(t *testing.T) {
 		}
 		if resultFn.Returns[0] != typ.Number {
 			t.Error("return type should be substituted")
-		}
-		if !resultFn.Effect.Equals(row) {
-			t.Fatalf("effect = %v, want %v", resultFn.Effect, row)
 		}
 	})
 }
